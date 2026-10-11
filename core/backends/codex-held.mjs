@@ -80,12 +80,15 @@ export class HeldAppServer {
     return this.attachedState;
   }
 
-  /** CodexRpc が読みを始める。sink: { line(text, seq), err(chunk), exit({ code, signal, error }), lost(reason), handedOff() } */
+  /** CodexRpc が読みを始める。sink: { line(text, seq), err(chunk), exit({ code, signal, error }), lost(reason), handedOff(), overflow({ reason, bytes }) } */
   run(sink) {
     this.sink = sink;
     const onErr = frame => { if (frame.id === this.id && !this.detached) sink.err(String(frame.chunk ?? '')); };
+    // 保持役が長すぎる行（1 行の上限を超えた応答）を捨てた。待っている依頼を待たせ続けないよう CodexRpc に伝える
+    const onOverflow = frame => { if (frame.id === this.id && !this.detached && frame.reason === 'line') sink.overflow?.(frame); };
     this.client.on('err', onErr);
-    this.offErr = () => this.client.off('err', onErr);
+    this.client.on('overflow', onOverflow);
+    this.offErr = () => { this.client.off('err', onErr); this.client.off('overflow', onOverflow); };
     if (this.stderrTail) sink.err(this.stderrTail);
     if (this.skipUpTo > 0) this.ack(this.skipUpTo);
     void (async () => {

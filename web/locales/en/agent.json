@@ -290,6 +290,7 @@
     "aborted": "Aborted.",
     "noticeUnknown": "Could not confirm the completion notices of the child tasks. Check the child conversation.",
     "historyUnreadable": "Note: The child finished its work, but its history could not be read afterwards because of a temporary error ({{error}}). The result is the last reply received during the run and may be incomplete. Check the child conversation.",
+    "historyNotLoaded": "Note: The child finished its work, but its history could not be read afterwards ({{error}}). The result is the last reply received during the run and may be incomplete. Check the child conversation.",
     "commandNotice": "[Pleiad command duration notice / {{taskId}} / {{noticeId}}]\nThe child for {{title}} has been running `{{command}}` or waiting for it to finish for at least {{minutes}} minutes. It may be stuck. Check with ply_task_status or stop it with ply_task_cancel.",
     "hostOfflineNotice": "[Pleiad host unreachable notice / {{host}}]\nThe host \"{{host}}\" has been unreachable since {{since}} ({{minutes}} min). {{count}} child task(s) delegated to it were running:\n{{items}}\nThe host PC may have stopped (for example, restarting), or Pleiad on the host may not be running. When the connection returns, their state and results catch up automatically. Wait for that, or stop them with ply_task_cancel (the stop request is sent to the host once it is reachable).",
     "hostBackNotice": "[Pleiad host reconnected notice / {{host}}]\nReconnected to the host \"{{host}}\" and caught up.\n{{items}}",

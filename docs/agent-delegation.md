@@ -337,6 +337,8 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 - 結果の読み出しが読み直しても読めなければ、タスクは失敗にせず `completed` にする。結果は実行中に流れてきた最後の返答（`text.delta` を `text.end` で区切った最後の分）で、`error` に注意書き（`agent:delegation.historyUnreadable`。元のエラーを含む）を載せる。完了通知にも載る。
 - Codex のターン用の app-server（Pleiad が担当する会話。ターンごとに起こす）は、止めたプロセスが終わるまで待ってからターンを返す（`CodexRpc.stop()` の返り。上限 3 秒）。返った直後に共有の app-server が同じ履歴の DB を読むため。
 
+Codex の履歴が大きすぎて読めない・30 秒で応答が無い（`core/history-retry.mjs` の `historyGaveUp`。code が `LINE_OVERFLOW`・`RPC_TIMEOUT`。docs/multi-backend.md「Codex の履歴の読み出し」）ときも、読み直さずに上と同じく扱う。注意書きは `agent:delegation.historyNotLoaded`（「一時的な」を言わない）。
+
 理由: 2026-09-27〜10-05 に、作業と報告を終えた Codex の子が 5 件、取り込みの `codex -32603: … (code: 1546) disk I/O error`（SQLITE_IOERR_TRUNCATE）で `failed` になった。履歴の DB は壊れておらず、少し後に読み直すと読める。止めたばかりのターン用の app-server（またはウイルス対策ソフト）と、WAL の切り詰めがぶつかったとみられる（openai/codex #49605 も Windows で同じ形）。
 
 ## 子に残った裏の作業

@@ -526,6 +526,10 @@ const SUITES = [
   './unit/adopt-codex.mjs',
   // Codex の app-server を保持役に載せる部品（無停止の更新 段階 3）: 載せるかの切り替え・世代つきの id・付け直すスレッドの再生と預かり・手を離す
   './unit/codex-held.mjs',
+  // Codex の履歴の読み出し: 画像の base64 を運ばないページ読み・上限超えと時間切れで待ち続けない・保持役の overflow で依頼を失敗にする
+  './unit/codex-history.mjs',
+  // 画像の多い Codex の会話（22 MB）を本物の保持役に載せて通す: 開ける・追加の指示と完了の返答が届く・読めない古い会話は待ち続けない
+  './unit/server-codex-large-history.mjs',
   // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
   './unit/claude-held.mjs',
   // 付け直し（無停止の更新 段階 3）: 保持役に載せた agy（偽物）を、ツールの実行中・終わった直後・強制終了・引き継ぎ（idle の agy を旧サーバーが止める）で引き継ぐ。切り替え（置き場があれば既定で載る）

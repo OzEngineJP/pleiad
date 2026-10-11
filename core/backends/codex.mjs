@@ -32,6 +32,7 @@ import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
 import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { COMPUTER_CALL_TIMEOUT_SEC, codexComputerConfig, codexComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, mcpText } from "./computer-delivery.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
+import { readThread } from "./codex-history.mjs";
 import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import * as store from '../store.mjs';
@@ -458,7 +459,7 @@ export function approvalTitle(toolName, input) {
 //   - 一覧: `thread/list { parentThreadId }`（永続化された子）と、実行時に覚えた子（rpc.parents と
 //     親の subAgentActivity / collabAgentToolCall）の和。前者は app-server の永続化の間合いに、
 //     後者は子の通知がこの接続に流れるかに依存するので、和を取ってどちらにも寄りかからない
-//   - 本文: `thread/read { threadId: 子, includeTurns: true }` を threadToMessages へ
+//   - 本文: readThread（codex-history.mjs。ページに分けて読み、画像の base64 を運ばない）を threadToMessages へ
 //   - 生んだ委譲の id と状態: 親の items（実行時は通知、無ければ親の thread/read）
 // server は 4 秒ごとに全部を呼ぶ（listSubagents / getSubagentMessages / getSubagentOrigin / getSubagentState）。
 // 重い呼び出しを毎回しないよう、ここで短く覚える。
@@ -511,6 +512,9 @@ const childMeta = new Map();
 const listCache = new Map();      // parent -> { at, promise }
 const messageCache = new Map();   // child -> { parent, at, stamp, messages }
 const parentCache = new Map();    // parent -> { at, promise }（promise は Map<child, entry>）
+// 会話を開くと、履歴（getMessages）と圧縮の印（getCompactions）を続けて読む。後の方は直前に読んだものを使う（同じ会話を 2 度読まない）
+const RECENT_READ_MS = 5_000;
+const recentReads = new Map();    // thread -> { at, thread }
 /** false になったら thread/list の parentThreadId を使わない（持たない版） */
 let listByParent = true;
 
@@ -744,6 +748,7 @@ nativeRpc.onDown(() => {
   listCache.clear();
   messageCache.clear();
   parentCache.clear();
+  recentReads.clear();
 });
 
 /** 期限切れの覚えを捨てる（親が何百あっても膨らまない） */
@@ -802,15 +807,33 @@ function listChildren(parent) {
 const unknownField = (err) =>
   err?.code === -32602 || (err?.code === -32600 && /unknown field/i.test(String(err?.message ?? "")));
 
+/**
+ * thread/resume・thread/fork は、既定では会話の中身（turns）も 1 行で返す。画像の多い会話は保持役の 1 行の上限（16 MiB）を超えて捨てられ、
+ * 応答が来ない（追加の指示が届かない）。中身は使わないので excludeTurns を付ける。知らない版に撥ねられたら以後は付けない
+ */
+let excludeTurns = true;
+async function requestWithoutTurns(rpc, method, params, timeoutMs = 0) {
+  if (excludeTurns) {
+    try {
+      return await rpc.request(method, { ...params, excludeTurns: true }, timeoutMs);
+    } catch (err) {
+      if (!unknownField(err)) throw err;
+      excludeTurns = false;
+      console.error(`  codex: ${method} の excludeTurns を使えない版。会話の中身ごと受け取る`);   // i18n-ignore: サーバーのログ
+    }
+  }
+  return rpc.request(method, params, timeoutMs);
+}
+
 /** 親の items を読んで、子ごとの { origin, status, 時刻 } を作る。PARENT_TTL_MS のあいだ覚える */
 function scanParent(parent) {
   const hit = parentCache.get(parent);
   if (hit && Date.now() - hit.at < PARENT_TTL_MS) return hit.promise;
   pruneCache(parentCache, PARENT_TTL_MS);
   const promise = (async () => {
-    const res = await nativeRpc.request("thread/read", { threadId: parent, includeTurns: true }, 30_000);
+    const thread = await readThread(nativeRpc, parent);
     const map = new Map();
-    for (const turn of res?.thread?.turns ?? []) {
+    for (const turn of thread?.turns ?? []) {
       const at = { start: toIso(turn.startedAt), end: toIso(turn.completedAt) ?? toIso(turn.startedAt) };
       for (const item of turn.items ?? []) {
         if (SUBAGENT_ITEMS.includes(item?.type)) {
@@ -877,7 +900,7 @@ function toUserInputResponse(questions, answers) {
 // ---------------------------------------------------------------- 履歴
 
 /**
- * thread/read {includeTurns:true} の turns/items -> NormalizedMessage[]。
+ * thread/read {includeTurns:true} と同じ形の turns/items（readThread。codex-history.mjs）-> NormalizedMessage[]。
  *
  * codex のアイテムは「1ターンの中に時系列で並ぶ」形なので、
  * reasoning とツールを assistant の発言に畳んでから積む
@@ -1297,7 +1320,7 @@ export const backend = {
       const hooks = hooksRuntime ? await codexHooksConfig(hooksRuntime, rpc, cwd) : null;
       const hooksKey = hooks?.key ?? '';
       await unloadForHooks(rpc, sessionId, hooksKey);
-      await rpc.request('thread/resume', { threadId: sessionId, ...(hooks ? { config: { hooks: hooks.config } } : {}) });
+      await requestWithoutTurns(rpc, 'thread/resume', { threadId: sessionId, ...(hooks ? { config: { hooks: hooks.config } } : {}) });
       if (rpc === nativeRpc) { loadedHooks.set(sessionId, hooksKey); heldAppServer()?.touchLabel(); }
       const completed = new Promise((resolve, reject) => {
         timer = setTimeout(() => reject(new Error('Compaction timed out')), 300_000);
@@ -1340,7 +1363,7 @@ export const backend = {
   },
 
   /**
-   * 子の会話。thread/read { threadId: 子, includeTurns: true } -> threadToMessages。
+   * 子の会話。readThread（codex-history.mjs）-> threadToMessages。
    * 子であることを確かめてから返す（agentId はクライアントから戻ってくる値）。
    * 終わった子は updatedAt が変わらない限り読み直さない。走っている子は MESSAGES_TTL_MS ごと。
    */
@@ -1353,8 +1376,7 @@ export const backend = {
         && cached.stamp && childMeta.get(agentId)?.updatedAt === cached.stamp;
       if (fresh || settled) return trimMessages(cached.messages, limit);
     }
-    const res = await nativeRpc.request("thread/read", { threadId: agentId, includeTurns: true }, 30_000);
-    const t = res?.thread;
+    const t = await readThread(nativeRpc, agentId);
     if (!t) return [];
     const parent = t.parentThreadId ?? t.source?.subAgent?.thread_spawn?.parent_thread_id ?? null;
     if (parent ? parent !== threadId : !isKnownChild(threadId, agentId)) return [];
@@ -1852,7 +1874,7 @@ export const backend = {
         }
         // 互換から公式へ戻すときは公式の provider を明示する（スレッドに記録された互換の provider を使わせない）
         const back = !compat && known !== undefined && known !== 'default' ? { modelProvider: await defaultProvider(rpc, cwd) } : {};
-        const resumed = await rpc.request("thread/resume", { threadId, ...common, ...back });
+        const resumed = await requestWithoutTurns(rpc, "thread/resume", { threadId, ...common, ...back });
         // 実際に効いた接続先を確かめる。違えばターンを始めない（互換の会話が公式へ、公式へ戻した会話が互換の先へ送られるのを防ぐ）
         const expected = compat ? compat.modelProvider : back.modelProvider;
         if (expected && typeof resumed?.modelProvider === 'string' && resumed.modelProvider !== expected) {
@@ -2040,7 +2062,7 @@ export const backend = {
     const guard = setTimeout(() => settle({ timedOut: true }), timeoutMs + 30_000);
     const started = Date.now();
     try {
-      if (loadedHere) await nativeRpc.request("thread/resume", { threadId });
+      if (loadedHere) await requestWithoutTurns(nativeRpc, "thread/resume", { threadId });
       await nativeRpc.request("thread/shellCommand", { threadId, command, timeoutMs });
       const { item, timedOut } = await done;
       // 止めた分は exitCode -1 と "command aborted by user" で閉じる。終了コードにせず「止めました」とそれまでの出力にする
@@ -2098,19 +2120,24 @@ export const backend = {
     }
   },
 
+  // 履歴はページに分けて読み、画像の base64 を運ばない。1 回の応答は 30 秒で打ち切る（codex-history.mjs）
   async getMessages(sessionId, options) {
     if (!sessionId) return [];
-    const res = await rpc.request("thread/read", { threadId: sessionId, includeTurns: true });
-    if (!res?.thread) throw new Error(t("codex.errors.historyUnreadable"));
-    return threadToMessages(res?.thread, options);
+    const thread = await readThread(rpc, sessionId);
+    if (!thread) throw new Error(t("codex.errors.historyUnreadable"));
+    pruneCache(recentReads, RECENT_READ_MS);
+    recentReads.set(sessionId, { at: Date.now(), thread });
+    return threadToMessages(thread, options);
   },
 
   async getCompactions(sessionId) {
-    const res = await nativeRpc.request('thread/read', { threadId: sessionId, includeTurns: true }, 30_000);
-    return (res?.thread?.turns ?? []).flatMap(turn => (turn.items ?? [])
+    const hit = recentReads.get(sessionId);
+    recentReads.delete(sessionId);
+    const thread = hit && Date.now() - hit.at < RECENT_READ_MS ? hit.thread : await readThread(nativeRpc, sessionId);
+    return (thread?.turns ?? []).flatMap(turn => (turn.items ?? [])
       .filter(item => item.type === 'contextCompaction')
       .map(item => ({ id: `native:${item.id}`, nativeId: item.id, turnId: turn.id ?? null, phase: 'complete', trigger: 'auto',
-        at: Number(turn.completedAt ?? turn.startedAt ?? res.thread.updatedAt) * 1000 })));
+        at: Number(turn.completedAt ?? turn.startedAt ?? thread.updatedAt) * 1000 })));
   },
 
   async setTitle(sessionId, title) {
@@ -2126,16 +2153,16 @@ export const backend = {
    */
   async rewind(threadId, { beforeMessageId } = {}) {
     if (!validId(threadId)) throw new Error(t("codex.errors.noThreadId", { method: "thread/revert" }));
-    const read = await nativeRpc.request("thread/read", { threadId, includeTurns: true }, 30_000);
+    const read = await readThread(nativeRpc, threadId);
     // item id を使い回すネイティブでは、最初に当たったターンで切ると残すべき履歴まで消える。当たるのが 1 つのターンだけのときだけ進む
-    const hits = (read?.thread?.turns ?? []).filter(x => (x.items ?? []).some(item => item?.type === "userMessage" && item.id === beforeMessageId));
+    const hits = (read?.turns ?? []).filter(x => (x.items ?? []).some(item => item?.type === "userMessage" && item.id === beforeMessageId));
     const turn = hits.length === 1 ? hits[0] : null;
     if (!turn?.id) throw new Error(t("codex.errors.rewindTurnNotFound"));
     if (turn.items[0]?.id !== beforeMessageId) throw new Error(t("codex.errors.rewindMidTurn"));
     // この app-server に読み込まれていなければ読み込み、終わったら外す（次のターンが自分の設定で読み込めるように。shell と同じ）
     const loadedHere = !loadedProvider.has(threadId) && !nativeRpc.threads.has(threadId);
     try {
-      if (loadedHere) await nativeRpc.request("thread/resume", { threadId });
+      if (loadedHere) await requestWithoutTurns(nativeRpc, "thread/resume", { threadId });
       try {
         await nativeRpc.request("thread/revert", { threadId, beforeTurnId: turn.id }, 30_000);
         return { sessionId: threadId, via: "revert" };
@@ -2143,7 +2170,7 @@ export const backend = {
         // 履歴の置き換えを断られた。legacy のスレッドは別スレッドへ切り出す
         console.error("  codex: thread/revert を断られたので thread/fork で切り出す:", String(error?.message ?? error).slice(0, 200));
       }
-      const forked = await nativeRpc.request("thread/fork", { threadId, beforeTurnId: turn.id }, 30_000);
+      const forked = await requestWithoutTurns(nativeRpc, "thread/fork", { threadId, beforeTurnId: turn.id }, 30_000);
       const child = forked?.thread?.id;
       if (!child) throw new Error(t("codex.errors.noThreadId", { method: "thread/fork" }));
       // 切り出した子はロードされている。次のターンが自分の設定で読み込めるように外す
@@ -2159,7 +2186,7 @@ export const backend = {
     // web が渡すのはメッセージ id なので、そのまま渡すと別のところで切れる。
     // 黙って末尾から分けると「途中から分けた」つもりの枝に後ろの発言が残るので断る
     if (upToMessageId) throw new Error(t("codex.errors.forkMidway"));
-    const res = await rpc.request("thread/fork", { threadId: sessionId });
+    const res = await requestWithoutTurns(rpc, "thread/fork", { threadId: sessionId });
     const child = res?.thread?.id;
     if (!child) throw new Error(t("codex.errors.noThreadId", { method: "thread/fork" }));
     return { sessionId: child };

@@ -11,7 +11,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
 import { createAgentTasks, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
-import { readWithRetry, transientStorageError } from './history-retry.mjs';
+import { historyGaveUp, readWithRetry, transientStorageError } from './history-retry.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
@@ -5269,6 +5269,7 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   while (!signal.aborted && (sessionBusy(task.sessionId) || awaitedBackground(task.sessionId) || childrenBusy())) await waitFree(task.sessionId, 250);
   // 履歴の読み出しが一時的な SQLite のエラーで失敗したら、間を空けて読み直す（core/history-retry.mjs）。
   // 読み直しても読めなければ、子の作業は終わっているので失敗にせず、流れてきた最後の返答を注意書き付きで結果にする。
+  // Codex の履歴が大きすぎる・応答が無い（historyGaveUp）ときも読み直さずに同じく扱う。
   // それ以外のエラーは今までどおり投げて失敗にする（docs/agent-delegation.md「子の結果」）
   let last, historyNote = null;
   try {
@@ -5277,11 +5278,14 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
       onRetry: (e, n, ms) => console.error(`  [delegation] 子 ${task.sessionId} の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
     });
   } catch (e) {
-    if (!transientStorageError(e)) throw e;
+    const gaveUp = historyGaveUp(e);
+    if (!transientStorageError(e) && !gaveUp) throw e;
     // i18n-ignore: サーバーのログ
     console.error(`  [delegation] 子 ${task.sessionId} の履歴を読み直しても読めなかった。流れてきた返答を結果にする:`, String(e?.message ?? e).slice(0, 300));
     last = execution.streamed;
-    historyNote = agentT(await agentLocaleFor(task.parentSessionId), 'delegation.historyUnreadable', { error: String(e?.message ?? e).slice(0, 300) });
+    const locale = await agentLocaleFor(task.parentSessionId);
+    const error = String(e?.message ?? e).slice(0, 300);
+    historyNote = gaveUp ? agentT(locale, 'delegation.historyNotLoaded', { error }) : agentT(locale, 'delegation.historyUnreadable', { error });
   }
   const text = last;
   // error は完了通知に載って依頼元のエージェントが読む（依頼元の会話の言語）

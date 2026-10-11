@@ -18,6 +18,7 @@
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
 import { t } from "../i18n.mjs";
 import { acquireHeldAppServer } from "./codex-held.mjs";
+import { LINE_OVERFLOW, RPC_TIMEOUT } from "./codex-history.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -38,6 +39,16 @@ const MAX_CHILDREN = 5000;
 
 /** 行き先の決まっていない frame の印（#target の戻り値） */
 const HOLD = Symbol("hold");
+
+/**
+ * 応答が保持役の 1 行の上限を超えうる依頼（会話の中身を返すもの）。保持役が行を捨てたら、これらを待ち続けずに失敗にする。
+ * どの依頼の答えが捨てられたかは分からないので、当てはまるものを全部失敗にする（ページ読みは小さくして読み直す。codex-history.mjs）
+ */
+const mayBeLarge = (method, params) =>
+  method === "thread/items/list"
+  || (method === "thread/turns/list" && params?.itemsView !== "notLoaded")
+  || (method === "thread/read" && params?.includeTurns === true)
+  || ((method === "thread/resume" || method === "thread/fork") && params?.excludeTurns !== true);
 
 const threadIdOf = (params) =>
   params?.threadId ?? params?.thread_id ?? params?.conversationId ?? params?.thread?.id ?? null;
@@ -276,6 +287,7 @@ export class CodexRpc {
           exit: (info) => die(info.error ? String(info.error) : `exit=${info.code} signal=${info.signal}`),
           lost: (reason) => die(String(reason)),
           handedOff: () => this.#handedOff(),
+          overflow: (frame) => this.#overflow(frame),
         });
       } else {
         proc.stdout.setEncoding("utf8");
@@ -328,11 +340,11 @@ export class CodexRpc {
     return new Promise((resolve, reject) => {
       let timer = null;
       const done = (fn) => (v) => { if (timer) clearTimeout(timer); this.pending.delete(id); fn(v); };
-      this.pending.set(id, { resolve: done(resolve), reject: done(reject) });
+      this.pending.set(id, { resolve: done(resolve), reject: done(reject), method, params });
       if (timeoutMs > 0) {
         timer = setTimeout(() => {
           const p = this.pending.get(id);
-          if (p) p.reject(new Error(t("codex.errors.timeout", { method, ms: timeoutMs })));
+          if (p) p.reject(Object.assign(new Error(t("codex.errors.timeout", { method, ms: timeoutMs })), { code: RPC_TIMEOUT }));
         }, timeoutMs);
         timer.unref?.();
       }
@@ -342,6 +354,15 @@ export class CodexRpc {
         this.pending.get(id)?.reject(err);
       }
     });
+  }
+
+  /** 保持役が長すぎる行を捨てた（frame.bytes）。大きな答えになりうる依頼をすぐ失敗にする（mayBeLarge） */
+  #overflow(frame) {
+    const hit = [...this.pending].filter(([, p]) => mayBeLarge(p.method, p.params));
+    console.error(`  codex: 保持役が ${frame?.bytes ?? "?"} バイトの行を捨てた。待っている依頼 ${hit.length} 件を失敗にする`);   // i18n-ignore: サーバーのログ
+    for (const [, p] of hit) {
+      p.reject(Object.assign(new Error(t("codex.errors.historyTooLarge", { method: p.method })), { code: LINE_OVERFLOW, bytes: frame?.bytes }));
+    }
   }
 
   #send(frame) {

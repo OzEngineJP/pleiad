@@ -785,3 +785,40 @@ Codexの `set_status / set_title / fork` は未接続なので、
 | Antigravity | `checkpoint` の意味は未確認。圧縮と判別できないため正規化しない。手動操作は提供しない | 取得しない | 取得しない |
 
 core は圧縮の開始・完了・失敗を `compaction`、文脈量を `contextWindow` として送る。既存の `contextUsage` はプラグインの読み込み記録なので保持する。Claude の `compact_boundary` と Codex の `contextCompaction` item をネイティブ履歴から優先して読み、sidecar の `compactions` から要約・trigger・失敗理由を補う。ID のない記録も同じターン、または近い時刻で照合して重複を除く。ネイティブ境界が無い分は sidecar から区切りを戻し、ネイティブ履歴の発言と一緒に描く。自動圧縮の予約は送信受理・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで取り消す。画面の会話切替では残す。見えている予約はファイルに保存し、Pleiad の再起動後に予定の時刻から 8 分以内のものを戻す（[ADR 0039](adr/0039-conversation-compaction.md)、[ADR 0069](adr/0069-idle-compaction-schedule-survives-restart.md)）。
+
+## Codex の履歴の読み出し（2026-10-12）
+
+Codex の会話の履歴（`getMessages`・`getCompactions`・`getSubagentMessages`・巻き戻し・子の一覧）は `core/backends/codex-history.mjs` の `readThread` で読む。返す形は `thread/read { includeTurns: true }` と同じ（`thread.turns[].items[]`）。
+
+**問題.** `thread/read { includeTurns: true }` は会話を 1 行の応答で丸ごと返す。画像を作った会話は、1 枚につき 1.6 MB ほどの base64（`imageGeneration` の `result`）を抱える。14 枚で 22 MB を超え、保持役の 1 行の上限（16 MiB。`core/holder/protocol.mjs` の `DEFAULT_MAX_LINE_BYTES`）で捨てられた。`getMessages` には時間切れが無かったので、Pleiad は応答を待ち続けた。会話が開けず、`ply_task_send` の追加の指示が届かず、終わった子が「実行中」のまま残った（2026-10-11）。`thread/resume`・`thread/fork` も、既定では会話の中身ごと返すので同じだった。
+
+**読み方.**
+
+- まずメタデータだけの `thread/read` を読む。
+- スレッドが paginated（`historyMode`。codex-cli 0.156 以降に作った会話）なら、ページに分けて読む。
+  - `thread/turns/list { itemsView: "notLoaded", sortDirection: "asc", limit: 100 }` でターンの並びと時刻を読む。
+  - `thread/items/list { sortDirection: "asc" }` でアイテムを読む。最初は 32 件ずつ。画像を含むページの次は 2 件にし、画像の無いページが続けば倍に戻す。
+  - 1 行が上限を超えたら（下の `LINE_OVERFLOW`）、同じ位置を半分の大きさで読み直す。1 件でも超えるなら「大きすぎて読み込めない」（`codex.errors.historyTooLarge`）で失敗にする。
+  - ターンの一覧の後に始まったターンのアイテムは、末尾のターンとして足す。
+- legacy のスレッドと、ページ読みを知らない版（`unknown variant`。以後は試さない）は、今までどおり 1 回で読む。
+- どちらの読み方でも、保存先（`savedPath`）のある画像の base64 は捨てる。画面は `/local-file` で保存先を開く。保存先の無い画像は、base64 が画面に出す元なので残す。
+- 1 回の応答は 30 秒で打ち切り、「30 秒で読み込めなかった」（`codex.errors.historyTimeout`）で失敗にする。
+- 会話を開くと `getMessages` の直後に `getCompactions` が同じ会話を読む。5 秒以内なら、直前に読んだものを使う（2 度読まない）。
+- `thread/resume`・`thread/fork` には `excludeTurns: true` を付ける。知らない版に撥ねられたら、以後は付けない。
+
+**保持役が行を捨てたとき.** 保持役は `overflow { id, reason: "line", bytes }` を送る（捨てた行の依頼の id は分からない）。`HeldAppServer` は自分の子の `reason: "line"` だけを `CodexRpc` に渡す。`CodexRpc` は、大きな答えになりうる待っている依頼をすぐ失敗にする（`LINE_OVERFLOW`）。対象は `thread/items/list`、`itemsView` が `notLoaded` でない `thread/turns/list`、中身つきの `thread/read`、`excludeTurns` の無い `thread/resume`・`thread/fork`。巻き添えで失敗したページ読みは、小さくして読み直すので害が無い。時間切れには `RPC_TIMEOUT` を付ける。
+
+**読めないとき.** ターンの後の取り込みと委譲の結果の読み出しは、この 2 つの失敗（`historyGaveUp`）でターンや委譲を失敗にしない（docs/agent-delegation.md「履歴が一時的に読めないとき」）。
+
+**使わなかった道.** codex の `thread_history_1.sqlite`（`thread_items`）を直に読む手もある。採らなかった理由:
+
+- codex の内部の形である。
+- legacy のスレッドが載らない。
+- `CODEX_HOME` ごとに場所が変わる。
+
+app-server のページ読みなら、codex の公開の口だけで済み、どの CODEX_HOME でも同じに動く。
+
+**試験.**
+
+- `tests/unit/codex-history.mjs`: 偽の app-server。読み方・上限超え・時間切れ・overflow を確かめる。
+- `tests/unit/server-codex-large-history.mjs`: 本物の保持役と、fake の app-server の `images:14`（22 MB）。開く・追加の指示・完了・legacy の失敗を確かめる。

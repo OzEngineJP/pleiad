@@ -4,6 +4,8 @@
 // 縮める処理（WAL の切り詰め）がぶつかり、`(code: 1546) disk I/O error`（SQLITE_IOERR_TRUNCATE）で一時的に読めないことがある。
 // 少し後に読み直すと読める（2026-10-06。openai/codex #49605 も同じ形。docs/agent-delegation.md「子の結果」）。
 
+import { LINE_OVERFLOW, RPC_TIMEOUT } from './backends/codex-history.mjs';
+
 /** 読み直すまでの間（ミリ秒）。この回数だけ読み直す */
 export const HISTORY_RETRY_DELAYS_MS = [500, 1000, 2000];
 
@@ -20,6 +22,14 @@ export function transientStorageError(err) {
   const code = /\(code:\s*(\d+)\)/i.exec(text);
   if (code && TRANSIENT_CODES.has(Number(code[1]) & 0xff)) return true;
   return /disk I\/O error|SQLITE_(?:IOERR|BUSY|LOCKED)\b|database (?:table )?is locked/i.test(text);
+}
+
+/**
+ * 読み直しても読めない履歴の読み出しの失敗か（Codex の履歴が保持役の 1 行の上限を超えた・30 秒で応答が無かった。core/backends/codex-history.mjs）。
+ * ターンの作業は終わっているので、一時的なエラーと同じく、ターンや委譲を失敗にしない
+ */
+export function historyGaveUp(err) {
+  return err?.code === LINE_OVERFLOW || err?.code === RPC_TIMEOUT;
 }
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));

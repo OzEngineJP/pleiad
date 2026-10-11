@@ -15,7 +15,7 @@ import { conversationTable, deletedNativeTable } from "./db.mjs";
 import { classifySystemMessages, BOT_RECENT_TAG } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
 import { WORK_NOTES_VERSION } from "./brain/inner.mjs";
-import { readWithRetry, transientStorageError } from "./history-retry.mjs";
+import { historyGaveUp, readWithRetry, transientStorageError } from "./history-retry.mjs";
 
 // 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0115）、本文は
 // conversations/<id>.json（会話ごとに 1 ファイル）。索引は変えた会話の行だけを書く。本文はまだ変更のたびに 1 会話分を丸ごと書く
@@ -846,7 +846,8 @@ export function wrapBackend(native) {
         // i18n-ignore: サーバーのログ
         onRetry: (e, n, ms) => console.error(`  conversations: ターンの後の履歴を読めなかったので ${ms}ms 後に読み直す（${n} 回目）:`, String(e?.message ?? e).slice(0, 300)),
       }).catch((e) => {
-        if (!transientStorageError(e)) throw e;
+        // Codex の履歴が大きすぎる・応答が無いとき（historyGaveUp）も同じく見送る
+        if (!transientStorageError(e) && !historyGaveUp(e)) throw e;
         // i18n-ignore: サーバーのログ
         console.error("  conversations: ターンの後の履歴を読み直しても読めなかったので、取り込みを次に読むときへ回す:", String(e?.message ?? e).slice(0, 300));
         return null;

@@ -17,6 +17,11 @@ const NL = String.fromCharCode(10);
 const UNIQUE_IDS = process.env.FAKE_CODEX_UNIQUE_IDS === "1";
 // FAKE_CODEX_LEGACY=1: 以前に作った legacy のスレッドのふり（thread/revert を断る。codex-cli 0.156.1 の実測）
 const LEGACY = process.env.FAKE_CODEX_LEGACY === "1";
+// 履歴のページ読み（thread/turns/list・thread/items/list。codex-cli 0.160.0 の paginated のスレッド）。
+// FAKE_CODEX_PAGING=off: ページ読みを知らない版のふり（method を知らないと撥ねる。スレッドは paginated のまま）
+const PAGING = process.env.FAKE_CODEX_PAGING !== "off";
+// 画像を作るターン（"images:<枚数>"）の 1 枚の base64 の大きさ（本物は 1 枚 1.6 MB ほど）
+const IMAGE_BYTES = Number(process.env.FAKE_CODEX_IMAGE_BYTES ?? 1_600_000);
 
 const send = (frame) => {
   if (STATE_DIR && frame.method === 'turn/completed') {
@@ -89,6 +94,8 @@ function wire(t, includeTurns) {
     ...(parentFilter === "ignore" ? {} : { parentThreadId: t.parentThreadId }),
     ...(t.spawn ? { agentNickname: t.spawn.agent_nickname, agentRole: t.spawn.agent_role } : {}),
     turns: includeTurns ? t.turns : [],
+    // 本物は 0.156 以降に作った会話を paginated で持つ（legacy の会話は thread/revert を断る）
+    historyMode: LEGACY ? "legacy" : "paginated",
     // rollout の置き場（[UNSTABLE] Thread.path）。FAKE_CODEX_ROLLOUT_DIR があるときだけ
     path: t.path ?? null,
   };
@@ -245,6 +252,47 @@ async function runTurn(t, turnId, text) {
     threadId: t.id,
     turn: { id: turnId, items: [], status: "completed", startedAt: secs(), completedAt: secs() },
   });
+}
+
+/**
+ * 画像を作るターン（"images:<枚数>"。本文のどこにあってもよい）。本物の imageGeneration と同じく、result に base64、savedPath に保存先を持つ。
+ * 1 枚 IMAGE_BYTES の base64 なので、14 枚で thread/read { includeTurns: true } の応答は 22 MB を超え、保持役の 1 行の上限（16 MiB）で捨てられる
+ */
+async function runImagesTurn(t, turnId, text) {
+  const count = Number(/images:(\d+)/.exec(text)[1]);
+  notify("turn/started", { threadId: t.id, turn: { id: turnId, items: [], status: "inProgress" } });
+  const user = { id: `it_u_${turnId}`, type: "userMessage", content: [{ type: "text", text }] };
+  const items = [user];
+  const chunk = "iVBORw0KGgoAAAANSUhEUgAA";
+  const data = chunk.repeat(Math.ceil(IMAGE_BYTES / chunk.length)).slice(0, IMAGE_BYTES);
+  for (let i = 0; i < count; i++) {
+    const id = `ig_${turnId}_${i}`;
+    notify("item/started", { threadId: t.id, turnId, startedAtMs: Date.now(), item: { id, type: "imageGeneration", status: "inProgress", revisedPrompt: null, result: "" } });
+    const savedPath = path.join(process.env.FAKE_CODEX_IMAGE_DIR ?? path.join(t.cwd ?? ".", "generated_images"), `${id}.png`);
+    const item = { id, type: "imageGeneration", status: "completed", revisedPrompt: `picture ${i + 1}`, result: data, savedPath };
+    notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item });
+    items.push(item);
+    await wait(1);
+  }
+  const body = `images:${count} を作りました`;
+  notify("item/agentMessage/delta", { threadId: t.id, turnId, itemId: `it_m_${turnId}`, delta: body });
+  const message = { id: `it_m_${turnId}`, type: "agentMessage", text: body };
+  notify("item/completed", { threadId: t.id, turnId, completedAtMs: Date.now(), item: message });
+  items.push(message);
+  t.turns.push({ id: turnId, status: "completed", startedAt: secs(), completedAt: secs(), items });
+  t.updatedAt = secs();
+  notify("turn/completed", { threadId: t.id, turn: { id: turnId, items: [], status: "completed", startedAt: secs(), completedAt: secs() } });
+}
+
+/** ページ読みの位置（本物は不透明な文字列。ここでは並びの添字） */
+function page(rows, params, fallbackLimit) {
+  const dir = params?.sortDirection === "desc" ? "desc" : "asc";
+  const ordered = dir === "desc" ? [...rows].reverse() : rows;
+  const start = params?.cursor == null ? 0 : Number(params.cursor);
+  if (!Number.isInteger(start) || start < 0) throw new RpcError(`invalid cursor: ${params.cursor}`, -32600);
+  const limit = Number.isInteger(params?.limit) && params.limit > 0 ? params.limit : fallbackLimit;
+  const end = Math.min(ordered.length, start + limit);
+  return { data: ordered.slice(start, end), nextCursor: end < ordered.length ? String(end) : null, backwardsCursor: null };
 }
 
 /** 中断されるまで終わらないターン。abort（turn/interrupt）と途中送信（turn/steer）を測る。 */
@@ -670,9 +718,10 @@ async function handle(method, params) {
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
       if (params?.model) t.model = params.model;
       applyProvider(t, params);
-      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, hooks: Boolean(params?.config?.hooks) });
+      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, hooks: Boolean(params?.config?.hooks), excludeTurns: params?.excludeTurns === true });
       return {
-        thread: wire(t, false),
+        // 本物は excludeTurns が無ければ会話の中身（turns）ごと返す
+        thread: wire(t, params?.excludeTurns !== true),
         approvalPolicy: params?.approvalPolicy ?? "untrusted",
         approvalsReviewer: "user",
         cwd: t.cwd,
@@ -725,6 +774,7 @@ async function handle(method, params) {
         : text.startsWith("bgterm") ? runBgTermTurn(t, turnId, text)
         : text.startsWith("reject") ? runRejectTurn(t, turnId, text)
         : text.startsWith("computer:") ? runComputerTurn(t, turnId, text)
+        : /images:\d+/.test(text) ? runImagesTurn(t, turnId, text)
         : runTurn(t, turnId, text);
       script.catch((err) => notify("error", {
         threadId: t.id, turnId, willRetry: false, error: { message: String(err?.message ?? err) },
@@ -833,7 +883,29 @@ async function handle(method, params) {
     case "thread/read": {
       const t = readThread(params?.threadId);
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
+      record({ method, threadId: t.id, includeTurns: Boolean(params?.includeTurns) });
       return { thread: wire(t, Boolean(params?.includeTurns)) };
+    }
+
+    // ターンの並び（itemsView: notLoaded はアイテムを載せない）。走っている間のターンは thread/read と同じく出さない
+    case "thread/turns/list": {
+      if (!PAGING) throw new RpcError("Invalid request: unknown variant `thread/turns/list`", -32600);
+      const t = readThread(params?.threadId);
+      if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
+      const view = params?.itemsView ?? "summary";
+      const out = page(t.turns, params, 25);
+      record({ method, threadId: t.id, itemsView: view, limit: params?.limit ?? null });
+      return { ...out, data: out.data.map((turn) => ({ ...turn, itemsView: view, items: view === "notLoaded" ? [] : turn.items })) };
+    }
+
+    case "thread/items/list": {
+      if (!PAGING) throw new RpcError("Invalid request: unknown variant `thread/items/list`", -32600);
+      const t = readThread(params?.threadId);
+      if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
+      const rows = t.turns.filter((turn) => !params?.turnId || turn.id === params.turnId)
+        .flatMap((turn) => (turn.items ?? []).map((item) => ({ turnId: turn.id, item, startedAtMs: (turn.startedAt ?? 0) * 1000, completedAtMs: (turn.completedAt ?? 0) * 1000 })));
+      record({ method, threadId: t.id, limit: params?.limit ?? null, cursor: params?.cursor ?? null });
+      return page(rows, params, 50);
     }
 
     case "thread/name/set": {
@@ -869,10 +941,10 @@ async function handle(method, params) {
         forkedFromId: src.id,
         turns: (cut >= 0 ? src.turns.slice(0, cut) : src.turns).map((t) => ({ ...t })),
       });
-      record({ method, threadId: src.id, childId: child.id, beforeTurnId: params?.beforeTurnId ?? null });
+      record({ method, threadId: src.id, childId: child.id, beforeTurnId: params?.beforeTurnId ?? null, excludeTurns: params?.excludeTurns === true });
       child.name = src.name ? `${src.name} (fork)` : null;
       return {
-        thread: wire(child, false),
+        thread: wire(child, params?.excludeTurns !== true),
         approvalPolicy: "untrusted", approvalsReviewer: "user", cwd: child.cwd,
         model: "fake-model-1", modelProvider: "openai", sandbox: { type: "workspaceWrite" },
       };
