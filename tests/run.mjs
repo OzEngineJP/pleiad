@@ -241,6 +241,8 @@ const SUITES = [
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）
   './unit/server-delegation-settings.mjs',
   './unit/server-delegation-model-name.mjs',
+  // 依頼元が子の Claude のアカウントを ply_delegate・ply_task_send の account で選ぶ（ply_usage の名前・断る場合・次のターンから・記録。ADR 0205）
+  './unit/server-delegate-account.mjs',
   // 委譲の結果に選ぶ返答: Stop フックの続き（調べものだけ）は飛ばす・中身の仕事をした続きは選ぶ（Claude の transcript の印）
   './unit/delegation-result.mjs',
   // 委譲の子の履歴が一時的に読めない（Codex の 1546 disk I/O error）: 0.5・1・2 秒で読み直す・読めなければ流れた返答で注意書き付きの完了・ターン用の app-server の終わりを待つ

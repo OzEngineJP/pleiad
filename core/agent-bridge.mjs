@@ -18,12 +18,13 @@ const delegateDescription = (locale, hosts = []) => [agentT(locale, 'bridge.tool
 export const agentTools = (locale, hosts = []) => [
   // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。kind はどちらでも必須（振り分けの記録にも残す）
   // host はリモートのホストへ任せる（端末側・ホスト側の両方がオンのホストがあるときだけ出す。docs/agent-delegation.md「リモートのホストへ任せる」）
-  tool('ply_delegate', delegateDescription(locale, hosts), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' },
+  // account は backend: 'claude' と一緒に書き、子の Claude のアカウントを固定する（ply_usage の account の値。ADR 0205）
+  tool('ply_delegate', delegateDescription(locale, hosts), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str,
     ...(hosts.length ? { host: str } : {}) }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
-  // backend・model・effort は子の設定を替える（次のターンから。ADR 0134）。設定だけなら message を省ける
-  tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, model: str, effort: str }, ['taskId']),
+  // backend・model・effort・account は子の設定を替える（次のターンから。ADR 0134・0205）。設定だけなら message を省ける
+  tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, model: str, effort: str, account: str }, ['taskId']),
   tool('ply_task_cancel', agentT(locale, 'bridge.tools.ply_task_cancel'), { taskId: str }, ['taskId']),
   tool('ply_task_list', agentT(locale, 'bridge.tools.ply_task_list'), {}),
   tool('ply_usage', agentT(locale, 'bridge.tools.ply_usage'), { backend: str }),

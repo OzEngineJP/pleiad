@@ -398,9 +398,9 @@ export function selectRetryAccount(check, backend, account) {
 }
 
 /** 振り分けの記録（ply_delegate の返り値の routing。タスクと子会話のメタデータにも同じ形で残す） */
-export function pinnedRouting({ kind, backend, model = null }) {
+export function pinnedRouting({ kind, backend, model = null, account = null, accountLabel = null }) {
   return { mode: 'pinned', kind, judge: null, signals: null, probabilities: null, difficulty: null, tier: null,
-    target: { backend, model: model ?? null, account: null }, skipped: [], usageAt: null, fallback: null };
+    target: { backend, model: model ?? null, account: account ?? null, ...(accountLabel ? { accountLabel } : {}) }, skipped: [], usageAt: null, fallback: null };
 }
 
 // ---- 子の思考の強さ（ADR 0164） -----------------------------------------------------

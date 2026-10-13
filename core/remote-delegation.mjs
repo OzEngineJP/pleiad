@@ -541,7 +541,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const hostName = host?.name ?? row.host.name;
     const op = { ply_task_status: 'status', ply_task_wait: 'wait', ply_task_send: 'send', ply_task_cancel: 'cancel' }[name];
     if (!op) throw new DelegationError(agentT(lng, 'tasks.unknownTool'), 'UNKNOWN_TOOL');
-    if (op === 'send' && ['backend', 'model', 'effort'].some(k => args[k] !== undefined)) throw new DelegationError(agentT(lng, 'delegation.remote.settingsUnsupported'), 'UNSUPPORTED');
+    if (op === 'send' && ['backend', 'model', 'effort', 'account'].some(k => args[k] !== undefined)) throw new DelegationError(agentT(lng, 'delegation.remote.settingsUnsupported'), 'UNSUPPORTED');
     if (!usable(host)) {
       // wait は待つ約束なので、つながり直す（ready）か seconds が過ぎるまで待ってから返す（短い間隔で回らせない）
       if (op === 'wait') {

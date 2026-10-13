@@ -56,8 +56,8 @@ export default async function(t) {
   const shared = createQuotaCache({ now: () => now });
   const agents = [
     { id: 'claude', label: 'Claude', usage: async () => ({ plan: 'max', windows: [], accounts: [
-      { label: 'ログイン中のアカウント', accountId: 'x', plan: 'max', windows: [usageWindow('5時間', 40, 1800000000000, 300)], message: null },
-      { label: 'tekalu@example.com', accountId: 'y', windows: [], needsUsageLogin: true, message: '認可してください' }] }) },
+      { label: 'ログイン中のアカウント', plan: 'max', windows: [usageWindow('5時間', 40, 1800000000000, 300)], message: null },
+      { label: 'tekalu@example.com', accountId: 'acct-0123456789ab', windows: [], needsUsageLogin: true, message: '認可してください' }] }) },
     { id: 'codex', label: 'Codex', usage: async () => { throw new Error('Bearer secret'); } },
     { id: 'fake', label: 'Fake' },
   ];
@@ -70,10 +70,18 @@ export default async function(t) {
   assert.equal(claude.accounts[0].windows[0].usedPercent, 40);
   assert.equal(claude.accounts[1].label, 't***@example.com');
   assert.ok(!JSON.stringify(all).includes('accountId') && !JSON.stringify(all).includes('tekalu@'));
+  // account は ply_delegate・ply_task_send の account に書ける名前（ログイン中は login、登録したものは内部の id。ADR 0205）
+  assert.deepEqual(claude.accounts.map(a => a.account), ['login', 'acct-0123456789ab']);
+  assert.ok(claude.accounts.every(a => a.runnable === undefined));
   assert.equal(typeof claude.checkedAt, 'string');
   const codex = all.backends[1];
   assert.equal(codex.checkedAt, null); assert.ok(codex.message && !JSON.stringify(codex).includes('secret'));
   t.ok('ply_usage は使用枠を持つ全バックエンドを返し、失敗は message に入れて他を返す', true);
+  // 登録の一覧を渡すと、トークンの無いアカウントに runnable: false を付ける。一覧のトークン以外の欄も返さない
+  const withTokens = await agentUsage({ ...deps, backend: 'claude', claudeAccounts: async () => [{ id: 'acct-0123456789ab', name: 'tekalu@example.com', hasToken: false, token: 'sk-ant-secret' }] });
+  assert.deepEqual(withTokens.backends[0].accounts.map(a => [a.account, a.runnable]), [['login', undefined], ['acct-0123456789ab', false]]);
+  assert.ok(!/sk-ant|tekalu@|hasToken/.test(JSON.stringify(withTokens)));
+  t.ok('ply_usage の Claude の各アカウントに account の名前を付け、資格情報とメールアドレスは出さない', true);
   const one = await agentUsage({ ...deps, backend: 'claude' });
   assert.deepEqual(one.backends.map(b => b.backend), ['claude']);
   assert.equal(one.backends[0].checkedAt, claude.checkedAt);

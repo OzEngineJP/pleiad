@@ -95,19 +95,28 @@ export const maskEmail = text => typeof text === 'string' ? text.replace(/([^\s@
 const percent = value => number(value) == null ? null : Math.round(value * 10) / 10;
 // リセット時刻を過ぎた枠の使用率は今の値ではない。画面（web/usage.mjs）と同じく不明（null）として渡す
 const expired = (w, now) => w.resetsAt != null && new Date(w.resetsAt).getTime() <= now;
-export function compactQuota(quota, now = Date.now()) {
+// Claude のアカウントの行には、ply_delegate・ply_task_send の account に書ける名前（account）を付ける。登録したアカウントは内部の id
+// （acct-… の無作為な名前で、秘密ではない。トークンは別の暗号化した保存先にある）、ログイン中のアカウントは 'login'（ADR 0205）。
+// runnable: false は、登録してあるがトークンが無く、子を走らせられないアカウント（tokens に hasToken を渡したときだけ分かる）
+export const LOGIN_ACCOUNT = 'login';
+export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
   const windows = list => (Array.isArray(list) ? list : []).map(w => ({ label: maskEmail(w.label),
     usedPercent: expired(w, now) ? null : percent(w.usedPercent), resetsAt: w.resetsAt ?? null }));
+  const account = a => {
+    const name = a.accountId ?? LOGIN_ACCOUNT;
+    return { account: name, ...(a.accountId && tokens?.get(a.accountId) === false ? { runnable: false } : {}) };
+  };
   return { plan: quota?.plan ?? null, windows: windows(quota?.windows),
-    ...(Array.isArray(quota?.accounts) ? { accounts: quota.accounts.map(a => ({ label: maskEmail(a.label), plan: a.plan ?? null, windows: windows(a.windows), message: maskEmail(a.message) })) } : {}),
+    ...(Array.isArray(quota?.accounts) ? { accounts: quota.accounts.map(a => ({ ...account(a), label: maskEmail(a.label), plan: a.plan ?? null, windows: windows(a.windows), message: maskEmail(a.message) })) } : {}),
     checkedAt: iso(quota?.checkedAt), message: maskEmail(quota?.message) };
 }
 
 /**
  * ply_usage の本体。backend を省けば使用枠を読めるバックエンドすべて。
- * read は providerUsage と同じ取得（同じ quotaCache を通す）。1 つが失敗しても他は返す
+ * read は providerUsage と同じ取得（同じ quotaCache を通す）。1 つが失敗しても他は返す。
+ * claudeAccounts は登録した Claude のアカウントの一覧（[{ id, hasToken }]。トークンの無いアカウントに runnable: false を付ける）
  */
-export async function agentUsage({ backend, list, get, read, locale }) {
+export async function agentUsage({ backend, list, get, read, locale, claudeAccounts }) {
   let targets;
   if (backend === undefined) targets = list().filter(b => b.usage);
   else {
@@ -120,7 +129,8 @@ export async function agentUsage({ backend, list, get, read, locale }) {
     let quota;
     try { quota = await read(b); }
     catch { quota = { windows: [], checkedAt: null, message: agentT(locale, 'usage.failed') }; }
-    return { backend: b.id, label: b.label, ...compactQuota(quota) };
+    const tokens = b.id === 'claude' && claudeAccounts ? new Map((await claudeAccounts().catch(() => [])).map(a => [a.id, Boolean(a.hasToken)])) : null;
+    return { backend: b.id, label: b.label, ...compactQuota(quota, Date.now(), { tokens }) };
   }));
   return { backends };
 }
