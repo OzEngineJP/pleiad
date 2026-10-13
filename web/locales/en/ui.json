@@ -1467,7 +1467,8 @@
       "mode": "Approval mode",
       "model": "Model",
       "backend": "Agent",
-      "effort": "Thinking effort"
+      "effort": "Thinking effort",
+      "account": "Account"
     },
     "by": {
       "human": "You",

@@ -229,19 +229,19 @@
     }
   },
   "bridge": {
-    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら子は今の作業場所で走る。worktree を作った子の変更はそのブランチに残り、元の場所へ取り込むのは依頼元の仕事。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
+    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。Claude のアカウントまで決めるときは、backend: \"claude\" と一緒に account（ply_usage の account の値）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら子は今の作業場所で走る。worktree を作った子の変更はそのブランチに残り、元の場所へ取り込むのは依頼元の仕事。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
     "title": "一覧と会話のタイトルに使う短い名前。30 字程度。",
     "tools": {
-      "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。model はそのバックエンドの一覧の名前（Claude なら sonnet・opus・opus[1m]・haiku・fable。claude-sonnet-5-5 のような正式な ID も同じ系統の行に当てる）。当たらない名前は既定に戻さずエラーにし、選べる名前を返す。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。isolate は任意の真偽: true で、この子だけの worktree（リポジトリの隣・専用のブランチ）で走らせる。false で今の作業場所のまま。省くと今の作業場所のまま。true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べるなら、worktree を使うかユーザーに聞く。worktree の子はその中だけに書き、終わるとコミットする。取り込みは依頼元が行う。",
+      "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。account は backend: \"claude\" のときだけ書け、子を走らせる Claude のアカウントを固定する（ply_usage の Claude の行の account の値: login か acct-…）。登録に無い・トークンが無い・使用枠が満杯と分かっているアカウントはエラーにし、選べる名前を返す（ほかのアカウントに黙って替えない）。account は host と一緒に使えない。model はそのバックエンドの一覧の名前（Claude なら sonnet・opus・opus[1m]・haiku・fable。claude-sonnet-5-5 のような正式な ID も同じ系統の行に当てる）。当たらない名前は既定に戻さずエラーにし、選べる名前を返す。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。isolate は任意の真偽: true で、この子だけの worktree（リポジトリの隣・専用のブランチ）で走らせる。false で今の作業場所のまま。省くと今の作業場所のまま。true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べるなら、worktree を使うかユーザーに聞く。worktree の子はその中だけに書き、終わるとコミットする。取り込みは依頼元が行う。",
       "ply_task_status": "Pleiad タスクとその結果を読む。長い結果の残りは nextOffset を使って読む。status: waiting は、子が人間の承認で止まっていることを表す。同じカードはこの会話にも出ているので、どこで承認するかをユーザーに伝える。",
       "ply_task_wait": "Pleiad タスクを最長 30 秒待つ。子が人間の承認を待つ状態（status: waiting）になったらすぐ戻る。まだ実行中という結果は失敗ではなく、完了は自動でも届く。waiting になったら待つのをやめ、どの会話に承認があるかをユーザーに伝える。",
-      "ply_task_send": "同じ Pleiad の子の会話に追加の指示を積む。完了した後でもよい。backend・model・effort で子の設定を替えられる（次のターンから。設定だけなら message を省ける）。",
+      "ply_task_send": "同じ Pleiad の子の会話に追加の指示を積む。完了した後でもよい。backend・model・effort・account で子の設定を替えられる（次のターンから。設定だけなら message を省ける）。account は Claude の子だけで、ply_usage の account の値を書く。",
       "ply_task_cancel": "Pleiad タスクと、その配下の Pleiad タスクを止める。",
       "ply_task_list": "この会話が作った Pleiad タスクだけを一覧にする。ネイティブのサブエージェントのジョブは含まない。",
-      "ply_usage": "サブスクリプションの使用枠（usedPercent, resetsAt）をバックエンドごとに読む。backend を省くと、使えるバックエンドすべて。重い委譲や並列の委譲の前に呼び、上限に近いバックエンドは避ける。値は最大 60 秒前のもの。"
+      "ply_usage": "サブスクリプションの使用枠（usedPercent, resetsAt）をバックエンドごとに読む。backend を省くと、使えるバックエンドすべて。重い委譲や並列の委譲の前に呼び、上限に近いバックエンドは避ける。値は最大 60 秒前のもの。Claude の各アカウントの行の account は、ply_delegate・ply_task_send の account に書ける名前（login はログイン中のアカウント）。runnable: false の行はトークンが無く、選べない。"
     },
     "hostOffline": "オフライン",
-    "hosts": "host にホストの Pleiad の名前を書くと、そのホストに任せる（そこの AI が、そのホストの PC で作業する）。使えるホスト: {{hosts}}。cwd・isolate はホストのパスとホストの規則で解釈する（cwd を省けばホストのホーム）。backend を省けばホストが委譲先を選ぶ。ホストの子の承認は、この会話にも出る（利用者が答える。あなたは答えられない）。オフラインのホストへは、待たずに失敗する。ply_task_status・ply_task_wait・ply_task_send・ply_task_cancel は同じ taskId でホストのタスクにも使える（ホストのタスクへは message だけ送れる）。host を省けばこの PC で動かす。",
+    "hosts": "host にホストの Pleiad の名前を書くと、そのホストに任せる（そこの AI が、そのホストの PC で作業する）。使えるホスト: {{hosts}}。cwd・isolate はホストのパスとホストの規則で解釈する（cwd を省けばホストのホーム）。backend を省けばホストが委譲先を選ぶ。ホストの子の承認は、この会話にも出る（利用者が答える。あなたは答えられない）。オフラインのホストへは、待たずに失敗する。ply_task_status・ply_task_wait・ply_task_send・ply_task_cancel は同じ taskId でホストのタスクにも使える（ホストのタスクへは message だけ送れる）。account はこの PC の Claude のアカウントなので、host とは一緒に書けない。host を省けばこの PC で動かす。",
     "invalidTool": "不正なツールまたは引数です",
     "kindsIntro": "kind（仕事の種類）:",
     "kinds": {
@@ -275,7 +275,8 @@
       "hostNoRecord": "ホスト「{{host}}」にこのタスクの記録がありません（ホストのデータが消えたか、別の端末として組み直されました）",
       "cancelPending": "ホスト「{{host}}」へ止める依頼がまだ届いていません（つながり直したら送ります）",
       "hostOnlyApproval": "ホスト「{{host}}」の画面で答える承認（設定の変更など）を待っています。利用者に、ホストの画面（またはこの PC の子の会話を見る）で答えてもらってください",
-      "settingsUnsupported": "ホストのタスクには、まだ子の設定（backend・model・effort）を替える機能がありません。message だけ送ってください"
+      "settingsUnsupported": "ホストのタスクには、まだ子の設定（backend・model・effort・account）を替える機能がありません。message だけ送ってください",
+      "accountUnsupported": "account はこの PC の Claude のアカウントを選ぶもので、ホストに任せるとき（host）には使えません。account を省いて頼み直してください"
     },
     "readOnly": "読み取り・計画モードでは Pleiad の子タスクを開始できません",
     "denied": "委譲は許可されませんでした",
@@ -284,6 +285,9 @@
     "childDeleted": "委譲した子の会話は削除されています。続けるなら、新しく委譲してください",
     "backendDisabled": "指定したバックエンドは有効ではありません",
     "modelUnknown": "model_unknown: モデル {{model}} は {{backend}} の今の一覧にありません（選べるもの: {{models}}）。model を直すか省いて、頼み直してください",
+    "accountUnknown": "account_unknown: Claude のアカウント {{account}} は登録にありません（選べるもの: {{accounts}}。ply_usage の account の値）。何も変えていません",
+    "accountNoToken": "account_no_token: Claude のアカウント {{account}} にはログインの情報が無く、子を走らせられません（選べるもの: {{accounts}}）。何も変えていません",
+    "accountQuotaFull": "quota_full: Claude のアカウント {{account}} の {{model}} は使用枠が上限に達しています。ほかのアカウントを選ぶか、account を省いてください。何も変えていません",
     "cwdNotDirectory": "cwd はディレクトリを指定してください",
     "endpointDeleted": "依頼元の会話の接続先は削除されています。依頼元の会話で接続先を選び直してください",
     "aborted": "中断しました",
@@ -329,6 +333,7 @@
     "stopping": "停止処理中です。少し待ってください",
     "modelUnknown": "model_unknown: モデル {{model}} は {{backend}} の今の一覧にありません（選べるもの: {{models}}）。何も変えていません",
     "quotaFull": "quota_full: {{backend}} の {{model}} は使用枠が上限に達しています。何も変えていません",
+    "accountClaudeOnly": "account は Claude の子だけで使えます（この子のエージェントは {{backend}}）。backend: \"claude\" と一緒に書くか、account を省いてください。何も変えていません",
     "effortUnknown": "effort_unknown: 思考の強さ {{effort}} は {{backend}} の {{model}} では選べません（選べるもの: {{choices}}）。何も変えていません",
     "childStarting": "子のターンが始まるところです。何も変えていません。少し待ってからやり直してください",
     "settingsMoved": "承認を待つ間に、子の設定かタスクの状態が変わりました。何も変えていません。ply_task_status で確かめてからやり直してください",
@@ -435,6 +440,8 @@
     "kindRequired": "kind を次のどれかで指定してください。\n{{kinds}}",
     "backendRequired": "委譲先の自動振り分けが無効になっています。backend（claude, codex, antigravity）を指定してください。",
     "pinOnly": "model と effort は backend を指定したときだけ使えます。自動で選ばせるなら model と effort を省いてください。",
+    "accountPinOnly": "account は backend: \"claude\" と一緒に指定したときだけ使えます。自動で選ばせるなら account を省いてください。",
+    "accountClaudeOnly": "account は backend: \"claude\" のときだけ使えます（指定した backend: {{backend}}）。account を省くか、backend を claude にしてください。",
     "exhausted": "使える委譲先がありません（種類 {{kind}}、難しさ {{difficulty}}、後回しの線 {{avoidPercent}}%）。候補とアカウントごとの理由:\n{{skipped}}\nbackend を指定して固定で頼み直すか、ユーザーに確認してください。",
     "modelUnavailable": "振り分けで選んだモデル {{model}}（{{backend}}）を使えません。backend を指定して頼み直してください。"
   },
@@ -491,7 +498,7 @@
     },
     "delegate": "委譲を基本にする。コマンド 1 回や 1〜2 ファイルの小さな編集より大きい作業は、自分でやらずに ply_delegate で任せる。",
     "main": "この会話で自分でやるのは、方針を決める・任せた結果を確かめる・取り消せない操作（送信・削除・支払い。先にユーザーに確認する）・結果が小さい単発の作業だけ。複数手順の作業と、結果が大きい操作（ブラウザー操作・スクリーンショット・長いログ・大きな MCP 応答）は任せ、子には要約と証拠だけを返させる。",
-    "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。ply_delegate には一覧に出る短い title を付ける。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら今の作業場所を使う。完了通知や ply_task_status に「作業場所: worktree …（未取り込み）」とあれば、その作業場所のブランチの変更を元の作業場所へ取り込む（マージ）のは自分の仕事。競合は自分で解く。取り込み後の片付けは Pleiad がする。",
+    "route": "任せるときは ply_delegate に kind を付け、backend は書かない（Pleiad が選ぶ）。backend を書くのはユーザーがエージェントやモデルを指定したときだけ。ユーザーが Claude のアカウントを指定したときは、backend: \"claude\" と account（ply_usage の account の値）を書く。どの候補も枠が無いと返されたら、ユーザーに伝える。ネイティブのサブエージェント（Claude の Agent tool など）ではなく ply_delegate を使う。ply_delegate には一覧に出る短い title を付ける。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら今の作業場所を使う。完了通知や ply_task_status に「作業場所: worktree …（未取り込み）」とあれば、その作業場所のブランチの変更を元の作業場所へ取り込む（マージ）のは自分の仕事。競合は自分で解く。取り込み後の片付けは Pleiad がする。",
     "commandLifetime": "コマンドは上限の時間を付けて実行する。終わらないもの（サーバー・画面のあるアプリ）はバックグラウンドで起動し、PID を控えて自分で止める。`Start-Process -Wait` のように終わりを無期限に待つ書き方はしない。",
     "codexPolicy": "Codex の承認なしのモード（full・YOLO）でも、Codex 自身の安全判定で一部のコマンドが実行前に拒否されることがある（`blocked by policy` など）。拒否されたら、言い換えや別のコマンドで回避しようとしない。実行できなかったコマンドと理由、その結果残ったもの（消せなかったファイル・止められなかったプロセスなど）を報告する。"
   },
@@ -1007,11 +1014,11 @@
         "taskId": "タスクの id。",
         "offset": "結果の読み始めの位置（前の返り値の nextOffset）。"
       },
-      "delegate": { "summary": "子の会話へ仕事を委譲する。", "kind": "仕事の種類。", "task": "子への依頼。", "title": "子の短い題。", "backend": "委譲先のエージェント。", "context": "子へ渡す背景情報。", "cwd": "作業場所。", "model": "委譲先のモデル。", "effort": "推論の強さ。", "isolate": "子を worktree で走らせるか（ユーザーが指示したときだけ true）。", "host": "任せ先のホスト（リモートでつないだ別の PC の Pleiad）の名前。省けばこの PC。" },
+      "delegate": { "summary": "子の会話へ仕事を委譲する。", "kind": "仕事の種類。", "task": "子への依頼。", "title": "子の短い題。", "backend": "委譲先のエージェント。", "context": "子へ渡す背景情報。", "cwd": "作業場所。", "model": "委譲先のモデル。", "effort": "推論の強さ。", "isolate": "子を worktree で走らせるか（ユーザーが指示したときだけ true）。", "host": "任せ先のホスト（リモートでつないだ別の PC の Pleiad）の名前。省けばこの PC。", "account": "子を走らせる Claude のアカウント（ply_usage の account の値。backend が claude のときだけ）。" },
       "taskStatus": { "summary": "自分が委譲した子の状態と結果を読む。", "taskId": "子のタスク id。", "offset": "結果の読み始めの位置。" },
       "taskWait": { "summary": "自分が委譲した子を最大 30 秒待つ。", "taskId": "子のタスク id。", "seconds": "待つ秒数（最大 30）。" },
       "taskSend": { "summary": "自分が委譲した子へ追加の指示を送る。子のエージェント・モデル・思考の強さも替えられる。", "taskId": "子のタスク id。", "message": "追加の指示。設定だけ替えるなら省ける。",
-        "backend": "子のエージェントを替える（会話を引き継ぐ。次のターンから）。", "model": "子のモデルを替える。", "effort": "子の思考の強さを替える。" },
+        "backend": "子のエージェントを替える（会話を引き継ぐ。次のターンから）。", "model": "子のモデルを替える。", "effort": "子の思考の強さを替える。", "account": "子の Claude のアカウントを替える（ply_usage の account の値。次のターンから）。" },
       "taskCancel": { "summary": "自分が委譲した子を止める。", "taskId": "子のタスク id。" },
       "taskList": { "summary": "自分が委譲した子の一覧を読む。" },
       "usage": { "summary": "委譲先の使用枠を読む。", "backend": "調べるエージェント。省くと全部。" },

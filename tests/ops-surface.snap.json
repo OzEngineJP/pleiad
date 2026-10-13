@@ -1672,7 +1672,7 @@
         "cli": true
       },
       "legacyCommand": null,
-      "input": "3e002aa0e25e"
+      "input": "88fa8d5542d2"
     },
     {
       "id": "delegation.hostView",
@@ -1842,7 +1842,7 @@
         "cli": true
       },
       "legacyCommand": null,
-      "input": "024081e091e8"
+      "input": "5fa80175104a"
     },
     {
       "id": "delegation.taskStatus",

@@ -9,24 +9,30 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 | ツール | 引数 | 動作 |
 |---|---|---|
-| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`model` は backend の一覧の名前で、Claude は正式な ID（`claude-sonnet-5-5`）も一覧の行に当てる（`backend.matchModel`。`resolvedModel` が一致する行、無ければ同じ系統の行）。当たらない名前は既定に落とさず `model_unknown`（選べる名前を添える。`agent:delegation.modelUnknown`）で断る。互換の接続先の会話は形だけを見る従来どおり。`isolate`（真偽）は下の「worktree」 |
+| `ply_delegate` | `kind`, `task`, 任意の `title`, `backend`, `context`, `cwd`, `model`, `effort`, `isolate`, `account`, `host`（下の「リモートのホストへ任せる」） | 子会話を作り、すぐ `taskId`・短い `title`・`routing`（どう選んだか）・worktree なら `worktree`（`{ id, branch, path, origin, baseBranch }`）を返す。`title` は一覧と子会話の見出しに使い、無ければ依頼の最初の空でない行。`model` / `effort` は `backend` を書いたときだけ。`model` は backend の一覧の名前で、Claude は正式な ID（`claude-sonnet-5-5`）も一覧の行に当てる（`backend.matchModel`。`resolvedModel` が一致する行、無ければ同じ系統の行）。当たらない名前は既定に落とさず `model_unknown`（選べる名前を添える。`agent:delegation.modelUnknown`）で断る。互換の接続先の会話は形だけを見る従来どおり。`account` は下の「Claude のアカウントを選ぶ」。`isolate`（真偽）は下の「worktree」 |
 | `ply_task_status` | `taskId`, 任意の `offset` | 状態と結果。結果は16,000文字ずつ返し、`nextOffset` で続きへ進む。子で実行前に拒否されたコマンドは `rejections`（下の「実行前に拒否されたコマンド」） |
 | `ply_task_wait` | `taskId`, 任意の `seconds`（1〜30、既定30） | 上限まで待つ。承認待ちになったらすぐ戻る。未完了なら現在の状態を返す |
-| `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort` | `backend` / `model` / `effort` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。起動準備中は受信可能になり次第、現在のターンに送る。待機分は順序を保ってまとめる。途中送信を受けられない場合は次のターンに送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
+| `ply_task_send` | `taskId`, 任意の `message`, `backend`, `model`, `effort`, `account` | `backend` / `model` / `effort` / `account` を書くと子の設定を替える（下の「子の設定を替える」。設定だけなら `message` を省ける）。`message` は同じ子会話に追加指示。子のターンが走っていて途中送信を受けられるなら、今のターンへ途中送信（`control.steer`）で渡す（下の「追加指示の配送」）。起動準備中は受信可能になり次第、現在のターンに送る。待機分は順序を保ってまとめる。途中送信を受けられない場合は次のターンに送る。完了後・停止後なら再開する（止まった直後に送った指示も捨てずに走らせる）。止めている途中（`cancelling`）は断る |
 | `ply_task_cancel` | `taskId` | タスクと、その配下の Pleiad タスクを停止する |
 | `ply_task_list` | なし | 呼び出し元が作成した Pleiad タスクだけを列挙する。結果の本文は載せず、拒否は件数（`rejectionCount`）だけ |
-| `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて |
+| `ply_usage` | 任意の `backend` | 各バックエンドの使用枠（枠ごとの `usedPercent`・`resetsAt`、`plan`、`checkedAt`、`message`）。省略時は使用枠を読めるバックエンドすべて。Claude の `accounts` の各行の `account` は `ply_delegate` / `ply_task_send` の `account` に書ける名前 |
 
-**子の設定を替える**（`ply_task_send` の `backend`・`model`・`effort`。[ADR 0134](adr/0134-parent-changes-child-settings.md)。`core/server.mjs` の `taskSettingsPlan` / `applyTaskSettings`）:
+**子の設定を替える**（`ply_task_send` の `backend`・`model`・`effort`・`account`。[ADR 0134](adr/0134-parent-changes-child-settings.md)・[ADR 0205](adr/0205-ai-chooses-claude-account.md)。`core/server.mjs` の `taskSettingsPlan` / `applyTaskSettings`）:
 - 子の会話の「次のターンから適用」（`nextSettings`。人の入力欄と同じ予約）に入れる。子が走っていても今のターンは止めない。走っていなければ次に走るとき（設定だけでは走らせない。例外: 使用枠の上限で止まっている子のエージェントを替えると、人の切り替えと同じく上限の待ちが解け、送信待ちが流れる）。一緒に積んだ `message` は、予約がある間は走っているターンへ途中送信しない（`canSteerNotice`）ので、替えた後のターンで読まれる。同じエージェントのモデルだけは、`sessions.setModel` と同じく走っているターンにも即時に伝える（できるエージェントだけ。返り値の `settings.modelLive`）。返り値はタスクの状態と `settings`（`{ backend, model, effort, mode, appliesTo: 'nextTurn', modelLive? }`）
 - エージェントを替えると、子の次のターンで引き継ぎ（`docs/backend-handoff.md`）を通って会話の履歴を渡す。作業場所はそのまま。子の承認モードは `resolveDelegatedMode` で、親の強さと子の今の強さ（人が下げていればそれ）の弱い方を上限にして決め、収まらなければ親の会話で 1 回承認を求め、断ったら何も変えない。元のエージェントへ戻したときは子の会話の今のモードのまま
-- アカウントは替えない（子の会話のアカウントのまま。[ADR 0094](adr/0094-human-only-five.md)）。接続先は `ply_delegate` と同じ規則
-- モデルが子の作業場所の一覧に無い（`model_unknown`。選べるものを添える）・そのモデルで選べない思考の強さ（`effort_unknown`）・使用量の取り置きで使用枠が満杯（`quota_full`）・自分が委譲していないタスク・止めている途中・子のターンが始まるところ（`agent:tasks.childStarting`）・`message` が空白だけか長すぎる・承認カードを待つ間に子の設定やタスクの状態が変わった（`agent:tasks.settingsMoved`。承認の後に計画を作り直して比べる）は断り、何も変えない。断る理由はすべて書く前に確かめる。書くのは子の予約 → タスクの記録 → 指示の順で、後の失敗（保存・受け付け）では書いた分を前に戻す
-- 記録: 子の会話の変更の記録（`backend`・`model`・`effort`。by: `agent`・via・bySession、理由「依頼元の AI が変更」）。タスクの `backend`・`model`・`effort`（替えたなら `mode`）を新しい値にし、`routing.target` を新しい委譲先に、`routing.changed`（`{ by: 'parent', at, from, count }`。`from` は最初の委譲先）を足す（今と同じ値なら書かず、最初の委譲先へ戻したら印を外す）。`ply_task_status` の値は子の次のターンからのもの。子のターンが始まるときは、タスクの記録を子が実際に走る値に合わせる（`agentTasks.sync`。人が子の予約を取り消した・替えたとき）。画面へは `agentTaskChanged { taskId }` で知らせ、委譲カードは新しい委譲先と「依頼元が変更（元: …）」を出す
+- アカウントは `account` を書いたときだけ替える（下の「Claude のアカウントを選ぶ」。子が Claude のとき、または同じ送信で `backend: "claude"` に替えるときだけ）。予約（`nextSettings.account`）に入れるので、人が入力欄でアカウントを選んだときと同じく次のターンから。書かなければ子の会話のアカウントのまま。接続先は `ply_delegate` と同じ規則で、`account` を書いたときは公式（互換の接続先から外れるなら、モデルは公式の一覧で確かめ直す）
+- モデルが子の作業場所の一覧に無い（`model_unknown`。選べるものを添える）・そのモデルで選べない思考の強さ（`effort_unknown`）・使用量の取り置きで使用枠が満杯（`quota_full`）・自分が委譲していないタスク・止めている途中・子のターンが始まるところ（`agent:tasks.childStarting`）・`message` が空白だけか長すぎる・承認カードを待つ間に子の設定やタスクの状態が変わった（`agent:tasks.settingsMoved`。承認の後に計画を作り直して比べる）・`account` が使えない（下の「Claude のアカウントを選ぶ」の断る理由。Claude 以外の子は `agent:tasks.accountClaudeOnly`）は断り、何も変えない。断る理由はすべて書く前に確かめる。書くのは子の予約 → タスクの記録 → 指示の順で、後の失敗（保存・受け付け）では書いた分を前に戻す
+- 記録: 子の会話の変更の記録（`backend`・`model`・`effort`・`account`。by: `agent`・via・bySession、理由「依頼元の AI が変更」。`account` は内部の id ではなく伏せた見出しで残す）。タスクの `backend`・`model`・`effort`（替えたなら `mode`）を新しい値にし、`routing.target` を新しい委譲先（Claude なら `account`・`accountLabel` も）に、`routing.changed`（`{ by: 'parent', at, from, count }`。`from` は最初の委譲先で、Claude なら `account`・`accountLabel` も）を足す（今と同じ値なら書かず、最初の委譲先へ戻したら印を外す）。`ply_task_status` の値は子の次のターンからのもの。子のターンが始まるときは、タスクの記録を子が実際に走る値に合わせる（`agentTasks.sync`。人が子の予約を取り消した・替えたとき）。画面へは `agentTaskChanged { taskId }` で知らせ、委譲カードは新しい委譲先と「依頼元が変更（元: …）」を出す
 
 `ply_usage` は重い委譲・並列委譲の前に、使用率の高いバックエンドを避けるために呼ぶ。読むだけなので、読み取り・計画モードの会話からも呼べる（`ply_delegate` / `ply_task_send` だけが `DELEGATING_TOOLS` として制限される）。
 取得は設定の「使用量」（`providerUsage`）と同じ `quotaCache` を通すので、値は最大60秒古く、何度呼んでも各サービスへの問い合わせは増えない。リセット時刻を過ぎた枠の `usedPercent` は、画面と同じく今の値ではないので `null`（不明）にする。
-ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。アカウント ID・資格情報は返さない。
+ローカルの使用実績（トークン数・参考費用）は返さない。Claude でアカウントを登録していれば `accounts` にアカウントごとの枠を並べ、表示名にメールアドレスが含まれる場合はローカル部を1文字残して伏せる。各行の `account` は `account` に書ける名前（ログイン中のアカウントは `login`、登録したアカウントは内部の id `acct-…`）で、トークンが無い行には `runnable: false` を付ける。内部の id は登録のたびに作る乱数で、資格情報ではない（トークンは id を鍵に別に暗号化して保存する）。資格情報・メールアドレスは返さない（[ADR 0205](adr/0205-ai-chooses-claude-account.md)）。
+
+**Claude のアカウントを選ぶ**（`ply_delegate` / `ply_task_send` の `account`。[ADR 0205](adr/0205-ai-chooses-claude-account.md)。`core/server.mjs` の `requestedAccount`）:
+- `ply_delegate` では `backend: "claude"` と一緒のときだけ書ける。`backend` が無ければ `agent:routing.accountPinOnly`、Claude 以外なら `agent:routing.accountClaudeOnly` で断る（自動の振り分けは今どおりアカウントも選ぶ）。書いた子は親の会話の接続先を継がず公式で走り、`routing.target` に `account`・`accountLabel`（伏せた見出し）を書く
+- 書けるのは `ply_usage` の `account` の値。登録に無い名前（`agent:delegation.accountUnknown`）・トークンが無いアカウント（`agent:delegation.accountNoToken`）は、選べる名前を添えて断る。そのモデルの使用枠が満杯と分かっているアカウント（`agent:delegation.accountQuotaFull`。使用量の取り置きと同じ判定）も断る。使用量が分からないだけなら断らない。黙ってほかのアカウントに落とさない
+- `host` と一緒には使えない（`agent:delegation.remote.accountUnsupported`。アカウントはこの PC のもの）。ホスト側でも `account` の付いた依頼は断る
+- 断る理由はすべて書く前に確かめ、断ったら何も作らず何も変えない
 不明な `backend` はエラー。1つのバックエンドの取得失敗はそのバックエンドの `message` に入れ、他は返す。
 
 **委譲の指示**: 委譲の使い方は、利用者の指示ファイルではなく Pleiad の指示の既定の項目として Pleiad が入れる（[ADR 0023](adr/0023-pleiad-added-delegation-instructions.md) を [ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md) で置き換え）。`ply_agents` の instructions の後ろに毎ターン足す。依頼元の会話には「委譲の進め方」（委譲を基本にする・この会話でやること。編集できる）と「委譲の振り分けの使い方」（`kind` を付けて `backend` を書かない。同じリポジトリに書く子を並べるなら worktree を使うかユーザーに聞くこと・完了通知や `ply_task_status` に「作業場所: worktree …（未取り込み）」とあればそのブランチを元の作業場所へ取り込むのは自分の仕事で競合も自分で解くことも書く。委譲と連動で編集できず、振り分けが無効なら入れない）、委譲された子の会話には「委譲された会話でのコマンドの扱い」（コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え、自分で止める・`Start-Process -Wait` のような無期限待機をしない。編集できる）、Codex の子にだけ「Codex の実行前の拒否」（承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。編集・切り替えできる）。項目・スイッチ・記録は context-runtime.md「Pleiad の指示」。Antigravity の子にも、コマンドの時間上限と PID の管理の指示をカスタムエージェントの本文に足す。親とユーザーの会話には足さない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。編集済みの子向け指示は上書きせず、既定に戻すと新しい文面になる。
@@ -118,7 +124,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 ```
 
 依頼文・判定器の生の応答・キーは保存しない。アカウントの見出しに含まれるメールアドレスは `ply_usage` と同じく伏せる。
-固定（`mode: "pinned"`）の `target` は実際に使う値（モデルが既定に戻った、継いだアカウント）で書く。
+固定（`mode: "pinned"`）の `target` は実際に使う値（モデルが既定に戻った、継いだアカウント、`account` で選んだアカウント）で書く。
 後で規則を見直すため、失敗はタスクの `status`（`failed`）と `routing` で数えられる。人が別の候補でやり直したことは、やり直したタスクの `routing.retry`（`of` が元のタスク、`from` が元の委譲先）で数え、元のタスクの `routing` と `of` で結び付ける。集計の画面はまだ無い。
 
 **別の候補でやり直す**（委譲カードの操作。画面は design-system.md「委譲カード」、WebSocket の `retryAgentTask { taskId, candidate, account?, stop?, approved? }`。`core/server.mjs` の `retryAgentTask`）:
@@ -151,7 +157,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 提案（画面のモックは承認済み、2026-10-06）、[ADR 0146](adr/0146-remote-agent-delegation.md)、issue #57。デスクトップ版の端末（ほかの PC の Pleiad をリモートで使う側）の会話の AI が、ペアリング済みのホストの Pleiad に仕事を任せる。道具は増やさず、`ply_delegate` に任意の `host` を足す。口とプロトコルは [docs/remote.md](remote.md) §4.5。
 
-- **使い方**: `ply_delegate { host: "<ホストの名前>", kind, task, … }`。省けば今どおり手元。`ply_task_status`・`ply_task_wait`・`ply_task_send`・`ply_task_cancel`・`ply_task_list` は同じ `ply-task-` の ID で、ホストのタスクにも効く（`ply_task_list` の行・`ply_task_status` の返り値に `host` が付く）。`backend` を書かなければホストが委譲先を選び（ホストの設定 › 委譲の自動の振り分け）、`routing.decidedBy` は `host`。自動の振り分けはホストを選ばない（AI が `host` を書いたときだけ）。`ply_usage` は手元の使用枠だけ。
+- **使い方**: `ply_delegate { host: "<ホストの名前>", kind, task, … }`。省けば今どおり手元。`ply_task_status`・`ply_task_wait`・`ply_task_send`・`ply_task_cancel`・`ply_task_list` は同じ `ply-task-` の ID で、ホストのタスクにも効く（`ply_task_list` の行・`ply_task_status` の返り値に `host` が付く）。`backend` を書かなければホストが委譲先を選び（ホストの設定 › 委譲の自動の振り分け）、`routing.decidedBy` は `host`。自動の振り分けはホストを選ばない（AI が `host` を書いたときだけ）。`ply_usage` は手元の使用枠だけ。`account` は手元のアカウントなので `host` と一緒には書けない（`ply_task_send` でホストのタスクの設定を替える機能もまだ無い）。
 - **使えるホスト**: 端末側（「ほかのホストにつなぐ」窓の「この PC の AI から任せる」）とホスト側（設定 › リモートの端末の「この端末の AI からの依頼を受ける」）の**両方がオン**で、ホストが動いているものだけ。どちらも既定オフで、人だけが変えられる。`ply_delegate` の説明には、使えるホストの名前（とオフラインの印）が会話ごとに入る。使えないホスト・オフラインのホストは、待たずに理由つきで失敗する。
 - **作業場所**: `cwd` はホストのパス（省けばホストのホーム）、`isolate` はホストの worktree の規則。端末の `cwd` は使わない。初版は絞らない。
 - **承認モード**: 子の承認モードは依頼元（端末の会話）に合わせる。端末は依頼元の会話の承認モードの位置（範囲・自律・強制できるか）を送り、ホストは手元の委譲と同じ `resolveDelegatedMode` で親の強さまでを継ぐ。ホスト側の上限は持たない（依頼元が確認なしなら、ホストの子も確認なしで動く）。引き上げが要るとき（`escalation`）は、ホストが子を作る前に計画を返し、端末が依頼元の会話で 1 回だけ確かめる（`permission.delegateEscalation`。見出しに ⇄ ホスト名）。許可されたら同じ鍵で確定する。Codex の親は手元と同じく、`full` / `yolo` 以外では端末で確かめる。`ply_delegate` の呼び出し自体は依頼元の会話の通常のツールの承認に従う。

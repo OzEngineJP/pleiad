@@ -810,28 +810,35 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (r) return steerInstructions(r);
     },
     /**
-     * 依頼元が子の設定（エージェント・モデル・思考の強さ）を替えた（ply_task_send の backend・model・effort。ADR 0134）。
+     * 依頼元が子の設定（エージェント・モデル・思考の強さ・Claude のアカウント）を替えた（ply_task_send の backend・model・effort・account。ADR 0134・0205）。
      * 子の会話へ入れるのは server（applyTaskSettings）。ここはタスクの記録だけ: backend・model・effort（と替えたなら mode）を新しい値にし、
      * routing.target を新しい委譲先に、routing.changed に「依頼元が替えた」印（最初の委譲先 from・時刻・回数）を残す。保存できなければ断る。
+     * account は次のターンで走るアカウント（Claude の内部の値。'' はログイン中。Claude 以外は null）。accountLabels は内部の値 → 伏せた見出し。
      * 今の値と同じなら何も書かない（changed: false）。最初の委譲先へ戻したら印を外す。
      * 返すのは { task, changed, previous }。previous は書く前の値で、後の失敗で戻すとき（untarget）に使う
      */
-    async retarget(owner, taskId, { backend, model, effort, mode, account }, locale) {
+    async retarget(owner, taskId, { backend, model, effort, mode, account, accountLabels = {} }, locale) {
       const r = owned(owner, taskId, locale);
       if (r.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
-      const same = (a, b) => (a.backend ?? null) === (b.backend ?? null) && (a.model ?? '') === (b.model ?? '') && (a.effort ?? '') === (b.effort ?? '');
-      if (same(r, { backend, model, effort }) && (r.mode ?? '') === (mode ?? '')) return { task: view(r), changed: false, previous: null };
+      // アカウントは Claude のときだけ比べる。from に account が無い（前の版で残した印）なら比べない
+      const acct = v => v ?? '';
+      const sameAccount = (a, b) => a.backend !== 'claude' || b.backend !== 'claude' || a.account === undefined || b.account === undefined || acct(a.account) === acct(b.account);
+      const same = (a, b) => (a.backend ?? null) === (b.backend ?? null) && (a.model ?? '') === (b.model ?? '') && (a.effort ?? '') === (b.effort ?? '') && sameAccount(a, b);
+      const now = { backend: r.backend, model: r.model, effort: r.effort, account: r.routing?.target?.backend === r.backend ? r.routing?.target?.account : undefined };
+      if (same(now, { backend, model, effort, account }) && (r.mode ?? '') === (mode ?? '')) return { task: view(r), changed: false, previous: null };
       const previous = structuredClone({ backend: r.backend, model: r.model, effort: r.effort, mode: r.mode, routing: r.routing ?? null });
       await commit(r.taskId, row => {
         if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
-        const from = row.routing?.changed?.from ?? { backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null };
         const target = row.routing?.target ?? {};
-        const sameAccount = backend === target.backend && (account ?? null) === (target.account ?? null);
+        const was = target.backend === 'claude' ? { account: acct(target.account), ...(target.accountLabel ? { accountLabel: target.accountLabel } : {}) } : {};
+        const from = row.routing?.changed?.from ?? { backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null, ...was };
+        const label = backend !== 'claude' ? null
+          : accountLabels[acct(account)] ?? (target.backend === 'claude' && acct(target.account) === acct(account) ? target.accountLabel : null);
         row.routing = { ...(row.routing ?? { mode: 'pinned', kind: null }),
-          target: { backend, model, account: account ?? null, ...(sameAccount && target.accountLabel ? { accountLabel: target.accountLabel } : {}), effort: effort || null } };
+          target: { backend, model, account: backend === 'claude' ? acct(account) : null, ...(label ? { accountLabel: label } : {}), effort: effort || null } };
         // 振り分けが決めた強さ（由来・段・合わせた元）は、依頼元が替えたら当てはまらない
         if ((previous.effort ?? '') !== (effort ?? '')) { row.routing.effortSource = 'parent'; delete row.routing.effortTier; delete row.routing.effortAsked; }
-        if (same(from, { backend, model, effort })) delete row.routing.changed;
+        if (same(from, { backend, model, effort, account })) delete row.routing.changed;
         else row.routing.changed = { by: 'parent', at: new Date().toISOString(), from, count: (previous.routing?.changed?.count ?? 0) + 1 };
         // 選んだ時点の使用率は前の委譲先のものなので外す
         if (backend !== target.backend || model !== target.model) { delete row.routing.targetWindows; delete row.routing.selectedWithLowHeadroom; }
@@ -850,14 +857,20 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     },
     /**
      * 子のターンが始まった。子が実際に走る backend・model・effort・mode にタスクの記録を合わせる（人が子の予約を取り消した・替えたときの食い違いを残さない）。
-     * 依頼元が替えた委譲（routing.changed）なら routing.target も合わせる。同じなら書かない。書いたらタスクの id を返す
+     * 依頼元が替えた委譲（routing.changed）なら routing.target も合わせる（アカウントが食い違えば、見出しは分からないので外す）。同じなら書かない。書いたらタスクの id を返す
      */
-    async sync(sessionId, { backend, model, effort, mode }) {
+    async sync(sessionId, { backend, model, effort, mode, account = null }) {
       const r = bySession.get(sessionId);
-      if (!r || ((r.backend ?? null) === backend && (r.model ?? '') === (model ?? '') && (r.effort ?? '') === (effort ?? '') && (r.mode ?? '') === (mode ?? ''))) return null;
+      const target = r?.routing?.changed ? r.routing.target : null;
+      const accountMoved = !!target && (target.account ?? null) !== account && !(backend === 'claude' && (target.account ?? '') === (account ?? ''));
+      if (!r || ((r.backend ?? null) === backend && (r.model ?? '') === (model ?? '') && (r.effort ?? '') === (effort ?? '') && (r.mode ?? '') === (mode ?? '') && !accountMoved)) return null;
       await record(r.taskId, row => {
         row.backend = backend; row.model = model; row.effort = effort; row.mode = mode;
-        if (row.routing?.changed && row.routing.target) row.routing.target = { ...row.routing.target, backend, model, effort: effort || null };
+        if (row.routing?.changed && row.routing.target) {
+          const moved = (row.routing.target.account ?? null) !== account && !(backend === 'claude' && (row.routing.target.account ?? '') === (account ?? ''));
+          const { accountLabel, ...rest } = row.routing.target;
+          row.routing.target = { ...rest, backend, model, account, ...(accountLabel && !moved ? { accountLabel } : {}), effort: effort || null };
+        }
       }, 'sync');
       return r.taskId;
     },

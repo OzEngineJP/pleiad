@@ -104,17 +104,19 @@ export const delegationOps = [
       effort: z.string().optional().describe(D('delegate', 'effort')),
       isolate: z.boolean().optional().describe(D('delegate', 'isolate')),
       host: z.string().max(200).optional().describe(D('delegate', 'host')),
+      account: z.string().max(200).optional().describe(D('delegate', 'account')),
     }) },
     { id: 'taskStatus', tool: 'ply_task_status', risk: 'read', input: z.object({ taskId: z.string().min(1).describe(D('taskStatus', 'taskId')),
       offset: z.number().int().min(0).optional().describe(D('taskStatus', 'offset')) }) },
     { id: 'taskWait', tool: 'ply_task_wait', risk: 'read', input: z.object({ taskId: z.string().min(1).describe(D('taskWait', 'taskId')),
       seconds: z.number().int().min(1).max(30).optional().describe(D('taskWait', 'seconds')) }) },
-    // message を省けば設定だけ替える（backend・model・effort のどれかが要る。確かめるのは server の taskSettingsPlan）
+    // message を省けば設定だけ替える（backend・model・effort・account のどれかが要る。確かめるのは server の taskSettingsPlan）
     { id: 'taskSend', tool: 'ply_task_send', risk: 'write', input: z.object({ taskId: z.string().min(1).describe(D('taskSend', 'taskId')),
       message: z.string().min(1).optional().describe(D('taskSend', 'message')),
       backend: z.string().min(1).max(40).optional().describe(D('taskSend', 'backend')),
       model: z.string().max(200).optional().describe(D('taskSend', 'model')),
-      effort: z.string().max(40).optional().describe(D('taskSend', 'effort')) }) },
+      effort: z.string().max(40).optional().describe(D('taskSend', 'effort')),
+      account: z.string().min(1).max(200).optional().describe(D('taskSend', 'account')) }) },
     // 画面は、どの会話の委譲でも止められる（人の操作）。AI は自分が委譲した子だけ（ply_task_cancel）
     { id: 'taskCancel', tool: 'ply_task_cancel', risk: 'write', modeGate: false, input: z.object({ taskId: z.string().min(1).describe(D('taskCancel', 'taskId')) }),
       legacyCommand: 'cancelAgentTask', ui: (ctx, { taskId }) => fromHost(() => ctx.delegation.cancel(taskId)) },
