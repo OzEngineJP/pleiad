@@ -155,8 +155,12 @@ export function swapHeight(host, mutate) {
   anim.onfinish = anim.oncancel = () => { host.style.overflow = prev; };
 }
 
-/** 走っているツールの行: 右端に §6 の弧と経過秒。結果が来たら applyToolResult が外す */
-export function markRunning(card, since = Date.now()) {
+/**
+ * 走っているツールの行: 右端に §6 の弧と経過秒。結果が来たら applyToolResult が外す。
+ * since はツールの始まり（この画面の時計の ms。web/server-clock.mjs の toolStartedAt）。無ければ今から数える
+ */
+export function markRunning(card, since = null) {
+  since ??= Date.now();
   card.classList.remove("tc-waiting");
   card.classList.add("tc-running");
   const res = card.querySelector(".tc-res");
@@ -202,9 +206,10 @@ export class Bundle {
   /**
    * @param {{live?:boolean, kind?:"tools"|"computer", onStop?:(bundle:Bundle)=>void}} [o]
    *   live: 走っているまとまり（最新の行 + 薄い行）。false は履歴（全部が中の行で、閉じて始まる）。
-   *   kind: "computer" はコンピューターの操作の塊。onStop はその「止める」（走っている間だけ）
+   *   kind: "computer" はコンピューターの操作の塊。onStop はその「止める」（走っている間だけ）。
+   *   since: 見出しの経過の起点（最初のツールの始まり。この画面の時計の ms）。無ければ今
    */
-  constructor({ live = false, kind = "tools", onStop = null } = {}) {
+  constructor({ live = false, kind = "tools", onStop = null, since = null } = {}) {
     this.kind = kind;
     this.computer = kind === "computer";
     this.onStop = onStop;
@@ -213,7 +218,7 @@ export class Bundle {
     this.expanded = false;   // 全部を開いているか
     this.live = live;
     this.cur = null;         // 最新の行（live のとき）
-    this.t0 = Date.now();
+    this.t0 = since ?? Date.now();
 
     this.el = el("div", `bundle${live ? " live" : ""}${this.computer ? " cu" : ""}`);
     this.el.bundle = this;

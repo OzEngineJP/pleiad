@@ -2635,6 +2635,10 @@ function makeEmit(turn) {
   const emit = (event, { recorded = false, replay = false } = {}) => {
     // 付け直しに渡したターン（handOffTurn）の出来事は、このサーバーでは流さない（閉じたバックエンドの aborted など）
     if (turn.handedOff) return;
+    // ツールの始まりに、サーバーが受けた時刻（epoch ms）を付ける。走っている行の経過は、画面がこれから数える
+    // （画面が受けた瞬間から数えると、開き直し・再接続の再生のたびに 0 に戻る）。実行中のスナップショットにも同じ値が残る。
+    // バックエンドが付けた時刻は上書きしない（docs/multi-backend.md §2.2）
+    if (event?.type === 'tool.start' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
     if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
     // git でしたこと（PR の作成など）をターンの終わりの要約に使う
     turn.gitCalls?.track(event);
@@ -7522,6 +7526,8 @@ wss.on("connection", (ws, req) => {
     homeDir: os.homedir(),
     resumedTurn: resumed,
     startedAt: SERVER_STARTED_AT,
+    // この PC の今の時刻（ms）。画面は端末の時計とのずれを覚え、出来事の時刻（tool.start の at など）から経過を数えるときに補う（web/server-clock.mjs）
+    now: Date.now(),
     // 離れた端末への通知（ADR 0086）を受けられる。古いホストにはこの欄が無く、端末は鍵の登録を送らない
     notify: 1,
     // 通話モード（/voice-ws）に対応している。キーを持つこの PC の画面だけ（中継越しの端末の画面には出さない。docs/voice-call.md）

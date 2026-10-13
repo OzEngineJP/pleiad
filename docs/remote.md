@@ -443,6 +443,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 | `ws://` 固定（`web/client.mjs:3140`）・`crypto.randomUUID()`（`:3123`） | 平文の非ループバックで壊れる | ループバックなので壊れない（直さなくてよい。モバイルの保険は §8.3） |
 | 1 ファイルの添付（上限 100MB） | 中身を 512 KiB の断片で送る（`attachStart` / `attachChunk` / `attachFinish`。フォルダーを送る口と同じ `core/folder-uploads.mjs`）。1 通で丸ごと送る `attachFile`（8MB まで）は古い画面のために残す | そのまま（1 通が 64 MiB の上限・端末内プロキシの溜めを超えない） |
 | ファイルのダウンロード（`/local-file?download=1`） | ブラウザーの保存 | そのまま（Electron の保存ダイアログ）。取り出しはこれで足りる |
+| 走っているツール・ターンの経過（`web/server-clock.mjs`） | サーバーが付けた時刻（`tool.start` の `at`・ターンの `startedAt`）から画面の時計で数える | 端末の時計はホストとずれうるので、接続ごとの `ready` の `now`（ホストの今の時刻）との差を覚えて補う。行き帰りの遅れの分だけ短く数えるが、秒の表示には効かない |
 
 ### 7.4 ホストへのつなぎ方
 

@@ -44,6 +44,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 見た目の規則は docs/design-system.md。
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
 import { Bundle, bundleOf, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
+import { localTime, syncServerClock, toolStartedAt } from "./server-clock.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
 import { whenText, timeText } from './schedule-times.mjs';
@@ -1630,12 +1631,15 @@ function closeBundle() {
   }
 }
 
-/** 今のまとまり。無ければ今の発言の末尾に作る。コンピューターの操作の連続は別の種類の塊（kind: "computer"）で、種類が替わればそこで切れる */
-function liveBundle(kind = "tools") {
+/**
+ * 今のまとまり。無ければ今の発言の末尾に作る。コンピューターの操作の連続は別の種類の塊（kind: "computer"）で、種類が替わればそこで切れる。
+ * since は新しく作るときの見出しの起点（最初のツールが始まった時刻。toolStartedAt）
+ */
+function liveBundle(kind = "tools", since = null) {
   const turn = ensureTurnEl();
   if (state.bundle && state.bundle.el.parentNode === turn && state.bundle.kind === kind) return state.bundle;
   closeBundle();
-  state.bundle = new Bundle({ live: true, kind, ...(kind === "computer" ? { onStop: stopComputer } : {}) });
+  state.bundle = new Bundle({ live: true, kind, since, ...(kind === "computer" ? { onStop: stopComputer } : {}) });
   turn.append(state.bundle.el);
   return state.bundle;
 }
@@ -2619,8 +2623,11 @@ function behindHere() {
   return all.length ? behindOfTasks(all) : null;
 }
 
+/** この会話で走っているターンが始まった時刻（この画面の時計の ms）。分からなければ null */
+const turnStartHere = () => localTime((state.work.turns ?? []).find(belongsHere)?.startedAt);
+
 const activity = {
-  t0: 0,
+  t0: 0,         // 経過の起点。走っているターンの始まり（turnStartHere）。分からなければ出し始めた時刻
   timer: null,
   markTimer: null,
   el: null,          // .m.activity
@@ -2658,7 +2665,7 @@ const activity = {
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
     this.suspended = true;
-    if (!this.t0) this.t0 = Date.now();
+    if (!this.t0) this.t0 = turnStartHere() ?? Date.now();
     if (behindHere()) return this.show(this.text || ACTIVITY_LABEL.running, { keepSuspended: true });
     clearTimeout(this.markTimer);
     this.markTimer = null;
@@ -2687,7 +2694,7 @@ const activity = {
     // 中断を頼んだ後は、止まり終えるまで何が流れてきても「中断している」のまま出す
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
-    if (!this.t0) this.t0 = Date.now();
+    if (!this.t0) this.t0 = turnStartHere() ?? Date.now();
     this.behind = behindHere();
     // ターンが終わって裏だけが残った、またはその逆。出ている節の印を差し替える
     if (this.el?.isConnected && this.shape !== this.shapeNow()) this.remark();
@@ -2722,6 +2729,9 @@ const activity = {
   },
   /** running が変わった。裏を待っているかどうかで印と見出しを差し替える（表示中のときだけ） */
   sync() {
+    // 開き直した直後は running の放送より先に出ることがある。ターンの始まりが分かったら、そこからの経過に直す
+    const start = turnStartHere();
+    if (this.t0 && start != null && start < this.t0) this.t0 = start;
     if (!this.el?.isConnected) return;
     const was = this.behind;
     this.behind = behindHere();
@@ -3221,7 +3231,12 @@ function onEvent(ev, replay = false) {
       linkDelegateCard(card, ev.input);
       const boundary = isBoundaryTool(ev.name);
       if (boundary) { closeBundle(); ensureTurnEl().append(card); }
-      else { markRunning(card); liveBundle(isComputerTool(ev.name) ? "computer" : "tools").add(card); }
+      else {
+        // 経過はサーバーが受けた時刻（at）から数える。開き直し・再接続の再生でも 0 に戻らない
+        const since = toolStartedAt(ev);
+        markRunning(card, since);
+        liveBundle(isComputerTool(ev.name) ? "computer" : "tools", since).add(card);
+      }
       // 2 件目で見出しが現れ、行が伸びる間も、読んでいた下端に付いていく
       if (stick) followBottom();
       if (ev.id) state.toolCards.set(ev.id, card);
@@ -9066,6 +9081,8 @@ function connect() {
       if (m.homeDir) state.homeDir = m.homeDir;
       // サーバーの起動時刻。これより前の更新による中断だけを「更新の後」の一行に数える（syncResumeStrip）
       state.serverStartedAt = Number.isFinite(m.startedAt) ? m.startedAt : null;
+      // サーバーの時計とのずれ。出来事の時刻（tool.start の at・ターンの startedAt）から経過を数えるときに補う
+      syncServerClock(m.now);
       // 画面と違う言語なら読み直すので、ここで止める
       if (applyLocale(m.locale)) return;
       connStatus.ready();

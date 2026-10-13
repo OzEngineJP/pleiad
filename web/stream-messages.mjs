@@ -58,6 +58,9 @@ export function streamMessages(events = [], { backend = null, model = null, init
         writing = false;
         const m = turn ?? openTurn();
         const call = { id: ev.id ?? null, name: ev.name, input: ev.input ?? null };
+        // 始まりの時刻（サーバーが受けた at・バックエンドが申告した startedAt）。走っている行の経過の起点（web/server-clock.mjs）
+        if (Number.isFinite(ev.at)) call.at = ev.at;
+        if (ev.startedAt != null) call.startedAt = ev.startedAt;
         (m.toolCalls ??= []).push(call);
         if (ev.id) calls.set(ev.id, call);
         break;
