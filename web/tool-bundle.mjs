@@ -68,8 +68,12 @@ export function splitToolCalls(calls, isBoundary, groupOf = () => "tools") {
   return out;
 }
 
-/** 見出しの経過。1:11 */
-export const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+/** 経過の形は 1 つ（s は秒）。`m:ss`、1 時間以上は `h:mm:ss`（見出し・走っている行・最下部の行・作業の一覧で同じ） */
+export function clock(s) {
+  s = Math.max(0, Math.floor(s));
+  const ss = String(s % 60).padStart(2, "0");
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${ss}` : `${Math.floor(s / 60)}:${ss}`;
+}
 
 // ---------------------------------------------------------------- 動き
 
@@ -106,7 +110,11 @@ function anchored(anchor, fn) {
 
 const ticking = new Set();   // 経過を刻む要素（行の右端 .tc-res と、走っているまとまりの見出し）
 let timer = 0;
-const secs = (ms) => `${Math.max(0, Math.floor(ms / 1000))}s`;
+/** 走っている行の経過。1 分未満は 8s、それ以上は見出しと同じ m:ss・h:mm:ss（長く止まっているのが読めるように） */
+export const secs = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : clock(s);
+};
 function tickAll() {
   const now = Date.now();
   for (const n of ticking) {

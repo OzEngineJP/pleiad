@@ -7,7 +7,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { markRunning, Bundle } from '../../web/tool-bundle.mjs';
+import { markRunning, Bundle, secs, clock } from '../../web/tool-bundle.mjs';
 import { renderToolCall } from '../../web/render.mjs';
 import { streamMessages } from '../../web/stream-messages.mjs';
 import { localTime, syncServerClock, toolStartedAt } from '../../web/server-clock.mjs';
@@ -19,7 +19,9 @@ export const title = '走っているツールの経過: サーバーが受け�
 
 const json = (x) => JSON.stringify(x);
 const read = (p) => fs.readFile(path.join(ROOT, p), 'utf8');
-const secsOf = (card) => Number.parseInt(card.querySelector('.tc-elapsed')?.textContent ?? '', 10);
+const elapsedOf = (card) => card.querySelector('.tc-elapsed')?.textContent ?? '';
+/** 8s・2:05・1:02:05 を秒にする */
+const secondsOf = (text) => (text.endsWith('s') ? Number.parseInt(text, 10) : text.split(':').map(Number).reduce((a, n) => a * 60 + n, 0));
 
 export default async function (t) {
   // ---- 画面の時計とサーバーの時計
@@ -52,12 +54,22 @@ export default async function (t) {
     markRunning(card, Date.now() - 120_000);
     const res = card.querySelector('.tc-res');
     res.paint(Date.now());
-    t.ok('2 分前に始まったツールの行は、描き直しても 120s 以上を出す', secsOf(card) >= 120, card.querySelector('.tc-elapsed')?.textContent);
+    t.ok('2 分前に始まったツールの行は、描き直しても 2:00 以上を出す（1 分以上は m:ss）', /^\d+:\d\d$/.test(elapsedOf(card)) && secondsOf(elapsedOf(card)) >= 120, elapsedOf(card));
+
+    const long = renderToolCall('Bash', { command: 'npm run build' }, { id: 'c3' });
+    markRunning(long, Date.now() - (12 * 3600 + 125) * 1000);
+    long.querySelector('.tc-res').paint(Date.now());
+    t.ok('12 時間前に始まったツールの行は h:mm:ss（12:02:05 以上。43325s とは出さない）',
+      /^\d+:\d\d:\d\d$/.test(elapsedOf(long)) && secondsOf(elapsedOf(long)) >= 12 * 3600 + 125 && elapsedOf(long).startsWith('12:02:'), elapsedOf(long));
 
     const fresh = renderToolCall('Bash', { command: 'ls' }, { id: 'c2' });
     markRunning(fresh);
     fresh.querySelector('.tc-res').paint(Date.now());
-    t.ok('始まりが分からないときは今から数える（今までと同じ）', secsOf(fresh) < 2, fresh.querySelector('.tc-elapsed')?.textContent);
+    t.ok('始まりが分からないときは今から数える（今までと同じ。1 分未満は 0s の形）', /^\d+s$/.test(elapsedOf(fresh)) && secondsOf(elapsedOf(fresh)) < 2, elapsedOf(fresh));
+    t.ok('行の経過の形: 1 分未満は 8s、それ以上は見出しと同じ m:ss、1 時間以上は h:mm:ss',
+      secs(8_000) === '8s' && secs(59_999) === '59s' && secs(60_000) === '1:00' && secs(125_000) === '2:05'
+      && secs(3_600_000) === '1:00:00' && secs((3600 + 62) * 1000) === '1:01:02' && secs(-5) === '0s',
+      [8_000, 59_999, 60_000, 125_000, 3_600_000, (3600 + 62) * 1000].map(secs).join());
 
     const bundle = new Bundle({ live: true, since: Date.now() - 125_000 });
     for (const id of ['b1', 'b2']) {
@@ -66,8 +78,11 @@ export default async function (t) {
       bundle.add(c);
     }
     bundle.head.paint();
-    const [m, s] = bundle.elEl.textContent.split(':').map(Number);
-    t.ok('まとまりの見出しの経過は、最初のツールの始まりから（2:05 前なら 2:05 以上）', m * 60 + s >= 125, bundle.elEl.textContent);
+    t.ok('まとまりの見出しの経過は、最初のツールの始まりから（2:05 前なら 2:05 以上）', secondsOf(bundle.elEl.textContent) >= 125, bundle.elEl.textContent);
+    const longBundle = new Bundle({ live: true, since: Date.now() - (3600 + 125) * 1000 });
+    longBundle.head.paint();
+    t.ok('1 時間を越えたまとまりの見出しは h:mm:ss（1:02:05）', longBundle.elEl.textContent === '1:02:05', longBundle.elEl.textContent);
+    t.ok('見出しの形: m:ss、1 時間以上は h:mm:ss', clock(0) === '0:00' && clock(3599) === '59:59' && clock(3600) === '1:00:00' && clock(12 * 3600 + 125) === '12:02:05');
     const plain = new Bundle({ live: true });
     plain.head.paint();
     t.ok('起点を渡さないまとまりは今から（0:00）', plain.elEl.textContent === '0:00', plain.elEl.textContent);

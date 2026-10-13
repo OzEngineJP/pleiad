@@ -43,7 +43,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
-import { Bundle, bundleOf, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
+import { Bundle, bundleOf, clock, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { localTime, syncServerClock, toolStartedAt } from "./server-clock.mjs";
 import { createContextMenu } from "./context-menu.mjs";
 import { setupLongPress } from "./long-press.mjs";
@@ -2722,9 +2722,8 @@ const activity = {
     relayoutBranches();
     syncWorkEntry();
     this.timer ??= setInterval(() => {
-      const s = Math.round((Date.now() - this.t0) / 1000);
       const e = this.el?.querySelector(".el");
-      if (e) e.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+      if (e) e.textContent = clock(Math.round((Date.now() - this.t0) / 1000));
     }, 1000);
   },
   /** running が変わった。裏を待っているかどうかで印と見出しを差し替える（表示中のときだけ） */
@@ -5241,12 +5240,8 @@ function statusText(item) {
   return failed ? t('timeline.result.failed') : '';
 }
 
-/** 経過の形は 1 つ。`m:ss`、1 時間を越えたら `h:mm:ss`（会話の中のカード・一覧・詳細で同じ） */
-function clockText(ms) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
-    : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
+/** 経過の形は 1 つ。`m:ss`、1 時間以上は `h:mm:ss`（会話の中のカード・一覧・詳細で同じ。web/tool-bundle.mjs の clock） */
+const clockText = (ms) => clock(ms / 1000);
 
 /** 経過時間。走っている間は今まで（m:ss）、終わったら終わった時刻（今日は HH:MM） */
 function elapsedText(item) {
