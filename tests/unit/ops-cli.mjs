@@ -173,8 +173,10 @@ export default async function (t) {
       child.stdout.on('data', (d) => { out += d; });
       for (const m of messages) child.stdin.write(`${JSON.stringify(m)}\n`);
       const want = messages.filter((m) => m.id !== undefined).length;
-      const timer = setInterval(() => { if (out.split('\n').filter(Boolean).filter((l) => JSON.parse(l).id !== undefined).length >= want) { clearInterval(timer); child.kill(); resolve(out.split('\n').filter(Boolean).map((l) => JSON.parse(l))); } }, 50);
-      setTimeout(() => { clearInterval(timer); child.kill(); resolve(out.split('\n').filter(Boolean).map((l) => JSON.parse(l))); }, 20_000).unref();
+      // 長い応答は途中で切れて届くので、改行まで届いた行だけを読む（届きかけの最後の行を JSON.parse すると worker ごと落ちる）
+      const lines = () => out.slice(0, out.lastIndexOf('\n') + 1).split('\n').filter(Boolean).map((l) => JSON.parse(l));
+      const timer = setInterval(() => { if (lines().filter((m) => m.id !== undefined).length >= want) { clearInterval(timer); child.kill(); resolve(lines()); } }, 50);
+      setTimeout(() => { clearInterval(timer); child.kill(); resolve(lines()); }, 20_000).unref();
     });
     const j = (replies, id) => replies.find((m) => m.id === id)?.result;
     const text = (replies, id) => JSON.parse(j(replies, id).content[0].text);
