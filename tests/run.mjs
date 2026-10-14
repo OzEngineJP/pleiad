@@ -642,6 +642,7 @@ const SUITES = [
   './unit/mobile-icons.mjs',
   // リモートでリンクを押したときの行き先（localhost の知らせ・写しはアプリの中・Web は端末のブラウザー）
   './unit/remote-links.mjs',
+  './unit/desktop-external-link.mjs',
   // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
   './unit/remote-browser-view.mjs',
 
