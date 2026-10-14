@@ -67,7 +67,7 @@ import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
 import { approvalChange, changeBody, changeHeading, changeWord } from "./setting-change.mjs";
-import { backgroundTitle, taskTree, nativeChildren, backgroundTotals, groupByOwner, visibleRows } from './background-model.mjs';
+import { backgroundTitle, taskTree, nativeChildren, backgroundTotals, childNativeEntry, groupByOwner, visibleRows } from './background-model.mjs';
 import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale, hostRowRunning, HOST_ROW_STALE_MS } from './host-view.mjs';
 import { createCardRoll } from './card-roll.mjs';
 import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
@@ -5206,7 +5206,7 @@ function backgroundItems(scope = null) {
     items.push(item);
     // 委譲した子の会話が生んだネイティブのサブエージェント（孫）も、手元の孫と同じ字下げの行で出す。親の行の「委譲 N」にも数える
     for (const a of childNatives(task)) {
-      const sub = nativeItem(a, { depth: depth + 1, rootLive, parentSessionId: task.sessionId });
+      const sub = nativeItem(a, { depth: depth + 1, rootLive, parentSessionId: task.sessionId, ...childNativeEntry(a, live) });
       if (nativeKeys.has(sub.key)) continue;
       nativeKeys.add(sub.key);
       items.push(sub);

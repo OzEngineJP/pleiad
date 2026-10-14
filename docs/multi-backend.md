@@ -443,9 +443,12 @@ Codex の app-server プロトコルは `codex app-server generate-json-schema -
     `limit` を超えたら先頭と末尾を残す（Claude と同じ）。子には `userMessage` が無い（依頼文は親から注入されて item にならない）。
   - `getSubagentOrigin` = 親の `subAgentActivity(kind=started, agentThreadId)` の `id`（= spawn の function call id `call_…`）、
     無ければ spawnAgent の `collabAgentToolCall` の `id`。どちらも `tool.start` の `event.id` と同じ item id。
-  - `getSubagentState` = `subAgentActivity.kind`（started/interacted → running、completed → completed、interrupted → stopped）と
+  - `getSubagentState` = `subAgentActivity.kind`（started → running、completed → completed、interrupted → stopped。interacted は届けただけなので状態を変えない）と
     `collabAgentToolCall.agentsStates`（pendingInit/running → running、completed、errored → failed、shutdown/interrupted → stopped、
-    notFound は分からない）。後から来たものが勝つ。時刻は実行時なら通知の `startedAtMs` / `completedAtMs`、履歴なら子の Thread の
+    notFound は分からない）。後から来たものが勝つ。終わった子が再び走るのは、子のターンが始まったとき（`turn/started` を子の
+    thread で見たとき。`send_message` の `trigger_turn: true` など）と、collab の sendInput・followupTask が running を返したとき。
+    `trigger_turn: false` の送信（interacted・sendMessage が completed を返す）では終わった子は completed のまま。
+    時刻は実行時なら通知の `startedAtMs` / `completedAtMs`、履歴なら子の Thread の
     `createdAt` / `updatedAt`（無ければ親のターンの時刻）。
   - server は 4 秒ごとに全部を呼ぶ。一覧は 2 秒、親の items（origin / 状態を通知で見ていない子のため）は 10 秒覚える。
     親が native の接続で走っている間の状態は通知だけで答える。終わった子の本文は `updatedAt` が変わらなければ読み直さない。
