@@ -267,6 +267,8 @@ const SUITES = [
   './unit/antigravity-usage.mjs',
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ
   './unit/header-usage.mjs',
+  // 取れなかった行は前回の枠を引き継ぐ（札・一覧・設定で同じ値）。設定の「使用量」は取り直しの間も前の表示を残す
+  './unit/usage-carry.mjs',
   './unit/effort.mjs',
   './unit/composer-agy.mjs',
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す
