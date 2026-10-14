@@ -59,7 +59,8 @@ export default async function (t) {
     const from = c.mark();
     const ended = c.runTurn({ prompt: "hang-command", sessionId, cwd: ROOT, backend: "antigravity", mode: "yolo" }, { ms: 60_000 });
     const shown = await c.waitFor((e) => e.type === "background" && e.sessionId === sessionId && e.tasks?.length === 1, { from, ms: 15_000 });
-    await until(async () => Number(await fs.readFile(commandPidFile, "utf8").catch(() => "0")) > 0, 3_000);
+    // 偽の agy は ACTIVE を出してからシェルを起こし、その pid を書く（並べて流すと 0.4 秒の裏へ回る判定より遅れる）
+    await until(async () => Number(await fs.readFile(commandPidFile, "utf8").catch(() => "0")) > 0, 10_000);
     const shell = Number(await fs.readFile(commandPidFile, "utf8").catch(() => "0")) || null;
     if (shell) leftovers.add(shell);
 

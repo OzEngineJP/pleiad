@@ -769,7 +769,9 @@ DONE はコマンドが本当に終わったときにしか来ない。裏へ回
      `commandKey` でならす。実機の 1.3.4 / Windows は `powershell -Command "<コマンド>"`）。agy 自身・中継（`agy-context-relay`）・孫・会話の外は選ばない。
      プロセスの一覧は win32 が `Get-CimInstance Win32_Process`（`ParentProcessId` で絞る）、posix が `ps -A -o pid=,ppid=,args=`
   3. 見つからない・2 つ以上当たる・agy の pid が分からないときは**何も落とさずにエラーを返す**
-  4. 木ごと落とす（win32 は `taskkill /PID <pid> /T /F`、posix は子孫を引いて SIGKILL）。agy 自身は落とさない
+  4. 木ごと落とす（win32 は `taskkill /PID <pid> /T /F`、posix は子孫を引いて SIGKILL）。agy 自身は落とさない。
+     taskkill /T は子を落としてから根を落とすので、子が終わると自分も終わるシェルは taskkill が根に届く前に終わりかけ、
+     「実行中のタスクのインスタンスがありません」「実行しようとした操作はサポートされていません」で失敗が返る。根が 2 秒以内に消えれば落とせたとみなす
   5. agy の DONE（`AGENT_HOST_AGY_STOP_WAIT_MS`、既定 15 秒まで）を待ってから `{ stopped: true }` を返す。実機（1.3.4）では止めて 2 秒ほどで出力の空の DONE が来て、モデルはコマンドが終わったとして続け、ターンは `result`（SUCCESS）で終わった
 - 中断・打ち切りは今までどおり agy を落とすだけで、コマンドのシェルを狙っては落とさない（agy と一緒に落ちるかは実機で確かめていない）
 

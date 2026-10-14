@@ -31,7 +31,9 @@ export default async function (t) {
   const fake = path.join(ROOT, "tests", "lib", "fake-agy.mjs");
   const pidFile = path.join(scratch, "agy-pids.json");
   const commandPidFile = path.join(scratch, "command-pid");
-  const commandPid = async () => Number(await fs.readFile(commandPidFile, "utf8").catch(() => "0")) || null;
+  const readPid = async () => Number(await fs.readFile(commandPidFile, "utf8").catch(() => "0")) || null;
+  // 偽の agy は ACTIVE を出してからシェルを起こし、その pid を書く。並べて流すと起こすのに 0.7 秒ほどかかり、裏へ回る（0.4 秒）より遅れる
+  const commandPid = async () => { await until(async () => Boolean(await readPid()), 10_000); return readPid(); };
   const leftovers = new Set();
 
   // 会話の外で、同じコマンドを走らせておく（止める口が当ててはいけない）
@@ -97,7 +99,7 @@ export default async function (t) {
     const result = await ended;
     t.ok("ターンは result で終わる（中断ではない）", result.outcome === "ok"
       && result.events.some((e) => e.type === "text.delta" && e.text.includes("コマンドが終わった")), String(result.outcome));
-    t.ok("コマンドのシェルとその子は落ちる", await until(() => !alive(shell) && inner.every((pid) => !alive(pid))),
+    t.ok("コマンドのシェルとその子は落ちる", Boolean(shell) && await until(() => !alive(shell) && inner.every((pid) => !alive(pid))),
       JSON.stringify({ shell, inner, alive: inner.filter(alive) }));
     t.ok("会話の外の同じコマンドは落とさない", alive(outside.pid), String(outside.pid));
     t.ok("agy 自身は落とさない（会話は続く）", alive(agyPid), String(agyPid));

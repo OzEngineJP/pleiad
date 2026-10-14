@@ -88,10 +88,25 @@ export async function listProcesses({ parent } = {}) {
     .map(([, pid, ppid, command]) => ({ pid: Number(pid), ppid: Number(ppid), command }));
 }
 
-/** pid のプロセスを木ごと落とす。Windows は taskkill /T /F、ほかは子孫を辿って SIGKILL */
-export async function killTree(pid, list) {
-  if (process.platform === "win32") {
-    await run("taskkill", ["/PID", String(pid), "/T", "/F"]);
+/** pid のプロセスがまだあるか（権限が無くて触れないものも、あるとみなす） */
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (err) { return err?.code === "EPERM"; } };
+
+/**
+ * pid のプロセスを木ごと落とす。Windows は taskkill /T /F、ほかは子孫を辿って SIGKILL。
+ * taskkill /T は子を落とした後で根を落とす。子が終わると自分も終わるシェル（cmd /c・powershell -Command）は、taskkill が根に届く前に
+ * 終わりかけて、「実行中のタスクのインスタンスがありません」「実行しようとした操作はサポートされていません」で失敗が返る。
+ * 根が（少し待って）消えれば落ちているので、失敗にしない
+ */
+export async function killTree(pid, list, { platform = process.platform, exec = run, isAlive = alive, graceMs = 2000 } = {}) {
+  if (platform === "win32") {
+    try {
+      await exec("taskkill", ["/PID", String(pid), "/T", "/F"]);
+    } catch (err) {
+      for (const end = Date.now() + graceMs; isAlive(pid);) {
+        if (Date.now() >= end) throw err;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
     return;
   }
   const all = list ?? await listProcesses();
