@@ -11,6 +11,8 @@
 //   - 引き継ぎ（段階 2 の 2d）: 保持役に載ったターン（held）は待たず、update-lock も取らずに effects.handover へ進む（作業の最中でも切り替わる）。
 //     載っていないターンが残れば待つ・新しい版か旧サーバーが引き継ぎの形を持たなければ今までの先送り・断られたら待ち直す（間を延ばす）・
 //     S2 を起こせなければ S1 のまま・S1 が渡して終わったのに S2 が立たなければ前の版で起こし直す
+//   - Claude Agent SDK の先取り（ADR 0206）: 事前の確かめの後に新しい版の SDK を取る。取れなければ保持役に載った Claude のターンは引き継がず、
+//     終わるのを待ってから替える（ターンは止めない）。待つ間に取り直し、取れたら引き継ぐ
 // 副作用の組み立て（createSwitchEffects）: S1 の終わりを待つ・付け直し・前の版の場所・ready の待ち。
 // preload の名前は前の版の画面が使う分を残す（新しい main が古い版の画面を出す間。design.md §7.1）
 // 本物: 別プロセスのサーバー（S1）に付けた包みのまま、S1 を終わらせて同じトークン・ポートで S2 を起こし、同じ包みでつながる
@@ -40,7 +42,7 @@ const busy = () => idle({ count: 1, turns: [{ sessionId: 's1', backend: 'fake' }
 /** 偽の副作用。works は running() が順に返す値（尽きたら最後の値） */
 function fakeEffects({ works = [idle()], prepare = { ok: true, runtime: { root: 'R', key: 'new' }, mode: 'detached' }, check = { check: 1, ipc: [1, 1], dataSchema: 2, dataSchemaFound: 2 },
   locks = [{ ok: true }], stops = [{ ok: true }], startNew = async () => ({ type: 'ready', port: 7420, token: 'tok', ...NEW }), startPrevious = async () => ({ type: 'ready', port: 7420, token: 'tok', ...OLD }),
-  ask = 'later', reattach = true, abortAll = async () => {}, now, handover = async () => ({ ready: { type: 'ready', port: 7420, token: 'tok', ...NEW }, timing: { ms: 12, gapMs: 3 } }) } = {}) {
+  ask = 'later', reattach = true, abortAll = async () => {}, now, handover = async () => ({ ready: { type: 'ready', port: 7420, token: 'tok', ...NEW }, timing: { ms: 12, gapMs: 3 } }), claudeSdk } = {}) {
   const calls = [];
   const delays = [];
   let w = 0, l = 0, s = 0;
@@ -64,6 +66,8 @@ function fakeEffects({ works = [idle()], prepare = { ok: true, runtime: { root: 
     fallback: async () => { calls.push('fallback'); },
     failed: async () => { calls.push('failed'); },
   };
+  // claudeSdk を渡したときだけ先取りを持つ（持たない effects でも動くことを、ほかの場面が確かめる）
+  if (claudeSdk) effects.claudeSdk = async runtime => { calls.push(`claudeSdk:${runtime.key}`); return claudeSdk(); };
   return { effects, calls };
 }
 
@@ -457,6 +461,34 @@ export default async function (t) {
       const failed = await both.control.run();
       t.ok('引き継ぎ: 前の版も起こせなければ failed', failed.state === 'failed' && both.calls.includes('failed'));
     }
+    // Claude Agent SDK の先取り（ADR 0206）
+    {
+      const claudeHeld = (extra = {}) => heldWork({ turns: [{ sessionId: 'h1', backend: 'claude', held: true }], ...extra });
+      t.ok('SDK の先取り: 新しい版の SDK が無ければ、保持役に載った Claude のターンがある間は引き継がない（ほかのバックエンドのターンは引き継ぐ）',
+        sw.handoverMode(claudeHeld(), { handover: [1, 1], holder: [1, 1], claudeSdk: false }) === false
+        && sw.handoverMode(heldWork(), { handover: [1, 1], holder: [1, 1], claudeSdk: false }) === true
+        && sw.handoverMode(claudeHeld(), { handover: [1, 1], holder: [1, 1], claudeSdk: true }) === true
+        && sw.handoverMode(claudeHeld(), { handover: [1, 1], holder: [1, 1] }) === true);
+      const afterTurn = idle({ handover: { v: 1, holder: 1, held: 0, blocking: 0 } });
+      const m = machine({ works: [claudeHeld(), claudeHeld(), afterTurn], check: handoverCheck, claudeSdk: async () => ({ ready: false, consent: true, kind: 'offline', detail: 'ENOTFOUND' }) });
+      const snap = await m.control.run();
+      t.ok('SDK の先取り: 事前の確かめの後、新しい版の実行場所で取る', m.calls.indexOf('claudeSdk:new') > m.calls.indexOf('check:new'), m.calls.join(' '));
+      const firstHandover = m.calls.findIndex(c => c.startsWith('handover:'));
+      t.ok('SDK の先取り: 取れなければ Claude のターンが終わるまで待ち（中断しない）、終わってから替える',
+        snap.state === 'done' && m.states.includes('waiting') && !m.calls.includes('abortAll') && m.calls.slice(0, firstHandover).filter(c => c === 'running').length === 3, JSON.stringify({ calls: m.calls, states: m.states }));
+      let clock = 0;
+      let tries = 0;
+      const retry = machine({ works: [claudeHeld()], check: handoverCheck, now: () => (clock += 20_000), claudeSdk: async () => (++tries < 2 ? { ready: false, consent: true, kind: 'offline' } : { ready: true, consent: true }) });
+      const retried = await retry.control.run();
+      t.ok('SDK の先取り: 待つ間に間をおいて取り直し、取れたら Claude のターンも引き継ぐ', retried.state === 'done' && tries === 2 && retry.calls.some(c => c.startsWith('handover:')) && !retry.calls.includes('lock'), JSON.stringify({ tries, calls: retry.calls }));
+      const thrown = machine({ works: [claudeHeld(), afterTurn], check: handoverCheck, claudeSdk: async () => { throw new Error('spawn ENOENT'); } });
+      const out = await thrown.control.run();
+      t.ok('SDK の先取り: 走らなければ（取れたか分からない）取れなかったものとして扱う', out.state === 'done' && thrown.states.includes('waiting')
+        && thrown.calls.slice(0, thrown.calls.findIndex(c => c.startsWith('handover:'))).filter(c => c === 'running').length === 2, thrown.calls.join(' '));
+      const ready = machine({ works: [claudeHeld()], check: handoverCheck, claudeSdk: async () => ({ ready: true, consent: true }) });
+      const handed = await ready.control.run();
+      t.ok('SDK の先取り: 取れていれば Claude のターンも待たずに引き継ぐ', handed.state === 'done' && ready.calls.some(c => c.startsWith('handover:')) && ready.calls.filter(c => c.startsWith('claudeSdk')).length === 1);
+    }
     // 引き継ぎの間（S1 を手放している間）は「サーバーが終了しました」を出さない
     {
       let release;
@@ -511,6 +543,13 @@ export default async function (t) {
       job: () => ({ inspectJob: () => ({}), decideLaunch: () => ({ mode: 'unsupported', reason: 'KILL_ON_JOB_CLOSE only' }) }) });
     const result = await effects.prepare();
     t.ok('prepare: Job が抜け道を許さなければ job', result.ok === false && result.reason === 'job');
+  }
+  {
+    const seen = [];
+    const effects = sw.createSwitchEffects({ link: new EventEmitter(), ready: {}, prepared: Promise.resolve(null), dataDir: 'D', env: { X: '1' },
+      fetchClaudeSdk: async options => { seen.push(options); return { ready: true }; } });
+    const out = await effects.claudeSdk({ nodeExe: 'N', appDir: 'A' });
+    t.ok('claudeSdk: 新しい版の実行場所の node と app で、同じデータ置き場へ取る', out.ready === true && seen[0].nodeExe === 'N' && seen[0].appDir === 'A' && seen[0].dataDir === 'D' && seen[0].env.X === '1');
   }
 
   // ---- 合わない版のダイアログ
