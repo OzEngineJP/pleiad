@@ -335,7 +335,7 @@ Codex は実行中のハンドルに `steer` を公開し、`turn/steer` に `ex
 ## 1. 何を作るか
 
 Claude Code を **セッションを離れずに扱えるようにするブラウザ host**。
-エージェントのコアは Claude Agent SDK。UI・セッション管理・成果物の提示を自前で持つ。
+エージェントのコアは Claude Agent SDK。UI・セッション管理・成果物の提示を自前で持つ。配布物は SDK を同梱せず、初めて要るときに npm のレジストリから取って読む（[ADR 0206](adr/0206-fetch-claude-agent-sdk-at-runtime.md)）。
 
 ## 2. 思想
 

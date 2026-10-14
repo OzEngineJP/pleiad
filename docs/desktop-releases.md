@@ -211,10 +211,14 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 - **サーバーの記録**: 実行場所で起こしたサーバーは stdio を持たないので、標準出力・標準エラー・捕まらなかった例外を `<実行場所>\logs\server.log`（`AGENT_HOST_SERVER_LOG`。`token=…` は伏せ、1MB を超えたら `server.log.old` に 1 世代）に書く。`off`（`utilityProcess`）の経路も同じ仕組みで `userData\logs\server.log`（開発版は `server-dev.log`）に書く。起動に失敗したときは main がその末尾をエラーに出す。main が居ないまま居続けるサーバーは、作業が 0 件のまま 3 分で終わる（更新のために main が離れた後は 30 分。`core/orphan-guard.mjs`）
 - 確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/runtime/node.exe` の SHA-256 が `scripts/node-runtime.json` と一致し、`resources/app/manifest.json` の全ファイルが実際のファイルと一致する（`desktop/runtime-manifest.cjs` の `buildManifest` で作り直して `buildHash` を比べる）。組み立ては、`AGENT_HOST_RUNTIME_DIR` を一時のフォルダーにして `desktop/runtime.cjs` の `install` を `resources` に対して呼ぶ（インストール版の Pleiad・`~/.agent-host` には触れない）
 
-## Claude Code の実行ファイルは同梱しない
+## Claude Agent SDK と Claude Code の実行ファイルは同梱しない
 
-`@anthropic-ai/claude-agent-sdk` の optionalDependencies（`@anthropic-ai/claude-agent-sdk-<os>-<arch>`、win32-x64 で約 238MB）は、electron-builder.yml の `files` で除外する。Pleiad は Claude の起動で必ず `pathToClaudeCodeExecutable` に利用者が入れた claude（`claudeExecutable()`）を渡すので、SDK 同梱の実行ファイルは読まれない（見つからなければ「未インストール」のエラー）。
-確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/node_modules/@anthropic-ai/` に `claude-agent-sdk` だけが残る。
+配布物（インストーラー・Store 版・macOS・Linux）には、Anthropic のライセンス（OSI のライセンスではない）のコードを 1 バイトも入れない（[ADR 0206](adr/0206-fetch-claude-agent-sdk-at-runtime.md)。SignPath Foundation の無償の署名の条件）。
+
+- **SDK**（`@anthropic-ai/claude-agent-sdk`）は devDependencies に版を固定して置き、`electron-builder.yml` の `files` でも除く。peer の `@anthropic-ai/sdk`（MIT）も devDependencies 扱いになり、同梱されない。配布物は、Claude のバックエンドを初めて使うとき（または設定の「エージェント」のボタン）に、`core/claude-sdk-pin.json` の版を `registry.npmjs.org` から取り、`package-lock.json` と同じ sha512 で確かめて `<データ置き場>/claude-sdk/<版>/` に置く（`core/claude-sdk-install.mjs`）。取る前に、Anthropic の利用条件が適用される旨を画面に出す
+- **SDK を上げるとき**は、`package.json`・`package-lock.json`・`core/claude-sdk-pin.json` を一緒に直す（`tests/unit/claude-sdk-pin.mjs` が食い違いを落とす）。更新で版が変わると、新しい main が切り替えの前に新しい版を取っておく（[設計](zero-downtime-update/design.md) §5.1）
+- **Claude Code の実行ファイル**（SDK の optionalDependencies の `@anthropic-ai/claude-agent-sdk-<os>-<arch>`、win32-x64 で約 238MB）も `files` で除く。Pleiad は Claude の起動で必ず `pathToClaudeCodeExecutable` に利用者が入れた claude（`claudeExecutable()`）を渡すので、SDK 同梱の実行ファイルは読まれない（見つからなければ「未インストール」のエラー）。取得する SDK も tarball だけで、optionalDependencies は取らない
+- 確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/node_modules/@anthropic-ai/` が無い（中身が空）。`dist-desktop/win-unpacked/` の全体を `claude-agent-sdk`・`@anthropic-ai/sdk`・`All rights reserved` で探して、アプリのコード（`core/claude-sdk*.mjs` の名前の参照）のほかに当たらない。取得の経路は、`AGENT_HOST_CLAUDE_SDK=download` と一時の `AGENT_HOST_DATA` で開発版を立てても試せる
 
 ## 配布と利用者認証
 
