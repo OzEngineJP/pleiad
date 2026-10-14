@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 
 const NL = String.fromCharCode(10);
 
@@ -327,6 +327,25 @@ async function runTurn(text) {
         usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 },
       },
     });
+  }
+
+  // 終わらないコマンド（hang-command）。本物（1.3.4）は WaitMsBeforeAsync（20 秒）で裏のタスクへ回し、AI は wait で待ち続ける。
+  // stream には ACTIVE が出たまま、DONE はコマンドが本当に終わったときにだけ来る。本物と同じく、コマンドはシェルの子（agy の直下）で走らせ、
+  // それが終わったら DONE・本文・result を出す（裏のコマンドを止める試験）。子の pid は FAKE_AGY_COMMAND_PID_FILE に書く
+  if (text.startsWith("hang-command")) {
+    const toolStep = ++stepIndex;
+    const command = 'node -e "setInterval(()=>{},1000)"';
+    const tool = { name: "run_command", parameters: { CommandLine: command, Cwd: process.cwd(), WaitMsBeforeAsync: 20000 } };
+    step({ step_index: toolStep, state: "ACTIVE", step_type: "tool", tool_name: "run_command", tool_info: tool });
+    const child = spawn(command, { shell: true, stdio: "ignore", windowsHide: true });
+    if (process.env.FAKE_AGY_COMMAND_PID_FILE) fs.writeFileSync(process.env.FAKE_AGY_COMMAND_PID_FILE, String(child.pid));
+    const ended = await new Promise((r) => child.once("exit", (code, signal) => r(signal ?? code)));
+    step({ step_index: toolStep, state: "DONE", step_type: "tool", tool_name: "run_command", tool_info: { ...tool, output: `exited: ${ended}` } });
+    const body = "コマンドが終わった";
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: body });
+    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
+    return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: body, duration_seconds: 1, num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } });
   }
 
   // 中断を測るための、終わらないターン
