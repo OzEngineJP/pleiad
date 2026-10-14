@@ -209,6 +209,7 @@ export function createCallTracker() {
   const commands = new Map();
   const events = [];
   return {
+    /** このイベントで増えた git の動きを返す（無ければ空） */
     track(event) {
       if (event?.type === 'tool.start' && event.id) {
         const command = commandOf(event.input);
@@ -216,8 +217,11 @@ export function createCallTracker() {
       } else if (event?.type === 'tool.result' && event.id && commands.has(event.id)) {
         const command = commands.get(event.id);
         commands.delete(event.id);
-        events.push(...eventsFromCall({ command, text: event.text ?? '', isError: Boolean(event.isError) }));
+        const found = eventsFromCall({ command, text: event.text ?? '', isError: Boolean(event.isError) });
+        events.push(...found);
+        return found;
       }
+      return [];
     },
     events: () => [...events],
   };

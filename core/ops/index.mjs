@@ -21,6 +21,7 @@ import { contextOps } from './context.mjs';
 import { remoteOps } from './remote.mjs';
 import { probeOps } from './probe.mjs';
 import { gitOps } from './git.mjs';
+import { gitPrsOps } from './git-prs.mjs';
 import { shellOps } from './shell.mjs';
 import { sessionWorkOps } from './session-work.mjs';
 import { fileOps } from './files.mjs';
@@ -41,7 +42,7 @@ const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((
 const fullRegistry = createRegistry({
   ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...browserOps, ...mcpOps, ...contextOps, ...remoteOps,
-    ...gitOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...draftOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...apiKeyOps, ...(withProbe ? probeOps : [])],
+    ...gitOps, ...gitPrsOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...draftOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...apiKeyOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],
 });
 

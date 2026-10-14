@@ -196,6 +196,7 @@ export default async function (t) {
       history: async () => ({ history: { root: 'C:/r', head: 'abc1234', commits: [{ hash: 'abc1234', short: 'abc1234', parents: [], author: 'a', at: 0, refs: [], subject: 's', ...secret }], next: null, session: null } }),
       commit: async () => ({ commit: { commit: { hash: 'abc1234', subject: 's', ...secret }, merge: false, files: [{ path: 'a', state: 'M', add: 1, del: 0 }], total: { files: 1, add: 1, del: 0 } } }),
       worktrees: async () => ({ worktrees: { base: null, total: 1, rows: [{ path: 'C:/r', branch: 'main', kind: 'here', ...secret }] } }),
+      prs: async () => ({ prs: [{ number: 1, url: 'https://github.com/o/r/pull/1', repo: 'o/r', title: 'fix', state: 'open', checks: 'pass' }], reason: null }),
       worktree: async () => ({ worktree: { path: 'C:/r', head: 'abc1234', committed: { files: [], total: { files: 0, add: 0, del: 0 } }, uncommitted: { files: [], total: { files: 0, add: 0, del: 0 } }, ...secret } }) },
     sessionWork: { backgroundTasks: async () => [{ id: 't', kind: 'shell', label: 'l', ...secret }], background: async () => ({ task: { id: 't', status: 'running', output: 'o', ...secret } }),
       subagents: async () => [{ agentId: 'a', origin: 'o', status: null, ...secret }], findSubagent: async () => ({ agentId: null }),

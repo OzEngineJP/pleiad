@@ -32,6 +32,8 @@ import { worktreeList } from './git-worktree.mjs';
 import { createWorktreeHost, writesScope } from './worktree-host.mjs';
 import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
+import { createPrReader, basicPr, PR_READ_MAX } from './git-prs.mjs';
+import { mergePrs, unionPrs } from './session-prs.mjs';
 import { createUpdateGate } from './update-gate.mjs';
 import { ensureDataSchema } from './data-schema.mjs';
 import { acquireDataLock, acquireDataLockWait } from './data-lock.mjs';
@@ -2347,6 +2349,20 @@ const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.A
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder });
 // git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
+// 会話が作った PR を会話に覚える（親の会話の git パネルが、委譲した子の PR も 1 つの一覧に出すため。ADR 0206）。
+// 作った瞬間（gh pr create の結果が届いたとき）とターンの終わりに呼ぶ。同じ PR は 1 件のまま、変わらなければ書かない。書き込みは順に
+let prWrites = Promise.resolve();
+function recordPrs(sessionId, events) {
+  const found = (events ?? []).filter(e => e?.kind === 'pr');
+  if (!sessionId || !found.length) return prWrites;
+  prWrites = prWrites.then(async () => {
+    const next = mergePrs((await store.get(sessionId)).prs, found);
+    if (next) await store.setSessionData(sessionId, 'prs', next);
+  }).catch(() => {});
+  return prWrites;
+}
+// 会話の PR の状態を gh で読む（60 秒覚える。読み取りだけ）
+const prReader = createPrReader();
 // worktree（ADR 0089）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
 const worktreeHost = createWorktreeHost({
   dataDir: store.dataDir, store,
@@ -2641,7 +2657,8 @@ function makeEmit(turn) {
     if (event?.type === 'tool.start' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
     if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
     // git でしたこと（PR の作成など）をターンの終わりの要約に使う
-    turn.gitCalls?.track(event);
+    const gitFound = turn.gitCalls?.track(event);
+    if (gitFound?.length && !replay) recordPrs(turn.info.sessionId, gitFound);
     // Internal activity and command observations do not add conversation UI events.
     if (event?.type === 'task.activity' || event?.type === 'task.command') return;
     // 新しい会話の最初のリクエストの文脈（固定の部分）。委譲の子の分だけ覚え、画面へは流さない（ADR 0166）
@@ -4103,6 +4120,19 @@ const opsGit = {
     const timeline = sessionId ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages) : [];
     const changes = await gitActivity.changes(cwd, sessionId, range);
     return { git: state, timeline, changes, worktrees, at: Date.now() };
+  },
+  // 会話の PR（会話が作ったもの＋委譲した子の会話が作ったもの）。states: false は gh を呼ばず、覚えている番号・URL だけ（先に番号を出すため）。
+  // 自分の会話の分は履歴からも拾い直す。子の分は今から作る PR の覚え書きだけ（昔の PR は戻さない）
+  prs: async (args) => {
+    const sessionId = args?.sessionId;
+    if (!sessionId) return { prs: [], reason: null };
+    const entry = await store.get(sessionId);
+    const backend = await resolveBackendForSession(sessionId).catch(() => null);
+    const past = backend ? timelineOf((await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [] }))).messages).filter(e => e.kind === 'pr') : [];
+    const children = await Promise.all((agentTasks?.descendants([sessionId]) ?? []).filter(r => r.sessionId).map(async r => ({ prs: (await store.get(r.sessionId)).prs ?? [] })));
+    const list = unionPrs([...(entry.prs ?? []), ...past.map(e => ({ number: e.number, url: e.url, at: e.at }))], children);
+    if (args?.states === false) return { prs: list.slice(0, PR_READ_MAX).map(basicPr), reason: null };
+    return prReader.read(list);
   },
   diff: async (args) => {
     const cwd = await gitWorktreeCwd(args);
@@ -6340,6 +6370,8 @@ async function closeTurn(ctx) {
     ]).catch(() => null);
     if (summary && turn.info.sessionId) emit({ type: 'present', kind: 'git', git: summary, by: 'ai', at: new Date().toISOString(), sessionId: turn.info.sessionId });
   }
+  // 作った PR の覚え書きは、git の撮影が間に合わなかったときも残す（作った瞬間に書いた分は、変わらないので書かない）
+  if (turn.gitCalls && turn.info.sessionId) await recordPrs(turn.info.sessionId, turn.gitCalls.events());
   await endTurn(turn, emit, { record: ctx.didStart });
 }
 
@@ -7660,6 +7692,8 @@ wss.on("connection", (ws, req) => {
           return await viaOp('git.worktrees');
         case 'gitWorktree':
           return await viaOp('git.worktree');
+        case 'gitPrs':
+          return await viaOp('git.prs');
         // ---- worktree（ADR 0136）。ぶつかりの確認・明示的な作成・片付けの操作
         case 'worktreeCheck':
           return await viaOp('worktrees.check');

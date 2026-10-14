@@ -2049,6 +2049,26 @@
       "input": "e894f481f4d9"
     },
     {
+      "id": "git.prs",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "git",
+            "prs"
+          ]
+        }
+      },
+      "legacyCommand": "gitPrs",
+      "input": "c73c23cd2c24"
+    },
+    {
       "id": "git.status",
       "risk": "read",
       "riskOf": false,
@@ -5266,6 +5286,11 @@
     {
       "id": "git.history",
       "path": "git history",
+      "positional": []
+    },
+    {
+      "id": "git.prs",
+      "path": "git prs",
       "positional": []
     },
     {

@@ -95,6 +95,7 @@ export const COMMANDS = new Set([
   'gitHistory',     // { sessionId, limit?, cursor? } -> { history: { root, head, commits: [{ hash, short, parents, author, at, refs: [{ kind: head|branch|remote|tag, name, pleiad?, detached? }], subject }], next, session: { n, at, head } | null } | null }。git log --branches --tags --remotes HEAD --topo-order（refs/pleiad/ は混ぜない）
   'gitCommit',      // { sessionId, hash } -> { commit: { commit: { hash, short, parents, author, at, subject, body }, merge, files: [{ path, orig?, state: A|M|D|R, add, del, binary }], total } | null }
   'gitWorktrees',   // { sessionId } -> { worktrees: { base: { path, branch, head }|null, total, rows: [{ path, branch, head, detached, locked, prunable, main, here, exists, dirty, ahead, behind, at, kind: here|plain|left|busy|clean, who?, leftover? }] } | null }
+  'gitPrs',         // { sessionId, states?: false } -> { prs: [{ number, url, repo, title?, state?: open|draft|merged|closed, checks?: pass|fail|pending, child? }], reason: 'no-gh'|'no-auth'|null }。会話と、委譲した子の会話が作った PR（新しい順）。states: false は gh を呼ばず番号・repo・URL だけ
   'gitWorktree',    // { sessionId, worktree } -> { worktree: { path, head, base, committed: { files, total }, uncommitted: { files, total }, failed } | null }
   // worktree（ADR 0089）。作る・消すのはサーバーが決めた置き場・ブランチだけ（画面から任意のパスを受けない）
   'worktreeCheck',  // { sessionId?, backend?, mode? } -> { git, current: { id, branch, path, origin, … } | null, conflicts: [{ sessionId, title, child }], canSplit }。同じリポジトリで書き込み中の別の会話（読むだけの会話・git 管理外では出さない）

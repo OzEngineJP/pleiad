@@ -1280,6 +1280,7 @@
     },
     "git": {
       "arg": { "sessionId": "会話の id。sessionId も cwd も省くとこの会話。", "cwd": "作業場所（どれかの会話が使った場所だけ）。", "range": "uncommitted（コミットしていない変更。既定）か session（この会話の間の変更）。", "limit": "返す件数（既定 30、最大 100）。", "cursor": "前の返り値の next。続きから返す。", "maxChars": "差分の字数の上限（既定 20000、最大 100000）。", "hash": "コミットの hash（7〜64 桁の 16 進数。git.history の hash）。", "worktree": "worktree のパス（git.worktrees の path）。" },
+      "prs": { "summary": "この会話の PR（この会話が作ったものと、委譲した子の会話が作ったもの。子の PR は今から作るものだけ）。新しい順で、番号・URL・repo と、gh で読めれば題・状態（open・draft・merged・closed）・チェック（pass・fail・pending）。gh が無い・ログインしていないときは state を省き reason に理由を返す。読み取りだけ（結果は 60 秒覚える）。", "states": "false で gh を呼ばず、番号・URL・repo だけを返す。" },
       "status": { "summary": "会話の作業場所の git の状態（ブランチ・HEAD・変更の数）。git が無い・管理外は git: null。", "brief": "true で、この会話の間のファイル・コミットの数も返す。", "fresh": "true で読み直す（短い間の控えを使わない）。" },
       "changes": { "summary": "会話の作業場所の変更の一覧（ファイルごとの増減）・worktree・この会話の git の出来事。", "only": "changes は変更の一覧だけ、light は worktree の一覧を計算しない（画面が使う軽い問い合わせ）。省くと全部。" },
       "diff": { "summary": "1 ファイルの差分（統一差分）。範囲の代わりに、コミット 1 つ・2 つのコミットの間・ステージ済み／変更の区別も選べる。", "path": "リポジトリのルートからのパス（git.changes の path）。", "commit": "このコミットの差分（最初の親との比較）。", "from": "2 つのコミットの間の、比べる元（to と一緒に）。", "to": "2 つのコミットの間の、比べる先（from と一緒に）。", "stage": "staged でステージ済み（HEAD と index）、work でステージしていない変更（index と作業ツリー。未追跡を含む）。", "orig": "名前の変更の元のパス。", "context": "前後の行数（既定 3）。画面が畳んだ行を開くときに使う。", "after": "true で、差分の後ろ側のファイルの全行も返す（画面が畳んだ行を開くため）。" },

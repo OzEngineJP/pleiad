@@ -84,7 +84,7 @@ export const COMMAND_REFUSE = [
   'setNotifyPc', 'setRemoteSettings', 'remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny',
   'remoteRevoke', 'setRemoteDeviceAgent', 'setRemoteResident',
   'contextSettings', 'slashSkills', 'sessionContext', 'plyInstructions', 'setPlyInstructions', 'refreshContext', 'contextDiff',
-  'gitStatus', 'gitPanel', 'gitDiff', 'gitHistory', 'gitCommit', 'gitWorktrees', 'gitWorktree',
+  'gitStatus', 'gitPanel', 'gitDiff', 'gitHistory', 'gitCommit', 'gitWorktrees', 'gitWorktree', 'gitPrs',
   'worktreeCheck', 'worktreeSplit', 'worktreeDiscard', 'worktreeKeep', 'worktreeArchive', 'worktreeRestore',
   'setSessionMcp', 'agentMcp', 'nativeInstructions', 'contextFindings', 'listMcpConfig', 'readMcpServer', 'saveMcpServer',
   'listPlyMcp', 'readPlyMcp', 'savePlyMcp', 'deletePlyMcp', 'mcpAuthStart', 'mcpAuthStatus', 'mcpAuthLogout', 'mcpReconnect',
