@@ -99,7 +99,8 @@ export function createUsageSource(cmd) {
     if (pending.has(backend)) return pending.get(backend);
     const task = cmd('providerUsage', { backend }).then(raw => {
       const result = raw?.quota ? { ...raw, quota: carryQuota(raw.quota, last.get(backend)) } : raw;
-      if (result?.quota) last.set(backend, result.quota);
+      // 枠もアカウントの行も無い結果（取得の失敗）では前回を捨てない。次に 1 行だけ読めなかったときに引き継げなくなる
+      if (result?.quota?.windows?.length || result?.quota?.accounts?.length) last.set(backend, result.quota);
       for (const listener of listeners) listener(backend, result);
       return result;
     }).finally(() => pending.delete(backend));

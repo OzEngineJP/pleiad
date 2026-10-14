@@ -60,7 +60,9 @@ export default async function(t) {
   t.ok('accountId で突き合わせ、取れた行は新しい値のまま。登録の無いエージェントも同じ', true);
 
   // 共通の口（createUsageSource）で引き継ぎ、札・一覧・設定の「使用量」へ同じ値を配る。失敗が続いても枠は残る
-  const replies = [{ label: 'Claude', quota: first, local: {} }, { label: 'Claude', quota: failed, local: {} }, { label: 'Claude', quota: failed, local: {} }];
+  // 3 回目は取得そのものの失敗（枠もアカウントも無い）。前回を捨てず、4 回目の 1 行の失敗にも引き継ぐ
+  const replies = [{ label: 'Claude', quota: first, local: {} }, { label: 'Claude', quota: failed, local: {} }, { label: 'Claude', quota: failed, local: {} },
+    { label: 'Claude', quota: { windows: [], checkedAt: null, message: '取得できませんでした' }, local: {} }, { label: 'Claude', quota: failed, local: {} }];
   const source = createUsageSource(async () => replies.shift());
   const heard = [];
   source.onResult((backend, result) => heard.push(result));
@@ -68,6 +70,8 @@ export default async function(t) {
   const second = await source.load('claude');
   assert.deepEqual(second.quota.accounts[0].windows, [week, five]);
   assert.equal((await source.load('claude')).quota.accounts[1].windows.length, 1, '失敗が続いても前回の枠のまま');
+  assert.deepEqual((await source.load('claude')).quota.windows, [], '取得そのものの失敗は素通し（札は web/header-usage.mjs の take が前の値を薄く残す）');
+  assert.deepEqual((await source.load('claude')).quota.accounts[0].windows, [week, five], '取得の失敗を挟んでも前回の枠を引き継ぐ');
   assert.deepEqual(heard[1].quota.accounts[0].windows, [week, five], 'onResult にも引き継いだ値を配る');
   assert.equal(failed.accounts[0].windows.length, 0, '受け取った結果は書き換えない');
   t.ok('createUsageSource が引き継ぎ、onResult と load の両方に同じ値を返す', true);
