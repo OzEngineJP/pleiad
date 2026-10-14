@@ -54,6 +54,8 @@ async page => {
   await page.locator('#newSession').click();
   await page.locator('#prompt').fill('echo:chrome window');
   await page.locator('#prompt').press('Control+Enter');
+  // 自分の発言が会話に載り、返事が済んでから会話の id を読む（先に読むと、送る前の仮の id を掴む）
+  await page.locator('#thread .m.user').first().waitFor();
   await page.waitForFunction(() => !document.querySelector('#send').disabled);
   const sessionId = await page.evaluate(() => localStorage.getItem('agent-host-current'));
   check(!!sessionId, 'a conversation exists');
@@ -80,7 +82,7 @@ async page => {
   check(await page.locator('#browserEntry').getAttribute('aria-expanded') === 'true', 'entry is pressed while open');
   const screen = page.locator('.cp-screen');
   await screen.waitFor();
-  check(/の Chrome の窓の映像（見るだけ）$/.test(await screen.getAttribute('aria-label')) && await screen.getAttribute('role') === 'img', 'the video is named and read-only');
+  check(/の Chrome のウィンドウの映像（見るだけ）$/.test(await screen.getAttribute('aria-label')) && await screen.getAttribute('role') === 'img', 'the video is named and read-only');
   check(await page.locator('.cp-slot').count() === 1 && await page.locator('.cp-slot .cc').count() === 1, 'the status slot exists and holds the control row (web/chrome-control.mjs)');
   await page.waitForFunction(() => window.__sent.some((x) => x.command === 'browserScreencast'));
   const start = (await sent('browserScreencast'))[0].args;

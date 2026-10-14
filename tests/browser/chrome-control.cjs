@@ -53,6 +53,8 @@ async page => {
   await page.locator('#newSession').click();
   await page.locator('#prompt').fill('echo:chrome control');
   await page.locator('#prompt').press('Control+Enter');
+  // 自分の発言が会話に載り、返事が済んでから会話の id を読む（先に読むと、送る前の仮の id を掴む）
+  await page.locator('#thread .m.user').first().waitFor();
   await page.waitForFunction(() => !document.querySelector('#send').disabled);
   const sessionId = await page.evaluate(() => localStorage.getItem('agent-host-current'));
   check(!!sessionId, 'a conversation exists');
@@ -118,6 +120,9 @@ async page => {
   // ============ 5. 窓が戻ると一行も戻る。止める・待機中・止めた後
   await page.evaluate((id) => window.__event({ type: 'chromeWindow', sessionId: id, windows: 1, operating: false }), sessionId);
   await page.locator('#browserEntry').waitFor({ state: 'visible' });
+  // ビューアの無い端末では、窓が無くなったときにパネルも閉じる。窓が戻っても閉じたままなので、入口から開き直す
+  if (await page.locator('#browserEntry').getAttribute('aria-expanded') !== 'true') await page.locator('#browserEntry').click();
+  await page.locator('.cp-slot').waitFor({ state: 'visible' });
   check((await shown()).join() === '止める,引き継ぐ', 'back to running buttons');
   await page.locator('.cp-slot .cc-btn', { hasText: '止める' }).click();
   await page.waitForFunction(() => window.__sent.some((x) => x.command === 'chromeStop'));
@@ -136,6 +141,9 @@ async page => {
 
   // ============ 7. 動きを減らす設定では、輪は広がらず薄く出て消えるだけ
   await page.emulateMedia({ reducedMotion: 'reduce' });
+  // 開き直した映像には、まだフレームが届いていない（輪は元の大きさが分かってから置く）
+  await page.evaluate(([id, data]) => window.__deliver({ kind: 'screencast', source: 'chrome', type: 'frame', sessionId: id, seq: 2, data, metadata: { deviceWidth: 1000, deviceHeight: 500 } }), [sessionId, PNG]);
+  await page.waitForFunction(() => document.querySelector('.cp-frame')?.getAttribute('src'));
   await page.evaluate((id) => window.__event({ type: 'chromeTap', sessionId: id, x: 10, y: 10, windowId: 1 }), sessionId);
   await page.locator('.cp-screen .cc-ring').waitFor({ state: 'attached' });
   check(await page.locator('.cp-screen .cc-ring').evaluate((el) => getComputedStyle(el).animationName === 'cc-ring-hold'), 'reduced motion: the ring only fades');
