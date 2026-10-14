@@ -13,7 +13,8 @@
 //   incompatible  合わない版。「あとで／中断して更新」を聞いている（ADR 0036 の形）。reason は INCOMPATIBLE_REASONS
 //   held          「あとで」。S1 のまま動かし続け、勝手には切り替えない（interruptNow で中断して切り替える。次の起動でまた聞く）。
 //                 reason が 'stoppers' のときは、止まるものだけが残ったときの「あとで」（止まるものが無くなる・作業が増えるまで自動では切り替えない）
-//   waiting       作業が 0 件になるのを待っている（waiting: { count, items, stoppers }。since は待ち始めた時刻。blockedBy は update-lock が断った理由）
+//   waiting       作業が 0 件になるのを待っている（waiting: { count, items, stoppers }。since は待ち始めた時刻。blockedBy は update-lock・S1 が断った理由。
+//                 blocked は「作業は 0 件なのに S1 が断り続けている」ときの { reason, sessions }。待っている作業の一覧が空の表示にならないよう、画面が何を待っているかを出す）
 //   asking        作業は終わったが、切り替えで止まるものが残っている。「あとで／止めて切り替え」を聞いている（reason: 'stoppers'）
 //   interrupting  「今すぐ中断して切り替える」: 全部を update で中断している（interrupt: { done, total }）
 //   locking       update-lock を取っている
@@ -160,7 +161,7 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
  *   }
  */
 function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {}, now = () => Date.now() }) {
-  let snap = { state: 'idle', server, target: typeof target === 'function' ? null : target, waiting: null, reason: null, blockedBy: null, error: null, previous: false,
+  let snap = { state: 'idle', server, target: typeof target === 'function' ? null : target, waiting: null, reason: null, blockedBy: null, blocked: null, error: null, previous: false,
     since: null, interrupt: null, interruptFailed: false, stopped: [], handover: null, at: null };
   const listeners = new Set();
   let interruptRequested = false;
@@ -204,7 +205,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
   }).finally(() => { pendingAnswer = null; });
 
   /** 待ちの表示。待ち始めた時刻（since）は、待ちでない状態から入ったときに決める（ロックが取れず待ちに戻ったときは変えない） */
-  const waiting = blockers => emit({ state: 'waiting', reason: null, waiting: blockers,
+  const waiting = blockers => emit({ state: 'waiting', reason: null, waiting: blockers, blocked: null,
     since: ['waiting', 'locking', 'interrupting'].includes(snap.state) && snap.since ? snap.since : now() });
 
   /**
@@ -271,7 +272,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       if (cancelled) { if (lock?.ok) effects.unlock(); return false; }
       if (!lock?.ok) {
         // 短い処理の最中（切り替え・送信待ちの配送など）。待ちに戻る
-        emit({ state: 'waiting', blockedBy: lock?.reason ?? null });
+        emit({ state: 'waiting', blockedBy: lock?.reason ?? null, blocked: { reason: 'lock', sessions: [] } });
         await pause();
         continue;
       }
@@ -330,13 +331,13 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       const how = await waitIdle();
       if (!how) return cancel();
       if (how === 'handover') {
-        emit({ state: 'handing', waiting: null });
+        emit({ state: 'handing', waiting: null, blocked: null });
         const out = await Promise.resolve(effects.handover(plan.runtime, plan.mode)).catch(error => ({ failed: error }));
         if (out?.declined) {
           // S1 が断った（忙しい・引き継げない作業が残っている）。S1 は元のまま。続けて断られたら間を延ばす
           declines += 1;
           log(`the handover was declined (${out.reason ?? '?'}${out.detail ? `: ${out.detail}` : ''}); waiting`);
-          emit({ state: 'waiting', blockedBy: out.reason ?? 'handover', error: null });
+          emit({ state: 'waiting', blockedBy: out.reason ?? 'handover', blocked: { reason: out.reason ?? 'handover', detail: out.detail ?? null, sessions: out.sessions ?? [] }, error: null });
           await pause(DECLINE_BACKOFF_MS[Math.min(declines, DECLINE_BACKOFF_MS.length) - 1]);
           continue;
         }
@@ -345,7 +346,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
         break;
       }
       declines = 0;
-      emit({ state: 'stopping', waiting: null });
+      emit({ state: 'stopping', waiting: null, blocked: null });
       const stopped = await Promise.resolve(effects.stopOld()).catch(error => ({ ok: false, error: errorText(error) }));
       if (stopped?.ok) break;
       log(`the old server did not stop: ${stopped?.error ?? '?'}`);
@@ -432,7 +433,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       interruptRequested = false;
       stoppersLater = false;
       declines = 0;
-      emit({ state: 'idle', previous: false, error: null, reason: null, waiting: null, blockedBy: null, since: null, interrupt: null, interruptFailed: false, stopped: [], handover: null, at: null });
+      emit({ state: 'idle', previous: false, error: null, reason: null, waiting: null, blockedBy: null, blocked: null, since: null, interrupt: null, interruptFailed: false, stopped: [], handover: null, at: null });
       running = run();
       running.catch(error => log(`switching failed: ${errorText(error)}`));
       return true;
@@ -553,7 +554,8 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
     if (!reply?.ok) {
       // S1 は元のまま。待たせていた S2 は止める（次に頼むときに起こし直す）
       stopLaunched();
-      return { declined: true, reason: reply?.reason ?? 'declined', detail: reply?.detail ?? null };
+      const sessions = (Array.isArray(reply?.sessions) ? reply.sessions : []).filter(id => typeof id === 'string').slice(0, 20);
+      return { declined: true, reason: reply?.reason ?? 'declined', detail: reply?.detail ?? null, sessions };
     }
     handedOver = true;
     // S1 はロックを放して終わる。プロセスが居なくなるのを待つ（S2 はロックが取れたら先へ進む。S1 の終わりを待たなくても進むので、上限を過ぎても進む）

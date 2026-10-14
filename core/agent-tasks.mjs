@@ -91,7 +91,11 @@ export function finalReply(messages) {
 // deliver は同じ親へ届ける完了通知（1 件以上）をまとめて受け取る。無音・コマンドの通知は ready だけで決める
 // childSteerable は「走っている子のターンへ追加指示を今すぐ渡せるか」、steer(task, { id, text }) はその途中送信。
 // 'delivered'（受理。合図の無いバックエンドは渡ったものとして扱う）/ 'pending'（受理。渡った合図を steered() で待つ）/
-// 'requeue'（受理されない。待機のまま次のターンで）/ 'error'（結果不明。送り直さない）を返す（ADR 0065）
+// 'requeue'（受理されない。待機のまま次のターンで）/ 'error'（結果不明。送り直さない）を返す（ADR 0065）。
+// deliver / deliverSilence / deliverCommand / deliverBackground の最後の引数 { accepted } は「親の会話がこの通知を受け取った」合図で、
+// 通知でターンが始まるときは、ターンが終わるまで待たずに呼ぶ。呼ぶと台帳は先に 'sent' を保存し（notify のみ）、通知を settling から外す。
+// 無停止の更新の引き継ぎ（core/handover.mjs）は settling が空になるのを待つので、ターンの終わりまで数えると、長いターンのあいだ引き継げない。
+// 受理の前（送ったかどうか分からない短い間）だけ settling に残す。受理の後は送り直さないので二重には届かない。
 export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false,
   // リモートのホストに任せたタスクの写し（row.host を持つ行。docs/agent-delegation.md「リモートのホストへ任せる」）: 今、依頼元の会話に中継された承認を待っているか・ホストのタスクを止める口
   remoteWaiting = () => false, cancelHost = async () => {},
@@ -113,7 +117,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const silenceMs = Number.isFinite(silenceMinutes) && silenceMinutes > 0 ? silenceMinutes * 60000 : 0;
   const commandMs = Number.isFinite(commandMinutes) && commandMinutes > 0 ? commandMinutes * 60000 : 0;
   const backgroundMs = Number.isFinite(backgroundMinutes) && backgroundMinutes > 0 ? backgroundMinutes * 60000 : 0;
-  const commandNotices = new Set(), backgroundNotices = new Set();
+  const commandNotices = new Map(), backgroundNotices = new Set();   // commandNotices は noticeId -> taskId
   const logFile = path.join(dataDir, 'agent-tasks-errors.log');
   let handle = null;
   let rowStore = taskStorage;
@@ -498,6 +502,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   async function notify(owner, rows) {
     noticeOwners.add(owner);
     for (const r of rows) notices.add(r.taskId);
+    // deliver が「依頼元のターンに受け取られた」（プロンプトが渡った。引き継げる状態）と知らせる口。受け取られた後は、ターンの終わりまで待たない:
+    // その時点で 'sent' を保存し（引き継ぎの前に記録を確定する。旧サーバーが引き継いだ後に書かず、新しいサーバーが再送しない）、settling から外す。
+    // 保存が終わるまで notices に残すので、引き継ぎはこの短い区間だけ待つ
+    let acceptance = null;
     try {
       // 親が受け取れない間（新しいターンも、走っているターンへの途中送信も）は delivering にせず、何も書かない（pending のまま次のタイマーで見る）
       const head = structuredClone(rows[0]);
@@ -505,8 +513,18 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       const sending = await begin(rows);
       if (!sending.length) return;
       const revisions = new Map(sending.map(r => [r.taskId, r.revision ?? 0]));
+      const accepted = () => acceptance ??= (async () => {
+        await serial(async () => {
+          for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId) && r.notification === 'delivering') { r.notification = 'sent'; r.updatedAt = Date.now(); }
+          await persist('notify.accepted', sending.map(r => r.taskId));
+          touched();
+        });
+        for (const r of sending) notices.delete(r.taskId);
+      })();
       // delivery callback only returns 'requeue' when no prompt was accepted.
-      const outcome = await deliver(sending.map(r => structuredClone(r))).catch(() => 'error');
+      const outcome = await deliver(sending.map(r => structuredClone(r)), { accepted }).catch(() => 'error');
+      // 受け取られた後の結果（ターンの終わり・引き継ぎ・失敗）では記録を変えない。送った事実は受け取られた時点で確定している
+      if (acceptance) { await acceptance; return; }
       if (outcome === 'requeue') {
         // 受け取られていない。親が空くまで何度も来るので、ファイルは delivering のまま書かず、メモリだけ pending に戻す
         await serial(async () => { for (const r of sending) if ((r.revision ?? 0) === revisions.get(r.taskId) && r.notification === 'delivering') r.notification = 'pending'; });
@@ -544,13 +562,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       try { await commit(r.taskId, row => { row.silenceNotifiedAt = activityAt; remember(row, 'noticedSilence', signature); }, 'silence.notice'); }
       catch { return; }
       if (r.status !== 'running' || (r.host && !r.hostTelemetry) || waitingOf(r) || lockWaitingOf(r) || r.lastActivityAt !== activityAt) return;
-      const outcome = await deliverSilence(structuredClone(r), Math.max(1, Math.floor((now() - activityAt) / 60000))).catch(() => 'error');
-      if (outcome === 'requeue' && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; forget(row, 'noticedSilence', signature); }, 'silence.requeue');
+      let taken = false;
+      const accepted = () => { taken = true; silenceNotices.delete(r.taskId); };
+      const outcome = await deliverSilence(structuredClone(r), Math.max(1, Math.floor((now() - activityAt) / 60000)), { accepted }).catch(() => 'error');
+      if (outcome === 'requeue' && !taken && r.lastActivityAt === activityAt) await record(r.taskId, row => { row.silenceNotifiedAt = null; forget(row, 'noticedSilence', signature); }, 'silence.requeue');
     } finally { silenceNotices.delete(r.taskId); }
   }
   async function notifyCommand(r, command) {
     const id = command.noticeId;
-    commandNotices.add(id);
+    commandNotices.set(id, r.taskId);
     const current = () => r.activeCommands?.find(c => c.noticeId === id);
     const eligible = () => {
       const c = current();
@@ -578,8 +598,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         return;
       }
       const c = current();
-      const outcome = await deliverCommand(structuredClone(r), { ...commandView(c, now()), noticeId: id }).catch(() => 'error');
-      if (outcome === 'requeue' && current()) await record(r.taskId, release, 'command.requeue');
+      // 依頼元のターンに受け取られたら、ターンの終わりまで待たない（印は送る前に保存済み。引き継ぎを止めない）
+      let taken = false;
+      const accepted = () => { taken = true; commandNotices.delete(id); };
+      const outcome = await deliverCommand(structuredClone(r), { ...commandView(c, now()), noticeId: id }, { accepted }).catch(() => 'error');
+      if (outcome === 'requeue' && !taken && current()) await record(r.taskId, release, 'command.requeue');
     } finally { commandNotices.delete(id); }
   }
   // 子が返答を終えて裏の作業だけを待っている（ADR 0170）。止めずに依頼元へ知らせ、待ちが続く間は backgroundMs ごとに知らせ直す。
@@ -602,9 +625,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       catch { return; }
       const live = current();
       if (!live) return;
+      let taken = false;
+      const accepted = () => { taken = true; backgroundNotices.delete(r.taskId); };
       const outcome = await deliverBackground(structuredClone(r), { count, minutes: Math.max(1, Math.floor((now() - bg.since) / 60000)),
-        interval: Math.max(1, Math.round(backgroundMs / 60000)), tasks: live.tasks }).catch(() => 'error');
-      if (outcome === 'requeue') await record(r.taskId, row => { if (row.backgroundNotice?.since === bg.since && row.backgroundNotice.count === count) row.backgroundNotice = before; }, 'background.requeue');
+        interval: Math.max(1, Math.round(backgroundMs / 60000)), tasks: live.tasks }, { accepted }).catch(() => 'error');
+      if (outcome === 'requeue' && !taken) await record(r.taskId, row => { if (row.backgroundNotice?.since === bg.since && row.backgroundNotice.count === count) row.backgroundNotice = before; }, 'background.requeue');
     } finally { backgroundNotices.delete(r.taskId); }
   }
   // 保存障害の間は、間隔を空けて保存だけをやり直す（1 回に 1 秒ほど待つ保存を、500ms ごとに仕事の数だけ重ねない）。
@@ -692,6 +717,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     // ホストに任せたタスクの写しは、ホストで動いている（この PC の更新・終了を止めない）。完了通知がまだ届いていないものだけ数える
     // 完了通知を渡している最中か（引き継ぎの前に終わるのを待つ。無停止の更新 2d。動いている子そのもの（busy）は、保持役に載った子は新しいサーバーが引き継ぐので数えない）
     get settling() { return notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || backgroundNotices.size > 0 || Object.values(records).some(r => r.notification === 'delivering'); },
+    /** 引き継ぎを待たせている通知の依頼元の会話（画面に「どの会話を待っているか」を出す） */
+    settlingSessions() {
+      const taskIds = [...notices, ...silenceNotices, ...backgroundNotices, ...commandNotices.values(), ...Object.values(records).filter(r => r.notification === 'delivering').map(r => r.taskId)];
+      return [...new Set(taskIds.map(id => records[id]?.parentSessionId).filter(Boolean))];
+    },
     get busy() { return live.size > 0 || notices.size > 0 || silenceNotices.size > 0 || commandNotices.size > 0 || backgroundNotices.size > 0 || Object.values(records).some(r => (ACTIVE.has(r.status) && !r.host) || r.notification === 'pending'); },
     list(owner) { return Object.values(records).filter(r => !owner || r.parentSessionId === owner).map(r => view(r)); },
     /** sessionIds の会話が作った行と、その子孫の行の view（ホストに任された子の下の孫を数える・止める。docs/remote.md §4.5） */

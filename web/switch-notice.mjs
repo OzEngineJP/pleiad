@@ -36,6 +36,9 @@ export function readSwitchState(payload) {
     interruptFailed: payload.interruptFailed === true,
     interrupt: payload.interrupt && typeof payload.interrupt === "object" ? { done: num(payload.interrupt.done) ?? 0, total: num(payload.interrupt.total) ?? 0 } : null,
     items: list(payload.items), stoppers: list(payload.stoppers), stopped: list(payload.stopped),
+    blocked: payload.blocked && typeof payload.blocked === "object"
+      ? { reason: String(payload.blocked.reason ?? ""), sessions: (Array.isArray(payload.blocked.sessions) ? payload.blocked.sessions : []).filter((id) => typeof id === "string") }
+      : null,
   };
 }
 
@@ -57,6 +60,29 @@ export function switchStopperRows(stoppers) {
   return (stoppers ?? []).map((s, i) => ({ key: `stop:${s.kind}:${s.sessionId ?? ""}:${s.label ?? i}`, sessionId: s.sessionId, kind: s.kind, backend: s.backend,
     what: s.kind === "shell" ? `! ${s.label ?? ""}`.trim() : s.label ? t("switch.terminalNamed", { label: s.label }) : t("switch.terminal") }));
 }
+
+/**
+ * 作業は 0 件なのに、サーバーが引き継ぎを断り続けているときの行（待っている処理の種類と、わかれば会話）。
+ * 作業の一覧が空の「0 件」にならないよう、何を待っているかを見せる
+ */
+export function switchBlockedRows(blocked) {
+  return (blocked?.sessions ?? []).map((sessionId) => ({ key: `blocked:${sessionId}`, sessionId, state: "settling", backend: null }));
+}
+
+const blockedText = (reason) => {
+  switch (reason) {
+    case "notices": return t("switch.blockedNotices");
+    case "outbox": return t("switch.blockedOutbox");
+    case "switching": return t("switch.blockedSwitching");
+    case "forking": return t("switch.blockedForking");
+    case "setting-approvals": return t("switch.blockedSettingApprovals");
+    case "steer": return t("switch.blockedSteer");
+    case "schedule": return t("switch.blockedSchedule");
+    case "chrome-close": return t("switch.blockedChromeClose");
+    case "lock": return t("switch.blockedLock");
+    default: return t("switch.blockedOther");
+  }
+};
 
 /** 「実行中 3 件・承認待ち 1 件」 */
 export function switchCounts(rows) {
@@ -81,8 +107,12 @@ export function noticeModel(state, { dismissed = false } = {}) {
   const stoppers = switchStopperRows(state.stoppers);
   const rows = switchWorkRows(state.items);
   switch (state.phase) {
-    case "waiting":
-      return { kind: "wait", title: t("switch.waiting", { target }), sub: switchCounts(rows), rows, stoppers, since: state.since, error: state.interruptFailed ? t("switch.interruptFailed") : "" };
+    case "waiting": {
+      // 待っている作業が無いのに待っているときは、待っている処理（と会話）を出す
+      const blocked = !rows.length && !stoppers.length && state.blocked;
+      return { kind: "wait", title: t("switch.waiting", { target }), sub: blocked ? blockedText(state.blocked.reason) : switchCounts(rows),
+        rows: blocked ? switchBlockedRows(state.blocked) : rows, stoppers, since: state.since, error: state.interruptFailed ? t("switch.interruptFailed") : "", blocked: Boolean(blocked) };
+    }
     case "asking":
       return { kind: "ask", title: t("switch.askTitle", { target }), sub: t("switch.askSub", { count: state.stoppers.length }), rows: [], stoppers };
     case "manual":
@@ -106,7 +136,7 @@ export function pageModel(state) {
   if (!state) return null;
   const target = state.target;
   switch (state.phase) {
-    case "waiting": return { status: t("switch.pageWaiting", { target }), hint: t("switch.pageRunning", { current: state.current }) };
+    case "waiting": return { status: t("switch.pageWaiting", { target }), hint: state.blocked && !state.items.length && !state.stoppers.length ? blockedText(state.blocked.reason) : t("switch.pageRunning", { current: state.current }) };
     case "asking": return { status: t("switch.pageAsking", { target }), hint: t("switch.pageRunning", { current: state.current }) };
     case "held": case "manual":
       return { status: state.kind === "stoppers" && state.phase === "held" ? t("switch.pageAsking", { target }) : t("switch.pageManual", { target }), hint: t("switch.pageRunning", { current: state.current }) };
@@ -174,11 +204,11 @@ export function setupSwitchNotice({ bridge = window.plyDesktop?.switch, sessionN
     const line = el("button", "update-work-row switch-row");
     line.type = "button";
     line.title = t("switch.openSession");
-    const waiting = row.state === "waiting";
+    const waiting = row.state === "waiting", settling = row.state === "settling";
     const mark = waiting ? el("span", "update-work-dia", "◆") : runMark(t("updates.workRunningOnly"));
     if (waiting) mark.setAttribute("aria-hidden", "true");
     line.append(mark, el("span", "update-work-name", row.sessionId ? sessionName(row.sessionId) : t("switch.unknownSession")),
-      el("span", `update-work-state${waiting ? " mark" : ""}`, waiting ? t("updates.workWaiting") : row.backend ? t("updates.workRunning", { agent: agentName(row.backend) }) : t("updates.workRunningOnly")));
+      el("span", `update-work-state${waiting ? " mark" : ""}`, waiting ? t("updates.workWaiting") : settling ? t("switch.blockedRow") : row.backend ? t("updates.workRunning", { agent: agentName(row.backend) }) : t("updates.workRunningOnly")));
     if (row.sessionId) line.onclick = () => openSession(row.sessionId);
     return line;
   }
@@ -216,12 +246,12 @@ export function setupSwitchNotice({ bridge = window.plyDesktop?.switch, sessionN
     const work = container.querySelector(".switch-grp-work") ?? container.appendChild(el("div", "switch-grp switch-grp-work"));
     const stop = container.querySelector(".switch-grp-stop") ?? container.appendChild(el("div", "switch-grp switch-grp-stop"));
     const since = model.since ? t("switch.since", { time: fmt.time(model.since) }) : "";
-    syncGroup(work, t("switch.listTitle"), since, model.rows ?? [], false);
+    syncGroup(work, model.blocked ? t("switch.blockedTitle") : t("switch.listTitle"), since, model.rows ?? [], false);
     syncGroup(stop, t("switch.stoppersTitle"), "", model.stoppers ?? [], true);
     container.hidden = work.hidden && stop.hidden;
   }
   function paintAfter(node, model) {
-    const show = (model.rows ?? []).length > 0 && ["wait", "manual"].includes(model.kind);
+    const show = (model.rows ?? []).length > 0 && !model.blocked && ["wait", "manual"].includes(model.kind);
     node.hidden = !show;
     if (!show) return;
     // 「中断した会話は ⚠ で残り、「再開」で続けられます。…」。訳文の {{mark}} の位置に三角を置く
@@ -288,6 +318,7 @@ export function setupSwitchNotice({ bridge = window.plyDesktop?.switch, sessionN
     box.hidden = !kind && !progress;
     if (box.hidden) return;
     const model = kind ? { kind, rows: switchWorkRows(state.items), stoppers: switchStopperRows(state.stoppers), since: state.since } : { kind: "none", rows: [], stoppers: [] };
+    if (kind === "wait" && !model.rows.length && !model.stoppers.length && state.blocked) Object.assign(model, { rows: switchBlockedRows(state.blocked), blocked: true });
     // 止まるものだけが残ったとき（ask）は止まるものだけ。合わない版・待ちは作業も並べる
     if (kind === "ask") model.rows = [];
     $("switchPageList").hidden = !kind;

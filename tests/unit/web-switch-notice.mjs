@@ -42,6 +42,20 @@ export default function (t) {
   const wait = model('waiting');
   t.ok('待ち: 題・件数・作業と止まるもの。待ち始めの時刻を持つ', wait.kind === 'wait' && wait.title === 'Pleiad 0.8.0 への切り替えを待っています' && wait.sub === '実行中 4 件・承認待ち 1 件' && wait.rows.length === 5 && wait.stoppers.length === 3 && wait.since === 5);
   t.ok('待ち: 中断が止まらなかったときだけ 1 行（辞書の文言）', wait.error === '' && noticeModel(readSwitchState({ ...base, phase: 'waiting', interruptFailed: true })).error.includes('止まらない作業があったため'));
+  // 作業は 0 件なのに S1 が断り続けているときは、「0 件」の空の一覧でなく、待っている処理（と会話）を出す
+  const blockedState = (reason, sessions = ['o1']) => readSwitchState({ ...base, phase: 'waiting', since: 5, items: [], stoppers: [], blocked: { reason, sessions: [...sessions, 9] } });
+  const blockedWait = noticeModel(blockedState('notices'));
+  t.ok('待ち（作業 0 件・断られ続け）: 待っている処理の 1 行と、待たせている会話（会話の id 以外は読まない）。一覧の見出しは「切り替えの前に済ませている処理」',
+    blockedWait.kind === 'wait' && blockedWait.sub === '委譲した作業の完了の知らせを会話へ届けています' && blockedWait.rows.length === 1 && blockedWait.rows[0].sessionId === 'o1' && blockedWait.rows[0].state === 'settling' && blockedWait.blocked === true
+    && readSwitchState({ ...base, phase: 'waiting', blocked: 3 }).blocked === null);
+  t.ok('待ち: 作業や止まるものが残っているときは今までどおり（件数の行・作業の行）で、blocked を見ない', (() => {
+    const mixed = noticeModel(readSwitchState({ ...base, phase: 'waiting', items, stoppers, blocked: { reason: 'notices', sessions: ['o1'] } }));
+    return mixed.blocked === false && mixed.sub === '実行中 4 件・承認待ち 1 件' && mixed.rows.length === 5;
+  })());
+  t.ok('待ち: 理由ごとの文言（種類が分からなければ汎用の文）。会話が分からなくても 1 行出る', ['notices', 'outbox', 'switching', 'forking', 'setting-approvals', 'steer', 'schedule', 'chrome-close', 'lock', 'unknown-kind']
+    .every(reason => noticeModel(blockedState(reason, [])).sub.length > 5) && noticeModel(blockedState('unknown-kind', [])).sub === '実行中の処理が終わるのを待っています' && noticeModel(blockedState('notices', [])).rows.length === 0);
+  t.ok('ページ: 作業 0 件で断られ続けているときの文言（ヒント）は待っている処理。普通は「動いているのは …」', pageModel(blockedState('outbox')).hint === '送信中のメッセージがあります。届いたら切り替えます'
+    && pageModel(readSwitchState({ ...base, phase: 'waiting', items })).hint.startsWith('動いているのは'));
   const ask = model('asking');
   t.ok('聞く: 止まるものだけを並べ、「切り替えると N 件が止まります」', ask.kind === 'ask' && ask.title === 'Pleiad 0.8.0 に切り替える準備ができました' && ask.sub === '切り替えると 3 件が止まります' && ask.rows.length === 0 && ask.stoppers.length === 3);
   const manual = model('manual');

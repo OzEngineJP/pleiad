@@ -78,13 +78,15 @@ export async function waitUntil(predicate, { timeoutMs, pollMs = 20, now = Date.
 }
 
 class Declined extends Error {
-  constructor(reason, detail = null) { super(detail ? `${reason}: ${detail}` : reason); this.reason = reason; this.detail = detail; }
+  constructor(reason, detail = null, sessions = []) { super(detail ? `${reason}: ${detail}` : reason); this.reason = reason; this.detail = detail; this.sessions = sessions; }
 }
+
+const busyDeclined = settled => new Declined('busy', settled.detail ?? null, settled.sessions ?? []);
 
 /**
  * 旧サーバーの引き継ぎ。deps:
  *   hold() / unhold()              新しい作業の開始を送信待ちに回す・戻す（戻したら、送信待ちを kick し直す）
- *   settled()                      → { ok, detail? } 短い処理が終わったか（終わっていないものを detail に）
+ *   settled()                      → { ok, detail?, sessions? } 短い処理が終わったか（終わっていないものを detail に、待たせている会話を sessions に）
  *   blockers()                     → [{ kind, sessionId }] 引き継げない作業（保持役に載っていないターンなど）
  *   inflight()                     → 処理中の MCP・hooks の呼び出しの数
  *   turns()                        → 引き継ぐターン（{ key, sessionId }）
@@ -119,7 +121,7 @@ export function createHandover(deps) {
         // 2. 短い処理
         const drained = await waitUntil(() => deps.settled().ok, { timeoutMs: drainMs, ...stamp });
         ms.drain = drained.waitedMs;
-        if (!drained.ok) throw new Declined('busy', deps.settled().detail ?? null);
+        if (!drained.ok) throw busyDeclined(deps.settled());
         // 3. 引き継げない作業
         const blockers = deps.blockers();
         if (blockers.length) throw new Declined('blocked', blockers.map(b => `${b.kind}:${b.sessionId ?? '-'}`).join(', '));
@@ -129,7 +131,8 @@ export function createHandover(deps) {
         const droppedCalls = calls.ok ? 0 : deps.inflight();
         if (droppedCalls) log(`handover: ${droppedCalls} call(s) were still running after ${inflightMs} ms; they will fail once and the model can retry`);
         // 待つ間に新しい短い処理・引き継げない作業が現れていないか、もう一度見る（hold の後なので増えないはずだが、始まっていた処理が終わるまで）
-        if (!deps.settled().ok) throw new Declined('busy', deps.settled().detail ?? null);
+        const again = deps.settled();
+        if (!again.ok) throw busyDeclined(again);
         const late = deps.blockers();
         if (late.length) throw new Declined('blocked', late.map(b => `${b.kind}:${b.sessionId ?? '-'}`).join(', '));
         // 5. タイマー
@@ -168,7 +171,7 @@ export function createHandover(deps) {
         const reason = error instanceof Declined ? error.reason : 'error';
         const detail = error instanceof Declined ? error.detail : String(error?.message ?? error);
         log(`handover: declined (${reason}${detail ? `: ${detail}` : ''})`);
-        return { ok: false, reason, detail };
+        return { ok: false, reason, detail, ...(error instanceof Declined && error.sessions.length ? { sessions: error.sessions } : {}) };
       } finally { running = false; }
     },
   };

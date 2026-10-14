@@ -24,7 +24,7 @@ function fakeDeps(overrides = {}) {
     log: () => {},
     hold: () => calls.push('hold'),
     unhold: () => calls.push('unhold'),
-    settled: () => ({ ok: !state.busy, detail: state.busy ? 'switching' : '' }),
+    settled: () => ({ ok: !state.busy, detail: state.busy ? 'switching' : '', sessions: state.busy ? (state.busySessions ?? []) : [] }),
     blockers: () => state.blockers,
     inflight: () => state.inflight,
     turns: () => state.turns,
@@ -82,6 +82,17 @@ export default async function (t) {
     const result = await createHandover(deps).run({ drainMs: 100 });
     t.ok('引き継げない作業があれば、待たずに断る（hold を戻す。タイマーは止めていない）', result.ok === false && result.reason === 'blocked' && result.detail.includes('turn:sx')
       && JSON.stringify(calls) === JSON.stringify(['hold', 'unhold']), JSON.stringify(calls));
+  }
+  {
+    // 画面が「待っている作業 0 件」でなく、待たせている会話を出せるように、断る答えに会話を載せる
+    const { deps, state } = fakeDeps();
+    state.busy = true; state.busySessions = ['owner-1'];
+    const result = await createHandover(deps).run({ drainMs: 50 });
+    t.ok('短い処理で断るときは、待たせている会話（sessions）を答えに載せる。無ければ載せない',
+      result.ok === false && result.reason === 'busy' && JSON.stringify(result.sessions) === '["owner-1"]');
+    state.busySessions = [];
+    const none = await createHandover(deps).run({ drainMs: 50 });
+    t.ok('待たせている会話が分からなければ sessions は載せない', none.reason === 'busy' && !('sessions' in none));
   }
   {
     const { deps, calls, state } = fakeDeps();

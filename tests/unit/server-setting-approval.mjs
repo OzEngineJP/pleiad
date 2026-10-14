@@ -186,5 +186,35 @@ async function ledger(t) {
     await ap.flush();
     t.ok('台帳はファイルに残る（待っている要求）', JSON.parse(await fs.readFile(file, 'utf8')).pending.map((p) => p.requestId).join() === 'setting-e');
     ap.close();
+
+    // 受け取られた（accepted）ら、ターンが続いていても settling から外れ、台帳から外して保存済みで、送り直さない
+    const file2 = path.join(dir, 'accepted', SETTING_APPROVALS_FILE);
+    await fs.mkdir(path.dirname(file2));
+    await fs.writeFile(file2, JSON.stringify({ version: 1, pending: [],
+      notices: [{ requestId: 'setting-f', sessionId: 's5', key: 'k', op: 'settings.set', outcome: 'allowed', state: 'queued' }] }));
+    const calls = [];
+    let turnEnds;
+    const turn = new Promise((resolve) => { turnEnds = resolve; });
+    let acceptNow;
+    const beforeAccept = new Promise((resolve) => { acceptNow = resolve; });
+    const ap2 = await createSettingApprovals({ dataDir: path.dirname(file2), intervalMs: 20, deliver: async (sessionId, list, { accepted }) => {
+      calls.push(list.map((n) => n.requestId));
+      await beforeAccept;
+      await accepted();
+      await turn;   // 通知で始まったターンが続いている間
+      return 'ok';
+    } });
+    for (let i = 0; i < 100 && !calls.length; i++) await sleep(10);
+    t.ok('受け取られる前は settling で、待たせている会話が分かる（保存は delivering）', ap2.settling && ap2.settlingSessions().join() === 's5'
+      && JSON.parse(await fs.readFile(file2, 'utf8')).notices[0].state === 'delivering');
+    acceptNow();
+    for (let i = 0; i < 100 && ap2.settling; i++) await sleep(10);
+    t.ok('受け取られたら、ターンが続いていても settling から外れ、台帳から外して保存している', !ap2.settling && ap2.settlingSessions().length === 0
+      && JSON.parse(await fs.readFile(file2, 'utf8')).notices.length === 0);
+    await sleep(120);
+    turnEnds();
+    await sleep(120);
+    t.ok('ターンが続く間も終わった後も送り直さない', calls.length === 1 && ap2.snapshot().notices.length === 0);
+    ap2.close();
   } finally { await fs.rm(dir, { recursive: true, force: true }).catch(() => {}); }
 }

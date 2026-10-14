@@ -14,7 +14,7 @@ import path from 'node:path';
 
 const dir = process.env.ADOPT_SCENES_DIR;
 if (!dir) throw new Error('adopt-server: ADOPT_SCENES_DIR is not set');
-const { handOffTurn, handoverState, trackIn } = await import('../../core/server.mjs');
+const { handOffTurn, handoverState, handoverSettled, trackIn } = await import('../../core/server.mjs');
 const { handOffHeld, pauseHeld, muteHeld } = await import('../../core/backends/fake.mjs');
 const { conversation } = await import('../../core/conversations.mjs');
 const { handOffClaude, muteClaudeHeld } = await import('../../core/backends/claude.mjs');
@@ -83,6 +83,8 @@ const scenes = {
   },
   pauseCodex: async ({ paused }) => pauseCodexHeld(paused),
   // 処理中の MCP の呼び出しが ms の間続いている形を作る（引き継ぎの前に終わるのを待つ上限の確かめ。2d）
+  // 引き継ぎの前の「短い処理が終わっているか」（core/server.mjs の handoverSettled。通知で始まったターンは数えない）
+  handoverSettled: async () => handoverSettled(),
   slowCall: async ({ ms }) => { trackIn(handoverState.inflight, new Promise(resolve => setTimeout(resolve, ms))); return handoverState.inflight.size; },
   pauseHeld: async ({ sessionId, paused }) => pauseHeld(sessionId, paused),
   muteHeld: async ({ sessionId, muted }) => muteHeld(sessionId, muted),

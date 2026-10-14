@@ -22,7 +22,8 @@ const pickList = list => (list ?? []).slice(0, LIST_MAX).map(pickItem);
 /**
  * snapshot（desktop/switch.cjs）→ 画面へ渡す形（版 1）。phase:
  *   none       何も出さない（切り替えが要らない・始まる前・main が終わる）
- *   waiting    作業が終わるのを待っている（since・items・stoppers。interruptFailed は中断が止まらなかった）
+ *   waiting    作業が終わるのを待っている（since・items・stoppers。interruptFailed は中断が止まらなかった。
+ *              blocked は、作業は 0 件なのに S1 が引き継ぎを断り続けているときの { reason（短い処理の種類）, sessions（待たせている会話）}）
  *   asking     作業が終わり、止まるものだけが残った。「あとで／止めて切り替え」を聞いている（stoppers）
  *   manual     合わない版。「あとで／中断して切り替え」を聞いている（reason は schema・ipc・runtime・job・check。items・stoppers）
  *   held       「あとで」の後（kind: 'stoppers' | 'manual'）。脇の知らせは閉じ、⚙ の点と設定のページに残す
@@ -36,7 +37,8 @@ function displayState(snap) {
   const lists = () => ({ items: pickList(snap.waiting?.items), stoppers: pickList(snap.waiting?.stoppers) });
   switch (snap?.state) {
     case 'waiting':
-      return { ...base, phase: 'waiting', since: snap.since ?? null, interruptFailed: snap.interruptFailed === true, ...lists() };
+      return { ...base, phase: 'waiting', since: snap.since ?? null, interruptFailed: snap.interruptFailed === true, ...lists(),
+        ...(snap.blocked ? { blocked: { reason: String(snap.blocked.reason ?? ''), sessions: (snap.blocked.sessions ?? []).filter(id => typeof id === 'string').slice(0, LIST_MAX) } } : {}) };
     case 'asking':
       return { ...base, phase: 'asking', ...lists() };
     case 'incompatible':
