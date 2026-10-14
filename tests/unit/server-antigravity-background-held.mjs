@@ -16,6 +16,8 @@ export const title = "保持役に載せた agy でも、裏へ回ったコマ�
 
 const COMMAND = 'node -e "setInterval(()=>{},1000)"';
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+// 後片付けで落としてよいのは、この試験が起こしたものだけ。init・自分・自分の親（runner）には、一覧を取り違えても手を出さない
+const safeToKill = (pid) => Number.isInteger(pid) && pid > 1 && pid !== process.pid && pid !== process.ppid;
 const until = async (check, ms = 10_000) => {
   for (const end = Date.now() + ms; Date.now() < end;) {
     if (await check()) return true;
@@ -79,7 +81,7 @@ export default async function (t) {
       probe?.close();
       if (!await until(() => !alive(holderPid))) { try { process.kill(holderPid); } catch { /* 既に終わっている */ } }
     }
-    for (const pid of leftovers) if (pid && alive(pid)) await killTree(pid).catch(() => {});
+    for (const pid of leftovers) if (safeToKill(pid) && alive(pid)) await killTree(pid).catch(() => {});
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 }

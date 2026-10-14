@@ -16,6 +16,8 @@
     "fx-orphan": 10,
     "fx-leak": 10,
     "fx-hang": 10,
+    "fx-stall": 800,
+    "fx-stall-once": 700,
     "fx-shell": 10
   }
 }

@@ -25,7 +25,11 @@ export const USAGE = `使い方: node tests/run.mjs [絞り込み…] [オプシ
   --weights <path>   時間の重みの JSON（既定 tests/suite-weights.json）
   --retry-failed n   落ちた suite だけを n 回（0 か 1。既定 0 = 流し直さない）新しい worker で流し直す。通ったら緑として扱い、流し直したことを必ず出す（CI 用）
   --list [--json]    走らせずに、選ばれた suite と重みを出す
-  --help, -h         これ`;
+  --help, -h         これ
+
+環境変数:
+  PLEIAD_TEST_SUITE_TIMEOUT_MS  suite ごとの上限を固定の値（ミリ秒）にする。0 で上限なし（既定は重みの 5 倍と 180 秒の大きい方。--jobs 2 以上）
+  PLEIAD_TEST_PROGRESS_MS       長い suite の「実行中: <名前>」の間隔（ミリ秒。既定 120000）`;
 
 const intIn = (name, text, min, max) => {
   if (!/^\d+$/.test(text)) throw new ArgError(`${name} は整数: ${JSON.stringify(text)}`);
@@ -162,6 +166,41 @@ export function loadWeights(file) {
 /** 重みの無い suite（新しく足したもの）は defaultMs で数える。落とさず、必ずどこかに入る */
 export const weightOf = (weights, name) => weights.map.get(name) ?? weights.defaultMs;
 export const isWeighted = (weights, name) => weights.map.has(name);
+
+/**
+ * suite ごとの時間の上限（worker の中で終わらない suite を、親が木ごと止めて失敗に数えるための値。tests/lib/runner.mjs）。
+ * 重みの SUITE_LIMIT_FACTOR 倍と SUITE_LIMIT_FLOOR_MS の大きい方。
+ *   - 重みは 16 並列で測った実測なので、2 並列の CI の Windows でも、重みの数倍あれば通常の揺れ（Windows Defender の初回読み・共有ランナーの負荷）に収まる。
+ *     手元の Windows の --jobs 2 全件では、かかった時間の最大は重みの約 5 倍（重みが数十 ms の suite）で、重みが 1 秒以上のものは 2.8 倍までだった
+ *   - 下限は、重みが小さい suite や、重みの無い新しい suite（defaultMs）が、起動の遅い回で落ちないための余裕
+ * PLEIAD_TEST_SUITE_TIMEOUT_MS を渡すと、全 suite にその値（ミリ秒）を使う。0 は上限なし。
+ */
+export const SUITE_LIMIT_FACTOR = 5;
+export const SUITE_LIMIT_FLOOR_MS = 180_000;
+export const SUITE_LIMIT_ENV = "PLEIAD_TEST_SUITE_TIMEOUT_MS";
+/** 長く走っている suite を知らせる間隔（ミリ秒）の既定と、上書きの環境変数 */
+export const PROGRESS_MS = 120_000;
+export const PROGRESS_ENV = "PLEIAD_TEST_PROGRESS_MS";
+
+const envMs = (env, name) => {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return null;
+  if (!/^\d+$/.test(String(raw).trim())) throw new ArgError(`${name} は 0 以上の整数（ミリ秒）: ${JSON.stringify(raw)}`);
+  return Number(String(raw).trim());
+};
+
+/** 環境変数から { fixedMs: 固定の上限（null なら重みから決める。0 は上限なし）, progressMs } を読む。おかしければ ArgError */
+export function readTimeoutEnv(env = process.env) {
+  const progress = envMs(env, PROGRESS_ENV);
+  if (progress === 0) throw new ArgError(`${PROGRESS_ENV} は 1 以上`);
+  return { fixedMs: envMs(env, SUITE_LIMIT_ENV), progressMs: progress ?? PROGRESS_MS };
+}
+
+/** suite 1 本の上限（ミリ秒）。null は上限なし */
+export function suiteLimitMs(weights, name, fixedMs = null) {
+  if (fixedMs !== null) return fixedMs === 0 ? null : fixedMs;
+  return Math.max(SUITE_LIMIT_FLOOR_MS, SUITE_LIMIT_FACTOR * weightOf(weights, name));
+}
 
 /** 重い順（同じ重みは名前順）。分割と worker への配り方が同じ並びを使う。ロケールに依らない比較 */
 export function heaviestFirst(entries, weights) {

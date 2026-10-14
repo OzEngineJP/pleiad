@@ -28,9 +28,26 @@ export default async function (t) {
     AGENT_HOST_TASK_BACKGROUND_MINUTES: String(INTERVAL_MS / 60000), ...gates.env } });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const taskOf = async (taskId) => (await c.cmd('agentTasks')).find((r) => r.taskId === taskId);
+  // fn 自体が返らない（cmd の返事が来ない）ときも、ms で打ち切る。CI で fn が返らず 30 分黙って止まった（2026-10）ので、止まったらサーバーの出力を残す
   const until = async (fn, ms = 30000) => {
     const deadline = Date.now() + ms;
-    for (;;) { const v = await fn(); if (v || Date.now() > deadline) return v; await sleep(50); }
+    for (;;) {
+      const call = Promise.resolve().then(fn);
+      call.catch(() => {});
+      const left = Math.max(0, deadline - Date.now());
+      let timer;
+      const stalled = Symbol('stalled');
+      const v = await Promise.race([call, new Promise((r) => { timer = setTimeout(() => r(stalled), left + 1000); })]);
+      clearTimeout(timer);
+      if (v === stalled) {
+        console.log(`  until の fn が返らないまま ${ms}ms を過ぎた: ${String(fn).replace(/\s+/g, ' ').slice(0, 160)}
+--- server.tail ---
+${server.tail(40)}`);
+        return null;
+      }
+      if (v || Date.now() > deadline) return v;
+      await sleep(50);
+    }
   };
   // 依頼元のターンの終わりは待たない（fake は返りの JSON を少しずつ流すので、その間に子が先へ進む）。
   // ツールの結果が届いた時点で返し、from（目印）も返す

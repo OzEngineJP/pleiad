@@ -5,7 +5,7 @@
 // 取得は設定の「使用量」と同じ口（web/usage.mjs の createUsageSource）。同じエージェントの取得が走っていれば相乗りする。
 // サーバーも 1 分はキャッシュを返す（core/server.mjs の providerQuota）ので、何度呼んでも各サービスへの問い合わせは増えない。
 // 更新: 5 分ごと（見えている間）・ターンが終わった直後（そのエージェントの分）・一覧を開いたとき・↻。
-// 取得に失敗したら直前の値を薄く出し、いつの値かを添える。
+// 取得に失敗したら直前の値を薄く出し、いつの値かを添える。（アカウントの行だけ読めなかったときは、その行の前回の枠を薄くせず出す。web/usage.mjs の carryQuota）
 import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
 import { isExpired } from './usage.mjs';
