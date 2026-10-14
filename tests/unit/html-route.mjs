@@ -244,6 +244,13 @@ export default async function (t) {
     assert.equal(r.cmds[0]?.[0], 'invoke', 'Ctrl+クリックもホストの OS のブラウザーは開かせない');
     assert(!names(r).includes('openPath'));
     r.cmds.length = 0;
+    // 中クリックも同じ（ブラウザーの既定のまま相対パスを新しいタブで開かせない）
+    const middle = clickOn(link(PATH), { button: 1 });
+    fire(listeners, 'auxclick', middle); await flush();
+    assert.equal(middle.defaultPrevented, true, '中クリック: 既定の動き（相対パスの新しいタブ）を止める');
+    assert.equal(r.cmds[0]?.[0], 'invoke', '中クリックもホストの内蔵ブラウザーのタブ');
+    assert(!names(r).includes('openPath'));
+    r.cmds.length = 0;
     r.preview.menu(10, 10, { path: PATH, element: null });
     const items = r.menus.at(-1).filter(i => !i.sep);
     assert(items[0].label.includes('ブラウザー'));
@@ -262,6 +269,7 @@ export default async function (t) {
     for (const [label, run] of [
       ['クリック', () => fire(listeners, 'click', clickOn(link(PATH)))],
       ['Ctrl+クリック', () => fire(listeners, 'click', clickOn(link(PATH), { ctrlKey: true }))],
+      ['中クリック', () => fire(listeners, 'auxclick', clickOn(link(PATH), { button: 1 }))],
       ['チップ', () => r.preview.open({ path: PATH, line: null }, null)],
     ]) {
       r.cmds.length = 0; run(); await flush();

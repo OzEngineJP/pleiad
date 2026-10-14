@@ -843,10 +843,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     const anchor = event.target.closest('a');
     if (!anchor || (!anchor.closest('#log') && !anchor.closest('#channelsView') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath } : fileReference(anchor.getAttribute('href'));
-    if (!ref || !isHtml(ref.path) || !cmd || !osActions()) return;
+    if (!ref || !isHtml(ref.path) || !cmd) return;
     event.preventDefault();
     anchor.closest('dialog[open]')?.close();
-    openHtml({ path:ref.path, element:anchor, base:anchor.closest('.file-preview-document') ? file?.path : undefined }, { external:true });
+    const base = anchor.closest('.file-preview-document') ? file?.path : undefined;
+    // PC の操作ができない端末（リモート）には既定のブラウザーが無い。ブラウザーが相対パスをそのまま新しいタブで開かないよう、左クリックと同じ行き先（htmlRoute）へ
+    if (!osActions()) return activate(ref, anchor, base);
+    openHtml({ path:ref.path, element:anchor, base }, { external:true });
   });
   // 可視化のカードの「ブラウザーで開く」: 写しを htmlRoute の開き先で開く（内蔵ブラウザーでは同じ記録はタブを使い回す）
   document.addEventListener('ply-visualize-browser', event => {
