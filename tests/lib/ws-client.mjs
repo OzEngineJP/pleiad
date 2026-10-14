@@ -5,6 +5,9 @@
 // 依存は既存の ws だけ（グローバル WebSocket に頼らないので Node 20 でも動く）。
 import WebSocket from "ws";
 
+/** cmd の返事を待つ既定の上限（ミリ秒） */
+export const CMD_TIMEOUT_MS = 60_000;
+
 /**
  * 1本つないで ready を受け取るまで待つ。
  * @param onEvent 受け取ったイベントごとに呼ばれる。第2引数はこの接続自身。
@@ -25,11 +28,20 @@ export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow
     rejectHello = rej;
   });
 
-  const cmd = (command, args = {}) =>
+  // 返事が来ない cmd（接続が閉じた後に送った分・サーバーが答えない分）で、試験が黙って止まらない。上限を過ぎたら、コマンド名を入れて拒否する。
+  // 長く待つ cmd だけ `cmd(name, args, { ms })` で延ばす（0 は上限なし）
+  const cmd = (command, args = {}, { ms = CMD_TIMEOUT_MS } = {}) =>
     new Promise((res, rej) => {
+      // ws は、開いていない接続への送信を黙って捨てる（close で拒否されるのは、その時点で待っていた分だけ）。送れないものは待たせない
+      if (ws.readyState !== WebSocket.OPEN) return rej(new Error(`cmd ${command} を送れない: 接続が開いていない（readyState ${ws.readyState}）`));
       const id = String(++seq);
-      pending.set(id, { res, rej });
-      ws.send(JSON.stringify({ kind: "command", command, id, args }));
+      const timer = ms > 0 ? setTimeout(() => {
+        if (pending.delete(id)) rej(new Error(`cmd ${command} の返事が ${ms}ms 来なかった`));
+      }, ms) : null;
+      timer?.unref?.();
+      pending.set(id, { res: (v) => { clearTimeout(timer); res(v); }, rej: (e) => { clearTimeout(timer); rej(e); } });
+      try { ws.send(JSON.stringify({ kind: "command", command, id, args })); }
+      catch (e) { pending.delete(id); clearTimeout(timer); rej(e); }
     });
 
   ws.on("message", (raw) => {

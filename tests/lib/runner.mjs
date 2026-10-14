@@ -9,6 +9,12 @@
 //                     通れば緑として扱い、流し直したことは端末・timings・GitHub Actions の注釈とまとめに必ず残す。2 回目も落ちれば失敗。
 //                     ランナーの整合の失敗（worker の異常終了・登録の不一致・worktree の漏れ）は流し直さない。
 //
+// suite ごとの時間の上限（--jobs N > 1 のとき。tests/lib/runner-plan.mjs の suiteLimitMs。重みの 5 倍と 180 秒の大きい方。PLEIAD_TEST_SUITE_TIMEOUT_MS で固定の値・0 で無し）:
+//                     結果を返さない suite（接続の待ち・子プロセスの待ちが終わらないなど）で CI が黙って止まらないよう、過ぎたら親が、その suite の名前・そこまでの出力・上限を出し、
+//                     worker を木ごと止めて、その suite を失敗に数え、新しい worker で残りを続ける。--retry-failed では流し直す（下の retryPass。揺れで止まった suite を緑にできるように）。
+//                     --jobs 1 は同じプロセスなので止められない（長く走っているものを知らせるだけ）。
+// 長く走っている suite は PLEIAD_TEST_PROGRESS_MS（既定 120 秒）ごとに「実行中: <名前>（経過）」と出す（CI のログで、止まった場所が分かるように）。
+//
 // どちらでも: 登録した suite はちょうど 1 回ずつ走り、走らなかったもの・二重に走ったもの・worker が途中で死んだものは失敗にする。
 // worktree の見張り（テストの後に本体の git に worktree が増えていない）は suite ごとに worker の中で見て、全体の前後でも親が見る。
 import fs from "node:fs";
@@ -21,13 +27,15 @@ import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
 import { reapOwned, killTagged, WORKER_TAG_ENV } from "./process-reap.mjs";
 import { isRetryable, buildRetryEntry, retryLines, reportRetriesToCi } from "./runner-retry.mjs";
-import { ArgError, USAGE, parseArgs, loadRegistry, loadWeights, weightOf, isWeighted, heaviestFirst, assignShards, planHash } from "./runner-plan.mjs";
+import { ArgError, USAGE, parseArgs, loadRegistry, loadWeights, weightOf, isWeighted, heaviestFirst, assignShards, planHash, readTimeoutEnv, suiteLimitMs } from "./runner-plan.mjs";
 
 const WORKER_PATH = fileURLToPath(new URL("./run-worker.mjs", import.meta.url));
 const WORKER_EXIT_GRACE_MS = 30_000;
 
 const clip = (text, n = 300) => { const s = String(text ?? ""); return s.length > n ? `${s.slice(0, n)}…` : s; };
 const firstLine = (e) => String(e?.stack ?? e ?? "").split("\n")[0];
+/** 69000 → "1 分 9 秒"・12000 → "12 秒" */
+const spanText = (ms) => { const s = Math.round(ms / 1000); return s >= 60 ? `${Math.floor(s / 60)} 分 ${s % 60} 秒` : `${s} 秒`; };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // suite を 1 本走らせる（同じプロセスの順次実行と、worker の中の両方が使う）
@@ -68,7 +76,7 @@ export function reviveSuite(d) {
 // ---------------------------------------------------------------------------------------------------------------------
 // 同じプロセスで順に（従来）
 
-async function runInProcess({ entries, root }) {
+async function runInProcess({ entries, root, progressMs }) {
   installDomStub();
   const loaded = [];
   // 全部を読み込んでから走らせる（従来と同じ。読み込みの失敗は、その suite だけの失敗にする）
@@ -80,9 +88,16 @@ async function runInProcess({ entries, root }) {
   await guard.prime();
   const out = [];
   const t0 = Date.now();
+  // 同じプロセスの中なので、終わらない suite は止められない。せめて、どこで止まっているかをログに出す
+  let current = null;
+  const ticker = setInterval(() => {
+    if (current && Date.now() - current.at >= progressMs * current.reports) { current.reports++; console.log(`  実行中: ${current.name}（経過 ${spanText(Date.now() - current.at)}）`); }
+  }, Math.min(5000, Math.max(50, progressMs / 4)));
+  ticker.unref();
   for (const { entry, mod, error } of loaded) {
     const startMs = Date.now() - t0;
     let suite;
+    current = { name: entry.name, at: Date.now(), reports: 1 };
     if (error) {
       suite = new Suite(entry.name, entry.title ?? entry.name);
       console.log(`\n── ${suite.name}  ${suite.title}`);
@@ -94,6 +109,7 @@ async function runInProcess({ entries, root }) {
     }
     out.push({ entry, suite, worker: null, startMs, endMs: Date.now() - t0 });
   }
+  clearInterval(ticker);
   return { records: out, workers: [], problems: [], reaped: 0, reapErrors: [] };
 }
 
@@ -120,7 +136,7 @@ function removeWorkerData(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* 残るだけ */ }
 }
 
-async function runPool({ entries, jobs, root, weights, parentDataDir }) {
+async function runPool({ entries, jobs, root, weights, parentDataDir, limitOf, progressMs }) {
   const queue = heaviestFirst(entries, weights);
   const t0 = Date.now();
   const records = [];
@@ -177,9 +193,22 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
       w.killTimer = setTimeout(() => killTree(w.pid), WORKER_EXIT_GRACE_MS);   // 終わらない worker は木ごと止める。残りは exit で回収
       return;
     }
-    w.busy = { entry, startedAt: Date.now(), out: [] };
+    const limitMs = limitOf(entry.name);
+    w.busy = { entry, startedAt: Date.now(), out: [], limitMs, reports: 1, timer: limitMs ? setTimeout(() => onTimeout(w, entry), limitMs) : null };
     try { w.child.send({ type: "run", name: entry.name, file: entry.abs }); }
     catch { /* 死んだ。close で拾う（busy の suite は失敗にする） */ }
+  };
+
+  /**
+   * suite が上限を過ぎても結果を返さない。そこまでの出力（worker が抱えている分）を出し、worker を木ごと止める。
+   * 失敗の記録は exit の側（予定外の終わりと同じ道。worker が起こした子孫の回収・置き場の削除・残りを新しい worker で続ける）で、status: "timeout" にして作る。
+   */
+  const onTimeout = (w, entry) => {
+    const b = w.busy;
+    if (!b || b.entry !== entry || w.closed) return;
+    w.timedOut = true;
+    emit(`  上限（${spanText(b.limitMs)}）を過ぎても ${entry.name} が終わらない。worker ${w.id} を止める`);
+    killTree(w.pid);
   };
 
   const spawnWorker = () => {
@@ -223,6 +252,7 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
           if (b) killTree(w.pid);   // 取り違えたまま続けない。exit で、実行中だった suite が失敗になる
           return;
         }
+        clearTimeout(b.timer);
         w.busy = null;
         w.done++;
         w.busyMs += Date.now() - b.startedAt;
@@ -234,6 +264,7 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
     child.on("error", (e) => { w.fatal = `${w.fatal ?? ""}${e?.message ?? e}`; });
     child.on("exit", async (code, signal) => {
       clearTimeout(w.killTimer);
+      clearTimeout(w.busy?.timer);
       w.closed = true;
       w.endedAt = Date.now();
       w.exit = { code, signal };
@@ -254,8 +285,14 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
         const s = new Suite(b.entry.name, b.entry.title ?? b.entry.name);
         s.ms = Date.now() - b.startedAt;
         const last = [...b.out.join("").split(/\r?\n/), ...w.tail].filter((l) => l.trim()).slice(-12);
-        s.ok("worker が最後まで走り切る", false, `worker ${id} が suite の途中で終了した（exit ${code}${signal ? ` / signal ${signal}` : ""}）${w.fatal ? ` ${w.fatal}` : ""}\n          直近の出力:\n          ${last.join("\n          ") || "（なし）"}`);
-        record(b.entry, s, w, b.startedAt - t0, { status: "crash" });
+        const tailText = `直近の出力:\n          ${last.join("\n          ") || "（なし）"}`;
+        if (w.timedOut) {
+          s.ok(`suite が上限（${spanText(b.limitMs)}）の時間内に終わる`, false, `${b.entry.name} が ${spanText(s.ms)} 経っても結果を返さなかったので、worker ${id} を止めた\n          ${tailText}`);
+          record(b.entry, s, w, b.startedAt - t0, { status: "timeout" });
+        } else {
+          s.ok("worker が最後まで走り切る", false, `worker ${id} が suite の途中で終了した（exit ${code}${signal ? ` / signal ${signal}` : ""}）${w.fatal ? ` ${w.fatal}` : ""}\n          ${tailText}`);
+          record(b.entry, s, w, b.startedAt - t0, { status: "crash" });
+        }
       } else if (!expected) {
         problems.push(`worker ${id} が予定外に終了した（exit ${code}${signal ? ` / signal ${signal}` : ""}）${w.fatal ? ` ${w.fatal}` : ""}${w.tail.length ? `\n      ${w.tail.slice(-10).join("\n      ")}` : ""}`);
         if (!w.ready) startFailures++;
@@ -265,6 +302,17 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
     });
     return w;
   };
+
+  // 長く走っている suite を、間隔ごとに知らせる（CI のログで、止まった場所が分かるように）
+  const ticker = setInterval(() => {
+    for (const w of workers) {
+      const b = w.busy;
+      if (!b || Date.now() - b.startedAt < progressMs * b.reports) continue;
+      b.reports++;
+      emit(`  実行中: ${b.entry.name}（経過 ${spanText(Date.now() - b.startedAt)}${b.limitMs ? `・上限 ${spanText(b.limitMs)}` : ""}・worker ${w.id}）`);
+    }
+  }, Math.min(5000, Math.max(50, progressMs / 4)));
+  ticker.unref();
 
   const killAll = () => { for (const w of workers) if (!w.closed) killTree(w.pid); };
   const onSignal = (sig) => { killAll(); reapRoots(workers); process.exit(sig === "SIGINT" ? 130 : 143); };
@@ -277,6 +325,7 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
     for (let i = 0; i < jobs; i++) spawnWorker();
     await allDone;
   } finally {
+    clearInterval(ticker);
     killAll();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
@@ -300,11 +349,11 @@ async function runPool({ entries, jobs, root, weights, parentDataDir }) {
  * 1 回目の結果のうち、流し直す対象（isRetryable）だけを新しい worker で 1 回走らせ、その結果で記録を置き換える。
  * 1 回目のランナーの問題・子孫の回収は引き継ぐ（流し直しで通っても、整合の失敗は消えない）。
  */
-async function retryPass({ ran, jobs, root, weights, parentDataDir, offsetMs }) {
+async function retryPass({ ran, jobs, root, weights, parentDataDir, offsetMs, limitOf, progressMs }) {
   const targets = ran.records.filter(isRetryable);
   if (!targets.length) return { ran, retried: [] };
   console.log(`\n══ 流し直し: 1 回目に落ちた ${targets.length} 本を、新しい worker で 1 回だけ走らせ直す（${targets.map((r) => r.entry.name).join(", ")}）`);
-  const second = await runPool({ entries: targets.map((r) => r.entry), jobs: Math.min(jobs, targets.length), root, weights, parentDataDir });
+  const second = await runPool({ entries: targets.map((r) => r.entry), jobs: Math.min(jobs, targets.length), root, weights, parentDataDir, limitOf, progressMs });
   const byName = new Map(second.records.map((r) => [r.entry.name, r]));
   const problems = [...ran.problems, ...second.problems];
   const retried = [];
@@ -342,7 +391,7 @@ function statusOf(suite, extra) {
   return "pass";
 }
 
-function buildTimings({ args, weights, selected, totalCount, records, workers, extraProblems, wallMs, plan }) {
+function buildTimings({ args, weights, selected, totalCount, records, workers, extraProblems, wallMs, plan, limitOf }) {
   const suites = records.map((r) => {
     const s = r.suite;
     return {
@@ -350,6 +399,7 @@ function buildTimings({ args, weights, selected, totalCount, records, workers, e
       file: r.entry.file,
       weightMs: weightOf(weights, r.entry.name),
       weighted: isWeighted(weights, r.entry.name),
+      limitMs: limitOf(r.entry.name),
       status: statusOf(s, r),
       ms: s.ms ?? 0,
       judgements: s.results.length,
@@ -432,6 +482,14 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
       return 2;
     }
   }
+  let timeoutEnv;
+  try { timeoutEnv = readTimeoutEnv(); } catch (e) {
+    if (!(e instanceof ArgError)) throw e;
+    console.error(`環境変数が不正: ${e.message}`);
+    return 2;
+  }
+  const limitOf = (name) => suiteLimitMs(weights, name, timeoutEnv.fixedMs);
+  const progressMs = timeoutEnv.progressMs;
   const jobs = Math.min(args.jobs, selected.length);
   const plan = { hash: planHash(filtered ? selected : entries, weights, args.shard?.total ?? 1) };
 
@@ -453,10 +511,10 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   // 全体の前後でも、本体の git の worktree を見る（suite ごとの見張りが拾えない取りこぼしと、worker が途中で死んだ場合の分）
   const before = await snapshotPleiadWorktrees(root);
   let ran = jobs > 1
-    ? await runPool({ entries: selected, jobs, root, weights, parentDataDir: testEnv.testDataDir })
-    : await runInProcess({ entries: selected, root });
+    ? await runPool({ entries: selected, jobs, root, weights, parentDataDir: testEnv.testDataDir, limitOf, progressMs })
+    : await runInProcess({ entries: selected, root, progressMs });
   let retried = [];
-  if (args.retryFailed > 0) ({ ran, retried } = await retryPass({ ran, jobs, root, weights, parentDataDir: testEnv.testDataDir, offsetMs: Date.now() - t0 }));
+  if (args.retryFailed > 0) ({ ran, retried } = await retryPass({ ran, jobs, root, weights, parentDataDir: testEnv.testDataDir, offsetMs: Date.now() - t0, limitOf, progressMs }));
   const after = await snapshotPleiadWorktrees(root);
   if (ran.reaped) console.log(`
   後始末: worker の子孫のプロセス ${ran.reaped} 本を止めた（suite が起こして残したもの・worker が途中で死んで残ったもの）`);
@@ -496,7 +554,7 @@ export async function main({ suites: files, baseDir, unitDir = null, argv, root,
   console.log(jobs > 1 ? `  ${(wallMs / 1000).toFixed(1)} 秒（worker ${jobs} 本・suite の合計 ${(sumMs / 1000).toFixed(1)} 秒）` : `  ${(wallMs / 1000).toFixed(1)} 秒`);
 
   if (args.timings) {
-    const doc = buildTimings({ args, weights, selected, totalCount: entries.length, records, workers: ran.workers, extraProblems: problemsRun, wallMs, plan });
+    const doc = buildTimings({ args, weights, selected, totalCount: entries.length, records, workers: ran.workers, extraProblems: problemsRun, wallMs, plan, limitOf: jobs > 1 ? limitOf : () => null });
     doc.ok = code === 0;
     doc.reapedProcesses = ran.reaped;
     doc.reapErrors = ran.reapErrors;

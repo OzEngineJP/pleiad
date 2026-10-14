@@ -2,6 +2,7 @@
 //
 // 流し直すのは「判定が落ちた / 例外で中断した」suite だけ（1 回だけ・新しい worker で）。
 // 流し直さない（失敗のまま）: ランナーの整合の失敗（worker の異常終了・起動できず走らなかった・登録した名前と export の不一致・worktree の漏れ）。
+// 上限（tests/lib/runner-plan.mjs の suiteLimitMs）を過ぎて止めた suite（status "timeout"）は流し直す: 揺れで止まったものは新しい worker で通ることがあり、止まり続けるものは 2 回止められて赤のまま。
 // 理由と範囲は docs/adr/0162-ci-retry-failed-suites.md。
 import fs from "node:fs";
 

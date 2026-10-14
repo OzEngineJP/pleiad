@@ -5,6 +5,7 @@
 //   - 実行: --jobs 1（同じプロセス）と --jobs 2（子プロセス）で、同じ suite が同じ結果になる。失敗の詳細・skip・例外・判定数が残る
 //   - 異常系: worker が途中で死ぬ・例外・読み込めない・名前の不一致は、他の suite を巻き込まず、その suite を失敗にして全体の終了コードを 1 にする
 //   - 流し直し: --retry-failed 1 は落ちた suite だけを新しい worker で 1 回流し直し、通れば緑・2 回目も落ちれば赤。流し直したことは端末・timings・Actions の注釈とまとめに残す。既定（指定なし）は流し直さない。ランナーの整合の失敗は流し直さない
+//   - 上限: 結果を返さない suite は、suite ごとの時間の上限（重みの 5 倍と 180 秒の大きい方。試験では PLEIAD_TEST_SUITE_TIMEOUT_MS で縮める）で、名前・そこまでの出力を出して worker を木ごと止め、失敗に数える。残りは新しい worker で続く。--retry-failed では流し直す。長い suite は「実行中: <名前>」を出す
 //   - 隔離: worker は親の AGENT_HOST_DATA を使わず、worker ごとの一時ディレクトリを作って消す。実行元の制御用の環境変数（PLEIAD_CONTROL_* など）はテストに届かない。子プロセスは残らない
 // 実際の tests/run.mjs は --list（走らせない）で見る。走らせるのは tests/lib/runner-fixtures/ の小さな試験用 suite（入口は tests/lib/runner-fixture-entry.mjs）。
 import { execFile, spawn } from "node:child_process";
@@ -15,7 +16,7 @@ import { ROOT } from "../lib/server.mjs";
 import { ownedDescendants, reapOwned, killTagged, WORKER_TAG_ENV } from "../lib/process-reap.mjs";
 import { Suite } from "../lib/harness.mjs";
 import { isRetryable, buildRetryEntry, reportRetriesToCi } from "../lib/runner-retry.mjs";
-import { ArgError, DEFAULT_JOBS, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf } from "../lib/runner-plan.mjs";
+import { ArgError, DEFAULT_JOBS, parseArgs, extractSuiteName, loadRegistry, loadWeights, assignShards, heaviestFirst, weightOf, suiteLimitMs, readTimeoutEnv, SUITE_LIMIT_FLOOR_MS, SUITE_LIMIT_FACTOR, PROGRESS_MS } from "../lib/runner-plan.mjs";
 
 export const name = "runner-contract";
 export const title = "テストランナー: 引数・登録・分割・worker・異常系・環境の隔離（--jobs / --shard）";
@@ -420,6 +421,65 @@ export default async function (t) {
         const r3 = reportRetriesToCi([info], { env, write: (s) => lines.push(s), append: () => { throw new Error("EACCES"); } });
         t.ok("まとめのファイルが書けなくても失敗にしない（注釈は出る）・Actions の外・流し直し 0 本では何も出さない", r3.annotations === 1 && r3.summary === false && reportRetriesToCi([info], { env: {}, write: () => { throw new Error("出さない"); }, append: () => { throw new Error("出さない"); } }).annotations === 0 && reportRetriesToCi([], { env, write: () => { throw new Error("出さない"); } }).annotations === 0);
       }
+    }
+
+    // ---- suite ごとの時間の上限（結果を返さない suite で、CI が黙って止まらない）---------------------------------------------------
+    {
+      const W = { map: new Map([["heavy", 77_000], ["light", 40], ["huge", 600_000]]), defaultMs: 3000 };
+      t.ok("上限: 重みの 5 倍と 180 秒の大きい方（軽い suite・重みの無い suite は下限、重い suite は 5 倍）",
+        suiteLimitMs(W, "light") === SUITE_LIMIT_FLOOR_MS && suiteLimitMs(W, "unknown") === SUITE_LIMIT_FLOOR_MS && suiteLimitMs(W, "heavy") === 77_000 * SUITE_LIMIT_FACTOR && suiteLimitMs(W, "huge") === 3_000_000 && SUITE_LIMIT_FLOOR_MS === 180_000 && SUITE_LIMIT_FACTOR === 5);
+      t.ok("上限: 固定の値（PLEIAD_TEST_SUITE_TIMEOUT_MS）は全 suite に効き、0 は上限なし", suiteLimitMs(W, "heavy", 1500) === 1500 && suiteLimitMs(W, "light", 1500) === 1500 && suiteLimitMs(W, "heavy", 0) === null);
+      const env = readTimeoutEnv({ PLEIAD_TEST_SUITE_TIMEOUT_MS: "2500", PLEIAD_TEST_PROGRESS_MS: "800" });
+      t.ok("環境変数: 上限と知らせる間隔を読む。無ければ（重みから決める・既定の間隔）", env.fixedMs === 2500 && env.progressMs === 800 && readTimeoutEnv({}).fixedMs === null && readTimeoutEnv({}).progressMs === PROGRESS_MS && readTimeoutEnv({ PLEIAD_TEST_SUITE_TIMEOUT_MS: "0" }).fixedMs === 0);
+      t.ok("環境変数が不正（整数でない・負・間隔 0）なら ArgError",
+        ["abc", "-1", "1.5"].every((v) => throws(() => readTimeoutEnv({ PLEIAD_TEST_SUITE_TIMEOUT_MS: v })) instanceof ArgError) && throws(() => readTimeoutEnv({ PLEIAD_TEST_PROGRESS_MS: "0" })) instanceof ArgError);
+      const NOENV = { PLEIAD_TEST_SUITE_TIMEOUT_MS: undefined, PLEIAD_TEST_PROGRESS_MS: undefined };
+      const badEnv = await fixtureRun(["./fx-pass-a.mjs"], ["--jobs", "1"], { ...NOENV, PLEIAD_TEST_SUITE_TIMEOUT_MS: "abc" });
+      t.ok("環境変数が不正なら、何も走らせず終了コード 2", badEnv.code === 2 && !badEnv.stdout.includes("── fx-"), `${badEnv.code} ${badEnv.stderr.slice(0, 200)}`);
+
+      // 終わらない suite 2 本 + 通る 2 本。上限（2.5 秒）で止められ、残りは新しい worker で続く
+      const LIMIT = { PLEIAD_TEST_SUITE_TIMEOUT_MS: "2500", PLEIAD_TEST_PROGRESS_MS: "800" };
+      const STALL = ["./fx-stall.mjs", "./fx-stall-once.mjs", "./fx-pass-a.mjs", "./fx-pass-b.mjs"];
+      const out1 = path.join(tmp, "stall-1");
+      fs.mkdirSync(out1);
+      const r = await fixtureRun(STALL, ["--jobs", "2", "--timings", path.join(tmp, "stall-1.json")], { RUNNER_FIXTURE_OUT: out1, ...LIMIT });
+      const R = read(path.join(tmp, "stall-1.json"));
+      const by = Object.fromEntries(R.suites.map((x) => [x.name, x]));
+      const info = readJsonIf(path.join(out1, "child-fx-stall.json"));
+      if (info) stray.push(info.child, info.worker);
+      t.ok("上限を過ぎた suite は timeout の失敗に数え、終了コード 1。時間は上限の近く（その suite が 120 秒待たれない）",
+        r.code === 1 && by["fx-stall"].status === "timeout" && by["fx-stall-once"].status === "timeout" && by["fx-stall"].ms >= 2400 && by["fx-stall"].ms < 15_000 && by["fx-stall"].limitMs === 2500 && R.ok === false, `${r.code} ${JSON.stringify(R.suites.map((x) => [x.name, x.status, x.ms]))}`);
+      t.ok("名前・上限・そこまでの出力が出る（worker が抱えていた分も）", r.stdout.includes("── fx-stall") && r.stdout.includes("STALL-PARTIAL-OUTPUT") && r.stdout.includes("STALL-ONCE-OUTPUT") && r.stdout.includes("の時間内に終わる") && r.stdout.includes("fx-stall が") && r.stdout.includes("直近の出力"), r.stdout.slice(-900));
+      t.ok("残りの suite は新しい worker で続き、通る（worker が 4 本以上起きる・止めた worker の置き場は消える）",
+        by["fx-pass-a"].status === "pass" && by["fx-pass-b"].status === "pass" && R.workers.length >= 4 && R.workers.every((w) => w.dataDirRemoved === true) && R.problems.length === 0 && R.totals.failedSuites === 2, JSON.stringify({ workers: R.workers.length, problems: R.problems, totals: R.totals }));
+      const gone = info ? await waitFor(() => !alive(info.worker) && !alive(info.child), 15_000) : null;
+      t.ok("止めた worker と、その suite が起こした孫は残らない・関係ないプロセスには触れない", !!info && !!gone && alive(bystander.pid), JSON.stringify(info));
+      t.ok("長く走っている suite は「実行中: <名前>（経過 …）」と知らせる（間隔ごと）", /実行中: fx-stall（経過 \d+ 秒・上限 3 秒・worker \d+）/.test(r.stdout), r.stdout.slice(-900));
+
+      // --retry-failed: 止められた suite も流し直す。揺れで止まった suite は通れば緑、止まり続ける suite は赤のまま
+      const out2 = path.join(tmp, "stall-2");
+      fs.mkdirSync(out2);
+      const rr = await fixtureRun(STALL, ["--jobs", "2", "--retry-failed", "1", "--timings", path.join(tmp, "stall-2.json")], { RUNNER_FIXTURE_OUT: out2, ...LIMIT });
+      const RR = read(path.join(tmp, "stall-2.json"));
+      const byR = Object.fromEntries(RR.suites.map((x) => [x.name, x]));
+      const infoR = readJsonIf(path.join(out2, "child-fx-stall.json"));
+      if (infoR) stray.push(infoR.child, infoR.worker);
+      const count = (file) => { try { return fs.readFileSync(path.join(out2, file), "utf8").split("\n").filter(Boolean).length; } catch { return 0; } };
+      t.ok("--retry-failed 1: 1 回目だけ止まった suite は流し直しで通って緑、止まり続ける suite は 2 回止められて赤（終了コード 1）",
+        rr.code === 1 && byR["fx-stall-once"].status === "pass" && byR["fx-stall-once"].retried?.outcome === "passed" && count("stall-once-attempts") === 2 && byR["fx-stall"].status === "timeout" && byR["fx-stall"].retried?.outcome === "failed" && count("stall-attempts") === 2 && RR.totals.retriedSuites === 2 && RR.totals.retriedPassed === 1, `${rr.code} ${JSON.stringify(RR.suites.map((x) => [x.name, x.status, x.retried?.outcome]))} ${rr.stdout.slice(-500)}`);
+      t.ok("流し直しの注釈・まとめに、止められたことが残る", rr.stdout.includes("流し直しで通った suite") && rr.stdout.includes("fx-stall-once") && rr.stdout.includes("流し直しでも落ちた suite") && rr.stdout.includes("の時間内に終わる"), rr.stdout.slice(-700));
+      // 止めたのに結果を返さなかった後も、通る suite は 1 回ずつしか走らない
+      t.ok("通る suite は流し直さない・ちょうど 1 回ずつ走る", byR["fx-pass-a"].retried === null && byR["fx-pass-b"].retried === null && (rr.stdout.match(/── fx-pass-a/g) ?? []).length === 1);
+      const gone2 = infoR ? await waitFor(() => !alive(infoR.worker) && !alive(infoR.child), 15_000) : null;
+      t.ok("流し直しで止めた worker と孫も残らない", !!infoR && !!gone2);
+
+      // 上限の無い通常の実行（--jobs 1 は止められないが、通る suite は今までどおり）
+      const j1 = await fixtureRun(["./fx-pass-a.mjs", "./fx-pass-b.mjs"], ["--jobs", "1", "--timings", path.join(tmp, "limit-j1.json")], NOENV);
+      const J1 = read(path.join(tmp, "limit-j1.json"));
+      t.ok("既定の上限（重みから決める）では、通る suite は影響を受けない・timings に suite ごとの上限が入る（--jobs 1 は null）", j1.code === 0 && J1.suites.every((x) => x.limitMs === null));
+      const j2 = await fixtureRun(["./fx-pass-a.mjs", "./fx-pass-b.mjs"], ["--jobs", "2", "--timings", path.join(tmp, "limit-j2.json")], NOENV);
+      const J2 = read(path.join(tmp, "limit-j2.json"));
+      t.ok("--jobs 2 の timings には suite ごとの上限が入る（重みの 5 倍と 180 秒の大きい方）", j2.code === 0 && J2.suites.every((x) => x.limitMs === SUITE_LIMIT_FLOOR_MS), JSON.stringify(J2.suites.map((x) => x.limitMs)));
     }
 
     // ---- 不正な引数・登録は、何も走らせない -------------------------------------------------------------------------------------
