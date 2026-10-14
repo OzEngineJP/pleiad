@@ -177,7 +177,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, viewpo
     shownText.replaceChildren();
     // PC のファイルは作業ディレクトリからの相対（画面が開いたとき label を渡す）。可視化の写しはデータ置き場のパスを見せず「可視化 · 題」
     if (tab?.snapshot) shownText.append(el('b', null, t('timeline.present.kind.visualization')), el('span', 'weak', ` · ${tab.snapshot.title || t('filePreview.visual.title')}`));
-    else if (parts.kind === 'file') shownText.append(el('b', null, t('browser.kind.file')), el('span', 'weak', ` · ${tab?.file?.label || parts.rest}`));
+    else if (parts.kind === 'file') shownText.append(el('b', null, t('browser.kind.file')), el('span', 'weak', ` · ${tab?.file?.label || (parts.rest === '/' ? tab?.title || '' : parts.rest)}`));
     else if (parts.kind !== 'blank') shownText.append(el('span', 'weak', parts.scheme), el('b', null, parts.host), el('span', 'weak', parts.rest));
   }
 
