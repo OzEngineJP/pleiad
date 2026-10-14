@@ -3,7 +3,7 @@
 // プロセスは起こさない。一覧（{ pid, ppid, command }）を渡して、純粋な部品として測る。
 // 守ること: agy の直下の子でコマンドを走らせているものだけを選ぶ。agy 自身・中継・孫・会話の外は選ばない。
 // 見つからない・あいまいなら選ばない。コマンドラインの形は実機（Windows の agy 1.3.4）の木に合わせた。
-import { commandKey, commandLabel, descendantsOf, pickCommandProcess, pickHeldAgy } from "../../core/backends/antigravity-background.mjs";
+import { commandKey, commandLabel, descendantsOf, killTree, pickCommandProcess, pickHeldAgy } from "../../core/backends/antigravity-background.mjs";
 
 export const name = "antigravity-background";
 export const title = "agy の裏のコマンドを止めるとき、その会話の agy の直下の子だけを選ぶ";
@@ -73,4 +73,16 @@ export default async function (t) {
   t.ok("2 つ当たれば決めない", pickHeldAgy(held, { holderPid: HOLDER, markers: ["--print="] }) === null);
   t.ok("目印が無ければ決めない", pickHeldAgy(held, { holderPid: HOLDER, markers: [] }) === null);
   t.ok("保持役の pid が分からなければ決めない", pickHeldAgy(held, { holderPid: null, markers: ["c-1"] }) === null);
+
+  // ---- 落とす（Windows の taskkill は差し替えて、プロセスは起こさない）
+  // シェルは子が落ちると自分で終わるので、taskkill /T が根に届く前に消えて「インスタンスがありません」の失敗が返ることがある
+  const calls = [];
+  const noInstance = async (file, args) => { calls.push([file, ...args].join(" ")); throw new Error("taskkill: no running instance"); };
+  const raced = await killTree(200, null, { platform: "win32", exec: noInstance, isAlive: () => false }).then(() => "ok", (e) => e.message);
+  t.ok("taskkill が失敗しても、根が消えていれば落とせたとみなす", raced === "ok" && calls[0] === "taskkill /PID 200 /T /F", JSON.stringify({ raced, calls }));
+  let polls = 0;
+  const exiting = await killTree(200, null, { platform: "win32", exec: noInstance, isAlive: () => ++polls < 3 }).then(() => "ok", (e) => e.message);
+  t.ok("根が終わりかけなら、消えるのを待って落とせたとみなす", exiting === "ok" && polls === 3, JSON.stringify({ exiting, polls }));
+  const stuck = await killTree(200, null, { platform: "win32", exec: noInstance, isAlive: () => true, graceMs: 200 }).then(() => "ok", (e) => e.message);
+  t.ok("根が残っていれば失敗を返す", stuck === "taskkill: no running instance", stuck);
 }
