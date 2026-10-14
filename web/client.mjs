@@ -3166,6 +3166,14 @@ function onEvent(ev, replay = false) {
         refreshContextEntry().catch(() => {});
       }
       return refresh();
+    // Claude Agent SDK の取得の状態（ADR 0206）。prompt は、同意が無いまま Claude の会話を始めようとした（取得の案内を開く）
+    case 'claudeSdk': {
+      if (!ev.status) break;
+      const { prompt, ...status } = ev.status;
+      setClaudeSdk(status);
+      if (prompt) openSettings();
+      break;
+    }
     case 'claudeAccountsChanged':
       claudeAccounts.invalidate();
       syncTopbar().catch(() => {});
@@ -3701,15 +3709,17 @@ function renderAuth() {
 }
 
 /**
- * ログインの URL と、コールバックを取れないときの手貼り。
+ * Claude Agent SDK の取得の案内とログインの URL と、コールバックを取れないときの手貼り。
  * 設定画面と初期設定ダイアログの両方に出す。**初期設定は modal なので、
  * ここを設定画面にしか出さないと、初回の利用者はログインを終われない。**
  */
 function authUrlBox(id) {
   const b = state.backends.find((x) => x.id === id);
+  const sdk = b && claudeSdkBox(state.auth.get(id)?.sdk);
   const pend = b && state.authUrl.get(id);
-  if (!pend) return null;
+  if (!pend) return sdk;
   const frag = document.createDocumentFragment();
+  if (sdk) frag.append(sdk);
   const box = el("div", "auth-url");
   if (/^https?:\/\//i.test(pend.url)) {
     const a = el("a", null, pend.url);
@@ -3744,6 +3754,60 @@ function authUrlBox(id) {
     frag.append(paste);
   }
   return frag;
+}
+
+/** Anthropic の規約（Claude Code の Legal and compliance。商用・消費者の規約と利用ポリシーへの入口） */
+const CLAUDE_TERMS_URL = "https://code.claude.com/docs/en/legal-and-compliance";
+
+/**
+ * Claude Agent SDK の取得の案内（配布物は SDK を持たない。ADR 0206）。取り終えるまで Claude の行の下に出す。
+ * 取る前に、npm のレジストリから取ること・Anthropic の規約が適用されることを見せ、「取得する」で同意して取る。進みと失敗（もう一度）もここ
+ */
+function claudeSdkBox(sdk) {
+  if (!sdk || sdk.ready) return null;
+  const box = el("div", "auth-sdk");
+  box.append(el("p", null, t("settings.agents.claudeSdk.notice", { version: sdk.version ?? "" })));
+  const terms = el("a", null, t("settings.agents.claudeSdk.terms"));
+  terms.href = CLAUDE_TERMS_URL; terms.target = "_blank"; terms.rel = "noreferrer";
+  box.append(terms);
+  if (sdk.fetching) {
+    const bar = document.createElement("progress");
+    bar.setAttribute("aria-label", t("settings.agents.claudeSdk.progressLabel"));
+    const received = formatBytes(sdk.fetching.received ?? 0);
+    if (sdk.fetching.total) { bar.max = sdk.fetching.total; bar.value = Math.min(sdk.fetching.total, sdk.fetching.received ?? 0); }
+    box.append(bar, el("span", "st", sdk.fetching.total
+      ? t("settings.agents.claudeSdk.fetching", { received, total: formatBytes(sdk.fetching.total) })
+      : t("settings.agents.claudeSdk.fetchingUnknown", { received })));
+    return box;
+  }
+  if (sdk.error) {
+    const failed = el("p", "err", t("settings.agents.claudeSdk.failed", { error: sdk.error.message ?? sdk.error.kind ?? "" }));
+    failed.setAttribute("role", "alert");
+    box.append(failed);
+  }
+  const btn = el("button", "btn", t(sdk.error ? "settings.agents.claudeSdk.retry" : "settings.agents.claudeSdk.fetch"));
+  btn.type = "button";
+  btn.onclick = (e) => { e.stopPropagation(); installClaudeSdk(); };
+  box.append(btn);
+  return box;
+}
+
+/** 取得の状態を置き換えて描き直す。取り終えたら Claude のモデルの一覧を引き直させる */
+function setClaudeSdk(status) {
+  const before = state.auth.get("claude");
+  state.auth.set("claude", { ...(before ?? {}), sdk: status });
+  if (status?.ready && before?.sdk && !before.sdk.ready) forgetVocab("claude");
+  renderAuth();
+  onboarding.paint();
+}
+
+/** 「取得する」（同意して取る）。進みは claudeSdk イベントで届く。答えは取り終わったか失敗した後の状態 */
+function installClaudeSdk() {
+  const sdk = state.auth.get("claude")?.sdk ?? {};
+  setClaudeSdk({ ...sdk, fetching: sdk.fetching ?? { received: 0, total: null }, error: null });
+  cmd("claudeSdkInstall")
+    .then((status) => { if (status && typeof status.ready === "boolean") setClaudeSdk(status); })
+    .catch((e) => setClaudeSdk({ ...sdk, fetching: null, error: { kind: "disk", message: e.message } }));
 }
 
 /** ログインは完了まで返ってこない（サーバがコールバックを待つ。10 分で時間切れ）。応答待ちで画面を止めない */

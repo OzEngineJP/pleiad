@@ -82,7 +82,17 @@
       "logoutFailed": "Couldn't sign out of {{agent}}: {{error}}",
       "loginUrl": "Sign in to {{agent}}: ",
       "loginMessage": "{{agent}}: {{message}}",
-      "loginDone": "Signed in"
+      "loginDone": "Signed in",
+      "claudeSdk": {
+        "notice": "Claude needs Anthropic's Claude Agent SDK ({{version}}). It isn't included with Pleiad, so it is downloaded from the npm registry and saved on this PC.",
+        "terms": "Anthropic's terms apply to the SDK",
+        "fetch": "Download",
+        "retry": "Try again",
+        "fetching": "Downloading… {{received}} / {{total}}",
+        "fetchingUnknown": "Downloading… {{received}}",
+        "progressLabel": "Claude Agent SDK download progress",
+        "failed": "Couldn't download: {{error}}"
+      }
     },
     "updates": {
       "loading": "Loading…",
