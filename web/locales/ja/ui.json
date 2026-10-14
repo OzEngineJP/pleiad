@@ -82,7 +82,17 @@
       "logoutFailed": "{{agent}} のログアウトに失敗: {{error}}",
       "loginUrl": "{{agent}} のログイン: ",
       "loginMessage": "{{agent}}: {{message}}",
-      "loginDone": "ログインした"
+      "loginDone": "ログインした",
+      "claudeSdk": {
+        "notice": "Claude を使うには Anthropic の Claude Agent SDK（{{version}}）が必要です。Pleiad には含まれていないため、npm のレジストリから取得して、この PC に保存します。",
+        "terms": "SDK には Anthropic の規約が適用されます",
+        "fetch": "取得する",
+        "retry": "もう一度取得",
+        "fetching": "取得しています… {{received}} / {{total}}",
+        "fetchingUnknown": "取得しています… {{received}}",
+        "progressLabel": "Claude Agent SDK の取得の進み",
+        "failed": "取得できませんでした: {{error}}"
+      }
     },
     "updates": {
       "loading": "読み込み中…",

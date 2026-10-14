@@ -9,7 +9,7 @@
 // 状態（snapshot().state）:
 //   current       切り替えは要らない（S1 がこの版）
 //   preparing     新しい版の実行場所（chooseServer が裏で組み始めたもの）を待つ・起こせるか（Job）を見る
-//   checking      事前の確かめ（core/handover-check.mjs）
+//   checking      事前の確かめ（core/handover-check.mjs）と、新しい版が固定した Claude Agent SDK の先取り（core/claude-sdk-fetch.mjs。ADR 0206）
 //   incompatible  合わない版。「あとで／中断して更新」を聞いている（ADR 0036 の形）。reason は INCOMPATIBLE_REASONS
 //   held          「あとで」。S1 のまま動かし続け、勝手には切り替えない（interruptNow で中断して切り替える。次の起動でまた聞く）。
 //                 reason が 'stoppers' のときは、止まるものだけが残ったときの「あとで」（止まるものが無くなる・作業が増えるまで自動では切り替えない）
@@ -30,6 +30,8 @@
 // 引き継ぎ（段階 2 の 2d。core/handover.mjs）: S1 が保持役に載ったターン（running の held）を新しいサーバーへ渡せるとき、そのターンは待たない
 // （作業の最中でも切り替える）。待つのは、載っていないターン・準備中のターンなど running の handover.blocking だけ。新しい版が handover-check で
 // 引き継ぎの形（handover・holder の範囲）を持っていて、S1 の running にも handover があるときだけ。無ければ今までの先送り（update-lock → shutdown → S2）。
+// 新しい版が固定した Claude Agent SDK が置き場に無い（同意が無い・取れなかった）ときは、保持役に載った Claude のターンを引き継がない
+// （S2 が付け直すときに SDK を読めず、ターンが切れる）。そのターンが終わるのを待ってから今までの先送りで替える。待つ間も 1 分おきに取り直す（ADR 0206）。
 //
 // 待つ作業（switchBlockers）: running の count（ターン・承認待ち・走っているサブエージェント・委譲タスク）。外部の stdio MCP・送信予定は
 // 数えない。**切り替えで止まるもの**（stoppers: `!` の行と、ターンの外に残っている裏の作業＝Codex の裏の端末など）は
@@ -45,6 +47,10 @@ const POLL_MS = 2000;
 /** S1 が shutdown を受けてから終わるまでの上限（plan.md 1-6 の 3） */
 const STOP_TIMEOUT_MS = 30_000;
 const CHECK_TIMEOUT_MS = 30_000;
+/** Claude Agent SDK の先取り（npm から 1.5 MB ほど）の上限。遅い回線とプロキシを見込む */
+const CLAUDE_SDK_FETCH_TIMEOUT_MS = 5 * 60_000;
+/** 先取りに失敗したまま待っている間、取り直す間隔 */
+const CLAUDE_SDK_RETRY_MS = 60_000;
 /** 事前の確かめで合わなかったときの理由。runtime・job・ipc は新しい版を実行場所で起こせないので、中断した後は main を起動し直す */
 const INCOMPATIBLE_REASONS = ['schema', 'ipc', 'runtime', 'job', 'check'];
 const RESTART_REASONS = new Set(['runtime', 'job', 'ipc']);
@@ -104,12 +110,14 @@ const inRange = (value, range) => Array.isArray(range) && range.length === 2 && 
 
 /**
  * 引き継ぎ（保持役に載ったターンを待たずに渡す）で切り替えるか。新しい版が引き継ぎの形と保持役の規約を持っていて（handover-check の handover・holder）、
- * S1 の running が handover を載せていて（版が範囲に入る）、保持役のターンがあるなら S1 の保持役の世代が新しい版の範囲に入るとき
+ * S1 の running が handover を載せていて（版が範囲に入る）、保持役のターンがあるなら S1 の保持役の世代が新しい版の範囲に入るとき。
+ * 新しい版の Claude Agent SDK が置き場に無い（plan.claudeSdk === false）なら、保持役に載った Claude のターンがある間は引き継がない
  */
 function handoverMode(work, plan) {
   const mine = work?.handover;
   if (!mine || !plan?.handover) return false;
   if (!inRange(mine.v, plan.handover)) return false;
+  if (plan.claudeSdk === false && (work.turns ?? []).some(turn => turn.held === true && turn.backend === 'claude')) return false;
   return !(mine.held > 0 && mine.holder != null && !inRange(mine.holder, plan.holder));
 }
 
@@ -132,6 +140,7 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
  *   effects  {
  *     prepare()            → { ok: true, runtime, mode } / { ok: false, reason: 'runtime'|'job', detail }
  *     check(runtime)       → handover-check の出力
+ *     claudeSdk(runtime)   → claude-sdk-fetch の出力（{ ready, consent, kind? }。無くてもよい。無ければ SDK を気にせず引き継ぐ）
  *     ask({ reason, waiting }) → 'now' | 'later'（合わない版・止まるものが残ったときの「あとで／中断して更新」）。
  *                          画面が答える（answer）ときは null・undefined を返す（ダイアログを出さない）
  *     running()            → runningWork
@@ -165,6 +174,8 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
   // 引き継ぎ（保持役に載ったターンを待たずに渡す）で切り替えられる版か（事前の確かめの結果）と、続けて断られた回数
   let handoverPlan = null;
   let declines = 0;
+  // Claude Agent SDK の先取りに失敗したとき、次に取り直す時刻
+  let sdkRetryAt = 0;
 
   const emit = patch => {
     snap = { ...snap, ...patch };
@@ -177,6 +188,15 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     poke = resolve;
     Promise.resolve(effects.delay(ms)).then(resolve, resolve);
   }).finally(() => { poke = null; });
+  /** 新しい版の実行場所で Claude Agent SDK を取っておく。置き場にあれば true（走らなかった・取れなかったは false） */
+  async function fetchClaudeSdk(runtime) {
+    const out = await Promise.resolve(effects.claudeSdk(runtime)).catch(error => ({ ready: false, kind: 'run', detail: errorText(error) }));
+    sdkRetryAt = now() + CLAUDE_SDK_RETRY_MS;
+    if (out?.ready === true) return true;
+    log(`the Claude Agent SDK of the new version is not ready (${out?.consent === false ? 'no consent' : `${out?.kind ?? '?'}${out?.detail ? `: ${out.detail}` : ''}`}): Claude turns on the holder are not handed over`);
+    return false;
+  }
+
   /** 画面かダイアログの答えを待つ（effects.ask が答えを返さなければ answer() だけを待つ） */
   const askUser = info => new Promise(resolve => {
     pendingAnswer = resolve;
@@ -212,6 +232,11 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
           await pause();
           continue;
         }
+      }
+      // SDK の先取りに失敗したまま待っている: 間をおいて取り直す（同意が後から付いた・回線が戻った）
+      if (handoverPlan?.claudeSdk === false && effects.claudeSdk && now() >= sdkRetryAt) {
+        handoverPlan = { ...handoverPlan, claudeSdk: await fetchClaudeSdk(handoverPlan.runtime) };
+        if (cancelled) return false;
       }
       const work = await effects.running().catch(() => null);
       if (cancelled) return false;
@@ -276,6 +301,8 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       emit({ state: 'checking' });
       const check = await Promise.resolve(effects.check(plan.runtime)).catch(error => ({ error: errorText(error) }));
       plan = { ...plan, ...judgeCheck(check) };
+      // 新しい版が固定した SDK を、切り替えの前に取っておく（取れなくても切り替えは止めない。引き継ぎの範囲を狭める。handoverMode）
+      if (plan.ok && effects.claudeSdk && !cancelled) plan = { ...plan, claudeSdk: await fetchClaudeSdk(plan.runtime) };
     }
     handoverPlan = plan?.ok ? plan : null;
     if (cancelled) return cancel();
@@ -424,17 +451,28 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
 
 // ---- 副作用
 
-/** 組んだ実行場所で core/handover-check.mjs を走らせ、出力の JSON を返す */
-function runHandoverCheck({ nodeExe, appDir, dataDir, env = process.env, execFile = require('node:child_process').execFile, timeoutMs = CHECK_TIMEOUT_MS }) {
+/** 組んだ実行場所で core/<script> を走らせ、標準出力の最後の行の JSON を返す */
+function runAppScript(script, { nodeExe, appDir, dataDir, env = process.env, execFile = require('node:child_process').execFile, timeoutMs }) {
   const childEnv = { ...env, AGENT_HOST_DATA: dataDir };
   delete childEnv.ELECTRON_RUN_AS_NODE;
+  const name = path.basename(script, '.mjs');
   return new Promise((resolve, reject) => {
-    execFile(nodeExe, [path.join(appDir, 'core', 'handover-check.mjs')], { cwd: appDir, env: childEnv, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) return reject(new Error(`handover-check failed: ${error.message}${stderr ? `\n${String(stderr).slice(-500)}` : ''}`));
+    execFile(nodeExe, [path.join(appDir, 'core', script)], { cwd: appDir, env: childEnv, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) return reject(new Error(`${name} failed: ${error.message}${stderr ? `\n${String(stderr).slice(-500)}` : ''}`));
       const line = String(stdout).trim().split(/\r?\n/).pop();
-      try { resolve(JSON.parse(line)); } catch { reject(new Error('handover-check printed no JSON')); }
+      try { resolve(JSON.parse(line)); } catch { reject(new Error(`${name} printed no JSON`)); }
     });
   });
+}
+
+/** 組んだ実行場所で core/handover-check.mjs を走らせ、出力の JSON を返す */
+function runHandoverCheck({ timeoutMs = CHECK_TIMEOUT_MS, ...options }) {
+  return runAppScript('handover-check.mjs', { ...options, timeoutMs });
+}
+
+/** 組んだ実行場所で core/claude-sdk-fetch.mjs を走らせ、新しい版が固定した Claude Agent SDK を置き場に取っておく（ADR 0206） */
+function runClaudeSdkFetch({ timeoutMs = CLAUDE_SDK_FETCH_TIMEOUT_MS, ...options }) {
+  return runAppScript('claude-sdk-fetch.mjs', { ...options, timeoutMs });
 }
 
 /** 次に届く ready を待つ（S2 はつながった直後に ready を送る。つなぐ前に付ける） */
@@ -462,7 +500,7 @@ function waitForReady(link, timeoutMs) {
  */
 function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, execPath, systemLocale = '', cwd, env = process.env,
   request, runningWork, abortAll, ask, reload, restart, fallback, failed, rearm = () => {}, log = () => {},
-  boot = require('./server-boot.cjs'), job = () => require('./job.cjs'), runtimeLib = () => require('./runtime.cjs'), check = runHandoverCheck,
+  boot = require('./server-boot.cjs'), job = () => require('./job.cjs'), runtimeLib = () => require('./runtime.cjs'), check = runHandoverCheck, fetchClaudeSdk = runClaudeSdkFetch,
   alive = pid => boot.isAlive(pid), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), now = () => Date.now(),
   stopTimeoutMs = STOP_TIMEOUT_MS, readyTimeoutMs = boot.START_TIMEOUT_MS, handoverRequestMs = HANDOVER_REQUEST_MS, preloadTimeoutMs = PRELOAD_TIMEOUT_MS,
   exists = file => require('node:fs').existsSync(file) }) {
@@ -550,6 +588,7 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
       return { ok: true, runtime, mode: decision.mode };
     },
     check: runtime => check({ nodeExe: runtime.nodeExe, appDir: runtime.appDir, dataDir, env }),
+    claudeSdk: runtime => fetchClaudeSdk({ nodeExe: runtime.nodeExe, appDir: runtime.appDir, dataDir, env }),
     ask,
     running: () => runningWork(),
     abortAll: onProgress => abortAll('update', onProgress),
@@ -647,6 +686,6 @@ function startSwitch({ linked, ready, resourcesPath, log = () => {}, readManifes
 }
 
 module.exports = {
-  POLL_MS, STOP_TIMEOUT_MS, HANDOVER_REQUEST_MS, DECLINE_BACKOFF_MS, INCOMPATIBLE_REASONS, RESTART_REASONS, MAIN_IPC,
-  needsSwitch, switchBlockers, handoverMode, judgeCheck, createSwitch, runHandoverCheck, waitForReady, createSwitchEffects, incompatibleDialog, startSwitch,
+  POLL_MS, STOP_TIMEOUT_MS, HANDOVER_REQUEST_MS, DECLINE_BACKOFF_MS, INCOMPATIBLE_REASONS, RESTART_REASONS, MAIN_IPC, CLAUDE_SDK_RETRY_MS,
+  needsSwitch, switchBlockers, handoverMode, judgeCheck, createSwitch, runHandoverCheck, runClaudeSdkFetch, waitForReady, createSwitchEffects, incompatibleDialog, startSwitch,
 };

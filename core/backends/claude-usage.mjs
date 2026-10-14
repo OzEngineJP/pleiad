@@ -1,4 +1,5 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
+// SDK は使うときに読む（配布物は SDK を持たない。取っていなければ、取得を促す文で失敗する。core/claude-sdk.mjs）
+import { loadClaudeSdk } from '../claude-sdk.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { claudeQuota } from '../usage.mjs';
 import { claudeEnv, redactToken, TOKEN_ENV } from '../claude-accounts.mjs';
@@ -24,6 +25,7 @@ export function usageEnv(base = process.env, { token, configDir } = {}) {
 export async function readClaudeUsage({ token, configDir } = {}) {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
+  const { query } = await loadClaudeSdk();
   const q = query({ prompt: (async function* () { await gate; })(), options: {
     pathToClaudeCodeExecutable: claudeExecutable(), persistSession: false,
     settingSources: ['user'], tools: [], mcpServers: {}, settings: { disableAllHooks: true },
