@@ -6,6 +6,7 @@ import { renderToolCall, applyToolResult, isDelegateToolName } from '../render.m
 import { Bundle, splitToolCalls, markRunning } from '../tool-bundle.mjs';
 import { isComputerTool } from '../computer-use.mjs';
 import { streamMessages } from '../stream-messages.mjs';
+import { toolStartedAt } from '../server-clock.mjs';
 
 const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);
 /** 委譲はまとまりの外に 1 件ずつ出す（client.mjs の toolNodes と同じ） */
@@ -87,7 +88,8 @@ export function toolNodes(calls, { running = false, link = null } = {}) {
   const cards = calls.map((c, i) => {
     const card = renderToolCall(c.name, c.input, { id: c.id ?? undefined });
     if (c.result) applyToolResult(card, c.result);
-    else if (running && i === calls.length - 1 && c.id) markRunning(card);
+    // 経過は呼び出しが始まった時刻から数える（描き直すたびに 0 に戻らない）
+    else if (running && i === calls.length - 1 && c.id) markRunning(card, toolStartedAt(c));
     if (link && isBoundary(card.dataset.tool)) link(card, c);
     return card;
   });

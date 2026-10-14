@@ -68,8 +68,12 @@ export function splitToolCalls(calls, isBoundary, groupOf = () => "tools") {
   return out;
 }
 
-/** 見出しの経過。1:11 */
-export const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+/** 経過の形は 1 つ（s は秒）。`m:ss`、1 時間以上は `h:mm:ss`（見出し・走っている行・最下部の行・作業の一覧で同じ） */
+export function clock(s) {
+  s = Math.max(0, Math.floor(s));
+  const ss = String(s % 60).padStart(2, "0");
+  return s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}:${ss}` : `${Math.floor(s / 60)}:${ss}`;
+}
 
 // ---------------------------------------------------------------- 動き
 
@@ -106,7 +110,11 @@ function anchored(anchor, fn) {
 
 const ticking = new Set();   // 経過を刻む要素（行の右端 .tc-res と、走っているまとまりの見出し）
 let timer = 0;
-const secs = (ms) => `${Math.max(0, Math.floor(ms / 1000))}s`;
+/** 走っている行の経過。1 分未満は 8s、それ以上は見出しと同じ m:ss・h:mm:ss（長く止まっているのが読めるように） */
+export const secs = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : clock(s);
+};
 function tickAll() {
   const now = Date.now();
   for (const n of ticking) {
@@ -155,8 +163,12 @@ export function swapHeight(host, mutate) {
   anim.onfinish = anim.oncancel = () => { host.style.overflow = prev; };
 }
 
-/** 走っているツールの行: 右端に §6 の弧と経過秒。結果が来たら applyToolResult が外す */
-export function markRunning(card, since = Date.now()) {
+/**
+ * 走っているツールの行: 右端に §6 の弧と経過秒。結果が来たら applyToolResult が外す。
+ * since はツールの始まり（この画面の時計の ms。web/server-clock.mjs の toolStartedAt）。無ければ今から数える
+ */
+export function markRunning(card, since = null) {
+  since ??= Date.now();
   card.classList.remove("tc-waiting");
   card.classList.add("tc-running");
   const res = card.querySelector(".tc-res");
@@ -202,9 +214,10 @@ export class Bundle {
   /**
    * @param {{live?:boolean, kind?:"tools"|"computer", onStop?:(bundle:Bundle)=>void}} [o]
    *   live: 走っているまとまり（最新の行 + 薄い行）。false は履歴（全部が中の行で、閉じて始まる）。
-   *   kind: "computer" はコンピューターの操作の塊。onStop はその「止める」（走っている間だけ）
+   *   kind: "computer" はコンピューターの操作の塊。onStop はその「止める」（走っている間だけ）。
+   *   since: 見出しの経過の起点（最初のツールの始まり。この画面の時計の ms）。無ければ今
    */
-  constructor({ live = false, kind = "tools", onStop = null } = {}) {
+  constructor({ live = false, kind = "tools", onStop = null, since = null } = {}) {
     this.kind = kind;
     this.computer = kind === "computer";
     this.onStop = onStop;
@@ -213,7 +226,7 @@ export class Bundle {
     this.expanded = false;   // 全部を開いているか
     this.live = live;
     this.cur = null;         // 最新の行（live のとき）
-    this.t0 = Date.now();
+    this.t0 = since ?? Date.now();
 
     this.el = el("div", `bundle${live ? " live" : ""}${this.computer ? " cu" : ""}`);
     this.el.bundle = this;

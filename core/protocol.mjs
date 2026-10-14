@@ -19,7 +19,7 @@ export function stampSessionId(event, fallback) {
 }
 
 // server -> client
-export const READY = "ready";   // { protocolVersion, version（アプリの版）, build（ビルドの短いハッシュ。開発は null）, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, locale, notify（スマホへの通知に対応していれば 1） }。version・build が画面を配った版と違えば、画面は 1 回だけ読み直す（protocolVersion は変えない）
+export const READY = "ready";   // { protocolVersion, version（アプリの版）, build（ビルドの短いハッシュ。開発は null）, homeDir, resumedTurn, startedAt（サーバーの起動時刻 ms）, now（送った時のサーバーの時刻 ms。画面が端末の時計とのずれを補う）, locale, notify（スマホへの通知に対応していれば 1） }。version・build が画面を配った版と違えば、画面は 1 回だけ読み直す（protocolVersion は変えない）
 export const EVENT = "event";
 export const RESPONSE = "response";
 export const ERROR = "error";
@@ -253,7 +253,7 @@ export const EVENTS = new Set([
   "text.end",        // { uuid? } 本文の追記が終わった。uuid は確定した発言の id（分岐の起点に使う）
   "thinking.start",  // 考え始めた
   "thinking.delta",  // { text?, estimatedTokens? }
-  "tool.start",      // { id, name, input, turnId?, startedAt?, processId? }
+  "tool.start",      // { id, name, input, at, turnId?, startedAt?, processId? }。at はサーバーが受けた時刻（ms。makeEmit が付ける）、startedAt はバックエンドが申告した開始（Codex）
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",

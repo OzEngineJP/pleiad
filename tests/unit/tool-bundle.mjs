@@ -35,7 +35,7 @@ export default async function (t) {
     t.ok("同じファイルへの変更は 1 つにまとめ、失敗・実行中の変更は数えない",
       files.length === 2 && files[0].add === 7 && files[0].del === 1 && files[0].name === "a.mjs" && files[1].name === "b.mjs", JSON.stringify(files));
   }
-  t.ok("経過は m:ss", clock(71) === "1:11" && clock(0) === "0:00" && clock(9) === "0:09");
+  t.ok("経過は m:ss、1 時間以上は h:mm:ss", clock(71) === "1:11" && clock(0) === "0:00" && clock(9) === "0:09" && clock(3725) === "1:02:05" && clock(43200) === "12:00:00");
 
   // ---- 区切り
   {

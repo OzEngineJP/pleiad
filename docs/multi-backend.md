@@ -72,7 +72,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `text.end` | `{ uuid? }` 確定した発言の id。走っている最中でも分岐の起点にできる（v3） | `assistant`（streamEl リセット） |
 | `thinking.start` | `{ }` | `content_block_start(thinking)` |
 | `thinking.delta` | `{ text?, estimatedTokens? }` | `thinking_delta` |
-| `tool.start` | `{ id, name, input }` | `assistant` の `tool_use` |
+| `tool.start` | `{ id, name, input, at, startedAt? }` `at` はサーバーが受けた時刻（epoch ms）。バックエンドは出さず、server の `makeEmit` が 1 か所で付ける（すでに数の `at` があれば上書きしない）。実行中のスナップショット（`stream.events`）にも同じ値が残るので、開き直し・再接続の再生でも、画面は走っているツールの経過と見出しの経過を本当の開始から数える（端末の時計とのずれは `ready` の `now` で補う）。`startedAt` はバックエンドが申告した開始（Codex の `startedAtMs`。推定で埋めない） | `assistant` の `tool_use` |
 | `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
 | `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"idle", label? }` | `system/status`, `session_state_changed` |
 | `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない） | `result` |

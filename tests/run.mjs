@@ -359,6 +359,8 @@ const SUITES = [
   './unit/markdown-xss.mjs',
   './unit/tools-render.mjs',
   './unit/tool-bundle.mjs',
+  // 走っているツールの経過: サーバーが受けた時刻（tool.start の at）から数え、開き直し・再接続でも 0 に戻らない
+  './unit/tool-elapsed.mjs',
   // 作業の詳細の読み直し: 開いたツールの詳細・まとまり・長文の畳みを、作り直しの後も同じ所で開いたままにする
   './unit/view-state.mjs',
   './unit/timeline-images.mjs',
