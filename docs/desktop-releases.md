@@ -36,8 +36,8 @@ Pleiad の画面・サーバー・Electron を一つの `package.json.version` �
 ## 利用者の操作
 
 設定の左メニュー「アプリ情報・更新」にバージョン、変更履歴、更新の状態、受け取る更新をまとめる。
-ブラウザー版と未署名の評価用パッケージでは履歴を読めるが自動更新はしない。Microsoft Store 版は Store が更新するので、electron-updater を使わず、Store で更新する案内を出す（[microsoft-store.md](microsoft-store.md)「自動更新」）。
-署名を必須にする release 設定だけが `plyRelease: true` と配布先を埋め込む。
+ブラウザー版と、release 設定を使わずに作ったパッケージ（`npm run desktop:pack`・`Desktop packages`）では履歴を読めるが自動更新はしない。Microsoft Store 版は Store が更新するので、electron-updater を使わず、Store で更新する案内を出す（[microsoft-store.md](microsoft-store.md)「自動更新」）。
+release 設定（`electron-builder.release.cjs`）だけが `plyRelease: true` と配布先を埋め込む。Windows の無署名の配布（`PLY_WINDOWS_SIGNING=none`）もこの設定で作るので、自動更新を持つ。
 
 新規設定の既定は自動確認あり（起動15秒後、以降30分ごと。ウィンドウへ戻ったときも、前回の確認から10分以上あいていれば確認する）、自動ダウンロードあり、明示的な再起動のみ。
 既存の `autoDownload: false` は維持する。自動ダウンロードは設定からいつでも選べる（転送・適用中を除く）。
@@ -120,6 +120,35 @@ main が落ちた・強制終了したときもサーバーは残り、次に起
 
 ## 公開前の準備（管理者が一度設定）
 
+### 更新の確かめ（Windows）
+
+[ADR 0207](adr/0207-unsigned-windows-release.md)。Windows のパッケージ版の自動更新は、インストールの前に `desktop/update-signature.cjs` が次の順で確かめる（electron-updater の `verifySignature` を差し替える。Store 版・開発起動・macOS は変えない）。受け入れなかった理由は `updater.log` に HRESULT と見つけた指紋つきで残る。
+
+1. ダウンロードしたファイルの SHA-512 が、`latest.yml` の `sha512` と合う。無い・合わない・読めないなら受け入れない。electron-updater もダウンロードの時に同じ値で確かめる（`ERR_CHECKSUM_MISMATCH`）。
+2. `WinVerifyTrust`（koffi）の結果を、アプリに同梱した方針 `desktop/update-trust.json` で判断する。
+
+| `WinVerifyTrust` の結果 | 受け入れる条件 |
+|---|---|
+| 無署名（`TRUST_E_NOSIGNATURE`） | 方針の `unsigned` が `accept` |
+| 信頼されないルート（`CERT_E_UNTRUSTEDROOT`。自己署名） | 署名者の証明書の SHA-1 指紋が `signers` にある |
+| Windows が信頼する署名（`S_OK`） | 指紋が `signers` にある。または発行元名（CN）が `publishers`、またはインストール済みの `app-update.yml` の `publisherName` にある |
+| 改ざん（`TRUST_E_BAD_DIGEST`）・その他 | 受け入れない |
+
+koffi を読めないときは、electron-updater の既定の確かめ（発行元名）が通ったときだけ受け入れる（無署名は通らない）。
+方針の形は `{ unsigned: "accept" | "reject", publishers: [発行元名], signers: [{ sha1, subject, expires }] }`。どれも受け入れない方針は、読み込みで失敗にする。
+**効くのは、インストール済みの版が同梱する方針。** 方針を変えた版が届くまで、利用者の PC では前の方針で確かめる。署名の形を変えるときは、受け入れる側を広げた版を先に配り、その後に新しい形の版を出す（下記「無署名への移り方」「認証局の署名へ戻すとき」）。
+リリースのビルドも同じ方針で止める（`scripts/release-signing.cjs`）。`none` は、方針が `unsigned: accept` でないとき、署名の設定（`CSC_LINK`・`WIN_CSC_LINK`・`PLY_WIN_CERTIFICATE_SHA1` など）が環境にあるときに止まる。`store`・`pfx`（`PLY_WIN_CERTIFICATE_SHA1` を渡したとき）は指紋が `signers` に無いと、`azure` は発行元が `publishers` に無いと止まる。
+手元の確かめは `scripts/verify-update-signature.ps1`。本物の koffi で、次を確かめてから、使い捨ての証明書を消す。
+- 無署名を、方針で受け入れる・受け入れない
+- `latest.yml` の sha512 との不一致
+- 指紋を固定した自己署名・固定していない自己署名
+- 1 バイト変えた署名済みのファイル
+- Windows が信頼する署名（`node.exe`）を、発行元が一覧にあるとき・無いとき
+
+`-Installer <exe>` を付けると実物も確かめる。
+
+**守りの違い（無署名にしたとき）**: 署名していたときは、GitHub の Release に書き込めても、署名の鍵が無ければ、利用者の PC で動く更新は出せなかった（鍵は同じリポジトリの Secrets にあるので、Actions を動かせる者は署名もさせられた）。無署名では、`latest.yml` と配布物を同じ Release から HTTPS で取る。その Release に書き込める者は両方を差し替えられる。sha512 が守るのは中身の正しさ（壊れていない・途中で差し替わっていない）で、出した人が本物かどうかは守らない。運用で足せる守りは、GitHub の不変のリリース（公開後の配布物の差し替えを防ぐ）・アカウントの 2 段階認証・リリースのワークフローの承認つき Environment。`latest.yml` に署名を付けて公開鍵をアプリに入れる形は、まだ決めていない（ADR 0207「影響」）。
+
 ### 自己署名での評価
 
 個人・少人数での検証では、無料の自己署名証明書を使える。一般のPCに最初から信頼される署名ではない。
@@ -136,14 +165,12 @@ powershell -NoProfile -File scripts/evaluation-certificate.ps1 -Action Trust -Ce
 powershell -NoProfile -File scripts/build-evaluation.ps1
 ```
 
-ビルドは署名を必須とし、完成したインストーラーと実行ファイルの署名が `Valid` かつ指定の証明書であることを検証する。
-更新時の `verifyUpdateCodeSignature` も有効なまま。ただし確かめ方を足してある（`desktop/update-signature.cjs`。[ADR 0176](adr/0176-update-signature-pinned-signers.md)）。
-Windows が署名者を信頼していれば、electron-updater の既定の確かめ（発行元名）が通る。信頼していないPCでも、`WinVerifyTrust` の結果がちょうど `CERT_E_UNTRUSTEDROOT`（0x800B0109）で、署名者の証明書の SHA-1 指紋が `desktop/update-signers.json` の一覧にあれば受け入れる。ファイルの改ざん（`TRUST_E_BAD_DIGEST`）・未署名・一覧に無い署名者は受け入れない。理由は `updater.log` に HRESULT と見つけた指紋つきで残る。
+ビルドは署名を必須とし、完成したインストーラーと実行ファイルの署名が `Valid` かつ指定の証明書であることを検証する（`PLY_WINDOWS_SIGNING=none` のときは署名せず、どれも `NotSigned` であることを確かめる）。
+更新の確かめは上記「更新の確かめ（Windows）」。自己署名は、署名者の証明書の指紋が `desktop/update-trust.json` の `signers` にあれば、証明書を信頼していないPCでも受け入れる（[ADR 0176](adr/0176-update-signature-pinned-signers.md)）。
 Windows の証明書ストア（`Root`）には何も入れない。このため、更新を受ける利用者に `Trust` は不要。
 未署名の beta.1 から最初の自己署名版へは手動インストールし、以降は同じ証明書で署名した新しい版を使う。
 この確かめを持たない古い版（beta.4 以前）から、持つ最初の版へ上げるときだけは、古い版の確かめが働くので、手動で入れ直すか、一度 `Trust` する。その版以降は不要。
 一覧に足す指紋は、署名に使う証明書の指紋（`PLY_WIN_CERTIFICATE_SHA1`）。鍵を替えるときは、新しい指紋を足した版を古い鍵で署名して先に配り、その後で新しい鍵の版を出す（先に新しい鍵の版を出すと、今の利用者は更新を受けられない）。
-手元の確かめは `scripts/verify-update-signature.ps1`（使い捨ての自己署名で、許可・未許可・改ざん・未署名を確かめ、証明書を消す。`-Installer <exe>` で実物も確かめる）。
 公開証明書の信頼と SmartScreen の評価は別であり、警告が消えることは保証しない。
 証明書の削除・切替は利用者が対象の拇印を確認して行う。正式署名への切替時も更新検証を行う。
 
@@ -158,7 +185,7 @@ Environment に必要なレビュアーとタグ制限を設定し、秘密情�
 | 種別 | 名前 | 内容 |
 |---|---|---|
 | Actions自動提供 | `GITHUB_TOKEN` | 下書き登録・公開・段階配信のジョブだけ `contents: write`。配布専用PATは不要 |
-| Variable | `PLY_WINDOWS_SIGNING` | Windowsの署名方式。`pfx` または `azure`。ローカルでは `store` も対応 |
+| Variable | `PLY_WINDOWS_SIGNING` | Windowsの署名方式。`none`（無署名。下記「無署名への移り方」の手順で）・`pfx`・`azure`。ローカルでは `store` も対応。`Evaluation release` は `none` でなければ自己署名で出す |
 | Variable | `PLY_WIN_PUBLISHER` | Windows証明書のCommon Nameと完全一致する発行元。更新時にも検証 |
 | Secret | `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` | `pfx` 用の証明書とパスワード。ローカルでは `CSC_LINK` / `CSC_KEY_PASSWORD` |
 | Variable | `PLY_AZURE_ENDPOINT` / `PLY_AZURE_ACCOUNT` / `PLY_AZURE_PROFILE` | `azure` 用のHTTPSエンドポイント・署名アカウント・証明書プロファイル |
@@ -173,7 +200,7 @@ Windows証明書ストアに秘密鍵へのアクセスを持つ証明書・プ�
 AzureにはCertificate Profile Signerの権限とPublic Trustプロファイルを用意し、発行元名を証明書に合わせる。
 本人確認・証明書発行・契約は未実施。設定を追加しただけでOSに信頼される署名になるわけではない。
 現実の資格情報をコード・CLI引数・成果物・アプリに埋め込まない。CI用の書き込みトークンを利用者へ配らない。
-証明書が未設定の場合に、未署名で公開へ進むフォールバックはない。
+証明書が未設定の場合に、未署名で公開へ進むフォールバックはない。無署名は `PLY_WINDOWS_SIGNING=none` を明示したときだけ。
 
 アプリに焼き込む更新フィード（`app-update.yml` の owner/repo）は `PLY_RELEASE_REPOSITORY`、未指定なら `tekalu1/pleiad`。`GITHUB_REPOSITORY` からは導かない。
 アップロード先（`GH_REPO`）は Actions の `github.repository`。フィードとアップロード先を分けることで、別リポジトリの Actions で作った版も `tekalu1/pleiad` を見に行く。
@@ -192,7 +219,7 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 ## 製品名と識別子
 
 表示名と配布物の名前は Pleiad。改名前の版からの更新とデータを保つため、`appId: jp.ply.desktop`・package.json の `name: agent-host`・実行ファイル名 `Ply.exe`・署名証明書の発行元名（`CN=Ply Evaluation …`）・`PLY_*` と `AGENT_HOST_*`・データ置き場（`~/.agent-host`）・MCP のサーバー名とツール名は変えない。
-アプリは更新の署名を発行元名で照合するので、鍵を替えるときも同じ発行元名にし、利用者には新しい公開証明書の信頼を求める。旧リポジトリ（非公開）からは橋渡し版を一度だけ配り、以後は `tekalu1/pleiad` から更新する（[ADR 0019](adr/0019-rename-ply-to-pleiad-keep-identifiers.md)）。
+認証局の署名へ移るときは、その発行元名を先に `desktop/update-trust.json` の `publishers` に足した版を配る（「更新の確かめ（Windows）」）。旧リポジトリ（非公開）からは橋渡し版を一度だけ配り、以後は `tekalu1/pleiad` から更新する（[ADR 0019](adr/0019-rename-ply-to-pleiad-keep-identifiers.md)）。
 
 ## 同梱する CLI
 
@@ -218,7 +245,7 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 
 ## 配布と利用者認証
 
-Releases は public で、ブラウザーからはログインなしで取得できる。評価版は自己署名のため、インストール前に公開証明書の扱いを確認する（下記「自己署名の配布」）。自動更新は、証明書を信頼していないPCでも、一覧（`desktop/update-signers.json`）に指紋のある署名者なら受け入れる（上記「自己署名での評価」）。
+Releases は public で、ブラウザーからはログインなしで取得できる。Windows の配布物は自己署名、または無署名（下記「無署名への移り方」の後）。どちらも初回のインストールでは SmartScreen が「不明な発行元」と出す。自動更新は、`desktop/update-trust.json` の方針で受け入れる（上記「更新の確かめ（Windows）」）。
 自動更新に GitHub のログインは要らない。`gh auth login` も不要で、GitHub CLI が無い PC・未ログインの PC でも更新できる。
 更新設定は `private: true` のまま（外すと最新の先行版を semver で選ぶ `NewestReleaseProvider` が効かなくなり、先行版のメタデータ `beta.yml` も探されるため。導入済みのアプリにもこの設定が焼き込まれている）。
 資格情報が無いときは、`PrivateGitHubProvider` 系の同じプロバイダーが `authorization` ヘッダーを付けずに GitHub API を呼ぶ。
@@ -237,9 +264,8 @@ Releases は public で、ブラウザーからはログインなしで取得で
 先行版・安定版とも、`PrivateGitHubProvider` が要求する `latest.yml` / `latest-mac.yml` を配る。
 GitHub Release の prerelease 属性とアプリの先行版設定で選別し、安定版へ先行版を流さない。
 
-未署名の評価版は自動更新を無効のまま配布し、次の評価版は Releases から手動でインストールする。
-評価版のリリースノートにはこの制限と対象OSを明記する。署名済みの正式フローとは別で、更新用メタデータは添付しない。
-最初の署名済み版への移行も手動インストール。その後の自動更新は旧版→新版を実機で検証する。
+release 設定を使わない未署名のパッケージ（`Desktop packages`）は自動更新を持たず、更新用メタデータも添付しない。次の版は Releases から手動でインストールする。
+無署名の配布（`PLY_WINDOWS_SIGNING=none`）はこれとは別で、release 設定で作り、自動更新を持つ。
 
 ## リリース手順
 
@@ -247,7 +273,7 @@ GitHub Release の prerelease 属性とアプリの先行版設定で選別し�
 Claude の CLI は既定で保持役に載るので（無停止の更新。[ADR 0151](adr/0151-zero-downtime-update.md)）、新しい CLI の版が出ていたら、`scripts/zero-downtime/claude/held-server.mjs` の実機の確かめ（承認待ちを A → B で付け直す）をその版でやり直す。
 載せる版の条件は `core/backends/claude-held.mjs` の `HELD_CLI_MIN_VERSION`（確かめた最も古い版。以上で同じ major を載せる）。付け直しに要る口（`pending_permission_requests` など）が無い版・合わなくなった版が出たときだけ、下限を上げるか上限を足す。
 
-### 自己署名の配布（現在の運用）
+### 自己署名の配布（現在の運用。無署名へ移るまで）
 
 `Evaluation release` は GitHub-hosted `windows-latest` で動く。このPCの常駐プロセス、ログイン状態、self-hosted runnerには依存しない。
 `main` に含まれる `vX.Y.Z`（正式）または `vX.Y.Z-beta.N`（先行版）のタグをpushすると、[同一 commit の main CI の検証結果](release-ci-reuse.md)を確認し、x64/ARM64ビルド・署名・署名検証を行い、そのリポジトリの Releases に配布する（Android のタグ `android-v…` では動かない）。成功を再利用できる場合はリリース環境の短い検査を行い、結果が揃わなければ通常テストを全部回す。main CI の失敗が確認された場合は公開しない。
@@ -257,7 +283,7 @@ Claude の CLI は既定で保持役に載るので（無停止の更新。[ADR 
 初回設定は `powershell -File scripts/setup-evaluation-secrets.ps1`。GitHub CLIで認証済みの管理者が実行する。
 GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CSC_LINK`、ランダムなパスワードを `WIN_CSC_KEY_PASSWORD` Repository Secretsへ標準入力で登録する。
 発行元と公開指紋は `PLY_WIN_PUBLISHER` / `PLY_WIN_CERTIFICATE_SHA1` Repository Variablesに登録する。
-`PLY_WIN_CERTIFICATE_SHA1` を登録してあれば、ビルドは署名の準備で `desktop/update-signers.json` にその指紋があるかを確かめ、無ければ止まる（`scripts/release-signing.cjs`。ストアの証明書は常に確かめる）。Azure（認証局）の署名と macOS は対象外。新しい鍵へ替えるときは、先に一覧へ足す。
+`PLY_WIN_CERTIFICATE_SHA1` を登録してあれば、ビルドは署名の準備で `desktop/update-trust.json` の `signers` にその指紋があるかを確かめ、無ければ止まる（`scripts/release-signing.cjs`。ストアの証明書は常に確かめる）。Azure（認証局）の署名は、発行元が `publishers` にあるかを確かめる。macOS は対象外。新しい鍵へ替えるときは、先に一覧へ足す。
 秘密鍵・パスワードはソース、ログ、Releaseアセットに含めない。署名ステップだけがSecretsを参照し、runnerの一時PFXと証明書ストアは処理後に掃除する。
 この証明書は自己署名であり、公的な認証局による署名ではない。
 
@@ -267,6 +293,24 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 `SIGNING-INFO.json` は公開証明書の指紋と有効期限、`BUILD-INFO.json` はソースコミットとActions実行URLを記録する。
 
 リリースジョブは所有者のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。PRから署名ジョブは実行しない。
+
+### 無署名への移り方
+
+[ADR 0207](adr/0207-unsigned-windows-release.md)。今の利用者の版（0.13.18 まで）の更新の確かめは ADR 0176 のもので、無署名（`TRUST_E_NOSIGNATURE`）を受け入れない。無署名の版をいきなり出すと、利用者の更新は「署名が無効」で止まり、手動での入れ直しが要る。そのため、署名した橋渡しの版を 1 つ挟む。
+
+1. **橋渡しの版を、今の形（自己署名）で出す。** `desktop/update-trust.json` が `unsigned: "accept"` の版（ADR 0207 を含む版）を、今の Variables のまま `Evaluation release` で正式の版（Latest）として出す。今の利用者は、指紋の固定（ADR 0176）で受け入れる。この版の `BUILD-INFO.json` には `updateAcceptsUnsigned: true` が載る。先行版を受け取る利用者は、正式の版を含めて一番新しい版を取るので、橋渡しの版が一番新しければ 1 つで済む。
+2. **利用者に届くのを待つ。** 起動中の PC は 30 分ごとに確かめてダウンロードし、再起動で入る。届いたかはこちらから見えないので、待つ長さは利用者の数と使い方で決める。
+3. **Repository Variable `PLY_WINDOWS_SIGNING` を `none` にして、次の版を出す。** `Evaluation release` は自己署名の手順を飛ばし、「Verify and publish unsigned」で、署名の Secrets を 1 つも渡さずに作る。公開の前に `scripts/release-unsigned-guard.mjs` が、Latest と一番新しい版の `BUILD-INFO.json` の `updateAcceptsUnsigned` を確かめ、`true` でなければ止める（橋渡しの版を飛ばしたまま出さないため）。配布物がどれも `NotSigned` であることも確かめる。`Pleiad-Evaluation.cer`・`SIGNING-INFO.json` は添付しない。`Desktop signed release` でも、`none` のときは同じ確かめをしてから無署名で作る。
+4. **無署名の版が出て、戻す必要が無いと決めたら、署名の設定を消す。** Repository Secrets の `WIN_CSC_LINK`・`WIN_CSC_KEY_PASSWORD`、Repository Variables の `PLY_WIN_PUBLISHER`・`PLY_WIN_CERTIFICATE_SHA1`。`PLY_WINDOWS_SIGNING=none` は残す。手元の自己署名の鍵（`%LOCALAPPDATA%/Ply/signing/`）も、署名の版を出し直す必要が無くなってから消す。
+
+橋渡しの版が届く前に止まっていた PC（オフラインのまま・更新を切った PC）は、無署名の版を受け取れない。Releases から手動でインストールし直す（設定と会話は残る）。
+`Desktop signed release` で出した版は `BUILD-INFO.json` を持たないので、その版が Latest か一番新しい版だと、無署名の公開は止まる。その場合は `Evaluation release` で橋渡しの版を出し直す。
+
+### 認証局の署名へ戻すとき
+
+1. 認証局の証明書の発行元名（CN）を `desktop/update-trust.json` の `publishers` に足した版を、無署名のまま出し、届くのを待つ。
+2. `PLY_WINDOWS_SIGNING` を `azure` などにして出す（`azure` は発行元が `publishers` に無いとビルドが止まる。`pfx` で認証局の証明書を使うときは止まらないので、足し忘れに気をつける）。
+3. 全員が署名の版に移ったら、`unsigned: "reject"` にした版を出す。それ以降、無署名の版は受け入れられない。
 
 ### 認証局の署名・段階配布
 
@@ -310,7 +354,8 @@ betaから安定版へ戻しても古い版へ戻さず、現在より新しい�
 | 新しいサーバーが立たない版 | 前の版のサーバーで動き続け、その旨が出る |
 | 形式番号が違う版 | 自動では切り替えず「あとで／中断して更新」を聞く。「あとで」では切り替わらない |
 | ダウンロード失敗・回線断 | 現行版で作業を続けられ、再試行できる |
-| 改ざん・署名不正 | 更新を適用しない |
+| 改ざん・署名不正 | 更新を適用しない（`latest.yml` の sha512 と合わない・署名の改ざん・方針に無い署名者や発行元。無署名は、インストール済みの版の方針が `accept` のときだけ通る） |
+| 無署名への橋渡し | 自己署名の旧版 → 橋渡しの版（自己署名・`unsigned: accept`）→ 無署名の版の順に、手動の操作なしで更新できる |
 | 安定版/先行版 | betaが安定版に流れず、古い版に戻らない。正式な版が Latest、先行版が Pre-release で出る |
 | 段階配信 | 0%で対象外、100%で対象、設定変更後も同一端末の割当が安定 |
 | 更新通知 | 初回導入は通知なし、更新後1回、リロードで再表示なし |
@@ -319,6 +364,7 @@ betaから安定版へ戻しても古い版へ戻さず、現在より新しい�
 未署名Windowsパッケージ生成は署名済みのOS更新テストの代わりにはならない。無停止の更新の本物のインストーラー（NSIS・electron-updater）での確認は、署名なしで appId・製品名・インストール先・データ置き場・実行場所・ポートを別にした試験用のインストーラーで行える（`scripts/zero-downtime/stage1-7/`。手順と結果は [stage1-7.md](zero-downtime-update/stage1-7.md)）。署名・スマホ・利用者の操作が要るものは同じ文書の「利用者に頼む確認」。
 選んだOSで署名済み旧版から新版へのインストール試験が終わるまで一般公開しない。macOSを追加するときは実機・公証も確認する。
 自己署名版の更新（2026-09-18、beta.2）で未確認: GitHub Releases からの実際の配信での更新、Windows ARM64。
+無署名への移り方（ADR 0207）で未確認: 実際の配信での、自己署名の旧版 → 橋渡しの版 → 無署名の版の更新。無署名の NSIS のインストーラーが作れること（`NotSigned`・`app-update.yml` に `publisherName` が無い・`latest.yml` の sha512 と一致・方針で受け入れる）は 2026-10-14 に手元で確かめた。
 
 ### インストーラー画面の手元確認（Windows）
 
