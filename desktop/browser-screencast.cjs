@@ -6,9 +6,10 @@
 //     タブが窓に載っていない・窓が最小化されていても描かれる（窓に載せる必要はある。panel.pin が窓の外に 1px で載せる）
 //   - 入力は Input.dispatch*。内蔵ブラウザーは人が見るもの（エージェントの操作は PC の Chrome）なので、常に通る。
 //     入力の変換は core/chrome/input.mjs（端末から操作する PC の Chrome の窓と共有）
-//   - 端末の右パネルは、ホストの画面の右パネルと同じ「会話のタブ列」を持つ。state.tabs にその会話のタブを載せ、
-//     start の tabId・navigate の select / close / newTab で見るタブを替える。見ているタブが閉じたら残りの先頭へ移る
-//     （無くなったら closed で終わる）。openTab は見ずにタブだけ足す（端末から開いた HTML。同じファイルは同じタブ）
+//   - 端末の右パネルは、ホストの画面の右パネルと同じ「会話のタブ列」を持つ。state.tabs にその会話のタブ（と止めた外部の読み込みの guard）を載せ、
+//     start の tabId・navigate の select / close / newTab / allowOnce で見るタブを替える・操作する。見ているタブが閉じたら残りの先頭へ移る
+//     （無くなったら closed で終わる）。openTab は見ずにタブだけ足す（端末から開いた HTML。同じファイルは同じタブ）。
+//     端末が足す・開くタブ（start の url / fileUrl・newTab・openTab）は、ホストの画面で選んでいるタブを変えない（panel の select: false）
 const { navigable, openable } = require('./browser-panel.cjs');
 
 let inputModule = null;
@@ -40,8 +41,9 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
       tabId: entry.tabId, url: shownUrl(c.getURL()), title: c.getTitle(), loading: c.isLoading(),
       canGoBack: c.navigationHistory.canGoBack(), canGoForward: c.navigationHistory.canGoForward(),
       // この会話の内蔵ブラウザーのタブ（ホストの画面の右パネルと同じ並び）。端末の右パネルのタブ列になる
+      // guard は止めた外部の読み込みの件数と出どころ（https）だけ。端末の右パネルの「N 件止めました・読み込む」の行になる（パスは載せない）
       tabs: panel.tabsFor(sessionId).filter(tab => !tab.webContents.isDestroyed())
-        .map(tab => ({ id: tab.id, url: shownUrl(tab.webContents.getURL()), title: tab.webContents.getTitle(), loading: tab.webContents.isLoading() })),
+        .map(tab => ({ id: tab.id, url: shownUrl(tab.webContents.getURL()), title: tab.webContents.getTitle(), loading: tab.webContents.isLoading(), guard: tab.guard ?? null })),
     };
   }
   let stateTimer = new Map();
@@ -55,8 +57,8 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
     }, 50));
   }
 
-  function pickTab(sessionId, url) {
-    if (url) return panel.createFor(sessionId, url);
+  function pickTab(sessionId, url, source = null) {
+    if (url) return panel.createFor(sessionId, url, source);
     const tabs = panel.tabsFor(sessionId);
     return tabs[0] ?? panel.createFor(sessionId, 'about:blank');
   }
@@ -87,7 +89,7 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
   const validSession = sessionId => typeof sessionId === 'string' && !!sessionId && sessionId.length <= 200;
   const tabOf = (sessionId, tabId) => panel.tabsFor(sessionId).find(tab => tab.id === tabId && !tab.webContents.isDestroyed()) ?? null;
 
-  async function start(sessionId, { url, fileUrl, tabId, ...options } = {}) {
+  async function start(sessionId, { url, fileUrl, tabId, source, ...options } = {}) {
     if (!validSession(sessionId)) throw new Error('invalid session');
     const target = fileUrl && /^file:/i.test(fileUrl) ? fileUrl : url;
     if (url && !fileUrl && (!navigable(url) || url === 'about:blank')) throw new Error('invalid-url');
@@ -104,7 +106,7 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
     if (existing) await stop(sessionId);
     let tab;
     if (tabId && !target) { tab = tabOf(sessionId, tabId); if (!tab) throw new Error('no-tab'); }
-    else tab = pickTab(sessionId, target);
+    else tab = pickTab(sessionId, target, fileUrl ? source : null);
     await attach(sessionId, tab, settings);
     return { tabId: tab.id, state: state(sessionId) };
   }
@@ -152,6 +154,8 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
       if (change === 'destroyed' && changed.id === tab.id) void follow(sessionId, entry);
       else pushState(sessionId);   // タブが増えた・減った（ホストの画面からも）。端末のタブ列を直す
     }));
+    // 止めた外部の読み込みの件数が変わった・設定が変わった（パネルの push）。端末の「読み込む」の行を直す
+    if (panel.onStateChanged) entry.cleanup.push(panel.onStateChanged(() => pushState(sessionId)));
     try { await begin(entry); }
     catch (error) { if (sessions.get(sessionId) === entry) release(sessionId); throw error; }
   }
@@ -184,11 +188,14 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
     pushState(sessionId);
   }
 
-  /** 見ずに、その会話の内蔵ブラウザーへ PC のファイル（HTML）のタブを足す。リモートの端末から HTML を開くとき（見に行くのは端末の start の tabId） */
-  function openTab(sessionId, fileUrl) {
+  /**
+   * 見ずに、その会話の内蔵ブラウザーへ PC のファイル（HTML）のタブを足す。リモートの端末から HTML を開くとき（見に行くのは端末の start の tabId）。
+   * ホストの画面で選んでいるタブは変えない。source はホストの画面の ⋯ とバッジに使う（file の label は作業ディレクトリからの相対）
+   */
+  function openTab(sessionId, fileUrl, source = null) {
     if (!validSession(sessionId)) throw new Error('invalid session');
     if (typeof fileUrl !== 'string' || !/^file:/i.test(fileUrl) || !openable(fileUrl)) throw new Error('invalid-url');
-    return { tabId: panel.openFor(sessionId, fileUrl).id };
+    return { tabId: panel.openFor(sessionId, fileUrl, source).id };
   }
 
   function ack(sessionId, frameId) {
@@ -224,6 +231,14 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
         const created = panel.createFor(sessionId, 'about:blank');
         await select(sessionId, created.id);
         return { tabId: created.id, state: state(sessionId) };
+      }
+      // 「読み込む」: 止めた https の出どころを、そのタブだけ通して読み直す。写しは書き直しが要るので rewrite（{ source, origins }）を返し、
+      // worker が一時の許可付きの写しを書いて openTab で同じタブへ開き直す（core/browser-screencast.mjs）
+      case 'allowOnce': {
+        const target = tabOf(sessionId, tabId ?? entry.tabId);
+        if (!target) throw new Error('no-tab');
+        const rewrite = panel.allowOnceFor?.(target.id);
+        return rewrite ? { rewrite } : undefined;
       }
       case 'back': if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack(); break;
       case 'forward': if (c.navigationHistory.canGoForward()) c.navigationHistory.goForward(); break;

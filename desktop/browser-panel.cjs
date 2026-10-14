@@ -21,14 +21,8 @@ const PARTITION = 'persist:pleiad-browser';
 const OPENABLE = new Set(['http:', 'https:', 'file:']);
 // ページの中から移ってよい先（と about:blank）。file: へはページからは移らせない（Chromium も http(s) からは止める）
 const NAVIGABLE = new Set(['http:', 'https:']);
-// URL のまま既定のブラウザーへ渡すのは http(s) だけ（userinfo の無いもの）
-function externalUrl(url) {
-  try {
-    const u = new URL(url);
-    if ((u.protocol === 'https:' || u.protocol === 'http:') && !u.username && !u.password) return u.href;
-  } catch {}
-  return null;
-}
+// URL のまま既定のブラウザーへ渡すのは http(s) だけ（userinfo の無いもの。desktop/main.cjs の external() と同じ判定）
+const { externalUrl } = require('./external-url.cjs');
 // file: の HTML も既定のブラウザーで開ける。ただし画面が明示して開いたファイル（tab.requested）そのものだけで、
 // ページの中で移った先の file: は断る。拡張子は URL の段階と、実体を解決した後（file-bridge の checkRequest）の両方で確かめる
 const OPENABLE_FILE = /\.html?$/i;
@@ -46,12 +40,16 @@ function externalFile(url, tab) {
   if (!file || !requested || !OPENABLE_FILE.test(file) || !samePath(path.resolve(file), path.resolve(requested))) return null;
   return file;
 }
-/** 画面が開いた file: のタブの照合の鍵。同じ実体のファイル（可視化の写しは会話と記録の id）は同じタブで開く（docs/inapp-browser.md） */
-function fileKey(url, source = null) {
+/**
+ * 画面が開いた file: のタブの照合の鍵。同じ実体のファイル（可視化の写しは会話と記録の id）は同じタブで開く（docs/inapp-browser.md）。
+ * シンボリックリンク・ジャンクション経由の別名でも同じ鍵になるよう実体（realpath）で見る。解決できなければ（まだ無いファイル）resolve
+ */
+function fileKey(url, source = null, realpath = fs.realpathSync) {
   if (source?.kind === 'snapshot') return `snapshot\0${source.sessionId}\0${source.id || source.at || ''}`;
   const file = filePath(url);
   if (!file) return null;
-  const resolved = path.resolve(file);
+  let resolved;
+  try { resolved = realpath(file); } catch { resolved = path.resolve(file); }
   return `file\0${process.platform === 'win32' ? resolved.toLowerCase() : resolved}`;
 }
 /** 画面から届いた source の形を確かめる。形が違えば null（タブの照合と画面の ⋯ のファイルの操作にだけ使い、読み込みの判断には使わない） */
@@ -391,7 +389,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     });
   }
 
-  function createTab({ url = '', sessionId = context.sessionId, select = true } = {}) {
+  /** select: false は、ホストの画面で選んでいるタブを変えない（リモートの端末が足すタブ。今のタブが無いときだけ reconcile が先頭を選ぶ） */
+  function createTab({ url = '', sessionId = context.sessionId, select = true, source = null } = {}) {
     const view = new WebContentsView({ webPreferences: { session: ses, contextIsolation: true, sandbox: true, nodeIntegration: false } });
     view.setBackgroundColor?.('#ffffff');
     const tab = { id: `t${nextId++}`, view, sessionId: sessionId ?? null, blank: !url };
@@ -425,7 +424,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     });
     c.on('destroyed', () => { byContents.delete(contentsId); if (tabs.has(tab.id)) removeTab(tab.id); });
     if (select) { remember(tab); if (isVisible(tab)) current = tab.id; }
-    if (url) load(tab, url);
+    else reconcile();
+    if (url) load(tab, url, source);
     place(); push();
     for (const listener of tabListeners) listener('created', tab);
     return tab;
@@ -434,7 +434,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     tab.blank = false; tab.requested = url;
     tab.allowFile = url.startsWith('file:');
     // 別のファイル・写しを読むなら、そのタブだけの一時の許可（「読み込む」）は引き継がない。同じものの読み直しでは残す
-    const key = tab.allowFile ? fileKey(url, source) : null;
+    const key = tab.allowFile ? fileKey(url, source, realpath) : null;
     if (key !== tab.key) tab.once = new Set();
     tab.key = key; tab.source = tab.allowFile ? source : null; tab.blocked.clear();
     tab.view.webContents.loadURL(url).catch(() => {});   // 失敗は Chromium のエラーページが出る
@@ -497,6 +497,20 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     return true;
   }
 
+  /**
+   * 「読み込む」: 止めた https の出どころを、このタブだけ一時的に通して読み直す。写しは meta の CSP が先に止めているので、
+   * 呼び側が一時の許可付きで写しを書き直して開き直す（写しのタブは { source, origins } を返す。ファイルのタブは null）。
+   * 本体の画面（command）とリモートの端末（desktop/browser-screencast.cjs の allowOnce）が同じ道を通る
+   */
+  function allowOnce(tab) {
+    if (!tab || !guarded(tab)) return null;
+    for (const row of tab.blocked.values()) if (row.secure) tab.once.add(row.origin);
+    tab.blocked.clear();
+    if (tab.source?.kind === 'snapshot') { push(); return { source: tab.source, origins: [...tab.once] }; }
+    tab.view.webContents.reload(); push();
+    return null;
+  }
+
   async function command(action, args = {}) {
     const tab = args.id ? tabOf(args.id) : currentTab();
     switch (action) {
@@ -510,13 +524,13 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
         if (!url) throw new Error('invalid-url');
         const source = cleanSource(args.source, url);
         // reuse: 同じ実体のファイル（写しは同じ記録）のタブがこの会話にあれば、新しく作らず前に出して読み直す
-        const key = args.reuse === true && url.startsWith('file:') ? fileKey(url, source) : null;
+        const key = args.reuse === true && url.startsWith('file:') ? fileKey(url, source, realpath) : null;
         const same = key ? visibleTabs().find(x => x.allowFile && x.key === key) : null;
         if (same) {
           current = same.id; remember(same); load(same, url, source); push();
           return { ...snapshot(), reused: same.id };
         }
-        if (!tab || args.newTab) { const created = createTab({ url }); if (source) Object.assign(created, { source, key: fileKey(url, source) }); }
+        if (!tab || args.newTab) createTab({ url, source });
         else { current = tab.id; remember(tab); load(tab, url, source); }
         push(); return snapshot();
       }
@@ -524,11 +538,8 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
       // 「読み込む」: 止めた https の出どころを、このタブだけ一時的に通して読み直す。写しは meta の CSP が先に止めているので、
       // 画面が一時の許可付きで写しを書き直して開き直す（rewrite を返す）
       case 'allowOnce': {
-        if (!tab || !guarded(tab)) return snapshot();
-        for (const row of tab.blocked.values()) if (row.secure) tab.once.add(row.origin);
-        tab.blocked.clear();
-        if (tab.source?.kind === 'snapshot') { push(); return { ...snapshot(), rewrite: { source: tab.source, origins: [...tab.once] } }; }
-        tab.view.webContents.reload(); push(); return snapshot();
+        const rewrite = allowOnce(tab);
+        return rewrite ? { ...snapshot(), rewrite } : snapshot();
       }
       case 'select': if (tab && isVisible(tab)) { current = tab.id; remember(tab); place(); push(); } return snapshot();
       case 'close': if (tab) removeTab(tab.id); return snapshot();
@@ -611,17 +622,25 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
   return {
     attach, command, layout, snapshot,
     // ---- 画面の転送（desktop/browser-screencast.cjs）へ渡す、会話ごとのタブと webContents
-    tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
-    createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, url: url || 'about:blank', select: true }); return { id: tab.id, webContents: tab.view.webContents }; },
-    // リモートの端末が開く PC のファイル（file: の HTML）。この会話に同じ実体のタブがあれば新しく作らず、そのタブを読み直す
-    openFor: (sessionId, url) => {
-      const key = fileKey(url);
+    // guard: そのタブで止めた外部の読み込み（件数と出どころだけ。パスは含まない）。端末の右パネルの「N 件止めました」の行になる
+    tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId)
+      .map(tab => ({ id: tab.id, webContents: tab.view.webContents, guard: guardInfo(tab).guard ?? null })),
+    // リモートの端末が足すタブは、ホストの画面で選んでいるタブを変えない（select: false）
+    createFor: (sessionId, url = '', source = null) => {
+      const tab = createTab({ sessionId, url: url || 'about:blank', select: false, source: cleanSource(source, url) });
+      return { id: tab.id, webContents: tab.view.webContents };
+    },
+    // リモートの端末が開く PC のファイル（file: の HTML・可視化の写し）。この会話に同じ実体のタブがあれば新しく作らず、そのタブを読み直す。
+    // source は画面が開いたときと同じ形（file の label・snapshot の記録の印）。ホストの画面の ⋯ とバッジに使う
+    openFor: (sessionId, url, source = null) => {
+      const clean = cleanSource(source, url);
+      const key = fileKey(url, clean, realpath);
       const same = key ? order.map(id => tabs.get(id)).find(tab => tab.sessionId === sessionId && tab.allowFile && tab.key === key) : null;
-      if (!same) { const tab = createTab({ sessionId, url, select: true }); return { id: tab.id, webContents: tab.view.webContents }; }
-      remember(same); if (isVisible(same)) current = same.id;
-      load(same, url, same.source); push();
+      if (!same) { const tab = createTab({ sessionId, url, select: false, source: clean }); return { id: tab.id, webContents: tab.view.webContents }; }
+      load(same, url, clean ?? same.source); push();
       return { id: same.id, webContents: same.view.webContents };
     },
+    allowOnceFor: id => allowOnce(tabs.get(id)),
     selectFor: id => { const tab = tabs.get(id); if (!tab) return; remember(tab); if (isVisible(tab)) { current = id; place(); } push(); },
     closeFor: id => removeTab(id),
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,

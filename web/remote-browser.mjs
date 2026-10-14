@@ -254,6 +254,8 @@ export function createRemoteBrowser({ cmd, getSessionId }) {
         if (!sessionId || ended) { await ensure(args.id); return panelState; }
         return nav('select', { tabId: args.id });
       case 'close': return nav('close', { tabId: args.id });
+      // 止めた外部の読み込みの「読み込む」。ほかの映像の操作と同じ道（browserScreencastNav。その会話を見ている接続だけ）。写しの書き直しはホストが済ませる
+      case 'allowOnce': return nav('allowOnce', { tabId: args.id });
       case 'back': case 'forward': case 'reload': case 'stop': return nav(action);
       case 'newTab': {
         await ensure();

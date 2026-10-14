@@ -66,7 +66,8 @@ export const SCREENCAST_COMMANDS = ['browserScreencast', 'browserScreencastStop'
  * args.source === 'chrome' は、エージェントの Chrome の窓の映像（chrome = { hub, bridge }）。ホストの画面もリモートも見られるが、見るだけ（移動は view-only）。
  * 入力はリモートの端末からだけ受け、端末が引き継いでいる間かは bridge（core/chrome/screencast.mjs）が決める（それ以外は view-only）。
  * 入力・移動は、その会話を見ている接続からだけ。
- * snapshotFile({ sessionId, id, at }) は可視化の写しを書き出して file: の URL を返す（見つからなければ null）
+ * snapshotFile({ sessionId, id, at, allow? }) は可視化の写しを書き出して file: の URL を返す（見つからなければ null）。
+ * allow は「読み込む」で、そのタブだけに加える https の出どころ
  */
 export async function screencastCommand({ command, args = {}, local, hub, bridge, client, snapshotFile, chrome = null }) {
   const viaChrome = args.source === 'chrome';
@@ -82,17 +83,20 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
   try {
     switch (command) {
       case 'browserScreencast': {
-        let url, fileUrl;
+        let url, fileUrl, source;
         if (args.visualization) {
           const v = args.visualization;
-          fileUrl = await snapshotFile?.({ sessionId: typeof v.sessionId === 'string' ? v.sessionId : sessionId, id: v.id, at: v.at });
+          const owner = typeof v.sessionId === 'string' ? v.sessionId : sessionId;
+          fileUrl = await snapshotFile?.({ sessionId: owner, id: v.id, at: v.at });
           if (!fileUrl) return { ok: false, code: 'not-found' };
+          // 同じ記録は同じタブ・「読み込む」で書き直せるよう、ホストの内蔵ブラウザーのタブに記録の印を付ける
+          source = { kind: 'snapshot', sessionId: owner, ...(v.id ? { id: String(v.id) } : {}), ...(v.at ? { at: String(v.at) } : {}) };
         } else if (args.url != null) {
           if (typeof args.url !== 'string' || !/^https?:\/\//i.test(args.url)) return { ok: false, code: 'invalid-url' };
           url = args.url;
         }
         const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
-        return { ok: true, result: await hub.watch(client, sessionId, { url, fileUrl, tabId, width: args.width, height: args.height, scale: args.scale, quality: args.quality }) };
+        return { ok: true, result: await hub.watch(client, sessionId, { url, fileUrl, source, tabId, width: args.width, height: args.height, scale: args.scale, quality: args.quality }) };
       }
       case 'browserScreencastStop': await hub.unwatch(client, sessionId); return { ok: true, result: {} };
       case 'browserScreencastAck': hub.received(client, sessionId, Number(args.seq)); return { ok: true, result: {} };
@@ -102,7 +106,15 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
         // select・close・newTab は内蔵ブラウザーのタブ列の操作（tabId はその会話のタブ）。見るタブが替わったら { tabId, state } が返る
         const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
         const result = await bridge.request('navigate', sessionId, { nav: args.action, url: args.url, tabId });
-        return { ok: true, result: result ?? {} };
+        // allowOnce（止めた外部の読み込みを通して読み直す）の写しは、一時の許可付きで書き直した写しを同じタブへ開き直す
+        const { rewrite, ...rest } = result ?? {};
+        if (rewrite?.source?.kind === 'snapshot') {
+          const { source, origins } = rewrite;
+          const fileUrl = await snapshotFile?.({ sessionId: source.sessionId, id: source.id, at: source.at, allow: origins });
+          if (!fileUrl) return { ok: false, code: 'not-found' };
+          await bridge.request('openTab', sessionId, { fileUrl, source });
+        }
+        return { ok: true, result: rest };
       }
       default: return { ok: false, code: 'unknown' };
     }
@@ -184,10 +196,10 @@ export function createScreencastHub({ bridge, source = null, ackTimeout = 3000, 
   }
 
   /** 見始める。url か fileUrl（サーバーが確かめた可視化の写し）があれば新しいタブで開き、tabId があればその会話のそのタブを見る。同じ会話を見ている端末とはタブを共有する */
-  async function watch(client, sessionId, { url, fileUrl, tabId, width, height, scale, quality = 'auto' } = {}) {
+  async function watch(client, sessionId, { url, fileUrl, source, tabId, width, height, scale, quality = 'auto' } = {}) {
     const level = QUALITY[quality] ? quality : 'auto';
     const settings = { width, height, scale: Math.min(Number(scale) || 1, QUALITY[level].maxScale), quality: level };
-    const options = { url, fileUrl, tabId, width, height, scale: settings.scale, quality: QUALITY[level].quality };
+    const options = { url, fileUrl, source, tabId, width, height, scale: settings.scale, quality: QUALITY[level].quality };
     let entry = entryOf(sessionId);
     const created = !entry;
     if (!entry) {

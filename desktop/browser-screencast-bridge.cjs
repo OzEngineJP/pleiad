@@ -29,7 +29,7 @@ function attachBrowserScreencastBridge(worker, panel, { keepVisible = () => () =
         case 'input': await screencast.input(sessionId, message.input); break;
         case 'navigate': result = await screencast.navigate(sessionId, message.nav, message.url, message.tabId) ?? {}; break;
         // 見ずに、その会話の内蔵ブラウザーへタブを足す（リモートの端末から PC のファイルを開く。見に行くのは端末の browserScreencast の tabId）
-        case 'openTab': result = screencast.openTab(sessionId, message.fileUrl); break;
+        case 'openTab': result = screencast.openTab(sessionId, message.fileUrl, message.source ?? null); break;
         default: throw new Error('unknown action');
       }
       post({ type: 'browser-screencast', id, ok: true, result });

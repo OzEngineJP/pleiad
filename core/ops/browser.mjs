@@ -5,7 +5,7 @@
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
 // 引き継ぐ（chromeTakeOver）は by: 'device' でリモートの端末から操作する（窓は PC に見せず、端末の映像の箱の大きさでページを描き、映像のセッションで入力を送る）。
 // ビューアの⋯「Chrome で開く（エージェントの窓へ）」（chromeOpen）は、会話の窓に URL を開く。ホストの PC の画面だけ。エージェントには知らせない。
-// openFile は、リモートの端末が PC の HTML をホストの内蔵ブラウザーのタブに開く（見るのは browserScreencast。ホストの窓は前に出さない）。
+// openFile は、リモートの端末が PC の HTML をホストの内蔵ブラウザーのタブに開く（見るのは browserScreencast。ホストの窓は前に出さず、ホストの画面で選んでいるタブも替えない）。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';

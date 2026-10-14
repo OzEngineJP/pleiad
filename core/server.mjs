@@ -3883,7 +3883,7 @@ const opsCompat = {
 const opsHostBrowser = screencastBridge ? {
   openFile: async ({ sessionId, path: requested, at, base }) => {
     const refuse = message => Object.assign(new Error(message), { userMessage: true });
-    let file;
+    let file, label;
     try {
       const sessions = await store.getAll();
       const roots = fileRoots(sessions);
@@ -3891,6 +3891,9 @@ const opsHostBrowser = screencastBridge ? {
       const inspected = await inspectFile(resolved.path, fileAccessFor(sessionId));
       if (inspected.stat.isDirectory() || !OPENABLE.test(inspected.file)) throw refuse(t('files.htmlOnly'));
       file = inspected.file;
+      // ホストの画面の ⋯・バッジの見出し: 作業ディレクトリからの相対（外にあればフルパス）。画面が開くときの displayPath（web/file-actions.mjs）と同じ
+      const rel = resolved.cwd ? path.relative(resolved.cwd, resolved.path) : '';
+      label = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : resolved.path).replaceAll('\\', '/');
     } catch (error) {
       if (error?.userMessage) throw error;
       const failure = previewFailure(error);
@@ -3898,13 +3901,13 @@ const opsHostBrowser = screencastBridge ? {
     }
     if (!screencastBridge.ready) throw refuse(t('remoteBrowser.unavailable'));
     if (!osActionAllowed()) throw refuse(t('files.tooMany'));
-    try { return await screencastBridge.request('openTab', sessionId, { fileUrl: pathToFileURL(file).href }); }
+    try { return await screencastBridge.request('openTab', sessionId, { fileUrl: pathToFileURL(file).href, source: { kind: 'file', label } }); }
     catch { throw refuse(t('remoteBrowser.failed')); }
   },
 } : null;
 
 // エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
-const opsChromeControl =chromeControl ? {
+const opsChromeControl = chromeControl ? {
   takeOver: (sessionId, options) => chromeControl.takeOver(sessionId, options),
   resume: sessionId => chromeControl.resume(sessionId),
   stop: sessionId => chromeControl.stop(sessionId),
@@ -8140,10 +8143,11 @@ wss.on("connection", (ws, req) => {
           const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
             chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
             client: screencastClients.get(ws),
-            snapshotFile: async ({ sessionId, id, at }) => {
+            snapshotFile: async ({ sessionId, id, at, allow }) => {
               const record = await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at });
               if (!record) return null;
-              const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs() });
+              const once = Array.isArray(allow) ? [...new Set(allow.slice(0, 50).map(externalOrigin).filter(Boolean))] : [];
+              const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs(), once, report: true });
               return pathToFileURL(file).href;
             } });
           // i18n-dynamic: server:remoteBrowser.

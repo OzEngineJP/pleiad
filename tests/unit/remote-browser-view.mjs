@@ -60,7 +60,7 @@ const client = () => { const got = []; return { got, send: message => got.push(m
 function fakePanel() {
   let serial = 0;
   const tabs = [], listeners = new Set(), log = { pinned: new Set(), commands: [] };
-  function createFor(sessionId, url = '') {
+  function createFor(sessionId, url = '', source = null) {
     const id = `t${++serial}`;
     const dbg = new EventEmitter();
     let attached = false;
@@ -70,19 +70,25 @@ function fakePanel() {
     Object.assign(contents, { debugger: dbg, url, destroyed: false, isDestroyed: () => contents.destroyed, getURL: () => contents.url, getTitle: () => 'page',
       isLoading: () => false, navigationHistory: { canGoBack: () => true, canGoForward: () => false, goBack: () => log.commands.push([id, 'goBack']), goForward() {} },
       reload: () => log.commands.push([id, 'reload']), stop() {}, loadURL: async next => { contents.url = next; log.commands.push([id, 'loadURL', next]); } });
-    const tab = { id, sessionId, webContents: contents };
+    const tab = { id, sessionId, source, webContents: contents };
     tabs.push(tab);
     for (const listener of listeners) listener('created', tab);
     return tab;
   }
   const destroy = id => { const index = tabs.findIndex(tab => tab.id === id); const [tab] = tabs.splice(index, 1); tab.webContents.destroyed = true; for (const fn of listeners) fn('destroyed', tab); };
+  const stateListeners = new Set();
   return {
     log, createFor, destroy,
     // 同じ会話に同じ file: のタブがあれば作らない（desktop/browser-panel.cjs の openFor）
-    openFor: (sessionId, url) => tabs.find(tab => tab.sessionId === sessionId && tab.webContents.url === url) ?? createFor(sessionId, url),
+    openFor: (sessionId, url, source = null) => tabs.find(tab => tab.sessionId === sessionId && tab.webContents.url === url) ?? createFor(sessionId, url, source),
     closeFor: destroy,
     tabsFor: sessionId => tabs.filter(tab => tab.sessionId === sessionId),
     onTabsChanged: fn => { listeners.add(fn); return () => listeners.delete(fn); },
+    // 止めた外部の読み込みの件数が変わったとき（desktop/browser-panel.cjs の onStateChanged）
+    onStateChanged: fn => { stateListeners.add(fn); return () => stateListeners.delete(fn); },
+    changed: () => { for (const fn of stateListeners) fn(); },
+    // 「読み込む」: 写しのタブは書き直しの指示（source と許す出どころ）を返す。それ以外は null（main が読み直す）
+    allowOnceFor: id => { log.commands.push([id, 'allowOnceFor']); const tab = tabs.find(item => item.id === id); return tab?.source?.kind === 'snapshot' ? { source: tab.source, origins: tab.guard?.origins ?? [] } : null; },
     pin: (id, on) => { if (on) log.pinned.add(id); else log.pinned.delete(id); },
   };
 }
@@ -168,7 +174,25 @@ export default async function (t) {
     const shown = await run('browserScreencast', { sessionId: 's1', visualization: { sessionId: 's0', id: 'v1' } }, { snapshotFile: async q => { asked = q; return 'file:///C:/data/visualization-snapshots/v1.html'; } });
     t.ok('可視化の写しはサーバーが書き出した file: の URL で開く（端末から file: は受けない）', shown.ok && asked.sessionId === 's0' && asked.id === 'v1'
       && bridge.requests.at(-1)[2].options.fileUrl.startsWith('file:') && !bridge.requests.at(-1)[2].options.url);
+    const startSource = bridge.requests.at(-1)[2].options.source;
+    t.ok('可視化の写しは、記録の印（source）をタブに付けて開く（「読み込む」で書き直せるように）', startSource.kind === 'snapshot' && startSource.sessionId === 's0' && startSource.id === 'v1');
     t.ok('写しが無ければ断る', (await run('browserScreencast', { sessionId: 's1', visualization: { id: 'x' } }, { snapshotFile: async () => null })).code === 'not-found');
+
+    // 「読み込む」（allowOnce）: main が rewrite を返したら、許す出どころつきで写しを書き直し、同じタブへ開き直す
+    const asks = [];
+    bridge.request = async (action, sessionId, args) => { bridge.requests.push([action, sessionId, args]);
+      return action === 'navigate' && args.nav === 'allowOnce' ? { tabId: 't1', rewrite: { source: { kind: 'snapshot', sessionId: 's0', id: 'v1' }, origins: ['https://cdn.example'] } } : {}; };
+    const allowed = await run('browserScreencastNav', { sessionId: 's1', action: 'allowOnce', tabId: 't1' }, { snapshotFile: async q => { asks.push(q); return 'file:///C:/data/visualization-snapshots/v1-once.html'; } });
+    const reopen = bridge.requests.at(-1);
+    t.ok('allowOnce の写しは、許す出どころつきで書き直して openTab で開き直す（rewrite は端末へ返さない）',
+      allowed.ok && asks[0].sessionId === 's0' && asks[0].id === 'v1' && asks[0].allow[0] === 'https://cdn.example'
+      && reopen[0] === 'openTab' && reopen[2].fileUrl.endsWith('v1-once.html') && reopen[2].source.kind === 'snapshot' && allowed.result.rewrite === undefined);
+    bridge.requests.length = 0;
+    bridge.request = async (action, sessionId, args) => { bridge.requests.push([action, sessionId, args]); return {}; };
+    const plain = await run('browserScreencastNav', { sessionId: 's1', action: 'allowOnce', tabId: 't1' }, { snapshotFile: async () => { throw new Error('書き直さない'); } });
+    t.ok('rewrite の無い allowOnce（file: のタブ・https のタブ）は main の読み直しだけ', plain.ok && bridge.requests.length === 1 && bridge.requests[0][2].nav === 'allowOnce');
+    bridge.request = async () => ({ rewrite: { source: { kind: 'snapshot', sessionId: 's0', id: 'v1' }, origins: [] } });
+    t.ok('書き直す写しが無くなっていたら not-found', (await run('browserScreencastNav', { sessionId: 's1', action: 'allowOnce' }, { snapshotFile: async () => null })).code === 'not-found');
   }
 
   // ---- parentPort の口
@@ -281,6 +305,35 @@ export default async function (t) {
     sc.close();
   }
 
+  // ---- main: source・止めた外部の読み込み（guard）・「読み込む」
+  {
+    const panel = fakePanel(), posted = [];
+    const sc = createBrowserScreencast(panel, { post: message => posted.push(message) });
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const source = { kind: 'file', label: 'docs/index.html' };
+    const opened = sc.openTab('s1', 'file:///C:/work/index.html', source);
+    t.ok('openTab の source はタブに付く（ホストの画面の ⋯ とバッジ）', panel.tabsFor('s1')[0].id === opened.tabId && panel.tabsFor('s1')[0].source === source);
+    const snap = sc.openTab('s1', 'file:///C:/data/visualization-snapshots/v1.html', { kind: 'snapshot', sessionId: 's0', id: 'v1' });
+    const snapTab = panel.tabsFor('s1').find(tab => tab.id === snap.tabId);
+    snapTab.guard = { blocked: 3, origins: ['https://cdn.example'] };
+    await sc.start('s1', { width: 390, height: 700, tabId: snap.tabId });
+    const tabs = sc.state('s1').tabs;
+    t.ok('state のタブに止めた件数と出どころ（https）が載る。ないタブは null', tabs.find(tab => tab.id === snap.tabId).guard.blocked === 3
+      && tabs.find(tab => tab.id === snap.tabId).guard.origins[0] === 'https://cdn.example' && tabs.find(tab => tab.id === opened.tabId).guard === null);
+    posted.length = 0;
+    panel.changed();
+    await sleep(80);
+    t.ok('件数が変わったら（パネルの push）状態を端末へ押し出す', posted.some(m => m.type === 'browser-screencast-state'));
+    const rewrite = await sc.navigate('s1', 'allowOnce', undefined, snap.tabId);
+    t.ok('写しのタブの allowOnce は rewrite（source と許す出どころ）を返す', rewrite.rewrite.source.id === 'v1' && rewrite.rewrite.origins[0] === 'https://cdn.example');
+    const plain = await sc.navigate('s1', 'allowOnce', undefined, opened.tabId);
+    t.ok('file: のタブの allowOnce は rewrite なし（main が読み直す）', !plain?.rewrite && panel.log.commands.some(([id, method]) => id === opened.tabId && method === 'allowOnceFor'));
+    let noTab = null;
+    try { await sc.navigate('s1', 'allowOnce', undefined, 't999'); } catch (e) { noTab = e.message; }
+    t.ok('ない・ほかの会話のタブの allowOnce は no-tab', noTab === 'no-tab');
+    sc.close();
+  }
+
   // ---- worker: タブ列の操作を main へ渡す
   {
     const bridge = fakeBridge();
@@ -364,6 +417,10 @@ export default async function (t) {
     t.ok('サーバーは isLocalRequest の結果を渡し、hostCapabilities で pcBrowser を答える',
       /screencastCommand\(\{ command: msg\.command, args: msg\.args \?\? \{\}, local,/.test(server) && /pcBrowser: !local && !!screencastBridge\?\.ready/.test(server));
     t.ok('接続が切れたら見ていた画面を外す', /screencastHub\?\.forget\(viewer\)/.test(server));
+    t.ok('リモートの HTML の openTab には、作業ディレクトリからの相対の label を持つ source を付ける', /request\('openTab', sessionId, \{ fileUrl: pathToFileURL\(file\)\.href, source: \{ kind: 'file', label \} \}\)/.test(server)
+      && /path\.relative\(resolved\.cwd, resolved\.path\)/.test(server));
+    t.ok('端末の「読み込む」は allowOnce として main へ渡る（写しは一時の許可つきで書き直す）', /case 'allowOnce': return nav\('allowOnce', \{ tabId: args\.id \}\)/.test(read('web/remote-browser.mjs'))
+      && /snapshotFile: async \(\{ sessionId, id, at, allow \}\)/.test(server) && /once, report: true/.test(server));
     const main = read('desktop/main.cjs');
     t.ok('デスクトップ版の main が橋をつなぐ', /attachBrowserScreencastBridge\(messages, browserPanel/.test(main));
     const client = read('web/client.mjs');
