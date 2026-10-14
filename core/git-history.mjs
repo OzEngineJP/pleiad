@@ -10,6 +10,8 @@ import { isPleiadBranch, worktreeList } from './git-worktree.mjs';
 
 export const HISTORY_DEFAULT = 50;
 export const HISTORY_MAX = 200;
+/** 会話の始まりのコミットを探す・「始まりまで読む」で読む上限（履歴の先頭から数えた件数） */
+export const START_SEARCH_MAX = 2000;
 const HASH_RX = /^[0-9a-f]{7,64}$/;
 export const isHash = (v) => typeof v === 'string' && HASH_RX.test(v);
 
@@ -57,9 +59,9 @@ export function parseLog(text) {
  * 履歴の 1 ページ。skip 件読み飛ばして limit 件。次のページがあれば next（読み飛ばす件数）。HEAD がまだ無い（最初のコミット前）リポジトリは空
  * @returns {Promise<{ commits: object[], next: number|null, head: string|null } | null>} 読めなければ null
  */
-export async function readHistory(root, { limit = HISTORY_DEFAULT, skip = 0 } = {}) {
+export async function readHistory(root, { limit = HISTORY_DEFAULT, skip = 0, max = HISTORY_MAX } = {}) {
   const head = await git.headCommit(root);
-  const take = Math.min(Math.max(Number(limit) || HISTORY_DEFAULT, 1), HISTORY_MAX);
+  const take = Math.min(Math.max(Number(limit) || HISTORY_DEFAULT, 1), max);
   const from = Math.max(Number(skip) || 0, 0);
   // refs/pleiad/ のターンの撮影は --branches --tags --remotes HEAD のどれにも入らない（--all は使わない）
   const r = await git.readGit(root, ['log', '--topo-order', '--decorate=full', '-z', `--max-count=${take + 1}`, `--skip=${from}`, `--format=${LOG_FORMAT}`, '--branches', '--tags', '--remotes', ...(head ? ['HEAD'] : []), '--'], { timeout: 8_000 });
@@ -67,6 +69,21 @@ export async function readHistory(root, { limit = HISTORY_DEFAULT, skip = 0 } = 
   const commits = parseLog(r.stdout);
   const more = commits.length > take;
   return { commits: commits.slice(0, take), next: more ? from + take : null, head };
+}
+
+/**
+ * コミットの履歴（readHistory と同じ並び）の先頭から数えて何番目か（0 始まり）。1 回の rev-list で、先頭から max 件までを見る。
+ * 見つからない（max 件より後・履歴に無い）・読めなかったときは pos: null
+ * @returns {Promise<{ pos: number|null, scanned: number }>}
+ */
+export async function startPosition(root, hash, { max = START_SEARCH_MAX } = {}) {
+  if (!isHash(hash)) return { pos: null, scanned: 0 };
+  const head = await git.headCommit(root);
+  const r = await git.readGit(root, ['rev-list', '--topo-order', `--max-count=${max}`, '--branches', '--tags', '--remotes', ...(head ? ['HEAD'] : []), '--'], { timeout: 8_000 });
+  if (!r.ok) return { pos: null, scanned: 0 };
+  const lines = r.stdout.split('\n').filter(Boolean);
+  const at = lines.indexOf(hash);
+  return { pos: at < 0 ? null : at, scanned: lines.length };
 }
 
 /** コミット 1 つの情報（本文を含む）。コミットでなければ null */
@@ -118,12 +135,24 @@ export async function resolveCommit(root, rev) {
 
 // ---------------------------------------------------------------- 作業場所
 
+/** 作業場所の状態を読むときの、同時に走らせる行の数（1 行の git は順に走らせるので、同時の git の数もこれ以下） */
+export const WORKTREE_READ_CONCURRENCY = 4;
+
+/** items を最大 n 個ずつ並べて走らせる（結果は元の順） */
+export async function mapLimit(items, n, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const lane = async () => { for (let i = next++; i < items.length; i = next++) out[i] = await fn(items[i], i); };
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, lane));
+  return out;
+}
+
 /**
- * root の git worktree の一覧に、それぞれの状態を足す。here は panel を開いている作業場所。
- * base は主の作業場所（一覧の先頭）の今の HEAD で、ahead は base にない自分のコミットの数。上限 30
- * @returns {Promise<{ base: { path, branch, head }|null, rows: object[] }|null>}
+ * root の git worktree の一覧（名前・場所・HEAD・ここか）。git は `worktree list` の 1 回だけで、中身は読まない（一覧の件数の元）。
+ * 状態（変更・ahead/behind・日時）は readWorktrees が足す。here は panel を開いている作業場所
+ * @returns {Promise<{ base: { path, branch, head }|null, rows: object[], total: number, list: object[] }|null>}
  */
-export async function readWorktrees(root, { limit = 30 } = {}) {
+export async function listWorktrees(root, { limit = 30 } = {}) {
   const list = await worktreeList(root);
   if (!list) return null;
   // 同じ場所でも書き方が違うことがある（Windows の 8.3 の短い名前 RUNNER~1・リンク・大文字小文字）。実際の場所に解いてから比べる
@@ -133,24 +162,38 @@ export async function readWorktrees(root, { limit = 30 } = {}) {
   const main = list[0] ?? null;
   const rows = await Promise.all(list.slice(0, limit).map(async (w, index) => {
     const here = norm(w.path) === norm(root) || norm(await real(w.path)) === rootReal;
-    const row = { path: w.path, branch: w.branch, head: w.head ? w.head.slice(0, 7) : null, detached: w.detached, locked: w.locked, prunable: w.prunable,
+    return { path: w.path, branch: w.branch, head: w.head ? w.head.slice(0, 7) : null, detached: w.detached, locked: w.locked, prunable: w.prunable,
       main: index === 0, here, exists: true, dirty: 0, ahead: 0, behind: 0, at: null };
+  }));
+  return { base: main ? { path: main.path, branch: main.branch, head: main.head } : null, rows, total: list.length, list };
+}
+
+/**
+ * root の git worktree の一覧に、それぞれの状態を足す。here は panel を開いている作業場所。
+ * base は主の作業場所（一覧の先頭）の今の HEAD で、ahead は base にない自分のコミットの数。上限 30。
+ * 行は WORKTREE_READ_CONCURRENCY ずつ、1 行の中の git は順に走らせる（一覧が大きくても同時の git が増えない）
+ * @returns {Promise<{ base: { path, branch, head }|null, rows: object[], total: number }|null>}
+ */
+export async function readWorktrees(root, { limit = 30, concurrency = WORKTREE_READ_CONCURRENCY } = {}) {
+  const view = await listWorktrees(root, { limit });
+  if (!view) return null;
+  const main = view.list[0] ?? null;
+  const rows = await mapLimit(view.rows, concurrency, async (row, index) => {
+    const w = view.list[index];
     if (w.prunable) return { ...row, exists: false };
     const status = await git.readStatus(w.path);
     if (!status) return { ...row, exists: false };
-    row.dirty = status.dirty;
+    const out = { ...row, dirty: status.dirty };
     if (index > 0 && main?.head && w.head) {
-      const [counts, last] = await Promise.all([
-        git.readGit(root, ['rev-list', '--left-right', '--count', `${main.head}...${w.head}`]),
-        git.readGit(root, ['log', '-1', '--format=%ct', w.head]),
-      ]);
-      if (counts.ok) { const [behind, ahead] = counts.stdout.trim().split(/\s+/).map(Number); row.behind = behind || 0; row.ahead = ahead || 0; }
+      const counts = await git.readGit(root, ['rev-list', '--left-right', '--count', `${main.head}...${w.head}`]);
+      const last = await git.readGit(root, ['log', '-1', '--format=%ct', w.head]);
+      if (counts.ok) { const [behind, ahead] = counts.stdout.trim().split(/\s+/).map(Number); out.behind = behind || 0; out.ahead = ahead || 0; }
       const ms = last.ok ? Number(last.stdout.trim()) * 1000 : NaN;
-      if (Number.isFinite(ms)) row.at = ms;
+      if (Number.isFinite(ms)) out.at = ms;
     }
-    return row;
-  }));
-  return { base: main ? { path: main.path, branch: main.branch, head: main.head } : null, rows, total: list.length };
+    return out;
+  });
+  return { base: view.base, rows, total: view.total };
 }
 
 /** 作業場所 1 つの中身。主の作業場所の HEAD との分岐点からのコミット済みの変更と、コミットしていない変更のファイル */
