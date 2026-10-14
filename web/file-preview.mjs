@@ -7,7 +7,7 @@ import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs
 import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon } from './icons.mjs';
 import { fileMenuItems, visualizationMenuItems, browserTabMenuItems, copyPathText, relativeTo, samePath, notify, download, openHostFile, displayPath, fileUrl } from './file-actions.mjs';
 import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
-import { linkOpenTarget } from './browser-address.mjs';
+import { htmlOpenRoute } from './browser-address.mjs';
 import { applySlots, fileSlots, visualizationSlots, customSlots, gitSlots, browserSlots, subtitleFor } from './side-panel.mjs';
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
@@ -676,7 +676,6 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     return { path:target.path, ...(ctx.sessionId ? { sessionId:ctx.sessionId } : {}), ...(ctx.at ? { at:ctx.at } : {}), ...(target.base ? { base:target.base } : {}) };
   };
   const failed = error => notify(String(error?.message || error || t('files.actionFailed')));
-  const useInAppBrowser = () => linkOpenTarget({ available:!!browser && !browser.remote && browserPanelAvailable() && osActions(), prefs:getPrefs() }) === 'inapp';
   /**
    * HTML の開き先（docs/file-preview.md「HTML の開き先」）。ファイルのクリック・パスのチップ・ツリー・添付・コンテキストの「開く」は全部ここを通る。
    *   inapp   … ホストの画面で、リンクの開き先が内蔵ブラウザー（そのタブ）
@@ -684,11 +683,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    *   remote  … ホストの内蔵ブラウザーの映像を見られるリモートの端末（ホストの内蔵ブラウザーにこの会話のタブを足す）
    *   source  … ブラウザーで開けない端末（右パネルに原文だけ）
    */
-  const htmlRoute = () => {
-    if (!cmd) return 'source';
-    if (osActions()) return useInAppBrowser() ? 'inapp' : 'external';
-    return browser?.remote && browser.available() ? 'remote' : 'source';
-  };
+  const htmlRoute = () => htmlOpenRoute({ hasCmd:!!cmd, hostScreen:!!osActions(), inappAvailable:!!browser && !browser.remote && browserPanelAvailable() && !!osActions(),
+    prefs:getPrefs(), remoteView:!!(browser?.remote && browser.available()) });
   /**
    * HTML ファイルをブラウザーで開く（開き先は htmlRoute）。external（Ctrl/⌘+クリック・中クリック）は設定によらず既定のブラウザー。
    * anchor（押したリンク）には、内蔵ブラウザーで開けたとき「表示中」を添える
@@ -705,7 +701,9 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   }
   /** リモートの端末: ホストの内蔵ブラウザーにこの会話のタブを足し（ホストの窓は前に出ない）、右パネルの「ブラウザー」でその映像を見る */
   async function openRemoteHtml(target) {
+    // 添付やコンテキストの「開く」は要素を持たない。まだ右パネルを開いていなければ context も空なので、今の会話を使う
     const where = whereFrom(target);
+    if (!where.sessionId) { const sessionId = getContext(null)?.sessionId; if (sessionId) where.sessionId = sessionId; }
     if (!where.sessionId) return notify(t('browser.remote.failed'));
     const result = await cmd('invoke', { op:'browser.openFile', args:where });
     browser.showTab(result.tabId);
