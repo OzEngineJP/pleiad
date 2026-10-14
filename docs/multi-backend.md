@@ -79,7 +79,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
 | `auth` | `{ backend, phase: "url"\|"done"\|"error", url?, message? }` | 新規（ログイン誘導） |
 | `session` | `{ sessionId, first?, model? }` | 既存 + モデル通知 |
-| `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`） |
+| `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`）。Antigravity は ACTIVE のまま残った `run_command`（§2.8「裏へ回ったコマンド」） |
 | `phase` | `{ state: "active"\|"waiting" }` `waiting` = main は返答を終えて止まっていて、かつ裏のタスクが 1 本以上生きている。それ以外は `active` | 新規（main の区切りと上の一覧から導く） |
 | `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`） |
 | `userMessage.dropped` | `{ messageId }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残るが、今これを出すバックエンドは無い） |
@@ -108,7 +108,7 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 |---|---|---|
 | `agent` | サブエージェント（Claude `local_agent`） | 数える |
 | `terminal` | ターンをまたいで生きる端末（Codex `unified_exec`） | **数えない**（ターンの終わった後の設備。会話末尾の「バックグラウンド N」から開く） |
-| `shell` | 裏のシェル（Claude `local_bash`） | `waitable: true` のときだけ数える |
+| `shell` | 裏のシェル（Claude `local_bash`・Antigravity の裏へ回った `run_command`） | `waitable: true` のときだけ数える（Antigravity は付けない） |
 | `other` | 上のどれでもない（ワークフロー・MCP タスクなど） | 数える |
 
 `shell` の扱いは**終わりの合図があるかどうか**で分かれる（2026-09 に直した）。
@@ -750,6 +750,28 @@ AI の発言はツールの完了ごと（本文は `AGENT_HOST_AGY_SAVE_MS`、�
   `AGENT_HOST_AGY_HOLDER`（既定は実行場所の置き場があるとき on）で、会話ごとの agy が保持役の子になり、サーバーが入れ替わっても走り続けて、新しいサーバーが付け直す。
   保持役の子は pid を控えず、終了時（`process.once("exit")`）は手を離していない子だけを止める。ターンの間の子（idle）は引き継ぎのとき旧サーバーが止め、
   落ちた後は次の起動の最初の保持役の使用が止める
+
+**裏へ回ったコマンド**（2026-10、`core/backends/antigravity-background.mjs`）:
+agy 1.3.4 の `run_command` は、`WaitMsBeforeAsync`（20 秒）たっても終わらないコマンドを裏へ回し、モデルは終わるまで待ち続ける
+（`npm run dev`・`node -e "setInterval(()=>{},1000)"` のような終わらないものは、ターンごと永久に止まる）。stream には ACTIVE が出たままで、
+DONE はコマンドが本当に終わったときにしか来ない。裏へ回ったことを示す行は無い。そこで:
+
+- `run_command` の ACTIVE から `AGENT_HOST_AGY_BACKGROUND_MS`（既定 30 秒）たっても DONE が来なければ、§2.2 の `background` を出す。
+  形は `{ id, kind: "shell", label }`（`id` はツールの id = `<conversation_id>:<step_index>`、`label` はコマンドラインを 80 文字で切ったもの）。
+  `waitable` は付けない（終わりの合図はコマンドの終わりだけで、待つ印にならない）。毎回全量を出し、DONE・ターンの終わり・中断で外す（空の一覧で流す）
+- **`phase` は出さない（`active` のまま）。** 理由: agy は途中送信（`control.steer`）を持たないので、`waiting` にして outbox を流し直しても届かない。
+  agy の main もコマンドの終わりを待ってツールを呼んだままで、Claude の「返答を終えて止まっている」とは違う。`waiting` にすると委譲の子では
+  依頼元へ裏作業の通知（ADR 0170）が飛び、子が終わったかのように見える
+- **止める口**（`stopBackground(sessionId, taskId)`。作業ダイアログの停止ボタン）は、そのコマンドを走らせているシェルの木だけを落とす:
+  1. その会話の agy の pid を引く。直に起こしたものは `session.pid`。保持役に載せたもの（pid を持たない）は、保持役の直下の子から
+     agent の置き場（`--add-dir`）か `--conversation <id>` が入っているものを 1 つだけ選ぶ（`pickHeldAgy`）
+  2. **agy の直下の子**だけを見て、コマンドラインにそのコマンドが入っているものを選ぶ（`pickCommandProcess`。引用符・`\`・空白の違いは
+     `commandKey` でならす。実機の 1.3.4 / Windows は `powershell -Command "<コマンド>"`）。agy 自身・中継（`agy-context-relay`）・孫・会話の外は選ばない。
+     プロセスの一覧は win32 が `Get-CimInstance Win32_Process`（`ParentProcessId` で絞る）、posix が `ps -A -o pid=,ppid=,args=`
+  3. 見つからない・2 つ以上当たる・agy の pid が分からないときは**何も落とさずにエラーを返す**
+  4. 木ごと落とす（win32 は `taskkill /PID <pid> /T /F`、posix は子孫を引いて SIGKILL）。agy 自身は落とさない
+  5. agy の DONE（`AGENT_HOST_AGY_STOP_WAIT_MS`、既定 15 秒まで）を待ってから `{ stopped: true }` を返す。実機（1.3.4）では止めて 2 秒ほどで出力の空の DONE が来て、モデルはコマンドが終わったとして続け、ターンは `result`（SUCCESS）で終わった
+- 中断・打ち切りは今までどおり agy を落とすだけで、コマンドのシェルを狙っては落とさない（agy と一緒に落ちるかは実機で確かめていない）
 
 実行ファイルは `AGENT_HOST_AGY_BIN`（既定 `agy`）。
 `--print-timeout` の値は `AGENT_HOST_AGY_PRINT_TIMEOUT`（既定 `24h`。**Go の duration 文字列**）。

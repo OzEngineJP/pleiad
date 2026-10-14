@@ -27,6 +27,7 @@ import { MAX_RESULT_CHARS } from "./shared.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
 import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
+import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { t } from "../i18n.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -46,6 +47,15 @@ const LATE = Symbol("late");
 
 /** ターンの途中で本文を控えに書き足す間隔。ツールの完了はすぐ書く */
 const TEXT_SAVE_MS = Number(process.env.AGENT_HOST_AGY_SAVE_MS ?? 2_000);
+
+/**
+ * run_command が ACTIVE のままこれだけたったら、裏のコマンドとして一覧（background）に出す。agy は WaitMsBeforeAsync（20 秒）を過ぎた
+ * コマンドを裏へ回し、AI は wait で待ち続ける（終わるまで DONE が来ない）。止める口は stopBackground（antigravity-background.mjs）
+ */
+const BACKGROUND_AFTER_MS = Number(process.env.AGENT_HOST_AGY_BACKGROUND_MS ?? 30_000);
+
+/** 裏のコマンドを落とした後、agy の DONE を待つ上限 */
+const STOP_WAIT_MS = Number(process.env.AGENT_HOST_AGY_STOP_WAIT_MS ?? 15_000);
 
 /**
  * 承認モード。**`yolo` の 1 つだけ**にしてある。
@@ -309,7 +319,40 @@ export const backend = {
     let timedOut = false;          // agy が出力を打ち切った（下の onPrintTimeout）
     const started = new Map();     // tool.start を出した step -> { name, input }
     let closed = false;            // このターンを畳み終えた（settle 済み）
-    const finished = new Promise((resolve) => { settle = () => { closed = true; resolve(); }; });
+    // 裏へ回ったコマンド（run_command が BACKGROUND_AFTER_MS を超えて ACTIVE のまま）。一覧（background）は全量で出す。
+    // id はツールの id（委譲の取り消し cancelBackground がツールの id で引く）。DONE とターンの終わり（settle）で外す
+    const behind = {
+      timers: new Map(),   // tool id -> まだ一覧に出していない run_command の見張り
+      tasks: new Map(),    // tool id -> { task, command }
+      gone: new Map(),     // tool id -> 外れたときに呼ぶもの（stopBackground が DONE を待つ）
+      wait(id, ms) {
+        return new Promise((resolve) => {
+          if (!behind.tasks.has(id)) return resolve();
+          const timer = setTimeout(resolve, ms);
+          timer.unref?.();
+          behind.gone.set(id, [...(behind.gone.get(id) ?? []), () => { clearTimeout(timer); resolve(); }]);
+        });
+      },
+    };
+    const sendBehind = (out = emit) => out({ type: "background", tasks: [...behind.tasks.values()].map((b) => b.task) });
+    const dropBehind = (id, out) => {
+      clearTimeout(behind.timers.get(id));
+      behind.timers.delete(id);
+      const had = behind.tasks.delete(id);
+      for (const done of behind.gone.get(id) ?? []) done();
+      behind.gone.delete(id);
+      if (had) sendBehind(out);
+    };
+    const clearBehind = () => {
+      for (const timer of behind.timers.values()) clearTimeout(timer);
+      behind.timers.clear();
+      const had = behind.tasks.size > 0;
+      behind.tasks.clear();
+      for (const list of behind.gone.values()) for (const done of list) done();
+      behind.gone.clear();
+      if (had) sendBehind();
+    };
+    const finished = new Promise((resolve) => { settle = () => { closed = true; clearBehind(); resolve(); }; });
 
     // ---- 控え。**ターンの途中から書き足す**（agy に履歴の取り出し口が無い。antigravity-store.mjs 冒頭）
     // ユーザー発言は id が分かって本文を渡したら、AI の発言はツールの完了ごと・本文は間を空けて、同じ uuid で差し替える。
@@ -484,8 +527,21 @@ export const backend = {
               started.set(id, { name, input, computer });
               out({ type: "activity", state: "running", label: t("activity.tool", { label: TOOL_HINTS[name]?.label ?? name }) });
               out({ type: "tool.start", id, name, input });
+              // 終わらないコマンドは agy が裏へ回し、DONE が来ないまま AI が wait で待ち続ける。しばらく ACTIVE のままなら裏のコマンドとして出す
+              if (!done && name === "run_command" && !closed) {
+                const command = String(input?.CommandLine ?? "");
+                const timer = setTimeout(() => {
+                  behind.timers.delete(id);
+                  if (closed) return;
+                  behind.tasks.set(id, { task: { id, kind: "shell", label: commandLabel(command) || name }, command });
+                  sendBehind();
+                }, BACKGROUND_AFTER_MS);
+                timer.unref?.();
+                behind.timers.set(id, timer);
+              }
             }
             if (!done) return;
+            dropBehind(id, out);
             const raw = typeof output === "string" ? output : JSON.stringify(output ?? "");
             // ply_computer: 画像を退避した行を除き、印の行から images と computer を作る。控えにもその形で残す（読み直しで印を読み直さない）
             const r = computer ? computerResult(raw, cut) : cut(raw);
@@ -517,6 +573,7 @@ export const backend = {
           resultTrace = { source: "result", status: String(r.status ?? "").slice(0, 100), outcome: outcome.outcome,
             ...(r.error ? { error: String(r.error).slice(0, 1000) } : {}) };
           if (outcome.outcome === "error") failed = new Error(outcome.error);
+          clearBehind();
           out(outcome);
           return settle?.();
         }
@@ -526,6 +583,7 @@ export const backend = {
       }
     };
     session.onEvent = handle;
+    session.behind = behind;   // stopBackground が引く（このターンの裏のコマンド）
 
     // 未ログインのままターンを投げた。**ここから Pleiad がログインを回すことはできない**
     // （認可コードは端末からしか読まれない。auth.login のコメント参照）。
@@ -553,6 +611,7 @@ export const backend = {
       const message = t("antigravity.errors.printTimeout");
       failed = new Error(message);
       resultTrace = { source: "printTimeout", status: null, outcome: "error", error: message };
+      clearBehind();
       emit({ type: "turnResult", outcome: "error", error: message });
       // **裏で走り続ける agy を残さない。** 放っておくと Pleiad の見ていない所でファイルを
       // 書き換え、Google の枠も食い続ける。会話は `--conversation <id>` で拾い直せる
@@ -569,6 +628,7 @@ export const backend = {
       if (signal?.signal?.aborted) return settle?.();
       failed = err;
       resultTrace = { source: "exit", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
+      clearBehind();
       emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
       settle?.();
     };
@@ -670,6 +730,8 @@ export const backend = {
       throw err;
     } finally {
       clearTimeout(timer);
+      clearBehind();
+      if (session.behind === behind) session.behind = null;
       // 途中で投げた（seal まで来なかった）ときも、そこまでの分を書いてから返す。
       // 積んだ書き込みを待つ（server はターンの後に控えを読む。次のターンの書き込みとも重ねない）。手を離したターンは新しいサーバーが書く
       await seal({ ok: false });
@@ -731,6 +793,18 @@ export const backend = {
     if (!session) return;
     try { session.kill(); } catch {}
     release(conversationId, session);
+  },
+
+  /**
+   * 裏へ回ったコマンドを 1 本止める（ターンは止めない）。その会話の agy の直下の子で、コマンドを走らせているシェルを木ごと落とし、
+   * agy の DONE を待つ（一覧から外れるのは DONE。AI は出力を受けてターンを続ける）。見つからない・あいまいなら何も落とさずに断る
+   */
+  async stopBackground(sessionId, taskId) {
+    const session = sessionId ? live.get(sessionId) : null;
+    const entry = session?.behind?.tasks.get(taskId);
+    if (!entry) throw new Error(t("antigravity.errors.backgroundGone"));
+    entry.stopping ??= stopCommand(session, entry.command, taskId).catch((err) => { entry.stopping = null; throw err; });
+    return entry.stopping;
   },
 
   // ---- 認証 ---------------------------------------------------------------
@@ -874,6 +948,41 @@ function listModels() {
 function spawnModels(log) {
   // `--log-file` は agy 全体のフラグなのでサブコマンドより前。既定のモデルを読むためだけに使い、読んだら消す
   return spawnCli(cliCommand("antigravity"), ["--log-file", log, "models"], { stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** 裏のコマンドを止める（backend.stopBackground）。agy の直下の子だけから選び、落とした後は DONE（一覧から外れる）を待つ */
+async function stopCommand(session, command, taskId) {
+  const agyPid = await agyPidOf(session).catch(() => null);
+  if (!agyPid) throw new Error(t("antigravity.errors.backgroundNoAgy"));
+  const list = await listProcesses({ parent: agyPid });
+  const hit = pickCommandProcess(list, { agyPid, command });
+  if (hit.error === "ambiguous") throw new Error(t("antigravity.errors.backgroundAmbiguous", { count: hit.count }));
+  if (hit.error) throw new Error(t("antigravity.errors.backgroundNotFound"));
+  const gone = session.behind?.wait(taskId, STOP_WAIT_MS);
+  try {
+    await killTree(hit.pid, list);
+  } catch (err) {
+    throw new Error(t("antigravity.errors.backgroundStopFailed", { why: String(err?.message ?? err).trim().slice(0, 300) }));
+  }
+  await gone;
+  return { stopped: true };
+}
+
+/**
+ * 会話の agy の pid。直に起こした agy は session.pid。保持役が持つ agy は pid を持たないので、付け直した子は保持役の子の状態（attach の答え・
+ * 起動時の一覧）から、このサーバーが起こさせた子は保持役の直下の子のうち、起動の引数（agent の置き場・--conversation）で決まる 1 つから引く
+ */
+async function agyPidOf(session) {
+  if (Number.isInteger(session.pid)) return session.pid;
+  const held = session.held;
+  if (!held || held.handedOff) return null;
+  const known = held.source?.attachedState?.pid ?? held.source?.state?.pid;
+  if (Number.isInteger(known)) return known;
+  const holderPid = held.client?.pid;
+  if (!Number.isInteger(holderPid)) return null;
+  const markers = [session.home, session.conversationId ? `--conversation ${session.conversationId}` : null].filter(Boolean);
+  if (!markers.length) return null;
+  return pickHeldAgy(await listProcesses({ parent: holderPid }), { holderPid, markers });
 }
 
 /** 引けた一覧だけを覚える（失敗は覚えない。前に引けた一覧を残す） */

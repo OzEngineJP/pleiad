@@ -628,7 +628,12 @@
       "noModels": "agy models returned nothing.",
       "exited": "agy exited: {{why}}",
       "notConnected": "Not connected to agy.",
-      "badConversationId": "Invalid conversation id: {{id}}"
+      "badConversationId": "Invalid conversation id: {{id}}",
+      "backgroundGone": "That background command is no longer running",
+      "backgroundNoAgy": "Cannot find this conversation's agy process, so the background command cannot be stopped",
+      "backgroundNotFound": "The background command's process was not found under agy (nothing was stopped)",
+      "backgroundAmbiguous": "{{count}} processes match the background command, so none was chosen (nothing was stopped)",
+      "backgroundStopFailed": "Could not stop the background command: {{why}}"
     },
     "auth": {
       "notLoggedInTurn": "You are not signed in to Antigravity. Run this command in a terminal to sign in.",

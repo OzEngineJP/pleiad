@@ -593,6 +593,10 @@ const SUITES = [
   './unit/server-antigravity.mjs',
   // 控えはターンの途中から書く: 途中の書き込み・失敗／中断で残る・uuid が変わらない・forget した控えを作り直さない・書き込みは 1 本ずつ
   './unit/antigravity-partial-transcript.mjs',
+  // 裏へ回ったコマンド: 落とす先の選び方（agy の直下の子だけ）と、server 越しに一覧へ出して止める
+  './unit/antigravity-background.mjs',
+  './unit/server-antigravity-background.mjs',
+  './unit/server-antigravity-background-held.mjs',
   // Pleiad の MCP 登録と認証の API、1 件つながらなくても会話が進むこと、antigravity では Pleiad 担当を開かないこと
   './unit/server-mcp-auth.mjs',
   './unit/server-agy-context.mjs',

@@ -626,7 +626,12 @@
       "noModels": "agy models が何も返さなかった",
       "exited": "agy が終了した: {{why}}",
       "notConnected": "agy につながっていない",
-      "badConversationId": "使えない会話 id: {{id}}"
+      "badConversationId": "使えない会話 id: {{id}}",
+      "backgroundGone": "その裏のコマンドはもう走っていない",
+      "backgroundNoAgy": "この会話の agy のプロセスが分からないので、裏のコマンドを止められない",
+      "backgroundNotFound": "裏のコマンドのプロセスが agy の下に見つからない（何も止めていない）",
+      "backgroundAmbiguous": "裏のコマンドに当たるプロセスが {{count}} 個あり、どれか決められない（何も止めていない）",
+      "backgroundStopFailed": "裏のコマンドを止められなかった: {{why}}"
     },
     "auth": {
       "notLoggedInTurn": "Antigravity にログインしていません。このコマンドを端末で実行してログインしてください。",
