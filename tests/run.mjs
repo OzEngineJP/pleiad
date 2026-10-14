@@ -557,6 +557,9 @@ const SUITES = [
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
+  // Claude Agent SDK を配布物に入れず npm から取る（ADR 0206）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
+  './unit/claude-sdk-pin.mjs',
+  './unit/claude-sdk.mjs',
   // アカウントの認可を Pleiad から回す（疑似端末の偽物と、偽の CLI を本物の疑似端末で）
   './unit/claude-login.mjs',
   './unit/server-claude-login.mjs',

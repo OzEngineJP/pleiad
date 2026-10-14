@@ -77,6 +77,13 @@ export const DATA_WRITES = [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
   ] },
+  { file: 'core/claude-sdk.mjs', sites: 1, targets: [
+    { name: 'claude-sdk/consent.json', limit: '固定（{ acceptedAt }）', reason: 'Claude Agent SDK の取得への同意の印（ADR 0206）。「取得する」を押したときだけ書く' },
+  ] },
+  { file: 'core/claude-sdk-install.mjs', sites: 4, targets: [
+    { name: 'claude-sdk/<版>/（npm の tarball の中身）', limit: 'MAX_UNPACKED=256MiB（実物は 0.3.288 で 5 MB ほど）。固定の版と、最後に使った 1 つ前の版だけ残す（cleanupSdk）', reason: '取ってきた SDK。一時フォルダーに展開して確かめてから名前を替えて置き、書き換えない' },
+    { name: 'claude-sdk/<版>/.pleiad-sdk.json・.pleiad-used', limit: '固定の小ささ（名前・版・integrity・時刻）', reason: '取り終えた印と、最後に読んだ時刻（片付けが古い版を選ぶ）' },
+  ] },
   { file: 'core/api-keys.mjs', sites: 1, targets: [
     { name: 'api-keys.json', limit: 'API キーの台帳。MAX_KEYS=200 件（キーの値は持たない。値は api-key-secrets.json）', reason: '設定の台帳（ADR 0155）。名前・プロバイダー・確認の結果・割り当てだけ。固定の小ささ' },
   ] },
