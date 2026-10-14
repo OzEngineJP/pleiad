@@ -75,12 +75,15 @@ function fakePanel() {
     for (const listener of listeners) listener('created', tab);
     return tab;
   }
+  const destroy = id => { const index = tabs.findIndex(tab => tab.id === id); const [tab] = tabs.splice(index, 1); tab.webContents.destroyed = true; for (const fn of listeners) fn('destroyed', tab); };
   return {
-    log, createFor,
+    log, createFor, destroy,
+    // 同じ会話に同じ file: のタブがあれば作らない（desktop/browser-panel.cjs の openFor）
+    openFor: (sessionId, url) => tabs.find(tab => tab.sessionId === sessionId && tab.webContents.url === url) ?? createFor(sessionId, url),
+    closeFor: destroy,
     tabsFor: sessionId => tabs.filter(tab => tab.sessionId === sessionId),
     onTabsChanged: fn => { listeners.add(fn); return () => listeners.delete(fn); },
     pin: (id, on) => { if (on) log.pinned.add(id); else log.pinned.delete(id); },
-    destroy: id => { const index = tabs.findIndex(tab => tab.id === id); const [tab] = tabs.splice(index, 1); tab.webContents.destroyed = true; for (const fn of listeners) fn('destroyed', tab); },
   };
 }
 
@@ -221,9 +224,83 @@ export default async function (t) {
     t.ok('止めると画面の送信とビューポートを戻す', stopCommands.includes('Page.stopScreencast') && stopCommands.includes('Emulation.clearDeviceMetricsOverride') && !panel.log.pinned.has(second.tabId));
   }
 
+  // ---- main: タブ列（右パネルのタブ。ホストの画面の右パネルと同じ並びを端末へ。選ぶ・閉じる・足す・ファイルを足す）
+  {
+    const panel = fakePanel(), posted = [];
+    const sc = createBrowserScreencast(panel, { post: message => posted.push(message) });
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const first = await sc.start('s1', { width: 390, height: 700 });
+    const other = panel.createFor('s2', 'https://other.example/');
+    const second = panel.createFor('s1', 'https://example.com/');   // ホストの画面で足したタブ
+    t.ok('状態にこの会話のタブ列を載せる（ほかの会話のタブは載せない）', sc.state('s1').tabs.map(tab => tab.id).join() === `${first.tabId},${second.id}`);
+    posted.length = 0;
+    await sleep(80);
+    const pushed = posted.filter(m => m.type === 'browser-screencast-state');
+    t.ok('タブが増えたら（ホストの画面からでも）状態を端末へ押し出す', pushed.length === 1 && pushed[0].state.tabs.length === 2);
+
+    const moved = await sc.navigate('s1', 'select', undefined, second.id);
+    t.ok('select で見るタブを替える（映す先と窓の外の載せ先が移る）', moved.tabId === second.id && panel.log.pinned.has(second.id) && !panel.log.pinned.has(first.tabId)
+      && panel.log.commands.some(([id, method]) => id === second.id && method === 'Page.startScreencast'));
+    posted.length = 0;
+    panel.tabsFor('s1')[0].webContents.debugger.emit('message', {}, 'Page.screencastFrame', { data: 'QQ==', sessionId: 1, metadata: {} });
+    panel.tabsFor('s1')[1].webContents.debugger.emit('message', {}, 'Page.screencastFrame', { data: 'Qg==', sessionId: 2, metadata: {} });
+    t.ok('替えたあとは、前のタブのフレームを渡さない', posted.filter(m => m.type === 'browser-screencast-frame').map(m => m.frame.data).join() === 'Qg==');
+    let noTab = [];
+    for (const id of ['t999', other.id]) { try { await sc.navigate('s1', 'select', undefined, id); } catch (e) { noTab.push(e.message); } }
+    t.ok('ない・ほかの会話のタブは選べない（no-tab）', noTab.join() === 'no-tab,no-tab');
+    const again = await sc.start('s1', { width: 400, height: 800, tabId: first.tabId });
+    t.ok('start に tabId を渡すと、そのタブへ見る先を移す', again.tabId === first.tabId && panel.log.pinned.has(first.tabId) && !panel.log.pinned.has(second.id));
+    t.ok('tabId の無い start は今のタブのまま大きさだけ変える', (await sc.start('s1', { width: 360, height: 700 })).tabId === first.tabId);
+
+    const made = await sc.navigate('s1', 'newTab');
+    t.ok('newTab は空のタブを足してそこへ移る', made.tabId !== first.tabId && sc.state('s1').tabs.length === 3 && panel.log.pinned.has(made.tabId)
+      && panel.tabsFor('s1').find(tab => tab.id === made.tabId).webContents.url === 'about:blank');
+
+    posted.length = 0;
+    await sc.navigate('s1', 'close', undefined, second.id);
+    t.ok('見ていないタブを閉じても、見るのは続ける', sc.state('s1').tabs.length === 2 && sc.state('s1').tabId === made.tabId && !posted.some(m => m.type === 'browser-screencast-ended'));
+    await sc.navigate('s1', 'close', undefined, made.tabId);
+    await sleep(10);
+    t.ok('見ているタブを閉じたら、残りの先頭へ移る（終わらせない）', sc.state('s1').tabId === first.tabId && panel.log.pinned.has(first.tabId) && !posted.some(m => m.type === 'browser-screencast-ended'));
+    let closeOther = null;
+    try { await sc.navigate('s1', 'close', undefined, other.id); } catch (e) { closeOther = e.message; }
+    t.ok('ほかの会話のタブは閉じられない', closeOther === 'no-tab' && panel.tabsFor('s2').length === 1);
+    await sc.navigate('s1', 'close');
+    await sleep(10);
+    t.ok('最後のタブを閉じたら終わり（closed）', posted.at(-1).type === 'browser-screencast-ended' && posted.at(-1).reason === 'closed' && sc.state('s1') === null && panel.log.pinned.size === 0);
+
+    // PC のファイル（HTML）を足す: 見ずに、会話のタブへ。同じファイルは同じタブ
+    const opened = sc.openTab('s1', 'file:///C:/work/index.html');
+    t.ok('openTab は見ずにタブを足し（見に行くのは tabId で start）、在り処は state に出ない', opened.tabId && !panel.log.pinned.has(opened.tabId) && sc.state('s1') === null);
+    t.ok('同じファイルをもう一度開くと同じタブ', sc.openTab('s1', 'file:///C:/work/index.html').tabId === opened.tabId && panel.tabsFor('s1').length === 1);
+    const watched = await sc.start('s1', { width: 390, height: 700, tabId: opened.tabId });
+    t.ok('端末は返った tabId で見に行く', watched.tabId === opened.tabId && watched.state.url === 'file:///' && watched.state.tabs[0].url === 'file:///');
+    const bad = [];
+    for (const url of ['https://example.com/', 'javascript:alert(1)', 'C:\\x.html', undefined]) { try { sc.openTab('s1', url); } catch (e) { bad.push(e.message); } }
+    t.ok('openTab は file: だけ受ける', bad.join() === 'invalid-url,invalid-url,invalid-url,invalid-url');
+    sc.close();
+  }
+
+  // ---- worker: タブ列の操作を main へ渡す
+  {
+    const bridge = fakeBridge();
+    const hub = createScreencastHub({ bridge });
+    const phone = client();
+    const run = (command, args) => screencastCommand({ command, args, local: false, hub, bridge, client: phone });
+    await run('browserScreencast', { sessionId: 's1', tabId: 't7' });
+    t.ok('tabId は見始めの依頼に載せる', bridge.requests.at(-1)[2].options.tabId === 't7');
+    await run('browserScreencast', { sessionId: 's1', tabId: 5 });
+    t.ok('文字でない tabId は載せない', bridge.requests.at(-1)[2].options.tabId === undefined);
+    bridge.request = async (action, sessionId, args) => { bridge.requests.push([action, sessionId, args]); return action === 'navigate' && args.nav === 'select' ? { tabId: args.tabId, state: { tabs: [] } } : action === 'start' ? { tabId: 't1' } : {}; };
+    const selected = await run('browserScreencastNav', { sessionId: 's1', action: 'select', tabId: 't7' });
+    t.ok('select・close・newTab は tabId つきで main へ渡し、返った tabId を端末へ返す', selected.ok && selected.result.tabId === 't7' && bridge.requests.at(-1)[2].tabId === 't7' && bridge.requests.at(-1)[2].nav === 'select');
+    bridge.request = async () => { throw new Error('no-tab'); };
+    t.ok('閉じられたタブの指定は no-tab', (await run('browserScreencastNav', { sessionId: 's1', action: 'select', tabId: 't8' })).code === 'no-tab');
+  }
+
   // ---- 入力の変換（CDP）
   {
-    const tap = inputCommands({ type: 'tap', x: 50, y: 5000 }, { width: 390, height: 700 });
+    const tap =inputCommands({ type: 'tap', x: 50, y: 5000 }, { width: 390, height: 700 });
     t.ok('タップの座標はページの大きさに収める', tap.length === 3 && tap[1][1].type === 'mousePressed' && tap[1][1].y === 700 && tap[2][1].type === 'mouseReleased');
     const enter = inputCommands({ type: 'key', key: 'Enter' });
     t.ok('Enter は文字（\\r）付きの keyDown と keyUp', enter[0][1].type === 'keyDown' && enter[0][1].text === '\r' && enter[1][1].type === 'keyUp');

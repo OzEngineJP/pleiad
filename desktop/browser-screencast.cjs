@@ -6,7 +6,10 @@
 //     タブが窓に載っていない・窓が最小化されていても描かれる（窓に載せる必要はある。panel.pin が窓の外に 1px で載せる）
 //   - 入力は Input.dispatch*。内蔵ブラウザーは人が見るもの（エージェントの操作は PC の Chrome）なので、常に通る。
 //     入力の変換は core/chrome/input.mjs（端末から操作する PC の Chrome の窓と共有）
-const { navigable } = require('./browser-panel.cjs');
+//   - 端末の右パネルは、ホストの画面の右パネルと同じ「会話のタブ列」を持つ。state.tabs にその会話のタブを載せ、
+//     start の tabId・navigate の select / close / newTab で見るタブを替える。見ているタブが閉じたら残りの先頭へ移る
+//     （無くなったら closed で終わる）。openTab は見ずにタブだけ足す（端末から開いた HTML。同じファイルは同じタブ）
+const { navigable, openable } = require('./browser-panel.cjs');
 
 let inputModule = null;
 const loadInput = () => (inputModule ??= import('../core/chrome/input.mjs'));
@@ -27,15 +30,18 @@ function screencastSettings({ width, height, scale, quality } = {}) {
 function createBrowserScreencast(panel, { post = () => {} } = {}) {
   const sessions = new Map();   // sessionId -> { tabId, contents, settings, cleanup[] }
 
+  // PC のファイル（可視化の写し・開いた HTML）の在り処は端末へ出さない
+  const shownUrl = url => url === 'about:blank' ? '' : /^file:/i.test(url) ? 'file:///' : url;
   function state(sessionId) {
     const entry = sessions.get(sessionId);
     const c = entry?.contents;
     if (!c || c.isDestroyed()) return null;
-    const url = c.getURL();
     return {
-      // PC のファイル（可視化の写し）の在り処は端末へ出さない
-      tabId: entry.tabId, url: url === 'about:blank' ? '' : /^file:/i.test(url) ? 'file:///' : url, title: c.getTitle(), loading: c.isLoading(),
+      tabId: entry.tabId, url: shownUrl(c.getURL()), title: c.getTitle(), loading: c.isLoading(),
       canGoBack: c.navigationHistory.canGoBack(), canGoForward: c.navigationHistory.canGoForward(),
+      // この会話の内蔵ブラウザーのタブ（ホストの画面の右パネルと同じ並び）。端末の右パネルのタブ列になる
+      tabs: panel.tabsFor(sessionId).filter(tab => !tab.webContents.isDestroyed())
+        .map(tab => ({ id: tab.id, url: shownUrl(tab.webContents.getURL()), title: tab.webContents.getTitle(), loading: tab.webContents.isLoading() })),
     };
   }
   let stateTimer = new Map();
@@ -78,14 +84,17 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
     post({ type: 'browser-screencast-ended', sessionId, reason });
   }
 
-  async function start(sessionId, { url, fileUrl, ...options } = {}) {
-    if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
+  const validSession = sessionId => typeof sessionId === 'string' && !!sessionId && sessionId.length <= 200;
+  const tabOf = (sessionId, tabId) => panel.tabsFor(sessionId).find(tab => tab.id === tabId && !tab.webContents.isDestroyed()) ?? null;
+
+  async function start(sessionId, { url, fileUrl, tabId, ...options } = {}) {
+    if (!validSession(sessionId)) throw new Error('invalid session');
     const target = fileUrl && /^file:/i.test(fileUrl) ? fileUrl : url;
     if (url && !fileUrl && (!navigable(url) || url === 'about:blank')) throw new Error('invalid-url');
     const settings = screencastSettings(options);
     const existing = sessions.get(sessionId);
-    // 開く URL が無く、同じ会話を見ているなら、同じタブのまま大きさと画質だけを変える
-    if (existing && !target) {
+    // 開く URL が無く、同じタブ（指定が無ければ今のタブ）を見ているなら、そのまま大きさと画質だけを変える
+    if (existing && !target && (!tabId || tabId === existing.tabId)) {
       existing.settings = settings;
       await existing.contents.debugger.sendCommand('Page.stopScreencast').catch(() => {});
       await begin(existing);
@@ -93,7 +102,15 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
       return { tabId: existing.tabId, state: state(sessionId) };
     }
     if (existing) await stop(sessionId);
-    const tab = pickTab(sessionId, target);
+    let tab;
+    if (tabId && !target) { tab = tabOf(sessionId, tabId); if (!tab) throw new Error('no-tab'); }
+    else tab = pickTab(sessionId, target);
+    await attach(sessionId, tab, settings);
+    return { tabId: tab.id, state: state(sessionId) };
+  }
+
+  /** そのタブを見始める。entry を作り、debugger とイベントを付けて、画面の送信を始める */
+  async function attach(sessionId, tab, settings) {
     const c = tab.webContents;
     if (!c || c.isDestroyed()) throw new Error('tab destroyed');
     const entry = { tabId: tab.id, contents: c, settings, cleanup: [] };
@@ -130,13 +147,49 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
         c.debugger.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => {});
       }
     });
-    entry.cleanup.push(panel.onTabsChanged((change, changed) => { if (change === 'destroyed' && changed.id === tab.id) end(sessionId, 'closed'); }));
+    entry.cleanup.push(panel.onTabsChanged((change, changed) => {
+      if (changed.sessionId !== sessionId) return;
+      if (change === 'destroyed' && changed.id === tab.id) void follow(sessionId, entry);
+      else pushState(sessionId);   // タブが増えた・減った（ホストの画面からも）。端末のタブ列を直す
+    }));
     try { await begin(entry); }
-    catch (error) { release(sessionId); throw error; }
-    return { tabId: tab.id, state: state(sessionId) };
+    catch (error) { if (sessions.get(sessionId) === entry) release(sessionId); throw error; }
+  }
+
+  /** 見ているタブが閉じられた。同じ会話の残りのタブがあればその先頭へ移り、無ければ終わる */
+  async function follow(sessionId, entry) {
+    if (sessions.get(sessionId) !== entry) return;
+    const next = panel.tabsFor(sessionId).find(tab => !tab.webContents.isDestroyed());
+    const { settings } = entry;
+    release(sessionId);
+    try {
+      if (!next) throw new Error('closed');
+      await attach(sessionId, next, settings);
+      pushState(sessionId);
+    } catch { post({ type: 'browser-screencast-ended', sessionId, reason: 'closed' }); }
   }
 
   async function stop(sessionId) { release(sessionId); }
+
+  /** 見ているタブを替える（端末のタブ列の選択）。ホストの画面で選んでいるタブは変えない */
+  async function select(sessionId, tabId) {
+    const entry = sessions.get(sessionId);
+    if (!entry) throw new Error('not-watching');
+    if (entry.tabId === tabId) return;
+    const tab = tabOf(sessionId, tabId);
+    if (!tab) throw new Error('no-tab');
+    const { settings } = entry;
+    release(sessionId);
+    await attach(sessionId, tab, settings);
+    pushState(sessionId);
+  }
+
+  /** 見ずに、その会話の内蔵ブラウザーへ PC のファイル（HTML）のタブを足す。リモートの端末から HTML を開くとき（見に行くのは端末の start の tabId） */
+  function openTab(sessionId, fileUrl) {
+    if (!validSession(sessionId)) throw new Error('invalid session');
+    if (typeof fileUrl !== 'string' || !/^file:/i.test(fileUrl) || !openable(fileUrl)) throw new Error('invalid-url');
+    return { tabId: panel.openFor(sessionId, fileUrl).id };
+  }
 
   function ack(sessionId, frameId) {
     const c = sessions.get(sessionId)?.contents;
@@ -153,11 +206,25 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
     for (const [method, params] of commands) await entry.contents.debugger.sendCommand(method, params);
   }
 
-  async function navigate(sessionId, action, url) {
+  /** 戻り値は { tabId, state }（見るタブが替わった・タブが増えたとき）か undefined */
+  async function navigate(sessionId, action, url, tabId) {
     const entry = sessions.get(sessionId);
     const c = entry?.contents;
     if (!c || c.isDestroyed()) throw new Error('not-watching');
     switch (action) {
+      case 'select': await select(sessionId, tabId); return { tabId: sessions.get(sessionId)?.tabId ?? null, state: state(sessionId) };
+      // 閉じるタブは、見ているタブでもほかのタブでもよい（見ているタブを閉じたら follow が残りへ移る）。その会話のタブだけ
+      case 'close': {
+        const target = tabOf(sessionId, tabId ?? entry.tabId);
+        if (!target) throw new Error('no-tab');
+        panel.closeFor(target.id);
+        return;
+      }
+      case 'newTab': {
+        const created = panel.createFor(sessionId, 'about:blank');
+        await select(sessionId, created.id);
+        return { tabId: created.id, state: state(sessionId) };
+      }
       case 'back': if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack(); break;
       case 'forward': if (c.navigationHistory.canGoForward()) c.navigationHistory.goForward(); break;
       case 'reload': c.reload(); break;
@@ -172,7 +239,7 @@ function createBrowserScreencast(panel, { post = () => {} } = {}) {
 
   function close() { for (const id of [...sessions.keys()]) release(id); }
 
-  return { start, stop, ack, input, navigate, state, close, watching: () => [...sessions.keys()] };
+  return { start, stop, ack, input, navigate, openTab, state, close, watching: () => [...sessions.keys()] };
 }
 
 module.exports = { createBrowserScreencast, screencastSettings };

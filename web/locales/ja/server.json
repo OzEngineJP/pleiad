@@ -1130,14 +1130,15 @@
     "reviewRequired": "Hooks の担当は確認の面から変えてください"
   },
   "remoteBrowser": {
-    "remote-only": "PC の内蔵ブラウザーは、この PC の画面の右パネルで開いてください。",
+    "remote-only": "内蔵ブラウザーは、この PC の画面の右パネルで開いてください。",
     "unavailable": "この PC では内蔵ブラウザーを使えません（デスクトップ版だけ）。",
     "invalid-session": "会話を開いてから使ってください。",
     "not-found": "可視化の写しが見つかりません。",
     "invalid-url": "開けない URL です。",
-    "not-watching": "PC のブラウザーを見ていません。開き直してください。",
+    "not-watching": "ブラウザーを見ていません。開き直してください。",
+    "no-tab": "そのタブはもう閉じられています。",
     "invalid-input": "送れない入力です。",
-    "failed": "PC のブラウザーの操作に失敗しました。",
+    "failed": "ブラウザーの操作に失敗しました。",
     "view-only": "Chrome のウィンドウは見るだけです。操作は引き継いでから、Chrome のウィンドウで行ってください。",
     "no-window": "この会話にはまだ Chrome のウィンドウがありません。",
     "unknown": "知らない操作です。"

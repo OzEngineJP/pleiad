@@ -5,6 +5,7 @@
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
 // 引き継ぐ（chromeTakeOver）は by: 'device' でリモートの端末から操作する（窓は PC に見せず、端末の映像の箱の大きさでページを描き、映像のセッションで入力を送る）。
 // ビューアの⋯「Chrome で開く（エージェントの窓へ）」（chromeOpen）は、会話の窓に URL を開く。ホストの PC の画面だけ。エージェントには知らせない。
+// openFile は、リモートの端末が PC の HTML をホストの内蔵ブラウザーのタブに開く（見るのは browserScreencast。ホストの窓は前に出さない）。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
@@ -230,6 +231,30 @@ export const browserOps = [
       if (!chrome.open) unavailable(ctx);
       const { targetId } = await chrome.open(sessionId, url);
       return { sessionId, targetId };
+    },
+  }),
+  // リモートの端末（PC のリモートの窓・スマホ・Web）が、PC のファイル（HTML）をホストの内蔵ブラウザーに開く。
+  // 範囲の検査は /file-preview と同じで、読み込みの確認はホストの画面が file: のタブに掛けているものがそのまま効く。開くだけで、見るのは端末の browserScreencast（tabId）
+  defineOp({
+    id: 'browser.openFile',
+    summary: 'agent:ops.browser.openFile.summary',
+    risk: 'write',
+    riskReason: 'Adds a tab for an HTML file the conversation can already preview (same path checks as /file-preview, and the external-load confirmation of the host screen applies) to the host built-in browser so a remote device can watch it; nothing is written and no window is brought to the front. Screen and remote devices only (not on MCP or CLI)',
+    input: z.object({
+      sessionId: sessionIdShape,
+      path: z.string().min(1).max(4096).describe('agent:ops.browser.openFile.path'),
+      at: z.string().max(100).optional().describe('agent:ops.browser.openFile.at'),
+      base: z.string().max(4096).optional().describe('agent:ops.browser.openFile.base'),
+    }),
+    output: z.object({ tabId: z.string().describe('agent:ops.browser.openFile.tabId') }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: async (ctx, { sessionId, path, at, base }) => {
+      if (!ctx.hostBrowser) throw new OpError('UNSUPPORTED', agentT(ctx.locale, 'ops.errors.hostBrowserUnsupported'));
+      try { return { tabId: (await ctx.hostBrowser.openFile({ sessionId, path, at, base })).tabId }; }
+      catch (error) {
+        if (error?.userMessage) throw new OpError('INVALID', error.message);
+        throw error;
+      }
     },
   }),
   // Chrome のプロフィール（第 10 段。docs/inapp-browser.md「プロフィール」）。本体は core/chrome/profile-choice.mjs（ply_browser の list_browser_profiles・use_browser_profile もここを通る）。

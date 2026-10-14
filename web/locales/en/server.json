@@ -1137,9 +1137,10 @@
     "invalid-session": "Open a conversation first.",
     "not-found": "Couldn't find the saved visualization.",
     "invalid-url": "Can't open this URL.",
-    "not-watching": "You aren't viewing the PC browser. Open it again.",
+    "not-watching": "You aren't viewing the browser. Open it again.",
+    "no-tab": "That tab has already been closed.",
     "invalid-input": "Can't send this input.",
-    "failed": "The PC browser action failed.",
+    "failed": "The browser action failed.",
     "view-only": "The Chrome window is view-only. Take it over and use the window in Chrome.",
     "no-window": "This conversation has no Chrome window yet.",
     "unknown": "Unknown action."

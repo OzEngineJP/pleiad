@@ -748,6 +748,21 @@
       "input": "c72e5204555a"
     },
     {
+      "id": "browser.openFile",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "2f0580b7a23c"
+    },
+    {
       "id": "browser.useProfile",
       "risk": "write",
       "riskOf": false,

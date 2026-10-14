@@ -613,6 +613,15 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     // ---- 画面の転送（desktop/browser-screencast.cjs）へ渡す、会話ごとのタブと webContents
     tabsFor: sessionId => order.map(id => tabs.get(id)).filter(tab => tab.sessionId === sessionId).map(tab => ({ id: tab.id, webContents: tab.view.webContents })),
     createFor: (sessionId, url = '') => { const tab = createTab({ sessionId, url: url || 'about:blank', select: true }); return { id: tab.id, webContents: tab.view.webContents }; },
+    // リモートの端末が開く PC のファイル（file: の HTML）。この会話に同じ実体のタブがあれば新しく作らず、そのタブを読み直す
+    openFor: (sessionId, url) => {
+      const key = fileKey(url);
+      const same = key ? order.map(id => tabs.get(id)).find(tab => tab.sessionId === sessionId && tab.allowFile && tab.key === key) : null;
+      if (!same) { const tab = createTab({ sessionId, url, select: true }); return { id: tab.id, webContents: tab.view.webContents }; }
+      remember(same); if (isVisible(same)) current = same.id;
+      load(same, url, same.source); push();
+      return { id: same.id, webContents: same.view.webContents };
+    },
     selectFor: id => { const tab = tabs.get(id); if (!tab) return; remember(tab); if (isVisible(tab)) { current = id; place(); } push(); },
     closeFor: id => removeTab(id),
     contentsOf: id => tabs.get(id)?.view.webContents ?? null,

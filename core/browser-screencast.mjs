@@ -91,21 +91,24 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
           if (typeof args.url !== 'string' || !/^https?:\/\//i.test(args.url)) return { ok: false, code: 'invalid-url' };
           url = args.url;
         }
-        return { ok: true, result: await hub.watch(client, sessionId, { url, fileUrl, width: args.width, height: args.height, scale: args.scale, quality: args.quality }) };
+        const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
+        return { ok: true, result: await hub.watch(client, sessionId, { url, fileUrl, tabId, width: args.width, height: args.height, scale: args.scale, quality: args.quality }) };
       }
       case 'browserScreencastStop': await hub.unwatch(client, sessionId); return { ok: true, result: {} };
       case 'browserScreencastAck': hub.received(client, sessionId, Number(args.seq)); return { ok: true, result: {} };
       case 'browserScreencastInput': case 'browserScreencastNav': {
         if (!hub.watching(client, sessionId)) return { ok: false, code: 'not-watching' };
-        if (command === 'browserScreencastInput') await bridge.request('input', sessionId, { input: args.input });
-        else await bridge.request('navigate', sessionId, { nav: args.action, url: args.url });
-        return { ok: true, result: {} };
+        if (command === 'browserScreencastInput') { await bridge.request('input', sessionId, { input: args.input }); return { ok: true, result: {} }; }
+        // select・close・newTab は内蔵ブラウザーのタブ列の操作（tabId はその会話のタブ）。見るタブが替わったら { tabId, state } が返る
+        const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
+        const result = await bridge.request('navigate', sessionId, { nav: args.action, url: args.url, tabId });
+        return { ok: true, result: result ?? {} };
       }
       default: return { ok: false, code: 'unknown' };
     }
   } catch (error) {
     const code = String(error?.message ?? '');
-    return { ok: false, code: ['invalid-url', 'invalid-input', 'not-watching', 'no-window', 'view-only'].includes(code) ? code : 'failed' };
+    return { ok: false, code: ['invalid-url', 'invalid-input', 'not-watching', 'no-window', 'view-only', 'no-tab'].includes(code) ? code : 'failed' };
   }
 }
 
@@ -180,11 +183,11 @@ export function createScreencastHub({ bridge, source = null, ackTimeout = 3000, 
     sessions.delete(sessionId);
   }
 
-  /** 見始める。url か fileUrl（サーバーが確かめた可視化の写し）があれば新しいタブで開く。同じ会話を見ている端末とはタブを共有する */
-  async function watch(client, sessionId, { url, fileUrl, width, height, scale, quality = 'auto' } = {}) {
+  /** 見始める。url か fileUrl（サーバーが確かめた可視化の写し）があれば新しいタブで開き、tabId があればその会話のそのタブを見る。同じ会話を見ている端末とはタブを共有する */
+  async function watch(client, sessionId, { url, fileUrl, tabId, width, height, scale, quality = 'auto' } = {}) {
     const level = QUALITY[quality] ? quality : 'auto';
     const settings = { width, height, scale: Math.min(Number(scale) || 1, QUALITY[level].maxScale), quality: level };
-    const options = { url, fileUrl, width, height, scale: settings.scale, quality: QUALITY[level].quality };
+    const options = { url, fileUrl, tabId, width, height, scale: settings.scale, quality: QUALITY[level].quality };
     let entry = entryOf(sessionId);
     const created = !entry;
     if (!entry) {

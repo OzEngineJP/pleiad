@@ -3877,8 +3877,34 @@ const opsCompat = {
   },
 };
 
+// リモートの端末から、PC のファイル（HTML）をホストの内蔵ブラウザーに開く（browser.openFile。docs/inapp-browser.md「リモートから見る」）。
+// 範囲は /file-preview と同じ（会話の作業場所・実体を解決した後のパスの検査）で、読み込みの確認（confirmExternalLoads）はホストの画面が file: のタブに掛けているものがそのまま効く。
+// 開くだけで見ない。端末は返った tabId で browserScreencast を始める。ホストの窓は前に出さない
+const opsHostBrowser = screencastBridge ? {
+  openFile: async ({ sessionId, path: requested, at, base }) => {
+    const refuse = message => Object.assign(new Error(message), { userMessage: true });
+    let file;
+    try {
+      const sessions = await store.getAll();
+      const roots = fileRoots(sessions);
+      const resolved = await resolveSessionFile({ path: requested, sessionId, at, base }, sessions, roots);
+      const inspected = await inspectFile(resolved.path, fileAccessFor(sessionId));
+      if (inspected.stat.isDirectory() || !OPENABLE.test(inspected.file)) throw refuse(t('files.htmlOnly'));
+      file = inspected.file;
+    } catch (error) {
+      if (error?.userMessage) throw error;
+      const failure = previewFailure(error);
+      throw refuse(failure.code === 'read-failed' && error?.message ? error.message : failure.message);
+    }
+    if (!screencastBridge.ready) throw refuse(t('remoteBrowser.unavailable'));
+    if (!osActionAllowed()) throw refuse(t('files.tooMany'));
+    try { return await screencastBridge.request('openTab', sessionId, { fileUrl: pathToFileURL(file).href }); }
+    catch { throw refuse(t('remoteBrowser.failed')); }
+  },
+} : null;
+
 // エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
-const opsChromeControl = chromeControl ? {
+const opsChromeControl =chromeControl ? {
   takeOver: (sessionId, options) => chromeControl.takeOver(sessionId, options),
   resume: sessionId => chromeControl.resume(sessionId),
   stop: sessionId => chromeControl.stop(sessionId),
@@ -4478,6 +4504,7 @@ function opsDeps(lng = currentLocale()) {
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
+    hostBrowser: opsHostBrowser,
     chromeControl: opsChromeControl,
     chromeProfiles: opsChromeProfiles,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
