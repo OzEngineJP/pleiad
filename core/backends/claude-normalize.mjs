@@ -9,14 +9,14 @@
 //      SDK を引き込むとその方針を壊す。
 //
 // 正規化イベントの一覧は docs/multi-backend.md §2.2。
-import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { ZERO_COST, resultCost, usageTotals, claudeUsageDelta } from "./claude-cost-state.mjs";
 import { computerResult, computerToolInput, isComputerTool } from "./computer-delivery.mjs";
 
 // 履歴のツール結果の切り詰め（fullResults なら切らない）
 const cutResult = (raw, full) => !full && raw.length > MAX_RESULT_CHARS
-  ? { text: raw.slice(0, MAX_RESULT_CHARS) + t("claude.truncated"), truncated: true }
+  ? { text: cutText(raw, MAX_RESULT_CHARS, t("claude.truncated")), truncated: true }
   : { text: raw, truncated: false };
 
 /** tool_result の content は string か [{type:"text"}] で来る。文字列に均す */

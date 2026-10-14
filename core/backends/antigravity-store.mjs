@@ -18,7 +18,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { writeAtomic } from "../atomic-file.mjs";
-import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 
@@ -131,7 +131,7 @@ export async function getMessages(conversationId, { fullResults = false } = {}) 
     for (const m of messages) {
       for (const call of m.toolCalls ?? []) {
         if (call.result?.text?.length > MAX_RESULT_CHARS) {
-          call.result.text = call.result.text.slice(0, MAX_RESULT_CHARS) + t("antigravity.truncated");
+          call.result.text = cutText(call.result.text, MAX_RESULT_CHARS, t("antigravity.truncated"));
           call.result.truncated = true;
         }
       }

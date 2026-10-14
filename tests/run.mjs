@@ -153,6 +153,7 @@ const SUITES = [
   './unit/modes.mjs',
   // git の動き（ADR 0085）: 状態・差分の解析、コマンド結果からのタイムライン（ブランチ・コミット・PR）、ターンの始まりと終わりの隠し ref の撮影・要約・掃除（一時リポジトリ）
   './unit/git-info.mjs',
+  './unit/git-pr.mjs',
   './unit/git-history.mjs',
   './unit/git-graph.mjs',
   './unit/git-diff.mjs',

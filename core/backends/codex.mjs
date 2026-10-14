@@ -29,7 +29,7 @@ import { maskText } from '../hooks-config.mjs';
 import crypto from 'node:crypto';
 import { undelivered } from './undelivered.mjs';
 import { codexCompatThread, redactSecret } from '../compat-endpoints.mjs';
-import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { COMPUTER_CALL_TIMEOUT_SEC, codexComputerConfig, codexComputerName, computerFailed, computerPrompt, computerResult, computerToolInput, mcpText } from "./computer-delivery.mjs";
 import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejections.mjs";
 import { readThread } from "./codex-history.mjs";
@@ -262,7 +262,7 @@ async function readConfig(cwd) {
 const cut = (s) => {
   const text = String(s ?? "");
   return text.length > MAX_RESULT_CHARS
-    ? { text: text.slice(0, MAX_RESULT_CHARS) + t("codex.truncated"), truncated: true }
+    ? { text: cutText(text, MAX_RESULT_CHARS, t("codex.truncated")), truncated: true }
     : { text, truncated: false };
 };
 
