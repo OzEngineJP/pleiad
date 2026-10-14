@@ -5,6 +5,7 @@ const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
 const { packagedIdentity } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
 const { createUpdateLog } = require('./update-log.cjs');
+const { externalUrl } = require('./external-url.cjs');
 const { installUpdateSignatureVerifier } = require('./update-signature.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
 const { attachSecretBridge } = require('./secret-bridge.cjs');
@@ -164,10 +165,8 @@ async function installUpdate() {
 }
 
 function external(url) {
-  try {
-    const u = new URL(url);
-    if (u.protocol === 'https:' && !u.username && !u.password) shell.openExternal(u.href).catch(() => {});
-  } catch {}
+  const href = externalUrl(url);
+  if (href) shell.openExternal(href).catch(() => {});
 }
 
 // 窓の上端を脇のパネルと同じ面にする。OS の枠を消し、閉じる・最小化のボタンだけを重ねて残す。

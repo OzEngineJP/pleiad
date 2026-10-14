@@ -37,18 +37,20 @@ const isHtml = path => /\.html?$/i.test(String(path ?? ''));
 /**
  * メニューの項目。run(action) が実際の操作をする（file-preview.mjs）。
  * @param {{ path:string, kind?:'file'|'directory'|null }} target
- * @param {{ osActions:boolean, current?:boolean, canUse?:boolean, run:(action:string)=>void }} env
- *   current は右パネルに今出ているファイル（「右パネルで開く」を出さない）
+ * @param {{ osActions:boolean, htmlBrowser?:boolean, current?:boolean, canUse?:boolean, run:(action:string)=>void }} env
+ *   current は右パネルに今出ているファイル（「プレビューで開く」「原文を見る」を出さない）。
+ *   htmlBrowser は HTML をブラウザーで開けるか（PC の画面とリモートの端末。開けない端末は原文だけ）
  */
-export function fileMenuItems(target, { osActions, current = false, canUse = true, run }) {
+export function fileMenuItems(target, { osActions, htmlBrowser = osActions, current = false, canUse = true, run }) {
   const directory = target.kind === 'directory';
   const item = (label, action) => ({ label, onClick: () => run(action) });
-  // HTML は「ブラウザーで開く」が先頭（設定の開き先に従う）。プレビューは「プレビューで開く」として残す（docs/file-preview.md）
-  const browser = osActions && !directory && isHtml(target.path);
+  // HTML は「ブラウザーで開く」が先頭（開き先は web/file-preview.mjs の htmlRoute）。右パネルで見るのは原文だけ（docs/file-preview.md）
+  const html = !directory && isHtml(target.path);
+  const browser = htmlBrowser && html;
   const groups = [
     [
       browser && item(t('files.menu.openInBrowser'), 'browser'),
-      !current && item(browser ? t('files.menu.openInPreview') : t('files.menu.openInPanel'), 'panel'),
+      !current && item(html ? t('files.menu.viewSource') : t('files.menu.openInPreview'), 'panel'),
       osActions && item(directory ? t('files.menu.revealFolder') : t('files.menu.revealFile'), 'reveal'),
     ],
     [item(t('files.menu.copyPath'), 'copy'), item(t('files.menu.copyRelative'), 'copyRelative')],

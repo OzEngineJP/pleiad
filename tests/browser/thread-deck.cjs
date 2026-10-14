@@ -309,11 +309,7 @@ async page => {
   await deliver({ type: 'channelPost', channelId: ch.id, op: 'edit', post: { ...turnA, presents: [{ kind: 'visualization', caption: 'p95 の推移', content: viz }], editedAt: Date.now() } });
   await page.locator('#chThread .post-presents .present-visualization').waitFor();
   check(await page.locator('#chThread .post-presents .present-visualization iframe').count() === 1 && await page.locator('dialog[open]').count() === 0, 'a visualization is drawn inline in the thread (no modal)');
-  await page.locator('#chThread .post-presents .visualize-expand').evaluate((n) => n.click());   // 操作は枠の上に重なって出る（iframe が押下を受けるので直に押す）
-  await page.waitForFunction(() => document.body.classList.contains('file-preview-open') && document.getElementById('chDeck').dataset.deck === 'solo');
-  check(true, 'expanding the visualization opens it in the right panel (the thread slides left)');
-  await page.locator('#filePreview .file-preview-actions button').last().click();
-  await settled();
+  check(await page.locator('#chThread .post-presents .visualize-open-browser').count() === 1, 'the visualization card has the one "open in browser" tool (no side-panel expand)');
 
   // ================================================================ ✕ → 流れが全幅に戻る
   await page.locator('#chThread .th-close').click();

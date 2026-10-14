@@ -7,18 +7,20 @@ import { t } from './i18n.mjs';
 
 /**
  * ファイル。取得の前後で呼び直す（⋯・ブラウザーで開く・エクスプローラーで表示・保存は取得できてから）。
- * @param {{ file?:object|null, osActions?:boolean }} s
+ * HTML は原文だけを見せる（描画はブラウザーが受け持つ）ので、プレビュー / 原文の切り替えは出さない。
+ * @param {{ file?:object|null, osActions?:boolean, htmlBrowser?:boolean }} s
+ *   htmlBrowser は HTML をブラウザーで開けるか（PC の画面とリモートの端末）
  */
-export function fileSlots({ file = null, osActions = false } = {}) {
+export function fileSlots({ file = null, osActions = false, htmlBrowser = osActions } = {}) {
   const local = osActions && !!file;
   return {
     mode: 'file',
     label: t('filePreview.panel'),
     kind: t('filePreview.mode.file'),
     head: ['tree', file && 'more', 'wide', 'close'].filter(Boolean),
-    views: !!file && typeof file.text === 'string' && file.kind !== 'text' && file.kind !== 'directory',
-    // HTML の「ブラウザーで開く」は切り替えのすぐ右（可視化と同じ位置）
-    toolbar: [local && file.kind === 'html' && 'browser', 'path', 'reload'].filter(Boolean),
+    views: !!file && typeof file.text === 'string' && file.kind !== 'text' && file.kind !== 'directory' && file.kind !== 'html',
+    // HTML の「ブラウザーで開く」は道具の列の先頭（可視化と同じ位置）
+    toolbar: [htmlBrowser && !!file && file.kind === 'html' && 'browser', 'path', 'reload'].filter(Boolean),
     aside: true,
     footer: ['reveal', 'save', 'use'].filter(id => (id === 'reveal' ? local : id === 'save' ? !!file?.downloadable : true)),
   };
@@ -27,16 +29,17 @@ export function fileSlots({ file = null, osActions = false } = {}) {
 /**
  * 会話に保存された可視化（写し）。元のパス（origin）はホスト上の在り処で、分かるときだけ
  * パス・元のファイルを開く・会話で使うを出す。ツリーは中身が無いので出さない。
- * @param {{ origin?:string|null, html?:unknown, canBrowse?:boolean, canUse?:boolean }} s
+ * 本文は原文だけで、プレビュー / 原文の切り替えは出さない（描画はブラウザーの仕事）。
+ * @param {{ origin?:string|null, canBrowse?:boolean, canUse?:boolean }} s
  *   canBrowse は写しをサーバーから引けるか（会話と記録の印が分かる）
  */
-export function visualizationSlots({ origin = null, html = '', canBrowse = true, canUse = true } = {}) {
+export function visualizationSlots({ origin = null, canBrowse = true, canUse = true } = {}) {
   return {
     mode: 'visualization',
     label: t('filePreview.visualPanel'),
     kind: t('filePreview.mode.visualization'),
     head: ['more', 'wide', 'close'],
-    views: typeof html === 'string',
+    views: false,   // 原文だけ。描画はブラウザーの仕事で、プレビューの切り替えは出さない
     toolbar: [canBrowse && 'visualBrowser', origin && 'path', origin && 'origin'].filter(Boolean),
     aside: false,
     note: origin ? t('filePreview.visual.note') : '',
@@ -48,7 +51,7 @@ export function visualizationSlots({ origin = null, html = '', canBrowse = true,
  * 統合ブラウザー（docs/inapp-browser.md、ADR 0041）。見出しの行にタブ列を置く。
  * ビューアと Chrome で道具の列を替え、ビューアのない端末では閉じるボタンも道具の列に置く。
  */
-export function browserSlots({ chrome = false, toolbar = [], tabs = true } = {}) {
+export function browserSlots({ chrome = false, toolbar = [], tabs = true, remote = false } = {}) {
   return {
     mode: 'browser',
     label: t('browser.panel'),
@@ -56,7 +59,8 @@ export function browserSlots({ chrome = false, toolbar = [], tabs = true } = {})
     head: tabs ? ['wide', 'close'] : [],
     tabs,
     views: false,
-    toolbar: chrome ? (tabs ? toolbar : ['close', ...toolbar]) : ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore'],
+    // リモートの端末は映像を見るので、ホストの既定のブラウザーで開く・DevTools などを持つ ⋯ は出さない
+    toolbar: chrome ? (tabs ? toolbar : ['close', ...toolbar]) : remote ? ['back', 'forward', 'reloadPage', 'address'] : ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore'],
     aside: false,
     note: '',
     footer: null,

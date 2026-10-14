@@ -6742,24 +6742,31 @@ let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry�
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
-const browserPanel = browserPanelAvailable()
-  ? createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null,
-    onChange: () => browserEntry?.paint() })
-  : null;
-// ホストの画面ではない端末から、ホストの内蔵ブラウザーを見る（web/remote-browser.mjs）。リンクを押したら開き先を選ぶ（web/link-sheet.mjs）
-const remoteBrowser = createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null,
-  getHostName: () => state.hostCaps?.hostName ?? '' });
-/** シートを出したら true。ホストの画面・内蔵ブラウザーの無いホストでは出さない（呼び出し側が今までどおりに開く） */
-function chooseRemote({ url = '', kind = 'url', label = url, openHere = () => {}, target = { url } }) {
-  const choices = linkChoices({ url, kind, pageOrigin: location.origin, hostScreen: state.osActions === true, pcBrowser: state.hostCaps?.pcBrowser === true });
+// ホストの画面（デスクトップ版）は plyDesktop.browser のページそのもの。それ以外の端末（リモートの窓・LAN のブラウザー）は、
+// ホストの内蔵ブラウザーの映像を同じ部品で見る（web/remote-browser.mjs。ホストが映像を送れる＝pcBrowser の間だけ。docs/inapp-browser.md）
+const remoteBrowser = browserPanelAvailable() ? null : createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null });
+const browserPanel = createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null,
+  onChange: () => browserEntry?.paint(),
+  ...(remoteBrowser ? { bridge: remoteBrowser.bridge, viewport: remoteBrowser.viewport,
+    available: () => state.osActions !== true && state.hostCaps?.pcBrowser === true } : {}) });
+/** ホストの内蔵ブラウザーが見られるか・見られるようになった（hostCaps と osActions は接続のあとで届く）。入口の出し入れはここで知らせる */
+const announceBrowserAvailability = () => { browserEntry?.paint(); document.dispatchEvent(new CustomEvent('ply-browser-availability')); };
+/**
+ * リモートの端末でリンクを押した。シートを出す（内蔵ブラウザーで開く / 既定のブラウザーで開く / リンクをコピー）か、
+ * localhost（この端末では開けない）ならシートを挟まずホストの内蔵ブラウザーのタブで開く。true なら受けた。
+ * ホストの画面・ホストの内蔵ブラウザーを見られない端末では何もせず false（呼び出し側が今までどおりに開く）
+ */
+function chooseRemote({ url = '', openHere = () => {} }) {
+  const choices = linkChoices({ url, pageOrigin: location.origin, hostScreen: state.osActions === true, pcBrowser: browserPanel.remote && browserPanel.available() });
   if (!choices) return false;
-  showLinkSheet({ label, choices, hostName: state.hostCaps?.hostName ?? '', onDevice: openHere, onPc: () => remoteBrowser.open(target) });
+  const openInApp = () => { browserPanel.open({ url, newTab: true }); };
+  if (choices.pcOnly) { openInApp(); return true; }
+  showLinkSheet({ label: url, hostName: state.hostCaps?.hostName ?? '', onInApp: openInApp, onExternal: openHere,
+    onCopy: () => navigator.clipboard.writeText(url).then(() => notify(t('timeline.link.copied')), () => notify(t('timeline.link.copyFailed'))) });
   return true;
 }
 const filePreview = setupFilePreview({
   browser: browserPanel,
-  chooseSnapshot: (query, openHere) => chooseRemote({ kind: 'snapshot', label: t('filePreview.visual.title'), openHere,
-    target: { visualization: { sessionId: query.sessionId, id: query.id, at: query.at } } }),
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
   getContext: anchor => channelsUi.contextForPanel(anchor) ?? ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
@@ -6854,7 +6861,7 @@ const notificationInbox = setupNotificationInbox({
 });
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps, openPage: name => $(`${name}Tab`)?.click() });
-const browserSettings = setupBrowserSettings({ available: !!browserPanel, cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf, getHostCaps: () => state.hostCaps,
+const browserSettings = setupBrowserSettings({ available: browserPanelAvailable(), cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf, getHostCaps: () => state.hostCaps,
   getChromeWaiting: () => [...state.pendingPerms.values()].filter(p => p.browserHandoff && !p.remote).map(p => state.sessions.find(s => s.id === p.sessionId)?.title || t("session.untitled")) });
 // 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
 const voiceWraps = new WeakMap();
@@ -6879,8 +6886,8 @@ voiceUi.mount({
 configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
 // 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
 setupLinkMenu({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getPrefs: () => state.prefs,
-  screen: () => ({ hostScreen: state.osActions === true, pcBrowser: state.hostCaps?.pcBrowser === true }),
-  openOnPc: url => remoteBrowser.open({ url }) });
+  screen: () => ({ hostScreen: state.osActions === true, pcBrowser: browserPanel.remote && browserPanel.available() }),
+  openRemote: url => browserPanel.open({ url, newTab: true }) });
 configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
   onboarding.open('browser');
   const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });
@@ -9168,9 +9175,9 @@ function connect() {
         filePreview.osChanged();
         syncAttachButton();
         renderAttached();
-        remoteBrowser.reconnected();
+        remoteBrowser?.reconnected();
         chromePanel?.reconnected();
-        browserEntry?.paint(); browserPanel?.refreshTabs(); chromeProfilePill?.refresh();
+        announceBrowserAvailability(); browserPanel.refreshTabs(); chromeProfilePill?.refresh();
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
@@ -9214,7 +9221,7 @@ function connect() {
     // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
     if (m.kind === "event") return onEvent(savedEvent(m.event));
     // PC の内蔵ブラウザーの画面（見ている接続にだけ届く）
-    if (m.kind === "screencast") return m.source === 'chrome' ? chromePanel?.onMessage(m) : remoteBrowser.onMessage(m);
+    if (m.kind === "screencast") return m.source === 'chrome' ? chromePanel?.onMessage(m) : remoteBrowser?.onMessage(m);
 
     if (m.kind === "response") {
       const p = pending.get(m.id);
@@ -9481,9 +9488,8 @@ function backToHosts() {
 function watchShellBack() {
   const escape = target => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
   addEventListener("plyremote:back", (e) => {
-    // リンクの開き先のシートと PC のブラウザーの画面（web/link-sheet.mjs・web/remote-browser.mjs）
+    // リンクの開き先のシート（web/link-sheet.mjs）。ブラウザーの右パネルは、ほかのパネルと同じ閉じ方（ファイルのプレビューの段）
     if (linkSheetOpen()) { e.preventDefault(); hideLinkSheet(); return; }
-    if (remoteBrowser.isOpen) { e.preventDefault(); remoteBrowser.close(); return; }
     const dialog = [...document.querySelectorAll("dialog[open]")].at(-1);
     if (dialog) {
       e.preventDefault();

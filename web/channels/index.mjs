@@ -9,7 +9,7 @@
 //     invoke(op, args)              … 操作の一覧（cmd('invoke', { op, args }) の短縮。失敗は throw）
 //     state                         … client の state（読むだけ。current・sessions・runningIds・waitingIds など）
 //     filePreview                   … web/file-preview.mjs の返り。open(ref, element)・openPanel・close・panelOpen
-//     browser                       … 内蔵ブラウザーの部品（web/browser-panel.mjs の返り。使えない画面では null。スレッドの見出しの入口が使う）
+//     browser                       … 内蔵ブラウザーの部品（web/browser-panel.mjs の返り。ホストの内蔵ブラウザーを見られない画面では available() が false。スレッドの見出しの入口が使う）
 //     permissionCard(ev, into)      … 承認のカードを入れ物へ描く（client.mjs の permissionCard。質問は質問のカード。決着は resolvePermission と同じ）
 //     openSession(id)               … Chats の会話を開く（Chats のタブへ戻して select）
 //     openThread(channelId, threadId, { postId }?) … スレッドを開く（postId があれば着いたその投稿へ送って輪を付ける。通知の一覧の飛び先）。setupChannels が足す（部品の openThread へ配る）。呼ぶのは W2（要約の行・「スレッドで返信」）、受けるのは W3

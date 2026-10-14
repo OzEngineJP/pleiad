@@ -1,4 +1,4 @@
-// worker（core/server.mjs）からの「PC のブラウザーで見る」の依頼を desktop/browser-screencast.cjs へ渡す橋
+// worker（core/server.mjs）からの「ホストの内蔵ブラウザーの映像を見る」の依頼を desktop/browser-screencast.cjs へ渡す橋
 // （docs/inapp-browser.md「リモートから見る」）。desktop/browser-viewer-bridge.cjs と同じく parentPort の message でつなぐ。
 //   worker -> main: { type: 'browser-screencast', id, action: start|stop|input|navigate, sessionId, ... } と
 //                   { type: 'browser-screencast-ack', sessionId, frameId }（worker が間引いて送る）
@@ -27,7 +27,9 @@ function attachBrowserScreencastBridge(worker, panel, { keepVisible = () => () =
         case 'start': result = await screencast.start(sessionId, message.options ?? {}); break;
         case 'stop': await screencast.stop(sessionId); break;
         case 'input': await screencast.input(sessionId, message.input); break;
-        case 'navigate': await screencast.navigate(sessionId, message.nav, message.url); break;
+        case 'navigate': result = await screencast.navigate(sessionId, message.nav, message.url, message.tabId) ?? {}; break;
+        // 見ずに、その会話の内蔵ブラウザーへタブを足す（リモートの端末から PC のファイルを開く。見に行くのは端末の browserScreencast の tabId）
+        case 'openTab': result = screencast.openTab(sessionId, message.fileUrl, message.source ?? null); break;
         default: throw new Error('unknown action');
       }
       post({ type: 'browser-screencast', id, ok: true, result });

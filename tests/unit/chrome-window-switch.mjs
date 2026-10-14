@@ -19,7 +19,7 @@ function rig({ paused = false, risk = null, failPin = false } = {}) {
       if (name === 'chromePinWindow') { if (failPin) throw new Error('pin failed'); return { pinnedWindowId: args.windowId }; }
       return {};
     },
-    preview, browser: {}, session: () => 'conv', windows, paused: () => isPaused, closeRisk: () => risk,
+    preview, browser: { available: () => true }, session: () => 'conv', windows, paused: () => isPaused, closeRisk: () => risk,
     showMenu: (x, y, items, title) => menus.push({ items, title }),
   });
   const ev = (ids, current, extra = {}) => ({ sessionId: 'conv', windows: ids.length, windowIds: ids, currentWindowId: current, ...extra });

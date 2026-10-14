@@ -3,8 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileReference } from '../../web/file-reference.mjs';
-import { parseTable, PREVIEW_CSP, htmlDocument, inlineScripts, previewDocument, previewFrame } from '../../web/file-preview-content.mjs';
-import { VISUALIZE_CSP } from '../../web/visualize-frame.mjs';
+import { parseTable } from '../../web/file-preview-content.mjs';
 import { renderMarkdown } from '../../web/render.mjs';
 import { startServer } from '../lib/server.mjs';
 export const name = 'file-preview';
@@ -26,76 +25,6 @@ export default async function(t) {
   assert.equal(parseTable('a\nb\nc',',',2).truncated,true);
   assert.deepEqual(parseTable('a\tb\n1\t2','\t').rows,[['a','b'],['1','2']]);
   t.ok('CSVの引用符・改行・TSV・表示上限を扱う',true);
-
-  // HTML のプレビューは可視化と同じ隔離でスクリプトを動かす
-  assert.equal(PREVIEW_CSP,VISUALIZE_CSP);
-  for (const rule of ["default-src 'none'","script-src 'unsafe-inline' https:","style-src 'unsafe-inline' https:","img-src https: data: blob:","font-src https: data: blob:","connect-src https:","frame-src https:","media-src https: data: blob:","worker-src https: blob:","object-src 'none'","base-uri 'none'","form-action 'none'"]) assert(PREVIEW_CSP.includes(rule),rule);
-  assert(!PREVIEW_CSP.includes('http:') && !PREVIEW_CSP.includes('allow-same-origin'));
-  const wrapped=previewDocument('<meta http-equiv="Content-Security-Policy" content="script-src *"><script>run()</script>');
-  assert(wrapped.indexOf(`content="${PREVIEW_CSP}"`)>0 && wrapped.indexOf(`content="${PREVIEW_CSP}"`)<wrapped.indexOf('<script>run()'));
-  const frame=previewFrame(wrapped,'page.html');
-  assert.equal(frame.getAttribute('sandbox'),'allow-scripts'); assert(!String(frame.getAttribute('sandbox')).includes('allow-same-origin'));
-  assert.equal(frame.getAttribute('referrerpolicy'),'no-referrer'); assert(frame.getAttribute('allow').includes("camera 'none'"));
-  assert.equal(frame.srcdoc,wrapped); assert.equal(frame.className,'file-preview-frame');
-  const scriptTag=(attrs,text)=>{const s=document.createElement('script');for(const [k,v] of Object.entries(attrs))s.setAttribute(k,v);if(text)s.textContent=text;return s;};
-  const root=document.createElement('div');
-  const local=scriptTag({src:'lib/app.js',type:'module'}),cdn=scriptTag({src:'https://cdn.jsdelivr.net/npm/x.js'}),absent=scriptTag({src:'missing.js'}),inline=scriptTag({},'go()'),handler=document.createElement('button');
-  handler.setAttribute('onclick','go()'); root.append(local,cdn,absent,inline,handler);
-  const omitted=new Set(),asked=[];
-  await inlineScripts(root,async raw=>{asked.push(raw);if(raw==='lib/app.js')return {kind:'text',size:40,text:'document.body.append("</script><b>")'};throw new Error('not-found');},omitted);
-  assert.deepEqual(asked,['lib/app.js','missing.js']);
-  assert.equal(local.getAttribute('src'),undefined); assert.equal(local.getAttribute('type'),'module');
-  assert(local.textContent.includes('<\\/script><b>') && !/<\/script/i.test(local.textContent));
-  assert.equal(cdn.getAttribute('src'),'https://cdn.jsdelivr.net/npm/x.js');
-  assert(!root.children.includes(absent) && root.children.includes(inline)); assert.equal(inline.textContent,'go()');
-  assert.equal(handler.getAttribute('onclick'),'go()'); assert.deepEqual([...omitted],['スクリプト']);
-  const big=scriptTag({src:'big.js'}),binary=scriptTag({src:'pic.js'}),root2=document.createElement('div'); root2.append(big,binary);
-  await inlineScripts(root2,async raw=>raw==='big.js'?{kind:'text',size:600*1024,text:'x'}:{kind:'image',size:1,data:''},new Set());
-  assert.equal(root2.children.length,0);
-  // テンプレートを持たない最小 DOM の上で htmlDocument 全体を通す
-  const fragment=document.createElement('div'),create=document.createElement;
-  fragment.append(scriptTag({src:'missing.js'}),scriptTag({},'run()'));
-  document.createElement=tag=>tag==='template'?{set innerHTML(v){},get innerHTML(){return fragment.children.map(c=>c.outerHTML).join('');},content:fragment}:create(tag);
-  let result; try { result=await htmlDocument('',async()=>{throw new Error('not-found');}); } finally { document.createElement=create; }
-  assert(result.document.includes('<script>run()</script>')); assert(!result.document.includes('missing.js'));
-  assert(result.document.indexOf('Content-Security-Policy')<result.document.indexOf('<body>'));
-  assert(result.note.includes('スクリプト') && !result.note.includes('実行しません'));
-  t.ok('HTMLはスクリプト付きで隔離枠に出す。CSPが先頭、ローカルのスクリプトは埋め込み、読めないものは省いて注記',true);
-
-  // The HTML scrubber must retain HTTPS resources and links without fetching them.
-  const elements = [
-    ['link',{rel:'stylesheet',href:'https://example.com/a.css'}],
-    ['style',{},'@import "https://example.com/b.css"; .x{background:url(https://example.com/c.png)}'],
-    ['img',{src:'https://example.com/d.png'}],
-    ['a',{href:'https://example.com/page',target:'_blank'},'site'],
-    ['a',{href:'#part'},'section'],
-    ['a',{href:'javascript:alert(1)'},'bad'],
-    ['video',{src:'https://example.com/movie.mp4'}],
-    ['iframe',{src:'https://example.com/frame'}],
-  ].map(([tag,attrs,body])=>{
-    const n=create(tag); for(const [key,value] of Object.entries(attrs)) n.setAttribute(key,value);
-    if(body)n.textContent=body;
-    Object.defineProperty(n,'localName',{value:tag});
-    Object.defineProperty(n,'attributes',{get(){return Object.entries(this.attrs).map(([name,value])=>({name,value}));}});
-    if(tag==='link')n.rel=attrs.rel;
-    return n;
-  });
-  const sample=create('div'); sample.append(...elements);
-  sample.querySelectorAll=selector=>{
-    if(selector==='iframe,frame,object,embed,base,meta[http-equiv],form')return sample.children.filter(n=>n.localName==='iframe');
-    if(selector==='script')return [];
-    if(selector==='link'||selector==='style')return sample.children.filter(n=>n.localName===selector);
-    if(selector==='*')return [...sample.children];
-    return [];
-  };
-  document.createElement=tag=>tag==='template'?{set innerHTML(_value){},get innerHTML(){return sample.children.map(n=>n.outerHTML).join('');},content:sample}:create(tag);
-  const resources=[]; let external;
-  try { external=await htmlDocument('',async raw=>{resources.push(raw);throw new Error('unexpected asset');}); }
-  finally { document.createElement=create; }
-  assert.deepEqual(resources,[]);
-  for(const expected of ['href="https://example.com/a.css"','@import','https://example.com/b.css','url(https://example.com/c.png)','src="https://example.com/d.png"','href="https://example.com/page"','href="#part"','src="https://example.com/movie.mp4"']) assert(external.document.includes(expected),expected);
-  assert(!external.document.includes('javascript:') && !external.document.includes('<iframe'));
-  t.ok('HTML の HTTPS 資源とリンクを残し、危険なリンクと入れ子の枠は除く',true);
 
   const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'ply-preview-'));
   const one=path.join(scratch,'one'),two=path.join(scratch,'two'),data=path.join(scratch,'data');

@@ -36,6 +36,8 @@ const SUITES = [
   './unit/send-schedule.mjs',
   './unit/server-scheduled-send.mjs',
   './unit/file-preview.mjs',
+  // HTML の開き先（htmlRoute）: 列（H-in / H-ex / L / R / R0）ごとの行き先と、起点（クリック・Ctrl・中クリック・チップ・メニュー・可視化のカード）の通り道
+  './unit/html-route.mjs',
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   './unit/file-preview-tree.mjs',
   './unit/file-access.mjs',
@@ -656,6 +658,7 @@ const SUITES = [
   './unit/mobile-icons.mjs',
   // リモートでリンクを押したときの行き先（localhost の知らせ・写しはアプリの中・Web は端末のブラウザー）
   './unit/remote-links.mjs',
+  './unit/desktop-external-link.mjs',
   // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
   './unit/remote-browser-view.mjs',
 

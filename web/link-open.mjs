@@ -9,7 +9,7 @@ let getPrefs = () => ({});
 let chooseRemote = () => false;
 /**
  * client.mjs passes the current prefs (linkOpen) and, for screens other than the host's, the chooser that shows
- * "open on this device / view in the PC's browser" (web/link-sheet.mjs). It returns true when it took the link.
+ * "open in the built-in browser / open in the default browser / copy" (web/link-sheet.mjs). It returns true when it took the link.
  */
 export function configureLinkOpen({ getPrefs: read, chooseRemote: choose } = {}) {
   if (typeof read === 'function') getPrefs = read;
@@ -61,7 +61,7 @@ export function appLinkOf(node) {
 export function handlePreviewLinkMessage(event) {
   if (event.data?.type !== 'ply-preview-open-link' || typeof event.data.url !== 'string' ||
       typeof event.data.newWindow !== 'boolean') return false;
-  for (const frame of document.querySelectorAll('iframe.visualize-frame, iframe.file-preview-frame')) {
+  for (const frame of document.querySelectorAll('iframe.visualize-frame')) {
     if (frame.contentWindow === event.source) {
       return openExternalLink(event.data.url, { newWindow: event.data.newWindow, external: event.data.external === true });
     }

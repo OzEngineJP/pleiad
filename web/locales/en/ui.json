@@ -247,7 +247,7 @@
         "title": "Open links in",
         "inapp": "Built-in browser",
         "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and HTML files open there too. Sign-ins stay in this app.",
+        "note": "The built-in browser opens beside the conversation, and HTML files open there too. If you choose the default browser, HTML files open in the default browser as well. Sign-ins stay in this app.",
         "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
       },
       "saveFailed": "Couldn't save: {{error}}",
@@ -306,8 +306,8 @@
       },
       "confirm": {
         "title": "External resources",
-        "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
-        "scopeRemote": "In visualizations and HTML previews (and HTML files opened in the PC’s built-in browser), blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages. This setting is shared by all screens.",
+        "scope": "In visualizations, HTML previews, and PC HTML files opened in the built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages or to HTML files opened in the default browser. This setting is shared by all screens.",
+        "scopeRemote": "In visualizations and HTML files opened in the host’s built-in browser, blocks loads (images, scripts, requests, and so on) from sites other than those you allow “Always”. Doesn’t apply to web pages or to HTML files opened in the default browser. This setting is shared by all screens.",
         "agentTitle": "Agent site access",
         "external": "Ask before loading external resources",
         "agent": "Ask before an agent uses a site",
@@ -863,7 +863,6 @@
     },
     "visual": {
       "source": "Visualization source",
-      "contents": "Visualization contents",
       "title": "Visualization",
       "save": "Save the HTML kept in the conversation",
       "status": "Saved visualization",
@@ -897,18 +896,7 @@
       "failedHint": "The image is corrupt or unsupported. Save it to check."
     },
     "unavailableAlt": "{{alt}} (can't display)",
-    "imageAlt": "Image",
     "someImages": "Some images can't be displayed.",
-    "omitted": {
-      "script": "scripts",
-      "extraStyle": "additional styles",
-      "imageFont": "images and fonts",
-      "style": "styles",
-      "image": "images",
-      "media": "media",
-      "join": ", ",
-      "note": "Some {{items}} couldn't be loaded. External resources other than scripts from allowed CDNs are not loaded."
-    },
     "original": "Source",
     "mode": {
       "file": "File",
@@ -2465,7 +2453,6 @@
   },
   "files": {
     "menu": {
-      "openInPanel": "Open in side panel",
       "openInPreview": "Open in preview",
       "viewSource": "View source",
       "openInBrowser": "Open in browser",
@@ -2501,10 +2488,7 @@
       "blocked": "Disabled because the link is unsafe",
       "hostOnly": "localhost links open only on the host's PC.",
       "openSheet": "Open link in",
-      "openOnDevice": "Open on this device",
-      "openOnDeviceSub": "This device's browser",
-      "openOnPc": "View in the PC's browser",
-      "pcOnly": "This URL opens only on the host PC.",
+      "openOnDeviceSub": "This device's default browser",
       "openInApp": "Open in built-in browser",
       "chooseDest": "Choose where to open",
       "copy": "Copy link",
@@ -2530,7 +2514,6 @@
       "namedVisualization": "Visualization: {{title}}",
       "copyPath": "Copy path",
       "download": "Save HTML",
-      "sidePanel": "Show in side panel",
       "browser": "Open in browser",
       "truncated": "Omitted because it's too large.",
       "badImage": "This image can't be displayed.",
@@ -4340,8 +4323,6 @@
   },
   "browser": {
     "panel": "Browser",
-    "entry": "In-app browser ({{keys}})",
-    "entryLabel": "In-app browser",
     "unifiedEntryLabel": "Browser",
     "entryState": { "requested": "Waiting for your help", "paused": "You are operating Chrome", "working": "{{name}} is operating Chrome" },
     "tabs": "Browser tabs",
@@ -4414,22 +4395,18 @@
       "profileActions": "Chrome profiles"
     },
     "remote": {
-      "title": "PC browser",
-      "backToChat": "Back to conversation",
-      "screen": "Browser screen sent from the PC",
-      "address": "PC browser address",
-      "editAddress": "Enter address",
+      "screen": "Browser screen",
       "connectedFps": "Connected · {{fps}} fps",
       "connecting": "Connecting…",
-      "ended": "The PC browser tab was closed",
+      "ended": "The browser tab was closed",
       "quality": "Quality: {{level}}",
       "qualityAuto": "Auto",
       "qualityLow": "Low",
       "textInput": "Type text",
-      "textLabel": "Text to type into the PC page",
-      "textPlaceholder": "Text for the PC",
+      "textLabel": "Text to type into the page",
+      "textPlaceholder": "Text for the page",
       "textSend": "Send",
-      "failed": "Couldn't open the PC browser."
+      "failed": "Couldn't open the browser."
     }
   },
   "nav": {

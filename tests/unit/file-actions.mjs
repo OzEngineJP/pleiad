@@ -82,11 +82,13 @@ export default async function (t) {
   // ---- 操作メニュー
   const run = () => {};
   assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, run })),
-    ['ブラウザーで開く', 'プレビューで開く', 'エクスプローラーで表示', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う']);
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, current: true, run })).slice(0, 2), ['ブラウザーで開く', 'エクスプローラーで表示'], '表示中はプレビューを出さない');
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/doc.md' }, { osActions: true, run })).slice(0, 2), ['右パネルで開く', 'エクスプローラーで表示'], 'HTML 以外は今までどおり');
+    ['ブラウザーで開く', '原文を見る', 'エクスプローラーで表示', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う'], 'HTML の右パネルは原文だけ');
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, current: true, run })).slice(0, 2), ['ブラウザーで開く', 'エクスプローラーで表示'], '表示中は原文を出さない');
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/doc.md' }, { osActions: true, run })).slice(0, 2), ['プレビューで開く', 'エクスプローラーで表示'], 'HTML 以外はプレビュー');
   assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: false, run })),
-    ['右パネルで開く', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う']);
+    ['原文を見る', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う'], 'ブラウザーの無い端末は原文だけ');
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: false, htmlBrowser: true, run })).slice(0, 2),
+    ['ブラウザーで開く', '原文を見る'], 'リモートはホストの内蔵ブラウザーに開ける');
   assert.deepEqual(labels(fileMenuItems({ path: 'D:/a', kind: 'directory' }, { osActions: true, current: true, run })),
     ['エクスプローラーで開く', 'パスをコピー', '相対パスをコピー']);
   assert(!labels(fileMenuItems({ path: 'D:/a/run.bat' }, { osActions: true, run })).includes('ブラウザーで開く'));

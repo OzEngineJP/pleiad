@@ -72,3 +72,17 @@ export function linkOpenPref(prefs) {
 export function linkOpenTarget({ available = false, prefs } = {}) {
   return available && linkOpenPref(prefs) === 'inapp' ? 'inapp' : 'external';
 }
+
+/**
+ * HTML ファイルの開き先（docs/file-preview.md「HTML の開き先」。web/file-preview.mjs の htmlRoute が呼ぶ）。
+ *   inapp    … ホストの画面で、リンクの開き先が内蔵ブラウザー
+ *   external … ホストの画面で既定のブラウザー、またはホストの PC の普通のブラウザー（サーバーが既定のブラウザーで開く）
+ *   remote   … ホストの内蔵ブラウザーの映像を見られるリモートの端末
+ *   source   … ブラウザーで開けない端末（右パネルに原文だけ）
+ * hostScreen はサーバーのある PC の画面から見ているか、inappAvailable はその画面で内蔵ブラウザーが使えるか、remoteView は映像が見られるか
+ */
+export function htmlOpenRoute({ hasCmd = false, hostScreen = false, inappAvailable = false, prefs, remoteView = false } = {}) {
+  if (!hasCmd) return 'source';
+  if (hostScreen) return linkOpenTarget({ available: inappAvailable, prefs }) === 'inapp' ? 'inapp' : 'external';
+  return remoteView ? 'remote' : 'source';
+}

@@ -3908,6 +3908,35 @@ const opsCompat = {
   },
 };
 
+// リモートの端末から、PC のファイル（HTML）をホストの内蔵ブラウザーに開く（browser.openFile。docs/inapp-browser.md「リモートから見る」）。
+// 範囲は /file-preview と同じ（会話の作業場所・実体を解決した後のパスの検査）で、読み込みの確認（confirmExternalLoads）はホストの画面が file: のタブに掛けているものがそのまま効く。
+// 開くだけで見ない。端末は返った tabId で browserScreencast を始める。ホストの窓は前に出さない
+const opsHostBrowser = screencastBridge ? {
+  openFile: async ({ sessionId, path: requested, at, base }) => {
+    const refuse = message => Object.assign(new Error(message), { userMessage: true });
+    let file, label;
+    try {
+      const sessions = await store.getAll();
+      const roots = fileRoots(sessions);
+      const resolved = await resolveSessionFile({ path: requested, sessionId, at, base }, sessions, roots);
+      const inspected = await inspectFile(resolved.path, fileAccessFor(sessionId));
+      if (inspected.stat.isDirectory() || !OPENABLE.test(inspected.file)) throw refuse(t('files.htmlOnly'));
+      file = inspected.file;
+      // ホストの画面の ⋯・バッジの見出し: 作業ディレクトリからの相対（外にあればフルパス）。画面が開くときの displayPath（web/file-actions.mjs）と同じ
+      const rel = resolved.cwd ? path.relative(resolved.cwd, resolved.path) : '';
+      label = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : resolved.path).replaceAll('\\', '/');
+    } catch (error) {
+      if (error?.userMessage) throw error;
+      const failure = previewFailure(error);
+      throw refuse(failure.code === 'read-failed' && error?.message ? error.message : failure.message);
+    }
+    if (!screencastBridge.ready) throw refuse(t('remoteBrowser.unavailable'));
+    if (!osActionAllowed()) throw refuse(t('files.tooMany'));
+    try { return await screencastBridge.request('openTab', sessionId, { fileUrl: pathToFileURL(file).href, source: { kind: 'file', label } }); }
+    catch { throw refuse(t('remoteBrowser.failed')); }
+  },
+} : null;
+
 // エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
 const opsChromeControl = chromeControl ? {
   takeOver: (sessionId, options) => chromeControl.takeOver(sessionId, options),
@@ -4532,6 +4561,7 @@ function opsDeps(lng = currentLocale()) {
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
+    hostBrowser: opsHostBrowser,
     chromeControl: opsChromeControl,
     chromeProfiles: opsChromeProfiles,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
@@ -7602,7 +7632,7 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
-    // 見ていた PC のブラウザーは、見る端末がいなくなれば止める
+    // 見ていたホストの内蔵ブラウザーの映像は、見る端末がいなくなれば止める
     const viewer = screencastClients.get(ws);
     if (viewer) { screencastHub?.forget(viewer); chromeScreencastHub?.forget(viewer); }
   });
@@ -8171,10 +8201,11 @@ wss.on("connection", (ws, req) => {
           const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
             chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
             client: screencastClients.get(ws),
-            snapshotFile: async ({ sessionId, id, at }) => {
+            snapshotFile: async ({ sessionId, id, at, allow }) => {
               const record = await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at });
               if (!record) return null;
-              const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs() });
+              const once = Array.isArray(allow) ? [...new Set(allow.slice(0, 50).map(externalOrigin).filter(Boolean))] : [];
+              const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs(), once, report: true });
               return pathToFileURL(file).href;
             } });
           // i18n-dynamic: server:remoteBrowser.

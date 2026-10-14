@@ -229,7 +229,7 @@ export default async function (t) {
     // この設定がプレビューと内蔵ブラウザーの両方に効くことを、どの画面にも書く。リンクの開き先はホストの画面だけなので、その理由を一言
     const remoteText = settingNodes.browserPanel.textContent;
     assert(remoteText.includes('リンクの開き先は PC（ホスト）の画面で選びます'), remoteText);
-    assert(remoteText.includes('外部の読み込み') && remoteText.includes('PC の内蔵ブラウザーで開いた HTML ファイルも'), 'リモートにも効く範囲を書く');
+    assert(remoteText.includes('外部の読み込み') && remoteText.includes('ホストの内蔵ブラウザーで開いた HTML ファイル'), 'リモートにも効く範囲を書く');
     assert(!remoteText.includes('エージェントのサイト利用'), 'エージェントの設定はホストの画面だけ');
     let prefs = {}; const sent = [];
     const settings = setupBrowserSettings({ available: true, cmd: async (c, a) => { sent.push([c, a]); }, getPrefs: () => prefs });
@@ -902,6 +902,28 @@ export default async function (t) {
       assert.equal(s.reused, snapId); assert.equal(snapContents.url, fileUrl(snapshotFile2));
       assert.equal(await verdict(snapId, 'https://s.example/a.png'), false, '書き直した写しの一時の許可');
       assert.equal(await verdict(snapId, fileUrl(path.join(data, 'visualization-snapshots', 'other.html'))), true, '写しは自分の置き場の別のファイルも読ませない');
+      // リモートの端末が足すタブ（openFor）: ホストの画面で選んでいるタブを替えず、印（label）が付き、同じ実体は 1 つにまとまる。止めた件数も端末へ渡る
+      const hostCurrent = (await go('state')).current;
+      const viaRemote = panel.openFor('s1', fileUrl(page2), { kind: 'file', label: 'out/page2.html' });
+      let st = await go('state'); assert.equal(st.current, hostCurrent, 'リモートが開いても、ホストの画面の今のタブは替わらない');
+      assert.deepEqual(st.tabs.find(tab => tab.id === viaRemote.id).file, { path: path.resolve(page2), label: 'out/page2.html' }, 'リモートが開いた file: のタブにも label が付く（ホストの画面の ⋯・札）');
+      assert.equal(panel.openFor('s1', fileUrl(page2), { kind: 'file', label: 'out/page2.html' }).id, viaRemote.id, '同じファイルをもう一度開いても同じタブ');
+      st = await go('state'); assert.equal(st.current, hostCurrent, '使い回しでも今のタブは替わらない');
+      assert.equal(st.tabs.filter(tab => tab.file?.path === path.resolve(page2)).length, 1);
+      assert.deepEqual(panel.tabsFor('s1').find(tab => tab.id === viaRemote.id).guard, { blocked: 0, origins: [] });
+      assert.equal(await verdict(viaRemote.id, 'https://r.example/a.png'), true);
+      assert.deepEqual(panel.tabsFor('s1').find(tab => tab.id === viaRemote.id).guard, { blocked: 1, origins: ['https://r.example'] }, '端末へは件数と出どころだけ（パスは含まない）');
+      assert.equal(panel.allowOnceFor(viaRemote.id), null, 'file: のタブは main がそのまま読み直す（書き直しは要らない）');
+      assert.equal(await verdict(viaRemote.id, 'https://r.example/a.png'), false, '端末の「読み込む」でそのタブだけ通る');
+      assert.equal(panel.tabsFor('s1').find(tab => tab.id === viaRemote.id).guard.blocked, 0);
+      const viaSnap = panel.openFor('s1', fileUrl(snapshotFile), { kind: 'snapshot', sessionId: 's1', id: 'rv1', title: '図', origin: null });
+      assert.equal((await go('state')).current, hostCurrent);
+      const rewrite = panel.allowOnceFor(viaSnap.id);
+      assert(rewrite?.source.kind === 'snapshot' && rewrite.source.sessionId === 's1' && rewrite.source.id === 'rv1' && rewrite.origins.length === 0, '写しは書き直しに要る記録の印と許可の出どころを返す: ' + JSON.stringify(rewrite));
+      // 同じ実体は別名（symlink・ジャンクション）でも同じ鍵。解決できなければ resolve
+      const alias = path.join(dir, 'alias', 'x.html'), real = path.join(dir, 'real', 'x.html');
+      assert.equal(bp.fileKey(fileUrl(alias), null, () => real), bp.fileKey(fileUrl(real), null, () => real), 'realpath した先で鍵を作る');
+      assert.equal(bp.fileKey(fileUrl(alias), null, () => { throw new Error('ENOENT'); }), bp.fileKey(fileUrl(alias), null, f => path.resolve(f)), '解決できなければ resolve');
       // 別の会話の同じ記録は別のタブ（タブはその会話のもの）
       await go('context', { sessionId: 's2' });
       s = await go('open', { url: fileUrl(snapshotFile2), newTab: true, reuse: true, source: { kind: 'snapshot', sessionId: 's2', id: 'v1', title: '売上', origin: null } });
@@ -932,7 +954,9 @@ export default async function (t) {
     assert(vp.tabsFor('conv-a').every(tab => tab.webContents.sessionPartition === 'persist:pleiad-browser'));
     let st = await go('context', { sessionId: 'conv-a' });
     assert.deepEqual(urls(st), ['https://a1.example/', 'https://a2.example/'], '今の会話のタブだけ並べる');
-    assert.equal(st.current, a2.id, 'その会話で最後に作った（選んだ）タブ');
+    assert.equal(st.current, a1.id, 'リモートの端末が足したタブ（createFor）はホストの画面の今のタブを替えない。今のタブが無かったときだけ先頭になる');
+    await go('select', { id: a2.id });
+    st = await go('state'); assert.equal(st.current, a2.id, 'ホストの画面で選べば、その会話で最後に選んだタブ');
     assert.equal(attachedView().webContents.url, 'https://a2.example/');
     assert.equal(vp.tabsFor('conv-b').length, 1, '見えない会話のタブは消えず、中継からは引ける');
 
@@ -949,6 +973,8 @@ export default async function (t) {
 
     // 会話に属さないタブはどの会話でも見える
     const loose = vp.createFor(null, 'https://loose.example/');
+    st = await go('state'); assert.equal(st.current, a2.id, '会話に属さないタブも、足しただけでは今のタブにならない');
+    await go('select', { id: loose.id });
     st = await go('state');
     assert.deepEqual(urls(st), ['https://a1.example/', 'https://a2.example/', 'https://loose.example/'], '会話に属さないタブは出す');
     assert.equal(st.current, loose.id);

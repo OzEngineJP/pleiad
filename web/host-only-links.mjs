@@ -19,7 +19,7 @@ export function isHostOnlyUrl(href, pageOrigin) {
 /**
  * 画面の中のリンクの押下を見張る（取り込みの段階で、ほかの処理より先に）。
  * onHostScreen() が true（サーバーのある PC の画面）なら何もしない。iframe の中のリンクはここに来ない。
- * choose(href) が true を返したら（「PC のブラウザーで見る」のシートを出した。web/link-sheet.mjs）知らせは出さない
+ * choose(href) が true を返したら（ホストの内蔵ブラウザーのタブで開いた。web/client.mjs の chooseRemote）知らせは出さない
  */
 export function watchHostOnlyLinks({ onHostScreen, notify, choose = () => false, root = document, origin = () => location.origin }) {
   const handler = event => {

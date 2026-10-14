@@ -792,6 +792,7 @@
       "chromePin": { "notWatching": "Chrome の映像を見ていないので、ウィンドウを固定できません。", "noWindow": "そのウィンドウはもうありません。", "operating": "引き継いでいる間は、映すウィンドウを切り替えられません。" },
       "chromeDeviceSize": "端末から操作するときは、映像の箱の大きさ（width・height）を指定してください。",
       "chromeOpenUrl": "Chrome で開けるのは http・https の URL だけです。",
+      "hostBrowserUnsupported": "この PC では内蔵ブラウザーを使えません（デスクトップ版だけ）。",
       "chromeProfileOwnSession": "エージェントが切り替えられるのは、自分の会話の Chrome のプロフィールだけです。sessionId を省いてください。",
       "chromeProfileBusy": {
         "operating": "エージェントが Chrome を操作している間は、プロフィールを切り替えられません。",
@@ -1087,6 +1088,7 @@
       "chromePinWindow": { "summary": "右パネルの Chrome の映像に映すウィンドウを固定する。windowId が null なら固定を解き、エージェントが最後に使ったウィンドウを追う。固定は会話に 1 つで、映像を見ている間だけ有効。エージェントの操作には影響しない。画面とリモートの端末からだけ呼べる。", "windowId": "映すウィンドウの id（chromeWindow イベントの windowIds にあるもの）。" },
       "chromeWindows": { "summary": "この会話と直接委譲した子の開いている Chrome のウィンドウを返す。画面のウィンドウの一覧に使う。" },
       "chromeOpen": { "summary": "ビューアで見ているページを、会話のエージェントの Chrome のウィンドウで開く。つながっていなければ Chrome の許可を待つ。エージェントには知らせない。ホストの PC の画面だけから呼べる。", "url": "開く URL（http・https）。" },
+      "openFile": { "summary": "会話で開ける PC の HTML ファイルを、ホストの内蔵ブラウザーのタブに開く（リモートの端末が右パネルのブラウザーで見るため）。範囲の検査は /file-preview と同じ。ホストの窓は前に出さない。画面とリモートの端末だけから呼べる。", "path": "HTML ファイルのパス（相対パスは会話の作業場所から）。", "at": "相対パスを解く基準にする発言の時刻（ISO 8601）。", "base": "プレビュー中の文書のパス。相対パスはそのフォルダーから解く。", "tabId": "開いたタブの id。browserScreencast の tabId に渡して見る。" },
       "listProfiles": { "summary": "この PC の Chrome のプロフィールの一覧（表示名・フォルダー名・設定のメモ）と、会話の今のプロフィール・今切り替えられない理由を返す。メールアドレスなどのアカウントの情報は読まない。", "profiles": "プロフィール。browser（chrome）・dir（フォルダー名）・name（表示名）・note（設定 › ブラウザーのメモ。無ければ空）。", "current": "会話の今のプロフィール（browser・dir）。まだ決まっていなければ null（最初のウィンドウは Chrome の最後に使ったプロフィールで開く）。会話を指定しなければ null。", "busy": "今切り替えられない理由。operating（エージェントが操作中）・waiting（人への依頼の待ち）・human（人がウィンドウを引き継いでいる）。切り替えられれば null。" },
       "useProfile": { "summary": "会話の Chrome のウィンドウを開くプロフィールを、一覧にあるものへ切り替える。開いているウィンドウは閉じず、次に開くウィンドウから効く。サイトの許可はプロフィールごとに記録される。エージェントが切り替えると会話に記録が残る。", "browser": "ブラウザー（chrome・edge）。省けばどれからでも探す。", "profile": "フォルダー名（dir）か表示名（name）。フォルダー名が先に当たる。" }
     },

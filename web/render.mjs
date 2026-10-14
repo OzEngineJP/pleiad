@@ -10,7 +10,7 @@ import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
 import { el, chevron } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
-import { copyIcon, downloadIcon, sidePanelIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
+import { copyIcon, downloadIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
@@ -675,14 +675,10 @@ export function renderPresent(ev) {
       tool(downloadIcon, t('timeline.present.download')).onclick =
         () => withContent((content) => downloadVisualization({ path: e.path, title: e.caption, content }));
 
-      // 開くのは右のプレビューパネル。ここは会話に載る面だけを組み立て、
+      // 開くのは「ブラウザーで開く」の 1 つだけ（どの画面でも。開き先は web/file-preview.mjs の htmlRoute）。ここは会話に載る面だけを組み立て、
       // 開く側とは要求イベントで繋ぐ（ファイルリンクと同じ一枚の面に集める）。
-      // at・id は会話の記録の印。右パネルの「ブラウザーで開く」がサーバーから写しを引く（core/server.mjs /visualization-snapshot）
-      // 内蔵ブラウザーが使えるホストの画面では、同じ位置に「ブラウザーで開く」を出し、「サイドパネルに表示」は隠す
-      // （どちらを出すかは body の inapp-links。web/file-preview.mjs が設定と画面で決める。docs/visualize.md）
+      // at・id は会話の記録の印。開く側がサーバーから写しを引く（core/server.mjs /visualization-snapshot。docs/visualize.md）
       const detailOf = (content) => ({ content, title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null });
-      const expand = tool(sidePanelIcon, t('timeline.present.sidePanel'), 'visualize-expand');
-      expand.onclick = () => withContent((content) => expand.dispatchEvent(new CustomEvent('ply-visualize-expand', { bubbles: true, detail: detailOf(content) })));
       const open = tool(openInBrowserIcon, t('timeline.present.browser'), 'visualize-open-browser');
       open.onclick = () => withContent((content) => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles: true, detail: detailOf(content) })));
       card.append(controls);

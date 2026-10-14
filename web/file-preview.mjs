@@ -2,12 +2,12 @@ import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
-import { htmlDocument, markdownContent, parseTable, previewFrame } from './file-preview-content.mjs';
-import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
+import { markdownContent, parseTable } from './file-preview-content.mjs';
+import { downloadVisualization } from './visualize-frame.mjs';
 import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon } from './icons.mjs';
 import { fileMenuItems, visualizationMenuItems, browserTabMenuItems, copyPathText, relativeTo, samePath, notify, download, openHostFile, displayPath, fileUrl } from './file-actions.mjs';
 import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
-import { linkOpenTarget } from './browser-address.mjs';
+import { htmlOpenRoute } from './browser-address.mjs';
 import { applySlots, fileSlots, visualizationSlots, customSlots, gitSlots, browserSlots, subtitleFor } from './side-panel.mjs';
 import { copyText } from './code-copy.mjs';
 import { createTree } from './tree.mjs';
@@ -35,10 +35,11 @@ const iconButton = (icon, label, action, className = 'btn btn-icon') => {
 /**
  * showMenu は web/client.mjs の右クリックメニュー（1 つを共有する）。cmd はサーバーへのコマンド。
  * osActions() はサーバーのある PC の画面から見ているか（OS の操作を出してよいか。判定はサーバー）
- * browser は内蔵ブラウザーの部品（web/browser-panel.mjs の createBrowserPanel）。デスクトップ版のホストの画面だけで渡る。
+ * browser は内蔵ブラウザーの部品（web/browser-panel.mjs の createBrowserPanel）。デスクトップ版のホストの画面は本物のページ、
+ * リモートの端末はホストの内蔵ブラウザーの映像（browser.remote）。使えるかは browser.available()
  * onBrowsing はパネルが内蔵ブラウザーになった・ブラウザーでなくなったとき（頭の行のボタンの押されている状態。web/header-entries.mjs）
  */
-export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, getPrefs = () => ({}), browser = null, chooseSnapshot = () => false, onBrowsing = () => {} }) {
+export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd, osActions = () => false, getPrefs = () => ({}), browser = null, onBrowsing = () => {} }) {
   const panel = el('aside', 'file-preview'); panel.id = 'filePreview'; panel.hidden = true;
   panel.setAttribute('aria-label', t('filePreview.panel')); panel.tabIndex = -1;
   const head = el('header', 'file-preview-head'), title = el('div', 'file-preview-title');
@@ -233,11 +234,11 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   function disposePdf() { renderTask?.cancel(); renderTask = null; pdfTask?.destroy().catch(() => {}); pdfTask = null; pdfDoc = null; }
   /** 今のモードの設定。状態（custom・visual・file）から毎回作り直す */
   function slots() {
-    if (browsing) return browserSlots();
-    if (custom?.key === 'chrome-window') return browserSlots({ chrome:true, toolbar:custom.toolbar ?? [], tabs:!!browser });
+    if (browsing) return browserSlots({ remote:!!browser.remote });
+    if (custom?.key === 'chrome-window') return browserSlots({ chrome:true, toolbar:custom.toolbar ?? [], tabs:!!browser?.available() });
     if (custom) return custom.footer || custom.head || custom.wide ? gitSlots({ label:custom.label, footer:custom.footer, head:custom.head, toolbar:custom.toolbar, wide:custom.wide }) : customSlots({ label:custom.label });
     if (visual) return visualizationSlots({ origin:visual.origin, html:visual.html, canBrowse:!!snapshotQuery(visual), canUse:!!useFile });
-    return fileSlots({ file, osActions:osActions() });
+    return fileSlots({ file, osActions:osActions(), htmlBrowser:htmlRoute() !== 'source' });
   }
   /**
    * 枠に今のモードを当てる。extra は見出し・下の行・状態などの文言（渡さなければ今のまま）。
@@ -248,7 +249,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     if (file) reveal.textContent = file.kind === 'directory' ? t('files.menu.revealFolder') : t('files.menu.revealFile');
     setIcon(more, moreIcon, visual ? t('filePreview.visual.actions') : t('files.currentActions'));
   }
-  const clearCurrent = () => document.querySelectorAll('.file-link[aria-current],.visualize-expand[aria-current]').forEach(node => node.removeAttribute('aria-current'));
+  const clearCurrent = () => document.querySelectorAll('.file-link[aria-current]').forEach(node => node.removeAttribute('aria-current'));
   function close(restore = true) {
     abort?.abort(); generation++; paintId++; disposePdf(); panel.hidden = true;
     document.body.classList.remove('file-preview-open','file-preview-wide');
@@ -360,18 +361,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     original.setAttribute('aria-pressed', String(source));
   };
   /**
-   * 可視化の面。ファイルと同じ切り替えを通す: プレビュー = 隔離した枠、原文 = 会話に残っている HTML そのもの。
-   * 取り直しはできないので、再読み込みと「会話で使う」は出ないまま
+   * 可視化の面。HTML は原文だけ（描画はブラウザーの仕事。ファイルの HTML と同じで、プレビューの切り替えは無い）:
+   * 会話に残っている HTML そのものを出す。取り直しはできないので、再読み込みと「会話で使う」は出ないまま
    */
   function paintVisual() {
-    setPressed();
     setNote(visualNote(visual)); content.scrollTop = 0;
-    if (source) {
-      content.setAttribute('aria-label', t('filePreview.visual.source'));
-      return sourceView(visual.html);
-    }
-    content.setAttribute('aria-label', t('filePreview.visual.contents'));
-    content.replaceChildren(visualizationFrame(visual.html, visual.title, { fill:true }));
+    content.setAttribute('aria-label', t('filePreview.visual.source'));
+    return sourceView(visual.html);
   }
   async function paint() {
     if (visual) return paintVisual();
@@ -424,16 +420,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
         content.replaceChildren(dirView);
         return;
       }
-      if (source || file.kind === 'text') return sourceView(file.text, reference?.line ?? null);
+      // HTML は原文だけ（描画はブラウザーの仕事。docs/file-preview.md）
+      if (source || file.kind === 'text' || file.kind === 'html') return sourceView(file.text, reference?.line ?? null);
       if (file.kind === 'unsupported') return stateMessage(t('filePreview.error.unsupported'), file.reason);
       if (file.kind === 'markdown') {
         const result = await markdownContent(file.text, loadAsset);
         if (ticket !== paintId) return;
         content.replaceChildren(result.article); setNote(result.note);
-      } else if (file.kind === 'html') {
-        const result = await htmlDocument(file.text, loadAsset);
-        if (ticket !== paintId) return;
-        content.replaceChildren(previewFrame(result.document, file.name)); setNote(result.note);
       } else if (file.kind === 'table') {
         const { rows, truncated } = parseTable(file.text, file.delimiter);
         const table = el('table'), head = el('thead'), body = el('tbody');
@@ -478,7 +471,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * element は閉じたときにフォーカスを戻す先（頭の行のボタン）。省くと今フォーカスのあるもの
    */
   function openBrowser(element) {
-    if (!browser) return;
+    if (!browser?.available()) return;
     if (browsing && !panel.hidden) { if (element) opener = element; browser.show(); return; }
     abort?.abort(); generation++; paintId++; disposePdf();
     const previous = custom; leaveCustom(); previous?.onClose?.();
@@ -604,13 +597,14 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
    * サーバーのある PC の既定のブラウザーへ渡す（openVisualization）。
    * リモートの窓（plyRemote のある殻）は、行き先を見て殻がアプリの中の窓・シートで開く（docs/remote.md §8.5）。
    * 空の窓では行き先が分からないので URL を直接渡す。殻は窓を返さない（opener を持たせない）ので null でも知らせない。
-   * ホストの画面ではない端末でホストに内蔵ブラウザーがあれば、先に「この端末で開く / PC のブラウザーで見る」を選ぶ（chooseSnapshot）
+   * ホストの内蔵ブラウザーの映像を見られるリモートの端末は、ホストの内蔵ブラウザーで開いて右パネルの「ブラウザー」で見る（htmlRoute の remote）
    */
-  function openSnapshot(v, direct = false) {
+  function openSnapshot(v) {
     const query = snapshotQuery(v);
     if (!query) return;
-    if (!direct && chooseSnapshot(Object.fromEntries(query), () => openSnapshot(v, true))) return;
-    if (useInAppBrowser()) {
+    const route = htmlRoute();
+    if (route === 'remote') return browser.showSnapshot(Object.fromEntries(query)).catch(failed);
+    if (route === 'inapp') {
       return openHostFile('openVisualization', Object.fromEntries(query), {
         cmd, inApp:true, openInPanel:openInBrowserPanel, reuse:true, source:() => snapshotSource(v, query),
       }).catch(failed);
@@ -677,19 +671,38 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     return { path:target.path, ...(ctx.sessionId ? { sessionId:ctx.sessionId } : {}), ...(ctx.at ? { at:ctx.at } : {}), ...(target.base ? { base:target.base } : {}) };
   };
   const failed = error => notify(String(error?.message || error || t('files.actionFailed')));
-  const useInAppBrowser = () => linkOpenTarget({ available:!!browser && browserPanelAvailable() && osActions(), prefs:getPrefs() }) === 'inapp';
   /**
-   * HTML ファイルをブラウザーで開く。設定が内蔵ブラウザーなら内蔵ブラウザーのタブ（同じファイルは使い回して読み直す）、
-   * 既定のブラウザーなら既定のブラウザー。external（Ctrl/⌘+クリック・中クリック）は設定によらず既定のブラウザー。
+   * HTML の開き先（docs/file-preview.md「HTML の開き先」）。ファイルのクリック・パスのチップ・ツリー・添付・コンテキストの「開く」は全部ここを通る。
+   *   inapp   … ホストの画面で、リンクの開き先が内蔵ブラウザー（そのタブ）
+   *   external … ホストの画面で既定のブラウザー、またはホスト PC の普通のブラウザー（サーバーが既定のブラウザーで開く）
+   *   remote  … ホストの内蔵ブラウザーの映像を見られるリモートの端末（ホストの内蔵ブラウザーにこの会話のタブを足す）
+   *   source  … ブラウザーで開けない端末（右パネルに原文だけ）
+   */
+  const htmlRoute = () => htmlOpenRoute({ hasCmd:!!cmd, hostScreen:!!osActions(), inappAvailable:!!browser && !browser.remote && browserPanelAvailable() && !!osActions(),
+    prefs:getPrefs(), remoteView:!!(browser?.remote && browser.available()) });
+  /**
+   * HTML ファイルをブラウザーで開く（開き先は htmlRoute）。external（Ctrl/⌘+クリック・中クリック）は設定によらず既定のブラウザー。
    * anchor（押したリンク）には、内蔵ブラウザーで開けたとき「表示中」を添える
    */
   async function openHtml(target, { external = false, anchor = null } = {}) {
-    if (!cmd) return;
+    const route = htmlRoute();
+    if (route === 'source') return open({ path:target.path, line:null, source:true }, target.element ?? null, target.base);
     try {
-      const result = await openHostFile('openPath', whereFrom(target), { cmd, inApp:!external && useInAppBrowser(), openInPanel:openInBrowserPanel, reuse:true,
+      if (route === 'remote') return await openRemoteHtml(target);
+      const result = await openHostFile('openPath', whereFrom(target), { cmd, inApp:!external && route === 'inapp', openInPanel:openInBrowserPanel, reuse:true,
         source:found => ({ kind:'file', label:displayPath(found.path, found.cwd) }) });
       if (result?.inApp && anchor?.isConnected) markBrowserLink(anchor, result.path);
     } catch (error) { failed(error); }
+  }
+  /** リモートの端末: ホストの内蔵ブラウザーにこの会話のタブを足し（ホストの窓は前に出ない）、右パネルの「ブラウザー」でその映像を見る */
+  async function openRemoteHtml(target) {
+    // 添付やコンテキストの「開く」は要素を持たない。まだ右パネルを開いていなければ context も空なので、今の会話を使う
+    const where = whereFrom(target);
+    if (!where.sessionId) { const sessionId = getContext(null)?.sessionId; if (sessionId) where.sessionId = sessionId; }
+    // 会話がまだ無い下書きの添付は、ホストのタブを足す相手の会話が無い。失敗の通知ではなく原文を右パネルで見せる
+    if (!where.sessionId) return open({ path:target.path, line:null, source:true }, target.element ?? null, target.base);
+    const result = await cmd('invoke', { op:'browser.openFile', args:where });
+    browser.showTab(result.tabId);
   }
   /** 内蔵ブラウザーで開いたファイルのリンクに「表示中」を添える。ブラウザーの今のタブが別のものになったら外す（syncBrowserMark） */
   function markBrowserLink(anchor, path) {
@@ -703,13 +716,11 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     if (browsing && !panel.hidden && tab?.file && samePath(tab.file.path, browserMark.path)) return;
     browserMark.anchor.removeAttribute('aria-current'); browserMark = null;
   }
-  /** ファイルを開く入口（リンク・ツリー・ファイルのカード）。HTML は設定が内蔵ブラウザーならそのタブで、ほかはいつもの右パネル */
+  /** ファイルを開く入口（リンク・パスのチップ・ツリー・ファイルのカード・添付・コンテキストの「開く」）。HTML は htmlRoute、ほかはいつもの右パネル */
   function activate(ref, element, base) {
-    if (isHtml(ref.path) && cmd && useInAppBrowser()) return openHtml({ path:ref.path, element, base }, { anchor:element?.tagName === 'A' ? element : null });
+    if (isHtml(ref.path) && !ref.line) return openHtml({ path:ref.path, element, base }, { anchor:element?.tagName === 'A' ? element : null });
     return open(ref, element, base);
   }
-  /** 内蔵ブラウザーのホストの画面では、可視化のカードに「サイドパネルに表示」の代わりに「ブラウザーで開く」を出す（body のクラスで出し分ける） */
-  function syncInAppLinks() { document.body.classList.toggle('inapp-links', useInAppBrowser()); }
   async function osAction(command, target) {
     if (!cmd) return;
     try { await cmd(command, whereFrom(target)); }
@@ -750,7 +761,7 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   function menu(x, y, target) {
     if (!showMenu || !target?.path) return;
     const current = target.current ?? (!!file && !panel.hidden && samePath(target.path, file.path));
-    showMenu(x, y, fileMenuItems(target, { osActions:osActions(), current, canUse:!!useFile, run:action => run(action, target) }), menuTitle(target.path));
+    showMenu(x, y, fileMenuItems(target, { osActions:osActions(), htmlBrowser:htmlRoute() !== 'source', current, canUse:!!useFile, run:action => run(action, target) }), menuTitle(target.path));
   }
   /** 内蔵ブラウザーの ⋯ の先頭に足すファイルの操作。画面が開いた PC のファイル・可視化の写しのタブだけ（desktop/browser-panel.cjs の file / snapshot） */
   function tabMenu(tab) {
@@ -767,11 +778,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
         return run(action, { path:tab.file.path });
       }
       const v = record ?? { html:null, title:tab.snapshot.title, origin:tab.snapshot.origin, at:tab.snapshot.at, id:tab.snapshot.id, sessionId:tab.snapshot.sessionId, where:null };
-      if (action === 'source') {
-        openVisualization({ content:v.html, title:v.title, path:v.origin, at:v.at, id:v.id }, null);
-        source = true; paint();
-        return;
-      }
+      // 原文を見る: 右パネルに会話に残っている HTML そのものを出す（描画はしない。ブラウザーのタブは残る）
+      if (action === 'source') return openVisualization({ content:v.html, title:v.title, path:v.origin, at:v.at, id:v.id }, null);
       return runVisual(action, v);
     } catch (error) { failed(error); }
   }
@@ -828,15 +836,15 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     const anchor = event.target.closest('a');
     if (!anchor || (!anchor.closest('#log') && !anchor.closest('#channelsView') && !anchor.closest('#workBody') && !anchor.closest('.file-preview-document'))) return;
     const ref = anchor.dataset.filePath ? { path:anchor.dataset.filePath } : fileReference(anchor.getAttribute('href'));
-    if (!ref || !isHtml(ref.path) || !cmd || !osActions()) return;
+    if (!ref || !isHtml(ref.path) || !cmd) return;
     event.preventDefault();
     anchor.closest('dialog[open]')?.close();
-    openHtml({ path:ref.path, element:anchor, base:anchor.closest('.file-preview-document') ? file?.path : undefined }, { external:true });
+    const base = anchor.closest('.file-preview-document') ? file?.path : undefined;
+    // PC の操作ができない端末（リモート）には既定のブラウザーが無い。ブラウザーが相対パスをそのまま新しいタブで開かないよう、左クリックと同じ行き先（htmlRoute）へ
+    if (!osActions()) return activate(ref, anchor, base);
+    openHtml({ path:ref.path, element:anchor, base }, { external:true });
   });
-  document.addEventListener('ply-visualize-expand', event => {
-    if (event.detail && event.target?.isConnected) openVisualization(event.detail, event.target);
-  });
-  // 内蔵ブラウザーの使えるホストの画面のカード: 写しを内蔵ブラウザーで開く（同じ記録はタブを使い回す）
+  // 可視化のカードの「ブラウザーで開く」: 写しを htmlRoute の開き先で開く（内蔵ブラウザーでは同じ記録はタブを使い回す）
   document.addEventListener('ply-visualize-browser', event => {
     const d = event.detail;
     if (!d || !event.target?.isConnected) return;
@@ -861,16 +869,15 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
   new MutationObserver(() => { if (!panel.hidden && document.body.classList.contains('settings')) close(false); }).observe(document.body,{attributes:true,attributeFilter:['class']});
   browser?.connect({ openPanel: () => openBrowser(), onEmpty: () => { if (browsing && !panel.hidden) close(); },
     tabMenu, rewriteSnapshot: source => rewriteSnapshot(source).catch(failed), onPaint: syncBrowserMark });
-  syncInAppLinks();
   return { close, layout, openPanel, updatePanel, panelOpen: key => !panel.hidden && custom?.key === key,
     /** 右パネルでファイルを開く（拡大表示の「右パネルで開く」） */
     open: (ref, element) => activate(ref, element),
     /** ファイルの操作メニュー（拡大表示・会話の画像） */
     menu, reveal: (target) => osAction('revealPath', target),
     /** 見ている場所（OS の操作の可否）が分かった・変わった */
-    osChanged: () => { syncInAppLinks(); if (!panel.hidden) show(); },
+    osChanged: () => { if (!panel.hidden) show(); },
     /** 設定（リンクの開き先）が変わった */
-    prefsChanged: syncInAppLinks,
+    prefsChanged: () => { if (!panel.hidden) show(); },
     /** 内蔵ブラウザーのモードにする（web/browser-panel.mjs と頭の行のボタンが呼ぶ） */
     openBrowser,
     /** 右パネルが内蔵ブラウザーを出しているか */

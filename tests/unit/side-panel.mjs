@@ -33,6 +33,8 @@ export default async function (t) {
   assert.deepEqual(html.footer, ['reveal', 'save', 'use']);
   const remote = fileSlots({ file: { kind: 'html', text: '<p>', downloadable: true }, osActions: false });
   assert.deepEqual(remote.toolbar, ['path', 'reload']); assert.deepEqual(remote.footer, ['save', 'use']);
+  assert.equal(html.views, false, 'HTML は原文だけ（描画の切り替えは無い）');
+  assert.deepEqual(fileSlots({ file: { kind: 'html', text: '<p>' }, osActions: false, htmlBrowser: true }).toolbar, ['browser', 'path', 'reload'], 'リモートはホストの内蔵ブラウザーへ');
   assert.equal(fileSlots({ file: { kind: 'text', text: 'x' } }).views, false, 'テキストは切り替えを出さない');
   assert.equal(fileSlots({ file: { kind: 'markdown', text: '# x' } }).kind, 'ファイル');
   t.ok('ファイル: 取得の前後・HTML・遠隔で出す部品', true);
@@ -43,6 +45,8 @@ export default async function (t) {
   assert.deepEqual(visual.toolbar, ['visualBrowser', 'path', 'origin']);
   assert.deepEqual(visual.footer, ['visualSave', 'use']);
   assert.equal(visual.kind, '可視化'); assert(visual.note.includes('元のファイルを開く'));
+  assert.equal(visual.views, false, '可視化の HTML も原文だけ（右パネルで描画する切り替えは出さない。描画はブラウザーの仕事）');
+  assert.equal(visualizationSlots({ origin: null, html: null }).views, false, '写しの中身が無いときも切り替えは出さない');
   const orphan = visualizationSlots({ origin: null, html: '<p>', canBrowse: true });
   assert.deepEqual(orphan.toolbar, ['visualBrowser'], '元が無ければパス・元のファイルを開くは出さない');
   assert.deepEqual(orphan.footer, ['visualSave']); assert.equal(orphan.note, '');
