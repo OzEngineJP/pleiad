@@ -118,7 +118,7 @@ WS の口は `browserScreencast`・`browserScreencastStop`・`browserScreencastA
 
 ### 検証
 
-`tests/unit/inapp-browser.mjs`（タブ・配置・リンク・PC のファイルの守りと外部読み込み）・`remote-browser-view.mjs`（転送・入力・リモートだけの口・右パネルの部品）・`url-links.mjs`（シートと右クリックの行き先）・`file-actions.mjs`・`file-preview.mjs`（`htmlRoute`）・`server-visualize.mjs`（HTML と可視化の開き先）・`server-ux.mjs`（設定の保存）・`desktop-external-link.mjs`（`target=_blank` の http・https を既定のブラウザーで開く）。
+`tests/unit/inapp-browser.mjs`（タブ・配置・リンク・PC のファイルの守りと外部読み込み）・`remote-browser-view.mjs`（転送・入力・リモートだけの口・右パネルの部品）・`url-links.mjs`（シートと右クリックの行き先）・`file-actions.mjs`・`html-route.mjs`（`htmlRoute` の列 H-in・H-ex・L・R・R0 ごとの行き先と、クリック・Ctrl・中クリック・チップ・メニュー・可視化のカードが同じ振り分けを通ること）・`server-visualize.mjs`（HTML と可視化の開き先）・`server-ux.mjs`（設定の保存）・`desktop-external-link.mjs`（`target=_blank` の http・https を既定のブラウザーで開く）。
 
 ### 更新時のタブの写し
 
