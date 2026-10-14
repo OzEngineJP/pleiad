@@ -585,7 +585,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 ### 8.5 リンク
 
-リモートの窓・モバイル版・LAN のブラウザー（ホストの PC の画面ではないところ）で、会話のリンクや可視化の「ブラウザーで開く」を押したときの行き先（2026-09-27、issue #33 の段階 0）。ホストがデスクトップ版なら、先に下からのシートで「内蔵ブラウザーで開く / 既定のブラウザーで開く / リンクをコピー」を選ぶ（2026-09-28、段階 4。2026-10-14 に [ADR 0206](adr/0206-html-route-and-remote-browser-panel.md) でこの 3 つにした。docs/inapp-browser.md「リモートから見る」）。下の表は「既定のブラウザーで開く」を選んだとき、またはホストに内蔵ブラウザーが無いとき（`npm start`）の行き先。規則は 3 か所が同じ表で持つ: 画面の `web/host-only-links.mjs`、デスクトップ版の `desktop/remote-windows.cjs` の `linkTarget`、Android の `LinkPolicy`（`mobile/android/remote-core`）。
+リモートの窓・モバイル版・LAN のブラウザー（ホストの PC の画面ではないところ）で、会話のリンクや可視化の「ブラウザーで開く」を押したときの行き先（2026-09-27、issue #33 の段階 0）。ホストがデスクトップ版なら、先に下からのシートで「内蔵ブラウザーで開く / 既定のブラウザーで開く / リンクをコピー」を選ぶ（2026-09-28、段階 4。2026-10-14 に [ADR 0207](adr/0207-html-route-and-remote-browser-panel.md) でこの 3 つにした。docs/inapp-browser.md「リモートから見る」）。下の表は「既定のブラウザーで開く」を選んだとき、またはホストに内蔵ブラウザーが無いとき（`npm start`）の行き先。規則は 3 か所が同じ表で持つ: 画面の `web/host-only-links.mjs`、デスクトップ版の `desktop/remote-windows.cjs` の `linkTarget`、Android の `LinkPolicy`（`mobile/android/remote-core`）。
 
 | 行き先 | 例 | 開く場所 |
 |---|---|---|
