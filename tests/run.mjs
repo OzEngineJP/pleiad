@@ -153,11 +153,18 @@ const SUITES = [
   './unit/modes.mjs',
   // git の動き（ADR 0085）: 状態・差分の解析、コマンド結果からのタイムライン（ブランチ・コミット・PR）、ターンの始まりと終わりの隠し ref の撮影・要約・掃除（一時リポジトリ）
   './unit/git-info.mjs',
+  './unit/git-pr.mjs',
+  // 会話の PR の覚え書き・状態の読み取り（偽の gh）・サーバー越し（委譲した子の PR が親の一覧に合流する。ADR 0206）
+  './unit/git-prs.mjs',
+  './unit/server-prs.mjs',
   './unit/git-history.mjs',
+  './unit/git-panel-load.mjs',
   './unit/git-graph.mjs',
   './unit/git-diff.mjs',
   './unit/git-panel-html.mjs',
+  './unit/git-prs-view.mjs',
   './unit/server-git.mjs',
+  './unit/server-git-panel-load.mjs',
   // git の動きの画面（ADR 0085）: 要約行・委譲カードの変更の行・したことの行・差分の面（色なし）・右パネルの表（gitSlots）
   './unit/git-view.mjs',
   // worktree の画面（ADR 0136）: 競合を知らせるチップと面・会話の中の静かな 1 行・残っている worktree の操作と結果の行・取り込みの依頼文
