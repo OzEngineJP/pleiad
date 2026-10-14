@@ -113,7 +113,7 @@ export default async function (t) {
   t.ok('Codex の子には入り、Claude の子・依頼元には入らない', forCodexChild.find(r => r.id === 'codexPolicy')?.inserted === true
     && forClaudeChild.find(r => r.id === 'codexPolicy')?.reason === 'agent' && forCodexParent.find(r => r.id === 'codexPolicy')?.reason === 'target');
   t.ok('前の版で委譲の指示を切っていても codexPolicy は入れたまま', normalizePlyInstructions(undefined, { delegation: false }).find(i => i.id === 'codexPolicy')?.on === true);
-  t.ok('保存済みの並びに無ければ既定の位置に足す', normalizePlyInstructions({ items: [{ id: 'delegate', on: true }, { id: 'child', on: false }] }).map(i => i.id).join() === 'delegate,child,codexPolicy');
+  t.ok('保存済みの並びに無ければ既定の位置に足す', normalizePlyInstructions({ items: [{ id: 'child', on: false }] }).map(i => i.id).join() === 'child,codexPolicy');
   const same = changePlyInstructions(list, { action: 'save', id: 'codexPolicy', name: item.name, body: item.body, target: 'child', agents: ['codex'] }, 'ja');
   const both = changePlyInstructions(list, { action: 'save', id: 'codexPolicy', name: item.name, body: item.body, target: 'child', agents: ['claude', 'codex'] }, 'ja');
   t.ok('既定と同じ値（Codex だけ）で保存しても「既定から変更」にしない。Claude も選ぶと変更', !resolvePlyInstructions(same, 'ja').find(i => i.id === 'codexPolicy').modified

@@ -4,7 +4,8 @@
 // Codex は developerInstructions で受け取る。保存は prefs.json の plyInstructions（すべての場所に共通。場所ごとには持たない）。
 //
 // 項目は 3 種類:
-//   - 既定（delegate: 委譲の進め方 / child: 委譲された会話でのコマンドの扱い / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
+//   - 既定（child: 委譲された会話でのコマンドの扱い / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
+//     依頼元に委譲を勧める既定（前の版の delegate: 委譲の進め方）は持たない。委譲するかは利用者が自分で足した指示で決める（ADR 0210）。
 //     Pleiad が最初から入れている。編集でき、編集していなければ
 //     文面は辞書（agent:guide.*）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で戻る）。
 //   - 委譲と連動（route: 委譲の振り分けの使い方）。ply_delegate の約束なので編集・スイッチは無く、委譲先の自動選択が有効なときだけ入る。
@@ -12,8 +13,9 @@
 //   - 自分で足したもの（u-…）。名前・本文・入れる会話（すべて／依頼元だけ／委譲された会話だけ）・エージェント（Claude Code・Codex）。
 //
 // 保存の形 { items: [{ id, on, name?, body?, target?, agents? }] }（並びが入る順）。既定の項目は編集したときだけ name などを持つ。
-// plyInstructions が無い間は、前の版の addedContext（{ delegation: false } で委譲の指示を切っていた）から作る（委譲の既定の 2 項目のスイッチに写す。
+// plyInstructions が無い間は、前の版の addedContext（{ delegation: false } で委譲の指示を切っていた）から作る（child のスイッチに写す。
 // codexPolicy は前の版に無かった項目なので入れたまま）。
+// 保存に残った delegate は、本文を編集していなければ捨て、編集していれば自分で足した指示（u-delegate）に変えて残す（ADR 0210）。
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { agentT, t } from './i18n.mjs';
@@ -22,7 +24,7 @@ import { estimateTokens } from '../web/token-estimate.mjs';
 export const TARGETS = ['all', 'parent', 'child'];
 export const AGENTS = ['claude', 'codex'];
 // agents を持たない既定の項目はどちらのエージェントにも入る
-const BUILTIN = { delegate: { target: 'parent' }, child: { target: 'child' }, codexPolicy: { target: 'child', agents: ['codex'] } };
+const BUILTIN = { child: { target: 'child' }, codexPolicy: { target: 'child', agents: ['codex'] } };
 const builtinAgents = id => [...(BUILTIN[id].agents ?? AGENTS)];
 const LINKED = 'route';
 const MAX_ITEMS = 50, MAX_BODY = 32 * 1024, MAX_NAME = 80;
@@ -30,7 +32,6 @@ const MAX_ITEMS = 50, MAX_BODY = 32 * 1024, MAX_NAME = 80;
 // i18n-dynamic: agent:guide.names.
 const builtinName = (locale, id) => agentT(locale, `guide.names.${id}`);
 function builtinBody(locale, id) {
-  if (id === 'delegate') return [`- ${agentT(locale, 'guide.delegate')}`, `- ${agentT(locale, 'guide.main')}`].join('\n');
   if (id === 'child') return agentT(locale, 'guide.commandLifetime');
   if (id === 'codexPolicy') return agentT(locale, 'guide.codexPolicy');
   return `- ${agentT(locale, 'guide.route')}`;
@@ -40,7 +41,7 @@ const edited = item => ['name', 'body', 'target', 'agents'].some(k => item[k] !=
 
 const agentsSchema = z.array(z.enum(AGENTS)).min(1).max(AGENTS.length);
 const storedSchema = z.object({
-  id: z.string().regex(/^(?:delegate|child|codexPolicy|u-[a-z0-9]{4,32})$/),
+  id: z.string().regex(/^(?:child|codexPolicy|u-[a-z0-9]{4,32})$/),
   on: z.boolean().optional(),
   name: z.string().trim().min(1).max(MAX_NAME).optional(),
   body: z.string().min(1).max(MAX_BODY).optional(),
@@ -48,17 +49,31 @@ const storedSchema = z.object({
   agents: agentsSchema.optional(),
 });
 
-/** 既定の並び（前の版の委譲の指示のスイッチ on を委譲の既定の 2 項目に写す） */
-const defaults = (on = true) => [{ id: 'delegate', on }, { id: 'child', on }, { id: 'codexPolicy', on: true }];
+/** 既定の並び（前の版の委譲の指示のスイッチ on を child に写す） */
+const defaults = (on = true) => [{ id: 'child', on }, { id: 'codexPolicy', on: true }];
+// 前の版の既定の項目。本文を編集していたら、この id の自分で足した指示に変える
+const FORMER_DELEGATE = 'u-delegate';
+const formerDelegateSchema = storedSchema.extend({ id: z.literal('delegate') });
+
+/** 前の版の delegate（委譲の進め方）。本文を編集していなければ null（捨てる）。名前を編集していなければ前の版の名前（locale の言語） */
+function fromFormerDelegate(value, locale) {
+  const parsed = formerDelegateSchema.safeParse(value);
+  if (!parsed.success || !parsed.data.body) return null;
+  const v = parsed.data;
+  return { id: FORMER_DELEGATE, on: v.on !== false, name: v.name ?? agentT(locale, 'guide.formerDelegateName'), body: v.body,
+    target: v.target ?? 'parent', agents: v.agents ? AGENTS.filter(x => v.agents.includes(x)) : [...AGENTS] };
+}
 
 /**
  * 保存された値（prefs.json の plyInstructions）を読む。壊れた項目は落とし、既定の項目が欠けていれば足す。
- * legacy は前の版の addedContext。plyInstructions が無いときだけ使う
+ * legacy は前の版の addedContext。plyInstructions が無いときだけ使う。locale は前の版の delegate を変えるときの名前の言語
  */
-export function normalizePlyInstructions(raw, legacy = null) {
+export function normalizePlyInstructions(raw, legacy = null, locale = 'ja') {
   if (!raw || !Array.isArray(raw.items)) return defaults(legacy?.delegation !== false);
   const out = [], seen = new Set();
-  for (const value of raw.items.slice(0, MAX_ITEMS)) {
+  for (const stored of raw.items.slice(0, MAX_ITEMS)) {
+    const value = stored?.id === 'delegate' ? fromFormerDelegate(stored, locale) : stored;
+    if (!value) continue;
     const parsed = storedSchema.safeParse(value);
     if (!parsed.success || seen.has(parsed.data.id)) continue;
     const v = parsed.data;
@@ -103,7 +118,7 @@ export function turnInstructions({ list, locale, child, routing, supported, canD
     if (!item.on) return skip('off');
     if ((item.target === 'parent' && child) || (item.target === 'child' && !child)) return skip('target');
     if (agent && AGENTS.includes(agent) && !item.agents.includes(agent)) return skip('agent');
-    if (!child && !canDelegate && (item.id === 'delegate' || item.id === LINKED)) return skip('readOnly');
+    if (!child && !canDelegate && item.id === LINKED) return skip('readOnly');
     return { ...base, inserted: true, text: itemText(locale, item) };
   });
 }
