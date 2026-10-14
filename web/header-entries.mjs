@@ -63,7 +63,7 @@ export const browserViewToOpen = ({ viewer = false, chrome = false, urgent = fal
   chrome && (urgent || last === 'chrome' || !viewer) ? 'chrome' : viewer ? 'viewer' : null;
 
 /**
- * 統合したブラウザーのボタン。browser は web/browser-panel.mjs の createBrowserPanel の返り値（使えない画面では null）、
+ * 統合したブラウザーのボタン。browser は web/browser-panel.mjs の createBrowserPanel の返り値（ホストの内蔵ブラウザーを見られない画面では available() が false）、
  * preview は web/file-preview.mjs の返り値（openBrowser・browserOpen・close）。
  * bridge は preload の plyDesktop.browser（ページにフォーカスがあるときの近道）。blocked() が true の間は近道を効かせない（設定・ダイアログ）。
  * ビューアも Chrome の窓も無い画面では隠す
@@ -77,6 +77,8 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   // 会話ごとの「前に人が選んだ中身」。人が開いた・タブを押したときだけ書く（自動で開いた・別の会話から開いたままの表示では書かない）
   const lastView = new Map();
   const activeId = () => getSessionId() ?? null;
+  // リモートの端末は、ホストが映像を送れる（pcBrowser）ときだけビューアがある。ホストの画面は常にある
+  const viewable = () => browser?.available() === true;
   const chromeOpen = () => chrome()?.isOpen() === true;
   const open = () => preview.browserOpen() || chromeOpen();
 
@@ -100,7 +102,7 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   function paint() {
     const id = activeId();
     const hasWindow = Boolean(id && chromeAvailable() && windows?.has(id));
-    button.hidden = !browser && !hasWindow;
+    button.hidden = !viewable() && !hasWindow;
     if (hasWindow) button.setAttribute('data-mobile-chrome', ''); else button.removeAttribute('data-mobile-chrome');
     if (button.hidden) return;
     const state = currentMark();
@@ -128,7 +130,7 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
       const id = activeId();
       const state = id ? getChromeState(id) : 'idle';
       const urgent = id && (waiting(id) || windows?.operating(id) || state === 'running' || state === 'paused');
-      const view = browserViewToOpen({ viewer: !!browser, chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
+      const view = browserViewToOpen({ viewer: viewable(), chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
       if (view === 'chrome') chrome()?.open(button);
       else if (view === 'viewer') { preview.openBrowser(button); browser.open(); }
       if (id && view) lastView.set(id, view);

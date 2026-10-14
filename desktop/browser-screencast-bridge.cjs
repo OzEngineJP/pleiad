@@ -1,4 +1,4 @@
-// worker（core/server.mjs）からの「PC のブラウザーで見る」の依頼を desktop/browser-screencast.cjs へ渡す橋
+// worker（core/server.mjs）からの「ホストの内蔵ブラウザーの映像を見る」の依頼を desktop/browser-screencast.cjs へ渡す橋
 // （docs/inapp-browser.md「リモートから見る」）。desktop/browser-viewer-bridge.cjs と同じく parentPort の message でつなぐ。
 //   worker -> main: { type: 'browser-screencast', id, action: start|stop|input|navigate, sessionId, ... } と
 //                   { type: 'browser-screencast-ack', sessionId, frameId }（worker が間引いて送る）

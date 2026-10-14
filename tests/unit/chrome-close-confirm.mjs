@@ -70,7 +70,7 @@ export default async function (t) {
       const preview = { openPanel: opts => { toolbar = opts.toolbar; body = opts.body; open = true; }, panelOpen: () => open, close: () => { open = false; } };
       windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
       const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return name === 'browserScreencast' ? { state: {} } : {}; },
-        preview, browser: {}, session: () => 'conv', windows, closeRisk: () => risk, showMenu: (x, y, items, title) => menus.push({ items, title }) });
+        preview, browser: { available: () => true }, session: () => 'conv', windows, closeRisk: () => risk, showMenu: (x, y, items, title) => menus.push({ items, title }) });
       panel.open();
       const dialog = () => body.querySelector('.cp-dlg');
       return { commands, menus, dialog, press: () => toolbar.at(-1).onclick(), closes: () => commands.filter(([name]) => name === 'chromeCloseWindow'),
@@ -112,7 +112,7 @@ export default async function (t) {
       let toolbar = null, open = false, rows = [];
       const preview = { openPanel: opts => { toolbar = opts.toolbar; open = true; }, panelOpen: () => open, close: () => { open = false; } };
       windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
-      const panel = setupChromePanel({ cmd: async name => (name === 'browserScreencast' ? { state: {} } : {}), preview, browser: {}, session: () => 'conv', windows,
+      const panel = setupChromePanel({ cmd: async name => (name === 'browserScreencast' ? { state: {} } : {}), preview, browser: { available: () => true }, session: () => 'conv', windows,
         showMenu: (x, y, items, title) => menus.push({ items, title }), children: () => rows, openChild: id => opened.push(id) });
       panel.open();
       await flush();

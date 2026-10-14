@@ -115,7 +115,10 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
 
   const browser = svgButton('th-browser', t('channels:thread.entry.browser'), GLOBE_PATHS);
   browser.setAttribute('aria-pressed', 'false');
-  browser.hidden = !host.browser;
+  // リモートの端末は、ホストが映像を送れる（pcBrowser）と分かってから出す（web/client.mjs が ply-browser-availability で知らせる）
+  const paintAvailability = () => { browser.hidden = host.browser?.available() !== true; };
+  paintAvailability();
+  document.addEventListener('ply-browser-availability', paintAvailability);
   browser.onclick = () => {
     const preview = host.filePreview;
     if (preview.browserOpen()) preview.close(false);

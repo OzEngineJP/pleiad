@@ -1132,8 +1132,8 @@
     "reviewRequired": "Change the hooks owner from the review"
   },
   "remoteBrowser": {
-    "remote-only": "Use the in-app browser in the right panel on this PC.",
-    "unavailable": "This PC can't use the in-app browser (desktop app only).",
+    "remote-only": "Use the built-in browser in the right panel on this PC.",
+    "unavailable": "This PC can't use the built-in browser (desktop app only).",
     "invalid-session": "Open a conversation first.",
     "not-found": "Couldn't find the saved visualization.",
     "invalid-url": "Can't open this URL.",

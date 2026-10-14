@@ -7573,7 +7573,7 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
-    // 見ていた PC のブラウザーは、見る端末がいなくなれば止める
+    // 見ていたホストの内蔵ブラウザーの映像は、見る端末がいなくなれば止める
     const viewer = screencastClients.get(ws);
     if (viewer) { screencastHub?.forget(viewer); chromeScreencastHub?.forget(viewer); }
   });

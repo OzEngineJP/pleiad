@@ -11,12 +11,13 @@ import { appLinkOf, openExternalLink, modifierKey } from './link-open.mjs';
 import { notify } from './file-actions.mjs';
 
 /**
- * 押したときの行き先。'inapp'・'external'（ホストの画面）、'choose'（リモートの画面。端末か PC かをシートで選ぶ）、
- * 'pc'（リモートの localhost。PC のブラウザーだけ）。ctrl は Ctrl/⌘ を押しているか（ホストの画面では既定のブラウザー）
+ * 押したときの行き先。'inapp'・'external'（ホストの画面）、'choose'（リモートの画面。内蔵ブラウザーか既定のブラウザーかをシートで選ぶ）。
+ * リモートの localhost は端末では開けないので、シートを挟まずホストの内蔵ブラウザー（'inapp'）。
+ * ctrl は Ctrl/⌘ を押しているか（ホストの画面では既定のブラウザー）
  */
 export function linkDestination({ href, ctrl = false, prefs, inAppAvailable = false, hostScreen = false, pcBrowser = false, pageOrigin }) {
   const choices = linkChoices({ url: href, pageOrigin, hostScreen, pcBrowser });
-  if (choices) return choices.pcOnly ? 'pc' : 'choose';
+  if (choices) return choices.pcOnly ? 'inapp' : 'choose';
   if (ctrl) return 'external';
   return linkOpenTarget({ available: inAppAvailable, prefs });
 }
@@ -24,23 +25,23 @@ export function linkDestination({ href, ctrl = false, prefs, inAppAvailable = fa
 /** 行き先の一行の字。[行き先, URL（スキームを省く）, 近道の案内（ホストの画面で設定が内蔵ブラウザーのときだけ）] */
 export function statusParts({ href, dest, key = 'Ctrl', ctrl = false, inAppSetting = false, hostScreen = false }) {
   const label = dest === 'inapp' ? t('timeline.link.openInApp')
-    : dest === 'choose' ? t('timeline.link.chooseDest')
-    : dest === 'pc' ? t('timeline.link.openOnPc') : t('browser.openExternal');
+    : dest === 'choose' ? t('timeline.link.chooseDest') : t('browser.openExternal');
   const hint = hostScreen && inAppSetting && !ctrl ? t('timeline.link.ctrlHint', { key }) : '';
   return [label, href.replace(/^https?:\/\//i, ''), hint];
 }
 
 /**
  * 右クリックのメニューの項目（web/context-menu.mjs の形）。null なら奪わず、ブラウザーの標準メニューに任せる
- * （内蔵ブラウザーの無い画面・PC のブラウザーを見られないリモート）。act は { openInApp, openExternal, openHere, openOnPc, copy }
+ * （内蔵ブラウザーの無い画面・ホストの内蔵ブラウザーを見られないリモート）。act は { openInApp, openExternal, openHere, openRemote, copy }
+ * （リモートの画面は openRemote = ホストの内蔵ブラウザーのタブ、openHere = この端末の既定のブラウザー。localhost は前者だけ）
  */
 export function linkMenuItems({ href, prefs, inAppAvailable = false, hostScreen = false, pcBrowser = false, pageOrigin, key = 'Ctrl', act }) {
   const copy = { label: t('timeline.link.copy'), onClick: act.copy };
   const choices = linkChoices({ url: href, pageOrigin, hostScreen, pcBrowser });
   if (choices) {
     return [
-      ...(choices.device ? [{ label: t('timeline.link.openOnDevice'), onClick: act.openHere }] : []),
-      { label: t('timeline.link.openOnPc'), onClick: act.openOnPc, ...(choices.pcOnly ? { note: t('timeline.link.pcOnly') } : {}) },
+      { label: t('timeline.link.openInApp'), onClick: act.openRemote },
+      ...(choices.pcOnly ? [] : [{ label: t('browser.openExternal'), onClick: act.openHere }]),
       { sep: true }, copy,
     ];
   }
@@ -58,10 +59,10 @@ export function linkMenuItems({ href, prefs, inAppAvailable = false, hostScreen 
 export const menuTitle = href => (href.length > 44 ? `…${href.slice(-43)}` : href);
 
 /**
- * 配線する。showMenu は web/client.mjs の右クリックメニュー、screen() は今の画面（ホストの画面か・PC のブラウザーを見られるか）、
- * openOnPc(url) はリモートの画面で PC のブラウザーを見る口
+ * 配線する。showMenu は web/client.mjs の右クリックメニュー、screen() は今の画面（ホストの画面か・ホストの内蔵ブラウザーを見られるか）、
+ * openRemote(url) はリモートの画面でホストの内蔵ブラウザーのタブに開く口
  */
-export function setupLinkMenu({ showMenu, getPrefs, screen, openOnPc, doc = document, pageOrigin = () => location.origin }) {
+export function setupLinkMenu({ showMenu, getPrefs, screen, openRemote, doc = document, pageOrigin = () => location.origin }) {
   const context = () => ({ prefs: getPrefs(), inAppAvailable: browserPanelAvailable(), pageOrigin: pageOrigin(), ...screen(), key: modifierKey() });
   let status = null, hovered = null, ctrl = false;
 
@@ -130,7 +131,7 @@ export function setupLinkMenu({ showMenu, getPrefs, screen, openOnPc, doc = docu
       openInApp: () => openExternalLink(href, { inapp: true }),
       openExternal: () => openExternalLink(href, { external: true }),
       openHere: () => openExternalLink(href, { direct: true }),
-      openOnPc: () => openOnPc(href),
+      openRemote: () => openRemote(href),
       copy: () => navigator.clipboard.writeText(href).then(() => notify(t('timeline.link.copied')), () => notify(t('timeline.link.copyFailed'))),
     } });
     if (!items) return;

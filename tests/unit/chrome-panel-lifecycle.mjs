@@ -13,7 +13,7 @@ function rig({ remote = false } = {}) {
   let panelOpen = false;
   const preview = { openPanel: () => { panelOpen = true; }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } };
   const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return name === 'browserScreencast' ? { state: { suspended: false } } : {}; },
-    preview, browser: remote ? null : {}, session: () => 'conv', windows });
+    preview, browser: remote ? null : { available: () => true }, session: () => 'conv', windows });
   const starts = () => commands.filter(([name]) => name === 'browserScreencast').length;
   const frame = seq => panel.onMessage({ source: 'chrome', sessionId: 'conv', type: 'frame', seq, data: 'AAAA', metadata: { deviceWidth: 390, deviceHeight: 700 } });
   return { panel, windows, commands, starts, frame };

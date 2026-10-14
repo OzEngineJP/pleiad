@@ -88,7 +88,7 @@ export default async function (t) {
     const entryButton = new N('button');
     entryButton.focus = () => {};
     const entry = setupBrowserEntry({ button: entryButton, mac: false,
-      browser: { open: () => { viewerIsOpen = true; opened.push('viewer'); } },
+      browser: { available: () => true, open: () => { viewerIsOpen = true; opened.push('viewer'); } },
       preview: { browserOpen: () => viewerIsOpen, openBrowser: () => {}, close: () => { chromeIsOpen = false; viewerIsOpen = false; } },
       chrome: () => ({ isOpen: () => chromeIsOpen, open: () => { chromeIsOpen = true; opened.push('chrome'); } }),
       windows: { has: () => true, operating: () => false }, getSessionId: () => current, chromeAvailable: () => true });
@@ -114,7 +114,7 @@ export default async function (t) {
     const said = [];
     const entryButton = new N('button');
     const entry = setupBrowserEntry({ button: entryButton, mac: false,
-      browser: { open: () => {} }, preview: { browserOpen: () => false, openBrowser: () => {}, close: () => {} },
+      browser: { available: () => true, open: () => {} }, preview: { browserOpen: () => false, openBrowser: () => {}, close: () => {} },
       windows: { has: () => true, operating: () => false }, getSessionId: () => 'a', chromeAvailable: () => true,
       waiting: () => waiting, getChromeState: () => state, announce: text => said.push(text) });
     entry.paint(); entry.paint();

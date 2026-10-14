@@ -416,7 +416,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
 
   function open(element = null) {
     const id = session();
-    if (!id || (!browser && !windows.has(id))) return;
+    if (!id || (!browser?.available() && !windows.has(id))) return;
     // 同じ会話の映像をもう見ているなら（選んでいるタブをもう一度押した）、映像を最初からにしない
     if (isOpen() && sessionId === id && !ended && (connecting || parts?.sink.frame)) return;
     show(id, element);
@@ -496,7 +496,7 @@ export function setupChromePanel({ cmd, preview, browser = null, showMenu = null
       if (watching && changed) paint();
       if (changed && isOpen() && ev.sessionId === sessionId && !(ev.windows > 0)) {
         // ビューアの無い端末では、窓が無くなると入口のボタンも消えて開き直せない。パネルだけ残さず閉じる
-        if (!browser) close(); else { ended = true; paint(); }
+        if (!browser?.available()) close(); else { ended = true; paint(); }
       }
       else if (isOpen() && ev.sessionId === sessionId && ev.windows > 0 && (ended || !parts?.sink.frame) && !connecting) {
         // 窓ができた（最初の窓・閉じた後の新しい窓）。残っている古いフレームを捨てて見直す

@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { createScreencastHub, screencastCommand, parentPortScreencast, QUALITY } from '../../core/browser-screencast.mjs';
 import { COMMANDS, SCREENCAST } from '../../core/protocol.mjs';
-import { containRect, toPageCoords, toPageDelta, framesPerSecond } from '../../web/remote-browser.mjs';
+import { containRect, toPageCoords, toPageDelta, framesPerSecond, panelStateOf } from '../../web/remote-browser.mjs';
 import { linkChoices } from '../../web/link-sheet.mjs';
 import { inputCommands } from '../../core/chrome/input.mjs';
 import { watchHostOnlyLinks } from '../../web/host-only-links.mjs';
@@ -326,17 +326,27 @@ export default async function (t) {
     t.ok('fps は直近 3 秒の枚数', framesPerSecond([0, 1000, 2000, 2500, 2900, 3000], 3000) === 2 && framesPerSecond([0], 5000) === 0);
   }
 
+  // ---- ホストの状態 → 右パネルのタブの列（ホストの画面と同じ部品が読む形）
+  {
+    const state = { tabId: 'b', url: 'https://b.example/', title: 'B', loading: true, canGoBack: true, canGoForward: false,
+      tabs: [{ id: 'a', url: 'https://a.example/', title: 'A' }, { id: 'b', url: 'https://old/', title: 'old' }] };
+    const panel = panelStateOf(state, 's1');
+    t.ok('見ているタブは戻る・進む・読み込み中と最新の URL、ほかのタブは一覧のまま', panel.current === 'b' && panel.sessionId === 's1'
+      && panel.tabs[1].url === 'https://b.example/' && panel.tabs[1].canGoBack === true && panel.tabs[1].loading === true
+      && panel.tabs[0].canGoBack === false && panel.tabs[0].url === 'https://a.example/');
+    t.ok('既定のブラウザーで開く（external）はリモートでは出さない', panel.tabs.every(tab => tab.external === false));
+    t.ok('状態が無ければ空の列（最後のタブが閉じた）', panelStateOf(null, 's1').tabs.length === 0 && panelStateOf(null, 's1').current === null);
+  }
+
   // ---- シートの出し分け
   {
     const page = 'http://127.0.0.1:51234';
     t.ok('ホストの画面ではシートを出さない', linkChoices({ url: 'https://example.com/', pageOrigin: page, hostScreen: true, pcBrowser: true }) === null);
     t.ok('内蔵ブラウザーの無いホストでは出さない（今までどおり）', linkChoices({ url: 'https://example.com/', pageOrigin: page, pcBrowser: false }) === null);
     const web = linkChoices({ url: 'https://example.com/', pageOrigin: page, pcBrowser: true });
-    t.ok('Web のページは「この端末で開く / PC のブラウザーで見る」', web.device && web.pc && !web.pcOnly);
+    t.ok('Web のページはシートで選ぶ（内蔵ブラウザー / 既定のブラウザー / コピー）', web && web.pcOnly === false);
     const local = linkChoices({ url: 'http://localhost:5173/projects', pageOrigin: page, pcBrowser: true });
-    t.ok('localhost は「PC のブラウザーで見る」だけ', !local.device && local.pc && local.pcOnly);
-    t.ok('PC のファイルも PC だけ・可視化の写しは両方', linkChoices({ kind: 'file', pcBrowser: true, pageOrigin: page }).pcOnly
-      && linkChoices({ kind: 'snapshot', pcBrowser: true, pageOrigin: page }).device);
+    t.ok('localhost は端末では開けない（シートを挟まず、ホストの内蔵ブラウザーのタブで開く）', local.pcOnly === true);
 
     const listeners = {}, told = [], chosen = [];
     const root = { addEventListener: (type, fn) => { listeners[type] = fn; }, removeEventListener() {} };
@@ -357,6 +367,12 @@ export default async function (t) {
     const main = read('desktop/main.cjs');
     t.ok('デスクトップ版の main が橋をつなぐ', /attachBrowserScreencastBridge\(messages, browserPanel/.test(main));
     const client = read('web/client.mjs');
-    t.ok('画面は screencast の知らせを表示へ渡す（Chrome の窓の映像は右パネルへ、内蔵ブラウザーは全面の表示へ）', /m\.kind === "screencast"\) return m\.source === 'chrome' \? chromePanel\?\.onMessage\(m\) : remoteBrowser\.onMessage\(m\)/.test(client));
+    t.ok('リモートの端末は右パネルのブラウザーへ映像を渡す部品を 1 つ作る（ホストの画面は作らない）。見られるのはホストの画面ではなく pcBrowser のときだけ',
+      /const remoteBrowser = browserPanelAvailable\(\) \? null : createRemoteBrowser\(/.test(client)
+      && /bridge: remoteBrowser\.bridge, viewport: remoteBrowser\.viewport,\s*available: \(\) => state\.osActions !== true && state\.hostCaps\?\.pcBrowser === true/.test(client));
+    t.ok('hostCapabilities が届いたら入口を出し直す（ply-browser-availability）', /announceBrowserAvailability\(\); browserPanel\.refreshTabs\(\)/.test(client)
+      && /dispatchEvent\(new CustomEvent\('ply-browser-availability'\)\)/.test(client));
+    t.ok('全面の表示（.rb）は無い', !/rb-open|\.rb\{|'rb'/.test(read('web/remote-browser.css') + read('web/remote-browser.mjs')));
+    t.ok('画面は screencast の知らせを表示へ渡す（Chrome の窓の映像は Chrome の窓のパネルへ、内蔵ブラウザーは右パネルのブラウザーへ）', /m\.kind === "screencast"\) return m\.source === 'chrome' \? chromePanel\?\.onMessage\(m\) : remoteBrowser\?\.onMessage\(m\)/.test(client));
   }
 }

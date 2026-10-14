@@ -229,7 +229,7 @@ export default async function (t) {
     // この設定がプレビューと内蔵ブラウザーの両方に効くことを、どの画面にも書く。リンクの開き先はホストの画面だけなので、その理由を一言
     const remoteText = settingNodes.browserPanel.textContent;
     assert(remoteText.includes('リンクの開き先は PC（ホスト）の画面で選びます'), remoteText);
-    assert(remoteText.includes('外部の読み込み') && remoteText.includes('PC の内蔵ブラウザーで開いた HTML ファイルも'), 'リモートにも効く範囲を書く');
+    assert(remoteText.includes('外部の読み込み') && remoteText.includes('ホストの内蔵ブラウザーで開いた HTML ファイル'), 'リモートにも効く範囲を書く');
     assert(!remoteText.includes('エージェントのサイト利用'), 'エージェントの設定はホストの画面だけ');
     let prefs = {}; const sent = [];
     const settings = setupBrowserSettings({ available: true, cmd: async (c, a) => { sent.push([c, a]); }, getPrefs: () => prefs });

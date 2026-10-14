@@ -793,7 +793,7 @@
       "chromePin": { "notWatching": "The Chrome video is not being watched, so the window cannot be pinned.", "noWindow": "That window no longer exists.", "operating": "The shown window cannot be switched while a person has taken over." },
       "chromeDeviceSize": "To operate from a device, give the size of its video box (width and height).",
       "chromeOpenUrl": "Only http and https URLs can be opened in Chrome.",
-      "hostBrowserUnsupported": "This PC can't use the in-app browser (desktop app only).",
+      "hostBrowserUnsupported": "This PC can't use the built-in browser (desktop app only).",
       "chromeProfileOwnSession": "An agent can only switch the Chrome profile of its own conversation. Omit sessionId.",
       "chromeProfileBusy": {
         "operating": "The Chrome profile can't be switched while the agent is operating Chrome.",

@@ -105,17 +105,16 @@ export default async function (t) {
   assert.equal(linkDestination({ href, prefs: inapp, ctrl: true, ...host }), 'external', 'Ctrl/⌘ を押している間は既定のブラウザー');
   assert.equal(linkDestination({ href: local, prefs: inapp, ...host }), 'inapp', 'ホストの画面の localhost は設定どおり');
   assert.equal(linkDestination({ href, prefs: inapp, ...remote }), 'choose');
-  assert.equal(linkDestination({ href: local, prefs: inapp, ctrl: true, ...remote }), 'pc');
+  assert.equal(linkDestination({ href: local, prefs: inapp, ctrl: true, ...remote }), 'inapp', 'リモートの localhost はシートを挟まずホストの内蔵ブラウザー');
   assert.equal(linkDestination({ href, prefs: inapp, inAppAvailable: false, hostScreen: true }), 'external', '内蔵ブラウザーの無い画面');
   const shown = statusParts({ href: 'https://example.com/a', dest: 'inapp', inAppSetting: true, hostScreen: true });
   assert.deepEqual(shown.slice(0, 2), ['内蔵ブラウザーで開く', 'example.com/a']);
   assert.match(shown[2], /Ctrl/);
   assert.equal(statusParts({ href, dest: 'external', ctrl: true, inAppSetting: true, hostScreen: true })[2], '', 'Ctrl 中は案内を出さない');
   assert.equal(statusParts({ href, dest: 'choose' })[0], '開き先を選ぶ');
-  assert.equal(statusParts({ href, dest: 'pc' })[0], 'PC のブラウザーで見る');
-  t.ok('行き先: ホストは設定と Ctrl/⌘、リモートは開き先を選ぶ / PC のブラウザーで見る、内蔵ブラウザーの無い画面は既定', true);
+  t.ok('行き先: ホストは設定と Ctrl/⌘、リモートは開き先を選ぶ（localhost はホストの内蔵ブラウザー）、内蔵ブラウザーの無い画面は既定', true);
 
-  const act = Object.fromEntries(['openInApp', 'openExternal', 'openHere', 'openOnPc', 'copy'].map(k => [k, () => k]));
+  const act = Object.fromEntries(['openInApp', 'openExternal', 'openHere', 'openRemote', 'copy'].map(k => [k, () => k]));
   const labels = items => items.map(i => (i.sep ? '―' : i.label));
   const hostMenu = linkMenuItems({ href, prefs: inapp, ...host, act });
   assert.deepEqual(labels(hostMenu), ['内蔵ブラウザーで開く', '既定のブラウザーで開く', '―', 'リンクをコピー']);
@@ -126,16 +125,17 @@ export default async function (t) {
   assert.equal(extMenu[1].hint, 'クリック');
   assert.equal(hostMenu[0].onClick(), 'openInApp');
   const remoteMenu = linkMenuItems({ href, prefs: inapp, ...remote, act });
-  assert.deepEqual(labels(remoteMenu), ['この端末で開く', 'PC のブラウザーで見る', '―', 'リンクをコピー']);
+  assert.deepEqual(labels(remoteMenu), ['内蔵ブラウザーで開く', '既定のブラウザーで開く', '―', 'リンクをコピー']);
+  assert.equal(remoteMenu[0].onClick(), 'openRemote');
+  assert.equal(remoteMenu[1].onClick(), 'openHere');
   const localMenu = linkMenuItems({ href: local, prefs: inapp, ...remote, act });
-  assert.deepEqual(labels(localMenu), ['PC のブラウザーで見る', '―', 'リンクをコピー'], 'localhost は「この端末で開く」を出さない');
-  assert.equal(localMenu[0].note, 'この URL は PC からだけ開けます。');
+  assert.deepEqual(labels(localMenu), ['内蔵ブラウザーで開く', '―', 'リンクをコピー'], 'localhost は端末では開けないので「既定のブラウザーで開く」を出さない');
   assert.equal(linkMenuItems({ href, prefs: inapp, inAppAvailable: false, hostScreen: true, act }), null, '内蔵ブラウザーの無い画面はブラウザーの標準メニュー');
-  assert.equal(linkMenuItems({ href, prefs: inapp, ...remote, pcBrowser: false, act }), null, 'PC のブラウザーを見られないリモートも標準メニュー');
+  assert.equal(linkMenuItems({ href, prefs: inapp, ...remote, pcBrowser: false, act }), null, 'ホストの内蔵ブラウザーを見られないリモートも標準メニュー');
   assert.equal(menuTitle('https://example.com/a'), 'https://example.com/a');
   assert.equal(menuTitle('https://example.com/' + 'x'.repeat(80)).length, 44);
   assert.ok(menuTitle('https://example.com/' + 'x'.repeat(80)).startsWith('…'));
-  t.ok('右クリックのメニュー: ホストは内蔵 / 既定 / コピー（今の設定に「クリック」）、リモートはシートと同じ語、標準に任せる画面は null', true);
+  t.ok('右クリックのメニュー: ホストは内蔵 / 既定 / コピー（今の設定に「クリック」）、リモートはシートと同じ 3 つ（localhost は内蔵ブラウザーとコピーだけ）、標準に任せる画面は null', true);
 
   // ---- 押した先を決める要素 ----
   const anchor = (h, target = '_blank', cls = true) => ({ closest: sel => (sel.includes('a.md-link') && cls && target === '_blank' ? { getAttribute: () => h } : null) });
