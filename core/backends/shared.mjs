@@ -8,7 +8,7 @@ export const MAX_RESULT_CHARS = 2000;
 
 /**
  * ツールの結果を max 文字で切って notice を付ける。切り捨てる側（末尾）に PR の URL があれば、notice の後ろへ 1 行で残す
- * （gh pr create は作った PR の URL を最後に出す。切ると履歴から PR が拾えなくなる。docs/git-design の「PR の決め方」）。
+ * （gh pr create は作った PR の URL を最後に出す。切ると履歴から PR が拾えなくなる。docs/git-panel-pr.md の「PR の決め方」）。
  */
 export function cutText(text, max, notice) {
   const s = String(text ?? "");
