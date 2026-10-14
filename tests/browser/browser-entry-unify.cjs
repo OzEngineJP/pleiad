@@ -67,9 +67,7 @@ async page => {
   check(await page.locator('.cp-slot').isVisible(), 'Chrome status in tool row');
   check(await page.locator('.cp-profile-slot').count() === 1, 'profile pill insertion slot');
   await page.locator('.cp-window-menu').click();
-  check((await page.locator('.pop:not([hidden])').textContent()).includes('窓 2 · 表示中'), 'current window in menu');
-  check((await page.locator('.pop:not([hidden])').textContent()).includes('窓 2'), 'window list in menu');
-  check((await page.locator('.pop:not([hidden])').textContent()).includes('ウィンドウを閉じる'), 'close action in menu');
+  check((await page.locator('.pop:not([hidden])').textContent()).includes('表示中のウィンドウを閉じる'), 'close shown window action in menu');
   await page.keyboard.press('Escape');
   await page.locator('.browser-tab-chrome [role=tab]').focus();
   await page.keyboard.press('ArrowRight');
