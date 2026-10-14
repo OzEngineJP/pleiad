@@ -3785,7 +3785,7 @@ function claudeSdkBox(sdk) {
     failed.setAttribute("role", "alert");
     box.append(failed);
   }
-  const btn = el("button", "btn", t(sdk.error ? "settings.agents.claudeSdk.retry" : "settings.agents.claudeSdk.fetch"));
+  const btn = el("button", "btn", (sdk.error ? t("settings.agents.claudeSdk.retry") : t("settings.agents.claudeSdk.fetch")));
   btn.type = "button";
   btn.onclick = (e) => { e.stopPropagation(); installClaudeSdk(); };
   box.append(btn);

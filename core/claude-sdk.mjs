@@ -103,6 +103,7 @@ export function requestClaudeSdkConsent() {
 /** 取得の失敗を、画面と会話に出す文にする */
 export function claudeSdkErrorMessage(error) {
   const kind = error?.kind ?? 'offline';
+  // i18n-dynamic: claudeSdk.errors.
   return t(`claudeSdk.errors.${kind}`, { detail: error?.detail ?? String(error?.message ?? error ?? '') });
 }
 

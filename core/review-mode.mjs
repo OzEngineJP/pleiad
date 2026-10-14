@@ -79,7 +79,7 @@ export const COMMAND_REFUSE = [
   'agentTasks', 'agentTaskInstructions', 'cancelAgentTask', 'retryAgentTask', 'delegationRouting', 'setDelegationRouting',
   'setApiKey', 'deleteApiKey', 'setApiKeyUse', 'resolveApiKeyGuide', 'setDelegationRoutingKey', 'deleteDelegationRoutingKey',
   'setVoiceKey', 'deleteVoiceKey', 'providerUsage',
-  'claudeAccounts', 'saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel',
+  'claudeAccounts', 'saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'claudeSdkInstall',
   'compatEndpoints', 'compatEndpointCheck', 'compatEndpointSave', 'compatEndpointRecheck', 'compatEndpointDelete', 'compatEndpointDefault',
   'setNotifyPc', 'setRemoteSettings', 'remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny',
   'remoteRevoke', 'setRemoteDeviceAgent', 'setRemoteResident',
