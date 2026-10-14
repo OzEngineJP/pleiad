@@ -25,6 +25,9 @@ export default async function (t) {
     ['idle', 'current', 'preparing', 'checking', 'cancelled', 'restarting', 'failed'].every(state => ds({ state }).phase === 'none'));
   const waiting = ds({ state: 'waiting', since: 123, waiting: { count: 2, items, stoppers } });
   t.ok('待ち: waiting（待ち始めの時刻・作業・止まるもの）', waiting.phase === 'waiting' && waiting.since === 123 && waiting.items.length === 2 && waiting.stoppers.length === 2 && waiting.interruptFailed === false);
+  const blockedWait = ds({ state: 'waiting', since: 5, waiting: { count: 0, items: [], stoppers: [] }, blocked: { reason: 'busy', sessions: ['o1', 5, 'o2'] } });
+  t.ok('作業が 0 件で S1 が断り続けているときは、待たせている会話を blocked で渡す（会話の id だけ）。普通の待ちには付けない',
+    blockedWait.phase === 'waiting' && blockedWait.blocked.reason === 'busy' && blockedWait.blocked.sessions.join() === 'o1,o2' && !('blocked' in waiting));
   t.ok('作業の項目は必要な項目だけ（コマンド・ツール名など中身は渡さない。止まるものは字だけ）', JSON.stringify(waiting.items[0]) === JSON.stringify({ kind: 'turn', sessionId: 's1', backend: 'claude', label: null })
     && JSON.stringify(waiting.stoppers[0]) === JSON.stringify({ kind: 'shell', sessionId: 's9', backend: null, label: 'npm run dev' }));
   t.ok('ロックを取っている間（locking）は作業が 0 件。切り替え中と同じ（待ちに戻して、空の一覧をちらつかせない）', ds({ state: 'locking', waiting: { count: 0, items: [], stoppers: [] } }).phase === 'switching');

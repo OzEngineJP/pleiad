@@ -485,6 +485,16 @@ export const backend = {
 
     // AGENT_HOST_FAKE_VOICE_REPLY=<JSON ファイル>: { when, steps } の when と同じ本文の発言には steps の台本で返す（通話の確認用。声で話した言葉は台本の接頭辞を持てないため。docs/voice-call.md）
     const text = plain ? scriptOf(prompt) : voiceReplyFor(scriptOf(prompt)) ?? scriptOf(prompt);
+    // 本文の HOLD_TURN:<ゲート> は、受け取った後、ゲートが開くまでターンを進めない（受理からターンの終わりまでの間を、テストが好きなだけ見られる。
+    // 委譲の子の結果に入れると、その完了通知で始まる親のターンが止まる）。echo:・ply: の台本には効かない（委譲の依頼のターンと子のターン自体は止めない）
+    const holdTurn = plain || /^(?:echo|ply):/.test(text) ? null : /\bHOLD_TURN:([\w.-]+)/.exec(text)?.[1];
+    if (holdTurn) {
+      await new Promise((resolve) => {
+        const stop = watchGate(holdTurn, resolve);
+        const abort = signal?.signal;
+        if (abort?.aborted) { stop(); resolve(); } else abort?.addEventListener?.("abort", () => { stop(); resolve(); }, { once: true });
+      });
+    }
     if (!plain && text.startsWith('limit ')) {
       const raw = text.slice(6).trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);

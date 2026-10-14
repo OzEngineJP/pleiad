@@ -25,6 +25,8 @@ export default async function (t) {
     while (Date.now() < deadline) { rows = await c.cmd('agentTasks'); if (fn(rows)) return rows; await sleep(50); }
     throw new Error('task timeout: ' + JSON.stringify(rows.map(({ backend, status, notification, error }) => ({ backend, status, notification, error }))));
   };
+  // sent は通知を受け取った時点なので、通知で始まった依頼元のターンが終わるまで待つ（走っている間の呼び出しは、そのターンの途中送信になる）
+  const idle = async sessionId => { for (let i = 0; i < 1200 && (await c.cmd('running')).turns.some(r => r.sessionId === sessionId); i++) await sleep(50); };
   const callTool = async (sessionId, name, args) => {
     for (let i = 0; ; i++) {
       try {
@@ -59,6 +61,7 @@ export default async function (t) {
     // ---- 委譲の子: ply_task_status の rejections と完了通知
     const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'codex', task: 'reject' }) })).sessionId;
     let rows = await awaitTasks(rows => rows.length === 1 && rows[0].notification === 'sent');
+    await idle(parent);
     const task = rows[0];
     const status = await callTool(parent, 'ply_task_status', { taskId: task.taskId });
     const [policy, spawn] = status.rejections ?? [];
@@ -81,11 +84,13 @@ export default async function (t) {
     // ---- ply_task_send の次の回: 前の回の分を渡し終えていれば置き換える
     await callTool(parent, 'ply_task_send', { taskId: task.taskId, message: 'reject-direct' });
     rows = await awaitTasks(rows => rows[0].revision === 1 && rows[0].status === 'completed' && rows[0].notification === 'sent');
+    await idle(parent);
     const next = await callTool(parent, 'ply_task_status', { taskId: task.taskId });
     t.ok('完了通知を送った後の追加の指示では、その回の拒否で置き換える', next.rejections?.length === 1 && next.rejections[0].via === 'direct'
       && next.rejections[0].command.startsWith('Remove-Item -LiteralPath'), JSON.stringify(next.rejections));
     await callTool(parent, 'ply_task_send', { taskId: task.taskId, message: 'hello' });
     rows = await awaitTasks(rows => rows[0].revision === 2 && rows[0].status === 'completed' && rows[0].notification === 'sent');
+    await idle(parent);
     const clean = await callTool(parent, 'ply_task_status', { taskId: task.taskId });
     const notices = (await c.cmd('loadSession', { sessionId: parent })).messages.filter(m => m.internalTaskNotice);
     t.ok('拒否の無い回は rejections が空で、完了通知にも段落を足さない', clean.rejections?.length === 0 && notices.length === 3 && !notices.at(-1).text.includes(header));

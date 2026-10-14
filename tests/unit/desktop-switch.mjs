@@ -444,6 +444,16 @@ export default async function (t) {
       const waits = m.effects.delays.filter(ms => ms >= 2000);
       t.ok('引き継ぎ: S1 に断られたら待ち（blockedBy に理由）、また頼む。続けて断られると間を延ばす（2 秒 → 4 秒）', snap.state === 'done' && n === 3 && waits.join() === '2000,4000' && m.calls.filter(c => c.startsWith('handover:')).length === 3, JSON.stringify({ n, waits }));
     }
+    // 作業は 0 件なのに断られ続ける（通知を渡している最中など）: 待っている作業の一覧が空の「0 件」にならないよう、断った理由と会話を blocked に出す
+    {
+      let n = 0;
+      const seen = [];
+      const m = machine({ works: [heldWork()], check: handoverCheck, handover: async () => (++n < 2 ? { declined: true, reason: 'busy', detail: 'notices', sessions: ['owner-1', 'owner-2'] } : { ready: { type: 'ready', port: 7420, token: 'tok', ...NEW }, timing: { ms: 1 } }) });
+      m.control.onState(s => { if (s.blocked) seen.push(s.blocked); });
+      const snap = await m.control.run();
+      t.ok('引き継ぎ: busy で断られたら blocked に理由と待たせている会話を出し、引き継げたら消す',
+        seen.length > 0 && seen.every(b => b.reason === 'busy' && b.detail === 'notices' && b.sessions.join() === 'owner-1,owner-2') && snap.state === 'done' && snap.blocked === null, JSON.stringify(seen));
+    }
     // S2 を起こせなかった: S1 は何も渡していない。そのまま動かし続ける（previous）
     {
       const m = machine({ works: [heldWork()], check: handoverCheck, handover: async () => ({ stay: new Error('spawn failed') }) });

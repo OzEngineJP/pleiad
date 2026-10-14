@@ -5693,7 +5693,8 @@ agentTasks = await createAgentTasks({
   steer: steerInstruction,
   // 同じ依頼元への完了通知をまとめて 1 つ届ける。走っているターンへ渡せれば途中送信で（noticeTarget）、
   // 渡せなければ（requeue）空いてから新しいターンで
-  deliver: async tasks => {
+  // accepted は、依頼元の新しいターンにプロンプトが受け取られた（引き継げる状態になった）ときに呼ぶ口。受け取られた後は、ターンの終わりまで引き継ぎを待たせない
+  deliver: async (tasks, { accepted } = {}) => {
     const owner = tasks[0].parentSessionId;
     // 端末の AI に任された作業の完了は、依頼元（端末）へ便りで届ける。ホストの会話に新しいターンは始めない
     if (isRemoteOwner(owner)) return remoteDeliver(tasks);
@@ -5703,7 +5704,7 @@ agentTasks = await createAgentTasks({
     if (!live && await noticeBlocked(owner)) return 'requeue';
     // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。recordTaskNotice）
     const prompt = completionNotice(await ensureAgentLocale(owner), tasks);
-    return live ? steerNotice(live, owner, prompt, tasks) : runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+    return live ? steerNotice(live, owner, prompt, tasks) : runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
   cancelBackground: async task => {
     for (const command of task.activeCommands) {
@@ -5711,22 +5712,22 @@ agentTasks = await createAgentTasks({
       if (found) await found.backend.stopBackground(task.sessionId, found.task.id);
     }
   },
-  deliverCommand: async (task, command) => {
+  deliverCommand: async (task, command, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';   // 初版は、ホストの子の長いコマンド・無音を端末へ知らせない（docs/remote.md §4.5）
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.commandNotice', { taskId: task.taskId, noticeId: command.noticeId,
       title: delegatedNoticeTitle(task), command: redactForPeer(command.command, 200), minutes: command.elapsedMinutes });
-    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
-  deliverSilence: async (task, minutes) => {
+  deliverSilence: async (task, minutes, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: delegatedNoticeTitle(task), minutes });
-    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
   // 子の main が返答を終えて裏の作業だけを待っている（ADR 0170）。止めずに、待っているものを依頼元へ見せる
   backgroundWaiting: sessionId => {
@@ -5736,13 +5737,13 @@ agentTasks = await createAgentTasks({
     const tasks = (turn.info.background ?? []).map(peerBackground);
     return tasks.length ? { since: execution.waitingSince, tasks } : null;
   },
-  deliverBackground: async (task, notice) => {
+  deliverBackground: async (task, notice, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const reply = notice.count > 1 ? null : task.host ? task.hostBackground?.reply ?? null : await lastReply(task.sessionId).catch(() => null);
-    return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task.host ? { ...task, title: delegatedNoticeTitle(task) } : task, notice, reply) }, () => {}, { internal: true });
+    return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task.host ? { ...task, title: delegatedNoticeTitle(task) } : task, notice, reply) }, () => {}, { internal: true, onAccepted: accepted });
   },
 });
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
@@ -5773,7 +5774,7 @@ settingApprovals = await createSettingApprovals({
   dataDir: store.dataDir,
   route: routeSettingNotice,
   onError: e => console.error('  設定の変更の承認の台帳:', String(e?.message ?? e)),
-  deliver: async (sessionId, notices) => {
+  deliver: async (sessionId, notices, { accepted } = {}) => {
     const live = await noticeTarget(sessionId);
     if (!live && await noticeBlocked(sessionId)) return 'requeue';
     const prompt = settingNotice(await ensureAgentLocale(sessionId), notices);
@@ -5781,7 +5782,7 @@ settingApprovals = await createSettingApprovals({
       const r = await steerNotice(live, sessionId, prompt, [], notices.map(({ requestId, sessionId, key, op, outcome, error, at }) => ({ requestId, sessionId, key, op, outcome, error, at })));
       return r === 'requeue' ? 'requeue' : r === 'ok' ? 'ok' : 'error';
     }
-    return (await runTurn({ sessionId, prompt }, () => {}, { internal: true })) === 'requeue' ? 'requeue' : 'ok';
+    return (await runTurn({ sessionId, prompt }, () => {}, { internal: true, onAccepted: accepted })) === 'requeue' ? 'requeue' : 'ok';
   },
 });
 if (settingApprovals.restored) console.log(`  前の起動で承認を待っていた設定の変更 ${settingApprovals.restored} 件を取り下げた（結果を会話へ届ける）`);
@@ -6129,6 +6130,11 @@ function bindTurnContext(ctx) {
   const { args, turn, emit } = ctx;
   ctx.onPromptDelivered = () => {
     touchCard(turn);   // 札の渡った合図の印（delivery）が変わりうる
+    // 内部のターン（完了通知など）の依頼元へ「受け取られた」と知らせる。以後は引き継げる。記録の確定（agentTasks・settingApprovals）が済むまで引き継ぎを待たせる
+    if (ctx.hooks?.onAccepted && !ctx.acceptedSent) {
+      ctx.acceptedSent = true;
+      trackIn(handover.critical, Promise.resolve().then(() => ctx.hooks.onAccepted()).catch(e => console.error('  通知の受け取りの記録に失敗:', String(e?.message ?? e))));
+    }
     if (ctx.interruption && !ctx.interruptionTaken) {
       ctx.interruptionTaken = true;
       store.takeStops(ctx.sessionId, ctx.interruption.keys, { dropped: ctx.interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
@@ -6548,6 +6554,27 @@ function holdable(turn) {
   return !store.peek(turn.info.sessionId)?.bot;
 }
 
+/**
+ * 引き継ぎの前に、短い処理（送りかけ・切り替え中など）が終わっているか。sessions は、待たせている処理の会話（画面の「待っている作業」に出す。分かるものだけ）。
+ * 通知で始まったターン自体は数えない（親の会話が通知を受け取った後は、ターンの終わりまで待たずに引き継げる。ADR 0151）
+ */
+function handoverSettled() {
+  const busy = [], sessions = new Set();
+  const wait = (kind, ids = []) => { busy.push(kind); for (const id of ids) if (id) sessions.add(id); };
+  // switching はターンの間ずっと会話を持つ（releaseTurn が外す）。走っているターンの分は短い処理ではない
+  const switchingIds = [...switching].filter(id => !runtime.turns.has(id));
+  if (switchingIds.length) wait('switching', switchingIds);
+  const forkingIds = [...forking].filter(id => !runtime.turns.has(id));
+  if (forkingIds.length) wait('forking', forkingIds);
+  if (outbox.busy) wait('outbox', outbox.busySessions());
+  if (agentTasks.settling) wait('notices', agentTasks.settlingSessions());
+  if (settingApprovals?.settling) wait('setting-approvals', settingApprovals.settlingSessions());
+  if (handover.critical.size) wait('steer');
+  if (schedule.firing) wait('schedule');
+  if (chromeWindowCloser?.busy()) wait('chrome-close');   // 閉じた窓の静止画と記録の書き込みの途中（手を離すと記録が欠ける。ADR 0167）
+  return { ok: busy.length === 0, detail: busy.join(', '), sessions: [...sessions] };
+}
+
 /** 旧サーバーの引き継ぎ（core/handover.mjs）。main の handover の依頼で走る。成功すると release の中で main へ答えてロックを放し、このプロセスは終わる */
 let handoverReply = null;
 const handoverRun = createHandover({
@@ -6558,18 +6585,7 @@ const handoverRun = createHandover({
     // 送信待ちに回していた分を送る
     void store.getAll().then(all => { for (const [id, meta] of Object.entries(all)) if (meta.outbox?.length) outbox.kick(id).catch(() => {}); }).catch(() => {});
   },
-  settled: () => {
-    const busy = [];
-    // switching はターンの間ずっと会話を持つ（releaseTurn が外す）。走っているターンの分は短い処理ではない
-    if ([...switching].some(id => !runtime.turns.has(id))) busy.push('switching');
-    if ([...forking].some(id => !runtime.turns.has(id))) busy.push('forking');
-    if (outbox.busy) busy.push('outbox');
-    if (agentTasks.settling) busy.push('notices');
-    if (handover.critical.size) busy.push('steer');
-    if (schedule.firing) busy.push('schedule');
-    if (chromeWindowCloser?.busy()) busy.push('chrome-close');   // 閉じた窓の静止画と記録の書き込みの途中（手を離すと記録が欠ける。ADR 0167）
-    return { ok: busy.length === 0, detail: busy.join(', ') };
-  },
+  settled: handoverSettled,
   blockers: () => {
     const out = [];
     const heldIds = new Set();
@@ -8769,4 +8785,4 @@ setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' &&
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
 
-export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn, handover as handoverState, trackIn };
+export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn, handover as handoverState, handoverSettled, trackIn };

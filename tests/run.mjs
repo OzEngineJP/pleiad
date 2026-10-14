@@ -221,6 +221,8 @@ const SUITES = [
   './unit/agent-tasks-command-storage.mjs',
   // 完了通知: 受け取り済み（read）は送らない・同じ親の分は 1 つにまとめる・走っているターンへ渡す（steerable）と送り直し・途中送信の条件
   './unit/agent-tasks-notice.mjs',
+  // 完了・無音通知は親が受け取った時点で settling から外れ（sent を先に保存）、ターンの終わりまで無停止の更新の引き継ぎを待たせない
+  './unit/agent-tasks-notice-accepted.mjs',
   // 追加指示（ply_task_send）を走っている子のターンへ途中送信で渡す: 受理・合図・捨てられた・合図なし・順序・止めた後（ADR 0065）
   './unit/agent-tasks-steer.mjs',
   // 付け直した委譲の子（無停止の更新 2b-7）: 起動の復元で interrupted にせず、結果の確定を引き継ぐ（手を離した側は書かない・途中送信の claim・あきらめ・取り消し）
@@ -556,6 +558,8 @@ const SUITES = [
   './unit/agy-relay-retry.mjs',
   // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る
   './unit/handover-server.mjs',
+  // 委譲の完了通知で始まった依頼元のターンが続いていても、通知を受け取った後は引き継げる（通知は送り直さない）
+  './unit/handover-notice.mjs',
   './unit/handover-core.mjs',
   // `!` の行を保持役に載せる（無停止の更新 段階 3）: 引き継ぎで新サーバーが引き取る（出力の途中・終わった直後・止める最中）。出力と終わりが 1 回だけ。切り替えの数え方
   './unit/adopt-shell.mjs',
