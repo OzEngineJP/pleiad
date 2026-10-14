@@ -9,7 +9,7 @@
 // 状態（snapshot().state）:
 //   current       切り替えは要らない（S1 がこの版）
 //   preparing     新しい版の実行場所（chooseServer が裏で組み始めたもの）を待つ・起こせるか（Job）を見る
-//   checking      事前の確かめ（core/handover-check.mjs）と、新しい版が固定した Claude Agent SDK の先取り（core/claude-sdk-fetch.mjs。ADR 0206）
+//   checking      事前の確かめ（core/handover-check.mjs）と、新しい版が固定した Claude Agent SDK の先取り（core/claude-sdk-fetch.mjs。ADR 0208）
 //   incompatible  合わない版。「あとで／中断して更新」を聞いている（ADR 0036 の形）。reason は INCOMPATIBLE_REASONS
 //   held          「あとで」。S1 のまま動かし続け、勝手には切り替えない（interruptNow で中断して切り替える。次の起動でまた聞く）。
 //                 reason が 'stoppers' のときは、止まるものだけが残ったときの「あとで」（止まるものが無くなる・作業が増えるまで自動では切り替えない）
@@ -31,7 +31,7 @@
 // （作業の最中でも切り替える）。待つのは、載っていないターン・準備中のターンなど running の handover.blocking だけ。新しい版が handover-check で
 // 引き継ぎの形（handover・holder の範囲）を持っていて、S1 の running にも handover があるときだけ。無ければ今までの先送り（update-lock → shutdown → S2）。
 // 新しい版が固定した Claude Agent SDK が置き場に無い（同意が無い・取れなかった）ときは、保持役に載った Claude のターンを引き継がない
-// （S2 が付け直すときに SDK を読めず、ターンが切れる）。そのターンが終わるのを待ってから今までの先送りで替える。待つ間も 1 分おきに取り直す（ADR 0206）。
+// （S2 が付け直すときに SDK を読めず、ターンが切れる）。そのターンが終わるのを待ってから今までの先送りで替える。待つ間も 1 分おきに取り直す（ADR 0208）。
 //
 // 待つ作業（switchBlockers）: running の count（ターン・承認待ち・走っているサブエージェント・委譲タスク）。外部の stdio MCP・送信予定は
 // 数えない。**切り替えで止まるもの**（stoppers: `!` の行と、ターンの外に残っている裏の作業＝Codex の裏の端末など）は
@@ -470,7 +470,7 @@ function runHandoverCheck({ timeoutMs = CHECK_TIMEOUT_MS, ...options }) {
   return runAppScript('handover-check.mjs', { ...options, timeoutMs });
 }
 
-/** 組んだ実行場所で core/claude-sdk-fetch.mjs を走らせ、新しい版が固定した Claude Agent SDK を置き場に取っておく（ADR 0206） */
+/** 組んだ実行場所で core/claude-sdk-fetch.mjs を走らせ、新しい版が固定した Claude Agent SDK を置き場に取っておく（ADR 0208） */
 function runClaudeSdkFetch({ timeoutMs = CLAUDE_SDK_FETCH_TIMEOUT_MS, ...options }) {
   return runAppScript('claude-sdk-fetch.mjs', { ...options, timeoutMs });
 }

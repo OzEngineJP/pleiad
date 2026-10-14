@@ -11,7 +11,7 @@ $tagSource = (& git rev-parse "$Tag^{commit}").Trim()
 if ($LASTEXITCODE -ne 0 -or $source -ne $tagSource) { throw 'Checkout must match the source tag.' }
 if (Test-Path -LiteralPath release-assets) { throw 'Use a fresh release checkout.' }
 $unsigned = $env:PLY_WINDOWS_SIGNING -eq 'none'
-# Users can install an unsigned update only from a version whose desktop/update-trust.json accepts unsigned updates (ADR 0207)
+# Users can install an unsigned update only from a version whose desktop/update-trust.json accepts unsigned updates (ADR 0209)
 if ($unsigned) {
   & node.exe scripts/release-unsigned-guard.mjs
   if ($LASTEXITCODE -ne 0) { throw 'Unsigned release blocked: publish a signed bridge release first.' }

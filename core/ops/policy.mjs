@@ -37,7 +37,7 @@ export const HUMAN_ONLY = Object.freeze({
   secrets: { commands: ['setApiKey', 'deleteApiKey', 'setApiKeyUse', 'resolveApiKeyGuide', 'setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'setVoiceKey', 'deleteVoiceKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret'] },
   // アカウント（契約・課金の主体）。一覧も含む。契約の主体として、提供元の規約に同意する操作（Claude Agent SDK の取得）もここ
   accounts: { commands: ['saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'authLogin', 'authLogout', 'authSubmit', 'claudeAccounts',
-    // Claude Agent SDK の取得。Anthropic の規約への同意を含むので、人が案内を読んで押す（ADR 0206）
+    // Claude Agent SDK の取得。Anthropic の規約への同意を含むので、人が案内を読んで押す（ADR 0208）
     'claudeSdkInstall'], settings: ['claudeAccount'] },
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
   endpointDefault: { commands: ['compatEndpointDefault'], settings: [] },

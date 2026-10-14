@@ -1,6 +1,6 @@
 # ADR 0176: 自己署名の更新は、署名者の指紋を固定して受け入れる
 
-- 状態: 置換（0207）。固定の指紋の一覧は、0207 の方針（`desktop/update-trust.json` の `signers`）に引き継ぐ
+- 状態: 置換（0209）。固定の指紋の一覧は、0209 の方針（`desktop/update-trust.json` の `signers`）に引き継ぐ
 - 日付: 2026-10-09
 - 関連: [desktop-releases.md](../desktop-releases.md)、[ADR 0151](0151-zero-downtime-update.md)
 

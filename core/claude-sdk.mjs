@@ -1,4 +1,4 @@
-// Claude Agent SDK（@anthropic-ai/claude-agent-sdk）をどこから読むか、の唯一の分かれ目（ADR 0206）。
+// Claude Agent SDK（@anthropic-ai/claude-agent-sdk）をどこから読むか、の唯一の分かれ目（ADR 0208）。
 //
 // SDK は Anthropic の独自ライセンス（© Anthropic PBC. All rights reserved）なので、配布物（インストーラー・アプリ）には入れない。
 // 配布物では、Claude を初めて使うとき（か設定の画面）に、利用者の同意を得てから npm のレジストリから取り、データ置き場に置いて読む。

@@ -113,7 +113,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native modules failed to load' }
           node tests/run.mjs computer-native desktop-updates
           if ($LASTEXITCODE -ne 0) { throw 'Release smoke tests failed' }
-      # Windows の配布は、リポジトリの変数 PLY_WINDOWS_SIGNING で選ぶ（ADR 0207・docs/desktop-releases.md「無署名への移り方」）。
+      # Windows の配布は、リポジトリの変数 PLY_WINDOWS_SIGNING で選ぶ（ADR 0209・docs/desktop-releases.md「無署名への移り方」）。
       # none でなければ、今までどおり自己署名で署名する（ADR 0176）。none なら署名の秘密を 1 つも渡さずに無署名で出す
       - name: Sign, verify and publish
         if: vars.PLY_WINDOWS_SIGNING != 'none'

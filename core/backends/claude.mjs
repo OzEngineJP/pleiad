@@ -7,7 +7,7 @@
 //
 // SDK メッセージ -> 正規化イベントの変換は claude-normalize.mjs（SDK 非依存・テスト可能）。
 //
-// SDK は静的に import しない。配布物には入っておらず、初めて要るときに npm から取る（core/claude-sdk.mjs。ADR 0206）。
+// SDK は静的に import しない。配布物には入っておらず、初めて要るときに npm から取る（core/claude-sdk.mjs。ADR 0208）。
 // 取っていないうちも、起動・ほかのバックエンド・会話の一覧は動く（一覧は空、会話を始めると取得の案内）。
 import { loadClaudeSdk, isClaudeSdkMissing, requestClaudeSdkConsent, claudeSdkStatus, onClaudeSdkChange, ensureClaudeSdk, startClaudeSdkMaintenance } from '../claude-sdk.mjs';
 import { claudeAuth } from '../auth/claude-cli.mjs';

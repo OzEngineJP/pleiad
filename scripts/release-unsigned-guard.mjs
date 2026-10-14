@@ -1,4 +1,4 @@
-// 無署名の版を出す前の確かめ（ADR 0207・docs/desktop-releases.md「無署名への移り方」）。
+// 無署名の版を出す前の確かめ（ADR 0209・docs/desktop-releases.md「無署名への移り方」）。
 // 利用者の手元の版が無署名の更新を受け入れられるのは、方針（desktop/update-trust.json）で unsigned を accept にした版から。
 // 正式の利用者が取る最新（Latest）と、先行版の利用者が取る一番新しい版の両方が、BUILD-INFO.json に updateAcceptsUnsigned: true を
 // 持つ（= 受け入れる版が届いている）ことを確かめ、無ければ止める。版が 1 つも無ければ（利用者がいない）通す。

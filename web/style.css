@@ -382,7 +382,7 @@ button.conn-lost:hover{color:var(--ink)}
 .auth-url a{display:block}
 .auth-paste{display:flex;gap:4px;padding:0 8px 6px}
 .auth-paste input{flex:1;min-width:0;background:var(--surface-2);border-radius:var(--r-pill);padding:5px 10px}
-/* Claude Agent SDK の取得の案内（取り終えるまで Claude の行の下。ADR 0206）。案内・規約・進み・失敗・ボタンを縦に */
+/* Claude Agent SDK の取得の案内（取り終えるまで Claude の行の下。ADR 0208）。案内・規約・進み・失敗・ボタンを縦に */
 .auth-sdk{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:2px 8px 8px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .auth-sdk p{margin:0}
 .auth-sdk .err{color:var(--ink-strong)}

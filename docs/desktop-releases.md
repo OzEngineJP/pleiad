@@ -122,7 +122,7 @@ main が落ちた・強制終了したときもサーバーは残り、次に起
 
 ### 更新の確かめ（Windows）
 
-[ADR 0207](adr/0207-unsigned-windows-release.md)。Windows のパッケージ版の自動更新は、インストールの前に `desktop/update-signature.cjs` が次の順で確かめる（electron-updater の `verifySignature` を差し替える。Store 版・開発起動・macOS は変えない）。受け入れなかった理由は `updater.log` に HRESULT と見つけた指紋つきで残る。
+[ADR 0209](adr/0209-unsigned-windows-release.md)。Windows のパッケージ版の自動更新は、インストールの前に `desktop/update-signature.cjs` が次の順で確かめる（electron-updater の `verifySignature` を差し替える。Store 版・開発起動・macOS は変えない）。受け入れなかった理由は `updater.log` に HRESULT と見つけた指紋つきで残る。
 
 1. ダウンロードしたファイルの SHA-512 が、`latest.yml` の `sha512` と合う。無い・合わない・読めないなら受け入れない。electron-updater もダウンロードの時に同じ値で確かめる（`ERR_CHECKSUM_MISMATCH`）。
 2. `WinVerifyTrust`（koffi）の結果を、アプリに同梱した方針 `desktop/update-trust.json` で判断する。
@@ -147,7 +147,7 @@ koffi を読めないときは、electron-updater の既定の確かめ（発行
 
 `-Installer <exe>` を付けると実物も確かめる。
 
-**守りの違い（無署名にしたとき）**: 署名していたときは、GitHub の Release に書き込めても、署名の鍵が無ければ、利用者の PC で動く更新は出せなかった（鍵は同じリポジトリの Secrets にあるので、Actions を動かせる者は署名もさせられた）。無署名では、`latest.yml` と配布物を同じ Release から HTTPS で取る。その Release に書き込める者は両方を差し替えられる。sha512 が守るのは中身の正しさ（壊れていない・途中で差し替わっていない）で、出した人が本物かどうかは守らない。運用で足せる守りは、GitHub の不変のリリース（公開後の配布物の差し替えを防ぐ）・アカウントの 2 段階認証・リリースのワークフローの承認つき Environment。`latest.yml` に署名を付けて公開鍵をアプリに入れる形は、まだ決めていない（ADR 0207「影響」）。
+**守りの違い（無署名にしたとき）**: 署名していたときは、GitHub の Release に書き込めても、署名の鍵が無ければ、利用者の PC で動く更新は出せなかった（鍵は同じリポジトリの Secrets にあるので、Actions を動かせる者は署名もさせられた）。無署名では、`latest.yml` と配布物を同じ Release から HTTPS で取る。その Release に書き込める者は両方を差し替えられる。sha512 が守るのは中身の正しさ（壊れていない・途中で差し替わっていない）で、出した人が本物かどうかは守らない。運用で足せる守りは、GitHub の不変のリリース（公開後の配布物の差し替えを防ぐ）・アカウントの 2 段階認証・リリースのワークフローの承認つき Environment。`latest.yml` に署名を付けて公開鍵をアプリに入れる形は、まだ決めていない（ADR 0209「影響」）。
 
 ### 自己署名での評価
 
@@ -240,9 +240,9 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 
 ## Claude Agent SDK と Claude Code の実行ファイルは同梱しない
 
-配布物（インストーラー・Store 版・macOS・Linux）には、Anthropic のライセンス（OSI のライセンスではない）のコードを 1 バイトも入れない（[ADR 0206](adr/0206-fetch-claude-agent-sdk-at-runtime.md)。SignPath Foundation の無償の署名の条件）。
+配布物（インストーラー・Store 版・macOS・Linux）には、Anthropic のライセンス（OSI のライセンスではない）のコードを 1 バイトも入れない（[ADR 0208](adr/0208-fetch-claude-agent-sdk-at-runtime.md)。SignPath Foundation の無償の署名の条件）。
 
-- **SDK**（`@anthropic-ai/claude-agent-sdk`）は devDependencies に版を固定して置き、`electron-builder.yml` の `files` でも除く。peer の `@anthropic-ai/sdk`（MIT）も devDependencies 扱いになり、同梱されない。配布物は、Claude のバックエンドを初めて使うとき（または設定の「エージェント」のボタン）に、`core/claude-sdk-pin.json` の版を `registry.npmjs.org` から取り、`package-lock.json` と同じ sha512 で確かめて `<データ置き場>/claude-sdk/<版>/` に置く（`core/claude-sdk-install.mjs`）。取る前に、Anthropic の利用条件が適用される旨を画面に出して同意を取る。ただし、前の版（SDK を同梱していた版）から Claude を使っていた人（使用量の記録・送った Claude の会話・Claude のアカウントの登録のどれかが、データ置き場にある）は同意済みとみなし、案内なしに取る（更新の前後で Claude の会話が途切れない。`core/claude-sdk-legacy.mjs`、[ADR 0206](adr/0206-fetch-claude-agent-sdk-at-runtime.md) 8）。新しく入れた人には案内を出す
+- **SDK**（`@anthropic-ai/claude-agent-sdk`）は devDependencies に版を固定して置き、`electron-builder.yml` の `files` でも除く。peer の `@anthropic-ai/sdk`（MIT）も devDependencies 扱いになり、同梱されない。配布物は、Claude のバックエンドを初めて使うとき（または設定の「エージェント」のボタン）に、`core/claude-sdk-pin.json` の版を `registry.npmjs.org` から取り、`package-lock.json` と同じ sha512 で確かめて `<データ置き場>/claude-sdk/<版>/` に置く（`core/claude-sdk-install.mjs`）。取る前に、Anthropic の利用条件が適用される旨を画面に出して同意を取る。ただし、前の版（SDK を同梱していた版）から Claude を使っていた人（使用量の記録・送った Claude の会話・Claude のアカウントの登録のどれかが、データ置き場にある）は同意済みとみなし、案内なしに取る（更新の前後で Claude の会話が途切れない。`core/claude-sdk-legacy.mjs`、[ADR 0208](adr/0208-fetch-claude-agent-sdk-at-runtime.md) 8）。新しく入れた人には案内を出す
 - **SDK を上げるとき**は、`package.json`・`package-lock.json`・`core/claude-sdk-pin.json` を一緒に直す（`tests/unit/claude-sdk-pin.mjs` が食い違いを落とす）。更新で版が変わると、新しい main が切り替えの前に新しい版を取っておく（[設計](zero-downtime-update/design.md) §5.1）
 - **Claude Code の実行ファイル**（SDK の optionalDependencies の `@anthropic-ai/claude-agent-sdk-<os>-<arch>`、win32-x64 で約 238MB）も `files` で除く。Pleiad は Claude の起動で必ず `pathToClaudeCodeExecutable` に利用者が入れた claude（`claudeExecutable()`）を渡すので、SDK 同梱の実行ファイルは読まれない（見つからなければ「未インストール」のエラー）。取得する SDK も tarball だけで、optionalDependencies は取らない
 - 確かめ方: `npm run desktop:pack` の `dist-desktop/win-unpacked/resources/app/node_modules/@anthropic-ai/` が無い（中身が空）。`dist-desktop/win-unpacked/` の全体を `claude-agent-sdk`・`@anthropic-ai/sdk`・`All rights reserved` で探して、アプリのコード（`core/claude-sdk*.mjs` の名前の参照）のほかに当たらない。取得の経路は、`AGENT_HOST_CLAUDE_SDK=download` と一時の `AGENT_HOST_DATA` で開発版を立てても試せる
@@ -300,9 +300,9 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 
 ### 無署名への移り方
 
-[ADR 0207](adr/0207-unsigned-windows-release.md)。今の利用者の版（0.13.18 まで）の更新の確かめは ADR 0176 のもので、無署名（`TRUST_E_NOSIGNATURE`）を受け入れない。無署名の版をいきなり出すと、利用者の更新は「署名が無効」で止まり、手動での入れ直しが要る。そのため、署名した橋渡しの版を 1 つ挟む。
+[ADR 0209](adr/0209-unsigned-windows-release.md)。今の利用者の版（0.13.18 まで）の更新の確かめは ADR 0176 のもので、無署名（`TRUST_E_NOSIGNATURE`）を受け入れない。無署名の版をいきなり出すと、利用者の更新は「署名が無効」で止まり、手動での入れ直しが要る。そのため、署名した橋渡しの版を 1 つ挟む。
 
-1. **橋渡しの版を、今の形（自己署名）で出す。** `desktop/update-trust.json` が `unsigned: "accept"` の版（ADR 0207 を含む版）を、今の Variables のまま `Evaluation release` で正式の版（Latest）として出す。今の利用者は、指紋の固定（ADR 0176）で受け入れる。この版の `BUILD-INFO.json` には `updateAcceptsUnsigned: true` が載る。先行版を受け取る利用者は、正式の版を含めて一番新しい版を取るので、橋渡しの版が一番新しければ 1 つで済む。
+1. **橋渡しの版を、今の形（自己署名）で出す。** `desktop/update-trust.json` が `unsigned: "accept"` の版（ADR 0209 を含む版）を、今の Variables のまま `Evaluation release` で正式の版（Latest）として出す。今の利用者は、指紋の固定（ADR 0176）で受け入れる。この版の `BUILD-INFO.json` には `updateAcceptsUnsigned: true` が載る。先行版を受け取る利用者は、正式の版を含めて一番新しい版を取るので、橋渡しの版が一番新しければ 1 つで済む。
 2. **利用者に届くのを待つ。** 起動中の PC は 30 分ごとに確かめてダウンロードし、再起動で入る。届いたかはこちらから見えないので、待つ長さは利用者の数と使い方で決める。
 3. **Repository Variable `PLY_WINDOWS_SIGNING` を `none` にして、次の版を出す。** `Evaluation release` は自己署名の手順を飛ばし、「Verify and publish unsigned」で、署名の Secrets を 1 つも渡さずに作る。公開の前に `scripts/release-unsigned-guard.mjs` が、Latest と一番新しい版の `BUILD-INFO.json` の `updateAcceptsUnsigned` を確かめ、`true` でなければ止める（橋渡しの版を飛ばしたまま出さないため）。配布物がどれも `NotSigned` であることも確かめる。`Pleiad-Evaluation.cer`・`SIGNING-INFO.json` は添付しない。`Desktop signed release` でも、`none` のときは同じ確かめをしてから無署名で作る。
 4. **無署名の版が出て、戻す必要が無いと決めたら、署名の設定を消す。** Repository Secrets の `WIN_CSC_LINK`・`WIN_CSC_KEY_PASSWORD`、Repository Variables の `PLY_WIN_PUBLISHER`・`PLY_WIN_CERTIFICATE_SHA1`。`PLY_WINDOWS_SIGNING=none` は残す。手元の自己署名の鍵（`%LOCALAPPDATA%/Ply/signing/`）も、署名の版を出し直す必要が無くなってから消す。
@@ -368,7 +368,7 @@ betaから安定版へ戻しても古い版へ戻さず、現在より新しい�
 未署名Windowsパッケージ生成は署名済みのOS更新テストの代わりにはならない。無停止の更新の本物のインストーラー（NSIS・electron-updater）での確認は、署名なしで appId・製品名・インストール先・データ置き場・実行場所・ポートを別にした試験用のインストーラーで行える（`scripts/zero-downtime/stage1-7/`。手順と結果は [stage1-7.md](zero-downtime-update/stage1-7.md)）。署名・スマホ・利用者の操作が要るものは同じ文書の「利用者に頼む確認」。
 選んだOSで署名済み旧版から新版へのインストール試験が終わるまで一般公開しない。macOSを追加するときは実機・公証も確認する。
 自己署名版の更新（2026-09-18、beta.2）で未確認: GitHub Releases からの実際の配信での更新、Windows ARM64。
-無署名への移り方（ADR 0207）で未確認: 実際の配信での、自己署名の旧版 → 橋渡しの版 → 無署名の版の更新。無署名の NSIS のインストーラーが作れること（`NotSigned`・`app-update.yml` に `publisherName` が無い・`latest.yml` の sha512 と一致・方針で受け入れる）は 2026-10-14 に手元で確かめた。
+無署名への移り方（ADR 0209）で未確認: 実際の配信での、自己署名の旧版 → 橋渡しの版 → 無署名の版の更新。無署名の NSIS のインストーラーが作れること（`NotSigned`・`app-update.yml` に `publisherName` が無い・`latest.yml` の sha512 と一致・方針で受け入れる）は 2026-10-14 に手元で確かめた。
 
 ### インストーラー画面の手元確認（Windows）
 

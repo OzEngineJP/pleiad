@@ -38,7 +38,7 @@ jobs:
       PLY_AZURE_ENDPOINT: ${{ vars.PLY_AZURE_ENDPOINT }}
       PLY_AZURE_ACCOUNT: ${{ vars.PLY_AZURE_ACCOUNT }}
       PLY_AZURE_PROFILE: ${{ vars.PLY_AZURE_PROFILE }}
-      # PLY_WINDOWS_SIGNING=none（無署名。ADR 0207）では、Windows に署名の秘密を渡さない（scripts/release-signing.cjs は渡されると止まる）
+      # PLY_WINDOWS_SIGNING=none（無署名。ADR 0209）では、Windows に署名の秘密を渡さない（scripts/release-signing.cjs は渡されると止まる）
       AZURE_TENANT_ID: ${{ matrix.os == 'windows-latest' && vars.PLY_WINDOWS_SIGNING != 'none' && secrets.AZURE_TENANT_ID || '' }}
       AZURE_CLIENT_ID: ${{ matrix.os == 'windows-latest' && vars.PLY_WINDOWS_SIGNING != 'none' && secrets.AZURE_CLIENT_ID || '' }}
       AZURE_CLIENT_SECRET: ${{ matrix.os == 'windows-latest' && vars.PLY_WINDOWS_SIGNING != 'none' && secrets.AZURE_CLIENT_SECRET || '' }}
@@ -71,7 +71,7 @@ jobs:
           }
       - name: Validate source version and signing configuration
         run: node scripts/release-preflight.mjs
-      # 手元の版が無署名を受け入れる版（橋渡しの版）が届いていないと止める（ADR 0207）
+      # 手元の版が無署名を受け入れる版（橋渡しの版）が届いていないと止める（ADR 0209）
       - name: Check that installed versions accept unsigned updates
         if: runner.os == 'Windows' && env.PLY_WINDOWS_SIGNING == 'none'
         env:

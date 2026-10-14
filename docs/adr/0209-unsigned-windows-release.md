@@ -1,4 +1,4 @@
-# ADR 0207: Windows の配布を無署名にし、更新は latest.yml の sha512 と方針で確かめる
+# ADR 0209: Windows の配布を無署名にし、更新は latest.yml の sha512 と方針で確かめる
 
 - 状態: 提案
 - 日付: 2026-10-14

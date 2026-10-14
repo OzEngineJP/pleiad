@@ -1,4 +1,4 @@
-// Claude Agent SDK の固定の版（core/claude-sdk-pin.json）と、配布物に SDK を入れない設定（ADR 0206）。
+// Claude Agent SDK の固定の版（core/claude-sdk-pin.json）と、配布物に SDK を入れない設定（ADR 0208）。
 //   - pin は package-lock の版・integrity・tarball の URL と同じ（npm install で版を上げたら pin も上げる。ずれたら取得が integrity で必ず落ちる）
 //   - SDK は devDependencies（版は固定）。dependencies などには無く、package-lock でも SDK と同梱の CLI の包みは dev だけ
 //   - electron-builder.yml の files が SDK と CLI の包みを外す。release・store の設定は yml の files をそのまま使い、OS ごとの files で足さない

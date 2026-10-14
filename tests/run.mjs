@@ -303,7 +303,7 @@ const SUITES = [
   // データ置き場を共有する 2 つのプロセス。本物の子プロセスを 2 本起動する
   './unit/mcp-oauth-processes.mjs',
   './unit/desktop-updates.mjs',
-  // 自動更新の確かめ（ADR 0207）: latest.yml の sha512・方針（update-trust.json）で無署名・発行元・固定の指紋を受け入れる・改ざんは止める・CLOSE を必ず呼ぶ・
+  // 自動更新の確かめ（ADR 0209）: latest.yml の sha512・方針（update-trust.json）で無署名・発行元・固定の指紋を受け入れる・改ざんは止める・CLOSE を必ず呼ぶ・
   // リリースのビルドの署名の方式（none を含む）と無署名の前の橋渡しの確かめ（偽の koffi。Windows では本物の koffi の呼び出しも）
   './unit/desktop-update-signature.mjs',
   './unit/desktop-store.mjs',
@@ -567,10 +567,10 @@ const SUITES = [
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
-  // Claude Agent SDK を配布物に入れず npm から取る（ADR 0206）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
+  // Claude Agent SDK を配布物に入れず npm から取る（ADR 0208）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
   './unit/claude-sdk-pin.mjs',
   './unit/claude-sdk.mjs',
-  // 前の版から Claude を使っていた人は、取得への同意を済ませたものとみなして取る（ADR 0206）
+  // 前の版から Claude を使っていた人は、取得への同意を済ませたものとみなして取る（ADR 0208）
   './unit/claude-sdk-legacy.mjs',
   // アカウントの認可を Pleiad から回す（疑似端末の偽物と、偽の CLI を本物の疑似端末で）
   './unit/claude-login.mjs',

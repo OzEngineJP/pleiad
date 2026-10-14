@@ -1,6 +1,6 @@
 const { loadTrust, normalizeThumbprint } = require('../desktop/update-signature.cjs');
 
-// 今の版の自動更新が、次の版を受け入れられるかを先に確かめる（desktop/update-trust.json・desktop/update-signature.cjs。ADR 0207）。
+// 今の版の自動更新が、次の版を受け入れられるかを先に確かめる（desktop/update-trust.json・desktop/update-signature.cjs。ADR 0209）。
 // 自己署名は、方針の signers にある指紋でだけ通る。Windows が信頼する署名（Azure の認証局）は、方針の publishers にある発行元でだけ通る。
 // 無署名は、方針の unsigned が accept のときだけ通る。どれも、手元の方針（このビルドが同梱するもの）で確かめる
 function assertUpdateSigner(thumbprint, signers = loadTrust().signers) {

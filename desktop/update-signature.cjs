@@ -1,5 +1,5 @@
 'use strict';
-// 自動更新のダウンロード後の確かめ（ADR 0207。ADR 0176 を改める）。electron-updater の NsisUpdater.verifySignature を差し替える。
+// 自動更新のダウンロード後の確かめ（ADR 0209。ADR 0176 を改める）。electron-updater の NsisUpdater.verifySignature を差し替える。
 // 既定の verifySignature は、入っている app-update.yml に publisherName が無いと何も確かめない（無署名の版の app-update.yml には書かれない）。
 // 差し替えると、方針（desktop/update-trust.json）で毎回確かめる:
 //   1. 中身: ファイルの sha512 が、ダウンロードした latest.yml の値と一致する（electron-updater も取る途中で確かめる。差し込みの前の念押し）

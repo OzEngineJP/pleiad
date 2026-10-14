@@ -3779,7 +3779,7 @@ const opsAgents = {
   authStatus: async (id) => {
     const backend = await pickBackend(null, id);
     const installed = installation(backend.id);
-    // Claude Agent SDK の取得の状態（Claude だけ。配布物は SDK を持たない。ADR 0206）。CLI の有無・ログインと別に出す
+    // Claude Agent SDK の取得の状態（Claude だけ。配布物は SDK を持たない。ADR 0208）。CLI の有無・ログインと別に出す
     const sdk = backend.sdk ? { sdk: backend.sdk.status() } : {};
     if (!installed.installed) return { backend: backend.id, status: { supported: true, ...installed, ...sdk } };
     if (!backend.auth?.status) return { backend: backend.id, status: { supported: false, ...sdk } };
@@ -8297,7 +8297,7 @@ wss.on("connection", (ws, req) => {
           return reply(true, { supported: true, ...(await backend.auth.status?.() ?? {}) });
         }
 
-        // Claude Agent SDK を npm から取る（設定の Claude の行の「取得」。案内に同意して押した。ADR 0206）。人だけ（HUMAN_ONLY の accounts）。
+        // Claude Agent SDK を npm から取る（設定の Claude の行の「取得」。案内に同意して押した。ADR 0208）。人だけ（HUMAN_ONLY の accounts）。
         // 進み具合は claudeSdk イベントで出る。取り終わるか失敗するまで待ち、その時の状態を返す（失敗は状態の error に載る）
         case "claudeSdkInstall": {
           const backend = await pickBackend(null, 'claude');
@@ -8685,7 +8685,7 @@ async function announce() {
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
-  // Claude Agent SDK（配布物は持たず、初めて要るときに npm から取る。ADR 0206）: 取得の状態を全端末へ配る。
+  // Claude Agent SDK（配布物は持たず、初めて要るときに npm から取る。ADR 0208）: 取得の状態を全端末へ配る。
   // 同意済みで固定の版が無ければ（更新で版が変わった）裏で取り、少し後に古い版を片付ける。取り終えたらモデルの一覧を引き直す
   for (const b of listBackends()) {
     if (!b.sdk) continue;

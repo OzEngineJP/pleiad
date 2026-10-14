@@ -186,7 +186,7 @@ export const COMMANDS = new Set([
   "authLogin",       // { backend }。URL は auth イベントで出る
   "authLogout",      // { backend }
   "authSubmit",      // { backend, input }。コールバックを取れないときの手貼り
-  "claudeSdkInstall", // {} -> 状態（claudeSdk イベントと同じ形）。Claude Agent SDK を npm から取る（取得の案内に同意して押した。ADR 0206）。取り終わるか失敗するまで待つ
+  "claudeSdkInstall", // {} -> 状態（claudeSdk イベントと同じ形）。Claude Agent SDK を npm から取る（取得の案内に同意して押した。ADR 0208）。取り終わるか失敗するまで待つ
   "running",         // いま動いているものの一覧
   "loadSubagent",    // サブエージェントの会話を読む
   "findSubagent",    // { sessionId, toolId } -> { agentId }。委譲ツールの tool_use id から、それが生んだサブエージェントを引く
@@ -286,7 +286,7 @@ export const EVENTS = new Set([
   "voiceChanged",  // 通話に使うキーの選び直し・差し替え・削除（sessionId は null）。中身は invoke の voice.status で取り直す
   "apiKeysChanged", // API キーの登録・差し替え・削除・割り当て・確認の結果が変わった（sessionId は null）。中身は invoke の apiKeys.list で取り直す
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す
-  "claudeSdk",    // { status: { source, version, ready, consent, fetching, error, prompt? } } Claude Agent SDK の取得の状態が変わった（sessionId は null。ADR 0206）。prompt: true は同意が無いまま Claude の会話を始めようとした（画面は設定の Claude の行を開く）
+  "claudeSdk",    // { status: { source, version, ready, consent, fetching, error, prompt? } } Claude Agent SDK の取得の状態が変わった（sessionId は null。ADR 0208）。prompt: true は同意が無いまま Claude の会話を始めようとした（画面は設定の Claude の行を開く）
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
   "remoteStatus",  // { status: RemoteStatus } リモートの設定・中継との接続・承認待ち・端末一覧が変わった（sessionId は null）
   "remotePairing", // { phase: connecting|request|approved|denied|cancelled|expired, request?, device? } ペアリングの進み具合。request のときに承認のダイアログを出す（sessionId は null）

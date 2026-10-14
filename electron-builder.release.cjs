@@ -6,7 +6,7 @@ const config = parse(fs.readFileSync(require('node:path').join(__dirname, 'elect
 const repository = process.env.PLY_RELEASE_REPOSITORY || 'tekalu1/pleiad';
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || '')) throw new Error('PLY_RELEASE_REPOSITORY must be owner/repo');
 const [owner, repo] = repository.split('/');
-// 署名の設定（scripts/release-signing.cjs）。PLY_WINDOWS_SIGNING=none（無署名。ADR 0207）では win.forceCodeSigning: false が
+// 署名の設定（scripts/release-signing.cjs）。PLY_WINDOWS_SIGNING=none（無署名。ADR 0209）では win.forceCodeSigning: false が
 // 下の forceCodeSigning: true より優先され、Windows だけ署名せずに作る。macOS は今のまま、署名と公証が無ければ止まる
 const signing = require('./scripts/release-signing.cjs').releaseSigning();
 if (signing.win) config.win = { ...config.win, ...signing.win };

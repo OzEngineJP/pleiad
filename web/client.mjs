@@ -3166,7 +3166,7 @@ function onEvent(ev, replay = false) {
         refreshContextEntry().catch(() => {});
       }
       return refresh();
-    // Claude Agent SDK の取得の状態（ADR 0206）。prompt は、同意が無いまま Claude の会話を始めようとした（取得の案内を開く）
+    // Claude Agent SDK の取得の状態（ADR 0208）。prompt は、同意が無いまま Claude の会話を始めようとした（取得の案内を開く）
     case 'claudeSdk': {
       if (!ev.status) break;
       const { prompt, ...status } = ev.status;
@@ -3760,7 +3760,7 @@ function authUrlBox(id) {
 const CLAUDE_TERMS_URL = "https://code.claude.com/docs/en/legal-and-compliance";
 
 /**
- * Claude Agent SDK の取得の案内（配布物は SDK を持たない。ADR 0206）。取り終えるまで Claude の行の下に出す。
+ * Claude Agent SDK の取得の案内（配布物は SDK を持たない。ADR 0208）。取り終えるまで Claude の行の下に出す。
  * 取る前に、npm のレジストリから取ること・Anthropic の規約が適用されることを見せ、「取得する」で同意して取る。進みと失敗（もう一度）もここ
  */
 function claudeSdkBox(sdk) {

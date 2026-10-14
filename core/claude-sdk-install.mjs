@@ -1,4 +1,4 @@
-// Claude Agent SDK を npm のレジストリから取って、データ置き場に置く部品（ADR 0206）。
+// Claude Agent SDK を npm のレジストリから取って、データ置き場に置く部品（ADR 0208）。
 // 配布物は SDK を同梱しない（Anthropic の独自ライセンス。SignPath の無料の署名の条件）。ここは取得・確かめ・展開・置き換え・片付けだけを持ち、
 // どれを使うか・いつ取るか・読み込みは core/claude-sdk.mjs。
 //

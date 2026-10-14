@@ -1,5 +1,5 @@
 {
-  "note": "自動更新が受け入れるインストーラー（desktop/update-signature.cjs。ADR 0207）。unsigned: 署名の無いものを受け入れるか（accept / reject）。publishers: Windows が信頼する署名なら、受け入れる発行元（証明書の CN か DN）。signers: Windows に信頼されていない自己署名でも受け入れる署名者の SHA-1 指紋。どれでも、中身は latest.yml の sha512 と突き合わせる。方針を狭める（unsigned を reject にする・署名者を外す）ときは、新しい方針で通る版を『今の方針で通る形で』先に配る。先に狭めた版を出しても、今の利用者の手元の方針で確かめるので更新は止まらないが、その次の版が新しい方針に通らなければ止まる。",
+  "note": "自動更新が受け入れるインストーラー（desktop/update-signature.cjs。ADR 0209）。unsigned: 署名の無いものを受け入れるか（accept / reject）。publishers: Windows が信頼する署名なら、受け入れる発行元（証明書の CN か DN）。signers: Windows に信頼されていない自己署名でも受け入れる署名者の SHA-1 指紋。どれでも、中身は latest.yml の sha512 と突き合わせる。方針を狭める（unsigned を reject にする・署名者を外す）ときは、新しい方針で通る版を『今の方針で通る形で』先に配る。先に狭めた版を出しても、今の利用者の手元の方針で確かめるので更新は止まらないが、その次の版が新しい方針に通らなければ止まる。",
   "unsigned": "accept",
   "publishers": [],
   "signers": [

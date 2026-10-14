@@ -1,4 +1,4 @@
-// 新しい版へ切り替える前に、その版が固定した Claude Agent SDK を取っておく（ADR 0206。無停止の更新の design.md §5.1）。
+// 新しい版へ切り替える前に、その版が固定した Claude Agent SDK を取っておく（ADR 0208。無停止の更新の design.md §5.1）。
 // 新しい main が、組み終えた実行場所の pleiad-node.exe で `app\<新>\core\claude-sdk-fetch.mjs` を走らせ、標準出力の最後の行の JSON を読む
 // （desktop/switch.cjs の runClaudeSdkFetch）。走っている古いサーバーとデータ置き場を分け合うが、触るのは claude-sdk\<新しい版>\ だけで、
 // 展開は一時フォルダーから名前を替えて置くので、古いサーバーが読んでいる版とはぶつからない。

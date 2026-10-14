@@ -1,4 +1,4 @@
-// Claude Agent SDK を配布物に入れず、npm のレジストリから取って読む（ADR 0206。core/claude-sdk-install.mjs・core/claude-sdk.mjs・core/claude-sdk-fetch.mjs）。
+// Claude Agent SDK を配布物に入れず、npm のレジストリから取って読む（ADR 0208。core/claude-sdk-install.mjs・core/claude-sdk.mjs・core/claude-sdk-fetch.mjs）。
 // 本物のレジストリにはつながない（tarball は手で組み、レジストリはループバックの偽物）:
 //   - integrity: 合わない tarball は捨てる（置き場に何も残らない）
 //   - 外へ出るパス: ..・絶対パス・ドライブ・\・予約名・pax と GNU の長い名前・シンボリックリンク・ハードリンク・デバイスを拒む（書く前に全体で）

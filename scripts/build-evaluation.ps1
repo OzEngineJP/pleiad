@@ -1,6 +1,6 @@
 param([string]$OutputDirectory = 'dist-desktop', [string]$CertificateManifest = $env:PLY_EVALUATION_MANIFEST)
 $ErrorActionPreference = 'Stop'
-# PLY_WINDOWS_SIGNING=none builds unsigned (ADR 0207). Anything else signs with the self-signed evaluation certificate (ADR 0176).
+# PLY_WINDOWS_SIGNING=none builds unsigned (ADR 0209). Anything else signs with the self-signed evaluation certificate (ADR 0176).
 $unsigned = $env:PLY_WINDOWS_SIGNING -eq 'none'
 if (!$unsigned) {
   if (!$CertificateManifest) { $CertificateManifest = Join-Path $env:LOCALAPPDATA 'Ply/signing/evaluation/certificate.json' }

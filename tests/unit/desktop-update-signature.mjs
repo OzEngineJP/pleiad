@@ -1,4 +1,4 @@
-// 自動更新のインストーラーの確かめ（desktop/update-signature.cjs。ADR 0207。ADR 0176 を改める）。
+// 自動更新のインストーラーの確かめ（desktop/update-signature.cjs。ADR 0209。ADR 0176 を改める）。
 //   - 中身: ファイルの sha512 が latest.yml の値と違う・分からない・読めないなら、署名を見る前に不合格
 //   - 無署名（TRUST_E_NOSIGNATURE）: 方針の unsigned が accept なら合格、reject なら不合格
 //   - 自己署名（CERT_E_UNTRUSTEDROOT）: 状態データから読んだ署名者の SHA-1 指紋が signers にあるときだけ合格。開いた状態データは必ず CLOSE する

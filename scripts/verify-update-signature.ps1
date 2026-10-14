@@ -1,4 +1,4 @@
-# Hand check of desktop/update-signature.cjs (ADR 0207) with the real koffi and the real electron-updater publisher check on this Windows PC.
+# Hand check of desktop/update-signature.cjs (ADR 0209) with the real koffi and the real electron-updater publisher check on this Windows PC.
 # Builds a tiny unsigned exe, signs a copy with a throw-away self-signed code-signing certificate in CurrentUser\My (NOT trusted by Windows),
 # and checks the update verifier against: unsigned (policy accept / reject), sha512 mismatch with latest.yml, pinned / unpinned self-signed,
 # a 1-byte-modified signed copy, and a Windows-trusted signature (node.exe) with an unlisted / listed publisher. Optionally a real installer.

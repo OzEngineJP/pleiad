@@ -11,7 +11,7 @@
 //   - 引き継ぎ（段階 2 の 2d）: 保持役に載ったターン（held）は待たず、update-lock も取らずに effects.handover へ進む（作業の最中でも切り替わる）。
 //     載っていないターンが残れば待つ・新しい版か旧サーバーが引き継ぎの形を持たなければ今までの先送り・断られたら待ち直す（間を延ばす）・
 //     S2 を起こせなければ S1 のまま・S1 が渡して終わったのに S2 が立たなければ前の版で起こし直す
-//   - Claude Agent SDK の先取り（ADR 0206）: 事前の確かめの後に新しい版の SDK を取る。取れなければ保持役に載った Claude のターンは引き継がず、
+//   - Claude Agent SDK の先取り（ADR 0208）: 事前の確かめの後に新しい版の SDK を取る。取れなければ保持役に載った Claude のターンは引き継がず、
 //     終わるのを待ってから替える（ターンは止めない）。待つ間に取り直し、取れたら引き継ぐ
 // 副作用の組み立て（createSwitchEffects）: S1 の終わりを待つ・付け直し・前の版の場所・ready の待ち。
 // preload の名前は前の版の画面が使う分を残す（新しい main が古い版の画面を出す間。design.md §7.1）
@@ -461,7 +461,7 @@ export default async function (t) {
       const failed = await both.control.run();
       t.ok('引き継ぎ: 前の版も起こせなければ failed', failed.state === 'failed' && both.calls.includes('failed'));
     }
-    // Claude Agent SDK の先取り（ADR 0206）
+    // Claude Agent SDK の先取り（ADR 0208）
     {
       const claudeHeld = (extra = {}) => heldWork({ turns: [{ sessionId: 'h1', backend: 'claude', held: true }], ...extra });
       t.ok('SDK の先取り: 新しい版の SDK が無ければ、保持役に載った Claude のターンがある間は引き継がない（ほかのバックエンドのターンは引き継ぐ）',
