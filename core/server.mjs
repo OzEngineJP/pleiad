@@ -3779,9 +3779,11 @@ const opsAgents = {
   authStatus: async (id) => {
     const backend = await pickBackend(null, id);
     const installed = installation(backend.id);
-    if (!installed.installed) return { backend: backend.id, status: { supported: true, ...installed } };
-    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false } };
-    return { backend: backend.id, status: { supported: true, ...installed, ...(await backend.auth.status()) } };
+    // Claude Agent SDK の取得の状態（Claude だけ。配布物は SDK を持たない。ADR 0206）。CLI の有無・ログインと別に出す
+    const sdk = backend.sdk ? { sdk: backend.sdk.status() } : {};
+    if (!installed.installed) return { backend: backend.id, status: { supported: true, ...installed, ...sdk } };
+    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false, ...sdk } };
+    return { backend: backend.id, status: { supported: true, ...installed, ...(await backend.auth.status()), ...sdk } };
   },
 };
 
@@ -8295,6 +8297,15 @@ wss.on("connection", (ws, req) => {
           return reply(true, { supported: true, ...(await backend.auth.status?.() ?? {}) });
         }
 
+        // Claude Agent SDK を npm から取る（設定の Claude の行の「取得」。案内に同意して押した。ADR 0206）。人だけ（HUMAN_ONLY の accounts）。
+        // 進み具合は claudeSdk イベントで出る。取り終わるか失敗するまで待ち、その時の状態を返す（失敗は状態の error に載る）
+        case "claudeSdkInstall": {
+          const backend = await pickBackend(null, 'claude');
+          if (!backend.sdk) return reply(true, { supported: false });
+          await backend.sdk.ensure({ consent: true }).catch(() => { /* 状態の error に載る */ });
+          return reply(true, backend.sdk.status());
+        }
+
         // ログインの折り返しをローカルに受けられないとき（1455 番が塞がっている等）、
         // 人間がブラウザから貼り戻したリダイレクト URL / code をエージェントへ渡す。
         // 待っているのは authLogin の側なので、ここは投げ込むだけで応答は即返る。
@@ -8674,6 +8685,18 @@ async function announce() {
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
+  // Claude Agent SDK（配布物は持たず、初めて要るときに npm から取る。ADR 0206）: 取得の状態を全端末へ配る。
+  // 同意済みで固定の版が無ければ（更新で版が変わった）裏で取り、少し後に古い版を片付ける。取り終えたらモデルの一覧を引き直す
+  for (const b of listBackends()) {
+    if (!b.sdk) continue;
+    let wasReady = b.sdk.status().ready;
+    b.sdk.onChange((status) => {
+      emitGlobal({ type: 'claudeSdk', sessionId: null, status });
+      if (status.ready && !wasReady && b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});
+      wasReady = status.ready;
+    });
+    b.sdk.maintain();
+  }
   // モデルの一覧を裏で引いておく。新しい会話・モデル選択が、CLI を起こす 10 秒ほどを待たない。
   // 作業場所は新しい会話の既定（ホーム）。取れなければ一覧の要求のときにまた引く（テストは ROUTING_USAGE_AUTO=off で起こさない）
   if (ROUTING_USAGE_AUTO) for (const b of listBackends()) if (b.warmModels && installation(b.id).installed) b.warmModels(os.homedir()).catch(() => {});

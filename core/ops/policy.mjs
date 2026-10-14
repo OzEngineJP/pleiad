@@ -35,8 +35,10 @@ export const HUMAN_ONLY = Object.freeze({
   mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode'], ops: ['bots.setMode'] },
   // 秘密の値を入れる・消す・認可する・割り当てる（API キー: 入れる・差し替える・消す・通話と判定器に使うキーを選ぶ・移行の案内の答え。互換の接続先のキー・MCP の OAuth。古い口の委譲の判定器・通話のキー）
   secrets: { commands: ['setApiKey', 'deleteApiKey', 'setApiKeyUse', 'resolveApiKeyGuide', 'setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'setVoiceKey', 'deleteVoiceKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret'] },
-  // アカウント（契約・課金の主体）。一覧も含む
-  accounts: { commands: ['saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'authLogin', 'authLogout', 'authSubmit', 'claudeAccounts'], settings: ['claudeAccount'] },
+  // アカウント（契約・課金の主体）。一覧も含む。契約の主体として、提供元の規約に同意する操作（Claude Agent SDK の取得）もここ
+  accounts: { commands: ['saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'authLogin', 'authLogout', 'authSubmit', 'claudeAccounts',
+    // Claude Agent SDK の取得。Anthropic の規約への同意を含むので、人が案内を読んで押す（ADR 0206）
+    'claudeSdkInstall'], settings: ['claudeAccount'] },
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
   endpointDefault: { commands: ['compatEndpointDefault'], settings: [] },
   // リモートのペアリングと外に開く設定（端末の一覧を含む）

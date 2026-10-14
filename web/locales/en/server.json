@@ -1,4 +1,18 @@
 {
+  "claudeSdk": {
+    "missing": "Claude needs Anthropic's Claude Agent SDK ({{version}}). Download it from the Claude row in Settings → Agents. The SDK comes from the npm registry, and Anthropic's terms apply.",
+    "errors": {
+      "offline": "Couldn't download the Claude Agent SDK (no network connection): {{detail}}",
+      "proxy": "Couldn't download the Claude Agent SDK (the proxy refused the request): {{detail}}",
+      "tls": "Couldn't download the Claude Agent SDK (the certificate couldn't be verified): {{detail}}",
+      "http": "Couldn't download the Claude Agent SDK (the npm registry returned an error): {{detail}}",
+      "integrity": "The downloaded Claude Agent SDK doesn't match the pinned version, so it won't be used: {{detail}}",
+      "extract": "Couldn't unpack the downloaded Claude Agent SDK: {{detail}}",
+      "disk": "Couldn't save the Claude Agent SDK: {{detail}}",
+      "aborted": "Downloading the Claude Agent SDK was interrupted: {{detail}}",
+      "consent": "You haven't agreed to download the Claude Agent SDK yet. Download it from the Claude row in Settings → Agents."
+    }
+  },
   "errors": {
     "unknownLocale": "Unknown language: {{value}}"
   },

@@ -28,6 +28,10 @@ files:
   # Claude Code の実行ファイル（SDK の optionalDependencies の @anthropic-ai/claude-agent-sdk-<os>-<arch>。win32-x64 で約 238MB）は入れない。
   # Pleiad は query() に必ず pathToClaudeCodeExecutable（利用者が入れた claude。core/cli-installation.mjs の claudeExecutable）を渡し、同梱版は読まない
   - "!node_modules/@anthropic-ai/claude-agent-sdk-*/**"
+  # Claude Agent SDK 本体も入れない（Anthropic の独自ライセンス。インストーラーは OSI のライセンスのものだけにする。ADR 0206）。
+  # devDependencies なので electron-builder は元から入れないが、依存の向きが変わっても入らないように明示する。
+  # 配布物は初めて要るときに npm から取る（core/claude-sdk.mjs）。tests/unit/claude-sdk-pin.mjs がこの行を確かめる
+  - "!node_modules/@anthropic-ai/claude-agent-sdk/**"
   # node-pty のソース・デバッグ情報・使わない ConPTY の DLL は入れない
   - "!node_modules/node-pty/{src,deps,scripts,third_party,typings}/**"
   - "!node_modules/node-pty/**/*.pdb"

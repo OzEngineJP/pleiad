@@ -1,4 +1,18 @@
 {
+  "claudeSdk": {
+    "missing": "Claude を使うには Anthropic の Claude Agent SDK（{{version}}）が要ります。設定の「エージェント」の Claude の行から取得してください。SDK は npm のレジストリから取得し、Anthropic の規約が適用されます。",
+    "errors": {
+      "offline": "Claude Agent SDK を取得できませんでした（ネットワークにつながりません）: {{detail}}",
+      "proxy": "Claude Agent SDK を取得できませんでした（プロキシが通しません）: {{detail}}",
+      "tls": "Claude Agent SDK を取得できませんでした（証明書を確かめられません）: {{detail}}",
+      "http": "Claude Agent SDK を取得できませんでした（npm のレジストリがエラーを返しました）: {{detail}}",
+      "integrity": "取得した Claude Agent SDK が固定の版と一致しないため、使いません: {{detail}}",
+      "extract": "取得した Claude Agent SDK を展開できませんでした: {{detail}}",
+      "disk": "Claude Agent SDK を保存できませんでした: {{detail}}",
+      "aborted": "Claude Agent SDK の取得が中断されました: {{detail}}",
+      "consent": "Claude Agent SDK の取得にまだ同意していません。設定の「エージェント」の Claude の行から取得してください。"
+    }
+  },
   "errors": {
     "unknownLocale": "知らない言語: {{value}}"
   },

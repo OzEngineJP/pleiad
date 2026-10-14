@@ -85,14 +85,17 @@ export const agentOps = [
     summary: 'agent:ops.agents.authStatus.summary',
     risk: 'read',
     input: z.object({ backend: backend('authStatus') }),
-    output: z.object({ backend: z.string(), supported: z.boolean(), installed: z.boolean().optional(), loggedIn: z.boolean().optional(), pending: z.boolean().optional() }),
+    output: z.object({ backend: z.string(), supported: z.boolean(), installed: z.boolean().optional(), loggedIn: z.boolean().optional(), pending: z.boolean().optional(),
+      // Claude だけ: Agent SDK を取り終えているか（配布物は SDK を持たず、人が設定で取得を押す。ADR 0206）
+      sdkReady: z.boolean().optional() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['agents', 'auth'] } },
     legacyCommand: 'authStatus',
     handler: async (ctx, { backend: id }) => {
       const got = await fromHost(() => ctx.agents.authStatus(id));
       const s = got.status;
       return { backend: got.backend, supported: s.supported === true, ...(typeof s.installed === 'boolean' ? { installed: s.installed } : {}),
-        ...(typeof s.loggedIn === 'boolean' ? { loggedIn: s.loggedIn } : {}), ...(s.pending === true ? { pending: true } : {}) };
+        ...(typeof s.loggedIn === 'boolean' ? { loggedIn: s.loggedIn } : {}), ...(s.pending === true ? { pending: true } : {}),
+        ...(typeof s.sdk?.ready === 'boolean' ? { sdkReady: s.sdk.ready } : {}) };
     },
     uiHandler: async (ctx, { backend: id }) => (await fromHost(() => ctx.agents.authStatus(id))).status,
   }),

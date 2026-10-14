@@ -6,12 +6,10 @@
 // 兼ねている」ことが見えなくなり、別のバックエンドを足すときに一度に全部を直す羽目になる。
 //
 // SDK メッセージ -> 正規化イベントの変換は claude-normalize.mjs（SDK 非依存・テスト可能）。
-import {
-  query, createSdkMcpServer, tool, resolveSettings,
-  listSessions as sdkListSessions, getSessionInfo, getSessionMessages,
-  renameSession, tagSession, forkSession, deleteSession as sdkDeleteSession,
-  listSubagents as sdkListSubagents, getSubagentMessages as sdkGetSubagentMessages,
-} from "@anthropic-ai/claude-agent-sdk";
+//
+// SDK は静的に import しない。配布物には入っておらず、初めて要るときに npm から取る（core/claude-sdk.mjs。ADR 0206）。
+// 取っていないうちも、起動・ほかのバックエンド・会話の一覧は動く（一覧は空、会話を始めると取得の案内）。
+import { loadClaudeSdk, isClaudeSdkMissing, requestClaudeSdkConsent, claudeSdkStatus, onClaudeSdkChange, ensureClaudeSdk, startClaudeSdkMaintenance } from '../claude-sdk.mjs';
 import { claudeAuth } from '../auth/claude-cli.mjs';
 import { t, agentT } from '../i18n.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
@@ -50,7 +48,8 @@ const NL = String.fromCharCode(10);
 // 入力を閉じて SDK の abort に落とす。受領の後も stopExitMs のうちに終わらなければ同じく落とす。
 // resumeGraceMs は裏の作業を見たターンで入力を閉じる前に置く猶予（claude-background.mjs の RESUME_GRACE_MS）
 // probe / cliSigThrottleMs はモデル一覧の引き直し（下の CATALOG_TTL のあたり）だけがテストで差し替える
-const sdk = { query, executable: claudeExecutable, probe: null, cliSigThrottleMs: 5_000, stopAckMs: 2500, stopExitMs: 3000, resumeGraceMs: RESUME_GRACE_MS };
+// query が null のときは読み込んだ SDK の query（loadClaudeSdk）
+const sdk = { query: null, executable: claudeExecutable, probe: null, cliSigThrottleMs: 5_000, stopAckMs: 2500, stopExitMs: 3000, resumeGraceMs: RESUME_GRACE_MS };
 export function setClaudeSdkForTest(over = {}) {
   const prev = { ...sdk };
   Object.assign(sdk, over);
@@ -150,6 +149,7 @@ async function probeCatalog(cwd, withSettings) {
   const idle = async function* () { await new Promise((resolve) => ac.signal.addEventListener("abort", resolve, { once: true })); };
   let q = null;
   try {
+    const query = sdk.query ?? (await loadClaudeSdk()).query;
     q = query({ prompt: idle(), options: {
       pathToClaudeCodeExecutable: claudeExecutable(), env: claudeEnv(process.env), abortController: ac,
       ...(withSettings
@@ -201,7 +201,12 @@ function loadCatalog(cwd, pref) {
   if (now - e.failed < CATALOG_RETRY) return Promise.resolve(stand());
   e.probe ??= sdk.probe(cwd, !pref.custom)
     .then((c) => { e.value = c; e.cliSig = cliSig; e.failed = 0; anyCatalog = c; anyCatalogSig = cliSig; coldSince = 0; e.at = Date.now(); return c; })
-    .catch((err) => { e.failed = Date.now(); e.cliSig = cliSig; console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err)); return e.value; })
+    .catch((err) => {
+      e.failed = Date.now(); e.cliSig = cliSig;
+      // SDK を取っていないだけなら黙る（固定の一覧で答える。取った後の引き直しで埋まる）
+      if (!isClaudeSdkMissing(err)) console.error("  Claude のモデル一覧を取れなかった:", String(err?.message ?? err));
+      return e.value;
+    })
     .finally(() => { e.probe = null; });
   // 引き直しは裏で走らせ、手元の答えがあれば待たずに返す（引き直しは CLI を起こして 10 秒ほど掛かる。会話を作る・一覧を開くたびに待たせない）
   const handy = stand();
@@ -227,7 +232,7 @@ async function preferredSettings(cwd) {
   const hit = preferredCache.get(key);
   if (hit && Date.now() - hit.at < 30_000) return hit.value;
   let effective = null;
-  try { ({ effective } = await resolveSettings({ ...(cwd ? { cwd } : {}), settingSources: ["user", "project", "local"] })); }
+  try { ({ effective } = await (await loadClaudeSdk()).resolveSettings({ ...(cwd ? { cwd } : {}), settingSources: ["user", "project", "local"] })); }
   catch { /* 読めなければ SDK の既定の行と段に任せる */ }
   const on = (v) => Boolean(v) && v !== "0" && String(v).toLowerCase() !== "false";
   const value = {
@@ -283,8 +288,9 @@ const TOOL_HINTS = {
  * sessionId は新規セッションだと init メッセージまで確定しないので、
  * ctx を書き換えられるオブジェクトとして渡す（runTurn が差し替える）。
  * 説明・引数の説明・返り値はエージェントが読むので、会話の言語（ctx.locale）で引く（agent 名前空間）
+ * api は読み込んだ SDK（createSdkMcpServer・tool）
  */
-function buildToolServer(ctx) {
+function buildToolServer(ctx, { createSdkMcpServer, tool }) {
   // 応答は CLI の stdin を通る。走っている間は入力を閉じさせない（claude-background.mjs）。
   // 引き継ぎ（無停止の更新 2d。core/handover.mjs）は、走っている mcp_message のハンドラーが終わるのを上限つきで待つ（ctx.track）
   const hosted = (name, handler) => (args) => {
@@ -687,6 +693,8 @@ export const backend = {
   subagentTools: ["Task", "Agent"],
 
   auth: claudeAuth,
+  // SDK の取得（配布物は SDK を持たず、初めて要るときに npm から取る。core/claude-sdk.mjs）。設定の Claude の行と ops が使う
+  sdk: { status: () => claudeSdkStatus(), ensure: (options) => ensureClaudeSdk(options), onChange: (fn) => onClaudeSdkChange(fn), maintain: () => startClaudeSdkMaintenance() },
   toolHints: TOOL_HINTS,
 
   modes: () => MODES,
@@ -713,6 +721,15 @@ export const backend = {
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
   async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }, adopt = null) {
+    // SDK を読む（配布物で初めてなら、同意があればここで取る。core/claude-sdk.mjs）。読めなければプロンプトを渡す前の失敗にする
+    // （送信待ちが「失敗」に戻り、取った後に再送できる）。同意が無ければ、画面に取得の案内を出させる
+    let api;
+    try { api = await loadClaudeSdk({ fetch: true }); }
+    catch (err) {
+      if (isClaudeSdkMissing(err) && !err.kind) requestClaudeSdkConsent();
+      throw undelivered(err);
+    }
+    const query = sdk.query ?? api.query;
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
     const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale, track: control?.track ?? null };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
@@ -771,7 +788,7 @@ export const backend = {
 
     // Pleiad 自身が渡す MCP。MCP を Pleiad が担当するときの「ネイティブ MCP を止められたか」の確認でも、これらは除く
     // ply_computer はロックを最長 10 分待つ。HTTP の MCP は既定で 60 秒（と無通信 300 秒）で切れるので、timeout で両方を上げる（実測 2026-10-01）
-    const plyServers = { host: buildToolServer(ctx), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}),
+    const plyServers = { host: buildToolServer(ctx, api), ...(agentRuntime ? { ply_agents: { type: "http", url: agentRuntime.url, headers: agentRuntime.headers } } : {}), ...(contextRuntime ? { ply_context: { type: 'http', url: contextRuntime.url, headers: contextRuntime.headers } } : {}),
       ...(computerRuntime ? { [COMPUTER_SERVER]: { type: 'http', url: computerRuntime.url, headers: computerRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}),
       // エージェントのブラウザー操作（core/browser-bridge.mjs。ADR 0148）。hand_to_user は人が戻すまで最長 BROWSER_WAIT_SLICE_MS（600 秒）待つので、ply_computer と同じ上限にする
       ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}),
@@ -1077,7 +1094,7 @@ export const backend = {
     const disallowedTools = [...(botFolders?.readOnlyRoots?.length ? readOnlyDenyRules(botFolders.readOnlyRoots) : []), ...(delegatedChild ? DELEGATED_CHILD_DISALLOWED_TOOLS : [])];
     const claudeExtraEnv = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...(autoCompactWindow ? { [AUTO_COMPACT_WINDOW_ENV]: String(autoCompactWindow) } : {}) };
     // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
-    if (!finished) try { q = sdk.query({
+    if (!finished) try { q = query({
       prompt: promptStream(),
       options: {
         pathToClaudeCodeExecutable: sdk.executable(),
@@ -1279,22 +1296,25 @@ export const backend = {
 
   // ---- セッション管理 -----------------------------------------------------
 
+  // SDK を取っていないうちは空（読めないことで起動・一覧を止めない。取った後の一覧で出る）
   async listSessions({ limit = 100 } = {}) {
-    const rows = await sdkListSessions({ limit });
+    const api = await loadClaudeSdk().catch((err) => { if (isClaudeSdkMissing(err)) return null; throw err; });
+    if (!api) return [];
+    const rows = await api.listSessions({ limit });
     return rows.map(toRow).filter(Boolean);
   },
 
   async getSession(sessionId) {
     if (!sessionId) return null;
     try {
-      return toRow(await getSessionInfo(sessionId));
+      return toRow(await (await loadClaudeSdk()).getSessionInfo(sessionId));
     } catch {
       return null;
     }
   },
 
   async getMessages(sessionId, options) {
-    const entries = await getSessionMessages(sessionId).catch(() => []);
+    const entries = await loadClaudeSdk().then((api) => api.getSessionMessages(sessionId)).catch(() => []);
     // 走っているターンに折り込まれた途中送信と、Stop フックの続きの印は getSessionMessages に出ない。transcript から拾う
     // 圧縮の要約・コマンドの行・中断などのシステム側の行は、transcript の印（無ければ文面）で見分けて置き換える（core/system-messages.mjs）
     const { rows, followUps, marks } = await readTranscriptExtras(sessionId);
@@ -1306,22 +1326,22 @@ export const backend = {
   async getCompactions(sessionId) {
     const text = await readTranscriptText(sessionId);
     if (text) return transcriptSystemMarks(text).compactions;
-    const rows = await getSessionMessages(sessionId, { includeSystemMessages: true }).catch(() => []);
+    const rows = await loadClaudeSdk().then((api) => api.getSessionMessages(sessionId, { includeSystemMessages: true })).catch(() => []);
     return claudeCompactionsFromHistory(rows);
   },
 
-  setTitle: (sessionId, title) => renameSession(sessionId, title),
+  setTitle: async (sessionId, title) => (await loadClaudeSdk()).renameSession(sessionId, title),
   // 隠れた会話（夜の整理・心拍）を片付けるときだけ使う（core/conversations.mjs の deleteHiddenConversation。ADR 0127）
-  deleteSession: (sessionId) => sdkDeleteSession(sessionId),
-  setTag: (sessionId, tag) => tagSession(sessionId, tag || null),
-  fork: (sessionId, { upToMessageId, title } = {}) => forkSession(sessionId, { upToMessageId, title }),
+  deleteSession: async (sessionId) => (await loadClaudeSdk()).deleteSession(sessionId),
+  setTag: async (sessionId, tag) => (await loadClaudeSdk()).tagSession(sessionId, tag || null),
+  fork: async (sessionId, { upToMessageId, title } = {}) => (await loadClaudeSdk()).forkSession(sessionId, { upToMessageId, title }),
 
-  listSubagents: (sessionId) => sdkListSubagents(sessionId),
+  listSubagents: async (sessionId) => (await loadClaudeSdk()).listSubagents(sessionId),
 
   // どの委譲ツール（tool_use id）から生まれたか。SDK は meta.json の toolUseId を各エントリの parent_tool_use_id に載せる
   async getSubagentOrigin(sessionId, agentId) {
     const raw = await readSubagentEntries(sessionId, agentId, { limit: 1 })
-      ?? await sdkGetSubagentMessages(sessionId, agentId, { limit: 1 }).catch(() => []);
+      ?? await loadClaudeSdk().then((api) => api.getSubagentMessages(sessionId, agentId, { limit: 1 })).catch(() => []);
     return raw.find((e) => e?.parent_tool_use_id)?.parent_tool_use_id ?? null;
   },
 
@@ -1335,7 +1355,7 @@ export const backend = {
 
   async getSubagentMessages(sessionId, agentId, { limit = 200 } = {}) {
     const raw = await readSubagentEntries(sessionId, agentId, { limit })
-      ?? await sdkGetSubagentMessages(sessionId, agentId, { limit }).catch(() => []);
+      ?? await loadClaudeSdk().then((api) => api.getSubagentMessages(sessionId, agentId, { limit })).catch(() => []);
     // サブエージェント側のメッセージは parent_tool_use_id を持つので、落とさずに読む
     return transcriptToMessages(raw, { includeNested: true });
   },
@@ -1349,6 +1369,7 @@ export const backend = {
   async suggestTitle({ transcript, oauthToken, endpoint = null, locale }) {
     let title = "";
     try {
+      const { query } = await loadClaudeSdk();
       for await (const m of query({
         prompt: agentT(locale, 'title.claude') + NL + NL + transcript,
         options: {
