@@ -10,12 +10,19 @@ $source = (& git rev-parse HEAD).Trim()
 $tagSource = (& git rev-parse "$Tag^{commit}").Trim()
 if ($LASTEXITCODE -ne 0 -or $source -ne $tagSource) { throw 'Checkout must match the source tag.' }
 if (Test-Path -LiteralPath release-assets) { throw 'Use a fresh release checkout.' }
+$unsigned = $env:PLY_WINDOWS_SIGNING -eq 'none'
+# Users can install an unsigned update only from a version whose desktop/update-trust.json accepts unsigned updates (ADR 0207)
+if ($unsigned) {
+  & node.exe scripts/release-unsigned-guard.mjs
+  if ($LASTEXITCODE -ne 0) { throw 'Unsigned release blocked: publish a signed bridge release first.' }
+}
 & "$PSScriptRoot/build-evaluation.ps1" -OutputDirectory dist-desktop
-if ($LASTEXITCODE -ne 0) { throw 'Signed build failed.' }
+if ($LASTEXITCODE -ne 0) { throw 'Evaluation build failed.' }
 New-Item -ItemType Directory -Path release-assets | Out-Null
 $names = Get-ChildItem -LiteralPath dist-desktop -File | Where-Object { $_.Name -match '\.(exe|blockmap)$' -or $_.Name -in @('latest.yml','Pleiad-Evaluation.cer','evaluation-certificate.ps1','SIGNING-INFO.json') }
 foreach ($file in $names) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path release-assets $file.Name) }
-[ordered]@{ version = $package.version; sourceCommit = $source; signing = 'self-signed evaluation'; runUrl = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" } | ConvertTo-Json | Set-Content -LiteralPath release-assets/BUILD-INFO.json -Encoding UTF8
+$trust = Get-Content -LiteralPath desktop/update-trust.json -Raw | ConvertFrom-Json
+[ordered]@{ version = $package.version; sourceCommit = $source; signing = $(if ($unsigned) { 'unsigned' } else { 'self-signed evaluation' }); updateAcceptsUnsigned = ($trust.unsigned -eq 'accept'); runUrl = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" } | ConvertTo-Json | Set-Content -LiteralPath release-assets/BUILD-INFO.json -Encoding UTF8
 & node.exe scripts/release-artifacts.mjs release-assets $package.version 100 temporary/release-notes.md windows
 if ($LASTEXITCODE -ne 0) { throw 'Release integrity check failed.' }
 & node.exe scripts/release-publish.mjs draft release-assets

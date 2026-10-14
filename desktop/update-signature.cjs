@@ -1,18 +1,26 @@
 'use strict';
-// 自動更新のダウンロード後の署名の確かめ（ADR 0176）。electron-updater の NsisUpdater.verifyUpdateCodeSignature に差し込む。
-//   (a) electron-updater の既定（Get-AuthenticodeSignature が Valid で、発行元名が合う）が合格なら合格。将来の認証局の署名はこの道
-//   (b) WinVerifyTrust の結果がちょうど CERT_E_UNTRUSTEDROOT（信頼されないルート）のときだけ、同じ状態データから取った署名者の証明書の
-//       SHA-1 指紋が desktop/update-signers.json の一覧に完全一致すれば合格。自己署名を Windows に信頼させていない PC でも更新できる
-// (b) は他の失敗（TRUST_E_BAD_DIGEST・TRUST_E_NOSIGNATURE ほか）を通さない。署名者の証明書は WinVerifyTrust の状態データからだけ読む
-// （別の読み方で取ると、検証した署名と別のものを見かねない）。koffi の読み込み・呼び出しの失敗は (b) の不合格で、更新全体は壊さない。
+// 自動更新のダウンロード後の確かめ（ADR 0207。ADR 0176 を改める）。electron-updater の NsisUpdater.verifySignature を差し替える。
+// 既定の verifySignature は、入っている app-update.yml に publisherName が無いと何も確かめない（無署名の版の app-update.yml には書かれない）。
+// 差し替えると、方針（desktop/update-trust.json）で毎回確かめる:
+//   1. 中身: ファイルの sha512 が、ダウンロードした latest.yml の値と一致する（electron-updater も取る途中で確かめる。差し込みの前の念押し）
+//   2. 署名: WinVerifyTrust の結果で分ける
+//      - S_OK（Windows が信頼する署名）: 署名者の指紋が signers にあるか、発行元が publishers（と app-update.yml の publisherName）に合えば合格。
+//        合わない発行元の署名は通さない（将来の認証局の署名へ戻る道。発行元は electron-updater の既定の確かめで比べる）
+//      - CERT_E_UNTRUSTEDROOT（信頼されないルート = 自己署名）: 同じ状態データから取った署名者の SHA-1 指紋が signers にあるときだけ合格
+//      - TRUST_E_NOSIGNATURE（署名が無い）: unsigned が accept のときだけ合格
+//      - それ以外（TRUST_E_BAD_DIGEST = 署名の後の改ざん、期限切れ、形の違うファイルなど）は不合格
+// 署名者の証明書は WinVerifyTrust の状態データからだけ読む（別の読み方で取ると、検証した署名と別のものを見かねない）。
+// koffi を読めない・呼べないときは分けられないので、publishers に合う署名（既定の確かめ）だけを通し、ほかは不合格（閉じる側に倒す）。
 
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SIGNERS_FILE = path.join(__dirname, 'update-signers.json');
+const TRUST_FILE = path.join(__dirname, 'update-trust.json');
 
+const S_OK = 0;
 const CERT_E_UNTRUSTEDROOT = 0x800B0109;
+const TRUST_E_NOSIGNATURE = 0x800B0100;
 const WTD_UI_NONE = 2;
 const WTD_REVOKE_NONE = 0;
 const WTD_CHOICE_FILE = 1;
@@ -23,13 +31,14 @@ const WTD_REVOCATION_CHECK_NONE = 0x10;
 const GENERIC_VERIFY_V2 = { Data1: 0x00AAC56B, Data2: 0xCD44, Data3: 0x11D0, Data4: [0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE] };
 
 const HRESULT_NAMES = new Map([
-  [0, 'S_OK'],
+  [S_OK, 'S_OK'],
   [CERT_E_UNTRUSTEDROOT, 'CERT_E_UNTRUSTEDROOT'],
-  [0x800B0100, 'TRUST_E_NOSIGNATURE'],
+  [TRUST_E_NOSIGNATURE, 'TRUST_E_NOSIGNATURE'],
   [0x80096010, 'TRUST_E_BAD_DIGEST'],
   [0x800B0101, 'CERT_E_EXPIRED'],
   [0x800B010A, 'CERT_E_CHAINING'],
   [0x800B0111, 'TRUST_E_EXPLICIT_DISTRUST'],
+  [0x800B0003, 'TRUST_E_SUBJECT_FORM_UNKNOWN'],
   [0x800B0004, 'TRUST_E_SUBJECT_NOT_TRUSTED'],
 ]);
 const hex = hr => `0x${(hr >>> 0).toString(16).toUpperCase().padStart(8, '0')}`;
@@ -42,11 +51,23 @@ function normalizeThumbprint(value) {
   return text;
 }
 
-/** update-signers.json の指紋の一覧（大文字の 40 桁）。読めない・空・形が違うときは例外 */
-function loadSigners(file = SIGNERS_FILE) {
+/**
+ * update-trust.json の方針 { unsigned: boolean, publishers: string[], signers: string[] }（signers は大文字の 40 桁）。
+ * 読めない・形が違う・何も受け入れない（unsigned が reject で、publishers も signers も空）ときは例外
+ */
+function loadTrust(file = TRUST_FILE) {
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-  if (!Array.isArray(data?.signers) || !data.signers.length) throw new Error(`No update signers in ${path.basename(file)}`);
-  return [...new Set(data.signers.map(s => normalizeThumbprint(s?.sha1)))];
+  if (data?.unsigned !== 'accept' && data?.unsigned !== 'reject') throw new Error(`"unsigned" must be "accept" or "reject" in ${path.basename(file)}`);
+  if (!Array.isArray(data.publishers) || data.publishers.some(p => typeof p !== 'string' || !p.trim())) throw new Error(`"publishers" must be a list of names in ${path.basename(file)}`);
+  if (!Array.isArray(data.signers)) throw new Error(`"signers" must be a list in ${path.basename(file)}`);
+  const trust = { unsigned: data.unsigned === 'accept', publishers: data.publishers.map(p => p.trim()), signers: [...new Set(data.signers.map(s => normalizeThumbprint(s?.sha1)))] };
+  if (!trust.unsigned && !trust.publishers.length && !trust.signers.length) throw new Error(`${path.basename(file)} accepts no update`);
+  return trust;
+}
+
+/** 受け入れる自己署名の署名者の指紋（リリースのビルドが、署名に使う証明書を確かめる。scripts/release-signing.cjs） */
+function loadSigners(file = TRUST_FILE) {
+  return loadTrust(file).signers;
 }
 
 const apis = new WeakMap();   // koffi の型は名前がグローバルなので、同じ koffi では 1 回だけ定義する
@@ -77,8 +98,8 @@ function api(koffi) {
 }
 
 /**
- * ファイルの署名を WinVerifyTrust で確かめ、結果が CERT_E_UNTRUSTEDROOT のときだけ、署名者の証明書の SHA-1 指紋を返す。
- * 戻り値 { hresult, thumbprint, error }（hresult は符号なしの数値。thumbprint は UNTRUSTEDROOT で読めたときだけ。error は読めなかった理由）。
+ * ファイルの署名を WinVerifyTrust で確かめ、結果が S_OK か CERT_E_UNTRUSTEDROOT のときは、署名者の証明書の SHA-1 指紋も返す。
+ * 戻り値 { hresult, thumbprint, error }（hresult は符号なしの数値。thumbprint は読めたときだけ。error は読めなかった理由）。
  * 状態データを開いたら、読み終えた後で必ず WTD_STATEACTION_CLOSE を呼ぶ。koffi の例外は呼んだ側へ投げる
  */
 function inspectSignature(koffi, filePath) {
@@ -93,7 +114,7 @@ function inspectSignature(koffi, filePath) {
   try {
     hresult = a.WinVerifyTrust(noWindow, GENERIC_VERIFY_V2, data) >>> 0;
     opened = true;
-    if (hresult !== CERT_E_UNTRUSTEDROOT) return { hresult, thumbprint: null, error: null };
+    if (hresult !== S_OK && hresult !== CERT_E_UNTRUSTEDROOT) return { hresult, thumbprint: null, error: null };
     if (!data.hWVTStateData) return { hresult, thumbprint: null, error: 'WinVerifyTrust returned no state data' };
     const provider = a.WTHelperProvDataFromStateData(data.hWVTStateData);
     if (!provider) return { hresult, thumbprint: null, error: 'WTHelperProvDataFromStateData returned null' };
@@ -114,57 +135,98 @@ function inspectSignature(koffi, filePath) {
   }
 }
 
-/**
- * (b) の確かめ。戻り値 { ok, reason }。reason は不合格の理由（updater.log に残る。HRESULT と、見つけた指紋）
- * @param {object} deps
- * @param [deps.koffi] 偽物でもよい
- * @param [deps.loadKoffi] koffi を読む（既定は require('koffi')）
- * @param [deps.signers] 受け入れる指紋の一覧（既定は update-signers.json）
- */
-function verifyPinnedSigner(filePath, { koffi = null, loadKoffi = () => require('koffi'), signers = null } = {}) {
-  let allowed;
-  try { allowed = (signers ?? loadSigners()).map(normalizeThumbprint); }
-  catch (error) { return { ok: false, reason: `the signer list is unusable: ${error.message}` }; }
-  let found;
-  try { found = inspectSignature(koffi ?? loadKoffi(), filePath); }
-  catch (error) { return { ok: false, reason: `WinVerifyTrust could not be called: ${String(error?.message ?? error)}` }; }
-  if (found.hresult !== CERT_E_UNTRUSTEDROOT) return { ok: false, reason: `WinVerifyTrust returned ${describe(found.hresult)}` };
-  if (!found.thumbprint) return { ok: false, reason: `WinVerifyTrust returned ${describe(found.hresult)} but ${found.error}` };
-  if (!allowed.includes(found.thumbprint)) return { ok: false, reason: `WinVerifyTrust returned ${describe(found.hresult)} and the signer ${found.thumbprint} is not an accepted update signer` };
-  return { ok: true, reason: null, thumbprint: found.thumbprint };
+/** ファイルの sha512（latest.yml と同じ base64） */
+function fileSha512(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha512');
+    fs.createReadStream(filePath).on('error', reject).on('data', chunk => hash.update(chunk)).on('end', () => resolve(hash.digest('base64')));
+  });
 }
 
 /**
- * NsisUpdater.verifyUpdateCodeSignature に渡す関数（(publisherNames, path) => null | 不合格の理由）。
+ * ダウンロードした更新を確かめる関数（(filePath, { sha512, publisherNames }) => null | 不合格の理由）を作る。
+ * sha512 は latest.yml の値（無ければ不合格）。publisherNames は入っている app-update.yml の publisherName（publishers に足す）
  * @param {object} deps
- * @param deps.defaultVerify electron-updater の既定の確かめ（publisherNames, path, logger）。(a)
+ * @param deps.defaultVerify electron-updater の既定の確かめ（publisherNames, path, logger）。Windows が信頼する署名の発行元を比べる
  * @param [deps.logger] electron-updater の logger（info・warn）
+ * @param [deps.trust] 方針（既定は update-trust.json）
+ * @param [deps.koffi] 偽物でもよい
+ * @param [deps.loadKoffi] koffi を読む（既定は require('koffi')）
+ * @param [deps.hashFile] ファイルの sha512（既定は fileSha512）
  */
-function createUpdateSignatureVerifier({ defaultVerify, logger = null, ...pinned }) {
-  return async function verifyUpdateSignature(publisherNames, filePath) {
-    let defaultReason;
-    try {
-      defaultReason = await defaultVerify(publisherNames, filePath, logger ?? { info() {}, warn() {}, error() {} });
-      if (defaultReason == null) return null;
-    } catch (error) { defaultReason = `the default verification failed: ${String(error?.message ?? error)}`; }
-    // Windows が署名者を信頼していない PC（自己署名）。信頼されないルートのときだけ、指紋で固定した署名者を受け入れる
-    const pin = verifyPinnedSigner(filePath, pinned);
-    if (pin.ok) {
-      logger?.info?.(`Update signature accepted: untrusted root, pinned signer ${pin.thumbprint}`);
-      return null;
+function createUpdateVerifier({ defaultVerify, logger = null, trust = null, koffi = null, loadKoffi = () => require('koffi'), hashFile = fileSha512 }) {
+  const quiet = { info() {}, warn() {}, error() {} };
+  const reject = reason => { logger?.warn?.(`Update rejected: ${reason}`); return reason; };
+  const accept = how => { logger?.info?.(`Update accepted: ${how}`); return null; };
+  // Windows が信頼する署名の発行元を、electron-updater の既定の確かめ（Get-AuthenticodeSignature が Valid で、CN か DN が合う）で比べる
+  const publisherMatches = async (names, filePath) => {
+    if (!names.length) return 'no publisher is accepted';
+    try { return await defaultVerify(names, filePath, logger ?? quiet); }
+    catch (error) { return `the publisher check failed: ${String(error?.message ?? error)}`; }
+  };
+
+  return async function verifyUpdate(filePath, { sha512 = null, publisherNames = [] } = {}) {
+    let policy;
+    try { policy = trust ?? loadTrust(); }
+    catch (error) { return reject(`the update trust policy is unusable: ${error.message}`); }
+    if (!sha512) return reject('the expected sha512 of the update is unknown');
+    let actual;
+    try { actual = await hashFile(filePath); }
+    catch (error) { return reject(`the update could not be read: ${String(error?.message ?? error)}`); }
+    if (actual !== sha512) return reject(`sha512 mismatch: the file has ${actual}, latest.yml has ${sha512}`);
+
+    const publishers = [...new Set([...policy.publishers, ...publisherNames.filter(Boolean)])];
+    let found;
+    try { found = inspectSignature(koffi ?? loadKoffi(), filePath); }
+    catch (error) {
+      // 分けられない。発行元の合う署名だけを通す
+      const why = `WinVerifyTrust could not be called: ${String(error?.message ?? error)}`;
+      const publisher = await publisherMatches(publishers, filePath);
+      return publisher == null ? accept(`signed by an accepted publisher (${why})`) : reject(`${why}; publisher check: ${String(publisher).slice(0, 300)}`);
     }
-    const reason = `not signed by a trusted publisher (${pin.reason}); default verification: ${String(defaultReason).slice(0, 300)}`;
-    logger?.warn?.(`Update signature rejected: ${reason}`);
-    return reason;
+    const result = describe(found.hresult);
+    if (found.hresult === TRUST_E_NOSIGNATURE) {
+      return policy.unsigned ? accept(`unsigned, accepted by the trust policy (sha512 matches latest.yml)`) : reject(`WinVerifyTrust returned ${result} and unsigned updates are not accepted`);
+    }
+    if (found.hresult === S_OK || found.hresult === CERT_E_UNTRUSTEDROOT) {
+      if (found.thumbprint && policy.signers.includes(found.thumbprint)) return accept(`${result}, pinned signer ${found.thumbprint}`);
+      if (found.hresult === CERT_E_UNTRUSTEDROOT) {
+        return reject(`WinVerifyTrust returned ${result} and ${found.thumbprint ? `the signer ${found.thumbprint} is not an accepted update signer` : found.error}`);
+      }
+      const publisher = await publisherMatches(publishers, filePath);
+      if (publisher == null) return accept(`${result}, accepted publisher`);
+      return reject(`WinVerifyTrust returned ${result} but the signer ${found.thumbprint ?? '(unread)'} is not an accepted publisher: ${String(publisher).slice(0, 300)}`);
+    }
+    return reject(`WinVerifyTrust returned ${result}`);
   };
 }
 
-/** main から呼ぶ。Windows の NsisUpdater の確かめを差し替える（それ以外は何もしない）。差し替えたら true */
-function installUpdateSignatureVerifier(updater, { platform = process.platform, defaultVerify = null, ...rest } = {}) {
-  if (platform !== 'win32' || !updater || !('verifyUpdateCodeSignature' in updater)) return false;
-  const verify = defaultVerify ?? require('electron-updater/out/windowsExecutableCodeSignatureVerifier').verifySignature;
-  updater.verifyUpdateCodeSignature = createUpdateSignatureVerifier({ defaultVerify: verify, logger: updater.logger, ...rest });
+/** NsisUpdater がダウンロードしているインストーラーの、latest.yml の sha512（doDownloadUpdate と同じ選び方） */
+function expectedSha512(updater) {
+  const current = updater.updateInfoAndProvider;
+  if (!current?.info || !current.provider) return null;
+  const { findFile } = require('electron-updater/out/providers/Provider');
+  return findFile(current.provider.resolveFiles(current.info), 'exe')?.info?.sha512 ?? null;
+}
+
+/** 入っている app-update.yml の publisherName（無ければ空） */
+async function installedPublisherNames(updater) {
+  try {
+    const name = (await updater.configOnDisk.value)?.publisherName;
+    return name == null ? [] : [].concat(name);
+  } catch { return []; }
+}
+
+/** main から呼ぶ。Windows の NsisUpdater の verifySignature を差し替える（それ以外は何もしない）。差し替えたら true */
+function installUpdateSignatureVerifier(updater, { platform = process.platform, defaultVerify = null, sha512Of = expectedSha512, ...rest } = {}) {
+  if (platform !== 'win32' || !updater || typeof updater.verifySignature !== 'function' || !('verifyUpdateCodeSignature' in updater)) return false;
+  const verify = createUpdateVerifier({ defaultVerify: defaultVerify ?? require('electron-updater/out/windowsExecutableCodeSignatureVerifier').verifySignature, logger: updater.logger, ...rest });
+  updater.verifySignature = async filePath => {
+    let sha512 = null;
+    try { sha512 = sha512Of(updater); } catch { /* 分からなければ verifyUpdate が不合格にする */ }
+    return verify(filePath, { sha512, publisherNames: await installedPublisherNames(updater) });
+  };
   return true;
 }
 
-module.exports = { CERT_E_UNTRUSTEDROOT, SIGNERS_FILE, normalizeThumbprint, loadSigners, inspectSignature, verifyPinnedSigner, createUpdateSignatureVerifier, installUpdateSignatureVerifier };
+module.exports = { S_OK, CERT_E_UNTRUSTEDROOT, TRUST_E_NOSIGNATURE, TRUST_FILE, normalizeThumbprint, loadTrust, loadSigners, inspectSignature, fileSha512, createUpdateVerifier, expectedSha512, installUpdateSignatureVerifier };
