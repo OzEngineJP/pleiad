@@ -28,7 +28,7 @@
 | `nativeInstructions` | `context.nativeInstructions` | read | エージェントが自分で読む指示ファイルと量。区切る。 |
 | `contextFindings` | `context.findings` | read | 指示ファイルの気になる所。 |
 | `gitStatus` | `git.status` | read | 会話の作業場所の git の状態。 |
-| `gitPanel` | `git.changes` | read | 変更の一覧・分けた作業場所・会話の git の出来事。ファイルを区切り、出来事は新しい 20 件。開いたときの分けた作業場所の片付け（sweep）は画面だけ。 |
+| `gitPanel` | `git.changes` | read | 変更の一覧・分けた作業場所・会話の git の出来事。ファイルを区切り、出来事は新しい 20 件。開いたときの分けた作業場所の片付け（sweep）は画面だけで、今のリポジトリに限り、同じリポジトリでは 5 分に 1 回まで。 |
 | `gitDiff` | `git.diff` | read | 1 ファイルの差分。AI には統一差分の文字列を切って返す。 |
 | `worktreeCheck` | `worktrees.check` | read | 分けた作業場所の状態（ぶつかり・分けられるか）。 |
 | `worktreeSettings` | `worktrees.settings` | read | 「いつも分ける」の値（書くのは既存の `worktrees.setSettings`）。 |

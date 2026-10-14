@@ -187,15 +187,15 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
    * 全部の片付け。終わったタスク（取り消した・失敗したものを含む）の作業場所は、子の会話の cwd を元の場所へ戻して判定し、
    * 残りは使っているものがあれば残す（worktrees.sweep）
    */
-  async function sweep({ root = null } = {}) {
+  async function sweep({ root = null, repoDir = null } = {}) {
     const rows = tasks();
     for (const e of await worktrees.list()) {
-      if (e.purpose !== 'task' || e.state !== 'ready' || e.kept || (root && !sameDir(e.root, root)) || now() - e.createdAt < (worktreeOptions.graceMs ?? 60_000)) continue;
+      if (e.purpose !== 'task' || e.state !== 'ready' || e.kept || (root && !sameDir(e.root, root)) || (repoDir && !sameDir(e.repoDir, repoDir)) || now() - e.createdAt < (worktreeOptions.graceMs ?? 60_000)) continue;
       const row = rows.find((r) => r.taskId === e.taskId);
       if (row && (ACTIVE.has(row.status) || row.pendingMessages > 0)) continue;
       await worktrees.settle(e.id, { release: row?.sessionId ? [row.sessionId] : [] });
     }
-    return worktrees.sweep({ root });
+    return worktrees.sweep({ root, repoDir });
   }
 
   /** 委譲の準備に失敗した。作ったばかりの子の作業場所を、準備中の印を外して片付ける（変更が無ければ消える） */

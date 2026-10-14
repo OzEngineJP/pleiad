@@ -104,6 +104,7 @@ export const gitOps = [
       sessionId, cwd,
       limit: z.number().int().min(1).max(HISTORY_PAGE_MAX).optional().describe(A('limit')),
       cursor: z.string().max(400).optional().describe(A('cursor')),
+      through: z.boolean().optional().describe(D('history', 'through')),
     }),
     output: z.object({ history: loose.nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['git', 'history'] } },
@@ -131,7 +132,7 @@ export const gitOps = [
   }),
   defineOp({
     id: 'git.worktrees', summary: 'agent:ops.git.worktrees.summary', risk: 'read',
-    input: z.object({ sessionId, cwd }),
+    input: z.object({ sessionId, cwd, only: z.enum(['list']).optional().describe(D('worktrees', 'only')) }),
     output: z.object({ worktrees: loose.nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['git', 'worktrees'] } },
     legacyCommand: 'gitWorktrees',
@@ -156,10 +157,10 @@ export const gitOps = [
 ];
 
 /** git.history の本体（画面も AI も同じ形）。cursor は読み飛ばす件数 */
-async function historyOf(ctx, { limit = HISTORY_PAGE_DEFAULT, cursor, ...args }) {
+async function historyOf(ctx, { limit = HISTORY_PAGE_DEFAULT, cursor, through, ...args }) {
   const skip = cursor === undefined ? 0 : decodeCursor(cursor);
   if (skip === null) throw new OpError('INVALID', agentT(ctx.locale, 'ops.errors.badCursor'));
-  const got = (await ctx.git.history({ ...args, limit, skip }))?.history;
+  const got = (await ctx.git.history({ ...args, limit, skip, through: through === true }))?.history;
   if (!got) return { history: null };
   const { next, ...rest } = got;
   return { history: { ...rest, next: next == null ? null : encodeCursor(next) } };

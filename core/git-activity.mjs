@@ -208,21 +208,67 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
     });
   }
 
+  // 会話の始まり（最初の撮影の親）は、決まったら変わらない。ページごとに ref の一覧を読み直さないよう、見つかったものだけ覚える
+  const starts = new Map();
+  const START_CACHE_MAX = 200;
+  /** 履歴の先頭から数えた始まりの位置。同じ問いを続けて呼んでも 1 回で済ませる（短い間だけ。履歴は動くので） */
+  const positions = new Map();
+  const POSITION_TTL_MS = 5_000;
+  function startPosition(root, hash, headHash) {
+    const key = `${root}\0${hash}\0${headHash ?? ''}`;
+    const hit = positions.get(key);
+    if (hit && now() - hit.at < POSITION_TTL_MS) return hit.value;
+    const value = history.startPosition(root, hash);
+    positions.set(key, { at: now(), value });
+    if (positions.size > 50) positions.delete(positions.keys().next().value);
+    return value;
+  }
+
   /** 会話の始まり: 最初のターンの撮影の時刻と、そのときの HEAD（グラフの ⚑）。撮影が無い会話は null */
   async function sessionStart(root, sessionId) {
+    const key = `${root}\0${sessionId}`;
+    if (sessionId && starts.has(key)) return starts.get(key);
     const first = await sessionBase(root, sessionId);
     if (!first) return null;
     const parent = await git.readGit(root, ['rev-parse', '--verify', '-q', `${first.commit}^`]);
-    return { n: first.n, at: first.at, head: parent.ok && parent.stdout.trim() ? parent.stdout.trim() : null };
+    const value = { n: first.n, at: first.at, head: parent.ok && parent.stdout.trim() ? parent.stdout.trim() : null };
+    if (sessionId) {
+      starts.set(key, value);
+      if (starts.size > START_CACHE_MAX) starts.delete(starts.keys().next().value);
+    }
+    return value;
   }
 
-  /** コミットの履歴の 1 ページ（グラフ）。session は会話の始まり。git 管理外・読めないときは null */
-  async function commits(cwd, sessionId, { limit, skip } = {}) {
+  /**
+   * コミットの履歴の 1 ページ（グラフ）。session は会話の始まりで、pos は履歴の先頭から数えた始まりの位置（0 始まり）。
+   * 読んだページに入っていればそこから、無ければ 1 回の rev-list で（START_SEARCH_MAX 件まで）。見つからなければ lost: true。
+   * through: true は「始まりまで」（skip から始まりのコミットまでを 1 回で読む。上限は START_SEARCH_MAX 件）。git 管理外・読めないときは null
+   */
+  async function commits(cwd, sessionId, { limit, skip, through = false } = {}) {
     const info = await git.repoInfo(cwd);
     if (!info) return null;
-    const page = await history.readHistory(info.root, { limit, skip });
+    const start = await sessionStart(info.root, sessionId);
+    const from = Math.max(Number(skip) || 0, 0);
+    let page;
+    let pos = null, lost = false;
+    if (through && start?.head) {
+      const head = await git.headCommit(info.root);
+      const found = await startPosition(info.root, start.head, head);
+      pos = found.pos; lost = pos == null;
+      if (lost) return { commits: [], next: null, head, session: { ...start, lost: true }, root: info.root };
+      page = await history.readHistory(info.root, { limit: Math.max(pos + 1 - from, 1), skip: from, max: history.START_SEARCH_MAX });
+    } else {
+      page = await history.readHistory(info.root, { limit, skip: from });
+    }
     if (!page) return null;
-    return { ...page, session: await sessionStart(info.root, sessionId), root: info.root };
+    if (!start?.head) return { ...page, session: start, root: info.root };
+    if (pos == null) {
+      const at = page.commits.findIndex((c) => c.hash === start.head);
+      if (at >= 0) pos = from + at;
+      else if (from === 0 && page.next == null) lost = true;   // 履歴を読み切っても無い
+      else if (from === 0) { const found = await startPosition(info.root, start.head, page.head); pos = found.pos; lost = pos == null; }
+    }
+    return { ...page, session: { ...start, ...(pos != null ? { pos } : {}), ...(lost ? { lost: true } : {}) }, root: info.root };
   }
 
   /** コミット 1 つの題・本文と変わったファイル */
@@ -251,6 +297,7 @@ export function createGitActivity({ now = Date.now, pruneAfterMs = PRUNE_AFTER_M
 
   /** 会話を消したときに、その会話の隠し ref を消す */
   async function forget(cwd, sessionId) {
+    for (const key of [...starts.keys()]) if (key.endsWith(`\0${sessionId}`)) starts.delete(key);
     const info = await git.repoInfo(cwd);
     return info ? git.forgetSession(info.root, sessionId) : 0;
   }

@@ -390,15 +390,19 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     return report;
   }
 
-  /** 全部の片付け（使っているものは残る）。起動の後・ターンの終わり・パネルを開いたときに呼ぶ */
-  async function sweep({ root = null } = {}) {
+  /**
+   * 全部の片付け（使っているものは残る）。起動の後・ターンの終わり・パネルを開いたときに呼ぶ。
+   * root はその作業場所から作ったものだけ、repoDir はそのリポジトリ（同じ .git）から作ったものだけ（パネルを開いたときは、開いたリポジトリだけ）
+   */
+  async function sweep({ root = null, repoDir = null } = {}) {
     await load();
     const out = [];
+    const inScope = (e) => (!root || sameDir(e.root, root)) && (!repoDir || sameDir(e.repoDir, repoDir));
     for (const entry of Object.values(entries)) {
-      if (entry.state !== 'ready' || entry.kept || (root && !sameDir(entry.root, root)) || now() - entry.createdAt < graceMs) continue;
+      if (entry.state !== 'ready' || entry.kept || !inScope(entry) || now() - entry.createdAt < graceMs) continue;
       out.push({ id: entry.id, ...(await settle(entry.id)) });
     }
-    const roots = new Set(Object.values(entries).filter((e) => e.state === 'ready' && (!root || sameDir(e.root, root))).map((e) => e.root));
+    const roots = new Set(Object.values(entries).filter((e) => e.state === 'ready' && inScope(e)).map((e) => e.root));
     for (const r of roots) wt.pruneArchiveRefs(r, archiveKeepMs, now()).catch(() => {});
     return out;
   }

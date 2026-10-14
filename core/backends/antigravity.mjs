@@ -23,7 +23,7 @@ import { AGENT_NAME, adoptHome, contextRefusal, prepareAgent, sweep } from "./an
 import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
-import { MAX_RESULT_CHARS } from "./shared.mjs";
+import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
 import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
@@ -173,7 +173,7 @@ const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_AGY_POLL_MS ?? 3_000);
 const cut = (s) => {
   const text = String(s ?? "");
   return text.length > MAX_RESULT_CHARS
-    ? { text: text.slice(0, MAX_RESULT_CHARS) + t("antigravity.truncated"), truncated: true }
+    ? { text: cutText(text, MAX_RESULT_CHARS, t("antigravity.truncated")), truncated: true }
     : { text, truncated: false };
 };
 

@@ -57,6 +57,33 @@
 .gp-br .meta a{color:var(--ink-blue);text-decoration:none;display:inline-flex;align-items:center;gap:3px}
 .gp-br .meta a:hover{text-decoration:underline}
 .gp-br .meta svg{width:12px;height:12px}
+/* 頭の PR の行（この会話と子の会話の PR。色は使わず、形と語で状態を分ける。web/git-prs.mjs） */
+.gp-prs{width:100%;display:flex;flex-direction:column;gap:2px;margin:0 0 6px;container-type:inline-size}
+.gp-prs[hidden]{display:none}
+.gp-pr{display:flex;align-items:center;gap:8px;min-width:0;min-height:30px;padding:5px 10px;margin:0 -10px;border-radius:var(--r-m);color:var(--ink);text-decoration:none;font-size:var(--fs-s)}
+a.gp-pr:hover{background:var(--surface-hover)}
+a.gp-pr:focus-visible,.gp-more:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.gp-pr > svg.i{width:15px;height:15px;color:var(--ink-weak);flex:none}
+.gp-pr .n{color:var(--ink-blue);font-weight:600;flex:none}
+.gp-pr .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gp-pr .s{flex:none;color:var(--ink-weak);white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.gp-pr .ci{display:inline-flex;align-items:center;gap:3px}
+.gp-pr .ci svg.i{width:12px;height:12px}
+.gp-pr .ci.bad{color:var(--ink-strong);font-weight:600}
+.gp-pr svg.go{width:12px;height:12px;color:var(--ink-weak);flex:none}
+.gp-pr .go-ph{width:12px;flex:none}
+.gp-pr.done .t{color:var(--ink-weak)}
+.gp-pr.sk .history-line{height:10px}
+.gp-more{align-self:flex-start;border:0;background:transparent;color:var(--ink-weak);font:inherit;font-size:var(--fs-s);padding:3px 10px;margin:0 -10px;border-radius:var(--r-pill);cursor:pointer}
+.gp-more:hover{background:var(--surface-hover);color:var(--ink)}
+.gp-quiet{font-size:var(--fs-xs);color:var(--ink-weak);margin:2px 0 0}
+/* 狭いパネル（360px 前後）では、チェックの語をたたみ（形と読み上げの名前は残す）、状態の語を残す */
+@container (max-width:380px){
+  .gp-pr{gap:6px}
+  .gp-pr .s{font-size:var(--fs-xs)}
+  .gp-pr .ci .cw{display:none}
+  .gp-pr.sk .s .history-line{width:48px!important}
+}
 .git-tag{background:var(--surface-3);color:var(--ink-weak);font-size:var(--fs-xs);padding:0 10px;line-height:1.7;border-radius:var(--r-pill);white-space:nowrap}
 /* タブ（Chats / Channels と同じ部品。ADR 0135） */
 .gp-tabs{display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:var(--r-pill);width:100%}
@@ -293,3 +320,30 @@
 .gp .ref.mine{background:none;color:var(--ink-blue);padding:0 2px;font-weight:600}
 .gp .ref .rn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gp .ref svg{flex:none}
+/* ---- 段ごとの表示（頭・変更の一覧が先、履歴・作業場所は後から。docs/design-system.md「git パネルの読み込み」） ---- */
+/* 骨組みは既存の .history-line（1.6 秒の光）。行の高さ・並びは本物と同じにして、入れ替わっても動かない。押せず、フォーカスも入らない */
+.gp .cg-row.sk{cursor:default;pointer-events:none}
+.gp .cg-row.sk svg.g{opacity:.4}
+.gp .cg-row.sk .cg-t,.gp .cg-row.sk .cg-tm{display:flex;align-items:center}
+.gp .hist-sk{height:178px;overflow:hidden}
+.gp .sk-seg{display:inline-block;width:204px;max-width:100%}
+.gp .sk-seg .history-line{height:29px}
+.gp .fr.sk{cursor:default;pointer-events:none}
+.gp .fr.sk .history-line{height:11px}
+.gp .cl-h .cl-tt > .history-line{margin:4px 0}
+.gp .wrow.sk{cursor:default;pointer-events:none}
+.gp .wrow.sk .b{height:19px}
+.gp .wrow.sk .p,.gp .wrow.sk .m,.gp .wrow .m.ph{height:18px;display:flex;align-items:center}
+.gp .wrow .tm{min-width:64px;justify-content:flex-end}
+.gp .wrow.sk .b .history-line{height:12px}
+.gp .wrow.sk .p .history-line,.gp .wrow .m.ph .history-line{height:9px}
+/* 会話の始まりが読み込んだ範囲より前のときの札（グラフの上の 1 行。.fold で畳む） */
+.gp .startnote{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;background:var(--surface-1);border-radius:var(--r-m);padding:5px 8px;margin:4px 0 6px;font-size:var(--fs-xs);color:var(--ink-weak);min-height:34px}
+.gp .startnote:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.gp .startnote .startmk{padding:0 4px 0 0;flex:none}
+.gp .startnote .sn-t{flex:1 1 12em;min-width:0}
+.gp .startnote .btn{font-size:var(--fs-xs);padding:2px 10px;height:24px;flex:none}
+.gp .startnote .pending-glint{color:var(--ink-weak)}
+/* 後から届いて入る行・一覧は 240ms で 4px 上がりながら出る（前から出ていたものは動かさない） */
+.gp .in{animation:gp-appear var(--dur) var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.gp .in{animation:none}}
