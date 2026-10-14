@@ -265,7 +265,7 @@ export default async function(t) {
     const store = releaseSigning({ ...publisher, PLY_WINDOWS_SIGNING: 'store', PLY_WIN_CERTIFICATE_SHA1: 'a'.repeat(40) }, 'win32', { signers: ['A'.repeat(40)] });
     t.ok('Hardware-backed Windows store certificate does not require key export', store.win.signtoolOptions.certificateSha1 === 'a'.repeat(40));
     const azureEnv = { ...publisher, PLY_WINDOWS_SIGNING: 'azure', PLY_AZURE_ENDPOINT: 'https://eus.codesigning.azure.net/', PLY_AZURE_ACCOUNT: 'account', PLY_AZURE_PROFILE: 'profile', AZURE_TENANT_ID: 'tenant', AZURE_CLIENT_ID: 'client', AZURE_CLIENT_SECRET: 'azure-secret' };
-    const azure = releaseSigning(azureEnv, 'win32');
+    const azure = releaseSigning(azureEnv, 'win32', { publishers: [publisher.PLY_WIN_PUBLISHER] });
     t.ok('Cloud signing preserves publisher verification without embedding authentication', azure.win.azureSignOptions.publisherName === publisher.PLY_WIN_PUBLISHER && !JSON.stringify(azure).includes('azure-secret') && !azure.win.signtoolOptions);
     await rejects('Signing refuses unrecognized methods', async () => releaseSigning({ ...publisher, PLY_WINDOWS_SIGNING: 'skip' }, 'win32'));
     await rejects('Signing refuses unexpected cloud endpoints', async () => releaseSigning({ ...azureEnv, PLY_AZURE_ENDPOINT: 'https://example.com' }, 'win32'));

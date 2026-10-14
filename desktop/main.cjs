@@ -406,7 +406,8 @@ async function boot() {
   // Microsoft Store の版は Store が更新する。確認もダウンロードもしない（docs/microsoft-store.md「自動更新」）
   const pkg = require('../package.json');
   const updaterOn = updaterEnabled({ packaged: app.isPackaged, pkg, windowsStore: process.windowsStore, feed: fs.existsSync(path.join(process.resourcesPath, 'app-update.yml')) });
-  // Windows が信頼していない自己署名でも、指紋で固定した署名者なら更新を受け入れる（desktop/update-signature.cjs。ADR 0176）。Store 版・開発起動は今のまま
+  // 更新のインストーラーを desktop/update-trust.json の方針で確かめる（desktop/update-signature.cjs。ADR 0207）。中身は latest.yml の sha512 と
+  // 突き合わせ、無署名・指紋で固定した自己署名・認めた発行元の署名を受け入れる。Store 版・開発起動は今のまま
   if (updaterOn) try { installUpdateSignatureVerifier(autoUpdater); } catch (e) { bootLogger.warn?.(`update signature verifier: ${e.message}`); }
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     store: isStoreBuild({ pkg, windowsStore: process.windowsStore }),
