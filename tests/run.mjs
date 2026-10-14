@@ -560,6 +560,8 @@ const SUITES = [
   // Claude Agent SDK を配布物に入れず npm から取る（ADR 0206）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意
   './unit/claude-sdk-pin.mjs',
   './unit/claude-sdk.mjs',
+  // 前の版から Claude を使っていた人は、取得への同意を済ませたものとみなして取る（ADR 0206）
+  './unit/claude-sdk-legacy.mjs',
   // アカウントの認可を Pleiad から回す（疑似端末の偽物と、偽の CLI を本物の疑似端末で）
   './unit/claude-login.mjs',
   './unit/server-claude-login.mjs',

@@ -24,6 +24,7 @@ import {
   CLAUDE_SDK_PIN, claudeSdkRoot, claudeSdkSource, claudeSdkStatus, claudeSdkConsent, ensureClaudeSdk, loadClaudeSdk, importInstalledSdk,
   isClaudeSdkMissing, onClaudeSdkChange, resetClaudeSdkForTest,
 } from '../../core/claude-sdk.mjs';
+import { LEGACY_CHECK_FILE } from '../../core/claude-sdk-legacy.mjs';
 
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -82,6 +83,8 @@ const fakePin = (version, gz) => ({ name: PIN_NAME, version, integrity: integrit
 const kindOf = async (fn) => { try { await fn(); return 'none'; } catch (err) { return err instanceof ClaudeSdkFetchError ? err.kind : `other: ${err?.message ?? err}`; } };
 const kindOfSync = (fn) => { try { fn(); return 'none'; } catch (err) { return err instanceof ClaudeSdkFetchError ? err.kind : `other: ${err?.message ?? err}`; } };
 const list = (dir) => { try { return fs.readdirSync(dir).sort(); } catch { return []; } };
+/** 置き場に、取った SDK（版のフォルダー・展開の途中）か同意が置かれているか。「前から使っていたか」の判断の印（legacy-check.json）だけは数えない */
+const hasSdkFiles = (root) => list(root).some((f) => f !== LEGACY_CHECK_FILE);
 
 /** ループバックの偽のレジストリ。handler(req, res) を差し替えられる。requests に来たパスを残す */
 async function fakeRegistry(handler) {
@@ -406,7 +409,7 @@ async function run(t, tmp) {
     t.ok('状態: 取る前は ready も同意も無い。版は固定の版', before.source === 'download' && before.ready === false && before.consent === false && before.version === CLAUDE_SDK_PIN.version, JSON.stringify(before));
     let missing = null;
     try { await loadClaudeSdk({ fetch: true, env }); } catch (err) { missing = err; }
-    t.ok('同意が無ければ取らずに CLAUDE_SDK_MISSING（版を言う文）', isClaudeSdkMissing(missing) && missing.message.includes(CLAUDE_SDK_PIN.version) && !fs.existsSync(root), missing?.message);
+    t.ok('同意が無ければ取らずに CLAUDE_SDK_MISSING（版を言う文）', isClaudeSdkMissing(missing) && missing.message.includes(CLAUDE_SDK_PIN.version) && !hasSdkFiles(root), missing?.message);
     t.ok('同意が無ければ ensure は consent の失敗', (await kindOf(() => ensureClaudeSdk({ env }))) === 'consent');
 
     const reg = await fakeRegistry((req, res) => { const body = Buffer.from('this is not the pinned tarball'); res.writeHead(200, { 'content-length': body.length }); res.end(body); });
@@ -420,7 +423,7 @@ async function run(t, tmp) {
       t.ok('同意して取る: 同意を残す（版をまたいで持つ）', claudeSdkConsent(root) === true);
       const after = claudeSdkStatus({ env });
       t.ok('取得の失敗: 状態に kind と、言語の辞書の文が載る', after.ready === false && after.error?.kind === 'integrity' && after.error.message && !after.error.message.startsWith('claudeSdk.'), JSON.stringify(after.error));
-      t.ok('取得の失敗: 置き場に版のフォルダーも展開の途中も残らない', list(root).join() === 'consent.json', list(root).join());
+      t.ok('取得の失敗: 置き場に版のフォルダーも展開の途中も残らない', list(root).filter((f) => f !== LEGACY_CHECK_FILE).join() === 'consent.json', list(root).join());
       t.ok('状態の知らせ: 取得の始まり（fetching）と終わり（error）を知らせる', seen.some((s) => s.fetching) && seen.at(-1)?.fetching === null && seen.at(-1)?.error?.kind === 'integrity');
       let err = null;
       try { await loadClaudeSdk({ fetch: true, env: env2 }); } catch (e) { err = e; }
@@ -448,7 +451,7 @@ async function run(t, tmp) {
     const fetchIn = (dataDir, extra = {}) => runClaudeSdkFetch({ nodeExe: process.execPath, appDir: ROOT, dataDir, env: { ...baseEnv, ...extra }, timeoutMs: 60_000 });
     const noConsent = await fetchIn(path.join(tmp, 'data-fetch-none'));
     t.ok('先取り: 同意が無ければ取らない（ready: false・consent: false）',
-      noConsent.fetch === 1 && noConsent.ready === false && noConsent.consent === false && noConsent.version === CLAUDE_SDK_PIN.version && !fs.existsSync(path.join(tmp, 'data-fetch-none', 'claude-sdk')), JSON.stringify(noConsent));
+      noConsent.fetch === 1 && noConsent.ready === false && noConsent.consent === false && noConsent.version === CLAUDE_SDK_PIN.version && !hasSdkFiles(path.join(tmp, 'data-fetch-none', 'claude-sdk')), JSON.stringify(noConsent));
     const ready = await fetchIn(data);
     t.ok('先取り: もう置いてあれば ready（取りに行かない）', ready.ready === true && ready.consent === true, JSON.stringify(ready));
     const failData = path.join(tmp, 'data-fetch-fail');

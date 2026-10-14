@@ -2,6 +2,7 @@
 //
 // SDK は Anthropic の独自ライセンス（© Anthropic PBC. All rights reserved）なので、配布物（インストーラー・アプリ）には入れない。
 // 配布物では、Claude を初めて使うとき（か設定の画面）に、利用者の同意を得てから npm のレジストリから取り、データ置き場に置いて読む。
+// 前の版（SDK を同梱していた版）から Claude を使っていた人は、同意済みとみなして案内なしに取る（core/claude-sdk-legacy.mjs）。
 //   local     アプリの node_modules の SDK を読む。開発（npm で直に動かす）と試験。node_modules に SDK があればこちら
 //   download  <データ置き場>/claude-sdk/<版>/ に取ったものを読む。配布物（SDK は devDependencies なので入らない）
 // AGENT_HOST_CLAUDE_SDK=local|download で強制できる（配布物と同じ道を開発機で試すとき）。
@@ -19,6 +20,7 @@ import module from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { t } from './i18n.mjs';
 import { checkPin, installedSdk, installSdk, cleanupSdk, markUsed, ClaudeSdkFetchError } from './claude-sdk-install.mjs';
+import { settleLegacyConsent } from './claude-sdk-legacy.mjs';
 
 export const SDK_NAME = '@anthropic-ai/claude-agent-sdk';
 const APP_ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -29,7 +31,8 @@ const APP_ANCHOR = new URL('../package.json', import.meta.url).href;
 export const CLAUDE_SDK_PIN = checkPin(JSON.parse(fs.readFileSync(new URL('./claude-sdk-pin.json', import.meta.url), 'utf8')));
 
 /** SDK を置くフォルダー（<データ置き場>/claude-sdk）。データ置き場は store.mjs と同じ決め方 */
-export const claudeSdkRoot = (env = process.env) => path.join(path.resolve(env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host')), 'claude-sdk');
+export const claudeSdkRoot = (env = process.env) => path.join(claudeDataDir(env), 'claude-sdk');
+const claudeDataDir = (env) => path.resolve(env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host'));
 
 /** 'local' か 'download'。**どちらを使うかはここだけで決める** */
 export function claudeSdkSource(env = process.env, appRoot = APP_ROOT) {
@@ -46,9 +49,21 @@ const consentFile = (root) => path.join(root, 'consent.json');
 export function claudeSdkConsent(root = claudeSdkRoot()) {
   try { return Boolean(JSON.parse(fs.readFileSync(consentFile(root), 'utf8'))?.acceptedAt); } catch { return false; }
 }
-function writeConsent(root) {
+/** 同意を書く。あれば書き直さない（みなし同意の reason を、後から「取得」を押しても消さない）。reason は押したのでなく、みなしたとき */
+function writeConsent(root, reason = null, evidence = null) {
+  if (claudeSdkConsent(root)) return;
   fs.mkdirSync(root, { recursive: true });
-  fs.writeFileSync(consentFile(root), JSON.stringify({ acceptedAt: new Date().toISOString() }));
+  fs.writeFileSync(consentFile(root), JSON.stringify({ acceptedAt: new Date().toISOString(), ...(reason ? { reason, evidence } : {}) }));
+}
+/**
+ * 同意があるか。無ければ、前の版から Claude を使っていた人かを見て（一度だけ。core/claude-sdk-legacy.mjs）、そうなら同意済みとみなして書く。
+ * 同意を見るところ（状態・取得・読み込み・先取り・起動の裏の取得）はこれを通す
+ */
+export function claudeSdkConsented(env = process.env) {
+  const root = claudeSdkRoot(env);
+  if (claudeSdkConsent(root)) return true;
+  if (claudeSdkSource(env) !== 'download') return false;
+  return settleLegacyConsent({ dataDir: claudeDataDir(env), root, writeConsent: (reason, evidence) => writeConsent(root, reason, evidence) });
 }
 
 // ---------------------------------------------------------------- 状態と取得
@@ -63,7 +78,7 @@ export function claudeSdkStatus({ env = process.env, root = claudeSdkRoot(env), 
     source,
     version: pin.version,
     ready: source === 'local' || Boolean(installedSdk(root, pin)),
-    consent: source === 'local' || claudeSdkConsent(root),
+    consent: source === 'local' || claudeSdkConsented(env),
     fetching: state.job ? { ...(state.progress ?? { received: 0, total: null }) } : null,
     error: state.error ? { ...state.error, message: claudeSdkErrorMessage(state.error) } : null,
   };
@@ -114,8 +129,8 @@ export function claudeSdkErrorMessage(error) {
 export function ensureClaudeSdk({ consent = false, env = process.env } = {}) {
   if (claudeSdkSource(env) === 'local') return Promise.resolve({ source: 'local', fetched: false });
   const root = claudeSdkRoot(env);
-  if (consent) writeConsent(root);
-  if (!claudeSdkConsent(root)) return Promise.reject(new ClaudeSdkFetchError('consent', 'the user has not agreed to fetch the SDK yet'));
+  if (consent) { claudeSdkConsented(env); writeConsent(root); }   // 先にみなし同意を見る（押す前から使っていた人の reason を、押した同意で隠さない）
+  if (!claudeSdkConsented(env)) return Promise.reject(new ClaudeSdkFetchError('consent', 'the user has not agreed to fetch the SDK yet'));
   if (state.job) return state.job;
   const have = installedSdk(root, CLAUDE_SDK_PIN);
   if (have) return Promise.resolve({ source: 'download', ...have, fetched: false });
@@ -238,7 +253,7 @@ export function loadClaudeSdk({ fetch = false, env = process.env } = {}) {
   }
   const have = installedSdk(root, CLAUDE_SDK_PIN);
   if (!have) {
-    if (!fetch || !claudeSdkConsent(root)) return Promise.reject(new ClaudeSdkMissingError(t('claudeSdk.missing', { version: CLAUDE_SDK_PIN.version })));
+    if (!fetch || !claudeSdkConsented(env)) return Promise.reject(new ClaudeSdkMissingError(t('claudeSdk.missing', { version: CLAUDE_SDK_PIN.version })));
     return ensureClaudeSdk({ env }).then(
       () => loadClaudeSdk({ fetch: false, env }),
       (err) => { throw new ClaudeSdkMissingError(claudeSdkErrorMessage(err), { kind: err?.kind ?? null, cause: err }); },
@@ -264,13 +279,14 @@ export function resetClaudeSdkForTest() {
 export const CLEANUP_DELAY_MS = 5 * 60_000;
 
 /**
- * サーバーの起動のあとに呼ぶ。配布物で同意済みなのに固定の版が無ければ（更新で版が変わり、切り替えの前に取れなかった）裏で取る。
+ * サーバーの起動のあとに呼ぶ。配布物で同意済み（前の版から Claude を使っていた人は、みなし同意）なのに固定の版が無ければ
+ * （更新で版が変わり、切り替えの前に取れなかった・入れ直した）裏で取る。取れなければ状態に残り、画面から再試行できる。
  * 少し待ってから古い版と展開の途中を片付ける。開発（local）では何もしない
  */
 export function startClaudeSdkMaintenance({ env = process.env, delayMs = CLEANUP_DELAY_MS } = {}) {
   if (claudeSdkSource(env) !== 'download') return () => {};
   const root = claudeSdkRoot(env);
-  if (claudeSdkConsent(root) && !installedSdk(root, CLAUDE_SDK_PIN)) ensureClaudeSdk({ env }).catch(() => { /* 状態に残す。画面から再試行できる */ });
+  if (claudeSdkConsented(env) && !installedSdk(root, CLAUDE_SDK_PIN)) ensureClaudeSdk({ env }).catch(() => { /* 状態に残す。画面から再試行できる */ });
   const timer = setTimeout(() => {
     cleanupSdk({ root, pin: CLAUDE_SDK_PIN })
       .then((removed) => { if (removed.length) console.log(`[claude-sdk] removed ${removed.join(', ')}`); })
