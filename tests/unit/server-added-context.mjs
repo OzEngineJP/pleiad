@@ -17,11 +17,20 @@ const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args }
 
 export default async function (t) {
   // ---- 保存の形（純粋な計算）
-  t.ok('前の版で委譲の指示を切っていたら、委譲の既定の 2 項目を切った状態で引き継ぐ（前の版に無かった codexPolicy は入れたまま）', normalizePlyInstructions(undefined, { delegation: false }).map(i => `${i.id}:${i.on}`).join() === 'delegate:false,child:false,codexPolicy:true'
-    && normalizePlyInstructions(undefined, null).every(i => i.on === true) && normalizePlyInstructions(undefined, null).map(i => i.id).join() === 'delegate,child,codexPolicy');
-  t.ok('壊れた項目は落とし、既定の項目が欠けていれば足す', normalizePlyInstructions({ items: [{ id: 'u-abcd12', name: 'x' }, { id: 'child', on: false }, { id: '../x' }] }).map(i => `${i.id}:${i.on}`).join() === 'delegate:true,child:false,codexPolicy:true');
+  t.ok('前の版で委譲の指示を切っていたら、child を切った状態で引き継ぐ（前の版に無かった codexPolicy は入れたまま）', normalizePlyInstructions(undefined, { delegation: false }).map(i => `${i.id}:${i.on}`).join() === 'child:false,codexPolicy:true'
+    && normalizePlyInstructions(undefined, null).every(i => i.on === true) && normalizePlyInstructions(undefined, null).map(i => i.id).join() === 'child,codexPolicy');
+  t.ok('壊れた項目は落とし、既定の項目が欠けていれば足す', normalizePlyInstructions({ items: [{ id: 'u-abcd12', name: 'x' }, { id: 'child', on: false }, { id: '../x' }] }).map(i => `${i.id}:${i.on}`).join() === 'child:false,codexPolicy:true');
+  // 前の版の既定の項目 delegate（委譲の進め方。ADR 0210）
+  t.ok('前の版の delegate は、本文を編集していなければ捨てる', normalizePlyInstructions({ items: [{ id: 'delegate', on: true }, { id: 'child', on: true }, { id: 'codexPolicy', on: true }] }).map(i => i.id).join() === 'child,codexPolicy'
+    && normalizePlyInstructions({ items: [{ id: 'delegate', on: false, name: '任せ方' }] }).map(i => i.id).join() === 'child,codexPolicy');
+  const former = normalizePlyInstructions({ items: [{ id: 'delegate', on: false, body: '- 3 ファイルまでは自分でやる。' }, { id: 'child', on: true }, { id: 'codexPolicy', on: true }] }, null, 'en');
+  t.ok('前の版の delegate の本文を編集していたら、自分で足した指示として並びの位置・スイッチのまま残す（名前は前の版の名前）', former.map(i => i.id).join() === 'u-delegate,child,codexPolicy'
+    && former[0].on === false && former[0].body === '- 3 ファイルまでは自分でやる。' && former[0].name === agentT('en', 'guide.formerDelegateName')
+    && former[0].target === 'parent' && former[0].agents.join() === 'claude,codex' && resolvePlyInstructions(former, 'ja')[0].tag === null);
+  const formerSaved = normalizePlyInstructions({ items: former });
+  t.ok('変えた後に保存した値を読んでも同じ', JSON.stringify(formerSaved) === JSON.stringify(former));
   const base = normalizePlyInstructions(undefined);
-  const same = changePlyInstructions(base, { action: 'save', id: 'delegate', name: agentT('ja', 'guide.names.delegate'), body: resolvePlyInstructions(base, 'ja')[0].body, target: 'parent', agents: ['claude', 'codex'] }, 'ja');
+  const same = changePlyInstructions(base, { action: 'save', id: 'child', name: agentT('ja', 'guide.names.child'), body: resolvePlyInstructions(base, 'ja')[0].body, target: 'child', agents: ['claude', 'codex'] }, 'ja');
   t.ok('既定と同じ内容で保存しても「既定から変更」にしない', !resolvePlyInstructions(same, 'ja')[0].modified);
   t.ok('連動の項目はいつも最後で、編集・並べ替えの対象にしない', resolvePlyInstructions(base, 'ja').at(-1).id === 'route'
     && (() => { try { changePlyInstructions(base, { action: 'toggle', id: 'route', on: false }, 'ja'); return false; } catch { return true; } })());
@@ -37,7 +46,7 @@ export default async function (t) {
   const bridge = agentT('ja', 'bridge.instructions');
   const listJa = () => resolvePlyInstructions(normalizePlyInstructions(undefined), 'ja');
   const text = id => itemText('ja', listJa().find(i => i.id === id));
-  const delegateText = text('delegate'), childText = text('child'), routeText = text('route'), codexPolicyText = text('codexPolicy');
+  const childText = text('child'), routeText = text('route'), codexPolicyText = text('codexPolicy');
   const lastAnswer = async sessionId => (await c.cmd('loadSession', { sessionId })).messages.findLast(m => m.role === 'assistant')?.text ?? '';
   // 子の完了通知が依頼元の会話で走っている間は次のターンを始められない。空くまで待って頼み直す
   const turnOn = async (sessionId, text) => {
@@ -53,22 +62,22 @@ export default async function (t) {
   try {
     // ---- 前の版のスイッチを引き継ぐ
     let state = await c.cmd('plyInstructions');
-    t.ok('前の版で切っていた委譲の指示は、既定の 2 項目が切れた状態で出る', state.items.map(i => `${i.id}:${i.tag}:${i.on}`).join() === 'delegate:default:false,child:default:false,codexPolicy:default:true,route:linked:true', JSON.stringify(state.items.map(i => [i.id, i.on])));
+    t.ok('前の版で切っていた委譲の指示は、child が切れた状態で出る', state.items.map(i => `${i.id}:${i.tag}:${i.on}`).join() === 'child:default:false,codexPolicy:default:true,route:linked:true', JSON.stringify(state.items.map(i => [i.id, i.on])));
     t.ok('合計のトークン数は入る項目だけ（切った項目は数えない）', state.total === state.items.find(i => i.id === 'route').tokens + state.items.find(i => i.id === 'codexPolicy').tokens && state.items.every(i => i.tokens > 0));
     const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'instructions' });
     const sid = first.sessionId;
     let answer = await lastAnswer(sid);
     t.ok('切った既定は入らず、連動の項目（振り分けの使い方）だけが入る', answer === `${bridge}\n\n${routeText}`, answer.slice(-200));
     let rec = await added(sid);
-    t.ok('項目ごとに入れたか・入れなかった理由を記録する', rec?.map(r => `${r.id}:${r.inserted}:${r.reason ?? ''}`).join() === 'delegate:false:off,child:false:off,codexPolicy:false:target,route:true:', JSON.stringify(rec));
+    t.ok('項目ごとに入れたか・入れなかった理由を記録する', rec?.map(r => `${r.id}:${r.inserted}:${r.reason ?? ''}`).join() === 'child:false:off,codexPolicy:false:target,route:true:', JSON.stringify(rec));
 
     // ---- スイッチを入れる（始まっている会話にも次のターンから）。保存すると前の版の値は消える
-    await c.cmd('setPlyInstructions', { action: 'toggle', id: 'delegate', on: true });
     state = await c.cmd('setPlyInstructions', { action: 'toggle', id: 'child', on: true });
-    t.ok('スイッチを保存し、前の版の addedContext は消す', state.items.every(i => i.on) && !Object.hasOwn(await prefs(), 'addedContext') && (await prefs()).plyInstructions.items.length === 3);
+    t.ok('スイッチを保存し、前の版の addedContext は消す', state.items.every(i => i.on) && !Object.hasOwn(await prefs(), 'addedContext') && (await prefs()).plyInstructions.items.length === 2);
     answer = await ask(sid);
-    t.ok('担当がエージェント任せでも、ply_agents の instructions の後ろに入る（依頼元には委譲の進め方と振り分けの使い方）', answer === `${bridge}\n\n${delegateText}\n\n${routeText}`, answer.slice(-240));
-    t.ok('入れた文は項目ごとに見出しが付く', delegateText.startsWith(agentT('ja', 'guide.heading', { name: agentT('ja', 'guide.names.delegate') })));
+    t.ok('担当がエージェント任せでも、ply_agents の instructions の後ろに入る（依頼元の既定は振り分けの使い方だけ。委譲を勧める既定は無い）', answer === `${bridge}\n\n${routeText}`, answer.slice(-240));
+    t.ok('入れた文は項目ごとに見出しが付く', routeText.startsWith(agentT('ja', 'guide.heading', { name: agentT('ja', 'guide.names.route') }))
+      && childText.startsWith(agentT('ja', 'guide.heading', { name: agentT('ja', 'guide.names.child') })));
 
     // ---- 子の会話
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'instructions' }) });
@@ -78,18 +87,22 @@ export default async function (t) {
     // fake はどのエージェントの項目も入れる（Codex だけの codexPolicy も。Claude の子に入らないことは tests/unit/codex-rejections.mjs）
     t.ok('子の会話には子向けの項目だけが入る', task?.result === `${bridge}\n\n${childText}\n\n${codexPolicyText}`, task?.result?.slice(-160));
     const childRec = await added(task.sessionId);
-    t.ok('子の会話の記録: 依頼元向けの項目は理由 target', childRec?.find(r => r.id === 'child')?.inserted === true && childRec.find(r => r.id === 'delegate')?.reason === 'target');
+    t.ok('子の会話の記録: 依頼元向けの項目は理由 target', childRec?.find(r => r.id === 'child')?.inserted === true && childRec.find(r => r.id === 'route')?.reason === 'target');
 
     // ---- 自分で足す・入れる会話・エージェント
     state = await c.cmd('setPlyInstructions', { action: 'save', name: '返答は短く', body: '- 結論から書く。', target: 'all', agents: ['claude', 'codex'] });
     const mine = state.items.find(i => i.tag === null);
-    t.ok('足した指示は連動の項目の前（保存した並びの最後）に入る', state.items.map(i => i.id).join() === `delegate,child,codexPolicy,${mine?.id},route` && mine.on && mine.tokens > 0);
+    t.ok('足した指示は連動の項目の前（保存した並びの最後）に入る', state.items.map(i => i.id).join() === `child,codexPolicy,${mine?.id},route` && mine.on && mine.tokens > 0);
     const mineText = itemText('ja', mine);
+    state = await c.cmd('setPlyInstructions', { action: 'save', name: '委譲を基本にする', body: '- 大きい作業は ply_delegate で任せる。', target: 'parent', agents: ['claude', 'codex'] });
+    const mine2 = state.items.findLast(i => i.tag === null);
+    const mine2Text = itemText('ja', mine2);
     answer = await ask(sid);
-    t.ok('並びの順に入る', answer === `${bridge}\n\n${delegateText}\n\n${mineText}\n\n${routeText}`, answer.slice(-240));
-    await c.cmd('setPlyInstructions', { action: 'order', ids: [mine.id, 'delegate', 'child', 'codexPolicy'] });
+    t.ok('並びの順に入る', answer === `${bridge}\n\n${mineText}\n\n${mine2Text}\n\n${routeText}`, answer.slice(-240));
+    await c.cmd('setPlyInstructions', { action: 'order', ids: [mine2.id, mine.id, 'child', 'codexPolicy'] });
     answer = await ask(sid);
-    t.ok('並べ替えると入る順も変わる', answer === `${bridge}\n\n${mineText}\n\n${delegateText}\n\n${routeText}`, answer.slice(-240));
+    t.ok('並べ替えると入る順も変わる', answer === `${bridge}\n\n${mine2Text}\n\n${mineText}\n\n${routeText}`, answer.slice(-240));
+    await c.cmd('setPlyInstructions', { action: 'delete', id: mine2.id });
     await c.cmd('setPlyInstructions', { action: 'save', id: mine.id, name: '返答は短く', body: '- 結論から書く。', target: 'child', agents: ['claude', 'codex'] });
     answer = await ask(sid);
     t.ok('入れる会話を「委譲された会話だけ」にすると依頼元には入らない', !answer.includes(mineText) && (await added(sid)).find(r => r.id === mine.id)?.reason === 'target');
@@ -99,30 +112,32 @@ export default async function (t) {
     t.ok('名前の無い指示・渡す口の無いエージェントは断る', Boolean(badSave) && Boolean(badAgent));
 
     // ---- 既定の編集と「既定に戻す」
-    state = await c.cmd('setPlyInstructions', { action: 'save', id: 'delegate', name: '委譲の進め方', body: '- 3 ファイルまでは自分でやる。', target: 'parent', agents: ['claude', 'codex'] });
-    t.ok('既定を編集すると「既定から変更」', state.items[1].id === 'delegate' && state.items[1].modified && state.items[1].tag === 'default');
+    // 依頼元でも見えるように、入れる会話も「すべて」に変える
+    state = await c.cmd('setPlyInstructions', { action: 'save', id: 'child', name: agentT('ja', 'guide.names.child'), body: '- 10 分で止める。', target: 'all', agents: ['claude', 'codex'] });
+    const editedChild = state.items.find(i => i.id === 'child');
+    t.ok('既定を編集すると「既定から変更」', editedChild?.modified && editedChild.tag === 'default' && editedChild.target === 'all');
     answer = await ask(sid);
-    t.ok('編集した文が入る', answer.includes('- 3 ファイルまでは自分でやる。') && !answer.includes(agentT('ja', 'guide.delegate')));
-    state = await c.cmd('setPlyInstructions', { action: 'reset', id: 'delegate' });
-    t.ok('「既定に戻す」で辞書の文へ戻る（編集していない既定は Pleiad の更新で新しい文面になる）', !state.items.find(i => i.id === 'delegate').modified
-      && !Object.hasOwn((await prefs()).plyInstructions.items.find(i => i.id === 'delegate'), 'body'));
+    t.ok('編集した文が入る', answer.includes('- 10 分で止める。') && !answer.includes(agentT('ja', 'guide.commandLifetime')));
+    state = await c.cmd('setPlyInstructions', { action: 'reset', id: 'child' });
+    t.ok('「既定に戻す」で辞書の文へ戻る（編集していない既定は Pleiad の更新で新しい文面になる）', !state.items.find(i => i.id === 'child').modified
+      && !Object.hasOwn((await prefs()).plyInstructions.items.find(i => i.id === 'child'), 'body'));
     await c.cmd('setPlyInstructions', { action: 'delete', id: mine.id });
 
     // ---- 振り分けを無効にすると連動の項目を入れない
     await c.cmd('setDelegationRouting', { settings: { enabled: false } });
     answer = await ask(sid);
-    t.ok('委譲先の自動選択が無効なら振り分けの使い方は入らない', answer === `${bridge}\n\n${delegateText}`, answer.slice(-160));
+    t.ok('委譲先の自動選択が無効なら振り分けの使い方は入らない（入れるものが無ければ ply_agents の instructions のまま）', answer === bridge, answer.slice(-160));
     t.ok('記録は routingOff', (await added(sid)).find(r => r.id === 'route')?.reason === 'routingOff');
     t.ok('画面の合計にも数えない', (await c.cmd('plyInstructions')).routing === false);
     await c.cmd('setDelegationRouting', { settings: { enabled: null } });
 
     // ---- Codex: developerInstructions に入り、ロード済みのスレッドでも次のターンから変わる。エージェントで絞れる
-    await c.cmd('setPlyInstructions', { action: 'save', name: 'Codex だけ', body: 'CODEX-ONLY', target: 'all', agents: ['codex'] });
+    const codexOnly = (await c.cmd('setPlyInstructions', { action: 'save', name: 'Codex だけ', body: 'CODEX-ONLY', target: 'all', agents: ['codex'] })).items.find(i => i.name === 'Codex だけ');
     const { sessionId: cx } = await c.cmd('newSession', { backend: 'codex', cwd: ROOT });
     await c.runTurn({ sessionId: cx, prompt: 'hello' });
     const turnsOf = async () => (await entries()).filter(e => e.method === 'turn/start');
     const firstTurn = (await turnsOf()).at(-1);
-    t.ok('Codex の developerInstructions に入る（Codex だけの項目も）', firstTurn?.developerInstructions?.includes(delegateText) && firstTurn.developerInstructions.includes('CODEX-ONLY') && firstTurn.developerInstructions.includes(bridge), String(firstTurn?.developerInstructions).slice(-160));
+    t.ok('Codex の developerInstructions に入る（Codex だけの項目も）', firstTurn?.developerInstructions?.includes(routeText) && firstTurn.developerInstructions.includes('CODEX-ONLY') && firstTurn.developerInstructions.includes(bridge), String(firstTurn?.developerInstructions).slice(-160));
     const stored = normalizePlyInstructions((await prefs()).plyInstructions);
     const forClaude = turnInstructions({ list: stored, locale: 'ja', child: false, routing: true, supported: true, canDelegate: true, agent: 'claude' });
     t.ok('Claude Code の会話には Codex だけの項目を入れず、理由 agent を記録する', forClaude.find(r => r.name === 'Codex だけ')?.reason === 'agent'
@@ -130,21 +145,21 @@ export default async function (t) {
     await c.runTurn({ sessionId: cx, prompt: 'again' });
     const unchanged = await entries();
     t.ok('指示が同じなら外さない（読み込み直さない）', !unchanged.some(e => e.method === 'thread/unsubscribe'));
-    await c.cmd('setPlyInstructions', { action: 'toggle', id: 'delegate', on: false });
+    await c.cmd('setPlyInstructions', { action: 'toggle', id: codexOnly.id, on: false });
     await c.runTurn({ sessionId: cx, prompt: 'after off' });
     const after = await entries();
     const offTurn = after.filter(e => e.method === 'turn/start').at(-1);
     t.ok('ロード済みのスレッドは外してから読み直し、新しい指示で走る', after.some(e => e.method === 'thread/unsubscribe' && e.threadId === offTurn?.threadId)
-      && !offTurn?.developerInstructions?.includes(delegateText) && offTurn?.developerInstructions?.includes(bridge), JSON.stringify(after.map(e => e.method)));
+      && !offTurn?.developerInstructions?.includes('CODEX-ONLY') && offTurn?.developerInstructions?.includes(bridge), JSON.stringify(after.map(e => e.method)));
 
     // ---- 読み取りのモードでは委譲できないので委譲の項目は入れない（ほかの項目は入る）
-    await c.cmd('setPlyInstructions', { action: 'toggle', id: 'delegate', on: true });
+    await c.cmd('setPlyInstructions', { action: 'toggle', id: codexOnly.id, on: true });
     await c.cmd('setTurnSettings', { sessionId: cx, mode: 'readonly' });
     await c.runTurn({ sessionId: cx, prompt: 'readonly' });
     const ro = (await turnsOf()).at(-1);
     const roRec = await added(cx);
-    t.ok('読み取りのモードの依頼元には委譲の項目を入れず、理由を記録する', !ro?.developerInstructions?.includes(delegateText) && roRec.find(r => r.id === 'delegate')?.reason === 'readOnly'
-      && roRec.find(r => r.id === 'route')?.reason === 'readOnly' && ro.developerInstructions.includes('CODEX-ONLY'));
+    t.ok('読み取りのモードの依頼元には委譲の項目を入れず、理由を記録する', !ro?.developerInstructions?.includes(routeText) && roRec.find(r => r.id === 'route')?.reason === 'readOnly'
+      && ro.developerInstructions.includes('CODEX-ONLY'));
   } finally {
     c.close();
     await server.stop();

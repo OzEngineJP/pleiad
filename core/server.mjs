@@ -1196,7 +1196,7 @@ hosts: () => remoteDelegation?.describe() ?? [] });
 // 前の版の Cerebras の判定器の項目（judgeByKind の cerebras・escalateToCerebras）は読むときに Qwen の名前へ直し、次に保存するときに書き直す（ADR 0177）
 let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
 // Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
-let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext); })();
+let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext, currentLocale()); })();
 /** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
 const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
 const ROUTING_SERVICES = [...new Set(Object.values(JUDGE_SERVICE))];
