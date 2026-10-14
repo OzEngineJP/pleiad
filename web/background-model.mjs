@@ -35,10 +35,24 @@ export function nativeChildren(sessionId, subagents, past = []) {
   return [...live, ...past.filter(a => !origins.has(a.origin) && !ids.has(a.id))].sort((a, b) => when(b) - when(a));
 }
 
-// hostStale: ホストの孫の行で、しばらく読めていないもの（走っていたかもしれない・終わったかもしれない）。どちらにも数えない
+/**
+ * 入口の数に入る項目。根が終わった子の孫（inEntry: false）は行として見せても数えない（childNativeEntry）。
+ * hostStale: ホストの孫の行で、しばらく読めていないもの（走っていたかもしれない・終わったかもしれない）。どちらにも数えない
+ */
+const countsLive = item => item.live && item.inEntry !== false;
+const countsEnded = item => item.group === 'agent' && !item.live && !item.hostStale && item.inEntry !== false;
 export function backgroundTotals(items) {
-  return { live: items.filter(item => item.live).length,
-    ended: items.filter(item => item.group === 'agent' && !item.live && !item.hostStale).length };
+  return { live: items.filter(countsLive).length, ended: items.filter(countsEnded).length };
+}
+
+/**
+ * 委譲した子の会話が生んだネイティブのサブエージェント（孫）の、入口の数への扱い。
+ * 根（委譲した子）が終わっているなら、孫は走っていても終わった行として出し、入口の数に入れない（開いた一覧の有無で数が変わらないように）。
+ * taskLive が真なら何も足さない（状態は nativeItem が決める）
+ */
+export function childNativeEntry(a, taskLive) {
+  if (taskLive) return {};
+  return { live: false, inEntry: false, status: a.status === 'running' || a.status == null ? null : a.status };
 }
 
 /** 種類の並び（固定）。数が変わっても、入口の中の位置が入れ替わらない */
@@ -55,7 +69,7 @@ export function backgroundKind(item) {
  * 承認待ちを含む種類だけ先頭へ寄せ、残りは固定の並び。並べるのは 3 種類まで（残りは hidden に数える）だが、承認待ちの種類は隠さない
  */
 export function backgroundSummary(items, maxVisible = 3) {
-  const live = items.filter(item => item.live);
+  const live = items.filter(countsLive);
   const byKind = new Map();
   for (const item of live) {
     const kind = backgroundKind(item);
@@ -68,7 +82,7 @@ export function backgroundSummary(items, maxVisible = 3) {
     Number(b.waiting > 0) - Number(a.waiting > 0) || BACKGROUND_KIND_ORDER.indexOf(a.kind) - BACKGROUND_KIND_ORDER.indexOf(b.kind));
   const shown = Math.max(maxVisible, groups.filter(group => group.waiting > 0).length);
   const visible = groups.length > shown ? groups.slice(0, shown) : groups;
-  return { live: live.length, ended: items.filter(item => item.group === 'agent' && !item.live).length,
+  return { live: live.length, ended: items.filter(countsEnded).length,
     groups, visible, hidden: groups.length - visible.length };
 }
 

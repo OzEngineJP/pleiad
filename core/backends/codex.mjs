@@ -484,7 +484,8 @@ const COLLAB_VERBS = new Set([
 const collabVerb = (tool) => (COLLAB_VERBS.has(tool) ? t(`codex.collab.${tool}`) : String(tool ?? ""));
 
 /** 状態の語彙（server の getSubagentState の契約）への写し。notFound など写せないものは null（分からない） */
-const ACTIVITY_STATE = { started: "running", interacted: "running", completed: "completed", interrupted: "stopped" };
+// interacted（メッセージを届けただけ）は状態を変えない。走り出すのは子のターン開始（turn/started）と、collab の running（sendInput・followupTask）
+const ACTIVITY_STATE = { started: "running", completed: "completed", interrupted: "stopped" };
 const COLLAB_STATE = {
   pendingInit: "running", running: "running", completed: "completed",
   errored: "failed", shutdown: "stopped", interrupted: "stopped",
@@ -528,7 +529,7 @@ const nameOfChild = (id) =>
 /**
  * 親の items の 1 件を map に畳む。parent はその item が載っているスレッド（collab は senderThreadId）。
  * at は { start, end }（ISO）。実行時は通知の startedAtMs / completedAtMs、履歴はターンの時刻。
- * 後から来たものが勝つ（interacted の後に completed、completed の後に interacted = 再開）。
+ * 後から来たものが勝つ（completed の後でも、collab の sendInput・followupTask が running を返せば再開）。
  */
 function applySubagentItem(map, parent, item, at) {
   const entry = (id, create) => {
@@ -597,6 +598,16 @@ function observeSubagents(method, params) {
     if (spawn?.agent_path) e.path = spawn.agent_path;
     if (!e.status) { e.status = "running"; e.startedAt = toIso(t.createdAt) ?? new Date().toISOString(); }
     bounded(liveSubagents);
+    return;
+  }
+  // 終わった子に新しいターンが始まった = 再開（send_message の trigger_turn: true など）。届けただけ（interacted）では再開しない
+  if (method === "turn/started") {
+    const e = liveSubagents.get(params?.threadId);
+    if (e && TERMINAL.has(e.status)) {
+      e.status = "running";
+      e.startedAt ??= toIso(params?.turn?.startedAt) ?? new Date().toISOString();
+      e.endedAt = null;
+    }
     return;
   }
   if (method !== "item/started" && method !== "item/completed") return;

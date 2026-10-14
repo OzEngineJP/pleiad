@@ -1,5 +1,5 @@
 import { taskTitle } from '../../core/task-title.mjs';
-import { backgroundTitle, taskTree, nativeChildren, backgroundTotals, backgroundKind, backgroundSummary, groupByOwner, visibleRows } from '../../web/background-model.mjs';
+import { backgroundTitle, taskTree, nativeChildren, backgroundTotals, childNativeEntry, backgroundKind, backgroundSummary, groupByOwner, visibleRows } from '../../web/background-model.mjs';
 
 export const name = 'background-model';
 export const title = 'バックグラウンドのタイトル・集計・子孫の順序・入口の種類のまとめ';
@@ -50,6 +50,23 @@ export default async function(t) {
   t.ok('承認待ちの種類が 3 を超えても全部出す', allWaiting.visible.length === 4 && allWaiting.visible.every(g => g.waiting) && allWaiting.hidden === 0);
   const ended = backgroundSummary([agent('claude', { live: false }), agent('codex', { live: false }), { group: 'command', live: false }]);
   t.ok('終わったものだけなら種類は出さず、完了の数だけ（コマンドは数えない）', ended.live === 0 && ended.groups.length === 0 && ended.ended === 2);
+
+  // ---- 終わった子（根）の孫は、行として出しても入口の数に入れない。一覧を開いたかどうかで数が変わらないように
+  const grandRunning = childNativeEntry({ status: 'running' }, false);
+  const grandDone = childNativeEntry({ status: 'completed' }, false);
+  t.ok('根が終わった孫は、走っていても終わった行（live: false・状態は分からない）で、入口に数えない印を持つ',
+    grandRunning.live === false && grandRunning.inEntry === false && grandRunning.status === null && grandDone.status === 'completed');
+  t.ok('根が走っている孫は何も足さない（状態は nativeItem が決める）', Object.keys(childNativeEntry({ status: 'running' }, true)).length === 0);
+  const grandRow = (entry) => ({ group: 'agent', backend: 'codex', ...entry });
+  const withoutGrand = [agent('claude'), { group: 'agent', backend: 'claude', live: false }];
+  const withGrand = [...withoutGrand, grandRow(grandRunning), grandRow(grandDone)];
+  t.ok('終わった根の孫の行を足しても、稼働中・完了の数は変わらない（一覧を開く前と後）',
+    JSON.stringify(backgroundTotals(withGrand)) === JSON.stringify(backgroundTotals(withoutGrand))
+    && backgroundTotals(withGrand).live === 1 && backgroundTotals(withGrand).ended === 1);
+  const summaryWith = backgroundSummary(withGrand);
+  t.ok('チップも、終わった根の孫は種類にも数にも出さない', summaryWith.live === 1 && summaryWith.groups.map(g => `${g.kind}:${g.n}`).join() === 'claude:1' && summaryWith.ended === 1);
+  t.ok('ホストの孫の hostStale は、稼働中にも完了にも数えない（チップの完了も合わせる）',
+    backgroundSummary([{ group: 'agent', live: false, hostStale: true }]).ended === 0 && backgroundTotals([{ group: 'agent', live: false, hostStale: true }]).ended === 0);
 
   // ---- Channels のスレッドの一覧: bot（根の会話）ごとに分け、終わった親は limit 件までなど
   const row = (key, owner, live, extra = {}) => ({ key, group: 'agent', owner, live, ...extra });

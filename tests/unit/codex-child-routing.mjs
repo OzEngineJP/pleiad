@@ -386,6 +386,62 @@ async function backendTurn(t) {
   t.ok("runTurn が返った後の子の承認はエラーで返す（codex は待たされない）", isError(late), JSON.stringify(late));
 }
 
+// ---- 3b. 届けただけ（interacted）では終わった子は走り出さない。ターンが始まるか、collab が running を返したら再開する
+//
+// 親の接続（shared）に子の通知を流して、getSubagentState の通知経路を測る（親が native の接続で走っている形）。
+
+const REVIVE_PARENT = "01a09da0-aaaa-7000-8000-00000000000a";
+const REVIVE_CHILD = "01a09da0-bbbb-7000-8000-00000000000b";
+
+async function interactedKeepsFinishedChild(t) {
+  shared.stop();
+  process.env.AGENT_HOST_CODEX_BIN = `node "${SCRIPT}"`;
+  const push = (...frames) => shared.request("test/push", { frames });
+  const subItem = (kind, id) => ({
+    method: "item/completed",
+    params: {
+      threadId: REVIVE_PARENT, turnId: "tn_x", completedAtMs: Date.now(),
+      item: { id, type: "subAgentActivity", kind, agentThreadId: REVIVE_CHILD, agentPath: "/root/revive" },
+    },
+  });
+  const collabItem = (id, tool, status) => ({
+    method: "item/completed",
+    params: {
+      threadId: REVIVE_PARENT, turnId: "tn_x", completedAtMs: Date.now(),
+      item: {
+        id, type: "collabAgentToolCall", tool, status: "completed", senderThreadId: REVIVE_PARENT,
+        receiverThreadIds: [REVIVE_CHILD], prompt: null, model: null, reasoningEffort: null,
+        agentsStates: { [REVIVE_CHILD]: { status, message: null } },
+      },
+    },
+  });
+  const childTurn = {
+    method: "turn/started", params: { threadId: REVIVE_CHILD, turn: { id: "tn_rv", status: "inProgress", startedAt: secs() } },
+  };
+  const state = async () => backend.getSubagentState(REVIVE_PARENT, REVIVE_CHILD);
+
+  await push(threadStarted(REVIVE_CHILD, { parent: REVIVE_PARENT, agentPath: "/root/revive" }),
+    activity(REVIVE_PARENT, REVIVE_CHILD, "/root/revive"), subItem("completed", "call_rv_done"));
+  t.ok("届けただけの前: 子が終わったら completed", (await state())?.status === "completed", JSON.stringify(await state()));
+
+  await push(subItem("interacted", "call_rv_msg"));
+  t.ok("subAgentActivity interacted（send_message で届けただけ）では completed のまま",
+    (await state())?.status === "completed", JSON.stringify(await state()));
+  await push(collabItem("call_rv_send", "sendMessage", "completed"));
+  t.ok("collab の sendMessage（trigger_turn: false）が completed を返しても completed のまま",
+    (await state())?.status === "completed", JSON.stringify(await state()));
+
+  await push(childTurn);
+  const resumed = await state();
+  t.ok("子のターンが始まったら running（endedAt は null）", resumed?.status === "running" && resumed.endedAt === null, JSON.stringify(resumed));
+
+  await push(subItem("completed", "call_rv_done2"));
+  t.ok("走り直して終わったら completed", (await state())?.status === "completed", JSON.stringify(await state()));
+  await push(collabItem("call_rv_follow", "followupTask", "running"));
+  t.ok("collab の followupTask が running を返したら running（ターンの通知が無くても）",
+    (await state())?.status === "running", JSON.stringify(await state()));
+}
+
 // ---- 4. サブエージェント一覧の口（listSubagents / getSubagentMessages / getSubagentOrigin / getSubagentState）
 //
 // こちらは tests/lib/fake-codex.mjs（thread/list { parentThreadId } と thread/read を持つ台本）と話す。
@@ -480,7 +536,7 @@ async function subagentsViaFake(t) {
   t.ok("getSubagentOrigin: 分からなければ null（孫）", await backend.getSubagentOrigin(seed.parent, seed.grandchild) === null);
 
   const done = await backend.getSubagentState(seed.parent, seed.activity);
-  t.ok("getSubagentState: 履歴の completed。時刻は子の Thread の createdAt / updatedAt",
+  t.ok("getSubagentState: 履歴の completed（届けただけの interacted が後にあっても）。時刻は子の Thread の createdAt / updatedAt",
     done?.status === "completed" && Math.abs(Date.parse(done.startedAt) - (Date.now() - 60_000)) < 5_000
       && Math.abs(Date.parse(done.endedAt) - (Date.now() - 30_000)) < 5_000,
     JSON.stringify(done));
@@ -529,6 +585,7 @@ export default async function (t) {
     await routesChildren(t, r);
     await holdsForNewThread(t, r);
     await backendTurn(t);
+    await interactedKeepsFinishedChild(t);
     await subagentsViaFake(t);
   } finally {
     r.stop();

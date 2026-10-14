@@ -515,7 +515,7 @@ async function runSubagentTurn(t, turnId, { slow = false } = {}) {
 /**
  * 通知を出さずに、サブエージェントの記録だけを持つ親を作る（fake/seedSubagents）。
  * Pleiad が実行時に何も見ていない親（再起動の後・別のクライアントで走った会話）を、親の items から読めるかを測る。
- *   activity:   subAgentActivity started -> completed（gpt-6-astra の形）
+ *   activity:   subAgentActivity started -> completed -> interacted（届けただけ。完了のまま）（gpt-6-astra の形）
  *   collab:     collabAgentToolCall(spawnAgent) だけ。agentsStates が errored
  *   stopped:    subAgentActivity started -> interrupted
  *   grandchild: activity の子が生んだ孫（親の直接の子ではない）
@@ -543,6 +543,7 @@ function seedSubagents(cwd) {
         reasoningEffort: null, agentsStates: { [collab.id]: { status: "errored", message: "boom" } } },
       activityItem("call_seed_stopped", "started", stopped, "/root/review_request"),
       activityItem(`subagent-completed-${activity.id}`, "completed", activity, "/root/song_audit"),
+      activityItem(`subagent-interacted-${activity.id}`, "interacted", activity, "/root/song_audit"),
       activityItem(`subagent-interrupted-${stopped.id}`, "interrupted", stopped, "/root/review_request"),
       { id: "it_sm", type: "agentMessage", text: "終わった" },
     ],
