@@ -37,4 +37,5 @@ beta.7〜9 のリリースは、どれも同じ形で止まった。同じ commi
 - 揺れる試験は隠れやすくなる。注釈・まとめ・timings の `retried` を見て、同じ suite が繰り返し流し直されるなら試験か製品を直す。
 - 流し直しは 1 回目に落ちた suite の再実行なので、`tests/lib/runner.mjs` の整合の検査（ちょうど 1 回ずつ走る）は 1 回目の記録で数える。
 - `test.yml` の run が main で増える（続けて push したとき）。標準の runner は無料で、同時実行の枠にも収まる。
+- 結果を返さない suite（上限を過ぎて止められたもの。`tests/lib/runner.mjs`）も流し直す対象。揺れで止まったものは新しい worker で通ることがあり、止まり続けるものは 2 回止められて赤のままになる（流し直したことは注釈に残る）。止まったままの suite でジョブが 30 分黙って止まる事故は、suite ごとの上限で防ぐ。
 - 版上げの手順は `docs/desktop-releases.md`「バージョンと原稿」、`ci-gate` の規則は `docs/release-ci-reuse.md`。
