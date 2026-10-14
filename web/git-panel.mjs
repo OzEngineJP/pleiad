@@ -17,7 +17,7 @@ import { diffHTML } from './git-diff.mjs';
 const KEY = 'git';
 const WIDE_PX = 740;      // 左右の差分を選べる幅
 const HISTORY_PAGE = 50;
-const SESSION_PAGES = 4;  // 会話の始まりのコミットを探して続けて読むページの上限
+const WT_SKELETON_ROWS = 3;   // 作業場所の件数が分かる前に出す骨組みの行数
 
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 /** 数（サーバーから来た値でも HTML に入れる前に数にする） */
@@ -67,7 +67,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   const ask = (command, args) => new Promise((resolve, reject) => { const timer = setTimeout(() => reject(new Error('timeout')), 30_000); cmd(command, args).then(resolve, reject).finally(() => clearTimeout(timer)); });
   const leftovers = createLeftovers({ ...worktrees, changed: () => { if (st.tab === 'worktrees') paint(); } });
   const fresh = (key) => ({ key, tab: 'changes', sel: { k: 'uncommitted' }, open: null, auto: false, touched: false, initial: 'uncommitted', shut: new Set(), older: false, base: null, changes: {}, commitData: {}, hist: null, histLoading: false,
-    wt: null, wtOpen: new Set(), wtDetail: new Map(), diff: null, loading: false, failed: false, at: null, note: '' });
+    start: null, wt: null, wtFull: false, wtOpen: new Set(), wtDetail: new Map(), diff: null, loading: false, failed: false, at: null, note: '' });
   let st = fresh(null);
   let opener = null, ticket = 0, noteTimer = 0, target = null, wide = false;
   const sid = () => target ?? session().id;
@@ -100,7 +100,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function selectTab(tab, focus = false) {
     if (st.tab === tab && !st.diff) { if (focus) tabs.querySelector(`[data-t="${tab}"]`).focus(); return; }
     st.diff = null; st.tab = tab;
-    if (tab === 'worktrees' && !st.wt) loadWorktrees();
+    if (tab === 'worktrees' && (!st.wt || st.wt.partial)) loadWorktrees();
     paint();
     if (focus) tabs.querySelector(`[data-t="${tab}"]`).focus();
   }
@@ -202,15 +202,50 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const c = commits[r - (layout.rows[0].wt ? 1 : 0)];
     const start = st.hist?.session;
     const isStart = start && start.head === c.hash;
-    const mark = isStart ? `<span class="startmk" title="${esc(t('git.startTitle', { time: fmt.time(start.at) }))}">${flagIcon}${esc(t('git.sessionStart', { time: fmt.time(start.at) }))}</span>` : '';
+    const mark = isStart ? `<span class="startmk" title="${esc(t('git.startTitle', { time: startTime(start.at) }))}">${flagIcon}${esc(t('git.sessionStart', { time: startTime(start.at) }))}</span>` : '';
     const tip = `${c.short} · ${c.author} · ${new Date(c.at).toLocaleString()}`;
     return `<button type="button" class="cg-row${row.head ? ' headc' : ''}" data-r="${r}" data-k="${esc(c.hash)}" aria-expanded="${st.open === c.hash}" aria-controls="ins-${r}" title="${esc(tip)}" aria-label="${esc(`${c.subject} · ${c.refs.map((x) => x.name).filter(Boolean).join(' ')} · ${fmt.relative(c.at)} · ${c.short}${isStart ? ` · ${t('git.sessionStartLabel')}` : ''}`)}">${rowSvg(layout, r)}<span class="cg-t">${c.refs.map(refHTML).join('')}<span class="subj">${esc(c.subject)}</span>${mark}</span><span class="cg-tm">${esc(fmt.relative(c.at))}</span>${chevHTML}</button>${boxShell(r, c.hash, c.subject)}`;
   }
 
+  /** 会話の始まりの日時。範囲より前の始まりは前の日のことが多いので、月日も付ける */
+  const startTime = (ms) => fmt.dateTime(ms, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  // ---------------------------------------------------------------- 読み込み中の骨組み（既存の .history-line。履歴・作業場所・範囲の一覧は、頭と変更の一覧より後に届く）
+  const skLine = (w, h) => `<span class="history-line" style="width:${w}${h ? `;height:${h}` : ''}"></span>`;
+  const HIST_SK_WIDTHS = ['58%', '44%', '62%', '38%', '52%', '46%'];
+  /** 履歴が届くまでの行（グラフの行と同じ高さ・同じ線。押せない） */
+  function histSkeletonHTML() {
+    const rows = HIST_SK_WIDTHS.map((w, i) => `<div class="cg-row sk" aria-hidden="true"><svg class="g" viewBox="0 0 44 30" aria-hidden="true"><path class="e l0" d="M10 ${i === 0 ? '15' : '0'}V30"/><circle class="n l0" cx="10" cy="15" r="4.3"/></svg><span class="cg-t">${skLine(w)}</span><span class="cg-tm">${skLine('34px')}</span><span></span></div>`).join('');
+    return `<div class="hist-sk">${rows}</div>`;
+  }
+  /** 「この会話の間」の一覧が届くまで（題の位置に 1 本、ファイルの行 2 本） */
+  const listSkeletonHTML = () => `<div class="cl-h"><div class="cl-tt">${skLine('46%', '12px')}</div></div><div class="tree" aria-busy="true"><div class="fr sk" aria-hidden="true">${skLine('38%', '11px')}</div><div class="fr sk" aria-hidden="true">${skLine('30%', '11px')}</div></div>`;
+  const WT_SK_WIDTHS = ['46%', '38%', '52%'];
+  /** 作業場所の一覧が届くまでの行（件数が分かる前は WT_SKELETON_ROWS 行） */
+  const wtSkeletonHTML = (i) => `<div class="wrow sk" aria-hidden="true">${branchIcon}<span style="min-width:0;display:block"><span class="b">${skLine(WT_SK_WIDTHS[i % WT_SK_WIDTHS.length])}</span><span class="p">${skLine('62%')}</span><span class="m">${skLine('52%')}</span></span><span class="tm"></span></div>`;
+
+  /**
+   * 会話の始まりの札（グラフの上の 1 行）。始まりのコミットが読み込んだ範囲の中なら ⚑ はその行に付くので、札は出さない。
+   * 範囲より前なら「始まりまで読む」、押した後は読み込み中、2,000 件まで探して無ければ「見つかりませんでした」
+   */
+  function startNoteHTML() {
+    const s = st.hist?.session;
+    if (!s?.head || startRow >= 0) return '';
+    const mark = `<span class="startmk" title="${esc(t('git.startTitle', { time: startTime(s.at) }))}">${flagIcon}${esc(t('git.sessionStart', { time: startTime(s.at) }))}</span>`;
+    const note = (inner) => `<div class="startnote" role="status" tabindex="-1">${mark}${inner}</div>`;
+    if (s.lost || st.start === 'lost') return note(`<span class="sn-t">${esc(t('git.startLost'))}</span>`);
+    if (s.pos == null) return '';
+    if (st.start === 'loading') return note(`<span class="sn-t pending-glint">${esc(t('git.loading'))}</span>`);
+    return note(`<span class="sn-t">${esc(t('git.startBeyond'))}</span><button class="btn btn-quiet" type="button" data-startfind>${esc(t('git.startFind'))}</button>`);
+  }
+  /** 札の入れ物（.fold。消すときは 240ms で畳む） */
+  const startSlotHTML = () => { const h = startNoteHTML(); return h ? `<div class="fold" data-start><div>${h}</div></div>` : ''; };
+
   function graphHTML() {
     const total = layout.rows.length;
     const foldFrom = startRow >= 0 ? startRow + 1 : total;
-    let h = `<div class="cg" role="list" aria-label="${esc(t('git.graph'))}">`;
+    const filling = st.histLoading && !st.hist;
+    let h = `<div class="cg" role="list" aria-label="${esc(t('git.graph'))}"${filling ? ' aria-busy="true"' : ''}>`;
     for (let r = 0; r < Math.min(foldFrom, total); r++) h += `<div role="listitem">${rowHTML(r)}</div>`;
     const hidden = total - foldFrom;
     if (hidden > 0) {
@@ -218,6 +253,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       h += `<button type="button" class="cg-more" aria-expanded="${st.older}" data-older>${tailSvg()}<span>${esc(st.older ? t('git.olderHide') : t('git.older', { count: hidden }))}</span></button>`;
     }
     if (st.hist?.next != null) h += `<div class="cg-more-row"><button class="btn btn-quiet" type="button" data-more>${esc(t('git.loadMore', { count: HISTORY_PAGE }))}</button></div>`;
+    if (filling) h += histSkeletonHTML();
     return `${h}</div>`;
   }
 
@@ -265,6 +301,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   function listHTML() {
     const m = listModel();
     diffList = []; fileKeys = {};
+    if (m.loading && st.sel.k === 'session') return listSkeletonHTML();
     const body = messageOf(m, st.sel.k === 'session' ? t('git.emptySession') : t('git.emptyUncommitted'));
     const groupsHTML = filesHTML(m, '', diffList, fileKeys);
     const tot = `${t('git.files', { count: m.total.files })}${m.total.add || m.total.del ? ` ${countsText(m.total)}` : ''}`;
@@ -293,11 +330,11 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   const cleanHTML = () => (st.sel.k === 'uncommitted' && st.changes.uncommitted && !st.changes.uncommitted.failed && !layout.rows[0]?.wt ? `<div class="git-empty" data-clean>${esc(t('git.emptyUncommitted'))}</div>` : '');
 
   function renderChanges() {
-    if (st.loading && !st.base) return frag(`<div class="gp-view"><div class="git-empty">${esc(t('git.loading'))}</div></div>`);
+    if (st.loading && !st.base) return frag(`<div class="gp-view cgv" aria-busy="true"><div class="rbar"><span class="sk-seg" aria-hidden="true">${skLine('100%', '22px')}</span></div><div class="cg" role="list" aria-label="${esc(t('git.graph'))}" aria-busy="true">${histSkeletonHTML()}</div></div>`);
     if (st.failed || !st.base) return frag(`<div class="gp-view"><div class="git-empty">${esc(t('git.failed'))}</div></div>`);
     buildLayout();
     const bar = rbarHTML();
-    const view = frag(`<div class="gp-view cgv">${bar ? `<div class="rbar">${bar}</div>` : ''}${cleanHTML()}${graphHTML()}<div class="cl">${st.sel.k === 'session' ? listHTML() : ''}</div></div>`);
+    const view = frag(`<div class="gp-view cgv">${bar ? `<div class="rbar">${bar}</div>` : ''}${cleanHTML()}${startSlotHTML()}${graphHTML()}<div class="cl">${st.sel.k === 'session' ? listHTML() : ''}</div></div>`);
     queueMicrotask(() => { applySelection(); wireTree(); });
     return view;
   }
@@ -313,13 +350,13 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const edgeOn = (i) => { const e = layout.edges[i]; return R.nodes.has(e.a) && (e.b == null ? false : R.nodes.has(e.b) || e.b === R.base); };
     for (const x of root.querySelectorAll('.cg [data-e]')) { const on = edgeOn(Number(x.dataset.e)); x.classList.toggle('on', on); x.classList.toggle('dim', dimOut && !on); }
     for (const x of root.querySelectorAll('.cg [data-n]')) { const r = Number(x.dataset.n); const on = R.nodes.has(r), base = r === R.base; x.classList.toggle('on', on); x.classList.toggle('base', base && !on); x.classList.toggle('dim', dimOut && !on && !base); }
-    for (const x of root.querySelectorAll('.cg-row')) {
+    for (const x of root.querySelectorAll('.cg-row:not(.sk)')) {
       const r = Number(x.dataset.r); const on = R.nodes.has(r);
       x.classList.toggle('dim', dimOut && !on && r !== R.base); x.classList.toggle('sel', x.dataset.k === st.open);
     }
     for (const x of root.querySelectorAll('.startmk')) x.classList.toggle('on', st.sel.k === 'session');
     // グラフの行は Tab の止まりを 1 つにする（↑↓ で移る）。開いている行、無ければ最初の行
-    const rowsAll = [...root.querySelectorAll('.cg-row')];
+    const rowsAll = [...root.querySelectorAll('.cg-row:not(.sk)')];
     const stop = rowsAll.find((x) => x.dataset.k === st.open) ?? rowsAll[0];
     for (const x of rowsAll) x.tabIndex = x === stop ? 0 : -1;
   }
@@ -333,7 +370,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const bar = root.querySelector('.rbar'), cl = root.querySelector('.cl');
     if (!cl) { paint(); return; }
     if (bar) bar.innerHTML = rbarHTML();
-    root.querySelector('[data-clean]')?.remove(); root.querySelector('.cg')?.insertAdjacentHTML('beforebegin', cleanHTML());
+    root.querySelector('[data-clean]')?.remove(); (root.querySelector('[data-start]') ?? root.querySelector('.cg'))?.insertAdjacentHTML('beforebegin', cleanHTML());
     if (next.k === 'session') { if (st.open === WT_KEY) toggleBox(WT_KEY); cl.innerHTML = listHTML(); }
     else { cl.innerHTML = ''; if (layout.rows[0]?.wt && st.open !== WT_KEY) toggleBox(WT_KEY); }
     wireTree(); applySelection(); paintTabs();
@@ -341,7 +378,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   }
 
   // ---------------------------------------------------------------- コミットの行の箱（同時に 1 つ。240ms · ease-out の開閉は .fold と同じ）
-  const rowOfKey = (key) => [...root.querySelectorAll('.cg-row')].find((x) => x.dataset.k === key);
+  const rowOfKey = (key) => [...root.querySelectorAll('.cg-row:not(.sk)')].find((x) => x.dataset.k === key);
   const foldOfRow = (row) => row?.nextElementSibling;
   function closeBox(key) {
     const row = rowOfKey(key), fold = foldOfRow(row); if (!row || !fold) return;
@@ -380,12 +417,12 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   }
 
   // ---------------------------------------------------------------- 一覧のキーボード（role=tree の行を上下で移る）
-  function treeRows() { return [...root.querySelectorAll('.cl .grp, .cl .fr')].filter((r) => !r.closest('.fold.shut')); }
+  function treeRows() { return [...root.querySelectorAll('.cl .grp, .cl .fr:not(.sk)')].filter((r) => !r.closest('.fold.shut')); }
   function focusRow(r) {
     for (const x of root.querySelectorAll('.cl .grp, .cl .fr')) { x.tabIndex = -1; x.querySelectorAll('button').forEach((b) => (b.tabIndex = -1)); }
     r.tabIndex = 0; r.querySelectorAll('button').forEach((b) => (b.tabIndex = 0)); r.focus();
   }
-  function wireTree() { const first = root.querySelector('.cl .grp, .cl .fr'); if (first) first.tabIndex = 0; }
+  function wireTree() { const first = root.querySelector('.cl .grp, .cl .fr:not(.sk)'); if (first) first.tabIndex = 0; }
   function toggleFold(r) {
     const id = r.dataset.fold; if (!id) return;
     if (st.shut.has(id)) st.shut.delete(id); else st.shut.add(id);
@@ -416,7 +453,9 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     return h;
   }
   function renderWorktrees() {
-    if (!st.wt) return frag(`<div class="gp-view"><div class="git-empty">${esc(st.wtFailed ? t('git.failed') : t('git.loading'))}</div></div>`);
+    if (!st.wt && st.wtFailed) return frag(`<div class="gp-view"><div class="git-empty">${esc(t('git.failed'))}</div></div>`);
+    if (!st.wt) return frag(`<div class="gp-view wtv" aria-busy="true">${Array.from({ length: WT_SKELETON_ROWS }, (_, i) => wtSkeletonHTML(i)).join('')}</div>`);
+    const partial = st.wt.partial === true;   // 一覧だけ届いている間は、状態の所を骨組みにする
     const base = st.wt.base?.branch ?? 'main';
     const view = frag('<div class="gp-view wtv"></div>');
     st.wt.rows.forEach((w, i) => {
@@ -424,7 +463,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
       const [cls, label] = badge(w);
       const tail = w.path.split('/').slice(-2).join('/');
       const meta = !w.exists ? t('git.wtMissing') : [w.main ? null : (w.ahead ? t('git.wtAhead', { base, count: w.ahead }) : t('git.wtSame', { base })), w.dirty ? t('git.wtDirty', { count: w.dirty }) : (w.main ? null : t('git.wtNoChange'))].filter(Boolean).join(' · ');
-      const row = frag(`<div><button type="button" class="wrow" aria-expanded="${open}" data-wi="${i}">${branchIcon}<span style="min-width:0"><span class="b"><code>${esc(w.branch ?? (w.detached ? `HEAD ${w.head}` : ''))}</code>${label ? `<span class="wbadge ${cls}">${esc(label)}</span>` : ''}</span><span class="p" title="${esc(w.path)}">…/${esc(tail)}</span><span class="m">${esc(meta)}</span></span><span class="tm">${w.at ? esc(fmt.relative(w.at)) : ''}<span class="chev">${chevRightIcon}</span></span></button><div class="fold${open ? '' : ' shut'}"><div><div class="wdet" data-wd="${i}">${open ? wtDetailHTML(w) : ''}</div></div></div></div>`);
+      const row = frag(`<div><button type="button" class="wrow" aria-expanded="${open}" data-wi="${i}">${branchIcon}<span style="min-width:0"><span class="b"><code>${esc(w.branch ?? (w.detached ? `HEAD ${w.head}` : ''))}</code>${label ? `<span class="wbadge ${cls}">${esc(label)}</span>` : ''}</span><span class="p" title="${esc(w.path)}">…/${esc(tail)}</span>${partial ? `<span class="m ph" aria-hidden="true">${skLine('52%')}</span>` : `<span class="m">${esc(meta)}</span>`}</span><span class="tm">${w.at ? esc(fmt.relative(w.at)) : ''}<span class="chev">${chevRightIcon}</span></span></button><div class="fold${open ? '' : ' shut'}"><div><div class="wdet" data-wd="${i}">${open ? wtDetailHTML(w) : ''}</div></div></div></div>`);
       view.append(row);
       if (open && w.kind === 'left' && w.leftover) row.querySelector('.wdet').append(leftovers.actions(w.leftover));
     });
@@ -532,6 +571,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (rg) { choose({ k: rg.dataset.rg }); root.querySelector(`[data-rg="${st.sel.k}"]`)?.focus(); return; }
     const crow = e.target.closest('.cg-row');
     if (crow) { toggleRow(crow.dataset.k); crow.focus({ preventScroll: true }); return; }
+    if (e.target.closest('[data-startfind]')) { findStart(); return; }
     if (e.target.closest('[data-older]')) { st.older = !st.older; paint({ keepScroll: true }); return; }
     if (e.target.closest('[data-more]')) { loadMoreHistory(); return; }
     if (e.target.closest('[data-v]')) { prefs.view = prefs.view === 'tree' ? 'list' : 'tree'; savePrefs(); const cl = root.querySelector('.cl'); cl.innerHTML = listHTML(); wireTree(); refillBox(); root.querySelector('[data-v]')?.focus(); return; }
@@ -573,8 +613,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     }
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     // グラフの行と、開いた箱の中のファイルの行は、見えている順に ↑↓ で移る
-    const visible = () => [...root.querySelectorAll('.cg-row, .ins .grp, .ins .fr')].filter((x) => !x.closest('.fold.shut'));
-    const go = (x) => { if (!x) return; if (x.classList.contains('cg-row')) { for (const y of root.querySelectorAll('.cg-row')) y.tabIndex = -1; x.tabIndex = 0; } x.focus(); };
+    const visible = () => [...root.querySelectorAll('.cg-row:not(.sk), .ins .grp, .ins .fr')].filter((x) => !x.closest('.fold.shut'));
+    const go = (x) => { if (!x) return; if (x.classList.contains('cg-row')) { for (const y of root.querySelectorAll('.cg-row:not(.sk)')) y.tabIndex = -1; x.tabIndex = 0; } x.focus(); };
     const crow = e.target.closest?.('.cg-row');
     if (crow && e.target === crow) {
       const open = crow.getAttribute('aria-expanded') === 'true';
@@ -634,13 +674,72 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     noteTimer = setTimeout(() => { st.note = ''; root.querySelector('.gp-toast')?.remove(); }, 1800);
   }
 
+  // ---------------------------------------------------------------- 段ごとの描き足し
+  // 頭・タブ・変更の一覧が先に出て、履歴・作業場所は届いた順に埋まる。描いてある所は作り直さず（動かさず）、新しく入る行だけ 240ms で出す。
+  /** 新しく入った要素を 4px 上がりながら出す（gp-appear）。動きを減らす設定では動かさない */
+  function appear(el) {
+    if (!el || reduced()) return;
+    el.classList.remove('in'); void el.offsetWidth; el.classList.add('in');
+    const done = (e) => { if (e.target !== el) return; el.classList.remove('in'); el.removeEventListener('animationend', done); };
+    el.addEventListener('animationend', done);
+  }
+
+  /** 会話の始まりの札を今の状態に合わせる。collapse は始まりまで読み終えたとき（札を 240ms で畳んでから消す） */
+  function syncStart({ collapse = false } = {}) {
+    const slot = root.querySelector('[data-start]');
+    const html = startNoteHTML();
+    if (html) {
+      if (!slot) root.querySelector('.cg')?.insertAdjacentHTML('beforebegin', `<div class="fold" data-start><div>${html}</div></div>`);
+      else if (!slot.classList.contains('shut')) slot.firstElementChild.innerHTML = html;
+      return;
+    }
+    if (!slot) return;
+    if (collapse && !reduced()) { slot.classList.add('shut'); slot.inert = true; setTimeout(() => { if (slot.classList.contains('shut')) slot.remove(); }, 320); }
+    else slot.remove();
+  }
+
+  /**
+   * 履歴が届いた・読み足したとき、グラフだけを差し替える（頭・タブ・変更の一覧・開いている箱の外は触らない）。
+   * 前から出ていた行は動かさず、新しく入った行だけ出す。スクロールの位置と、行にあったフォーカスは保つ
+   */
+  function paintGraph() {
+    const cg = root.querySelector('.cg');
+    if (st.tab !== 'changes' || st.diff) return;
+    if (!cg || !st.base) { paint({ keepScroll: true }); return; }
+    const scrollEl = root.parentElement, top = scrollEl?.scrollTop ?? 0;
+    const clY = root.querySelector('.cl')?.offsetTop ?? 0;
+    const had = new Set([...cg.querySelectorAll('.cg-row:not(.sk)')].map((x) => x.dataset.k));
+    const active = document.activeElement?.closest?.('.cg-row')?.dataset.k;
+    buildLayout();
+    const next = frag(graphHTML());
+    cg.replaceWith(next);
+    for (const row of next.querySelectorAll('.cg-row')) if (!had.has(row.dataset.k)) appear(row.parentElement);
+    syncStart({ collapse: true });
+    // 「この会話の間」の題の「HH:MM の撮影から」は、履歴（会話の始まりの時刻）が届いてから付く。一覧は作り直さず、その 1 語だけ足す
+    const tt = root.querySelector('.cl .cl-tt > b');
+    const note = st.sel.k === 'session' ? listModel().titleNote : '';
+    if (tt && note) {
+      let w = tt.querySelector('.w');
+      if (!w) { tt.append(' '); w = document.createElement('span'); w.className = 'w'; tt.append(w); }
+      w.textContent = note;
+    }
+    applySelection();
+    // 一覧より下を見ていたときは、グラフが伸びた分だけ送って、見ていた所を動かさない
+    if (scrollEl) scrollEl.scrollTop = top > 0 && top >= clY ? top + ((root.querySelector('.cl')?.offsetTop ?? 0) - clY) : top;
+    if (active) rowOfKey(active)?.focus({ preventScroll: true });
+  }
+
   // ---------------------------------------------------------------- 取得
   async function loadRange(range) {
     const id = sid(); let data = null;
     try { data = await ask('gitPanel', { sessionId: id, range, only: 'changes' }); } catch { /* */ }
-    if (sid() !== id || !data?.changes) return;
-    st.changes[range] = data.changes;
-    if (st.sel.k === range && st.tab === 'changes' && !st.diff) { const cl = root.querySelector('.cl'); if (cl) { cl.innerHTML = listHTML(); wireTree(); applySelection(); paintTabs(); } }
+    if (sid() !== id) return;
+    const first = !st.changes[range];
+    st.changes[range] = data?.changes ?? { failed: true, files: [], total: { files: 0, add: 0, del: 0 } };
+    if (st.sel.k === range && st.tab === 'changes' && !st.diff) {
+      const cl = root.querySelector('.cl');
+      if (cl) { cl.innerHTML = listHTML(); wireTree(); applySelection(); paintTabs(); if (first) appear(cl); }
+    }
   }
   async function loadCommit(hash) {
     const id = sid(); let res = null;
@@ -649,38 +748,71 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     st.commitData[hash] = res?.commit ?? { failed: true, commit: { hash, short: hash.slice(0, 7), subject: '', author: '', at: 0, parents: [] }, files: [], total: { files: 0, add: 0, del: 0 } };
     if (st.open === hash) refillBox();
   }
+  /** 履歴の最初の 1 ページ。会話の始まりの位置（session.pos）は core が 1 回で数えて返す（探して続けて読むことはしない）。届いたら true */
   async function loadHistory() {
-    const id = sid(); st.histLoading = true;
+    const id = sid(), cur = st; cur.histLoading = true;
     let res = null;
     try { res = await ask('gitHistory', { sessionId: id, limit: HISTORY_PAGE }); } catch { /* */ }
-    if (sid() !== id) return;
-    st.histLoading = false;
-    if (!res?.history) { st.hist = null; return; }
-    st.hist = res.history;
-    // 会話の始まりのコミットが読み込みの外なら、見つかるまで続けて読む（上限あり）
-    for (let n = 0; n < SESSION_PAGES && st.hist.session?.head && st.hist.next != null && !st.hist.commits.some((c) => c.hash === st.hist.session.head); n++) {
-      let more = null;
-      try { more = await ask('gitHistory', { sessionId: id, limit: HISTORY_PAGE, cursor: st.hist.next }); } catch { break; }
-      if (sid() !== id || !more?.history) break;
-      st.hist = { ...st.hist, commits: [...st.hist.commits, ...more.history.commits], next: more.history.next };
-    }
+    if (st !== cur || sid() !== id) return false;
+    st.histLoading = false; st.start = null;
+    st.hist = res?.history ?? null;
+    return true;
   }
   async function loadMoreHistory() {
-    const id = sid(); let more = null;
+    const id = sid(), cur = st; let more = null;
     try { more = await ask('gitHistory', { sessionId: id, limit: HISTORY_PAGE, cursor: st.hist.next }); } catch { /* */ }
-    if (sid() !== id || !more?.history) return;
+    if (st !== cur || sid() !== id || !more?.history) return;
     // 続きを読む間に HEAD が動いたら、--skip がずれるので最初から読み直す
-    if (more.history.head !== st.hist.head) { await loadHistory(); paint({ keepScroll: true }); return; }
+    if (more.history.head !== st.hist.head) { if (await loadHistory()) paintGraph(); return; }
     const seen = new Set(st.hist.commits.map((c) => c.hash));
     st.hist = { ...st.hist, commits: [...st.hist.commits, ...more.history.commits.filter((c) => !seen.has(c.hash))], next: more.history.next };
-    paint({ keepScroll: true });
+    paintGraph();
   }
+  /** 「始まりまで読む」: 会話の始まりのコミットまでを 1 回で読み足し、札を畳み、⚑ を本当の位置に出す */
+  async function findStart() {
+    const id = sid(), cur = st, hist = st.hist, s = hist?.session;
+    if (!s?.head || st.start === 'loading' || hist.next == null) return;
+    const fromBtn = Boolean(document.activeElement?.closest?.('[data-startfind]'));
+    st.start = 'loading'; syncStart();
+    if (fromBtn) root.querySelector('.startnote')?.focus({ preventScroll: true });
+    let res = null;
+    try { res = await ask('gitHistory', { sessionId: id, cursor: hist.next, through: true }); } catch { /* */ }
+    if (st !== cur || sid() !== id || st.hist !== hist) return;
+    const got = res?.history;
+    if (!got) { st.start = null; syncStart(); return; }   // 読めなかった: ボタンに戻す（もう一度押せる）
+    if (got.session?.lost) { st.start = 'lost'; syncStart(); return; }
+    if (got.head !== hist.head) { if (await loadHistory()) paintGraph(); return; }
+    const seen = new Set(hist.commits.map((c) => c.hash));
+    st.hist = { ...hist, commits: [...hist.commits, ...got.commits.filter((c) => !seen.has(c.hash))], next: got.next };
+    st.start = null;
+    paintGraph();
+    if (fromBtn) { const row = rowOfKey(s.head); if (row) { row.focus({ preventScroll: true }); row.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); } }
+  }
+
+  /** 作業場所タブを開いたとき: 各 worktree の状態まで読む（一覧は先に届いていれば、名前とパスはそのまま、状態の所だけ埋める） */
   async function loadWorktrees() {
-    const id = sid(); let res = null;
+    const id = sid(), cur = st;
+    if (cur.wtFull) return;
+    cur.wtFull = true; cur.wtFailed = false;
+    let res = null;
     try { res = await ask('gitWorktrees', { sessionId: id }); } catch { /* */ }
-    if (sid() !== id) return;
+    cur.wtFull = false;
+    if (st !== cur || sid() !== id) return;
     st.wt = res?.worktrees ?? null; st.wtFailed = !st.wt;
-    paint({ keepScroll: true });
+    if (st.tab === 'worktrees' && !st.diff) paint({ keepScroll: true }); else paintTabs();
+  }
+  /**
+   * パネルを開いたとき: 一覧（名前・パス・件数）だけ。git は worktree list の 1 回で、各 worktree の中は読まない。
+   * 件数はタブの名前（読み上げ・ツールチップ）に出す。replace は再読み込みで、読んである状態つきの一覧を捨てて取り直す
+   */
+  async function loadWtList({ replace = false } = {}) {
+    const id = sid(), cur = st;
+    let res = null;
+    try { res = await ask('gitWorktrees', { sessionId: id, only: 'list' }); } catch { /* */ }
+    if (st !== cur || sid() !== id || !res?.worktrees) return;
+    if (st.wt && !st.wt.partial && !replace) return;   // 状態つきが先に届いていたら、そちらを使う
+    st.wt = res.worktrees;
+    if (st.tab === 'worktrees' && !st.diff) paint({ keepScroll: true }); else paintTabs();
   }
   async function loadWtDetail(w) {
     const id = sid(); let res = null;
@@ -690,6 +822,11 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     paint({ keepScroll: true });
   }
 
+  /**
+   * 開いたとき・再読み込み・ターンの終わり。段に分けて出す:
+   *   1 gitPanel の軽い答えが来たら、頭・タブ・変更の一覧を描く（履歴・範囲の一覧は骨組み）
+   *   2 履歴・「この会話の間」の一覧・開いた箱・作業場所の件数を並べて読み、届いた順に描き足す
+   */
   async function load({ force = false } = {}) {
     const id = sid();
     if (!id) return;
@@ -701,7 +838,10 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (mine !== ticket || sid() !== id) return;
     st.loading = false; st.at = Date.now();
     if (!data?.git) { st.base = null; st.failed = true; onState(null, { foreign: foreign() }); paint(); return; }
-    st.base = data; st.changes = { uncommitted: data.changes };
+    const had = Boolean(st.base);
+    // 読み直す間は前の「この会話の間」の一覧を残す（骨組みに戻さない）。コミットの中身は変わらないので、取れたものは残す
+    const keep = had && st.sel.k === 'session' && data.changes?.hasSession ? st.changes.session : null;
+    st.base = data; st.changes = { uncommitted: data.changes, ...(keep ? { session: keep } : {}) };
     if (!data.changes?.hasSession && st.sel.k === 'session') st.sel = { k: 'uncommitted' };
     if (st.initial === 'session' && data.changes?.hasSession) st.sel = { k: 'session' };
     st.initial = 'uncommitted';
@@ -709,14 +849,21 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     if (!st.touched && !st.open && st.sel.k === 'uncommitted' && (data.changes?.total?.files ?? 0) > 0) { st.open = WT_KEY; st.auto = true; }
     onState(data.git, { foreign: foreign() });
     prs.load(id, (data.timeline ?? []).filter((e) => e.kind === 'pr'));
-    st.commitData = {};
+    st.commitData = Object.fromEntries(Object.entries(st.commitData).filter(([, v]) => !v.failed));
     const sameHead = !force && st.hist && data.git.head && st.hist.head?.startsWith(data.git.head);
-    await Promise.all([sameHead ? null : loadHistory(), st.sel.k === 'session' ? loadRange('session') : null, st.open && st.open !== WT_KEY ? loadCommit(st.open) : null, st.tab === 'worktrees' ? loadWorktrees() : null]);
-    if (mine !== ticket || sid() !== id) return;
+    if (!sameHead) st.histLoading = true;
     // 差分を開いている間に取り直しが終わったら、差分は開いたまま中身だけ読み直す
     if (st.diff) { st.diff.cache.clear(); st.diff.failed.clear(); loadDiffAt(st.diff.index); }
-    paint();
-    if (!st.wt || force) loadWorktrees();
+    // 段 1。ここに PR の行など、gitPanel の軽い答えだけで描ける頭の部品を足す（履歴・作業場所を待たせない）
+    paint({ keepScroll: had });
+    // 段 2
+    const jobs = [];
+    if (!sameHead) jobs.push(loadHistory().then((ok) => { if (ok && mine === ticket) paintGraph(); }));
+    if (st.sel.k === 'session') jobs.push(loadRange('session'));
+    if (st.open && st.open !== WT_KEY && !st.commitData[st.open]) jobs.push(loadCommit(st.open));
+    if (st.tab === 'worktrees') jobs.push(loadWorktrees());
+    else if (!st.wt || force) jobs.push(loadWtList({ replace: force }));
+    await Promise.all(jobs);
   }
 
   // ---------------------------------------------------------------- 開閉

@@ -320,3 +320,30 @@ a.gp-pr:focus-visible,.gp-more:focus-visible{outline:2px solid var(--line-blue);
 .gp .ref.mine{background:none;color:var(--ink-blue);padding:0 2px;font-weight:600}
 .gp .ref .rn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gp .ref svg{flex:none}
+/* ---- 段ごとの表示（頭・変更の一覧が先、履歴・作業場所は後から。docs/design-system.md「git パネルの読み込み」） ---- */
+/* 骨組みは既存の .history-line（1.6 秒の光）。行の高さ・並びは本物と同じにして、入れ替わっても動かない。押せず、フォーカスも入らない */
+.gp .cg-row.sk{cursor:default;pointer-events:none}
+.gp .cg-row.sk svg.g{opacity:.4}
+.gp .cg-row.sk .cg-t,.gp .cg-row.sk .cg-tm{display:flex;align-items:center}
+.gp .hist-sk{height:178px;overflow:hidden}
+.gp .sk-seg{display:inline-block;width:204px;max-width:100%}
+.gp .sk-seg .history-line{height:29px}
+.gp .fr.sk{cursor:default;pointer-events:none}
+.gp .fr.sk .history-line{height:11px}
+.gp .cl-h .cl-tt > .history-line{margin:4px 0}
+.gp .wrow.sk{cursor:default;pointer-events:none}
+.gp .wrow.sk .b{height:19px}
+.gp .wrow.sk .p,.gp .wrow.sk .m,.gp .wrow .m.ph{height:18px;display:flex;align-items:center}
+.gp .wrow .tm{min-width:64px;justify-content:flex-end}
+.gp .wrow.sk .b .history-line{height:12px}
+.gp .wrow.sk .p .history-line,.gp .wrow .m.ph .history-line{height:9px}
+/* 会話の始まりが読み込んだ範囲より前のときの札（グラフの上の 1 行。.fold で畳む） */
+.gp .startnote{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;background:var(--surface-1);border-radius:var(--r-m);padding:5px 8px;margin:4px 0 6px;font-size:var(--fs-xs);color:var(--ink-weak);min-height:34px}
+.gp .startnote:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.gp .startnote .startmk{padding:0 4px 0 0;flex:none}
+.gp .startnote .sn-t{flex:1 1 12em;min-width:0}
+.gp .startnote .btn{font-size:var(--fs-xs);padding:2px 10px;height:24px;flex:none}
+.gp .startnote .pending-glint{color:var(--ink-weak)}
+/* 後から届いて入る行・一覧は 240ms で 4px 上がりながら出る（前から出ていたものは動かさない） */
+.gp .in{animation:gp-appear var(--dur) var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.gp .in{animation:none}}

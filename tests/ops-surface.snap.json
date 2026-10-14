@@ -2046,7 +2046,7 @@
         }
       },
       "legacyCommand": "gitHistory",
-      "input": "e894f481f4d9"
+      "input": "15c61013e176"
     },
     {
       "id": "git.prs",
@@ -2129,7 +2129,7 @@
         }
       },
       "legacyCommand": "gitWorktrees",
-      "input": "6e29f82f210b"
+      "input": "51b5b6a9396f"
     },
     {
       "id": "hooks.copy",

@@ -225,6 +225,18 @@ export default async function (t) {
     t.ok('退避の ref はブランチ一覧に出ず、ユーザーの main は動かない', !/pleiad\/ply/.test(sh(repo, 'branch', '--list')) && sh(repo, 'rev-parse', 'main').trim() === sh(repo, 'rev-parse', 'HEAD').trim());
     t.ok('退避は 90 日を過ぎたら掃除される', (await wtgit.pruneArchiveRefs(repo, 90 * 86400_000, Date.now() + 100 * 86400_000)) === 1 && (await wtgit.listArchiveRefs(repo)).length === 0);
 
+    // 片付けの範囲: repoDir を渡すと、そのリポジトリから作ったものだけ（パネルを開いたとき、開いたリポジトリだけを調べる）
+    const repoB = `${scratch}/repo-b`;
+    await makeRepo(repoB);
+    const scoped = createWorktrees({ dataDir: `${scratch}/data-scoped`, retryMs: [1, 1], sleep: async () => {}, graceMs: 0, users: async () => ({ busy: [], attached: [] }) });
+    const wa = (await scoped.create({ cwd: repo })).entry;
+    const wb = (await scoped.create({ cwd: repoB })).entry;
+    const swB = await scoped.sweep({ repoDir: wb.repoDir });
+    t.ok('片付けの範囲: repoDir を渡すと、そのリポジトリの分だけ片付ける（ほかのリポジトリのものは触らない）',
+      swB.length === 1 && swB[0].id === wb.id && swB[0].action === 'removed' && !(await exists(wb.path)) && (await exists(wa.path)) && (await scoped.get(wa.id)) !== null, JSON.stringify(swB));
+    const swAll = await scoped.sweep();
+    t.ok('片付けの範囲: 何も渡さなければ全部（今までどおり）', swAll.some((x) => x.id === wa.id && x.action === 'removed') && !(await exists(wa.path)));
+
     // 台帳を全部片付けたら、置き場の <repo>.pleiad は空になって消える
     for (const x of await wts.list()) await wts.settle(x.id, { release: ['s1', 's9'] });
     t.ok('全部片付いたら置き場のフォルダーも消える', !(await exists(`${scratch}/repo.pleiad`)) || (await fs.readdir(`${scratch}/repo.pleiad`)).length === 0);

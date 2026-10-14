@@ -1284,9 +1284,9 @@
       "status": { "summary": "会話の作業場所の git の状態（ブランチ・HEAD・変更の数）。git が無い・管理外は git: null。", "brief": "true で、この会話の間のファイル・コミットの数も返す。", "fresh": "true で読み直す（短い間の控えを使わない）。" },
       "changes": { "summary": "会話の作業場所の変更の一覧（ファイルごとの増減）・worktree・この会話の git の出来事。", "only": "changes は変更の一覧だけ、light は worktree の一覧を計算しない（画面が使う軽い問い合わせ）。省くと全部。" },
       "diff": { "summary": "1 ファイルの差分（統一差分）。範囲の代わりに、コミット 1 つ・2 つのコミットの間・ステージ済み／変更の区別も選べる。", "path": "リポジトリのルートからのパス（git.changes の path）。", "commit": "このコミットの差分（最初の親との比較）。", "from": "2 つのコミットの間の、比べる元（to と一緒に）。", "to": "2 つのコミットの間の、比べる先（from と一緒に）。", "stage": "staged でステージ済み（HEAD と index）、work でステージしていない変更（index と作業ツリー。未追跡を含む）。", "orig": "名前の変更の元のパス。", "context": "前後の行数（既定 3）。画面が畳んだ行を開くときに使う。", "after": "true で、差分の後ろ側のファイルの全行も返す（画面が畳んだ行を開くため）。" },
-      "history": { "summary": "コミットの履歴（git log --branches --tags --remotes HEAD を親が先の並びで。hash・親・作者・日時・ブランチ・タグ・題）。Pleiad の隠し ref は含めない。この会話の始まりの HEAD も返す。" },
+      "history": { "summary": "コミットの履歴（git log --branches --tags --remotes HEAD を親が先の並びで。hash・親・作者・日時・ブランチ・タグ・題）。Pleiad の隠し ref は含めない。この会話の始まりの HEAD と、履歴の先頭から数えた位置（pos。2000 件までに無ければ lost）も返す。", "through": "true で、cursor から会話の始まりのコミットまでを 1 回で返す（上限 2000 件。limit は使わない）。" },
       "commit": { "summary": "コミット 1 つの題・本文・作者・親と、変わったファイル（ファイルごとの増減）。マージは最初の親との差。" },
-      "worktrees": { "summary": "このリポジトリの worktree の一覧。ブランチ・パス・未コミットの数・主の作業場所からの先行。Pleiad が作ったものと、Pleiad の外で作ったものの区別つき。" },
+      "worktrees": { "summary": "このリポジトリの worktree の一覧。ブランチ・パス・未コミットの数・主の作業場所からの先行。Pleiad が作ったものと、Pleiad の外で作ったものの区別つき。", "only": "list で、一覧（ブランチ・パス・件数）だけ返し、各 worktree の中身は読まない（画面が使う軽い問い合わせ）。省くと状態つき。" },
       "worktree": { "summary": "worktree 1 つの中身（主の worktree との分岐点からのコミット済みの変更と、コミットしていない変更のファイル）。" }
     },
     "shell": {
