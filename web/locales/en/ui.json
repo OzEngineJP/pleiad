@@ -870,18 +870,7 @@
       "failedHint": "The image is corrupt or unsupported. Save it to check."
     },
     "unavailableAlt": "{{alt}} (can't display)",
-    "imageAlt": "Image",
     "someImages": "Some images can't be displayed.",
-    "omitted": {
-      "script": "scripts",
-      "extraStyle": "additional styles",
-      "imageFont": "images and fonts",
-      "style": "styles",
-      "image": "images",
-      "media": "media",
-      "join": ", ",
-      "note": "Some {{items}} couldn't be loaded. External resources other than scripts from allowed CDNs are not loaded."
-    },
     "original": "Source",
     "mode": {
       "file": "File",
@@ -2438,7 +2427,6 @@
   },
   "files": {
     "menu": {
-      "openInPanel": "Open in side panel",
       "openInPreview": "Open in preview",
       "viewSource": "View source",
       "openInBrowser": "Open in browser",
@@ -2503,7 +2491,6 @@
       "namedVisualization": "Visualization: {{title}}",
       "copyPath": "Copy path",
       "download": "Save HTML",
-      "sidePanel": "Show in side panel",
       "browser": "Open in browser",
       "truncated": "Omitted because it's too large.",
       "badImage": "This image can't be displayed.",
@@ -4313,8 +4300,6 @@
   },
   "browser": {
     "panel": "Browser",
-    "entry": "In-app browser ({{keys}})",
-    "entryLabel": "In-app browser",
     "unifiedEntryLabel": "Browser",
     "entryState": { "requested": "Waiting for your help", "paused": "You are operating Chrome", "working": "{{name}} is operating Chrome" },
     "tabs": "Browser tabs",
@@ -4387,22 +4372,18 @@
       "profileActions": "Chrome profiles"
     },
     "remote": {
-      "title": "PC browser",
-      "backToChat": "Back to conversation",
-      "screen": "Browser screen sent from the PC",
-      "address": "PC browser address",
-      "editAddress": "Enter address",
+      "screen": "Browser screen",
       "connectedFps": "Connected · {{fps}} fps",
       "connecting": "Connecting…",
-      "ended": "The PC browser tab was closed",
+      "ended": "The browser tab was closed",
       "quality": "Quality: {{level}}",
       "qualityAuto": "Auto",
       "qualityLow": "Low",
       "textInput": "Type text",
-      "textLabel": "Text to type into the PC page",
-      "textPlaceholder": "Text for the PC",
+      "textLabel": "Text to type into the page",
+      "textPlaceholder": "Text for the page",
       "textSend": "Send",
-      "failed": "Couldn't open the PC browser."
+      "failed": "Couldn't open the browser."
     }
   },
   "nav": {

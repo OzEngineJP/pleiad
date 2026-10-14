@@ -1,16 +1,9 @@
 import { renderMarkdown } from './render.mjs';
 import { fileReference } from './file-reference.mjs';
-import { VISUALIZE_CSP, isolateFrame } from './visualize-frame.mjs';
-import { LINK_BRIDGE, VIOLATION_BRIDGE } from './visualize-document.mjs';
-import { previewCsp } from './browser-confirm-policy.mjs';
-import { confirmedPreview } from './preview-confirm.mjs';
 import { t } from './i18n.mjs';
 
 /** 読み込めなかった画像の代わりの文字（alt）。「名前（表示できません）」 */
 const unavailableAlt = alt => t('filePreview.unavailableAlt', { alt });
-
-// HTML file previews and visualizations share the same sandbox policy.
-export const PREVIEW_CSP = VISUALIZE_CSP;
 
 /** CSV/TSV with escaped quotes, delimiters and newlines inside quoted cells. */
 export function parseTable(text, delimiter = ',', maxRows = 501, maxColumns = 100) {
@@ -32,117 +25,6 @@ export function parseTable(text, delimiter = ',', maxRows = 501, maxColumns = 10
 }
 
 const dataUrl = file => `data:${file.mime};base64,${file.data}`;
-
-/** Local `<script src>` becomes inline text (the file is read through the same
- * budget as other assets). HTTPS sources stay under the shared CSP.
- */
-export async function inlineScripts(root, asset, omitted) {
-  for (const script of root.querySelectorAll('script')) {
-    const raw = script.getAttribute('src') ?? null;
-    if (raw == null || !fileReference(raw)) continue;
-    script.removeAttribute('src'); script.removeAttribute('integrity');
-    try {
-      const file = await asset(raw);
-      if (file.kind !== 'text' || typeof file.text !== 'string' || file.size > 512 * 1024) throw new Error('script');
-      // Serialized raw inside <script>: keep the text from closing its own element.
-      script.textContent = file.text.replace(/<\/(script)/gi, '<\\/$1');
-    } catch { omitted.add(t('filePreview.omitted.script')); script.remove(); }
-  }
-}
-
-/** Policy goes before ALL file content, even documents with their own head. */
-export function previewDocument(body, policy = {}) {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">${VIOLATION_BRIDGE}<meta name="viewport" content="width=device-width,initial-scale=1"><style>body{margin:16px;font:15px/1.7 system-ui,sans-serif;overflow-wrap:anywhere}img,svg{max-width:100%;height:auto}</style>${LINK_BRIDGE}</head><body>${body}</body></html>`;
-}
-
-/** Scripts run in an opaque origin (never allow-same-origin): the app carries authenticated cookies. */
-export function previewFrame(documentText, title) {
-  const frame = isolateFrame(document.createElement('iframe'));
-  frame.className = 'file-preview-frame'; frame.title = title;
-  confirmedPreview(frame, policy => documentText.replace(/(<meta http-equiv="Content-Security-Policy" content=")[^"]*/, (_match, prefix) => prefix + previewCsp(policy)));
-  return frame;
-}
-
-/** Never connect untrusted markup to the parent document. Templates are inert.
- * Serialize into an opaque sandboxed iframe (scripts allowed, no same-origin)
- * after replacing local resources. Source content cannot relax the CSP prepended before it.
- */
-export async function htmlDocument(text, loadAsset) {
-  const template = document.createElement('template');
-  template.innerHTML = text;
-  const fragment = template.content;
-  const omitted = new Set();
-  let count = 0;
-  const asset = async raw => {
-    if (++count > 24 || !fileReference(raw)) throw new Error('resource');
-    return loadAsset(raw);
-  };
-  for (const element of fragment.querySelectorAll('iframe,frame,object,embed,base,meta[http-equiv],form')) {
-    if (element.localName === 'form') element.replaceWith(...element.childNodes);
-    else element.remove();
-  }
-  await inlineScripts(fragment, asset, omitted);
-  async function cssText(css, base) {
-    // Keep HTTPS imports; local imports still have no inline resolver.
-    css = css.replace(/@import\s+(?:url\(\s*(['"]?)(.*?)\1\s*\)|"([^"]*)"|'([^']*)')[^;]*;?/gi, (rule, _quote, url, double, single) => {
-      if (/^https:\/\//i.test(url || double || single || '')) return rule;
-      omitted.add(t('filePreview.omitted.extraStyle'));
-      return '';
-    });
-    const refs = [...css.matchAll(/url\(\s*(['"]?)(.*?)\1\s*\)/gi)];
-    for (const ref of refs) {
-      if (/^(https:\/\/|data:|blob:|#)/i.test(ref[2])) continue;
-      let replacement = 'none';
-      try {
-        const file = await loadAsset(ref[2], base);
-        if (++count > 24 || file.kind !== 'image' || file.size > 4 * 1024 * 1024) throw new Error('resource');
-        replacement = `url("${dataUrl(file)}")`;
-      } catch { omitted.add(t('filePreview.omitted.imageFont')); }
-      css = css.replace(ref[0], replacement);
-    }
-    return css;
-  }
-  for (const link of fragment.querySelectorAll('link')) {
-    if (link.rel.toLowerCase() === 'stylesheet') {
-      if (/^https:\/\//i.test(link.getAttribute('href') || '')) continue;
-      try {
-        const file = await asset(link.getAttribute('href'));
-        if (file.kind !== 'text' || file.size > 512 * 1024) throw new Error('stylesheet');
-        const style = document.createElement('style'); style.textContent = await cssText(file.text, file.path); link.replaceWith(style);
-      } catch { omitted.add(t('filePreview.omitted.style')); link.remove(); }
-    } else link.remove();
-  }
-  for (const style of fragment.querySelectorAll('style')) style.textContent = await cssText(style.textContent);
-  for (const element of fragment.querySelectorAll('*')) {
-    for (const attribute of [...element.attributes]) {
-      const name = attribute.name.toLowerCase();
-      if (['srcdoc','srcset','ping','autofocus','formaction','action','download'].includes(name) || (name === 'target' && !['a','area'].includes(element.localName))) element.removeAttribute(attribute.name);
-    }
-    if (element.hasAttribute('style')) element.setAttribute('style', await cssText(element.getAttribute('style')));
-    // The frame bridge opens absolute Web links; local files remain in source mode.
-    if (element.localName === 'a' || element.localName === 'area') {
-      if (!/^(https?:\/\/|#)/i.test(element.getAttribute('href') || '')) element.removeAttribute('href');
-      element.removeAttribute('xlink:href');
-    }
-    if (element.localName === 'img') {
-      const raw = element.getAttribute('src') ?? '';
-      if (/^(https:\/\/|data:image\/|blob:)/i.test(raw)) continue;
-      element.removeAttribute('src');
-      try {
-        const file = await asset(raw);
-        if (file.kind !== 'image' || file.size > 4 * 1024 * 1024) throw new Error('image');
-        element.setAttribute('src', dataUrl(file));
-      } catch { omitted.add(t('filePreview.omitted.image')); element.setAttribute('alt', unavailableAlt(element.getAttribute('alt') || raw || t('filePreview.imageAlt'))); }
-    }
-    if (['video','audio','source','track','image','use'].includes(element.localName)) {
-      for (const name of ['src','href','xlink:href','poster']) if (element.hasAttribute(name) && !/^(https:\/\/|data:|blob:|#)/i.test(element.getAttribute(name))) { element.removeAttribute(name); omitted.add(t('filePreview.omitted.media')); }
-    }
-  }
-  return {
-    document:previewDocument(template.innerHTML),
-    note:omitted.size ? t('filePreview.omitted.note', { items: [...omitted].join(t('filePreview.omitted.join')) }) : '',
-  };
-}
 
 export async function markdownContent(text, loadAsset) {
   const article = document.createElement('article'); article.className = 'body file-preview-document';

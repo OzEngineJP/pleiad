@@ -61,7 +61,7 @@ export function appLinkOf(node) {
 export function handlePreviewLinkMessage(event) {
   if (event.data?.type !== 'ply-preview-open-link' || typeof event.data.url !== 'string' ||
       typeof event.data.newWindow !== 'boolean') return false;
-  for (const frame of document.querySelectorAll('iframe.visualize-frame, iframe.file-preview-frame')) {
+  for (const frame of document.querySelectorAll('iframe.visualize-frame')) {
     if (frame.contentWindow === event.source) {
       return openExternalLink(event.data.url, { newWindow: event.data.newWindow, external: event.data.external === true });
     }

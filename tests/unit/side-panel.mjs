@@ -33,6 +33,8 @@ export default async function (t) {
   assert.deepEqual(html.footer, ['reveal', 'save', 'use']);
   const remote = fileSlots({ file: { kind: 'html', text: '<p>', downloadable: true }, osActions: false });
   assert.deepEqual(remote.toolbar, ['path', 'reload']); assert.deepEqual(remote.footer, ['save', 'use']);
+  assert.equal(html.views, false, 'HTML は原文だけ（描画の切り替えは無い）');
+  assert.deepEqual(fileSlots({ file: { kind: 'html', text: '<p>' }, osActions: false, htmlBrowser: true }).toolbar, ['browser', 'path', 'reload'], 'リモートはホストの内蔵ブラウザーへ');
   assert.equal(fileSlots({ file: { kind: 'text', text: 'x' } }).views, false, 'テキストは切り替えを出さない');
   assert.equal(fileSlots({ file: { kind: 'markdown', text: '# x' } }).kind, 'ファイル');
   t.ok('ファイル: 取得の前後・HTML・遠隔で出す部品', true);

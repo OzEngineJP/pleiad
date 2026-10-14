@@ -57,7 +57,6 @@ export default async function (t) {
   for (const r of rows) r.parentElement = thread;
   const pick = (kind) => rows.filter((r) => r.kind === kind);
   thread.querySelectorAll = (sel) => ({
-    '.visualize-expand': [expand],
     ':scope > .branch-row': pick('branch'),
     ':scope > .mw.compaction-boundary': pick('compact'),
     ':scope > .mw.card:not(.done)': pick('card'),
@@ -67,7 +66,7 @@ export default async function (t) {
   assert.deepEqual(turnKinds(thread, turns), ['', 'compact', 'branch', 'pending', '', '', ''],
     '出来事は直前の発言のターンに付ける。決着した承認（done）は数えない。可視化は区別しない');
   // 優先は 承認待ち > 圧縮 > 分岐
-  thread.querySelectorAll = (sel) => ({ ':scope > .mw.card:not(.done)': [rows[3]], ':scope > .mw.compaction-boundary': [rows[3]], ':scope > .branch-row': [rows[3]], '.visualize-expand': [] })[sel] ?? [];
+  thread.querySelectorAll = (sel) => ({ ':scope > .mw.card:not(.done)': [rows[3]], ':scope > .mw.compaction-boundary': [rows[3]], ':scope > .branch-row': [rows[3]] })[sel] ?? [];
   assert.equal(turnKinds(thread, turns)[1], 'pending', '同じターンに複数あれば承認待ちを出す');
   thread.querySelectorAll = () => [];
   assert.deepEqual(turnKinds(thread, turns), turns.map(() => ''), '何も無ければ空');

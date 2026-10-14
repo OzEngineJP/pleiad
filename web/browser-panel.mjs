@@ -1,7 +1,8 @@
 // 内蔵ブラウザーの右パネル（docs/inapp-browser.md、ADR 0041）。ページそのものはデスクトップ版の main が
 // 右パネルの本文の枠の位置に重ねる WebContentsView（desktop/browser-panel.cjs）で、ここは枠の部品と位置の報告だけを持つ。
-//   - 使えるのはデスクトップ版のホストの画面（ローカルの窓）だけ。ブラウザーで開いた Pleiad とリモートの窓では
-//     browserPanelAvailable() が false で、openInBrowserPanel() は何もしない（false を返す）
+//   - ページそのものを持てるのはデスクトップ版のホストの画面（ローカルの窓）だけ（browserPanelAvailable()）。
+//     ブラウザーで開いた Pleiad とリモートの窓は、同じ部品でホストの内蔵ブラウザーの映像を見る（web/remote-browser.mjs。viewport を渡す）。
+//     ホストが映像を送れない（pcBrowser でない）間は openInBrowserPanel() は何もしない（false を返す）
 //   - ネイティブの View は DOM より上に描かれる。メニュー・ダイアログ・知らせが本文の枠に重なる間は、
 //     main に写した画像をもらって同じ位置に置き、View を外す（freeze / unfreeze）
 // 部品を並べるのは右パネルの枠（web/side-panel.mjs の browserSlots と applySlots）。ここでは作るだけ。
@@ -33,14 +34,16 @@ export function browserPanelAvailable() {
 }
 
 let opener = null;
+let availability = browserPanelAvailable;
 /**
  * 内蔵ブラウザーで URL を開く（右パネルをブラウザーにして、今のタブで開く。newTab なら新しいタブ）。
+ * ホストの画面ではホストの内蔵ブラウザーそのもの、リモートの端末ではホストの内蔵ブラウザーの映像（web/remote-browser.mjs）。
  * url を省くと空の新しいタブ。使えない画面・開けない URL では何もせず false。
  * reuse: 同じ実体のファイル（可視化の写しは同じ記録）のタブがこの会話にあれば、新しく作らず前に出して読み直す。
  * source: 画面が開いた PC のファイル・可視化の写しの印（⋯ のファイルの操作とアドレス欄の見せ方。desktop/browser-panel.cjs の cleanSource）
  */
 export function openInBrowserPanel(url, { newTab = false, reuse = false, source = null } = {}) {
-  if (!browserPanelAvailable() || !opener) return false;
+  if (!availability() || !opener) return false;
   if (url != null && url !== '') {
     const target = normalizeAddress(url);
     if (!target) return false;
@@ -61,9 +64,13 @@ const button = (icon, label, action, className = 'btn btn-icon') => {
  * getSessionId は今開いている会話（タブがどの会話から開かれたかを main が覚える）。
  * openPanel は右パネルをブラウザーのモードにする関数（web/file-preview.mjs が後から入れる）。onEmpty は同じ会話のまま最後のタブが無くなったとき
  * （タブの無い会話へ移っただけなら呼ばず、パネルは開いたまま）。
- * onChange は main から状態（タブ）が届いて描き直した後
+ * onChange は main から状態（タブ）が届いて描き直した後。
+ * リモートの端末では bridge と viewport（映像）を web/remote-browser.mjs が渡し、available() がホストの内蔵ブラウザーを見られるか（pcBrowser）を答える。
+ * そのときタブの列・道具の列はホストの画面と同じ部品で、本文の枠にはページの代わりに映像が入る
  */
-export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMenu, getSessionId = () => null, onChange = () => {} } = {}) {
+export function createBrowserPanel({ bridge = window.plyDesktop?.browser, viewport = null, available = null, showMenu, getSessionId = () => null, onChange = () => {} } = {}) {
+  const remote = !!viewport;
+  if (remote || available) availability = available ?? (() => true);
   let state = { tabs: [], current: null, sessionId: null };
   let shown = false, covered = false, freezing = null, editing = false;
   // tabMenu(tab): ⋯ の先頭に足すファイルの操作（PC のファイル・可視化の写しのタブだけ。web/file-preview.mjs）。
@@ -155,7 +162,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   const empty = el('div', 'browser-empty');
   empty.append(el('h3', null, t('browser.empty.title')), el('p', null, t('browser.empty.hint')));
   const still = el('img', 'browser-still'); still.alt = ''; still.hidden = true;
-  body.append(empty, still);
+  body.append(empty, still, ...(remote ? [viewport] : []));
 
   function focusAddress() { requestAnimationFrame(() => { input.focus(); input.select(); }); }
 
@@ -270,7 +277,7 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
     reload.title = loading ? t('browser.stop') : t('browser.reload'); reload.setAttribute('aria-label', reload.title);
     // 押せるかは main が決める（http・https と、画面が明示して開いた file: の HTML。desktop/browser-panel.cjs）
     openExternal.disabled = !tab?.external;
-    empty.hidden = !!tab?.url;
+    empty.hidden = remote || !!tab?.url;   // リモートは空のタブも映像（白いページ）で見せる
     paintTabs(); paintAddress(); paintGuard();
     // 止めた https の出どころは、設定 › ブラウザーの「止めた出どころ」にも並べる
     for (const entry of state.tabs) if (entry.guard?.origins?.length) noteBlockedOrigins(entry.guard.origins);
@@ -348,6 +355,10 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
   bridge.command('state').then(paint).catch(() => {});
 
   const api = {
+    /** リモートの端末の右パネル（映像）か。ホストの画面ではない */
+    remote,
+    /** ホストの内蔵ブラウザーを見られるか（ホストの画面は常に true、リモートはホストが映像を送れるとき） */
+    available: () => (remote ? availability() : true),
     buttons: { back, forward, reloadPage: reload, address, openExternal, browserMore: more },
     tabsRow, guardRow, body,
     refreshTabs: paintTabs,
@@ -381,6 +392,16 @@ export function createBrowserPanel({ bridge = window.plyDesktop?.browser, showMe
       }
       else if (fresh || !state.tabs.length) { await run('newTab').catch(failed); focusAddress(); }
       if (!state.tabs.length) { await run('newTab').catch(failed); focusAddress(); }
+    },
+    /** リモートの端末: ホストの内蔵ブラウザーの、このタブを見る（browser.openFile が作ったタブ）。右パネルをブラウザーにして映像を出す */
+    async showTab(tabId) {
+      hooks.openPanel();
+      await bridge.command('select', { id: tabId }).catch(failed);
+    },
+    /** リモートの端末: 会話に残った可視化の写し（{ sessionId, id | at }）をホストの内蔵ブラウザーで開いて見る */
+    async showSnapshot(query) {
+      hooks.openPanel();
+      await bridge.watchSnapshot?.(query)?.catch(failed);
     },
     get state() { return state; },
   };

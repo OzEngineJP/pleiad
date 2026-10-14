@@ -33,7 +33,7 @@ function draw(frame, record) {
   frame.srcdoc = record.render(policy);
 }
 export function refreshPreviewConfirmation() {
-  for (const frame of document.querySelectorAll('iframe.visualize-frame,iframe.file-preview-frame')) {
+  for (const frame of document.querySelectorAll('iframe.visualize-frame')) {
     const record = records.get(frame);
     if (record && record.policy !== JSON.stringify(previewPolicy(getPrefs(), [...record.once]))) draw(frame, record);
   }
@@ -42,7 +42,7 @@ export function receivePreviewViolation(event) {
   if (event.data?.type !== 'ply-preview-blocked' || getPrefs().confirmExternalLoads !== true) return false;
   const origin = blockedOrigin(event.data.url);   // http も数える（許可に加えられるのは https だけ）
   if (!origin) return false;
-  for (const frame of document.querySelectorAll('iframe.visualize-frame,iframe.file-preview-frame')) {
+  for (const frame of document.querySelectorAll('iframe.visualize-frame')) {
     const record = records.get(frame);
     if (!record || frame.contentWindow !== event.source) continue;
     const allowed = previewPolicy(getPrefs(), [...record.once]).origins;

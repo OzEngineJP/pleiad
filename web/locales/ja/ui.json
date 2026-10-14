@@ -855,18 +855,7 @@
       "failedHint": "破損または未対応の画像です。保存して確認できます。"
     },
     "unavailableAlt": "{{alt}}（表示できません）",
-    "imageAlt": "画像",
     "someImages": "一部の画像を表示できません。",
-    "omitted": {
-      "script": "スクリプト",
-      "extraStyle": "追加のスタイル",
-      "imageFont": "画像・フォント",
-      "style": "スタイル",
-      "image": "画像",
-      "media": "メディア",
-      "join": "・",
-      "note": "一部の{{items}}を読み込めません。外部の資源は、許可されたCDNのスクリプト以外は読み込みません。"
-    },
     "original": "原文",
     "mode": {
       "file": "ファイル",
@@ -2376,7 +2365,6 @@
   },
   "files": {
     "menu": {
-      "openInPanel": "右パネルで開く",
       "openInPreview": "プレビューで開く",
       "viewSource": "原文を見る",
       "openInBrowser": "ブラウザーで開く",
@@ -2441,7 +2429,6 @@
       "namedVisualization": "可視化: {{title}}",
       "copyPath": "パスをコピー",
       "download": "HTML を保存",
-      "sidePanel": "サイドパネルに表示",
       "browser": "ブラウザーで開く",
       "truncated": "大きすぎるため省略されました",
       "badImage": "表示できない画像です",
@@ -4194,8 +4181,6 @@
   },
   "browser": {
     "panel": "ブラウザー",
-    "entry": "内蔵ブラウザー（{{keys}}）",
-    "entryLabel": "内蔵ブラウザー",
     "unifiedEntryLabel": "ブラウザー",
     "entryState": { "requested": "あなたへの依頼待ち", "paused": "あなたが Chrome を操作中", "working": "{{name}} が Chrome を操作中" },
     "tabs": "ブラウザーのタブ",
@@ -4268,22 +4253,18 @@
       "profileActions": "Chrome のプロフィール"
     },
     "remote": {
-      "title": "PC のブラウザー",
-      "backToChat": "会話へ",
-      "screen": "PC から送られたブラウザーの画面",
-      "address": "PC のブラウザーのアドレス",
-      "editAddress": "アドレスを入力",
+      "screen": "ブラウザーの画面",
       "connectedFps": "接続中 · {{fps}} fps",
       "connecting": "接続しています…",
-      "ended": "PC のブラウザーのタブが閉じました",
+      "ended": "ブラウザーのタブが閉じました",
       "quality": "画質: {{level}}",
       "qualityAuto": "自動",
       "qualityLow": "低",
       "textInput": "文字入力",
-      "textLabel": "PC のページへ入力する文字",
-      "textPlaceholder": "PC に入力する文字",
+      "textLabel": "ページへ入力する文字",
+      "textPlaceholder": "ページに入力する文字",
       "textSend": "入力",
-      "failed": "PC のブラウザーを開けませんでした。"
+      "failed": "ブラウザーを開けませんでした。"
     }
   },
   "nav": {
