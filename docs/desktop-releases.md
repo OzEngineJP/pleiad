@@ -329,6 +329,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 4. `Desktop publish or rollout` の `publish` で下書きを公開する。betaはpre-release、安定版はlatest。
 5. 少人数で確認後、同ワークフローの `rollout` で10→50→100%へ拡大する。
    配信率は自動で上げない。障害・問い合わせの確認に基づき判断する。
+   ただし、リポジトリは 2026-10-14 から immutable releases を有効にしている。公開済みのリリースの資産は差し替えられないので、公開後に `latest.yml` を上げ直す `rollout` は失敗する。段階配信が要るときは、下書きのうちに配信率を決めて `publish` する（公開後に率を変えるなら、immutable releases を外すか、次の版で行う）。
 
 CIは無断でバージョンを決めたりコミット・タグを作ったりしない。ソースと配布先へのpush/公開は明示的な操作（`release-bump.mjs` は人が打つコマンドで、`--push` を付けたときだけ push する）。
 既存の `Desktop packages` は未署名の評価用生成として残す。
