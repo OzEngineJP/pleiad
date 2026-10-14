@@ -359,7 +359,9 @@ async function run(t, tmp) {
     t.ok('peer: 組み込み（node:）と置き場の中の相対の import はそのまま', typeof api.createHash === 'function' && api.local.ok === true);
     const probe2 = await import(`${pathToFileURL(path.join(base, 'probe', 'probe.mjs')).href}?again`);
     t.ok('peer: フックは置き場の中だけに効く（外のファイルの解決は変えない）', probe2.decoy === true);
-    t.ok('peer: Node 24 の同期のフック（registerHooks）がある', typeof module.registerHooks === 'function', process.version);
+    // Node 22.15 以降は同期のフック（registerHooks）、22.13〜22.14 は別スレッドのローダー（register）を使う。上の判定はどちらの道でも通る
+    t.ok('peer: この Node で使えるフックの道がある（registerHooks か register）', typeof module.registerHooks === 'function' || typeof module.register === 'function',
+      `${process.version} ${typeof module.registerHooks === 'function' ? 'registerHooks' : 'register'}`);
   }
 
   // ---------------------------------------------------------------- 本物の SDK の import
