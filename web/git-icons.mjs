@@ -17,3 +17,12 @@ export const flagIcon = make('<path d="M5.5 21V4M5.5 4.5h11l-2.3 4 2.3 4h-11"/>'
 export const diffIcon = make('<path d="M8 4v7M4.5 7.5h7M12.5 18h7"/><path d="M19 5 5 19"/>');
 export const graphTabIcon = make('<circle cx="7" cy="5.5" r="2.2"/><circle cx="7" cy="18.5" r="2.2"/><circle cx="17" cy="12" r="2.2"/><path d="M7 7.7v8.6M14.8 12H12a5 5 0 0 1-5-5"/>');
 export const worktreeTabIcon = make('<path d="M2.5 12H8M19 5.5h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9M16.5 3 19.2 5.5 16.5 8M16.5 16l2.7 2.5-2.7 2.5"/>');
+// PR の状態（色を使わず、形で分ける。docs/git-panel-pr.md）と、チェックの結果
+export const prIcon = make('<circle cx="6" cy="5.5" r="2.3"/><circle cx="6" cy="18.5" r="2.3"/><path d="M6 7.8v8.4"/><circle cx="18" cy="18.5" r="2.3"/><path d="M18 16.2V9.5a3 3 0 0 0-3-3h-3"/>');
+export const prOpenIcon = make('<circle cx="6" cy="5.5" r="2.3"/><circle cx="6" cy="18.5" r="2.3"/><path d="M6 7.8v8.4"/><circle cx="18" cy="18.5" r="2.3"/><path d="M18 16.2V9.5a3 3 0 0 0-3-3h-4.5"/><path d="M12.8 4l-2.5 2.5 2.5 2.5"/>');
+export const prDraftIcon = make('<circle cx="6" cy="5.5" r="2.3"/><circle cx="6" cy="18.5" r="2.3"/><path d="M6 7.8v8.4"/><circle cx="18" cy="18.5" r="2.3"/><path d="M18 5v.01M18 9v.01M18 13v.01" stroke-width="2.6"/>');
+export const prMergedIcon = make('<circle cx="6" cy="5.5" r="2.3"/><circle cx="6" cy="18.5" r="2.3"/><circle cx="18" cy="13" r="2.3"/><path d="M6 7.8v8.4"/><path d="M6 7.8c0 3.6 3.2 5.2 9.7 5.2"/>');
+export const prClosedIcon = make('<circle cx="6" cy="5.5" r="2.3"/><circle cx="6" cy="18.5" r="2.3"/><path d="M6 7.8v8.4"/><circle cx="18" cy="18.5" r="2.3"/><path d="M18 16.2v-4.4"/><path d="M15.6 4.4l4.8 4.8M20.4 4.4l-4.8 4.8"/>');
+export const checkPassIcon = make('<path d="M5 12.5l4.5 4.5L19 7.5"/>');
+export const checkFailIcon = make('<path d="M6 6l12 12M18 6L6 18"/>');
+export const checkPendingIcon = make('<circle cx="12" cy="12" r="7.5" stroke-dasharray="3.2 3"/>');

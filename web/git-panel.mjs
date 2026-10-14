@@ -6,10 +6,11 @@
 // 右パネルの枠は web/file-preview.mjs の openPanel（頭の再読み込み・広げる・閉じる、道具の列にタブ）。ここは中身だけを作る。
 // 文字列に埋めるモデル・利用者由来の値は esc を通す。
 import { t, fmt } from './i18n.mjs';
-import { branchIcon, jumpIcon, chevRightIcon, backIcon, openInBrowserIcon, folderIcon, moreIcon, archiveIcon } from './icons.mjs';
+import { branchIcon, jumpIcon, chevRightIcon, backIcon, folderIcon, moreIcon, archiveIcon } from './icons.mjs';
 import { refreshIcon, chatIcon, listIcon, treeIcon, upIcon, downIcon, prevChangeIcon, nextChangeIcon, inlineIcon, sideIcon, wrapIcon, tagIcon, cloudIcon, flagIcon, diffIcon, graphTabIcon, worktreeTabIcon } from './git-icons.mjs';
 import { branchLabel, changeText, filesText } from './git-view.mjs';
 import { createLeftovers } from './worktree-ui.mjs';
+import { createPrsRow } from './git-prs.mjs';
 import { layoutGraph, rangeNodes, rowSvg, tailSvg, lanesBelow, WT_KEY } from './git-graph.mjs';
 import { diffHTML } from './git-diff.mjs';
 
@@ -23,8 +24,6 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 /** 状態の文字は M / A / D / U / R だけ（class と HTML に入れるので、それ以外は M にする） */
 const stateOfFile = (v) => (typeof v === 'string' && v.length === 1 && 'MADUR'.includes(v) ? v : 'M');
-/** http(s) の URL だけをリンクにする */
-const safeUrl = (u) => (/^https?:\/\//i.test(String(u ?? '')) ? String(u) : '');
 const frag = (html) => { const tpl = document.createElement('template'); tpl.innerHTML = html.trim(); return tpl.content.firstElementChild; };
 const splitPath = (p) => { const i = p.lastIndexOf('/'); return i < 0 ? ['', p] : [p.slice(0, i), p.slice(i + 1)]; };
 const FT = { js: 'JS', mjs: 'JS', cjs: 'JS', ts: 'TS', md: 'M↓', css: '#', json: '{}', html: '<>' };
@@ -94,6 +93,8 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const to = e.key === 'ArrowRight' ? keys[(k + 1) % keys.length] : e.key === 'ArrowLeft' ? keys[(k + keys.length - 1) % keys.length] : e.key === 'Home' ? keys[0] : e.key === 'End' ? keys.at(-1) : null;
     if (to) { e.preventDefault(); selectTab(to, true); }
   });
+  // 頭の PR の行（この会話と、委譲した子の会話の PR。ADR 0206）。道具の列のタブの上に置く
+  const prs = createPrsRow({ ask });
   new ResizeObserver(() => { const w = root.clientWidth >= WIDE_PX; if (w !== wide) { wide = w; if (st.diff) paint(); } }).observe(root);
 
   function selectTab(tab, focus = false) {
@@ -141,11 +142,9 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     const g = st.base?.git;
     const title = frag('<div class="gp-br"></div>');
     if (g) {
-      const pr = [...(st.base.timeline ?? [])].reverse().find((e) => e.kind === 'pr');
       const meta = [];
       if (g.branch && g.upstream) { if (g.ahead > 0) meta.push(`<span title="${esc(t('git.aheadTitle', { upstream: g.upstream, count: g.ahead }))}">↑${g.ahead}</span>`); if (g.behind > 0) meta.push(`<span title="${esc(t('git.behindTitle', { upstream: g.upstream, count: g.behind }))}">↓${g.behind}</span>`); }
       else if (g.branch && g.head) meta.push(`<span>${esc(t('git.unpushed'))}</span>`);
-      if (pr && safeUrl(pr.url)) meta.push(`<a href="${esc(safeUrl(pr.url))}" target="_blank" rel="noopener noreferrer" title="${esc(t('git.prTitle', { number: pr.number }))}">${esc(t('git.pr', { number: pr.number }))}${openInBrowserIcon}</a>`);
       title.innerHTML = `<span class="bn">${branchIcon}<span>${esc(branchLabel(g))}</span></span>${g.linked ? `<span class="git-tag">${esc(t('git.worktree'))}</span>` : ''}${meta.length ? `<span class="meta">${meta.join('<span aria-hidden="true">·</span>')}</span>` : ''}`;
     } else title.textContent = t('git.panel');
     preview.updatePanel(KEY, { title, subtitle: g?.root ?? '' });
@@ -709,6 +708,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     // 触っていないうちは、コミットしていない変更があれば「未コミットの変更」の行を開いておく（Esc はこの箱でなくパネルを閉じる）
     if (!st.touched && !st.open && st.sel.k === 'uncommitted' && (data.changes?.total?.files ?? 0) > 0) { st.open = WT_KEY; st.auto = true; }
     onState(data.git, { foreign: foreign() });
+    prs.load(id, (data.timeline ?? []).filter((e) => e.kind === 'pr'));
     st.commitData = {};
     const sameHead = !force && st.hist && data.git.head && st.hist.head?.startsWith(data.git.head);
     await Promise.all([sameHead ? null : loadHistory(), st.sel.k === 'session' ? loadRange('session') : null, st.open && st.open !== WT_KEY ? loadCommit(st.open) : null, st.tab === 'worktrees' ? loadWorktrees() : null]);
@@ -722,7 +722,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
   // ---------------------------------------------------------------- 開閉
   function resetFor(id) {
     if (st.key === id) return;
-    ticket++; leftovers.reset();
+    ticket++; leftovers.reset(); prs.reset();
     st = fresh(id);
   }
 
@@ -735,7 +735,7 @@ export function setupGitPanel({ cmd, preview, session, jump, use, onState = () =
     opener = element ?? null;
     preview.openPanel({
       key: KEY, title: t('git.panel'), subtitle: '', label: t('git.panel'), element: opener, body: root,
-      head: [{ node: reloadBtn }], toolbar: [tabs],
+      head: [{ node: reloadBtn }], toolbar: [prs.el, tabs],
       onClose: () => { opener?.setAttribute?.('aria-expanded', 'false'); onOpenChange(false); },
     });
     onOpenChange(true);

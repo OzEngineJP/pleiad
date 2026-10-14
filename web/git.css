@@ -57,6 +57,33 @@
 .gp-br .meta a{color:var(--ink-blue);text-decoration:none;display:inline-flex;align-items:center;gap:3px}
 .gp-br .meta a:hover{text-decoration:underline}
 .gp-br .meta svg{width:12px;height:12px}
+/* 頭の PR の行（この会話と子の会話の PR。色は使わず、形と語で状態を分ける。web/git-prs.mjs） */
+.gp-prs{width:100%;display:flex;flex-direction:column;gap:2px;margin:0 0 6px;container-type:inline-size}
+.gp-prs[hidden]{display:none}
+.gp-pr{display:flex;align-items:center;gap:8px;min-width:0;min-height:30px;padding:5px 10px;margin:0 -10px;border-radius:var(--r-m);color:var(--ink);text-decoration:none;font-size:var(--fs-s)}
+a.gp-pr:hover{background:var(--surface-hover)}
+a.gp-pr:focus-visible,.gp-more:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.gp-pr > svg.i{width:15px;height:15px;color:var(--ink-weak);flex:none}
+.gp-pr .n{color:var(--ink-blue);font-weight:600;flex:none}
+.gp-pr .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gp-pr .s{flex:none;color:var(--ink-weak);white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.gp-pr .ci{display:inline-flex;align-items:center;gap:3px}
+.gp-pr .ci svg.i{width:12px;height:12px}
+.gp-pr .ci.bad{color:var(--ink-strong);font-weight:600}
+.gp-pr svg.go{width:12px;height:12px;color:var(--ink-weak);flex:none}
+.gp-pr .go-ph{width:12px;flex:none}
+.gp-pr.done .t{color:var(--ink-weak)}
+.gp-pr.sk .history-line{height:10px}
+.gp-more{align-self:flex-start;border:0;background:transparent;color:var(--ink-weak);font:inherit;font-size:var(--fs-s);padding:3px 10px;margin:0 -10px;border-radius:var(--r-pill);cursor:pointer}
+.gp-more:hover{background:var(--surface-hover);color:var(--ink)}
+.gp-quiet{font-size:var(--fs-xs);color:var(--ink-weak);margin:2px 0 0}
+/* 狭いパネル（360px 前後）では、チェックの語をたたみ（形と読み上げの名前は残す）、状態の語を残す */
+@container (max-width:380px){
+  .gp-pr{gap:6px}
+  .gp-pr .s{font-size:var(--fs-xs)}
+  .gp-pr .ci .cw{display:none}
+  .gp-pr.sk .s .history-line{width:48px!important}
+}
 .git-tag{background:var(--surface-3);color:var(--ink-weak);font-size:var(--fs-xs);padding:0 10px;line-height:1.7;border-radius:var(--r-pill);white-space:nowrap}
 /* タブ（Chats / Channels と同じ部品。ADR 0135） */
 .gp-tabs{display:flex;gap:2px;padding:3px;background:var(--surface-3);border-radius:var(--r-pill);width:100%}
