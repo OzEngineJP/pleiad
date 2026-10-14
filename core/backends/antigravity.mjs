@@ -960,7 +960,7 @@ async function stopCommand(session, command, taskId) {
   if (hit.error) throw new Error(t("antigravity.errors.backgroundNotFound"));
   const gone = session.behind?.wait(taskId, STOP_WAIT_MS);
   try {
-    await killTree(hit.pid, list);
+    await killTree(hit.pid);   // list は agy の直下の子だけ。POSIX は子孫を辿るので、killTree が全部の一覧を取り直す
   } catch (err) {
     throw new Error(t("antigravity.errors.backgroundStopFailed", { why: String(err?.message ?? err).trim().slice(0, 300) }));
   }

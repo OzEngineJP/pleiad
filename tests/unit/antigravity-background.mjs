@@ -3,7 +3,7 @@
 // プロセスは起こさない。一覧（{ pid, ppid, command }）を渡して、純粋な部品として測る。
 // 守ること: agy の直下の子でコマンドを走らせているものだけを選ぶ。agy 自身・中継・孫・会話の外は選ばない。
 // 見つからない・あいまいなら選ばない。コマンドラインの形は実機（Windows の agy 1.3.4）の木に合わせた。
-import { commandKey, commandLabel, descendantsOf, killTree, pickCommandProcess, pickHeldAgy } from "../../core/backends/antigravity-background.mjs";
+import { ancestorsOf, commandKey, commandLabel, descendantsOf, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "../../core/backends/antigravity-background.mjs";
 
 export const name = "antigravity-background";
 export const title = "agy の裏のコマンドを止めるとき、その会話の agy の直下の子だけを選ぶ";
@@ -85,4 +85,55 @@ export default async function (t) {
   t.ok("根が終わりかけなら、消えるのを待って落とせたとみなす", exiting === "ok" && polls === 3, JSON.stringify({ exiting, polls }));
   const stuck = await killTree(200, null, { platform: "win32", exec: noInstance, isAlive: () => true, graceMs: 200 }).then(() => "ok", (e) => e.message);
   t.ok("根が残っていれば失敗を返す", stuck === "taskkill: no running instance", stuck);
+
+  // ---- 一覧の絞り込み（ps の出力を差し替える。どの OS でも parent の直下の子だけが返る）
+  const PS = [
+    "    1     0 /sbin/init",
+    "   50     1 node holder.mjs",
+    "  100    50 agy --print= --conversation c-1",
+    "  200   100 /bin/sh -c node -e \"setInterval(()=>{},1000)\"",
+    "  300   200 node -e setInterval(()=>{},1000)",
+    "  400     1 /usr/bin/runner-agent",
+    "garbage line",
+  ].join("\n");
+  const psCalls = [];
+  const fakePs = async (file, args) => { psCalls.push([file, ...args].join(" ")); return PS; };
+  const pidsOf = (rows) => rows.map((p) => p.pid).join(",");
+  const direct = await listProcesses({ parent: 100, platform: "linux", exec: fakePs });
+  t.ok("POSIX でも parent の直下の子だけ（孫・init・外は入らない）", pidsOf(direct) === "200" && direct[0].ppid === 100, pidsOf(direct));
+  t.ok("POSIX の一覧は pid・ppid・コマンドラインに分かれる", direct[0].command === '/bin/sh -c node -e "setInterval(()=>{},1000)"', direct[0].command);
+  t.ok("init の直下を引いても、孫は入らない", pidsOf(await listProcesses({ parent: 1, platform: "linux", exec: fakePs })) === "50,400");
+  t.ok("parent を省くと全部（壊れた行は除く）", pidsOf(await listProcesses({ platform: "linux", exec: fakePs })) === "1,50,100,200,300,400");
+  t.ok("parent が整数でなければ絞らない", pidsOf(await listProcesses({ parent: "100", platform: "linux", exec: fakePs })) === "1,50,100,200,300,400");
+  t.ok("子の無い parent は空", (await listProcesses({ parent: 999, platform: "linux", exec: fakePs })).length === 0);
+  t.ok("ps -A で全部を引く", psCalls[0] === "ps -A -o pid=,ppid=,args=", psCalls[0]);
+  const psWin = [];
+  const fakePowershell = async (file, args) => { psWin.push(args.at(-1)); return '[{"ProcessId":5,"ParentProcessId":4,"CommandLine":"x"}]'; };
+  const win = await listProcesses({ parent: 4, platform: "win32", exec: fakePowershell });
+  t.ok("Windows は Win32_Process を parent で絞って引く", pidsOf(win) === "5" && psWin[0].includes("-Filter 'ParentProcessId=4'"), psWin[0]);
+
+  // ---- 祖先
+  const chain = [
+    { pid: 1, ppid: 0, command: "init" }, { pid: 10, ppid: 1, command: "runner" }, { pid: 20, ppid: 10, command: "node tests" },
+    { pid: 30, ppid: 20, command: "node suite" }, { pid: 31, ppid: 20, command: "other" },
+  ];
+  t.ok("祖先は親から順に、自分を含めずに並ぶ", JSON.stringify(ancestorsOf(chain, 30)) === "[20,10,1]", JSON.stringify(ancestorsOf(chain, 30)));
+  t.ok("一覧に無い pid の祖先は空", ancestorsOf(chain, 999).length === 0);
+  t.ok("親子が輪になっていても止まる", ancestorsOf(loop, 1).length === 2, JSON.stringify(ancestorsOf(loop, 1)));
+
+  // ---- 落とす先の守り（process.kill を差し替えず、守りで例外になる pid だけを渡す。落とせてしまえば試験自身が落ちる）
+  const self = { pid: 30, ppid: 20 };
+  const refuse = async (pid, list, options) => killTree(pid, list, { self, ...options }).then(() => "killed", (e) => e.message);
+  const noExec = async () => { throw new Error("exec must not run"); };
+  for (const platform of ["win32", "linux"]) {
+    const o = { platform, exec: noExec };
+    t.ok(`${platform}: pid が 1 以下・整数でないものは落とさない`,
+      (await Promise.all([1, 0, -5, 1.5, null, undefined, "200"].map((pid) => refuse(pid, chain, o)))).every((r) => r.startsWith("refusing")));
+    t.ok(`${platform}: この process と親は落とさない`, (await refuse(30, chain, o)).startsWith("refusing") && (await refuse(20, chain, o)).startsWith("refusing"));
+  }
+  t.ok("POSIX: この process の祖先（親の親・init の下の runner）は落とさない", (await refuse(10, chain, { platform: "linux", exec: noExec })).startsWith("refusing"));
+  // 祖先のどれかが子孫に入っていても、自分と祖先は落とさない（落とせた pid が無ければ、no process の例外で止まる）
+  const skewed = [{ pid: 40, ppid: 1, command: "x" }, { pid: 30, ppid: 40, command: "me" }, { pid: 41, ppid: 30, command: "child" }];
+  t.ok("POSIX: 自分の祖先を落とそうとしたら断る（一覧が自分の上に木を張っていても）",
+    (await refuse(40, skewed, { platform: "linux", exec: noExec })).startsWith("refusing"));
 }
