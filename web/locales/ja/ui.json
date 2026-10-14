@@ -824,7 +824,6 @@
     },
     "visual": {
       "source": "可視化の原文",
-      "contents": "可視化の内容",
       "title": "可視化",
       "save": "会話に残っている HTML を保存",
       "status": "保存済みの可視化",

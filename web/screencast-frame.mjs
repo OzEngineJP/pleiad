@@ -1,5 +1,5 @@
 // 映像のフレームを <img> に描き、描き終えたら ack を返す部品（docs/inapp-browser.md「リモートから見る」）。
-// 内蔵ブラウザーを見る全面の表示（web/remote-browser.mjs）とエージェントの Chrome の窓の右パネル（web/chrome-panel.mjs）が共有する。
+// 右パネルの「ブラウザー」の映像（web/remote-browser.mjs）とエージェントの Chrome の窓の右パネル（web/chrome-panel.mjs）が共有する。
 // フレームは WS の screencast メッセージ（{ seq, data（JPEG の base64）, metadata }）。ホストは ack を受けるまで次を出さないので、
 // 描き終えた（load）ときに onAck(seq) を呼ぶ。
 

@@ -29,16 +29,17 @@ export function fileSlots({ file = null, osActions = false, htmlBrowser = osActi
 /**
  * 会話に保存された可視化（写し）。元のパス（origin）はホスト上の在り処で、分かるときだけ
  * パス・元のファイルを開く・会話で使うを出す。ツリーは中身が無いので出さない。
- * @param {{ origin?:string|null, html?:unknown, canBrowse?:boolean, canUse?:boolean }} s
+ * 本文は原文だけで、プレビュー / 原文の切り替えは出さない（描画はブラウザーの仕事）。
+ * @param {{ origin?:string|null, canBrowse?:boolean, canUse?:boolean }} s
  *   canBrowse は写しをサーバーから引けるか（会話と記録の印が分かる）
  */
-export function visualizationSlots({ origin = null, html = '', canBrowse = true, canUse = true } = {}) {
+export function visualizationSlots({ origin = null, canBrowse = true, canUse = true } = {}) {
   return {
     mode: 'visualization',
     label: t('filePreview.visualPanel'),
     kind: t('filePreview.mode.visualization'),
     head: ['more', 'wide', 'close'],
-    views: typeof html === 'string',
+    views: false,   // 原文だけ。描画はブラウザーの仕事で、プレビューの切り替えは出さない
     toolbar: [canBrowse && 'visualBrowser', origin && 'path', origin && 'origin'].filter(Boolean),
     aside: false,
     note: origin ? t('filePreview.visual.note') : '',

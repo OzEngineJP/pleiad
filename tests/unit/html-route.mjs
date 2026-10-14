@@ -263,6 +263,17 @@ export default async function (t) {
     t.ok('R: 全部の起点がホストの内蔵ブラウザーのタブ（browser.openFile / 写しの映像）', true);
   });
 
+  // R + 会話がまだ無い下書きの添付: ホストのタブを足す相手が無いので、失敗の通知ではなく原文を右パネルに出す
+  await withDom({ plyRemote: {} }, async listeners => {
+    const r = await rig(listeners, { host: false, remote: true, sessionId: null });
+    await r.preview.open({ path: PATH, line: null }, null); await flush();
+    assert(!r.cmds.some(([n]) => ['openPath', 'invoke', 'openVisualization'].includes(n)), `ホストへ何も送らない: ${JSON.stringify(r.cmds)}`);
+    assert.deepEqual(r.remoteCalls.tab, []);
+    assert.equal(document.body.classList.contains('file-preview-open'), true, '右パネルに原文が開く（失敗の通知ではない）');
+    document.body.classList.remove('file-preview-open');
+    t.ok('R（会話なしの下書きの添付）: 原文へ落とす', true);
+  });
+
   // R0: リモート（映像なし）→ 原文
   await withDom({ plyRemote: {} }, async listeners => {
     const r = await rig(listeners, { host: false, remote: false });

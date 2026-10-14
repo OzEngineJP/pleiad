@@ -3,7 +3,7 @@ import { t, fmt } from './i18n.mjs';
 import { isComposingKey } from './keyboard.mjs';
 import { fileReference, fileDownloadUrl } from './file-reference.mjs';
 import { markdownContent, parseTable } from './file-preview-content.mjs';
-import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
+import { downloadVisualization } from './visualize-frame.mjs';
 import { copyIcon, closeIcon, backIcon, expandIcon, collapseIcon, folderIcon, fileIcon, moreIcon, locateIcon, collapseAllIcon } from './icons.mjs';
 import { fileMenuItems, visualizationMenuItems, browserTabMenuItems, copyPathText, relativeTo, samePath, notify, download, openHostFile, displayPath, fileUrl } from './file-actions.mjs';
 import { browserPanelAvailable, openInBrowserPanel } from './browser-panel.mjs';
@@ -361,18 +361,13 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     original.setAttribute('aria-pressed', String(source));
   };
   /**
-   * 可視化の面。ファイルと同じ切り替えを通す: プレビュー = 隔離した枠、原文 = 会話に残っている HTML そのもの。
-   * 取り直しはできないので、再読み込みと「会話で使う」は出ないまま
+   * 可視化の面。HTML は原文だけ（描画はブラウザーの仕事。ファイルの HTML と同じで、プレビューの切り替えは無い）:
+   * 会話に残っている HTML そのものを出す。取り直しはできないので、再読み込みと「会話で使う」は出ないまま
    */
   function paintVisual() {
-    setPressed();
     setNote(visualNote(visual)); content.scrollTop = 0;
-    if (source) {
-      content.setAttribute('aria-label', t('filePreview.visual.source'));
-      return sourceView(visual.html);
-    }
-    content.setAttribute('aria-label', t('filePreview.visual.contents'));
-    content.replaceChildren(visualizationFrame(visual.html, visual.title, { fill:true }));
+    content.setAttribute('aria-label', t('filePreview.visual.source'));
+    return sourceView(visual.html);
   }
   async function paint() {
     if (visual) return paintVisual();
@@ -704,7 +699,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     // 添付やコンテキストの「開く」は要素を持たない。まだ右パネルを開いていなければ context も空なので、今の会話を使う
     const where = whereFrom(target);
     if (!where.sessionId) { const sessionId = getContext(null)?.sessionId; if (sessionId) where.sessionId = sessionId; }
-    if (!where.sessionId) return notify(t('browser.remote.failed'));
+    // 会話がまだ無い下書きの添付は、ホストのタブを足す相手の会話が無い。失敗の通知ではなく原文を右パネルで見せる
+    if (!where.sessionId) return open({ path:target.path, line:null, source:true }, target.element ?? null, target.base);
     const result = await cmd('invoke', { op:'browser.openFile', args:where });
     browser.showTab(result.tabId);
   }
@@ -782,11 +778,8 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
         return run(action, { path:tab.file.path });
       }
       const v = record ?? { html:null, title:tab.snapshot.title, origin:tab.snapshot.origin, at:tab.snapshot.at, id:tab.snapshot.id, sessionId:tab.snapshot.sessionId, where:null };
-      if (action === 'source') {
-        openVisualization({ content:v.html, title:v.title, path:v.origin, at:v.at, id:v.id }, null);
-        source = true; paint();
-        return;
-      }
+      // 原文を見る: 右パネルに会話に残っている HTML そのものを出す（描画はしない。ブラウザーのタブは残る）
+      if (action === 'source') return openVisualization({ content:v.html, title:v.title, path:v.origin, at:v.at, id:v.id }, null);
       return runVisual(action, v);
     } catch (error) { failed(error); }
   }

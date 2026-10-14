@@ -836,7 +836,6 @@
     },
     "visual": {
       "source": "Visualization source",
-      "contents": "Visualization contents",
       "title": "Visualization",
       "save": "Save the HTML kept in the conversation",
       "status": "Saved visualization",
