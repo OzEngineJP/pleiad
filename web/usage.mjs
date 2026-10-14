@@ -73,14 +73,33 @@ export function renderEndpoints(parent, endpoints) {
   parent.append(el('p', 'usage-note', t('usage.endpointCost')));
 }
 /**
+ * 取れなかった行（枠が空）には前回取れた枠を引き継ぐ。行はアカウントごと（accountId。ログイン中は無し）。
+ * 1 アカウントの読み取りの失敗・タイムアウト・rate_limits の無い応答で、札や一覧の行ごと消えないように。薄くはしない
+ * （枠の時刻が過ぎれば isExpired で「—」になる）。使用量の認可が済んでいない行（needsUsageLogin）は引き継がない。
+ * reauth の行は枠を出したうえで、認可のやり直しのボタンと文言を残す
+ */
+export function carryQuota(quota, prev) {
+  if (!quota || !prev) return quota;
+  const fill = (row, old) => !old?.windows?.length || row.windows?.length || row.needsUsageLogin ? row
+    : { ...row, windows: old.windows, plan: row.plan ?? old.plan };
+  if (Array.isArray(quota.accounts)) {
+    const old = new Map((prev.accounts ?? []).map(a => [a.accountId ?? '', a]));
+    return { ...quota, accounts: quota.accounts.map(a => fill(a, old.get(a.accountId ?? ''))) };
+  }
+  return prev.accounts ? quota : fill(quota, prev);
+}
+/**
  * providerUsage の取得。設定の「使用量」と会話のヘッダーのチップ（web/header-usage.mjs）が共有する。
- * 同じエージェントの取得が走っている間は、それに相乗りする（同時に 2 本投げない）。届いた結果は onResult で両方へ配る
+ * 同じエージェントの取得が走っている間は、それに相乗りする（同時に 2 本投げない）。届いた結果は onResult で両方へ配る。
+ * 前回の枠の引き継ぎ（carryQuota）もここでするので、両方に同じ値が出る
  */
 export function createUsageSource(cmd) {
-  const pending = new Map(), listeners = new Set();
+  const pending = new Map(), listeners = new Set(), last = new Map();
   function load(backend) {
     if (pending.has(backend)) return pending.get(backend);
-    const task = cmd('providerUsage', { backend }).then(result => {
+    const task = cmd('providerUsage', { backend }).then(raw => {
+      const result = raw?.quota ? { ...raw, quota: carryQuota(raw.quota, last.get(backend)) } : raw;
+      if (result?.quota) last.set(backend, result.quota);
       for (const listener of listeners) listener(backend, result);
       return result;
     }).finally(() => pending.delete(backend));
@@ -90,23 +109,32 @@ export function createUsageSource(cmd) {
 }
 export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
   let loading = false;
+  // エージェントごとのカード。取り直しの間も前の表示を残し、取れてから差し替える（初回だけ「読み込み中…」）
+  const cards = new Map();
   async function refresh() {
     if (loading) return;
     loading = true; $('refreshUsage').disabled = true;
-    const root = $('usageCards'); root.replaceChildren();
+    const root = $('usageCards'), list = getBackends();
     try {
-      if (!getBackends().length) root.append(el('p', 'usage-note', t('usage.waiting')));
-      await Promise.all(getBackends().map(async backend => {
-        const card = el('section', 'usage-card');
-        card.append(el('h3', null, backend.label), el('p', 'usage-note', t('usage.loading'))); root.append(card);
+      for (const [id, card] of cards) if (!list.some(b => b.id === id)) { card.remove(); cards.delete(id); }
+      if (!list.length) root.replaceChildren(el('p', 'usage-note', t('usage.waiting')));
+      else if (!cards.size) root.replaceChildren();
+      await Promise.all(list.map(async backend => {
+        let card = cards.get(backend.id);
+        if (!card) {
+          card = el('section', 'usage-card'); card.dataset.loaded = '';
+          card.append(el('h3', null, backend.label), el('p', 'usage-note', t('usage.loading')));
+          cards.set(backend.id, card); root.append(card);
+        }
         try {
           const result = await source.load(backend.id);
-          card.replaceChildren(el('h3', null, result.label));
-          renderQuota(card, result.quota, onUsageLogin);
-          if (result.quota.checkedAt) card.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
-          renderEndpoints(card, await endpoints(backend.id).catch(() => []));
-          renderLocal(card, result.local);
-        } catch { card.replaceChildren(el('h3', null, backend.label), el('p', 'usage-note', t('usage.failed'))); }
+          const body = el('div'); body.append(el('h3', null, result.label));
+          renderQuota(body, result.quota, onUsageLogin);
+          if (result.quota.checkedAt) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
+          renderEndpoints(body, await endpoints(backend.id).catch(() => []));
+          renderLocal(body, result.local);
+          card.replaceChildren(...body.children); card.dataset.loaded = '1';
+        } catch { if (!card.dataset.loaded) card.replaceChildren(el('h3', null, backend.label), el('p', 'usage-note', t('usage.failed'))); }
       }));
     } finally { loading = false; $('refreshUsage').disabled = false; }
   }
