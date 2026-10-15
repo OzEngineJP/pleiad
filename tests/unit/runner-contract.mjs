@@ -325,7 +325,8 @@ export default async function (t) {
       const shellGone = shellChild && process.platform !== "win32" ? await waitFor(() => !alive(shellChild.child), 8000) : null;
       // Windows の Git Bash（msys）は、孫を自分の子として起こした後、仲介のプロセスが worker の死と一緒に消えると親子の鎖が切れる（孫の親が存在しない pid になる）。
       // 鎖で辿れず、ほかの作業のプロセスと区別する印も無いので、この場合だけは回収を保証しない（止められるのは worker が生きている間の取り消し・正常な終わり）。ここでは残りものを最後に止める
-      t.ok("ホストのシェル（core/host-shell.mjs）が起こした孫は、worker が途中で死んでも残らない（POSIX。Windows の Git Bash 経由は保証しない）", rs.code === 1 && SH.suites.find((x) => x.name === "fx-shell")?.status === "crash" && !!shellChild && (process.platform === "win32" || !!shellGone), JSON.stringify({ code: rs.code, shellChild, alive: shellChild && alive(shellChild.child), tail: rs.stdout.slice(-300) }));
+      // macOS も保証しない: POSIX のシェルは detached（グループを抜ける）で、印の読める /proc が無いので見つけられない（上の「worker が起こした孫」の判定と同じ。issue #72）
+      t.ok("ホストのシェル（core/host-shell.mjs）が起こした孫は、worker が途中で死んでも残らない（Linux。Windows の Git Bash 経由と macOS は保証しない）", rs.code === 1 && SH.suites.find((x) => x.name === "fx-shell")?.status === "crash" && !!shellChild && (process.platform === "win32" || process.platform === "darwin" || !!shellGone), JSON.stringify({ code: rs.code, shellChild, alive: shellChild && alive(shellChild.child), tail: rs.stdout.slice(-300) }));
       t.ok("そのときも関係ないプロセスには触れない", alive(bystander.pid));
     }
     {
