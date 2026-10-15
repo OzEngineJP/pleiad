@@ -316,6 +316,8 @@ const SUITES = [
   './unit/desktop-exit-dialog.mjs',
   // OS にサインインしたら起動する設定: 登録するパス・引数（版に依らない exe と --hidden）・OS の実際の状態・古いパスの直し・使えない構成（偽の electron。本物の Run には書かない）
   './unit/desktop-login-item.mjs',
+  // サーバーを起こす前のログインシェルの環境の読み込み（ADR 0212）: 重ね方・時間切れ・rc の出力に紛れない（偽のシェル。利用者の rc は走らせない）
+  './unit/desktop-shell-env.mjs',
   './unit/login-item-server.mjs',
   './unit/login-item-ui.mjs',
   './unit/message-queue.mjs',
