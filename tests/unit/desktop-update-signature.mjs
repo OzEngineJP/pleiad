@@ -15,7 +15,7 @@ import { Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createRequire } from 'node:module';
 import { parse } from 'yaml';
-import { compareTags, releasesToCheck, unsignedBlockers } from '../../scripts/release-unsigned-guard.mjs';
+import { GH_MAX_BUFFER, RELEASE_LIST_JQ, compareTags, releasesToCheck, unsignedBlockers } from '../../scripts/release-unsigned-guard.mjs';
 
 const require = createRequire(import.meta.url);
 const sig = require('../../desktop/update-signature.cjs');
@@ -299,6 +299,10 @@ export default async function (t) {
     const blocked = unsignedBlockers(checks, oldStable);
     t.ok('ガード: 受け入れない版（BUILD-INFO に印が無い）が残っていれば止める', blocked.length === 1 && blocked[0].includes('v0.13.18') && blocked[0].includes('stable'), blocked.join(' | '));
     t.ok('ガード: BUILD-INFO が取れない版も止める', unsignedBlockers(checks, new Map()).length === 2);
+    // 版の一覧は版ごとに配布物の行を持ち、そのまま読むと execFileSync の既定の上限（1 MB）を超えて止まった（v0.14.0）
+    const guard = fs.readFileSync(new URL('../../scripts/release-unsigned-guard.mjs', import.meta.url), 'utf8');
+    t.ok('ガード: 版の一覧は使う欄（tag_name・draft）だけを取り、gh の出力の上限を広げる', RELEASE_LIST_JQ === '[.[] | {tag_name, draft}]'
+      && guard.includes("'--jq', RELEASE_LIST_JQ") && guard.includes('maxBuffer: GH_MAX_BUFFER') && GH_MAX_BUFFER >= 16 * 1024 * 1024);
   }
 
   // ---- 本物の koffi（Windows）
