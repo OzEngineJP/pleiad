@@ -42,7 +42,7 @@ export default function (t) {
     const s = setup();
     t.ok('空の欄の先頭で `!` を打つとシェルの形（`!` は欄に入れない）', s.key('!') === true && s.c.active && s.prompt.value === '' && s.box.classList.contains('shell'));
     t.ok('頭の行に「シェル · 作業ディレクトリの名前」と「文として送る」', !s.head.hidden && texts(s.head).includes('[chat.shell.label]') && texts(s.head).includes('pleiad') && texts(s.head).includes('[chat.shell.asText]'), texts(s.head));
-    t.ok('送信の名前は「実行」、プレースホルダーは実行するコマンド', s.send.getAttribute('title') === '[chat.shell.run]' && s.send.getAttribute('aria-label') === '[chat.shell.run]' && s.prompt.placeholder === '[chat.shell.placeholder]');
+    t.ok('送信の名前は「実行」、プレースホルダーは実行するコマンド', s.send.getAttribute('title') === '[chat.shell.run]' && s.send.getAttribute('aria-label') === '[chat.shell.run]' && /^\[chat\.shell\.placeholder:\{"key":"(Ctrl\+|⌘)Enter"\}\]$/.test(s.prompt.placeholder), s.prompt.placeholder);
     s.key('l'); s.key('s');
     t.ok('シェルの形でも字は書ける', s.prompt.value === 'ls' && s.c.active);
     t.ok('字がある間の Backspace は字を消すだけ', s.backspace() === false && s.prompt.value === 'l' && s.c.active);

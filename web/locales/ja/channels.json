@@ -95,8 +95,8 @@
       "shortPlaceholder": "#{{name}} へ投稿",
       "dm": "{{name}} にメッセージ",
       "home": "新しい会話を書く",
-      "send": "投稿（Ctrl+Enter）",
-      "sendKeys": "Ctrl+Enter で送信",
+      "send": "投稿（{{key}}）",
+      "sendKeys": "{{key}} で送信",
       "failed": "投稿できませんでした: {{error}}"
     },
     "attach": {

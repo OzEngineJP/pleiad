@@ -5,7 +5,7 @@
 // チップは無い（bot の動かし方は bot が持つ）。「@」で bot とメンバーを補完（mention-complete.mjs）。
 // 誰も @ していない文では、淡い提案（「@Owl を呼ぶ」）を欄の上に出す。DM は宛先が決まっているので出さない。
 import { createMarkdownEditor } from '../md-editor.mjs';
-import { isComposingKey } from '../keyboard.mjs';
+import { isComposingKey, shortcutLabel } from '../keyboard.mjs';
 import { promptMaxHeight } from '../composer-layout.mjs';
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
@@ -71,8 +71,8 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
   note.setAttribute('role', 'status');
   const send = el('button', 'btn btn-primary ch-send');
   send.type = 'submit';
-  send.title = t('channels:feed.composer.send');
-  send.setAttribute('aria-label', t('channels:feed.composer.send'));
+  send.title = t('channels:feed.composer.send', { key: shortcutLabel('Enter') });
+  send.setAttribute('aria-label', send.title);
   send.append(sendIcon());
 
   let busy = false, disabled = false, noteTimer = null, draftKey = null, saveTimer = null, pendingWake = null;

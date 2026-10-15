@@ -11,6 +11,7 @@
 import { el, svgEl } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
+import { shortcutLabel } from '../keyboard.mjs';
 import { fillPost, renderPost, dayText, authorInfo, wireAttachmentZoom } from './post.mjs';
 import { withReaction } from './reactions.mjs';
 import { createChComposer } from './ch-composer.mjs';
@@ -118,7 +119,7 @@ export function createFeed(host) {
     const ch = S.channel;
     if (!ch) return;
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄の案内と同じ決まり）
-    const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
+    const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys', { key: shortcutLabel('Enter') })}`;
     if (ch.kind === 'home') composer.setPlaceholder(t('channels:feed.composer.home') + keys);
     else if (ch.kind === 'dm') composer.setPlaceholder(t('channels:feed.composer.dm', { name: ch.name }) + keys);
     else if (narrow()) composer.setPlaceholder(t('channels:feed.composer.shortPlaceholder', { name: ch.name }));

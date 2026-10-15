@@ -69,7 +69,7 @@ async page => {
   const input = page.locator('#chFeedComposerInput');
 
   // ---- 入力欄の作り: クリップ・案内（Ctrl+Enter）・チップは無い
-  check(/Ctrl\+Enter/.test(await input.getAttribute('placeholder')), 'the placeholder tells the send shortcut like Chats');
+  check(/(Ctrl\+|⌘)Enter/.test(await input.getAttribute('placeholder')), 'the placeholder tells the send shortcut like Chats');
   check(await page.locator('#chFeedComposer .ch-attach').count() === 1 && await page.locator('#chFeedComposer .chip').count() === 0, 'the clip button exists and there are no model chips');
   check(await page.locator('#chFeedComposer input[type=file]').count() === 1, 'a hidden file input backs the clip');
 

@@ -1,4 +1,4 @@
-import { isComposingKey } from "./keyboard.mjs";
+import { isComposingKey, shortcutLabel } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
@@ -6547,7 +6547,7 @@ function watchTitleBar() {
 }
 
 // 入力欄の既定の案内。指で使う画面には Ctrl+Enter が無いので、送信のボタンを案内する
-const promptPlaceholder = () => (matchMedia("(pointer:coarse)").matches ? t("chat.composer.placeholderTouch") : t("chat.composer.placeholder"));
+const promptPlaceholder = () => (matchMedia("(pointer:coarse)").matches ? t("chat.composer.placeholderTouch") : t("chat.composer.placeholder", { key: shortcutLabel("Enter") }));
 
 // ---------------------------------------------------------------- 脇の開閉
 // 端末ごとの好みなのでブラウザ側に覚える。最初の描画での反映は index.html の先頭の script が済ませている。

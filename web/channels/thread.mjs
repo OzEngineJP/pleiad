@@ -8,6 +8,7 @@
 import { el, svgEl } from '../dom.mjs';
 import { botIcon } from './bot-icon.mjs';
 import { t } from '../i18n.mjs';
+import { shortcutLabel } from '../keyboard.mjs';
 import { runMark } from '../arc.mjs';
 import { savedEvent } from '../saved-text.mjs';
 import { renderPost, fillPost, authorInfo, wireAttachmentZoom, whenText } from './post.mjs';
@@ -307,7 +308,7 @@ export function createThread(host) {
   function paintPlaceholder() {
     const live = liveBots();
     // 送信の近道は、指で使う画面には出さない（Chats の入力欄と同じ）
-    const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys')}`;
+    const keys = window.matchMedia?.('(pointer:coarse)').matches ? '' : ` · ${t('channels:feed.composer.sendKeys', { key: shortcutLabel('Enter') })}`;
     // 宛先に追従する: 宛先の bot が作業中なら「作業中でも届きます」、そうでなければ「〜に届きます」
     const to = composer.dest?.bot ?? null;
     const text = to && live.some((b) => b.id === to.id) ? t('channels:thread.composer.working', { name: to.name })

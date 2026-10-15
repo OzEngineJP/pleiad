@@ -11,7 +11,7 @@
 // 何を送るか（巻き戻して送る・分岐して送る・元の位置の見せ方）は呼び出し側（host）が持つ。ここは状態・帯・ボタン・キー・書きかけの出し入れ。
 import { el } from '../dom.mjs';
 import { runMark } from '../arc.mjs';
-import { isComposingKey } from '../keyboard.mjs';
+import { isComposingKey, shortcutLabel } from '../keyboard.mjs';
 import { branchGlyph, penGlyph, sendGlyph, sendLabels, tailLines } from '../resend-band.mjs';
 
 let seq = 0;
@@ -107,7 +107,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
     send.append(sendGlyph(), sendText);
     branch.setAttribute('aria-label', t('chat.resend.branchLabel'));
     branch.setAttribute('aria-keyshortcuts', 'Control+Shift+Enter Meta+Shift+Enter');
-    branch.title = `${t('chat.resend.branch')} (Ctrl+Shift+Enter)`;
+    branch.title = `${t('chat.resend.branch')} (${shortcutLabel('Enter', { shift: true })})`;
     send.setAttribute('aria-keyshortcuts', 'Control+Enter Meta+Enter');
     branch.onclick = () => api.branch();
     send.onclick = () => api.send();
@@ -127,7 +127,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
     const { label, aria } = sendLabels(tail);
     ui.sendText.textContent = label;
     ui.send.setAttribute('aria-label', aria);
-    ui.send.title = `${label} (Ctrl+Enter)`;
+    ui.send.title = `${label} (${shortcutLabel('Enter')})`;
     // 同じ会話では送り直せないとき（委譲された作業の会話）は［送り直す］を出さず、分岐して送るが主になる
     ui.send.hidden = Boolean(tail.forkOnly);
     // 消えるものが無ければ、分岐しても同じなので出さない

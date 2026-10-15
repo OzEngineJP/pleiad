@@ -10,6 +10,7 @@
 // トップレベルで辞書を読み終えてから抜けるので、import したモジュールは読み込みの時点から t() を使える。
 // Node（テスト）では fetch の代わりにファイルを読む。i18next は index.html の import map で /vendor/i18next.mjs に向く。
 import i18next from 'i18next';
+import { parseShortcut, shortcutLabel, shortcutAria } from './keyboard.mjs';
 
 export const LOCALES = ['ja', 'en'];
 export const FALLBACK = 'en';
@@ -108,8 +109,12 @@ export function applyDom(root = globalThis.document) {
   const nodes = [...(root.matches?.('[data-i18n],[data-i18n-title],[data-i18n-aria-label],[data-i18n-placeholder]') ? [root] : []),
     ...root.querySelectorAll('[data-i18n],[data-i18n-title],[data-i18n-aria-label],[data-i18n-placeholder]')];
   for (const node of nodes) {
-    if (node.dataset.i18n) node.textContent = t(node.dataset.i18n);
-    for (const [key, attr] of ATTRS) if (node.dataset[key]) node.setAttribute(attr, t(node.dataset[key]));
+    // data-shortcut（"Enter"・"shift+Enter"・"B"）があれば、訳文の {{key}} を OS の表記（macOS は ⌘）で埋め、ボタンなら aria-keyshortcuts も合わせる
+    const shortcut = node.dataset.shortcut && parseShortcut(node.dataset.shortcut);
+    const args = shortcut ? { key: shortcutLabel(shortcut.key, shortcut) } : undefined;
+    if (shortcut && node.localName === 'button') node.setAttribute('aria-keyshortcuts', shortcutAria(shortcut.key, shortcut));
+    if (node.dataset.i18n) node.textContent = t(node.dataset.i18n, args);
+    for (const [key, attr] of ATTRS) if (node.dataset[key]) node.setAttribute(attr, t(node.dataset[key], args));
   }
 }
 

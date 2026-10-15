@@ -7,6 +7,7 @@
 // - どちらの形でも頭の行に「文として送る」（`!` で始まる文としてふつうに送る）
 // DOM は受け取った要素だけを触る。走らせる・送るのは client.mjs（submit と onAsText）。
 import { el, icon } from './dom.mjs';
+import { shortcutLabel } from './keyboard.mjs';
 
 const PROMPT_ICON = 'M4 17l6-5-6-5M12 19h8';
 const WARN_ICON = 'M12 4l9 16H3zM12 10v4M12 17v.5';
@@ -60,7 +61,7 @@ export function createShellComposer({ box, prompt, head, send, t, availability, 
     paintHead();
     if (mode === 'shell') {
       if (savedPlaceholder === null) savedPlaceholder = prompt.placeholder;
-      prompt.placeholder = touch() ? t('chat.shell.placeholderTouch') : t('chat.shell.placeholder');
+      prompt.placeholder = touch() ? t('chat.shell.placeholderTouch') : t('chat.shell.placeholder', { key: shortcutLabel('Enter') });
       prompt.setAttribute('spellcheck', 'false');
       if (sendTitle.title === null) { sendTitle.title = send.getAttribute('title'); sendTitle.label = send.getAttribute('aria-label'); }
       send.setAttribute('title', t('chat.shell.run'));

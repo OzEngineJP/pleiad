@@ -4,6 +4,7 @@
 // 内蔵ブラウザーは右パネルのブラウザー。どれも bot の会話（そのスレッドで最後に動いた bot）を基準にする。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
+import { shortcutLabel } from '../keyboard.mjs';
 import { closeIcon, branchIcon } from '../icons.mjs';
 
 const TOC_PATH = 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1';
@@ -36,8 +37,8 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   const side = el('button', 'btn btn-icon side-toggle th-side');
   side.type = 'button';
   side.id = 'chThreadOpenSidebar';
-  side.title = t('app.openSidebarTitle');
-  side.setAttribute('aria-label', t('app.openSidebarTitle'));
+  side.title = t('app.openSidebarTitle', { key: shortcutLabel('B') });
+  side.setAttribute('aria-label', side.title);
   const sideSvg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
   sideSvg.append(svgEl('rect', { x: 3, y: 4, width: 18, height: 16, rx: 4 }), svgEl('path', { d: 'M9.5 4v16' }));
   side.append(sideSvg);
