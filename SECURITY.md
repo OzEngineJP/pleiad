@@ -10,10 +10,10 @@ Reports are accepted for the latest code on the default branch (`main`) and the 
 ## 報告のしかた
 
 脆弱性と思われるものを見つけたら、**公開の Issue や Pull Request には書かず**、GitHub の
-[Private vulnerability reporting](https://github.com/tekalu1/pleiad/security/advisories/new)（リポジトリの「Security」タブ →「Report a vulnerability」）から非公開で報告してほしい。
+[Private vulnerability reporting](https://github.com/OzEngineJP/pleiad/security/advisories/new)（リポジトリの「Security」タブ →「Report a vulnerability」）から非公開で報告してほしい。
 
 Please do **not** open a public issue or pull request for security problems. Report them privately through GitHub's
-[Private vulnerability reporting](https://github.com/tekalu1/pleiad/security/advisories/new) ("Security" tab → "Report a vulnerability").
+[Private vulnerability reporting](https://github.com/OzEngineJP/pleiad/security/advisories/new) ("Security" tab → "Report a vulnerability").
 
 報告には、可能な範囲で次を含めてほしい。
 

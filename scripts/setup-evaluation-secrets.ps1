@@ -1,4 +1,4 @@
-param([string]$Repository = 'tekalu1/pleiad')
+param([string]$Repository = 'OzEngineJP/pleiad')
 $ErrorActionPreference = 'Stop'
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Invalid repository.' }
 & gh.exe repo view $Repository --json name | Out-Null

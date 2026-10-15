@@ -176,7 +176,7 @@ Windows の証明書ストア（`Root`）には何も入れない。このため
 
 ### 正式な配布環境
 
-コードと配布先は public リポジトリ `tekalu1/pleiad` にまとめ、Releases で配布する。
+コードと配布先は public リポジトリ `OzEngineJP/pleiad` にまとめ、Releases で配布する（2026-10-16 に `tekalu1/pleiad` から移した）。
 正式配布のCIは `github.repository` をアップロード先として使う。アプリに焼き込む更新フィードは別に決める（下記）。
 
 ソースリポジトリの GitHub Environment `desktop-release` に必要な値を設定する。
@@ -202,8 +202,9 @@ AzureにはCertificate Profile Signerの権限とPublic Trustプロファイル�
 現実の資格情報をコード・CLI引数・成果物・アプリに埋め込まない。CI用の書き込みトークンを利用者へ配らない。
 証明書が未設定の場合に、未署名で公開へ進むフォールバックはない。無署名は `PLY_WINDOWS_SIGNING=none` を明示したときだけ。
 
-アプリに焼き込む更新フィード（`app-update.yml` の owner/repo）は `PLY_RELEASE_REPOSITORY`、未指定なら `tekalu1/pleiad`。`GITHUB_REPOSITORY` からは導かない。
-アップロード先（`GH_REPO`）は Actions の `github.repository`。フィードとアップロード先を分けることで、別リポジトリの Actions で作った版も `tekalu1/pleiad` を見に行く。
+アプリに焼き込む更新フィード（`app-update.yml` の owner/repo）は `PLY_RELEASE_REPOSITORY`、未指定なら `OzEngineJP/pleiad`。`GITHUB_REPOSITORY` からは導かない。
+0.14.2 までの版は `tekalu1/pleiad` を焼き込んでいる。GitHub は移したリポジトリの旧い名前を転送する（API は 301 で `/repositories/<id>/…` へ、配布の URL は新しい名前へ）ので、その版も新しい場所の更新を受け取る（`desktop/update-auth.cjs` の取得は転送をたどる。2026-10-16 に試験用のリポジトリで確かめた）。**`tekalu1` の下に `pleiad` という名前のリポジトリを作らない**（転送が切れ、0.14.2 までの版の更新が止まる）。
+アップロード先（`GH_REPO`）は Actions の `github.repository`。フィードとアップロード先を分けることで、別リポジトリの Actions で作った版も `OzEngineJP/pleiad` を見に行く。
 Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参照しない。
 
 ## サインイン時の起動

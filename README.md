@@ -9,8 +9,8 @@
   <a href="https://pleiad.dev">pleiad.dev</a></p>
 
 <p align="center">
-  <a href="https://github.com/tekalu1/pleiad/releases"><img src="https://img.shields.io/github/v/release/tekalu1/pleiad?include_prereleases" alt="Release"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/tekalu1/pleiad" alt="License"></a>
+  <a href="https://github.com/OzEngineJP/pleiad/releases"><img src="https://img.shields.io/github/v/release/OzEngineJP/pleiad?include_prereleases" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/OzEngineJP/pleiad" alt="License"></a>
 </p>
 
 <picture>
@@ -35,7 +35,7 @@ Conversations, statuses, branches, and approvals work the same way no matter whi
 
 ## Install
 
-Download the Windows installer (x64 or ARM64) from [Releases](https://github.com/tekalu1/pleiad/releases).
+Download the Windows installer (x64 or ARM64) from [Releases](https://github.com/OzEngineJP/pleiad/releases).
 
 Beta builds are self-signed, so Windows SmartScreen may show a warning.
 See [docs/desktop-releases.md](docs/desktop-releases.md) for how to verify the certificate.
