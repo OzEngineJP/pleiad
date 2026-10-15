@@ -260,6 +260,8 @@ export const EVENTS = new Set([
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
   "turnResult",      // { outcome: ok|error|aborted, turns?, costUsd?, error?, reason? }。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
+  // { text } 次の発言の候補（1 行）。Claude はターンの中（turnResult より前のこともある）、Codex・Antigravity はターンの後に届く。保存しない（core/prompt-suggestions.mjs）
+  "promptSuggestion",
 
   // ---- セッションとメタ情報
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）

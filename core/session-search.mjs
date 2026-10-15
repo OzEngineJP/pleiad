@@ -230,6 +230,37 @@ export function extractMessages(raw) {
   return msgs;
 }
 
+/** 会話の履歴から、入力欄の `!` で送ったコマンド（kind: 'shell' の行）を取り出す。入力欄の ↑ の呼び出しが使う（検索には当てない） */
+export function extractShellCommands(raw) {
+  return (Array.isArray(raw) ? raw : []).filter((m) => m?.kind === 'shell' && typeof m.command === 'string' && m.command.trim())
+    .map((m) => ({ uuid: String(m.uuid ?? ''), at: m.at ?? null, text: m.command }));
+}
+
+/**
+ * 送信済みのメッセージの並び（入力欄の ↑。sessions.sentMessages）。first の会話の分を先に、ほかを後に、それぞれ新しい順。
+ * 同じ文は新しい 1 つだけ。copies は会話 id → { msgs, shells }、titles は会話 id → 題
+ */
+export function sentMessagesOf({ ids, first = null, copies, titles = new Map(), shell = false, limit = 100, textMax = 20_000 }) {
+  const rowsOf = (id) => {
+    const c = copies.get(id);
+    const list = shell ? c?.shells ?? [] : (c?.msgs ?? []).filter((m) => m.role === 'user' && m.text);
+    return list.map((m, i) => ({ sessionId: id, title: titles.get(id) ?? '', uuid: m.uuid, at: m.at ?? null, text: m.text, order: i }));
+  };
+  const newest = (a, b) => String(b.at ?? '').localeCompare(String(a.at ?? '')) || b.order - a.order;
+  const head = first ? rowsOf(first).sort(newest) : [];
+  const rest = ids.filter((id) => id !== first).flatMap(rowsOf).sort(newest);
+  const seen = new Set();
+  const out = [];
+  for (const row of [...head, ...rest]) {
+    const key = row.text.trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({ sessionId: row.sessionId, title: row.title, uuid: row.uuid, at: row.at, text: row.text.length > textMax ? row.text.slice(0, textMax) : row.text });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 const includesTerm = (term, original, folded) => (term.exact ? original.includes(term.needle) : folded.includes(term.needle));
 
 /**
@@ -401,7 +432,7 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
   function put(id, raw, sig) {
     const prev = copies.get(id);
     if (prev && prev.sig > sig) return false;   // もっと新しい写しがある（遅れて届いた読み込みで巻き戻さない）
-    copies.set(id, { sig, msgs: extractMessages(raw) });
+    copies.set(id, { sig, msgs: extractMessages(raw), shells: extractShellCommands(raw) });
     failed.delete(id);
     updatedAt = now();
     return true;
@@ -573,5 +604,22 @@ export function createSessionSearch({ listSessions, readStored = async () => nul
     return { first: first ? { uuid: first.uuid, at: first.at, text: first.text } : null, count: c.msgs.length, lastAt };
   }
 
-  return { search, status, start, ingest, refresh, idle, stop, outline };
+  /**
+   * 送信済みのメッセージ（sessions.sentMessages。入力欄の ↑）。rows は対象の会話（呼び出し側が bot・委譲の子を除く）。
+   * まだ写していない会話は裏で読み込みを頼み、読めた分だけで答える（first の会話は先に読む）
+   */
+  async function sentMessages({ rows: given, first = null, shell = false, limit, textMax }) {
+    await start();
+    const ids = given.map((r) => r.id);
+    for (const id of ids) if (!copies.has(id) && !failed.has(id)) request(id, { front: id === first });
+    if (first && !copies.has(first)) {
+      let timer;
+      await Promise.race([settled(first), new Promise((r) => { timer = setTimeout(r, staleWaitMs); })]);
+      clearTimeout(timer);
+    }
+    const titles = new Map(given.map((r) => [r.id, r.title && r.title !== '(no title)' ? r.title : '']));
+    return sentMessagesOf({ ids, first, copies, titles, shell, limit, textMax });
+  }
+
+  return { search, status, start, ingest, refresh, idle, stop, outline, sentMessages };
 }

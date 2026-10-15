@@ -873,8 +873,9 @@ async function handle(method, params) {
       // 既定（sourceKinds 無し）は対話の会話だけ。サブエージェントの子は parentThreadId を付けたときだけ返る
       // （実機で確認）。古い版は parentThreadId を知らずに無視し、普通の一覧を返す
       const parent = parentFilter === "ignore" ? null : params?.parentThreadId ?? null;
+      // 使い捨て（ephemeral）のスレッドは一覧に出さない（実機で確認。2026-10-15。タイトル・次の発言の候補が使う）
       const data = [...threads.values()]
-        .filter((t) => (parent ? t.parentThreadId === parent : !t.parentThreadId))
+        .filter((t) => !t.ephemeral && (parent ? t.parentThreadId === parent : !t.parentThreadId))
         .sort((a, b) => dir * (a.updatedAt - b.updatedAt))
         .slice(0, params?.limit ?? 100)
         .map((t) => wire(t, false));

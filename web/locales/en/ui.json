@@ -45,6 +45,7 @@
       "apiKeys": "API keys",
       "usage": "Usage",
       "appearance": "Appearance",
+      "input": "Input",
       "context": "Plugins",
       "notify": "Notifications",
       "voice": "Calls",
@@ -54,6 +55,17 @@
       "autoCompaction": "Auto compaction",
       "browser": "Browser",
       "computer": "Computer use"
+    },
+    "input": {
+      "historyRecall": {
+        "title": "Recall sent messages with the Up key",
+        "description": "Press Up on the top line of the message box to bring back a message you sent before."
+      },
+      "suggestions": {
+        "title": "Suggest the next message",
+        "description": "After a reply, a suggestion appears in the empty message box. Press Tab to use it. In Codex and Antigravity conversations, making it uses a little usage."
+      },
+      "saveFailed": "Couldn't save: {{error}}"
     },
     "usage": {
       "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
@@ -1834,7 +1846,7 @@
     },
     "shell": {
       "label": "Shell",
-      "placeholder": "Command to run (Ctrl+Enter)",
+      "placeholder": "Command to run ({{sendKeys}})",
       "placeholderTouch": "Command to run",
       "run": "Run",
       "asText": "Send as text",
@@ -2088,16 +2100,23 @@
       "rechoose": "Choose again",
       "cancel": "Cancel"
     },
+    "recall": {
+      "backToDraft": "Back to your draft"
+    },
+    "suggestion": {
+      "accept": "Use the suggestion",
+      "described": "Suggestion: {{text}}"
+    },
     "composer": {
       "skills": "Skills",
       "attach": "Attach files (or drop or paste them)",
       "abort": "Stop",
-      "sendTitle": "Send (Ctrl+Enter)",
+      "sendTitle": "Send ({{sendKeys}})",
       "cwd": "Working directory",
       "model": "Agent, model, and effort",
       "mode": "Approval mode",
       "firstMessage": "Write the first message for {{name}}",
-      "placeholder": "Ctrl+Enter to send",
+      "placeholder": "{{sendKeys}} to send",
       "placeholderTouch": "Write a message",
       "editorLabel": "Message",
       "queued": "Will send once the conversation is ready",
@@ -3739,7 +3758,7 @@
     "hostTime": "PC time: {{time}}",
     "sendNow": "Send now",
     "sendMore": "Send options (pick a time)",
-    "sendMoreTitle": "Schedule the message (Ctrl+Shift+Enter)",
+    "sendMoreTitle": "Schedule the message ({{scheduleKeys}})",
     "armedRemove": "Remove the scheduled time",
     "armedNoteEdit": "Sending schedules this message again for {{when}}",
     "rowEdit": "Edit",

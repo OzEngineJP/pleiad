@@ -665,6 +665,8 @@ export const backend = {
     compact: true,
     // 委譲の子だけ自動圧縮の閾値を下げる窓（runArgs.autoCompactWindow → CLAUDE_CODE_AUTO_COMPACT_WINDOW）を受ける
     autoCompactWindow: true,
+    // 次の発言の候補はターンの中で届く（runArgs.promptSuggestions。ターンの後に作らない。core/prompt-suggestions.mjs）
+    promptSuggestions: 'native',
     title: true,       // renameSession / customTitle。公式 CLI・VS Code と共有される
     tag: true,         // tagSession / tag。同上
     fork: true,
@@ -720,7 +722,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
     // SDK を読む（配布物で初めてなら、同意があればここで取る。core/claude-sdk.mjs）。読めなければプロンプトを渡す前の失敗にする
     // （送信待ちが「失敗」に戻り、取った後に再送できる）。同意が無ければ、画面に取得の案内を出させる
     let api;
@@ -1147,6 +1149,9 @@ export const backend = {
         ...(model || endpoint?.roles?.main ? { model: model || endpoint.roles.main } : {}),
         ...(effort && (!endpoint || endpoint.options?.sendThinking) ? { effort } : {}),
         includePartialMessages: true,
+        // 次の発言の候補（core/prompt-suggestions.mjs、ADR 0211）。result の後に prompt_suggestion が 1 つ届く（最初のターン・プランモード・上限の近くでは来ない）。
+        // 入力を result の直後に閉じても、CLI は終わる前に届ける（2026-10-15 実測。resume で起こし直したプロセスの 1 ターン目でも届く）
+        ...(promptSuggestions ? { promptSuggestions: true } : {}),
         // hooks の発火（hook_started / hook_response）を受け取る。会話の右パネルの「発火の記録」に使う（claude-normalize.mjs）
         includeHookEvents: true,
         // 引き継ぎ（2d）は、走っている hooks のコールバックが終わるのを上限つきで待つ（control.track。trackedHooks）

@@ -97,6 +97,16 @@ export const settings = [
   defineSetting({ key: 'effort', summary: S('effort'), risk: 'write', riskReason: `The default thinking depth for new conversations. ${PICK_ABOUT}`,
     schema: z.string(), default: '', read: fromPrefs('effort'),
     ...plainPref('effort', (ctx, v) => { if (typeof v !== 'string' || !/^[a-z]{0,20}$/.test(v)) throw invalid(ctx, `effort: ${String(v).slice(0, 40)}`); return v; }) }),
+  // 入力欄（設定 › 入力。docs/design-system.md「入力欄の呼び出しと候補」）。どちらも既定はオン
+  defineSetting({ key: 'composer.historyRecall', summary: S('composer.historyRecall'), risk: 'write', riskReason: `Whether Up in the message box recalls sent messages. ${WRITE_ABOUT}`,
+    prefKeys: ['composerHistoryRecall'], schema: z.boolean(), default: true, read: fromPrefs('composerHistoryRecall'),
+    normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.historyRecall: boolean'); return { after: v }; },
+    write: (ctx, v) => ctx.writes.pref('composerHistoryRecall', v) }),
+  defineSetting({ key: 'composer.suggestions', summary: S('composer.suggestions'), risk: 'write',
+    riskReason: `Whether a predicted next message is shown in the empty message box (Codex and Antigravity spend a little usage to make it; turning it off only stops that). ${WRITE_ABOUT}`,
+    prefKeys: ['composerSuggestions'], schema: z.boolean(), default: true, read: fromPrefs('composerSuggestions'),
+    normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.suggestions: boolean'); return { after: v }; },
+    write: (ctx, v) => ctx.writes.pref('composerSuggestions', v) }),
   // 承認モードは人間だけが変える（design.md §8.5）。agent には出さない
   defineSetting({ key: 'mode', summary: S('mode'), risk: 'human-only', schema: z.string(), default: '', read: fromPrefs('mode'), ...plainPref('mode', knownValue('mode')) }),
   // 既定のアカウントを替えると、新しい会話が別の契約・課金で動く。アカウントは human-only（ADR 0082）

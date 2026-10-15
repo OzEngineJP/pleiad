@@ -60,9 +60,10 @@ import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './op
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
 import { addCliToPath, mcpSetup } from './cli-launcher.mjs';
-import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX } from './ops/sessions.mjs';
+import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX, SENT_DEFAULT, SENT_MAX, SENT_TEXT_MAX } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
+import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt-suggestions.mjs';
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt } from './limit-resume.mjs';
@@ -2079,6 +2080,15 @@ const sessionSearch = createHostSessionSearch({
 });
 
 /**
+ * 次の発言の候補の作りかけ（core/prompt-suggestions.mjs、ADR 0211）。Codex・Antigravity の会話は、ターンの後にここで作る（suggestAfterTurn）。
+ * Claude の会話はターンの中で届く（promptSuggestions）。どちらも promptSuggestion の出来事で画面へ流す。保存はしない（画面が会話ごとに持つ）
+ */
+const promptSuggestions = createSuggestionJobs({
+  onSuggestion: (sessionId, text) => emitGlobal({ type: 'promptSuggestion', sessionId, text }),
+  onError: (id, err) => console.error(`  次の発言の候補を作れませんでした (${id}):`, String(err?.message ?? err)),
+});
+
+/**
  * 使用量の表示に使うアカウント。会話用のトークンではなく、アカウントごとの設定フォルダ（`claude auth login` 済み）で読む
  * （setup-token のトークンは scope が user:inference だけで使用量を読めない）。認可が済んでいないものは理由を出す。
  * 1 件も登録していなければ空＝今までどおりログイン中のアカウントだけ
@@ -3246,6 +3256,12 @@ const opsApp = {
       }),
       nextBefore: rows.length > page.length ? page.at(-1).lastModified : null,
     };
+  },
+  // 入力欄の ↑ の呼び出し（sessions.sentMessages）: bot の会話・委譲の子を除いた会話の送信済みのメッセージ。指定の会話の分を先に
+  sentMessages: async ({ sessionId, shell = false, limit = SENT_DEFAULT } = {}) => {
+    const rows = (await sessionList({ limit: 500, track: false })).filter((r) => !r.bot && !r.delegation && (!r.unsent || r.id === sessionId));
+    const items = await sessionSearch.sentMessages({ rows, first: sessionId ?? null, shell, limit: Math.min(limit, SENT_MAX), textMax: SENT_TEXT_MAX });
+    return { items };
   },
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
@@ -5843,6 +5859,8 @@ async function runTurnInternal(args, onStarted, hooks) {
   // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
   if (sessionId && runtime.turns.has(sessionId)) throw new Error(t('session.running'));
   if (sessionId && hooks.compact !== 'idle') compactionScheduler.cancel(sessionId);
+  // 次の発言の候補の作りかけは、次のターンが始まったら要らない
+  if (sessionId) promptSuggestions.cancel(sessionId);
   const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
@@ -6214,7 +6232,10 @@ async function beginTurn(ctx) {
   // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
   const autoCompactWindow = await delegatedCompaction(ctx);
   // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
-  const delegatedChild = Boolean(sessionId && (await store.get(sessionId).catch(() => null))?.delegation);
+  const sessionMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
+  const delegatedChild = Boolean(sessionMeta?.delegation);
+  // 次の発言の候補（Claude はターンの中で予測を受ける。core/prompt-suggestions.mjs）。設定がオフ・委譲の子・bot・圧縮のターンでは頼まない
+  const wantsSuggestion = !delegatedChild && !sessionMeta?.bot && !hooks.compact && (await store.getPrefs()).composerSuggestions !== false;
   const runArgs = {
     prompt,
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -6260,6 +6281,7 @@ async function beginTurn(ctx) {
     // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
     ...(endpoint ? { endpoint } : {}),
     ...(autoCompactWindow ? { autoCompactWindow } : {}),
+    ...(wantsSuggestion ? { promptSuggestions: true } : {}),
   };
   if (runArgs.browserEnv) {
     // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
@@ -7066,6 +7088,31 @@ async function endTurn(turn, emit, { record = true } = {}) {
       compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000,
         turn.compactionRevision, usage.usedTokens);
   }
+  if (record) void suggestAfterTurn(turn, { delegated, bot: Boolean(botKind) }).catch(err => console.error('  次の発言の候補を作れませんでした:', String(err?.message ?? err)));
+}
+
+/**
+ * 次の発言の候補を、ターンの後に作る（Codex・Antigravity。backend.suggestNext。core/prompt-suggestions.mjs、ADR 0211）。
+ * Claude はターンの中で届くので作らない（capabilities.promptSuggestions が 'native'）。
+ * 成功で終わった、人と話している会話（委譲の子・bot・圧縮でない）で、設定がオンで、次のターンも送信待ちも無いときだけ。
+ * 要約は会話の言語のまま渡し、モデルは軽いもの（バックエンドが選ぶ）。会話で選んだ互換の接続先があればそれで回す
+ */
+async function suggestAfterTurn(turn, { delegated, bot }) {
+  const id = turn.info.sessionId;
+  const backend = turn.backend;
+  if (!id || turn.outcome !== 'ok' || turn.compactTrigger || turn.compaction || delegated || bot) return;
+  if (backend.capabilities?.promptSuggestions === 'native' || typeof backend.suggestNext !== 'function') return;
+  if ((await store.getPrefs()).composerSuggestions === false) return;
+  if (runtime.turns.has(id) || (await outbox.list(id)).some(m => !['sent', 'cancelled'].includes(m.status))) return;
+  promptSuggestions.start(id, async (signal) => {
+    const { messages } = await history.loadTranscript(id, backend);
+    const gist = suggestionGist(messages);
+    if (!gist || signal.aborted) return null;
+    const saved = await store.get(id);
+    const endpoint = endpointCapable(backend) && saved.compatEndpoint ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
+    if (saved.compatEndpoint && !endpoint) return null;
+    return backend.suggestNext({ prompt: suggestionPrompt(gist), signal, ...(endpoint ? { endpoint } : {}) });
+  });
 }
 
 /** 送信待ちが残っている会話を全部 kick する。ターンが終わるたびに呼ぶ。 */

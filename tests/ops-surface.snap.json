@@ -3749,6 +3749,21 @@
       "input": "6fd588228159"
     },
     {
+      "id": "sessions.sentMessages",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "a07a99ae8785"
+    },
+    {
       "id": "sessions.setAutoCompaction",
       "risk": "write",
       "riskOf": false,
@@ -4451,6 +4466,24 @@
       ]
     },
     {
+      "key": "composer.historyRecall",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "composerHistoryRecall"
+      ]
+    },
+    {
+      "key": "composer.suggestions",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "composerSuggestions"
+      ]
+    },
+    {
       "key": "computerUse",
       "risk": "write",
       "riskOf": true,
@@ -4646,6 +4679,20 @@
       "agent-bound-readonly": "human-only=hidden"
     },
     "compaction.auto": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "composer.historyRecall": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "composer.suggestions": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",

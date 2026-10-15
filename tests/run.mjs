@@ -35,6 +35,9 @@ const SUITES = [
   './unit/server-limit-resume.mjs',
   './unit/send-schedule.mjs',
   './unit/server-scheduled-send.mjs',
+  // 次の発言の候補（要約・読み取り・作りかけ・Claude の予測・Antigravity の使い捨てのホーム）と、入力欄の ↑ の呼び出しの並び（ADR 0211）
+  './unit/prompt-suggestions.mjs',
+  './unit/server-prompt-suggestions.mjs',
   './unit/file-preview.mjs',
   // HTML の開き先（htmlRoute）: 列（H-in / H-ex / L / R / R0）ごとの行き先と、起点（クリック・Ctrl・中クリック・チップ・メニュー・可視化のカード）の通り道
   './unit/html-route.mjs',

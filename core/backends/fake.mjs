@@ -987,6 +987,13 @@ export const backend = {
     return String(transcript ?? "").split("\n").find((l) => l.trim())?.slice(0, 20) ?? "無題";
   },
 
+  // 次の発言の候補（core/prompt-suggestions.mjs）。LLM は呼ばない。要約の最後の返答（[agent]）の中の「suggest:<文>」（行末まで）を候補にする。無ければ候補なし
+  async suggestNext({ prompt }) {
+    const last = String(prompt ?? "").split("[agent]\n").at(-1).split("</conversation>")[0];
+    const text = /suggest:([^\n]*)/.exec(last)?.[1]?.trim();
+    return JSON.stringify({ suggestion: text || null });
+  },
+
   auth: {
     async status() {
       return { loggedIn: auth.loggedIn, account: auth.account, detail: "テスト用のダミー" };

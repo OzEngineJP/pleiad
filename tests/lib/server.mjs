@@ -6,6 +6,7 @@
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertNotGuarded } from "../../core/test-guard.mjs";
@@ -30,16 +31,18 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
   // 夜の記憶整理（core/memory/learn.mjs）は、起動のときに一度「追いつく」実行をし、そのときの会話・投稿を読んで隠れた learner 会話を作る。
   // 負荷で起動直後の読み取りが遅れると、テストが投稿した直後や runTurn の最中にその会話が走り、その session イベントを
   // ws-client.runTurn が自分の会話と取り違える（会話が control-info の返事でなく {"memories":[]} になる）。テストの server は止めておく。
-  // 確かめるテストは prefs.json に memoryLearnPaused: false を置いてから起動する
+  // 確かめるテストは prefs.json に memoryLearnPaused: false を置いてから起動する。
+  // 次の発言の候補（core/prompt-suggestions.mjs）も止めておく（ターンのたびに候補を作る裏の 1 回が、ターンや保持役の数え方の試験に混ざる）。
+  // 確かめるテスト（server-prompt-suggestions）は起動後に設定でオンにする
   // 本物のデータ置き場（PLEIAD_TEST_GUARD_HOME。tests/lib/test-env.mjs）には、prefs.json を置くことも、サーバーを立てることもしない
   if (dataDir) assertNotGuarded(dataDir, "start a test server on", { ...process.env, ...env });
   if (dataDir) {
     const file = path.join(dataDir, "prefs.json");
     let prefs = {};
     try { prefs = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* 無ければ空から */ }
-    if (prefs.memoryLearnPaused === undefined) {
+    if (prefs.memoryLearnPaused === undefined || prefs.composerSuggestions === undefined) {
       fs.mkdirSync(dataDir, { recursive: true });
-      fs.writeFileSync(file, JSON.stringify({ ...prefs, memoryLearnPaused: true }));
+      fs.writeFileSync(file, JSON.stringify({ memoryLearnPaused: true, composerSuggestions: false, ...prefs }));
     }
   }
   const child = spawn(process.execPath, [entry, ...args], {
@@ -67,6 +70,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       AGENT_HOST_WORKTREES: "off",
       // 言語は日本語に固定する。テストは日本語の文言に依存している（CI の OS の言語で変わらないように）
       AGENT_HOST_LOCALE: process.env.AGENT_HOST_LOCALE || "ja",
+      // Antigravity の次の発言の候補を作る agy の使い捨てのホーム（core/backends/antigravity-suggest.mjs）は、利用者の一時フォルダーでなくデータ置き場の下に
+      AGENT_HOST_AGY_SUGGEST_HOME: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), "pleiad-agy-suggest"),
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
       ...env,
     },

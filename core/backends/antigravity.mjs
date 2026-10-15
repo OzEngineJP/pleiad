@@ -27,6 +27,7 @@ import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
 import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
+import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { t } from "../i18n.mjs";
 import crypto from "node:crypto";
@@ -285,6 +286,14 @@ export const backend = {
    */
   async models() {
     return modelCache ?? buildAgyModels([], null);
+  },
+
+  /**
+   * 次の発言の候補（core/prompt-suggestions.mjs、ADR 0211）。prompt は指示と要約。返すのは生の返り（読むのは server 側）。
+   * agy は 1 回ごとに会話を履歴に残すので、使い捨てのホームで起こす（antigravity-suggest.mjs）
+   */
+  async suggestNext({ prompt, signal }) {
+    return runAgySuggestion({ prompt, model: suggestModel(await backend.models()), signal });
   },
 
   // ---- 実行 ---------------------------------------------------------------
