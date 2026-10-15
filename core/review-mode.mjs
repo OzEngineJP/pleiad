@@ -92,7 +92,7 @@ export const COMMAND_REFUSE = [
   'scanHooks', 'readHook', 'hookTargets', 'saveHooks', 'copyHooks', 'sessionHooks', 'plyHooks', 'readPlyHook', 'savePlyHook',
   'removePlyHook', 'togglePlyHook', 'plyHookPreview', 'hooksUnifyPreview', 'setHooksOwner', 'repairPlyHooks',
   'setAutoCompaction', 'setConversationAutoCompaction', 'runShell', 'stopShell', 'skipShell', 'switchBackend', 'setMode',
-  'revealPath', 'openPath', 'openVisualization', 'authLogin', 'authLogout', 'authSubmit',
+  'revealPath', 'openPath', 'openVisualization', 'authLogin', 'authLogout', 'authSubmit', 'authCancel',
   'attachFile', 'attachStart', 'attachChunk', 'attachFinish', 'attachCancel', 'attachImport', 'attachImportCancel',
   'uploadCheck', 'uploadStart', 'uploadChunk', 'uploadFinish', 'uploadCancel',
   'browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav', 'computerStop',

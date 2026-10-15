@@ -95,6 +95,9 @@
       "loginUrl": "{{agent}} のログイン: ",
       "loginMessage": "{{agent}}: {{message}}",
       "loginDone": "ログインした",
+      "cliVersion": "{{agent}} {{version}}",
+      "expired": "⚠ ログインの有効期限が切れています。",
+      "signInAgain": "ログインし直す",
       "claudeSdk": {
         "notice": "Claude を使うには Anthropic の Claude Agent SDK（{{version}}）が必要です。Pleiad には含まれていないため、npm のレジストリから取得して、この PC に保存します。",
         "terms": "SDK には Anthropic の規約が適用されます",
@@ -557,6 +560,7 @@
       "nameJoin": "」「"
     },
     "reissue": "トークンを発行し直す",
+    "reissueMissing": "そのアカウントは見つかりません。一覧から選んでトークンを発行し直してください。",
     "issue": "トークンを発行",
     "redoUsage": "使用量の認可をやり直す",
     "authorizeUsage": "使用量の表示を認可",
@@ -1827,6 +1831,20 @@
       "truncated": "出力が長いので途中から省きました",
       "runFailed": "実行できませんでした: {{error}}",
       "where": "{{cwd}} で実行"
+    },
+    "authExpired": {
+      "login": "{{agent}} のログイン（{{email}}）の有効期限が切れています。",
+      "loginNoEmail": "{{agent}} のログインの有効期限が切れています。",
+      "token": "Claude のアカウント「{{name}}」のトークンの有効期限が切れています。",
+      "tokenUnnamed": "Claude のアカウントのトークンの有効期限が切れています。",
+      "signInAgain": "ログインし直す",
+      "waiting": "ブラウザーでログインしてください…",
+      "cancel": "キャンセル",
+      "signedIn": "✓ ログインしました",
+      "resent": "✓ ログインし直して、もう一度送りました",
+      "sendAgain": "もう一度送る",
+      "reissue": "トークンを再発行",
+      "loginFailed": "ログインできませんでした: {{error}}"
     },
     "sys": {
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
