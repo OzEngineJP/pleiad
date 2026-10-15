@@ -120,7 +120,8 @@ async function applyLoginShellEnv({ env = process.env, platform = process.platfo
     log(`login shell environment unavailable (${shell ?? 'no shell'})`);
     return false;
   }
-  const merged = mergeShellEnv(env, shellEnv);
+  // PATH の区切りは読み込む OS のもの（呼ぶ側の platform。動いている OS の path.delimiter ではない）
+  const merged = mergeShellEnv(env, shellEnv, { delimiter: platform === 'win32' ? ';' : ':' });
   for (const key of Object.keys(merged)) env[key] = merged[key];
   return true;
 }
