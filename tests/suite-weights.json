@@ -238,6 +238,7 @@
     "mobile-shell": 13,
     "mobile-web": 323,
     "modes": 1,
+    "node-pty-mode": 2,
     "notification-inbox": 570,
     "notification-inbox-server": 2678,
     "notification-inbox-ui": 2,
