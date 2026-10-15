@@ -165,14 +165,24 @@ const sameUrlPrefix = (url, prefix) => process.platform === 'win32' || process.p
 const isBare = (spec) => !/^(\.|\/|[A-Za-z][A-Za-z0-9+.-]*:)/.test(spec) && !spec.startsWith('#') && !module.isBuiltin(spec);
 
 /**
+ * 置き場を照合する URL の頭。Node が渡す parentURL は実体のパスなので、置き場のパスがシンボリックリンクを通るとき
+ * （macOS の /var → /private/var など）に備えて、実体のパスの頭も足す（issue #71）
+ */
+function rootPrefixes(root) {
+  const prefix = (dir) => pathToFileURL(dir).href.replace(/\/?$/, '/');
+  const list = [prefix(root)];
+  try { list.push(prefix(fs.realpathSync(root))); } catch { /* まだ無い置き場は、そのままのパスだけで照合する */ }
+  return [...new Set(list)];
+}
+
+/**
  * 置き場の中のファイルが書いた裸の指定子（zod/v4 など）を、アプリの package.json から解決させる。
  * Node 22.15 以降は registerHooks（同じスレッド・同期）、それより前は register（別スレッドのローダー）
  */
 function installPeerHook(root) {
-  const prefix = pathToFileURL(root).href.replace(/\/?$/, '/');
-  if (hookedRoots.has(prefix)) return;
-  hookedRoots.add(prefix);
-  if (hooksInstalled) return;
+  const added = rootPrefixes(root).filter((p) => !hookedRoots.has(p));
+  for (const p of added) hookedRoots.add(p);
+  if (!added.length || hooksInstalled) return added;
   hooksInstalled = true;
   if (typeof module.registerHooks === 'function') {
     module.registerHooks({
@@ -184,7 +194,7 @@ function installPeerHook(root) {
         return nextResolve(specifier, context);
       },
     });
-    return;
+    return added;
   }
   // 古い Node（22.13〜22.14）: 別スレッドのローダー。置き場は data で渡す（後から増えた置き場は port で足す）
   const loader = `
@@ -208,12 +218,12 @@ function installPeerHook(root) {
   });
   port1.unref?.();
   addRoot = (p) => port1.postMessage({ root: p });
+  return added;
 }
 let addRoot = null;
 function hookRoot(root) {
-  const before = hookedRoots.size;
-  installPeerHook(root);
-  if (addRoot && hookedRoots.size > before) addRoot([...hookedRoots].at(-1));
+  const added = installPeerHook(root);
+  if (addRoot) for (const p of added) addRoot(p);
 }
 
 /** 置き場に取ったものを読む（試験もここを通す）。peer 依存はアプリのものに解決させる */
