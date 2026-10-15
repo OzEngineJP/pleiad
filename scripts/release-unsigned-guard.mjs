@@ -7,6 +7,9 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const TAG = /^v(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/;
+/** 版の一覧から取る欄（releasesToCheck が見るものだけ）と、gh の出力の上限 */
+export const RELEASE_LIST_JQ = '[.[] | {tag_name, draft}]';
+export const GH_MAX_BUFFER = 64 * 1024 * 1024;
 
 /** v1.2.3 / v1.2.3-beta.4 を比べる（正式は同じ版の beta より新しい）。形の違うタグは null */
 export function compareTags(a, b) {
@@ -39,11 +42,13 @@ export function unsignedBlockers(checks, buildInfos) {
 async function main() {
   const repo = process.env.GH_REPO, releaseTag = process.env.RELEASE_TAG;
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo || '') || !TAG.test(releaseTag || '') || !process.env.GH_TOKEN) throw new Error('Release tag, repository and token required');
-  const gh = args => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  // 版の一覧は版ごとに配布物の行を持ち、版が増えると execFileSync の既定の上限（1 MB）を超えて ENOBUFS で止まる（v0.14.0 で起きた）。
+  // 一覧は使う欄（tag_name・draft）だけを --jq で取り、上限も広げておく
+  const gh = args => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: GH_MAX_BUFFER });
   let latestTag = null;
   try { latestTag = JSON.parse(gh(['api', `repos/${repo}/releases/latest`])).tag_name ?? null; }
   catch (error) { if (!/Not Found|HTTP 404/.test(String(error.stderr))) throw error; }
-  const list = JSON.parse(gh(['api', `repos/${repo}/releases?per_page=100`]));
+  const list = JSON.parse(gh(['api', `repos/${repo}/releases?per_page=100`, '--jq', RELEASE_LIST_JQ]));
   const checks = releasesToCheck(list, latestTag, releaseTag);
   const buildInfos = new Map();
   for (const { tag } of checks) {
