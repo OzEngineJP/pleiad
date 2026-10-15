@@ -450,6 +450,7 @@ const SUITES = [
   './unit/handover-check.mjs',
   // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
   './unit/pack-runtime.mjs',
+  './unit/node-pty-mode.mjs',
   // 実機の確認（scripts/zero-downtime/stage1-7/）の試験用のインストール版が、利用者のインストール版と重ならない
   './unit/zdtest-isolation.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
