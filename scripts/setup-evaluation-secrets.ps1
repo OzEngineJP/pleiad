@@ -8,7 +8,7 @@ function Set-Secret([string]$Name, [string]$Value) {
   # Keep secret values out of command arguments, files and console output.
   $info = New-Object System.Diagnostics.ProcessStartInfo
   $info.FileName = (Get-Command gh.exe).Source
-  $info.Arguments = "secret set $Name --repo $Repository"
+  $info.Arguments = "secret set $Name --repo $Repository --env release"
   $info.UseShellExecute = $false
   $info.CreateNoWindow = $true
   $info.RedirectStandardInput = $true

@@ -285,7 +285,7 @@ Claude の CLI は既定で保持役に載るので（無停止の更新。[ADR 
 下書きへアップロードした全ファイルを再取得してSHA-256を照合した後、100%配信で公開する。失敗時は公開へ進まない。既存リリースのバイナリは上書きしない。
 
 初回設定は `powershell -File scripts/setup-evaluation-secrets.ps1`。GitHub CLIで認証済みの管理者が実行する。
-GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CSC_LINK`、ランダムなパスワードを `WIN_CSC_KEY_PASSWORD` Repository Secretsへ標準入力で登録する。
+GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CSC_LINK`、ランダムなパスワードを `WIN_CSC_KEY_PASSWORD` として、Environment `release` の Secrets へ標準入力で登録する。署名・ストアの Secrets は Repository Secrets に置かず、`main` と `v*` のタグからしか使えない Environment `release` にだけ置く（[ADR 0214](adr/0214-release-environment-secrets.md)）。
 発行元と公開指紋は `PLY_WIN_PUBLISHER` / `PLY_WIN_CERTIFICATE_SHA1` Repository Variablesに登録する。
 `PLY_WIN_CERTIFICATE_SHA1` を登録してあれば、ビルドは署名の準備で `desktop/update-trust.json` の `signers` にその指紋があるかを確かめ、無ければ止まる（`scripts/release-signing.cjs`。ストアの証明書は常に確かめる）。Azure（認証局）の署名は、発行元が `publishers` にあるかを確かめる。macOS は対象外。新しい鍵へ替えるときは、先に一覧へ足す。
 秘密鍵・パスワードはソース、ログ、Releaseアセットに含めない。署名ステップだけがSecretsを参照し、runnerの一時PFXと証明書ストアは処理後に掃除する。
@@ -305,7 +305,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 1. **橋渡しの版を、今の形（自己署名）で出す。** `desktop/update-trust.json` が `unsigned: "accept"` の版（ADR 0209 を含む版）を、今の Variables のまま `Evaluation release` で正式の版（Latest）として出す。今の利用者は、指紋の固定（ADR 0176）で受け入れる。この版の `BUILD-INFO.json` には `updateAcceptsUnsigned: true` が載る。先行版を受け取る利用者は、正式の版を含めて一番新しい版を取るので、橋渡しの版が一番新しければ 1 つで済む。
 2. **利用者に届くのを待つ。** 起動中の PC は 30 分ごとに確かめてダウンロードし、再起動で入る。届いたかはこちらから見えないので、待つ長さは利用者の数と使い方で決める。
 3. **Repository Variable `PLY_WINDOWS_SIGNING` を `none` にして、次の版を出す。** `Evaluation release` は自己署名の手順を飛ばし、「Verify and publish unsigned」で、署名の Secrets を 1 つも渡さずに作る。公開の前に `scripts/release-unsigned-guard.mjs` が、Latest と一番新しい版の `BUILD-INFO.json` の `updateAcceptsUnsigned` を確かめ、`true` でなければ止める（橋渡しの版を飛ばしたまま出さないため）。配布物がどれも `NotSigned` であることも確かめる。`Pleiad-Evaluation.cer`・`SIGNING-INFO.json` は添付しない。`Desktop signed release` でも、`none` のときは同じ確かめをしてから無署名で作る。
-4. **無署名の版が出て、戻す必要が無いと決めたら、署名の設定を消す。** Repository Secrets の `WIN_CSC_LINK`・`WIN_CSC_KEY_PASSWORD`、Repository Variables の `PLY_WIN_PUBLISHER`・`PLY_WIN_CERTIFICATE_SHA1`。`PLY_WINDOWS_SIGNING=none` は残す。手元の自己署名の鍵（`%LOCALAPPDATA%/Ply/signing/`）も、署名の版を出し直す必要が無くなってから消す。
+4. **無署名の版が出て、戻す必要が無いと決めたら、署名の設定を消す。** Environment `release` の Secrets の `WIN_CSC_LINK`・`WIN_CSC_KEY_PASSWORD`、Repository Variables の `PLY_WIN_PUBLISHER`・`PLY_WIN_CERTIFICATE_SHA1`。`PLY_WINDOWS_SIGNING=none` は残す。手元の自己署名の鍵（`%LOCALAPPDATA%/Ply/signing/`）も、署名の版を出し直す必要が無くなってから消す。
 
 橋渡しの版が届く前に止まっていた PC（オフラインのまま・更新を切った PC）は、無署名の版を受け取れない。Releases から手動でインストールし直す（設定と会話は残る）。
 `Desktop signed release` で出した版は `BUILD-INFO.json` を持たないので、その版が Latest か一番新しい版だと、無署名の公開は止まる。その場合は `Evaluation release` で橋渡しの版を出し直す。
