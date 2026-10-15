@@ -144,7 +144,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
 }
 
 export default async function (t) {
-  // サーバーへ渡す env はログインシェルの環境を読み込んだ後に作る（desktop/shell-env.cjs。ADR 0212）
+  // サーバーへ渡す env はログインシェルの環境を読み込んだ後に作る（desktop/shell-env.cjs。ADR 0213）
   {
     const shellEnv = async ({ env }) => { await tick(); env.PATH = '/opt/homebrew/bin:/usr/bin'; env.FROM_SHELL = '1'; return true; };
     const { calls } = await start({ env: { PATH: '/usr/bin' }, shellEnv });

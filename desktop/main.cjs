@@ -235,7 +235,7 @@ function startServerSwitch(ready, portFile, onServerExit) {
 }
 
 async function boot() {
-  // Dock・Finder から起こすと PATH が launchd の最小限なので、ログインシェルの環境を読み込む（desktop/shell-env.cjs。ADR 0212）。
+  // Dock・Finder から起こすと PATH が launchd の最小限なので、ログインシェルの環境を読み込む（desktop/shell-env.cjs。ADR 0213）。
   // サーバーへ渡す env（下の utilityProcess.fork・desktop/server-boot.cjs の serverEnv）を作る前に終える
   const shellEnv = applyLoginShellEnv({ log: message => console.warn('[shell-env]', message) }).catch(error => console.warn('[shell-env]', error?.message ?? error));
   // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）。

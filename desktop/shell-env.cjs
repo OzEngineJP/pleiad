@@ -1,4 +1,4 @@
-// ログインシェルの環境変数を読み込む（docs/design.md「4. アーキテクチャ」の「サーバーへ渡す環境変数」。ADR 0212）。
+// ログインシェルの環境変数を読み込む（docs/design.md「4. アーキテクチャ」の「サーバーへ渡す環境変数」。ADR 0213）。
 // macOS の Dock・Finder・ログイン項目から起こしたアプリは launchd の最小限の PATH（/usr/bin:/bin:/usr/sbin:/sbin）しか持たず、
 // ~/.zprofile・~/.zshrc で足した PATH（Homebrew・gcloud など）が、サーバー経由でエージェントの CLI と `!` の行のシェルに届かない。
 // サーバーを起こす前に利用者のログインシェルを対話で 1 回だけ走らせ、その環境を main の process.env へ写す。
