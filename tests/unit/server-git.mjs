@@ -113,8 +113,9 @@ export default async function (t) {
     const childSteps = { steps: [{ tool: 'Bash', input: { command: 'work' }, result: 'ok', ask: true }, { text: '終わった' }] };
     const parentFrom = c.mark();
     const parentRun = c.runTurn({ backend: 'fake', cwd: repo, prompt: ply('ply_delegate', { kind: 'implement', backend: 'fake', task: `steps:${JSON.stringify(childSteps)}`, cwd: wt }) });
-    // 子のツールを承認待ちに止め、子が worktree を変え終わるまで終わらせない（実時間の長さで待たない）
-    const started = await permissionBeforeTurnEnd(parentRun, parentFrom);
+    // 子のツールを承認待ちに止め、子が worktree を変え終わるまで終わらせない（実時間の長さで待たない）。
+    // 親は ply_delegate を返すと子を待たずにターンを終えられるので、親のターンの終わりとは競わせず、子の承認だけを待つ（issue #73）
+    const started = await c.waitFor((e) => e.type === 'permission', { from: parentFrom, ms: 30_000 });
     await startSnapped(started.sessionId);
     await fs.writeFile(path.join(wt, 'w1.txt'), 'a\nb\n');
     sh(wt, 'add', '.'); sh(wt, 'commit', '-q', '-m', 'child: w1');
