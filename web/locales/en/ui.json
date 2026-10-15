@@ -2313,7 +2313,7 @@
     "backToChat": "Back to chat",
     "newSessionTitle": "New session (keeps the current filters)",
     "settings": "Settings",
-    "closeSidebarTitle": "Close sidebar (Ctrl+B)",
+    "closeSidebarTitle": "Close sidebar ({{key}})",
     "closeSidebar": "Close sidebar",
     "search": "Search conversations",
     "filterTitle": "Filter by working directory, status, or agent",
@@ -2347,7 +2347,7 @@
       "stillStale": "Checked at {{time}}. You still need to reopen the page.",
       "unreachable": "Checked at {{time}}. Couldn't reach the server."
     },
-    "openSidebarTitle": "Open sidebar (Ctrl+B)",
+    "openSidebarTitle": "Open sidebar ({{key}})",
     "openSidebar": "Open sidebar",
     "openSidebarWith": "Open sidebar ({{detail}})",
     "previewShowing": "Viewing",
@@ -4470,7 +4470,7 @@
     },
     "toc": {
       "title": "Contents",
-      "entry": "Contents and search in this conversation (Ctrl+F)",
+      "entry": "Contents and search in this conversation ({{key}})",
       "close": "Close (Esc)",
       "search": "Search this conversation",
       "prevHit": "Previous match (Shift+Enter)",

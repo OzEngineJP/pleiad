@@ -67,6 +67,7 @@ const SUITES = [
   // macOS のヘルパー通信・座標・入力の中断・platform の分岐（本物の OS 入力は送らない）
   './unit/computer-mac.mjs',
   './unit/header-entries.mjs',
+  './unit/shortcut-labels.mjs',
   './unit/arc.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',

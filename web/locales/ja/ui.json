@@ -2253,7 +2253,7 @@
     "backToChat": "会話に戻る",
     "newSessionTitle": "新しいセッション（絞り込みの条件を引き継ぐ）",
     "settings": "設定",
-    "closeSidebarTitle": "サイドバーを閉じる（Ctrl+B）",
+    "closeSidebarTitle": "サイドバーを閉じる（{{key}}）",
     "closeSidebar": "サイドバーを閉じる",
     "search": "会話を検索",
     "filterTitle": "作業ディレクトリ・状態・エージェントで絞る",
@@ -2286,7 +2286,7 @@
       "stillStale": "{{time}} に確認しました。まだ開き直しが必要です。",
       "unreachable": "{{time}} に確認しました。サーバーに接続できませんでした。"
     },
-    "openSidebarTitle": "サイドバーを開く（Ctrl+B）",
+    "openSidebarTitle": "サイドバーを開く（{{key}}）",
     "openSidebar": "サイドバーを開く",
     "openSidebarWith": "サイドバーを開く（{{detail}}）",
     "previewShowing": "表示中",
@@ -4348,7 +4348,7 @@
     },
     "toc": {
       "title": "目次",
-      "entry": "目次と会話内検索（Ctrl+F）",
+      "entry": "目次と会話内検索（{{key}}）",
       "close": "閉じる（Esc）",
       "search": "会話内を検索",
       "prevHit": "前の一致（Shift+Enter）",
