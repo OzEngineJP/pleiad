@@ -296,7 +296,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 インストーラーの署名を Windows で `Valid` と確かめたい評価端末では、Releaseの `Pleiad-Evaluation.cer` と `evaluation-certificate.ps1` を取得し、別途確認した指紋を指定して `-Action Trust -CertificateFile ... -ExpectedThumbprint ...` を実行する。
 `SIGNING-INFO.json` は公開証明書の指紋と有効期限、`BUILD-INFO.json` はソースコミットとActions実行URLを記録する。
 
-リリースジョブは所有者のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。PRから署名ジョブは実行しない。
+リリースジョブは、リポジトリの持ち主か、Repository Variable `PLY_RELEASE_ACTORS`（JSON の配列。例 `["tekalu1"]`）にある人のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。組織のリポジトリでは持ち主が組織になって人の push と一致しないので、出す人を `PLY_RELEASE_ACTORS` に書く。PRから署名ジョブは実行しない。
 
 ### 無署名への移り方
 

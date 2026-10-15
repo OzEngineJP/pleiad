@@ -18,7 +18,9 @@ jobs:
   # 同じ commit の main の CI（test.yml の push の run）を読み、release の npm test を省けるかを決める（docs/release-ci-reuse.md）。
   # 書く権限を持たない別のジョブにし、待つ間は Windows の runner を使わない。CI が赤ければここで止まり、release のジョブは走らない
   ci-gate:
-    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    # 出せるのは、リポジトリの持ち主と Repository Variable PLY_RELEASE_ACTORS（JSON の配列。例 ["tekalu1"]）にある人だけ。
+    # 組織のリポジトリでは持ち主が組織になり、人の push と一致しないので、出す人を変数で決める（docs/desktop-releases.md「自己署名の配布」）
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は 30 分
     timeout-minutes: 50
@@ -46,7 +48,7 @@ jobs:
         run: node scripts/release-ci-gate.mjs --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --wait-minutes 40 --interval-seconds 30 --missing-grace-minutes 5 --request-timeout-seconds 20
   release:
     needs: ci-gate
-    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
