@@ -87,6 +87,7 @@
     "chrome-profiles-ui": 40,
     "chrome-windows": 3828,
     "claude-accounts": 397,
+    "claude-auth-expired": 3000,
     "claude-background": 18,
     "claude-catalog-cli-version": 130,
     "claude-catalog-stale": 3313,

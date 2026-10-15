@@ -20,6 +20,7 @@ import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
 import { tailInfo, penGlyph } from './resend-band.mjs';
+import { paintAuthFailure, resentNote } from './auth-expired.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
@@ -1106,7 +1107,7 @@ function resendPayload(text, attached, sessionId) {
  * 押した時点の実行中の判定は、帯を開いたときのものではなく今のもの（開いたあとに走り出していたら、入力欄の帯を作り直して、もう一度押してもらう）。
  * 巻き戻しは済んで受け付けだけが失敗したときは、rewind を外して同じ messageId で送り直す（起点の発言はもう無いので、巻き戻し直せない）
  */
-async function rewindSend({ m, source, tail, text, attached, editing = false }) {
+async function rewindSend({ m, source, tail, text, attached, editing = false, after = null }) {
   if (isRunningHere() && !tail.running) {
     const next = { ...tail, running: true, any: true };
     if (editing) chatEdit.setTail(next);
@@ -1126,6 +1127,8 @@ async function rewindSend({ m, source, tail, text, attached, editing = false }) 
     if (state.current === source) await select(source, { reload: true });
     // 読み直せなかったときに、畳んだ行が隠れたまま残らないように（高さ 0・不透明度 0 のまま）
     for (const w of doomed) if (w.isConnected) w.remove();
+    // 呼び手の後始末（ログインし直して自動で送ったときの「送りました」の行。resendFailedTurn）
+    if (state.current === source) after?.();
     return true;
   };
   try {
@@ -3375,7 +3378,8 @@ function onEvent(ev, replay = false) {
       if (ev.compact) return;
       settleStrays();
       closeBundle();                                // ターンが終わったら、最新の行を残さず見出しだけにする
-      if (ev.outcome === "ok") return;             // 終わったことは稼働表示が消えれば分かる
+      // 終わったことは稼働表示が消えれば分かる。設定の行に期限切れを出しているなら、通ったターンで消えたかを読み直す（server が印を消す）
+      if (ev.outcome === "ok") { if ([...state.auth.values()].some((st) => st?.expired)) refreshAuth().catch(() => {}); return; }
       closeTurnEl();
       // 中断の一行は保存された状態と同じ形で描く（paintInterruptLine が二重に出さない）
       if (ev.outcome === "aborted" || ev.outcome === 'limited') paintInterruptLine({ at: ev.at ?? Date.now(),
@@ -3385,6 +3389,8 @@ function onEvent(ev, replay = false) {
         // ターンの失敗は会話の出来事として残す。「✕ 失敗」は強い字（ツールの失敗と同じ語）
         const node = sys(html.t("chat.sys.failed", { head: t("timeline.result.failed"), error: ev.error ?? t("chat.sys.unknownReason") }, ["head"]));
         node.classList.add("turn-failed");
+        // ログインの期限切れ（401）だけは、何が切れたかの一文と直す入口に替える（web/auth-expired.mjs。ADR 0212）
+        if (ev.kind === 'auth' && ev.auth) authFailureRow(node, ev);
         if (ev.sessionId) turnErrorRows.set(ev.sessionId, { messageId: ev.messageId, node });
         const failed = outboxes.get(ev.sessionId)?.find(m => m.status === 'failed' && m.id === ev.messageId);
         if (failed) syncOutboxRows(outboxes.get(ev.sessionId));
@@ -3746,7 +3752,14 @@ function renderAuth() {
   for (const b of targets) {
     const st = state.auth.get(b.id) ?? {};
     const row = el("div", "auth-row");
-    row.append(el("span", "name", b.label));
+    const name = el("span", "name", b.label);
+    // 使っている CLI の在り処（ホームは ~。弱い字の等幅）。版は説明（title）にだけ出す（ADR 0212）
+    if (st.cliPath) {
+      const where = el("small", "auth-cli", st.cliPath);
+      if (st.cliVersion) where.title = t("settings.agents.cliVersion", { agent: b.label, version: st.cliVersion });
+      name.append(where);
+    }
+    row.append(name);
     const text = st.installed === false ? t("settings.agents.notInstalled") : !st.supported ? (st.error ? t("settings.agents.statusError", { error: st.error }) : t("settings.agents.loginUnsupported"))
       : st.pending ? t("settings.agents.loginPending")
       : st.loggedIn ? (st.account || t("settings.agents.loggedIn"))
@@ -3780,6 +3793,20 @@ function renderAuth() {
       row.append(button);
     }
     sec.append(row);
+    // 会話で 401 を受けた（CLI は期限が切れてもログイン済みを返す）。行はふだんのまま、その下に ⚠ の 1 行と文字だけの直す入口
+    if (st.expired && st.loggedIn && !st.pending) {
+      const note = el("div", "auth-note");
+      note.setAttribute("role", "status");
+      note.append(el("span", null, t("settings.agents.expired")));
+      if (window.plyRemote) note.append(el("span", "remote-login-note", t("remote.loginOnHost")));
+      else {
+        const again = el("button", "btn link", t("settings.agents.signInAgain"));
+        again.type = "button";
+        again.onclick = (e) => { e.stopPropagation(); authLogin(b); };
+        note.append(again);
+      }
+      sec.append(note);
+    }
     if (st.installed !== false && st.supported && !st.loggedIn && !st.pending) need.push(b.label);
 
     const box = authUrlBox(b.id);
@@ -3892,21 +3919,115 @@ function installClaudeSdk() {
     .catch((e) => setClaudeSdk({ ...sdk, fetching: null, error: { kind: "disk", message: e.message } }));
 }
 
-/** ログインは完了まで返ってこない（サーバがコールバックを待つ。10 分で時間切れ）。応答待ちで画面を止めない */
-function authLogin(b) {
-  if (window.plyRemote) { sys(html.t("remote.loginOnHost")); return; }   // リモートの窓からは始めない（renderAuth と同じ理由）
+/**
+ * ログインは完了まで返ってこない（サーバがコールバックを待つ。10 分で時間切れ）。応答待ちで画面を止めない。
+ * fromRow は会話の失敗の行の［ログインし直す］（web/auth-expired.mjs）: 設定の面を開かず、済んだ・やめたの一行も会話に足さない。
+ * そのときだけ、終わりを待てる約束（成功ならログインの状態、失敗・取り消しは reject）を返す
+ */
+function authLogin(b, { fromRow = false } = {}) {
+  if (window.plyRemote) { sys(html.t("remote.loginOnHost")); return Promise.resolve(null); }   // リモートの窓からは始めない（renderAuth と同じ理由）
   state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), supported: true, pending: true });
   renderAuth();
   onboarding.paint();
-  let failure;
-  cmd("authLogin", { backend: b.id })
+  if (fromRow) rowLogins.add(b.id);
+  let failure, result = null;
+  const done = cmd("authLogin", { backend: b.id })
+    .then((r) => { result = r; })
     .catch((e) => { failure = e; })
     .finally(async () => {
+      rowLogins.delete(b.id);
       state.authUrl.delete(b.id);
       forgetVocab(b.id);
       await refreshAuth().catch(() => {});
-      if (failure) $("setupError").textContent = t("settings.agents.loginFailedRetry", { agent: b.label, error: failure.message });
-    });
+      // 取り消し（失敗の行の［キャンセル］）は失敗として出さない。失敗の行から始めたものは、行が理由を出す
+      if (failure && failure.code !== 'CANCELLED' && !fromRow) $("setupError").textContent = t("settings.agents.loginFailedRetry", { agent: b.label, error: failure.message });
+      // ログインが済んだ: 期限切れのまま待っているほかの失敗の行を［もう一度送る］にする（自動では送らない。始めた行は待っている最中なので触らない）
+      if (!failure) authRowsSignedIn(b.id);
+    })
+    .then(() => { if (failure) throw failure; return result; });
+  if (!fromRow) done.catch(() => {});
+  return done;
+}
+
+// 失敗の行から始めたログイン（バックエンドの id）。設定の面を開かず、済んだの一行を会話に足さない（onAuthEvent）
+const rowLogins = new Set();
+// 会話の中の、ログインの期限切れの失敗の行（{ backend, row }。web/auth-expired.mjs の paintAuthFailure の返り）
+let authRows = [];
+function authRowsSignedIn(backend) {
+  authRows = authRows.filter((x) => x.node.isConnected);
+  for (const x of authRows) if (x.backend === backend) x.row.signedIn();
+}
+
+/**
+ * ターンがログインの期限切れ（401）で失敗した行を、何が切れたかの一文と直す入口にする（docs/design-system.md「ログインの期限切れ」、ADR 0212）。
+ * CLI のログインなら、設定の行にも期限切れを出す（server も覚えている。開いていない窓は次の authStatus で知る）
+ */
+function authFailureRow(node, ev) {
+  const b = state.backends.find((x) => x.id === ev.backend);
+  const agent = b?.label ?? ev.backend ?? '';
+  const auth = ev.auth;
+  const pristine = ev.pristine === true;
+  const before = auth.mode === 'cli' ? auth.email ?? state.auth.get(ev.backend)?.account ?? null : null;
+  const accountName = auth.mode === 'token' ? claudeAccounts.list()?.find?.((a) => a.id === auth.accountId)?.name ?? '' : '';
+  const row = paintAuthFailure(node, {
+    auth, pristine, agent, accountName, before, remote: Boolean(window.plyRemote) || !b,
+    login: () => authLogin(b, { fromRow: true }),
+    cancel: () => cmd('authCancel', { backend: ev.backend }).catch(() => {}),
+    resend: ({ auto }) => resendFailedTurn({ sessionId: ev.sessionId, messageId: ev.messageId, node, auto, pristine, auth, agent }),
+    reissue: () => claudeAccounts.open({ reissue: auth.accountId }),
+    spinner: () => runMark(),
+  });
+  authRows = authRows.filter((x) => x.node.isConnected);
+  authRows.push({ backend: ev.backend, node, row });
+  const st = state.auth.get(ev.backend);
+  if (auth.mode === 'cli' && st?.loggedIn && !st.expired) { state.auth.set(ev.backend, { ...st, expired: true }); renderAuth(); }
+}
+
+/** 失敗したターンの自分の発言の行（.m）。送信待ちの id の行、無ければ失敗の行より前の最後の自分の発言 */
+function failedUserRow(node, messageId) {
+  const own = messageRow(messageId)?.querySelector('.m[data-role="user"]');
+  if (own) return own;
+  for (let w = node.closest('.mw')?.previousElementSibling; w; w = w.previousElementSibling) {
+    const m = w.querySelector(':scope .m[data-role="user"]');
+    if (m) return m;
+  }
+  return null;
+}
+
+/**
+ * 失敗した発言をもう一度送る（ログインし直したあと）。同じ会話の中で、その発言の手前まで巻き戻して送り直す（「再送信」と同じ rewindSend。ADR 0102）。
+ * 巻き戻すので、失敗した発言と失敗の返答は履歴に二重に残らない。何も出ていないターン（pristine）で、後ろに自分の発言も走っている返答も無いときだけ
+ * 確かめずに送る。そうでなければ（auto なら送らずに false）、いつもの「再送信」（消えるものを入力欄の上の帯で確かめる）に任せる。
+ * auto で送れたら、送り直した発言の手前に「ログインし直して、もう一度送りました」の行を置く（元の失敗の行は巻き戻した範囲と一緒に消える）
+ */
+async function resendFailedTurn({ sessionId, messageId, node, auto, pristine, auth, agent }) {
+  if (state.current !== sessionId || !node.isConnected) return false;
+  let m = failedUserRow(node, messageId);
+  // 発言の uuid はターンの後の履歴の読み直し（syncHistory）で付く。まだなら読み直す
+  if (m && !m.dataset.uuid) { await syncHistory().catch(() => {}); m = failedUserRow(node, messageId); }
+  if (!m?.dataset.uuid || state.current !== sessionId) {
+    if (!auto) composerError(t('chat.resend.failed', { error: t('chat.message.notSaved') }));
+    return false;
+  }
+  const confirm = async () => { if (!auto) await resendFrom(m, false); return false; };
+  if (!pristine) return confirm();
+  const data = await cmd('loadSession', { sessionId }).catch(() => null);
+  if (!data || state.current !== sessionId || !m.isConnected) return false;
+  const index = data.messages.findIndex((x) => x.uuid === m.dataset.uuid);
+  if (index < 0) return confirm();
+  const tail = tailInfo(data.messages, index, { running: isRunningHere(), forkOnly: Boolean(state.sessions.find((x) => x.id === sessionId)?.delegation) });
+  if (tail.users > 0 || tail.running || tail.forkOnly || tail.files) return confirm();
+  return rewindSend({ m, source: sessionId, tail, text: data.messages[index].text ?? '', attached: messageAttachments(data, index),
+    after: auto ? () => placeResentNote(auth, agent) : null });
+}
+
+/** 送り直した発言（会話の最後の自分の発言）の手前に「ログインし直して、もう一度送りました」の行を置く */
+function placeResentNote(auth, agent) {
+  const users = thread.querySelectorAll('.m[data-role="user"]');
+  const target = users[users.length - 1]?.closest('.mw');
+  const w = wrap(resentNote(auth, { agent }));
+  if (target) target.before(w); else thread.append(w);
+  relayoutBranches();
 }
 
 async function authLogout(b) {
@@ -3927,7 +4048,8 @@ function onAuthEvent(ev) {
     state.authUrl.set(ev.backend, { url: String(ev.url ?? ""), message: ev.message ? String(ev.message) : "" });
     renderAuth();
     onboarding.paint();             // 初期設定ダイアログの中でログインを始めたときは、そちらに出す
-    openSettings();                 // 進め方が見える場所に居てもらう
+    // 進め方が見える場所に居てもらう。会話の失敗の行から始めたログインは、その行が待っている様子を出すので開かない（URL の一行は会話に残す）
+    if (!rowLogins.has(ev.backend)) openSettings();
     const row = el("div", "m sys", t("settings.agents.loginUrl", { agent: name }));
     const url = String(ev.url ?? "");
     const a = el("a", null, url);
@@ -3937,8 +4059,14 @@ function onAuthEvent(ev) {
     return append(row);
   }
   state.authUrl.delete(ev.backend);
-  if (ev.phase === "error") $("setupError").textContent = t("settings.agents.loginFailed", { agent: name, error: ev.message ?? "" });
-  else sys(html.t("settings.agents.loginMessage", { agent: name, message: ev.message ?? t("settings.agents.loginDone") }));
+  const fromRow = rowLogins.has(ev.backend);
+  if (ev.phase === "error") { if (!fromRow) $("setupError").textContent = t("settings.agents.loginFailed", { agent: name, error: ev.message ?? "" }); }
+  // 失敗の行から始めたログインは、その行が「✓ ログインしました」に替わるので、会話に一行を足さない
+  else if (!fromRow) {
+    sys(html.t("settings.agents.loginMessage", { agent: name, message: ev.message ?? t("settings.agents.loginDone") }));
+    // ほかの窓・設定からのログイン。期限切れのまま待っている失敗の行を［もう一度送る］にする
+    if (ev.phase === "done") authRowsSignedIn(ev.backend);
+  }
   refreshAuth().catch(() => {});
 }
 

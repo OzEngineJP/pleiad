@@ -296,13 +296,18 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     }
     catch (e) { $('caState').textContent = t('accounts.deleteFailed', { error: e.message }); }
   }
-  async function open({ usageLogin } = {}) {
+  // usageLogin: そのアカウントの「使用量の表示を認可」を始める。reissue: そのアカウントのトークンの再発行（setup-token）を始める
+  // （会話の失敗の行の［トークンを再発行］。web/auth-expired.mjs、ADR 0212）
+  async function open({ usageLogin, reissue } = {}) {
     openSettings(); panel.hidden = false; $('caState').textContent = t('accounts.loading');
     try {
       await load(true); $('caForm').hidden = true; resetForm(); confirming = ''; draw(); drawFlow(); $('caState').textContent = '';
       panel.scrollIntoView({ block: 'nearest' });
       const target = usageLogin && accounts.find(a => a.id === usageLogin);
       if (target) startLogin({ kind: 'usage-login', accountId: target.id, name: target.name });
+      const again = !target && reissue && accounts.find(a => a.id === reissue);
+      if (again) startLogin({ kind: 'setup-token', accountId: again.id, name: again.name });
+      else if (reissue && !target) $('caState').textContent = t('accounts.reissueMissing');
     }
     catch (e) { $('caState').textContent = e.message; }
   }
