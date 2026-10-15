@@ -937,7 +937,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     const d = get();
     // 作業ディレクトリ
     const cwd = d.cwd ?? "";
-    const split = d.worktree?.current ?? null;
+    const split = d.worktree?.current ?? (d.worktreePending ? { origin: cwd } : null);
     cwdName.textContent = split ? baseName(split.origin) : cwd ? baseName(cwd) : t("chat.composer.cwd");
     chips.cwd.title = cwd ? t("composer.cwd.chipTitle", { cwd }) : t("chat.composer.cwd");
     if (split) chips.cwd.title = `${chips.cwd.title} · ${t("worktree.chipTitle", { origin: split.origin })}`;

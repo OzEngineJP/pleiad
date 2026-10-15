@@ -657,6 +657,7 @@
         "effort": "Thinking effort for the next turn.",
         "cwd": "Working folder for the next turn. Changing it needs an approval card.",
         "cancel": "true cancels the reservation.",
+        "worktreePending": "Cancel the remembered worktree plan. Only a person (the screen).",
         "mode": "Approval mode id. Only a person (the screen); an agent gets NEEDS_UI.",
         "account": "Claude account id. Only a person (the screen); an agent gets NEEDS_UI.",
         "endpoint": "Compatible endpoint id. Only a person (the screen); an agent gets NEEDS_UI.",
@@ -1679,6 +1680,7 @@
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",
     "claudeAccount": "The default Claude account (an id; no token. Only a human changes it).",
+    "repoDefaults": "Defaults remembered for each repository when a message is sent (read only).",
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent). delegatedHeadroom is the room for a delegated Claude child: it is compacted once its context passes its fixed part (the size of its first request) plus this many tokens (0 = off, otherwise 30000 to 1000000)."
     },

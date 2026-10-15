@@ -112,6 +112,9 @@ export const settings = [
   // 既定のアカウントを替えると、新しい会話が別の契約・課金で動く。アカウントは human-only（ADR 0082）
   defineSetting({ key: 'claudeAccount', summary: S('claudeAccount'), risk: 'human-only', schema: z.string().nullable(), default: null, read: fromPrefs('claudeAccount'),
     ...plainPref('claudeAccount', async (ctx, v) => { if (!(await ctx.host.accountIds()).includes(v)) throw invalid(ctx, `claudeAccount: ${String(v).slice(0, 40)}`); return v; }, { nullable: true }) }),
+  // 送信したときだけサーバーが更新する。settings.set からは書けない。
+  defineSetting({ key: 'repoDefaults', summary: S('repoDefaults'), risk: 'read', prefKeys: ['repoDefaults'],
+    schema: z.record(z.string(), z.unknown()), default: {}, read: fromPrefs('repoDefaults') }),
   defineSetting({ key: 'compaction.auto', summary: S('compaction.auto'), risk: 'write', riskReason: `Auto compaction threshold and delay. ${WRITE_ABOUT}`, prefKeys: ['autoCompaction'],
     schema: compaction, writeSchema: compactionPatch, default: DEFAULT_COMPACTION_SETTINGS, read: (ctx) => ctx.compactionSettings?.(),
     normalize: (ctx, input, { before }) => {
