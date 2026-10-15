@@ -15,6 +15,10 @@ export const LIST_MAX = 100;
 export const ROOTS_DEFAULT = 30;
 export const ROOTS_MAX = 100;
 export const ROOT_TEXT_MAX = 2_000;
+/** sessions.sentMessages: 1 回の件数（既定・上限）と、1 件の本文の字数 */
+export const SENT_DEFAULT = 100;
+export const SENT_MAX = 200;
+export const SENT_TEXT_MAX = 20_000;
 /** sessions.read: messageId の前後それぞれの件数の上限 */
 export const READ_SIDE_MAX = 20;
 export const READ_SIDE_DEFAULT = 4;
@@ -174,6 +178,20 @@ const searchOps = [
         throw e;
       }
     },
+  }),
+  // 入力欄の ↑ で呼び出す送信済みのメッセージ（docs/design-system.md「入力欄の呼び出しと候補」）。画面だけが使う。本文は検索の写しから
+  defineOp({
+    id: 'sessions.sentMessages',
+    summary: 'agent:ops.sessions.sentMessages.summary',
+    risk: 'read',
+    input: z.object({
+      sessionId: z.string().min(1).max(200).optional().describe(D('sentMessages', 'sessionId')),
+      shell: z.boolean().optional().describe(D('sentMessages', 'shell')),
+      limit: z.number().int().min(1).max(SENT_MAX).optional().describe(D('sentMessages', 'limit')),
+    }),
+    output: z.object({ items: z.array(z.object({ sessionId: z.string(), title: z.string(), uuid: z.string(), at: z.string().nullable(), text: z.string() })) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, args) => ctx.app.sentMessages(args),
   }),
   // 一時チャットの流れ（docs/design-system.md「一時チャットの流れ」）: 会話ごとに、最初のあなたの発言を根の投稿に見立てた行。新しい順に limit 件
   defineOp({

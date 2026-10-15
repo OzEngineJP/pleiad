@@ -536,6 +536,7 @@
       "sendScheduledNow": { "summary": "Put a scheduled message into the send queue now without waiting for its time.", "id": "ID of the scheduled message.", "confirm": "Send scheduled message {{id}} now" },
       "schedules": { "summary": "List planned actions for conversations.", "sessionId": "Limit the list to one conversation; omit for all." },
       "cancelSchedule": { "summary": "Cancel a planned action.", "id": "The schedule ID." },
+      "sentMessages": { "summary": "Sent messages that Up recalls in the message box: the given conversation's first, then other conversations' (no bot or delegated ones), each newest first. The same text appears once, at its newest.", "sessionId": "The conversation to put first.", "shell": "When true, return the commands sent with !.", "limit": "How many to return (default 100, max 200)." },
       "roots": { "summary": "Quick chats feed: conversations (no bot, delegated or unsent ones) newest first, each with its first message of yours and the message count.", "before": "Start from conversations that changed before this time (ms). The previous page's nextBefore.", "limit": "How many to return (default 30, max 100)." },
       "search": {
         "summary": "Search conversations by title, status, place and message text. Space-separated words are ANDed; quote a phrase for an exact match. Each result carries excerpts of the matching messages.",
@@ -1670,6 +1671,10 @@
     "memoryLearnBackend": "Agent for nightly memory organization. Empty follows the conversation default.",
     "memoryLearnAt": "Local time for nightly memory organization (HH:MM).",
     "memoryLearnPaused": "Pause nightly memory organization.",
+    "composer": {
+      "historyRecall": "Whether pressing Up on the top line of the message box recalls sent messages (true / false).",
+      "suggestions": "Whether a predicted next message is shown in the empty message box after a reply (true / false). Codex and Antigravity conversations use a little usage to make it."
+    },
     "model": "The default model for new conversations.",
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",

@@ -112,6 +112,7 @@
       <button type="button" id="usageTab" aria-controls="usagePanel" data-i18n="settings.nav.usage"></button>
       <button type="button" id="delegationTab" aria-controls="delegationPanel" data-i18n="settings.nav.delegation"></button>
       <button type="button" id="appearanceTab" aria-controls="appearancePanel" data-i18n="settings.nav.appearance"></button>
+      <button type="button" id="inputTab" aria-controls="inputPanel" data-i18n="settings.nav.input"></button>
       <button type="button" id="openContext" aria-controls="contextPanel" data-i18n="settings.nav.context"></button>
       <button type="button" id="autoCompactionTab" aria-controls="autoCompactionPanel" data-i18n="settings.nav.autoCompaction"></button>
       <!-- 内蔵ブラウザー。デスクトップ版のホストの画面だけ出す（web/browser-settings.mjs） -->
@@ -388,6 +389,8 @@
           <div class="seg sec" id="localeSeg" role="group" data-i18n-aria-label="settings.appearance.language.title"><button type="button" data-locale="auto"></button><button type="button" data-locale="ja"></button><button type="button" data-locale="en"></button></div>
           <p class="locale-now" id="localeNow" role="status" aria-live="polite"></p>
         </section>
+        <!-- 入力（↑ の呼び出し・次のメッセージの候補）。中身は web/input-settings.mjs が作る -->
+        <section id="inputPanel" data-i18n-aria-label="settings.nav.input" hidden></section>
         <section id="contextPanel" data-i18n-aria-label="settings.nav.context" hidden></section>
         <section id="autoCompactionPanel" data-i18n-aria-label="settings.nav.autoCompaction" hidden>
           <div class="auto-compaction-settings">

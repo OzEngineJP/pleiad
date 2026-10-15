@@ -45,6 +45,7 @@
       "apiKeys": "API キー",
       "usage": "使用量",
       "appearance": "外観",
+      "input": "入力",
       "context": "プラグイン",
       "notify": "通知",
       "voice": "通話",
@@ -54,6 +55,17 @@
       "autoCompaction": "自動圧縮",
       "browser": "ブラウザー",
       "computer": "コンピューターの操作"
+    },
+    "input": {
+      "historyRecall": {
+        "title": "↑ キーで送信済みのメッセージを呼び出す",
+        "description": "入力欄の一番上の行で ↑ を押すと、前に送ったメッセージが入ります。"
+      },
+      "suggestions": {
+        "title": "次のメッセージの候補を表示する",
+        "description": "返答の後、空の入力欄に候補を表示します。Tab で入力できます。Codex と Antigravity の会話では、候補を作るのに使用量を少し使います。"
+      },
+      "saveFailed": "保存できませんでした: {{error}}"
     },
     "usage": {
       "description": "サブスクの枠はアカウント全体の値です。使用率・残量・リセット日時を表示します。",
@@ -1793,7 +1805,7 @@
     },
     "shell": {
       "label": "シェル",
-      "placeholder": "実行するコマンド（Ctrl+Enter）",
+      "placeholder": "実行するコマンド（{{sendKeys}}）",
       "placeholderTouch": "実行するコマンド",
       "run": "実行",
       "asText": "文として送る",
@@ -2035,16 +2047,23 @@
       "rechoose": "選び直す",
       "cancel": "取り消す"
     },
+    "recall": {
+      "backToDraft": "下書きに戻す"
+    },
+    "suggestion": {
+      "accept": "候補を入れる",
+      "described": "候補: {{text}}"
+    },
     "composer": {
       "skills": "スキル",
       "attach": "ファイルを添付（ドロップ・貼り付けでも）",
       "abort": "中断",
-      "sendTitle": "送信（Ctrl+Enter）",
+      "sendTitle": "送信（{{sendKeys}}）",
       "cwd": "作業ディレクトリ",
       "model": "エージェント・モデル・エフォート",
       "mode": "承認モード",
       "firstMessage": "{{name}} の最初の発言を書く",
-      "placeholder": "Ctrl+Enter で送信",
+      "placeholder": "{{sendKeys}} で送信",
       "placeholderTouch": "メッセージを書く",
       "editorLabel": "メッセージ",
       "queued": "会話ができしだい送ります",
@@ -3622,7 +3641,7 @@
     "hostTime": "PC の時刻: {{time}}",
     "sendNow": "今すぐ送る",
     "sendMore": "送信のオプション（日時を指定）",
-    "sendMoreTitle": "日時を指定して送信（Ctrl+Shift+Enter）",
+    "sendMoreTitle": "日時を指定して送信（{{scheduleKeys}}）",
     "armedRemove": "日時の指定を外す",
     "armedNoteEdit": "送ると、{{when}} の送信予定にし直します",
     "rowEdit": "編集",

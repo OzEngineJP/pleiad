@@ -35,6 +35,9 @@ import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
 import { setupRemote } from './remote.mjs';
 import { setupNotifySettings } from './notify-settings.mjs';
+import { setupInputSettings, inputPrefs } from './input-settings.mjs';
+import { createRecall } from './composer/recall.mjs';
+import { createSuggestion } from './composer/suggestion.mjs';
 import { setupMobileNotify } from './mobile-notify.mjs';
 import { createPresenceReporter } from './presence.mjs';
 import { compatModelText } from './compat-models.mjs';
@@ -262,8 +265,8 @@ const chatComposer = createComposer({
   },
   isPlain: () => composerPlain,
   wait: { runMark, onChange: () => syncRunState() },
-  // 入力欄の `!` と「/」の候補が開いている間は、その操作を先に取る（Ctrl+Enter は送信のまま）
-  keys: [(e) => shellComposer.keydown(e), (e) => slashSkills.keydown(e)],
+  // 入力欄の `!` と「/」の候補が開いている間は、その操作を先に取る（Ctrl+Enter は送信のまま）。次に候補の Tab、↑ の呼び出し
+  keys: [(e) => shellComposer.keydown(e), (e) => slashSkills.keydown(e), (e) => chatSuggestion.keydown(e), (e) => chatRecall.keydown(e)],
   onSubmit: () => submit(),
   onSchedule: () => sendMenu.open(),
 });
@@ -279,6 +282,71 @@ const chatEdit = chatComposer.useEdit({
     change: () => saveDraftSoon(),
   },
 });
+// 入力欄の ↑ で送信済みのメッセージを呼び出す（web/composer/recall.mjs。設定 › 入力）。並びはこの会話 → ほかの会話の新しい順
+// （sessions.sentMessages。検索の写しはターンの終わりに追いつくので、このページで送ったばかりの分を先に足す）
+const recentSent = [];
+const RECENT_SENT_MAX = 50;
+function noteSent(sessionId, text, shell = false) {
+  if (!sessionId || !String(text ?? '').trim()) return;
+  recentSent.unshift({ sessionId, title: '', uuid: '', at: new Date().toISOString(), text: String(text), shell });
+  recentSent.length = Math.min(recentSent.length, RECENT_SENT_MAX);
+}
+async function loadSentMessages(shell) {
+  const { items = [] } = await cmd('invoke', { op: 'sessions.sentMessages', args: { ...(state.current ? { sessionId: state.current } : {}), ...(shell ? { shell: true } : {}) } });
+  const local = recentSent.filter(r => r.shell === shell && r.sessionId === state.current);
+  const seen = new Set();
+  return [...local, ...items].filter(r => { const key = r.text.trim(); if (!key || seen.has(key)) return false; seen.add(key); return true; })
+    .map(r => (r.title || r.sessionId !== state.current ? r : { ...r, title: state.sessions.find(s => s.id === r.sessionId)?.title ?? '' }));
+}
+const chatRecall = createRecall({
+  prompt: $('prompt'), box: $('cbox'), t,
+  enabled: () => inputPrefs(state.prefs).historyRecall,
+  blocked: () => chatEdit.active || slashSkills.isOpen?.() || Boolean(queuedSend),
+  shell: () => shellComposer.active,
+  load: ({ shell }) => loadSentMessages(shell),
+  current: () => state.current,
+  take: () => ({ text: $('prompt').value, attached: state.attached.slice() }),
+  restore: (draft) => { state.attached = draft?.attached ?? []; $('prompt').value = draft?.text ?? ''; fitPrompt(); renderAttached(); },
+  put: (item) => putRecalled(item),
+});
+/** 呼び出したものを欄に入れる。文中の添付の印があれば、その発言の添付も戻す（再送信と同じ。recalledAttachments） */
+function putRecalled(item) {
+  state.attached = [];
+  $('prompt').value = item.text;
+  fitPrompt(); renderAttached();
+  if (!shellComposer.active && item.uuid && item.text.split(/\r?\n/).some(line => ATTACHMENT_LINE.test(line.trim()))) void recalledAttachments(item);
+}
+async function recalledAttachments(item) {
+  const data = await cmd('loadSession', { sessionId: item.sessionId }).catch(() => null);
+  const index = data?.messages?.findIndex(row => row.uuid === item.uuid) ?? -1;
+  if (index < 0 || $('prompt').value !== item.text || !chatRecall.active) return;
+  state.attached = messageAttachments(data, index);
+  renderAttached();
+}
+// 次のメッセージの候補（web/composer/suggestion.mjs。設定 › 入力）。会話ごとに最後に届いたもの（promptSuggestion の出来事）を持つ。
+// 送った・別の端末から発言が入ったら捨てる
+const suggestions = new Map();
+const chatSuggestion = createSuggestion({
+  prompt: $('prompt'), box: $('cbox'), t,
+  touch: () => matchMedia('(pointer:coarse)').matches,
+  enabled: () => inputPrefs(state.prefs).suggestions,
+  blocked: () => !state.current || state.current === freshSessionId || isRunningHere() || chatEdit.active || chatRecall.active
+    || shellComposer.active || shellComposer.blocked || Boolean(state.loadingSession) || Boolean(homeDest.bot),
+  accept: (text) => {
+    suggestions.delete(state.current);
+    const prompt = $('prompt');
+    prompt.value = text;
+    prompt.setSelectionRange?.(text.length, text.length);
+    prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    prompt.focus();
+  },
+});
+function dropSuggestion(sessionId) {
+  if (!suggestions.delete(sessionId) && sessionId !== state.current) return;
+  if (sessionId === state.current) chatSuggestion.set(null);
+}
+$('prompt').addEventListener('input', () => { chatRecall.input(); chatSuggestion.refresh(); });
+$('prompt').addEventListener('focus', () => chatSuggestion.refresh());
 // まだ送っていない会話の宛先（bot なし / bot）。bot を選んだ最初の送信は、一時チャットでその bot に話しかける投稿になる（sendToHomeBot）
 const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args }),
   visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
@@ -923,6 +991,16 @@ function forkAtReplyEnd(head) {
   return replyMessages(head).reverse().find(x => x.dataset.uuid) ?? null;
 }
 
+/** 発言（data.messages[index]）に人が付けた添付を、入力欄の添付の形にする（再送信・↑ の呼び出し） */
+function messageAttachments(data, index) {
+  return (data.presents ?? []).filter(p => attachmentMessageIndex(data.messages, p) === index)
+    // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
+    .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
+      mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
+      // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
+      ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
+}
+
 /**
  * 発言の「編集して再送信」「再送信」。基本は同じ会話の中で送り直す（後ろの発言は消える。ADR 0102）。
  * 編集は、いつもの入力欄に元の本文と添付を入れて「編集中」にする（chatEdit。送り直すと消えるものは入力欄の上の帯に出る）。
@@ -937,12 +1015,7 @@ async function resendFrom(m, edit) {
     if (state.current !== source || !m.isConnected || state.busy) return;
     const index = data.messages.findIndex(row => row.uuid === m.dataset.uuid);
     if (index < 0) throw new Error(t('chat.message.notSaved'));
-    const attached = data.presents.filter(p => attachmentMessageIndex(data.messages, p) === index)
-      // 名前は captionParams.name（新しい記録）。無い過去の記録は保存された見出し「添付: 名前」から取る
-      .map(p => ({ path: p.path, name: p.captionParams?.name || p.caption?.replace(/^添付:\s*/, '') || p.path.split(/[\\/]/).at(-1),
-        mime: p.mime ?? /^data:([^;,]+)/.exec(p.dataUri ?? '')?.[1] ?? '', kind: p.kind, dataUri: p.dataUri,
-        // 出どころと大きさも引き継ぐ（入力欄の一覧が出す）
-        ...(p.origin === 'host' || p.origin === 'device' ? { from: p.origin } : {}), ...(Number.isFinite(p.size) ? { size: p.size } : {}) }));
+    const attached = messageAttachments(data, index);
     // 印（[添付] / [Attachment]）は本文の位置のまま入力欄へ戻す。文中の位置を保つ（編集で印を消した添付は送らない。resendPayload）
     const content = { text: data.messages[index].text ?? '', attached };
     // 委譲された作業の会話は同じ会話では送り直せない（サーバーも断る）。分岐して送るだけにする
@@ -1550,6 +1623,8 @@ async function runShellFromComposer() {
   }
   const sessionId = state.current;
   const runId = randomId();
+  noteSent(sessionId, command, true);
+  chatRecall.reset();
   $('prompt').value = '';
   shellComposer.exit();
   fitPrompt();
@@ -3040,7 +3115,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
@@ -3098,6 +3173,13 @@ function onEvent(ev, replay = false) {
   // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
   if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl(); refreshTaskChromeWindows(); } return; }
   if (ev.type === 'chromeProfile') { chromeProfilePill?.onProfileEvent(ev); refreshTaskChromeWindows(); return; }
+  // 次のメッセージの候補（どの会話のものも覚える。開いている会話なら出す）。発言が入った会話の候補は捨てる
+  if (ev.type === 'promptSuggestion' && ev.sessionId) {
+    suggestions.set(ev.sessionId, ev.text);
+    if (ev.sessionId === state.current) chatSuggestion.set(ev.text);
+    return;
+  }
+  if (ev.type === 'userMessage' && ev.sessionId && !replay) dropSuggestion(ev.sessionId);
   if (!isMine(ev)) {
     // 一覧に効くものだけは取り込む（画面には出さない）。セッションに紐づかないもの（statusIcon 等）はここへ来ない
     if (["status", "group", "title", "fork", "mode", "model", "cwd", "backend", "nextSettings"].includes(ev.type)) {
@@ -8293,6 +8375,8 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     // 開き直し: 先に空にして「読み込み中」。切り替え（keepUpTo）は剥がれた後に一緒に描くので、ここでは触らない
     // 作っている間の送信の予約は、別の会話へ移ったら取り消す（字は "" の下書きに残り、作った会話へ移る。startNew）
     if (!fresh && composerWait.queued) composerWait.cancel();
+    // ↑ で呼び出している間は、下書きへ戻してから保存する（呼び出した文を下書きにしない）
+    chatRecall.release();
     if (!fresh) saveDraft().catch(() => {});
     // 新しい会話の欄で始めた添付: できた会話へ付け替える。作っていないのに別の会話へ移るなら、その欄の持ち物として "" に切り離す
     // （後で作る別の会話に紛れ込まない。届いたら "" の下書きに積む）
@@ -8317,6 +8401,8 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     syncTopbar();
     clearThread();
     if (!fresh) loadDraft();
+    chatRecall.reset();
+    chatSuggestion.set(suggestions.get(id) ?? null);
   }
   try {
     await loadAndPaint(id, { keepUpTo, quiet, fresh, after });
@@ -8937,6 +9023,7 @@ function syncRunState() {
   $("abort").disabled = here && stoppingHere();
   syncResume();     // 中断状態なら同じ位置に「再開」
   syncEditTail();   // 編集中の帯の「走っている返答は止まる」
+  chatSuggestion.refresh();   // 次のメッセージの候補は、返答が終わってから出す
   controls.fit();   // 中断が出入りすると行の幅の配分が変わる
   if (!here) {
     closeTurnEl();
@@ -8952,6 +9039,9 @@ async function clearSentDraft(id, text, attachments) {
   const paths = (list) => JSON.stringify(list.map(a => a.path).sort());
   if (draft?.text !== text || paths(draft.attached ?? []) !== paths(attachments)) return;
   if (state.current === id) { $('prompt').value = ''; state.attached = []; renderAttached(); $('slashHint').textContent = ''; slashSkills.close(); fitPrompt(); }
+  noteSent(id, text);
+  dropSuggestion(id);
+  chatRecall.reset();
   await persistDraft(id, { text: '', attached: [], dirty: true });
 }
 /**
@@ -9595,6 +9685,7 @@ setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, end
   onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
+const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
 const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage: name => $(`${name}Tab`)?.click() });
 // 設定 › API キー。使っている所のリンクは、接続先は設定 › エージェント設定の接続先の面、通話・委譲はそのページへ

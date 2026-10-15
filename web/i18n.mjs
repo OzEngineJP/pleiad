@@ -19,6 +19,14 @@ const isNode = Boolean(globalThis.process?.versions?.node);
 
 const pickLang = (v) => (LOCALES.includes(v) ? v : null);
 
+/** macOS か（送信キーの表記を ⌘ にする）。Node（テスト）では違う */
+export const isMac = () => !isNode && /Mac/.test(globalThis.navigator?.platform ?? '');
+/**
+ * キーの表記（docs/design-system.md「入力欄と上端」）。辞書の {{sendKeys}}・{{scheduleKeys}} に入る（i18next の既定の変数。静的な HTML の data-i18n にも効く）。
+ * 押すキーは Mac でも Ctrl+Enter と ⌘+Enter の両方が効く（web/composer/composer.mjs）。表記だけを Mac の書き方（⌘⇧B と同じ記号）にする
+ */
+export const KEY_LABELS = isMac() ? { sendKeys: '⌘↩', scheduleKeys: '⌘⇧↩' } : { sendKeys: 'Ctrl+Enter', scheduleKeys: 'Ctrl+Shift+Enter' };
+
 /** 今の画面の言語。<html lang> が正（インライン script が写しから入れる）。無ければ日本語 */
 export let lang = pickLang(globalThis.document?.documentElement?.lang) ?? 'ja';
 
@@ -56,7 +64,7 @@ await i18n.init({
   initAsync: false,
   returnNull: false,
   returnEmptyString: false,
-  interpolation: { escapeValue: false },
+  interpolation: { escapeValue: false, defaultVariables: KEY_LABELS },
 });
 await Promise.all([ensure(lang), ensure(FALLBACK)]);
 if (!isNode && globalThis.document?.documentElement) document.documentElement.lang = lang;

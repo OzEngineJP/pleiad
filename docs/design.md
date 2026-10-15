@@ -273,6 +273,14 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - **位置**: 確定するたびに、基準の行（`historyAnchor`）の位置が動かないよう `#log` の `scrollTop` を補正する。末尾を見ていたなら補正ではなく末尾へ合わせ直す。`scrollTop` は画面の 1px に丸められるので、丸めきれなかった端数は次の補正に足す。
 - **切り替え**: 会話の切り替え・描き直しは `cancel`、描き終えたら `prepare`（`prepareHistoryHeights`）。静かな読み直しで残した行は確定済みのまま残り、未確定の行だけを見張り直す。
 
+## 次の発言の候補（2026-10-15）
+
+返答が終わった会話の、空の入力欄にグレーで出す次のメッセージの候補（見た目は design-system.md「入力欄の呼び出しと候補」、[ADR 0211](adr/0211-prompt-suggestions-and-history-recall.md)）。設定 › 入力の「次のメッセージの候補を表示する」（`composer.suggestions`。既定オン）で止められる。作るのは成功で終わったターンの後だけで、委譲の子・bot・圧縮のターンには作らない。候補は保存せず、`promptSuggestion` の出来事（`{ sessionId, text }`）で全部の画面へ流し、画面が会話ごとに最後の 1 つを持つ。送った・別の端末から発言が入ったら捨てる。次のターンが始まったら、作りかけは止める（`core/prompt-suggestions.mjs` の `createSuggestionJobs`）。
+- **Claude**: Claude Code の予測（Agent SDK の `promptSuggestions`）。ターンの中で `prompt_suggestion` が届く（`result` の後。最初のターン・プランモード・使用量の上限の近くでは来ない）。親の会話のキャッシュに相乗りするので、ほぼ使用量を使わない。Pleiad が `result` の直後に入力を閉じても届き、resume で起こし直したプロセスの 1 ターン目でも届く（2026-10-15 実測）
+- **Codex・Antigravity**: ネイティブの予測が無い（Codex の app-server に口が無い。TUI には 2026-09-24 に入り 09-27 に外された。ChatGPT のデスクトップの「composer predictions」は app-server から使えない）。ターンの後に、直近の発言（人と AI の本文。新しい方から 8 件・最後の返答は 4000 字・ほかは 1500 字）の要約を、指示（Codex の TUI の予測の指示に、要約で渡すことを足したもの）と一緒に軽いモデルへ 1 回渡し、`{"suggestion": …}` の JSON で受ける（`backend.suggestNext`）。1 行・240 字まで。会話の長さによらず 1 回の費用がほぼ一定。
+  Codex はタイトルと同じ軽いモデルの使い捨てのスレッド（`ephemeral`）。会話の fork（`thread/fork`）は使わない（fork は新しいスレッドの id でキャッシュが分かれ、会話の部分がキャッシュに乗らない。2026-10-15 実測）。会話で選んだ互換の接続先があればそれで回す。
+  Antigravity は `agy --print` を Flash の low で 1 回。`agy --print` は 1 回ごとに会話を利用者の履歴（`~/.gemini/antigravity-cli/`）に残すので、agy の状態の置き場（`USERPROFILE`・`HOME`）だけを一時フォルダーの下の使い捨ての場所（`pleiad-agy-suggest`）へ向けて起こす（ログインは OS の資格情報にあり、そのまま通る）。回ごとにその回の会話の置き場を消し、消せずに残った 10 分より古いものと 2 MB を超えた要約の DB も、次に起こす前に消す（`core/backends/antigravity-suggest.mjs`）
+
 ## セッション検索（2026-10-03）
 
 会話の題だけでなく本文まで探す core の関数 `search(input) → SearchResult`（`core/session-search.mjs`。[ADR 0080](adr/0080-session-fulltext-search.md)）。画面・MCP・CLI は `core/ops/sessions.mjs` の操作 `sessions.search`（risk: read。画面・MCP 直・CLI `sessions search <query>`）から同じものを呼ぶ。画面は脇の検索で、WS の汎用 `invoke` から呼ぶ（新しい WS コマンドは足さない。見た目は design-system.md §4.1「検索」、[ADR 0084](adr/0084-sidebar-fulltext-search-ui.md)）。MCP は直に出すツール `search_sessions`（ply_control・`pleiad mcp`）、CLI は `pleiad sessions search <query>`。hit の `uuid` を `sessions.read` の `messageId` に渡すと、その発言の前後を読める。
@@ -282,6 +290,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - **照合**: 空白区切りは AND（語ごとに、題・状態・場所・どの発言に当たってもよい）。`"…"` は 1 語で畳まず完全一致、ほかは NFKC と小文字の部分一致。演算子は解かない。語が 13 個以上は `RangeError`。
 - **絞り込み**（`filters`）: `backends`・`cwd`（完全一致）・`status`（`null` は状態なし）・`since`/`until`（会話の `lastModified`。ISO か epoch ms）・`speaker`（`any`/`user`/`assistant`）・`includeDelegated`（既定は委譲の子を含めない）・`includeToolInputs`・`sessionIds`。アーカイブという考えは無い。
 - **並びと続き**: `sort` は `relevance`（既定）か `recent`。関連度は題に当たった語 ×4 + 全部の語が 1 つの発言か題に揃えば 2 + `log2(1 + 一致した発言の数)` − min(3, 経過日数 / 30)（同点は新しい順）。新しさの減点に上限（3 = 90 日）があるので、1 年前の会話も、題に全部の語が当たれば新しい本文だけの当たりより先に並ぶ（2026-10-03。ADR 0080 の式からの調整）。語が無ければ新しい順。`limit`（既定 50・最大 200）と `cursor`（`nextCursor` をそのまま返す）で会話の件数を区切る。
+- **送信済みのメッセージ**（`sessions.sentMessages`。画面だけ。入力欄の ↑ の呼び出し）: 同じ写しから、指定した会話の人の発言を先に、ほかの会話（bot・委譲の子を除く）の分を後に、それぞれ新しい順で返す。同じ文は新しい 1 つだけ、既定 100 件・最大 200 件、1 件 20000 字まで。`shell: true` なら入力欄の `!` で送ったコマンド（`kind: 'shell'` の行）を同じ並びで返す（検索には当てない）。まだ写していない会話は裏で読み込みを頼み、読めた分だけで答える
 - **結果**: 会話の平らな一覧。各会話に `matched`（`title`/`status`/`place`/`message`/`toolInput`）・`hitCount`（一致した発言の数）・`hits`（`hitsPerSession` 件。既定 1・最大 10）。hit は `uuid`（画面の行の `data-uuid` と同じ）・`index`・`role`・`at`・`excerpt`（改行と連続空白を畳み、最初の一致の手前 16 字から約 140 字）・`ranges`（excerpt の中の一致の位置）。抜粋に選ぶ発言は、題に無い語を多く含む → 語を多く含む → 新しい、の順。委譲の子（`includeDelegated`）には `parentSessionId` が付く。
 
 ## デスクトップの更新（2026-09-12）

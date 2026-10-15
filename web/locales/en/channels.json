@@ -98,8 +98,8 @@
       "shortPlaceholder": "Post to #{{name}}",
       "dm": "Message {{name}}",
       "home": "Write a new conversation",
-      "send": "Post (Ctrl+Enter)",
-      "sendKeys": "Ctrl+Enter to send",
+      "send": "Post ({{sendKeys}})",
+      "sendKeys": "{{sendKeys}} to send",
       "failed": "Couldn't post: {{error}}"
     },
     "attach": {

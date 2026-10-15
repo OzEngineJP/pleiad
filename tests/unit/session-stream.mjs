@@ -80,6 +80,8 @@ export default async function (t) {
     t: key => key, html: { t: key => key }, ACTIVITY_LABEL: {},
     // 入力欄の「編集中」（web/composer/edit-mode.mjs・client.mjs の chatEdit / syncEdit）。このテストの対象外（編集中ではない会話だけ）
     chatEdit: { active: false, sending: false, snapshot: () => null, reset: noop, restore: noop }, syncEdit: noop, syncEditTail: noop,
+    // 入力欄の ↑ の呼び出し・次のメッセージの候補・設定 › 入力（web/composer/recall.mjs・suggestion.mjs・web/input-settings.mjs）。このテストの対象外
+    chatRecall: { release: noop, reset: noop, input: noop, active: false }, chatSuggestion: { set: noop, refresh: noop }, suggestions: new Map(), dropSuggestion: noop, inputSettings: { paint: noop },
     // 中断と再開（client.mjs の syncResume / paintInterruptLine、web/interrupt.mjs）。このテストの対象外
     syncResume: noop, paintInterruptLine: noop, isInterrupted: () => false, interruptReadPoint: () => 0, resumeSettled: () => false,
     // 会話を開くときの窓と手前を足す仕事（ADR 0182）。このテストの対象外

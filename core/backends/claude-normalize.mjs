@@ -13,6 +13,7 @@ import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { ZERO_COST, resultCost, usageTotals, claudeUsageDelta } from "./claude-cost-state.mjs";
 import { computerResult, computerToolInput, isComputerTool } from "./computer-delivery.mjs";
+import { cleanSuggestion } from "../prompt-suggestions.mjs";
 
 // 履歴のツール結果の切り詰め（fullResults なら切らない）
 const cutResult = (raw, full) => !full && raw.length > MAX_RESULT_CHARS
@@ -89,6 +90,12 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = nul
         window: quota.rateLimitType ?? quota.rate_limit_type ?? null });
     }
     if (m.type === 'rate_limit_event') return out;
+  }
+
+  // 次の発言の候補（promptSuggestions。core/prompt-suggestions.mjs）。1 行に整えて使えるものだけ
+  if (m.type === 'prompt_suggestion') {
+    const text = cleanSuggestion(m.suggestion);
+    return text ? [{ type: 'promptSuggestion', text }] : [];
   }
 
   if (m.type === 'tool_progress') return [{ type: 'task.activity' },
