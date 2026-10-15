@@ -781,6 +781,14 @@ export default async function (t) {
       assert.equal(bp.protectedFile('file://server/share/a.png', data), true, 'UNC');
       assert.equal(bp.protectedFile(fileUrl(path.join(data, 'secret.json')), data), true, 'データ置き場');
       assert.equal(bp.protectedFile(fileUrl(path.join(data, 'nope', 'x.png')), data), true, '無いファイルでもデータ置き場の下は止める');
+      // データ置き場へのパスがシンボリックリンクを通るとき（macOS の /var → /private/var と同じ形。issue #71）
+      const link = path.join(dir, 'data-link');
+      let linked = false;
+      try { fs.symlinkSync(data, link, 'junction'); linked = true; } catch { /* リンクを作れない環境では見ない */ }
+      if (linked) {
+        assert.equal(bp.protectedFile(fileUrl(path.join(link, 'nope', 'x.png')), link), true, 'リンクを通る置き場でも、無いファイルは止める');
+        assert.equal(bp.protectedFile(fileUrl(path.join(link, 'uploads', 'b.png')), link), false, 'リンクを通る置き場でも、uploads の下は読める');
+      }
       assert.equal(bp.protectedFile(fileUrl(path.join(data, 'uploads', 'a.png')), data), false, '添付の uploads は読める');
       assert.equal(bp.protectedFile(fileUrl(page2), data), false, 'ふつうのファイル');
       assert.equal(bp.protectedFile('https://a.example/', data), false, 'file: 以外は対象外');

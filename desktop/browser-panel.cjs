@@ -68,6 +68,19 @@ function cleanSource(source, url) {
   return null;
 }
 const realOf = (file, realpath) => { try { return realpath(file); } catch { return null; } };
+/**
+ * まだ無いファイルの実体のパス。在る一番近い親を実体にして、残りをつなげる（親がシンボリックリンクを通るとき、
+ * たとえば macOS の /var → /private/var でも、実体にしたデータ置き場と比べられるように。issue #71）
+ */
+const realOfMissing = (file, realpath) => {
+  const rest = [];
+  for (let dir = path.resolve(file); ; dir = path.dirname(dir)) {
+    const real = realOf(dir, realpath);
+    if (real) return path.join(real, ...rest);
+    if (path.dirname(dir) === dir) return path.resolve(file);
+    rest.unshift(path.basename(dir));
+  }
+};
 const insideOf = (file, root) => {
   const rel = path.relative(root, file);
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
@@ -87,7 +100,7 @@ function protectedFile(url, dataDir, realpath = fs.realpathSync) {
   if (/^[\\/]{2}/.test(file)) return true;
   const root = dataDir ? realOf(path.resolve(dataDir), realpath) : null;
   if (!root) return false;
-  const real = realOf(file, realpath) ?? path.resolve(file);
+  const real = realOf(file, realpath) ?? realOfMissing(file, realpath);
   const inside = (a, b) => insideOf(fold(a), fold(b));
   if (!inside(real, root)) return false;
   const uploads = realOf(path.join(root, 'uploads'), realpath) ?? path.join(root, 'uploads');
