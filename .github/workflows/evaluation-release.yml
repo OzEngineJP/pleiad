@@ -118,10 +118,11 @@ jobs:
             codesign --verify --deep --strict "$bundle"
             xcrun stapler validate "$bundle"
             spctl --assess --type execute -vv "$bundle"
+            app="$bundle"
             count=$((count + 1))
           done < <(find dist-desktop -maxdepth 2 -name '*.app' -print0)
           [ "$count" -eq 1 ] || { echo "Expected one $PLY_MAC_ARCH app, found $count"; exit 1; }
-          lipo -archs "$bundle/Contents/MacOS/Pleiad" | grep -qx "${PLY_MAC_ARCH/x64/x86_64}" || { echo "Pleiad.app is not $PLY_MAC_ARCH"; exit 1; }
+          [ "$(lipo -archs "$app/Contents/MacOS/Pleiad")" = "${PLY_MAC_ARCH/x64/x86_64}" ] || { echo "Pleiad.app is not $PLY_MAC_ARCH"; exit 1; }
           [ -f dist-desktop/latest-mac.yml ] || { echo 'Missing latest-mac.yml'; exit 1; }
       - name: Remove notarization key
         if: always()
