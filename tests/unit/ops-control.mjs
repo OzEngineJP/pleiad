@@ -372,7 +372,8 @@ export default async function (t) {
     t.ok('app.running: 走っている作業の数と中身', running.body.result.count === 0 && Array.isArray(running.body.result.turns) && running.body.result.waiting === 0);
     const slow = c.runTurn({ prompt: 'slow', sessionId: null, cwd: ROOT, backend: 'fake', mode: 'default' }, { ms: 30_000 });
     let during = null;
-    for (let i = 0; i < 100 && !(during?.body?.result?.count > 0); i++) { await new Promise((r) => setTimeout(r, 50)); during = await api(cli, 'POST', '/api/ops/app.running', {}); }
+    // 新しい会話の id は、ターンが走り始めた後にエージェントの session の知らせで決まる。決まるまで待つ
+    for (let i = 0; i < 100 && !(during?.body?.result?.count > 0 && typeof during.body.result.turns[0]?.sessionId === 'string'); i++) { await new Promise((r) => setTimeout(r, 50)); during = await api(cli, 'POST', '/api/ops/app.running', {}); }
     t.ok('app.running: 走っているターンが数に入り、会話の id・エージェント・題が出る', during.body.result.count === 1 && during.body.result.turns[0].backend === 'fake' && typeof during.body.result.turns[0].sessionId === 'string', JSON.stringify(during.body.result));
     await c.cmd('abort', { sessionId: during.body.result.turns[0].sessionId }).catch(() => {});
     await slow.catch(() => {});

@@ -6318,12 +6318,13 @@ async function beginTurn(ctx) {
   // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
   const sessionMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
   const delegatedChild = Boolean(sessionMeta?.delegation);
+  // 送った設定をリポジトリの既定に覚える（ADR 0216）。覚えられなくても送信は止めない
   if (rememberableRepoTurn(sessionId, sessionMeta, hooks)) {
-    await store.rememberRepoDefault(await repoDefaultKey(cwd), {
+    const worktree = Boolean(worktreeHost.worktrees.lookup(cwd));
+    await repoDefaultKey(cwd).then(key => store.rememberRepoDefault(key, {
       backend: backend.id, model, effort, mode: permissionMode,
-      account: accountId, endpoint: endpointId,
-      worktree: Boolean(worktreeHost.worktrees.lookup(cwd)),
-    });
+      account: accountId, endpoint: endpointId, worktree,
+    })).catch(err => console.error("  リポジトリの既定の記録に失敗:", String(err?.message ?? err)));
   }
   if (sessionId && sessionMeta?.worktreePending) await store.setSessionData(sessionId, 'worktreePending', false);
   // 次の発言の候補（Claude はターンの中で予測を受ける。core/prompt-suggestions.mjs）。設定がオフ・委譲の子・bot・圧縮のターンでは頼まない
