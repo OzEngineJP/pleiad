@@ -25,6 +25,8 @@ export default async function(t) {
 
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-repo-defaults-')));
   const a = path.join(tmp, 'a'), b = path.join(tmp, 'b'), plain = path.join(tmp, 'plain');
+  // Git のリポジトリのキーは git が返す / 区切りのパス（Windows でも）。Git 管理外は path.resolve のまま
+  const aKey = a.replaceAll('\\', '/');
   await fs.mkdir(path.join(a, 'sub'), { recursive: true });
   await fs.mkdir(b);
   await fs.mkdir(plain);
@@ -40,10 +42,10 @@ export default async function(t) {
   try {
     const first = (await c.cmd('newSession', { backend: 'fake', cwd: a })).sessionId;
     await c.cmd('setTurnSettings', { sessionId: first, model: 'fast', effort: 'low', mode: 'auto', rememberModel: true });
-    t.ok('チップだけではリポジトリに記録しない', !(await c.cmd('prefs')).repoDefaults?.[a]);
+    t.ok('チップだけではリポジトリに記録しない', !(await c.cmd('prefs')).repoDefaults?.[aKey]);
     await c.runTurn({ sessionId: first, prompt: 'echo:a' });
-    t.ok('送った値をリポジトリ本体へ記録', (await c.cmd('prefs')).repoDefaults?.[a]?.model === 'fast'
-      && (await c.cmd('prefs')).repoDefaults?.[a]?.effort === 'low' && (await c.cmd('prefs')).repoDefaults?.[a]?.mode === 'auto');
+    t.ok('送った値をリポジトリ本体へ記録', (await c.cmd('prefs')).repoDefaults?.[aKey]?.model === 'fast'
+      && (await c.cmd('prefs')).repoDefaults?.[aKey]?.effort === 'low' && (await c.cmd('prefs')).repoDefaults?.[aKey]?.mode === 'auto');
     const sub = (await c.cmd('newSession', { cwd: path.join(a, 'sub') })).sessionId;
     t.ok('同じリポジトリのサブフォルダーは設定を使う', (await row(sub)).model === 'fast' && (await row(sub)).effort === 'low' && (await row(sub)).mode === 'auto');
 
@@ -63,7 +65,7 @@ export default async function(t) {
     const split = await c.cmd('worktreeSplit', { sessionId: first, cwd: a });
     await c.cmd('setTurnSettings', { sessionId: first, cwd: split.cwd });
     await c.runTurn({ sessionId: first, prompt: 'echo:worktree' });
-    t.ok('worktree の送信も本体の同じキーに記録', (await c.cmd('prefs')).repoDefaults?.[a]?.worktree === true);
+    t.ok('worktree の送信も本体の同じキーに記録', (await c.cmd('prefs')).repoDefaults?.[aKey]?.worktree === true);
     const pending = (await c.cmd('newSession', { cwd: a })).sessionId;
     t.ok('新しい会話は送る前に worktree を予約し、まだ作らない', (await row(pending)).worktreePending === true);
     await c.cmd('setTurnSettings', { sessionId: pending, worktreePending: false });
@@ -72,7 +74,7 @@ export default async function(t) {
     await c.cmd('setTurnSettings', { sessionId: pending, cwd: a });
     t.ok('× で外した会話は場所を選び直しても予定を戻さない', !(await row(pending)).worktreePending);
     await c.runTurn({ sessionId: pending, prompt: 'echo:original' });
-    t.ok('元の場所から送ると worktree なしへ更新', (await c.cmd('prefs')).repoDefaults?.[a]?.worktree === false);
+    t.ok('元の場所から送ると worktree なしへ更新', (await c.cmd('prefs')).repoDefaults?.[aKey]?.worktree === false);
 
     const plainFirst = (await c.cmd('newSession', { backend: 'fake', cwd: plain })).sessionId;
     await c.cmd('setTurnSettings', { sessionId: plainFirst, model: 'fast' });
