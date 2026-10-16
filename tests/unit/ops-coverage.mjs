@@ -24,7 +24,8 @@ export default async function (t) {
   t.ok('setPref の WS コマンドは settings.set の legacyCommand（設定の一覧から作る）で、除外表に無い', registry.get('settings.set')?.legacyCommand === 'setPref' && !('setPref' in baseline.commands));
   t.ok('store.setPref を直に呼ぶ箇所はすべて印（ops-allow-setpref）つきで、savePref の出口が 1 つある', setPrefCalls.length > 0 && setPrefCalls.every((c) => c.allowed)
     && setPrefCalls.some((c) => c.file === 'core/server.mjs' && c.allowed), JSON.stringify(setPrefCalls));
-  t.ok('設定の一覧の書ける設定は、読むだけにしたものを除いて全部（addedContext は前の版の名残で読むだけ）', registry.settings.filter((x) => x.readOnly).map((x) => x.key).join(',') === 'addedContext');
+  t.ok('設定の一覧の書ける設定は、内部だけが更新する表などを除いて全部',
+    registry.settings.filter((x) => x.readOnly).map((x) => x.key).sort().join(',') === 'addedContext,repoDefaults');
   t.ok('除外表の理由の種類が決められたものだけ', Object.values(baseline.commands).every((k) => KINDS.includes(k)));
   t.ok('invoke は gateway として載っている', baseline.commands.invoke === 'gateway');
   t.ok('human-only の除外表に承認モード・承認の応答・秘密・リモートのペアリングがある',

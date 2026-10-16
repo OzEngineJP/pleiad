@@ -351,6 +351,7 @@
     "server-prs": 8000,
     "server-push-notify": 2898,
     "server-read": 1152,
+    "server-repo-defaults": 6000,
     "server-retired": 1136,
     "server-rewind": 15242,
     "server-running-slim": 13052,

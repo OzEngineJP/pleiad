@@ -30,6 +30,7 @@ import * as gitInfo from './git-info.mjs';
 import * as gitHistory from './git-history.mjs';
 import { worktreeList } from './git-worktree.mjs';
 import { createWorktreeHost, writesScope } from './worktree-host.mjs';
+import { rememberableRepoTurn } from './repo-defaults.mjs';
 import { insideDir, sameDir } from './worktrees.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createPrReader, basicPr, PR_READ_MAX } from './git-prs.mjs';
@@ -1943,6 +1944,7 @@ function sessionRow(b, s, extra = {}) {
     model: extra.model ?? "",
     effort: extra.effort ?? "",
     nextSettings: extra.nextSettings ?? null,
+    worktreePending: Boolean(extra.worktreePending && extra.unsent),
     // Claude のアカウント（'' = ログイン中のアカウント）。id だけでトークンは載せない
     claudeAccount: extra.claudeAccount ?? "",
     // 互換の接続先（'' = 公式）。id だけでキーは載せない
@@ -2146,6 +2148,17 @@ async function pickBackend(sessionId, given) {
   const only = listBackends();
   if (only.length === 1 || (remembered && only.length)) return only[0];
   throw new Error(t('agents.required'));
+}
+
+/** サブフォルダーと worktree を本体のリポジトリへまとめる。Git 管理外はそのフォルダー。 */
+async function repoDefaultKey(cwd) {
+  const entry = worktreeHost.worktrees.lookup(cwd);
+  if (entry?.repoDir) return entry.repoDir;
+  const info = await worktreeHost.repoOf(cwd);
+  return info ? worktreeHost.repoDirOf(info) : path.resolve(cwd);
+}
+async function repoDefaultFor(cwd) {
+  return (await store.getPrefs()).repoDefaults?.[await repoDefaultKey(cwd)] ?? null;
 }
 
 /** 対応を終えたエージェントの会話は続けられない。ターン・設定の変更・切り替えの前に断る */
@@ -3370,14 +3383,17 @@ async function createSession(args) {
   const sourceBackend = sourceId ? await resolveBackendForSession(sourceId) : null;
   if (sourceId && !sourceBackend) throw new Error(t('session.sourceNotFound'));
   const source = sourceId ? await store.get(sourceId) : null;
+  const cwd = isReviewMode() ? reviewWorkDir() : typeof args?.cwd === "string" && args.cwd.trim() ? args.cwd.trim() : os.homedir();
+  const sameRepo = source?.cwd && await repoDefaultKey(source.nextSettings?.cwd ?? source.cwd) === await repoDefaultKey(cwd);
+  const remembered = await repoDefaultFor(cwd);
   const selected = source?.nextSettings?.backend ?? sourceBackend?.id;
   // 引き継ぎ元が対応を終えたエージェントなら、エージェントは継がない（既定へ落とす）
-  const selectedBackend = getBackend(selected) ? selected : undefined;
-  const backend = await pickBackend(null, args?.backend ?? selectedBackend);
-  const inherit = source && backend.id === selectedBackend;
-  const model = args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : undefined);
-  const mode = args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : undefined);
-  const cwd = isReviewMode() ? reviewWorkDir() : typeof args?.cwd === "string" && args.cwd.trim() ? args.cwd.trim() : os.homedir();
+  const selectedBackend = sameRepo && getBackend(selected) ? selected : undefined;
+  const backend = await pickBackend(null, args?.backend ?? selectedBackend ?? (getBackend(remembered?.backend) ? remembered.backend : undefined));
+  const inherit = sameRepo && source && backend.id === selectedBackend;
+  const chosen = !inherit && remembered?.backend === backend.id ? remembered : null;
+  const model = args?.model ?? (inherit ? source.nextSettings?.model ?? source.model ?? "" : chosen?.model);
+  const mode = args?.mode ?? (inherit ? source.nextSettings?.mode ?? (backend.id === sourceBackend.id ? source.mode : undefined) : chosen?.mode);
   const status = typeof args?.status === "string" ? args.status.trim() || null : null;
   // draft: 入力欄に入れておく文（「見直しを頼む」。ADR 0056）。作るのと同時に下書きとして保存し、送らない
   const draft = args?.draft;
@@ -3396,20 +3412,28 @@ async function createSession(args) {
         endpoint = args.endpoint;
         if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) throw new Error(t('settings.endpointNotRegistered'));
       } else {
-        endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : await compatEndpoints.defaultFor(backend.id);
+        endpoint = inherit ? source.nextSettings?.endpoint ?? source.compatEndpoint ?? '' : chosen?.endpoint ?? await compatEndpoints.defaultFor(backend.id);
         if (endpoint && !(await compatEndpoints.has(endpoint, backend.id))) endpoint = '';
       }
     }
     if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
-    const selected = await resolveModel(null, inherit || args?.model !== undefined ? model : undefined, backend, cwd || undefined, endpoint);
+    const selected = await resolveModel(null, model, backend, cwd || undefined, endpoint);
     await store.setModel(sessionId, selected);
-    const effort = args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : undefined);
-    await store.setSessionData(sessionId, 'effort', await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint)));
+    const effort = args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : chosen?.effort);
+    const resolvedEffort = await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint))
+      .catch(async error => {
+        if (args?.effort !== undefined || inherit) throw error;
+        return resolveEffort(null, '', backend, selected, cwd || undefined, await endpointRow(endpoint));
+      });
+    await store.setSessionData(sessionId, 'effort', resolvedEffort);
     await store.setMode(sessionId, await resolveMode(null, mode, backend));
     // 引き継ぎ元の会話で選んでいた Claude のアカウントも継ぐ（予約中ならそれを）
     // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
-    const account = source ? source.nextSettings?.account ?? source.claudeAccount ?? '' : (await store.getPrefs()).claudeAccount ?? '';
+    const account = inherit ? source.nextSettings?.account ?? source.claudeAccount ?? '' : chosen?.account ?? (await store.getPrefs()).claudeAccount ?? '';
     if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
+    await store.setSessionData(sessionId, 'worktreePending', Boolean(remembered?.worktree && !worktreeHost.worktrees.lookup(cwd)));
+    const selectedSettings = Object.fromEntries(['backend', 'model', 'effort', 'mode', 'endpoint', 'account'].filter(k => args?.[k] !== undefined).map(k => [k, true]));
+    if (Object.keys(selectedSettings).length) await store.setSessionData(sessionId, 'selectedSettings', selectedSettings);
     if (draft) await store.setSessionData(sessionId, "draft", { text: draft, attached: [] }, { durable: true });
     await chromeProfiles?.startNew(sessionId);
   } catch (e) { await deleteUnsentConversation(sessionId); await store.removeSession(sessionId); releaseAgentConnection(sessionId); throw e; }
@@ -3419,13 +3443,32 @@ async function createSession(args) {
 
 /** 次のターンの設定を予約する（sessions.setTurnSettings。WS の setTurnSettings の中身）。予約は nextSettings。返り値は予約（取り消しは null） */
 async function reserveTurnSettings(args) {
-  const { sessionId, backend: targetId, model, mode, cwd: requestedCwd, cancel, account, endpoint } = args ?? {};
+  const { sessionId, cwd: requestedCwd, cancel } = args ?? {};
+  const explicit = { ...args };
   if (!sessionId) throw new Error(t('session.required'));
   if (forking.has(sessionId) || switching.has(sessionId) && !runtime.turns.has(sessionId)) throw new Error(t('session.preparingSettings'));
   const work = (settingsWrites.get(sessionId) ?? Promise.resolve()).catch(() => {}).then(async () => {
     const source = refuseRetired(await resolveBackendForSession(sessionId));
     if (!source) throw new Error(t('session.notFound'));
     const current = { ...(await store.get(sessionId)) };
+    const manual = { ...(current.selectedSettings ?? {}) };
+    let pendingWorktree = current.worktreePending ?? false;
+    let { backend: targetId, model, mode, account, endpoint } = args;
+    if (!cancel && current.unsent && requestedCwd && await repoDefaultKey(requestedCwd) !== await repoDefaultKey(current.nextSettings?.cwd ?? current.cwd)) {
+      const remembered = await repoDefaultFor(requestedCwd);
+      const preferred = getBackend(remembered?.backend) ? remembered.backend : (await pickBackend(null)).id;
+      if (!manual.backend && targetId === undefined) targetId = preferred;
+      const bid = targetId ?? current.nextSettings?.backend ?? source.id;
+      const scoped = remembered?.backend === bid ? remembered : null;
+      const global = (await store.getPrefs()).backends?.[bid] ?? await store.getPrefs();
+      if (!manual.model && model === undefined) model = scoped?.model ?? global.model ?? '';
+      if (!manual.effort && args.effort === undefined) args = { ...args, effort: scoped?.effort ?? global.effort ?? '' };
+      if (!manual.mode && mode === undefined) mode = scoped?.mode ?? global.mode;
+      if (!manual.account && account === undefined) account = scoped?.account ?? (await store.getPrefs()).claudeAccount ?? '';
+      if (!manual.endpoint && endpoint === undefined) endpoint = scoped?.endpoint ?? await compatEndpoints.defaultFor(bid);
+      pendingWorktree = Boolean(!manual.worktree && remembered?.worktree && !worktreeHost.worktrees.lookup(requestedCwd));
+    }
+    if (args.worktreePending === false || requestedCwd && worktreeHost.worktrees.lookup(requestedCwd)) pendingWorktree = false;
     // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
     if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
     const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
@@ -3452,6 +3495,7 @@ async function reserveTurnSettings(args) {
     const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
       : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
     const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
+    if (!explicit.effort && args.effort !== undefined && !Object.hasOwn(choices, args.effort)) args = { ...args, effort: '' };
     const selectedEffort = cancel ? '' : args.effort !== undefined
       ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow)
       : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
@@ -3471,6 +3515,12 @@ async function reserveTurnSettings(args) {
     const next = cancel || (source.id === target.id && (current.model ?? "") === selectedModel && (selectedMode === undefined || selectedMode === current.mode) && (current.effort ?? "") === selectedEffort && !selectedCwd && !accountChanged && !endpointChanged)
       ? null : { backend: target.id, model: selectedModel, effort: selectedEffort, ...(selectedMode !== undefined ? { mode: selectedMode } : {}), ...(selectedCwd ? { cwd: selectedCwd } : {}), ...(accountChanged ? { account: selectedAccount } : {}), ...(endpointChanged ? { endpoint: selectedEndpoint } : {}) };
     await store.setSessionData(sessionId, "nextSettings", next, { durable: true });
+    if (current.unsent && pendingWorktree !== current.worktreePending) await store.setSessionData(sessionId, 'worktreePending', pendingWorktree);
+    if (current.unsent) {
+      for (const key of ['backend', 'model', 'effort', 'mode', 'account', 'endpoint']) if (explicit[key] !== undefined) manual[key] = true;
+      if (explicit.worktreePending === false) manual.worktree = true;
+      if (Object.keys(manual).length) await store.setSessionData(sessionId, 'selectedSettings', manual);
+    }
     if (current.interrupted?.reason === 'limit'
       && ((account !== undefined && accountChanged) || (!cancel && next?.backend && next.backend !== source.id))) {
       leaveLimit(sessionId);
@@ -3479,13 +3529,13 @@ async function reserveTurnSettings(args) {
     if (current.nextSettings?.cwd && current.nextSettings.cwd !== next?.cwd) settleWorktreeAt(current.nextSettings.cwd).catch(() => {});
     // keepPrefs: 依頼元の AI が子の設定を替えるとき（applyTaskSettings）。人の既定には覚えない
     if (!cancel && !args.keepPrefs) {
-      if (targetId !== undefined) await savePref("backend", target.id);
+      if (explicit.backend !== undefined) await savePref("backend", target.id);
       // 互換の接続先のモデル・段は公式の既定（prefs）に覚えない。接続先の既定は設定の「既定にする」だけで決まる（決定 2）
       if (args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
       if (args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
       if (args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
       // 人が選んだ Claude のアカウントは、次に開く新しい会話の既定にする（newSession）
-      if (account !== undefined) await savePref("claudeAccount", account || null);
+      if (explicit.account !== undefined) await savePref("claudeAccount", account || null);
     }
     emitGlobal({ type: "nextSettings", sessionId, nextSettings: next });
     return next;
@@ -6210,7 +6260,7 @@ function bindTurnContext(ctx) {
 }
 
 async function beginTurn(ctx) {
-  const { args, hooks, sessionId, prompt, backend, cwd, account, endpoint, agentLocale,
+  const { args, hooks, sessionId, prompt, backend, cwd, account, accountId, endpoint, endpointId, agentLocale,
     permissionMode, model, effort, attachments, contextRecord, hooksTurn, turn, emit,
     resolvedContext, shellHandoff } = ctx;
 
@@ -6268,6 +6318,15 @@ async function beginTurn(ctx) {
   // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
   const sessionMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
   const delegatedChild = Boolean(sessionMeta?.delegation);
+  // 送った設定をリポジトリの既定に覚える（ADR 0216）。覚えられなくても送信は止めない
+  if (rememberableRepoTurn(sessionId, sessionMeta, hooks)) {
+    const worktree = Boolean(worktreeHost.worktrees.lookup(cwd));
+    await repoDefaultKey(cwd).then(key => store.rememberRepoDefault(key, {
+      backend: backend.id, model, effort, mode: permissionMode,
+      account: accountId, endpoint: endpointId, worktree,
+    })).catch(err => console.error("  リポジトリの既定の記録に失敗:", String(err?.message ?? err)));
+  }
+  if (sessionId && sessionMeta?.worktreePending) await store.setSessionData(sessionId, 'worktreePending', false);
   // 次の発言の候補（Claude はターンの中で予測を受ける。core/prompt-suggestions.mjs）。設定がオフ・委譲の子・bot・圧縮のターンでは頼まない
   const wantsSuggestion = !delegatedChild && !sessionMeta?.bot && !hooks.compact && (await store.getPrefs()).composerSuggestions !== false;
   const runArgs = {

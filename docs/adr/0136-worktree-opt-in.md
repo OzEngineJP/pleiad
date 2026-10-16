@@ -18,6 +18,8 @@ worktree は Git のオブジェクトを共有するが、作業ツリーを 1 
 5. 画面・エラー・エージェントへの呼び名は ja / en とも「worktree」にする。Pleiad の外で作った worktree の札は「Pleiad の外」/ “Outside Pleiad”。会話の fork など、worktree と無関係の語は変えない。
 6. 前の版で会話に残った present `kind: 'worktree'` は新しい文言で描き続ける。新しくは発行しない。手で worktree を作った後の予約と取り消し、片付け・退避・復元・取り込みの操作は続ける。
 
+決定 1 の例外として、[ADR 0216](0216-remember-repository-turn-settings.md) は前回 worktree で送ったリポジトリで次の会話にも worktree を予約する。送信前に示し、取り消せる。
+
 ## 理由
 
 worktree を作るかどうかと、そのディスク使用量、パスの変更、取り込みの手間をユーザーが選べる。衝突の知らせで、同じ作業ツリーへの並行書き込みに気付ける。Git を使う人には「分けた作業場所」より「worktree」が直接伝わる。

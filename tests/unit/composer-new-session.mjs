@@ -20,7 +20,7 @@ export const title = '新しい会話を作っている間に書いた字が消�
 
 const FUNCTIONS = ['startNew', 'select', 'loadHistory', 'loadAndPaint', 'paintSession', 'saveDraft', 'persistDraft', 'dropBlankDraft', 'loadDraft',
   'syncRunState', 'submit', 'clearSentDraft', 'uploadsHere', 'adoptUploads', 'uploadBlockReason', 'attachFiles', 'adoptAttachment', 'saveDraftSoon', 'flushDraft',
-  'reserveSettings', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings'];
+  'reserveSettings', 'applyCwd', 'chooseSettings', 'justCreated', 'noteDraftChange', 'draftView', 'sendDraftSettings', 'startWorktree'];
 
 export default async function (t) {
   const source = (await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
@@ -76,6 +76,7 @@ export default async function (t) {
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0, stagedNext: new Map(),
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
+    refreshWorktree: async () => {},
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },
     setDrawer: noop, settleDrawer: noop, takeBootPrefetch: () => null, bootSkeleton: false, paintHistorySkeleton: noop, bootHold: null, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: async () => {},
@@ -502,4 +503,42 @@ export default async function (t) {
   await staging;
   t.ok('書く前の写しの行が載っても、予約の結果で合わせる', state.sessions.find(s => s.id === 'staged').nextSettings?.model === 'fast', JSON.stringify(state.sessions.find(s => s.id === 'staged')));
   context.cmd = cmdBefore;
+
+  // 前回の worktree の予定は、送る直前まで作らず、失敗したら本文を残して止める。
+  const planned = state.sessions.find(s => s.id === 'staged');
+  planned.unsent = true; planned.worktreePending = true;
+  state.current = 'staged'; state.cwd = 'C:/home'; prompt.value = 'worktree で送る';
+  context.cmd = (command, args = {}) => command === 'worktreeSplit' ? Promise.reject(new Error('split failed')) : cmdBefore(command, args);
+  const beforeFailed = calls.filter(c => c.command === 'sendMessage').length;
+  await run('submit()');
+  t.ok('worktree を作れなければ送らず、本文と理由を残す',
+    calls.filter(c => c.command === 'sendMessage').length === beforeFailed && prompt.value === 'worktree で送る' && $('settingsError').textContent.includes('split failed'));
+  context.cmd = (command, args = {}) => command === 'worktreeSplit' ? Promise.resolve({ cwd: 'C:/home.pleiad/one' })
+    : command === 'setTurnSettings' ? Promise.resolve({ cwd: args.cwd, backend: 'fake', model: '', effort: '' }) : cmdBefore(command, args);
+  await run('submit()');
+  t.ok('最初の送信直前に worktree を作り、その cwd で送る',
+    calls.filter(c => c.command === 'sendMessage').at(-1)?.args.cwd === 'C:/home.pleiad/one' && !planned.worktreePending);
+
+  // 予定の 1 行と × の役割。既存の wt-compact の部品を使う。
+  const notice = new Map();
+  const node = id => { if (!notice.has(id)) notice.set(id, new N('div')); return notice.get(id); };
+  node('nextSettings').append(new N('b'));
+  Object.defineProperty(node('cancelSettings'), 'title', {
+    get() { return this.attrs.title; }, set(value) { this.attrs.title = value; },
+  });
+  const ui = vm.createContext({ state: { current: 'p', sessions: [{ id: 'p', unsent: true, worktreePending: true }] },
+    $: node, t: k => k, el: (tag, cls, value) => { const n = new N(tag); n.className = cls ?? ''; if (value) n.textContent = value; return n; },
+    branchIcon: '<svg></svg>', paintHandoffNote: noop, reserveSettings: patch => { ui.patch = patch; }, controls: { paint: noop } });
+  const start = source.indexOf('function paintSettingsNotice()');
+  vm.runInContext(source.slice(start, source.indexOf('\n}', start) + 2), ui);
+  const cancelStart = source.indexOf('$("cancelSettings").onclick =');
+  vm.runInContext(source.slice(cancelStart, source.indexOf('\n};', cancelStart) + 3), ui);
+  vm.runInContext('paintSettingsNotice()', ui);
+  t.ok('送信前の札は軽い 1 行で、× は元の場所へ戻すと読み上げる',
+    node('nextSettings').classList.contains('wt-compact') && node('nextSettings').querySelector('b').textContent === 'worktree.pendingTitle'
+    && node('nextSettingsText').textContent.includes('worktree.pendingSame') && node('cancelSettings').attrs.title === 'worktree.pendingCancel'
+    && node('cancelSettings').getAttribute('aria-label') === 'worktree.pendingCancel',
+    JSON.stringify({ html: node('nextSettings').outerHTML, text: node('nextSettingsText').outerHTML, cancel: node('cancelSettings').outerHTML }));
+  node('cancelSettings').onclick();
+  t.ok('× はこの会話の worktree 予定だけを外す', ui.patch?.worktreePending === false && !ui.state.sessions[0].worktreePending);
 }

@@ -3902,7 +3902,7 @@
         }
       },
       "legacyCommand": "setTurnSettings",
-      "input": "ab66527a27f3"
+      "input": "8c1abd22f8b5"
     },
     {
       "id": "sessions.stopBackground",
@@ -4630,6 +4630,15 @@
       "writable": true,
       "prefKeys": [
         "plyInstructions"
+      ]
+    },
+    {
+      "key": "repoDefaults",
+      "risk": "read",
+      "riskOf": false,
+      "writable": false,
+      "prefKeys": [
+        "repoDefaults"
       ]
     },
     {

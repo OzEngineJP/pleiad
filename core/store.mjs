@@ -183,6 +183,22 @@ export async function setPref(key, value, backendId) {
   });
 }
 
+/** 送ったリポジトリの設定。件数を固定し、最後に使ったものだけを残す。 */
+export const REPO_DEFAULT_LIMIT = 50;
+export async function rememberRepoDefault(repoDir, choice) {
+  return exclusive(async () => {
+    const all = await prefs.read();
+    const rows = { ...(all.repoDefaults ?? {}) };
+    delete rows[repoDir];
+    rows[repoDir] = { ...choice, at: Date.now() };
+    const keys = Object.keys(rows).sort((a, b) => (rows[a]?.at ?? 0) - (rows[b]?.at ?? 0));
+    for (const key of keys.slice(0, Math.max(0, keys.length - REPO_DEFAULT_LIMIT))) delete rows[key];
+    all.repoDefaults = rows;
+    await prefs.write();
+    return rows[repoDir];
+  });
+}
+
 export async function rememberBrowserSite(site) {
   return exclusive(async () => {
     const all = await prefs.read();
@@ -463,7 +479,7 @@ export const dataDir = DIR;
 /** Host-only data. 書き込みはその場で行い、書けなければ投げる（durable は互換のために残す。意味は変わらない） */
 export async function setSessionData(sessionId, field, value, { durable = false } = {}) {
   void durable;
-  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "rewind", "scheduledSends", "bot", "antigravityFailures", "contextBase", "chromeProfile", "prs"].includes(field)) throw new Error(t("store.invalidSessionField"));
+  if (!sessionId || !["draft", "nextSettings", "outbox", "effort", "contextSession", "delegation", "taskNotices", "relayed", "ungrouped", "claudeAccount", "compatEndpoint", "agentLocale", "routing", "compactions", "contextWindow", "autoCompactionOff", "compacted", "hookRuns", "shellPending", "shellExits", "shellKept", "computerApps", "rewind", "scheduledSends", "bot", "antigravityFailures", "contextBase", "chromeProfile", "prs", "worktreePending", "selectedSettings"].includes(field)) throw new Error(t("store.invalidSessionField"));
   return exclusive(async () => {
     const all = await load();
     const before = all[sessionId];

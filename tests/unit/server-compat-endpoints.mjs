@@ -122,7 +122,9 @@ export default async function (t) {
     t.ok("「既定にする」を押した接続先は新しい会話の既定になる", (await cmd("listSessions")).find(s => s.id === byDefault.sessionId)?.compatEndpoint === id);
     await cmd("compatEndpointDefault", { agent: "codex", id: "" });
     const plain = await cmd("newSession", { backend: "codex", cwd: ROOT });
-    t.ok("公式を既定に戻すと新しい会話は公式", (await cmd("listSessions")).find(s => s.id === plain.sessionId)?.compatEndpoint === "");
+    t.ok("全体を公式に戻しても、送信済みのリポジトリでは覚えた接続先を使う", (await cmd("listSessions")).find(s => s.id === plain.sessionId)?.compatEndpoint === id);
+    const elsewhere = await cmd("newSession", { backend: "codex", cwd: scratch });
+    t.ok("記録のない場所は全体の公式既定を使う", (await cmd("listSessions")).find(s => s.id === elsewhere.sessionId)?.compatEndpoint === "");
 
     // ---- タイトル生成は接続先の既定のモデルで
     const titled = await cmd("suggestTitle", { sessionId }).catch(e => ({ error: e.message }));

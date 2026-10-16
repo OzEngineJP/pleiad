@@ -763,6 +763,9 @@
     "back": "元の場所に戻す",
     "next": "worktree（{{path}}）",
     "splitFailed": "worktree を作れませんでした · {{error}}",
+    "pendingTitle": "送ると作成",
+    "pendingSame": "worktree（前回と同じ）",
+    "pendingCancel": "元の場所で始める",
     "line": {
       "started": "worktree で始めました（{{who}}が作業中）",
       "startedNoWho": "worktree で始めました",

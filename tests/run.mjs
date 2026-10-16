@@ -590,6 +590,7 @@ const SUITES = [
   './unit/server-claude-login.mjs',
   './unit/server-background.mjs',
   './unit/server-handoff.mjs',
+  './unit/server-repo-defaults.mjs',
   // 対応を終えた procway-code の会話・設定が残っていても安全に動く
   './unit/server-retired.mjs',
   './unit/server-fork.mjs',
