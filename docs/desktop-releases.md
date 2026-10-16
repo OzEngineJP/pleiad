@@ -300,7 +300,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 
 #### macOS の配布
 
-[ADR 0211](adr/0211-macos-evaluation-release.md)。Repository Variable `PLY_MAC_RELEASE` が `on` のとき、`Evaluation release` は `mac` のジョブ（`macos-15`）で macOS 版も作る。`on` でなければ今までどおり Windows だけ。
+[ADR 0215](adr/0215-macos-evaluation-release.md)。Repository Variable `PLY_MAC_RELEASE` が `on` のとき、`Evaluation release` は `mac` のジョブ（`macos-15`）で macOS 版も作る。`on` でなければ今までどおり Windows だけ。
 - `mac` のジョブは Windows の `release` より先に走る。Developer ID Application の証明書で署名し（hardened runtime）、App Store Connect の API キーで公証する。Intel / Apple Silicon の 2 つの `.app` を `codesign --verify --deep --strict`・`xcrun stapler validate`・`spctl --assess` で確かめ、dmg・zip・blockmap・`latest-mac.yml` を artifact `mac-release` に置く。
 - `release` のジョブは、それを `scripts/publish-evaluation.ps1` で Windows の配布物と同じ下書きに入れ、`platforms=all` で照合してから一緒に公開する（`RELEASE-PLATFORMS.json`・`BUILD-INFO.json` の `platforms`）。immutable releases なので、公開した後に macOS の分を足せない。
 - `mac` のジョブが落ちる・取り消されると、`release` のジョブは走らない（macOS を欠いた版を Windows だけで公開しない）。macOS を出さずに急ぐときは、`PLY_MAC_RELEASE` を外して手動実行し直す。

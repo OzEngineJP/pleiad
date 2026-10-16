@@ -1,4 +1,4 @@
-# 0211 macOS 版を Evaluation release で Windows 版と一緒に出す
+# 0215 macOS 版を Evaluation release で Windows 版と一緒に出す
 
 - 状態: 提案
 
