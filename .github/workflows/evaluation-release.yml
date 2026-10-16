@@ -62,8 +62,8 @@ jobs:
         arch: [x64, arm64]
     name: mac (${{ matrix.arch }})
     runs-on: macos-15
-    # 手元（Apple Silicon）で両 CPU を 1 つのジョブで作って約 15 分（CPU は 3 割ほどで、残りは公証の待ち）。公証の待ちは揺れるので余裕を持たせる
-    timeout-minutes: 60
+    # 手元（Apple Silicon）で 1 つの CPU の署名・公証・dmg・zip が約 4.5 分（2026-10-17）。公証の待ちは Apple 次第で揺れるので余裕を持たせる
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
