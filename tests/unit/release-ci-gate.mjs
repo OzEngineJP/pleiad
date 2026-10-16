@@ -424,7 +424,11 @@ export default async function (t) {
     t.ok('照合のジョブは actions: read と contents: read だけ', JSON.stringify(gate.permissions) === JSON.stringify({ actions: 'read', contents: 'read' }), JSON.stringify(gate.permissions));
     t.ok('照合のジョブのトークンは github.token（秘密を渡さない）', JSON.stringify(gate.steps).includes('${{ github.token }}') && !JSON.stringify(gate).includes('secrets.'));
     const ACTOR_IF = "(github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')";
-    t.ok('照合と公開のジョブを動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && release.if === ACTOR_IF, JSON.stringify([gate.if, release.if]));
+    // 公開のジョブは macOS のジョブ（PLY_MAC_RELEASE が on のときだけ）も待つので、skipped でも走れる形に包む。照合のジョブが通ったことは自分で確かめる
+    const mac = rel.jobs.mac;
+    const RELEASE_IF = `\${{ !cancelled() && needs.ci-gate.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && ${ACTOR_IF} }}`;
+    t.ok('照合と公開のジョブを動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && release.if === RELEASE_IF && mac.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'`, JSON.stringify([gate.if, release.if, mac.if]));
+    t.ok('macOS のジョブも照合のジョブを待ち、公開は macOS が落ちたら走らない', mac.needs === 'ci-gate' && JSON.stringify(release.needs) === JSON.stringify(['ci-gate', 'mac']));
     t.ok('公開のジョブは照合のジョブを待つ（赤なら走らない）', release.needs === 'ci-gate' || (Array.isArray(release.needs) && release.needs.includes('ci-gate')));
     const steps = release.steps;
     const full = steps.findIndex(s => s.run === 'node tests/run.mjs --jobs 2 --retry-failed 1');
