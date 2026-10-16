@@ -191,7 +191,7 @@ Environment に必要なレビュアーとタグ制限を設定し、秘密情�
 | Variable | `PLY_AZURE_ENDPOINT` / `PLY_AZURE_ACCOUNT` / `PLY_AZURE_PROFILE` | `azure` 用のHTTPSエンドポイント・署名アカウント・証明書プロファイル |
 | Secret | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | `azure` 用の署名権限を持つサービスプリンシパル |
 | Secret | `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD` | Developer ID Application証明書とパスワード |
-| Secret | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Apple公証の資格情報 |
+| Secret | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Apple公証の資格情報（`Evaluation release` は App Store Connect の API キー。上記「macOS の配布」） |
 
 Windowsのハードウェア証明書は、署名用端末で `PLY_WINDOWS_SIGNING=store` と証明書のthumbprint `PLY_WIN_CERTIFICATE_SHA1` を指定する。
 Windows証明書ストアに秘密鍵へのアクセスを持つ証明書・プロバイダーが必要。GitHubの標準runnerへUSBトークンを持ち込むフローは含まない。
@@ -298,6 +298,26 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 `SIGNING-INFO.json` は公開証明書の指紋と有効期限、`BUILD-INFO.json` はソースコミットとActions実行URLを記録する。
 
 リリースジョブは、リポジトリの持ち主か、Repository Variable `PLY_RELEASE_ACTORS`（JSON の配列。例 `["tekalu1"]`）にある人のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。組織のリポジトリでは持ち主が組織になって人の push と一致しないので、出す人を `PLY_RELEASE_ACTORS` に書く。PRから署名ジョブは実行しない。
+
+#### macOS の配布
+
+[ADR 0215](adr/0215-macos-evaluation-release.md)。Repository Variable `PLY_MAC_RELEASE` が `on` のとき、`Evaluation release` は macOS 版も作る。`on` でなければ今までどおり Windows だけ。
+- ジョブは `ci-gate` の後に並んで走る: `windows`（テスト・ビルド・署名。配布物を artifact `windows-release` に置く）と、`mac (x64)`・`mac (arm64)`（`macos-15`。CPU ごとに 1 つ）。最後に `publish` が全部を 1 つの下書きに入れて公開する。書く権限（`contents: write`）は `publish` だけが持ち、秘密は使わない。
+- `mac` のジョブは CPU ごとに分け、署名と公証の待ちを重ねる。`PLY_MAC_ARCH`（`x64`・`arm64`）で `electron-builder.release.cjs` の target を 1 つの CPU に絞る（`scripts/release-signing.cjs` の `macArchTargets`）。署名は Mach-O だけを 1 つずつ行う（`electron-builder.yml` の `mac.signIgnore`）。@electron/osx-sign は `.pak`・`.bcmap` などのデータも 1 つずつ署名してタイムスタンプを取りに行き、921 個で約 6.7 分かかっていた。データは `.app` の署名（CodeResources）の封に入る。2026-10-17 の手元（Apple Silicon）の測定で、1 つの CPU の署名・公証・dmg・zip が約 10 分から約 4.5 分になり、2 つの CPU を並べても約 4.5 分。
+- `mac` のジョブは Developer ID Application の証明書で署名し（hardened runtime）、App Store Connect の API キーで公証する。`.app` を `codesign --verify --deep --strict`・`xcrun stapler validate`・`spctl --assess` と `lipo`（CPU）で確かめ、dmg・zip・blockmap・`latest-mac.yml` を artifact `mac-x64`・`mac-arm64` に置く。
+- `publish` のジョブは、CPU ごとの `latest-mac.yml` を `scripts/release-mac-merge.mjs` で 1 つにまとめ（版・名前・checksum が合わない、CPU が欠ける・重なると止まる）、`scripts/publish-evaluation.ps1 -WindowsAssets … -MacAssets …` で Windows の配布物と同じ下書きに入れ、`platforms=all` で照合してから一緒に公開する（`RELEASE-PLATFORMS.json`・`BUILD-INFO.json` の `platforms`）。immutable releases なので、公開した後に macOS の分を足せない。`windows` のジョブは同じスクリプトを `-BuildOnly` で呼ぶ。
+- `windows`・`mac` のどれかが落ちる・取り消されると、`publish` のジョブは走らない（macOS を欠いた版を Windows だけで公開しない）。`mac` は片方の CPU が落ちたらもう片方も止める。macOS を出さずに急ぐときは、`PLY_MAC_RELEASE` を外して手動実行し直す。
+- main の CI に macOS の脚は無い。`mac` のジョブは配布に関わるテスト（`desktop-updates`）と node-pty の読み込みだけを確かめる。全部のテストは `windows` のジョブ（または main の CI）が受け持つ。
+- macOS の自動更新は electron-updater（Squirrel.Mac）で、zip と `latest-mac.yml` を使う。macOS には `LOCALAPPDATA` が無く、版ごとの実行場所を決められないので、無停止の更新は使わず `utilityProcess` の流れ（作業が無いのを確かめてから入れ替えて起動し直す）になる。Squirrel.Mac は更新後のアプリの署名が今のアプリと同じ Developer ID であることを求めるので、署名の無い macOS 版は自動更新できない。
+
+初回設定（Apple Developer Program の管理者）:
+1. 「Developer ID Application」の証明書を作り、秘密鍵ごと `.p12` に書き出す。Base64 を `MAC_CSC_LINK`、書き出しのパスワードを `MAC_CSC_KEY_PASSWORD` として Environment `release` の Secrets に登録する（`gh secret set <名前> --env release`。[ADR 0214](adr/0214-release-environment-secrets.md)）。
+2. App Store Connect の「ユーザーとアクセス → 統合 → App Store Connect API」でチームのキー（役割は Developer）を作る。`.p8` の中身を `APPLE_API_KEY`、キー ID を `APPLE_API_KEY_ID`、Issuer ID を `APPLE_API_ISSUER` として同じく Environment `release` の Secrets に登録する（`.p8` は 1 度しか取れない）。
+3. Repository Variable `PLY_MAC_RELEASE` を `on` にする。
+
+`scripts/release-signing.cjs` は、API キー（`APPLE_API_KEY` は `.p8` の場所）か、Apple ID と App 用パスワード（`APPLE_ID`・`APPLE_APP_SPECIFIC_PASSWORD`・`APPLE_TEAM_ID`）のどちらかを求める。`Desktop signed release` は Apple ID の形のまま。
+2026-10-16〜17 に手元（Apple Silicon）で確かめたこと: 本物の証明書と API キーで、CPU ごとのビルド（`PLY_MAC_ARCH`）を 2 つ並べて署名・公証し、`mac` のジョブの確かめ（`codesign`・`stapler`・`spctl`・`lipo`）を YAML から取り出して流すと通る（両方で約 4.5 分。公証の記録の問題は 0 件）。`signIgnore` で外したデータのファイルを書き換えると `codesign --verify` が封の違反で止める。`mac` のジョブの bash の手順は食い違い（タグ・commit・版・main に無い）で止まる。本物の 2 つの配布物を `release-mac-merge.mjs` でまとめ、`publish-evaluation.ps1`（PowerShell 7。CI は Windows PowerShell 5.1）の 2 段（`-BuildOnly` → `-WindowsAssets`・`-MacAssets`）で同じ下書きに入れると照合を通る。Windows の配布物の欠け・改ざん・署名の別の食い違いでは、下書きの前に止まる。electron-updater の選び方（`MacUpdater.filterFilesForArch`）は、まとめた `latest-mac.yml` から Intel には x64、Apple Silicon には arm64 の zip を選ぶ。識別子と配信先を変えた試験用の版で、0.14.3 → 0.14.4 の自動更新が通る（2026-10-16 は GitHub Releases から。2026-10-17 は CPU ごとに作ってまとめた配布物を手元の HTTP から配り、Squirrel.Mac が入れ替えて起動し直すまで約 17 秒）。GitHub の上での Secrets・artifact の受け渡しと時間は、マージ後の最初のリリースで確かめる。
+macOS 版の初回の公開の前に、実機で、新規インストール（Gatekeeper の警告が出ない）と、macOS 版どうしの自動更新（旧版 → 新版）を確かめる。最初の macOS 版は自動更新を持たない旧版が無いので、利用者は Releases の dmg から手で入れる。
 
 ### 無署名への移り方
 

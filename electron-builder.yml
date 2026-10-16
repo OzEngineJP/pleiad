@@ -71,6 +71,11 @@ mac:
     NSMicrophoneUsageDescription: Pleiad uses the microphone only during a voice call you start, to talk to your agent.
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # 1 つずつ署名するのはコード（Mach-O）だけにする。@electron/osx-sign は「バイナリらしい」データのファイルも 1 つずつ署名し、
+  # そのたびにタイムスタンプを取りに行く（921 個で約 6.7 分。2026-10-17 の手元の測定）。データは .app の署名（CodeResources）の封に入るので、
+  # 個別の署名は要らない。どれも中身は Mach-O ではない（.node は Mach-O と他 OS の本体が混ざるので外さない）
+  signIgnore:
+    - '\.(pak|bcmap|pfb|ttf|dat|bin|wasm|icns|ico|png|gif|icc|json|nib)$'
   target:
     - target: dmg
       arch: [x64, arm64]

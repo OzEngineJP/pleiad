@@ -1,3 +1,4 @@
+const fs = require('node:fs');
 const { loadTrust, normalizeThumbprint } = require('../desktop/update-signature.cjs');
 
 // 今の版の自動更新が、次の版を受け入れられるかを先に確かめる（desktop/update-trust.json・desktop/update-signature.cjs。ADR 0209）。
@@ -25,7 +26,17 @@ function releaseSigning(env = process.env, platform = process.platform, { signer
     return env[name].trim();
   };
   if (platform === 'darwin') {
-    for (const name of ['CSC_LINK', 'CSC_KEY_PASSWORD', 'APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID']) required(name);
+    required('CSC_LINK'); required('CSC_KEY_PASSWORD');
+    // 公証の資格情報は、App Store Connect の API キー（Evaluation release の既定）か、Apple ID と App 用パスワードのどちらか。
+    // electron-builder は Apple ID の変数が 1 つでもあればそちらを使うので、混ぜたときは Apple ID 側がそろっていることを求める
+    const has = names => names.every(name => env[name]?.trim());
+    const appleId = ['APPLE_ID', 'APPLE_APP_SPECIFIC_PASSWORD', 'APPLE_TEAM_ID'];
+    const apiKey = ['APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER'];
+    if (appleId.some(name => env[name]?.trim()) ? !has(appleId) : !has(apiKey)) {
+      throw new Error(`Missing notarization settings: ${apiKey.join(', ')} or ${appleId.join(', ')}`);
+    }
+    // APPLE_API_KEY は .p8 の中身ではなく、そのファイルの場所
+    if (!appleId.some(name => env[name]?.trim()) && !fs.existsSync(env.APPLE_API_KEY.trim())) throw new Error('APPLE_API_KEY must be the path to the App Store Connect API key (.p8)');
     return { mac: { hardenedRuntime: true, notarize: true } };
   }
   if (platform !== 'win32') throw new Error('Signed desktop builds require Windows or macOS');
@@ -62,4 +73,16 @@ function releaseSigning(env = process.env, platform = process.platform, { signer
   } else throw new Error('PLY_WINDOWS_SIGNING must be none, store, pfx, or azure');
   return { win };
 }
-module.exports = { releaseSigning, SIGNING_ENV };
+// Evaluation release は macOS を CPU ごとのジョブで並べて作り、公証の待ちを重ねる（PLY_MAC_ARCH。docs/desktop-releases.md「macOS の配布」）。
+// electron-builder は target の arch を CLI の --x64 / --arm64 より優先するので、target の arch を書き換えて 1 つに絞る
+const MAC_ARCHS = ['x64', 'arm64'];
+function macArchTargets(targets, arch) {
+  if (!arch) return targets;
+  if (!MAC_ARCHS.includes(arch)) throw new Error(`PLY_MAC_ARCH must be ${MAC_ARCHS.join(' or ')}`);
+  return targets.map(target => {
+    const entry = typeof target === 'string' ? { target } : target;
+    if (entry.arch && ![].concat(entry.arch).includes(arch)) throw new Error(`macOS target ${entry.target} does not build ${arch}`);
+    return { ...entry, arch: [arch] };
+  });
+}
+module.exports = { releaseSigning, macArchTargets, SIGNING_ENV };
