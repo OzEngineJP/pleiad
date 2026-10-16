@@ -55,7 +55,8 @@ jobs:
     environment: release
     if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') && vars.PLY_MAC_RELEASE == 'on'
     runs-on: macos-15
-    timeout-minutes: 60
+    # 手元（Apple Silicon）で署名と公証に約 26 分かかった。GitHub の runner は遅く、公証の待ちも揺れるので余裕を持たせる
+    timeout-minutes: 90
     permissions:
       contents: read
     env:

@@ -306,7 +306,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 - `release` のジョブは、それを `scripts/publish-evaluation.ps1` で Windows の配布物と同じ下書きに入れ、`platforms=all` で照合してから一緒に公開する（`RELEASE-PLATFORMS.json`・`BUILD-INFO.json` の `platforms`）。immutable releases なので、公開した後に macOS の分を足せない。
 - `mac` のジョブが落ちる・取り消されると、`release` のジョブは走らない（macOS を欠いた版を Windows だけで公開しない）。macOS を出さずに急ぐときは、`PLY_MAC_RELEASE` を外して手動実行し直す。
 - main の CI に macOS の脚は無い。`mac` のジョブは配布に関わるテスト（`desktop-updates`）と node-pty の読み込みだけを確かめる。全部のテストは Windows の `release`（または main の CI）が受け持つ。
-- macOS の自動更新は electron-updater（Squirrel.Mac）で、zip と `latest-mac.yml` を使う。Squirrel.Mac は更新後のアプリの署名が今のアプリと同じ Developer ID であることを求めるので、署名の無い macOS 版は自動更新できない。
+- macOS の自動更新は electron-updater（Squirrel.Mac）で、zip と `latest-mac.yml` を使う。macOS には `LOCALAPPDATA` が無く、版ごとの実行場所を決められないので、無停止の更新は使わず `utilityProcess` の流れ（作業が無いのを確かめてから入れ替えて起動し直す）になる。Squirrel.Mac は更新後のアプリの署名が今のアプリと同じ Developer ID であることを求めるので、署名の無い macOS 版は自動更新できない。
 
 初回設定（Apple Developer Program の管理者）:
 1. 「Developer ID Application」の証明書を作り、秘密鍵ごと `.p12` に書き出す。Base64 を `MAC_CSC_LINK`、書き出しのパスワードを `MAC_CSC_KEY_PASSWORD` として Environment `release` の Secrets に登録する（`gh secret set <名前> --env release`。[ADR 0214](adr/0214-release-environment-secrets.md)）。
@@ -314,6 +314,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 3. Repository Variable `PLY_MAC_RELEASE` を `on` にする。
 
 `scripts/release-signing.cjs` は、API キー（`APPLE_API_KEY` は `.p8` の場所）か、Apple ID と App 用パスワード（`APPLE_ID`・`APPLE_APP_SPECIFIC_PASSWORD`・`APPLE_TEAM_ID`）のどちらかを求める。`Desktop signed release` は Apple ID の形のまま。
+2026-10-16 に手元（Apple Silicon）で確かめたこと: 本物の証明書と API キーで両 CPU の署名・公証・`stapler`・`spctl` が通る（約 26 分）。`mac` のジョブの bash の手順を YAML から取り出して流し、食い違い（タグ・commit・版・main に無い）で止まる。`publish-evaluation.ps1`（PowerShell 7。CI は Windows PowerShell 5.1）が本物の macOS の配布物を Windows の分と同じ下書きに入れ、`latest-mac.yml` の欠け・zip の改ざん・CPU の欠け・版の違いで下書きの前に止まる。識別子と配信先を変えた試験用の版で、0.14.3 → 0.14.4 の自動更新（GitHub Releases から版を見つけ、CPU に合う zip を取り、Squirrel.Mac が入れ替えて起動し直す。約 12 秒）が通る。GitHub の上での Secrets・artifact の受け渡しは、マージ後の最初のリリースで確かめる。
 macOS 版の初回の公開の前に、実機で、新規インストール（Gatekeeper の警告が出ない）と、macOS 版どうしの自動更新（旧版 → 新版）を確かめる。最初の macOS 版は自動更新を持たない旧版が無いので、利用者は Releases の dmg から手で入れる。
 
 ### 無署名への移り方

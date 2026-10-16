@@ -35,7 +35,10 @@ if ($MacAssets) {
   $platforms = 'all'
 }
 $trust = Get-Content -LiteralPath desktop/update-trust.json -Raw | ConvertFrom-Json
-[ordered]@{ version = $package.version; sourceCommit = $source; signing = $(if ($unsigned) { 'unsigned' } else { 'self-signed evaluation' }); updateAcceptsUnsigned = ($trust.unsigned -eq 'accept'); platforms = $platforms; macSigning = $(if ($MacAssets) { 'Developer ID, notarized' } else { $null }); runUrl = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" } | ConvertTo-Json | Set-Content -LiteralPath release-assets/BUILD-INFO.json -Encoding UTF8
+$buildInfo = [ordered]@{ version = $package.version; sourceCommit = $source; signing = $(if ($unsigned) { 'unsigned' } else { 'self-signed evaluation' }); updateAcceptsUnsigned = ($trust.unsigned -eq 'accept'); platforms = $platforms }
+if ($MacAssets) { $buildInfo.macSigning = 'Developer ID, notarized' }
+$buildInfo.runUrl = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+$buildInfo | ConvertTo-Json | Set-Content -LiteralPath release-assets/BUILD-INFO.json -Encoding UTF8
 & node.exe scripts/release-artifacts.mjs release-assets $package.version 100 temporary/release-notes.md $platforms
 if ($LASTEXITCODE -ne 0) { throw 'Release integrity check failed.' }
 & node.exe scripts/release-publish.mjs draft release-assets
