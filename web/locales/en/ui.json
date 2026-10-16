@@ -45,6 +45,7 @@
       "apiKeys": "API keys",
       "usage": "Usage",
       "appearance": "Appearance",
+      "input": "Input",
       "context": "Plugins",
       "notify": "Notifications",
       "voice": "Calls",
@@ -54,6 +55,17 @@
       "autoCompaction": "Auto compaction",
       "browser": "Browser",
       "computer": "Computer use"
+    },
+    "input": {
+      "historyRecall": {
+        "title": "Recall sent messages with the Up key",
+        "description": "Press Up on the top line of the message box to bring back a message you sent before."
+      },
+      "suggestions": {
+        "title": "Suggest the next message",
+        "description": "After a reply, a suggestion appears in the empty message box. Press Tab to use it. In Codex and Antigravity conversations, making it uses a little usage."
+      },
+      "saveFailed": "Couldn't save: {{error}}"
     },
     "usage": {
       "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
@@ -83,6 +95,9 @@
       "loginUrl": "Sign in to {{agent}}: ",
       "loginMessage": "{{agent}}: {{message}}",
       "loginDone": "Signed in",
+      "cliVersion": "{{agent}} {{version}}",
+      "expired": "⚠ Your sign-in has expired.",
+      "signInAgain": "Sign in again",
       "claudeSdk": {
         "notice": "Claude needs Anthropic's Claude Agent SDK ({{version}}). It isn't included with Pleiad, so it is downloaded from the npm registry and saved on this PC.",
         "terms": "Anthropic's terms apply to the SDK",
@@ -554,6 +569,7 @@
       "nameJoin": "”, “"
     },
     "reissue": "Issue token again",
+    "reissueMissing": "That account couldn’t be found. Choose it from the list and issue the token again.",
     "issue": "Issue token",
     "redoUsage": "Redo usage authorization",
     "authorizeUsage": "Authorize usage display",
@@ -1834,7 +1850,7 @@
     },
     "shell": {
       "label": "Shell",
-      "placeholder": "Command to run (Ctrl+Enter)",
+      "placeholder": "Command to run ({{sendKeys}})",
       "placeholderTouch": "Command to run",
       "run": "Run",
       "asText": "Send as text",
@@ -1856,6 +1872,20 @@
       "truncated": "Output was too long; the rest was left out",
       "runFailed": "Couldn't run: {{error}}",
       "where": "Runs in {{cwd}}"
+    },
+    "authExpired": {
+      "login": "Your {{agent}} sign-in ({{email}}) has expired.",
+      "loginNoEmail": "Your {{agent}} sign-in has expired.",
+      "token": "The token for Claude account “{{name}}” has expired.",
+      "tokenUnnamed": "The token for this Claude account has expired.",
+      "signInAgain": "Sign in again",
+      "waiting": "Sign in in your browser…",
+      "cancel": "Cancel",
+      "signedIn": "✓ Signed in",
+      "resent": "✓ Signed in again and resent",
+      "sendAgain": "Send again",
+      "reissue": "Reissue token",
+      "loginFailed": "Couldn’t sign in: {{error}}"
     },
     "sys": {
       "taskResumed": "Received the Pleiad task result and resumed",
@@ -2088,16 +2118,23 @@
       "rechoose": "Choose again",
       "cancel": "Cancel"
     },
+    "recall": {
+      "backToDraft": "Back to your draft"
+    },
+    "suggestion": {
+      "accept": "Use the suggestion",
+      "described": "Suggestion: {{text}}"
+    },
     "composer": {
       "skills": "Skills",
       "attach": "Attach files (or drop or paste them)",
       "abort": "Stop",
-      "sendTitle": "Send (Ctrl+Enter)",
+      "sendTitle": "Send ({{sendKeys}})",
       "cwd": "Working directory",
       "model": "Agent, model, and effort",
       "mode": "Approval mode",
       "firstMessage": "Write the first message for {{name}}",
-      "placeholder": "Ctrl+Enter to send",
+      "placeholder": "{{sendKeys}} to send",
       "placeholderTouch": "Write a message",
       "editorLabel": "Message",
       "queued": "Will send once the conversation is ready",
@@ -2294,7 +2331,7 @@
     "backToChat": "Back to chat",
     "newSessionTitle": "New session (keeps the current filters)",
     "settings": "Settings",
-    "closeSidebarTitle": "Close sidebar (Ctrl+B)",
+    "closeSidebarTitle": "Close sidebar ({{key}})",
     "closeSidebar": "Close sidebar",
     "search": "Search conversations",
     "filterTitle": "Filter by working directory, status, or agent",
@@ -2328,7 +2365,7 @@
       "stillStale": "Checked at {{time}}. You still need to reopen the page.",
       "unreachable": "Checked at {{time}}. Couldn't reach the server."
     },
-    "openSidebarTitle": "Open sidebar (Ctrl+B)",
+    "openSidebarTitle": "Open sidebar ({{key}})",
     "openSidebar": "Open sidebar",
     "openSidebarWith": "Open sidebar ({{detail}})",
     "previewShowing": "Viewing",
@@ -3034,6 +3071,18 @@
     "terminal": "Terminal",
     "terminalNamed": "Terminal · {{label}}",
     "unknownSession": "Background work",
+    "blockedTitle": "Finishing before the switch",
+    "blockedRow": "Working",
+    "blockedNotices": "Delivering a delegated task's completion notice to its conversation",
+    "blockedOutbox": "A message is being sent. Pleiad will switch once it arrives",
+    "blockedSwitching": "Changing a conversation's model or settings",
+    "blockedForking": "Forking a conversation",
+    "blockedSettingApprovals": "Delivering the result of a setting approval to its conversation",
+    "blockedSteer": "Delivering an interjection to a running turn",
+    "blockedSchedule": "Starting a scheduled task",
+    "blockedChromeClose": "Closing a browser window",
+    "blockedLock": "Waiting for another update step to finish",
+    "blockedOther": "Waiting for a running step to finish",
     "openSession": "Open this conversation",
     "after": "Stopped conversations are kept with {{mark}}, and Resume continues them. Waiting approvals are denied.",
     "askTitle": "Ready to switch to Pleiad {{target}}",
@@ -3727,7 +3776,7 @@
     "hostTime": "PC time: {{time}}",
     "sendNow": "Send now",
     "sendMore": "Send options (pick a time)",
-    "sendMoreTitle": "Schedule the message (Ctrl+Shift+Enter)",
+    "sendMoreTitle": "Schedule the message ({{scheduleKeys}})",
     "armedRemove": "Remove the scheduled time",
     "armedNoteEdit": "Sending schedules this message again for {{when}}",
     "rowEdit": "Edit",
@@ -4439,7 +4488,7 @@
     },
     "toc": {
       "title": "Contents",
-      "entry": "Contents and search in this conversation (Ctrl+F)",
+      "entry": "Contents and search in this conversation ({{key}})",
       "close": "Close (Esc)",
       "search": "Search this conversation",
       "prevHit": "Previous match (Shift+Enter)",

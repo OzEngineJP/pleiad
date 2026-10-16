@@ -12,7 +12,7 @@ if (!$unsigned) {
   $env:PLY_WIN_CERTIFICATE_SHA1 = $manifest.thumbprint
 }
 # Update feed baked into the app. Upload destination (GH_REPO) is chosen separately by publish-evaluation.ps1.
-if (!$env:PLY_RELEASE_REPOSITORY) { $env:PLY_RELEASE_REPOSITORY = 'tekalu1/pleiad' }
+if (!$env:PLY_RELEASE_REPOSITORY) { $env:PLY_RELEASE_REPOSITORY = 'OzEngineJP/pleiad' }
 & npm.cmd run desktop:dist -- --config electron-builder.release.cjs --win --x64 --publish never "--config.directories.output=$OutputDirectory"
 if ($LASTEXITCODE -ne 0) { throw 'Evaluation build failed.' }
 $artifacts = @((Get-ChildItem -LiteralPath $OutputDirectory -Filter '*.exe')) + @((Get-ChildItem -LiteralPath $OutputDirectory -Recurse -Filter 'Ply.exe'))

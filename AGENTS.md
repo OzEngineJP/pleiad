@@ -37,6 +37,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定 `claude,codex,antigravity`） |
 | `AGENT_HOST_CODEX_BIN` | codex の実行ファイル（既定 `codex`） |
 | `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |
+| `AGENT_HOST_SHELL_ENV` | `off` なら、デスクトップ版（macOS・Linux）の main がサーバーを起こす前にログインシェルの環境を読み込まない（戻し道。`desktop/shell-env.cjs`・ADR 0213）。読み込み中のシェルには `PLEIAD_RESOLVING_SHELL_ENV=1` を付け、入れ子にしない |
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
 | `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
@@ -62,6 +63,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_VOICE_API` | 通話モード（`core/voice/`）の OpenRouter の送り先（既定 `https://openrouter.ai/api/v1`）。テストの偽物用（`tests/lib/fake-openrouter.mjs`）。`tests/lib/server.mjs` は既定で閉じたポートへ向け、本物へは送らない |
 | `AGENT_HOST_FAKE_VOICE_REPLY` | fake バックエンドの通話の確認用。`{ when, steps }`（または `{ when, script }`。配列なら発言ごと）の JSON ファイルを渡すと、本文が `when` と一致した発言に `steps` の台本（`script` ならそのままの台本）で返す（声で話した言葉は台本の接頭辞を持てないため。`docs/voice-call.md`） |
 | `AGENT_HOST_CHROME_USER_DATA` | Pleiad が `DevToolsActivePort` を読む Chrome の `User Data` を、このディレクトリだけに差し替える（OS に依らない。既定は Windows の `%LOCALAPPDATA%\Google\Chrome\User Data`）。テストは存在しない一時ディレクトリへ向け（`tests/lib/test-env.mjs`）、実機の確かめは `--user-data-dir` を付けて起こした確かめ専用の Chrome を指す（利用者の Chrome に触れない。`docs/inapp-browser.md`「Chrome への接続」）。確認の窓はそのポートを待ち受けるプロセスの窓だけを見る |
+| `AGENT_HOST_AGY_SUGGEST_HOME` | Antigravity の会話の次の発言の候補を作る agy の使い捨てのホーム（既定は一時フォルダーの下の `pleiad-agy-suggest`。`core/backends/antigravity-suggest.mjs`）。`tests/lib/server.mjs` が試験のデータ置き場の下へ向ける（利用者の一時フォルダーに残さない） |
 | `AGENT_HOST_WORKTREE_GRACE_MS` | worktree を作ってから、使われていないものとして自動で片付けるまでの猶予（既定 60 秒。ADR 0089）。テストが 0 にする |
 | `AGENT_HOST_TASK_BACKGROUND_MINUTES` | 委譲の子が返答を終えて裏の作業だけを待つ間、依頼元へ「まだ走っている」を知らせ直す周期（分。既定 30、`0` で知らせない。小数も可）。裏の作業は止めない。最初の知らせは待ち始めて 1 分後（周期がそれより短ければ周期）。ADR 0170・`docs/agent-delegation.md`「子に残った裏の作業」。前の `AGENT_HOST_DELEGATION_BACKGROUND_WAIT_MS`（10 分で止める）は廃止 |
 

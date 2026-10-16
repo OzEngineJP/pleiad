@@ -45,6 +45,7 @@ export default async function (t) {
     while (Date.now() < deadline) { list = await c.cmd('agentTasks'); if (fn(list)) return list; await sleep(50); }
     throw new Error('task timeout: ' + JSON.stringify(list));
   };
+  const idle = async (id) => { for (let i = 0; i < 200; i++) { if (!(await c.cmd('running')).turns.some((r) => r.sessionId === id)) return; await sleep(50); } };
   const turnWithChanges = async (args, change) => {
     const from = c.mark();
     const running = c.runTurn(args);
@@ -148,6 +149,7 @@ export default async function (t) {
     const owner = doneTurn.sessionId;
     tasks = await awaitTasks((list) => list.some((r) => r.parentSessionId === owner && r.notification === 'sent'));
     const child = tasks.find((r) => r.parentSessionId === owner);
+    await idle(owner);   // 通知は受け取った時点で sent になるので、通知で始まったターンが終わるのを待つ
     await sleep(300);
     t.ok('終わった子は消せる。タスクの記録は履歴として残る', await c.cmd('deleteSession', { sessionId: child.sessionId }) === 'deleted'
       && !(await listed(c, child.sessionId)) && (await c.cmd('agentTasks')).some((r) => r.taskId === child.taskId && r.sessionId === child.sessionId));
@@ -159,6 +161,7 @@ export default async function (t) {
       && !(await listed(c, child.sessionId)) && rows('SELECT 1 FROM sessions WHERE session_id = ?', child.sessionId).length === 0,
     JSON.stringify(tasks.find((r) => r.taskId === child.taskId)));
     await awaitTasks((list) => list.filter((r) => r.parentSessionId === owner).every((r) => r.notification === 'sent' || r.notification === 'read'));
+    await idle(owner);
     await sleep(300);
     t.ok('子の終わった親は消せる', await c.cmd('deleteSession', { sessionId: owner }) === 'deleted' && !(await listed(c, owner)));
     t.ok('親を消しても、残った子の会話とタスクの一覧は読める（サーバーが落ちない）', Array.isArray(await c.cmd('agentTasks')) && Array.isArray(await c.cmd('listSessions'))

@@ -7,7 +7,7 @@
   "hero.lede": "<span class=\"nw\">{claude}Claude Code,</span> <span class=\"nw\">{openai}Codex, and</span> <span class=\"nw\">{antigravity}Antigravity —</span> <span class=\"nw\">on one screen,</span> <span class=\"nw\">from anywhere.</span>",
   "cta.download": "Download for Windows",
   "cta.source": "macOS & Linux: build from source",
-  "cta.sourceHref": "https://github.com/tekalu1/pleiad#run-from-source",
+  "cta.sourceHref": "https://github.com/OzEngineJP/pleiad#run-from-source",
   "hero.meta": "Beta · Windows 10 / 11",
   "screen.aria": "On one screen",
   "leave.0": "<span class=\"nw\">A terminal</span> <span class=\"nw\">for every agent.</span>",

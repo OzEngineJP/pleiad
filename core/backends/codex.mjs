@@ -2114,6 +2114,33 @@ export const backend = {
     } finally { clearTimeout(timer); }
   },
 
+  /**
+   * 次の発言の候補（core/prompt-suggestions.mjs、ADR 0211）。prompt は指示と要約。返すのは生の返り（読むのは server 側）。
+   * タイトルと同じく、軽いモデルの使い捨てのスレッド（ephemeral。会話の一覧に残らない）で 1 回だけ回す。
+   * 会話の fork（thread/fork）では作らない: fork は新しいスレッドの id で、会話の部分がキャッシュに乗らない（2026-10-15 実測）
+   */
+  async suggestNext({ prompt, endpoint = null, signal }) {
+    const pick = endpoint ? { model: endpoint.roles?.main || undefined, effort: '' } : titleModel(await backend.models(os.tmpdir()));
+    const ac = new AbortController();
+    const stop = () => ac.abort();
+    if (signal?.aborted) return null;
+    signal?.addEventListener('abort', stop, { once: true });
+    let text = "", error = null;
+    try {
+      await backend.runTurn({
+        prompt, cwd: os.tmpdir(), mode: "readonly", model: pick.model, effort: pick.effort, ephemeral: true, signal: ac, endpoint,
+        askPermission: async () => ({ allow: false }),
+        emit: (ev) => {
+          if (ev.type === "text.delta") text += ev.text;
+          if (ev.type === "turnResult" && ev.outcome !== "ok") error = ev.error || ev.outcome;
+        },
+      });
+    } finally { signal?.removeEventListener('abort', stop); }
+    if (ac.signal.aborted) return null;
+    if (error) throw new Error(error);
+    return text;
+  },
+
   // ---- セッション管理 -----------------------------------------------------
 
   async listSessions({ limit = 100 } = {}) {

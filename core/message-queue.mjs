@@ -118,6 +118,8 @@ export function createMessageQueue({ store, active, start, changed, delivered })
   };
   return {
     get busy() { return locks.size > 0; },
+    /** 送信の処理中の会話（引き継ぎを待たせている会話） */
+    busySessions() { return [...locks.keys()]; },
     retryPaused,
     list: id => serial(id, async () => view(id, await list(id))), kick, pause,
     // ターンは始めたが、バックエンドがプロンプトを渡す前に失敗した。送っていないので失敗として残し、再送か取り消しを選ばせる

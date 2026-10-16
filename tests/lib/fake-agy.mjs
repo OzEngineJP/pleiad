@@ -19,8 +19,11 @@ import { spawn, spawnSync } from "node:child_process";
 const NL = String.fromCharCode(10);
 
 const argv = process.argv.slice(2);
+// 次の発言の候補を作る 1 回（core/backends/antigravity-suggest.mjs）は、使い捨てのホーム（pleiad-agy-suggest）で起きる。会話の agy ではないので、
+// 起こした数・引数の控え（FAKE_AGY_PID_FILE・FAKE_AGY_ARGS_FILE）には入れない（会話の agy の起こし直しを数える試験のため）
+const forSuggestion = path.basename(process.env.USERPROFILE ?? "") === "pleiad-agy-suggest";
 // 起こされた pid を控える。**呼び出し側が落としたかどうか**をテストから見るため
-if (process.env.FAKE_AGY_PID_FILE) {
+if (process.env.FAKE_AGY_PID_FILE && !forSuggestion) {
   try {
     const file = process.env.FAKE_AGY_PID_FILE;
     const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
@@ -28,11 +31,20 @@ if (process.env.FAKE_AGY_PID_FILE) {
     fs.writeFileSync(file, JSON.stringify(list));
   } catch {}
 }
-if (process.env.FAKE_AGY_ARGS_FILE) {
+if (process.env.FAKE_AGY_ARGS_FILE && !forSuggestion) {
   try {
     const file = process.env.FAKE_AGY_ARGS_FILE;
     const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
     list.push(argv);
+    fs.writeFileSync(file, JSON.stringify(list));
+  } catch {}
+}
+// 起こされたときのホーム（USERPROFILE・HOME）と作業場所を控える。候補づくりの使い捨てのホームの検査用（tests/unit/prompt-suggestions.mjs）
+if (process.env.FAKE_AGY_ENV_FILE) {
+  try {
+    const file = process.env.FAKE_AGY_ENV_FILE;
+    const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+    list.push({ USERPROFILE: process.env.USERPROFILE ?? null, HOME: process.env.HOME ?? null, cwd: process.cwd() });
     fs.writeFileSync(file, JSON.stringify(list));
   } catch {}
 }
@@ -409,6 +421,21 @@ async function runTurn(text) {
         usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
       },
     });
+  }
+
+  // 次の発言の候補の指示（core/prompt-suggestions.mjs）には JSON で答え、本物と同じく会話の置き場をホームの下に作る
+  if (text.includes("Return only JSON matching this schema")) {
+    const base = path.join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".gemini", "antigravity-cli");
+    try {
+      fs.mkdirSync(path.join(base, "conversations"), { recursive: true });
+      fs.mkdirSync(path.join(base, "brain", conversationId), { recursive: true });
+      fs.writeFileSync(path.join(base, "conversations", `${conversationId}.db`), "");
+    } catch {}
+    const reply = JSON.stringify({ suggestion: "テストを流して" });
+    step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: reply });
+    step({ step_index: stepIndex, state: "DONE", step_type: "agent_response" });
+    return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: reply, duration_seconds: 0.1, num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } });
   }
 
   // 本文は**真のデルタ**で流れる（state: ACTIVE を繰り返し、最後に DONE）

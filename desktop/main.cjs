@@ -27,6 +27,7 @@ const { attachBrowserViewerBridge } = require('./browser-viewer-bridge.cjs');
 // リモートの端末から内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）
 const { attachBrowserScreencastBridge } = require('./browser-screencast-bridge.cjs');
 const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
+const { applyLoginShellEnv } = require('./shell-env.cjs');
 // コンピューターの操作（Windows）の Win32 の層: 撮影・入力・アプリの特定（docs/computer-use.md、desktop/computer/service.cjs）
 const { attachComputerService, withPerMonitorDpi } = require('./computer/service.cjs');
 const { loadWin32 } = require('./computer/win32.cjs');
@@ -234,9 +235,13 @@ function startServerSwitch(ready, portFile, onServerExit) {
 }
 
 async function boot() {
+  // Dock・Finder から起こすと PATH が launchd の最小限なので、ログインシェルの環境を読み込む（desktop/shell-env.cjs。ADR 0213）。
+  // サーバーへ渡す env（下の utilityProcess.fork・desktop/server-boot.cjs の serverEnv）を作る前に終える
+  const shellEnv = applyLoginShellEnv({ log: message => console.warn('[shell-env]', message) }).catch(error => console.warn('[shell-env]', error?.message ?? error));
   // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）。
   // main の中のリモートの端末側（core/remote/device.mjs）が引く core/i18n.mjs もここで同じ言語にそろえる
   await initDesktopI18n({ systemLanguage: systemLanguage() }).catch(() => setLocale(resolveLocale({ system: systemLanguage() })));
+  await shellEnv;
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
   const agentBrowserBin = prepareAgentBrowserBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: path.join(__dirname, '..'), dataDir: app.getPath('userData') });

@@ -37,6 +37,7 @@
 #agentControls .head{margin-top:20px}
 #agentControls .auth-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 0}
 #agentControls .auth-row .st{flex:1;min-width:120px}
+#agentControls .auth-note{padding:0 0 12px;margin-top:-6px}
 #agentControls .auth-url{overflow-wrap:anywhere}
 #setupError,#onboardingError{font-size:var(--fs-s)}
 @media(max-width:520px){.onboarding-dialog{padding:16px}.onboarding-actions{flex-direction:column-reverse;align-items:stretch}}
@@ -378,6 +379,12 @@ button.conn-lost:hover{color:var(--ink)}
 .auth-row .name{flex:none;color:var(--ink)}
 .auth-row .st{flex:1;min-width:0;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .auth-row .btn{padding:2px 10px;font-size:var(--fs-xs)}
+/* 名前の下の CLI の在り処（弱い字の等幅。版は title だけ）と、期限切れの 1 行（行の下。折り返し、省略しない。設定 › 委譲の ⚠ の行と同じ形） */
+.auth-row .name:has(.auth-cli){flex:0 1 auto;min-width:0;max-width:100%}
+.auth-row .name .auth-cli{display:block;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.auth-note{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:0 8px 6px;font-size:var(--fs-s);color:var(--ink-strong);font-weight:600;overflow-wrap:anywhere}
+.auth-note .btn.link{border:0;background:none;padding:0;font-weight:400;font-size:var(--fs-s);color:var(--ink-blue);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.auth-note .btn.link:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px;border-radius:4px}
 .auth-url{padding:2px 8px 4px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .auth-url a{display:block}
 .auth-paste{display:flex;gap:4px;padding:0 8px 6px}
@@ -830,6 +837,17 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}
 .m.sys.turn-failed b{color:var(--ink-strong);font-weight:700}
+/* ログインの期限切れの失敗（web/auth-expired.mjs。docs/design-system.md「ログインの期限切れ」）。1 行目は失敗の一文、2 行目に直す入口・待っている様子・済んだ */
+.m.sys.auth-fail{display:flex;flex-direction:column;gap:4px}
+.auth-fail .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.auth-fail .acts .btn{padding:2px 10px;font-size:var(--fs-xs)}
+.auth-fail .wait{display:inline-flex;align-items:center;gap:6px}
+.auth-fail .wait .run{width:12px;height:12px}
+.auth-fail .wait .run svg{width:12px;height:12px}
+.auth-fail-note{color:var(--ink-weak)}
+.auth-fail .acts.fade{animation:auth-fail-in var(--dur-fast,.18s) var(--ease-out,ease-out)}
+@keyframes auth-fail-in{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.auth-fail .acts.fade{animation:none}}
 .m.sys code{font-size:var(--fs-xs)}
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}
@@ -1167,6 +1185,38 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 :is(#prompt,#thPrompt)[data-empty=true]::before{content:attr(placeholder);position:absolute;left:12px;top:9px;right:12px;color:var(--ink-weak);pointer-events:none;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 :is(#prompt,#thPrompt).md-atom-sel{caret-color:transparent}
+/* キーの印（↑ の呼び出しの Esc・候補の Tab）。.key-hint kbd と同じく、枠線を使わず紙の面と丸い角で見せる */
+.kc{font:var(--fs-xs)/1.5 var(--font-mono);background:var(--surface-paper);border-radius:var(--r-pill);padding:0 6px;color:var(--ink-weak);white-space:nowrap}
+/* ↑ で送信済みのメッセージを呼び出している間の行（web/composer/recall.mjs。docs/design-system.md「入力欄の呼び出しと候補」）。
+   欄の上の小さな弱い字で「3 / 5 · 10/14 18:20 · 会話名」と Esc の印。240ms で開閉し、欄の字は 120ms で 5px 上（↓ なら下）から入る */
+.recall-row{display:flex;align-items:center;gap:6px;padding:0 12px;max-height:0;opacity:0;overflow:hidden;font-size:var(--fs-xs);color:var(--ink-weak);
+  transition:max-height var(--dur) var(--ease-out),opacity var(--dur) var(--ease-out),padding var(--dur) var(--ease-out)}
+.recall-row.on{max-height:30px;opacity:1;padding-top:6px}
+.recall-row svg.i{width:13px;height:13px;flex:none}
+.recall-pos{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
+.recall-from{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recall-sp{flex:1}
+.recall-esc{flex:none;cursor:pointer}
+.recall-esc:hover{color:var(--ink)}
+:is(#prompt,#thPrompt).recall-swap{animation:recall-in var(--dur-fast) var(--ease-out)}
+:is(#prompt,#thPrompt).recall-swap.down{animation-name:recall-in-down}
+@keyframes recall-in{from{opacity:.2;transform:translateY(-5px)}}
+@keyframes recall-in-down{from{opacity:.2;transform:translateY(5px)}}
+/* 空の欄の、次のメッセージの候補（web/composer/suggestion.mjs）。案内と同じ位置と弱い字で、折り返す。案内は隠し、末尾に Tab の印。
+   240ms で薄く出る。タッチの画面は Tab の代わりに右の丸いボタン（候補を入れる） */
+.composer-ghost{position:absolute;padding:9px 12px 3px;line-height:1.6;color:var(--ink-weak);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;
+  pointer-events:none;opacity:0;transition:opacity var(--dur) var(--ease-out)}
+.composer-ghost.on{opacity:1}
+.composer-ghost[hidden]{display:none}
+.composer-ghost.touch{padding-right:48px}
+.cg-key{margin-left:6px}
+:is(#prompt,#thPrompt)[data-ghost][data-empty=true]::before{content:none}
+:is(#prompt,#thPrompt)[data-ghost=touch]{padding-right:48px}
+.cg-take{position:absolute;right:10px;z-index:2;width:28px;height:28px;padding:0;border-radius:50%;background:var(--surface-paper);color:var(--ink-blue);
+  display:inline-grid;place-items:center;box-shadow:0 1px 2px var(--shadow);cursor:pointer}
+.cg-take[hidden]{display:none}
+.cg-take svg.i{width:15px;height:15px}
+@media (prefers-reduced-motion:reduce){.recall-row,.composer-ghost{transition:none}:is(#prompt,#thPrompt).recall-swap{animation:none}}
 .md-b{min-height:1.6em;margin:0}
 .md-b.md-h{font-weight:600;line-height:1.4;margin:.35em 0 .1em}
 .md-b.md-h[data-l="1"]{font-size:1.35em}

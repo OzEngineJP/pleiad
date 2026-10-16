@@ -32,7 +32,7 @@ export default async function (t) {
     && messageMenuPlan({ kind: "ai" })[0].label === "返答をコピー");
   t.ok("報告は Pleiad 開発者への Issue を開き、会話本文を自動で含めない", (() => {
     const url = new URL(aiReportUrl());
-    return url.origin === 'https://github.com' && url.pathname === '/tekalu1/pleiad/issues/new'
+    return url.origin === 'https://github.com' && url.pathname === '/OzEngineJP/pleiad/issues/new'
       && url.searchParams.get('title') === 'Pleiad で表示された不適切な AI の内容'
       && url.searchParams.get('body')?.includes('会話本文を自動で添付しません');
   })());

@@ -23,6 +23,8 @@ export default async function(t) {
     escalations.push(ev);
     await api.cmd('resolvePermission', { id: ev.id, allow: true }).catch(() => {});
   } });
+  // 完了通知は、親の会話が受け取った時点で sent になる（通知で始まったターンの終わりは待たない。ADR 0151）。続けて発言するときは、そのターンが終わるのを待つ
+  const idle = async id => { for (let i = 0; i < 200; i++) { if (!(await c.cmd('running')).turns.some(r => r.sessionId === id)) return; await sleep(50); } };
   const awaitTasks = async fn => {
     // A cold Windows worker has a 30s startup budget; include that in the wait.
     const deadline = Date.now() + 60_000;
@@ -68,6 +70,7 @@ export default async function(t) {
     t.ok('詳細取得は選んだタスクの指示と配送状態だけを返す', delivered.instructions.length === 1
       && delivered.instructions[0].text === 'echo:FOLLOW_UP' && delivered.instructions[0].state === 'delivered');
     const nestedPrompt = prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:DEEP_RESULT' });
+    await idle(sid);
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: nestedPrompt }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === nestedPrompt && r.notification === 'sent'));
     const nestedResult = rows.find(r => r.task === nestedPrompt).result;
@@ -76,6 +79,7 @@ export default async function(t) {
     t.ok('孫の結果を受け取った子の最終回答を親へ返す', Boolean(grandchild) && nestedResult.includes(grandchild.taskId) && nestedResult.includes('DEEP_RESULT') && grandchild.notification === 'sent', nestedResult.slice(0, 200));
     const other = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_task_status', { taskId: child.taskId }) });
     t.ok('別会話の taskId を MCP から操作できない', other.events.some(e => e.type === 'tool.result' && e.isError));
+    await idle(sid);
     const slowMark = c.mark();
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'slow' }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === 'slow' && r.status === 'running'));
@@ -90,6 +94,7 @@ export default async function(t) {
     t.ok('UI の停止コマンドが子の実行を止める', !(await c.cmd('running')).turns.some(r => r.sessionId === slow.sessionId));
     for (let i = 0; i < 100; i++) { if (!(await c.cmd('running')).turns.some(t => t.sessionId === sid)) break; await sleep(50); }
     t.ok('親の強さに収まる委譲では聞かない', escalations.length === 0, `${escalations.length} 件聞かれた`);
+    await idle(sid);
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'antigravity', task: 'agy-test-task' }) });
     rows = await awaitTasks(rows => rows.some(r => r.backend === 'antigravity' && r.notification === 'sent'));
     const agyChild = rows.find(r => r.backend === 'antigravity');
@@ -100,6 +105,7 @@ export default async function(t) {
     t.ok('親より強い委譲は親の会話で1回だけ聞き、何をどの強さで動かすか見せる',
       escalations.length === 1 && String(asked?.title ?? '').includes('Antigravity') && String(asked?.title ?? '').includes('yolo'), asked?.title ?? '聞かれなかった');
     // 親が auto（聞かずに進む）なら、子も既定の default ではなく auto で始まる
+    await idle(sid);
     await c.runTurn({ sessionId: sid, mode: 'auto', prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:INHERITED' }) });
     rows = await awaitTasks(rows => rows.some(r => r.task === 'echo:INHERITED' && r.notification === 'sent'));
     const inherited = rows.find(r => r.task === 'echo:INHERITED');

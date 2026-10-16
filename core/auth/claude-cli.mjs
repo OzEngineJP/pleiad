@@ -3,9 +3,13 @@ import { t } from '../i18n.mjs';
 
 export function createClaudeAuth(launch = (args) => spawnCli(cliCommand('claude'), args, { stdio: ['ignore', 'pipe', 'pipe'] })) {
   let pending = null;
-  function run(args, { emit, timeout = 15_000 } = {}) {
+  // 待っている `claude auth login` の子と、取り消しを頼まれたか（cancel。会話の失敗の行の「キャンセル」。ADR 0212）
+  let loginChild = null;
+  let cancelled = false;
+  function run(args, { emit, timeout = 15_000, onChild } = {}) {
     return new Promise((resolve, reject) => {
       const child = launch(args);
+      onChild?.(child);
       let output = '';
       let stdout = '';
       let lastUrl = '';
@@ -37,12 +41,21 @@ export function createClaudeAuth(launch = (args) => spawnCli(cliCommand('claude'
     },
     async login({ emit }) {
       if (pending) throw new Error(t('claude.auth.loginPending'));
-      pending = run(['auth', 'login'], { emit, timeout: 10 * 60_000 });
+      cancelled = false;
+      pending = run(['auth', 'login'], { emit, timeout: 10 * 60_000, onChild: child => { loginChild = child; } });
       try {
-        const result = await pending;
+        const result = await pending.catch(error => { if (cancelled) return { code: null }; throw error; });
+        if (cancelled) throw Object.assign(new Error(t('claude.auth.loginCancelled')), { code: 'CANCELLED' });
         if (result.code !== 0) throw new Error(t('claude.auth.loginFailed'));
         emit({ type: 'auth', phase: 'done', message: t('claude.auth.loggedIn') });
-      } finally { pending = null; }
+      } finally { pending = null; loginChild = null; cancelled = false; }
+    },
+    /** 待っているログインをやめる（子を止める）。待っていなければ何もしない。login は CANCELLED で返る */
+    async cancel() {
+      if (!pending || !loginChild) return { cancelled: false };
+      cancelled = true;
+      loginChild.kill();
+      return { cancelled: true };
     },
     async logout() {
       if (pending) throw new Error(t('claude.auth.waitLogin'));

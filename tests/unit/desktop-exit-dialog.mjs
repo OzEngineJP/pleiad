@@ -93,6 +93,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     './computer-overlay.cjs': { attachComputerOverlay: () => ({ close: () => {} }) },
     './chrome-pill.cjs': { attachChromePill: () => ({ close: () => {} }) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
+    './shell-env.cjs': { applyLoginShellEnv: async () => false },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './worker-messages.cjs': workerMessages,
     // 起動の失敗の理由は、サーバーが書いた logs\server.log の末尾（core/server-log.mjs）

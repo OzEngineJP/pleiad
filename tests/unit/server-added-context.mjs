@@ -83,6 +83,8 @@ export default async function (t) {
     await c.runTurn({ sessionId: sid, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'instructions' }) });
     let rows;
     for (let i = 0; i < 1200; i++) { rows = await c.cmd('agentTasks'); if (rows[0]?.status === 'completed' && rows[0].notification === 'sent') break; await sleep(50); }
+    // sent は通知を受け取った時点なので、通知で始まった依頼元のターンが終わるのも待つ
+    for (let i = 0; i < 1200 && (await c.cmd('running')).turns.some(r => r.sessionId === sid); i++) await sleep(50);
     const task = rows[0];
     // fake はどのエージェントの項目も入れる（Codex だけの codexPolicy も。Claude の子に入らないことは tests/unit/codex-rejections.mjs）
     t.ok('子の会話には子向けの項目だけが入る', task?.result === `${bridge}\n\n${childText}\n\n${codexPolicyText}`, task?.result?.slice(-160));

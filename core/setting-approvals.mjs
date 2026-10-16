@@ -12,6 +12,8 @@
 // outcome: allowed（許可して変えた）・denied（拒否）・failed（許可したが変えられなかった。error に理由）・
 //          superseded（同じ会話・同じ設定への新しい要求に置き換えた）・restart（再起動で取り下げた）
 // 届け方は委譲の完了通知と同じく「多くても 1 回」: 送る前に delivering を保存し、送ったか分からないまま落ちたら次の起動で捨てる。
+// 新しいターンで届けるときは、そのターンに受け取られた（deliver の accepted。引き継げる状態）時点で台帳から外して保存し、ターンの終わりまで待たない。
+// settling は、受け取られたか分からない間と台帳を書いている間（引き継ぎは、これが終わるまで待つ。旧サーバーが引き継いだ後に台帳を書かない）。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { writeAtomic } from './atomic-file.mjs';
@@ -21,8 +23,9 @@ export const OUTCOMES = ['allowed', 'denied', 'failed', 'superseded', 'restart']
 
 /**
  * @param dataDir    データ置き場
- * @param deliver    (sessionId, notices) => 'ok' | 'requeue' | 'error'。requeue は受け取られていない（会話が空いてから送り直す）。
- *                   error は渡ったか分からない（送り直さない）。sessionId は届け先で、求めた会話と違うとき、渡す結果に via（route の返り）が付く
+ * @param deliver    (sessionId, notices, { accepted }) => 'ok' | 'requeue' | 'error'。requeue は受け取られていない（会話が空いてから送り直す）。
+ *                   error は渡ったか分からない（送り直さない）。sessionId は届け先で、求めた会話と違うとき、渡す結果に via（route の返り）が付く。
+ *                   accepted() は、新しいターンがプロンプトを受け取ったときに呼ぶ（以後の結果は台帳に反映しない）
  * @param route      (notice) => { sessionId, via? } | null。届け先の会話。null（引けない・失敗）は求めた会話
  * @param intervalMs 届け直しを試す間隔
  */
@@ -44,14 +47,18 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
   const restored = notices.filter((n) => n.outcome === 'restart').length;
 
   let chain = Promise.resolve();
+  let saving = 0;
   const save = () => {
     const body = JSON.stringify({ version: 1, pending, notices }, null, 2);
-    chain = chain.then(() => writeAtomic(file, body)).catch(onError);
+    saving += 1;
+    chain = chain.then(() => writeAtomic(file, body)).catch(onError).finally(() => { saving -= 1; });
     return chain;
   };
   if (restored || notices.length) await save();
 
   const sending = new Set();
+  // 受け取られたか分からない間の届け先の会話（引き継ぎを待たせる）
+  const unsettled = new Set();
   /** 結果の届け先。求めた会話か、その委譲のタスクが終わっているなら依頼元の会話（route） */
   async function destinationOf(n) {
     const to = await Promise.resolve().then(() => route?.({ ...n })).catch(() => null);
@@ -62,15 +69,24 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
     const list = items.map((x) => x.n).filter((n) => n.state === 'queued');
     if (!list.length) return;
     sending.add(sessionId);
+    unsettled.add(sessionId);
     try {
       for (const n of list) n.state = 'delivering';
       await save();
       const viaOf = new Map(items.map((x) => [x.n, x.via]));
-      const outcome = await Promise.resolve().then(() => deliver(sessionId, list.map((n) => ({ ...n, ...(viaOf.get(n) ? { via: viaOf.get(n) } : {}) })))).catch(() => 'error');
+      let acceptance = null;
+      const accepted = () => acceptance ??= (async () => {
+        notices = notices.filter((n) => !list.includes(n));
+        await save();
+        unsettled.delete(sessionId);
+      })();
+      const outcome = await Promise.resolve().then(() => deliver(sessionId, list.map((n) => ({ ...n, ...(viaOf.get(n) ? { via: viaOf.get(n) } : {}) })), { accepted })).catch(() => 'error');
+      // 受け取られた後の結果（ターンの終わり・引き継ぎ）では台帳を書かない
+      if (acceptance) { await acceptance; return; }
       if (outcome === 'requeue') for (const n of list) n.state = 'queued';
       else notices = notices.filter((n) => !list.includes(n));
       await save();
-    } finally { sending.delete(sessionId); }
+    } finally { sending.delete(sessionId); unsettled.delete(sessionId); }
   }
   let kicking = false;
   async function kick() {
@@ -91,6 +107,9 @@ export async function createSettingApprovals({ dataDir, deliver, route = null, n
 
   return {
     restored,
+    /** 引き継ぎを待たせている届けか（受け取られたか分からない間・台帳を書いている間） */
+    get settling() { return unsettled.size > 0 || saving > 0; },
+    settlingSessions: () => [...unsettled],
     /** 答えを待つ要求を台帳に足す（同じ requestId は置き換える。受領証が合わず聞き直したとき） */
     add(entry) {
       pending = pending.filter((p) => p.requestId !== entry.requestId);

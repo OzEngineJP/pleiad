@@ -364,6 +364,23 @@ async function run(t, tmp) {
       `${process.version} ${typeof module.registerHooks === 'function' ? 'registerHooks' : 'register'}`);
   }
 
+  // ---------------------------------------------------------------- 置き場のパスがシンボリックリンクを通るとき（macOS の /var → /private/var と同じ形。issue #71）
+  {
+    const real = path.join(tmp, 'peer-real');
+    const link = path.join(tmp, 'peer-link');
+    fs.mkdirSync(real);
+    let linked = false;
+    try { fs.symlinkSync(real, link, 'junction'); linked = true; } catch { /* リンクを作れない環境では見ない */ }
+    if (!linked) t.ok('peer（リンク）: この環境ではシンボリックリンクを作れない', true);
+    else {
+      const root = path.join(link, 'claude-sdk');
+      const gz = tgz(fakePackage('2.0.0', { 'sdk.mjs': "import * as z from 'zod/v4';\nexport { z };\n" }));
+      const got = await installSdk({ root, pin: fakePin('2.0.0', gz), download: async () => gz });
+      const api = await importInstalledSdk(got.entry, root);
+      t.ok('peer（リンク）: 置き場がリンクを通っても、zod/v4 はアプリの zod', api.z === await import('zod/v4'));
+    }
+  }
+
   // ---------------------------------------------------------------- 本物の SDK の import
   {
     const sdkDir = path.join(ROOT, 'node_modules', '@anthropic-ai', 'claude-agent-sdk');

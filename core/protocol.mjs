@@ -182,10 +182,11 @@ export const COMMANDS = new Set([
   "openPath",         // 同上。HTML だけ。returnPath:true なら検査済みの実体パスを返し、OS では開かない。遠隔の接続は断る
   "openVisualization", // { sessionId, id? | at?, returnPath? } -> { path }。写しを書き、returnPath:true なら開かずに返す。遠隔の接続は断る
   "backends",        // 使えるバックエンドの一覧（capabilities / toolHints 付き）
-  "authStatus",      // { backend } -> { supported, loggedIn?, account?, detail? }
+  "authStatus",      // { backend } -> { supported, loggedIn?, account?, detail?, cliPath?（ホームは ~）, cliVersion?, expired?（会話で 401 を受けた。ADR 0212） }
   "authLogin",       // { backend }。URL は auth イベントで出る
   "authLogout",      // { backend }
   "authSubmit",      // { backend, input }。コールバックを取れないときの手貼り
+  "authCancel",      // { backend } -> { supported, cancelled? }。待っている authLogin をやめる（authLogin は CANCELLED で返る）
   "claudeSdkInstall", // {} -> 状態（claudeSdk イベントと同じ形）。Claude Agent SDK を npm から取る（取得の案内に同意して押した。ADR 0208）。取り終わるか失敗するまで待つ
   "running",         // いま動いているものの一覧
   "loadSubagent",    // サブエージェントの会話を読む
@@ -260,6 +261,10 @@ export const EVENTS = new Set([
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
   "turnResult",      // { outcome: ok|error|aborted, turns?, costUsd?, error?, reason? }。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
+  //   kind: 'auth' はログインの期限切れ（401）の失敗。pristine はツールの実行も返答の本文もまだ出ていなかった（最初の API 呼び出しで断られた）。
+  //   server が auth: { mode: cli, email? } | { mode: token, accountId, name? } と backend を添える（互換の接続先の会話には添えない。ADR 0212）
+  // { text } 次の発言の候補（1 行）。Claude はターンの中（turnResult より前のこともある）、Codex・Antigravity はターンの後に届く。保存しない（core/prompt-suggestions.mjs）
+  "promptSuggestion",
 
   // ---- セッションとメタ情報
   "session",      // sessionId が確定した { sessionId, model? }（model は実際に解決されたもの）

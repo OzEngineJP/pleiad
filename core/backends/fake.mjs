@@ -17,6 +17,8 @@
 //   "question"     … askPermission（kind:"question"）を呼び、回答を本文にする
 //   "slow"         … 中断されるまで待つ
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
+//   "fail-auth"    … ログインの期限切れ（401）で失敗する（Claude と同じ kind: 'auth'・pristine: true。ADR 0212）。
+//                    "fail-auth tool" はツールを 1 回動かしてから失敗する（pristine: false）
 //   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
 //   "deleted-natives" … このプロセスで deleteSession に渡されたネイティブの id と、今あるネイティブの会話の id を JSON（{ deleted, live }）で本文にする
@@ -50,6 +52,7 @@
 // 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける／
 //   AGENT_HOST_FAKE_QUOTA=<JSON のファイル> … 使用枠（usage()。{ windows: [{ label, usedPercent, resetsAt, minutes }] }）を毎回そのファイルから読む。
 //   指定が無いと usage() を持たない（使用量の上限の再開が、解除時刻の分からない上限の空きを確かめる検査用）
+//   AGENT_HOST_FAKE_LOGIN_MS=<ms> … ログイン（auth.login）が終わるまでの時間（既定 0）。その間は pending で、auth.cancel でやめられる（会話の失敗の行の「キャンセル」の確認用）
 //   AGENT_HOST_FAKE_SUBAGENTS=<JSON のファイル> … { "<sessionId>": [{ id, toolUseId, status, startedAt, endedAt }] }。記録にだけ在る会話（種を置いた会話）の
 //   過去のサブエージェントを引けるようにする（作業ダイアログの過去の一覧の検査用。tests/browser/history-window-seed.mjs）。ターンで生んだ子が在る会話ではそちらを使う
 //
@@ -61,6 +64,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { undelivered } from "./undelivered.mjs";
 import { isReviewMode, fakeScriptAllowed } from "../review-mode.mjs";
 import { runHeld, driveHeld } from "./fake-held.mjs";
@@ -69,7 +73,7 @@ import { computerDisplay, computerToolInput } from "../computer-use/display.mjs"
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
 const deletedNatives = [];    // deleteSession に渡された id（台本 "deleted-natives"）
 const outlivesWaits = new Map();   // 会話 id → { handle, result }（台本 "outlives:"）
-const auth = { loggedIn: false, account: null };
+const auth = { loggedIn: false, account: null, pending: null };
 // 台本 "bg-shell" の止め口（Pleiad の会話 id -> taskId -> 止める関数）と、台本 "term" が残した端末（会話 id -> 端末の一覧）
 const shells = new Map();
 const terminals = new Map();
@@ -485,6 +489,16 @@ export const backend = {
 
     // AGENT_HOST_FAKE_VOICE_REPLY=<JSON ファイル>: { when, steps } の when と同じ本文の発言には steps の台本で返す（通話の確認用。声で話した言葉は台本の接頭辞を持てないため。docs/voice-call.md）
     const text = plain ? scriptOf(prompt) : voiceReplyFor(scriptOf(prompt)) ?? scriptOf(prompt);
+    // 本文の HOLD_TURN:<ゲート> は、受け取った後、ゲートが開くまでターンを進めない（受理からターンの終わりまでの間を、テストが好きなだけ見られる。
+    // 委譲の子の結果に入れると、その完了通知で始まる親のターンが止まる）。echo:・ply: の台本には効かない（委譲の依頼のターンと子のターン自体は止めない）
+    const holdTurn = plain || /^(?:echo|ply):/.test(text) ? null : /\bHOLD_TURN:([\w.-]+)/.exec(text)?.[1];
+    if (holdTurn) {
+      await new Promise((resolve) => {
+        const stop = watchGate(holdTurn, resolve);
+        const abort = signal?.signal;
+        if (abort?.aborted) { stop(); resolve(); } else abort?.addEventListener?.("abort", () => { stop(); resolve(); }, { once: true });
+      });
+    }
     if (!plain && text.startsWith('limit ')) {
       const raw = text.slice(6).trim();
       const resetsAt = /^\d+$/.test(raw) ? Number(raw) : Date.parse(raw);
@@ -495,6 +509,8 @@ export const backend = {
     }
     // 発言の id は先に決めておき、text.end に載せる（履歴と同じ id で分岐の起点になる）
     const out = { uuid: crypto.randomUUID(), role: "assistant", text: "", toolCalls: null };
+    // 台本 "fail-auth" の失敗（turnResult に kind: 'auth' と pristine を付ける）
+    let authFailure = null;
 
     try {
       if (!plain && text.startsWith("slow")) {
@@ -805,6 +821,17 @@ export const backend = {
         if (base && !sessionId) emit({ type: "contextBase", tokens: Number(base[1]) });
         out.text = `compactWindow:${autoCompactWindow ?? "none"}`;
         await say(emit, out.text, out.uuid);
+      } else if (/^fail-auth(\s|$)/.test(text)) {
+        const tool = /\btool\b/.test(text);
+        if (tool) {
+          const call = { id: crypto.randomUUID(), name: "Read", input: { file_path: "README.md" } };
+          emit({ type: "tool.start", id: call.id, name: call.name, input: call.input });
+          emit({ type: "tool.result", id: call.id, text: "ok", isError: false, truncated: false });
+          out.toolCalls = [{ ...call, result: { text: "ok", isError: false, truncated: false } }];
+          out.tools = [call.name];
+        }
+        authFailure = { pristine: !tool };
+        throw new Error("Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token has expired. Re-authenticate to continue.");
       } else if (/^fail(\s|$)/.test(text)) {
         throw new Error('fake: failure');
       } else if (/^bg(\s|$)/.test(text)) {
@@ -844,7 +871,8 @@ export const backend = {
         await say(emit, out.text, out.uuid);
       }
     } catch (err) {
-      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
+      emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err), ...(authFailure ? { kind: "auth", pristine: authFailure.pristine } : {}) });
+      if (authFailure && out.toolCalls) push(s, out);
       throw err;
     } finally {
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
@@ -977,15 +1005,42 @@ export const backend = {
     return String(transcript ?? "").split("\n").find((l) => l.trim())?.slice(0, 20) ?? "無題";
   },
 
+  // 次の発言の候補（core/prompt-suggestions.mjs）。LLM は呼ばない。要約の最後の返答（[agent]）の中の「suggest:<文>」（行末まで）を候補にする。無ければ候補なし
+  async suggestNext({ prompt }) {
+    const last = String(prompt ?? "").split("[agent]\n").at(-1).split("</conversation>")[0];
+    const text = /suggest:([^\n]*)/.exec(last)?.[1]?.trim();
+    return JSON.stringify({ suggestion: text || null });
+  },
+
+  // 使っている CLI の在り処と版（設定の行の名前の下。Claude の cliInfo と同じ形）。fake は CLI を持たないので、このファイル
+  async cliInfo() {
+    return { path: fileURLToPath(import.meta.url), version: "0.0.0-fake" };
+  },
+
   auth: {
     async status() {
+      if (auth.pending) return { loggedIn: false, pending: true };
       return { loggedIn: auth.loggedIn, account: auth.account, detail: "テスト用のダミー" };
     },
     async login({ emit }) {
       emit?.({ type: "auth", backend: "fake", phase: "url", url: "https://example.invalid/login" });
+      const ms = Number(process.env.AGENT_HOST_FAKE_LOGIN_MS) || 0;
+      if (ms > 0) {
+        const cancelled = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), ms);
+          auth.pending = () => { clearTimeout(timer); resolve(true); };
+        });
+        auth.pending = null;
+        if (cancelled) throw Object.assign(new Error("fake: login cancelled"), { code: "CANCELLED" });
+      }
       auth.loggedIn = true;
       auth.account = "tester";
       emit?.({ type: "auth", backend: "fake", phase: "done", message: "ログインした" });
+    },
+    async cancel() {
+      if (!auth.pending) return { cancelled: false };
+      auth.pending();
+      return { cancelled: true };
     },
     async logout() {
       auth.loggedIn = false;
@@ -999,6 +1054,7 @@ export function reset() {
   sessions.clear();
   auth.loggedIn = false;
   auth.account = null;
+  auth.pending = null;
 }
 
 // 台本 "held:" の旧サーバーの手を離す口と、読みを止める口（tests/lib/adopt-server.mjs が呼ぶ。fake-held.mjs）

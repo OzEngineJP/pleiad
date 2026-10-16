@@ -9,7 +9,7 @@ macOS のパッケージは `Desktop packages`（署名なし・手動）と `De
 ## 決定
 
 - `Evaluation release` に `mac` のジョブを足す。Repository Variable `PLY_MAC_RELEASE` が `on` のときだけ走る。
-- 署名は Developer ID Application の証明書（`MAC_CSC_LINK`・`MAC_CSC_KEY_PASSWORD`）、公証は App Store Connect の API キー（`APPLE_API_KEY`・`APPLE_API_KEY_ID`・`APPLE_API_ISSUER`）。`scripts/release-signing.cjs` は Apple ID の形も引き続き受け付ける。
+- 署名は Developer ID Application の証明書（`MAC_CSC_LINK`・`MAC_CSC_KEY_PASSWORD`）、公証は App Store Connect の API キー（`APPLE_API_KEY`・`APPLE_API_KEY_ID`・`APPLE_API_ISSUER`）。どれも Environment `release` の Secrets に置く（ADR 0214）。`scripts/release-signing.cjs` は Apple ID の形も引き続き受け付ける。
 - macOS の配布物は Windows の `release` のジョブが同じ下書きに入れ、両方を照合してから一緒に公開する。`mac` のジョブが落ちたら公開しない。
 
 ## 理由

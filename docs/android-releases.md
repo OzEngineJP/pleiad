@@ -40,7 +40,7 @@ Google Play へは、同じ鍵・同じ版の決め方の AAB を、手動のワ
 | Secret | `PLY_ANDROID_KEY_PASSWORD` | 鍵のパスワード |
 | 変数 | `PLY_ANDROID_CERT_SHA256` | 署名証明書の SHA-256（大文字 16 進・コロン無し。比較は大小文字と区切りを正規化する） |
 
-どれかが空なら、ワークフローは署名の手順で明確なエラーを出して落ちる。keystore は実行の間だけ `$RUNNER_TEMP` に復元し、成否にかかわらず最後に消す。
+Secret は Repository Secrets ではなく Environment `release`（`main` と `v*` のタグからしか使えない）に置く（[ADR 0214](adr/0214-release-environment-secrets.md)）。この節と下の Play の表の Secret も同じ。どれかが空なら、ワークフローは署名の手順で明確なエラーを出して落ちる。keystore は実行の間だけ `$RUNNER_TEMP` に復元し、成否にかかわらず最後に消す。
 
 署名の後、最新の build-tools の `apksigner verify --print-certs` で、署名証明書の SHA-256 が `PLY_ANDROID_CERT_SHA256` と一致することを確かめる。一致しない（別の鍵で署名された・変数が空）ときはリリースを作らない。
 
@@ -154,7 +154,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
    1. Google Cloud Console でプロジェクトを作り、「Google Play Android Developer API」を有効にする。
    2. サービスアカウントを作る（Cloud の役割は付けなくてよい）。鍵（JSON）を作って落とす。
    3. Play Console の「ユーザーと権限」→「新しいユーザーを招待」で、サービスアカウントのメールアドレスを入れ、Pleiad のアプリにテストのトラックへリリースする権限を与える。
-   4. GitHub の Secret `PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON` に JSON の全文を入れ、手元の JSON を消す。
+   4. GitHub の Environment `release` の Secret `PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON` に JSON の全文を入れ（`gh secret set PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON --env release < <JSON>`）、手元の JSON を消す。
 9. **最初の AAB を上げる。** 「Android Play upload」を `track: internal`・`status: draft` で実行する。Play Console で内部テストのテスター（自分のアカウント）を決めてロールアウトする。内部テストは 100 人まで・アプリの設定が終わっていなくても作れる。[^testing] ここで前面サービスの申告が出るので、5 の申告を済ませる。
 10. **鍵が同じことを実機で確かめる。** `dev.pleiad.app` の GitHub の APK が入った端末で、テスターの登録の後に Play から更新し、入れ直し無しで上書きされ、ペアリングしたホストが残ることを見る。
 11. **クローズドテストを 14 日続ける。** 既定のクローズドテストのトラックにテスターのリスト（メールアドレスのリストか Google グループ）を付け、配布する国を選び、ワークフローを `track: alpha` で実行するか内部テストのリリースを昇格させて、審査に出す。テスターは参加用のリンクから参加する。**12 人以上が 14 日続けて参加**している必要があり、途中で抜けて入り直した人は数え直しになる。内部テストは数えない。[^test-req][^testing]

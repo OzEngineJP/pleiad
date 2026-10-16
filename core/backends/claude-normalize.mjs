@@ -13,6 +13,7 @@ import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { ZERO_COST, resultCost, usageTotals, claudeUsageDelta } from "./claude-cost-state.mjs";
 import { computerResult, computerToolInput, isComputerTool } from "./computer-delivery.mjs";
+import { cleanSuggestion } from "../prompt-suggestions.mjs";
 
 // 履歴のツール結果の切り詰め（fullResults なら切らない）
 const cutResult = (raw, full) => !full && raw.length > MAX_RESULT_CHARS
@@ -67,6 +68,14 @@ export function createClaudeCompactDiagnostic() {
  * computerIds はターンの間持ち回す Set。ply_computer の tool_use の id を覚え、その tool_result だけ印の行を読む
  * （docs/computer-use.md「印の行」。画像は image ブロックからではなく印から作る）
  */
+/**
+ * 失敗の文面がログインの期限切れ（401）か。SDK の印（authFailed）が届かずに例外だけが来たときの控え
+ * （`Claude Code returned an error result: Failed to authenticate. API Error: 401 OAuth access token has expired. …`）。ADR 0212
+ */
+export function isClaudeAuthError(message) {
+  return /authentication_failed|access token has expired|failed to authenticate|\bAPI Error:? 401\b/i.test(String(message ?? ''));
+}
+
 export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = null } = {}) {
   const out = [];
   if (!m || typeof m !== "object") return out;
@@ -89,6 +98,18 @@ export function normalizeSdkMessage(m, { costBase = ZERO_COST, computerIds = nul
         window: quota.rateLimitType ?? quota.rate_limit_type ?? null });
     }
     if (m.type === 'rate_limit_event') return out;
+  }
+
+  // ログインの期限切れ（401）。SDK は assistant の error: 'authentication_failed' と、result の is_error・api_error_status: 401 で知らせる。
+  // 印（authFailed）は claude.mjs が受け取り、失敗の turnResult に kind: 'auth' を付ける（画面へは流さない。'limit' と同じ扱い。ADR 0212）
+  if (m.type === 'assistant' && m.error === 'authentication_failed') out.push({ type: 'authFailed' });
+  if (m.type === 'result' && m.is_error === true && m.api_error_status === 401)
+    out.push({ type: 'authFailed', ...(typeof m.result === 'string' && m.result ? { message: m.result } : {}) });
+
+  // 次の発言の候補（promptSuggestions。core/prompt-suggestions.mjs）。1 行に整えて使えるものだけ
+  if (m.type === 'prompt_suggestion') {
+    const text = cleanSuggestion(m.suggestion);
+    return text ? [{ type: 'promptSuggestion', text }] : [];
   }
 
   if (m.type === 'tool_progress') return [{ type: 'task.activity' },

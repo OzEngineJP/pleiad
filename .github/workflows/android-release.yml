@@ -27,6 +27,8 @@ concurrency:
 jobs:
   release:
     if: github.ref == 'refs/heads/main'
+    # 署名・ストアの Secrets は Environment「release」にだけ置く（main と v* のタグからしか使えない。ADR 0214）
+    environment: release
     runs-on: ubuntu-latest
     permissions:
       contents: write

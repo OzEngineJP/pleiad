@@ -176,7 +176,7 @@ Windows の証明書ストア（`Root`）には何も入れない。このため
 
 ### 正式な配布環境
 
-コードと配布先は public リポジトリ `tekalu1/pleiad` にまとめ、Releases で配布する。
+コードと配布先は public リポジトリ `OzEngineJP/pleiad` にまとめ、Releases で配布する（2026-10-16 に `tekalu1/pleiad` から移した）。
 正式配布のCIは `github.repository` をアップロード先として使う。アプリに焼き込む更新フィードは別に決める（下記）。
 
 ソースリポジトリの GitHub Environment `desktop-release` に必要な値を設定する。
@@ -202,8 +202,9 @@ AzureにはCertificate Profile Signerの権限とPublic Trustプロファイル�
 現実の資格情報をコード・CLI引数・成果物・アプリに埋め込まない。CI用の書き込みトークンを利用者へ配らない。
 証明書が未設定の場合に、未署名で公開へ進むフォールバックはない。無署名は `PLY_WINDOWS_SIGNING=none` を明示したときだけ。
 
-アプリに焼き込む更新フィード（`app-update.yml` の owner/repo）は `PLY_RELEASE_REPOSITORY`、未指定なら `tekalu1/pleiad`。`GITHUB_REPOSITORY` からは導かない。
-アップロード先（`GH_REPO`）は Actions の `github.repository`。フィードとアップロード先を分けることで、別リポジトリの Actions で作った版も `tekalu1/pleiad` を見に行く。
+アプリに焼き込む更新フィード（`app-update.yml` の owner/repo）は `PLY_RELEASE_REPOSITORY`、未指定なら `OzEngineJP/pleiad`。`GITHUB_REPOSITORY` からは導かない。
+0.14.2 までの版は `tekalu1/pleiad` を焼き込んでいる。GitHub は移したリポジトリの旧い名前を転送する（API は 301 で `/repositories/<id>/…` へ、配布の URL は新しい名前へ）ので、その版も新しい場所の更新を受け取る（`desktop/update-auth.cjs` の取得は転送をたどる。2026-10-16 に試験用のリポジトリで確かめた）。**`tekalu1` の下に `pleiad` という名前のリポジトリを作らない**（転送が切れ、0.14.2 までの版の更新が止まる）。
+アップロード先（`GH_REPO`）は Actions の `github.repository`。フィードとアップロード先を分けることで、別リポジトリの Actions で作った版も `OzEngineJP/pleiad` を見に行く。
 Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参照しない。
 
 ## サインイン時の起動
@@ -285,7 +286,7 @@ Claude の CLI は既定で保持役に載るので（無停止の更新。[ADR 
 下書きへアップロードした全ファイルを再取得してSHA-256を照合した後、100%配信で公開する。失敗時は公開へ進まない。既存リリースのバイナリは上書きしない。
 
 初回設定は `powershell -File scripts/setup-evaluation-secrets.ps1`。GitHub CLIで認証済みの管理者が実行する。
-GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CSC_LINK`、ランダムなパスワードを `WIN_CSC_KEY_PASSWORD` Repository Secretsへ標準入力で登録する。
+GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CSC_LINK`、ランダムなパスワードを `WIN_CSC_KEY_PASSWORD` として、Environment `release` の Secrets へ標準入力で登録する。署名・ストアの Secrets は Repository Secrets に置かず、`main` と `v*` のタグからしか使えない Environment `release` にだけ置く（[ADR 0214](adr/0214-release-environment-secrets.md)）。
 発行元と公開指紋は `PLY_WIN_PUBLISHER` / `PLY_WIN_CERTIFICATE_SHA1` Repository Variablesに登録する。
 `PLY_WIN_CERTIFICATE_SHA1` を登録してあれば、ビルドは署名の準備で `desktop/update-trust.json` の `signers` にその指紋があるかを確かめ、無ければ止まる（`scripts/release-signing.cjs`。ストアの証明書は常に確かめる）。Azure（認証局）の署名は、発行元が `publishers` にあるかを確かめる。macOS は対象外。新しい鍵へ替えるときは、先に一覧へ足す。
 秘密鍵・パスワードはソース、ログ、Releaseアセットに含めない。署名ステップだけがSecretsを参照し、runnerの一時PFXと証明書ストアは処理後に掃除する。
@@ -296,7 +297,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 インストーラーの署名を Windows で `Valid` と確かめたい評価端末では、Releaseの `Pleiad-Evaluation.cer` と `evaluation-certificate.ps1` を取得し、別途確認した指紋を指定して `-Action Trust -CertificateFile ... -ExpectedThumbprint ...` を実行する。
 `SIGNING-INFO.json` は公開証明書の指紋と有効期限、`BUILD-INFO.json` はソースコミットとActions実行URLを記録する。
 
-リリースジョブは所有者のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。PRから署名ジョブは実行しない。
+リリースジョブは、リポジトリの持ち主か、Repository Variable `PLY_RELEASE_ACTORS`（JSON の配列。例 `["tekalu1"]`）にある人のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。組織のリポジトリでは持ち主が組織になって人の push と一致しないので、出す人を `PLY_RELEASE_ACTORS` に書く。PRから署名ジョブは実行しない。
 
 #### macOS の配布
 
@@ -308,8 +309,8 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 - macOS の自動更新は electron-updater（Squirrel.Mac）で、zip と `latest-mac.yml` を使う。Squirrel.Mac は更新後のアプリの署名が今のアプリと同じ Developer ID であることを求めるので、署名の無い macOS 版は自動更新できない。
 
 初回設定（Apple Developer Program の管理者）:
-1. 「Developer ID Application」の証明書を作り、秘密鍵ごと `.p12` に書き出す。Base64 を Repository Secret `MAC_CSC_LINK`、書き出しのパスワードを `MAC_CSC_KEY_PASSWORD` に登録する。
-2. App Store Connect の「ユーザーとアクセス → 統合 → App Store Connect API」でチームのキー（役割は Developer）を作る。`.p8` の中身を `APPLE_API_KEY`、キー ID を `APPLE_API_KEY_ID`、Issuer ID を `APPLE_API_ISSUER` の Repository Secrets に登録する（`.p8` は 1 度しか取れない）。
+1. 「Developer ID Application」の証明書を作り、秘密鍵ごと `.p12` に書き出す。Base64 を `MAC_CSC_LINK`、書き出しのパスワードを `MAC_CSC_KEY_PASSWORD` として Environment `release` の Secrets に登録する（`gh secret set <名前> --env release`。[ADR 0214](adr/0214-release-environment-secrets.md)）。
+2. App Store Connect の「ユーザーとアクセス → 統合 → App Store Connect API」でチームのキー（役割は Developer）を作る。`.p8` の中身を `APPLE_API_KEY`、キー ID を `APPLE_API_KEY_ID`、Issuer ID を `APPLE_API_ISSUER` として同じく Environment `release` の Secrets に登録する（`.p8` は 1 度しか取れない）。
 3. Repository Variable `PLY_MAC_RELEASE` を `on` にする。
 
 `scripts/release-signing.cjs` は、API キー（`APPLE_API_KEY` は `.p8` の場所）か、Apple ID と App 用パスワード（`APPLE_ID`・`APPLE_APP_SPECIFIC_PASSWORD`・`APPLE_TEAM_ID`）のどちらかを求める。`Desktop signed release` は Apple ID の形のまま。
@@ -322,7 +323,7 @@ macOS 版の初回の公開の前に、実機で、新規インストール（Ga
 1. **橋渡しの版を、今の形（自己署名）で出す。** `desktop/update-trust.json` が `unsigned: "accept"` の版（ADR 0209 を含む版）を、今の Variables のまま `Evaluation release` で正式の版（Latest）として出す。今の利用者は、指紋の固定（ADR 0176）で受け入れる。この版の `BUILD-INFO.json` には `updateAcceptsUnsigned: true` が載る。先行版を受け取る利用者は、正式の版を含めて一番新しい版を取るので、橋渡しの版が一番新しければ 1 つで済む。
 2. **利用者に届くのを待つ。** 起動中の PC は 30 分ごとに確かめてダウンロードし、再起動で入る。届いたかはこちらから見えないので、待つ長さは利用者の数と使い方で決める。
 3. **Repository Variable `PLY_WINDOWS_SIGNING` を `none` にして、次の版を出す。** `Evaluation release` は自己署名の手順を飛ばし、「Verify and publish unsigned」で、署名の Secrets を 1 つも渡さずに作る。公開の前に `scripts/release-unsigned-guard.mjs` が、Latest と一番新しい版の `BUILD-INFO.json` の `updateAcceptsUnsigned` を確かめ、`true` でなければ止める（橋渡しの版を飛ばしたまま出さないため）。配布物がどれも `NotSigned` であることも確かめる。`Pleiad-Evaluation.cer`・`SIGNING-INFO.json` は添付しない。`Desktop signed release` でも、`none` のときは同じ確かめをしてから無署名で作る。
-4. **無署名の版が出て、戻す必要が無いと決めたら、署名の設定を消す。** Repository Secrets の `WIN_CSC_LINK`・`WIN_CSC_KEY_PASSWORD`、Repository Variables の `PLY_WIN_PUBLISHER`・`PLY_WIN_CERTIFICATE_SHA1`。`PLY_WINDOWS_SIGNING=none` は残す。手元の自己署名の鍵（`%LOCALAPPDATA%/Ply/signing/`）も、署名の版を出し直す必要が無くなってから消す。
+4. **無署名の版が出て、戻す必要が無いと決めたら、署名の設定を消す。** Environment `release` の Secrets の `WIN_CSC_LINK`・`WIN_CSC_KEY_PASSWORD`、Repository Variables の `PLY_WIN_PUBLISHER`・`PLY_WIN_CERTIFICATE_SHA1`。`PLY_WINDOWS_SIGNING=none` は残す。手元の自己署名の鍵（`%LOCALAPPDATA%/Ply/signing/`）も、署名の版を出し直す必要が無くなってから消す。
 
 橋渡しの版が届く前に止まっていた PC（オフラインのまま・更新を切った PC）は、無署名の版を受け取れない。Releases から手動でインストールし直す（設定と会話は残る）。
 `Desktop signed release` で出した版は `BUILD-INFO.json` を持たないので、その版が Latest か一番新しい版だと、無署名の公開は止まる。その場合は `Evaluation release` で橋渡しの版を出し直す。

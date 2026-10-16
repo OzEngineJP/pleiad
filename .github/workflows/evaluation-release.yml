@@ -18,7 +18,9 @@ jobs:
   # 同じ commit の main の CI（test.yml の push の run）を読み、release の npm test を省けるかを決める（docs/release-ci-reuse.md）。
   # 書く権限を持たない別のジョブにし、待つ間は Windows の runner を使わない。CI が赤ければここで止まり、release のジョブは走らない
   ci-gate:
-    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    # 出せるのは、リポジトリの持ち主と Repository Variable PLY_RELEASE_ACTORS（JSON の配列。例 ["tekalu1"]）にある人だけ。
+    # 組織のリポジトリでは持ち主が組織になり、人の push と一致しないので、出す人を変数で決める（docs/desktop-releases.md「自己署名の配布」）
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は 30 分
     timeout-minutes: 50
@@ -49,7 +51,9 @@ jobs:
   # （immutable releases なので、公開した後には足せない）。このジョブが落ちたら release のジョブは走らず、Windows だけで公開しない
   mac:
     needs: ci-gate
-    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main') && vars.PLY_MAC_RELEASE == 'on'
+    # 署名・公証の Secrets は Environment「release」にだけ置く（ADR 0214）
+    environment: release
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') && vars.PLY_MAC_RELEASE == 'on'
     runs-on: macos-15
     timeout-minutes: 60
     permissions:
@@ -97,7 +101,6 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          PLY_RELEASE_REPOSITORY: tekalu1/pleiad
         run: npm run desktop:dist -- --config electron-builder.release.cjs --mac --publish never
       - name: Verify macOS signature and notarization
         run: |
@@ -126,7 +129,9 @@ jobs:
   release:
     needs: [ci-gate, mac]
     # mac は PLY_MAC_RELEASE が on でなければ skipped。失敗・取り消しなら走らない（macOS を欠いた版を Windows だけで公開しない）
-    if: ${{ !cancelled() && needs.ci-gate.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
+    # 署名・ストアの Secrets は Environment「release」にだけ置く（main と v* のタグからしか使えない。ADR 0214）
+    environment: release
+    if: ${{ !cancelled() && needs.ci-gate.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:

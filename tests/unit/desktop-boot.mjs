@@ -43,8 +43,8 @@ class FakeLink extends EventEmitter {
   }
 }
 
-async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' } } = {}) {
-  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], switches: [], updates: null, restarts: 0, restarterOptions: null };
+async function start({ env = {}, packaged = false, choice = 'link', connectError = null, reattach = false, resourcesPath = 'C:\\inst\\resources', quitFails = false, hangInstall = false, restart = { ok: false, reason: 'failed' }, shellEnv = async () => false } = {}) {
+  const calls = { dialogs: [], messages: [], quits: 0, forks: 0, connects: 0, loads: [], left: null, killed: false, chosen: null, reattaches: 0, logs: [], order: [], bootSteps: [], switches: [], updates: null, restarts: 0, restarterOptions: null };
   const link = new FakeLink(calls);
   link.connectError = connectError;
   const utility = new EventEmitter();
@@ -77,7 +77,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   const dialog = { showMessageBox: (...args) => { calls.dialogs.push(args); return new Promise(() => {}); } };
   const electron = {
     app, BrowserWindow, WebContentsView: class {}, dialog,
-    utilityProcess: { fork: (_file, _args, options) => { calls.forks++; calls.forkOptions = options; queueMicrotask(() => utility.emit('message', { type: 'ready', port: 7499, token: 'utility-token' })); return utility; } },
+    utilityProcess: { fork: (_file, _args, options) => { calls.forks++; calls.forkOptions = options; calls.bootSteps.push('fork'); queueMicrotask(() => utility.emit('message', { type: 'ready', port: 7499, token: 'utility-token' })); return utility; } },
     shell: { openExternal: () => Promise.resolve() },
     ipcMain: { on: () => {}, handle: () => {} },
     Notification: class {}, nativeTheme: { shouldUseDarkColors: false }, safeStorage: {}, session: {}, nativeImage: {}, Menu: {}, powerMonitor: new EventEmitter(), screen: calls.screen = new EventEmitter(),
@@ -87,7 +87,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   const autoUpdater = new EventEmitter();
   autoUpdater.quitAndInstall = () => { calls.order.push('quitAndInstall'); if (hangInstall) return; if (quitFails) throw new Error('installer did not start'); electron.autoUpdater.emit('before-quit-for-update'); };
   const serverBoot = {
-    chooseServer: async options => { calls.chosen = options; return choice === 'link' ? { link, logFile: 'C:\\rt\\logs\\server.log', connect: () => link.connect() } : null; },
+    chooseServer: async options => { calls.chosen = options; calls.bootSteps.push('chooseServer'); return choice === 'link' ? { link, logFile: 'C:\\rt\\logs\\server.log', connect: () => link.connect() } : null; },
     describeBootError: (error, t) => `described:${error.code}:${t('server.startTimeout')}`,
     reattachServer: async () => { calls.reattaches++; return reattach; },
     resolveDataDir: () => 'D:\\data',
@@ -117,6 +117,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
     './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
+    './shell-env.cjs': { applyLoginShellEnv: options => { calls.bootSteps.push('shell-env:start'); return shellEnv({ env, options }).then(result => { calls.bootSteps.push('shell-env:done'); return result; }); } },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './server-boot.cjs': serverBoot,
     './server-restart.cjs': { createServerRestarter: options => { calls.restarterOptions = options; return { restart: async () => { calls.restarts++; calls.order.push('restart'); return typeof restart === 'function' ? restart(calls) : restart; } }; } },
@@ -143,6 +144,25 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
 }
 
 export default async function (t) {
+  // サーバーへ渡す env はログインシェルの環境を読み込んだ後に作る（desktop/shell-env.cjs。ADR 0213）
+  {
+    const shellEnv = async ({ env }) => { await tick(); env.PATH = '/opt/homebrew/bin:/usr/bin'; env.FROM_SHELL = '1'; return true; };
+    const { calls } = await start({ env: { PATH: '/usr/bin' }, shellEnv });
+    t.ok('utilityProcess は、ログインシェルの環境を読み終えてから起こす',
+      calls.bootSteps.indexOf('shell-env:start') === 0 && calls.bootSteps.indexOf('shell-env:done') < calls.bootSteps.indexOf('fork'), calls.bootSteps.join());
+    t.ok('utilityProcess の env にログインシェルの PATH と変数が入る（agent-browser の場所はその前に足す）',
+      calls.forkOptions?.env?.FROM_SHELL === '1' && calls.forkOptions.env.PATH.endsWith('/opt/homebrew/bin:/usr/bin'), calls.forkOptions?.env?.PATH);
+  }
+  {
+    const shellEnv = async ({ env }) => { await tick(); env.FROM_SHELL = '1'; return true; };
+    const { calls } = await start({ env: {}, packaged: true, shellEnv });
+    t.ok('パイプのサーバー（chooseServer）も、ログインシェルの環境を読み終えてから選ぶ',
+      calls.bootSteps.indexOf('shell-env:done') >= 0 && calls.bootSteps.indexOf('shell-env:done') < calls.bootSteps.indexOf('chooseServer'), calls.bootSteps.join());
+  }
+  {
+    const { calls } = await start({ env: {}, shellEnv: async () => { throw new Error('shell broke'); } });
+    t.ok('読み込みが例外でも起動は続け、理由をログに残す', calls.forks === 1 && calls.loads.length === 1 && calls.logs.some(line => line.includes('[shell-env]') && line.includes('shell broke')), calls.logs.join(' | '));
+  }
   {
     const { calls } = await start({ env: {} });
     t.ok('開発（パッケージ版でない）の既定は off: 今の utilityProcess で起こし、chooseServer は呼ばない', calls.forks === 1 && calls.chosen === null && calls.loads[0] === 'http://127.0.0.1:7499/?token=utility-token');

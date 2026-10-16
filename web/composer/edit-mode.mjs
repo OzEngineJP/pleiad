@@ -12,6 +12,7 @@
 import { el } from '../dom.mjs';
 import { runMark } from '../arc.mjs';
 import { isComposingKey } from '../keyboard.mjs';
+import { KEY_LABELS } from '../i18n.mjs';
 import { branchGlyph, penGlyph, sendGlyph, sendLabels, tailLines } from '../resend-band.mjs';
 
 let seq = 0;
@@ -107,7 +108,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
     send.append(sendGlyph(), sendText);
     branch.setAttribute('aria-label', t('chat.resend.branchLabel'));
     branch.setAttribute('aria-keyshortcuts', 'Control+Shift+Enter Meta+Shift+Enter');
-    branch.title = `${t('chat.resend.branch')} (Ctrl+Shift+Enter)`;
+    branch.title = `${t('chat.resend.branch')} (${KEY_LABELS.scheduleKeys})`;
     send.setAttribute('aria-keyshortcuts', 'Control+Enter Meta+Enter');
     branch.onclick = () => api.branch();
     send.onclick = () => api.send();
@@ -127,7 +128,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
     const { label, aria } = sendLabels(tail);
     ui.sendText.textContent = label;
     ui.send.setAttribute('aria-label', aria);
-    ui.send.title = `${label} (Ctrl+Enter)`;
+    ui.send.title = `${label} (${KEY_LABELS.sendKeys})`;
     // 同じ会話では送り直せないとき（委譲された作業の会話）は［送り直す］を出さず、分岐して送るが主になる
     ui.send.hidden = Boolean(tail.forkOnly);
     // 消えるものが無ければ、分岐しても同じなので出さない

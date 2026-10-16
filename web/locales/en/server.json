@@ -487,6 +487,7 @@
       "timeout": "Timed out. Sign in again.",
       "statusUnreadable": "Could not check the Claude Code sign-in status. Update the CLI and check again.",
       "loginPending": "Sign-in is already in progress.",
+      "loginCancelled": "Sign-in was cancelled.",
       "loginFailed": "Could not complete sign-in. Try again.",
       "loggedIn": "Signed in",
       "waitLogin": "Wait for sign-in to finish.",

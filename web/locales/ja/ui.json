@@ -45,6 +45,7 @@
       "apiKeys": "API キー",
       "usage": "使用量",
       "appearance": "外観",
+      "input": "入力",
       "context": "プラグイン",
       "notify": "通知",
       "voice": "通話",
@@ -54,6 +55,17 @@
       "autoCompaction": "自動圧縮",
       "browser": "ブラウザー",
       "computer": "コンピューターの操作"
+    },
+    "input": {
+      "historyRecall": {
+        "title": "↑ キーで送信済みのメッセージを呼び出す",
+        "description": "入力欄の一番上の行で ↑ を押すと、前に送ったメッセージが入ります。"
+      },
+      "suggestions": {
+        "title": "次のメッセージの候補を表示する",
+        "description": "返答の後、空の入力欄に候補を表示します。Tab で入力できます。Codex と Antigravity の会話では、候補を作るのに使用量を少し使います。"
+      },
+      "saveFailed": "保存できませんでした: {{error}}"
     },
     "usage": {
       "description": "サブスクの枠はアカウント全体の値です。使用率・残量・リセット日時を表示します。",
@@ -83,6 +95,9 @@
       "loginUrl": "{{agent}} のログイン: ",
       "loginMessage": "{{agent}}: {{message}}",
       "loginDone": "ログインした",
+      "cliVersion": "{{agent}} {{version}}",
+      "expired": "⚠ ログインの有効期限が切れています。",
+      "signInAgain": "ログインし直す",
       "claudeSdk": {
         "notice": "Claude を使うには Anthropic の Claude Agent SDK（{{version}}）が必要です。Pleiad には含まれていないため、npm のレジストリから取得して、この PC に保存します。",
         "terms": "SDK には Anthropic の規約が適用されます",
@@ -545,6 +560,7 @@
       "nameJoin": "」「"
     },
     "reissue": "トークンを発行し直す",
+    "reissueMissing": "そのアカウントは見つかりません。一覧から選んでトークンを発行し直してください。",
     "issue": "トークンを発行",
     "redoUsage": "使用量の認可をやり直す",
     "authorizeUsage": "使用量の表示を認可",
@@ -1793,7 +1809,7 @@
     },
     "shell": {
       "label": "シェル",
-      "placeholder": "実行するコマンド（Ctrl+Enter）",
+      "placeholder": "実行するコマンド（{{sendKeys}}）",
       "placeholderTouch": "実行するコマンド",
       "run": "実行",
       "asText": "文として送る",
@@ -1815,6 +1831,20 @@
       "truncated": "出力が長いので途中から省きました",
       "runFailed": "実行できませんでした: {{error}}",
       "where": "{{cwd}} で実行"
+    },
+    "authExpired": {
+      "login": "{{agent}} のログイン（{{email}}）の有効期限が切れています。",
+      "loginNoEmail": "{{agent}} のログインの有効期限が切れています。",
+      "token": "Claude のアカウント「{{name}}」のトークンの有効期限が切れています。",
+      "tokenUnnamed": "Claude のアカウントのトークンの有効期限が切れています。",
+      "signInAgain": "ログインし直す",
+      "waiting": "ブラウザーでログインしてください…",
+      "cancel": "キャンセル",
+      "signedIn": "✓ ログインしました",
+      "resent": "✓ ログインし直して、もう一度送りました",
+      "sendAgain": "もう一度送る",
+      "reissue": "トークンを再発行",
+      "loginFailed": "ログインできませんでした: {{error}}"
     },
     "sys": {
       "taskResumed": "Pleiad タスクの結果を受け取って再開しました",
@@ -2035,16 +2065,23 @@
       "rechoose": "選び直す",
       "cancel": "取り消す"
     },
+    "recall": {
+      "backToDraft": "下書きに戻す"
+    },
+    "suggestion": {
+      "accept": "候補を入れる",
+      "described": "候補: {{text}}"
+    },
     "composer": {
       "skills": "スキル",
       "attach": "ファイルを添付（ドロップ・貼り付けでも）",
       "abort": "中断",
-      "sendTitle": "送信（Ctrl+Enter）",
+      "sendTitle": "送信（{{sendKeys}}）",
       "cwd": "作業ディレクトリ",
       "model": "エージェント・モデル・エフォート",
       "mode": "承認モード",
       "firstMessage": "{{name}} の最初の発言を書く",
-      "placeholder": "Ctrl+Enter で送信",
+      "placeholder": "{{sendKeys}} で送信",
       "placeholderTouch": "メッセージを書く",
       "editorLabel": "メッセージ",
       "queued": "会話ができしだい送ります",
@@ -2234,7 +2271,7 @@
     "backToChat": "会話に戻る",
     "newSessionTitle": "新しいセッション（絞り込みの条件を引き継ぐ）",
     "settings": "設定",
-    "closeSidebarTitle": "サイドバーを閉じる（Ctrl+B）",
+    "closeSidebarTitle": "サイドバーを閉じる（{{key}}）",
     "closeSidebar": "サイドバーを閉じる",
     "search": "会話を検索",
     "filterTitle": "作業ディレクトリ・状態・エージェントで絞る",
@@ -2267,7 +2304,7 @@
       "stillStale": "{{time}} に確認しました。まだ開き直しが必要です。",
       "unreachable": "{{time}} に確認しました。サーバーに接続できませんでした。"
     },
-    "openSidebarTitle": "サイドバーを開く（Ctrl+B）",
+    "openSidebarTitle": "サイドバーを開く（{{key}}）",
     "openSidebar": "サイドバーを開く",
     "openSidebarWith": "サイドバーを開く（{{detail}}）",
     "previewShowing": "表示中",
@@ -2933,6 +2970,18 @@
     "terminal": "端末",
     "terminalNamed": "端末 · {{label}}",
     "unknownSession": "バックグラウンドの作業",
+    "blockedTitle": "切り替えの前に済ませている処理",
+    "blockedRow": "処理中",
+    "blockedNotices": "委譲した作業の完了の知らせを会話へ届けています",
+    "blockedOutbox": "送信中のメッセージがあります。届いたら切り替えます",
+    "blockedSwitching": "会話のモデルなどを切り替えています",
+    "blockedForking": "会話を分岐しています",
+    "blockedSettingApprovals": "設定の承認の結果を会話へ届けています",
+    "blockedSteer": "実行中のターンへの割り込みを届けています",
+    "blockedSchedule": "予定の作業を起動しています",
+    "blockedChromeClose": "ブラウザーの窓を閉じています",
+    "blockedLock": "ほかの更新の処理が終わるのを待っています",
+    "blockedOther": "実行中の処理が終わるのを待っています",
     "openSession": "この会話を開く",
     "after": "中断した会話は {{mark}} で残り、「再開」で続けられます。承認待ちは却下扱いになります。",
     "askTitle": "Pleiad {{target}} に切り替える準備ができました",
@@ -3610,7 +3659,7 @@
     "hostTime": "PC の時刻: {{time}}",
     "sendNow": "今すぐ送る",
     "sendMore": "送信のオプション（日時を指定）",
-    "sendMoreTitle": "日時を指定して送信（Ctrl+Shift+Enter）",
+    "sendMoreTitle": "日時を指定して送信（{{scheduleKeys}}）",
     "armedRemove": "日時の指定を外す",
     "armedNoteEdit": "送ると、{{when}} の送信予定にし直します",
     "rowEdit": "編集",
@@ -4317,7 +4366,7 @@
     },
     "toc": {
       "title": "目次",
-      "entry": "目次と会話内検索（Ctrl+F）",
+      "entry": "目次と会話内検索（{{key}}）",
       "close": "閉じる（Esc）",
       "search": "会話内を検索",
       "prevHit": "前の一致（Shift+Enter）",

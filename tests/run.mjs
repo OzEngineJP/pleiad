@@ -35,6 +35,9 @@ const SUITES = [
   './unit/server-limit-resume.mjs',
   './unit/send-schedule.mjs',
   './unit/server-scheduled-send.mjs',
+  // 次の発言の候補（要約・読み取り・作りかけ・Claude の予測・Antigravity の使い捨てのホーム）と、入力欄の ↑ の呼び出しの並び（ADR 0211）
+  './unit/prompt-suggestions.mjs',
+  './unit/server-prompt-suggestions.mjs',
   './unit/file-preview.mjs',
   // HTML の開き先（htmlRoute）: 列（H-in / H-ex / L / R / R0）ごとの行き先と、起点（クリック・Ctrl・中クリック・チップ・メニュー・可視化のカード）の通り道
   './unit/html-route.mjs',
@@ -64,6 +67,7 @@ const SUITES = [
   // macOS のヘルパー通信・座標・入力の中断・platform の分岐（本物の OS 入力は送らない）
   './unit/computer-mac.mjs',
   './unit/header-entries.mjs',
+  './unit/shortcut-labels.mjs',
   './unit/arc.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',
@@ -221,6 +225,8 @@ const SUITES = [
   './unit/agent-tasks-command-storage.mjs',
   // 完了通知: 受け取り済み（read）は送らない・同じ親の分は 1 つにまとめる・走っているターンへ渡す（steerable）と送り直し・途中送信の条件
   './unit/agent-tasks-notice.mjs',
+  // 完了・無音通知は親が受け取った時点で settling から外れ（sent を先に保存）、ターンの終わりまで無停止の更新の引き継ぎを待たせない
+  './unit/agent-tasks-notice-accepted.mjs',
   // 追加指示（ply_task_send）を走っている子のターンへ途中送信で渡す: 受理・合図・捨てられた・合図なし・順序・止めた後（ADR 0065）
   './unit/agent-tasks-steer.mjs',
   // 付け直した委譲の子（無停止の更新 2b-7）: 起動の復元で interrupted にせず、結果の確定を引き継ぐ（手を離した側は書かない・途中送信の claim・あきらめ・取り消し）
@@ -310,6 +316,8 @@ const SUITES = [
   './unit/desktop-exit-dialog.mjs',
   // OS にサインインしたら起動する設定: 登録するパス・引数（版に依らない exe と --hidden）・OS の実際の状態・古いパスの直し・使えない構成（偽の electron。本物の Run には書かない）
   './unit/desktop-login-item.mjs',
+  // サーバーを起こす前のログインシェルの環境の読み込み（ADR 0213）: 重ね方・時間切れ・rc の出力に紛れない（偽のシェル。利用者の rc は走らせない）
+  './unit/desktop-shell-env.mjs',
   './unit/login-item-server.mjs',
   './unit/login-item-ui.mjs',
   './unit/message-queue.mjs',
@@ -445,6 +453,7 @@ const SUITES = [
   './unit/handover-check.mjs',
   // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
   './unit/pack-runtime.mjs',
+  './unit/node-pty-mode.mjs',
   // 実機の確認（scripts/zero-downtime/stage1-7/）の試験用のインストール版が、利用者のインストール版と重ならない
   './unit/zdtest-isolation.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
@@ -492,6 +501,8 @@ const SUITES = [
   './unit/claude-steer-stop.mjs',
   // Claude のターンの終わり: Stop フックの続き・裏へ回ったまま終わらないコマンド（stopTask で終わる）
   './unit/claude-turn-end.mjs',
+  // Claude のログインの期限切れ（401）: 見分け・pristine・失敗の行に添える auth・設定の行の期限切れの印と CLI の在り処（ADR 0212）
+  './unit/claude-auth-expired.mjs',
   // Claude のモデル一覧: CLI の実体（版）が変わったら 30 分の TTL の中でも引き直す
   './unit/claude-catalog-cli-version.mjs',
   // Claude のモデル一覧: 手元に古い一覧・別の作業場所の一覧があれば、引き直しを待たずに返す
@@ -556,6 +567,8 @@ const SUITES = [
   './unit/agy-relay-retry.mjs',
   // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る
   './unit/handover-server.mjs',
+  // 委譲の完了通知で始まった依頼元のターンが続いていても、通知を受け取った後は引き継げる（通知は送り直さない）
+  './unit/handover-notice.mjs',
   './unit/handover-core.mjs',
   // `!` の行を保持役に載せる（無停止の更新 段階 3）: 引き継ぎで新サーバーが引き取る（出力の途中・終わった直後・止める最中）。出力と終わりが 1 回だけ。切り替えの数え方
   './unit/adopt-shell.mjs',

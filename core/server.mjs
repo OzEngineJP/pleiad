@@ -60,9 +60,10 @@ import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './op
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
 import { addCliToPath, mcpSetup } from './cli-launcher.mjs';
-import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX } from './ops/sessions.mjs';
+import { parentIdOf, ROOTS_DEFAULT, ROOTS_MAX, ROOT_TEXT_MAX, SENT_DEFAULT, SENT_MAX, SENT_TEXT_MAX } from './ops/sessions.mjs';
 import * as store from "./store.mjs";
 import * as history from "./history.mjs";
+import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt-suggestions.mjs';
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt } from './limit-resume.mjs';
@@ -177,6 +178,20 @@ process.on('unhandledRejection', (reason) => {
 });
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
+// ログインの期限切れ（バックエンド id → 気づいた時刻）。会話のターンが 401（kind: 'auth'）で失敗したときに付け、
+// ログインし直す・CLI のログインのターンが通る・ログアウトで消す。メモリだけ（再起動で消える。次の 401 でまた付く。ADR 0212）
+const authExpired = new Map();
+// 最後に読めたログイン中のアカウント（バックエンド id → メールアドレス）。失敗の行に「どのアカウントでログインし直すか」を出す
+const authAccounts = new Map();
+/** ホームの下のパスを ~ で短くする（設定の行に出す CLI の在り処） */
+const homeShort = (p) => { const home = os.homedir(); return home && String(p).startsWith(home + path.sep) ? `~${String(p).slice(home.length)}` : String(p); };
+/** ログインの状態を受けたあと: アカウントを覚え、ログインしていなければ期限切れの印を消す */
+function noteAuth(id, status) {
+  if (status?.loggedIn && status.account) authAccounts.set(id, String(status.account));
+  if (status && status.loggedIn === false && !status.pending) authExpired.delete(id);
+  return status;
+}
+
 // 書き込みを始める前に、データ置き場をこのプロセスだけが持つようにする（別のプロセスが持っていれば、理由を出して起動を止める。
 // 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）。
 // 無停止の更新の新サーバー（--handover。core/handover.mjs）は、モジュールの読み込みを済ませたうえで、旧サーバーがデータ置き場を放すのを待って取る（数十 ms 刻み）
@@ -2079,6 +2094,15 @@ const sessionSearch = createHostSessionSearch({
 });
 
 /**
+ * 次の発言の候補の作りかけ（core/prompt-suggestions.mjs、ADR 0211）。Codex・Antigravity の会話は、ターンの後にここで作る（suggestAfterTurn）。
+ * Claude の会話はターンの中で届く（promptSuggestions）。どちらも promptSuggestion の出来事で画面へ流す。保存はしない（画面が会話ごとに持つ）
+ */
+const promptSuggestions = createSuggestionJobs({
+  onSuggestion: (sessionId, text) => emitGlobal({ type: 'promptSuggestion', sessionId, text }),
+  onError: (id, err) => console.error(`  次の発言の候補を作れませんでした (${id}):`, String(err?.message ?? err)),
+});
+
+/**
  * 使用量の表示に使うアカウント。会話用のトークンではなく、アカウントごとの設定フォルダ（`claude auth login` 済み）で読む
  * （setup-token のトークンは scope が user:inference だけで使用量を読めない）。認可が済んでいないものは理由を出す。
  * 1 件も登録していなければ空＝今までどおりログイン中のアカウントだけ
@@ -2772,6 +2796,18 @@ function makeEmit(turn) {
           window: event.window ?? null, account: turn.info.account ?? null, backend: turn.backend.id, model: turn.info.model ?? null };
         event = { ...event, ...turn.limit };
       }
+      // ログインの期限切れ（401。バックエンドの kind: 'auth'）。互換の接続先の会話は接続先のキーの問題なので、ふつうの失敗のまま。
+      // CLI のログイン（mode: cli）か、Pleiad の Claude のアカウントのトークン（mode: token）かを添える。CLI のときは期限切れを覚える
+      // （claude auth status は期限が切れてもログイン済みを返すので、設定の行の ⚠ はこれで出す。ADR 0212）
+      if (event.outcome === 'error' && event.kind === 'auth' && !turn.info.endpoint) {
+        const accountId = turn.info.account || '';
+        event = { ...event, backend: turn.backend.id, auth: accountId
+          ? { mode: 'token', accountId, name: turn.authAccount?.id === accountId ? turn.authAccount.name : null }
+          : { mode: 'cli', email: authAccounts.get(turn.backend.id) ?? null } };
+        if (!accountId && !replay) authExpired.set(turn.backend.id, Date.now());
+      }
+      // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
+      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !turn.info.account) authExpired.delete(turn.backend.id);
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
@@ -3246,6 +3282,12 @@ const opsApp = {
       }),
       nextBefore: rows.length > page.length ? page.at(-1).lastModified : null,
     };
+  },
+  // 入力欄の ↑ の呼び出し（sessions.sentMessages）: bot の会話・委譲の子を除いた会話の送信済みのメッセージ。指定の会話の分を先に
+  sentMessages: async ({ sessionId, shell = false, limit = SENT_DEFAULT } = {}) => {
+    const rows = (await sessionList({ limit: 500, track: false })).filter((r) => !r.bot && !r.delegation && (!r.unsent || r.id === sessionId));
+    const items = await sessionSearch.sentMessages({ rows, first: sessionId ?? null, shell, limit: Math.min(limit, SENT_MAX), textMax: SENT_TEXT_MAX });
+    return { items };
   },
   status: async () => ({ version: APP_VERSION, protocolVersion: P.PROTOCOL_VERSION, startedAt: SERVER_STARTED_AT, locale: { ...locale }, running: (await runningWork()).count }),
   // 外の AI の MCP の設定に貼る pleiad mcp（app.cliSetup。core/cli-launcher.mjs）
@@ -3782,8 +3824,14 @@ const opsAgents = {
     // Claude Agent SDK の取得の状態（Claude だけ。配布物は SDK を持たない。ADR 0208）。CLI の有無・ログインと別に出す
     const sdk = backend.sdk ? { sdk: backend.sdk.status() } : {};
     if (!installed.installed) return { backend: backend.id, status: { supported: true, ...installed, ...sdk } };
-    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false, ...sdk } };
-    return { backend: backend.id, status: { supported: true, ...installed, ...(await backend.auth.status()), ...sdk } };
+    // 使っている CLI の在り処（ホームは ~）と版（設定の行の名前の下。版は説明にだけ出す）。持つバックエンドだけ（Claude）
+    const cli = await backend.cliInfo?.().catch(() => null);
+    const where = cli?.path ? { cliPath: homeShort(cli.path), ...(cli.version ? { cliVersion: String(cli.version) } : {}) } : {};
+    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false, ...where, ...sdk } };
+    const auth = noteAuth(backend.id, await backend.auth.status());
+    // 期限切れ（会話で 401 を受けた）。CLI はログイン済みを返したままなので、Pleiad が覚えている印で出す
+    const expired = auth.loggedIn && authExpired.has(backend.id) ? { expired: true } : {};
+    return { backend: backend.id, status: { supported: true, ...installed, ...auth, ...where, ...expired, ...sdk } };
   },
 };
 
@@ -5693,7 +5741,8 @@ agentTasks = await createAgentTasks({
   steer: steerInstruction,
   // 同じ依頼元への完了通知をまとめて 1 つ届ける。走っているターンへ渡せれば途中送信で（noticeTarget）、
   // 渡せなければ（requeue）空いてから新しいターンで
-  deliver: async tasks => {
+  // accepted は、依頼元の新しいターンにプロンプトが受け取られた（引き継げる状態になった）ときに呼ぶ口。受け取られた後は、ターンの終わりまで引き継ぎを待たせない
+  deliver: async (tasks, { accepted } = {}) => {
     const owner = tasks[0].parentSessionId;
     // 端末の AI に任された作業の完了は、依頼元（端末）へ便りで届ける。ホストの会話に新しいターンは始めない
     if (isRemoteOwner(owner)) return remoteDeliver(tasks);
@@ -5703,7 +5752,7 @@ agentTasks = await createAgentTasks({
     if (!live && await noticeBlocked(owner)) return 'requeue';
     // 完了通知は依頼元の会話の言語で。人間の発言と見分ける印は文言ではなく、送った本文のハッシュ（taskNotices。recordTaskNotice）
     const prompt = completionNotice(await ensureAgentLocale(owner), tasks);
-    return live ? steerNotice(live, owner, prompt, tasks) : runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+    return live ? steerNotice(live, owner, prompt, tasks) : runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
   cancelBackground: async task => {
     for (const command of task.activeCommands) {
@@ -5711,22 +5760,22 @@ agentTasks = await createAgentTasks({
       if (found) await found.backend.stopBackground(task.sessionId, found.task.id);
     }
   },
-  deliverCommand: async (task, command) => {
+  deliverCommand: async (task, command, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';   // 初版は、ホストの子の長いコマンド・無音を端末へ知らせない（docs/remote.md §4.5）
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.commandNotice', { taskId: task.taskId, noticeId: command.noticeId,
       title: delegatedNoticeTitle(task), command: redactForPeer(command.command, 200), minutes: command.elapsedMinutes });
-    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
-  deliverSilence: async (task, minutes) => {
+  deliverSilence: async (task, minutes, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const prompt = agentT(lng, 'delegation.silenceNotice', { taskId: task.taskId, title: delegatedNoticeTitle(task), minutes });
-    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true });
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
   // 子の main が返答を終えて裏の作業だけを待っている（ADR 0170）。止めずに、待っているものを依頼元へ見せる
   backgroundWaiting: sessionId => {
@@ -5736,13 +5785,13 @@ agentTasks = await createAgentTasks({
     const tasks = (turn.info.background ?? []).map(peerBackground);
     return tasks.length ? { since: execution.waitingSince, tasks } : null;
   },
-  deliverBackground: async (task, notice) => {
+  deliverBackground: async (task, notice, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';
     if (await noticeBlocked(owner)) return 'requeue';
     const lng = await ensureAgentLocale(owner);
     const reply = notice.count > 1 ? null : task.host ? task.hostBackground?.reply ?? null : await lastReply(task.sessionId).catch(() => null);
-    return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task.host ? { ...task, title: delegatedNoticeTitle(task) } : task, notice, reply) }, () => {}, { internal: true });
+    return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task.host ? { ...task, title: delegatedNoticeTitle(task) } : task, notice, reply) }, () => {}, { internal: true, onAccepted: accepted });
   },
 });
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
@@ -5773,7 +5822,7 @@ settingApprovals = await createSettingApprovals({
   dataDir: store.dataDir,
   route: routeSettingNotice,
   onError: e => console.error('  設定の変更の承認の台帳:', String(e?.message ?? e)),
-  deliver: async (sessionId, notices) => {
+  deliver: async (sessionId, notices, { accepted } = {}) => {
     const live = await noticeTarget(sessionId);
     if (!live && await noticeBlocked(sessionId)) return 'requeue';
     const prompt = settingNotice(await ensureAgentLocale(sessionId), notices);
@@ -5781,7 +5830,7 @@ settingApprovals = await createSettingApprovals({
       const r = await steerNotice(live, sessionId, prompt, [], notices.map(({ requestId, sessionId, key, op, outcome, error, at }) => ({ requestId, sessionId, key, op, outcome, error, at })));
       return r === 'requeue' ? 'requeue' : r === 'ok' ? 'ok' : 'error';
     }
-    return (await runTurn({ sessionId, prompt }, () => {}, { internal: true })) === 'requeue' ? 'requeue' : 'ok';
+    return (await runTurn({ sessionId, prompt }, () => {}, { internal: true, onAccepted: accepted })) === 'requeue' ? 'requeue' : 'ok';
   },
 });
 if (settingApprovals.restored) console.log(`  前の起動で承認を待っていた設定の変更 ${settingApprovals.restored} 件を取り下げた（結果を会話へ届ける）`);
@@ -5842,6 +5891,8 @@ async function runTurnInternal(args, onStarted, hooks) {
   // 同じセッションの二重実行は防ぐ。別のセッションなら並行して回してよい
   if (sessionId && runtime.turns.has(sessionId)) throw new Error(t('session.running'));
   if (sessionId && hooks.compact !== 'idle') compactionScheduler.cancel(sessionId);
+  // 次の発言の候補の作りかけは、次のターンが始まったら要らない
+  if (sessionId) promptSuggestions.cancel(sessionId);
   const compactionRevision = sessionId ? compactionScheduler.revision(sessionId) : null;
   if (sessionId) switching.add(sessionId);
   try {
@@ -6033,6 +6084,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
     // 受理した途中送信（送信待ちの項目）のうち、渡った合図（userMessage.delivered / dropped）をまだ待っているものの id（steerConfirms のバックエンドだけ）。札の steers
     pendingSteers: new Set(),
     ended: false,
+    // このターンが使う Claude のアカウント（Pleiad で発行したトークン）の id と名前。401 の失敗の行に名前を出す（makeEmit。ADR 0212）
+    authAccount: account ? { id: account.id, name: account.name } : null,
     info: {
       sessionId,
       backend: backend.id,
@@ -6129,6 +6182,11 @@ function bindTurnContext(ctx) {
   const { args, turn, emit } = ctx;
   ctx.onPromptDelivered = () => {
     touchCard(turn);   // 札の渡った合図の印（delivery）が変わりうる
+    // 内部のターン（完了通知など）の依頼元へ「受け取られた」と知らせる。以後は引き継げる。記録の確定（agentTasks・settingApprovals）が済むまで引き継ぎを待たせる
+    if (ctx.hooks?.onAccepted && !ctx.acceptedSent) {
+      ctx.acceptedSent = true;
+      trackIn(handover.critical, Promise.resolve().then(() => ctx.hooks.onAccepted()).catch(e => console.error('  通知の受け取りの記録に失敗:', String(e?.message ?? e))));
+    }
     if (ctx.interruption && !ctx.interruptionTaken) {
       ctx.interruptionTaken = true;
       store.takeStops(ctx.sessionId, ctx.interruption.keys, { dropped: ctx.interruption.dropped }).catch(e => console.error('  中断で止めたものを伝えた記録に失敗:', String(e?.message ?? e)));
@@ -6208,7 +6266,10 @@ async function beginTurn(ctx) {
   // 委譲の子の Claude だけ、CLI の自動圧縮の閾値を「固定の部分 + 空き」に下げる（親・bot は CLI の既定のまま。docs/design.md「自動圧縮」、ADR 0166）
   const autoCompactWindow = await delegatedCompaction(ctx);
   // 委譲の子は、可視化（出力は依頼元が受け取る）と ply_control の指示を渡さず、Claude は使わない組み込みの道具も外す（ADR 0169）
-  const delegatedChild = Boolean(sessionId && (await store.get(sessionId).catch(() => null))?.delegation);
+  const sessionMeta = sessionId ? await store.get(sessionId).catch(() => null) : null;
+  const delegatedChild = Boolean(sessionMeta?.delegation);
+  // 次の発言の候補（Claude はターンの中で予測を受ける。core/prompt-suggestions.mjs）。設定がオフ・委譲の子・bot・圧縮のターンでは頼まない
+  const wantsSuggestion = !delegatedChild && !sessionMeta?.bot && !hooks.compact && (await store.getPrefs()).composerSuggestions !== false;
   const runArgs = {
     prompt,
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
@@ -6254,6 +6315,7 @@ async function beginTurn(ctx) {
     // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
     ...(endpoint ? { endpoint } : {}),
     ...(autoCompactWindow ? { autoCompactWindow } : {}),
+    ...(wantsSuggestion ? { promptSuggestions: true } : {}),
   };
   if (runArgs.browserEnv) {
     // 中継へ渡したキー。新規会話の id 決定での付け替え（rebind）と、承認の問い合わせ（getAgent）がこれで照合する
@@ -6548,6 +6610,27 @@ function holdable(turn) {
   return !store.peek(turn.info.sessionId)?.bot;
 }
 
+/**
+ * 引き継ぎの前に、短い処理（送りかけ・切り替え中など）が終わっているか。sessions は、待たせている処理の会話（画面の「待っている作業」に出す。分かるものだけ）。
+ * 通知で始まったターン自体は数えない（親の会話が通知を受け取った後は、ターンの終わりまで待たずに引き継げる。ADR 0151）
+ */
+function handoverSettled() {
+  const busy = [], sessions = new Set();
+  const wait = (kind, ids = []) => { busy.push(kind); for (const id of ids) if (id) sessions.add(id); };
+  // switching はターンの間ずっと会話を持つ（releaseTurn が外す）。走っているターンの分は短い処理ではない
+  const switchingIds = [...switching].filter(id => !runtime.turns.has(id));
+  if (switchingIds.length) wait('switching', switchingIds);
+  const forkingIds = [...forking].filter(id => !runtime.turns.has(id));
+  if (forkingIds.length) wait('forking', forkingIds);
+  if (outbox.busy) wait('outbox', outbox.busySessions());
+  if (agentTasks.settling) wait('notices', agentTasks.settlingSessions());
+  if (settingApprovals?.settling) wait('setting-approvals', settingApprovals.settlingSessions());
+  if (handover.critical.size) wait('steer');
+  if (schedule.firing) wait('schedule');
+  if (chromeWindowCloser?.busy()) wait('chrome-close');   // 閉じた窓の静止画と記録の書き込みの途中（手を離すと記録が欠ける。ADR 0167）
+  return { ok: busy.length === 0, detail: busy.join(', '), sessions: [...sessions] };
+}
+
 /** 旧サーバーの引き継ぎ（core/handover.mjs）。main の handover の依頼で走る。成功すると release の中で main へ答えてロックを放し、このプロセスは終わる */
 let handoverReply = null;
 const handoverRun = createHandover({
@@ -6558,18 +6641,7 @@ const handoverRun = createHandover({
     // 送信待ちに回していた分を送る
     void store.getAll().then(all => { for (const [id, meta] of Object.entries(all)) if (meta.outbox?.length) outbox.kick(id).catch(() => {}); }).catch(() => {});
   },
-  settled: () => {
-    const busy = [];
-    // switching はターンの間ずっと会話を持つ（releaseTurn が外す）。走っているターンの分は短い処理ではない
-    if ([...switching].some(id => !runtime.turns.has(id))) busy.push('switching');
-    if ([...forking].some(id => !runtime.turns.has(id))) busy.push('forking');
-    if (outbox.busy) busy.push('outbox');
-    if (agentTasks.settling) busy.push('notices');
-    if (handover.critical.size) busy.push('steer');
-    if (schedule.firing) busy.push('schedule');
-    if (chromeWindowCloser?.busy()) busy.push('chrome-close');   // 閉じた窓の静止画と記録の書き込みの途中（手を離すと記録が欠ける。ADR 0167）
-    return { ok: busy.length === 0, detail: busy.join(', ') };
-  },
+  settled: handoverSettled,
   blockers: () => {
     const out = [];
     const heldIds = new Set();
@@ -7050,6 +7122,31 @@ async function endTurn(turn, emit, { record = true } = {}) {
       compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000,
         turn.compactionRevision, usage.usedTokens);
   }
+  if (record) void suggestAfterTurn(turn, { delegated, bot: Boolean(botKind) }).catch(err => console.error('  次の発言の候補を作れませんでした:', String(err?.message ?? err)));
+}
+
+/**
+ * 次の発言の候補を、ターンの後に作る（Codex・Antigravity。backend.suggestNext。core/prompt-suggestions.mjs、ADR 0211）。
+ * Claude はターンの中で届くので作らない（capabilities.promptSuggestions が 'native'）。
+ * 成功で終わった、人と話している会話（委譲の子・bot・圧縮でない）で、設定がオンで、次のターンも送信待ちも無いときだけ。
+ * 要約は会話の言語のまま渡し、モデルは軽いもの（バックエンドが選ぶ）。会話で選んだ互換の接続先があればそれで回す
+ */
+async function suggestAfterTurn(turn, { delegated, bot }) {
+  const id = turn.info.sessionId;
+  const backend = turn.backend;
+  if (!id || turn.outcome !== 'ok' || turn.compactTrigger || turn.compaction || delegated || bot) return;
+  if (backend.capabilities?.promptSuggestions === 'native' || typeof backend.suggestNext !== 'function') return;
+  if ((await store.getPrefs()).composerSuggestions === false) return;
+  if (runtime.turns.has(id) || (await outbox.list(id)).some(m => !['sent', 'cancelled'].includes(m.status))) return;
+  promptSuggestions.start(id, async (signal) => {
+    const { messages } = await history.loadTranscript(id, backend);
+    const gist = suggestionGist(messages);
+    if (!gist || signal.aborted) return null;
+    const saved = await store.get(id);
+    const endpoint = endpointCapable(backend) && saved.compatEndpoint ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
+    if (saved.compatEndpoint && !endpoint) return null;
+    return backend.suggestNext({ prompt: suggestionPrompt(gist), signal, ...(endpoint ? { endpoint } : {}) });
+  });
 }
 
 /** 送信待ちが残っている会話を全部 kick する。ターンが終わるたびに呼ぶ。 */
@@ -8294,7 +8391,15 @@ wss.on("connection", (ws, req) => {
             emit: (ev) => emitGlobal({ ...ev, backend: backend.id, sessionId: null }),
           });
           quotaCache.clear();
-          return reply(true, { supported: true, ...(await backend.auth.status?.() ?? {}) });
+          authExpired.delete(backend.id);
+          return reply(true, { supported: true, ...noteAuth(backend.id, await backend.auth.status?.() ?? {}) });
+        }
+
+        // 待っているログイン（authLogin）をやめる（会話の失敗の行の「キャンセル」。ADR 0212）。authLogin は CANCELLED の失敗で返る
+        case "authCancel": {
+          const backend = await pickBackend(null, msg.args?.backend);
+          if (!backend.auth?.cancel) return reply(true, { supported: false });
+          return reply(true, { supported: true, ...(await backend.auth.cancel()) });
         }
 
         // Claude Agent SDK を npm から取る（設定の Claude の行の「取得」。案内に同意して押した。ADR 0208）。人だけ（HUMAN_ONLY の accounts）。
@@ -8321,7 +8426,8 @@ wss.on("connection", (ws, req) => {
           if (!backend.auth?.logout) return reply(true, { supported: false });
           await backend.auth.logout();
           quotaCache.clear();
-          return reply(true, { supported: true, ...(await backend.auth.status?.() ?? {}) });
+          authExpired.delete(backend.id);
+          return reply(true, { supported: true, ...noteAuth(backend.id, await backend.auth.status?.() ?? {}) });
         }
 
         case "running":
@@ -8769,4 +8875,4 @@ setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' &&
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
 
-export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn, handover as handoverState, trackIn };
+export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn, handover as handoverState, handoverSettled, trackIn };

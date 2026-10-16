@@ -8,6 +8,7 @@ afterPack: ./scripts/after-pack.cjs
 # node-pty は N-API の prebuild（win32 / darwin の x64・arm64）をそのまま Electron で読む。
 # 既定の npmRebuild はソースからビルドし直して build/Release に置き（prebuild より先に読まれる）、
 # x64 の runner で arm64 をクロスビルドすることになるので止める。ほかの本番依存に再ビルドの要る native モジュールは無い
+# macOS の prebuild の spawn-helper は npm から入れると実行権限が無いので、afterPack で付ける（scripts/node-pty-mode.cjs）
 npmRebuild: false
 # koffi の .node は asar の外に置く（今は asar: false で全部が展開済みだが、asar を有効にしても読めるように）
 asarUnpack:
