@@ -44,9 +44,89 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/release-ci-gate.mjs --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --wait-minutes 40 --interval-seconds 30 --missing-grace-minutes 5 --request-timeout-seconds 20
-  release:
+  # macOS の配布（Developer ID の署名と公証。docs/desktop-releases.md「macOS の配布」）。リポジトリの変数 PLY_MAC_RELEASE が on のときだけ走る。
+  # 作った dmg・zip・latest-mac.yml を artifact に置き、Windows の release のジョブが同じ下書きに入れてから公開する
+  # （immutable releases なので、公開した後には足せない）。このジョブが落ちたら release のジョブは走らず、Windows だけで公開しない
+  mac:
     needs: ci-gate
-    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main') && vars.PLY_MAC_RELEASE == 'on'
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || { echo 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)'; exit 1; }
+          git merge-base --is-ancestor HEAD origin/main || { echo 'Release source must be on main'; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$CI_SHA" ] || { echo 'Checkout does not match the commit checked against main CI'; exit 1; }
+          [ "v$(node -p "require('./package.json').version")" = "$RELEASE_TAG" ] || { echo 'Tag must match package version'; exit 1; }
+      # 同梱する Swift のヘルパー（scripts/build-computer-mac.cjs）を computer-mac-helper.yml と同じ Xcode で作る
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.13"
+          cache: npm
+      - run: npm ci
+      # main の CI に macOS の脚は無い。全部のテストは Windows の release のジョブ（または main の CI）に任せ、ここでは配布に関わるものだけ確かめる
+      - name: Release environment smoke
+        run: |
+          node -e "require('node-pty')"
+          node tests/run.mjs desktop-updates
+      # App Store Connect の API キー（.p8）は中身を Secret に置き、electron-builder にはファイルの場所を渡す（scripts/release-signing.cjs）
+      - name: Prepare notarization key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          [ -n "$APPLE_API_KEY_P8" ] || { echo 'Missing secret APPLE_API_KEY'; exit 1; }
+          key="$RUNNER_TEMP/apple-api-key.p8"
+          (umask 077; printf '%s\n' "$APPLE_API_KEY_P8" > "$key")
+          echo "APPLE_API_KEY=$key" >> "$GITHUB_ENV"
+      - name: Build, sign and notarize
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          PLY_RELEASE_REPOSITORY: tekalu1/pleiad
+        run: npm run desktop:dist -- --config electron-builder.release.cjs --mac --publish never
+      - name: Verify macOS signature and notarization
+        run: |
+          count=0
+          while IFS= read -r -d '' bundle; do
+            codesign --verify --deep --strict "$bundle"
+            xcrun stapler validate "$bundle"
+            spctl --assess --type execute -vv "$bundle"
+            count=$((count + 1))
+          done < <(find dist-desktop -maxdepth 2 -name '*.app' -print0)
+          [ "$count" -ge 2 ] || { echo 'Missing macOS architecture'; exit 1; }
+          [ -f dist-desktop/latest-mac.yml ] || { echo 'Missing latest-mac.yml'; exit 1; }
+      - name: Remove notarization key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/apple-api-key.p8"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mac-release
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist-desktop/*.dmg
+            dist-desktop/*.zip
+            dist-desktop/*.blockmap
+            dist-desktop/latest-mac.yml
+  release:
+    needs: [ci-gate, mac]
+    # mac は PLY_MAC_RELEASE が on でなければ skipped。失敗・取り消しなら走らない（macOS を欠いた版を Windows だけで公開しない）
+    if: ${{ !cancelled() && needs.ci-gate.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
@@ -63,6 +143,11 @@ jobs:
           ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
           persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.mac.result == 'success'
+        with:
+          name: mac-release
+          path: ${{ runner.temp }}/mac-release
       - name: Validate release source
         run: |
           if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-beta\.\d+)?$') { throw 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)' }
@@ -119,6 +204,8 @@ jobs:
         if: vars.PLY_WINDOWS_SIGNING != 'none'
         env:
           GH_TOKEN: ${{ github.token }}
+          # scripts/publish-evaluation.ps1 が、ここにある macOS の配布物を同じ下書きに入れる（空なら Windows だけ）
+          PLY_MAC_ASSETS: ${{ needs.mac.result == 'success' && format('{0}/mac-release', runner.temp) || '' }}
           PLY_EVALUATION_PFX: ${{ secrets.WIN_CSC_LINK }}
           PLY_EVALUATION_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           PLY_WIN_PUBLISHER: ${{ vars.PLY_WIN_PUBLISHER }}
@@ -135,5 +222,6 @@ jobs:
         if: vars.PLY_WINDOWS_SIGNING == 'none'
         env:
           GH_TOKEN: ${{ github.token }}
+          PLY_MAC_ASSETS: ${{ needs.mac.result == 'success' && format('{0}/mac-release', runner.temp) || '' }}
           PLY_WINDOWS_SIGNING: none
         run: ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG

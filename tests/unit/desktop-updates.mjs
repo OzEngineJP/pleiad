@@ -270,6 +270,14 @@ export default async function(t) {
     await rejects('Signing refuses unrecognized methods', async () => releaseSigning({ ...publisher, PLY_WINDOWS_SIGNING: 'skip' }, 'win32'));
     await rejects('Signing refuses unexpected cloud endpoints', async () => releaseSigning({ ...azureEnv, PLY_AZURE_ENDPOINT: 'https://example.com' }, 'win32'));
     await rejects('macOS release requires notarization credentials', async () => releaseSigning({ CSC_LINK: 'key', CSC_KEY_PASSWORD: 'password' }, 'darwin'));
+    const macKey = path.join(dir, 'AuthKey.p8');
+    await fs.writeFile(macKey, 'private-api-key');
+    const macApi = { CSC_LINK: 'key', CSC_KEY_PASSWORD: 'password', APPLE_API_KEY: macKey, APPLE_API_KEY_ID: 'KEYID', APPLE_API_ISSUER: 'issuer' };
+    t.ok('macOS release notarizes with an App Store Connect API key', releaseSigning(macApi, 'darwin').mac.notarize === true && !JSON.stringify(releaseSigning(macApi, 'darwin')).includes('private-'));
+    t.ok('macOS release notarizes with an Apple ID', releaseSigning({ CSC_LINK: 'key', CSC_KEY_PASSWORD: 'password', APPLE_ID: 'a@example.com', APPLE_APP_SPECIFIC_PASSWORD: 'p', APPLE_TEAM_ID: 'T' }, 'darwin').mac.hardenedRuntime === true);
+    await rejects('macOS API key must be a file path', async () => releaseSigning({ ...macApi, APPLE_API_KEY: '-----BEGIN PRIVATE KEY-----' }, 'darwin'));
+    await rejects('macOS API key is incomplete without the issuer', async () => releaseSigning({ ...macApi, APPLE_API_ISSUER: '' }, 'darwin'));
+    await rejects('A partial Apple ID overrides the API key and is refused', async () => releaseSigning({ ...macApi, APPLE_ID: 'a@example.com' }, 'darwin'));
     const gate = createUpdateGate(), leave = gate.enter();
     t.ok('Active login/save blocks shutdown lease', !gate.acquire());
     leave(); leave();

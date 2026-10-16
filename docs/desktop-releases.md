@@ -191,7 +191,7 @@ Environment に必要なレビュアーとタグ制限を設定し、秘密情�
 | Variable | `PLY_AZURE_ENDPOINT` / `PLY_AZURE_ACCOUNT` / `PLY_AZURE_PROFILE` | `azure` 用のHTTPSエンドポイント・署名アカウント・証明書プロファイル |
 | Secret | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | `azure` 用の署名権限を持つサービスプリンシパル |
 | Secret | `MAC_CSC_LINK` / `MAC_CSC_KEY_PASSWORD` | Developer ID Application証明書とパスワード |
-| Secret | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Apple公証の資格情報 |
+| Secret | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Apple公証の資格情報（`Evaluation release` は App Store Connect の API キー。上記「macOS の配布」） |
 
 Windowsのハードウェア証明書は、署名用端末で `PLY_WINDOWS_SIGNING=store` と証明書のthumbprint `PLY_WIN_CERTIFICATE_SHA1` を指定する。
 Windows証明書ストアに秘密鍵へのアクセスを持つ証明書・プロバイダーが必要。GitHubの標準runnerへUSBトークンを持ち込むフローは含まない。
@@ -297,6 +297,23 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 `SIGNING-INFO.json` は公開証明書の指紋と有効期限、`BUILD-INFO.json` はソースコミットとActions実行URLを記録する。
 
 リリースジョブは所有者のタグpushまたはmainからの手動実行に限定し、タグがmainに含まれることも検証する。PRから署名ジョブは実行しない。
+
+#### macOS の配布
+
+[ADR 0211](adr/0211-macos-evaluation-release.md)。Repository Variable `PLY_MAC_RELEASE` が `on` のとき、`Evaluation release` は `mac` のジョブ（`macos-15`）で macOS 版も作る。`on` でなければ今までどおり Windows だけ。
+- `mac` のジョブは Windows の `release` より先に走る。Developer ID Application の証明書で署名し（hardened runtime）、App Store Connect の API キーで公証する。Intel / Apple Silicon の 2 つの `.app` を `codesign --verify --deep --strict`・`xcrun stapler validate`・`spctl --assess` で確かめ、dmg・zip・blockmap・`latest-mac.yml` を artifact `mac-release` に置く。
+- `release` のジョブは、それを `scripts/publish-evaluation.ps1` で Windows の配布物と同じ下書きに入れ、`platforms=all` で照合してから一緒に公開する（`RELEASE-PLATFORMS.json`・`BUILD-INFO.json` の `platforms`）。immutable releases なので、公開した後に macOS の分を足せない。
+- `mac` のジョブが落ちる・取り消されると、`release` のジョブは走らない（macOS を欠いた版を Windows だけで公開しない）。macOS を出さずに急ぐときは、`PLY_MAC_RELEASE` を外して手動実行し直す。
+- main の CI に macOS の脚は無い。`mac` のジョブは配布に関わるテスト（`desktop-updates`）と node-pty の読み込みだけを確かめる。全部のテストは Windows の `release`（または main の CI）が受け持つ。
+- macOS の自動更新は electron-updater（Squirrel.Mac）で、zip と `latest-mac.yml` を使う。Squirrel.Mac は更新後のアプリの署名が今のアプリと同じ Developer ID であることを求めるので、署名の無い macOS 版は自動更新できない。
+
+初回設定（Apple Developer Program の管理者）:
+1. 「Developer ID Application」の証明書を作り、秘密鍵ごと `.p12` に書き出す。Base64 を Repository Secret `MAC_CSC_LINK`、書き出しのパスワードを `MAC_CSC_KEY_PASSWORD` に登録する。
+2. App Store Connect の「ユーザーとアクセス → 統合 → App Store Connect API」でチームのキー（役割は Developer）を作る。`.p8` の中身を `APPLE_API_KEY`、キー ID を `APPLE_API_KEY_ID`、Issuer ID を `APPLE_API_ISSUER` の Repository Secrets に登録する（`.p8` は 1 度しか取れない）。
+3. Repository Variable `PLY_MAC_RELEASE` を `on` にする。
+
+`scripts/release-signing.cjs` は、API キー（`APPLE_API_KEY` は `.p8` の場所）か、Apple ID と App 用パスワード（`APPLE_ID`・`APPLE_APP_SPECIFIC_PASSWORD`・`APPLE_TEAM_ID`）のどちらかを求める。`Desktop signed release` は Apple ID の形のまま。
+macOS 版の初回の公開の前に、実機で、新規インストール（Gatekeeper の警告が出ない）と、macOS 版どうしの自動更新（旧版 → 新版）を確かめる。最初の macOS 版は自動更新を持たない旧版が無いので、利用者は Releases の dmg から手で入れる。
 
 ### 無署名への移り方
 
