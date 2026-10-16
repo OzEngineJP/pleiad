@@ -73,4 +73,16 @@ function releaseSigning(env = process.env, platform = process.platform, { signer
   } else throw new Error('PLY_WINDOWS_SIGNING must be none, store, pfx, or azure');
   return { win };
 }
-module.exports = { releaseSigning, SIGNING_ENV };
+// Evaluation release は macOS を CPU ごとのジョブで並べて作り、公証の待ちを重ねる（PLY_MAC_ARCH。docs/desktop-releases.md「macOS の配布」）。
+// electron-builder は target の arch を CLI の --x64 / --arm64 より優先するので、target の arch を書き換えて 1 つに絞る
+const MAC_ARCHS = ['x64', 'arm64'];
+function macArchTargets(targets, arch) {
+  if (!arch) return targets;
+  if (!MAC_ARCHS.includes(arch)) throw new Error(`PLY_MAC_ARCH must be ${MAC_ARCHS.join(' or ')}`);
+  return targets.map(target => {
+    const entry = typeof target === 'string' ? { target } : target;
+    if (entry.arch && ![].concat(entry.arch).includes(arch)) throw new Error(`macOS target ${entry.target} does not build ${arch}`);
+    return { ...entry, arch: [arch] };
+  });
+}
+module.exports = { releaseSigning, macArchTargets, SIGNING_ENV };

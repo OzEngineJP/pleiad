@@ -1,7 +1,12 @@
-# MacAssets: the signed and notarized macOS build from the mac job of the Evaluation release workflow (dmg, zip, blockmap, latest-mac.yml).
-# When given, both platforms go into one draft and are published together; a published release cannot take assets later (immutable releases).
-param([Parameter(Mandatory = $true)][string]$Tag, [string]$MacAssets = $env:PLY_MAC_ASSETS)
+# The Evaluation release workflow builds each platform in its own job, in parallel, and publishes them together:
+#   -BuildOnly      the windows job: build and sign Windows, and leave the Windows assets in release-assets (uploaded as an artifact).
+#   -WindowsAssets  the publish job: the Windows assets from the windows job, used instead of building here.
+#   -MacAssets      the publish job: the signed and notarized macOS build (dmg, zip, blockmap, latest-mac.yml), merged by scripts/release-mac-merge.mjs.
+# Without -BuildOnly or -WindowsAssets the script builds Windows itself and publishes, as one step.
+# Both platforms go into one draft and are published together; a published release cannot take assets later (immutable releases).
+param([Parameter(Mandatory = $true)][string]$Tag, [string]$MacAssets = $env:PLY_MAC_ASSETS, [string]$WindowsAssets = $env:PLY_WINDOWS_ASSETS, [switch]$BuildOnly)
 $ErrorActionPreference = 'Stop'
+if ($BuildOnly -and ($MacAssets -or $WindowsAssets)) { throw 'BuildOnly builds Windows only; it does not take prebuilt assets.' }
 $package = Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json
 if ($Tag -notmatch '^v\d+\.\d+\.\d+(-beta\.\d+)?$' -or $Tag -cne "v$($package.version)") { throw 'Evaluation tag must match the package version (vX.Y.Z or vX.Y.Z-beta.N).' }
 if (!$env:GH_TOKEN -or !$env:GITHUB_REPOSITORY) { throw 'Run from the evaluation release workflow.' }
@@ -18,11 +23,21 @@ if ($unsigned) {
   & node.exe scripts/release-unsigned-guard.mjs
   if ($LASTEXITCODE -ne 0) { throw 'Unsigned release blocked: publish a signed bridge release first.' }
 }
-& "$PSScriptRoot/build-evaluation.ps1" -OutputDirectory dist-desktop
-if ($LASTEXITCODE -ne 0) { throw 'Evaluation build failed.' }
+if (!$WindowsAssets) {
+  & "$PSScriptRoot/build-evaluation.ps1" -OutputDirectory dist-desktop
+  if ($LASTEXITCODE -ne 0) { throw 'Evaluation build failed.' }
+  $WindowsAssets = 'dist-desktop'
+}
 New-Item -ItemType Directory -Path release-assets | Out-Null
-$names = Get-ChildItem -LiteralPath dist-desktop -File | Where-Object { $_.Name -match '\.(exe|blockmap)$' -or $_.Name -in @('latest.yml','Pleiad-Evaluation.cer','evaluation-certificate.ps1','SIGNING-INFO.json') }
+$names = Get-ChildItem -LiteralPath $WindowsAssets -File | Where-Object { $_.Name -match '\.(exe|blockmap)$' -or $_.Name -in @('latest.yml','Pleiad-Evaluation.cer','evaluation-certificate.ps1','SIGNING-INFO.json') }
 foreach ($file in $names) { Copy-Item -LiteralPath $file.FullName -Destination (Join-Path release-assets $file.Name) }
+if (!(Test-Path -LiteralPath release-assets/latest.yml) -or !(Get-ChildItem -LiteralPath release-assets -Filter '*.exe')) { throw 'Windows assets are missing the installer or latest.yml.' }
+# The windows job and the publish job read PLY_WINDOWS_SIGNING separately; the assets must match what this job writes into BUILD-INFO.json
+if ($unsigned -eq (Test-Path -LiteralPath release-assets/SIGNING-INFO.json)) { throw 'Windows assets do not match PLY_WINDOWS_SIGNING.' }
+if ($BuildOnly) {
+  Write-Output 'Windows assets are ready in release-assets.'
+  return
+}
 $platforms = 'windows'
 if ($MacAssets) {
   $macFiles = @(Get-ChildItem -LiteralPath $MacAssets -File | Where-Object { $_.Name -match '\.(dmg|zip|blockmap)$' -or $_.Name -eq 'latest-mac.yml' })

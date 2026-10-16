@@ -420,24 +420,35 @@ export default async function (t) {
 
     const rel = parse(await fs.readFile(path.join(ROOT, '.github/workflows/evaluation-release.yml'), 'utf8'));
     const gate = rel.jobs['ci-gate'];
-    const release = rel.jobs.release;
+    const windows = rel.jobs.windows;
+    const publishJob = rel.jobs.publish;
     t.ok('照合のジョブは actions: read と contents: read だけ', JSON.stringify(gate.permissions) === JSON.stringify({ actions: 'read', contents: 'read' }), JSON.stringify(gate.permissions));
     t.ok('照合のジョブのトークンは github.token（秘密を渡さない）', JSON.stringify(gate.steps).includes('${{ github.token }}') && !JSON.stringify(gate).includes('secrets.'));
     const ACTOR_IF = "(github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')";
-    // 公開のジョブは macOS のジョブ（PLY_MAC_RELEASE が on のときだけ）も待つので、skipped でも走れる形に包む。照合のジョブが通ったことは自分で確かめる
+    // ビルドの windows と mac（CPU ごと。PLY_MAC_RELEASE が on のときだけ）は照合の後に並んで走り、publish が両方を待つ。
+    // mac は skipped でも publish が走れる形に包むので、照合と windows が通ったことは publish が自分で確かめる
     const mac = rel.jobs.mac;
-    const RELEASE_IF = `\${{ !cancelled() && needs.ci-gate.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && ${ACTOR_IF} }}`;
-    t.ok('照合と公開のジョブを動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && release.if === RELEASE_IF && mac.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'`, JSON.stringify([gate.if, release.if, mac.if]));
-    t.ok('macOS のジョブも照合のジョブを待ち、公開は macOS が落ちたら走らない', mac.needs === 'ci-gate' && JSON.stringify(release.needs) === JSON.stringify(['ci-gate', 'mac']));
-    t.ok('公開のジョブは照合のジョブを待つ（赤なら走らない）', release.needs === 'ci-gate' || (Array.isArray(release.needs) && release.needs.includes('ci-gate')));
-    const steps = release.steps;
+    const PUBLISH_IF = `\${{ !cancelled() && needs.ci-gate.result == 'success' && needs.windows.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && ${ACTOR_IF} }}`;
+    t.ok('どのジョブも動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && windows.if === ACTOR_IF && publishJob.if === PUBLISH_IF && mac.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'`, JSON.stringify([gate.if, windows.if, publishJob.if, mac.if]));
+    t.ok('windows と mac は照合のジョブだけを待って並んで走り、publish は全部を待つ', windows.needs === 'ci-gate' && mac.needs === 'ci-gate' && JSON.stringify(publishJob.needs) === JSON.stringify(['ci-gate', 'windows', 'mac']));
+    t.ok('mac は CPU ごとのジョブで、片方が落ちたらもう片方も止める', JSON.stringify(mac.strategy?.matrix?.arch) === JSON.stringify(['x64', 'arm64']) && mac.strategy['fail-fast'] === true && mac.env.PLY_MAC_ARCH === '${{ matrix.arch }}');
+    t.ok('書く権限は publish だけ（ビルドのジョブは contents: read）', JSON.stringify(publishJob.permissions) === JSON.stringify({ contents: 'write' }) && [windows, mac].every(job => JSON.stringify(job.permissions) === JSON.stringify({ contents: 'read' })));
+    t.ok('publish は秘密を使わない', !JSON.stringify(publishJob).includes('secrets.'));
+    const pubSteps = publishJob.steps;
+    const merge = pubSteps.findIndex(s => /release-mac-merge\.mjs/.test(s.run ?? ''));
+    const pub = pubSteps.findIndex(s => /publish-evaluation\.ps1 -Tag/.test(s.run ?? ''));
+    t.ok('publish は macOS の CPU ごとの配布物をまとめてから、windows の配布物と一緒に公開する', merge >= 0 && merge < pub && /mac-x64/.test(pubSteps[merge].run) && /mac-arm64/.test(pubSteps[merge].run)
+      && /windows-release/.test(pubSteps[pub].env.PLY_WINDOWS_ASSETS) && !/-BuildOnly/.test(pubSteps[pub].run));
+    t.ok('publish の Windows の署名の別は、windows のジョブと同じ変数から決める', pubSteps[pub].env.PLY_WINDOWS_SIGNING === "${{ vars.PLY_WINDOWS_SIGNING == 'none' && 'none' || '' }}");
+    const steps = windows.steps;
     const full = steps.findIndex(s => s.run === 'node tests/run.mjs --jobs 2 --retry-failed 1');
     const smoke = steps.findIndex(s => /Release environment smoke/.test(s.name ?? ''));
-    const publish = steps.findIndex(s => /publish/i.test(s.name ?? ''));
+    const builds = steps.map((s, i) => /publish-evaluation\.ps1 -Tag \$env:RELEASE_TAG -BuildOnly/.test(s.run ?? '') ? i : -1).filter(i => i >= 0);
+    t.ok('windows のジョブは署名あり・無署名のどちらでも、公開せずにビルドだけをする', builds.length === 2 && !steps.some(s => /publish-evaluation\.ps1/.test(s.run ?? '') && !/-BuildOnly/.test(s.run)));
     t.ok('全部のテストは reuse 以外のすべてで回る（空・想定外の値でも省かない）', steps[full]?.if === "needs.ci-gate.outputs.decision != 'reuse'", steps[full]?.if);
     t.ok('reuse のときは release の環境の短い検査を回す', steps[smoke]?.if === "needs.ci-gate.outputs.decision == 'reuse'" && /require\('koffi'\)/.test(steps[smoke].run));
-    t.ok('テストと短い検査は公開の前', full >= 0 && smoke >= 0 && full < publish && smoke < publish);
-    t.ok('公開のジョブは照合した commit と checkout が同じかを確かめる', steps.some(s => /CI_SHA/.test(s.run ?? '')) && /needs\.ci-gate\.outputs\.sha/.test(release.env.CI_SHA));
+    t.ok('テストと短い検査はビルドの前', full >= 0 && smoke >= 0 && builds.every(i => full < i && smoke < i));
+    t.ok('ビルドと公開のジョブは照合した commit と checkout が同じかを確かめる', [windows, mac, publishJob].every(job => job.steps.some(s => /CI_SHA/.test(s.run ?? '')) && /needs\.ci-gate\.outputs\.sha/.test(job.env.CI_SHA)));
     const winNode = testYml.jobs.test.strategy.matrix.include.find(m => m.os === 'windows-latest').node;
     const relNode = steps.find(s => String(s.uses).startsWith('actions/setup-node'))?.with?.['node-version'];
     t.ok('release の Node は test.yml の Windows の脚と同じ版', String(relNode) === String(winNode), `${relNode} / ${winNode}`);

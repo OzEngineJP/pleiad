@@ -301,11 +301,13 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 
 #### macOS の配布
 
-[ADR 0215](adr/0215-macos-evaluation-release.md)。Repository Variable `PLY_MAC_RELEASE` が `on` のとき、`Evaluation release` は `mac` のジョブ（`macos-15`）で macOS 版も作る。`on` でなければ今までどおり Windows だけ。
-- `mac` のジョブは Windows の `release` より先に走る。Developer ID Application の証明書で署名し（hardened runtime）、App Store Connect の API キーで公証する。Intel / Apple Silicon の 2 つの `.app` を `codesign --verify --deep --strict`・`xcrun stapler validate`・`spctl --assess` で確かめ、dmg・zip・blockmap・`latest-mac.yml` を artifact `mac-release` に置く。
-- `release` のジョブは、それを `scripts/publish-evaluation.ps1` で Windows の配布物と同じ下書きに入れ、`platforms=all` で照合してから一緒に公開する（`RELEASE-PLATFORMS.json`・`BUILD-INFO.json` の `platforms`）。immutable releases なので、公開した後に macOS の分を足せない。
-- `mac` のジョブが落ちる・取り消されると、`release` のジョブは走らない（macOS を欠いた版を Windows だけで公開しない）。macOS を出さずに急ぐときは、`PLY_MAC_RELEASE` を外して手動実行し直す。
-- main の CI に macOS の脚は無い。`mac` のジョブは配布に関わるテスト（`desktop-updates`）と node-pty の読み込みだけを確かめる。全部のテストは Windows の `release`（または main の CI）が受け持つ。
+[ADR 0215](adr/0215-macos-evaluation-release.md)。Repository Variable `PLY_MAC_RELEASE` が `on` のとき、`Evaluation release` は macOS 版も作る。`on` でなければ今までどおり Windows だけ。
+- ジョブは `ci-gate` の後に並んで走る: `windows`（テスト・ビルド・署名。配布物を artifact `windows-release` に置く）と、`mac (x64)`・`mac (arm64)`（`macos-15`。CPU ごとに 1 つ）。最後に `publish` が全部を 1 つの下書きに入れて公開する。書く権限（`contents: write`）は `publish` だけが持ち、秘密は使わない。
+- `mac` のジョブの時間の大半は Apple の公証の待ち（手元で両 CPU を 1 つのジョブで作って約 15 分、CPU は 3 割ほど）なので、CPU ごとのジョブに分けて待ちを重ねる。`PLY_MAC_ARCH`（`x64`・`arm64`）で `electron-builder.release.cjs` の target を 1 つの CPU に絞る（`scripts/release-signing.cjs` の `macArchTargets`）。
+- `mac` のジョブは Developer ID Application の証明書で署名し（hardened runtime）、App Store Connect の API キーで公証する。`.app` を `codesign --verify --deep --strict`・`xcrun stapler validate`・`spctl --assess` と `lipo`（CPU）で確かめ、dmg・zip・blockmap・`latest-mac.yml` を artifact `mac-x64`・`mac-arm64` に置く。
+- `publish` のジョブは、CPU ごとの `latest-mac.yml` を `scripts/release-mac-merge.mjs` で 1 つにまとめ（版・名前・checksum が合わない、CPU が欠ける・重なると止まる）、`scripts/publish-evaluation.ps1 -WindowsAssets … -MacAssets …` で Windows の配布物と同じ下書きに入れ、`platforms=all` で照合してから一緒に公開する（`RELEASE-PLATFORMS.json`・`BUILD-INFO.json` の `platforms`）。immutable releases なので、公開した後に macOS の分を足せない。`windows` のジョブは同じスクリプトを `-BuildOnly` で呼ぶ。
+- `windows`・`mac` のどれかが落ちる・取り消されると、`publish` のジョブは走らない（macOS を欠いた版を Windows だけで公開しない）。`mac` は片方の CPU が落ちたらもう片方も止める。macOS を出さずに急ぐときは、`PLY_MAC_RELEASE` を外して手動実行し直す。
+- main の CI に macOS の脚は無い。`mac` のジョブは配布に関わるテスト（`desktop-updates`）と node-pty の読み込みだけを確かめる。全部のテストは `windows` のジョブ（または main の CI）が受け持つ。
 - macOS の自動更新は electron-updater（Squirrel.Mac）で、zip と `latest-mac.yml` を使う。macOS には `LOCALAPPDATA` が無く、版ごとの実行場所を決められないので、無停止の更新は使わず `utilityProcess` の流れ（作業が無いのを確かめてから入れ替えて起動し直す）になる。Squirrel.Mac は更新後のアプリの署名が今のアプリと同じ Developer ID であることを求めるので、署名の無い macOS 版は自動更新できない。
 
 初回設定（Apple Developer Program の管理者）:

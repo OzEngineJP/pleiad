@@ -11,9 +11,10 @@ import { createMessageQueue } from '../../core/message-queue.mjs';
 import { ensureDataSchema } from '../../core/data-schema.mjs';
 import { readSessions } from '../lib/data-store.mjs';
 import { prepareArtifacts } from '../../scripts/release-artifacts.mjs';
+import { mergeMacReleases } from '../../scripts/release-mac-merge.mjs';
 import { generateReleaseInfo, compareVersions } from '../../scripts/release-info.mjs';
 const { Updates } = createRequire(import.meta.url)('../../desktop/updates.cjs');
-const { releaseSigning } = createRequire(import.meta.url)('../../scripts/release-signing.cjs');
+const { releaseSigning, macArchTargets } = createRequire(import.meta.url)('../../scripts/release-signing.cjs');
 const { AppUpdater } = createRequire(import.meta.url)('electron-updater/out/AppUpdater.js');
 const { GitHubProvider } = createRequire(import.meta.url)('electron-updater/out/providers/GitHubProvider.js');
 const { PrivateGitHubProvider } = createRequire(import.meta.url)('electron-updater/out/providers/PrivateGitHubProvider.js');
@@ -333,6 +334,44 @@ export default async function(t) {
     await rejects('Release platform selection cannot change during rollout', () => prepareArtifacts(windowsAssets, '0.1.0-beta.1', 50, null, 'all'));
     await fs.writeFile(path.join(windowsAssets, names[0]), 'changed');
     await rejects('Windows-only releases still reject changed installers', () => prepareArtifacts(windowsAssets, '0.1.0-beta.1', 100));
+    // macOS は CPU ごとのジョブで作る（PLY_MAC_ARCH）。electron-builder の target を 1 つの CPU に絞る
+    const macTargets = parse(await fs.readFile(new URL('../../electron-builder.yml', import.meta.url), 'utf8')).mac.target;
+    t.ok('PLY_MAC_ARCH narrows every macOS target to one CPU', JSON.stringify(macArchTargets(macTargets, 'arm64')) === JSON.stringify(macTargets.map(m => ({ ...m, arch: ['arm64'] }))) && macArchTargets(macTargets, 'x64').every(m => m.arch.join() === 'x64'));
+    t.ok('Without PLY_MAC_ARCH the macOS targets are unchanged', macArchTargets(macTargets, undefined) === macTargets);
+    await rejects('PLY_MAC_ARCH refuses unknown CPUs', async () => macArchTargets(macTargets, 'universal'));
+    await rejects('PLY_MAC_ARCH refuses a CPU the target does not build', async () => macArchTargets([{ target: 'zip', arch: ['x64'] }], 'arm64'));
+    // CPU ごとの latest-mac.yml を 1 つにまとめる（scripts/release-mac-merge.mjs）
+    const macBuild = async (arch, { version = '0.1.0-beta.1', extra = [], tamper = false, files } = {}) => {
+      const out = path.join(dir, `mac-${arch}-${crypto.randomUUID()}`); await fs.mkdir(out);
+      const names = files ?? [`Pleiad-${version}-mac-${arch}.zip`, `Pleiad-${version}-mac-${arch}.dmg`];
+      for (const name of [...names, ...names.map(n => `${n}.blockmap`), ...extra]) await fs.writeFile(path.join(out, name), name);
+      if (tamper) await fs.writeFile(path.join(out, names[0]), 'tampered');
+      await fs.writeFile(path.join(out, 'latest-mac.yml'), stringify({ version, files: names.map(entry), path: names[0], sha512: entry(names[0]).sha512, releaseDate: `2026-10-17T0${arch === 'x64' ? 1 : 2}:00:00.000Z` }));
+      return out;
+    };
+    const [x64Build, armBuild] = [await macBuild('x64'), await macBuild('arm64')];
+    const merged = path.join(dir, 'mac-merged');
+    await mergeMacReleases(merged, '0.1.0-beta.1', [armBuild, x64Build]);
+    const mergedFeed = parse(await fs.readFile(path.join(merged, 'latest-mac.yml'), 'utf8'));
+    t.ok('Merged macOS feed lists both CPUs, x64 first, with the newest build date',
+      mergedFeed.files.map(f => f.url).join() === 'Pleiad-0.1.0-beta.1-mac-x64.zip,Pleiad-0.1.0-beta.1-mac-x64.dmg,Pleiad-0.1.0-beta.1-mac-arm64.zip,Pleiad-0.1.0-beta.1-mac-arm64.dmg'
+      && mergedFeed.path === 'Pleiad-0.1.0-beta.1-mac-x64.zip' && mergedFeed.releaseDate === '2026-10-17T02:00:00.000Z');
+    t.ok('Merged macOS assets include the blockmaps of both CPUs', (await fs.readdir(merged)).filter(n => n.endsWith('.blockmap')).length === 4);
+    // まとめたものは、公開の前の照合（両 CPU の zip・checksum）をそのまま通る
+    const combined = path.join(dir, 'combined'); await fs.mkdir(combined);
+    for (const name of await fs.readdir(merged)) await fs.copyFile(path.join(merged, name), path.join(combined, name));
+    await fs.writeFile(path.join(combined, names[0]), names[0]);
+    await fs.writeFile(path.join(combined, 'latest.yml'), stringify({ version: '0.1.0-beta.1', files: [entry(names[0])] }));
+    await prepareArtifacts(combined, '0.1.0-beta.1', 100, null, 'all');
+    t.ok('Merged macOS assets pass the release integrity check with Windows', JSON.parse(await fs.readFile(path.join(combined, 'RELEASE-PLATFORMS.json'), 'utf8')).platforms === 'all');
+    await rejects('Merge refuses a missing CPU', () => mergeMacReleases(path.join(dir, 'm1'), '0.1.0-beta.1', [x64Build]));
+    await rejects('Merge refuses the same CPU twice', async () => mergeMacReleases(path.join(dir, 'm2'), '0.1.0-beta.1', [x64Build, await macBuild('x64')]));
+    await rejects('Merge refuses a build of another version', async () => mergeMacReleases(path.join(dir, 'm3'), '0.1.0-beta.1', [x64Build, await macBuild('arm64', { version: '0.1.0-beta.2' })]));
+    await rejects('Merge refuses a tampered package', async () => mergeMacReleases(path.join(dir, 'm4'), '0.1.0-beta.1', [x64Build, await macBuild('arm64', { tamper: true })]));
+    await rejects('Merge refuses a feed that mixes CPUs', async () => mergeMacReleases(path.join(dir, 'm5'), '0.1.0-beta.1', [x64Build, await macBuild('arm64', { files: ['Pleiad-0.1.0-beta.1-mac-arm64.zip', 'Pleiad-0.1.0-beta.1-mac-x64.dmg'] })]));
+    await rejects('Merge refuses stray packages that are not in the feed', async () => mergeMacReleases(path.join(dir, 'm6'), '0.1.0-beta.1', [x64Build, await macBuild('arm64', { extra: ['Pleiad-0.1.0-beta.1-mac-x64.zip'] })]));
+    await rejects('Merge refuses a feed without a ZIP', async () => mergeMacReleases(path.join(dir, 'm7'), '0.1.0-beta.1', [x64Build, await macBuild('arm64', { files: ['Pleiad-0.1.0-beta.1-mac-arm64.dmg'] })]));
+    await rejects('Merge refuses a non-empty output', () => mergeMacReleases(merged, '0.1.0-beta.1', [x64Build, armBuild]));
     await generateReleaseInfo();
     const pkg = JSON.parse(await fs.readFile(new URL('../../package.json', import.meta.url), 'utf8'));
     const info = JSON.parse(await fs.readFile(new URL('../../web/release-info.json', import.meta.url), 'utf8'));
