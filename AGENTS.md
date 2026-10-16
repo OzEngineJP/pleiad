@@ -37,6 +37,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定 `claude,codex,antigravity`） |
 | `AGENT_HOST_CODEX_BIN` | codex の実行ファイル（既定 `codex`） |
 | `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |
+| `AGENT_HOST_SHELL_ENV` | `off` なら、デスクトップ版（macOS・Linux）の main がサーバーを起こす前にログインシェルの環境を読み込まない（戻し道。`desktop/shell-env.cjs`・ADR 0213）。読み込み中のシェルには `PLEIAD_RESOLVING_SHELL_ENV=1` を付け、入れ子にしない |
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
 | `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |

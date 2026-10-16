@@ -658,22 +658,34 @@ export default async function (t) {
       dataDir, entry: path.join(ROOT, 'tests', 'lib', 'parent-port-server.mjs') });
     let c, a, configDir = null;
     try {
-      c = await openHost({ port: server.port, token: server.token, autoAllow: true });
-      const turn = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ok' });
-      const configs = await fs.readdir(path.join(dataDir, 'agent-browser')).catch(() => []);
+      c = await openHost({ port: server.port, token: server.token });
+      // agent-browser を呼ばなかったターンの設定の置き場は、ターンの終わりに待たずに消える（settleBrowserEnvironment。ADR 0180）。
+      // ターンの後に読むと片付けと競うので、ツールの承認待ちでターンを止めている間に読み、読んでから承認する（issue #79）
+      const paused = 'steps:' + JSON.stringify({ steps: [{ tool: 'Bash', input: { command: 'x' }, result: 'ok', ask: true }, { text: 'ok' }] });
+      const duringTurn = async (args, read) => {
+        const from = c.mark();
+        const running = c.runTurn(args);
+        const asked = await c.waitFor((e) => e.type === 'permission', { from, ms: 30_000 });
+        const got = await read();
+        await c.cmd('resolvePermission', { id: asked.id, allow: true });
+        return { turn: await running, got };
+      };
+      const readConfigs = async () => {
+        const names = await fs.readdir(path.join(dataDir, 'agent-browser')).catch(() => []);
+        const file = names.length === 1 ? path.join(dataDir, 'agent-browser', names[0], 'agent-browser.json') : null;
+        return { names, config: file ? JSON.parse(await readFile(file, 'utf8')) : null };
+      };
+      const { turn, got: { names: configs, config } } = await duringTurn({ backend: 'fake', cwd: ROOT, prompt: paused }, readConfigs);
       if (configs.length) configDir = path.join(dataDir, 'agent-browser', configs[0]);
-      const config = configs.length === 1 ? JSON.parse(await readFile(path.join(dataDir, 'agent-browser', configs[0], 'agent-browser.json'), 'utf8')) : null;
       const sent = (await readFile(ppLog, 'utf8').catch(() => '')).split('\n').filter(Boolean).map(line => JSON.parse(line));
       t.ok('ターンの agent-browser.json の cdp は core の中継（parentPort へ endpoint を頼まない）', /^ws:\/\/127\.0\.0\.1:\d+\/devtools\/browser\/[a-f0-9]{48}$/.test(config?.cdp ?? '') && !config.cdp.startsWith('ws://127.0.0.1:1/')
         && !sent.some(m => m.type === 'agent-browser-endpoint'), JSON.stringify({ config, sent: sent.map(m => m.type) }));
       a = await agent(config.cdp);
       // ターンは終わっているので、つながっていない Chrome へは確認を出さずに断る（頼んだ人が居ない）。端点は中継につながっている
       t.ok('その端点は中継につながる。ターンの外で Chrome につながっていなければ、確認を出さずに断る', /outside of a turn/.test((await a.cmd('Browser.getVersion')).error?.message ?? '') && chrome.pending() === 0);
-      const second = await c.runTurn({ backend: 'fake', cwd: ROOT, sessionId: turn.sessionId, prompt: 'ok' });
-      const after = JSON.parse(await readFile(path.join(dataDir, 'agent-browser', configs[0], 'agent-browser.json'), 'utf8'));
+      const { turn: second, got: { names: configsAfter, config: after } } = await duringTurn({ backend: 'fake', cwd: ROOT, sessionId: turn.sessionId, prompt: paused }, readConfigs);
       t.ok('鍵の文字列はサーバーのログに出ない', !server.tail(200).includes(config.cdp.split('/').pop()));
-      const configsAfter = await fs.readdir(path.join(dataDir, 'agent-browser'));
-      t.ok('会話の id が決まった後のターンも同じ設定ファイル・同じ端点（中継の rebind）', second.sessionId === turn.sessionId && after.cdp === config.cdp && configsAfter.length === 1, JSON.stringify({ configsAfter, after }));
+      t.ok('会話の id が決まった後のターンも同じ設定ファイル・同じ端点（中継の rebind）', second.sessionId === turn.sessionId && after?.cdp === config.cdp && configsAfter.length === 1 && configsAfter[0] === configs[0], JSON.stringify({ configsAfter, after }));
     } finally {
       a?.close(); c?.close?.(); await server.stop(); await chrome.stop();
       if (configDir) await rm(browserSocketDirectory(configDir), { recursive: true, force: true }).catch(() => {});

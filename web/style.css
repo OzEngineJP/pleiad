@@ -37,6 +37,7 @@
 #agentControls .head{margin-top:20px}
 #agentControls .auth-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:12px 0}
 #agentControls .auth-row .st{flex:1;min-width:120px}
+#agentControls .auth-note{padding:0 0 12px;margin-top:-6px}
 #agentControls .auth-url{overflow-wrap:anywhere}
 #setupError,#onboardingError{font-size:var(--fs-s)}
 @media(max-width:520px){.onboarding-dialog{padding:16px}.onboarding-actions{flex-direction:column-reverse;align-items:stretch}}
@@ -378,6 +379,12 @@ button.conn-lost:hover{color:var(--ink)}
 .auth-row .name{flex:none;color:var(--ink)}
 .auth-row .st{flex:1;min-width:0;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .auth-row .btn{padding:2px 10px;font-size:var(--fs-xs)}
+/* 名前の下の CLI の在り処（弱い字の等幅。版は title だけ）と、期限切れの 1 行（行の下。折り返し、省略しない。設定 › 委譲の ⚠ の行と同じ形） */
+.auth-row .name:has(.auth-cli){flex:0 1 auto;min-width:0;max-width:100%}
+.auth-row .name .auth-cli{display:block;font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+.auth-note{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:0 8px 6px;font-size:var(--fs-s);color:var(--ink-strong);font-weight:600;overflow-wrap:anywhere}
+.auth-note .btn.link{border:0;background:none;padding:0;font-weight:400;font-size:var(--fs-s);color:var(--ink-blue);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.auth-note .btn.link:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px;border-radius:4px}
 .auth-url{padding:2px 8px 4px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .auth-url a{display:block}
 .auth-paste{display:flex;gap:4px;padding:0 8px 6px}
@@ -830,6 +837,17 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys{margin-bottom:8px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .m.sys b{color:var(--ink);font-weight:500}
 .m.sys.turn-failed b{color:var(--ink-strong);font-weight:700}
+/* ログインの期限切れの失敗（web/auth-expired.mjs。docs/design-system.md「ログインの期限切れ」）。1 行目は失敗の一文、2 行目に直す入口・待っている様子・済んだ */
+.m.sys.auth-fail{display:flex;flex-direction:column;gap:4px}
+.auth-fail .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.auth-fail .acts .btn{padding:2px 10px;font-size:var(--fs-xs)}
+.auth-fail .wait{display:inline-flex;align-items:center;gap:6px}
+.auth-fail .wait .run{width:12px;height:12px}
+.auth-fail .wait .run svg{width:12px;height:12px}
+.auth-fail-note{color:var(--ink-weak)}
+.auth-fail .acts.fade{animation:auth-fail-in var(--dur-fast,.18s) var(--ease-out,ease-out)}
+@keyframes auth-fail-in{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.auth-fail .acts.fade{animation:none}}
 .m.sys code{font-size:var(--fs-xs)}
 /* 「■ 中断しました · 14:32」。保存された中断から描く一行（client.mjs の paintInterruptLine） */
 .m.sys.interrupted{display:flex;align-items:center;gap:6px}

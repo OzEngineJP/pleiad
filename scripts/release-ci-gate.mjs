@@ -1,6 +1,6 @@
 // タグのリリースが、同じ commit の main の CI（test.yml の push の run）の成功をそのまま使えるかを決める。
 //
-//   node scripts/release-ci-gate.mjs --tag v0.7.4 --repo tekalu1/pleiad [--wait-minutes 40] [--interval-seconds 30] [--missing-grace-minutes 5] [--request-timeout-seconds 20]
+//   node scripts/release-ci-gate.mjs --tag v0.7.4 --repo OzEngineJP/pleiad [--wait-minutes 40] [--interval-seconds 30] [--missing-grace-minutes 5] [--request-timeout-seconds 20]
 //
 // 結果（GITHUB_OUTPUT の decision）:
 //   reuse    … 同じ commit の test.yml（push・main）の最新の attempt で、必須のジョブがすべて success。release の npm test を省ける

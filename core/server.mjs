@@ -179,6 +179,20 @@ process.on('unhandledRejection', (reason) => {
 });
 const updateGate = createUpdateGate();
 const quotaCache = createQuotaCache();
+// ログインの期限切れ（バックエンド id → 気づいた時刻）。会話のターンが 401（kind: 'auth'）で失敗したときに付け、
+// ログインし直す・CLI のログインのターンが通る・ログアウトで消す。メモリだけ（再起動で消える。次の 401 でまた付く。ADR 0212）
+const authExpired = new Map();
+// 最後に読めたログイン中のアカウント（バックエンド id → メールアドレス）。失敗の行に「どのアカウントでログインし直すか」を出す
+const authAccounts = new Map();
+/** ホームの下のパスを ~ で短くする（設定の行に出す CLI の在り処） */
+const homeShort = (p) => { const home = os.homedir(); return home && String(p).startsWith(home + path.sep) ? `~${String(p).slice(home.length)}` : String(p); };
+/** ログインの状態を受けたあと: アカウントを覚え、ログインしていなければ期限切れの印を消す */
+function noteAuth(id, status) {
+  if (status?.loggedIn && status.account) authAccounts.set(id, String(status.account));
+  if (status && status.loggedIn === false && !status.pending) authExpired.delete(id);
+  return status;
+}
+
 // 書き込みを始める前に、データ置き場をこのプロセスだけが持つようにする（別のプロセスが持っていれば、理由を出して起動を止める。
 // 終了まで持つ。core/data-lock.mjs）。そのうえで形式を確かめ、古ければここで移行する（core/schema-migration.mjs。失敗すれば起動を止める）。
 // 無停止の更新の新サーバー（--handover。core/handover.mjs）は、モジュールの読み込みを済ませたうえで、旧サーバーがデータ置き場を放すのを待って取る（数十 ms 刻み）
@@ -2795,6 +2809,18 @@ function makeEmit(turn) {
           window: event.window ?? null, account: turn.info.account ?? null, backend: turn.backend.id, model: turn.info.model ?? null };
         event = { ...event, ...turn.limit };
       }
+      // ログインの期限切れ（401。バックエンドの kind: 'auth'）。互換の接続先の会話は接続先のキーの問題なので、ふつうの失敗のまま。
+      // CLI のログイン（mode: cli）か、Pleiad の Claude のアカウントのトークン（mode: token）かを添える。CLI のときは期限切れを覚える
+      // （claude auth status は期限が切れてもログイン済みを返すので、設定の行の ⚠ はこれで出す。ADR 0212）
+      if (event.outcome === 'error' && event.kind === 'auth' && !turn.info.endpoint) {
+        const accountId = turn.info.account || '';
+        event = { ...event, backend: turn.backend.id, auth: accountId
+          ? { mode: 'token', accountId, name: turn.authAccount?.id === accountId ? turn.authAccount.name : null }
+          : { mode: 'cli', email: authAccounts.get(turn.backend.id) ?? null } };
+        if (!accountId && !replay) authExpired.set(turn.backend.id, Date.now());
+      }
+      // CLI のログインで走ったターンが通った = ログインは生きている（期限切れの印を消す）
+      if (event.outcome === 'ok' && !replay && !turn.info.endpoint && !turn.info.account) authExpired.delete(turn.backend.id);
       // 中断で終わったら理由を添える（画面は会話の末尾の「中断しました」の文言を理由で選ぶ）
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
@@ -3848,8 +3874,14 @@ const opsAgents = {
     // Claude Agent SDK の取得の状態（Claude だけ。配布物は SDK を持たない。ADR 0208）。CLI の有無・ログインと別に出す
     const sdk = backend.sdk ? { sdk: backend.sdk.status() } : {};
     if (!installed.installed) return { backend: backend.id, status: { supported: true, ...installed, ...sdk } };
-    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false, ...sdk } };
-    return { backend: backend.id, status: { supported: true, ...installed, ...(await backend.auth.status()), ...sdk } };
+    // 使っている CLI の在り処（ホームは ~）と版（設定の行の名前の下。版は説明にだけ出す）。持つバックエンドだけ（Claude）
+    const cli = await backend.cliInfo?.().catch(() => null);
+    const where = cli?.path ? { cliPath: homeShort(cli.path), ...(cli.version ? { cliVersion: String(cli.version) } : {}) } : {};
+    if (!backend.auth?.status) return { backend: backend.id, status: { supported: false, ...where, ...sdk } };
+    const auth = noteAuth(backend.id, await backend.auth.status());
+    // 期限切れ（会話で 401 を受けた）。CLI はログイン済みを返したままなので、Pleiad が覚えている印で出す
+    const expired = auth.loggedIn && authExpired.has(backend.id) ? { expired: true } : {};
+    return { backend: backend.id, status: { supported: true, ...installed, ...auth, ...where, ...expired, ...sdk } };
   },
 };
 
@@ -6102,6 +6134,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
     // 受理した途中送信（送信待ちの項目）のうち、渡った合図（userMessage.delivered / dropped）をまだ待っているものの id（steerConfirms のバックエンドだけ）。札の steers
     pendingSteers: new Set(),
     ended: false,
+    // このターンが使う Claude のアカウント（Pleiad で発行したトークン）の id と名前。401 の失敗の行に名前を出す（makeEmit。ADR 0212）
+    authAccount: account ? { id: account.id, name: account.name } : null,
     info: {
       sessionId,
       backend: backend.id,
@@ -8415,7 +8449,15 @@ wss.on("connection", (ws, req) => {
             emit: (ev) => emitGlobal({ ...ev, backend: backend.id, sessionId: null }),
           });
           quotaCache.clear();
-          return reply(true, { supported: true, ...(await backend.auth.status?.() ?? {}) });
+          authExpired.delete(backend.id);
+          return reply(true, { supported: true, ...noteAuth(backend.id, await backend.auth.status?.() ?? {}) });
+        }
+
+        // 待っているログイン（authLogin）をやめる（会話の失敗の行の「キャンセル」。ADR 0212）。authLogin は CANCELLED の失敗で返る
+        case "authCancel": {
+          const backend = await pickBackend(null, msg.args?.backend);
+          if (!backend.auth?.cancel) return reply(true, { supported: false });
+          return reply(true, { supported: true, ...(await backend.auth.cancel()) });
         }
 
         // Claude Agent SDK を npm から取る（設定の Claude の行の「取得」。案内に同意して押した。ADR 0208）。人だけ（HUMAN_ONLY の accounts）。
@@ -8442,7 +8484,8 @@ wss.on("connection", (ws, req) => {
           if (!backend.auth?.logout) return reply(true, { supported: false });
           await backend.auth.logout();
           quotaCache.clear();
-          return reply(true, { supported: true, ...(await backend.auth.status?.() ?? {}) });
+          authExpired.delete(backend.id);
+          return reply(true, { supported: true, ...noteAuth(backend.id, await backend.auth.status?.() ?? {}) });
         }
 
         case "running":

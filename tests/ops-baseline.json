@@ -51,6 +51,7 @@
     "authLogin": "human-only",
     "authLogout": "human-only",
     "authSubmit": "human-only",
+    "authCancel": "human-only",
     "claudeSdkInstall": "human-only",
     "prefs": "ui-internal",
     "attachFile": "stream",

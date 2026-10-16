@@ -95,6 +95,9 @@
       "loginUrl": "Sign in to {{agent}}: ",
       "loginMessage": "{{agent}}: {{message}}",
       "loginDone": "Signed in",
+      "cliVersion": "{{agent}} {{version}}",
+      "expired": "⚠ Your sign-in has expired.",
+      "signInAgain": "Sign in again",
       "claudeSdk": {
         "notice": "Claude needs Anthropic's Claude Agent SDK ({{version}}). It isn't included with Pleiad, so it is downloaded from the npm registry and saved on this PC.",
         "terms": "Anthropic's terms apply to the SDK",
@@ -566,6 +569,7 @@
       "nameJoin": "”, “"
     },
     "reissue": "Issue token again",
+    "reissueMissing": "That account couldn’t be found. Choose it from the list and issue the token again.",
     "issue": "Issue token",
     "redoUsage": "Redo usage authorization",
     "authorizeUsage": "Authorize usage display",
@@ -1872,6 +1876,20 @@
       "runFailed": "Couldn't run: {{error}}",
       "where": "Runs in {{cwd}}"
     },
+    "authExpired": {
+      "login": "Your {{agent}} sign-in ({{email}}) has expired.",
+      "loginNoEmail": "Your {{agent}} sign-in has expired.",
+      "token": "The token for Claude account “{{name}}” has expired.",
+      "tokenUnnamed": "The token for this Claude account has expired.",
+      "signInAgain": "Sign in again",
+      "waiting": "Sign in in your browser…",
+      "cancel": "Cancel",
+      "signedIn": "✓ Signed in",
+      "resent": "✓ Signed in again and resent",
+      "sendAgain": "Send again",
+      "reissue": "Reissue token",
+      "loginFailed": "Couldn’t sign in: {{error}}"
+    },
     "sys": {
       "taskResumed": "Received the Pleiad task result and resumed",
       "taskResultState": "Delegation result ({{state}})",
@@ -2316,7 +2334,7 @@
     "backToChat": "Back to chat",
     "newSessionTitle": "New session (keeps the current filters)",
     "settings": "Settings",
-    "closeSidebarTitle": "Close sidebar (Ctrl+B)",
+    "closeSidebarTitle": "Close sidebar ({{key}})",
     "closeSidebar": "Close sidebar",
     "search": "Search conversations",
     "filterTitle": "Filter by working directory, status, or agent",
@@ -2350,7 +2368,7 @@
       "stillStale": "Checked at {{time}}. You still need to reopen the page.",
       "unreachable": "Checked at {{time}}. Couldn't reach the server."
     },
-    "openSidebarTitle": "Open sidebar (Ctrl+B)",
+    "openSidebarTitle": "Open sidebar ({{key}})",
     "openSidebar": "Open sidebar",
     "openSidebarWith": "Open sidebar ({{detail}})",
     "previewShowing": "Viewing",
@@ -4473,7 +4491,7 @@
     },
     "toc": {
       "title": "Contents",
-      "entry": "Contents and search in this conversation (Ctrl+F)",
+      "entry": "Contents and search in this conversation ({{key}})",
       "close": "Close (Esc)",
       "search": "Search this conversation",
       "prevHit": "Previous match (Shift+Enter)",

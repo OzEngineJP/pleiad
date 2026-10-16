@@ -485,6 +485,7 @@
       "timeout": "時間切れです。ログインをやり直してください",
       "statusUnreadable": "Claude Code の認証状態を確認できません。CLI を更新して再確認してください",
       "loginPending": "ログインは既に進行中です",
+      "loginCancelled": "ログインをやめました",
       "loginFailed": "ログインを完了できませんでした。もう一度お試しください",
       "loggedIn": "ログインしました",
       "waitLogin": "ログインの完了を待ってください",

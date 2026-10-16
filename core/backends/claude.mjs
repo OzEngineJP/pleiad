@@ -30,7 +30,7 @@ import * as store from "../store.mjs";
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { buildClaudeModels, FALLBACK_MODELS, matchClaudeModel } from "./claude-models.mjs";
 import { ZERO_COST, readCostState, decideCostBase } from "./claude-cost-state.mjs";
-import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript, transcriptSystemMarks } from "./claude-normalize.mjs";
+import { normalizeSdkMessage, isClaudeAuthError, createClaudeCompactDiagnostic, claudeCompactionsFromHistory, transcriptToMessages, mergeQueuedCommands, stopHookFollowUps, subagentEntries, invalidSubagentTranscript, invalidQueuedCommandTranscript, transcriptSystemMarks } from "./claude-normalize.mjs";
 import { classifySystemMessages } from "../system-messages.mjs";
 import { promptTitle } from "../prompt-title.mjs";
 import { createTurnTracker, createInputQueue, createInputCloser, createHostCalls, createStderrLog, RESUME_GRACE_MS } from "./claude-background.mjs";
@@ -38,7 +38,7 @@ import { COMPUTER_CALL_TIMEOUT_SEC, COMPUTER_SERVER, computerPrompt, isComputerT
 import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { promptHash } from "../turn-card.mjs";
 import { ADOPT_TURN_MARK } from "../adopt.mjs";
-import { createHeldCli, heldPlan } from "./claude-held.mjs";
+import { createHeldCli, heldPlan, cliVersion } from "./claude-held.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 
 const NL = String.fromCharCode(10);
@@ -695,6 +695,11 @@ export const backend = {
   subagentTools: ["Task", "Agent"],
 
   auth: claudeAuth,
+  // 使っている claude の実行ファイルと版（設定の Claude の行の名前の下。版は説明にだけ出す。ADR 0212）。版は実体ごとに 1 回だけ聞く（claude-held.mjs）
+  async cliInfo() {
+    let exe; try { exe = sdk.executable(); } catch { return null; }
+    return { path: exe, version: await cliVersion(exe) };
+  },
   // SDK の取得（配布物は SDK を持たず、初めて要るときに npm から取る。core/claude-sdk.mjs）。設定の Claude の行と ops が使う
   sdk: { status: () => claudeSdkStatus(), ensure: (options) => ensureClaudeSdk(options), onChange: (fn) => onClaudeSdkChange(fn), maintain: () => startClaudeSdkMaintenance() },
   toolHints: TOOL_HINTS,
@@ -1018,6 +1023,10 @@ export const backend = {
     let toldModel = false;
     let heldResult = null;
     let limit = null;
+    // ログインの期限切れ（401）の印（normalize の authFailed）と、このターンにツールの実行か返答の本文がもう出たか。
+    // 失敗の turnResult に kind: 'auth' と pristine（何も出ていない = 最初の API 呼び出しで断られた）を付ける（ADR 0212）
+    let authFailed = null;
+    let produced = false;
     // CLI から最初のメッセージが届いたか。巻き戻しを伴うターンが、これより前に失敗したら（catch の rewindRejected）
     let sawMessage = false;
     // 新しい会話の最初のリクエストの文脈の大きさ（固定の部分）を出したか。委譲の子の自動圧縮の閾値に使う（server の makeEmit。ADR 0166）
@@ -1067,6 +1076,8 @@ export const backend = {
         // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は開始時点からの累計なので、その都度出してよい（server は上書きする）。
         // 中断を頼んだ後の result（打ち切られた内部ターン）は出さない。結果は最後に aborted で出す
         if (ev.type === 'limit') { limit = ev; continue; }
+        if (ev.type === 'authFailed') { authFailed = { message: ev.message ?? authFailed?.message ?? null }; continue; }
+        if (ev.type === 'text.delta' || ev.type === 'tool.start') produced = true;
         if (ev.type === "turnResult" && stop) continue;
         if (ev.type === 'turnResult' && limit) { heldResult = { ...ev, outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window }; continue; }
         if (ev.type === "turnResult" && ev.outcome === "ok") { heldResult = ev; continue; }
@@ -1219,6 +1230,8 @@ export const backend = {
       if (held?.handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: ctx.sessionId, handedOff: true }; }
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
       else if (limit) emit({ type: 'turnResult', outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window });
+      // 401 の result は subtype が success のまま（is_error だけが立つ）。例外にならずに終わっても、成功として出さない
+      else if (authFailed) emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced });
       else if (heldResult) emit(heldResult);
     } catch (err) {
       if (held?.handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: ctx.sessionId, handedOff: true }; }
@@ -1238,7 +1251,8 @@ export const backend = {
         return { sessionId: ctx.sessionId };
       }
       const message = hide(err?.message ?? err);
-      emit({ type: "turnResult", outcome: "error", error: message });
+      const auth = authFailed || isClaudeAuthError(err?.message ?? err);
+      emit({ type: "turnResult", outcome: "error", error: message, ...(auth ? { kind: 'auth', pristine: !produced } : {}) });
       const thrown = (oauthToken || endpoint) && err?.message && message !== err.message ? new Error(message) : err;
       throw promptSent ? thrown : undelivered(thrown);
     } finally {

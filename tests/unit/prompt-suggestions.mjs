@@ -89,7 +89,8 @@ export default async function (t) {
     const seen = JSON.parse(fs.readFileSync(envFile, 'utf8'))[0];
     const home = suggestHome(dir);
     t.ok('使い捨てのホームで起こす（USERPROFILE・HOME を一時の場所へ。利用者のホームではない）', seen.USERPROFILE === home && seen.HOME === home && seen.USERPROFILE !== realHome, JSON.stringify(seen));
-    t.ok('作業場所はホームの下の空のフォルダー', path.resolve(seen.cwd) === path.resolve(home, 'work'), seen.cwd);
+    // 子の process.cwd() は実体のパスを返す（macOS の一時フォルダーは /var → /private/var のシンボリックリンク）ので、実体どうしで比べる（issue #84）
+    t.ok('作業場所はホームの下の空のフォルダー', fs.realpathSync(seen.cwd) === fs.realpathSync(path.resolve(home, 'work')), seen.cwd);
     const base = path.join(home, '.gemini', 'antigravity-cli');
     t.ok('その回の会話の置き場は消す', fs.readdirSync(path.join(base, 'conversations')).length === 0 && fs.readdirSync(path.join(base, 'brain')).length === 0);
     const stopped = new AbortController();

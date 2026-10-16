@@ -18,7 +18,9 @@ jobs:
   # 同じ commit の main の CI（test.yml の push の run）を読み、release の npm test を省けるかを決める（docs/release-ci-reuse.md）。
   # 書く権限を持たない別のジョブにし、待つ間は Windows の runner を使わない。CI が赤ければここで止まり、release のジョブは走らない
   ci-gate:
-    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    # 出せるのは、リポジトリの持ち主と Repository Variable PLY_RELEASE_ACTORS（JSON の配列。例 ["tekalu1"]）にある人だけ。
+    # 組織のリポジトリでは持ち主が組織になり、人の push と一致しないので、出す人を変数で決める（docs/desktop-releases.md「自己署名の配布」）
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     # 待つ上限（--wait-minutes 40）より少し長く。test.yml のジョブの上限は 30 分
     timeout-minutes: 50
@@ -44,13 +46,107 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node scripts/release-ci-gate.mjs --tag "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --wait-minutes 40 --interval-seconds 30 --missing-grace-minutes 5 --request-timeout-seconds 20
-  release:
+  # macOS の配布（Developer ID の署名と公証。docs/desktop-releases.md「macOS の配布」）。リポジトリの変数 PLY_MAC_RELEASE が on のときだけ走る。
+  # 時間の大半は Apple の公証の待ちなので、CPU ごとのジョブに分けて並べる（PLY_MAC_ARCH。scripts/release-signing.cjs の macArchTargets）。
+  # windows のジョブとも並んで走り、publish のジョブが両方の配布物を同じ下書きに入れてから公開する（immutable releases なので、公開した後には足せない）。
+  # どれかが落ちたら publish は走らず、Windows だけで公開しない
+  mac:
     needs: ci-gate
-    if: github.actor == github.repository_owner && (github.event_name == 'push' || github.ref == 'refs/heads/main')
+    # 署名・公証の Secrets は Environment「release」にだけ置く（ADR 0214）
+    environment: release
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') && vars.PLY_MAC_RELEASE == 'on'
+    strategy:
+      # 片方が落ちたら公開しないので、もう片方の公証を待たない
+      fail-fast: true
+      matrix:
+        arch: [x64, arm64]
+    name: mac (${{ matrix.arch }})
+    runs-on: macos-15
+    # 手元（Apple Silicon）で 1 つの CPU の署名・公証・dmg・zip が約 4.5 分（2026-10-17）。公証の待ちは Apple 次第で揺れるので余裕を持たせる
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
+      PLY_MAC_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]] || { echo 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)'; exit 1; }
+          git merge-base --is-ancestor HEAD origin/main || { echo 'Release source must be on main'; exit 1; }
+          [ "$(git rev-parse HEAD)" = "$CI_SHA" ] || { echo 'Checkout does not match the commit checked against main CI'; exit 1; }
+          [ "v$(node -p "require('./package.json').version")" = "$RELEASE_TAG" ] || { echo 'Tag must match package version'; exit 1; }
+      # 同梱する Swift のヘルパー（scripts/build-computer-mac.cjs）を computer-mac-helper.yml と同じ Xcode で作る
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.13"
+          cache: npm
+      - run: npm ci
+      # main の CI に macOS の脚は無い。全部のテストは windows のジョブ（または main の CI）に任せ、ここでは配布に関わるものだけ確かめる
+      - name: Release environment smoke
+        run: |
+          node -e "require('node-pty')"
+          node tests/run.mjs desktop-updates
+      # App Store Connect の API キー（.p8）は中身を Secret に置き、electron-builder にはファイルの場所を渡す（scripts/release-signing.cjs）
+      - name: Prepare notarization key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          [ -n "$APPLE_API_KEY_P8" ] || { echo 'Missing secret APPLE_API_KEY'; exit 1; }
+          key="$RUNNER_TEMP/apple-api-key.p8"
+          (umask 077; printf '%s\n' "$APPLE_API_KEY_P8" > "$key")
+          echo "APPLE_API_KEY=$key" >> "$GITHUB_ENV"
+      - name: Build, sign and notarize
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: npm run desktop:dist -- --config electron-builder.release.cjs --mac --publish never
+      - name: Verify macOS signature and notarization
+        run: |
+          count=0
+          while IFS= read -r -d '' bundle; do
+            codesign --verify --deep --strict "$bundle"
+            xcrun stapler validate "$bundle"
+            spctl --assess --type execute -vv "$bundle"
+            app="$bundle"
+            count=$((count + 1))
+          done < <(find dist-desktop -maxdepth 2 -name '*.app' -print0)
+          [ "$count" -eq 1 ] || { echo "Expected one $PLY_MAC_ARCH app, found $count"; exit 1; }
+          [ "$(lipo -archs "$app/Contents/MacOS/Pleiad")" = "${PLY_MAC_ARCH/x64/x86_64}" ] || { echo "Pleiad.app is not $PLY_MAC_ARCH"; exit 1; }
+          [ -f dist-desktop/latest-mac.yml ] || { echo 'Missing latest-mac.yml'; exit 1; }
+      - name: Remove notarization key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/apple-api-key.p8"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mac-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist-desktop/*.dmg
+            dist-desktop/*.zip
+            dist-desktop/*.blockmap
+            dist-desktop/latest-mac.yml
+  # Windows のテスト・ビルド・署名。mac のジョブと並んで走り、配布物を artifact windows-release に置く（公開は publish のジョブ）
+  windows:
+    needs: ci-gate
+    # 署名・ストアの Secrets は Environment「release」にだけ置く（main と v* のタグからしか使えない。ADR 0214）
+    environment: release
+    if: (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main')
     runs-on: windows-latest
     timeout-minutes: 45
     permissions:
-      contents: write
+      contents: read
     defaults:
       run:
         shell: powershell
@@ -114,8 +210,8 @@ jobs:
           node tests/run.mjs computer-native desktop-updates
           if ($LASTEXITCODE -ne 0) { throw 'Release smoke tests failed' }
       # Windows の配布は、リポジトリの変数 PLY_WINDOWS_SIGNING で選ぶ（ADR 0209・docs/desktop-releases.md「無署名への移り方」）。
-      # none でなければ、今までどおり自己署名で署名する（ADR 0176）。none なら署名の秘密を 1 つも渡さずに無署名で出す
-      - name: Sign, verify and publish
+      # none でなければ、今までどおり自己署名で署名する（ADR 0176）。none なら署名の秘密を 1 つも渡さずに無署名で作る
+      - name: Sign, verify and build
         if: vars.PLY_WINDOWS_SIGNING != 'none'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -126,14 +222,85 @@ jobs:
         run: |
           try {
             ./scripts/import-evaluation-signing.ps1
-            ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG
+            ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG -BuildOnly
           } finally {
             ./scripts/import-evaluation-signing.ps1 -Cleanup
           }
       # 手元の版が無署名を受け入れる版（橋渡しの版）が届いていないと、scripts/release-unsigned-guard.mjs が止める
-      - name: Verify and publish unsigned
+      - name: Verify and build unsigned
         if: vars.PLY_WINDOWS_SIGNING == 'none'
         env:
           GH_TOKEN: ${{ github.token }}
           PLY_WINDOWS_SIGNING: none
+        run: ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG -BuildOnly
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-release
+          if-no-files-found: error
+          retention-days: 7
+          path: release-assets/
+  # 両 OS の配布物を 1 つの下書きに入れ、照合してから一緒に公開する。秘密は使わず、書く権限はこのジョブだけが持つ。
+  # mac は PLY_MAC_RELEASE が on でなければ skipped（Windows だけで公開）。落ちた・取り消されたら走らない（macOS を欠いた版を公開しない）
+  publish:
+    needs: [ci-gate, windows, mac]
+    environment: release
+    if: ${{ !cancelled() && needs.ci-gate.result == 'success' && needs.windows.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: powershell
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CI_SHA: ${{ needs.ci-gate.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release source
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-beta\.\d+)?$') { throw 'Expected release tag (vX.Y.Z or vX.Y.Z-beta.N)' }
+          git merge-base --is-ancestor HEAD origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release source must be on main' }
+          if ((git rev-parse HEAD) -cne $env:CI_SHA) { throw 'Checkout does not match the commit checked against main CI' }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.13"
+          cache: npm
+      # 照合と公開のスクリプトが使うのは yaml だけ。Electron などの取得（install のスクリプト）は要らない
+      - run: npm ci --ignore-scripts
+      # 下書きの本文（temporary/release-notes.md）を作る。中身の確かめは windows のジョブでも済んでいる
+      - name: Release notes
+        run: |
+          node scripts/release-info.mjs --require-new-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes are missing, invalid or unchanged' }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-release
+          path: ${{ runner.temp }}/windows-release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: needs.mac.result == 'success'
+        with:
+          pattern: mac-*
+          path: ${{ runner.temp }}/mac-builds
+      # CPU ごとの latest-mac.yml を 1 つにまとめる（scripts/release-mac-merge.mjs。両 CPU がそろわなければ止まる）
+      - name: Merge macOS builds
+        if: needs.mac.result == 'success'
+        run: |
+          $builds = Join-Path $env:RUNNER_TEMP 'mac-builds'
+          $version = $env:RELEASE_TAG.Substring(1)
+          node scripts/release-mac-merge.mjs (Join-Path $env:RUNNER_TEMP 'mac-release') $version (Join-Path $builds 'mac-x64') (Join-Path $builds 'mac-arm64')
+          if ($LASTEXITCODE -ne 0) { throw 'macOS builds could not be merged' }
+      - name: Verify and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLY_WINDOWS_ASSETS: ${{ format('{0}/windows-release', runner.temp) }}
+          # scripts/publish-evaluation.ps1 が、ここにある macOS の配布物を同じ下書きに入れる（空なら Windows だけ）
+          PLY_MAC_ASSETS: ${{ needs.mac.result == 'success' && format('{0}/mac-release', runner.temp) || '' }}
+          # BUILD-INFO.json の signing と、無署名のときの確かめ（windows のジョブの配布物と食い違えば止まる）
+          PLY_WINDOWS_SIGNING: ${{ vars.PLY_WINDOWS_SIGNING == 'none' && 'none' || '' }}
         run: ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG

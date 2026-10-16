@@ -8,7 +8,7 @@ import { openExternalLink } from './link-open.mjs';
 
 export const COPIED_MS = 1200;
 export function aiReportUrl() {
-  return 'https://github.com/tekalu1/pleiad/issues/new?' + new URLSearchParams({
+  return 'https://github.com/OzEngineJP/pleiad/issues/new?' + new URLSearchParams({
     title: t('chat.message.reportTitle'), body: t('chat.message.reportBody'),
   });
 }

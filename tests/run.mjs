@@ -67,6 +67,7 @@ const SUITES = [
   // macOS のヘルパー通信・座標・入力の中断・platform の分岐（本物の OS 入力は送らない）
   './unit/computer-mac.mjs',
   './unit/header-entries.mjs',
+  './unit/shortcut-labels.mjs',
   './unit/arc.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',
@@ -315,6 +316,8 @@ const SUITES = [
   './unit/desktop-exit-dialog.mjs',
   // OS にサインインしたら起動する設定: 登録するパス・引数（版に依らない exe と --hidden）・OS の実際の状態・古いパスの直し・使えない構成（偽の electron。本物の Run には書かない）
   './unit/desktop-login-item.mjs',
+  // サーバーを起こす前のログインシェルの環境の読み込み（ADR 0213）: 重ね方・時間切れ・rc の出力に紛れない（偽のシェル。利用者の rc は走らせない）
+  './unit/desktop-shell-env.mjs',
   './unit/login-item-server.mjs',
   './unit/login-item-ui.mjs',
   './unit/message-queue.mjs',
@@ -450,6 +453,7 @@ const SUITES = [
   './unit/handover-check.mjs',
   // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
   './unit/pack-runtime.mjs',
+  './unit/node-pty-mode.mjs',
   // 実機の確認（scripts/zero-downtime/stage1-7/）の試験用のインストール版が、利用者のインストール版と重ならない
   './unit/zdtest-isolation.mjs',
   // デスクトップ版の端末（リモートの窓）: 窓ごとの信頼・preload の出し分け・バッジ。Electron は起こさない
@@ -497,6 +501,8 @@ const SUITES = [
   './unit/claude-steer-stop.mjs',
   // Claude のターンの終わり: Stop フックの続き・裏へ回ったまま終わらないコマンド（stopTask で終わる）
   './unit/claude-turn-end.mjs',
+  // Claude のログインの期限切れ（401）: 見分け・pristine・失敗の行に添える auth・設定の行の期限切れの印と CLI の在り処（ADR 0212）
+  './unit/claude-auth-expired.mjs',
   // Claude のモデル一覧: CLI の実体（版）が変わったら 30 分の TTL の中でも引き直す
   './unit/claude-catalog-cli-version.mjs',
   // Claude のモデル一覧: 手元に古い一覧・別の作業場所の一覧があれば、引き直しを待たずに返す
