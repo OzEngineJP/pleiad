@@ -295,6 +295,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 const port = Number(process.argv[process.argv.indexOf('--port') + 1] ?? 0) || 0;
+// 起こされた印（試験が「一覧を作るだけでは起こさない」を確かめる）
+if (process.env.FAKE_OPENCODE_STARTED_FILE) { try { (await import('node:fs')).appendFileSync(process.env.FAKE_OPENCODE_STARTED_FILE, `${process.pid}
+`); } catch {} }
 server.listen(port, '127.0.0.1', () => {
   console.log(`opencode server listening on http://127.0.0.1:${server.address().port}`);
 });

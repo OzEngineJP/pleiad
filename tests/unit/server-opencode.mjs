@@ -6,13 +6,26 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { loadSqlite } from '../../core/db.mjs';
 
 export const name = 'server-opencode';
 export const title = 'OpenCode: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮';
 
 export default async function (t) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-opencode-'));
-  const server = await startServer({ dataDir, timeoutMs: 60_000, env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"` } });
+  // OpenCode の側に前からある会話（TUI で作ったもの）。サーバーが動いていない間は、この DB から一覧に出す
+  const ocData = path.join(dataDir, 'oc-data');
+  await fs.mkdir(ocData, { recursive: true });
+  const { DatabaseSync } = loadSqlite();
+  const seed = new DatabaseSync(path.join(ocData, 'opencode.db'));
+  seed.exec('create table session (id text primary key, parent_id text, directory text, title text, time_created integer, time_updated integer, time_archived integer)');
+  seed.prepare('insert into session values (?, ?, ?, ?, ?, ?, ?)').run('ses_tui0001', null, ROOT, 'made in the TUI', 1000, 2000, null);
+  seed.prepare('insert into session values (?, ?, ?, ?, ?, ?, ?)').run('ses_tui0002', 'ses_tui0001', ROOT, 'a subagent', 1000, 2000, null);
+  seed.close();
+  await fs.writeFile(path.join(ocData, 'auth.json'), JSON.stringify({ openai: { type: 'oauth', access: 'secret-value' } }));
+  const started = path.join(dataDir, 'oc-started.txt');
+  const server = await startServer({ dataDir, timeoutMs: 60_000, env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"`,
+    AGENT_HOST_OPENCODE_DATA: ocData, FAKE_OPENCODE_STARTED_FILE: started } });
   const answers = [];   // 承認・質問の答え方（先頭から使う）
   const asked = [];
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, self) => {
@@ -23,6 +36,14 @@ export default async function (t) {
   } });
   const text = (r) => r.events.filter((e) => e.type === 'text.delta' && e.sessionId === r.sessionId).map((e) => e.text).join('');
   try {
+    // ---- まだ使っていない間は、一覧とログインの状態のために OpenCode のサーバー（約 760 MB）を起こさない
+    const early = (await c.cmd('listSessions')).find((x) => x.id === 'ses_tui0001');
+    const auth = await c.cmd('authStatus', { backend: 'opencode' });
+    const startedEarly = await fs.readFile(started, 'utf8').catch(() => '');
+    t.ok('起こす前: OpenCode の会話の DB から一覧に出す（子の会話は出さない）', early?.title === 'made in the TUI' && early.backend === 'opencode'
+      && !(await c.cmd('listSessions')).some((x) => x.id === 'ses_tui0002'), JSON.stringify(early));
+    t.ok('起こす前: ログインの状態は資格情報のファイルの接続先の名前だけで答える（値は出さない）', auth.loggedIn === true && /openai/.test(auth.account ?? '') && !JSON.stringify(auth).includes('secret-value'), JSON.stringify(auth));
+    t.ok('起こす前: 一覧・ログインの状態では OpenCode のサーバーを起こさない', startedEarly === '', startedEarly);
     const [b] = await c.cmd('backends');
     t.ok('記述: 短い名前・ロゴ・自動の圧縮の行が付く', b.id === 'opencode' && b.shortLabel === 'OpenCode' && b.brand?.logo === 'opencode.svg' && b.idleCompaction === 'opencode', JSON.stringify(b));
     t.ok('能力: 分岐・サブエージェント・承認・圧縮・委譲の橋・コンピューターの操作', b.capabilities.fork && b.capabilities.subagents && b.capabilities.alwaysAllow

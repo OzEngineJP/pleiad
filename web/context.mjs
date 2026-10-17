@@ -24,21 +24,24 @@ const TEXT = {
     agent: [t('context.owner.agent'), t('context.instruction.agent')],
     ply: [t('context.owner.ply'), t('context.instruction.ply')],
     note: t('context.instruction.note'),
-    formats: { user: [['common', t('context.instruction.sourceCommon')], ['claude', 'CLAUDE.md'], ['codex', t('context.instruction.sourceCodex')]] },
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
+    formats: { user: [['common', t('context.instruction.sourceCommon')], ['claude', 'CLAUDE.md'], ['codex', t('context.instruction.sourceCodex')], ['opencode', t('context.instruction.sourceOpencode')]] },
   },
   skill: {
     title: 'Skills', owned: 'Skills',
     agent: [t('context.owner.agent'), t('context.skill.agent')],
     ply: [t('context.owner.ply'), t('context.skill.ply')],
     note: t('context.skill.note'),
-    formats: { user: [['common', t('context.skill.sourceCommon')], ['claude', '.claude/skills'], ['codex', '.codex/skills']] },
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
+    formats: { user: [['common', t('context.skill.sourceCommon')], ['claude', '.claude/skills'], ['codex', '.codex/skills'], ['opencode', '.opencode/skills']] },
   },
   mcp: {
     title: t('context.mcp.title'), owned: t('context.mcp.title'),
     agent: [t('context.owner.agent'), t('context.mcp.agent')],
     ply: [t('context.owner.ply'), t('context.mcp.ply')],
     // ユーザーはエージェントの設定（~/.claude.json・~/.codex/config.toml）、作業場所はプロジェクトの設定ファイル
-    formats: { user: [['claude', t('context.mcp.sourceClaude')], ['codex', t('context.mcp.sourceCodex')]], directory: [['claude', '.mcp.json'], ['codex', '.codex/config.toml']] },
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
+    formats: { user: [['claude', t('context.mcp.sourceClaude')], ['codex', t('context.mcp.sourceCodex')], ['opencode', t('context.mcp.sourceOpencode')]], directory: [['claude', '.mcp.json'], ['codex', '.codex/config.toml'], ['opencode', 'opencode.json']] },
   },
 };
 const SHOWN = 8;   // Skills は多いので最初はこれだけ並べ、「すべて見る」で残りを出す

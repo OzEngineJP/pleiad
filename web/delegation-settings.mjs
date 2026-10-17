@@ -64,8 +64,9 @@ function button(text, onclick, className = 'btn') {
  * @param modelsOf   そのエージェントのモデルの一覧（backend -> Promise<{ [id]: { label } }>）
  * @param modelName  モデルの表示名（backend, model -> 文字）
  * @param openPage   設定のほかのページへ移る（API キー）
+ * @param agents     候補に足せるエージェント（有効なエージェントの id。() -> string[]）
  */
-export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName, openPage = () => {} }) {
+export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName, openPage = () => {}, agents = () => [] }) {
   const $ = id => document.getElementById(id);
   const root = $('delegationPanel');
   let data = null, committed = null, message = '', registering = '', keyList = null, confirmingReset = false, refreshing = false;
@@ -453,7 +454,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   async function addMenu(tier, anchor) {
     const list = data.settings.tiers[tier] ?? [];
     const r = anchor.getBoundingClientRect();
-    const backends = [...new Set(['claude', 'codex', 'antigravity', ...data.candidates.map(c => c.backend)].filter(Boolean))];
+    const backends = [...new Set([...agents(), ...data.candidates.map(c => c.backend)].filter(Boolean))];
     const items = await Promise.all(backends.map(async backend => {
       const models = await modelsOf(backend).catch(() => null);
       const ids = Object.keys(models ?? {}).filter(id => id && !list.includes(`${backend}:${id}`));
