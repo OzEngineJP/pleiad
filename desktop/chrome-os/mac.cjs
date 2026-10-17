@@ -80,6 +80,9 @@ function parseActivePortText(text) {
  * @param [deps.sleep] 待ち関数
  * @param [deps.features] 機能の表の上書き
  */
+/** 確認のシートを見つけてから押すまでの待ち（シートの出てくる動き） */
+const ALLOW_SETTLE_MS = 600;
+
 function createMacChromeOs({
   helper,
   mac = null,
@@ -166,6 +169,9 @@ function createMacChromeOs({
   async function allowPermission(ref) {
     const entry = known(ref);
     if (!entry || entry.kind !== 'dialog') return false;
+    // 確認のシートは出てくる動きの間、押しても効かない（AXPress は成功を返すが閉じない。CI の macOS 15 で、見つけて 14ms で押して開かなかった）。
+    // 出きるまで待ってから押す
+    await sleep(ALLOW_SETTLE_MS);
     const res = await callHelper('chromeAllowDialog', { id: entry.id });
     if (!res || res.ok !== true) return false;
     if (res.method != null && res.method !== 'ax-press' && res.method !== 'ax-confirm') return false;
