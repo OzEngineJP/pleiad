@@ -51,6 +51,9 @@ export const DATA_WRITES = [
   { file: 'core/backends/antigravity-store.mjs', sites: 1, targets: [
     { name: 'antigravity/<conversationId>.json', limit: '会話の長さ', reason: 'Antigravity の会話の控え。ターン中に何度も書き直す', unbounded: true },
   ] },
+  { file: 'core/backends/opencode-plugin.mjs', sites: 1, targets: [
+    { name: 'opencode/pleiad-plugin.mjs', limit: '固定（PLUGIN_SOURCE。数 KB）', reason: 'OpenCode に読ませるプラグインの本文。中身が変わったときだけ書き直す（asar の中は OpenCode から読めない）' },
+  ] },
   { file: 'core/backends/antigravity-pids.mjs', sites: 1, targets: [
     { name: 'antigravity/pids.json', limit: '同時に動く agy の数', reason: '生きているプロセスの控え' },
   ] },

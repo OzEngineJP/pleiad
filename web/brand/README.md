@@ -13,5 +13,9 @@ their respective owners and are stored locally to avoid runtime third-party requ
   (https://github.com/lobehub/lobe-icons, MIT). Added a path ID for SVG `use`; the path
   geometry is unchanged. Rendered in the Google blue.
 - `claude.svg`: Claude mark, downloaded unchanged from https://claude.ai/favicon.svg
+- `opencode.svg`: opencode mark from LobeHub's icon collection
+  https://cdn.jsdelivr.net/npm/@lobehub/icons-static-svg@latest/icons/opencode.svg
+  (https://github.com/lobehub/lobe-icons, MIT). Added a path ID for SVG `use` and the title; the path
+  geometry is unchanged. Rendered in the text color (retrieved 2026-10-18).
 
 Retrieved 2026-09-12 (`antigravity.svg`: 2026-09-16). Original colors and aspect ratios are preserved.

@@ -20,6 +20,7 @@ export const RIGS = {
   },
   codex: async () => ({ env: { AGENT_HOST_BACKENDS: 'codex', AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"` }, prompt: (text) => text }),
   antigravity: async () => ({ env: { AGENT_HOST_BACKENDS: 'antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"` }, prompt: (text) => text }),
+  opencode: async () => ({ env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"` }, prompt: (text) => text }),
 };
 
 export const CAPABILITY_CONTRACTS = {

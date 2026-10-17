@@ -650,6 +650,32 @@
       "loginFailed": "Sign-in failed."
     }
   },
+  "opencode": {
+    "description": "Uses OpenCode's providers (OpenCode Zen, ChatGPT, GitHub Copilot, API keys)",
+    "modes": {
+      "ask": "Asks for everything except reading",
+      "edit": "Edits files automatically, asks for the rest",
+      "full": "Never asks. Stays inside the working directory",
+      "yolo": "No confirmations and no limits (including outside the working directory)",
+      "plan": "Does not edit (OpenCode's plan agent)"
+    },
+    "models": {
+      "default": "Default (OpenCode settings)"
+    },
+    "errors": {
+      "notInstalled": "OpenCode (opencode) was not found. Install it, then check again",
+      "noModel": "No model to use. Choose a model in OpenCode",
+      "forkMissing": "The message to fork from was not found"
+    },
+    "auth": {
+      "freeOnly": "OpenCode Zen free models only",
+      "detail": "OpenCode (providers connected with opencode auth login)",
+      "runCommand": "Run this command in a terminal, choose the provider to connect, and sign in. (This updates automatically when you finish)",
+      "loggedIn": "Provider connected",
+      "loginTimeout": "The terminal sign-in did not finish (please try again)",
+      "logoutInCli": "To disconnect an OpenCode provider, run opencode auth logout in a terminal"
+    }
+  },
   "antigravity": {
     "description": "Uses your Google AI Pro / Ultra plan.",
     "modes": {

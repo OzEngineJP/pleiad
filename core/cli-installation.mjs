@@ -44,6 +44,8 @@ export function cliCommand(id) {
       const bin = typeof metadata.bin === 'string' ? metadata.bin : metadata.bin?.[id];
       const script = bin && path.resolve(packageDir, bin);
       if (script && /\.[cm]?js$/i.test(script) && fs.statSync(script).isFile()) return [process.execPath, script, ...argv.slice(1)];
+      // 包みの中身がネイティブの実行ファイル（opencode-ai の bin/opencode.exe）なら、cmd を挟まずに直に起こす
+      if (script && process.platform === 'win32' && /\.exe$/i.test(script) && fs.statSync(script).isFile()) return [script, ...argv.slice(1)];
     } catch {}
   }
   return exe ? [exe, ...argv.slice(1)] : null;
