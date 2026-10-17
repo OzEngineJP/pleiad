@@ -26,7 +26,7 @@ const { prepareAgentBrowserBin, commandName } = require('../desktop/agent-browse
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = process.env.VERIFY_OUT_DIR || path.join(os.tmpdir(), `ply-chrome-mac-out-${Date.now()}`);
-const HELPER_BIN = process.env.VERIFY_HELPER_BIN || path.join(ROOT, 'build', 'mac-helper', 'pleiad-computer-helper');
+const HELPER_BIN = process.env.VERIFY_HELPER_BIN || path.join(ROOT, 'desktop', 'computer', 'mac', 'dist', 'pleiad-computer-helper');
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 

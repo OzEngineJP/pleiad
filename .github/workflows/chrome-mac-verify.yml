@@ -56,7 +56,7 @@ jobs:
           csrutil status || true
           echo "=== System TCC.db clients ==="
           sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "SELECT service, client, client_type, auth_value FROM access;" 2>&1 | tee "$RUNNER_TEMP/chrome-mac-evidence/tcc-system-before.txt" || true
-          HELPER_PATH="$(pwd)/build/mac-helper/pleiad-computer-helper"
+          HELPER_PATH="$(pwd)/desktop/computer/mac/dist/pleiad-computer-helper"
           NODE_PATH="$(which node)"
           for CLIENT_SPEC in \
             "0:com.apple.Terminal" \
