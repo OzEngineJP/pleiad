@@ -1194,13 +1194,34 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .recall-row.on{max-height:30px;opacity:1;padding-top:6px}
 .recall-row svg.i{width:13px;height:13px;flex:none}
 .recall-pos{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}
-.recall-from{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 一番古いものでさらに ↑: 数が 220ms だけ小さく跳ねる */
+.recall-pos.bump{animation:recall-bump 220ms var(--ease-out)}
+@keyframes recall-bump{25%{transform:translateY(-3px)}60%{transform:translateY(1px)}}
+/* ほかの会話の分: 紙の面の札（吹き出しのアイコン＋会話名、本文の色）。移った 1 回目だけ 240ms で左から入る */
+.recall-conv{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0;padding:0 8px 0 6px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink)}
+.recall-conv[hidden]{display:none}
+.recall-row .recall-conv svg.i{width:12px;height:12px;color:var(--ink-weak)}
+.recall-conv span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recall-conv.enter{animation:recall-conv-in var(--dur) var(--ease-out)}
+@keyframes recall-conv-in{from{opacity:0;transform:translateX(-6px)}}
+/* タッチの画面の行の「前へ」「次へ」「閉じる」（Esc の印の代わり） */
+.recall-btn{flex:none;display:inline-grid;place-items:center;width:28px;height:24px;padding:0;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);cursor:pointer}
+.recall-btn[hidden]{display:none}
+.recall-btn:hover{background:var(--surface-2);color:var(--ink)}
+.recall-btn:disabled{opacity:.4;cursor:default;background:transparent}
+.recall-row .recall-btn svg.i{width:14px;height:14px}
+/* タッチの画面の履歴のボタン。欄が空で候補も無いとき、候補を入れるボタンと同じ位置に。面も影も持たない弱いアイコン（目立たせない） */
+.recall-open{position:absolute;right:10px;z-index:2;display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border-radius:50%;background:transparent;color:var(--ink-weak);cursor:pointer}
+.recall-open[hidden]{display:none}
+.recall-open svg.i{width:15px;height:15px}
+:is(#prompt,#thPrompt)[data-recall-open]{padding-right:48px}
+.recall-from{flex:none;white-space:nowrap}
 .recall-sp{flex:1}
 .recall-esc{flex:none;cursor:pointer}
 .recall-esc:hover{color:var(--ink)}
 .recall-esc[hidden]{display:none}
 /* 並びを待っている間（150ms を過ぎたら「読み込み中…」）。アイコンが弱く明滅する */
-.recall-row.wait svg.i{animation:recall-wait 1.2s ease-in-out infinite}
+.recall-row.loading svg.i{animation:recall-wait 1.2s ease-in-out infinite}
 @keyframes recall-wait{50%{opacity:.35}}
 :is(#prompt,#thPrompt).recall-swap{animation:recall-in var(--dur-fast) var(--ease-out)}
 :is(#prompt,#thPrompt).recall-swap.down{animation-name:recall-in-down}
@@ -1211,16 +1232,22 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .composer-ghost{position:absolute;padding:9px 12px 3px;line-height:1.6;color:var(--ink-weak);white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;
   pointer-events:none;opacity:0;transition:opacity var(--dur) var(--ease-out)}
 .composer-ghost.on{opacity:1}
+.composer-ghost.out{transition-duration:var(--dur-fast)}
 .composer-ghost[hidden]{display:none}
 .composer-ghost.touch{padding-right:48px}
-.cg-key{margin-left:6px}
+.cg-key{margin-left:6px;display:inline-block}
+/* 空の欄の Ctrl/⌘+Enter: 送らずに Tab の印が 0.7 秒だけ青い輪で光り、少し膨らむ（動きを減らす設定では輪だけ） */
+.cg-key.nudge{animation:cg-nudge 700ms var(--ease-out)}
+@keyframes cg-nudge{20%{color:var(--ink-blue);box-shadow:0 0 0 2px var(--line-blue);transform:scale(1.08)}60%{color:var(--ink-blue);box-shadow:0 0 0 2px var(--line-blue)}}
+@keyframes cg-nudge-still{0%,80%{color:var(--ink-blue);box-shadow:0 0 0 2px var(--line-blue)}}
 :is(#prompt,#thPrompt)[data-ghost][data-empty=true]::before{content:none}
 :is(#prompt,#thPrompt)[data-ghost=touch]{padding-right:48px}
 .cg-take{position:absolute;right:10px;z-index:2;width:28px;height:28px;padding:0;border-radius:50%;background:var(--surface-paper);color:var(--ink-blue);
   display:inline-grid;place-items:center;box-shadow:0 1px 2px var(--shadow);cursor:pointer}
 .cg-take[hidden]{display:none}
 .cg-take svg.i{width:15px;height:15px}
-@media (prefers-reduced-motion:reduce){.recall-row,.composer-ghost{transition:none}:is(#prompt,#thPrompt).recall-swap,.recall-row.wait svg.i{animation:none}}
+@media (prefers-reduced-motion:reduce){.recall-row,.composer-ghost{transition:none}:is(#prompt,#thPrompt).recall-swap,.recall-row.loading svg.i,.recall-pos.bump,.recall-conv.enter{animation:none}
+  .cg-key.nudge{animation-name:cg-nudge-still}}
 .md-b{min-height:1.6em;margin:0}
 .md-b.md-h{font-weight:600;line-height:1.4;margin:.35em 0 .1em}
 .md-b.md-h[data-l="1"]{font-size:1.35em}

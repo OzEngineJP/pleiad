@@ -3,7 +3,9 @@
 // - ↑ が効くのは、カーソルが一番上の行（見た目の行）にあり、範囲を選んでいないときだけ。↓ は呼び出している間の一番下の行で
 // - 最初の ↑ で書きかけ（字と添付）を脇へ取る。↓ で一番新しいものを越えるか Esc で戻す。呼び出した文を直したら、それが新しい書きかけになる
 // - 呼び出した直後のカーソルは先頭（↓ なら末尾）。↑ を続けて押せば遡れる
-// - 欄の上に「3 / 5 · 10/14 18:20 · 会話名」の行を出す（ほかの会話の分だけ会話名。Esc の印を押しても戻る）
+// - 欄の上に「3 / 5 · 10/14 18:20 [会話名]」の行を出す（ほかの会話の分だけ、吹き出しのアイコンと会話名の札。Esc の印を押しても戻る）
+// - 一番古いものでさらに ↑ を押したら、数が小さく跳ねる（これ以上は無い合図）
+// - タッチの画面（↑ のキーが無い）: 欄が空で候補も無いとき、欄の右に履歴のボタン。行の右端は Esc の印の代わりに「前へ」「次へ」「閉じる」
 // - 順と中身は呼び出し側（load）が決める（この会話 → ほかの会話の新しい順。`!` の形では `!` で送ったコマンドだけ）
 // - 並びは欄にフォーカスが来た・会話を替えたときに先に読む（prefetch）。読み終わる前の ↑ は、150ms 過ぎたら行に「読み込み中…」を出して待つ。
 //   待つ間の ↑ は重ねない。待つ間に字を打った・会話を替えたら、読み終えても欄に入れない
@@ -12,6 +14,11 @@ import { el, icon } from '../dom.mjs';
 import { fmt } from '../i18n.mjs';
 
 const HISTORY_ICON = 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2';
+const CONV_ICON = 'M4 5h16v11H9l-5 4z';
+const OLDER_ICON = 'M18 15l-6-6-6 6';
+const NEWER_ICON = 'M6 9l6 6 6-6';
+const CLOSE_ICON = 'M6 6l12 12M18 6L6 18';
+const BUMP_MS = 220;
 const SWAP_MS = 120;
 const WAIT_SHOW_MS = 150;
 const PREFETCH_MS = 250;
@@ -61,8 +68,11 @@ const plainArrow = (e) => !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
  * @param {() => object} o.take 書きかけを取る（{ text, ... }）
  * @param {(draft: object) => void} o.restore 書きかけを戻す
  * @param {(item: object) => void} o.put 呼び出したものを欄に入れる
+ * @param {() => boolean} [o.touch] タッチの画面か（履歴のボタンと、行の「前へ」「次へ」「閉じる」）
+ * @param {() => boolean} [o.covered] 欄の右のボタンの位置が埋まっている（候補を入れるボタンが出ている）
  */
-export function createRecall({ prompt, box, t, enabled, blocked = () => false, shell = () => false, load, current = () => null, take, restore, put }) {
+export function createRecall({ prompt, box, t, enabled, blocked = () => false, shell = () => false, load, current = () => null, take, restore, put,
+  touch = () => false, covered = () => false }) {
   let items = null;       // 読んだ並び（最初の ↑ で読む）
   let loadedFor = null;   // 並びを読んだときの形（'text' | 'shell'）と会話
   let idx = -1;           // 呼び出している位置（-1 = 書きかけ）
@@ -74,6 +84,8 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
   let waitTimer = null;
   let prefetchTimer = null;
   let swapTimer = null;
+  let bumpTimer = null;
+  let lastOther = false;  // 前に出した分がほかの会話のものだったか（札が入る動きは、移った 1 回目だけ）
 
   const row = el('div', 'recall-row');
   row.setAttribute('role', 'status');
@@ -86,23 +98,82 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
   esc.setAttribute('aria-label', t('chat.recall.backToDraft'));
   esc.addEventListener('mousedown', (e) => e.preventDefault());
   esc.onclick = () => { back(); prompt.focus?.(); };
-  row.append(icon(HISTORY_ICON), pos, from, el('span', 'recall-sp'), esc);
+  const conv = el('span', 'recall-conv');
+  const convName = el('span');
+  conv.append(icon(CONV_ICON), convName);
+  conv.hidden = true;
+  const rowButton = (path, label, act) => {
+    const b = el('button', 'recall-btn');
+    b.type = 'button';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.append(icon(path));
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+    b.onclick = act;
+    b.hidden = true;
+    return b;
+  };
+  const older = rowButton(OLDER_ICON, t('chat.recall.older'), () => stepUp());
+  const newer = rowButton(NEWER_ICON, t('chat.recall.newer'), () => stepDown());
+  const close = rowButton(CLOSE_ICON, t('chat.recall.backToDraft'), () => back());
+  row.append(icon(HISTORY_ICON), pos, from, conv, el('span', 'recall-sp'), esc, older, newer, close);
   box.insertBefore(row, prompt);
+  // タッチの画面の履歴のボタン（欄が空で候補も無いときだけ。候補を入れるボタンと同じ位置）
+  const open = el('button', 'recall-open');
+  open.type = 'button';
+  open.title = t('chat.recall.open');
+  open.setAttribute('aria-label', t('chat.recall.open'));
+  open.append(icon(HISTORY_ICON));
+  open.addEventListener('mousedown', (e) => e.preventDefault());
+  open.onclick = () => { void up(); };
+  open.hidden = true;
+  prompt.insertAdjacentElement('afterend', open);
 
   const active = () => idx >= 0;
 
   function paintRow() {
     const item = active() ? items[idx] : null;
-    row.classList.remove('wait');
-    esc.hidden = false;
+    const touchMode = touch();
+    row.classList.remove('loading');
+    esc.hidden = touchMode;
+    older.hidden = newer.hidden = close.hidden = !touchMode;
     row.classList.toggle('on', Boolean(item));
-    if (!item) return;
+    if (!item) { lastOther = false; paintOpen(); return; }
     pos.textContent = `${idx + 1} / ${items.length}`;
     const when = recallWhen(item.at);
-    const other = item.sessionId && item.sessionId !== current();
-    const parts = [when, other ? (item.title || t('session.untitled')) : ''].filter(Boolean);
-    from.textContent = parts.length ? `· ${parts.join(' · ')}` : '';
-    from.title = from.textContent.slice(2);
+    from.textContent = when ? `· ${when}` : '';
+    from.title = when;
+    const other = Boolean(item.sessionId && item.sessionId !== current());
+    conv.hidden = !other;
+    if (other) {
+      const name = item.title || t('session.untitled');
+      convName.textContent = name;
+      conv.title = name;
+      if (!lastOther) { conv.classList.remove('enter'); void conv.offsetWidth; conv.classList.add('enter'); }
+    }
+    lastOther = other;
+    older.disabled = idx >= items.length - 1;
+    paintOpen();
+  }
+
+  /** 履歴のボタン（タッチの画面だけ）。欄が空・呼び出していない・候補のボタンが出ていないときに、欄の右上に置く */
+  function paintOpen() {
+    const show = touch() && enabled() && !blocked() && !prompt.readOnly && !active() && !waiting && !String(prompt.value ?? '').length && !covered();
+    open.hidden = !show;
+    if (show) { open.style.top = `${prompt.offsetTop + 6}px`; prompt.dataset.recallOpen = '1'; }
+    else delete prompt.dataset.recallOpen;
+  }
+  // 欄の上の行が開閉する間も欄は動くので、箱の大きさが変わるたびに置き直す
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => { if (!open.hidden) paintOpen(); }).observe(box);
+  box.addEventListener?.('transitionend', () => { if (!open.hidden) paintOpen(); });
+
+  /** 一番古いものでさらに ↑: 数が小さく跳ねる */
+  function bump() {
+    clearTimeout(bumpTimer);
+    pos.classList.remove('bump');
+    void pos.offsetWidth;
+    pos.classList.add('bump');
+    bumpTimer = setTimeout(() => pos.classList.remove('bump'), BUMP_MS + 80);
   }
 
   function swap(down) {
@@ -131,6 +202,19 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
     show(true);
   }
 
+  /** ↑・「前へ」: 古い方へ。一番古いものなら跳ねるだけ */
+  function stepUp() {
+    if (active() && idx >= (items?.length ?? 0) - 1) { bump(); return; }
+    void up();
+  }
+
+  /** ↓・「次へ」: 新しい方へ。一番新しいものを越えたら書きかけへ戻る */
+  function stepDown() {
+    if (!active()) return;
+    idx -= 1;
+    show(true);
+  }
+
   /** 並びの持ち主（形と会話）。替わったら読み直す */
   const keyNow = () => `${shell() ? 'shell' : 'text'}|${current() ?? ''}`;
   const ready = () => Boolean(items) && loadedFor === keyNow();
@@ -151,8 +235,9 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
   function paintWait() {
     pos.textContent = t('chat.recall.loading');
     from.textContent = ''; from.title = '';
-    esc.hidden = true;
-    row.classList.add('on', 'wait');
+    conv.hidden = true;
+    esc.hidden = older.hidden = newer.hidden = close.hidden = true;
+    row.classList.add('on', 'loading');
   }
 
   /** 並びを先に読んでおく（欄にフォーカスが来た・会話を替えた・送った）。続けて呼ばれたら最後の 1 回だけ */
@@ -170,6 +255,7 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
     if (!ready()) {
       const key = keyNow(), before = String(prompt.value ?? '');
       waiting = true;
+      paintOpen();
       clearTimeout(waitTimer);
       waitTimer = setTimeout(() => { if (waiting) paintWait(); }, WAIT_SHOW_MS);
       try { await ensureItems(); } catch { /* 読めなければ何も入れない */ } finally { waiting = false; clearTimeout(waitTimer); }
@@ -192,25 +278,24 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
       if (e.key === 'Escape' && active()) { e.preventDefault(); back(); return true; }
       if (!plainArrow(e)) return false;
       if (e.key === 'ArrowUp' && caretAtEdge(prompt, 'top')) {
-        if (active() && idx >= (items?.length ?? 0) - 1) return false;
         e.preventDefault();
-        void up();
+        stepUp();
         return true;
       }
       if (e.key === 'ArrowDown' && active() && caretAtEdge(prompt, 'bottom')) {
         e.preventDefault();
-        idx -= 1;
-        show(true);
+        stepDown();
         return true;
       }
       return false;
     },
     /** 字の欄の input。呼び出した文を直したら、呼び出しは終わり（それが新しい書きかけ） */
     input() {
-      if (!active() || String(prompt.value ?? '') === shown) return;
-      idx = -1; draft = null; shown = null;
-      paintRow();
+      if (active() && String(prompt.value ?? '') !== shown) { idx = -1; draft = null; shown = null; paintRow(); }
+      else paintOpen();
     },
+    /** 欄・候補・設定が変わった（履歴のボタンを出すかを決め直す） */
+    refresh: paintOpen,
     /** 呼び出している間なら、動きを付けずに書きかけへ戻す（会話を替える前。呼び出した文を下書きとして保存しない） */
     release() {
       if (!active()) return;

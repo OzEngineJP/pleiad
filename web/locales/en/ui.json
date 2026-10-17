@@ -2173,11 +2173,15 @@
     },
     "recall": {
       "backToDraft": "Back to your draft",
-      "loading": "Loading sent messages…"
+      "loading": "Loading…",
+      "open": "Sent messages",
+      "older": "Previous",
+      "newer": "Next"
     },
     "suggestion": {
       "accept": "Use the suggestion",
-      "described": "Suggestion: {{text}}"
+      "described": "Suggestion: {{text}}",
+      "useTab": "Press Tab to use the suggestion"
     },
     "composer": {
       "skills": "Skills",

@@ -310,6 +310,9 @@ const chatRecall = createRecall({
   take: () => ({ text: $('prompt').value, attached: state.attached.slice() }),
   restore: (draft) => { state.attached = draft?.attached ?? []; $('prompt').value = draft?.text ?? ''; fitPrompt(); renderAttached(); },
   put: (item) => putRecalled(item),
+  // タッチの画面は欄の右に履歴のボタン。候補を入れるボタンが出ている間は譲る
+  touch: () => matchMedia('(pointer:coarse)').matches,
+  covered: () => chatSuggestion.visible,
 });
 /** 呼び出したものを欄に入れる。文中の添付の印があれば、その発言の添付も戻す（再送信と同じ。recalledAttachments） */
 function putRecalled(item) {
@@ -342,6 +345,10 @@ const chatSuggestion = createSuggestion({
     prompt.dispatchEvent(new Event('input', { bubbles: true }));
     prompt.focus();
   },
+  announce: (text) => announce(text),
+  // Esc で消した候補は、次の返答で新しい候補が届くまで出さない
+  dismiss: () => suggestions.delete(state.current),
+  painted: () => chatRecall.refresh(),
 });
 function dropSuggestion(sessionId) {
   if (!suggestions.delete(sessionId) && sessionId !== state.current) return;
