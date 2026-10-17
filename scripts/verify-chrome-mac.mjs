@@ -143,6 +143,10 @@ async function main() {
     if (!browser) throw new Error('Google Chrome not found on runner');
 
     const chromeBin = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const verOut = await runCmd(chromeBin, ['--version']);
+    log(`Google Chrome version: ${verOut.stdout || verOut.stderr}`);
+    results.chromeVersion = verOut.stdout;
+
     log(`Launching initial Google Chrome window with --user-data-dir=${userDataDir}`);
     chromeProc = spawn(chromeBin, [
       `--user-data-dir=${userDataDir}`,
@@ -169,7 +173,7 @@ async function main() {
     log(`DevToolsActivePort before enableRemoteDebugging: ${JSON.stringify(portBefore)}`);
 
     // 起動直後の AX ツリーを記録
-    const initialAx = await helper.call('chromeDumpAx', { maxDepth: 6 }).catch(e => ({ error: e.message }));
+    const initialAx = await helper.call('chromeDumpAx', { maxDepth: 12 }).catch(e => ({ error: e.message }));
     await fs.writeFile(path.join(OUT_DIR, 'ax-initial.json'), JSON.stringify(initialAx, null, 2));
 
     log('Calling osClient.enableRemoteDebugging...');
@@ -182,11 +186,6 @@ async function main() {
     const enableElapsedMs = Date.now() - enableStart;
     log(`enableRemoteDebugging result (${enableElapsedMs}ms): ${JSON.stringify(enableRes)}`);
 
-    if (!enableRes?.ok) {
-      const failAx = await helper.call('chromeDumpAx', { maxDepth: 10 }).catch(e => ({ error: e.message }));
-      await fs.writeFile(path.join(OUT_DIR, 'ax-enable-failed.json'), JSON.stringify(failAx, null, 2));
-    }
-
     // DevToolsActivePort が書かれるのを確かめる
     let activePort = null;
     const waitPortEnd = Date.now() + 5000;
@@ -195,6 +194,12 @@ async function main() {
       if (activePort) break;
       await sleep(200);
     }
+    const udEntries = await fs.readdir(userDataDir).catch(() => []);
+    log(`userDataDir entries after enableRemoteDebugging: ${JSON.stringify(udEntries)}`);
+    if (!enableRes?.ok || !activePort) {
+      const failAx = await helper.call('chromeDumpAx', { maxDepth: 15 }).catch(e => ({ error: e.message }));
+      await fs.writeFile(path.join(OUT_DIR, 'ax-enable-failed.json'), JSON.stringify(failAx, null, 2));
+    }
     const windowsAfterEnable = await osClient.snapshotWindows();
     results.stages.enableRemoteDebugging = {
       ok: enableRes?.ok === true && Boolean(activePort),
@@ -202,6 +207,7 @@ async function main() {
       elapsedMs: enableElapsedMs,
       portBefore,
       activePort,
+      udEntries,
       initialWindows,
       windowsAfterEnable,
     };

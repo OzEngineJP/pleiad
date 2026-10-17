@@ -86,6 +86,9 @@ export function unsupportedChromeOs(reason = 'platform') {
 
 const READY_WAIT_MS = 5000;
 const CALL_TIMEOUT_MS = 5000;
+/** 押す・トグルを入れる（Chrome の起動・ページの読み込みを含む）の待ち */
+const ALLOW_TIMEOUT_MS = 20_000;
+const ENABLE_TIMEOUT_MS = 45_000;
 
 /**
  * parentPort 越しの口。port が無い（Electron でない）ときは no-desktop の口を返す。
@@ -140,11 +143,11 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     port.on('connect', requestReady);
   }
 
-  const call = (action, args, fallback) => {
+  const call = (action, args, fallback, wait = timeoutMs) => {
     if (!caps.supported) return Promise.resolve(fallback);
     return new Promise(resolve => {
       const id = `co${++next}`;
-      const timer = setTimeout(() => { pending.delete(id); resolve(fallback); }, timeoutMs);
+      const timer = setTimeout(() => { pending.delete(id); resolve(fallback); }, wait);
       pending.set(id, { resolve, timer, fallback });
       let sent = false;
       try { sent = port.postMessage({ type: 'chrome-os', id, action, args }) !== false; } catch { /* 送れなかった */ }
@@ -169,9 +172,9 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     generation: () => generation,
     snapshotWindows: () => call('snapshotWindows', {}, null),
     findPermissionDialog: ({ since, port } = {}) => call('findPermissionDialog', { since: since ?? [], port: port ?? null }, null),
-    allowPermission: ref => call('allowPermission', { ref }, false),
+    allowPermission: ref => call('allowPermission', { ref }, false, Math.max(timeoutMs, ALLOW_TIMEOUT_MS)),
     enableRemoteDebugging: ({ browser, profileDir, userDataDir = null } = {}) =>
-      call('enableRemoteDebugging', { browser, profileDir, userDataDir }, { ok: false, reason: 'unsupported' }),
+      call('enableRemoteDebugging', { browser, profileDir, userDataDir }, { ok: false, reason: 'timeout' }, Math.max(timeoutMs, ENABLE_TIMEOUT_MS)),
     raise: ref => call('raise', { ref }, { ok: false, method: 'failed' }),
     yieldForeground: (ref, { to } = {}) => call('yieldForeground', { ref, to }, false),
     foreground: () => call('foreground', {}, null),

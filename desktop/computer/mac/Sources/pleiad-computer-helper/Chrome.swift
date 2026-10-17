@@ -305,15 +305,29 @@ enum Chrome {
         return lower.contains("remote debugging") || raw.contains("リモート デバッグ") || raw.contains("リモートデバッグ")
     }
 
+    private static func collectShortText(_ node: AXUIElement, depth: Int = 0, maxDepth: Int = 3) -> String {
+        if depth > maxDepth { return "" }
+        var parts: [String] = []
+        if let t = axString(node, kAXTitleAttribute as String), !t.isEmpty { parts.append(t) }
+        if let d = axString(node, kAXDescriptionAttribute as String), !d.isEmpty { parts.append(d) }
+        if let v = axString(node, kAXValueAttribute as String), !v.isEmpty { parts.append(v) }
+        if let h = axString(node, kAXHelpAttribute as String), !h.isEmpty { parts.append(h) }
+        for c in axChildren(node) {
+            let ct = collectShortText(c, depth: depth + 1, maxDepth: maxDepth)
+            if !ct.isEmpty { parts.append(ct) }
+        }
+        return parts.joined(separator: " ")
+    }
+
     /** Web の中身（AXWebArea）を除いた Chrome 自身の UI 木から、許可ボタンとダイアログ文言を探す */
-    private static func scanDialogInTree(_ root: AXUIElement, maxDepth: Int = 12) -> (allowButton: AXUIElement?, allowTitle: String?, hasDialogText: Bool) {
+    private static func scanDialogInTree(_ root: AXUIElement, maxDepth: Int = 25) -> (allowButton: AXUIElement?, allowTitle: String?, hasDialogText: Bool) {
         var allowButton: AXUIElement?
         var allowTitle: String?
         var hasText = false
         var visited = 0
 
         func walk(_ node: AXUIElement, depth: Int) {
-            if depth > maxDepth || visited > 600 { return }
+            if depth > maxDepth || visited > 3000 { return }
             visited += 1
             let role = axString(node, kAXRoleAttribute as String) ?? ""
             if role == "AXWebArea" { return } // ページの DOM の中の偽ボタンは絶対に触らない
@@ -330,6 +344,15 @@ enum Chrome {
                 } else if isAllowButtonLabel(desc) {
                     allowButton = node
                     allowTitle = desc
+                } else if isAllowButtonLabel(val) {
+                    allowButton = node
+                    allowTitle = val
+                } else {
+                    let childText = collectShortText(node, depth: 0, maxDepth: 2)
+                    if isAllowButtonLabel(childText) {
+                        allowButton = node
+                        allowTitle = childText
+                    }
                 }
             }
             for child in axChildren(node) {
@@ -350,50 +373,72 @@ enum Chrome {
         if let ownerPid {
             targetPids = [ownerPid]
         } else if port > 0 {
-            // port が指定されているのに待ち受けプロセスが引けない場合、ブラウザが 1 プロセスだけならそれを使う
             let all = browserPids()
             targetPids = all.count == 1 ? all : []
         } else {
             targetPids = browserPids()
         }
 
+        let snap = windows(["port": port])
+        let allWins = (snap["windows"] as? [[String: Any]]) ?? []
+
         guard AXIsProcessTrusted() else {
-            // AX 無しでも CGWindowList で小さい新しい窓があれば返す
-            let snap = windows(["port": port])
-            if let list = snap["windows"] as? [[String: Any]] {
-                for w in list {
-                    guard let id = w["id"] as? String, !since.contains(id),
-                          let pid = w["pid"] as? Int, targetPids.contains(pid_t(pid)),
-                          let visible = w["visible"] as? Bool, visible,
-                          let width = w["width"] as? Double, let height = w["height"] as? Double,
-                          width >= minDialogWidth, width <= maxDialogWidth,
-                          height >= minDialogHeight, height <= maxDialogHeight else { continue }
-                    return ["dialog": w]
-                }
+            for w in allWins {
+                guard let id = w["id"] as? String, !since.contains(id),
+                      let pid = w["pid"] as? Int, targetPids.contains(pid_t(pid)),
+                      let visible = w["visible"] as? Bool, visible,
+                      let width = w["width"] as? Double, let height = w["height"] as? Double,
+                      width >= minDialogWidth, width <= maxDialogWidth,
+                      height >= minDialogHeight, height <= maxDialogHeight else { continue }
+                return ["dialog": w]
             }
             return ["dialog": NSNull()]
         }
 
         for pid in targetPids {
             enableAppAccessibility(pid)
-            let winDicts = collectAxWindows(for: pid)
-            // 1. since に無い、小さい窓（またはダイアログ文言／Allow ボタンを持つ窓）
-            for w in winDicts {
-                guard let id = w["id"] as? String,
-                      let visible = w["visible"] as? Bool, visible,
-                      let width = w["width"] as? Double, let height = w["height"] as? Double else { continue }
-                let isSmall = width >= minDialogWidth && width <= maxDialogWidth && height >= minDialogHeight && height <= maxDialogHeight
-                if !since.contains(id) && isSmall {
-                    return ["dialog": w]
+        }
+
+        for w in allWins {
+            guard let id = w["id"] as? String,
+                  let pid = w["pid"] as? Int, targetPids.contains(pid_t(pid)),
+                  let visible = w["visible"] as? Bool, visible,
+                  let width = w["width"] as? Double, let height = w["height"] as? Double else { continue }
+            let isSmall = width >= minDialogWidth && width <= maxDialogWidth && height >= minDialogHeight && height <= maxDialogHeight
+            if !since.contains(id) && isSmall {
+                return ["dialog": w]
+            }
+            if let entry = lookupWindow(id: id) {
+                let scan = scanDialogInTree(entry.element)
+                if scan.allowButton != nil && (scan.hasDialogText || !since.contains(id) || isSmall) {
+                    var d = w
+                    d["hasAllowButton"] = true
+                    return ["dialog": d]
                 }
-                if let entry = lookupWindow(id: id) {
-                    let scan = scanDialogInTree(entry.element)
-                    if scan.allowButton != nil && (scan.hasDialogText || !since.contains(id) || isSmall) {
-                        var d = w
-                        d["hasAllowButton"] = true
-                        return ["dialog": d]
-                    }
-                }
+            }
+        }
+
+        // アプリ直下の要素（kAXWindowsAttribute に出ないモーダルやシート）も走査する
+        for pid in targetPids {
+            let appElem = AXUIElementCreateApplication(pid)
+            let scan = scanDialogInTree(appElem, maxDepth: 25)
+            if scan.allowButton != nil && scan.hasDialogText {
+                let id = registerWindow(pid: pid, element: appElem)
+                return [
+                    "dialog": [
+                        "id": id,
+                        "pid": Int(pid),
+                        "exe": "Google Chrome",
+                        "title": "Allow remote debugging?",
+                        "x": 100.0,
+                        "y": 100.0,
+                        "width": 420.0,
+                        "height": 180.0,
+                        "minimized": false,
+                        "visible": true,
+                        "hasAllowButton": true
+                    ]
+                ]
             }
         }
         return ["dialog": NSNull()]
@@ -409,19 +454,31 @@ enum Chrome {
         }
         enableAppAccessibility(entry.pid)
 
-        // まず対象の窓の中から Allow / 許可する ボタンを探す
-        let scan = scanDialogInTree(entry.element, maxDepth: 15)
+        // 1. 対象の要素の中から Allow / 許可する ボタンを探す
+        let scan = scanDialogInTree(entry.element, maxDepth: 25)
         if let btn = scan.allowButton {
+            _ = AXUIElementSetAttributeValue(btn, kAXFocusedAttribute as CFString, kCFBooleanTrue)
             let err = AXUIElementPerformAction(btn, kAXPressAction as CFString)
             if err == .success {
                 return ["ok": true, "button": scan.allowTitle ?? "Allow", "method": "ax-press"]
             }
+            if AXUIElementPerformAction(btn, kAXConfirmAction as CFString) == .success {
+                return ["ok": true, "button": scan.allowTitle ?? "Allow", "method": "ax-confirm"]
+            }
         }
 
-        // ダイアログが親窓・兄弟窓としてぶら下がっている場合、同じ PID の他の AXWindow も探す
+        // 2. 同じ PID のアプリ全体・他の AXWindow からも探す
         let appElem = AXUIElementCreateApplication(entry.pid)
+        let appScan = scanDialogInTree(appElem, maxDepth: 25)
+        if let btn = appScan.allowButton, appScan.hasDialogText {
+            _ = AXUIElementSetAttributeValue(btn, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            let err = AXUIElementPerformAction(btn, kAXPressAction as CFString)
+            if err == .success {
+                return ["ok": true, "button": appScan.allowTitle ?? "Allow", "method": "ax-press-app"]
+            }
+        }
         for win in axChildren(appElem, kAXWindowsAttribute as String) {
-            let s = scanDialogInTree(win, maxDepth: 15)
+            let s = scanDialogInTree(win, maxDepth: 25)
             if let btn = s.allowButton, s.hasDialogText {
                 let err = AXUIElementPerformAction(btn, kAXPressAction as CFString)
                 if err == .success {
@@ -439,7 +496,7 @@ enum Chrome {
         var visited = 0
 
         func walk(_ node: AXUIElement, depth: Int) {
-            if depth > 14 || visited > 800 { return }
+            if depth > 20 || visited > 2000 { return }
             visited += 1
             let role = axString(node, kAXRoleAttribute as String) ?? ""
             if role == "AXWebArea" { return }
@@ -466,59 +523,89 @@ enum Chrome {
         return candidates.max(by: { $0.score < $1.score })?.elem
     }
 
-    private static func findRemoteDebuggingCheckbox(in root: AXUIElement) -> (checkbox: AXUIElement, checked: Bool, label: String)? {
-        var matches: [(checkbox: AXUIElement, checked: Bool, label: String, score: Int)] = []
+    private struct CheckboxMatch {
+        let checkbox: AXUIElement
+        let parent: AXUIElement?
+        let checked: Bool
+        let enabled: Bool
+        let label: String
+        let score: Int
+    }
+
+    private static func scanRemoteDebuggingCheckboxes(in root: AXUIElement) -> (best: CheckboxMatch?, all: [[String: Any]]) {
+        var matches: [CheckboxMatch] = []
+        var all: [[String: Any]] = []
         var visited = 0
 
-        func collectText(_ node: AXUIElement, depth: Int = 0) -> String {
-            if depth > 3 { return "" }
-            var parts: [String] = []
-            if let t = axString(node, kAXTitleAttribute as String), !t.isEmpty { parts.append(t) }
-            if let d = axString(node, kAXDescriptionAttribute as String), !d.isEmpty { parts.append(d) }
-            if let v = axString(node, kAXValueAttribute as String), !v.isEmpty { parts.append(v) }
-            for c in axChildren(node) {
-                let ct = collectText(c, depth: depth + 1)
-                if !ct.isEmpty { parts.append(ct) }
-            }
-            return parts.joined(separator: " ")
-        }
-
-        func walk(_ node: AXUIElement, parent: AXUIElement?, depth: Int, inWebArea: Bool) {
-            if depth > 30 || visited > 3000 { return }
+        func walk(_ node: AXUIElement, parent: AXUIElement?, grandparent: AXUIElement?, depth: Int) {
+            if depth > 35 || visited > 5000 { return }
             visited += 1
             let role = axString(node, kAXRoleAttribute as String) ?? ""
-            let nowInWeb = inWebArea || role == "AXWebArea"
-            if role == "AXCheckBox" {
-                let ownText = collectText(node, depth: 1)
-                let parentText = parent.map { collectText($0, depth: 1) } ?? ""
-                let combined = "\(ownText) \(parentText)"
+            if role == "AXCheckBox" || role == "AXSwitch" || role == "AXRadioButton" {
+                let domId = axString(node, "AXDOMIdentifier") ?? axString(node, kAXIdentifierAttribute as String) ?? ""
+                var titleElemText = ""
+                var titleElemRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(node, kAXTitleUIElementAttribute as CFString, &titleElemRef) == .success,
+                   let te = titleElemRef, CFGetTypeID(te) == AXUIElementGetTypeID() {
+                    titleElemText = collectShortText(te as! AXUIElement, depth: 0, maxDepth: 2)
+                }
+                let ownText = collectShortText(node, depth: 0, maxDepth: 2)
+                let parentText = parent.map { collectShortText($0, depth: 0, maxDepth: 2) } ?? ""
+                let grandText = grandparent.map { collectShortText($0, depth: 0, maxDepth: 2) } ?? ""
+                let combined = "\(domId) \(titleElemText) \(ownText) \(parentText) \(grandText)"
                 let lower = combined.lowercased()
+                let domLower = domId.lowercased()
+                let enabled = axBool(node, kAXEnabledAttribute as String) ?? true
                 let val = axInt(node, kAXValueAttribute as String) ?? ((axBool(node, kAXValueAttribute as String) == true) ? 1 : 0)
-                var score = nowInWeb ? 10 : 0
-                if lower.contains("remote debugging") || combined.contains("リモート デバッグ") || combined.contains("リモートデバッグ") || lower.contains("browser instance") {
+
+                var score = 0
+                if domLower == "remote-debugging-enabled" {
+                    score += 500
+                }
+                if lower.contains("allow remote debugging") || lower.contains("browser instance") ||
+                   combined.contains("このブラウザ インスタンスでリモート デバッグを許可") || combined.contains("リモート デバッグを許可") {
+                    score += 200
+                } else if lower.contains("remote debugging") || combined.contains("リモート デバッグ") || combined.contains("リモートデバッグ") {
                     score += 100
                 }
-                if lower.contains("discover usb") || lower.contains("discover network") || lower.contains("port forwarding") {
-                    score -= 100
+                if domLower.contains("discover-") || domLower.contains("port-forwarding") || domLower.contains("bubble-locking") ||
+                   lower.contains("discover usb") || lower.contains("discover network") || lower.contains("port forwarding") || lower.contains("bubble locking") {
+                    score -= 400
                 }
-                if score > 0 {
-                    matches.append((node, val != 0, ownText.isEmpty ? parentText : ownText, score))
+
+                let label = !domId.isEmpty ? domId : (!ownText.isEmpty ? ownText : parentText)
+                all.append([
+                    "domId": domId,
+                    "checked": val != 0,
+                    "enabled": enabled,
+                    "score": score,
+                    "label": String(label.prefix(80))
+                ])
+                if score >= 100 {
+                    matches.append(CheckboxMatch(
+                        checkbox: node,
+                        parent: parent,
+                        checked: val != 0,
+                        enabled: enabled,
+                        label: String(label.prefix(80)),
+                        score: score
+                    ))
                 }
             }
             for child in axChildren(node) {
-                walk(child, parent: node, depth: depth + 1, inWebArea: nowInWeb)
+                walk(child, parent: node, grandparent: parent, depth: depth + 1)
             }
         }
 
-        walk(root, parent: nil, depth: 0, inWebArea: false)
-        guard let best = matches.max(by: { $0.score < $1.score }) else { return nil }
-        return (best.checkbox, best.checked, best.label)
+        walk(root, parent: nil, grandparent: nil, depth: 0)
+        let best = matches.max(by: { $0.score < $1.score })
+        return (best, all)
     }
 
-    private static func postReturnToPid(_ pid: pid_t) {
+    private static func postKeyToPid(_ pid: pid_t, code: Int) {
         let src = CGEventSource(stateID: .hidSystemState)
-        if let down = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Return), keyDown: true),
-           let up = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(kVK_Return), keyDown: false) {
+        if let down = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(code), keyDown: true),
+           let up = CGEvent(keyboardEventSource: src, virtualKey: CGKeyCode(code), keyDown: false) {
             down.flags = []
             up.flags = []
             down.postToPid(pid)
@@ -541,7 +628,7 @@ enum Chrome {
 
     /**
      * chrome://inspect/#remote-debugging への遷移とトグルの 1 ステップ。
-     * { id: String, url?: String, navigate?: Bool, activateFallback?: Bool }
+     * { id: String, url?: String, marker?: String, navigate?: Bool, activateFallback?: Bool }
      */
     static func enableStep(_ args: [String: Any]) -> [String: Any] {
         guard AXIsProcessTrusted(), let id = args["id"] as? String else {
@@ -551,18 +638,49 @@ enum Chrome {
             return ["state": "error", "reason": "window-gone"]
         }
         let targetUrl = (args["url"] as? String) ?? "chrome://inspect/#remote-debugging"
+        let marker = (args["marker"] as? String) ?? ""
         enableAppAccessibility(entry.pid)
         let title = axString(entry.element, kAXTitleAttribute as String) ?? ""
+        let stillOnMarker = !marker.isEmpty ? title.contains(marker) : title.contains("PLY-ENABLE-")
 
-        // 1. すでにチェックボックスが見えていれば、状態を見て必要なら押す
-        if let found = findRemoteDebuggingCheckbox(in: entry.element) {
-            if found.checked {
-                return ["state": "already-on", "checked": true, "label": found.label, "title": title]
+        // 1. すでに遷移していてリモートデバッグのチェックボックスが見えていれば、有効化を待ってトグルする
+        let scan = scanRemoteDebuggingCheckboxes(in: entry.element)
+        if !stillOnMarker, let found = scan.best {
+            if !found.enabled {
+                return ["state": "checkbox-disabled", "label": found.label, "title": title, "checkboxes": scan.all]
             }
-            let err = AXUIElementPerformAction(found.checkbox, kAXPressAction as CFString)
-            usleep(120_000)
-            let after = findRemoteDebuggingCheckbox(in: entry.element)?.checked ?? (err == .success)
-            return ["state": "toggled", "checked": after, "axError": Int(err.rawValue), "label": found.label, "title": title]
+            if found.checked {
+                return ["state": "already-on", "checked": true, "label": found.label, "title": title, "checkboxes": scan.all]
+            }
+            // 方法 1: チェックボックス自身に kAXPressAction
+            let err1 = AXUIElementPerformAction(found.checkbox, kAXPressAction as CFString)
+            usleep(250_000)
+            if scanRemoteDebuggingCheckboxes(in: entry.element).best?.checked == true {
+                return ["state": "toggled", "checked": true, "method": "ax-press-checkbox", "axError": Int(err1.rawValue), "label": found.label, "title": title]
+            }
+            // 方法 2: 親の label 要素に kAXPressAction
+            if let parent = found.parent {
+                _ = AXUIElementPerformAction(parent, kAXPressAction as CFString)
+                usleep(250_000)
+                if scanRemoteDebuggingCheckboxes(in: entry.element).best?.checked == true {
+                    return ["state": "toggled", "checked": true, "method": "ax-press-label", "label": found.label, "title": title]
+                }
+            }
+            // 方法 3: フォーカスして Space キーを送る
+            _ = AXUIElementSetAttributeValue(found.checkbox, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+            usleep(50_000)
+            postKeyToPid(entry.pid, code: kVK_Space)
+            usleep(250_000)
+            let after3 = scanRemoteDebuggingCheckboxes(in: entry.element).best?.checked == true
+            return [
+                "state": after3 ? "toggled" : "toggle-pending",
+                "checked": after3,
+                "method": "focus-space",
+                "axError": Int(err1.rawValue),
+                "label": found.label,
+                "title": title,
+                "checkboxes": scan.all
+            ]
         }
 
         // 2. まだ遷移していない（または遷移指示がある）ならアドレス欄から遷移する
@@ -575,42 +693,35 @@ enum Chrome {
             _ = AXUIElementSetAttributeValue(entry.element, kAXMainAttribute as CFString, kCFBooleanTrue)
             _ = NSRunningApplication(processIdentifier: entry.pid)?.activate()
             usleep(120_000)
-            if let bar = findAddressBar(in: entry.element) {
-                _ = AXUIElementSetAttributeValue(bar, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                usleep(40_000)
-                _ = AXUIElementSetAttributeValue(bar, kAXValueAttribute as CFString, targetUrl as CFTypeRef)
-                usleep(40_000)
-                let currentVal = axString(bar, kAXValueAttribute as String) ?? ""
-                if !currentVal.contains("chrome://inspect") {
-                    postHidKey(kVK_ANSI_L, flags: .maskCommand)
-                    usleep(60_000)
-                    try? InputDriver.shared.text(["text": targetUrl])
-                    usleep(60_000)
-                }
-                postHidKey(kVK_Return)
-                return ["state": "navigated-active", "prevFrontPid": Int(prevFrontPid), "title": title]
-            } else {
-                postHidKey(kVK_ANSI_L, flags: .maskCommand)
-                usleep(80_000)
-                try? InputDriver.shared.text(["text": targetUrl])
-                usleep(60_000)
-                postHidKey(kVK_Return)
-                return ["state": "navigated-hotkey", "prevFrontPid": Int(prevFrontPid), "title": title]
-            }
+            postHidKey(kVK_ANSI_L, flags: .maskCommand)
+            usleep(80_000)
+            try? InputDriver.shared.text(["text": targetUrl])
+            usleep(80_000)
+            postHidKey(kVK_Return)
+            return ["state": "navigated-active", "prevFrontPid": Int(prevFrontPid), "title": title]
         }
 
         if doNavigate {
+            let prevFrontPid = NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0
+            // Chrome はアドレス欄の Return を前面の窓でしか受けないため、遷移の間だけ対象窓を前に出す
+            _ = AXUIElementPerformAction(entry.element, kAXRaiseAction as CFString)
+            _ = AXUIElementSetAttributeValue(entry.element, kAXMainAttribute as CFString, kCFBooleanTrue)
+            _ = NSRunningApplication(processIdentifier: entry.pid)?.activate()
+            usleep(100_000)
             if let bar = findAddressBar(in: entry.element) {
                 _ = AXUIElementSetAttributeValue(bar, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                usleep(60_000)
                 _ = AXUIElementSetAttributeValue(bar, kAXValueAttribute as CFString, targetUrl as CFTypeRef)
+                usleep(60_000)
                 _ = AXUIElementPerformAction(bar, kAXConfirmAction as CFString)
-                postReturnToPid(entry.pid)
-                return ["state": "navigated-bg", "title": title]
+                postKeyToPid(entry.pid, code: kVK_Return)
+                postHidKey(kVK_Return)
+                return ["state": "navigated-bg", "prevFrontPid": Int(prevFrontPid), "title": title]
             }
-            return ["state": "no-address-bar", "title": title]
+            return ["state": "no-address-bar", "prevFrontPid": Int(prevFrontPid), "title": title]
         }
 
-        return ["state": "waiting", "title": title]
+        return ["state": "waiting", "title": title, "stillOnMarker": stillOnMarker, "checkboxes": scan.all]
     }
 
     // ---- 窓の操作（前に出す・閉じる・位置と大きさ・ディスプレイ） ------------------------------
@@ -707,7 +818,7 @@ enum Chrome {
 
     /** CI 診断用: ブラウザーの AX ツリーをダンプする */
     static func dumpAx(_ args: [String: Any]) -> [String: Any] {
-        let maxDepth = intValue(args["maxDepth"]) ?? 8
+        let maxDepth = intValue(args["maxDepth"]) ?? 14
         let trusted = AXIsProcessTrusted()
         guard trusted else { return ["trusted": false, "trees": []] }
         var trees: [[String: Any]] = []
@@ -719,14 +830,16 @@ enum Chrome {
                 visited += 1
                 var d: [String: Any] = ["role": axString(node, kAXRoleAttribute as String) ?? ""]
                 if let sr = axString(node, kAXSubroleAttribute as String), !sr.isEmpty { d["subrole"] = sr }
+                if let domId = axString(node, "AXDOMIdentifier") ?? axString(node, kAXIdentifierAttribute as String), !domId.isEmpty { d["domId"] = domId }
                 if let t = axString(node, kAXTitleAttribute as String), !t.isEmpty { d["title"] = String(t.prefix(120)) }
                 if let desc = axString(node, kAXDescriptionAttribute as String), !desc.isEmpty { d["desc"] = String(desc.prefix(120)) }
                 if let v = axString(node, kAXValueAttribute as String), !v.isEmpty { d["value"] = String(v.prefix(120)) }
                 else if let iv = axInt(node, kAXValueAttribute as String) { d["value"] = iv }
+                if let en = axBool(node, kAXEnabledAttribute as String) { d["enabled"] = en }
                 if let pt = axPoint(node, kAXPositionAttribute as String), let sz = axSize(node, kAXSizeAttribute as String) {
                     d["rect"] = [Int(pt.x), Int(pt.y), Int(sz.width), Int(sz.height)]
                 }
-                if depth < maxDepth && visited < 500 {
+                if depth < maxDepth && visited < 2500 {
                     let ch = axChildren(node)
                     if !ch.isEmpty {
                         d["children"] = ch.prefix(40).map { dumpNode($0, depth: depth + 1) }

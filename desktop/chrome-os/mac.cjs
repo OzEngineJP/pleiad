@@ -96,10 +96,10 @@ function createMacChromeOs({
   const client = helper ?? mac?.helper ?? null;
   const features = Object.freeze({ ...DEFAULT_FEATURES, ...(featureOverrides ?? {}) });
   const time = {
-    findSetupMs: 6000,
-    toggleMs: 10000,
-    activateAfterMs: 1500,
-    portWaitMs: 2500,
+    findSetupMs: 8000,
+    toggleMs: 14000,
+    activateAfterMs: 1200,
+    portWaitMs: 5000,
     pollMs: 120,
     ...timing,
   };
@@ -194,28 +194,34 @@ function createMacChromeOs({
     if (userDataDir != null && !targetDir) return { ok: false, reason: 'invalid-user-data-dir' };
     if (await isActivePortListening(targetDir)) return { ok: true };
 
-    let resolvedBrowser = browser && typeof browser.id === 'string' ? browsers.get(browser.id) : null;
-    if (!resolvedBrowser) {
-      const found = locateBrowser({ product: 'chrome' });
-      if (found) resolvedBrowser = browsers.get(found.id);
+    let resolvedBrowser = null;
+    let browserRef = browser;
+    if (browser != null) {
+      resolvedBrowser = typeof browser.id === 'string' ? browsers.get(browser.id) : null;
+      if (!resolvedBrowser) return { ok: false, reason: 'invalid-browser' };
+    } else {
+      browserRef = locateBrowser({ product: 'chrome' });
+      if (browserRef) resolvedBrowser = browsers.get(browserRef.id);
+      if (!resolvedBrowser) return { ok: false, reason: 'browser-not-found' };
     }
-    if (!resolvedBrowser) return { ok: false, reason: 'browser-not-found' };
+
     const prof = typeof profileDir === 'string' && PROFILE_DIR.test(profileDir) ? profileDir : 'Default';
     const nonce = crypto.randomBytes(8).toString('hex');
     const marker = `PLY-ENABLE-${nonce}`;
     const url = `data:text/html,<title>${marker}</title>`;
     const customDir = userDataDir ?? (env.AGENT_HOST_CHROME_USER_DATA || null);
 
+    const fgBefore = await callHelper('foreground', {});
+    let prevFrontPid = Number.isInteger(fgBefore?.app?.pid) ? fgBefore.app.pid : 0;
+
     const launched = launchWindow({
-      browser: [...browsers.entries()].find(([, v]) => v === resolvedBrowser)?.[0]
-        ? { id: [...browsers.entries()].find(([, v]) => v === resolvedBrowser)[0], product: resolvedBrowser.product }
-        : browser,
+      browser: browserRef,
       profileDir: prof,
       url,
       nonce,
       userDataDir: customDir,
     });
-    if (!launched?.ok) return { ok: false, reason: 'launch-failed' };
+    if (!launched?.ok) return { ok: false, reason: launched?.reason ?? 'launch-failed' };
 
     // 1. 開いた設定用の窓を題のマーカーで見つける
     let setupId = null;
@@ -228,27 +234,37 @@ function createMacChromeOs({
     }
     if (!setupId) return { ok: false, reason: 'window-not-found' };
 
-    let prevFrontPid = 0;
     try {
       // 2. chrome://inspect/#remote-debugging へ遷移し、チェックボックスをオンにする
       let navigated = false;
       let activated = false;
+      let stillOnMarker = true;
+      let lastLogKey = '';
       const start = Date.now();
       const deadline = start + time.toggleMs;
       while (Date.now() < deadline) {
         const elapsed = Date.now() - start;
-        const shouldActivate = navigated && !activated && elapsed >= time.activateAfterMs;
+        const shouldActivate = navigated && !activated && stillOnMarker && elapsed >= time.activateAfterMs;
         if (shouldActivate) activated = true;
         const step = await callHelper('chromeEnableStep', {
           id: setupId,
           url: 'chrome://inspect/#remote-debugging',
+          marker,
           navigate: !navigated,
           activateFallback: shouldActivate,
         });
+        const logKey = `${step?.state}:${step?.title}:${step?.checked}:${step?.checkboxes?.length ?? 0}`;
+        if (logKey !== lastLogKey) {
+          log(`enableStep (${elapsed}ms): ${JSON.stringify(step)}`);
+          lastLogKey = logKey;
+        }
         if (step?.prevFrontPid > 0 && !prevFrontPid) prevFrontPid = step.prevFrontPid;
+        if (typeof step?.stillOnMarker === 'boolean') stillOnMarker = step.stillOnMarker;
+        else if (typeof step?.title === 'string' && !step.title.includes(marker)) stillOnMarker = false;
+
         if (step?.state === 'navigated-bg' || step?.state === 'navigated-active' || step?.state === 'navigated-hotkey') {
           navigated = true;
-        } else if (step?.state === 'already-on' || step?.state === 'toggled') {
+        } else if (step?.state === 'already-on' || (step?.state === 'toggled' && step?.checked !== false)) {
           const portDeadline = Date.now() + time.portWaitMs;
           while (Date.now() < portDeadline) {
             if (await isActivePortListening(targetDir)) return { ok: true };
