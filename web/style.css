@@ -1198,6 +1198,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .recall-sp{flex:1}
 .recall-esc{flex:none;cursor:pointer}
 .recall-esc:hover{color:var(--ink)}
+.recall-esc[hidden]{display:none}
+/* 並びを待っている間（150ms を過ぎたら「読み込み中…」）。アイコンが弱く明滅する */
+.recall-row.wait svg.i{animation:recall-wait 1.2s ease-in-out infinite}
+@keyframes recall-wait{50%{opacity:.35}}
 :is(#prompt,#thPrompt).recall-swap{animation:recall-in var(--dur-fast) var(--ease-out)}
 :is(#prompt,#thPrompt).recall-swap.down{animation-name:recall-in-down}
 @keyframes recall-in{from{opacity:.2;transform:translateY(-5px)}}
@@ -1216,7 +1220,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   display:inline-grid;place-items:center;box-shadow:0 1px 2px var(--shadow);cursor:pointer}
 .cg-take[hidden]{display:none}
 .cg-take svg.i{width:15px;height:15px}
-@media (prefers-reduced-motion:reduce){.recall-row,.composer-ghost{transition:none}:is(#prompt,#thPrompt).recall-swap{animation:none}}
+@media (prefers-reduced-motion:reduce){.recall-row,.composer-ghost{transition:none}:is(#prompt,#thPrompt).recall-swap,.recall-row.wait svg.i{animation:none}}
 .md-b{min-height:1.6em;margin:0}
 .md-b.md-h{font-weight:600;line-height:1.4;margin:.35em 0 .1em}
 .md-b.md-h[data-l="1"]{font-size:1.35em}
