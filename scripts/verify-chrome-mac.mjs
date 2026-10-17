@@ -108,7 +108,7 @@ async function main() {
     log(`Starting helper: ${HELPER_BIN}`);
     helper = createHelperClient({ command: HELPER_BIN, log: l => log(`[helper] ${l}`) });
     const ping = await helper.call('ping', {});
-    const hello = helper.hello();
+    const hello = helper.hello;
     const perms = await helper.call('permissions', {});
     const displays = await helper.call('chromeDisplays', {});
     results.stages.permissions = {
@@ -425,7 +425,7 @@ async function main() {
     try { await relay?.close?.(); } catch {}
     try { await conn?.close?.(); } catch {}
     try { await testServer?.close?.(); } catch {}
-    try { helper?.close?.(); } catch {}
+    try { helper?.stop?.(); } catch {}
     if (chromeProc?.pid) {
       try { process.kill(chromeProc.pid, 'SIGTERM'); } catch {}
     }
@@ -438,9 +438,10 @@ async function main() {
     results.stages.agentBrowser?.ok === true;
   if (!allOk) {
     console.error('Verification did not pass all required stages.');
-    process.exitCode = 1;
+    process.exit(1);
   } else {
     console.log('All verification stages passed!');
+    process.exit(0);
   }
 }
 
