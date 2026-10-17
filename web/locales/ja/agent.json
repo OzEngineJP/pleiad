@@ -267,7 +267,7 @@
     }
   },
   "bridge": {
-    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（claude, codex, antigravity）を書く。Claude のアカウントまで決めるときは、backend: \"claude\" と一緒に account（ply_usage の account の値）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら子は今の作業場所で走る。worktree を作った子の変更はそのブランチに残り、元の場所へ取り込むのは依頼元の仕事。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
+    "instructions": "Pleiad の委譲ツール（ply_agents MCP）: ply_delegate で Pleiad が管理する子の会話を作る。kind（仕事の種類）は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先（backend・model・Claude のアカウント）を選び、選んだ理由を返り値の routing に載せる。特定の委譲先が要るときだけ backend（{{backends}}）を書く。Claude のアカウントまで決めるときは、backend: \"claude\" と一緒に account（ply_usage の account の値）を書く。これはネイティブの spawn_agent / agent_job / Agent やその ID とは別物である。ply-task- の ID には ply_task_* だけを使う。ply_delegate はすぐに戻り、完了の結果は Pleiad が後のターンでこの会話へ届ける。その間にほかの作業を続けても、応答を終えてもよい。ply_task_wait は最長 30 秒待ち、子が人間の承認を待つ状態（status: waiting）になった時点ですぐ戻る。そのときは待ち直さず、どの会話に承認があるかをユーザーに伝える。ply_task_send は同じ子の会話に追加の指示を積む。必要なタスクの文脈は明示して渡すこと。非公開の推論と親の会話の記録は写されない。cwd の既定はこの会話の作業場所。isolate: true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べて任せるなら、worktree を使うかユーザーに聞く。省略したら子は今の作業場所で走る。worktree を作った子の変更はそのブランチに残り、元の場所へ取り込むのは依頼元の仕事。ply_usage は各バックエンドの使用枠を読む（読み取りのみ、最大 60 秒前の値）。タスクの完了を受け取ったことを伝えるためだけに再び委譲しない。ply_delegate には一覧と子の会話に使う短い title を付ける。委譲は、ユーザーのタスクと適用される指示で認められている場合に限って使う。",
     "title": "一覧と会話のタイトルに使う短い名前。30 字程度。",
     "tools": {
       "ply_delegate": "Pleiad が管理するタスクを始める。taskId をすぐに返し、完了は自動で届く。ネイティブの spawn_agent とは別物。kind は必ず書く。backend を省くと、Pleiad が種類・難しさ・使用量から委譲先を選び、理由を routing に載せる（全部の候補が使えなければエラー。そのときは backend を書いて頼み直すか、ユーザーに聞く）。backend を書くと固定で、model・effort も指定できる（model・effort は backend を書いたときだけ）。account は backend: \"claude\" のときだけ書け、子を走らせる Claude のアカウントを固定する（ply_usage の Claude の行の account の値: login か acct-…）。登録に無い・トークンが無い・使用枠が満杯と分かっているアカウントはエラーにし、選べる名前を返す（ほかのアカウントに黙って替えない）。account は host と一緒に使えない。model はそのバックエンドの一覧の名前（Claude なら sonnet・opus・opus[1m]・haiku・fable。claude-sonnet-5-5 のような正式な ID も同じ系統の行に当てる）。当たらない名前は既定に戻さずエラーにし、選べる名前を返す。子は呼び出し元の承認の強さを、それを超えない範囲で継ぐ。それより強い子には、ここで人間の承認が 1 回要る。isolate は任意の真偽: true で、この子だけの worktree（リポジトリの隣・専用のブランチ）で走らせる。false で今の作業場所のまま。省くと今の作業場所のまま。true はユーザーが worktree を使うよう指示したときだけ付ける。同じリポジトリに書く子を並べるなら、worktree を使うかユーザーに聞く。worktree の子はその中だけに書き、終わるとコミットする。取り込みは依頼元が行う。",
@@ -476,7 +476,7 @@
   },
   "routing": {
     "kindRequired": "kind を次のどれかで指定してください。\n{{kinds}}",
-    "backendRequired": "委譲先の自動振り分けが無効になっています。backend（claude, codex, antigravity）を指定してください。",
+    "backendRequired": "委譲先の自動振り分けが無効になっています。backend（{{backends}}）を指定してください。",
     "pinOnly": "model と effort は backend を指定したときだけ使えます。自動で選ばせるなら model と effort を省いてください。",
     "accountPinOnly": "account は backend: \"claude\" と一緒に指定したときだけ使えます。自動で選ばせるなら account を省いてください。",
     "accountClaudeOnly": "account は backend: \"claude\" のときだけ使えます（指定した backend: {{backend}}）。account を省くか、backend を claude にしてください。",
@@ -595,7 +595,7 @@
       },
       "list": {
         "summary": "会話の一覧を、新しい順に返す。絞り込みとページ送りができる。本文まで探すときは search_sessions。",
-        "backend": "エージェントの id（claude・codex・antigravity）で絞る。",
+        "backend": "エージェントの id（agents.list の id）で絞る。",
         "cwd": "作業フォルダーで絞る（そのフォルダーとその下）。",
         "status": "状態で絞る。空の文字列は状態の無い会話。",
         "parent": "この会話の子（分岐・委譲）だけにする。親の会話の id。",
@@ -644,7 +644,7 @@
       "new": {
         "summary": "新しい会話（まだ送っていない下書き）を作る。作るだけで、発言を送るのは人。承認モード・接続先は選べない（引き継ぎ元か既定）。",
         "sourceSessionId": "設定の引き継ぎ元の会話の id（エージェント・モデル・思考の強さ・承認モードを継ぐ）。",
-        "backend": "エージェントの id（claude・codex・antigravity）。",
+        "backend": "エージェントの id（agents.list の id）。",
         "model": "モデルの id。省くと引き継ぎ元か既定。",
         "effort": "思考の強さ。省くと引き継ぎ元か既定。",
         "mode": "承認モードの id。人（画面）だけが決められる。AI が渡すと NEEDS_UI。",
@@ -1476,7 +1476,7 @@
         "icon": "絵文字 1 つ。省略は 🤖。",
         "iconImage": "画像アイコンの元画像の絶対パス（PNG・JPEG・WebP、1MiB まで）。形式を確かめ、置き場へそのまま写す。",
         "persona": "人格（性格・役割・話し方の自由文）。",
-        "backend": "エージェントの id（claude・codex・antigravity）。省略は既定。",
+        "backend": "エージェントの id（agents.list の id）。省略は既定。",
         "model": "モデル。省略はそのエージェントの既定。",
         "effort": "エフォート。省略は既定。",
         "reason": "作る理由（承認カードに出る）。"
