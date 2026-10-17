@@ -106,7 +106,7 @@ async function main() {
   try {
     // ---- Stage 1: Helper & TCC Accessibility 確認 -----------------------------------------------
     log(`Starting helper: ${HELPER_BIN}`);
-    helper = createHelperClient({ binaryPath: HELPER_BIN, log: l => log(`[helper] ${l}`) });
+    helper = createHelperClient({ command: HELPER_BIN, log: l => log(`[helper] ${l}`) });
     const ping = await helper.call('ping', {});
     const hello = helper.hello();
     const perms = await helper.call('permissions', {});
