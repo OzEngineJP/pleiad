@@ -10,7 +10,7 @@
 import os from 'node:os';
 import { z } from 'zod';
 import { agentT, LOCALE_SETTINGS, t } from '../i18n.mjs';
-import { DEFAULT_COMPACTION_SETTINGS, normalizeCompactionSettings } from '../compaction-settings.mjs';
+import { DEFAULT_COMPACTION_SETTINGS, IDLE_COMPACTION_AGENTS, normalizeCompactionSettings } from '../compaction-settings.mjs';
 import { DEFAULTS as ROUTING_DEFAULTS, normalizeSettings as normalizeRoutingSettings, migrateLegacySettings as migrateRoutingSettings, RoutingSettingsError, RETIRED_KEYS as ROUTING_RETIRED_KEYS } from '../delegation-routing.mjs';
 import { KINDS as CONTEXT_KINDS, normalizeKind as normalizeContextKind } from '../context-settings.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../../web/instruction-amount.mjs';
@@ -30,13 +30,15 @@ const same = (a, b) => stableStringify(a) === stableStringify(b);
 const invalid = (ctx, detail, human) => new OpError('INVALID', human && ctx.principal?.by === 'human' ? human : agentT(ctx.locale, 'ops.errors.INVALID', { detail }));
 
 const site = z.object({ origin: z.string(), mode: z.string().optional(), profile: z.string().optional() }).passthrough();
+// エージェントごとの行は、会話を離れた後の自動の圧縮を持つエージェント（エージェントの記述）から作る
+const idleRow = z.object({ enabled: z.boolean(), delayMinutes: z.number().int() });
 const compaction = z.object({
   enabled: z.boolean(), minTokens: z.number().int(), delegatedHeadroom: z.number().int(),
-  claude: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }), codex: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }),
+  ...Object.fromEntries(IDLE_COMPACTION_AGENTS.map((id) => [id, idleRow])),
 });
 const compactionPatch = z.object({
   enabled: z.boolean(), minTokens: z.number().int(), delegatedHeadroom: z.number().int(),
-  claude: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }).partial(), codex: z.object({ enabled: z.boolean(), delayMinutes: z.number().int() }).partial(),
+  ...Object.fromEntries(IDLE_COMPACTION_AGENTS.map((id) => [id, idleRow.partial()])),
 }).partial();
 
 const S = (key) => `agent:settings.${key}`;
@@ -122,7 +124,7 @@ export const settings = [
     schema: compaction, writeSchema: compactionPatch, default: DEFAULT_COMPACTION_SETTINGS, read: (ctx) => ctx.compactionSettings?.(),
     normalize: (ctx, input, { before }) => {
       try {
-        return { after: normalizeCompactionSettings({ ...before, ...input, claude: { ...before.claude, ...input.claude }, codex: { ...before.codex, ...input.codex } }) };
+        return { after: normalizeCompactionSettings({ ...before, ...input, ...Object.fromEntries(IDLE_COMPACTION_AGENTS.map((id) => [id, { ...before[id], ...input[id] }])) }) };
       } catch (e) { throw invalid(ctx, 'compaction.auto', String(e?.message ?? e)); }
     },
     write: (ctx, value) => ctx.writes.compaction(value) }),

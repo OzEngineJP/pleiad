@@ -406,9 +406,8 @@
             </section>
             <section class="mp-panel auto-compaction-agents">
               <div class="auto-compaction-head"><span data-i18n="compaction.agent"></span><span data-i18n="compaction.enabled"></span><span data-i18n="compaction.delay"></span></div>
-              <div class="auto-compaction-row"><span>Claude Code</span><button type="button" class="cx-sw" id="autoCompactionClaude" role="switch" data-i18n-aria-label="compaction.claudeEnabled"></button><label class="rt-number-row"><input type="number" id="autoCompactionClaudeDelay" min="1" max="10080" data-i18n-aria-label="compaction.claudeDelay"> <span class="rt-unit" data-i18n="compaction.minutes"></span></label></div>
-              <div class="auto-compaction-row"><span>Codex</span><button type="button" class="cx-sw" id="autoCompactionCodex" role="switch" data-i18n-aria-label="compaction.codexEnabled"></button><label class="rt-number-row"><input type="number" id="autoCompactionCodexDelay" min="1" max="10080" data-i18n-aria-label="compaction.codexDelay"> <span class="rt-unit" data-i18n="compaction.minutes"></span></label></div>
-              <div class="auto-compaction-managed" data-i18n="compaction.antigravityAutoManaged"></div>
+              <!-- エージェントごとの行（会話を離れた後の自動の圧縮の行を持つエージェントと、自分で圧縮するエージェント）。web/client.mjs の paintAutoCompactionAgents が作る -->
+              <div id="autoCompactionAgents"></div>
             </section>
             <dl class="auto-compaction-rules mp-note">
               <div><dt data-i18n="compaction.ruleExcludedTitle"></dt><dd data-i18n="compaction.ruleExcluded"></dd></div>

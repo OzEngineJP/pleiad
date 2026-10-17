@@ -15,14 +15,14 @@ export const isUnattendedMode = mode => Boolean(mode) && scopeRank(mode.scope) >
 /**
  * アプリを操作してよいかを決める。
  * 'allow' 聞かずに許可 / 'ask' 承認カードを出す / 'ask-high' 警告付きで出す / 'forbidden' 禁止（カードは出さない）/ 'denied' このターンで拒否済み。
- * 順: 禁止 > このターンの拒否 > 確認なし（Antigravity は常に）> すべて許可 > 常に許可・この会話で許可 > 聞く。
+ * 順: 禁止 > このターンの拒否 > 確認なし（対話の承認を持たないエージェント。capabilities.approvals: 'none' は常に）> すべて許可 > 常に許可・この会話で許可 > 聞く。
  * `enabled: false` の会話には MCP を渡さないので、ここでは見ない（橋が unsupported で返す）
  */
-export function decideApp({ app, prefs, sessionApps = [], deniedThisTurn = new Set(), mode, agent } = {}) {
+export function decideApp({ app, prefs, sessionApps = [], deniedThisTurn = new Set(), mode, approvals = 'interactive' } = {}) {
   if (!app || isForbiddenApp(app)) return 'forbidden';
   if (deniedThisTurn.has?.(app.id)) return 'denied';
-  // Antigravity は承認モードが yolo しか無いので、アプリの承認も聞かない（2026-10-01 に決めた）
-  if (agent === 'antigravity' || isUnattendedMode(mode)) return 'allow';
+  // 対話の承認を持たないエージェント（Antigravity。承認モードが yolo しか無い）には、アプリの承認も聞かない（2026-10-01 に決めた）
+  if (approvals === 'none' || isUnattendedMode(mode)) return 'allow';
   const cu = normalizeComputerUse(prefs?.computerUse ?? prefs);
   if (cu.allowAllApps) return 'allow';
   const ids = new Set(sessionApps);
@@ -31,8 +31,8 @@ export function decideApp({ app, prefs, sessionApps = [], deniedThisTurn = new S
 }
 
 /** 確認なし（bypass）かすべて許可で、聞かずに通した判定か。印の行の grant（'bypass' | 'all'）に使う。それ以外は null */
-export function autoGrantKind({ prefs, mode, agent, app, sessionApps = [] } = {}) {
-  if (agent === 'antigravity' || isUnattendedMode(mode)) return 'bypass';
+export function autoGrantKind({ prefs, mode, approvals = 'interactive', app, sessionApps = [] } = {}) {
+  if (approvals === 'none' || isUnattendedMode(mode)) return 'bypass';
   const cu = normalizeComputerUse(prefs?.computerUse ?? prefs);
   if (!cu.allowAllApps) return null;
   const ids = new Set(sessionApps);

@@ -1315,6 +1315,17 @@ export const backend = {
     compatEndpoints: true,
     // 入力欄の `!`: app-server の thread/shellCommand で走らせる（下の shell。ADR 0054）
     shell: 'native',
+    forkMessage: false,         // thread/fork は発言の途中では切れない（Pleiad が写す）
+    approvals: 'interactive',
+    // MCP のツールの呼び出しは Codex が承認を聞かない。確認なしの承認モードのほかは Pleiad が聞く（server.mjs の mcpApprovalByHost）
+    mcpApproval: 'host',
+    claudeAccounts: false,
+    autoCompactWindow: false,
+    promptSuggestions: false,   // ターンの後に suggestNext で作る
+    plyContext: 'turn',
+    effortInModelId: false,
+    instructionsAtStart: false,
+    failureDiagnostics: false,
   },
 
   toolHints: TOOL_HINTS,

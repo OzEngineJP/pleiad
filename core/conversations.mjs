@@ -777,6 +777,7 @@ export function wrapBackend(native) {
     // 戻る道が無いまま毎回失敗する（下の finally が採用を戻すようになる前に作られた会話。2026-10-06）。
     // 失敗の文面には頼らず、resume の前に transcript があるか確かめる。本文（r.messages）がある会話の nativeId は外さない（履歴が消えたように見えるので、失敗を見せる）。
     // 外した後に採用される id は新しいので、送り直しは 1 度で済む（また空なら finally が戻す）
+    // backend-allow: transcript の無い id の resume を断るのは Claude Code だけの事情で、古い会話の救済（能力の印にする意味が無い）
     if (r.nativeId && native.id === "claude" && !r.messages.length && await nativeTranscriptMissing(r.nativeId)) {
       // i18n-ignore: サーバーのログ
       console.error("  conversations: transcript の無い nativeId を外して新しく始める:", r.nativeId);

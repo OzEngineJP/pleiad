@@ -256,6 +256,8 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       for (const botId of recipients) if (store.get(botId)) await service.addSendTargets({ botId, sessionIds, source: 'shown' });
     },
     modesOf,
+    /** 指示（人格）が会話の始めにしか効かないエージェントか（capabilities.instructionsAtStart。core/bots/dispatch.mjs が人格を渡し直す） */
+    instructionsAtStart: (id) => Boolean(backendOf(id)?.capabilities?.instructionsAtStart),
 
     async approvalOf({ botId }) {
       const bot = store.get(botId);
@@ -426,9 +428,8 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const bot = getBot(botId);
       if (bot.plain) throw invalid('the built-in agent has no approval mode of its own; choose it in each thread');
       const modes = modesOf(bot.backend);
+      // 途中で人に聞けないエージェント（Antigravity）は、modes() が確認なしの 1 つしか持たない（決定 4）ので、ここで断られる
       if (modes && !modes[mode]) throw invalid(`mode: unknown for ${bot.backend}: ${mode}`);
-      // Antigravity は途中で人に聞けないので、承認モードは yolo の 1 つだけ（決定 4。modes() もそれしか持たない）
-      if (bot.backend === 'antigravity' && mode !== 'yolo') throw invalid('mode: antigravity bots can only use yolo');
       if (mode === bot.mode) return bot;
       const next = await store.update(botId, (b) => ({ ...b, mode, updatedAt: now() }));
       send({ type: 'botsChanged', bot: next });

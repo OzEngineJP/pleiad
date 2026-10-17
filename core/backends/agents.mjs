@@ -1,0 +1,79 @@
+// エージェントごとの記述（データだけ）。SDK にもネットワークにも依存せず、バックエンドを読み込まずに引ける。
+//
+// エージェントの一覧・CLI の探し方・画面のロゴ・短い名前・圧縮の既定など、core と画面のあちこちが id ごとに持っていた表は、
+// ここから作る（docs/multi-backend.md「エージェントを足す」）。エージェントを足すときは、ここに 1 つ足し、
+// core/backends/<id>.mjs を書く。記述のキー（DESCRIPTOR_KEYS）は全部書く（使わないものは null）。tests/unit/backend-contract.mjs が落とす。
+import path from 'node:path';
+
+/**
+ * module      core/backends/ からの場所（core/backends/index.mjs が動的 import する）
+ * shortLabel  入力欄のエージェントの区切りの短い名前（製品名なので訳さない）。null なら正式名（backend.label）
+ * brand       ロゴ（web/brand/ のファイル）。mark: true は SVG の #mark を currentColor で描く（色は web/style.css の .row-be-<id>）、
+ *             false は画像のまま。null はロゴなし（◇）
+ * cli         実行ファイル。exe は既定の名前、binEnv は差し替えの環境変数、npmPackage は npm の包み（.cmd を node で起こす形に解く）、
+ *             installUrl は「インストール」の案内、searchDirs は PATH のほかに見る置き場（起動済みの Pleiad が PATH の変更を拾えないため）。
+ *             null は CLI を使わない（fake）
+ * idleCompaction  会話を離れた後の自動の圧縮（ADR 0068）の既定 { enabled, delayMinutes }。null は Pleiad が圧縮しない
+ *             （エージェントが自分で決める）。文字列なら、その id の設定の行を借りる（fake は claude の行で試験する）
+ */
+export const AGENTS = {
+  claude: {
+    module: './claude.mjs',
+    shortLabel: 'Claude',
+    brand: { logo: 'claude.svg', mark: false },
+    cli: { exe: 'claude', binEnv: 'AGENT_HOST_CLAUDE_BIN', npmPackage: '@anthropic-ai/claude-code', installUrl: 'https://code.claude.com/docs/en/setup', searchDirs: null },
+    idleCompaction: { enabled: true, delayMinutes: 50 },
+  },
+  codex: {
+    module: './codex.mjs',
+    shortLabel: 'Codex',
+    brand: { logo: 'openai.svg', mark: true },
+    cli: { exe: 'codex', binEnv: 'AGENT_HOST_CODEX_BIN', npmPackage: '@openai/codex', installUrl: 'https://developers.openai.com/codex/cli/', searchDirs: null },
+    idleCompaction: { enabled: false, delayMinutes: 25 },
+  },
+  antigravity: {
+    module: './antigravity.mjs',
+    shortLabel: 'Antigravity',
+    brand: { logo: 'antigravity.svg', mark: true },
+    cli: {
+      exe: 'agy', binEnv: 'AGENT_HOST_AGY_BIN', npmPackage: null, installUrl: 'https://antigravity.google/docs/cli/install/',
+      // Windows の配置先（install.ps1 が `%LOCALAPPDATA%\agy\bin` へ置き、そのあと `agy install` が PATH を書く）。
+      // PATH だけを見ていると、入れた直後に「再確認」を押しても未インストールのまま。Unix 版は `$HOME/.local/bin` なので既定の置き場で足りる
+      searchDirs: (env) => (env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'agy', 'bin')] : []),
+    },
+    idleCompaction: null,
+  },
+  fake: {
+    module: './fake.mjs',
+    shortLabel: null,
+    brand: null,
+    cli: null,
+    idleCompaction: 'claude',
+  },
+};
+
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction']);
+
+/** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
+export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
+
+/** id の記述。知らない id なら null */
+export const agentOf = (id) => (Object.hasOwn(AGENTS, id) ? AGENTS[id] : null);
+
+/** 会話を離れた後の自動の圧縮の設定の行を持つエージェント（行を借りるものは除く）と、その既定 */
+export function idleCompactionDefaults() {
+  return Object.fromEntries(Object.entries(AGENTS).filter(([, a]) => a.idleCompaction && typeof a.idleCompaction === 'object').map(([id, a]) => [id, { ...a.idleCompaction }]));
+}
+
+/** id の会話が使う自動の圧縮の設定の行の id（借りる先があればそれ）。行が無ければ null */
+export function idleCompactionKey(id) {
+  const rule = agentOf(id)?.idleCompaction;
+  if (typeof rule === 'string') return rule;
+  return rule ? id : null;
+}
+
+/** 画面に渡す記述（describeBackends に載せる分） */
+export function agentPresentation(id) {
+  const a = agentOf(id);
+  return { shortLabel: a?.shortLabel ?? null, brand: a?.brand ? { ...a.brand } : null, idleCompaction: idleCompactionKey(id) };
+}

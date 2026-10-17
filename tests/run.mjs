@@ -191,6 +191,11 @@ const SUITES = [
   './unit/ops-policy.mjs',
   './unit/ops-registry.mjs',
   './unit/ops-coverage.mjs',
+  // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
+  // core/backends/ の外のエージェントの id の直書き（ラチェット）
+  './unit/backend-contract.mjs',
+  './unit/backend-conformance.mjs',
+  './unit/backends-lint.mjs',
   './unit/ops-surface.mjs',
   // 操作の一覧の中身（会話・設定・委譲）・MCP の生成器と橋・ply_control の 3 つのエージェントへの渡し方・サーバー越しの HTTP と権限の配線・CLI と pleiad mcp
   './unit/ops-sessions.mjs',

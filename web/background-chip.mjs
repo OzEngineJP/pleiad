@@ -8,14 +8,16 @@ import { runMark } from './arc.mjs';
 import { backendLogo } from './side.mjs';
 import { TERMINAL_PATHS } from './icons.mjs';
 import { backgroundSummary } from './background-model.mjs';
+import { agentLabel, agentShortLabel } from './agent-brands.mjs';
 
 /** 出入りの長さ（ms）。style.css の --dur と同じ */
 const OUT_MS = 240;
 // 画面を持たない読み込み（単体テスト。thread.mjs がこのファイルを読む）では matchMedia が無い
 const reduced = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
 
+// エージェントは短い名前（エージェントの記述）、互換の接続先・端末は辞書の名前
 // i18n-dynamic: activity.bgKind.
-const kindName = (kind) => t(`activity.bgKind.${kind}`);
+const kindName = (kind) => (agentLabel(kind) ? agentShortLabel(kind) : t(`activity.bgKind.${kind}`));
 
 function kindLogo(kind) {
   const mark = el('span', `bgc-logo bgc-${kind}`);

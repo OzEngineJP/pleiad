@@ -173,7 +173,7 @@ export function createActions({ driver, shots, access, askPermission, translate,
     remember(ctx, app);
     const prefs = await access.getPrefs();
     const apps = await sessionApps(ctx);
-    const args = { app, prefs, sessionApps: apps, deniedThisTurn: ctx.t.denied, mode: ctx.info.mode, agent: ctx.agent.id };
+    const args = { app, prefs, sessionApps: apps, deniedThisTurn: ctx.t.denied, mode: ctx.info.mode, approvals: ctx.agent.approvals };
     const decision = decideApp(args);
     if (decision === 'forbidden') fail('forbidden', { app: nameOf(app), ...(where ? { where } : {}) });
     if (decision === 'denied') fail('denied', { app: nameOf(app) });
@@ -231,7 +231,7 @@ export function createActions({ driver, shots, access, askPermission, translate,
       const prefs = await access.getPrefs();
       const cu = normalizeComputerUse(prefs.computerUse);
       const lines = [];
-      if (ctx.agent.id === 'antigravity' || isUnattendedMode(ctx.info.mode)) lines.push(L(ctx, 'granted.unattended'));
+      if (ctx.agent.approvals === 'none' || isUnattendedMode(ctx.info.mode)) lines.push(L(ctx, 'granted.unattended'));
       else if (cu.allowAllApps) lines.push(L(ctx, 'granted.all'));
       const seen = new Set();
       const add = (id, name, kind) => { if (seen.has(id)) return; seen.add(id); lines.push(L(ctx, `granted.${kind}`, { app: name })); };
@@ -252,7 +252,7 @@ export function createActions({ driver, shots, access, askPermission, translate,
         const app = apps?.[0] ?? null;
         if (!app) { entries.push({ name, result: 'not_found' }); continue; }
         remember(ctx, app);
-        const decision = decideApp({ app, prefs, sessionApps: await sessionApps(ctx), deniedThisTurn: ctx.t.denied, mode: ctx.info.mode, agent: ctx.agent.id });
+        const decision = decideApp({ app, prefs, sessionApps: await sessionApps(ctx), deniedThisTurn: ctx.t.denied, mode: ctx.info.mode, approvals: ctx.agent.approvals });
         entries.push({ name, app, decision, result: decision === 'allow' ? 'allowed' : decision === 'forbidden' ? 'forbidden' : decision === 'denied' ? 'denied' : 'ask' });
       }
       const asks = [...new Map(entries.filter(e => e.result === 'ask').map(e => [e.app.id, e])).values()];

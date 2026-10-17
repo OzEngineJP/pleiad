@@ -172,7 +172,7 @@ export default async function(t) {
       const r2 = await x.call('left_click', { coordinate: [100, 100], title: 'x' });
       t.ok('すべて許可は聞かずに許可。grant は all（最初の 1 回だけ）', hall.asked.length === 0 && mark(r).grant === 'all' && !('grant' in mark(r2)));
       x.end();
-      const agy = hall.connect({ sessionId: 'agy', agent: { id: 'antigravity', label: 'Antigravity' } });
+      const agy = hall.connect({ sessionId: 'agy', agent: { id: 'antigravity', label: 'Antigravity', approvals: 'none' } });
       hall.db.prefs.computerUse.allowAllApps = false;
       await agy.call('screenshot', { title: 'x' });
       const ar = await agy.call('left_click', { coordinate: [100, 100], title: 'x' });

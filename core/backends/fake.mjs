@@ -416,7 +416,7 @@ export const backend = {
     // 同じ会話での巻き戻し（core/conversations.mjs の rewind）。FAKE_REWIND で形を切り替える:
     //   resumeAt（既定）… Claude と同じ。次のターンが drops の手前で切る / reject … 次のターンが拒否する（ホスト管理へ落とす経路） /
     //   thread … Codex と同じ。rewind() が今すぐ切る / off … 巻き戻す口が無い（Antigravity と同じ。ホスト管理）
-    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? undefined : v === 'thread' ? 'thread' : 'resumeAt'; },
+    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? false : v === 'thread' ? 'thread' : 'resumeAt'; },
     subagents: true,
     liveModel: true,
     liveMode: true,
@@ -428,6 +428,14 @@ export const backend = {
     claudeAccounts: true,
     // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
     shell: 'host',
+    approvals: 'interactive',
+    mcpApproval: 'agent',
+    compatEndpoints: false,
+    promptSuggestions: false,
+    plyContext: 'turn',
+    effortInModelId: false,
+    instructionsAtStart: false,
+    failureDiagnostics: false,
     // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）
     get computerUse() {
       if (process.env.FAKE_COMPUTER_USE === 'off') return false;

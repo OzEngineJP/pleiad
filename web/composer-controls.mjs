@@ -40,8 +40,6 @@ export function chipCaret() {
   return caret;
 }
 
-/** エージェントの区切りの短い名前（製品名なので訳さない）。無いものは正式名 */
-const AGENT_SHORT = { claude: "Claude", codex: "Codex", antigravity: "Antigravity" };
 
 let measureCtx = null;
 /** チップの幅と、名前の先頭 N 字（と …）の幅を返す。frame は名前以外（アイコン・余白・▾・札） */
@@ -508,7 +506,8 @@ export function renderModel({ pop, target: d, on, hide }) {
     for (const b of d.backends) {
       const btn = el("button", b.id === d.backend ? "on" : "");
       // ロゴは脇の行・発言者の行と同じ。字は区切りを 1 行に収める短い名前で、読み上げと title は正式名
-      btn.append(logo(b.id), el("span", "seg-name", AGENT_SHORT[b.id] ?? b.label));
+      // 短い名前はエージェントの記述の shortLabel（製品名なので訳さない）。無いものは正式名
+      btn.append(logo(b.id), el("span", "seg-name", b.shortLabel ?? b.label));
       btn.setAttribute("aria-label", b.label);
       btn.title = b.label;
       btn.type = "button";

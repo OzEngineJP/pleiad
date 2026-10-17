@@ -1065,6 +1065,8 @@ export default async function (t) {
           const w = world('plain');
           w.sessions.s1.backend = backend;
           w.d.bots.instructions = (bot) => `PERSONA(${bot.persona ?? ''})`;
+          // 指示が会話の始めにしか効かないエージェントか（本物は capabilities.instructionsAtStart。core/bots/service.mjs）
+          w.d.bots.instructionsAtStart = (id) => id === 'antigravity';
           return w;
         };
         const begin = async (w) => (await w.d.turnExtras({ ...w.turn, info: { sessionId: 's1' } })).notes;

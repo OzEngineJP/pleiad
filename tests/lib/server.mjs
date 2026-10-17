@@ -72,6 +72,9 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       AGENT_HOST_LOCALE: process.env.AGENT_HOST_LOCALE || "ja",
       // Antigravity の次の発言の候補を作る agy の使い捨てのホーム（core/backends/antigravity-suggest.mjs）は、利用者の一時フォルダーでなくデータ置き場の下に
       AGENT_HOST_AGY_SUGGEST_HOME: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), "pleiad-agy-suggest"),
+      // バックエンドが出したイベントを契約（core/backends/contract.mjs）に照らし、外れたら [backend-contract] の行を出させる。
+      // 下の stop() がその行を見つけたら落とす（どの試験のサーバーでも、契約に外れたイベントを見逃さない）
+      PLEIAD_BACKEND_CONTRACT: "strict",
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
       ...env,
     },
@@ -80,9 +83,12 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
 
   // 落ちたときに何が起きていたか言えるよう、直近の出力だけ手元に残す
   const log = [];
+  // 契約に外れたイベント（[backend-contract] の行）。直近の出力と違い、捨てずに全部持つ
+  const contract = [];
   const keep = (chunk) => {
     for (const line of String(chunk).split(/\r?\n/)) {
       if (!line.trim()) continue;
+      if (line.includes("[backend-contract]")) contract.push(line.trim());
       log.push(line);
       if (log.length > 200) log.shift();
     }
@@ -127,14 +133,22 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       child.kill("SIGKILL");
       await done;
     },
+    /** 契約に外れたイベントの行（core/backends/contract.mjs）。契約の違反を確かめる試験が読む */
+    contractViolations: () => [...contract],
     async stop() {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      const done = new Promise((r) => child.once("exit", r));
-      child.kill();
-      // 行儀よく終わらないなら諦めて落とす（SDK が子を抱えたままのことがある）
-      const hard = setTimeout(() => child.kill("SIGKILL"), 5000);
-      await done;
-      clearTimeout(hard);
+      if (child.exitCode === null && child.signalCode === null) {
+        const done = new Promise((r) => child.once("exit", r));
+        child.kill();
+        // 行儀よく終わらないなら諦めて落とす（SDK が子を抱えたままのことがある）
+        const hard = setTimeout(() => child.kill("SIGKILL"), 5000);
+        await done;
+        clearTimeout(hard);
+      }
+      if (contract.length && env.PLEIAD_BACKEND_CONTRACT !== "off") {
+        const lines = [...new Set(contract)];
+        contract.length = 0;
+        throw new Error(`バックエンドのイベントが契約（core/backends/contract.mjs）に外れた:\n${lines.join("\n")}`);
+      }
     },
   };
 }
