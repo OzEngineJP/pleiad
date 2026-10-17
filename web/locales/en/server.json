@@ -651,6 +651,9 @@
     }
   },
   "opencode": {
+    "hooks": {
+      "promptBlocked": "The message was blocked by a hook (UserPromptSubmit): {{reason}}"
+    },
     "description": "Uses OpenCode's providers (OpenCode Zen, ChatGPT, GitHub Copilot, API keys)",
     "modes": {
       "ask": "Asks for everything except reading",

@@ -8,7 +8,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { maskText } from './hooks-config.mjs';
+import { maskText, HOOK_EMULATED, UNIFY_TARGETS } from './hooks-config.mjs';
 import { t } from './i18n.mjs';
 import { adapt, runCommand } from './hook-adapter.mjs';
 import { CLAUDE_CALLBACK_UNSUPPORTED, planHooks, deliverable, codexHooksTable, agyHooksFile, suppliedSummary, unsupportedSummary, claudeIdentityOutput, nativeFate, HOOK_AGENTS } from './hooks-plan.mjs';
@@ -105,7 +105,7 @@ export function unifyPreview({ report, raws = [], hooks = [], owner = null, dire
   const here = new Set(owner?.disabled ?? []);
   const registry = hooks.map(h => ({ id: h.id, name: h.name, agent: h.agent, event: h.event, matcher: h.matcher, command: maskText(h.command), enabled: h.enabled,
     disabledHere: here.has(h.id),
-    targets: Object.fromEntries(HOOK_AGENTS.map(a => { const d = deliverable(h, a, { platform }); return [a, d ? { status: d.status, reasons: d.reasons, event: d.event, matcher: d.matcher, adapter: d.adapter } : null]; })) }));
+    targets: Object.fromEntries(UNIFY_TARGETS.map(a => { const d = deliverable(h, a, { platform }); return [a, d ? { status: d.status, reasons: d.reasons, event: d.event, matcher: d.matcher, adapter: d.adapter } : null]; })) }));
   const incomplete = [...new Set((report.files ?? []).filter(f => f.agent === 'antigravity' && (f.status === 'error' || f.partial)).map(f => f.agent))];
   return { direction, stops, inactive, keeps, registry, incomplete,
     files: (report.files ?? []).filter(f => f.status === 'error' || f.partial).map(f => ({ agent: f.agent, path: f.path, error: f.error ?? null, partial: Boolean(f.partial) })) };
@@ -127,6 +127,18 @@ const refuse = (key, params = {}) => Object.assign(new Error(t(key, params)), { 
 export async function prepareHooksTurn({ agent, cwd, ctx }) {
   const { plyHooks, hooksConfig, dataDir, findNode, platform = process.platform, now = new Date(), context = null } = ctx;
   // hooks を受け取れないエージェント（fake など）: 担当を読めなくても会話は止めない（渡すものが無い）。記録だけ残す
+  // ネイティブの形が無く、Pleiad が別のエージェントの形を真似て渡すエージェント（OpenCode）: 止めるネイティブの設定ファイルは無い。
+  // 登録はバックエンドが受け取り、Pleiad の中で走らせる（コールバック。core/backends/opencode-hooks.mjs）
+  if (HOOK_EMULATED[agent]) {
+    const owner = await plyHooks.resolveForTurn(cwd);
+    if (owner.owner !== 'ply') return null;
+    const record = { owner: 'ply', at: now.toISOString(), agent, from: owner.from, revision: owner.revision, supplied: [], unsupported: [], skipped: [], stopped: [], kept: [], leaks: [], unknownNative: [] };
+    const plan = planHooks({ hooks: owner.hooks, owner, agent, platform });
+    record.skipped = plan.skipped.map(({ hook, reason }) => ({ id: hook.id, name: hook.name, reason }));
+    record.unsupported = plan.unsupported.map(unsupportedSummary);
+    record.supplied = plan.supplied.map(s => ({ ...suppliedSummary(s), via: 'callback' }));
+    return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied: plan.supplied, record } };
+  }
   if (!HOOK_AGENTS.includes(agent)) {
     const owner = await plyHooks.resolve(cwd).catch(() => null);
     if (owner?.owner !== 'ply') return null;

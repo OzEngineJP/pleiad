@@ -649,6 +649,9 @@
     }
   },
   "opencode": {
+    "hooks": {
+      "promptBlocked": "発言は Hooks（UserPromptSubmit）に止められました：{{reason}}"
+    },
     "description": "OpenCode の接続先（OpenCode Zen・ChatGPT・GitHub Copilot・API キー）を使う",
     "modes": {
       "ask": "読むほかは毎回聞く",

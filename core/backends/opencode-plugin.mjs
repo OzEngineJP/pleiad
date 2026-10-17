@@ -15,13 +15,32 @@ export const PLUGIN_FILE = 'pleiad-plugin.mjs';
 // OpenCode の中で動く本文。Node の組み込みも使わない（fetch と process.env だけ）
 export const PLUGIN_SOURCE = `// Written by Pleiad (core/backends/opencode-plugin.mjs). Do not edit: Pleiad rewrites it when the source changes
 const ENV_URL = process.env.PLEIAD_OPENCODE_ENV_URL ?? '';
+const HOOK_URL = process.env.PLEIAD_OPENCODE_HOOK_URL ?? '';
 const SECRET = process.env.PLEIAD_OPENCODE_SECRET ?? '';
 const PLY_TOOL = /^ply_(agents|control|computer|browser|context)_/;
 
+// Hooks that Pleiad runs before / after a tool. Pleiad returns {} when the conversation has none
+async function hook(body) {
+  if (!HOOK_URL || !SECRET) return {};
+  try {
+    const res = await fetch(HOOK_URL, { method: 'POST', headers: { authorization: 'Bearer ' + SECRET, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15 * 60 * 1000) });
+    return res.ok ? await res.json() : {};
+  } catch { return {}; }
+}
+
 export const PleiadPlugin = async () => ({
   'tool.execute.before': async (input, output) => {
-    if (!PLY_TOOL.test(String(input?.tool ?? '')) || !output?.args || typeof output.args !== 'object') return;
-    Object.assign(output.args, { _pleiadSession: String(input.sessionID ?? '') });
+    const args = output?.args && typeof output.args === 'object' ? output.args : null;
+    const verdict = await hook({ session: String(input?.sessionID ?? ''), phase: 'before', tool: String(input?.tool ?? ''), args: args ?? {} });
+    // A block is thrown: OpenCode reports it to the model as the tool's failure
+    if (verdict?.block) throw new Error(String(verdict.block));
+    if (args && verdict?.args && typeof verdict.args === 'object') Object.assign(args, verdict.args);
+    if (!PLY_TOOL.test(String(input?.tool ?? '')) || !args) return;
+    Object.assign(args, { _pleiadSession: String(input.sessionID ?? '') });
+  },
+  'tool.execute.after': async (input, output) => {
+    const verdict = await hook({ session: String(input?.sessionID ?? ''), phase: 'after', tool: String(input?.tool ?? ''), args: input?.args ?? {}, output: typeof output?.output === 'string' ? output.output : '' });
+    if (verdict?.append && output && typeof output.output === 'string') output.output += '\\n' + String(verdict.append);
   },
   'shell.env': async (input, output) => {
     if (!ENV_URL || !SECRET || !input?.sessionID || !output?.env) return;

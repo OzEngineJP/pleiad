@@ -18,6 +18,7 @@ import { opencodeRelay, RELAY_SERVERS } from '../opencode-relay.mjs';
 import { createOpencodeServer } from './opencode-server.mjs';
 import { createTurnMapper, messagesToNormalized, sessionRow, errorOf } from './opencode-normalize.mjs';
 import { writePlugin } from './opencode-plugin.mjs';
+import { createHookRunner } from './opencode-hooks.mjs';
 import { computerPrompt } from './computer-delivery.mjs';
 import { undelivered } from './undelivered.mjs';
 
@@ -73,6 +74,7 @@ const server = createOpencodeServer({
       // 利用者の opencode.json は書き換えずに、Pleiad のプラグインだけを足す。Pleiad が起こした OpenCode は勝手に自分を更新しない（ADR 0037）
       OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [plugin], autoupdate: false }),
       PLEIAD_OPENCODE_ENV_URL: opencodeRelay.envUrl(),
+      PLEIAD_OPENCODE_HOOK_URL: opencodeRelay.hookUrl(),
       PLEIAD_OPENCODE_SECRET: opencodeRelay.secret,
     };
   },
@@ -284,6 +286,7 @@ export const backend = {
     const { prompt, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, notes = [], shellAppends = [] } = args;
     let sessionId = args.sessionId ?? null;
     const permission = RULES[modeOf(mode)];
+    let fresh = false;
     try {
       await server.ensure();
       if (!sessionId) {
@@ -291,6 +294,7 @@ export const backend = {
         sessionId = created.id;
         directories.set(sessionId, created.directory ?? cwd);
         appliedMode.set(sessionId, modeOf(mode));
+        fresh = true;
         emit({ type: 'session', sessionId, first: true, ...(model ? { model } : {}) });
       } else {
         emit({ type: 'session', sessionId, ...(model ? { model } : {}) });
@@ -304,8 +308,13 @@ export const backend = {
       await server.request('PATCH', `/session/${sessionId}`, { directory, body: { permission } });
       appliedMode.set(sessionId, modeOf(mode));
     }
-    // Pleiad の MCP と会話のシェルの環境変数を、この会話に結び付ける
-    const servers = opencodeRelay.bind(sessionId, { runtimes: args, env: shellEnv(args) });
+    // Pleiad がそろえる Hooks（hooksRuntime。ADR 0049）。Claude Code の形で、Pleiad の中で走らせる（core/backends/opencode-hooks.mjs）
+    const hooks = args.hooksRuntime
+      ? createHookRunner(args.hooksRuntime, { onRun: (run) => emit({ type: 'hookRun', ...run }), base: { session_id: sessionId, cwd: directory } })
+      : null;
+    // Pleiad の MCP・会話のシェルの環境変数・ツールの前後の Hooks を、この会話に結び付ける
+    const servers = opencodeRelay.bind(sessionId, { runtimes: args, env: shellEnv(args),
+      hooks: hooks ? { beforeTool: (p) => hooks.beforeTool(p, { signal: signal?.signal }), afterTool: (p) => hooks.afterTool(p, { signal: signal?.signal }) } : null });
     await ensureRelay(directory, servers);
 
     // 「既定」でもモデルを明示して送る。省くと OpenCode は自分の覚えている最後のモデルを使い、画面の「既定」（resolvesTo）と食い違う
@@ -314,8 +323,11 @@ export const backend = {
     const data = await providers(directory).catch(() => null);
     const windowTokens = () => modelInfo(data, ref)?.limit?.context ?? null;
 
+    // ターンの終わり（session.idle）を待つ口。Stop の Hooks が続けさせたら、もう一度待つ
     let settle;
-    const done = new Promise((resolve) => { settle = resolve; });
+    let done;
+    const arm = () => { done = new Promise((resolve) => { settle = resolve; }); };
+    arm();
     const steers = [];              // { id, text } 途中送信で渡したもの（自分の発言として会話に入ったら「渡った」）
     const children = new Set();
     let delivered = false;
@@ -399,7 +411,18 @@ export const backend = {
       for (const line of shellAppends) {
         await server.request('POST', `/session/${sessionId}/message`, { directory, body: { noReply: true, ...(ref ? { model: ref } : {}), parts: [{ type: 'text', text: String(line) }] } });
       }
-      const system = systemText(args);
+      // 会話の始めと発言の前の Hooks（SessionStart・UserPromptSubmit）。足す文脈は system に、止める答えなら送らない
+      const extra = [];
+      if (hooks && fresh) { const c = await hooks.sessionStart({ signal: signal?.signal }); if (c) extra.push(c); }
+      if (hooks) {
+        const r = await hooks.promptSubmit(String(prompt ?? ''), { signal: signal?.signal });
+        if (r.block) {
+          emit({ type: 'turnResult', outcome: 'error', error: t('opencode.hooks.promptBlocked', { reason: r.block }) });
+          return { sessionId };
+        }
+        if (r.context) extra.push(r.context);
+      }
+      const system = [systemText(args), ...extra].filter(Boolean).join('\n\n');
       emit({ type: 'activity', state: 'thinking' });
       await server.request('POST', `/session/${sessionId}/prompt_async`, {
         directory,
@@ -414,6 +437,14 @@ export const backend = {
       control?.onReady?.();
       if (signal?.signal?.aborted) onAbort();
       await done;
+      // 終わりの前の Hooks（Stop）。続けさせる理由なら、それを次の発言として渡して、もう一度終わりを待つ（3 回まで）
+      for (let n = 0; hooks?.has('Stop') && n < 3 && !aborted && !gone && !mapper.error; n++) {
+        const reason = await hooks.stop(n > 0, { signal: signal?.signal });
+        if (!reason) break;
+        arm();
+        await server.request('POST', `/session/${sessionId}/prompt_async`, { directory, body: { ...(ref ? { model: ref } : {}), agent: modeOf(mode) === 'plan' ? 'plan' : 'build', parts: [{ type: 'text', text: reason }] } });
+        await done;
+      }
     } catch (err) {
       emit({ type: 'turnResult', outcome: 'error', error: String(err?.message ?? err) });
       throw err;

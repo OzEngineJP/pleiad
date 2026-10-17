@@ -4275,7 +4275,8 @@
       "via": {
         "claude": "コールバックで渡す",
         "codex": "会話の設定（thread の config）で渡す",
-        "antigravity": "一時の置き場の hooks.json で渡す"
+        "antigravity": "一時の置き場の hooks.json で渡す",
+        "opencode": "Pleiad のプラグインとコールバックで、Claude Code と同じ形で渡す"
       },
       "viaAdapter": "{{via}} · 入出力のアダプター越し",
       "reason": {

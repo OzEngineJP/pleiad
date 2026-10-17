@@ -16,7 +16,10 @@ import { lineDiff } from './session-context.mjs';
 import { unifyConfirmPanel, plyRegistryTier, brokenNotice } from './hooks-unify-ui.mjs';
 
 export const HOOK_AGENTS = [['claude', 'Claude Code'], ['codex', 'Codex'], ['antigravity', 'Antigravity']];
-export const agentLabel = id => HOOK_AGENTS.find(([k]) => k === id)?.[1] ?? id;
+/** Pleiad がそろえるときの渡し先（ネイティブの Hooks を持たず、Pleiad が Claude Code の形を真似て渡す OpenCode を足す。core/hooks-config.mjs の UNIFY_TARGETS） */
+// backend-allow: 渡し先の名前の表（core/hooks-config.mjs の UNIFY_TARGETS と同じ並び。ネイティブの Hooks の表 HOOK_AGENTS と同じく画面が持つ）
+export const UNIFY_TARGETS = [...HOOK_AGENTS, ['opencode', 'OpenCode']];
+export const agentLabel = id => UNIFY_TARGETS.find(([k]) => k === id)?.[1] ?? id;
 // 「登録なし」でも一覧に出す主なイベント（すべて見るとき）
 const MAIN_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SessionEnd'];
 // ツールの名前で絞るイベント（シートの matcher の例）

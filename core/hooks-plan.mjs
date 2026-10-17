@@ -3,7 +3,7 @@
 //   Codex:       thread/start・thread/resume の config に hooks（登録）と hooks.state（自分の定義に trusted_hash、ユーザー・プロジェクトの key に enabled:false）
 //   Antigravity: Pleiad の一時の置き場（--add-dir）の .agents/hooks.json に、登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの { enabled: false }
 // 変換（イベント・matcher・入出力）は第 2 段の core/hooks-copy.mjs と core/hook-adapter.mjs をそのまま使う。
-import { HOOK_AGENTS, HOOK_EVENTS } from './hooks-config.mjs';
+import { HOOK_AGENTS, HOOK_EVENTS, HOOK_EMULATED } from './hooks-config.mjs';
 import { convertHook, ADAPTER_MARGIN, adapterCommand, defaultTimeout } from './hooks-copy.mjs';
 
 // Claude の SDK のコールバックで渡せないイベント。SessionStart はコールバックが呼ばれない（実機で確認。2026-09-28、Agent SDK 0.3.258）。
@@ -22,6 +22,15 @@ export const AGY_NAME_PREFIX = 'pleiad-';
  */
 export function deliverable(hook, to, { platform = process.platform } = {}) {
   if (!hook?.targets?.includes(to)) return null;
+  // 別のエージェントの形を真似て渡すエージェント（OpenCode は Claude Code の形）: その形へ渡すときと同じに組み立てる。
+  // matcher の上書きは、そのエージェントの分があればそれ。SessionStart は Pleiad が自分で走らせるので渡せる（Claude の SDK のコールバックの制約は無い）
+  const as = HOOK_EMULATED[to];
+  if (as) {
+    const d = deliverable({ ...hook, targets: [as], matchers: { ...(hook.matchers ?? {}), ...(hook.matchers?.[to] ? { [as]: hook.matchers[to] } : {}) } }, as, { platform });
+    if (!d) return null;
+    const reasons = d.reasons.filter((r) => !(r.code === 'claudeCallback' && r.params?.event === 'SessionStart'));
+    return { ...d, status: reasons.length ? 'blocked' : 'ok', reasons, emulates: as };
+  }
   const reasons = [];
   const chosen = hook.matchers?.[to];
   let d;

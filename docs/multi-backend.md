@@ -864,6 +864,7 @@ Codexの `set_status / set_title / fork` は未接続なので、
 - 会話のシェルの環境変数（ブラウザー・操作の一覧の CLI・秘密情報）は、プラグインの `shell.env`（会話の id を受け取る）が `/mcp/opencode/env?session=` から取る
 - Pleiad の指示（委譲・可視化・ブラウザー・コンピューター・操作の一覧・秘密情報・bot の人格）は `prompt_async` の `system` で毎ターン渡す
 - Pleiad 担当のコンテキスト（`ply_context`）はまだ渡さない（`plyContext: false`。OpenCode の設定・指示ファイルがそのまま効く）
+- **Hooks**: OpenCode にはコマンドの Hooks の形が無い。Pleiad がそろえる Hooks は、Claude Code の形を真似て渡す（エージェントの記述の `hooksAs`）。ツールの前後はプラグインの `tool.execute.before` / `after` が `/mcp/opencode/hook` を呼び、発言の前・会話の始め・終わりの前はバックエンドが走らせる（[context-runtime.md](context-runtime.md)「Pleiad がそろえる会話」）
 
 ## 3. 変えないこと
 

@@ -4396,7 +4396,8 @@
       "via": {
         "claude": "Passed as a callback",
         "codex": "Passed in the conversation's settings (thread config)",
-        "antigravity": "Passed in hooks.json in a temporary folder"
+        "antigravity": "Passed in hooks.json in a temporary folder",
+        "opencode": "Passed through Pleiad's plugin and callbacks, in the Claude Code form"
       },
       "viaAdapter": "{{via}} · through the input/output adapter",
       "reason": {

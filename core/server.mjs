@@ -99,7 +99,7 @@ import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
-import { createHooksConfig, HOOK_AGENTS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
+import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
 import { stopHeldAppServer } from './backends/codex-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
@@ -4226,16 +4226,17 @@ const opsHooks = {
     // 会話の右パネル: その会話の場所で見つかった定義（読み込まれたかは分からない）と、受け取った発火の記録。
     // Hooks を Pleiad がそろえた会話は、そのターンの記録（渡した登録・止めたネイティブ・渡せなかったもの・漏れ）も返す（unify）
     const id = args.sessionId ?? null;
-    const agent = HOOK_AGENTS.includes(args.backend) ? args.backend : null;
+    const agent = UNIFY_TARGETS.includes(args.backend) ? args.backend : null;
     const cwd = args.cwd ? await scanDirectory(args.cwd).catch(() => null) : null;
-    const report = agent && cwd ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
+    const report = agent && cwd && HOOK_AGENTS.includes(agent) ? await hooksConfig.scan({ cwd, agents: [agent] }) : null;
     if (report && agent === 'codex') await withCodexTrust(report, cwd, { trust: args.trust === true });
     const saved = id ? await store.get(id).catch(() => ({})) : {};
     const live = id ? runtime.turns.get(id) : null;
     const unify = live?.contextRecord?.hooks ?? saved.contextSession?.hooks ?? null;
     const owner = cwd ? (await plyHooks.resolve(cwd).catch(() => null))?.owner ?? 'native' : 'native';
     // 発火を受け取れる接続: Claude（通知・コールバック）、Codex（hook/started・hook/completed）、Antigravity は Pleiad が渡した分だけ（アダプターの記録）
-    const observable = agent === 'claude' || agent === 'codex' ? 'all' : agent === 'antigravity' && unify?.owner === 'ply' ? 'pleiad' : null;
+    // 真似て渡すエージェント（OpenCode）は、Pleiad が渡した分だけ（Pleiad の中で走らせる）
+    const observable = agent === 'claude' || agent === 'codex' ? 'all' : (agent === 'antigravity' || HOOK_EMULATED[agent]) && unify?.owner === 'ply' ? 'pleiad' : null;
     return { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) };
   },
   view: (cwd) => plyHooks.view(cwd),
@@ -8152,7 +8153,7 @@ wss.on("connection", (ws, req) => {
           // 追加・編集のシートの確認: エージェントごとの渡し方（イベント・matcher・アダプター・渡せない理由）。保存はしない
           const value = msg.args?.value ?? {};
           const hook = { ...value, targets: Array.isArray(value.targets) ? value.targets : [], matcher: value.matcher ?? '' };
-          return reply(true, { targets: Object.fromEntries(HOOK_AGENTS.map(a => { const d = hook.targets.includes(a) ? deliverable(hook, a) : null;
+          return reply(true, { targets: Object.fromEntries(UNIFY_TARGETS.map(a => { const d = hook.targets.includes(a) ? deliverable(hook, a) : null;
             return [a, d ? { status: d.status, reasons: d.reasons, warnings: d.warnings ?? [], event: d.event, matcher: d.matcher, adapter: d.adapter } : null]; })) });
         }
         case 'hooksUnifyPreview':

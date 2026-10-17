@@ -22,9 +22,17 @@ import { FRONTMATTER } from './context-scan.mjs';
 import { redactSecrets } from './redact.mjs';
 import { renameRetry } from './atomic-file.mjs';
 import { t } from './i18n.mjs';
+import { AGENTS } from './backends/agents.mjs';
 import { convertHook, adapterCommand, parseAdapterCommand, safeAdapterPath, suggestName, scriptPaths } from './hooks-copy.mjs';
 
 export const HOOK_AGENTS = ['claude', 'codex', 'antigravity'];
+/**
+ * Hooks を Pleiad がそろえるときに渡せるエージェント（登録の targets）。ネイティブの Hooks の設定ファイルを持つ HOOK_AGENTS に、
+ * ネイティブの形が無く、Pleiad が別のエージェントの形を真似て渡すエージェントを足したもの（HOOK_EMULATED）
+ */
+// どのエージェントを真似るかはエージェントの記述の hooksAs（core/backends/agents.mjs）。OpenCode は Claude Code の形（docs/multi-backend.md §2.10「Hooks」）
+export const HOOK_EMULATED = Object.freeze(Object.fromEntries(Object.entries(AGENTS).filter(([, a]) => a.hooksAs).map(([id, a]) => [id, a.hooksAs])));
+export const UNIFY_TARGETS = Object.freeze([...HOOK_AGENTS, ...Object.keys(HOOK_EMULATED)]);
 // 各エージェントの公式のイベント（2026-09-27 時点。temporary/reports/hooks-agent-specs.md）
 export const HOOK_EVENTS = {
   claude: ['SessionStart', 'Setup', 'UserPromptSubmit', 'UserPromptExpansion', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse',

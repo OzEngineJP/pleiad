@@ -119,6 +119,14 @@ async function mcpCall(s, server, tool, args) {
   return (body.result?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n') || JSON.stringify(body.error ?? body.result ?? null);
 }
 
+// Pleiad のプラグインの tool.execute.before / after と同じく、Pleiad の口（PLEIAD_OPENCODE_HOOK_URL）にツールの前後を聞く
+async function pluginHook(s, phase, tool, args, output = '') {
+  if (!process.env.PLEIAD_OPENCODE_HOOK_URL) return {};
+  const res = await fetch(process.env.PLEIAD_OPENCODE_HOOK_URL, { method: 'POST', headers: { authorization: `Bearer ${process.env.PLEIAD_OPENCODE_SECRET}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ session: s.id, phase, tool, args, output }) }).catch(() => null);
+  return res?.ok ? res.json() : {};
+}
+
 async function run(s, user, text, { system = null } = {}) {
   const ctl = { aborted: false, steers: [], abort: null };
   ctl.aborted$ = new Promise((resolve) => { ctl.abort = resolve; });
@@ -140,10 +148,19 @@ async function run(s, user, text, { system = null } = {}) {
     let reply = `echo: ${text}`;
     a.reasoning('thinking about it');
     if (text.startsWith('tool')) {
-      const t = a.tool('bash', { command: 'echo hello' });
+      const args = { command: text.includes('forbidden') ? 'echo forbidden' : 'echo hello' };
+      const verdict = await pluginHook(s, 'before', 'bash', args);
+      if (verdict.args) Object.assign(args, verdict.args);
+      const t = a.tool('bash', args);
       await wait(5);
-      t.done('hello\n', { exit: 0, truncated: false });
-      reply = 'ran the tool';
+      if (verdict.block) { t.fail(verdict.block); reply = `blocked: ${verdict.block}`; }
+      else {
+        let out = `${args.command === 'echo hello' ? 'hello' : args.command}\n`;
+        const after = await pluginHook(s, 'after', 'bash', args, out);
+        if (after.append) out += `\n${after.append}`;
+        t.done(out, { exit: 0, truncated: false });
+        reply = after.append ? `ran the tool (${after.append})` : 'ran the tool';
+      }
     } else if (text.startsWith('ask')) {
       const t = a.tool('bash', { command: 'echo asked' });
       const answer = await Promise.race([ask(s, 'permission.asked', { permission: 'bash', patterns: ['echo asked'], metadata: { command: 'echo asked' }, always: ['echo *'], tool: { messageID: a.info.id, callID: t.callID } }), ctl.aborted$.then(() => ({ reply: 'reject' }))]);

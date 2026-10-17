@@ -199,6 +199,8 @@ const SUITES = [
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
   './unit/server-opencode.mjs',
   './unit/opencode-parts.mjs',
+  // OpenCode の会話で Pleiad がそろえる Hooks（Claude Code の形。ツールの前後・発言の前・終わりの前）
+  './unit/server-opencode-hooks.mjs',
   './unit/ops-surface.mjs',
   // 操作の一覧の中身（会話・設定・委譲）・MCP の生成器と橋・ply_control の 3 つのエージェントへの渡し方・サーバー越しの HTTP と権限の配線・CLI と pleiad mcp
   './unit/ops-sessions.mjs',
