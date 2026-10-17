@@ -15,6 +15,8 @@ import path from 'node:path';
  *             null は CLI を使わない（fake）
  * idleCompaction  会話を離れた後の自動の圧縮（ADR 0068）の既定 { enabled, delayMinutes }。null は Pleiad が圧縮しない
  *             （エージェントが自分で決める）。文字列なら、その id の設定の行を借りる（fake は claude の行で試験する）
+ * contextSources  エージェントが自分で読む指示・Skills・MCP の読み込み元（core/context-settings.mjs の SOURCES）。
+ *             エージェント任せの会話の「指示の量」の見積もりと、エージェントの設定に登録された MCP の一覧に使う。null は読み方を知らない
  */
 export const AGENTS = {
   claude: {
@@ -23,6 +25,7 @@ export const AGENTS = {
     brand: { logo: 'claude.svg', mark: false },
     cli: { exe: 'claude', binEnv: 'AGENT_HOST_CLAUDE_BIN', npmPackage: '@anthropic-ai/claude-code', installUrl: 'https://code.claude.com/docs/en/setup', searchDirs: null },
     idleCompaction: { enabled: true, delayMinutes: 50 },
+    contextSources: ['claude'],
   },
   codex: {
     module: './codex.mjs',
@@ -30,6 +33,7 @@ export const AGENTS = {
     brand: { logo: 'openai.svg', mark: true },
     cli: { exe: 'codex', binEnv: 'AGENT_HOST_CODEX_BIN', npmPackage: '@openai/codex', installUrl: 'https://developers.openai.com/codex/cli/', searchDirs: null },
     idleCompaction: { enabled: false, delayMinutes: 25 },
+    contextSources: ['codex'],
   },
   antigravity: {
     module: './antigravity.mjs',
@@ -42,6 +46,7 @@ export const AGENTS = {
       searchDirs: (env) => (env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'agy', 'bin')] : []),
     },
     idleCompaction: null,
+    contextSources: null,
   },
   opencode: {
     module: './opencode.mjs',
@@ -54,6 +59,8 @@ export const AGENTS = {
     },
     // 会話を離れた後の自動の圧縮（summarize）。既定は切る（OpenCode 自身も文脈があふれる前に圧縮する）
     idleCompaction: { enabled: false, delayMinutes: 25 },
+    // AGENTS.md（作業場所。common）と、設定の置き場の AGENTS.md・skills・opencode.json の mcp
+    contextSources: ['common', 'opencode'],
   },
   fake: {
     module: './fake.mjs',
@@ -61,10 +68,11 @@ export const AGENTS = {
     brand: null,
     cli: null,
     idleCompaction: 'claude',
+    contextSources: null,
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));

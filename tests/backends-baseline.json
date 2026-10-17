@@ -9,9 +9,8 @@
     "core/compat-endpoints.mjs": 9,
     "core/computer-use/apps.mjs": 2,
     "core/context-runtime.mjs": 1,
-    "core/context-scan.mjs": 8,
-    "core/context-session.mjs": 4,
-    "core/context-settings.mjs": 4,
+    "core/context-scan.mjs": 7,
+    "core/context-settings.mjs": 2,
     "core/delegation-routing.mjs": 11,
     "core/delegation-usage.mjs": 1,
     "core/effort.mjs": 3,
@@ -35,13 +34,12 @@
     "web/compat-endpoints.mjs": 4,
     "web/compat-presets.mjs": 4,
     "web/composer-controls.mjs": 1,
-    "web/context.mjs": 9,
+    "web/context.mjs": 1,
     "web/delegation-routing-view.mjs": 7,
-    "web/delegation-settings.mjs": 3,
     "web/hooks-card.mjs": 32,
     "web/hooks-unify-ui.mjs": 7,
     "web/mcp-config.mjs": 7,
     "web/ply-instructions-card.mjs": 2,
-    "web/session-context.mjs": 6
+    "web/session-context.mjs": 4
   }
 }

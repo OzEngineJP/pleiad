@@ -31,8 +31,7 @@ const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
 const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
 const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'connected'] };
-const AGENT_FILES = { claude: 'claude', codex: 'codex' };
-const SOURCE = { claude: 'Claude', codex: 'Codex', common: t('sessionContext.source.common'), ply: 'Pleiad' };
+const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 const GROUPS = ['user', 'dir', 'extra'];
 // 「この場所だけ変える」の担当の 2 択（設定の画面と同じ文）
 const OWNER = {
@@ -745,8 +744,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   }
   /** エージェント任せの MCP。そのエージェントの設定に登録されているもの（読むだけ） */
   function nativeMcp(k, data) {
-    const s = session(), label = backendLabel(), file = AGENT_FILES[s?.backend];
-    if (!file) { k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.unreadable', { agent: label }))); return; }
+    const s = session(), label = backendLabel();
     const where = data.report.cwd ?? s?.cwd;
     const cached = agentCache.get(where);
     if (!cached) {
@@ -754,7 +752,9 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       cmd('agentMcp', { cwd: where }).then(r => { agentCache.set(where, r); refresh(); }).catch(() => { agentCache.set(where, { agents: {} }); refresh(); });
       return;
     }
-    const list = cached.agents?.[file] ?? [];
+    // 読み方を知っているエージェント（エージェントの記述の contextSources）だけが返りに載る
+    if (!Object.hasOwn(cached.agents ?? {}, s?.backend)) { k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.unreadable', { agent: label }))); return; }
+    const list = cached.agents[s.backend] ?? [];
     if (!list.length) { k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.none', { agent: label }))); return; }
     k.append(el('p', 'cx-sub', t('sessionContext.nativeMcp.list', { agent: label, count: list.length })));
     const rowOf = x => { const r = el('div', 'scx-item'); const body = el('div', 't'); body.append(el('div', null, x.name), el('div', 'p', x.disabled ? t('sessionContext.nativeMcp.disabled', { path: shortPath(x.path) }) : shortPath(x.path))); r.append(el('span', 'cx-dot off'), body); return r; };

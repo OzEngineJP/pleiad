@@ -75,6 +75,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       // バックエンドが出したイベントを契約（core/backends/contract.mjs）に照らし、外れたら [backend-contract] の行を出させる。
       // 下の stop() がその行を見つけたら落とす（どの試験のサーバーでも、契約に外れたイベントを見逃さない）
       PLEIAD_BACKEND_CONTRACT: "strict",
+      // OpenCode の会話の DB・資格情報の置き場（core/backends/opencode.mjs）。利用者の本物（~/.local/share/opencode）を読まない
+      AGENT_HOST_OPENCODE_DATA: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), "opencode-data"),
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
       ...env,
     },

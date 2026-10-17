@@ -10053,7 +10053,9 @@ presenceReporter.start();
 // 設定 › 委譲（委譲先の自動振り分け）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
-  modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click() });
+  modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click(),
+  // 候補に足せるのは有効なエージェント（試験用の fake は出さない）
+  agents: () => state.backends.map((b) => b.id).filter((id) => id !== 'fake') });
 clearThread();
 initTheme();
 initLocale();

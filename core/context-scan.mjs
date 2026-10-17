@@ -56,8 +56,25 @@ function renderServers(file, servers) {
   }
   return JSON.stringify({ mcpServers: servers }, null, 2);
 }
+/**
+ * OpenCode の mcp（{ type: local, command: [実行ファイル, …引数], environment } / { type: remote, url, headers }）を、
+ * 走査が読む Claude の形（{ command, args, env } / { type: http, url, headers }）に写す。enabled: false はそのまま残す
+ */
+export function opencodeServers(map) {
+  if (map == null) return null;
+  if (typeof map !== 'object' || Array.isArray(map)) return map;
+  return Object.fromEntries(Object.entries(map).map(([name, v]) => {
+    if (!v || typeof v !== 'object') return [name, v];
+    const off = v.enabled === false ? { enabled: false } : {};
+    if (v.type === 'remote' || typeof v.url === 'string') return [name, { type: 'http', url: v.url, ...(v.headers ? { headers: v.headers } : {}), ...off }];
+    const command = Array.isArray(v.command) ? v.command : [v.command];
+    return [name, { command: String(command[0] ?? ''), args: command.slice(1).map(String), ...(v.environment ? { env: v.environment } : {}), ...off }];
+  }));
+}
 // scopes: 探す範囲。既定は両方。設定の画面のユーザーの段は ['user'] だけ（作業場所のファイルを混ぜない）
-export async function scanContext(settings, { home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'), claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'), runtime = false, plyServers = null, scopes = ['user', 'directory'] } = {}) {
+export async function scanContext(settings, { home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'), claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'),
+  // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+  opencodeHome = process.env.OPENCODE_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'opencode'), runtime = false, plyServers = null, scopes = ['user', 'directory'] } = {}) {
   const { cwd } = settings;
   // 種類ごと・範囲（user = home / directory = Git ルート〜作業場所）ごとの探し方。形式 1 の { user, directory } も受け付ける
   const plan = scanPlan(settings);
@@ -218,7 +235,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       configs.push({ path: file, realPath: data.real, source: ctx.source, scope: ctx.scope, bytes: Buffer.byteLength(body), content: body });
     }
   }
-  // kinds はこの (base, source) で探す種類。種類ごとに探す形式が違うので、呼ぶ側が絞って渡す
+    // kinds はこの (base, source) で探す種類。種類ごとに探す形式が違うので、呼ぶ側が絞って渡す
   async function scanBase(base, source, scope, kinds, custom = false) {
     const spec = { kinds };
     const ctx = { source, scope, appliesTo: scope === 'user' ? null : custom ? cwd : base, ...(custom ? { root: base } : {}) };
@@ -231,7 +248,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       if (spec.kinds.includes('skill')) await skills(path.join(base, '.agents', 'skills'), ctx);
       return;
     }
-    const configDir = user && !custom ? source === 'codex' ? codexHome : claudeHome : path.join(base, `.${source}`);
+    const configDir = user && !custom ? { codex: codexHome, claude: claudeHome, opencode: opencodeHome }[source] : path.join(base, `.${source}`);
     if (spec.kinds.includes('instruction')) {
       const dir = user && !custom ? configDir : base;
       searched.push({ path: dir, kind: 'instruction', ...ctx });
@@ -243,6 +260,10 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
         await instruction(path.join(dir, 'CLAUDE.md'), ctx);
         if (!user || custom) { await instruction(path.join(configDir, 'CLAUDE.md'), ctx); await instruction(path.join(base, 'CLAUDE.local.md'), ctx); }
         await rules(path.join(configDir, 'rules'), ctx, user && !custom ? null : base);
+      // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      } else if (source === 'opencode' && user && !custom) {
+        // OpenCode の全体の指示は設定の置き場の AGENTS.md。作業場所の AGENTS.md は common が探す
+        await instruction(path.join(configDir, 'AGENTS.md'), ctx);
       }
     }
     if (spec.kinds.includes('skill')) {
@@ -251,6 +272,9 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     }
     if (spec.kinds.includes('mcp')) {
       if (source === 'codex') await mcp(path.join(configDir, 'config.toml'), ctx, v => v.mcp_servers);
+      // OpenCode は設定の置き場（全体）と作業場所の opencode.json の mcp。形を Claude の形（command・args・env・url）に写して並べる
+      // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      else if (source === 'opencode') await mcp(path.join(user && !custom ? configDir : base, 'opencode.json'), ctx, v => opencodeServers(v.mcp));
       else if (source === 'claude' && user && !custom) {
         await mcp(path.join(home, '.claude.json'), ctx, v => v.mcpServers);
       } else {

@@ -10,6 +10,7 @@ import { createTurnMapper, messagesToNormalized, toolName, sessionRow } from '..
 import { createOpencodeRelay, SESSION_ARG } from '../../core/opencode-relay.mjs';
 import { PLUGIN_SOURCE, writePlugin } from '../../core/backends/opencode-plugin.mjs';
 import { checkBackendEvent } from '../../core/backends/contract.mjs';
+import { scanContext, opencodeServers } from '../../core/context-scan.mjs';
 
 export const name = 'opencode-parts';
 export const title = 'OpenCode の部品: 実機の出来事の写し替え・発言の写し替え・中継の口・プラグイン';
@@ -105,6 +106,35 @@ export default async function (t) {
   await relay.handle(fakeReq({ method: 'GET', headers: { authorization: 'Bearer s3cret' } }), res, new URL('http://127.0.0.1:9/mcp/opencode/env?session=ses_child'));
   t.ok('中継: 会話のシェルの環境変数（子の会話は親の分）', envRes.status !== 0 && JSON.parse(res.body).PLEIAD_CONTROL_URL === 'http://x');
   t.ok('中継: 知らないサーバー名は 404', (await call('nope', { jsonrpc: '2.0', id: 8, method: 'tools/list' })).status === 404);
+
+  // ---- コンテキストの読み込み元（OpenCode が自分で読む指示・Skills・MCP）
+  const cx = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-oc-context-'));
+  try {
+    const home = path.join(cx, 'home'), opencodeHome = path.join(home, '.config', 'opencode'), repo = path.join(cx, 'repo');
+    const skill = (dir, name) => { fs.mkdirSync(path.join(dir, name), { recursive: true }); fs.writeFileSync(path.join(dir, name, 'SKILL.md'), `---
+name: ${name}
+description: about ${name}
+---
+body`); };
+    fs.mkdirSync(opencodeHome, { recursive: true });
+    fs.writeFileSync(path.join(opencodeHome, 'AGENTS.md'), '# global rules');
+    skill(path.join(opencodeHome, 'skills'), 'global-skill');
+    fs.writeFileSync(path.join(opencodeHome, 'opencode.json'), JSON.stringify({ mcp: { local1: { type: 'local', command: ['node', 'x.js'], environment: { A: '1' } }, remote1: { type: 'remote', url: 'https://example.com/mcp', enabled: false } } }));
+    fs.mkdirSync(repo, { recursive: true });
+    fs.writeFileSync(path.join(repo, 'AGENTS.md'), '# project rules');
+    skill(path.join(repo, '.opencode', 'skills'), 'project-skill');
+    fs.writeFileSync(path.join(repo, 'opencode.json'), JSON.stringify({ mcp: { proj: { type: 'local', command: ['npx', 'y'] } } }));
+    const oc = { sources: ['common', 'opencode'], kinds: ['instruction', 'skill', 'mcp'], excludePaths: [] };
+    const scan = await scanContext({ cwd: repo, user: oc, directory: oc }, { home, opencodeHome });
+    const of = (kind) => scan.entries.filter((e) => e.kind === kind);
+    t.ok('読み込み元 opencode: 設定の置き場と作業場所の AGENTS.md', of('instruction').filter((e) => e.name === 'AGENTS.md').map((e) => e.scope).sort().join() === 'directory,user', JSON.stringify(of('instruction').map((e) => [e.name, e.scope, e.path])));
+    t.ok('読み込み元 opencode: 設定の置き場と .opencode の skills', ['global-skill', 'project-skill'].every((n) => of('skill').some((e) => e.name === n)), JSON.stringify(of('skill').map((e) => e.name)));
+    const mcp = Object.fromEntries(of('mcp').map((e) => [e.name, e]));
+    t.ok('読み込み元 opencode: opencode.json の mcp を Claude の形に写して並べる（切ったものは disabled）', mcp.local1?.transport === 'stdio' && mcp.local1.command === 'node' && mcp.local1.args?.join() === 'x.js'
+      && mcp.local1.envKeys?.join() === 'A' && mcp.remote1?.transport === 'http' && mcp.remote1.status === 'disabled' && mcp.proj?.command === 'npx', JSON.stringify(of('mcp')));
+    t.ok('形の写し: remote は http、local は command と args、置き換えられないものはそのまま', JSON.stringify(opencodeServers({ r: { type: 'remote', url: 'u', headers: { h: '1' } } })) === JSON.stringify({ r: { type: 'http', url: 'u', headers: { h: '1' } } })
+      && opencodeServers(null) === null && opencodeServers([]).length === 0);
+  } finally { fs.rmSync(cx, { recursive: true, force: true }); }
 
   // ---- プラグイン（OpenCode の中で動く本文を、そのまま読み込んで呼ぶ）
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-oc-plugin-'));

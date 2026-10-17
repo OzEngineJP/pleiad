@@ -798,7 +798,8 @@ Codexの `set_status / set_title / fork` は未接続なので、
 足すときに書くもの:
 
 1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`module`・`shortLabel`・`brand`（ロゴ。`web/brand/` に置く）・`cli`
-   （`exe`・`binEnv`・`npmPackage`・`installUrl`・`searchDirs`）・`idleCompaction`（会話を離れた後の自動の圧縮の既定。Pleiad が圧縮しないなら null）。
+   （`exe`・`binEnv`・`npmPackage`・`installUrl`・`searchDirs`）・`idleCompaction`（会話を離れた後の自動の圧縮の既定。Pleiad が圧縮しないなら null）・
+   `contextSources`（エージェントが自分で読む指示・Skills・MCP の読み込み元。`core/context-settings.mjs` の `SOURCES`。新しい形式なら `core/context-scan.mjs` に読み方を足す）。
    全部のキーを書く（使わないものは null）。レジストリ（`index.mjs`）・CLI の探し方（`core/cli-installation.mjs`）・自動の圧縮の設定の行
    （`core/compaction-settings.mjs`・`core/ops/settings.mjs`・設定の画面）・画面のロゴと短い名前（`web/agent-brands.mjs`）・委譲の行き先
    （`core/agent-bridge.mjs` の `backend`）は、ここから作るので触らない

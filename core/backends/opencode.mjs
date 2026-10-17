@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { t } from '../i18n.mjs';
+import { loadSqlite } from '../db.mjs';
 import { cliCommand } from '../cli-installation.mjs';
 import * as store from '../store.mjs';
 import { opencodeRelay, RELAY_SERVERS } from '../opencode-relay.mjs';
@@ -106,8 +107,40 @@ async function providers(cwd) {
 
 /** OpenCode の資格情報のファイル（auth.json）の更新時刻。無ければ 0（OpenCode の置き場は XDG_DATA_HOME、無ければ ~/.local/share/opencode） */
 function authStamp() {
-  const base = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
-  try { return fs.statSync(path.join(base, 'opencode', 'auth.json')).mtimeMs; } catch { return 0; }
+  try { return fs.statSync(path.join(opencodeData(), 'auth.json')).mtimeMs; } catch { return 0; }
+}
+
+/** OpenCode のデータの置き場（会話の DB・資格情報）。AGENT_HOST_OPENCODE_DATA で差し替える（試験は一時の場所へ向け、利用者の本物を読まない） */
+function opencodeData() {
+  return process.env.AGENT_HOST_OPENCODE_DATA || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode');
+}
+
+/**
+ * サーバーが動いていないときの会話の行。OpenCode の会話の DB（opencode.db の session の表）を読み取りだけで開く。
+ * 一覧を作るたびに約 760 MB のサーバーを起こさないため（画面を開いただけで起きていた）。読めなければ null
+ */
+function sessionsFromDb({ limit = 100, id = null } = {}) {
+  const file = path.join(opencodeData(), 'opencode.db');
+  if (!fs.existsSync(file)) return [];
+  let db = null;
+  try {
+    const { DatabaseSync } = loadSqlite();
+    db = new DatabaseSync(file, { readOnly: true });
+    const cols = 'id, parent_id, directory, title, time_created, time_updated';
+    const rows = id
+      ? db.prepare(`select ${cols} from session where id = ?`).all(id)
+      : db.prepare(`select ${cols} from session where parent_id is null and time_archived is null order by time_updated desc limit ?`).all(limit);
+    return rows.map((r) => ({ id: r.id, parentID: r.parent_id ?? undefined, directory: r.directory, title: r.title, time: { created: Number(r.time_created), updated: Number(r.time_updated) } }));
+  } catch {
+    return null;
+  } finally {
+    try { db?.close(); } catch {}
+  }
+}
+
+/** つないだ接続先の名前（資格情報のファイルのキーだけを読む。値は読まない） */
+function connectedFromFile() {
+  try { return Object.keys(JSON.parse(fs.readFileSync(path.join(opencodeData(), 'auth.json'), 'utf8')) ?? {}); } catch { return []; }
 }
 
 /** "provider/model" -> { providerID, modelID }。"" や形の違うものは null（OpenCode の既定に従う） */
@@ -410,7 +443,8 @@ export const backend = {
   // ---- セッション管理 -----------------------------------------------------
 
   async listSessions({ limit = 100 } = {}) {
-    const rows = await server.request('GET', '/experimental/session', { query: { roots: true, limit } });
+    // サーバーが動いていなければ、起こさずに会話の DB から読む（Pleiad で作った会話は Pleiad の控えからも一覧に出る）
+    const rows = server.running ? await server.request('GET', '/experimental/session', { query: { roots: true, limit } }) : (sessionsFromDb({ limit }) ?? []);
     const list = Array.isArray(rows) ? rows : rows?.data ?? [];
     for (const s of list) if (s?.id && s.directory) directories.set(s.id, s.directory);
     return list.filter((s) => !s.parentID).map(sessionRow).filter(Boolean);
@@ -418,6 +452,11 @@ export const backend = {
 
   async getSession(sessionId) {
     if (!sessionId || !/^ses_/.test(sessionId)) return null;
+    if (!server.running) {
+      const [row] = sessionsFromDb({ id: sessionId }) ?? [];
+      if (row?.directory) directories.set(row.id, row.directory);
+      return sessionRow(row ?? null);
+    }
     const s = await server.request('GET', `/session/${encodeURIComponent(sessionId)}`, { directory: directories.get(sessionId) ?? null }).catch(() => null);
     if (s?.directory) directories.set(s.id, s.directory);
     return sessionRow(s);
@@ -478,6 +517,11 @@ export const backend = {
     /** ログインしているか。OpenCode の無料のモデル（opencode）はログイン無しで使えるので、サーバーが答えればログイン済みとして、つないだ接続先を出す */
     async status() {
       if (!cliCommand('opencode')) return { loggedIn: false, account: null, detail: t('opencode.errors.notInstalled') };
+      // サーバーが動いていなければ、起こさずに資格情報のファイルの接続先の名前だけで答える
+      if (!server.running) {
+        const connected = connectedFromFile();
+        return { loggedIn: true, account: connected.join(', ') || t('opencode.auth.freeOnly'), detail: t('opencode.auth.detail') };
+      }
       try {
         const data = await server.request('GET', '/provider');
         const connected = (data?.connected ?? []).map((id) => (data?.all ?? []).find((p) => p.id === id)?.name ?? id);

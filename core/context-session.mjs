@@ -13,11 +13,15 @@ import { KINDS, pathKey } from './context-settings.mjs';
 import { pinChanges, readSnapshot, resolveRuntime } from './context-runtime.mjs';
 import { contextFindings } from './context-findings.mjs';
 import { t } from './i18n.mjs';
+import { AGENTS, agentOf } from './backends/agents.mjs';
 
 const MAX_TEXT = 256 * 1024;
 const NAME = /^[a-zA-Z0-9_.-]{1,128}$/;
 /** エージェント任せのとき、そのエージェントが読む指示の探す形式（core/context-scan.mjs の sources） */
-const NATIVE_SOURCE = { claude: 'claude', codex: 'codex' };
+// エージェントが自分で読む読み込み元（エージェントの記述の contextSources）
+const nativeSources = (agent) => agentOf(agent)?.contextSources ?? null;
+/** エージェントの設定に MCP を登録できるエージェントと、その読み込み元（common は MCP を持たない） */
+const mcpAgents = () => Object.entries(AGENTS).map(([id, a]) => [id, (a.contextSources ?? []).filter((s) => s !== 'common')]).filter(([, s]) => s.length);
 
 export function createContextSession({ store, snapshots, plyServers = async () => null, liveRecord = () => null, isRunning = () => false, scanOptions = {} }) {
   async function saved(sessionId) {
@@ -89,15 +93,16 @@ export function createContextSession({ store, snapshots, plyServers = async () =
    * 探索の設定（探す形式・除外）には従わず、登録されているものをそのまま並べる。接続・起動はしない
    */
   async function agentMcp(cwd) {
-    const scope = { sources: ['claude', 'codex'], excludePaths: [] };
+    const owners = mcpAgents();
+    const scope = { sources: [...new Set(owners.flatMap(([, s]) => s))], excludePaths: [] };
     const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'mcp' ? scope : null]));
     const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
-    const agents = { claude: [], codex: [] };
+    const agents = Object.fromEntries(owners.map(([id]) => [id, []]));
     for (const e of scan.entries) {
       if (e.kind !== 'mcp') continue;
-      for (const source of new Set(e.origins.map(o => o.source))) {
-        if (!agents[source] || agents[source].some(s => s.name === e.name)) continue;
-        agents[source].push({ name: e.name, transport: e.transport, endpoint: e.endpoint ?? null, command: e.command ?? null, path: e.path, scope: e.scope, disabled: e.status === 'disabled' });
+      for (const source of new Set(e.origins.map(o => o.source))) for (const [id, sources] of owners) {
+        if (!sources.includes(source) || agents[id].some(s => s.name === e.name)) continue;
+        agents[id].push({ name: e.name, transport: e.transport, endpoint: e.endpoint ?? null, command: e.command ?? null, path: e.path, scope: e.scope, disabled: e.status === 'disabled' });
       }
     }
     return { cwd: scan.cwd, agents, diagnostics: scan.diagnostics };
@@ -115,9 +120,9 @@ export function createContextSession({ store, snapshots, plyServers = async () =
   }
   /** nativeInstructions の探索。行に本文（content）と実体のパスを残す（気になる所が使う） */
   async function nativeScan(cwd, agent) {
-    const source = NATIVE_SOURCE[agent];
-    if (!source) return { cwd, agent, entries: null };
-    const scope = { sources: [source], excludePaths: [] };
+    const sources = nativeSources(agent);
+    if (!sources) return { cwd, agent, entries: null };
+    const scope = { sources, excludePaths: [] };
     const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'instruction' ? scope : null]));
     const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
     const seen = new Set(), entries = [];

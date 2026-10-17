@@ -1216,6 +1216,7 @@
       "note": "Pleiad provides no instruction files. Which files are read depends on the agent.",
       "sourceCommon": "AGENTS.md (shared)",
       "sourceCodex": "Codex format",
+      "sourceOpencode": "OpenCode format",
       "title": "Instructions",
       "files": "instruction files",
       "fileTitle": "Instructions from files (CLAUDE.md, AGENTS.md)",
@@ -1233,7 +1234,8 @@
       "agent": "Each agent connects according to its own MCP settings",
       "ply": "Connect the same MCP servers to every agent",
       "sourceClaude": "Claude settings",
-      "sourceCodex": "Codex settings"
+      "sourceCodex": "Codex settings",
+      "sourceOpencode": "OpenCode settings"
     },
     "copyPath": "Copy path",
     "copied": "Copied",
