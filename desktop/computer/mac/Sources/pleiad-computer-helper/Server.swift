@@ -84,6 +84,15 @@ final class HelperServer {
         case "apps": return Apps.list()
         case "launch": try Apps.launch(args, reply: reply); return nil
         case "activate": return ["activated": try Apps.activate(args)]
+        case "chromeWindows": return Chrome.windows(args)
+        case "chromeFindDialog": return Chrome.findDialog(args)
+        case "chromeAllowDialog": return Chrome.allowDialog(args)
+        case "chromeEnableStep": return Chrome.enableStep(args)
+        case "chromeRaise": return Chrome.raise(args)
+        case "chromeClose": return Chrome.close(args)
+        case "chromeMoveWindow": return Chrome.moveWindow(args)
+        case "chromeDisplays": return Chrome.displays()
+        case "chromeDumpAx": return Chrome.dumpAx(args)
         default: throw HelperError(.failed, "unknown op: \(request.op)")
         }
     }

@@ -10,9 +10,9 @@ import os from 'node:os';
 const TEST_ENV = 'AGENT_HOST_CHROME_USER_DATA';
 
 /**
- * 今の OS で使える Chrome 系のブラウザーの User Data（今は Windows だけ。ほかの OS は空 = 使えない）。先頭が Chrome（接続に使う）、
+ * 今の OS で使える Chrome 系のブラウザーの User Data（Windows と macOS。ほかの OS は空 = 使えない）。先頭が Chrome（接続に使う）、
  * 2 つ目の Edge はプロフィールの一覧の口（Edge への接続はまだ無いので一覧にも出ない。docs/inapp-browser.md「プロフィール」）。
- * custom は環境変数で差し替えた User Data（chrome.exe に --user-data-dir を付ける。付けないと既定の User Data の Chrome に窓が開く）。
+ * custom は環境変数で差し替えた User Data（Chrome に --user-data-dir を付ける。付けないと既定の User Data の Chrome に窓が開く）。
  * 差し替えたときはそれだけを返す（試験・確かめで利用者の本物の Edge も読まない）
  * @returns {{ browser: 'chrome' | 'edge', userDataDir: string, custom?: true }[]}
  */
@@ -23,6 +23,13 @@ export function chromeHomes({ platform = process.platform, env = process.env } =
     return [
       { browser: 'chrome', userDataDir: path.join(base, 'Google', 'Chrome', 'User Data') },
       { browser: 'edge', userDataDir: path.join(base, 'Microsoft', 'Edge', 'User Data') },
+    ];
+  }
+  if (platform === 'darwin') {
+    const base = path.join(env.HOME || os.homedir(), 'Library', 'Application Support');
+    return [
+      { browser: 'chrome', userDataDir: path.join(base, 'Google', 'Chrome') },
+      { browser: 'edge', userDataDir: path.join(base, 'Microsoft Edge') },
     ];
   }
   return [];

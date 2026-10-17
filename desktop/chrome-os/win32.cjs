@@ -44,7 +44,7 @@ const PROFILE_DIR = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
 const NONCE = /^[a-f0-9]{8,64}$/;
 const NONCE_URL = /^data:text\/html[,;]/;
 
-const FEATURES = Object.freeze({ dialog: true, raise: true, launch: true, conceal: true, watch: true, bounds: true });
+const FEATURES = Object.freeze({ dialog: true, raise: true, launch: true, conceal: true, watch: true, bounds: true, allow: false, enable: false });
 
 const exeName = path_ => (typeof path_ === 'string' && path_ ? path_.split(/[\\/]/).pop().toLowerCase() : null);
 const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
@@ -659,7 +659,10 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   return {
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
-    snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close, bounds, watch,
+    snapshotWindows, findPermissionDialog,
+    allowPermission: () => false,
+    enableRemoteDebugging: () => ({ ok: false, reason: 'unsupported' }),
+    raise, yieldForeground, foreground, appWindow, close, bounds, watch,
     locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
     exportAgent, adoptAgent, reconceal, closeAllAgents,
     /** テスト用: 見張りを 1 回だけ回す・止める */

@@ -13,10 +13,10 @@ export const CHROME_PID = 4242;
 export function fakeChromeOs({ chrome = null, supported = true, reason = 'platform', features } = {}) {
   const realCaps = Object.freeze({
     supported, ...(supported ? {} : { reason }),
-    features: features ?? { dialog: supported, raise: supported, launch: supported, conceal: supported, watch: supported, bounds: supported },
+    features: features ?? { dialog: supported, raise: supported, launch: supported, conceal: supported, watch: supported, bounds: supported, allow: supported, enable: supported },
   });
   // main が居ない間（更新）は pending（supported: false）。setPending(false) で戻して onReady を呼ぶ
-  const pendingCaps = Object.freeze({ supported: false, reason: 'pending', features: { dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false } });
+  const pendingCaps = Object.freeze({ supported: false, reason: 'pending', features: { dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false, allow: false, enable: false } });
   let caps = realCaps;
   const log = [];
   const windows = new Map([['chrome-main', { browser: true }], ['app-notes', { browser: false }]]);
@@ -24,11 +24,12 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   let stealing = false;
   let windowStealing = false;
   let hideDialogs = false;
+  const shownDialogs = new Set();
   const listeners = new Set();
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
   // readyWaitMs: pending の間、ready() が層の戻りを待つ長さ（0 は待たずに pending のまま返す）。本物の口（parentPortChromeOs）は readyWaitMs だけ待つ
-  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
+  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, enableFails: false, allowFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
   let generation = 0;
   const readyWaiters = new Set();
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
@@ -83,7 +84,20 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       note({ op: 'findPermissionDialog', since, port });
       if (hideDialogs || !chrome) return null;
       const d = chrome.dialogs().find(x => !since.includes(x.id));
-      return d ? { id: d.id } : null;
+      if (!d) return null;
+      shownDialogs.add(d.id);
+      return { id: d.id };
+    },
+    async allowPermission(ref) {
+      note({ op: 'allowPermission', ref: ref?.id });
+      if (opts.allowFails || !chrome || !ref?.id || !shownDialogs.has(ref.id)) return false;
+      return chrome.allowDialog(ref.id);
+    },
+    async enableRemoteDebugging({ browser, profileDir, userDataDir = null } = {}) {
+      note({ op: 'enableRemoteDebugging', browser: browser?.id ?? null, profileDir: profileDir ?? null, userDataDir });
+      if (opts.enableFails || browser?.id !== 'fake-browser' || !chrome) return { ok: false, reason: 'failed' };
+      await chrome.turnOn();
+      return { ok: true };
     },
     async raise(ref) { note({ op: 'raise', ref: ref?.id }); fg = ref?.id ?? fg; return { ok: true, method: 'direct' }; },
     async yieldForeground(ref, { to } = {}) {
@@ -94,7 +108,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     async foreground() { note({ op: 'foreground' }); return { id: fg, browser: isDialog(fg) || hw.has(fg) || windows.get(fg)?.browser === true }; },
     /** Pleiad 自身の窓（引き継ぎで窓を戻す画面の手がかり）。opts.noAppWindow なら引けない */
     async appWindow() { note({ op: 'appWindow' }); return opts.noAppWindow ? null : { id: opts.appWindow }; },
-    async close(ref) { note({ op: 'close', ref: ref?.id }); return chrome ? chrome.closeDialog(ref?.id) : false; },
+    async close(ref) { note({ op: 'close', ref: ref?.id }); if (!ref?.id || !shownDialogs.has(ref.id)) return false; return chrome ? chrome.closeDialog(ref.id) : false; },
 
     // ---- エージェントの窓
     async locateBrowser({ product = 'chrome' } = {}) { note({ op: 'locateBrowser', product }); return opts.chromeMissing ? null : { id: 'fake-browser', product }; },
@@ -212,6 +226,8 @@ export function fakeMainPort(os, { delayMs = 20, epoch = 'main-1' } = {}) {
   const act = async (action, a = {}) => {
     switch (action) {
       case 'findPermissionDialog': return os.findPermissionDialog({ since: a.since, port: a.port });
+      case 'allowPermission': return os.allowPermission(a.ref);
+      case 'enableRemoteDebugging': return os.enableRemoteDebugging({ browser: a.browser, profileDir: a.profileDir, userDataDir: a.userDataDir });
       case 'raise': return os.raise(a.ref);
       case 'yieldForeground': return os.yieldForeground(a.ref, { to: a.to });
       case 'close': return os.close(a.ref);

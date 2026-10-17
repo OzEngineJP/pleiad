@@ -8,7 +8,7 @@
 // どの口も、使えない OS・使えない機能・時間切れでは投げずに null / false を返す（呼び出し側は、層が無くても進める作りにする）。
 //
 // @typedef {{ id: string }} WindowRef   層が出した値。core は覚える・比べる・返すだけ（Windows は窓のハンドルの 10 進）。層が出していない値には何もしない
-// @typedef {{ supported: boolean, reason?: string, features: { dialog: boolean, raise: boolean, launch: boolean, conceal: boolean, watch: boolean, bounds: boolean } }} Capabilities
+// @typedef {{ supported: boolean, reason?: string, features: { dialog: boolean, raise: boolean, launch: boolean, conceal: boolean, watch: boolean, bounds: boolean, allow: boolean, enable: boolean } }} Capabilities
 //
 // capabilities()                         → Capabilities（同期。main の chrome-os-ready を受けるまでは pending）
 // ready()                                → Promise<Capabilities>（main の返事を待つ。返事が無ければ supported: false）
@@ -16,6 +16,10 @@
 // snapshotWindows()                      → Promise<string[] | null>  今あるブラウザーの最上位の窓の印（findPermissionDialog の比べ元。中身は層だけが解く）
 // findPermissionDialog({ since, port })  → Promise<WindowRef | null>  since に無い、見えている、小さい（外形が 1000×700 DIP 以下）ブラウザーの窓＝リモート デバッグの確認。
 //                                          port（DevToolsActivePort のポート）があれば、その待ち受けのプロセスの窓だけ（別の User Data の Chrome と取り違えない）
+// allowPermission(ref)                   → Promise<boolean>  findPermissionDialog が出した確認の窓の「許可する／Allow」を押す。層が確認として出した ref 以外には何もしない
+// enableRemoteDebugging({ browser, profileDir, userDataDir? })
+//                                        → Promise<{ ok: boolean, reason?: string }>  新しい窓を開き、chrome://inspect/#remote-debugging へ移り、トグルをオンにして、その窓を閉じる。
+//                                          すでにオンなら何もせず ok。利用者がすでに使っている窓・タブには触らない
 // raise(ref)                             → Promise<{ ok: boolean, method: string }>  窓を前に出す（最小化なら戻す）。method は direct・attach・failed など
 // yieldForeground(ref, { to })           → Promise<boolean>  ref が前面を取っていたら to（直前の前面）に返す
 // foreground()                           → Promise<{ id: string, browser: boolean } | null>  今の前面の窓。browser はブラウザー自身の窓か
@@ -46,7 +50,7 @@
 // adoptAgent(token, { revealed })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
 
-const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
+const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false, allow: false, enable: false });
 
 /** テストとほかの OS の既定。どの口も null / false を返す */
 export function unsupportedChromeOs(reason = 'platform') {
@@ -59,6 +63,8 @@ export function unsupportedChromeOs(reason = 'platform') {
     generation: () => 0,
     snapshotWindows: async () => null,
     findPermissionDialog: async () => null,
+    allowPermission: async () => false,
+    enableRemoteDebugging: async () => ({ ok: false, reason: 'unsupported' }),
     raise: async () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: async () => false,
     foreground: async () => null,
@@ -163,6 +169,9 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     generation: () => generation,
     snapshotWindows: () => call('snapshotWindows', {}, null),
     findPermissionDialog: ({ since, port } = {}) => call('findPermissionDialog', { since: since ?? [], port: port ?? null }, null),
+    allowPermission: ref => call('allowPermission', { ref }, false),
+    enableRemoteDebugging: ({ browser, profileDir, userDataDir = null } = {}) =>
+      call('enableRemoteDebugging', { browser, profileDir, userDataDir }, { ok: false, reason: 'unsupported' }),
     raise: ref => call('raise', { ref }, { ok: false, method: 'failed' }),
     yieldForeground: (ref, { to } = {}) => call('yieldForeground', { ref, to }, false),
     foreground: () => call('foreground', {}, null),

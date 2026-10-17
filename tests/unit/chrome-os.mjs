@@ -1,8 +1,10 @@
 import { createRequire } from 'node:module';
+import path from 'node:path';
 import { parentPortChromeOs, unsupportedChromeOs } from '../../core/chrome/os.mjs';
 
 const require = createRequire(import.meta.url);
 const { createWin32ChromeOs, WM_CLOSE, WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_LAYERED } = require('../../desktop/chrome-os/win32.cjs');
+const { createMacChromeOs } = require('../../desktop/chrome-os/mac.cjs');
 const { createChromeOs, attachChromeOs } = require('../../desktop/chrome-os/index.cjs');
 
 export const name = 'chrome-os';
@@ -223,11 +225,12 @@ export default async function (t) {
 
   // ===== index.cjs: 使えない OS・parentPort の往復 =====
   {
-    for (const [platform, win32, reason, expect] of [['darwin', null, 'native', 'platform'], ['linux', {}, 'native', 'platform'], ['win32', null, 'native', 'native'], ['win32', null, 'platform', 'platform']]) {
+    for (const [platform, win32, reason, expect] of [['darwin', null, 'native', 'native'], ['linux', {}, 'native', 'platform'], ['win32', null, 'native', 'native'], ['win32', null, 'platform', 'platform']]) {
       const os = createChromeOs({ platform, win32, reason });
       const caps = os.capabilities();
-      t.ok(`${platform}${win32 ? '' : '（win32 の表なし）'} → supported: false / ${expect}、どの口も null・false で投げない`,
+      t.ok(`${platform}${win32 ? '' : '（ネイティブ層なし）'} → supported: false / ${expect}、どの口も null・false で投げない`,
         caps.supported === false && caps.reason === expect && os.snapshotWindows() === null && os.findPermissionDialog({ since: [] }) === null
+        && os.allowPermission({ id: '1' }) === false && os.enableRemoteDebugging({}).ok === false
         && os.raise({ id: '1' }).ok === false && os.yieldForeground({ id: '1' }, {}) === false && os.foreground() === null && os.close({ id: '1' }) === false
         && os.locateBrowser({}) === null && os.launchWindow({}).ok === false && os.findWindowByNonce('a') === null && os.findWindowByBounds({}) === null
         && os.hiddenSpot() === null && os.conceal({ id: '1' }) === false && os.reveal({ id: '1' }) === false && os.release({ id: '1' }) === false && os.reconceal() === 0);
@@ -1003,5 +1006,132 @@ export default async function (t) {
     t.ok('最小化した窓の矩形は返さない', os.bounds(ref) === null);
     w.windows.delete(800);
     t.ok('閉じた窓・知らない ref の矩形は返さない', os.bounds(ref) === null && os.bounds({ id: 'unknown' }) === null);
+  }
+
+  // ===== macOS の層（mac.cjs）と index.cjs の darwin 選択・非同期の往復 =====
+  {
+    const calls = [];
+    const windows = [
+      { id: 'ax-500-1', pid: 500, exe: 'Google Chrome', title: 'Google', x: 100, y: 100, width: 800, height: 800, minimized: false, visible: true },
+    ];
+    let dialogEntry = { id: 'ax-500-2', pid: 500, exe: 'Google Chrome', title: 'Allow remote debugging?', x: 200, y: 200, width: 420, height: 180, minimized: false, visible: true };
+    let frontApp = { pid: 99, bundleId: 'com.apple.TextEdit', name: 'TextEdit' };
+    let enableStepCount = 0;
+    const helper = {
+      async call(op, args = {}) {
+        calls.push({ op, args });
+        switch (op) {
+          case 'chromeWindows': return { windows: [...windows], ownerPid: args.port === 9222 ? 500 : null, trusted: true };
+          case 'chromeFindDialog': {
+            if (!dialogEntry || (args.since ?? []).includes(dialogEntry.id)) return { dialog: null };
+            if (args.port && args.port !== 9222) return { dialog: null };
+            return { dialog: { ...dialogEntry } };
+          }
+          case 'chromeAllowDialog': return { ok: args.id === dialogEntry?.id };
+          case 'chromeEnableStep': {
+            enableStepCount += 1;
+            if (enableStepCount === 1) return { state: 'navigated-bg', title: 'PLY-ENABLE' };
+            return { state: 'toggled', checked: true, title: 'Inspect with Chrome Developer Tools' };
+          }
+          case 'chromeRaise': {
+            frontApp = { pid: 500, bundleId: 'com.google.Chrome', name: 'Google Chrome' };
+            return { ok: true, method: 'direct' };
+          }
+          case 'chromeClose': {
+            const idx = windows.findIndex(w => w.id === args.id);
+            if (idx >= 0) windows.splice(idx, 1);
+            return { ok: true };
+          }
+          case 'chromeMoveWindow': {
+            const hit = windows.find(w => w.id === args.id);
+            if (!hit) return { ok: false };
+            if (typeof args.x === 'number') hit.x = args.x;
+            if (typeof args.y === 'number') hit.y = args.y;
+            return { ok: true, x: hit.x, y: hit.y, width: hit.width, height: hit.height, minimized: false };
+          }
+          case 'chromeDisplays': return { displays: [{ id: 1, x: 0, y: 0, width: 1440, height: 900, isMain: true }] };
+          case 'foreground': return { app: frontApp };
+          case 'activate': {
+            frontApp = { pid: args.pid, bundleId: 'com.apple.TextEdit', name: 'TextEdit' };
+            return { activated: true };
+          }
+          default: return {};
+        }
+      },
+    };
+    const chromeAppBin = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    const spawned = [];
+    let portAlive = false;
+    const macOs = createChromeOs({
+      platform: 'darwin',
+      helper,
+      env: { HOME: '/Users/alice', AGENT_HOST_CHROME_USER_DATA: path.resolve('/tmp/ply-mac-ud') },
+      exists: p => p === chromeAppBin,
+      readFile: () => '9222\n/devtools/browser/11111111-2222-3333-4444-555555555555\n',
+      probePort: async () => portAlive,
+      sleep: async () => {},
+      spawn: (exe, args) => {
+        spawned.push({ exe, args });
+        const urlArg = args.find(a => a.startsWith('data:text/html,')) ?? '';
+        const m = urlArg.match(/<title>([^<]+)<\/title>/);
+        if (m) {
+          windows.push({ id: `ax-500-${windows.length + 10}`, pid: 500, exe: 'Google Chrome', title: m[1], x: 120, y: 120, width: 800, height: 800, minimized: false, visible: true });
+        }
+        if (m && m[1].startsWith('PLY-ENABLE-')) portAlive = true;
+        return { on() {}, unref() {} };
+      },
+    });
+    const caps = macOs.capabilities();
+    t.ok('darwin + helper があれば supported: true（dialog・allow・enable・raise・launch が true）',
+      caps.supported === true && caps.features.dialog === true && caps.features.allow === true
+      && caps.features.enable === true && caps.features.raise === true && caps.features.launch === true,
+      JSON.stringify(caps));
+
+    // IPC 往復（attachChromeOs が Promise の戻り値を解決して返す）
+    const toWorker = [], toPort = [];
+    const worker = { on: (type, fn) => toWorker.push(fn), postMessage: m => queueMicrotask(() => toPort.forEach(fn => fn({ data: m }))) };
+    const port = { on: (type, fn) => toPort.push(fn), postMessage: m => queueMicrotask(() => toWorker.forEach(fn => fn(m))) };
+    const core = parentPortChromeOs(port, { timeoutMs: 500, readyWaitMs: 500 });
+    attachChromeOs(worker, { chromeOs: macOs });
+    const readyCaps = await core.ready();
+    t.ok('darwin の attachChromeOs から allow・enable の features が届く', readyCaps.features.allow === true && readyCaps.features.enable === true);
+
+    const snap = await core.snapshotWindows();
+    t.ok('mac.cjs: snapshotWindows が非同期の helper 経由で窓の id を返す', Array.isArray(snap) && snap.includes('ax-500-1'));
+    const dlg = await core.findPermissionDialog({ since: snap, port: 9222 });
+    t.ok('mac.cjs: findPermissionDialog が確認の窓を返す（port 一致）', dlg?.id === 'ax-500-2');
+    t.ok('mac.cjs: allowPermission は確認として出した ref 以外には何もしない',
+      await core.allowPermission({ id: 'ax-500-1' }) === false && await core.allowPermission({ id: 'unknown' }) === false && await core.allowPermission(null) === false);
+    t.ok('mac.cjs: allowPermission が確認の ref の Allow を押す', await core.allowPermission(dlg) === true);
+    t.ok('mac.cjs: close も確認の ref だけに効く', await core.close({ id: 'ax-500-1' }) === false && await core.close(dlg) === true);
+
+    const browser = await core.locateBrowser({ product: 'chrome' });
+    t.ok('mac.cjs: locateBrowser が /Applications/Google Chrome.app の実行ファイルを見つける', browser?.product === 'chrome' && typeof browser.id === 'string');
+
+    // enableRemoteDebugging: まだオフのときは新しい窓を開き、トグルをオンにして窓を閉じる
+    const beforeWinCount = windows.length;
+    const enabled = await core.enableRemoteDebugging({ browser, profileDir: 'Default' });
+    t.ok('mac.cjs: enableRemoteDebugging が新しい窓を開き、トグルをオンにして、その窓を閉じる（既存の窓は残る）',
+      enabled?.ok === true && spawned.length === 1 && windows.length === beforeWinCount
+      && calls.some(c => c.op === 'chromeEnableStep') && calls.some(c => c.op === 'chromeClose'),
+      JSON.stringify({ enabled, spawnedCount: spawned.length, winCount: windows.length }));
+
+    // enableRemoteDebugging: すでにオンなら窓を開かずにすぐ ok
+    const spawnCountBefore = spawned.length;
+    const enabledAgain = await core.enableRemoteDebugging({ browser, profileDir: 'Default' });
+    t.ok('mac.cjs: すでに DevToolsActivePort が生きていれば何も開かずに ok', enabledAgain?.ok === true && spawned.length === spawnCountBefore);
+
+    // エージェントの窓の起動と nonce 検出
+    const nonce = 'abcdef0123456789';
+    const launched = await core.launchWindow({ browser, profileDir: 'Default', url: `data:text/html,<title>PLY-${nonce}</title>`, nonce });
+    t.ok('mac.cjs: launchWindow が --new-window で起動する', launched?.ok === true);
+    const agentRef = await core.findWindowByNonce(nonce);
+    t.ok('mac.cjs: findWindowByNonce が題の nonce で窓を見つける', typeof agentRef?.id === 'string');
+    const fgBefore = await core.foreground();
+    t.ok('mac.cjs: foreground が前面アプリを返す', fgBefore?.browser === false);
+    const raised = await core.raise(agentRef);
+    t.ok('mac.cjs: raise で窓を前に出し、yieldForeground で元の前面へ戻せる',
+      raised?.ok === true && await core.yieldForeground(agentRef, { to: fgBefore }) === true);
+    t.ok('mac.cjs: closeAgent でエージェントの窓を閉じる', await core.closeAgent(agentRef) === true);
   }
 }
