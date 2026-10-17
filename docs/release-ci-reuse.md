@@ -7,8 +7,8 @@ CI が赤ければ公開しない。使える成功が無ければ、今まで�
 
 1. `ci-gate` ジョブ（ubuntu、権限は `actions: read` と `contents: read` だけ）が `scripts/release-ci-gate.mjs` を走らせる。
    タグを commit に解き（注釈つきのタグは指す commit まで剥がす）、GitHub の API を読むだけ（GET）で判定する。トークンは `github.token` で、値はログに出さない。
-2. 判定が「赤」ならこのジョブが失敗し、署名・公開をする `release` ジョブは走らない。
-3. `release` ジョブ（windows）は、checkout した commit が `ci-gate` の照合した commit と同じかを確かめる。
+2. 判定が「赤」ならこのジョブが失敗し、ビルド・署名をする `windows`・`mac` ジョブと、公開をする `publish` ジョブは走らない。
+3. `windows` ジョブは、checkout した commit が `ci-gate` の照合した commit と同じかを確かめる（`mac`・`publish` も同じ確かめをする）。
    判定が `reuse` なら短い検査（下記）だけ、それ以外（`fallback`・空・想定外の値）なら `npm test` を全部回してから署名・公開へ進む。
 
 ## 判定の規則

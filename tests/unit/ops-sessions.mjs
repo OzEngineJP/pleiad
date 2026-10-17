@@ -153,7 +153,7 @@ export default async function (t) {
     && def('computerUse').riskOf({}, { allowAllApps: true }) === 'guarded' && def('computerUse').riskOf({ alwaysAllowed: [] }, { alwaysAllowed: [{ id: 'x' }] }) === 'guarded'
     && def('computerUse').riskOf({ enabled: true }, { enabled: false }) === 'write' && def('computerUse').riskOf({ alwaysAllowed: [{ id: 'x' }] }, { alwaysAllowed: [] }) === 'write');
   t.ok('承認モードとアカウントは human-only。秘密を持つものは設定に無い', def('mode').risk === 'human-only' && def('claudeAccount').risk === 'human-only' && !settings.some((s) => /key|token|secret|password/i.test(s.key)));
-  t.ok('書ける設定は、前の版の名残の addedContext 以外の全部', settings.filter((s) => s.readOnly).map((s) => s.key).join() === 'addedContext');
+  t.ok('書ける設定は、内部だけが更新する表などを除いて全部', settings.filter((s) => s.readOnly).map((s) => s.key).sort().join() === 'addedContext,repoDefaults');
 
   // ---- 委譲
   const tasks = [

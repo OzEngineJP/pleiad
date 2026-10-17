@@ -312,6 +312,7 @@ export const conversationOps = [
       effort: z.string().max(40).optional().describe(D('setTurnSettings', 'effort')),
       cwd: z.string().max(8192).optional().describe(D('setTurnSettings', 'cwd')),
       cancel: z.boolean().optional().describe(D('setTurnSettings', 'cancel')),
+      worktreePending: z.literal(false).optional().describe(D('setTurnSettings', 'worktreePending')),
       mode: z.string().max(60).optional().describe(D('setTurnSettings', 'mode')),
       account: z.string().max(200).optional().describe(D('setTurnSettings', 'account')),
       endpoint: z.string().max(200).optional().describe(D('setTurnSettings', 'endpoint')),
@@ -323,7 +324,7 @@ export const conversationOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['sessions', 'next'], positional: ['sessionId'] } },
     legacyCommand: 'setTurnSettings',
     handler: (ctx, args) => {
-      humanOnlyFields(ctx, args, ['mode', 'account', 'endpoint', 'rememberModel', 'rememberEffort', 'rememberMode']);
+      humanOnlyFields(ctx, args, ['mode', 'account', 'endpoint', 'rememberModel', 'rememberEffort', 'rememberMode', 'worktreePending']);
       return fromHost(() => ctx.conversations.setTurnSettings({ ...args, sessionId: targetOf(ctx, args.sessionId) }));
     },
   }),

@@ -776,6 +776,9 @@
     "back": "Back to the original",
     "next": "Worktree ({{path}})",
     "splitFailed": "Could not create the worktree · {{error}}",
+    "pendingTitle": "Created when sent",
+    "pendingSame": "worktree (same as last time)",
+    "pendingCancel": "Start in the original location",
     "line": {
       "started": "Started in a worktree (same repository in use by {{who}})",
       "startedNoWho": "Started in a worktree",

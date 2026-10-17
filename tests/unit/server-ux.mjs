@@ -108,13 +108,13 @@ export default async function(t) {
     c.close(); await server.stop(); server = await startServer(config); c = await open({ port: server.port, token: server.token, autoAllow: true });
     const browserPrefs = await c.cmd('prefs');
     t.ok('browser confirmation and both permission lists survive server restart; malformed origin rejected', badBrowserPref && browserPrefs.confirmExternalLoads && browserPrefs.confirmAgentSites && JSON.stringify(browserPrefs.externalSitePermissions) === JSON.stringify(externalSites) && JSON.stringify(browserPrefs.agentSitePermissions) === JSON.stringify(agentSites));
-    const inherited = await c.cmd('newSession', { sourceSessionId: dirId, cwd: ROOT });
+    const inherited = await c.cmd('newSession', { sourceSessionId: dirId, cwd: changedDir });
     const inheritedRow = await row(inherited.sessionId);
     t.ok('new session uses source settings over global preferences', inheritedRow.backend === 'fake' && inheritedRow.model === '' && inheritedRow.mode === 'auto');
     const inheritedTurn = await c.runTurn({ sessionId: inherited.sessionId, prompt: 'echo:inherited' });
     t.ok('explicit default model survives different global preference at execution', inheritedTurn.events.some(e => e.type === 'session' && e.model === ''));
     await c.cmd('setTurnSettings', { sessionId: dirId, model: 'smart' });
-    const reservedNew = await c.cmd('newSession', { sourceSessionId: dirId, cwd: ROOT });
+    const reservedNew = await c.cmd('newSession', { sourceSessionId: dirId, cwd: changedDir });
     t.ok('new session inherits reserved model', (await row(reservedNew.sessionId)).model === 'smart');
     const fork = await c.cmd('fork', { sessionId: dirId });
     let forkRow = await row(fork.sessionId);
@@ -132,7 +132,7 @@ export default async function(t) {
     await c.cmd('setTurnSettings', { sessionId: fork.sessionId, mode: 'ask' });
     c.close(); await server.stop(); server = await startServer(config); c = await open({ port: server.port, token: server.token, autoAllow: true });
     t.ok('承認モード予約を再起動後に復元', (await row(fork.sessionId)).nextSettings?.mode === 'ask');
-    const switchedNew = await c.cmd('newSession', { sourceSessionId: fork.sessionId, cwd: ROOT });
+    const switchedNew = await c.cmd('newSession', { sourceSessionId: fork.sessionId, cwd: changedDir });
     t.ok('new session inherits reserved agent and its model', (await row(switchedNew.sessionId)).backend === 'codex' && (await row(switchedNew.sessionId)).model === 'fake-model-2');
     t.ok('新規セッションは変更先に予約した承認モードを継承', (await row(switchedNew.sessionId)).mode === 'ask');
     await c.cmd('setTurnSettings', { sessionId: fork.sessionId, backend: 'fake', model: 'smart' });

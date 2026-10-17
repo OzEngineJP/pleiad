@@ -4284,7 +4284,23 @@ function syncSettingsHold() {
 function paintSettingsNotice() {
   const s = state.sessions.find(s => s.id === state.current);
   const next = s?.nextSettings;
-  $("nextSettings").hidden = !next;
+  const pendingWorktree = Boolean(s?.unsent && s.worktreePending);
+  $("nextSettings").hidden = !next && !pendingWorktree;
+  // i18n-dynamic: worktree.pendingTitle
+  // i18n-dynamic: worktree.pendingCancel
+  $("nextSettings").querySelector('b').textContent = t(pendingWorktree ? 'worktree.pendingTitle' : 'chat.next.title');
+  $("cancelSettings").title = t(pendingWorktree ? 'worktree.pendingCancel' : 'chat.next.cancel');
+  $("cancelSettings").setAttribute('aria-label', $("cancelSettings").title);
+  if (pendingWorktree) {
+    const mark = el('span', 'wt-ic');
+    mark.innerHTML = branchIcon;
+    mark.setAttribute('aria-hidden', 'true');
+    $("nextSettingsText").replaceChildren(mark, el('span', null, t('worktree.pendingSame')));
+    $("nextSettings").classList.add('wt-compact');
+    $("nextSettingsBehind").hidden = true;
+    paintHandoffNote(s, null);
+    return;
+  }
   if (!next) $("nextSettings").classList.remove("wt-compact");
   // main が返答を終えて裏だけを待っている間（ターンの phase が waiting）は、送信が予約より先に今のターンへ届く（途中送信）。
   // 予約は次のターンから効くので、そう書く（docs/multi-backend.md §2.2）
@@ -4348,7 +4364,15 @@ function paintHandoffNote(s, next) {
   }
   box.replaceChildren(summary, rows);
 }
-$("cancelSettings").onclick = () => reserveSettings({ cancel: true });
+$("cancelSettings").onclick = () => {
+  const s = state.sessions.find(s => s.id === state.current);
+  if (s?.unsent && s.worktreePending) {
+    s.worktreePending = false;
+    reserveSettings({ worktreePending: false });
+    controls.paint();
+    paintSettingsNotice();
+  } else reserveSettings({ cancel: true });
+};
 
 /** 最近使った作業ディレクトリ。いつ使ったかを添える */
 function cwdOptions() {
@@ -4544,6 +4568,7 @@ const controls = chatComposer.useControls({
       },
       git: state.git.data,
       worktree: state.worktree.data,
+      worktreePending: Boolean(state.sessions.find(s => s.id === state.current)?.worktreePending),
       // 別の会話が同じリポジトリに書き込み中なら { who }。チップと面に知らせる
       worktreeBusy: worktreeBusyPlan(),
     };
@@ -5059,7 +5084,7 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
     try {
       await settingsWrite.catch(() => {});
       await modeWrite;
-      const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? chosen.backend ?? (source ? undefined : state.prefs.backend ?? state.backendId),
+      const result = await cmd("newSession", { sourceSessionId: source, backend: backend ?? chosen.backend,
         cwd: requestedCwd, status,
         ...Object.fromEntries(["model", "effort", "mode", "endpoint"].filter(k => chosen[k] !== undefined).map(k => [k, chosen[k]])) });
       pendingRows.delete(pendingNewSession.id);
@@ -7955,9 +7980,14 @@ async function startWorktree() {
   try {
     const res = await cmd('worktreeSplit', { ...(state.current ? { sessionId: state.current } : {}), cwd: state.cwd });
     await applyCwd(res.cwd);
+    const row = state.sessions.find(s => s.id === state.current);
+    if (row) row.worktreePending = false;
     $('settingsError').textContent = '';
+    refreshWorktree().catch(() => {});
+    return true;
   } catch (e) { $('settingsError').textContent = t('worktree.splitFailed', { error: e.message }); }
   refreshWorktree().catch(() => {});
+  return false;
 }
 /** 元の場所へ戻す（次のターンから）。origin を言わなければ、今の worktree の元 */
 async function backFromWorktree(origin = state.worktree.data?.current?.origin) {
@@ -9378,6 +9408,11 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
     const ordered = orderedAttachments();
     const attachments = ordered.map(a => ({ path: a.path, name: a.name, mime: a.mime ?? '' }));
     if (!text.trim() && !attachments.length) return;
+    if (state.sessions.find(s => s.id === sessionId)?.worktreePending) {
+      if (!await startWorktree()) return;
+      await settingsWrite;
+      if (state.current !== sessionId) return;
+    }
     if (text.trim() === '/compact' && !attachments.length) {
       if (canCompactHere()) {
         await cmd('compactConversation', { sessionId });
