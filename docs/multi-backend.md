@@ -66,6 +66,11 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 
 `sdk` イベントを廃止し、以下に置き換える（[ADR 0006](adr/0006-normalized-events-protocol.md)）。`PROTOCOL_VERSION` は **2**。
 
+バックエンドが出してよいイベントの種類と、必ず付けるフィールドの正本は `core/backends/contract.mjs` の `BACKEND_EVENTS`
+（ターンの外の `host.event` で出せるものは `OUTSIDE_TURN_EVENTS`）。試験のサーバー（`tests/lib/server.mjs`）は `PLEIAD_BACKEND_CONTRACT=strict` で
+受け口（runTurn・compact・adoptTurn の `emit` と `host.event`）ごとに照らし、外れたイベントがあれば `stop()` で落とす。下の表は意味の説明
+（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)）。
+
 | type | ペイロード（`sessionId` は emitGlobal が必ず補う） | 置き換える旧経路 |
 |---|---|---|
 | `text.delta` | `{ text }` | `stream_event/text_delta` |
@@ -225,26 +230,19 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 
 ### 2.3 `AgentBackend` インターフェース
 
-`core/backends/<id>.mjs` が 1 つずつ export する。`core/backends/index.mjs` がレジストリ。
+`core/backends/<id>.mjs` が 1 つずつ export する。`core/backends/index.mjs` がレジストリで、どの id があるかはエージェントの記述
+（`core/backends/agents.mjs`。下の「エージェントを足す」）から作る。
+
+能力の印（`capabilities`）の正本は `core/backends/contract.mjs` の `CAPABILITIES`。**バックエンドは全部のキーに値を書く**
+（対応しないものは `false` などで明示する。書いていないことを「対応しない」の代わりにしない）。値の形と、値ごとに要るメソッド
+（`fork: true` なら `fork()` など）もそこに書いてあり、`npm test` の backend-contract が確かめる。今の値の一覧は自動で作る
+[backend-matrix.md](backend-matrix.md)。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
 
 ```js
 export const backend = {
-  id: "claude" | "codex" | "antigravity" | "fake",
+  id: "claude",              // core/backends/agents.mjs のキーと同じ
   label: "Claude Code",
-  capabilities: {
-    title: bool,        // ネイティブにタイトルを持てる（持てなければ sidecar が正本）
-    tag: bool,          // ネイティブに状態タグを持てる
-    fork: bool,
-    subagents: bool,
-    liveModel: bool,    // 実行中にモデルを切り替えられる
-    liveMode: bool,
-    hostTools: bool,    // set_status / set_title / fork を AI 側から呼べる。present は §2.6
-    alwaysAllow: bool,  // 「常に許可」を返せる
-    login: bool,        // auth.login がある
-    computerUse: false | { images: 'inline' | 'path', waitSliceMs: number | null },
-                        // ply_computer を受け取れる。server は runTurn に computerRuntime（{ url, headers, instructions } | null）を渡す。
-                        // 値はエージェントごとの実測（computer-use.md「エージェントごとの値」）
-  },
+  capabilities: { ... },     // core/backends/contract.mjs の CAPABILITIES の全部のキー
 
   // ---- 語彙（UI はこれを <select> に流し込むだけ。値の意味は知らない）
   modes(): { [id]: { label, note } },          // 承認モード。id はバックエンドごとに違ってよい
@@ -793,6 +791,33 @@ DONE はコマンドが本当に終わったときにしか来ない。裏へ回
 Codexの新規・再開スレッドは `config['mcp_servers.ply']`、Claudeは `mcpServers.ply` で接続する。
 Codexの `set_status / set_title / fork` は未接続なので、
 `capabilities.hostTools: false` は維持する。可視化へ移した理由は [ADR 0008](adr/0008-retire-present-mcp-for-visualize.md)。
+
+### 2.9 エージェントを足す（2026-10-18）
+
+エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)）。
+足すときに書くもの:
+
+1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`module`・`shortLabel`・`brand`（ロゴ。`web/brand/` に置く）・`cli`
+   （`exe`・`binEnv`・`npmPackage`・`installUrl`・`searchDirs`）・`idleCompaction`（会話を離れた後の自動の圧縮の既定。Pleiad が圧縮しないなら null）。
+   全部のキーを書く（使わないものは null）。レジストリ（`index.mjs`）・CLI の探し方（`core/cli-installation.mjs`）・自動の圧縮の設定の行
+   （`core/compaction-settings.mjs`・`core/ops/settings.mjs`・設定の画面）・画面のロゴと短い名前（`web/agent-brands.mjs`）・委譲の行き先
+   （`core/agent-bridge.mjs` の `backend`）は、ここから作るので触らない
+2. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形と、能力の印の全部のキー
+3. **身代わり**（`tests/lib/fake-<id>.mjs`。LLM を呼ばずにプロトコルの形だけを真似る）と、`tests/lib/backend-contracts.mjs` の `RIGS` の 1 行。
+   `npm test` の backend-conformance が、全エージェントで同じ共通の契約（1 ターン・履歴の形と uuid・続き・タイトル・分岐・イベントの形）を回す
+4. 対応表を書き直す: `node tests/lib/backend-matrix.mjs --write`
+
+**能力の印を足すとき**は、`contract.mjs` の `CAPABILITIES`（値の形・要るメソッド）・全バックエンドの値・`NO_CAPABILITIES`・
+対応表の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）・その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
+`'conformance'` か既存の suite の名前）を足す。どれかが欠けると backend-contract が落ちる。
+
+#### id で分けない
+
+`core/backends/` の外で `'claude'`・`'codex'`・`'antigravity'` を比べる・並べる・引くと、エージェントを足したときに黙って足りなくなる
+（一覧に無い・分岐に当たらない）。`npm test` の backends-lint（`tests/lint-backends.mjs`）が、ファイルごとの件数を基準（`tests/backends-baseline.json`）と比べ、
+増えたら落とす。減らしたら `node tests/lint-backends.mjs --update-baseline` で基準を下げる（上げる更新は拒む）。
+そのエージェントだけの事情で、印にする意味が無いもの（Claude の transcript の救済など）は、行に `backend-allow: 理由` の印を付ける。
+基準に残っている分（フック・MCP とコンテキストの設定の読み方・互換の接続先・委譲の振り分け・Claude のアカウント）は、[issue #91](https://github.com/OzEngineJP/pleiad/issues/91) で減らす。
 
 ## 3. 変えないこと
 

@@ -71,6 +71,7 @@ import { limitHolds, limitResetsAt } from './limit-resume.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
+import { idleCompactionKey } from './backends/agents.mjs';
 import { createContextBases } from './context-bases.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { slimRow, createListDeltas } from './session-list-delta.mjs';
@@ -92,6 +93,7 @@ import { createSecretFill } from './secret-fill.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
+import { contractEmit } from './backends/contract.mjs';
 import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
@@ -780,10 +782,10 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   const child = name === 'ply_delegate' ? getBackend(args.backend) : settings?.switching ? settings.target : null;
   // 子の設定を替えるときは、子の今の強さも上限にした判定（taskSettingsPlan の decided）
   const decided = settings ? settings.decided : child ? resolveDelegatedMode({ parentMode: turn.info.mode, parentModes: turn.backend.modes(), childModes: child.modes() }) : null;
-  // codex は MCP のツール呼び出しを自前の承認に通さない。full / yolo 以外の codex 親では、
+  // MCP のツール呼び出しを自前の承認に通さないエージェント（Codex）の親では、確認なしの承認モードのほかは、
   // これが無いと委譲が起きたこと自体に人間が気づけないので、強さが収まっていても聞く。
-  const codexBlind = turn.backend.id === 'codex' && !['full', 'yolo'].includes(turn.info.mode);
-  if (mutation && (decided?.escalation || codexBlind)) {
+  const unseen = mcpApprovalByHost(turn.backend, turn.info.mode);
+  if (mutation && (decided?.escalation || unseen)) {
     // 何をどの強さで動かすことになるのかをカードに出す。委譲のたびではなく、この1回だけ聞く
     const title = decided ? t('permission.delegateEscalation', { agent: child.label, mode: child.modes()[decided.mode]?.label ?? decided.mode, modeId: decided.mode }) : undefined;
     const answer = await askPermission({ toolName: name, input: args, title, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
@@ -811,12 +813,21 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
 
 /**
  * ply_delegate { host }（端末のデスクトップ版の AI からホストの Pleiad へ。core/remote-delegation.mjs）。手元の委譲と同じ関門を通る:
- * 読み取り・計画モードの会話は断る（上）・Codex の親は full / yolo 以外では呼び出し自体を確かめる・承認モードの引き上げが要るときは、ホストが計画を返し、
+ * 読み取り・計画モードの会話は断る（上）・MCP の承認を聞かないエージェント（Codex）の親は確認なしの承認モードのほかでは呼び出し自体を確かめる・承認モードの引き上げが要るときは、ホストが計画を返し、
  * 依頼元の会話で 1 回だけ確かめる。ホストに任された会話（とその子孫）からも、さらにホストへ任せられる（2026-10-09 に禁止を外した）
  */
+/**
+ * MCP のツールの呼び出しを Pleiad が聞くか。エージェント自身が聞かない（capabilities.mcpApproval: 'host'。Codex）とき、
+ * 確認なし（モードの autonomy が never）の承認モードのほかは聞く
+ */
+function mcpApprovalByHost(backend, modeId) {
+  if (backend?.capabilities?.mcpApproval !== 'host') return false;
+  return backend.modes?.()?.[modeId]?.autonomy !== 'never';
+}
+
 async function callRemoteDelegate(owner, turn, args, lng) {
   if (!remoteDelegation.enabled) throw new Error(agentT(lng, 'delegation.remote.unavailable'));
-  if (turn.backend.id === 'codex' && !['full', 'yolo'].includes(turn.info.mode)) {
+  if (mcpApprovalByHost(turn.backend, turn.info.mode)) {
     const answer = await askPermission({ toolName: 'ply_delegate', input: args, sessionId: owner, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: lng });
     if (!answer.allow) throw new Error(agentT(lng, 'delegation.denied'));
   }
@@ -1236,7 +1247,9 @@ const agentBridge = createAgentBridge({ call: async (owner, name, args, { locale
   return result.result;
 },
 // ply_delegate の host に書けるホスト（端末側・ホスト側の両方がオンのもの。オフラインの印つき）。無ければ host の引数自体を出さない
-hosts: () => remoteDelegation?.describe() ?? [] });
+hosts: () => remoteDelegation?.describe() ?? [],
+// backend に書けるエージェントは、有効なもの（AGENT_HOST_BACKENDS）
+backends: () => listBackends().map(b => b.id) });
 
 // ---- 委譲先の自動振り分け ------------------------------------------------------
 // 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器が使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
@@ -1552,7 +1565,8 @@ function openComputerPort(entry, backend, token) {
       if (!sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
       return { turnId: live.presentKey, sessionId, title: (await store.get(sessionId).catch(() => null))?.title ?? '',
         mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, ancestors: await delegationAncestors(sessionId),
-        agent: { id: live.backend.id, label: live.backend.label } };
+        // approvals: 対話の承認を持たないエージェント（'none'）にはアプリの承認を聞かない（core/computer-use/policy.mjs）
+        agent: { id: live.backend.id, label: live.backend.label, approvals: live.backend.capabilities?.approvals ?? 'interactive' } };
     } });
 }
 
@@ -2898,9 +2912,9 @@ function makeEmit(turn) {
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
       if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
-      if (turn.backend.id === 'antigravity' && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
+      if (turn.backend.capabilities?.failureDiagnostics && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
         turn.failureReason = { source: 'backend.turnResult', error: String(event.error ?? '').slice(0, 1000) };
-      if (turn.backend.id === 'antigravity' && event.backendFailure)
+      if (turn.backend.capabilities?.failureDiagnostics && event.backendFailure)
         turn.failureReason = { source: 'backend.afterReply', status: String(event.backendFailure.status ?? '').slice(0, 100),
           error: String(event.backendFailure.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
@@ -3149,7 +3163,7 @@ async function applyAutoCompaction(settings) {
   // A reservation already firing may be preparing its backend. Settings take effect before
   // the disk write, and ineligible in-flight reservations are invalidated before invocation.
   compactionScheduler.cancelFiring(entry => {
-    const row = settings[entry.backendId === 'fake' ? 'claude' : entry.backendId];
+    const row = settings[idleCompactionKey(entry.backendId)];
     return !settings.enabled || !row?.enabled || entry.usedTokens < settings.minTokens;
   });
   compactionSettings = settings;
@@ -3157,7 +3171,7 @@ async function applyAutoCompaction(settings) {
   catch (err) { compactionSettings = previousSettings; throw err; }
   for (const entry of compactionScheduler.entries()) {
     const backend = await resolveBackendForSession(entry.sessionId);
-    const row = settings[backend?.id === 'fake' ? 'claude' : backend?.id];
+    const row = settings[idleCompactionKey(backend?.id)];
     if (!settings.enabled || !row?.enabled
         || (await store.get(entry.sessionId)).contextWindow?.usedTokens < settings.minTokens)
       compactionScheduler.cancel(entry.sessionId);
@@ -6088,7 +6102,7 @@ botHost = createBotHost({
 for (const b of listBackends()) {
   b.attachHost?.({
     background: (sessionId, tasks) => setBackground(b, sessionId, tasks),
-    event: (sessionId, event) => emitOutsideTurn(sessionId, event),
+    event: (emit => (sessionId, event) => emit(event, sessionId))(contractEmit((event, sessionId) => emitOutsideTurn(sessionId, event), b.id, { outsideTurn: true })),
   });
 }
 
@@ -6467,7 +6481,7 @@ async function beginTurn(ctx) {
     origin: localOrigin(), signal: turn.ac.signal,
     isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: ctx.saveContext,
     progress: ({ current, total }) => emit({ type: 'activity', state: 'preparing', current, total }),
-    authorize: backend.id === 'codex' && !['full','yolo'].includes(permissionMode)
+    authorize: mcpApprovalByHost(backend, permissionMode)
       ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
       : undefined });
   if (resolvedContext?.servers.length) emit({ type: 'activity', state: 'thinking' });
@@ -6511,7 +6525,8 @@ async function beginTurn(ctx) {
     model: model || undefined,
     effort,
     // 渡った合図（onPromptDelivered）を呼ばないバックエンド（antigravity）もある。返答の中身が届いたら渡ったとみなす
-    emit: (event, opts) => { if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); return emit(event, opts); },
+    // 試験のサーバー（PLEIAD_BACKEND_CONTRACT=strict）では、バックエンドが出したイベントを契約（core/backends/contract.mjs）に照らす
+    emit: contractEmit((event, opts) => { if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); return emit(event, opts); }, backend.id),
     onPromptDelivered: ctx.onPromptDelivered,
     // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
     askPermission: request => askPermission({ ...request, locale: agentLocale }),
@@ -6680,7 +6695,7 @@ async function driveTurn(ctx, start) {
       reason: String(err?.message ?? err) });
     if (ctx.resolvedContext) { ctx.contextRecord.report.status = 'failed'; await ctx.saveContext().catch(() => {}); }
     if (!turn.errorShown) {
-      if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
+      if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
       emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
     }
     // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
@@ -6704,12 +6719,12 @@ async function closeTurn(ctx) {
   if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
   if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
   await turn.visualizations.close().catch(err => {
-    if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
+    if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
     emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
   });
   await Promise.allSettled([ctx.runtimeContext?.close()]);
   await ctx.saveContext().catch(() => {
-    if (turn.backend.id === 'antigravity') turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
+    if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
     emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
   });
   // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
@@ -7178,11 +7193,11 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
           card: ctx.card.backendCard, source,
           ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
-          emit: (event, opts) => {
+          emit: contractEmit((event, opts) => {
             if (opts?.replay) replayed = true;
             else { if (replayed) settle(); if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); }
             return emit(event, opts);
-          },
+          }, backend.id),
           onPromptDelivered: ctx.onPromptDelivered,
           askPermission: request => askPermission({ ...request, locale: agentLocale }),
           hostInvoke: hostInvokeFor(agentLocale),
@@ -7260,7 +7275,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     : stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
-  if (turn.backend.id === 'antigravity' && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
+  if (turn.backend.capabilities?.failureDiagnostics && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
+    // 失敗の理由を残すエージェント（capabilities.failureDiagnostics）。項目の名前は最初に使った agy の名前のまま（保存の形）
     const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).antigravityFailures ?? [];
     await store.setSessionData(turn.info.sessionId, 'antigravityFailures', [...previous, {
       at: completedAt, outcome: turn.outcome, ...(turn.failureReason ?? { source: 'unknown', error: '' }),
@@ -7346,7 +7362,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     const id = turn.info.sessionId;
     const meta = await store.get(id);
     const queued = await outbox.list(id);
-    const row = compactionSettings[turn.backend.id === 'fake' ? 'claude' : turn.backend.id];
+    const row = compactionSettings[idleCompactionKey(turn.backend.id)];
     const usage = turn.contextWindow ?? meta.contextWindow;
     if (compactionScheduler.revision(id) === turn.compactionRevision && !runtime.turns.has(id)
         && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
@@ -7435,7 +7451,7 @@ const compactionScheduler = createCompactionScheduler({
   changed: (sessionId, at) => { emitGlobal({ type: 'compactionSchedule', sessionId, at }); saveCompactionSchedule(); },
   canRun: async (id, expectedBackend) => {
     const [meta, backend, queued] = await Promise.all([store.get(id), resolveBackendForSession(id), outbox.list(id)]);
-    const row = compactionSettings[backend?.id === 'fake' ? 'claude' : backend?.id];
+    const row = compactionSettings[idleCompactionKey(backend?.id)];
     return backend?.id === expectedBackend && !sessionBusy(id) && !meta.autoCompactionOff && !meta.delegation
       && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
       && compactionSettings.enabled && row?.enabled && backend?.capabilities?.compact

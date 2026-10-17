@@ -279,6 +279,21 @@ export const backend = {
     // ply_computer は 2 本目の中継（agy-context-relay.mjs --computer）で渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
     // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びないので、ロックの待ちは 150 秒ごとに分けて返す
     computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },
+    forkMessage: false,
+    rewind: false,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
+    approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
+    mcpApproval: 'agent',
+    claudeAccounts: false,
+    compatEndpoints: false,
+    compact: false,             // 圧縮は agy が自分で決める
+    autoCompactWindow: false,
+    promptSuggestions: false,   // ターンの後に suggestNext で作る
+    plyAgents: false,           // 委譲の橋は渡さない。Pleiad の指示は addedInstructions で渡す
+    shell: false,
+    // 会話を続けるときに人格（エージェント定義）を渡し直しても、最初の指示のまま動く（実機の確認。2026-10-03。core/bots/dispatch.mjs）
+    instructionsAtStart: true,
+    // 失敗の理由を会話の控えに残し、ターンの後に agy のログを書き出す（server.mjs の recordBackendFailure）
+    failureDiagnostics: true,
   },
 
   toolHints: TOOL_HINTS,

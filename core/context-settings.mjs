@@ -42,7 +42,9 @@ export const DEFAULT_OWNERS = { instruction: 'native', skill: 'native', mcp: 'na
 export const defaultKind = () => ({ owner: 'native', user: { sources: [...DEFAULT_SOURCES], excludePaths: [] }, directory: { sources: [...DEFAULT_SOURCES], excludePaths: [] } });
 
 const paths = z.array(z.string().trim().min(1).max(4096)).max(64);
-const scopeSchema = z.object({ sources: z.array(storedSource).max(4), excludePaths: paths }).strict();
+// 探索元の数の上限は一覧の長さ（探索元を足しても、全部を選んだ設定が検証で落ちない）
+const MAX_SOURCES = SOURCES.length + RETIRED_SOURCES.length;
+const scopeSchema = z.object({ sources: z.array(storedSource).max(MAX_SOURCES), excludePaths: paths }).strict();
 const NAME = z.string().min(1).max(128);
 const kindSchema = z.object({
   owner: z.enum(['native', 'ply']),
@@ -52,7 +54,7 @@ const kindSchema = z.object({
   prefer: z.record(NAME, z.string().min(1).max(4096)).optional(),
 }).strict();
 const legacySpec = z.object({
-  sources: z.array(storedSource).max(4),
+  sources: z.array(storedSource).max(MAX_SOURCES),
   kinds: z.array(z.enum(KINDS)).max(3),
   additionalRoots: paths,
   excludePaths: paths,

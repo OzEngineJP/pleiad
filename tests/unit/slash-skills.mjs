@@ -16,7 +16,7 @@ const SKILLS = [
   { name: "daily-report", description: "進捗報告の下書きを作る。レビュー観点も添える", hint: "<日付>", from: "プロジェクト" },
 ];
 
-function mount({ cwd = "D:/work", load, now, canCompact = () => true, idPrefix } = {}) {
+function mount({ cwd = "D:/work", load, now, canCompact = () => true, compactNote, idPrefix } = {}) {
   const input = el("textarea");
   input.value = "";
   input.setSelectionRange = (start, end) => { input.selectionStart = start; input.selectionEnd = end; };
@@ -25,7 +25,7 @@ function mount({ cwd = "D:/work", load, now, canCompact = () => true, idPrefix }
   const hint = el("div", "slash-hint");
   const calls = [];
   const slash = setupSlashSkills({
-    input, list, hint, cwd: () => cwd, now, canCompact, idPrefix,
+    input, list, hint, cwd: () => cwd, now, canCompact, compactNote, idPrefix,
     load: async (key) => { calls.push(key); return load ? load(key) : SKILLS; },
   });
   const type = (value, caret = value.length) => { input.value = value; input.setSelectionRange(caret, caret); input.dispatchEvent({ type: "input" }); };
@@ -87,7 +87,8 @@ export default async function (t) {
   t.ok("/compact を空白なしで確定できる", first.querySelector(".name").textContent === "/compact"
     && first.querySelector(".desc").textContent === "会話を圧縮");
   t.ok("スキルは次の組に残る", m.options()[1].querySelector(".desc").textContent === "会話の中に図を出す");
-  const agy = mount({ canCompact: () => false });
+  // 理由の文は画面（client.mjs）がエージェントの名前を差し込んで渡す（compaction.agentManaged）
+  const agy = mount({ canCompact: () => false, compactNote: () => 'Antigravity が必要に応じて自動で圧縮します' });
   agy.type('/'); await agy.settle();
   t.ok('Antigravity では圧縮候補を選べず理由が見える', agy.options()[0].getAttribute('aria-disabled') === 'true'
     && agy.options()[0].querySelector('.desc').textContent.includes('Antigravity'));

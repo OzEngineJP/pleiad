@@ -1,4 +1,5 @@
 import { taskTitle } from '../../core/task-title.mjs';
+import { setAgentBrands } from '../../web/agent-brands.mjs';
 import { backgroundTitle, taskTree, nativeChildren, backgroundTotals, childNativeEntry, backgroundKind, backgroundSummary, groupByOwner, visibleRows } from '../../web/background-model.mjs';
 
 export const name = 'background-model';
@@ -32,6 +33,8 @@ export default async function(t) {
   t.ok('しばらく読めていないホストの孫の行（hostStale）は、稼働中にも完了にも数えない', stale.live === 1 && stale.ended === 1);
 
   // ---- 入口のチップ（docs/design-system.md「入力欄の上の帯」）
+  // ロゴのあるエージェントはサーバーのエージェントの記述から（web/agent-brands.mjs）。並びは一覧の順
+  setAgentBrands(['claude', 'codex', 'antigravity'].map((id) => ({ id, label: id, brand: { logo: `${id}.svg`, mark: id !== 'claude' } })));
   const agent = (backend, extra = {}) => ({ group: 'agent', backend, live: true, ...extra });
   const command = () => ({ group: 'command', live: true });
   t.ok('種類: ロゴのある接続先はそのまま、それ以外の接続先は互換、コマンドは term',

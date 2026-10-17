@@ -31,21 +31,20 @@ import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
 import { captureRows, playRows } from "./flip.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
+import { agentBrand } from "./agent-brands.mjs";
 
-const backendLogos = {
-  codex: "./brand/openai.svg",
-  claude: "./brand/claude.svg",
-  antigravity: "./brand/antigravity.svg",
-};
-
-/** エージェントのロゴ（14px）。一覧の行とバックグラウンドのダイアログで使う */
+/**
+ * エージェントのロゴ（14px）。一覧の行とバックグラウンドのダイアログで使う。ロゴはエージェントの記述の brand（web/agent-brands.mjs）。
+ * mark のロゴは SVG の #mark を currentColor で描き、色は .row-be-<id>（web/style.css）。ロゴの無いエージェントは ◇
+ */
 export function backendLogo(id, label) {
   const mark = el("span", "row-be");
   mark.title = label;
-  const src = Object.hasOwn(backendLogos, id) ? backendLogos[id] : null;
+  const brand = agentBrand(id);
+  const src = brand ? `./brand/${brand.logo}` : null;
   if (src) {
     mark.classList.add(`row-be-${id}`);
-    if (id === "codex" || id === "antigravity") {
+    if (brand.mark) {
       const svg = svgEl("svg", { viewBox: "0 0 24 24", role: "img", "aria-label": label });
       svg.append(svgEl("use", { href: `${src}#mark` }));
       mark.append(svg);

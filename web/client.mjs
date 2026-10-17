@@ -82,6 +82,7 @@ import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
+import { setAgentBrands } from "./agent-brands.mjs";
 import { setupChannels } from "./channels/index.mjs";
 import { setupVoice } from "./voice/index.mjs";
 import { createVoiceDelivery } from "./voice/delivery.mjs";
@@ -479,7 +480,7 @@ function syncStripVisible() {
 /** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
 function paintContextStrip() {
   const usage = state.contextWindow;
-  const show = Boolean(state.current && activeBackendId() !== 'antigravity' && (usage || state.compactionAt || state.compactionPhase));
+  const show = Boolean(state.current && (usage || state.compactionAt || state.compactionPhase));
   contextShown = show;
   const wrap = $('contextMeterWrap'), meter = $('contextMeter'), text = $('contextStripText'), status = $('contextStripStatus');
   if (!show) {
@@ -651,23 +652,53 @@ function acceptCompaction(event) {
   paintContextStrip();
 }
 function paintAutoCompactionSettings() {
-  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000, delegatedHeadroom: 100_000,
-    claude: { enabled: true, delayMinutes: 50 }, codex: { enabled: false, delayMinutes: 25 } };
+  const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000, delegatedHeadroom: 100_000 };
   $('autoCompactionEnabled').setAttribute('aria-checked', String(settings.enabled));
   $('autoCompactionMin').value = String(settings.minTokens / 1000);
   $('autoCompactionDelegated').value = String((settings.delegatedHeadroom ?? 100_000) / 1000);
-  for (const id of ['claude', 'codex']) {
-    const name = id[0].toUpperCase() + id.slice(1);
-    $(`autoCompaction${name}`).setAttribute('aria-checked', String(settings[id].enabled));
-    $(`autoCompaction${name}Delay`).value = String(settings[id].delayMinutes);
+  paintAutoCompactionAgents(settings);
+}
+/**
+ * エージェントごとの行。会話を離れた後の自動の圧縮の行を持つエージェント（記述の idleCompaction が自分の id）は入切と待ち時間、
+ * 自分で圧縮するエージェント（compact を持たない）は 1 行の注記。並びはエージェントの一覧の順。入力中に作り直さないよう、顔ぶれが変わったときだけ作る
+ */
+function paintAutoCompactionAgents(settings) {
+  const box = $('autoCompactionAgents');
+  const own = state.backends.filter((b) => b.idleCompaction === b.id && settings[b.id]);
+  const managed = state.backends.filter((b) => !b.capabilities?.compact);
+  const key = JSON.stringify([document.documentElement.lang, own.map((b) => b.id), managed.map((b) => b.id)]);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.replaceChildren(...own.map((b) => {
+      const row = el('div', 'auto-compaction-row');
+      row.dataset.agent = b.id;
+      const sw = el('button', 'cx-sw');
+      sw.type = 'button';
+      sw.setAttribute('role', 'switch');
+      sw.setAttribute('aria-label', t('compaction.agentEnabled', { agent: b.label }));
+      const delay = el('label', 'rt-number-row');
+      const input = el('input');
+      Object.assign(input, { type: 'number', min: '1', max: '10080' });
+      input.setAttribute('aria-label', t('compaction.agentDelay', { agent: b.label }));
+      delay.append(input, ' ', el('span', 'rt-unit', t('compaction.minutes')));
+      row.append(el('span', null, b.label), sw, delay);
+      return row;
+    }), ...managed.map((b) => el('div', 'auto-compaction-managed', t('compaction.agentAutoManaged', { agent: b.label }))));
+  }
+  for (const row of box.querySelectorAll('.auto-compaction-row')) {
+    const value = settings[row.dataset.agent];
+    row.querySelector('.cx-sw').setAttribute('aria-checked', String(Boolean(value?.enabled)));
+    row.querySelector('input').value = String(value?.delayMinutes ?? '');
   }
 }
 async function saveAutoCompactionSettings() {
-  const settings = { enabled: $('autoCompactionEnabled').getAttribute('aria-checked') === 'true',
+  // 今の設定を土台にする（無効にしていて行を出していないエージェントの行を、既定に戻さない）
+  const settings = { ...(state.prefs.autoCompaction ?? {}), enabled: $('autoCompactionEnabled').getAttribute('aria-checked') === 'true',
     minTokens: Number($('autoCompactionMin').value) * 1000,
-    delegatedHeadroom: Number($('autoCompactionDelegated').value) * 1000,
-    claude: { enabled: $('autoCompactionClaude').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionClaudeDelay').value) },
-    codex: { enabled: $('autoCompactionCodex').getAttribute('aria-checked') === 'true', delayMinutes: Number($('autoCompactionCodexDelay').value) } };
+    delegatedHeadroom: Number($('autoCompactionDelegated').value) * 1000 };
+  for (const row of $('autoCompactionAgents').querySelectorAll('.auto-compaction-row')) {
+    settings[row.dataset.agent] = { enabled: row.querySelector('.cx-sw').getAttribute('aria-checked') === 'true', delayMinutes: Number(row.querySelector('input').value) };
+  }
   try {
     const saved = await cmd('setAutoCompaction', { settings });
     state.prefs.autoCompaction = saved;
@@ -3794,11 +3825,15 @@ async function loadBackends(early = null) {
   if (state.backends.length) return state.backends;
   const list = early ?? await cmd("backends").catch(() => []);
   state.backends = Array.isArray(list) ? list : [];
+  // ロゴと短い名前（エージェントの記述）。脇の行・入口のチップ・入力欄の区切りがここから引く
+  setAgentBrands(state.backends);
   for (const b of state.backends) applyToolHints(b.toolHints);
   state.backendId = state.backends.some((b) => b.id === state.prefs.backend)
     ? state.prefs.backend : state.backendId ?? state.backends[0]?.id ?? null;
   state.shownBackend ??= state.backendId;
   controls.paint();
+  // 自動の圧縮の行はエージェントの一覧から作る
+  if (state.prefs.autoCompaction) paintAutoCompactionSettings();
   // 認証の状態はエージェントを引いたときに 1 回だけ。以降はログイン / ログアウトの後に取り直す
   refreshAuth().catch(() => {});
   return state.backends;
@@ -4623,6 +4658,7 @@ const controls = chatComposer.useControls({
 const slashSkills = chatComposer.useSlash({
   cwd: () => state.cwd.trim() || state.draft.cwd || "",
   canCompact: () => canCompactHere(),
+  compactNote: () => t('compaction.agentManaged', { agent: labelOf(activeBackendId()) }),
   load: (cwd) => cmd("slashSkills", { cwd: cwd || undefined }),
   off: () => shellComposer.active || composerEditor.inCode(),
 });
@@ -7722,9 +7758,9 @@ function rowMenu(s, x, y, lead = []) {
           .catch((e) => sideNote(t("session.titleFailed", { error: e.message }))) } },
     ] },
     { label: t('compaction.compact'), disabled: !capsOf(s.backend).compact,
-      note: !capsOf(s.backend).compact ? t('compaction.antigravityManaged') : '',
+      note: !capsOf(s.backend).compact ? t('compaction.agentManaged', { agent: labelOf(s.backend) }) : '',
       onClick: () => cmd('compactConversation', { sessionId: s.id }).catch(error => showRowCompactionError(s, error)) },
-    ...(s.backend === 'antigravity' ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
+    ...(!capsOf(s.backend).compact ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
       onClick: () => cmd('setConversationAutoCompaction', { sessionId: s.id, off: !s.autoCompactionOff })
         .then(({ off }) => { s.autoCompactionOff = off; renderSessions(); }).catch(error => showRowCompactionError(s, error, true)) }]),
     { label: t("session.menu.changeStatus"), hint: s.status ?? t("session.status.none"), sub: () => [
@@ -9425,7 +9461,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
       if (canCompactHere()) {
         await cmd('compactConversation', { sessionId });
         await clearSentDraft(sessionId, text, attachments);
-      } else sys(t('compaction.antigravityManaged'));
+      } else sys(t('compaction.agentManaged', { agent: labelOf(activeBackendId()) }));
       return;
     }
     if (!at) {
@@ -9774,8 +9810,11 @@ document.addEventListener('keydown', event => {
     event.preventDefault(); items[next]?.focus();
   }
 });
-for (const input of $('autoCompactionPanel').querySelectorAll('input')) input.addEventListener('change', saveAutoCompactionSettings);
-for (const button of $('autoCompactionPanel').querySelectorAll('.cx-sw')) button.addEventListener('click', () => {
+// エージェントごとの行は後から作る（paintAutoCompactionAgents）ので、パネルで受ける
+$('autoCompactionPanel').addEventListener('change', (event) => { if (event.target.matches('input')) saveAutoCompactionSettings(); });
+$('autoCompactionPanel').addEventListener('click', (event) => {
+  const button = event.target.closest('.cx-sw');
+  if (!button) return;
   button.setAttribute('aria-checked', String(button.getAttribute('aria-checked') !== 'true'));
   saveAutoCompactionSettings();
 });

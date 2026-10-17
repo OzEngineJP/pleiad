@@ -18,17 +18,4 @@ export function cutText(text, max, notice) {
 ${urls.at(-1)[0]}` : "");
 }
 
-/** capabilities の既定。バックエンドは持てるものだけ true にする。 */
-export const NO_CAPABILITIES = {
-  title: false,
-  tag: false,
-  fork: false,
-  subagents: false,
-  liveModel: false,
-  liveMode: false,
-  hostTools: false,
-  // ply_agents（委譲の橋）を受け取れるか。受け取れる会話にだけ Pleiad の指示を入れる（core/ply-instructions.mjs）
-  plyAgents: false,
-  alwaysAllow: false,
-  login: false,
-};
+// 能力の印の一覧と既定（何も持たない形）は core/backends/contract.mjs

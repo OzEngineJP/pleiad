@@ -4,22 +4,18 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { parseCommand } from './command-line.mjs';
 import { t } from './i18n.mjs';
+import { AGENTS, agentOf } from './backends/agents.mjs';
 
-export const INSTALL_URLS = {
-  codex: 'https://developers.openai.com/codex/cli/',
-  claude: 'https://code.claude.com/docs/en/setup',
-  antigravity: 'https://antigravity.google/docs/cli/install/',
-};
+/** id -> インストールの案内（エージェントの記述の cli.installUrl）。CLI を使わないもの（fake）は載らない */
+export const INSTALL_URLS = Object.fromEntries(Object.entries(AGENTS).filter(([, a]) => a.cli?.installUrl).map(([id, a]) => [id, a.cli.installUrl]));
 
 export function findExecutable(command, env = process.env, platform = process.platform) {
   const dirs = [path.join(os.homedir(), '.local', 'bin'), '/opt/homebrew/bin', '/usr/local/bin'];
   if (env.APPDATA) dirs.push(path.join(env.APPDATA, 'npm'));
-  // Antigravity CLI の Windows での配置先（install.ps1 が `%LOCALAPPDATA%\agy\bin` へ置き、
-  // そのあと `agy install` が PATH を書く）。**PATH だけを見ていると見つからない**:
-  // 起動済みの Pleiad は PATH の変更を拾えないので、入れた直後に「再確認」を押しても
-  // 未インストールのままになる。置き場を直接見て、再起動を要らなくする。
-  // Unix 版は `$HOME/.local/bin` なので上の dirs で足りる
-  if (env.LOCALAPPDATA) dirs.push(path.join(env.LOCALAPPDATA, 'agy', 'bin'));
+  // エージェントの独自の置き場（エージェントの記述の cli.searchDirs。agy の `%LOCALAPPDATA%\agy\bin` など）。
+  // **PATH だけを見ていると見つからない**: 起動済みの Pleiad は PATH の変更を拾えないので、入れた直後に「再確認」を押しても
+  // 未インストールのままになる。置き場を直接見て、再起動を要らなくする
+  for (const a of Object.values(AGENTS)) dirs.push(...(a.cli?.searchDirs?.(env) ?? []));
   const roots = /[\\/]/.test(command) ? [''] : [...String(env.PATH || env.Path || '').split(path.delimiter).filter(Boolean), ...dirs];
   const exts = platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : [''];
   for (const root of roots) for (const ext of exts) {
@@ -35,14 +31,13 @@ export function findExecutable(command, env = process.env, platform = process.pl
 }
 
 export function cliCommand(id) {
-  const configured = id === 'codex' ? process.env.AGENT_HOST_CODEX_BIN : id === 'claude' ? process.env.AGENT_HOST_CLAUDE_BIN : id === 'antigravity' ? process.env.AGENT_HOST_AGY_BIN : null;
-  // 実行ファイル名がバックエンド id と違うものだけ書く。**id は必ずバックエンド id に揃える**
-  // （installation() は backend.id で引かれるので、ここだけ別名にすると
-  //  INSTALL_URLS が引けず「未インストール」を出せなくなる）
-  const argv = configured ? parseCommand(configured) : [{ antigravity: 'agy' }[id] ?? id];
+  // **id は必ずバックエンド id で引く**（installation() は backend.id で引かれる。実行ファイル名は記述の cli.exe）
+  const cli = agentOf(id)?.cli ?? null;
+  const configured = cli?.binEnv ? process.env[cli.binEnv] : null;
+  const argv = configured ? parseCommand(configured) : [cli?.exe ?? id];
   const exe = argv[0] && findExecutable(argv[0]);
-  if (exe && /\.(cmd|bat)$/i.test(exe)) {
-    const packageName = { claude: '@anthropic-ai/claude-code', codex: '@openai/codex' }[id];
+  const packageName = cli?.npmPackage;
+  if (exe && packageName && /\.(cmd|bat)$/i.test(exe)) {
     try {
       const packageDir = path.join(path.dirname(exe), 'node_modules', packageName);
       const metadata = JSON.parse(fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8'));

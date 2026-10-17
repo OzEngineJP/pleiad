@@ -1,20 +1,17 @@
 // バックエンドのレジストリ。
 //
-// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定 "claude,codex,antigravity"）で選ぶ。
+// 有効にするものは環境変数 AGENT_HOST_BACKENDS（カンマ区切り、既定は core/backends/agents.mjs の fake を除く全部）で選ぶ。
 // 読み込みは動的 import にしてある。理由: claude.mjs は Agent SDK を引き込むので、
 // `AGENT_HOST_BACKENDS=fake` のテストでは**そもそも読み込みたくない**
 // （SDK 無しでサーバが起動できることが、バックエンド抽象化ができている証拠になる）。
 import * as store from "../store.mjs";
 import { wrapBackend as wrapNative, conversationBackend } from "../conversations.mjs";
 import { t } from "../i18n.mjs";
+import { NO_CAPABILITIES } from "./contract.mjs";
+import { AGENTS, DEFAULT_AGENT_IDS, agentPresentation } from "./agents.mjs";
 
-// id -> そのモジュールの場所。ここに無い id は無視する（環境変数からの任意 import は許さない）
-const KNOWN = {
-  claude: "./claude.mjs",
-  codex: "./codex.mjs",
-  antigravity: "./antigravity.mjs",
-  fake: "./fake.mjs",
-};
+// id -> そのモジュールの場所（エージェントの記述 core/backends/agents.mjs の module）。ここに無い id は無視する（環境変数からの任意 import は許さない）
+const KNOWN = Object.fromEntries(Object.entries(AGENTS).map(([id, a]) => [id, a.module]));
 
 const enabled = new Map();   // id -> backend
 
@@ -46,7 +43,7 @@ function retiredBackend(id, info) {
   const native = {
     id, label: info.label,
     get retired() { return info.notice; },
-    capabilities: {},
+    capabilities: { ...NO_CAPABILITIES },
     modes: () => ({}),
     models: async () => ({}),
     listSessions: async () => [],
@@ -68,7 +65,7 @@ function retiredBackend(id, info) {
 // 既定は 3 つとも。読み込めないものは skip され、codex / antigravity は最初に使うまで
 // プロセスを起こさないので、入っていない環境でも claude だけで動く
 // （一覧の取得はバックエンドごとに失敗を握るので巻き添えにならない）。
-const wanted = String(process.env.AGENT_HOST_BACKENDS ?? "claude,codex,antigravity")
+const wanted = String(process.env.AGENT_HOST_BACKENDS ?? DEFAULT_AGENT_IDS.join(","))
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -120,6 +117,8 @@ export function describeBackends() {
     id: b.id,
     label: b.label ?? b.id,
     description: b.description ?? "",
+    // 短い名前・ロゴ・自動の圧縮の設定の行（エージェントの記述）。画面は id の表を持たずにこれを使う
+    ...agentPresentation(b.id),
     capabilities: {
       ...b.capabilities,
       suggestTitle: typeof b.suggestTitle === "function",

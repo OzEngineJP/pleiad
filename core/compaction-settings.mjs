@@ -1,9 +1,13 @@
+import { idleCompactionDefaults } from './backends/agents.mjs';
+
+/** 会話を離れた後の自動の圧縮の行を持つエージェント（エージェントの記述の idleCompaction。ADR 0068） */
+export const IDLE_COMPACTION_AGENTS = Object.freeze(Object.keys(idleCompactionDefaults()));
+
 export const DEFAULT_COMPACTION_SETTINGS = Object.freeze({
   enabled: true,
   minTokens: 150_000,
   delegatedHeadroom: 100_000,
-  claude: { enabled: true, delayMinutes: 50 },
-  codex: { enabled: false, delayMinutes: 25 },
+  ...idleCompactionDefaults(),
 });
 
 // Claude Code の自動圧縮の閾値は min(floor(有効窓 × pct/100), 有効窓 − 13000)、有効窓 = 窓 − min(最大出力, 20000)。
@@ -38,7 +42,7 @@ export function normalizeCompactionSettings(input = {}) {
   const headroom = result.delegatedHeadroom;
   if (!Number.isInteger(headroom) || (headroom !== 0 && headroom < DELEGATED_HEADROOM_MIN) || headroom > DELEGATED_HEADROOM_MAX)
     throw new Error('Invalid auto compaction settings');
-  for (const id of ['claude', 'codex']) {
+  for (const id of IDLE_COMPACTION_AGENTS) {
     const row = input[id] ?? {};
     result[id] = { enabled: row.enabled ?? defaults[id].enabled, delayMinutes: row.delayMinutes ?? defaults[id].delayMinutes };
     if (typeof result[id].enabled !== 'boolean' || !Number.isInteger(result[id].delayMinutes) || result[id].delayMinutes < 1 || result[id].delayMinutes > 10080)

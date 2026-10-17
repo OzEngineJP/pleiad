@@ -422,9 +422,6 @@
     "waitingBackground": "Waiting for background tasks",
     "backgroundOnly": "Commands running in the background",
     "bgKind": {
-      "claude": "Claude",
-      "codex": "Codex",
-      "antigravity": "Antigravity",
       "compat": "Compatible",
       "term": "Terminal"
     },
@@ -4025,10 +4022,9 @@
     "showSummary": "Show summary",
     "commandGroup": "Pleiad commands",
     "disableConversation": "Do not auto compact this conversation",
-    "antigravityManaged": "Antigravity compacts automatically when needed",
-    "antigravityAutoManaged": "Managed automatically by Antigravity",
-    "claudeEnabled": "Claude Code auto compaction",
-    "codexEnabled": "Codex auto compaction",
+    "agentManaged": "{{agent}} compacts automatically when needed",
+    "agentAutoManaged": "Managed automatically by {{agent}}",
+    "agentEnabled": "{{agent}} auto compaction",
     "ruleExcludedTitle": "Excluded",
     "ruleExcluded": "Delegated child conversations (they are rarely resumed after returning their result), active turns, pending approval, and failed or interrupted turns",
     "ruleSkipTitle": "Skipped",
@@ -4046,8 +4042,7 @@
     "agent": "Agent",
     "enabled": "On / Off",
     "delay": "Delay",
-    "claudeDelay": "Claude Code delay",
-    "codexDelay": "Codex delay",
+    "agentDelay": "{{agent}} delay",
     "minutes": "min",
     "saveFailed": "Could not save auto compaction settings: {{error}}"
   },

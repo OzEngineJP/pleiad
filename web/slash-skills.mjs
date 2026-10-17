@@ -71,7 +71,7 @@ export function filterSkills(skills, q) {
  * @param {() => number} [o.now] 取得した時刻の測り方（テストのためだけに差し替えられる）
  * @param {string} [o.idPrefix] 候補の行の id の頭（入力欄ごとに違える）
  */
-export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, now = () => Date.now(), off = () => false, idPrefix = "slash-option" }) {
+export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canCompact = () => true, compactNote = () => "", now = () => Date.now(), off = () => false, idPrefix = "slash-option" }) {
   // 同じ作業ディレクトリなら使い回す。ただし古くなったら取り直す（編集中に足したスキルを拾う）
   const FRESH_MS = 60_000;
   let skills = [], skillsKey = null, skillsAt = 0, loadingKey = null;
@@ -119,7 +119,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
       name.append(el("span", null, "/"), ...parts(s.name, q));
       if (s.hint) name.append(el("span", "args", s.hint));
       li.append(name, el("span", "from", s.from ?? ""));
-      li.append(el("span", "desc", s.command && !canCompact() ? t('compaction.antigravityManaged') : s.description ?? ""));
+      li.append(el("span", "desc", s.command && !canCompact() ? compactNote() : s.description ?? ""));
       // click だと blur が先に走る。mousedown で取る（combo と同じ）
       li.onmousedown = (e) => { e.preventDefault(); commit(i); };
       list.append(li);

@@ -14,7 +14,7 @@
 
 ```
 core/     Node の HTTP + WebSocket サーバー。バックエンドに依存しない
-  backends/  エージェント 1 種類 = 1 ファイル（claude・codex・antigravity と、テスト用の fake）
+  backends/  エージェント 1 種類 = 1 ファイル（claude・codex・antigravity と、テスト用の fake）。エージェントの記述は agents.mjs、契約（能力の印・イベント）は contract.mjs
   ops/       操作の一覧（レジストリ）。画面・MCP・CLI へ外に出す機能の正本（`docs/design.md`「操作の一覧」）
 bin/      CLI（`pleiad`。走っている Pleiad の操作の一覧を使う薄いクライアントと `pleiad mcp`。Node の組み込みだけ。`docs/design.md`「操作の一覧」）
 web/      画面。素の ESM でビルドは無い。サーバーがリクエストごとにディスクから読む
@@ -77,6 +77,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - テストは必ず作業用 worktree の中で実行する。`main` の作業ディレクトリで `npm test` を走らせても worktree の変更は検証できない。
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
 - 画面・AI・CLI へ外に出す機能は、WS の case を足すだけにせず `core/ops/` に操作として定義する（ADR 0081）。足し忘れは `npm test` の ops-coverage が落とす（`tests/ops-baseline.json` の `todo` は増やせない）。設定（prefs.json）を足す・変えるときは `core/ops/settings.mjs` の `defineSetting`（危険度・`normalize`・`write`）に書き、`store.setPref` を直に呼ばない（画面の `setPref` も AI の `settings.set` も同じ定義を通る。`ops-coverage` が落とす）。操作の危険度・出す口を変えたら `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface` で snapshot を更新し、差分を確認する。
+- エージェントごとに違う振る舞いは、`core/backends/` の外で id（`'claude'` など）を比べずに、能力の印（`core/backends/contract.mjs`）かエージェントの記述（`core/backends/agents.mjs`）から引く（`docs/multi-backend.md`「エージェントを足す」、ADR 0220）。印を足したら全バックエンドに値を書く。id の直書きは `npm test` の backends-lint が数え、増やせない（基準 `tests/backends-baseline.json` の更新は減らすときだけ。`node tests/lint-backends.mjs --update-baseline`）。能力の印を変えたら `node tests/lib/backend-matrix.mjs --write` で `docs/backend-matrix.md` を書き直す。
 - 画面・エラー・エージェント向けの文言は辞書（`web/locales/<言語>/<名前空間>.json`）に置き、`t()` で引く（`docs/design.md`「多言語対応」、訳語は `docs/i18n-glossary.md` に従う）。直書きの日本語は `npm test` の lint-i18n が落とす。基準（`tests/i18n-baseline.json`）の更新は減らすときだけ（`node tests/lint-i18n.mjs --update-baseline`）。
   - `web/locales/*/ui.json` は `JSON.stringify(…, null, 2)` の整形と一致しないので、読んで書き直さず、キーは文字の置き換えで足す。`sed '/"connected"/d'` のような行単位の削除は別の節の同じキーまで消すので使わない。
 - コード変更後は `npm test` を実行する。通常テストは実際の LLM を呼び出さない。1 本だけなら `node tests/run.mjs <ケース名>`。Pleiad の会話のシェルから流しても、継いだ Pleiad の変数（`AGENT_HOST_`・`PLEIAD_`・`PLY_`・`AGENT_BROWSER_` で始まるもの）は外して走る（`env -u` は要らない。残る利用者の上書きは `tests/lib/inherited-env.mjs`）。test-env を読まない入口でも、`tests/lib/server.mjs` はテストのサーバーへ起動用の変数（`core/boot-env.mjs`）と `PLEIAD_CLI_*`・`PLEIAD_CONTROL_*` を継がない。

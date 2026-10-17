@@ -32,14 +32,14 @@ export default async function(t) {
   t.ok('確認なし（範囲 full かつ自律 never）は聞かずに許可', d({ mode: BYPASS }) === 'allow');
   t.ok('範囲が workspace の「聞かずに進む」（Codex の全部自動）は聞く', d({ mode: { scope: 'workspace', autonomy: 'never' } }) === 'ask'
     && !isUnattendedMode({ scope: 'workspace', autonomy: 'never' }) && isUnattendedMode(BYPASS));
-  t.ok('Antigravity はいつも聞かずに許可（承認モードが yolo しかない）', d({ agent: 'antigravity', mode: ASK }) === 'allow');
+  t.ok('Antigravity はいつも聞かずに許可（承認モードが yolo しかない）', d({ approvals: 'none', mode: ASK }) === 'allow');
   t.ok('このターンで拒否済みなら、聞き直さずに denied', d({ deniedThisTurn: new Set([notepad.id]) }) === 'denied');
   t.ok('拒否は確認なし・すべて許可・常に許可より先に効く', d({ deniedThisTurn: new Set([notepad.id]), mode: BYPASS }) === 'denied'
     && d({ deniedThisTurn: new Set([notepad.id]), prefs: { computerUse: { allowAllApps: true } } }) === 'denied');
   const terminal = FAKE_APPS.terminal;
   t.ok('禁止のアプリは、確認なし・すべて許可・常に許可・Antigravity でも forbidden', ['forbidden'].every(want =>
     d({ app: terminal, mode: BYPASS }) === want && d({ app: terminal, prefs: { computerUse: { allowAllApps: true } } }) === want
-    && d({ app: terminal, sessionApps: [terminal.id] }) === want && d({ app: terminal, agent: 'antigravity' }) === want
+    && d({ app: terminal, sessionApps: [terminal.id] }) === want && d({ app: terminal, approvals: 'none' }) === want
     && d({ app: terminal, prefs: { computerUse: { alwaysAllowed: [row(terminal)] } } }) === want));
   t.ok('禁止は拒否済みより先に効く（denied ではなく forbidden）', d({ app: terminal, deniedThisTurn: new Set([terminal.id]) }) === 'forbidden');
   t.ok('Pleiad 自身（self）は禁止', d({ app: FAKE_APPS.pleiad, mode: BYPASS }) === 'forbidden' && isForbiddenApp({ id: 'exe:c:/x/whatever.exe', self: true }));
@@ -67,7 +67,7 @@ export default async function(t) {
     && autoGrantKind({ mode: ASK, prefs: { computerUse: { allowAllApps: true } }, app: notepad }) === 'all'
     && autoGrantKind({ mode: ASK, prefs: { computerUse: { allowAllApps: true, alwaysAllowed: [row(notepad)] } }, app: notepad }) === null
     && autoGrantKind({ mode: ASK, prefs: {}, sessionApps: [notepad.id], app: notepad }) === null
-    && autoGrantKind({ agent: 'antigravity', mode: ASK, prefs: {}, app: notepad }) === 'bypass');
+    && autoGrantKind({ approvals: 'none', mode: ASK, prefs: {}, app: notepad }) === 'bypass');
   t.ok('prefs.computerUse は足りない項目を既定で埋める（enabled: true・allowAllApps: false・introduced: false・alwaysAllowed: []）',
     JSON.stringify(normalizeComputerUse(undefined)) === JSON.stringify({ enabled: true, allowAllApps: false, introduced: false, alwaysAllowed: [] })
     && normalizeComputerUse({ enabled: false }).enabled === false && normalizeComputerUse({ alwaysAllowed: [1, { id: 'a' }, row(notepad)] }).alwaysAllowed.length === 1);

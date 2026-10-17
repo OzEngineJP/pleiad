@@ -1,3 +1,4 @@
+import { brandedAgents } from './agent-brands.mjs';
 /** The persisted title may be absent on tasks created before title was added. */
 export function backgroundTitle(task) {
   return [...(task.title?.trim() || String(task.task ?? '').split(/\r?\n/).find(line => line.trim())?.trim().replace(/\s+/g, ' ') || task.taskId || '')].slice(0, 40).join('');
@@ -55,13 +56,15 @@ export function childNativeEntry(a, taskLive) {
   return { live: false, inEntry: false, status: a.status === 'running' || a.status == null ? null : a.status };
 }
 
-/** 種類の並び（固定）。数が変わっても、入口の中の位置が入れ替わらない */
-export const BACKGROUND_KIND_ORDER = ['claude', 'codex', 'antigravity', 'compat', 'term'];
-const LOGO_BACKENDS = new Set(['claude', 'codex', 'antigravity']);
+/**
+ * 種類の並び（ロゴのあるエージェントはエージェントの一覧の順、その後に互換・端末）。数が変わっても、入口の中の位置が入れ替わらない。
+ * ロゴのあるエージェントはエージェントの記述から（web/agent-brands.mjs）
+ */
+export const backgroundKindOrder = () => [...brandedAgents(), 'compat', 'term'];
 /** 項目の種類。エージェントはロゴのある接続先ごと、互換の接続先は 1 つにまとめ、裏のコマンド・端末は term */
 export function backgroundKind(item) {
   if (item.group === 'command') return 'term';
-  return LOGO_BACKENDS.has(item.backend) ? item.backend : 'compat';
+  return item.backend && brandedAgents().includes(item.backend) ? item.backend : 'compat';
 }
 
 /**
@@ -69,6 +72,7 @@ export function backgroundKind(item) {
  * 承認待ちを含む種類だけ先頭へ寄せ、残りは固定の並び。並べるのは 3 種類まで（残りは hidden に数える）だが、承認待ちの種類は隠さない
  */
 export function backgroundSummary(items, maxVisible = 3) {
+  const order = backgroundKindOrder();
   const live = items.filter(countsLive);
   const byKind = new Map();
   for (const item of live) {
@@ -79,7 +83,7 @@ export function backgroundSummary(items, maxVisible = 3) {
     byKind.set(kind, group);
   }
   const groups = [...byKind.values()].sort((a, b) =>
-    Number(b.waiting > 0) - Number(a.waiting > 0) || BACKGROUND_KIND_ORDER.indexOf(a.kind) - BACKGROUND_KIND_ORDER.indexOf(b.kind));
+    Number(b.waiting > 0) - Number(a.waiting > 0) || order.indexOf(a.kind) - order.indexOf(b.kind));
   const shown = Math.max(maxVisible, groups.filter(group => group.waiting > 0).length);
   const visible = groups.length > shown ? groups.slice(0, shown) : groups;
   return { live: live.length, ended: items.filter(countsEnded).length,

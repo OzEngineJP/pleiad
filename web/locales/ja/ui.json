@@ -414,9 +414,6 @@
     "waitingBackground": "裏の作業を待っている",
     "backgroundOnly": "裏でコマンドが動いている",
     "bgKind": {
-      "claude": "Claude",
-      "codex": "Codex",
-      "antigravity": "Antigravity",
       "compat": "互換",
       "term": "ターミナル"
     },
@@ -3904,10 +3901,9 @@
     "showSummary": "要約を表示",
     "commandGroup": "Pleiad のコマンド",
     "disableConversation": "この会話では自動圧縮しない",
-    "antigravityManaged": "Antigravity が必要に応じて自動で圧縮します",
-    "antigravityAutoManaged": "Antigravity が自動で管理",
-    "claudeEnabled": "Claude Code の自動圧縮",
-    "codexEnabled": "Codex の自動圧縮",
+    "agentManaged": "{{agent}} が必要に応じて自動で圧縮します",
+    "agentAutoManaged": "{{agent}} が自動で管理",
+    "agentEnabled": "{{agent}} の自動圧縮",
     "ruleExcludedTitle": "対象外",
     "ruleExcluded": "委譲の子の会話（結果を返した後はほとんど再開されないため）、実行中、承認待ち、失敗・中断したターン",
     "ruleSkipTitle": "見送り",
@@ -3925,8 +3921,7 @@
     "agent": "エージェント",
     "enabled": "入 / 切",
     "delay": "待ち時間",
-    "claudeDelay": "Claude Code の待ち時間",
-    "codexDelay": "Codex の待ち時間",
+    "agentDelay": "{{agent}} の待ち時間",
     "minutes": "分",
     "saveFailed": "自動圧縮の設定を保存できませんでした：{{error}}"
   },

@@ -1,6 +1,7 @@
 import { claimToken } from './mcp-token.mjs';
 import { agentT } from './i18n.mjs';
 import { KINDS } from './delegation-routing.mjs';
+import { DEFAULT_AGENT_IDS } from './backends/agents.mjs';
 
 export const AGENTS_MCP_PATH = '/mcp/agents';
 // 文はエージェントに渡すので会話の言語で引く（agent 名前空間。docs/design.md「多言語対応」）。en は以前の英語の固定文と同じ
@@ -14,17 +15,20 @@ export const kindList = locale => KINDS.map(k => `- ${k}: ${agentT(locale, `brid
 const hostList = (locale, hosts) => hosts.map(h => (h.online ? h.name : `${h.name} (${agentT(locale, 'bridge.hostOffline')})`)).join(', ');
 const delegateDescription = (locale, hosts = []) => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.title'), agentT(locale, 'bridge.kindsIntro'), kindList(locale), agentT(locale, 'bridge.kindBoundaries'),
   ...(hosts.length ? [agentT(locale, 'bridge.hosts', { hosts: hostList(locale, hosts) })] : [])].join('\n');
-/** ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語に依らない */
-export const agentTools = (locale, hosts = []) => [
+/**
+ * ツールの定義。説明は会話の言語。名前と引数（inputSchema）は言語に依らない。
+ * backends は backend に書けるエージェント（有効なもの。server は listBackends から渡す。id の一覧をここに持たない）
+ */
+export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS) => [
   // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。kind はどちらでも必須（振り分けの記録にも残す）
   // host はリモートのホストへ任せる（端末側・ホスト側の両方がオンのホストがあるときだけ出す。docs/agent-delegation.md「リモートのホストへ任せる」）
   // account は backend: 'claude' と一緒に書き、子の Claude のアカウントを固定する（ply_usage の account の値。ADR 0205）
-  tool('ply_delegate', delegateDescription(locale, hosts), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str,
+  tool('ply_delegate', delegateDescription(locale, hosts), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str,
     ...(hosts.length ? { host: str } : {}) }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),
   tool('ply_task_wait', agentT(locale, 'bridge.tools.ply_task_wait'), { taskId: str, seconds: { type: 'integer', minimum: 1, maximum: 30 } }, ['taskId']),
   // backend・model・effort・account は子の設定を替える（次のターンから。ADR 0134・0205）。設定だけなら message を省ける
-  tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str, backend: { type: 'string', enum: ['claude', 'codex', 'antigravity'] }, model: str, effort: str, account: str }, ['taskId']),
+  tool('ply_task_send', agentT(locale, 'bridge.tools.ply_task_send'), { taskId: str, message: str, backend: { type: 'string', enum: [...backends] }, model: str, effort: str, account: str }, ['taskId']),
   tool('ply_task_cancel', agentT(locale, 'bridge.tools.ply_task_cancel'), { taskId: str }, ['taskId']),
   tool('ply_task_list', agentT(locale, 'bridge.tools.ply_task_list'), {}),
   tool('ply_usage', agentT(locale, 'bridge.tools.ply_usage'), { backend: str }),
@@ -34,7 +38,7 @@ export const agentTools = (locale, hosts = []) => [
 export const DELEGATING_TOOLS = ['ply_delegate', 'ply_task_send'];
 
 // Dedicated, stable names: never remap these tools through the external-MCP hash bridge.
-export function createAgentBridge({ call, hosts = () => [] }) {
+export function createAgentBridge({ call, hosts = () => [], backends = () => DEFAULT_AGENT_IDS }) {
   const bindings = new Map();
   return {
     // locale は接続した会話の言語。橋は会話ごとに開くので、instructions・ツールの説明・エラーはその会話の言語で返す。
@@ -65,11 +69,11 @@ export function createAgentBridge({ call, hosts = () => [] }) {
       let result;
       if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'ply_agents', version: '1.0.0' } };  // instructions は systemPrompt の append だけで渡す（二重にしない。ADR 0169）
       else if (m.method === 'ping') result = {};
-      else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts()) };
+      else if (m.method === 'tools/list') result = { tools: agentTools(locale, hosts(), backends()) };
       else if (m.method === 'tools/call') {
         try {
           // host の引数は、今使えるホストが無くても受ける（会話の途中で設定が変わっても、説明つきの失敗にする。callAgentOp の host の分岐が理由を言う）
-          const definition = agentTools(locale, [{ name: '', online: false }]).find(t => t.name === m.params?.name);
+          const definition = agentTools(locale, [{ name: '', online: false }], backends()).find(t => t.name === m.params?.name);
           const args = m.params?.arguments ?? {};
           if (!definition || !args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(k => !Object.hasOwn(definition.inputSchema.properties, k))) throw new Error(agentT(locale, 'bridge.invalidTool'));
           const data = await call(await owner(), definition.name, args, { locale });

@@ -689,6 +689,12 @@ export const backend = {
     compatEndpoints: true,
     // 入力欄の `!`: Pleiad がホストで走らせ、結果を次のターンの始めに shouldQuery: false の行で渡す（runTurn の shellAppends。ADR 0054）
     shell: 'host',
+    approvals: 'interactive',   // canUseTool
+    mcpApproval: 'agent',       // MCP のツールも canUseTool を通る
+    plyContext: 'turn',         // ply_context はターンごとのトークンで mcpServers に渡す
+    effortInModelId: false,
+    instructionsAtStart: false, // 人格（botInstructions）はターンごとに append に入る
+    failureDiagnostics: false,
   },
 
   // 親側の Task の説明を拾ってサブエージェントの見出しにする（server.mjs）。
