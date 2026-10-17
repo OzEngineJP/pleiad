@@ -2120,11 +2120,15 @@
     },
     "recall": {
       "backToDraft": "下書きに戻す",
-      "loading": "送信済みのメッセージを読み込み中…"
+      "loading": "読み込み中…",
+      "open": "送信済みのメッセージ",
+      "older": "前へ",
+      "newer": "次へ"
     },
     "suggestion": {
       "accept": "候補を入れる",
-      "described": "候補: {{text}}"
+      "described": "候補: {{text}}",
+      "useTab": "Tab で候補を入れます"
     },
     "composer": {
       "skills": "スキル",
