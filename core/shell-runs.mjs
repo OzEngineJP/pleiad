@@ -32,7 +32,7 @@ export const shellMode = (backend) => {
  * @param emit 出来事を全部の接続へ流す（server の emitGlobal）
  * @param timeoutMs 上限。既定 10 分（AGENT_HOST_SHELL_TIMEOUT_MS で短くできる。テスト用）
  * @param holder 保持役の口（core/shell-held.mjs の createShellHolder）。無ければ 'host' の行はいつもサーバーの子
- * @param envFor 'host' の行のシェルに足す環境変数（秘密情報と変数。ADR 0215）。(run) => Promise<{ NAME: value }>
+ * @param envFor 'host' の行のシェルに足す環境変数（秘密情報と変数。ADR 0217）。(run) => Promise<{ NAME: value }>
  */
 export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AGENT_HOST_SHELL_TIMEOUT_MS) || SHELL_TIMEOUT_MS, runHost = runHostShell, holder = null, envFor = async () => ({}) }) {
   const runs = new Map();          // runId -> 走っている分 { sessionId, runId, command, cwd, at, backend, stdout, stderr, ac, mode, held? }
@@ -58,7 +58,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     // 送り直された同じ runId は走らせない（つながり直しの再送で 2 回走る事故を防ぐ）
     if (seen.has(runId)) return { runId, duplicate: true };
     seen.add(runId);
-    // 秘密情報と変数（ADR 0215）。走らせる前に読む（start が返る前にプロセスを起こす今の順を変えない）。読めなくても行は走らせる（足さないだけ）
+    // 秘密情報と変数（ADR 0217）。走らせる前に読む（start が返る前にプロセスを起こす今の順を変えない）。読めなくても行は走らせる（足さないだけ）
     const env = mode === 'host' ? await Promise.resolve().then(() => envFor({ sessionId, cwd })).catch(e => { console.error('shell: 秘密情報と変数を読めなかった:', e?.code ?? e?.message ?? e); return {}; }) ?? {} : {};
     const run = { sessionId, runId, command, cwd, at: new Date().toISOString(), backend: backend.id, mode, stdout: '', stderr: '', skip: false, ac: new AbortController(), env };
     runs.set(runId, run);

@@ -91,7 +91,7 @@ export const DATA_WRITES = [
     { name: 'api-keys.json', limit: 'API キーの台帳。MAX_KEYS=200 件（キーの値は持たない。値は api-key-secrets.json）', reason: '設定の台帳（ADR 0155）。名前・プロバイダー・確認の結果・割り当てだけ。固定の小ささ' },
   ] },
   { file: 'core/secrets.mjs', sites: 1, targets: [
-    { name: 'secrets.json', limit: '秘密情報と変数の台帳。MAX_ITEMS=500 件（秘密の値は持たない。値は secret-values.json）。最後の入力（lastUse）は項目ごとに 1 つを上書き', reason: '設定の台帳（ADR 0215）。名前・種類・使い道・メモ・変数の値だけ。固定の小ささ' },
+    { name: 'secrets.json', limit: '秘密情報と変数の台帳。MAX_ITEMS=500 件（秘密の値は持たない。値は secret-values.json）。最後の入力（lastUse）は項目ごとに 1 つを上書き', reason: '設定の台帳（ADR 0217）。名前・種類・使い道・メモ・変数の値だけ。固定の小ささ' },
   ] },
   { file: 'core/compat-endpoints.mjs', sites: 3, targets: [
     { name: 'compat-endpoints.json', limit: '互換の接続先。ユーザーが数個作る', reason: '設定の台帳' },

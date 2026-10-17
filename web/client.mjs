@@ -2043,7 +2043,7 @@ function settingChangeApproval(ev, change) {
 }
 
 /**
- * 秘密情報の入力のカード（permission の secretRequest。ADR 0215、docs/design-system.md「秘密情報の入力のカード」）。
+ * 秘密情報の入力のカード（permission の secretRequest。ADR 0217、docs/design-system.md「秘密情報の入力のカード」）。
  * AI が secrets.request で人に値を頼んだ。値は画面から保存先へ直に送り（secrets.answerRequest）、AI には保存した名前だけが後で届く。
  * カードは承認カードと同じ並びで、ターンが終わっても残る。保存・やめると 1 行に畳む。別の端末で答えた・取り下げた決着は settingApproval イベントで畳む
  */
@@ -2738,7 +2738,7 @@ function renderPermission(ev) {
   // ホストの画面でしか答えられない承認（設定の変更など。ホストの子の承認の中継）は、答えるボタンの無い知らせのカード
   if (ev.remote?.hostOnly) { closeTurnEl(); activity.show(t("activity.waitingApproval")); return hostOnlyCard(ev); }
   // 設定の変更の承認（ply_control の guarded。ADR 0082）。読めなければ（形が違う）ふつうの承認として出す
-  // 秘密情報の入力のカード（secrets.request。ADR 0215）
+  // 秘密情報の入力のカード（secrets.request。ADR 0217）
   if (ev.secretRequest?.requestId) {
     closeTurnEl();
     return secretRequestCard(ev);

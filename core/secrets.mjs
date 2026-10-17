@@ -1,4 +1,4 @@
-// 秘密情報と変数（ADR 0215。設定 › 秘密情報と変数、docs/design.md「秘密情報と変数」）。
+// 秘密情報と変数（ADR 0217。設定 › 秘密情報と変数、docs/design.md「秘密情報と変数」）。
 //
 // 人が預けた値を、AI が人の代わりに使えるようにする。使い道は 3 つで、登録しただけではどこにも渡さない（使い道を選ぶ操作が同意）。
 //   - 環境変数として渡す（名前と渡す場所。会話のシェルにだけ入る。core/server.mjs の secretsRuntimeFor）
@@ -31,7 +31,7 @@ export const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 
 /**
  * 使えない名前。Pleiad 自身が渡すもの（会話の CLI・ブラウザー・起動の変数）と、上書きすると CLI が動かなくなるものだけ。
- * ANTHROPIC_*・OPENAI_* などは断らない（シェルにだけ渡すので、エージェントの CLI 本体の認証は替わらない。ADR 0215）。
+ * ANTHROPIC_*・OPENAI_* などは断らない（シェルにだけ渡すので、エージェントの CLI 本体の認証は替わらない。ADR 0217）。
  * Windows の環境変数は大文字小文字を区別しないので、比べるときは大文字にする
  */
 const RESERVED_EXACT = new Set(['PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'COMSPEC', 'ELECTRON_RUN_AS_NODE', 'CLAUDE_ENV_FILE']);

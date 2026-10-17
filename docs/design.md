@@ -710,7 +710,7 @@ Claude・Codex 共通の `ply_agents` MCP で、Pleiad 管理の子会話を作�
 
 ## 秘密情報と変数（承認済み 2026-10-17）
 
-人が預けた値を、AI が人の代わりに使えるようにする（サイトにログインする・手元に開発の環境を作る）。AI は値を**使えるが、知らない**: 環境変数はシェルが展開し、サイトの入力は Pleiad が入れる（[ADR 0215](adr/0215-secrets-and-variables-for-agents.md)）。画面は設定 › 秘密情報と変数（2026-10-17 までの「API キー」。[design-system.md](design-system.md)「設定 › 秘密情報と変数」）。
+人が預けた値を、AI が人の代わりに使えるようにする（サイトにログインする・手元に開発の環境を作る）。AI は値を**使えるが、知らない**: 環境変数はシェルが展開し、サイトの入力は Pleiad が入れる（[ADR 0217](adr/0217-secrets-and-variables-for-agents.md)）。画面は設定 › 秘密情報と変数（2026-10-17 までの「API キー」。[design-system.md](design-system.md)「設定 › 秘密情報と変数」）。
 
 - **置き場**: `<data>/secrets.json`（秘密でない台帳。`{ version: 1, items: [{ id: 'sec-…', kind: 'login' | 'secret' | 'var', label, note, username?, value?（var だけ）, sites, env: { name, scope: 'all' | { folders } } | null, lastUse, createdAt, updatedAt, by: 'human' | 'ai' }], keyUses: { '<API キーの id>': { env, note } } }`。500 件まで）と `<data>/secret-values.json`（値。`core/secret-store.mjs`。エントリ `item:<id>`）。API キーの台帳（下の「API キー」）は変えず、API キーの使い道は `keyUses` に id で持つ（古い版の `core/api-keys.mjs` は知らない項目を書き戻しで落とすため）。実装は `core/secrets.mjs`。
 - **同意**: 登録しただけではどこにも渡さない。使い道（環境変数として渡す・サイトで入力する・Pleiad の機能）を選ぶ操作が同意。

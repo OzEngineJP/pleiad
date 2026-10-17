@@ -15,7 +15,7 @@ export const PLY_PARTS = ['visualize', 'skills', 'agents', 'added', 'guide', 'br
  * ply_agents の instructions、added は Pleiad の指示の記録（入れた項目だけ text がある）。computer は ply_computer の指示文
  * （3 つのバックエンドとも渡す。エージェントごとの呼び方を足したもの。core/backends/computer-delivery.mjs の computerPrompt）。
  * control は ply_control（操作の一覧。ADR 0081）の指示文。全会話・3 つのバックエンドに渡す。
- * secrets は秘密情報と変数の一覧の文（名前だけ。ADR 0215。core/secrets-prompt.mjs）。一覧が空の会話には渡さない。
+ * secrets は秘密情報と変数の一覧の文（名前だけ。ADR 0217。core/secrets-prompt.mjs）。一覧が空の会話には渡さない。
  * 戻り: [{ id, tokens }]。渡さなかった（0 の）ものは載せない
  */
 export function plyParts({ plyAgents = false, context = null, visualize = null, browser = null, agents = null, added = null, computer = null, control = null, secrets = null } = {}) {

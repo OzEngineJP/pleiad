@@ -273,7 +273,7 @@ export default async function (t) {
 
     const serverSource = fs.readFileSync(path.join(ROOT, 'core/server.mjs'), 'utf8');
     const postSource = serverSource.match(/async function postResident\([\s\S]*?\n\}/)[0];
-    // emitGlobal は秘密情報の伏せ（secretStream）を通して emitOne へ渡す（ADR 0215）。両方を写す
+    // emitGlobal は秘密情報の伏せ（secretStream）を通して emitOne へ渡す（ADR 0217）。両方を写す
     const emitSource = serverSource.match(/function emitGlobal\([\s\S]*?\n\}/)[0] + '\n' + serverSource.match(/function emitOne\([\s\S]*?\n\}/)[0];
     const sent = [];
     let rows = [{ paused: false }, { paused: true }];

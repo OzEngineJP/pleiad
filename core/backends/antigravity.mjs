@@ -229,12 +229,12 @@ const digest = (value) => (value == null ? null : crypto.createHash("sha256").up
 function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey, secretsKey = null }) {
   return { context: digest(contextKey), shape: contextShape ?? null, browser: browserEnv?.AGENT_BROWSER_CONFIG ?? null, hooks: hooksShape ?? null,
     computer: digest(computerKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null,
-    // 秘密情報と変数（ADR 0215）。値はハッシュだけ（札に残る）。無い会話は今までと同じ印
+    // 秘密情報と変数（ADR 0217）。値はハッシュだけ（札に残る）。無い会話は今までと同じ印
     ...(secretsKey ? { secrets: digest(secretsKey) } : {}) };
 }
 /**
  * agy 自身が認証・接続先に読む環境変数（Gemini CLI と同じ名前）。秘密情報と変数に同じ名前があっても agy のプロセスには入れない
- * （agy はシェルを自分の子として起こし、プロセスの env を継がせるので、入れると agy 自身の認証が替わる。ADR 0215）
+ * （agy はシェルを自分の子として起こし、プロセスの env を継がせるので、入れると agy 自身の認証が替わる。ADR 0217）
  */
 export const AGY_OWN_ENV = Object.freeze(['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_GENAI_USE_GCA']);
 const agyOwn = new Set(AGY_OWN_ENV);
@@ -436,7 +436,7 @@ export const backend = {
     // bot の人格（エージェント定義の本文）と触れてよいフォルダー（--add-dir）も起動時にしか渡せない。人格を直した・フォルダーを変えたら起こし直す。
     // 起動中のプロセスは指示の文そのものを比べないので、人格のハッシュで判定する（bot でなければ null で、今までと同じ）
     const botKey = botSessionKey(botInstructions, botFolders);
-    // 秘密情報と変数（ADR 0215）も起動時にしか渡せない（プロセスの env と指示）。変われば起こし直す
+    // 秘密情報と変数（ADR 0217）も起動時にしか渡せない（プロセスの env と指示）。変われば起こし直す
     const secretsEnv = agySecretsEnv(secretsRuntime?.env);
     const secretsKey = Object.keys(secretsEnv).length || secretsRuntime?.instructions ? JSON.stringify([secretsEnv, secretsRuntime?.instructions ?? '']) : null;
     const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey, secretsKey });

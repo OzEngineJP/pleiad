@@ -1505,7 +1505,7 @@ export const backend = {
   // ---- 実行 ---------------------------------------------------------------
 
   async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
-    // 会話のシェルへ渡す秘密情報と変数（ADR 0215）。空なら渡さない
+    // 会話のシェルへ渡す秘密情報と変数（ADR 0217）。空なら渡さない
     const secretsEnv = secretsRuntime?.env && Object.keys(secretsRuntime.env).length ? secretsRuntime.env : null;
     // adopt は付け直し（{ source, card }。adoptTurn だけが渡す。無停止の更新 段階 3）。保持役の子の app-server が持つ走っているターンを、記録の再生で引き取る
     // 再生の間の emit は replay（実行中のスナップショットとメモリの状態だけを作り、画面へは流さない。server の makeEmit）
@@ -1823,7 +1823,7 @@ export const backend = {
           // 会話のシェルへ渡す環境変数。内蔵ブラウザーの接続と、pleiad CLI をこの会話に束縛する接続情報（PLEIAD_CONTROL_URL・PLEIAD_CONTROL_TOKEN。ADR 0083）。
           // app-server は 1 本を全会話で共有するので、プロセスの env ではなくスレッドごとの config で渡す
           ...((browserEnv || controlRuntime || secretsEnv) ? { 'shell_environment_policy.set': {
-            // 秘密情報と変数（ADR 0215）。set は既定の除外（名前に KEY・SECRET・TOKEN を含むもの）の後に入るので、そういう名前でも届く。
+            // 秘密情報と変数（ADR 0217）。set は既定の除外（名前に KEY・SECRET・TOKEN を含むもの）の後に入るので、そういう名前でも届く。
             // Pleiad の値（下）が同じ名前に勝つ（使えない名前は登録の時点で断っている）
             ...secretsEnv,
             ...(browserEnv ? {

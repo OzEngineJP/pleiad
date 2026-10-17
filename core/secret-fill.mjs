@@ -1,4 +1,4 @@
-// ply_browser の fill_secret（ADR 0215「サイトで入力する」）。登録したログイン情報を、会話の Chrome の今のタブの入力欄に入れる。
+// ply_browser の fill_secret（ADR 0217「サイトで入力する」）。登録したログイン情報を、会話の Chrome の今のタブの入力欄に入れる。
 //
 // 1. 会話の今のタブに中継自身のセッションを付ける（core/chrome/relay.mjs の view.attach。エージェントのセッションとは別）
 // 2. selector があればその要素に、無ければ今フォーカスのある要素に。ページの origin と、入力できる要素かを読む

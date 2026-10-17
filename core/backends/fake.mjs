@@ -632,7 +632,7 @@ export const backend = {
           envUrl: controlRuntime.env?.PLEIAD_CONTROL_URL, token: controlRuntime.env?.PLEIAD_CONTROL_TOKEN, sameToken: controlRuntime.env?.PLEIAD_CONTROL_TOKEN === controlRuntime.headers?.Authorization?.replace('Bearer ', '') }) : 'control: unavailable';
         await say(emit, out.text, out.uuid);
       } else if (text === 'secrets-info') {
-        // 秘密情報と変数（ADR 0215）で渡った環境変数の名前と一覧の文。値は返さない
+        // 秘密情報と変数（ADR 0217）で渡った環境変数の名前と一覧の文。値は返さない
         out.text = JSON.stringify({ names: Object.keys(secretsRuntime?.env ?? {}).sort(), instructions: secretsRuntime?.instructions ?? null });
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith('secrets-env:')) {

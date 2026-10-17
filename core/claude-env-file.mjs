@@ -1,4 +1,4 @@
-// Claude の会話のシェルにだけ渡す環境変数（ADR 0215「環境変数の渡し方」）。
+// Claude の会話のシェルにだけ渡す環境変数（ADR 0217「環境変数の渡し方」）。
 //
 // Claude Code は CLAUDE_ENV_FILE のスクリプトを、Bash ツールの各コマンドの前に同じシェルで読む。秘密情報と変数をここに書けば、
 // CLI 本体の env（options.env）には入らない。利用者が自分のアプリのために登録した ANTHROPIC_API_KEY などが、Claude Code 自身の認証・接続先を替えない。
@@ -16,7 +16,7 @@ export const shQuote = value => `'${String(value).replace(/'/g, `'\\''`)}'`;
 
 /** スクリプトの中身。vars は { NAME: value }。inherit は利用者が元から付けていた CLAUDE_ENV_FILE（無ければ null） */
 export function envScript(vars, { inherit = null } = {}) {
-  const lines = ['# Pleiad: environment variables for this conversation (ADR 0215). Deleted when the turn ends.'];
+  const lines = ['# Pleiad: environment variables for this conversation (ADR 0217). Deleted when the turn ends.'];
   // Windows の Git Bash でも読めるよう、区切りは / にする
   if (inherit) { const own = String(inherit).replace(/\\/g, '/'); lines.push(`[ -f ${shQuote(own)} ] && . ${shQuote(own)}`); }
   for (const [name, value] of Object.entries(vars ?? {})) if (NAME.test(name)) lines.push(`export ${name}=${shQuote(value)}`);

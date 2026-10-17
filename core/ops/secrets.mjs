@@ -1,6 +1,6 @@
-// secrets.*: 設定 › 秘密情報と変数（core/secrets.mjs。ADR 0215）。
+// secrets.*: 設定 › 秘密情報と変数（core/secrets.mjs。ADR 0217）。
 //
-// 値は返さない（変数の値だけは返す）。危険度は ADR 0215 の表のとおり:
+// 値は返さない（変数の値だけは返す）。危険度は ADR 0217 の表のとおり:
 //   一覧 read・変数 write・使い道を狭める write／広げる guarded・削除 guarded・AI が作った値 guarded・人に頼む write。
 //   人の項目の秘密の値を入れる・差し替える（secrets.save・secrets.import・secrets.answerRequest）は human-only（「秘密の値」の組。ADR 0094）。
 // 本体はサーバーが ctx.secrets で渡す（core/server.mjs の secretsOps）。
@@ -110,7 +110,7 @@ export const secretOps = [
     id: 'secrets.setVariable',
     summary: 'agent:ops.secrets.setVariable.summary',
     risk: 'write',
-    riskReason: 'A variable is a non-secret value that is shown on screen as is (NODE_ENV=development); it is passed to the shell of later turns of conversations in its folders. It cannot touch a secret value, a password or an API key (secrets.save / secrets.create), and turning a secret back into a variable is refused (ADR 0215)',
+    riskReason: 'A variable is a non-secret value that is shown on screen as is (NODE_ENV=development); it is passed to the shell of later turns of conversations in its folders. It cannot touch a secret value, a password or an API key (secrets.save / secrets.create), and turning a secret back into a variable is refused (ADR 0217)',
     input: z.object({
       id: z.string().max(40).optional().describe(D('setVariable', 'id')),
       name: z.string().min(1).max(128).describe(D('setVariable', 'name')),
@@ -138,7 +138,7 @@ export const secretOps = [
     id: 'secrets.setUses',
     summary: 'agent:ops.secrets.setUses.summary',
     risk: 'write',
-    riskReason: 'Narrowing how a saved value is used (no longer passing it as an environment variable, fewer folders, removing a site) only reduces what the agent can use, and renaming the variable changes nothing about who can read it. Widening it (passing a secret as an environment variable, to more folders or everywhere, or to a new site) is raised to guarded by riskOf (ADR 0215)',
+    riskReason: 'Narrowing how a saved value is used (no longer passing it as an environment variable, fewer folders, removing a site) only reduces what the agent can use, and renaming the variable changes nothing about who can read it. Widening it (passing a secret as an environment variable, to more folders or everywhere, or to a new site) is raised to guarded by riskOf (ADR 0217)',
     input: z.object({
       id: z.string().min(1).max(40).describe(D('setUses', 'id')),
       env: env.nullable().optional().describe(D('setUses', 'env')),
@@ -171,7 +171,7 @@ export const secretOps = [
     id: 'secrets.delete',
     summary: 'agent:ops.secrets.delete.summary',
     risk: 'write',
-    riskReason: 'Deleting a variable (a non-secret value shown on screen) can be undone by setting it again. Deleting a secret, a password or a login cannot be undone without a person entering the value again, so riskOf raises it to guarded (ADR 0215)',
+    riskReason: 'Deleting a variable (a non-secret value shown on screen) can be undone by setting it again. Deleting a secret, a password or a login cannot be undone without a person entering the value again, so riskOf raises it to guarded (ADR 0217)',
     input: z.object({ id: z.string().min(1).max(40).describe(D('delete', 'id')), reason: z.string().max(500).optional().describe(D('delete', 'reason')) }),
     riskOf: (ctx, { id }) => (agentOf(ctx) && ctx.secrets.store.known(id)?.kind !== 'var' ? 'guarded' : 'write'),
     confirm: (ctx, { id }) => {
@@ -230,7 +230,7 @@ export const secretOps = [
     id: 'secrets.request',
     summary: 'agent:ops.secrets.request.summary',
     risk: 'write',
-    riskReason: 'Only shows a card in the calling conversation asking a person to enter a value; nothing is saved or passed unless the person enters it and presses save, and the value never comes back to the agent (only the saved name does, ADR 0215)',
+    riskReason: 'Only shows a card in the calling conversation asking a person to enter a value; nothing is saved or passed unless the person enters it and presses save, and the value never comes back to the agent (only the saved name does, ADR 0217)',
     modeGate: false,
     scope: 'session',
     input: z.object({

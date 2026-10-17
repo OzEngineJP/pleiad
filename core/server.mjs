@@ -173,7 +173,7 @@ import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from '
 // 子（エージェントの CLI・`!` の行・MCP）は process.env を継ぐので、どれを起こすより前に外す。以後の読み出しはこの写しから。
 // 読み込みの間に読むもの（core/server-log-boot.mjs の出力の向け先・core/i18n.mjs の最初の言語）は、ここより前なので今のまま
 const BOOT_ENV = takeBootEnv(process.env);
-// 画面・リモートへ送る前に、秘密情報の値と一致する部分を伏せる（core/secret-mask.mjs。ADR 0215）。emitGlobal・sendTo が使うので、どの出来事より先に作る
+// 画面・リモートへ送る前に、秘密情報の値と一致する部分を伏せる（core/secret-mask.mjs。ADR 0217）。emitGlobal・sendTo が使うので、どの出来事より先に作る
 const secretMasker = createSecretMasker();
 const secretStream = createStreamMasker(secretMasker);
 
@@ -499,7 +499,7 @@ const apiKeys = createApiKeys({
   onChange: change => apiKeysChanged(change),
 });
 const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets, apiKeys });
-// 秘密情報と変数（設定 › 秘密情報と変数。core/secrets.mjs、ADR 0215）。登録しただけでは渡さず、使い道（環境変数・サイトでの入力）を選んだものだけを使う。
+// 秘密情報と変数（設定 › 秘密情報と変数。core/secrets.mjs、ADR 0217）。登録しただけでは渡さず、使い道（環境変数・サイトでの入力）を選んだものだけを使う。
 // 値は secret-values.json（API キー・MCP と同じ暗号化）。API キーの使い道（環境変数）も台帳の keyUses に id で持つ
 const secretValueStore = createSecretStore({ file: path.join(store.dataDir, 'secret-values.json'), cipher: secretCipher });
 secretValueStore.migrate().catch(() => {});
@@ -1551,7 +1551,7 @@ function openComputerPort(entry, backend, token) {
 
 // ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148） ----------------------------
 const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs, closeWindow: async (sessionId, taskId) => chromeWindowCloser?.close(taskId ? await delegatedChromeTarget(sessionId, taskId) : sessionId),
-  // 登録したログイン情報をサイトの入力欄に入れる（fill_secret。core/secret-fill.mjs、ADR 0215）。Chrome の中継があるホストだけ
+  // 登録したログイン情報をサイトの入力欄に入れる（fill_secret。core/secret-fill.mjs、ADR 0217）。Chrome の中継があるホストだけ
   fillSecret: chromeRelay ? createSecretFill({ relay: () => chromeRelay, secrets, log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`) }) : null });
 const delegatedChromeTarget = (sessionId, taskId) => resolveDelegatedChromeTarget(sessionId, taskId, { task: id => agentTasks?.get(id), meta: id => store.get(id) });
 // プロフィールのツールは ops（browser.listProfiles・useProfile）を通す（画面・CLI と同じ断り・同じ監査）
@@ -1615,7 +1615,7 @@ function controlRuntimeFor(turn) {
 }
 
 /**
- * このターンに渡す秘密情報と変数（ADR 0215）。{ env: 会話のシェルへ渡す環境変数, instructions: 名前だけの一覧の文 }。どちらも無ければ null。
+ * このターンに渡す秘密情報と変数（ADR 0217）。{ env: 会話のシェルへ渡す環境変数, instructions: 名前だけの一覧の文 }。どちらも無ければ null。
  * ログイン情報は、ply_browser を渡すターンだけ一覧に書く（fill_secret はそのターンでしか使えない）。読めないときは渡さず、ターンは止めない
  */
 async function secretsRuntimeFor(cwd, lng, { browser = false } = {}) {
@@ -2416,7 +2416,7 @@ function wanted(ws, event) {
 
 /** つながっている host 全部に送る（開いている会話を宣言した接続には、その会話の流れだけ）。1つでも届けば true。 */
 function sendTo(frame) {
-  // 秘密情報の値（エージェントがシェルで表示したものなど）は、画面・リモートへ出す前に伏せる（ADR 0215）
+  // 秘密情報の値（エージェントがシェルで表示したものなど）は、画面・リモートへ出す前に伏せる（ADR 0217）
   const text = secretMasker.json(JSON.stringify(frame));
   const event = frame.kind === P.EVENT ? frame.event : null;
   let sent = false;
@@ -2431,7 +2431,7 @@ function sendTo(frame) {
 // 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める。保持役があれば保持役の子に載せ、引き継ぎで渡す（無停止の更新 段階 3）
 const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
 const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder,
-  // 秘密情報と変数（ADR 0215）。エージェントのシェルと同じく、その行の場所に渡すものを足す
+  // 秘密情報と変数（ADR 0217）。エージェントのシェルと同じく、その行の場所に渡すものを足す
   envFor: async run => (await secrets.envFor(run.cwd)).vars });
 // git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
@@ -2532,7 +2532,7 @@ async function savePref(key, value, backendId) {
 const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
-  // 秘密情報の値は、流れの切れ端にまたがっても伏せる（core/secret-mask.mjs の createStreamMasker。ADR 0215）。
+  // 秘密情報の値は、流れの切れ端にまたがっても伏せる（core/secret-mask.mjs の createStreamMasker。ADR 0217）。
   // ここで伏せれば、読み上げ・走っているターンの写し・届け直しの置き場・画面のどれにも値が残らない
   for (const ev of secretStream.process(event)) emitOne(ev);
 }
@@ -4576,7 +4576,7 @@ async function finishSettingApproval(requestId, outcome, extra = {}) {
 }
 
 /**
- * 秘密情報の入力のカード（secrets.request。ADR 0215）。会話にカードを出し、待たずに返す。人が値を入れて保存したら（secrets.answerRequest）
+ * 秘密情報の入力のカード（secrets.request。ADR 0217）。会話にカードを出し、待たずに返す。人が値を入れて保存したら（secrets.answerRequest）
  * 項目を作ってカードを決着させ、保存した名前だけを会話へ届ける（設定の変更の承認と同じ台帳・同じ届け方。ADR 0088）。値はカードにも結果にも載せない
  */
 const secretRequests = new Map();   // requestId -> { sessionId, spec, settle }
@@ -4754,7 +4754,7 @@ function opsDeps(lng = currentLocale()) {
     voice: { status: async () => ({ ...(await voiceHost.status()), keyRef: (await apiKeys.hasUse('voice')) ? apiKeys.usesState().voice : null }) },
     // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
     apiKeys: { list: () => apiKeys.list(), check: id => apiKeys.check(id) },
-    // 設定 › 秘密情報と変数（core/ops/secrets.mjs。ADR 0215）。値は返さない（変数の値だけ）
+    // 設定 › 秘密情報と変数（core/ops/secrets.mjs。ADR 0217）。値は返さない（変数の値だけ）
     secrets: secretsOps,
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
@@ -5178,7 +5178,7 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       ...(browserSite ? { browserSite } : {}),
       ...(computerApp ? { computerApp } : {}),
       ...(settingChange ? { settingChange } : {}),
-      // 秘密情報の入力のカード（secrets.request。ADR 0215）。値は載せない。人が保存すると secrets.answerRequest が決着させる
+      // 秘密情報の入力のカード（secrets.request。ADR 0217）。値は載せない。人が保存すると secrets.answerRequest が決着させる
       ...(secretRequest ? { secretRequest } : {}),
       ...(browserHandoff ? { browserHandoff } : {}),
       ...(questions ? { questions } : {}),
@@ -6488,7 +6488,7 @@ async function beginTurn(ctx) {
     runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
     runArgs.browserRuntime = browserRuntimeFor(turn);
   }
-  // 秘密情報と変数（ADR 0215）。この会話の場所に渡す環境変数（シェルにだけ入る）と、名前だけの一覧の文。圧縮のターンには渡さない
+  // 秘密情報と変数（ADR 0217）。この会話の場所に渡す環境変数（シェルにだけ入る）と、名前だけの一覧の文。圧縮のターンには渡さない
   if (!hooks.compact) {
     const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime) });
     if (secretsRuntime) runArgs.secretsRuntime = secretsRuntime;

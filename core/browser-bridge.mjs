@@ -27,7 +27,7 @@ export const browserTools = locale => [{
 }];
 
 /**
- * 登録したログイン情報をサイトの入力欄に入れる（ADR 0215「サイトで入力する」）。値はエージェントに返さない。
+ * 登録したログイン情報をサイトの入力欄に入れる（ADR 0217「サイトで入力する」）。値はエージェントに返さない。
  * Pleiad が会話のタブの origin を確かめ、ログイン情報のサイトに合うときだけ入れる。秘密情報の本体があるホストだけに載せる（createBrowserBridge の fillSecret）
  */
 export const fillSecretTool = locale => ({

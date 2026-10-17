@@ -812,7 +812,7 @@ export const backend = {
     const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     // 付け直しは、旧サーバーが書いたファイルを札から引き継ぐ（CLI は起動のときだけ読む。ターンの終わりにこちらが消す）
     const flag = adopt ? adoptClaudeFlagSettings(store.dataDir, adopt.card.flag) : endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
-    // 秘密情報と変数（ADR 0215）。CLI 本体の env には入れず、CLAUDE_ENV_FILE で Bash ツールのシェルにだけ渡す（core/claude-env-file.mjs）。
+    // 秘密情報と変数（ADR 0217）。CLI 本体の env には入れず、CLAUDE_ENV_FILE で Bash ツールのシェルにだけ渡す（core/claude-env-file.mjs）。
     // 付け直しは旧サーバーが書いたファイルを札から引き継ぐ（Bash の各コマンドの前に読まれるので、ターンの終わりまで消さない）
     let envFile = null;
     try { envFile = adopt ? adoptClaudeEnvFile(store.dataDir, adopt.card.envFile) : await writeClaudeEnvFile(store.dataDir, secretsRuntime?.env); }

@@ -256,7 +256,7 @@ Channels のスレッドの作業ログに出る委譲ツールも同じカー�
 - 末尾に文字だけの「既定に戻す」（全部既定なら押せない）。押すとその場の `.mp-confirm`「委譲の設定を既定に戻しますか。キーは残ります。」
 - 「試す」画面・影で試す・一致率や応答時間の表示は置かない
 
-### 設定 › 秘密情報と変数（承認済み 2026-10-17、[ADR 0215](adr/0215-secrets-and-variables-for-agents.md)。API キーの部分は承認済み 2026-10-07、[ADR 0155](adr/0155-api-keys-in-one-place.md)）
+### 設定 › 秘密情報と変数（承認済み 2026-10-17、[ADR 0217](adr/0217-secrets-and-variables-for-agents.md)。API キーの部分は承認済み 2026-10-07、[ADR 0155](adr/0155-api-keys-in-one-place.md)）
 
 メニューは「エージェント設定」の直下（`web/api-keys-settings.mjs`、部品 `web/api-key-ui.mjs`、`.env` の読み方 `web/dotenv.mjs`、スタイル `web/api-keys.css`）。2026-10-17 までの名前は「API キー」。人が預ける値をここに 1 回だけ登録し、項目ごとに使い道を選ぶ。接続先・通話・委譲・`wait_until` の問いは今までどおり「どのキーを使うか」を選ぶだけ。面と部品は設定の管理の面（`.mp-panel` / `.mp-card` / `.mp-confirm` / `.mp-result` / `.mp-presets` / `.rt-key-form` / `.nf-section`）で、新しいトークンは無い。区切りは余白と面の階調だけ（枠線・片側の線は使わない）。
 
@@ -276,7 +276,7 @@ Channels のスレッドの作業ログに出る委譲ツールも同じカー�
 - 動き: 欄の開閉・カードの消え方・結果の行の出現は 240ms · ease-out（高さと不透明度。結果の行は 6px 下から）。`prefers-reduced-motion` では 0ms・弧は静止。480px 以下は、カードの操作を名前の下へ回し、使い道は見出しと値を縦に積む。
 - 使う側の「使うキー」の選択: 既存の `.pop` のリストボックス（↑↓ Enter Esc、Esc で元のボタンへ戻る）。接続先のフォームは「● 登録済みのキー（秘密情報と変数で管理）／○ 別のキーを入れる」で、登録済みがあれば既定で選ばれ貼り直しは要らない。別のキーを入れると、このページにも 1 件として並ぶ。
 
-#### 秘密情報の入力のカード（承認済み 2026-10-17、[ADR 0215](adr/0215-secrets-and-variables-for-agents.md)）
+#### 秘密情報の入力のカード（承認済み 2026-10-17、[ADR 0217](adr/0217-secrets-and-variables-for-agents.md)）
 
 AI が `secrets.request` で人に値を頼んだときに会話に出るカード（`web/client.mjs` の `secretRequestCard`。スタイル `.sr-*`）。設定の変更の承認カードと同じ並び・同じ印（あなたを待っている）で、ターンが終わっても残る。
 
