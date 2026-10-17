@@ -4526,9 +4526,10 @@
     "switchFailed": "Couldn't switch the profile"
   },
   "chromeControl": {
-    "status": { "running": "{{name}} is operating", "idle": "Idle", "paused": "You are operating", "stopped": "Stopped" },
+    "status": { "running": "{{name}} is operating", "idle": "Idle", "paused": "You are operating", "pausedPc": "Operating on the PC", "stopped": "Stopped" },
     "stop": "Stop",
     "takeOver": "Take over",
+    "takeOverPc": "Operate on the PC",
     "resume": "Hand back to {{name}}",
     "failed": "Could not do that.",
     "banner": "Paused · you are operating Chrome",
@@ -4581,10 +4582,8 @@
       "fixedTab": "{{name}}'s Chrome (can't be closed)",
       "windowActions": "Chrome window actions",
       "windowNumber": "Window {{n}}",
-      "childrenHeading": "Child conversations' windows (opens the conversation)",
       "childUntitled": "Child conversation",
       "childWaiting": "Waiting for you",
-      "childCount": "{{n}} windows",
       "windowCount": "{{n}} windows",
       "panel": "Chrome window",
       "entry": "{{name}}'s Chrome window",
@@ -4607,6 +4606,9 @@
       "closeRiskHuman": "You have taken over this window. Closing it ends what you are doing midway.",
       "closeRiskWaiting": "This window is waiting for you (to sign in, for example). If you close it, the request goes unanswered.",
       "switchLabel": "Windows", "follow": "Follow the agent", "pinned": "Pinned", "pinFailed": "Couldn't switch windows.",
+      "convSwitchLabel": "Conversations and windows", "thisConversation": "This conversation", "openConversation": "Open conversation",
+      "tabsLabel": "Tabs", "tabUntitled": "Untitled", "closeTab": "Close {{title}}", "closeTabFailed": "Couldn't close the tab.",
+      "operateHere": "Operate on this device", "operatingOnPc": "Operating on the PC",
       "chipAgentRunning": "{{name}} is operating", "chipAgentIdle": "{{name}} operated last",
       "profileActions": "Chrome profiles"
     },

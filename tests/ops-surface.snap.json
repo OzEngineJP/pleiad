@@ -558,6 +558,21 @@
       "input": "f08816c821a8"
     },
     {
+      "id": "browser.chromeCloseTab",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeCloseTab",
+      "input": "6290c3ff07c7"
+    },
+    {
       "id": "browser.chromeCloseWindow",
       "risk": "write",
       "riskOf": false,
@@ -660,7 +675,7 @@
         "cli": false
       },
       "legacyCommand": "chromePinWindow",
-      "input": "d8b113b0adae"
+      "input": "9d8ea29d7832"
     },
     {
       "id": "browser.chromeRaiseDialog",
@@ -740,7 +755,7 @@
         "cli": false
       },
       "legacyCommand": "chromeTakeOver",
-      "input": "6b5db096dd25"
+      "input": "8a3d43cb63bb"
     },
     {
       "id": "browser.chromeWindows",
