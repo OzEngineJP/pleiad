@@ -1,6 +1,6 @@
 # 0215 秘密情報と変数をエージェントに預ける（API キーの画面を広げる）
 
-- 状態: 提案
+- 状態: 承認（2026-10-17）。利用者がモック（AsIs / ToBe）を見て、下の形と次の 3 点を決めた: ページの名前は「秘密情報と変数」、AI が自分で作った値は承認を通して新しい項目として足せる（人が入れた項目は AI が差し替え・削除できない）、入力する先はまず Chrome（`ply_browser`）だけ
 - 関連: [ADR 0155](0155-api-keys-in-one-place.md)（API キーの置き場と同意の分け方。画面の名前とカードの操作をこの ADR で変える）、[ADR 0094](0094-human-only-five.md)（「秘密の値」の組にコマンドを足す。組は 5 つのまま）、[ADR 0213](0213-login-shell-env.md)（サーバーへ渡す環境変数）、[ADR 0083](0083-control-surface-cli.md)（会話のシェルへ渡す環境変数）、docs/inapp-browser.md（`hand_to_user`）
 
 ## 状況
@@ -25,7 +25,7 @@
 
 ### 何を持つか
 
-設定 › API キーを **「秘密情報と変数」** に広げる（名前は利用者の決定を待つ。モック `temporary/mockups/secrets-and-env.html`）。1 つのページに次を並べる。
+設定 › API キーを **「秘密情報と変数」** に広げる（承認したモックの形は docs/design-system.md「設定 › 秘密情報と変数」）。1 つのページに次を並べる。
 
 | 種類 | 値を画面に出すか | 例 |
 |---|---|---|
@@ -87,10 +87,11 @@ ADR 0155 と同じ分け方にする。登録は置くだけで、**使い道を
   | 削除 | guarded |
   | サイトで入力する（`fill_secret`） | write |
   | 人に値を頼む（`secrets.request`） | write |
-  | 秘密の値・パスワード・API キーを入れる・差し替える | human-only（「秘密の値」の組。組の数は 5 のまま） |
+  | AI が作った値で新しい項目を足す・`by: 'ai'` の項目の値を差し替える（`secrets.create`） | guarded |
+  | 秘密の値・パスワード・API キーを人の項目に入れる・差し替える | human-only（「秘密の値」の組。組の数は 5 のまま） |
 
 - **人に値を頼む**: `secrets.request({ name, kind, reason, scope })` で、会話に入力のカード（承認カードと同じ並び。ターンを越えて残る）を出す。人が値を入れて保存すると、AI には保存した名前だけが返る。値はカードから保存先へ直に入り、会話の記録・イベント・AI の返りを通らない。
-- AI が自分で作った値（AI がサービスにアカウントを作ったときのパスワードなど）を AI が新しい項目として登録できるかは、利用者の決定を待つ（案: 承認を通して足せる。`by: 'ai'` を付ける。人が入れた項目は AI が差し替え・削除できない）。
+- **AI が自分で作った値**（AI がサービスにアカウントを作ったときのパスワードなど）は、AI が新しい項目として足せる（`secrets.create`。guarded = 承認を通す。`by: 'ai'` を付ける）。AI が差し替えられるのは `by: 'ai'` の項目の値だけで、人が入れた項目（`by: 'human'`）の値は差し替えられない。AI の削除は guarded。
 
 ### 値を外に出さない
 
@@ -136,3 +137,11 @@ ADR 0155 と同じ分け方にする。登録は置くだけで、**使い道を
 - `CLAUDE_ENV_FILE`: Windows の Bash ツール（Git Bash）で読まれるか。PowerShell ツールに届く条件（v2.1.296 以降）。利用者が自分で `CLAUDE_ENV_FILE` を付けている・SessionStart の hook がそこへ書くときに、Pleiad のファイルと両立できるか（できなければ、利用者のファイルを読み込む 1 行を Pleiad のファイルの頭に足す）。
 - Codex: `shell_environment_policy.set` の値が、名前に KEY・SECRET・TOKEN を含んでもシェルに届くか（既定の除外より後に入るはず）。スレッドを resume するときに値を替えられるか。値が rollout と `~/.codex/logs_2.sqlite` に残らないか（2026-10-17 の手元の記録では、今渡している `PLEIAD_CONTROL_TOKEN` は残っていなかった）。
 - agy: 認証に読む環境変数の名前。
+
+## 追記（2026-10-17）: 実装で確かめたこと・決めたこと
+
+- **確かめたこと**: Claude Code 2.1.299（Windows・Git Bash）で、`CLAUDE_ENV_FILE` に書いた値が Bash ツールのコマンドに届き、同じファイルに書いた `ANTHROPIC_API_KEY`（偽物）は CLI 本体の認証に使われなかった。codex-cli 0.160.0 で、`shell_environment_policy.set` に入れた名前に KEY を含む変数がシェルに届いた（Windows の Codex は PowerShell なので `$env:NAME`。エージェントへの一覧の文は「bash は $NAME、PowerShell は $env:NAME」と書く）。Codex の rollout と `logs_2.sqlite` に、今渡している `PLEIAD_CONTROL_TOKEN` は残っていなかった。
+- **伏せる場所**: 本文の「会話の記録（pleiad.db）に入れる前」は採らず、**画面・リモートへ出す前**に伏せる。WS の送信と返事（履歴の読み直しを含む）・届け直しの置き場に加え、流れの切れ端（`text.delta`・`thinking.delta`・`shell.output`）は会話ごとに値の書き出しに当たる末尾だけを持ち越してつなぎ、`emitGlobal` の入口で伏せる（1 通ずつ伏せるだけでは、切れ端にまたがる値が漏れた）。手元の記録（pleiad.db の `!` の行の出力など）は伏せない。値はエージェントの CLI の記録（`~/.claude/projects` など）にも同じく残り、記録を伏せても守りにならないため。
+- **入力のカードの届け方**: `secrets.request` は待たずに返り、結果は設定の変更の承認と同じ台帳（`setting-approvals.json`）と届け方で会話へ届ける（ply_control の呼び出しは Codex で 60 秒で切れるので、カードを待って返さない）。
+- **ターンを止めない**: 値の復号は main に頼むため、main が居ない間は待たされる。ターンの始めに読む上限を 10 秒にし、過ぎたら渡さずに始める。秘密情報の無い会話（API キーに使い道を選んでいない）は、API キーの置き場にも暗号化にも触れない。
+- **サイトで入力する**: `agent-browser fill` に値を渡すとプロセスの引数に載るので使わず、中継自身のセッションで今のタブに付けて `Input.insertText` で入れる。入力先は、エージェントが先に `agent-browser click` で選んだ欄（または `selector`）。

@@ -15,6 +15,7 @@ import { t, agentT } from '../i18n.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
+import { writeClaudeEnvFile, adoptClaudeEnvFile } from '../claude-env-file.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { AUTO_COMPACT_WINDOW_ENV } from '../compaction-settings.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
@@ -727,7 +728,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
     // SDK を読む（配布物で初めてなら、同意があればここで取る。core/claude-sdk.mjs）。読めなければプロンプトを渡す前の失敗にする
     // （送信待ちが「失敗」に戻り、取った後に再送できる）。同意が無ければ、画面に取得の案内を出させる
     let api;
@@ -811,6 +812,11 @@ export const backend = {
     const compactDiagnostic = compact ? createClaudeCompactDiagnostic() : null;
     // 付け直しは、旧サーバーが書いたファイルを札から引き継ぐ（CLI は起動のときだけ読む。ターンの終わりにこちらが消す）
     const flag = adopt ? adoptClaudeFlagSettings(store.dataDir, adopt.card.flag) : endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
+    // 秘密情報と変数（ADR 0215）。CLI 本体の env には入れず、CLAUDE_ENV_FILE で Bash ツールのシェルにだけ渡す（core/claude-env-file.mjs）。
+    // 付け直しは旧サーバーが書いたファイルを札から引き継ぐ（Bash の各コマンドの前に読まれるので、ターンの終わりまで消さない）
+    let envFile = null;
+    try { envFile = adopt ? adoptClaudeEnvFile(store.dataDir, adopt.card.envFile) : await writeClaudeEnvFile(store.dataDir, secretsRuntime?.env); }
+    catch (e) { if (!adopt) await flag?.dispose(); throw undelivered(e); }
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
     // resume する前に読む（CLI はこの値を読み戻し、result はそこからの累計になる）。1 つの query の result は全部これから引く。
     // 付け直しは札の値（旧サーバーがターンの始まりに読んだもの。CLI が query の終わりに書く値を読み直すとずれる）
@@ -873,7 +879,7 @@ export const backend = {
      * 途中送信は本文を入れずハッシュにする（札の上限。core/turn-card.mjs と同じ）。裏の作業と main の状態（claude-background.mjs の tracker）は、
      * 印からの再生で作り直る（付け直し直後の background_tasks_changed が全量で置き換える）ので、再生に出ない流し込みの数（pushed）だけを置く
      */
-    const backendCard = () => ({ held: true, costBase, flag: flag ? path.basename(flag.file) : null,
+    const backendCard = () => ({ held: true, costBase, flag: flag ? path.basename(flag.file) : null, envFile: envFile ? path.basename(envFile.file) : null,
       steers: pendingSteers.map(p => ({ id: p.id, uuid: p.uuid, hash: p.hash, sawResult: p.sawResult })), pushed: tracker.pending });
     // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）。最初の 1 回は子を起こした直後・付け直した直後に置く
     const bindHolder = () => {
@@ -1118,7 +1124,9 @@ export const backend = {
         // 会話で選んだアカウントのトークンは、この会話の env にだけ入れる（process.env は触らない。core/claude-accounts.mjs）
         // 委譲の子だけ、自動圧縮の閾値を下げる窓（autoCompactWindow。固定の部分 + 設定 compaction.auto の delegatedHeadroom。ADR 0166）を足す
         env: { ...(endpoint ? claudeCompatEnv(process.env, endpoint, claudeExtraEnv)
-          : claudeEnv(process.env, { token: oauthToken, extra: claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env },
+          : claudeEnv(process.env, { token: oauthToken, extra: claudeExtraEnv })), ...browserEnv, ...controlRuntime?.env,
+          // 秘密情報と変数は Bash ツールのシェルにだけ（上の envFile）。値そのものは CLI 本体の env に入れない
+          ...(envFile ? { CLAUDE_ENV_FILE: envFile.file } : {}) },
         // CLI の stderr は今まで捨てていた（上限で subagent を殺したことも分からなかった）。トークン・接続先のキーが紛れても伏せる
         stderr: createStderrLog({ secrets: [oauthToken, endpoint?.key].filter(Boolean) }),
         resume: sessionId ?? undefined,
@@ -1141,7 +1149,7 @@ export const backend = {
         // bot の人格（core/bots/sessions.mjs の botInstructions）は並びの最後。同じ bot なら毎ターン同じバイト列（キャッシュを壊さない）。
         // snapshot: false は bot の会話だけ。CLI は最初のターンのシステムプロンプトを記録して、後のターンで別の append を渡しても使い回す（既定）。
         // それだと人格を直しても動いている会話に届かない（2026-10-03 の実機の確認）。毎ターン組み直せば、同じ人格のあいだは同じバイト列でキャッシュは保たれ、直したターンだけ落ちる
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || botInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), ...(botInstructions ? { snapshot: false } : {}) } } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || secretsRuntime?.instructions || botInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), ...(botInstructions ? { snapshot: false } : {}) } } : {}),
         // bot の触れてよいフォルダー（cwd の外の分）。読み取り専用（ro）のフォルダーは、acceptEdits が聞かずに通す編集を deny ルールで断る（シェルの書き込みは断れない。docs/channels.md）
         ...(botFolders?.additionalDirectories?.length ? { additionalDirectories: botFolders.additionalDirectories } : {}),
         ...(disallowedTools.length ? { disallowedTools } : {}),
@@ -1179,7 +1187,7 @@ export const backend = {
         }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })), control?.track),
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
-    }); } catch (e) { if (!adopt) await flag?.dispose(); void held?.finish(); throw undelivered(e); }
+    }); } catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); } void held?.finish(); throw undelivered(e); }
 
     // 実行中に承認モードやモデルを変えられるようにする。
     // ターン開始時の options だけだと、走り出した後の切り替えが効かない。
@@ -1258,7 +1266,7 @@ export const backend = {
     } finally {
       clearStopTimer();
       // 手を離したターンのフラグ設定のファイルは消さない（札が指す。付け直したサーバーがターンの終わりに消す）
-      if (!held?.handedOff) await flag?.dispose();
+      if (!held?.handedOff) { await flag?.dispose(); await envFile?.dispose(); }
       signal?.signal?.removeEventListener?.("abort", stopTurn);
       for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
       for (const [id, x] of heldTurns) if (x.held === held) heldTurns.delete(id);

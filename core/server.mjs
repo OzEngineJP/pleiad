@@ -83,6 +83,11 @@ import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
 import { createApiKeys, ApiKeyError, USES as API_KEY_USES } from './api-keys.mjs';
+import { createSecrets, SecretsError, ENV_NAME as SECRET_ENV_NAME, reservedEnvName, normalizeSite, normalizeFolder, normalizeScope } from './secrets.mjs';
+import { createSecretMasker, createStreamMasker } from './secret-mask.mjs';
+import { secretsPrompt } from './secrets-prompt.mjs';
+import { sweepClaudeEnvFiles } from './claude-env-file.mjs';
+import { createSecretFill } from './secret-fill.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
@@ -168,6 +173,9 @@ import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from '
 // 子（エージェントの CLI・`!` の行・MCP）は process.env を継ぐので、どれを起こすより前に外す。以後の読み出しはこの写しから。
 // 読み込みの間に読むもの（core/server-log-boot.mjs の出力の向け先・core/i18n.mjs の最初の言語）は、ここより前なので今のまま
 const BOOT_ENV = takeBootEnv(process.env);
+// 画面・リモートへ送る前に、秘密情報の値と一致する部分を伏せる（core/secret-mask.mjs。ADR 0215）。emitGlobal・sendTo が使うので、どの出来事より先に作る
+const secretMasker = createSecretMasker();
+const secretStream = createStreamMasker(secretMasker);
 
 // 保存（DB への書き込み）の失敗は例外として返る（ADR 0115）。待たずに呼んで受けていない箇所が残っていると、Node の既定
 // （処理されない Promise の拒否でプロセスが落ちる）では、1 件の保存の失敗でサーバーごと落ち、走っている他の会話のターンまで止まる。
@@ -491,6 +499,24 @@ const apiKeys = createApiKeys({
   onChange: change => apiKeysChanged(change),
 });
 const compatEndpoints = createCompatEndpoints({ dataDir: store.dataDir, secrets: compatSecrets, apiKeys });
+// 秘密情報と変数（設定 › 秘密情報と変数。core/secrets.mjs、ADR 0215）。登録しただけでは渡さず、使い道（環境変数・サイトでの入力）を選んだものだけを使う。
+// 値は secret-values.json（API キー・MCP と同じ暗号化）。API キーの使い道（環境変数）も台帳の keyUses に id で持つ
+const secretValueStore = createSecretStore({ file: path.join(store.dataDir, 'secret-values.json'), cipher: secretCipher });
+secretValueStore.migrate().catch(() => {});
+const secrets = createSecrets({
+  dataDir: store.dataDir, values: secretValueStore, apiKeys: () => apiKeys,
+  // worktree（<リポジトリ>.pleiad/… など）の会話も、元のリポジトリのフォルダーの使い道を引く
+  repoRoot: async cwd => { const info = await gitInfo.repoInfo(cwd); return info ? (info.commonDir.endsWith('/.git') ? info.commonDir.slice(0, -5) : info.root) : null; },
+  log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
+  onChange: change => secretsChanged(change),
+});
+// 伏せる値の一覧は変わるたびに読み直す（送る口は待てない）。伏せる口（secretMasker・secretStream）はファイルの頭で作る
+let maskRefresh = Promise.resolve();
+function refreshSecretMask() {
+  maskRefresh = maskRefresh.then(() => secrets.maskValues()).then(values => secretMasker.set(values)).catch(e => console.error('  secrets: 伏せる値を読めなかった:', String(e?.code ?? e?.message ?? e)));
+  return maskRefresh;
+}
+secrets.init().then(refreshSecretMask).catch(() => {});
 // 古い置き場から API キーへの移行（冪等。暗号化された古いキーを読めない起動では保留して、古い置き場を読み続ける）。
 // 起動は待たない（暗号器は main がつながるまで答えないことがある。使う側は apiKeys の中で移行の終わりを待つ）
 apiKeys.init().catch(() => {});
@@ -1219,10 +1245,19 @@ const routingKey = service => apiKeys.useKey(`judge:${ROUTING_JUDGE[service]}`);
 /** API キー・割り当てが変わったとき（core/api-keys.mjs の onChange）。使う側の画面と通話のキーを更新する */
 function apiKeysChanged(change = {}) {
   emitGlobal({ type: 'apiKeysChanged', sessionId: null });
+  // API キーの値・一覧が変わった。伏せる値を読み直し、消したキーの使い道（環境変数）を外す
+  secrets.invalidate();
+  if (change.keys) secrets.pruneKeyUses().catch(() => {});
+  refreshSecretMask();
   const uses = change.uses ?? [];
   if (uses.includes('voice')) { voiceHost.keysChanged().catch(() => {}); emitGlobal({ type: 'voiceChanged', sessionId: null }); }
   if (uses.some(u => u.startsWith('judge:'))) emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
   if (change.endpoints) emitGlobal({ type: 'compatEndpointsChanged', sessionId: null });
+}
+/** 秘密情報と変数が変わったとき（core/secrets.mjs の onChange）。画面へ知らせ、伏せる値を読み直す（値は載せない） */
+function secretsChanged() {
+  emitGlobal({ type: 'secretsChanged', sessionId: null });
+  refreshSecretMask();
 }
 /**
  * 古い口（setVoiceKey・setDelegationRoutingKey）の中身。移行済みなら API キーに登録して使うキーに選ぶ（同じ値があれば再利用）、
@@ -1515,7 +1550,9 @@ function openComputerPort(entry, backend, token) {
 }
 
 // ---- ply_browser（エージェントのブラウザー操作の口。core/browser-bridge.mjs、ADR 0148） ----------------------------
-const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs, closeWindow: async (sessionId, taskId) => chromeWindowCloser?.close(taskId ? await delegatedChromeTarget(sessionId, taskId) : sessionId) });
+const browserBridge = createBrowserBridge({ handoffs: chromeHandoffs, closeWindow: async (sessionId, taskId) => chromeWindowCloser?.close(taskId ? await delegatedChromeTarget(sessionId, taskId) : sessionId),
+  // 登録したログイン情報をサイトの入力欄に入れる（fill_secret。core/secret-fill.mjs、ADR 0215）。Chrome の中継があるホストだけ
+  fillSecret: chromeRelay ? createSecretFill({ relay: () => chromeRelay, secrets, log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`) }) : null });
 const delegatedChromeTarget = (sessionId, taskId) => resolveDelegatedChromeTarget(sessionId, taskId, { task: id => agentTasks?.get(id), meta: id => store.get(id) });
 // プロフィールのツールは ops（browser.listProfiles・useProfile）を通す（画面・CLI と同じ断り・同じ監査）
 if (chromeProfiles) browserBridge.useProfiles({
@@ -1576,6 +1613,28 @@ function controlRuntimeFor(turn) {
   return { url: entry.control.url, headers: entry.control.headers, instructions: controlInstructions(entry.locale),
     env: { PLEIAD_CONTROL_URL: localOrigin(), PLEIAD_CONTROL_TOKEN: entry.control.token } };
 }
+
+/**
+ * このターンに渡す秘密情報と変数（ADR 0215）。{ env: 会話のシェルへ渡す環境変数, instructions: 名前だけの一覧の文 }。どちらも無ければ null。
+ * ログイン情報は、ply_browser を渡すターンだけ一覧に書く（fill_secret はそのターンでしか使えない）。読めないときは渡さず、ターンは止めない
+ */
+async function secretsRuntimeFor(cwd, lng, { browser = false } = {}) {
+  let timer;
+  try {
+    // 値の復号は main に頼む（デスクトップ版）。main が居ない間（更新の途中など）はターンを長く止めず、上限を過ぎたら渡さずに始める
+    const read = Promise.all([secrets.envFor(cwd), secrets.agentList()]);
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'SECRETS_TIMEOUT' })), SECRETS_TURN_WAIT_MS); timer.unref?.(); });
+    const [{ vars, entries, unreadable }, { items }] = await Promise.race([read, late]);
+    const instructions = secretsPrompt({ entries, logins: items.filter(i => i.kind === 'login'), unreadable, browser, agentT, locale: lng });
+    if (!Object.keys(vars).length && !instructions) return null;
+    return { env: vars, instructions };
+  } catch (e) {
+    console.error('  secrets: このターンに渡せなかった:', String(e?.code ?? e?.message ?? e));
+    return null;
+  } finally { clearTimeout(timer); }
+}
+/** ターンを始めるときに秘密情報と変数を読む上限（ms） */
+const SECRETS_TURN_WAIT_MS = 10_000;
 
 /** このターンに渡す ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（docs/computer-use.md「エージェントへの渡し方」） */
 async function computerRuntimeFor(turn) {
@@ -2337,7 +2396,7 @@ const LIST_NEUTRAL_EVENTS = new Set([
   // 入力欄の `!`（core/shell-runs.mjs）。一覧の行は変わらない
   "shell.start", "shell.output", "shell.done", "shell.skip", "shell.handed",
   // チャンネル・bot・記憶・ルーティンの出来事。会話の一覧の行は変わらない（bot の会話の行の変化は sessionsChanged が伝える）
-  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged",
+  "channelsChanged", "channelPost", "channelReaction", "channelThread", "channelRead", "botsChanged", "memoryChanged", "routinesChanged", "channelEvent", "voiceChanged", "apiKeysChanged", "secretsChanged",
   // 通知の一覧の件数（ベルのボタン。ADR 0149）。会話の一覧の行は変わらない
   "notificationsChanged",
   // 会話の Chrome のプロフィールが替わった（core/chrome/profile-choice.mjs）。一覧の行は変わらない
@@ -2357,7 +2416,8 @@ function wanted(ws, event) {
 
 /** つながっている host 全部に送る（開いている会話を宣言した接続には、その会話の流れだけ）。1つでも届けば true。 */
 function sendTo(frame) {
-  const text = JSON.stringify(frame);
+  // 秘密情報の値（エージェントがシェルで表示したものなど）は、画面・リモートへ出す前に伏せる（ADR 0215）
+  const text = secretMasker.json(JSON.stringify(frame));
   const event = frame.kind === P.EVENT ? frame.event : null;
   let sent = false;
   for (const ws of runtime.sockets) {
@@ -2370,7 +2430,9 @@ function sendTo(frame) {
 }
 // 入力欄の `!`（シェルの行。ADR 0054）。走っている子のプロセスはサーバーの終わりに止める。保持役があれば保持役の子に載せ、引き継ぎで渡す（無停止の更新 段階 3）
 const shellHolder = createShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
-const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder });
+const shellRuns = createShellRuns({ store, emit: event => emitGlobal(event), holder: shellHolder,
+  // 秘密情報と変数（ADR 0215）。エージェントのシェルと同じく、その行の場所に渡すものを足す
+  envFor: async run => (await secrets.envFor(run.cwd)).vars });
 // git の動き（ADR 0085）。状態・ターンの始まりと終わりの隠し ref・変更の一覧と差分。git が無い・git 管理外は null
 const gitActivity = createGitActivity();
 // 会話が作った PR を会話に覚える（親の会話の git パネルが、委譲した子の PR も 1 つの一覧に出すため。ADR 0206）。
@@ -2470,6 +2532,11 @@ async function savePref(key, value, backendId) {
 const liveReads = new Set();
 let streamSequence = 0;
 function emitGlobal(event) {
+  // 秘密情報の値は、流れの切れ端にまたがっても伏せる（core/secret-mask.mjs の createStreamMasker。ADR 0215）。
+  // ここで伏せれば、読み上げ・走っているターンの写し・届け直しの置き場・画面のどれにも値が残らない
+  for (const ev of secretStream.process(event)) emitOne(ev);
+}
+function emitOne(event) {
   voiceHost.onEvent(event);   // 通話が見ている会話の読み上げ（core/voice/host.mjs）
   if (event.type === 'routinesChanged') void postResident();
   // 通知の一覧: 人以外の投稿の @あなた・チャンネルの既読・アーカイブ（ADR 0149）
@@ -4508,10 +4575,98 @@ async function finishSettingApproval(requestId, outcome, extra = {}) {
   if (entry) emitGlobal({ type: 'settingApproval', sessionId: entry.sessionId, requestId, outcome });
 }
 
+/**
+ * 秘密情報の入力のカード（secrets.request。ADR 0215）。会話にカードを出し、待たずに返す。人が値を入れて保存したら（secrets.answerRequest）
+ * 項目を作ってカードを決着させ、保存した名前だけを会話へ届ける（設定の変更の承認と同じ台帳・同じ届け方。ADR 0088）。値はカードにも結果にも載せない
+ */
+const secretRequests = new Map();   // requestId -> { sessionId, spec, settle }
+/** cwd の git の本体のフォルダー（worktree なら元のリポジトリ）。git 管理外なら cwd */
+async function mainFolderOf(cwd) {
+  const info = cwd ? await gitInfo.repoInfo(cwd).catch(() => null) : null;
+  return info ? (info.commonDir.endsWith('/.git') ? info.commonDir.slice(0, -5) : info.root) : cwd;
+}
+async function requestSecret(ctx, args) {
+  const lng = ctx.locale;
+  const sessionId = ctx.actor?.sessionId;
+  if (!sessionId) throw new OpError('NEEDS_UI', agentT(lng, 'ops.errors.NEEDS_UI'));
+  const name = String(args.name ?? '').trim();
+  const sites = (args.sites ?? []).map(normalizeSite).filter(Boolean);
+  if (args.kind !== 'login' || name) {
+    if (!SECRET_ENV_NAME.test(name)) throw new SecretsError('INVALID_NAME', { name });
+    if (reservedEnvName(name)) throw new SecretsError('RESERVED_NAME', { name });
+  }
+  if (args.kind === 'login' && !sites.length) throw new SecretsError('INVALID_SITE');
+  const cwd = await gitCwd({ sessionId }).catch(() => null);
+  const folder = args.scope === 'folder' && cwd ? normalizeFolder(await mainFolderOf(cwd)) : null;
+  const spec = { kind: args.kind, name: name || null, label: String(args.label ?? '').trim() || name || sites[0] || '', reason: String(args.reason).slice(0, 500),
+    sites, username: String(args.username ?? '').trim(), scope: folder ? { folders: [folder] } : 'all' };
+  const key = spec.name ?? spec.label;
+  const turn = runtime.turns.get(sessionId);
+  const backend = turn?.backend ?? await resolveBackendForSession(sessionId).catch(() => null);
+  const agent = { id: backend?.id ?? '', label: backend?.label ?? '' };
+  const requestId = `secret-${crypto.randomUUID()}`;
+  for (const old of settingApprovals.pendingFor(sessionId, key, 'secrets.request')) await withdrawSettingCard(old.requestId, 'superseded');
+  await settingApprovals.add({ requestId, sessionId, key, op: 'secrets.request' });
+  const ac = new AbortController();
+  settingCards.set(requestId, ac);
+  askPermission({
+    toolName: 'ply_control', input: {}, sessionId, kind: 'tool', canAlways: false, signal: ac.signal, detached: true,
+    title: t('secrets.requestTitle', { agent: agent.label }),
+    secretRequest: { requestId, ...spec, agent },
+    onOpen: handle => secretRequests.set(requestId, { sessionId, spec, settle: handle.settle }),
+  }).then(async (answer) => {
+    secretRequests.delete(requestId);
+    if (settingCards.get(requestId) === ac) settingCards.delete(requestId);
+    if (ac.signal.aborted) return;
+    await finishSettingApproval(requestId, answer?.allow ? 'allowed' : 'denied');
+  }).catch((e) => console.error('  秘密情報の入力のカードに失敗:', String(e?.message ?? e)));
+  return { status: 'pending', code: 'PENDING_INPUT', requestId, message: agentT(lng, 'ops.secrets.request.pending', { requestId, name: key }) };
+}
+/** 入力のカードへの人の答え。項目を作り（同じ名前・同じ場所・同じ種類の項目があれば値を差し替え）、カードを決着させる */
+async function answerSecretRequest(ctx, args) {
+  const r = secretRequests.get(args.requestId);
+  if (!r) throw new OpError('ALREADY_RESOLVED', t('approval.alreadyResolved'));
+  const { spec } = r;
+  const scope = args.scope ?? spec.scope;
+  const env = spec.name ? { name: spec.name, scope } : null;
+  const listed = await secrets.list();
+  const target = normalizeScope(scope);
+  const same = env && listed.items.find(i => i.kind === spec.kind && i.env && i.env.name.toUpperCase() === env.name.toUpperCase() && JSON.stringify(i.env.scope) === JSON.stringify(target));
+  let id;
+  if (same) {
+    const value = spec.kind === 'login' ? args.password : args.value;
+    await secrets.update(same.id, { ...(spec.kind === 'var' ? { value: args.value ?? '' } : value ? { secretValue: value } : {}),
+      ...(args.username !== undefined && spec.kind === 'login' ? { username: args.username } : {}) });
+    id = same.id;
+  } else {
+    ({ id } = await secrets.create({ kind: spec.kind, label: String(args.label ?? '').trim() || spec.label, note: spec.reason, username: args.username ?? spec.username,
+      value: args.value, password: args.password, sites: spec.sites, env }, { by: 'human' }));
+  }
+  r.settle({ allow: true });
+  return { id, name: spec.name ?? spec.label };
+}
+/** ops の ctx.secrets（core/ops/secrets.mjs） */
+const secretsOps = {
+  store: secrets,
+  /** API キーの使い道を、項目と同じ形で（secrets.setUses の危険度の判定と承認カード） */
+  async keyUse(id) {
+    const key = (await apiKeys.list().catch(() => null))?.keys.find(k => k.id === id);
+    if (!key) return null;
+    const use = (await secrets.list()).keyUses[id] ?? null;
+    return { id, kind: 'apiKey', label: key.label || key.provider, env: use?.env ?? null, sites: [] };
+  },
+  request: requestSecret,
+  answer: answerSecretRequest,
+};
+
 /** 設定と操作の承認結果を、エージェントへ渡す文にする。via は、求めた子ではなく依頼元へ届けるときの子（routeSettingNotice） */
 function settingNotice(lng, notices) {
   // i18n-dynamic: agent:ops.settingNotice.
   return notices.map((n) => {
+    // 秘密情報の入力のカード（secrets.request）の結果。値は載せず、保存した名前だけ（key に名前を持たせている）
+    // i18n-dynamic: agent:ops.secrets.request.notice.
+    if (n.op === 'secrets.request') return agentT(lng, `ops.secrets.request.notice.${n.outcome}`, { requestId: n.requestId, name: n.key ?? '', error: n.error ?? '' })
+      + (n.via ? '\n' + agentT(lng, 'ops.settingNotice.opFromChild', { taskId: n.via.taskId, title: n.via.title ?? '', state: n.via.status }) : '');
     const setting = n.op === 'settings.set';
     const words = setting ? null : opsRegistry.get(n.op)?.approvalWords ?? 'op';
     const params = setting ? { target: settingTarget(lng, n.op, n.key) } : approvalWords(lng, words);
@@ -4599,6 +4754,8 @@ function opsDeps(lng = currentLocale()) {
     voice: { status: async () => ({ ...(await voiceHost.status()), keyRef: (await apiKeys.hasUse('voice')) ? apiKeys.usesState().voice : null }) },
     // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
     apiKeys: { list: () => apiKeys.list(), check: id => apiKeys.check(id) },
+    // 設定 › 秘密情報と変数（core/ops/secrets.mjs。ADR 0215）。値は返さない（変数の値だけ）
+    secrets: secretsOps,
     compactionSettings: () => compactionSettings,
     statuses: opsStatuses,
     worktrees: opsWorktrees,
@@ -4981,7 +5138,7 @@ function chromeHandoffProfile(sessionId) {
   const dir = chromeRelay?.scope.windows?.(sessionId)?.find(window => window.windowId === windowId)?.profile;
   return dir ? { browser: 'chrome', dir } : null;
 }
-const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff }) => {
+const askPermission = async ({ toolName, input, sessionId, toolUseID, title, signal, canAlways, kind, questions, locale, browserSite, computerApp, settingChange, secretRequest, detached = false, outlivesTurn = false, onOpen, onSettle, browserHandoff }) => {
   const { chain: ancestors, remote: remoteRoot } = sessionId ? await delegationRoot(sessionId) : { chain: [], remote: null };
   // 中継先の見出しは「どの会話の承認か」。委譲したときの info.title を使う
   const childTitle = ancestors.length || remoteRoot ? (await store.get(sessionId)).title || t('permission.childConversation') : "";
@@ -5021,6 +5178,8 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       ...(browserSite ? { browserSite } : {}),
       ...(computerApp ? { computerApp } : {}),
       ...(settingChange ? { settingChange } : {}),
+      // 秘密情報の入力のカード（secrets.request。ADR 0215）。値は載せない。人が保存すると secrets.answerRequest が決着させる
+      ...(secretRequest ? { secretRequest } : {}),
       ...(browserHandoff ? { browserHandoff } : {}),
       ...(questions ? { questions } : {}),
       // 端末の AI に任された子の承認。画面は「依頼元の会話（⇄ 端末）でも答えられます」を添える（docs/remote.md §4.5）
@@ -5305,6 +5464,8 @@ if ((process.env.AGENT_HOST_ADOPT_HOLDER === '1' || HANDOVER_START || handoverEn
 // 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
 // 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
+// 同じく、秘密情報と変数を Claude のシェルへ渡すファイル（core/claude-env-file.mjs。値を含む）
+sweepClaudeEnvFiles(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.envFile).filter(Boolean) }).catch(() => {});
 await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])), keepQueued: HANDOVER_START });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
 {
@@ -6327,10 +6488,16 @@ async function beginTurn(ctx) {
     runArgs.browserInstructions = browserInstruction(runArgs.browserEnv, agentLocale, agentT);
     runArgs.browserRuntime = browserRuntimeFor(turn);
   }
+  // 秘密情報と変数（ADR 0215）。この会話の場所に渡す環境変数（シェルにだけ入る）と、名前だけの一覧の文。圧縮のターンには渡さない
+  if (!hooks.compact) {
+    const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime) });
+    if (secretsRuntime) runArgs.secretsRuntime = secretsRuntime;
+  }
   // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
   const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
     visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
-    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime?.instructions ?? null });
+    computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime?.instructions ?? null,
+    secrets: runArgs.secretsRuntime?.instructions ?? null });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
   ctx.runArgs = runArgs;
 }
@@ -7746,8 +7913,8 @@ wss.on("connection", (ws, req) => {
     // 画面が bulk を添えたコマンドの大きい返事は、中継越しなら WS の外（HTTP の /bulk/<id>）で渡す。WS の後の返事・出来事を待たせない（ADR 0179）
     const reply = (ok, payload, code, extra) => {
       if (ws.readyState !== ws.OPEN) return;
-      const bulk = ok && msg.bulk === true && !local ? bulkReplies.offer(JSON.stringify(payload ?? null)) : null;
-      ws.send(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(bulk ? { bulk } : ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) }));
+      const bulk = ok && msg.bulk === true && !local ? bulkReplies.offer(secretMasker.json(JSON.stringify(payload ?? null))) : null;
+      ws.send(secretMasker.json(JSON.stringify({ kind: P.RESPONSE, id: msg.id ?? null, ok, ...(bulk ? { bulk } : ok ? { result: payload } : { error: payload, ...(code ? { code } : {}), ...extra }) })));
     };
 
     // 審査モード（ADR 0172）: 許可の一覧（core/review-mode.mjs の COMMAND_PASS）にある命令だけ通す。ほかは何もせずに断る
@@ -8158,6 +8325,8 @@ wss.on("connection", (ws, req) => {
           // Chrome の操作待ち（core/chrome/handoff.mjs）の「戻した・つながった」は、専用のボタン（browser.chromeResume ほか）からしか決まらない。
           // 一般の「許可」を受けると、人が戻していないのに「Chrome を戻しました」になる（botやスマホの通知の許可ボタンなど）。断る・止めるは通す
           if (w.payload.browserHandoff && allow === true) return reply(false, t('approval.browserHandoffAllow'), 'HANDOFF_ONLY');
+          // 秘密情報の入力のカードは、値を保存する操作（secrets.answerRequest）でしか「保存した」にならない。ここで通すのは断るだけ
+          if (w.payload.secretRequest && allow === true) return reply(false, t('secrets.requestAnswerOnly'), 'SECRET_INPUT_ONLY');
           // 設定の変更の承認は受領証つき。画面は出したカードの受領証を添えて答える。合わなければ別の変更への答えなので受け取らない（取り違え・再送を防ぐ）
           if (w.payload.settingChange && w.payload.settingChange.receipt !== receipt) return reply(false, t('approval.receiptMismatch'), 'RECEIPT_MISMATCH');
           // 回答を伴うツール（質問カード）は、承認ではなく入力の差し替えとして返る。

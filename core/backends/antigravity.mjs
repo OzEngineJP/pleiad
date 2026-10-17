@@ -226,10 +226,20 @@ const digest = (value) => (value == null ? null : crypto.createHash("sha256").up
  * 起動時にしか渡せないもの（Pleiad のコンテキスト・ブラウザー・Hooks・ply_computer・ply_control・bot の人格）の印。起動時と違う渡し方になる次のターンは agy を起こし直す。
  * トークンを含むものは頭の文字列ではなくダイジェストで持つ: 保持役に載せた agy の札（server の takeCard）にそのまま置いても秘密が出ず、付け直した先が同じ印で比べられる
  */
-function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey }) {
+function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey, secretsKey = null }) {
   return { context: digest(contextKey), shape: contextShape ?? null, browser: browserEnv?.AGENT_BROWSER_CONFIG ?? null, hooks: hooksShape ?? null,
-    computer: digest(computerKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null };
+    computer: digest(computerKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null,
+    // 秘密情報と変数（ADR 0215）。値はハッシュだけ（札に残る）。無い会話は今までと同じ印
+    ...(secretsKey ? { secrets: digest(secretsKey) } : {}) };
 }
+/**
+ * agy 自身が認証・接続先に読む環境変数（Gemini CLI と同じ名前）。秘密情報と変数に同じ名前があっても agy のプロセスには入れない
+ * （agy はシェルを自分の子として起こし、プロセスの env を継がせるので、入れると agy 自身の認証が替わる。ADR 0215）
+ */
+export const AGY_OWN_ENV = Object.freeze(['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_APPLICATION_CREDENTIALS', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_CLOUD_LOCATION', 'GOOGLE_GENAI_USE_VERTEXAI', 'GOOGLE_GENAI_USE_GCA']);
+const agyOwn = new Set(AGY_OWN_ENV);
+/** agy のプロセスへ渡す秘密情報と変数（agy 自身の名前は除く） */
+export const agySecretsEnv = env => Object.fromEntries(Object.entries(env ?? {}).filter(([name]) => !agyOwn.has(name.toUpperCase())));
 const sameKeys = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
 /** bot の起こし直しの判定の印: 人格の文のハッシュとフォルダー。bot の会話でなければ null */
@@ -299,7 +309,7 @@ export const backend = {
   // ---- 実行 ---------------------------------------------------------------
 
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは antigravity-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
     const m = MODES[modeFor(mode)];
     const k = adopt?.card?.agy ?? null;   // 付け直しの札のバックエンドの欄（backendCard）
 
@@ -426,7 +436,10 @@ export const backend = {
     // bot の人格（エージェント定義の本文）と触れてよいフォルダー（--add-dir）も起動時にしか渡せない。人格を直した・フォルダーを変えたら起こし直す。
     // 起動中のプロセスは指示の文そのものを比べないので、人格のハッシュで判定する（bot でなければ null で、今までと同じ）
     const botKey = botSessionKey(botInstructions, botFolders);
-    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey });
+    // 秘密情報と変数（ADR 0215）も起動時にしか渡せない（プロセスの env と指示）。変われば起こし直す
+    const secretsEnv = agySecretsEnv(secretsRuntime?.env);
+    const secretsKey = Object.keys(secretsEnv).length || secretsRuntime?.instructions ? JSON.stringify([secretsEnv, secretsRuntime?.instructions ?? '']) : null;
+    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey, secretsKey });
     if (session && !sameKeys(session.keys, keys)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session && !adopt;
@@ -448,9 +461,9 @@ export const backend = {
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
       const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
       const botDirs = botFolders?.additionalDirectories ?? [];
-      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions || computerRuntime || controlRuntime || botInstructions);
+      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions || computerRuntime || controlRuntime || secretsRuntime?.instructions || botInstructions);
       const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
-        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions, controlRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
+        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
         context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
         browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null,
         control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null, held: Boolean(plan) }) : null;
@@ -463,8 +476,8 @@ export const backend = {
         skipPermissions: Boolean(m.skip),
         // agy のヘッドレスは cwd だけではワークスペースを設定しないため、--add-dir で渡す
         addDirs: [...(cwd ? [cwd] : []), ...botDirs],
-        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), ...botDirs, agent.home], ...(useAgent ? { agent: AGENT_NAME } : {}), env: { ...agent.env, ...browserEnv }, onGone: agent.cleanup }
-          : browserEnv ? { env: browserEnv } : {}),
+        ...(agent ? { addDirs: [...(cwd ? [cwd] : []), ...botDirs, agent.home], ...(useAgent ? { agent: AGENT_NAME } : {}), env: { ...secretsEnv, ...agent.env, ...browserEnv }, onGone: agent.cleanup }
+          : browserEnv || Object.keys(secretsEnv).length ? { env: { ...secretsEnv, ...browserEnv } } : {}),
         ...(plan ? { held: createHeldAgy({ client: plan.client }) } : {}),
       });
       session.hookRuns = agent?.runs ? { file: agent.runs, offset: 0 } : null;

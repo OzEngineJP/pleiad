@@ -26,6 +26,25 @@ export const browserTools = locale => [{
   inputSchema: { type: 'object', properties: { task: { type: 'string', description: agentT(locale, 'browserBridge.closeWindowTask.argument') } }, additionalProperties: false },
 }];
 
+/**
+ * 登録したログイン情報をサイトの入力欄に入れる（ADR 0215「サイトで入力する」）。値はエージェントに返さない。
+ * Pleiad が会話のタブの origin を確かめ、ログイン情報のサイトに合うときだけ入れる。秘密情報の本体があるホストだけに載せる（createBrowserBridge の fillSecret）
+ */
+export const fillSecretTool = locale => ({
+  name: 'fill_secret',
+  description: agentT(locale, 'browserBridge.fillSecret.description'),
+  inputSchema: {
+    type: 'object',
+    properties: {
+      item: { type: 'string', description: agentT(locale, 'browserBridge.fillSecret.item') },
+      field: { type: 'string', enum: ['username', 'password'], description: agentT(locale, 'browserBridge.fillSecret.field') },
+      selector: { type: 'string', description: agentT(locale, 'browserBridge.fillSecret.selector') },
+    },
+    required: ['item', 'field'],
+    additionalProperties: false,
+  },
+});
+
 /** Chrome のプロフィールのツール（第 10 段）。プロフィールの本体があるホストだけに載せる（createBrowserBridge の useProfiles） */
 export const PROFILE_TOOLS = ['list_browser_profiles', 'use_browser_profile'];
 export const profileTools = locale => [{
@@ -65,7 +84,7 @@ export function handToUserResult(locale, answer) {
 }
 
 /** ply_browser の口。会話ごとに open し、橋は会話の id が決まっても使い回す（agy は会話のあいだ同じトークンを使う） */
-export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}) {
+export function createBrowserBridge({ handoffs = null, closeWindow = null, fillSecret = null } = {}) {
   const bindings = new Map();
   const fail = text => ({ isError: true, content: [{ type: 'text', text }] });
   let profiles = null;   // { list(sessionId, locale), use(sessionId, { profile, browser }, locale) }（useProfiles で差し込む。ops の browser.listProfiles・useProfile を呼ぶ）
@@ -87,6 +106,18 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
     // i18n-dynamic: agent:browserBridge.closeWindow.
     const { locale } = binding;
     if (profiles && PROFILE_TOOLS.includes(params?.name)) return profileCall(binding, params);
+    if (params?.name === 'fill_secret' && fillSecret && handoffs) {
+      const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments) ? params.arguments : null;
+      if (!args || typeof args.item !== 'string' || !args.item || args.item.length > 40 || !['username', 'password'].includes(args.field)
+        || (args.selector !== undefined && (typeof args.selector !== 'string' || args.selector.length > 1000)) || Object.keys(args).some(key => !['item', 'field', 'selector'].includes(key)))
+        return fail(agentT(locale, 'browserBridge.invalidTool'));
+      let owner;
+      try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
+      if (!owner?.sessionId) return fail(agentT(locale, 'browserBridge.handToUser.noTurn'));
+      // 返りは「入れた・入れなかった理由」だけ（値は載せない）
+      const r = await fillSecret(owner.sessionId, { item: args.item, field: args.field, selector: args.selector ?? null }, locale).catch(error => ({ ok: false, text: String(error?.message ?? error) }));
+      return { isError: !r.ok, content: [{ type: 'text', text: r.text }] };
+    }
     if (!['hand_to_user', 'close_browser_window'].includes(params?.name) || (params.name === 'hand_to_user' && !handoffs) || (params.name === 'close_browser_window' && !closeWindow)) return fail(agentT(locale, 'browserBridge.invalidTool'));
     let owner;
     try { owner = await binding.owner(); } catch (error) { return fail(String(error?.message ?? error)); }
@@ -144,7 +175,7 @@ export function createBrowserBridge({ handoffs = null, closeWindow = null } = {}
       let result;
       if (m.method === 'initialize') result = { protocolVersion: '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: BROWSER_SERVER, version: '1.0.0' } };
       else if (m.method === 'ping') result = {};
-      else if (m.method === 'tools/list') result = { tools: handoffs ? browserTools(locale) : [] };   // Chrome の層が無いホストは載せない
+      else if (m.method === 'tools/list') result = { tools: handoffs ? [...browserTools(locale), ...(fillSecret ? [fillSecretTool(locale)] : [])] : [] };   // Chrome の層が無いホストは載せない
       else if (m.method === 'tools/call') result = await callTool(binding, m.params);
       else return reply(200, { jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'Method not found' } });
       if (m.method === 'tools/list' && handoffs && profiles) result = { tools: [...result.tools, ...profileTools(locale)] };

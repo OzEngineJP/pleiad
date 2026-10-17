@@ -273,7 +273,7 @@
     },
     "key": {
       "hostMismatch": "The selected key is not for this endpoint's URL (host). Choose a key for this URL or enter another key",
-      "refMissing": "The selected key was not found. Check it in API keys",
+      "refMissing": "The selected key was not found. Check it in Settings › Secrets and variables",
       "invalid": "The API key contains spaces or line breaks. Paste only the value.",
       "unreadable": "Can't read the saved key."
     },
@@ -329,7 +329,7 @@
       "deleted": "This conversation's endpoint has been deleted. Choose another endpoint from the model panel in the input area.",
       "wrongAgent": "This conversation's endpoint \"{{name}}\" is for {{agent}}. Choose another endpoint.",
       "failed": "The last check of endpoint \"{{name}}\" failed. Check it again under Settings › Agents › Endpoints, or choose another endpoint.",
-      "keyMissing": "No key is selected for the endpoint \"{{name}}\". Register one in Settings › API keys and choose it when editing the endpoint.",
+      "keyMissing": "No key is selected for the endpoint \"{{name}}\". Register one in Settings › Secrets and variables and choose it when editing the endpoint.",
       "keyUnreadable": "Can't read the key for endpoint \"{{name}}\"."
     }
   },
@@ -437,6 +437,26 @@
     "failed": "Could not change launch at sign-in ({{reason}})"
   },
   "secrets": {
+    "errors": {
+      "INVALID": "The secret is not in a valid form",
+      "INVALID_NAME": "Invalid environment variable name: {{name}} (start with a letter or _, then letters, digits and _)",
+      "RESERVED_NAME": "{{name}} is used by Pleiad and cannot be saved",
+      "INVALID_SCOPE": "Invalid folders (all folders, or absolute folder paths)",
+      "INVALID_LABEL": "Enter a name",
+      "INVALID_SITE": "Enter the site as a host name (example.com)",
+      "INVALID_VALUE": "Invalid value (empty, too long, or contains NUL)",
+      "DUPLICATE_NAME": "Environment variable {{name}} is already saved for the same folders",
+      "TOO_MANY": "You can save up to {{max}} secrets and variables",
+      "FILE_BROKEN": "Cannot read the secrets and variables file (secrets.json). Fix or move the file",
+      "NOT_FOUND": "That item is not saved",
+      "KEY_NOT_FOUND": "That API key is not saved",
+      "NOT_LOGIN": "Not a login",
+      "SITE_MISMATCH": "{{label}} cannot be used on this site",
+      "NOT_VARIABLE": "Not a variable (change secrets and logins on screen or with secrets.create)",
+      "HUMAN_ITEM": "The AI cannot replace the value of an item a person saved"
+    },
+    "requestTitle": "{{agent}} is asking for a secret",
+    "requestAnswerOnly": "Answer this request by entering the value and pressing Save. Press Cancel to decline.",
     "busy": "The secrets file is in use by another process. Wait a moment and try again.",
     "plainReason": "Electron's safeStorage isn't available in this launch (such as npm start).",
     "cryptoFailed": "Couldn't encrypt or decrypt the secrets.",

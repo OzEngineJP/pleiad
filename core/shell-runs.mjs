@@ -32,8 +32,9 @@ export const shellMode = (backend) => {
  * @param emit 出来事を全部の接続へ流す（server の emitGlobal）
  * @param timeoutMs 上限。既定 10 分（AGENT_HOST_SHELL_TIMEOUT_MS で短くできる。テスト用）
  * @param holder 保持役の口（core/shell-held.mjs の createShellHolder）。無ければ 'host' の行はいつもサーバーの子
+ * @param envFor 'host' の行のシェルに足す環境変数（秘密情報と変数。ADR 0215）。(run) => Promise<{ NAME: value }>
  */
-export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AGENT_HOST_SHELL_TIMEOUT_MS) || SHELL_TIMEOUT_MS, runHost = runHostShell, holder = null }) {
+export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AGENT_HOST_SHELL_TIMEOUT_MS) || SHELL_TIMEOUT_MS, runHost = runHostShell, holder = null, envFor = async () => ({}) }) {
   const runs = new Map();          // runId -> 走っている分 { sessionId, runId, command, cwd, at, backend, stdout, stderr, ac, mode, held? }
   const nativeDone = new Map();    // sessionId -> Set<runId>  エージェントが走らせて終わった分（次の発言で「渡した」にする）
   const seen = new Set();          // 受け付けた runId（同じコマンドを 2 度走らせない。プロセスの寿命だけ）
@@ -57,7 +58,9 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     // 送り直された同じ runId は走らせない（つながり直しの再送で 2 回走る事故を防ぐ）
     if (seen.has(runId)) return { runId, duplicate: true };
     seen.add(runId);
-    const run = { sessionId, runId, command, cwd, at: new Date().toISOString(), backend: backend.id, mode, stdout: '', stderr: '', skip: false, ac: new AbortController() };
+    // 秘密情報と変数（ADR 0215）。走らせる前に読む（start が返る前にプロセスを起こす今の順を変えない）。読めなくても行は走らせる（足さないだけ）
+    const env = mode === 'host' ? await Promise.resolve().then(() => envFor({ sessionId, cwd })).catch(e => { console.error('shell: 秘密情報と変数を読めなかった:', e?.code ?? e?.message ?? e); return {}; }) ?? {} : {};
+    const run = { sessionId, runId, command, cwd, at: new Date().toISOString(), backend: backend.id, mode, stdout: '', stderr: '', skip: false, ac: new AbortController(), env };
     runs.set(runId, run);
     emit({ type: 'shell.start', sessionId, runId, command, cwd, at: run.at, backend: backend.id, mode });
     const onOutput = outputOf(run);
@@ -77,7 +80,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
   /** 'host' の行を走らせる。保持役に載せられれば保持役の子、載せられなければ今の流れ（サーバーの子） */
   async function hostWork(run, onOutput) {
     const held = holder && !run.ac.signal.aborted ? await holder.start(run, { timeoutMs }).catch(e => { console.error('shell: 保持役に載せられなかった:', e?.message ?? e); return null; }) : null;
-    if (!held) return runHost({ command: run.command, cwd: run.cwd, timeoutMs, signal: run.ac.signal, onOutput });
+    if (!held) return runHost({ command: run.command, cwd: run.cwd, timeoutMs, signal: run.ac.signal, onOutput, ...(Object.keys(run.env).length ? { env: { ...process.env, ...run.env } } : {}) });
     return driveHeld(run, held, onOutput);
   }
   /** 保持役の子の記録を読む。ack 済みの出力（付け直す前のサーバーが流した分）は組み立てるだけで流さない */

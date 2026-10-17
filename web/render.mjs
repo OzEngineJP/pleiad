@@ -1169,7 +1169,14 @@ const TOOL_LABEL = {
   mcp__ply__present: t("timeline.tool.label.present"), mcp__host__present: t("timeline.tool.label.present"),
   mcp__host__set_status: t("timeline.tool.label.status"),
   mcp__host__set_title: t("timeline.tool.label.title"), mcp__host__fork: t("timeline.tool.label.fork"),
+  mcp__ply_browser__fill_secret: t("timeline.tool.label.fillSecret"),
 };
+
+/** ログイン情報の入力（ply_browser の fill_secret。ADR 0215）。値は入力にも結果にも無い。何を入れたかと、結果の文（項目の名前とサイト）だけ */
+function drawFillSecret(card, head, inp) {
+  head.append(textMain(inp.field === "username" ? t("timeline.tool.fillSecret.username") : t("timeline.tool.fillSecret.password")));
+  if (inp.selector) head.append(noteSpan(clip(String(inp.selector), 40), String(inp.selector)));
+}
 
 const TOOL_DRAW = {
   Bash: drawShell, PowerShell: drawShell,
@@ -1180,6 +1187,7 @@ const TOOL_DRAW = {
   WebFetch: drawWebFetch, WebSearch: drawWebSearch, TodoWrite: drawTodo,
   mcp__ply__present: drawPresent, mcp__host__present: drawPresent, mcp__host__set_status: drawStatus,
   mcp__host__set_title: drawTitle, mcp__host__fork: drawFork,
+  mcp__ply_browser__fill_secret: drawFillSecret,
 };
 
 // 対象がファイルのツール（見出しにファイルリンクを添える）と、入力の中でパスを持つキー（エージェントごとに名前が違う）

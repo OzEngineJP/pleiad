@@ -3188,6 +3188,174 @@
       "input": "fea14d9d33fa"
     },
     {
+      "id": "secrets.answerRequest",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "92ddd77798eb"
+    },
+    {
+      "id": "secrets.create",
+      "risk": "guarded",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "secrets",
+            "create"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "39d7e445c549"
+    },
+    {
+      "id": "secrets.delete",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "secrets",
+            "delete"
+          ],
+          "positional": [
+            "id"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "75da37200b97"
+    },
+    {
+      "id": "secrets.import",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "0122e7459f48"
+    },
+    {
+      "id": "secrets.list",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "secrets",
+            "list"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "secrets.request",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "session",
+      "modeGate": false,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": false,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "secrets",
+            "request"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "2b1df70d84a5"
+    },
+    {
+      "id": "secrets.save",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "86aa0f5e8e4d"
+    },
+    {
+      "id": "secrets.setUses",
+      "risk": "write",
+      "riskOf": true,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "secrets",
+            "set-uses"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "8db78e72725f"
+    },
+    {
+      "id": "secrets.setVariable",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "secrets",
+            "set-variable"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "99914b0f5bb8"
+    },
+    {
       "id": "sessions.abort",
       "risk": "write",
       "riskOf": false,
@@ -5658,6 +5826,38 @@
     {
       "id": "app.running",
       "path": "running",
+      "positional": []
+    },
+    {
+      "id": "secrets.create",
+      "path": "secrets create",
+      "positional": []
+    },
+    {
+      "id": "secrets.delete",
+      "path": "secrets delete",
+      "positional": [
+        "id"
+      ]
+    },
+    {
+      "id": "secrets.list",
+      "path": "secrets list",
+      "positional": []
+    },
+    {
+      "id": "secrets.request",
+      "path": "secrets request",
+      "positional": []
+    },
+    {
+      "id": "secrets.setUses",
+      "path": "secrets set-uses",
+      "positional": []
+    },
+    {
+      "id": "secrets.setVariable",
+      "path": "secrets set-variable",
       "positional": []
     },
     {

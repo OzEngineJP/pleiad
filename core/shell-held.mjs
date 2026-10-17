@@ -153,7 +153,8 @@ export function createShellHolder({ dataDir, root = bootEnv('AGENT_HOST_RUNTIME_
       const id = `shell-${run.runId}-${crypto.randomBytes(3).toString('hex')}`;
       // 出来事の購読は spawn より前に始める。印と始めの行は spawn の直後（同じ接続の中の順序は保たれる）
       const source = holderSource(client, { id, acked: 0, seq: 0, marks: { [SHELL_MARK]: 1 } }, { spawned: true });
-      client.spawn({ id, command: process.execPath, args: [CHILD], cwd: run.cwd || undefined, env: { ...process.env }, policy: 'none', label: card });
+      // run.env は秘密情報と変数（ADR 0215。shell-runs の envFor）。札（label）には載せない
+      client.spawn({ id, command: process.execPath, args: [CHILD], cwd: run.cwd || undefined, env: { ...process.env, ...(run.env ?? {}) }, policy: 'none', label: card });
       client.mark(id, SHELL_MARK, 1);
       source.write(lineOf({ t: 'run', command: run.command, cwd: run.cwd, timeoutMs }));
       return heldShell(source);

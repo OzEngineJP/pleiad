@@ -290,6 +290,10 @@ const SUITES = [
   './unit/api-keys.mjs',
   // API キーのコマンドをサーバー越しに: 引数とエラー・使う側へのイベント・通話中の差し替え／使わない／削除で通話が切れる・値が出ない
   './unit/server-api-keys.mjs',
+  // 秘密情報と変数（ADR 0215）: 置き場（値を出さない・使えない名前・渡す場所の勝ち負け・worktree・.env・origin の照合・伏せる・Claude のシェルへ渡すファイル）
+  './unit/secrets-store.mjs',
+  // 秘密情報と変数をサーバー越しに: 操作と権限・ターンのシェルへ渡す・画面へ出る前に伏せる・`!` の行・入力のカード・サイトでの入力
+  './unit/server-secrets.mjs',
   // リモート接続の暗号・フレーム・チャネル（core/remote/）。Noise の公式ベクトルと、メモリの管でつないだ往復
   './unit/remote-noise.mjs',
   './unit/remote-pairing-vectors.mjs',

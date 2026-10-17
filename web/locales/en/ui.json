@@ -42,7 +42,7 @@
     },
     "nav": {
       "agents": "Agents",
-      "apiKeys": "API keys",
+      "apiKeys": "Secrets and variables",
       "usage": "Usage",
       "appearance": "Appearance",
       "input": "Input",
@@ -1058,7 +1058,8 @@
         "guide": "Context guide",
         "browser": "Browser guide",
         "computer": "Computer use guide",
-        "control": "Pleiad control guide"
+        "control": "Pleiad control guide",
+        "secrets": "Secrets and variables list"
       },
       "over": "Your instructions are {{ratio}}× the budget",
       "overDetail": " · ~{{own}} / {{budget}}",
@@ -1540,6 +1541,20 @@
     "defaultTitle": "New session"
   },
   "chat": {
+    "secretRequest": {
+      "headingMark": "Secret needed",
+      "from": "from {{agent}}",
+      "ask": {
+        "secret": "Enter {{name}}",
+        "login": "Enter the login for {{name}}",
+        "var": "Enter the value of {{name}}"
+      },
+      "cancel": "Cancel",
+      "save": "Save",
+      "saving": "Saving…",
+      "saved": "Saved {{name}}",
+      "cancelled": "Cancelled"
+    },
     "ask": {
       "heading": "{{mark}}",
       "headingMark": "Waiting for an answer",
@@ -2558,7 +2573,12 @@
       "bodyFailed": "Couldn't load this. Tap to try again."
     },
     "tool": {
+      "fillSecret": {
+        "username": "login username",
+        "password": "login password"
+      },
       "label": {
+        "fillSecret": "Enter",
         "run": "Run",
         "read": "Read",
         "write": "Write",
@@ -3327,29 +3347,148 @@
     "busy": "Another folder is being sent.",
     "dropFailed": "Couldn't read the folder ({{error}})"
   },
+  "secrets": {
+    "lead": "Saving something here does not hand it to anything. It is used only where you choose.",
+    "heading": "Secrets",
+    "empty": "No secrets yet",
+    "broken": "Cannot read the secrets and variables file (secrets.json). Fix or move the file.",
+    "encryptedNote": "Secrets are stored with your OS encryption and are never shown on screen.",
+    "scope": {
+      "all": "All folders",
+      "more": "{{folder}} and {{count}} more",
+      "choose": "Choose folder…",
+      "pathAria": "Folder path",
+      "pathPlaceholder": "/Users/me/project"
+    },
+    "uses": {
+      "none": "Not used anywhere",
+      "aria": "Where {{name}} is used",
+      "env": "Environment variable",
+      "pleiad": "Pleiad",
+      "sites": "Sites",
+      "lastUse": "Last entered",
+      "lastUseAt": "{{when}} · {{site}}",
+      "title": "Use",
+      "envOn": "Pass as an environment variable",
+      "envName": "Name",
+      "scope": "Folders",
+      "sitesOn": "Enter on the site",
+      "sitesEmpty": "Enter a site",
+      "pleiadTitle": "Pleiad features"
+    },
+    "errors": {
+      "name": "Invalid environment variable name: {{name}} (start with a letter or _, then letters, digits and _)",
+      "reserved": "{{name}} is used by Pleiad and cannot be saved",
+      "password": "Enter the password",
+      "value": "Enter a value"
+    },
+    "kinds": {
+      "api": {
+        "name": "API key",
+        "hint": "OpenRouter and others"
+      },
+      "login": {
+        "name": "Login",
+        "hint": "Site username and password"
+      },
+      "secret": {
+        "name": "Secret",
+        "hint": "Token or password"
+      },
+      "var": {
+        "name": "Variable",
+        "hint": "Value is shown"
+      }
+    },
+    "add": {
+      "open": "+ Add",
+      "title": "Add",
+      "kind": "Type",
+      "submit": "Add",
+      "done": "Added {{name}}."
+    },
+    "fields": {
+      "label": "Name",
+      "site": "Site",
+      "username": "Username",
+      "password": "Password",
+      "envName": "Name",
+      "value": "Value",
+      "note": "Note",
+      "notePlaceholder": "What it is for (the AI sees this too)"
+    },
+    "edit": {
+      "aria": "Edit {{name}}",
+      "replacePlaceholder": "Enter only to replace",
+      "toSecret": "Make it a secret",
+      "toSecretHint": "The value will no longer be shown. This cannot be undone.",
+      "save": "Save",
+      "saved": "Saved {{name}}."
+    },
+    "delete": {
+      "envLabel": "Environment variable {{name}}",
+      "envEffect": "no longer passed from the next turn",
+      "sitesLabel": "Sites {{sites}}",
+      "sitesEffect": "the AI can no longer enter it"
+    },
+    "card": {
+      "username": "Username {{name}}",
+      "byAi": "Added by AI"
+    },
+    "actions": {
+      "edit": "Edit",
+      "editAria": "Edit · {{name}}"
+    },
+    "list": {
+      "used": "Secrets in use",
+      "unusedHeading": "Not used anywhere",
+      "unused": "Secrets not used anywhere",
+      "all": "Secrets"
+    },
+    "vars": {
+      "heading": "Variables",
+      "add": "+ Add",
+      "empty": "No variables yet"
+    },
+    "import": {
+      "open": "Import .env",
+      "title": "Import .env",
+      "text": "Contents",
+      "preview": "To import",
+      "status": {
+        "new": "New",
+        "overwrite": "Overwrite",
+        "exists": "Exists",
+        "reserved": "Not allowed",
+        "skip": "Skipped"
+      },
+      "secret": "Secret",
+      "secretAria": "Make {{name}} a secret",
+      "submit": "Import {{count}}",
+      "malformed": "{{count}} unreadable lines",
+      "overwrite": "Overwrite existing names",
+      "done": "Imported ({{created}} new · {{updated}} overwritten · {{skipped}} skipped)."
+    }
+  },
   "apiKeys": {
     "unnamed": "Unnamed key",
-    "lead": "Registering a key doesn't send anything anywhere. Data is sent only once you choose the key where it's used.",
-    "heading": "Registered keys",
-    "empty": "No keys yet",
     "loadFailed": "Couldn't load the API keys: {{error}}",
     "failed": "Couldn't complete that: {{error}}",
     "cancel": "Cancel",
     "show": "Show",
     "hide": "Hide",
-    "manage": "Manage in API keys",
+    "manage": "Manage in Secrets and variables",
     "useKey": "Key to use",
     "checking": "Checking…",
     "listSeparator": ", ",
-    "encryptedNote": "Keys are stored with OS encryption and never shown on screen.",
     "notEncrypted": "This launch can't encrypt keys (they are stored in a file only you can read).",
     "deferred": {
       "title": "Moving the API keys is on hold",
       "locked": "The old encrypted keys can't be read in this launch. Open Pleiad in a launch that can decrypt (the desktop app) to move them. Until then, voice calls, delegation and endpoints keep using their current keys.",
       "other": "The old key storage can't be read, so moving the keys is on hold. Until then, voice calls, delegation and endpoints keep using their current keys."
     },
-    "deferredInUse": "Moving the keys is on hold, so the current key is still in use (Settings › API keys)",
-    "deferredShort": "Moving the keys is on hold (Settings › API keys)",
+    "deferredInUse": "Moving the keys is on hold, so the current key is still in use (Settings › Secrets and variables)",
+    "deferredShort": "Moving the keys is on hold (Settings › Secrets and variables)",
     "status": {
       "registered": "Registered",
       "registeredPrefix": "Registered ·",
@@ -3368,13 +3507,10 @@
       "checkedHint": "Checked ✓ {{when}}"
     },
     "register": {
-      "hint": "Registered in API keys, so endpoints and delegation can choose it too.",
-      "useNow": "Register and use",
-      "submit": "Register"
+      "hint": "Registered in Secrets and variables, so endpoints and delegation can choose it too.",
+      "useNow": "Register and use"
     },
     "add": {
-      "open": "＋ Add a key",
-      "title": "Add a key",
       "provider": "Provider",
       "providers": {
         "openrouter": {
@@ -3393,15 +3529,12 @@
       "key": "Key",
       "keyAria": "{{provider}} key",
       "keyAriaCustom": "Key",
-      "registered": "Registered the {{name}} key. Checking…",
       "registeredChecked": "Registered the {{name}} key. Checked ✓",
       "registeredFailed": "Registered the {{name}} key. The check failed."
     },
     "actions": {
-      "replace": "Replace",
       "check": "Check",
       "delete": "Delete",
-      "replaceAria": "Replace · {{name}}",
       "checkAria": "Check · {{name}}",
       "deleteAria": "Delete · {{name}}"
     },
@@ -3410,7 +3543,6 @@
       "failed": "Checked the {{name}} key. The check failed."
     },
     "uses": {
-      "label": "Used by",
       "none": "Not used anywhere",
       "aria": "Where {{name}} is used",
       "endpoint": "{{agent}} endpoint \"{{name}}\"",
@@ -3427,17 +3559,9 @@
       "computer": "wait_until stops asking and waits by screen changes only",
       "judge": "This judge is no longer used"
     },
-    "list": {
-      "used": "Keys in use",
-      "unused": "Unused keys",
-      "unusedHeading": "Keys not used anywhere",
-      "all": "Registered keys"
-    },
     "replace": {
-      "aria": "Replace the {{name}} key",
       "input": "New key for {{name}}",
       "cost": "Replacing checks the endpoints that use it again (this may cost a little).",
-      "submit": "Replace",
       "done": "Replaced the {{name}} key"
     },
     "result": {
@@ -3508,10 +3632,10 @@
       "unused": "not used",
       "own": "Enter another key",
       "ownAria": "Another key",
-      "ownCaption": "It is registered in API keys as a separate key.",
+      "ownCaption": "It is registered in Secrets and variables as a separate key.",
       "keyRequired": "Enter the other key",
-      "registersOpenrouter": "Registered in API keys, so voice calls and delegation can choose it too.",
-      "registersNamed": "Registered in API keys under this endpoint's name."
+      "registersOpenrouter": "Registered in Secrets and variables, so voice calls and delegation can choose it too.",
+      "registersNamed": "Registered in Secrets and variables under this endpoint's name."
     }
   },
   "routing": {
@@ -4598,7 +4722,7 @@
       "sttBusyRepeat": "Speech recognition is busy ({{n}} times in a row)",
       "sttBusyHint": "Add a fallback speech recognition model in Settings › Calls, and calls switch to it when it is busy.",
       "sttKey": "The speech recognition key was not accepted",
-      "sttKeyHint": "Check it in Settings › API keys.",
+      "sttKeyHint": "Check it in Settings › Secrets and variables.",
       "close": "Close",
       "tts": "Could not read that aloud. See the text on screen",
       "sendFailed": "Could not send the message: {{error}}",

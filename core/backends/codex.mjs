@@ -1504,7 +1504,9 @@ export const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+    // 会話のシェルへ渡す秘密情報と変数（ADR 0215）。空なら渡さない
+    const secretsEnv = secretsRuntime?.env && Object.keys(secretsRuntime.env).length ? secretsRuntime.env : null;
     // adopt は付け直し（{ source, card }。adoptTurn だけが渡す。無停止の更新 段階 3）。保持役の子の app-server が持つ走っているターンを、記録の再生で引き取る
     // 再生の間の emit は replay（実行中のスナップショットとメモリの状態だけを作り、画面へは流さない。server の makeEmit）
     const emitOut = emit;
@@ -1820,7 +1822,10 @@ export const backend = {
           ...(compat ? compat.config : {}),
           // 会話のシェルへ渡す環境変数。内蔵ブラウザーの接続と、pleiad CLI をこの会話に束縛する接続情報（PLEIAD_CONTROL_URL・PLEIAD_CONTROL_TOKEN。ADR 0083）。
           // app-server は 1 本を全会話で共有するので、プロセスの env ではなくスレッドごとの config で渡す
-          ...((browserEnv || controlRuntime) ? { 'shell_environment_policy.set': {
+          ...((browserEnv || controlRuntime || secretsEnv) ? { 'shell_environment_policy.set': {
+            // 秘密情報と変数（ADR 0215）。set は既定の除外（名前に KEY・SECRET・TOKEN を含むもの）の後に入るので、そういう名前でも届く。
+            // Pleiad の値（下）が同じ名前に勝つ（使えない名前は登録の時点で断っている）
+            ...secretsEnv,
             ...(browserEnv ? {
               AGENT_BROWSER_CONFIG: browserEnv.AGENT_BROWSER_CONFIG,
               AGENT_BROWSER_SESSION: browserEnv.AGENT_BROWSER_SESSION,
@@ -1838,7 +1843,7 @@ export const backend = {
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
         // bot の人格（core/bots/sessions.mjs の botInstructions）はここに入れない。thread/resume は developerInstructions を渡し直しても、
         // 最初のターンの指示が履歴に残っていて効かない（人格を直した会話に届かない。2026-10-03 の実機の確認）ので、毎ターンの turn/start の collaborationMode で渡す
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || secretsRuntime?.instructions) ? { developerInstructions: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions].filter(Boolean).join('\n\n') } : {}),
         approvalPolicy: m.approvalPolicy,
         sandbox: m.sandbox,
         ...(model ? { model } : {}),
@@ -1849,7 +1854,9 @@ export const backend = {
       // 指示と ply_computer の接続先。どちらかが変わったロード済みのスレッドは外して読み直す（resume は config の変更を黙って無視する）
       const instructionsKey = (common.developerInstructions ?? '') + (computerRuntime ? `\0${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : '')
         + (browserRuntime ? `\0${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : '')
-        + (controlRuntime ? `\0${controlRuntime.url} ${controlRuntime.headers?.Authorization ?? ''}` : '');
+        + (controlRuntime ? `\0${controlRuntime.url} ${controlRuntime.headers?.Authorization ?? ''}` : '')
+        // 秘密情報と変数が変わったスレッドも読み直す（resume は shell_environment_policy の変更も無視する）。値は指紋にするだけで残さない
+        + (secretsEnv ? `\0${JSON.stringify(secretsEnv)}` : '');
       if (adopt) {
         // 付け直し: 印より前に生まれて走っている子の親子を引き直し、印から ack までの記録を再生して状態を作る（通知は全部 replay）。
         // 答えが残っている承認の依頼（保持役の控えの鍵）は、再生で onRequest が出し直す（承認の id はツールの id から決まる同じ値）。続きは預かっていた frame から

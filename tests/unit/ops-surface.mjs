@@ -157,6 +157,11 @@ export default async function (t) {
     // API キー（ADR 0155）。値は持たない（名前・プロバイダー・確認の結果・使っている所だけ）
     apiKeys: { list: async () => ({ migration: { state: 'done' }, storage: { encrypted: true, backend: 'fake' }, keys: [{ id: 'key-aaaaaaaaaaaa', provider: 'openrouter', label: 'OpenRouter', uses: [{ kind: 'voice' }], ...secret }], uses: { voice: 'key-aaaaaaaaaaaa', 'judge:jev': null }, guide: null }),
       check: async (id) => ({ id, ok: true, at: 'a' }) },
+    // 秘密情報と変数（ADR 0215）。秘密の値は持たない（変数の値だけ）
+    secrets: { store: {
+      list: async () => ({ broken: false, storage: { encrypted: true, backend: 'fake' }, items: [{ id: 'sec-aaaaaaaaaaaa', kind: 'var', label: 'NODE_ENV', value: 'test', env: { name: 'NODE_ENV', scope: 'all' }, sites: [], ...secret }], keyUses: {} }),
+      agentList: async () => ({ items: [{ id: 'sec-aaaaaaaaaaaa', kind: 'var', label: 'NODE_ENV', value: 'test', env: { name: 'NODE_ENV', scope: 'all' }, ...secret }] }),
+      known: () => null } },
     prefs: async () => ({ agentSitePermissions: [{ origin: 'o', ...secret }], locale: 'ja' }),
     compactionSettings: () => ({ enabled: true, ...secret }),
     delegation: { list: () => [{ taskId: 't', status: 'completed', ...secret }], get: () => ({ taskId: 't', status: 'completed', result: 'done', ...secret }),

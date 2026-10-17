@@ -88,6 +88,7 @@ import { createVoiceDelivery } from "./voice/delivery.mjs";
 import { createChatVoiceSender } from "./voice/chat-send.mjs";
 import { setupVoiceSettings } from "./voice/settings.mjs";
 import { setupApiKeysSettings } from "./api-keys-settings.mjs";
+import { keyInput } from "./api-key-ui.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
 import { retainPlan, syncRequest, joinReply, joinOlder, anchorSig, subagentCalls, SUBAGENT_TOOLS, WINDOW_MESSAGES, WINDOW_BYTES } from "./history-sync.mjs";
@@ -2041,6 +2042,109 @@ function settingChangeApproval(ev, change) {
   return m;
 }
 
+/**
+ * 秘密情報の入力のカード（permission の secretRequest。ADR 0215、docs/design-system.md「秘密情報の入力のカード」）。
+ * AI が secrets.request で人に値を頼んだ。値は画面から保存先へ直に送り（secrets.answerRequest）、AI には保存した名前だけが後で届く。
+ * カードは承認カードと同じ並びで、ターンが終わっても残る。保存・やめると 1 行に畳む。別の端末で答えた・取り下げた決着は settingApproval イベントで畳む
+ */
+function secretRequestCard(ev) {
+  const req = ev.secretRequest;
+  const name = req.name || req.label || "";
+  const m = el("div", "m card");
+  const card = el("div", "card sr-card");
+  card.setAttribute("role", "group");
+  card.setAttribute("aria-label", `${t("chat.secretRequest.headingMark")} ${name}`.trim());
+  m.append(card);
+  const head = el("div", "card-head");
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.secretRequest.headingMark")));
+  const where = req.kind === "login" ? (req.sites ?? []).join(", ") : req.scope && req.scope !== "all" ? req.scope.folders.join(", ") : t("secrets.scope.all");
+  head.append(el("span", "desc", req.agent?.label ? t("chat.secretRequest.from", { agent: req.agent.label }) : ""), el("span", "relay-host", where));
+  const body = el("div", "sr-body");
+  // i18n-dynamic: chat.secretRequest.ask.
+  body.append(el("p", "sr-ask", t(`chat.secretRequest.ask.${["login", "var"].includes(req.kind) ? req.kind : "secret"}`, { name: req.label || name })));
+  if (req.reason) body.append(el("p", "sr-reason", req.reason));
+  const inputs = {};
+  const secretField = (label, key, { mono = false, aria } = {}) => {
+    const { row, input } = keyInput({ ariaLabel: aria ?? label });
+    inputs[key] = input;
+    const f = el("label", "mp-field"); f.append(el("span", mono ? "ak-mono" : null, label), row);
+    return f;
+  };
+  if (req.kind === "login") {
+    const user = el("input"); user.type = "text"; user.autocomplete = "off"; user.spellcheck = false; user.value = req.username ?? ""; user.setAttribute("aria-label", t("secrets.fields.username"));
+    inputs.username = user;
+    const f = el("label", "mp-field"); f.append(el("span", null, t("secrets.fields.username")), user);
+    body.append(f, secretField(t("secrets.fields.password"), "password"));
+  } else if (req.kind === "var") {
+    const v = el("input"); v.type = "text"; v.autocomplete = "off"; v.spellcheck = false; v.classList.add("ak-mono"); v.setAttribute("aria-label", req.name);
+    inputs.value = v;
+    const f = el("label", "mp-field"); f.append(el("span", "ak-mono", req.name), v);
+    body.append(f);
+  } else body.append(secretField(req.name, "value", { mono: true }));
+  const res = el("span", "res");
+  const deny = el("button", "btn btn-quiet", t("chat.secretRequest.cancel"));
+  const save = el("button", "btn btn-primary", t("chat.secretRequest.save"));
+  for (const b of [deny, save]) b.type = "button";
+  const actions = el("div", "card-actions cu-actions");
+  actions.append(res, deny, save);
+  card.append(head, body, actions);
+  let said = null;
+  const collapse = (text) => {
+    for (const i of Object.values(inputs)) i.value = "";
+    if (said) { said.textContent = `${text} · ${said.dataset.at}`; return; }
+    m.classList.add("done");
+    m.closest(".mw")?.classList.add("done");
+    card.classList.add("done");
+    for (const rest of head.querySelectorAll(".card-kind-rest")) rest.remove();
+    head.querySelector(".card-kind").textContent = t("chat.secretRequest.headingMark");
+    head.querySelector(".desc").textContent = name;
+    said = el("span", "res", "");
+    said.dataset.at = hhmm(new Date());
+    said.textContent = `${text} · ${said.dataset.at}`;
+    head.append(said);
+    body.remove();
+    actions.remove();
+    state.pendingPerms.delete(ev.id);
+  };
+  const outcomeText = (outcome) => (outcome === "allowed" ? t("chat.secretRequest.saved", { name }) : outcome === "denied" ? t("chat.secretRequest.cancelled") : t("chat.settingApproval.withdrawn"));
+  if (!settingCardsOpen.has(req.requestId)) settingCardsOpen.set(req.requestId, new Set());
+  settingCardsOpen.get(req.requestId).add((outcome) => collapse(outcomeText(outcome)));
+  const send = async (ok) => {
+    if (card.dataset.sending) return;
+    const args = { requestId: req.requestId };
+    if (ok) {
+      if (req.kind === "login") { args.username = inputs.username.value.trim(); args.password = inputs.password.value; if (!args.password) return inputs.password.focus(); }
+      else { args.value = inputs.value.value; if (req.kind !== "var" && !args.value) return inputs.value.focus(); }
+    }
+    card.dataset.sending = "1";
+    for (const b of [deny, save]) b.disabled = true;
+    res.className = "res";
+    res.removeAttribute("role");
+    res.replaceChildren(el("span", null, ok ? t("chat.secretRequest.saving") : t("chat.approval.sending", { action: t("chat.secretRequest.cancel") })));
+    const arc = setTimeout(() => res.prepend(runMark()), 150);
+    try {
+      if (ok) await cmd("invoke", { op: "secrets.answerRequest", args });
+      else await cmd("resolvePermission", { id: ev.id, allow: false, always: false, messageKey: "userDenied" });
+    } catch (err) {
+      clearTimeout(arc);
+      delete card.dataset.sending;
+      if (alreadyResolved(err) || err?.code === "ALREADY_RESOLVED") return collapse(t("chat.approval.elsewhere"));
+      for (const b of [deny, save]) b.disabled = false;
+      res.className = "res fail";
+      res.setAttribute("role", "alert");
+      res.replaceChildren(`✕ ${err.message}`);
+      return;
+    }
+    clearTimeout(arc);
+    collapse(outcomeText(ok ? "allowed" : "denied"));
+  };
+  save.onclick = () => send(true);
+  deny.onclick = () => send(false);
+  body.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing && e.target.tagName === "INPUT") { e.preventDefault(); send(true); } };
+  placeCard(m, ev, null);
+  return m;
+}
+
 // ---------------------------------------------------------------- 質問カード
 // 質問は「危ないから承認する」ツールではなく、**こちらに聞いている**ツール。
 // 承認チャネルはそのまま使い（core は保留・猶予をこの経路で面倒を見ている）、
@@ -2634,6 +2738,11 @@ function renderPermission(ev) {
   // ホストの画面でしか答えられない承認（設定の変更など。ホストの子の承認の中継）は、答えるボタンの無い知らせのカード
   if (ev.remote?.hostOnly) { closeTurnEl(); activity.show(t("activity.waitingApproval")); return hostOnlyCard(ev); }
   // 設定の変更の承認（ply_control の guarded。ADR 0082）。読めなければ（形が違う）ふつうの承認として出す
+  // 秘密情報の入力のカード（secrets.request。ADR 0215）
+  if (ev.secretRequest?.requestId) {
+    closeTurnEl();
+    return secretRequestCard(ev);
+  }
   const settingChange = ev.settingChange ? approvalChange(ev.settingChange) : null;
   if (settingChange) {
     closeTurnEl();
@@ -3132,6 +3241,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'voiceChanged') { voiceSettings.event(ev); voiceUi.refresh({ changed: true }); return; }
   // API キーの登録・差し替え・削除・割り当て・確認の結果（設定 › API キー。core/api-keys.mjs）。キーを選ぶ 3 つの画面も取り直す
   if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); computerSettings.event(ev); compatEndpoints.keysChanged(); return; }
+  if (ev.type === 'secretsChanged') { apiKeysSettings.event(ev); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
   // 承認が片付いた（子の会話・別の窓・ターンの終わりや中断で）。開いていない会話の分の覚えと、子の会話のダイアログのカードも畳むので、会話の絞り込みの前に受ける
@@ -9817,7 +9927,8 @@ const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, 
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
 const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage: name => $(`${name}Tab`)?.click() });
 // 設定 › API キー。使っている所のリンクは、接続先は設定 › エージェント設定の接続先の面、通話・委譲はそのページへ
-const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) compatEndpoints.open(agent); else $('setupTab').click(); } });
+const apiKeysSettings = setupApiKeysSettings({ cmd, page: onboarding.page, openEndpoints: agent => { if (compatEndpoints.openAgent !== agent) compatEndpoints.open(agent); else $('setupTab').click(); },
+  recentFolders: () => cwdOptions().map((o) => o.value) });
 // スマホのアプリの中だけ: 最初の作業が終わったときの帯と、通知から開く会話
 const mobileNotify = setupMobileNotify({ band: $('notifyBand'), openSession: id => select(id) });
 // 手元の窓の中継のカードの「子の会話を見る」で、このリモートの窓の会話を開く（desktop/remote-windows.cjs の openHost）

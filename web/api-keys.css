@@ -75,3 +75,61 @@
 /* 白いカードの中の入力欄は一段沈める（白の上に白の欄が溶けないように） */
 .ak-add .mp-keyrow input,.ak-add .mp-field input:not([type=checkbox]):not([type=radio]) { background:var(--surface-1); }
 .ak-card .rt-key-form .mp-keyrow input { background:var(--surface-1); }
+/* 設定 › 秘密情報と変数（承認済み 2026-10-17。ADR 0215、docs/design-system.md「設定 › 秘密情報と変数」）。区切りは余白と面の階調だけ（枠線・片側の線は使わない） */
+.ak-mono { font-family:var(--font-mono); font-size:12.5px; }
+.ak-uses-grid { display:grid; grid-template-columns:auto minmax(0,1fr); gap:4px 12px; margin:10px 0 0; font-size:var(--fs-s); align-items:baseline; }
+.ak-uses-grid dt { color:var(--ink-weak); }
+.ak-uses-grid dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+.ak-inline { display:flex; flex-wrap:wrap; margin:0; padding:0; list-style:none; }
+.ak-inline li:not(:last-child)::after { content:"·"; margin:0 6px; color:var(--ink-weak); }
+.ak-usebox { margin:14px 0 0; padding:10px 14px; border-radius:var(--r-m); background:var(--surface-1); min-width:0; }
+.ak-usebox legend { float:left; width:100%; padding:0; margin:0 0 4px; font-weight:600; font-size:13px; }
+.ak-usebox legend + * { clear:both; }
+.ak-usebox .mp-field input:not([type=checkbox]):not([type=radio]) { background:var(--surface-paper); }
+.ak-usebox .ak-selbtn { background:var(--surface-paper); }
+.ak-usebox .ak-selbtn:hover,.ak-usebox .ak-selbtn[aria-expanded=true] { background:var(--surface-2); }
+.ak-indent { margin:0 0 6px 26px; }
+.ak-indent .mp-field { margin-top:6px; }
+.ak-static { cursor:default; }
+.ak-gap { flex:none; width:13px; }
+.ak-providers { margin-top:0; }
+.ak-selwrap input.ak-mono { display:block; margin-top:6px; width:100%; min-width:0; padding:8px 14px; border-radius:var(--r-pill); background:var(--surface-1); color:var(--ink); }
+.ak-vars-head { margin-top:22px; }
+.ak-vars-head .mp-card-actions { margin-left:auto; }
+.ak-vars { list-style:none; margin:10px 0 0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.ak-var { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 12px; align-items:center; padding:8px 12px; background:var(--surface-paper); border-radius:var(--r-s); }
+.ak-kv { display:flex; flex-wrap:wrap; gap:2px 14px; align-items:baseline; min-width:0; }
+.ak-k { font-family:var(--font-mono); font-size:12.5px; font-weight:600; overflow-wrap:anywhere; }
+.ak-v { font-family:var(--font-mono); font-size:12.5px; min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ak-w { grid-column:1; font-size:var(--fs-s); color:var(--ink-weak); overflow-wrap:anywhere; }
+.ak-var > .mp-card-actions { grid-row:1 / span 2; grid-column:2; }
+.ak-var-more { grid-column:1 / -1; }
+.ak-vars-empty { margin-top:8px; }
+.ak-import textarea { width:100%; min-height:110px; padding:10px 14px; border-radius:var(--r-m); background:var(--surface-1); color:var(--ink); resize:vertical; line-height:1.6; }
+.ak-imp { width:100%; border-collapse:separate; border-spacing:0 2px; margin-top:10px; font-size:12.5px; }
+.ak-imp td { padding:4px 8px; vertical-align:middle; background:var(--surface-1); }
+.ak-imp td:first-child { border-radius:var(--r-s) 0 0 var(--r-s); }
+.ak-imp td:last-child { border-radius:0 var(--r-s) var(--r-s) 0; }
+.ak-imp td.k { overflow-wrap:anywhere; font-weight:600; }
+.ak-imp td.s { color:var(--ink-weak); white-space:nowrap; }
+.ak-imp td.c { text-align:right; white-space:nowrap; }
+.ak-imp label { display:inline-flex; gap:6px; align-items:center; cursor:pointer; }
+.ak-imp input[type=checkbox] { accent-color:var(--ink-blue); }
+@media (max-width:480px) {
+  .ak-card > .mp-row { flex-wrap:wrap; }
+  .ak-card .mp-card-actions { flex-basis:100%; justify-content:flex-start; margin:4px 0 0 -10px; }
+  .ak-uses-grid { grid-template-columns:minmax(0,1fr); gap:0; }
+  .ak-uses-grid dd + dt { margin-top:6px; }
+  .ak-indent { margin-left:0; }
+}
+/* 秘密情報の入力のカード（会話の中。web/client.mjs の secretRequestCard。ADR 0215）。承認カードと同じ面・並び */
+.sr-body { padding:2px 0 4px; }
+.sr-ask { margin:4px 0 0; font-weight:600; overflow-wrap:anywhere; }
+.sr-reason { margin:4px 0 0; color:var(--ink-weak); font-size:13px; overflow-wrap:anywhere; }
+.sr-body .mp-field { display:block; margin-top:10px; }
+.sr-body .mp-field > span { display:block; margin-bottom:6px; font-size:13px; }
+.sr-body input:not([type=checkbox]) { width:100%; min-width:0; padding:9px 14px; border-radius:var(--r-pill); background:var(--surface-paper); color:var(--ink); }
+.sr-body .mp-keyrow input { width:auto; flex:1; }
+/* 編集の欄（カード・変数の行の中）。白い面の上の欄は一段沈める */
+.ak-form .mp-field input:not([type=checkbox]):not([type=radio]),.ak-form .mp-keyrow input { background:var(--surface-1); }
+.ak-form .ak-usebox .mp-field input:not([type=checkbox]):not([type=radio]) { background:var(--surface-paper); }

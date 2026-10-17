@@ -42,7 +42,7 @@
     },
     "nav": {
       "agents": "エージェント設定",
-      "apiKeys": "API キー",
+      "apiKeys": "秘密情報と変数",
       "usage": "使用量",
       "appearance": "外観",
       "input": "入力",
@@ -1031,7 +1031,8 @@
         "guide": "コンテキストの案内",
         "browser": "ブラウザーの説明",
         "computer": "コンピューターの操作の説明",
-        "control": "Pleiad の操作の説明"
+        "control": "Pleiad の操作の説明",
+        "secrets": "秘密情報と変数の一覧"
       },
       "over": "自分で書いた指示が目安の {{ratio}} 倍",
       "overDetail": " · 約 {{own}} / {{budget}}",
@@ -1503,6 +1504,20 @@
     "defaultTitle": "新しいセッション"
   },
   "chat": {
+    "secretRequest": {
+      "headingMark": "秘密情報の入力",
+      "from": "{{agent}} から",
+      "ask": {
+        "secret": "{{name}} を入れてください",
+        "login": "{{name}} のログイン情報を入れてください",
+        "var": "{{name}} の値を入れてください"
+      },
+      "cancel": "やめる",
+      "save": "保存",
+      "saving": "保存しています…",
+      "saved": "{{name}} を保存しました",
+      "cancelled": "やめました"
+    },
     "ask": {
       "heading": "{{mark}}",
       "headingMark": "答えを待っている",
@@ -2494,7 +2509,12 @@
       "bodyFailed": "読み込めませんでした。押すともう一度読みます"
     },
     "tool": {
+      "fillSecret": {
+        "username": "ログイン情報のユーザー名",
+        "password": "ログイン情報のパスワード"
+      },
       "label": {
+        "fillSecret": "入力",
         "run": "実行",
         "read": "読む",
         "write": "書く",
@@ -3214,29 +3234,148 @@
     "busy": "ほかのフォルダーを送っている途中です。",
     "dropFailed": "フォルダーを読めませんでした（{{error}}）"
   },
+  "secrets": {
+    "lead": "登録しただけでは、どこにも渡しません。使い道を選んだときから使われます。",
+    "heading": "秘密情報",
+    "empty": "秘密情報はまだありません",
+    "broken": "秘密情報と変数の台帳（secrets.json）を読めません。ファイルを直すか退避してください。",
+    "encryptedNote": "秘密情報は OS の暗号化で保存し、画面には表示しません。",
+    "scope": {
+      "all": "すべてのフォルダー",
+      "more": "{{folder}} ほか {{count}}",
+      "choose": "フォルダーを選ぶ…",
+      "pathAria": "フォルダーのパス",
+      "pathPlaceholder": "D:\\dev\\project"
+    },
+    "uses": {
+      "none": "どこにも使われていません",
+      "aria": "{{name}} の使い道",
+      "env": "環境変数",
+      "pleiad": "Pleiad",
+      "sites": "サイト",
+      "lastUse": "最後の入力",
+      "lastUseAt": "{{when}} · {{site}}",
+      "title": "使い道",
+      "envOn": "環境変数として渡す",
+      "envName": "名前",
+      "scope": "渡す場所",
+      "sitesOn": "サイトで入力する",
+      "sitesEmpty": "サイトを入れてください",
+      "pleiadTitle": "Pleiad の機能"
+    },
+    "errors": {
+      "name": "環境変数の名前が正しくありません: {{name}}（英字か _ で始め、英数字と _ だけ）",
+      "reserved": "{{name}} は Pleiad が使う名前なので登録できません",
+      "password": "パスワードを入れてください",
+      "value": "値を入れてください"
+    },
+    "kinds": {
+      "api": {
+        "name": "API キー",
+        "hint": "OpenRouter など"
+      },
+      "login": {
+        "name": "ログイン情報",
+        "hint": "サイトの ID とパスワード"
+      },
+      "secret": {
+        "name": "秘密の値",
+        "hint": "トークン・パスワード"
+      },
+      "var": {
+        "name": "変数",
+        "hint": "値を表示する"
+      }
+    },
+    "add": {
+      "open": "＋ 追加",
+      "title": "追加",
+      "kind": "種類",
+      "submit": "追加",
+      "done": "{{name}} を追加しました。"
+    },
+    "fields": {
+      "label": "名前",
+      "site": "サイト",
+      "username": "ユーザー名",
+      "password": "パスワード",
+      "envName": "名前",
+      "value": "値",
+      "note": "メモ",
+      "notePlaceholder": "何に使うか（AI にも見えます）"
+    },
+    "edit": {
+      "aria": "{{name}} を編集",
+      "replacePlaceholder": "差し替えるときだけ入力",
+      "toSecret": "秘密の値にする",
+      "toSecretHint": "画面に値を出さなくなります。変数には戻せません。",
+      "save": "保存",
+      "saved": "{{name}} を保存しました。"
+    },
+    "delete": {
+      "envLabel": "環境変数 {{name}}",
+      "envEffect": "次のターンから渡されなくなります",
+      "sitesLabel": "サイト {{sites}}",
+      "sitesEffect": "AI が入力できなくなります"
+    },
+    "card": {
+      "username": "ユーザー名 {{name}}",
+      "byAi": "AI が登録"
+    },
+    "actions": {
+      "edit": "編集",
+      "editAria": "編集 · {{name}}"
+    },
+    "list": {
+      "used": "使っている秘密情報",
+      "unusedHeading": "どこにも使われていない項目",
+      "unused": "どこにも使われていない秘密情報",
+      "all": "秘密情報"
+    },
+    "vars": {
+      "heading": "変数",
+      "add": "＋ 追加",
+      "empty": "変数はまだありません"
+    },
+    "import": {
+      "open": ".env を取り込む",
+      "title": ".env を取り込む",
+      "text": "内容",
+      "preview": "取り込む内容",
+      "status": {
+        "new": "新規",
+        "overwrite": "上書き",
+        "exists": "登録済み",
+        "reserved": "使えない名前",
+        "skip": "取り込まない"
+      },
+      "secret": "秘密",
+      "secretAria": "{{name}} を秘密にする",
+      "submit": "{{count}} 件を取り込む",
+      "malformed": "読めない行 {{count}}",
+      "overwrite": "登録済みの名前を上書きする",
+      "done": "取り込みました（新規 {{created}} · 上書き {{updated}} · 取り込まない {{skipped}}）。"
+    }
+  },
   "apiKeys": {
     "unnamed": "名前のないキー",
-    "lead": "登録しただけでは、どこにも送りません。使う所でキーを選んだときから送ります。",
-    "heading": "登録済みのキー",
-    "empty": "キーはまだありません",
     "loadFailed": "API キーを読み込めませんでした: {{error}}",
     "failed": "操作できませんでした: {{error}}",
     "cancel": "やめる",
     "show": "表示",
     "hide": "隠す",
-    "manage": "API キーで管理",
+    "manage": "秘密情報と変数で管理",
     "useKey": "使うキー",
     "checking": "確かめています…",
     "listSeparator": "・",
-    "encryptedNote": "キーは OS の暗号化で保存し、画面には表示しません。",
     "notEncrypted": "この起動ではキーを暗号化できません（本人だけが読めるファイルに保存します）。",
     "deferred": {
       "title": "API キーの移行を保留しています",
       "locked": "暗号化された古いキーを、この起動では読めません。暗号化できる起動（Pleiad デスクトップ）で開くと移行されます。それまでは、通話・委譲・接続先は今までのキーのまま使えます。",
       "other": "古いキーの置き場を読めないため、移行を保留しています。それまでは、通話・委譲・接続先は今までのキーのまま使えます。"
     },
-    "deferredInUse": "移行を保留中のため、今までのキーのまま使っています（設定 › API キー）",
-    "deferredShort": "移行を保留中です（設定 › API キー）",
+    "deferredInUse": "移行を保留中のため、今までのキーのまま使っています（設定 › 秘密情報と変数）",
+    "deferredShort": "移行を保留中です（設定 › 秘密情報と変数）",
     "status": {
       "registered": "登録済み",
       "registeredPrefix": "登録済み ·",
@@ -3255,13 +3394,10 @@
       "checkedHint": "確認 ✓ {{when}}"
     },
     "register": {
-      "hint": "API キーに登録され、接続先や委譲からも選べます。",
-      "useNow": "登録して使う",
-      "submit": "登録"
+      "hint": "秘密情報と変数に登録され、接続先や委譲からも選べます。",
+      "useNow": "登録して使う"
     },
     "add": {
-      "open": "＋ キーを追加",
-      "title": "キーを追加",
       "provider": "プロバイダー",
       "providers": {
         "openrouter": {
@@ -3280,15 +3416,12 @@
       "key": "キー",
       "keyAria": "{{provider}} のキー",
       "keyAriaCustom": "キー",
-      "registered": "{{name}} のキーを登録しました。確かめています…",
       "registeredChecked": "{{name}} のキーを登録しました。確認 ✓",
       "registeredFailed": "{{name}} のキーを登録しました。確認に失敗しました。"
     },
     "actions": {
-      "replace": "差し替える",
       "check": "確かめる",
       "delete": "削除",
-      "replaceAria": "差し替える · {{name}}",
       "checkAria": "確かめる · {{name}}",
       "deleteAria": "削除 · {{name}}"
     },
@@ -3297,7 +3430,6 @@
       "failed": "{{name}} のキーを確かめました。確認に失敗しました。"
     },
     "uses": {
-      "label": "使っている所",
       "none": "どこにも使われていません",
       "aria": "{{name}} を使っている所",
       "endpoint": "{{agent}} の接続先「{{name}}」",
@@ -3314,17 +3446,9 @@
       "computer": "wait_until の問いは使われず、画面の差分だけで待ちます",
       "judge": "この判定器は使われなくなります"
     },
-    "list": {
-      "used": "使っているキー",
-      "unused": "使われていないキー",
-      "unusedHeading": "どこにも使われていないキー",
-      "all": "登録済みのキー"
-    },
     "replace": {
-      "aria": "{{name}} のキーを差し替える",
       "input": "{{name}} の新しいキー",
       "cost": "差し替えると、使っている接続先を確かめ直します（わずかに料金がかかることがあります）",
-      "submit": "差し替える",
       "done": "{{name}} のキーを差し替えました"
     },
     "result": {
@@ -3395,10 +3519,10 @@
       "unused": "未使用",
       "own": "別のキーを入れる",
       "ownAria": "別のキー",
-      "ownCaption": "API キーに別のキーとして登録されます。",
+      "ownCaption": "秘密情報と変数に別のキーとして登録されます。",
       "keyRequired": "別のキーを入力してください",
-      "registersOpenrouter": "API キーに登録され、通話や委譲でも選べます。",
-      "registersNamed": "接続先の名前で API キーに登録されます。"
+      "registersOpenrouter": "秘密情報と変数に登録され、通話や委譲でも選べます。",
+      "registersNamed": "接続先の名前で秘密情報と変数に登録されます。"
     }
   },
   "routing": {
@@ -4476,7 +4600,7 @@
       "sttBusyRepeat": "聞き取りが混み合っています（{{n}} 回続けて）",
       "sttBusyHint": "設定 › 通話に「聞き取りの予備のモデル」を入れると、混んだときに切り替わります。",
       "sttKey": "聞き取りのキーが受け付けられませんでした",
-      "sttKeyHint": "設定 › API キーで確かめてください。",
+      "sttKeyHint": "設定 › 秘密情報と変数で確かめてください。",
       "close": "閉じる",
       "tts": "読み上げられませんでした。画面の文字で見てください",
       "sendFailed": "発言を送れませんでした: {{error}}",

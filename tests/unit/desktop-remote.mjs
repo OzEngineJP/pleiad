@@ -273,7 +273,8 @@ export default async function (t) {
 
     const serverSource = fs.readFileSync(path.join(ROOT, 'core/server.mjs'), 'utf8');
     const postSource = serverSource.match(/async function postResident\([\s\S]*?\n\}/)[0];
-    const emitSource = serverSource.match(/function emitGlobal\([\s\S]*?\n\}/)[0];
+    // emitGlobal は秘密情報の伏せ（secretStream）を通して emitOne へ渡す（ADR 0215）。両方を写す
+    const emitSource = serverSource.match(/function emitGlobal\([\s\S]*?\n\}/)[0] + '\n' + serverSource.match(/function emitOne\([\s\S]*?\n\}/)[0];
     const sent = [];
     let rows = [{ paused: false }, { paused: true }];
     const context = vm.createContext({
@@ -282,6 +283,7 @@ export default async function (t) {
       botHost: { opsDeps: () => ({ routines: { list: async () => rows } }) },
       locale: { lang: 'ja' }, enabledRoutineCount, residentSignal,
       LIST_NEUTRAL_EVENTS: new Set(), invalidateSessionLists() {}, streamEvents: new Set(), voiceHost: { onEvent() {} },   // 通話の読み上げ（emitGlobal の先頭）。このテストの対象外
+      secretStream: { process: event => [event] },   // 秘密情報の伏せ（core/secret-mask.mjs）。このテストの対象外
       runtime: { turns: new Map() }, P: { EVENT: 'event' }, sendTo: () => true,
     });
     vm.runInContext(`let residentLast = '', residentStatus = null, residentWork = null, residentSeq = 0;

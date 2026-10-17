@@ -453,7 +453,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, browserInstructions, oauthToken, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, secretsRuntime = null, browserInstructions, oauthToken, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
     // 審査モードで通さない台本は、台本として読まずに言葉をそのまま返す（下の plain）
     const plain = isReviewMode() && !fakeScriptAllowed(scriptOf(prompt));
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
@@ -630,6 +630,14 @@ export const backend = {
         // 実際に渡った ply_control の接続（url・指示文・会話のシェルへ渡す環境変数の名前とトークン）。テストが会話に束縛した呼び出しを作るのに使う
         out.text = controlRuntime ? JSON.stringify({ url: controlRuntime.url, instructions: controlRuntime.instructions, env: Object.keys(controlRuntime.env ?? {}),
           envUrl: controlRuntime.env?.PLEIAD_CONTROL_URL, token: controlRuntime.env?.PLEIAD_CONTROL_TOKEN, sameToken: controlRuntime.env?.PLEIAD_CONTROL_TOKEN === controlRuntime.headers?.Authorization?.replace('Bearer ', '') }) : 'control: unavailable';
+        await say(emit, out.text, out.uuid);
+      } else if (text === 'secrets-info') {
+        // 秘密情報と変数（ADR 0215）で渡った環境変数の名前と一覧の文。値は返さない
+        out.text = JSON.stringify({ names: Object.keys(secretsRuntime?.env ?? {}).sort(), instructions: secretsRuntime?.instructions ?? null });
+        await say(emit, out.text, out.uuid);
+      } else if (text.startsWith('secrets-env:')) {
+        // 渡った値をそのまま言う（エージェントがシェルで値を表示した場面。画面へ出る前に伏せられることを試験が確かめる）
+        out.text = `value=${secretsRuntime?.env?.[text.slice('secrets-env:'.length).trim()] ?? '(none)'}`;
         await say(emit, out.text, out.uuid);
       } else if (text === 'browser-instructions') {
         out.text = browserInstructions ?? '(none)';

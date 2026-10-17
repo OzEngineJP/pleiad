@@ -290,6 +290,8 @@ ADR 0148 にある「{エージェント名} が操作中「題」· 止める �
 
 `ply_browser`（`core/browser-bridge.mjs`、`/mcp/browser`）の `hand_to_user` は、`reason`（`login`・`captcha`・`two_factor`・`payment`・`other`）と `message` を受ける。文は最大 200 文字。依頼のカードの「Chrome で操作する」は引き継ぎを呼び、「あなたが操作中」へ替わる。「Claude に戻す」で一時停止が解けると待っていた呼び出しに返る。接続前なら接続の案内に読み替え、すでにカードがあれば同じカードを待つ。
 
+**登録したログイン情報**（[ADR 0215](adr/0215-secrets-and-variables-for-agents.md)、design.md「秘密情報と変数」）: ログインの画面で、そのサイトのログイン情報が設定 › 秘密情報と変数に登録されていれば、エージェントは人に渡さず `ply_browser` の `fill_secret({ item, field: username | password, selector? })` で入れる（指示の文 `agent:browser.instructions` と、システムプロンプトの秘密情報と変数の一覧に書く）。Pleiad は会話の今のタブの origin がログイン情報のサイト（https・同じホストかサブドメイン）に合うときだけ、フォーカスのある入力欄に `Input.insertText` で入れ（`core/secret-fill.mjs`）、値はエージェントに返さない。合わない・入力欄でない・iframe の中のときは理由だけを返す（iframe の中は `hand_to_user` を勧める）。登録が無いログインと、CAPTCHA・2 段階認証・支払い・個人情報の入力は今のとおり `hand_to_user`。`fill_secret` は Chrome の中継があるホストだけに載せる。
+
 端末の AI がホストの子に任せた仕事の Chrome の待ち（`chromeWait` の印つきの中継）は、依頼元には承認の形ではなく専用のカードで出す（`web/chrome-wait-card.mjs`、[ADR 0204](adr/0204-chrome-wait-card-one-per-conversation.md)）。1 会話 1 枚で、ホストの状態の変わりは `relayUpdate` → `permissionUpdate` で同じカードの中身を替える。依頼元から押せるのは「Chrome を使わずに続けてもらう」（拒否で決着。子へは「人が Chrome を使わずに続けるよう選んだ」。`messageKey: chromeSkipped`）だけで、「許可」は出さない。`hand_to_user` の待ちの区切りの戻り（`waiting`）には、待った分数と「Chrome を使わずに進めてよい」を入れる。
 
 委譲した子の依頼は親の会話にも複製される。親のカードの操作対象は子の会話 ID なので、親から子の窓を引き継ぎ、戻せる。子のカードも同時に済む。`reason: login` の子が並行したときだけ、直接の親・現在のタブを含む窓の実際のプロフィール・呼び出し時の現在のタブの origin がすべて同じなら、親のカードを 1 枚にまとめる。カードには待っている子の作業を並べ、最初の子の窓を操作対象にする。戻すと各子の待ちを解き、各自が `snapshot` からやり直す。origin または窓のプロフィールが読めない場合は別のカードにする。
