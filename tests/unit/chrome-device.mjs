@@ -183,6 +183,16 @@ export default async function (t) {
       t.ok('PC で引き継いでいる間（by: pc）の入力も view-only', pcPaused.by === 'pc' && pcInput.code === 'view-only' && inputsOn(r, view).length === 0, JSON.stringify(pcInput));
       const lateDevice = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2 });
       t.ok('PC が引き継いでいる所へ端末が後から押しても、今の状態（by: pc）を返すだけ（大きさを変えない）', lateDevice.state === 'paused' && lateDevice.by === 'pc' && !r.captureLog.some(([op]) => op === 'operate'), JSON.stringify(lateDevice));
+      // 「この端末で操作する」（fromPc）: PC の窓を隠せなければ移さない
+      r.os.opts.concealFails = true;
+      const stuck = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2, fromPc: true });
+      t.ok('fromPc でも PC の窓を隠せなければ移さない（by: pc のまま・conceal-failed・映像は断ったまま）', stuck.by === 'pc' && stuck.error === 'conceal-failed' && r.control.captureBlocked('one') === true && !r.captureLog.some(([op]) => op === 'operate'), JSON.stringify(stuck));
+      r.os.opts.concealFails = false;
+      const moved = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2, fromPc: true });
+      t.ok('fromPc: PC の窓を隠して端末の操作へ移す（一時停止は続き、始まりの時刻は同じ・理由は消える）', moved.state === 'paused' && moved.by === 'device' && moved.since === pcPaused.since && moved.error === null && concealed(r, tab), JSON.stringify(moved));
+      t.ok('fromPc: 映像の断りを解き、ページの大きさを端末に合わせる', r.captureLog.some(([op]) => op === 'resume') && r.captureLog.some(([op, , v]) => op === 'operate' && v?.width === 390) && r.control.captureBlocked('one') === false && await until(() => r.fake.screencasting(tab)), JSON.stringify(r.captureLog));
+      const movedInput = await r.input('one', { type: 'tap', x: 10, y: 10 });
+      t.ok('fromPc: 移した後は端末の入力が通る', movedInput.ok === true, JSON.stringify(movedInput));
       await r.control.resume('one');
       // 戻すと agent-browser がつなぎ直す。映像は付け直しで同じタブを追う
       const a2 = await r.agent('one');
@@ -272,7 +282,7 @@ export default async function (t) {
     t.ok('chromeTakeOver: by: device は大きさを渡し、それ以外は by: pc（大きさは捨てる）', JSON.stringify(calls) === JSON.stringify([['s', { by: 'device', width: 390, height: 700, scale: 2 }], ['s', { by: 'pc' }]]), JSON.stringify(calls));
     const invalid = await op.handler(ctx, { sessionId: 's', by: 'device' }).then(() => null, error => error);
     t.ok('大きさが無ければ INVALID（画面の言語の字）', invalid?.code === 'INVALID' && typeof invalid.message === 'string' && invalid.message.length > 0, JSON.stringify(invalid?.message));
-    t.ok('入力の形: by は pc か device・大きさは正の数', op.input.safeParse({ sessionId: 's', by: 'phone' }).success === false && op.input.safeParse({ sessionId: 's', by: 'device', width: -1 }).success === false && op.input.safeParse({ sessionId: 's', by: 'device', width: 390, height: 700, scale: 2 }).success === true);
+    t.ok('入力の形: by は pc か device・大きさは正の数', op.input.safeParse({ sessionId: 's', by: 'phone' }).success === false && op.input.safeParse({ sessionId: 's', by: 'device', width: -1 }).success === false && op.input.safeParse({ sessionId: 's', by: 'device', width: 390, height: 700, scale: 2 }).success === true && op.input.safeParse({ sessionId: 's', by: 'device', width: 390, height: 700, fromPc: true }).success === true);
   }
 
   // ===== 6. ビューアの⋯「Chrome で開く」（relay.openForConversation） =====

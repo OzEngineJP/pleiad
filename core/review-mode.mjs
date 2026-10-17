@@ -97,7 +97,7 @@ export const COMMAND_REFUSE = [
   'uploadCheck', 'uploadStart', 'uploadChunk', 'uploadFinish', 'uploadCancel',
   'browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav', 'computerStop',
   'chromeStatus', 'chromeConnect', 'chromeDisconnect', 'chromeRaiseDialog', 'chromeConsent', 'chromeEnable', 'chromeTakeOver', 'chromeResume', 'chromeStop',
-  'chromeOpen', 'chromeCloseWindow', 'chromePinWindow',
+  'chromeOpen', 'chromeCloseWindow', 'chromePinWindow', 'chromeCloseTab',
 ];
 
 /** 全命令 → 通すか。載っていない命令は undefined（断る） */

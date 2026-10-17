@@ -10,12 +10,12 @@ import { t } from './i18n.mjs';
 
 export const CONTROL_STATES = ['running', 'idle', 'stopped', 'paused'];
 
-/** 状態の一行の語（running は {{name}} が操作中）。state が無ければ null */
-export function statusText(state, name, error = null) {
+/** 状態の一行の語（running は {{name}} が操作中。リモートの端末で PC が引き継いでいる間は「PC で操作中」）。state が無ければ null */
+export function statusText(state, name, error = null, { by = null, remote = false } = {}) {
   if (error === 'conceal-failed') return t('chromeControl.error.concealFailed');
   if (state === 'running') return t('chromeControl.status.running', { name });
   if (state === 'idle') return t('chromeControl.status.idle');
-  if (state === 'paused') return t('chromeControl.status.paused');
+  if (state === 'paused') return remote && by === 'pc' ? t('chromeControl.status.pausedPc') : t('chromeControl.status.paused');
   if (state === 'stopped') return t('chromeControl.status.stopped');
   return null;
 }
@@ -46,8 +46,8 @@ const RING_MS = 700;
  * @returns {{ root: HTMLElement, banner: HTMLElement, overlay: HTMLElement, apply: (next: {state: string, since?: number|null, error?: string|null}|null) => void,
  *            ring: (x: number, y: number, size?: {width: number, height: number}) => void, state: () => string|null, refresh: () => void }}
  */
-export function createChromeControlView({ run, getName = () => 'Claude', onError = () => {} } = {}) {
-  let current = null;
+export function createChromeControlView({ run, getName = () => 'Claude', onError = () => {}, remote = () => false } = {}) {
+  let current = null, showBanner = true;
   let busy = false;
   const root = el('div', 'cc'); root.hidden = true;
   const status = el('span', 'cc-status'); status.setAttribute('role', 'status');
@@ -83,10 +83,10 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
     const state = current?.state ?? null;
     root.hidden = !state;
     root.dataset.state = state ?? '';
-    banner.hidden = state !== 'paused';
+    banner.hidden = state !== 'paused' || !showBanner;
     overlay.dataset.state = state ?? '';
     if (!state) return;
-    text.textContent = statusText(state, getName(), current.error);
+    text.textContent = statusText(state, getName(), current.error, { by: current.by, remote: remote() === true });
     const allowed = actionsFor(state);
     for (const [action, b] of buttons) {
       b.hidden = !allowed.includes(action);
@@ -110,7 +110,8 @@ export function createChromeControlView({ run, getName = () => 'Claude', onError
 
   return {
     root, banner, overlay, ring,
-    apply(next) { current = next && CONTROL_STATES.includes(next.state) ? { state: next.state, since: next.since ?? null, error: next.error ?? null } : null; paint(); },
+    /** banner: 会話の中の一時停止の帯を出すか（右パネルが子の会話を映している間は、帯の会話と状態の会話が違うので出さない） */
+    apply(next, { banner = true } = {}) { showBanner = banner; current = next && CONTROL_STATES.includes(next.state) ? { state: next.state, since: next.since ?? null, error: next.error ?? null, by: next.by ?? null } : null; paint(); },
     state: () => current?.state ?? null,
     refresh: paint,
   };

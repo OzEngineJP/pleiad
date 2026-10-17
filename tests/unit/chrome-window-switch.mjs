@@ -119,9 +119,12 @@ export default async function (t) {
       r.setPaused(false);
       r.panel.refresh();
       t.ok('引き継ぎが終わると、押せるようにもどる', r.chips().every(chip => chip.disabled === false) && r.follow().disabled === false && !('data-paused' in r.root().attrs));
+      r.setPaused(true);
       r.panel.setOperating(true);
-      t.ok('この端末から操作している間も、切り替えられない', r.chips().every(chip => chip.disabled === true));
+      t.ok('この端末から操作している間（端末の引き継ぎ）は、切り替えられる', r.chips().every(chip => chip.disabled === false) && r.follow().disabled === false);
       r.panel.setOperating(false);
+      t.ok('ほかの端末が操作している間（この端末は見るだけ）は、切り替えられない', r.chips().every(chip => chip.disabled === true));
+      r.setPaused(false);
     }
 
     // 固定が失敗したら知らせて、選びを実際の状態に戻す
@@ -201,6 +204,114 @@ export default async function (t) {
       await flush();
       const closes = r.commands.filter(([name]) => name === 'chromeCloseWindow');
       t.ok('固定していなければ、エージェントのいるウィンドウを閉じる', closes.length === 1 && closes[0][1].windowId === 9);
+    }
+
+    // 会話の題の列: この会話と窓のある子の会話。子の Chrome を映しても会話は移らない
+    {
+      const commands = [], menus = [], opened = [], windows = createWindowTable();
+      let body = null, toolbar = null, panelOpen = false;
+      const preview = { openPanel: opts => { body = opts.body; toolbar = opts.toolbar; panelOpen = true; }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } };
+      const rows = [{ sessionId: 'conv', taskId: null, title: null, windows: 1, state: 'idle' },
+        { sessionId: 'kid', taskId: 'tk', title: '価格を調べる', windows: 2, state: 'running', waiting: false },
+        { sessionId: 'gone', taskId: 'tg', title: '終了', windows: 0, state: 'idle' }];
+      windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
+      windows.apply({ sessionId: 'kid', windows: 2, windowIds: [21, 22], currentWindowId: 21, operating: true });
+      const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return name === 'browserScreencast' ? { state: { suspended: false } } : name === 'chromePinWindow' ? { pinnedWindowId: args.windowId } : {}; },
+        preview, browser: { available: () => true }, session: () => 'conv', windows, children: () => rows, getAgentName: id => (id === 'kid' ? 'Codex' : 'Claude'),
+        showMenu: (x, y, items, title) => menus.push({ items, title }), openConversation: id => opened.push(id), menuItems: () => [{ label: 'PC で操作する', onClick: () => {} }] });
+      panel.open();
+      await flush();
+      const convChips = () => body.querySelectorAll('.cp-sw-conv');
+      const numChips = () => body.querySelectorAll('.cp-sw-chip').filter(chip => !chip.classList.contains('cp-sw-conv'));
+      const labels = () => convChips().map(chip => chip.querySelector('.cp-sw-t').textContent);
+      t.ok('窓のある子の会話があれば、上の列に会話の題（この会話・子の題）が出る。窓の無い子は出さない', labels().join() === 'この会話,価格を調べる' && 'data-open' in body.querySelector('.cp-sw').attrs, labels().join());
+      t.ok('子の会話のウィンドウが 2 つ以上なら、その題の後ろに番号のチップ。子のエージェントの印は弧', numChips().length === 2
+        && numChips().filter(chip => 'data-agent' in chip.attrs).length === 1 && convChips()[1].querySelector('.run') !== null);
+      t.ok('映している会話（この会話。番号が無い）の題が選ばれている', convChips()[0].attrs['aria-selected'] === 'true' && convChips()[1].attrs['aria-selected'] === 'false');
+      convChips()[1].onclick();
+      await flush();
+      t.ok('子の題を押すと、会話は移らずに子の Chrome を映す（この会話の映像を止めて、子の映像を見始める）', panel.sessionId === 'kid' && panel.owner === 'conv'
+        && commands.some(([name, args]) => name === 'browserScreencastStop' && args.sessionId === 'conv') && commands.some(([name, args]) => name === 'browserScreencast' && args.sessionId === 'kid'));
+      t.ok('子を映している間は、子の番号のチップに敷きがあり、題は映している印', numChips().filter(chip => chip.attrs['aria-selected'] === 'true').length === 1 && convChips().every(chip => chip.attrs['aria-selected'] === 'false') && 'data-on' in convChips()[1].attrs);
+      t.ok('映像の名前は子のエージェント', /Codex/.test(body.querySelector('.cp-screen').attrs['aria-label']));
+      toolbar.at(-1).onclick();
+      const menu = menus.at(-1).items.map(item => item.label);
+      t.ok('⋯ の先頭に呼ぶ側の行（PC で操作する）、子を映している間は「会話を開く」、最後は「表示中のウィンドウを閉じる」', menu[0] === 'PC で操作する' && menu.includes('会話を開く') && /閉じる/.test(menu.at(-1)), JSON.stringify(menu));
+      menus.at(-1).items.find(item => item.label === '会話を開く').onClick();
+      t.ok('「会話を開く」で子の会話へ移る', opened.join() === 'kid');
+      convChips()[0].onclick();
+      await flush();
+      t.ok('この会話の題で戻る', panel.sessionId === 'conv');
+      toolbar.at(-1).onclick();
+      t.ok('この会話を映している間は「会話を開く」を出さない', !menus.at(-1).items.some(item => item.label === '会話を開く'));
+      // 子の番号を押すと、子へ替えてからそのウィンドウを固定する
+      numChips()[1].onclick();
+      await flush(); await flush();
+      t.ok('ほかの会話の番号を押すと、その会話を映してからそのウィンドウを固定する', panel.sessionId === 'kid' && commands.some(([name, args]) => name === 'chromePinWindow' && args.sessionId === 'kid' && args.windowId === 22));
+      panel.close();
+      // 会話を開くときに子を指す（委譲カードの「Chrome のウィンドウを見る」）
+      panel.open(null, { target: 'kid' });
+      await flush();
+      t.ok('open の target で、子の Chrome を映して開く（会話は移らない）', panel.sessionId === 'kid' && panel.owner === 'conv');
+      panel.close();
+    }
+
+    // タブの列: 映しているウィンドウのタブが 2 つ以上のとき。押すと固定・端末で操作している間だけ ×・開いたタブへ移ったら光る
+    {
+      const r = rig({ paused: true });
+      r.windows.apply(r.ev([7], 7));
+      r.setPaused(false);
+      r.panel.open();
+      await flush();
+      const state = (list, extra = {}) => r.panel.onMessage({ source: 'chrome', sessionId: 'conv', type: 'state', state: { tabId: 'T1', agentTabId: 'T1', pinnedTabId: null, suspended: false, list, ...extra } });
+      const tabsRoot = () => r.body().querySelector('.cp-tabs');
+      const tabChips = () => r.body().querySelectorAll('.cp-tab-b');
+      state([{ tabId: 'T1', windowId: 7, title: 'Example Store' }]);
+      t.ok('タブが 1 つなら、タブの列は開かない', !('data-open' in tabsRoot().attrs));
+      state([{ tabId: 'T1', windowId: 7, title: 'Example Store' }, { tabId: 'T2', windowId: 7, title: 'Shop B' }, { tabId: 'T9', windowId: 99, title: '別の窓' }]);
+      t.ok('タブが 2 つ以上なら、映しているウィンドウのタブの題が並ぶ（ほかのウィンドウのタブは出さない）', 'data-open' in tabsRoot().attrs && tabChips().map(chip => chip.querySelector('.cp-sw-t').textContent).join() === 'Example Store,Shop B');
+      t.ok('タブは tablist の中の tab。エージェントのタブに印', tabsRoot().querySelector('.cp-sw-list').attrs.role === 'tablist' && tabChips().every(chip => chip.attrs.role === 'tab') && tabChips()[0].querySelector('.cp-sw-dot, .run') !== null);
+      t.ok('上の列が閉じていると、「追う」は下の列の右端に移る', tabsRoot().querySelector('.cp-sw-follow') !== null);
+      t.ok('見るだけの間は × を出さない', r.body().querySelectorAll('.cp-tab-x').every(x => x.hidden === true));
+      tabChips()[1].onclick();
+      t.ok('タブを押すと、そのタブを固定する命令を送り、押したタブが選ばれる', JSON.stringify(r.pins().at(-1)) === JSON.stringify({ sessionId: 'conv', windowId: 7, tabId: 'T2' }) && tabChips()[1].attrs['aria-selected'] === 'true');
+      await flush();
+      state([{ tabId: 'T1', windowId: 7, title: 'Example Store' }, { tabId: 'T2', windowId: 7, title: 'Shop B' }], { tabId: 'T2', pinnedTabId: 'T2' });
+      t.ok('タブを固定している間は、固定の印と「追う」が外れた状態', 'data-pinned' in r.screen().attrs && r.follow().attrs['aria-pressed'] === 'false');
+      r.setPaused(true);
+      r.panel.setOperating(true);
+      t.ok('端末で操作している間は、タブに × が出る', r.body().querySelectorAll('.cp-tab-x').every(x => x.hidden === false));
+      r.body().querySelectorAll('.cp-tab-x')[1].onclick({ stopPropagation() {} });
+      await flush();
+      t.ok('× で、そのタブを閉じる命令を送る', JSON.stringify(r.commands.filter(([name]) => name === 'chromeCloseTab').at(-1)?.[1]) === JSON.stringify({ sessionId: 'conv', tabId: 'T2' }));
+      // ページが開いたタブへサーバーが移った
+      state([{ tabId: 'T1', windowId: 7, title: 'Example Store' }, { tabId: 'G', windowId: 7, title: 'Sign in' }, { tabId: 'T2', windowId: 7, title: 'Shop B' }], { tabId: 'G', pinnedTabId: 'G' });
+      const google = tabChips().find(chip => chip.querySelector('.cp-sw-t').textContent === 'Sign in');
+      t.ok('開いたタブへ移ったら、そのチップが選ばれて 1 回光る', google?.attrs['aria-selected'] === 'true' && google.classList.contains('flash'));
+      r.panel.setOperating(false);
+    }
+
+    // PC で操作している間のリモートの端末: 幕に「この端末で操作する」
+    {
+      const asked = [];
+      const commands = [], windows = createWindowTable();
+      let body = null, panelOpen = false;
+      const preview = { openPanel: opts => { body = opts.body; panelOpen = true; }, panelOpen: () => panelOpen, close: () => { panelOpen = false; } };
+      windows.apply({ sessionId: 'conv', windows: 1, windowIds: [7], currentWindowId: 7 });
+      let remotePc = true;
+      const panel = setupChromePanel({ cmd: async (name, args) => { commands.push([name, args]); return name === 'browserScreencast' ? { state: { suspended: true } } : {}; },
+        preview, browser: { available: () => true }, session: () => 'conv', windows, paused: () => true, canOperateHere: () => remotePc, operateHere: async id => { asked.push(id); } });
+      panel.open();
+      await flush(); await flush();
+      const here = body.querySelector('.cp-veil-here');
+      t.ok('PC で操作している間（映像を止めている）、幕に「PC で操作中」と「この端末で操作する」', body.querySelector('.cp-veil').hidden === false && here.hidden === false && /PC で操作中/.test(body.querySelector('.cp-veil-text').textContent));
+      here.onclick();
+      await flush();
+      t.ok('押すと、その会話を端末へ移す（operateHere）', asked.join() === 'conv');
+      remotePc = false;
+      panel.refresh();
+      t.ok('PC の画面では出さない（映像を止めています）', here.hidden === true && /映像を止めています/.test(body.querySelector('.cp-veil-text').textContent));
+      panel.close();
     }
 
     // 窓の番号は会話の中で安定する（閉じても詰めない）

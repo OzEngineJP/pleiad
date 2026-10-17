@@ -50,7 +50,9 @@
 .cp-veil{position:absolute;inset:0;display:grid;place-items:center;background:var(--surface-veil);color:var(--ink);
   animation:cp-veil-in var(--dur) var(--ease-out)}
 .cp-veil[hidden]{display:none}
+.cp-veil-box{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:calc(100% - 24px)}
 .cp-veil-text{padding:6px 12px;border-radius:var(--r-pill);background:var(--surface-paper);font-size:var(--fs-s)}
+.cp-veil-here[hidden]{display:none}
 /* 見るだけの案内（白いページの上でも見えるよう沈んだ面 --surface-2）。押す・打つと出て、少しして消える（タッチでは出したまま） */
 .cp-hint{position:absolute;left:50%;bottom:12px;transform:translate(-50%,6px);max-width:calc(100% - 24px);padding:6px 12px;border-radius:var(--r-pill);
   background:var(--surface-2);color:var(--ink);font-size:var(--fs-s);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
@@ -75,7 +77,7 @@
   .cp-hint{transform:translate(-50%,0)}
 }
 
-/* ---------- 見るウィンドウを選ぶ（承認済み 2026-10-09。docs/design-system.md「Chrome のウィンドウ」）---------- */
+/* ---------- 見るウィンドウを選ぶ（承認済み 2026-10-09・会話とタブの列は 2026-10-18。docs/design-system.md「Chrome のウィンドウ」）---------- */
 .file-preview[data-panel="chrome-window"] .cp{position:relative}
 /* 番号のチップの列。ウィンドウが 2 つ以上のときだけ開く（閉じている間は gap の分も詰める） */
 .cp-sw{display:grid;grid-template-rows:0fr;margin-bottom:-8px;visibility:hidden;
@@ -100,12 +102,27 @@
 .cp-sw-ag{display:grid;place-items:center;width:0;height:16px;transform:scale(0);transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
 .cp-sw-chip[data-agent] .cp-sw-ag{width:16px;transform:scale(1)}
 .cp-sw-ag .run{transform:scale(.8)}
-.cp-sw:not([data-run]) .cp-sw-chip[data-agent] .cp-sw-ag::after{content:"";display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-weak)}
+.cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-weak)}
 .cp-sw-dot{display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-weak)}
+.cp-sw-dot.wait{background:var(--ink-mark)}
+/* 会話の題のチップ・タブのチップ（題を省略して並べる。印は題の前） */
+.cp-sw-chip.cp-sw-conv,.cp-sw-chip.cp-tab-b{width:auto;max-width:180px;padding:0 10px;gap:6px}
+.cp-sw-chip + .cp-sw-conv{margin-left:6px}
+.cp-sw-conv[data-on]{color:var(--ink)}
+.cp-sw-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
+.cp-sw-cm{display:grid;place-items:center;flex:none;width:12px;height:16px}
+.cp-sw-cm:empty{display:none}
+.cp-sw-cm .run{transform:scale(.8)}
+.cp-tab{position:relative;flex:none;display:flex;align-items:center}
+.cp-tab-x{display:grid;place-items:center;flex:none;width:20px;height:20px;margin:0 4px 0 -6px;padding:0;border:0;border-radius:50%;background:none;color:var(--ink-weak);font:inherit;font-size:14px;line-height:1;cursor:pointer;
+  position:relative;z-index:1}
+.cp-tab-x:hover{background:var(--surface-2);color:var(--ink)}
+.cp-tab-x:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.cp-tab-x[hidden]{display:none}
 .cp-sw-chip.flash{animation:cp-sw-flash 700ms var(--ease-out)}
 @keyframes cp-sw-flash{0%{box-shadow:0 0 0 3px var(--line-blue)}100%{box-shadow:0 0 0 3px transparent}}
 /* 引き継ぎ中は切り替えない */
-.cp-sw[data-paused] .cp-sw-chip{opacity:.45}
+.cp-sw[data-paused] .cp-sw-chip:not(.cp-sw-conv){opacity:.45}
 /* 「エージェントを追う」: 枠のないアイコンのボタン（⋯ と同じ）。追っている間は青、固定している間は薄く、エージェントが別のウィンドウにいる間は濃く */
 .cp-sw-follow{flex:none;position:relative;color:var(--ink-weak)}
 .cp-sw-follow.on{color:var(--ink-blue)}
@@ -139,7 +156,9 @@
   .cp-sw-chip,.cp-sw-pad{height:36px}
   .cp-sw-chip{width:52px}
   .cp-sw-pad{width:52px}
+  .cp-sw-chip.cp-sw-conv,.cp-sw-chip.cp-tab-b{width:auto}
   .cp-sw-follow{width:40px;height:40px}
+  .cp-tab-x{width:28px;height:28px}
 }
 @media (prefers-reduced-motion:reduce){
   .cp-sw,.cp-sw-pad,.cp-sw-chip,.cp-sw-ag,.cp-pin,.cp-ghost{transition:none}
