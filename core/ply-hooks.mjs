@@ -18,7 +18,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { HOOK_AGENTS, HOOK_EVENTS, maskText } from './hooks-config.mjs';
+import { HOOK_AGENTS, HOOK_EVENTS, UNIFY_TARGETS, maskText } from './hooks-config.mjs';
 import { pathKey, containsPath, scanDirectory } from './context-settings.mjs';
 import { writeAtomic } from './atomic-file.mjs';
 import { t } from './i18n.mjs';
@@ -53,12 +53,12 @@ export function normalizeHook(value, previous = null, now = new Date()) {
   }
   if (value.async === true) out.async = true;
   const targets = Array.isArray(value.targets) ? [...new Set(value.targets)] : [agent];
-  if (!targets.length || targets.some(a => !HOOK_AGENTS.includes(a))) throw invalid('plyHooks.targets');
-  out.targets = HOOK_AGENTS.filter(a => targets.includes(a));
+  if (!targets.length || targets.some(a => !UNIFY_TARGETS.includes(a))) throw invalid('plyHooks.targets');
+  out.targets = UNIFY_TARGETS.filter(a => targets.includes(a));
   if (record(value.matchers)) {
     const m = {};
     for (const [a, v] of Object.entries(value.matchers)) {
-      if (!HOOK_AGENTS.includes(a) || a === agent || typeof v !== 'string' || v.length > 500) throw invalid('plyHooks.matcher');
+      if (!UNIFY_TARGETS.includes(a) || a === agent || typeof v !== 'string' || v.length > 500) throw invalid('plyHooks.matcher');
       if (v.trim() && out.targets.includes(a)) m[a] = v.trim();
     }
     if (Object.keys(m).length) out.matchers = m;

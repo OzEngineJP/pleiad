@@ -8,7 +8,7 @@
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
-import { HOOK_AGENTS, agentLabel, eventLabel, scopeLabel } from './hooks-card.mjs';
+import { HOOK_AGENTS, UNIFY_TARGETS, agentLabel, eventLabel, scopeLabel } from './hooks-card.mjs';
 
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest', 'PermissionDenied']);
 function button(text, className = 'btn', onClick) {
@@ -200,7 +200,7 @@ export function unifyConfirmPanel({ cmd, cwd = null, direction, reset = false, s
         head.append(el('b', null, h.name), badge(t('hooks.unify.form', { agent: agentLabel(h.agent) })), ...(h.imported ? [badge(t('hooks.unify.importing'))] : []));
         card.append(head, el('span', 'cx-sub', `${eventLabel(h.event)} · ${h.event}${h.matcher ? ` · ${t('hooks.row.matcher', { matcher: h.matcher })}` : ''}`), el('span', 'cx-mono hk-cmd', h.command ?? ''));
         const facts = el('div', 'fm facts');
-        for (const [a, label] of HOOK_AGENTS) { const d = h.targets?.[a]; if (!d) continue; facts.append(el('span', 'k', label), el('span', 'v' + (d.status === 'ok' ? '' : ' cx-strong'), deliveryText(a, d))); }
+        for (const [a, label] of UNIFY_TARGETS) { const d = h.targets?.[a]; if (!d) continue; facts.append(el('span', 'k', label), el('span', 'v' + (d.status === 'ok' ? '' : ' cx-strong'), deliveryText(a, d))); }
         card.append(facts);
         regList.append(card);
       }
@@ -335,7 +335,7 @@ function plyPeek(h, { cmd, onChanged, work }) {
   box.append(how);
   cmd('plyHookPreview', { value: { ...h, command: 'x' } }).then(r => {
     how.replaceChildren();
-    for (const [a, label] of HOOK_AGENTS) { const d = r.targets[a]; if (!d) continue; how.append(el('span', 'k', label), el('span', 'v' + (d.status === 'ok' ? '' : ' cx-strong'), deliveryText(a, d))); }
+    for (const [a, label] of UNIFY_TARGETS) { const d = r.targets[a]; if (!d) continue; how.append(el('span', 'k', label), el('span', 'v' + (d.status === 'ok' ? '' : ' cx-strong'), deliveryText(a, d))); }
   }).catch(() => how.replaceChildren());
   box.append(el('p', 'msg', t('hooks.unify.peekNote')));
   const acts = el('div', 'acts');
@@ -386,7 +386,7 @@ export async function openPlyHookSheet({ cmd, hook = null, onSaved }) {
   const targets = el('fieldset', 'mcp-field hk-fieldset');
   targets.append(el('legend', null, t('hooks.unify.targets')));
   const chips = el('div', 'cx-chips');
-  const boxes = HOOK_AGENTS.map(([id, label]) => { const l = el('label', 'hk-check'), c = el('input'); c.type = 'checkbox'; c.value = id; c.checked = (full?.targets ?? [agent.value]).includes(id); l.append(c, document.createTextNode(label)); chips.append(l); return c; });
+  const boxes = UNIFY_TARGETS.map(([id, label]) => { const l = el('label', 'hk-check'), c = el('input'); c.type = 'checkbox'; c.value = id; c.checked = (full?.targets ?? [agent.value]).includes(id); l.append(c, document.createTextNode(label)); chips.append(l); return c; });
   targets.append(chips, el('p', 'mcp-note', t('hooks.unify.targetsNote')));
   // 渡す先ごとの matcher の上書き（自動で訳せないときに入れたもの）。編集では保存済みの値から始め、見せて変え・消せるようにする
   const overrides = initialOverrides(full);
@@ -440,7 +440,7 @@ export async function openPlyHookSheet({ cmd, hook = null, onSaved }) {
     let r;
     try { r = await cmd('plyHookPreview', { value: v }); } catch (e) { box.replaceChildren(el('p', 'mcp-error', e.message)); return; }
     box.replaceChildren(el('p', 'hk-q', t('hooks.unify.reviewLead')), el('p', 'cx-strong hk-warn', t('hooks.unify.reviewWarn')));
-    for (const [a, label] of HOOK_AGENTS) {
+    for (const [a, label] of UNIFY_TARGETS) {
       const d = r.targets[a];
       if (!d) continue;
       const card = el('div', 'hk-target');

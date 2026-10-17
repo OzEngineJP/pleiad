@@ -5,7 +5,8 @@
 //   2. OpenCode は `/mcp/opencode/<サーバー>` へ MCP の JSON-RPC を送る（合言葉は Pleiad の起動ごと）
 //   3. ここで会話の id から、そのターンの口（runArgs の agentRuntime など。url と headers）を引き、tools/call をそのまま転送する
 // ツールの一覧（tools/list）は、最後に結び付けた会話の口に聞く（ツールの定義は会話に依らない。説明の言語だけが違う）。
-// 会話のシェルの環境変数（ブラウザー・操作の一覧・秘密情報）は、プラグインの shell.env が `/mcp/opencode/env?session=` で取る
+// 会話のシェルの環境変数（ブラウザー・操作の一覧・秘密情報）は、プラグインの shell.env が `/mcp/opencode/env?session=` で取る。
+// Pleiad がそろえる Hooks のツールの前後は、プラグインの tool.execute.before / after が `/mcp/opencode/hook` を呼ぶ（core/backends/opencode-hooks.mjs）
 import crypto from 'node:crypto';
 
 export const OPENCODE_RELAY_PATH = '/mcp/opencode';
@@ -16,7 +17,7 @@ export const SESSION_ARG = '_pleiadSession';
 const BODY_MAX = 4 * 1024 * 1024;
 
 export function createOpencodeRelay({ secret = crypto.randomBytes(24).toString('hex'), fetchImpl = (...a) => fetch(...a) } = {}) {
-  const sessions = new Map();   // OpenCode の会話の id -> { runtimes: { server: { url, headers } }, env: {} }
+  const sessions = new Map();   // OpenCode の会話の id -> { runtimes: { server: { url, headers } }, env: {}, hooks: { beforeTool, afterTool } | null }
   const aliases = new Map();    // 子の会話（task のサブエージェント）の id -> 親の会話の id
   const latest = new Map();     // server -> { url, headers }（ツールの一覧を聞く先）
   let origin = null;
@@ -58,17 +59,18 @@ export function createOpencodeRelay({ secret = crypto.randomBytes(24).toString('
     /** OpenCode に渡すサーバーの url（origin が決まっていること） */
     serverUrl: (server) => `${origin}${OPENCODE_RELAY_PATH}/${server}`,
     envUrl: () => `${origin}${OPENCODE_RELAY_PATH}/env`,
+    hookUrl: () => `${origin}${OPENCODE_RELAY_PATH}/hook`,
     /**
      * 会話にそのターンの口と環境変数を結び付ける（ターンの始めに）。runtimes は { agentRuntime, controlRuntime, ... }（url・headers を持つもの）
      * 返りは、口のあるサーバー名の一覧
      */
-    bind(sessionId, { runtimes = {}, env = {} } = {}) {
+    bind(sessionId, { runtimes = {}, env = {}, hooks = null } = {}) {
       const bound = {};
       for (const [server, key] of Object.entries(RELAY_SERVERS)) {
         const r = runtimes[key];
         if (r?.url) { bound[server] = { url: r.url, headers: { ...(r.headers ?? {}) } }; latest.set(server, bound[server]); }
       }
-      sessions.set(sessionId, { runtimes: bound, env: { ...env } });
+      sessions.set(sessionId, { runtimes: bound, env: { ...env }, hooks });
       return Object.keys(bound);
     },
     /** 子の会話（サブエージェント）を親の会話に結び付ける。子のツールの呼び出しは親の口へ */
@@ -85,6 +87,24 @@ export function createOpencodeRelay({ secret = crypto.randomBytes(24).toString('
       if (rest === 'env') {
         if (req.method !== 'GET') return reply(res, 405);
         return reply(res, 200, lookup(url.searchParams.get('session') ?? '')?.env ?? {});
+      }
+      if (rest === 'hook') {
+        if (req.method !== 'POST') return reply(res, 405);
+        let body;
+        try {
+          const chunks = []; let size = 0;
+          for await (const chunk of req) { size += chunk.length; if (size > BODY_MAX) return reply(res, 413); chunks.push(chunk); }
+          body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch { return reply(res, 400, {}); }
+        // 会話に Hooks が結び付いていなければ何もしない（ほとんどのツールの呼び出しはここで返る）
+        const hooks = lookup(String(body?.session ?? ''))?.hooks;
+        if (!hooks) return reply(res, 200, {});
+        try {
+          const out = body.phase === 'after' ? await hooks.afterTool({ tool: body.tool, args: body.args, output: body.output }) : await hooks.beforeTool({ tool: body.tool, args: body.args });
+          return reply(res, 200, out ?? {});
+        } catch (err) {
+          return reply(res, 200, { error: String(err?.message ?? err).slice(0, 300) });
+        }
       }
       const server = rest;
       if (!Object.hasOwn(RELAY_SERVERS, server)) return reply(res, 404, { error: 'unknown server' });

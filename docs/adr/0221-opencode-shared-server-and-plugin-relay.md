@@ -20,6 +20,8 @@
 - 利用者の `opencode.json` は書き換えない。Pleiad が起こした OpenCode は `autoupdate: false` にする。
 - 「既定」のモデルでも、Pleiad が決めたモデル（OpenCode の設定の `model`、無ければ OpenCode Zen の既定）を明示して送る。
 - 巻き戻しに `revert` は使わない（ファイルの変更まで戻すため）。Pleiad の写しで戻す。
+- **互換の接続先（Pleiad の compat endpoints）は OpenCode には作らない。** OpenCode は接続先（provider）を自分で持ち（`opencode auth login`・`opencode.json` の `provider`。OpenRouter・LiteLLM・Ollama などの OpenAI 互換も入る）、Pleiad のモデルの一覧にもつないだ接続先のモデルが出る。共有のサーバー 1 本に会話ごとの接続先を足すと、接続先を変えるたびにサーバーを起こし直すことになる（走っているターンが止まる）。
+- **Pleiad がそろえる Hooks は、Claude Code の形を真似て渡す**（エージェントの記述の `hooksAs`）。OpenCode のフックは JS のプラグインでコマンドの形が無いため。ツールの前後は Pleiad のプラグインが中継の口 `/mcp/opencode/hook` を呼び、発言の前・会話の始め・終わりの前はバックエンドが走らせる。
 
 ## 理由
 

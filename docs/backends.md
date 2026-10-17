@@ -44,6 +44,10 @@ Pleiad は自分のプラグインとツール（委譲・操作の一覧・コ�
 
 承認モードは「都度確認」「編集は自動」「全部自動」「YOLO」「計画のみ」。「全部自動」は作業ディレクトリの外へのアクセスを断る。
 
+Hooks を Pleiad がそろえる場所では、Claude Code の形の登録をそのまま OpenCode の会話にも渡せる（渡し先に OpenCode を選ぶ）。OpenCode 自身のプラグインは止めない。
+
+互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または `opencode.json` の `provider`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
+
 ## コンピューターの操作
 
 デスクトップ版（Windows）では、各エージェントに Pleiad の MCP `ply_computer` を渡し、画面を撮ってマウスとキーボードでアプリを操作させられる（[`computer-use.md`](computer-use.md)）。エージェントごとの違い:
