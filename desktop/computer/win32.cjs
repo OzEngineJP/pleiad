@@ -372,6 +372,8 @@ function createWin32(koffi) {
     setExStyle(hwnd, value) { f.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, Number(value) >>> 0); return true; },
     /** 位置・大きさ・Z 順（flags は SWP_*）。前面は取らない（呼び出し側が SWP_NOACTIVATE を付ける） */
     setWindowPos: (hwnd, x, y, width, height, flags) => !!f.SetWindowPos(hwnd, 0, x, y, width, height, flags),
+    // 最前面（HWND_TOPMOST -1）に置く・外す（HWND_NOTOPMOST -2）。位置・大きさ・前面は変えない（SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE）
+    setTopmost: (hwnd, on) => !!f.SetWindowPos(hwnd, on ? -1 : -2, 0, 0, 0, 0, 0x2 | 0x1 | 0x10),
     /** WS_EX_LAYERED の窓の透明度（0 = 完全に透明、255 = 不透明） */
     setLayeredAlpha: (hwnd, alpha) => !!f.SetLayeredWindowAttributes(hwnd, 0, alpha, 2),
     /** レジストリの文字列（hive は 'HKCU' | 'HKLM'。name が空なら既定値）。無い・読めないときは null */

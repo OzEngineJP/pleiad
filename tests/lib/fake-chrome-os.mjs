@@ -8,6 +8,8 @@
 // （addWindow で利用者の窓・Edge の窓・別のプロセスの窓を足せる。偽の Chrome の窓の外形は、隠すまで Browser.setWindowBounds に追従する）。
 // closeAgent は、隠した窓を閉じる（偽の Chrome の窓も閉じる）。closeFails なら見える形へ戻す。窓が消えて（killWindow）いれば記録を捨てるだけ。
 // 前面の見張りは持たない（層のテストが偽の Win32 の表で見る）。stealsForeground(true) の間に出た窓は前面を取り、prevFg に前の前面を覚える。
+// allowPermission は確認の「許可する」を押す（偽の Chrome の保留を approve。opts.allowFails なら押せない、opts.allowNoOpen なら押したのに開かない）。
+// enableRemoteDebugging はトグルを入れる（偽の Chrome の turnOn。opts.enableFails なら入れられない）。どちらも features の allow・enable を渡したときだけ使える
 export const CHROME_PID = 4242;
 
 export function fakeChromeOs({ chrome = null, supported = true, reason = 'platform', features } = {}) {
@@ -28,7 +30,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
   // readyWaitMs: pending の間、ready() が層の戻りを待つ長さ（0 は待たずに pending のまま返す）。本物の口（parentPortChromeOs）は readyWaitMs だけ待つ
-  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
+  const opts = { allowFails: false, allowNoOpen: false, enableFails: false, appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
   let generation = 0;
   const readyWaiters = new Set();
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
@@ -95,6 +97,18 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     /** Pleiad 自身の窓（引き継ぎで窓を戻す画面の手がかり）。opts.noAppWindow なら引けない */
     async appWindow() { note({ op: 'appWindow' }); return opts.noAppWindow ? null : { id: opts.appWindow }; },
     async close(ref) { note({ op: 'close', ref: ref?.id }); return chrome ? chrome.closeDialog(ref?.id) : false; },
+    async allowPermission(ref) {
+      note({ op: 'allowPermission', ref: ref?.id });
+      if (opts.allowFails || !chrome || !isDialog(ref?.id)) return false;
+      if (!opts.allowNoOpen) chrome.approve();
+      return true;
+    },
+    async enableRemoteDebugging(args = {}) {
+      note({ op: 'enableRemoteDebugging', args: JSON.parse(JSON.stringify({ ...args, browser: args.browser?.id ?? null })) });
+      if (opts.enableFails || !chrome) return { ok: false, reason: 'no-switch' };
+      await chrome.turnOn();
+      return { ok: true };
+    },
 
     // ---- エージェントの窓
     async locateBrowser({ product = 'chrome' } = {}) { note({ op: 'locateBrowser', product }); return opts.chromeMissing ? null : { id: 'fake-browser', product }; },

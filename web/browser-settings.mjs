@@ -9,6 +9,7 @@ import { profileKey, noteOf, browserLabel, validProfileRef, profileLabel, NOTE_M
 const AGENT_BROWSER_VERSION = '0.38.1';
 
 // エージェントのブラウザー（PC の Chrome）への接続の案内で開いてもらうアドレス。chrome.exe に渡しても新しいタブになるので、コピーして貼り付けてもらう
+// （OS の層がトグルを入れられるときは「オンにしてつなぐ」で Pleiad が入れる。ADR 0218）
 const CHROME_INSPECT_ADDRESS = 'chrome://inspect/#remote-debugging';
 
 /** Chrome の印（16px の線画。ブラウザーの固定タブと同じ形） */
@@ -121,7 +122,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   onBlockedPreviewOrigins(paintConfirmation);
 
   // ---- エージェントのブラウザー（PC の Chrome）への接続。状態はサーバーの chromeBrowser イベントで替わる（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）
-  let chrome = null;   // { state, reason, dialog, product } | null（まだ分からない）
+  let chrome = null;   // { state, reason, dialog, product, assist, enable } | null（まだ分からない）
   let copied = false, copyFailed = false, copyTimer = null;
   const chromeError = el('p', 'browser-setting-note browser-chrome-error'); chromeError.setAttribute('role', 'status');
   function chromeCommand(command) {
@@ -154,19 +155,39 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     const note = text => el('p', 'browser-setting-note', text);
     if (state === 'unsupported') {
       status.textContent = t(reason === 'platform' ? `${k}unsupportedOs` : `${k}unsupportedEnv`);
+    } else if (state === 'setup' && chrome.assist === 'enabling') {
+      status.textContent = t(`${k}enable.working`);
+      actions.push(chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
     } else if (state === 'setup') {
       // ファイルはあるのにつながらない（unreachable）ときは、Chrome が閉じているだけのこともある（ファイルは Chrome を閉じても残る）
       const unreachable = reason === 'unreachable';
-      status.textContent = t(unreachable ? `${k}setup.unreachable` : `${k}setup.status`);
-      if (unreachable) details.push(note(t(`${k}setup.unreachableNote`)));
+      // Pleiad がトグルを入れられる（Windows）なら「オンにしてつなぐ」。押したときだけ入れる（ADR 0218）。手で入れる手順とコピーは残す
+      const canEnable = chrome.enable === true && chrome.assist !== 'enable-failed';
+      status.textContent = chrome.assist === 'enable-failed' ? t(`${k}enable.failed`) : t(unreachable ? `${k}setup.unreachable` : `${k}setup.status`);
+      if (canEnable) details.push(note(t(`${k}enable.note`)));
+      else if (unreachable) details.push(note(t(`${k}setup.unreachableNote`)));
       const steps = el('ol', 'browser-conn-steps');
       const one = el('li'); one.append(el('span', 'n', '1'), el('span', null, t(`${k}setup.step1`)), el('code', null, CHROME_INSPECT_ADDRESS));
       const two = el('li'); two.append(el('span', 'n', '2'), el('span', null, t(`${k}setup.step2`)));
       steps.append(one, two);
-      details.push(steps, note(t(`${k}setup.note`)));
-      const copy = el('button', 'btn btn-primary', copied ? t(`${k}setup.copied`) : t(`${k}setup.copy`)); copy.type = 'button'; copy.onclick = () => { void copyAddress(); };
-      actions.push(copy, chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
+      if (canEnable) {
+        const manual = el('details', 'browser-conn-manual');
+        manual.append(el('summary', null, t(`${k}enable.manual`)), steps, note(t(`${k}setup.note`)));
+        details.push(manual);
+      } else details.push(steps, note(t(`${k}setup.note`)));
+      const copy = el('button', canEnable ? 'btn' : 'btn btn-primary', copied ? t(`${k}setup.copied`) : t(`${k}setup.copy`)); copy.type = 'button'; copy.onclick = () => { void copyAddress(); };
+      if (canEnable) actions.push(chromeButton(t(`${k}enable.connect`), 'chromeEnable', 'btn btn-primary'));
+      else if (chrome.enable === true && chrome.assist === 'enable-failed') actions.push(chromeButton(t(`${k}denied.retry`), 'chromeEnable', 'btn btn-primary'), copy);
+      else actions.push(copy);
+      actions.push(chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
       if (copyFailed) details.push(note(t(`${k}setup.copyFailed`)));
+    } else if (state === 'consent') {
+      // 会話のエージェントが接続を待っている（Pleiad の中の許可）。ここでの「許可」も同じ
+      status.textContent = t(`${k}consent.status`);
+      actions.push(chromeButton(t(`${k}consent.allow`), 'chromeConsent', 'btn btn-primary'), chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
+    } else if (state === 'permission' && chrome.assist === 'allowing') {
+      status.textContent = t(`${k}permission.allowing`);
+      actions.push(chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
     } else if (state === 'permission') {
       status.textContent = t(`${k}permission.status`);
       actions.push(chromeButton(t(`${k}permission.raise`), 'chromeRaiseDialog', 'btn btn-primary'), chromeButton(t(`${k}giveUp`), 'chromeDisconnect', 'btn btn-quiet'));
@@ -187,10 +208,20 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     }
     const row = el('div', 'browser-conn-row');
     // 会話が Chrome の準備・許可を待っている間は、「まだ内蔵ブラウザーを使います」と言わず、どの会話が待っているかを言う
-    const waiting = ['setup', 'permission', 'denied'].includes(state) ? getChromeWaiting() : [];
+    const waiting = ['setup', 'consent', 'permission', 'denied'].includes(state) ? getChromeWaiting() : [];
     const name = el('span', 'nm'); name.append(el('strong', null, t(`${k}name`)), el('small', null, waiting.length ? t(`${k}waiting`, { title: waiting.join(' · ') }) : t(`${k}description`)));
     row.append(chromeMark(), name, status, ...actions);
-    chromeSection.replaceChildren(el('h3', null, t(`${k}title`)), row, ...details, chromeError);
+    // Chrome の確認に自動で答える（既定はオン。ADR 0218）。オフにすると、今までどおり Chrome の確認を人が押す
+    const auto = [];
+    if (state !== 'unsupported') {
+      const autoRow = el('label', 'browser-setting');
+      const toggle = el('input'); toggle.type = 'checkbox'; toggle.setAttribute('role', 'switch'); toggle.checked = getPrefs().chromeAutoAllow !== false;
+      toggle.onchange = () => save('chromeAutoAllow', toggle.checked);
+      autoRow.append(el('span', null, t(`${k}autoAllow.label`)), toggle);
+      const autoNote = note(t(`${k}autoAllow.note`)); autoNote.classList.add('browser-auto-allow-note');
+      auto.push(autoRow, autoNote);
+    }
+    chromeSection.replaceChildren(el('h3', null, t(`${k}title`)), row, ...details, ...auto, chromeError);
   }
   function loadChrome() {
     const caps = getHostCaps();
@@ -250,6 +281,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     const value = linkOpenPref(getPrefs());
     for (const b of buttons) { b.classList.toggle('on', b.dataset.linkOpen === value); b.setAttribute('aria-pressed', String(b.dataset.linkOpen === value)); }
     paintConfirmation();
+    paintChrome();
     // 書いているメモの欄は描き直さない（打っている途中の字と位置を保つ）
     if (!profileSection.contains(document.activeElement)) paintProfiles();
   }
@@ -261,7 +293,7 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     /** サーバーの chromeBrowser イベント（ホストの画面だけに届く） */
     chromeEvent(ev) {
       const was = chrome?.state;
-      chrome = { state: ev.state, reason: ev.reason ?? null, dialog: ev.dialog === true, product: ev.product ?? null }; paintChrome();
+      chrome = { state: ev.state, reason: ev.reason ?? null, dialog: ev.dialog === true, product: ev.product ?? null, assist: ev.assist ?? null, enable: ev.enable === true }; paintChrome();
       if (ev.state === 'connected' && was !== 'connected') void loadProfiles();   // つないだときに、増やした・名前を変えたプロフィールを読み直す
     },
     /** hostCapabilities が届いた（つなぎ直したときも）。使える環境なら今の状態を取り直す */

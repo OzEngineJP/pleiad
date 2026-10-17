@@ -588,6 +588,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "browser.chromeConsent",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeConsent",
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "browser.chromeDisconnect",
       "risk": "write",
       "riskOf": false,
@@ -600,6 +615,21 @@
         "cli": false
       },
       "legacyCommand": "chromeDisconnect",
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "browser.chromeEnable",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": "chromeEnable",
       "input": "25c7d85c859a"
     },
     {
@@ -4598,6 +4628,15 @@
       ]
     },
     {
+      "key": "chromeAutoAllow",
+      "risk": "write",
+      "riskOf": true,
+      "writable": true,
+      "prefKeys": [
+        "chromeAutoAllow"
+      ]
+    },
+    {
       "key": "chromeNewProfile",
       "risk": "write",
       "riskOf": false,
@@ -4833,6 +4872,13 @@
       "agent-bound-ask": "write=allow",
       "agent-bound-never-full": "write=allow",
       "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "chromeAutoAllow": {
+      "human": "write=allow guarded=allow",
+      "agent-unbound": "write=allow guarded=deny:NEEDS_UI",
+      "agent-bound-ask": "write=allow guarded=ask",
+      "agent-bound-never-full": "write=allow guarded=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE guarded=deny:READ_ONLY_MODE"
     },
     "chromeNewProfile": {
       "human": "write=allow",

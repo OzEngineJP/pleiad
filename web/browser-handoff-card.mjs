@@ -1,5 +1,7 @@
 // Chrome の操作待ちのカード（permission の browserHandoff。core/chrome/handoff.mjs、ADR 0148・0168）。
-// 接続の案内（reason: connect。setup / permission / denied）と、人への依頼（asked → operating）の 2 種類を 1 枚で描く。
+// 接続の案内（reason: connect。setup / consent / permission / denied）と、人への依頼（asked → operating）の 2 種類を 1 枚で描く。
+// 接続の案内は承認の形（「許可　{エージェント} に Chrome への接続を許可しますか？」）で聞き、押したら Pleiad が Chrome の確認に答える（ADR 0218）。
+// トグルがオフ（setup）なら「オンにしてつなぐ」で Pleiad がトグルを入れる。確認なしのモードでも、ここは人が押す。
 // client.mjs は枠（見出し・置き場・名簿への登録）を作り、中身とボタンはここが持つ。
 // 決着（戻した・つながった・断った・中断）はサーバーの permissionSettled で届き、畳む字は settledLine が決める。
 // リモートの端末（client が operateHere を渡す）では「Chrome で操作する」を「この端末で操作する」（右パネルの Chrome の窓で操作する。by: 'device'）と
@@ -20,9 +22,13 @@ export function handoffSummary(t, h) {
   return h.reason === 'connect' ? t(`${K}connect.lead`) : t(`${K}askedLead`, { reason: reasonLabel(t, h.reason) });
 }
 
+/** 見出しの印。接続の案内は承認（承認を待っている）、人への依頼は Chrome の操作待ち */
+export const handoffMark = (t, h) => (h?.reason === 'connect' ? t('chat.approval.headingMark') : t(`${K}headingMark`));
+
 /** 決着の 1 行。ev は permissionSettled のイベント（allow・reason・response） */
 export function settledLine(t, ev) {
   const r = ev?.response;
+  if (ev?.allow === true && r?.kind === 'connected' && r.auto) return t(`${K}done.${r.continued ? 'connectedAutoContinued' : 'connectedAuto'}`);
   if (ev?.allow === true && r?.kind === 'connected') return t(`${K}done.${r.continued ? 'connectedContinued' : 'connected'}`);
   if (ev?.allow === true) return t(`${K}done.${r?.continued ? 'resumedContinued' : 'resumed'}`);
   if (ev?.reason === 'aborted') return t(`${K}done.aborted`);
@@ -36,9 +42,10 @@ export function settledLine(t, ev) {
  *   view.buttons   … 今のボタン（actions へ並べる）。replaceButtons の呼び出しで並べ直す
  *   view.update(h) … permissionUpdate の browserHandoff を渡して描き直す
  * onChange(buttons, res) は描き直すたびに呼ばれ、client が actions を並べ直す。
+ * spinner() は「つないでいます…」の回る印（web/arc.mjs の runMark）。
  * operateHere() はリモートの端末だけ: 右パネルの Chrome の窓を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す
  */
-export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null }) {
+export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null, spinner = null }) {
   let h = ev.browserHandoff;
   const targetSessionId = () => h.targetSessionId ?? ev.targetSessionId ?? ev.sessionId;
   const body = el('div', 'bh-body');
@@ -70,26 +77,79 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     b.onclick = run(b, work);
     return b;
   };
-  const decline = () => button(t(`${K}decline`), () => cmd('resolvePermission', { id: ev.id, allow: false, always: false, messageKey: 'userDenied' }), 'btn btn-quiet');
+  const decline = (label = t(`${K}decline`)) => button(label, () => cmd('resolvePermission', { id: ev.id, allow: false, always: false, messageKey: 'userDenied' }), 'btn btn-quiet');
   const note = text => el('p', 'browser-setting-note', text);
+  const C = `${K}connect.`;
+  let copied = false, copyTimer = null;
+
+  /** 「許可　{問い}」と説明（アプリの承認と同じ形。web/computer-use.mjs の approvalBody） */
+  const ask = (question, explain) => {
+    const box = el('div', 'cu-ap bh-ask');
+    const ln = el('div', 'ln');
+    ln.append(el('span', 'lbl', t('chat.computerApproval.label')));
+    const q = el('span', 'q');
+    q.append(el('span', 'qt', question));
+    ln.append(q);
+    box.append(ln, el('div', 'expl', explain));
+    return box;
+  };
+  /** 手でトグルを入れる手順（アドレスの横に「コピー」） */
+  const steps = () => {
+    const list = el('ol', 'bh-steps');
+    const one = el('li');
+    const text = el('span', null, t(`${C}step1`));
+    const addr = el('span', 'bh-addr');
+    const copy = el('button', 'btn btn-quiet bh-copy', copied ? t(`${S}setup.copied`) : t(`${C}copy`));
+    copy.type = 'button';
+    copy.onclick = async () => {
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+        await navigator.clipboard.writeText(CHROME_INSPECT_ADDRESS);
+        copied = true; clearTimeout(copyTimer); copyTimer = setTimeout(() => { copied = false; if (!busy) paint(); }, 2000);
+      } catch { copied = false; res.className = 'res fail'; res.replaceChildren(t(`${S}setup.copyFailed`)); return; }
+      if (!busy) paint();
+    };
+    addr.append(el('code', null, CHROME_INSPECT_ADDRESS), copy);
+    text.append(addr);
+    one.append(el('span', 'n', '1'), text);
+    const two = el('li');
+    two.append(el('span', 'n', '2'), el('span', null, t(`${C}step2`)));
+    list.append(one, two);
+    return list;
+  };
+  const working = text => { const line = el('div', 'bh-working'); line.append(...(spinner ? [spinner()] : []), el('span', null, text)); return line; };
+  const agent = () => h.agent || t('chat.computerApproval.agent');
 
   function paintConnect() {
     const lead = el('div', 'bh-lead');
-    if (h.state === 'setup') {
-      lead.textContent = t(`${S}setup.status`);
-      const steps = el('ol', 'browser-conn-steps');
-      const one = el('li'); one.append(el('span', 'n', '1'), el('span', null, t(`${S}setup.step1`)), el('code', null, CHROME_INSPECT_ADDRESS));
-      const two = el('li'); two.append(el('span', 'n', '2'), el('span', null, t(`${S}setup.step2`)));
-      steps.append(one, two);
-      body.replaceChildren(lead, steps, note(t(`${S}setup.note`)));
+    if (h.state === 'setup' && h.assist === 'enabling') {
+      body.replaceChildren(working(t(`${C}enabling`)));
       buttons = [decline()];
+    } else if (h.state === 'setup' && h.enable && h.assist !== 'enable-failed') {
+      // Pleiad がトグルを入れる。確認なしのモードでも聞く（ADR 0218）
+      const manual = el('details', 'bh-manual');
+      manual.append(el('summary', null, t(`${C}manual`)), steps(), note(t(`${C}auto`)));
+      body.replaceChildren(ask(t(`${C}enableQuestion`), t(`${C}enableExplain`)), manual);
+      buttons = [...(h.auto ? [el('span', 'bh-left', t(`${C}enableAlways`))] : []),
+        decline(t('chat.approval.deny')), button(t(`${C}enableAllow`), () => cmd('chromeEnable'), 'btn btn-primary')];
+    } else if (h.state === 'setup') {
+      lead.textContent = h.assist === 'enable-failed' ? t(`${C}enableFailed`) : t(`${S}setup.status`);
+      body.replaceChildren(lead, note(t(h.assist === 'enable-failed' ? `${C}enableFailedNote` : `${C}auto`)), steps());
+      // オンにできなかった（Chrome が自分の画面を先に出していた など）: 済ませてから押し直せる
+      buttons = [decline(), ...(h.enable && h.assist === 'enable-failed' ? [button(t(`${S}denied.retry`), () => cmd('chromeEnable'), 'btn btn-primary')] : [])];
+    } else if (h.state === 'consent') {
+      body.replaceChildren(ask(t(`${C}question`, { agent: agent() }), t(`${C}explain`)));
+      buttons = [el('span', 'bh-left', t(`${C}blocking`)), decline(t('chat.approval.deny')), button(t('chat.approval.allow'), () => cmd('chromeConsent'), 'btn btn-primary')];
     } else if (h.state === 'denied') {
       lead.textContent = t(`${S}denied.status`);
       body.replaceChildren(lead);
       buttons = [decline(), button(t(`${S}denied.retry`), () => cmd('chromeConnect'), 'btn btn-primary')];
+    } else if (h.assist === 'allowing') {
+      body.replaceChildren(working(t(`${C}allowing`)));
+      buttons = [decline()];
     } else {
       lead.textContent = t(`${S}permission.status`);
-      body.replaceChildren(lead, note(t(`${S}permission.note`)));
+      body.replaceChildren(lead, note(t(h.assist === 'allow-failed' ? `${C}allowFailedNote` : `${S}permission.note`)));
       buttons = [decline(), ...(h.dialog ? [button(t(`${S}permission.raise`), () => cmd('chromeRaiseDialog'), 'btn btn-primary')] : [])];
     }
   }
@@ -140,6 +200,7 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
     res,
     get buttons() { return buttons; },
     summary: () => handoffSummary(t, h),
+    mark: () => handoffMark(t, h),
     update(next) {
       if (!next) return;
       h = { ...h, ...next };

@@ -57,6 +57,7 @@ function fakeWin32({ directForeground = true } = {}) {
     currentThread: () => 1,
     attachThreadInput(from, to, on) { calls.push(['attachThreadInput', from, to, on]); w.attached = on; return true; },
     postMessage(hwnd, msg, wp, lp) { calls.push(['postMessage', hwnd, msg, wp, lp]); return true; },
+    setTopmost(hwnd, on) { calls.push(['setTopmost', hwnd, on]); windows.get(hwnd).topmost = on; return true; },
   };
   return w;
 }
@@ -1003,5 +1004,121 @@ export default async function (t) {
     t.ok('最小化した窓の矩形は返さない', os.bounds(ref) === null);
     w.windows.delete(800);
     t.ok('閉じた窓・知らない ref の矩形は返さない', os.bounds(ref) === null && os.bounds({ id: 'unknown' }) === null);
+  }
+
+  // ===== Chrome の確認を押す・トグルを入れる（ADR 0218）。UI Automation（PowerShell）は偽の uia で置き換える =====
+  {
+    const w = fakeWin32();
+    w.add(900, { title: 'ふつうの Chrome の窓', rect: { left: 0, top: 0, right: 3840, bottom: 2160 } });
+    const asked = [];
+    let answer = { ok: true };
+    const os = createWin32ChromeOs({ win32: w, uia: async request => { asked.push(request); return answer; } });
+    const features = os.capabilities().features;
+    t.ok('Windows の層の features に allow・enable がある', features.allow === true && features.enable === true, JSON.stringify(features));
+    const snap = os.snapshotWindows();
+    w.add(910, DIALOG);
+    const ref = os.findPermissionDialog({ since: snap });
+    t.ok('確認として出した ref の allowPermission は、その窓へ uia の allow を頼む', await os.allowPermission(ref) === true && asked.length === 1 && asked[0].op === 'allow' && asked[0].hwnd === 910, JSON.stringify(asked));
+    t.ok('確認として出していない ref（ふつうの窓）には何もしない', await os.allowPermission({ id: '900' }) === false && await os.allowPermission({ id: 'nope' }) === false && asked.length === 1);
+    answer = { ok: false, reason: 'no-button' };
+    t.ok('uia が押せなければ false（人が押す案内に戻る）', await os.allowPermission(ref) === false);
+    answer = { ok: true };
+    w.windows.get(910).pid = 20;
+    t.ok('確認の窓がブラウザーの実行ファイルでなくなっていたら押さない', await os.allowPermission(ref) === false && asked.length === 2);
+    w.windows.delete(910);
+    t.ok('閉じた確認の窓は押さない', await os.allowPermission(ref) === false && asked.length === 2);
+  }
+  {
+    // トグル: 題に nonce を持つ窓を画面の外に開き、隠し、透明・素通しのまま画面の中の一番上へ置いて uia の enable を頼み、閉じる
+    const make = ({ others = true, opens = true, answers = {} } = {}) => {
+      const w = fakeWin32();
+      if (others) w.add(900, { title: 'ふつうの Chrome の窓', rect: { left: 0, top: 0, right: 2000, bottom: 1200 } });
+      w.add(1, { title: 'メモ帳', className: 'Notepad', pid: 30 });
+      w.fg = 1;
+      const exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+      const spawned = [];
+      const spawn = (file, args) => {
+        spawned.push(args);
+        const title = /<title>([a-f0-9]+)<\/title>/.exec(args.at(-1))?.[1] ?? '';
+        // 起動中の Chrome に渡した新しい窓は、--window-position を無視して画面の中に開き、前面を取る（実機）
+        // opens: 数なら、その回目の頼みで初めて開く（起動していない Chrome は、起動のときの URL を開かないことがある）
+        if (opens === true || opens === spawned.length) { w.add(950, { title, rect: { left: 100, top: 100, right: 1300, bottom: 1000 } }); w.fg = 950; }
+        return { on() {}, unref() {}, pid: 77 };
+      };
+      let clock = 0;
+      const seen = [];
+      const os = createWin32ChromeOs({ win32: w, env: ENV, exists: p => p === exe, spawn, now: () => (clock += 1000), sleep: async () => {},
+        timers: { setInterval: () => 1, clearInterval: () => {} },
+        uia: async request => { const wnd = w.windows.get(request.hwnd); seen.push({ request, rect: { ...wnd.rect }, alpha: wnd.alpha, exStyle: wnd.exStyle, fg: w.fg, topmost: wnd.topmost === true }); return answers[request.op] ?? { ok: true }; } });
+      return { w, os, spawned, seen };
+    };
+    {
+      const { w, os, spawned, seen } = make();
+      const browser = os.locateBrowser({});
+      const result = await os.enableRemoteDebugging({ browser, profileDir: 'Profile 1' });
+      t.ok('enableRemoteDebugging は ok', result.ok === true, JSON.stringify(result));
+      const args = spawned[0] ?? [];
+      t.ok('chrome.exe を --profile-directory・--new-window と、題が nonce の data: のページで起こす（chrome:// は渡さない）', args.includes('--profile-directory=Profile 1') && args.includes('--new-window') && /^data:text\/html,<title>[a-f0-9]{24}<\/title>$/.test(args.at(-1)) && !args.some(a => a.startsWith('chrome://')), JSON.stringify(args));
+      const [nav, toggle] = seen;
+      t.ok('uia は navigate（その窓・chrome://inspect/#remote-debugging・題の nonce）→ toggle の順', seen.length === 2 && nav.request.op === 'navigate' && nav.request.hwnd === 950 && nav.request.url === 'chrome://inspect/#remote-debugging'
+        && /^[a-f0-9]{24}$/.test(nav.request.nonce) && toggle.request.op === 'toggle' && toggle.request.hwnd === 950, JSON.stringify(seen.map(x => x.request)));
+      t.ok('uia の間、窓は透明（alpha 0）・素通し・タスクバーの外で、画面の中（主モニターの左上）にある', [nav, toggle].every(one => one.alpha === 0 && (one.exStyle & WS_EX_LAYERED) && (one.exStyle & WS_EX_TRANSPARENT) && (one.exStyle & WS_EX_TOOLWINDOW) && !(one.exStyle & WS_EX_APPWINDOW)
+        && one.rect.left === 40 && one.rect.top === 40), JSON.stringify(nav));
+      t.ok('uia の間は最前面（前面に戻した窓が上に重なっても覆われない）。終わったら外す', nav.topmost === true && toggle.topmost === true && w.windows.get(950).topmost === false);
+      t.ok('ページを開く間だけ、その窓が前面（Chrome はアドレス欄の Enter を前面の窓でしか受けない）', nav.fg === 950, String(nav.fg));
+      t.ok('開いたら、トグルの前に起こす前の前面（メモ帳）へ返す', toggle.fg === 1 && w.fg === 1, `${toggle.fg} ${w.fg}`);
+      t.ok('同じ Chrome にほかの窓があれば、入れた後で窓を閉じる（WM_CLOSE）', w.calls.some(c => c[0] === 'postMessage' && c[1] === 950 && c[2] === WM_CLOSE));
+      t.ok('利用者の窓（900）には触らない', !w.calls.some(c => c[1] === 900 && ['setWindowPos', 'setExStyle', 'setLayeredAlpha', 'postMessage'].includes(c[0])));
+    }
+    {
+      const { w, os, seen } = make({ others: false });
+      const result = await os.enableRemoteDebugging({ browser: os.locateBrowser({}), profileDir: 'Default' });
+      t.ok('ほかに Chrome の窓が無い（この窓で Chrome を起動した）なら、閉じずに見える形へ戻す（閉じると Chrome ごと終わる）', result.ok === true && seen.length === 2
+        && !w.calls.some(c => c[0] === 'postMessage' && c[1] === 950) && w.windows.get(950).alpha === 255, JSON.stringify(w.windows.get(950)));
+    }
+    {
+      const { w, os } = make({ answers: { toggle: { ok: false, reason: 'no-switch' } } });
+      const result = await os.enableRemoteDebugging({ browser: os.locateBrowser({}), profileDir: 'Default' });
+      t.ok('トグルが見つからなければ ok: false と理由。窓は閉じ、前面はメモ帳のまま', result.ok === false && result.reason === 'no-switch' && w.calls.some(c => c[0] === 'postMessage' && c[1] === 950 && c[2] === WM_CLOSE) && w.fg === 1, JSON.stringify(result));
+    }
+    {
+      const { w, os, seen } = make({ answers: { navigate: { ok: false, reason: 'not-navigated' } } });
+      const result = await os.enableRemoteDebugging({ browser: os.locateBrowser({}), profileDir: 'Default' });
+      t.ok('ページが開かなければ toggle は呼ばず not-navigated。前面はメモ帳へ返す', result.ok === false && result.reason === 'not-navigated' && seen.length === 1 && w.fg === 1, JSON.stringify(result));
+    }
+    {
+      const { os, seen, spawned } = make({ opens: false });
+      const result = await os.enableRemoteDebugging({ browser: os.locateBrowser({}), profileDir: 'Default' });
+      t.ok('頼み直しても窓が見つからなければ no-window（uia は呼ばない。頼むのは 2 回まで）', result.ok === false && result.reason === 'no-window' && seen.length === 0 && spawned.length === 2, JSON.stringify(result));
+    }
+    {
+      // 起動していない Chrome: 1 回目の頼みでは Pleiad の窓が開かず、起動した Chrome に頼み直すと開く
+      const { w, os, seen, spawned } = make({ others: false, opens: 2 });
+      const result = await os.enableRemoteDebugging({ browser: os.locateBrowser({}), profileDir: 'Default' });
+      t.ok('1 回目で窓が開かなければ、同じ題の URL でもう一度頼み、開いた窓でトグルを入れる', result.ok === true && spawned.length === 2 && spawned[0].at(-1) === spawned[1].at(-1) && seen.length === 2, JSON.stringify({ result, n: spawned.length }));
+      t.ok('この窓で Chrome を起動したので、閉じずに見える形へ戻す', !w.calls.some(c => c[0] === 'postMessage' && c[1] === 950));
+    }
+    {
+      const { os, seen, spawned } = make();
+      const result = await os.enableRemoteDebugging({ browser: { id: 'nope' }, profileDir: 'Default' });
+      t.ok('層が出していないブラウザーでは起こさない', result.ok === false && spawned.length === 0 && seen.length === 0, JSON.stringify(result));
+    }
+  }
+  {
+    // main の attachChromeOs は、押す・入れるの結果を待ってから返す
+    const sent = [];
+    const handlers = [];
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    const chromeOs = { ...createChromeOs({ platform: 'linux' }), allowPermission: async () => { await gate; return true; } };
+    attachChromeOs({ on: (type, fn) => handlers.push(fn), postMessage: m => sent.push(m) }, { chromeOs, log: () => {} });
+    handlers.forEach(fn => fn({ type: 'chrome-os', id: 'a1', action: 'allowPermission', args: { ref: { id: '1' } } }));
+    await new Promise(resolve => setImmediate(resolve));
+    t.ok('押している間は返さない', !sent.some(m => m.type === 'chrome-os-result'));
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+    t.ok('押し終えたら chrome-os-result を返す', sent.some(m => m.type === 'chrome-os-result' && m.id === 'a1' && m.ok === true && m.result === true), JSON.stringify(sent));
+    const unsupported = createChromeOs({ platform: 'linux' });
+    t.ok('使えない OS の層は allow・enable が false', unsupported.capabilities().features.allow === false && unsupported.capabilities().features.enable === false);
   }
 }

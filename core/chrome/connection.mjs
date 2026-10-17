@@ -1,9 +1,12 @@
 // PC の Chrome への CDP 接続 1 本の持ち主（docs/inapp-browser.md「Chrome への接続」、ADR 0148・0153）。
 //
-// 会話をまたいで 1 本を使い回す（許可の確認は接続ごとに出るため、切ってつなぎ直さない）。状態は 5 つ:
+// 会話をまたいで 1 本を使い回す（許可の確認は接続ごとに出るため、切ってつなぎ直さない）。状態は 6 つ:
 //   off         何もしていない（起動直後・「切る」・「やめる」・接続が切れた後）
 //   setup  (A)  Chrome のトグル（chrome://inspect/#remote-debugging）がオフ。DevToolsActivePort が無い（reason null）・書かれたポートにつながらない
-//               （reason unreachable。Chrome が起動していないときも。ファイルは Chrome を閉じても残る）。1 秒ごとに読み直し、時間では打ち切らない
+//               （reason unreachable。Chrome が起動していないときも。ファイルは Chrome を閉じても残る）。1 秒ごとに読み直し、時間では打ち切らない。
+//               人が「オンにしてつなぐ」を押すと（enable）、OS の層がトグルを入れる（ADR 0218）。確認なしのモードでも、自動では入れない
+//   consent     ポートは生きているが、Chrome の確認に Pleiad が答える前の、Pleiad の中の許可を待っている（ADR 0218）。Chrome にはまだ何も出さない。
+//               Pleiad が確認を押せる（OS の層の allow・設定の autoAllow）ときだけ入る。許可（consent）・設定の「つなぐ」・確認なしのモードの demand で抜ける
 //   permission (B)  Chrome に「リモート デバッグを許可しますか？」が出ている。待ちは無期限。Chrome の約 5 分の打ち切りは、Pleiad が確認を閉じてつなぎ直して覆う
 //   denied (C)  利用者が「キャンセル」を押した（打ち切りでは入らない）
 //   connected (D)  つながった。ws が閉じたら off＋理由。自動ではつなぎ直さない（つなぐたびに確認が出るため）
@@ -11,10 +14,12 @@
 //
 // OS の値（窓のハンドルなど）は持たない。窓の操作は os（core/chrome/os.mjs の口）だけを呼ぶ。
 // 第 2 段で上りへ送る CDP は Browser.getVersion だけ（Target.* は送らない。利用者のタブの URL・題を受け取らない）。
+// assist は Pleiad が代わりに押している段: enabling（トグルを入れている）・enable-failed（入れられなかった。人が入れる案内）・
+// allowing（確認を押している）・allow-failed（押せなかった。人が押す案内）。状態が替わると消える
 // ログには状態・round・raise の method だけを出す（窓の題や Chrome の値は出さない）。
 import { WebSocket as NodeWebSocket } from 'ws';
 import net from 'node:net';
-import { readActivePort } from './locate.mjs';
+import { readActivePort, readLastUsedProfile } from './locate.mjs';
 import { createCdp } from './cdp.mjs';
 
 export class ChromeConnectionError extends Error {
@@ -33,6 +38,8 @@ const DEFAULTS = {
   yieldWatchMs: 1000,
   selfCloseGuardMs: 3000,
   probeMs: 1000,
+  /** 確認を押してから、ws が開くのを待つ。過ぎたら人が押す案内に戻す */
+  allowOpenMs: 5000,
 };
 
 const realClock = { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: t => clearTimeout(t) };
@@ -54,16 +61,18 @@ export function probeLoopbackPort(port, timeoutMs = DEFAULTS.probeMs) {
  * @param os  core/chrome/os.mjs の口（偽物でもよい）
  * @param link  接続の子への口（core/chrome/link.mjs。ADR 0167）。あれば ws はそこ経由で張る・引き継ぐ。無い・切れたときは WebSocketImpl（このプロセスの中の ws）
  */
-export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSocket, link = null, clock = realClock, probePort = probeLoopbackPort, log = () => {}, ...overrides }) {
+export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSocket, link = null, clock = realClock, probePort = probeLoopbackPort, log = () => {},
+  autoAllow = () => true, lastUsedProfile = readLastUsedProfile, ...overrides }) {
   const opt = { ...DEFAULTS, ...overrides };
   const home = locate?.userDataDir ? locate : null;
   const listeners = new Set();
   const waiters = new Set();
-  let status = { state: 'off', reason: null, dialog: false, product: null };
+  let status = { state: 'off', reason: null, dialog: false, product: null, assist: null };
   let lastEmitted = null;
   let current = null;        // 進行中の試行（setup・permission・denied の間）
   let connected = null;      // { cdp, port }
   let userStarted = false;   // 設定の「つなぐ」から始めた試行か（待つ人がいなくなっても止めない）
+  let consentNext = false;   // 試行が始まる前に許可が来た（確認なしのモードの demand）
   let bEntry = { raised: false };   // B に入ってから確認を前に出したか
   let seq = 0;
   let closedForGood = false;
@@ -74,15 +83,21 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   const caps = () => os.capabilities();
   const linked = () => (link?.alive ? link : null);
   const wsImpl = () => linked()?.WebSocketImpl ?? WebSocketImpl;
+  /** Chrome の確認を Pleiad が押すか（OS の層が押せて、設定で止めていない）。押さないときは consent に入らず、今までどおり人が Chrome で押す */
+  const pressing = async () => {
+    if (caps().features?.allow !== true) return false;
+    try { return (await autoAllow()) !== false; } catch { return true; }
+  };
   /** 接続の子の経由では、CDP の番号を前のサーバーが振った番号より後から始める（古い答えと混ぜない） */
   const firstId = () => linked()?.welcome.firstId ?? 1;
 
   /** 公開する状態。OS の層が使えないときは unsupported で固定 */
   function state() {
-    if (!home) return { state: 'unsupported', reason: 'platform', dialog: false, product: null };
+    if (!home) return { state: 'unsupported', reason: 'platform', dialog: false, product: null, assist: null };
     const c = caps();
-    if (!c.supported && c.reason !== 'pending') return { state: 'unsupported', reason: c.reason ?? 'platform', dialog: false, product: null };
-    return { ...status };
+    if (!c.supported && c.reason !== 'pending') return { state: 'unsupported', reason: c.reason ?? 'platform', dialog: false, product: null, assist: null };
+    // enable は OS の層がトグルを入れられるか（画面の「オンにしてつなぐ」を出すか）
+    return { ...status, enable: c.features?.enable === true };
   }
   function emit() {
     if (closedForGood) return;
@@ -95,9 +110,10 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   function setStatus(patch) {
     const next = { ...status, ...patch };
     if (next.state !== 'connected') next.product = null;
-    const changed = next.state !== status.state || next.reason !== status.reason || next.dialog !== status.dialog;
+    if (next.state !== status.state && !('assist' in patch)) next.assist = null;
+    const changed = next.state !== status.state || next.reason !== status.reason || next.dialog !== status.dialog || next.assist !== status.assist;
     status = next;
-    if (changed) log(`chrome: state=${next.state}${next.reason ? ` reason=${next.reason}` : ''}${next.state === 'permission' ? ` dialog=${next.dialog}` : ''}`);
+    if (changed) log(`chrome: state=${next.state}${next.reason ? ` reason=${next.reason}` : ''}${next.state === 'permission' ? ` dialog=${next.dialog}` : ''}${next.assist ? ` assist=${next.assist}` : ''}`);
     emit();
   }
   const rejectWaiters = error => { const list = [...waiters]; waiters.clear(); for (const w of list) w.reject(error); };
@@ -110,32 +126,64 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
   // ---- 試行 ----------------------------------------------------------------------------------
   const stale = (att, rnd) => closedForGood || att.stopped || current !== att || (rnd !== undefined && att.cur !== rnd);
   const clearTimer = (obj, key) => { if (obj[key]) { clock.clearTimeout(obj[key]); obj[key] = null; } };
-  const clearRound = rnd => { for (const key of ['reissueTimer', 'guardTimer', 'yieldTimer']) clearTimer(rnd, key); rnd.finding = false; };
+  const clearRound = rnd => { for (const key of ['reissueTimer', 'guardTimer', 'yieldTimer', 'allowTimer']) clearTimer(rnd, key); rnd.finding = false; };
 
   async function begin() {
     if (closedForGood || current) return;
     if (!await isSupported()) { rejectWaiters(new ChromeConnectionError('unsupported')); emit(); return; }
     if (closedForGood || current || connected) return;
     if (!waiters.size && !userStarted) return;   // 待つ人が、試行が始まる前に外れた
-    const att ={ id: ++seq, stopped: false, cur: null, round: 0, pollTimer: null };
+    const att = { id: ++seq, stopped: false, cur: null, round: 0, pollTimer: null, consented: userStarted || consentNext, allowFailed: false };
+    consentNext = false;
     current = att;
     await tryPort(att);
   }
 
-  /** ポートが生きているか。生きていれば upgrade を投げる（B）、そうでなければ A で 1 秒ごとに読み直す */
+  /** ポートが生きているか。生きていれば upgrade を投げる（B。Pleiad が押すなら、許可を待つ consent を先に挟む）、そうでなければ A で 1 秒ごとに読み直す */
+  /**
+   * 読み直しは試行ごとに 1 本だけ。読んでいる間に許可（grant）や「オンにしてつなぐ」が来たら、終わった後にもう 1 回読む
+   * （2 本が並ぶと、どちらも upgrade を投げて確認が 2 つ出る）
+   */
   async function tryPort(att) {
+    if (att.reading) { att.again = true; return; }
+    att.reading = true;
+    try { await readPort(att); }
+    finally {
+      att.reading = false;
+      if (att.again) { att.again = false; if (!stale(att) && !att.cur) run(tryPort(att)); }
+    }
+  }
+
+  async function readPort(att) {
     const info = await readActivePort(home.userDataDir);
     if (stale(att)) return;
     if (!info || !await probePort(info.port)) {
       if (stale(att)) return;
       if (att.cur) { await sweep(att.cur); att.cur = null; if (stale(att)) return; }
       // ファイルはあるのにつながらない（unreachable）: Chrome が起動していないか、トグルがオフ（どちらでもファイルは残る）。ファイルが無い（null）: トグルを一度もオンにしていない
-      setStatus({ state: 'setup', reason: info ? 'unreachable' : null, dialog: false });
+      // トグルを入れている間・入れられなかった後の印（assist）は、A のままなら残す
+      setStatus({ state: 'setup', reason: info ? 'unreachable' : null, dialog: false, ...(status.state === 'setup' ? {} : { assist: null }) });
       clearTimer(att, 'pollTimer');
       att.pollTimer = clock.setTimeout(() => { att.pollTimer = null; if (!stale(att)) run(tryPort(att)); }, opt.pollMs);
       return;
     }
+    if (!att.consented && await pressing()) {
+      if (stale(att)) return;
+      // Chrome には何も出さず、Pleiad の中の許可を待つ。ポートが死んだら A へ戻すため、読み直しは続ける
+      setStatus({ state: 'consent', reason: null, dialog: false });
+      clearTimer(att, 'pollTimer');
+      att.pollTimer = clock.setTimeout(() => { att.pollTimer = null; if (!stale(att)) run(tryPort(att)); }, opt.pollMs);
+      return;
+    }
+    clearTimer(att, 'pollTimer');
     await startUpgrade(att, info);
+  }
+
+  /** 試行に許可を付ける。consent で待っていれば、すぐ upgrade へ進める */
+  function grant(att) {
+    if (!att || att.consented) return;
+    att.consented = true;
+    if (status.state === 'consent' && !stale(att)) { clearTimer(att, 'pollTimer'); run(tryPort(att)); }
   }
 
   async function startUpgrade(att, info) {
@@ -144,13 +192,17 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
     const [snap, fg] = await Promise.all([os.snapshotWindows(), os.foreground()]);
     if (stale(att)) return;
     const rnd = { n: att.round, snap: snap ?? [], prevFg: fg, ws: null, dialog: null, opened: false, selfClose: false, upgradeAt: clock.now(), port: info.port, path: info.path,
-      reissueTimer: null, guardTimer: null, yieldTimer: null, finding: false };
+      reissueTimer: null, guardTimer: null, yieldTimer: null, allowTimer: null, finding: false };
     att.cur = rnd;
     // 接続の子との縁が途中で切れていたら、子が持つ古い ws を終わらせてから、このサーバーの中で張る（二重の接続・二重の確認にしない）
     if (link && !link.alive) { await link.retireChild?.(); if (stale(att)) return; }
     const ws = new (wsImpl())(`ws://127.0.0.1:${info.port}${info.path}`, { perMessageDeflate: false });
     rnd.ws = ws;
-    setStatus({ state: 'permission', reason: null, dialog: att.round === 0 ? false : status.dialog });
+    // 押すつもりの試行は、確認が出る前から「つないでいます」（allowing）にする（人に Chrome の確認を探させない）
+    const willPress = att.consented && !att.allowFailed && await pressing();
+    if (stale(att, rnd)) return;
+    const assist = willPress ? 'allowing' : att.allowFailed ? 'allow-failed' : null;
+    setStatus({ state: 'permission', reason: null, dialog: att.round === 0 ? false : status.dialog, assist });
     wireRound(att, rnd, ws, opt.reissueMs);
   }
 
@@ -178,13 +230,38 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       const ref = await os.findPermissionDialog({ since: rnd.snap, port: rnd.port });
       if (stale(att, rnd) || !rnd.finding) return;
       if (ref) { rnd.finding = false; await onDialogFound(att, rnd, ref); return; }
-      if (clock.now() >= deadline) { rnd.finding = false; if (att.round === 0) setStatus({ dialog: false }); return; }
+      if (clock.now() >= deadline) {
+        rnd.finding = false;
+        // 押すつもりで待っていたのに確認が見つからない。人が Chrome で押す案内に戻す
+        if (att.round === 0) setStatus({ dialog: false, ...(status.assist === 'allowing' ? { assist: 'allow-failed' } : {}) });
+        return;
+      }
       await sleep(opt.dialogPollMs);
     }
   }
 
   async function onDialogFound(att, rnd, ref) {
     rnd.dialog = ref;
+    if (att.consented && !att.allowFailed && await pressing()) {
+      if (stale(att, rnd) || rnd.opened || rnd.failed) return;
+      // 許可を得た試行の確認は、Pleiad が押す（ADR 0218）。押せない・押しても開かないときは、人が押す案内（前に出す）へ戻す
+      setStatus({ dialog: true, assist: 'allowing' });
+      const ok = await os.allowPermission(ref);
+      if (stale(att, rnd) || rnd.opened || rnd.failed) return;
+      log(`chrome: allow ok=${ok === true}`);
+      if (ok === true) {
+        rnd.allowTimer = clock.setTimeout(() => {
+          rnd.allowTimer = null;
+          if (stale(att, rnd) || rnd.opened || rnd.failed) return;
+          att.allowFailed = true;
+          setStatus({ assist: 'allow-failed' });
+          run(onDialogFound(att, rnd, ref));
+        }, opt.allowOpenMs);
+        return;
+      }
+      att.allowFailed = true;
+      setStatus({ assist: 'allow-failed' });
+    }
     setStatus({ dialog: true });
     // 前に出すのは、B に入って最初に見つけた 1 回だけ（出し直した確認は前に出さない）
     if (!bEntry.raised) {
@@ -310,8 +387,10 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
      * つながった cdp を返す。何人が待っても試行は 1 本。期限は持たない。abort はその人だけを外す
      * （ほかに待つ人がいなくて、設定の「つなぐ」から始めた試行でもなければ、試行も止める）
      */
-    async demand({ signal } = {}) {
+    async demand({ signal, consent = false } = {}) {
       if (closedForGood) throw new ChromeConnectionError('closed');
+      // 確認なしのモードの会話（consent: true）は、Pleiad の中の許可を待たない。始まっている試行にも許可を付ける
+      if (consent) { if (current) grant(current); else consentNext = true; }
       // つながっていれば層を待たない。更新の直後は、接続を引き継いでも main の層はサーバーの待ち受けの後でないと付かない（待つと上りがつながらないまま時間切れになる）
       if (connected && !connected.cdp.closed) return connected.cdp;
       if (!await isSupported()) throw new ChromeConnectionError('unsupported');
@@ -335,7 +414,43 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       if (connected) return;
       userStarted = true;
       if (!current) { await begin(); return; }
+      grant(current);   // 人が押した「つなぐ」は、この接続の許可でもある
       if (status.state === 'denied') await this.retry();
+    },
+    /** Pleiad の中の許可（カードの「許可」）。consent で待っていれば upgrade へ進む。試行が無ければ何もしない */
+    consent() {
+      if (closedForGood || !current) return false;
+      grant(current);
+      return true;
+    },
+    /**
+     * 「オンにしてつなぐ」: OS の層にトグルを入れてもらい、この接続の許可も兼ねる（ADR 0218。2 回聞かない）。
+     * A（setup）のときだけ動く。入れられなければ assist: enable-failed（人が入れる案内）。試行が無ければ設定の「つなぐ」と同じに始める
+     */
+    async enable() {
+      if (closedForGood) return { ok: false, reason: 'closed' };
+      if (!await isSupported() || caps().features?.enable !== true) return { ok: false, reason: 'unsupported' };
+      if (connected) return { ok: true };
+      if (!current) { userStarted = true; await begin(); }
+      const att = current;
+      if (!att) return { ok: false, reason: 'no-attempt' };
+      grant(att);
+      if (status.state !== 'setup' || status.assist === 'enabling') return { ok: status.state !== 'setup' };
+      setStatus({ assist: 'enabling' });
+      const browser = await os.locateBrowser({ product: home.browser ?? 'chrome' });
+      const profileDir = await lastUsedProfile(home.userDataDir);
+      const result = browser
+        ? await os.enableRemoteDebugging({ browser, profileDir, ...(home.custom ? { userDataDir: home.userDataDir } : {}) })
+        : { ok: false, reason: 'no-browser' };
+      if (stale(att)) return { ok: false, reason: 'stale' };
+      log(`chrome: enable ok=${result?.ok === true}${result?.reason ? ` reason=${result.reason}` : ''}`);
+      if (result?.ok !== true) { if (status.state === 'setup') setStatus({ assist: 'enable-failed' }); return { ok: false, reason: String(result?.reason ?? 'failed') }; }
+      if (status.state === 'setup') {
+        setStatus({ assist: null });
+        clearTimer(att, 'pollTimer');
+        run(tryPort(att));
+      }
+      return { ok: true };
     },
     /** C の「もう一度」: B（トグルがオフなら A）からやり直す */
     async retry() {
@@ -393,11 +508,12 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
         cdp.onClose(() => { run(onConnectedClosed(cdp, welcome.port)); });
         return true;
       }
-      const att = { id: ++seq, stopped: false, cur: null, round: 0, pollTimer: null };
+      // 引き継いだ確認待ちは、前の main が人に任せた（または押した）もの。Pleiad はもう押さない
+      const att = { id: ++seq, stopped: false, cur: null, round: 0, pollTimer: null, consented: true, allowFailed: true };
       current = att; userStarted = true; bEntry = { raised: true };   // 確認は前の main が前に出した。出し直しの前面は返さない
       const upgradeAt = Number(welcome.upgradeAt) || clock.now();
       const rnd = { n: 0, snap: [], prevFg: null, ws: socket, dialog: null, opened: false, selfClose: false, upgradeAt, port: welcome.port, path: welcome.path,
-        reissueTimer: null, guardTimer: null, yieldTimer: null, finding: false };
+        reissueTimer: null, guardTimer: null, yieldTimer: null, allowTimer: null, finding: false };
       att.cur = rnd;
       setStatus({ state: 'permission', reason: null, dialog: false });
       wireRound(att, rnd, socket, Math.max(0, opt.reissueMs - (clock.now() - upgradeAt)));

@@ -7,8 +7,10 @@
 // エージェントの窓（題の nonce か窓の大きさで見つけた窓）として出した ref だけ。
 
 const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createUiaRunner } = require('./win32-uia.cjs');
 
 const BROWSER_CLASS = 'Chrome_WidgetWin_1';   // Electron のアプリも同じクラスなので、実行ファイルでも絞る
 const BROWSER_EXES = new Set(['chrome.exe', 'msedge.exe']);
@@ -44,7 +46,21 @@ const PROFILE_DIR = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
 const NONCE = /^[a-f0-9]{8,64}$/;
 const NONCE_URL = /^data:text\/html[,;]/;
 
-const FEATURES = Object.freeze({ dialog: true, raise: true, launch: true, conceal: true, watch: true, bounds: true });
+const FEATURES = Object.freeze({ dialog: true, raise: true, launch: true, conceal: true, watch: true, bounds: true, allow: true, enable: true });
+
+// リモート デバッグのトグルの画面（ADR 0218）。外からは開けない（コマンドラインで渡すと Chrome は新しいタブにする）ので、Pleiad が開いた窓のアドレス欄に入れる
+const INSPECT_URL = 'chrome://inspect/#remote-debugging';
+/** トグルの窓を開いてから見つけるまで（Chrome が起動していなければ起動から） */
+const ENABLE_FIND_MS = 20_000;
+/**
+ * 窓がこれだけ経っても見つからなければ、同じ URL でもう一度頼む。起動していない Chrome は、起動のときに渡した URL を開かないことがある
+ * （起動の画面・前回の続きを優先する。実機で、閉じた Chrome に頼むと Pleiad の窓が開かなかった）。2 回目は起動した Chrome に渡るので開く
+ */
+const ENABLE_RELAUNCH_MS = 5_000;
+/** 窓を探す間隔。見つけるまでの間は窓が見えるので短くする */
+const ENABLE_POLL_MS = 50;
+/** トグルを探して押すまで（PowerShell の起動を除く） */
+const ENABLE_UIA_MS = 12_000;
 
 const exeName = path_ => (typeof path_ === 'string' && path_ ? path_.split(/[\\/]/).pop().toLowerCase() : null);
 const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
@@ -57,10 +73,13 @@ const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
  * @param [deps.exists] ファイルがあるか（既定は fs.existsSync）
  * @param [deps.timers] 前面の見張りの周期（既定は setInterval / clearInterval）
  * @param [deps.appHwnd] Pleiad 自身の窓（main の BrowserWindow）のハンドルを返す関数。引き継ぎで窓を戻す画面を、押した時の前面でなく Pleiad の窓のある画面にするのに使う
+ * @param [deps.uia] Chrome 自身の画面を UI Automation で押す口（win32-uia.cjs の createUiaRunner。テストは偽物）
+ * @param [deps.sleep] 待つ（既定は setTimeout。テストは偽物）
  */
 function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn, env = process.env, exists = fs.existsSync,
-  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null, pointToDip = null }) {
-  const refs = new Map();   // id -> { hwnd, kind: 'dialog' | 'foreign' | 'agent', ex0?, concealed? }
+  timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null, pointToDip = null,
+  uia = createUiaRunner({ env, log }), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const refs = new Map();   // id -> { hwnd, kind: 'dialog' | 'foreign' | 'agent', ex0?, concealed?, ghost? }
   const browsers = new Map();   // id -> { path, product }
   let browserSeq = 0;
   const remember = (hwnd, kind) => {
@@ -257,6 +276,97 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid)))) { refs.delete(ref.id); return false; }
       return win32.postMessage(entry.hwnd, WM_CLOSE, 0, 0) === true;
     } catch { return false; }
+  }
+
+  /** ref が、今もブラウザーの実行ファイルの、ブラウザーのクラスの窓か */
+  const stillBrowser = entry => {
+    try {
+      const info = win32.windowInfo(entry.hwnd);
+      return info.className === BROWSER_CLASS && BROWSER_EXES.has(exeName(win32.processPath(info.pid))) ? info : null;
+    } catch { return null; }
+  };
+
+  /**
+   * 確認の窓として出した ref の「許可する」を押す（ADR 0218）。ボタンは UI Automation の InvokePattern で押し、マウス・キーボードは使わない。
+   * ボタンは名前（Allow・許可する）で探し、ちょうど 1 つのときだけ押す。ほかの言語の Chrome・見つからないときは false（人が押す案内に戻る）
+   */
+  async function allowPermission(ref) {
+    const entry = known(ref);
+    if (!entry || entry.kind !== 'dialog' || !alive(entry.hwnd) || !stillBrowser(entry)) return false;
+    const result = await uia({ op: 'allow', hwnd: entry.hwnd });
+    log(`allow ok=${result?.ok === true}${result?.reason ? ` reason=${result.reason}` : ''}`);
+    return result?.ok === true;
+  }
+
+  /**
+   * Chrome のリモート デバッグのトグルをオンにする（ADR 0218。人が「オンにしてつなぐ」を押したときだけ core が呼ぶ）。
+   * 1. 題に nonce を持つ新しい窓を画面の外に開き、隠す（conceal。透明・マウスの素通し・タスクバーの外）
+   * 2. 透明のまま、画面の中の最前面（topmost）へ置く。Chrome は画面の外・覆われた窓のページの中身をアクセシビリティに出さず、
+   *    ほかの窓が前面に戻ると一番上（HWND_TOP）の窓にも重なる（実機で確認）
+   * 3. その窓のアドレス欄に chrome://inspect/#remote-debugging を入れて開く（win32-uia.ps1 の navigate）。Chrome はアドレス欄の Enter を、
+   *    窓が前面のときしか受けないので、開く間（1 秒未満）だけこの窓に前面を持たせ、開いたらすぐ起こす前の前面へ返す
+   * 4. トグルを UI Automation で入れる（toggle。前面は要らない）
+   * 5. 窓を閉じる。ほかに同じ Chrome の窓が無い（この窓で Chrome を起動した）ときは、閉じると Chrome ごと終わるので、見える形へ戻して残す
+   * 利用者の窓・タブ・アドレス欄には触らない
+   */
+  async function enableRemoteDebugging({ browser, profileDir, userDataDir = null } = {}) {
+    const nonce = crypto.randomBytes(12).toString('hex');
+    let before = 0;
+    try { before = win32.foreground(); } catch { before = 0; }
+    const launched = launchWindow({ browser, profileDir, url: `data:text/html,<title>${nonce}</title>`, nonce, userDataDir, position: hiddenSpot(), size: { width: 800, height: 600 } });
+    if (!launched.ok) return { ok: false, reason: launched.reason ?? 'launch' };
+    let ref = null;
+    const start = now();
+    let relaunched = false;
+    while (!ref && now() - start < ENABLE_FIND_MS) {
+      await sleep(ENABLE_POLL_MS);
+      ref = findWindowByNonce(nonce);
+      if (!ref && !relaunched && now() - start >= ENABLE_RELAUNCH_MS) {
+        relaunched = true;
+        log('enable: the window did not open, so it was asked again');
+        launchWindow({ browser, profileDir, url: `data:text/html,<title>${nonce}</title>`, nonce, userDataDir, position: hiddenSpot(), size: { width: 800, height: 600 } });
+      }
+    }
+    if (!ref) return { ok: false, reason: 'no-window' };
+    const entry = knownAgent(ref);
+    if (!entry) return { ok: false, reason: 'no-window' };
+    // ghost: 見張りが画面の外へ戻さず、前面も返さない（開く間だけ、この層が前面を持たせる）
+    entry.ghost = true;
+    const giveBack = () => { try { if (before && before !== entry.hwnd && alive(before) && win32.foreground() === entry.hwnd) bring(before); } catch { /* 返せなくても続ける */ } };
+    let result = { ok: false, reason: 'place' };
+    try {
+      if (!conceal(ref)) { result = { ok: false, reason: 'conceal' }; }
+      else {
+        let list = [];
+        try { list = win32.monitors?.() ?? []; } catch { list = []; }
+        const screen = list.find(m => m.primary) ?? list[0];
+        if (screen && win32.setWindowPos(entry.hwnd, screen.x + 40, screen.y + 40, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER)) {
+          win32.setTopmost?.(entry.hwnd, true);
+          if (win32.foreground() !== entry.hwnd) bring(entry.hwnd);
+          result = await uia({ op: 'navigate', hwnd: entry.hwnd, url: INSPECT_URL, nonce, timeoutMs: ENABLE_UIA_MS / 2 }, { timeoutMs: ENABLE_UIA_MS / 2 + 8000 });
+          giveBack();
+          if (result?.ok === true) result = await uia({ op: 'toggle', hwnd: entry.hwnd, timeoutMs: ENABLE_UIA_MS / 2 }, { timeoutMs: ENABLE_UIA_MS / 2 + 8000 });
+        }
+      }
+    } catch (error) {
+      log(`enable failed: ${error.message}`);
+    } finally {
+      giveBack();
+      entry.ghost = false;
+      try { win32.setTopmost?.(entry.hwnd, false); } catch { /* 閉じた窓 */ }
+    }
+    // 頼み直しで同じ題の窓がもう 1 つ開いていたら、それも閉じる（見える窓を残さない）
+    if (relaunched) {
+      for (const w of browserWindows()) {
+        if (w.hwnd !== entry.hwnd && w.info.title.includes(nonce)) { try { win32.postMessage(w.hwnd, WM_CLOSE, 0, 0); } catch { /* 閉じていてもよい */ } }
+      }
+    }
+    const info = stillBrowser(entry);
+    const others = info ? browserWindows().filter(w => w.hwnd !== entry.hwnd && w.info.pid === info.pid && !w.info.title.includes(nonce) && (w.info.visible || w.info.iconic)) : [];
+    if (others.length) closeAgent(ref);
+    else { reveal(ref); release(ref); }
+    log(`enable ok=${result?.ok === true}${result?.reason ? ` reason=${result.reason}` : ''}${others.length ? '' : ' kept'}`);
+    return result?.ok === true ? { ok: true } : { ok: false, reason: String(result?.reason ?? 'failed') };
   }
 
   // ---- エージェントの窓（ADR 0154） -----------------------------------------------------------------
@@ -591,7 +701,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
    */
   function keepConcealed() {
     for (const [id, entry] of [...refs]) {
-      if (entry.kind !== 'agent' || !entry.concealed || entry.closeAt) continue;
+      if (entry.kind !== 'agent' || !entry.concealed || entry.closeAt || entry.ghost) continue;   // ghost: トグルを入れている間の窓（enableRemoteDebugging）
       let info;
       try { info = win32.windowInfo(entry.hwnd); } catch { continue; }
       if (!info.rect || (concealStyled(info) && offscreen(info.rect))) continue;
@@ -626,6 +736,8 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       hidden.add(entry.hwnd);
     }
     if (!hidden.size) { stopGuard(); return; }
+    // トグルを入れている窓（ghost）は、開く間だけ層が前面を持たせる。見張りは返さない
+    const ghosts = new Set([...refs.values()].filter(e => e.kind === 'agent' && e.ghost).map(e => e.hwnd));
     if (now() - placedAt >= PLACE_CHECK_MS) { placedAt = now(); keepConcealed(); }
     concealOwned(hidden);
     if (!fg) return;
@@ -633,7 +745,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (current) { before.set(fg, current); if (before.size > 64) before.delete(before.keys().next().value); }
       current = fg;
     }
-    if (!hidden.has(fg)) return;
+    if (!hidden.has(fg) || ghosts.has(fg)) return;
     // 隠した窓が前面を取った。直前の前面（隠した窓でも、最小化・閉じた窓でもない）へ返す。直前も隠した窓なら、その前をたどる
     let target = before.get(fg);
     for (let hop = 0; target && hop < 4 && (hidden.has(target) || !alive(target)); hop += 1) target = before.get(target);
@@ -659,7 +771,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
 
   return {
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
-    snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close, bounds, watch,
+    snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close, allowPermission, enableRemoteDebugging, bounds, watch,
     locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
     exportAgent, adoptAgent, reconceal, closeAllAgents,
     /** テスト用: 見張りを 1 回だけ回す・止める */
