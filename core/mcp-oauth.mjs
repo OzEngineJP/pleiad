@@ -198,7 +198,7 @@ export function createMcpOAuth({ secrets, lockDir, openExternal = () => {}, emit
       const endpoint = flow.discovery?.authorizationServerMetadata?.registration_endpoint;
       if ((init.method ?? 'GET').toUpperCase() === 'POST' && endpoint && sameUrl(String(url), endpoint)) {
         const body = await res.clone().json().catch(() => null);
-        if (res.ok) flow.registration = body?.registration_client_uri && body?.registration_access_token ? { uri: body.registration_client_uri, token: body.registration_access_token } : null;
+        if (res.ok) { flow.registered = true; flow.registration = body?.registration_client_uri && body?.registration_access_token ? { uri: body.registration_client_uri, token: body.registration_access_token } : null; }
         else { flow.dcrError = body?.error; flow.dcrErrorDescription = body?.error_description; }
       }
       return res;
@@ -223,7 +223,16 @@ export function createMcpOAuth({ secrets, lockDir, openExternal = () => {}, emit
         return undefined;
       },
       async saveClientInformation(info) {
-        // ここに来るのは DCR で新しく登録したときだけ（手入力・メタデータ文書は clientInformation() が返す）
+        // SDK は、issuer の印の無いクライアント（手入力・メタデータ文書・前の版で保存した DCR）を認可サーバーが受け入れた後に、
+        // 印を付けてここへ渡し直す。新しい登録ではないので、DCR の登録として扱わない（種類と登録管理の値を変えない）
+        if (!flow.registered) {
+          if (manual && info.client_id === manual.client_id) return;
+          if (cimdUrl && info.client_id === cimdUrl) { flow.clientKind = 'metadata-document'; return; }
+          const known = flow.client ?? (saved?.client?.dynamic ? saved.client : null);
+          if (known && known.info?.client_id === info.client_id) { flow.client = { ...known, info }; return; }
+        }
+        // ここから先は DCR で新しく登録したとき（手入力・メタデータ文書は clientInformation() が返す）
+        flow.registered = false;
         const replaced = flow.superseded ?? flow.client ?? (saved?.client?.dynamic ? saved.client : null);
         flow.superseded = null;
         flow.client = { info, issuer: flow.discovery?.authorizationServerUrl, redirectUri: flow.redirectUri, dynamic: true, registeredAt: new Date(now()).toISOString(),
