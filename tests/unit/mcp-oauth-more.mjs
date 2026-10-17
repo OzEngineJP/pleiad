@@ -96,6 +96,20 @@ export default async function (t) {
         s.oauth.cancel('srv');
       } finally { blocker.close(); }
     }
+    {
+      // 前の版で保存した DCR のクライアント（info に issuer の印が無い）でログインし直す。SDK が印を付けて渡し直しても、
+      // 新しい登録とみなさず、種類と登録管理（RFC 7592）の値を残す
+      const m = await mock();
+      const s = await setup({ transport: 'http', url: m.mcpUrl, auth: 'oauth' });
+      await s.login();
+      await s.secrets.update('mcp:srv:oauth', st => { const { issuer, ...info } = st.client.info; return { ...st, client: { ...st.client, info } }; });
+      const before = (await s.state()).client;
+      await s.login();
+      const after = (await s.state()).client, status = await s.oauth.status('srv', s.def);
+      t.ok('印の無い保存済みの DCR クライアントでログインし直しても、DCR はやり直さず消さない', m.as.registrations.length === 1 && m.as.deleted.length === 0 && !before.info.issuer);
+      t.ok('種類は dynamic のまま、登録管理の値と登録の日時を残す', status.client === 'dynamic' && after.dynamic === true && after.info.client_id === 'dcr-1'
+        && after.management?.token === before.management?.token && Boolean(after.management?.token) && after.registeredAt === before.registeredAt, JSON.stringify(after));
+    }
 
     // ================= 3. Client ID Metadata Documents
     {

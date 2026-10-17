@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { parse, stringify } from 'smol-toml';
+import { stringify } from 'smol-toml';
+import { parseToml as parse } from './toml.mjs';
 import { scanDirectory } from './context-settings.mjs';
 import { t } from './i18n.mjs';
 
