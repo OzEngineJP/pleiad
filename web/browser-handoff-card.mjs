@@ -43,7 +43,7 @@ export function settledLine(t, ev) {
  *   view.update(h) … permissionUpdate の browserHandoff を渡して描き直す
  * onChange(buttons, res) は描き直すたびに呼ばれ、client が actions を並べ直す。
  * spinner() は「つないでいます…」の回る印（web/arc.mjs の runMark）。
- * operateHere() はリモートの端末だけ: 右パネルの Chrome の窓を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す
+ * operateHere(会話の id) はリモートの端末だけ: 右パネルにその会話の Chrome の窓を開き、映像の箱の大きさ（{ width, height, scale }。開けなければ null）を返す
  */
 export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operateHere = null, spinner = null }) {
   let h = ev.browserHandoff;
@@ -184,7 +184,7 @@ export function browserHandoffView(ev, { el, t, cmd, onChange = () => {}, operat
   }
 
   async function takeOverHere() {
-    const size = await operateHere();
+    const size = await operateHere(targetSessionId());
     if (!size) throw new Error(t(`${K}noWindow`));
     await cmd('chromeTakeOver', { sessionId: targetSessionId(), by: 'device', ...size });
   }

@@ -4141,7 +4141,9 @@ const opsChrome = chromeConnection ? {
   open: chromeRelay ? (sessionId, url) => chromeRelay.openForConversation(sessionId, url) : null,
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
   // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
-  pinWindow: chromeScreencast ? async (sessionId, windowId) => ({ pinnedWindowId: (await chromeScreencast.request('pin', sessionId, { windowId })).pinnedWindowId }) : null,
+  pinWindow: chromeScreencast ? async (sessionId, windowId, tabId = null) => { const result = await chromeScreencast.request('pin', sessionId, { windowId, tabId }); return { pinnedWindowId: result.pinnedWindowId, pinnedTabId: result.pinnedTabId ?? null }; } : null,
+  // 端末が引き継いでいる間に、タブの列の × でタブを閉じる（core/chrome/screencast.mjs の closeTab）
+  closeTab: chromeScreencast ? (sessionId, tabId) => chromeScreencast.request('closeTab', sessionId, { tabId }) : null,
   windows: async parentId => {
     const rows = delegatedChromeWindows(parentId, { rows: () => agentTasks?.rowsWhere(row => row.parentSessionId === parentId && row.sessionId && store.peek(row.sessionId)?.delegation?.taskId === row.taskId) ?? [],
       sessions: () => chromeRelay?.view.sessions() ?? [], summary: id => chromeRelay.view.summary(id), profile: id => chromeProfiles?.current(id), state: id => chromeControl?.state(id)?.state ?? 'idle', waiting: id => Boolean(chromeHandoffs?.current?.(id)) });
@@ -8589,6 +8591,7 @@ wss.on("connection", (ws, req) => {
         case 'chromeOpen': return await viaOp('browser.chromeOpen');
         case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
         case 'chromePinWindow': return await viaOp('browser.chromePinWindow');
+        case 'chromeCloseTab': return await viaOp('browser.chromeCloseTab');
         case "resolvePath": case "revealPath": case "openPath": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));

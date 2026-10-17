@@ -19,6 +19,8 @@
 // 端末から引き継ぐ（第 7 段。takeOver(sessionId, { by: 'device', width, height, scale })）: 窓は見せない（PC の画面に出さない）。エージェントの接続は同じく切るが、
 // 映像は止めず（端末はその映像を見て操作する）、入力は映像のセッションで送り、ページの大きさを端末の映像の箱に合わせる（capture.operate）。戻すと大きさを戻してから解く。
 // 引き継ぎは早い者勝ち: すでに paused なら、後から押したほう（PC でも端末でも）は今の状態を返すだけ。
+// ただし PC で引き継いでいる間に、端末が「この端末で操作する」を押したとき（takeOver(sessionId, { by: 'device', fromPc: true, ... })）は、
+// PC に見せていた窓を隠してから端末へ移す（一時停止は解かず、始まりの時刻も保つ）。隠せなければ移さず、conceal-failed を返す
 import { deviceViewport } from './input.mjs';
 
 export const CONTROL_STATES = Object.freeze(['running', 'idle', 'stopped', 'paused']);
@@ -94,10 +96,13 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     return run;
   };
 
-  async function doTakeOver(sessionId, { by = 'pc', width, height, scale } = {}) {
+  async function doTakeOver(sessionId, { by = 'pc', width, height, scale, fromPc = false } = {}) {
     const before = relay.state(sessionId);
     if (!before) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
-    if (before.paused) return stateOf(sessionId);
+    if (before.paused) {
+      if (by === 'device' && fromPc === true && !devices.has(sessionId)) return moveToDevice(sessionId, deviceViewport({ width, height, scale }));
+      return stateOf(sessionId);
+    }
     if (by === 'device') return takeOverByDevice(sessionId, deviceViewport({ width, height, scale }));
     // 見せられる窓が無ければ、一時停止にしない（一時停止はエージェントの接続を切るので、窓が無いのに切らない）
     if (!relay.scope.windows?.(sessionId).some(window => window.ref)) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
@@ -123,6 +128,28 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     devices.set(sessionId, viewport);   // pause の中の同期の syncCapture が、映像を断らないように先に立てる
     relay.pause(sessionId, now(), { by: 'device', viewport });
     await Promise.resolve(capture?.operate?.(sessionId, viewport)).catch(error => log(`chrome-control: operate failed: ${error?.message ?? error}`));
+    return stateOf(sessionId);
+  }
+
+  /** PC で引き継いでいる窓を、端末の操作へ移す: 窓を隠してから（隠せなければ移さない）、映像を戻し、大きさを端末に合わせる */
+  async function moveToDevice(sessionId, viewport) {
+    if (!viewport) throw new ChromeControlError('INVALID', 'the size of the device view is needed');
+    if (!relay.view?.tabs?.(sessionId)?.length) throw new ChromeControlError('NO_WINDOW', 'no agent browser window to hand over');
+    await relay.refreshWindows(sessionId).catch(error => log(`chrome-control: refreshWindows failed: ${error?.message ?? error}`));
+    let result = { concealed: 0, failed: 0 };
+    try { result = await relay.scope.conceal({ entryId: sessionId, cdp: relay.cdp }); }
+    catch (error) { log(`chrome-control: conceal failed: ${error?.message ?? error}`); result = { concealed: 0, failed: 1 }; }
+    if (result.failed > 0) {
+      log(`chrome-control: ${result.failed} window(s) could not be hidden, so the takeover stayed on the PC`);
+      errors.set(sessionId, 'conceal-failed');
+      publish(sessionId);
+      return stateOf(sessionId);
+    }
+    errors.delete(sessionId);
+    devices.set(sessionId, viewport);   // handOver の中の同期の syncCapture が、映像の断りを解くように先に立てる
+    relay.handOver(sessionId, { by: 'device', viewport });
+    await Promise.resolve(capture?.operate?.(sessionId, viewport)).catch(error => log(`chrome-control: operate failed: ${error?.message ?? error}`));
+    publish(sessionId);
     return stateOf(sessionId);
   }
 
@@ -174,7 +201,7 @@ export function createChromeControl({ relay, os, now = Date.now, record = async 
     state: stateOf,
     /** 中継が知っている会話すべての今の状態（待機中のものは除く。画面がつなぎ直したとき） */
     snapshot: () => relay.sessionIds().map(stateOf).filter(state => state.state !== 'idle'),
-    /** options: { by: 'pc' | 'device', width, height, scale }（by: 'device' は端末の映像の箱の大きさ（CSS px と倍率）を付ける） */
+    /** options: { by: 'pc' | 'device', width, height, scale, fromPc }（by: 'device' は端末の映像の箱の大きさ（CSS px と倍率）を付ける。fromPc は PC の引き継ぎを端末へ移す） */
     takeOver: (sessionId, options) => serial(sessionId, () => doTakeOver(sessionId, options)),
     resume: sessionId => serial(sessionId, () => doResume(sessionId)),
     stop: sessionId => serial(sessionId, () => doStop(sessionId)),

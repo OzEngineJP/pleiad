@@ -233,12 +233,13 @@ export const COMMANDS = new Set([
   'chromeConsent',           // {} -> 状態。接続のカードの「許可」（consent → Pleiad が Chrome の確認を押す。ADR 0218）。画面とリモートの端末から
   'chromeEnable',            // {} -> { ok, reason }。接続のカードの「オンにしてつなぐ」（Chrome のリモート デバッグを Pleiad が入れる。ADR 0218）。画面とリモートの端末から
   // エージェントの Chrome の窓の操作（core/chrome/control.mjs）。{ sessionId } -> { sessionId, state: running|idle|stopped|paused, since, error, by }。変わったら chromeControl イベント。画面とリモートの端末から
-  'chromeTakeOver',          // 引き継ぐ: 窓を見える形に戻して前に出し、エージェントのコマンドを断る（paused）。{ by: 'device', width, height, scale } は端末から操作する（窓は出さない）
+  'chromeTakeOver',          // 引き継ぐ: 窓を見える形に戻して前に出し、エージェントのコマンドを断る（paused）。{ by: 'device', width, height, scale } は端末から操作する（窓は出さない）。fromPc: true は PC の引き継ぎを端末へ移す
   'chromeResume',            // 戻す: 窓を画面の外の見えない窓に戻し、paused を解く（会話に「あなたが引き継ぎ · Claude に戻しました」の行）
   'chromeStop',              // 止める: 接続を閉じ、次の人の送信まで再接続を断る（stopped）
   'chromeOpen',              // { sessionId, url } -> { sessionId, targetId }。ビューアの⋯「Chrome で開く」。会話の窓に開く（つながっていなければ許可を待つ）。ホストの PC の画面だけ
   'chromeCloseWindow',       // { sessionId, windowId? } -> { closed }。会話の専用窓を閉じ、最後の画面を残す。windowId があればそのウィンドウだけ（複数あるとき）。画面とリモートの端末から
-  'chromePinWindow',         // { sessionId, windowId|null } -> { pinnedWindowId }。右パネルの映像に映すウィンドウを固定する・解く（null）。固定は会話に 1 つで、chromeWindow イベントの pinnedWindowId で全部の端末に配る。映像を見ている間だけ
+  'chromePinWindow',         // { sessionId, windowId|null, tabId? } -> { pinnedWindowId, pinnedTabId }。右パネルの映像に映すウィンドウ・タブを固定する・解く（null）。固定は会話に 1 つで、chromeWindow イベントの pinnedWindowId で全部の端末に配る。映像を見ている間だけ
+  'chromeCloseTab',          // { sessionId, tabId } -> {}。端末が引き継いでいる間に、タブの列の × でタブを閉じる（最後のタブは閉じない）
 ]);
 
 // event.type の一覧（server -> client の EVENT ペイロード）。

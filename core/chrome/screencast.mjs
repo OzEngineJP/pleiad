@@ -9,14 +9,18 @@
 //     第 6 段の「あなたが操作中」が呼ぶ。状態に { suspended: true } を載せて見る側に知らせる。
 //     **suspend と resume は呼ぶ側が対にする**（断りは会話の寿命と結ぶ: 会話を消す・Chrome の接続が切れると消え、id が替わると新しい id へ付け替える。
 //     windowId なしの resume は、その会話の窓ごとの断りも全部外す）。suspend は呼んだ時に同期で効く（順番待ちの中の付け替え・開始の途中でもフレームを流さない）
-//   - 人が映すウィンドウを選べる（pin(sessionId, windowId)。右パネルの番号チップ）。固定の間は、エージェントがほかのウィンドウに移っても映像は動かず、
-//     固定したウィンドウの中の今のタブ（無ければ最初のタブ）を映す。解くのは pin(sessionId, null)・固定したウィンドウが消えたとき・映像の見張りが終わったとき（パネルを閉じる・会話を消す・Chrome の接続が切れる）。
-//     固定は会話に 1 つ（端末ごとではない）。エージェントの操作の宛先には影響しない。変化は onPin で知らせる
+//   - 人が映すウィンドウ・タブを選べる（pin(sessionId, windowId, tabId)。右パネルの番号チップとタブの列）。固定の間は、エージェントがほかへ移っても映像は動かず、
+//     固定したタブ、またはウィンドウの中の今のタブ（無ければ最初のタブ）を映す。解くのは pin(sessionId, null)・固定したタブ・ウィンドウが消えたとき・映像の見張りが終わったとき（パネルを閉じる・会話を消す・Chrome の接続が切れる）。
+//     固定は会話に 1 つ（端末ごとではない）。エージェントの操作の宛先には影響しない。ウィンドウの変化は onPin で知らせる。
+//     端末が引き継いでいる間も選べる（PC が引き継いで映像を止めている間は選べない）
+//   - 端末が引き継いでいる間に、ページが新しいタブ・ウィンドウを開いたら（openerId のあるタブ）、そのタブへ自動で移る（固定。前の固定を覚える）。
+//     そのタブが閉じたら前の固定（開いた元のタブ）へ戻る。引き継ぎが終わったら、自動で移った分の固定は外す。エージェントはその間タブに触らないので、今のタブは動かない
+//   - 状態に、タブの並びと題（list）・エージェントの今のタブ（agentTabId）・固定したタブ（pinnedTabId）を載せる（タブの列。見ている端末にだけ届く。ログには出さない）
 //   - focus emulation の理由は、映像の見張り（watch）ごとの札で数える（relay の view.focus の owner）。閉じてすぐ開き直しても、古い見張りの「手放す」が新しい見張りの理由を消さない
 // core/browser-screencast.mjs の createScreencastHub の bridge の形（ready・request・ack・onFrame・onState・onEnded・onAway）で使う。
-// 見る側の入力（タップ・文字・移動）は受けない（見るだけ）。URL・題は状態に載せない。
+// 見る側の入力（タップ・文字・移動）は受けない（見るだけ）。URL は状態に載せない。
 // ただし端末が引き継いでいる間（第 7 段の by: 'device'。operate(sessionId, viewport)）だけは、映像のセッション（エージェントの接続ではない）で入力を送り、
-// ページの大きさを端末の映像の箱に合わせる（Emulation.setDeviceMetricsOverride。operate(sessionId, null) で clearDeviceMetricsOverride）。
+// ページの大きさを端末の映像の箱に合わせる（Emulation.setDeviceMetricsOverride。operate(sessionId, null) で clearDeviceMetricsOverride）。タブの列の × で、タブを閉じられる（closeTab）。
 import { inputCommands, deviceMetrics } from './input.mjs';
 
 const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
@@ -36,7 +40,7 @@ export function chromeScreencastSettings({ width, height, scale, quality } = {})
  * @param deps.host  core/chrome/relay.mjs の view（onChange・summary・tabs・current・attach）
  */
 export function createChromeScreencast({ host, log = () => {} } = {}) {
-  const watches = new Map();   // 会話の id -> { settings, view, tabId, generation, queue, suspended: boolean, announced: boolean（端末へ知らせた suspended）, pinned: 固定したウィンドウの id か null }
+  const watches = new Map();   // 会話の id -> { settings, view, tabId, generation, queue, suspended: boolean, announced: boolean（端末へ知らせた suspended）, pin: 固定（{ windowId, tabId, auto, back }）か null, known: 知っているタブの id }
   const lastFrames = new Map(); // 人が窓を直接閉じたときの最後の映像（JPEG）。一時停止中も更新しない
   const suspended = new Set(); // 'sessionId' か 'sessionId#windowId'
   const operated = new Map();  // 会話の id -> 端末の映像の箱（{ width, height, scale }。端末が引き継いでいる間）
@@ -51,25 +55,60 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
   /** 会話の id が替わった: 断りも新しい id へ付け替える */
   const moveSuspension = (from, to) => { for (const key of keysOf(from)) { suspended.delete(key); suspended.add(`${to}${key.slice(from.length)}`); } };
 
+  /** タブの並びと題・開いた元（relay の view.items。古い口しか無ければ題なし） */
+  const itemsOf = sessionId => host.items?.(sessionId) ?? host.tabs(sessionId).map(tab => ({ ...tab, title: '', openerId: null }));
   function stateOf(sessionId, watch) {
     const summary = host.summary(sessionId);
-    return { tabId: watch.tabId ?? null, agent: summary.operating, suspended: watch.suspended, tabs: summary.tabs, pinnedWindowId: watch.pinned ?? null };
+    return { tabId: watch.tabId ?? null, agent: summary.operating, suspended: watch.suspended, tabs: summary.tabs, pinnedWindowId: pinWindowOf(sessionId, watch), pinnedTabId: watch.pin?.tabId ?? null,
+      agentTabId: host.current(sessionId), list: itemsOf(sessionId).map(item => ({ tabId: item.targetId, windowId: item.windowId ?? null, title: item.title ?? '' })) };
   }
-  /** 固定を変える。変わったときだけ聞き手（chromeWindow の配信）へ知らせる */
-  function setPin(sessionId, watch, windowId) {
-    const next = windowId ?? null;
-    if ((watch.pinned ?? null) === next) return false;
-    watch.pinned = next;
-    emit('pin', sessionId, next);
-    return true;
+  /** 固定しているウィンドウ（タブを固定していれば、そのタブの今の窓）。無ければ null */
+  function pinWindowOf(sessionId, watch) {
+    const pin = watch.pin;
+    if (!pin) return null;
+    if (pin.tabId) return host.tabs(sessionId).find(tab => tab.targetId === pin.tabId)?.windowId ?? pin.windowId ?? null;
+    return pin.windowId;
   }
-  /** 映すタブを決める: 固定したウィンドウがあればその中（今のタブがそこにあればそれ、無ければ最初のタブ）、無ければ今のタブ。固定したウィンドウが消えていれば固定を解く */
+  /** 固定を変える（next: { windowId, tabId, auto, back } か null）。固定したウィンドウが変わったときだけ聞き手（chromeWindow の配信）へ知らせる */
+  function setPin(sessionId, watch, next) {
+    const before = watch.pin, beforeWindow = pinWindowOf(sessionId, watch);
+    watch.pin = next ?? null;
+    const changed = (before?.windowId ?? null) !== (watch.pin?.windowId ?? null) || (before?.tabId ?? null) !== (watch.pin?.tabId ?? null);
+    const window = pinWindowOf(sessionId, watch);
+    if (window !== beforeWindow) emit('pin', sessionId, window);
+    return changed;
+  }
+  const alive = (pin, tabs) => pin.tabId ? tabs.some(tab => tab.targetId === pin.tabId) : tabs.some(tab => tab.windowId === pin.windowId);
+  /**
+   * 映すタブを決める: 固定したタブがあればそれ、固定したウィンドウがあればその中（今のタブがそこにあればそれ、無ければ最初のタブ）、無ければ今のタブ。
+   * 固定したタブ・ウィンドウが消えていれば、自動で移った分は前の固定（開いた元のタブ）へ戻し、人が選んだ分は固定を解く
+   */
   function targetOf(sessionId, watch) {
     const current = host.current(sessionId);
-    if (watch.pinned == null) return current;
-    const inWindow = host.tabs(sessionId).filter(tab => tab.windowId === watch.pinned);
-    if (!inWindow.length) { setPin(sessionId, watch, null); return current; }
+    const tabs = host.tabs(sessionId);
+    while (watch.pin && !alive(watch.pin, tabs)) setPin(sessionId, watch, watch.pin.auto ? watch.pin.back : null);
+    const pin = watch.pin;
+    if (!pin) return current;
+    if (pin.tabId) return pin.tabId;
+    const inWindow = tabs.filter(tab => tab.windowId === pin.windowId);
     return (inWindow.find(tab => tab.targetId === current) ?? inWindow[0]).targetId;
+  }
+  /** 端末が引き継いでいる間に、ページが開いた新しいタブ（開いた元が範囲のタブ）へ移る。知っているタブの一覧はいつも更新する */
+  function followOpened(sessionId, watch) {
+    const items = itemsOf(sessionId);
+    const known = watch.known;
+    watch.known = new Set(items.map(item => item.targetId));
+    if (!operated.has(sessionId) || watch.suspended) return;
+    for (const item of items) {
+      if (known.has(item.targetId) || !item.openerId || !watch.known.has(item.openerId)) continue;
+      setPin(sessionId, watch, { windowId: item.windowId ?? null, tabId: item.targetId, auto: true, back: watch.pin });
+    }
+  }
+  /** 自動で移った分の固定を外す（引き継ぎが終わった） */
+  function dropAutoPins(sessionId, watch) {
+    let changed = false;
+    while (watch.pin?.auto) changed = setPin(sessionId, watch, watch.pin.back) || changed;
+    return changed;
   }
   const pushState = (sessionId, watch) => {
     if (watches.get(sessionId) !== watch) return;
@@ -163,10 +202,12 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     }
     const watch = watches.get(sessionId);
     if (!watch) return;
-    if (kind === 'operating') { pushState(sessionId, watch); return; }
+    if (kind === 'operating' || kind === 'title') { pushState(sessionId, watch); return; }
     // tabs / current。窓のタブが 1 つも無くなったら、映像の持ち主（窓）が消えた
     if (!host.summary(sessionId).tabs) { end(sessionId, 'closed'); return; }
-    follow(sessionId, watch).catch(error => { log(`chrome-screencast: follow failed: ${error?.message ?? error}`); });
+    if (kind === 'tabs') followOpened(sessionId, watch);
+    // タブの並び・エージェントの今のタブも状態に載るので、付け替えの後に知らせる
+    follow(sessionId, watch).then(() => pushState(sessionId, watch), error => { log(`chrome-screencast: follow failed: ${error?.message ?? error}`); });
   });
 
   async function start(sessionId, options = {}) {
@@ -183,7 +224,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
         await view.send('Page.startScreencast', { format: 'jpeg', quality: settings.quality, maxWidth: settings.maxWidth, maxHeight: settings.maxHeight, everyNthFrame: 1 }).catch(() => {});
       }
     } else {
-      watch = { settings, view: null, tabId: null, generation: 0, queue: Promise.resolve(), suspended: false, announced: false, metrics: false, pinned: null };
+      watch = { settings, view: null, tabId: null, generation: 0, queue: Promise.resolve(), suspended: false, announced: false, metrics: false, pin: null, known: new Set(itemsOf(sessionId).map(item => item.targetId)) };
       watches.set(sessionId, watch);
     }
     try { await follow(sessionId, watch); }
@@ -200,16 +241,48 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     await release(watch, sessionId);
   }
 
-  /** 映すウィンドウを固定する（windowId）・解いて今のタブを追う（null）。映像の見張りが無い間は固定しない */
-  async function pin(sessionId, windowId) {
+  /** 映すタブ（tabId）・ウィンドウ（windowId）を固定する・解いて今のタブを追う（どちらも null）。映像の見張りが無い間は固定しない */
+  async function pin(sessionId, windowId, tabId = null) {
     const watch = watches.get(sessionId);
     if (!watch) throw new Error('not-watching');
-    if (watch.suspended || operated.has(sessionId)) throw new Error('operating');   // 引き継いでいる間は切り替えない
-    if (windowId != null && !host.tabs(sessionId).some(tab => tab.windowId === windowId)) throw new Error('no-window');
-    const changed = setPin(sessionId, watch, windowId);
+    if (watch.suspended) throw new Error('operating');   // PC で引き継いでいる間（映像を止めている）は切り替えない
+    const tabs = host.tabs(sessionId);
+    let next = null;
+    if (tabId != null) {
+      const tab = tabs.find(item => item.targetId === tabId);
+      if (!tab) throw new Error('no-tab');
+      next = { windowId: tab.windowId ?? null, tabId, auto: false, back: null };
+    } else if (windowId != null) {
+      if (!tabs.some(tab => tab.windowId === windowId)) throw new Error('no-window');
+      next = { windowId, tabId: null, auto: false, back: null };
+    }
+    const changed = setPin(sessionId, watch, next);
     await follow(sessionId, watch);
     if (changed) pushState(sessionId, watch);
-    return { pinnedWindowId: watch.pinned ?? null, state: stateOf(sessionId, watch) };
+    return { pinnedWindowId: pinWindowOf(sessionId, watch), pinnedTabId: watch.pin?.tabId ?? null, state: stateOf(sessionId, watch) };
+  }
+
+  /**
+   * タブを閉じる（端末が引き継いでいる間のタブの列の ×）。最後のタブは閉じない（窓を閉じるのは ⋯ の確かめを通す）。
+   * 映しているタブを閉じるなら、開いた元のタブ（無ければ隣のタブ）へ先に自動で移る（自動で移ったタブは、閉じた後に前の固定へ戻る）
+   */
+  async function closeTab(sessionId, tabId) {
+    if (!operated.has(sessionId)) throw new Error('view-only');
+    const watch = watches.get(sessionId);
+    if (!watch) throw new Error('not-watching');
+    const items = itemsOf(sessionId);
+    const tab = items.find(item => item.targetId === tabId);
+    if (!tab) throw new Error('no-tab');
+    if (items.length < 2) throw new Error('last-tab');
+    if (watch.tabId === tabId && !watch.pin?.auto) {
+      const same = items.filter(item => item.windowId === tab.windowId);
+      const index = same.indexOf(tab);
+      const next = items.find(item => item.targetId === tab.openerId) ?? same[index - 1] ?? same[index + 1] ?? items.find(item => item.targetId !== tabId);
+      setPin(sessionId, watch, { windowId: next.windowId ?? null, tabId: next.targetId, auto: true, back: null });   // 選んだタブが無くなった代わり。引き継ぎが終われば外す
+    }
+    try { await host.closeTab(sessionId, tabId); }
+    finally { refollow(sessionId); }
+    return {};
   }
 
   const on = kind => fn => { listeners[kind].add(fn); return () => listeners[kind].delete(fn); };
@@ -219,7 +292,8 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
       switch (action) {
         case 'start': return start(sessionId, args.options ?? {});
         case 'stop': await stop(sessionId); return {};
-        case 'pin': return pin(sessionId, args.windowId ?? null);
+        case 'pin': return pin(sessionId, args.windowId ?? null, args.tabId ?? null);
+        case 'closeTab': return closeTab(sessionId, args.tabId);
         case 'input': return input(sessionId, args.input);
         default: throw new Error('view-only');   // 移動・エージェントの操作は受けない。入力も端末が引き継いでいる間だけ
       }
@@ -229,10 +303,10 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
       if (view && Number.isInteger(frameId)) view.send('Page.screencastFrameAck', { sessionId: frameId }).catch(() => {});
     },
     onFrame: on('frame'), onState: on('state'), onEnded: on('ended'), onAway: on('away'),
-    /** 固定の変化（sessionId, windowId|null）。chromeWindow の配信が聞く */
+    /** 固定したウィンドウの変化（sessionId, windowId|null）。chromeWindow の配信が聞く */
     onPin: on('pin'),
-    /** 今固定しているウィンドウの id（無ければ null） */
-    pinned: sessionId => watches.get(sessionId)?.pinned ?? null,
+    /** 今固定しているウィンドウの id（タブを固定していればその窓。無ければ null） */
+    pinned: sessionId => { const watch = watches.get(sessionId); return watch ? pinWindowOf(sessionId, watch) : null; },
 
     /**
      * 撮影を断つ（第 6 段の「あなたが操作中」）。windowId があればその窓が今のタブの窓のときだけ、無ければ会話の窓すべて。
@@ -257,6 +331,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
       if (viewport) operated.set(sessionId, viewport); else operated.delete(sessionId);
       const watch = watches.get(sessionId);
       if (!watch) return Promise.resolve();
+      if (!viewport && dropAutoPins(sessionId, watch)) { refollow(sessionId).then(() => pushState(sessionId, watch)); }
       const run = watch.queue.then(async () => {
         const view = watch.view;
         if (!view) return;

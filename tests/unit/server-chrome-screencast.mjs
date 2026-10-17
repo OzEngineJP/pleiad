@@ -138,6 +138,12 @@ export default async function (t) {
       t.ok('固定は会話に 1 つ: 見ていない端末からでも解ける（見ている端末が居る間は有効）', notWatching.ok === true && await until(() => c.events.filter(e => e.type === 'chromeWindow').at(-1)?.pinnedWindowId === null, 10000, 'released'));
       const bad = await remote.ask('chromePinWindow', { sessionId: id, windowId: 123456 });
       t.ok('存在しないウィンドウは固定できない', bad.ok === false, JSON.stringify(bad));
+      const tabPin = await remote.ask('chromePinWindow', { sessionId: id, windowId: null, tabId: second });
+      t.ok('リモートの端末から tabId でタブを固定できる（そのタブの窓が pinnedWindowId で配られる）', tabPin.ok === true && tabPin.result?.pinnedTabId === second
+        && await until(() => chrome.browser.screencasting(second), 10000, 'tab pinned'), JSON.stringify(tabPin));
+      await remote.ask('chromePinWindow', { sessionId: id, windowId: null });
+      const viewOnlyClose = await remote.ask('chromeCloseTab', { sessionId: id, tabId: second });
+      t.ok('端末で操作していない間の chromeCloseTab は断る（タブは残る）', viewOnlyClose.ok === false && chrome.browser.targets().some(x => x.targetId === second), JSON.stringify(viewOnlyClose));
       const closeOne = await remote.ask('chromeCloseWindow', { sessionId: id, windowId: hostEvent.windowIds[0] });
       t.ok('windowId を付けた chromeCloseWindow は、そのウィンドウだけ閉じて、もう一方は残る',
         closeOne.ok === true && closeOne.result?.closed === true && await until(() => !chrome.browser.targets().some(x => x.targetId === opened) && chrome.browser.targets().some(x => x.targetId === second), 10000, 'one closed')

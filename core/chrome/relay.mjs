@@ -31,7 +31,7 @@
 //     中継はエージェントの接続を切る。デーモンはつなぎ直すときに記録を読み直し、縛りが無ければ新しいタブ（新しい専用窓）を作る。
 //     縛りの無いエージェントの接続は切らない（次の createTarget で黙って窓を開き直す。ADR 0154）
 // 右パネルの映像（core/chrome/screencast.mjs。ADR 0148 第 5 段）には view の口を出す: 会話の窓のタブ・エージェントが最後に触れたタブ（「今のタブ」）・
-// 操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
+// タブの題（右パネルのタブの列。見ている端末にだけ送る）・操作中の印・中継自身のセッションの付け外し（エージェントのセッションとは別。映像を見ている間だけ付け、focus emulation も映像側のセッションで持つ）・変化の知らせ
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
@@ -140,7 +140,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   const changeListeners = new Set(), tapListeners = new Set(), lostListeners = new Set();
   const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
   const changed = entry => { fire(changeListeners, entry.id); carryChanged(); };
-  const viewers = new Set();   // 映像側の聞き手 fn(entryId, kind, extra)。kind: tabs（タブの増減）| current（今のタブが替わった）| operating（操作中の印が替わった）| reset（Chrome の接続が切れた）| forget（会話を消した）| rebind（extra が前の id）
+  const viewers = new Set();   // 映像側の聞き手 fn(entryId, kind, extra)。kind: tabs（タブの増減・タブの窓が分かった）| title（タブの題が替わった）| current（今のタブが替わった）| operating（操作中の印が替わった）| reset（Chrome の接続が切れた）| forget（会話を消した）| rebind（extra が前の id）
   const notifyView = (entryId, kind, extra) => { for (const fn of [...viewers]) { try { fn(entryId, kind, extra); } catch { /* 聞き手の失敗は中継を壊さない */ } } };
   /** 更新を越えて持ち越す状態（接続の子へ預ける carry）。端点（会話の id・鍵・待ち受けのポート）と、隠した窓の印 */
   function snapshot() {
@@ -410,6 +410,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (where?.windowId != null && state.tabs.get(tab.targetId) === tab) {
         const isNewWindow = !tab.entry.windows.has(where.windowId);
         tab.windowId = where.windowId; addWindow(state, tab.entry, where.windowId);
+        notifyView(tab.entry.id, 'tabs');   // 映像の側がタブの窓を知る（開いた直後は窓が分からない）
         // popup の別窓は画面の左上などに出て前面を取る。同じ置き方（画面の外・透明）を当てる（ADR 0154）
         if (isNewWindow) Promise.resolve(scope.adoptPopup?.({ cdp: state.cdp, entryId: tab.entry.id, windowId: where.windowId })).catch(() => {});
       }
@@ -450,8 +451,10 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       case 'Target.targetInfoChanged': {
         const tab = state.tabs.get(params.targetInfo?.targetId);
         if (!tab) return;   // 範囲の外のタブの URL・題は捨てる（覚えない）
+        const titled = tab.info.title !== params.targetInfo.title;
         tab.info = { ...params.targetInfo };
         onTabUrl(state, tab);
+        if (titled) notifyView(tab.entry.id, 'title');
         for (const client of clientsOf(tab.entry)) if (client.discovering) send(client, { method, params });
         return;
       }
@@ -1057,6 +1060,14 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       changed(entry);
       return true;
     },
+    /** 一時停止のまま、操作する人を替える（PC から端末へ移す）。始まりの時刻は保つ */
+    handOver(sessionId, { by, viewport } = {}) {
+      const entry = entries.get(sessionId);
+      if (!entry?.paused) return false;
+      entry.paused = { at: entry.paused.at, ...(typeof by === 'string' ? { by } : {}), ...(viewport ? { viewport: { ...viewport } } : {}) };
+      changed(entry);
+      return true;
+    },
     /**
      * 引き継いでいる間に人が窓を作り替えた（タブを引き離して新しい窓にした・窓ごと閉じた）のを、戻す前に取り込む: タブごとの今の窓を引き直し、
      * 新しい窓は範囲に足して（scope.adoptPopup。引き継ぎ中は記録だけで、戻すときに探して隠す）、タブの無くなった窓の記録は捨てる
@@ -1306,7 +1317,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     },
     /**
      * 映像（core/chrome/screencast.mjs）の口。会話の窓のタブの一覧・今のタブ・操作中の印・変化の知らせと、中継自身のセッションの付け外し。
-     * 映像のセッションは範囲のタブだけに付けられ、エージェントのセッションとは別（付け外しが互いに影響しない）。URL・題はここから出さない
+     * 映像のセッションは範囲のタブだけに付けられ、エージェントのセッションとは別（付け外しが互いに影響しない）。URL は出さない。題はタブの列（items）だけに出す
      */
     view: {
       onChange(fn) { viewers.add(fn); return () => viewers.delete(fn); },
@@ -1320,6 +1331,18 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       tabs(sessionId) {
         const entry = entries.get(sessionId);
         return entry && up ? tabsOf(up, entry).map(tab => ({ targetId: tab.targetId, windowId: tab.windowId })) : [];
+      },
+      /** タブの並びと題・開いた元のタブ（右パネルのタブの列。映像を見ている端末にだけ送り、ログには出さない）。URL は出さない */
+      items(sessionId) {
+        const entry = entries.get(sessionId);
+        return entry && up ? tabsOf(up, entry).map(tab => ({ targetId: tab.targetId, windowId: tab.windowId, title: String(tab.info.title ?? '').slice(0, 300), openerId: tab.opener?.targetId ?? null })) : [];
+      },
+      /** 範囲のタブを閉じる（端末が引き継いでいる間に、人がタブの列の × で閉じる） */
+      async closeTab(sessionId, targetId) {
+        const state = up;
+        const tab = state?.tabs.get(targetId);
+        if (!state || state.cdp.closed || !tab || tab.entry.id !== sessionId) throw new Error('tab not available');
+        await state.cdp.send('Target.closeTarget', { targetId });
       },
       /** 今のタブ: エージェントが最後にコマンドを送った（開いた）タブ。無い・閉じていれば窓の最初のタブ。タブが無ければ null */
       current(sessionId) {

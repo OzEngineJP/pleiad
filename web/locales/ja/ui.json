@@ -4400,9 +4400,10 @@
     "switchFailed": "プロフィールを切り替えられませんでした"
   },
   "chromeControl": {
-    "status": { "running": "{{name}} が操作中", "idle": "待機中", "paused": "あなたが操作中", "stopped": "止めました" },
+    "status": { "running": "{{name}} が操作中", "idle": "待機中", "paused": "あなたが操作中", "pausedPc": "PC で操作中", "stopped": "止めました" },
     "stop": "止める",
     "takeOver": "引き継ぐ",
+    "takeOverPc": "PC で操作する",
     "resume": "{{name}} に戻す",
     "failed": "操作できませんでした",
     "banner": "一時停止中 · あなたが Chrome で操作しています",
@@ -4455,10 +4456,8 @@
       "fixedTab": "{{name}} の Chrome（閉じられません）",
       "windowActions": "Chrome のウィンドウの操作",
       "windowNumber": "ウィンドウ {{n}}",
-      "childrenHeading": "子の会話のウィンドウ（押すとその会話を開く）",
       "childUntitled": "子の会話",
       "childWaiting": "依頼待ち",
-      "childCount": "{{n}} ウィンドウ",
       "windowCount": "{{n}} ウィンドウ",
       "panel": "Chrome のウィンドウ",
       "entry": "{{name}} の Chrome のウィンドウ",
@@ -4481,6 +4480,9 @@
       "closeRiskHuman": "このウィンドウは引き継ぎ中です。閉じると、操作の途中で終わります。",
       "closeRiskWaiting": "このウィンドウは、あなたの操作（ログインなど）を待っています。閉じると、依頼に応えられなくなります。",
       "switchLabel": "ウィンドウ", "follow": "エージェントを追う", "pinned": "固定中", "pinFailed": "ウィンドウを切り替えられませんでした。",
+      "convSwitchLabel": "会話とウィンドウ", "thisConversation": "この会話", "openConversation": "会話を開く",
+      "tabsLabel": "タブ", "tabUntitled": "無題", "closeTab": "{{title}} を閉じる", "closeTabFailed": "タブを閉じられませんでした",
+      "operateHere": "この端末で操作する", "operatingOnPc": "PC で操作中",
       "chipAgentRunning": "{{name}} が操作中", "chipAgentIdle": "{{name}} が最後に操作",
       "profileActions": "Chrome のプロフィール"
     },

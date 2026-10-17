@@ -127,7 +127,7 @@ import { createConversationToc } from './conversation-toc.mjs';
 import { setupGitPanel } from './git-panel.mjs';
 import { renderDelegateGit, branchLabel } from './git-view.mjs';
 import { busyPlan, paintWorktreeLine, setWorktreeLineMode, askText, shortPath } from './worktree-ui.mjs';
-import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession } from './chrome-control.mjs';
+import { chromeControlStore, createChromeControlView, setChromeHandoverAgentName, setChromeClosedSession, actionsFor } from './chrome-control.mjs';
 import { branchIcon } from './icons.mjs';
 import { createSessionListSync } from './session-list-sync.mjs';
 const outboxes = new Map();
@@ -2488,7 +2488,7 @@ function browserHandoffCard(ev, into = null) {
   head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), handoffMark(t, ev.browserHandoff)));
   const actions = el("div", "card-actions");
   // リモートの端末では「この端末で操作する」（右パネルの Chrome の窓で操作する）を足す
-  const operateHere = window.plyRemote ? async () => (await chromePanel?.measure()) ?? null : null;
+  const operateHere = window.plyRemote ? async (target) => (await chromePanel?.measure(null, { target })) ?? null : null;
   const view = browserHandoffView(ev, { el, t, cmd, operateHere, spinner: runMark, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
   head.append(el("span", "desc", view.summary()));
   card.append(head, view.body, actions);
@@ -5274,8 +5274,12 @@ let taskChromeRequest = 0;
 const closingChildWindows = new Set();
 /** 引き継ぎ中・依頼待ちの印（行の state / 依頼のカード）から、閉じると途中で終わるか */
 const handoffWaiting = id => [...state.pendingPerms.values()].some(ev => ev.sessionId === id && ev.browserHandoff);
-/** 「Chrome の窓を見る」: 子の会話へ移ってから、右パネルを Chrome の窓にする（会話が替わる時に閉じるので、移った後に開く） */
+/**
+ * 「Chrome の窓を見る」: 今の会話の子なら、会話を移らずに右パネルで子の Chrome を映す（上の列の会話の題で親へ戻れる）。
+ * 今の会話の子でなければ（Channels のスレッドのカードなど）、子の会話へ移ってから開く（会話が替わる時に閉じるので、移った後に開く）
+ */
 async function openChildChromeWindow(sessionId) {
+  if (state.current && chromeWindowRows.some(row => row.sessionId === sessionId && row.taskId)) { chromePanel?.open($('browserEntry'), { target: sessionId }); return; }
   await select(sessionId);
   if (state.current === sessionId) chromePanel?.open($('browserEntry'));
 }
@@ -5309,6 +5313,7 @@ async function refreshTaskChromeWindows(sessionId = state.current) {
   for (const row of chromeWindowRows) if (row.taskId) taskChromeRows.set(row.taskId, row);
   paintDelegateCards();
   browserEntry?.paint(); browserPanel?.refreshTabs();
+  chromePanel?.refresh();   // 右パネルの上の列（窓のある子の会話の題）
 }
 /**
  * Channels のスレッドが見ている bot の会話（子孫まで）の委譲の行。Chats の会話の分（taskCards.rows）とは別に持つので、Chats の会話を切り替えても消えない。
@@ -9699,12 +9704,30 @@ gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: stat
 gitPanel.onOpenChange(paintGitEntry);
 $('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
 // 会話の右パネル「Chrome の窓」（ADR 0148 第 5 段）。窓のある会話の頭の行の入口から開く。映像は見るだけ（ホストの画面もリモートの端末も）
+/** 右パネルの Chrome が映している会話（開いていなければ今の会話）。状態の一行・引き継ぎ・押した位置の輪はこの会話に向く */
+function chromeTarget() { return (chromePanel?.isOpen() && chromePanel.sessionId) || state.current || null; }
+/** その会話のエージェントの名前（子の会話を映しているときは子のエージェント） */
+function chromeAgentName(id) { return labelOf((id && id !== state.current ? state.sessions.find(s => s.id === id)?.backend : null) ?? activeBackendId()); }
+/** リモートの端末で、映像の箱の大きさを測ってその会話を端末から引き継ぐ（fromPc は PC で引き継いでいる窓を端末へ移す） */
+async function takeOverOnDevice(id, { fromPc = false } = {}) {
+  const size = await chromePanel?.measure(null, { target: id });
+  if (!size) throw new Error(t('chromeControl.failed'));
+  return cmd('chromeTakeOver', { sessionId: id, by: 'device', ...size, ...(fromPc ? { fromPc: true } : {}) });
+}
 chromePanel = setupChromePanel({ cmd, preview: filePreview, browser: browserPanel,
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
-  session: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()), windows: chromeWindows,
-  children: () => chromeWindowRows, openChild: openChildChromeWindow,
+  session: () => state.current ?? null, getAgentName: id => chromeAgentName(id), windows: chromeWindows,
+  children: () => chromeWindowRows,
   closeRisk: id => closeRiskOf({ state: chromeControlStore.get(id).state, waiting: handoffWaiting(id) }),
-  paused: id => chromeControlStore.get(id).state === 'paused' });
+  paused: id => chromeControlStore.get(id).state === 'paused',
+  waiting: id => handoffWaiting(id),
+  // PC で操作している間のリモートの端末: 幕に「この端末で操作する」（PC の窓を隠して端末へ移す）
+  canOperateHere: id => Boolean(window.plyRemote) && chromeControlStore.get(id).state === 'paused' && chromeControlStore.get(id).by === 'pc',
+  operateHere: id => takeOverOnDevice(id, { fromPc: true }),
+  // リモートの端末の「引き継ぐ」は端末で操作するので、PC で操作するのは ⋯ から
+  menuItems: id => (window.plyRemote && actionsFor(chromeControlStore.get(id).state).includes('takeOver')
+    ? [{ label: t('chromeControl.takeOverPc'), onClick: () => cmd('chromeTakeOver', { sessionId: id }).catch(error => notify(error?.message || t('chromeControl.failed'))) }] : []),
+  openConversation: async id => { await select(id); if (state.current === id) chromePanel?.open($('browserEntry')); } });
 chromePanel.onOpenChange(() => { browserEntry?.paint(); browserPanel?.refreshTabs(); });
 browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === true,
   chromeOpen: () => chromePanel?.isOpen() === true,
@@ -9717,8 +9740,11 @@ browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === 
 // エージェントの Chrome の窓の状態の一行・止める・引き継ぐ・戻す（web/chrome-control.mjs。ADR 0154）。状態の一行は右パネルの映像の上の差し込み口、押した位置の輪は映像の上、
 // 一時停止中の帯は会話の側（入力欄の上）。撮影を断っている間の幕は映像の側が出す。窓があるか一時停止中の会話だけに出す
 chromeControlView = createChromeControlView({
-  getName: () => labelOf(activeBackendId()),
-  run: (action) => cmd({ takeOver: 'chromeTakeOver', resume: 'chromeResume', stop: 'chromeStop' }[action], { sessionId: state.current }),
+  getName: () => chromeAgentName(chromeTarget()),
+  remote: () => Boolean(window.plyRemote),
+  // リモートの端末の「引き継ぐ」は、この端末で操作する（PC で操作するのは ⋯ の「PC で操作する」）
+  run: (action) => (action === 'takeOver' && window.plyRemote ? takeOverOnDevice(chromeTarget())
+    : cmd({ takeOver: 'chromeTakeOver', resume: 'chromeResume', stop: 'chromeStop' }[action], { sessionId: chromeTarget() })),
   onError: (error) => notify(error?.message || t('chromeControl.failed')),
 });
 chromePanel.mountStatus(chromeControlView.root);
@@ -9728,7 +9754,7 @@ chromeProfilePill = setupChromeProfilePill({
   slot: chromePanel.profileSlot,
   cmd: (command, args) => cmd(command, args),
   showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
-  getSessionId: () => state.current ?? null,
+  getSessionId: () => chromeTarget(),
   getPrefs: () => state.prefs,
   getHostCaps: () => state.hostCaps,
   openSettings: () => {
@@ -9740,9 +9766,9 @@ chromeProfilePill = setupChromeProfilePill({
 });
 chromePanel.onOpenChange((open) => { if (open) chromeProfilePill?.refresh(); });
 function paintChromeControl() {
-  const id = state.current ?? null;
+  const id = chromeTarget();
   const row = id ? chromeControlStore.get(id) : null;
-  chromeControlView?.apply(row && (row.state === 'paused' || chromeWindows.has(id)) ? row : null);
+  chromeControlView?.apply(row && (row.state === 'paused' || chromeWindows.has(id)) ? row : null, { banner: id === state.current });
   // 端末から操作する（by: 'device' の一時停止）間は、リモートの端末の映像から入力を送る（ホストの画面は見るだけのまま）
   chromePanel?.setOperating(Boolean(window.plyRemote) && row?.state === 'paused' && row.by === 'device');
   chromeProfilePill?.onStateChange();
@@ -9758,8 +9784,10 @@ browserPanel?.connect({
     catch (error) { chromePanel.cancelWaiting(); notify(error?.message || t('browser.chromeWindow.openFailed')); }
   },
 });
-chromeControlStore.onChange((id) => { if (id === state.current) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); browserPanel?.refreshTabs(); } });
-chromeControlStore.onTap((tap) => { if (tap.sessionId === state.current && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
+chromeControlStore.onChange((id) => { if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); browserPanel?.refreshTabs(); } });
+chromeControlStore.onTap((tap) => { if (tap.sessionId === chromeTarget() && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
+// 右パネルが映す会話を替えた（子の会話の Chrome を映した・戻した・閉じた）: 状態の一行とプロフィールをその会話に合わせる
+chromePanel.onTargetChange(() => { paintChromeControl(); chromeProfilePill?.refresh(); });
 document.addEventListener('ply-git-open', (event) => {
   const sessionId = event.detail?.sessionId ?? null;
   if (!sessionId && !state.current) return;
