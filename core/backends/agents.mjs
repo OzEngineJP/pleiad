@@ -43,6 +43,18 @@ export const AGENTS = {
     },
     idleCompaction: null,
   },
+  opencode: {
+    module: './opencode.mjs',
+    shortLabel: 'OpenCode',
+    brand: { logo: 'opencode.svg', mark: true },
+    cli: {
+      exe: 'opencode', binEnv: 'AGENT_HOST_OPENCODE_BIN', npmPackage: 'opencode-ai', installUrl: 'https://opencode.ai/docs/',
+      // 公式のインストーラー（install スクリプト）は `~/.opencode/bin` に置く。npm で入れたものは PATH（npm の置き場）で見つかる
+      searchDirs: (env) => [path.join(env.USERPROFILE || env.HOME || '', '.opencode', 'bin')].filter((d) => d.length > '.opencode/bin'.length),
+    },
+    // 会話を離れた後の自動の圧縮（summarize）。既定は切る（OpenCode 自身も文脈があふれる前に圧縮する）
+    idleCompaction: { enabled: false, delayMinutes: 25 },
+  },
   fake: {
     module: './fake.mjs',
     shortLabel: null,

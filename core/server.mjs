@@ -94,6 +94,7 @@ import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
 import { contractEmit } from './backends/contract.mjs';
+import { opencodeRelay, OPENCODE_RELAY_PATH } from './opencode-relay.mjs';
 import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
@@ -1781,7 +1782,7 @@ const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 // critical: 引き継ぎの前に終わるのを待つ短い処理（途中送信の受理待ち）。inflight: 処理中の HTTP の MCP・in-process の host MCP・hooks のコールバック
 // （待つのは上限つきで、待ち切れなくても進む。その呼び出しは 1 回失敗し、モデルが読んでやり直す）
 const handover = { hold: false, critical: new Set(), inflight: new Set(), droppedCalls: 0 };
-const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, OPS_PATH];
+const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
 const trackIn = (set, promise) => {
   const tracked = Promise.resolve(promise);
   set.add(tracked);
@@ -1799,6 +1800,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return trackIn(handover.inflight, computerBridge.handle(req, res));
   if (url.pathname === BROWSER_MCP_PATH) return trackIn(handover.inflight, browserBridge.handle(req, res));
   if (url.pathname === CONTROL_MCP_PATH) return trackIn(handover.inflight, controlBridge.handle(req, res));
+  // OpenCode の共有のサーバーから来る Pleiad のツールの呼び出しと、会話のシェルの環境変数（core/opencode-relay.mjs。合言葉は起動ごと）
+  if (url.pathname.startsWith(`${OPENCODE_RELAY_PATH}/`)) return trackIn(handover.inflight, opencodeRelay.handle(req, res, url));
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
@@ -9034,6 +9037,8 @@ mainPort.on('connect', () => {
 
 async function announce() {
   const { port } = server.address();
+  // OpenCode の中継の口の宛先（OpenCode の共有のサーバーは、これが決まってから起こす。core/backends/opencode.mjs）
+  opencodeRelay.setOrigin(localOrigin());
   // CLI がつなぎ先を見つける control.json（ADR 0083）。権限 0600。終了時に pid が自分のときだけ消す。
   // 起動の案内（下の URL の行）を見て CLI や検査が動き出すので、その前に書き終える
   // main とのパイプは、control.json に名前を書く前に立てる（main-link.json の秘密も一緒に書く）

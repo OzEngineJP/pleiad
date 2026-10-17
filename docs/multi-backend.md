@@ -819,6 +819,51 @@ Codexの `set_status / set_title / fork` は未接続なので、
 そのエージェントだけの事情で、印にする意味が無いもの（Claude の transcript の救済など）は、行に `backend-allow: 理由` の印を付ける。
 基準に残っている分（フック・MCP とコンテキストの設定の読み方・互換の接続先・委譲の振り分け・Claude のアカウント）は、[issue #91](https://github.com/OzEngineJP/pleiad/issues/91) で減らす。
 
+### 2.10 OpenCode（`opencode serve`、2026-10-18）
+
+**接続口**は OpenCode のヘッドレスのサーバー `opencode serve`（HTTP + SSE）。実機（opencode 1.19.3 / windows-x64）で確かめたこと:
+
+- 1 本で約 760 MB を使う（[ADR 0221](adr/0221-opencode-shared-server-and-plugin-relay.md)）。**会話ごとに起こさず、Pleiad のサーバーにつき 1 本を共有する**（`core/backends/opencode-server.mjs`。Codex の app-server と同じ）。
+  初めて要ったときに `serve --port 0 --hostname 127.0.0.1` で起こし、stdout の `opencode server listening on http://…` から宛先を読む。
+  basic 認証の合言葉（`OPENCODE_SERVER_PASSWORD`）は起動ごとに作る。Pleiad が終わるときは `exit` で木ごと止める
+- 作業場所は呼び出しごとの `?directory=` で選ぶ（作業場所ごとに OpenCode の instance ができる）。出来事は `/global/event` の 1 本で全部の作業場所の分が
+  `{ directory, payload: { type, properties } }` で届く
+- ターン: `POST /session/{id}/prompt_async`（204 ですぐ返る）。出来事は `message.updated`・`message.part.updated`（部品の全体）・`message.part.delta`
+  （`field: text` の追記）・`session.status`・`session.error`・`session.idle`（ターンの終わり）。部品は `text`・`reasoning`・`tool`
+  （`state.status` が pending → running → completed / error）・`step-finish`（`tokens`・`cost`）。1 ターンに assistant の発言が複数ある（ツールを呼ぶたびに次の step）。
+  写し替えは `core/backends/opencode-normalize.mjs`（実機の記録 `tests/lib/opencode-events.json` で試験する）
+- 承認: `permission.asked { id, permission, patterns, metadata, always, tool }` → `POST /permission/{id}/reply { reply: once | always | reject, message? }`。
+  質問（`question` のツール）: `question.asked` → `POST /question/{id}/reply { answers: [[ラベル]] }` か `/reject`
+- **承認モード**は会話の権限の規則（`permission: [{ permission, pattern, action }]`。最後に一致したものが勝つ）。会話を作るときに入れ、モードを替えたときだけ
+  `PATCH /session/{id}` で後ろに足す（PATCH は置き換えずに足す。どのモードも最初に `*` を置くので、前の規則を上書きする）。
+  都度確認（読むほかは聞く）・編集は自動・全部自動（作業場所の外は断る）・YOLO・計画のみ（agent `plan`）
+- 途中送信は、走っている最中の `prompt_async`。同じ実行の次の区切りで読まれる。v2 の `/api/session/{id}/prompt { delivery: steer }` は受理はするが、
+  1.19.3 では会話に入らなかった（使わない）。自分の発言が `message.updated` で会話に入ったら `userMessage.delivered` を出す
+- 中断: `POST /session/{id}/abort` → `session.error`（`MessageAbortedError`）→ `session.idle`
+- 分岐: `POST /session/{id}/fork { messageID }` は**渡した発言の手前まで**を写し、発言の id を振り直す。Pleiad の「その発言まで」は次の発言の id を渡す（最後なら省く）。
+  巻き戻しの `revert` はファイルの変更まで戻すので使わない（`rewind: false`。Pleiad の写しで戻す）
+- サブエージェント: `task` のツールの `state.metadata.sessionId` が子の会話。子の承認・質問は親のターンで聞き、中身は `/session/{id}/children` と子の発言で読む
+- 圧縮: `POST /session/{id}/summarize { providerID, modelID, auto: false }`。圧縮の印（`compaction` の部品だけの user の発言）と要約（assistant の `summary: true`）が残る
+- 入力欄の `!` は Pleiad が走らせ（`shell: 'host'`）、次のターンの始めに返答を起こさない発言（`POST /session/{id}/message { noReply: true }`）で積む
+- モデル: `GET /config/providers` の接続先ごとのモデル（id は `接続先/モデル`）。エフォートはモデルの `variants`（prompt の `variant`）。モデルが 40 を超える接続先
+  （OpenRouter など）は、接続先の既定と `opencode.json` に書いたモデルだけを出す
+- ログイン: OpenCode Zen の無料のモデルはログイン無しで使える。接続先（ChatGPT Pro/Plus・GitHub Copilot・API キー）は端末の `opencode auth login` で選ぶので、
+  そのコマンドを案内し、資格情報のファイル（`auth.json`）が変わったらサーバーを起こし直して確かめる
+
+**Pleiad の MCP と会話のシェルの環境変数**（`core/opencode-relay.mjs`・`core/backends/opencode-plugin.mjs`）:
+
+- OpenCode の MCP の設定は作業場所（instance）全体のもので、**MCP の呼び出しに会話の id は載らない**（実機で確認）。会話ごとに違う口（委譲の橋のトークンなど）を
+  そのままは渡せない
+- そこで、Pleiad のプラグインを `OPENCODE_CONFIG_CONTENT` の `plugin` で読ませる（利用者の `opencode.json` は書き換えない。本文はデータ置き場の
+  `opencode/pleiad-plugin.mjs` に書き出す。パッケージ版の asar の中は OpenCode から読めない）。プラグインの `tool.execute.before` が、`ply_*` のツールの引数に
+  OpenCode の会話の id（`_pleiadSession`）を足す（引数はその場で書き足す。置き換えると MCP に届かない）
+- Pleiad は `/mcp/opencode/<サーバー>`（`ply_agents`・`ply_control`・`ply_computer`・`ply_browser`）で受け、会話の id からそのターンの口へ `tools/call` を転送する。
+  ターンの始めに、作業場所の instance へその口を `POST /mcp` で足す（まだ足していない・つながっていないものだけ）。合言葉は Pleiad の起動ごと。
+  結び付いていない会話の id の呼び出しは断る。子の会話（サブエージェント）は親の口を使う
+- 会話のシェルの環境変数（ブラウザー・操作の一覧の CLI・秘密情報）は、プラグインの `shell.env`（会話の id を受け取る）が `/mcp/opencode/env?session=` から取る
+- Pleiad の指示（委譲・可視化・ブラウザー・コンピューター・操作の一覧・秘密情報・bot の人格）は `prompt_async` の `system` で毎ターン渡す
+- Pleiad 担当のコンテキスト（`ply_context`）はまだ渡さない（`plyContext: false`。OpenCode の設定・指示ファイルがそのまま効く）
+
 ## 3. 変えないこと
 
 - 承認の保留・猶予・中断（design.md §8.5）。`server.mjs` の

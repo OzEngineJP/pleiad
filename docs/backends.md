@@ -34,12 +34,23 @@ Google のサブスクリプション枠（AI Pro / Ultra）を使える唯一�
 
 `agy` のヘッドレスには対話の承認が無いので、選べる承認モードは「全部自動」だけ。`--dangerously-skip-permissions` を付けない限りツールは黙って拒否されるため、「計画だけ」「編集は自動」「都度確認」は出さない。思考は流れず、ツールは終わってから出る。本文は逐次流れるので、会話の見え方は他と変わらない。`agy` に一覧も履歴も無いため、会話の控えは Pleiad が `AGENT_HOST_DATA` の下に書く。
 
+## OpenCode
+
+OpenCode（`opencode`）の接続先をそのまま使う。OpenCode Zen の無料のモデルはログイン無しで使え、ChatGPT Pro/Plus・GitHub Copilot・API キーの接続先は端末の
+`opencode auth login` でつなぐ（「ログイン」を押すとそのコマンドが出る。終わると表示が切り替わる）。外すのも端末の `opencode auth logout`。
+
+Pleiad は OpenCode のサーバー（`opencode serve`）を 1 本だけ起こし、全部の会話で使う（1 本で約 760 MB）。利用者の `opencode.json`（MCP・権限・指示）はそのまま効き、
+Pleiad は自分のプラグインとツール（委譲・操作の一覧・コンピューターの操作・ブラウザー）だけを足す。会話は OpenCode の側に残るので、OpenCode の TUI からも見える。
+
+承認モードは「都度確認」「編集は自動」「全部自動」「YOLO」「計画のみ」。「全部自動」は作業ディレクトリの外へのアクセスを断る。
+
 ## コンピューターの操作
 
-デスクトップ版（Windows）では、3 つのエージェントに Pleiad の MCP `ply_computer` を渡し、画面を撮ってマウスとキーボードでアプリを操作させられる（[`computer-use.md`](computer-use.md)）。エージェントごとの違い:
+デスクトップ版（Windows）では、各エージェントに Pleiad の MCP `ply_computer` を渡し、画面を撮ってマウスとキーボードでアプリを操作させられる（[`computer-use.md`](computer-use.md)）。エージェントごとの違い:
 
 - Claude Code: 違いは無い。ツールごとの承認は出さず、アプリの承認だけを聞く。
 - Codex: Pleiad から起動した会話では、Codex に同梱の computer use を切る（利用者の `~/.codex/config.toml` は書き換えない。Pleiad の外の Codex には影響しない）。
+- OpenCode: Claude Code と同じくアプリの承認を聞く。画像は MCP の image のまま渡す（モデルが画像を読めるかは、選んだモデルによる）。
 - Antigravity: アプリの承認を聞かない（承認モードが確認なししか無いため。禁止のアプリは拒む）。画像はファイルを開いて見るので、1 回の撮影に 2 手かかる。別の会話が操作中のときは、3 分ごとに呼び直しながら待つ。
 
 ## 互換の接続先

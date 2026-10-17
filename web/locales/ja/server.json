@@ -648,6 +648,32 @@
       "loginFailed": "ログインに失敗した"
     }
   },
+  "opencode": {
+    "description": "OpenCode の接続先（OpenCode Zen・ChatGPT・GitHub Copilot・API キー）を使う",
+    "modes": {
+      "ask": "読むほかは毎回聞く",
+      "edit": "ファイルの編集は自動、ほかは聞く",
+      "full": "聞かない。作業ディレクトリの外へは出ない",
+      "yolo": "確認なし・制限なし（作業ディレクトリの外も）",
+      "plan": "編集しない（OpenCode の plan エージェント）"
+    },
+    "models": {
+      "default": "既定（OpenCode の設定）"
+    },
+    "errors": {
+      "notInstalled": "OpenCode（opencode）が見つかりません。インストールしてから再確認してください",
+      "noModel": "使うモデルが決まりません。OpenCode でモデルを選んでください",
+      "forkMissing": "分岐の起点の発言が見つかりません"
+    },
+    "auth": {
+      "freeOnly": "OpenCode Zen の無料のモデルだけ",
+      "detail": "OpenCode（opencode auth login でつないだ接続先）",
+      "runCommand": "このコマンドを端末で実行し、つなぐ接続先を選んでログインしてください。（終わるとここが自動で切り替わります）",
+      "loggedIn": "接続先をつないだ",
+      "loginTimeout": "端末でのログインが終わらなかった（もう一度お試しください）",
+      "logoutInCli": "OpenCode の接続先を外すには、端末で opencode auth logout を実行してください"
+    }
+  },
   "antigravity": {
     "description": "Google AI Pro / Ultra の枠を使う",
     "modes": {
