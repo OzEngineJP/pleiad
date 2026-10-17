@@ -1012,9 +1012,24 @@ export default async function (t) {
   {
     const calls = [];
     const windows = [
-      { id: 'ax-500-1', pid: 500, exe: 'Google Chrome', title: 'Google', x: 100, y: 100, width: 800, height: 800, minimized: false, visible: true },
+      { id: 'ax-500-1', pid: 500, exe: 'Google Chrome', title: 'Google', x: 100, y: 100, width: 800, height: 800, minimized: false, visible: true, allowButtons: ['Allow'] },
     ];
-    let dialogEntry = { id: 'ax-500-2', pid: 500, exe: 'Google Chrome', title: 'Allow remote debugging?', x: 200, y: 200, width: 420, height: 180, minimized: false, visible: true };
+    let dialogEntry = {
+      id: 'ax-500-2',
+      pid: 500,
+      exe: 'Google Chrome',
+      title: 'Allow remote debugging?',
+      x: 200,
+      y: 200,
+      width: 420,
+      height: 180,
+      minimized: false,
+      visible: true,
+      hasDialogText: true,
+      allowButtons: ['Allow'],
+      method: 'ax-press',
+    };
+    let pressedButtons = [];
     let frontApp = { pid: 99, bundleId: 'com.apple.TextEdit', name: 'TextEdit' };
     let enableStepCount = 0;
     const helper = {
@@ -1025,9 +1040,19 @@ export default async function (t) {
           case 'chromeFindDialog': {
             if (!dialogEntry || (args.since ?? []).includes(dialogEntry.id)) return { dialog: null };
             if (args.port && args.port !== 9222) return { dialog: null };
+            if (!dialogEntry.hasDialogText || (dialogEntry.allowButtons?.length ?? 0) !== 1) return { dialog: null };
             return { dialog: { ...dialogEntry } };
           }
-          case 'chromeAllowDialog': return { ok: args.id === dialogEntry?.id };
+          case 'chromeAllowDialog': {
+            // 確認の窓（args.id）1 つの部分木だけを調べ、他の窓（windows）の Allow ボタンは絶対に触らない
+            if (!dialogEntry || args.id !== dialogEntry.id) return { ok: false, reason: 'unknown-window' };
+            if (!dialogEntry.hasDialogText) return { ok: false, reason: 'not-dialog', hasDialogText: false };
+            const count = dialogEntry.allowButtons?.length ?? 0;
+            if (count === 0) return { ok: false, reason: 'no-button', allowCount: 0 };
+            if (count > 1) return { ok: false, reason: 'ambiguous', allowCount: count };
+            pressedButtons.push({ windowId: dialogEntry.id, button: dialogEntry.allowButtons[0], method: dialogEntry.method ?? 'ax-press' });
+            return { ok: true, button: dialogEntry.allowButtons[0], method: dialogEntry.method ?? 'ax-press', hasDialogText: true, allowCount: 1 };
+          }
           case 'chromeEnableStep': {
             enableStepCount += 1;
             if (enableStepCount === 1) return { state: 'navigated-bg', title: 'PLY-ENABLE' };
@@ -1102,7 +1127,25 @@ export default async function (t) {
     t.ok('mac.cjs: findPermissionDialog が確認の窓を返す（port 一致）', dlg?.id === 'ax-500-2');
     t.ok('mac.cjs: allowPermission は確認として出した ref 以外には何もしない',
       await core.allowPermission({ id: 'ax-500-1' }) === false && await core.allowPermission({ id: 'unknown' }) === false && await core.allowPermission(null) === false);
-    t.ok('mac.cjs: allowPermission が確認の ref の Allow を押す', await core.allowPermission(dlg) === true);
+    t.ok('mac.cjs: allowPermission が確認の ref の Allow を押す（method: ax-press）',
+      await core.allowPermission(dlg) === true && pressedButtons.length === 1 && pressedButtons[0].windowId === 'ax-500-2');
+
+    // 確認の窓の中に許可のボタンが 2 つあれば押さない（ambiguous）
+    pressedButtons = [];
+    dialogEntry.allowButtons = ['Allow', 'Allow'];
+    t.ok('mac.cjs: 確認の窓の中に許可のボタンが 2 つあれば押さない',
+      await core.allowPermission(dlg) === false && pressedButtons.length === 0);
+
+    // 確認の窓の中に許可ボタンが 0 個で、確認の窓の外（別の窓 ax-500-1 の通知・カメラ確認など）にだけ許可ボタンがあるときは押さない
+    dialogEntry.allowButtons = [];
+    t.ok('mac.cjs: 確認の窓の外の許可のボタンは押さない（no-button、ax-press-app / ax-press-sibling も拒否）',
+      await core.allowPermission(dlg) === false && pressedButtons.length === 0);
+    dialogEntry.allowButtons = ['Allow'];
+    dialogEntry.method = 'ax-press-sibling';
+    t.ok('mac.cjs: 確認の窓の中で押した method（ax-press / ax-confirm）以外は失敗にする',
+      await core.allowPermission(dlg) === false);
+    dialogEntry.method = 'ax-press';
+
     t.ok('mac.cjs: close も確認の ref だけに効く', await core.close({ id: 'ax-500-1' }) === false && await core.close(dlg) === true);
 
     const browser = await core.locateBrowser({ product: 'chrome' });

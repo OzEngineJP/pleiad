@@ -31,8 +31,8 @@ Windows 側の自動許可・自動有効化と名前・形をそろえて、`co
 | op | 役割 |
 |---|---|
 | `chromeWindows` | 指定ポートの `lsof` または実行ファイル名から Chrome の PID を特定し、`AXManualAccessibility` と `AXEnhancedUserInterface` を `true` にして `AXWindow` 一覧（ID `ax-<pid>-<index>`・題・座標・大きさ・最小化）を返す |
-| `chromeFindDialog` | Chrome の窓とシート（`AXSheet`・`AXDialog`）を走査し、リモートデバッグの確認（「リモート デバッグ」「Remote debugging」等の文言と、許可／拒否の 2 ボタン、またはキャンセル＋設定のボタン構成）を見つけて窓の参照を返す |
-| `chromeAllowDialog` | 指定した窓の中の確認シートから許可ボタン（`許可する`・`Allow`、または拒否・設定ボタン以外の肯定ボタン）を探して `kAXPressAction` で押す |
+| `chromeFindDialog` | Chrome のシート（`AXSheet`・`AXDialog`・`AXApplicationAlertDialog`）と小窓を走査し、その要素の部分木（`AXWebArea` を除く）にリモートデバッグの確認の文言があり、かつ許可ボタンがちょうど 1 つあるシート・窓そのものの参照を返す（シートが窓に付くときは親の `AXWindow` ではなくシート要素を返す） |
+| `chromeAllowDialog` | `chromeFindDialog` が出した `id` の要素 1 つの部分木（`AXWebArea` を除く）だけを調べ、確認の文言を含み、かつ許可ボタン（`許可する`・`Allow`）がちょうど 1 つのときだけ `kAXPressAction`（または `kAXConfirmAction`）で押す（`method: "ax-press" | "ax-confirm"`）。0 個や 2 個以上なら押さずに `{ ok: false, reason: "no-button" | "ambiguous" }` を返し、アプリ全体や他の `AXWindow` は見ない |
 | `chromeEnableStep` | マーカーの題で一時窓を特定し、アドレス欄（`AXTextField`）へ `chrome://inspect/#remote-debugging` を入れて移動させ、`AXWebArea` 内のチェックボックス `AXDOMIdentifier == "remote-debugging-enabled"` が有効（`kAXEnabledAttribute == true`）になるのを待ってからオンにし、検証後に一時窓を閉じる |
 | `chromeRaise` | `NSRunningApplication.activate` と `kAXMainAttribute`・`kAXFocusedAttribute`・`kAXRaiseAction` で窓を前面に出す |
 | `chromeClose` | `kAXCloseButtonAttribute` に `kAXPressAction` を送って窓を閉じる |
@@ -46,6 +46,7 @@ Chrome 152（macOS arm64）での実測に基づき、次の手順を採る。
 1. **Web 領域の AX 露出**: Chrome は既定では Web ページの中身を macOS の Accessibility 木に出さない。アプリの `AXUIElement` に `AXManualAccessibility = true` と `AXEnhancedUserInterface = true` を設定すると、`AXWebArea` の下に DOM の要素が現れる。
 2. **アドレス欄からの移動**: `chrome://inspect/#remote-debugging` はコマンドライン引数で直接開くと新しいタブになるため、まず `data:text/html,<title>PLY-ENABLE-<nonce></title>` を `--new-window` で開き、その窓のアドレス欄（`AXTextField`）に URL を設定して `Return` を送る。Chrome は窓がアクティブでないとアドレス欄の `Return` で移動しないため、移動の間だけ一時窓をアクティブにし、必要なら `⌘L` → 文字列入力 → `Return` にフォールバックし、完了後に `prevFrontPid` のアプリを前面へ戻す。
 3. **チェックボックスの特定と待機**: `chrome://inspect` には 4 つのチェックボックス（`discover-usb-devices-enable`・`discover-tcp-devices-enable`・`port-forwarding-enable`・`remote-debugging-enabled`）があり、最初の 2 つは初期状態でチェック済み、`remote-debugging-enabled` はページの初期化（`inspect.js`）が終わるまで `disabled`（`kAXEnabledAttribute == false`）になっている。そのため `AXDOMIdentifier == "remote-debugging-enabled"`（またはラベル文言 `Allow remote debugging for this browser instance`）で厳密に特定し、`enabled == true` になるまで待ってから `kAXPressAction`（効かなければ親 `<label>` の `kAXPressAction`、さらにフォーカス＋Space）でオンにし、`kAXValueAttribute` が `1` になったことを確かめる。
+4. **確認シートの単一要素への限定**: 利用者の Chrome にはサイトの通知・カメラ・位置情報などの「許可する／Allow」の確認も出うる。取り違えて別の許可を押さないよう、`chromeAllowDialog` は `chromeFindDialog` が返したシート・窓 1 つの部分木（`AXWebArea` を除く）だけを見て、確認の文言と「ちょうど 1 つの許可ボタン」が揃っているときだけ押す（Windows 側の `desktop/chrome-os/win32-uia.ps1` の `allow` と同じ規則）。
 
 ### 5. 窓を隠す（`conceal`）の扱い
 
@@ -62,12 +63,14 @@ Chrome 152（macOS arm64）での実測に基づき、次の手順を採る。
 `.github/workflows/chrome-mac-verify.yml`（`scripts/verify-chrome-mac.mjs`）により、`macos-15`（macOS 15.7.9 arm64、Google Chrome 152.0.7977.83）で一時 `--user-data-dir` を使って次の一連の流れが通ることを実証した。
 
 - **Accessibility の許可**: ランナー上で `AXIsProcessTrusted()` が `true`、`CGPreflightScreenCaptureAccess()` も `true`。
+  - **注（実証の範囲）**: CI のワークフローでは、実行前に `/Library/Application Support/com.apple.TCC/TCC.db` へ `kTCCServiceAccessibility` の許可を書き込んでから試している。利用者の Mac では、初めて使うときに Pleiad に Accessibility の許可を手で出す必要がある（ヘルパーの `request` op とシステム設定の Accessibility ペインへの案内。[ADR 0173](0173-computer-use-macos.md) §6）。
 - **`enableRemoteDebugging`**: 既存の窓（`ax-4068-1`）を残したまま一時窓を開き、`chrome://inspect/#remote-debugging` の `remote-debugging-enabled` をオンにして一時窓を閉じ、`DevToolsActivePort`（port `9222`）が生成され、残る窓が `ax-4068-1` のみであることを確認（所要約 5.5 秒）。
-- **接続と `allowPermission`**: `createChromeConnection` が `permission` 状態に入り、`findPermissionDialog` が確認シート（`ax-4068-3`）を検出し、`allowPermission` が Allow ボタンを `AXPress` して `connected`（`Browser.getVersion` → `Chrome/152.0.7977.83`）に遷移することを確認。
+- **接続と `allowPermission`**: `createChromeConnection` が `permission` 状態に入り、`findPermissionDialog` が確認シートを検出し、`allowPermission` が確認シート内の Allow ボタンを `method: "ax-press"` で押して `connected`（`Browser.getVersion` → `Chrome/152.0.7977.83`）に遷移することを確認。
 - **中継と `agent-browser`**: `createChromeRelay` と `createWindowManager` を通して同梱の `agent-browser`（darwin arm64）でローカル試験ページを `open` → `snapshot -i` → `screenshot` し、見出し・ボタンの取得と PNG 保存がすべて成功することを確認。
-- **実証できなかったこと**:
+- **実証できなかったこと・未確認の範囲**:
   - 窓を画面外や透明にして利用者から完全に隠すこと（`conceal`）。macOS の WindowServer が画面外への移動を `x = 984` にクランプするため、`features.conceal: false` として見える窓で動かす。
   - `enableRemoteDebugging` で一時窓のアドレス欄に `Return` を送る約 1〜2 秒の間、Chrome の一時窓が一度アクティブになること（完了後に元の前面アプリへ戻す）。
+  - **日本語 UI の Chrome**: CI は英語の Chrome だけで確かめた。日本語の Chrome の確認シートの「許可する」と、`chrome://inspect/#remote-debugging` のトグルの文言は、実機ではまだ確かめていない（トグル自体は言語に依らない `AXDOMIdentifier == "remote-debugging-enabled"` を主条件にしている）。
 
 ## 理由
 

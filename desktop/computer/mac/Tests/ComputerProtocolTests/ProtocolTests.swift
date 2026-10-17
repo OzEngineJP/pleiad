@@ -89,4 +89,50 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(modifierFlags([KeyCode.command, KeyCode.shift]), 0x00120000)
         XCTAssertEqual(modifierFlags([KeyCode.returnKey]), 0)
     }
+
+    func testEvaluateDialogCandidateSingleButtonAndRejectsAmbiguousOrOutside() {
+        // 1. 確認の文言があり、許可ボタンがちょうど 1 つ（英語 / 日本語）→ canAllow == true
+        let okEn = evaluateDialogCandidate(
+            texts: ["Allow remote debugging?", "Only web developers should turn on this feature"],
+            buttonLabels: [(0, "Turn off in settings"), (1, "Cancel"), (2, "Allow")]
+        )
+        XCTAssertTrue(okEn.canAllow)
+        XCTAssertNil(okEn.reason)
+        XCTAssertEqual(okEn.allowButtonIndices, [2])
+        XCTAssertEqual(okEn.allowTitles, ["Allow"])
+
+        let okJa = evaluateDialogCandidate(
+            texts: ["リモート デバッグを許可しますか？"],
+            buttonLabels: [(0, "設定でオフにする"), (1, "キャンセル"), (2, "許可する")]
+        )
+        XCTAssertTrue(okJa.canAllow)
+        XCTAssertEqual(okJa.allowButtonIndices, [2])
+        XCTAssertEqual(okJa.allowTitles, ["許可する"])
+
+        // 2. 確認の窓の中に許可ボタンが 2 つ以上ある → 押さない（reason: "ambiguous"）
+        let dup = evaluateDialogCandidate(
+            texts: ["Allow remote debugging?"],
+            buttonLabels: [(0, "Allow"), (1, "Cancel"), (2, "Allow")]
+        )
+        XCTAssertFalse(dup.canAllow)
+        XCTAssertEqual(dup.reason, "ambiguous")
+        XCTAssertEqual(dup.allowButtonIndices, [0, 2])
+
+        // 3. 確認の文言はあるが許可ボタンが 0 個 → 押さない（reason: "no-button"）
+        let noBtn = evaluateDialogCandidate(
+            texts: ["Allow remote debugging?"],
+            buttonLabels: [(0, "Cancel")]
+        )
+        XCTAssertFalse(noBtn.canAllow)
+        XCTAssertEqual(noBtn.reason, "no-button")
+
+        // 4. 確認の窓の外（サイトの通知・カメラ等の確認でリモートデバッグ文言が無い要素）の許可ボタン → 押さない（reason: "not-dialog"）
+        let outside = evaluateDialogCandidate(
+            texts: ["example.com wants to show notifications"],
+            buttonLabels: [(0, "Block"), (1, "Allow")]
+        )
+        XCTAssertFalse(outside.canAllow)
+        XCTAssertEqual(outside.reason, "not-dialog")
+    }
 }
+

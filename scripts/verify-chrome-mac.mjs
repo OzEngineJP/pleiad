@@ -121,6 +121,14 @@ async function main() {
     };
     log(`Permissions: accessibility=${perms?.accessibility}, screen=${perms?.screen}, displays=${JSON.stringify(displays?.displays)}`);
 
+    let lastAllowHelperResult = null;
+    const rawHelperCall = helper.call.bind(helper);
+    helper.call = async (op, args, timeoutMs) => {
+      const res = await rawHelperCall(op, args, timeoutMs);
+      if (op === 'chromeAllowDialog') lastAllowHelperResult = res;
+      return res;
+    };
+
     // IPC 往復の配線（parentPortChromeOs ⇄ attachChromeOs ⇄ createChromeOs(darwin)）
     const toWorker = [], toPort = [];
     const worker = { on: (_t, fn) => toWorker.push(fn), postMessage: m => queueMicrotask(() => toPort.forEach(fn => fn({ data: m }))) };
@@ -260,15 +268,19 @@ async function main() {
 
     const cdp = await withTimeout(demandPromise, 10_000, 'conn.demand() after allowPermission');
     const version = await cdp.send('Browser.getVersion');
+    const allowMethod = lastAllowHelperResult?.method ?? null;
+    const validAllowMethod = allowMethod === 'ax-press' || allowMethod === 'ax-confirm';
     results.stages.connectionAndPermission = {
-      ok: conn.state().state === 'connected' && Boolean(foundDialog) && allowResult === true,
+      ok: conn.state().state === 'connected' && Boolean(foundDialog) && allowResult === true && validAllowMethod,
       foundDialog,
       allowResult,
+      allowMethod,
+      allowHelperResult: lastAllowHelperResult,
       connectedState: conn.state(),
       browserVersion: version,
       stateHistory,
     };
-    log(`Connected to Chrome! Version: ${JSON.stringify(version)}`);
+    log(`Connected to Chrome! allowMethod=${allowMethod}, Version: ${JSON.stringify(version)}`);
 
     // ---- Stage 4: core/chrome/relay.mjs + 同梱 agent-browser で open / snapshot / screenshot -------
     testServer = await startLocalTestServer();

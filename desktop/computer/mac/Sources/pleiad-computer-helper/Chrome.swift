@@ -201,10 +201,20 @@ enum Chrome {
             if let dict = windowDict(id: id, pid: pid, element: win) {
                 out.append(dict)
             }
-            // シートや子ダイアログがあれば一緒に拾う
-            for sheet in axChildren(win, "AXSheets") {
+            // シートや子ダイアログ（AXSheets 属性、および直下の AXSheet / AXDialog 子要素）も独立した要素として拾う
+            var sheetElements = axChildren(win, "AXSheets")
+            for child in axChildren(win) {
+                let cRole = axString(child, kAXRoleAttribute as String) ?? ""
+                let cSub = axString(child, kAXSubroleAttribute as String) ?? ""
+                if (cRole == "AXSheet" || cRole == "AXDialog" || cSub == "AXApplicationAlertDialog" || cSub == "AXDialog") &&
+                   !sheetElements.contains(where: { CFEqual($0, child) }) {
+                    sheetElements.append(child)
+                }
+            }
+            for sheet in sheetElements {
                 let sid = registerWindow(pid: pid, element: sheet)
-                if let sdict = windowDict(id: sid, pid: pid, element: sheet) {
+                if !out.contains(where: { ($0["id"] as? String) == sid }),
+                   let sdict = windowDict(id: sid, pid: pid, element: sheet) {
                     out.append(sdict)
                 }
             }
@@ -242,7 +252,7 @@ enum Chrome {
                            abs(ew - Double(b.width)) <= 4 && abs(eh - Double(b.height)) <= 4
                 }
                 if !matched {
-                    // 点の下から AXWindow が引けるなら登録する
+                    // 点の下から AXWindow / AXSheet / AXDialog が引けるなら登録する
                     if trusted {
                         var hitElem: AXUIElement?
                         let midX = Float(b.midX), midY = Float(b.midY)
@@ -294,17 +304,6 @@ enum Chrome {
 
     // ---- 確認のダイアログの検出と「許可する / Allow」の押下 ------------------------------------
 
-    private static func isAllowButtonLabel(_ raw: String) -> Bool {
-        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lower = s.lowercased()
-        return lower == "allow" || s == "許可する" || s == "許可"
-    }
-
-    private static func looksLikeDialogText(_ raw: String) -> Bool {
-        let lower = raw.lowercased()
-        return lower.contains("remote debugging") || raw.contains("リモート デバッグ") || raw.contains("リモートデバッグ")
-    }
-
     private static func collectShortText(_ node: AXUIElement, depth: Int = 0, maxDepth: Int = 3) -> String {
         if depth > maxDepth { return "" }
         var parts: [String] = []
@@ -319,11 +318,19 @@ enum Chrome {
         return parts.joined(separator: " ")
     }
 
-    /** Web の中身（AXWebArea）を除いた Chrome 自身の UI 木から、許可ボタンとダイアログ文言を探す */
-    private static func scanDialogInTree(_ root: AXUIElement, maxDepth: Int = 25) -> (allowButton: AXUIElement?, allowTitle: String?, hasDialogText: Bool) {
-        var allowButton: AXUIElement?
-        var allowTitle: String?
-        var hasText = false
+    private struct DialogTreeScan {
+        let evaluation: DialogTreeEvaluation
+        let allowButtons: [AXUIElement]
+    }
+
+    /**
+     * Web の中身（AXWebArea）と子シート（root 自身が AXWindow のときの AXSheet）を除いた
+     * 1 つの要素の部分木から、確認の文言とすべての許可ボタンを集めて evaluateDialogCandidate で判定する。
+     */
+    private static func scanDialogInTree(_ root: AXUIElement, maxDepth: Int = 25, skipChildSheets: Bool = false) -> DialogTreeScan {
+        var texts: [String] = []
+        var buttonLabels: [(index: Int, label: String)] = []
+        var buttons: [AXUIElement] = []
         var visited = 0
 
         func walk(_ node: AXUIElement, depth: Int) {
@@ -331,29 +338,29 @@ enum Chrome {
             visited += 1
             let role = axString(node, kAXRoleAttribute as String) ?? ""
             if role == "AXWebArea" { return } // ページの DOM の中の偽ボタンは絶対に触らない
+            if depth > 0 && skipChildSheets && role == "AXSheet" { return } // シートはシート自身の要素として扱う
+
             let title = axString(node, kAXTitleAttribute as String) ?? ""
             let desc = axString(node, kAXDescriptionAttribute as String) ?? ""
             let val = axString(node, kAXValueAttribute as String) ?? ""
-            if looksLikeDialogText(title) || looksLikeDialogText(desc) || looksLikeDialogText(val) {
-                hasText = true
-            }
-            if role == "AXButton" && allowButton == nil {
+            if !title.isEmpty { texts.append(title) }
+            if !desc.isEmpty { texts.append(desc) }
+            if !val.isEmpty { texts.append(val) }
+
+            if role == "AXButton" {
+                let candidateLabel: String
                 if isAllowButtonLabel(title) {
-                    allowButton = node
-                    allowTitle = title
+                    candidateLabel = title
                 } else if isAllowButtonLabel(desc) {
-                    allowButton = node
-                    allowTitle = desc
+                    candidateLabel = desc
                 } else if isAllowButtonLabel(val) {
-                    allowButton = node
-                    allowTitle = val
+                    candidateLabel = val
                 } else {
-                    let childText = collectShortText(node, depth: 0, maxDepth: 2)
-                    if isAllowButtonLabel(childText) {
-                        allowButton = node
-                        allowTitle = childText
-                    }
+                    candidateLabel = collectShortText(node, depth: 0, maxDepth: 2)
                 }
+                let idx = buttons.count
+                buttons.append(node)
+                buttonLabels.append((index: idx, label: candidateLabel))
             }
             for child in axChildren(node) {
                 walk(child, depth: depth + 1)
@@ -361,10 +368,16 @@ enum Chrome {
         }
 
         walk(root, depth: 0)
-        return (allowButton, allowTitle, hasText)
+        let eval = evaluateDialogCandidate(texts: texts, buttonLabels: buttonLabels)
+        let matchedButtons = eval.allowButtonIndices.map { buttons[$0] }
+        return DialogTreeScan(evaluation: eval, allowButtons: matchedButtons)
     }
 
-    /** { since?: [String], port?: Int } → { dialog: [String: Any] | NSNull } */
+    /**
+     * 確認のダイアログ（シートまたは小窓）を特定する。
+     * シートが Chrome の窓に付くときは親の AXWindow ではなく、確認の文言と 1 つの許可ボタンを持つシート要素そのものを返す。
+     * { since?: [String], port?: Int } → { dialog: [String: Any] | NSNull }
+     */
     static func findDialog(_ args: [String: Any]) -> [String: Any] {
         let since = Set((args["since"] as? [String]) ?? [])
         let port = intValue(args["port"]) ?? 0
@@ -377,6 +390,10 @@ enum Chrome {
             targetPids = all.count == 1 ? all : []
         } else {
             targetPids = browserPids()
+        }
+
+        for pid in targetPids {
+            enableAppAccessibility(pid)
         }
 
         let snap = windows(["port": port])
@@ -395,56 +412,50 @@ enum Chrome {
             return ["dialog": NSNull()]
         }
 
-        for pid in targetPids {
-            enableAppAccessibility(pid)
+        // 1. まずシート（AXSheet / AXDialog / AXApplicationAlertDialog）を優先して調べる
+        for w in allWins {
+            guard let id = w["id"] as? String,
+                  let pid = w["pid"] as? Int, targetPids.contains(pid_t(pid)),
+                  let visible = w["visible"] as? Bool, visible else { continue }
+            let role = w["role"] as? String ?? ""
+            let subrole = w["subrole"] as? String ?? ""
+            let isSheetOrDialog = role == "AXSheet" || role == "AXDialog" || subrole == "AXApplicationAlertDialog" || subrole == "AXDialog"
+            guard isSheetOrDialog, let entry = lookupWindow(id: id) else { continue }
+            let scan = scanDialogInTree(entry.element)
+            if scan.evaluation.canAllow {
+                var d = w
+                d["hasAllowButton"] = true
+                return ["dialog": d]
+            }
         }
 
+        // 2. 独立した小窓（AXWindow）を確認する（子シートがある場合はシート側で拾うので skipChildSheets: true）
         for w in allWins {
             guard let id = w["id"] as? String,
                   let pid = w["pid"] as? Int, targetPids.contains(pid_t(pid)),
                   let visible = w["visible"] as? Bool, visible,
-                  let width = w["width"] as? Double, let height = w["height"] as? Double else { continue }
-            let isSmall = width >= minDialogWidth && width <= maxDialogWidth && height >= minDialogHeight && height <= maxDialogHeight
-            if !since.contains(id) && isSmall {
-                return ["dialog": w]
+                  let width = w["width"] as? Double, let height = w["height"] as? Double,
+                  let entry = lookupWindow(id: id) else { continue }
+            let scan = scanDialogInTree(entry.element, skipChildSheets: true)
+            if scan.evaluation.canAllow {
+                var d = w
+                d["hasAllowButton"] = true
+                return ["dialog": d]
             }
-            if let entry = lookupWindow(id: id) {
-                let scan = scanDialogInTree(entry.element)
-                if scan.allowButton != nil && (scan.hasDialogText || !since.contains(id) || isSmall) {
-                    var d = w
-                    d["hasAllowButton"] = true
-                    return ["dialog": d]
-                }
+            let isSmall = width >= minDialogWidth && width <= maxDialogWidth && height >= minDialogHeight && height <= maxDialogHeight
+            if !since.contains(id) && isSmall && scan.evaluation.hasDialogText {
+                return ["dialog": w]
             }
         }
 
-        // アプリ直下の要素（kAXWindowsAttribute に出ないモーダルやシート）も走査する
-        for pid in targetPids {
-            let appElem = AXUIElementCreateApplication(pid)
-            let scan = scanDialogInTree(appElem, maxDepth: 25)
-            if scan.allowButton != nil && scan.hasDialogText {
-                let id = registerWindow(pid: pid, element: appElem)
-                return [
-                    "dialog": [
-                        "id": id,
-                        "pid": Int(pid),
-                        "exe": "Google Chrome",
-                        "title": "Allow remote debugging?",
-                        "x": 100.0,
-                        "y": 100.0,
-                        "width": 420.0,
-                        "height": 180.0,
-                        "minimized": false,
-                        "visible": true,
-                        "hasAllowButton": true
-                    ]
-                ]
-            }
-        }
         return ["dialog": NSNull()]
     }
 
-    /** { id: String } → { ok: Bool, title?: String } */
+    /**
+     * findDialog が出した id の要素（確認のシート・窓）1 つの部分木だけを調べ、
+     * 確認の文言を含み、かつ許可のボタンがちょうど 1 つのときだけ押す。
+     * { id: String } → { ok: Bool, button?: String, method?: String, reason?: String }
+     */
     static func allowDialog(_ args: [String: Any]) -> [String: Any] {
         guard AXIsProcessTrusted(), let id = args["id"] as? String else {
             return ["ok": false, "reason": "not-trusted-or-no-id"]
@@ -454,39 +465,20 @@ enum Chrome {
         }
         enableAppAccessibility(entry.pid)
 
-        // 1. 対象の要素の中から Allow / 許可する ボタンを探す
         let scan = scanDialogInTree(entry.element, maxDepth: 25)
-        if let btn = scan.allowButton {
-            _ = AXUIElementSetAttributeValue(btn, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-            let err = AXUIElementPerformAction(btn, kAXPressAction as CFString)
-            if err == .success {
-                return ["ok": true, "button": scan.allowTitle ?? "Allow", "method": "ax-press"]
-            }
-            if AXUIElementPerformAction(btn, kAXConfirmAction as CFString) == .success {
-                return ["ok": true, "button": scan.allowTitle ?? "Allow", "method": "ax-confirm"]
-            }
+        if !scan.evaluation.canAllow {
+            return ["ok": false, "reason": scan.evaluation.reason ?? "no-button"]
         }
-
-        // 2. 同じ PID のアプリ全体・他の AXWindow からも探す
-        let appElem = AXUIElementCreateApplication(entry.pid)
-        let appScan = scanDialogInTree(appElem, maxDepth: 25)
-        if let btn = appScan.allowButton, appScan.hasDialogText {
-            _ = AXUIElementSetAttributeValue(btn, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-            let err = AXUIElementPerformAction(btn, kAXPressAction as CFString)
-            if err == .success {
-                return ["ok": true, "button": appScan.allowTitle ?? "Allow", "method": "ax-press-app"]
-            }
+        let btn = scan.allowButtons[0]
+        let btnTitle = scan.evaluation.allowTitles.first ?? "Allow"
+        _ = AXUIElementSetAttributeValue(btn, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+        if AXUIElementPerformAction(btn, kAXPressAction as CFString) == .success {
+            return ["ok": true, "button": btnTitle, "method": "ax-press"]
         }
-        for win in axChildren(appElem, kAXWindowsAttribute as String) {
-            let s = scanDialogInTree(win, maxDepth: 25)
-            if let btn = s.allowButton, s.hasDialogText {
-                let err = AXUIElementPerformAction(btn, kAXPressAction as CFString)
-                if err == .success {
-                    return ["ok": true, "button": s.allowTitle ?? "Allow", "method": "ax-press-sibling"]
-                }
-            }
+        if AXUIElementPerformAction(btn, kAXConfirmAction as CFString) == .success {
+            return ["ok": true, "button": btnTitle, "method": "ax-confirm"]
         }
-        return ["ok": false, "reason": "allow-button-not-found"]
+        return ["ok": false, "reason": "action-failed"]
     }
 
     // ---- chrome://inspect/#remote-debugging の自動有効化 ---------------------------------------

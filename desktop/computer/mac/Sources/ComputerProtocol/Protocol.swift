@@ -107,3 +107,59 @@ public func requireRect(_ value: Any?, name: String = "rect") throws -> Rect {
           width > 0, height > 0 else { throw HelperError(.failed, "\(name) must be { x, y, width, height }") }
     return Rect(x: x, y: y, width: width, height: height)
 }
+
+// ---- Chrome の「リモート デバッグを許可しますか？」確認の判定（テスト可能な純関数） ----------
+
+public func isAllowButtonLabel(_ raw: String) -> Bool {
+    let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lower = s.lowercased()
+    return lower == "allow" || s == "許可する" || s == "許可"
+}
+
+public func looksLikeRemoteDebuggingDialogText(_ raw: String) -> Bool {
+    let lower = raw.lowercased()
+    return lower.contains("remote debugging") || raw.contains("リモート デバッグ") || raw.contains("リモートデバッグ")
+}
+
+public struct DialogTreeEvaluation: Equatable {
+    public let hasDialogText: Bool
+    public let allowButtonIndices: [Int]
+    public let allowTitles: [String]
+    public let reason: String? // nil when valid (hasDialogText && allowButtonIndices.count == 1)
+
+    public var canAllow: Bool { reason == nil && allowButtonIndices.count == 1 }
+}
+
+/**
+ * 1 つの確認の窓・シートの部分木（AXWebArea を除いた要素列）に確認の文言があり、
+ * かつ許可ボタンがちょうど 1 つだけあるかを判定する。
+ * 0 個なら "no-button"、2 個以上なら "ambiguous"、確認の文言が無ければ "not-dialog" を返す。
+ */
+public func evaluateDialogCandidate(texts: [String], buttonLabels: [(index: Int, label: String)]) -> DialogTreeEvaluation {
+    let hasText = texts.contains { looksLikeRemoteDebuggingDialogText($0) }
+    var matchedIndices: [Int] = []
+    var matchedTitles: [String] = []
+    for item in buttonLabels {
+        if isAllowButtonLabel(item.label) {
+            matchedIndices.append(item.index)
+            matchedTitles.append(item.label.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+    let reason: String?
+    if !hasText {
+        reason = "not-dialog"
+    } else if matchedIndices.isEmpty {
+        reason = "no-button"
+    } else if matchedIndices.count > 1 {
+        reason = "ambiguous"
+    } else {
+        reason = nil
+    }
+    return DialogTreeEvaluation(
+        hasDialogText: hasText,
+        allowButtonIndices: matchedIndices,
+        allowTitles: matchedTitles,
+        reason: reason
+    )
+}
+

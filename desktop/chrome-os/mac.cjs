@@ -167,7 +167,11 @@ function createMacChromeOs({
     const entry = known(ref);
     if (!entry || entry.kind !== 'dialog') return false;
     const res = await callHelper('chromeAllowDialog', { id: entry.id });
-    return res?.ok === true;
+    if (!res || res.ok !== true) return false;
+    if (res.method != null && res.method !== 'ax-press' && res.method !== 'ax-confirm') return false;
+    if (res.hasDialogText === false) return false;
+    if (typeof res.allowCount === 'number' && res.allowCount !== 1) return false;
+    return true;
   }
 
   function resolveUserDataDir(userDataDir) {
