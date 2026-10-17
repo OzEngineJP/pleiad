@@ -283,7 +283,7 @@ async function boot() {
   }
   computerService = attachComputerService(messages, { electron: { screen, nativeImage }, app, log: line => console.warn('[computer]', line), win32, backend: macBackend, reason: computerReason,
     escape: computerEscape });
-  chromeOs = createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, reason: win32Reason, log: line => console.warn('[chrome-os]', line),
+  chromeOs = createChromeOs({ platform: process.platform, win32: win32 ? withPerMonitorDpi(win32) : null, mac: macBackend, reason: process.platform === 'darwin' ? computerReason : win32Reason, log: line => console.warn('[chrome-os]', line),
     pointToDip: point => screen.screenToDipPoint(point),
     appHwnd: () => { const w = window; return w && !w.isDestroyed() ? Number(w.getNativeWindowHandle().readBigUInt64LE()) : 0; } });
   attachChromeOs(messages, { chromeOs, log: line => console.warn('[chrome-os]', line) });

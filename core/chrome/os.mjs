@@ -8,7 +8,7 @@
 // どの口も、使えない OS・使えない機能・時間切れでは投げずに null / false を返す（呼び出し側は、層が無くても進める作りにする）。
 //
 // @typedef {{ id: string }} WindowRef   層が出した値。core は覚える・比べる・返すだけ（Windows は窓のハンドルの 10 進）。層が出していない値には何もしない
-// @typedef {{ supported: boolean, reason?: string, features: { dialog: boolean, raise: boolean, launch: boolean, conceal: boolean, watch: boolean, bounds: boolean } }} Capabilities
+// @typedef {{ supported: boolean, reason?: string, features: { dialog: boolean, raise: boolean, launch: boolean, conceal: boolean, watch: boolean, bounds: boolean, allow: boolean, enable: boolean } }} Capabilities
 //
 // capabilities()                         → Capabilities（同期。main の chrome-os-ready を受けるまでは pending）
 // ready()                                → Promise<Capabilities>（main の返事を待つ。返事が無ければ supported: false）
@@ -23,6 +23,11 @@
 // generation()                           → number  層が入れ替わった（main が替わった・main との縁が切れた）回数。引き継ぎの途中で層が入れ替わり、呼び出しが「聞けなかった」だけなのを、
 //                                          「見つからなかった」と取り違えないために使う（windows.mjs の readopt）
 // close(ref)                             → Promise<boolean>  確認の窓を閉じる（層が確認として出した ref だけ）
+// allowPermission(ref)                   → Promise<boolean>  確認の窓の「許可する」を押す（層が確認として出した ref だけ。ADR 0218）。押せなければ false（人が押す案内に戻る）
+// enableRemoteDebugging({ browser, profileDir, userDataDir? })
+//                                        → Promise<{ ok: boolean, reason?: string }>  Chrome のリモート デバッグのトグルをオンにする（ADR 0218）。層が開いた新しい窓の
+//                                          chrome://inspect/#remote-debugging で入れ、その窓を閉じる。利用者の窓・タブには触らない。browser は locateBrowser の値。
+//                                          人が「オンにしてつなぐ」を押したときだけ呼ぶ（確認なしのモードでも、自動では呼ばない）
 //
 // エージェントの専用の窓（ADR 0154。core/chrome/windows.mjs が使う）。層が出した ref・browser 以外には何もしない
 // locateBrowser({ product })             → Promise<{ id, product } | null>  ブラウザーの実行ファイル（Windows はレジストリの App Paths → 既定の 3 か所）。id は launchWindow だけが使える
@@ -46,7 +51,7 @@
 // adoptAgent(token, { revealed })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
 
-const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false });
+const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false, allow: false, enable: false });
 
 /** テストとほかの OS の既定。どの口も null / false を返す */
 export function unsupportedChromeOs(reason = 'platform') {
@@ -64,6 +69,8 @@ export function unsupportedChromeOs(reason = 'platform') {
     foreground: async () => null,
     appWindow: async () => null,
     close: async () => false,
+    allowPermission: async () => false,
+    enableRemoteDebugging: async () => ({ ok: false, reason: 'unsupported' }),
     locateBrowser: async () => null,
     launchWindow: async () => ({ ok: false }),
     findWindowByNonce: async () => null,
@@ -80,6 +87,9 @@ export function unsupportedChromeOs(reason = 'platform') {
 
 const READY_WAIT_MS = 5000;
 const CALL_TIMEOUT_MS = 5000;
+/** 押す（PowerShell の起動を含む）・トグルを入れる（Chrome の起動・ページの読み込みを含む）の待ち */
+const ALLOW_TIMEOUT_MS = 20_000;
+const ENABLE_TIMEOUT_MS = 45_000;
 
 /**
  * parentPort 越しの口。port が無い（Electron でない）ときは no-desktop の口を返す。
@@ -134,11 +144,11 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     port.on('connect', requestReady);
   }
 
-  const call = (action, args, fallback) => {
+  const call = (action, args, fallback, wait = timeoutMs) => {
     if (!caps.supported) return Promise.resolve(fallback);
     return new Promise(resolve => {
       const id = `co${++next}`;
-      const timer = setTimeout(() => { pending.delete(id); resolve(fallback); }, timeoutMs);
+      const timer = setTimeout(() => { pending.delete(id); resolve(fallback); }, wait);
       pending.set(id, { resolve, timer, fallback });
       let sent = false;
       try { sent = port.postMessage({ type: 'chrome-os', id, action, args }) !== false; } catch { /* 送れなかった */ }
@@ -168,6 +178,9 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     foreground: () => call('foreground', {}, null),
     appWindow: () => call('appWindow', {}, null),
     close: ref => call('close', { ref }, false),
+    allowPermission: ref => call('allowPermission', { ref }, false, Math.max(timeoutMs, ALLOW_TIMEOUT_MS)),
+    enableRemoteDebugging: ({ browser, profileDir, userDataDir = null } = {}) =>
+      call('enableRemoteDebugging', { browser, profileDir, userDataDir }, { ok: false, reason: 'timeout' }, Math.max(timeoutMs, ENABLE_TIMEOUT_MS)),
     locateBrowser: ({ product = 'chrome' } = {}) => call('locateBrowser', { product }, null),
     launchWindow: ({ browser, profileDir, url, nonce, userDataDir = null, position = null, size = null } = {}) =>
       call('launchWindow', { browser, profileDir, url, nonce, userDataDir, position, size }, { ok: false }),

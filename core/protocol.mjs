@@ -230,6 +230,8 @@ export const COMMANDS = new Set([
   'chromeConnect',           // {} -> 状態。つなぐ（denied のときは「もう一度」）
   'chromeDisconnect',        // {} -> 状態。切る・やめる（確認が出ていれば閉じる）
   'chromeRaiseDialog',       // {} -> { raised, method }。Chrome の許可の確認を前に出す
+  'chromeConsent',           // {} -> 状態。接続のカードの「許可」（consent → Pleiad が Chrome の確認を押す。ADR 0218）。画面とリモートの端末から
+  'chromeEnable',            // {} -> { ok, reason }。接続のカードの「オンにしてつなぐ」（Chrome のリモート デバッグを Pleiad が入れる。ADR 0218）。画面とリモートの端末から
   // エージェントの Chrome の窓の操作（core/chrome/control.mjs）。{ sessionId } -> { sessionId, state: running|idle|stopped|paused, since, error, by }。変わったら chromeControl イベント。画面とリモートの端末から
   'chromeTakeOver',          // 引き継ぐ: 窓を見える形に戻して前に出し、エージェントのコマンドを断る（paused）。{ by: 'device', width, height, scale } は端末から操作する（窓は出さない）
   'chromeResume',            // 戻す: 窓を画面の外の見えない窓に戻し、paused を解く（会話に「あなたが引き継ぎ · Claude に戻しました」の行）

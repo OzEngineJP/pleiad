@@ -1,0 +1,87 @@
+# macOS ランナー（macos-15）で Pleiad の Chrome の OS の層（mac.cjs + pleiad-computer-helper）を実機 Google Chrome で実証する。
+name: Chrome macOS verification
+
+on:
+  push:
+    branches: [main, feat/chrome-mac]
+    paths: &paths
+      - 'core/chrome/**'
+      - 'desktop/chrome-os/**'
+      - 'desktop/computer/mac/**'
+      - 'scripts/verify-chrome-mac.mjs'
+      - 'tests/unit/chrome-os.mjs'
+      - 'tests/unit/chrome-connection.mjs'
+      - '.github/workflows/chrome-mac-verify.yml'
+  pull_request:
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-mac-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app
+          swift --version
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test protocol and build universal helper
+        run: |
+          (cd desktop/computer/mac && swift test)
+          node scripts/build-computer-mac.cjs
+
+      - name: Run unit tests on macOS
+        run: node tests/run.mjs chrome-os chrome-connection computer-mac
+
+      - name: Inspect and configure TCC Accessibility on runner
+        run: |
+          mkdir -p "$RUNNER_TEMP/chrome-mac-evidence"
+          csrutil status || true
+          echo "=== System TCC.db clients ==="
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "SELECT service, client, client_type, auth_value FROM access;" 2>&1 | tee "$RUNNER_TEMP/chrome-mac-evidence/tcc-system-before.txt" || true
+          HELPER_PATH="$(pwd)/desktop/computer/mac/dist/pleiad-computer-helper"
+          NODE_PATH="$(which node)"
+          for CLIENT_SPEC in \
+            "0:com.apple.Terminal" \
+            "0:com.apple.dt.Xcode" \
+            "1:$HELPER_PATH" \
+            "1:$NODE_PATH" \
+            "1:/bin/bash" \
+            "1:/bin/zsh" \
+            "1:/usr/libexec/sshd-keygen-wrapper"; do
+            CTYPE="${CLIENT_SPEC%%:*}"
+            CLIENT="${CLIENT_SPEC#*:}"
+            sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+              "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, flags) VALUES ('kTCCServiceAccessibility', '$CLIENT', $CTYPE, 2, 4, 1, 0);" 2>/dev/null || true
+          done
+          sudo killall tccd 2>/dev/null || true
+          sleep 1
+
+      - name: Verify Chrome on macOS end-to-end
+        env:
+          VERIFY_OUT_DIR: ${{ runner.temp }}/chrome-mac-evidence
+        run: node scripts/verify-chrome-mac.mjs
+
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: chrome-mac-evidence
+          path: ${{ runner.temp }}/chrome-mac-evidence

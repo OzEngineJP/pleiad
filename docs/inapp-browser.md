@@ -126,28 +126,46 @@ WS の口は `browserScreencast`・`browserScreencastStop`・`browserScreencastA
 
 ## エージェントのブラウザー（Chrome）
 
-エージェントの `agent-browser` は、PC の Chrome の専用の窓を会話ごとに使う（[ADR 0148](adr/0148-agent-browser-in-chrome.md)）。使えるのは Windows のデスクトップ版で、Chrome の OS の層が使えるホスト。Windows 以外・Electron の無い `npm start` では、ブラウザー用の環境変数・指示・`ply_browser` をエージェントへ渡さない。内蔵ブラウザーへの切り替えは無い。
+エージェントの `agent-browser` は、PC の Chrome の専用の窓を会話ごとに使う（[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0219](adr/0219-agent-browser-in-chrome-macos.md)）。使えるのは Windows と macOS（14 以上）のデスクトップ版で、Chrome の OS の層が使えるホスト。それ以外の OS・Electron の無い `npm start` では、ブラウザー用の環境変数・指示・`ply_browser` をエージェントへ渡さない。内蔵ブラウザーへの切り替えは無い。
 
 ### Chrome への接続
 
-設定 › ブラウザー › 「エージェントのブラウザー」で「つなぐ」を押す。初めて使うときは、PC の Chrome のアドレス欄に `chrome://inspect/#remote-debugging` を貼り付けて開き、「Allow remote debugging for this browser instance」をオンにする。Chrome の確認で「許可する」を押すとつながる。Pleiad はこの確認に自動で答えない。エージェントが先に使おうとした場合も、会話に接続の案内を出して人の許可を待つ。
+設定 › ブラウザー › 「エージェントのブラウザー」で「つなぐ」を押すか、エージェントが使おうとしたときに会話に出る接続のカードで許可する。
 
-`core/chrome/locate.mjs` が既定では Windows の `%LOCALAPPDATA%/Google/Chrome/User Data` の `DevToolsActivePort` を読み、`core/chrome/connection.mjs` が CDP の接続を持つ。ファイルが残っていても、ポートにつながらなければ準備待ちにする。
+Chrome の「リモート デバッグを許可しますか？」には、Pleiad が答える（[ADR 0218](adr/0218-pleiad-answers-chrome-remote-debugging-prompt.md)）。答えるのは、人が許した接続のものだけ:
+- カードの「許可」を押した
+- 設定の「つなぐ」を押した
+- 確認なし・制限なしのモードの会話（カードを出さず、「確認なしのため自動」の 1 行だけ残す）
+
+許可の前には Chrome に何も出さない。設定「Chrome の確認に自動で答える」（`chromeAutoAllow`、既定はオン）をオフにすると、今までどおり人が Chrome で押す。押せなかったときも、人が押す案内（「ダイアログを前に出す」）に戻る。
+
+初めて使うとき（トグルがオフ）は、カードや設定の「オンにしてつなぐ」を押すと、Pleiad が `chrome://inspect/#remote-debugging` の「Allow remote debugging for this browser instance」をオンにして、そのままつなぐ。確認なしのモードでも、ここは人が押したときだけ。Pleiad がオンにできなければ、アドレスと「コピー」の手順で人が入れる。
+
+`core/chrome/locate.mjs` が既定では Windows の `%LOCALAPPDATA%/Google/Chrome/User Data`、macOS の `~/Library/Application Support/Google/Chrome` の `DevToolsActivePort` を読み、`core/chrome/connection.mjs` が CDP の接続を持つ。ファイルが残っていても、ポートにつながらなければ準備待ちにする。
 
 | 状態 | 意味と次の動き |
 |---|---|
 | `off` | 未接続。「つなぐ」で準備へ進む。「切る」「やめる」や接続の切断で戻る |
-| `setup`（A） | Chrome の準備待ち。起動とトグルを案内する。ファイルが無い、またはポートにつながらない間は 1 秒ごとに調べ、自動で B へ進む |
-| `permission`（B） | Chrome に許可を求めている。許可で D、確認を断られると C、ポートが閉じれば A |
+| `setup`（A） | Chrome の準備待ち。起動とトグルを案内する（「オンにしてつなぐ」で Pleiad が入れる）。ファイルが無い、またはポートにつながらない間は 1 秒ごとに調べ、自動で次へ進む |
+| `consent` | Pleiad が確認に答えられるときだけ。ポートは生きているが、Pleiad の中の許可を待っている。Chrome にはまだ何も出さない。許可で B へ |
+| `permission`（B） | Chrome に許可を求めている。許可を得た接続なら Pleiad が確認を押す（`assist: allowing`）。押せなければ人が押す（`allow-failed`）。許可で D、確認を断られると C、ポートが閉じれば A |
 | `denied`（C） | Chrome で許可されなかった。「もう一度」で試し直し、「やめる」で待ちを終える |
 | `connected`（D） | 許可され、`Browser.getVersion` まで成功した。状態に Chrome の版を出す。「切る」で接続を閉じる |
-| `unsupported` | OS の層が使えない。理由は `platform`（Windows 以外）・`native`（koffi を読めない）・`no-desktop`（Electron が無い） |
+| `unsupported` | OS の層が使えない。理由は `platform`（Windows・macOS 14 以上以外）・`native`（koffi または Swift ヘルパーを読めない）・`no-desktop`（Electron が無い） |
 
 待ちは無期限（[ADR 0153](adr/0153-chrome-connection-waits-indefinitely-behind-os-layer.md)）。Chrome の確認の打ち切りを避け、270 秒で古い確認を閉じて出し直す。確認を出してから 290 秒より前の拒否は C、以降は打ち切りとして出し直す。確認の「[設定] でオフにする」も C になる。トグルを実際にオフにしてポートが閉じれば A に戻る。
 
 確認を前に出すのは最初に見つけた 1 回と、人が「ダイアログを前に出す」を押したときだけ。出し直しでは前面を取らせず、B の表示も変えない。「やめる」「切る」では確認を閉じる。つないでいる間、Chrome に自動テストの帯が出ることがある。
 
-`browser.chromeConnect`・`browser.chromeDisconnect`・`browser.chromeRaiseDialog` はホストの PC の画面だけから呼べる。`browser.chromeStatus` は MCP の catalog と CLI の `pleiad browser status` にも出る。`chromeBrowser` イベント（`state, reason, dialog, product`）はホストの画面だけへ配る。接続の案内のカードは会話へ届くが、スマホで Chrome 自身の許可に答えることはできない。
+`browser.chromeConnect`・`browser.chromeDisconnect`・`browser.chromeRaiseDialog` はホストの PC の画面だけから呼べる。カードの「許可」（`browser.chromeConsent`）と「オンにしてつなぐ」（`browser.chromeEnable`）は人のボタンで、画面とリモートの端末から呼べる（MCP・CLI には出さない）。`browser.chromeStatus` は MCP の catalog と CLI の `pleiad browser status` にも出る。`chromeBrowser` イベント（`state, reason, dialog, product, assist, enable`）はホストの画面だけへ配る。
+
+OS の層の押し方（Windows）: 確認の窓の「許可する」は UI Automation の `InvokePattern` で押す（`desktop/chrome-os/win32-uia.ps1`）。押すのは、層が確認として出した窓の中に、名前が「Allow」「許可する」のボタンがちょうど 1 つのときだけ。
+
+トグルは次の順で入れる:
+1. 新しい窓を開いて隠し、透明・素通しのまま最前面に置く
+2. その窓のアドレス欄からページを開く（その間だけ窓に前面を持たせる）
+3. IAccessible2 を問い合わせて、ページの中身を UI Automation に出させる
+4. CheckBox を `TogglePattern` で入れ、窓を閉じる
 
 ### 接続の子（更新を越える Chrome への接続。[ADR 0167](adr/0167-chrome-connection-held-across-updates.md)）
 
@@ -211,7 +229,10 @@ OS の層は、隠した窓が前面を取ったら直前の前面へ返す。�
 
 #### OS ごとの層
 
-`core/chrome/os.mjs` が OS の口を定め、Windows の実装は `desktop/chrome-os/` に置く。窓は core では不透明な `WindowRef` で扱う。main との `chrome-os` / `chrome-os-result` の往復で、確認の発見・前面化・隠す・戻すを頼む。OS の層が使えなければ `unsupported` を返す。
+`core/chrome/os.mjs` が OS の口（確認の発見・許可ボタンの押下・トグルの有効化・前面化・窓の起動・隠す・戻すなど）を定め、実装は `desktop/chrome-os/`（Windows は `win32.cjs`、macOS は `mac.cjs`）に置く。窓は core では不透明な `WindowRef` で扱う。main との `chrome-os` / `chrome-os-result` の往復で操作を頼み、OS の層が使えなければ `unsupported` を返す。
+
+- **Windows（`win32.cjs`）**: Win32 API（koffi）で窓の列挙・前面化・閉じる・画面の外での透明化（`conceal: true`。[ADR 0154](adr/0154-agent-window-hidden-off-screen.md)）を行う。
+- **macOS（`mac.cjs`、[ADR 0219](adr/0219-agent-browser-in-chrome-macos.md)）**: computer use と共通の Swift ヘルパー（`pleiad-computer-helper`、[ADR 0173](adr/0173-computer-use-macos.md)）の `chrome*` op（Accessibility API + `CGEvent`）を使う。`AXManualAccessibility` と `AXEnhancedUserInterface` を有効にして Chrome の Web 内容と確認シートを AX 木に出し、`enableRemoteDebugging`（専用の一時窓で `chrome://inspect/#remote-debugging` を開いて `remote-debugging-enabled` のチェックボックスを押し、窓を閉じて元の前面へ戻す）と `allowPermission`（確認シートの「許可する／Allow」を押す）を提供する。macOS の WindowServer は通常の窓を画面の外へ完全に追い出すことを許さず、最小化も `AXMinimized` で維持されないため、`conceal` と `watch` は `false` とし、見える窓のまま使う。
 
 確かめ専用の Chrome は `AGENT_HOST_CHROME_USER_DATA` で User Data を差し替える。このとき窓の起動にも同じ `--user-data-dir` を渡す。試験は偽の Chrome・OS の層、または専用のプロフィールを使い、利用者の Chrome を操作しない。
 

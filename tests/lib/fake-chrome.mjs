@@ -97,6 +97,14 @@ export async function startFakeChrome({ permission = 'auto', product = 'Chrome/1
     cancel() { for (const e of pending.splice(0)) { removeDialog(e); deny(e); } },
     /** Chrome の打ち切り: 保留を壊すが、確認の窓は残る */
     expire() { for (const e of pending.splice(0)) { dialogs.get(e.dialogId).stale = true; e.socket.destroy(); } },
+    /** 確認の窓の「許可する」を押す（その id の保留だけを通す） */
+    allowDialog(id) {
+      if (!dialogs.has(id)) return false;
+      const i = pending.findIndex(e => e.dialogId === id);
+      if (i >= 0) { const [e] = pending.splice(i, 1); dialogs.delete(id); accept(e); return true; }
+      dialogs.delete(id);
+      return true;
+    },
     /** 確認の窓を閉じる（WM_CLOSE）。保留が壊れる。閉じたのが残っていた窓なら窓だけ消える */
     closeDialog(id) {
       if (!dialogs.has(id)) return false;

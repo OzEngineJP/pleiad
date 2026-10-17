@@ -349,3 +349,22 @@ dialog.tc-shot-dlg::backdrop{background:var(--surface-veil)}
 .tc-shot-dlg .img .tc-shot-gone{display:block;padding:48px 0;text-align:center}
 .tc-shot-dlg .btn:disabled{opacity:.4;pointer-events:none}
 .bh-waiting-tasks li.current{font-weight:600}
+/* Chrome の接続の案内（web/browser-handoff-card.mjs。ADR 0218）。本文はほかのカードと同じ左右の余白。手順は番号の右に文が折れる格子 */
+.card>.bh-body{min-width:0;padding:2px 16px 4px;font-size:var(--fs-s)}
+.bh-body>.bh-lead{color:var(--ink-strong);font-weight:600;font-size:var(--fs)}
+.bh-body .browser-setting-note{margin:4px 0 0;color:var(--ink-weak)}
+.bh-body>.cu-ap{padding:0}
+.bh-steps{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.bh-steps li{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;align-items:start}
+.bh-steps .n{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--surface-3);font-size:var(--fs-xs);font-weight:600}
+.bh-addr{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}
+.bh-addr code{font:var(--fs-s) var(--font-mono);background:var(--surface-2);border-radius:var(--r-s);padding:2px 8px;overflow-wrap:anywhere;min-width:0}
+.bh-addr .bh-copy{padding:2px 10px;font-size:var(--fs-s)}
+.bh-manual{margin-top:8px}
+.bh-manual>summary{cursor:pointer;width:max-content;max-width:100%;color:var(--ink-weak)}
+.bh-working{display:flex;align-items:center;gap:8px;color:var(--ink)}
+.bh-working svg{width:14px;height:14px;flex:none}
+.card-actions .bh-left{margin-right:auto;font-size:var(--fs-s);color:var(--ink-weak)}
+/* 足の左の一言があるときは、空の結果の欄を詰める（左の一言が左端に付く） */
+.card-actions .res:empty:has(+.bh-left){display:none}
+@media (max-width:560px){.card-actions .bh-left{flex-basis:100%}}

@@ -78,6 +78,13 @@ export default async function (t) {
     const overLinux = chromeHomes({ platform: 'linux', env: { AGENT_HOST_CHROME_USER_DATA: '/tmp/chrome-test' } });
     t.ok('差し替えは OS に依らない（ほかの OS でも確かめ用に使える）', overLinux.length === 1 && overLinux[0].userDataDir === '/tmp/chrome-test', JSON.stringify(overLinux));
     t.ok('空文字は差し替えとみなさない', chromeHomes({ platform: 'win32', env: { ...win, AGENT_HOST_CHROME_USER_DATA: '' } })[0].userDataDir === def[0].userDataDir);
+    const mac = { HOME: '/Users/alice' };
+    const macDef = chromeHomes({ platform: 'darwin', env: mac });
+    t.ok('既定（macOS）は ~/Library/Application Support/Google/Chrome が先頭（2 つ目は Microsoft Edge）',
+      macDef.length === 2
+      && macDef[0].browser === 'chrome' && macDef[0].userDataDir === path.join('/Users/alice', 'Library', 'Application Support', 'Google', 'Chrome')
+      && macDef[1].browser === 'edge' && macDef[1].userDataDir === path.join('/Users/alice', 'Library', 'Application Support', 'Microsoft Edge'),
+      JSON.stringify(macDef));
     t.ok('ほかの OS で差し替えが無ければ使えない（空）', chromeHomes({ platform: 'linux', env: {} }).length === 0);
   }
 
