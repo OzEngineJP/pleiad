@@ -331,6 +331,7 @@ const SUITES = [
   './unit/message-steer.mjs',
   './unit/visualize.mjs',
   './unit/server-visualize.mjs',
+  './unit/toml.mjs',
   './unit/mcp-config.mjs',
   // Hooks: 3 エージェントの元の設定の探索（壊れたファイル・伏せ字）と書き込み（JSON / TOML・競合・enabled・部分成功）
   './unit/hooks-config.mjs',
