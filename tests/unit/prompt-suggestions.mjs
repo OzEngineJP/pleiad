@@ -3,7 +3,7 @@
 //   - 要約: 人と AI の本文だけ・最後が AI の返答でなければ作らない・件数と字数の上限
 //   - 返りの読み取り: 前後の字・``` を許す・1 行に畳む・引用符を落とす・空・null・上限超え・JSON でないものは null
 //   - 作りかけ: 同じ会話で始め直すと前のものは捨てる・止めたら知らせない・時間切れ
-//   - Claude の予測（prompt_suggestion）を promptSuggestion の出来事にする
+//   - Claude の予測（prompt_suggestion）を promptSuggestion の出来事にする。頼むターンだけ CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION を付ける
 //   - Antigravity: 使い捨てのホーム（USERPROFILE・HOME）で起こし、その回の会話の置き場を消す。軽い Flash を選ぶ
 //   - 送信済みの並び: 指定の会話が先・新しい順・同じ文は 1 つ・`!` のコマンドは別の並び
 import fs from 'node:fs';
@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SUGGESTION_MAX, cleanSuggestion, createSuggestionJobs, parseSuggestion, suggestionGist, suggestionPrompt } from '../../core/prompt-suggestions.mjs';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
+import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { STALE_MS, forgetConversation, runAgySuggestion, suggestArgs, suggestHome, suggestModel, sweepStale, trimSummaries } from '../../core/backends/antigravity-suggest.mjs';
 import { extractShellCommands, sentMessagesOf, extractMessages } from '../../core/session-search.mjs';
 
@@ -74,6 +75,37 @@ export default async function (t) {
   // ---- Claude の予測
   t.ok('prompt_suggestion を promptSuggestion の出来事にする', JSON.stringify(normalizeSdkMessage({ type: 'prompt_suggestion', suggestion: ' コミットして ', uuid: 'u', session_id: 's' })) === JSON.stringify([{ type: 'promptSuggestion', text: 'コミットして' }]));
   t.ok('空の予測は出さない', normalizeSdkMessage({ type: 'prompt_suggestion', suggestion: '' }).length === 0);
+  // 候補を頼むターンだけ CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION を付ける（付けないと使用枠の警告の間は CLI が作らない。SDK は身代わり）
+  {
+    const claudeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-suggest-claude-'));
+    const prevConfig = process.env.CLAUDE_CONFIG_DIR;
+    const prevFlag = process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION;
+    let restoreSdk = null;
+    try {
+      process.env.CLAUDE_CONFIG_DIR = claudeDir;
+      delete process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION;
+      let options = null;
+      restoreSdk = setClaudeSdkForTest({ executable: () => 'claude-fake', query: ({ prompt, options: o }) => {
+        options = o;
+        (async () => { for await (const _ of prompt) { /* 入力は読み捨てる */ } })();
+        return { close() {}, interrupt: async () => ({}), async *[Symbol.asyncIterator]() {
+          yield { type: 'result', subtype: 'success', num_turns: 1, session_id: 's-1', total_cost_usd: 0 };
+        } };
+      } });
+      const run = (extra) => claude.runTurn({ prompt: 'x', sessionId: 's-1', cwd: claudeDir, mode: 'default', emit: () => {}, askPermission: async () => ({ allow: true }),
+        signal: new AbortController(), control: {}, hostSessionId: 'h', ...extra });
+      await run({ promptSuggestions: true });
+      t.ok('候補を頼むターンは promptSuggestions と CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=true を渡す',
+        options?.promptSuggestions === true && options?.env?.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION === 'true', JSON.stringify({ p: options?.promptSuggestions, e: options?.env?.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION }));
+      await run({});
+      t.ok('頼まないターン（設定がオフ・委譲の子・bot）は付けない', !options?.promptSuggestions && !('CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION' in (options?.env ?? {})));
+    } finally {
+      restoreSdk?.();
+      if (prevConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevConfig;
+      if (prevFlag !== undefined) process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION = prevFlag;
+      fs.rmSync(claudeDir, { recursive: true, force: true });
+    }
+  }
 
   // ---- Antigravity
   t.ok('軽い Flash の low を選ぶ（無ければ Flash、無ければ既定）', suggestModel({ 'gemini-3.1-pro-high': {}, 'gemini-3.8-flash-high': {}, 'gemini-3.8-flash-low': {} }) === 'gemini-3.8-flash-low'

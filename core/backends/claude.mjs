@@ -1111,7 +1111,10 @@ export const backend = {
 
     // 外す道具: bot の読み取り専用フォルダーの deny ルール + 委譲の子が使わない組み込みの道具（DELEGATED_CHILD_DISALLOWED_TOOLS）
     const disallowedTools = [...(botFolders?.readOnlyRoots?.length ? readOnlyDenyRules(botFolders.readOnlyRoots) : []), ...(delegatedChild ? DELEGATED_CHILD_DISALLOWED_TOOLS : [])];
-    const claudeExtraEnv = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...(autoCompactWindow ? { [AUTO_COMPACT_WINDOW_ENV]: String(autoCompactWindow) } : {}) };
+    // 次の発言の候補を頼むターンは CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION も付ける。付けないと CLI は使用枠の警告（allowed_warning。週次 95% など）の間、
+    // 候補を黙って作らない（付けると警告の間も作る。上限に達した rejected では作らない）。利用者の設定 promptSuggestionEnabled より Pleiad の設定 › 入力を優先する
+    const claudeExtraEnv = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...(autoCompactWindow ? { [AUTO_COMPACT_WINDOW_ENV]: String(autoCompactWindow) } : {}),
+      ...(promptSuggestions ? { CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "true" } : {}) };
     // query の組み立てで例外になっても、鍵を含むフラグ設定のファイルを残さない（ターンの終わりの finally まで届かないため）
     if (!finished) try { q = query({
       prompt: promptStream(),
