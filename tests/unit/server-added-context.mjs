@@ -43,7 +43,7 @@ export default async function (t) {
   const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,codex',
     AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_LOG: log } });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
-  const bridge = agentT('ja', 'bridge.instructions');
+  const bridge = agentT('ja', 'bridge.instructions', { backends: 'fake, codex' });
   const listJa = () => resolvePlyInstructions(normalizePlyInstructions(undefined), 'ja');
   const text = id => itemText('ja', listJa().find(i => i.id === id));
   const childText = text('child'), routeText = text('route'), codexPolicyText = text('codexPolicy');

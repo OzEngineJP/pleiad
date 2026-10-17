@@ -21,6 +21,12 @@ export default async function (t) {
   seed.exec('create table session (id text primary key, parent_id text, directory text, title text, time_created integer, time_updated integer, time_archived integer)');
   seed.prepare('insert into session values (?, ?, ?, ?, ?, ?, ?)').run('ses_tui0001', null, ROOT, 'made in the TUI', 1000, 2000, null);
   seed.prepare('insert into session values (?, ?, ?, ?, ?, ?, ?)').run('ses_tui0002', 'ses_tui0001', ROOT, 'a subagent', 1000, 2000, null);
+  seed.exec('create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text)');
+  seed.exec('create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text)');
+  seed.prepare('insert into message values (?, ?, ?, ?, ?)').run('msg_tui01', 'ses_tui0001', 1000, 1000, JSON.stringify({ role: 'user', time: { created: 1000 } }));
+  seed.prepare('insert into message values (?, ?, ?, ?, ?)').run('msg_tui02', 'ses_tui0001', 1100, 1200, JSON.stringify({ role: 'assistant', time: { created: 1100 } }));
+  seed.prepare('insert into part values (?, ?, ?, ?, ?, ?)').run('prt_tui01', 'msg_tui01', 'ses_tui0001', 1000, 1000, JSON.stringify({ type: 'text', text: 'hello from the TUI' }));
+  seed.prepare('insert into part values (?, ?, ?, ?, ?, ?)').run('prt_tui02', 'msg_tui02', 'ses_tui0001', 1100, 1200, JSON.stringify({ type: 'text', text: 'answered in the TUI' }));
   seed.close();
   await fs.writeFile(path.join(ocData, 'auth.json'), JSON.stringify({ openai: { type: 'oauth', access: 'secret-value' } }));
   const started = path.join(dataDir, 'oc-started.txt');
@@ -39,11 +45,13 @@ export default async function (t) {
     // ---- まだ使っていない間は、一覧とログインの状態のために OpenCode のサーバー（約 760 MB）を起こさない
     const early = (await c.cmd('listSessions')).find((x) => x.id === 'ses_tui0001');
     const auth = await c.cmd('authStatus', { backend: 'opencode' });
+    const tuiHistory = await c.cmd('loadSession', { sessionId: 'ses_tui0001' });
+    t.ok('起こす前: 会話の発言も DB から読む（全文検索の索引作りが全部の会話を読むため）', tuiHistory.messages.map((m) => `${m.role}:${m.text}`).join('|') === 'user:hello from the TUI|assistant:answered in the TUI', JSON.stringify(tuiHistory.messages));
     const startedEarly = await fs.readFile(started, 'utf8').catch(() => '');
     t.ok('起こす前: OpenCode の会話の DB から一覧に出す（子の会話は出さない）', early?.title === 'made in the TUI' && early.backend === 'opencode'
       && !(await c.cmd('listSessions')).some((x) => x.id === 'ses_tui0002'), JSON.stringify(early));
     t.ok('起こす前: ログインの状態は資格情報のファイルの接続先の名前だけで答える（値は出さない）', auth.loggedIn === true && /openai/.test(auth.account ?? '') && !JSON.stringify(auth).includes('secret-value'), JSON.stringify(auth));
-    t.ok('起こす前: 一覧・ログインの状態では OpenCode のサーバーを起こさない', startedEarly === '', startedEarly);
+    t.ok('起こす前: 一覧・ログインの状態・発言の読み出しでは OpenCode のサーバーを起こさない', startedEarly === '', startedEarly);
     const [b] = await c.cmd('backends');
     t.ok('記述: 短い名前・ロゴ・自動の圧縮の行が付く', b.id === 'opencode' && b.shortLabel === 'OpenCode' && b.brand?.logo === 'opencode.svg' && b.idleCompaction === 'opencode', JSON.stringify(b));
     t.ok('能力: 分岐・サブエージェント・承認・圧縮・委譲の橋・コンピューターの操作', b.capabilities.fork && b.capabilities.subagents && b.capabilities.alwaysAllow

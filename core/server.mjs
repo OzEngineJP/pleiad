@@ -1336,7 +1336,7 @@ async function routeDelegation(args, lng, cwd) {
   // account は委譲先を固定したときだけ（自動の振り分けはアカウントも使用量で選ぶ）
   if (args.account !== undefined) throw new Error(agentT(lng, 'routing.accountPinOnly'));
   const settings = routingSettingsCache;
-  if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired'));
+  if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired', { backends: listBackends().map(b => b.id).join(', ') }));
   if (args.model !== undefined || args.effort !== undefined) throw new Error(agentT(lng, 'routing.pinOnly'));
   // 依頼文は判定器へ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));

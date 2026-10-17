@@ -138,6 +138,30 @@ function sessionsFromDb({ limit = 100, id = null } = {}) {
   }
 }
 
+/** サーバーが動いていないときの会話の発言（message・part の表。中身は API の返りと同じ JSON）。読めなければ null */
+function messagesFromDb(sessionId) {
+  const file = path.join(opencodeData(), 'opencode.db');
+  if (!fs.existsSync(file)) return null;
+  let db = null;
+  try {
+    const { DatabaseSync } = loadSqlite();
+    db = new DatabaseSync(file, { readOnly: true });
+    const messages = db.prepare('select id, data from message where session_id = ? order by time_created, id').all(sessionId);
+    const parts = db.prepare('select id, message_id, data from part where session_id = ? order by time_created, id').all(sessionId);
+    const byMessage = new Map();
+    for (const p of parts) {
+      const list = byMessage.get(p.message_id) ?? [];
+      list.push({ ...JSON.parse(p.data), id: p.id, messageID: p.message_id, sessionID: sessionId });
+      byMessage.set(p.message_id, list);
+    }
+    return messages.map((m) => ({ info: { ...JSON.parse(m.data), id: m.id, sessionID: sessionId }, parts: byMessage.get(m.id) ?? [] }));
+  } catch {
+    return null;
+  } finally {
+    try { db?.close(); } catch {}
+  }
+}
+
 /** つないだ接続先の名前（資格情報のファイルのキーだけを読む。値は読まない） */
 function connectedFromFile() {
   try { return Object.keys(JSON.parse(fs.readFileSync(path.join(opencodeData(), 'auth.json'), 'utf8')) ?? {}); } catch { return []; }
@@ -464,6 +488,11 @@ export const backend = {
 
   async getMessages(sessionId, options = {}) {
     if (!sessionId) return [];
+    // サーバーが動いていなければ、起こさずに会話の DB から読む（全文検索の索引作りが全部の会話を読むので、起動のたびに起きていた）
+    if (!server.running) {
+      const stored = messagesFromDb(sessionId);
+      if (stored) return messagesToNormalized(stored, options);
+    }
     const directory = await directoryOf(sessionId);
     const list = await server.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory });
     return messagesToNormalized(list, options);

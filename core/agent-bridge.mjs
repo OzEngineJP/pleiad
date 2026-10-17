@@ -5,8 +5,8 @@ import { DEFAULT_AGENT_IDS } from './backends/agents.mjs';
 
 export const AGENTS_MCP_PATH = '/mcp/agents';
 // 文はエージェントに渡すので会話の言語で引く（agent 名前空間。docs/design.md「多言語対応」）。en は以前の英語の固定文と同じ
-/** ply_agents の instructions。locale は会話の言語 */
-export const agentInstructions = locale => agentT(locale, 'bridge.instructions');
+/** ply_agents の instructions。locale は会話の言語、backends は backend に書けるエージェント（有効なもの） */
+export const agentInstructions = (locale, backends = DEFAULT_AGENT_IDS) => agentT(locale, 'bridge.instructions', { backends: [...backends].join(', ') });
 const str = { type: 'string' };
 const tool = (name, description, properties, required = []) => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false } });
 // i18n-dynamic: agent:bridge.kinds.
@@ -45,7 +45,7 @@ export function createAgentBridge({ call, hosts = () => [], backends = () => DEF
     // token は開き直す口の値（省略なら新しく作る。形が違う・使用中なら投げる）
     open({ origin, owner, locale, token: fixed }) {
       const token = claimToken(bindings, fixed); bindings.set(token, { owner, locale });
-      return { url: origin + AGENTS_MCP_PATH, headers: { Authorization: `Bearer ${token}` }, instructions: agentInstructions(locale),
+      return { url: origin + AGENTS_MCP_PATH, headers: { Authorization: `Bearer ${token}` }, instructions: agentInstructions(locale, backends()),
         close: () => bindings.delete(token) };
     },
     async handle(req, res) {
