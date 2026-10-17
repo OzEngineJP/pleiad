@@ -279,7 +279,7 @@
       "agentBrowser": {
         "title": "エージェントのブラウザー",
         "name": "Chrome",
-        "description": "この PC の Chrome につなぎます。エージェントはまだ内蔵ブラウザーを使います。",
+        "description": "この PC の Chrome につなぎ、エージェントが操作します。",
         "unsupportedOs": "この OS ではまだ使えません",
         "unsupportedEnv": "この環境ではまだ使えません",
         "giveUp": "やめる",
@@ -306,7 +306,23 @@
         "permission": {
           "status": "Chrome に許可の確認が出ています",
           "raise": "ダイアログを前に出す",
+          "allowing": "Chrome につないでいます…",
           "note": "Chrome が確認を出し直しても、そのまま待ちます。「許可する」を押すまで続きます。"
+        },
+        "consent": {
+          "status": "会話のエージェントが Chrome への接続の許可を待っています",
+          "allow": "許可"
+        },
+        "enable": {
+          "connect": "オンにしてつなぐ",
+          "working": "Chrome の設定をオンにしています…",
+          "failed": "Chrome の設定をオンにできませんでした",
+          "note": "押すと、Pleiad が Chrome の設定の画面を開き、リモート デバッグをオンにしてつなぎます。",
+          "manual": "自分でオンにする"
+        },
+        "autoAllow": {
+          "label": "Chrome の確認に自動で答える",
+          "note": "Chrome に出る「リモート デバッグを許可しますか？」に、Pleiad が代わりに答えます。答えるのは、あなたがカードや「つなぐ」で許可した接続と、確認なしのモードの会話の接続だけです。"
         },
         "denied": {
           "status": "Chrome で許可されませんでした",
@@ -1769,7 +1785,24 @@
         "other": "操作の依頼"
       },
       "connect": {
-        "lead": "Chrome への接続を待っています"
+        "lead": "Chrome への接続",
+        "question": "{{agent}} に Chrome への接続を許可しますか？",
+        "explain": "この PC の Chrome を操作します。ログイン中のサイトも使えます。",
+        "blocking": "許可しないと、このターンは止まったまま",
+        "allowing": "Chrome につないでいます…",
+        "allowFailedNote": "Chrome の画面で「許可する」を押してください。",
+        "enableQuestion": "Chrome のリモート デバッグをオンにしますか？",
+        "enableExplain": "Pleiad が Chrome の設定の画面を開き、「Allow remote debugging for this browser instance」をオンにして、そのままつなぎます。オンは Chrome を起動し直しても残ります。",
+        "enableAllow": "オンにしてつなぐ",
+        "enableAlways": "確認なしのモードでも、ここは聞きます",
+        "enabling": "Chrome の設定をオンにしています…",
+        "enableFailed": "Chrome の設定をオンにできませんでした",
+        "enableFailedNote": "Chrome に別の画面（ログインなど）が出ていたら、それを済ませてから「もう一度」を押してください。次の手順でご自分でオンにしても、自動で進みます。",
+        "manual": "自分でオンにする",
+        "step1": "Chrome のアドレス欄で次のアドレスを開く",
+        "step2": "「Allow remote debugging for this browser instance」をオンにする",
+        "copy": "コピー",
+        "auto": "オンになると自動で進みます。"
       },
       "operating": "あなたが操作中",
       "operatingNote": "Chrome のウィンドウで操作して、終わったら「Claude に戻す」を押してください。",
@@ -1789,6 +1822,8 @@
         "resumedContinued": "済み · Claude に続けるよう送りました",
         "connected": "済み · Chrome につながりました",
         "connectedContinued": "済み · Chrome につながったので、Claude に続けるよう送りました",
+        "connectedAuto": "確認なしのため自動 · Chrome につながりました",
+        "connectedAutoContinued": "確認なしのため自動 · Chrome につながったので、Claude に続けるよう送りました",
         "declined": "断りました",
         "aborted": "中断しました"
       }

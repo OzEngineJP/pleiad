@@ -280,7 +280,7 @@
       "agentBrowser": {
         "title": "Agent browser",
         "name": "Chrome",
-        "description": "Connects to the Chrome on this PC. Agents still use the built-in browser for now.",
+        "description": "Connects to the Chrome on this PC so agents can operate it.",
         "unsupportedOs": "Not available on this OS yet",
         "unsupportedEnv": "Not available in this environment yet",
         "giveUp": "Stop",
@@ -307,7 +307,23 @@
         "permission": {
           "status": "Chrome is asking for permission",
           "raise": "Bring the prompt to the front",
+          "allowing": "Connecting to Chrome…",
           "note": "If Chrome shows the prompt again, it keeps waiting. This continues until you press “Allow”."
+        },
+        "consent": {
+          "status": "An agent in a conversation is waiting for permission to connect to Chrome",
+          "allow": "Allow"
+        },
+        "enable": {
+          "connect": "Turn on and connect",
+          "working": "Turning on the Chrome setting…",
+          "failed": "Couldn't turn on the Chrome setting",
+          "note": "Pleiad opens Chrome's settings page, turns on remote debugging, and connects.",
+          "manual": "Turn it on yourself"
+        },
+        "autoAllow": {
+          "label": "Answer Chrome's prompt automatically",
+          "note": "Pleiad answers Chrome's \"Allow remote debugging?\" prompt for you, only for connections you allowed on the card or with Connect, and for conversations in a no-confirmation mode."
         },
         "denied": {
           "status": "Chrome didn’t allow the connection",
@@ -1807,7 +1823,24 @@
         "other": "Hands-on request"
       },
       "connect": {
-        "lead": "Waiting for the Chrome connection"
+        "lead": "Chrome connection",
+        "question": "Allow {{agent}} to connect to Chrome?",
+        "explain": "It operates the Chrome on this PC, including sites you are signed in to.",
+        "blocking": "Until you allow it, this turn stays paused",
+        "allowing": "Connecting to Chrome…",
+        "allowFailedNote": "Press Allow in Chrome.",
+        "enableQuestion": "Turn on remote debugging in Chrome?",
+        "enableExplain": "Pleiad opens Chrome's settings page, turns on \"Allow remote debugging for this browser instance\", and connects. It stays on after Chrome restarts.",
+        "enableAllow": "Turn on and connect",
+        "enableAlways": "Asked even in no-confirmation modes",
+        "enabling": "Turning on the Chrome setting…",
+        "enableFailed": "Couldn't turn on the Chrome setting",
+        "enableFailedNote": "If Chrome is showing another screen (such as sign-in), finish it and press Try again. You can also turn it on yourself with these steps; it continues automatically.",
+        "manual": "Turn it on yourself",
+        "step1": "Open this address in Chrome's address bar",
+        "step2": "Turn on \"Allow remote debugging for this browser instance\"",
+        "copy": "Copy",
+        "auto": "It continues automatically once it is on."
       },
       "operating": "You are operating",
       "operatingNote": "Work in the Chrome window, then press \"Return to Claude\" when you are done.",
@@ -1827,6 +1860,8 @@
         "resumedContinued": "Done · Asked Claude to continue",
         "connected": "Done · Chrome is connected",
         "connectedContinued": "Done · Chrome is connected; asked Claude to continue",
+        "connectedAuto": "Automatic (no-confirmation mode) · Chrome is connected",
+        "connectedAutoContinued": "Automatic (no-confirmation mode) · Chrome is connected; asked Claude to continue",
         "declined": "Declined",
         "aborted": "Stopped"
       }

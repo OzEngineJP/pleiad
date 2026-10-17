@@ -5,18 +5,21 @@
 // ホストの PC の画面だけから呼べる（エージェントがつなぐ道は core の接続の案内 chromeConnection.demand が持つ）。
 // 引き継ぐ（chromeTakeOver）は by: 'device' でリモートの端末から操作する（窓は PC に見せず、端末の映像の箱の大きさでページを描き、映像のセッションで入力を送る）。
 // ビューアの⋯「Chrome で開く（エージェントの窓へ）」（chromeOpen）は、会話の窓に URL を開く。ホストの PC の画面だけ。エージェントには知らせない。
+// 許可（chromeConsent）・オンにしてつなぐ（chromeEnable）は、会話の接続のカードのボタン（ADR 0218）。人が押すので、画面とリモートの端末から呼べる（MCP・CLI には出さない）。
 // openFile は、リモートの端末が PC の HTML をホストの内蔵ブラウザーのタブに開く（見るのは browserScreencast。ホストの窓は前に出さず、ホストの画面で選んでいるタブも替えない）。
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { PROFILE_BROWSERS } from '../../web/chrome-profile-model.mjs';
 
-const STATES = ['off', 'setup', 'permission', 'denied', 'connected', 'unsupported'];
+const STATES = ['off', 'setup', 'consent', 'permission', 'denied', 'connected', 'unsupported'];
 const stateShape = z.object({
   state: z.enum(STATES).describe('agent:ops.browser.chromeStatus.state'),
   reason: z.string().nullable().describe('agent:ops.browser.chromeStatus.reason'),
   dialog: z.boolean().describe('agent:ops.browser.chromeStatus.dialog'),
   product: z.string().nullable().describe('agent:ops.browser.chromeStatus.product'),
+  assist: z.enum(['enabling', 'enable-failed', 'allowing', 'allow-failed']).nullable().optional().describe('agent:ops.browser.chromeStatus.assist'),
+  enable: z.boolean().optional().describe('agent:ops.browser.chromeStatus.enable'),
 });
 
 /** Electron の無いホスト（ctx.chrome が無い）と、OS の層が使えない OS では、状態は unsupported、操作は UNSUPPORTED で断る */
@@ -134,6 +137,28 @@ export const browserOps = [
     hostScreenOnly: true,
     legacyCommand: 'chromeRaiseDialog',
     handler: (ctx) => mustBeSupported(ctx).raiseDialog(),
+  }),
+  defineOp({
+    id: 'browser.chromeConsent',
+    summary: 'agent:ops.browser.chromeConsent.summary',
+    risk: 'write',
+    riskReason: 'The human allows the agent to connect to the Chrome on this PC from the connection card; Pleiad then answers Chrome\'s own prompt for that connection only (ADR 0218). Screen and remote devices only (not on MCP or CLI)',
+    input: z.object({}),
+    output: stateShape,
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'chromeConsent',
+    handler: (ctx) => { const chrome = mustBeSupported(ctx); chrome.consent(); return chrome.status(); },
+  }),
+  defineOp({
+    id: 'browser.chromeEnable',
+    summary: 'agent:ops.browser.chromeEnable.summary',
+    risk: 'write',
+    riskReason: 'The human asks Pleiad to turn on remote debugging in the Chrome on this PC (chrome://inspect) and connect; Chrome still keeps its own switch, and Pleiad never turns it on without this press, in any approval mode (ADR 0218). Screen and remote devices only (not on MCP or CLI)',
+    input: z.object({}),
+    output: z.object({ ok: z.boolean(), reason: z.string().nullable() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    legacyCommand: 'chromeEnable',
+    handler: async (ctx) => { const result = await mustBeSupported(ctx).enable(); return { ok: result?.ok === true, reason: result?.ok === true ? null : String(result?.reason ?? 'failed') }; },
   }),
   defineOp({
     id: 'browser.chromeTakeOver',

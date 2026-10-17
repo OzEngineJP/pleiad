@@ -91,7 +91,8 @@ export default async function (t) {
     settings.chromeEvent({ state: 'off', reason: 'disconnected', dialog: false, product: null });
     t.ok('自分で切ったときは理由を出さない', !section.textContent.includes('Chrome が閉じました') && !section.textContent.includes('取り消されました'));
     settings.chromeEvent({ state: 'off', reason: 'declined', dialog: false, product: null });
-    t.ok('「やめる」の後も理由を出さない', buttonsOf(section).join() === 'つなぐ' && section.querySelectorAll('.browser-setting-note').filter(n => n.textContent).length === 0);
+    // 「Chrome の確認に自動で答える」の説明（ADR 0218）は理由ではないので数えない
+    t.ok('「やめる」の後も理由を出さない', buttonsOf(section).join() === 'つなぐ' && section.querySelectorAll('.browser-setting-note').filter(n => n.textContent && !n.classList.contains('browser-auto-allow-note')).length === 0);
 
     // ---- 使えない
     settings.chromeEvent({ state: 'unsupported', reason: 'platform', dialog: false, product: null });

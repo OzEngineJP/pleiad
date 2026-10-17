@@ -16,10 +16,6 @@
 // snapshotWindows()                      → Promise<string[] | null>  今あるブラウザーの最上位の窓の印（findPermissionDialog の比べ元。中身は層だけが解く）
 // findPermissionDialog({ since, port })  → Promise<WindowRef | null>  since に無い、見えている、小さい（外形が 1000×700 DIP 以下）ブラウザーの窓＝リモート デバッグの確認。
 //                                          port（DevToolsActivePort のポート）があれば、その待ち受けのプロセスの窓だけ（別の User Data の Chrome と取り違えない）
-// allowPermission(ref)                   → Promise<boolean>  findPermissionDialog が出した確認の窓の「許可する／Allow」を押す。層が確認として出した ref 以外には何もしない
-// enableRemoteDebugging({ browser, profileDir, userDataDir? })
-//                                        → Promise<{ ok: boolean, reason?: string }>  新しい窓を開き、chrome://inspect/#remote-debugging へ移り、トグルをオンにして、その窓を閉じる。
-//                                          すでにオンなら何もせず ok。利用者がすでに使っている窓・タブには触らない
 // raise(ref)                             → Promise<{ ok: boolean, method: string }>  窓を前に出す（最小化なら戻す）。method は direct・attach・failed など
 // yieldForeground(ref, { to })           → Promise<boolean>  ref が前面を取っていたら to（直前の前面）に返す
 // foreground()                           → Promise<{ id: string, browser: boolean } | null>  今の前面の窓。browser はブラウザー自身の窓か
@@ -27,6 +23,11 @@
 // generation()                           → number  層が入れ替わった（main が替わった・main との縁が切れた）回数。引き継ぎの途中で層が入れ替わり、呼び出しが「聞けなかった」だけなのを、
 //                                          「見つからなかった」と取り違えないために使う（windows.mjs の readopt）
 // close(ref)                             → Promise<boolean>  確認の窓を閉じる（層が確認として出した ref だけ）
+// allowPermission(ref)                   → Promise<boolean>  確認の窓の「許可する」を押す（層が確認として出した ref だけ。ADR 0218）。押せなければ false（人が押す案内に戻る）
+// enableRemoteDebugging({ browser, profileDir, userDataDir? })
+//                                        → Promise<{ ok: boolean, reason?: string }>  Chrome のリモート デバッグのトグルをオンにする（ADR 0218）。層が開いた新しい窓の
+//                                          chrome://inspect/#remote-debugging で入れ、その窓を閉じる。利用者の窓・タブには触らない。browser は locateBrowser の値。
+//                                          人が「オンにしてつなぐ」を押したときだけ呼ぶ（確認なしのモードでも、自動では呼ばない）
 //
 // エージェントの専用の窓（ADR 0154。core/chrome/windows.mjs が使う）。層が出した ref・browser 以外には何もしない
 // locateBrowser({ product })             → Promise<{ id, product } | null>  ブラウザーの実行ファイル（Windows はレジストリの App Paths → 既定の 3 か所）。id は launchWindow だけが使える
@@ -63,13 +64,13 @@ export function unsupportedChromeOs(reason = 'platform') {
     generation: () => 0,
     snapshotWindows: async () => null,
     findPermissionDialog: async () => null,
-    allowPermission: async () => false,
-    enableRemoteDebugging: async () => ({ ok: false, reason: 'unsupported' }),
     raise: async () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: async () => false,
     foreground: async () => null,
     appWindow: async () => null,
     close: async () => false,
+    allowPermission: async () => false,
+    enableRemoteDebugging: async () => ({ ok: false, reason: 'unsupported' }),
     locateBrowser: async () => null,
     launchWindow: async () => ({ ok: false }),
     findWindowByNonce: async () => null,
@@ -86,7 +87,7 @@ export function unsupportedChromeOs(reason = 'platform') {
 
 const READY_WAIT_MS = 5000;
 const CALL_TIMEOUT_MS = 5000;
-/** 押す・トグルを入れる（Chrome の起動・ページの読み込みを含む）の待ち */
+/** 押す（PowerShell の起動を含む）・トグルを入れる（Chrome の起動・ページの読み込みを含む）の待ち */
 const ALLOW_TIMEOUT_MS = 20_000;
 const ENABLE_TIMEOUT_MS = 45_000;
 
@@ -172,14 +173,14 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     generation: () => generation,
     snapshotWindows: () => call('snapshotWindows', {}, null),
     findPermissionDialog: ({ since, port } = {}) => call('findPermissionDialog', { since: since ?? [], port: port ?? null }, null),
-    allowPermission: ref => call('allowPermission', { ref }, false, Math.max(timeoutMs, ALLOW_TIMEOUT_MS)),
-    enableRemoteDebugging: ({ browser, profileDir, userDataDir = null } = {}) =>
-      call('enableRemoteDebugging', { browser, profileDir, userDataDir }, { ok: false, reason: 'timeout' }, Math.max(timeoutMs, ENABLE_TIMEOUT_MS)),
     raise: ref => call('raise', { ref }, { ok: false, method: 'failed' }),
     yieldForeground: (ref, { to } = {}) => call('yieldForeground', { ref, to }, false),
     foreground: () => call('foreground', {}, null),
     appWindow: () => call('appWindow', {}, null),
     close: ref => call('close', { ref }, false),
+    allowPermission: ref => call('allowPermission', { ref }, false, Math.max(timeoutMs, ALLOW_TIMEOUT_MS)),
+    enableRemoteDebugging: ({ browser, profileDir, userDataDir = null } = {}) =>
+      call('enableRemoteDebugging', { browser, profileDir, userDataDir }, { ok: false, reason: 'timeout' }, Math.max(timeoutMs, ENABLE_TIMEOUT_MS)),
     locateBrowser: ({ product = 'chrome' } = {}) => call('locateBrowser', { product }, null),
     launchWindow: ({ browser, profileDir, url, nonce, userDataDir = null, position = null, size = null } = {}) =>
       call('launchWindow', { browser, profileDir, url, nonce, userDataDir, position, size }, { ok: false }),

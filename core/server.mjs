@@ -260,7 +260,9 @@ const chromeLink = chromeOs && chromeLinkEnabled({ runtimeRoot: BOOT_ENV.AGENT_H
     .catch(error => { console.error('  chrome-link: not available:', String(error?.code ?? error?.message ?? error)); return null; })
   : null;
 const chromeConnection = chromeOs
-  ? createChromeConnection({ locate: chromeLocate, os: chromeOs, link: chromeLink, log: line => console.log(`  ${line}`) })
+  ? createChromeConnection({ locate: chromeLocate, os: chromeOs, link: chromeLink, log: line => console.log(`  ${line}`),
+    // 設定 › ブラウザーの「Chrome の確認に自動で答える」（既定はオン。ADR 0218）
+    autoAllow: async () => (await store.getPrefs()).chromeAutoAllow !== false })
   : null;
 // 人を待つ場面の台帳（接続の許可の案内・ログインなどの依頼。core/chrome/handoff.mjs、ADR 0148・0168）。待ちは askPermission の outlivesTurn で出す。
 // control は第 6 段の core/chrome/control.mjs（{ state, onChange }）。中継の後に作られるので、下の chromeControl を作った所で useControl で差し込む
@@ -272,7 +274,11 @@ const chromeHandoffs = chromeConnection ? createChromeHandoffs({
   // 人の「止める」・子の取り消しで待ちを片付ける合図。ターンが普通に終わっても abort されない（ターンの AbortController は中断のときだけ引く）
   turnSignal: id => runtime.turns.get(id)?.ac.signal,
   continueTurn: (sessionId, { kind, messageId }) => continueAfterHandoff(sessionId, kind, messageId),
-  titleFor: ({ reason, message }) => reason === 'connect' ? t('permission.browserHandoffConnect') : t('permission.browserHandoff', { message: message ?? '' }),
+  // 接続の案内の題は「{エージェント} が Chrome への接続の許可を待っています」（通知・一覧で、何を待っているかが分かるように。ADR 0218）
+  titleFor: ({ reason, message, sessionId }) => reason === 'connect' ? t('permission.browserHandoffConnect', { agent: runtime.turns.get(sessionId)?.backend.label ?? t('permission.agentFallback') }) : t('permission.browserHandoff', { message: message ?? '' }),
+  // 確認なし・制限なしのモード（範囲 full・自律 never。web/composer-controls.mjs の isDanger と同じ）の会話は、Pleiad の中の許可を飛ばす（ADR 0218）
+  agentLabel: id => runtime.turns.get(id)?.backend.label ?? null,
+  autoConsent: id => { const live = runtime.turns.get(id); if (!live) return false; const m = modePosition(live.backend.modes()?.[live.info.mode]); return m.scope === 'full' && m.autonomy === 'never'; },
   log: line => console.log(`  ${line}`),
 }) : null;
 // 会話の Chrome のプロフィール（core/chrome/profile-choice.mjs、第 10 段）。一覧は Local State の名前とフォルダー名だけ。Edge は接続ができるまで出さない。
@@ -4115,6 +4121,8 @@ const opsChrome = chromeConnection ? {
   connect: async () => { await chromeConnection.connect(); return chromeConnection.state(); },
   disconnect: () => { chromeConnection.disconnect(); return chromeConnection.state(); },
   raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
+  consent: () => chromeConnection.consent(),
+  enable: () => chromeConnection.enable(),
   // ビューアの⋯「Chrome で開く」。つながっていなければ Chrome の許可を待つ（カードは出さない）
   open: chromeRelay ? (sessionId, url) => chromeRelay.openForConversation(sessionId, url) : null,
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
@@ -8555,6 +8563,9 @@ wss.on("connection", (ws, req) => {
         case 'chromeConnect': return await viaOp('browser.chromeConnect');
         case 'chromeDisconnect': return await viaOp('browser.chromeDisconnect');
         case 'chromeRaiseDialog': return await viaOp('browser.chromeRaiseDialog');
+        // 接続のカードの「許可」「オンにしてつなぐ」（人だけ。画面とリモートの端末から。ADR 0218）
+        case 'chromeConsent': return await viaOp('browser.chromeConsent');
+        case 'chromeEnable': return await viaOp('browser.chromeEnable');
         // エージェントの Chrome の窓の引き継ぐ・戻す・止める（人だけ。画面とリモートの端末から。browser.chromeTakeOver・chromeResume・chromeStop）
         case 'chromeTakeOver': return await viaOp('browser.chromeTakeOver');
         case 'chromeResume': return await viaOp('browser.chromeResume');

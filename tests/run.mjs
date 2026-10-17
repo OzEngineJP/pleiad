@@ -76,6 +76,7 @@ const SUITES = [
   './unit/browser-bridge.mjs',
   // Chrome への接続（ADR 0148・0153）: A〜D の状態機械・無期限の待ち・確認の出し直し・OS の層が無いとき（偽の Chrome・偽の OS の層・偽の時計）
   './unit/chrome-connection.mjs',
+  './unit/chrome-auto-allow.mjs',
   // Chrome の絞り込みの中継（ADR 0148・0153）: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open）・止める・鍵・agent-browser の本物の通し（偽の Chrome）
   './unit/chrome-relay.mjs',
   './unit/chrome-close-window.mjs',

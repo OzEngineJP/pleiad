@@ -69,6 +69,9 @@ const siteExample = { origin: 'https://a.example', mode: 'always', agent: 'claud
 
 const confirmRiskOf = (before, after) => (before === true && after !== true ? 'guarded' : 'write');
 const confirmExamples = [{ before: true, after: false, risk: 'guarded' }, { before: false, after: true, risk: 'write' }];
+// Pleiad が Chrome の確認に答える向き（オフ → オン）は関所を緩めるので guarded（ADR 0218）
+const autoAllowRiskOf = (before, after) => (before === false && after === true ? 'guarded' : 'write');
+const autoAllowExamples = [{ before: false, after: true, risk: 'guarded' }, { before: true, after: false, risk: 'write' }];
 
 export const settings = [
   defineSetting({ key: 'locale', summary: S('locale'), risk: 'write', riskReason: `Display language. ${WRITE_ABOUT}`, prefKeys: ['locale'],
@@ -128,6 +131,10 @@ export const settings = [
     riskOf: confirmRiskOf, riskExamples: confirmExamples, schema: z.boolean(), default: false, read: fromPrefs('confirmAgentSites'),
     normalize: (ctx, v) => { if (!validBrowserPref('confirmAgentSites', v)) throw invalid(ctx, 'confirmAgentSites: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.browserPref('confirmAgentSites', v) }),
+  defineSetting({ key: 'chromeAutoAllow', summary: S('chromeAutoAllow'), risk: 'write', riskReason: 'Turning it off only brings back the manual Chrome prompt; turning it on lets Pleiad answer Chrome\'s remote debugging prompt for connections a human or a no-confirmation mode allowed, and is raised to guarded by riskOf',
+    riskOf: autoAllowRiskOf, riskExamples: autoAllowExamples, prefKeys: ['chromeAutoAllow'], schema: z.boolean(), default: true, read: fromPrefs('chromeAutoAllow'),
+    normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'chromeAutoAllow: boolean'); return { after: v }; },
+    write: (ctx, v) => ctx.writes.pref('chromeAutoAllow', v) }),
   defineSetting({ key: 'confirmExternalLoads', summary: S('confirmExternalLoads'), risk: 'write', riskReason: `Turning the confirmation on only narrows the gate; turning it off is raised to guarded by riskOf`,
     riskOf: confirmRiskOf, riskExamples: confirmExamples, schema: z.boolean(), default: false, read: fromPrefs('confirmExternalLoads'),
     normalize: (ctx, v) => { if (!validBrowserPref('confirmExternalLoads', v)) throw invalid(ctx, 'confirmExternalLoads: boolean'); return { after: v }; },

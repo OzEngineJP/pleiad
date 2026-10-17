@@ -1,6 +1,7 @@
 // エージェントのブラウザー（PC の Chrome）の「人を待つ」場面の台帳（ADR 0148・0153・0168、docs/inapp-browser.md）。
 //   - 接続の案内（connect）: Chrome の許可の確認を待つ。中継（core/chrome/relay.mjs）が、接続が無いまま 20 秒抱えるときに出す。
-//     Chrome の状態 A〜D（setup / permission / denied）はカードの中身として写し、つながったら決着する
+//     Chrome の状態 A〜D（setup / consent / permission / denied）はカードの中身として写し、つながったら決着する。
+//     確認なしのモードの会話（autoConsent）は Pleiad の中の許可（consent）を飛ばす。トグル（setup）はどのモードでも人が「オンにしてつなぐ」を押す（ADR 0218）
 //   - 人への依頼（ask）: ログイン・CAPTCHA・2 段階認証・支払いなど。ply_browser の hand_to_user から出す。
 //     「Chrome で操作する」（一時停止）→「Claude に戻す」（再開）は第 6 段の core/chrome/control.mjs が持ち、ここは control の変化を見て決着させる
 // 待ちは askPermission の outlivesTurn（ターンが終わっても残る。ADR 0168）で出す。カードの id は替えず、中身は onOpen の update で差し替える。
@@ -16,7 +17,7 @@ import crypto from 'node:crypto';
 
 export const HANDOFF_REASONS = ['login', 'captcha', 'two_factor', 'payment', 'other'];
 const MESSAGE_MAX = 200;
-const CONNECT_STATES = new Set(['setup', 'permission', 'denied']);
+const CONNECT_STATES = new Set(['setup', 'consent', 'permission', 'denied']);
 
 /** 「続けてください」の送信の id。カードの id から決まる UUID の形の値（同じ id・同じ引数の outbox.accept は 1 件にまとまる） */
 export function continuationMessageId(cardId) {
@@ -38,16 +39,18 @@ const cleanMessage = value => {
  * @param [deps.turnLive]     この会話のターンが走っているか（既定は sessionBusy）
  * @param [deps.turnSignal]   (sessionId) => 走っているターンの中断の合図（人の「止める」・子の取り消しで待ちを片付ける）。ターンの終わりでは abort されない
  * @param deps.continueTurn   (sessionId, { kind, messageId }) => Promise。会話へ「続けてください」を送る（outbox.accept）
- * @param [deps.titleFor]     ({ reason, message }) => カードの題（通知の一覧・端末の通知に出る）
+ * @param [deps.titleFor]     ({ reason, message, sessionId }) => カードの題（通知の一覧・端末の通知に出る）
+ * @param [deps.autoConsent]  (sessionId) => その会話が確認なし・制限なしのモードか（Chrome の確認に Pleiad の中の許可なしで答える。ADR 0218）
+ * @param [deps.agentLabel]   (sessionId) => その会話のエージェントの名前（カードの「Claude に Chrome への接続を許可しますか？」）
  */
-export function createChromeHandoffs({ askPermission, connection, control: initialControl = null, sessionBusy, turnLive = sessionBusy, turnSignal = () => undefined, continueTurn, titleFor = () => '', now = () => new Date(), log = () => {} }) {
+export function createChromeHandoffs({ askPermission, connection, control: initialControl = null, sessionBusy, turnLive = sessionBusy, turnSignal = () => undefined, continueTurn, titleFor = () => '', autoConsent = () => false, agentLabel = () => null, now = () => new Date(), log = () => {} }) {
   const open = new Map();      // sessionId -> Handoff（決着するまで）
   const unclaimed = new Map(); // sessionId -> 決着した答え（ターンの中で、まだ誰にも返していないもの）
   let closed = false;
 
   const connectPayload = () => {
     const status = connection.state();
-    return { state: CONNECT_STATES.has(status.state) ? status.state : 'setup', dialog: status.dialog === true };
+    return { state: CONNECT_STATES.has(status.state) ? status.state : 'setup', dialog: status.dialog === true, assist: status.assist ?? null, enable: status.enable === true };
   };
 
   /** カードの中身を差し替える。onOpen の前（askPermission が祖先を読んでいる間）の分はためておく */
@@ -62,7 +65,7 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
       operating: false, window: { url: null, title: null }, early: null, startedAt: now().getTime() };
     open.set(sessionId, h);
     h.answer = askPermission({
-      kind: 'tool', toolName: 'ply_browser', input: { reason, message }, title: titleFor({ reason, message }), sessionId,
+      kind: 'tool', toolName: 'ply_browser', input: { reason, message }, title: titleFor({ reason, message, sessionId }), sessionId,
       browserHandoff: { ...browserHandoff, turnLive: turnLive(sessionId), windowTitle: null, by: null },
       outlivesTurn: true,
       signal: turnSignal(sessionId),
@@ -111,14 +114,21 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
   function resolveWith(h, kind) {
     if (h.done) return;
     const continued = !h.waiters.size && !turnLive(h.sessionId) && !sessionBusy(h.sessionId);
-    const answer = { allow: true, always: false, scope: 'once', response: { kind, at: now().toISOString(), url: h.window.url, title: h.window.title, continued } };
+    // auto: 確認なしのモードで、Pleiad の中の許可を飛ばしてつないだ（畳んだ行の「確認なしのため自動」）
+    const auto = h.reason === 'connect' && h.shown?.auto === true && !h.human;
+    const answer = { allow: true, always: false, scope: 'once', response: { kind, at: now().toISOString(), url: h.window.url, title: h.window.title, continued, ...(auto ? { auto: true } : {}) } };
     if (h.card) h.card.settle(answer); else h.early = answer;
   }
 
   function startConnect(sessionId) {
-    const h = create(sessionId, 'connect', null, { reason: 'connect', message: null, ...connectPayload() });
+    let auto = false;
+    try { auto = autoConsent(sessionId) === true; } catch { auto = false; }
+    let agent = null;
+    try { agent = agentLabel(sessionId) ?? null; } catch { agent = null; }
+    const h = create(sessionId, 'connect', null, { reason: 'connect', message: null, auto, agent, ...connectPayload() });
+    if (h.shown.state === 'setup' || h.shown.assist === 'allow-failed') h.human = true;
     // 中継の 20 秒の待ちが外れても試行は止めない。カードが待つ人になる（core/chrome/connection.mjs の demand）
-    connection.demand({ signal: h.ac.signal }).then(
+    connection.demand({ signal: h.ac.signal, consent: auto }).then(
       () => resolveWith(h, 'connected'),
       error => {
         if (error?.code === 'declined') { const answer = { allow: false, messageKey: 'userDenied' }; if (h.card) h.card.settle(answer); else h.early = answer; }
@@ -130,7 +140,9 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
     for (const h of [...open.values()]) {
       if (h.reason !== 'connect' || h.done) continue;
       if (status.state === 'connected') resolveWith(h, 'connected');
-      else if (CONNECT_STATES.has(status.state)) patch(h, { state: status.state, dialog: status.dialog === true });
+      // 人が手を動かした（トグルを入れた・Chrome の確認を押す案内に戻った・断った）接続は、「確認なしのため自動」と書かない
+      if (status.state === 'setup' || status.state === 'denied' || status.assist === 'allow-failed') h.human = true;
+      if (CONNECT_STATES.has(status.state)) patch(h, { state: status.state, dialog: status.dialog === true, assist: status.assist ?? null, enable: status.enable === true });
     }
   });
 

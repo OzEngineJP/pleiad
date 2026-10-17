@@ -8,7 +8,7 @@ const { createWin32ChromeOs } = require('./win32.cjs');
 const { createMacChromeOs } = require('./mac.cjs');
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false, allow: false, enable: false });
-const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'allowPermission', 'enableRemoteDebugging', 'raise', 'yieldForeground', 'foreground', 'appWindow', 'close',
+const ACTIONS = new Set(['snapshotWindows', 'findPermissionDialog', 'raise', 'yieldForeground', 'foreground', 'appWindow', 'close', 'allowPermission', 'enableRemoteDebugging',
   'locateBrowser', 'launchWindow', 'findWindowByNonce', 'findWindowByBounds', 'hiddenSpot', 'conceal', 'reveal', 'release', 'closeAgent', 'exportAgent', 'adoptAgent']);
 
 /**
@@ -23,8 +23,6 @@ function createChromeOs({ platform = process.platform, win32 = null, mac = null,
     capabilities: () => ({ supported: false, reason: why, features: FEATURES_NONE }),
     snapshotWindows: () => null,
     findPermissionDialog: () => null,
-    allowPermission: () => false,
-    enableRemoteDebugging: () => ({ ok: false, reason: 'unsupported' }),
     raise: () => ({ ok: false, method: 'unsupported' }),
     yieldForeground: () => false,
     foreground: () => null,
@@ -32,6 +30,8 @@ function createChromeOs({ platform = process.platform, win32 = null, mac = null,
     watch: () => () => {},
     appWindow: () => null,
     close: () => false,
+    allowPermission: () => false,
+    enableRemoteDebugging: () => ({ ok: false, reason: 'unsupported' }),
     locateBrowser: () => null,
     launchWindow: () => ({ ok: false, reason: 'unsupported' }),
     findWindowByNonce: () => null,
@@ -53,7 +53,7 @@ function attachChromeOs(worker, { chromeOs, log = () => {} }) {
   const post = message => { try { worker.postMessage(message); } catch (error) { log(`postMessage failed: ${error.message}`); } };
   const epoch = crypto.randomBytes(8).toString('hex');
   const ready = () => { const c = chromeOs.capabilities(); post({ type: 'chrome-os-ready', supported: c.supported === true, ...(c.reason ? { reason: c.reason } : {}), features: c.features ?? FEATURES_NONE, epoch }); };
-  worker.on('message', message => {
+  worker.on('message', async message => {
     if (!message || typeof message.type !== 'string') return;
     if (message.type === 'chrome-os-ready-request') { ready(); return; }
     if (message.type !== 'chrome-os') return;
@@ -64,11 +64,12 @@ function attachChromeOs(worker, { chromeOs, log = () => {} }) {
       let result;
       switch (action) {
         case 'findPermissionDialog': result = chromeOs.findPermissionDialog({ since: a.since, port: a.port }); break;
-        case 'allowPermission': result = chromeOs.allowPermission(a.ref); break;
-        case 'enableRemoteDebugging': result = chromeOs.enableRemoteDebugging({ browser: a.browser, profileDir: a.profileDir, userDataDir: a.userDataDir }); break;
         case 'raise': result = chromeOs.raise(a.ref); break;
         case 'yieldForeground': result = chromeOs.yieldForeground(a.ref, { to: a.to }); break;
         case 'close': result = chromeOs.close(a.ref); break;
+        // 押す・トグルを入れるは PowerShell を待つ（ほかの依頼は待たせない。結果は id で返る）
+        case 'allowPermission': result = await chromeOs.allowPermission(a.ref); break;
+        case 'enableRemoteDebugging': result = await chromeOs.enableRemoteDebugging({ browser: a.browser, profileDir: a.profileDir, userDataDir: a.userDataDir ?? null }); break;
         case 'locateBrowser': result = chromeOs.locateBrowser({ product: a.product }); break;
         case 'launchWindow': result = chromeOs.launchWindow(a); break;
         case 'findWindowByNonce': result = chromeOs.findWindowByNonce(a.nonce); break;

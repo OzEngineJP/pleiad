@@ -95,7 +95,7 @@ import { retainPlan, syncRequest, joinReply, joinOlder, anchorSig, subagentCalls
 import { createHeightSettler } from "./history-heights.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, icon, relTime, randomId, chevron } from "./dom.mjs";
-import { browserHandoffView, settledLine as handoffSettledLine } from "./browser-handoff-card.mjs";
+import { browserHandoffView, settledLine as handoffSettledLine, handoffMark } from "./browser-handoff-card.mjs";
 import { chromeWaitView, chromeSettledLine } from "./chrome-wait-card.mjs";
 import { t, fmt, lang as uiLang, applyDom, languageName, rememberLang } from "./i18n.mjs";
 import { savedEvent, savedTitle } from "./saved-text.mjs";
@@ -2446,11 +2446,12 @@ function browserHandoffCard(ev, into = null) {
   const card = el("div", "card");
   m.append(card);
   const head = el("div", "card-head");
-  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), t("chat.browserHandoff.headingMark")));
+  // 接続の案内は承認（承認を待っている）、人への依頼は Chrome の操作待ち
+  head.append(...markedHead(t("chat.approval.heading", { mark: MARK }), handoffMark(t, ev.browserHandoff)));
   const actions = el("div", "card-actions");
   // リモートの端末では「この端末で操作する」（右パネルの Chrome の窓で操作する）を足す
   const operateHere = window.plyRemote ? async () => (await chromePanel?.measure()) ?? null : null;
-  const view = browserHandoffView(ev, { el, t, cmd, operateHere, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
+  const view = browserHandoffView(ev, { el, t, cmd, operateHere, spinner: runMark, onChange: (buttons, res) => actions.replaceChildren(res, ...buttons) });
   head.append(el("span", "desc", view.summary()));
   card.append(head, view.body, actions);
   placeCard(m, ev, into);

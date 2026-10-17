@@ -238,40 +238,19 @@ async function main() {
       stateHistory.push({ at: new Date().toISOString(), ...s });
     });
 
-    const beforeConnectWins = (await osClient.snapshotWindows()) ?? [];
-    const demandPromise = conn.demand();
-
-    // permission 状態になり確認のダイアログが出るのを待つ
-    let foundDialog = null;
-    let allowResult = false;
-    const dialogDeadline = Date.now() + 12_000;
-    while (Date.now() < dialogDeadline) {
-      const st = conn.state();
-      if (st.state === 'connected') break;
-      const dlg = await osClient.findPermissionDialog({ since: beforeConnectWins, port: activePort.port });
-      if (dlg) {
-        foundDialog = dlg;
-        log(`Found permission dialog: ${JSON.stringify(dlg)}`);
-        const dlgAx = await helper.call('chromeDumpAx', { maxDepth: 10 }).catch(e => ({ error: e.message }));
-        await fs.writeFile(path.join(OUT_DIR, 'ax-permission-dialog.json'), JSON.stringify(dlgAx, null, 2));
-        allowResult = await osClient.allowPermission(dlg);
-        log(`allowPermission(${dlg.id}) -> ${allowResult}`);
-        if (allowResult) break;
-      }
-      await sleep(250);
-    }
-
-    if (!foundDialog) {
-      const noDlgAx = await helper.call('chromeDumpAx', { maxDepth: 10 }).catch(e => ({ error: e.message }));
-      await fs.writeFile(path.join(OUT_DIR, 'ax-no-dialog.json'), JSON.stringify(noDlgAx, null, 2));
-    }
-
-    const cdp = await withTimeout(demandPromise, 10_000, 'conn.demand() after allowPermission');
+    // 確認なし・制限なしのモードの会話と同じ流れ（ADR 0218）: Pleiad の中の許可（consent）を付けて接続を求め、
+    // 出た確認は接続の部品（connection.mjs）が findPermissionDialog → allowPermission で押す。ここでは押さない
+    const demandPromise = conn.demand({ consent: true });
+    const cdp = await withTimeout(demandPromise, 30_000, 'conn.demand({ consent: true })');
+    const foundDialog = stateHistory.some(s => s.state === 'permission' && s.dialog === true);
+    const allowResult = lastAllowHelperResult?.ok === true;
+    const pressedByConnection = stateHistory.some(s => s.state === 'permission' && s.assist === 'allowing');
     const version = await cdp.send('Browser.getVersion');
     const allowMethod = lastAllowHelperResult?.method ?? null;
     const validAllowMethod = allowMethod === 'ax-press' || allowMethod === 'ax-confirm';
     results.stages.connectionAndPermission = {
-      ok: conn.state().state === 'connected' && Boolean(foundDialog) && allowResult === true && validAllowMethod,
+      ok: conn.state().state === 'connected' && foundDialog && allowResult === true && validAllowMethod && pressedByConnection,
+      pressedByConnection,
       foundDialog,
       allowResult,
       allowMethod,

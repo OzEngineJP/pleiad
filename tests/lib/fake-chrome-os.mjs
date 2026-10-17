@@ -8,12 +8,15 @@
 // （addWindow で利用者の窓・Edge の窓・別のプロセスの窓を足せる。偽の Chrome の窓の外形は、隠すまで Browser.setWindowBounds に追従する）。
 // closeAgent は、隠した窓を閉じる（偽の Chrome の窓も閉じる）。closeFails なら見える形へ戻す。窓が消えて（killWindow）いれば記録を捨てるだけ。
 // 前面の見張りは持たない（層のテストが偽の Win32 の表で見る）。stealsForeground(true) の間に出た窓は前面を取り、prevFg に前の前面を覚える。
+// allowPermission は確認の「許可する」を押す（偽の Chrome の保留を approve。opts.allowFails なら押せない、opts.allowNoOpen なら押したのに開かない）。
+// enableRemoteDebugging はトグルを入れる（偽の Chrome の turnOn。opts.enableFails なら入れられない）。どちらも features の allow・enable を渡したときだけ使える
 export const CHROME_PID = 4242;
 
 export function fakeChromeOs({ chrome = null, supported = true, reason = 'platform', features } = {}) {
   const realCaps = Object.freeze({
     supported, ...(supported ? {} : { reason }),
-    features: features ?? { dialog: supported, raise: supported, launch: supported, conceal: supported, watch: supported, bounds: supported, allow: supported, enable: supported },
+    // allow・enable（Chrome の確認を押す・トグルを入れる。ADR 0218）は既定では持たない。押す流れを見る試験だけが features で渡す
+    features: features ?? { dialog: supported, raise: supported, launch: supported, conceal: supported, watch: supported, bounds: supported },
   });
   // main が居ない間（更新）は pending（supported: false）。setPending(false) で戻して onReady を呼ぶ
   const pendingCaps = Object.freeze({ supported: false, reason: 'pending', features: { dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false, allow: false, enable: false } });
@@ -29,7 +32,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
   // readyWaitMs: pending の間、ready() が層の戻りを待つ長さ（0 は待たずに pending のまま返す）。本物の口（parentPortChromeOs）は readyWaitMs だけ待つ
-  const opts = { appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, enableFails: false, allowFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
+  const opts = { allowFails: false, allowNoOpen: false, enableFails: false, appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
   let generation = 0;
   const readyWaiters = new Set();
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
@@ -91,11 +94,12 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     async allowPermission(ref) {
       note({ op: 'allowPermission', ref: ref?.id });
       if (opts.allowFails || !chrome || !ref?.id || !shownDialogs.has(ref.id)) return false;
-      return chrome.allowDialog(ref.id);
+      // allowNoOpen: 押したと答えるが、接続は開かない（押しても開かないとき、人の案内へ戻ることを見る）
+      return opts.allowNoOpen ? true : chrome.allowDialog(ref.id);
     },
-    async enableRemoteDebugging({ browser, profileDir, userDataDir = null } = {}) {
-      note({ op: 'enableRemoteDebugging', browser: browser?.id ?? null, profileDir: profileDir ?? null, userDataDir });
-      if (opts.enableFails || browser?.id !== 'fake-browser' || !chrome) return { ok: false, reason: 'failed' };
+    async enableRemoteDebugging(args = {}) {
+      note({ op: 'enableRemoteDebugging', args: JSON.parse(JSON.stringify({ ...args, browser: args.browser?.id ?? null })) });
+      if (opts.enableFails || args.browser?.id !== 'fake-browser' || !chrome) return { ok: false, reason: 'no-switch' };
       await chrome.turnOn();
       return { ok: true };
     },
