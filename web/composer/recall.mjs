@@ -5,12 +5,16 @@
 // - 呼び出した直後のカーソルは先頭（↓ なら末尾）。↑ を続けて押せば遡れる
 // - 欄の上に「3 / 5 · 10/14 18:20 · 会話名」の行を出す（ほかの会話の分だけ会話名。Esc の印を押しても戻る）
 // - 順と中身は呼び出し側（load）が決める（この会話 → ほかの会話の新しい順。`!` の形では `!` で送ったコマンドだけ）
+// - 並びは欄にフォーカスが来た・会話を替えたときに先に読む（prefetch）。読み終わる前の ↑ は、150ms 過ぎたら行に「読み込み中…」を出して待つ。
+//   待つ間の ↑ は重ねない。待つ間に字を打った・会話を替えたら、読み終えても欄に入れない
 // 欄に字を入れる・添付を戻すのも呼び出し側（put）。ここは位置と行と、キーを取るかの判断だけを持つ。
 import { el, icon } from '../dom.mjs';
 import { fmt } from '../i18n.mjs';
 
 const HISTORY_ICON = 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2';
 const SWAP_MS = 120;
+const WAIT_SHOW_MS = 150;
+const PREFETCH_MS = 250;
 
 /** 呼び出した時刻の言い方。今日なら時刻、それより前なら月日と時刻 */
 export function recallWhen(at, now = Date.now()) {
@@ -64,7 +68,11 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
   let idx = -1;           // 呼び出している位置（-1 = 書きかけ）
   let draft = null;       // 脇へ取った書きかけ
   let shown = null;       // 欄に入れた字（直したかを見分ける）
-  let loading = null;
+  let loading = null;     // 読んでいる途中の並び（loadingKey の分）
+  let loadingKey = null;
+  let waiting = false;    // ↑ を押して並びを待っている
+  let waitTimer = null;
+  let prefetchTimer = null;
   let swapTimer = null;
 
   const row = el('div', 'recall-row');
@@ -85,6 +93,8 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
 
   function paintRow() {
     const item = active() ? items[idx] : null;
+    row.classList.remove('wait');
+    esc.hidden = false;
     row.classList.toggle('on', Boolean(item));
     if (!item) return;
     pos.textContent = `${idx + 1} / ${items.length}`;
@@ -121,18 +131,53 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
     show(true);
   }
 
+  /** 並びの持ち主（形と会話）。替わったら読み直す */
+  const keyNow = () => `${shell() ? 'shell' : 'text'}|${current() ?? ''}`;
+  const ready = () => Boolean(items) && loadedFor === keyNow();
+
   async function ensureItems() {
-    const kind = shell() ? 'shell' : 'text';
-    const key = `${kind}|${current() ?? ''}`;
+    const key = keyNow();
     if (items && loadedFor === key) return items;
-    loading ??= load({ shell: kind === 'shell' }).then((list) => { items = Array.isArray(list) ? list : []; loadedFor = key; return items; })
-      .finally(() => { loading = null; });
-    return loading;
+    if (loading && loadingKey === key) return loading;
+    const p = load({ shell: key.startsWith('shell|') }).then((list) => {
+      if (loading === p) { items = Array.isArray(list) ? list : []; loadedFor = key; }
+      return Array.isArray(list) ? list : [];
+    }).finally(() => { if (loading === p) { loading = null; loadingKey = null; } });
+    loading = p; loadingKey = key;
+    return p;
   }
 
+  /** 待っている間の行（「読み込み中…」）。150ms 以内に読み終えたら出さない */
+  function paintWait() {
+    pos.textContent = t('chat.recall.loading');
+    from.textContent = ''; from.title = '';
+    esc.hidden = true;
+    row.classList.add('on', 'wait');
+  }
+
+  /** 並びを先に読んでおく（欄にフォーカスが来た・会話を替えた・送った）。続けて呼ばれたら最後の 1 回だけ */
+  function prefetch() {
+    clearTimeout(prefetchTimer);
+    prefetchTimer = setTimeout(() => {
+      if (enabled() && !ready()) ensureItems().catch(() => {});
+    }, PREFETCH_MS);
+  }
+  prompt.addEventListener?.('focus', prefetch);
+
   async function up() {
-    const list = await ensureItems();
-    if (!list.length || idx >= list.length - 1) return;
+    if (waiting) return;
+    let list = items;
+    if (!ready()) {
+      const key = keyNow(), before = String(prompt.value ?? '');
+      waiting = true;
+      clearTimeout(waitTimer);
+      waitTimer = setTimeout(() => { if (waiting) paintWait(); }, WAIT_SHOW_MS);
+      try { await ensureItems(); } catch { /* 読めなければ何も入れない */ } finally { waiting = false; clearTimeout(waitTimer); }
+      // 待つ間に打った・会話や形を替えた（並びを捨てた）・書けなくなったなら入れない
+      if (String(prompt.value ?? '') !== before || keyNow() !== key || !ready() || prompt.readOnly || !enabled()) { paintRow(); return; }
+      list = items;
+    }
+    if (!list.length || idx >= list.length - 1) { paintRow(); return; }
     if (idx === -1) draft = take();
     idx += 1;
     show(false);
@@ -174,10 +219,11 @@ export function createRecall({ prompt, box, t, enabled, blocked = () => false, s
       draft = null; shown = null;
       paintRow();
     },
-    /** 会話を替えた・送った。並びは次の ↑ で読み直す（書きかけは戻さない。替えた先の書きかけが入る） */
+    /** 会話を替えた・送った。並びは読み直す（書きかけは戻さない。替えた先の書きかけが入る）。読んでいる途中の古い並びも使わない */
     reset() {
-      idx = -1; draft = null; shown = null; items = null; loadedFor = null;
+      idx = -1; draft = null; shown = null; items = null; loadedFor = null; loading = null; loadingKey = null;
       paintRow();
+      if (prompt.contains?.(globalThis.document?.activeElement)) prefetch();
     },
   };
 }

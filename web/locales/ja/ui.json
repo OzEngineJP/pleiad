@@ -2119,7 +2119,8 @@
       "cancel": "取り消す"
     },
     "recall": {
-      "backToDraft": "下書きに戻す"
+      "backToDraft": "下書きに戻す",
+      "loading": "送信済みのメッセージを読み込み中…"
     },
     "suggestion": {
       "accept": "候補を入れる",

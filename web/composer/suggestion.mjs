@@ -82,7 +82,12 @@ export function createSuggestion({ prompt, box, t, touch = () => false, enabled,
 
   ghost.hidden = true;
   take.hidden = true;
-  addEventListener('resize', () => { if (visible) { place(); prompt.style.minHeight = `${ghost.offsetHeight}px`; } });
+  // 位置は出した瞬間の 1 回では決まらない: 欄の上の行（↑ の呼び出しの行など）が 240ms で開閉する間も欄は動くので、
+  // 箱の大きさが変わるたびと、箱の中の動きが終わったときに測り直す
+  const replace = () => { if (visible) { place(); prompt.style.minHeight = `${ghost.offsetHeight}px`; } };
+  addEventListener('resize', replace);
+  if (typeof ResizeObserver === 'function') new ResizeObserver(replace).observe(box);
+  box.addEventListener?.('transitionend', replace);
 
   return {
     get text() { return text; },

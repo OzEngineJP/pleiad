@@ -2172,7 +2172,8 @@
       "cancel": "Cancel"
     },
     "recall": {
-      "backToDraft": "Back to your draft"
+      "backToDraft": "Back to your draft",
+      "loading": "Loading sent messages…"
     },
     "suggestion": {
       "accept": "Use the suggestion",
