@@ -1,8 +1,8 @@
-import { StringDecoder } from 'node:string_decoder';
+import { createLineReader } from '../link-codec.mjs';
 import { spawnCli, cliCommand } from '../cli-installation.mjs';
 import { killTree } from './antigravity-background.mjs';
 
-const MAX_FRAME_BYTES = 1024 * 1024;
+export const MAX_DEVIN_FRAME_BYTES = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 const CLIENT_INFO = { name: 'pleiad', version: '0.0.0' };
 const SAFE_ERROR = Symbol('safe ACP error');
@@ -28,7 +28,7 @@ function waitForExit(child, timeoutMs) {
 }
 
 export class DevinAcp {
-  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, timeoutMs = 30_000 } = {}) {
+  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  devin: dropped an oversize ACP line (${bytes} bytes)`), timeoutMs = 30_000 } = {}) {
     this.command = command;
     this.cwd = cwd;
     this.env = env;
@@ -48,8 +48,21 @@ export class DevinAcp {
     this.pending = new Map();
     this.incoming = new Set();
     this.seenIncoming = new Set();
-    this.decoder = new StringDecoder('utf8');
-    this.buffer = '';
+    this.reader = createLineReader({
+      maxBytes: MAX_DEVIN_FRAME_BYTES,
+      onLine: line => this.#line(line),
+      onOverflow: info => {
+        // The id is unavailable. Keep reading ACKs, but bound even prompt calls
+        // that normally have no deadline if the discarded line was their reply.
+        for (const [id, pending] of this.pending) if (!pending.timer) {
+          pending.timer = setTimeout(() => {
+            if (!this.pending.delete(id)) return;
+            pending.reject(rpcError('Devin ACP request timed out after a dropped frame', -32001));
+          }, this.timeoutMs > 0 ? this.timeoutMs : 30_000);
+        }
+        try { onDrop(info); } catch {}
+      },
+    });
     this.stderrBytes = 0;
     this.stderrTail = '';
   }
@@ -122,29 +135,22 @@ export class DevinAcp {
 
   #write(frame) {
     const text = JSON.stringify(frame);
-    if (Buffer.byteLength(text, 'utf8') > MAX_FRAME_BYTES) throw rpcError('Devin ACP frame exceeds limit', -32600);
     if (!this.proc?.stdin?.writable) throw rpcError('Devin ACP stdin is closed');
     this.proc.stdin.write(`${text}\n`, (error) => { if (error) this.#fail(rpcError('Devin ACP write failed')); });
   }
 
   #stdout(chunk) {
     if (this.gone || this.closing) return;
-    this.buffer += this.decoder.write(chunk);
-    if (Buffer.byteLength(this.buffer, 'utf8') > MAX_FRAME_BYTES && !this.buffer.includes('\n')) return this.#fail(rpcError('Devin ACP frame exceeds limit', -32600));
-    let at;
-    while ((at = this.buffer.indexOf('\n')) !== -1) {
-      let line = this.buffer.slice(0, at);
-      this.buffer = this.buffer.slice(at + 1);
-      if (line.endsWith('\r')) line = line.slice(0, -1);
-      if (Buffer.byteLength(line, 'utf8') > MAX_FRAME_BYTES) return this.#fail(rpcError('Devin ACP frame exceeds limit', -32600));
-      if (!line.trim()) continue;
-      let frame;
-      try { frame = JSON.parse(line); } catch { return this.#fail(rpcError('Invalid Devin ACP JSON frame', -32700)); }
-      if (!frame || frame.jsonrpc !== '2.0' || typeof frame !== 'object') return this.#fail(rpcError('Invalid Devin ACP JSON-RPC frame', -32600));
-      this.#frame(frame);
-      if (this.gone) return;
-    }
-    if (Buffer.byteLength(this.buffer, 'utf8') > MAX_FRAME_BYTES) this.#fail(rpcError('Devin ACP frame exceeds limit', -32600));
+    this.reader.push(chunk);
+  }
+
+  #line(line) {
+    if (this.gone || this.closing) return;
+    if (!line.trim()) return;
+    let frame;
+    try { frame = JSON.parse(line); } catch { return this.#fail(rpcError('Invalid Devin ACP JSON frame', -32700)); }
+    if (!frame || frame.jsonrpc !== '2.0' || typeof frame !== 'object') return this.#fail(rpcError('Invalid Devin ACP JSON-RPC frame', -32600));
+    this.#frame(frame);
   }
 
   #stderr(chunk) {
@@ -218,6 +224,7 @@ export class DevinAcp {
   #fail(error) {
     if (this.gone || this.closing) return;
     this.gone = true;
+    this.reader.reset();
     this.connectionAbort.abort();
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear();
@@ -242,6 +249,7 @@ export class DevinAcp {
   async close() {
     if (this.closed) return this.closed;
     this.closing = true;
+    this.reader.reset();
     this.connectionAbort.abort();
     const error = rpcError('Devin ACP closed', -32800);
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }

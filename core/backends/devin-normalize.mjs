@@ -2,9 +2,56 @@
 // existing backends: { uuid, role, text, thinking?, toolCalls? }.
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
 
+// Bound previews before retaining state, cloning it or emitting tool events.
+// Result text uses the shared backend limit; structured inputs and ACP diffs
+// also need a total budget because they can contain entire source files.
+export const MAX_DEVIN_TOOL_CHARS = 16 * 1024;
+function compactToolValue(value) {
+  let remaining = MAX_DEVIN_TOOL_CHARS, nodes = 256, truncated = false;
+  function text(value) {
+    const kept = Buffer.from(value.slice(0, remaining), 'utf8').toString('utf8');
+    remaining -= kept.length;
+    if (kept.length === value.length) return kept;
+    truncated = true;
+    return `${kept}\n…`;
+  }
+  function visit(value, depth = 0) {
+    if (--nodes < 0 || depth > 12 || remaining <= 0) { truncated = true; return '…'; }
+    if (typeof value === 'string') return text(value);
+    if (!value || typeof value !== 'object') return value;
+    let source = value;
+    if (typeof value.oldText === 'string' && typeof value.newText === 'string'
+      && value.oldText.length + value.newText.length > MAX_DEVIN_TOOL_CHARS) {
+      const before = value.oldText, after = value.newText;
+      let prefix = 0, suffix = 0;
+      while (prefix < Math.min(before.length, after.length) && before[prefix] === after[prefix]) prefix++;
+      while (suffix < Math.min(before.length, after.length) - prefix
+        && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix++;
+      const excerpt = str => {
+        const start = Math.max(0, prefix - 160), end = str.length - Math.max(0, suffix - 160);
+        const stop = Math.min(end, start + MAX_DEVIN_TOOL_CHARS / 4);
+        return `${start ? '…' : ''}${str.slice(start, stop)}${stop < str.length ? '…' : ''}`;
+      };
+      source = { ...value, oldText: excerpt(before), newText: excerpt(after), truncated: true,
+        oldLength: before.length, newLength: after.length };
+      truncated = true;
+    }
+    const out = Array.isArray(source) ? [] : {};
+    for (const key of Object.keys(source)) {
+      if (remaining <= 0 || nodes <= 0) { truncated = true; break; }
+      const name = Array.isArray(source) ? key : text(key);
+      Object.defineProperty(out, name, { value: visit(source[key], depth + 1), enumerable: true, writable: true, configurable: true });
+    }
+    return out;
+  }
+  const preview = visit(value);
+  return { preview, truncated };
+}
+
 const contentText = value => {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(contentText).join('\n');
+  if (value?.type === 'diff') return `${value.path ?? ''}\n-${value.oldText ?? ''}\n+${value.newText ?? ''}`;
   if (value?.type === 'text') return String(value.text ?? '');
   if (value?.content) return contentText(value.content);
   return '';
@@ -58,7 +105,11 @@ export function createDevinMapper(sessionId, emit = () => {}) {
       if (typeof id !== 'string' || !id) return;
       const state = toolStates.get(id) ?? { toolCallId: id };
       for (const key of ['title', 'name', 'kind', 'status', 'rawInput', 'rawOutput', 'content', 'locations']) {
-        if (update[key] != null) state[key] = structuredClone(update[key]);
+        if (update[key] != null) {
+          const { preview, truncated } = compactToolValue(update[key]);
+          state[key] = preview;
+          if (truncated) state.truncated = true;
+        }
       }
       toolStates.set(id, state);
       let call = tools.get(id);
@@ -74,7 +125,7 @@ export function createDevinMapper(sessionId, emit = () => {}) {
       if (['completed', 'failed', 'cancelled'].includes(state.status)) {
         const raw = contentText(state.content) || contentText(state.rawOutput)
           || (state.rawOutput != null ? JSON.stringify(state.rawOutput) : '');
-        const result = { text: cutText(raw, MAX_RESULT_CHARS, '\n…'), isError: state.status !== 'completed', truncated: raw.length > MAX_RESULT_CHARS };
+        const result = { text: cutText(raw, MAX_RESULT_CHARS, '\n…'), isError: state.status !== 'completed', truncated: Boolean(state.truncated) || raw.length > MAX_RESULT_CHARS };
         const changed = JSON.stringify(call.result) !== JSON.stringify(result);
         call.result = result;
         if (changed) send({ type: 'tool.result', id, ...result });

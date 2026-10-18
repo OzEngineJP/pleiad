@@ -55,14 +55,16 @@ export function decodeLine(text) {
 /**
  * バイト列を行に分ける（0x0A 区切り。UTF-8 の多バイトの中には現れない）。
  * 1 行が maxBytes（後から maxBytes に代入して変えられる）を超えたら、その行の残りを次の改行まで捨てて onDrop({ reason: 'oversize', bytes }) を呼ぶ（つながりは保つ）。
+ * onOverflow は超過が分かった時点で一度呼ぶ（改行の来ない出力の検知用）。bytes はその時点までの受信量。
  * 改行の来ないまま終わった行は reset で捨てる（行の途中で切れた入力は渡さない）
  */
-export function createLineReader({ maxBytes = DEFAULT_MAX_LINE_BYTES, onLine, onDrop = () => {} }) {
+export function createLineReader({ maxBytes = DEFAULT_MAX_LINE_BYTES, onLine, onDrop = () => {}, onOverflow = () => {} }) {
   let chunks = [];
   let size = 0;
   let skipping = false;
   let skipped = 0;
   let limit = maxBytes;
+  const overflow = bytes => onOverflow({ reason: 'oversize', bytes });
   const dropOversize = bytes => onDrop({ reason: 'oversize', bytes });
   return {
     push(chunk) {
@@ -77,7 +79,7 @@ export function createLineReader({ maxBytes = DEFAULT_MAX_LINE_BYTES, onLine, on
           skipping = false; skipped = 0;
           continue;
         }
-        if (size + piece.length > limit) { dropOversize(size + piece.length); chunks = []; size = 0; continue; }
+        if (size + piece.length > limit) { overflow(size + piece.length); dropOversize(size + piece.length); chunks = []; size = 0; continue; }
         const line = chunks.length ? Buffer.concat([...chunks, piece]) : piece;
         chunks = []; size = 0;
         if (line.length) onLine(line.toString('utf8'));
@@ -85,7 +87,7 @@ export function createLineReader({ maxBytes = DEFAULT_MAX_LINE_BYTES, onLine, on
       const rest = chunk.subarray(start);
       if (!rest.length) return;
       if (skipping) { skipped += rest.length; return; }
-      if (size + rest.length > limit) { skipping = true; skipped = size + rest.length; chunks = []; size = 0; return; }
+      if (size + rest.length > limit) { overflow(size + rest.length); skipping = true; skipped = size + rest.length; chunks = []; size = 0; return; }
       chunks.push(rest); size += rest.length;
     },
     /** 溜めた途中の行を捨てる（つながりが切れたとき） */
