@@ -1,6 +1,30 @@
 {
-  "version": "0.18.0",
+  "version": "0.19.0",
   "releases": [
+    {
+      "version": "0.19.0",
+      "date": "2026-10-18",
+      "title": "OpenCode をエージェントとして使えるようになりました",
+      "sections": [
+        {
+          "title": "新しくなったこと",
+          "items": [
+            "OpenCode を、Claude Code・Codex・Antigravity と同じくエージェントとして選べるようになりました。OpenCode の接続先をそのまま使います。OpenCode Zen の無料のモデルはログイン無しで使え、ChatGPT Pro/Plus・GitHub Copilot・API キーなどの接続先は端末の「opencode auth login」でつなぎます。モデルとエフォートは入力欄で選べます。",
+            "OpenCode の会話でも、承認・質問・途中で送る発言・中断・分岐・サブエージェント・圧縮・タイトル・入力欄の「!」が使えます。委譲・Pleiad の操作・コンピューターの操作・ブラウザーの操作も使えます。",
+            "設定 › プラグインで「Pleiad がそろえる」にした指示・Skills・外部 MCP と Hooks も、OpenCode の会話に渡せます。このとき、OpenCode 自身の AGENTS.md・Skills・MCP は読ませません。",
+            "Pleiad を更新しても、走っている OpenCode のターンは止まりません。承認を待っている途中で更新しても、新しい版で同じ承認が出て、答えると続きます。",
+            "OpenCode の TUI で作った会話も一覧に出て、Pleiad から続けられます。"
+          ]
+        },
+        {
+          "title": "変わったこと",
+          "items": [
+            "OpenCode は、全部の会話で 1 つを共有して動かします（1 つで約 760 MB）。一覧を開くだけでは起動しません。",
+            "指示・Skills・外部 MCP を「Pleiad がそろえる」にした場所の OpenCode の会話では、ターンごとに専用の OpenCode を起動するので、始まるまでに数秒かかります。作業場所の .opencode の中のエージェント・コマンド・プラグインは、その会話では読まれません。"
+          ]
+        }
+      ]
+    },
     {
       "version": "0.18.0",
       "date": "2026-10-18",
