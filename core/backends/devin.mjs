@@ -247,7 +247,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           let browserInstructions = args.browserInstructions;
           if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
           const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.visualizeInstructions, browserInstructions, args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
-          mapper.beginTurn(prompt);
+          // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
+          mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
           if (control) control.handle = { sessionId };

@@ -292,8 +292,7 @@ export async function deleteHiddenConversation(id, backendOf) {
 export function mergeMessages(record, recent, backend) {
   record._dirty = true;
   const segment = record.messages.slice(record.base);
-  const used = new Set();
-  for (const raw of recent) {
+  const rows = recent.map((raw) => {
     const m = { ...raw, backend };
     if (Array.isArray(m.toolCalls)) {
       for (const call of m.toolCalls) {
@@ -302,13 +301,127 @@ export function mergeMessages(record, recent, backend) {
     }
     // Native engines may reuse item IDs in a new execution segment.
     if (m.uuid && record.nativeId) m.uuid = `${backend}:${record.nativeId}:${m.uuid}`;
-    if (m.role === "user" && m.text === record.injected) m.text = record.original;
+    // 送った全文（指示を前に足したもの）はハッシュだけを残す。再生の全文を原文に戻すのに使う（alignPositional）
+    if (m.role === "user" && typeof m.sent === "string") m.promptHash = promptHash(m.sent);
+    delete m.sent;
+    // 再生の user 行は送った全文そのもの。書き換える前の全文のハッシュで原文に戻す（alignPositional）。引き継ぎの文は、全文が一致するときだけ戻す
+    // （ハッシュの無い記録の行は原文で入っている。末尾だけの書き換えは、全文のまま入った記録の行と合わなくなるのでかけない）
+    if (m.role === "user" && m.positional) {
+      m.promptHash = promptHash(m.text);
+      if (typeof record.injected === "string" && record.injected && m.text === record.injected) m.text = record.original;
+    } else if (m.role === "user") m.text = restoreHandoff(record, m.text);
+    return { m, raw };
+  });
+  if (rows.some(({ m }) => m.positional)) {
+    record.messages = [...record.messages.slice(0, record.base), ...alignPositional(segment, rows.map(({ m }) => m))];
+    return;
+  }
+  const used = new Set();
+  for (const { m, raw } of rows) {
     const at = segment.findIndex((old, index) => !used.has(index) && (m.uuid ? old.uuid === m.uuid || old.uuid === raw.uuid :
       !old.uuid && old.role === m.role && old.text === m.text));
     if (at < 0) { segment.push(m); used.add(segment.length - 1); }
     else { m.uuid = segment[at].uuid; segment[at] = m; used.add(at); }
   }
   record.messages = [...record.messages.slice(0, record.base), ...segment];
+}
+
+// 引き継ぎの文を人が書いた原文に戻す。先頭のメモや `!` の結果が前に付いた行（ACP の行。人が書いた分を "\n\n" でつなぐ）も、末尾の引き継ぎの文だけを戻す
+function restoreHandoff(record, text) {
+  const injected = record.injected;
+  if (typeof injected !== "string" || !injected || typeof text !== "string") return text;
+  if (text === injected) return record.original;
+  return text.endsWith(`\n\n${injected}`) ? `${text.slice(0, -injected.length)}${record.original}` : text;
+}
+
+// 改行コードの違い（CRLF / LF）だけは同じ本文として扱う。空白は詰めない（コードの字下げなど、空白だけが違う別の本文を取り違えない）
+const lf = (text) => String(text ?? "").replace(/\r\n/g, "\n");
+const promptHash = (text) => crypto.createHash("sha256").update(lf(text)).digest("hex");
+// 照合の鍵。同じ本文でもツールの呼び出し（id）が違えば別の行
+const rowKey = (m) => JSON.stringify([m.role, lf(m.text), (m.toolCalls ?? []).map((call) => String(call?.id ?? ""))]);
+// 再生の行と記録の行の最長共通部分列を表で解く上限（セル数）。超えたら末尾から貪欲に当てる
+const ALIGN_MAX_CELLS = 4_000_000;
+const ALIGN_LOOKBACK = 64;
+
+/**
+ * ACP の再生の行（positional。core/backends/devin-normalize.mjs）を記録に当てる（#97）。
+ * 再生の行の uuid は配列の位置から作るので、圧縮で位置がずれると別の発言を指す。uuid では当てず、順序と中身で当てる。
+ * - ライブの行（このプロセスが送ったターン。uuid にターンの乱数が入る）は uuid で当てる
+ * - 再生の行は、記録の末尾の窓と順序を保って 1 対 1 に当てる。どれを取っても同じ数なら末尾側を取る（圧縮は古い側を落とすので、再生に残るのは新しい側）。
+ *   role と本文で全体を重複排除しない（正当な「OK」「続けて」の繰り返しを消さない）
+ * - 当たるのは鍵（role・本文・ツールの id）が同じ行だけ。当たった行は記録の uuid を保って中身を更新する。
+ *   当たらない再生の行は直前に当たった行の後に、当たらないライブの行は末尾に足す。当たらなかった記録の行は消さない（圧縮で落ちた発言を残す）
+ */
+function alignPositional(segment, rows) {
+  // 再生の user 行は送った全文。記録の同じハッシュの行の本文（人が書いた分）に戻す。全文が一致したときだけ
+  const originals = new Map();
+  for (const old of segment) if (old.role === "user" && old.promptHash) originals.set(old.promptHash, old.text);
+  for (const m of rows) {
+    if (m.positional && m.role === "user" && originals.has(m.promptHash)) m.text = originals.get(m.promptHash);
+  }
+  const match = rows.map(() => -1), taken = new Set();
+  rows.forEach((m, i) => {
+    if (m.positional || !m.uuid) return;
+    const at = segment.findIndex((old, j) => !taken.has(j) && old.uuid === m.uuid);
+    if (at >= 0) { match[i] = at; taken.add(at); }
+  });
+  const replay = rows.flatMap((m, i) => (m.positional ? [i] : []));
+  const window = [];
+  for (let j = Math.max(0, segment.length - (replay.length * 2 + 64)); j < segment.length; j++) if (!taken.has(j)) window.push(j);
+  const ids = new Map(), id = (m) => { const key = rowKey(m); if (!ids.has(key)) ids.set(key, ids.size); return ids.get(key); };
+  const a = replay.map((i) => id(rows[i])), b = window.map((j) => id(segment[j]));
+  const pair = (i, j) => { match[replay[i]] = window[j]; };
+  // 末尾の共通部分は、そのまま最長共通部分列の一部になる（ふつうの再生は記録の末尾と一致するので、ここで済む）
+  let n = a.length, w = b.length;
+  while (n > 0 && w > 0 && a[n - 1] === b[w - 1]) pair(--n, --w);
+  if (n * w <= ALIGN_MAX_CELLS) {
+    const width = w + 1, dp = new Uint32Array((n + 1) * width);
+    for (let i = 1; i <= n; i++) {
+      for (let j = 1; j <= w; j++) {
+        dp[i * width + j] = a[i - 1] === b[j - 1] ? dp[(i - 1) * width + j - 1] + 1 : Math.max(dp[(i - 1) * width + j], dp[i * width + j - 1]);
+      }
+    }
+    for (let i = n, j = w; i > 0 && j > 0;) {
+      if (a[i - 1] === b[j - 1]) pair(--i, --j);
+      else if (dp[(i - 1) * width + j] >= dp[i * width + j - 1]) i--;
+      else j--;
+    }
+  } else {
+    // 長すぎる残りは、末尾から順に近くの同じ鍵の行へ当てる（当てそこねた行は足されるだけで、記録の行は失わない）
+    for (let i = n - 1, j = w; i >= 0 && j > 0; i--) {
+      for (let k = j - 1; k >= Math.max(0, j - ALIGN_LOOKBACK); k--) {
+        if (a[i] === b[k]) { pair(i, k); j = k; break; }
+      }
+    }
+  }
+  const merged = segment.slice(), after = new Map(), uuids = new Set(segment.map((m) => m.uuid).filter(Boolean));
+  const first = match.find((j) => j >= 0);
+  let cursor = first === undefined ? segment.length - 1 : first - 1;
+  rows.forEach((m, i) => {
+    const positional = m.positional;
+    delete m.positional;
+    const at = match[i];
+    if (at >= 0) {
+      m.uuid = segment[at].uuid;
+      if (m.at == null && segment[at].at != null) m.at = segment[at].at;
+      if (m.role === "user" && !m.promptHash && segment[at].promptHash) m.promptHash = segment[at].promptHash;
+      merged[at] = m;
+      cursor = at;
+      return;
+    }
+    if (!positional) cursor = segment.length - 1;
+    if (m.uuid && uuids.has(m.uuid)) {
+      let k = 1;
+      while (uuids.has(`${m.uuid}#${k}`)) k++;
+      m.uuid = `${m.uuid}#${k}`;
+    }
+    if (m.uuid) uuids.add(m.uuid);
+    if (!after.has(cursor)) after.set(cursor, []);
+    after.get(cursor).push(m);
+  });
+  const out = [...(after.get(-1) ?? [])];
+  merged.forEach((m, j) => out.push(m, ...(after.get(j) ?? [])));
+  return out;
 }
 
 export async function switchBackend(id, source, target, { restart = false } = {}) {
