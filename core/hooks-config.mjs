@@ -33,6 +33,8 @@ export const HOOK_AGENTS = ['claude', 'codex', 'antigravity'];
 // どのエージェントを真似るかはエージェントの記述の hooksAs（core/backends/agents.mjs）。OpenCode は Claude Code の形（docs/multi-backend.md §2.10「Hooks」）
 export const HOOK_EMULATED = Object.freeze(Object.fromEntries(Object.entries(AGENTS).filter(([, a]) => a.hooksAs).map(([id, a]) => [id, a.hooksAs])));
 export const UNIFY_TARGETS = Object.freeze([...HOOK_AGENTS, ...Object.keys(HOOK_EMULATED)]);
+// 真似て渡すエージェントへの渡し方（記述の hooksVia）。'callback' は Pleiad の中で走らせる、'plugin' はエージェントがプラグインの hooks のファイルを走らせる
+export const HOOK_VIA = Object.freeze(Object.fromEntries(Object.entries(AGENTS).filter(([, a]) => a.hooksAs).map(([id, a]) => [id, a.hooksVia])));
 // 各エージェントの公式のイベント（2026-09-27 時点。temporary/reports/hooks-agent-specs.md）
 export const HOOK_EVENTS = {
   claude: ['SessionStart', 'Setup', 'UserPromptSubmit', 'UserPromptExpansion', 'PreToolUse', 'PermissionRequest', 'PermissionDenied', 'PostToolUse',
@@ -42,6 +44,10 @@ export const HOOK_EVENTS = {
   codex: ['SessionStart', 'SessionEnd', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'UserPromptSubmit',
     'PreCompact', 'PostCompact', 'Stop', 'Interrupt'],
   antigravity: ['PreToolUse', 'PostToolUse', 'PreInvocation', 'PostInvocation', 'Stop'],
+  // Grok の hooks.json のイベント名（Claude Code の形。snake_case でも読む。2026-10-19 時点、~/.grok/docs/user-guide/10-hooks.md）。
+  // StopCancelled は Grok 固有、SubagentEnd は SubagentStop の別名
+  grok: ['SessionStart', 'SessionEnd', 'Stop', 'StopFailure', 'StopCancelled', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
+    'PermissionDenied', 'UserPromptSubmit', 'Notification', 'SubagentStart', 'SubagentStop', 'SubagentEnd', 'PreCompact', 'PostCompact'],
 };
 // 一覧の並び（ライフサイクル順）。開始 → 入力 → ツール前 → 権限 → ツール後／失敗 → サブエージェント／圧縮 → 停止 → 終了、固有のものは後ろ
 export const HOOK_ORDER = ['SessionStart', 'Setup', 'UserPromptSubmit', 'UserPromptExpansion', 'PreInvocation', 'PreToolUse', 'PermissionRequest',

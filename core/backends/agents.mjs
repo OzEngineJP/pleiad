@@ -15,8 +15,10 @@ import path from 'node:path';
  *             null は CLI を使わない（fake）
  * idleCompaction  会話を離れた後の自動の圧縮（ADR 0068）の既定 { enabled, delayMinutes }。null は Pleiad が圧縮しない
  *             （エージェントが自分で決める）。文字列なら、その id の設定の行を借りる（fake は claude の行で試験する）
- * hooksAs     Pleiad がそろえる Hooks を、ネイティブの形の無いこのエージェントへ、どのエージェントの形を真似て渡すか（core/hooks-config.mjs の UNIFY_TARGETS）。
+ * hooksAs     Pleiad がそろえる Hooks を、このエージェントへ、どのエージェントの形を真似て渡すか（core/hooks-config.mjs の UNIFY_TARGETS）。
  *             ネイティブの Hooks を持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）と、渡さないエージェントは null
+ * hooksVia    hooksAs のエージェントへの渡し方。'callback' は Pleiad の中で走らせてエージェントのプラグインの口から呼ぶ（OpenCode）、
+ *             'plugin' はエージェントが自分で走らせる hooks のファイルを、その会話だけのプラグインとして渡す（Grok）。hooksAs が null なら null
  * contextSources  エージェントが自分で読む指示・Skills・MCP の読み込み元（core/context-settings.mjs の SOURCES）。
  *             エージェント任せの会話の「指示の量」の見積もりと、エージェントの設定に登録された MCP の一覧に使う。null は読み方を知らない
  * shellDefault  エージェントのシェルのツールの既定（設定 shellTool。ADR 0227 §3）。'native' はエージェントのもの、'ply' は Pleiad の ply_shell だけ
@@ -34,6 +36,7 @@ export const AGENTS = {
     idleCompaction: { enabled: true, delayMinutes: 50 },
     contextSources: ['claude'],
     hooksAs: null,
+    hooksVia: null,
     shellTools: ['Bash', 'PowerShell'],
     shellDefault: 'native',
   },
@@ -45,6 +48,7 @@ export const AGENTS = {
     idleCompaction: { enabled: false, delayMinutes: 25 },
     contextSources: ['codex'],
     hooksAs: null,
+    hooksVia: null,
     shellTools: ['commandExecution'],
     shellDefault: 'native',
   },
@@ -62,6 +66,7 @@ export const AGENTS = {
     // AGENTS.md（作業場所。common）と、~/.gemini・.agents 系（antigravity）
     contextSources: ['common', 'antigravity'],
     hooksAs: null,
+    hooksVia: null,
     shellTools: ['run_command'],
     shellDefault: 'native',
   },
@@ -80,6 +85,7 @@ export const AGENTS = {
     contextSources: ['common', 'opencode'],
     // OpenCode のフックは JS のプラグインで、コマンドの Hooks の形が無い。Pleiad のプラグインと中継の口で、Claude Code の Hooks と同じ形で渡す（opencode-hooks.mjs）
     hooksAs: 'claude',
+    hooksVia: 'callback',
     // bash が裏で起こしたサーバーを待って戻らなくなる（v1.19.3。2026-10-18）ので、既定で ply_shell だけにする
     shellTools: ['bash', 'shell'],
     shellDefault: 'ply',
@@ -98,6 +104,7 @@ export const AGENTS = {
     // AGENTS.md（common）・Claude 互換のインポート（claude）・.devin 系（devin）・OpenCode の MCP のインポート（opencode）
     contextSources: ['common', 'claude', 'devin', 'opencode'],
     hooksAs: null,
+    hooksVia: null,
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
@@ -113,10 +120,11 @@ export const AGENTS = {
     },
     // 会話を離れた後の自動の圧縮は Grok 自身が決める（config.toml の [session] auto_compact_threshold_percent）
     idleCompaction: null,
-    // AGENTS.md（作業場所。common）と Claude 互換（CLAUDE.md・.claude/ の読み込み元。既定で有効）
-    contextSources: ['common', 'claude'],
-    // Grok はネイティブの Hooks（x.ai/hooks）を持つが、Pleiad がそろえる Hooks の渡し方はまだ無い
-    hooksAs: null,
+    // AGENTS.md（作業場所。common）と ~/.grok（AGENTS.md・rules・skills・config.toml の MCP。grok）と Claude 互換（既定で有効）
+    contextSources: ['common', 'grok', 'claude'],
+    // Grok の Hooks の形は Claude Code と同じ。セッション限定のプラグイン（_meta.pluginDirs）の hooks/hooks.json で渡す
+    hooksAs: 'claude',
+    hooksVia: 'plugin',
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。grok-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
@@ -129,12 +137,13 @@ export const AGENTS = {
     idleCompaction: 'claude',
     contextSources: null,
     hooksAs: null,
+    hooksVia: null,
     shellTools: ['fake_shell'],
     shellDefault: 'native',
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources', 'hooksAs', 'shellTools', 'shellDefault']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));

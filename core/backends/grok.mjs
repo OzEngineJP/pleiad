@@ -7,6 +7,7 @@ import { NO_CAPABILITIES } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
+import { writeTurnPlugin } from './grok-hooks.mjs';
 
 // i18n-dynamic: grok.errors.modelUnavailable
 // i18n-dynamic: grok.errors.effortUnavailable
@@ -78,9 +79,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     if (!value) throw Object.assign(new Error(t('grok.errors.notInstalled')), { code: 'NOT_INSTALLED' });
     return value;
   }
-  async function openClient(cwd, args = [], handlers = {}) {
+  async function openClient(cwd, args = [], handlers = {}, extraEnv = null) {
     const Client = Acp ?? (await import('./grok-acp.mjs')).GrokAcp;
-    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), ...handlers, onRequest: handlers.onRequest ?? (async method => {
+    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), env: extraEnv ? { ...process.env, ...extraEnv } : process.env, ...handlers, onRequest: handlers.onRequest ?? (async method => {
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
@@ -133,7 +134,10 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   }
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true },
+    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true,
+      // ACP の session/new・session/load の mcpServers（type: 'http'）に ply_agents を、その instructions を発言へ足して渡す。
+      // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
+      plyAgents: true, hooks: true },
     modes,
     async models(cwd = process.cwd()) {
       const client = await serial(metadataQueue, () => openClient(cwd).catch(error => { throw isAuthError(error) ? fail('loginRequired') : error; }));
@@ -178,7 +182,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         const { emit, onPromptDelivered, control } = args;
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
-        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null;
+        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null, plugin = null;
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -204,6 +208,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
           const model = typeof args.model === 'string' && args.model ? args.model : '';
           const effort = typeof args.effort === 'string' && args.effort ? args.effort : '';
+          // Pleiad がそろえる Hooks を渡すターンは、Claude・Cursor・Codex 互換の読み込み元を環境変数で止める（二重実行の防止）
+          const hookEnv = args.hooksRuntime?.compatHookEnv ?? null;
           client = await openClient(cwd, spawnArgs(model, effort), {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
             onUpdate: params => {
@@ -226,16 +232,25 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               const selected = answer?.allow ? allow : deny;
               return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
             },
-          });
+          }, hookEnv);
           check();
           verifySelection(client.init, model, effort);
           const windowTokens = Number((client.init?._meta?.modelState?.availableModels ?? []).find(m => m.modelId === client.init?._meta?.modelState?.currentModelId)?._meta?.totalContextTokens) || null;
+          // Pleiad の MCP（ply_agents。委譲の橋）は ACP の mcpServers で渡す（type: 'http' が要る。Devin と同じ）
+          const agentRuntime = args.agentRuntime;
+          const mcpServers = agentRuntime?.url
+            ? [{ name: 'ply_agents', type: 'http', url: agentRuntime.url, headers: Object.entries(agentRuntime.headers ?? {}).map(([name, value]) => ({ name, value })) }]
+            : [];
+          // Pleiad がそろえる Hooks は、このターンだけのプラグイン（hooks/hooks.json）として _meta.pluginDirs で渡す。
+          // 渡した置き場は trusted になり、保存されない（session/load でも毎回渡す）。ターンの終わりに消す（grok-hooks.mjs）
+          if (args.hooksRuntime?.pluginHooks) plugin = await writeTurnPlugin(path.join(dataDir, 'grok-hooks'), args.hooksRuntime.pluginHooks);
+          const meta = plugin ? { _meta: { pluginDirs: [plugin.dir] } } : {};
           let state;
           if (sessionId) {
             mapper = createGrokMapper(sessionId, emit, { windowTokens });
-            state = await client.call('session/load', { sessionId, cwd, mcpServers: [] });
+            state = await client.call('session/load', { sessionId, cwd, mcpServers, ...meta });
           } else {
-            state = await client.call('session/new', { cwd, mcpServers: [] });
+            state = await client.call('session/new', { cwd, mcpServers, ...meta });
             sessionId = state?.sessionId;
             if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('grok.errors.notConnected'));
             mapper = createGrokMapper(sessionId, emit, { windowTokens });
@@ -244,7 +259,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           check();
           await applyMode(client, sessionId, state, args.mode || 'ask');
           check();
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           mapper.beginTurn(prompt);
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: model || client.init?._meta?.modelState?.currentModelId || undefined, ...(args.sessionId ? {} : { first: true }) });
@@ -280,6 +295,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               outcome = 'error';
             }
           }
+          plugin?.cleanup();
           if (sessionId) active.delete(sessionId);
           if (control) { control.handle = null; control.steer = null; }
           mapper?.finish();

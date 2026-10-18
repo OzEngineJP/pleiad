@@ -85,6 +85,31 @@ export default async function(t) {
     const commonScan = await scanContext({ cwd: child, user: common, directory: common }, { home });
     t.ok('共通配置だけでプロジェクト指示と両スコープの Skills を探索', commonScan.entries.some(e => e.path === path.join(repo, 'AGENTS.md')) && commonScan.entries.filter(e => e.kind === 'skill').length === 2);
     t.ok('独自フォルダー・架空の共通 MCP 設定を探索しない', !commonScan.searched.some(e => e.path.includes('.ply') || e.kind === 'mcp'));
+    // Grok: 全体は $GROK_HOME（~/.grok 以外の場所でも）の AGENTS.md・rules・skills・config.toml、作業場所は AGENT.md・.grok/rules・.grok/skills・.grok/config.toml
+    const grokHome = path.join(tmp, 'grok-home');
+    await write(path.join(grokHome, 'AGENTS.md'), 'grok global');
+    await write(path.join(grokHome, 'rules/style.md'), 'grok user rule');
+    await write(path.join(grokHome, 'skills/grok-skill/SKILL.md'), '---\nname: grok-skill\ndescription: grok user skill\n---\n');
+    await write(path.join(grokHome, 'config.toml'), '[mcp_servers.grok-tools]\ncommand = "node"\nargs = ["tools.mjs"]\n[mcp_servers.grok-tools.env]\nTOKEN = "SECRET-GROK-TOKEN"\n[mcp_servers.grok-off]\nenabled = false\nurl = "https://host/mcp?key=SECRET-GROK-QUERY"\n');
+    await write(path.join(home, '.grok/AGENTS.md'), 'not GROK_HOME');
+    await write(path.join(repo, 'AGENT.md'), 'grok project');
+    await write(path.join(repo, '.grok/rules/project.md'), 'grok project rule');
+    await write(path.join(repo, '.grok/skills/grok-project/SKILL.md'), '---\nname: grok-project\ndescription: grok project skill\n---\n');
+    await write(path.join(repo, '.grok/config.toml'), '[mcp_servers.grok-local]\ncommand = "node"\n');
+    const grokOnly = { ...DEFAULT_SCAN, sources: ['grok'], additionalRoots: [] };
+    const grokScan = await scanContext({ cwd: child, user: grokOnly, directory: grokOnly }, { home, grokHome });
+    const grokFound = p => grokScan.entries.some(e => e.path === p && e.origins.some(o => o.source === 'grok'));
+    t.ok('Grok: GROK_HOME の AGENTS.md・rules・skills を読み、~/.grok は読まない',
+      grokFound(path.join(grokHome, 'AGENTS.md')) && grokFound(path.join(grokHome, 'rules/style.md')) && grokFound(path.join(grokHome, 'skills/grok-skill/SKILL.md'))
+      && !grokScan.entries.some(e => e.path === path.join(home, '.grok/AGENTS.md')), JSON.stringify(grokScan.entries.map(e => e.path)));
+    t.ok('Grok: 作業場所の AGENT.md・.grok/rules・.grok/skills を読む',
+      grokFound(path.join(repo, 'AGENT.md')) && grokFound(path.join(repo, '.grok/rules/project.md')) && grokFound(path.join(repo, '.grok/skills/grok-project/SKILL.md')));
+    t.ok('Grok: 全体と作業場所の config.toml の mcp_servers を読み、無効も表す',
+      ['grok-tools', 'grok-local'].every(n => grokScan.entries.some(e => e.kind === 'mcp' && e.name === n && e.status === 'candidate'))
+      && grokScan.entries.some(e => e.kind === 'mcp' && e.name === 'grok-off' && e.status === 'disabled')
+      && grokScan.entries.find(e => e.name === 'grok-local')?.scope === 'directory', JSON.stringify(grokScan.entries.filter(e => e.kind === 'mcp').map(e => [e.name, e.status, e.scope])));
+    t.ok('Grok: MCP の env の値と URL のクエリを返さない', !JSON.stringify(grokScan).includes('SECRET-GROK-TOKEN') && !JSON.stringify(grokScan).includes('SECRET-GROK-QUERY')
+      && grokScan.entries.find(e => e.name === 'grok-tools')?.envKeys?.join() === 'TOKEN');
     // 旧版が書いたキーは実体パスとは限らない（短縮名のままの TEMP 等）。表記が違っても継承できること
     await write(path.join(tmp, 'legacy/context-scans.json'), JSON.stringify({ version: 1, user: { ...common, sources: ['ply', 'claude'] }, directories: { [path.join(rawTmp, 'repo')]: { ...common, sources: ['ply'] } } }));
     const legacy = createContextSettings(path.join(tmp, 'legacy'), home);

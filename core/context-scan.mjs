@@ -102,7 +102,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   opencodeHome = process.env.OPENCODE_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'opencode'), runtime = false, plyServers = null, scopes = ['user', 'directory'],
   // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
   devinHome = process.env.DEVIN_CONFIG_HOME ? path.join(process.env.DEVIN_CONFIG_HOME, 'devin') : path.join(process.env.APPDATA ?? process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'devin'),
-  geminiHome = path.join(home, '.gemini') } = {}) {
+  geminiHome = path.join(home, '.gemini'), grokHome = process.env.GROK_HOME || path.join(home, '.grok') } = {}) {
   const { cwd } = settings;
   // 種類ごと・範囲（user = home / directory = Git ルート〜作業場所）ごとの探し方。形式 1 の { user, directory } も受け付ける
   const plan = scanPlan(settings);
@@ -301,7 +301,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       return;
     }
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
-    const configDir = user && !custom ? { codex: codexHome, claude: claudeHome, opencode: opencodeHome, devin: devinHome, antigravity: geminiHome }[source]
+    const configDir = user && !custom ? { codex: codexHome, claude: claudeHome, opencode: opencodeHome, devin: devinHome, antigravity: geminiHome, grok: grokHome }[source]
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
       : path.join(base, source === 'devin' ? '.devin' : source === 'antigravity' ? '.gemini' : `.${source}`);
     if (spec.kinds.includes('instruction')) {
@@ -339,6 +339,13 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
       } else if (source === 'antigravity') {
         await instruction(path.join(dir, 'GEMINI.md'), ctx);
+      // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      } else if (source === 'grok') {
+        // Grok の全体の指示は $GROK_HOME/AGENTS.md。作業場所の AGENTS.md は common、CLAUDE.* は claude が探し、ここでは Grok だけが読む別名の AGENT.md を探す
+        if (user && !custom) await instruction(path.join(configDir, 'AGENTS.md'), ctx);
+        else await instruction(path.join(dir, 'AGENT.md'), ctx);
+        // .grok/rules/ の .md はすべて読む（ユーザーは $GROK_HOME/rules/。~/.grok/docs/user-guide/12-project-rules.md）
+        await rules(path.join(configDir, 'rules'), ctx, user && !custom ? null : base);
       }
     }
     if (spec.kinds.includes('skill')) {
@@ -384,6 +391,9 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
         await mcp(path.join(configDir, 'settings.json'), ctx, v => v.mcpServers);
         if (user && !custom) await mcp(path.join(configDir, 'config', 'mcp_config.json'), ctx, v => v.mcpServers);
       }
+      // Grok の MCP は config.toml の [mcp_servers.<name>]（全体と作業場所の .grok/config.toml）
+      // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      else if (source === 'grok') await mcp(path.join(configDir, 'config.toml'), ctx, v => v.mcp_servers);
       else if (source === 'claude' && user && !custom) {
         await mcp(path.join(home, '.claude.json'), ctx, v => v.mcpServers);
       } else {

@@ -31,7 +31,7 @@ import { t } from './i18n.mjs';
 export const KINDS = ['instruction', 'skill', 'mcp'];
 export const VERSION = 3;
 // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
-export const SOURCES = ['common', 'claude', 'codex', 'opencode', 'devin', 'antigravity'];
+export const SOURCES = ['common', 'claude', 'codex', 'opencode', 'devin', 'antigravity', 'grok'];
 // 対応を終えたエージェントの探索元。前の版で保存した設定を読めるように受け付け、読んだところで落とす
 const RETIRED_SOURCES = ['procway'];
 const storedSource = z.enum([...SOURCES, ...RETIRED_SOURCES]);

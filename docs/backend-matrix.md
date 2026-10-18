@@ -26,7 +26,7 @@
 | 手動・自動の圧縮（`compact`） | ✓ | ✓ | — | ✓ | ✓ | — |
 | 委譲の子の自動圧縮の閾値を受け取る（`autoCompactWindow`） | ✓ | — | — | — | — | — |
 | 次の発言の候補（native: ターンの中で届く / —: Pleiad がターンの後に作る）（`promptSuggestions`） | native | — | — | — | — | — |
-| 委譲の橋（ply_agents）と Pleiad の指示を受け取る（`plyAgents`） | ✓ | ✓ | — | ✓ | — | — |
+| 委譲の橋（ply_agents）と Pleiad の指示を受け取る（`plyAgents`） | ✓ | ✓ | — | ✓ | — | ✓ |
 | Pleiad のコンテキスト（ply_context）の受け取り方（turn / conversation）（`plyContext`） | turn | turn | conversation | turn | — | — |
 | コンピューターの操作（ply_computer）。画像の渡し方（`computerUse`） | inline | inline | path（150 秒ごと） | inline | inline | — |
 | 入力欄の `!`（host: Pleiad が走らせる / native: エージェントが走らせる）（`shell`） | host | native | — | host | — | host |
@@ -40,4 +40,4 @@
 | 操作の一覧（ply_control）と会話に束縛した CLI（PLEIAD_CONTROL_*）を受け取る（`plyControl`） | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | 秘密情報と変数（環境変数と一覧の文）を受け取る（`secrets`） | ✓ | ✓ | ✓ | ✓ | ✓ | — |
 | 可視化の指示を受け取る（`visualize`） | ✓ | ✓ | — | ✓ | ✓ | — |
-| Pleiad がそろえる Hooks（hooksRuntime）を受け取る（`hooks`） | ✓ | ✓ | ✓ | ✓ | — | — |
+| Pleiad がそろえる Hooks（hooksRuntime）を受け取る（`hooks`） | ✓ | ✓ | ✓ | ✓ | — | ✓ |

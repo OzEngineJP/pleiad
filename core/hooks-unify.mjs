@@ -5,13 +5,15 @@
 //   - Claude のコールバック（claudeHookCallbacks）: 登録のコマンドを子プロセスで動かし、答えをコールバックの戻り値にする
 // エージェントの設定ファイルは書き換えない。
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { maskText, HOOK_EMULATED, UNIFY_TARGETS } from './hooks-config.mjs';
+import { maskText, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS } from './hooks-config.mjs';
+import { parseToml } from './toml.mjs';
 import { t } from './i18n.mjs';
 import { adapt, runCommand } from './hook-adapter.mjs';
-import { CLAUDE_CALLBACK_UNSUPPORTED, planHooks, deliverable, codexHooksTable, agyHooksFile, suppliedSummary, unsupportedSummary, claudeIdentityOutput, nativeFate, HOOK_AGENTS } from './hooks-plan.mjs';
+import { CLAUDE_CALLBACK_UNSUPPORTED, planHooks, deliverable, codexHooksTable, agyHooksFile, grokHooksFile, suppliedSummary, unsupportedSummary, claudeIdentityOutput, nativeFate, HOOK_AGENTS } from './hooks-plan.mjs';
 import { safeAdapterPath } from './hooks-copy.mjs';
 
 const ADAPTER_FILE = fileURLToPath(new URL('./hook-adapter.mjs', import.meta.url));
@@ -122,13 +124,13 @@ const refuse = (key, params = {}) => Object.assign(new Error(t(key, params)), { 
  *   担当が確かに分からない・担当が Pleiad なのに登録に壊れた部分がある（ply-hooks の resolveForTurn）、
  *   agy で止める一覧を作るファイルを読めない、agy でカスタムエージェント（Skills も Pleiad 担当）が hooks を止めてしまう、
  *   agy の名前が Pleiad の登録の名前とぶつかる
- *   ctx: { plyHooks, hooksConfig, dataDir, findNode, platform, now, context: { owners, delivered }（このターンのコンテキストの担当と、Pleiad が渡すか） }
+ *   ctx: { plyHooks, hooksConfig, dataDir, findNode, platform, now, context: { owners, delivered }（このターンのコンテキストの担当と、Pleiad が渡すか）, grokHome（Grok のネイティブの hooks を読む $GROK_HOME。試験用） }
  */
 export async function prepareHooksTurn({ agent, cwd, ctx }) {
-  const { plyHooks, hooksConfig, dataDir, findNode, platform = process.platform, now = new Date(), context = null } = ctx;
+  const { plyHooks, hooksConfig, dataDir, findNode, platform = process.platform, now = new Date(), context = null, grokHome = process.env.GROK_HOME || path.join(os.homedir(), '.grok') } = ctx;
   // hooks を受け取れないエージェント（fake など）: 担当を読めなくても会話は止めない（渡すものが無い）。記録だけ残す
-  // ネイティブの形が無く、Pleiad が別のエージェントの形を真似て渡すエージェント（OpenCode）: 止めるネイティブの設定ファイルは無い。
-  // 登録はバックエンドが受け取り、Pleiad の中で走らせる（コールバック。core/backends/opencode-hooks.mjs）
+  // Pleiad が別のエージェントの形を真似て渡すエージェント: コールバックで渡すもの（OpenCode）は止めるネイティブの設定ファイルが無く、
+  // 登録はバックエンドが受け取り、Pleiad の中で走らせる（core/backends/opencode-hooks.mjs）。プラグインで渡すもの（Grok）は下
   if (HOOK_EMULATED[agent]) {
     const owner = await plyHooks.resolveForTurn(cwd);
     if (owner.owner !== 'ply') return null;
@@ -136,8 +138,32 @@ export async function prepareHooksTurn({ agent, cwd, ctx }) {
     const plan = planHooks({ hooks: owner.hooks, owner, agent, platform });
     record.skipped = plan.skipped.map(({ hook, reason }) => ({ id: hook.id, name: hook.name, reason }));
     record.unsupported = plan.unsupported.map(unsupportedSummary);
-    record.supplied = plan.supplied.map(s => ({ ...suppliedSummary(s), via: 'callback' }));
-    return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied: plan.supplied, record } };
+    if (HOOK_VIA[agent] !== 'plugin') {
+      record.supplied = plan.supplied.map(s => ({ ...suppliedSummary(s), via: 'callback' }));
+      return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied: plan.supplied, record } };
+    }
+    // プラグインで渡すエージェント（Grok）: Claude の形の hooks/hooks.json の中身（pluginHooks）を組む。
+    // バックエンドがターンごとの置き場に書いて _meta.pluginDirs で渡し、ターンの終わりに消す（core/backends/grok.mjs）。
+    // ~/.grok/hooks・.grok/hooks のネイティブはセッションごとに止められない（kept）。
+    // Claude・Cursor・Codex 互換の読み込み元は、起動する CLI の環境変数で止める（compatHookEnv。二重実行の防止）
+    let supplied = plan.supplied;
+    const needsAdapter = supplied.some(s => s.d.adapter);
+    let adapterPath = null;
+    if (needsAdapter) {
+      const found = await findNode();
+      adapterPath = await writeAdapterTo(path.join(dataDir, 'hooks-runtime'), await adapterSource());
+      if (!found || !safeAdapterPath(adapterPath)) {
+        const drop = supplied.filter(s => s.d.adapter);
+        record.unsupported.push(...drop.map(s => unsupportedSummary({ hook: s.hook, reasons: [{ code: found ? 'adapterPath' : 'noNode' }] })));
+        supplied = supplied.filter(s => !s.d.adapter);
+      }
+    }
+    // アダプターは PATH の node で動かす（Grok は Pleiad が起こした CLI の PATH を引き継ぎ、フックはそのシェルで走る）
+    const pluginHooks = grokHooksFile(supplied, { adapterPath });
+    record.supplied = supplied.map(s => ({ ...suppliedSummary(s), via: 'plugin' }));
+    for (const r of await grokNativeHooks(agent, cwd, grokHome)) record.kept.push(r);
+    record.stopped.push({ agent, scope: 'compat', name: 'Claude Code · Cursor · Codex', event: null, matcher: null, command: '', path: null });
+    return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied, pluginHooks, compatHookEnv: GROK_COMPAT_HOOK_ENV, record } };
   }
   if (!HOOK_AGENTS.includes(agent)) {
     const owner = await plyHooks.resolve(cwd).catch(() => null);
@@ -236,6 +262,53 @@ export function claudeHookCallbacks(runtime, { onRun = () => {}, run = runComman
     (out[d.event] ??= []).push({ ...(d.matcher ? { matcher: d.matcher } : {}), timeout, hooks: [callback] });
   }
   return out;
+}
+
+/** Grok の互換の読み込み元を止める環境変数（Claude・Cursor・Codex の設定ファイルの hooks を読ませない） */
+export const GROK_COMPAT_HOOK_ENV = Object.freeze({
+  GROK_CLAUDE_HOOKS_ENABLED: 'false',
+  GROK_CURSOR_HOOKS_ENABLED: 'false',
+  GROK_CODEX_HOOKS_ENABLED: 'false',
+});
+/**
+ * Grok が自分で読むネイティブの hooks（kept。セッションごとに止められない）。$GROK_HOME（既定 ~/.grok）の hooks/*.json と config.toml の [[hooks.<イベント>]]、
+ * 作業場所の git の根から作業場所までの .grok/hooks/*.json（フォルダーの信頼が要る。~/.grok/docs/user-guide/10-hooks.md）。
+ * managed_config.toml・requirements.toml（管理者）は読まない。コマンドは伏せ字にする
+ */
+async function grokNativeHooks(agent, cwd, grokHome) {
+  const roots = [{ dir: path.join(grokHome, 'hooks'), scope: 'user' }];
+  const ancestors = [];
+  for (let d = path.resolve(cwd); ; d = path.dirname(d)) {
+    ancestors.unshift(d);
+    try { await fs.stat(path.join(d, '.git')); break; } catch {}
+    if (path.dirname(d) === d) { ancestors.splice(0, ancestors.length, path.resolve(cwd)); break; }
+  }
+  for (const d of ancestors) roots.push({ dir: path.join(d, '.grok', 'hooks'), scope: 'project' });
+  const rows = [];
+  const add = (scope, name, file, hooks) => {
+    for (const [event, groups] of Object.entries(hooks ?? {})) {
+      if (!Array.isArray(groups)) continue;
+      for (const group of groups) {
+        const h = group?.hooks?.find(x => typeof x?.command === 'string' || typeof x?.url === 'string');
+        rows.push({ agent, scope, name, event, matcher: group?.matcher ?? null, command: maskText(String(h?.command ?? h?.url ?? '')), path: file });
+      }
+    }
+  };
+  for (const { dir, scope } of roots) {
+    let names;
+    try { names = await fs.readdir(dir); } catch { continue; }
+    for (const name of names.filter(n => n.toLowerCase().endsWith('.json')).sort()) {
+      const file = path.join(dir, name);
+      let config;
+      try { config = JSON.parse(await fs.readFile(file, 'utf8')); } catch { continue; }
+      add(scope, name, file, config?.hooks);
+    }
+  }
+  const toml = path.join(grokHome, 'config.toml');
+  let config = null;
+  try { config = parseToml(await fs.readFile(toml, 'utf8')); } catch {}
+  if (config?.hooks && typeof config.hooks === 'object') add('user', 'config.toml', toml, config.hooks);
+  return rows;
 }
 
 /** 2 つの hooks（コールバック）の表を合わせる（Pleiad 自身の PreCompact / PostCompact と、登録の分） */
