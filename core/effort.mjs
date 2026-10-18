@@ -37,7 +37,7 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
   }
   const fallback = values.includes(entry?.defaultEffort) ? entry.defaultEffort : null;
   const levelNote = value => entry?.effortNotes?.[value] ?? t('effort.supported');
-  return Object.fromEntries([['', { label: t('models.default'), note: t('effort.useAgentEndpoint'), ...(fallback ? { resolvesTo: fallback } : {}), ...(reason ? { reason } : {}) }],
+  return Object.fromEntries([['', { label: t('models.default'), note: entry?.effortDefaultNote ?? t('effort.useAgentEndpoint'), ...(fallback ? { resolvesTo: fallback } : {}), ...(reason ? { reason } : {}) }],
     ...values.map(value => [value, { label: value, note: levelNote(value),
       ...(value === fallback ? { isDefault: true } : {}) }])]);
 }

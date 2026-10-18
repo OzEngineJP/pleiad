@@ -765,6 +765,9 @@
       "yolo": "確認なし・制限なし（作業ディレクトリの外も）",
       "plan": "編集しない（OpenCode の plan エージェント）"
     },
+    "effort": {
+      "useDefault": "OpenCode・モデルの既定を使う"
+    },
     "models": {
       "default": "既定（OpenCode の設定）"
     },
