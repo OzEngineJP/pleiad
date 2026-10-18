@@ -680,6 +680,7 @@
   "devin": {
     "description": "ローカルの Devin CLI と既存のログインを使う",
     "usageUnknown": "Devin CLI の残り使用枠は取得できないため不明です。",
+    "usageNoCredentials": "Devin CLI の資格情報がないため、残り使用枠は不明です。",
     "modes": {
       "ask": "質問のみ",
       "askNote": "コードを変更せず回答する。OS の読み取り専用の隔離ではない",
@@ -723,7 +724,10 @@
       "copilotPremiumRequests": "GitHub Copilot のプレミアム要求",
       "copilotPremiumModels": "GitHub Copilot のプレミアムモデル",
       "copilotChat": "GitHub Copilot のチャット",
-      "copilotCompletions": "GitHub Copilot のコード補完"
+      "copilotCompletions": "GitHub Copilot のコード補完",
+      "keyMissing": "API キーがないため、使用枠は不明です。",
+      "openrouterNoLimit": "OpenRouter のこのキーには利用上限が設定されていないため、使用枠はありません。",
+      "zenQuotaUnavailable": "OpenCode Zen は残り使用枠を照会する口を提供していないため、使用枠は不明です。"
     },
     "hooks": {
       "promptBlocked": "発言は Hooks（UserPromptSubmit）に止められました：{{reason}}"
@@ -981,7 +985,9 @@
   "usage": {
     "window": {
       "fiveHour": "5時間",
+      "daily": "日次",
       "weekly": "週次（7日間）",
+      "monthly": "月次",
       "hours": "{{hours}}時間",
       "unknown": "期間不明",
       "oauthAppsWeekly": "OAuth アプリ・週次",

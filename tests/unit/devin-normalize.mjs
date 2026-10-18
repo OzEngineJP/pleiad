@@ -87,4 +87,17 @@ export default function (t) {
   assert.equal(partial.getToolCall('content-first').rawInput.command, 'example --target important');
   assert.equal(partial.getToolCall('unknown'), null);
   t.ok('完了→出力の順序、非 null の falsy 値と既知詳細の参照を保ち、不明 ID は null', true);
+
+  // usage_update（ACP）: used/size は文脈の占有、cost は USD のときだけ費用として出す
+  const usev = [], um = createDevinMapper('u', e => usev.push(e));
+  um.beginTurn('turn');
+  um.accept({ sessionUpdate: 'usage_update', used: 1200, size: 4000, cost: { amount: 0.5, currency: 'USD' } });
+  um.accept({ sessionUpdate: 'usage_update', used: 'x', size: 0, cost: { amount: 1, currency: 'EUR' } });
+  um.accept({ sessionUpdate: 'usage_update', used: 10, size: 100 });
+  assert.deepEqual(usev.map(({ type, sessionId, ...rest }) => [type, rest]), [
+    ['contextWindow', { usedTokens: 1200, windowTokens: 4000 }],
+    ['usage', { costUsd: 0.5 }],
+    ['contextWindow', { usedTokens: 10, windowTokens: 100 }],
+  ]);
+  t.ok('usage_update は文脈の占有と費用（USD のみ）の出来事に変え、読めない値は出さない', true);
 }

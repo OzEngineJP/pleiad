@@ -1,8 +1,21 @@
-import { whamQuota, usageWindow } from '../usage.mjs';
+import { whamQuota, usageWindow, number } from '../usage.mjs';
 import { readAccountAuth } from './opencode-accounts.mjs';
 import { t } from '../i18n.mjs';
 
 const nonnegative = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+const INTERVAL_MINUTES = { monthly: 30 * 24 * 60, weekly: 7 * 24 * 60, daily: 24 * 60 };
+
+// OpenRouter のキー自身の利用上限（GET /api/v1/auth/key の effective_budget）。
+// 上限を付けていないキーは使い放題なので枠にならない
+export function openrouterQuota(data) {
+  const d = data?.data, budget = d?.effective_budget;
+  const limit = number(budget?.limit_usd) ?? number(d?.limit);
+  const spend = number(budget?.spend_usd) ?? number(d?.usage_monthly);
+  if (!limit || spend == null) return { plan: null, windows: [], message: t('opencode.usage.openrouterNoLimit') };
+  return { plan: null, message: null, windows: [{ ...usageWindow(`OpenRouter ${t('usage.window.monthly')}`,
+    spend / limit * 100, budget?.resets_at ?? null, INTERVAL_MINUTES[budget?.reset_interval] ?? null), provider: 'openrouter' }] };
+}
+
 export function copilotQuota(data) {
   const labels = {
     premium_interactions: t('opencode.usage.copilotPremiumRequests'), premium_models: t('opencode.usage.copilotPremiumModels'),
@@ -31,10 +44,14 @@ export async function accountQuota(account = null, { fetcher = fetch } = {}) {
   const auth = readAccountAuth(account);
   const results = await Promise.all(Object.entries(auth).map(async ([provider, c]) => {
     const unknown = message => ({ windows: [], message: t('opencode.usage.providerMessage', { provider, message }) });
-    if (c.type !== 'oauth') return unknown(t('opencode.usage.credentialTypeUnavailable'));
-    if (provider !== 'openai' && provider !== 'github-copilot') return unknown(t('opencode.usage.providerUnsupported'));
     try {
+      // OpenRouter の残量はキー自身を聞く（OAuth ではなく API キーの接続先）
+      if (provider === 'openrouter') {
+        if (typeof c.key !== 'string' || !c.key) return unknown(t('opencode.usage.keyMissing'));
+        return openrouterQuota(await getJson(fetcher, 'https://openrouter.ai/api/v1/auth/key', { authorization: `Bearer ${c.key}` }));
+      }
       if (provider === 'openai') {
+        if (c.type !== 'oauth') return unknown(t('opencode.usage.credentialTypeUnavailable'));
         if (!c.access) return unknown(t('opencode.usage.accessMissing'));
         if (c.expires <= Date.now()) return unknown(t('opencode.usage.accessExpired'));
         const data = await getJson(fetcher, 'https://chatgpt.com/backend-api/wham/usage', {
@@ -45,13 +62,19 @@ export async function accountQuota(account = null, { fetcher = fetch } = {}) {
           .map(w => ({ ...w, label: `ChatGPT ${w.label}`, provider }));
         return { ...result, windows, message: windows.length ? null : t('opencode.usage.chatgptUnavailable') };
       }
-      // OpenCode's Copilot OAuth refresh field contains the long-lived GitHub
-      // token; access may be an ephemeral Copilot inference token.
-      if (c.enterpriseUrl) return unknown(t('opencode.usage.enterpriseUnsupported'));
-      if (!c.refresh) return unknown(t('opencode.usage.githubTokenMissing'));
-      return copilotQuota(await getJson(fetcher, 'https://api.github.com/copilot_internal/user', {
-        authorization: `token ${c.refresh}`, 'X-GitHub-Api-Version': '2025-04-01', 'User-Agent': 'Pleiad', accept: 'application/json',
-      }));
+      if (provider === 'github-copilot') {
+        if (c.type !== 'oauth') return unknown(t('opencode.usage.credentialTypeUnavailable'));
+        // OpenCode's Copilot OAuth refresh field contains the long-lived GitHub
+        // token; access may be an ephemeral Copilot inference token.
+        if (c.enterpriseUrl) return unknown(t('opencode.usage.enterpriseUnsupported'));
+        if (!c.refresh) return unknown(t('opencode.usage.githubTokenMissing'));
+        return copilotQuota(await getJson(fetcher, 'https://api.github.com/copilot_internal/user', {
+          authorization: `token ${c.refresh}`, 'X-GitHub-Api-Version': '2025-04-01', 'User-Agent': 'Pleiad', accept: 'application/json',
+        }));
+      }
+      // OpenCode Zen（無料枠・Go プランとも）に残り使用枠を照会する口は無い
+      if (provider === 'opencode') return unknown(t('opencode.usage.zenQuotaUnavailable'));
+      return unknown(t('opencode.usage.providerUnsupported'));
     } catch (err) {
       return unknown(/^HTTP \d+$/.test(err?.message) ? t('opencode.usage.httpUnavailable', { status: err.message }) : t('opencode.usage.requestFailed'));
     }
