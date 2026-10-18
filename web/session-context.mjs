@@ -3,7 +3,7 @@
 // 一番上は作業場所の面: 「<場所> · 全体の設定どおり／<親の場所> の設定どおり／このフォルダーだけの設定 · n 項目」と「この場所だけ変える」。
 // そのすぐ下が指示の量の面（ADR 0056）: 毎ターン最初に読み込まれる指示の合計と、ユーザー／この場所と親フォルダー／Pleiad が足す分の積み上げ、
 //   自分で書いた分にだけ引く目安の線。エージェント任せの指示は、そのエージェントの規則で Pleiad が探した結果を数えて「推定」と添える。
-//   同じ面の中に「気になる所」（違うファイルのほぼ同じ段落と、もう無いパス。contextFindings）を件数付きで畳む（0 件なら出さない）。
+//   同じ面の中に「気になる所」（違うファイルのほぼ同じ段落と、もう無いパス。contextFindings）を件数付きで畳む（0 件も完了を残す）。
 //   面の最後が「見直しを頼む」: 同じ作業場所に未送信の新しい会話を作り、入力欄に依頼文の下書きを入れて開く（送らない。askReview）
 //   変えている間（edit）は、この場所の設定（places。core/context-settings.mjs）で探した結果を並べ、担当と行のスイッチでこのフォルダーだけ変える
 //   （「全体の設定に戻す」「終わる」）。保存は次のターンから効く。
@@ -147,16 +147,18 @@ export function placeStatus(here) {
   return { over: false, text: from ? t('sessionContext.place.from', { path: shortPath(from) }) : t('sessionContext.place.default'), count: 0 };
 }
 
+// i18n-dynamic: sessionContext.state.
+// i18n-dynamic: sessionContext.amount.reading
 // i18n-dynamic: sessionContext.group.
 // i18n-dynamic: sessionContext.added.reason.
 // i18n-dynamic: sessionContext.amount.part.
 // i18n-dynamic: sessionContext.findings.scope.
-export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET, askReview = null }) {
+export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET, askReview = null, onStateChange = () => {} }) {
   const logins = new Map();     // MCP 名 -> ログインの進み具合（ブラウザで続けてください… / ログインしました）
   const agentCache = new Map(); // cwd -> agentMcp の結果
-  const nativeCache = new Map(); // cwd|エージェント -> nativeInstructions の結果（null は読んでいる途中）。パネルを開くたびに読み直す
+  const nativeCache = new Map(); // cwd|エージェント -> nativeInstructions の結果（結果と取得状態）。パネルを開くたびに読み直す
   let plyOpen = false;          // 指示の量の面の「Pleiad が足す分」を開いているか
-  const findingsCache = new Map(); // 会話|場所|エージェント -> contextFindings の結果（null は計算の途中）。パネルを開くたびに計算し直す
+  const findingsCache = new Map(); // 会話|場所|エージェント -> contextFindings の結果（結果と取得状態）。パネルを開くたびに計算し直す
   let issuesOpen = true;        // 「気になる所」を開いているか（最初は開く）
   let reviewing = false, reviewError = ''; // 「見直しを頼む」で会話を作っている途中か（二度押しで 2 つ作らない）・作れなかった理由
   let diff = null, diffOpen = false, busy = false, notice = '';
@@ -182,6 +184,44 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   const cwdOf = data => data?.report?.cwd ?? session()?.cwd ?? null;
   const here = () => place.view?.places?.find(p => p.current) ?? null;
 
+  // 結果と取得状態を別々に保つ。再取得や失敗でも、前回届いた部分を空にしない。
+  function readPart(cache, key, command, args) {
+    let part = cache.get(key);
+    if (!part) cache.clear(); // 開いている対象の前回結果だけを保つ。
+    if (!part || (part.stale && !part.pending)) {
+      part = { value: part?.value ?? null, pending: true, error: false };
+      cache.set(key, part);
+      const current = part;
+      cmd(command, args).then(value => {
+        if (cache.get(key) !== current) return;
+        Object.assign(current, { value, pending: false }); refresh();
+      }).catch(() => {
+        if (cache.get(key) !== current) return;
+        Object.assign(current, { error: true, pending: false }); refresh();
+      });
+    }
+    return part;
+  }
+  function stateLine(text, { pending = false, error = false, retry = null } = {}) {
+    const row = el('div', 'scx-state');
+    row.setAttribute('role', 'status');
+    if (pending || error) {
+      const mark = pending ? runMark() : el('span', 'scx-state-mark', '!');
+      mark.setAttribute('aria-hidden', 'true'); row.append(mark);
+    }
+    row.append(el('span', null, text));
+    if (retry) row.append(button(t('sessionContext.state.retry'), 'btn btn-quiet', retry));
+    return row;
+  }
+  function retryPart(part) { part.stale = true; refresh(); }
+  function entryState() {
+    const data = info();
+    if (!data?.report || managed(data, 'instruction')) return '';
+    const part = nativeCache.get(`${cwdOf(data)}|${session()?.backend ?? ''}`);
+    return !part ? '' : part.error ? 'nativeError' : (!part.pending && !Array.isArray(part.value?.entries)) ? 'nativeUnknown'
+      : part.pending ? (part.value ? 'refreshing' : 'loading') : '';
+  }
+
   // ---------------------------------------------------------------- 描画
   let shownFor = null;
   function render() {
@@ -189,8 +229,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; reviewError = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; hooksConfirm = null; }
     const data = info();
     const box = el('div', 'scx');
+    if (data?.pending || data?.error) box.append(stateLine(t(data.pending
+      ? (data.report ? 'sessionContext.state.refreshing' : 'sessionContext.state.loading') : 'sessionContext.state.error'),
+      { pending: data.pending, error: data.error, retry: data.error ? () => refreshInfo(true) : null }));
     if (!data?.report) {
-      box.append(el('p', 'cx-sub', t('sessionContext.notStarted')));
+      if (!data?.pending && !data?.error) box.append(data == null
+        ? stateLine(t('sessionContext.state.loading'), { pending: true })
+        : el('p', 'cx-sub', t('sessionContext.notStarted')));
       return box;
     }
     const report = data.report;
@@ -255,25 +300,26 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   // 数えるのは毎ターン最初に読み込まれる指示だけ（条件付きの rules・Skills の本文・MCP のツール定義・履歴は数えない）。
   // 自分で書いた分は、Pleiad が渡した会話では記録の行（tokens）、エージェント任せの会話では nativeInstructions の見積もり。
   // Pleiad が足す分は、直前のターンで実際に渡した文（plyParts。core/instruction-amount.mjs）。この面はファイルを変えない
-  /** エージェント任せの指示を、そのエージェントの規則で探した結果。まだ無ければ読み始めて null（読んでいる途中） */
+  /** エージェント任せの指示を、そのエージェントの規則で探した結果と取得状態 */
   function nativeFound(data) {
     const where = cwdOf(data), agent = session()?.backend ?? '';
     const key = `${where}|${agent}`;
-    if (!nativeCache.has(key)) {
-      nativeCache.set(key, null);
-      cmd('nativeInstructions', { cwd: where, backend: agent })
-        .then(r => { nativeCache.set(key, r ?? { entries: null }); refresh(); })
-        .catch(() => { nativeCache.set(key, { entries: null }); refresh(); });
-    }
-    return nativeCache.get(key);
+    return readPart(nativeCache, key, 'nativeInstructions', { cwd: where, backend: agent });
   }
+  function nativeStatus(part) {
+    if (part.error) return stateLine(t('sessionContext.state.nativeError'), { error: true, retry: () => retryPart(part) });
+    if (part.pending) return stateLine(t(part.value ? 'sessionContext.state.nativeRefreshing' : 'sessionContext.amount.reading', { agent: backendLabel() }), { pending: true });
+    if (!Array.isArray(part.value?.entries)) return stateLine(t('sessionContext.amount.unknown', { agent: backendLabel() }));
+    if (!part.value.entries.length) return stateLine(t('sessionContext.amount.nativeNone', { agent: backendLabel() }));
+    return null;
+  }
+
   function amountFace(data) {
     const managedHere = managed(data, 'instruction');
     const native = managedHere ? null : nativeFound(data);
-    const reading = !managedHere && native === null;
-    const unknown = !managedHere && !reading && !native.entries;
+    const unknown = !managedHere && !Array.isArray(native.value?.entries);
     const estimated = !managedHere && !unknown;
-    const rows = managedHere ? data.report.entries.filter(e => e.kind === 'instruction' && e.status === 'supplied') : native?.entries ?? [];
+    const rows = managedHere ? data.report.entries.filter(e => e.kind === 'instruction' && e.status === 'supplied') : native?.value?.entries ?? [];
     const parts = data.plyParts ?? null;
     const a = instructionAmount({ rows, parts: parts ?? [], budget: budget() });
     const n = v => fmt.number(v);
@@ -286,9 +332,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (estimated) { const est = el('span', 'scx-est', t('sessionContext.amount.estimated')); est.title = t('sessionContext.amount.estimatedNote'); head.append(est); }
     head.append(el('span', 'scx-total', about(a.total)));
     k.append(head);
-    if (reading) k.append(el('p', 'cx-sub', t('sessionContext.amount.reading', { agent: backendLabel() })));
-    else if (unknown) k.append(el('p', 'cx-sub', t('sessionContext.amount.unknown', { agent: backendLabel() })));
-    else if (estimated) k.append(el('p', 'cx-sub', native.entries.length ? t('sessionContext.amount.estimatedNote') : t('sessionContext.amount.nativeNone', { agent: backendLabel() })));
+    if (!managedHere) {
+      const status = nativeStatus(native);
+      if (status) k.append(status);
+      else if (estimated) k.append(el('p', 'cx-sub', t('sessionContext.amount.estimatedNote')));
+    }
 
     // 積み上げの棒。全長は合計か目安の大きい方。目安の線は自分で書いた分にだけ当てる（左端から測る）
     const pct = v => `${(a.scale ? v / a.scale * 100 : 0).toFixed(2)}%`;
@@ -324,7 +372,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       row.append(sw, el('span', 'n', label), el('span', 'v', value));
       return row;
     };
-    const ownValue = v => reading || unknown ? '—' : about(v);
+    const ownValue = v => unknown ? '—' : about(v);
     for (const [side, v] of [['user', a.user], ['dir', a.dir]]) { const r = el('li'); r.append(li('span', side, t(`sessionContext.group.${side}`), ownValue(v))); legend.append(r); }
     const plyRow = el('li');
     if (!parts) plyRow.append(li('span', 'ply', t('sessionContext.amount.ply'), t('sessionContext.amount.plyPending')));
@@ -351,12 +399,9 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       over.append(g, text);
       k.append(over);
     }
-    if (!reading && !unknown) {
-      const found = findingsOf(data);
-      const issues = issuesFace(found);
-      if (issues) k.append(issues);
-      if (askReview && rows.length) k.append(reviewActs({ rows, amount: a, found, cwd: cwdOf(data) }));
-    }
+    const found = findingsOf(data);
+    k.append(issuesFace(found));
+    if (askReview && rows.length) k.append(reviewActs({ rows, amount: a, found, cwd: cwdOf(data) }));
     return k;
   }
 
@@ -365,15 +410,15 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   // 入力欄に依頼文の下書き（web/context-review.mjs）を入れて開く。自動では送らない
   function reviewActs({ rows, amount, found, cwd }) {
     const acts = el('div', 'scx-acts');
-    const ask = button(t('sessionContext.review.ask'), reviewUrged(amount, found) ? 'btn btn-primary' : 'btn', async () => {
+    const ask = button(t('sessionContext.review.ask'), reviewUrged(amount, found.value) ? 'btn btn-primary' : 'btn', async () => {
       if (reviewing) return;
       reviewing = true; reviewError = ''; ask.disabled = true;
-      try { await askReview({ cwd, text: reviewDraft({ rows, amount, findings: found }) }); }
+      try { await askReview({ cwd, text: reviewDraft({ rows, amount, findings: found.value }) }); }
       catch (e) { reviewError = t('sessionContext.review.failed', { error: e?.message ?? String(e) }); }
       finally { reviewing = false; refresh(); }
     });
     // 気になる所を計算している間は押せない（下書きに見つかった所が入らないため）
-    ask.disabled = reviewing || found === null;
+    ask.disabled = reviewing || found.pending || found.error || !found.value;
     acts.append(ask, el('span', 'cx-sub', t('sessionContext.review.note')));
     if (reviewError) { const err = el('p', 'cx-sub scx-err', reviewError); err.setAttribute('role', 'alert'); acts.append(err); }
     return acts;
@@ -385,19 +430,32 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function findingsOf(data) {
     const id = session()?.id ?? '', where = cwdOf(data), agent = session()?.backend ?? '';
     const key = `${id}|${where}|${agent}`;
-    const none = { duplicates: [], missing: [], more: {} };
-    if (!findingsCache.has(key)) {
-      findingsCache.set(key, null);
-      cmd('contextFindings', { sessionId: id, cwd: where, backend: agent })
-        .then(r => { findingsCache.set(key, r ?? none); refresh(); })
-        .catch(() => { findingsCache.set(key, none); refresh(); });
-    }
-    return findingsCache.get(key);
+    return readPart(findingsCache, key, 'contextFindings', { sessionId: id, cwd: where, backend: agent });
   }
   /** 件数付きで開閉する区画。重複は 2 か所を上下に並べて共通の部分を太字に、無いパスはどのファイルのどのパスか。各側に「開く」（その行へ） */
-  function issuesFace(found) {
+  function issuesFace(part) {
+    const found = part.value;
     const count = findingCount(found);
-    if (!count) return null;
+    const box = el('div', 'scx-issues');
+    if (part.pending || part.error || !found || !count) {
+      if (!found || !count) box.append(el('span', 'scx-issues-title', t('sessionContext.findings.title')));
+      if (part.error) box.append(stateLine(t('sessionContext.state.findingsError'), { error: true, retry: () => retryPart(part) }));
+      else if (part.pending) box.append(stateLine(t(found ? 'sessionContext.state.findingsRefreshing' : 'sessionContext.state.checking'), { pending: true }));
+      else if (!found) box.append(stateLine(t('sessionContext.state.unknown')));
+      else {
+        box.replaceChildren();
+        const check = el('span', 'scx-state-mark', '✓'); check.setAttribute('aria-hidden', 'true');
+        box.append(check, el('span', null, t('sessionContext.state.noFindings')));
+      }
+      if (!count) {
+        if (found && (part.pending || part.error)) {
+          const result = el('p', 'scx-empty-result');
+          const check = el('span', 'scx-state-mark', '✓'); check.setAttribute('aria-hidden', 'true');
+          result.append(check, el('span', null, t('sessionContext.state.noFindings'))); box.append(result);
+        }
+        return box;
+      }
+    }
     const d = el('details', 'scx-issues');
     d.open = issuesOpen;
     d.addEventListener('toggle', () => { issuesOpen = d.open; });
@@ -442,15 +500,23 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     }
     const more = (found.more?.duplicates ?? 0) + (found.more?.missing ?? 0);
     if (more) d.append(el('p', 'cx-sub scx-more', t('sessionContext.findings.more', { count: more })));
+    if (part.pending || part.error) { box.append(d); return box; }
     return d;
   }
 
   // ---------------------------------------------------------------- 作業場所の面
   function loadPlace(cwd) {
-    if (!cwd || (place.cwd === cwd && (place.view || place.loading))) return;
-    place = { cwd, view: null, loading: true };
-    cmd('contextSettings', { cwd }).then(v => { if (place.cwd === cwd) { place.view = v; place.loading = false; refresh(); } })
-      .catch(() => { if (place.cwd === cwd) place.loading = false; });
+    if (!cwd) { place = { cwd, view: null, loading: false }; return; }
+    if (place.cwd === cwd && !place.stale) return;
+    const current = { cwd, view: place.cwd === cwd ? place.view : null, loading: true, error: false };
+    place = current;
+    cmd('contextSettings', { cwd }).then(view => {
+      if (place !== current) return;
+      Object.assign(place, { view, loading: false }); refresh();
+    }).catch(() => {
+      if (place !== current) return;
+      Object.assign(place, { error: true, loading: false }); refresh();
+    });
   }
   function placeFace(data) {
     const face = el('section', 'scx-place');
@@ -459,7 +525,10 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     text.append(el('span', 'cx-path', cwdOf(data) ?? ''));
     const st = placeStatus(here());
     const line = el('div', 'p' + (st.over ? ' over' : ''), st.text + (edit && !st.over ? t('sessionContext.place.willOverride') : ''));
-    text.append(line);
+    if (here()) text.append(line);
+    if (place.loading || place.error || !here()) text.append(stateLine(t(place.error ? 'sessionContext.state.settingsError'
+      : place.loading ? (here() ? 'sessionContext.state.settingsRefreshing' : 'sessionContext.state.settingsLoading') : 'sessionContext.state.settingsUnknown'),
+      { pending: place.loading, error: place.error, retry: place.error ? () => { place.stale = true; refresh(); } : null }));
     const acts = el('div', 'acts');
     if (edit) {
       if (st.over) acts.append(button(t('sessionContext.place.reset'), 'btn', () => placeWork(async () => {
@@ -472,7 +541,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     } else {
       const start = button(t('sessionContext.place.start'), 'btn btn-quiet', () => startEdit());
       start.dataset.act = 'placeStart';
-      start.disabled = !place.view;
+      start.disabled = place.loading || place.error || !here();
       acts.append(start);
     }
     face.append(text, acts);
@@ -622,7 +691,9 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (!ply) {
       k.append(el('p', 'cx-sub', t('sessionContext.instruction.native', { agent: backendLabel() })));
       // Pleiad が同じ規則で探したもの（指示の量の「推定」の中身）。畳んで出す
-      const found = nativeFound(data)?.entries;
+      const part = nativeFound(data), found = part.value?.entries;
+      const status = nativeStatus(part);
+      if (status) k.append(status);
       if (found?.length) {
         const list = el('div');
         grouped(list, found, e => item('·', e.name, shortPath(dir(e.path)), { tokens: e.tokens }).row);
@@ -1035,11 +1106,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     chip = element ?? chip;
     const data = info() ?? {};
     // 開くたびに作業場所の設定を読み直す（設定の画面や別の窓で変わっていることがある）。エージェント任せの指示の見積もりも同じ
-    place = { cwd: null, view: null, loading: false };
-    nativeCache.clear();
-    findingsCache.clear();
+    place.stale = true;
+    for (const cache of [nativeCache, findingsCache]) for (const part of cache.values()) if (!part.pending) part.stale = true;
     preview.openPanel({ key: KEY, title, subtitle: data.report ? subtitle(data) : '', body: render(), label: title, element: chip,
       onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; } });
+    onStateChange();
   }
   function toggle(element) {
     if (preview.panelOpen(KEY)) preview.close();
@@ -1048,9 +1119,11 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   /** 記録が変わったとき（ターンの開始・読み込み直し・外す）。開いていれば描き直す */
   function refresh() {
     // 閉じているときは描かない（描くと作業場所の設定やエージェント任せの指示の見積もりを読みに行く）
-    if (!preview.panelOpen(KEY)) return;
-    const data = info() ?? {};
-    preview.updatePanel(KEY, { subtitle: data.report ? subtitle(data) : '', body: render() });
+    if (preview.panelOpen(KEY)) {
+      const data = info() ?? {};
+      preview.updatePanel(KEY, { subtitle: data.report ? subtitle(data) : '', body: render() });
+    }
+    onStateChange();
   }
-  return { open, toggle, refresh, isOpen: () => preview.panelOpen(KEY) };
+  return { open, toggle, refresh, entryState, isOpen: () => preview.panelOpen(KEY) };
 }

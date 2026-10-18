@@ -936,6 +936,24 @@
     }
   },
   "sessionContext": {
+    "state": {
+      "loading": "Loading…",
+      "refreshing": "Updating…",
+      "error": "Couldn't load plugins",
+      "retry": "Retry",
+      "nativeError": "Couldn't read instruction files",
+      "nativeRefreshing": "Checking instruction files again…",
+      "nativeUnknown": "Can't check instruction files",
+      "settingsLoading": "Loading settings…",
+      "settingsRefreshing": "Updating settings…",
+      "settingsUnknown": "Settings unavailable",
+      "settingsError": "Couldn't load settings",
+      "checking": "Checking…",
+      "findingsRefreshing": "Checking for issues again…",
+      "unknown": "Can't check for issues",
+      "findingsError": "Couldn't check for issues",
+      "noFindings": "No issues found"
+    },
     "word": {
       "instruction": "Instructions"
     },

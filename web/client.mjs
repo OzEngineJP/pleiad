@@ -3659,7 +3659,7 @@ function onEvent(ev, replay = false) {
       // 開始時刻・外した MCP などは sessionContext の戻りにしか無いので、同じ会話なら前の値を引き継ぐ
       const id = state.current ?? state.contextInfoId;
       const prev = state.contextInfoId === id ? state.contextInfo : null;
-      state.contextInfo = { ...prev, report: ev.report, owners: ev.report?.owners, pinned: isManagedContext(ev.report), changed: { differs: false, paths: [], files: [] },
+      state.contextInfo = { ...prev, pending: false, error: false, report: ev.report, owners: ev.report?.owners, pinned: isManagedContext(ev.report), changed: { differs: false, paths: [], files: [] },
         plyParts: ev.plyParts ?? prev?.plyParts ?? null };
       state.contextInfoId = id;
       paintContextEntry();
@@ -7927,8 +7927,14 @@ function openContextPage() {
 /** タイトル行の右の入口。押すと右パネル「この会話のコンテキスト」を開閉する。セッションを選んでいないときは出さない */
 function paintContextEntry() {
   chromePanel?.reset(); browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl();   // 会話が替わった
-  paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: state.contextInfo?.report,
-    summary: chipText(state.contextInfo), changed: !!state.contextInfo?.changed?.differs });
+  paintContextEntryStatus();
+}
+function paintContextEntryStatus() {
+  const data = state.contextInfoId === state.current ? state.contextInfo : null;
+  paintContextEntryButton($('contextEntry'), { visible: !!state.current, report: data?.report,
+    status: !data ? 'loading' : data.error ? 'error' : data.pending ? (data.report ? 'refreshing' : 'loading') : sessionContext.entryState(),
+    summary: chipText(data), changed: !!data?.changed?.differs });
+  for (const hint of document.querySelectorAll('.context-entry-status')) hint.textContent = $('contextEntry').dataset.contextStatus || '';
   paintMoreEntry();
 }
 /** 「…」の右上の変更ありの点。「…」へ逃がしたものだけを見る（480px 以下のプラグイン・700px 以下の git） */
@@ -7941,16 +7947,30 @@ function paintMoreEntry() {
   button.setAttribute('aria-label', changed ? `${t('session.more')} · ${t('session.context.changed')}` : t('session.more'));
 }
 /** 今のセッションの読み込み記録を取り直す。固定された会話ではサーバが今のファイルと突き合わせる */
+let contextEntryRequest = 0;
 async function refreshContextEntry({ force = false } = {}) {
   const id = state.current;
   if (!id) {
     state.contextInfo = null;
     state.contextInfoId = null;
   } else if (force || state.contextInfoId !== id) {
-    const info = await cmd('sessionContext', { sessionId: id }).catch(() => null);
-    if (state.current !== id) return state.contextInfo;
-    state.contextInfo = info;
+    const request = ++contextEntryRequest;
+    const pending = { ...(state.contextInfoId === id ? state.contextInfo : null), pending: true, error: false };
+    state.contextInfo = pending;
     state.contextInfoId = id;
+    paintContextEntry();
+    sessionContext.refresh();
+    try {
+      const info = await cmd('sessionContext', { sessionId: id });
+      if (state.current !== id || contextEntryRequest !== request) return state.contextInfo;
+      // 取得中に届いたターンの報告は新しい。付随情報だけ応答から補う。
+      const live = state.contextInfo;
+      state.contextInfo = !live?.report || live.report === pending.report ? info ?? {} : { ...live, ...info, pending: false, error: false,
+        report: live.report, owners: live.owners, pinned: live.pinned, changed: live.changed, plyParts: live.plyParts ?? info?.plyParts };
+    } catch {
+      if (state.current !== id || contextEntryRequest !== request) return state.contextInfo;
+      state.contextInfo = { ...state.contextInfo, pending: false, error: true };
+    }
   } else return state.contextInfo;
   paintContextEntry();
   sessionContext.refresh();
@@ -9691,7 +9711,7 @@ const context = setupContext({ button: $('openContext'), cmd,
 const sessionContext = setupSessionContext({ cmd, preview: filePreview,
   session: () => state.sessions.find(s => s.id === state.current) ?? null,
   info: () => (state.contextInfoId === state.current ? state.contextInfo : null),
-  refreshInfo: (force) => refreshContextEntry({ force }),
+  refreshInfo: (force) => refreshContextEntry({ force }), onStateChange: paintContextEntryStatus,
   openSettings: () => openContextPage(), labelOf,
   isRunning: () => Boolean(state.current && state.runningIds.has(state.current)), budget: () => budgetOf(state.prefs), askReview: draftReview });
 $('contextEntry').onclick = () => sessionContext.toggle($('contextEntry'));
@@ -9901,7 +9921,7 @@ function sessionMoreLead() {
   const lead = [];
   if (phoneView.matches) {
     lead.push({ head: t('session.menu.open') });
-    if (!$('contextEntry').hidden) lead.push({ label: $('contextEntry').getAttribute('aria-label'),
+    if (!$('contextEntry').hidden) lead.push({ label: t('session.context.label'), hint: () => el('span', 'hint context-entry-status', $('contextEntry').dataset.contextStatus || ''),
       onClick: () => sessionContext.open($('sessionMore')) });
     if (!$('gitEntry').hidden) lead.push({ label: $('gitEntry').getAttribute('aria-label'),
       hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) });
