@@ -27,6 +27,7 @@ export default async function (t) {
     const extra = Object.keys(a).filter((k) => !DESCRIPTOR_KEYS.includes(k));
     t.ok(`${id}: 記述のキーを全部書く（使わないものは null）`, missing.length === 0 && extra.length === 0, JSON.stringify({ missing, extra }));
     t.ok(`${id}: 身代わり（tests/lib/backend-contracts.mjs の RIGS）がある`, typeof RIGS[id] === 'function');
+    t.ok(`${id}: hooksVia は hooksAs のエージェントだけが書き、'callback' か 'plugin'`, a.hooksAs ? ['callback', 'plugin'].includes(a.hooksVia) : a.hooksVia === null, String(a.hooksVia));
     if (a.cli) t.ok(`${id}: CLI の記述に exe・binEnv・installUrl がある`, typeof a.cli.exe === 'string' && /^AGENT_HOST_[A-Z_]+_BIN$/.test(a.cli.binEnv) && /^https:\/\//.test(a.cli.installUrl));
     const key = idleCompactionKey(id);
     t.ok(`${id}: 自動の圧縮の行は、compact を持つときだけ（行の無い compact は黙って自動の圧縮が動かない）`,

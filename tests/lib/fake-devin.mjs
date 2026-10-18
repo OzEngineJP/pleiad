@@ -125,7 +125,11 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'session/prompt': {
         const session = load(p.sessionId), text = (p.prompt ?? []).map(v => v.text ?? '').join('');
         // 走っている回への prompt は同じ回に折り込む（実機の振る舞い。応答は回の終わりにまとめて返る）
-        if (running.has(session.sessionId)) { (session.steerQueue ??= []).push({ id: request.id, text }); return; }
+        if (running.has(session.sessionId)) {
+          // [fast-steer]: 呼び出しが直ぐに成功で決着する（受理の判定の窓より速い成功。合図が受理の応答より先に出る順の試験用）
+          if (text.includes('[fast-steer]')) { session.messages.push({ role: 'user', text }); persist(session); write({ id: request.id, result: { stopReason: 'end_turn' } }); return; }
+          (session.steerQueue ??= []).push({ id: request.id, text }); return;
+        }
         if (text === '/compact') {
           // ACP のスラッシュコマンドは prompt の本文として届く。発言は増やさず、占有だけ減らして usage_update を流す
           session.used = Math.max(20000, Math.round((session.used ?? 120000) * 0.15)); persist(session);
@@ -195,6 +199,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         write({ id: request.id, result });
         // 折り込まれた途中送信も、同じ回の続きとして返し、並んだ順に応答を書く
         for (const steer of session.steerQueue ?? []) {
+          // [drop-steer]: 受理したが読んだか分からないまま cancelled で決着する（既読不明の試験用）
+          if (steer.text.includes('[drop-steer]')) { write({ id: steer.id, result: { stopReason: 'cancelled' } }); continue; }
           session.messages.push({ role: 'user', text: steer.text });
           update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
           const steerReply = `fixture: ${steer.text}`, steerMiddle = Math.ceil(steerReply.length / 2);
@@ -204,6 +210,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           write({ id: steer.id, result: { stopReason: 'end_turn' } });
         }
         session.steerQueue = []; persist(session);
+        // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る
+        if (text.includes('[compact-rewrite]')) { session.messages.splice(0, 2); persist(session); }
         return;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);

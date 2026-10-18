@@ -87,7 +87,12 @@ export default async function (t) {
     t.ok('見積もりの行にも同じ数え方の量が付く', claude.entries.find(e => e.name === 'always.md')?.tokens === estimateTokens('ALWAYS_RULE'));
     const codex = await session.nativeInstructions(cwd, 'codex');
     t.ok('Codex の規則で探す（AGENTS.md だけ）', codex.entries.map(e => `${e.scope}:${e.name}`).sort().join() === 'directory:AGENTS.md,user:AGENTS.md', JSON.stringify(codex.entries.map(e => e.path)));
-    t.ok('読み方を知らないエージェントは数えない（entries: null）', (await session.nativeInstructions(cwd, 'antigravity')).entries === null);
+    const antigravity = await session.nativeInstructions(cwd, 'antigravity');
+    t.ok('読み込み元を持つエージェントは、その規則で探す（Antigravity は作業場所の AGENTS.md）', antigravity.entries?.some(e => e.scope === 'directory' && e.name === 'AGENTS.md'),
+      JSON.stringify(antigravity.entries?.map(e => `${e.scope}:${e.name}`)));
+    // 読み込み元（contextSources）が null のエージェントと、登録されていないエージェント
+    t.ok('読み方を知らないエージェントは数えない（entries: null）', (await session.nativeInstructions(cwd, 'fake')).entries === null
+      && (await session.nativeInstructions(cwd, 'no-such-agent')).entries === null);
 
     // ---- サーバー越し: 会話の記録と目安の設定
     host = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake' } });
@@ -102,7 +107,7 @@ export default async function (t) {
     t.ok('渡した指示の行に量が付く', record.report.entries.find(e => e.kind === 'instruction' && e.status === 'supplied')?.tokens === estimateTokens('ROOT_AGENTS '.repeat(30)));
     const usage = turn.events.filter(e => e.type === 'contextUsage');
     t.ok('ターンの記録の知らせ（contextUsage）にも載る', usage.at(-1)?.plyParts?.map(p => p.id).join() === ids);
-    const native = await client.cmd('nativeInstructions', { cwd, backend: 'antigravity' });
+    const native = await client.cmd('nativeInstructions', { cwd, backend: 'fake' });
     t.ok('nativeInstructions は読むだけのコマンドとして届く', native.entries === null);
 
     let prefs = await client.cmd('setPref', { key: 'instructionBudget', value: 8000 });

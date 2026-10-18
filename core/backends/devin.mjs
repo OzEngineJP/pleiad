@@ -250,12 +250,13 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           let browserInstructions = args.browserInstructions;
           if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
           const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
-          mapper.beginTurn(prompt);
+          // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
+          mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
           // 途中送信: 走っているターンへ session/prompt を重ねる。Devin は同じ回に折り込む（実測 3000.11.92）
           steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted });
-          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); }
+          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
           check();
           prompting = true;
           // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
@@ -274,9 +275,12 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
           // 途中送信で並んだ分がまだ回っていれば、その決着まで待つ（区切りが来ず次の回に回った分）。
-          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる
+          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる。
+          // closing を先に立て、drain の間に届いた新しい途中送信は受理しない（次のターンで送る）。
+          // drain 中に並んだ分の回が承認を求められるよう、prompting は drain が済むまで下ろさない
+          closing = true;
           if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
-          prompting = false; verified = null; closing = true; local.abort();
+          prompting = false; verified = null; local.abort();
           if (client) {
             try { await closeClient(); }
             catch (closeError) {
@@ -285,7 +289,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             }
           }
           if (sessionId) active.delete(sessionId);
-          if (control) { control.handle = null; control.steer = null; }
+          if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('devin.errors.promptFailed')) } : {}) });
         }

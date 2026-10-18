@@ -1,5 +1,6 @@
 // ACP replay and live updates use the same normalized transcript shape as the
 // existing backends: { uuid, role, text, thinking?, toolCalls? }.
+import crypto from 'node:crypto';
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
 
 // Bound previews before retaining state, cloning it or emitting tool events.
@@ -60,10 +61,16 @@ const inputOf = value => value && typeof value === 'object' ? value : value == n
 
 export function createDevinMapper(sessionId, emit = () => {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
-  let current = null, expectedEcho = null, echo = '', live = false, sepText = false, sepThink = false;
+  let current = null, expectedEcho = null, echo = '', live = false, turn = null, sepText = false, sepThink = false;
+  // uuid は位置から作る（ホスト記録の無いネイティブの会話は、この uuid のまま再開・再起動の後も同じ行を指す）。
+  // ただし圧縮で位置がずれると別の発言に当たるので、ホスト記録に重ねるときは使わない（core/conversations.mjs の mergeMessages）。
+  // 再生（session/load）の行には positional の印を付け、順序と中身で当てさせる。ライブの行には、ターンごとの乱数の入った liveUuid を付ける
   function row(role) {
     if (current?.role !== role) {
-      current = { uuid: `${sessionId}:${role}:${messages.length}`, role, text: '', at: null };
+      const uuid = `${sessionId}:${role}:${messages.length}`;
+      current = live
+        ? { uuid, liveUuid: `${sessionId}:${turn}:${role}:${messages.length}`, role, text: '', at: null }
+        : { uuid, role, text: '', at: null, positional: true };
       messages.push(current);
     }
     return current;
@@ -85,9 +92,12 @@ export function createDevinMapper(sessionId, emit = () => {}) {
         echo += text;
         if (expectedEcho.startsWith(echo)) { if (echo === expectedEcho) expectedEcho = null; return; }
         // Preserve unexpected delivered input rather than silently losing it.
-        current.text = echo; expectedEcho = null; return;
+        current.text = current.sent = echo; expectedEcho = null; return;
       }
-      row('user').text += text;
+      // 返答の前に届いた途中送信は同じ行に続く。再生でも同じ行に続くので、送った全文にも足す（記録の照合のハッシュ）
+      const message = row('user');
+      message.text += text;
+      if (typeof message.sent === 'string') message.sent += text;
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;
       const message = row('assistant'), text = contentText(update.content);
@@ -135,11 +145,17 @@ export function createDevinMapper(sessionId, emit = () => {}) {
   return {
     accept,
     getToolCall: id => toolStates.has(id) ? structuredClone(toolStates.get(id)) : null,
-    beginTurn(prompt) {
-      current = null; row('user').text = prompt;
-      expectedEcho = prompt; echo = ''; live = true;
+    /**
+     * sent は送る全文（Pleiad の指示を前に足したもの）。エコーの照合にだけ使う。shown は人が書いた分（先頭のメモと `!` の結果を含む）で、
+     * 行の text にする。sent は行に持たせ、記録は全文のハッシュだけを残して、再生の全文を原文に戻すのに使う
+     */
+    beginTurn(sent, shown = sent) {
+      current = null; live = true; turn = crypto.randomUUID();
+      Object.assign(row('user'), { text: shown, sent });
+      expectedEcho = sent; echo = '';
     },
-    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid }); live = false; },
+    // 発言の id はネイティブの会話の行の uuid。ホスト記録の会話では、記録の行に合わせて liveUuid に替える（core/conversations.mjs の hostEvent）
+    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid, ...(current.liveUuid ? { liveUuid: current.liveUuid } : {}) }); live = false; },
     messages: () => structuredClone(messages),
   };
 }

@@ -1,0 +1,130 @@
+// Grok のバックエンド（core/backends/grok.mjs）へ、ACP の身代わりを差し込んで確かめる:
+// 会話ごとの MCP（ply_agents と headers）・Hooks のプラグイン（_meta.pluginDirs）・互換の Hooks を止める環境変数が、
+// session/new と session/load の両方に届き、渡さないターン・別の会話・履歴の読み込みには混ざらない。
+// プラグインの置き場はターンの終わりに消え、持ち主の居ない残りは次の書き込みで消える。
+// turn_completed の usage（ターンのモデル呼び出しの合計）は文脈の量にしない
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createGrokBackend } from '../../core/backends/grok.mjs';
+import { createGrokMapper } from '../../core/backends/grok-normalize.mjs';
+
+export const name = 'grok-backend';
+export const title = 'Grok: 会話ごとの MCP・Hooks のプラグイン・互換の止め方が session/new と session/load に届き、ほかへ漏れない・置き場の掃除';
+
+const MODEL = 'grok-fixture';
+
+export default async function (t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-grok-backend-'));
+  const dataDir = path.join(root, 'data'), cwd = path.join(root, 'project'), other = path.join(root, 'other');
+  fs.mkdirSync(cwd, { recursive: true }); fs.mkdirSync(other, { recursive: true });
+  const calls = [];
+  let nextId = 0;
+  const sessions = new Map();
+  class FakeAcp {
+    constructor(options) { this.options = options; this.init = null; }
+    async start() {
+      this.init = { _meta: { modelState: { currentModelId: MODEL, availableModels: [{ modelId: MODEL, _meta: { totalContextTokens: 1000 } }] } } };
+      return this.init;
+    }
+    notify() {}
+    async call(method, params) {
+      const entry = { method, params, env: this.options.env };
+      const dirs = params?._meta?.pluginDirs ?? [];
+      // 呼ばれた時点で置き場に hooks.json があるか（Grok が読むのはこの時点）
+      entry.pluginFiles = dirs.map(d => { try { return JSON.parse(fs.readFileSync(path.join(d, 'hooks', 'hooks.json'), 'utf8')); } catch { return null; } });
+      calls.push(entry);
+      if (method === 'session/new') {
+        if (params.cwd.includes('broken')) throw new Error('fixture: session/new failed');
+        const sessionId = `grok-fixture-${++nextId}`; sessions.set(sessionId, params.cwd);
+        return { sessionId };
+      }
+      if (method === 'session/load') return { sessionId: params.sessionId };
+      if (method === 'session/prompt') return { stopReason: 'end_turn' };
+      return {};
+    }
+    async close() {}
+  }
+  const backend = createGrokBackend({ Acp: FakeAcp, command: () => ['grok-fixture'], dataDir });
+  const base = path.join(dataDir, 'grok-hooks');
+  const pluginHooks = { hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node adapter.mjs pre' }] }] } };
+  const compatHookEnv = { GROK_CLAUDE_HOOKS_ENABLED: 'false', GROK_CURSOR_HOOKS_ENABLED: 'false', GROK_CODEX_HOOKS_ENABLED: 'false' };
+  const agentRuntime = { url: 'http://127.0.0.1:1/mcp/agents', headers: { Authorization: 'Bearer fixture-token', 'X-Ply-Session': 'fixture' }, instructions: 'fixture instructions' };
+  const turn = (args) => backend.runTurn({ prompt: 'hello', mode: 'ask', emit: () => {}, ...args });
+  const of = (method, from) => calls.slice(from).filter(c => c.method === method);
+  const compatOff = env => Object.keys(compatHookEnv).every(k => env?.[k] === 'false');
+  const compatUntouched = env => Object.keys(compatHookEnv).every(k => env?.[k] === process.env[k]);
+  const ownDirs = () => { try { return fs.readdirSync(base).filter(n => n.startsWith(`${process.pid}-`)); } catch { return []; } };
+
+  try {
+    // 持ち主の居ない残り（終わったプロセスの pid）と、生きている別のプロセス（親）の置き場を先に置く
+    const dead = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore' }).pid;
+    for (const owner of [dead, process.ppid]) fs.mkdirSync(path.join(base, `${owner}-fixture`, 'hooks'), { recursive: true });
+
+    // 1. 渡すターン（新しい会話）: session/new に MCP（headers 付き）とプラグインの置き場、CLI に互換を止める環境変数
+    let mark = calls.length;
+    const first = await turn({ cwd, agentRuntime, hooksRuntime: { pluginHooks, compatHookEnv } });
+    const created = of('session/new', mark)[0];
+    const mcp = created?.params?.mcpServers ?? [];
+    t.ok('session/new に ply_agents を type: http と headers の { name, value } で渡す',
+      mcp.length === 1 && mcp[0].name === 'ply_agents' && mcp[0].type === 'http' && mcp[0].url === agentRuntime.url
+      && JSON.stringify(mcp[0].headers) === JSON.stringify([{ name: 'Authorization', value: 'Bearer fixture-token' }, { name: 'X-Ply-Session', value: 'fixture' }]), JSON.stringify(mcp));
+    const firstDir = created?.params?._meta?.pluginDirs?.[0];
+    t.ok('session/new の _meta.pluginDirs の置き場に、渡した hooks.json がある',
+      created?.params?._meta?.pluginDirs?.length === 1 && path.dirname(firstDir) === base && JSON.stringify(created.pluginFiles[0]) === JSON.stringify(pluginHooks), JSON.stringify(created?.params?._meta));
+    t.ok('渡すターンの CLI は互換の Hooks を止める環境変数で起こす', compatOff(created?.env));
+    t.ok('発言に ply_agents の説明を足す', of('session/prompt', mark)[0]?.params?.prompt?.[0]?.text.includes('fixture instructions'));
+    t.ok('ターンが終わると置き場を消す', !fs.existsSync(firstDir) && ownDirs().length === 0, JSON.stringify(ownDirs()));
+    t.ok('最初の書き込みで、持ち主の居ない残りを消し、生きている別のプロセスの置き場は残す',
+      !fs.existsSync(path.join(base, `${dead}-fixture`)) && fs.existsSync(path.join(base, `${process.ppid}-fixture`)));
+
+    // 2. 同じ会話の次のターン: session/load にも MCP と新しい置き場を渡す（セッション限定のプラグインは保存されない）
+    mark = calls.length;
+    await turn({ sessionId: first.sessionId, cwd, agentRuntime, hooksRuntime: { pluginHooks, compatHookEnv } });
+    const loaded = of('session/load', mark)[0];
+    const loadDir = loaded?.params?._meta?.pluginDirs?.[0];
+    t.ok('session/load にも ply_agents（headers 付き）を渡す', loaded?.params?.mcpServers?.[0]?.name === 'ply_agents' && loaded.params.mcpServers[0].headers.length === 2);
+    t.ok('session/load にも、そのターンの新しい置き場と hooks.json を渡す',
+      Boolean(loadDir) && loadDir !== firstDir && JSON.stringify(loaded.pluginFiles[0]) === JSON.stringify(pluginHooks) && compatOff(loaded.env));
+    t.ok('次のターンの置き場も終わりに消す', !fs.existsSync(loadDir) && ownDirs().length === 0);
+
+    // 3. 同じ会話で、そろえない・委譲を使わないターン: 前のターンの MCP・プラグイン・環境変数を持ち越さない
+    mark = calls.length;
+    await turn({ sessionId: first.sessionId, cwd });
+    const plain = of('session/load', mark)[0];
+    t.ok('渡さないターンの session/load は mcpServers が空で _meta が無い', JSON.stringify(plain?.params?.mcpServers) === '[]' && !('_meta' in (plain?.params ?? {})), JSON.stringify(plain?.params));
+    t.ok('渡さないターンは互換の Hooks の環境変数を変えない', compatUntouched(plain?.env));
+
+    // 4. 別の会話（別の場所）の新しいターン: 前の会話の分が混ざらない
+    mark = calls.length;
+    await turn({ cwd: other });
+    const fresh = of('session/new', mark)[0];
+    t.ok('別の会話の session/new は mcpServers が空で _meta が無く、環境変数も変えない',
+      JSON.stringify(fresh?.params?.mcpServers) === '[]' && !('_meta' in (fresh?.params ?? {})) && compatUntouched(fresh?.env), JSON.stringify(fresh?.params));
+
+    // 5. 履歴の読み込み（getMessages）は、渡した会話でも MCP もプラグインも渡さない（覚えた履歴を外して読み直させる）
+    await backend.releaseConversation(first.sessionId);
+    mark = calls.length;
+    await backend.getMessages(first.sessionId);
+    const history = of('session/load', mark)[0];
+    t.ok('履歴の読み込みの session/load は mcpServers が空で _meta が無い', history && JSON.stringify(history.params.mcpServers) === '[]' && !('_meta' in history.params), JSON.stringify(history?.params));
+
+    // 6. session/new が失敗しても置き場を残さない
+    const broken = path.join(root, 'broken');
+    fs.mkdirSync(broken);
+    const failed = await turn({ cwd: broken, hooksRuntime: { pluginHooks, compatHookEnv } }).then(() => null, e => e);
+    t.ok('session/new が失敗したターンも置き場を消す', Boolean(failed) && ownDirs().length === 0, String(failed?.message));
+
+    // 7. turn_completed の usage は呼び出しの合計で、文脈の占有ではない。usage_update の used/size だけを文脈の量にする
+    const events = [];
+    const mapper = createGrokMapper('grok-fixture-usage', e => events.push(e), { windowTokens: 1000 });
+    mapper.beginTurn('hello');
+    mapper.accept({ sessionUpdate: 'turn_completed', stop_reason: 'end_turn', usage: { inputTokens: 580, outputTokens: 1, totalTokens: 581 } });
+    t.ok('turn_completed の usage から文脈の量を出さない', !events.some(e => e.type === 'contextWindow'), JSON.stringify(events));
+    mapper.accept({ sessionUpdate: 'usage_update', used: 290, size: 1000 });
+    t.ok('usage_update の used/size は文脈の量にする', events.some(e => e.type === 'contextWindow' && e.usedTokens === 290 && e.windowTokens === 1000));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}

@@ -7,6 +7,7 @@ import { NO_CAPABILITIES } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
+import { writeTurnPlugin } from './grok-hooks.mjs';
 
 // i18n-dynamic: grok.errors.modelUnavailable
 // i18n-dynamic: grok.errors.effortUnavailable
@@ -78,9 +79,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     if (!value) throw Object.assign(new Error(t('grok.errors.notInstalled')), { code: 'NOT_INSTALLED' });
     return value;
   }
-  async function openClient(cwd, args = [], handlers = {}) {
+  async function openClient(cwd, args = [], handlers = {}, extraEnv = null) {
     const Client = Acp ?? (await import('./grok-acp.mjs')).GrokAcp;
-    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), ...handlers, onRequest: handlers.onRequest ?? (async method => {
+    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), env: extraEnv ? { ...process.env, ...extraEnv } : process.env, ...handlers, onRequest: handlers.onRequest ?? (async method => {
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
@@ -133,7 +134,10 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   }
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true },
+    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true,
+      // ACP の session/new・session/load の mcpServers（type: 'http'）に ply_agents を、その instructions を発言へ足して渡す。
+      // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
+      plyAgents: true, hooks: true },
     modes,
     async models(cwd = process.cwd()) {
       const client = await serial(metadataQueue, () => openClient(cwd).catch(error => { throw isAuthError(error) ? fail('loginRequired') : error; }));
@@ -178,7 +182,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         const { emit, onPromptDelivered, control } = args;
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
-        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null;
+        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null, plugin = null;
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -204,6 +208,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
           const model = typeof args.model === 'string' && args.model ? args.model : '';
           const effort = typeof args.effort === 'string' && args.effort ? args.effort : '';
+          // Pleiad がそろえる Hooks を渡すターンは、Claude・Cursor・Codex 互換の読み込み元を環境変数で止める（二重実行の防止）
+          const hookEnv = args.hooksRuntime?.compatHookEnv ?? null;
           client = await openClient(cwd, spawnArgs(model, effort), {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
             onUpdate: params => {
@@ -226,16 +232,25 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               const selected = answer?.allow ? allow : deny;
               return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
             },
-          });
+          }, hookEnv);
           check();
           verifySelection(client.init, model, effort);
           const windowTokens = Number((client.init?._meta?.modelState?.availableModels ?? []).find(m => m.modelId === client.init?._meta?.modelState?.currentModelId)?._meta?.totalContextTokens) || null;
+          // Pleiad の MCP（ply_agents。委譲の橋）は ACP の mcpServers で渡す（type: 'http' が要る。Devin と同じ）
+          const agentRuntime = args.agentRuntime;
+          const mcpServers = agentRuntime?.url
+            ? [{ name: 'ply_agents', type: 'http', url: agentRuntime.url, headers: Object.entries(agentRuntime.headers ?? {}).map(([name, value]) => ({ name, value })) }]
+            : [];
+          // Pleiad がそろえる Hooks は、このターンだけのプラグイン（hooks/hooks.json）として _meta.pluginDirs で渡す。
+          // 渡した置き場は trusted になり、保存されない（session/load でも毎回渡す）。ターンの終わりに消す（grok-hooks.mjs）
+          if (args.hooksRuntime?.pluginHooks) plugin = await writeTurnPlugin(path.join(dataDir, 'grok-hooks'), args.hooksRuntime.pluginHooks);
+          const meta = plugin ? { _meta: { pluginDirs: [plugin.dir] } } : {};
           let state;
           if (sessionId) {
             mapper = createGrokMapper(sessionId, emit, { windowTokens });
-            state = await client.call('session/load', { sessionId, cwd, mcpServers: [] });
+            state = await client.call('session/load', { sessionId, cwd, mcpServers, ...meta });
           } else {
-            state = await client.call('session/new', { cwd, mcpServers: [] });
+            state = await client.call('session/new', { cwd, mcpServers, ...meta });
             sessionId = state?.sessionId;
             if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('grok.errors.notConnected'));
             mapper = createGrokMapper(sessionId, emit, { windowTokens });
@@ -244,14 +259,16 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           check();
           await applyMode(client, sessionId, state, args.mode || 'ask');
           check();
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
-          mapper.beginTurn(prompt);
+          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+          // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
+          mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: model || client.init?._meta?.modelState?.currentModelId || undefined, ...(args.sessionId ? {} : { first: true }) });
           // 途中送信: 走っているターンへ session/prompt を重ねる。Grok は内蔵の待ち行列に積み、
           // 今の回の直後に続けて回す（実測 1.0.62。決着は drain で待つので、Pleiad の同じターンに見える）
-          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted });
-          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); }
+          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+            onSent: text => mapper?.queueUser(text) });
+          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
           check();
           prompting = true;
           // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
@@ -270,9 +287,12 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
           // 途中送信で待ち行列に並んだ分がまだ回っていれば、その決着まで待つ（Grok は今の回の直後に続けて回す）。
-          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる
+          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる。
+          // closing を先に立て、drain の間に届いた新しい途中送信は受理しない（次のターンで送る）。
+          // drain 中に並んだ分の回が承認を求められるよう、prompting は drain が済むまで下ろさない
+          closing = true;
           if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
-          prompting = false; closing = true; local.abort();
+          prompting = false; local.abort();
           if (client) {
             try { await closeClient(); }
             catch (closeError) {
@@ -280,8 +300,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               outcome = 'error';
             }
           }
+          plugin?.cleanup();
           if (sessionId) active.delete(sessionId);
-          if (control) { control.handle = null; control.steer = null; }
+          if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('grok.errors.promptFailed')) } : {}) });
         }

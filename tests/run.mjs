@@ -202,9 +202,11 @@ const SUITES = [
   './unit/devin-acp.mjs',
   './unit/devin-config.mjs',
   './unit/devin-normalize.mjs',
+  './unit/acp-record-merge.mjs',
   './unit/devin-usage.mjs',
   './unit/server-devin.mjs',
   './unit/server-grok.mjs',
+  './unit/grok-backend.mjs',
   './unit/backend-conformance.mjs',
   './unit/backends-lint.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
@@ -266,6 +268,10 @@ const SUITES = [
   './unit/server-delegation-notice.mjs',
   // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
   './unit/server-delegation-steer.mjs',
+  // ACP の子（Devin）への追加指示: 受理後の決着（渡った合図で delivered・既読不明は dropped で送り直さない）を指示の状態に反映する
+  './unit/server-delegation-steer-acp.mjs',
+  // acp-steer の単体: 受理後の決着の合図・早期拒否・drain・受理前の合図なし。normalize の分割 user チャンク連結と Grok の途中送信の user 行の置き場
+  './unit/acp-steer.mjs',
   './unit/background-model.mjs',
   // 委譲の行: running は終わっていない・通知が届いていない短い行だけ。会話の分は agentTasks の tree・taskIds で読み、running を重ねる
   './unit/task-cards.mjs',

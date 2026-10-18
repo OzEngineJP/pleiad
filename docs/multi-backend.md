@@ -86,8 +86,8 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `session` | `{ sessionId, first?, model? }` | 既存 + モデル通知 |
 | `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`）。Antigravity は ACTIVE のまま残った `run_command`（§2.8「裏へ回ったコマンド」） |
 | `phase` | `{ state: "active"\|"waiting" }` `waiting` = main は返答を終えて止まっていて、かつ裏のタスクが 1 本以上生きている。それ以外は `active` | 新規（main の区切りと上の一覧から導く） |
-| `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`） |
-| `userMessage.dropped` | `{ messageId }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残る。ACP の 2 つ（Devin・Grok）が、呼び出しが拒否・中断で決着した分に出す） |
+| `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`。ACP の 2 つ（Devin・Grok）は、受理した呼び出しが cancelled 以外で決着したときに出す） |
+| `userMessage.dropped` | `{ messageId, unknown? }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す。`unknown: true` は「読まれたか分からない」決着（読んで動いてから止められた可能性。ACP の 2 つは cancelled・接続断を区別できないのでこれを出す）で、既に実行された可能性があるため自動では送り直さない（委譲の指示は待機へ戻さず dropped にする。人の途中送信は保留に戻り、送り直すかは人が決める） | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残る。ACP の 2 つ（Devin・Grok）が、呼び出しが拒否・中断で決着した分に出す） |
 
 `present` / `status` / `title` / `fork` / `mode` / `model` / `running` / `turnEnd` はそのまま。
 
@@ -105,8 +105,11 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 途中送信の口は `control.steer`（`core/backends/acp-steer.mjs` は ACP の 2 バックエンドの共通部品）。
 ACP の `session/prompt` を走っているターンへ重ねると、**Devin は同じ回に折り込み**（実測 3000.11.92）、
 **Grok は内蔵の待ち行列に積んで今の回の直後に続けて回す**（実測 1.0.62）。どちらも応答は回の決着まで返らないので、
-「受理」は書き込みが直ぐに断られなかったこと、「渡らなかった」は呼び出しが拒否・中断で決着したこと。
-Grok のように次の回として回る分は、runTurn が drain で決着まで待つ（待たずに畳むと接続の終了で全部 dropped になる）。
+「受理」は書き込みが直ぐに断られなかったこと。受理した分は `steerConfirms` の約束どおり呼び出しの決着で合図を出す
+（cancelled 以外の stopReason で `userMessage.delivered`、拒否・中断は既読不明として `unknown: true` 付きの `userMessage.dropped`）。受理前の早期の拒否では合図を出さない。
+Grok のように次の回として回る分は、runTurn が drain で決着まで待つ（待たずに畳むと接続の終了で全部 dropped になる）。Grok は途中送信を `user_message_chunk` でエコーしないので、mapper が自分で user 行に置く（`queueUser`）。
+書いた直後に積み（受理の判定を待つ間に今の回が終わり、次の回の出力が始まることがある）、`turn_completed` の後に次の回の出力が始まる直前に送った順で置く。早期のプロトコル拒否（次のターンで送り直す）だけは取り消し、回られずに残った分は記録の末尾に置く。
+Devin は折り込んだ途中送信を `user_message_chunk` で流すかを確かめておらず、mapper は自分で行を置かない（流れなければライブの記録に残らない。元の依頼の echo が終わる前に流れると、echo と見分けられない）。
 Antigravity は途中送信を持たない（送ると `reason: 'turn'` で送信待ちになる）。
 `phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
 終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。
@@ -903,6 +906,7 @@ plugin は `opencode/pleiad-plugin-v2/` の package として配置する。ツ�
 | Codex | app-server 0.156.1 の `contextCompaction` item と `thread/compacted`、手動は `thread/compact/start` | `thread/tokenUsage/updated` の `last.totalTokens` / `modelContextWindow` | 現在の item 形からは取得できない |
 | Antigravity | `checkpoint` の意味は未確認。圧縮と判別できないため正規化しない。手動操作は提供しない | 取得しない | 取得しない |
 | Devin | Devin 自身の自動圧縮は ACP の会話に出ない。手動は `/compact` を prompt の本文として送る（ACP のスラッシュコマンドの形） | `usage_update` の `used` / `size` | 取得しない |
+| Grok | 正規化しない（自動の圧縮は Grok 自身が `config.toml` の `[session] auto_compact_threshold_percent` で決める） | `usage_update` の `used` / `size`（2026-10-19 の実機では届かなかった）。`turn_completed` の `usage` は使わない: ターンのモデル呼び出しの合計（課金の量）で、複数のモデル呼び出しでは同じ文脈を繰り返し数えるため、文脈の占有量に使えない。`_x.ai/session/usage` も同じ合計を返し、使用枠の残り・リセットの時刻は返さない | 取得しない |
 
 core は圧縮の開始・完了・失敗を `compaction`、文脈量を `contextWindow` として送る。既存の `contextUsage` はプラグインの読み込み記録なので保持する。Claude の `compact_boundary` と Codex の `contextCompaction` item をネイティブ履歴から優先して読み、sidecar の `compactions` から要約・trigger・失敗理由を補う。ID のない記録も同じターン、または近い時刻で照合して重複を除く。ネイティブ境界が無い分は sidecar から区切りを戻し、ネイティブ履歴の発言と一緒に描く。自動圧縮の予約は送信受理・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで取り消す。画面の会話切替では残す。見えている予約はファイルに保存し、Pleiad の再起動後に予定の時刻から 8 分以内のものを戻す（[ADR 0039](adr/0039-conversation-compaction.md)、[ADR 0069](adr/0069-idle-compaction-schedule-survives-restart.md)）。
 
@@ -952,3 +956,24 @@ Devin の受信は 1 行 64 MiB までとし、改行までのバイト数を加
 ツールの入力・出力・content などは、各フィールドにキーを含む文字列 16,384 文字の予算を設け、値は 256 個、深さは 12 段までに制限してから、ツール状態・履歴・画面へ渡す。巨大な `oldText` / `newText` は共通の前後を除き、変更部分と前後それぞれ 160 文字、元の文字数、省略の印を残す。変更部分自体が大きいときは前後それぞれを 4,096 文字までにし、文字予算も適用する。省略の印は文字予算とは別に付ける。結果テキストは他のバックエンドと同じ `MAX_RESULT_CHARS`（2,000 文字）で切る。
 
 この情報は表示用の抜粋であり、完全なパッチではない。Devin CLI が管理する DB や実行する編集内容は変更しない。履歴再生とライブ更新は同じ処理を通る（[ADR 0230](adr/0230-devin-large-tool-previews.md)）。
+
+## ACP の記録（Devin・Grok）の発言と再生の照合（2026-10-19）
+
+ACP には指示の欄が無いので、Pleiad の指示（visualize・browser・control・secrets・bot・追加の指示）は発言の本文の前に足して送る。エージェントにはこれまでどおり全部が届く。
+
+**記録する発言.** mapper（`devin-normalize.mjs`・`grok-normalize.mjs`）の `beginTurn(sent, shown)` は、行の `text` を `shown`（人が書いた分。先頭のメモと `!` の結果を含む）にする。`sent`（送った全文）は `user_message_chunk` のエコーとの照合にだけ使う。分割されたエコーは連結して照合する。`mergeMessages` は `sent` を保存せず、`promptHash`（改行コードだけを LF にそろえた全文の sha256）を残す。空白は詰めない。字下げだけが違うコードの発言を取り違えないためである。
+
+**再生の照合.** `session/load` の再生では、user 行が送った全文で返り、uuid は配列の位置から作られる。圧縮でネイティブが古い発言を落とすと位置がずれ、同じ uuid が別の発言を指す。そこで mapper は再生の行に `positional: true` を付ける。ライブの行には、位置の uuid とは別に、ターンごとの乱数の入った `liveUuid` を付ける。`mergeMessages` は `positional` の行が来たときだけ、次の手順で照合する（`core/conversations.mjs` の `alignPositional`）。ほかのバックエンドの照合は変えない。
+
+1. 再生の user 行の全文のハッシュが記録の行の `promptHash` と一致したら、その行の本文（原文）に戻す。一致しなければ全文のまま残し、見出しで推測して剥がすことはしない。
+2. ライブの行は `liveUuid` を uuid にして照合する。
+3. 再生の行は、記録の末尾の窓と順序を保って 1 対 1 に照合する。照合の鍵は role・本文・ツールの id の並び。末尾の共通部分を先に当て、残りを最長共通部分列で当てる。同じ数の当て方が複数あれば末尾側を取る。表が 400 万セルを超えるときは、末尾から 64 行の範囲で同じ鍵の行へ貪欲に当てる。
+4. 照合できた行は、記録の uuid を保ったまま中身（ツールの結果など）を更新する。照合できない行は、直前に照合できた行の後ろに差し込む。uuid が重なるときは `#k` を付ける。照合できなかった記録の行は消さない。
+
+**発言の id.** mapper の行の `uuid` は、ライブでも再生でも配列の位置から作る。ホスト記録の無いネイティブの会話（旧来の会話）はネイティブの行をそのまま返すので、再開・サーバーの再起動の後も、ライブで出た行と同じ uuid で読める。ホスト記録に重ねるときだけ、`mergeMessages` が `liveUuid` を uuid として採用し、記録の uuid の形（`バックエンド:ネイティブの id:…`）にする。`text.end` の発言の id も同じ組み合わせにそろえる。mapper は `uuid`（位置）と `liveUuid` を両方出す。ホスト記録の会話では `hostEvent` が `liveUuid` を記録の行と同じ形の uuid に直し、ホスト記録の無い会話では `liveUuid` を外して渡す。通知の飛び先（`turn.lastUuid`）と画面の行の照合が、どちらの会話でも読み直した履歴の行に当たる。ホスト記録の無い会話の履歴からは、記録に重ねるときだけ使う印（`sent`・`positional`・`liveUuid`）を外して返す。ホスト記録の無い会話の再生の user 行は、修正前と同じく送った全文のままである（原文の記録が無い）。
+
+role と本文で全体を重複排除することはしない。正当な「OK」「続けて」の繰り返しが消えるためである。
+
+引き継ぎの文（`record.injected`）は、ライブの行と他のバックエンドの行では、メモや `!` の結果が前に付いた行でも末尾の引き継ぎの文だけを原文に戻す。再生の行には、末尾だけの書き換えをかけない。ハッシュは書き換える前の全文から求め、手順 1 で原文に戻す。ハッシュの無い修正前の記録に備えて、再生の行の全文が引き継ぎの文と一致するときだけは原文に戻す（修正前の記録は、指示を足さずに送った引き継ぎの発言を原文で持っている。指示が前に付いた発言は全文で持っているので、末尾だけを書き換えると合わなくなる）。
+
+修正前の記録に残った、指示の全文が入った発言と重複した行は、自動では直さない。注入の部分を正しく見分ける材料が記録に無いためである。試験は `tests/unit/acp-record-merge.mjs`・`tests/unit/devin-normalize.mjs`。偽の ACP サーバー（`tests/lib/fake-devin.mjs`・`fake-grok.mjs`）は、発言に `[compact-rewrite]` があると最初の 1 往復を落として履歴を書き換える。`tests/unit/server-devin.mjs`・`server-grok.mjs` はこれを使い、ホスト記録の会話の圧縮・指示の付加・再起動と、ホスト記録の無い会話の再開・再起動の uuid と発言の id を確かめる。

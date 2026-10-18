@@ -154,6 +154,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         // 待ち行列に積まれた途中送信を、並んだ順に続けて回す
         while (session.queue?.length) {
           const queued = session.queue.shift();
+          // [drop-steer]: 受理したが読んだか分からないまま cancelled で決着する（既読不明の試験用）
+          if (queued.text.includes('[drop-steer]')) { write({ id: queued.id, result: { stopReason: 'cancelled' } }); continue; }
           const qtoken = { cancelled: false }; running.set(session.sessionId, qtoken);
           session.messages.push({ role: 'user', text: queued.text }); persist(session);
           update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
@@ -164,6 +166,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           notify(session.sessionId, { sessionUpdate: 'turn_completed', stop_reason: qtoken.cancelled ? 'cancelled' : 'end_turn', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
           write({ id: queued.id, result: { stopReason: qtoken.cancelled ? 'cancelled' : 'end_turn' } });
         }
+        // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る
+        if (text.includes('[compact-rewrite]')) { session.messages.splice(0, 2); persist(session); }
         return;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);

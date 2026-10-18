@@ -101,7 +101,7 @@ import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
-import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
+import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
 import { stopHeldAppServer } from './backends/codex-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
@@ -3054,7 +3054,7 @@ function makeEmit(turn) {
       const sent = liveInstructions.get(event.messageId);
       liveInstructions.delete(event.messageId);
       touchCard(turn);
-      agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
+      agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : event.unknown ? "unknown" : "dropped").catch(() => {});
     }
     // 受理済みの途中送信（送信待ちの項目）への合図。捨てられたら送信待ちへ戻す
     const awaited = signal && event.messageId && turn.pendingSteers?.delete(event.messageId);
@@ -4448,8 +4448,11 @@ const opsHooks = {
     const unify = live?.contextRecord?.hooks ?? saved.contextSession?.hooks ?? null;
     const owner = cwd ? (await plyHooks.resolve(cwd).catch(() => null))?.owner ?? 'native' : 'native';
     // 発火を受け取れる接続: Claude（通知・コールバック）、Codex（hook/started・hook/completed）、Antigravity は Pleiad が渡した分だけ（アダプターの記録）
-    // 真似て渡すエージェント（OpenCode）は、Pleiad が渡した分だけ（Pleiad の中で走らせる）
-    const observable = agent === 'claude' || agent === 'codex' ? 'all' : (agent === 'antigravity' || HOOK_EMULATED[agent]) && unify?.owner === 'ply' ? 'pleiad' : null;
+    // 真似て渡すエージェントのうち Pleiad の中で走らせるもの（OpenCode）は、Pleiad が渡した分だけ。
+    // プラグインのファイルで渡すもの（Grok）は Grok が自分で走らせる。発火の知らせ（hook_execution の runs[].name =
+    // `plugin/<置き場の名前>/hooks:<event>[i].hooks[j]`）は届くが、Pleiad の登録の id と結んでいないので観測できないとする
+    const observable = agent === 'claude' || agent === 'codex' ? 'all'
+      : (agent === 'antigravity' || (HOOK_EMULATED[agent] && HOOK_VIA[agent] !== 'plugin')) && unify?.owner === 'ply' ? 'pleiad' : null;
     return { agent, cwd, report, observable: Boolean(observable), observed: observable, owner, unify, runs: trimHookRuns([...(saved.hookRuns ?? []), ...(live?.hookRuns ?? [])]) };
   },
   view: (cwd) => plyHooks.view(cwd),

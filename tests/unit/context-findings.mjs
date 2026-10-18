@@ -112,7 +112,10 @@ export default async function (t) {
     const session = createContextSession({ store: { get: async () => ({ contextSession: record }) }, snapshots: null, scanOptions });
     const native = await session.findings('s1', repo, 'codex');
     t.ok('エージェント任せの会話は、そのエージェントの規則で探したファイルが対象', native.duplicates.length === 1 && native.missing.map(m => m.target).join() === 'docs/gone.md', JSON.stringify(native.missing));
-    t.ok('規則を知らないエージェントは null', await session.findings('s1', repo, 'antigravity') === null);
+    const antigravity = await session.findings('s1', repo, 'antigravity');
+    t.ok('読み込み元を持つエージェントは、その規則で探したファイルが対象（Antigravity は作業場所の AGENTS.md）', antigravity?.missing.map(m => m.target).join() === 'docs/gone.md', JSON.stringify(antigravity));
+    // 読み込み元（contextSources）が null のエージェントと、登録されていないエージェント
+    t.ok('規則を知らないエージェントは null', await session.findings('s1', repo, 'fake') === null && await session.findings('s1', repo, 'no-such-agent') === null);
     const plain = await session.nativeInstructions(repo, 'codex');
     t.ok('nativeInstructions は本文を返さない（量だけ）', plain.entries.length === 2 && plain.entries.every(e => !('content' in e) && !('realPath' in e)));
 

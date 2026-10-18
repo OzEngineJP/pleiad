@@ -3,7 +3,7 @@
 //   Codex:       thread/start・thread/resume の config に hooks（登録）と hooks.state（自分の定義に trusted_hash、ユーザー・プロジェクトの key に enabled:false）
 //   Antigravity: Pleiad の一時の置き場（--add-dir）の .agents/hooks.json に、登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの { enabled: false }
 // 変換（イベント・matcher・入出力）は第 2 段の core/hooks-copy.mjs と core/hook-adapter.mjs をそのまま使う。
-import { HOOK_AGENTS, HOOK_EVENTS, HOOK_EMULATED } from './hooks-config.mjs';
+import { HOOK_AGENTS, HOOK_EVENTS, HOOK_EMULATED, HOOK_VIA } from './hooks-config.mjs';
 import { convertHook, ADAPTER_MARGIN, adapterCommand, defaultTimeout } from './hooks-copy.mjs';
 
 // Claude の SDK のコールバックで渡せないイベント。SessionStart はコールバックが呼ばれない（実機で確認。2026-09-28、Agent SDK 0.3.258）。
@@ -29,6 +29,10 @@ export function deliverable(hook, to, { platform = process.platform } = {}) {
     const d = deliverable({ ...hook, targets: [as], matchers: { ...(hook.matchers ?? {}), ...(hook.matchers?.[to] ? { [as]: hook.matchers[to] } : {}) } }, as, { platform });
     if (!d) return null;
     const reasons = d.reasons.filter((r) => !(r.code === 'claudeCallback' && r.params?.event === 'SessionStart'));
+    // 自分のイベントの表があるエージェント（Grok）は、真似る形にあっても自分が起こさないイベントを渡さない（黙って走らないため）
+    if (HOOK_EVENTS[to] && !HOOK_EVENTS[to].includes(d.event) && !reasons.some((r) => r.code === 'event')) reasons.push({ code: 'event', params: { event: d.event } });
+    // プラグインのファイルで渡すエージェント（Grok）は async を読まず、終わるまで待つ（~/.grok/docs/user-guide/10-hooks.md）。待ち方が変わるので渡さない
+    if (d.async && HOOK_VIA[to] === 'plugin') reasons.push({ code: 'asyncGrok' });
     return { ...d, status: reasons.length ? 'blocked' : 'ok', reasons, emulates: as };
   }
   const reasons = [];
@@ -88,6 +92,21 @@ export function codexHooksTable(supplied, { adapterPath, node }) {
       ...(s.d.timeout ? { timeout: s.d.timeout } : {}), ...(s.d.async ? { async: true } : {}) }] });
   }
   return { table, index };
+}
+
+/**
+ * Grok のこのターンだけのプラグインの hooks/hooks.json（core/backends/grok-hooks.mjs が書き、_meta.pluginDirs で渡す。形は Claude Code と同じ）。
+ * 登録 1 件を 1 つの group にする。コマンドは Claude の形（アダプター越しのものは <先> = claude）
+ */
+export function grokHooksFile(supplied, { adapterPath, node = 'node' }) {
+  const hooks = {};
+  for (const s of supplied) {
+    const list = hooks[s.d.event] ??= [];
+    list.push({ ...(s.d.matcher ? { matcher: s.d.matcher } : {}),
+      hooks: [{ type: 'command', command: suppliedCommand(s, 'claude', { adapterPath, node }), // backend-allow: Grok の hooks の形は Claude Code と同じ
+        ...(s.d.timeout ? { timeout: s.d.timeout } : {}) }] });
+  }
+  return { hooks };
 }
 
 const snake = e => e.replace(/[A-Z]/g, (c, i) => (i ? '_' : '') + c.toLowerCase());
