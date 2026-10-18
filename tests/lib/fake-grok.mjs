@@ -33,6 +33,12 @@ const modelState = (current) => ({
 });
 const MODE_IDS = ['default', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions', 'plan'];
 const modesFor = current => ({ currentModeId: current, availableModes: MODE_IDS.map(id => ({ id, name: id, description: `fixture mode ${id}` })) });
+const configOptions = session => [
+  { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: session.model, options: MODELS.map(m => ({ value: m.modelId, name: m.name })) },
+  { id: 'reasoning_effort', name: 'Reasoning Effort', category: 'thought_level', type: 'select', currentValue: session.effort, options: EFFORTS.map(e => ({ value: e.value, name: e.label })) },
+];
+// Grok のターンの終わりは `_x.ai/session_notification` で届く（内側は同じ sessionUpdate の形）
+const notify = (sessionId, value) => write({ method: '_x.ai/session_notification', params: { sessionId, update: value } });
 
 const stateDir = process.env.FAKE_GROK_STATE_DIR || (process.env.GROK_HOME ? path.join(process.env.GROK_HOME, 'sessions') : '');
 if (stateDir) fs.mkdirSync(stateDir, { recursive: true });
@@ -92,13 +98,14 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         if (process.env.FAKE_GROK_AUTH === '0') throw Object.assign(new Error('Authentication required'), { code: -32002 });
         const session = { sessionId: `grok-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'default', model: spawnModel, effort: spawnEffort };
         persist(session);
-        result = { sessionId: session.sessionId, modes: modesFor(session.mode) }; break;
+        // 実機は modes を返さず、models と configOptions（model・reasoning_effort）を返す
+        result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
       case 'session/load': {
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
         replay(session);
-        result = { sessionId: session.sessionId, modes: modesFor(session.mode) }; break;
+        result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
       case 'session/list': {
         if (stateDir) for (const name of fs.readdirSync(stateDir).filter(name => /^grok-fixture-.*\.json$/.test(name))) { const s = JSON.parse(fs.readFileSync(path.join(stateDir, name), 'utf8')); sessions.set(s.sessionId, s); }
@@ -108,8 +115,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         const session = load(p.sessionId);
         if (!MODE_IDS.includes(p.modeId)) throw new Error('Unsupported mode');
         session.mode = p.modeId; persist(session);
-        update(session.sessionId, { sessionUpdate: 'current_mode_update', currentModeId: p.modeId });
-        result = { currentModeId: p.modeId }; break;
+        notify(session.sessionId, { sessionUpdate: 'current_mode_update', currentModeId: p.modeId });
+        result = {}; break;
       }
       case 'session/prompt': {
         const session = load(p.sessionId), text = (p.prompt ?? []).map(v => v.text ?? '').join('');
@@ -136,6 +143,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(0, middle) } });
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });
         session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools }); persist(session); running.delete(session.sessionId);
+        notify(session.sessionId, { sessionUpdate: 'turn_completed', stop_reason: token.cancelled ? 'cancelled' : 'end_turn', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
         result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn' }; break;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);

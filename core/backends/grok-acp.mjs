@@ -171,7 +171,8 @@ export class GrokAcp {
         if (!(typeof frame.id === 'string' || (typeof frame.id === 'number' && Number.isFinite(frame.id)))) return this.#fail(rpcError('Invalid Grok ACP request id', -32600));
         return this.#serverRequest(frame);
       }
-      if (frame.method === 'session/update') {
+      // Grok は固有の出来事を `_x.ai/session_notification`（内側は同じ sessionUpdate の形）で送る
+      if (frame.method === 'session/update' || frame.method === '_x.ai/session_notification') {
         try {
           const result = this.onUpdate(frame.params);
           if (result && typeof result.then === 'function') result.catch(() => this.#fail(rpcError('Grok ACP update handler failed')));

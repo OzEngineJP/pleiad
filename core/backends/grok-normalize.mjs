@@ -12,7 +12,7 @@ const contentText = value => {
 };
 const inputOf = value => value && typeof value === 'object' ? value : value == null ? {} : { value };
 
-export function createGrokMapper(sessionId, emit = () => {}) {
+export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null } = {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
   let current = null, expectedEcho = null, echo = '', live = false, sepText = false, sepThink = false;
   function row(role) {
@@ -26,13 +26,22 @@ export function createGrokMapper(sessionId, emit = () => {}) {
   function accept(update) {
     const kind = update?.sessionUpdate;
     if (kind === 'usage_update') {
-      // Grok の使用状況（used/size は文脈の占有、cost はセッションの費用）
+      // used/size は文脈の占有、cost はセッションの費用（形は Devin と同じ）
       const used = Number(update.used), size = Number(update.size);
       if (live && Number.isFinite(used) && Number.isFinite(size) && size > 0) send({ type: 'contextWindow', usedTokens: used, windowTokens: size });
       const cost = Number(update.cost?.amount);
       if (live && Number.isFinite(cost) && String(update.cost?.currency ?? '').toUpperCase() === 'USD') send({ type: 'usage', costUsd: cost });
       return;
     }
+    // Grok のターンの終わり（_x.ai/session_notification で届く）。usage.totalTokens は文脈の占有
+    if (kind === 'turn_completed') {
+      const used = Number(update.usage?.totalTokens);
+      if (live && Number.isFinite(used) && Number.isFinite(windowTokens) && windowTokens > 0) send({ type: 'contextWindow', usedTokens: used, windowTokens });
+      return;
+    }
+    // Grok のフックの実行（_x.ai/session_notification で届く）
+    if (kind === 'hook_run_started') { send({ type: 'hookRun', phase: 'started' }); return; }
+    if (kind === 'hook_execution') { send({ type: 'hookRun', phase: 'response' }); return; }
     if (kind === 'user_message_chunk') {
       const text = contentText(update.content);
       if (live && expectedEcho !== null && !current?.thinking && !current?.toolCalls?.length && current?.role === 'user') {

@@ -119,7 +119,11 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     }
     const options = state?.configOptions ?? [];
     const modeOption = options.filter(o => o?.id === 'mode' || o?.category === 'mode');
-    if (modeOption.length !== 1) throw fail('modeUnavailable');
+    if (modeOption.length !== 1) {
+      // Grok は modes も mode の configOption も返さないが、session/set_mode は直接受ける（空の ACK）
+      await client.call('session/set_mode', { sessionId, modeId: wanted });
+      return;
+    }
     const choices = values => (values ?? []).flatMap(v => Array.isArray(v?.options) ? choices(v.options) : [v?.value]);
     if (!choices(modeOption[0].options).includes(wanted)) throw fail('modeUnavailable');
     const result = await client.call('session/set_config_option', { sessionId, configId: modeOption[0].id, value: wanted });
@@ -221,15 +225,16 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           });
           check();
           verifySelection(client.init, model, effort);
+          const windowTokens = Number((client.init?._meta?.modelState?.availableModels ?? []).find(m => m.modelId === client.init?._meta?.modelState?.currentModelId)?._meta?.totalContextTokens) || null;
           let state;
           if (sessionId) {
-            mapper = createGrokMapper(sessionId, emit);
+            mapper = createGrokMapper(sessionId, emit, { windowTokens });
             state = await client.call('session/load', { sessionId, cwd, mcpServers: [] });
           } else {
             state = await client.call('session/new', { cwd, mcpServers: [] });
             sessionId = state?.sessionId;
             if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('grok.errors.notConnected'));
-            mapper = createGrokMapper(sessionId, emit);
+            mapper = createGrokMapper(sessionId, emit, { windowTokens });
           }
           remember(sessionId, mapper); active.set(sessionId, client);
           check();
