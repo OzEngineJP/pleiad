@@ -25,10 +25,25 @@ export default async function (t) {
     const first = await c.runTurn({ backend: 'devin', cwd, prompt: '[permission] alpha', model: 'swe-2-medium', mode: 'accept-edits' });
     const sid = first.sessionId, loaded = await c.cmd('loadSession', { sessionId: sid });
     t.ok('承認を Pleiad に渡し、本文・思考・ツールの結果を保存する', first.outcome === 'ok' && permissions.length === 1 && loaded.messages.some(m => m.role === 'assistant' && m.thinking && m.toolCalls?.length));
+    const sessionAt = first.events.findIndex(e => e.type === 'session'), thinkAt = first.events.findIndex(e => e.type === 'activity' && e.state === 'thinking'), textAt = first.events.findIndex(e => e.type === 'text.delta');
+    t.ok('送ってから最初の応答まで稼働表示が出る（送信準備中→考えている）',
+      first.events.find(e => e.type === 'activity')?.state === 'preparing' && sessionAt > -1 && thinkAt > sessionAt && thinkAt < textAt);
     const before = structuredClone(loaded.messages);
     const next = await c.runTurn({ sessionId: sid, prompt: 'beta', model: 'swe-2-max', mode: 'ask' });
+    const nextStates = next.events.filter(e => e.type === 'activity').map(e => e.state);
+    t.ok('再開の送信でも同じ順で出す', nextStates[0] === 'preparing' && nextStates.includes('thinking'));
     const after = await c.cmd('loadSession', { sessionId: sid });
     t.ok('再開時の replay を重複させず前の UUID を保つ', next.outcome === 'ok' && after.messages.filter(m => m.role === 'user').length === 2 && before.every((m, i) => after.messages[i].uuid === m.uuid));
+    const compactFrom = c.mark();
+    const compactResult = await c.cmd('compactConversation', { sessionId: sid });
+    const compactDone = await c.waitFor(e => e.type === 'compaction' && e.sessionId === sid && e.phase === 'complete', { from: compactFrom, ms: 20_000 });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sid, { from: compactFrom, ms: 20_000 });
+    const afterCompact = await c.cmd('loadSession', { sessionId: sid });
+    t.ok('/compact を送って手動圧縮が完了し、前後の文脈量を持つ',
+      compactResult.status === 'started' && compactDone.trigger === 'manual'
+      && compactDone.beforeTokens > compactDone.afterTokens
+      && afterCompact.compactions?.some(x => x.phase === 'complete')
+      && afterCompact.messages.filter(m => m.role === 'user').length === 2, JSON.stringify(compactDone));
     const editId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
     const edit = await c.runTurn({ sessionId: editId, prompt: '[large-edit]', model: 'swe-2-high' });
     const edited = await c.cmd('loadSession', { sessionId: editId });
@@ -44,6 +59,8 @@ export default async function (t) {
     const text = env.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     const observed = JSON.parse(text);
     t.ok('別 cwd は別プロセスで起動し native 設定の場所を保つ', observed.cwd === other && observed.configHome === nativeConfig);
+    // ply_control は ACP の mcpServers（type: 'http'）と会話束縛の CLI の env で届く（印 plyControl。ブラウザーは Chrome の層が無い試験では渡らない）
+    t.ok('ply_control を mcpServers で渡し、会話束縛の CLI の環境変数が届く', observed.mcpServers?.includes('ply_control') && observed.seenEnv?.includes('PLEIAD_CONTROL_URL') && observed.seenEnv?.includes('PLEIAD_CONTROL_TOKEN'), JSON.stringify({ mcpServers: observed.mcpServers, seenEnv: observed.seenEnv }));
     for (const marker of ['model', 'thought_level', 'speed', 'mode']) {
       const turn = await c.runTurn({ backend: 'devin', cwd, prompt: `[${marker}-drift]`, model: 'swe-2-high' });
       t.ok(`実行中の確認済み設定の変更を拒否する（${marker}）`, turn.outcome === 'error');

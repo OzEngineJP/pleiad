@@ -682,6 +682,26 @@
       "loginFailed": "ログインに失敗した"
     }
   },
+  "grok": {
+    "description": "ローカルの Grok Build CLI と既存のログインを使う",
+    "modes": {
+      "askNote": "読む以外の操作を確認する。OS による隔離ではない",
+      "editNote": "編集を自動で許可する。作業場所の外へのアクセスを OS で隔離しない",
+      "auto": "自動",
+      "autoNote": "Grok が安全と判断する操作を自動で許可する。作業場所の外も対象",
+      "planNote": "変更前に計画する。OS の読み取り専用の隔離ではない",
+      "bypassNote": "確認しない"
+    },
+    "errors": {
+      "notInstalled": "Grok Build CLI（grok）が見つかりません。インストールしてから再確認してください",
+      "loginRequired": "Grok Build CLI にログインしていません。`grok login`（ブラウザーが無いときは `grok login --device-auth`）を実行してからやり直してください",
+      "modeUnavailable": "選んだ承認モードを Grok Build CLI の応答で確認できません",
+      "modelUnavailable": "選んだモデルは Grok Build CLI で使えません（{{model}}）",
+      "effortUnavailable": "選んだ思考の強さを Grok Build CLI が受け付けませんでした（{{effort}}）",
+      "promptFailed": "Grok Build のターンが正常に完了しませんでした",
+      "notConnected": "Grok Build CLI に接続していません"
+    }
+  },
   "devin": {
     "description": "ローカルの Devin CLI と既存のログインを使う",
     "usageUnknown": "Devin CLI の残り使用枠は取得できないため不明です。",

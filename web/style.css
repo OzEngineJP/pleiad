@@ -342,6 +342,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .row-be-claude img{height:14px}
 .row-be-antigravity svg{color:var(--ink-antigravity)}
 .row-be-devin svg{color:var(--ink-brand)}
+.row-be-grok svg{color:var(--ink-brand)}
 .wait{color:var(--ink-mark);flex:none}                 /* あなたを待っている。UI 全体でこの意味にだけ差し色 */
 .wait::before{content:"◆ ";font-size:9px;vertical-align:1px}
 .wait.only::before{content:"◆"}                         /* 器の見出しでは文言を出さず印だけ */

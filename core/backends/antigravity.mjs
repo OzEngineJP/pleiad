@@ -298,6 +298,9 @@ export const backend = {
     // 失敗の理由を会話の控えに残し、ターンの後に agy のログを書き出す（server.mjs の recordBackendFailure）
     failureDiagnostics: true,
     handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
+    // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
+    // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに渡す。可視化の指示は渡さない（発言に入れていない）
+    browser: true, plyControl: true, secrets: true, visualize: false, hooks: true,
   },
 
   toolHints: TOOL_HINTS,

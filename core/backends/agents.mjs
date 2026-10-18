@@ -92,10 +92,30 @@ export const AGENTS = {
       // The official Windows installer adds this directory to PATH after installation.
       searchDirs: (env) => (env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'devin', 'cli', 'bin')] : []),
     },
-    idleCompaction: null,
+    // 会話を離れた後の自動の圧縮（/compact を prompt として送る）。既定は切る（Devin 自身も文脈があふれる前に圧縮する）
+    idleCompaction: { enabled: false, delayMinutes: 25 },
     contextSources: null,
     hooksAs: null,
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
+    shellTools: [],
+    shellDefault: 'native',
+  },
+  grok: {
+    module: './grok.mjs',
+    shortLabel: 'Grok',
+    brand: { logo: 'grok.svg', mark: true },
+    cli: {
+      exe: 'grok', binEnv: 'AGENT_HOST_GROK_BIN', npmPackage: '@xai-official/grok', installUrl: 'https://x.ai/cli',
+      // 公式のインストーラー（install.ps1 / install.sh）は `~/.grok/bin` に置く。npm で入れたものは PATH で見つかる
+      searchDirs: (env) => [path.join(env.USERPROFILE || env.HOME || '', '.grok', 'bin')].filter((d) => d.length > '.grok/bin'.length),
+    },
+    // 会話を離れた後の自動の圧縮は Grok 自身が決める（config.toml の [session] auto_compact_threshold_percent）
+    idleCompaction: null,
+    // AGENTS.md（作業場所。common）と Claude 互換（CLAUDE.md・.claude/ の読み込み元。既定で有効）
+    contextSources: ['common', 'claude'],
+    // Grok はネイティブの Hooks（x.ai/hooks）を持つが、Pleiad がそろえる Hooks の渡し方はまだ無い
+    hooksAs: null,
+    // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。grok-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
   },

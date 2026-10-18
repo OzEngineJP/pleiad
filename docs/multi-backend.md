@@ -79,7 +79,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `thinking.delta` | `{ text?, estimatedTokens? }` | `thinking_delta` |
 | `tool.start` | `{ id, name, input, at, startedAt?, shell? }` `shell: true` は、名前でシェルのツールと見分けられない呼び出し（ACP の自由な題。Devin の `kind: "execute"`）がシェルのコマンドであること。名前で見分けるものは、エージェントの記述（`core/backends/agents.mjs`）の `shellTools` に書く（`core/shell-tools.mjs`）。`at` はサーバーが受けた時刻（epoch ms）。バックエンドは出さず、server の `makeEmit` が 1 か所で付ける（すでに数の `at` があれば上書きしない）。実行中のスナップショット（`stream.events`）にも同じ値が残るので、開き直し・再接続の再生でも、画面は走っているツールの経過と見出しの経過を本当の開始から数える（端末の時計とのずれは `ready` の `now` で補う）。`startedAt` はバックエンドが申告した開始（Codex の `startedAtMs`。推定で埋めない） | `assistant` の `tool_use` |
 | `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
-| `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"retrying"\|"idle", label?, retry? }`（retrying は上限・一時的な失敗のあと再試行を待っている。`retry: { attempt, next, message, reason, limit }`、next は次の再試行の epoch ms。人の応答待ちの waiting とは別。ADR 0229） | `system/status`, `session_state_changed` |
+| `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"preparing"\|"retrying"\|"idle", label?, retry? }`（preparing は送信の準備。CLI の起動・履歴の再生・設定の適用など、送る前に数秒かかるもの。retrying は上限・一時的な失敗のあと再試行を待っている。`retry: { attempt, next, message, reason, limit }`、next は次の再試行の epoch ms。人の応答待ちの waiting とは別。ADR 0229） | `system/status`, `session_state_changed` |
 | `turnResult` | `{ outcome: "ok"\|"error"\|"aborted"\|"limited", turns?, costUsd?, error?, resetsAt? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない。limited は使用量の上限で止まった。resetsAt は解ける時刻の epoch ms で、分からなければ出さない。ADR 0229） | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
 | `auth` | `{ backend, phase: "url"\|"done"\|"error", url?, message? }` | 新規（ログイン誘導） |
@@ -351,7 +351,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 - ツール: `run`（終わるまで待つ。上限は既定 2 分・最大 10 分）・`start`（裏で始めてすぐジョブの id を返す）・`output`（`since` から続きを読む）・`stop`（子のプロセスごと止める）・`list`。走らせる口は `core/host-shell.mjs`。`shell` 引数で `default`・`bash`・`powershell`・`cmd`（Windows だけ）を選ぶ。コマンドには会話のシェルの環境変数（エージェントの Chrome・`PLEIAD_CONTROL_*`・秘密情報と変数）を渡す
 - 承認: 読み取りだけのモード（scope が `none`・`readonly`）は断る。確認なし（autonomy が `never`）のほかは、走らせる前に会話へ承認のカードを出す。エージェント側では聞かない（Claude は `decidePermission` で通し、OpenCode は `ply_shell_*` を allow、Codex は `default_tools_approval_mode: approve`）
 - ジョブの出力はメモリだけ（256 KB。古い方から捨て、捨てた分を数える）。会話ごとの同時の `start` は 8 まで。`start` のジョブは会話の裏の一覧（`running` の `background`、`kind: 'shell'`、`backend: 'ply_shell'`）に出て、`sessions.stopBackground` で止められる。人が止めた・自分で終わった `start` のジョブは、その会話へ知らせる（`shell.jobDone`）。サーバーの終わり・会話の削除・巻き戻しで止める（保持役には載せない）
-- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せないので、Devin は Pleiad の MCP をまだ受けていないので、渡していない
+- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せず、Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control は ACP の `session/new` の `mcpServers` で渡す）
 - **エージェントのシェルを切る**: 設定 `shellTool`（`{ <エージェントの id>: 'native' | 'ply' }`。無ければエージェントの記述の `shellDefault`。OpenCode だけ `'ply'`）が `'ply'` で、能力の印 `nativeShellOff` を持つエージェントは、`runArgs.shellRuntime.nativeOff` でエージェントのシェルのツールを切る。Claude は `disallowedTools` に `Bash`・`PowerShell`、OpenCode は会話の権限で `bash` を全面拒否（一覧から外れる。規則の印 `+noshell`）。切った会話にだけ使い方の指示（`shell.instructions`。「指示の量」の内訳 `shell`）を足す
 - シェルのツールの名前（長いコマンドの知らせ・声の待ちの案内が見分ける）は、エージェントの記述の `shellTools`（`core/shell-tools.mjs`。toolHints の `shape: 'shell'` と同じ名前）。名前で見分けられない呼び出し（ACP の自由な題）は `tool.start` の `shell: true`
 
@@ -829,6 +829,13 @@ Codexの `set_status / set_title / fork` は未接続なので、
 対応表の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）・その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
 `'conformance'` か既存の suite の名前）を足す。どれかが欠けると backend-contract が落ちる。
 
+**runArgs の配達物**（エージェントへ機能を渡すキー: `browserEnv`・`controlRuntime`・`secretsRuntime` など）は `contract.mjs` の
+`RUN_ARG_FEATURES` に「キー → 能力の印」の行が要る。`server.mjs` は runArgs を組み立てるところと、バックエンドへ渡す前の `gateRunArgs` の
+両方で印を見るので、印の無いバックエンドにはその配達物が届かない（消したキーはバックエンドの既定値に落ちる）。一覧に無いキーを runArgs に
+足すと試験（`PLEIAD_BACKEND_CONTRACT=strict`）で `gateRunArgs` が例外にするので、新しい配達物は必ず `RUN_ARG_FEATURES`（機能）か
+`RUN_ARG_PLUMBING`（プロンプト・承認など全バックエンドに渡る回線）のどちらかに登録する。配達物の機能を足したら、対応する印も足し、
+受け取れないバックエンドは `false` と宣言する。`false` なのに配達される組み合わせは起きない。
+
 #### id で分けない
 
 `core/backends/` の外で `'claude'`・`'codex'`・`'antigravity'` を比べる・並べる・引くと、エージェントを足したときに黙って足りなくなる
@@ -885,6 +892,7 @@ plugin は `opencode/pleiad-plugin-v2/` の package として配置する。ツ�
 | Claude Code | SDK の `status.compacting`・`compact_result`・`compact_boundary`、PreCompact / PostCompact。手動は `/compact` | `getContextUsage()` の `total_tokens` / `raw_max_tokens` | PostCompact |
 | Codex | app-server 0.156.1 の `contextCompaction` item と `thread/compacted`、手動は `thread/compact/start` | `thread/tokenUsage/updated` の `last.totalTokens` / `modelContextWindow` | 現在の item 形からは取得できない |
 | Antigravity | `checkpoint` の意味は未確認。圧縮と判別できないため正規化しない。手動操作は提供しない | 取得しない | 取得しない |
+| Devin | Devin 自身の自動圧縮は ACP の会話に出ない。手動は `/compact` を prompt の本文として送る（ACP のスラッシュコマンドの形） | `usage_update` の `used` / `size` | 取得しない |
 
 core は圧縮の開始・完了・失敗を `compaction`、文脈量を `contextWindow` として送る。既存の `contextUsage` はプラグインの読み込み記録なので保持する。Claude の `compact_boundary` と Codex の `contextCompaction` item をネイティブ履歴から優先して読み、sidecar の `compactions` から要約・trigger・失敗理由を補う。ID のない記録も同じターン、または近い時刻で照合して重複を除く。ネイティブ境界が無い分は sidecar から区切りを戻し、ネイティブ履歴の発言と一緒に描く。自動圧縮の予約は送信受理・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで取り消す。画面の会話切替では残す。見えている予約はファイルに保存し、Pleiad の再起動後に予定の時刻から 8 分以内のものを戻す（[ADR 0039](adr/0039-conversation-compaction.md)、[ADR 0069](adr/0069-idle-compaction-schedule-survives-restart.md)）。
 

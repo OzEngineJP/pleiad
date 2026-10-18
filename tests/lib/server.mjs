@@ -51,10 +51,12 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       // main がサーバーを起こすときにだけ渡す変数（AGENT_HOST_HANDOVER・SERVER_LOG・RUNTIME_KEY など。core/boot-env.mjs）と、Pleiad が会話のシェルへ渡す
       // PLEIAD_CLI_*・PLEIAD_CONTROL_* などは、実行元から継がない（tests/lib/inherited-env.mjs の serverBaseEnv）。test-env を読まずに startServer を使う入口
       // （tests/browser/*）でも、インストール版の実行場所・server.log・Ply.exe へ向かない。確かめるテストは env で渡す
-      ...Object.fromEntries(Object.entries(serverBaseEnv(process.env)).filter(([key]) => !key.toUpperCase().startsWith('DEVIN_') && key.toUpperCase() !== 'WINDSURF_API_KEY')),
-      // test-env を読まない入口でも、実 Devin の起動と継承した資格情報の利用を防ぐ。
-      // Devin の試験だけが env で身代わりを指定する。
+      ...Object.fromEntries(Object.entries(serverBaseEnv(process.env)).filter(([key]) => !key.toUpperCase().startsWith('DEVIN_') && !key.toUpperCase().startsWith('GROK_') && !key.toUpperCase().startsWith('XAI_') && key.toUpperCase() !== 'WINDSURF_API_KEY')),
+      // test-env を読まない入口でも、実 Devin・Grok の起動と継承した資格情報の利用を防ぐ。
+      // Devin・Grok の試験だけが env で身代わりを指定する。
       AGENT_HOST_DEVIN_BIN: 'missing-pleiad-test-devin-cli',
+      AGENT_HOST_GROK_BIN: 'missing-pleiad-test-grok-cli',
+      GROK_HOME: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), 'grok-home'),
       DEVIN_CONFIG_HOME: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), 'devin-config'),
       DEVIN_SESSIONS_DIR: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), 'devin-sessions'),
       AGENT_HOST_PORT: "0",

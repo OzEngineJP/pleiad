@@ -448,6 +448,8 @@ export const backend = {
       if (process.env.FAKE_COMPUTER_USE === 'off') return false;
       return { images: process.env.FAKE_COMPUTER_IMAGES === 'path' ? 'path' : 'inline', waitSliceMs: Number(process.env.FAKE_COMPUTER_SLICE_MS) > 0 ? Number(process.env.FAKE_COMPUTER_SLICE_MS) : null };
     },
+    // runArgs の配達物は台本で全部確かめられるよう、全部受け取ることにする
+    browser: true, plyControl: true, secrets: true, visualize: true, hooks: true,
   },
 
   subagentTools: ["Agent"],

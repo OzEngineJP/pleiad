@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
-import { t } from '../i18n.mjs';
+import { t, agentT } from '../i18n.mjs';
+import { BROWSER_SERVER } from '../browser-bridge.mjs';
+import { CONTROL_SERVER } from '../ops/surfaces/mcp.mjs';
 import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
 import { NO_CAPABILITIES } from './contract.mjs';
@@ -63,8 +65,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       return catalogue(launch, signal);
     });
   }
-  async function openClient(cwd, handlers = {}) {
-    const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir });
+  async function openClient(cwd, handlers = {}, extraEnv = null) {
+    const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: extraEnv ? { ...process.env, ...extraEnv } : process.env });
     const Client = Acp ?? (await import('./devin-acp.mjs')).DevinAcp;
     const client = new Client({ ...launch, ...handlers, onRequest: handlers.onRequest ?? (async method => {
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
@@ -91,7 +93,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   });
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true },
+    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true,
+      // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
+      browser: true, plyControl: true, secrets: true, visualize: true },
     modes,
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
     async models(cwd = process.cwd()) { return buildDevinModels(await rawModels(cwd)); },
@@ -165,9 +169,14 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
           if (args.contextRuntime) throw new Error(t('context.runtime.refused', { backend: 'Devin CLI' }));
           check();
+          // モデル一覧・CLI の起動・履歴の再生・設定の適用は送る前に済ませるが、数秒黙る。
+          // その間も画面が止まって見えないよう、準備中から稼働表示に出す
+          emit({ type: 'activity', state: 'preparing' });
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
           const selection = resolveDevinModel(await rawModels(cwd, local.signal), args.model ?? '');
           check();
+          // ブラウザー（AGENT_BROWSER_*）・ply_control の CLI・秘密情報と変数は、起動する CLI の env で渡す（会話のシェルへ届く）
+          const extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}), ...(args.secretsRuntime?.env ?? {}) };
           client = await openClient(cwd, {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
             onResponse: ({ method, params, result }) => {
@@ -199,14 +208,17 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               const selected = answer?.allow ? allow : deny;
               return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
             },
-          });
+          }, extraEnv);
           check();
+          // Pleiad の MCP（ply_browser・ply_control）は ACP の mcpServers で渡す（type: 'http' が要る。外すと session/new が Invalid params で断る）
+          const acpMcp = (name, runtime) => (runtime?.url ? [{ name, type: 'http', url: runtime.url, headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : []);
+          const mcpServers = [...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime)];
           let state;
           if (sessionId) {
             mapper = createDevinMapper(sessionId, emit);
-            state = await client.call('session/load', { sessionId, cwd, mcpServers: [] });
+            state = await client.call('session/load', { sessionId, cwd, mcpServers });
           } else {
-            state = await client.call('session/new', { cwd, mcpServers: [] });
+            state = await client.call('session/new', { cwd, mcpServers });
             sessionId = state?.sessionId;
             if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('devin.errors.notConnected'));
             mapper = createDevinMapper(sessionId, emit);
@@ -231,13 +243,18 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           selectedMode = mode;
           if (latestSession !== sessionId || !matchesVerified(latestSnapshot, verified) || latestMode !== mode) throw new Error(t('devin.errors.configChanged'));
           check();
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+          // 読み取り専用のモードでは、ブラウザーの指示を「操作しない」に読み替える（agent-browser は読むだけでもデーモンの書き込みが要る。Codex と同じ）
+          let browserInstructions = args.browserInstructions;
+          if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
+          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.visualizeInstructions, browserInstructions, args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           mapper.beginTurn(prompt);
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
           if (control) control.handle = { sessionId };
           check();
           prompting = true;
+          // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
+          emit({ type: 'activity', state: 'thinking' });
           const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
           sent = true; onPromptDelivered?.();
           const result = await Promise.race([response, stopped]);
@@ -266,6 +283,53 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         if (outcome === 'error') throw sent ? error : undelivered(error);
         return { sessionId };
       });
+    },
+    /**
+     * 会話の圧縮（/compact）。ACP のスラッシュコマンドは、host が prompt の本文として送る。
+     * Devin の自動圧縮は ACP の会話には出ない（CLI の変更履歴）ので、区切りはここで出す。
+     * 第 1 引数の sessionId はネイティブの id（core/conversations.mjs が host の id から訳す）。
+     * 前後の文脈量は、Devin が流す usage_update（文脈の占有）から取る。来なければ量は付けない
+     */
+    async compact({ sessionId, emit, cwd, trigger = 'manual', signal }) {
+      const dir = path.resolve(cwd ?? (await cwdFor(sessionId)) ?? process.cwd());
+      const hostSignal = signal?.signal ?? signal;
+      const local = new AbortController();
+      let client, fatal = null, usage = null;
+      const onAbort = () => { local.abort(); try { client?.notify('session/cancel', { sessionId }); } catch {} };
+      hostSignal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        client = await openClient(dir, {
+          onGone: error => { fatal = error; local.abort(); },
+          onUpdate: params => {
+            if (params.sessionId !== sessionId) return;
+            const u = params.update;
+            if (u?.sessionUpdate !== 'usage_update') return;
+            const used = Number(u.used), size = Number(u.size);
+            if (!Number.isFinite(used) || !Number.isFinite(size) || size <= 0) return;
+            usage = { usedTokens: used, windowTokens: size };
+            emit({ type: 'contextWindow', usedTokens: used, windowTokens: size });
+          },
+        });
+        await client.call('session/load', { sessionId, cwd: dir, mcpServers: [] });
+        if (fatal) throw fatal;
+        const before = usage?.usedTokens;
+        emit({ type: 'compaction', phase: 'start', trigger });
+        emit({ type: 'activity', state: 'compacting' });
+        const result = await client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '/compact' }] }, { timeoutMs: 0 });
+        if (fatal) throw fatal;
+        if (result?.stopReason !== 'end_turn') {
+          emit({ type: 'compaction', phase: 'failed', trigger,
+            reason: result?.stopReason === 'cancelled' || local.signal.aborted ? t('turn.aborted') : t('devin.errors.promptFailed') });
+          return { sessionId };
+        }
+        const after = usage?.usedTokens;
+        emit({ type: 'compaction', phase: 'complete', trigger,
+          ...(Number.isFinite(before) && Number.isFinite(after) && after !== before ? { beforeTokens: before, afterTokens: after } : {}) });
+        return { sessionId };
+      } finally {
+        hostSignal?.removeEventListener('abort', onAbort);
+        if (client) await client.close().catch(() => {});
+      }
     },
     async releaseConversation(id) { const client = active.get(id); if (client) await client.close(); cache.delete(id); },
   };
