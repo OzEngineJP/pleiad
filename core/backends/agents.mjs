@@ -69,6 +69,19 @@ export const AGENTS = {
     // OpenCode のフックは JS のプラグインで、コマンドの Hooks の形が無い。Pleiad のプラグインと中継の口で、Claude Code の Hooks と同じ形で渡す（opencode-hooks.mjs）
     hooksAs: 'claude',
   },
+  devin: {
+    module: './devin.mjs',
+    shortLabel: 'Devin',
+    brand: null,
+    cli: {
+      exe: 'devin', binEnv: 'AGENT_HOST_DEVIN_BIN', npmPackage: null, installUrl: 'https://docs.devin.ai/cli',
+      // The official Windows installer adds this directory to PATH after installation.
+      searchDirs: (env) => (env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'devin', 'cli', 'bin')] : []),
+    },
+    idleCompaction: null,
+    contextSources: null,
+    hooksAs: null,
+  },
   fake: {
     module: './fake.mjs',
     shortLabel: null,

@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center">One workspace for Claude Code, Codex, and Antigravity.<br>
+<p align="center">One workspace for Claude Code, Codex, Antigravity, OpenCode, and Devin CLI.<br>
   <a href="https://pleiad.dev">pleiad.dev</a></p>
 
 <p align="center">
@@ -23,7 +23,7 @@ Conversations, statuses, branches, and approvals work the same way no matter whi
 
 ## Features
 
-- **One list for every agent**: Claude Code, OpenAI Codex, and Google Antigravity conversations in a single list, organized by status and group.
+- **One list for every agent**: Claude Code, OpenAI Codex, Google Antigravity, OpenCode, and Devin CLI conversations in a single list, organized by status and group.
 - **Compatible endpoints**: Point Claude Code or Codex at OpenRouter, LiteLLM, a local Ollama, and more, and pick one per conversation.
 - **Branching**: Fork a conversation from any message to try another approach.
 - **Approvals**: Approve tool calls right in the conversation, or set a mode per conversation, from asking every time to fully automatic.

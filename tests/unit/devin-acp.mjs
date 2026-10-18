@@ -10,14 +10,14 @@ export const title = 'Devin ACP JSON-RPC framing, callbacks, timeouts and proces
 
 const fake = fileURLToPath(new URL('../lib/fake-devin.mjs', import.meta.url));
 const launch = (stateDir, callbacks = {}) => new DevinAcp({
-  command: [process.execPath, fake], cwd: process.cwd(), env: { FAKE_DEVIN_STATE_DIR: stateDir }, timeoutMs: 2000, ...callbacks,
+  command: [process.execPath, fake], cwd: process.cwd(), env: { ...process.env, FAKE_DEVIN_STATE_DIR: stateDir }, timeoutMs: 2000, ...callbacks,
 });
 
 export default async function test(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-devin-acp-'));
   const updates = [];
   const gone = [];
-  const rpc = launch(root, { onUpdate: (params) => updates.push(params), onRequest: async (method, params) => ({ method, optionId: params.options[0].optionId }), onGone: (error) => gone.push(error) });
+  const rpc = launch(root, { onUpdate: (params) => updates.push(params), onRequest: async (_method, params) => ({ outcome: { outcome: 'selected', optionId: params.options[0].optionId } }), onGone: (error) => gone.push(error) });
   try {
     const initialized = await rpc.start();
     assert.equal(initialized.protocolVersion, 1);
@@ -26,13 +26,13 @@ export default async function test(t) {
     const { sessionId } = await rpc.call('session/new', { cwd: process.cwd(), mcpServers: [] });
     assert.match(sessionId, /^devin-fixture-/);
     await rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '[multi-utf8] hello' }] });
-    assert.ok(updates.some((p) => p.sessionId === sessionId && p.update.content.text === '日本語🙂'));
+    assert.ok(updates.some((p) => p.sessionId === sessionId && p.update.content?.text === '日本語🙂'));
     assert.ok(updates.filter((p) => p.sessionId === sessionId).length >= 3);
     const loaded = await rpc.call('session/load', { sessionId });
     assert.equal(loaded.sessionId, sessionId);
     assert.ok((await rpc.call('session/list', {})).sessions.some((s) => s.sessionId === sessionId));
     const decision = await rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '[permission]' }] });
-    assert.deepEqual(decision.permissionResult, { method: 'session/request_permission', optionId: 'allow_once' });
+    assert.deepEqual(decision.permissionResult, { outcome: { outcome: 'selected', optionId: 'allow_once' } });
     await assert.rejects(rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '[slow]' }] }, { timeoutMs: 20 }), /timed out/);
     t.ok('initialize・session RPC・通知全体・マルチバイト分割・request応答・timeout', true);
   } catch (error) {

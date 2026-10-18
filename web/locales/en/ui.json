@@ -1021,6 +1021,8 @@
     "notStarted": "This conversation hasn't started yet. What Pleiad provides is recorded here on the first send.",
     "guarded": {
       "title": "This conversation doesn't use the settings Pleiad provides",
+      "unavailable": "{{backend}} does not support Pleiad-managed instructions, Skills, or external MCP. Saved ownership settings are kept, but do not apply to this conversation.",
+      "supportUnknown": "Could not confirm whether this agent supports Pleiad-managed context. Saved ownership settings are kept. Retry to check support.",
       "reason": "{{backend}} can't receive the plugins Pleiad provides, so loading was left to the agent itself."
     },
     "failed": {
