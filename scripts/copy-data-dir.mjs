@@ -4,7 +4,9 @@
 //
 // 元は既定で AGENT_HOST_DATA、無ければ ~/.agent-host。**元は読むだけ**（DB は読み取り専用の接続で VACUUM INTO する。
 // 動いているサーバーの DB のファイルをそのままコピーしない。WAL に未反映の分が -wal にあり、途中の写しは壊れる）。
-//   写さないもの: remote/（同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す）・*-secrets.json・*.lock・pleiad.lock*（データ置き場のロック）・control.json（接続情報）
+//   写さないもの: remote/（同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す）・名前に secret を含むもの（秘密の値。下の isSecret）・
+//                 *.lock・pleiad.lock*（データ置き場のロック）・control.json（接続情報）・
+//                 worktrees.json（worktree の台帳。下の skipFile）
 //   --keep-tasks  写しの agent_tasks（委譲のタスク）を残す。既定は空にする（委譲の続きを走らせない）。
 //                 委譲のタスクが載る送信量（running など）を測るときだけ使う
 //   --light       conversations/（会話の本文）・handoff-*.json・uploads/・presents/ などの大きなものを写さない（移行や 1 回の更新の時間を測るだけなら要らない）
@@ -26,8 +28,15 @@ if (fs.existsSync(out) && fs.readdirSync(out).length) throw new Error(`destinati
 fs.mkdirSync(out, { recursive: true });
 
 const SKIP_DIRS = new Set(['remote']);
+// 秘密の値の置き場は、名前に secret を含むものを階層を問わずすべて写さない（大小を区別しない。ファイルもフォルダーも）。
+// 以前は `*-secrets.json` の形だけを除いていて、秘密情報と変数の値（secret-values.json。ADR 0217）がその形に当たらず写っていた。
+// 名前を 1 つずつ挙げるやり方は、次に足される秘密の置き場（名前の形が違うもの・書きかけの .tmp）を黙って写す。広く除けば、
+// 外れたときに起きるのは「写しに無害なファイルが 1 つ足りない」だけで、秘密が漏れる向きには外れない（写しは画面と測定にしか使わない）
+const isSecret = name => /secret/i.test(name);
 const LIGHT_SKIP_DIRS = new Set(['conversations', 'uploads', 'presents', 'visualization-snapshots', 'context-snapshots', 'agent-browser', 'claude-login-tmp', 'mcp-locks', 'computer-use', 'antigravity', 'claude-usage', 'run', 'hooks-runtime']);
-const skipFile = name => /-secrets\.json$/.test(name) || /\.lock$/.test(name) || /^pleiad\.lock/.test(name) || name === 'control.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)
+// worktree の台帳は写さない。写すと、写しで立てたサーバーが起動の後の整理（core/worktrees.mjs の reconcile・sweep）で本物のリポジトリの
+// worktree を自分のものとして片付けに行く（git worktree prune・取り込み済みのブランチの削除・変更の無い worktree の削除。2026-10-18 に起きた）
+const skipFile = name => isSecret(name) || /\.lock$/.test(name) || /^pleiad\.lock/.test(name) || name === 'control.json' || name === 'worktrees.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)
   || (flag('--light') && name.startsWith('handoff-')) || (!flag('--keep-tasks') && name === 'agent-tasks.json');
 let files = 0, bytes = 0;
 function copyDir(from, to, top) {
@@ -36,6 +45,7 @@ function copyDir(from, to, top) {
     const source = path.join(from, entry.name), target = path.join(to, entry.name);
     if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) {
+      if (isSecret(entry.name)) continue;
       if (top && (SKIP_DIRS.has(entry.name) || (flag('--light') && LIGHT_SKIP_DIRS.has(entry.name)))) continue;
       copyDir(source, target, false);
     } else if (entry.isFile() && !skipFile(entry.name)) {

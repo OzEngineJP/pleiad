@@ -8,6 +8,7 @@
 //                        agent が人格を変える（bot 自身の人格を含む。外から来た文に押された bot が人格を書き換える足場になる）のは riskOf で guarded。
 //                        名前・アイコン・人の人格の変更・モデル・エフォート・狭める向きは write
 //   bots.setMode         human-only。承認モード（Antigravity の bot は yolo だけ）。AI には存在しないのと同じに見える
+//   bots.setAccount      human-only。bot のエージェントのアカウント（ADR 0224）。bots.update では変えられない。AI には存在しないのと同じに見える
 //   bots.delete          guarded（消す操作）。bot の会話は残り（Chats の一覧に戻る）、DM のチャンネルは archive
 import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
@@ -32,7 +33,7 @@ const folder = z.object({
 
 const botShape = {
   id: z.string(), name: z.string(), icon: z.string(), iconImage: z.string(), persona: z.string(),
-  backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(),
+  backend: z.string(), model: z.string(), effort: z.string(), mode: z.string(), account: z.string(),
   folders: z.array(z.object({ path: z.string(), access: z.enum(['rw', 'ro']) })),
   sendToOthers: z.boolean(), sendTargets: z.array(z.string()),
   pulse: z.object({ on: z.boolean(), everyMin: z.number(), backend: z.string(), model: z.string(), channelId: z.string() }),
@@ -163,6 +164,23 @@ export const botOps = [
     surfaces: { ui: true, mcp: false, cli: false },
     handler: guarded(async (ctx, { botId, mode }) => {
       const bot = await ctx.bots.setMode({ botId, mode }, { kind: 'human' });
+      return (await ctx.bots.overview({ botId: bot.id }))[0];
+    }),
+  }),
+
+  // どのアカウント（＝誰の使用枠・請求）で動くかも人だけが決める（ADR 0082 のアカウント・ADR 0224）。'' = ログイン中のアカウント。
+  // bot のエージェントに登録の無い id・使えない（トークン・資格情報の無い）アカウントは INVALID。アカウントを持てない backend の bot は '' だけ
+  defineOp({
+    id: 'bots.setAccount',
+    summary: 'agent:ops.bots.setAccount.summary',
+    risk: 'human-only',
+    input: z.object({
+      botId: z.string().min(1).max(100).describe(D('setAccount', 'botId')),
+      account: z.string().max(100).describe(D('setAccount', 'account')),
+    }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: guarded(async (ctx, { botId, account }) => {
+      const bot = await ctx.bots.setAccount({ botId, account }, { kind: 'human' });
       return (await ctx.bots.overview({ botId: bot.id }))[0];
     }),
   }),

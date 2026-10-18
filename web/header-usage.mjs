@@ -10,7 +10,8 @@ import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
 import { isExpired } from './usage.mjs';
 
-const HIGH = 80;
+/** これ以上の使用率は強い見た目にする（帯の札・入力欄と bot のページのアカウントの行） */
+export const HIGH = 80;
 const EVERY = 5 * 60_000;
 const DAY = 24 * 3600_000;
 
@@ -34,6 +35,18 @@ export const percentText = used => used == null ? '—' : `${Math.min(Math.round
 export function quotaOf(quota, account = '') {
   if (!Array.isArray(quota?.accounts) || !quota.accounts.length) return quota ?? null;
   return quota.accounts.find(a => account ? a.accountId === account : !a.accountId) ?? quota.accounts[0];
+}
+
+/**
+ * アカウントの行の右に出す、その週の使用量（docs/design-system.md「bot のページ」、ADR 0224）。
+ * quota.accounts からそのアカウントの行だけを引く（無ければ出さない。quotaOf のように先頭の行へ寄せると、別のアカウントの値に見える）。
+ * 枠は全体の週次（モデルの系統だけの週次は除く）。週の枠が無い・率が分からなければ null（行は今までの補足のまま）
+ */
+export function weekUsage(quota, account = '') {
+  const rows = Array.isArray(quota?.accounts) && quota.accounts.length ? quota.accounts : null;
+  const row = rows ? rows.find(a => account ? a.accountId === account : !a.accountId) : account ? null : quota;
+  const used = usedOf((row?.windows ?? []).find(w => w.minutes === 10080 && !w.model && !w.limitName));
+  return used == null ? null : { used, high: used >= HIGH };
 }
 
 /** 使用量の表示の認可が要る（済んでいない・やり直し） */
@@ -76,18 +89,17 @@ export function groupsOf(windows = [], now = Date.now()) {
 }
 
 /**
- * チップの中身。null は出さない（枠が 1 つも無い: fake・互換の接続先・未対応）。
- *   kind: 'auth' … 認可が要る（「使用量 —」を薄く）  'unknown' … 枠はあるが率が分からない  'value' … 率または上限
+ * チップの中身。枠が無いときも unknown として一覧への入口を残す。
+ *   kind: 'auth' … 認可が要る（「使用量 —」を薄く）  'unknown' … 枠が無い・率が分からない  'value' … 率または上限
  */
 export function chipState(row, now = Date.now()) {
-  if (!row) return null;
-  const window = topWindow(row.windows, now);
+  const window = topWindow(row?.windows, now);
   if (window) {
     const used = usedOf(window, now);
     return { kind: 'value', window, used, high: used >= HIGH, limit: atLimit(window, now) };
   }
   if (needsAuth(row)) return { kind: 'auth' };
-  return row.windows?.length ? { kind: 'unknown' } : null;
+  return { kind: 'unknown' };
 }
 
 /** 残りの時間。「3 時間 10 分」「42 分」 */
@@ -138,7 +150,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     for (const id of list) asked.add(id);
     await Promise.all(list.map(id => source.load(id).catch(() => {
       const prev = data.get(id);
-      if (prev) data.set(id, { ...prev, failed: true });
+      data.set(id, { ...prev, failed: true });
+      paint();
     })));
     loading--; paint();
   }
@@ -162,17 +175,19 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const entry = data.get(shown.backend);
     const row = quotaOf(entry?.quota, shown.account);
     // 互換の接続先で動く会話はサブスクの枠を使わない
-    const state = shown.endpoint ? null : chipState(row);
-    chip.hidden = !state;
+    const state = chipState(shown.endpoint ? null : row);
+    chip.hidden = false;
     onVisibility();
-    if (!state) { close(); return; }
-    const agent = labelOf(shown.backend), stale = staleNote(entry);
-    chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry.failed ? ' dim' : '');
+    const agent = labelOf(shown.backend), stale = shown.endpoint ? '' : staleNote(entry);
+    chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry?.failed ? ' dim' : '');
     if (state.kind !== 'value') {
-      const text = state.kind === 'auth' ? t('usage.header.unauthorized') : t('usage.unknown');
+      const text = shown.endpoint ? t('usage.header.endpointUnavailable')
+        : !entry ? t('usage.loading')
+        : state.kind === 'auth' ? t('usage.header.unauthorized')
+        : row?.windows?.length ? t('usage.unknown') : t('usage.header.unavailable');
       chip.replaceChildren(el('span', 'lb', t('usage.header.title')), mini(0), el('span', 'pc', '—'), caret());
-      chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text }));
-      chip.title = [state.kind === 'auth' ? row.message || text : text, stale].filter(Boolean).join(' · ');
+      chip.setAttribute('aria-label', shown.backend ? t('usage.header.chipLabel', { agent, text }) : t('usage.header.title'));
+      chip.title = [!shown.endpoint && row?.message || text, stale].filter(Boolean).join(' · ');
       return;
     }
     const w = state.window, label = shortLabel(w);
@@ -205,41 +220,46 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     return grid;
   }
   function agentSection(id, entry, current) {
-    const row = quotaOf(entry.quota, current ? shown.account : '');
-    if (!row || !(row.windows?.length || needsAuth(row))) return null;
-    const section = el('section', 'usage-agent' + (entry.failed ? ' usage-old' : ''));
-    const { windows, group, others, below } = groupsOf(row.windows ?? []);
-    const notes = [current && t('usage.header.thisConversation'), entry.quota?.accounts?.length && row.label,
+    const endpoint = current && shown.endpoint;
+    const row = endpoint ? null : quotaOf(entry?.quota, current ? shown.account : '');
+    const section = el('section', 'usage-agent' + (entry?.failed ? ' usage-old' : ''));
+    const { windows, group, others, below } = groupsOf(row?.windows ?? []);
+    const notes = [current && t('usage.header.thisConversation'), row && entry?.quota?.accounts?.length && row.label,
       group && t('usage.header.group', { name: group })].filter(Boolean);
     const head = el('div', 'an', labelOf(id));
     if (notes.length) head.append(el('small', null, notes.join(' · ')));
     section.append(head);
-    if (entry.failed) section.append(el('p', 'usage-note', staleNote(entry)));
+    const stale = endpoint ? '' : staleNote(entry);
+    if (stale) section.append(el('p', 'usage-note', stale));
     if (windows.length) section.append(rows(windows));
     if (others) section.append(el('p', 'more', below == null ? t('usage.header.otherGroups', { count: others })
       : t('usage.header.otherGroupsBelow', { count: others, percent: below })));
     if (needsAuth(row)) {
-      if (row.message) section.append(el('p', 'usage-note', row.message));
+      section.append(el('p', 'usage-note', row.message || t('usage.header.unauthorized')));
       // 登録したアカウントの使用量は、アカウントごとに「使用量の表示を認可」が済んでから読める（web/usage.mjs と同じ口）
       if (row.accountId && onUsageLogin) {
         const button = el('button', 'btn btn-quiet', row.needsUsageLogin ? t('accounts.authorizeUsage') : t('usage.redoAuth'));
         button.type = 'button'; button.onclick = () => { close(); onUsageLogin(row.accountId); };
         section.append(button);
       }
+    } else if (!windows.length) {
+      const text = endpoint ? t('usage.header.endpointUnavailable') : !entry ? t('usage.loading')
+        : row?.message || t('usage.header.unavailable');
+      section.append(el('p', 'usage-note', text));
     }
     return section;
   }
   function paintPop() {
     if (pop.hidden) return;
     const head = el('div', 'usage-pop-head');
-    const checked = data.get(shown.backend)?.quota?.checkedAt;
+    const checked = shown.endpoint ? null : data.get(shown.backend)?.quota?.checkedAt;
     const again = el('button', 'rf', '↻');
     again.type = 'button'; again.disabled = loading > 0;
     again.setAttribute('aria-label', t('usage.header.refresh')); again.title = t('usage.header.refresh');
     again.onclick = () => refresh();
     head.append(el('b', null, t('usage.header.title')), el('span', 'when', checked ? fmt.relative(checked) : ''), again);
-    const order = [shown.backend, ...ids().filter(id => id !== shown.backend)];
-    const sections = order.map(id => data.has(id) ? agentSection(id, data.get(id), id === shown.backend) : null).filter(Boolean);
+    const order = [shown.backend, ...ids().filter(id => id !== shown.backend)].filter(Boolean);
+    const sections = order.map(id => agentSection(id, data.get(id), id === shown.backend));
     const foot = el('div', 'foot');
     const more = el('button', null, t('usage.header.openSettings'));
     more.type = 'button'; more.onclick = () => { close(); openSettings(); };

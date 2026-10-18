@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { lang, setLanguage } from '../../web/i18n.mjs';
 import { currentLocale, setLocale } from '../../core/i18n.mjs';
-import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText } from '../../web/header-usage.mjs';
+import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, HIGH } from '../../web/header-usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'header-usage';
@@ -46,8 +46,8 @@ async function japaneseCases(t) {
   assert.match(resetText(week, now), /に回復$/);
   t.ok('上限は回復の時刻が先のときだけ。100 に届かない率を 100% と丸めない。回復の目安', true);
 
-  assert.equal(chipState(null), null);
-  assert.equal(chipState({ windows: [], message: '未対応' }), null, '枠の無いエージェントは出さない');
+  assert.deepEqual(chipState(null), { kind: 'unknown' });
+  assert.deepEqual(chipState({ windows: [], message: '未対応' }), { kind: 'unknown' }, '枠が無くても一覧への入口を残す');
   assert.deepEqual(chipState({ windows: [], needsUsageLogin: true, accountId: 'a' }), { kind: 'auth' });
   assert.deepEqual(chipState({ windows: [win('5時間', null, null)] }), { kind: 'unknown' });
   const quota = { windows: [], accounts: [
@@ -59,7 +59,7 @@ async function japaneseCases(t) {
   assert.equal(quotaOf(quota, 'gone').label, 'ログイン中のアカウント');
   assert.equal(quotaOf({ windows: [five] }, 'work').windows[0], five);
   assert.equal(needsAuth(quotaOf(quota, 'work')), true);
-  t.ok('Claude は会話で使うアカウントの枠。未認可は「使用量 —」、枠の無いものは出さない', true);
+  t.ok('Claude は会話で使うアカウントの枠。未認可も枠の無いものも「使用量 —」', true);
 
   assert.equal(shortLabel(week), '週次');
   assert.equal(shortLabel(win('Opus・週次', 1, null)), 'Opus・週次');
@@ -77,4 +77,29 @@ async function japaneseCases(t) {
   assert.equal(grouped.below, 20);
   assert.equal(groupsOf([five, week], now).others, 0);
   t.ok('枠の名前の括弧書きとグループ名を外し、Antigravity はいちばん使っているグループだけを出す', true);
+
+  // ---- アカウントの行の週の使用量（入力欄と bot のページのアカウントの節。ADR 0224）
+  const later = new Date(Date.now() + 86400_000).toISOString();
+  const weekly = (used, extra = {}) => ({ label: '週次（7日間）', minutes: 10080, usedPercent: used, resetsAt: later, ...extra });
+  const accounts = { accounts: [
+    { label: 'ログイン中', accountId: null, windows: [{ label: '5時間', minutes: 300, usedPercent: 70, resetsAt: later }, weekly(42)] },
+    { label: 'OZ', accountId: 'acc-oz', windows: [weekly(5, { model: 'opus', label: '週次（Opus）' }), weekly(9)] },
+    { label: 'Hot', accountId: 'acc-hot', windows: [weekly(100)] },
+    { label: 'NoWeek', accountId: 'acc-5h', windows: [{ label: '5時間', minutes: 300, usedPercent: 12, resetsAt: later }] },
+  ] };
+  t.ok('週の使用量: ログイン中は accountId の無い行の週次（5 時間の枠は使わない）', JSON.stringify(weekUsage(accounts, '')) === '{"used":42,"high":false}', JSON.stringify(weekUsage(accounts, '')));
+  t.ok('週の使用量: 登録のアカウントはその行の全体の週次（モデルの系統だけの週次は除く）', weekUsage(accounts, 'acc-oz')?.used === 9);
+  t.ok(`週の使用量: ${HIGH}% 以上は強い見た目（high）`, weekUsage(accounts, 'acc-hot')?.high === true && weekUsage({ windows: [weekly(HIGH)] })?.high === true && weekUsage({ windows: [weekly(HIGH - 1)] })?.high === false);
+  t.ok('週の使用量: 週の枠が無い・率が分からない・行が無いアカウントは null（先頭の行の値を借りない）',
+    weekUsage(accounts, 'acc-5h') === null && weekUsage({ windows: [weekly(null)] }) === null && weekUsage(accounts, 'acc-gone') === null && weekUsage(null) === null);
+  t.ok('週の使用量: 登録の無い使用量（accounts が無い）は、ログイン中だけが quota そのものの週次', weekUsage({ windows: [weekly(7)] }, '')?.used === 7 && weekUsage({ windows: [weekly(7)] }, 'acc-oz') === null);
+  // Codex など（資格情報のアカウント。ADR 0222）の使用枠: 全体の windows はログイン中、accounts の行に登録のアカウント
+  const codex = { plan: 'plus', windows: [weekly(31)], accounts: [
+    { accountId: null, label: 'Codex', ready: true, windows: [{ label: '5時間', minutes: 300, usedPercent: 3, resetsAt: later }, weekly(31)] },
+    { accountId: 'acct-cx', label: 'Work', ready: true, windows: [weekly(64)] },
+    { accountId: 'acct-off', label: 'Off', ready: false, windows: [] },
+  ] };
+  t.ok('週の使用量: Codex の使用枠も同じ形で引ける（ログイン中・登録のアカウント・資格情報の無いアカウントは null）',
+    weekUsage(codex, '')?.used === 31 && weekUsage(codex, 'acct-cx')?.used === 64 && weekUsage(codex, 'acct-off') === null);
+  t.ok('週の使用量: 時刻を過ぎた週次は今の値ではない（null）', weekUsage({ windows: [weekly(50, { resetsAt: new Date(Date.now() - 1000).toISOString() })] }) === null);
 }

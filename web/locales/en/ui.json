@@ -2909,7 +2909,8 @@
     "agent": "Agent",
     "account": {
       "title": "Account",
-      "compatOff": "Accounts aren't used with compatible endpoints"
+      "compatOff": "Accounts aren't used with compatible endpoints",
+      "week": "Week {{percent}}"
     },
     "endpoint": {
       "title": "Endpoint",
@@ -3107,6 +3108,8 @@
     "failed": "Couldn't fetch. Check the connection and refresh.",
     "header": {
       "title": "Usage",
+      "unavailable": "Usage is unavailable.",
+      "endpointUnavailable": "Usage is unavailable for this endpoint.",
       "unauthorized": "Not authorized",
       "chipLabel": "{{agent}} usage: {{text}}",
       "chipTitle": "{{agent}} · {{label}} {{percent}} used / {{reset}}",
