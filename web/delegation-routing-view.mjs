@@ -223,7 +223,7 @@ export function parseRoutingFailure(text) {
 }
 
 // 直せば通るもの（設定）を先に、待てば戻るもの（使用量）を後に
-const FAILURE_ORDER = ['unavailable', 'model_unknown', 'quota_full', 'quota_high', 'pace_high', 'pace_unknown', 'usage_stale', 'usage_unknown'];
+const FAILURE_ORDER = ['unavailable', 'model_unknown', 'quota_full', 'recently_limited', 'retry_waiting', 'quota_high', 'pace_high', 'pace_unknown', 'usage_stale', 'usage_unknown'];
 /** 飛ばした候補を理由ごとにまとめる。[{ reason, items }]（理由の順は FAILURE_ORDER、知らない理由は後ろ） */
 export function groupSkipped(skipped) {
   const groups = new Map();

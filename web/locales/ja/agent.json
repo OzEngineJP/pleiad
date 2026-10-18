@@ -355,7 +355,13 @@
     "noticeWorkspaceUnknown": "作業場所: worktree {{branch}}（状態を確かめられません。{{path}} を見てください）",
     "noticeRetry": "利用者が {{of}} を別の委譲先でやり直したタスク\n",
     "noticeRejections": "実行前に拒否されたコマンド（Codex 自身の安全判定など）: {{count}} 件\n{{items}}\n全件は ply_task_status の rejections で読めます。",
-    "noticeRejection": "- {{command}}（{{reason}}）"
+    "noticeRejection": "- {{command}}（{{reason}}）",
+    "noticeLimit": "使用量の上限で止まりました。{{time}} に解除される見込みです。解除の後に ply_task_send で続けるか、待てないなら ply_delegate で別の委譲先に任せ直してください。",
+    "noticeLimitUnknown": "使用量の上限で止まりました。解除の時刻は分かりません。時間を置いて ply_task_send で続けるか、ply_delegate で別の委譲先に任せ直してください。",
+    "retryNoticeLimit": "[Pleiad タスク再試行待ち通知 / {{taskId}}]\n{{title}} の子は使用量の上限に当たり、委譲先が再試行を待っています（{{when}}）。\n理由: {{message}}\n子は止まっておらず、待ちが明ければ自分で続けます。そのまま待つか、待てないなら ply_task_cancel で止めて ply_delegate で別の委譲先に任せ直してください。",
+    "retryNoticeError": "[Pleiad タスク再試行待ち通知 / {{taskId}}]\n{{title}} の子は委譲先の一時的な失敗のあと、再試行を待っています（{{when}}）。\n理由: {{message}}\n子は止まっておらず、再試行が通れば自分で続けます。そのまま待つか、待てないなら ply_task_cancel で止めて ply_delegate で別の委譲先に任せ直してください。",
+    "retryWhen": "{{time}} に {{attempt}} 回目の再試行",
+    "retryWhenUnknown": "{{attempt}} 回目の再試行。時刻は分かりません"
   },
   "tasks": {
     "textLength": "{{name}} は1〜{{max}}文字で指定してください",
@@ -377,6 +383,7 @@
     "settingsMoved": "承認を待つ間に、子の設定かタスクの状態が変わりました。何も変えていません。ply_task_status で確かめてからやり直してください",
     "settingsFailed": "子の設定を替えられませんでした（{{error}}）。何も変えていません",
     "steerUnknown": "追加指示を子のターンへ渡した結果が分かりません。届いているかもしれないので、送り直さず ply_task_status と子の結果で確かめてください",
+    "limitHeld": "子は使用量の上限で止まっています。指示は積みましたが、{{time}} の解除まで走らせません。待てないなら ply_task_cancel で止めて ply_delegate で別の委譲先に任せ直してください",
     "unknownTool": "不明な Pleiad タスクツールです",
     "storageFailed": "委譲の記録を保存できないため、受け付けませんでした（{{code}}）。少し待ってからやり直してください。動いている子は止まっていません",
     "storageFault": "委譲の記録を保存できていません（{{code}}、{{since}} から）。ここに出ている状態はまだ保存できていないことがあり、子は動き続けている可能性があります"

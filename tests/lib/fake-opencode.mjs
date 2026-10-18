@@ -13,6 +13,11 @@
 //   "slow"          中断（/abort）されるまで終わらない
 //   "hold"          途中送信（走っている最中の prompt_async）が届くまで（最長 20 秒）待ってから答える
 //   "fail"          失敗（session.error）で終わる
+//   "retry-recover" 再試行の待ち（session.status の retry、"Rate limit exceeded"）を 200ms 出してから答える。"retry-nonext" は next の無い待ち
+//   "retry-gate:<名前>" 再試行の待ちのまま、ゲートが開くまで待ってから答える（next は 1 分後）
+//   "retry-free" / "retry-go" 待っても通らない上限（Zen の無料枠 free_tier_limit・Go の枠 account_rate_limit）の待ちのまま、中断されるまで止まる
+//   "retry-rate"    "Rate limit exceeded" の待ちを 5 回出し、なお 429 の session.error で終わる
+//   "compact-limited" 普通に答えるが、この会話の圧縮（summarize）は無料枠の上限の待ちのまま、中断されるまで止まる
 //   "show-system"   受け取った system（Pleiad の指示）をそのまま答える
 //   "gate:<名前>"   bash のツールを動かしたまま、ゲート（AGENT_HOST_FAKE_GATE_DIR/<名前> のファイル）が開くまで待ってから "gate <名前> done" と答える
 //   "stream:<名前>" 本文の前半を流したまま、ゲートが開くまで待ってから後半を流す（本文は "first half <名前> / second half <名前>"）
@@ -173,9 +178,19 @@ async function pluginHook(s, phase, tool, args, output = '') {
   return res?.ok ? res.json() : {};
 }
 
+/** 再試行の待ち（GET /session/status もこれを返す）・待ちが明けた busy */
+function retryStatus(s, status) {
+  if (s.run) s.run.status = { type: 'retry', ...status };
+  broadcast(s.directory, 'session.status', { sessionID: s.id, status: { type: 'retry', ...status } });
+}
+function busyStatus(s) {
+  if (s.run) s.run.status = { type: 'busy' };
+  broadcast(s.directory, 'session.status', { sessionID: s.id, status: { type: 'busy' } });
+}
+
 async function run(s, user, text, { system = null } = {}) {
-  const ctl = { aborted: false, steers: [], abort: null };
-  ctl.aborted$ = new Promise((resolve) => { ctl.abort = resolve; });
+  const ctl = { aborted: false, steers: [], abort: null, status: { type: 'busy' } };
+  ctl.aborted$ = new Promise((resolve) => { ctl.abort = () => { ctl.stopped = true; resolve(); }; });
   s.run = ctl;
   broadcast(s.directory, 'session.status', { sessionID: s.id, status: { type: 'busy' } });
   const a = assistant(s, user.id);
@@ -197,6 +212,35 @@ async function run(s, user, text, { system = null } = {}) {
       broadcast(s.directory, 'session.error', { sessionID: s.id, error: { name: 'APIError', data: { message: 'Usage limit reached', statusCode: 429,
         responseBody: JSON.stringify({ error: { type: 'usage_limit_reached', resets_at: 2000000000 } }) } } });
       return;
+    }
+    // 再試行の待ち（実機 1.19.3 に 429 を返す provider を当てて確かめた形。ADR 0229）
+    if (text.startsWith('retry-free') || text.startsWith('retry-go')) {
+      // 待っても通らない上限（Zen の無料枠・Go の枠）。本物は 5 回まで待ち直す。ここでは中断されるまで待ち、中断で session.error なしに idle
+      retryStatus(s, text.startsWith('retry-free')
+        ? { attempt: 1, message: 'Free usage exceeded, subscribe to Go', action: { reason: 'free_tier_limit', provider: 'fake', title: 'Free limit reached', message: 'Subscribe to OpenCode Go for reliable access to the best open-source models for $10/month.', label: 'subscribe', link: 'https://opencode.ai/go' }, next: now() + 3_000 }
+        : { attempt: 1, message: 'Weekly usage limit reached. It will reset in 1 minute. To continue using this model now, enable usage from your available balance - https://opencode.ai/workspace/wrk_x/go', action: { reason: 'account_rate_limit', provider: 'fake', title: 'Go limit reached', message: 'Weekly usage limit reached. It will reset in 1 minute. To continue using this model now, enable usage from your available balance', label: 'open settings', link: 'https://opencode.ai/workspace/wrk_x/go' }, next: now() + 60_000 });
+      await ctl.aborted$;
+      return;
+    }
+    if (text.startsWith('retry-rate')) {
+      // 込み具合の 429（"Rate limit exceeded"、action なし）。5 回待ち直して、なお 429 なら session.error
+      for (let attempt = 1; attempt <= 5 && !ctl.stopped; attempt++) {
+        retryStatus(s, { attempt, message: 'Rate limit exceeded', next: now() + 40 });
+        await Promise.race([wait(40), ctl.aborted$]);
+        if (ctl.stopped) return;
+        busyStatus(s);
+      }
+      broadcast(s.directory, 'session.error', { sessionID: s.id, error: { name: 'APIError', data: { message: 'Rate limit exceeded', statusCode: 429, isRetryable: true,
+        responseHeaders: { 'content-type': 'application/json', 'retry-after': '120' }, responseBody: JSON.stringify({ error: { message: 'Rate limit exceeded', type: 'rate_limit' } }) } } });
+      return;
+    }
+    if (text.startsWith('retry-recover') || text.startsWith('retry-nonext') || text.startsWith('retry-gate:')) {
+      // 待った後に通る。retry-gate はゲートが開くまで待ち（next は 1 分後）、retry-nonext は next の無い待ち（実機では見ていない。古い版・別の provider の備え）
+      const name = text.startsWith('retry-gate:') ? text.slice('retry-gate:'.length).trim() : null;
+      retryStatus(s, { attempt: 1, message: text.startsWith('retry-nonext') ? 'Provider is overloaded' : 'Rate limit exceeded', ...(text.startsWith('retry-nonext') ? {} : { next: now() + (name ? 60_000 : 200) }) });
+      await Promise.race([name ? gate(name, ctl) : wait(200), ctl.aborted$]);
+      if (ctl.stopped) return;
+      busyStatus(s);
     }
     if (text === 'account-env') {
       await a.text(JSON.stringify({ accountId: process.env.PLEIAD_OPENCODE_ACCOUNT_ID ?? null,
@@ -323,7 +367,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === '/permission' && req.method === 'GET') return send(200, [...pending.values()].filter((x) => x.kind === 'permission' && (!dir || x.directory === dir)).map((x) => x.properties));
     if (url.pathname === '/question' && req.method === 'GET') return send(200, [...pending.values()].filter((x) => x.kind === 'question' && (!dir || x.directory === dir)).map((x) => x.properties));
-    if (url.pathname === '/session/status' && req.method === 'GET') return send(200, Object.fromEntries([...sessions.values()].filter((x) => x.run && (!dir || x.directory === dir)).map((x) => [x.id, { type: 'busy' }])));
+    if (url.pathname === '/session/status' && req.method === 'GET') return send(200, Object.fromEntries([...sessions.values()].filter((x) => x.run && (!dir || x.directory === dir)).map((x) => [x.id, x.run.status ?? { type: 'busy' }])));
     if (url.pathname === '/experimental/session') return send(200, [...sessions.values()].filter((s) => !s.parentID).reverse().map(row));
     if (url.pathname === '/session' && req.method === 'POST') {
       const b = await body(req);
@@ -375,6 +419,16 @@ const server = http.createServer(async (req, res) => {
       if (action === 'summarize') {
         await body(req);
         send(200, true);
+        if (s.messages.some((m) => m.info.role === 'user' && m.parts.some((p) => p.type === 'text' && p.text.startsWith('compact-limited')))) {
+          let release;
+          s.run = { steers: [], abort: () => release(), status: null };
+          retryStatus(s, { attempt: 1, message: 'Free usage exceeded, subscribe to Go', action: { reason: 'free_tier_limit', provider: 'fake', title: 'Free limit reached', link: 'https://opencode.ai/go' }, next: now() + 3_000 });
+          await new Promise((r) => { release = r; });
+          s.run = null;
+          broadcast(s.directory, 'session.status', { sessionID: s.id, status: { type: 'idle' } });
+          broadcast(s.directory, 'session.idle', { sessionID: s.id });
+          return;
+        }
         const user = { id: id('msg'), sessionID: s.id, role: 'user', time: { created: now() } };
         s.messages.push({ info: user, parts: [{ id: id('prt'), messageID: user.id, sessionID: s.id, type: 'compaction', auto: false }] });
         broadcast(s.directory, 'message.updated', { sessionID: s.id, info: user });
