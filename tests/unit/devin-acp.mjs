@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
-import { DevinAcp } from '../../core/backends/devin-acp.mjs';
+import { DevinAcp, MAX_DEVIN_FRAME_BYTES } from '../../core/backends/devin-acp.mjs';
 
 export const name = 'devin-acp';
 export const title = 'Devin ACP JSON-RPC framing, callbacks, timeouts and process lifecycle';
@@ -106,6 +106,65 @@ export default async function test(t) {
   const permission = { jsonrpc: '2.0', id: 'boundary-request', method: 'session/request_permission', params: { options: [] } };
   const inject = (client, frame) => client.proc.stdout.emit('data', Buffer.from(typeof frame === 'string' ? frame : `${JSON.stringify(frame)}\n`));
   try {
+    const largeUpdates = [], drops = [], lost = [];
+    const large = launch(scratch, { onUpdate: p => largeUpdates.push(p.update), onDrop: info => drops.push(info), onGone: e => lost.push(e) });
+    try {
+      await large.start();
+      const { sessionId } = await large.call('session/new', { cwd: process.cwd() });
+      await large.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '[large-edit]' }] });
+      const edit = largeUpdates.find(u => u.content?.[0]?.type === 'diff');
+      assert.ok(Buffer.byteLength(JSON.stringify(edit)) > 1024 * 1024);
+      largeUpdates.length = 0;
+      await large.call('session/load', { sessionId });
+      assert.deepEqual(largeUpdates.find(u => u.content?.[0]?.type === 'diff').content, edit.content);
+      t.ok('1 MiB 超の Edit をライブと session/load 再生で受信できる', true);
+      const sent = 'x'.repeat(1024 * 1024 + 1);
+      await large.call('session/list', { unused: sent });
+      t.ok('1 MiB 超の送信を制限しない', true);
+
+      const block = Buffer.alloc(1024 * 1024, 0x78);
+      for (let i = 0; i < 64; i++) large.proc.stdout.emit('data', block);
+      assert.equal(large.reader.pending, MAX_DEVIN_FRAME_BYTES);
+      large.proc.stdout.emit('data', Buffer.from('x'));
+      assert.equal(large.reader.pending, 0);
+      assert.deepEqual(drops, [{ reason: 'oversize', bytes: MAX_DEVIN_FRAME_BYTES + 1 }]);
+      for (let i = 0; i < 16; i++) large.proc.stdout.emit('data', block);
+      assert.equal(large.reader.pending, 0);
+      assert.equal(large.alive, true);
+      t.ok('改行なしで 64 MiB を超えた時点でバッファーを解放し以後を保持しない', true);
+      inject(large, 'tail\n' + JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'after drop' } } } }) + '\n');
+      assert.equal(drops.length, 1);
+      assert.deepEqual(drops[0], { reason: 'oversize', bytes: MAX_DEVIN_FRAME_BYTES + 1 });
+      assert.equal(largeUpdates.at(-1).content.text, 'after drop');
+      await large.call('session/list', {});
+      assert.equal(lost.length, 0);
+      t.ok('超過行だけを改行まで捨てて一度通知し、後続通知・RPC と接続を保つ', true);
+
+      // A complete oversize reply can also arrive in a single data event.
+      large.timeoutMs = 500;
+      const unanswered = large.call('fixture/no-reply', {}, { timeoutMs: 0 });
+      const rejected = assert.rejects(unanswered, /timed out after a dropped frame/);
+      const id = `pleiad-${large.nextId}`;
+      inject(large, JSON.stringify({ jsonrpc: '2.0', id, result: 'x'.repeat(MAX_DEVIN_FRAME_BYTES) }) + '\n');
+      await rejected;
+      assert.equal(large.pending.has(id), false);
+      large.timeoutMs = 2000;
+      await large.call('session/list', {});
+      assert.equal(drops.length, 2);
+      t.ok('破棄した応答の期限なし要求も時間切れになり次の要求を送れる', true);
+
+      // The byte boundary includes CR but excludes LF, with UTF-8 split anywhere.
+      const suffix = Buffer.from('🙂"}}}}\r\n');
+      const prefix = Buffer.from('{"jsonrpc":"2.0","method":"session/update","params":{"update":{"content":{"text":"');
+      const exact = Buffer.concat([prefix, Buffer.alloc(MAX_DEVIN_FRAME_BYTES - prefix.length - suffix.length + 1, 0x61), suffix]);
+      const split = exact.length - suffix.length + 2;
+      large.proc.stdout.emit('data', exact.subarray(0, split));
+      large.proc.stdout.emit('data', exact.subarray(split));
+      assert.ok(largeUpdates.at(-1).content.text.endsWith('🙂'));
+      assert.equal(drops.length, 2);
+      t.ok('64 MiB ちょうどの行と CRLF・UTF-8 の途中分割を受け入れる', true);
+    } finally { await large.close(); }
+
     const order = [];
     const ordered = launch('', { onResponse: ({ method, params }) => { if (method === 'session/list') order.push(`response:${params.cwd}`); }, onUpdate: () => order.push('notification') });
     try {

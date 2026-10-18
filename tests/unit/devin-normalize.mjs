@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createDevinMapper } from '../../core/backends/devin-normalize.mjs';
+import { createDevinMapper, MAX_DEVIN_TOOL_CHARS } from '../../core/backends/devin-normalize.mjs';
 
 export const name = 'devin-normalize';
 export const title = 'Devin ACP replay と本文・思考・ツールを同じ正規化履歴へ写し、再読込で UUID を保つ';
@@ -87,6 +87,41 @@ export default function (t) {
   assert.equal(partial.getToolCall('content-first').rawInput.command, 'example --target important');
   assert.equal(partial.getToolCall('unknown'), null);
   t.ok('完了→出力の順序、非 null の falsy 値と既知詳細の参照を保ち、不明 ID は null', true);
+
+  const hugeEvents = [], huge = createDevinMapper('huge', e => hugeEvents.push(e));
+  huge.beginTurn('edit');
+  const common = 'line of source 日本語🙂\n'.repeat(30000);
+  const diff = { type: 'diff', path: 'large.mjs', oldText: common + 'before' + common, newText: common + 'after' + common };
+  const update = { sessionUpdate: 'tool_call', toolCallId: 'edit', title: 'Edit file', kind: 'edit', locations: [{ path: 'large.mjs' }], rawInput: { file_path: 'large.mjs', oldText: diff.oldText, newText: diff.newText }, content: [diff] };
+  huge.accept(update);
+  huge.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'edit', status: 'completed' });
+  const state = huge.getToolCall('edit'), call = huge.messages()[1].toolCalls[0];
+  assert.ok(JSON.stringify(state).length < MAX_DEVIN_TOOL_CHARS * 3);
+  assert.ok(JSON.stringify(hugeEvents).length < MAX_DEVIN_TOOL_CHARS * 3);
+  assert.equal(state.content[0].path, 'large.mjs');
+  assert.equal(state.locations[0].path, 'large.mjs');
+  assert.equal(state.content[0].oldLength, diff.oldText.length);
+  assert.equal(state.content[0].truncated, true);
+  assert.ok(call.input.oldText.includes('before'));
+  assert.ok(call.input.newText.includes('after'));
+  assert.ok(call.result.text.includes('before') && call.result.text.includes('after'));
+  assert.equal(call.result.truncated, true);
+  assert.equal(update.content[0].oldText, diff.oldText);
+  t.ok('巨大 diff は変更箇所・場所・元の長さと省略の印だけを上限付きで保持・表示する', true);
+  huge.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'edit', rawOutput: { text: 'x'.repeat(2e6), many: Array(10000).fill('value') }, content: null });
+  assert.ok(JSON.stringify(huge.getToolCall('edit')).length < MAX_DEVIN_TOOL_CHARS * 4);
+  huge.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'edit', content: Array.from({ length: 10000 }, () => ({ type: 'text', text: 'x' })) });
+  assert.ok(huge.getToolCall('edit').content.length <= 256);
+  assert.equal(huge.getToolCall('edit').status, 'completed');
+  t.ok('部分更新の巨大な出力と多数の小さい項目にも総量の上限を適用する', true);
+  huge.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'replace', status: 'completed', content: [{ type: 'diff', path: 'replace.mjs', oldText: 'a'.repeat(2e6), newText: 'b'.repeat(2e6) }] });
+  const replacement = huge.getToolCall('replace').content[0];
+  assert.ok(replacement.oldText.startsWith('a') && replacement.newText.startsWith('b'));
+  assert.equal(replacement.oldLength, 2e6);
+  assert.equal(replacement.newLength, 2e6);
+  assert.equal(replacement.truncated, true);
+  assert.ok(JSON.stringify(replacement).length < MAX_DEVIN_TOOL_CHARS);
+  t.ok('全文を置き換える巨大 diff でも変更前後の両方を残す', true);
 
   // usage_update（ACP）: used/size は文脈の占有、cost は USD のときだけ費用として出す
   const usev = [], um = createDevinMapper('u', e => usev.push(e));
