@@ -21,6 +21,10 @@ export default async function (tt) {
     tt.ok('Chrome の操作待ちは「…が Chrome の操作を待っています」（承認と言わない）', d.line === 'Owl が Chrome の操作を待っています' && d.open === true);
     d = describeNotification({ ...wait, ask: 'chrome', resolvedAt: 5, outcome: 'allowed', unread: false }, t);
     tt.ok('済んだ Chrome の操作待ちは過去形で、「承認済み」を付けない', d.line === 'Owl が Chrome の操作を待っていました' && d.icon === 'closed' && d.outcome === '', JSON.stringify(d));
+    d = describeNotification({ ...wait, ask: 'command', actor: undefined }, t);
+    tt.ok('戻らないコマンド（ADR 0224）は「コマンドが戻らず、会話が止まっているかもしれません」', d.line === 'コマンドが戻らず、会話が止まっているかもしれません' && d.open === true, JSON.stringify(d));
+    d = describeNotification({ ...wait, ask: 'command', resolvedAt: 5, outcome: 'cancelled', unread: false }, t);
+    tt.ok('済んだ戻らないコマンドは過去形で、決着の言葉を付けない', d.line === 'Owl のコマンドが戻らず、会話が止まっていました' && d.outcome === '', JSON.stringify(d));
     d = describeNotification({ ...wait, resolvedAt: 5, outcome: 'allowed', unread: false }, t);
     tt.ok('決着したあなた待ちは過去形・◇・「承認済み」（弱く出す）', d.line === 'Owl が承認を待っていました' && d.icon === 'closed' && d.outcome === '承認済み' && d.open === false);
     tt.ok('決着の言葉: 回答済み・却下・取り消し', ['answered', 'denied', 'cancelled'].map((o) => describeNotification({ ...wait, resolvedAt: 5, outcome: o }, t).outcome).join() === '回答済み,却下,取り消し');

@@ -512,6 +512,10 @@
     "dropped": "{{count}} more were left out.",
     "footer": "Do not simply redo what was stopped. Check the current state (files, command output, ply_task_status) first, then decide whether to delegate again or rerun commands."
   },
+  "shell": {
+    "commandNotice": "[Pleiad command duration notice / {{noticeId}}]\n`{{command}}`, run in this conversation, has not finished after {{minutes}} minutes (Pleiad has not stopped it). If it should finish, check whether it is stuck. For something that does not finish, such as a server, start it in the background so the command returns right away. {{hint}}",
+    "commandHint": "ply_shell's start lets you keep working without waiting (read output with output, stop it with stop)."
+  },
   "guide": {
     "bot": {
       "heading": "You are {{icon}} {{name}}.",

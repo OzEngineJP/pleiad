@@ -10,6 +10,7 @@
 //     completion({ sessionId, outcome, completedAt, uuid? })   … ターンの完了・失敗（completionKind の規則で、載せないものは載せない）
 //     permissionOpened({ id, sessionId, kind, via?, chrome? }) … あなた待ちの成立。via は承認のカードが出ている会話（委譲の子の承認は依頼元）。chrome は Chrome の操作待ち
 //     permissionSettled({ id, answer, kind })                  … 決着
+//     commandStuck({ sessionId, id })・commandSettled({ sessionId, id }) … 会話が読めないまま戻らないコマンド（ADR 0224 §2）。あなた待ちとして載せ、終わったら決着させる
 //     observe(event)                                           … channelPost（人以外の @あなた）・channelRead・channelsChanged（アーカイブ）
 //     sessionRemoved(sessionId)
 import { completionKind, permissionOutcome } from './notifications.mjs';
@@ -70,6 +71,17 @@ export function createNotificationSources({ inbox, store, viewing = () => false,
       });
     }),
     permissionSettled: guard('permission settled', async ({ id, answer, kind = 'tool' }) => inbox.settle(`wait:${id}`, permissionOutcome(answer, { kind }))),
+
+    commandStuck: guard('command stuck', async ({ sessionId, id }) => {
+      if (!sessionId || !id) return null;
+      const place = await sessionPlace(sessionId);
+      if (place.sb && hiddenKinds.has(place.sb.kind)) return null;
+      return inbox.add({
+        kind: 'wait', dedupeKey: `command:${sessionId}:${id}`, sessionId, channelId: place.channelId, viewing: viewing(sessionId),
+        data: { ask: 'command', threadId: place.threadId, actor: place.actor, title: place.title, channelName: place.channelName, home: place.home, threadTitle: place.threadTitle },
+      });
+    }),
+    commandSettled: guard('command settled', async ({ sessionId, id }) => inbox.settle(`command:${sessionId}:${id}`, 'cancelled')),
 
     observe: guard('event', async (event) => {
       if (event?.type === 'channelPost' && (event.op === 'add' || event.op === 'edit')) {

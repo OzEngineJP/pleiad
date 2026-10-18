@@ -3318,6 +3318,16 @@
           "closed": "The agent was waiting for you in Chrome"
         }
       },
+      "command": {
+        "named": {
+          "open": "A command run by {{name}} has not returned; the conversation may be stuck",
+          "closed": "A command run by {{name}} did not return; the conversation was stuck"
+        },
+        "plain": {
+          "open": "A command has not returned; the conversation may be stuck",
+          "closed": "A command did not return; the conversation was stuck"
+        }
+      },
       "failed": {
         "named": "{{name}}'s turn failed",
         "titled": "{{title}} failed",

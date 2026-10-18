@@ -372,6 +372,7 @@ await contextBases.load();
 import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
+import { createSessionCommands } from './session-commands.mjs';
 import { createShellHolder } from './shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
@@ -767,6 +768,8 @@ async function withCodexTrust(report, cwd, { trust = true } = {}) {
   } catch (e) { return applyCodexHooks(report, null, String(e?.message ?? e).slice(0, 200)); }
 }
 let agentTasks;
+// 普通の会話の長いコマンドの見張り（ADR 0224 §2）。委譲の台帳の後に作る
+let sessionCommands;
 // bot・Channels・ルーティン（core/bots-host.mjs）。つなぎ目は botHost?.xxx() で呼ぶ（生成前・失敗時は何もしない）
 let botHost;
 // 設定の変更の承認の台帳と、結果を会話へ届ける待ち行列（core/setting-approvals.mjs、ADR 0088）
@@ -2875,7 +2878,7 @@ function makeEmit(turn) {
     // （画面が受けた瞬間から数えると、開き直し・再接続の再生のたびに 0 に戻る）。実行中のスナップショットにも同じ値が残る。
     // バックエンドが付けた時刻は上書きしない（docs/multi-backend.md §2.2）
     if (event?.type === 'tool.start' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
-    if (event?.type) agentTasks?.observe(turn.info.sessionId, event);
+    if (event?.type) { agentTasks?.observe(turn.info.sessionId, event); sessionCommands?.observe(turn.info.sessionId, event); }
     // git でしたこと（PR の作成など）をターンの終わりの要約に使う
     const gitFound = turn.gitCalls?.track(event);
     if (gitFound?.length && !replay) recordPrs(turn.info.sessionId, gitFound);
@@ -2951,7 +2954,7 @@ function makeEmit(turn) {
       const notice = liveNotices.get(event.messageId);
       liveNotices.delete(event.messageId);
       touchCard(turn);
-      if (event.type === "userMessage.delivered") emit({ type: "taskNotice", text: notice.prompt }, { replay });
+      if (event.type === "userMessage.delivered") { emit({ type: "taskNotice", text: notice.prompt }, { replay }); notice.delivered?.(); }
       else if (notice.redeliver) notice.redeliver();
       else agentTasks?.renotify(notice.items).catch(() => {});
       return;
@@ -3795,6 +3798,7 @@ async function deleteSessionOf(sessionId) {
     limitReleaseTimers.delete(sessionId); limitStates.delete(sessionId);
     relayHops.delete(sessionId);
     completionNotices.forget(sessionId);
+    sessionCommands?.forget(sessionId);
     pushNotifier.viewed(sessionId);
     void inboxSources.sessionRemoved(sessionId);
     releaseAgentConnection(sessionId);
@@ -5698,26 +5702,30 @@ function completionNotice(lng, tasks) {
  * 「渡った」合図を後から出すバックエンド（steerConfirms）では、通知の一行を渡った時点で出し、捨てられたら送り直す（liveNotices）。
  * 送り直し先は、タスクの完了通知なら agentTasks.renotify（items）、設定の変更の承認の結果なら台帳へ戻す（settingNotices。付け直す先でも作り直せる形）
  */
-async function steerNotice(turn, owner, prompt, tasks, settingNotices = null) {
+async function steerNotice(turn, owner, prompt, tasks, settingNotices = null, hooks = null) {
   await recordTaskNotice(owner, prompt);
   const item = { id: `task-notice-${crypto.randomUUID()}`, args: { prompt } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
   if (confirms) {
-    liveNotices.set(item.id, noticeEntry(owner, prompt, tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), settingNotices));
+    liveNotices.set(item.id, noticeEntry(owner, prompt, tasks.map(x => ({ taskId: x.taskId, revision: x.revision ?? 0 })), settingNotices, hooks));
     touchCard(turn);
   }
   let accepted;
   try { accepted = await trackIn(handover.critical, turn.control.steer?.(item)); }
   catch { if (liveNotices.delete(item.id)) touchCard(turn); return 'error'; }
   if (!accepted) { if (liveNotices.delete(item.id)) touchCard(turn); return 'requeue'; }
-  if (!confirms) emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt });
+  if (!confirms) { emitGlobal({ type: 'taskNotice', sessionId: owner, text: prompt }); hooks?.delivered?.(); }
   return 'ok';
 }
 
-/** 渡った合図を待つ完了通知の控え（liveNotices の値）。設定の変更の承認の結果は、台帳へ戻す口を settingNotices から作る */
-function noticeEntry(owner, prompt, items, settingNotices = null) {
-  return { owner, prompt, items, ...(settingNotices ? { settingNotices, redeliver: () => settingApprovals.requeue(settingNotices) } : {}) };
+/**
+ * 渡った合図を待つ完了通知の控え（liveNotices の値）。設定の変更の承認の結果は、台帳へ戻す口を settingNotices から作る。
+ * hooks（{ delivered, redeliver }）は、長いコマンドの知らせ（ADR 0224）が受け取り・捨てられたことを知る口（メモリだけ。付け直した先には無い）
+ */
+function noticeEntry(owner, prompt, items, settingNotices = null, hooks = null) {
+  return { owner, prompt, items, ...(settingNotices ? { settingNotices, redeliver: () => settingApprovals.requeue(settingNotices) } : {}),
+    ...(hooks?.delivered ? { delivered: hooks.delivered } : {}), ...(hooks?.redeliver && !settingNotices ? { redeliver: hooks.redeliver } : {}) };
 }
 
 /**
@@ -6131,6 +6139,28 @@ agentTasks = await createAgentTasks({
     const reply = notice.count > 1 ? null : task.host ? task.hostBackground?.reply ?? null : await lastReply(task.sessionId).catch(() => null);
     return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task.host ? { ...task, title: delegatedNoticeTitle(task) } : task, notice, reply) }, () => {}, { internal: true, onAccepted: accepted });
   },
+});
+// 普通の会話の長いコマンドを、その会話自身へ知らせる（ADR 0224 §2）。委譲の子は上の台帳が親へ知らせる。止めない。
+// 走っているターンへは途中送信で渡し（渡った合図で受け取り）、渡せなければ空いてから新しいターンで渡す。
+// 受け取られないまま（エージェントが自分のシェルのツールの中で固まっている）なら、通知の一覧のあなた待ちに載せる
+// ply_shell をこの会話に渡しているか（ADR 0224 §1。知らせの文に使い方を添えるか）
+function plyShellOffered(sessionId) { return false; }
+sessionCommands = createSessionCommands({
+  delegated: sessionId => taskExecutions.has(sessionId),
+  waiting: sessionId => [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId && blocksTurn(w)),
+  deliver: async (sessionId, command, { accept, requeue }) => {
+    if (isRemoteOwner(sessionId)) return 'ok';
+    const lng = await ensureAgentLocale(sessionId);
+    const prompt = agentT(lng, 'shell.commandNotice', { noticeId: `${command.source}:${command.id}`, command: redactForPeer(command.command, 200),
+      minutes: command.elapsedMinutes, hint: plyShellOffered(sessionId) ? agentT(lng, 'shell.commandHint') : '' });
+    const live = await noticeTarget(sessionId);
+    if (live) return steerNotice(live, sessionId, prompt, [], null, { delivered: accept, redeliver: requeue });
+    if (await noticeBlocked(sessionId)) return 'requeue';
+    await recordTaskNotice(sessionId, prompt);
+    return runTurn({ sessionId, prompt }, () => {}, { internal: true, onAccepted: accept });
+  },
+  raise: (sessionId, command) => { void inboxSources.commandStuck({ sessionId, id: `${command.source}:${command.id}` }); },
+  settle: (sessionId, command) => { void inboxSources.commandSettled({ sessionId, id: `${command.source}:${command.id}` }); },
 });
 // 前の起動で走っていて、再起動で止まった委譲タスクを、依頼元の会話の「止めたもの」に残す（次のターンで伝える）。
 // 裏の作業と承認待ちは保存していないので分からない（docs/design.md「中断と再開」）
@@ -7713,6 +7743,7 @@ const OUTSIDE_TURN_EVENTS = new Set(["tool.result", "task.command", "task.activi
 function emitOutsideTurn(sessionId, event) {
   if (!sessionId || !OUTSIDE_TURN_EVENTS.has(event?.type)) return;
   agentTasks?.observe(sessionId, event);
+  sessionCommands?.observe(sessionId, event);
   if (event.type.startsWith("task.")) return;
   emitGlobal({ ...event, sessionId });
 }
