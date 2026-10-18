@@ -906,7 +906,7 @@ plugin は `opencode/pleiad-plugin-v2/` の package として配置する。ツ�
 | Codex | app-server 0.156.1 の `contextCompaction` item と `thread/compacted`、手動は `thread/compact/start` | `thread/tokenUsage/updated` の `last.totalTokens` / `modelContextWindow` | 現在の item 形からは取得できない |
 | Antigravity | `checkpoint` の意味は未確認。圧縮と判別できないため正規化しない。手動操作は提供しない | 取得しない | 取得しない |
 | Devin | Devin 自身の自動圧縮は ACP の会話に出ない。手動は `/compact` を prompt の本文として送る（ACP のスラッシュコマンドの形） | `usage_update` の `used` / `size` | 取得しない |
-| Grok | 正規化しない（自動の圧縮は Grok 自身が `config.toml` の `[session] auto_compact_threshold_percent` で決める） | `usage_update` の `used` / `size`（2026-10-19 の実機では届かなかった）。`turn_completed` の `usage` は使わない: ターンのモデル呼び出しの合計（課金の量）で、呼び出しが 2 回のターンは文脈の占有のほぼ 2 倍になる（`totalTokens` 58,145、最後の呼び出しのプロンプト 29,195）。`_x.ai/session/usage` も同じ合計を返し、使用枠の残り・リセットの時刻は返さない | 取得しない |
+| Grok | 正規化しない（自動の圧縮は Grok 自身が `config.toml` の `[session] auto_compact_threshold_percent` で決める） | `usage_update` の `used` / `size`（2026-10-19 の実機では届かなかった）。`turn_completed` の `usage` は使わない: ターンのモデル呼び出しの合計（課金の量）で、複数のモデル呼び出しでは同じ文脈を繰り返し数えるため、文脈の占有量に使えない。`_x.ai/session/usage` も同じ合計を返し、使用枠の残り・リセットの時刻は返さない | 取得しない |
 
 core は圧縮の開始・完了・失敗を `compaction`、文脈量を `contextWindow` として送る。既存の `contextUsage` はプラグインの読み込み記録なので保持する。Claude の `compact_boundary` と Codex の `contextCompaction` item をネイティブ履歴から優先して読み、sidecar の `compactions` から要約・trigger・失敗理由を補う。ID のない記録も同じターン、または近い時刻で照合して重複を除く。ネイティブ境界が無い分は sidecar から区切りを戻し、ネイティブ履歴の発言と一緒に描く。自動圧縮の予約は送信受理・手動圧縮・未送信会話の削除・バックエンド切替・対象外への設定変更・キャンセルで取り消す。画面の会話切替では残す。見えている予約はファイルに保存し、Pleiad の再起動後に予定の時刻から 8 分以内のものを戻す（[ADR 0039](adr/0039-conversation-compaction.md)、[ADR 0069](adr/0069-idle-compaction-schedule-survives-restart.md)）。
 
