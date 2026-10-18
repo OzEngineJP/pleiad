@@ -61,9 +61,10 @@ export async function accountQuota(account = null, { fetcher = fetch } = {}) {
 export async function opencodeUsage({ accounts = [], account } = {}, options) {
   const rows = await Promise.all((account ? [account] : [null, ...accounts]).map(async account => {
     const ready = account ? account.ready ?? Object.keys(readAccountAuth(account)).length > 0 : true;
+    const quota = !ready ? { windows: [], message: 'This account has no usable credential.' } : await accountQuota(account, options);
     return { accountId: account?.id ?? null,
       label: account?.name || (account ? account.id : 'OpenCode CLI login'), ready,
-      ...(!ready ? { windows: [], message: 'This account has no usable credential.' } : await accountQuota(account, options)), checkedAt: Date.now() };
+      ...quota, checkedAt: quota.windows.length ? Date.now() : null };
   }));
   return { ...rows[0], accounts: rows };
 }

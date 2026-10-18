@@ -62,7 +62,9 @@ export default async function testOpencodeUsage(t) {
     const other = { ...account, id: 'acct-two', name: 'Two', dir: path.join(scratch, 'two'), credential: { auth: { openai: { ...oauth, access: 'access-two' } } } };
     const multiple = await opencodeUsage({ accounts: [account, other, { ...other, id: 'empty', ready: false }] }, { fetcher });
     assert.deepEqual(multiple.accounts.map(r => r.accountId), [null, 'acct-one', 'acct-two', 'empty']);
-    assert.ok(multiple.accounts.every(r => Number.isFinite(r.checkedAt)));
+    assert.equal(multiple.accounts[0].checkedAt, null);
+    assert.ok(multiple.accounts.slice(1, 3).every(r => Number.isFinite(r.checkedAt)));
+    assert.equal(multiple.accounts[3].checkedAt, null);
     assert.equal(multiple.accounts[3].windows.length, 0);
     assert.equal(multiple.accounts[3].ready, false);
     assert.ok(seen.some(r => r.headers.authorization === 'Bearer access-two'));
@@ -74,6 +76,8 @@ export default async function testOpencodeUsage(t) {
       assert.equal(result.windows.length, 0);
       assert.ok(result.message);
       assert.ok(!JSON.stringify(result).includes('secret-provider-response'));
+      const failedRow = await opencodeUsage({ account }, { fetcher });
+      assert.equal(failedRow.checkedAt, null);
     }
     assert.ok(!seen.some(r => r.url === '/stolen-token'));
     const before = seen.length;
