@@ -195,6 +195,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         write({ id: request.id, result });
         // 折り込まれた途中送信も、同じ回の続きとして返し、並んだ順に応答を書く
         for (const steer of session.steerQueue ?? []) {
+          // [drop-steer]: 受理したが読んだか分からないまま cancelled で決着する（既読不明の試験用）
+          if (steer.text.includes('[drop-steer]')) { write({ id: steer.id, result: { stopReason: 'cancelled' } }); continue; }
           session.messages.push({ role: 'user', text: steer.text });
           update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
           const steerReply = `fixture: ${steer.text}`, steerMiddle = Math.ceil(steerReply.length / 2);

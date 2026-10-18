@@ -250,7 +250,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           emit({ type: 'session', sessionId, model: model || client.init?._meta?.modelState?.currentModelId || undefined, ...(args.sessionId ? {} : { first: true }) });
           // 途中送信: 走っているターンへ session/prompt を重ねる。Grok は内蔵の待ち行列に積み、
           // 今の回の直後に続けて回す（実測 1.0.62。決着は drain で待つので、Pleiad の同じターンに見える）
-          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted });
+          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+            onSent: text => mapper?.noteUser(text) });
           if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
           check();
           prompting = true;

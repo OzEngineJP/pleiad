@@ -73,6 +73,21 @@ export default async function (t) {
       t.ok('画面へも userMessage.dropped が出る', events(b.task, markB, 'userMessage.dropped').length >= 1);
       await awaitTask(b.parent, r => ['failed', 'cancelled', 'completed'].includes(r.status), 30_000);
     }
+
+    // ---- 受理後に cancelled で決着（既読不明）: dropped にして自動では送り直さない（二重配送を避ける）
+    {
+      const d = await child('[slow] unknown-drop');
+      const markD = c.mark();
+      await send(d.parent, d.task, '[drop-steer] maybe-read');
+      await awaitState(d.task, '[drop-steer] maybe-read:sending');
+      const doneD = await awaitTask(d.parent, r => r.status === 'completed', 30_000);
+      t.ok('既読不明の決着は dropped のまま残し、待機へ戻さない',
+        await stateOf(d.task) === '[drop-steer] maybe-read:dropped', await stateOf(d.task));
+      const turnsD = c.since(markD).filter(e => e.type === 'turnEnd' && e.sessionId === d.task.sessionId);
+      const userTextsD = (await c.cmd('loadSession', { sessionId: d.task.sessionId })).messages.filter(m => m.role === 'user').map(m => m.text);
+      t.ok('自動で次のターンへ送り直さない（新しいターンも重複配送も無い）',
+        turnsD.length === 1 && userTextsD.filter(x => x.includes('maybe-read')).length <= 1, JSON.stringify({ turnsD: turnsD.length, doneD: doneD.status }));
+    }
   } finally {
     c?.close();
     await server?.stop();

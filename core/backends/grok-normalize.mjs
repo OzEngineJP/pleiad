@@ -50,8 +50,6 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
         // Preserve unexpected delivered input rather than silently losing it.
         current.text = echo; expectedEcho = null; return;
       }
-      // 直前の user 行が本文を持ち echo 待ちでなければ、届いたのは別の発言（途中送信の折り込みなど）。行を分ける
-      if (current?.role === 'user' && current.text) current = null;
       row('user').text += text;
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;
@@ -100,6 +98,9 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       current = null; row('user').text = prompt;
       expectedEcho = prompt; echo = ''; live = true;
     },
+    // Grok は受理した途中送信を user_message_chunk でエコーしない（実測 1.0.62）。
+    // 受理した分を記録の user 行として自分で置く（待ち行列で回る分も、送った順の行にする）
+    noteUser(text) { current = null; row('user').text = text; },
     finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid }); live = false; },
     messages: () => structuredClone(messages),
   };

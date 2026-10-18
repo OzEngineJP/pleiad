@@ -3054,7 +3054,7 @@ function makeEmit(turn) {
       const sent = liveInstructions.get(event.messageId);
       liveInstructions.delete(event.messageId);
       touchCard(turn);
-      agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : "dropped").catch(() => {});
+      agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : event.unknown ? "unknown" : "dropped").catch(() => {});
     }
     // 受理済みの途中送信（送信待ちの項目）への合図。捨てられたら送信待ちへ戻す
     const awaited = signal && event.messageId && turn.pendingSteers?.delete(event.messageId);
