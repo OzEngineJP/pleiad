@@ -6753,6 +6753,7 @@ async function beginTurn(ctx) {
   const wantsSuggestion = !delegatedChild && !sessionMeta?.bot && !hooks.compact && (await store.getPrefs()).composerSuggestions !== false;
   const runArgs = {
     prompt,
+    messageId: args.messageId ?? null,
     ...(shellHandoff?.lines.length ? { shellAppends: shellHandoff.lines } : {}),
     ...(notes.length ? { notes } : {}),
     ...(botExtras.botInstructions ? { botInstructions: botExtras.botInstructions } : {}),

@@ -28,6 +28,10 @@ import path from 'node:path';
 const PASSWORD = process.env.OPENCODE_SERVER_PASSWORD ?? '';
 const AUTH = `Basic ${Buffer.from(`opencode:${PASSWORD}`).toString('base64')}`;
 const CONFIG = (() => { try { return JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? '{}'); } catch { return {}; } })();
+const relayEndpoint=kind=>{
+  try {if(process.env.PLEIAD_OPENCODE_RELAY_FILE)return JSON.parse(fs.readFileSync(process.env.PLEIAD_OPENCODE_RELAY_FILE,'utf8'))[kind];}catch{}
+  return process.env[`PLEIAD_OPENCODE_${kind.toUpperCase()}_URL`];
+};
 const PROVIDERS = {
   providers: [{ id: 'fake', name: 'Fake', models: { echo: { name: 'Echo', limit: { context: 100_000, output: 8_000 }, variants: { low: {}, high: {} } }, tiny: { name: 'Tiny', limit: { context: 8_000, output: 1_000 }, variants: {} } } }],
   default: { fake: 'echo' },
@@ -49,7 +53,7 @@ function persist(id) {
   const s = id && STATE_FILE ? sessions.get(id) : null;
   if (!s) return;
   const all = readState();
-  const { run, ...rest } = s;
+  const { run, compacting, ...rest } = s;
   all[id] = rest;
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(all));
@@ -57,17 +61,52 @@ function persist(id) {
 /** 会話を引く。走っていなければファイルの最新で置き換える（別のプロセスが続けたかもしれない） */
 function lookup(id) {
   const now = sessions.get(id);
-  if (!STATE_FILE || now?.run) return now;
+  if (!STATE_FILE || now?.run || now?.compacting) return now;
   const saved = readState()[id];
-  if (saved) sessions.set(id, { ...saved, run: null });
+  if(saved) {if(now)Object.assign(now,saved,{run:null});else sessions.set(id,{...saved,run:null});}
   return sessions.get(id);
 }
 if (STATE_FILE) for (const saved of Object.values(readState())) sessions.set(saved.id, { ...saved, run: null });
 
 function broadcast(directory, type, properties) {
   persist(properties?.sessionID);
-  const line = `data: ${JSON.stringify({ directory, payload: { id: id('evt'), type, properties } })}\n\n`;
-  for (const res of clients) res.write(line);
+  const p=properties,s=sessions.get(p.sessionID),m=s?.messages.find(m=>m.info.id===(p.messageID??p.part?.messageID??p.info?.id));
+  const output=(event,data)=>{const line=`data: ${JSON.stringify({id:id('evt'),created:now(),type:event,data,location:{directory}})}\n\n`;for(const res of clients)res.write(line);};
+  if(type==='session.created')return output(type,{sessionID:p.sessionID,parentID:p.info.parentID,location:{directory}});
+  if(type==='message.updated'&&p.info.role==='user')return output('session.inbox.delivered',{sessionID:s.id,inboxID:p.info.id});
+  if(type==='message.updated')return;
+  if(type==='message.part.delta') {
+    const part=m.parts.find(x=>x.id===p.partID);
+    return output(`session.${part.type}.delta`,{sessionID:s.id,assistantMessageID:m.info.id,ordinal:m.parts.filter(x=>x.type===part.type).findIndex(x=>x.id===part.id),delta:p.delta});
+  }
+  if(type==='message.part.updated') {
+    const part=p.part;
+    if(m.info.role==='user')return;
+    const base={sessionID:s.id,assistantMessageID:m.info.id};
+    if(['text','reasoning'].includes(part.type))return output(`session.${part.type}.${part.time?.end?'ended':'started'}`,{...base,ordinal:m.parts.filter(x=>x.type===part.type).findIndex(x=>x.id===part.id),text:part.text});
+    if(part.type==='step-finish')return output('session.step.ended',{...base,tokens:part.tokens,cost:part.cost});
+    if(part.type==='tool') {
+      const state=part.state,tool={...base,id:part.callID};
+      if(state.status==='pending')return output('session.tool.input.started',{...tool,name:part.tool});
+      if(state.status==='running'){output('session.tool.called',{...tool,input:state.input,executed:true});if(state.metadata)output('session.tool.progress',{...tool,metadata:state.metadata});return;}
+      return output(state.status==='completed'?'session.tool.success':'session.tool.failed',{...tool,metadata:state.metadata,executed:true,...(state.status==='completed'?{content:[{type:'text',text:state.output}]}:{error:{type:'ToolError',message:state.error}})});
+    }
+    return;
+  }
+  if(type==='permission.asked')return output(type,{id:p.id,sessionID:p.sessionID,action:p.permission,resources:p.patterns,save:p.always,metadata:p.metadata,source:{type:'tool',messageID:p.tool.messageID,id:p.tool.callID}});
+  if(type==='question.asked')return output('form.created',{form:formOf(p)});
+  if(type==='session.error'){s.error=p.error;return;}
+  if(type==='session.idle')return output(s.error?'session.execution.failed':'session.execution.succeeded',{sessionID:s.id,...(s.error?{error:s.error}:{})});
+  output(type,p);
+}
+function formOf(p){return {id:p.id,sessionID:p.sessionID,title:'Question',fields:p.questions.map((q,i)=>({key:String(i),type:q.multiple?'multiselect':'string',title:q.question,options:q.options.map(o=>({value:o.label,label:o.label,...(o.description?{description:o.description}:{})}))}))};}
+function nativeRow(s){return {...row(s),location:{directory:s.directory},permissions:s.permission.map(r=>({action:r.permission,resource:r.pattern,effect:r.action})),time:Object.fromEntries(Object.entries(s.time).map(([k,v])=>[k,new Date(v).toISOString()]))};}
+function nativeMessage(m){
+  const {info,parts}=m;
+  const base={id:info.id,time:Object.fromEntries(Object.entries(info.time).map(([k,v])=>[k,new Date(v).toISOString()]))};
+  if(info.summary)return {...base,type:'compaction',status:info.status??'completed',reason:'manual',summary:parts.filter(p=>p.type==='text').map(p=>p.text).join(''),recent:'',tokens:info.tokens,cost:info.cost};
+  if(info.role==='user')return {...base,type:info.synthetic?'synthetic':'user',text:parts.filter(p=>p.type==='text').map(p=>p.text).join(''),files:[],agents:[],skills:[]};
+  return {...base,type:'assistant',agent:'build',model:{providerID:'fake',id:'echo'},tokens:info.tokens,cost:info.cost,content:parts.filter(p=>['text','reasoning','tool'].includes(p.type)).map(p=>p.type==='tool'?{type:'tool',id:p.callID,name:p.tool,time:{created:base.time.created},state:{...p.state,...(p.state.output?{content:[{type:'text',text:p.state.output}]}:{}),...(p.state.error?{error:{type:'ToolError',message:p.state.error}}:{})}}:{type:p.type,text:p.text})};
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => Date.now();
@@ -80,8 +119,8 @@ function session(directory, { title = null, parentID = null, permission = [] } =
   return s;
 }
 
-function addUser(s, text, { system = null } = {}) {
-  const info = { id: id('msg'), sessionID: s.id, role: 'user', time: { created: now() }, ...(system ? { system } : {}) };
+function addUser(s, text, { system = null, messageID = null, synthetic = false } = {}) {
+  const info = { id: messageID ?? id('msg'), sessionID: s.id, role: 'user', time: { created: now() }, ...(system ? { system } : {}),...(synthetic?{synthetic:true}:{}) };
   const part = { id: id('prt'), messageID: info.id, sessionID: s.id, type: 'text', text };
   s.messages.push({ info, parts: [part] });
   broadcast(s.directory, 'message.updated', { sessionID: s.id, info });
@@ -160,15 +199,15 @@ async function mcpCall(s, server, tool, args) {
   const entry = mcp.get(s.directory)?.[server];
   if (!entry) return `no mcp server ${server}`;
   const res = await fetch(entry.config.url, { method: 'POST', headers: { ...entry.config.headers, 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: tool, arguments: { ...args, _pleiadSession: s.id } } }) });
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: tool, arguments: args, _meta:{'ai.opencode/sessionID':s.id} } }) });
   const body = await res.json();
   return (body.result?.content ?? []).filter((c) => c.type === 'text').map((c) => c.text).join('\n') || JSON.stringify(body.error ?? body.result ?? null);
 }
 
 // Pleiad のプラグインの tool.execute.before / after と同じく、Pleiad の口（PLEIAD_OPENCODE_HOOK_URL）にツールの前後を聞く
 async function pluginHook(s, phase, tool, args, output = '') {
-  if (!process.env.PLEIAD_OPENCODE_HOOK_URL) return {};
-  const res = await fetch(process.env.PLEIAD_OPENCODE_HOOK_URL, { method: 'POST', headers: { authorization: `Bearer ${process.env.PLEIAD_OPENCODE_SECRET}`, 'content-type': 'application/json' },
+  if (!relayEndpoint('hook')) return {};
+  const res = await fetch(relayEndpoint('hook')+'?account='+encodeURIComponent(process.env.PLEIAD_OPENCODE_ACCOUNT??'login'), { method: 'POST', headers: { authorization: `Bearer ${process.env.PLEIAD_OPENCODE_SECRET}`, 'content-type': 'application/json' },
     body: JSON.stringify({ session: s.id, phase, tool, args, output }) }).catch(() => null);
   return res?.ok ? res.json() : {};
 }
@@ -177,6 +216,7 @@ async function run(s, user, text, { system = null } = {}) {
   const ctl = { aborted: false, steers: [], abort: null };
   ctl.aborted$ = new Promise((resolve) => { ctl.abort = resolve; });
   s.run = ctl;
+  s.error=null;
   broadcast(s.directory, 'session.status', { sessionID: s.id, status: { type: 'busy' } });
   const a = assistant(s, user.id);
   try {
@@ -250,7 +290,7 @@ async function run(s, user, text, { system = null } = {}) {
       reply = out;
     } else if (text.startsWith('env')) {
       const t = a.tool('bash', { command: 'env' });
-      const res = await fetch(`${process.env.PLEIAD_OPENCODE_ENV_URL}?session=${encodeURIComponent(s.id)}`, { headers: { authorization: `Bearer ${process.env.PLEIAD_OPENCODE_SECRET}` } });
+      const res = await fetch(`${relayEndpoint('env')}?session=${encodeURIComponent(s.id)}&account=${encodeURIComponent(process.env.PLEIAD_OPENCODE_ACCOUNT??'login')}`, { headers: { authorization: `Bearer ${process.env.PLEIAD_OPENCODE_SECRET}` } });
       const env = res.ok ? await res.json() : { status: res.status };
       t.done(JSON.stringify(env));
       reply = `env: ${JSON.stringify(env)}`;
@@ -276,7 +316,7 @@ async function run(s, user, text, { system = null } = {}) {
     }
     // 途中送信: 走っている最中に届いた発言は、ここ（区切り）で読む
     await wait(30);
-    for (const steer of ctl.steers.splice(0)) { addUser(s, steer); reply += `\n受け取った: ${steer}`; }
+    for (const steer of ctl.steers.splice(0)) { const text=typeof steer==='string'?steer:steer.text;addUser(s,text,{messageID:steer.id}); reply += `\n受け取った: ${text}`; }
     await a.text(system ? `[system] ${reply}` : reply);
     a.finish();
   } finally {
@@ -288,23 +328,96 @@ async function run(s, user, text, { system = null } = {}) {
 }
 
 async function body(req) {
+  if(req.fakeBody)return req.fakeBody;
   const chunks = [];
   for await (const c of req) chunks.push(c);
   const raw = Buffer.concat(chunks).toString('utf8');
-  return raw ? JSON.parse(raw) : {};
+  return req.fakeBody=raw ? JSON.parse(raw) : {};
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
-  const send = (status, value) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(value === undefined ? '' : JSON.stringify(value)); };
-  if (req.headers.authorization !== AUTH) return send(401, { error: 'unauthorized' });
-  const dir = url.searchParams.get('directory');
+  const wire=url.pathname;
+  const direct = (status,value) => {res.writeHead(status,{'content-type':'application/json'});res.end(value===undefined?'':JSON.stringify(value));};
+  const send = (status, value) => {
+    if(status===204)return direct(status);
+    if(status>=400)return direct(status,value);
+    if(value?.id&&sessions.has(value.id))value=nativeRow(sessions.get(value.id));
+    if(Array.isArray(value)&&wire.endsWith('/message'))return direct(status,{data:value.map(nativeMessage),cursor:{}});
+    return direct(status,{data:value});
+  };
+  if (req.headers.authorization !== AUTH) return direct(401, { error: 'unauthorized' });
+  if(!wire.startsWith('/api/')&&wire!=='/openapi.json')return direct(404,{error:'v2 only'});
+  let dir=req.headers['x-opencode-directory']?decodeURIComponent(req.headers['x-opencode-directory']):null;
+  if(wire==='/api/info')return direct(200,{version:'2.0.32',pid:process.pid});
+  if(wire==='/openapi.json')return direct(200,{info:{title:'opencode HttpApi',version:'0.0.1'},paths:{'/api/session':{},'/api/event':{}}});
+  if(wire==='/api/experimental/migration/v1')return direct(200,{status:'completed'});
+  const nativeModels=PROVIDERS.providers.flatMap(p=>Object.entries(p.models).map(([key,m])=>({...m,id:key,providerID:p.id,enabled:true,variants:Object.keys(m.variants).map(id=>({id}))})));
+  if(wire==='/api/model')return direct(200,{location:{directory:dir},data:nativeModels});
+  if(wire==='/api/model/default')return direct(200,{location:{directory:dir},data:nativeModels.find(m=>`${m.providerID}/${m.id}`===(process.env.FAKE_OPENCODE_MODEL??'fake/echo'))});
+  if(wire==='/api/credential')return direct(200,{data:[{integrationID:'fake',id:'cred_fake',active:true,value:{type:'key',key:'fake-key'}}]});
+  if(wire==='/api/config')return direct(200,[{type:'document',info:CONFIG}]);
+  if(wire==='/api/event')url.pathname='/global/event';
+  else if(wire==='/api/mcp')return direct(200,{location:{directory:dir},data:Object.entries(mcp.get(dir)??{}).map(([name,value])=>({name,status:{status:value.status}}))});
+  else if(wire.startsWith('/api/experimental/mcp/')) {
+    const b=await body(req);req.fakeBody={name:decodeURIComponent(wire.split('/').at(-1)),config:b.config};req.method='POST';url.pathname='/mcp';
+  }else if(wire==='/api/session/active')return direct(200,{data:Object.fromEntries([...sessions.values()].filter(s=>s.run).map(s=>[s.id,{type:'busy'}]))});
+  else if(wire==='/api/session'&&req.method==='GET') {
+    const parent=url.searchParams.get('parentID');
+    return direct(200,{data:[...sessions.values()].filter(s=>!parent||parent==='null'?!s.parentID:s.parentID===parent).reverse().map(nativeRow),cursor:{}});
+  }else if(wire==='/api/session'&&req.method==='POST') {
+    const b=await body(req);dir=b.location?.directory??dir;
+    req.fakeBody={...b,permission:(b.permissions??[]).map(r=>({permission:r.action,pattern:r.resource,action:r.effect}))};url.pathname='/session';
+  }else if(wire.startsWith('/api/session/')) {
+    const seg=wire.split('/').filter(Boolean),sid=seg[2],action=seg[3],s=lookup(sid);
+    if(!s)return direct(404,{error:'not found'});
+    dir=s.directory;url.pathname=wire.slice(4);
+    if(['model','agent','environment'].includes(action)) {const b=await body(req);s[action]=b.model??b.agent??b.variables;return direct(204);}
+    if(action==='inbox') {
+      if(req.method==='DELETE') {if(s.run)s.run.steers=s.run.steers.filter(x=>x.id!==seg[4]);return direct(204);}
+      return direct(200,{data:(s.run?.steers??[]).map(x=>({id:x.id,sessionID:sid,type:'user',time:x.time,delivery:'steer',payload:{text:x.text}}))});
+    }
+    if(action==='message'&&seg[4]) {const m=s.messages.find(m=>m.info.id===seg[4]);return m?direct(200,{data:nativeMessage(m)}):direct(404,{error:'not found'});}
+    if(['permission','form'].includes(action)) {
+      if(req.method==='GET')return direct(200,{data:[...pending.values()].filter(x=>x.properties.sessionID===sid&&x.kind===(action==='form'?'question':'permission')).map(x=>action==='form'?formOf(x.properties):{...x.properties,action:x.properties.permission,resources:x.properties.patterns,save:x.properties.always,source:{type:'tool',id:x.properties.tool?.callID}})});
+      const requestID=seg[4],b=await body(req);
+      if(action==='permission'){waits.get(requestID)?.({reply:b.decision,message:b.message});waits.delete(requestID);return direct(204);}
+      const q=pending.get(requestID)?.properties;
+      waits.get(requestID)?.(req.method==='DELETE'?{rejected:true}:{answers:(q?.questions??[]).map((_,i)=>Array.isArray(b.answer[String(i)])?b.answer[String(i)]:[b.answer[String(i)]])});waits.delete(requestID);return direct(204);
+    }
+    if(action==='prompt') {
+      const b=await body(req);
+      const existing=s.messages.find(m=>m.info.id===b.id),queued=s.run?.steers.find(x=>x.id===b.id);
+      if(existing||queued)return direct(200,{data:{id:b.id,sessionID:sid,type:'user',time:existing?nativeMessage(existing).time:queued.time,delivery:b.delivery}});
+      let system='';
+      if(relayEndpoint('env')){try{const response=await fetch(relayEndpoint('env')+'?kind=context&session='+encodeURIComponent(sid)+'&account='+encodeURIComponent(process.env.PLEIAD_OPENCODE_ACCOUNT??'login'),{headers:{authorization:'Bearer '+process.env.PLEIAD_OPENCODE_SECRET}});system=(await response.json()).system??'';}catch{}}
+      direct(200,{data:{id:b.id,sessionID:sid,type:'user',text:b.text,delivery:b.delivery}});
+      if(s.run){s.run.steers.push({id:b.id,text:b.text,time:{created:new Date().toISOString()}});return;}
+      const user=addUser(s,b.text,{messageID:b.id,system});void run(s,user,b.text,{system});return;
+    }
+    if(action==='synthetic'){const b=await body(req),user=addUser(s,b.text,{synthetic:true,messageID:b.id});return direct(200,{data:{id:user.id,type:'synthetic',text:b.text}});}
+    if(action==='interrupt'){const interrupted=Boolean(s.run);s.run?.abort();return direct(200,{interrupted});}
+    if(action==='fork'){const b=await body(req);req.fakeBody={messageID:b.before};}
+    if(action==='compact') {
+      s.compacting=true;
+      const b=await body(req),mid=b.id??id('msg');
+      const info={id:mid,sessionID:sid,role:'assistant',summary:true,status:'running',time:{created:now()}};
+      const m={info,parts:[]};s.messages.push(m);
+      direct(200,{data:{id:mid,sessionID:sid,type:'compaction',delivery:'steer',time:{created:new Date(info.time.created).toISOString()}}});
+      broadcast(s.directory,'session.compaction.started',{sessionID:sid,inputID:mid,reason:'manual',recent:''});
+      await wait(10);info.status='completed';info.tokens={input:12,output:4};info.cost=0.0001;
+      m.parts.push({id:id('prt'),type:'text',text:'## Summary\n- the fake conversation so far'});
+      s.compacting=false;persist(sid);broadcast(s.directory,'session.compaction.ended',{sessionID:sid,reason:'manual',text:m.parts[0].text,tokens:info.tokens,cost:info.cost});
+      broadcast(s.directory,'session.idle',{sessionID:sid});return;
+    }
+    if(!action&&req.method==='PATCH'){const b=await body(req);req.fakeBody={...b,...(b.permissions?{permission:b.permissions.map(r=>({permission:r.action,pattern:r.resource,action:r.effect}))}:{})};}
+  }
   const parts = url.pathname.split('/').filter(Boolean);
   try {
     if (url.pathname === '/global/health') return send(200, { healthy: true, version: 'fake' });
     if (url.pathname === '/global/event') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-      res.write(`data: ${JSON.stringify({ payload: { type: 'server.connected', properties: {} } })}\n\n`);
+      res.write(`data: ${JSON.stringify({type:'server.connected',data:{}})}\n\n`);
       clients.add(res);
       req.on('close', () => clients.delete(res));
       return;
@@ -405,5 +518,6 @@ if (process.env.FAKE_OPENCODE_LAUNCH_FILE) {
 `);
 }
 server.listen(port, '127.0.0.1', () => {
-  console.log(`opencode server listening on http://127.0.0.1:${server.address().port}`);
+  console.log(JSON.stringify({url:`http://127.0.0.1:${server.address().port}`}));
 });
+if(process.argv.includes('--stdio')){process.stdin.resume();process.stdin.on('end',()=>server.close(()=>process.exit(0)));}

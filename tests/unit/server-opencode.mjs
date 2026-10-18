@@ -28,7 +28,7 @@ export default async function (t) {
   seed.prepare('insert into part values (?, ?, ?, ?, ?, ?)').run('prt_tui01', 'msg_tui01', 'ses_tui0001', 1000, 1000, JSON.stringify({ type: 'text', text: 'hello from the TUI' }));
   seed.prepare('insert into part values (?, ?, ?, ?, ?, ?)').run('prt_tui02', 'msg_tui02', 'ses_tui0001', 1100, 1200, JSON.stringify({ type: 'text', text: 'answered in the TUI' }));
   seed.close();
-  await fs.writeFile(path.join(ocData, 'auth.json'), JSON.stringify({ openai: { type: 'oauth', access: 'secret-value' } }));
+  await fs.writeFile(path.join(ocData, 'auth.json'), JSON.stringify({ openai: { type: 'oauth', access: 'secret-value', refresh:'refresh', expires:2000000000000 } }));
   const started = path.join(dataDir, 'oc-started.txt');
   const server = await startServer({ dataDir, timeoutMs: 60_000, env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"`,
     AGENT_HOST_OPENCODE_DATA: ocData, FAKE_OPENCODE_STARTED_FILE: started } });

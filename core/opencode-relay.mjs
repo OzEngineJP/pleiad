@@ -29,21 +29,34 @@ export function createOpencodeRelay({ secret: initialSecret = crypto.randomBytes
   const latest = new Map();     // server -> { url, headers }（ツールの一覧を聞く先）
   let origin = null;
   let originWaiters = [];
+  const scoped = (id, account = 'login') => `${account}:${id}`;
+  const accountToken = (account = 'login') => crypto.createHmac('sha256',secret).update(account).digest('hex');
 
   const rootOf = (id) => {
     let key = id;
     for (let i = 0; i < 8 && !sessions.has(key) && aliases.has(key); i++) key = aliases.get(key);
     return key;
   };
-  const lookup = (id) => sessions.get(rootOf(id)) ?? null;
+  const lookup = (id, account = 'login') => sessions.get(rootOf(scoped(id, account))) ?? null;
   /** 付け直す途中の会話なら、結び付け直すまで待ってから引く */
-  const settled = async (id) => {
-    const found = lookup(id);
+  const settled = async (id, account = 'login') => {
+    if(!id)return null;
+    const found = lookup(id, account);
     if (found) return found;
-    const wait = expected.get(rootOf(id));
+    // A child may execute before its tool result reaches the live UI. Verify the
+    // server's parent relation and initialize its environment before forwarding.
+    for (const entry of sessions.values()) if (entry.account === account && entry.resolveChild) {
+      const parent = await entry.resolveChild(id).catch(() => null);
+      if (parent && lookup(parent, account) === entry) {
+        aliases.set(scoped(id, account), scoped(parent, account));
+        await entry.prepareChild?.(id);
+        return entry;
+      }
+    }
+    const wait = expected.get(rootOf(scoped(id, account)));
     if (!wait) return null;
     await wait.promise;
-    return lookup(id);
+    return lookup(id, account);
   };
   const release = (id) => {
     const wait = expected.get(id);
@@ -76,58 +89,64 @@ export function createOpencodeRelay({ secret: initialSecret = crypto.randomBytes
 
   return {
     get secret() { return secret; },
+    token:accountToken,
     /** 前のサーバーの合言葉にする（引き継いだ OpenCode のサーバーは、その値で中継を呼ぶ） */
     adoptSecret(value) { if (typeof value === 'string' && value.length >= 32) secret = value; },
     /** 付け直すターンの会話（と子の会話）。結び付けるまで、その会話の呼び出しを待たせる。children は { 子の id: 親の id } */
-    expect(sessionIds, children = {}) {
+    expect(sessionIds, children = {}, account = 'login') {
       for (const id of sessionIds ?? []) {
-        if (!id || expected.has(id) || sessions.has(id)) continue;
+        const key=scoped(id,account);
+        if (!id || expected.has(key) || sessions.has(key)) continue;
         let resolve;
         const promise = new Promise((r) => { resolve = r; });
-        const timer = setTimeout(() => release(id), expectMs);
+        const timer = setTimeout(() => release(key), expectMs);
         timer.unref?.();
-        expected.set(id, { promise, resolve, timer });
+        expected.set(key, { promise, resolve, timer });
       }
-      for (const [child, parent] of Object.entries(children ?? {})) if (child && parent && child !== parent) aliases.set(child, parent);
+      for (const [child, parent] of Object.entries(children ?? {})) if (child && parent && child !== parent) aliases.set(scoped(child,account), scoped(parent,account));
     },
     /** 付け直さなかった会話の待ちを外す */
-    unexpect: (sessionId) => release(sessionId),
+    unexpect: (sessionId, account = 'login') => release(scoped(sessionId,account)),
     /** Pleiad のサーバーの待ち受け（http://127.0.0.1:port）。server が listen の後に入れる */
     setOrigin(value) { origin = value; for (const fn of originWaiters) fn(value); originWaiters = []; },
     origin: () => origin,
     whenOrigin: () => (origin ? Promise.resolve(origin) : new Promise((resolve) => originWaiters.push(resolve))),
     /** OpenCode に渡すサーバーの url（origin が決まっていること） */
-    serverUrl: (server) => `${origin}${OPENCODE_RELAY_PATH}/${server}`,
+    serverUrl: (server, account = 'login') => `${origin}${OPENCODE_RELAY_PATH}/${server}?account=${encodeURIComponent(account)}`,
     envUrl: () => `${origin}${OPENCODE_RELAY_PATH}/env`,
     hookUrl: () => `${origin}${OPENCODE_RELAY_PATH}/hook`,
     /**
      * 会話にそのターンの口と環境変数を結び付ける（ターンの始めに）。runtimes は { agentRuntime, controlRuntime, ... }（url・headers を持つもの）
      * 返りは、口のあるサーバー名の一覧
      */
-    bind(sessionId, { runtimes = {}, env = {}, hooks = null } = {}) {
+    bind(sessionId, { runtimes = {}, env = {}, hooks = null, account = 'login', system = '', resolveChild = null, prepareChild = null, context = null } = {}) {
       const bound = {};
       for (const [server, key] of Object.entries(RELAY_SERVERS)) {
         const r = runtimes[key];
-        if (r?.url) { bound[server] = { url: r.url, headers: { ...(r.headers ?? {}) } }; latest.set(server, bound[server]); }
+        if (r?.url) { bound[server] = { url: r.url, headers: { ...(r.headers ?? {}) } }; latest.set(scoped(server,account), bound[server]); }
       }
-      sessions.set(sessionId, { runtimes: bound, env: { ...env }, hooks });
-      release(sessionId);
+      sessions.set(scoped(sessionId,account), { runtimes: bound, env: { ...env }, hooks, account, system, resolveChild, prepareChild, context });
+      release(scoped(sessionId,account));
       return Object.keys(bound);
     },
     /** 子の会話（サブエージェント）を親の会話に結び付ける。子のツールの呼び出しは親の口へ */
-    alias(childId, parentId) { if (childId && parentId && childId !== parentId) aliases.set(childId, parentId); },
+    alias(childId, parentId, account = 'login') { if (childId && parentId && childId !== parentId && lookup(parentId,account)) aliases.set(scoped(childId,account), scoped(parentId,account)); },
+    setSystem(sessionId, text, account = 'login') { const entry=lookup(sessionId,account);if(entry)entry.system=String(text ?? ''); },
     /** 会話の結び付きを外す（会話を消したとき）。走っていない会話も、続きのターンまで残しておいてよい */
-    unbind(sessionId) { sessions.delete(sessionId); release(sessionId); for (const [k, v] of aliases) if (k === sessionId || v === sessionId) aliases.delete(k); },
-    has: (sessionId) => Boolean(lookup(sessionId)),
+    unbind(sessionId, account = 'login') {const key=scoped(sessionId,account); sessions.delete(key); release(key); for (const [k, v] of aliases) if (k === key || v === key) aliases.delete(k); },
+    has: (sessionId, account = 'login') => Boolean(lookup(sessionId,account)),
 
     async handle(req, res, url) {
+      const account = url.searchParams.get('account') ?? 'login';
       const token = /^Bearer (\S+)$/.exec(req.headers.authorization ?? '')?.[1] ?? '';
-      const a = Buffer.from(token), b = Buffer.from(secret);
+      const a = Buffer.from(token), b = Buffer.from(accountToken(account));
       if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return reply(res, 401, { error: 'Unauthorized' });
       const rest = url.pathname.slice(OPENCODE_RELAY_PATH.length + 1);
       if (rest === 'env') {
         if (req.method !== 'GET') return reply(res, 405);
-        return reply(res, 200, (await settled(url.searchParams.get('session') ?? ''))?.env ?? {});
+        const entry=await settled(url.searchParams.get('session') ?? '',account);
+        if(!entry)return reply(res,403,{error:'Unknown conversation'});
+        return reply(res, 200, url.searchParams.get('kind')==='context' ? {system:entry.system,requiredServers:Object.keys(entry.runtimes),...(await entry.context?.(url.searchParams.get('session')) ?? {})} : entry.env);
       }
       if (rest === 'hook') {
         if (req.method !== 'POST') return reply(res, 405);
@@ -138,10 +157,12 @@ export function createOpencodeRelay({ secret: initialSecret = crypto.randomBytes
           body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         } catch { return reply(res, 400, {}); }
         // 会話に Hooks が結び付いていなければ何もしない（ほとんどのツールの呼び出しはここで返る）
-        const hooks = (await settled(String(body?.session ?? '')))?.hooks;
+        const entry=await settled(String(body?.session ?? ''),account);
+        if(!entry)return reply(res,403,{error:'Unknown conversation'});
+        const hooks = entry.hooks;
         if (!hooks) return reply(res, 200, {});
         try {
-          const out = body.phase === 'after' ? await hooks.afterTool({ tool: body.tool, args: body.args, output: body.output }) : await hooks.beforeTool({ tool: body.tool, args: body.args });
+          const out = body.phase === 'after' ? await hooks.afterTool({sessionID:body.session,tool:body.tool,args:body.args,output:body.output}) : await hooks.beforeTool({sessionID:body.session,tool:body.tool,args:body.args});
           return reply(res, 200, out ?? {});
         } catch (err) {
           return reply(res, 200, { error: String(err?.message ?? err).slice(0, 300) });
@@ -167,16 +188,16 @@ export function createOpencodeRelay({ secret: initialSecret = crypto.randomBytes
         }
         if (message.method === 'ping') return ok({});
         if (message.method === 'tools/list') {
-          const target = latest.get(server);
+          const target = latest.get(scoped(server,account));
           if (!target) return ok({ tools: [] });
           const answer = await forward(target, { jsonrpc: '2.0', id, method: 'tools/list', params: message.params ?? {} });
           return reply(res, 200, { jsonrpc: '2.0', id, ...(answer?.error ? { error: answer.error } : { result: answer?.result ?? { tools: [] } }) });
         }
         if (message.method === 'tools/call') {
           const args = { ...(message.params?.arguments ?? {}) };
-          const sessionId = String(args[SESSION_ARG] ?? '');
+          const sessionId = String(message.params?._meta?.['ai.opencode/sessionID'] ?? '');
           delete args[SESSION_ARG];
-          const target = (await settled(sessionId))?.runtimes?.[server];
+          const target = sessionId ? (await settled(sessionId,account))?.runtimes?.[server] : null;
           if (!target) return ok({ isError: true, content: [{ type: 'text', text: `${server} is not available in this conversation` }] });
           const answer = await forward(target, { jsonrpc: '2.0', id, method: 'tools/call', params: { ...message.params, arguments: args } });
           return reply(res, 200, { jsonrpc: '2.0', id, ...(answer?.error ? { error: answer.error } : { result: answer?.result ?? {} }) });

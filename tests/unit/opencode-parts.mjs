@@ -83,7 +83,7 @@ export default async function (t) {
   } });
   relay.setOrigin('http://127.0.0.1:9');
   const url = (p) => new URL(`http://127.0.0.1:9/mcp/opencode/${p}`);
-  const call = async (p, body, auth = 'Bearer s3cret', method = 'POST') => { const res = fakeRes(); await relay.handle(fakeReq({ method, headers: { authorization: auth }, body }), res, url(p)); return res; };
+  const call = async (p, body, auth = 'Bearer '+relay.token(), method = 'POST') => { const res = fakeRes(); await relay.handle(fakeReq({ method, headers: { authorization: auth }, body }), res, url(p)); return res; };
   t.ok('中継: 合言葉が違えば 401', (await call('ply_agents', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, 'Bearer nope')).status === 401);
   t.ok('中継: まだ会話が無ければツールの一覧は空', (await call('ply_agents', { jsonrpc: '2.0', id: 1, method: 'tools/list' })).json().result.tools.length === 0);
   relay.bind('ses_A', { runtimes: { agentRuntime: { url: 'http://pleiad/mcp/agents', headers: { Authorization: 'Bearer A' } } }, env: { PLEIAD_CONTROL_URL: 'http://x' } });
@@ -92,18 +92,18 @@ export default async function (t) {
   const listed = (await call('ply_agents', { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json();
   t.ok('中継: 一覧は結び付けた口に聞く', listed.result.tools[0].name === 'ply_delegate');
   forwarded.length = 0;
-  await call('ply_agents', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_A', x: 1 } } });
-  await call('ply_agents', { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_B' } } });
-  await call('ply_agents', { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_child' } } });
+  await call('ply_agents', { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ply_task_list', _meta: { 'ai.opencode/sessionID': 'ses_A' }, arguments: { x: 1 } } });
+  await call('ply_agents', { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'ply_task_list', _meta: { 'ai.opencode/sessionID': 'ses_B' }, arguments: {  } } });
+  await call('ply_agents', { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'ply_task_list', _meta: { 'ai.opencode/sessionID': 'ses_child' }, arguments: {  } } });
   t.ok('中継: 会話の id でその会話の口（トークン）へ振り分け、会話の id の引数は外す', forwarded.map((f) => f.headers.Authorization).join() === 'Bearer A,Bearer B,Bearer A'
     && forwarded[0].body.params.arguments.x === 1 && !(SESSION_ARG in forwarded[0].body.params.arguments), JSON.stringify(forwarded.map((f) => [f.headers.Authorization, f.body.params])));
-  const stray = (await call('ply_agents', { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_unknown' } } })).json();
+  const stray = (await call('ply_agents', { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'ply_task_list', _meta: { 'ai.opencode/sessionID': 'ses_unknown' }, arguments: {  } } })).json();
   t.ok('中継: 結び付いていない会話は断る（ほかの会話の口を使わせない）', stray.result.isError === true && forwarded.length === 3);
-  const noBrowser = (await call('ply_browser', { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'open', arguments: { [SESSION_ARG]: 'ses_A' } } })).json();
+  const noBrowser = (await call('ply_browser', { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'open', _meta: { 'ai.opencode/sessionID': 'ses_A' }, arguments: {  } } })).json();
   t.ok('中継: その会話に無い口（ブラウザー）は断る', noBrowser.result.isError === true);
   const envRes = await call('env?session=ses_A', null, 'Bearer s3cret', 'GET');
   const res = fakeRes();
-  await relay.handle(fakeReq({ method: 'GET', headers: { authorization: 'Bearer s3cret' } }), res, new URL('http://127.0.0.1:9/mcp/opencode/env?session=ses_child'));
+  await relay.handle(fakeReq({ method: 'GET', headers: { authorization: 'Bearer '+relay.token() } }), res, new URL('http://127.0.0.1:9/mcp/opencode/env?session=ses_child'));
   t.ok('中継: 会話のシェルの環境変数（子の会話は親の分）', envRes.status !== 0 && JSON.parse(res.body).PLEIAD_CONTROL_URL === 'http://x');
   t.ok('中継: 知らないサーバー名は 404', (await call('nope', { jsonrpc: '2.0', id: 8, method: 'tools/list' })).status === 404);
 
@@ -112,17 +112,17 @@ export default async function (t) {
   relay.adoptSecret('short');
   t.ok('中継: 短すぎる合言葉は引き継がない', (await call('ply_agents', { jsonrpc: '2.0', id: 9, method: 'tools/list' })).status === 200);
   relay.adoptSecret(previous);
-  t.ok('中継: 引き継いだ合言葉で通り、前の値は 401', (await call('ply_agents', { jsonrpc: '2.0', id: 10, method: 'tools/list' }, `Bearer ${previous}`)).status === 200
-    && (await call('ply_agents', { jsonrpc: '2.0', id: 11, method: 'tools/list' })).status === 401 && relay.secret === previous);
+  t.ok('中継: 引き継いだ合言葉で通り、前の値は 401', (await call('ply_agents', { jsonrpc: '2.0', id: 10, method: 'tools/list' }, `Bearer ${relay.token()}`)).status === 200
+    && (await call('ply_agents', { jsonrpc: '2.0', id: 11, method: 'tools/list' },'Bearer stale')).status === 401 && relay.secret === previous);
   relay.expect(['ses_W', 'ses_X'], { ses_Wc: 'ses_W' });
   forwarded.length = 0;
-  const waiting = call('ply_agents', { jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_Wc' } } }, `Bearer ${previous}`);
+  const waiting = call('ply_agents', { jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'ply_task_list', _meta: { 'ai.opencode/sessionID': 'ses_Wc' }, arguments: {  } } }, `Bearer ${relay.token()}`);
   await new Promise((r) => setTimeout(r, 30));
   t.ok('中継: 付け直す会話（の子）の呼び出しは、結び付けるまで待つ', forwarded.length === 0);
   relay.bind('ses_W', { runtimes: { agentRuntime: { url: 'http://pleiad/mcp/agents', headers: { Authorization: 'Bearer W' } } } });
   await waiting;
   t.ok('中継: 結び付けたら、その会話の口へ届く', forwarded.map((f) => f.headers.Authorization).join() === 'Bearer W');
-  const dropped = call('ply_agents', { jsonrpc: '2.0', id: 13, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_X' } } }, `Bearer ${previous}`);
+  const dropped = call('ply_agents', { jsonrpc: '2.0', id: 13, method: 'tools/call', params: { name: 'ply_task_list', _meta: { 'ai.opencode/sessionID': 'ses_X' }, arguments: {  } } }, `Bearer ${relay.token()}`);
   relay.unexpect('ses_X');
   t.ok('中継: 付け直さなかった会話の待ちは外れて断る', (await dropped).json().result.isError === true);
 
@@ -174,34 +174,38 @@ body`); };
       && opencodeServers(null) === null && opencodeServers([]).length === 0);
   } finally { fs.rmSync(cx, { recursive: true, force: true }); }
 
-  // ---- プラグイン（OpenCode の中で動く本文を、そのまま読み込んで呼ぶ）
+  // The package and callbacks below use the v2 plugin registration contract.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-oc-plugin-'));
   try {
-    const href = writePlugin(dir);
-    t.ok('プラグインはデータ置き場の opencode/ に書き出し、file URL で渡す', href === pathToFileURL(path.join(dir, 'opencode', 'pleiad-plugin.mjs')).href
-      && fs.readFileSync(path.join(dir, 'opencode', 'pleiad-plugin.mjs'), 'utf8') === PLUGIN_SOURCE);
-    const seen = [];
-    const envServer = http.createServer((req, res2) => { seen.push({ url: req.url, auth: req.headers.authorization }); res2.writeHead(200, { 'content-type': 'application/json' }); res2.end(JSON.stringify({ A: '1', N: 2 })); });
-    await new Promise((r) => envServer.listen(0, '127.0.0.1', r));
-    process.env.PLEIAD_OPENCODE_ENV_URL = `http://127.0.0.1:${envServer.address().port}/mcp/opencode/env`;
-    process.env.PLEIAD_OPENCODE_SECRET = 'plug';
+    const href=writePlugin(dir),entry=path.join(dir,'opencode','pleiad-plugin-v2','index.js');
+    t.ok('v2 plugin package has a module entry',fs.readFileSync(entry,'utf8')===PLUGIN_SOURCE && JSON.parse(fs.readFileSync(path.join(path.dirname(entry),'package.json'),'utf8')).type==='module');
+    const seen=[];
+    const endpoint=http.createServer(async(req,res)=>{
+      let raw='';for await(const chunk of req)raw+=chunk;
+      const body=raw?JSON.parse(raw):null;seen.push({url:req.url,body,auth:req.headers.authorization});
+      res.writeHead(200,{'content-type':'application/json'});
+      res.end(JSON.stringify(body?.phase==='before'?{args:{command:'rewritten'}}:body?.phase==='after'?{append:'checked'}:{system:'Pleiad instructions'}));
+    });
+    await new Promise(r=>endpoint.listen(0,'127.0.0.1',r));
+    process.env.PLEIAD_OPENCODE_ENV_URL='http://127.0.0.1:'+endpoint.address().port+'/env';
+    process.env.PLEIAD_OPENCODE_HOOK_URL='http://127.0.0.1:'+endpoint.address().port+'/hook';
+    process.env.PLEIAD_OPENCODE_SECRET='plug';
     try {
-      const mod = await import(`${href}?t=${Date.now()}`);
-      const hooks = await mod.PleiadPlugin({});
-      const ply = { args: { a: 1 } };
-      await hooks['tool.execute.before']({ tool: 'ply_agents_ply_delegate', sessionID: 'ses_X' }, ply);
-      const other = { args: { a: 1 } };
-      await hooks['tool.execute.before']({ tool: 'bash', sessionID: 'ses_X' }, other);
-      t.ok('プラグイン: ply_* のツールの引数にだけ会話の id を足す（その場で書き足す）', ply.args._pleiadSession === 'ses_X' && ply.args.a === 1 && !('_pleiadSession' in other.args));
-      const env = { env: { KEEP: 'k' } };
-      await hooks['shell.env']({ sessionID: 'ses_X', cwd: '.' }, env);
-      t.ok('プラグイン: shell.env は会話の環境変数（文字列だけ）を足す', env.env.A === '1' && env.env.KEEP === 'k' && !('N' in env.env)
-        && seen[0]?.url === '/mcp/opencode/env?session=ses_X' && seen[0]?.auth === 'Bearer plug', JSON.stringify({ env, seen }));
-    } finally {
-      delete process.env.PLEIAD_OPENCODE_ENV_URL; delete process.env.PLEIAD_OPENCODE_SECRET;
-      envServer.close();
-    }
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+      const callbacks=new Map();
+      const domain={hook:async(name,fn)=>{callbacks.set(name,fn);return{dispose:async()=>{}};}};
+      const mod=await import(pathToFileURL(entry).href+'?v2');
+      await mod.default.setup({tool:domain,session:domain,shell:domain});
+      const before={sessionID:'ses_X',tool:'shell',input:{command:'original'}};
+      await callbacks.get('execute.before')(before);
+      t.ok('v2 tool hook replaces input without an identity argument',before.input.command==='rewritten'&&!('_pleiadSession' in before.input));
+      const after={...before,status:'completed',result:{content:[{type:'text',text:'out'}]}};
+      await callbacks.get('execute.after')(after);
+      t.ok('v2 completed result receives post-tool context',after.result.content[1]?.text==='checked');
+      for(const kind of ['context','compaction','title','generate']){
+        const event={sessionID:'ses_X',system:[]};await callbacks.get(kind)(event);
+        t.ok('v2 '+kind+' receives conversation instructions',event.system[0]?.text==='Pleiad instructions');
+      }
+      t.ok('v2 plugin authenticates and scopes the conversation',seen.every(x=>x.auth==='Bearer plug'&&x.url.includes('account=login')&&x.url.includes('session=ses_X')));
+    }finally{delete process.env.PLEIAD_OPENCODE_ENV_URL;delete process.env.PLEIAD_OPENCODE_HOOK_URL;delete process.env.PLEIAD_OPENCODE_SECRET;await new Promise(r=>endpoint.close(r));}
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 }

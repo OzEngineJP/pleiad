@@ -15,13 +15,14 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { opencodeData } from './opencode-accounts.mjs';
 
 const GLOBAL_CONFIG_FILES = ['config.json', 'opencode.json', 'opencode.jsonc'];
 const PROJECT_CONFIG_FILES = ['opencode.json', 'opencode.jsonc'];
 const SKILL_DIRS = ['skill', 'skills'];
 const INSTRUCTION_FILES = ['AGENTS.md', 'CLAUDE.md', 'CONTEXT.md'];
 /** 設定の中で、配列を足し合わせるキー（OpenCode の設定の合わせ方と同じ。ほかの配列は後の値が勝つ） */
-const CONCAT = new Set(['plugin', 'instructions']);
+const CONCAT = new Set(['plugins', 'instructions']);
 
 /** JSONC（コメントと末尾のカンマを許す JSON）を読む。読めなければ投げる */
 export function parseJsonc(text) {
@@ -194,8 +195,19 @@ async function unlinkEntry(p) {
 /**
  * 専用のサーバーに足す環境変数と、OPENCODE_CONFIG_CONTENT に合わせる設定。owners は Pleiad の担当（instruction・skill・mcp が 'ply' か）
  */
-export async function managedLaunch({ owners, cwd, dataDir, source }) {
+export async function managedLaunch({ owners, cwd, dataDir, source, dataHome = path.dirname(opencodeData()), homeSource = os.homedir() }) {
   const configHome = await mirrorGlobalConfig({ dataDir, owners, source });
+  const home=path.join(configHome,'home');
+  await fs.mkdir(home,{recursive:true});
+  // v2 also discovers global .agents and .claude roots outside XDG_CONFIG_HOME.
+  // Copy only the kinds delegated to OpenCode into the isolated home.
+  for(const name of ['.agents','.claude']) {
+    const dest=path.join(home,name);await fs.mkdir(dest,{recursive:true});
+    if(owners?.skill !== 'ply') {
+      const from=path.join(homeSource,name,'skills');
+      if((await exists(from))?.isDirectory() && !await exists(path.join(dest,'skills')))await fs.symlink(from,path.join(dest,'skills'),'junction');
+    }
+  }
   let config = stripOwned(await projectConfig(cwd), owners);
   if (owners?.instruction !== 'ply') {
     const own = await absoluteInstructions(config.instructions, cwd);
@@ -207,9 +219,13 @@ export async function managedLaunch({ owners, cwd, dataDir, source }) {
   }
   const env = {
     XDG_CONFIG_HOME: configHome,
+    XDG_DATA_HOME: dataHome,
+    HOME:home,USERPROFILE:home,
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
-    ...(owners?.instruction === 'ply' ? { OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: '1' } : {}),
-    ...(owners?.skill === 'ply' ? { OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' } : {}),
+    ...(owners?.skill === 'ply' ? { OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' } : {}),
   };
+  if(process.platform==='win32' && process.env.ProgramData) {
+    env.ProgramData=await mirrorGlobalConfig({dataDir:path.join(dataDir,'opencode-system'),owners,source:path.join(process.env.ProgramData,'opencode')});
+  }
   return { env, config };
 }

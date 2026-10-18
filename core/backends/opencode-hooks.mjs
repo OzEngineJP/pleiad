@@ -9,7 +9,7 @@ import { claudeHookCallbacks } from '../hooks-unify.mjs';
 import { toolName as displayName } from './opencode-normalize.mjs';
 
 /** OpenCode の組み込みのツール -> Claude Code のツール名 */
-const TOOL_NAMES = { bash: 'Bash', read: 'Read', write: 'Write', edit: 'Edit', patch: 'Edit', glob: 'Glob', grep: 'Grep', list: 'LS', webfetch: 'WebFetch',
+const TOOL_NAMES = { bash: 'Bash', shell: 'Bash', subagent: 'Task', read: 'Read', write: 'Write', edit: 'Edit', patch: 'Edit', glob: 'Glob', grep: 'Grep', list: 'LS', webfetch: 'WebFetch',
   websearch: 'WebSearch', task: 'Task', todowrite: 'TodoWrite', todoread: 'TodoRead', skill: 'Skill', question: 'AskUserQuestion' };
 /** 入力のキー（OpenCode -> Claude）。ほかのキーはそのまま */
 const KEYS = { filePath: 'file_path', oldString: 'old_string', newString: 'new_string', replaceAll: 'replace_all' };

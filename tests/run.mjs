@@ -26,6 +26,7 @@ const ROOT = path.resolve(TESTS, "..");
 // 登録した suite（tests/ からの相対）。ファイルの `export const name` が名前。web/render.mjs はブラウザ前提なので、
 // 読み込む**前**に DOM を差し替える（runner が読み込みの直前に installDomStub する）。
 const SUITES = [
+  './unit/opencode-v2.mjs',
   './unit/compaction.mjs',
   './unit/server-compaction.mjs',
   // 委譲の子だけ自動圧縮の窓（CLAUDE_CODE_AUTO_COMPACT_WINDOW = 閾値 + 33000）を渡す: 親・0（オフ）・利用者の環境変数が先、では渡さない

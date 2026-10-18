@@ -37,17 +37,20 @@ export default async function testOpencodeAdopt(t) {
   const httpServer = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (req.headers.authorization !== expectedAuth) { res.writeHead(401); res.end(); return; }
-    if (url.pathname === '/global/event') {
+    if (url.pathname === '/api/event') {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      res.flushHeaders();
+      res.write('data: '+JSON.stringify({type:'server.connected',data:{}})+'\n\n');
       return;
     }
-    if (url.pathname !== '/session/ses_restore/message' || url.searchParams.get('directory') !== '/restore-workspace') {
+    if(url.pathname==='/api/info'){res.writeHead(200,{'content-type':'application/json'});return res.end(JSON.stringify({version:'2.0.32'}));}
+    if(url.pathname==='/api/experimental/migration/v1'){res.writeHead(200,{'content-type':'application/json'});return res.end(JSON.stringify({status:'completed'}));}
+    if(url.pathname==='/openapi.json'){res.writeHead(200,{'content-type':'application/json'});return res.end(JSON.stringify({info:{title:'opencode HttpApi'},paths:{'/api/session':{},'/api/event':{}}}));}
+    if (url.pathname !== '/api/session/ses_restore/message' || decodeURIComponent(req.headers['x-opencode-directory']??'') !== '/restore-workspace') {
       res.writeHead(404); res.end(); return;
     }
     calls.reads++;
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify([{ info: { id: 'msg_saved', role: 'user' }, parts: [{ type: 'text', text: 'saved history' }] }]));
+    res.end(JSON.stringify({data:[{id:'msg_saved',type:'user',text:'saved history',time:{created:1000}}],cursor:{}}));
   });
   const client = new EventEmitter();
   Object.assign(client, { connected: true, attach: async () => ({ alive: true }), release() {}, ack() {}, label() {},
@@ -65,7 +68,7 @@ export default async function testOpencodeAdopt(t) {
     const restore = async (suffix, dieOnAcquire = false) => {
       const account = { id: `adopt-${suffix}`, dir: path.join(process.env.AGENT_HOST_DATA, `adopt-${suffix}`) };
       const restored = await expandHeldOpencode({ client, child: { id: opencodeChildId(account), alive: true,
-        label: { v: 1, server: { base, auth, origin: 'http://previous-pleiad', account },
+        label: { v: 1, server: { protocol:2, base, auth, origin: 'http://previous-pleiad', account },
           turns: { [`ses_restore_${suffix}`]: { backendCard: { account } } } } } });
       assert.equal(restored.length, 1);
       sources.push(...restored);

@@ -69,12 +69,11 @@ export default async function (t) {
       value: { owner: 'ply', user: kind === 'mcp' ? { sources: [], excludePaths: [] } : null, directory: { sources: ['common', 'opencode'], excludePaths: [] } } });
     const managed = await client.runTurn({ sessionId, prompt: 'show-system', mode: 'full' }, { ms: 60_000 });
     const body = text(managed);
-    t.ok('Pleiad の担当: 指示と Skills の一覧が system に入る', managed.outcome === 'ok' && body.includes('PROJECT-RULE-OC') && /demo: Demo skill for the opencode test/.test(body), body);
+    t.ok('Pleiad の担当: 指示と Skills の一覧が system に入る', managed.outcome === 'ok' && body.includes('PROJECT-RULE-OC') && /demo: Demo skill for the opencode test/.test(body), body || JSON.stringify({errors:managed.events.filter(e=>e.type==='turnResult'),log:host.tail(30)}));
     const dedicated = (await launches()).at(-1);
     for (let n = 0; n < 200 && alive(dedicated.pid); n++) await new Promise((r) => setTimeout(r, 50));
     t.ok('Pleiad の担当: そのターンだけ専用のサーバーを起こし、終わったら止める（共有のサーバーは残る）', (await launches()).length === 2 && dedicated.pid !== shared.pid && !alive(dedicated.pid) && alive(shared.pid), JSON.stringify({ dedicated: dedicated.pid, shared: shared.pid }));
-    t.ok('専用のサーバー: 作業場所の設定と Claude の指示・外の Skills を止める', dedicated.flags.OPENCODE_DISABLE_PROJECT_CONFIG === '1' && dedicated.flags.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT === '1'
-      && dedicated.flags.OPENCODE_DISABLE_EXTERNAL_SKILLS === '1' && dedicated.flags.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS === '1', JSON.stringify(dedicated.flags));
+    t.ok('専用のサーバー: 作業場所の設定と Claude の指示・外の Skills を止める', dedicated.flags.OPENCODE_DISABLE_PROJECT_CONFIG === '1' && dedicated.flags.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS === '1', JSON.stringify(dedicated.flags));
     const mirror = path.join(dedicated.xdg, 'opencode');
     const mirrored = await fs.readdir(mirror);
     const mirroredConfig = JSON.parse(await fs.readFile(path.join(mirror, 'opencode.jsonc'), 'utf8'));
@@ -82,8 +81,8 @@ export default async function (t) {
       path.relative(path.join(dataDir, 'opencode', 'managed'), dedicated.xdg).split(path.sep).length === 1 && !mirrored.includes('AGENTS.md') && !mirrored.includes('skills')
       && mirrored.includes('agent') && !mirroredConfig.mcp && mirroredConfig.provider?.myprov?.name === 'Mine', JSON.stringify({ mirrored, mirroredConfig }));
     t.ok('写した置き場: フォルダーは junction（中身を写さない）', (await fs.lstat(path.join(mirror, 'agent'))).isSymbolicLink() && (await fs.readFile(path.join(mirror, 'agent', 'reviewer.md'), 'utf8')) === 'REVIEWER\n');
-    t.ok('専用のサーバー: 作業場所の設定は、担当の種類（指示・MCP）を外して渡し直す', !dedicated.config.mcp && !dedicated.config.instructions && !dedicated.config.skills && dedicated.config.autoupdate === false
-      && dedicated.config.plugin?.length === 1, JSON.stringify(dedicated.config));
+    t.ok('専用のサーバー: 作業場所の設定は、担当の種類（指示・MCP）を外して渡し直す', !dedicated.config.mcp && !dedicated.config.instructions && !dedicated.config.skills && dedicated.config.update === 'disable'
+      && dedicated.config.plugins?.length === 1, JSON.stringify(dedicated.config));
 
     const skillId = /demo: Demo skill for the opencode test（id: ([^、]+)、/.exec(body)?.[1];
     const skill = await client.runTurn({ sessionId, prompt: `mcp:${JSON.stringify({ server: 'ply_context', tool: 'load_skill', arguments: { id: skillId } })}`, mode: 'full' }, { ms: 60_000 });
@@ -101,7 +100,7 @@ export default async function (t) {
     const instructions = (m.config.instructions ?? []).map((p) => path.resolve(p));
     t.ok('組み合わせ: エージェントに任せる指示は、作業場所の指示ファイルと設定の instructions を絶対パスで渡し直す', mixed.outcome === 'ok'
       && instructions.includes(path.join(cwd, 'AGENTS.md')) && instructions.includes(path.join(cwd, 'extra.md')) && !m.flags.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT, JSON.stringify(m));
-    t.ok('組み合わせ: MCP を任せれば作業場所の mcp を渡し直し、Skills の担当は外の Skills を止める', m.config.mcp?.projmcp?.command?.[1] === 'x.js' && m.flags.OPENCODE_DISABLE_EXTERNAL_SKILLS === '1' && !m.config.skills, JSON.stringify(m.config));
+    t.ok('組み合わせ: MCP を任せれば作業場所の mcp を渡し直し、Skills の担当は外の Skills を止める', m.config.mcp?.projmcp?.command?.[1] === 'x.js' && m.flags.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS === '1' && !m.config.skills, JSON.stringify(m.config));
     const mirrored2 = await fs.readdir(path.join(m.xdg, 'opencode'));
     const config2 = JSON.parse(await fs.readFile(path.join(m.xdg, 'opencode', 'opencode.jsonc'), 'utf8'));
     t.ok('組み合わせ: 写した置き場に全体の AGENTS.md と mcp を残し、skills は置かない', mirrored2.includes('AGENTS.md') && !mirrored2.includes('skills') && Boolean(config2.mcp?.globalmcp), JSON.stringify({ mirrored2, config2 }));
@@ -112,7 +111,7 @@ export default async function (t) {
     await client.runTurn({ sessionId, prompt: 'show-system', mode: 'full' }, { ms: 60_000 });
     const i = (await launches()).at(-1);
     t.ok('組み合わせ: Skills を任せれば .opencode の Skills を skills.paths で渡し直し、外の Skills は止めない', (i.config.skills?.paths ?? []).map((p) => path.resolve(p)).includes(path.join(cwd, '.opencode', 'skills'))
-      && !i.flags.OPENCODE_DISABLE_EXTERNAL_SKILLS && i.flags.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT === '1' && (await fs.readdir(path.join(i.xdg, 'opencode'))).includes('skills'), JSON.stringify(i));
+      && !i.flags.OPENCODE_DISABLE_EXTERNAL_SKILLS && i.flags.OPENCODE_DISABLE_PROJECT_CONFIG === '1' && (await fs.readdir(path.join(i.xdg, 'opencode'))).includes('skills'), JSON.stringify(i));
     // プロセスが消えるまでには少し間がある（Linux）。決め打ちで待たず、消えるまで待つ（上限 10 秒）
     const gone = async () => (await launches()).slice(1).every((x) => !alive(x.pid));
     for (let n = 0; n < 200 && !(await gone()); n++) await new Promise((r) => setTimeout(r, 50));

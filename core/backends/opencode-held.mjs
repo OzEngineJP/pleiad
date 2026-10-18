@@ -16,6 +16,7 @@ import { holderLink } from '../holder/link.mjs';
 import { LABEL_MAX_BYTES } from '../holder/protocol.mjs';
 import { ADOPT_TURN_MARK, registerChildExpander } from '../adopt.mjs';
 import { accountKey } from './opencode-accounts.mjs';
+import { startupUrl } from './opencode-server.mjs';
 
 export const OPENCODE_CHILD = 'opencode-server';
 export const OPENCODE_LABEL_KIND = 'opencode-server';
@@ -103,7 +104,7 @@ export class HeldOpencode {
       const done = (fn, value) => { clearTimeout(timer); offLine(); offGone(); fn(value); };
       const timer = setTimeout(() => done(reject, new Error(`opencode serve did not start in ${timeoutMs}ms: ${this.tail()}`.slice(0, 500))), timeoutMs);
       timer.unref?.();
-      const offLine = this.onLine(line => { const m = LISTENING.exec(line); if (m) done(resolve, m[1].replace(/\/$/, '')); });
+      const offLine = this.onLine(line => { const url = startupUrl(line); if (url) done(resolve, url); });
       const offGone = this.onGone(exit => done(reject, new Error(`opencode serve exited (${exit.code ?? exit.signal ?? exit.error}): ${this.tail()}`.slice(0, 500))));
       this.client.spawn({ id: this.id, command, args, cwd, env, policy: 'none', label: this.labelObject(), keepMs: KEEP_MS });
     });
@@ -235,7 +236,7 @@ function turnSource({ held, sessionId, card }) {
       released = true;
       // 付け直さなかったターンの札は外す（次に置く札に残さない）。付け直したターンは、終わるときに adoptTurn が外す
       if (held.cards.get(sessionId) === card) held.endTurn(sessionId);
-      onForget(sessionId);
+      onForget(sessionId,held.server?.account?.id ?? 'login');
     },
   };
 }

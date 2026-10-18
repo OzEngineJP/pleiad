@@ -17,8 +17,10 @@
 // 同じトークン・ポートで待ち受けてから付け直す（restoreAdoptedTurns・adoptTurn）。
 export const HANDOVER_FLAG = '--handover';
 /** main との口の handover の形の版（core/handover-check.mjs が範囲を出し、running の handover.v に載せる）。形を変えるときは上げる */
-export const HANDOVER_VERSION = 1;
-export const HANDOVER_RANGE = [1, 1];
+// The v2 OpenCode adapter cannot consume an in-flight v1 turn card. The first
+// update across this boundary drains the old server; later updates retain turns.
+export const HANDOVER_VERSION = 2;
+export const HANDOVER_RANGE = [2, 2];
 /** 短い処理が終わるのを待つ上限（これを過ぎたら取りやめる）・処理中の呼び出しを待つ上限（過ぎたら待ち切れた分を数えて進む）・新サーバーがロックを待つ上限 */
 export const DRAIN_MS = 8_000;
 export const INFLIGHT_MS = 5_000;

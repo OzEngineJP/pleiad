@@ -48,10 +48,10 @@ const toolInput = (part) => (part?.state?.input && typeof part.state.input === '
 /** OpenCode のエラー -> { message, kind } */
 export function errorOf(error) {
   if (!error) return null;
-  const name = String(error.name ?? '');
+  const name = String(error.name ?? error.type ?? '');
   const message = String(error.data?.message ?? error.message ?? name ?? 'error');
   const data = error.data ?? error;
-  let body = data.responseBody;
+  let body = data.responseBody ?? data.response?.body;
   try { if (typeof body === 'string') body = JSON.parse(body); } catch { body = null; }
   const code = body?.error?.code ?? body?.error?.type ?? data.code;
   const limited = Number(data.statusCode ?? data.status) === 429
@@ -127,7 +127,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
       }
       // task のツールは子の会話を作る（state.metadata.sessionId）。子の承認を親の会話で聞き、サブエージェントとして読む
       const child = part.state?.metadata?.sessionId;
-      if (part.tool === 'task' && typeof child === 'string' && child && child !== sessionId) onChild({ childId: child, callId: id });
+      if (['task','subagent'].includes(part.tool) && typeof child === 'string' && child && child !== sessionId) onChild({ childId: child, callId: id });
       if (!entry.done && (status === 'completed' || status === 'error')) {
         entry.done = true;
         emit({ type: 'tool.result', id, ...toolResult(part, { full: true }) });
@@ -135,15 +135,15 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
       return;
     }
     if (part.type === 'step-finish') {
-      if (entry.done) return;
-      entry.done = true;
       const tokens = part.tokens ?? {};
       const cacheRead = Number(tokens.cache?.read) || 0;
+      const record={inputTokens:(Number(tokens.input)||0)+cacheRead,outputTokens:(Number(tokens.output)||0)+(Number(tokens.reasoning)||0),cachedTokens:cacheRead,costUsd:Number(part.cost)||0};
+      const previous=entry.recorded ?? {inputTokens:0,outputTokens:0,cachedTokens:0,costUsd:0};
+      if(Object.keys(record).some(key=>record[key]<previous[key]))return;
+      if(Object.keys(record).every(key=>record[key]===previous[key]))return;
+      entry.recorded=record;
       // 入力にはキャッシュの読みを、出力には考えた分を含める（antigravity.mjs の usageFor と同じ約束）
-      usage.inputTokens += (Number(tokens.input) || 0) + cacheRead;
-      usage.outputTokens += (Number(tokens.output) || 0) + (Number(tokens.reasoning) || 0);
-      usage.cachedTokens += cacheRead;
-      usage.costUsd += Number(part.cost) || 0;
+      for(const key of Object.keys(record))usage[key]+=record[key]-previous[key];
       emit({ type: 'usage', ...usage });
       const window = windowTokens();
       const used = (Number(tokens.input) || 0) + cacheRead + (Number(tokens.cache?.write) || 0) + (Number(tokens.output) || 0);

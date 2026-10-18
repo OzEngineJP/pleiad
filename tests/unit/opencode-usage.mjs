@@ -99,9 +99,9 @@ export default async function testOpencodeUsage(t) {
     // 同じ接続先が両方にあるときは auth.json が優先。db にしかない接続先も残る
     await fs.writeFile(path.join(loginDir, 'auth.json'), JSON.stringify({ openrouter: { type: 'api', key: 'or-json-key' } }));
     const merged = await accountQuota(null, { fetcher });
-    assert.equal(seen.filter(r => r.url.includes('auth/key')).at(-1).headers.authorization, 'Bearer or-json-key');
+    assert.equal(seen.filter(r => r.url.includes('auth/key')).at(-1).headers.authorization, 'Bearer or-db-key');
     assert.ok(merged.message.includes(translate('opencode.usage.zenQuotaUnavailable')));
-    t.ok('同じ接続先は auth.json の資格情報を優先し、db にしかない接続先も読む', true);
+    t.ok('移行済みの DB 資格情報を優先し、古い auth.json で上書きしない', true);
 
     for (scenario of ['unauthorized', 'malformed', 'empty', 'redirect']) {
       const result = await accountQuota(account, { fetcher });

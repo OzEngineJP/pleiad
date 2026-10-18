@@ -97,7 +97,12 @@ function credentialRows(file) {
   let db = null;
   try {
     db = new (loadSqlite().DatabaseSync)(file, { readOnly: true });
-    return db.prepare('SELECT integration_id, value FROM credential').all();
+    const cols=new Set(db.prepare('PRAGMA table_info(credential)').all().map(c=>c.name));
+    const order=cols.has('active') ? ' ORDER BY active DESC'+(cols.has('time_created')?', time_created DESC':'')+', id DESC' : '';
+    const rows=db.prepare('SELECT integration_id, value FROM credential'+order).all();
+    const selected=new Map();
+    for(const row of rows)if(!selected.has(row.integration_id))selected.set(row.integration_id,row);
+    return [...selected.values()];
   } catch { return []; }
   finally { try { db?.close(); } catch {} }
 }
@@ -163,20 +168,20 @@ export function readAccountAuth(account = null) {
   // The CLI's own store stays lenient: there is no saved seed to fall back to.
   if (!account) {
     const stored = readStoredAuth(null);
-    try { return { ...stored, ...validAuth(JSON.parse(fs.readFileSync(file, 'utf8'))) }; }
+    try { return { ...validAuth(JSON.parse(fs.readFileSync(file, 'utf8'))), ...stored }; }
     catch { return stored; }
   }
   assertAccountTree(account, { requireExists: false });
   const stored = readStoredAuth(account);
   // Absent CLI copy: the encrypted snapshot is the only source, so use it.
-  if (!statSafe(file)) return { ...stored, ...validAuth(account.credential?.auth) };
+  if (!statSafe(file)) return { ...validAuth(account.credential?.auth), ...stored };
   // Present CLI copy: never read it through a link or an unsafe directory tree,
   // and never silently substitute the saved seed for an unreadable file.
   assertSafeAuth(file);
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch { throw new Error(t('accounts.backend.credentialUnreadable', { agent: 'OpenCode' })); }
-  return { ...stored, ...validAuth(parsed) };
+  return { ...validAuth(parsed), ...stored };
 }
 
 export function prepareAccount(account) {
@@ -206,11 +211,12 @@ export function prepareAccount(account) {
     .map(key => [key, '']));
   return {
     ...credentials,
+    HOME:path.join(dir,'home'),USERPROFILE:path.join(dir,'home'),
     XDG_DATA_HOME: dirs.data, XDG_CONFIG_HOME: dirs.config, XDG_CACHE_HOME: dirs.cache, XDG_STATE_HOME: dirs.state,
     OPENCODE_CONFIG_DIR: path.join(dirs.config, 'opencode'),
     PLEIAD_OPENCODE_ACCOUNT_ID: account.id,
     // Do not inherit another account's provider credentials or explicit database.
-    OPENCODE_DB: '', OPENCODE_CONFIG: '', OPENAI_API_KEY: '', OPENAI_ORG_ID: '', OPENAI_PROJECT_ID: '',
+    OPENCODE_DB: path.join(opencodeData(account),'opencode.db'), OPENCODE_CONFIG: '', OPENAI_API_KEY: '', OPENAI_ORG_ID: '', OPENAI_PROJECT_ID: '',
     ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', GITHUB_TOKEN: '', GH_TOKEN: '',
     GITHUB_COPILOT_TOKEN: '', OPENCODE_API_KEY: '',
     AWS_ACCESS_KEY_ID: '', AWS_PROFILE: '',
@@ -223,8 +229,7 @@ const psQuote = value => `'${String(value).replaceAll("'", "''")}'`;
 const shQuote = value => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 export function accountLoginCommand(account, argv, platform = process.platform) {
   const dirs = accountPaths(account);
-  const env = { XDG_DATA_HOME: dirs.data, XDG_CONFIG_HOME: dirs.config, XDG_CACHE_HOME: dirs.cache, XDG_STATE_HOME: dirs.state,
-    OPENCODE_CONFIG_DIR: path.join(dirs.config, 'opencode') };
+  const env = {...prepareAccount(account),OPENCODE_CONFIG_CONTENT:'',OPENCODE_PASSWORD:'',OPENCODE_SERVER_PASSWORD:''};
   if (platform === 'win32') {
     // Run in a child PowerShell so the user's terminal environment is unchanged.
     const script = [...Object.entries(env).map(([k, v]) => `$env:${k}=${psQuote(v)}`), `& ${[...argv, 'auth', 'login'].map(psQuote).join(' ')}`].join('; ');
