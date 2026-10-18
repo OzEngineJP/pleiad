@@ -23,7 +23,7 @@
 | Pleiad の画面からログインする（`login`） | ✓ | ✓ | ✓ | ✓ | — | — |
 | 会話ごとにアカウントを選ぶ（token: Pleiad がトークンを持つ / agent: エージェントがアカウントごとの置き場でログインする）（`accounts`） | token | agent | — | agent | — | — |
 | 互換の接続先を会話ごとに選ぶ（`compatEndpoints`） | ✓ | ✓ | — | — | — | — |
-| 手動・自動の圧縮（`compact`） | ✓ | ✓ | — | ✓ | — | — |
+| 手動・自動の圧縮（`compact`） | ✓ | ✓ | — | ✓ | ✓ | — |
 | 委譲の子の自動圧縮の閾値を受け取る（`autoCompactWindow`） | ✓ | — | — | — | — | — |
 | 次の発言の候補（native: ターンの中で届く / —: Pleiad がターンの後に作る）（`promptSuggestions`） | native | — | — | — | — | — |
 | 委譲の橋（ply_agents）と Pleiad の指示を受け取る（`plyAgents`） | ✓ | ✓ | — | ✓ | — | — |

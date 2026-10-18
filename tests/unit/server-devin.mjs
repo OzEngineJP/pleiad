@@ -34,6 +34,16 @@ export default async function (t) {
     t.ok('再開の送信でも同じ順で出す', nextStates[0] === 'preparing' && nextStates.includes('thinking'));
     const after = await c.cmd('loadSession', { sessionId: sid });
     t.ok('再開時の replay を重複させず前の UUID を保つ', next.outcome === 'ok' && after.messages.filter(m => m.role === 'user').length === 2 && before.every((m, i) => after.messages[i].uuid === m.uuid));
+    const compactFrom = c.mark();
+    const compactResult = await c.cmd('compactConversation', { sessionId: sid });
+    const compactDone = await c.waitFor(e => e.type === 'compaction' && e.sessionId === sid && e.phase === 'complete', { from: compactFrom, ms: 20_000 });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sid, { from: compactFrom, ms: 20_000 });
+    const afterCompact = await c.cmd('loadSession', { sessionId: sid });
+    t.ok('/compact を送って手動圧縮が完了し、前後の文脈量を持つ',
+      compactResult.status === 'started' && compactDone.trigger === 'manual'
+      && compactDone.beforeTokens > compactDone.afterTokens
+      && afterCompact.compactions?.some(x => x.phase === 'complete')
+      && afterCompact.messages.filter(m => m.role === 'user').length === 2, JSON.stringify(compactDone));
     const editId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
     const edit = await c.runTurn({ sessionId: editId, prompt: '[large-edit]', model: 'swe-2-high' });
     const edited = await c.cmd('loadSession', { sessionId: editId });
