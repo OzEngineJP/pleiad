@@ -190,6 +190,8 @@ async function turn(item) {
   out({ type: 'system', subtype: 'init', session_id: sessionId, model: MODEL, cwd, tools: [], mcp_servers: [], claude_code_version: VERSION, uuid: uuid() });
   out({ type: 'user', message: { role: 'user', content: item.text }, session_id: sessionId, parent_tool_use_id: null, uuid: item.uuid, isReplay: true });
   record({ type: 'user', uuid: item.uuid, message: { role: 'user', content: item.text } });
+  // 実機は API への要求を出すと status: requesting を出す（claude-normalize が稼働表示に変える）
+  out({ type: 'system', subtype: 'status', status: 'requesting', session_id: sessionId, uuid: uuid() });
   let steps;
   try { steps = item.text.startsWith('script:') ? JSON.parse(item.text.slice(7)).steps : [{ text: `echo: ${item.text}` }]; }
   catch { steps = [{ text: `bad script` }]; }

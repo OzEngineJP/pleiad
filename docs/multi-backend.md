@@ -351,7 +351,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 - ツール: `run`（終わるまで待つ。上限は既定 2 分・最大 10 分）・`start`（裏で始めてすぐジョブの id を返す）・`output`（`since` から続きを読む）・`stop`（子のプロセスごと止める）・`list`。走らせる口は `core/host-shell.mjs`。`shell` 引数で `default`・`bash`・`powershell`・`cmd`（Windows だけ）を選ぶ。コマンドには会話のシェルの環境変数（エージェントの Chrome・`PLEIAD_CONTROL_*`・秘密情報と変数）を渡す
 - 承認: 読み取りだけのモード（scope が `none`・`readonly`）は断る。確認なし（autonomy が `never`）のほかは、走らせる前に会話へ承認のカードを出す。エージェント側では聞かない（Claude は `decidePermission` で通し、OpenCode は `ply_shell_*` を allow、Codex は `default_tools_approval_mode: approve`）
 - ジョブの出力はメモリだけ（256 KB。古い方から捨て、捨てた分を数える）。会話ごとの同時の `start` は 8 まで。`start` のジョブは会話の裏の一覧（`running` の `background`、`kind: 'shell'`、`backend: 'ply_shell'`）に出て、`sessions.stopBackground` で止められる。人が止めた・自分で終わった `start` のジョブは、その会話へ知らせる（`shell.jobDone`）。サーバーの終わり・会話の削除・巻き戻しで止める（保持役には載せない）
-- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せないので、Devin は Pleiad の MCP をまだ受けていないので、渡していない
+- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せず、Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control は ACP の `session/new` の `mcpServers` で渡す）
 - **エージェントのシェルを切る**: 設定 `shellTool`（`{ <エージェントの id>: 'native' | 'ply' }`。無ければエージェントの記述の `shellDefault`。OpenCode だけ `'ply'`）が `'ply'` で、能力の印 `nativeShellOff` を持つエージェントは、`runArgs.shellRuntime.nativeOff` でエージェントのシェルのツールを切る。Claude は `disallowedTools` に `Bash`・`PowerShell`、OpenCode は会話の権限で `bash` を全面拒否（一覧から外れる。規則の印 `+noshell`）。切った会話にだけ使い方の指示（`shell.instructions`。「指示の量」の内訳 `shell`）を足す
 - シェルのツールの名前（長いコマンドの知らせ・声の待ちの案内が見分ける）は、エージェントの記述の `shellTools`（`core/shell-tools.mjs`。toolHints の `shape: 'shell'` と同じ名前）。名前で見分けられない呼び出し（ACP の自由な題）は `tool.start` の `shell: true`
 
@@ -828,6 +828,13 @@ Codexの `set_status / set_title / fork` は未接続なので、
 **能力の印を足すとき**は、`contract.mjs` の `CAPABILITIES`（値の形・要るメソッド）・全バックエンドの値・`NO_CAPABILITIES`・
 対応表の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）・その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
 `'conformance'` か既存の suite の名前）を足す。どれかが欠けると backend-contract が落ちる。
+
+**runArgs の配達物**（エージェントへ機能を渡すキー: `browserEnv`・`controlRuntime`・`secretsRuntime` など）は `contract.mjs` の
+`RUN_ARG_FEATURES` に「キー → 能力の印」の行が要る。`server.mjs` は runArgs を組み立てるところと、バックエンドへ渡す前の `gateRunArgs` の
+両方で印を見るので、印の無いバックエンドにはその配達物が届かない（消したキーはバックエンドの既定値に落ちる）。一覧に無いキーを runArgs に
+足すと試験（`PLEIAD_BACKEND_CONTRACT=strict`）で `gateRunArgs` が例外にするので、新しい配達物は必ず `RUN_ARG_FEATURES`（機能）か
+`RUN_ARG_PLUMBING`（プロンプト・承認など全バックエンドに渡る回線）のどちらかに登録する。配達物の機能を足したら、対応する印も足し、
+受け取れないバックエンドは `false` と宣言する。`false` なのに配達される組み合わせは起きない。
 
 #### id で分けない
 

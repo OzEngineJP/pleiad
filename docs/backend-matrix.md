@@ -36,3 +36,8 @@
 | 指示は会話の始めにしか効かない（人格を直したら次のターンで渡し直す）（`instructionsAtStart`） | — | — | ✓ | — | — | — |
 | 失敗の理由を会話の控えに残す（`failureDiagnostics`） | — | — | ✓ | — | ✓ | ✓ |
 | 更新で走っているターンを止めない（無停止の更新。新しいサーバーが付け直す）（`handover`） | ✓ | ✓ | ✓ | ✓ | — | — |
+| エージェントのブラウザー（Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser）を受け取る（`browser`） | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 操作の一覧（ply_control）と会話に束縛した CLI（PLEIAD_CONTROL_*）を受け取る（`plyControl`） | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 秘密情報と変数（環境変数と一覧の文）を受け取る（`secrets`） | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 可視化の指示を受け取る（`visualize`） | ✓ | ✓ | — | ✓ | ✓ | — |
+| Pleiad がそろえる Hooks（hooksRuntime）を受け取る（`hooks`） | ✓ | ✓ | ✓ | ✓ | — | — |
