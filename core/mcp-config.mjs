@@ -69,14 +69,19 @@ function renderToml(text, config, name, value) {
   return { text: stringify(expected), reformatsFile: true };
 }
 
-export function createMcpConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex') } = {}) {
+export function createMcpConfig({ home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'),
+  // backend-allow: 読み込み元（ファイルの形式）の名前。エージェントの分岐ではない
+  devinHome = process.env.DEVIN_CONFIG_HOME ? path.join(process.env.DEVIN_CONFIG_HOME, 'devin') : path.join(process.env.APPDATA ?? process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'devin') } = {}) {
   let writes = Promise.resolve();
   async function target(args) {
-    if (!['claude', 'codex'].includes(args?.format) || !['user', 'directory'].includes(args?.scope)) throw new Error(t('mcp.config.target'));
+  // backend-allow: 読み込み元（ファイルの形式）の名前で、エージェントの分岐ではない
+    if (!['claude', 'codex', 'devin'].includes(args?.format) || !['user', 'directory'].includes(args?.scope)) throw new Error(t('mcp.config.target'));
     const cwd = await scanDirectory(args.cwd);
     const file = args.format === 'codex'
       ? path.join(args.scope === 'user' ? codexHome : path.join(cwd, '.codex'), 'config.toml')
-      : args.scope === 'user' ? path.join(home, '.claude.json') : path.join(cwd, '.mcp.json');
+      : args.format === 'devin'
+        ? path.join(args.scope === 'user' ? devinHome : path.join(cwd, '.devin'), 'mcp_config.json')
+        : args.scope === 'user' ? path.join(home, '.claude.json') : path.join(cwd, '.mcp.json');
     return { cwd, path: file, format: args.format, scope: args.scope };
   }
   async function read(args) {
@@ -166,7 +171,8 @@ export function createMcpConfig({ home = os.homedir(), codexHome = process.env.C
     await writes.catch(() => {});
     const servers = {};
     for (const scope of ['user', 'directory']) {
-      for (const format of ['claude', 'codex']) {
+      // backend-allow: 読み込み元（ファイルの形式）の名前
+      for (const format of ['claude', 'codex', 'devin']) {
         const data = await read({ cwd, scope, format });
         for (const [name, value] of Object.entries(data.servers)) {
           if (!/^[a-zA-Z0-9_.-]{1,128}$/.test(name) || ['__proto__', 'constructor', 'prototype', 'host', 'ply'].includes(name)) continue;

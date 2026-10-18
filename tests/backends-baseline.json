@@ -17,10 +17,9 @@
     "core/hooks-copy.mjs": 51,
     "core/hooks-plan.mjs": 13,
     "core/hooks-unify.mjs": 10,
-    "core/mcp-config.mjs": 11,
+    "core/mcp-config.mjs": 8,
     "core/mcp-import.mjs": 11,
     "core/ops/hooks.mjs": 3,
-    "core/ops/mcp.mjs": 2,
     "core/ops/settings.mjs": 1,
     "core/ply-instructions.mjs": 3,
     "core/server.mjs": 12,
@@ -36,7 +35,7 @@
     "web/delegation-routing-view.mjs": 7,
     "web/hooks-card.mjs": 32,
     "web/hooks-unify-ui.mjs": 7,
-    "web/mcp-config.mjs": 7,
+    "web/mcp-config.mjs": 1,
     "web/ply-instructions-card.mjs": 2,
     "web/session-context.mjs": 4
   }

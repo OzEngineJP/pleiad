@@ -59,7 +59,8 @@ export const AGENTS = {
       searchDirs: (env) => (env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'agy', 'bin')] : []),
     },
     idleCompaction: null,
-    contextSources: null,
+    // AGENTS.md（作業場所。common）と、~/.gemini・.agents 系（antigravity）
+    contextSources: ['common', 'antigravity'],
     hooksAs: null,
     shellTools: ['run_command'],
     shellDefault: 'native',
@@ -94,7 +95,8 @@ export const AGENTS = {
     },
     // 会話を離れた後の自動の圧縮（/compact を prompt として送る）。既定は切る（Devin 自身も文脈があふれる前に圧縮する）
     idleCompaction: { enabled: false, delayMinutes: 25 },
-    contextSources: null,
+    // AGENTS.md（common）・Claude 互換のインポート（claude）・.devin 系（devin）・OpenCode の MCP のインポート（opencode）
+    contextSources: ['common', 'claude', 'devin', 'opencode'],
     hooksAs: null,
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
     shellTools: [],

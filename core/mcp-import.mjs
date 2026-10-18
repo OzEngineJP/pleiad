@@ -76,6 +76,12 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
     take('command', 'args', 'env', 'env_vars', 'cwd', 'url', 'bearer_token_env_var', 'http_headers', 'env_http_headers', 'scopes', 'oauth_resource',
       'enabled', 'startup_timeout_sec', 'startup_timeout_ms', 'tool_timeout_sec', 'enabled_tools', 'disabled_tools');
     value.transport = stdio ? 'stdio' : 'http';
+  // backend-allow: 読み込み元（ファイルの形式）の名前で、エージェントの分岐ではない
+  } else if (format === 'devin') {
+    take('command', 'args', 'env', 'url', 'transport', 'headers', 'disabled', 'oauthClientId', 'oauthClientSecret', 'oauthResource', 'scopes');
+    const transport = native.transport ?? (stdio ? 'stdio' : 'http');
+    if (!['stdio', 'http', 'sse'].includes(transport)) throw new Error(t('mcp.import.transport', { type: transport }));
+    value.transport = transport;
   } else throw new Error(t('mcp.import.format'));
 
   if (value.transport === 'stdio') {
@@ -102,7 +108,10 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
       if (record(native.env_http_headers)) for (const [k, variable] of Object.entries(native.env_http_headers)) addHeader(k, fromEnv(t('mcp.import.labelHeader', { name: k }), String(variable)));
     }
     const bearerVar = format === 'codex' && typeof native.bearer_token_env_var === 'string' ? native.bearer_token_env_var : null;
-    const oauthHint = format === 'claude' ? record(native.oauth) : (native.scopes !== undefined || native.oauth_resource !== undefined);
+    const oauthHint = format === 'claude' ? record(native.oauth)
+  // backend-allow: 読み込み元（ファイルの形式）の名前で、エージェントの分岐ではない
+      : format === 'devin' ? (native.oauthClientId !== undefined || native.oauthResource !== undefined || native.oauthClientSecret !== undefined || native.scopes !== undefined)
+        : (native.scopes !== undefined || native.oauth_resource !== undefined);
     if (oauthHint) {
       value.auth = 'oauth';
       const o = {};
@@ -115,6 +124,13 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
         }
         // Claude のクライアントシークレットは設定ファイルではなく資格情報の保管庫にある
         if (o.clientId) notes.push(t('mcp.import.clientSecret'));
+  // backend-allow: 読み込み元（ファイルの形式）の名前で、エージェントの分岐ではない
+      } else if (format === 'devin') {
+        if (typeof native.oauthClientId === 'string' && native.oauthClientId) o.clientId = native.oauthClientId;
+        if (typeof native.oauthResource === 'string' && native.oauthResource) o.resource = native.oauthResource;
+        if (strings(native.scopes) && native.scopes.length) o.scope = native.scopes.join(' ');
+        // Devin のクライアントシークレットは ${env:VAR} 参照にすることが多い。伏せて移す
+        if (native.oauthClientSecret !== undefined) notes.push(t('mcp.import.clientSecret'));
       } else {
         if (strings(native.scopes) && native.scopes.length) o.scope = native.scopes.join(' ');
         if (typeof native.oauth_resource === 'string' && native.oauth_resource) o.resource = native.oauth_resource;
@@ -131,6 +147,8 @@ export function convertNative(format, native, { includeSecrets = false, env = pr
       value.headers = headers;
     }
   }
+  // backend-allow: 読み込み元（ファイルの形式）の名前で、エージェントの分岐ではない
+  if (format === 'devin' && native.disabled === true) value.enabled = false;
   if (format === 'codex') {
     if (native.enabled === false) value.enabled = false;
     const startup = Number.isFinite(native.startup_timeout_sec) ? native.startup_timeout_sec : Number.isFinite(native.startup_timeout_ms) ? native.startup_timeout_ms / 1000 : undefined;

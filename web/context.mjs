@@ -25,7 +25,7 @@ const TEXT = {
     ply: [t('context.owner.ply'), t('context.instruction.ply')],
     note: t('context.instruction.note'),
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
-    formats: { user: [['common', t('context.instruction.sourceCommon')], ['claude', 'CLAUDE.md'], ['codex', t('context.instruction.sourceCodex')], ['opencode', t('context.instruction.sourceOpencode')]] },
+    formats: { user: [['common', t('context.instruction.sourceCommon')], ['claude', 'CLAUDE.md'], ['codex', t('context.instruction.sourceCodex')], ['opencode', t('context.instruction.sourceOpencode')], ['devin', t('context.instruction.sourceDevin')], ['antigravity', t('context.instruction.sourceAntigravity')]] },
   },
   skill: {
     title: 'Skills', owned: 'Skills',
@@ -33,7 +33,7 @@ const TEXT = {
     ply: [t('context.owner.ply'), t('context.skill.ply')],
     note: t('context.skill.note'),
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
-    formats: { user: [['common', t('context.skill.sourceCommon')], ['claude', '.claude/skills'], ['codex', '.codex/skills'], ['opencode', '.opencode/skills']] },
+    formats: { user: [['common', t('context.skill.sourceCommon')], ['claude', '.claude/skills'], ['codex', '.codex/skills'], ['opencode', '.opencode/skills'], ['devin', '.devin/skills'], ['antigravity', '.gemini/skills']] },
   },
   mcp: {
     title: t('context.mcp.title'), owned: t('context.mcp.title'),
@@ -41,7 +41,7 @@ const TEXT = {
     ply: [t('context.owner.ply'), t('context.mcp.ply')],
     // ユーザーはエージェントの設定（~/.claude.json・~/.codex/config.toml）、作業場所はプロジェクトの設定ファイル
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
-    formats: { user: [['claude', t('context.mcp.sourceClaude')], ['codex', t('context.mcp.sourceCodex')], ['opencode', t('context.mcp.sourceOpencode')]], directory: [['claude', '.mcp.json'], ['codex', '.codex/config.toml'], ['opencode', 'opencode.json']] },
+    formats: { user: [['claude', t('context.mcp.sourceClaude')], ['codex', t('context.mcp.sourceCodex')], ['opencode', t('context.mcp.sourceOpencode')], ['devin', t('context.mcp.sourceDevin')], ['antigravity', t('context.mcp.sourceAntigravity')]], directory: [['claude', '.mcp.json'], ['codex', '.codex/config.toml'], ['opencode', 'opencode.json'], ['devin', '.devin/mcp_config.json'], ['antigravity', '.gemini/settings.json']] },
   },
 };
 const SHOWN = 8;   // Skills は多いので最初はこれだけ並べ、「すべて見る」で残りを出す

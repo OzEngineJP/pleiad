@@ -28,7 +28,7 @@
 | 次の発言の候補（native: ターンの中で届く / —: Pleiad がターンの後に作る）（`promptSuggestions`） | native | — | — | — | — | — |
 | 委譲の橋（ply_agents）と Pleiad の指示を受け取る（`plyAgents`） | ✓ | ✓ | — | ✓ | — | — |
 | Pleiad のコンテキスト（ply_context）の受け取り方（turn / conversation）（`plyContext`） | turn | turn | conversation | turn | — | — |
-| コンピューターの操作（ply_computer）。画像の渡し方（`computerUse`） | inline | inline | path（150 秒ごと） | inline | — | — |
+| コンピューターの操作（ply_computer）。画像の渡し方（`computerUse`） | inline | inline | path（150 秒ごと） | inline | inline | — |
 | 入力欄の `!`（host: Pleiad が走らせる / native: エージェントが走らせる）（`shell`） | host | native | — | host | — | host |
 | Pleiad のシェルのツール（ply_shell）を受け取る（`plyShell`） | ✓ | ✓ | — | ✓ | — | — |
 | エージェントのシェルのツールを会話ごとに切れる（ply_shell だけにする）（`nativeShellOff`） | ✓ | — | — | ✓ | — | — |

@@ -2669,7 +2669,7 @@
         }
       },
       "legacyCommand": "listMcpConfig",
-      "input": "e062309ea1e6"
+      "input": "0e1063377de5"
     },
     {
       "id": "mcp.nativeRead",
@@ -2692,7 +2692,7 @@
         }
       },
       "legacyCommand": "readMcpServer",
-      "input": "c2792a8c9829"
+      "input": "0edabb38af89"
     },
     {
       "id": "mcp.nativeSave",
@@ -2715,7 +2715,7 @@
         }
       },
       "legacyCommand": "saveMcpServer",
-      "input": "051d03827897"
+      "input": "fba22cb697e6"
     },
     {
       "id": "mcp.read",

@@ -71,10 +71,38 @@ export function opencodeServers(map) {
     return [name, { command: String(command[0] ?? ''), args: command.slice(1).map(String), ...(v.environment ? { env: v.environment } : {}), ...off }];
   }));
 }
+// Zed の settings.json の context_servers（{ name: { command: { path, args } } } か { name: { url } }）を、走査が読む形に写す
+export function zedServers(map) {
+  const servers = map?.context_servers;
+  if (servers == null) return null;
+  if (!record(servers)) return servers;
+  return Object.fromEntries(Object.entries(servers).map(([name, v]) => {
+    if (!record(v)) return [name, v];
+    if (typeof v.url === 'string') return [name, { url: v.url }];
+    const cmd = record(v.command) ? v.command : {};
+    return [name, { command: String(cmd.path ?? ''), ...(Array.isArray(cmd.args) ? { args: cmd.args.map(String) } : {}) }];
+  }));
+}
+// JSONC（// と /* */ のコメント。Devin の設定ファイルはコメントが書ける）を JSON にする。文字列の中は触らない
+export function stripJsonc(text) {
+  let out = '', str = false, esc = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i], n = text[i + 1];
+    if (str) { out += c; if (esc) esc = false; else if (c === '\\') esc = true; else if (c === '"') str = false; continue; }
+    if (c === '"') { str = true; out += c; continue; }
+    if (c === '/' && n === '/') { while (i < text.length && text[i] !== '\n') i++; out += '\n'; continue; }
+    if (c === '/' && n === '*') { i += 2; while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) { if (text[i] === '\n') out += '\n'; i++; } i++; continue; }
+    out += c;
+  }
+  return out;
+}
 // scopes: 探す範囲。既定は両方。設定の画面のユーザーの段は ['user'] だけ（作業場所のファイルを混ぜない）
 export async function scanContext(settings, { home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'), claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'),
   // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
-  opencodeHome = process.env.OPENCODE_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'opencode'), runtime = false, plyServers = null, scopes = ['user', 'directory'] } = {}) {
+  opencodeHome = process.env.OPENCODE_CONFIG_DIR ?? path.join(process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'opencode'), runtime = false, plyServers = null, scopes = ['user', 'directory'],
+  // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+  devinHome = process.env.DEVIN_CONFIG_HOME ? path.join(process.env.DEVIN_CONFIG_HOME, 'devin') : path.join(process.env.APPDATA ?? process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'devin'),
+  geminiHome = path.join(home, '.gemini') } = {}) {
   const { cwd } = settings;
   // 種類ごと・範囲（user = home / directory = Git ルート〜作業場所）ごとの探し方。形式 1 の { user, directory } も受け付ける
   const plan = scanPlan(settings);
@@ -206,12 +234,36 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
         ...(runtime ? { metadata: meta } : {}), extensions: Object.keys(meta ?? {}).filter(k => !['name', 'description', 'license', 'compatibility', 'metadata'].includes(k)) });
     }
   }
+  /**
+   * Devin が読む他ツールの規則（.devin/rules・.windsurf/rules・.cursor/rules の .md・.mdc）。
+   * 発動条件は frontmatter（windsurf の trigger・cursor の alwaysApply / globs）。paths・globs があるものは条件付き
+   */
+  async function otherRules(dir, ctx, depth = 0) {
+    if (!depth) searched.push({ path: dir, kind: 'instruction', ...ctx });
+    for (const entry of await list(dir)) {
+      const file = path.join(dir, entry.name), md = /\.(md|mdc)$/i.test(entry.name);
+      if (entry.isDirectory() || (entry.isSymbolicLink() && !md)) { if (depth < 10) await otherRules(file, ctx, depth + 1); continue; }
+      if (!md) continue;
+      const data = await read(file);
+      if (!data) continue;
+      const match = FRONTMATTER.exec(data.text);
+      let meta = null;
+      try { meta = match ? yaml(match[1] ?? '', { maxAliasCount: 20, logLevel: 'silent' }) : null; }
+      catch { issue(file, t('context.scan.ruleFrontmatter')); continue; }
+      const raw = record(meta) ? meta.paths ?? meta.globs : undefined, paths = raw == null ? null : globList(raw);
+      if (raw != null && !paths) { issue(file, t('context.scan.rulePaths')); continue; }
+      await instruction(file, ctx, paths ? 'conditional' : 'candidate', 0, new Set(), { rule: true, ...(paths ? { paths, pathsBase: ctx.appliesTo } : {}) });
+    }
+  }
   async function mcp(file, ctx, select) {
     searched.push({ path: file, kind: 'mcp', ...ctx });
     const data = await read(file);
     if (!data) return;
+    // Devin の設定ファイル（.devin/・DEVIN_CONFIG_HOME の config）は JSONC
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+    const text = ctx.source === 'devin' ? stripJsonc(data.text) : data.text;
     let config;
-    try { config = path.extname(file) === '.toml' ? toml(data.text) : JSON.parse(data.text); }
+    try { config = path.extname(file) === '.toml' ? toml(text) : JSON.parse(text); }
     catch { issue(file, t('context.scan.mcpParse')); return; }
     if (!record(config)) { issue(file, t('context.scan.mcpInvalid')); return; }
     const servers = select(config);
@@ -248,7 +300,10 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       if (spec.kinds.includes('skill')) await skills(path.join(base, '.agents', 'skills'), ctx);
       return;
     }
-    const configDir = user && !custom ? { codex: codexHome, claude: claudeHome, opencode: opencodeHome }[source] : path.join(base, `.${source}`);
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+    const configDir = user && !custom ? { codex: codexHome, claude: claudeHome, opencode: opencodeHome, devin: devinHome, antigravity: geminiHome }[source]
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      : path.join(base, source === 'devin' ? '.devin' : source === 'antigravity' ? '.gemini' : `.${source}`);
     if (spec.kinds.includes('instruction')) {
       const dir = user && !custom ? configDir : base;
       searched.push({ path: dir, kind: 'instruction', ...ctx });
@@ -264,17 +319,71 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       } else if (source === 'opencode' && user && !custom) {
         // OpenCode の全体の指示は設定の置き場の AGENTS.md。作業場所の AGENTS.md は common が探す
         await instruction(path.join(configDir, 'AGENTS.md'), ctx);
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      } else if (source === 'devin') {
+        if (user && !custom) {
+          await instruction(path.join(configDir, 'AGENTS.md'), ctx);
+          await instruction(path.join(configDir, 'AGENT.md'), ctx);
+          await instruction(path.join(home, '.devin', 'global_rules.md'), ctx);
+          await otherRules(path.join(home, '.devin', 'rules'), ctx);
+        } else {
+          await instruction(path.join(base, 'AGENTS.local.md'), ctx);
+          await instruction(path.join(base, 'AGENT.md'), ctx);
+          await instruction(path.join(base, '.windsurfrules'), ctx);
+          await instruction(path.join(base, '.devin', 'global_rules.md'), ctx);
+          await instruction(path.join(base, '.windsurf', 'global_rules.md'), ctx);
+          await otherRules(path.join(base, '.devin', 'rules'), ctx);
+          await otherRules(path.join(base, '.windsurf', 'rules'), ctx);
+          await otherRules(path.join(base, '.cursor', 'rules'), ctx);
+        }
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      } else if (source === 'antigravity') {
+        await instruction(path.join(dir, 'GEMINI.md'), ctx);
       }
     }
     if (spec.kinds.includes('skill')) {
       await skills(path.join(configDir, 'skills'), ctx);
       if (source === 'codex' && !custom) await skills(path.join(user ? home : base, '.agents', 'skills'), ctx);
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      else if (source === 'devin') {
+        if (user && !custom) {
+          await skills(path.join(path.dirname(configDir), 'cognition', 'skills'), ctx);
+          for (const ch of ['windsurf', 'windsurf-next', 'windsurf-insiders']) await skills(path.join(home, '.codeium', ch, 'skills'), ctx);
+          await skills(path.join(home, '.copilot', 'skills'), ctx);
+        } else {
+          await skills(path.join(base, '.cognition', 'skills'), ctx);
+          await skills(path.join(base, '.windsurf', 'skills'), ctx);
+          await skills(path.join(base, '.github', 'skills'), ctx);
+        }
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      } else if (source === 'antigravity' && user && !custom) await skills(path.join(configDir, 'antigravity', 'global_skills'), ctx);
     }
     if (spec.kinds.includes('mcp')) {
       if (source === 'codex') await mcp(path.join(configDir, 'config.toml'), ctx, v => v.mcp_servers);
       // OpenCode は設定の置き場（全体）と作業場所の opencode.json の mcp。形を Claude の形（command・args・env・url）に写して並べる
       // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
       else if (source === 'opencode') await mcp(path.join(user && !custom ? configDir : base, 'opencode.json'), ctx, v => opencodeServers(v.mcp));
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      else if (source === 'devin') {
+        if (user && !custom) {
+          await mcp(path.join(configDir, 'mcp_config.json'), ctx, v => v.mcpServers);
+          await mcp(path.join(configDir, 'config.json'), ctx, v => v.mcpServers); // v3000.3 より前の置き場
+          await mcp(path.join(home, '.cursor', 'mcp.json'), ctx, v => v.mcpServers);
+          await mcp(path.join(home, '.config', 'zed', 'settings.json'), ctx, zedServers);
+          for (const ch of ['windsurf', 'windsurf-next', 'windsurf-insiders']) await mcp(path.join(home, '.codeium', ch, 'mcp_config.json'), ctx, v => v.mcpServers);
+        } else {
+          await mcp(path.join(base, '.devin', 'mcp_config.json'), ctx, v => v.mcpServers);
+          await mcp(path.join(base, '.devin', 'mcp_config.local.json'), ctx, v => v.mcpServers);
+          await mcp(path.join(base, '.devin', 'config.json'), ctx, v => v.mcpServers); // v3000.3 より前の置き場
+          await mcp(path.join(base, '.devin', 'config.local.json'), ctx, v => v.mcpServers);
+          await mcp(path.join(base, '.cursor', 'mcp.json'), ctx, v => v.mcpServers);
+          await mcp(path.join(base, '.zed', 'settings.json'), ctx, zedServers);
+        }
+    // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
+      } else if (source === 'antigravity') {
+        await mcp(path.join(configDir, 'settings.json'), ctx, v => v.mcpServers);
+        if (user && !custom) await mcp(path.join(configDir, 'config', 'mcp_config.json'), ctx, v => v.mcpServers);
+      }
       else if (source === 'claude' && user && !custom) {
         await mcp(path.join(home, '.claude.json'), ctx, v => v.mcpServers);
       } else {

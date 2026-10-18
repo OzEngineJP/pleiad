@@ -14,7 +14,8 @@ const A = (key) => `agent:ops.mcp.arg.${key}`;
 
 const NAME = z.string().min(1).max(128);
 const where = {
-  format: z.enum(['claude', 'codex']).describe(A('format')),
+  // backend-allow: 読み込み元（ファイルの形式）の名前
+  format: z.enum(['claude', 'codex', 'devin']).describe(A('format')),
   scope: z.enum(['user', 'directory']).describe(A('scope')),
   cwd: z.string().max(4096).optional().describe(A('cwd')),
 };

@@ -1284,6 +1284,8 @@
       "sourceCommon": "AGENTS.md (shared)",
       "sourceCodex": "Codex format",
       "sourceOpencode": "OpenCode format",
+      "sourceDevin": "Devin format",
+      "sourceAntigravity": "Antigravity format",
       "title": "Instructions",
       "files": "instruction files",
       "fileTitle": "Instructions from files (CLAUDE.md, AGENTS.md)",
@@ -1302,7 +1304,9 @@
       "ply": "Connect the same MCP servers to every agent",
       "sourceClaude": "Claude settings",
       "sourceCodex": "Codex settings",
-      "sourceOpencode": "OpenCode settings"
+      "sourceOpencode": "OpenCode settings",
+      "sourceDevin": "Devin settings",
+      "sourceAntigravity": "Antigravity settings"
     },
     "copyPath": "Copy path",
     "copied": "Copied",

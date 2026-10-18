@@ -1251,6 +1251,8 @@
       "sourceCommon": "AGENTS.md（共通）",
       "sourceCodex": "Codex 形式",
       "sourceOpencode": "OpenCode 形式",
+      "sourceDevin": "Devin 形式",
+      "sourceAntigravity": "Antigravity 形式",
       "title": "指示",
       "files": "指示ファイル",
       "fileTitle": "ファイルの指示（CLAUDE.md・AGENTS.md）",
@@ -1269,7 +1271,9 @@
       "ply": "どのエージェントにも同じ MCP をつなぐ",
       "sourceClaude": "Claude の設定",
       "sourceCodex": "Codex の設定",
-      "sourceOpencode": "OpenCode の設定"
+      "sourceOpencode": "OpenCode の設定",
+      "sourceDevin": "Devin の設定",
+      "sourceAntigravity": "Antigravity の設定"
     },
     "copyPath": "パスをコピー",
     "copied": "コピーしました",

@@ -23,7 +23,8 @@ function withPlus(b, text) {
 }
 
 const MASK = '••••';
-const AGENTS = [['claude', 'Claude'], ['codex', 'Codex']];
+// backend-allow: 読み込み元（ファイルの形式）の名前
+const AGENTS = [['claude', 'Claude'], ['codex', 'Codex'], ['devin', 'Devin']];
 const agentName = id => AGENTS.find(([k]) => k === id)?.[1] ?? id;
 const STATES = { 'signed-in': t('mcp.state.signedIn'), 'signed-out': t('mcp.state.signedOut'), expired: t('mcp.state.expired'), pending: t('mcp.state.pending'), locked: t('mcp.state.locked'), error: t('mcp.state.error') };
 /** つなぎ方の短い名前 */
@@ -349,8 +350,10 @@ export function createMcpSection() {
       if (config) { const code = el('div'); code.innerHTML = codeBlock(excerpt(config, name), langFromPath(config.path)); box.append(code); }
     }
     box.append(el('p', 'msg', t('mcp.peek.masked')));
-    const importable = entries.find(e => ['claude', 'codex'].includes(e.origins?.[0]?.source) && (e.status === 'candidate' || e.shadowedBy === 'choice'))
-      ?? entries.find(e => ['claude', 'codex'].includes(e.origins?.[0]?.source));
+      // backend-allow: 読み込み元（ファイルの形式）の名前
+    const importable = entries.find(e => ['claude', 'codex', 'devin'].includes(e.origins?.[0]?.source) && (e.status === 'candidate' || e.shadowedBy === 'choice'))
+      // backend-allow: 読み込み元（ファイルの形式）の名前
+      ?? entries.find(e => ['claude', 'codex', 'devin'].includes(e.origins?.[0]?.source));
     if (importable) {
       const acts = el('div', 'acts');
       acts.append(button(t('mcp.import.button'), 'btn btn-quiet', () => ctx.work(async () => {
