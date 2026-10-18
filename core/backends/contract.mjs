@@ -199,7 +199,7 @@ export const RUN_ARG_FEATURES = Object.freeze({
 
 /** runArgs に載ってよい、配達物でないキー。新しいキーを足すときは配達物なら RUN_ARG_FEATURES へ、どのバックエンドにも必要ならここへ */
 export const RUN_ARG_PLUMBING = Object.freeze(new Set([
-  'prompt', 'sessionId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke',
+  'prompt', 'sessionId', 'messageId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke',
   'signal', 'control', 'locale', 'delegatedChild', 'addedInstructions', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
   'compact', 'oauthToken', 'account', 'endpoint', 'autoCompactWindow', 'promptSuggestions',
   'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',

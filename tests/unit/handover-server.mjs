@@ -107,7 +107,7 @@ export default async function (t) {
       void c1.cmd('sendMessage', { sessionId: ids.B, messageId: 'handover-b-0001', prompt: 'slow' }).catch(() => {});
       await c1.waitFor(e => e.type === 'turn.started' || e.type === 'session' || e.type === 'activity', { ms: WAIT_MS, from }).catch(() => {});
       const running = await until(async () => { const r = await c1.cmd('running'); return r.turns.some(x => x.sessionId === ids.B) ? r : null; }, WAIT_MS, 'running の B');
-      assert.equal(running.handover.v, 1, 'running に handover の版');
+      assert.equal(running.handover.v, 2, 'running に handover の版');
       assert.equal(running.turns.find(x => x.sessionId === ids.B).held ?? false, false, '保持役に載っていないターンは held でない');
       assert.equal(running.handover.blocking, running.count, '渡せない作業は待たせる作業');
       const declined = await m1.request('handover');

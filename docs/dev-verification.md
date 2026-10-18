@@ -4,6 +4,26 @@
 
 ## テスト
 
+### OpenCode v2
+
+`npm test -- opencode data-writes handover --jobs 2` は v2 の fixture で配送・再接続・引き継ぎ・権限・履歴と移行の退行を調べる。公開 backend の 22 メソッドは次の 5 群で確認する。件数は公開口の割り当てであり、全経路の実行網羅率ではない。
+
+| 群 | 公開メソッド | 主な試験 |
+|---|---|---|
+| モード・モデル・残量（3） | `modes`, `models`, `usage` | `server-opencode`, `opencode-usage`, `backend-contract` |
+| アカウント・認証（7） | `forAccount`, `accountLogin`, `accountStatus`, `accountRemove`, `auth.status`, `auth.login`, `auth.logout` | `opencode-accounts`, `server-opencode` |
+| 実行・更新（3） | `runTurn`, `adoptTurn`, `releaseIdle` | `opencode-v2`, `opencode-adopt`, `adopt-opencode`, `opencode-retry-turn`, `server-opencode-hooks`, `server-opencode-context` |
+| 会話・履歴（6） | `compact`, `listSessions`, `getSession`, `getMessages`, `setTitle`, `fork` | `server-opencode`, `opencode-parts`, `opencode-v2` |
+| 子会話（3） | `listSubagents`, `getSubagentMessages`, `getSubagentOrigin` | `server-opencode`, `opencode-accounts`, `server-opencode-context` |
+
+`npm run test:e2e -- opencode-v2` は PATH 上の実 CLI を使う。一時 HOME・設定・DB とローカルの応答 fixture で、初回 MCP、Code Mode の承認、Hooks の拒否と引数変更、下位 AGENTS.md の除外、圧縮後の同じ会話の再開を確認する。続いて実サービスへ短い要求を 1 回送る。既定は Zen の無料モデル。`OPENCODE_E2E_SERVICE=off` で実サービスだけ省ける。
+
+実サービスを指定する場合は `OPENCODE_E2E_SERVICE_MODEL=provider/model` を設定する。`OPENCODE_E2E_AUTH_PROVIDER=groq` などを付けると、その接続先の既存 API 資格情報だけを一時領域へ写す。OAuth は更新せず、利用者の認証や DB は変更しない。モデル ID は接続先の現在の一覧で確認する。`PLEIAD_*` は試験ランナーが取り除くため、試験用の選択には使わない。
+
+v2 の新規 DB 作成は旧 `auth.json` を自動で取り込まない。Pleiad の初回復元は公式 credential API と未完了の印を使い、通信失敗や一時的な読みの失敗は起動ごとに最大 5 回まで再試行する。不正な項目は飛ばし、既存 DB とログアウト済み DB は再取り込みしない。5 回失敗した場合や、CLI を先に開いて新規 DB を作った場合は、OpenCode 側でログインする。
+
+Pleiad が指示を担当する場合、圧縮に残った native 指示はモデル送信前にも除外する。署名済みの本文を安全に変更できない場合は要求を断る。戻し方と対応版は [利用案内](backends.md#opencode) と [接続契約](multi-backend.md) を参照。
+
 - `tests/lint-design.mjs --strict`（`npm test` の design-lint）は、CSS の `background` に `--surface-*`・`--fill-*`、`color` に `--ink-*` 以外を許さない。`--line-*` は svg の `fill`/`stroke`、`linear-gradient(var(--line-x),var(--line-x))` の背景、border だけ。独自の変数（`--rail-line` など）を経由した色も族が判らず落ちる。普段と触れたときで色を替えるときは、規則ごとに `--surface-*` / `--ink-*` を書くか、`opacity` で濃さを替える（2026-09-30、会話の地図）。単体の確認は `node tests/lint-design.mjs web/tokens.css <css> --strict`。
 - 設定のページ（左のメニューの項目）を足すときは、`web/onboarding.mjs` の `pages` の配列に加えて、同じファイルの `$('<名前>Tab').onclick = () => page('<名>')` の行も足す。配列だけだと札は出るが、押しても（`.click()` でも）ページが切り替わらない（2026-10-01、コンピューターの操作の節）。`hostCapabilities` に項目を足すと、返り値を `deepEqual` で比べる `tests/unit/file-actions.mjs` の 2 か所の期待値も変わる。
 - `web/client.mjs` の `onEvent` などに新しい部品（`setupXxx` が返すオブジェクト）の呼び出しを足したら、関数を切り出して `vm` で動かすテスト（`tests/unit/session-stream.mjs` など。`vm.createContext` で探す）の文脈にも身代わりを足す。足さないと全件のときに `ReferenceError: xxx is not defined` で落ちる（2026-10-03、`mobileNotify`・`notifySettings`。git の動きの `refreshGit`・`gitPanel` でも同じことが起きた）。

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { runCase, summarize } from '../lib/harness.mjs';
-import { prepareAccount, opencodeData, loginAccount, readAccountAuth, accountLoginCommand } from '../../core/backends/opencode-accounts.mjs';
+import { prepareAccount, opencodeData, loginAccount, readAccountAuth, accountLoginCommand,prepareCredentialImport,importLegacyCredentials } from '../../core/backends/opencode-accounts.mjs';
 import { t as translate } from '../../core/i18n.mjs';
 
 export const name = 'opencode-accounts';
@@ -30,6 +30,45 @@ export default async function testOpencodeAccounts(t) {
     await fs.writeFile(realAuth, JSON.stringify(auth('current-cli').auth));
     const original = await fs.readFile(realAuth, 'utf8');
     const oneEnv = prepareAccount(one), twoEnv = prepareAccount(two);
+    const restored={id:'acct-restored',dir:path.join(scratch,'accounts','acct-restored'),credential:auth('restored')};
+    restored.credential.auth.invalid={...restored.credential.auth.openai,expires:1.5};
+    restored.credential.auth['https://wellknown.invalid/']={type:'wellknown',key:'ENV_NAME',token:'fixture'};
+    prepareAccount(restored);
+    const fresh=path.join(opencodeData(restored),'opencode.db'),marker=fresh+'.pleiad-import-auth',created=[];
+    prepareCredentialImport(fresh,restored);
+    const records=[];let loseResponse=true,wellknownCalls=0;
+    const credentials=async(method,_url,options)=>{
+      if(method==='GET')return {data:records};
+      if(_url.endsWith('/wellknown')) {wellknownCalls++;if(wellknownCalls===1)throw Object.assign(new Error('Manifest unavailable'),{status:400});return null;}
+      created.push(options.body);records.push(options.body);
+      if(loseResponse){loseResponse=false;throw new Error('Lost response');}
+      return {data:options.body};
+    };
+    assert((await importLegacyCredentials(credentials,fresh,restored)).pending);
+    assert(fsSync.existsSync(marker));
+    await importLegacyCredentials(credentials,fresh,restored);
+    assert.equal(created.length,2);assert.equal(created[0].activate,false);assert.equal(created[0].value.methodID,'chatgpt-browser');
+    assert.equal(created[1].integrationID,'https://wellknown.invalid');assert.equal(wellknownCalls,2);
+    assert(!fsSync.existsSync(marker));
+    await fs.writeFile(fresh,'existing database');records.length=0;
+    prepareCredentialImport(fresh,restored);await importLegacyCredentials(credentials,fresh,restored);
+    assert.equal(created.length,2);
+    t.ok('Fresh v2 credential restore survives a lost API response once and does not reimport into an existing logged-out database',true);
+    const legacyBroken=path.join(scratch,'broken.db');
+    prepareCredentialImport(legacyBroken);
+    await fs.writeFile(realAuth,'{');
+    prepareCredentialImport(legacyBroken);
+    await importLegacyCredentials(credentials,legacyBroken);
+    assert(fsSync.existsSync(legacyBroken+'.pleiad-import-auth'));
+    for(let retry=0;retry<4;retry++)await importLegacyCredentials(credentials,legacyBroken);
+    assert(!fsSync.existsSync(legacyBroken+'.pleiad-import-auth'));
+    await fs.writeFile(realAuth,original);
+    const linkedAuth=path.join(scratch,'auth-link.json');
+    await fs.rename(realAuth,linkedAuth);await fs.link(linkedAuth,realAuth);
+    prepareCredentialImport(legacyBroken);
+    assert(!fsSync.existsSync(legacyBroken+'.pleiad-import-auth'));
+    await fs.unlink(realAuth);await fs.rename(linkedAuth,realAuth);
+    t.ok('Malformed or linked legacy credentials do not prevent startup or remain pending',true);
     assert.notEqual(oneEnv.XDG_DATA_HOME, twoEnv.XDG_DATA_HOME);
     assert.notEqual(oneEnv.XDG_CONFIG_HOME, twoEnv.XDG_CONFIG_HOME);
     assert.notEqual(oneEnv.XDG_STATE_HOME, twoEnv.XDG_STATE_HOME);

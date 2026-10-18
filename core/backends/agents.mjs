@@ -69,7 +69,7 @@ export const AGENTS = {
     shortLabel: 'OpenCode',
     brand: { logo: 'opencode.svg', mark: true },
     cli: {
-      exe: 'opencode', binEnv: 'AGENT_HOST_OPENCODE_BIN', npmPackage: 'opencode-ai', installUrl: 'https://opencode.ai/docs/',
+      exe: 'opencode', binEnv: 'AGENT_HOST_OPENCODE_BIN', npmPackage: '@opencode/cli', installUrl: 'https://opencode.ai/docs/',
       // 公式のインストーラー（install スクリプト）は `~/.opencode/bin` に置く。npm で入れたものは PATH（npm の置き場）で見つかる
       searchDirs: (env) => [path.join(env.USERPROFILE || env.HOME || '', '.opencode', 'bin')].filter((d) => d.length > '.opencode/bin'.length),
     },
@@ -80,7 +80,7 @@ export const AGENTS = {
     // OpenCode のフックは JS のプラグインで、コマンドの Hooks の形が無い。Pleiad のプラグインと中継の口で、Claude Code の Hooks と同じ形で渡す（opencode-hooks.mjs）
     hooksAs: 'claude',
     // bash が裏で起こしたサーバーを待って戻らなくなる（v1.19.3。2026-10-18）ので、既定で ply_shell だけにする
-    shellTools: ['bash'],
+    shellTools: ['bash', 'shell'],
     shellDefault: 'ply',
   },
   devin: {

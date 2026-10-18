@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { t } from '../i18n.mjs';
 import { loadSqlite } from '../db.mjs';
 
@@ -97,7 +98,12 @@ function credentialRows(file) {
   let db = null;
   try {
     db = new (loadSqlite().DatabaseSync)(file, { readOnly: true });
-    return db.prepare('SELECT integration_id, value FROM credential').all();
+    const cols=new Set(db.prepare('PRAGMA table_info(credential)').all().map(c=>c.name));
+    const order=cols.has('active') ? ' ORDER BY active DESC'+(cols.has('time_created')?', time_created DESC':'')+', id DESC' : '';
+    const rows=db.prepare('SELECT integration_id, value FROM credential'+order).all();
+    const selected=new Map();
+    for(const row of rows)if(!selected.has(row.integration_id))selected.set(row.integration_id,row);
+    return [...selected.values()];
   } catch { return []; }
   finally { try { db?.close(); } catch {} }
 }
@@ -147,8 +153,7 @@ export function opencodeData(account = null) {
   return account ? path.join(accountPaths(account).data, 'opencode') : defaultOpencodeData();
 }
 
-// Keep the CLI's required plaintext copy only in this account's private data dir.
-// A refreshed CLI copy takes precedence over the encrypted login snapshot.
+// v2 の認証 DB を優先し、移行前の auth.json と暗号化した控えを補完に使う。
 export function validAuth(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value).filter(([, c]) => c && (
@@ -163,20 +168,95 @@ export function readAccountAuth(account = null) {
   // The CLI's own store stays lenient: there is no saved seed to fall back to.
   if (!account) {
     const stored = readStoredAuth(null);
-    try { return { ...stored, ...validAuth(JSON.parse(fs.readFileSync(file, 'utf8'))) }; }
+    try { return { ...validAuth(JSON.parse(fs.readFileSync(file, 'utf8'))), ...stored }; }
     catch { return stored; }
   }
   assertAccountTree(account, { requireExists: false });
   const stored = readStoredAuth(account);
   // Absent CLI copy: the encrypted snapshot is the only source, so use it.
-  if (!statSafe(file)) return { ...stored, ...validAuth(account.credential?.auth) };
+  if (!statSafe(file)) return { ...validAuth(account.credential?.auth), ...stored };
   // Present CLI copy: never read it through a link or an unsafe directory tree,
   // and never silently substitute the saved seed for an unreadable file.
   assertSafeAuth(file);
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch { throw new Error(t('accounts.backend.credentialUnreadable', { agent: 'OpenCode' })); }
-  return { ...stored, ...validAuth(parsed) };
+  return { ...validAuth(parsed), ...stored };
+}
+
+const IMPORT_ATTEMPTS=5;
+function writeImportMarker(marker,attempts,flag='w') {
+  fs.writeFileSync(marker,JSON.stringify({attempts}),{flag,mode:0o600});
+}
+function legacyImportSource(account) {
+  try {
+    const file=path.join(opencodeData(account),'auth.json');
+    return assertSafeAuth(file)?validAuth(JSON.parse(fs.readFileSync(file,'utf8'))):null;
+  }catch {
+    console.error('  opencode: invalid legacy credential source skipped');
+    return null;
+  }
+}
+
+/** 新規 v2 DB の bootstrap は auth.json を取り込まない。初回だけの作業を残す。 */
+export function prepareCredentialImport(file,account=null) {
+  if(statSafe(file)?.size)return;
+  if(!legacyImportSource(account))return;
+  const marker=file+'.pleiad-import-auth';
+  try{writeImportMarker(marker,0,'wx');}
+  catch(error){if(error.code!=='EEXIST')throw error;assertSafeAuth(marker);}
+}
+
+/** CLI の DB を直に書かず、公式 API で不足する初回資格情報だけを足す。 */
+export async function importLegacyCredentials(request,file,account=null) {
+  const marker=file+'.pleiad-import-auth';
+  if(!assertSafeAuth(marker))return;
+  let attempts=0;
+  try{attempts=JSON.parse(fs.readFileSync(marker,'utf8')).attempts??0;}catch{/* An interrupted or older marker starts a bounded retry. */}
+  if(!Number.isInteger(attempts) || attempts<0 || attempts>=IMPORT_ATTEMPTS)attempts=IMPORT_ATTEMPTS-1;
+  attempts++;
+  let current;
+  try{current=(await request('GET','/api/credential'))?.data;}catch{}
+  const finish=(pending,skipped=0)=>{
+    const retry=pending && attempts<IMPORT_ATTEMPTS;
+    if(retry)writeImportMarker(marker,attempts);
+    else try{fs.unlinkSync(marker);}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(pending || skipped)console.error('  opencode: credential restore:',retry?'pending':pending?'stopped':'complete',`(${skipped} invalid entries skipped)`);
+    return {pending:retry,skipped};
+  };
+  if(!Array.isArray(current))return finish(true);
+  const present=new Set(current.map(c=>c.integrationID));
+  let pending=false,skipped=0;
+  const source=legacyImportSource(account);
+  if(!source)pending=true;
+  for(const [rawID,credential] of Object.entries(source??{})) {
+    const integrationID=rawID.replace(/\/+$/,'');
+    const record=v=>v && typeof v==='object' && !Array.isArray(v);
+    if(!integrationID || credential.type==='oauth' && (!Number.isInteger(credential.expires) || credential.methodID!==undefined && typeof credential.methodID!=='string' || ['accountId','enterpriseUrl'].some(key=>credential[key]!==undefined && typeof credential[key]!=='string')) || credential.metadata!==undefined && (!record(credential.metadata) || credential.type==='api' && Object.values(credential.metadata).some(value=>typeof value!=='string'))) {skipped++;continue;}
+    const value=credential.type==='api'?{type:'key',key:credential.key,...(credential.metadata?{metadata:credential.metadata}:{})}:credential.type==='wellknown'?{type:'key',key:credential.token}:{
+      type:'oauth',methodID:credential.methodID ?? (integrationID==='openai'?'chatgpt-browser':['github-copilot','opencode','xai'].includes(integrationID)?'device':'oauth'),
+      access:credential.access,refresh:credential.refresh,expires:credential.expires,
+      metadata:{...credential.metadata,...(credential.accountId?{accountID:credential.accountId}:{}),...(credential.enterpriseUrl?{enterpriseUrl:credential.enterpriseUrl}:{})},
+    };
+    const id='cred_pleiad_legacy_'+crypto.createHash('sha256').update(integrationID).digest('hex').slice(0,24);
+    let discovering=false;
+    try {
+      if(!present.has(integrationID))await request('POST','/api/credential',{body:{id,integrationID,label:value.type==='oauth'?'OAuth':'API key',value,activate:false}});
+      if(credential.type==='wellknown') {
+        discovering=true;
+        await request('POST','/api/experimental/integration/wellknown',{body:{url:integrationID}});
+      }
+    }
+    catch(error) {
+      if(error.status===400 && !discovering){skipped++;continue;}
+      if(error.status===409) {
+        const rows=await request('GET','/api/credential').then(result=>result?.data).catch(()=>null);
+        if(rows?.some(c=>c.id===id && c.integrationID===integrationID) && credential.type!=='wellknown')continue;
+      }
+      pending=true;
+    }
+  }
+  return finish(pending,skipped);
 }
 
 export function prepareAccount(account) {
@@ -186,7 +266,7 @@ export function prepareAccount(account) {
   privateRoot(dir);
   const dirs = accountPaths(account);
   assertAccountTree(account);
-  for (const sub of [...Object.values(dirs), opencodeData(account)]) {
+  for (const sub of [...Object.values(dirs), opencodeData(account),path.join(dir,'home')]) {
     assertAccountTree(account);
     assertRealDir(sub);
     fs.mkdirSync(sub, { recursive: true, mode: 0o700 });
@@ -206,11 +286,12 @@ export function prepareAccount(account) {
     .map(key => [key, '']));
   return {
     ...credentials,
+    HOME:path.join(dir,'home'),USERPROFILE:path.join(dir,'home'),
     XDG_DATA_HOME: dirs.data, XDG_CONFIG_HOME: dirs.config, XDG_CACHE_HOME: dirs.cache, XDG_STATE_HOME: dirs.state,
     OPENCODE_CONFIG_DIR: path.join(dirs.config, 'opencode'),
     PLEIAD_OPENCODE_ACCOUNT_ID: account.id,
     // Do not inherit another account's provider credentials or explicit database.
-    OPENCODE_DB: '', OPENCODE_CONFIG: '', OPENAI_API_KEY: '', OPENAI_ORG_ID: '', OPENAI_PROJECT_ID: '',
+    OPENCODE_DB: path.join(opencodeData(account),'opencode.db'), OPENCODE_CONFIG: '', OPENAI_API_KEY: '', OPENAI_ORG_ID: '', OPENAI_PROJECT_ID: '',
     ANTHROPIC_API_KEY: '', ANTHROPIC_AUTH_TOKEN: '', GITHUB_TOKEN: '', GH_TOKEN: '',
     GITHUB_COPILOT_TOKEN: '', OPENCODE_API_KEY: '',
     AWS_ACCESS_KEY_ID: '', AWS_PROFILE: '',
@@ -223,8 +304,7 @@ const psQuote = value => `'${String(value).replaceAll("'", "''")}'`;
 const shQuote = value => `'${String(value).replaceAll("'", "'\"'\"'")}'`;
 export function accountLoginCommand(account, argv, platform = process.platform) {
   const dirs = accountPaths(account);
-  const env = { XDG_DATA_HOME: dirs.data, XDG_CONFIG_HOME: dirs.config, XDG_CACHE_HOME: dirs.cache, XDG_STATE_HOME: dirs.state,
-    OPENCODE_CONFIG_DIR: path.join(dirs.config, 'opencode') };
+  const env = {...prepareAccount(account),OPENCODE_CONFIG_CONTENT:'',OPENCODE_PASSWORD:'',OPENCODE_SERVER_PASSWORD:''};
   if (platform === 'win32') {
     // Run in a child PowerShell so the user's terminal environment is unchanged.
     const script = [...Object.entries(env).map(([k, v]) => `$env:${k}=${psQuote(v)}`), `& ${[...argv, 'auth', 'login'].map(psQuote).join(' ')}`].join('; ');

@@ -271,12 +271,12 @@ export default async function (t) {
         // 身代わりの OpenCode は会話をメモリにだけ持つ（本物はディスクに残す）ので、起こし直した後は新しい会話で確かめる
         const res = await c4.runTurn({ backend: 'opencode', cwd: work, prompt: 'env', mode: 'full', model: 'fake/echo' }, { ms: WAIT_MS });
         assert.equal(res.outcome, 'ok', s4.tail(15));
-        assert.equal((await starts()).length, startsBefore + 1, 'ポートが変わったので OpenCode を 1 回だけ起こし直す');
-        await until(() => !alive(oldPid), WAIT_MS, '古い OpenCode は止まる');
+        assert.equal((await starts()).length, startsBefore, '新しい中継を参照し、OpenCode を起こし直さない');
+        assert.ok(alive(oldPid),'会話を保持する OpenCode が継続する');
         assert.match(text(c4, res.sessionId), /env: \{/, s4.tail(15));
         assert.doesNotMatch(text(c4, res.sessionId), /"status":40\d/, '起こし直した OpenCode の中継の口が通る');
       }
-      t.ok('強制終了: 承認待ちのまま落ちても、札の置き直しで新しいサーバーが同じ id の承認で付け直し、1 回だけ締まる。ポートが変わったら、ターンが無くなってから OpenCode を起こし直す', true);
+      t.ok('強制終了: 同じ id の承認で復元し、ポート変更後も OpenCode を止めずに中継を付け直す', true);
     }
   } catch (error) {
     const brief = client => (client?.events ?? []).slice(-25).map(e => `${e.type}${e.sessionId ? `:${String(e.sessionId).slice(-6)}` : ''}`).join(' ');

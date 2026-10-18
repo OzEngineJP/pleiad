@@ -58,11 +58,15 @@ export const DATA_WRITES = [
   { file: 'core/backends/opencode-held.mjs', sites: 1, targets: [
     { name: 'run/opencode-env-<uuid>.json', limit: '保持役に載せた OpenCode のターンごとに 1 つ（会話のシェルの環境変数。数 KB）。ターンの終わりに消し、消し損ねは起動時に片付ける', reason: '無停止の更新で付け直す新しいサーバーが読む、秘密情報を含む環境変数（権限 0600。札には名前だけを置く）' },
   ] },
-  { file: 'core/backends/opencode-context.mjs', sites: 4, targets: [
+  { file: 'core/backends/opencode-context.mjs', sites: 5, targets: [
     { name: 'opencode/managed/<担当の組み合わせ>/opencode/…', limit: '担当の組み合わせごとに 1 つ（最大 7）。中身は OpenCode の全体の設定ファイルの写し（数 KB）と junction だけ。ターンごとに作り直す', reason: 'Pleiad 担当のコンテキストのターンの専用の OpenCode に渡す設定の置き場（担当の種類の AGENTS.md・skills・mcp を外した写し。docs/multi-backend.md §2.10）' },
   ] },
-  { file: 'core/backends/opencode-plugin.mjs', sites: 1, targets: [
-    { name: 'opencode/pleiad-plugin.mjs', limit: '固定（PLUGIN_SOURCE。数 KB）', reason: 'OpenCode に読ませるプラグインの本文。中身が変わったときだけ書き直す（asar の中は OpenCode から読めない）' },
+  { file: 'core/backends/opencode-plugin.mjs', sites: 3, targets: [
+    { name: 'opencode/pleiad-plugin-v2/{package.json,index.js}', limit: '固定 2 ファイル（数 KB）', reason: 'OpenCode v2 が読む plugin package。本文が変わったときだけ書き直す' },
+    { name: 'run/opencode-relay-<account hash>.json', limit: 'アカウントごとに固定 1 ファイル。接続先 URL 2 個だけ', reason: '更新後の Pleiad の待ち受けを、継続中の plugin に原子的に渡す。秘密は含めない' },
+  ] },
+  { file: 'core/backends/opencode-migration.mjs', sites: 1, targets: [
+    { name: '<OpenCode DB>.pleiad-before-v2.db', limit: '移行元 DB ごとに 1 つ。元の DB と同じ大きさ', reason: '公式 v1 移行前の一貫した SQLite バックアップ。元のデータと資格情報を含むため 0600 で保持する' },
   ] },
   { file: 'core/backends/antigravity-pids.mjs', sites: 1, targets: [
     { name: 'antigravity/pids.json', limit: '同時に動く agy の数', reason: '生きているプロセスの控え' },
@@ -94,7 +98,8 @@ export const DATA_WRITES = [
     { name: 'accounts/codex/<id>/.logged-out', limit: 'アカウントごとに1つ。1文字', reason: '明示ログアウト後に保存した資格情報を復元しないための印' },
     { name: 'accounts/codex/<id>/<共有リンク>', limit: 'dirs・filesの固定の一覧', reason: 'CLIの設定・会話・書き手のロックの共有。リンク先の内容は書かない' },
   ] },
-  { file: 'core/backends/opencode-accounts.mjs', sites: 1, targets: [
+  { file: 'core/backends/opencode-accounts.mjs', sites: 2, targets: [
+      { name: '(置き場の外) OpenCode DB.pleiad-import-auth', limit: 'DB ごとに1つ。IMPORT_ATTEMPTS=5 までの回数を記した 32 bytes 以下の印', reason: '新規 v2 DB への資格情報取り込みを再開する印。公式 API で完了または5回失敗した後に消す' },
     { name: 'accounts/opencode/<id>/data/opencode/auth.json', limit: 'アカウントごとに1つ。接続先の資格情報', reason: 'OpenCodeが必要とする資格情報の初回配置。既存ファイルは上書きしない' },
   ] },
   { file: 'core/claude-accounts.mjs', sites: 3, targets: [

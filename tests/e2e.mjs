@@ -22,6 +22,7 @@ scrubInheritedEnv();
 process.env.AGENT_HOST_LOCALE ||= "ja";
 
 const cases = [
+  await import('./e2e/opencode-v2.mjs'),
   await import('./e2e/agent-delegation.mjs'),
   await import('./e2e/usage.mjs'),
   await import('./e2e/antigravity-usage.mjs'),

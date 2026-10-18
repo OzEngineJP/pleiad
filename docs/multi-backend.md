@@ -844,83 +844,37 @@ Codexの `set_status / set_title / fork` は未接続なので、
 そのエージェントだけの事情で、印にする意味が無いもの（Claude の transcript の救済など）は、行に `backend-allow: 理由` の印を付ける。
 基準に残っている分（フック・MCP とコンテキストの設定の読み方・互換の接続先・委譲の振り分け・Claude のアカウント）は、[issue #91](https://github.com/OzEngineJP/pleiad/issues/91) で減らす。
 
-### 2.10 OpenCode（`opencode serve`、2026-10-18）
+### 2.10 OpenCode v2（2026-10-18）
 
-**接続口**は OpenCode のヘッドレスのサーバー `opencode serve`（HTTP + SSE）。実機（opencode 1.19.3 / windows-x64）で確かめたこと:
+対象は **v2.0.32 以降の v2**。HTTP/SSE と専用 plugin を使い、公開 backend の機能を維持する（[ADR 0232](adr/0232-opencode-v2-http-plugin-contract.md)）。公式 commit は `843a6c514e606b436a7fe713422ace0a93ad3d61`。
 
-- 1 本で約 760 MB を使う（[ADR 0221](adr/0221-opencode-shared-server-and-plugin-relay.md)）。**会話ごとに起こさず、Pleiad のサーバーにつき 1 本を共有する**（`core/backends/opencode-server.mjs`。Codex の app-server と同じ）。
-  初めて要ったときに `serve --port 0 --hostname 127.0.0.1` で起こし、stdout の `opencode server listening on http://…` から宛先を読む。
-  basic 認証の合言葉（`OPENCODE_SERVER_PASSWORD`）は起動ごとに作る。Pleiad が終わるときは `exit` で木ごと止める（保持役に載せたときは下の「無停止の更新」）
-- 作業場所は呼び出しごとの `?directory=` で選ぶ（作業場所ごとに OpenCode の instance ができる）。出来事は `/global/event` の 1 本で全部の作業場所の分が
-  `{ directory, payload: { type, properties } }` で届く
-- ターン: `POST /session/{id}/prompt_async`（204 ですぐ返る）。出来事は `message.updated`・`message.part.updated`（部品の全体）・`message.part.delta`
-  （`field: text` の追記）・`session.status`・`session.error`・`session.idle`（ターンの終わり）。部品は `text`・`reasoning`・`tool`
-  （`state.status` が pending → running → completed / error）・`step-finish`（`tokens`・`cost`）。1 ターンに assistant の発言が複数ある（ツールを呼ぶたびに次の step）。
-  写し替えは `core/backends/opencode-normalize.mjs`（実機の記録 `tests/lib/opencode-events.json` で試験する）
-- 承認: `permission.asked { id, permission, patterns, metadata, always, tool }` → `POST /permission/{id}/reply { reply: once | always | reject, message? }`。
-  質問（`question` のツール）: `question.asked` → `POST /question/{id}/reply { answers: [[ラベル]] }` か `/reject`
-- **承認モード**は会話の権限の規則（`permission: [{ permission, pattern, action }]`。最後に一致したものが勝つ）。会話を作るときに入れ、モードを替えたときだけ
-  `PATCH /session/{id}` で後ろに足す（PATCH は置き換えずに足す。どのモードも最初に `*` を置くので、前の規則を上書きする）。
-  都度確認（読むほかは聞く）・編集は自動・全部自動（作業場所の外は断る）・YOLO・計画のみ（agent `plan`）
-- 途中送信は、走っている最中の `prompt_async`。同じ実行の次の区切りで読まれる。v2 の `/api/session/{id}/prompt { delivery: steer }` は受理はするが、
-  1.19.3 では会話に入らなかった（使わない）。自分の発言が `message.updated` で会話に入ったら `userMessage.delivered` を出す
-- 中断: `POST /session/{id}/abort` → `session.error`（`MessageAbortedError`）→ `session.idle`
-- 分岐: `POST /session/{id}/fork { messageID }` は**渡した発言の手前まで**を写し、発言の id を振り直す。Pleiad の「その発言まで」は次の発言の id を渡す（最後なら省く）。
-  巻き戻しの `revert` はファイルの変更まで戻すので使わない（`rewind: false`。Pleiad の写しで戻す）
-- サブエージェント: `task` のツールの `state.metadata.sessionId` が子の会話。子の承認・質問は親のターンで聞き、中身は `/session/{id}/children` と子の発言で読む
-- 圧縮: `POST /session/{id}/summarize { providerID, modelID, auto: false }`。圧縮の印（`compaction` の部品だけの user の発言）と要約（assistant の `summary: true`）が残る
-- 入力欄の `!` は Pleiad が走らせ（`shell: 'host'`）、次のターンの始めに返答を起こさない発言（`POST /session/{id}/message { noReply: true }`）で積む
-- モデル: `GET /config/providers` の接続先ごとのモデル（id は `接続先/モデル`）。エフォートはモデルの `variants`（prompt の `variant`）。モデルが 40 を超える接続先
-  （OpenRouter など）は、接続先の既定と `opencode.json` に書いたモデルだけを出す
-- ログイン: OpenCode Zen の無料のモデルはログイン無しで使える。接続先（ChatGPT Pro/Plus・GitHub Copilot・API キー）は端末の `opencode auth login` で選ぶので、
-  そのコマンドを案内し、資格情報のファイル（`auth.json`）が変わったらサーバーを起こし直して確かめる
+`serve --stdio --hostname 127.0.0.1 --port 0` の stdout JSON から URL を読み、起動ごとの Basic 認証でつなぐ。保持役が stdin を維持し、共有プロセスをアカウントごとに持つ。場所は `x-opencode-directory`、出来事は `/api/event`。内部の旧形式のパス名は `opencode-v2.mjs` が v2 API に変換するための私有の契約で、v1 サーバーには送らない。
 
-**Pleiad の MCP と会話のシェルの環境変数**（`core/opencode-relay.mjs`・`core/backends/opencode-plugin.mjs`）:
+| 機能 | v2 の契約と Pleiad の扱い |
+|---|---|
+| 会話の作成・継続・題 | `/api/session`。会話 ID とアカウントの組を維持する |
+| 送信・途中送信 | `prompt { id, text, delivery: steer }`。受付と配送を区別し、発言 ID を照合する。応答消失は inbox と履歴で確認する |
+| 本文・推論・ツール | native event envelope を内部イベントへ変換。text と reasoning は種類ごとの ordinal を使う |
+| 承認・質問 | 会話別の permission・form と reply。選択肢は表示名から native の値に戻し、拒否・取り消しも返す |
+| 承認モード | `permissions: [{ action, resource, effect }]`。Code Mode 自体も都度確認・編集・計画モードの承認にかける。移動・外部 worktree は YOLO に限る |
+| 中断 | inbox の未配送入力を取り消し、`interrupt?resume=false` で止める |
+| 履歴 | message を cursor でページ取得。起動していなければ SQLite を読み取り専用で開く。移行途中は旧テーブルを読む |
+| 分岐・巻き戻し | `fork { before }` に次の発言 ID を渡して選んだ発言までを含める。ファイルの巻き戻しは Pleiad の snapshot を使う |
+| 子の会話 | `subagent` の native session ID を取得。親を確かめ、子孫の承認・質問と環境を復元する |
+| 圧縮 | `compact` の受付 ID と compaction の完了を照合。running・failed を要約の区切りにせず、費用も加算する |
+| モデル・使用量 | `/api/model`・default と credential を利用。variant をモデル切替へ渡す。同じ発言の使用量を重複加算しない。再試行は待ちの時刻・回数を表示し、確定した上限は limited で終える |
+| ログイン・複数 account | `auth login` を案内。v2 credential の active・作成時刻・ID の降順で選ぶ。HOME・設定・DB と relay token を分ける |
+| 添付・`!` | 添付の保存は Pleiad が担う。`!` の出力は `synthetic { resume:false }` で、返答を起こさず積む |
 
-- OpenCode の MCP の設定は作業場所（instance）全体のもので、**MCP の呼び出しに会話の id は載らない**（実機で確認）。会話ごとに違う口（委譲の橋のトークンなど）を
-  そのままは渡せない
-- そこで、Pleiad のプラグインを `OPENCODE_CONFIG_CONTENT` の `plugin` で読ませる（利用者の `opencode.json` は書き換えない。本文はデータ置き場の
-  `opencode/pleiad-plugin.mjs` に書き出す。パッケージ版の asar の中は OpenCode から読めない）。プラグインの `tool.execute.before` が、`ply_*` のツールの引数に
-  OpenCode の会話の id（`_pleiadSession`）を足す（引数はその場で書き足す。置き換えると MCP に届かない）
-- Pleiad は `/mcp/opencode/<サーバー>`（`ply_agents`・`ply_control`・`ply_computer`・`ply_browser`）で受け、会話の id からそのターンの口へ `tools/call` を転送する。
-  ターンの始めに、作業場所の instance へその口を `POST /mcp` で足す（まだ足していない・つながっていないものだけ）。合言葉は Pleiad の起動ごと。
-  結び付いていない会話の id の呼び出しは断る。子の会話（サブエージェント）は親の口を使う
-- 会話のシェルの環境変数（ブラウザー・操作の一覧の CLI・秘密情報）は、プラグインの `shell.env`（会話の id を受け取る）が `/mcp/opencode/env?session=` から取る
-- Pleiad の指示（委譲・可視化・ブラウザー・コンピューター・操作の一覧・秘密情報・bot の人格）は `prompt_async` の `system` で毎ターン渡す
-- Pleiad 担当のコンテキスト（`ply_context`）は下の「Pleiad 担当のコンテキスト」
-- **Hooks**: OpenCode にはコマンドの Hooks の形が無い。Pleiad がそろえる Hooks は、Claude Code の形を真似て渡す（エージェントの記述の `hooksAs`）。ツールの前後はプラグインの `tool.execute.before` / `after` が `/mcp/opencode/hook` を呼び、発言の前・会話の始め・終わりの前はバックエンドが走らせる（[context-runtime.md](context-runtime.md)「Pleiad がそろえる会話」）
+**Pleiad の MCP・指示・Hooks。** `tools/call` の `_meta["ai.opencode/sessionID"]` と account token を使って会話の橋へ配送する。引数による会話 ID の指定は信頼しない。MCP の接続先は `PUT /api/experimental/mcp/:server` で登録し、接続と tool registry の準備を待つ。Pleiad のツールは `codemode:false` で直接使える。
 
-**Pleiad 担当のコンテキスト**（`core/backends/opencode-context.mjs`。`plyContext: 'turn'`）:
+plugin は `opencode/pleiad-plugin-v2/` の package として配置する。ツール前の Hooks は拒否・引数変更を反映し、連携できなければ実行を断る。ツール後と context・compaction・title・generate の補助 hook は、遅い失敗で完了済みの処理を壊さない。指示は会話ごとに system に注入する。会話の環境は native environment API に設定し、shell の起動 hook でも連携用の認証情報を取り除く。
 
-- OpenCode が自分で読むもの（1.19.3 のソースと、モデルへ送った要求を受けて確かめた）: 指示は設定の置き場の AGENTS.md（無ければ `~/.claude/CLAUDE.md`）と、作業場所から Git のルートまでの
-  AGENTS.md・CLAUDE.md・CONTEXT.md（最初に見つかった名前の全部）と設定の `instructions`。Skills は設定の置き場と作業場所の `.opencode` の `skill(s)`、`.claude`・`.agents` の skills、
-  設定の `skills.paths`（名前と説明はシステムプロンプトにも並ぶ）。MCP は設定の `mcp`
-- 指示はサーバーのプロセス全体の設定でしか止められず、Skills の一覧も会話の権限の規則では消えない。そこで **Pleiad が担当するターンだけ専用の `opencode serve` を起こし、ターンの終わりに止める**
-  （保持役には載せない。無停止の更新の切り替えは、このターンが終わるのを待つ。Codex の専用の app-server と同じ）。会話は同じ DB にあるので、共有のサーバーと行き来しても続く
-- 専用のサーバーは `OPENCODE_DISABLE_PROJECT_CONFIG=1` と、全体の設定の置き場を写した置き場（`XDG_CONFIG_HOME` = データ置き場の `opencode/managed/<担当の組み合わせ>`）で起こす。
-  写した置き場は設定ファイルを担当の種類のキー（`instructions`・`mcp`・`skills`）を外して写し、フォルダーは junction でつなぐ。指示を担当するなら AGENTS.md を、Skills を担当するなら `skill(s)` を置かない
-- 作業場所の設定（`opencode.json(c)`・`.opencode/opencode.json(c)`）は担当の種類のキーを外して `OPENCODE_CONFIG_CONTENT` で渡し直す。エージェントに任せる作業場所の指示ファイルと設定の
-  `instructions`、`.opencode` の Skills は絶対パス（`instructions`・`skills.paths`）で渡し直す（作業場所の設定を止めると、OpenCode は相対パスを設定の置き場から探す）
-- 担当の種類ごとに足す環境変数: 指示 → `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT`、Skills → `OPENCODE_DISABLE_EXTERNAL_SKILLS`・`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`（と会話の権限の規則で組み込みの `skill` を deny）
-- ply_context はほかの Pleiad の MCP と同じく中継の口（`ply_context` → そのターンの `contextRuntime`）。指示の文（`contextRuntime.prompt`）は `system` の先頭に入れる。
-  指示・Skill・MCP の資源の読み出しのツールは読むだけなので、どの承認モードでも聞かない。外部 MCP のツールは OpenCode の権限の規則で聞く
-- 作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、Pleiad が担当するターンでは読まれない（作業場所の設定を止めるため）。圧縮も専用のサーバーで行う
+**コンテキストの担当。** Pleiad 担当のターンは専用プロセスを使い、独立 HOME と設定の写しから担当の指示・Skills・MCP を外す。作業場所の設定を無効にし、OpenCode に任せる設定だけを絶対パスで渡し直す。v2 が自動で読む指示名は AGENTS.md。下位の read が追加した native 指示も、Pleiad 担当ならモデルの文脈から除く。分離できない OS のシステム設定がある場合は開始を断る。専用プロセスはターンの終わりに止まり、更新はその終了を待つ。
 
-**無停止の更新**（`core/backends/opencode-held.mjs`。[ADR 0151](adr/0151-zero-downtime-update.md)・[zero-downtime-update/](zero-downtime-update/plan.md)）:
+**移行と更新。** v1 の会話がある場合は、CLI 起動前に SQLite の一貫した `.pleiad-before-v2.db` バックアップを作り、公式変換の完了を待つ。継続する会話は発言・添付まで検証し、欠落があれば原本を残して開始を断る。外部 URL の v1 添付は公式変換で内容を保持できない場合がある。
 
-- 共有の `opencode serve` を保持役の子（`policy: 'none'`）に載せる（`AGENT_HOST_OPENCODE_HOLDER`。既定は実行場所の置き場があるとき）。Codex の app-server と違い、話すのは HTTP と SSE なので、保持役に持たせるのはプロセスだけ。
-  stdout は起動の 1 行を読むだけで、記録は来たそばから ack して捨てる
-- 子の札（label）は `{ k: 'opencode-server', v: 1, server: { base, auth, origin, secret }, turns: { <会話の id>: <サーバーの札> } }`。新しいサーバーは札の待ち受けの URL と basic 認証でつなぎ直し（起こさない）、
-  中継の合言葉を前の値にする（OpenCode に渡したプラグインの env と MCP の設定は変えられない）。付け直すターンの会話の中継の呼び出しは、結び付け直すまで待たせる
-- ターンの札（`control.backendCard`）は作業場所・モデル・承認モード・発言を送った時刻（`since`）・渡ったか・途中送信のハッシュ・子の会話・中継の口（url と headers）。
-  会話のシェルの環境変数（秘密情報を含む）は札に入れず、データ置き場の `run/opencode-env-<uuid>.json`（0600）に置いて名前だけを書く
-- 付け直し（`adoptTurn`）は発言を送らず、出来事を溜めながら、会話の発言（`GET /session/{id}/message` の `since` より後）を組み立て直し（画面へは出さない再生）、
-  溜めた出来事を流し、答えていない承認・質問（`GET /permission`・`GET /question`。承認の id はツールの id から決まるので、前のサーバーと同じカードになる）を出し直し、
-  会話の状態（`GET /session/status`）が busy でなければ、入れ替わりの間に終わったとして締める。途中の本文は、取り直した本文と溜めた差分が重ならないよう、次の部品の更新（全文）まで差分を読まない（写し替えの `resync`）
-- ターンの無い引き継ぎでも OpenCode を新しいサーバーへ渡す（`releaseIdle` が手を離す。起こし直しの数秒を省く）。新しいサーバーが別のポートで立ったとき（落ちた後の起こし直しなど）は、
-  付け直したターンが終わってから OpenCode を起こし直す（中継の口の URL が古い）
-- Pleiad が入れ替わる 1〜2 秒のあいだ、プラグインの Hooks と環境変数の呼び出しは、つながらなければ少し待ってやり直す（やり直さないと、その間のツールの前の Hooks を素通りする）。
-  MCP のツールの呼び出しは OpenCode の MCP のクライアントが投げるので、その間に当たったものはツールのエラーになる（Claude Code と同じ）
+最初の v1→v2 更新は旧サーバーの作業が終わってから切り替える。以降の共有プロセスは保持役のまま、札・履歴・保留中の承認と質問・active・inbox からターンを復元する。本文は snapshot と差分を重ねず、終了時の全文で補う。plugin は小さな接続先ファイルを毎回読み、新しい Pleiad は MCP の URL も更新する。ポートが変わっても OpenCode を止めない。処理中に切り替わった MCP 呼び出しは一度失敗する場合があり、以降は新しい接続先を使う。
 
 ## 3. 変えないこと
 

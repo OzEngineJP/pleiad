@@ -1,14 +1,6 @@
-// OpenCode の出来事・発言を Pleiad の正規化イベント・NormalizedMessage に写す（docs/multi-backend.md §2.10）。
-// SDK にもネットワークにも依存しない純粋な関数（tests/unit/opencode-normalize.mjs）。
-//
-// 実機（opencode 1.19.3）の形:
-//   message.updated       { info: { id, role, sessionID, error?, tokens, cost, summary? } }
-//   message.part.updated  { part: { id, messageID, sessionID, type: text | reasoning | tool | step-start | step-finish | compaction …, … } }
-//   message.part.delta    { messageID, partID, field: 'text', delta }
-//   session.status        { status: { type: busy | idle } | { type: retry, attempt, message, action?, next } }（next は次の再試行の epoch ms。retryOf）
-//   session.error         { error: { name, data: { message } } }
-//   session.idle          {}
-// tool の部品は state.status が pending → running → completed / error と進み、callID が呼び出しの id
+// Pleiad 内部の会話イベント・履歴を、公開 backend のイベントと発言へ写す。
+// OpenCode v2 の API/SSE・SQLite からの変換は opencode-v2.mjs が担当する。
+// tests/lib/opencode-events.json は、この内部形式の回帰試験に使う旧記録。
 import { COMPUTER_TOOL_PREFIX, computerResult, computerFailed } from './computer-delivery.mjs';
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
 
@@ -74,16 +66,16 @@ function retryAfterAt(headers, now) {
  */
 export function errorOf(error, now = Date.now()) {
   if (!error) return null;
-  const name = String(error.name ?? '');
+  const name = String(error.name ?? error.type ?? '');
   const message = String(error.data?.message ?? error.message ?? name ?? 'error');
   const data = error.data ?? error;
-  let body = data.responseBody;
+  let body = data.responseBody ?? data.response?.body;
   try { if (typeof body === 'string') body = JSON.parse(body); } catch { body = null; }
   const code = body?.error?.code ?? body?.error?.type ?? data.code;
   const status = Number(data.statusCode ?? data.status);
-  const limited = status === 429 || LIMIT_CODES.has(code);
+  const limited = status === 429 || LIMIT_CODES.has(code) || name==='provider.quota' || name==='provider.rate-limit';
   const resetsAt = epochMs(body?.error?.resets_at ?? data.resetsAt) ?? (limited ? retryAfterAt(data.responseHeaders, now) : null);
-  return { name, message, aborted: name === 'MessageAbortedError', auth: name === 'ProviderAuthError', limited, ...(resetsAt ? { resetsAt } : {}) };
+  return { name, message, aborted: ['MessageAbortedError','aborted'].includes(name), auth: ['ProviderAuthError','provider.auth'].includes(name), limited, ...(resetsAt ? { resetsAt } : {}) };
 }
 
 // 再試行の待ちのうち、待っても今は通らない上限（ADR 0229）。action.reason は OpenCode が付ける理由
@@ -179,7 +171,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
       }
       // task のツールは子の会話を作る（state.metadata.sessionId）。子の承認を親の会話で聞き、サブエージェントとして読む
       const child = part.state?.metadata?.sessionId;
-      if (part.tool === 'task' && typeof child === 'string' && child && child !== sessionId) onChild({ childId: child, callId: id });
+      if (['task','subagent'].includes(part.tool) && typeof child === 'string' && child && child !== sessionId) onChild({ childId: child, callId: id });
       if (!entry.done && (status === 'completed' || status === 'error')) {
         entry.done = true;
         emit({ type: 'tool.result', id, ...toolResult(part, { full: true }) });
@@ -187,15 +179,15 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
       return;
     }
     if (part.type === 'step-finish') {
-      if (entry.done) return;
-      entry.done = true;
       const tokens = part.tokens ?? {};
       const cacheRead = Number(tokens.cache?.read) || 0;
+      const record={inputTokens:(Number(tokens.input)||0)+cacheRead,outputTokens:(Number(tokens.output)||0)+(Number(tokens.reasoning)||0),cachedTokens:cacheRead,costUsd:Number(part.cost)||0};
+      const previous=entry.recorded ?? {inputTokens:0,outputTokens:0,cachedTokens:0,costUsd:0};
+      if(Object.keys(record).some(key=>record[key]<previous[key]))return;
+      if(Object.keys(record).every(key=>record[key]===previous[key]))return;
+      entry.recorded=record;
       // 入力にはキャッシュの読みを、出力には考えた分を含める（antigravity.mjs の usageFor と同じ約束）
-      usage.inputTokens += (Number(tokens.input) || 0) + cacheRead;
-      usage.outputTokens += (Number(tokens.output) || 0) + (Number(tokens.reasoning) || 0);
-      usage.cachedTokens += cacheRead;
-      usage.costUsd += Number(part.cost) || 0;
+      for(const key of Object.keys(record))usage[key]+=record[key]-previous[key];
       emit({ type: 'usage', ...usage });
       const window = windowTokens();
       const used = (Number(tokens.input) || 0) + cacheRead + (Number(tokens.cache?.write) || 0) + (Number(tokens.output) || 0);
