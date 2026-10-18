@@ -223,12 +223,17 @@ export function elapsedPercent(w, now) {
 const words = s => String(s ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 const squash = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const claudeFamily = s => /(fable|opus|sonnet|haiku)/i.exec(String(s ?? ''))?.[1].toLowerCase() ?? null;
+/** agy の使用枠のグループ名で、モデルの系統を指す語 */
+const AGY_FAMILIES = ['gemini', 'claude', 'gpt'];
+/** agy のグループ名にある、モデルを指さない汎用の語（'Claude and GPT models' の 'and'・'models' など） */
+const AGY_GROUP_GENERIC = new Set(['model', 'models', 'and', 'the']);
 
 /**
  * その候補に効く枠。
  *   claude      … 全体の枠（5 時間・週次）と、そのモデルの系統の週次（seven_day_opus / model_scoped）
  *   codex       … 主の枠（limitId が codex か無し）と、名前がそのモデルに当たる追加の枠
- *   antigravity … モデル名の語をいちばん多く含むグループの枠（gemini-* → Gemini …、claude-* / gpt-* → Claude and GPT …）
+ *   antigravity … モデル名の語をいちばん多く含むグループの枠（gemini-* → Gemini …、claude-* / gpt-* → Claude and GPT …）。
+ *     専用の枠（'Gemini 4 Argon' など）は、系統・汎用の語を除いた名前の語が全部モデルの id に入るときだけ当たる
  *   接続先ごとの枠（provider を持つ枠。OpenCode のつないだ接続先）… モデルの id の接続先（「接続先/モデル」の前半）の枠だけ
  */
 export function windowsFor(backend, model, windows = []) {
@@ -247,11 +252,15 @@ export function windowsFor(backend, model, windows = []) {
   }
   if (backend === 'antigravity') {
     const modelWords = new Set(words(model));
-    const family = ['gemini', 'claude', 'gpt'].find(f => modelWords.has(f));
+    const family = AGY_FAMILIES.find(f => modelWords.has(f));
     if (!family) return [];
+    // 一部の語しか当たらない専用の枠（'Gemini 4 Argon'）を汎用の枠（'Gemini Models'）と同点で並べて混ぜないよう、
+    // 系統・汎用の語を除いた名前の語（'4'・'argon'）が全部モデルの id に入るグループだけを候補にする
     const scored = [...new Set(list.map(w => w.group).filter(Boolean))]
-      .filter(g => words(g).includes(family))
-      .map(g => [g, words(g).filter(x => modelWords.has(x)).length]);
+      .map(g => [g, words(g)])
+      .filter(([, gwords]) => gwords.includes(family)
+        && gwords.every(x => AGY_FAMILIES.includes(x) || AGY_GROUP_GENERIC.has(x) || modelWords.has(x)))
+      .map(([g, gwords]) => [g, gwords.filter(x => modelWords.has(x)).length]);
     if (!scored.length) return [];
     const best = Math.max(...scored.map(([, s]) => s));
     const groups = new Set(scored.filter(([, s]) => s === best).map(([g]) => g));
