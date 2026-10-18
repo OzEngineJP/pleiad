@@ -767,6 +767,9 @@
       "yolo": "No confirmations and no limits (including outside the working directory)",
       "plan": "Does not edit (OpenCode's plan agent)"
     },
+    "effort": {
+      "useDefault": "Uses OpenCode and model defaults."
+    },
     "models": {
       "default": "Default (OpenCode settings)"
     },

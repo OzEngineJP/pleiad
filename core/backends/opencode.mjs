@@ -352,7 +352,7 @@ async function listModels(cwd, srv = server) {
   const config = await srv.request('GET', '/config', { directory: cwd || null }).catch(() => null);
   const configured = new Set(Object.entries(config?.provider ?? {}).flatMap(([pid, p]) => Object.keys(p?.models ?? {}).map((m) => `${pid}/${m}`)));
   const def = await defaultModelRef(cwd, srv).catch(() => null);
-  const out = { '': { get label() { return t('opencode.models.default'); }, note: def ? `${def.providerID}/${def.modelID}` : '', ...(def ? { resolvesTo: `${def.providerID}/${def.modelID}` } : {}), efforts: [], defaultEffort: null } };
+  const out = { '': { get label() { return t('opencode.models.default'); }, note: def ? `${def.providerID}/${def.modelID}` : '', ...(def ? { resolvesTo: `${def.providerID}/${def.modelID}` } : {}), efforts: [], defaultEffort: null, effortDefaultNote: t('opencode.effort.useDefault') } };
   for (const p of data?.providers ?? []) {
     const models = Object.entries(p.models ?? {});
     const keep = models.length <= PROVIDER_MODELS_MAX ? models
@@ -361,6 +361,12 @@ async function listModels(cwd, srv = server) {
       const efforts = Object.keys(m?.variants ?? {});
       out[`${p.id}/${id}`] = { label: m?.name || id, note: p.name || p.id, efforts, defaultEffort: null };
     }
+  }
+  // 「既定に従う」でも、実際に当たるモデルの段を選べるようにする（エフォートは variant）。
+  // OpenCode は既定の variant を持たないので defaultEffort は null のまま（画面は「既定」の段を作らない）
+  const resolved = def ? `${def.providerID}/${def.modelID}` : null;
+  if (resolved && out[resolved]) {
+    Object.assign(out[''], { efforts: out[resolved].efforts, defaultEffort: out[resolved].defaultEffort });
   }
   return out;
 }

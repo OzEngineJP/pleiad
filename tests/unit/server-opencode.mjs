@@ -58,6 +58,10 @@ export default async function (t) {
       && b.capabilities.compact && b.capabilities.plyAgents && b.capabilities.computerUse?.images === 'inline' && b.capabilities.shell === 'host');
     const vocab = await c.cmd('models', { backend: 'opencode' });
     t.ok('モデル: 既定と接続先のモデル。エフォートはモデルの variants', vocab[''] && vocab['fake/echo']?.efforts?.join() === 'low,high' && vocab['fake/tiny']?.efforts?.length === 0, JSON.stringify(vocab));
+    t.ok('モデル: 既定の行にも、実際に当たるモデルの段を写す', vocab['']?.resolvesTo === 'fake/echo' && vocab['']?.efforts?.join() === 'low,high', JSON.stringify(vocab['']));
+    const ocEfforts = await c.cmd('efforts', { backend: 'opencode', model: '', cwd: ROOT });
+    t.ok('エフォート: 既定のモデルでも段が選べる（OpenCode は既定の variant を返さないので「既定」の段は作らない）',
+      Object.keys(ocEfforts).join() === ',low,high' && !ocEfforts[''].resolvesTo, JSON.stringify(ocEfforts));
     const modes = await c.cmd('modes', { backend: 'opencode' });
     t.ok('承認モード: 都度確認が先頭で、全部自動・YOLO は聞かない', Object.keys(modes).join() === 'ask,edit,full,yolo,plan' && modes.full.autonomy === 'never' && modes.yolo.scope === 'full', JSON.stringify(Object.keys(modes)));
 
