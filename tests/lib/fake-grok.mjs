@@ -116,9 +116,30 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         replay(session);
         result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
+      case 'session/resume': {
+        const session = load(p.sessionId);
+        if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
+        result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
+      }
+      case 'session/fork': {
+        const source = load(p.sessionId);
+        if (p.cwd && source.cwd !== p.cwd) throw new Error('cwd mismatch');
+        const child = { ...structuredClone(source), sessionId: `grok-fixture-${crypto.randomUUID()}` };
+        persist(child);
+        result = { sessionId: child.sessionId, models: { currentModelId: child.model, availableModels: MODELS }, configOptions: configOptions(child) }; break;
+      }
+      case 'session/rename': {
+        const session = load(p.sessionId);
+        if (typeof p.title !== 'string') throw new Error('title is required');
+        session.title = p.title; persist(session); result = {}; break;
+      }
       case 'session/list': {
         if (stateDir) for (const name of fs.readdirSync(stateDir).filter(name => /^grok-fixture-.*\.json$/.test(name))) { const s = JSON.parse(fs.readFileSync(path.join(stateDir, name), 'utf8')); sessions.set(s.sessionId, s); }
         result = { sessions: [...sessions.values()].filter(s => !p.cwd || s.cwd === p.cwd).map(s => ({ sessionId: s.sessionId, cwd: s.cwd, title: s.title ?? null })) }; break;
+      }
+      case 'session/close': {
+        load(p.sessionId);
+        result = { _meta: { 'x.ai/closeOutcome': 'closed' } }; break;
       }
       case 'session/set_mode': {
         const session = load(p.sessionId);

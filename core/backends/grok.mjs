@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { cliCommand } from '../cli-installation.mjs';
 import { t } from '../i18n.mjs';
 import * as store from '../store.mjs';
@@ -247,8 +248,19 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           const meta = plugin ? { _meta: { pluginDirs: [plugin.dir] } } : {};
           let state;
           if (sessionId) {
-            mapper = createGrokMapper(sessionId, emit, { windowTokens });
-            state = await client.call('session/load', { sessionId, cwd, mcpServers, ...meta });
+            try {
+              state = await client.call('session/resume', { sessionId, cwd, mcpServers, ...meta });
+              // Reuse a mapper that already owns the transcript. After a server restart,
+              // resume has no replay to seed positional UUIDs, so namespace this turn's
+              // new rows until the next explicit history load can align them by content.
+              mapper = cache.get(sessionId) ?? createGrokMapper(sessionId, emit, { windowTokens, messageNamespace: randomUUID() });
+              mapper.setEmit(emit);
+            } catch (error) {
+              // Older Grok CLI releases expose session/load but not session/resume.
+              if (![-32601, -32602].includes(error?.code)) throw error;
+              mapper = createGrokMapper(sessionId, emit, { windowTokens });
+              state = await client.call('session/load', { sessionId, cwd, mcpServers, ...meta });
+            }
           } else {
             state = await client.call('session/new', { cwd, mcpServers, ...meta });
             sessionId = state?.sessionId;
@@ -310,7 +322,21 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         return { sessionId };
       });
     },
-    async releaseConversation(id) { const client = active.get(id); if (client) await client.close(); cache.delete(id); },
+    async releaseConversation(id) {
+      let client = active.get(id);
+      if (!client) {
+        const cwd = await cwdFor(id);
+        if (cwd && command()) {
+          try { client = await openClient(cwd); } catch {}
+        }
+      }
+      if (client) {
+        try { await client.call('session/close', { sessionId: id }); } catch {}
+        await client.close().catch(() => {});
+      }
+      active.delete(id);
+      cache.delete(id);
+    },
   };
 }
 

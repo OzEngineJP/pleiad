@@ -13,8 +13,9 @@ const contentText = value => {
 };
 const inputOf = value => value && typeof value === 'object' ? value : value == null ? {} : { value };
 
-export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null } = {}) {
+export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null, messageNamespace = null } = {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
+  let emitTurn = emit;
   let current = null, expectedEcho = null, echo = '', live = false, turn = null, sepText = false, sepThink = false;
   // uuid は位置から作る（ホスト記録の無いネイティブの会話は、この uuid のまま再開・再起動の後も同じ行を指す）。
   // ただし圧縮で位置がずれると別の発言に当たるので、ホスト記録に重ねるときは使わない（core/conversations.mjs の mergeMessages）。
@@ -29,7 +30,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
   }
   function row(role) {
     if (current?.role !== role) {
-      const uuid = `${sessionId}:${role}:${messages.length}`;
+      const uuid = `${sessionId}:${messageNamespace ? `${messageNamespace}:` : ''}${role}:${messages.length}`;
       current = live
         ? { uuid, liveUuid: `${sessionId}:${turn}:${role}:${messages.length}`, role, text: '', at: null }
         : { uuid, role, text: '', at: null, positional: true };
@@ -37,7 +38,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
     }
     return current;
   }
-  function send(event) { if (live) emit({ ...event, sessionId }); }
+  function send(event) { if (live) emitTurn({ ...event, sessionId }); }
   function accept(update) {
     const kind = update?.sessionUpdate;
     if (kind === 'usage_update') {
@@ -114,6 +115,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
   }
   return {
     accept,
+    setEmit: emit => { emitTurn = emit; },
     getToolCall: id => toolStates.has(id) ? structuredClone(toolStates.get(id)) : null,
     /**
      * sent は送る全文（Pleiad の指示を前に足したもの）。エコーの照合にだけ使う。shown は人が書いた分（先頭のメモと `!` の結果を含む）で、

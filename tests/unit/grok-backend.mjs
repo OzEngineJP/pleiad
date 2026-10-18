@@ -21,6 +21,7 @@ export default async function (t) {
   fs.mkdirSync(cwd, { recursive: true }); fs.mkdirSync(other, { recursive: true });
   const calls = [];
   let nextId = 0;
+  let rejectResume = false;
   const sessions = new Map();
   class FakeAcp {
     constructor(options) { this.options = options; this.init = null; }
@@ -41,7 +42,17 @@ export default async function (t) {
         return { sessionId };
       }
       if (method === 'session/load') return { sessionId: params.sessionId };
-      if (method === 'session/prompt') return { stopReason: 'end_turn' };
+      if (method === 'session/resume') {
+        if (rejectResume) throw Object.assign(new Error('method not found'), { code: -32601 });
+        return { sessionId: params.sessionId, models: { currentModelId: MODEL, availableModels: [{ modelId: MODEL }] }, configOptions: [] };
+      }
+      if (method === 'session/close') return { _meta: { 'x.ai/closeOutcome': 'closed' } };
+      if (method === 'session/prompt') {
+        const text = params.prompt?.map(part => part.text ?? '').join('') ?? '';
+        this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } } });
+        this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'fixture reply' } } });
+        return { stopReason: 'end_turn' };
+      }
       return {};
     }
     async close() {}
@@ -65,6 +76,7 @@ export default async function (t) {
     // 1. 渡すターン（新しい会話）: session/new に MCP（headers 付き）とプラグインの置き場、CLI に互換を止める環境変数
     let mark = calls.length;
     const first = await turn({ cwd, agentRuntime, hooksRuntime: { pluginHooks, compatHookEnv } });
+    const firstMessages = await backend.getMessages(first.sessionId);
     const created = of('session/new', mark)[0];
     const mcp = created?.params?.mcpServers ?? [];
     t.ok('session/new に ply_agents を type: http と headers の { name, value } で渡す',
@@ -79,21 +91,28 @@ export default async function (t) {
     t.ok('最初の書き込みで、持ち主の居ない残りを消し、生きている別のプロセスの置き場は残す',
       !fs.existsSync(path.join(base, `${dead}-fixture`)) && fs.existsSync(path.join(base, `${process.ppid}-fixture`)));
 
-    // 2. 同じ会話の次のターン: session/load にも MCP と新しい置き場を渡す（セッション限定のプラグインは保存されない）
+    // 2. 同じ会話の次のターン: session/resume にも MCP と新しい置き場を渡す（セッション限定のプラグインは保存されない）
     mark = calls.length;
     await turn({ sessionId: first.sessionId, cwd, agentRuntime, hooksRuntime: { pluginHooks, compatHookEnv } });
-    const loaded = of('session/load', mark)[0];
+    const loaded = of('session/resume', mark)[0];
     const loadDir = loaded?.params?._meta?.pluginDirs?.[0];
-    t.ok('session/load にも ply_agents（headers 付き）を渡す', loaded?.params?.mcpServers?.[0]?.name === 'ply_agents' && loaded.params.mcpServers[0].headers.length === 2);
-    t.ok('session/load にも、そのターンの新しい置き場と hooks.json を渡す',
+    t.ok('session/resume にも ply_agents（headers 付き）を渡す', loaded?.params?.mcpServers?.[0]?.name === 'ply_agents' && loaded.params.mcpServers[0].headers.length === 2);
+    t.ok('session/resume にも、そのターンの新しい置き場と hooks.json を渡す',
       Boolean(loadDir) && loadDir !== firstDir && JSON.stringify(loaded.pluginFiles[0]) === JSON.stringify(pluginHooks) && compatOff(loaded.env));
     t.ok('次のターンの置き場も終わりに消す', !fs.existsSync(loadDir) && ownDirs().length === 0);
+
+    rejectResume = true;
+    mark = calls.length;
+    await turn({ sessionId: first.sessionId, cwd });
+    t.ok('session/resume が未対応なら session/load に戻す',
+      of('session/resume', mark).length === 1 && of('session/load', mark).length === 1);
+    rejectResume = false;
 
     // 3. 同じ会話で、そろえない・委譲を使わないターン: 前のターンの MCP・プラグイン・環境変数を持ち越さない
     mark = calls.length;
     await turn({ sessionId: first.sessionId, cwd });
-    const plain = of('session/load', mark)[0];
-    t.ok('渡さないターンの session/load は mcpServers が空で _meta が無い', JSON.stringify(plain?.params?.mcpServers) === '[]' && !('_meta' in (plain?.params ?? {})), JSON.stringify(plain?.params));
+    const plain = of('session/resume', mark)[0];
+    t.ok('渡さないターンの session/resume は mcpServers が空で _meta が無い', JSON.stringify(plain?.params?.mcpServers) === '[]' && !('_meta' in (plain?.params ?? {})), JSON.stringify(plain?.params));
     t.ok('渡さないターンは互換の Hooks の環境変数を変えない', compatUntouched(plain?.env));
 
     // 4. 別の会話（別の場所）の新しいターン: 前の会話の分が混ざらない
@@ -105,6 +124,7 @@ export default async function (t) {
 
     // 5. 履歴の読み込み（getMessages）は、渡した会話でも MCP もプラグインも渡さない（覚えた履歴を外して読み直させる）
     await backend.releaseConversation(first.sessionId);
+    t.ok('releaseConversation は native session/close を送る', of('session/close', 0).length === 1);
     mark = calls.length;
     await backend.getMessages(first.sessionId);
     const history = of('session/load', mark)[0];
@@ -115,6 +135,13 @@ export default async function (t) {
     fs.mkdirSync(broken);
     const failed = await turn({ cwd: broken, hooksRuntime: { pluginHooks, compatHookEnv } }).then(() => null, e => e);
     t.ok('session/new が失敗したターンも置き場を消す', Boolean(failed) && ownDirs().length === 0, String(failed?.message));
+
+    await backend.releaseConversation(first.sessionId);
+    await turn({ sessionId: first.sessionId, cwd });
+    const resumedMessages = await backend.getMessages(first.sessionId);
+    t.ok('履歴 mapper が無い状態で resume しても新しい UUID は既存行と衝突しない',
+      resumedMessages.length === 2 && firstMessages.length === 2
+      && resumedMessages.every(m => !firstMessages.some(old => old.uuid === m.uuid)), JSON.stringify(resumedMessages.map(m => m.uuid)));
 
     // 7. turn_completed の usage は呼び出しの合計で、文脈の占有ではない。usage_update の used/size だけを文脈の量にする
     const events = [];
