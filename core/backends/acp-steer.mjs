@@ -6,9 +6,13 @@
 // 受理した分は steerConfirms の約束どおり、呼び出しの決着で合図を出す: 回の決着（cancelled 以外の
 // stopReason）で userMessage.delivered。拒否・中断（cancelled・reject）は「読まれたか分からない」
 // （読んで動き始めてから止められた可能性がある）ので unknown: true 付きの userMessage.dropped にし、
-// server は未配送として残して自動では送り直さない（読まれたか不明なので勝手に送り直さない）。
+// server は未配送として残して自動では送り直さない（既に実行された可能性があるため）。
 // 受理する前の決着（早期のプロトコル拒否）では合図を出さない（受理していないので、呼ぶ側の
 // 送信待ちへの戻しだけに任せる。合図と戻しが二重に走らないよう、emit のハンドラは受理の後に付ける）。
+// onSent（記録の口。grok.mjs）は書いた直後に呼び、受理の判定は待たない。待つ間に今の回が終わり、
+// この発言の回の出力が届き始めることがある（待ってから置くと、置き場がその出力より後ろにずれる）。
+// onSent が返す取り消しは、確実に届かなかった早期のプロトコル拒否でだけ呼ぶ（その発言は次のターンで
+// 送り直されるので、記録に残すと同じ発言が 2 行になる）。
 //
 // 回の終わりに並んだまま残った分は、ターンを畳む前に drain で決着まで待つ（待たずに畳むと、
 // 接続の終了で全部 dropped になり、並んだだけのメッセージが答えられない）。
@@ -22,24 +26,25 @@ export function createAcpSteer({ client, sessionId, emit, ready, onSent }) {
     get size() { return calls.size; },
     async steer(item) {
       if (!ready()) return false;
+      const text = String(item?.args?.prompt ?? '');
       let call;
       try {
-        call = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: String(item?.args?.prompt ?? '') }] }, { timeoutMs: 0 });
+        call = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, { timeoutMs: 0 });
       } catch { return false; }
+      const withdraw = onSent?.(text);
       const entry = { id: item?.id ?? null };
       calls.set(call, entry);
       // プロトコル上の拒否（会話が無い・パラメータの不備）は直ぐに返る。少し待って、断られなければ受理にする
       const early = await Promise.race([call.then(() => null, e => e), new Promise(resolve => setTimeout(resolve, 300)).then(() => null)]);
       if (early instanceof Error) {
         calls.delete(call);
-        if (PROTOCOL_REJECT_CODES.has(early.code)) return false;
+        if (PROTOCOL_REJECT_CODES.has(early.code)) { withdraw?.(); return false; }
+        // それ以外は結果不明（呼ぶ側は送り直さない）。送った本文は記録に残す
         throw early;
       }
       call.then(
         result => { if (calls.delete(call) && entry.id) emit({ type: result?.stopReason === 'cancelled' ? 'userMessage.dropped' : 'userMessage.delivered', messageId: entry.id, ...(result?.stopReason === 'cancelled' ? { unknown: true } : {}) }); },
         () => { if (calls.delete(call) && entry.id) emit({ type: 'userMessage.dropped', messageId: entry.id, unknown: true }); });
-      // 受理した発言をライブの記録へ置く口（エコーが来ないバックエンドで、履歴に送った本文を残す。grok.mjs）
-      onSent?.(String(item?.args?.prompt ?? ''));
       return true;
     },
     /** 並んだ分の決着まで待つ。alive() が false になったら（中断・失敗）待つのをやめる */

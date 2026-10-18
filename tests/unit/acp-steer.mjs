@@ -29,12 +29,43 @@ export default async function (t) {
     t.ok('cancelled 以外の決着で delivered が届く', events.length === 1 && events[0].type === 'userMessage.delivered' && events[0].messageId === 'm1', JSON.stringify(events));
   }
 
-  // 300ms 以内の早期成功でも同じ（受理後にだけ合図を出す）
+  // 決着も拒否も無いうちは、判定の窓（300ms）が過ぎるまで返らず、合図も出さない
   {
     const { steer, events } = mk();
     const p = steer.steer({ id: 'm2', args: { prompt: 'hi' } });
     t.ok('受理されるまで返らない（早期に emit しない）', await Promise.race([p.then(() => 'done'), sleep(10).then(() => 'wait')]) === 'wait' && events.length === 0);
     await p;
+  }
+  // 窓の中で呼び出しが成功で決着した（回が速く終わった）: 受理として直ぐ返り、delivered を出す
+  {
+    const { steer, events, resolve } = mk();
+    const started = Date.now();
+    const p = steer.steer({ id: 'm2b', args: { prompt: 'hi' } });
+    resolve({ stopReason: 'end_turn' });
+    const ok = await p;
+    await sleep(0);
+    t.ok('窓の中の成功は受理（窓を待たずに返る）', ok === true && Date.now() - started < 250, `${ok} ${Date.now() - started}ms`);
+    t.ok('窓の中の成功でも delivered が 1 度だけ届く', events.length === 1 && events[0].type === 'userMessage.delivered' && events[0].messageId === 'm2b', JSON.stringify(events));
+  }
+  // 記録の口（onSent）は書いた直後に呼ぶ。取り消しは確実に届かなかった早期のプロトコル拒否でだけ
+  {
+    const run = async settle => {
+      let resolveNext, rejectNext; const log = [];
+      const client = { call: () => new Promise((res, rej) => { resolveNext = res; rejectNext = rej; }) };
+      const steer = createAcpSteer({ client, sessionId: 's1', emit: () => {}, ready: () => true,
+        onSent: text => { log.push(`sent:${text}`); return () => log.push('withdraw'); } });
+      const p = steer.steer({ id: 'w', args: { prompt: 'x' } });
+      const atWrite = [...log];
+      await settle({ resolve: v => resolveNext(v), reject: e => rejectNext(e), p });
+      return { atWrite, log };
+    };
+    const reject = await run(async ({ reject, p }) => { reject(Object.assign(new Error('bad'), { code: -32602 })); await p; });
+    t.ok('onSent は受理の判定を待たずに書いた直後に呼ぶ', reject.atWrite.join() === 'sent:x', JSON.stringify(reject.atWrite));
+    t.ok('早期のプロトコル拒否は取り消す', reject.log.join() === 'sent:x,withdraw', JSON.stringify(reject.log));
+    const unknown = await run(async ({ reject, p }) => { reject(Object.assign(new Error('boom'), { code: -32000 })); await p.catch(() => {}); });
+    t.ok('結果不明の早期拒否は取り消さない（送り直されないので記録に残す）', unknown.log.join() === 'sent:x', JSON.stringify(unknown.log));
+    const cancelled = await run(async ({ resolve, p }) => { await p; resolve({ stopReason: 'cancelled' }); await sleep(0); });
+    t.ok('受理後の cancelled は取り消さない', cancelled.log.join() === 'sent:x', JSON.stringify(cancelled.log));
   }
 
   // 早期のプロトコル拒否: false を返し、合図は出さない（呼ぶ側の requeue と二重にならない）
@@ -147,5 +178,70 @@ export default async function (t) {
     mapper.finish();
     const msgs = mapper.messages();
     t.ok('回られなかった途中送信も履歴に残る', msgs.length === 3 && msgs[2].role === 'user' && msgs[2].text === 'never-ran', JSON.stringify(msgs));
+  }
+  // Grok（acp-steer と mapper をつないだ形）: 受理の判定の窓（300ms）の中で今の回が終わり、
+  // 途中送信の回の出力まで届いても、user 行はその出力の直前に置く（窓の後に積むと、出力が元の
+  // assistant 行に混ざり、user 行が後ろへずれる）。live と再生で uuid・順序・本文が揃う
+  {
+    const u = text => ({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
+    const a = text => ({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+    const tc = { sessionUpdate: 'turn_completed', stop_reason: 'end_turn' };
+    const sig = ms => ms.map(m => `${m.uuid}|${m.role}|${m.text}`).join(';');
+    const wire = () => {
+      const mapper = createGrokMapper('s', () => {});
+      let resolveCall, rejectCall;
+      const client = { call: () => new Promise((res, rej) => { resolveCall = res; rejectCall = rej; }) };
+      const steer = createAcpSteer({ client, sessionId: 's', emit: () => {}, ready: () => true, onSent: text => mapper.queueUser(text) });
+      return { mapper, steer, resolve: v => resolveCall(v), reject: e => rejectCall(e) };
+    };
+    const replayMapper = createGrokMapper('s', () => {});
+    for (const upd of [u('q1'), a('main'), u('s1'), a('r1')]) replayMapper.accept(upd);
+    const replay = sig(replayMapper.messages());
+
+    // 窓の中で s1 の回まで終わり、呼び出しも成功で決着する（速い成功）
+    {
+      const { mapper, steer, resolve } = wire();
+      mapper.beginTurn('q1'); mapper.accept(u('q1')); mapper.accept(a('main'));
+      const p = steer.steer({ id: 'f', args: { prompt: 's1' } });
+      mapper.accept(tc); mapper.accept(a('r')); mapper.accept(a('1')); mapper.accept(tc);
+      resolve({ stopReason: 'end_turn' });
+      const ok = await p;
+      mapper.finish();
+      t.ok('速い成功: user 行が s1 の回の出力の直前に立ち、再生と揃う', ok === true && sig(mapper.messages()) === replay, JSON.stringify({ live: sig(mapper.messages()), replay }));
+    }
+    // 窓の中で今の回が終わって s1 の回の出力が始まり、受理の判定はその後（窓が過ぎてから）
+    {
+      const { mapper, steer, resolve } = wire();
+      mapper.beginTurn('q1'); mapper.accept(u('q1')); mapper.accept(a('main'));
+      const p = steer.steer({ id: 'g', args: { prompt: 's1' } });
+      mapper.accept(tc); mapper.accept(a('r'));
+      const ok = await p;
+      mapper.accept(a('1')); mapper.accept(tc);
+      resolve({ stopReason: 'end_turn' });
+      await sleep(0);
+      mapper.finish();
+      t.ok('判定待ちの間に始まった出力でも user 行は出力の直前で、分断しない', ok === true && sig(mapper.messages()) === replay, JSON.stringify({ live: sig(mapper.messages()), replay }));
+    }
+    // 早期のプロトコル拒否（次のターンで送り直す）は記録に残さない（同じ発言が 2 行にならない）
+    {
+      const { mapper, steer, reject } = wire();
+      mapper.beginTurn('q1'); mapper.accept(u('q1'));
+      const p = steer.steer({ id: 'r', args: { prompt: 's1' } });
+      reject(Object.assign(new Error('bad'), { code: -32602 }));
+      const ok = await p;
+      mapper.accept(a('main')); mapper.accept(tc);
+      mapper.finish();
+      t.ok('早期の拒否は user 行を残さない', ok === false && sig(mapper.messages()) === 's:user:0|user|q1;s:assistant:1|assistant|main', sig(mapper.messages()));
+    }
+    // 履歴の再生で立った区切りで、このターンの最初の出力の前に途中送信を置かない
+    {
+      const mapper = createGrokMapper('s', () => {});
+      for (const upd of [u('q0'), a('r0'), tc]) mapper.accept(upd);
+      mapper.beginTurn('q1'); mapper.accept(u('q1'));
+      mapper.queueUser('s1');
+      mapper.accept(a('main')); mapper.accept(tc); mapper.accept(a('r1'));
+      mapper.finish();
+      t.ok('再生の区切りは持ち越さない', sig(mapper.messages()) === 's:user:0|user|q0;s:assistant:1|assistant|r0;s:user:2|user|q1;s:assistant:3|assistant|main;s:user:4|user|s1;s:assistant:5|assistant|r1', sig(mapper.messages()));
+    }
   }
 }

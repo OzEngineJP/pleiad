@@ -125,7 +125,11 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'session/prompt': {
         const session = load(p.sessionId), text = (p.prompt ?? []).map(v => v.text ?? '').join('');
         // 走っている回への prompt は同じ回に折り込む（実機の振る舞い。応答は回の終わりにまとめて返る）
-        if (running.has(session.sessionId)) { (session.steerQueue ??= []).push({ id: request.id, text }); return; }
+        if (running.has(session.sessionId)) {
+          // [fast-steer]: 呼び出しが直ぐに成功で決着する（受理の判定の窓より速い成功。合図が受理の応答より先に出る順の試験用）
+          if (text.includes('[fast-steer]')) { session.messages.push({ role: 'user', text }); persist(session); write({ id: request.id, result: { stopReason: 'end_turn' } }); return; }
+          (session.steerQueue ??= []).push({ id: request.id, text }); return;
+        }
         if (text === '/compact') {
           // ACP のスラッシュコマンドは prompt の本文として届く。発言は増やさず、占有だけ減らして usage_update を流す
           session.used = Math.max(20000, Math.round((session.used ?? 120000) * 0.15)); persist(session);

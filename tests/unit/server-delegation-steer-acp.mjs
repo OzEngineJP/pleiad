@@ -61,7 +61,22 @@ export default async function (t) {
       t.ok('同じ回に折り込まれて答えられる（新しいターンは増えない）', held.result.includes('follow-up A') || text.includes('fixture: follow-up A'), held.result?.slice(0, 200));
     }
 
-    // ---- 受理 → 中断で決着: 「渡った」合図が無いまま捨てられた分は delivered のままにせず dropped にする
+    // ---- 受理の判定の窓（300ms）より速い成功: 渡った合図が受理の応答（pending 付きの userMessage）より先に出ても、
+    // 指示は delivered で決着し、送信中・待機のまま残らない（server は合図の控えを steer を呼ぶ前に置く）
+    {
+      const f = await child('[slow] fast-steer');
+      const markF = c.mark();
+      const out = JSON.parse((await send(f.parent, f.task, '[fast-steer] quick').then(r => r.events.find(e => e.type === 'tool.result'))).text);
+      const order = c.since(markF).filter(e => e.sessionId === f.task.sessionId && ['userMessage', 'userMessage.delivered'].includes(e.type)).map(e => `${e.type}${e.pending ? ':pending' : ''}`);
+      t.ok('合図が受理の応答より先に出る順になっている（この試験の前提）', order.join() === 'userMessage.delivered,userMessage:pending', order.join());
+      t.ok('指示は delivered で決着し、依頼元の pendingMessages は 0',
+        out.pendingMessages === 0 && await awaitState(f.task, '[fast-steer] quick:delivered') === '[fast-steer] quick:delivered', await stateOf(f.task));
+      await awaitTask(f.parent, r => r.status === 'completed', 30_000);
+      t.ok('子のターンが終わっても送信中・待機に戻らず、送り直しも無い',
+        await stateOf(f.task) === '[fast-steer] quick:delivered' && events(f.task, markF, 'userMessage').length === 1, await stateOf(f.task));
+    }
+
+    // ---- 受理 → 中断で決着:「渡った」合図が無いまま捨てられた分は delivered のままにせず dropped にする
     {
       const b = await child('[slow] drop-me');
       const markB = c.mark();
@@ -74,7 +89,7 @@ export default async function (t) {
       await awaitTask(b.parent, r => ['failed', 'cancelled', 'completed'].includes(r.status), 30_000);
     }
 
-    // ---- 受理後に cancelled で決着（既読不明）: dropped にして自動では送り直さない（二重配送を避ける）
+    // ---- 受理後に cancelled で決着（既読不明）: 既に実行された可能性があるので、dropped にして自動では送り直さない
     {
       const d = await child('[slow] unknown-drop');
       const markD = c.mark();

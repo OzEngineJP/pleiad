@@ -87,7 +87,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`）。Antigravity は ACTIVE のまま残った `run_command`（§2.8「裏へ回ったコマンド」） |
 | `phase` | `{ state: "active"\|"waiting" }` `waiting` = main は返答を終えて止まっていて、かつ裏のタスクが 1 本以上生きている。それ以外は `active` | 新規（main の区切りと上の一覧から導く） |
 | `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`。ACP の 2 つ（Devin・Grok）は、受理した呼び出しが cancelled 以外で決着したときに出す） |
-| `userMessage.dropped` | `{ messageId, unknown? }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す。`unknown: true` は「読まれたか分からない」決着（読んで動いてから止められた可能性。ACP の 2 つは cancelled・接続断を区別できないのでこれを出す）で、委譲の指示は待機へ戻さず dropped にして送り直さない（二重配送を避ける。人の途中送信は送信待ちへ戻して人手に委ねる） | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残る。ACP の 2 つ（Devin・Grok）が、呼び出しが拒否・中断で決着した分に出す） |
+| `userMessage.dropped` | `{ messageId, unknown? }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す。`unknown: true` は「読まれたか分からない」決着（読んで動いてから止められた可能性。ACP の 2 つは cancelled・接続断を区別できないのでこれを出す）で、既に実行された可能性があるため自動では送り直さない（委譲の指示は待機へ戻さず dropped にする。人の途中送信は保留に戻り、送り直すかは人が決める） | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残る。ACP の 2 つ（Devin・Grok）が、呼び出しが拒否・中断で決着した分に出す） |
 
 `present` / `status` / `title` / `fork` / `mode` / `model` / `running` / `turnEnd` はそのまま。
 
@@ -107,7 +107,9 @@ ACP の `session/prompt` を走っているターンへ重ねると、**Devin �
 **Grok は内蔵の待ち行列に積んで今の回の直後に続けて回す**（実測 1.0.62）。どちらも応答は回の決着まで返らないので、
 「受理」は書き込みが直ぐに断られなかったこと。受理した分は `steerConfirms` の約束どおり呼び出しの決着で合図を出す
 （cancelled 以外の stopReason で `userMessage.delivered`、拒否・中断は既読不明として `unknown: true` 付きの `userMessage.dropped`）。受理前の早期の拒否では合図を出さない。
-Grok のように次の回として回る分は、runTurn が drain で決着まで待つ（待たずに畳むと接続の終了で全部 dropped になる）。Grok は受理した途中送信を `user_message_chunk` でエコーしないので、受理した分を mapper が自分で user 行に置く（`noteUser`）。
+Grok のように次の回として回る分は、runTurn が drain で決着まで待つ（待たずに畳むと接続の終了で全部 dropped になる）。Grok は途中送信を `user_message_chunk` でエコーしないので、mapper が自分で user 行に置く（`queueUser`）。
+書いた直後に積み（受理の判定を待つ間に今の回が終わり、次の回の出力が始まることがある）、`turn_completed` の後に次の回の出力が始まる直前に送った順で置く。早期のプロトコル拒否（次のターンで送り直す）だけは取り消し、回られずに残った分は記録の末尾に置く。
+Devin は折り込んだ途中送信を `user_message_chunk` で流すかを確かめておらず、mapper は自分で行を置かない（流れなければライブの記録に残らない。元の依頼の echo が終わる前に流れると、echo と見分けられない）。
 Antigravity は途中送信を持たない（送ると `reason: 'turn'` で送信待ちになる）。
 `phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
 終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。

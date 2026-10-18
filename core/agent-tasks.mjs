@@ -846,7 +846,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     async steered(taskId, instructionId, event) {
       if (event === 'delivered') await resolveClaim(taskId, instructionId, 'delivered');
       // 読まれたか分からない決着（cancelled・接続断。ACP のバックエンドは区別しない）は、
-      // 二重配送より未配送のほうが扱いやすいので dropped にして送り直さない（steer の 'error' と同じ扱い）
+      // 指示を読んで既に実行した可能性があるので、dropped にして自動では送り直さない（steer の 'error' と同じ扱い）
       else if (event === 'unknown') await resolveClaim(taskId, instructionId, 'dropped');
       else await unclaim(taskId, instructionId);
     },

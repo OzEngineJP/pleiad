@@ -15,13 +15,13 @@ const inputOf = value => value && typeof value === 'object' ? value : value == n
 export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null } = {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
   let current = null, expectedEcho = null, echo = '', live = false, sepText = false, sepThink = false;
-  // 受理したが回の中ではまだ置けない途中送信（エコーが来ないので自分で行を作る）と、直近に届いた回の区切り
+  // 送ったが回の中ではまだ置けない途中送信（エコーが来ないので自分で行を作る。{ text }）と、直近に届いた回の区切り
   const pendingUsers = [];
   let turnBoundary = false;
-  // queued の回の出力が始まる直前に、受理した順に user 行を 1 つ置く。
-  // 受理した時点ではなくターンの境界で置くので、流れている元の行（user の echo・assistant の本文）を分断しない
+  // queued の回の出力が始まる直前に、送った順に user 行を 1 つ置く。
+  // 送った時点ではなくターンの境界で置くので、流れている元の行（user の echo・assistant の本文）を分断しない
   function flushQueued() {
-    if (turnBoundary && pendingUsers.length) { current = null; row('user').text = pendingUsers.shift(); turnBoundary = false; }
+    if (turnBoundary && pendingUsers.length) { current = null; row('user').text = pendingUsers.shift().text; turnBoundary = false; }
   }
   function row(role) {
     if (current?.role !== role) {
@@ -109,15 +109,21 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
     getToolCall: id => toolStates.has(id) ? structuredClone(toolStates.get(id)) : null,
     beginTurn(prompt) {
       current = null; row('user').text = prompt;
-      expectedEcho = prompt; echo = ''; live = true;
+      // 区切りはこのターンの中で届いたものだけを数える（履歴の再生で立った区切りで、このターンの最初の出力の前に置かない）
+      expectedEcho = prompt; echo = ''; live = true; turnBoundary = false;
     },
-    // Grok は受理した途中送信を user_message_chunk でエコーしない（実測 1.0.62）。
-    // 受理した分は pendingUsers に積み、次の回の出力が始まる直前に user 行として置く（flushQueued）
-    queueUser(text) { pendingUsers.push(String(text)); },
+    // Grok は途中送信を user_message_chunk でエコーしない（実測 1.0.62）。
+    // 書いた直後に pendingUsers に積み、次の回の出力が始まる直前に user 行として置く（flushQueued）。
+    // 戻り値はまだ置いていない分の取り消し（確実に届かなかった早期の拒否で acp-steer が呼ぶ）
+    queueUser(text) {
+      const entry = { text: String(text) };
+      pendingUsers.push(entry);
+      return () => { const i = pendingUsers.indexOf(entry); if (i >= 0) pendingUsers.splice(i, 1); };
+    },
     finish() {
       if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid });
       // 送ったのに回られず残った分（中断・既読不明）は、送った順に末尾へ置いて無くさない
-      while (pendingUsers.length) { current = null; row('user').text = pendingUsers.shift(); }
+      while (pendingUsers.length) { current = null; row('user').text = pendingUsers.shift().text; }
       live = false;
     },
     messages: () => structuredClone(messages),
