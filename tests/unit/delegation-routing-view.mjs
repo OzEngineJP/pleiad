@@ -1,5 +1,6 @@
 // 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
 import assert from 'node:assert/strict';
+import { lang, setLanguage } from '../../web/i18n.mjs';
 import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, retryPanel, usageRows, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail, compactionLine,
   skipText, parseRoutingFailure, groupSkipped, groupText, routingFailureParts } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
@@ -10,7 +11,18 @@ import { readFileSync } from 'node:fs';
 export const name = 'delegation-routing-view';
 export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分と判定器の面の描き直し';
 
-export default async function (t) {
+export default async function(t) {
+  // These assertions require Japanese, regardless of the host or preceding suite.
+  const previousLanguage = lang;
+  try {
+    await setLanguage("ja");
+    await japaneseCases(t);
+  } finally {
+    await setLanguage(previousLanguage);
+  }
+}
+
+async function japaneseCases(t) {
   const names = { backend: id => ({ codex: 'Codex', claude: 'Claude Code' })[id] ?? id, model: (_b, m) => ({ sonnet: 'Sonnet', 'gpt-6-sol': 'gpt-6-sol' })[m] ?? m };
   const routing = { mode: 'auto', kind: 'implement', judge: 'jev', signals: { diagnose: false, choose: true, long_procedure: false, many_parts: false, writes_shared: true, security_gate: false },
     difficulty: 'mid', baseTier: 't3', tier: 't3', target: { backend: 'codex', model: 'gpt-6-sol', account: null },
