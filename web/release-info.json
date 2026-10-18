@@ -1,8 +1,8 @@
 {
-  "version": "0.21.0",
+  "version": "0.21.1",
   "releases": [
     {
-      "version": "0.21.0",
+      "version": "0.21.1",
       "date": "2026-10-18",
       "title": "Devin と、Codex・OpenCode の複数アカウントに対応しました",
       "sections": [
