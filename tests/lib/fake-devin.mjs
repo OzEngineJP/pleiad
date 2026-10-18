@@ -10,7 +10,17 @@ const catalogue = { families: [
 ] };
 if (command === '--version' || command === 'version') { console.log('3000.11.92'); process.exit(0); }
 if (command === 'models') { console.log(process.env.FAKE_DEVIN_CATALOGUE ? fs.readFileSync(process.env.FAKE_DEVIN_CATALOGUE, 'utf8') : JSON.stringify(catalogue)); process.exit(0); }
-if (command === 'auth') { console.log('{"authenticated":true}'); process.exit(0); }
+if (command === 'auth') {
+  // ログイン状態はファイルに持つ（FAKE_DEVIN_AUTH_FILE。内容は in / out。無ければ in）。`auth login`・`auth logout` で替わる
+  const authFile = process.env.FAKE_DEVIN_AUTH_FILE || '';
+  const read = () => { try { return fs.readFileSync(authFile, 'utf8').trim() === 'in'; } catch { return true; } };
+  const write = value => { if (authFile) { fs.mkdirSync(path.dirname(authFile), { recursive: true }); fs.writeFileSync(authFile, value); } };
+  const sub = argv[argv.indexOf('auth') + 1];
+  if (sub === 'login') write('in');
+  else if (sub === 'logout') write('out');
+  console.log(JSON.stringify({ authenticated: read(), name: 'fixture-devin' }));
+  process.exit(0);
+}
 if (command !== 'acp') process.exit(2);
 
 const stateDir = process.env.FAKE_DEVIN_STATE_DIR || process.env.DEVIN_SESSIONS_DIR || '';

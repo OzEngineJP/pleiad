@@ -699,7 +699,17 @@
       "modelUnavailable": "選んだモデルは Grok Build CLI で使えません（{{model}}）",
       "effortUnavailable": "選んだ思考の強さを Grok Build CLI が受け付けませんでした（{{effort}}）",
       "promptFailed": "Grok Build のターンが正常に完了しませんでした",
-      "notConnected": "Grok Build CLI に接続していません"
+      "notConnected": "Grok Build CLI に接続していません",
+      "timeout": "Grok Build CLI の応答がタイムアウトしました（{{method}}、{{ms}} ms）"
+    },
+    "auth": {
+      "account": "Grok アカウント",
+      "notLoggedIn": "Grok にログインしていない（端末で grok login を実行してログイン）",
+      "loginRunning": "ログインが既に走っている",
+      "alreadyLoggedIn": "すでにログインしている",
+      "runCommand": "このコマンドを端末で実行し、画面の案内に沿って Grok にログインしてください。（Grok のログインは端末からしか行えません。終わるとここが自動で切り替わります）",
+      "loggedIn": "ログインした",
+      "loginTimeout": "端末でのログインが終わらなかった（もう一度お試しください）"
     }
   },
   "devin": {
@@ -728,6 +738,13 @@
       "selectionUnavailable": "Devin CLI の選択肢ではモデル設定を確認できません（{{setting}}）",
       "selectionNotAcknowledged": "Devin CLI がモデル設定を確認しませんでした（{{setting}}）",
       "startFailed": "Devin CLI を起動できませんでした"
+    },
+    "auth": {
+      "loginRunning": "ログインが既に走っている",
+      "alreadyLoggedIn": "すでにログインしている",
+      "runCommand": "このコマンドを端末で実行し、画面の案内に沿って Devin にログインしてください。（Devin のログインは端末からしか行えません。終わるとここが自動で切り替わります）",
+      "loggedIn": "ログインした",
+      "loginTimeout": "端末でのログインが終わらなかった（もう一度お試しください）"
     }
   },
   "opencode": {

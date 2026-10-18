@@ -3930,59 +3930,153 @@ async function refreshAuth() {
   await onboarding.refresh();
 }
 
+/** 「アカウントと接続先」の面を開いているエージェント（'' は全部閉じ）。一度に開くのは 1 枚 */
+let openConnAgent = '';
+
+/** 「アカウントと接続先」の中の 1 節（見出し + 管理の面が入る枠） */
+function connSection(which) {
+  const sec = el('section', 'conn-sec');
+  sec.dataset.sec = which;
+  sec.append(el('h4', null, which === 'accounts' ? t('settings.agents.accounts') : t('settings.agents.endpoints')), el('div', 'conn-slot'));
+  return sec;
+}
+
+/** 管理の面を、そのエージェントのカードの中の枠へ移して開く（各モジュールの onOpen が呼ぶ） */
+function mountPanel(agentId, sec, panelId) {
+  const slot = document.querySelector(`#authSec [data-agent="${agentId}"] .agent-conn [data-sec="${sec}"] .conn-slot`);
+  const panel = $(panelId);
+  if (!slot || !panel) return;
+  slot.append(panel);
+  openConnAgent = agentId;
+  paintConnState();
+}
+
+function paintConnState() {
+  for (const card of document.querySelectorAll('#authSec .agent-card')) {
+    const open = card.dataset.agent === openConnAgent;
+    const conn = card.querySelector('.agent-conn');
+    if (conn) conn.hidden = !open;
+    card.classList.toggle('open', open);
+    card.querySelector('.connect')?.setAttribute('aria-expanded', String(open));
+  }
+}
+
+/** 「接続」を全部畳む（面側も閉じて、途中の追加・ログインの流れも片付ける） */
+function closeAgentConns() {
+  openConnAgent = '';
+  claudeAccounts.close(); agentAccounts.close(); compatEndpoints.close();
+  paintConnState();
+}
+
+/** カードの「アカウントと接続先」。開いていれば畳み、畳んでいればそのエージェントの面を開く */
+function toggleAgentConn(b) {
+  if (openConnAgent === b.id) { closeAgentConns(); return; }
+  const st = state.auth.get(b.id) ?? {};
+  const accounts = b.capabilities?.accounts && st.installed !== false;
+  const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
+  openConnAgent = b.id;
+  paintConnState();
+  // open() が onOpen → mountPanel を呼び、面がカードの中の枠へ移る
+  if (accounts) (b.capabilities.accounts === 'token' ? claudeAccounts.open() : agentAccounts.open(b.id));
+  if (endpoints) compatEndpoints.open(b.id);
+}
+
+/** 描き直しで外れた管理の面を、開いているカードの枠へ戻す（面は作り直さない。中身と途中の流れはそのまま） */
+function restoreConnPanels() {
+  if (!openConnAgent) return;
+  const conn = document.querySelector(`#authSec [data-agent="${openConnAgent}"] .agent-conn`);
+  if (!conn) { openConnAgent = ''; return; }
+  const slots = {
+    accounts: conn.querySelector('[data-sec="accounts"] .conn-slot'),
+    endpoints: conn.querySelector('[data-sec="endpoints"] .conn-slot'),
+  };
+  if (claudeAccounts.openAgent === openConnAgent && slots.accounts) slots.accounts.append($('claudeAccountsPanel'));
+  if (agentAccounts.openAgent === openConnAgent && slots.accounts) slots.accounts.append($('agentAccountsPanel'));
+  if (compatEndpoints.openAgent === openConnAgent && slots.endpoints) slots.endpoints.append($('compatEndpointsPanel'));
+  conn.hidden = false;
+  conn.closest('.agent-card')?.classList.add('open');
+  conn.closest('.agent-card')?.querySelector('.connect')?.setAttribute('aria-expanded', 'true');
+}
+
 function renderAuth() {
   const sec = $("authSec");
   const targets = state.backends.filter((b) => b.capabilities?.login);
   sec.hidden = targets.length === 0;
   sec.replaceChildren();
   if (!targets.length) { $("authNeed").hidden = true; return; }
-  sec.append(el("div", "head", t("settings.agents.heading")));
   const need = [];
+  const list = el("div", "agent-list");
   for (const b of targets) {
     const st = state.auth.get(b.id) ?? {};
-    const row = el("div", "auth-row");
-    const name = el("span", "name", b.label);
-    // 使っている CLI の在り処（ホームは ~。弱い字の等幅）。版は説明（title）にだけ出す（ADR 0212）
-    if (st.cliPath) {
-      const where = el("small", "auth-cli", st.cliPath);
-      if (st.cliVersion) where.title = t("settings.agents.cliVersion", { agent: b.label, version: st.cliVersion });
-      name.append(where);
-    }
-    row.append(name);
+    const card = el("article", "agent-card");
+    card.dataset.agent = b.id;
+    const head = el("div", "agent-head");
+    head.append(backendLogo(b.id, b.label), el("span", "agent-name", b.label));
     const text = st.installed === false ? t("settings.agents.notInstalled") : !st.supported ? (st.error ? t("settings.agents.statusError", { error: st.error }) : t("settings.agents.loginUnsupported"))
       : st.pending ? t("settings.agents.loginPending")
-      : st.loggedIn ? (st.account || t("settings.agents.loggedIn"))
+      : st.loggedIn ? t("settings.agents.stateOn")
       : t("settings.agents.loggedOut");
-    const s2 = el("span", "st", text);
-    if (st.detail && st.loggedIn) s2.title = st.detail;
-    row.append(s2);
+    const stEl = el("span", "agent-state", text);
+    if (st.detail && st.loggedIn) stEl.title = st.detail;
+    if (st.installed === false || !st.supported || (!st.loggedIn && !st.pending)) stEl.classList.add("out");
+    else if (st.pending) stEl.classList.add("wait");
+    head.append(stEl);
+    const actions = el("div", "agent-actions");
     if (st.installed === false && st.installUrl) {
       const link = el("a", "btn", t("settings.agents.install"));
       link.href = st.installUrl; link.target = "_blank"; link.rel = "noreferrer";
-      row.append(link);
+      actions.append(link);
     } else if (st.supported && !st.pending && !st.loggedIn && window.plyRemote) {
       // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）。状態はそのまま見える
-      row.append(el("span", "remote-login-note", t("remote.loginOnHost")));
+      actions.append(el("span", "remote-login-note", t("remote.loginOnHost")));
     } else if (st.supported && !st.pending) {
       const loggedIn = st.loggedIn;
       const btn = el("button", "btn", loggedIn ? t("settings.agents.signOut") : t("settings.agents.signIn"));
       btn.type = "button";
       btn.onclick = (e) => { e.stopPropagation(); if (loggedIn) authLogout(b); else authLogin(b); };
-      row.append(btn);
+      actions.append(btn);
     }
-    // 会話ごとに選べるアカウント（Claude は Pleiad が claude setup-token を回して発行したトークン、ほかはエージェントがアカウントごとにログイン。ADR 0222）
-    if (b.capabilities?.accounts && st.installed !== false) {
-      const button = el('button', 'btn', t('settings.agents.accounts')); button.type = 'button';
-      button.onclick = () => (b.capabilities.accounts === 'token' ? claudeAccounts.open() : agentAccounts.open(b.id)); row.append(button);
+    // アカウントと接続先。持っているものだけ（アカウントのみのエージェントは「アカウント」）。1 つの面に両方を縦に並べる
+    const accounts = b.capabilities?.accounts && st.installed !== false;
+    const endpoints = b.capabilities?.compatEndpoints && st.installed !== false;
+    if (accounts || endpoints) {
+      const connect = el("button", "btn connect");
+      connect.type = "button";
+      connect.append(el("span", "t", accounts && endpoints ? t("settings.agents.accountsEndpoints") : accounts ? t("settings.agents.accounts") : t("settings.agents.endpoints")));
+      const chev = svgEl("svg", { viewBox: "0 0 12 12", "aria-hidden": "true" });
+      chev.append(svgEl("path", { d: "M2 4l4 4 4-4", fill: "none", stroke: "currentColor", "stroke-width": "1.6", "stroke-linecap": "round" }));
+      connect.append(chev);
+      connect.setAttribute("aria-expanded", "false");
+      connect.onclick = (e) => { e.stopPropagation(); toggleAgentConn(b); };
+      actions.append(connect);
     }
-    // 互換の接続先（Claude Code の Anthropic 互換・Codex の Responses 互換）。同じページの下に管理の面を開く
-    if (b.capabilities?.compatEndpoints && st.installed !== false) {
-      const button = el('button', 'btn', t('settings.agents.endpoints')); button.type = 'button';
-      button.setAttribute('aria-expanded', String(compatEndpoints.openAgent === b.id));
-      button.onclick = () => compatEndpoints.open(b.id);
-      row.append(button);
+    head.append(actions);
+    card.append(head);
+    // 使っているアカウントと CLI の在り処（あるものだけ。版は説明の title に出す。ADR 0212）
+    const meta = el("div", "agent-meta");
+    if (st.loggedIn && st.account) meta.append(el("span", "acct", st.account));
+    if (st.cliPath) {
+      if (meta.childNodes.length) meta.append(el("span", "sep", "·"));
+      const where = el("span", "path", st.cliPath);
+      if (st.cliVersion) where.title = t("settings.agents.cliVersion", { agent: b.label, version: st.cliVersion });
+      meta.append(where);
     }
-    sec.append(row);
+    if (meta.childNodes.length) card.append(meta);
+    // 「アカウントと接続先」の面（アカウント → 接続先の順に縦に並ぶ）
+    if (accounts || endpoints) {
+      const conn = el("div", "agent-conn");
+      conn.hidden = true;
+      const chead = el("div", "agent-conn-head");
+      chead.append(el("h3", null, t("settings.agents.connections")));
+      const closeBtn = el("button", "btn", t("compat.action.close"));
+      closeBtn.type = "button";
+      closeBtn.onclick = () => closeAgentConns();
+      chead.append(closeBtn);
+      conn.append(chead);
+      if (accounts) conn.append(connSection('accounts'));
+      if (endpoints) conn.append(connSection('endpoints'));
+      card.append(conn);
+    }
     // 会話で 401 を受けた（CLI は期限が切れてもログイン済みを返す）。行はふだんのまま、その下に ⚠ の 1 行と文字だけの直す入口
     if (st.expired && st.loggedIn && !st.pending) {
       const note = el("div", "auth-note");
@@ -3995,13 +4089,16 @@ function renderAuth() {
         again.onclick = (e) => { e.stopPropagation(); authLogin(b); };
         note.append(again);
       }
-      sec.append(note);
+      card.append(note);
     }
     if (st.installed !== false && st.supported && !st.loggedIn && !st.pending) need.push(b.label);
 
     const box = authUrlBox(b.id);
-    if (box) sec.append(box);
+    if (box) card.append(box);
+    list.append(card);
   }
+  sec.append(list);
+  restoreConnPanels();
   const line = $("authNeed");
   line.hidden = need.length === 0;
   if (need.length) line.textContent = t("app.authNeed", { agents: need.join(t("app.listSeparator")) });
@@ -4535,7 +4632,10 @@ const compatEndpoints = setupCompatEndpoints({ cmd,
   openPage: name => $(`${name}Tab`)?.click(),
   onChange: () => { syncTopbar().catch(() => {}); },
   officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || t('settings.agents.loggedIn')) : ''; } });
-compatEndpoints.onOpen(() => renderAuth());
+// 管理の面が開きたいとき、面をそのエージェントのカードの「アカウントと接続先」の中へ移す
+claudeAccounts.onOpen(() => mountPanel('claude', 'accounts', 'claudeAccountsPanel'));   // backend-allow: Claude のアカウントの面は Claude のカード専用
+agentAccounts.onOpen(id => mountPanel(id, 'accounts', 'agentAccountsPanel'));
+compatEndpoints.onOpen(id => { if (id) mountPanel(id, 'endpoints', 'compatEndpointsPanel'); });
 function endpointLabel(id) {
   if (!id) return t("chat.endpoint.official");
   return compatEndpoints.get(id)?.name ?? t("chat.endpoint.deleted");

@@ -7,7 +7,20 @@ import readline from 'node:readline';
 const argv = process.argv.slice(2);
 const version = argv.find(v => ['version', '--version'].includes(v));
 if (version) { console.log('grok 1.0.62 (fixture)'); process.exit(0); }
+// ログイン状態は AGENT_HOST_GROK_HOME の auth.json（無ければログイン済みとして扱う。本物の ~/.grok には触れない）
+const grokHome = process.env.AGENT_HOST_GROK_HOME || '';
+const authFile = grokHome ? path.join(grokHome, 'auth.json') : '';
+const loggedIn = () => !authFile || fs.existsSync(authFile);
+if (argv[0] === 'login') {
+  if (authFile) { fs.mkdirSync(grokHome, { recursive: true }); fs.writeFileSync(authFile, '{"fixture":{"api_key":"fake"}}'); }
+  process.exit(0);
+}
+if (argv[0] === 'logout') {
+  try { if (authFile) fs.rmSync(authFile, { force: true }); } catch {}
+  process.exit(0);
+}
 if (argv[0] === 'models') {
+  if (!loggedIn()) { console.error('Not logged in. Run `grok login`.'); process.exit(1); }
   console.log('Default model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5');
   process.exit(0);
 }

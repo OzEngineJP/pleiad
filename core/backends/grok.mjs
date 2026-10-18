@@ -1,5 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { cliCommand } from '../cli-installation.mjs';
+import { cliCommand, spawnCli } from '../cli-installation.mjs';
 import { t } from '../i18n.mjs';
 import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
@@ -17,6 +19,10 @@ const fail = (key, values = {}) => Object.assign(new Error(t(`grok.errors.${key}
 
 const abortError = () => Object.assign(new Error('Grok turn cancelled'), { aborted: true });
 const isAuthError = error => /auth|credential|login|unauthorized/i.test(String(error?.message ?? '')) || error?.code === -32002;
+const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_GROK_LOGIN_MS ?? 10 * 60_000);
+const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_GROK_POLL_MS ?? 3_000);
+/** Grok の置き場（config.toml・auth.json）。試験は AGENT_HOST_GROK_HOME で差し替える */
+const grokHome = () => process.env.AGENT_HOST_GROK_HOME || path.join(os.homedir(), '.grok');
 
 // Pleiad のモード → Grok の permission mode（`grok --permission-mode` の値と同じ）
 const GROK_MODES = { ask: 'default', 'accept-edits': 'acceptEdits', auto: 'auto', bypass: 'bypassPermissions', plan: 'plan' };
@@ -132,9 +138,11 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     const actual = result?.configOptions?.find(o => o.id === modeOption[0].id)?.currentValue;
     if (typeof actual === 'string' && actual !== wanted) throw fail('modeUnavailable');
   }
+  // ログインの案内が同時に走らないよう掴む旗
+  let pendingAuth = null;
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true,
+    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true,
       // ACP の session/new・session/load の mcpServers（type: 'http'）に ply_agents を、その instructions を発言へ足して渡す。
       // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
       plyAgents: true, hooks: true },
@@ -311,7 +319,87 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       });
     },
     async releaseConversation(id) { const client = active.get(id); if (client) await client.close(); cache.delete(id); },
+
+    // ---- 認証 ---------------------------------------------------------------
+    //
+    // ログインは `grok login`（ブラウザー・デバイスコードは端末で）。資格情報は ~/.grok/auth.json。
+    // Pleiad はコマンドを案内して済むのを見届ける（Antigravity・Devin と同じ流れ）。アカウント名は
+    // auth.json から読めないので、状態と CLI の場所だけを出す。
+
+    auth: {
+      /** ~/.grok/auth.json に登録があればログイン済み。無ければ `grok models` が通るか見る（XAI_API_KEY など） */
+      async status() {
+        if (await signedIn()) return { loggedIn: true, account: t('grok.auth.account'), detail: null };
+        return { loggedIn: false, account: null, detail: t('grok.auth.notLoggedIn') };
+      },
+      /** ログインは端末でしか受け付けない。コマンドを出し、ログインが済むまで見張る */
+      async login({ emit }) {
+        if (pendingAuth) throw new Error(t('grok.auth.loginRunning'));
+        pendingAuth = {};
+        try {
+          if (await signedIn()) {
+            emit?.({ type: 'auth', phase: 'done', message: t('grok.auth.alreadyLoggedIn') });
+            return;
+          }
+          const command = [...argv(), 'login'].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+          emit?.({ type: 'auth', phase: 'url', url: command, message: t('grok.auth.runCommand') });
+          const until = Date.now() + LOGIN_TIMEOUT_MS;
+          while (Date.now() < until) {
+            await new Promise(r => { const timer = setTimeout(r, LOGIN_POLL_MS); timer.unref?.(); });
+            if (await signedIn()) {
+              emit?.({ type: 'auth', phase: 'done', message: t('grok.auth.loggedIn') });
+              return;
+            }
+          }
+          const message = t('grok.auth.loginTimeout');
+          emit?.({ type: 'auth', phase: 'error', message });
+          throw new Error(message);
+        } finally {
+          pendingAuth = null;
+        }
+      },
+      /** `grok logout`。対話は要らないので Pleiad から実行する */
+      async logout() {
+        const { code, err, out } = await runAuth(['logout']);
+        if (code !== 0) throw new Error((err || out || t('grok.errors.promptFailed')).trim().slice(0, 300));
+      },
+    },
+    /** 使っている grok の実行ファイルと版（設定の行の名前の下。Claude の cliInfo と同じ形） */
+    async cliInfo() {
+      const argv = command();
+      if (!argv) return null;
+      const { code, out } = await runAuth(['--version']).catch(() => ({ code: -1, out: '' }));
+      const version = code === 0 ? (/(\d[\d.]*)/.exec(out)?.[1] ?? null) : null;
+      return { path: argv[0] === process.execPath && argv[1] ? argv[1] : argv[0], ...(version ? { version } : {}) };
+    },
   };
+
+  /** 認証まわりの小さな起動（status・logout・--version）。ターンの ACP とは別経路 */
+  function runAuth(args, { timeoutMs = 15000 } = {}) {
+    return new Promise((resolve, reject) => {
+      const child = spawnCli(argv(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      let out = '', err = '', settled = false;
+      const finish = (error, code = null) => { if (settled) return; settled = true; clearTimeout(timer); error ? reject(error) : resolve({ code, out, err }); };
+      const timer = setTimeout(() => { try { child.kill(); } catch {} finish(new Error(t('grok.errors.timeout', { method: args.join(' '), ms: timeoutMs }))); }, timeoutMs);
+      timer.unref?.();
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', c => { out += c; });
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', c => { err += c; });
+      child.once('error', finish);
+      child.once('close', code => finish(null, code));
+    });
+  }
+  /** auth.json の登録、XAI_API_KEY、`grok models` のどれかが通ればログイン済み */
+  async function signedIn() {
+    if (process.env.XAI_API_KEY) return true;
+    try {
+      if (Object.keys(JSON.parse(fs.readFileSync(path.join(grokHome(), 'auth.json'), 'utf8'))).length) return true;
+    } catch {}
+    if (!command()) return false;
+    const { code } = await runAuth(['models'], { timeoutMs: 10000 }).catch(() => ({ code: -1 }));
+    return code === 0;
+  }
 }
 
 export const backend = createGrokBackend();

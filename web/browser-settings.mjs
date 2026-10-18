@@ -2,6 +2,7 @@
 // External resources can be confirmed on every screen; agent access needs the desktop browser.
 import { t } from './i18n.mjs';
 import { el, svgEl } from './dom.mjs';
+import { createCombo } from './combo.mjs';
 import { LINK_OPEN_VALUES, linkOpenPref } from './browser-address.mjs';
 import { modifierKey } from './link-open.mjs';
 import { blockedPreviewOrigins, onBlockedPreviewOrigins } from './preview-confirm.mjs';
@@ -244,19 +245,18 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
     const k = 'settings.browser.profiles.';
     const many = new Set(profiles.map(p => p.browser)).size > 1;
     const nameOf = p => many ? `${browserLabel(p.browser)} · ${profileLabel(p, profiles)}` : profileLabel(p, profiles);
-    // 新しい会話の既定（選ばなければ Chrome の最後に使ったプロフィール）
+    // 新しい会話の既定（選ばなければ Chrome の最後に使ったプロフィール）。プルダウンは共通の combo（web/combo.mjs）
     const want = validProfileRef(prefs.chromeNewProfile) ? profileKey(prefs.chromeNewProfile) : '';
-    const select = el('select'); select.id = 'browserNewProfile';
-    const last = el('option', null, t(`${k}lastUsed`)); last.value = ''; select.append(last);
-    for (const p of profiles) { const o = el('option', null, nameOf(p)); o.value = profileKey(p); select.append(o); }
-    select.value = profiles.some(p => profileKey(p) === want) ? want : '';
-    select.onchange = () => {
-      const p = profiles.find(row => profileKey(row) === select.value);
-      void save('chromeNewProfile', p ? { browser: p.browser, dir: p.dir } : null);
-    };
+    const pick = createCombo({ ariaLabel: t(`${k}newDefault`), strict: true, cls: 'browser-pick',
+      value: profiles.some(p => profileKey(p) === want) ? want : '',
+      options: () => [{ value: '', label: t(`${k}lastUsed`) }, ...profiles.map(p => ({ value: profileKey(p), label: nameOf(p) }))],
+      onCommit: v => {
+        const p = profiles.find(row => profileKey(row) === v);
+        void save('chromeNewProfile', p ? { browser: p.browser, dir: p.dir } : null);
+      } });
+    pick.root.id = 'browserNewProfile';
     const pickRow = el('div', 'browser-setting');
-    const pickLabel = el('label', null, t(`${k}newDefault`)); pickLabel.htmlFor = select.id;
-    pickRow.append(pickLabel, select);
+    pickRow.append(el('span', null, t(`${k}newDefault`)), pick.root);
     const list = el('div', 'browser-profile-list');
     for (const p of profiles) {
       const row = el('div', 'browser-setting browser-profile');
