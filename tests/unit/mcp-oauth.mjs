@@ -245,7 +245,7 @@ export default async function (t) {
       t.ok('残りの MCP はつながり、ツール数を記録する', rows.fixture.status === 'connected' && rows.fixture.tools === 1 && runtime.report.status === 'ready', JSON.stringify(rows.fixture));
       const list = await (await fetch(connection.url, { method: 'POST', headers: { ...connection.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })).json();
       t.ok('つながった MCP のツールだけを公開する', list.result.tools.some(x => x.description.includes('[fixture / echo]')) && !list.result.tools.some(x => x.description.includes('[remote')));
-    } finally { await connection?.close(); host.closeAllConnections(); await new Promise(r => host.close(r)); }
+    } finally { await connection?.close(); await bridge.dispose(); host.closeAllConnections(); await new Promise(r => host.close(r)); }
   } finally {
     for (const s of servers) await s.close();
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

@@ -317,6 +317,7 @@ const SUITES = [
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   './unit/composer-settings.mjs',
   './unit/context-transports.mjs',
+  './unit/context-warm.mjs',
   './unit/context-runtime.mjs',
   // 外部 MCP の認証（担当が Pleiad のとき）。秘密の置き場、OAuth はローカルのモックの認可サーバー・MCP だけと話す
   './unit/mcp-secret-store.mjs',
