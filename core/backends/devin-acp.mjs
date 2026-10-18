@@ -5,13 +5,17 @@ import { killTree } from './antigravity-background.mjs';
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 const CLIENT_INFO = { name: 'pleiad', version: '0.0.0' };
+const SAFE_ERROR = Symbol('safe ACP error');
+const CALLBACK_CODES = new Set([-32700, -32600, -32601, -32602, -32603, -32800]);
+const PROCESS_CODES = new Set(['ENOENT', 'EACCES', 'EPERM', 'ENOEXEC', 'E2BIG', 'ENOMEM', 'EMFILE', 'ENFILE', 'EAGAIN', 'ENOTDIR', 'EINVAL']);
 
-function rpcError(message, code = -32000, data) {
+function rpcError(message, code = -32000) {
   const error = new Error(message);
   error.code = code;
-  if (data !== undefined) error.data = data;
+  error[SAFE_ERROR] = true;
   return error;
 }
+const processError = error => rpcError('Devin ACP process failed', PROCESS_CODES.has(error?.code) ? error.code : -32000);
 
 function waitForExit(child, timeoutMs) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
@@ -38,6 +42,7 @@ export class DevinAcp {
     this.gone = false;
     this.closed = null;
     this.reaping = null;
+    this.connectionAbort = new AbortController();
     this.nextId = 0;
     this.pending = new Map();
     this.incoming = new Set();
@@ -52,8 +57,8 @@ export class DevinAcp {
   get alive() { return Boolean(this.proc && this.proc.exitCode === null && this.proc.signalCode === null && !this.gone); }
 
   start() {
-    if (this.starting) return this.starting;
     if (this.closing || this.gone) return Promise.reject(rpcError('Devin ACP is closed'));
+    if (this.starting) return this.starting;
     this.starting = this.#start();
     return this.starting;
   }
@@ -63,20 +68,23 @@ export class DevinAcp {
     try {
       child = spawnCli(this.command, ['acp'], {
         cwd: this.cwd,
-        env: this.env ? { ...process.env, ...this.env } : process.env,
+        env: this.env ?? process.env,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       });
       this.proc = child;
+      child.stdin.on('error', () => this.#fail(rpcError('Devin ACP input pipe failed')));
+      child.stdout.on('error', () => this.#fail(rpcError('Devin ACP output pipe failed')));
+      child.stderr.on('error', () => this.#fail(rpcError('Devin ACP error pipe failed')));
       child.stdout.on('data', (chunk) => this.#stdout(chunk));
       child.stderr.on('data', (chunk) => this.#stderr(chunk));
-      child.on('error', (error) => this.#fail(rpcError(`Devin ACP process error: ${error.message}`)));
-      child.on('exit', (code, signal) => this.#fail(rpcError(`Devin ACP exited (${signal ?? code ?? 'unknown'})`)));
+      child.on('error', error => this.#fail(processError(error)));
+      child.on('exit', () => this.#fail(rpcError('Devin ACP exited')));
       await new Promise((resolve, reject) => {
         if (child.pid) return resolve();
         const timer = setTimeout(() => reject(rpcError('Devin ACP spawn timed out')), this.timeoutMs);
         child.once('spawn', () => { clearTimeout(timer); resolve(); });
-        child.once('error', (error) => { clearTimeout(timer); reject(error); });
+        child.once('error', error => { clearTimeout(timer); reject(processError(error)); });
       });
       if (this.closing) throw rpcError('Devin ACP closed during startup', -32800);
       return await this.call('initialize', {
@@ -85,8 +93,9 @@ export class DevinAcp {
         clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
       }, { timeoutMs: this.timeoutMs });
     } catch (error) {
-      this.#fail(error instanceof Error ? error : rpcError('Devin ACP failed to start'));
-      throw error;
+      const safe = error?.[SAFE_ERROR] ? error : processError(error);
+      this.#fail(safe);
+      throw safe;
     }
   }
 
@@ -95,10 +104,10 @@ export class DevinAcp {
     const id = `pleiad-${++this.nextId}`;
     if (this.pending.has(id)) return Promise.reject(rpcError('Duplicate JSON-RPC id'));
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = timeoutMs > 0 ? setTimeout(() => {
         if (!this.pending.delete(id)) return;
-        reject(rpcError(`Devin ACP request timed out: ${method}`, -32001));
-      }, Math.max(1, timeoutMs));
+        reject(rpcError('Devin ACP request timed out', -32001));
+      }, timeoutMs) : null;
       this.pending.set(id, { resolve, reject, timer });
       try { this.#write({ jsonrpc: '2.0', id, method, params }); }
       catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
@@ -171,7 +180,7 @@ export class DevinAcp {
     clearTimeout(pending.timer);
     if (hasError) {
       const e = frame.error;
-      pending.reject(rpcError(e.message, e.code, e.data));
+      pending.reject(rpcError('Devin ACP request failed', Number.isSafeInteger(e.code) ? e.code : -32000));
     } else pending.resolve(frame.result);
   }
 
@@ -180,25 +189,42 @@ export class DevinAcp {
     if (this.seenIncoming.has(idKey) || this.seenIncoming.size >= 10_000) return this.#fail(rpcError('Duplicate or excessive Devin ACP request id', -32600));
     this.seenIncoming.add(idKey);
     this.incoming.add(idKey);
-    Promise.resolve().then(() => this.onRequest(frame.method, frame.params)).then(
+    const signal = this.connectionAbort.signal;
+    let onAbort;
+    const cancelled = new Promise(resolve => {
+      onAbort = () => resolve(null);
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
+    const handling = Promise.resolve().then(() => {
+      if (this.closing || this.gone || signal.aborted) return null;
+      return this.onRequest(frame.method, frame.params, { signal });
+    });
+    Promise.race([handling, cancelled]).then(
       (result) => { if (!this.closing && !this.gone) this.#write({ jsonrpc: '2.0', id: frame.id, result: result ?? null }); },
-      (error) => { if (!this.closing && !this.gone) this.#write({ jsonrpc: '2.0', id: frame.id, error: { code: Number.isInteger(error?.code) ? error.code : -32601, message: String(error?.message ?? 'Request denied') } }); },
-    ).catch(() => this.#fail(rpcError('Devin ACP request response failed'))).finally(() => this.incoming.delete(idKey));
+      (error) => { if (!this.closing && !this.gone) this.#write({ jsonrpc: '2.0', id: frame.id, error: { code: CALLBACK_CODES.has(error?.code) ? error.code : -32603, message: 'Devin ACP client request failed' } }); },
+    ).catch(() => this.#fail(rpcError('Devin ACP request response failed'))).finally(() => { signal.removeEventListener('abort', onAbort); this.incoming.delete(idKey); });
   }
 
   #fail(error) {
     if (this.gone || this.closing) return;
     this.gone = true;
+    this.connectionAbort.abort();
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear();
-    try { this.proc?.stdin?.destroy(); } catch {}
-    this.reaping = this.#terminateTree();
+    this.reaping = this.#terminateTree().finally(() => { try { this.proc?.stdin?.destroy(); } catch {} });
     try { this.onGone(error); } catch {}
   }
 
   async #terminateTree() {
     const child = this.proc;
-    if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+    if (!child?.pid) return;
+    // Each POSIX child owns a detached process group. The group can survive the
+    // root process, so reap it even when the CLI has already exited.
+    if (process.platform !== 'win32') {
+      try { process.kill(-child.pid, 'SIGKILL'); return; } catch {}
+    }
+    if (child.exitCode !== null || child.signalCode !== null) return;
     try { await killTree(child.pid); } catch {
       try { if (process.platform === 'win32') child.kill('SIGKILL'); else process.kill(-child.pid, 'SIGKILL'); } catch {}
     }
@@ -207,6 +233,7 @@ export class DevinAcp {
   async close() {
     if (this.closed) return this.closed;
     this.closing = true;
+    this.connectionAbort.abort();
     const error = rpcError('Devin ACP closed', -32800);
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear();
@@ -216,23 +243,23 @@ export class DevinAcp {
       if (this.reaping) {
         await this.reaping;
         if (child.pid) await waitForExit(child, 2000);
+        if (child.pid && child.exitCode === null && child.signalCode === null) throw rpcError('Devin ACP did not stop');
         this.gone = true;
         return;
       }
-      try { child.stdin?.end(); } catch {}
       if (child.pid == null) await new Promise((resolve) => {
         const done = () => { clearTimeout(timer); child.off('spawn', done); child.off('error', done); resolve(); };
         const timer = setTimeout(done, 1000);
         child.once('spawn', done);
         child.once('error', done);
       });
+      // Stop the tree while its root is still alive: ending stdin first can let
+      // the root exit before Windows taskkill can discover its descendants.
       if (child.exitCode === null && child.signalCode === null && child.pid) {
-        await waitForExit(child, 500);
-        if (child.exitCode === null && child.signalCode === null) {
-          this.reaping = this.#terminateTree();
-          await this.reaping;
-          await waitForExit(child, 2000);
-        }
+        this.reaping = this.#terminateTree();
+        await this.reaping;
+        await waitForExit(child, 2000);
+        if (child.exitCode === null && child.signalCode === null) throw rpcError('Devin ACP did not stop');
       }
       this.gone = true;
     })();

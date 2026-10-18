@@ -6,6 +6,88 @@ import { spawnSync } from 'node:child_process';
 import { t } from '../i18n.mjs';
 
 const privateRoots = new Set();
+const accountId = /^[a-z0-9][a-z0-9-]*$/i;
+const statSafe = p => fs.lstatSync(p, { throwIfNoEntry: false });
+const contains = (root, candidate) => {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
+};
+
+// The CLI's default credential store. An account must never reach into it, and
+// a link that would make the private area resolve to it fails closed.
+export function defaultOpencodeData() {
+  return path.resolve(process.env.AGENT_HOST_OPENCODE_DATA
+    || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode'));
+}
+
+// Resolve aliases even when the final directory has not been created yet.
+function canonicalPath(candidate) {
+  let ancestor = path.resolve(candidate);
+  const missing = [];
+  while (!statSafe(ancestor)) {
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) throw new Error('Cannot resolve OpenCode account directory');
+    missing.unshift(path.basename(ancestor));
+    ancestor = parent;
+  }
+  return path.resolve(fs.realpathSync(ancestor), ...missing);
+}
+
+function assertSeparateFromCli(dir) {
+  const cli = canonicalPath(defaultOpencodeData()), account = canonicalPath(dir);
+  if (contains(account, cli) || contains(cli, account)) throw new Error('OpenCode account directory overlaps the CLI data directory');
+}
+
+// Mirrors the Codex account-directory check: the account owns its own directory,
+// it must not overlap the CLI data directory, and no existing ancestor or entry
+// below it may be a link (a junction/symlink could redirect reads, chmods and
+// writes to the shared CLI credential store).
+function accountDir(account, { create = false, requireExists = true } = {}) {
+  if (!account || typeof account.id !== 'string' || !accountId.test(account.id) || typeof account.dir !== 'string' || !path.isAbsolute(account.dir))
+    throw new Error('Invalid OpenCode account directory');
+  const dir = path.resolve(account.dir);
+  if (path.basename(dir) !== account.id) throw new Error('Invalid OpenCode account directory');
+  assertSeparateFromCli(dir);
+  for (let p = dir; ; p = path.dirname(p)) {
+    const s = statSafe(p);
+    if (s && (!s.isDirectory() || s.isSymbolicLink())) throw new Error('Unsafe OpenCode account directory');
+    if (path.dirname(p) === p) break;
+  }
+  if (create) {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    return accountDir(account, { requireExists });
+  }
+  if (requireExists && !statSafe(dir)) throw new Error(t('accounts.backend.directoryRemoved', { agent: 'OpenCode' }));
+  return dir;
+}
+
+function assertRealDir(dir) {
+  const s = statSafe(dir);
+  if (s && (!s.isDirectory() || s.isSymbolicLink())) throw new Error('Unsafe OpenCode account directory');
+}
+
+// The account directory and every directory the CLI reads/writes below it must
+// be real directories, so no link can redirect the private area to the CLI store.
+function assertAccountTree(account, { requireExists = true } = {}) {
+  accountDir(account, { create: false, requireExists });
+  for (const dir of Object.values(accountPaths(account))) {
+    assertRealDir(dir);
+    assertRealDir(path.join(dir, 'opencode'));
+  }
+}
+
+function assertSafeAuth(file) {
+  const s = statSafe(file);
+  if (!s) return null;
+  if (!s.isFile() || s.isSymbolicLink() || s.nlink > 1) throw new Error('Unsafe OpenCode authentication file');
+  return s;
+}
+
+function readAuthText(file) {
+  if (!assertSafeAuth(file)) return null;
+  return fs.readFileSync(file, 'utf8');
+}
+
 let userSid;
 function privateRoot(dir) {
   if (process.platform !== 'win32' || privateRoots.has(dir)) return;
@@ -28,8 +110,7 @@ export function accountPaths(account) {
 }
 
 export function opencodeData(account = null) {
-  return account ? path.join(accountPaths(account).data, 'opencode')
-    : process.env.AGENT_HOST_OPENCODE_DATA || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode');
+  return account ? path.join(accountPaths(account).data, 'opencode') : defaultOpencodeData();
 }
 
 // Keep the CLI's required plaintext copy only in this account's private data dir.
@@ -44,27 +125,43 @@ export function validAuth(value) {
 }
 
 export function readAccountAuth(account = null) {
-  try { return validAuth(JSON.parse(fs.readFileSync(path.join(opencodeData(account), 'auth.json'), 'utf8'))); }
-  catch { return account ? validAuth(account.credential?.auth) : {}; }
+  const file = path.join(opencodeData(account), 'auth.json');
+  // The CLI's own store stays lenient: there is no saved seed to fall back to.
+  if (!account) { try { return validAuth(JSON.parse(fs.readFileSync(file, 'utf8'))); } catch { return {}; } }
+  assertAccountTree(account, { requireExists: false });
+  // Absent CLI copy: the encrypted snapshot is the only source, so use it.
+  if (!statSafe(file)) return validAuth(account.credential?.auth);
+  // Present CLI copy: never read it through a link or an unsafe directory tree,
+  // and never silently substitute the saved seed for an unreadable file.
+  assertSafeAuth(file);
+  let parsed;
+  try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { throw new Error(t('accounts.backend.credentialUnreadable', { agent: 'OpenCode' })); }
+  return validAuth(parsed);
 }
 
 export function prepareAccount(account) {
   if (!account) return {};
+  const dir = accountDir(account, { create: true });
+  fs.chmodSync(dir, 0o700);
+  privateRoot(dir);
   const dirs = accountPaths(account);
-  fs.mkdirSync(account.dir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(account.dir, 0o700);
-  privateRoot(account.dir);
-  for (const dir of [...Object.values(dirs), opencodeData(account)]) {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(dir, 0o700);
+  assertAccountTree(account);
+  for (const sub of [...Object.values(dirs), opencodeData(account)]) {
+    assertAccountTree(account);
+    assertRealDir(sub);
+    fs.mkdirSync(sub, { recursive: true, mode: 0o700 });
+    assertAccountTree(account);
+    fs.chmodSync(sub, 0o700);
   }
   const file = path.join(opencodeData(account), 'auth.json');
   const auth = validAuth(account.credential?.auth);
-  if (!fs.existsSync(file) && Object.keys(auth).length) {
-    try { fs.writeFileSync(file, JSON.stringify(auth), { encoding: 'utf8', mode: 0o600, flag: 'wx' }); }
-    catch (err) { if (err.code !== 'EEXIST') throw err; }
+  if (Object.keys(auth).length && !assertSafeAuth(file)) {
+    assertAccountTree(account);
+    fs.writeFileSync(file, JSON.stringify(auth), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
   }
-  if (fs.existsSync(file)) fs.chmodSync(file, 0o600);
+  assertAccountTree(account);
+  if (assertSafeAuth(file)) fs.chmodSync(file, 0o600);
   const credentials = Object.fromEntries(Object.keys(process.env)
     .filter(key => /(?:API_KEY|API_TOKEN|ACCESS_TOKEN|AUTH_TOKEN|SECRET_ACCESS_KEY|SESSION_TOKEN)$/i.test(key))
     .map(key => [key, '']));
@@ -104,15 +201,18 @@ export async function loginAccount({ account, emit, signal, argv, timeoutMs = 60
   if (abortSignal?.aborted) throw cancelled(abortSignal.reason);
   prepareAccount(account);
   const file = path.join(opencodeData(account), 'auth.json');
-  const before = (() => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } })();
+  // readAuthText refuses to follow a link to the CLI store; a swap mid-login
+  // therefore fails closed instead of reading the shared credentials.
+  assertAccountTree(account);
+  const before = readAuthText(file) ?? '';
   emit?.({ type: 'auth', phase: 'url', url: accountLoginCommand(account, argv), message: t('opencode.auth.accountRunCommand') });
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     try { await delay(pollMs, undefined, { signal: abortSignal }); }
     catch (err) { if (err.name === 'AbortError') throw cancelled(err); throw err; }
-    let text;
-    try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
-    if (text === before) continue;
+    assertAccountTree(account);
+    const text = readAuthText(file);
+    if (text == null || text === before) continue;
     let auth;
     try { auth = validAuth(JSON.parse(text)); } catch { continue; }
     if (!Object.keys(auth).length) continue;
