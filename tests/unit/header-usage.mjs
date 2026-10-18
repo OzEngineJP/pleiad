@@ -1,10 +1,26 @@
 import assert from 'node:assert/strict';
+import { lang, setLanguage } from '../../web/i18n.mjs';
+import { currentLocale, setLocale } from '../../core/i18n.mjs';
 import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText } from '../../web/header-usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'header-usage';
 export const title = 'ヘッダーの使用量: 枠の選び方・アカウント・上限・グループのまとめ';
 export default async function(t) {
+  // These assertions require Japanese, regardless of the host or preceding suite.
+  const previousLanguage = lang;
+  const previousLocale = currentLocale();
+  try {
+    setLocale("ja");
+    await setLanguage("ja");
+    await japaneseCases(t);
+  } finally {
+    setLocale(previousLocale);
+    await setLanguage(previousLanguage);
+  }
+}
+
+async function japaneseCases(t) {
   const now = Date.parse('2026-09-25T12:00:00Z');
   const at = ms => new Date(now + ms).toISOString();
   const win = (label, used, resetsAt, extra = {}) => ({ label, usedPercent: used, remainingPercent: used == null ? null : Math.max(0, 100 - used), resetsAt, ...extra });

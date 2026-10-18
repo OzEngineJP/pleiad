@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { lang, setLanguage } from '../../web/i18n.mjs';
 import { N } from '../lib/dom-stub.mjs';
 import { carryQuota, createUsageSource, setupUsage } from '../../web/usage.mjs';
 import { chipState, quotaOf } from '../../web/header-usage.mjs';
@@ -6,6 +7,17 @@ import { chipState, quotaOf } from '../../web/header-usage.mjs';
 export const name = 'usage-carry';
 export const title = '使用量: 取れなかった行は前回の枠を引き継ぐ・設定の「使用量」は取り直しの間も前の表示を残す';
 export default async function(t) {
+  // These assertions require Japanese, regardless of the host or preceding suite.
+  const previousLanguage = lang;
+  try {
+    await setLanguage("ja");
+    await japaneseCases(t);
+  } finally {
+    await setLanguage(previousLanguage);
+  }
+}
+
+async function japaneseCases(t) {
   const future = new Date(Date.now() + 3600_000).toISOString();
   const win = (label, used) => ({ label, usedPercent: used, remainingPercent: 100 - used, resetsAt: future });
   const week = win('週次（7日間）', 48), five = win('5時間', 20);
