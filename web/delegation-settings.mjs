@@ -18,6 +18,7 @@ import { kindText, difficultyText, tierText, tierShortText, judgeText, skipText,
 import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './api-key-ui.mjs';
 import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delegation-effort.mjs';
 import { effortSelect, effortFixed } from './effort-select.mjs';
+import { candidateOrder, moveCandidate } from './delegation-order.mjs';
 
 const SERVICES = ['openrouter'];
 /** キーのサービスごとの、そのキーを使う判定器と割り当て（API キーの uses。名前は前の版のまま judge:jev） */
@@ -71,7 +72,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const root = $('delegationPanel');
   let data = null, committed = null, message = '', registering = '', keyList = null, confirmingReset = false, refreshing = false;
   const pending = [];
-  let saving = false, refreshSerial = 0;
+  let saving = false, refreshSerial = 0, orderFocus = '', advancedDirty = false;
   // 判定器の面で押した部品（`${kind}:${judge}` か 'escalate'）。描き直したときにフォーカスを戻す
   let judgeFocus = '';
   const names = { backend: id => labelOf(id), model: (backend, model) => modelName(backend, model) || model };
@@ -99,7 +100,23 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const advancedBody = el('div');
   advanced.append(summary, advancedBody);
   const reset = el('div', 'rt-reset');
-  root.append(head, stateLine, effective, judges, keys, advanced, reset);
+  const orderStatus = el('div', 'visually-hidden');
+  orderStatus.setAttribute('role', 'status'); orderStatus.setAttribute('aria-live', 'polite'); orderStatus.setAttribute('aria-atomic', 'true');
+  const announceOrder = text => { orderStatus.textContent = text; };
+  root.append(head, stateLine, effective, judges, keys, advanced, reset, orderStatus);
+  const ordering = candidateOrder({ root: advancedBody, current: tier => data?.settings.tiers[tier] ?? [], showMenu, announce: announceOrder,
+    move: changeOrder, settled: focus => {
+      if (focus) orderFocus = focus;
+      if (focus || advancedDirty) paintAdvanced();
+    } });
+  function changeOrder(tier, candidate, to) {
+    const next = moveCandidate(data.settings.tiers[tier], candidate, to);
+    if (!next) return;
+    orderFocus = `order|${tier}|${candidate}`;
+    saveNested('tiers', { ...data.settings.tiers, [tier]: next });
+    const { backend, model } = splitCandidate(candidate);
+    announceOrder(t('routing.settings.orderMoved', { name: names.model(backend, model), position: to + 1 }));
+  }
 
   async function refresh(args = {}) {
     const serial = ++refreshSerial;
@@ -301,9 +318,12 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
 
   // ---- 詳しい設定
   function paintAdvanced() {
+    if (ordering.busy) { advancedDirty = true; return; }
+    advancedDirty = false;
     const s = data.settings;
     // 強さの選択を押した後の描き直しで、押した部品へフォーカスを戻す
-    const focused = advancedBody.contains(document.activeElement) ? document.activeElement.dataset?.fk ?? '' : '';
+    const focused = orderFocus || (advancedBody.contains(document.activeElement) ? document.activeElement.dataset?.fk ?? '' : '');
+    orderFocus = '';
     const out = [];
     // 段ごとの候補
     const tiersHead = el('div', 'rt-sub-head');
@@ -367,6 +387,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   function tierBlock(tier) {
     const list = data.settings.tiers[tier] ?? [];
     const block = el('div', 'rt-tier');
+    block.dataset.tier = tier;
     const tierHead = el('div', 'rt-tier-head');
     tierHead.append(el('span', 'rt-tier-name', tierText(tier)), tierEffortSelect(tier, list));
     block.append(tierHead);
@@ -384,23 +405,15 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       const usage = candidateUsage(candidate);
       info.append(title, ...usageLines(usage.lines));
       const actions = el('div', 'rt-cand-actions');
-      const move = (to, label, d) => {
-        const b = button('', () => { const next = [...list]; [next[i], next[to]] = [next[to], next[i]]; saveNested('tiers', { ...data.settings.tiers, [tier]: next }); }, 'btn btn-icon rt-move');
-        b.setAttribute('aria-label', label); b.title = label;
-        b.innerHTML = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
-        b.disabled = to < 0 || to >= list.length;
-        return b;
-      };
       const remove = button('', () => saveNested('tiers', { ...data.settings.tiers, [tier]: list.filter(c => c !== candidate) }), 'btn btn-icon rt-move');
       remove.setAttribute('aria-label', t('routing.settings.candidateRemove', { name }));
       remove.title = remove.getAttribute('aria-label');
       remove.innerHTML = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
       remove.disabled = false;
-      actions.append(move(i - 1, t('routing.settings.candidateUp', { name }), 'M6 15l6-6 6 6'),
-        move(i + 1, t('routing.settings.candidateDown', { name }), 'M6 9l6 6 6-6'), remove);
+      actions.append(remove);
       const effort = el('div', 'rt-cand-effort');
       effort.append(candidateEffortSelect(tier, candidate, name));
-      row.append(info, effort, actions);
+      row.append(ordering.handle(tier, candidate, name), info, effort, actions);
       rows.append(row);
     });
     if (!list.length) block.append(el('p', 'mp-note', t('routing.settings.empty')));
