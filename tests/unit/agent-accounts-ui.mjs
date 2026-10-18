@@ -11,6 +11,9 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 export default async function test(t) {
+  const i18n = await import('../../web/i18n.mjs');
+  const originalLanguage = i18n.lang;
+  await i18n.setLanguage('en');
   const globals = { document: globalThis.document, window: globalThis.window };
   const nodes = new Map(), popups = [];
   class Node extends N {
@@ -34,7 +37,7 @@ export default async function test(t) {
   globalThis.window = { open: () => { const popup = { location: { href: '' }, closed: 0, close() { this.closed++; } }; popups.push(popup); return popup; } };
   const { setupAgentAccounts, createAccountRequestCache, composerAccount } = await import('../../web/agent-accounts.mjs');
   const { paintAuthFailure } = await import('../../web/auth-expired.mjs');
-  const { t: tr } = await import('../../web/i18n.mjs');
+  const { t: tr } = i18n;
   const $ = id => nodes.get(id);
   const account = (id, name = id) => ({ id, name, hasCredential: false });
   const calls = [];
@@ -280,6 +283,7 @@ export default async function test(t) {
       check('account auth-expired action opens account settings without pretending to start a login or resend');
     }
   } finally {
+    await i18n.setLanguage(originalLanguage);
     if (globals.document === undefined) delete globalThis.document; else globalThis.document = globals.document;
     if (globals.window === undefined) delete globalThis.window; else globalThis.window = globals.window;
   }
