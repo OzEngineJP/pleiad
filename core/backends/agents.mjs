@@ -19,6 +19,8 @@ import path from 'node:path';
  *             ネイティブの Hooks を持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）と、渡さないエージェントは null
  * contextSources  エージェントが自分で読む指示・Skills・MCP の読み込み元（core/context-settings.mjs の SOURCES）。
  *             エージェント任せの会話の「指示の量」の見積もりと、エージェントの設定に登録された MCP の一覧に使う。null は読み方を知らない
+ * shellDefault  エージェントのシェルのツールの既定（設定 shellTool。ADR 0224 §3）。'native' はエージェントのもの、'ply' は Pleiad の ply_shell だけ
+ *             （能力の印 nativeShellOff が無いエージェントは 'native' のまま）
  * shellTools  シェルのコマンドを走らせるネイティブのツールの名前（tool.start の name。大文字と小文字を区別する）。長いコマンドの知らせ・
  *             声の待ちの案内が、この一覧で見分ける（core/shell-tools.mjs）。バックエンドの toolHints の shape: 'shell' と同じ名前を書く
  *             （tests/unit/backend-contract.mjs が突き合わせる）。名前で見分けられないエージェントは []（tool.start に shell: true を付ける）
@@ -33,6 +35,7 @@ export const AGENTS = {
     contextSources: ['claude'],
     hooksAs: null,
     shellTools: ['Bash', 'PowerShell'],
+    shellDefault: 'native',
   },
   codex: {
     module: './codex.mjs',
@@ -43,6 +46,7 @@ export const AGENTS = {
     contextSources: ['codex'],
     hooksAs: null,
     shellTools: ['commandExecution'],
+    shellDefault: 'native',
   },
   antigravity: {
     module: './antigravity.mjs',
@@ -58,6 +62,7 @@ export const AGENTS = {
     contextSources: null,
     hooksAs: null,
     shellTools: ['run_command'],
+    shellDefault: 'native',
   },
   opencode: {
     module: './opencode.mjs',
@@ -74,7 +79,9 @@ export const AGENTS = {
     contextSources: ['common', 'opencode'],
     // OpenCode のフックは JS のプラグインで、コマンドの Hooks の形が無い。Pleiad のプラグインと中継の口で、Claude Code の Hooks と同じ形で渡す（opencode-hooks.mjs）
     hooksAs: 'claude',
+    // bash が裏で起こしたサーバーを待って戻らなくなる（v1.19.3。2026-10-18）ので、既定で ply_shell だけにする
     shellTools: ['bash'],
+    shellDefault: 'ply',
   },
   devin: {
     module: './devin.mjs',
@@ -90,6 +97,7 @@ export const AGENTS = {
     hooksAs: null,
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
     shellTools: [],
+    shellDefault: 'native',
   },
   fake: {
     module: './fake.mjs',
@@ -100,10 +108,11 @@ export const AGENTS = {
     contextSources: null,
     hooksAs: null,
     shellTools: ['fake_shell'],
+    shellDefault: 'native',
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources', 'hooksAs', 'shellTools']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources', 'hooksAs', 'shellTools', 'shellDefault']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));

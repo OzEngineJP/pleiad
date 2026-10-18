@@ -102,6 +102,17 @@ export const settings = [
   defineSetting({ key: 'effort', summary: S('effort'), risk: 'write', riskReason: `The default thinking depth for new conversations. ${PICK_ABOUT}`,
     schema: z.string(), default: '', read: fromPrefs('effort'),
     ...plainPref('effort', (ctx, v) => { if (typeof v !== 'string' || !/^[a-z]{0,20}$/.test(v)) throw invalid(ctx, `effort: ${String(v).slice(0, 40)}`); return v; }) }),
+  // エージェントのシェルのツール（ADR 0224 §3）。エージェントごとに native（エージェントのもの）か ply（Pleiad の ply_shell だけ）。渡した分を重ねる。
+  // null で全部を既定（エージェントの記述の shellDefault）に戻す。ply_shell も会話の承認モードで聞くので、どちらへ替えても関所は緩まない
+  defineSetting({ key: 'shellTool', summary: S('shellTool'), risk: 'write', riskReason: `Which shell tool each agent uses: its own, or Pleiad's ply_shell, which asks for approval under the same approval modes. ${PICK_ABOUT}`,
+    prefKeys: ['shellTool'], schema: z.record(z.string(), z.enum(['native', 'ply'])), default: {}, read: async (ctx) => (await prefs(ctx)).shellTool ?? {},
+    normalize: async (ctx, v) => {
+      if (v === null) return { after: null };
+      const rows = v && typeof v === 'object' && !Array.isArray(v) ? Object.entries(v) : null;
+      if (!rows || rows.some(([id, choice]) => !/^[a-z][a-z0-9-]{0,30}$/.test(id) || !['native', 'ply'].includes(choice))) throw invalid(ctx, `shellTool: ${JSON.stringify(v)?.slice(0, 80)}`);
+      return { after: { ...((await prefs(ctx)).shellTool ?? {}), ...v } };
+    },
+    write: (ctx, v) => ctx.writes.pref('shellTool', v) }),
   // 入力欄（設定 › 入力。docs/design-system.md「入力欄の呼び出しと候補」）。どちらも既定はオン
   defineSetting({ key: 'composer.historyRecall', summary: S('composer.historyRecall'), risk: 'write', riskReason: `Whether Up in the message box recalls sent messages. ${WRITE_ABOUT}`,
     prefKeys: ['composerHistoryRecall'], schema: z.boolean(), default: true, read: fromPrefs('composerHistoryRecall'),

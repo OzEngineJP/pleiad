@@ -19,7 +19,7 @@ export const PLUGIN_SOURCE = `// Written by Pleiad (core/backends/opencode-plugi
 const ENV_URL = process.env.PLEIAD_OPENCODE_ENV_URL ?? '';
 const HOOK_URL = process.env.PLEIAD_OPENCODE_HOOK_URL ?? '';
 const SECRET = process.env.PLEIAD_OPENCODE_SECRET ?? '';
-const PLY_TOOL = /^ply_(agents|control|computer|browser|context)_/;
+const PLY_TOOL = /^ply_(agents|control|computer|browser|context|shell)_/;
 
 // Pleiad may be restarting for an update (a second or two): retry a refused connection for a while
 async function call(url, init, waitMs) {

@@ -35,6 +35,7 @@ import { readTurnRejections, rolloutPathOf, rolloutSize } from "./codex-rejectio
 import { readThread } from "./codex-history.mjs";
 import { BROWSER_SERVER } from "../browser-bridge.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
+import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
 import { stripInjectedContext } from "../system-messages.mjs";
@@ -1335,6 +1336,9 @@ const backend = {
     compatEndpoints: true,
     // 入力欄の `!`: app-server の thread/shellCommand で走らせる（下の shell。ADR 0054）
     shell: 'native',
+    // ply_shell を受け取る。Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0224）
+    plyShell: true,
+    nativeShellOff: false,
     forkMessage: false,         // thread/fork は発言の途中では切れない（Pleiad が写す）
     approvals: 'interactive',
     // MCP のツールの呼び出しは Codex が承認を聞かない。確認なしの承認モードのほかは Pleiad が聞く（server.mjs の mcpApprovalByHost）
@@ -1536,7 +1540,7 @@ const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
     // 会話のシェルへ渡す秘密情報と変数（ADR 0217）。空なら渡さない
     const secretsEnv = secretsRuntime?.env && Object.keys(secretsRuntime.env).length ? secretsRuntime.env : null;
     // adopt は付け直し（{ source, card }。adoptTurn だけが渡す。無停止の更新 段階 3）。保持役の子の app-server が持つ走っているターンを、記録の再生で引き取る
@@ -1847,6 +1851,8 @@ const backend = {
           ...(browserRuntime ? { [`mcp_servers.${BROWSER_SERVER}`]: { url: browserRuntime.url, http_headers: browserRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: COMPUTER_CALL_TIMEOUT_SEC } } : {}),
           // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。承認は registry.invoke が会話の承認モードで決めるので、ツールごとには聞かない
           ...(controlRuntime ? { [`mcp_servers.${CONTROL_SERVER}`]: { url: controlRuntime.url, http_headers: controlRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
+          // Pleiad のシェルのツール（ADR 0224）。承認は橋が会話の承認モードで決める。run は最長 10 分待つ
+          ...(shellRuntime ? { [`mcp_servers.${SHELL_SERVER}`]: { url: shellRuntime.url, http_headers: shellRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: Math.ceil(RUN_TIMEOUT_MAX_MS / 1000) + 60 } } : {}),
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),
           // コンピューターの操作（ply_computer）と、同梱の computer use を切る上書き。渡さない会話には何も足さない（利用者の ~/.codex に任せる）
@@ -1887,6 +1893,7 @@ const backend = {
       const instructionsKey = (common.developerInstructions ?? '') + (computerRuntime ? `\0${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : '')
         + (browserRuntime ? `\0${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : '')
         + (controlRuntime ? `\0${controlRuntime.url} ${controlRuntime.headers?.Authorization ?? ''}` : '')
+        + (shellRuntime ? `\0${shellRuntime.url} ${shellRuntime.headers?.Authorization ?? ''}` : '')
         // 秘密情報と変数が変わったスレッドも読み直す（resume は shell_environment_policy の変更も無視する）。値は指紋にするだけで残さない
         + (secretsEnv ? `\0${JSON.stringify(secretsEnv)}` : '');
       if (adopt) {

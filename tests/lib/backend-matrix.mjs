@@ -33,6 +33,8 @@ export const ABOUT = {
   plyAgents: '委譲の橋（ply_agents）と Pleiad の指示を受け取る',
   plyContext: 'Pleiad のコンテキスト（ply_context）の受け取り方（turn / conversation）',
   computerUse: 'コンピューターの操作（ply_computer）。画像の渡し方',
+  plyShell: 'Pleiad のシェルのツール（ply_shell）を受け取る',
+  nativeShellOff: 'エージェントのシェルのツールを会話ごとに切れる（ply_shell だけにする）',
   shell: '入力欄の `!`（host: Pleiad が走らせる / native: エージェントが走らせる）',
   effortInModelId: '強さをモデルの id で選ぶ',
   instructionsAtStart: '指示は会話の始めにしか効かない（人格を直したら次のターンで渡し直す）',

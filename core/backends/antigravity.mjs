@@ -290,6 +290,9 @@ export const backend = {
     promptSuggestions: false,   // ターンの後に suggestNext で作る
     plyAgents: false,           // 委譲の橋は渡さない。Pleiad の指示は addedInstructions で渡す
     shell: false,
+    // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0224）
+    plyShell: false,
+    nativeShellOff: false,
     // 会話を続けるときに人格（エージェント定義）を渡し直しても、最初の指示のまま動く（実機の確認。2026-10-03。core/bots/dispatch.mjs）
     instructionsAtStart: true,
     // 失敗の理由を会話の控えに残し、ターンの後に agy のログを書き出す（server.mjs の recordBackendFailure）

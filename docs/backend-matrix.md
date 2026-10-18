@@ -30,6 +30,8 @@
 | Pleiad のコンテキスト（ply_context）の受け取り方（turn / conversation）（`plyContext`） | turn | turn | conversation | turn | — |
 | コンピューターの操作（ply_computer）。画像の渡し方（`computerUse`） | inline | inline | path（150 秒ごと） | inline | — |
 | 入力欄の `!`（host: Pleiad が走らせる / native: エージェントが走らせる）（`shell`） | host | native | — | host | — |
+| Pleiad のシェルのツール（ply_shell）を受け取る（`plyShell`） | ✓ | ✓ | — | ✓ | — |
+| エージェントのシェルのツールを会話ごとに切れる（ply_shell だけにする）（`nativeShellOff`） | ✓ | — | — | ✓ | — |
 | 強さをモデルの id で選ぶ（`effortInModelId`） | — | — | ✓ | — | ✓ |
 | 指示は会話の始めにしか効かない（人格を直したら次のターンで渡し直す）（`instructionsAtStart`） | — | — | ✓ | — | — |
 | 失敗の理由を会話の控えに残す（`failureDiagnostics`） | — | — | ✓ | — | ✓ |

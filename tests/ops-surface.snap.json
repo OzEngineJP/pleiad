@@ -4963,6 +4963,15 @@
       ]
     },
     {
+      "key": "shellTool",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "shellTool"
+      ]
+    },
+    {
       "key": "voice",
       "risk": "write",
       "riskOf": true,
@@ -5161,6 +5170,13 @@
       "agent-bound-ask": "guarded=ask",
       "agent-bound-never-full": "guarded=allow",
       "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "shellTool": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
     "voice": {
       "human": "write=allow guarded=allow",

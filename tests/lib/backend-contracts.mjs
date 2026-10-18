@@ -46,6 +46,8 @@ export const CAPABILITY_CONTRACTS = {
   plyAgents: ['agent-tasks'],
   plyContext: ['server-agy-context', 'server-opencode-context', 'context-owner-capability'],
   computerUse: ['computer-bridge'],
+  plyShell: ['shell-bridge', 'shell-delivery'],
+  nativeShellOff: ['shell-delivery'],
   shell: ['server-shell'],
   effortInModelId: ['effort', 'devin-models', 'server-devin'],
   instructionsAtStart: ['bot-dispatch'],

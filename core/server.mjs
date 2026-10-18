@@ -71,7 +71,7 @@ import { limitHolds, limitResetsAt } from './limit-resume.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
-import { idleCompactionKey } from './backends/agents.mjs';
+import { agentOf, idleCompactionKey } from './backends/agents.mjs';
 import { createContextBases } from './context-bases.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { slimRow, createListDeltas } from './session-list-delta.mjs';
@@ -373,6 +373,7 @@ import { installation, cliCommand } from "./cli-installation.mjs";
 import { createClaudeLogin } from './claude-login.mjs';
 import { createShellRuns, shellMode } from './shell-runs.mjs';
 import { createSessionCommands } from './session-commands.mjs';
+import { createShellBridge, SHELL_MCP_PATH } from './shell-bridge.mjs';
 import { createShellHolder } from './shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
@@ -1541,7 +1542,8 @@ function attachAgentsPort(entry, token) {
 /** 札へ入れる、会話の口のトークン（開いていない口は null）。restoreConnection に渡す形 */
 function connectionTokens(entry) {
   const bearer = (port) => /^Bearer ([a-f0-9]{64})$/.exec(port?.headers?.Authorization ?? '')?.[1] ?? null;
-  return { agents: bearer(entry.runtime), computer: bearer(entry.computer), browser: bearer(entry.browser), control: entry.control?.token ?? null, context: entry.contextToken ?? null };
+  return { agents: bearer(entry.runtime), computer: bearer(entry.computer), browser: bearer(entry.browser), control: entry.control?.token ?? null, context: entry.contextToken ?? null,
+    shell: entry.shell?.token ?? null };
 }
 
 /**
@@ -1562,6 +1564,7 @@ function restoreConnection(entry) {
     restored.contextToken = tokens.context;
     if (tokens.browser) restored.browser = browserBridge.open({ origin: localOrigin(), locale, owner: browserOwner(restored), token: tokens.browser });
     if (tokens.control) restored.control = openControlPort(restored, tokens.control);
+    if (tokens.shell) restored.shell = openShellPort(restored, tokens.shell);
     if (tokens.computer) {
       const backend = getBackend(computerBackend);
       if (!computerBridge || !backend) throw new Error('Computer use is not available');
@@ -1572,6 +1575,7 @@ function restoreConnection(entry) {
     try { restored.close?.(); } catch {}
     try { restored.browser?.close(); } catch {}
     try { restored.control?.close(); } catch {}
+    try { restored.shell?.close(); } catch {}
     try { restored.computer?.close(); } catch {}
     throw e;
   }
@@ -1613,6 +1617,9 @@ function releaseAgentConnection(key) {
   try { entry.computer?.close(); } catch {}
   try { entry.browser?.close(); } catch {}
   try { entry.control?.close(); } catch {}
+  try { entry.shell?.close(); } catch {}
+  // 会話を消したら、その会話の ply_shell のジョブも止める（ADR 0224）
+  void shellBridge.stopSession(key);
   // 会話を消したら、その会話で撮ったスクリーンショットも消す（ADR 0075）
   computerShots.removeSession(key).catch(() => {});
 }
@@ -1709,6 +1716,88 @@ function controlRuntimeFor(turn) {
   entry.control ??= openControlPort(entry);
   return { url: entry.control.url, headers: entry.control.headers, instructions: controlInstructions(entry.locale),
     env: { PLEIAD_CONTROL_URL: localOrigin(), PLEIAD_CONTROL_TOKEN: entry.control.token } };
+}
+
+// ply_shell: Pleiad がホストでシェルのコマンドを走らせる口（core/shell-bridge.mjs、ADR 0224 §1）。承認は会話の承認モードで Pleiad が決める。
+// ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブが終わったら会話へ知らせる（エージェントが自分で止めたものを除く）
+const shellBridge = createShellBridge({
+  askPermission: request => askPermission(request),
+  onJobStart: (sessionId, job) => {
+    sessionCommands?.track(sessionId, { id: job.jobId, command: job.command, cwd: job.cwd, startedAt: job.startedAt });
+    shellJobsChanged(sessionId);
+  },
+  onJobEnd: (sessionId, job, tail) => {
+    sessionCommands?.untrack(sessionId, job.jobId);
+    shellJobsChanged(sessionId);
+    if (job.kind === 'start' && !['agent', 'session', 'turn'].includes(job.stoppedBy)) void deliverJobEnd(sessionId, job, tail);
+  },
+});
+process.on('exit', () => shellBridge.stopAll());
+/** ply_shell の口を開く。token があれば、その値で開き直す（restoreConnection） */
+function openShellPort(entry, token) {
+  return shellBridge.open({ origin: localOrigin(), locale: entry.locale, token,
+    owner: async () => {
+      const live = runtime.turns.get(entry.key);
+      if (!live) throw new Error(agentT(entry.locale, 'delegation.notRunning'));
+      await live.setup;
+      const sessionId = live.info.sessionId;
+      if (!sessionId) throw new Error(agentT(entry.locale, 'delegation.idPending'));
+      return { sessionId, cwd: live.info.cwd, mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, env: entry.shellEnv ?? {} };
+    } });
+}
+/** エージェントのシェルのツール（設定 shellTool。ADR 0224 §3）: 'native'（エージェントのもの）か 'ply'（ply_shell だけ） */
+async function shellToolChoice(backend) {
+  const chosen = (await store.getPrefs()).shellTool?.[backend.id];
+  return chosen === 'ply' || chosen === 'native' ? chosen : (agentOf(backend.id)?.shellDefault ?? 'native');
+}
+/**
+ * このターンに渡す ply_shell（url・headers・nativeOff・instructions）。受け取れないエージェントなら null。
+ * nativeOff: エージェントのシェルのツールを切る（切れるエージェントで、設定が 'ply' のとき）。切るときだけ、使い方の指示を足す
+ */
+async function shellRuntimeFor(turn) {
+  if (!turn.backend.capabilities?.plyShell) return null;
+  const entry = conversationConnection(turn);
+  entry.shell ??= openShellPort(entry);
+  const nativeOff = Boolean(turn.backend.capabilities?.nativeShellOff) && (await shellToolChoice(turn.backend)) === 'ply';
+  return { url: entry.shell.url, headers: entry.shell.headers, nativeOff, instructions: nativeOff ? agentT(entry.locale, 'shell.instructions') : null };
+}
+/** ply_shell をこの会話に渡しているか（知らせの文に使い方を添えるか） */
+function plyShellOffered(sessionId) {
+  return [...agentConnections.values()].some(e => e.sessionId === sessionId && e.shell);
+}
+/** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない） */
+const shellBackground = sessionId => shellBridge.jobs(sessionId).filter(j => j.running && j.kind === 'start')
+  .map(j => ({ id: j.jobId, kind: 'shell', label: String(j.command).slice(0, 200), source: 'ply_shell' }));
+/** 裏の一覧の止める・読む口（findBackgroundTask が返す backend の形） */
+const SHELL_JOBS_HOST = {
+  id: 'ply_shell',
+  stopBackground: async (sessionId, taskId) => ({ stopped: await shellBridge.stop(sessionId, taskId) }),
+  getBackgroundTask: async (sessionId, taskId) => {
+    const job = shellBridge.job(sessionId, taskId);
+    return job ? { id: job.jobId, kind: 'shell', label: job.command, status: job.running ? 'running' : 'completed', output: job.output } : null;
+  },
+};
+function shellJobsChanged(sessionId) {
+  syncRunningPoll();
+  broadcastRunning();
+  completionNotices.changed(sessionId);
+}
+/** start のジョブの終わりを会話へ知らせる。走っているターンへは途中送信、空いていれば新しいターン。渡せなければ少し待ってやり直す（30 分まで） */
+async function deliverJobEnd(sessionId, job, tail) {
+  const lng = await ensureAgentLocale(sessionId).catch(() => currentLocale());
+  const status = job.timedOut ? agentT(lng, 'shell.statusTimedOut') : job.stopped ? agentT(lng, 'shell.statusStopped') : agentT(lng, 'shell.statusExit', { code: job.exitCode ?? '?' });
+  const prompt = agentT(lng, 'shell.jobDone', { jobId: job.jobId, command: redactForPeer(job.command, 200), status, tail: redactForPeer(String(tail ?? '').slice(-2000), 2000) || agentT(lng, 'shell.noOutput') });
+  const until = Date.now() + 30 * 60_000;
+  while (Date.now() < until) {
+    const live = await noticeTarget(sessionId).catch(() => null);
+    if (live && (await steerNotice(live, sessionId, prompt, [])) === 'ok') return;
+    if (!live && !(await noticeBlocked(sessionId).catch(() => true))) {
+      await recordTaskNotice(sessionId, prompt).catch(() => {});
+      await runTurn({ sessionId, prompt }, () => {}, { internal: true }).catch(() => {});
+      return;
+    }
+    await new Promise(r => setTimeout(r, 15_000).unref?.());
+  }
 }
 
 /**
@@ -1857,7 +1946,7 @@ const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 // critical: 引き継ぎの前に終わるのを待つ短い処理（途中送信の受理待ち）。inflight: 処理中の HTTP の MCP・in-process の host MCP・hooks のコールバック
 // （待つのは上限つきで、待ち切れなくても進む。その呼び出しは 1 回失敗し、モデルが読んでやり直す）
 const handover = { hold: false, critical: new Set(), inflight: new Set(), droppedCalls: 0 };
-const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
+const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, SHELL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
 const trackIn = (set, promise) => {
   const tracked = Promise.resolve(promise);
   set.add(tracked);
@@ -1875,6 +1964,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === COMPUTER_MCP_PATH && computerBridge) return trackIn(handover.inflight, computerBridge.handle(req, res));
   if (url.pathname === BROWSER_MCP_PATH) return trackIn(handover.inflight, browserBridge.handle(req, res));
   if (url.pathname === CONTROL_MCP_PATH) return trackIn(handover.inflight, controlBridge.handle(req, res));
+  if (url.pathname === SHELL_MCP_PATH) return trackIn(handover.inflight, shellBridge.handle(req, res));
   // OpenCode の共有のサーバーから来る Pleiad のツールの呼び出しと、会話のシェルの環境変数（core/opencode-relay.mjs。合言葉は起動ごと）
   if (url.pathname.startsWith(`${OPENCODE_RELAY_PATH}/`)) return trackIn(handover.inflight, opencodeRelay.handle(req, res, url));
   // CLI の口。画面のトークンは受けず、CLI 用トークンか会話の接続のトークンだけを受ける（core/ops/surfaces/http.mjs）
@@ -2571,7 +2661,7 @@ const prReader = createPrReader();
 // worktree（ADR 0089）。台帳・作成・片付けと、ぶつかり・委譲の判定。使っているもの（走っているターン・シェル・委譲の子）を見てから消す
 const worktreeHost = createWorktreeHost({
   dataDir: store.dataDir, store,
-  turns: () => runtime.turns, shellCwds: () => shellRuns.cwds(), tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
+  turns: () => runtime.turns, shellCwds: () => [...shellRuns.cwds(), ...shellBridge.cwds()], tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
   emit: event => emitGlobal(event), reason: (key, params) => savedReason(key, params),
   log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
   // AGENT_HOST_WORKTREES=off で worktree を作らない。テストのサーバーが開発中のリポジトリ（<リポジトリ>.pleiad）に残さないため（tests/lib/server.mjs）
@@ -3388,6 +3478,7 @@ async function rewindConversation({ sessionId, beforeMessageId, stopRunning = fa
     // ターンの外に残っている裏の作業（Codex の端末など）も止める
     const outside = runtime.background.get(sessionId);
     for (const x of outside?.tasks ?? []) await getBackend(outside.backend)?.stopBackground?.(sessionId, x.id).catch(() => {});
+    await shellBridge.stopSession(sessionId).catch(() => {});
     // 送信待ちは、どれも切り口より後に送ったもの（送り終えたものは履歴にいる）。巻き戻した先では意味を失うので取り消す
     for (const m of await outbox.list(sessionId)) {
       if (!['sent', 'cancelled'].includes(m.status)) await outbox.action(sessionId, m.id, 'cancel').catch(() => {});
@@ -3757,7 +3848,7 @@ async function refuseDelete(sessionId) {
   // bot の会話は Channels のスレッド・DM・ルーティンが持つ（一覧にも出ない）。隠れた会話は host.deleteHidden が片付ける（ADR 0127）
   if (meta.bot) throw deleteRefusal(t('session.deleteBot'));
   if (sessionBusy(sessionId) || [...runtime.waiting.values()].some(w => w.payload?.sessionId === sessionId && !(w.outlivesTurn && w.origin === sessionId && !blocksTurn(w)))
-      || runtime.background.get(sessionId)?.tasks?.length || shellRuns.runningIn(sessionId)
+      || runtime.background.get(sessionId)?.tasks?.length || shellRuns.runningIn(sessionId) || shellBridge.running(sessionId)
       || (agentTasks?.running() ?? []).some(r => r.sessionId === sessionId)) throw deleteRefusal(t('session.deleteBusy'));
   if ((agentTasks?.running() ?? []).some(r => r.parentSessionId === sessionId)) throw deleteRefusal(t('session.deleteChildren'));
   if ((await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status))
@@ -4608,7 +4699,7 @@ const opsSessionWork = {
   },
   // 会話の裏の処理の一覧（ターンの外で動いているものと、走っているターンのもの）
   backgroundTasks: (sessionId) => {
-    const rows = [...(runtime.background.get(sessionId)?.tasks ?? []), ...(runtime.turns.get(sessionId)?.info.background ?? [])];
+    const rows = [...(runtime.background.get(sessionId)?.tasks ?? []), ...(runtime.turns.get(sessionId)?.info.background ?? []), ...shellBackground(sessionId)];
     return rows.filter((x, i) => x?.id && rows.findIndex((y) => y?.id === x.id) === i);
   },
   // 詳細の読み出しは停止から独立した操作
@@ -5101,6 +5192,11 @@ async function runningWork() {
   const background = [...runtime.background.values()].map((b) => ({
     kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })), ...(getBackend(b.backend)?.holdsBackground?.() ? { held: true } : {}),
   }));
+  // ply_shell の裏のジョブ（ADR 0224）。Pleiad のサーバーの子なので、引き継ぎでは止まる（held を付けない）
+  for (const sessionId of shellBridge.sessionsWithJobs()) {
+    const tasks = shellBackground(sessionId);
+    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString() });
+  }
 
   const dueRows = schedule.list();
   // 委譲のタスクは、終わっていないものと完了通知が届いていないものだけ（agentTasks.running）。過去の分は会話ごとに delegation.tasks で読む
@@ -5160,7 +5256,7 @@ async function broadcastRunning({ poll = false } = {}) {
 
 /** サブエージェントは走っている最中に増える。1本でも走っていれば（裏に残っていれば）定期的に配る。 */
 function syncRunningPoll() {
-  const want = runtime.turns.size > 0 || runtime.background.size > 0;
+  const want = runtime.turns.size > 0 || runtime.background.size > 0 || shellBridge.sessionsWithJobs().length > 0;
   if (want && !runtime.runningPoll) runtime.runningPoll = setInterval(() => broadcastRunning({ poll: true }), 4000);
   if (!want && runtime.runningPoll) { clearInterval(runtime.runningPoll); runtime.runningPoll = null; }
 }
@@ -6143,8 +6239,6 @@ agentTasks = await createAgentTasks({
 // 普通の会話の長いコマンドを、その会話自身へ知らせる（ADR 0224 §2）。委譲の子は上の台帳が親へ知らせる。止めない。
 // 走っているターンへは途中送信で渡し（渡った合図で受け取り）、渡せなければ空いてから新しいターンで渡す。
 // 受け取られないまま（エージェントが自分のシェルのツールの中で固まっている）なら、通知の一覧のあなた待ちに載せる
-// ply_shell をこの会話に渡しているか（ADR 0224 §1。知らせの文に使い方を添えるか）
-function plyShellOffered(sessionId) { return false; }
 sessionCommands = createSessionCommands({
   delegated: sessionId => taskExecutions.has(sessionId),
   waiting: sessionId => [...runtime.waiting.values()].some(w => w.payload.sessionId === sessionId && blocksTurn(w)),
@@ -6687,6 +6781,8 @@ async function beginTurn(ctx) {
     // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
     // 委譲の子には指示（約 0.2k）だけ渡さない。MCP は残す: 子の設定変更の承認を依頼元へ中継する口（ADR 0088）が ply_control を通るため
     controlRuntime: delegatedChild ? { ...controlRuntimeFor(turn), instructions: null } : controlRuntimeFor(turn),
+    // ply_shell（ADR 0224 §1）。受け取れるエージェントだけ。nativeOff ならエージェントのシェルのツールを切る（§3）
+    shellRuntime: await shellRuntimeFor(turn),
     addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
     contextRuntime: ctx.runtimeContext,
     // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
@@ -6716,11 +6812,13 @@ async function beginTurn(ctx) {
     const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime) });
     if (secretsRuntime) runArgs.secretsRuntime = secretsRuntime;
   }
+  // ply_shell のコマンドへ渡す、会話のシェルの環境変数（エージェントのシェルと同じ: ブラウザー・CLI の接続・秘密情報）
+  conversationConnection(turn).shellEnv = { ...(runArgs.browserEnv ?? {}), ...(runArgs.controlRuntime?.env ?? {}), ...(runArgs.secretsRuntime?.env ?? {}) };
   // Pleiad が足した文の量（右パネルの「指示の量」。ADR 0056）。このターンで渡す文が出そろったここで数え、変わったときだけ記録し直す
   const parts = plyParts({ plyAgents: Boolean(backend.capabilities?.plyAgents), context: ctx.runtimeContext?.sections ?? null,
     visualize: runArgs.visualizeInstructions, browser: runArgs.browserInstructions, agents: agentConnection(turn).instructions, added: contextRecord.added,
     computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime?.instructions ?? null,
-    secrets: runArgs.secretsRuntime?.instructions ?? null });
+    secrets: runArgs.secretsRuntime?.instructions ?? null, shell: runArgs.shellRuntime?.instructions ?? null });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
   ctx.runArgs = runArgs;
 }
@@ -7729,6 +7827,8 @@ function findBackgroundTask(sessionId, taskId) {
   const turn = runtime.turns.get(sessionId);
   const inTurn = turn?.info.background?.find((x) => x.id === taskId);
   if (inTurn) return { task: inTurn, backend: turn.backend, backendId: turn.backend.id };
+  const job = shellBackground(sessionId).find((x) => x.id === taskId);
+  if (job) return { task: job, backend: SHELL_JOBS_HOST, backendId: SHELL_JOBS_HOST.id };
   return null;
 }
 

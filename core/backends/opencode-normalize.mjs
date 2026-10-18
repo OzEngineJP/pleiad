@@ -13,7 +13,7 @@ import { COMPUTER_TOOL_PREFIX, computerResult, computerFailed } from './computer
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
 
 /** Pleiad の MCP のサーバー（OpenCode の MCP の設定のキー）。ツールの名前は `<サーバー>_<ツール>` で届く */
-export const PLY_SERVERS = ['ply_agents', 'ply_control', 'ply_computer', 'ply_browser', 'ply_context'];
+export const PLY_SERVERS = ['ply_agents', 'ply_control', 'ply_computer', 'ply_browser', 'ply_context', 'ply_shell'];
 
 /**
  * OpenCode のツールの名前 -> 表示の名前。Pleiad の MCP のツールは、Claude と同じ `mcp__<サーバー>__<ツール>` にそろえる

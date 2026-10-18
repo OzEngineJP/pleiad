@@ -1137,7 +1137,8 @@
         "browser": "Browser guide",
         "computer": "Computer use guide",
         "control": "Pleiad control guide",
-        "secrets": "Secrets and variables list"
+        "secrets": "Secrets and variables list",
+        "shell": "Shell tool guide"
       },
       "over": "Your instructions are {{ratio}}× the budget",
       "overDetail": " · ~{{own}} / {{budget}}",

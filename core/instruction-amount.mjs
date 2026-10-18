@@ -3,8 +3,8 @@
 // 数えるのは、このターンで実際にエージェントへ渡した文だけ。数え方は画面と同じ estimateTokens（実際のトークナイザーではない）
 import { estimateTokens } from '../web/token-estimate.mjs';
 
-/** 内訳の並び（画面の並び）。Visualize の説明・Skills の一覧・委譲ツールの説明・Pleiad の指示・コンテキストの案内・ブラウザーの説明・コンピューターの操作の説明・Pleiad の操作（ply_control）の説明・秘密情報と変数の一覧 */
-export const PLY_PARTS = ['visualize', 'skills', 'agents', 'added', 'guide', 'browser', 'computer', 'control', 'secrets'];
+/** 内訳の並び（画面の並び）。Visualize の説明・Skills の一覧・委譲ツールの説明・Pleiad の指示・コンテキストの案内・ブラウザーの説明・コンピューターの操作の説明・Pleiad の操作（ply_control）の説明・秘密情報と変数の一覧・シェルのツール（ply_shell）の説明 */
+export const PLY_PARTS = ['visualize', 'skills', 'agents', 'added', 'guide', 'browser', 'computer', 'control', 'secrets', 'shell'];
 
 /**
  * 渡し方はバックエンドで違う（core/backends/*.mjs の runTurn）:
@@ -16,9 +16,10 @@ export const PLY_PARTS = ['visualize', 'skills', 'agents', 'added', 'guide', 'br
  * （3 つのバックエンドとも渡す。エージェントごとの呼び方を足したもの。core/backends/computer-delivery.mjs の computerPrompt）。
  * control は ply_control（操作の一覧。ADR 0081）の指示文。全会話・3 つのバックエンドに渡す。
  * secrets は秘密情報と変数の一覧の文（名前だけ。ADR 0217。core/secrets-prompt.mjs）。一覧が空の会話には渡さない。
+ * shell は ply_shell の使い方の文（ADR 0224）。エージェントのシェルのツールを切った会話にだけ渡す。
  * 戻り: [{ id, tokens }]。渡さなかった（0 の）ものは載せない
  */
-export function plyParts({ plyAgents = false, context = null, visualize = null, browser = null, agents = null, added = null, computer = null, control = null, secrets = null } = {}) {
+export function plyParts({ plyAgents = false, context = null, visualize = null, browser = null, agents = null, added = null, computer = null, control = null, secrets = null, shell = null } = {}) {
   const text = {
     visualize: plyAgents ? visualize : null,
     skills: context?.skills,
@@ -29,6 +30,7 @@ export function plyParts({ plyAgents = false, context = null, visualize = null, 
     computer,
     control,
     secrets,
+    shell,
   };
   return PLY_PARTS.map(id => ({ id, tokens: estimateTokens(text[id]) })).filter(p => p.tokens > 0);
 }

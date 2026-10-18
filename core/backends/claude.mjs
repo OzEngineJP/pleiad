@@ -41,6 +41,7 @@ import { promptHash } from "../turn-card.mjs";
 import { ADOPT_TURN_MARK } from "../adopt.mjs";
 import { createHeldCli, heldPlan, cliVersion } from "./claude-held.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
+import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -357,6 +358,8 @@ function buildToolServer(ctx, { createSdkMcpServer, tool }) {
  * いずれも子の仕事（依頼元へ結果を返す）には要らない。AskUserQuestion・Agent・Bash・PowerShell は残す。
  */
 export const DELEGATED_CHILD_DISALLOWED_TOOLS = ['Workflow', 'ScheduleWakeup', 'ReportFindings', 'ListAgents'];
+/** エージェントのシェルのツールを切る会話で外すもの（ply_shell だけにする。ADR 0224 §3）。TOOL_HINTS の shape: 'shell'（記述の shellTools と同じ名前） */
+export const NATIVE_SHELL_TOOLS = Object.freeze(Object.keys(TOOL_HINTS).filter((name) => TOOL_HINTS[name].shape === 'shell'));
 
 /**
  * 読み取り専用のフォルダーの deny ルール。Claude Code の `Edit(...)` は Edit・Write・NotebookEdit などファイルを書き換える道具に掛かる。
@@ -400,6 +403,8 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${BROWSER_SERVER}__`)) return { behavior: "allow", updatedInput: input };
   // 操作の一覧（ply_control）も聞かない。権限と承認は registry.invoke が会話の承認モードで決める（ADR 0082）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${CONTROL_SERVER}__`)) return { behavior: "allow", updatedInput: input };
+  // ply_shell も聞かない。承認は橋（core/shell-bridge.mjs）が会話の承認モードで決める（ADR 0224。二重に聞かない）
+  if (typeof toolName === "string" && toolName.startsWith(`mcp__${SHELL_SERVER}__`)) return { behavior: "allow", updatedInput: input };
 
   if (typeof askPermission !== "function") {
     return { behavior: "deny", message: agentT(ctx.locale, 'approval.noHandler', { tool: toolName }) };
@@ -689,6 +694,9 @@ export const backend = {
     compatEndpoints: true,
     // 入力欄の `!`: Pleiad がホストで走らせ、結果を次のターンの始めに shouldQuery: false の行で渡す（runTurn の shellAppends。ADR 0054）
     shell: 'host',
+    // ply_shell を受け取り、Bash・PowerShell を disallowedTools で切れる（ADR 0224）
+    plyShell: true,
+    nativeShellOff: true,
     approvals: 'interactive',   // canUseTool
     mcpApproval: 'agent',       // MCP のツールも canUseTool を通る
     plyContext: 'turn',         // ply_context はターンごとのトークンで mcpServers に渡す
@@ -735,7 +743,7 @@ export const backend = {
    * 新規セッションは走り出すまで id が無いので、確定した時点で `session` イベントを出す。
    */
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは claude-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, hostSessionId, hostBackend, hostInvoke, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, delegatedChild = false, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, oauthToken, endpoint = null, autoCompactWindow = null, locale, compact, shellAppends = [], notes = [], botInstructions = null, botFolders = null, rewind = null, promptSuggestions = false }, adopt = null) {
     // SDK を読む（配布物で初めてなら、同意があればここで取る。core/claude-sdk.mjs）。読めなければプロンプトを渡す前の失敗にする
     // （送信待ちが「失敗」に戻り、取った後に再送できる）。同意が無ければ、画面に取得の案内を出させる
     let api;
@@ -809,7 +817,9 @@ export const backend = {
       ...(browserRuntime ? { [BROWSER_SERVER]: { type: 'http', url: browserRuntime.url, headers: browserRuntime.headers, timeout: COMPUTER_CALL_TIMEOUT_SEC * 1000 } } : {}),
       // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。全会話に渡す
       // 承認が要る呼び出しも待たずに返る（ADR 0088）ので、待ちの上限はほかの Pleiad の MCP と同じ既定
-      ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers } } : {}) };
+      ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers } } : {}),
+      // Pleiad のシェルのツール（core/shell-bridge.mjs。ADR 0224）。run は最長 10 分待つので、待ちの上限をそれより長くする
+      ...(shellRuntime ? { [SHELL_SERVER]: { type: 'http', url: shellRuntime.url, headers: shellRuntime.headers, timeout: RUN_TIMEOUT_MAX_MS + 60_000 } } : {}) };
     const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'claude' });
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
@@ -1117,7 +1127,10 @@ export const backend = {
     }
 
     // 外す道具: bot の読み取り専用フォルダーの deny ルール + 委譲の子が使わない組み込みの道具（DELEGATED_CHILD_DISALLOWED_TOOLS）
-    const disallowedTools = [...(botFolders?.readOnlyRoots?.length ? readOnlyDenyRules(botFolders.readOnlyRoots) : []), ...(delegatedChild ? DELEGATED_CHILD_DISALLOWED_TOOLS : [])];
+    // + エージェントのシェルのツールを切る会話（ply_shell だけにする。ADR 0224 §3）の Bash・PowerShell。
+    // コンテキストの担当が足す分（Skill。context-options.mjs）も残す（後ろの disallowedTools が上書きしないように混ぜる）
+    const disallowedTools = [...(contextOptions.disallowedTools ?? []), ...(botFolders?.readOnlyRoots?.length ? readOnlyDenyRules(botFolders.readOnlyRoots) : []), ...(delegatedChild ? DELEGATED_CHILD_DISALLOWED_TOOLS : []),
+      ...(shellRuntime?.nativeOff ? NATIVE_SHELL_TOOLS : [])];
     // 次の発言の候補を頼むターンは CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION も付ける。付けないと CLI は使用枠の警告（allowed_warning。週次 95% など）の間、
     // 候補を黙って作らない（付けると警告の間も作る。上限に達した rejected では作らない）。利用者の設定 promptSuggestionEnabled より Pleiad の設定 › 入力を優先する
     const claudeExtraEnv = { CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...(autoCompactWindow ? { [AUTO_COMPACT_WINDOW_ENV]: String(autoCompactWindow) } : {}),
@@ -1159,7 +1172,7 @@ export const backend = {
         // bot の人格（core/bots/sessions.mjs の botInstructions）は並びの最後。同じ bot なら毎ターン同じバイト列（キャッシュを壊さない）。
         // snapshot: false は bot の会話だけ。CLI は最初のターンのシステムプロンプトを記録して、後のターンで別の append を渡しても使い回す（既定）。
         // それだと人格を直しても動いている会話に届かない（2026-10-03 の実機の確認）。毎ターン組み直せば、同じ人格のあいだは同じバイト列でキャッシュは保たれ、直したターンだけ落ちる
-        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || secretsRuntime?.instructions || botInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), ...(botInstructions ? { snapshot: false } : {}) } } : {}),
+        ...((visualizeInstructions || browserInstructions || contextRuntime?.prompt || agentRuntime?.instructions || computerInstructions || controlRuntime?.instructions || shellRuntime?.instructions || secretsRuntime?.instructions || botInstructions) ? { systemPrompt: { type: 'preset', preset: 'claude_code', append: [contextRuntime?.prompt, visualizeInstructions, browserInstructions, agentRuntime?.instructions, computerInstructions, controlRuntime?.instructions, shellRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), ...(botInstructions ? { snapshot: false } : {}) } } : {}),
         // bot の触れてよいフォルダー（cwd の外の分）。読み取り専用（ro）のフォルダーは、acceptEdits が聞かずに通す編集を deny ルールで断る（シェルの書き込みは断れない。docs/channels.md）
         ...(botFolders?.additionalDirectories?.length ? { additionalDirectories: botFolders.additionalDirectories } : {}),
         ...(disallowedTools.length ? { disallowedTools } : {}),

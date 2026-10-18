@@ -63,6 +63,17 @@ const RULES = {
   yolo: [rule('*', 'allow'), rule('external_directory', 'allow'), rule('doom_loop', 'allow')],
   plan: [rule('*', 'ask'), ...READS.map((p) => rule(p, 'allow')), rule('edit', 'deny')],
 };
+/**
+ * 会話の権限の規則と、その組み合わせの印（変わったら入れ直す）。
+ * - Skills を Pleiad が担当するターンは、OpenCode の組み込みの skill のツールも止める（中身の無いツールを見せない）
+ * - ply_shell（ADR 0224）は聞かない（承認は橋が会話の承認モードで決める。二重に聞かない）。
+ *   エージェントのシェルを切る会話（shellRuntime.nativeOff）は bash を全面拒否にする（OpenCode は全面拒否のツールを一覧から外す）
+ */
+export function sessionPermission(mode, { noSkill = false, shellRuntime = null } = {}) {
+  const noShell = Boolean(shellRuntime?.nativeOff);
+  const permission = [...RULES[modeOf(mode)], ...(shellRuntime ? [rule('ply_shell_*', 'allow')] : []), ...(noSkill ? [rule('skill', 'deny')] : []), ...(noShell ? [rule('bash', 'deny')] : [])];
+  return { permission, permissionKey: `${modeOf(mode)}${shellRuntime ? '+plyshell' : ''}${noSkill ? '+noskill' : ''}${noShell ? '+noshell' : ''}` };
+}
 const MODES = {
   ask: { get label() { return t('modes.ask'); }, get short() { return t('modesShort.ask'); }, get note() { return t('opencode.modes.ask'); }, scope: 'workspace', autonomy: 'ask', enforced: true },
   edit: { get label() { return t('modes.acceptEdits'); }, get short() { return t('modesShort.acceptEdits'); }, get note() { return t('opencode.modes.edit'); }, scope: 'workspace', autonomy: 'judge', enforced: true },
@@ -327,10 +338,10 @@ async function ensureRelay(cwd, servers, srv = server) {
 }
 
 /** Pleiad の指示（委譲・可視化・ブラウザー・コンピューター・操作の一覧・秘密情報・Pleiad が足した文・bot の人格）。毎ターン system で渡す */
-function systemText({ contextRuntime, agentRuntime, visualizeInstructions, browserInstructions, computerRuntime, controlRuntime, secretsRuntime, addedInstructions, botInstructions, locale }) {
+function systemText({ contextRuntime, agentRuntime, visualizeInstructions, browserInstructions, computerRuntime, controlRuntime, shellRuntime, secretsRuntime, addedInstructions, botInstructions, locale }) {
   return [
     contextRuntime?.prompt, agentRuntime?.instructions, visualizeInstructions, browserInstructions,
-    computerPrompt(computerRuntime, { locale, agent: 'opencode' }), controlRuntime?.instructions, secretsRuntime?.instructions, addedInstructions, botInstructions,
+    computerPrompt(computerRuntime, { locale, agent: 'opencode' }), controlRuntime?.instructions, shellRuntime?.instructions, secretsRuntime?.instructions, addedInstructions, botInstructions,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -377,6 +388,9 @@ export const backend = {
     plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
     computerUse: { images: 'inline', waitSliceMs: null },
     shell: 'host',          // 入力欄の `!` は Pleiad が走らせ、次のターンの始めに返答を起こさない行（noReply）で渡す
+    // ply_shell を受け取り、会話の権限で bash を拒否して切れる（ADR 0224。既定は切る: エージェントの記述の shellDefault）
+    plyShell: true,
+    nativeShellOff: true,
     effortInModelId: false, // エフォートはモデルの variants（prompt の variant）
     instructionsAtStart: false,
     failureDiagnostics: false,
@@ -488,10 +502,7 @@ export const backend = {
     const { prompt, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, notes = [], shellAppends = [] } = args;
     let sessionId = args.sessionId ?? null;
     const card = adopt?.card ?? null;
-    // Skills を Pleiad が担当するターンは、OpenCode の組み込みの skill のツールも止める（中身の無いツールを見せない）。規則は承認モードと組で入れ直す
-    const noSkill = args.contextRuntime?.owners?.skill === 'ply';
-    const permission = [...RULES[modeOf(mode)], ...(noSkill ? [rule('skill', 'deny')] : [])];
-    const permissionKey = `${modeOf(mode)}${noSkill ? '+noskill' : ''}`;
+    const { permission, permissionKey } = sessionPermission(mode, { noSkill: args.contextRuntime?.owners?.skill === 'ply', shellRuntime: args.shellRuntime });
     let fresh = false;
     try {
       await srv.ensure();

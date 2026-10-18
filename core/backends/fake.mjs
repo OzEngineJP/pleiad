@@ -29,6 +29,7 @@
 //   "browser:<json>" … ply_browser（browserRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
 //                     渡っていなければ "browser: unavailable"。"browser-instructions" は渡った内蔵ブラウザーの指示文を返す
 //   "control:<json>" … ply_control（controlRuntime。Pleiad の操作の一覧）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。渡っていなければ "control: unavailable"。
+//   "shell:<json>"   … ply_shell（shellRuntime。ADR 0224）のツールを同じ形で呼ぶ。渡っていなければ "shell: unavailable"。"shell-info" は渡った口（nativeOff・指示文）
 //                     "control-info" は渡った接続の url・指示文・会話のシェルへ渡す環境変数の名前とトークンを JSON で返す
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
@@ -429,6 +430,8 @@ export const backend = {
     get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? false : 'token'; },
     // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
     shell: 'host',
+    plyShell: true,
+    nativeShellOff: true,
     approvals: 'interactive',
     mcpApproval: 'agent',
     compatEndpoints: false,
@@ -463,7 +466,7 @@ export const backend = {
     emit({ type: 'contextWindow', usedTokens: 21_000, windowTokens: 200_000 });
   },
 
-  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, secretsRuntime = null, browserInstructions, oauthToken, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, emit, onPromptDelivered, askPermission, signal, control, agentRuntime, contextRuntime, computerRuntime, browserRuntime, controlRuntime, shellRuntime = null, secretsRuntime = null, browserInstructions, oauthToken, autoCompactWindow, hostSessionId, shellAppends = [], notes = [], botInstructions = null, rewind = null }) {
     // 審査モードで通さない台本は、台本として読まずに言葉をそのまま返す（下の plain）
     const plain = isReviewMode() && !fakeScriptAllowed(scriptOf(prompt));
     // プロンプトを渡す前に失敗する台本（claude のネイティブ指示を止められなかったときと同じ形）。会話にも記録しない
@@ -617,16 +620,18 @@ export const backend = {
         // bot の会話の検査用。Pleiad が足した notes（記憶・末尾）／ botInstructions（人格）を JSON で返す
         out.text = JSON.stringify(text.startsWith("notes:") ? notes : botInstructions);
         await say(emit, out.text, out.uuid);
-      } else if (text.startsWith('control:')) {
-        // ply_control（操作の一覧。ADR 0081）の呼び出し。ほかの MCP と同じく mcp__ply_control__<ツール> の行で残す。渡っていなければ "control: unavailable"
-        if (!controlRuntime) out.text = 'control: unavailable';
+      } else if (text.startsWith('control:') || text.startsWith('shell:')) {
+        // ply_control（操作の一覧。ADR 0081）・ply_shell（ADR 0224）の呼び出し。ほかの MCP と同じく mcp__<サーバー>__<ツール> の行で残す。渡っていなければ "<名前>: unavailable"
+        const kind = text.startsWith('shell:') ? 'shell' : 'control';
+        const port = kind === 'shell' ? shellRuntime : controlRuntime;
+        if (!port) out.text = `${kind}: unavailable`;
         else {
           out.toolCalls = []; const texts = [];
-          for (const params of [].concat(JSON.parse(text.slice('control:'.length)))) {
+          for (const params of [].concat(JSON.parse(text.slice(kind.length + 1)))) {
             const callId = crypto.randomUUID();
-            const toolName = `mcp__ply_control__${params.name}`;
+            const toolName = `mcp__ply_${kind}__${params.name}`;
             emit({ type: 'tool.start', id: callId, name: toolName, input: params.arguments ?? {} });
-            const response = await fetch(controlRuntime.url, { method: 'POST', headers: { ...controlRuntime.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
+            const response = await fetch(port.url, { method: 'POST', headers: { ...port.headers, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params }) });
             const result = (await response.json()).result;
             const raw = result.content[0].text;
             emit({ type: 'tool.result', id: callId, text: raw, isError: Boolean(result.isError) });
@@ -635,6 +640,9 @@ export const backend = {
           }
           out.text = texts.join('\n');
         }
+        await say(emit, out.text, out.uuid);
+      } else if (text === 'shell-info') {
+        out.text = shellRuntime ? JSON.stringify({ url: shellRuntime.url, nativeOff: shellRuntime.nativeOff, instructions: shellRuntime.instructions }) : 'shell: unavailable';
         await say(emit, out.text, out.uuid);
       } else if (text === 'control-info') {
         // 実際に渡った ply_control の接続（url・指示文・会話のシェルへ渡す環境変数の名前とトークン）。テストが会話に束縛した呼び出しを作るのに使う

@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 export const OPENCODE_RELAY_PATH = '/mcp/opencode';
 /** OpenCode の MCP のサーバー名 -> runArgs の口の名前 */
 // ply_context は Pleiad 担当のコンテキストのターン（専用のサーバー）だけ。口はターンごとのトークン
-export const RELAY_SERVERS = Object.freeze({ ply_agents: 'agentRuntime', ply_control: 'controlRuntime', ply_computer: 'computerRuntime', ply_browser: 'browserRuntime', ply_context: 'contextRuntime' });
+export const RELAY_SERVERS = Object.freeze({ ply_agents: 'agentRuntime', ply_control: 'controlRuntime', ply_computer: 'computerRuntime', ply_browser: 'browserRuntime', ply_context: 'contextRuntime', ply_shell: 'shellRuntime' });
 /** 会話の id を運ぶ引数の名前（プラグインが足し、ここで外す） */
 export const SESSION_ARG = '_pleiadSession';
 const BODY_MAX = 4 * 1024 * 1024;
