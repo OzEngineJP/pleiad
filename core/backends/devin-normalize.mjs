@@ -13,7 +13,7 @@ const inputOf = value => value && typeof value === 'object' ? value : value == n
 
 export function createDevinMapper(sessionId, emit = () => {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
-  let current = null, expectedEcho = null, echo = '', live = false;
+  let current = null, expectedEcho = null, echo = '', live = false, sepText = false, sepThink = false;
   function row(role) {
     if (current?.role !== role) {
       current = { uuid: `${sessionId}:${role}:${messages.length}`, role, text: '', at: null };
@@ -36,13 +36,14 @@ export function createDevinMapper(sessionId, emit = () => {}) {
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;
       const message = row('assistant'), text = contentText(update.content);
-      message.text += text;
+      // ツールを挟んだあとの本文は別の段落（区切り無しに連結すると、断片同士がくっつく）
+      message.text += (sepText && message.text ? '\n\n' : '') + text; sepText = false;
       if (text) send({ type: 'text.delta', text });
     } else if (kind === 'agent_thought_chunk') {
       expectedEcho = null;
       const message = row('assistant'), text = contentText(update.content);
       if (!message.thinking) send({ type: 'thinking.start' });
-      message.thinking = (message.thinking ?? '') + text;
+      message.thinking = (message.thinking ?? '') + (sepThink && message.thinking ? '\n\n' : '') + text; sepThink = false;
       if (text) send({ type: 'thinking.delta', text });
     } else if (kind === 'tool_call' || kind === 'tool_call_update') {
       const id = update.toolCallId;
@@ -56,7 +57,7 @@ export function createDevinMapper(sessionId, emit = () => {}) {
       if (!call) {
         const message = row('assistant');
         call = { id, name: String(state.title ?? state.name ?? state.kind ?? 'tool'), input: inputOf(state.rawInput), result: null };
-        (message.toolCalls ??= []).push(call); tools.set(id, call);
+        (message.toolCalls ??= []).push(call); tools.set(id, call); sepText = sepThink = true;
         // ACP の kind: 'execute' はシェルのコマンド（名前は自由な題なので、名前では見分けられない。core/shell-tools.mjs）
         send({ type: 'tool.start', id, name: call.name, input: call.input, ...(state.kind === 'execute' ? { shell: true } : {}) });
       }
