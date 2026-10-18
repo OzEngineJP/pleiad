@@ -159,7 +159,7 @@ export default async function (t) {
       const recovered = drift.endsWith('recovered');
       if (recovered) await turn; else await assert.rejects(turn);
       const nativeDir = path.join(dataDir, 'devin', 'sessions');
-      const [file] = await fs.readdir(nativeDir);
+      const [file] = (await fs.readdir(nativeDir)).filter(name => name.endsWith('.json'));
       const saved = JSON.parse(await fs.readFile(path.join(nativeDir, file), 'utf8'));
       t.ok(`最終 ACK 前後の同一 batch の最新設定で prompt の送信を判断する（${drift}）`,
         delivered === recovered && updates.find(event => event.type === 'turnResult').outcome === (recovered ? 'ok' : 'error') && saved.messages.filter(message => message.role === 'user').length === (recovered ? 1 : 0));

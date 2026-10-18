@@ -45,7 +45,13 @@ if (stateDir) fs.mkdirSync(stateDir, { recursive: true });
 const sessions = new Map(), running = new Map(), pending = new Map();
 let seq = 0;
 const file = id => path.join(stateDir, `${id}.json`);
-const persist = session => { sessions.set(session.sessionId, session); if (stateDir) fs.writeFileSync(file(session.sessionId), JSON.stringify(session)); };
+// 書きかけのファイルを読ませない。止められても、別のプロセスが読んでも、前か後の完全な版だけが見える
+const persist = session => {
+  sessions.set(session.sessionId, session);
+  if (!stateDir) return;
+  const target = file(session.sessionId), temp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(session)); fs.renameSync(temp, target);
+};
 const load = id => {
   if (sessions.has(id)) return sessions.get(id);
   if (!/^grok-fixture-[\w-]+$/.test(id ?? '')) throw new Error('Unknown session');
@@ -147,7 +153,11 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         const middle = Math.ceil(reply.length / 2);
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(0, middle) } });
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });
-        session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools }); persist(session); running.delete(session.sessionId);
+        session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools });
+        // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る。
+        // 保存は応答を書く前に終える。親は応答を受けるとプロセスを止めるので、後に回すと書きかけで残る
+        if (text.includes('[compact-rewrite]')) session.messages.splice(0, 2);
+        persist(session); running.delete(session.sessionId);
         notify(session.sessionId, { sessionUpdate: 'turn_completed', stop_reason: token.cancelled ? 'cancelled' : 'end_turn', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
         result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn' };
         write({ id: request.id, result });
@@ -166,8 +176,6 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           notify(session.sessionId, { sessionUpdate: 'turn_completed', stop_reason: qtoken.cancelled ? 'cancelled' : 'end_turn', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
           write({ id: queued.id, result: { stopReason: qtoken.cancelled ? 'cancelled' : 'end_turn' } });
         }
-        // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る
-        if (text.includes('[compact-rewrite]')) { session.messages.splice(0, 2); persist(session); }
         return;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);

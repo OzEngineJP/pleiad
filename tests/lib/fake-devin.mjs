@@ -18,7 +18,13 @@ if (stateDir) fs.mkdirSync(stateDir, { recursive: true });
 const sessions = new Map(), running = new Map(), pending = new Map();
 let seq = 0;
 const file = id => path.join(stateDir, `${id}.json`);
-const persist = session => { sessions.set(session.sessionId, session); if (stateDir) fs.writeFileSync(file(session.sessionId), JSON.stringify(session)); };
+// 書きかけのファイルを読ませない。止められても、別のプロセスが読んでも、前か後の完全な版だけが見える
+const persist = session => {
+  sessions.set(session.sessionId, session);
+  if (!stateDir) return;
+  const target = file(session.sessionId), temp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(session)); fs.renameSync(temp, target);
+};
 const load = id => {
   if (sessions.has(id)) return sessions.get(id);
   if (!/^devin-fixture-[\w-]+$/.test(id ?? '')) throw new Error('Unknown session');
@@ -193,12 +199,16 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });
         }
         session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools });
+        // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る
+        if (text.includes('[compact-rewrite]')) session.messages.splice(0, 2);
+        const steers = session.steerQueue ?? []; session.steerQueue = [];
+        // 保存は応答を書く前に終える。親は応答を受けるとプロセスを止めるので、後に回すと書きかけで残る
         session.used = Math.min(session.window, (session.used ?? 120000) + 30000); persist(session); running.delete(session.sessionId);
         update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window });
         result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn', permissionResult };
         write({ id: request.id, result });
         // 折り込まれた途中送信も、同じ回の続きとして返し、並んだ順に応答を書く
-        for (const steer of session.steerQueue ?? []) {
+        for (const steer of steers) {
           // [drop-steer]: 受理したが読んだか分からないまま cancelled で決着する（既読不明の試験用）
           if (steer.text.includes('[drop-steer]')) { write({ id: steer.id, result: { stopReason: 'cancelled' } }); continue; }
           session.messages.push({ role: 'user', text: steer.text });
@@ -206,12 +216,9 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           const steerReply = `fixture: ${steer.text}`, steerMiddle = Math.ceil(steerReply.length / 2);
           update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: steerReply.slice(0, steerMiddle) } });
           update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: steerReply.slice(steerMiddle) } });
-          session.messages.push({ role: 'assistant', text: steerReply, thinking: 'fixture thought' });
+          session.messages.push({ role: 'assistant', text: steerReply, thinking: 'fixture thought' }); persist(session);
           write({ id: steer.id, result: { stopReason: 'end_turn' } });
         }
-        session.steerQueue = []; persist(session);
-        // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る
-        if (text.includes('[compact-rewrite]')) { session.messages.splice(0, 2); persist(session); }
         return;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);
