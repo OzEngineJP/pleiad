@@ -52,6 +52,7 @@ export function normalizeConnectionTokens(tokens) {
     browser: pick(tokens.browser),
     control: pick(tokens.control),
     context: pick(tokens.context),
+    shell: pick(tokens.shell),
   };
 }
 
@@ -71,6 +72,7 @@ function extractTokensFromCtx(ctx) {
       browser: extractBearer(entry.browser),
       control: typeof entry.control?.token === 'string' ? entry.control.token : null,
       context: typeof entry.contextToken === 'string' ? entry.contextToken : null,
+      shell: typeof entry.shell?.token === 'string' ? entry.shell.token : null,
     });
   }
   return null;

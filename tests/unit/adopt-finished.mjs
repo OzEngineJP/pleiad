@@ -209,13 +209,14 @@ export default async function (t) {
     const rpc = (urlPath, token, method) => fetch(`http://127.0.0.1:${b.port}${urlPath}`, { method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: {} }) });
-    for (const [urlPath, token] of [['/mcp/agents', card.connectionTokens.agents], ['/mcp/control', card.connectionTokens.control]]) {
+    assert.ok(card.connectionTokens.shell, 'ply_shell の口のトークンも札に載る（ADR 0224）');
+    for (const [urlPath, token] of [['/mcp/agents', card.connectionTokens.agents], ['/mcp/control', card.connectionTokens.control], ['/mcp/shell', card.connectionTokens.shell]]) {
       const res = await rpc(urlPath, token, 'initialize');
       assert.equal(res.status, 200, `${urlPath} は札のトークンで通る`);
       assert.ok((await res.json()).result, `${urlPath} の initialize が答える`);
     }
     assert.notEqual((await rpc('/mcp/control', crypto.randomBytes(32).toString('hex'), 'initialize')).status, 200, '知らないトークンは断る');
-    t.ok('会話の口（ply_agents・ply_control）が札のトークンで開き直される', true);
+    t.ok('会話の口（ply_agents・ply_control・ply_shell）が札のトークンで開き直される', true);
 
     assert.equal(usageOf(cards.Y.presentKey).length, 1, '旧サーバーが記録済みの使用量に重ねない');
     assert.equal(sessionMeta(ids.Y).interrupted ?? null, null);
