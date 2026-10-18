@@ -215,18 +215,6 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
       }
       return;
     }
-    // エージェントの区切り（宛先とモデルの面）: ←→ で区切りの中を移り、↑ で選んでいる宛先の札へ、↓ で次の一覧へ
-    const segButton = e.target.closest?.(".cseg button");
-    if (segButton && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) {
-      const buttons = [...segButton.parentElement.querySelectorAll("button:not(:disabled)")];
-      const i = buttons.indexOf(segButton);
-      let to = null;
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") to = buttons[Math.max(0, Math.min(buttons.length - 1, i + (e.key === "ArrowRight" ? 1 : -1)))];
-      else if (e.key === "ArrowUp") to = pop.querySelector(".destination-option.on") ?? [...pop.querySelectorAll(".destination-option")].pop();
-      else to = [...pop.querySelectorAll("[role=listbox]:not([hidden]) [role=option]:not(:disabled), input:not([type=range])")].find((n) => after(segButton.parentElement, n));
-      if (to) { e.preventDefault(); to.focus(); }
-      return;
-    }
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     // 一覧の中を移る。入力欄からは ↓ で入力欄より後ろにある最初の一覧の先頭へ（互換の接続先のモデルの欄は
     // 接続先の一覧の下にあるので、面の最初の一覧ではなく直下のモデルの候補へ）。一覧の先頭で ↑ は直前の入力欄、無ければ選んでいる宛先の札へ
@@ -243,8 +231,7 @@ export function panel(chip, pop, { align = "left", render, onShow, onHide, width
     const i = rows.indexOf(from) + (e.key === "ArrowDown" ? 1 : -1);
     if (i < 0) {
       const input = [...pop.querySelectorAll("input:not([type=range])")].filter((n) => after(n, list)).pop();
-      const seg = [...pop.querySelectorAll(".cseg button.on")].filter((n) => after(n, list)).pop();
-      (input ?? seg ?? pop.querySelector(".destination-option.on") ?? [...pop.querySelectorAll(".destination-option")].pop())?.focus();
+      (input ?? pop.querySelector(".destination-option.on") ?? [...pop.querySelectorAll(".destination-option")].pop())?.focus();
       return;
     }
     rows[Math.min(i, rows.length - 1)]?.focus();
@@ -261,7 +248,7 @@ globalThis.document?.addEventListener?.("pointerdown", (e) => {
 globalThis.addEventListener?.("resize", () => openPanel?.place());
 
 /** 一覧の行。main（名前）+ sub（補足）+ right（札・時刻）。選ばれていれば ✓ */
-function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disabled, badge }) {
+function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disabled, badge, mark }) {
   const b = el("button", "copt" + (mono ? " cmono" : "") + (danger ? " danger" : ""));
   b.type = "button";
   // 選べない行（互換の接続先を選んでいる間の Claude のアカウント）。弱い字で ✓ を付けない
@@ -272,7 +259,12 @@ function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disa
   if (title) b.title = title;
   b.append(el("span", "tick", on ? "✓" : ""));
   const mid = el("span", "cbody");
-  if (badge) {
+  if (mark) {
+    // エージェントの行: ロゴ + 名前（名前だけを詰める）
+    const m = el("span", "main hasmark");
+    m.append(mark, el("span", "txt", main));
+    mid.append(m);
+  } else if (badge) {
     // 字の横の小さな札（互換の接続先のモデルの「1M」）。字だけを詰め、札は残す
     const m = el("span", "main hasb");
     const b = el("span", "cbadge", badge.text);
@@ -510,23 +502,12 @@ export function renderModel({ pop, target: d, on, hide }) {
   }
   if (d.backendSwitchable) {
     parts.push(head(t("composer.agent")));
-    const seg = el("div", "seg cseg");
-    seg.setAttribute("role", "group");
-    seg.setAttribute("aria-label", t("composer.agent"));
-    for (const b of d.backends) {
-      const btn = el("button", b.id === d.backend ? "on" : "");
-      // ロゴは脇の行・発言者の行と同じ。字は区切りを 1 行に収める短い名前で、読み上げと title は正式名
-      // 短い名前はエージェントの記述の shortLabel（製品名なので訳さない）。無いものは正式名
-      btn.append(logo(b.id), el("span", "seg-name", b.shortLabel ?? b.label));
-      btn.setAttribute("aria-label", b.label);
-      btn.title = b.label;
-      btn.type = "button";
-      btn.dataset.key = `backend:${b.id}`;
-      btn.setAttribute("aria-pressed", String(b.id === d.backend));
-      btn.onclick = () => { if (b.id !== d.backend) on.backend(b.id); };
-      seg.append(btn);
-    }
-    parts.push(seg);
+    // モデル・接続先・アカウントと同じ一覧の行（承認済み（2026-10-18）、ADR 0228）。ロゴ + 正式名、右端に週の使用量（取れるものだけ）
+    parts.push(listbox(t("composer.agent"), d.backends.map((b) => {
+      const usage = d.backendUsage?.(b.id);
+      return row({ on: b.id === d.backend, main: b.label, mark: logo(b.id), right: usage ? weekRight(usage) : "",
+        key: `backend:${b.id}`, onPick: () => { if (b.id !== d.backend) on.backend(b.id); } });
+    })));
   }
   if (!agentHead && d.destination?.usage) parts.push(d.destination.usage);
   // 互換の接続先（Claude Code・Codex）。先頭は「公式」、下に登録した接続先。選んでいる間は使えないものを短い一行で出す

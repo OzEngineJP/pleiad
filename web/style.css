@@ -341,6 +341,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .row-be-codex svg{color:var(--ink-brand)}
 .row-be-claude img{height:14px}
 .row-be-antigravity svg{color:var(--ink-antigravity)}
+.row-be-devin svg{color:var(--ink-brand)}
 .wait{color:var(--ink-mark);flex:none}                 /* あなたを待っている。UI 全体でこの意味にだけ差し色 */
 .wait::before{content:"◆ ";font-size:9px;vertical-align:1px}
 .wait.only::before{content:"◆"}                         /* 器の見出しでは文言を出さず印だけ */
@@ -1446,10 +1447,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .destination-option .destination-wait{color:var(--ink-mark);font-size:var(--fs-xs)}
 .destination-option .run{flex:none}
 .destination-option .row-be{flex:none;width:16px;height:16px}
-/* 宛先とモデルの面のエージェントの区切り: 名前の前にロゴ */
-.cpop .cseg button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:0}
-.cpop .cseg button .row-be{flex:none;width:15px;height:15px}
-.cpop .cseg button .seg-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cpop .chead.destination-head{display:flex;align-items:baseline;gap:8px}
 .destination-head-note{margin-left:auto;letter-spacing:0}
 /* 宛先のエージェントの使用量の 1 行（「▬ 5時間 66% ▬ 週次 31% … 使用量 ›」） */
@@ -1478,6 +1475,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .copt .main{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .copt .main.hasb{display:flex;align-items:baseline;min-width:0}
 .copt .main.hasb .txt{min-width:0;overflow:hidden;text-overflow:ellipsis}
+/* エージェントの行: ロゴ + 名前（宛先とモデルの面。ADR 0228） */
+.copt .main.hasmark{display:flex;align-items:center;gap:8px;min-width:0}
+.copt .main.hasmark .txt{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.copt .main.hasmark .row-be{flex:none;width:16px;height:16px}
 .chip .v .cbadge{margin:0 0 0 4px}
 .copt .sub{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .copt.cmono .sub{font-family:var(--font-mono)}
@@ -1527,7 +1528,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cmsg.hint .btn{color:var(--ink-blue);padding:1px 6px;font-size:inherit}
 /* 作業ディレクトリを保存している間のチップ（§4.6 の保存中は弱い字） */
 .chip.saving .v{color:var(--ink-weak)}
-.cseg{margin:2px 8px 4px}
 /* ---- 手元のフォルダーを送る（web/folder-upload.mjs・web/attach-menu.mjs、docs/remote.md §8.1。リモートの窓の添付のボタンの面） ----
    押すとまず「ファイルを添付… / フォルダーを送る…」（.caction の 2 行）。送る前は件数と大きさ・除外の札・送り先（combo）・
    「作業フォルダーにする」、既にあるフォルダーへはその場の確認、送っている間はバーと件数・大きさ。色は塗りのバーと「送る」だけ */

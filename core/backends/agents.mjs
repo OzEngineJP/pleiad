@@ -86,7 +86,7 @@ export const AGENTS = {
   devin: {
     module: './devin.mjs',
     shortLabel: 'Devin',
-    brand: null,
+    brand: { logo: 'devin.svg', mark: true },
     cli: {
       exe: 'devin', binEnv: 'AGENT_HOST_DEVIN_BIN', npmPackage: null, installUrl: 'https://docs.devin.ai/cli',
       // The official Windows installer adds this directory to PATH after installation.

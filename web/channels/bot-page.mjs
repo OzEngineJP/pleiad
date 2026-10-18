@@ -335,15 +335,17 @@ export function createBotPage(host) {
       ...(value && !list.some((a) => a.id === value) ? [{ value, label: t('chat.account.deleted'), hint: t('chat.account.chooseAgain') }] : []),
     ];
   }
-  /** モデルの面を開いている間に 1 度だけ、その bot のエージェントの使用量を読む（読めたら面を描き直す） */
+  /** モデルの面を開いている間に 1 度ずつ、エージェントの使用量を読む（アカウントの行とエージェントの行の週の使用量。読めたら面を描き直す） */
   function askQuota() {
-    const backend = vm()?.backend;
-    if (!backend || !accountShown() || S.quotaAsked.has(backend) || typeof host.quota !== 'function') return;
-    S.quotaAsked.add(backend);
-    Promise.resolve(host.quota(backend)).then((result) => {
-      S.quota.set(backend, result);
-      if (modelPanel.open && vm()?.backend === backend) { modelPanel.render(); modelPanel.place(); }
-    }).catch(() => {});
+    if (typeof host.quota !== 'function') return;
+    for (const b of backends()) {
+      if (S.quotaAsked.has(b.id)) continue;
+      S.quotaAsked.add(b.id);
+      Promise.resolve(host.quota(b.id)).then((result) => {
+        S.quota.set(b.id, result);
+        if (modelPanel.open) { modelPanel.render(); modelPanel.place(); }
+      }).catch(() => {});
+    }
   }
   /** 選んだアカウントが消えた・使えない（トークン・資格情報が無い）ときの一文（入力欄と同じ文） */
   function paintAccountWarn() {
@@ -671,6 +673,7 @@ export function createBotPage(host) {
     const v = S.v ?? { modes: {}, models: {}, efforts: {} };
     return {
       backends: backends(), backend: cur.backend, backendSwitchable: backends().length > 1,
+      backendUsage: (id) => weekUsage(S.quota.get(id)?.quota, ''),
       models: v.models, model: cur.model ?? '',
       efforts: v.efforts, effort: cur.effort ?? '', effortDisabled: Object.keys(v.efforts ?? {}).length <= 1,
       ...(accountShown() ? { accounts: accountOptions(), account: cur.account ?? '' } : {}),
