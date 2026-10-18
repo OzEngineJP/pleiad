@@ -24,6 +24,14 @@ export function createDevinMapper(sessionId, emit = () => {}) {
   function send(event) { if (live) emit({ ...event, sessionId }); }
   function accept(update) {
     const kind = update?.sessionUpdate;
+    if (kind === 'usage_update') {
+      // Devin の使用状況（used/size は文脈の占有、cost はセッションの費用）
+      const used = Number(update.used), size = Number(update.size);
+      if (live && Number.isFinite(used) && Number.isFinite(size) && size > 0) send({ type: 'contextWindow', usedTokens: used, windowTokens: size });
+      const cost = Number(update.cost?.amount);
+      if (live && Number.isFinite(cost) && String(update.cost?.currency ?? '').toUpperCase() === 'USD') send({ type: 'usage', costUsd: cost });
+      return;
+    }
     if (kind === 'user_message_chunk') {
       const text = contentText(update.content);
       if (live && expectedEcho !== null && !current?.thinking && !current?.toolCalls?.length && current?.role === 'user') {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { lang, setLanguage } from '../../web/i18n.mjs';
 import { currentLocale, setLocale } from '../../core/i18n.mjs';
-import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, HIGH } from '../../web/header-usage.mjs';
+import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, windowsForModel, HIGH } from '../../web/header-usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'header-usage';
@@ -102,4 +102,21 @@ async function japaneseCases(t) {
   t.ok('週の使用量: Codex の使用枠も同じ形で引ける（ログイン中・登録のアカウント・資格情報の無いアカウントは null）',
     weekUsage(codex, '')?.used === 31 && weekUsage(codex, 'acct-cx')?.used === 64 && weekUsage(codex, 'acct-off') === null);
   t.ok('週の使用量: 時刻を過ぎた週次は今の値ではない（null）', weekUsage({ windows: [weekly(50, { resetsAt: new Date(Date.now() - 1000).toISOString() })] }) === null);
+
+  // ---- 会話のモデルに合う枠への絞り込み（札と一覧の「この会話」の節）
+  const pwin = (provider, used) => ({ label: `${provider} 枠`, usedPercent: used, resetsAt: later, provider });
+  const mixed = [pwin('openrouter', 30), pwin('openai', 40), { label: 'x', usedPercent: 10, resetsAt: later }];
+  assert.deepEqual(windowsForModel(mixed, 'openrouter/anthropic/x').map(w => w.provider ?? null), ['openrouter', null]);
+  assert.deepEqual(windowsForModel(mixed, 'groq/y').map(w => w.provider ?? null), [null]);
+  assert.deepEqual(windowsForModel([pwin('openrouter', 30), pwin('openai', 40)], 'zen/y'), []);
+  assert.equal(windowsForModel(mixed, ''), mixed);
+  const gwin = group => ({ label: `${group} 5時間`, usedPercent: 10, resetsAt: later, group });
+  const agyWins = [gwin('Gemini Flash'), gwin('Gemini Pro'), gwin('Claude and GPT models')];
+  assert.deepEqual(windowsForModel(agyWins, 'gemini-2.5-pro'), [agyWins[1]]);
+  assert.deepEqual(windowsForModel(agyWins, 'claude-sonnet-4.5'), [agyWins[2]]);
+  assert.equal(windowsForModel(agyWins, 'mystery-1'), agyWins);
+  const cwin = (model, used) => ({ label: 'w', usedPercent: used, resetsAt: later, ...(model ? { model } : {}) });
+  const claudeWins = [cwin(null, 10), cwin('Opus', 20), cwin('Sonnet', 30)];
+  assert.deepEqual(windowsForModel(claudeWins, 'claude-sonnet-4-5'), [claudeWins[0], claudeWins[2]]);
+  t.ok('接続先・グループ・モデルの系統で会話の枠に絞る（系統が読めなければ全部・別の接続先は空）', true);
 }

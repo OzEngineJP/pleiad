@@ -93,7 +93,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
     capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true },
     modes,
-    async usage() { return { windows: [], checkedAt: null, message: t('devin.usageUnknown') }; },
+    async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
     async models(cwd = process.cwd()) { return buildDevinModels(await rawModels(cwd)); },
     async listSessions({ cwd } = {}) {
       // Common conversations add their persisted rows without starting a CLI. An

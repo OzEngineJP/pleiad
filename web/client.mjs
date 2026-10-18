@@ -8290,7 +8290,7 @@ async function syncTopbar() {
   state.account = selectedAccount;
   if (homeBot) state.accountShown = false;
   // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
-  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint });
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: chosen?.model ?? s?.nextSettings?.model ?? s?.model ?? '' });
 
   // 予約があれば次のターンの作業場所を表示する。
   if (s) state.cwd = (justCreated() && state.draft.cwd) || (s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
@@ -8321,6 +8321,8 @@ async function syncTopbar() {
   await syncAccount(s, bid, { value: selectedAccount, visible: !homeBot, current });
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
+  // 確定したモデルで使用量の札をもう一度絞り直す（先の呼び出し時点ではモデルが未確定のことがある）
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: state.model });
   paintSettingsNotice();
   refreshWorktree().catch(() => {});
   renderSessions();
