@@ -95,6 +95,12 @@ export default async function testOpencodeRetryTurn(t) {
       compactEvents.some(e => e.type === 'activity' && e.state === 'retrying' && e.retry.reason === 'free_tier_limit')
       && /Free usage exceeded/.test(failed?.reason ?? '') && !compactEvents.some(e => e.phase === 'complete') && Date.now() - c0 < 10_000,
       JSON.stringify(compactEvents));
+    t.ok('失敗した圧縮で消費した token と cost も一度だけ計上する',compactEvents.filter(e=>e.type==='usage').length===1 && Math.abs((compactEvents.find(e=>e.type==='usage')?.costUsd??0)-0.0003)<1e-10,JSON.stringify(compactEvents));
+    const cancelBase=await run('compact-abort');
+    const cancellation=new AbortController(),cancelEvents=[];
+    await backend.compact({sessionId:cancelBase.sessionId,cwd:scratch,signal:{signal:cancellation.signal},emit:e=>{cancelEvents.push(e);if(e.type==='activity'&&e.state==='compacting')cancellation.abort(new Error('User stopped'));}});
+    const charged=cancelEvents.filter(e=>e.type==='usage');
+    t.ok('手動中断: native の終了まで待ち、message に無い使用量を会話の累計差分から一度だけ回収する',charged.length===1 && charged[0].inputTokens===7 && Math.abs(charged[0].costUsd-0.0003)<1e-10 && cancelEvents.some(e=>e.phase==='failed') && !cancelEvents.some(e=>e.phase==='complete'),JSON.stringify(cancelEvents));
   } finally {
     await stop?.();
     for (const [key, value] of Object.entries(before)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }

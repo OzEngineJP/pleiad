@@ -1,16 +1,7 @@
-// OpenCode（`opencode serve`）のバックエンド（docs/multi-backend.md §2.10）。
-//
-// - Pleiad のサーバーにつき共有の `opencode serve` を 1 本（opencode-server.mjs）。作業場所は `?directory=` で選ぶ
-// - ターン: POST /session/{id}/prompt_async で送り、`/global/event` の出来事を正規化して流す（opencode-normalize.mjs）。
-//   session.idle でターンの終わり
-// - 承認: permission.asked / question.asked を askPermission に渡し、POST /permission|question/{id}/reply で返す
-// - 承認モード: 会話の権限の規則（最後に一致したものが勝つ）。モードを替えたときだけ PATCH で後ろに足す
-// - Pleiad の MCP（委譲・操作の一覧・コンピューター・ブラウザー）: 作業場所の instance に中継（core/opencode-relay.mjs）の口を POST /mcp で足し、
-//   会話をそのターンの口に結び付ける。Pleiad の指示は prompt の system で毎ターン渡す
-// - 無停止の更新: 共有のサーバーは保持役の子（opencode-held.mjs）。ターンは札（control.backendCard）を置き、引き継ぎでは手を離す（control.holder.handOff）。
-//   新しいサーバーは adoptTurn で、会話の発言・答えていない承認と質問・会話の状態を OpenCode に聞き直して、走っているターンを組み立て直す
-// - Pleiad 担当のコンテキスト（ply_context）: そのターンだけ専用のサーバーを起こし、OpenCode 自身の指示・Skills・MCP のうち Pleiad が担当する種類を読ませない
-//   （opencode-context.mjs）。ply_context は中継の口で渡し、指示の文は system に入れる
+// OpenCode v2 の公開 backend。HTTP/SSE は opencode-v2.mjs で内部の会話イベントへ写す。
+// MCP は account と native session ID で中継し、指示・Hooks は v2 plugin で渡す。
+// 共有プロセスは保持役が --stdio の stdin を維持する。コンテキストの担当が異なる
+// ターンは設定と HOME を隔離し、終了後に専用プロセスを止める（docs/multi-backend.md §2.10）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { t } from '../i18n.mjs';
@@ -26,9 +17,9 @@ import { managedLaunch } from './opencode-context.mjs';
 import { configureOpencodeHeld, acquireHeldOpencode, heldOpencode, accountHeldOpencode, writeOpencodeEnvFile, adoptOpencodeEnvFile } from './opencode-held.mjs';
 import { computerPrompt } from './computer-delivery.mjs';
 import { undelivered } from './undelivered.mjs';
-import { accountKey, opencodeData, prepareAccount, readAccountAuth, loginAccount } from './opencode-accounts.mjs';
+import { accountKey, opencodeData, prepareAccount, readAccountAuth, loginAccount, prepareCredentialImport, importLegacyCredentials } from './opencode-accounts.mjs';
 import { opencodeUsage } from './opencode-usage.mjs';
-import { v2Message } from './opencode-v2.mjs';
+import { v2Message, replayV2Messages } from './opencode-v2.mjs';
 import crypto from 'node:crypto';
 import {backupV1Database,verifyV1Conversation,v2MigrationComplete,opencodeDatabase} from './opencode-migration.mjs';
 
@@ -36,9 +27,28 @@ const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const LOGIN_POLL_MS = 3_000;
 const nativeMessageId = (id, account) => id ? 'msg_'+crypto.createHash('sha256').update(`${account}:${id}`).digest('hex').slice(0,40) : undefined;
 const databaseFor=account=>opencodeDatabase(opencodeData(account),account?{}:process.env);
+const instructionOmissions=messages=>{
+  const omitted=messages.filter(m=>m.info.type==='synthetic' && m.info.metadata?.instruction?.paths);
+  return {omitMessageIDs:omitted.map(m=>m.info.id),omitTexts:omitted.map(m=>m.info.text).filter(Boolean)};
+};
+function instructionContext(srv,account) {
+  const cache=new Map();
+  return {
+    context(id,{fresh=false}={}) {
+      if(fresh)cache.delete(id);
+      if(!cache.has(id)) {
+        const pending=Promise.resolve().then(async()=>instructionOmissions(srv.running?await srv.request('GET',`/session/${id}/message`):messagesFromDb(id,account)??[]));
+        cache.set(id,pending);pending.catch(()=>cache.delete(id));
+      }
+      return cache.get(id);
+    },
+    invalidate:id=>cache.delete(id),
+  };
+}
 const beforeOpenCode=account=>()=>{
   const file=databaseFor(account);
   fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});
+  prepareCredentialImport(file,account);
   backupV1Database(file);
   backupV1Database(path.join(path.dirname(file),'opencode-next.db'));
 };
@@ -131,6 +141,7 @@ function serverFor(account = null) {
   if (!accountServers.has(key)) {
     const srv = createOpencodeServer({ command: () => cliCommand('opencode'),
       beforeStart:beforeOpenCode(account),
+      afterStart:request=>importLegacyCredentials(request,databaseFor(account),account),
       account: { id: account.id, dir: account.dir },
       held: { acquire: args => acquireHeldOpencode({ ...args, account }) },
       origin: () => opencodeRelay.whenOrigin(), currentOrigin: () => opencodeRelay.origin(),
@@ -167,11 +178,12 @@ configureOpencodeHeld({
     }
     opencodeRelay.expect(Object.keys(turns ?? {}), children, srv?.account?.id ?? 'login');
   },
-  forget: (sessionId, account) => opencodeRelay.unexpect(sessionId,account),
+  forget: (sessionId, account) => {opencodeRelay.unexpect(sessionId,account);opencodeRelay.unbind(sessionId,account);},
 });
 
 const server = createOpencodeServer({
   beforeStart:beforeOpenCode(null),
+  afterStart:request=>importLegacyCredentials(request,databaseFor(null)),
   command: () => cliCommand('opencode'),
   held: { acquire: acquireHeldOpencode },
   origin: () => opencodeRelay.whenOrigin(),
@@ -182,7 +194,7 @@ const server = createOpencodeServer({
 });
 
 /**
- * OpenCode に渡す環境変数。中継の口（プラグインの shell.env が会話の環境変数を取る先）は Pleiad の待ち受けが決まってから。
+ * OpenCode に渡す環境変数。中継とプラグインの口は Pleiad の待ち受けが決まってから。
  * 利用者の opencode.json は書き換えずに、Pleiad のプラグインだけを足す。Pleiad が起こした OpenCode は勝手に自分を更新しない（ADR 0037）。
  * config は OPENCODE_CONFIG_CONTENT に合わせる設定（Pleiad 担当のコンテキストの専用のサーバーが、作業場所の設定を渡し直す）
  */
@@ -219,11 +231,13 @@ async function managedServer(contextRuntime, cwd, account = null) {
     ...(account ? { source: accountEnv.OPENCODE_CONFIG_DIR } : {}) });
   const srv = createOpencodeServer({
     beforeStart:beforeOpenCode(account),
+    afterStart:request=>importLegacyCredentials(request,databaseFor(account),account),
     account: account ? {id:account.id,dir:account.dir} : null,
     command: () => cliCommand('opencode'),
     origin: () => opencodeRelay.whenOrigin(),
     currentOrigin: () => opencodeRelay.origin(),
     env: async () => ({ ...(await serverEnv(launch.config,account)), ...accountEnv, ...launch.env,
+      PLEIAD_OPENCODE_INSTRUCTION_OWNER:contextRuntime.owners?.instruction ?? 'native',
       ...(account ? { OPENCODE_CONFIG_DIR: path.join(launch.env.XDG_CONFIG_HOME, 'opencode') } : {}) }),
   });
   srv.accountKey = accountKey(account);
@@ -381,7 +395,7 @@ function systemText({ contextRuntime, agentRuntime, visualizeInstructions, brows
   ].filter(Boolean).join('\n\n');
 }
 
-/** 会話のシェルへ渡す環境変数（ブラウザー・操作の一覧・秘密情報。プラグインの shell.env が取る） */
+/** 会話のシェルへ渡す環境変数（ブラウザー・操作の一覧・秘密情報。native environment に設定する） */
 const shellEnv = ({ browserEnv, controlRuntime, secretsRuntime }) => ({ ...(browserEnv ?? {}), ...(controlRuntime?.env ?? {}), ...(secretsRuntime?.env ?? {}) });
 
 /** 中継に結び付ける会話の口（url と headers だけ）。付け直す新しいサーバーのために札にも置く（トークンは札の connectionTokens と同じもの） */
@@ -581,22 +595,23 @@ export const backend = {
     const environment=Object.fromEntries(Object.entries({...process.env,...prepareAccount(account),...variables}).filter(([key,value])=>value!=null && !/^PLEIAD_OPENCODE_/i.test(key) && !/^OPENCODE_(SERVER_)?PASSWORD$/i.test(key)).map(([key,value])=>[key,String(value)]));
     const prepareEnvironment = id => srv.request('PUT', `/api/session/${id}/environment`, {body:{variables:environment}});
     await prepareEnvironment(sessionId);
+    const instructions=instructionContext(srv,account);
     const servers = opencodeRelay.bind(sessionId, { runtimes, env: variables, account:relayAccount, system:systemText(args),
       resolveChild:async id=>(await srv.request('GET',`/session/${encodeURIComponent(id)}`))?.parentID,
       prepareChild:prepareEnvironment,
-      context:args.contextRuntime?.owners?.instruction==='ply' ? async id=>({omitMessageIDs:(await srv.request('GET',`/session/${id}/message`)).filter(m=>m.info.type==='synthetic'&&m.info.metadata?.instruction?.paths).map(m=>m.info.id)}) : null,
+      context:args.contextRuntime?.owners?.instruction==='ply' ? instructions.context : null,
       hooks: {
         beforeTool: async p => {
-          if(p.tool==='opencode_session_move' && modeOf(mode)!=='yolo')return {block:'Changing the conversation directory requires YOLO mode'};
-          if(p.tool==='opencode_worktree_create' && modeOf(mode)!=='yolo')return {block:'Creating an external worktree requires YOLO mode'};
-          if(p.tool==='opencode_session_rename' && p.args?.sessionID && p.args.sessionID!==p.sessionID)return {block:'Cannot rename another conversation'};
+          if(p.tool==='opencode_session_move' && modeOf(mode)!=='yolo')return {block:t('opencode.errors.moveRestricted')};
+          if(p.tool==='opencode_worktree_create' && modeOf(mode)!=='yolo')return {block:t('opencode.errors.worktreeRestricted')};
+          if(['opencode_session_rename','opencode_session_move'].includes(p.tool) && p.args?.sessionID && p.args.sessionID!==p.sessionID)return {block:t('opencode.errors.otherConversation')};
           if(p.tool==='execute' && ['ask','edit','plan'].includes(modeOf(mode))) {
             const answer=await askPermission({toolName:'execute',input:p.args,sessionId,signal:signal?.signal,canAlways:false,kind:'tool',questions:null});
-            if(!answer?.allow)return {block:answer?.message ?? 'Code execution was not approved'};
+            if(!answer?.allow)return {block:answer?.message ?? t('opencode.errors.executeDenied')};
           }
           return hooks?.beforeTool(p,{signal:signal?.signal}) ?? {};
         },
-        afterTool:p=>hooks?.afterTool(p,{signal:signal?.signal}) ?? {},
+        afterTool:p=>{if(p.tool==='read')instructions.invalidate(p.sessionID);return hooks?.afterTool(p,{signal:signal?.signal}) ?? {};},
       } });
     await ensureRelay(directory, servers, srv);
 
@@ -611,7 +626,7 @@ export const backend = {
     let done;
     const arm = () => { done = new Promise((resolve) => { settle = resolve; }); };
     arm();
-    // { id, text, hash } 途中送信で渡したもの（自分の発言として会話に入ったら「渡った」）。付け直したものは本文を持たず、ハッシュで照らす
+    // 途中送信は native 発言 ID で確認する。本文が同じでも別の送信を区別する。
     const steers = (card?.steers ?? []).map(x => ({id:x.id ?? null,nativeId:x.nativeId ?? nativeMessageId(x.id,relayAccount)}));
     const children = new Set(card?.children ?? []);
     let delivered = Boolean(card?.delivered);
@@ -738,7 +753,7 @@ export const backend = {
         steers.push({id:item?.id ?? null,nativeId});
         control.touch?.();
         await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory, signal:signal?.signal, body: { id:nativeId, ...(ref ? { model: ref } : {}), parts: [{ type: 'text', text: said }] } });
-        await srv.resync();
+        await srv.resync({snapshot:false});
         return true;
       };
     }
@@ -780,12 +795,7 @@ export const backend = {
         // このターンの発言（送った時刻より後）を組み立て直す。途中の本文は、次の部品の更新まで差分を読まない（溜めた差分と重なる）
         replaying = true;
         try {
-          for (const m of Array.isArray(list) ? list : []) {
-            // 送った時刻が分からない札なら組み立て直さない（前の発言まで流すと重なる）
-            if (!(since > 0) || !(Number(m?.info?.time?.created) >= since)) continue;
-            mapper.handle({ type: 'message.updated', properties: { info: m.info } });
-            for (const part of m.parts ?? []) mapper.handle({ type: 'message.part.updated', properties: { part } });
-          }
+          replayV2Messages((list ?? []).filter(m=>since>0 && Number(m.info?.time?.created)>=since),onEvent);
         } finally { replaying = false; }
         mapper.resync();
         const early = queue;
@@ -800,7 +810,7 @@ export const backend = {
         if (state !== 'busy' && state !== 'retry') {
           const pending=await srv.request('GET',`/api/session/${sessionId}/inbox`);
           if(!Array.isArray(pending?.data))throw new Error('OpenCode v2: invalid inbox response');
-          if(!pending.data.length)settle();
+          if(!pending.data.length)await srv.resync();
         }
         // 再試行を待っている最中に引き取った。待ちの印（次の再試行の時刻）を出し直し、上限なら止める（ADR 0229）
         else if (state === 'retry') onEvent({ type: 'session.status', properties: { sessionID: sessionId, status: status[sessionId] } });
@@ -841,7 +851,7 @@ export const backend = {
           },
         });
         admitted=true;resolveAdmission();
-        await srv.resync();
+        await srv.resync({snapshot:Boolean(previous)});
         control?.onReady?.();
         if (signal?.signal?.aborted) onAbort();
         await done;
@@ -854,7 +864,7 @@ export const backend = {
         control?.touch?.();
         arm();
         await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory,signal:signal?.signal, body: { id:nativeMessageId(`${userMessageId}:stop:${stopRounds}`,relayAccount), ...(ref ? { model: ref } : {}), agent: modeOf(card?.mode ?? mode) === 'plan' ? 'plan' : 'build', parts: [{ type: 'text', text: reason }] } });
-        await srv.resync();
+        await srv.resync({snapshot:false});
         await done;
       }
     } catch (err) {
@@ -921,16 +931,40 @@ export const backend = {
       const dedicated = await managedServer(args.contextRuntime, args.cwd, selectedAccount(args.sessionId, args));
       try { return await backend.compact(args, dedicated); } finally { await dedicated.stop(); }
     }
-    srv ??= serverFor(selectedAccount(args.sessionId, args));
+    const account=selectedAccount(args.sessionId,args);
+    srv ??= serverFor(account);
     const { sessionId, emit, cwd, trigger = 'manual' } = args;
     const directory = (await directoryOf(sessionId, srv)) ?? cwd;
+    const servers=opencodeRelay.bind(sessionId,{account:account?.id ?? 'login',system:systemText(args),runtimes:relayRuntimes(args),
+      context:args.contextRuntime?.owners?.instruction==='ply'?instructionContext(srv,account).context:null,
+    });
+    await ensureRelay(directory,servers,srv);
     const msgs = await srv.request('GET', `/session/${sessionId}/message`, { directory });
     const last = [...(msgs ?? [])].reverse().find((m) => m.info?.role === 'assistant' && m.info?.providerID);
     const ref = last ? { providerID: last.info.providerID, modelID: last.info.modelID } : await defaultModelRef(directory, srv);
     if (!ref) throw new Error(t('opencode.errors.noModel'));
     emit({ type: 'compaction', phase: 'start', trigger });
     const since=Date.now();
-    let failure=null,summary=null;
+    const usageBefore=await srv.request('GET',`/session/${sessionId}`,{directory});
+    let failure=null,summary=null,receipt=null;
+    let stopping=null;
+    const interrupt=()=>stopping ??= srv.request('POST',`/session/${sessionId}/abort`,{directory}).catch(()=>{});
+    const onAbort=()=>{failure=args.signal.signal.reason ?? new Error('Interrupted');if(receipt)void interrupt();};
+    args.signal?.signal?.addEventListener('abort',onAbort,{once:true});
+    const emitUsage=async()=>{
+      let tokens=summary?.info.tokens,cost=summary?.info.cost;
+      // v2.0.32 の手動中断は message へ usage を写さない。会話の累計には保存される。
+      if(!tokens && summary && usageBefore?.tokens && Number.isFinite(usageBefore.cost)) {
+        const after=await srv.request('GET',`/session/${sessionId}`,{directory}).catch(()=>null);
+        if(after?.tokens && Number.isFinite(after.cost)) {
+          const delta=(a,b)=>Math.max(0,(a??0)-(b??0));
+          tokens={input:delta(after.tokens.input,usageBefore.tokens.input),output:delta(after.tokens.output,usageBefore.tokens.output),reasoning:delta(after.tokens.reasoning,usageBefore.tokens.reasoning),cache:{read:delta(after.tokens.cache?.read,usageBefore.tokens.cache?.read)}};
+          cost=delta(after.cost,usageBefore.cost);
+        }
+      }
+      if(!tokens)return;
+      emit({type:'usage',inputTokens:(tokens.input??0)+(tokens.cache?.read??0),outputTokens:(tokens.output??0)+(tokens.reasoning??0),cachedTokens:tokens.cache?.read??0,costUsd:cost??0});
+    };
     const offGone=srv.onGone(error=>{failure=error;});
     let limitStop = false;
     const onEvent = (event) => {
@@ -944,36 +978,47 @@ export const backend = {
         if (retry.definite && !limitStop) {
           limitStop = true;
           failure = { message: retry.message || 'usage limit' };
-          void srv.request('POST', `/session/${sessionId}/abort`, { directory }).catch(() => {});
+          void interrupt();
         }
       } else if (event.type === 'session.status' && status?.type === 'busy') emit({ type: 'activity', state: 'compacting' });
     };
     turnsBySession.set(sessionKey(sessionId, srv), onEvent);
     try {
-      const receipt=await srv.request('POST',`/session/${sessionId}/summarize`,{directory,body:{id:nativeMessageId(crypto.randomUUID(),srv.relayAccount ?? 'login')},timeoutMs:15*60_000});
+      receipt=await srv.request('POST',`/session/${sessionId}/summarize`,{directory,body:{id:nativeMessageId(crypto.randomUUID(),srv.relayAccount ?? 'login')},timeoutMs:15*60_000});
       if(!receipt?.id)throw new Error('OpenCode v2: compaction admission returned no ID');
+      if(args.signal?.signal?.aborted)onAbort();
       const until=since+10*60_000;
       while(Date.now()<until) {
-        if(failure)throw failure;
-        if(args.signal?.signal?.aborted)throw args.signal.signal.reason ?? new Error('Interrupted');
         const rows=await srv.request('GET',`/session/${sessionId}/message`,{directory});
         const current=rows.find(m=>m.info.id===receipt.id && m.info.type==='compaction');
-        if(current?.info.status==='failed')throw errorOf(current.info.error) ?? new Error('OpenCode compaction failed');
+        if(current?.info.status==='failed'){summary=current;throw errorOf(current.info.error) ?? new Error('OpenCode compaction failed');}
         if(current?.info.status==='completed'){summary=current;break;}
+        if(failure)throw failure;
+        if(args.signal?.signal?.aborted)throw args.signal.signal.reason ?? new Error('Interrupted');
         await new Promise(resolve=>setTimeout(resolve,500));
       }
       if(!summary)throw new Error('OpenCode compaction did not finish before the timeout');
     } catch(error) {
+      if(receipt?.id && !summary) {
+        await interrupt();
+        // interrupt の受付は圧縮の cleanup より早い。終端の課金が保存されるまで待つ。
+        const until=Date.now()+30000;
+        do {
+          const rows=srv.running?await srv.request('GET',`/session/${sessionId}/message`,{directory}).catch(()=>[]):messagesFromDb(sessionId,account)??[];
+          summary=rows.find(m=>m.info.id===receipt.id && m.info.type==='compaction' && ['completed','failed'].includes(m.info.status));
+          if(summary || !srv.running)break;
+          await new Promise(resolve=>setTimeout(resolve,100));
+        }while(Date.now()<until);
+      }
+      await emitUsage();
       emit({type:'compaction',phase:'failed',trigger,reason:String(error.message ?? error)});
       return;
     } finally {
+      args.signal?.signal?.removeEventListener('abort',onAbort);
       offGone();
       if(turnsBySession.get(sessionKey(sessionId,srv))===onEvent)turnsBySession.delete(sessionKey(sessionId,srv));
     }
-    if(summary.info.tokens) {
-      const tokens=summary.info.tokens;
-      emit({type:'usage',inputTokens:(tokens.input??0)+(tokens.cache?.read??0),outputTokens:(tokens.output??0)+(tokens.reasoning??0),cachedTokens:tokens.cache?.read??0,costUsd:summary.info.cost??0});
-    }
+    await emitUsage();
     const text = (summary?.parts ?? []).filter((p) => p.type === 'text').map((p) => p.text).join('');
     emit({ type: 'compaction', phase: 'complete', trigger, ...(text ? { summary: text } : {}), ...(summary?.info?.id ? { nativeId: summary.info.id } : {}) });
   },
@@ -1094,7 +1139,6 @@ export const backend = {
       if(accountBusy(null))throw new Error(t('accounts.backend.inUse',{agent:'OpenCode'}));
       const argv = cliCommand('opencode');
       if (!argv) throw new Error(t('opencode.errors.notInstalled'));
-      const before = new Set(((await server.request('GET', '/provider').catch(() => null))?.connected) ?? []);
       const command = [...argv, 'auth', 'login'].map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
       emit?.({ type: 'auth', phase: 'url', url: command, message: t('opencode.auth.runCommand') });
       const until = Date.now() + LOGIN_TIMEOUT_MS;

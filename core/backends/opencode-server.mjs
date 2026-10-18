@@ -5,6 +5,7 @@ import { spawnCli } from '../cli-installation.mjs';
 import { killTree } from './antigravity-background.mjs';
 import { createV2Protocol } from './opencode-v2.mjs';
 import { opencodeRelay } from '../opencode-relay.mjs';
+import {t} from '../i18n.mjs';
 
 const START_TIMEOUT_MS = Number(process.env.AGENT_HOST_OPENCODE_START_MS) || 60_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -31,18 +32,18 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
     const info=await rawRequest('GET','/api/info');
     const version=String(info?.version ?? info?.data?.version ?? '');
     const match=/^2\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
-    if(!match || (Number(match[1])===0 && Number(match[2])<32))throw new Error(`Unsupported OpenCode version: ${version || 'unknown'}; requires v2.0.32 or newer v2`);
+    if(!match || (Number(match[1])===0 && Number(match[2])<32))throw new Error(t('opencode.errors.version',{version:version||'unknown'}));
     const schema=await rawRequest('GET','/openapi.json');
     if(schema?.info?.title!=='opencode HttpApi' || !schema.paths?.['/api/session'] || !schema.paths?.['/api/event'])throw new Error('OpenCode v2 API schema does not match');
     const until=Date.now()+15*60_000;
     for(;;) {
       const migration=await rawRequest('GET','/api/experimental/migration/v1');
       if(migration?.status==='completed')break;
-      if(migration?.status==='error')throw new Error('OpenCode v1 migration failed; the original database backup is retained');
-      if(!['required','running'].includes(migration?.status) || Date.now()>=until)throw new Error('OpenCode v1 migration did not complete');
+      if(migration?.status==='error')throw new Error(t('opencode.errors.migrationFailed'));
+      if(!['required','running'].includes(migration?.status) || Date.now()>=until)throw new Error(t('opencode.errors.migrationPending'));
       await new Promise(resolve=>setTimeout(resolve,500));
     }
-    await afterStart();
+    await afterStart(rawRequest);
   }
   async function start() {
     const argv=command();if(!argv)throw Object.assign(new Error('opencode is not installed'),{code:'NOT_INSTALLED'});
@@ -113,7 +114,7 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
     await starting;return {base,auth};
   }
   async function rawRequest(method,path,{directory=null,body,query={},timeoutMs=REQUEST_TIMEOUT_MS,signal}={}) {
-    if(!base)throw new Error('OpenCode server is unavailable');
+    if(!base)throw Object.assign(new Error('OpenCode server is unavailable'),{code:'OPENCODE_GONE'});
     const qs=new URLSearchParams(Object.entries(query).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>[k,String(v)]));
     const res=await fetch(`${base}${path}${qs.size?'?'+qs:''}`,{method,headers:{authorization:auth,accept:'application/json',...(directory?{'x-opencode-directory':encodeURIComponent(directory)}:{}),...(body!==undefined?{'content-type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs)});
     if(!res.ok){await res.body?.cancel();throw Object.assign(new Error(`OpenCode ${method} ${path}: HTTP ${res.status}`),{status:res.status});}
@@ -166,7 +167,7 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
     }
   }
   return {ensure,relayAccount:accountId,async request(method,path,options){await ensure();return protocol.request(method,path,options);},
-    begin:(id,since,accepted)=>protocol.begin(id,since,accepted),resync:()=>protocol.resync(),
+    begin:(id,since,accepted)=>protocol.begin(id,since,accepted),resync:options=>protocol.resync(options),
     subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn);},onGone(fn){goneListeners.add(fn);return()=>goneListeners.delete(fn);},
     get running(){return Boolean((proc||heldChild)&&base);},get held(){return heldChild&&!heldChild.detached&&!heldChild.closed?heldChild:null;},
     handedOff(){retired=true;stream?.abort();stream=null;heldChild=null;base=null;auth=null;servedOrigin=null;},stop:stopNow};

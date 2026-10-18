@@ -1,10 +1,10 @@
 // OpenCode の共有のサーバー（`opencode serve`）を保持役（core/holder/）の子に載せる（無停止の更新。docs/multi-backend.md §2.10、ADR 0221）。
 // Codex の app-server（codex-held.mjs）と同じく全部の会話で共有する 1 本だが、話すのは stdio ではなく HTTP と SSE なので、保持役に持たせるのはプロセスだけ:
-//   - 子の stdout は起動の 1 行（`opencode server listening on …`）を読むだけで、記録は来たそばから ack して捨てる（再生には使わない）
+//   - 子の stdout は起動の 1 行（JSON の url）を読むだけで、記録は来たそばから ack して捨てる（再生には使わない）
 //   - 新しいサーバーは札（label）の server（待ち受けの URL・basic 認証・中継の合言葉・Pleiad の待ち受け）でつなぎ直し、
-//     走っていたターンは会話の発言（GET /session/{id}/message）と答えていない承認・質問（GET /permission・/question）から組み立て直す（opencode.mjs の adoptTurn）
+//     走っていたターンは会話の発言（GET /api/session/{id}/message）と答えていない承認・質問（GET /api/session/{id}/permission・/form）から組み立て直す（opencode.mjs の adoptTurn）
 //   札（label）: { k: 'opencode-server', v: 1, server: { base, auth, origin, secret }, turns: { <OpenCode の会話の id>: <サーバーの札> } }
-//     origin は OpenCode に渡した Pleiad の待ち受け（中継の口・プラグインの env の URL）。違うポートで立った新しいサーバーは、走っているターンが無くなったら起こし直す
+//     origin は OpenCode に渡した Pleiad の待ち受け（中継の口・プラグインの env の URL）。新しいサーバーは、ファイルの URL を差し替えて plugin と MCP の口を付け直す
 //   手を離す（handOff）: 同じ tick に来た全部のターンの札を置いて、保持役に detach する。以後このサーバーは子に書かない（HTTP は新しいサーバーのもの）
 //   付け直し（expand）: 起動で保持役の子の札を読み、子に付けて、札のターンごとの元を返す。ターンの無い子も引き継ぐ（起こし直しの数秒を省く）
 // 会話のシェルの環境変数（秘密情報を含む）は札に入れず、データ置き場の run/opencode-env-<uuid>.json に 0600 で置いて名前だけを札に書く（Claude の claude-env-file.mjs と同じ扱い）
@@ -22,7 +22,6 @@ export const OPENCODE_CHILD = 'opencode-server';
 export const OPENCODE_LABEL_KIND = 'opencode-server';
 /** 親が居ない状態が続いたとき、保持役が OpenCode を止めるまで（codex-held.mjs と同じ。引き継ぎ・落ちた後の起こし直しよりずっと長く、Pleiad を閉じた後に残り続けない長さ） */
 const KEEP_MS = 10 * 60_000;
-const LISTENING = /opencode server listening on (http:\/\/[^\s]+)/i;
 const ENV_FILE = /^opencode-env-[0-9a-f-]+\.json$/;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -102,10 +101,10 @@ export class HeldOpencode {
   spawn({ command, args, env, cwd, timeoutMs }) {
     return new Promise((resolve, reject) => {
       const done = (fn, value) => { clearTimeout(timer); offLine(); offGone(); fn(value); };
-      const timer = setTimeout(() => done(reject, new Error(`opencode serve did not start in ${timeoutMs}ms: ${this.tail()}`.slice(0, 500))), timeoutMs);
+      const timer = setTimeout(() => done(reject, new Error(`opencode serve did not start in ${timeoutMs}ms`)), timeoutMs);
       timer.unref?.();
       const offLine = this.onLine(line => { const url = startupUrl(line); if (url) done(resolve, url); });
-      const offGone = this.onGone(exit => done(reject, new Error(`opencode serve exited (${exit.code ?? exit.signal ?? exit.error}): ${this.tail()}`.slice(0, 500))));
+      const offGone = this.onGone(exit => done(reject, new Error(`opencode serve exited (${exit.code ?? exit.signal ?? "error"})`)));
       this.client.spawn({ id: this.id, command, args, cwd, env, policy: 'none', label: this.labelObject(), keepMs: KEEP_MS });
     });
   }

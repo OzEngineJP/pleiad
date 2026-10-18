@@ -162,19 +162,24 @@
     "visualizationSaveFailed": "可視化を保存できませんでした: {{error}}",
     "contextSaveFailed": "プラグインの利用記録を保存できませんでした"
   },
-  "browserHandoff": { "continue": { "resumed": "Chrome のウィンドウの操作を終えました。続けてください。", "connected": "Chrome につながりました。続けてください。" } },
+  "browserHandoff": {
+    "continue": {
+      "resumed": "Chrome のウィンドウの操作を終えました。続けてください。",
+      "connected": "Chrome につながりました。続けてください。"
+    }
+  },
   "resume": {
     "running": "この会話は実行中です。終わってから再開してください",
     "notInterrupted": "この会話は中断していません",
-      "outboxUnknown": "送信結果を確認できないメッセージがあるため、再開できません。会話を確かめてから、未送信の一覧でそのメッセージを再送するか取り消してください",
-      "limitWaiting": "このアカウントは上限の解除を待っています。別のアカウントを選ぶか、解除まで待ってください",
+    "outboxUnknown": "送信結果を確認できないメッセージがあるため、再開できません。会話を確かめてから、未送信の一覧でそのメッセージを再送するか取り消してください",
+    "limitWaiting": "このアカウントは上限の解除を待っています。別のアカウントを選ぶか、解除まで待ってください",
     "prompt": {
       "user": "続けてください",
       "update": "Pleiad の更新のため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
       "quit": "Pleiad の終了のため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
       "restart": "Pleiad が再起動したため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
-        "hostAway": "接続が切れたため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
-        "limit": "使用量の上限で止まりました。止まる前の続きから進めてください。"
+      "hostAway": "接続が切れたため中断しました。途中だった操作は結果を確かめてから、続きを進めてください。",
+      "limit": "使用量の上限で止まりました。止まる前の続きから進めてください。"
     }
   },
   "scan": {
@@ -746,7 +751,17 @@
     "errors": {
       "notInstalled": "OpenCode（opencode）が見つかりません。インストールしてから再確認してください",
       "noModel": "使うモデルが決まりません。OpenCode でモデルを選んでください",
-      "forkMissing": "分岐の起点の発言が見つかりません"
+      "forkMissing": "分岐の起点の発言が見つかりません",
+      "moveRestricted": "会話の作業場所の変更には YOLO モードが必要です",
+      "worktreeRestricted": "作業場所の外への worktree 作成には YOLO モードが必要です",
+      "otherConversation": "別の会話のタイトルは変更できません",
+      "executeDenied": "コードの実行は承認されませんでした",
+      "systemOwner": "この OpenCode のシステム設定は Pleiad 担当のコンテキストから分離できません。設定の担当を OpenCode に変更するか、システム設定をユーザー設定へ移してください",
+      "migrationLoss": "OpenCode の会話を v2 に移す際、発言または添付をすべて保持できたと確認できませんでした。元のデータと .pleiad-before-v2.db のバックアップは残しています",
+      "migrationFailed": "OpenCode の v1 データの移行に失敗しました。移行前のバックアップは残しています",
+      "migrationPending": "OpenCode の v1 データの移行が完了していません",
+      "version": "OpenCode {{version}} には対応していません。v2.0.32 以降の v2 を使ってください",
+      "compactionOwner": "この要求から Pleiad 担当の指示を安全に除外できませんでした。新しい会話を始めるか、指示の担当を OpenCode に変更してください"
     },
     "auth": {
       "accountRunCommand": "端末で次のコマンドを実行し、この OpenCode のアカウントでログインしてください。",
@@ -760,7 +775,9 @@
     }
   },
   "antigravity": {
-    "accounts": { "unavailable": "Antigravity のアカウント切替は未対応です。OS の共有資格情報を安全に分離できません。ログイン中のアカウントを使うか、別の OS ユーザーまたは仮想マシンで実行してください。" },
+    "accounts": {
+      "unavailable": "Antigravity のアカウント切替は未対応です。OS の共有資格情報を安全に分離できません。ログイン中のアカウントを使うか、別の OS ユーザーまたは仮想マシンで実行してください。"
+    },
     "description": "Google AI Pro / Ultra の枠を使う",
     "modes": {
       "yolo": "確認しない。すべてのツールを通す（agy のヘッドレスはこれ以外だと黙って拒否される）"

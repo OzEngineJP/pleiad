@@ -1,30 +1,8 @@
-// `opencode serve` の身代わり。HTTP の口と `/global/event`（SSE）を、実機（opencode 1.19.3 / windows-x64、2026-10-18）で確かめた形だけ真似る。
-// LLM を呼ばない。core/backends/opencode.mjs の写し替え（出来事 -> 正規化イベント、承認・質問の受け渡し、中断、分岐、圧縮、
-// サブエージェント、Pleiad の MCP の中継とシェルの環境変数）を試験で通すためのもの。推測で足した口は無い。
-//
-// 使い方: AGENT_HOST_OPENCODE_BIN="node tests/lib/fake-opencode.mjs" で opencode-server.mjs から `serve --port 0 --hostname 127.0.0.1` で起こされる。
-// 台本は発言の先頭で選ぶ:
-//   "tool"          bash のツールを 1 回動かしてから答える
-//   "ask"           bash の承認（permission.asked）を待ち、許可なら動かす。拒否なら error のツール
-//   "question"      質問（question.asked）を待ち、答えを本文にする
-//   "mcp:<json>"    { server, tool, arguments } の Pleiad の MCP のツールを、POST /mcp で足された口へ呼ぶ（プラグインと同じく _pleiadSession を足す）
-//   "env"           プラグインの shell.env と同じく、PLEIAD_OPENCODE_ENV_URL から会話の環境変数を取り、JSON を本文にする
-//   "task"          子の会話（task のサブエージェント）を作って答えさせる
-//   "slow"          中断（/abort）されるまで終わらない
-//   "hold"          途中送信（走っている最中の prompt_async）が届くまで（最長 20 秒）待ってから答える
-//   "fail"          失敗（session.error）で終わる
-//   "retry-recover" 再試行の待ち（session.status の retry、"Rate limit exceeded"）を 200ms 出してから答える。"retry-nonext" は next の無い待ち
-//   "retry-gate:<名前>" 再試行の待ちのまま、ゲートが開くまで待ってから答える（next は 1 分後）
-//   "retry-free" / "retry-go" 待っても通らない上限（Zen の無料枠 free_tier_limit・Go の枠 account_rate_limit）の待ちのまま、中断されるまで止まる
-//   "retry-rate"    "Rate limit exceeded" の待ちを 5 回出し、なお 429 の session.error で終わる
-//   "compact-limited" 普通に答えるが、この会話の圧縮（summarize）は無料枠の上限の待ちのまま、中断されるまで止まる
-//   "show-system"   受け取った system（Pleiad の指示）をそのまま答える
-//   "gate:<名前>"   bash のツールを動かしたまま、ゲート（AGENT_HOST_FAKE_GATE_DIR/<名前> のファイル）が開くまで待ってから "gate <名前> done" と答える
-//   "stream:<名前>" 本文の前半を流したまま、ゲートが開くまで待ってから後半を流す（本文は "first half <名前> / second half <名前>"）
-// 答えていない承認・質問は GET /permission・/question、走っている会話は GET /session/status で返す（無停止の更新の付け直しが聞き直す）
-// FAKE_OPENCODE_STATE_DIR を付けると、会話をファイルに残して別のプロセスと分け合う（本物は同じ DB を使う。Pleiad 担当のコンテキストの専用のサーバーが、共有のサーバーで作った会話を続ける）
-//   それ以外        "echo: <発言>" と答える（system を受けたら "[system]" を前に付ける）
-// 走っている最中に届いた prompt_async は、同じ実行の中で次の区切りに読み（途中送信）、本文の最後に "受け取った: <本文>" を足す。
+// OpenCode v2.0.32 の HTTP/SSE を模した、モデルを呼ばない試験サーバー。
+// 外側は /api/* と native event envelope、内部は既存の会話の台本を使う。
+// 台本は tool / ask / question / mcp:<JSON> / env / task / slow / hold / fail /
+// retry-* / gate:<名前> / stream:<名前> / show-system。共有ファイルでプロセス間の
+// 会話を維持し、モデル推論と本物の v2 plugin の検証は別途行う。
 import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -80,6 +58,12 @@ function broadcast(directory, type, properties) {
   if(type==='session.created')return output(type,{sessionID:p.sessionID,parentID:p.info.parentID,location:{directory}});
   if(type==='message.updated'&&p.info.role==='user')return output('session.inbox.delivered',{sessionID:s.id,inboxID:p.info.id});
   if(type==='message.updated')return;
+  if(type==='session.status') {
+    const status=p.status,mid=s?.messages.findLast(m=>m.info.role==='assistant')?.info.id;
+    if(status.type==='retry')return output('session.retry.scheduled',{sessionID:s.id,assistantMessageID:mid,attempt:status.attempt,at:status.next,error:{type:status.action?'provider.quota':'provider.rate-limit',message:status.message,response:{body:JSON.stringify({error:{type:status.action?.reason==='free_tier_limit'?'FreeUsageLimitError':status.action?.reason==='account_rate_limit'?'GoUsageLimitError':undefined}})}}});
+    if(status.type==='busy')return output('session.step.started',{sessionID:s.id,assistantMessageID:mid});
+    return;
+  }
   if(type==='message.part.delta') {
     const part=m.parts.find(x=>x.id===p.partID);
     return output(`session.${part.type}.delta`,{sessionID:s.id,assistantMessageID:m.info.id,ordinal:m.parts.filter(x=>x.type===part.type).findIndex(x=>x.id===part.id),delta:p.delta});
@@ -105,11 +89,19 @@ function broadcast(directory, type, properties) {
   output(type,p);
 }
 function formOf(p){return {id:p.id,sessionID:p.sessionID,title:'Question',fields:p.questions.map((q,i)=>({key:String(i),type:q.multiple?'multiselect':'string',title:q.question,options:q.options.map(o=>({value:o.label,label:o.label,...(o.description?{description:o.description}:{})}))}))};}
-function nativeRow(s){return {...row(s),location:{directory:s.directory},permissions:s.permission.map(r=>({action:r.permission,resource:r.pattern,effect:r.action})),time:Object.fromEntries(Object.entries(s.time).map(([k,v])=>[k,new Date(v).toISOString()]))};}
+function nativeRow(s){
+  const totals={cost:0,tokens:{input:0,output:0,reasoning:0,cache:{read:0,write:0}}};
+  for(const info of [...s.messages.map(m=>m.info),...Object.values(s.compactionUsage??{})]) {
+    totals.cost+=info.cost??0;
+    for(const key of ['input','output','reasoning'])totals.tokens[key]+=info.tokens?.[key]??0;
+    for(const key of ['read','write'])totals.tokens.cache[key]+=info.tokens?.cache?.[key]??0;
+  }
+  return {...row(s),...totals,location:{directory:s.directory},permissions:s.permission.map(r=>({action:r.permission,resource:r.pattern,effect:r.action})),time:Object.fromEntries(Object.entries(s.time).map(([k,v])=>[k,new Date(v).toISOString()]))};
+}
 function nativeMessage(m){
   const {info,parts}=m;
   const base={id:info.id,time:Object.fromEntries(Object.entries(info.time).map(([k,v])=>[k,new Date(v).toISOString()]))};
-  if(info.summary)return {...base,type:'compaction',status:info.status??'completed',reason:'manual',summary:parts.filter(p=>p.type==='text').map(p=>p.text).join(''),recent:'',tokens:info.tokens,cost:info.cost};
+  if(info.summary)return {...base,type:'compaction',status:info.status??'completed',reason:'manual',summary:parts.filter(p=>p.type==='text').map(p=>p.text).join(''),recent:'',tokens:info.tokens,cost:info.cost,...(info.error?{error:info.error}:{})};
   if(info.role==='user')return {...base,type:info.synthetic?'synthetic':'user',text:parts.filter(p=>p.type==='text').map(p=>p.text).join(''),files:[],agents:[],skills:[]};
   return {...base,type:'assistant',agent:'build',model:{providerID:'fake',id:'echo'},tokens:info.tokens,cost:info.cost,content:parts.filter(p=>['text','reasoning','tool'].includes(p.type)).map(p=>p.type==='tool'?{type:'tool',id:p.callID,name:p.tool,time:{created:base.time.created},state:{...p.state,...(p.state.output?{content:[{type:'text',text:p.state.output}]}:{}),...(p.state.error?{error:{type:'ToolError',message:p.state.error}}:{})}}:{type:p.type,text:p.text})};
 }
@@ -449,6 +441,16 @@ const server = http.createServer(async (req, res) => {
       const m={info,parts:[]};s.messages.push(m);
       direct(200,{data:{id:mid,sessionID:sid,type:'compaction',delivery:'steer',time:{created:new Date(info.time.created).toISOString()}}});
       broadcast(s.directory,'session.compaction.started',{sessionID:sid,inputID:mid,reason:'manual',recent:''});
+      const cancelled=s.messages.some(m=>m.info.role==='user'&&m.parts.some(p=>p.type==='text'&&p.text.startsWith('compact-abort')));
+      if(cancelled || s.messages.some(m=>m.info.role==='user'&&m.parts.some(p=>p.type==='text'&&p.text.startsWith('compact-limited')))) {
+        let release;const stopped=new Promise(resolve=>{release=resolve;});
+        s.run={steers:[],abort:release};
+        if(cancelled)busyStatus(s);
+        else retryStatus(s,{attempt:1,message:'Free usage exceeded, subscribe to Go',action:{reason:'free_tier_limit'},next:now()+3000});
+        await stopped;await wait(50);s.run=null;s.compacting=false;info.status='failed';(s.compactionUsage??={})[mid]={tokens:{input:7,output:2},cost:0.0003};info.error=cancelled?{type:'compaction.interrupted',message:'Compaction interrupted'}:{type:'provider.quota',message:'Free usage exceeded, subscribe to Go'};
+        persist(sid);broadcast(s.directory,'session.compaction.failed',{sessionID:sid,inputID:mid,reason:'manual',error:info.error});
+        broadcast(s.directory,'session.idle',{sessionID:sid});return;
+      }
       await wait(10);info.status='completed';info.tokens={input:12,output:4};info.cost=0.0001;
       m.parts.push({id:id('prt'),type:'text',text:'## Summary\n- the fake conversation so far'});
       s.compacting=false;persist(sid);broadcast(s.directory,'session.compaction.ended',{sessionID:sid,reason:'manual',text:m.parts[0].text,tokens:info.tokens,cost:info.cost});

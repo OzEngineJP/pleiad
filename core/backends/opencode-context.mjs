@@ -1,26 +1,17 @@
-// Pleiad がコンテキストを担当する OpenCode のターン（ply_context）の、専用の opencode serve の起こし方（docs/multi-backend.md §2.10「Pleiad 担当のコンテキスト」、ADR 0221）。
-//
-// OpenCode が自分で読むもの（実機の opencode 1.19.3 のソースと、モデルへ送った要求を受けて確かめた）:
-//   - 指示: 設定の置き場の AGENTS.md（無ければ ~/.claude/CLAUDE.md）と、作業場所から Git のルートまでの AGENTS.md・CLAUDE.md・CONTEXT.md（最初に見つかった名前の全部）・設定の instructions
-//   - Skills: 設定の置き場と作業場所の .opencode の skill(s)、~/.claude・~/.agents と作業場所の .claude・.agents の skills、設定の skills.paths。名前と説明はシステムプロンプトにも並ぶ
-//   - MCP: 設定（全体・作業場所）の mcp
-// 指示はサーバーのプロセス全体の設定でしか止められず（会話ごとの口が無い）、Skills もシステムプロンプトの一覧は権限の規則では消えない。そこで、Pleiad が担当するターンは
-// 共有のサーバーを使わず、そのターンだけ専用のサーバーを起こす（Codex の専用の app-server と同じ考え）。起こし方:
-//   - OPENCODE_DISABLE_PROJECT_CONFIG=1（作業場所の opencode.json・.opencode・指示ファイルを読まない）と、設定の置き場を写した置き場（XDG_CONFIG_HOME）
-//   - 写した置き場は、全体の設定の置き場のファイルを写し（設定は Pleiad が担当する種類のキーを外す）、フォルダーは junction でつなぐ。指示を担当するなら AGENTS.md を、Skills を担当するなら skill(s) を置かない
-//   - 作業場所の設定（opencode.json・.opencode/opencode.json）は、Pleiad が担当する種類のキーを外して OPENCODE_CONFIG_CONTENT で渡し直す。エージェントに任せる指示ファイルと
-//     .opencode の Skills は、instructions・skills.paths の絶対パスで渡し直す（作業場所の設定を止めると、OpenCode は相対パスを設定の置き場から探すため）
-//   - Skills を担当するなら OPENCODE_DISABLE_EXTERNAL_SKILLS・OPENCODE_DISABLE_CLAUDE_CODE_SKILLS、指示を担当するなら OPENCODE_DISABLE_CLAUDE_CODE_PROMPT
-// 作業場所の .opencode の中のエージェント・コマンド・プラグインは、このターンでは読まれない（作業場所の設定を止めるため。docs/backends.md に書く）。
+// Pleiad がコンテキストを担当する OpenCode v2 のターンの起動設定。
+// 設定の写しと独立した HOME を使い、担当する指示・Skills・MCP を設定から外す。
+// OpenCode に任せる設定は絶対パスで渡し直す。下位の read が読み込んだ指示は
+// plugin がモデルの文脈から除く（docs/multi-backend.md §2.10）。
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { opencodeData } from './opencode-accounts.mjs';
+import { t } from '../i18n.mjs';
 
 const GLOBAL_CONFIG_FILES = ['config.json', 'opencode.json', 'opencode.jsonc'];
 const PROJECT_CONFIG_FILES = ['opencode.json', 'opencode.jsonc'];
 const SKILL_DIRS = ['skill', 'skills'];
-const INSTRUCTION_FILES = ['AGENTS.md', 'CLAUDE.md', 'CONTEXT.md'];
+const INSTRUCTION_FILES = ['AGENTS.md'];
 /** 設定の中で、配列を足し合わせるキー（OpenCode の設定の合わせ方と同じ。ほかの配列は後の値が勝つ） */
 const CONCAT = new Set(['plugins', 'instructions']);
 
@@ -196,6 +187,19 @@ async function unlinkEntry(p) {
  * 専用のサーバーに足す環境変数と、OPENCODE_CONFIG_CONTENT に合わせる設定。owners は Pleiad の担当（instruction・skill・mcp が 'ply' か）
  */
 export async function managedLaunch({ owners, cwd, dataDir, source, dataHome = path.dirname(opencodeData()), homeSource = os.homedir() }) {
+  if(process.platform!=='win32') {
+    if(process.platform==='darwin' && Object.values(owners ?? {}).includes('ply')) {
+      const roots=['/Library/Managed Preferences',path.join('/Library/Managed Preferences',os.userInfo().username)];
+      if((await Promise.all(roots.map(root=>exists(path.join(root,'ai.opencode.managed.plist'))))).some(Boolean))
+        throw new Error(t('opencode.errors.systemOwner'));
+    }
+    const system=process.platform==='darwin'?'/Library/Application Support/opencode':'/etc/opencode';
+    const config=await projectConfig(system);
+    const instructions=owners?.instruction==='ply' && ((await exists(path.join(system,'AGENTS.md'))) || config.instructions?.length);
+    const skills=owners?.skill==='ply' && (config.skills || (await Promise.all(SKILL_DIRS.map(name=>exists(path.join(system,name))))).some(Boolean));
+    const mcp=owners?.mcp==='ply' && Object.keys(config.mcp ?? {}).length;
+    if(instructions || skills || mcp)throw new Error(t('opencode.errors.systemOwner'));
+  }
   const configHome = await mirrorGlobalConfig({ dataDir, owners, source });
   const home=path.join(configHome,'home');
   await fs.mkdir(home,{recursive:true});
@@ -219,13 +223,14 @@ export async function managedLaunch({ owners, cwd, dataDir, source, dataHome = p
   }
   const env = {
     XDG_CONFIG_HOME: configHome,
+    OPENCODE_CONFIG_DIR:path.join(configHome,'opencode'),OPENCODE_CONFIG:'',
     XDG_DATA_HOME: dataHome,
     HOME:home,USERPROFILE:home,
     OPENCODE_DISABLE_PROJECT_CONFIG: '1',
     ...(owners?.skill === 'ply' ? { OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' } : {}),
   };
-  if(process.platform==='win32' && process.env.ProgramData) {
-    env.ProgramData=await mirrorGlobalConfig({dataDir:path.join(dataDir,'opencode-system'),owners,source:path.join(process.env.ProgramData,'opencode')});
+  if(process.platform==='win32') {
+    env.ProgramData=await mirrorGlobalConfig({dataDir:path.join(dataDir,'opencode-system'),owners,source:path.join(process.env.ProgramData || 'C:/ProgramData','opencode')});
   }
   return { env, config };
 }

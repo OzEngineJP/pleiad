@@ -1,14 +1,6 @@
-// OpenCode の出来事・発言を Pleiad の正規化イベント・NormalizedMessage に写す（docs/multi-backend.md §2.10）。
-// SDK にもネットワークにも依存しない純粋な関数（tests/unit/opencode-normalize.mjs）。
-//
-// 実機（opencode 1.19.3）の形:
-//   message.updated       { info: { id, role, sessionID, error?, tokens, cost, summary? } }
-//   message.part.updated  { part: { id, messageID, sessionID, type: text | reasoning | tool | step-start | step-finish | compaction …, … } }
-//   message.part.delta    { messageID, partID, field: 'text', delta }
-//   session.status        { status: { type: busy | idle } | { type: retry, attempt, message, action?, next } }（next は次の再試行の epoch ms。retryOf）
-//   session.error         { error: { name, data: { message } } }
-//   session.idle          {}
-// tool の部品は state.status が pending → running → completed / error と進み、callID が呼び出しの id
+// Pleiad 内部の会話イベント・履歴を、公開 backend のイベントと発言へ写す。
+// OpenCode v2 の API/SSE・SQLite からの変換は opencode-v2.mjs が担当する。
+// tests/lib/opencode-events.json は、この内部形式の回帰試験に使う旧記録。
 import { COMPUTER_TOOL_PREFIX, computerResult, computerFailed } from './computer-delivery.mjs';
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
 
@@ -81,9 +73,9 @@ export function errorOf(error, now = Date.now()) {
   try { if (typeof body === 'string') body = JSON.parse(body); } catch { body = null; }
   const code = body?.error?.code ?? body?.error?.type ?? data.code;
   const status = Number(data.statusCode ?? data.status);
-  const limited = status === 429 || LIMIT_CODES.has(code);
+  const limited = status === 429 || LIMIT_CODES.has(code) || name==='provider.quota' || name==='provider.rate-limit';
   const resetsAt = epochMs(body?.error?.resets_at ?? data.resetsAt) ?? (limited ? retryAfterAt(data.responseHeaders, now) : null);
-  return { name, message, aborted: name === 'MessageAbortedError', auth: name === 'ProviderAuthError', limited, ...(resetsAt ? { resetsAt } : {}) };
+  return { name, message, aborted: ['MessageAbortedError','aborted'].includes(name), auth: ['ProviderAuthError','provider.auth'].includes(name), limited, ...(resetsAt ? { resetsAt } : {}) };
 }
 
 // 再試行の待ちのうち、待っても今は通らない上限（ADR 0229）。action.reason は OpenCode が付ける理由

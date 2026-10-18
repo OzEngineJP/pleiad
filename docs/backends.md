@@ -40,7 +40,7 @@ Antigravity 1.4.2 の複数アカウント切替は未対応。CLI とアプリ�
 
 ## OpenCode
 
-OpenCode（`opencode`）の接続先をそのまま使う。OpenCode Zen の無料のモデルはログイン無しで使え、ChatGPT Pro/Plus・GitHub Copilot・API キーの接続先は端末の
+OpenCode v2.0.32 以降の v2（`opencode`）の接続先をそのまま使う。OpenCode Zen の無料のモデルはログイン無しで使え、ChatGPT Pro/Plus・GitHub Copilot・API キーの接続先は端末の
 `opencode auth login` でつなぐ（「ログイン」を押すとそのコマンドが出る。終わると表示が切り替わる）。外すのも端末の `opencode auth logout`。
 
 複数のログインを使う場合は、設定の OpenCode の「アカウント」から追加する。Pleiad が表示する専用のコマンドを、Pleiad が動いている PC の端末で実行してログインする。会話ごとにアカウントを選べ、切替時には保存した会話を引き継いで新しい実行区間を始める。既存の OpenCode のログインは書き換えない。
@@ -54,12 +54,18 @@ Pleiad は自分のプラグインとツール（委譲・操作の一覧・コ�
 
 Hooks を Pleiad がそろえる場所では、Claude Code の形の登録をそのまま OpenCode の会話にも渡せる（渡し先に OpenCode を選ぶ）。OpenCode 自身のプラグインは止めない。
 
-Pleiad を更新しても、走っている OpenCode のターンは止まらない（承認待ちのままでも、新しい版で同じ承認が出る）。
+Pleiad を更新しても、共有サーバーで走っている OpenCode のターンは止まらない（承認待ちのままでも、新しい版で同じ承認が出る）。初回の v1 対応版からの更新は、古いターンを終えてから切り替える。Pleiad がコンテキストを担当する専用サーバーのターンも、終了してから切り替える。
+
+旧会話は元の DB を退避し、OpenCode の公式変換が終わった後に同じ会話 ID で再開する。変換で外部ファイルの添付などが欠けた会話は、欠落を通知して再開を止める。元の記録と退避した DB は残る。
 
 設定 › プラグインで指示・Skills・外部 MCP を「Pleiad がそろえる」にした場所では、Pleiad がそろえたものだけを OpenCode に渡し、OpenCode 自身の AGENTS.md・Skills・MCP は読ませない。
 そのため、そのターンだけ専用の OpenCode を起こす（起動の数秒が足される）。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。
 
-互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または `opencode.json` の `provider`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
+システム管理者の設定に担当外のコンテキストがあり、隔離できない環境では開始時に理由を表示する。macOS の管理プロファイルがある場合も同様。Windows の専用サーバーは OpenCode のシステム設定用の置き場も隔離する。
+
+v2.0.32 では、Bedrock の SigV4 で署名した圧縮要求に、Pleiad 担当として除外すべき古い指示が再び入る場合がある。この場合は送信を止めて理由を表示する。署名した本文を書き換えたり、担当外の指示を送信したりしない。新しい会話を始めるか、指示の担当を OpenCode に変えると再開できる。
+
+互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または v2 の `opencode.json` の `providers`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
 
 ## Devin CLI
 

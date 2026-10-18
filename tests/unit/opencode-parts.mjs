@@ -1,10 +1,12 @@
 // OpenCode のバックエンドの部品: 出来事の写し替え（実機の記録 tests/lib/opencode-events.json）・発言の写し替え・
 // 中継の口（core/opencode-relay.mjs。合言葉・会話への振り分け・子の会話・知らない会話は断る・環境変数）・
-// OpenCode に読ませるプラグイン（core/backends/opencode-plugin.mjs。ply_* の引数に会話の id を足す・shell.env）
+// OpenCode に読ませるプラグイン（core/backends/opencode-plugin.mjs。v2 の登録 API・会話の環境・指示）
 import fs from 'node:fs';
+import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import zlib from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 import { createTurnMapper, messagesToNormalized, toolName, sessionRow } from '../../core/backends/opencode-normalize.mjs';
 import { createOpencodeRelay, SESSION_ARG } from '../../core/opencode-relay.mjs';
@@ -106,6 +108,12 @@ export default async function (t) {
   await relay.handle(fakeReq({ method: 'GET', headers: { authorization: 'Bearer '+relay.token() } }), res, new URL('http://127.0.0.1:9/mcp/opencode/env?session=ses_child'));
   t.ok('中継: 会話のシェルの環境変数（子の会話は親の分）', envRes.status !== 0 && JSON.parse(res.body).PLEIAD_CONTROL_URL === 'http://x');
   t.ok('中継: 知らないサーバー名は 404', (await call('nope', { jsonrpc: '2.0', id: 8, method: 'tools/list' })).status === 404);
+  const environments=[];
+  relay.bind('ses_A',{env:{value:'new'},prepareChild:async id=>environments.push(id)});
+  await Promise.all([call('env?session=ses_child',null,'Bearer '+relay.token(),'GET'),call('env?session=ses_child',null,'Bearer '+relay.token(),'GET')]);
+  relay.bind('ses_A',{env:{value:'revoked'},prepareChild:async id=>environments.push(id)});
+  await call('env?session=ses_child',null,'Bearer '+relay.token(),'GET');
+  t.ok('中継: 前のターンの子も bind ごとに環境を設定し直し、並行する呼び出しは一度にまとめる',environments.join() === 'ses_child,ses_child');
 
   // ---- 無停止の更新: 前のサーバーの合言葉を引き継ぐ・付け直す会話は結び付けるまで呼び出しを待たせる
   const previous = 'p'.repeat(48);
@@ -179,17 +187,19 @@ body`); };
   try {
     const href=writePlugin(dir),entry=path.join(dir,'opencode','pleiad-plugin-v2','index.js');
     t.ok('v2 plugin package has a module entry',fs.readFileSync(entry,'utf8')===PLUGIN_SOURCE && JSON.parse(fs.readFileSync(path.join(path.dirname(entry),'package.json'),'utf8')).type==='module');
-    const seen=[];
+    const seen=[];let unavailable=false;
     const endpoint=http.createServer(async(req,res)=>{
       let raw='';for await(const chunk of req)raw+=chunk;
       const body=raw?JSON.parse(raw):null;seen.push({url:req.url,body,auth:req.headers.authorization});
+      if(unavailable){res.writeHead(403);res.end('{}');return;}
       res.writeHead(200,{'content-type':'application/json'});
-      res.end(JSON.stringify(body?.phase==='before'?{args:{command:'rewritten'}}:body?.phase==='after'?{append:'checked'}:{system:'Pleiad instructions'}));
+      res.end(JSON.stringify(body?.phase==='before'?{args:{command:'rewritten'}}:body?.phase==='after'?{append:'checked'}:{system:'Pleiad instructions',omitMessageIDs:['native_instruction'],omitTexts:['AGENTS_ONLY']}));
     });
     await new Promise(r=>endpoint.listen(0,'127.0.0.1',r));
     process.env.PLEIAD_OPENCODE_ENV_URL='http://127.0.0.1:'+endpoint.address().port+'/env';
     process.env.PLEIAD_OPENCODE_HOOK_URL='http://127.0.0.1:'+endpoint.address().port+'/hook';
     process.env.PLEIAD_OPENCODE_SECRET='plug';
+    process.env.PLEIAD_OPENCODE_INSTRUCTION_OWNER='ply';
     try {
       const callbacks=new Map();
       const domain={hook:async(name,fn)=>{callbacks.set(name,fn);return{dispose:async()=>{}};}};
@@ -202,10 +212,33 @@ body`); };
       await callbacks.get('execute.after')(after);
       t.ok('v2 completed result receives post-tool context',after.result.content[1]?.text==='checked');
       for(const kind of ['context','compaction','title','generate']){
-        const event={sessionID:'ses_X',system:[]};await callbacks.get(kind)(event);
+        const event={sessionID:'ses_X',system:[],messages:[{id:'native_instruction',content:[{type:'text',text:'AGENTS_ONLY'}]},{id:'checkpoint',content:[{type:'text',text:'<conversation-checkpoint>\n[Synthetic context]: AGENTS_ONLY\nKeep user text\n</conversation-checkpoint>'}]}]};await callbacks.get(kind)(event);
         t.ok('v2 '+kind+' receives conversation instructions',event.system[0]?.text==='Pleiad instructions');
+        t.ok('v2 '+kind+' omits native instructions from live and compacted context',event.messages.length===1 && !event.messages[0].content[0].text.includes('AGENTS_ONLY') && event.messages[0].content[0].text.includes('Keep user text'));
       }
+      const request={sessionID:'ses_X',request:new Request('http://127.0.0.1/provider',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({messages:[{content:'[Synthetic context]: AGENTS_ONLY\nKeep user text'}]})})};
+      await callbacks.get('http.request')(request);
+      const sanitized=await request.request.json();
+      const frame={sessionID:'ses_X',frame:JSON.stringify({input:[{text:'[Synthetic context]: AGENTS_ONLY\nKeep user text'}]})};
+      await callbacks.get('experimental.ws.send')(frame);
+      t.ok('v2 provider requests omit instructions reinserted by compaction fallback, over HTTP and WebSocket',!JSON.stringify(sanitized).includes('AGENTS_ONLY') && !frame.frame.includes('AGENTS_ONLY') && frame.frame.includes('Keep user text'));
+      for(const [encoding,encode,decode] of [['gzip',zlib.gzipSync,zlib.gunzipSync],['br',zlib.brotliCompressSync,zlib.brotliDecompressSync],['deflate',zlib.deflateSync,zlib.inflateSync],...(zlib.zstdCompressSync?[['zstd',zlib.zstdCompressSync,zlib.zstdDecompressSync]]:[])]) {
+        const compressed={sessionID:'ses_X',request:new Request('http://127.0.0.1/provider',{method:'POST',headers:{'content-type':'application/json','content-encoding':encoding},body:encode(Buffer.from(JSON.stringify({input:'[Synthetic context]: AGENTS_ONLY\nKeep user text'})))})};
+        await callbacks.get('http.request')(compressed);
+        const text=decode(Buffer.from(await compressed.request.arrayBuffer())).toString();
+        t.ok('v2 '+encoding+' body preserves encoding while excluding instructions',!text.includes('AGENTS_ONLY')&&text.includes('Keep user text')&&compressed.request.headers.get('content-encoding')===encoding);
+      }
+      const signed={sessionID:'ses_X',request:new Request('http://127.0.0.1/provider',{method:'POST',headers:{'content-type':'application/json',authorization:'AWS4-HMAC-SHA256 fixture'},body:JSON.stringify({input:'[Synthetic context]: AGENTS_ONLY'})})};
+      await callbacks.get('http.request')(signed);
+      t.ok('v2 signed requests needing exclusion return a local error without forwarding credentials or original body',signed.request.url.endsWith('/blocked?account=login&session=ses_X') && signed.request.headers.get('authorization')==='Bearer plug' && !await signed.request.text());
       t.ok('v2 plugin authenticates and scopes the conversation',seen.every(x=>x.auth==='Bearer plug'&&x.url.includes('account=login')&&x.url.includes('session=ses_X')));
-    }finally{delete process.env.PLEIAD_OPENCODE_ENV_URL;delete process.env.PLEIAD_OPENCODE_HOOK_URL;delete process.env.PLEIAD_OPENCODE_SECRET;await new Promise(r=>endpoint.close(r));}
+      unavailable=true;
+      const guarded={sessionID:'ses_X',request:new Request('http://127.0.0.1/provider',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer provider-key'},body:'{"input":"private context"}'})};
+      await callbacks.get('http.request')(guarded);
+      assert(guarded.request.url.includes('/blocked?'));
+      assert(!await guarded.request.text());
+      await assert.rejects(callbacks.get('experimental.ws.send')({sessionID:'ses_X',frame:'{"input":"private context"}'}),/instruction context is unavailable/);
+      t.ok('A missing relay context stops HTTP and WebSocket requests before provider credentials or content are sent',true);
+    }finally{delete process.env.PLEIAD_OPENCODE_ENV_URL;delete process.env.PLEIAD_OPENCODE_HOOK_URL;delete process.env.PLEIAD_OPENCODE_SECRET;delete process.env.PLEIAD_OPENCODE_INSTRUCTION_OWNER;await new Promise(r=>endpoint.close(r));}
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 }

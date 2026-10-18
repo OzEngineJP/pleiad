@@ -3,6 +3,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import { t } from '../i18n.mjs';
 import { loadSqlite } from '../db.mjs';
 
@@ -152,8 +153,7 @@ export function opencodeData(account = null) {
   return account ? path.join(accountPaths(account).data, 'opencode') : defaultOpencodeData();
 }
 
-// Keep the CLI's required plaintext copy only in this account's private data dir.
-// A refreshed CLI copy takes precedence over the encrypted login snapshot.
+// v2 の認証 DB を優先し、移行前の auth.json と暗号化した控えを補完に使う。
 export function validAuth(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(Object.entries(value).filter(([, c]) => c && (
@@ -184,6 +184,67 @@ export function readAccountAuth(account = null) {
   return { ...validAuth(parsed), ...stored };
 }
 
+function legacyImportSource(account) {
+  try {
+    const file=path.join(opencodeData(account),'auth.json');
+    return assertSafeAuth(file)?validAuth(JSON.parse(fs.readFileSync(file,'utf8'))):null;
+  }catch {
+    console.error('  opencode: invalid legacy credential source skipped');
+    return null;
+  }
+}
+
+/** 新規 v2 DB の bootstrap は auth.json を取り込まない。初回だけの作業を残す。 */
+export function prepareCredentialImport(file,account=null) {
+  if(statSafe(file)?.size)return;
+  if(!legacyImportSource(account))return;
+  const marker=file+'.pleiad-import-auth';
+  try{fs.writeFileSync(marker,'pending',{flag:'wx',mode:0o600});}
+  catch(error){if(error.code!=='EEXIST')throw error;assertSafeAuth(marker);}
+}
+
+/** CLI の DB を直に書かず、公式 API で不足する初回資格情報だけを足す。 */
+export async function importLegacyCredentials(request,file,account=null) {
+  const marker=file+'.pleiad-import-auth';
+  if(!assertSafeAuth(marker))return;
+  let current;
+  try{current=(await request('GET','/api/credential'))?.data;}catch{return {pending:true};}
+  if(!Array.isArray(current))return {pending:true};
+  const present=new Set(current.map(c=>c.integrationID));
+  let pending=false,skipped=0;
+  const source=legacyImportSource(account)??{};
+  for(const [rawID,credential] of Object.entries(source)) {
+    const integrationID=rawID.replace(/\/+$/,'');
+    const record=v=>v && typeof v==='object' && !Array.isArray(v);
+    if(!integrationID || credential.type==='oauth' && (!Number.isInteger(credential.expires) || credential.methodID!==undefined && typeof credential.methodID!=='string' || ['accountId','enterpriseUrl'].some(key=>credential[key]!==undefined && typeof credential[key]!=='string')) || credential.metadata!==undefined && (!record(credential.metadata) || credential.type==='api' && Object.values(credential.metadata).some(value=>typeof value!=='string'))) {skipped++;continue;}
+    const value=credential.type==='api'?{type:'key',key:credential.key,...(credential.metadata?{metadata:credential.metadata}:{})}:credential.type==='wellknown'?{type:'key',key:credential.token}:{
+      type:'oauth',methodID:credential.methodID ?? (integrationID==='openai'?'chatgpt-browser':['github-copilot','opencode','xai'].includes(integrationID)?'device':'oauth'),
+      access:credential.access,refresh:credential.refresh,expires:credential.expires,
+      metadata:{...credential.metadata,...(credential.accountId?{accountID:credential.accountId}:{}),...(credential.enterpriseUrl?{enterpriseUrl:credential.enterpriseUrl}:{})},
+    };
+    const id='cred_pleiad_legacy_'+crypto.createHash('sha256').update(integrationID).digest('hex').slice(0,24);
+    let discovering=false;
+    try {
+      if(!present.has(integrationID))await request('POST','/api/credential',{body:{id,integrationID,label:value.type==='oauth'?'OAuth':'API key',value,activate:false}});
+      if(credential.type==='wellknown') {
+        discovering=true;
+        await request('POST','/api/experimental/integration/wellknown',{body:{url:integrationID}});
+      }
+    }
+    catch(error) {
+      if(error.status===400 && !discovering){skipped++;continue;}
+      if(error.status===409) {
+        const rows=await request('GET','/api/credential').then(result=>result?.data).catch(()=>null);
+        if(rows?.some(c=>c.id===id && c.integrationID===integrationID) && credential.type!=='wellknown')continue;
+      }
+      pending=true;
+    }
+  }
+  if(!pending)try{fs.unlinkSync(marker);}catch(error){if(error.code!=='ENOENT')throw error;}
+  if(pending || skipped)console.error('  opencode: credential restore:',pending?'pending':'complete',`(${skipped} invalid entries skipped)`);
+  return {pending,skipped};
+}
+
 export function prepareAccount(account) {
   if (!account) return {};
   const dir = accountDir(account, { create: true });
@@ -191,7 +252,7 @@ export function prepareAccount(account) {
   privateRoot(dir);
   const dirs = accountPaths(account);
   assertAccountTree(account);
-  for (const sub of [...Object.values(dirs), opencodeData(account)]) {
+  for (const sub of [...Object.values(dirs), opencodeData(account),path.join(dir,'home')]) {
     assertAccountTree(account);
     assertRealDir(sub);
     fs.mkdirSync(sub, { recursive: true, mode: 0o700 });

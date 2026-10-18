@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {loadSqlite} from '../db.mjs';
+import {t} from '../i18n.mjs';
 
 const table = (db,name) => Boolean(db.prepare("select 1 from sqlite_master where type='table' and name=?").get(name));
 export function v2MigrationComplete(db) {
@@ -42,7 +43,7 @@ export function verifyV1Conversation(file,id) {
   const db=new DatabaseSync(file,{readOnly:true});
   try {
     if(!table(db,'session') || !db.prepare('select 1 from session where id=?').get(id))return;
-    const fail=()=>{throw new Error('OpenCode v1 conversation migration could not preserve all messages or attachments. The original database and its .pleiad-before-v2.db backup are retained.');};
+    const fail=()=>{throw Object.assign(new Error(t('opencode.errors.migrationLoss')),{code:'OPENCODE_MIGRATION_LOSS'});};
     if(!v2MigrationComplete(db) || !db.prepare('select 1 from session_v2 where id=?').get(id))return fail();
     const old=db.prepare('select id,data from message where session_id=? order by time_created,id').all(id);
     const oldParts=db.prepare('select message_id,data from part where session_id=? order by id').all(id);
@@ -57,6 +58,15 @@ export function verifyV1Conversation(file,id) {
       if(owned.length && owned.every(p=>p.type==='subtask'))continue;
       if(parentParts.some(p=>p.type==='subtask') && owned.some(p=>p.type==='tool'&&p.tool==='task'))continue;
       const migrated=next.get(row.id);if(!migrated)return fail();
+      const files=owned.filter(p=>p.type==='file');
+      if(files.length) {
+        if(files.length!==(migrated.files??[]).length)return fail();
+        for(const file of files) {
+          const match=/^data:([^,]*?),(.*)$/s.exec(file.url ?? '');if(!match)return fail();
+          const data=match[1].includes(';base64')?Buffer.from(match[2],'base64').toString('base64'):Buffer.from(decodeURIComponent(match[2])).toString('base64');
+          if(!(migrated.files??[]).some(f=>f.data===data && f.mime===file.mime))return fail();
+        }
+      }
       for(const part of owned) {
         if(part.type==='file' && !String(part.url).startsWith('data:'))return fail();
         if(part.type==='text' && !part.ignored && !part.synthetic) {

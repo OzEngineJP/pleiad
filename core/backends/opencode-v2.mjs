@@ -7,6 +7,12 @@ const contentText = content => (content ?? []).map(c => c.type === 'text' ? c.te
 const toolMetadata = value => value && ({...value,...(value.sessionID ? {sessionId:value.sessionID} : {})});
 export const v2Permissions = rules => (rules ?? []).map(r => ({ action: r.permission, resource: r.pattern, effect: r.action }));
 export const v2Session = s => s && ({ ...s, directory: s.location?.directory ?? s.directory, time: Object.fromEntries(Object.entries(s.time ?? {}).map(([k,v]) => [k, millis(v)])) });
+export function v2Retry(p) {
+  let body;try{body=JSON.parse(p.error?.response?.body ?? '{}');}catch{body={};}
+  const code=body?.error?.type ?? body?.error?.code;
+  const reason=code==='FreeUsageLimitError'?'free_tier_limit':code==='GoUsageLimitError'?'account_rate_limit':null;
+  return {type:'retry',attempt:p.attempt,next:Number.isFinite(p.at)?p.at:null,message:p.error?.message ?? '',...(reason?{action:{reason}}:{})};
+}
 
 /** One projection is used for history, live reconciliation, and offline SQLite reads. */
 export function v2Message(message, sessionID) {
@@ -29,6 +35,22 @@ export function v2Message(message, sessionID) {
   });
   if (m.tokens && (m.type === 'assistant' || m.type==='compaction')) parts.push({id:`${m.id}:usage`,messageID:m.id,sessionID,type:'step-finish',tokens:m.tokens,cost:m.cost ?? 0});
   return {info,parts};
+}
+
+/** 履歴と再接続で同じ出来事を作る。圧縮の本文は通常の応答へ混ぜない。 */
+export function replayV2Messages(list, publish) {
+  for (const message of list) {
+    const {info,parts}=message;
+    if(info.type==='compaction') {
+      publish({type:'pleiad.compaction',properties:{sessionID:info.sessionID,message}});
+      for(const part of parts.filter(p=>p.type==='step-finish'))publish({type:'message.part.updated',properties:{part}});
+    } else {
+      publish({type:'message.updated',properties:{info}});
+      for(const part of parts)publish({type:'message.part.updated',properties:{part}});
+      if(info.type==='assistant' && !info.time?.completed && info.retry)
+        publish({type:'session.status',properties:{sessionID:info.sessionID,status:v2Retry(info.retry)}});
+    }
+  }
 }
 
 export function createV2Protocol({ call, publish, setSystem = () => {} }) {
@@ -83,6 +105,7 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
       if(options.signal?.aborted) throw options.signal.reason ?? new Error('Interrupted');
       try { return await value('POST', `/api/session/${sid}/prompt`, {...options,body:{...body,id}}); }
       catch (error) {
+        if(error.code==='OPENCODE_GONE')throw error;
         if(!ambiguous && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 409) {
           error.undelivered = true;
           throw error;
@@ -100,15 +123,7 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
     }
   }
   function replay(list) {
-    for(const m of list) {
-      if(m.info.type==='compaction') {
-        emit('pleiad.compaction',{sessionID:m.info.sessionID,message:m});
-        for(const part of m.parts.filter(p=>p.type==='step-finish'))emit('message.part.updated',{part});
-        continue;
-      }
-      emit('message.updated',{info:m.info});
-      for(const part of m.parts) emit('message.part.updated',{part});
-    }
+    replayV2Messages(list,publish);
   }
   async function pending(kind) {
     await discoverChildren();
@@ -172,7 +187,10 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
     }
     if(path==='/session/status') {
       const active=await value('GET','/api/session/active');
-      return Object.fromEntries(Object.keys(active ?? {}).map(sid=>[sid,{type:'busy'}]));
+      return Object.fromEntries(await Promise.all(Object.keys(active ?? {}).map(async sid=>{
+        const current=(await history(sid)).findLast(m=>m.info.type==='assistant' && !m.info.time?.completed);
+        return [sid,current?.info.retry?v2Retry(current.info.retry):{type:'busy'}];
+      })));
     }
     if(path==='/permission') return pending('permission');
     if(path==='/question') return pending('form');
@@ -217,7 +235,7 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
       return request(method,at,{...options,body:{...(body.title!==undefined?{title:body.title}:{}),...(body.permission?{permissions:v2Permissions(body.permission)}:{}),...(body.metadata?{metadata:body.metadata}:{})}});
     }
     if(tail==='message'&&method==='GET')return history(sid,options);
-    if(tail==='children')return (await value('GET','/api/session',{query:{parentID:sid,limit:200}}) ?? []).map(v2Session);
+    if(tail==='children')return (await page('/api/session',{query:{parentID:sid}})).map(v2Session);
     if(tail==='fork')return v2Session(await value('POST',`${at}/fork`,{body:body.messageID?{before:body.messageID}:{}}));
     if(tail==='abort') {
       const inbox=await value('GET',`${at}/inbox`);
@@ -288,10 +306,11 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
       if(raw.type.endsWith('interrupted'))emit('session.error',{sessionID:sid,error:{name:'MessageAbortedError',message:'Interrupted'}});
       turns.delete(sid);admitted.delete(sid);emit('session.idle',{sessionID:sid});return;
     }
-    if(raw.type==='session.retry.scheduled')emit('session.status',{sessionID:sid,status:{type:'retry',message:p.error?.message}});
+    if(raw.type==='session.retry.scheduled')emit('session.status',{sessionID:sid,status:v2Retry(p)});
+    if(raw.type==='session.step.started')emit('session.status',{sessionID:sid,status:{type:'busy'}});
   }
-  async function resync() {
-    for(const [sid,since] of turns) {
+  async function resync({snapshot=true}={}) {
+    for(const [sid,since] of snapshot?turns:[]) {
       replay((await history(sid)).filter(m=>m.info.time.created>=since));
       emit('pleiad.resync',{sessionID:sid});
     }
@@ -301,7 +320,11 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
     for(const sid of turns.keys())if(admitted.has(sid) && !active?.[sid]) {
       const inbox=await value('GET',`/api/session/${sid}/inbox`);
       if(!Array.isArray(inbox))throw new Error('OpenCode v2: invalid inbox response');
-      if(!inbox.length) {emit('session.idle',{sessionID:sid});turns.delete(sid);admitted.delete(sid);}
+      if(!inbox.length) {
+        // 最初の履歴取得と active の確認の間に終わった応答を回収してから締める。
+        replay((await history(sid)).filter(m=>m.info.time.created>=turns.get(sid)));
+        emit('session.idle',{sessionID:sid});turns.delete(sid);admitted.delete(sid);
+      }
     }
   }
   return {request:dispatch,event,history,pending,resync,begin(sid,since,accepted=false){sessions.add(sid);if(since){turns.set(sid,since);if(accepted)admitted.add(sid);else admitted.delete(sid);}}};

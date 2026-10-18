@@ -162,7 +162,12 @@
     "visualizationSaveFailed": "Could not save the visualization: {{error}}",
     "contextSaveFailed": "Could not save the context usage record."
   },
-  "browserHandoff": { "continue": { "resumed": "I finished in the Chrome window. Please continue.", "connected": "Chrome is connected. Please continue." } },
+  "browserHandoff": {
+    "continue": {
+      "resumed": "I finished in the Chrome window. Please continue.",
+      "connected": "Chrome is connected. Please continue."
+    }
+  },
   "resume": {
     "running": "This conversation is running. Resume it after it finishes.",
     "notInterrupted": "This conversation was not stopped.",
@@ -748,7 +753,17 @@
     "errors": {
       "notInstalled": "OpenCode (opencode) was not found. Install it, then check again",
       "noModel": "No model to use. Choose a model in OpenCode",
-      "forkMissing": "The message to fork from was not found"
+      "forkMissing": "The message to fork from was not found",
+      "moveRestricted": "Changing the conversation directory requires YOLO mode",
+      "worktreeRestricted": "Creating a worktree outside the working directory requires YOLO mode",
+      "otherConversation": "Another conversation's title cannot be changed",
+      "executeDenied": "Code execution was not approved",
+      "systemOwner": "This OpenCode system configuration cannot be isolated from Pleiad-owned context. Assign the context to OpenCode or move the system configuration to user settings",
+      "migrationLoss": "OpenCode's v2 migration could not be verified to preserve all messages and attachments. The original data and .pleiad-before-v2.db backup are retained",
+      "migrationFailed": "OpenCode's v1 data migration failed. The original backup is retained",
+      "migrationPending": "OpenCode's v1 data migration has not completed",
+      "version": "OpenCode {{version}} is unsupported. Use v2.0.32 or a newer v2 release",
+      "compactionOwner": "OpenCode could not safely exclude Pleiad-managed instructions from this request. Start a new conversation or change the instruction owner to OpenCode."
     },
     "auth": {
       "accountRunCommand": "Run this command in a terminal to sign in to this OpenCode account.",
@@ -762,7 +777,9 @@
     }
   },
   "antigravity": {
-    "accounts": { "unavailable": "Antigravity account switching is unavailable because its shared OS credentials cannot be safely isolated. Use the currently signed-in account, or a separate OS user or virtual machine." },
+    "accounts": {
+      "unavailable": "Antigravity account switching is unavailable because its shared OS credentials cannot be safely isolated. Use the currently signed-in account, or a separate OS user or virtual machine."
+    },
     "description": "Uses your Google AI Pro / Ultra plan.",
     "modes": {
       "yolo": "Never asks. Allows every tool (in headless mode agy silently rejects tools otherwise)."
