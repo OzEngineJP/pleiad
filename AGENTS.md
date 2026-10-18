@@ -139,7 +139,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - 既存サーバーがある場合は、対象リポジトリのプロセスとポートを確認する。文書のみの変更など、再起動が不要なら既存サーバーの応答確認でよい。
 - インストール版の Pleiad から起動されたエージェントのシェルには、`ELECTRON_RUN_AS_NODE=1`（`utilityProcess` の経路）と、0.12.0-beta.1 までの版では main が起動の時にだけ渡す `AGENT_HOST_PORT`・`AGENT_HOST_BIND`・`AGENT_HOST_HANDOVER=on`・`AGENT_HOST_RUNTIME_KEY`・`AGENT_HOST_SERVER_LOG` など（`core/boot-env.mjs` の一覧）が引き継がれている（直った版のサーバーは、読んだ後に process.env から外して子へ渡さない）。残っているシェルで `node core/server.mjs` を起こすと main のパイプを待ち、出力がインストール版の server.log へ流れるので、`env -u` で外すか `tests/run.mjs` を使う（テストは外して走る）。そのまま `npm start` すると、既定の `~/.agent-host` を使う 2 台目になるので、データ置き場のロック（`core/data-lock.mjs`）で起動を止める（持ち主の PID を出す。止まらなかった頃は空きポートへ移って 2 台目が立っていた）。ポートの持ち主が `Ply.exe` ならリポジトリのサーバーではないので止めない（無停止の更新が on のインストール版では、サーバーは実行場所の `pleiad-node.exe` で走り main の子でない。`%LOCALAPPDATA%\agent-host-runtime` の下の `pleiad-node.exe` も同じ理由で止めない。このサーバーの env には `ELECTRON_RUN_AS_NODE` は付かない）。main から確かめるなら別ポート・別のデータ置き場で起動する。`electron.exe` は `env -u ELECTRON_RUN_AS_NODE` を付けて起動する（付けないと Node として動く）。`web/` はリクエストごとにディスクから読むため、リポジトリのサーバーなら画面だけの変更に再起動は要らない。
 - **再起動すると実行中のターンが終了する。** 停止前に UI の実行中表示または WebSocket の `running` コマンドで実行中の作業が 0 件であることを確認する。実行中なら完了を待つ。確認できない場合や中断が必要な場合は、理由を伝えてユーザーに確認する。
-- 再起動時は確認済みの対象サーバーだけを停止する。他の Node.js プロセスを一括停止しない。Windows でバックグラウンド起動する場合は `Start-Process -WindowStyle Hidden` を使う。
+- 再起動時は確認済みの対象サーバーだけを停止する。他の Node.js プロセスを一括停止しない。Windows でバックグラウンド起動する場合は `Start-Process -WindowStyle Hidden` を使う（窓を前に出さない）。`-RedirectStandardOutput`・`-RedirectStandardError` は付けない（起こしたサーバーがシェルの出力のパイプを継いで握り、エージェントのシェルのツールが戻らなくなる。2026-10-18 に OpenCode の会話が 2 時間止まった）。ログが要るなら `Start-Process cmd -WindowStyle Hidden -ArgumentList '/c','node core/server.mjs > <ログ> 2>&1'` のように、起こした先で書き出す。
 
 ## 完了と後片付け
 
