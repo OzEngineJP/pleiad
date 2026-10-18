@@ -293,6 +293,7 @@ const SUITES = [
   // 同じく画面: 委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分（web/delegation-routing-view.mjs）
   './unit/delegation-routing-view.mjs',
   './unit/delegation-effort-view.mjs',
+  './unit/delegation-order.mjs',
   // Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチ・Codex のロード済みスレッド
   './unit/server-added-context.mjs',
   './unit/usage.mjs',
@@ -301,6 +302,7 @@ const SUITES = [
   './unit/antigravity-usage.mjs',
   // 会話のヘッダーの使用量のチップ（web/header-usage.mjs）: 枠の選び方・アカウント・上限・グループのまとめ
   './unit/header-usage.mjs',
+  './unit/header-usage-ui.mjs',
   // 取れなかった行は前回の枠を引き継ぐ（札・一覧・設定で同じ値）。設定の「使用量」は取り直しの間も前の表示を残す
   './unit/usage-carry.mjs',
   './unit/effort.mjs',

@@ -13,7 +13,7 @@ export function createContextMenu() {
     cancelTimers();
     closeTimer = setTimeout(() => { if (!editing()) trim(depth); }, 250);
   }
-  const buttons = panel => [...panel.querySelectorAll(':scope > button, :scope > input')];
+  const buttons = panel => [...panel.querySelectorAll(':scope > button, :scope > input')].filter(row => !row.disabled);
   function trim(depth) {
     for (const p of panels.splice(depth)) { p.trigger?.setAttribute('aria-expanded', 'false'); p.remove(); }
   }
