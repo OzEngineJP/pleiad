@@ -2,15 +2,12 @@
 // 材料は bot の会話の履歴（loadSession）。スレッドの投稿は進捗の文と提示だけを持つので、そのターンの道具の呼び出しは会話から引く:
 //   ターンの投稿（turn.sessionId）の at から、同じ会話の次のターンの投稿の at までの間の AI の発言の toolCalls。
 // 走っているターンは履歴にまだ無いので、出来事（loadSession の live が返す stream.events）を stream-messages.mjs で畳んで後ろに足す。
-import { renderToolCall, applyToolResult, isDelegateToolName } from '../render.mjs';
+import { renderToolCall, applyToolResult, isPlyDelegateToolName } from '../render.mjs';
 import { Bundle, splitToolCalls, markRunning } from '../tool-bundle.mjs';
 import { isComputerTool } from '../computer-use.mjs';
 import { streamMessages } from '../stream-messages.mjs';
 import { toolStartedAt } from '../server-clock.mjs';
-
-const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);
-/** 委譲はまとまりの外に 1 件ずつ出す（client.mjs の toolNodes と同じ） */
-const isBoundary = (name) => isDelegateToolName(name) || SUBAGENT_TOOLS.has(name);
+import { subagentToolSet } from '../history-sync.mjs';
 
 /** 更新の最短の間隔。走っている間は投稿の更新（1 秒に 1 回まで）のたびに頼まない */
 export const REFRESH_MS = 2500;
@@ -81,10 +78,14 @@ export const signatureOf = (calls) => calls.map((c) => `${c.id ?? c.name}:${c.re
 
 /**
  * 呼び出しの並びを、まとまり（1 件だけなら行のまま）と委譲に分けた要素にする。走っている最後の呼び出し（結果が無い）は走っている印。
- * link(card, call) は、カードを作るたびに呼ぶ（委譲のカードを Chats と同じ形に仕上げる口。client.mjs の linkDelegateCard）
+ * link(card, call) は、カードを作るたびに呼ぶ（委譲のカードを Chats と同じ形に仕上げる口。client.mjs の linkDelegateCard）。
+ * subagentTools は、その範囲の bot のエージェントが申告したサブエージェントのツール名（describeBackends の subagentTools。無ければ既定の一覧）
  * @returns {{ nodes: HTMLElement[], bundles: Bundle[] }}
  */
-export function toolNodes(calls, { running = false, link = null } = {}) {
+export function toolNodes(calls, { running = false, link = null, subagentTools = null } = {}) {
+  const names = subagentToolSet(subagentTools);
+  // 委譲はまとまりの外に 1 件ずつ出す（client.mjs の toolNodes と同じ）
+  const isBoundary = (name) => isPlyDelegateToolName(name) || names.has(name);
   const cards = calls.map((c, i) => {
     const card = renderToolCall(c.name, c.input, { id: c.id ?? undefined });
     if (c.result) applyToolResult(card, c.result);

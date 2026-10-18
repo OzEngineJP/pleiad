@@ -170,24 +170,37 @@ export function joinReply(prev, data, request) {
 
 // ---------------------------------------------------------------- 窓と本文の遅延（ADR 0182）
 
-/** 委譲先のエージェント（サブエージェント）を呼ぶツール。作業ダイアログの過去の一覧は、この呼び出しから子を引き直す */
-export const SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);
+/**
+ * 委譲先のエージェント（サブエージェント）を呼ぶツールの既定の一覧。作業ダイアログの過去の一覧は、この呼び出しから子を引き直す。
+ * バックエンドは自分のツール名を subagentTools で申告する（describeBackends）。申告が無い・まだ届いていないときだけこの一覧を使う（互換）
+ */
+export const DEFAULT_SUBAGENT_TOOLS = new Set(['Task', 'Agent', 'collabAgentToolCall', 'subAgentActivity']);
+
+/** 申告（配列・Set）を名前の集合に直す。空・無ければ既定の一覧 */
+export const subagentToolSet = (tools) => (tools && (tools.size ?? tools.length) ? new Set(tools) : DEFAULT_SUBAGENT_TOOLS);
 
 /**
  * messages の [from, to) にあるサブエージェントの呼び出しの要約 { id, said, done, failed, at }。
- * said は依頼の最初の行（120 字まで）、done は結果が付いているか、failed は結果がエラーか。窓の手前の分は、サーバーがこれで運ぶ
+ * said は依頼の最初の行（120 字まで）、done は結果が付いているか、failed は結果がエラーか。窓の手前の分は、サーバーがこれで運ぶ。
+ * tools: 認識する名前の集合（配列・Set。既定は DEFAULT_SUBAGENT_TOOLS）、または発言の backend から集合を引く関数
+ * （会話の途中でエージェントを替えた履歴は、発言ごとの申告で見分ける。backend の無い発言は呼び出し側が決めた既定で引く）
  */
-export function subagentCalls(messages, from = 0, to = messages.length) {
+export function subagentCalls(messages, from = 0, to = messages.length, tools = null) {
+  const uniform = typeof tools === "function" ? null : subagentToolSet(tools);
+  const namesOf = typeof tools === "function" ? tools : () => uniform;
   const out = [];
-  for (let i = from; i < to; i++) for (const call of messages[i]?.toolCalls ?? []) {
-    if (!SUBAGENT_TOOLS.has(call?.name) || !call.id) continue;
-    const said = call.input?.description || call.input?.task || call.input?.prompt;
-    out.push({ id: call.id, said: String(said ?? '').split(/\r?\n/).find(Boolean)?.slice(0, 120) ?? '', done: Boolean(call.result), failed: Boolean(call.result?.isError), at: messages[i].at ?? null });
+  for (let i = from; i < to; i++) {
+    const names = namesOf(messages[i]?.backend);
+    for (const call of messages[i]?.toolCalls ?? []) {
+      if (!names.has(call?.name) || !call.id) continue;
+      const said = call.input?.description || call.input?.task || call.input?.prompt;
+      out.push({ id: call.id, said: String(said ?? '').split(/\r?\n/).find(Boolean)?.slice(0, 120) ?? '', done: Boolean(call.result), failed: Boolean(call.result?.isError), at: messages[i].at ?? null });
+    }
   }
   return out;
 }
-const earlierOf = (messages, start) => {
-  const calls = start > 0 ? subagentCalls(messages, 0, start) : [];
+const earlierOf = (messages, start, tools = null) => {
+  const calls = start > 0 ? subagentCalls(messages, 0, start, tools) : [];
   return calls.length ? { earlierCalls: calls } : {};
 };
 
@@ -263,9 +276,10 @@ const stubAll = (presents, from, lazy) => lazy ? presents.map((p, k) => stubPres
  *   - from・check（差分。窓があれば base 付き）が合う: 続きだけ。lazy なら提示は印にする
  *   - tail（件数）: 末尾の窓。応答に base・total・presentBase・presentTotal を足す（差分の印 from は無い）
  *   - それ以外: 全量（lazy なら提示は印）
- * 応答の base の有無が、この仕組みを知っているサーバーの印になる（画面は base が無ければ窓なし・提示は全文として扱う）
+ * 応答の base の有無が、この仕組みを知っているサーバーの印になる（画面は base が無ければ窓なし・提示は全文として扱う）。
+ * tools は subagentCalls と同じ（委譲の呼び出しを見分ける名前の集合、または発言の backend から引く関数）
  */
-export function serveHistory(body, args) {
+export function serveHistory(body, args, tools = null) {
   if (args?.older && typeof args.older === "object") return serveOlder(body, args.older, args.lazy === true);
   const lazy = args?.lazy === true;
   const tail = intArg(args?.tail), windowed = tail !== null && tail > 0;
@@ -275,12 +289,12 @@ export function serveHistory(body, args) {
   const from = intArg(args?.from), presentFrom = intArg(args?.presentFrom);
   if (from !== null && presentFrom !== null && base <= from && presentBase <= presentFrom && from <= messages.length && presentFrom <= presents.length
     && digestOf(messages, from, messageSig, base) === args.check && digestOf(presents, presentFrom, presentSig, presentBase) === args.presentCheck) {
-    return { ...body, messages: messages.slice(from), presents: stubAll(presents.slice(presentFrom), presentFrom, lazy), from, total: messages.length, base, presentFrom, presentTotal: presents.length, presentBase, ...earlierOf(messages, base) };
+    return { ...body, messages: messages.slice(from), presents: stubAll(presents.slice(presentFrom), presentFrom, lazy), from, total: messages.length, base, presentFrom, presentTotal: presents.length, presentBase, ...earlierOf(messages, base, tools) };
   }
   if (!windowed) return { ...body, presents: stubAll(presents, 0, lazy), base: 0, total: messages.length, presentBase: 0, presentTotal: presents.length };
   const start = windowStart(messages, tail, intArg(args?.tailBytes) ?? 0);
   const pb = presentBaseFor(messages, presents, start);
-  return { ...body, messages: messages.slice(start), presents: stubAll(presents.slice(pb), pb, lazy), base: start, total: messages.length, presentBase: pb, presentTotal: presents.length, ...earlierOf(messages, start) };
+  return { ...body, messages: messages.slice(start), presents: stubAll(presents.slice(pb), pb, lazy), base: start, total: messages.length, presentBase: pb, presentTotal: presents.length, ...earlierOf(messages, start, tools) };
 }
 
 /**

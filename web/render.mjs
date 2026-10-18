@@ -1215,8 +1215,22 @@ export function applyToolHints(hints) {
   }
 }
 
-/** 委譲のツール（Task / Agent / ply_delegate）。右端の状態は client.mjs が子の状態で描くので、結果の要約は出さない */
-export const isDelegateToolName = (name) => /^(Task|Agent)$/.test(String(name ?? "")) || /(^|[_./])ply_delegate$/.test(String(name ?? ""));
+/** Pleiad タスクへの委譲ツール（バックエンドに依らない共通の名前） */
+export const isPlyDelegateToolName = (name) => /(^|[_./])ply_delegate$/.test(String(name ?? ""));
+
+// サブエージェントを呼ぶツールの名前。既定の Task・Agent に、バックエンドの申告（describeBackends の subagentTools）を足す
+const DELEGATE_TOOL_NAMES = new Set(["Task", "Agent"]);
+
+/**
+ * バックエンドの申告（describeBackends の subagentTools）を委譲のツール名に足す。
+ * client.mjs がエージェントの一覧ごとに呼ぶ。足すだけ（申告の集まりは増えていくだけなので）
+ */
+export function applySubagentTools(names) {
+  for (const name of names ?? []) if (name) DELEGATE_TOOL_NAMES.add(String(name));
+}
+
+/** 委譲のツール（Task / Agent / 申告されたサブエージェントのツール / ply_delegate）。右端の状態は client.mjs が子の状態で描くので、結果の要約は出さない */
+export const isDelegateToolName = (name) => DELEGATE_TOOL_NAMES.has(String(name ?? "")) || isPlyDelegateToolName(name);
 
 /**
  * ツール呼び出しを 1 行にし、開くとツールごとの中身（差分・出力の末尾・ファイル一覧・キーと値）を読めるようにする。

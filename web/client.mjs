@@ -47,7 +47,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // host の UI。core とは WebSocket + protocolVersion で話す。
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
-import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, plainTextHtml } from "./render.mjs";
+import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, applySubagentTools, plainTextHtml } from "./render.mjs";
 import { Bundle, bundleOf, clock, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { localTime, syncServerClock, toolStartedAt } from "./server-clock.mjs";
 import { createContextMenu } from "./context-menu.mjs";
@@ -93,7 +93,7 @@ import { setupApiKeysSettings } from "./api-keys-settings.mjs";
 import { keyInput } from "./api-key-ui.mjs";
 import { familiesOf } from "./family.mjs";
 import { createBranches, commonPrefix, nodeKeys } from "./branches.mjs";
-import { retainPlan, syncRequest, joinReply, joinOlder, anchorSig, subagentCalls, SUBAGENT_TOOLS, WINDOW_MESSAGES, WINDOW_BYTES } from "./history-sync.mjs";
+import { retainPlan, syncRequest, joinReply, joinOlder, anchorSig, subagentCalls, subagentToolSet, DEFAULT_SUBAGENT_TOOLS, WINDOW_MESSAGES, WINDOW_BYTES } from "./history-sync.mjs";
 import { createHeightSettler } from "./history-heights.mjs";
 import { makeBranchRow, layoutBranchSpine, motionDuration, EASING } from "./branch-view.mjs";
 import { el, svgEl, icon, relTime, randomId, chevron } from "./dom.mjs";
@@ -1772,8 +1772,8 @@ function liveBundle(kind = "tools", since = null) {
   return state.bundle;
 }
 
-/** まとまりの外に置くツール（委譲・サブエージェント）。子は親のターンの後も動くので、閉じても見える */
-const isBoundaryTool = (name) => isDelegateTool(name) || SUBAGENT_TOOLS.has(name);
+/** まとまりの外に置くツール（委譲・サブエージェント）。子は親のターンの後も動くので、閉じても見える。tools はその発言のエージェントの申告（subagentToolsOf） */
+const isBoundaryTool = (name, tools) => isDelegateTool(name) || tools.has(name);
 
 /** 会話の下端に付いていく（行が伸びて高さが変わる間も、読んでいた下端に居続ける） */
 function followBottom(ms = 320) {
@@ -3492,7 +3492,7 @@ function onEvent(ev, replay = false) {
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id });
       linkDelegateCard(card, ev.input);
-      const boundary = isBoundaryTool(ev.name);
+      const boundary = isBoundaryTool(ev.name, subagentToolsOf(ev.backend ?? activeBackendId()));
       if (boundary) { closeBundle(); ensureTurnEl().append(card); }
       else {
         // 経過はサーバーが受けた時刻（at）から数える。開き直し・再接続の再生でも 0 に戻らない
@@ -3836,6 +3836,11 @@ function capsOf(id) {
   return state.backends.find((b) => b.id === id)?.capabilities ?? {};
 }
 
+/** エージェントが申告した、サブエージェントを呼ぶツール名の集合（describeBackends の subagentTools）。申告が無い・一覧がまだなら既定の一覧（互換） */
+function subagentToolsOf(id) {
+  return subagentToolSet(state.backends.find((b) => b.id === id)?.subagentTools);
+}
+
 function labelOf(id) {
   return state.backends.find((b) => b.id === id)?.label ?? id ?? "";
 }
@@ -3852,7 +3857,7 @@ async function loadBackends(early = null) {
   state.backends = Array.isArray(list) ? list : [];
   // ロゴと短い名前（エージェントの記述）。脇の行・入口のチップ・入力欄の区切りがここから引く
   setAgentBrands(state.backends);
-  for (const b of state.backends) applyToolHints(b.toolHints);
+  for (const b of state.backends) { applyToolHints(b.toolHints); applySubagentTools(b.subagentTools); }
   state.backendId = state.backends.some((b) => b.id === state.prefs.backend)
     ? state.prefs.backend : state.backendId ?? state.backends[0]?.id ?? null;
   state.shownBackend ??= state.backendId;
@@ -5559,7 +5564,7 @@ function restorePastSubagents(sessionId) {
   if (isRunningHere()) return;
   const backend = activeBackendId();
   const liveOrigins = new Set(subagentsHere().map(a => a.origin));
-  for (const call of [...(state.earlierCalls ?? []), ...subagentCalls(state.messages ?? [])]) {
+  for (const call of [...(state.earlierCalls ?? []), ...subagentCalls(state.messages ?? [], 0, (state.messages ?? []).length, (id) => subagentToolsOf(id ?? backend))]) {
     if (liveOrigins.has(call.id)) continue;
     const lookup = `${sessionId}:${call.id}`;
     if ((bg.history.has(lookup) && !subagentLive(bg.history.get(lookup))) || bg.finding.has(lookup) || bg.notFound.has(lookup)) continue;
@@ -6464,7 +6469,7 @@ function linkDelegateCard(card, input = null, result = null, ctx = null) {
     // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
     const routing = delegateResult(result)?.routing;
     if (routing) cardRouting.set(card, routing);
-  } else if (!SUBAGENT_TOOLS.has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
+  } else if (!subagentToolsOf(ctx?.backend ?? activeBackendId()).has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
   card.classList.add('tc-delegate');
   card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
   const res = card.querySelector('.tc-res');
@@ -8657,12 +8662,12 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     const cards = (m.toolCalls ?? []).map((c) => {
       const card = renderToolCall(c.name, c.input, { id: c.id });
       if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result, sessionId); }
-      if (!readonly) linkDelegateCard(card, c.input, c.result);
+      if (!readonly) linkDelegateCard(card, c.input, c.result, { backend: m.backend ?? backend ?? activeBackendId() });
       if (c.id && !readonly) state.toolCards.set(c.id, card);
       return card;
     });
     if (!m.toolCalls) for (const name of m.tools ?? []) cards.push(renderToolCall(name, null));
-    node.append(...toolNodes(cards));
+    node.append(...toolNodes(cards, subagentToolsOf(m.backend ?? backend ?? activeBackendId())));
     if (m.text) { const b = el("div", "body"); b.dataset.raw = m.text; b.innerHTML = renderAssistantMarkdown(m.text, refs); node.append(b); }
   }
   if (readonly) stripActions(node);
@@ -8673,9 +8678,9 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
  * 履歴の 1 つの発言のツールの行を、まとまり（閉じた見出し）と委譲に分けて並べる。委譲はまとまりの外に 1 件ずつ出し、そこでまとまりが切れる。
  * 1 件だけのまとまりは見出しを付けず、行のまま置く
  */
-function toolNodes(cards) {
+function toolNodes(cards, tools) {
   const out = [];
-  for (const seg of splitToolCalls(cards, (card) => isBoundaryTool(card.dataset.tool), (card) => (isComputerTool(card.dataset.tool) ? "computer" : "tools"))) {
+  for (const seg of splitToolCalls(cards, (card) => isBoundaryTool(card.dataset.tool, tools), (card) => (isComputerTool(card.dataset.tool) ? "computer" : "tools"))) {
     if (seg.type === "delegate") { out.push(seg.call); continue; }
     // コンピューターの操作は 1 件でも塊（見出しが「コンピューターを操作しました」）
     if (seg.calls.length === 1 && seg.kind !== "computer") { out.push(seg.calls[0]); continue; }

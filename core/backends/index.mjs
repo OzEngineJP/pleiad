@@ -164,6 +164,8 @@ export function describeBackends() {
       tag: Boolean(b.capabilities?.tag && typeof b.setTag === "function"),
     },
     toolHints: b.toolHints ?? {},
+    // サブエージェントを呼ぶツールの名前の申告。画面は固定の一覧を持たず、これで委譲のカード・過去の一覧を見分ける
+    subagentTools: [...new Set(b.subagentTools ?? [])],
   }));
 }
 

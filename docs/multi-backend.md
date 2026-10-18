@@ -291,6 +291,9 @@ export const backend = {
 
   // ---- 表示ヒント（web/render.mjs の TOOL_LABEL を補う）
   toolHints?: { [toolName]: { label, shape: "shell"|"read"|"write"|"edit"|"search"|"delegate"|"web"|"generic" } },
+  // サブエージェントを呼ぶツールの名前（tool.start / 履歴の toolCalls の name と厳密一致）。
+  // 画面は固定の一覧を持たずこれで見分ける: 委譲カード（子へ飛ぶ矢印・状態）・作業ダイアログの過去の一覧・スレッドの作業ログ
+  subagentTools?: string[],
 };
 ```
 
