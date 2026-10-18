@@ -769,7 +769,7 @@ async function withCodexTrust(report, cwd, { trust = true } = {}) {
   } catch (e) { return applyCodexHooks(report, null, String(e?.message ?? e).slice(0, 200)); }
 }
 let agentTasks;
-// 普通の会話の長いコマンドの見張り（ADR 0225 §2）。委譲の台帳の後に作る
+// 普通の会話の長いコマンドの見張り（ADR 0227 §2）。委譲の台帳の後に作る
 let sessionCommands;
 // bot・Channels・ルーティン（core/bots-host.mjs）。つなぎ目は botHost?.xxx() で呼ぶ（生成前・失敗時は何もしない）
 let botHost;
@@ -1618,7 +1618,7 @@ function releaseAgentConnection(key) {
   try { entry.browser?.close(); } catch {}
   try { entry.control?.close(); } catch {}
   try { entry.shell?.close(); } catch {}
-  // 会話を消したら、その会話の ply_shell のジョブも止める（ADR 0225）
+  // 会話を消したら、その会話の ply_shell のジョブも止める（ADR 0227）
   void shellBridge.stopSession(key);
   // 会話を消したら、その会話で撮ったスクリーンショットも消す（ADR 0075）
   computerShots.removeSession(key).catch(() => {});
@@ -1718,7 +1718,7 @@ function controlRuntimeFor(turn) {
     env: { PLEIAD_CONTROL_URL: localOrigin(), PLEIAD_CONTROL_TOKEN: entry.control.token } };
 }
 
-// ply_shell: Pleiad がホストでシェルのコマンドを走らせる口（core/shell-bridge.mjs、ADR 0225 §1）。承認は会話の承認モードで Pleiad が決める。
+// ply_shell: Pleiad がホストでシェルのコマンドを走らせる口（core/shell-bridge.mjs、ADR 0227 §1）。承認は会話の承認モードで Pleiad が決める。
 // ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブが終わったら会話へ知らせる（エージェントが自分で止めたものを除く）
 const shellBridge = createShellBridge({
   askPermission: request => askPermission(request),
@@ -1745,7 +1745,7 @@ function openShellPort(entry, token) {
       return { sessionId, cwd: live.info.cwd, mode: modePosition(live.backend.modes()[live.info.mode]), signal: live.ac.signal, env: entry.shellEnv ?? {} };
     } });
 }
-/** エージェントのシェルのツール（設定 shellTool。ADR 0225 §3）: 'native'（エージェントのもの）か 'ply'（ply_shell だけ） */
+/** エージェントのシェルのツール（設定 shellTool。ADR 0227 §3）: 'native'（エージェントのもの）か 'ply'（ply_shell だけ） */
 async function shellToolChoice(backend) {
   const chosen = (await store.getPrefs()).shellTool?.[backend.id];
   return chosen === 'ply' || chosen === 'native' ? chosen : (agentOf(backend.id)?.shellDefault ?? 'native');
@@ -5193,7 +5193,7 @@ async function runningWork() {
   const background = [...runtime.background.values()].map((b) => ({
     kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })), ...(getBackend(b.backend)?.holdsBackground?.() ? { held: true } : {}),
   }));
-  // ply_shell の裏のジョブ（ADR 0225）。Pleiad のサーバーの子なので、引き継ぎでは止まる（held を付けない）
+  // ply_shell の裏のジョブ（ADR 0227）。Pleiad のサーバーの子なので、引き継ぎでは止まる（held を付けない）
   for (const sessionId of shellBridge.sessionsWithJobs()) {
     const tasks = shellBackground(sessionId);
     if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString() });
@@ -5818,7 +5818,7 @@ async function steerNotice(turn, owner, prompt, tasks, settingNotices = null, ho
 
 /**
  * 渡った合図を待つ完了通知の控え（liveNotices の値）。設定の変更の承認の結果は、台帳へ戻す口を settingNotices から作る。
- * hooks（{ delivered, redeliver }）は、長いコマンドの知らせ（ADR 0225）が受け取り・捨てられたことを知る口（メモリだけ。付け直した先には無い）
+ * hooks（{ delivered, redeliver }）は、長いコマンドの知らせ（ADR 0227）が受け取り・捨てられたことを知る口（メモリだけ。付け直した先には無い）
  */
 function noticeEntry(owner, prompt, items, settingNotices = null, hooks = null) {
   return { owner, prompt, items, ...(settingNotices ? { settingNotices, redeliver: () => settingApprovals.requeue(settingNotices) } : {}),
@@ -6237,7 +6237,7 @@ agentTasks = await createAgentTasks({
     return runTurn({ sessionId: owner, prompt: backgroundNotice(lng, task.host ? { ...task, title: delegatedNoticeTitle(task) } : task, notice, reply) }, () => {}, { internal: true, onAccepted: accepted });
   },
 });
-// 普通の会話の長いコマンドを、その会話自身へ知らせる（ADR 0225 §2）。委譲の子は上の台帳が親へ知らせる。止めない。
+// 普通の会話の長いコマンドを、その会話自身へ知らせる（ADR 0227 §2）。委譲の子は上の台帳が親へ知らせる。止めない。
 // 走っているターンへは途中送信で渡し（渡った合図で受け取り）、渡せなければ空いてから新しいターンで渡す。
 // 受け取られないまま（エージェントが自分のシェルのツールの中で固まっている）なら、通知の一覧のあなた待ちに載せる
 sessionCommands = createSessionCommands({
@@ -6786,7 +6786,7 @@ async function beginTurn(ctx) {
     // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
     // 委譲の子には指示（約 0.2k）だけ渡さない。MCP は残す: 子の設定変更の承認を依頼元へ中継する口（ADR 0088）が ply_control を通るため
     controlRuntime: delegatedChild ? { ...controlRuntimeFor(turn), instructions: null } : controlRuntimeFor(turn),
-    // ply_shell（ADR 0225 §1）。受け取れるエージェントだけ。nativeOff ならエージェントのシェルのツールを切る（§3）
+    // ply_shell（ADR 0227 §1）。受け取れるエージェントだけ。nativeOff ならエージェントのシェルのツールを切る（§3）
     shellRuntime: await shellRuntimeFor(turn),
     addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
     contextRuntime: ctx.runtimeContext,

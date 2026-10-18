@@ -358,7 +358,7 @@ function buildToolServer(ctx, { createSdkMcpServer, tool }) {
  * いずれも子の仕事（依頼元へ結果を返す）には要らない。AskUserQuestion・Agent・Bash・PowerShell は残す。
  */
 export const DELEGATED_CHILD_DISALLOWED_TOOLS = ['Workflow', 'ScheduleWakeup', 'ReportFindings', 'ListAgents'];
-/** エージェントのシェルのツールを切る会話で外すもの（ply_shell だけにする。ADR 0225 §3）。TOOL_HINTS の shape: 'shell'（記述の shellTools と同じ名前） */
+/** エージェントのシェルのツールを切る会話で外すもの（ply_shell だけにする。ADR 0227 §3）。TOOL_HINTS の shape: 'shell'（記述の shellTools と同じ名前） */
 export const NATIVE_SHELL_TOOLS = Object.freeze(Object.keys(TOOL_HINTS).filter((name) => TOOL_HINTS[name].shape === 'shell'));
 
 /**
@@ -403,7 +403,7 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${BROWSER_SERVER}__`)) return { behavior: "allow", updatedInput: input };
   // 操作の一覧（ply_control）も聞かない。権限と承認は registry.invoke が会話の承認モードで決める（ADR 0082）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${CONTROL_SERVER}__`)) return { behavior: "allow", updatedInput: input };
-  // ply_shell も聞かない。承認は橋（core/shell-bridge.mjs）が会話の承認モードで決める（ADR 0225。二重に聞かない）
+  // ply_shell も聞かない。承認は橋（core/shell-bridge.mjs）が会話の承認モードで決める（ADR 0227。二重に聞かない）
   if (typeof toolName === "string" && toolName.startsWith(`mcp__${SHELL_SERVER}__`)) return { behavior: "allow", updatedInput: input };
 
   if (typeof askPermission !== "function") {
@@ -694,7 +694,7 @@ export const backend = {
     compatEndpoints: true,
     // 入力欄の `!`: Pleiad がホストで走らせ、結果を次のターンの始めに shouldQuery: false の行で渡す（runTurn の shellAppends。ADR 0054）
     shell: 'host',
-    // ply_shell を受け取り、Bash・PowerShell を disallowedTools で切れる（ADR 0225）
+    // ply_shell を受け取り、Bash・PowerShell を disallowedTools で切れる（ADR 0227）
     plyShell: true,
     nativeShellOff: true,
     approvals: 'interactive',   // canUseTool
@@ -818,7 +818,7 @@ export const backend = {
       // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。全会話に渡す
       // 承認が要る呼び出しも待たずに返る（ADR 0088）ので、待ちの上限はほかの Pleiad の MCP と同じ既定
       ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers } } : {}),
-      // Pleiad のシェルのツール（core/shell-bridge.mjs。ADR 0225）。run は最長 10 分待つので、待ちの上限をそれより長くする
+      // Pleiad のシェルのツール（core/shell-bridge.mjs。ADR 0227）。run は最長 10 分待つので、待ちの上限をそれより長くする
       ...(shellRuntime ? { [SHELL_SERVER]: { type: 'http', url: shellRuntime.url, headers: shellRuntime.headers, timeout: RUN_TIMEOUT_MAX_MS + 60_000 } } : {}) };
     const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'claude' });
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
@@ -1127,7 +1127,7 @@ export const backend = {
     }
 
     // 外す道具: bot の読み取り専用フォルダーの deny ルール + 委譲の子が使わない組み込みの道具（DELEGATED_CHILD_DISALLOWED_TOOLS）
-    // + エージェントのシェルのツールを切る会話（ply_shell だけにする。ADR 0225 §3）の Bash・PowerShell。
+    // + エージェントのシェルのツールを切る会話（ply_shell だけにする。ADR 0227 §3）の Bash・PowerShell。
     // コンテキストの担当が足す分（Skill。context-options.mjs）も残す（後ろの disallowedTools が上書きしないように混ぜる）
     const disallowedTools = [...(contextOptions.disallowedTools ?? []), ...(botFolders?.readOnlyRoots?.length ? readOnlyDenyRules(botFolders.readOnlyRoots) : []), ...(delegatedChild ? DELEGATED_CHILD_DISALLOWED_TOOLS : []),
       ...(shellRuntime?.nativeOff ? NATIVE_SHELL_TOOLS : [])];

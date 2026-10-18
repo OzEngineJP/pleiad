@@ -346,7 +346,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 
 #### Pleiad のシェルのツール（ply_shell、2026-10-18）
 
-エージェントがホストでシェルのコマンドを走らせる Pleiad の MCP（`/mcp/shell`、`core/shell-bridge.mjs`。[ADR 0225](adr/0225-ply-shell-and-command-notices.md)）。会話ごとの Bearer で会話に束縛する（骨格は `core/mcp-bridge.mjs`、無停止の更新の付け直しは `restoreConnection` の `shell`）。
+エージェントがホストでシェルのコマンドを走らせる Pleiad の MCP（`/mcp/shell`、`core/shell-bridge.mjs`。[ADR 0227](adr/0227-ply-shell-and-command-notices.md)）。会話ごとの Bearer で会話に束縛する（骨格は `core/mcp-bridge.mjs`、無停止の更新の付け直しは `restoreConnection` の `shell`）。
 
 - ツール: `run`（終わるまで待つ。上限は既定 2 分・最大 10 分）・`start`（裏で始めてすぐジョブの id を返す）・`output`（`since` から続きを読む）・`stop`（子のプロセスごと止める）・`list`。走らせる口は `core/host-shell.mjs`。`shell` 引数で `default`・`bash`・`powershell`・`cmd`（Windows だけ）を選ぶ。コマンドには会話のシェルの環境変数（エージェントの Chrome・`PLEIAD_CONTROL_*`・秘密情報と変数）を渡す
 - 承認: 読み取りだけのモード（scope が `none`・`readonly`）は断る。確認なし（autonomy が `never`）のほかは、走らせる前に会話へ承認のカードを出す。エージェント側では聞かない（Claude は `decidePermission` で通し、OpenCode は `ply_shell_*` を allow、Codex は `default_tools_approval_mode: approve`）

@@ -1,4 +1,4 @@
-// 普通の会話（委譲の子でない会話）の長いコマンドを、その会話自身へ知らせる（ADR 0225 §2）。止めない。
+// 普通の会話（委譲の子でない会話）の長いコマンドを、その会話自身へ知らせる（ADR 0227 §2）。止めない。
 //
 // - 見るもの: ネイティブのシェルのツール（core/shell-tools.mjs の isShellToolCall）の tool.start〜tool.result と、
 //   Pleiad のシェルのツール（ply_shell）の run・start のジョブ（track / untrack）

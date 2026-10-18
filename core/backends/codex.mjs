@@ -1336,7 +1336,7 @@ const backend = {
     compatEndpoints: true,
     // 入力欄の `!`: app-server の thread/shellCommand で走らせる（下の shell。ADR 0054）
     shell: 'native',
-    // ply_shell を受け取る。Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0225）
+    // ply_shell を受け取る。Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0227）
     plyShell: true,
     nativeShellOff: false,
     forkMessage: false,         // thread/fork は発言の途中では切れない（Pleiad が写す）
@@ -1851,7 +1851,7 @@ const backend = {
           ...(browserRuntime ? { [`mcp_servers.${BROWSER_SERVER}`]: { url: browserRuntime.url, http_headers: browserRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: COMPUTER_CALL_TIMEOUT_SEC } } : {}),
           // Pleiad の操作の一覧（core/ops/surfaces/control.mjs。ADR 0081）。承認は registry.invoke が会話の承認モードで決めるので、ツールごとには聞かない
           ...(controlRuntime ? { [`mcp_servers.${CONTROL_SERVER}`]: { url: controlRuntime.url, http_headers: controlRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: 60 } } : {}),
-          // Pleiad のシェルのツール（ADR 0225）。承認は橋が会話の承認モードで決める。run は最長 10 分待つ
+          // Pleiad のシェルのツール（ADR 0227）。承認は橋が会話の承認モードで決める。run は最長 10 分待つ
           ...(shellRuntime ? { [`mcp_servers.${SHELL_SERVER}`]: { url: shellRuntime.url, http_headers: shellRuntime.headers, enabled: true, required: false, default_tools_approval_mode: 'approve', startup_timeout_sec: 20, tool_timeout_sec: Math.ceil(RUN_TIMEOUT_MAX_MS / 1000) + 60 } } : {}),
             // The context bridge applies the selected mode to external tool calls.
             ...(contextRuntime ? { 'mcp_servers.ply_context': { url: contextRuntime.url, http_headers: contextRuntime.headers, enabled: true, required: true, default_tools_approval_mode: 'approve', startup_timeout_sec: 20 } } : {}),

@@ -1,4 +1,4 @@
-// ply_shell の渡し方（ADR 0225 §1・§3）。LLM は呼ばない。
+// ply_shell の渡し方（ADR 0227 §1・§3）。LLM は呼ばない。
 //   - OpenCode: ply_shell は聞かない。エージェントのシェルを切る会話は bash を全面拒否（一覧から外れる）。規則の印も変わる
 //   - Claude: ply_shell を MCP に足し、聞かない。切る会話は Bash・PowerShell を disallowedTools に入れ、使い方の指示を足す
 //   - サーバー（fake）: 設定 shellTool で切り替わる・run が走る・start のジョブが裏の一覧に出て人が止められる・終わりを会話へ知らせる・

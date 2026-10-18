@@ -1,4 +1,4 @@
-// ply_shell: Pleiad がホストでシェルのコマンドを走らせる MCP（ADR 0225 §1）。会話ごとの HTTP の口（core/mcp-bridge.mjs）。
+// ply_shell: Pleiad がホストでシェルのコマンドを走らせる MCP（ADR 0227 §1）。会話ごとの HTTP の口（core/mcp-bridge.mjs）。
 //
 // ツール: run（終わるまで待つ）・start（裏で始めてすぐ戻る）・output（ジョブの出力の続き）・stop（ジョブを止める）・list（この会話のジョブ）。
 // - 走らせる口は core/host-shell.mjs。シェルが終わったら、パイプを握ったプロセスが残っていても少し待って戻る（leftover）

@@ -54,9 +54,9 @@ export const CAPABILITIES = {
   computerUse: { valid: (v) => v === false || (Boolean(v) && typeof v === 'object' && ['inline', 'path'].includes(v.images) && (v.waitSliceMs === null || Number.isFinite(v.waitSliceMs))) },
   // 入力欄の `!`（host: Pleiad が走らせて次のターンで渡す / native: エージェントが走らせる / false: 使えない。ADR 0054）
   shell: { valid: oneOf(false, 'host', 'native'), requires: (v) => (v === 'native' ? ['shell'] : []) },
-  // Pleiad のシェルのツール（ply_shell。runArgs.shellRuntime）を受け取る（ADR 0225 §1）
+  // Pleiad のシェルのツール（ply_shell。runArgs.shellRuntime）を受け取る（ADR 0227 §1）
   plyShell: { valid: bool },
-  // エージェントのシェルのツールを会話ごとに切れる（runArgs.shellRuntime.nativeOff。ADR 0225 §3）。切るのは ply_shell を受け取るときだけ
+  // エージェントのシェルのツールを会話ごとに切れる（runArgs.shellRuntime.nativeOff。ADR 0227 §3）。切るのは ply_shell を受け取るときだけ
   nativeShellOff: { valid: bool },
   // 強さがモデルの id に入る（エフォートを別に渡さない。core/effort.mjs）
   effortInModelId: { valid: bool },
