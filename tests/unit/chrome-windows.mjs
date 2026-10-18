@@ -5,7 +5,7 @@ import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { createChromeRelay } from '../../core/chrome/relay.mjs';
-import { createChromeWindows, nonceUrl, WINDOW_DIP } from '../../core/chrome/windows.mjs';
+import { createChromeWindows, nonceUrl, WINDOW_DIP, PROFILE_LAUNCH_FAILED } from '../../core/chrome/windows.mjs';
 import { readLastUsedProfile, chromeHomes } from '../../core/chrome/locate.mjs';
 
 export const name = 'chrome-windows';
@@ -49,14 +49,14 @@ function agent(url) {
 
 const TIMING = { hwndWaitMs: 200, hwndPollMs: 10, targetWaitMs: 500, targetPollMs: 10, popupWaitMs: 200, boundsWaitMs: 100 };
 
-async function rig({ custom = true, localState } = {}) {
+async function rig({ custom = true, localState, profileFor } = {}) {
   const chrome = await startFakeChrome({ permission: 'auto' });
   if (localState !== undefined) await writeFile(path.join(chrome.userDataDir, 'Local State'), localState);
   const os_ = fakeChromeOs({ chrome });
   const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
   const logs = [];
   const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, ...(custom ? { custom: true } : {}) };
-  const scope = createChromeWindows({ os: os_, locate, log: line => logs.push(line), timing: TIMING });
+  const scope = createChromeWindows({ os: os_, locate, log: line => logs.push(line), timing: TIMING, ...(profileFor ? { profileFor } : {}) });
   const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, log: line => logs.push(line) });
   const live = [];
   return {
@@ -176,8 +176,76 @@ export default async function (t) {
       const a = await r.agent('one');
       const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
       const tab = tabInfo(r, created.result?.targetId);
-      t.ok('chrome.exe を起こせなければ、createTarget の新しい窓に落とす（隠す・ログに残す）', !!tab && r.os.calls('launchWindow').length === 1
-        && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === 1 && concealedOk(hwndOf(r, tab.windowId)) && r.logs.some(line => line.includes('launching chrome.exe failed')));
+      t.ok('chrome.exe を起こせなければ、探し直して 1 回だけやり直し、それでも駄目なら createTarget の新しい窓に落とす（隠す・ログに理由を残す）', !!tab && r.os.calls('launchWindow').length === 2
+        && r.os.calls('locateBrowser').length === 2
+        && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === 1 && concealedOk(hwndOf(r, tab.windowId)) && r.logs.filter(line => line === 'chrome-windows: launching chrome.exe failed (spawn)').length === 2, JSON.stringify(r.logs));
+    } finally { await r.stop(); }
+  }
+  {
+    // 1 回だけ起こせなかった: 探し直したやり直しで chrome.exe の窓が開く（createTarget に落とさない）
+    const r = await rig();
+    try {
+      r.os.opts.launchFailures = 1;
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const tab = tabInfo(r, created.result?.targetId);
+      t.ok('chrome.exe を 1 回起こせなくても、探し直したやり直しで chrome.exe の窓を開く', !!tab && r.os.calls('launchWindow').length === 2 && r.os.calls('locateBrowser').length === 2
+        && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === 0 && concealedOk(hwndOf(r, tab.windowId)), JSON.stringify(r.logs));
+    } finally { await r.stop(); }
+  }
+  {
+    // main が入れ替わった（層の世代が上がった）: 前の main の browser の id は新しい層が知らない。探し直してから起こす（2026-10-18 の v0.20.0 への更新）
+    const r = await rig();
+    try {
+      const a = await r.agent('one');
+      await a.cmd('Target.createTarget', { url: 'about:blank' });
+      r.os.setPending(true);
+      r.os.setPending(false);
+      const b = await r.agent('two');
+      const created = await b.cmd('Target.createTarget', { url: 'about:blank' });
+      const launches = r.os.calls('launchWindow');
+      t.ok('層の世代が替われば browser を探し直し、新しい層の id で chrome.exe を起こす（前の id で断られない）', !created.error && launches.length === 2
+        && launches[0].args.browser === 'fake-browser' && launches[1].args.browser === 'fake-browser-g1' && r.os.calls('locateBrowser').length === 2
+        && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === 0 && !r.logs.some(line => line.includes('launching chrome.exe failed')), JSON.stringify({ launches, logs: r.logs }));
+    } finally { await r.stop(); }
+  }
+  {
+    // 世代は同じなのに層が id を知らない（層の表から追い出された・世代を数えない口）: unknown-browser を受けたら探し直して 1 回だけやり直す
+    const r = await rig();
+    try {
+      const original = r.os.locateBrowser;
+      let first = true;
+      r.os.locateBrowser = async args => { const found = await original(args); if (first) { first = false; return { ...found, id: 'stale-browser' }; } return found; };
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const launches = r.os.calls('launchWindow');
+      t.ok('unknown-browser なら探し直して、同じ題（nonce）でもう 1 回だけ起こす', !created.error && launches.length === 2 && launches[0].args.browser === 'stale-browser' && launches[1].args.browser === 'fake-browser'
+        && launches[0].args.nonce === launches[1].args.nonce && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === 0
+        && r.logs.includes('chrome-windows: launching chrome.exe failed (unknown-browser)'), JSON.stringify({ launches, logs: r.logs }));
+    } finally { await r.stop(); }
+  }
+  {
+    // 返事を聞けなかった（時間切れ。reason が無い）: chrome.exe が窓を開いたかもしれないので、起こし直さない
+    const r = await rig();
+    try {
+      r.os.launchWindow = async () => ({ ok: false });
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      t.ok('返事の無い失敗では chrome.exe を起こし直さず、createTarget の窓に落とす', !created.error && r.os.calls('locateBrowser').length === 1
+        && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === 1 && r.logs.includes('chrome-windows: launching chrome.exe failed (no answer)'), JSON.stringify(r.logs));
+    } finally { await r.stop(); }
+  }
+  {
+    // 選んだプロフィールの窓を開けない: ほかのプロフィール（createTarget）に落とさず、エージェントに次の手を書いた失敗を返す
+    const r = await rig({ profileFor: () => ({ browser: 'chrome', dir: 'Profile 1' }) });
+    try {
+      r.os.opts.launchFails = true;
+      const a = await r.agent('one');
+      const pages = r.fake.targets().length;
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      t.ok('選んだプロフィールで開けなければ、探し直して 1 回だけやり直し、次の手（やり直す・人に確かめる・use_browser_profile）を書いたエラーで返す', created.error?.message === PROFILE_LAUNCH_FAILED
+        && /use_browser_profile/.test(created.error.message) && r.os.calls('launchWindow').length === 2 && r.os.calls('launchWindow').every(c => c.args.profileDir === 'Profile 1')
+        && r.chrome.calls.filter(c => c.method === 'Target.createTarget').length === 0 && r.fake.targets().length === pages, JSON.stringify({ created, targets: r.fake.targets() }));
     } finally { await r.stop(); }
   }
   {

@@ -32,8 +32,9 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
   const hw = new Map();   // hwnd -> { id, windowId, rect(DIP), concealed, agent, alpha, ex, prevFg }
   let hwSeq = 100;
   // readyWaitMs: pending の間、ready() が層の戻りを待つ長さ（0 は待たずに pending のまま返す）。本物の口（parentPortChromeOs）は readyWaitMs だけ待つ
-  const opts = { allowFails: false, allowNoOpen: false, enableFails: false, appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
+  const opts = { allowFails: false, allowNoOpen: false, enableFails: false, appWindow: 'pleiad-window', noAppWindow: false, launchFails: false, launchFailures: 0, chromeMissing: false, hideNonce: false, hideBounds: false, concealFails: false, honorPosition: true, noListener: false, closeFails: false, adoptFails: false, restoreMoveMs: 0, readyWaitMs: 0 };
   let generation = 0;
+  const browserId = () => (generation ? `fake-browser-g${generation}` : 'fake-browser');
   const readyWaiters = new Set();
   const OFFSCREEN = Object.freeze({ x: 6000, y: 0 });
   const isDialog = id => chrome?.dialogs().some(d => d.id === id);
@@ -99,7 +100,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     },
     async enableRemoteDebugging(args = {}) {
       note({ op: 'enableRemoteDebugging', args: JSON.parse(JSON.stringify({ ...args, browser: args.browser?.id ?? null })) });
-      if (opts.enableFails || args.browser?.id !== 'fake-browser' || !chrome) return { ok: false, reason: 'no-switch' };
+      if (opts.enableFails || args.browser?.id !== browserId() || !chrome) return { ok: false, reason: 'no-switch' };
       await chrome.turnOn();
       return { ok: true };
     },
@@ -115,10 +116,14 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     async close(ref) { note({ op: 'close', ref: ref?.id }); if (!ref?.id || !shownDialogs.has(ref.id)) return false; return chrome ? chrome.closeDialog(ref.id) : false; },
 
     // ---- エージェントの窓
-    async locateBrowser({ product = 'chrome' } = {}) { note({ op: 'locateBrowser', product }); return opts.chromeMissing ? null : { id: 'fake-browser', product }; },
+    // browser の id は層の世代（main のプロセス）ごとの値（本物の win32 は起動ごとの連番）。前の世代の id は launchWindow が unknown-browser で断る
+    async locateBrowser({ product = 'chrome' } = {}) { note({ op: 'locateBrowser', product }); return opts.chromeMissing ? null : { id: browserId(), product }; },
     async launchWindow(args = {}) {
       note({ op: 'launchWindow', args: JSON.parse(JSON.stringify({ ...args, browser: args.browser?.id ?? null })) });
-      if (opts.launchFails || args.browser?.id !== 'fake-browser' || !chrome) return { ok: false };
+      if (args.browser?.id !== browserId()) return { ok: false, reason: 'unknown-browser' };
+      // launchFails: いつも起こせない。launchFailures: その回数だけ起こせない（探し直した後のやり直しを見る）
+      if (opts.launchFails || !chrome) return { ok: false, reason: 'spawn' };
+      if (opts.launchFailures > 0) { opts.launchFailures -= 1; return { ok: false, reason: 'spawn' }; }
       const position = opts.honorPosition && args.position ? { left: args.position.x, top: args.position.y } : {};
       const size = opts.honorPosition && args.size ? { width: args.size.width, height: args.size.height } : {};
       chrome.browser.launchWindow({ url: args.url, bounds: { ...position, ...size }, profileDir: args.profileDir ?? null });
