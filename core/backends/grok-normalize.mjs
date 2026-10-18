@@ -15,6 +15,14 @@ const inputOf = value => value && typeof value === 'object' ? value : value == n
 export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null } = {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
   let current = null, expectedEcho = null, echo = '', live = false, sepText = false, sepThink = false;
+  // 受理したが回の中ではまだ置けない途中送信（エコーが来ないので自分で行を作る）と、直近に届いた回の区切り
+  const pendingUsers = [];
+  let turnBoundary = false;
+  // queued の回の出力が始まる直前に、受理した順に user 行を 1 つ置く。
+  // 受理した時点ではなくターンの境界で置くので、流れている元の行（user の echo・assistant の本文）を分断しない
+  function flushQueued() {
+    if (turnBoundary && pendingUsers.length) { current = null; row('user').text = pendingUsers.shift(); turnBoundary = false; }
+  }
   function row(role) {
     if (current?.role !== role) {
       current = { uuid: `${sessionId}:${role}:${messages.length}`, role, text: '', at: null };
@@ -37,6 +45,8 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
     if (kind === 'turn_completed') {
       const used = Number(update.usage?.totalTokens);
       if (live && Number.isFinite(used) && Number.isFinite(windowTokens) && windowTokens > 0) send({ type: 'contextWindow', usedTokens: used, windowTokens });
+      // 回の区切り。受理した途中送信（queued）は、次に出力が始まる直前に user 行を置く（下の flushQueued）
+      turnBoundary = true;
       return;
     }
     // Grok のフックの実行（_x.ai/session_notification で届く）
@@ -53,17 +63,20 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       row('user').text += text;
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;
+      flushQueued();
       const message = row('assistant'), text = contentText(update.content);
       // ツールを挟んだあとの本文は別の段落（区切り無しに連結すると、断片同士がくっつく）
       message.text += (sepText && message.text ? '\n\n' : '') + text; sepText = false;
       if (text) send({ type: 'text.delta', text });
     } else if (kind === 'agent_thought_chunk') {
       expectedEcho = null;
+      flushQueued();
       const message = row('assistant'), text = contentText(update.content);
       if (!message.thinking) send({ type: 'thinking.start' });
       message.thinking = (message.thinking ?? '') + (sepThink && message.thinking ? '\n\n' : '') + text; sepThink = false;
       if (text) send({ type: 'thinking.delta', text });
     } else if (kind === 'tool_call' || kind === 'tool_call_update') {
+      flushQueued();
       const id = update.toolCallId;
       if (typeof id !== 'string' || !id) return;
       const state = toolStates.get(id) ?? { toolCallId: id };
@@ -99,9 +112,14 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       expectedEcho = prompt; echo = ''; live = true;
     },
     // Grok は受理した途中送信を user_message_chunk でエコーしない（実測 1.0.62）。
-    // 受理した分を記録の user 行として自分で置く（待ち行列で回る分も、送った順の行にする）
-    noteUser(text) { current = null; row('user').text = text; },
-    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid }); live = false; },
+    // 受理した分は pendingUsers に積み、次の回の出力が始まる直前に user 行として置く（flushQueued）
+    queueUser(text) { pendingUsers.push(String(text)); },
+    finish() {
+      if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid });
+      // 送ったのに回られず残った分（中断・既読不明）は、送った順に末尾へ置いて無くさない
+      while (pendingUsers.length) { current = null; row('user').text = pendingUsers.shift(); }
+      live = false;
+    },
     messages: () => structuredClone(messages),
   };
 }
