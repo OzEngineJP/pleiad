@@ -59,6 +59,8 @@ export default async function testOpencodeAccounts(t) {
     await fs.writeFile(realAuth,'{');
     prepareCredentialImport(legacyBroken);
     await importLegacyCredentials(credentials,legacyBroken);
+    assert(fsSync.existsSync(legacyBroken+'.pleiad-import-auth'));
+    for(let retry=0;retry<4;retry++)await importLegacyCredentials(credentials,legacyBroken);
     assert(!fsSync.existsSync(legacyBroken+'.pleiad-import-auth'));
     await fs.writeFile(realAuth,original);
     const linkedAuth=path.join(scratch,'auth-link.json');

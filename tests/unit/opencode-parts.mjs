@@ -108,6 +108,10 @@ export default async function (t) {
   await relay.handle(fakeReq({ method: 'GET', headers: { authorization: 'Bearer '+relay.token() } }), res, new URL('http://127.0.0.1:9/mcp/opencode/env?session=ses_child'));
   t.ok('中継: 会話のシェルの環境変数（子の会話は親の分）', envRes.status !== 0 && JSON.parse(res.body).PLEIAD_CONTROL_URL === 'http://x');
   t.ok('中継: 知らないサーバー名は 404', (await call('nope', { jsonrpc: '2.0', id: 8, method: 'tools/list' })).status === 404);
+  let refreshed=false;
+  relay.bind('ses_refresh',{context:async(id,options)=>{refreshed=id==='ses_refresh'&&options.fresh;return{omitTexts:['new native instruction']};}});
+  const freshContext=(await call('env?session=ses_refresh&kind=context&fresh=1',null,'Bearer '+relay.token(),'GET')).json();
+  t.ok('送信直前の context は履歴のキャッシュを更新する',refreshed&&freshContext.omitTexts[0]==='new native instruction');
   const environments=[];
   relay.bind('ses_A',{env:{value:'new'},prepareChild:async id=>environments.push(id)});
   await Promise.all([call('env?session=ses_child',null,'Bearer '+relay.token(),'GET'),call('env?session=ses_child',null,'Bearer '+relay.token(),'GET')]);
@@ -222,6 +226,7 @@ body`); };
       const frame={sessionID:'ses_X',frame:JSON.stringify({input:[{text:'[Synthetic context]: AGENTS_ONLY\nKeep user text'}]})};
       await callbacks.get('experimental.ws.send')(frame);
       t.ok('v2 provider requests omit instructions reinserted by compaction fallback, over HTTP and WebSocket',!JSON.stringify(sanitized).includes('AGENTS_ONLY') && !frame.frame.includes('AGENTS_ONLY') && frame.frame.includes('Keep user text'));
+      assert(seen.slice(-2).every(call=>new URL('http://127.0.0.1'+call.url).searchParams.get('fresh')==='1'));
       for(const [encoding,encode,decode] of [['gzip',zlib.gzipSync,zlib.gunzipSync],['br',zlib.brotliCompressSync,zlib.brotliDecompressSync],['deflate',zlib.deflateSync,zlib.inflateSync],...(zlib.zstdCompressSync?[['zstd',zlib.zstdCompressSync,zlib.zstdDecompressSync]]:[])]) {
         const compressed={sessionID:'ses_X',request:new Request('http://127.0.0.1/provider',{method:'POST',headers:{'content-type':'application/json','content-encoding':encoding},body:encode(Buffer.from(JSON.stringify({input:'[Synthetic context]: AGENTS_ONLY\nKeep user text'})))})};
         await callbacks.get('http.request')(compressed);

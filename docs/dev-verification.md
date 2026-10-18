@@ -20,7 +20,7 @@
 
 実サービスを指定する場合は `OPENCODE_E2E_SERVICE_MODEL=provider/model` を設定する。`OPENCODE_E2E_AUTH_PROVIDER=groq` などを付けると、その接続先の既存 API 資格情報だけを一時領域へ写す。OAuth は更新せず、利用者の認証や DB は変更しない。モデル ID は接続先の現在の一覧で確認する。`PLEIAD_*` は試験ランナーが取り除くため、試験用の選択には使わない。
 
-v2 の新規 DB 作成は旧 `auth.json` を自動で取り込まない。Pleiad の初回復元は公式 credential API と未完了の印を使い、通信失敗は次回再試行する。不正な項目は飛ばし、既存 DB とログアウト済み DB は再取り込みしない。CLI を先に開いて新規 DB を作った場合は、OpenCode 側でログインする。
+v2 の新規 DB 作成は旧 `auth.json` を自動で取り込まない。Pleiad の初回復元は公式 credential API と未完了の印を使い、通信失敗や一時的な読みの失敗は起動ごとに最大 5 回まで再試行する。不正な項目は飛ばし、既存 DB とログアウト済み DB は再取り込みしない。5 回失敗した場合や、CLI を先に開いて新規 DB を作った場合は、OpenCode 側でログインする。
 
 Pleiad が指示を担当する場合、圧縮に残った native 指示はモデル送信前にも除外する。署名済みの本文を安全に変更できない場合は要求を断る。戻し方と対応版は [利用案内](backends.md#opencode) と [接続契約](multi-backend.md) を参照。
 

@@ -184,6 +184,10 @@ export function readAccountAuth(account = null) {
   return { ...validAuth(parsed), ...stored };
 }
 
+const IMPORT_ATTEMPTS=5;
+function writeImportMarker(marker,attempts,flag='w') {
+  fs.writeFileSync(marker,JSON.stringify({attempts}),{flag,mode:0o600});
+}
 function legacyImportSource(account) {
   try {
     const file=path.join(opencodeData(account),'auth.json');
@@ -199,7 +203,7 @@ export function prepareCredentialImport(file,account=null) {
   if(statSafe(file)?.size)return;
   if(!legacyImportSource(account))return;
   const marker=file+'.pleiad-import-auth';
-  try{fs.writeFileSync(marker,'pending',{flag:'wx',mode:0o600});}
+  try{writeImportMarker(marker,0,'wx');}
   catch(error){if(error.code!=='EEXIST')throw error;assertSafeAuth(marker);}
 }
 
@@ -207,13 +211,25 @@ export function prepareCredentialImport(file,account=null) {
 export async function importLegacyCredentials(request,file,account=null) {
   const marker=file+'.pleiad-import-auth';
   if(!assertSafeAuth(marker))return;
+  let attempts=0;
+  try{attempts=JSON.parse(fs.readFileSync(marker,'utf8')).attempts??0;}catch{/* An interrupted or older marker starts a bounded retry. */}
+  if(!Number.isInteger(attempts) || attempts<0 || attempts>=IMPORT_ATTEMPTS)attempts=IMPORT_ATTEMPTS-1;
+  attempts++;
   let current;
-  try{current=(await request('GET','/api/credential'))?.data;}catch{return {pending:true};}
-  if(!Array.isArray(current))return {pending:true};
+  try{current=(await request('GET','/api/credential'))?.data;}catch{}
+  const finish=(pending,skipped=0)=>{
+    const retry=pending && attempts<IMPORT_ATTEMPTS;
+    if(retry)writeImportMarker(marker,attempts);
+    else try{fs.unlinkSync(marker);}catch(error){if(error.code!=='ENOENT')throw error;}
+    if(pending || skipped)console.error('  opencode: credential restore:',retry?'pending':pending?'stopped':'complete',`(${skipped} invalid entries skipped)`);
+    return {pending:retry,skipped};
+  };
+  if(!Array.isArray(current))return finish(true);
   const present=new Set(current.map(c=>c.integrationID));
   let pending=false,skipped=0;
-  const source=legacyImportSource(account)??{};
-  for(const [rawID,credential] of Object.entries(source)) {
+  const source=legacyImportSource(account);
+  if(!source)pending=true;
+  for(const [rawID,credential] of Object.entries(source??{})) {
     const integrationID=rawID.replace(/\/+$/,'');
     const record=v=>v && typeof v==='object' && !Array.isArray(v);
     if(!integrationID || credential.type==='oauth' && (!Number.isInteger(credential.expires) || credential.methodID!==undefined && typeof credential.methodID!=='string' || ['accountId','enterpriseUrl'].some(key=>credential[key]!==undefined && typeof credential[key]!=='string')) || credential.metadata!==undefined && (!record(credential.metadata) || credential.type==='api' && Object.values(credential.metadata).some(value=>typeof value!=='string'))) {skipped++;continue;}
@@ -240,9 +256,7 @@ export async function importLegacyCredentials(request,file,account=null) {
       pending=true;
     }
   }
-  if(!pending)try{fs.unlinkSync(marker);}catch(error){if(error.code!=='ENOENT')throw error;}
-  if(pending || skipped)console.error('  opencode: credential restore:',pending?'pending':'complete',`(${skipped} invalid entries skipped)`);
-  return {pending,skipped};
+  return finish(pending,skipped);
 }
 
 export function prepareAccount(account) {

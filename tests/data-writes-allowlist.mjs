@@ -99,7 +99,7 @@ export const DATA_WRITES = [
     { name: 'accounts/codex/<id>/<共有リンク>', limit: 'dirs・filesの固定の一覧', reason: 'CLIの設定・会話・書き手のロックの共有。リンク先の内容は書かない' },
   ] },
   { file: 'core/backends/opencode-accounts.mjs', sites: 2, targets: [
-    { name: '(置き場の外) OpenCode DB.pleiad-import-auth', limit: 'DB ごとに初回取り込み中の pending 7 bytes だけ', reason: '新規 v2 DB への資格情報取り込みを再開する印。公式 API で完了した後に消す' },
+      { name: '(置き場の外) OpenCode DB.pleiad-import-auth', limit: 'DB ごとに1つ。IMPORT_ATTEMPTS=5 までの回数を記した 32 bytes 以下の印', reason: '新規 v2 DB への資格情報取り込みを再開する印。公式 API で完了または5回失敗した後に消す' },
     { name: 'accounts/opencode/<id>/data/opencode/auth.json', limit: 'アカウントごとに1つ。接続先の資格情報', reason: 'OpenCodeが必要とする資格情報の初回配置。既存ファイルは上書きしない' },
   ] },
   { file: 'core/claude-accounts.mjs', sites: 3, targets: [
