@@ -299,6 +299,9 @@ export function mergeMessages(record, recent, backend) {
         if (call?.result) sanitizeToolResult(call.result);
       }
     }
+    // ACP のライブの行は、位置の uuid の代わりにターンの乱数の入った uuid で記録する（位置は圧縮でずれる。alignPositional）
+    if (typeof m.liveUuid === "string") m.uuid = m.liveUuid;
+    delete m.liveUuid;
     // Native engines may reuse item IDs in a new execution segment.
     if (m.uuid && record.nativeId) m.uuid = `${backend}:${record.nativeId}:${m.uuid}`;
     // 送った全文（指示を前に足したもの）はハッシュだけを残す。再生の全文を原文に戻すのに使う（alignPositional）
@@ -334,6 +337,9 @@ function restoreHandoff(record, text) {
   return text.endsWith(`\n\n${injected}`) ? `${text.slice(0, -injected.length)}${record.original}` : text;
 }
 
+// ホスト記録の無いネイティブの会話の発言から、記録に重ねるときだけ使う印（ACP の mapper。送った全文・再生の印・ライブの uuid）を外す
+const nativeView = (messages) => messages.map(({ sent, positional, liveUuid, ...m }) => m);
+const nativeEvent = ({ liveUuid, ...event }) => event;
 // 改行コードの違い（CRLF / LF）だけは同じ本文として扱う。空白は詰めない（コードの字下げなど、空白だけが違う別の本文を取り違えない）
 const lf = (text) => String(text ?? "").replace(/\r\n/g, "\n");
 const promptHash = (text) => crypto.createHash("sha256").update(lf(text)).digest("hex");
@@ -450,8 +456,10 @@ export async function switchBackend(id, source, target, { restart = false } = {}
   await store.setMode(id, Object.keys(target.modes())[0] ?? "default");
 }
 
-function hostEvent(event, id, nativeId) {
+// ACP のライブの発言の id（liveUuid）は、記録の行（mergeMessages）と同じ形に直して渡す。通知の飛び先や画面の行の照合が記録の行に当たるように
+function hostEvent({ liveUuid, ...event }, id, nativeId, backend) {
   return { ...event,
+    ...(typeof liveUuid === 'string' && nativeId ? { uuid: `${backend}:${nativeId}:${liveUuid}` } : {}),
     ...(event.sessionId === undefined || event.sessionId === nativeId ? { sessionId: id } : {}),
     ...(event.type === 'session' ? { first: false } : {}),
   };
@@ -494,7 +502,7 @@ export function wrapBackend(native) {
   };
   wrapped.getMessages = async (id, options) => {
     const r = await conversation(id);
-    if (!r) return applyRewindMark(await native.getMessages(id, options), await pendingMark(id, id));
+    if (!r) return applyRewindMark(nativeView(await native.getMessages(id, options)), await pendingMark(id, id));
     if (r.nativeId) {
       const recent = applyRewindMark(await native.getMessages(r.nativeId, { fullResults: true }), await pendingMark(id, r.nativeId));
       if (recent.length) {
@@ -548,7 +556,7 @@ export function wrapBackend(native) {
     if (!r.nativeId) throw new Error(t('compaction.notStarted'));
     return native.compact({ ...args, sessionId: r.nativeId, hostSessionId: id, hostBackend: wrapped,
       askPermission: req => args.askPermission({ ...req, sessionId: id }),
-      emit: event => args.emit(hostEvent(event, id, r.nativeId)),
+      emit: event => args.emit(hostEvent(event, id, r.nativeId, native.id)),
     });
   };
   for (const [method, field] of [["setTitle", "title"], ["setTag", "status"]]) {
@@ -848,7 +856,7 @@ export function wrapBackend(native) {
     if (!r.nativeId) throw new Error('adopt: the conversation has no native session');
     return native.adoptTurn({ ...args, sessionId: r.nativeId, hostSessionId: id, hostBackend: wrapped,
       askPermission: req => args.askPermission({ ...req, sessionId: id }),
-      emit: (ev, opts) => args.emit(hostEvent(ev, id, r.nativeId), opts) });
+      emit: (ev, opts) => args.emit(hostEvent(ev, id, r.nativeId, native.id), opts) });
   };
   wrapped.prepareTurn = async (id) => {
     const r = id && await conversation(id);
@@ -894,7 +902,9 @@ export function wrapBackend(native) {
     if (mark && (mark.tries ?? 0) >= 2) throw Object.assign(new Error("rewind kept failing"), { rewindRejected: true });
     if (mark) await store.setSessionData(id, "rewind", { ...mark, tries: (mark.tries ?? 0) + 1 }, { durable: true });
     const rewind = mark ? { at: mark.at, drops: mark.drops } : undefined;
-    if (!r) return native.runTurn(rewind ? { ...args, rewind } : args);
+    // ホスト記録の無い会話は、ネイティブの行の uuid（位置）のまま。記録に重ねるときだけ使う liveUuid は外して渡す
+    if (!r) return native.runTurn({ ...args, ...(rewind ? { rewind } : {}),
+      ...(args.emit ? { emit: (ev, ...rest) => args.emit(ev && typeof ev.liveUuid === "string" ? nativeEvent(ev) : ev, ...rest) } : {}) });
     if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
     // 存在しない nativeId を resume し続ける会話の救済。Claude Code は transcript の無い id の resume を `No conversation found with session ID` で断り、
     // 戻る道が無いまま毎回失敗する（下の finally が採用を戻すようになる前に作られた会話。2026-10-06）。
@@ -955,7 +965,7 @@ export function wrapBackend(native) {
             checkpoint = save();
             checkpoint.catch(() => {});
           }
-          args.emit(hostEvent(ev, id, r.nativeId));
+          args.emit(hostEvent(ev, id, r.nativeId, native.id));
         },
       });
     } catch (e) {

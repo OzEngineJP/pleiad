@@ -16,13 +16,15 @@ const inputOf = value => value && typeof value === 'object' ? value : value == n
 export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null } = {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
   let current = null, expectedEcho = null, echo = '', live = false, turn = null, sepText = false, sepThink = false;
-  // 再生（session/load）の行の uuid は位置から作るので、ネイティブが履歴を書き換えると別の発言に当たる。positional の印を付け、
-  // 記録には順序と中身で当てさせる（core/conversations.mjs の mergeMessages）。ライブの行はターンごとの乱数を uuid に入れる
+  // uuid は位置から作る（ホスト記録の無いネイティブの会話は、この uuid のまま再開・再起動の後も同じ行を指す）。
+  // ただし圧縮で位置がずれると別の発言に当たるので、ホスト記録に重ねるときは使わない（core/conversations.mjs の mergeMessages）。
+  // 再生（session/load）の行には positional の印を付け、順序と中身で当てさせる。ライブの行には、ターンごとの乱数の入った liveUuid を付ける
   function row(role) {
     if (current?.role !== role) {
+      const uuid = `${sessionId}:${role}:${messages.length}`;
       current = live
-        ? { uuid: `${sessionId}:${turn}:${role}:${messages.length}`, role, text: '', at: null }
-        : { uuid: `${sessionId}:${role}:${messages.length}`, role, text: '', at: null, positional: true };
+        ? { uuid, liveUuid: `${sessionId}:${turn}:${role}:${messages.length}`, role, text: '', at: null }
+        : { uuid, role, text: '', at: null, positional: true };
       messages.push(current);
     }
     return current;
@@ -111,7 +113,8 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       Object.assign(row('user'), { text: shown, sent });
       expectedEcho = sent; echo = '';
     },
-    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid }); live = false; },
+    // 発言の id はネイティブの会話の行の uuid。ホスト記録の会話では、記録の行に合わせて liveUuid に替える（core/conversations.mjs の hostEvent）
+    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid, ...(current.liveUuid ? { liveUuid: current.liveUuid } : {}) }); live = false; },
     messages: () => structuredClone(messages),
   };
 }

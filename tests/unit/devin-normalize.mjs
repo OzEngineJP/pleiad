@@ -21,17 +21,22 @@ export default function (t) {
   replay.accept({ sessionUpdate: 'tool_call', toolCallId: 'tool', title: 'Read file', rawInput: { path: 'test' } });
   replay.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'tool', status: 'completed', rawOutput: 'result' });
   replay.accept(chunk('agent', '日本語🙂'));
-  const content = rows => rows.map(({ uuid, at, sent, positional, ...m }) => m);
+  const content = rows => rows.map(({ uuid, liveUuid, at, sent, positional, ...m }) => m);
   assert.deepEqual(content(replay.messages()), content(first));
   t.ok('replay はライブの出来事を出さず同じ履歴を再現し、再生の行に位置の印を付ける', replayEvents.length === 0
-    && replay.messages().every(m => m.positional) && first.every(m => !m.positional));
+    && replay.messages().every(m => m.positional && !m.liveUuid) && first.every(m => !m.positional && m.liveUuid));
+  // ホスト記録の無いネイティブの会話は uuid をそのまま使うので、ライブで出た行と後の再生の行は同じ uuid になる
+  t.ok('ライブの行と再生の行は、同じ位置なら同じ uuid になる', replay.messages().every((m, i) => m.uuid === first[i].uuid));
   const replayed = replay.messages().map(m => m.uuid);
   replay.beginTurn('next'); replay.accept(chunk('agent', 'answer')); replay.finish();
   replay.beginTurn('next'); replay.accept(chunk('agent', 'answer')); replay.finish();
   const continued = replay.messages();
-  t.ok('続きで前の発言の UUID を変えず、ターンの行は同じ本文でもターンごとに別の UUID になる', continued.length === 6
+  const again = createDevinMapper('s');
+  for (const m of continued) again.accept(chunk(m.role === 'user' ? 'user' : 'agent', m.text));
+  t.ok('続きで前の発言の UUID を変えず、続きの行の uuid は再読込の再生と同じで、liveUuid は同じ本文でもターンごとに別になる', continued.length === 6
     && replayed.every((uuid, i) => continued[i].uuid === uuid)
-    && new Set(continued.map(m => m.uuid)).size === 6 && continued.slice(2).every(m => !m.positional));
+    && again.messages().every((m, i) => m.uuid === continued[i].uuid)
+    && new Set(continued.slice(2).map(m => m.liveUuid)).size === 4 && continued.slice(2).every(m => !m.positional));
 
   // 送る全文（指示を前に足したもの）と記録する原文を分ける。分割されたエコーも全文と照合して重ねない（#97）
   const injected = createDevinMapper('inj');
