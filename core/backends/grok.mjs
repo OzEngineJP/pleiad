@@ -6,6 +6,7 @@ import { conversation } from '../conversations.mjs';
 import { NO_CAPABILITIES } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
+import { createAcpSteer } from './acp-steer.mjs';
 
 // i18n-dynamic: grok.errors.modelUnavailable
 // i18n-dynamic: grok.errors.effortUnavailable
@@ -177,7 +178,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         const { emit, onPromptDelivered, control } = args;
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
-        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog;
+        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null;
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -247,13 +248,17 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           mapper.beginTurn(prompt);
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: model || client.init?._meta?.modelState?.currentModelId || undefined, ...(args.sessionId ? {} : { first: true }) });
-          if (control) control.handle = { sessionId };
+          // 途中送信: 走っているターンへ session/prompt を重ねる。Grok は内蔵の待ち行列に積み、
+          // 今の回の直後に続けて回す（実測 1.0.62。決着は drain で待つので、Pleiad の同じターンに見える）
+          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted });
+          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); }
           check();
           prompting = true;
           // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
           emit({ type: 'activity', state: 'thinking' });
           const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
           sent = true; onPromptDelivered?.();
+          control?.onReady?.();
           const result = await Promise.race([response, stopped]);
           if (fatal) throw fatal;
           if (local.signal.aborted || result?.stopReason === 'cancelled') outcome = 'aborted';
@@ -264,6 +269,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           outcome = !fatal && (hostSignal?.aborted || error.aborted) ? 'aborted' : 'error';
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
+          // 途中送信で待ち行列に並んだ分がまだ回っていれば、その決着まで待つ（Grok は今の回の直後に続けて回す）。
+          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる
+          if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
           prompting = false; closing = true; local.abort();
           if (client) {
             try { await closeClient(); }
@@ -273,7 +281,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             }
           }
           if (sessionId) active.delete(sessionId);
-          if (control) control.handle = null;
+          if (control) { control.handle = null; control.steer = null; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('grok.errors.promptFailed')) } : {}) });
         }
