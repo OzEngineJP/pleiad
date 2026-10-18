@@ -546,6 +546,48 @@
       "nameRequired": "名前を入力してください"
     }
   },
+  "agentAccounts": {
+    "title": "{{agent}} のアカウント",
+    "intro": "会話ごとに {{agent}} のアカウントを選べます。アカウントを足すと、そのアカウントでログインします。選んでいない会話は、今 {{agent}} にログインしているアカウントで動きます。",
+    "close": "閉じる",
+    "add": "アカウントを足す",
+    "cancel": "やめる",
+    "login": "ログインする",
+    "relogin": "ログインし直す",
+    "edit": "名前を変える",
+    "delete": "削除",
+    "confirmDelete": "「{{name}}」を削除しますか？このアカウントを選んでいた会話は、次の送信で止まります。",
+    "confirmDeleteButton": "削除する",
+    "deleteFailed": "削除できませんでした：{{error}}",
+    "empty": "まだアカウントがありません。",
+    "loading": "読み込んでいます…",
+    "status": {
+      "signedIn": "ログイン済み",
+      "signedInAs": "ログイン済み（{{label}}）",
+      "signedOut": "まだログインしていません"
+    },
+    "form": {
+      "addTitle": "{{agent}} のアカウントを足す",
+      "editTitle": "「{{name}}」の名前を変える",
+      "name": "名前",
+      "namePlaceholder": "仕事用 など",
+      "nameRequired": "名前を入れてください",
+      "addAndLogin": "足してログインする",
+      "save": "保存"
+    },
+    "flow": {
+      "title": "「{{name}}」でログイン",
+      "starting": "準備しています…",
+      "openBrowser": "ブラウザーでログインを続けてください。終わると自動で進みます。",
+      "openLink": "ログインの画面を開く",
+      "runCommand": "端末で次のコマンドを打って、ログインしてください。終わると自動で進みます。",
+      "copy": "コピー",
+      "done": "ログインしました。入力欄でこのアカウントを選べます。",
+      "doneAs": "{{label}} でログインしました。入力欄でこのアカウントを選べます。",
+      "failed": "ログインできませんでした。",
+      "retry": "もう一度"
+    }
+  },
   "accounts": {
     "title": "Claude のアカウント",
     "close": "閉じる",
@@ -558,7 +600,7 @@
     },
     "status": {
       "token": "トークン登録済み",
-      "noToken": "トークン未登録",
+      "noToken": "認証情報なし",
       "usage": "使用量の表示: 認可済み",
       "noUsage": "使用量の表示: 未認可"
     },
@@ -1906,6 +1948,8 @@
       "login": "{{agent}} のログイン（{{email}}）の有効期限が切れています。",
       "loginNoEmail": "{{agent}} のログインの有効期限が切れています。",
       "token": "Claude のアカウント「{{name}}」のトークンの有効期限が切れています。",
+      "account": "アカウント「{{name}}」（{{agent}}）のログインが切れました",
+      "openAccounts": "アカウント設定を開く",
       "tokenUnnamed": "Claude のアカウントのトークンの有効期限が切れています。",
       "signInAgain": "ログインし直す",
       "waiting": "ブラウザーでログインしてください…",
@@ -2169,11 +2213,11 @@
     "account": {
       "signedIn": "ログイン中",
       "signedInAccount": "ログイン中のアカウント",
-      "noToken": "トークン未登録",
+      "noToken": "認証情報なし",
       "deleted": "削除されたアカウント",
       "chooseAgain": "選び直してください",
-      "deletedWarning": "選択中の Claude のアカウントは削除されています。アカウントを選び直してください",
-      "noTokenWarning": "Claude のアカウント「{{name}}」のトークンが未登録です。設定から貼り付けてください"
+      "deletedWarning": "選択中のアカウントは削除されています。アカウントを選び直してください",
+      "noTokenWarning": "アカウント「{{name}}」の認証情報がありません。設定のアカウントからログインしてください"
     },
     "endpoint": {
       "official": "公式",
@@ -2777,7 +2821,7 @@
     },
     "agent": "エージェント",
     "account": {
-      "title": "Claude のアカウント",
+      "title": "アカウント",
       "compatOff": "互換の接続先ではアカウントを使いません"
     },
     "endpoint": {
@@ -3656,7 +3700,7 @@
     "unavailable": {
       "disabled": "無効",
       "not_installed": "未インストール",
-      "no_token": "トークン未登録"
+      "no_token": "認証情報なし"
     },
     "line": {
       "head": "{{kind}}・{{difficulty}} → {{target}}",

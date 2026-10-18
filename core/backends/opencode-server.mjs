@@ -20,11 +20,11 @@ const REQUEST_TIMEOUT_MS = 120_000;
 /**
  * @param command () => argv | null。opencode の実行ファイル（cliCommand('opencode')）
  * @param env () => Promise<object>。起こすときに足す環境変数（OPENCODE_CONFIG_CONTENT など）
- * @param held { acquire({ argv }) => Promise<HeldOpencode | null> } | null。保持役に載せる口（opencode-held.mjs）
- * @param origin () => Promise<string>。OpenCode に渡す Pleiad の待ち受け（札に置く）。currentOrigin は今の値（待ち受ける前は null。見比べるだけで待たない）
+ * @param held { acquire({ argv, allowSpawn }) => Promise<HeldOpencode | null> } | null。保持役に載せる口（opencode-held.mjs）
+ * @param origin () => Promise<string>。OpenCode に渡す Pleiad の待ち受け（札に置く）。currentOrigin は今の値（待ち受ける前は null。新規起動を許可するか、待たずに確かめる）
  * @param busy () => boolean。走っているターンがあるか（待ち受けが変わったときに起こし直してよいか）
  */
-export function createOpencodeServer({ command, env = async () => ({}), held = null, origin = async () => null, currentOrigin = () => null, busy = () => false }) {
+export function createOpencodeServer({ command, env = async () => ({}), held = null, account = null, origin = async () => null, currentOrigin = () => null, busy = () => false }) {
   let proc = null;          // 起こした子（Pleiad の子のとき）
   let heldChild = null;     // 保持役の子のとき（HeldOpencode）
   let base = null;          // http://127.0.0.1:port
@@ -46,8 +46,10 @@ export function createOpencodeServer({ command, env = async () => ({}), held = n
   async function start() {
     const argv = command();
     if (!argv) throw Object.assign(new Error('opencode is not installed'), { code: 'NOT_INSTALLED' });
-    const h = held ? await held.acquire({ argv }).catch((err) => { console.error('  opencode: the holder is not available:', String(err?.message ?? err).slice(0, 200)); return null; }) : null;
-    if (h?.server?.base) return adopt(h);
+    const h = held ? await held.acquire({ argv, allowSpawn: Boolean(currentOrigin()) }).catch((err) => { console.error('  opencode: the holder is not available:', String(err?.message ?? err).slice(0, 200)); return null; }) : null;
+    if (h?.server?.base && !h.closed && !h.detached) return adopt(h);
+    // 起動時の履歴復元は listen より先。引継ぎ先を失ったら env/origin を待たずに断る（listen は復元の終了を待っている）。
+    if (!currentOrigin()) throw Object.assign(new Error('opencode: cannot start a server before Pleiad is listening; the previous server is unavailable'), { code: 'OPENCODE_ORIGIN_NOT_READY' });
     const password = crypto.randomBytes(24).toString('hex');
     const extra = await env();
     const childEnv = { ...process.env, ...extra, OPENCODE_SERVER_PASSWORD: password, OPENCODE_SERVER_USERNAME: 'opencode' };
@@ -56,7 +58,7 @@ export function createOpencodeServer({ command, env = async () => ({}), held = n
       const [file, ...prefix] = argv;
       const url = await h.spawn({ command: file, args: [...prefix, ...args], env: childEnv, cwd: process.cwd(), timeoutMs: START_TIMEOUT_MS });
       const at = await origin();
-      h.setServer({ base: url, auth: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`, origin: at, secret: extra.PLEIAD_OPENCODE_SECRET ?? null });
+      h.setServer({ base: url, auth: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`, origin: at, secret: extra.PLEIAD_OPENCODE_SECRET ?? null, ...(account ? { account } : {}) });
       return adopt(h);
     }
     const child = spawnCli(argv, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });

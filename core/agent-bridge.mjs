@@ -22,7 +22,7 @@ const delegateDescription = (locale, hosts = []) => [agentT(locale, 'bridge.tool
 export const agentTools = (locale, hosts = [], backends = DEFAULT_AGENT_IDS) => [
   // backend を省けば Pleiad が委譲先を選ぶ（core/delegation-routing.mjs）。kind はどちらでも必須（振り分けの記録にも残す）
   // host はリモートのホストへ任せる（端末側・ホスト側の両方がオンのホストがあるときだけ出す。docs/agent-delegation.md「リモートのホストへ任せる」）
-  // account は backend: 'claude' と一緒に書き、子の Claude のアカウントを固定する（ply_usage の account の値。ADR 0205）
+  // account は backend と一緒に書き、子の登録アカウントを固定する（ply_usage の account の値。ADR 0205）
   tool('ply_delegate', delegateDescription(locale, hosts), { kind: { type: 'string', enum: [...KINDS] }, task: str, title: str, backend: { type: 'string', enum: [...backends] }, context: str, cwd: str, model: str, effort: str, isolate: { type: 'boolean' }, account: str,
     ...(hosts.length ? { host: str } : {}) }, ['kind', 'task']),
   tool('ply_task_status', agentT(locale, 'bridge.tools.ply_task_status'), { taskId: str, offset: { type: 'integer', minimum: 0 } }, ['taskId']),

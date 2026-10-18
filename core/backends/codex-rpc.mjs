@@ -1,6 +1,6 @@
 // `codex app-server` と話す JSON-RPC 2.0 クライアント（stdio・改行区切り）。
 //
-// **1 プロセスを全セッションで共有する**（docs/multi-backend.md §2.5）。
+// **アカウントごとに1プロセスをセッション間で共有する**（docs/multi-backend.md §2.5）。
 // セッションごとに codex を立てると、10 本並行で回したときにプロセスが 10 個増え、
 // それぞれが ~/.codex を読み書きする。app-server は threadId で多重化できるので、
 // 1 本に集約して threadId で振り分ける。
@@ -19,6 +19,14 @@ import { cliCommand, spawnCli } from "../cli-installation.mjs";
 import { t } from "../i18n.mjs";
 import { acquireHeldAppServer } from "./codex-held.mjs";
 import { LINE_OVERFLOW, RPC_TIMEOUT } from "./codex-history.mjs";
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+// Dedicated context servers and hook probes inherit the calling account too.
+const environments = new AsyncLocalStorage();
+export const withCodexEnvironment = (env, fn) => environments.run(env, fn);
+const writers = new Map();
+const transfers = new Map();
+const instances = new Set();
 
 const NL = String.fromCharCode(10);
 
@@ -60,8 +68,8 @@ export function tomlValue(v) {
   if (v && typeof v === 'object') return '{' + Object.entries(v).map(([k,s]) => JSON.stringify(k) + '=' + tomlValue(s)).join(',') + '}';
   return JSON.stringify(v);
 }
-function launch(config = {}) {
-  return spawnCli(cliCommand("codex"), ["app-server", ...Object.entries(config).flatMap(([k,v]) => ['-c', `${k}=${tomlValue(v)}`])], { stdio: ["pipe", "pipe", "pipe"] });
+function launch(config = {}, env) {
+  return spawnCli(cliCommand("codex"), ["app-server", ...Object.entries(config).flatMap(([k,v]) => ['-c', `${k}=${tomlValue(v)}`])], { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
 }
 
 /** 保持役の口（held。core/backends/codex-held.mjs）を ChildProcess のように見せる（stdin の書き込みと kill だけ） */
@@ -76,8 +84,9 @@ function heldProc(held) {
 
 export class CodexRpc {
   /** acquire: 保持役の口を取る（async。載せない・載せられないときは null）。共有の app-server だけが渡す */
-  constructor(config = {}, { acquire = null } = {}) {
+  constructor(config = {}, { acquire = null, env = environments.getStore() } = {}) {
     this.config = config;
+    this.env = env;
     this.acquire = acquire;
     this.heldChannel = null;    // 保持役の口（載せたとき）
     this.idPrefix = null;       // 載せたときの依頼の id の世代（文字列の id にする）
@@ -106,6 +115,14 @@ export class CodexRpc {
     this.downs = new Set();
     // app-server につながった（起こした・付け直した）ときの聞き手。保持役の子を引き継いだとき、前のサーバーの控えを戻すのに使う
     this.starts = new Set();
+    this.closingThreads = new Set();
+    this.onDown(() => { instances.delete(this); this.closingThreads.clear(); for (const [id, owner] of writers) if (owner === this) writers.delete(id); });
+    this.onNotify((method, params) => {
+      if (method === 'thread/closed') {
+        this.closingThreads.delete(params.threadId);
+        if (writers.get(params.threadId) === this) writers.delete(params.threadId);
+      }
+    });
   }
 
   /** app-server につながったときに呼ばれる（引数は保持役の口。載せていなければ null）。返り値を呼ぶと外れる */
@@ -243,6 +260,7 @@ export class CodexRpc {
   }
 
   async start() {
+    instances.add(this);
     if (this.handedOff) throw new Error(t("codex.errors.handedOff"));
     if (this.proc && this.proc.exitCode === null && this.proc.signalCode === null) return this.ready;
     if (this.ready) return this.ready;
@@ -253,7 +271,7 @@ export class CodexRpc {
         console.error("  codex: 保持役に載せられないので今の形で app-server を起こす:", String(err?.message ?? err));   // i18n-ignore: サーバーのログ
         return null;
       }) : null;
-      const proc = held ? heldProc(held) : launch(this.config);
+      const proc = held ? heldProc(held) : launch(this.config, this.env);
       this.proc = proc;
       this.heldChannel = held;
       this.idPrefix = held ? `${process.pid}.${Date.now().toString(36)}.` : null;
@@ -277,6 +295,7 @@ export class CodexRpc {
         for (const fn of [...this.downs]) { try { fn(err); } catch {} }
       };
       if (held) {
+        for (const threadId of new Set([...(held.expected ?? []), ...Object.keys(held.meta?.loaded ?? {})])) writers.set(threadId, this);
         for (const threadId of held.expected ?? []) this.expect(threadId);   // 付け直すスレッド（引き継いだ子の札）。ハンドラーが付くまで frame を預かる
         held.run({
           line: (text, seq) => this.#lineIn(text, seq),
@@ -326,7 +345,60 @@ export class CodexRpc {
   /** 1 往復。起動していなければ起動する。落ちていたら立て直す。 */
   async request(method, params = {}, timeoutMs = 0) {
     await this.start();
-    return this.#request(method, params, timeoutMs);
+    const id = params?.threadId;
+    if (method === 'thread/resume' && id) {
+      // Serialize transfers of the same rollout. Unsubscribe acknowledges the
+      // request immediately, but Codex keeps its writer lock until thread/closed.
+      const previous = transfers.get(id) ?? Promise.resolve();
+      const run = previous.catch(() => {}).then(async () => {
+        const owner = writers.get(id);
+        if (owner && owner !== this) await owner.releaseThread(id);
+        if (owner === this && this.closingThreads.has(id)) await this.waitForThreadClose(id);
+        const result = await this.#request(method, params, timeoutMs);
+        writers.set(id, this);
+        return result;
+      });
+      transfers.set(id, run);
+      try { return await run; } finally { if (transfers.get(id) === run) transfers.delete(id); }
+    }
+    if (method === 'thread/unsubscribe' && this.env?.CODEX_HOME) this.closingThreads.add(id);
+    let result;
+    try { result = await this.#request(method, params, timeoutMs); }
+    catch (error) { if (method === 'thread/unsubscribe') this.closingThreads.delete(id); throw error; }
+    if (['thread/start', 'thread/fork'].includes(method) && result?.thread?.id) writers.set(result.thread.id, this);
+    if (method === 'thread/unsubscribe' && result?.status === 'notLoaded') {
+      this.closingThreads.delete(id);
+      if (writers.get(id) === this) writers.delete(id);
+    }
+    return result;
+  }
+
+  async releaseThread(threadId) {
+    if (this.threads.has(threadId) || this.expecting.has(threadId) || this.canReleaseThread?.(threadId) === false) throw new Error(t('codex.accounts.threadBusy'));
+    let timer, off, offDown, resolve, reject;
+    const closed = new Promise((yes, no) => { resolve = yes; reject = no; });
+    closed.catch(() => {});
+    off = this.onNotify((method, p) => { if (method === 'thread/closed' && p.threadId === threadId) resolve(); });
+    offDown = this.onDown(() => resolve());
+    timer = setTimeout(() => reject(new Error(t('codex.accounts.releaseTimeout'))), 75_000); timer.unref?.();
+    try {
+      const result = await this.request('thread/unsubscribe', { threadId }, 15_000);
+      if (result?.status === 'notLoaded') resolve();
+      else if (!['unsubscribed', 'notSubscribed'].includes(result?.status)) throw new Error(t('codex.accounts.releaseFailed'));
+      await closed;
+      if (writers.get(threadId) === this) writers.delete(threadId);
+    } finally { clearTimeout(timer); off(); offDown(); }
+  }
+
+  async waitForThreadClose(threadId) {
+    let timer, off, offDown;
+    try {
+      await new Promise((resolve, reject) => {
+        off = this.onNotify((method, p) => { if (method === 'thread/closed' && p.threadId === threadId) resolve(); });
+        offDown = this.onDown(resolve);
+        timer = setTimeout(() => reject(new Error(t('codex.accounts.releaseTimeout'))), 75_000); timer.unref?.();
+      });
+    } finally { clearTimeout(timer); off?.(); offDown?.(); }
   }
 
   /** notification を送る（応答を待たない）。 */
@@ -546,6 +618,13 @@ export class CodexRpc {
    * `(code: 1546) disk I/O error` になることがあるため（core/history-retry.mjs）。呼び出し側は待たなくてもよい
    */
   stop({ waitMs = STOP_WAIT_MS } = {}) {
+    instances.delete(this);
+    for (const [id, owner] of writers) if (owner === this) writers.delete(id);
+    const stopped = new Error('Codex app-server stopped');
+    for (const p of this.pending.values()) p.reject(stopped);
+    this.pending.clear();
+    for (const h of this.threads.values()) h.onGone?.(stopped);
+    for (const fn of [...this.downs]) { try { fn(stopped); } catch {} }
     const proc = this.proc;
     const channel = this.heldChannel;
     this.proc = null;
@@ -565,4 +644,4 @@ export class CodexRpc {
 }
 
 export const rpc = new CodexRpc({}, { acquire: acquireHeldAppServer });
-process.once('exit', () => rpc.stop());
+process.once('exit', () => { for (const instance of instances) instance.stop(); });

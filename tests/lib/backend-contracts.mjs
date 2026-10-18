@@ -37,7 +37,7 @@ export const CAPABILITY_CONTRACTS = {
   alwaysAllow: ['server-fake'],
   mcpApproval: ['server-codex'],
   login: ['server-codex', 'server-fake'],
-  claudeAccounts: ['server-claude-accounts'],
+  accounts: ['server-claude-accounts', 'agent-accounts', 'codex-accounts', 'opencode-accounts', 'server-agent-accounts', 'server-agent-account-adopt'],
   compatEndpoints: ['compat-endpoints'],
   compact: ['server-compaction', 'server-codex-compaction'],
   autoCompactWindow: ['server-compaction-delegated'],

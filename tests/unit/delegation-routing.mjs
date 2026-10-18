@@ -229,7 +229,7 @@ export default async function (t) {
     && manualRouting({ kind: 'design', candidate: 'claude:opus', check: retryMain, of: 'old', from: null }).target.account === '');
   t.ok('使えない認証や存在しない認証をやり直しで選べない', !selectRetryAccount(checkCandidate('claude:opus', { usage: fullUsage, settings: softSettings, now: NOW }), 'claude', '').ok
     && !selectRetryAccount(retryBase, 'claude', 'missing').ok);
-  const loginOnly = checkCandidate('claude:opus', { usage: { claude: { ...S1.claude, accounts: undefined, windows: [h5(10), week(10, 70)] } }, settings: softSettings, now: NOW });
+  const loginOnly = checkCandidate('claude:opus', { usage: { claude: { ...S1.claude, accountable: true, accounts: undefined, windows: [h5(10), week(10, 70)] } }, settings: softSettings, now: NOW });
   t.ok('認証一覧の無い Claude もログイン中の認証でやり直せる', selectRetryAccount(loginOnly, 'claude', '').ok);
   t.ok('判定が無い（signals が null）なら難しさは mid', route({ kind: 'implement', judged: { judge: 'none', signals: null, fallback: 'no_key' }, settings, usage: S1, now: NOW }).routing.difficulty === 'mid');
   t.ok('ux_change は判定に関係なく t4', routeAt('ux_change', 'low', S1).routing.tier === 't4');
@@ -263,9 +263,17 @@ export default async function (t) {
     pick([acc('', [h5(100)], same), acc('a', [h5(90), week(90, 80)], { org: 'org-1', email: 'me@example.com' })]).account === 'a');
   t.ok('メールか組織が分からなければまとめない', dedupeAccounts([acc('', [], { org: 'org-1', email: null }), acc('a', [], { org: 'org-1', email: 'me@example.com' })]).length === 2
     && dedupeAccounts([acc('', [], null), acc('a', [], same)]).length === 2);
-  t.ok('登録が無い（accounts が無い）ときはログイン中のアカウント（\'\'）', checkCandidate('claude:haiku', { usage: { claude: { available: true, checkedAt: NOW, windows: [h5(1), week(1, 50)], models: ALL_MODELS.claude } }, settings, now: NOW }).account === '');
+  t.ok('登録が無い（accounts が無い）ときはログイン中のアカウント（\'\'）', checkCandidate('claude:haiku', { usage: { claude: { available: true, accountable: true, checkedAt: NOW, windows: [h5(1), week(1, 50)], models: ALL_MODELS.claude } }, settings, now: NOW }).account === '');
 
   // ---- 固定・画面用の一覧
+  const separateChecks = checkCandidate('codex:gpt-6-sol', { usage: { codex: { available: true, accountable: true, checkedAt: NOW,
+    models: ALL_MODELS.codex, accounts: [
+      { account: 'failed', runnable: true, checkedAt: null, windows: [week(100, 60)] },
+      { account: 'known', runnable: true, checkedAt: NOW, windows: [week(20, 60)] },
+    ] } }, settings, now: NOW });
+  t.ok('Codex も登録アカウントごとに判定し、他の行の取得時刻で成功扱いにしない', separateChecks.account === 'known'
+    && separateChecks.accounts.find(a => a.account === 'failed').reason === 'usage_unknown');
+
   const pinned = pinnedRouting({ kind: 'review', backend: 'codex', model: 'gpt-6-sol' });
   t.ok('固定のときも kind を記録する', pinned.mode === 'pinned' && pinned.kind === 'review' && pinned.target.backend === 'codex' && pinned.target.model === 'gpt-6-sol' && pinned.difficulty === null);
   const retryCheck = checkCandidate('codex:gpt-6-sol', { usage: S3, settings, now: NOW });
@@ -335,7 +343,7 @@ export default async function (t) {
 
   // ---- 使用量の取り置き
   let reads = 0, warmed = 0;
-  const claudeB = { id: 'claude', usage: true }, agyB = { id: 'antigravity', usage: true }, codexB = { id: 'codex', usage: true }, fakeB = { id: 'fake' };
+  const claudeB = { id: 'claude', usage: true, capabilities: { accounts: 'token' } }, agyB = { id: 'antigravity', usage: true }, codexB = { id: 'codex', usage: true }, fakeB = { id: 'fake' };
   let agyKnows = false;
   const monitor = createUsageMonitor({
     backends: () => [claudeB, agyB, codexB, fakeB], installed: id => id !== 'codex',

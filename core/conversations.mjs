@@ -311,9 +311,9 @@ export function mergeMessages(record, recent, backend) {
   record.messages = [...record.messages.slice(0, record.base), ...segment];
 }
 
-export async function switchBackend(id, source, target) {
+export async function switchBackend(id, source, target, { restart = false } = {}) {
   const existing = await conversation(id);
-  if ((existing?.backend ?? source.id) === target.id) return;
+  if (!restart && (existing?.backend ?? source.id) === target.id) return;
   const nativeInfo = await source.getSession(id);
   if (!nativeInfo) throw new Error(t("conversations.switchUnreadable"));
   const meta = await store.get(id);

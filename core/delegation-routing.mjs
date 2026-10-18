@@ -229,9 +229,14 @@ const claudeFamily = s => /(fable|opus|sonnet|haiku)/i.exec(String(s ?? ''))?.[1
  *   claude      … 全体の枠（5 時間・週次）と、そのモデルの系統の週次（seven_day_opus / model_scoped）
  *   codex       … 主の枠（limitId が codex か無し）と、名前がそのモデルに当たる追加の枠
  *   antigravity … モデル名の語をいちばん多く含むグループの枠（gemini-* → Gemini …、claude-* / gpt-* → Claude and GPT …）
+ *   接続先ごとの枠（provider を持つ枠。OpenCode のつないだ接続先）… モデルの id の接続先（「接続先/モデル」の前半）の枠だけ
  */
 export function windowsFor(backend, model, windows = []) {
   const list = Array.isArray(windows) ? windows : [];
+  if (list.some(w => w.provider)) {
+    const provider = String(model ?? '').split('/')[0];
+    return list.filter(w => !w.provider || w.provider === provider);
+  }
   if (backend === 'claude') {
     const family = claudeFamily(model);
     return list.filter(w => !w.model || (family && claudeFamily(w.model) === family));
@@ -336,18 +341,21 @@ export function checkCandidate(candidate, { usage, settings, now }) {
   // 使用量をまだ一度も取っていない（取り置きが空）ときは、有効かどうかも分からないので中身を付けない
   if (!parsed || !entry?.available) return { ok: false, reason: 'unavailable', ...(!parsed ? {} : entry ? { detail: 'not_installed' } : Object.keys(usage ?? {}).length ? { detail: 'disabled' } : {}) };
   if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown',
-    ...(parsed.backend === 'claude' && Array.isArray(entry.accounts) ? { accounts: dedupeAccounts(entry.accounts).map(a => ({
+    ...(Array.isArray(entry.accounts) ? { accounts: dedupeAccounts(entry.accounts).map(a => ({
       account: a.account, label: a.label ?? null, ok: false, reason: 'model_unknown', windows: [] })) } : {}) };
   const checkedAt = entry.checkedAt ?? null;
   const staleReason = checkedAt == null ? 'usage_unknown' : now - checkedAt > STALE_MS ? 'usage_stale' : null;
   const policy = { now, avoidPercent: settings.avoidPercent, paceLimit: settings.paceLimit };
-  if (parsed.backend === 'claude' && Array.isArray(entry.accounts)) {
+  // アカウントを登録したエージェント（ADR 0222）: アカウントごとに見て、余裕のあるものを選ぶ
+  if (Array.isArray(entry.accounts)) {
     const assessed = entry.accounts.map(a => {
       if (!a.runnable) return { account: a.account, label: a.label ?? null, identity: a.identity, ok: false, reason: 'unavailable' };
-      const windows = windowsFor('claude', parsed.model, a.windows);
+      const windows = windowsFor(parsed.backend, parsed.model, a.windows);
       const verdict = judgeWindows(windows, policy);
-      return { account: a.account, label: a.label ?? null, identity: a.identity, windows,
-        ...selectable(verdict.reason === 'quota_full' ? verdict : staleReason ? { ok: false, reason: staleReason } : verdict) };
+      const rowAt = Object.hasOwn(a, 'checkedAt') ? a.checkedAt : checkedAt;
+      const rowStale = rowAt == null ? 'usage_unknown' : now - rowAt > STALE_MS ? 'usage_stale' : null;
+      return { checkedAt: rowAt, account: a.account, label: a.label ?? null, identity: a.identity, windows,
+        ...selectable(rowStale ? { ok: false, reason: rowStale } : verdict) };
     });
     const ranked = [...assessed].sort((a, b) =>
       Number(!a.ok || a.deferred) - Number(!b.ok || b.deferred)
@@ -383,14 +391,16 @@ export function checkCandidate(candidate, { usage, settings, now }) {
   const windows = windowsFor(parsed.backend, parsed.model, entry.windows);
   const verdict = judgeWindows(windows, policy);
   const check = selectable(verdict.reason === 'quota_full' ? verdict : staleReason ? { ok: false, reason: staleReason } : verdict);
-  return { ...check, account: parsed.backend === 'claude' ? '' : null, checkedAt,
+  // アカウントを持てるエージェントは、登録が無ければログイン中のアカウント（''）。持てないエージェントは null
+  return { ...check, account: entry.accountable ? '' : null, checkedAt,
     ...(check.deferred ? { avoidPercent: settings.avoidPercent, maxUsed: maxUsage(windows, now), weeklyRate: weeklyPace(windows, now) } : {}),
     ...(check.ok ? { windows: windows.map(w => brief(w, usedNow(w, now))) } : {}) };
 }
 
-/** やり直しで指定された Claude の認証を、重複を除いた候補の判定から取り出す。 */
+/** やり直し・指定で選ばれたアカウントを、重複を除いた候補の判定から取り出す（account を渡さなければ判定のまま） */
 export function selectRetryAccount(check, backend, account) {
-  if (backend !== 'claude' || account === undefined) return check;
+  void backend;
+  if (account === undefined) return check;
   if (!check.accounts && account === check.account) return check;
   const selected = check.accounts?.find(a => a.account === account);
   return selected ? { ...selected, account, accountLabel: selected.label, checkedAt: check.checkedAt }
@@ -538,7 +548,7 @@ export function candidateStates({ settings, usage, now = Date.now() }) {
     const parsed = parseCandidate(candidate);
     const check = checkCandidate(candidate, { usage, settings, now });
     const entry = parsed ? usage?.[parsed.backend] : null;
-    const accountRows = parsed?.backend === 'claude' ? check.accounts ?? null : null;
+    const accountRows = check.accounts ?? null;
     return { candidate, backend: parsed?.backend ?? null, model: parsed?.model ?? null,
       tiers: TIERS.filter(tier => (settings.tiers[tier] ?? []).includes(candidate)),
       usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}), account: check.ok ? check.account ?? null : null,

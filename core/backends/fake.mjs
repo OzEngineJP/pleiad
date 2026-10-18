@@ -425,7 +425,8 @@ export const backend = {
     alwaysAllow: true,
     login: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）
-    claudeAccounts: true,
+    // アカウント（Claude の台帳を共有する形）。試験が FAKE_ACCOUNTS=off で「アカウントを持てないエージェント」にする
+    get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? false : 'token'; },
     // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
     shell: 'host',
     approvals: 'interactive',

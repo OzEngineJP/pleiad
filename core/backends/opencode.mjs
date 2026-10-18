@@ -12,7 +12,6 @@
 // - Pleiad 担当のコンテキスト（ply_context）: そのターンだけ専用のサーバーを起こし、OpenCode 自身の指示・Skills・MCP のうち Pleiad が担当する種類を読ませない
 //   （opencode-context.mjs）。ply_context は中継の口で渡し、指示の文は system に入れる
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { t } from '../i18n.mjs';
 import { loadSqlite } from '../db.mjs';
@@ -24,10 +23,12 @@ import { createTurnMapper, messagesToNormalized, sessionRow, errorOf } from './o
 import { writePlugin } from './opencode-plugin.mjs';
 import { createHookRunner } from './opencode-hooks.mjs';
 import { managedLaunch } from './opencode-context.mjs';
-import { configureOpencodeHeld, acquireHeldOpencode, heldOpencode, writeOpencodeEnvFile, adoptOpencodeEnvFile } from './opencode-held.mjs';
+import { configureOpencodeHeld, acquireHeldOpencode, heldOpencode, accountHeldOpencode, writeOpencodeEnvFile, adoptOpencodeEnvFile } from './opencode-held.mjs';
 import { promptHash } from '../turn-card.mjs';
 import { computerPrompt } from './computer-delivery.mjs';
 import { undelivered } from './undelivered.mjs';
+import { accountKey, opencodeData, prepareAccount, readAccountAuth, loginAccount } from './opencode-accounts.mjs';
+import { opencodeUsage } from './opencode-usage.mjs';
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const LOGIN_POLL_MS = 3_000;
@@ -77,6 +78,56 @@ const directories = new Map();   // 会話の id -> 作業場所（OpenCode の 
 const appliedMode = new Map();   // 会話の id -> 最後に入れた承認モード（同じなら PATCH しない。規則は後ろに足していく形なので）
 const turnsBySession = new Map(); // 会話の id（と子の会話の id） -> 走っているターンの受け口
 let providersCache = null;       // { at, data }（/config/providers）
+const accountServers = new Map();
+const removingAccounts = new Set();
+const loggingInAccounts = new Set();
+const accountTurns = new Map();
+const sessionAccounts = new Map();
+const sessionKey = (id, srv = server) => `${srv.accountKey ?? 'login'}:${id}`;
+
+function selectedAccount(sessionId, options = {}) {
+  const remembered = sessionAccounts.get(sessionId);
+  const account = options.account === undefined ? remembered : options.account;
+  if (remembered && accountKey(remembered) !== accountKey(account)) throw new Error('OpenCode session belongs to a different account');
+  return account ?? null;
+}
+
+function rememberSession(id, account) {
+  const previous = sessionAccounts.get(id);
+  if (previous && accountKey(previous) !== accountKey(account)) throw new Error('OpenCode session account mismatch');
+  // Credentials belong in the private auth file, never in session/holder metadata.
+  if (account) sessionAccounts.set(id, { id: account.id, dir: account.dir });
+}
+
+function serverFor(account = null) {
+  if (!account) return server;
+  const key = accountKey(account);
+  if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
+  if (loggingInAccounts.has(key)) throw new Error(t('accounts.backend.loginRunning', { agent: 'OpenCode' }));
+  prepareAccount(account);
+  if (!accountServers.has(key)) {
+    const srv = createOpencodeServer({ command: () => cliCommand('opencode'),
+      account: { id: account.id, dir: account.dir },
+      held: { acquire: args => acquireHeldOpencode({ ...args, account }) },
+      origin: () => opencodeRelay.whenOrigin(), currentOrigin: () => opencodeRelay.origin(),
+      busy: () => [...turnsBySession.keys()].some(k => k.startsWith(`${key}:`)) || (heldOpencode(account)?.cards.size ?? 0) > 0,
+      env: async () => ({ ...(await serverEnv()), ...prepareAccount(account) }),
+    });
+    srv.accountKey = key;
+    srv.subscribe(event => dispatch(event, srv));
+    srv.onGone(err => {
+      for (const [k, fn] of turnsBySession) if (k.startsWith(`${key}:`)) fn({ type: 'pleiad.gone', properties: { error: err } });
+    });
+    accountServers.set(key, srv);
+  }
+  return accountServers.get(key);
+}
+
+function accountBusy(account) {
+  const key = accountKey(account);
+  return (accountTurns.get(key) ?? 0) > 0 || loggingInAccounts.has(key)
+    || [...turnsBySession.keys()].some(k => k.startsWith(`${key}:`)) || (accountHeldOpencode(account)?.cards.size ?? 0) > 0;
+}
 
 // 保持役に載せたとき、前のサーバーの子を引き継いだら、中継の合言葉を前の値にし、付け直すターンの会話の呼び出しを結び付けるまで待たせる
 configureOpencodeHeld({
@@ -85,8 +136,10 @@ configureOpencodeHeld({
     opencodeRelay.adoptSecret(srv?.secret);
     const children = {};
     for (const [sessionId, card] of Object.entries(turns ?? {})) {
+      const account = srv?.account ?? card?.backendCard?.account ?? null;
+      if (account) rememberSession(sessionId, account);
       for (const child of card?.backendCard?.children ?? []) children[child] = sessionId;
-      if (card?.backendCard?.directory) directories.set(sessionId, card.backendCard.directory);
+      if (card?.backendCard?.directory) directories.set(`${accountKey(account)}:${sessionId}`, card.backendCard.directory);
     }
     opencodeRelay.expect(Object.keys(turns ?? {}), children);
   },
@@ -120,33 +173,38 @@ async function serverEnv(config = {}) {
 }
 
 // 出来事は 1 本の流れで全部来る。会話の id で、走っているターンへ配る
-const dispatch = (event) => {
+const dispatch = (event, srv = server) => {
   const sid = event.properties?.sessionID ?? event.properties?.info?.sessionID ?? event.properties?.part?.sessionID;
   if (!sid) return;
-  turnsBySession.get(sid)?.(event);
+  turnsBySession.get(sessionKey(sid, srv))?.(event);
 };
-server.subscribe(dispatch);
+server.subscribe(event => dispatch(event, server));
 
 /**
  * Pleiad 担当のコンテキストのターンの専用のサーバー（opencode-context.mjs）。OpenCode 自身の指示・Skills・MCP のうち Pleiad が担当する種類を読ませない。
  * 保持役には載せない（ターンの終わりに止める。無停止の更新の切り替えは、このターンが終わるのを待つ。Codex の専用の app-server と同じ）
  */
-async function managedServer(contextRuntime, cwd) {
-  const launch = await managedLaunch({ owners: contextRuntime.owners, cwd, dataDir: store.dataDir });
+async function managedServer(contextRuntime, cwd, account = null) {
+  const accountEnv = prepareAccount(account);
+  const launch = await managedLaunch({ owners: contextRuntime.owners, cwd, dataDir: account?.dir ?? store.dataDir,
+    ...(account ? { source: accountEnv.OPENCODE_CONFIG_DIR } : {}) });
   const srv = createOpencodeServer({
     command: () => cliCommand('opencode'),
     origin: () => opencodeRelay.whenOrigin(),
-    env: async () => ({ ...(await serverEnv(launch.config)), ...launch.env }),
+    currentOrigin: () => opencodeRelay.origin(),
+    env: async () => ({ ...(await serverEnv(launch.config)), ...accountEnv, ...launch.env,
+      ...(account ? { OPENCODE_CONFIG_DIR: path.join(launch.env.XDG_CONFIG_HOME, 'opencode') } : {}) }),
   });
-  srv.subscribe(dispatch);
+  srv.accountKey = accountKey(account);
+  srv.subscribe(event => dispatch(event, srv));
   return srv;
 }
-server.onGone((err) => { for (const fn of new Set(turnsBySession.values())) fn({ type: 'pleiad.gone', properties: { error: err } }); });
+server.onGone((err) => { for (const [key, fn] of turnsBySession) if (key.startsWith('login:')) fn({ type: 'pleiad.gone', properties: { error: err } }); });
 
 async function directoryOf(sessionId, srv = server) {
-  if (directories.has(sessionId)) return directories.get(sessionId);
+  if (directories.has(sessionKey(sessionId, srv))) return directories.get(sessionKey(sessionId, srv));
   const s = await srv.request('GET', `/session/${encodeURIComponent(sessionId)}`).catch(() => null);
-  if (s?.directory) directories.set(sessionId, s.directory);
+  if (s?.directory) directories.set(sessionKey(sessionId, srv), s.directory);
   return s?.directory ?? null;
 }
 
@@ -164,17 +222,12 @@ function authStamp() {
   try { return fs.statSync(path.join(opencodeData(), 'auth.json')).mtimeMs; } catch { return 0; }
 }
 
-/** OpenCode のデータの置き場（会話の DB・資格情報）。AGENT_HOST_OPENCODE_DATA で差し替える（試験は一時の場所へ向け、利用者の本物を読まない） */
-function opencodeData() {
-  return process.env.AGENT_HOST_OPENCODE_DATA || path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode');
-}
-
 /**
  * サーバーが動いていないときの会話の行。OpenCode の会話の DB（opencode.db の session の表）を読み取りだけで開く。
  * 一覧を作るたびに約 760 MB のサーバーを起こさないため（画面を開いただけで起きていた）。読めなければ null
  */
-function sessionsFromDb({ limit = 100, id = null } = {}) {
-  const file = path.join(opencodeData(), 'opencode.db');
+function sessionsFromDb({ limit = 100, id = null, account = null } = {}) {
+  const file = path.join(opencodeData(account), 'opencode.db');
   if (!fs.existsSync(file)) return [];
   let db = null;
   try {
@@ -193,8 +246,8 @@ function sessionsFromDb({ limit = 100, id = null } = {}) {
 }
 
 /** サーバーが動いていないときの会話の発言（message・part の表。中身は API の返りと同じ JSON）。読めなければ null */
-function messagesFromDb(sessionId) {
-  const file = path.join(opencodeData(), 'opencode.db');
+function messagesFromDb(sessionId, account = null) {
+  const file = path.join(opencodeData(account), 'opencode.db');
   if (!fs.existsSync(file)) return null;
   let db = null;
   try {
@@ -244,11 +297,11 @@ async function defaultModelRef(cwd, srv = server) {
 }
 
 /** モデルの一覧（"" は OpenCode の既定に従う）。エフォートはモデルの variants */
-async function listModels(cwd) {
-  const data = await providers(cwd);
-  const config = await server.request('GET', '/config', { directory: cwd || null }).catch(() => null);
+async function listModels(cwd, srv = server) {
+  const data = await providers(cwd, srv);
+  const config = await srv.request('GET', '/config', { directory: cwd || null }).catch(() => null);
   const configured = new Set(Object.entries(config?.provider ?? {}).flatMap(([pid, p]) => Object.keys(p?.models ?? {}).map((m) => `${pid}/${m}`)));
-  const def = await defaultModelRef(cwd).catch(() => null);
+  const def = await defaultModelRef(cwd, srv).catch(() => null);
   const out = { '': { get label() { return t('opencode.models.default'); }, note: def ? `${def.providerID}/${def.modelID}` : '', ...(def ? { resolvesTo: `${def.providerID}/${def.modelID}` } : {}), efforts: [], defaultEffort: null } };
   for (const p of data?.providers ?? []) {
     const models = Object.entries(p.models ?? {});
@@ -315,7 +368,7 @@ export const backend = {
     alwaysAllow: true,      // reply: always（OpenCode が出す always のパターンで、この会話の間）
     mcpApproval: 'agent',   // MCP のツールも権限の規則（*）を通り、OpenCode が聞く
     login: true,            // 端末で opencode auth login を案内して待つ
-    claudeAccounts: false,
+    accounts: 'agent',
     compatEndpoints: false,
     compact: true,          // POST /session/{id}/summarize
     autoCompactWindow: false,
@@ -334,7 +387,81 @@ export const backend = {
   toolHints: TOOL_HINTS,
 
   modes: () => Object.fromEntries(Object.entries(MODES).map(([id, m]) => [id, vocab(m)])),
-  models: (cwd) => listModels(cwd),
+  models: (cwd, options = {}) => listModels(cwd, serverFor(options.account)),
+  usage: opencodeUsage,
+
+  async forAccount(account) {
+    accountKey(account);
+    const bound = { ...backend };
+    const call = (method, args) => async (...values) => {
+      const key = accountKey(account);
+      if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
+      if (loggingInAccounts.has(key)) throw new Error(t('accounts.backend.loginRunning', { agent: 'OpenCode' }));
+      accountTurns.set(key, (accountTurns.get(key) ?? 0) + 1);
+      try { return await backend[method](...args(values)); }
+      finally {
+        const left = (accountTurns.get(key) ?? 1) - 1;
+        if (left) accountTurns.set(key, left); else accountTurns.delete(key);
+      }
+    };
+    // Pure methods still receive the bound receiver; every I/O method below
+    // injects the account after caller options, including nested wrapper calls.
+    for (const [key, value] of Object.entries(bound)) if (typeof value === 'function') bound[key] = value.bind(bound);
+    for (const key of ['runTurn', 'compact', 'adoptTurn', 'listSessions'])
+      bound[key] = call(key, ([args = {}]) => [{ ...args, account }]);
+    for (const key of ['models', 'getSession', 'getMessages', 'fork', 'listSubagents'])
+      bound[key] = call(key, ([first, options = {}]) => [first, { ...options, account }]);
+    for (const key of ['setTitle', 'getSubagentMessages', 'getSubagentOrigin'])
+      bound[key] = call(key, ([first, second, options = {}]) => [first, second, { ...options, account }]);
+    bound.usage = call('usage', ([options = {}]) => [{ ...options, accounts: [], account }]);
+    bound.releaseIdle = call('releaseIdle', () => [{ account }]);
+    for (const key of ['accountLogin', 'accountStatus', 'accountRemove'])
+      bound[key] = (options = {}) => backend[key]({ ...options, account });
+    bound.forAccount = next => backend.forAccount(next);
+    bound.auth = {
+      status: async () => {
+        if (!account) return backend.auth.status();
+        const status = await backend.accountStatus({ account });
+        return { loggedIn: status.hasCredential, account: status.label ?? null };
+      },
+      login: (options = {}) => account ? backend.accountLogin({ ...options, account }) : backend.auth.login(options),
+      logout: (...args) => backend.auth.logout(...args),
+    };
+    return bound;
+  },
+
+  async accountLogin(args) {
+    const argv = cliCommand('opencode');
+    if (!argv) throw new Error(t('opencode.errors.notInstalled'));
+    if (accountBusy(args.account)) throw new Error(t('accounts.backend.inUse', { agent: 'OpenCode' }));
+    const key = accountKey(args.account);
+    if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
+    loggingInAccounts.add(key);
+    try {
+      const result = await loginAccount({ ...args, argv });
+      // The provider catalog and running CLI cache credentials at startup.
+      await accountServers.get(key)?.stop();
+      await accountHeldOpencode(args.account)?.stop();
+      return result;
+    } finally { loggingInAccounts.delete(key); }
+  },
+
+  async accountStatus({ account }) {
+    return { hasCredential: Object.keys(readAccountAuth(account)).length > 0, label: Object.keys(readAccountAuth(account)).join(', ') || null };
+  },
+
+  async accountRemove({ account }) {
+    const key = accountKey(account);
+    if (!account || accountBusy(account) || removingAccounts.has(key)) throw new Error(t('accounts.backend.inUse', { agent: 'OpenCode' }));
+    removingAccounts.add(key);
+    try {
+      await accountServers.get(key)?.stop();
+      await accountHeldOpencode(account)?.stop();
+      accountServers.delete(key);
+      for (const [id, a] of sessionAccounts) if (accountKey(a) === key) sessionAccounts.delete(id);
+      for (const map of [directories, appliedMode]) for (const k of map.keys()) if (k.startsWith(`${key}:`)) map.delete(k);
+    } finally { removingAccounts.delete(key); }
+  },
 
   // ---- 実行 ---------------------------------------------------------------
 
@@ -343,14 +470,21 @@ export const backend = {
    * 発言は送らず、会話の発言・承認・質問・状態を OpenCode に聞き直して続きを受ける
    */
   async runTurn(args, adopt = null, srv = null) {
+    const account = selectedAccount(args.sessionId, args);
+    const key = accountKey(account);
+    if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
+    if (loggingInAccounts.has(key)) throw new Error(t('accounts.backend.loginRunning', { agent: 'OpenCode' }));
+    accountTurns.set(key, (accountTurns.get(key) ?? 0) + 1);
+    try {
+    if (adopt && accountKey(adopt.card?.account) !== accountKey(account)) throw new Error('OpenCode holder account mismatch');
     // Pleiad 担当のコンテキストのターンは、そのターンだけの専用のサーバーで走らせ、終わったら止める
     if (!srv && args.contextRuntime && !adopt) {
       let dedicated;
-      try { dedicated = await managedServer(args.contextRuntime, args.cwd); }
+      try { dedicated = await managedServer(args.contextRuntime, args.cwd, account); }
       catch (err) { args.emit({ type: 'turnResult', outcome: 'error', error: String(err?.message ?? err) }); throw undelivered(err); }
       try { return await backend.runTurn(args, null, dedicated); } finally { await dedicated.stop(); }
     }
-    srv ??= server;
+    srv ??= serverFor(account);
     const { prompt, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, notes = [], shellAppends = [] } = args;
     let sessionId = args.sessionId ?? null;
     const card = adopt?.card ?? null;
@@ -363,13 +497,13 @@ export const backend = {
       await srv.ensure();
       if (adopt) {
         // 会話も作業場所も承認モードの規則も、前のサーバーのまま
-        if (card.directory) directories.set(sessionId, card.directory);
-        if (card.mode) appliedMode.set(sessionId, card.mode);
+        if (card.directory) directories.set(sessionKey(sessionId, srv), card.directory);
+        if (card.mode) appliedMode.set(sessionKey(sessionId, srv), card.mode);
       } else if (!sessionId) {
         const created = await srv.request('POST', '/session', { directory: cwd, body: { permission } });
         sessionId = created.id;
-        directories.set(sessionId, created.directory ?? cwd);
-        appliedMode.set(sessionId, permissionKey);
+        directories.set(sessionKey(sessionId, srv), created.directory ?? cwd);
+        appliedMode.set(sessionKey(sessionId, srv), permissionKey);
         fresh = true;
         emit({ type: 'session', sessionId, first: true, ...(model ? { model } : {}) });
       } else {
@@ -379,10 +513,11 @@ export const backend = {
       emit({ type: 'turnResult', outcome: 'error', error: String(err?.code === 'NOT_INSTALLED' ? t('opencode.errors.notInstalled') : err?.message ?? err) });
       throw undelivered(err);
     }
+    rememberSession(sessionId, account);
     const directory = (await directoryOf(sessionId, srv)) ?? cwd;
-    if (!adopt && appliedMode.get(sessionId) !== permissionKey) {
+    if (!adopt && appliedMode.get(sessionKey(sessionId, srv)) !== permissionKey) {
       await srv.request('PATCH', `/session/${sessionId}`, { directory, body: { permission } });
-      appliedMode.set(sessionId, permissionKey);
+      appliedMode.set(sessionKey(sessionId, srv), permissionKey);
     }
     // Pleiad がそろえる Hooks（hooksRuntime。ADR 0049）。Claude Code の形で、Pleiad の中で走らせる（core/backends/opencode-hooks.mjs）
     const hooks = args.hooksRuntime
@@ -435,10 +570,11 @@ export const backend = {
         if (i >= 0) { const [x] = steers.splice(i, 1); if (x.id) out({ type: 'userMessage.delivered', messageId: x.id }); control?.touch?.(); }
       },
       onChild: ({ childId }) => {
-        if (children.has(childId) && turnsBySession.get(childId) === route) return;
+        if (children.has(childId) && turnsBySession.get(sessionKey(childId, srv)) === route) return;
         children.add(childId);
+        rememberSession(childId, account);
         opencodeRelay.alias(childId, sessionId);
-        turnsBySession.set(childId, route);
+        turnsBySession.set(sessionKey(childId, srv), route);
         control?.touch?.();
       },
     });
@@ -486,8 +622,8 @@ export const backend = {
     // 付け直しは、取り直した発言を流し終えるまで出来事を溜める（取り直しと出来事の間に、取りこぼしを作らない）
     let queue = adopt ? [] : null;
     const route = (event) => (queue ? queue.push(event) : onEvent(event));
-    turnsBySession.set(sessionId, route);
-    for (const child of children) { opencodeRelay.alias(child, sessionId); turnsBySession.set(child, route); }
+    turnsBySession.set(sessionKey(sessionId, srv), route);
+    for (const child of children) { rememberSession(child, account); opencodeRelay.alias(child, sessionId); turnsBySession.set(sessionKey(child, srv), route); }
     // 専用のサーバー（Pleiad 担当のコンテキスト）が落ちたら、このターンに知らせる（共有のサーバーの分は全部のターンへ配る）
     const offGone = srv !== server ? srv.onGone((err) => onEvent({ type: 'pleiad.gone', properties: { error: err } })) : null;
 
@@ -515,7 +651,7 @@ export const backend = {
     // （付ける前のターンは引き継げないので、短い準備のあいだは切り替えが待つ）
     const bindHeld = () => {
       if (!heldServer) return;
-      control.backendCard = () => ({ held: true, directory, ref, mode: modeOf(card?.mode ?? mode), since, delivered, userMessageId, stopRounds,
+      control.backendCard = () => ({ held: true, account: account ? { id: account.id, dir: account.dir } : null, directory, ref, mode: modeOf(card?.mode ?? mode), since, delivered, userMessageId, stopRounds,
         steers: steers.filter((x) => x.id).map((x) => ({ id: x.id, hash: x.hash })), children: [...children], runtimes, envFile: envFile?.name ?? null });
       control.holder = {
         label: (c) => heldServer.putCard(sessionId, c),
@@ -604,13 +740,17 @@ export const backend = {
       }
     } catch (err) {
       if (handedOff) return { sessionId, handedOff: true };
+      if (err?.status === 429) {
+        emit({ type: 'turnResult', outcome: 'limited', error: String(err.message), pristine: mapper.pristine });
+        return { sessionId };
+      }
       emit({ type: 'turnResult', outcome: 'error', error: String(err?.message ?? err) });
       throw err;
     } finally {
       signal?.signal?.removeEventListener?.('abort', onAbort);
       offGone?.();
-      if (turnsBySession.get(sessionId) === route) turnsBySession.delete(sessionId);
-      for (const child of children) if (turnsBySession.get(child) === route) turnsBySession.delete(child);
+      if (turnsBySession.get(sessionKey(sessionId, srv)) === route) turnsBySession.delete(sessionKey(sessionId, srv));
+      for (const child of children) if (turnsBySession.get(sessionKey(child, srv)) === route) turnsBySession.delete(sessionKey(child, srv));
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
       // 手を離したターンは、札も環境変数のファイルも新しいサーバーのもの
       if (!handedOff) { heldServer?.endTurn(sessionId); void envFile?.dispose(); }
@@ -620,9 +760,15 @@ export const backend = {
 
     const error = gone ? { message: String(gone.message ?? gone) } : mapper.error;
     if (aborted || error?.aborted) emit({ type: 'turnResult', outcome: 'aborted' });
-    else if (error) emit({ type: 'turnResult', outcome: 'error', error: error.message, ...(error.auth ? { kind: 'auth', pristine: !mapper.wroteText } : {}) });
+    else if (error) emit({ type: 'turnResult', outcome: error.limited ? 'limited' : 'error', error: error.message,
+      ...(error.limited ? { pristine: mapper.pristine, ...(error.resetsAt ? { resetsAt: error.resetsAt } : {}) } : {}),
+      ...(error.auth ? { kind: 'auth', pristine: mapper.pristine } : {}) });
     else emit({ type: 'turnResult', outcome: 'ok', costUsd: mapper.usage.costUsd });
     return { sessionId };
+    } finally {
+      const left = (accountTurns.get(key) ?? 1) - 1;
+      if (left) accountTurns.set(key, left); else accountTurns.delete(key);
+    }
   },
 
   /**
@@ -635,20 +781,23 @@ export const backend = {
   },
 
   /** 引き継ぎで、ターンの無い共有のサーバーも新しいサーバーへ渡す（札は待ち受けだけ。新しいサーバーが起こし直さずに使う） */
-  async releaseIdle() {
-    const held = server.held;
-    if (!held || held.cards.size > 0) return;
-    await held.handOff();
-    server.handedOff();
+  async releaseIdle(options = {}) {
+    const servers = Object.hasOwn(options, 'account') ? [serverFor(options.account)] : [server, ...accountServers.values()];
+    for (const srv of servers) {
+      const held = srv.held;
+      if (!held || held.cards.size > 0) continue;
+      await held.handOff();
+      srv.handedOff();
+    }
   },
 
   async compact(args, srv = null) {
     // Pleiad 担当のコンテキストの会話の圧縮も、専用のサーバーで（OpenCode 自身の指示を要約の依頼に混ぜない）
     if (!srv && args.contextRuntime) {
-      const dedicated = await managedServer(args.contextRuntime, args.cwd);
+      const dedicated = await managedServer(args.contextRuntime, args.cwd, selectedAccount(args.sessionId, args));
       try { return await backend.compact(args, dedicated); } finally { await dedicated.stop(); }
     }
-    srv ??= server;
+    srv ??= serverFor(selectedAccount(args.sessionId, args));
     const { sessionId, emit, cwd, trigger = 'manual' } = args;
     const directory = (await directoryOf(sessionId, srv)) ?? cwd;
     const msgs = await srv.request('GET', `/session/${sessionId}/message`, { directory });
@@ -664,14 +813,14 @@ export const backend = {
       if (event.type === 'session.error') error = errorOf(event.properties.error);
       if (event.type === 'session.idle') settle();
     };
-    turnsBySession.set(sessionId, onEvent);
+    turnsBySession.set(sessionKey(sessionId, srv), onEvent);
     const offGone = srv !== server ? srv.onGone((err) => onEvent({ type: 'pleiad.gone', properties: { error: err } })) : null;
     try {
       await srv.request('POST', `/session/${sessionId}/summarize`, { directory, body: { ...ref, auto: false }, timeoutMs: 15 * 60_000 });
       await Promise.race([done, new Promise((r) => setTimeout(r, 10 * 60_000).unref?.())]);
     } finally {
       offGone?.();
-      if (turnsBySession.get(sessionId) === onEvent) turnsBySession.delete(sessionId);
+      if (turnsBySession.get(sessionKey(sessionId, srv)) === onEvent) turnsBySession.delete(sessionKey(sessionId, srv));
     }
     if (error) {
       emit({ type: 'compaction', phase: 'failed', trigger, reason: String(error.message ?? error) });
@@ -685,46 +834,55 @@ export const backend = {
 
   // ---- セッション管理 -----------------------------------------------------
 
-  async listSessions({ limit = 100 } = {}) {
+  async listSessions({ limit = 100, account = null } = {}) {
+    const srv = serverFor(account);
     // サーバーが動いていなければ、起こさずに会話の DB から読む（Pleiad で作った会話は Pleiad の控えからも一覧に出る）
-    const rows = server.running ? await server.request('GET', '/experimental/session', { query: { roots: true, limit } }) : (sessionsFromDb({ limit }) ?? []);
+    const rows = srv.running ? await srv.request('GET', '/experimental/session', { query: { roots: true, limit } }) : (sessionsFromDb({ limit, account }) ?? []);
     const list = Array.isArray(rows) ? rows : rows?.data ?? [];
-    for (const s of list) if (s?.id && s.directory) directories.set(s.id, s.directory);
-    return list.filter((s) => !s.parentID).map(sessionRow).filter(Boolean);
+    for (const s of list) if (s?.id) { rememberSession(s.id, account); if (s.directory) directories.set(sessionKey(s.id, srv), s.directory); }
+    return list.filter((s) => !s.parentID).map(sessionRow).filter(Boolean).map(s => ({ ...s, ...(account ? { accountId: account.id } : {}) }));
   },
 
-  async getSession(sessionId) {
+  async getSession(sessionId, options = {}) {
     if (!sessionId || !/^ses_/.test(sessionId)) return null;
-    if (!server.running) {
-      const [row] = sessionsFromDb({ id: sessionId }) ?? [];
-      if (row?.directory) directories.set(row.id, row.directory);
+    const account = selectedAccount(sessionId, options), srv = serverFor(account);
+    if (!srv.running) {
+      const [row] = sessionsFromDb({ id: sessionId, account }) ?? [];
+      if (row) rememberSession(row.id, account);
+      if (row?.directory) directories.set(sessionKey(row.id, srv), row.directory);
       return sessionRow(row ?? null);
     }
-    const s = await server.request('GET', `/session/${encodeURIComponent(sessionId)}`, { directory: directories.get(sessionId) ?? null }).catch(() => null);
-    if (s?.directory) directories.set(s.id, s.directory);
+    const s = await srv.request('GET', `/session/${encodeURIComponent(sessionId)}`, { directory: directories.get(sessionKey(sessionId, srv)) ?? null }).catch(() => null);
+    if (s) rememberSession(s.id, account);
+    if (s?.directory) directories.set(sessionKey(s.id, srv), s.directory);
     return sessionRow(s);
   },
 
   async getMessages(sessionId, options = {}) {
     if (!sessionId) return [];
+    const account = selectedAccount(sessionId, options), srv = serverFor(account);
     // サーバーが動いていなければ、起こさずに会話の DB から読む（全文検索の索引作りが全部の会話を読むので、起動のたびに起きていた）
-    if (!server.running) {
-      const stored = messagesFromDb(sessionId);
+    if (!srv.running) {
+      const stored = messagesFromDb(sessionId, account);
       if (stored) return messagesToNormalized(stored, options);
     }
-    const directory = await directoryOf(sessionId);
-    const list = await server.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory });
+    const directory = await directoryOf(sessionId, srv);
+    const list = await srv.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory });
+    rememberSession(sessionId, account);
     return messagesToNormalized(list, options);
   },
 
-  async setTitle(sessionId, title) {
-    const directory = await directoryOf(sessionId);
-    await server.request('PATCH', `/session/${encodeURIComponent(sessionId)}`, { directory, body: { title: String(title ?? '') } });
+  async setTitle(sessionId, title, options = {}) {
+    const srv = serverFor(selectedAccount(sessionId, options));
+    const directory = await directoryOf(sessionId, srv);
+    await srv.request('PATCH', `/session/${encodeURIComponent(sessionId)}`, { directory, body: { title: String(title ?? '') } });
   },
 
-  async fork(sessionId, { upToMessageId, title } = {}) {
-    const directory = await directoryOf(sessionId);
-    const list = await server.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory });
+  async fork(sessionId, options = {}) {
+    const { upToMessageId, title } = options;
+    const account = selectedAccount(sessionId, options), srv = serverFor(account);
+    const directory = await directoryOf(sessionId, srv);
+    const list = await srv.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory });
     const ids = (list ?? []).map((m) => m.info?.id);
     let body = {};
     if (upToMessageId) {
@@ -733,28 +891,34 @@ export const backend = {
       // OpenCode の fork は渡した発言の手前までを写す。その発言までを含めるので、次の発言の id を渡す（最後なら全部）
       if (at + 1 < ids.length) body = { messageID: ids[at + 1] };
     }
-    const created = await server.request('POST', `/session/${encodeURIComponent(sessionId)}/fork`, { directory, body });
-    if (created?.directory) directories.set(created.id, created.directory);
-    if (title) await server.request('PATCH', `/session/${created.id}`, { directory, body: { title: String(title) } }).catch(() => {});
-    return { sessionId: created.id };
+    const created = await srv.request('POST', `/session/${encodeURIComponent(sessionId)}/fork`, { directory, body });
+    rememberSession(created.id, account);
+    if (created?.directory) directories.set(sessionKey(created.id, srv), created.directory);
+    if (title) await srv.request('PATCH', `/session/${created.id}`, { directory, body: { title: String(title) } }).catch(() => {});
+    return { sessionId: created.id, ...(account ? { accountId: account.id } : {}) };
   },
 
-  async listSubagents(sessionId) {
-    const directory = await directoryOf(sessionId);
-    const kids = await server.request('GET', `/session/${encodeURIComponent(sessionId)}/children`, { directory }).catch(() => []);
+  async listSubagents(sessionId, options = {}) {
+    const account = selectedAccount(sessionId, options), srv = serverFor(account);
+    const directory = await directoryOf(sessionId, srv);
+    const kids = await srv.request('GET', `/session/${encodeURIComponent(sessionId)}/children`, { directory }).catch(() => []);
+    for (const k of kids ?? []) rememberSession(k.id, account);
     return (kids ?? []).map((k) => k.id).filter(Boolean);
   },
 
-  async getSubagentMessages(sessionId, agentId, { limit } = {}) {
-    const directory = await directoryOf(sessionId);
-    const list = await server.request('GET', `/session/${encodeURIComponent(agentId)}/message`, { directory }).catch(() => []);
+  async getSubagentMessages(sessionId, agentId, options = {}) {
+    const { limit } = options;
+    const srv = serverFor(selectedAccount(sessionId, options));
+    const directory = await directoryOf(sessionId, srv);
+    const list = await srv.request('GET', `/session/${encodeURIComponent(agentId)}/message`, { directory }).catch(() => []);
     const messages = messagesToNormalized(list);
     return Number.isFinite(limit) ? messages.slice(-limit) : messages;
   },
 
-  async getSubagentOrigin(sessionId, agentId) {
-    const directory = await directoryOf(sessionId);
-    const list = await server.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory }).catch(() => []);
+  async getSubagentOrigin(sessionId, agentId, options = {}) {
+    const srv = serverFor(selectedAccount(sessionId, options));
+    const directory = await directoryOf(sessionId, srv);
+    const list = await srv.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory }).catch(() => []);
     for (const m of list ?? []) for (const p of m.parts ?? []) if (p.type === 'tool' && p.tool === 'task' && p.state?.metadata?.sessionId === agentId) return String(p.callID ?? p.id);
     return null;
   },
@@ -810,6 +974,6 @@ export const backend = {
 };
 
 /** 試験用: 共有のサーバーを止める（tests/unit/server-opencode.mjs） */
-export const stopOpencodeServer = () => server.stop();
+export const stopOpencodeServer = () => Promise.all([server, ...accountServers.values()].map(s => s.stop()));
 /** 中継の口に結び付けるサーバー名（試験が見る） */
 export const OPENCODE_RELAY_SERVERS = Object.keys(RELAY_SERVERS);

@@ -599,6 +599,16 @@ const SUITES = [
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
   './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
+  './unit/agent-accounts.mjs',
+  './unit/codex-accounts.mjs',
+  './unit/opencode-accounts.mjs',
+  './unit/opencode-usage.mjs',
+  './unit/server-agent-accounts.mjs',
+  './unit/agent-accounts-ui.mjs',
+  './unit/account-backend-i18n.mjs',
+  './unit/opencode-adopt.mjs',
+  './unit/server-agent-account-adopt.mjs',
+  './unit/antigravity-accounts.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
   // Claude Agent SDK を配布物に入れず npm から取る（ADR 0208）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意

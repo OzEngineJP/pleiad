@@ -55,7 +55,7 @@ export default async function(t) {
   const fetched = {};
   const shared = createQuotaCache({ now: () => now });
   const agents = [
-    { id: 'claude', label: 'Claude', usage: async () => ({ plan: 'max', windows: [], accounts: [
+    { id: 'claude', label: 'Claude', capabilities: { accounts: 'token' }, usage: async () => ({ plan: 'max', windows: [], accounts: [
       { label: 'ログイン中のアカウント', plan: 'max', windows: [usageWindow('5時間', 40, 1800000000000, 300)], message: null },
       { label: 'tekalu@example.com', accountId: 'acct-0123456789ab', windows: [], needsUsageLogin: true, message: '認可してください' }] }) },
     { id: 'codex', label: 'Codex', usage: async () => { throw new Error('Bearer secret'); } },
@@ -78,7 +78,7 @@ export default async function(t) {
   assert.equal(codex.checkedAt, null); assert.ok(codex.message && !JSON.stringify(codex).includes('secret'));
   t.ok('ply_usage は使用枠を持つ全バックエンドを返し、失敗は message に入れて他を返す', true);
   // 登録の一覧を渡すと、トークンの無いアカウントに runnable: false を付ける。一覧のトークン以外の欄も返さない
-  const withTokens = await agentUsage({ ...deps, backend: 'claude', claudeAccounts: async () => [{ id: 'acct-0123456789ab', name: 'tekalu@example.com', hasToken: false, token: 'sk-ant-secret' }] });
+  const withTokens = await agentUsage({ ...deps, backend: 'claude', accounts: async () => [{ id: 'acct-0123456789ab', name: 'tekalu@example.com', ready: false, token: 'sk-ant-secret' }] });
   assert.deepEqual(withTokens.backends[0].accounts.map(a => [a.account, a.runnable]), [['login', undefined], ['acct-0123456789ab', false]]);
   assert.ok(!/sk-ant|tekalu@|hasToken/.test(JSON.stringify(withTokens)));
   t.ok('ply_usage の Claude の各アカウントに account の名前を付け、資格情報とメールアドレスは出さない', true);

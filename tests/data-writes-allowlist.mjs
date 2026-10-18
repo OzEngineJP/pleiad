@@ -82,6 +82,17 @@ export const DATA_WRITES = [
     { name: 'context-scans.json', limit: 'ユーザーが設定した場所（places）の数。通常は数個から数十', reason: '探索の設定。件数に上限は無い', unbounded: true },
     { name: 'context-scans.v<N>-backup.json', limit: '形式の移行の前に 1 回だけ（flag wx）', reason: '形式移行前の写し。増えない' },
   ] },
+  { file: 'core/agent-accounts.mjs', sites: 2, targets: [
+    { name: 'agent-accounts.json', limit: 'MAX_ACCOUNTS=100', reason: 'エージェントごとの登録アカウントの台帳。秘密は別の暗号化ストア' },
+  ] },
+  { file: 'core/backends/codex-accounts.mjs', sites: 3, targets: [
+    { name: 'accounts/codex/<id>/auth.json', limit: 'アカウントごとに1つ。CLIの認証情報', reason: '専用CODEX_HOMEに必要な資格情報の初回配置。既存ファイルは上書きしない' },
+    { name: 'accounts/codex/<id>/.logged-out', limit: 'アカウントごとに1つ。1文字', reason: '明示ログアウト後に保存した資格情報を復元しないための印' },
+    { name: 'accounts/codex/<id>/<共有リンク>', limit: 'dirs・filesの固定の一覧', reason: 'CLIの設定・会話・書き手のロックの共有。リンク先の内容は書かない' },
+  ] },
+  { file: 'core/backends/opencode-accounts.mjs', sites: 1, targets: [
+    { name: 'accounts/opencode/<id>/data/opencode/auth.json', limit: 'アカウントごとに1つ。接続先の資格情報', reason: 'OpenCodeが必要とする資格情報の初回配置。既存ファイルは上書きしない' },
+  ] },
   { file: 'core/claude-accounts.mjs', sites: 3, targets: [
     { name: 'claude-accounts.json', limit: 'Claude のアカウント。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'claude-usage/<id>/<印>', limit: 'アカウントごとに 1 つ。固定の小ささ', reason: '使用量ログイン済みの印' },
@@ -117,7 +128,7 @@ export const DATA_WRITES = [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },
   ] },
   { file: 'core/secret-store.mjs', sites: 8, targets: [
-    { name: 'mcp-secrets.json・claude-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・secret-values.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・秘密情報（MAX_ITEMS=500）・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
+    { name: 'mcp-secrets.json・claude-account-secrets.json・agent-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・secret-values.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・秘密情報（MAX_ITEMS=500）・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
     { name: '<上の秘密ファイル>.lock', limit: '固定の小ささ（pid だけ）', reason: 'ロックファイル' },
   ] },
   { file: 'core/remote/devices.mjs', sites: 2, targets: [
