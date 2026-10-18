@@ -22,6 +22,11 @@ export const RIGS = {
   antigravity: async () => ({ env: { AGENT_HOST_BACKENDS: 'antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"` }, prompt: (text) => text }),
   opencode: async () => ({ env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"` }, prompt: (text) => text }),
   devin: async () => ({ env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"` }, prompt: (text) => text }),
+  grok: async (scratch) => {
+    const home = path.join(scratch, 'grok-home');
+    await fs.mkdir(home, { recursive: true });
+    return { env: { AGENT_HOST_BACKENDS: 'grok', AGENT_HOST_GROK_BIN: `node "${path.join(ROOT, 'tests/lib/fake-grok.mjs')}"`, GROK_HOME: home }, prompt: (text) => text };
+  },
 };
 
 export const CAPABILITY_CONTRACTS = {
