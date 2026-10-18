@@ -253,7 +253,7 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 | OpenCode | `bash` の部品（running）を正規化した `tool.start` | 同じ呼び出しの `tool.result` |
 | Devin | ACP の `kind: "execute"` の `tool_call`（`tool.start` の `shell: true`） | 同じ呼び出しの `tool.result` |
 
-シェルのツールの名前はエージェントの記述の `shellTools`（`core/shell-tools.mjs`）から引く。委譲の子でない会話の長いコマンドは、その会話自身へ知らせる（[ADR 0224](adr/0224-ply-shell-and-command-notices.md)。docs/design.md「長いコマンドの知らせ」）。
+シェルのツールの名前はエージェントの記述の `shellTools`（`core/shell-tools.mjs`）から引く。委譲の子でない会話の長いコマンドは、その会話自身へ知らせる（[ADR 0225](adr/0225-ply-shell-and-command-notices.md)。docs/design.md「長いコマンドの知らせ」）。
 
 Claude の background 起動結果（`backgroundTaskId` または起動を示す本文）は完了ではない。`task_started` / `task_updated` で background に移ったものも、実際の終了まで残す。Codex の端末は子タスクが `completed` になっても通知対象で、終了を確認するまで台帳に残る。台帳の通知は子を再実行しない。サーバー再起動後は保存済みコマンドの生存を確認できないため `state: unknown`・経過 `null` とし、再通知や自動停止はしない。
 

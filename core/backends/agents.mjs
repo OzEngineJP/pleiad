@@ -19,7 +19,7 @@ import path from 'node:path';
  *             ネイティブの Hooks を持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）と、渡さないエージェントは null
  * contextSources  エージェントが自分で読む指示・Skills・MCP の読み込み元（core/context-settings.mjs の SOURCES）。
  *             エージェント任せの会話の「指示の量」の見積もりと、エージェントの設定に登録された MCP の一覧に使う。null は読み方を知らない
- * shellDefault  エージェントのシェルのツールの既定（設定 shellTool。ADR 0224 §3）。'native' はエージェントのもの、'ply' は Pleiad の ply_shell だけ
+ * shellDefault  エージェントのシェルのツールの既定（設定 shellTool。ADR 0225 §3）。'native' はエージェントのもの、'ply' は Pleiad の ply_shell だけ
  *             （能力の印 nativeShellOff が無いエージェントは 'native' のまま）
  * shellTools  シェルのコマンドを走らせるネイティブのツールの名前（tool.start の name。大文字と小文字を区別する）。長いコマンドの知らせ・
  *             声の待ちの案内が、この一覧で見分ける（core/shell-tools.mjs）。バックエンドの toolHints の shape: 'shell' と同じ名前を書く

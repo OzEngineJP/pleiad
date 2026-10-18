@@ -102,7 +102,7 @@ export const settings = [
   defineSetting({ key: 'effort', summary: S('effort'), risk: 'write', riskReason: `The default thinking depth for new conversations. ${PICK_ABOUT}`,
     schema: z.string(), default: '', read: fromPrefs('effort'),
     ...plainPref('effort', (ctx, v) => { if (typeof v !== 'string' || !/^[a-z]{0,20}$/.test(v)) throw invalid(ctx, `effort: ${String(v).slice(0, 40)}`); return v; }) }),
-  // エージェントのシェルのツール（ADR 0224 §3）。エージェントごとに native（エージェントのもの）か ply（Pleiad の ply_shell だけ）。渡した分を重ねる。
+  // エージェントのシェルのツール（ADR 0225 §3）。エージェントごとに native（エージェントのもの）か ply（Pleiad の ply_shell だけ）。渡した分を重ねる。
   // null で全部を既定（エージェントの記述の shellDefault）に戻す。ply_shell も会話の承認モードで聞くので、どちらへ替えても関所は緩まない
   defineSetting({ key: 'shellTool', summary: S('shellTool'), risk: 'write', riskReason: `Which shell tool each agent uses: its own, or Pleiad's ply_shell, which asks for approval under the same approval modes. ${PICK_ABOUT}`,
     prefKeys: ['shellTool'], schema: z.record(z.string(), z.enum(['native', 'ply'])), default: {}, read: async (ctx) => (await prefs(ctx)).shellTool ?? {},

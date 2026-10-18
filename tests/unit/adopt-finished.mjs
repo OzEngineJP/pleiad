@@ -209,7 +209,7 @@ export default async function (t) {
     const rpc = (urlPath, token, method) => fetch(`http://127.0.0.1:${b.port}${urlPath}`, { method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: {} }) });
-    assert.ok(card.connectionTokens.shell, 'ply_shell の口のトークンも札に載る（ADR 0224）');
+    assert.ok(card.connectionTokens.shell, 'ply_shell の口のトークンも札に載る（ADR 0225）');
     for (const [urlPath, token] of [['/mcp/agents', card.connectionTokens.agents], ['/mcp/control', card.connectionTokens.control], ['/mcp/shell', card.connectionTokens.shell]]) {
       const res = await rpc(urlPath, token, 'initialize');
       assert.equal(res.status, 200, `${urlPath} は札のトークンで通る`);

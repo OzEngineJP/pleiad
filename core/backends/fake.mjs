@@ -29,7 +29,7 @@
 //   "browser:<json>" … ply_browser（browserRuntime）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。
 //                     渡っていなければ "browser: unavailable"。"browser-instructions" は渡った内蔵ブラウザーの指示文を返す
 //   "control:<json>" … ply_control（controlRuntime。Pleiad の操作の一覧）のツールを { name, arguments }（配列なら順に）呼び、返りを本文にする。渡っていなければ "control: unavailable"。
-//   "shell:<json>"   … ply_shell（shellRuntime。ADR 0224）のツールを同じ形で呼ぶ。渡っていなければ "shell: unavailable"。"shell-info" は渡った口（nativeOff・指示文）
+//   "shell:<json>"   … ply_shell（shellRuntime。ADR 0225）のツールを同じ形で呼ぶ。渡っていなければ "shell: unavailable"。"shell-info" は渡った口（nativeOff・指示文）
 //                     "control-info" は渡った接続の url・指示文・会話のシェルへ渡す環境変数の名前とトークンを JSON で返す
 //   "compact"      … 文脈の圧縮（Claude の activity compacting と同じ形）を流す
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
@@ -621,7 +621,7 @@ export const backend = {
         out.text = JSON.stringify(text.startsWith("notes:") ? notes : botInstructions);
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith('control:') || text.startsWith('shell:')) {
-        // ply_control（操作の一覧。ADR 0081）・ply_shell（ADR 0224）の呼び出し。ほかの MCP と同じく mcp__<サーバー>__<ツール> の行で残す。渡っていなければ "<名前>: unavailable"
+        // ply_control（操作の一覧。ADR 0081）・ply_shell（ADR 0225）の呼び出し。ほかの MCP と同じく mcp__<サーバー>__<ツール> の行で残す。渡っていなければ "<名前>: unavailable"
         const kind = text.startsWith('shell:') ? 'shell' : 'control';
         const port = kind === 'shell' ? shellRuntime : controlRuntime;
         if (!port) out.text = `${kind}: unavailable`;

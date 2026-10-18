@@ -66,7 +66,7 @@ const RULES = {
 /**
  * 会話の権限の規則と、その組み合わせの印（変わったら入れ直す）。
  * - Skills を Pleiad が担当するターンは、OpenCode の組み込みの skill のツールも止める（中身の無いツールを見せない）
- * - ply_shell（ADR 0224）は聞かない（承認は橋が会話の承認モードで決める。二重に聞かない）。
+ * - ply_shell（ADR 0225）は聞かない（承認は橋が会話の承認モードで決める。二重に聞かない）。
  *   エージェントのシェルを切る会話（shellRuntime.nativeOff）は bash を全面拒否にする（OpenCode は全面拒否のツールを一覧から外す）
  */
 export function sessionPermission(mode, { noSkill = false, shellRuntime = null } = {}) {
@@ -388,7 +388,7 @@ export const backend = {
     plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
     computerUse: { images: 'inline', waitSliceMs: null },
     shell: 'host',          // 入力欄の `!` は Pleiad が走らせ、次のターンの始めに返答を起こさない行（noReply）で渡す
-    // ply_shell を受け取り、会話の権限で bash を拒否して切れる（ADR 0224。既定は切る: エージェントの記述の shellDefault）
+    // ply_shell を受け取り、会話の権限で bash を拒否して切れる（ADR 0225。既定は切る: エージェントの記述の shellDefault）
     plyShell: true,
     nativeShellOff: true,
     effortInModelId: false, // エフォートはモデルの variants（prompt の variant）

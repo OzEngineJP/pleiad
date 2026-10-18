@@ -42,7 +42,7 @@ export function describeNotification(n, t, titleOf = () => '') {
       ? (n.threadTitle ? t('inbox.place.thread', { channel: n.channelName, thread: n.threadTitle }) : t('inbox.place.channel', { channel: n.channelName }))
       : (n.threadTitle || '');
   } else if (n.target?.sessionId) place = t('inbox.place.chat', { title: title || t('session.untitled') });
-  // Chrome の操作待ちが済んだことは「承認済み」と言わない（承認ではない）。「…待っていました」だけで足りる。戻らないコマンド（ADR 0224）の決着も同じ
+  // Chrome の操作待ちが済んだことは「承認済み」と言わない（承認ではない）。「…待っていました」だけで足りる。戻らないコマンド（ADR 0225）の決着も同じ
   const outcome = n.kind === 'wait' && n.outcome && !(n.ask === 'chrome' && n.outcome === 'allowed') && n.ask !== 'command' ? t(`inbox.outcome.${n.outcome}`) : '';
   const icon = n.kind === 'wait' ? (open ? 'wait' : 'closed') : n.kind;
   return { icon, line, place, outcome, open };
