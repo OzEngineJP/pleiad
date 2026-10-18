@@ -107,6 +107,44 @@ export default async function (t) {
   t.ok('中継: 会話のシェルの環境変数（子の会話は親の分）', envRes.status !== 0 && JSON.parse(res.body).PLEIAD_CONTROL_URL === 'http://x');
   t.ok('中継: 知らないサーバー名は 404', (await call('nope', { jsonrpc: '2.0', id: 8, method: 'tools/list' })).status === 404);
 
+  // ---- 無停止の更新: 前のサーバーの合言葉を引き継ぐ・付け直す会話は結び付けるまで呼び出しを待たせる
+  const previous = 'p'.repeat(48);
+  relay.adoptSecret('short');
+  t.ok('中継: 短すぎる合言葉は引き継がない', (await call('ply_agents', { jsonrpc: '2.0', id: 9, method: 'tools/list' })).status === 200);
+  relay.adoptSecret(previous);
+  t.ok('中継: 引き継いだ合言葉で通り、前の値は 401', (await call('ply_agents', { jsonrpc: '2.0', id: 10, method: 'tools/list' }, `Bearer ${previous}`)).status === 200
+    && (await call('ply_agents', { jsonrpc: '2.0', id: 11, method: 'tools/list' })).status === 401 && relay.secret === previous);
+  relay.expect(['ses_W', 'ses_X'], { ses_Wc: 'ses_W' });
+  forwarded.length = 0;
+  const waiting = call('ply_agents', { jsonrpc: '2.0', id: 12, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_Wc' } } }, `Bearer ${previous}`);
+  await new Promise((r) => setTimeout(r, 30));
+  t.ok('中継: 付け直す会話（の子）の呼び出しは、結び付けるまで待つ', forwarded.length === 0);
+  relay.bind('ses_W', { runtimes: { agentRuntime: { url: 'http://pleiad/mcp/agents', headers: { Authorization: 'Bearer W' } } } });
+  await waiting;
+  t.ok('中継: 結び付けたら、その会話の口へ届く', forwarded.map((f) => f.headers.Authorization).join() === 'Bearer W');
+  const dropped = call('ply_agents', { jsonrpc: '2.0', id: 13, method: 'tools/call', params: { name: 'ply_task_list', arguments: { [SESSION_ARG]: 'ses_X' } } }, `Bearer ${previous}`);
+  relay.unexpect('ses_X');
+  t.ok('中継: 付け直さなかった会話の待ちは外れて断る', (await dropped).json().result.isError === true);
+
+  // ---- 無停止の更新: 取り直した発言の後、途中の本文は次の部品の更新まで差分を読まない（溜めた差分と重ならない）
+  {
+    const got = [];
+    const m = createTurnMapper({ sessionId: 'ses_R', emit: (e) => got.push(e) });
+    const part = (extra) => ({ type: 'message.part.updated', properties: { part: { id: 'prt_t', messageID: 'msg_a', sessionID: 'ses_R', type: 'text', ...extra } } });
+    const delta = (id, d) => ({ type: 'message.part.delta', properties: { sessionID: 'ses_R', messageID: 'msg_a', partID: id, field: 'text', delta: d } });
+    m.handle({ type: 'message.updated', properties: { info: { id: 'msg_a', role: 'assistant', sessionID: 'ses_R' } } });
+    m.handle(part({ text: 'hello wor', time: { start: 1 } }));   // 取り直した今の本文
+    m.resync();
+    m.handle(delta('prt_t', 'wor'));                              // 取り直しの前に溜まっていた差分（本文に入っている）
+    m.handle(part({ text: 'hello', time: { start: 1 } }));        // 溜まっていた古い更新
+    m.handle(delta('prt_t', 'ld'));                               // 取り直しの後の差分（終わりの更新が全文で埋める）
+    m.handle(part({ text: 'hello world', time: { start: 1, end: 2 } }));
+    m.handle({ type: 'message.part.updated', properties: { part: { id: 'prt_n', messageID: 'msg_a', sessionID: 'ses_R', type: 'text', text: '', time: { start: 3 } } } });
+    m.handle(delta('prt_n', '!'));
+    const streamed = got.filter((e) => e.type === 'text.delta').map((e) => e.text).join('');
+    t.ok('付け直し: 途中の本文は欠けも重なりもなく、後から始まった部品の差分は普通に流れる', streamed === 'hello world!' && got.filter((e) => e.type === 'text.end').length === 1, JSON.stringify(got));
+  }
+
   // ---- コンテキストの読み込み元（OpenCode が自分で読む指示・Skills・MCP）
   const cx = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-oc-context-'));
   try {

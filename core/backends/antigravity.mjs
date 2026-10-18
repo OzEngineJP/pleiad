@@ -294,6 +294,7 @@ export const backend = {
     instructionsAtStart: true,
     // 失敗の理由を会話の控えに残し、ターンの後に agy のログを書き出す（server.mjs の recordBackendFailure）
     failureDiagnostics: true,
+    handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
   },
 
   toolHints: TOOL_HINTS,

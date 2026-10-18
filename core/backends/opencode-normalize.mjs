@@ -70,7 +70,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
 
   const partOf = (part) => {
     let entry = parts.get(part.id);
-    if (!entry) { entry = { type: part.type, messageID: part.messageID, streamed: '', started: false, done: false }; parts.set(part.id, entry); }
+    if (!entry) { entry = { type: part.type, messageID: part.messageID, streamed: '', started: false, done: false, resync: false }; parts.set(part.id, entry); }
     return entry;
   };
 
@@ -85,6 +85,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
       if (part.synthetic) return;
       // 差分（message.part.delta）が来なかった分は、部品の本文の残りを流す
       const text = String(part.text ?? '');
+      if (entry.resync && text.length >= entry.streamed.length) entry.resync = false;
       if (text.length > entry.streamed.length && text.startsWith(entry.streamed)) {
         if (!entry.started) { emit({ type: 'activity', state: 'writing' }); entry.started = true; }
         emit({ type: 'text.delta', text: text.slice(entry.streamed.length) });
@@ -97,6 +98,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
     if (part.type === 'reasoning') {
       if (!entry.started) { entry.started = true; emit({ type: 'thinking.start' }); emit({ type: 'activity', state: 'thinking' }); }
       const text = String(part.text ?? '');
+      if (entry.resync && text.length >= entry.streamed.length) entry.resync = false;
       if (text.length > entry.streamed.length && text.startsWith(entry.streamed)) {
         emit({ type: 'thinking.delta', text: text.slice(entry.streamed.length) });
         entry.streamed = text;
@@ -155,7 +157,8 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
         case 'message.part.delta': {
           if (p.field !== 'text' || typeof p.delta !== 'string') return false;
           const entry = parts.get(p.partID);
-          if (!entry || roles.get(p.messageID) === 'user') return false;
+          // 付け直しで取り直した途中の部品は、次の部品の更新（全文）まで差分を読まない（取り直した本文と重なる）
+          if (!entry || entry.resync || roles.get(p.messageID) === 'user') return false;
           if (entry.type === 'text') {
             if (!entry.started) { emit({ type: 'activity', state: 'writing' }); entry.started = true; }
             emit({ type: 'text.delta', text: p.delta });
@@ -180,6 +183,8 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
           return false;
       }
     },
+    /** 付け直しで発言を取り直した後: 途中の本文・考えの部品は、次の部品の更新まで差分を捨てる（溜めた差分は取り直した本文に入っている） */
+    resync() { for (const entry of parts.values()) if (!entry.done && (entry.type === 'text' || entry.type === 'reasoning')) entry.resync = true; },
     get error() { return error; },
     get usage() { return { ...usage }; },
     get idle() { return idle; },

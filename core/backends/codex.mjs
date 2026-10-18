@@ -1326,6 +1326,7 @@ export const backend = {
     effortInModelId: false,
     instructionsAtStart: false,
     failureDiagnostics: false,
+    handover: true,          // 共有の app-server を保持役に載せ、新しいサーバーが付け直す（codex-held.mjs）
   },
 
   toolHints: TOOL_HINTS,

@@ -49,6 +49,7 @@ export const CAPABILITY_CONTRACTS = {
   effortInModelId: ['effort'],
   instructionsAtStart: ['bot-dispatch'],
   failureDiagnostics: ['server-antigravity'],
+  handover: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'],
 };
 
 /**

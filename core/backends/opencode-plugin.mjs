@@ -6,6 +6,8 @@
 //     MCP の呼び出しには会話の id が載らないので、Pleiad の中継（core/opencode-relay.mjs）はこれで会話を見分ける。
 //     引数はその場で書き足す（output.args を置き換えると MCP に届かない）
 //   - shell.env: 会話のシェルに、その会話の環境変数（ブラウザー・操作の一覧・秘密情報）を足す。中継の /env から取る
+// Pleiad が無停止の更新で入れ替わる間（1〜2 秒）は中継の口がつながらない。つながらない呼び出しは少し待ってやり直す
+// （やり直さないと、その間のツールの前の Hooks を素通りする）
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -19,11 +21,23 @@ const HOOK_URL = process.env.PLEIAD_OPENCODE_HOOK_URL ?? '';
 const SECRET = process.env.PLEIAD_OPENCODE_SECRET ?? '';
 const PLY_TOOL = /^ply_(agents|control|computer|browser|context)_/;
 
+// Pleiad may be restarting for an update (a second or two): retry a refused connection for a while
+async function call(url, init, waitMs) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    try { return await fetch(url, init()); }
+    catch (err) {
+      if (Date.now() > until || err?.name === 'TimeoutError' || err?.name === 'AbortError') throw err;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
 // Hooks that Pleiad runs before / after a tool. Pleiad returns {} when the conversation has none
 async function hook(body) {
   if (!HOOK_URL || !SECRET) return {};
   try {
-    const res = await fetch(HOOK_URL, { method: 'POST', headers: { authorization: 'Bearer ' + SECRET, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15 * 60 * 1000) });
+    const res = await call(HOOK_URL, () => ({ method: 'POST', headers: { authorization: 'Bearer ' + SECRET, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15 * 60 * 1000) }), 30 * 1000);
     return res.ok ? await res.json() : {};
   } catch { return {}; }
 }
@@ -45,7 +59,7 @@ export const PleiadPlugin = async () => ({
   'shell.env': async (input, output) => {
     if (!ENV_URL || !SECRET || !input?.sessionID || !output?.env) return;
     try {
-      const res = await fetch(ENV_URL + '?session=' + encodeURIComponent(input.sessionID), { headers: { authorization: 'Bearer ' + SECRET }, signal: AbortSignal.timeout(3000) });
+      const res = await call(ENV_URL + '?session=' + encodeURIComponent(input.sessionID), () => ({ headers: { authorization: 'Bearer ' + SECRET }, signal: AbortSignal.timeout(10 * 1000) }), 15 * 1000);
       if (!res.ok) return;
       const env = await res.json();
       for (const [k, v] of Object.entries(env ?? {})) if (typeof v === 'string') output.env[k] = v;

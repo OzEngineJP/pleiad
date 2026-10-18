@@ -22,6 +22,9 @@
 - 巻き戻しに `revert` は使わない（ファイルの変更まで戻すため）。Pleiad の写しで戻す。
 - **互換の接続先（Pleiad の compat endpoints）は OpenCode には作らない。** OpenCode は接続先（provider）を自分で持ち（`opencode auth login`・`opencode.json` の `provider`。OpenRouter・LiteLLM・Ollama などの OpenAI 互換も入る）、Pleiad のモデルの一覧にもつないだ接続先のモデルが出る。共有のサーバー 1 本に会話ごとの接続先を足すと、接続先を変えるたびにサーバーを起こし直すことになる（走っているターンが止まる）。
 - **Pleiad がそろえる Hooks は、Claude Code の形を真似て渡す**（エージェントの記述の `hooksAs`）。OpenCode のフックは JS のプラグインでコマンドの形が無いため。ツールの前後は Pleiad のプラグインが中継の口 `/mcp/opencode/hook` を呼び、発言の前・会話の始め・終わりの前はバックエンドが走らせる。
+- **無停止の更新（[ADR 0151](0151-zero-downtime-update.md)）では、共有の `opencode serve` を保持役の子に載せ、プロセスだけを持たせる。** 新しいサーバーは、子の札に置いた待ち受けの URL・basic 認証・中継の合言葉でつなぎ直し、
+  走っていたターンは OpenCode に聞き直して組み立て直す（会話の発言・答えていない承認と質問・会話の状態）。Codex のように stdout の記録を再生しない（HTTP と SSE には記録が無く、OpenCode が会話の状態を持っているため）。
+  会話のシェルの環境変数（秘密情報）は札に入れず、データ置き場のファイルに置く。
 
 ## 理由
 
@@ -33,4 +36,5 @@
 
 - 設計は `docs/multi-backend.md` §2.10、利用者向けは `docs/backends.md`「OpenCode」。
 - OpenCode の版が上がってプラグインの口や出来事の形が変わったら、身代わり（`tests/lib/fake-opencode.mjs`）と実機の記録（`tests/lib/opencode-events.json`）を取り直す。
-- Pleiad 担当のコンテキスト（`ply_context`）・フック・互換の接続先・無停止の更新は、issue #91 の段階 2・3 で足す。
+- フック・互換の接続先（作らない）・無停止の更新は、issue #91 の段階 2・3 で決めて足した（上の決定）。Pleiad 担当のコンテキスト（`ply_context`）は別に決める。
+- 無停止の更新の設計は `docs/multi-backend.md` §2.10「無停止の更新」、試験は `tests/unit/adopt-opencode.mjs`（身代わりの OpenCode を保持役に載せ、本物の引き継ぎの道・ターンの無い引き継ぎ・強制終了を通す）。

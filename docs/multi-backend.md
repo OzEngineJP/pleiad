@@ -826,7 +826,7 @@ Codexの `set_status / set_title / fork` は未接続なので、
 
 - 1 本で約 760 MB を使う（[ADR 0221](adr/0221-opencode-shared-server-and-plugin-relay.md)）。**会話ごとに起こさず、Pleiad のサーバーにつき 1 本を共有する**（`core/backends/opencode-server.mjs`。Codex の app-server と同じ）。
   初めて要ったときに `serve --port 0 --hostname 127.0.0.1` で起こし、stdout の `opencode server listening on http://…` から宛先を読む。
-  basic 認証の合言葉（`OPENCODE_SERVER_PASSWORD`）は起動ごとに作る。Pleiad が終わるときは `exit` で木ごと止める
+  basic 認証の合言葉（`OPENCODE_SERVER_PASSWORD`）は起動ごとに作る。Pleiad が終わるときは `exit` で木ごと止める（保持役に載せたときは下の「無停止の更新」）
 - 作業場所は呼び出しごとの `?directory=` で選ぶ（作業場所ごとに OpenCode の instance ができる）。出来事は `/global/event` の 1 本で全部の作業場所の分が
   `{ directory, payload: { type, properties } }` で届く
 - ターン: `POST /session/{id}/prompt_async`（204 ですぐ返る）。出来事は `message.updated`・`message.part.updated`（部品の全体）・`message.part.delta`
@@ -865,6 +865,22 @@ Codexの `set_status / set_title / fork` は未接続なので、
 - Pleiad の指示（委譲・可視化・ブラウザー・コンピューター・操作の一覧・秘密情報・bot の人格）は `prompt_async` の `system` で毎ターン渡す
 - Pleiad 担当のコンテキスト（`ply_context`）はまだ渡さない（`plyContext: false`。OpenCode の設定・指示ファイルがそのまま効く）
 - **Hooks**: OpenCode にはコマンドの Hooks の形が無い。Pleiad がそろえる Hooks は、Claude Code の形を真似て渡す（エージェントの記述の `hooksAs`）。ツールの前後はプラグインの `tool.execute.before` / `after` が `/mcp/opencode/hook` を呼び、発言の前・会話の始め・終わりの前はバックエンドが走らせる（[context-runtime.md](context-runtime.md)「Pleiad がそろえる会話」）
+
+**無停止の更新**（`core/backends/opencode-held.mjs`。[ADR 0151](adr/0151-zero-downtime-update.md)・[zero-downtime-update/](zero-downtime-update/plan.md)）:
+
+- 共有の `opencode serve` を保持役の子（`policy: 'none'`）に載せる（`AGENT_HOST_OPENCODE_HOLDER`。既定は実行場所の置き場があるとき）。Codex の app-server と違い、話すのは HTTP と SSE なので、保持役に持たせるのはプロセスだけ。
+  stdout は起動の 1 行を読むだけで、記録は来たそばから ack して捨てる
+- 子の札（label）は `{ k: 'opencode-server', v: 1, server: { base, auth, origin, secret }, turns: { <会話の id>: <サーバーの札> } }`。新しいサーバーは札の待ち受けの URL と basic 認証でつなぎ直し（起こさない）、
+  中継の合言葉を前の値にする（OpenCode に渡したプラグインの env と MCP の設定は変えられない）。付け直すターンの会話の中継の呼び出しは、結び付け直すまで待たせる
+- ターンの札（`control.backendCard`）は作業場所・モデル・承認モード・発言を送った時刻（`since`）・渡ったか・途中送信のハッシュ・子の会話・中継の口（url と headers）。
+  会話のシェルの環境変数（秘密情報を含む）は札に入れず、データ置き場の `run/opencode-env-<uuid>.json`（0600）に置いて名前だけを書く
+- 付け直し（`adoptTurn`）は発言を送らず、出来事を溜めながら、会話の発言（`GET /session/{id}/message` の `since` より後）を組み立て直し（画面へは出さない再生）、
+  溜めた出来事を流し、答えていない承認・質問（`GET /permission`・`GET /question`。承認の id はツールの id から決まるので、前のサーバーと同じカードになる）を出し直し、
+  会話の状態（`GET /session/status`）が busy でなければ、入れ替わりの間に終わったとして締める。途中の本文は、取り直した本文と溜めた差分が重ならないよう、次の部品の更新（全文）まで差分を読まない（写し替えの `resync`）
+- ターンの無い引き継ぎでも OpenCode を新しいサーバーへ渡す（`releaseIdle` が手を離す。起こし直しの数秒を省く）。新しいサーバーが別のポートで立ったとき（落ちた後の起こし直しなど）は、
+  付け直したターンが終わってから OpenCode を起こし直す（中継の口の URL が古い）
+- Pleiad が入れ替わる 1〜2 秒のあいだ、プラグインの Hooks と環境変数の呼び出しは、つながらなければ少し待ってやり直す（やり直さないと、その間のツールの前の Hooks を素通りする）。
+  MCP のツールの呼び出しは OpenCode の MCP のクライアントが投げるので、その間に当たったものはツールのエラーになる（Claude Code と同じ）
 
 ## 3. 変えないこと
 
