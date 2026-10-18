@@ -74,7 +74,7 @@ export function createContextMenu() {
       if (item.icon) row.append(item.icon);
       row.append(el('span', 'lbl', item.label));
       if (item.pending) { const label = el('span', 'hint pending-label'); label.append(runMark(t('pending.loading')), t('pending.loading')); row.append(label); }
-      else if (item.hint) row.append(el('span', 'hint', item.hint));
+      else if (item.hint) row.append(typeof item.hint === 'function' ? item.hint() : el('span', 'hint', item.hint));
       // 項目の下の補足（押せない理由など）。右の値（.hint）とは別に、弱い小さな本文の字で全文を折り返す
       if (item.note) row.append(el('span', 'note', item.note));
       if (item.sub) {

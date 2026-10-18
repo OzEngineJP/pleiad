@@ -447,3 +447,16 @@ select.hk-input{border:0;border-radius:var(--r-m);font:inherit;font-size:var(--f
 .hk-stopped .cx-list{margin-top:6px}
 .hk-ask{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .hk-ask .cx-sub{flex:1 1 180px}
+
+/* 取得状態は結果と分けて文字で示す。 */
+.scx-state{display:flex;align-items:center;flex-wrap:wrap;gap:6px;color:var(--ink-weak);font-size:var(--fs-s);overflow-wrap:anywhere}
+.scx-state>span:not(.run):not(.scx-state-mark){flex:1 1 120px;min-width:0}
+.scx-state .btn{padding:3px 10px;font-size:var(--fs-s)}
+.scx-state-mark{flex:none;color:var(--ink);font-weight:600}
+.scx-issues-title{font-size:var(--fs-s);font-weight:600;color:var(--ink)}
+.scx-issues>.scx-state{margin-top:4px}
+.scx-issues>.scx-state-mark{margin-right:6px}
+.scx-issues>.scx-issues{margin-top:6px}
+.scx-place .scx-state{font-size:var(--fs-xs)}
+.scx-empty-result{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:var(--fs-s)}
+.scx-state .run svg,#contextEntry .entry-context-state.run svg{animation-duration:1.2s}

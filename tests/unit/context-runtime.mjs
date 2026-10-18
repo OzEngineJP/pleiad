@@ -96,6 +96,7 @@ export default async function(t) {
     t.ok('別セッションの資格情報では使えない',(await request('tools/list',{},{})).status===401);
     await connection.close();
     t.ok('ターン終了後は接続口を失効',(await request('tools/list')).status===401);
+    await bridge.dispose();
     connection=null;
     host=await startServer({dataDir:path.join(tmp,'data'),env:{AGENT_HOST_BACKENDS:'fake'}});client=await open(host);
     const none={sources:[],excludePaths:[]},kindAs=owner=>({owner,user:none,directory:none});
