@@ -31,6 +31,21 @@ export default function (t) {
   const snapshot = replay.messages(); snapshot[0].text = 'modified';
   t.ok('読み出した配列を書き換えても内部履歴は変わらない', replay.messages()[0].text === 'hello');
 
+  // ツールを挟んだ本文の断片は段落で分け、同じ段の中の断片は連結する（2026-10-18）
+  const sep = createDevinMapper('sep');
+  sep.accept(chunk('agent', '一行目'));
+  sep.accept({ sessionUpdate: 'tool_call', toolCallId: 't1', title: 'run', status: 'running' });
+  sep.accept(chunk('agent', '二行目')); sep.accept(chunk('agent', 'の続き'));
+  sep.accept({ sessionUpdate: 'tool_call', toolCallId: 't2', title: 'run2', status: 'running' });
+  sep.accept(chunk('agent', '別の段'));
+  sep.accept({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: '考え' } });
+  assert.equal(sep.messages()[0].text, '一行目\n\n二行目の続き\n\n別の段');
+  assert.equal(sep.messages()[0].thinking, '考え');
+  sep.accept({ sessionUpdate: 'tool_call', toolCallId: 't3', title: 'run3', status: 'running' });
+  sep.accept({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'の続き' } });
+  assert.equal(sep.messages()[0].thinking, '考え\n\nの続き');
+  t.ok('ツールを挟んだ本文・思考の断片は段落で分ける', true);
+
   const partialEvents = [], partial = createDevinMapper('partial', event => partialEvents.push(event));
   partial.beginTurn('tool updates');
   const patch = (toolCallId, fields) => partial.accept({ sessionUpdate: 'tool_call_update', toolCallId, ...fields });
