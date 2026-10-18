@@ -14,7 +14,7 @@
 
 ```
 core/     Node の HTTP + WebSocket サーバー。バックエンドに依存しない
-  backends/  エージェント 1 種類 = 1 ファイル（claude・codex・antigravity・opencode と、テスト用の fake）。エージェントの記述は agents.mjs、契約（能力の印・イベント）は contract.mjs
+  backends/  エージェント 1 種類 = 1 ファイル（一覧は agents.mjs。テスト用の fake を含む）。契約（能力の印・イベント）は contract.mjs
   ops/       操作の一覧（レジストリ）。画面・MCP・CLI へ外に出す機能の正本（`docs/design.md`「操作の一覧」）
 bin/      CLI（`pleiad`。走っている Pleiad の操作の一覧を使う薄いクライアントと `pleiad mcp`。Node の組み込みだけ。`docs/design.md`「操作の一覧」）
 web/      画面。素の ESM でビルドは無い。サーバーがリクエストごとにディスクから読む
@@ -34,10 +34,11 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_PORT` | 既定 7420。予約済み・使用中なら空きポートへ移る |
 | `AGENT_HOST_BIND` | 既定 `127.0.0.1` |
 | `AGENT_HOST_DATA` | データ置き場（既定 `~/.agent-host`） |
-| `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定はエージェントの記述 `core/backends/agents.mjs` の fake を除く全部 = `claude,codex,antigravity,opencode`） |
+| `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定はエージェントの記述 `core/backends/agents.mjs` の fake を除く全部） |
 | `AGENT_HOST_CODEX_BIN` | codex の実行ファイル（既定 `codex`） |
 | `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |
 | `AGENT_HOST_OPENCODE_BIN` | OpenCode の実行ファイル（既定 `opencode`。npm の包みなら中の `opencode.exe` を直に起こす）。試験は身代わり `node tests/lib/fake-opencode.mjs` |
+| `AGENT_HOST_DEVIN_BIN` | Devin CLI の実行ファイル（既定 `devin`）。試験では身代わりに差し替え、本物の資格情報を使わない |
 | `AGENT_HOST_SHELL_ENV` | `off` なら、デスクトップ版（macOS・Linux）の main がサーバーを起こす前にログインシェルの環境を読み込まない（戻し道。`desktop/shell-env.cjs`・ADR 0213）。読み込み中のシェルには `PLEIAD_RESOLVING_SHELL_ENV=1` を付け、入れ子にしない |
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |

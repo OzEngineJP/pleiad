@@ -800,13 +800,16 @@ Codexの `set_status / set_title / fork` は未接続なので、
 1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`module`・`shortLabel`・`brand`（ロゴ。`web/brand/` に置く）・`cli`
    （`exe`・`binEnv`・`npmPackage`・`installUrl`・`searchDirs`）・`idleCompaction`（会話を離れた後の自動の圧縮の既定。Pleiad が圧縮しないなら null）・
    `contextSources`（エージェントが自分で読む指示・Skills・MCP の読み込み元。`core/context-settings.mjs` の `SOURCES`。新しい形式なら `core/context-scan.mjs` に読み方を足す）。
+   `contextSources: null` は Pleiad が読み込み元を把握しておらず推計できないという意味で、エージェント自身の設定読み込みを抑止する値ではない。
    全部のキーを書く（使わないものは null）。レジストリ（`index.mjs`）・CLI の探し方（`core/cli-installation.mjs`）・自動の圧縮の設定の行
    （`core/compaction-settings.mjs`・`core/ops/settings.mjs`・設定の画面）・画面のロゴと短い名前（`web/agent-brands.mjs`）・委譲の行き先
    （`core/agent-bridge.mjs` の `backend`）は、ここから作るので触らない
 2. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形と、能力の印の全部のキー
 3. **身代わり**（`tests/lib/fake-<id>.mjs`。LLM を呼ばずにプロトコルの形だけを真似る）と、`tests/lib/backend-contracts.mjs` の `RIGS` の 1 行。
    `npm test` の backend-conformance が、全エージェントで同じ共通の契約（1 ターン・履歴の形と uuid・続き・タイトル・分岐・イベントの形）を回す
-4. 対応表を書き直す: `node tests/lib/backend-matrix.mjs --write`
+4. **試験の隔離**。`tests/lib/test-env.mjs` と `tests/lib/server.mjs` で実 CLI の起動・利用者の資格情報の読み出しを防ぐ。
+   そのエージェント固有の身代わり試験を `tests/run.mjs` に登録する。backend-registry は一覧の全件で CLI の差し替え・インストール案内・既定と指定順の登録を確かめる
+5. 対応表を書き直す: `node tests/lib/backend-matrix.mjs --write`
 
 **能力の印を足すとき**は、`contract.mjs` の `CAPABILITIES`（値の形・要るメソッド）・全バックエンドの値・`NO_CAPABILITIES`・
 対応表の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）・その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。

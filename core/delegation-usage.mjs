@@ -4,7 +4,7 @@
 //
 // snapshot() の形（core/delegation-routing.mjs の checkCandidate が読む）:
 //   { [backend]: { available, checkedAt, windows, accounts?, models: { [model]: bool } } }
-//   accounts … Claude で登録したアカウントがあるとき。[{ account: ''（ログイン中）| アカウント id, label, windows, identity, runnable }]
+//   accounts … アカウントを登録したエージェント（ADR 0222）。[{ account: ''（ログイン中）| アカウント id, label, windows, identity, runnable }]
 //   models   … 候補に挙がっているモデルが今の一覧にあるか（無ければ model_unknown で飛ばす）
 
 import { maskEmail } from './usage.mjs';
@@ -27,7 +27,8 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
   let running = null, timer = null, again = false;
 
   async function one(b, wanted) {
-    const entry = { available: installed(b.id), checkedAt: null, windows: [], models: {} };
+    // accountable: アカウントを持てるエージェント（登録が無ければ、選ぶのはログイン中のアカウント）
+    const entry = { available: installed(b.id), checkedAt: null, windows: [], models: {}, accountable: Boolean(b.capabilities?.accounts) };
     if (!entry.available) return entry;
     const models = [...new Set(wanted.filter(c => c.backend === b.id).map(c => c.model))];
     const known = async () => Object.fromEntries(await Promise.all(models.map(async m => [m, await modelKnown(b, m).catch(() => false)])));
@@ -40,16 +41,18 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
     if (!quota?.checkedAt) return entry;
     entry.checkedAt = quota.checkedAt;
     entry.windows = Array.isArray(quota.windows) ? quota.windows : [];
-    if (b.id === 'claude' && Array.isArray(quota.accounts)) {
-      const ids = await claudeIdentities().catch(() => null);
+    if (Array.isArray(quota.accounts)) {
+      // Claude は台帳の持ち主の手がかり（使用量の設定フォルダ）とトークンの有無で見る。ほかのエージェントは使用量の行（エージェントが読んだもの）のまま
+      const ids = b.capabilities?.accounts === 'token' ? await claudeIdentities().catch(() => null) : null;
       entry.accounts = quota.accounts.map(row => {
         const account = row.accountId ?? '';
-        const registered = account ? ids?.accounts?.find(a => a.id === account) : null;
+        const registered = account && ids ? ids.accounts?.find(a => a.id === account) : null;
         // 見出しは人が付けた名前で、メールアドレスを書いていることがある。振り分けの記録はエージェントにも返るので伏せる（ply_usage と同じ）
         return { account, label: maskEmail(row.label), windows: Array.isArray(row.windows) ? row.windows : [],
-          identity: account ? registered?.identity ?? null : ids?.login ?? null,
-          // 登録したアカウントはトークンが無いと会話を回せない。ログイン中のアカウントは使用量が読めていれば回せる
-          runnable: account ? Boolean(registered?.hasToken) : true };
+          ...(Object.hasOwn(row, 'checkedAt') ? { checkedAt: row.checkedAt } : {}),
+          identity: ids ? (account ? registered?.identity ?? null : ids.login ?? null) : row.identity ?? null,
+          // 登録したアカウントは資格情報（Claude はトークン）が無いと会話を回せない。ログイン中のアカウントは使用量が読めていれば回せる
+          runnable: account ? (ids ? Boolean(registered?.hasToken) : row.ready !== false) : true };
       });
     }
     return entry;

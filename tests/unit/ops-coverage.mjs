@@ -38,11 +38,10 @@ export default async function (t) {
   t.ok('5 つの一覧: アカウントの一覧（claudeAccounts）・端末の一覧（remoteDevices）・外に開く設定（setRemoteSettings）も human-only',
     ['claudeAccounts', 'remoteDevices', 'setRemoteSettings', 'compatEndpointDefault', 'mcpAuthStart', 'authLogin'].every((n) => baseline.commands[n] === 'human-only'));
   t.ok('human-only の設定は承認モードの既定（mode）と既定のアカウント（claudeAccount）だけ',
-    registry.settings.filter((x) => x.risk === 'human-only').map((x) => x.key).sort().join() === [...HUMAN_ONLY_SETTINGS].sort().join() && HUMAN_ONLY_SETTINGS.size === 2);
+    registry.settings.filter((x) => x.risk === 'human-only').map((x) => x.key).sort().join() === [...HUMAN_ONLY_SETTINGS].sort().join() && HUMAN_ONLY_SETTINGS.size === 3);
   t.ok('実物の操作の human-only は、WS のコマンドを持たない承認モード・bot のアカウント・秘密の操作（bots.setMode・bots.setAccount（ADR 0222）・routines.rotateSecret・秘密情報と変数の secrets.save・secrets.import・secrets.answerRequest。ADR 0217）だけ（検査用の probe.* を除く）',
-    registry.ops.filter((op) => op.risk === 'human-only' && !op.id.startsWith('probe.')).map((op) => op.id).sort().join() === 'bots.setAccount,bots.setMode,routines.rotateSecret,secrets.answerRequest,secrets.import,secrets.save'
-      && [...HUMAN_ONLY_OPS].sort().join() === 'bots.setAccount,bots.setMode,routines.rotateSecret,secrets.answerRequest,secrets.import,secrets.save'
-      && HUMAN_ONLY.mode.ops.includes('bots.setMode') && HUMAN_ONLY.accounts.ops.includes('bots.setAccount'));
+    registry.ops.filter((op) => op.risk === 'human-only' && !op.id.startsWith('probe.')).map((op) => op.id).sort().join() === [...HUMAN_ONLY_OPS].sort().join() && HUMAN_ONLY_OPS.size === 12 && HUMAN_ONLY.mode.ops.includes('bots.setMode')
+      && HUMAN_ONLY.accounts.ops.includes('bots.setAccount'));
   const moved = { worktreeSplit: ['worktrees.split', 'write'], worktreeKeep: ['worktrees.keep', 'write'], worktreeArchive: ['worktrees.archive', 'write'], worktreeRestore: ['worktrees.restore', 'write'],
     worktreeDiscard: ['worktrees.discard', 'write'], setNotifyPc: ['notify.setPc', 'write'], setNotifyDevice: ['notify.setDevice', 'write'],
     readHook: ['hooks.read', 'read'], readPlyHook: ['hooks.readPly', 'read'], compatEndpointRecheck: ['compatEndpoints.recheck', 'write'], compatEndpointDelete: ['compatEndpoints.delete', 'guarded'],

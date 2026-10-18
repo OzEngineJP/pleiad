@@ -268,19 +268,19 @@
     }
   },
   "bridge": {
-    "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind (the kind of work). If you omit backend, Pleiad chooses the target (backend, model, Claude account) from the kind, the difficulty, and quota usage, and explains the choice in the returned routing. Give backend ({{backends}}) only when a specific target is required. To choose the Claude account as well, give account (the account value from ply_usage) together with backend: \"claude\". This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace. Set isolate: true only when the user instructs you to use a worktree. If you plan to run children that write to the same repository in parallel, ask the user whether to use worktrees. Omission keeps the current workspace. A child in a worktree leaves changes on its branch; merging them back into the original workspace is the requester's job. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old). Do not delegate again merely to acknowledge a task completion. Give ply_delegate a short title for the background list and child conversation. Use delegation only when authorized by the user's task and applicable instructions.",
+    "instructions": "Pleiad delegation tools (ply_agents MCP): use ply_delegate to create a Pleiad-managed child conversation. Always give kind (the kind of work). If you omit backend, Pleiad chooses the target (backend, model, agent account) from the kind, the difficulty, and quota usage, and explains the choice in the returned routing. Give backend ({{backends}}) only when a specific target is required. To choose the agent account as well, give account (the account value from ply_usage) together with backend. This is distinct from native spawn_agent / agent_job / Agent and their IDs. Use only ply_task_* with ply-task- IDs. ply_delegate returns immediately; Pleiad delivers completion results to this conversation in a later turn. You may continue other work or finish your response. ply_task_wait waits at most 30 seconds, and returns as soon as the child is waiting for a human approval (status: waiting); then tell the user which conversation holds the approval instead of waiting again. ply_task_send queues an additional instruction on the same child conversation. Pass the necessary task context explicitly; private reasoning and the parent transcript are not copied. cwd defaults to this conversation's workspace. Set isolate: true only when the user instructs you to use a worktree. If you plan to run children that write to the same repository in parallel, ask the user whether to use worktrees. Omission keeps the current workspace. A child in a worktree leaves changes on its branch; merging them back into the original workspace is the requester's job. ply_usage reads each backend's quota usage (read-only, up to 60 seconds old). Do not delegate again merely to acknowledge a task completion. Give ply_delegate a short title for the background list and child conversation. Use delegation only when authorized by the user's task and applicable instructions.",
     "title": "A short name for the list and child conversation title, about 30 characters.",
     "tools": {
-      "ply_delegate": "Start a Pleiad-managed task. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. Always give kind. If backend is omitted, Pleiad chooses the target from the kind, the difficulty, and quota usage, and explains it in routing (if no candidate is usable this fails; then retry with an explicit backend or ask the user). An explicit backend pins the target and allows model and effort (model and effort only with backend). account is allowed only with backend: \"claude\" and pins the Claude account the child runs on (the account value of a Claude row in ply_usage: login or acct-...). An account that is not registered, has no token, or is known to be out of quota is an error that lists the valid names; it is never silently replaced with another account. account cannot be combined with host. model is a name from that backend's list (for Claude: sonnet, opus, opus[1m], haiku, fable; an official ID such as claude-sonnet-5-5 is matched to the same family's row). A name that matches nothing is an error that lists the valid names, not a silent fallback to the default. The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here. isolate is an optional boolean: true runs this child in its own worktree next to the repository, on a dedicated branch; false keeps the current workspace. Omission keeps the current workspace. Set true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. A child with a worktree writes only inside it and commits when done. The requester merges.",
+      "ply_delegate": "Start a Pleiad-managed task. Returns taskId immediately; completion is delivered automatically. Separate from native spawn_agent. Always give kind. If backend is omitted, Pleiad chooses the target from the kind, the difficulty, and quota usage, and explains it in routing (if no candidate is usable this fails; then retry with an explicit backend or ask the user). An explicit backend pins the target and allows model and effort (model and effort only with backend). account is allowed with a backend that supports accounts and pins the agent account the child runs on (the account value of that agent’s row in ply_usage: login or acct-...). An account that is not registered, has no credentials, or is known to be out of quota is an error that lists the valid names; it is never silently replaced with another account. account cannot be combined with host. model is a name from that backend's list (for Claude: sonnet, opus, opus[1m], haiku, fable; an official ID such as claude-sonnet-5-5 is matched to the same family's row). A name that matches nothing is an error that lists the valid names, not a silent fallback to the default. The child inherits the caller approval strength without exceeding it; a stronger child needs one human approval here. isolate is an optional boolean: true runs this child in its own worktree next to the repository, on a dedicated branch; false keeps the current workspace. Omission keeps the current workspace. Set true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. A child with a worktree writes only inside it and commits when done. The requester merges.",
       "ply_task_status": "Read a Pleiad task and its result. Use nextOffset to read the remainder of a long result. status: waiting means the child is stopped on a human approval; the same card is also shown in this conversation, so tell the user where to approve.",
       "ply_task_wait": "Wait up to 30 seconds for a Pleiad task; returns immediately once the child is waiting for a human approval (status: waiting). A still-running result is not a failure; completion will also be delivered automatically. On waiting, stop waiting and tell the user which conversation holds the approval.",
-      "ply_task_send": "Queue an additional instruction for the same Pleiad child conversation, including after completion. backend, model, effort and account change the child's settings from its next turn; message may be omitted when only changing settings. account is for Claude children only and takes the account value from ply_usage.",
+      "ply_task_send": "Queue an additional instruction for the same Pleiad child conversation, including after completion. backend, model, effort and account change the child's settings from its next turn; message may be omitted when only changing settings. account is for children whose agent supports accounts and takes the account value from ply_usage.",
       "ply_task_cancel": "Cancel a Pleiad task and its descendant Pleiad tasks.",
       "ply_task_list": "List only the Pleiad tasks created by this conversation. Does not list native subagent jobs.",
-      "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old. The account of each Claude account row is the name to give as account to ply_delegate and ply_task_send (login is the signed-in account). Rows with runnable: false have no token and cannot be chosen."
+      "ply_usage": "Read subscription quota usage (usedPercent, resetsAt) per backend, or all usable backends when backend is omitted. Call before heavy or parallel delegation and avoid backends that are close to their limit. Values may be up to 60 seconds old. The account of each agent account row is the name to give as account to ply_delegate and ply_task_send (login is the signed-in account). Rows with runnable: false have no token and cannot be chosen."
     },
     "hostOffline": "offline",
-    "hosts": "Write a Pleiad host's name in host to hand the work to that host (its AI works on that host's PC). Available hosts: {{hosts}}. cwd and isolate are interpreted with the host's paths and rules (omit cwd for the host's home folder). Omit backend and the host chooses the agent. Approvals for the host's child also appear in this conversation (the user answers them; you cannot). A request to an offline host fails immediately. ply_task_status, ply_task_wait, ply_task_send and ply_task_cancel work on the host's task with the same taskId (send only a message to a host task). account is a Claude account on this PC, so it cannot be combined with host. Omit host to run it on this PC.",
+    "hosts": "Write a Pleiad host's name in host to hand the work to that host (its AI works on that host's PC). Available hosts: {{hosts}}. cwd and isolate are interpreted with the host's paths and rules (omit cwd for the host's home folder). Omit backend and the host chooses the agent. Approvals for the host's child also appear in this conversation (the user answers them; you cannot). A request to an offline host fails immediately. ply_task_status, ply_task_wait, ply_task_send and ply_task_cancel work on the host's task with the same taskId (send only a message to a host task). account is an agent account on this PC, so it cannot be combined with host. Omit host to run it on this PC.",
     "invalidTool": "Invalid tool or arguments.",
     "kindsIntro": "kind (the kind of work):",
     "kinds": {
@@ -315,7 +315,7 @@
       "cancelPending": "The request to stop this task has not reached the host \"{{host}}\" yet (it is sent when the connection returns).",
       "hostOnlyApproval": "Waiting for an approval that has to be answered on the host \"{{host}}\" (such as a settings change). Ask the user to answer it on the host (or open the child conversation).",
       "settingsUnsupported": "Changing the settings of a task on a host (backend, model, effort, account) is not supported yet. Send only a message.",
-      "accountUnsupported": "account chooses a Claude account on this PC, so it cannot be used when handing work to a host (host). Retry without account."
+      "accountUnsupported": "account chooses an agent account on this PC, so it cannot be used when handing work to a host (host). Retry without account."
     },
     "readOnly": "Pleiad child tasks cannot be started in read-only or plan mode.",
     "denied": "The delegation was not allowed.",
@@ -324,9 +324,9 @@
     "childDeleted": "The delegated child conversation has been deleted. To continue, delegate again.",
     "backendDisabled": "The specified backend is not enabled.",
     "modelUnknown": "model_unknown: The model {{model}} is not in the current {{backend}} model list (available: {{models}}). Fix or omit model and delegate again.",
-    "accountUnknown": "account_unknown: the Claude account {{account}} is not registered (available: {{accounts}}; the account values from ply_usage). Nothing was changed.",
-    "accountNoToken": "account_no_token: the Claude account {{account}} has no sign-in token, so the child cannot run on it (available: {{accounts}}). Nothing was changed.",
-    "accountQuotaFull": "quota_full: the quota for {{model}} on the Claude account {{account}} is used up. Choose another account or omit account. Nothing was changed.",
+    "accountUnknown": "account_unknown: the agent account {{account}} is not registered (available: {{accounts}}; the account values from ply_usage). Nothing was changed.",
+    "accountNoToken": "account_no_token: the agent account {{account}} has no sign-in token, so the child cannot run on it (available: {{accounts}}). Nothing was changed.",
+    "accountQuotaFull": "quota_full: the quota for {{model}} on the agent account {{account}} is used up. Choose another account or omit account. Nothing was changed.",
     "cwdNotDirectory": "cwd must be a directory.",
     "endpointDeleted": "The endpoint of the requesting conversation has been deleted. Choose an endpoint again in the requesting conversation.",
     "aborted": "Aborted.",
@@ -372,7 +372,7 @@
     "stopping": "The task is stopping. Wait a moment.",
     "modelUnknown": "model_unknown: model {{model}} is not in the current {{backend}} model list (available: {{models}}). Nothing was changed.",
     "quotaFull": "quota_full: the quota for {{model}} on {{backend}} is used up. Nothing was changed.",
-    "accountClaudeOnly": "account is only for Claude children (this child runs on {{backend}}). Give it together with backend: \"claude\", or omit account. Nothing was changed.",
+    "accountClaudeOnly": "This child’s agent ({{backend}}) does not support account selection. Omit account. Nothing was changed.",
     "effortUnknown": "effort_unknown: thinking effort {{effort}} is not available for {{model}} on {{backend}} (available: {{choices}}). Nothing was changed.",
     "childStarting": "The child's turn is starting. Nothing was changed. Wait a moment and try again.",
     "settingsMoved": "While the approval was pending, the child's settings or the task's state changed. Nothing was changed. Check ply_task_status and try again.",
@@ -479,8 +479,8 @@
     "kindRequired": "Give kind as one of the following.\n{{kinds}}",
     "backendRequired": "Automatic delegation routing is turned off. Give backend ({{backends}}).",
     "pinOnly": "model and effort can be used only with backend. Omit model and effort to let Pleiad choose.",
-    "accountPinOnly": "account can be used only together with backend: \"claude\". Omit account to let Pleiad choose.",
-    "accountClaudeOnly": "account can be used only with backend: \"claude\" (given backend: {{backend}}). Omit account or set backend to claude.",
+    "accountPinOnly": "account can be used only together with backend. Omit account to let Pleiad choose.",
+    "accountClaudeOnly": "Agent {{backend}} does not support account selection. Omit account.",
     "exhausted": "No delegation target is usable (kind {{kind}}, difficulty {{difficulty}}, deferral threshold {{avoidPercent}}%). Candidate and account reasons:\n{{skipped}}\nRetry with an explicit backend, or ask the user.",
     "modelUnavailable": "The model {{model}} ({{backend}}) chosen by routing is not available. Retry with an explicit backend."
   },
@@ -535,7 +535,7 @@
       "codexPolicy": "Commands Codex rejects before running"
     },
     "formerDelegateName": "How to delegate",
-    "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. When the user asks for a specific Claude account, write backend: \"claude\" and account (the account value from ply_usage). If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool). Give ply_delegate a short title for the background list. Set isolate: true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. Omission uses the current workspace. When a completion notice or ply_task_status says \"Workspace: worktree … (not merged)\", merging that workspace branch back into the original workspace is your job; resolve conflicts yourself. Pleiad cleans up afterwards.",
+    "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. When the user asks for a specific agent account, write backend: \"claude\" and account (the account value from ply_usage). If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool). Give ply_delegate a short title for the background list. Set isolate: true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. Omission uses the current workspace. When a completion notice or ply_task_status says \"Workspace: worktree … (not merged)\", merging that workspace branch back into the original workspace is your job; resolve conflicts yourself. Pleiad cleans up afterwards.",
     "commandLifetime": "Run commands with a time limit. Start persistent processes (servers and graphical apps) in the background, record their PIDs, and stop them yourself; do not wait indefinitely for exit with commands such as `Start-Process -Wait`.",
     "codexPolicy": "Even in Codex modes without approvals (full, YOLO), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on)."
   },
@@ -558,6 +558,37 @@
     "required": "required"
   },
   "ops": {
+    "accounts": {
+      "list": {
+        "summary": "List registered accounts",
+      "backend": "Agent ID"
+      },
+      "create": {
+        "summary": "Add an account",
+      "backend": "Agent ID",
+      "name": "Display name for the account"
+      },
+      "rename": {
+        "summary": "Rename an account",
+      "id": "Registered account ID",
+      "name": "Display name for the account"
+      },
+      "remove": {
+        "summary": "Remove a registered account",
+      "id": "Registered account ID"
+      },
+      "login": {
+        "summary": "Sign in to a registered account",
+      "attempt": "Sign-in attempt ID, matched when cancelling",
+      "id": "Registered account ID",
+      "open": "Open sign-in in the browser on this PC"
+      },
+      "cancel": {
+        "summary": "Cancel account sign-in",
+      "attempt": "Sign-in attempt ID, matched when cancelling",
+      "id": "Registered account ID"
+      }
+    },
     "app": {
       "status": {
         "summary": "Return Pleiad's version, start time, display language, and the number of running tasks."
@@ -697,7 +728,7 @@
         "cancel": "true cancels the reservation.",
         "worktreePending": "Cancel the remembered worktree plan. Only a person (the screen).",
         "mode": "Approval mode id. Only a person (the screen); an agent gets NEEDS_UI.",
-        "account": "Claude account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "account": "agent account id. Only a person (the screen); an agent gets NEEDS_UI.",
         "endpoint": "Compatible endpoint id. Only a person (the screen); an agent gets NEEDS_UI.",
         "remember": "Remember the chosen value as the default. Only a person (the screen); an agent uses settings.set."
       },
@@ -783,6 +814,7 @@
       },
       "models": {
         "summary": "List an agent's models (id, name, note).",
+        "account": "Registered account ID; omit for the signed-in account",
         "backend": "Agent id. Omit for the default agent.",
         "cwd": "Working folder (when the model list depends on the place).",
         "limit": "How many to return (default 30, max 100).",
@@ -794,6 +826,7 @@
       },
       "efforts": {
         "summary": "List the thinking-effort values an agent offers (id, name, note).",
+        "account": "Registered account ID; omit for the signed-in account",
         "backend": "Agent id. Omit for the default agent.",
         "model": "Model id (the steps depend on the model).",
         "cwd": "Working folder.",
@@ -1141,11 +1174,11 @@
         "taskId": "The task id.",
         "offset": "Where to start reading the result (nextOffset from the previous result)."
       },
-      "delegate": { "summary": "Delegate work to a child conversation.", "kind": "Kind of work.", "task": "Request for the child.", "title": "Short title for the child.", "backend": "Target agent.", "context": "Background for the child.", "cwd": "Working directory.", "model": "Target model.", "effort": "Reasoning effort.", "isolate": "Whether to run the child in a worktree (true only when the user asked for one).", "host": "Name of the host (another PC's Pleiad connected remotely) to hand the work to. Omit to run on this PC.", "account": "Claude account to run the child on (the account value from ply_usage; only with backend claude)." },
+      "delegate": { "summary": "Delegate work to a child conversation.", "kind": "Kind of work.", "task": "Request for the child.", "title": "Short title for the child.", "backend": "Target agent.", "context": "Background for the child.", "cwd": "Working directory.", "model": "Target model.", "effort": "Reasoning effort.", "isolate": "Whether to run the child in a worktree (true only when the user asked for one).", "host": "Name of the host (another PC's Pleiad connected remotely) to hand the work to. Omit to run on this PC.", "account": "agent account to run the child on (the account value from ply_usage; only with backend claude)." },
       "taskStatus": { "summary": "Read the status and result of your child task.", "taskId": "Child task id.", "offset": "Result offset." },
       "taskWait": { "summary": "Wait up to 30 seconds for your child task.", "taskId": "Child task id.", "seconds": "Seconds to wait, at most 30." },
       "taskSend": { "summary": "Send another instruction to your child task, or change its agent, model or thinking effort.", "taskId": "Child task id.", "message": "Additional instruction. Omit it to change settings only.",
-        "backend": "Switch the child's agent (the conversation is handed over; from the next turn).", "model": "Change the child's model.", "effort": "Change the child's thinking effort.", "account": "Change the child's Claude account (the account value from ply_usage; from the next turn)." },
+        "backend": "Switch the child's agent (the conversation is handed over; from the next turn).", "model": "Change the child's model.", "effort": "Change the child's thinking effort.", "account": "Change the child's agent account (the account value from ply_usage; from the next turn)." },
       "taskCancel": { "summary": "Stop your child task.", "taskId": "Child task id." },
       "taskList": { "summary": "List your child tasks." },
       "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." },
@@ -1166,7 +1199,7 @@
         "taskId": "Id of the task to redo.",
         "candidate": "The candidate (<agent>:<model>). Pick one from the candidates of delegation.routing.",
         "stop": "Whether to stop the original task if it is running (required then).",
-        "account": "Claude account id. Only a person (the screen); an agent gets NEEDS_UI.",
+        "account": "agent account id. Only a person (the screen); an agent gets NEEDS_UI.",
         "approved": "Whether the stronger-approval-mode confirmation was done. Only a person (the screen); an agent gets NEEDS_UI."
       },
       "routing": {
@@ -1797,6 +1830,7 @@
     "dryRunNote": "This is a trial run of a routine. Do not post to any channel; answer in this conversation with what you would do and the result (you are running in a read-only mode)."
   },
   "settings": {
+    "account": "Default registered account per agent (human only)",
     "locale": "Display language (auto follows the OS).",
     "voice": "Call mode settings (speech-to-text and text-to-speech models and voice, language, per-call and per-day call length limits, echo cancellation). Only the fields you pass are overlaid; a null field returns to its default. Raising the limits needs the user's approval. The OpenRouter key is not handled here.",
     "linkOpen": "Where links open (inapp is the built-in browser, external is the default browser).",
@@ -1812,7 +1846,7 @@
     "model": "The default model for new conversations.",
     "effort": "The default thinking depth for new conversations.",
     "mode": "The default approval mode (only a human changes it).",
-    "claudeAccount": "The default Claude account (an id; no token. Only a human changes it).",
+    "claudeAccount": "The default agent account (an id; no token. Only a human changes it).",
     "repoDefaults": "Defaults remembered for each repository when a message is sent (read only).",
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent). delegatedHeadroom is the room for a delegated Claude child: it is compacted once its context passes its fixed part (the size of its first request) plus this many tokens (0 = off, otherwise 30000 to 1000000)."

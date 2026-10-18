@@ -552,6 +552,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
    プラグインの「変更あり」は右上の強い字の点（紙の色の 2px の切り欠き）。件数は字にせず名前にだけ入れる。
    内蔵ブラウザーの操作中は右上の走っている弧（§6。14px の紙の色の丸の中に半径 4.4・線 1.5） */
 #contextEntry,#browserEntry{position:relative}
+.entry-context-state{position:absolute;bottom:-2px;right:-3px;display:flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);font-size:var(--fs-xs);font-weight:600;line-height:1;pointer-events:none}
+.entry-context-state.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 .entry-dot{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;color:var(--ink-strong);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
 .entry-run.run{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
 .entry-run.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
@@ -2146,3 +2148,5 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:480px){.cw-card .card-actions .res.cw-live{flex-basis:100%}}
 @media (max-width:480px){.card-head:has(.relay-host){flex-wrap:wrap}.card-head:has(.relay-host) .desc{flex-basis:100%;order:3;white-space:normal}.relay-host{margin-left:auto}
   .remote-origin{flex-basis:100%;order:99;white-space:normal;font-size:var(--fs-xs)}}
+
+.pop .li .hint.context-entry-status{max-width:65%;white-space:normal;overflow:visible;text-overflow:clip;font-family:inherit}

@@ -17,6 +17,8 @@ Claude では会話のメタ情報の正本が `~/.claude`（SDK ネイティブ
 
 ログインはサイドバー下の「バックエンド認証」から行う（`~/.codex/auth.json` は codex が書く）。
 
+設定の Codex の「アカウント」から追加してログインすると、会話ごとに使うアカウントを選べる。選ばない会話は現在の CLI ログインを使う。登録したアカウントは認証と app-server を分け、CLI の設定・会話の記録・書き手のロックを共有する。Windows ではファイルのシンボリックリンクを作れる環境が必要。使用量の枠もアカウントごとに出る。
+
 承認モードは「都度確認」「auto」「全部自動」「YOLO」「読むだけ」。
 
 - 「全部自動」は作業ディレクトリ内の制限を残して確認を省く。
@@ -34,12 +36,18 @@ Google のサブスクリプション枠（AI Pro / Ultra）を使える唯一�
 
 `agy` のヘッドレスには対話の承認が無いので、選べる承認モードは「全部自動」だけ。`--dangerously-skip-permissions` を付けない限りツールは黙って拒否されるため、「計画だけ」「編集は自動」「都度確認」は出さない。思考は流れず、ツールは終わってから出る。本文は逐次流れるので、会話の見え方は他と変わらない。`agy` に一覧も履歴も無いため、会話の控えは Pleiad が `AGENT_HOST_DATA` の下に書く。
 
+Antigravity 1.4.2 の複数アカウント切替は未対応。CLI とアプリが OS の認証を共有するため、Pleiad だけで認証を安全に分離できない。別のアカウントを同時に使う場合は、別の OS ユーザーや仮想マシンで環境を分ける（[認証の公式説明](https://www.antigravity.google/docs/install?tab=cli)、[ADR 0222](adr/0222-agent-accounts-and-provider-quota.md)）。
+
 ## OpenCode
 
 OpenCode（`opencode`）の接続先をそのまま使う。OpenCode Zen の無料のモデルはログイン無しで使え、ChatGPT Pro/Plus・GitHub Copilot・API キーの接続先は端末の
 `opencode auth login` でつなぐ（「ログイン」を押すとそのコマンドが出る。終わると表示が切り替わる）。外すのも端末の `opencode auth logout`。
 
-Pleiad は OpenCode のサーバー（`opencode serve`）を 1 本だけ起こし、全部の会話で使う（1 本で約 760 MB）。利用者の `opencode.json`（MCP・権限・指示）はそのまま効き、
+複数のログインを使う場合は、設定の OpenCode の「アカウント」から追加する。Pleiad が表示する専用のコマンドを、Pleiad が動いている PC の端末で実行してログインする。会話ごとにアカウントを選べ、切替時には保存した会話を引き継いで新しい実行区間を始める。既存の OpenCode のログインは書き換えない。
+
+使用枠は ChatGPT と GitHub Copilot の OAuth 接続から読み取る。枠は接続先ごとに表示し、委譲では選ぶモデルの接続先に効く枠だけを使う。API キー・未対応の接続先・期限切れの OAuth など、読めない枠は不明と理由を出す。無料モデルの使用量を他の接続先の枠で代用しない。
+
+Pleiad は OpenCode のサーバー（`opencode serve`）を、現在の CLI ログインでは 1 本共有する。登録したアカウントは認証・設定・データの置き場とサーバーを分ける。利用者の `opencode.json`（MCP・権限・指示）はそのまま効き、
 Pleiad は自分のプラグインとツール（委譲・操作の一覧・コンピューターの操作・ブラウザー）だけを足す。会話は OpenCode の側に残るので、OpenCode の TUI からも見える。
 
 承認モードは「都度確認」「編集は自動」「全部自動」「YOLO」「計画のみ」。「全部自動」は作業ディレクトリの外へのアクセスを断る。
@@ -52,6 +60,34 @@ Pleiad を更新しても、走っている OpenCode のターンは止まらな
 そのため、そのターンだけ専用の OpenCode を起こす（起動の数秒が足される）。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。
 
 互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または `opencode.json` の `provider`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
+
+## Devin CLI
+
+ローカルの Devin CLI（`devin`）へ ACP で接続する。クラウドの Devin セッションを操作する接続ではない。
+[公式のインストール手順](https://docs.devin.ai/cli)に従い、Pleiad が動く PC に CLI を入れる。
+
+- Windows: 公式の x64 / ARM64 インストーラー、または PowerShell の `irm https://static.devin.ai/cli/setup.ps1 | iex`。
+- macOS / Linux: `curl -fsSL https://cli.devin.ai/install.sh | bash`。macOS は Homebrew の `brew install --cask devin-cli` も使える。
+
+Windows のインストール先 `%LOCALAPPDATA%\devin\cli\bin` と、macOS / Linux の `~/.local/bin`・Homebrew の置き場も探す。
+別の場所の CLI は `AGENT_HOST_DEVIN_BIN` で指定できる。
+
+ログインは同じ PC の端末で `devin auth login` を実行する（[公式コマンド一覧](https://docs.devin.ai/cli/reference/commands)）。
+Pleiad の画面からのログイン、複数アカウントの切替は未対応。
+
+Devin CLI のモデルは、モデル系列の代表と、思考の強さ・速度が別の選択肢になっている。モデル名の末尾だけを強さとして切り出さず、CLI が返す選択肢を使う
+（[モデルの公式説明](https://docs.devin.ai/cli/models)、[ACP 接続の公式説明](https://docs.devin.ai/cli/acp/zed)）。
+モデルの一覧には有料の候補も出す。既定は現在のカタログで無料と確認できる SWE-2 High を優先し、無ければ別の無料候補を使う。
+無料の既定が無い場合や有料モデルを使う場合は、モデルを明示的に選ぶ。選んだモデル・思考・標準速度を ACP が確認しない場合は開始しない。
+カタログに載っていても ACP が対応する選択肢を返さないモデルは使えない。
+無料表示はアカウント・時期によって変わる。2026-10-18 の接続確認では `swe-2-high`・`swe-2-medium`・`swe-2-max` が Free と返った。
+利用上限や請求額を保証する表示ではなく、残り使用枠を取得できないときは「不明」とする。
+
+Pleiad が読むネイティブ設定の一覧が不明なときは、指示量や MCP の一覧を推定しない。
+これは Devin 自身がネイティブ設定を読まないという保証ではない。Pleiad 管理のコンテキストを受け取れない場合は担当の切替を無効にし、
+保存済みの担当が Pleiad でも、この会話では適用されない理由を表示する。
+通常の会話では利用者のネイティブ設定とログインを保ち、会話データの置き場だけを Pleiad 専用に分ける。
+Windows では CLI 本体が予期せず先に終了した場合、既存の `taskkill` による終了処理だけでは残った子プロセスをすべて回収できる保証はない。
 
 ## コンピューターの操作
 

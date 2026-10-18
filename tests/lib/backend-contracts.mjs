@@ -21,6 +21,7 @@ export const RIGS = {
   codex: async () => ({ env: { AGENT_HOST_BACKENDS: 'codex', AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"` }, prompt: (text) => text }),
   antigravity: async () => ({ env: { AGENT_HOST_BACKENDS: 'antigravity', AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"` }, prompt: (text) => text }),
   opencode: async () => ({ env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"` }, prompt: (text) => text }),
+  devin: async () => ({ env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"` }, prompt: (text) => text }),
 };
 
 export const CAPABILITY_CONTRACTS = {
@@ -33,22 +34,22 @@ export const CAPABILITY_CONTRACTS = {
   liveModel: ['server-delegation-settings', 'server-ux'],
   liveMode: ['server-ux'],
   hostTools: ['event-session-id'],
-  approvals: ['computer-policy', 'server-antigravity'],
+  approvals: ['computer-policy', 'server-antigravity', 'devin-acp', 'server-devin'],
   alwaysAllow: ['server-fake'],
-  mcpApproval: ['server-codex'],
+  mcpApproval: ['server-codex', 'server-devin'],
   login: ['server-codex', 'server-fake'],
-  claudeAccounts: ['server-claude-accounts'],
+  accounts: ['server-claude-accounts', 'agent-accounts', 'codex-accounts', 'opencode-accounts', 'server-agent-accounts', 'server-agent-account-adopt'],
   compatEndpoints: ['compat-endpoints'],
   compact: ['server-compaction', 'server-codex-compaction'],
   autoCompactWindow: ['server-compaction-delegated'],
   promptSuggestions: ['server-prompt-suggestions'],
   plyAgents: ['agent-tasks'],
-  plyContext: ['server-agy-context', 'server-opencode-context'],
+  plyContext: ['server-agy-context', 'server-opencode-context', 'context-owner-capability'],
   computerUse: ['computer-bridge'],
   shell: ['server-shell'],
-  effortInModelId: ['effort'],
+  effortInModelId: ['effort', 'devin-models', 'server-devin'],
   instructionsAtStart: ['bot-dispatch'],
-  failureDiagnostics: ['server-antigravity'],
+  failureDiagnostics: ['server-antigravity', 'server-devin'],
   handover: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'],
 };
 

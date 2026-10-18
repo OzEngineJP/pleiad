@@ -1,6 +1,96 @@
 {
   "ops": [
     {
+      "id": "accounts.cancel",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "5bf79d5ee491"
+    },
+    {
+      "id": "accounts.create",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "7d76517c1322"
+    },
+    {
+      "id": "accounts.list",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "85db2d737bea"
+    },
+    {
+      "id": "accounts.login",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "7e16bba9e4c6"
+    },
+    {
+      "id": "accounts.remove",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "5a99fff8b352"
+    },
+    {
+      "id": "accounts.rename",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "9ab342f94869"
+    },
+    {
       "id": "agents.authStatus",
       "risk": "read",
       "riskOf": false,
@@ -38,7 +128,7 @@
         }
       },
       "legacyCommand": "efforts",
-      "input": "1d0cc7c623e6"
+      "input": "35373f372e54"
     },
     {
       "id": "agents.list",
@@ -78,7 +168,7 @@
         }
       },
       "legacyCommand": "models",
-      "input": "5d455995ab0e"
+      "input": "4abb00a8a101"
     },
     {
       "id": "agents.modes",
@@ -4631,6 +4721,15 @@
   ],
   "settings": [
     {
+      "key": "account",
+      "risk": "human-only",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "account"
+      ]
+    },
+    {
       "key": "addedContext",
       "risk": "guarded",
       "riskOf": false,
@@ -4889,6 +4988,13 @@
     }
   ],
   "settingPolicy": {
+    "account": {
+      "human": "human-only=allow",
+      "agent-unbound": "human-only=hidden",
+      "agent-bound-ask": "human-only=hidden",
+      "agent-bound-never-full": "human-only=hidden",
+      "agent-bound-readonly": "human-only=hidden"
+    },
     "agentSitePermissions": {
       "human": "write=allow guarded=allow",
       "agent-unbound": "write=allow guarded=deny:NEEDS_UI",

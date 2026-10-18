@@ -194,6 +194,14 @@ const SUITES = [
   // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
   // core/backends/ の外のエージェントの id の直書き（ラチェット）
   './unit/backend-contract.mjs',
+  './unit/backend-registry.mjs',
+  './unit/backend-test-env.mjs',
+  './unit/context-owner-capability.mjs',
+  './unit/devin-models.mjs',
+  './unit/devin-acp.mjs',
+  './unit/devin-config.mjs',
+  './unit/devin-normalize.mjs',
+  './unit/server-devin.mjs',
   './unit/backend-conformance.mjs',
   './unit/backends-lint.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
@@ -317,6 +325,7 @@ const SUITES = [
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   './unit/composer-settings.mjs',
   './unit/context-transports.mjs',
+  './unit/context-warm.mjs',
   './unit/context-runtime.mjs',
   // 外部 MCP の認証（担当が Pleiad のとき）。秘密の置き場、OAuth はローカルのモックの認可サーバー・MCP だけと話す
   './unit/mcp-secret-store.mjs',
@@ -598,6 +607,16 @@ const SUITES = [
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
   './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
+  './unit/agent-accounts.mjs',
+  './unit/codex-accounts.mjs',
+  './unit/opencode-accounts.mjs',
+  './unit/opencode-usage.mjs',
+  './unit/server-agent-accounts.mjs',
+  './unit/agent-accounts-ui.mjs',
+  './unit/account-backend-i18n.mjs',
+  './unit/opencode-adopt.mjs',
+  './unit/server-agent-account-adopt.mjs',
+  './unit/antigravity-accounts.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',
   // Claude Agent SDK を配布物に入れず npm から取る（ADR 0208）: 固定の版と package-lock・配布の設定から外す行／integrity・外へ出るパス・途中で止まった展開・オフライン・版の切り替え・peer 依存の解決・同意

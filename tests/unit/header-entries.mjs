@@ -47,6 +47,24 @@ export default async function (t) {
   assert.equal(button.hidden, true, '会話を選んでいないときは出さない');
   t.ok('プラグイン: 件数は title と名前にだけ、変更ありは右上の点（変更がある間だけ）。管理していない会話は件数を入れない', true);
 
+  // 取得中・失敗は件数の代わりに状態を読み、変更ありの点と共存する。
+  for (const [status, word] of [['loading', '読み込み中…'], ['refreshing', '更新中…'], ['error', '読み取れませんでした']]) {
+    const text = contextEntryText({ report, summary, changed: true, status });
+    assert.equal(text.title, `この会話のプラグイン · ${word} · 変更あり`);
+    assert.equal(text.label, `プラグイン · ${word} · 変更あり`);
+    paintContextEntry(button, { visible: true, report, summary, changed: true, status });
+    assert.equal(button.querySelectorAll('.entry-dot').length, 1);
+    assert.equal(button.querySelectorAll('.entry-context-state').length, 1);
+    assert.equal(button.querySelector('.entry-context-state').getAttribute('aria-hidden'), 'true');
+    assert.equal(button.dataset.contextStatus, word, '狭い画面のメニューも同じ状態文');
+  }
+  paintContextEntry(button, { visible: true, report, summary, changed: true });
+  assert.equal(button.querySelectorAll('.entry-context-state').length, 0, '完了で状態印を外す');
+  assert.equal(button.getAttribute('aria-label'), 'プラグイン 12 変更あり', '完了で件数に戻す');
+  const unknown = contextEntryText({ report: native, summary: 'エージェント任せ', status: 'nativeUnknown' });
+  assert.equal(unknown.title, 'この会話のプラグイン：エージェント任せ · 指示ファイルを確認できません');
+  t.ok('プラグインの待機・更新・失敗を名前と右下の印に示し、変更ありと共存。完了で件数に戻す', true);
+
   // ---- 近道
   const key = (over) => ({ key: 'B', ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, isComposing: false, keyCode: 66, defaultPrevented: false, ...over });
   assert.equal(isBrowserShortcut(key(), false), true, 'Ctrl+Shift+B');

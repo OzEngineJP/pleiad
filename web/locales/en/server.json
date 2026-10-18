@@ -55,8 +55,31 @@
     "tokenRequired": "A token is required (use the URL printed at startup)."
   },
   "accounts": {
+    "backend": {
+      "inUse": "The {{agent}} account is in use. Wait for its operations to finish and try again.",
+      "inUseByTurn": "The {{agent}} account is in use by a conversation or background command. Wait for it to finish and try again.",
+      "removing": "The {{agent}} account is being deleted.",
+      "removedOrRemoving": "The {{agent}} account is being deleted or has been deleted.",
+      "directoryRemoved": "The {{agent}} account directory has been deleted. Add the account again.",
+      "loginRunning": "Sign-in to this {{agent}} account is already in progress.",
+      "loginCancelled": "{{agent}} sign-in was cancelled.",
+      "notLoggedIn": "Sign in to this {{agent}} account first.",
+      "loginNoCredential": "No credentials were found after {{agent}} sign-in. Sign in again.",
+      "loginFailed": "{{agent}} sign-in could not be completed. Please try again.",
+      "permissionsUnknown": "Could not determine the access permissions needed to protect this {{agent}} account's credentials.",
+      "permissionsFailed": "Could not set access permissions to protect this {{agent}} account's credentials.",
+      "credentialUnreadable": "Unable to read {{agent}} account credentials."
+    },
     "deleted": "That account has been deleted.",
-    "notRegistered": "That account is not registered."
+    "notRegistered": "That account is not registered.",
+    "nameRequired": "Enter a name for the account.",
+    "listBroken": "The account list (agent-accounts.json) cannot be read.",
+    "badBackend": "This agent cannot have accounts.",
+    "credentialUnreadable": "The account credentials cannot be read: {{message}}",
+    "loginBusy": "This account is already signing in",
+    "loginFailed": "Sign-in could not be completed",
+    "tooMany": "You can register up to 100 accounts",
+    "credentialMissing": "Sign in to this account first"
   },
   "permission": {
     "delegateEscalationHost": "This delegation runs {{agent}} on {{host}} in \"{{mode}}\" ({{modeId}}).",
@@ -570,6 +593,12 @@
     "badArgument": "A CLI argument contains characters that are not allowed."
   },
   "codex": {
+    "accounts": {
+      "shareFailed": "Could not share {{entry}} with this Codex account ({{code}}). Enable symbolic links and try again.",
+      "threadBusy": "The Codex conversation is busy in another account or context. Wait for it to finish and try again.",
+      "releaseTimeout": "The previous Codex conversation did not finish closing. Wait a moment and try again.",
+      "releaseFailed": "Could not close the previous Codex account's connection. Please try again."
+    },
     "description": "Uses your ChatGPT subscription.",
     "modes": {
       "ask": "Asks every time unless the command is trusted.",
@@ -650,7 +679,54 @@
       "loginFailed": "Sign-in failed."
     }
   },
+  "devin": {
+    "description": "Uses local Devin CLI and its existing sign-in",
+    "usageUnknown": "Remaining Devin CLI quota is unavailable and is shown as unknown.",
+    "modes": {
+      "ask": "Questions only",
+      "askNote": "Answers without code changes. This is not OS-enforced read-only isolation",
+      "editNote": "Allows editing. Access outside the working directory is not isolated by the OS",
+      "smart": "AI judgment",
+      "smartNote": "Automatically allows actions Devin judges safe, including outside the working directory",
+      "planNote": "Plans before changing code. This is not OS-enforced read-only isolation",
+      "bypassNote": "Normally skips confirmations. Organization policies may still require approval"
+    },
+    "errors": {
+      "notInstalled": "Devin CLI (devin) was not found. Install it, then check again",
+      "modeUnavailable": "Devin CLI did not confirm the selected permission mode",
+      "configChanged": "Stopped because a verified model, thought level, speed or permission mode changed during the turn",
+      "promptFailed": "The Devin CLI turn did not complete successfully",
+      "notConnected": "Devin CLI is not connected",
+      "timeout": "Devin CLI response timed out ({{method}}, {{ms}} ms)",
+      "invalidCatalogue": "Could not verify the Devin CLI model catalogue",
+      "modelUnavailable": "The selected model is not in the current catalogue ({{model}})",
+      "explicitModelRequired": "No free default model is available. Select a model explicitly",
+      "selectionUnavailable": "The advertised Devin CLI choices do not confirm this model setting ({{setting}})",
+      "selectionNotAcknowledged": "Devin CLI did not acknowledge the model setting ({{setting}})",
+      "startFailed": "Could not start Devin CLI"
+    }
+  },
   "opencode": {
+    "usage": {
+      "providerMessage": "{{provider}}: {{message}}",
+      "credentialTypeUnavailable": "Subscription quota is unavailable for this credential type.",
+      "providerUnsupported": "Quota retrieval is not supported for this provider.",
+      "accessMissing": "The OAuth access token is missing, so quota is unknown.",
+      "accessExpired": "The OAuth access token has expired. Send a message in a conversation or sign in again to refresh it.",
+      "chatgptUnavailable": "ChatGPT quota snapshots were unavailable or invalid.",
+      "enterpriseUnsupported": "Quota retrieval from a custom GitHub Copilot enterprise endpoint is not supported.",
+      "githubTokenMissing": "The GitHub OAuth token is missing, so quota is unknown.",
+      "httpUnavailable": "Quota is unavailable ({{status}}).",
+      "requestFailed": "The quota request failed or returned invalid data.",
+      "noCredentials": "No OpenCode provider credentials are available, so subscription quota is unknown.",
+      "accountNotReady": "This account has no usable credentials.",
+      "cliLogin": "OpenCode signed-in account",
+      "copilotUnavailable": "GitHub Copilot returned no finite quota snapshot. Quota is unlimited or unavailable.",
+      "copilotPremiumRequests": "GitHub Copilot premium requests",
+      "copilotPremiumModels": "GitHub Copilot premium models",
+      "copilotChat": "GitHub Copilot chat",
+      "copilotCompletions": "GitHub Copilot code completions"
+    },
     "hooks": {
       "promptBlocked": "The message was blocked by a hook (UserPromptSubmit): {{reason}}"
     },
@@ -671,6 +747,8 @@
       "forkMissing": "The message to fork from was not found"
     },
     "auth": {
+      "accountRunCommand": "Run this command in a terminal to sign in to this OpenCode account.",
+      "accountLoggedIn": "Signed in to the OpenCode account.",
       "freeOnly": "OpenCode Zen free models only",
       "detail": "OpenCode (providers connected with opencode auth login)",
       "runCommand": "Run this command in a terminal, choose the provider to connect, and sign in. (This updates automatically when you finish)",
@@ -680,6 +758,7 @@
     }
   },
   "antigravity": {
+    "accounts": { "unavailable": "Antigravity account switching is unavailable because its shared OS credentials cannot be safely isolated. Use the currently signed-in account, or a separate OS user or virtual machine." },
     "description": "Uses your Google AI Pro / Ultra plan.",
     "modes": {
       "yolo": "Never asks. Allows every tool (in headless mode agy silently rejects tools otherwise)."

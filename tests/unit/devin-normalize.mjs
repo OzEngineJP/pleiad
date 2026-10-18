@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import { createDevinMapper } from '../../core/backends/devin-normalize.mjs';
+
+export const name = 'devin-normalize';
+export const title = 'Devin ACP replay と本文・思考・ツールを同じ正規化履歴へ写し、再読込で UUID を保つ';
+const chunk = (role, text) => ({ sessionUpdate: `${role}_message_chunk`, content: { type: 'text', text } });
+export default function (t) {
+  const events = [], live = createDevinMapper('s', e => events.push(e));
+  live.beginTurn('hello'); live.accept(chunk('user', 'hel')); live.accept(chunk('user', 'lo'));
+  live.accept({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'think' } });
+  live.accept({ sessionUpdate: 'tool_call', toolCallId: 'tool', title: 'Read file', rawInput: { path: 'test' }, status: 'running' });
+  live.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'tool', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: 'result' } }] });
+  live.accept(chunk('agent', '日本語')); live.accept(chunk('agent', '🙂')); live.finish();
+  const first = live.messages();
+  assert.deepEqual(first.map(m => [m.role, m.text]), [['user', 'hello'], ['assistant', '日本語🙂']]);
+  t.ok('入力の echo を重複させず、本文はチャンクを連結する', true);
+  t.ok('思考とツールの入出力は既存 backend の履歴形式に合う', first[1].thinking === 'think' && first[1].toolCalls[0].input.path === 'test' && first[1].toolCalls[0].result.text === 'result');
+  t.ok('本文・思考・ツールと本文の区切りを逐次流す', ['text.delta', 'thinking.start', 'thinking.delta', 'tool.start', 'tool.result', 'text.end'].every(type => events.some(e => e.type === type)));
+  const replayEvents = [], replay = createDevinMapper('s', e => replayEvents.push(e));
+  replay.accept(chunk('user', 'hello')); replay.accept({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'think' } });
+  replay.accept({ sessionUpdate: 'tool_call', toolCallId: 'tool', title: 'Read file', rawInput: { path: 'test' } });
+  replay.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'tool', status: 'completed', rawOutput: 'result' });
+  replay.accept(chunk('agent', '日本語🙂'));
+  assert.deepEqual(replay.messages(), first);
+  t.ok('replay はライブの出来事を出さず同じ UUID・履歴を再現する', replayEvents.length === 0);
+  replay.beginTurn('next'); replay.accept(chunk('agent', 'answer')); replay.finish();
+  t.ok('続きで前の発言の UUID を変えない', first.every((m, i) => replay.messages()[i].uuid === m.uuid) && replay.messages().length === 4);
+  const failed = createDevinMapper('f'); failed.accept(chunk('user', 'x'));
+  failed.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'failed', status: 'failed', rawOutput: 'x'.repeat(5000) });
+  t.ok('失敗ツールと長い結果を保持し、表示用の結果を制限する', failed.messages()[1].toolCalls[0].result.isError && failed.messages()[1].toolCalls[0].result.truncated);
+  const snapshot = replay.messages(); snapshot[0].text = 'modified';
+  t.ok('読み出した配列を書き換えても内部履歴は変わらない', replay.messages()[0].text === 'hello');
+
+  const partialEvents = [], partial = createDevinMapper('partial', event => partialEvents.push(event));
+  partial.beginTurn('tool updates');
+  const patch = (toolCallId, fields) => partial.accept({ sessionUpdate: 'tool_call_update', toolCallId, ...fields });
+  const resultOf = id => partial.messages()[1].toolCalls.find(call => call.id === id).result;
+  const resultEvents = id => partialEvents.filter(event => event.type === 'tool.result' && event.id === id);
+  partial.accept({ sessionUpdate: 'tool_call', toolCallId: 'content-first', title: 'Execute example', rawInput: { command: 'example --target important' }, status: 'pending' });
+  patch('content-first', { status: 'in_progress', content: [{ type: 'content', content: { type: 'text', text: 'saved output' } }] });
+  patch('content-first', { status: 'completed' });
+  assert.equal(resultOf('content-first').text, 'saved output');
+  patch('content-first', { title: null, rawInput: null, rawOutput: null, content: null, status: 'completed' });
+  patch('content-first', { status: 'completed' });
+  assert.equal(resultOf('content-first').text, 'saved output');
+  assert.equal(resultEvents('content-first').length, 1);
+  assert.equal(partial.getToolCall('content-first').title, 'Execute example');
+  assert.equal(partial.getToolCall('content-first').rawInput.command, 'example --target important');
+  t.ok('出力→status-only 完了でも出力を保持し、省略・null・重複 status は空で上書きしない', true);
+
+  patch('output-first', { title: 'Output', rawInput: { path: 'owned' }, status: 'completed', rawOutput: 'later result' });
+  patch('output-first', { status: 'completed', rawOutput: null, rawInput: null });
+  assert.equal(resultOf('output-first').text, 'later result');
+  assert.equal(resultEvents('output-first').length, 1);
+  patch('output-first', { rawOutput: 'updated result' });
+  assert.equal(resultOf('output-first').text, 'updated result');
+  patch('output-first', { content: [{ type: 'content', content: { type: 'text', text: 'content after completion' } }] });
+  assert.equal(resultOf('output-first').text, 'content after completion');
+  assert.equal(resultEvents('output-first').length, 3);
+  t.ok('完了後の rawOutput-only/content-only 更新も保持済み status を使い結果を更新する', true);
+
+  patch('status-first', { status: 'completed' });
+  patch('status-first', { content: [{ type: 'content', content: { type: 'text', text: 'delayed output' } }] });
+  patch('status-first', { status: null, content: null });
+  assert.equal(resultOf('status-first').text, 'delayed output');
+  assert.equal(resultEvents('status-first').length, 2);
+  patch('status-first', { title: 'Known operation', rawInput: false, rawOutput: false });
+  patch('status-first', { rawInput: null, rawOutput: null });
+  assert.equal(partial.getToolCall('status-first').rawInput, false);
+  assert.equal(partial.getToolCall('status-first').rawOutput, false);
+  const detail = partial.getToolCall('content-first'); detail.rawInput.command = 'changed';
+  assert.equal(partial.getToolCall('content-first').rawInput.command, 'example --target important');
+  assert.equal(partial.getToolCall('unknown'), null);
+  t.ok('完了→出力の順序、非 null の falsy 値と既知詳細の参照を保ち、不明 ID は null', true);
+}

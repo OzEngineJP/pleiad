@@ -15,14 +15,14 @@
 import os from "node:os";
 import { codexQuota, createCodexMeter } from '../usage.mjs';
 import { codexLimitError, codexResetOf } from './codex-limit.mjs';
-import { rpc } from "./codex-rpc.mjs";
-import { rpc as nativeRpc } from './codex-rpc.mjs';
+import { rpc as defaultRpc, withCodexEnvironment } from './codex-rpc.mjs';
 import { commandActivity } from "./codex-background.mjs";
 import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
 import { promptTitle } from '../prompt-title.mjs';
-import { CodexRpc } from './codex-rpc.mjs';
-import { configureCodexHeld, heldAppServer } from './codex-held.mjs';
+import { CodexRpc as BaseCodexRpc } from './codex-rpc.mjs';
+import { configureCodexHeld, heldAppServer as heldForAccount, acquireHeldAppServer } from './codex-held.mjs';
+import { codexAccountKey, prepareCodexAccount, readCodexCredential, validateCodexAccount, codexAccountLoggedOut, markCodexLoggedOut } from './codex-accounts.mjs';
 import { ADOPT_TURN_MARK } from '../adopt.mjs';
 import { codexHooksState, codexListProblem } from '../hooks-plan.mjs';
 import { maskText } from '../hooks-config.mjs';
@@ -40,6 +40,21 @@ import { t, agentT } from "../i18n.mjs";
 import { stripInjectedContext } from "../system-messages.mjs";
 
 const NL = String.fromCharCode(10);
+
+// Each app-server owns its model/config caches, loaded threads, terminal watchers
+// and handover metadata. Keeping these in one instance avoids cross-account
+// cache hits and notifications, including helpers called outside runTurn.
+function createCodexBackend({ rpc = defaultRpc, account = null, env = null } = {}) {
+const nativeRpc = rpc;
+const heldAppServer = () => heldForAccount(account);
+class CodexRpc extends BaseCodexRpc {
+  constructor(config = {}, options = {}) { super({ ...(account ? { cli_auth_credentials_store: 'file' } : {}), ...config }, { ...(env ? { env } : {}), ...options }); }
+}
+const contextRpc = async (context, cwd, native) => {
+  const client = await withCodexEnvironment(env, () => codexContextRpc(context, cwd, native));
+  if (account) client.config.cli_auth_credentials_store = 'file';
+  return client;
+};
 
 // 共有の app-server を保持役の子に載せるときの置き場（core/backends/codex-held.mjs）。データ置き場は store が持つ
 configureCodexHeld({ dataDir: () => store.dataDir });
@@ -67,7 +82,7 @@ const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, .
 // 同じ種類なら設定済みの追加ルートなどを保持し、YOLO から戻る場合は制限を復元する。
 // writableRoots は bot の触れてよいフォルダーのうち書けるもの（cwd の外の分。core/bots/sessions.mjs の folderPlan）。
 // null（bot でない会話）は何も足さない。bot の会話は、前のターンの書き込み先を引き継がず、渡した分に置き換える
-export function sandboxForTurn(mode, current, writableRoots = null) {
+function sandboxForTurn(mode, current, writableRoots = null) {
   const type = {
     "workspace-write": "workspaceWrite",
     "read-only": "readOnly",
@@ -117,7 +132,7 @@ const userShellAborted = (item) => item?.exitCode === -1 && item.status !== "com
  * （Windows は `"C:\\…\\powershell.exe" -Command 'echo hi'`。codex-cli 0.156.1 で確認）。人が打った形に戻す。
  * 戻せなければ、commandActions が 1 つならその command、それも無ければそのまま
  */
-export function userShellCommand(item) {
+function userShellCommand(item) {
   const raw = String(item?.command ?? "");
   const m = /^("[^"]*"|\S+)(?:\s+-(?:NoProfile|NoLogo))*\s+(?:-Command|-lc|-c)\s+(\S[\s\S]*)$/.exec(raw);
   const shell = m && /(?:^|[\\/])(?:bash|sh|zsh|powershell|pwsh)(?:\.exe)?$/i.test(m[1].replace(/^"|"$/g, ""));
@@ -168,7 +183,7 @@ const modelTtlMs = () => Number(process.env.AGENT_HOST_CODEX_MODELS_TTL_MS ?? 30
 const MAX_MODEL_PAGES = 20;
 
 /** 覚えた一覧を捨てる。ログイン・ログアウトで使えるモデルが変わる */
-export function forgetModels() {
+function forgetModels() {
   modelCache = null;
   modelFetch = null;
   listDefault = null;
@@ -235,7 +250,7 @@ const TITLE_MODELS = ["gpt-5.6-luna", "luna", "mini", "nano", "spark"];
  * models（modelList / models() の形）からタイトル生成の `{ model?, effort? }` を選ぶ。
  * model が無ければ codex の既定に任せる。effort は選んだモデルが low を持つ（段が分からない）ときだけ low
  */
-export function titleModel(models) {
+function titleModel(models) {
   const ids = Object.keys(models ?? {}).filter((id) => id && !models[id]?.hidden);
   const word = (w) => new RegExp(`(^|[^a-z0-9])${w.replaceAll(".", "\\.")}([^a-z0-9]|$)`, "i");
   const find = (w) => ids.find((id) => id === w)
@@ -442,7 +457,7 @@ function subagentLabel(child) {
  * 承認カード・通知の見出し（title）。Codex の承認要求は title を運ばない（commandExecution は null で来る。2026-10-03 の実機の確認）ので、
  * 何を許すのかが見出しで読めるよう、入力の対象（コマンドの 1 行目・変更するファイル・理由）で補う。無ければ null
  */
-export function approvalTitle(toolName, input) {
+function approvalTitle(toolName, input) {
   const oneLine = (v) => {
     const text = (Array.isArray(v) ? v.join(' ') : String(v ?? '')).split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? '';
     return text.length > 80 ? `${text.slice(0, 80)}…` : text;
@@ -655,6 +670,10 @@ const forgetLoaded = (threadId) => {
  * loaded = ロード済みのスレッドの設定（接続先・指示の指紋・hooks の指紋。上の 3 つの表）、watch = 裏の端末を数えているスレッドと報告先の会話の id。
  * 忘れると、新しいサーバーは「ロード済みのスレッドの設定は同じ」とみなし、変えた設定が resume で黙って無視される
  */
+nativeRpc.onNotify((method, params) => {
+  if (method === 'thread/closed') forgetLoaded(params.threadId);
+});
+
 function heldMeta() {
   const loaded = {};
   for (const id of new Set([...loadedProvider.keys(), ...loadedInstructions.keys(), ...loadedHooks.keys()])) {
@@ -696,7 +715,7 @@ async function unloadForHooks(rpc, threadId, hooksKey) {
 // 同じ表を同時に頼まれたら 1 本のプローブを分け合い、失敗は 30 秒のあいだ覚えて app-server を起こし直さない
 const probeCache = new Map();
 const PROBE_KEEP = 50, PROBE_FAIL_MS = 30_000;
-export function probeHookHashes(table, cwd, { spawn = config => new CodexRpc(config), now = Date.now } = {}) {
+function probeHookHashes(table, cwd, { spawn = config => new CodexRpc(config), now = Date.now } = {}) {
   const key = JSON.stringify(table);
   const hit = probeCache.get(key);
   if (hit && !(hit.failedAt && now() - hit.failedAt > PROBE_FAIL_MS)) {
@@ -718,7 +737,7 @@ export function probeHookHashes(table, cwd, { spawn = config => new CodexRpc(con
  * Hooks を Pleiad がそろえるターンの config の hooks。ターンごとに hooks/list（その会話の app-server・その cwd）を取り直し、
  * ユーザー・プロジェクトの定義の key を enabled:false にする。自分の定義には trusted_hash を付ける（ADR 0049。Pleiad の画面で確かめた登録だけ）
  */
-export async function codexHooksConfig(runtime, rpc, cwd, { probe = probeHookHashes } = {}) {
+async function codexHooksConfig(runtime, rpc, cwd, { probe = probeHookHashes } = {}) {
   const list = (await rpc.request('hooks/list', { cwds: [cwd] }, 15_000))?.data;
   // 一覧が欠けている・形が違う・cwd ごとの errors があるときは、止める key が全部そろっていない。0 件として続けない（ネイティブが漏れて動く）
   const problem = codexListProblem(list, cwd);
@@ -735,7 +754,7 @@ export async function codexHooksConfig(runtime, rpc, cwd, { probe = probeHookHas
 }
 const HOOK_OUTCOME = { completed: 'success', failed: 'error', blocked: 'blocked', stopped: 'cancelled' };
 /** Codex の hook/started・hook/completed を Pleiad の hookRun にする。出力（entries の本文）は秘密を含みうるので持ち出さない */
-export function codexHookRun(method, params, hooksRuntime = null) {
+function codexHookRun(method, params, hooksRuntime = null) {
   const run = params?.run ?? {};
   const event = typeof run.eventName === 'string' && run.eventName ? run.eventName[0].toUpperCase() + run.eventName.slice(1) : '';
   const source = typeof run.source === 'string' ? run.source : 'unknown';
@@ -917,7 +936,7 @@ function toUserInputResponse(questions, answers) {
  * reasoning とツールを assistant の発言に畳んでから積む
  * （Claude の transcriptToMessages と同じ形にして、web/render.mjs をそのまま使う）。
  */
-export function threadToMessages(thread, { fullResults = false } = {}) {
+function threadToMessages(thread, { fullResults = false } = {}) {
   const messages = [];
 
   for (const turn of thread?.turns ?? []) {
@@ -1040,6 +1059,7 @@ function toRow(t) {
 const trackers = new Map();   // threadId -> { tracker, sessionId }（sessionId = 報告先の会話 id）
 let host = null;              // server が渡す口（background / event）
 let watching = false;
+nativeRpc.canReleaseThread = threadId => !(trackers.get(threadId)?.tracker.size > 0);
 
 /** 報告先の会話 id から見張りを引く（stopBackground は会話 id で来る）。 */
 const watchOf = (sessionId) =>
@@ -1228,14 +1248,14 @@ async function reconcileAll() {
 
 // ---------------------------------------------------------------- backend
 
-export function codexContextWindow(tokenUsage) {
+function codexContextWindow(tokenUsage) {
   const usedTokens = tokenUsage?.last?.totalTokens;
   const windowTokens = tokenUsage?.modelContextWindow;
   return Number.isFinite(usedTokens) && Number.isFinite(windowTokens) && windowTokens > 0
     ? { type: 'contextWindow', usedTokens, windowTokens } : null;
 }
 
-export function codexCompactionEvent(method, params) {
+function codexCompactionEvent(method, params) {
   if (method === 'thread/compacted' ||
       (method === 'item/completed' && params?.item?.type === 'contextCompaction'))
     return { type: 'compaction', phase: 'complete', trigger: 'auto', nativeId: params?.item?.id ?? null,
@@ -1248,13 +1268,13 @@ export function codexCompactionEvent(method, params) {
 // 保持役に載せたターン: threadId -> control.holder。テストの入口（tests/lib/adopt-server.mjs）が、サーバーの手を離す（handOffTurn）の後に子を手放すのに使う。
 // 本番の手を離す口は server の handoverRun が control.holder.handOff を直に呼ぶ
 const heldTurns = new Map();
-export async function handOffCodex(threadId, card) {
+async function handOffCodex(threadId, card) {
   const holder = heldTurns.get(threadId);
   if (!holder) throw new Error(`codex: no held turn to hand off (${threadId})`);
   await holder.handOff(card);
 }
 /** テスト用: 共有の app-server の読みを止める／再開する（app-server の出力は保持役に溜まり、このサーバーは処理も ack もしない） */
-export function pauseCodexHeld(paused) {
+function pauseCodexHeld(paused) {
   const server = heldAppServer();
   if (!server) throw new Error('codex: the app-server is not on the holder');
   server.source.pause(paused);
@@ -1283,7 +1303,7 @@ async function relearnChildren(rpc, root) {
   }
 }
 
-export const backend = {
+const backend = {
   async usage() { return codexQuota(await rpc.request('account/rateLimits/read', {}, 15_000)); },
   /**
    * Codex が今読む hooks と、その信頼状態（trustStatus: trusted / untrusted / modified / managed）と hash（hooks/list）。
@@ -1319,7 +1339,7 @@ export const backend = {
     approvals: 'interactive',
     // MCP のツールの呼び出しは Codex が承認を聞かない。確認なしの承認モードのほかは Pleiad が聞く（server.mjs の mcpApprovalByHost）
     mcpApproval: 'host',
-    claudeAccounts: false,
+    accounts: 'agent',
     autoCompactWindow: false,
     promptSuggestions: false,   // ターンの後に suggestNext で作る
     plyContext: 'turn',
@@ -1335,7 +1355,7 @@ export const backend = {
   async compact({ sessionId, emit, cwd, hooksRuntime = null, contextRuntime = null }) {
     if (!validId(sessionId)) throw new Error(t('codex.errors.noThreadId', { method: 'thread/compact/start' }));
     // 通常のターンと同じ設定のサーバーを使う。共有サーバーで開いたままにすると、次の専用サーバーが書き込みロックで再開できない。
-    const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc) : nativeRpc;
+    const rpc = contextRuntime ? await contextRpc(contextRuntime, cwd, nativeRpc) : nativeRpc;
     let off, timer;
     try {
       // 圧縮でも PreCompact / PostCompact の hooks が動く。通常のターンと同じく、Hooks を Pleiad がそろえる会話は登録と止める key を渡し、
@@ -1524,7 +1544,7 @@ export const backend = {
     const emitOut = emit;
     let replaying = false;
     emit = (event, opts) => emitOut(event, replaying && !opts?.replay ? { ...opts, replay: true } : opts);
-    const rpc = contextRuntime ? await codexContextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc;
+    const rpc = adopt?.source?.rpc ?? (contextRuntime ? await contextRpc(contextRuntime, cwd, nativeRpc).catch(e => { throw undelivered(e); }) : nativeRpc);
     // Hooks を Pleiad がそろえる会話。止める key はこのターンの直前に作り直す（起動の後に足された定義も、次のターンからは止まる）。
     // 作れなければターンを始めない（ネイティブと Pleiad の登録が二重に動くか、どちらも動かないため）
     let hooks = null;
@@ -2268,30 +2288,41 @@ export const backend = {
      * `account/login/completed` は **threadId を持たない**ので、
      * スレッドへの振り分けではなく rpc.onNotify（全通知の聞き手）で拾う。
      */
-    async login({ emit }) {
-      const res = await rpc.request("account/login/start", { type: "chatgpt" }, 60_000);
-      const url = res?.authUrl ?? res?.verificationUrl ?? null;
-      const loginId = res?.loginId ?? null;
-
-      if (!url) {
-        // apiKey など、URL を出さずに終わる型。すでに終わっている
-        forgetModels();
-        emit?.({ type: "auth", phase: "done", message: t("codex.auth.loggedIn") });
-        return;
-      }
-      emit?.({ type: "auth", phase: "url", url, message: t("codex.auth.openBrowser") });
-
-      await new Promise((resolve) => {
-        const off = rpc.onNotify((method, params) => {
-          if (method !== "account/login/completed") return;
-          if (loginId && params?.loginId && params.loginId !== loginId) return;
-          off();
-          // 使えるモデルはアカウントで変わる。「ログインした」を受けた画面が引き直す前に捨てる
-          if (params?.success) { forgetModels(); emit?.({ type: "auth", phase: "done", message: t("codex.auth.loggedIn") }); }
-          else emit?.({ type: "auth", phase: "error", message: String(params?.error ?? t("codex.auth.loginFailed")) });
-          resolve();
-        });
+    async login({ emit, signal, openExternal }) {
+      const abortSignal = signal?.signal ?? signal;
+      if (abortSignal?.aborted) throw new Error(t('accounts.backend.loginCancelled', { agent: 'Codex' }));
+      // Subscribe before starting: completion can precede the request response.
+      const early = [];
+      let loginId, accept, timer, offDown;
+      const completed = new Promise((resolve, reject) => { accept = p => p.success ? resolve() : reject(new Error(t('codex.auth.loginFailed'))); });
+      completed.catch(() => {});
+      const off = rpc.onNotify((method, params) => {
+        if (method !== 'account/login/completed') return;
+        if (loginId === undefined) { early.push(params); return; }
+        if (!loginId || params?.loginId === loginId) accept(params);
       });
+      const abort = () => accept({ success: false });
+      abortSignal?.addEventListener('abort', abort, { once: true });
+      offDown = rpc.onDown(abort);
+      timer = setTimeout(abort, 11 * 60_000); timer.unref?.();
+      try {
+        const res = await rpc.request('account/login/start', { type: 'chatgpt' }, 60_000);
+        loginId = res?.loginId ?? null;
+        const url = res?.authUrl ?? res?.verificationUrl ?? null;
+        for (const p of early) if (!loginId || p?.loginId === loginId) accept(p);
+        if (url) {
+          emit?.({ type: 'auth', phase: 'url', url, message: t('codex.auth.openBrowser') });
+          if (openExternal) await openExternal(url);
+          await completed;
+        }
+        forgetModels();
+        emit?.({ type: 'auth', phase: 'done', message: t('codex.auth.loggedIn') });
+      } catch (error) {
+        if (loginId) await rpc.request('account/login/cancel', { loginId }, 5000).catch(() => {});
+        throw error;
+      } finally {
+        clearTimeout(timer); off(); offDown?.(); abortSignal?.removeEventListener('abort', abort);
+      }
     },
 
     async logout() {
@@ -2301,4 +2332,186 @@ export const backend = {
   },
 };
 
-export { MODES, TOOL_HINTS };
+const hasBackground = () => [...trackers.values()].some(w => w.tracker.size > 0);
+const dispose = async () => {
+  host = null;
+  reconcilable = false;
+  clearInterval(reconcileTimer); reconcileTimer = null;
+  trackers.clear();
+  await rpc.stop();
+};
+return { backend, rpc, dispose, hasBackground, forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS };
+}
+
+const initial = createCodexBackend();
+export const { forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS } = initial;
+const accountBackends = new Map();
+const readyBackends = new Map();
+const activeAccounts = new Map();
+const removingAccounts = new Set();
+const removedAccounts = new Set();
+let attachedHost = null;
+
+async function usingAccount(account, fn) {
+  const key = codexAccountKey(account);
+  if (removingAccounts.has(key) || removedAccounts.has(key)) throw new Error(t('accounts.backend.removedOrRemoving', { agent: 'Codex' }));
+  activeAccounts.set(key, (activeAccounts.get(key) ?? 0) + 1);
+  try { return await fn(); }
+  finally { const count = activeAccounts.get(key) - 1; if (count) activeAccounts.set(key, count); else activeAccounts.delete(key); }
+}
+
+export async function codexBackendForAccount(account, { login = false, allowUnauthenticated = false } = {}) {
+  if (!account) return initial.backend;
+  const key = codexAccountKey(account);
+  if (removingAccounts.has(key) || removedAccounts.has(key)) throw new Error(t('accounts.backend.removedOrRemoving', { agent: 'Codex' }));
+  let pending = accountBackends.get(key);
+  if (!pending) {
+    pending = (async () => {
+      const env = await prepareCodexAccount(account, { login, allowUnauthenticated });
+      const rpc = new BaseCodexRpc({ cli_auth_credentials_store: 'file' }, { env, acquire: config => acquireHeldAppServer(config, { account, env }) });
+      const instance = createCodexBackend({ rpc, account: { id: account.id, dir: account.dir }, env });
+      if (attachedHost) instance.backend.attachHost(attachedHost);
+      readyBackends.set(key, instance);
+      return instance;
+    })();
+    accountBackends.set(key, pending);
+    pending.catch(() => { if (accountBackends.get(key) === pending) accountBackends.delete(key); });
+  }
+  const instance = await pending;
+  // Revalidate even on a cache hit: deletion or a substituted auth link must not
+  // keep using in-memory credentials or silently revive the account directory.
+  if (!login) {
+    try { if (!(await validateCodexAccount(account)) && !allowUnauthenticated) throw new Error(t('accounts.backend.notLoggedIn', { agent: 'Codex' })); }
+    catch (e) { await instance.dispose(); accountBackends.delete(key); readyBackends.delete(key); throw e; }
+  }
+  return instance.backend;
+}
+
+const positional = new Set(['models', 'hooksList', 'getSession', 'getMessages', 'getCompactions', 'setTitle', 'fork', 'rewind', 'listSubagents', 'getSubagentMessages', 'getSubagentOrigin', 'getSubagentState', 'stopBackground']);
+const defaultMethods = { ...initial.backend };
+export const backend = initial.backend;
+for (const [name, fn] of Object.entries(defaultMethods)) {
+  if (typeof fn !== 'function' || ['modes', 'attachHost', 'usage', 'getBackgroundTask', 'holdsBackground'].includes(name)) continue;
+  backend[name] = async (...args) => {
+    const options = positional.has(name) ? args.at(-1) : args[0];
+    const account = (options && typeof options === 'object' ? options.account : null) ?? (name === 'adoptTurn' ? args[0]?.source?.account : null);
+    if (name === 'adoptTurn' && codexAccountKey(account) !== codexAccountKey(args[0]?.source?.account)) throw new Error('Codex adoption account mismatch');
+    return usingAccount(account, async () => account ? (await codexBackendForAccount(account))[name](...args) : fn(...args));
+  };
+}
+backend.attachHost = h => {
+  attachedHost = h;
+  defaultMethods.attachHost(h);
+  for (const pending of accountBackends.values()) void pending.then(i => i.backend.attachHost(h)).catch(() => {});
+};
+backend.getBackgroundTask = (sessionId, taskId, { account = null } = {}) => account
+  ? readyBackends.get(codexAccountKey(account))?.backend.getBackgroundTask(sessionId, taskId) ?? null
+  : defaultMethods.getBackgroundTask(sessionId, taskId) ?? [...readyBackends.values()].map(i => i.backend.getBackgroundTask(sessionId, taskId)).find(Boolean) ?? null;
+backend.holdsBackground = ({ account = null } = {}) => Boolean(heldForAccount(account));
+export async function codexRpcForAccount(account) {
+  await codexBackendForAccount(account);
+  return account ? (await accountBackends.get(codexAccountKey(account))).rpc : defaultRpc;
+}
+backend.accountDispose = async ({ account }) => {
+  const key = codexAccountKey(account), pending = accountBackends.get(key);
+  if (!pending) return;
+  const instance = await pending;
+  await instance.dispose();
+  accountBackends.delete(key);
+  readyBackends.delete(key);
+};
+backend.accountRemove = async ({ account }) => {
+  if (!account) throw new Error('A dedicated Codex account is required');
+  const key = codexAccountKey(account);
+  if (removingAccounts.has(key) || activeAccounts.get(key)) throw new Error(t('accounts.backend.inUse', { agent: 'Codex' }));
+  removingAccounts.add(key);
+  try {
+    const pending = accountBackends.get(key);
+    if (!pending) { removedAccounts.add(key); return; }
+    const instance = await pending;
+    if (instance.rpc.threads.size || instance.rpc.claims.size || instance.rpc.expecting.size || instance.rpc.pending.size || instance.hasBackground()) throw new Error(t('accounts.backend.inUseByTurn', { agent: 'Codex' }));
+    await backend.accountDispose({ account });
+    removedAccounts.add(key);
+  } finally { removingAccounts.delete(key); }
+};
+
+backend.accountStatus = async ({ account }) => usingAccount(account, async () => {
+  if (!account) { const s = await initial.backend.auth.status(); return { hasCredential: s.loggedIn, label: s.account }; }
+  if (await codexAccountLoggedOut(account)) return { hasCredential: false };
+  if (!account.credential && !(await readCodexCredential(account))) return { hasCredential: false };
+  const b = await codexBackendForAccount(account);
+  const s = await b.auth.status();
+  return { hasCredential: s.loggedIn, label: s.account };
+});
+
+backend.accountLogin = async ({ account, emit, signal, openExternal }) => usingAccount(account, async () => {
+  if (!account) throw new Error('A dedicated Codex account is required');
+  const b = await codexBackendForAccount(account, { login: true });
+  await b.auth.login({ emit, signal, openExternal });
+  const credential = await readCodexCredential(account);
+  if (!credential) throw new Error(t('accounts.backend.loginNoCredential', { agent: 'Codex' }));
+  const s = await b.auth.status();
+  if (!s.loggedIn) throw new Error(t('accounts.backend.loginFailed', { agent: 'Codex' }));
+  await markCodexLoggedOut(account, false);
+  return { credential, label: s.account };
+});
+
+async function readAccountQuota(account) {
+  const base = { accountId: account?.id ?? null, label: account?.name ?? 'Codex', ready: account?.ready !== false };
+  return usingAccount(account, async () => {
+    if (account?.ready === false) return { ...base, windows: [], checkedAt: null, message: t('usage.codexUnavailable') };
+    try {
+      const b = await codexBackendForAccount(account);
+      const quota = await (account ? b.usage() : defaultMethods.usage());
+      const identity = await (await codexRpcForAccount(account)).request('account/read', {}, 15_000).then(r => {
+        const a = r?.account;
+        return a ? { org: a.chatgptAccountId ?? null, email: a.email ?? null } : null;
+      }, () => null);
+      return { ...base, ...quota, identity, checkedAt: quota.windows.length ? Date.now() : null };
+    } catch {
+      return { ...base, windows: [], checkedAt: null, message: t('usage.codexUnavailable') };
+    }
+  }).catch(() => ({ ...base, windows: [], checkedAt: null, message: t('usage.codexUnavailable') }));
+}
+backend.usage = async ({ accounts = [] } = {}) => {
+  const rows = await Promise.all([readAccountQuota(null), ...accounts.map(readAccountQuota)]);
+  return { plan: rows[0].plan ?? null, windows: rows[0].windows, message: rows[0].message, accounts: rows };
+};
+
+// Conversation wrappers can drop options on nested native calls. Bind before
+// wrapping so every entry point, including calls without options, keeps account.
+const optionAt = {
+  models: 1, hooksList: 1, getSession: 1, getMessages: 1, getCompactions: 1, setTitle: 2,
+  fork: 1, rewind: 1, listSubagents: 1, getSubagentMessages: 2, getSubagentOrigin: 2,
+  getSubagentState: 2, stopBackground: 2, getBackgroundTask: 2,
+};
+backend.forAccount = async account => usingAccount(account, async () => {
+  // No credential or account descriptor is exposed on the returned backend.
+  const selected = account ? { ...account } : null;
+  const native = await codexBackendForAccount(selected);
+  const bound = Object.defineProperties({}, Object.getOwnPropertyDescriptors(backend));
+  for (const [name, fn] of Object.entries(backend)) {
+    if (typeof fn !== 'function') continue;
+    if (name === 'forAccount') { bound[name] = next => backend.forAccount(next); continue; }
+    if (name === 'usage') {
+      bound[name] = async () => { const row = await readAccountQuota(selected); return { ...row, accounts: [row] }; };
+      continue;
+    }
+    if (name === 'modes') { bound[name] = (...args) => fn(...args); continue; }
+    if (name === 'attachHost') { bound[name] = host => native.attachHost(host); continue; }
+    bound[name] = (...args) => {
+      const index = optionAt[name] ?? 0;
+      args[index] = { ...args[index], account: selected };
+      return fn(...args);
+    };
+  }
+  bound.auth = Object.fromEntries(Object.keys(native.auth).map(name => [name, (...args) => usingAccount(selected, async () => {
+    if (selected && name === 'status' && await codexAccountLoggedOut(selected)) return { loggedIn: false, account: null, detail: t('codex.auth.notLoggedIn') };
+    const current = await codexBackendForAccount(selected, { login: name === 'login', allowUnauthenticated: name === 'status' });
+    if (selected && name === 'logout') await markCodexLoggedOut(selected, true);
+    const result = await current.auth[name](...args);
+    if (selected && name === 'login') await markCodexLoggedOut(selected, false);
+    return result;
+  })]));
+  return bound;
+});

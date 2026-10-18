@@ -39,7 +39,7 @@ export const HUMAN_ONLY = Object.freeze({
   // bot が動くアカウント（bots.setAccount。ADR 0222）も同じ: どの契約の枠で動くかを AI が自分で選び直せない
   accounts: { commands: ['saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'authLogin', 'authLogout', 'authSubmit', 'authCancel', 'claudeAccounts',
     // Claude Agent SDK の取得。Anthropic の規約への同意を含むので、人が案内を読んで押す（ADR 0208）
-    'claudeSdkInstall'], settings: ['claudeAccount'], ops: ['bots.setAccount'] },
+    'claudeSdkInstall'], settings: ['claudeAccount', 'account'], ops: ['accounts.list', 'accounts.create', 'accounts.rename', 'accounts.remove', 'accounts.login', 'accounts.cancel', 'bots.setAccount'] },
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
   endpointDefault: { commands: ['compatEndpointDefault'], settings: [] },
   // リモートのペアリングと外に開く設定（端末の一覧を含む）

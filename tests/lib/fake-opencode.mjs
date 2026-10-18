@@ -41,7 +41,8 @@ const waits = new Map();          // permission / question の id -> resolve
 const pending = new Map();        // 答えていない permission / question の id -> { kind, properties }
 const clients = new Set();
 
-const STATE_FILE = process.env.FAKE_OPENCODE_STATE_DIR ? path.join(process.env.FAKE_OPENCODE_STATE_DIR, 'sessions.json') : null;
+const ACCOUNT_DATA = process.env.PLEIAD_OPENCODE_ACCOUNT_ID ? path.join(process.env.XDG_DATA_HOME, 'opencode') : null;
+const STATE_FILE = ACCOUNT_DATA ? path.join(ACCOUNT_DATA, 'fake-sessions.json') : process.env.FAKE_OPENCODE_STATE_DIR ? path.join(process.env.FAKE_OPENCODE_STATE_DIR, 'sessions.json') : null;
 const readState = () => { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return {}; } };
 /** 変えた会話だけをファイルに書く（ほかのプロセスが変えた会話は上書きしない） */
 function persist(id) {
@@ -188,6 +189,22 @@ async function run(s, user, text, { system = null } = {}) {
     }
     if (text.startsWith('fail')) {
       broadcast(s.directory, 'session.error', { sessionID: s.id, error: { name: 'UnknownError', data: { message: 'fake failure' } } });
+      return;
+    }
+    if (text.startsWith('limited') || text.startsWith('partial-limited') || text.startsWith('tool-limited')) {
+      if (text.startsWith('partial-')) await a.text('partial answer');
+      if (text.startsWith('tool-')) { const tool = a.tool('bash', { command: 'write-file' }); tool.done('written'); }
+      broadcast(s.directory, 'session.error', { sessionID: s.id, error: { name: 'APIError', data: { message: 'Usage limit reached', statusCode: 429,
+        responseBody: JSON.stringify({ error: { type: 'usage_limit_reached', resets_at: 2000000000 } }) } } });
+      return;
+    }
+    if (text === 'account-env') {
+      await a.text(JSON.stringify({ accountId: process.env.PLEIAD_OPENCODE_ACCOUNT_ID ?? null,
+        data: process.env.XDG_DATA_HOME, config: process.env.XDG_CONFIG_HOME, state: process.env.XDG_STATE_HOME,
+        inheritedOpenAI: Boolean(process.env.OPENAI_API_KEY),
+        inheritedGemini: Boolean(process.env.GEMINI_API_KEY), inheritedConfig: Boolean(process.env.OPENCODE_CONFIG),
+        providers: ACCOUNT_DATA ? Object.keys(JSON.parse(fs.readFileSync(path.join(ACCOUNT_DATA, 'auth.json'), 'utf8'))) : [] }));
+      a.finish();
       return;
     }
     let reply = `echo: ${text}`;

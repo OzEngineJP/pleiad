@@ -12,6 +12,7 @@ import { t } from './i18n.mjs';
 
 /** 「✕ 失敗」に続く一文。agent はエージェントの名前（Claude Code）、accountName は名前が添えられていないときの控え（アカウントの一覧） */
 export function authFailureMessage(auth, { agent = '', accountName = '' } = {}) {
+  if (auth?.mode === 'account') return t('chat.authExpired.account', { agent, name: auth.name || accountName });
   if (auth?.mode === 'token') {
     const name = auth.name || accountName;
     return name ? t('chat.authExpired.token', { name }) : t('chat.authExpired.tokenUnnamed');
@@ -56,6 +57,10 @@ export function paintAuthFailure(node, opts) {
     acts.classList.remove('fade');
     void acts.offsetWidth;   // 状態が替わるたびに、短い出し入れ（.fade）をやり直す
     if (next !== 'expired') acts.classList.add('fade');
+    if (auth?.mode === 'account') {
+      acts.replaceChildren(button(t('chat.authExpired.openAccounts'), () => reissue?.(), true));
+      return;
+    }
     if (auth?.mode === 'token') {
       acts.replaceChildren(button(t('chat.authExpired.reissue'), () => reissue?.(), true));
       return;
@@ -104,7 +109,7 @@ export function paintAuthFailure(node, opts) {
   return {
     get phase() { return phase; },
     /** 設定やほかの窓からログインが済んだ。自動では送らず［もう一度送る］にする（期限切れのまま待っている行だけ） */
-    signedIn() { if (phase === 'expired' && auth?.mode !== 'token' && node.isConnected) paint('manual'); },
+    signedIn() { if (phase === 'expired' && auth?.mode === 'cli' && node.isConnected) paint('manual'); },
   };
 }
 

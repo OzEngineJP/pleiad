@@ -33,6 +33,12 @@ if (!process.env.AGENT_HOST_DATA) {
 // 4) Chrome の User Data を、存在しない一時ディレクトリへ向ける。テストが利用者の本物の Chrome の DevToolsActivePort を読まない（core/chrome/locate.mjs。
 //    偽の Chrome を使うテストは、自分の一時ディレクトリを AGENT_HOST_CHROME_USER_DATA に渡す）
 if (!process.env.AGENT_HOST_CHROME_USER_DATA) process.env.AGENT_HOST_CHROME_USER_DATA = path.join(os.tmpdir(), `pleiad-test-no-chrome-${process.pid}`);
+// 5) Devin の実 CLI は既定では起こさない。登録が増えても、モデル一覧やログイン確認が
+// 利用者の資格情報に届かないようにする。Devin の試験は明示的に身代わりを渡す。
+for (const key of Object.keys(process.env)) if (key.toUpperCase().startsWith('DEVIN_') || key.toUpperCase() === 'WINDSURF_API_KEY') delete process.env[key];
+process.env.AGENT_HOST_DEVIN_BIN = 'missing-pleiad-test-devin-cli';
+process.env.DEVIN_CONFIG_HOME = path.join(process.env.AGENT_HOST_DATA, 'devin-config');
+process.env.DEVIN_SESSIONS_DIR = path.join(process.env.AGENT_HOST_DATA, 'devin-sessions');
 export const testDataDir = process.env.AGENT_HOST_DATA;
 /** このプロセスが作った一時の置き場か（利用者が AGENT_HOST_DATA を渡したときは false） */
 export const testDataOwned = created !== null;

@@ -37,8 +37,9 @@ export const CAPABILITIES = {
   // MCP のツールの承認。host は、エージェント自身が聞かないので、確認なしの承認モード（autonomy: full）のほかは Pleiad が聞く（Codex）
   mcpApproval: { valid: oneOf('agent', 'host') },
   login: { valid: bool, requires: (v) => (v ? ['auth'] : []) },
-  // 会話ごとに Claude のアカウント（setup-token のトークン）を選べる。server は oauthToken を渡す
-  claudeAccounts: { valid: bool },
+  // 会話ごとにアカウントを選べる（ADR 0222）。token: Pleiad がトークンを持ち、server は oauthToken を渡す（Claude の setup-token）。
+  // agent: アカウントごとの置き場でエージェント自身がログインし、server は account（core/agent-accounts.mjs の resolve）を渡す
+  accounts: { valid: oneOf(false, 'token', 'agent'), requires: (v) => (v === 'agent' ? ['accountLogin', 'accountStatus', 'forAccount'] : []) },
   compatEndpoints: { valid: bool },
   compact: { valid: bool },
   // 委譲の子の自動圧縮の閾値を受け取る（runArgs.autoCompactWindow）
@@ -68,7 +69,7 @@ export const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITIES));
 /** 何も持たない能力（対応を終えたバックエンド。core/backends/index.mjs の retiredBackend） */
 export const NO_CAPABILITIES = Object.freeze({
   title: false, tag: false, fork: false, forkMessage: false, rewind: false, subagents: false, liveModel: false, liveMode: false,
-  hostTools: false, approvals: 'none', alwaysAllow: false, mcpApproval: 'agent', login: false, claudeAccounts: false, compatEndpoints: false,
+  hostTools: false, approvals: 'none', alwaysAllow: false, mcpApproval: 'agent', login: false, accounts: false, compatEndpoints: false,
   compact: false, autoCompactWindow: false, promptSuggestions: false, plyAgents: false, plyContext: false, computerUse: false,
   shell: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, handover: false,
 });

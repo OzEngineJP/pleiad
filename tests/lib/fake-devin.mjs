@@ -1,0 +1,174 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import readline from 'node:readline';
+
+const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
+const catalogue = { families: [
+  { family_uid: 'swe-2', family_label: 'SWE-2', slug: 'swe-2', variants: ['high', 'medium', 'max'].map(level => ({ model_uid: `swe-2-${level}`, label: `SWE-2 ${level}`, cost_tier: 'Free', max_context_tokens: 262000 })) },
+  { family_uid: 'fixture-paid', family_label: 'Fixture paid', slug: 'fixture-paid', variants: [{ model_uid: 'paid-exact', label: 'Fixture paid', cost_tier: 'High cost', cost_summary: '$1 per unit' }] },
+] };
+if (command === '--version' || command === 'version') { console.log('3000.11.92'); process.exit(0); }
+if (command === 'models') { console.log(process.env.FAKE_DEVIN_CATALOGUE ? fs.readFileSync(process.env.FAKE_DEVIN_CATALOGUE, 'utf8') : JSON.stringify(catalogue)); process.exit(0); }
+if (command === 'auth') { console.log('{"authenticated":true}'); process.exit(0); }
+if (command !== 'acp') process.exit(2);
+
+const stateDir = process.env.FAKE_DEVIN_STATE_DIR || process.env.DEVIN_SESSIONS_DIR || '';
+if (stateDir) fs.mkdirSync(stateDir, { recursive: true });
+const sessions = new Map(), running = new Map(), pending = new Map();
+let seq = 0;
+const file = id => path.join(stateDir, `${id}.json`);
+const persist = session => { sessions.set(session.sessionId, session); if (stateDir) fs.writeFileSync(file(session.sessionId), JSON.stringify(session)); };
+const load = id => {
+  if (sessions.has(id)) return sessions.get(id);
+  if (!/^devin-fixture-[\w-]+$/.test(id ?? '')) throw new Error('Unknown session');
+  const session = stateDir ? JSON.parse(fs.readFileSync(file(id), 'utf8')) : null;
+  if (!session) throw new Error('Unknown session');
+  sessions.set(id, session); return session;
+};
+const configs = session => [
+  { id: 'mode', category: 'mode', type: 'select', currentValue: session.mode, options: ['ask', 'accept-edits', 'smart', 'plan', 'bypass'].map(value => ({ value, name: value })) },
+  { id: 'model', category: 'model', type: 'select', currentValue: session.model, options: [{ group: 'Models', options: [{ value: 'swe-2-high', name: 'SWE-2' }, { value: 'paid-exact', name: 'Fixture paid' }] }] },
+  ...(session.model === 'paid-exact' ? [] : [{ id: 'thought_level', category: 'thought_level', type: 'select', currentValue: session.thought_level, options: ['medium', 'high', 'max'].map(value => ({ value, name: value })) }]),
+  { id: 'speed', category: 'model_config', type: 'select', currentValue: session.speed, options: ['standard', 'fast'].map(value => ({ value, name: value })) },
+];
+const write = frame => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...frame })}\n`);
+const update = (sessionId, value) => write({ method: 'session/update', params: { sessionId, update: value } });
+const ask = (method, params) => new Promise((resolve, reject) => { const id = `fixture-request-${++seq}`; pending.set(id, { resolve, reject, sessionId: params.sessionId }); write({ id, method, params }); });
+function replay(session) {
+  for (const message of session.messages) {
+    if (message.role === 'user') update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: message.text } });
+    else {
+      if (message.thinking) update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: message.thinking } });
+      for (const tool of message.toolCalls ?? []) {
+        update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, rawInput: tool.input, status: 'running' });
+        update(session.sessionId, { sessionUpdate: 'tool_call_update', toolCallId: tool.id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: tool.result } }] });
+      }
+      update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: message.text } });
+    }
+  }
+}
+function cancel(id) {
+  const token = running.get(id);
+  if (token && !token.stubborn) { token.cancelled = true; token.wake?.(); }
+  for (const [key, waiter] of pending) if (waiter.sessionId === id) { pending.delete(key); waiter.resolve({ outcome: { outcome: 'cancelled' } }); }
+}
+
+readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line', async line => {
+  let request; try { request = JSON.parse(line); } catch { return; }
+  if (!request.method) {
+    const waiter = pending.get(request.id); if (!waiter) return;
+    pending.delete(request.id); request.error ? waiter.reject(new Error(request.error.message)) : waiter.resolve(request.result); return;
+  }
+  if (request.method === 'session/cancel') { cancel(request.params?.sessionId); if (request.id !== undefined) write({ id: request.id, result: {} }); return; }
+  if (request.id === undefined) return;
+  try {
+    let result;
+    const p = request.params ?? {};
+    switch (request.method) {
+      case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
+      case 'session/new': {
+        const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast' };
+        persist(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
+        result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
+      }
+      case 'session/load': {
+        const session = load(p.sessionId);
+        if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
+        replay(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
+        result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
+      }
+      case 'session/list': {
+        if (stateDir) for (const name of fs.readdirSync(stateDir).filter(name => /^devin-fixture-.*\.json$/.test(name))) { const s = JSON.parse(fs.readFileSync(path.join(stateDir, name), 'utf8')); sessions.set(s.sessionId, s); }
+        result = { sessions: [...sessions.values()].filter(s => !p.cwd || s.cwd === p.cwd).map(s => ({ sessionId: s.sessionId, cwd: s.cwd, title: s.title ?? null })) }; break;
+      }
+      case 'session/set_config_option': {
+        const session = load(p.sessionId), option = configs(session).find(o => o.id === p.configId);
+        const flatten = values => values.flatMap(v => v.options ? flatten(v.options) : [v.value]);
+        if (!option || !flatten(option.options).includes(p.value)) throw new Error('Unsupported config value');
+        session[p.configId] = p.value; persist(session);
+        const options = configs(session);
+        if (process.env.FAKE_DEVIN_BAD_ACK === p.configId) options.find(o => o.id === p.configId).currentValue = 'wrong';
+        const drift = process.env.FAKE_DEVIN_SETUP_DRIFT;
+        if (p.configId === 'speed' && drift) {
+          const frames = [];
+          const configFrame = values => ({ method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'config_option_update', configOptions: values } } });
+          const modeFrame = value => ({ method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'current_mode_update', currentModeId: value } } });
+          if (drift === 'before-mode') {
+            session.mode = 'bypass'; frames.push(modeFrame(session.mode));
+            frames.push({ id: request.id, result: { configOptions: configs(session) } });
+          } else {
+            if (drift === 'before-recovered') frames.push(modeFrame('bypass'));
+            frames.push({ id: request.id, result: { configOptions: options } });
+            if (drift === 'after-mode') { session.mode = 'bypass'; frames.push(modeFrame(session.mode)); }
+            if (drift === 'after-model') { session.model = 'paid-exact'; frames.push(configFrame(configs(session))); }
+            if (drift === 'after-config-mode') { session.mode = 'bypass'; frames.push(configFrame(configs(session))); }
+            if (drift === 'after-empty') frames.push(configFrame([]));
+            if (drift === 'after-duplicate') frames.push(configFrame([...options, options[0]]));
+            if (drift === 'after-recovered') { frames.push(modeFrame('bypass')); frames.push(configFrame(options)); }
+          }
+          persist(session);
+          // One write forces ACK + notifications through one transport batch.
+          process.stdout.write(frames.map(frame => JSON.stringify({ jsonrpc: '2.0', ...frame })).join('\n') + '\n');
+          return;
+        }
+        update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: options });
+        result = { configOptions: options }; break;
+      }
+      case 'session/prompt': {
+        const session = load(p.sessionId), text = (p.prompt ?? []).map(v => v.text ?? '').join('');
+        const token = { cancelled: false, stubborn: text.includes('[stubborn]') }; running.set(session.sessionId, token);
+        session.messages.push({ role: 'user', text }); persist(session);
+        update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
+        if (text.includes('[kill]')) process.exit(17);
+        if (text.includes('[slow]') || token.stubborn) await new Promise(resolve => { const timer = setTimeout(resolve, token.stubborn ? 60000 : Number(process.env.FAKE_DEVIN_SLOW_MS || 5000)); token.wake = () => { clearTimeout(timer); resolve(); }; });
+        if (token.cancelled) { running.delete(session.sessionId); result = { stopReason: 'cancelled' }; break; }
+        if (text.includes('[frame-malformed]')) { process.stdout.write('{not-json}\n'); break; }
+        const drift = ['model', 'thought_level', 'speed'].find(kind => text.includes(`[${kind}-drift]`));
+        if (drift) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session).map(o => o.id === drift ? { ...o, currentValue: 'unexpected' } : o) });
+        if (text.includes('[config-valid]')) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
+        if (text.includes('[config-empty]')) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: [] });
+        if (text.includes('[config-invalid]')) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: null });
+        for (const kind of ['mode', 'model', 'thought_level', 'speed']) {
+          if (text.includes(`[${kind}-missing]`)) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session).filter(o => o.id !== kind) });
+          if (text.includes(`[${kind}-duplicate]`)) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: [...configs(session), configs(session).find(o => o.id === kind)] });
+          if (text.includes(`[${kind}-renamed]`)) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session).map(o => o.id === kind ? { ...o, id: `${kind}-new` } : o) });
+        }
+        if (text.includes('[mode-drift]')) update(session.sessionId, { sessionUpdate: 'current_mode_update', currentModeId: 'bypass' });
+        let permissionResult = null;
+        const tools = [];
+        const permissionKind = ['permission', 'permission-id-only', 'permission-partial', 'permission-null', 'permission-unknown'].find(kind => text.includes(`[${kind}]`));
+        if (permissionKind || text.includes('[tool]')) {
+          const tool = { id: crypto.randomUUID(), name: 'Fixture permission', input: { command: 'echo fixture' }, result: 'fixture tool result' };
+          if (permissionKind !== 'permission-unknown') update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, kind: 'execute', rawInput: tool.input, status: 'running' });
+          if (permissionKind) {
+            const requestTool = permissionKind === 'permission' ? { toolCallId: tool.id, title: tool.name, rawInput: tool.input }
+              : permissionKind === 'permission-partial' ? { toolCallId: tool.id, title: 'Updated permission' }
+              : permissionKind === 'permission-null' ? { toolCallId: tool.id, title: null, rawInput: null }
+              : { toolCallId: tool.id };
+            permissionResult = await ask('session/request_permission', { sessionId: session.sessionId, toolCall: requestTool, options: [{ optionId: 'allow_once', kind: 'allow_once', name: 'Allow once' }, { optionId: 'reject_once', kind: 'reject_once', name: 'Reject once' }] });
+          }
+          update(session.sessionId, { sessionUpdate: 'tool_call_update', toolCallId: tool.id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: tool.result } }] }); tools.push(tool);
+        }
+        update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
+        let reply = `fixture: ${text}`;
+        if (text.includes('[env]')) reply = JSON.stringify({ cwd: process.cwd(), configHome: process.env.DEVIN_CONFIG_HOME ?? null, sessions: process.env.DEVIN_SESSIONS_DIR });
+        if (text.includes('[multi-utf8]')) {
+          const frame = `${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '日本語🙂' } } } })}\n`;
+          const bytes = Buffer.from(frame), split = bytes.indexOf(Buffer.from('🙂')) + 2;
+          process.stdout.write(bytes.subarray(0, split)); await new Promise(r => setTimeout(r, 5)); process.stdout.write(bytes.subarray(split));
+          reply = `日本語🙂${reply}`;
+          update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice('日本語🙂'.length) } });
+        } else {
+          const middle = Math.ceil(reply.length / 2);
+          update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(0, middle) } });
+          update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });
+        }
+        session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools }); persist(session); running.delete(session.sessionId);
+        result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn', permissionResult }; break;
+      }
+      default: throw new Error(`Unsupported method: ${request.method}`);
+    }
+    write({ id: request.id, result });
+  } catch (error) { write({ id: request.id, error: { code: -32000, message: error.message } }); }
+});

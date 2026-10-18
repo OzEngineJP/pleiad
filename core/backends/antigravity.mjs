@@ -283,7 +283,7 @@ export const backend = {
     rewind: false,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
     approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
     mcpApproval: 'agent',
-    claudeAccounts: false,
+    accounts: false,
     compatEndpoints: false,
     compact: false,             // 圧縮は agy が自分で決める
     autoCompactWindow: false,
@@ -325,7 +325,12 @@ export const backend = {
   // ---- 実行 ---------------------------------------------------------------
 
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは antigravity-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null }, adopt = null) {
+    if (account != null) {
+      const error = new Error(t('antigravity.accounts.unavailable'));
+      error.code = 'AGY_ACCOUNTS_UNSUPPORTED';
+      throw error;
+    }
     const m = MODES[modeFor(mode)];
     const k = adopt?.card?.agy ?? null;   // 付け直しの札のバックエンドの欄（backendCard）
 

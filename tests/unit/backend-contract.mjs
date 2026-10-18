@@ -33,6 +33,9 @@ export default async function (t) {
       Boolean(key) === Boolean(natives[id]?.capabilities?.compact), JSON.stringify({ key, compact: natives[id]?.capabilities?.compact }));
   }
   t.ok('既定で有効にするのは fake を除く全部', DEFAULT_AGENT_IDS.join() === Object.keys(AGENTS).filter((id) => id !== 'fake').join());
+  t.ok('身代わりの一覧に、記述に無いエージェントが無い', Object.keys(RIGS).every((id) => Object.hasOwn(AGENTS, id)));
+  t.ok('CLI の実行ファイルを差し替える環境変数はエージェントごとに独立する',
+    new Set(Object.values(AGENTS).filter((a) => a.cli).map((a) => a.cli.binEnv)).size === Object.values(AGENTS).filter((a) => a.cli).length);
 
   // 印ごとの契約の試験と説明（印を足して、試験・説明を書き忘れたら落とす）
   const suites = new Set([...readFileSync(path.join(ROOT, 'tests', 'run.mjs'), 'utf8').matchAll(/'\.\/unit\/([\w.-]+)\.mjs'/g)].map((m) => m[1]));

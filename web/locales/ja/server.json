@@ -55,8 +55,31 @@
     "tokenRequired": "トークンが要る（起動時に出た URL を使う）"
   },
   "accounts": {
+    "backend": {
+      "inUse": "{{agent}} のアカウントは使用中です。処理が終わってから、もう一度お試しください。",
+      "inUseByTurn": "{{agent}} のアカウントは会話またはバックグラウンドのコマンドで使用中です。処理が終わってから、もう一度お試しください。",
+      "removing": "{{agent}} のアカウントを削除しています。",
+      "removedOrRemoving": "{{agent}} のアカウントは削除中、または削除済みです。",
+      "directoryRemoved": "{{agent}} のアカウントの保存先は削除されています。アカウントを登録し直してください。",
+      "loginRunning": "この {{agent}} のアカウントはログインの途中です。",
+      "loginCancelled": "{{agent}} のログインを取り消しました。",
+      "notLoggedIn": "この {{agent}} のアカウントでログインしてください。",
+      "loginNoCredential": "{{agent}} のログイン後に認証情報を確認できませんでした。もう一度ログインしてください。",
+      "loginFailed": "{{agent}} のログインを完了できませんでした。もう一度お試しください。",
+      "permissionsUnknown": "{{agent}} のアカウントの認証情報を保護するためのアクセス権を確認できませんでした。",
+      "permissionsFailed": "{{agent}} のアカウントの認証情報を保護するためのアクセス権を設定できませんでした。",
+      "credentialUnreadable": "{{agent}} のアカウントの認証情報を読み取れません。"
+    },
     "deleted": "そのアカウントは削除されています",
-    "notRegistered": "そのアカウントは登録されていません"
+    "notRegistered": "そのアカウントは登録されていません",
+    "nameRequired": "アカウントの名前を入れてください",
+    "listBroken": "アカウントの一覧（agent-accounts.json）を読めません",
+    "badBackend": "アカウントを持てないエージェントです",
+    "credentialUnreadable": "アカウントの資格情報を読めません: {{message}}",
+    "loginBusy": "このアカウントはログインの途中です",
+    "loginFailed": "ログインを完了できませんでした",
+    "tooMany": "登録できるアカウントは100件までです",
+    "credentialMissing": "このアカウントでログインしてください"
   },
   "permission": {
     "delegateEscalationHost": "この委譲は {{host}} で {{agent}} を「{{mode}}（{{modeId}}）」で動かします",
@@ -568,6 +591,12 @@
     "badArgument": "CLI の引数に使用できない文字があります"
   },
   "codex": {
+    "accounts": {
+      "shareFailed": "Codex のアカウントで {{entry}} を共有できませんでした（{{code}}）。シンボリックリンクを作成できるようにして、もう一度お試しください。",
+      "threadBusy": "Codex の会話は別のアカウントまたは実行環境で使用中です。処理が終わってから、もう一度お試しください。",
+      "releaseTimeout": "前の Codex の会話の終了を確認できませんでした。しばらく待ってから、もう一度お試しください。",
+      "releaseFailed": "前の Codex のアカウントとの接続を閉じられませんでした。もう一度お試しください。"
+    },
     "description": "ChatGPT のサブスク枠を使う",
     "modes": {
       "ask": "信頼済み以外は毎回聞く",
@@ -648,7 +677,54 @@
       "loginFailed": "ログインに失敗した"
     }
   },
+  "devin": {
+    "description": "ローカルの Devin CLI と既存のログインを使う",
+    "usageUnknown": "Devin CLI の残り使用枠は取得できないため不明です。",
+    "modes": {
+      "ask": "質問のみ",
+      "askNote": "コードを変更せず回答する。OS の読み取り専用の隔離ではない",
+      "editNote": "編集を許可する。作業場所の外へのアクセスを OS で隔離しない",
+      "smart": "AI が判断",
+      "smartNote": "Devin が安全と判断する操作を自動で許可する。作業場所の外も対象",
+      "planNote": "変更前に計画する。OS の読み取り専用の隔離ではない",
+      "bypassNote": "原則として確認しない。組織のポリシーによる承認は残ることがある"
+    },
+    "errors": {
+      "notInstalled": "Devin CLI（devin）が見つかりません。インストールしてから再確認してください",
+      "modeUnavailable": "選んだ承認モードを Devin CLI の応答で確認できません",
+      "configChanged": "実行中に確認済みのモデル・思考・速度または承認モードが変わったため停止しました",
+      "promptFailed": "Devin CLI のターンが正常に完了しませんでした",
+      "notConnected": "Devin CLI に接続していません",
+      "timeout": "Devin CLI の応答がタイムアウトしました（{{method}}、{{ms}} ms）",
+      "invalidCatalogue": "Devin CLI のモデル一覧を確認できません",
+      "modelUnavailable": "指定したモデルを現在の一覧で確認できません（{{model}}）",
+      "explicitModelRequired": "無料の既定モデルがありません。利用するモデルを明示的に選択してください",
+      "selectionUnavailable": "Devin CLI の選択肢ではモデル設定を確認できません（{{setting}}）",
+      "selectionNotAcknowledged": "Devin CLI がモデル設定を確認しませんでした（{{setting}}）",
+      "startFailed": "Devin CLI を起動できませんでした"
+    }
+  },
   "opencode": {
+    "usage": {
+      "providerMessage": "{{provider}}：{{message}}",
+      "credentialTypeUnavailable": "この認証方法では、契約プランの使用枠を取得できません。",
+      "providerUnsupported": "この接続先の使用枠の取得には対応していません。",
+      "accessMissing": "OAuth のアクセストークンがないため、使用枠は不明です。",
+      "accessExpired": "OAuth のアクセストークンの有効期限が切れています。会話でメッセージを送るか、ログインし直して更新してください。",
+      "chatgptUnavailable": "ChatGPT の使用枠を取得できなかったか、応答の形式を確認できませんでした。",
+      "enterpriseUnsupported": "GitHub Copilot の Enterprise 専用の接続先からの使用枠取得には対応していません。",
+      "githubTokenMissing": "GitHub の OAuth トークンがないため、使用枠は不明です。",
+      "httpUnavailable": "使用枠を取得できませんでした（{{status}}）。",
+      "requestFailed": "使用枠の取得に失敗したか、応答の形式を確認できませんでした。",
+      "noCredentials": "OpenCode の接続先の認証情報がないため、契約プランの使用枠は不明です。",
+      "accountNotReady": "このアカウントには利用できる認証情報がありません。",
+      "cliLogin": "OpenCode のログイン中のアカウント",
+      "copilotUnavailable": "GitHub Copilot の有限の使用枠は返されませんでした。無制限か、取得できない状態です。",
+      "copilotPremiumRequests": "GitHub Copilot のプレミアム要求",
+      "copilotPremiumModels": "GitHub Copilot のプレミアムモデル",
+      "copilotChat": "GitHub Copilot のチャット",
+      "copilotCompletions": "GitHub Copilot のコード補完"
+    },
     "hooks": {
       "promptBlocked": "発言は Hooks（UserPromptSubmit）に止められました：{{reason}}"
     },
@@ -669,6 +745,8 @@
       "forkMissing": "分岐の起点の発言が見つかりません"
     },
     "auth": {
+      "accountRunCommand": "端末で次のコマンドを実行し、この OpenCode のアカウントでログインしてください。",
+      "accountLoggedIn": "OpenCode のアカウントでログインしました。",
       "freeOnly": "OpenCode Zen の無料のモデルだけ",
       "detail": "OpenCode（opencode auth login でつないだ接続先）",
       "runCommand": "このコマンドを端末で実行し、つなぐ接続先を選んでログインしてください。（終わるとここが自動で切り替わります）",
@@ -678,6 +756,7 @@
     }
   },
   "antigravity": {
+    "accounts": { "unavailable": "Antigravity のアカウント切替は未対応です。OS の共有資格情報を安全に分離できません。ログイン中のアカウントを使うか、別の OS ユーザーまたは仮想マシンで実行してください。" },
     "description": "Google AI Pro / Ultra の枠を使う",
     "modes": {
       "yolo": "確認しない。すべてのツールを通す（agy のヘッドレスはこれ以外だと黙って拒否される）"

@@ -173,7 +173,8 @@ export async function setPref(key, value, backendId) {
     const all = await prefs.read();
     if (value === null || value === undefined) delete all[key];
     else all[key] = value;
-    if (backendId && (key === "mode" || key === "model" || key === "effort")) {
+    // account はエージェントごとの新しい会話の既定のアカウント（ADR 0222）
+    if (backendId && (key === "mode" || key === "model" || key === "effort" || key === "account")) {
       const previous = all.backends ? all.backends[backendId] : { mode: all.mode, model: all.model };
       all.backends ??= {};
       all.backends[backendId] = { ...previous, [key]: value };

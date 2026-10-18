@@ -25,7 +25,7 @@ export const ABOUT = {
   alwaysAllow: '承認に「常に許可」を返す',
   mcpApproval: 'MCP のツールの承認（host: エージェントが聞かないので Pleiad が聞く）',
   login: 'Pleiad の画面からログインする',
-  claudeAccounts: '会話ごとに Claude のアカウントを選ぶ',
+  accounts: '会話ごとにアカウントを選ぶ（token: Pleiad がトークンを持つ / agent: エージェントがアカウントごとの置き場でログインする）',
   compatEndpoints: '互換の接続先を会話ごとに選ぶ',
   compact: '手動・自動の圧縮',
   autoCompactWindow: '委譲の子の自動圧縮の閾値を受け取る',
