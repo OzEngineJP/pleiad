@@ -334,8 +334,10 @@ export function dedupeAccounts(accounts = [], prefer = () => false) {
  * not_installed（CLI が入っていない）・no_token（登録したアカウントにトークンが無い）
  * usage は core/delegation-usage.mjs の snapshot()：
  *   { [backend]: { available, checkedAt, windows, accounts?: [{ account, label, windows, identity, runnable }], models: { [model]: bool } } }
+ * blocked(backend, model, account) は、上限で再試行を待っている・上限で止まったばかりの枠（ADR 0229）。
+ *   { reason: 'retry_waiting' | 'recently_limited', until? }（until は戻る見込みの時刻 ms）を返せば、その枠は使えない
  */
-export function checkCandidate(candidate, { usage, settings, now }) {
+export function checkCandidate(candidate, { usage, settings, now, blocked = () => null }) {
   const parsed = parseCandidate(candidate);
   const entry = parsed ? usage?.[parsed.backend] : null;
   // 使用量をまだ一度も取っていない（取り置きが空）ときは、有効かどうかも分からないので中身を付けない
@@ -350,6 +352,8 @@ export function checkCandidate(candidate, { usage, settings, now }) {
   if (Array.isArray(entry.accounts)) {
     const assessed = entry.accounts.map(a => {
       if (!a.runnable) return { account: a.account, label: a.label ?? null, identity: a.identity, ok: false, reason: 'unavailable' };
+      const held = blocked(parsed.backend, parsed.model, a.account);
+      if (held) return { account: a.account, label: a.label ?? null, identity: a.identity, ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}) };
       const windows = windowsFor(parsed.backend, parsed.model, a.windows);
       const verdict = judgeWindows(windows, policy);
       const rowAt = Object.hasOwn(a, 'checkedAt') ? a.checkedAt : checkedAt;
@@ -364,7 +368,7 @@ export function checkCandidate(candidate, { usage, settings, now }) {
     let results = dedupeAccounts(ranked, r => r.ok && !r.deferred);
     if (!results.some(r => r.ok && !r.deferred)) results = dedupeAccounts(ranked, r => r.ok);
     const accountRows = results.map(r => ({ account: r.account, label: r.label, ok: r.ok, deferred: Boolean(r.deferred),
-      reason: r.reason ?? null, ...(r.reason === 'unavailable' ? { detail: 'no_token' } : {}),
+      reason: r.reason ?? null, ...(r.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(r.until ? { until: r.until } : {}),
       ...(r.window ? { window: r.window } : {}), windows: (r.windows ?? []).map(w => brief(w, usedNow(w, now))),
       maxUsed: maxUsage(r.windows, now), weeklyRate: weeklyPace(r.windows ?? [], now),
       checkedAt, avoidPercent: settings.avoidPercent }));
@@ -381,13 +385,15 @@ export function checkCandidate(candidate, { usage, settings, now }) {
           accounts: accountRows };
       }
       const first = results.find(r => r.reason !== 'unavailable') ?? results[0];
-      return { ok: false, reason: first?.reason ?? 'usage_unknown', ...(first?.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(first?.window ? { window: first.window } : {}), checkedAt,
+      return { ok: false, reason: first?.reason ?? 'usage_unknown', ...(first?.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(first?.until ? { until: first.until } : {}), ...(first?.window ? { window: first.window } : {}), checkedAt,
         accounts: accountRows };
     }
     usable.sort((a, b) => pressure(a, b, now));
     return { ok: true, account: usable[0].account, accountLabel: usable[0].label, checkedAt,
       windows: usable[0].windows.map(w => brief(w, usedNow(w, now))), accounts: accountRows };
   }
+  const held = blocked(parsed.backend, parsed.model, entry.accountable ? '' : null);
+  if (held) return { ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}), account: entry.accountable ? '' : null, checkedAt };
   const windows = windowsFor(parsed.backend, parsed.model, entry.windows);
   const verdict = judgeWindows(windows, policy);
   const check = selectable(verdict.reason === 'quota_full' ? verdict : staleReason ? { ok: false, reason: staleReason } : verdict);
@@ -467,7 +473,7 @@ export function manualRouting({ kind, candidate, check, of, from, effortTier = n
  * 選べれば { ok: true, routing }、全部だめなら { ok: false, routing }（target は null）。
  * usageAt は選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）
  */
-export function route({ kind, judged = {}, settings, usage, now = Date.now(), rejected = {} }) {
+export function route({ kind, judged = {}, settings, usage, now = Date.now(), rejected = {}, blocked }) {
   const difficulty = judged.signals ? difficultyOf(judged.signals) : 'mid';
   const base = settings.table[kind][DIFFICULTIES.indexOf(difficulty)];
   const index = LADDER.indexOf(base);
@@ -491,7 +497,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
   const inspect = (tier, chooseSoft) => {
     const localSoft = [];
     for (const candidate of settings.tiers[tier] ?? []) {
-      const assessed = checkCandidate(candidate, { usage, settings, now });
+      const assessed = checkCandidate(candidate, { usage, settings, now, blocked });
       const check = Object.hasOwn(rejected, candidate) ? { ok: false, reason: rejected[candidate], checkedAt: assessed.checkedAt,
         ...(assessed.accounts ? { accounts: assessed.accounts.map(a => ({ account: a.account, label: a.label, ok: false,
           reason: rejected[candidate], windows: a.windows })) } : {}) } : assessed;
@@ -500,7 +506,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
         for (const a of check.accounts) {
           if (check.ok && !check.deferred && a.account === check.account) continue;
           skipped.push({ candidate, tier, account: a.account, accountLabel: a.label, reason: a.reason ?? 'lower_priority',
-            ...(a.detail ? { detail: a.detail } : {}), ...(a.window ? { window: a.window } : {}),
+            ...(a.detail ? { detail: a.detail } : {}), ...(a.until ? { until: iso(a.until) } : {}), ...(a.window ? { window: a.window } : {}),
             ...(a.windows?.length ? { windows: a.windows } : {}),
             ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
         }
@@ -513,7 +519,7 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
         return { tier, backend, model, ...check };
       }
       if (check.deferred) localSoft.push({ tier, candidate, check });
-      skipped.push({ candidate, tier, reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.window ? { window: check.window } : {}), ...(check.accounts ? { accounts: check.accounts } : {}),
+      skipped.push({ candidate, tier, reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.until ? { until: iso(check.until) } : {}), ...(check.window ? { window: check.window } : {}), ...(check.accounts ? { accounts: check.accounts } : {}),
         ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
     }
     if (chooseSoft && localSoft.length) return pickSoft(localSoft);
@@ -542,16 +548,17 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
 /**
  * 候補ごとの今の状態（設定画面の段ごとの候補と、各候補の使用量）。settings の全段の候補を重複なく
  */
-export function candidateStates({ settings, usage, now = Date.now() }) {
+export function candidateStates({ settings, usage, now = Date.now(), blocked }) {
   const ids = [...new Set(TIERS.flatMap(tier => settings.tiers[tier] ?? []))];
   return ids.map(candidate => {
     const parsed = parseCandidate(candidate);
-    const check = checkCandidate(candidate, { usage, settings, now });
+    const check = checkCandidate(candidate, { usage, settings, now, blocked });
     const entry = parsed ? usage?.[parsed.backend] : null;
     const accountRows = check.accounts ?? null;
     return { candidate, backend: parsed?.backend ?? null, model: parsed?.model ?? null,
       tiers: TIERS.filter(tier => (settings.tiers[tier] ?? []).includes(candidate)),
-      usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}), account: check.ok ? check.account ?? null : null,
+      usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}),
+      ...(check.until ? { until: new Date(check.until).toISOString() } : {}), account: check.ok ? check.account ?? null : null,
       ...(check.window ? { window: check.window } : {}),
       checkedAt: entry?.checkedAt ? new Date(entry.checkedAt).toISOString() : null,
       windows: parsed && !accountRows ? windowsFor(parsed.backend, parsed.model, entry?.windows).map(w => brief(w, usedNow(w, now))) : [],
