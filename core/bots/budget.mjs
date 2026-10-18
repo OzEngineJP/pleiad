@@ -11,7 +11,7 @@
 //
 //   createBudget({ channels, host, now, log, brain }) → Budget
 //     brain … 頭の中の保存（core/brain/store.mjs）。無ければ心拍の分は数えない（ADR 0126）
-//     host.readQuota(backendId) … 使用枠（server の providerQuota。設定の「使用量」・ply_usage と同じ quotaCache）
+//     host.readQuota(backendId) … 使用枠（server の providerQuota。設定の「使用量」・ply_usage と同じ quotaStore）
 //     host.usageStore.tokensSince(backendId, sinceMs) … この PC の記録のトークンの合計
 //   Budget:
 //     charge({ channelId, threadId, backend, model, usage }): Promise<number|null>   … ターンの終わり。足した %（数えられなかったら null）
@@ -67,7 +67,7 @@ export function createBudget({ channels, host, now = Date.now, log = () => {}, b
     const key = keyOf(backend, model);
     try {
       const quota = await host?.readQuota?.(backend);
-      const w = quota ? weeklyWindow(backend, model, quota, now()) : null;
+      const w = quota && !quota.stale ? weeklyWindow(backend, model, quota, now()) : null;
       if (w && w.usedPercent >= MIN_USED_PERCENT) {
         const total = await host?.usageStore?.tokensSince?.(backend, Date.parse(w.resetsAt) - WEEK_MS);
         if (total > 0) { const rate = total / w.usedPercent; rates.set(key, rate); return rate; }
@@ -82,7 +82,7 @@ export function createBudget({ channels, host, now = Date.now, log = () => {}, b
     let window = null;
     try {
       const quota = await host?.readQuota?.(backend);
-      const w = quota ? weeklyWindow(backend, model, quota, now()) : null;
+      const w = quota && !quota.stale ? weeklyWindow(backend, model, quota, now()) : null;
       if (w) window = { usedPercent: w.usedPercent, resetsAt: w.resetsAt };
     } catch (e) { log('could not read the usage window:', errText(e)); }
     return { rate, window };

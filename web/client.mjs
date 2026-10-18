@@ -3332,6 +3332,8 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'worktreesChanged') { gitPanel?.changed(); loadTaskCards(state.current).then(repaintTasks).catch(() => {}); return; }
   // 委譲の振り分けの設定・キー・使用量が変わった。設定 › 委譲を開いていれば取り直す
   if (ev.type === 'delegationRoutingChanged') { delegationSettings.event(ev); return; }
+  // 使用枠の正本に新しい値が届いた・無効化した（backend が無ければ全部）。購読している面へ結果を配る
+  if (ev.type === 'usageChanged') { ev.backend ? usageSource.load(ev.backend).catch(() => {}) : usageSource.reload(); return; }
   // 依頼元が委譲の子の設定を替えた（ADR 0134）。持っている行なら読み直す（終わったタスクは running に載らないため）
   if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
@@ -4628,8 +4630,6 @@ function syncAttachButton() {
   else { b.removeAttribute("aria-haspopup"); b.removeAttribute("aria-expanded"); }
 }
 
-// 入力欄の設定のチップ（web/composer-controls.mjs）。値は state に持ち、チップは get() で毎回読む
-const composerQuota = new Map();
 /** 未送信の会話で「bot なし」のときに動くエージェント（bot を選んでいる間も、bot なしの札にはこちらを出す） */
 function homeBackend() {
   const s = state.sessions.find(x => x.id === state.current);
@@ -4654,12 +4654,12 @@ const controls = chatComposer.useControls({
       cwd: bot ? bot.folders?.[0]?.path || state.homeDir || state.cwd : state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
       backends: state.backends, backend: bid,
       // エージェントの行の右端の週の使用量（取れないものは出さない）
-      backendUsage: (id) => weekUsage(composerQuota.get(id)?.quota, ""),
+      backendUsage: (id) => weekUsage(usageSource.get(id)?.quota, ""),
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
       models: state.models, model: state.model,
       efforts: state.efforts, effort: state.effort, effortDisabled: state.effortDisabled,
-      accounts: !bot && state.accountShown ? accountOptions(composerQuota.get(bid)?.quota) : null, account: state.account,
+      accounts: !bot && state.accountShown ? accountOptions(usageSource.get(bid)?.quota) : null, account: state.account,
       endpoint: bot ? null : endpointView(bid),
       modes: state.modes, mode: state.mode,
       modeDisabled: Boolean(bot),
@@ -4670,7 +4670,7 @@ const controls = chatComposer.useControls({
         botSetup: bot ? homeBotSetup(bot) : '',
         openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
         backendLabel: labelOf, onPick: id => homeDest.choose(id),
-        usage: destinationUsage(composerQuota.get(bid), { account: bot ? bot.account ?? '' : state.account,
+        usage: destinationUsage(usageSource.get(bid), { account: bot ? bot.account ?? '' : state.account,
           open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
         groups: sent ? [] : [{ options: [
           { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },
@@ -7290,6 +7290,8 @@ const channelsUi = setupChannels({
   // スレッドの入力欄の設定のチップ（web/channels/thread-composer.mjs）: エージェントのモデル・承認モードの語彙と、エフォートの段
   vocab: (backend) => loadVocab(backend),
   quota: (backend) => usageSource.load(backend),
+  usageOf: (backend) => usageSource.get(backend),
+  onUsage: (fn) => usageSource.onResult(fn),
   openUsage: () => { onboarding.open('usage'); $('usageTab').click(); },
   // 送信の日時の面の一言（窓を閉じても動き続けるか・ホストの時刻帯）。会話の入力欄と同じ材料
   scheduleEnvironment: async () => {
@@ -10118,7 +10120,7 @@ function watchRemoteReason() {
 }
 // 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）
 const usageSource = createUsageSource(cmd);
-usageSource.onResult((backend, result) => { composerQuota.set(backend, result); if (controls.panels.model.open) controls.paint(); });
+usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); });
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,

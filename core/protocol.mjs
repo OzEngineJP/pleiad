@@ -296,6 +296,7 @@ export const EVENTS = new Set([
   "apiKeysChanged", // API キーの登録・差し替え・削除・割り当て・確認の結果が変わった（sessionId は null）。中身は invoke の apiKeys.list で取り直す
   "secretsChanged", // 秘密情報と変数（ADR 0217）の項目・使い道・最後の入力が変わった（sessionId は null）。中身は invoke の secrets.list で取り直す。値は載せない
   "delegationRoutingChanged", // change: settings|usage（旧送信元では省略）。sessionId は null。中身は delegationRouting コマンドで取り直す
+  "usageChanged", // { backend } 使用枠の正本（quotaStore）に新しい値が届いた・無効化した（backend は null。sessionId は null）。画面は providerUsage で取り直す
   "claudeSdk",    // { status: { source, version, ready, consent, fetching, error, prompt? } } Claude Agent SDK の取得の状態が変わった（sessionId は null。ADR 0208）。prompt: true は同意が無いまま Claude の会話を始めようとした（画面は設定の Claude の行を開く）
   "claudeLogin",  // { loginId, kind, accountId, phase: url|code|verifying|done|error|cancelled, url?, message? } アカウントの認可の進み具合（sessionId は null）。トークンは載せない
   "remoteStatus",  // { status: RemoteStatus } リモートの設定・中継との接続・承認待ち・端末一覧が変わった（sessionId は null）

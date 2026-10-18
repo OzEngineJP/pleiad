@@ -212,7 +212,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M7 10l5 5 5-5');
     svg.append(path); return svg;
   };
-  const staleNote = entry => entry?.failed && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) }) : '';
+  const staleNote = entry => (entry?.failed || entry?.quota?.stale) && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) }) : '';
 
   function paintChip() {
     const entry = data.get(shown.backend);

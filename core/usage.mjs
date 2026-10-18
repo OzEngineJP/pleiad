@@ -1,8 +1,11 @@
 // Provider quota snapshots and local usage are deliberately separate: tokens cannot
 // be converted into subscription percentages. Never persist account credentials.
+import fs from 'node:fs';
+import path from 'node:path';
 import { t, agentT } from './i18n.mjs';
 import { openData } from './data-schema.mjs';
 import { usageTable } from './db.mjs';
+import { writeAtomic } from './atomic-file.mjs';
 import { CLAUDE_COST_DELTA } from './usage-migrations.mjs';
 
 export const number = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
@@ -67,24 +70,63 @@ export function claudeQuota(data) {
     message: windows.length ? null : t('usage.claudeUnavailable') };
 }
 
-// Cache only successful sanitized responses, coalesce concurrent refresh requests.
-export function createQuotaCache({ now = Date.now, ttl = 60_000 } = {}) {
-  const cache = new Map(), pending = new Map();
-  let generation = 0;
-  const read = async (key, fetcher) => {
-    const hit = cache.get(key);
-    if (hit && now() - hit.checkedAt < ttl) return hit;
-    if (pending.has(key)) return pending.get(key);
-    const version = generation;
-    const task = Promise.resolve().then(fetcher).then(value => {
-      if (version !== generation) return { windows: [], checkedAt: null, message: t('usage.authChanged') };
-      const result = { ...value, checkedAt: now() }; cache.set(key, result); return result;
-    }).catch(() => ({ windows: [], checkedAt: null, message: t('usage.fetchFailed') }))
-      .finally(() => pending.delete(key));
-    pending.set(key, task); return task;
+const QUOTA_SNAPSHOTS_FILE = 'usage-quota.json';
+// 写しに残すエージェントの上限（使うエージェントの種類は限られる。溢れないための上限。tests/data-writes-allowlist.mjs）
+const QUOTA_SNAPSHOTS_MAX = 20;
+
+/**
+ * プロバイダーの使用枠の正本（単一のストア。設定の画面・ply_usage・委譲の監視・チャンネルの予算・
+ * ヘッダーの札が同じスナップショットを読む）。成功した値だけをキャッシュし、同時の取得は相乗りする。
+ *   get(key)                    … 前回のスナップショット（同期）。無ければ null
+ *   refresh(key, fetcher, opt)  … 取得。ttl 内はキャッシュを返す。force は ttl を待たず取り直す
+ *   subscribe(fn)               … 値が取れた（key）・無効化した（key が null）通知。画面への push に使う
+ *   invalidate()                … 認可・キーが変わった。次の取得は必ず取り直す
+ *   flush()                     … 残っている書き出しが済むまで待つ（テスト用）
+ * スナップショット: { revision, fetchedAt, stale, ...quota（windows・accounts・checkedAt・message…） }。
+ * dir を渡すと、取れた値を usage-quota.json に原子的に残し、起動時に stale: true で読み戻す
+ * （再起動しても札が残る。stale の値は取り直しが届くまで先に返し、届いたら subscribe で知らせる）
+ */
+export function createQuotaStore({ now = Date.now, ttl = 60_000, dir = null, io = fs } = {}) {
+  const cache = new Map(), pending = new Map(), listeners = new Set();
+  let generation = 0, writes = Promise.resolve();
+  const file = dir ? path.join(dir, QUOTA_SNAPSHOTS_FILE) : null;
+  if (file) {
+    try {
+      const saved = JSON.parse(io.readFileSync(file, 'utf8'));
+      for (const [key, quota] of Object.entries(saved?.backends ?? {}).slice(0, QUOTA_SNAPSHOTS_MAX))
+        cache.set(key, { ...quota, revision: 0, fetchedAt: quota?.checkedAt ?? 0, stale: true });
+    } catch { /* 無い・壊れているなら空で始める */ }
+  }
+  const persist = () => {
+    if (!file) return;
+    const backends = Object.fromEntries([...cache].map(([key, s]) => [key, (({ revision, fetchedAt, stale, ...q }) => q)(s)]));
+    writes = writes.then(() => writeAtomic(file, JSON.stringify({ version: 1, backends }, null, 2) + '\n', { mode: 0o600 })).catch(() => {});
   };
-  read.clear = () => { generation++; cache.clear(); };
-  return read;
+  const notify = (key, snapshot) => { for (const fn of listeners) { try { fn(key, snapshot); } catch {} } };
+  return {
+    get: key => cache.get(key) ?? null,
+    async refresh(key, fetcher, { force = false } = {}) {
+      const hit = cache.get(key);
+      if (hit && !hit.stale && !force && now() - hit.fetchedAt < ttl) return hit;
+      if (!pending.has(key)) {
+        const version = generation;
+        const task = Promise.resolve().then(fetcher).then(value => {
+          if (version !== generation) return { windows: [], checkedAt: null, message: t('usage.authChanged') };
+          const snapshot = { ...value, checkedAt: now(), revision: (cache.get(key)?.revision ?? 0) + 1, fetchedAt: now(), stale: false };
+          cache.set(key, snapshot); persist(); notify(key, snapshot);
+          return snapshot;
+        }).catch(() => ({ windows: [], checkedAt: null, message: t('usage.fetchFailed') }))
+          .finally(() => pending.delete(key));
+        pending.set(key, task);
+      }
+      // 前回の終了時の値（stale）があれば、取り直しが届くまで先にそれを返す
+      if (hit?.stale) return hit;
+      return pending.get(key);
+    },
+    subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    invalidate() { generation++; cache.clear(); persist(); notify(null, null); },
+    flush: () => writes,
+  };
 }
 
 // エージェント（ply_usage）へ渡す使用枠。委譲先を選ぶ判断に要る分だけに絞る（残率・期間の分・ローカル実績は落とす）。
@@ -113,7 +155,7 @@ export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
 
 /**
  * ply_usage の本体。backend を省けば使用枠を読めるバックエンドすべて。
- * read は providerUsage と同じ取得（同じ quotaCache を通す）。1 つが失敗しても他は返す。
+ * read は providerUsage と同じ取得（同じ quotaStore を通す）。1 つが失敗しても他は返す。
  * accounts(b) はそのエージェントに登録したアカウントの一覧（[{ id, ready }]。資格情報の無いアカウントに runnable: false を付ける）
  */
 export async function agentUsage({ backend, list, get, read, locale, accounts }) {
