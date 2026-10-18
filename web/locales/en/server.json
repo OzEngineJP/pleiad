@@ -679,6 +679,26 @@
       "loginFailed": "Sign-in failed."
     }
   },
+  "grok": {
+    "description": "Uses local Grok Build CLI and its existing sign-in",
+    "modes": {
+      "askNote": "Asks before actions other than reading. This is not OS-enforced isolation",
+      "editNote": "Allows editing automatically. Access outside the working directory is not isolated by the OS",
+      "auto": "Auto",
+      "autoNote": "Automatically allows actions Grok judges safe, including outside the working directory",
+      "planNote": "Plans before changing code. This is not OS-enforced read-only isolation",
+      "bypassNote": "Skips confirmations"
+    },
+    "errors": {
+      "notInstalled": "Grok Build CLI (grok) was not found. Install it, then check again",
+      "loginRequired": "Grok Build CLI is not signed in. Run `grok login` (or `grok login --device-auth` without a browser), then try again",
+      "modeUnavailable": "Grok Build CLI did not confirm the selected permission mode",
+      "modelUnavailable": "The selected model is not available in Grok Build CLI ({{model}})",
+      "effortUnavailable": "Grok Build CLI did not accept the selected reasoning effort ({{effort}})",
+      "promptFailed": "The Grok Build turn did not complete successfully",
+      "notConnected": "Grok Build CLI is not connected"
+    }
+  },
   "devin": {
     "description": "Uses local Devin CLI and its existing sign-in",
     "usageUnknown": "Remaining Devin CLI quota is unavailable and is shown as unknown.",

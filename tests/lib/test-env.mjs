@@ -37,6 +37,10 @@ if (!process.env.AGENT_HOST_CHROME_USER_DATA) process.env.AGENT_HOST_CHROME_USER
 // 利用者の資格情報に届かないようにする。Devin の試験は明示的に身代わりを渡す。
 for (const key of Object.keys(process.env)) if (key.toUpperCase().startsWith('DEVIN_') || key.toUpperCase() === 'WINDSURF_API_KEY') delete process.env[key];
 process.env.AGENT_HOST_DEVIN_BIN = 'missing-pleiad-test-devin-cli';
+// Grok の実 CLI は既定では起こさない。GROK_HOME を試験の置き場へ向け、利用者のログイン（~/.grok/auth.json）を読まない
+for (const key of Object.keys(process.env)) if (key.toUpperCase().startsWith('GROK_') || key.toUpperCase().startsWith('XAI_')) delete process.env[key];
+process.env.AGENT_HOST_GROK_BIN = 'missing-pleiad-test-grok-cli';
+process.env.GROK_HOME = path.join(process.env.AGENT_HOST_DATA, 'grok-home');
 process.env.DEVIN_CONFIG_HOME = path.join(process.env.AGENT_HOST_DATA, 'devin-config');
 process.env.DEVIN_SESSIONS_DIR = path.join(process.env.AGENT_HOST_DATA, 'devin-sessions');
 export const testDataDir = process.env.AGENT_HOST_DATA;
