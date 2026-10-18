@@ -499,6 +499,7 @@ export function createThread(host) {
         }
         const backend = S.bots.get(p.turn?.botId)?.backend ?? null;
         const built = toolNodes(item.calls, { running: running && item === lastCalls,
+          subagentTools: host.state?.backends?.find((b) => b.id === backend)?.subagentTools,
           link: (card, c) => host.background?.link(card, c.input, c.result, { scope, sessionId: w.sessionId, backend }) });
         const group = el('div', 'th-tools');
         group.append(...built.nodes);

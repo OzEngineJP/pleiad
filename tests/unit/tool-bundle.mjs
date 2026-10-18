@@ -4,7 +4,8 @@
 //
 // DOM シムは tests/run.mjs が入口で入れている。
 import { bundleStats, splitToolCalls, clock } from "../../web/tool-bundle.mjs";
-import { renderToolCall, applyToolResult, applyToolHints, toolChange, exitCodeOf, failureLine, isDelegateToolName } from "../../web/render.mjs";
+import { renderToolCall, applyToolResult, applyToolHints, applySubagentTools, toolChange, exitCodeOf, failureLine, isDelegateToolName, isPlyDelegateToolName } from "../../web/render.mjs";
+import { toolNodes } from "../../web/channels/thread-tools.mjs";
 import { parseTaskNotice } from "../../web/task-notice.mjs";
 
 export const name = "tool-bundle";
@@ -45,6 +46,20 @@ export default async function (t) {
       seg.map((s) => s.type === "bundle" ? `b${s.calls.length}` : "d").join() === "b2,d,b1,d,d,b1", seg.map((s) => s.type).join());
     t.ok("空なら何も出さない", splitToolCalls([], isDelegate).length === 0);
     t.ok("委譲のツール名の判定（Task・Agent・ply_delegate）", isDelegateToolName("Agent") && isDelegateToolName("Task") && isDelegateToolName("mcp__ply_agents__ply_delegate") && !isDelegateToolName("Bash") && !isDelegateToolName("mcp__x__delegate_all"));
+    // バックエンドの申告（subagentTools）で委譲の名前が増える（OpenCode の小文字の task・subagent）
+    applySubagentTools(["task", "subagent"]);
+    t.ok("申告で委譲のツール名が増える", isDelegateToolName("task") && isDelegateToolName("subagent") && !isDelegateToolName("taskRunner"));
+    t.ok("ply_delegate だけの判定（バックエンドに依らない）", isPlyDelegateToolName("mcp__ply_agents__ply_delegate") && !isPlyDelegateToolName("task"));
+    // スレッドの作業ログの要素分け（web/channels/thread-tools.mjs）: 申告の集合で delegate をまとまりの外に出す
+    const calls = [
+      { id: "a", name: "Bash", input: {}, result: { text: "x" } },
+      { id: "b", name: "task", input: { description: "子へ" }, result: { text: "y" } },
+      { id: "c", name: "Grep", input: {}, result: { text: "z" } },
+    ];
+    const declared = toolNodes(calls, { subagentTools: ["task", "subagent"] });
+    t.ok("作業ログ: 申告された task は委譲としてまとまりの外に 1 件ずつ", declared.nodes.length === 3 && declared.bundles.length === 0);
+    const plain = toolNodes(calls);
+    t.ok("作業ログ: 申告が無ければ task はまとまりの中（既定の一覧のまま）", plain.nodes.length === 1 && plain.bundles.length === 1);
   }
 
   // ---- 変えた量

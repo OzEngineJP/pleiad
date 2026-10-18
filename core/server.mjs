@@ -167,7 +167,7 @@ import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
-import { serveHistory } from "../web/history-sync.mjs";
+import { serveHistory, subagentToolSet } from "../web/history-sync.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
@@ -8796,6 +8796,14 @@ wss.on("connection", (ws, req) => {
           try {
             const backend = await resolveBackendForSession(sessionId);
             const retired = backend?.retired ? { retired: backend.retired } : {};
+            // 委譲（サブエージェント）の呼び出しは、発言を出したエージェントの申告（subagentTools）で見分ける。
+            // 発言に backend が無ければ会話の持ち主、対応を終えた・申告の無いエージェントは既定の一覧で拾う
+            const subagentToolNames = new Map();
+            const subagentToolsOf = (id) => {
+              const key = id ?? backend?.id ?? "";
+              if (!subagentToolNames.has(key)) subagentToolNames.set(key, subagentToolSet(getBackend(key)?.subagentTools));
+              return subagentToolNames.get(key);
+            };
             // A later completion cannot be acknowledged by an older history snapshot.
             const sidecar = await store.get(sessionId);
             const completedAt = sidecar.completedAt ?? null;
@@ -8826,7 +8834,7 @@ wss.on("connection", (ws, req) => {
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
-            if (!msg.args?.live) return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args));
+            if (!msg.args?.live) return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -8846,9 +8854,9 @@ wss.on("connection", (ws, req) => {
                 messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
-              }, msg.args));
+              }, msg.args, subagentToolsOf));
             }
-            return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args));
+            return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));
           } finally { liveReads.delete(read); }
         }
 

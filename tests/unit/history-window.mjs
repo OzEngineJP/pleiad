@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import vm from "node:vm";
 import { buildItems, inlineAttachments } from "../../web/timeline.mjs";
 import {
-  serveHistory, serveFrom, serveOlder, joinReply, joinOlder, syncRequest, windowStart, presentBaseFor, stubPresent, messageSig, anchorSig, presentSig, subagentCalls,
+  serveHistory, serveFrom, serveOlder, joinReply, joinOlder, syncRequest, windowStart, presentBaseFor, stubPresent, messageSig, anchorSig, presentSig, subagentCalls, subagentToolSet,
   WINDOW_MESSAGES, WINDOW_BYTES, LAZY_MIN,
 } from "../../web/history-sync.mjs";
 
@@ -148,6 +148,22 @@ export default async function (t) {
   t.ok("窓の手前: 窓の差分の応答にも付く", "from" in callsDiff && same(callsDiff.earlierCalls, calls));
   const olderCalls = serveOlder(clone(withCalls), { before: winCalls.base, count: 50, bytes: WINDOW_BYTES, check: anchorSig(withCalls.messages[winCalls.base]), presentBefore: winCalls.presentBase }, true);
   t.ok("窓の手前: 遡りの応答には付けない（画面は最初の窓の分を持ち続ける。遡って読んだ分は messages に入る）", !("earlierCalls" in olderCalls));
+
+  // バックエンドの申告（subagentTools）で見分える（OpenCode の小文字の task・subagent。既定の一覧は今までどおり）
+  withCalls.messages[1].toolCalls.push(callOf("o1", "task", { description: "申告された委譲" }, undefined));
+  t.ok("subagentCalls（申告）: 既定の一覧では小文字の task は拾わない", subagentCalls(withCalls.messages, 0, 6).map(c => c.id).join() === "s1,s2,s3");
+  t.ok("subagentCalls（申告）: 渡した集合（['task','subagent']）で task を拾い、既定の Task などは拾わない",
+    subagentCalls(withCalls.messages, 0, 6, ["task", "subagent"]).map(c => c.id).join() === "o1"
+    && subagentCalls(withCalls.messages, 0, 6, new Set(["task"])).map(c => c.id).join() === "o1");
+  withCalls.messages[3].backend = "opencode";
+  withCalls.messages[3].toolCalls.push(callOf("o2", "task", { description: "発言のエージェントの委譲" }, undefined));
+  const perMsg = (id) => subagentToolSet(id === "opencode" ? ["task", "subagent"] : ["Task", "Agent"]);
+  t.ok("subagentCalls（申告）: 発言の backend でエージェントごとの申告を引ける（backend の無い発言は呼び出し側の既定）",
+    subagentCalls(withCalls.messages, 0, 6, perMsg).map(c => c.id).join() === "s1,o2,s3");
+  const ocWin = serveHistory(clone(withCalls), winArgs, ["task", "subagent"]);
+  t.ok("窓の手前（申告）: 渡した集合で earlierCalls を作る（既定の Task・Agent は拾わない）", ocWin.earlierCalls?.map(c => c.id).join() === "o1,o2", JSON.stringify(ocWin.earlierCalls));
+  const perMsgWin = serveHistory(clone(withCalls), winArgs, perMsg);
+  t.ok("窓の手前（申告）: 発言ごとの申告を引く関数でも作れる", perMsgWin.earlierCalls?.map(c => c.id).join() === "s1,o2,s3");
 
   // ---------------------------------------------------------------- 窓の差分
   const mine = { messages: win.messages, presents: win.presents, base: win.base, presentBase: win.presentBase };
