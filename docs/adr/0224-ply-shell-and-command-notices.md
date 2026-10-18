@@ -17,7 +17,9 @@
 
 ### 1. Pleiad のシェルのツール `ply_shell`
 
-- Pleiad の MCP（会話ごとのトークンの HTTP の口。`core/mcp-bridge.mjs`）として、Pleiad の MCP を受け取るエージェント（Claude・Codex・Antigravity・OpenCode・fake）に渡す。Devin は Pleiad の MCP をまだ受けていない（`mcpServers: []`）ので、Devin の HTTP の MCP を確かめてから渡す。今後足すエージェントも、Pleiad の MCP を受ければ同じ口を使える。
+- Pleiad の MCP（会話ごとのトークンの HTTP の口。`core/mcp-bridge.mjs`）として、Claude・Codex・OpenCode・fake に渡す（能力の印 `plyShell`）。今後足すエージェントも、Pleiad の MCP を受ければ同じ口を使える。
+  - Antigravity にはまだ渡さない。Pleiad の MCP は Pleiad のカスタムエージェントでしか渡せず、渡すために必ずカスタムエージェントにすると、作業場所の AGENTS.md を読まなくなる。
+  - Devin は Pleiad の MCP をまだ受けていない（`mcpServers: []`）。Devin の HTTP の MCP を確かめてから渡す。
 - ツールは 5 つ。
   - `run` … 終わるまで待つ（上限は既定 2 分・最大 10 分）。シェルが終わったら、パイプを握ったプロセスが残っていても少し待って戻り、残ったことを結果に書く。
   - `start` … 裏で始めて、すぐ戻る（ジョブの id を返す）。サーバーなど、終わらないもの向け。

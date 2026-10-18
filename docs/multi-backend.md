@@ -342,6 +342,18 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 | 無し（Antigravity） | 使えない（`runShell` は断る） | — | — |
 
 - 完了通知で再開するターン・圧縮のターン・走っているターンへの途中送信では渡さない。エージェントを切り替えたら（予約した設定の適用も）走っている分を止め、替えた先も `'host'` なら `shellPending` を次のターンで渡し、そうでなければ捨てる（「渡さない」の行は `shellKept` に残す。`shellRuns.switched`）。予約で替わる先が `'host'` どうしでなければ `runShell` は断る。未送信の会話の削除・サーバーの終わりでも止める
+- シェルが終わっても、裏で起こしたプロセスが出力のパイプを握ったまま残ることがある（PowerShell の `Start-Process -RedirectStandardOutput` で起こしたサーバーなど）。`close` を待ち続けないよう、シェルが終わったら 2 秒（`EXIT_CLOSE_GRACE_MS`）待って締め、終了コードと `leftover: true` を返す
+
+#### Pleiad のシェルのツール（ply_shell、2026-10-18）
+
+エージェントがホストでシェルのコマンドを走らせる Pleiad の MCP（`/mcp/shell`、`core/shell-bridge.mjs`。[ADR 0224](adr/0224-ply-shell-and-command-notices.md)）。会話ごとの Bearer で会話に束縛する（骨格は `core/mcp-bridge.mjs`、無停止の更新の付け直しは `restoreConnection` の `shell`）。
+
+- ツール: `run`（終わるまで待つ。上限は既定 2 分・最大 10 分）・`start`（裏で始めてすぐジョブの id を返す）・`output`（`since` から続きを読む）・`stop`（子のプロセスごと止める）・`list`。走らせる口は `core/host-shell.mjs`。`shell` 引数で `default`・`bash`・`powershell`・`cmd`（Windows だけ）を選ぶ。コマンドには会話のシェルの環境変数（エージェントの Chrome・`PLEIAD_CONTROL_*`・秘密情報と変数）を渡す
+- 承認: 読み取りだけのモード（scope が `none`・`readonly`）は断る。確認なし（autonomy が `never`）のほかは、走らせる前に会話へ承認のカードを出す。エージェント側では聞かない（Claude は `decidePermission` で通し、OpenCode は `ply_shell_*` を allow、Codex は `default_tools_approval_mode: approve`）
+- ジョブの出力はメモリだけ（256 KB。古い方から捨て、捨てた分を数える）。会話ごとの同時の `start` は 8 まで。`start` のジョブは会話の裏の一覧（`running` の `background`、`kind: 'shell'`、`backend: 'ply_shell'`）に出て、`sessions.stopBackground` で止められる。人が止めた・自分で終わった `start` のジョブは、その会話へ知らせる（`shell.jobDone`）。サーバーの終わり・会話の削除・巻き戻しで止める（保持役には載せない）
+- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せないので、Devin は Pleiad の MCP をまだ受けていないので、渡していない
+- **エージェントのシェルを切る**: 設定 `shellTool`（`{ <エージェントの id>: 'native' | 'ply' }`。無ければエージェントの記述の `shellDefault`。OpenCode だけ `'ply'`）が `'ply'` で、能力の印 `nativeShellOff` を持つエージェントは、`runArgs.shellRuntime.nativeOff` でエージェントのシェルのツールを切る。Claude は `disallowedTools` に `Bash`・`PowerShell`、OpenCode は会話の権限で `bash` を全面拒否（一覧から外れる。規則の印 `+noshell`）。切った会話にだけ使い方の指示（`shell.instructions`。「指示の量」の内訳 `shell`）を足す
+- シェルのツールの名前（長いコマンドの知らせ・声の待ちの案内が見分ける）は、エージェントの記述の `shellTools`（`core/shell-tools.mjs`。toolHints の `shape: 'shell'` と同じ名前）。名前で見分けられない呼び出し（ACP の自由な題）は `tool.start` の `shell: true`
 
 ### 2.4 sidecar の拡張
 
@@ -799,6 +811,8 @@ Codexの `set_status / set_title / fork` は未接続なので、
 
 1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`module`・`shortLabel`・`brand`（ロゴ。`web/brand/` に置く）・`cli`
    （`exe`・`binEnv`・`npmPackage`・`installUrl`・`searchDirs`）・`idleCompaction`（会話を離れた後の自動の圧縮の既定。Pleiad が圧縮しないなら null）・
+   `shellTools`（シェルのコマンドを走らせるネイティブのツールの名前。toolHints の `shape: 'shell'` と同じ。名前で見分けられないなら `[]` にして `tool.start` に `shell: true`）・
+   `shellDefault`（エージェントのシェルのツールの既定。`'native'` か `'ply'`。§2.3「Pleiad のシェルのツール」）・
    `contextSources`（エージェントが自分で読む指示・Skills・MCP の読み込み元。`core/context-settings.mjs` の `SOURCES`。新しい形式なら `core/context-scan.mjs` に読み方を足す）。
    `contextSources: null` は Pleiad が読み込み元を把握しておらず推計できないという意味で、エージェント自身の設定読み込みを抑止する値ではない。
    全部のキーを書く（使わないものは null）。レジストリ（`index.mjs`）・CLI の探し方（`core/cli-installation.mjs`）・自動の圧縮の設定の行
