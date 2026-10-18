@@ -274,8 +274,9 @@ export default async function(t) {
     const macKey = path.join(dir, 'AuthKey.p8');
     await fs.writeFile(macKey, 'private-api-key');
     const macApi = { CSC_LINK: 'key', CSC_KEY_PASSWORD: 'password', APPLE_API_KEY: macKey, APPLE_API_KEY_ID: 'KEYID', APPLE_API_ISSUER: 'issuer' };
-    t.ok('macOS release notarizes with an App Store Connect API key', releaseSigning(macApi, 'darwin').mac.notarize === true && !JSON.stringify(releaseSigning(macApi, 'darwin')).includes('private-'));
-    t.ok('macOS release notarizes with an Apple ID', releaseSigning({ CSC_LINK: 'key', CSC_KEY_PASSWORD: 'password', APPLE_ID: 'a@example.com', APPLE_APP_SPECIFIC_PASSWORD: 'p', APPLE_TEAM_ID: 'T' }, 'darwin').mac.hardenedRuntime === true);
+    // 公証は electron-builder 任せにせず afterSign（scripts/notarize-mac.cjs）で行うので、mac.notarize は false。資格情報の要求は変わらない
+    t.ok('macOS release requires an App Store Connect API key for notarization', releaseSigning(macApi, 'darwin').mac.notarize === false && !JSON.stringify(releaseSigning(macApi, 'darwin')).includes('private-'));
+    t.ok('macOS release accepts an Apple ID for notarization', releaseSigning({ CSC_LINK: 'key', CSC_KEY_PASSWORD: 'password', APPLE_ID: 'a@example.com', APPLE_APP_SPECIFIC_PASSWORD: 'p', APPLE_TEAM_ID: 'T' }, 'darwin').mac.hardenedRuntime === true);
     await rejects('macOS API key must be a file path', async () => releaseSigning({ ...macApi, APPLE_API_KEY: '-----BEGIN PRIVATE KEY-----' }, 'darwin'));
     await rejects('macOS API key is incomplete without the issuer', async () => releaseSigning({ ...macApi, APPLE_API_ISSUER: '' }, 'darwin'));
     await rejects('A partial Apple ID overrides the API key and is refused', async () => releaseSigning({ ...macApi, APPLE_ID: 'a@example.com' }, 'darwin'));
