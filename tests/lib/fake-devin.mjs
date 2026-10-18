@@ -69,7 +69,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'fixture/no-reply': return;
       case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
       case 'session/new': {
-        const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast',
+        const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast', used: 120000, window: 262000,
           // 起動で届いたもの（mcpServers・Pleiad からの環境変数）。配達物の試験が読む
           mcpServers: p.mcpServers ?? [], seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_CONTROL_)/.test(k)) };
         persist(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
@@ -79,6 +79,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
         replay(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
+        update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used ?? 120000, size: session.window ?? 262000 });
         result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
       }
       case 'session/list': {
@@ -120,6 +121,12 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       }
       case 'session/prompt': {
         const session = load(p.sessionId), text = (p.prompt ?? []).map(v => v.text ?? '').join('');
+        if (text === '/compact') {
+          // ACP のスラッシュコマンドは prompt の本文として届く。発言は増やさず、占有だけ減らして usage_update を流す
+          session.used = Math.max(20000, Math.round((session.used ?? 120000) * 0.15)); persist(session);
+          update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window });
+          result = { stopReason: 'end_turn' }; break;
+        }
         const token = { cancelled: false, stubborn: text.includes('[stubborn]') }; running.set(session.sessionId, token);
         session.messages.push({ role: 'user', text }); persist(session);
         update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
@@ -176,7 +183,9 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(0, middle) } });
           update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });
         }
-        session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools }); persist(session); running.delete(session.sessionId);
+        session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools });
+        session.used = Math.min(session.window, (session.used ?? 120000) + 30000); persist(session); running.delete(session.sessionId);
+        update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window });
         result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn', permissionResult }; break;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);

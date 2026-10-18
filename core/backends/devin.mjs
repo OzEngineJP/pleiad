@@ -93,7 +93,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   });
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true,
+    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true,
       // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
       browser: true, plyControl: true, secrets: true, visualize: true },
     modes,
@@ -283,6 +283,53 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         if (outcome === 'error') throw sent ? error : undelivered(error);
         return { sessionId };
       });
+    },
+    /**
+     * 会話の圧縮（/compact）。ACP のスラッシュコマンドは、host が prompt の本文として送る。
+     * Devin の自動圧縮は ACP の会話には出ない（CLI の変更履歴）ので、区切りはここで出す。
+     * 第 1 引数の sessionId はネイティブの id（core/conversations.mjs が host の id から訳す）。
+     * 前後の文脈量は、Devin が流す usage_update（文脈の占有）から取る。来なければ量は付けない
+     */
+    async compact({ sessionId, emit, cwd, trigger = 'manual', signal }) {
+      const dir = path.resolve(cwd ?? (await cwdFor(sessionId)) ?? process.cwd());
+      const hostSignal = signal?.signal ?? signal;
+      const local = new AbortController();
+      let client, fatal = null, usage = null;
+      const onAbort = () => { local.abort(); try { client?.notify('session/cancel', { sessionId }); } catch {} };
+      hostSignal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        client = await openClient(dir, {
+          onGone: error => { fatal = error; local.abort(); },
+          onUpdate: params => {
+            if (params.sessionId !== sessionId) return;
+            const u = params.update;
+            if (u?.sessionUpdate !== 'usage_update') return;
+            const used = Number(u.used), size = Number(u.size);
+            if (!Number.isFinite(used) || !Number.isFinite(size) || size <= 0) return;
+            usage = { usedTokens: used, windowTokens: size };
+            emit({ type: 'contextWindow', usedTokens: used, windowTokens: size });
+          },
+        });
+        await client.call('session/load', { sessionId, cwd: dir, mcpServers: [] });
+        if (fatal) throw fatal;
+        const before = usage?.usedTokens;
+        emit({ type: 'compaction', phase: 'start', trigger });
+        emit({ type: 'activity', state: 'compacting' });
+        const result = await client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '/compact' }] }, { timeoutMs: 0 });
+        if (fatal) throw fatal;
+        if (result?.stopReason !== 'end_turn') {
+          emit({ type: 'compaction', phase: 'failed', trigger,
+            reason: result?.stopReason === 'cancelled' || local.signal.aborted ? t('turn.aborted') : t('devin.errors.promptFailed') });
+          return { sessionId };
+        }
+        const after = usage?.usedTokens;
+        emit({ type: 'compaction', phase: 'complete', trigger,
+          ...(Number.isFinite(before) && Number.isFinite(after) && after !== before ? { beforeTokens: before, afterTokens: after } : {}) });
+        return { sessionId };
+      } finally {
+        hostSignal?.removeEventListener('abort', onAbort);
+        if (client) await client.close().catch(() => {});
+      }
     },
     async releaseConversation(id) { const client = active.get(id); if (client) await client.close(); cache.delete(id); },
   };
