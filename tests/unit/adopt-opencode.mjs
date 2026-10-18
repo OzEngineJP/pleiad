@@ -88,13 +88,15 @@ export default async function (t) {
     const meta = sessionMeta(id);
     assert.equal(meta.interrupted ?? null, null, `${label}: restart・update の中断にならない`);
     assert.equal(meta.turnStartedAt ?? null, null, `${label}: 走っている印は片付く`);
-    assert.ok(meta.completedAt > (doneBefore ?? 0), `${label}: 完了時刻を書く`);
+    // 前の値と比べて大きいかではなく、書き換わったかを見る（WSL2 などは時刻合わせで時計が戻ることがある）
+    assert.ok(Number.isFinite(meta.completedAt) && meta.completedAt !== doneBefore, `${label}: 完了時刻を書く`);
   };
   const assistantTexts = async (client, id) => (await client.cmd('loadSession', { sessionId: id })).messages.filter(m => m.role === 'assistant').map(m => m.text);
   let token = null;
   let s1 = null, s2 = null, s3 = null, s4 = null, c1 = null, c2 = null, c3 = null, c4 = null, m1 = null, m2 = null, m3 = null, holderPid = null;
   try {
-    const found = await ensureHolder({ dataDir, root, mode: 'detached', idleMs: 20_000, timeoutMs: 20_000 });
+    // 保持役は、子も親も居ない間が idleMs 続くと終わる。遅い環境（WSL など）で 1 の起動とターンの間に終わらないよう長めにする（後片付けで止める）
+    const found = await ensureHolder({ dataDir, root, mode: 'detached', idleMs: 120_000, timeoutMs: 20_000 });
     holderPid = found.pid;
     found.client.close();
 
@@ -130,6 +132,7 @@ export default async function (t) {
 
     // 3. 引き継ぎ（本物の道）: 承認待ち（Q）・ツールの実行中（S）・本文の途中（T）
     const ids = {};
+    const helloEnds = {};
     {
       s1 = await startServer({ env: envH, dataDir, timeoutMs: 40_000 });
       m1 = await attachMain(dataDir, s1);
@@ -140,6 +143,7 @@ export default async function (t) {
         const res = await c1.runTurn({ backend: 'opencode', cwd: work, prompt: `hello ${k}`, mode: 'full', model: 'fake/echo' }, { ms: WAIT_MS });
         assert.equal(res.outcome, 'ok', s1.tail(10));
         ids[k] = res.sessionId;
+        helloEnds[k] = res.events.filter((x) => x.type === 'turnEnd' && x.sessionId === res.sessionId).map((x) => x.completedAt);
       }
       const ocPid = (await starts()).at(-1);
       const startsBefore = (await starts()).length;
@@ -178,6 +182,8 @@ export default async function (t) {
       await gates.open('s-tool');
       await gates.open('t-text');
       for (const k of Object.keys(ids)) await c2.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids[k], { ms: WAIT_MS }).catch(e => { throw new Error(`${k}: ${e.message}\n${s2.tail(25)}`); });
+      // 完了時刻と使用量は turnEnd の後に書かれる（遅い環境で決め打ちの待ちでは足りない）
+      for (const k of Object.keys(ids)) await until(() => sessionMeta(ids[k])?.completedAt !== doneBefore[k] && usageOf(ids[k]) > usageBefore[k], WAIT_MS, `${k} の完了時刻と使用量`).catch((e) => { throw new Error(`${e.message}: ${JSON.stringify({ completedAt: sessionMeta(ids[k])?.completedAt, doneBefore: doneBefore[k], interrupted: sessionMeta(ids[k])?.interrupted, usage: usageOf(ids[k]), usageBefore: usageBefore[k], ends: c2.events.filter((x) => x.type === 'turnEnd' && x.sessionId === ids[k]).map((x) => [x.outcome, x.completedAt]), helloEnds: helloEnds[k] })}`); });
       await sleep(300);
       for (const k of Object.keys(ids)) {
         assertEndedOnce(c2, ids[k], doneBefore[k], k);
@@ -247,16 +253,19 @@ export default async function (t) {
       c3.close(); c3 = null;
       try { m3.link.kill(); } catch { /* 終わっている */ }
       m3 = null;
-      await s3.stop(); s3 = null;
+      // 強制終了（SIGKILL）。stop() は Linux ではシグナルでサーバーの終わりの処理を走らせ、手を離していない OpenCode も止めてしまう（本番の落ち方ではない）
+      await s3.kill(); s3 = null;
       s4 = await startServer({ env: { ...env, AGENT_HOST_ADOPT_HOLDER: '1' }, dataDir, timeoutMs: 40_000 });
       c4 = await open({ port: s4.port, token: s4.token });
       const askB = await c4.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS }).catch(e => { throw new Error(`${e.message}\n${s4.tail(25)}`); });
       assert.equal(askB.id, askA.id, '強制終了: 承認の id は前と同じ');
+      // 付け直しの最中は起こし直さない（ターンが終わった後は、待ち受けが変わったので次の問い合わせで起こし直してよい）
+      assert.equal((await starts()).length, startsBefore, '付け直しでは OpenCode を起こし直さない');
       await c4.cmd('resolvePermission', { id: askB.id, allow: true });
       await c4.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids.Q, { ms: WAIT_MS });
+      await until(() => sessionMeta(ids.Q)?.completedAt !== doneBefore, WAIT_MS, '強制終了の Q の完了時刻');
       await sleep(300);
       assertEndedOnce(c4, ids.Q, doneBefore, '強制終了の Q');
-      assert.equal((await starts()).length, startsBefore, '付け直しでは OpenCode を起こし直さない');
       // S4 は別のポート（startServer が選ぶ）。ターンが無くなったので、次のターンで OpenCode を起こし直す（中継の口の URL が古い）
       if (s4.port !== prevPort) {
         // 身代わりの OpenCode は会話をメモリにだけ持つ（本物はディスクに残す）ので、起こし直した後は新しい会話で確かめる

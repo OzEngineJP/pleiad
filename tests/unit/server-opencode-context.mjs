@@ -71,6 +71,7 @@ export default async function (t) {
     const body = text(managed);
     t.ok('Pleiad の担当: 指示と Skills の一覧が system に入る', managed.outcome === 'ok' && body.includes('PROJECT-RULE-OC') && /demo: Demo skill for the opencode test/.test(body), body);
     const dedicated = (await launches()).at(-1);
+    for (let n = 0; n < 200 && alive(dedicated.pid); n++) await new Promise((r) => setTimeout(r, 50));
     t.ok('Pleiad の担当: そのターンだけ専用のサーバーを起こし、終わったら止める（共有のサーバーは残る）', (await launches()).length === 2 && dedicated.pid !== shared.pid && !alive(dedicated.pid) && alive(shared.pid), JSON.stringify({ dedicated: dedicated.pid, shared: shared.pid }));
     t.ok('専用のサーバー: 作業場所の設定と Claude の指示・外の Skills を止める', dedicated.flags.OPENCODE_DISABLE_PROJECT_CONFIG === '1' && dedicated.flags.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT === '1'
       && dedicated.flags.OPENCODE_DISABLE_EXTERNAL_SKILLS === '1' && dedicated.flags.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS === '1', JSON.stringify(dedicated.flags));
@@ -112,7 +113,10 @@ export default async function (t) {
     const i = (await launches()).at(-1);
     t.ok('組み合わせ: Skills を任せれば .opencode の Skills を skills.paths で渡し直し、外の Skills は止めない', (i.config.skills?.paths ?? []).map((p) => path.resolve(p)).includes(path.join(cwd, '.opencode', 'skills'))
       && !i.flags.OPENCODE_DISABLE_EXTERNAL_SKILLS && i.flags.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT === '1' && (await fs.readdir(path.join(i.xdg, 'opencode'))).includes('skills'), JSON.stringify(i));
-    t.ok('どのターンの後も、専用のサーバーは残らない', (await launches()).slice(1).every((x) => !alive(x.pid)));
+    // プロセスが消えるまでには少し間がある（Linux）。決め打ちで待たず、消えるまで待つ（上限 10 秒）
+    const gone = async () => (await launches()).slice(1).every((x) => !alive(x.pid));
+    for (let n = 0; n < 200 && !(await gone()); n++) await new Promise((r) => setTimeout(r, 50));
+    t.ok('どのターンの後も、専用のサーバーは残らない', await gone());
   } finally {
     client?.close(); await host?.stop();
     for (const x of await launches()) if (alive(x.pid)) { try { process.kill(x.pid); } catch { /* 終わっている */ } }
