@@ -91,7 +91,7 @@ export function normalizeBot(raw, now = Date.now()) {
   return {
     id: raw.id, name: raw.name, icon: str(raw.icon, '🤖'), iconImage: str(raw.iconImage), persona: str(raw.persona),
     backend: str(raw.backend), model: str(raw.model), effort: str(raw.effort), mode: str(raw.mode),
-    // Claude のアカウントの id（'' = ログイン中のアカウント）。人だけが bots.setAccount で変える。claudeAccounts を持たない backend では使わない
+    // bot のエージェントのアカウントの id（'' = ログイン中のアカウント）。人だけが bots.setAccount で変える。capabilities.accounts を持たない backend では使わない
     account: str(raw.account),
     folders: normalizeFolders(raw.folders),
     sendToOthers: raw.sendToOthers !== false,

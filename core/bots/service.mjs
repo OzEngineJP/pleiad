@@ -6,7 +6,7 @@
 //   channels … ChannelService（bot を作ると DM のチャンネルを作る。createDm({ bot })。まだ無い・失敗なら dmChannelId は空のままで、
 //             start()・ensureDm() が後から作る）
 //   host    … createBotHost の道具（store・createConversation・getBackend・listBackends・resolveModel・resolveEffort・currentLocale・
-//             runtime・usageStore・claudeAccountList）。無くても定義の保存だけは動く（会話を作る・使用量・状態は host が要る）
+//             runtime・usageStore・accountList・reserveAccount）。無くても定義の保存だけは動く（会話を作る・使用量・状態は host が要る）
 //   emit    … botsChanged を出す
 //
 // BotService（author は types.mjs の Author）:
@@ -19,8 +19,9 @@
 //                                                   pulse は渡した欄だけ変わる（{ on?, everyMin?, backend?, model?, channelId? }。ADR 0126）
 //   planUpdate(input): Promise<{ bot, next, loosens, rows }>   … update の検査と、承認カードに出す前後。riskOf・confirm・update が同じ結果を使う
 //   setMode({ botId, mode }, author): Promise<Bot>                 … 承認モード。human-only の操作から（Antigravity は 'yolo' だけ）。既存の会話の承認モードも揃える
-//   setAccount({ botId, account }, author): Promise<Bot>           … Claude のアカウント（'' = ログイン中）。human-only の操作から（ADR 0224）。
-//                                                   登録の無い id・トークンの無いアカウントは断る（host.claudeAccountList）。既存の会話（claudeAccounts を持つ backend）も揃える
+//   setAccount({ botId, account }, author): Promise<Bot>           … bot のエージェントのアカウント（'' = ログイン中）。human-only の操作から（ADR 0224）。
+//                                                   登録の無い id・使えないアカウントは断る（host.accountList）。既存の会話（capabilities.accounts を持つ backend）も揃える。
+//                                                   update で backend を替えると '' に戻る（アカウントはエージェントごと）
 //   remove({ botId }, author): Promise<void>      … DM のチャンネルは archive。会話は消さず、bot の印を外して Chats の一覧に戻す
 //   usage({ botId }): Promise<{ weekTokens: number, cacheRatio: number|null }>   … 使用量の記録（DB の usage_records）を sessionId で引く
 //   overview({ botId? }): Promise<(Bot & { usage, state })[]>      … bots.list / get の返り。state は 'working' | 'waiting' | 'idle'
@@ -342,6 +343,8 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         next.backend = input.backend;
         // モデルとエフォートは backend ごとの語彙。明示がなければ既定に戻す。承認モードは同じ id があれば保ち、無ければ新しい backend の既定
         next.model = ''; next.effort = '';
+        // アカウントはエージェントごと（id はエージェントをまたいで重ならない。ADR 0222）。替えた先ではログイン中のアカウントに戻す
+        if (bot.account) { next.account = ''; row('account', bot.account, ''); }
         const modes = backend?.modes?.();
         if (modes && !modes[bot.mode]) next.mode = defaultMode(modes);
         row('backend', bot.backend, next.backend);
@@ -396,7 +399,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       return {
         bot, next, rows, reasons, loosens: reasons.length > 0, changed: rows.length > 0,
         // 受領証の元（承認のあとに読み直して、承認した変更と同じか確かめる）
-        before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode,
+        before: { name: bot.name, icon: bot.icon, iconImage: bot.iconImage, persona: bot.persona, backend: bot.backend, model: bot.model, effort: bot.effort, mode: bot.mode, account: bot.account,
           folders: bot.folders, sendToOthers: bot.sendToOthers, sendTargets: bot.sendTargets, pulse: bot.pulse },
       };
     },
@@ -444,12 +447,13 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const bot = getBot(botId);
       if (bot.plain) throw invalid('the built-in agent has no account of its own; choose it in each thread');
       const id = typeof account === 'string' ? account : '';
-      // '' （ログイン中のアカウント）はいつでも選べる。登録のアカウントは、今あってトークンを持つものだけ（使えないアカウントを選ばせない）
+      // '' （ログイン中のアカウント）はいつでも選べる。登録のアカウントは、bot のエージェントに今あって使えるもの
+      // （Claude はトークン、ほかはログインして資格情報をしまった）だけ（使えないアカウント・ほかのエージェントのアカウントを選ばせない）
       if (id) {
-        if (typeof host?.claudeAccountList !== 'function') throw invalid(`account: not registered: ${id}`);
-        const row = (await host.claudeAccountList()).find((a) => a.id === id);
+        if (typeof host?.accountList !== 'function') throw invalid(`account: not registered: ${id}`);
+        const row = (await host.accountList(bot.backend)).find((a) => a.id === id);
         if (!row) throw invalid(`account: not registered: ${id}`);
-        if (!row.hasToken) throw invalid(`account: has no token: ${id}`);
+        if (!row.ready) throw invalid(`account: not ready: ${id}`);
       }
       if (id === bot.account) return bot;
       const next = await store.update(botId, (b) => ({ ...b, account: id, updatedAt: now() }));

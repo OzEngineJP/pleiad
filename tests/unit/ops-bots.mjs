@@ -1,6 +1,6 @@
 // bots.* の操作（registry 越し。サーバーの道具は身代わり）: 作成と DM のチャンネル・AI から見える操作と見えない操作（承認モードは人だけ）・
 // 範囲を広げる向きの update は承認・狭める向きは通る・Antigravity の bot は yolo だけ・削除・一覧の使用量と状態・DM の会話。ADR 0082・0109
-// Claude のアカウント（bots.setAccount。人だけ・登録の無い id とトークンの無いアカウントは断る・会話の claudeAccount に写す。ADR 0224）
+// bot のアカウント（bots.setAccount。人だけ・bot のエージェントに登録の無い id と使えないアカウントは断る・会話に写す（送った Codex の会話は次のターンの予約）・バックエンドを替えると ''。ADR 0224）
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -22,16 +22,16 @@ const CLAUDE_MODES = {
   plan: { scope: 'readonly', autonomy: 'ask' }, bypass: { scope: 'full', autonomy: 'never' },
 };
 
-/** 身代わり: バックエンド 3 つ（Claude だけがアカウントを使える）・会話の保存・チャンネルの口・使用量・実行中のターン・登録した Claude のアカウント */
+/** 身代わり: バックエンド 3 つ（Claude はトークン・Codex は資格情報のアカウント・Antigravity は無し）・会話の保存・チャンネルの口・使用量・実行中のターン・登録したアカウント */
 function fake(dataDir, { usage = [], dmFails = false } = {}) {
   const sessions = {};
   let n = 0;
   const backends = {
-    claude: { id: 'claude', modes: () => CLAUDE_MODES, capabilities: { claudeAccounts: true } },
-    codex: { id: 'codex', modes: () => ({ ask: { scope: 'workspace', autonomy: 'ask' }, full: { scope: 'workspace', autonomy: 'never' }, yolo: { scope: 'full', autonomy: 'never' } }) },
+    claude: { id: 'claude', modes: () => CLAUDE_MODES, capabilities: { accounts: 'token' } },
+    codex: { id: 'codex', capabilities: { accounts: 'agent' }, modes: () => ({ ask: { scope: 'workspace', autonomy: 'ask' }, full: { scope: 'workspace', autonomy: 'never' }, yolo: { scope: 'full', autonomy: 'never' } }) },
     antigravity: { id: 'antigravity', modes: () => ({ yolo: { scope: 'full', autonomy: 'never' } }) },
   };
-  const calls = { dm: [], archive: [], update: [], conversations: [], events: [] };
+  const calls = { dm: [], archive: [], update: [], conversations: [], events: [], reserved: [] };
   const channels = {
     createDm: async ({ bot }) => { if (dmFails) throw new Error('channels.createDm is not implemented yet'); calls.dm.push(bot.id); return { id: `c_dm_${bot.id}`, kind: 'dm', name: bot.name, cwd: null }; },
     get: async ({ channelId }) => ({ id: channelId, kind: 'dm', name: 'dm', cwd: null }),
@@ -54,7 +54,11 @@ function fake(dataDir, { usage = [], dmFails = false } = {}) {
     },
     usageStore: { records: async ({ sessionIds, since }) => usage.filter((r) => sessionIds.includes(r.sessionId) && r.at >= since) },
     runtime: { turns: new Map(), waiting: new Map() },
-    claudeAccountList: async () => [{ id: 'acc-oz', name: 'OZ', hasToken: true }, { id: 'acc-bare', name: 'Bare', hasToken: false }],
+    accountList: async (backendId) => ({
+      claude: [{ id: 'acc-oz', name: 'OZ', ready: true }, { id: 'acc-bare', name: 'Bare', ready: false }],
+      codex: [{ id: 'acct-cx', name: 'Work', ready: true }],
+    })[backendId] ?? [],
+    reserveAccount: async (sessionId, account) => { calls.reserved.push({ sessionId, account }); sessions[sessionId] = { ...sessions[sessionId], nextSettings: { ...sessions[sessionId]?.nextSettings, account } }; },
   };
   const service = createBotService({ dataDir, channels, host, emit: (e) => calls.events.push(e), now: () => 1_000_000 });
   const approvals = [];
@@ -143,7 +147,7 @@ export default async function (t) {
     t.ok('Antigravity の bot は yolo で始まる', agy.mode === 'yolo');
     t.ok('Antigravity の bot は yolo 以外を断る', (await call(human, 'bots.setMode', { botId: agy.id, mode: 'default' })).code === 'INVALID' && (await call(human, 'bots.setMode', { botId: agy.id, mode: 'yolo' })).ok);
 
-    // ---- Claude のアカウントも人だけ（ADR 0224）
+    // ---- bot のアカウントも人だけ（ADR 0224）
     t.ok('作った bot のアカウントは \'\'（ログイン中）', made.result.account === '' && sessions[sess.sessionId].claudeAccount === undefined);
     const aiAccount = await call(asking, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
     const freeAccount = await call({ ...agent('bypass'), mode: MODES.bypass }, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
@@ -153,7 +157,7 @@ export default async function (t) {
     const unknown = await call(human, 'bots.setAccount', { botId: owl, account: 'acc-gone' });
     t.ok('登録の無いアカウントは INVALID（変わらない）', unknown.code === 'INVALID' && /not registered/.test(unknown.error) && (await f.service.get({ botId: owl })).account === '', JSON.stringify(unknown));
     const bare = await call(human, 'bots.setAccount', { botId: owl, account: 'acc-bare' });
-    t.ok('トークンの無いアカウントは INVALID（変わらない）', bare.code === 'INVALID' && /no token/.test(bare.error) && (await f.service.get({ botId: owl })).account === '', JSON.stringify(bare));
+    t.ok('使えない（トークンの無い）アカウントは INVALID（変わらない）', bare.code === 'INVALID' && /not ready/.test(bare.error) && (await f.service.get({ botId: owl })).account === '', JSON.stringify(bare));
     t.ok('無い bot は BOT_NOT_FOUND', (await call(human, 'bots.setAccount', { botId: 'b_nope', account: '' })).code === 'BOT_NOT_FOUND');
     const eventsBefore = calls.events.length;
     const chosen = await call(human, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
@@ -170,15 +174,29 @@ export default async function (t) {
     const back = await call(human, 'bots.setAccount', { botId: owl, account: '' });
     t.ok('\'\'（ログイン中）はいつでも選べ、今ある会話（ルーティンも）も \'\' に揃う', back.ok && back.result.account === ''
       && [sess.sessionId, owlThread.sessionId, owlRoutine.sessionId].every((id) => sessions[id].claudeAccount === ''));
-    // アカウントを使えないエージェント（Codex）の bot: 保存はできるが、会話には付けない
+    // Codex の bot: Codex のアカウントを選べる（Claude のアカウントは選べない）
     const kite = (await call(human, 'bots.create', { name: 'Kite', backend: 'codex' })).result;
-    const kiteSet = await call(human, 'bots.setAccount', { botId: kite.id, account: 'acc-oz' });
     const kiteDm = await f.service.ensureDmSession({ botId: kite.id });
+    const kiteClaude = await call(human, 'bots.setAccount', { botId: kite.id, account: 'acc-oz' });
+    t.ok('Codex の bot に Claude のアカウントは INVALID（bot のエージェントに登録の無い id）', kiteClaude.code === 'INVALID' && /not registered/.test(kiteClaude.error) && (await f.service.get({ botId: kite.id })).account === '', JSON.stringify(kiteClaude));
+    const kiteSet = await call(human, 'bots.setAccount', { botId: kite.id, account: 'acct-cx' });
+    t.ok('Codex の bot は Codex のアカウントを選べ、まだ送っていない会話には claudeAccount として付く', kiteSet.ok && kiteSet.result.account === 'acct-cx' && sessions[kiteDm.sessionId].claudeAccount === 'acct-cx' && calls.reserved.length === 0);
     const kiteThread = await f.service.createSession({ botId: kite.id, channel: { id: 'c_k', kind: 'channel', name: 'k', cwd: folderA }, threadId: 'p_k', kind: 'thread', rootText: 'x' });
-    t.ok('Codex の bot にもアカウントは保存できる（Claude に戻したときに効く）', kiteSet.ok && kiteSet.result.account === 'acc-oz');
-    t.ok('Codex の会話（DM・スレッド）には claudeAccount を付けない', !('claudeAccount' in sessions[kiteDm.sessionId]) && !('claudeAccount' in sessions[kiteThread.sessionId]));
+    t.ok('新しく作る Codex の会話にも bot のアカウントが付く', sessions[kiteThread.sessionId].claudeAccount === 'acct-cx');
+    sessions[kiteDm.sessionId].unsent = false;
     await call(human, 'bots.setAccount', { botId: kite.id, account: '' });
-    t.ok('Codex の bot のアカウントを変えても、会話に claudeAccount を書かない（揃えるのは Claude の会話だけ）', !('claudeAccount' in sessions[kiteDm.sessionId]) && !('claudeAccount' in sessions[kiteThread.sessionId]));
+    t.ok('送った Codex の会話は、次のターンの予約で替える（ネイティブの会話はアカウントごと。その場では書き換えない）',
+      calls.reserved.some((r) => r.sessionId === kiteDm.sessionId && r.account === '') && sessions[kiteDm.sessionId].claudeAccount === 'acct-cx'
+      && !calls.reserved.some((r) => r.sessionId === kiteThread.sessionId) && sessions[kiteThread.sessionId].claudeAccount === '', JSON.stringify(calls.reserved));
+    const reservedBefore = calls.reserved.length;
+    await call(human, 'bots.setAccount', { botId: kite.id, account: 'acct-cx' });
+    await call(human, 'bots.setAccount', { botId: kite.id, account: 'acct-cx' });
+    t.ok('予約が同じアカウントなら、もう一度は予約しない', calls.reserved.length === reservedBefore + 1);
+    const gravity = (await call(human, 'bots.create', { name: 'Gravity3', backend: 'antigravity' })).result;
+    const gravitySet = await call(human, 'bots.setAccount', { botId: gravity.id, account: 'acc-oz' });
+    t.ok('アカウントを持てないエージェント（Antigravity）の bot はログイン中（空）だけ', gravitySet.code === 'INVALID' && (await call(human, 'bots.setAccount', { botId: gravity.id, account: '' })).ok, JSON.stringify(gravitySet));
+    const kiteSwap = await call(human, 'bots.update', { botId: kite.id, backend: 'claude' });
+    t.ok('バックエンドを替えるとアカウントはログイン中（空）に戻る（id はエージェントごと）', kiteSwap.ok && kiteSwap.result.account === '' && (await f.service.get({ botId: kite.id })).account === '', JSON.stringify(kiteSwap));
 
     // ---- update: 狭める向きは通る・広げる向きは承認
     const before = approvals.length;

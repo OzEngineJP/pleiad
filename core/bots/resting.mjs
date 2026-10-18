@@ -9,9 +9,9 @@
 //     key(bot): string                       … その bot の休憩の key（restKey に takesAccount を渡したもの）
 //     stop(): void
 //   onChange(key) … 休み始めた・休み終えた（key は `${backend}:${model}`。dispatch が botsChanged を出す）
-//   Claude のアカウントを選んだ bot（ADR 0224）は、枠がアカウントごとなので key に `:${account}` を足す（アカウントを替えれば休憩から出る）。
-//   足すのは、そのアカウントで動くバックエンド（takesAccount(backendId)。capabilities.claudeAccounts）の bot だけ（ほかの backend の bot に残った
-//   account は使われないので、同じ枠の bot と一緒に休む）
+//   アカウントを選んだ bot（ADR 0224）は、枠がアカウントごとなので key に `:${account}` を足す（アカウントを替えれば休憩から出る）。
+//   足すのは、そのアカウントで動くバックエンド（takesAccount(backendId)。capabilities.accounts）の bot だけ（アカウントを持てない backend の
+//   bot に account があっても使われないので、同じ枠の bot と一緒に休む）
 
 export const restKey = (bot, takesAccount = () => true) =>
   `${bot?.backend ?? ''}:${bot?.model ?? ''}${bot?.account && takesAccount(bot.backend ?? '') ? `:${bot.account}` : ''}`;

@@ -6202,8 +6202,10 @@ botHost = createBotHost({
   },
   // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaCache を通す
   readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
-  // bot のアカウント（bots.setAccount。ADR 0224）の検査: 登録があり、トークンを持つものだけ選ばせる
-  claudeAccountList: async () => (await claudeAccounts.list()).accounts,
+  // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
+  accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
+  // bot のアカウントを、送った会話（Codex・OpenCode）では次のターンの予約にする。人の既定には覚えない
+  reserveAccount: (sessionId, account) => reserveTurnSettings({ sessionId, account, keepPrefs: true }),
 });
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う

@@ -131,7 +131,7 @@ export default async function (t) {
     t.ok('足りない欄は既定・知らない欄は捨てる・sendToOthers の既定は true', n.icon === '🤖' && n.persona === '' && n.sendToOthers === true && n.dmSessionId === null && n.createdAt === 5 && !('extra' in n));
     t.ok('sendTargets は文字列だけ・重複なし', n.sendTargets.length === 1 && n.sendTargets[0] === 's');
     t.ok('sendToOthers: false は保たれる', normalizeBot({ id: 'b', name: 'n', sendToOthers: false }).sendToOthers === false);
-    t.ok('Claude のアカウント（ADR 0224）: 無い・文字列でない古い行は \'\'（ログイン中）、id は保たれる',
+    t.ok('bot のアカウント（ADR 0224）: 無い・文字列でない古い行は \'\'（ログイン中）、id は保たれる',
       n.account === '' && normalizeBot({ id: 'b', name: 'n', account: 7 }).account === '' && normalizeBot({ id: 'b', name: 'n', account: 'acc-oz' }).account === 'acc-oz');
     const folders = normalizeFolders(['/a', '/a/', { path: '/b', access: 'ro' }, { path: '' }, { path: '/c', access: 'zzz' }, 5]);
     t.ok('フォルダー: 重複（末尾の区切り）は先を残し、access は rw か ro（既定 rw）', folders.map((f) => `${f.path}:${f.access}`).join() === '/a:rw,/b:ro,/c:rw', folders.map((f) => f.path).join());
