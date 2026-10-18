@@ -277,7 +277,7 @@ export default async function (t) {
     t.ok('ビルド: Azure の発行元が方針に無ければ止める（認証局の署名へ戻る前に、発行元を載せた版を配る）', typeof azureUnlisted === 'string' && azureUnlisted.includes('Example Publisher') && azureUnlisted.includes('update-trust.json'), String(azureUnlisted));
     t.ok('ビルド: none 以外は発行元の名前が要る', typeof throws(() => releaseSigning({ PLY_WINDOWS_SIGNING: 'store', PLY_WIN_CERTIFICATE_SHA1: listed }, 'win32')) === 'string');
     t.ok('ビルド: 知らない方式は止める', String(throws(() => releaseSigning({ ...publisher, PLY_WINDOWS_SIGNING: 'skip' }, 'win32'))).includes('none, store, pfx, or azure'));
-    t.ok('ビルド: macOS は方針を読まず、署名と公証のまま', releaseSigning({ PLY_WINDOWS_SIGNING: 'none', CSC_LINK: 'k', CSC_KEY_PASSWORD: 'p', APPLE_ID: 'a', APPLE_APP_SPECIFIC_PASSWORD: 'b', APPLE_TEAM_ID: 'c' }, 'darwin', { signers: [] }).mac.notarize === true);
+    t.ok('ビルド: macOS は方針を読まず、署名と公証のまま（公証は afterSign の scripts/notarize-mac.cjs が行うので notarize: false）', releaseSigning({ PLY_WINDOWS_SIGNING: 'none', CSC_LINK: 'k', CSC_KEY_PASSWORD: 'p', APPLE_ID: 'a', APPLE_APP_SPECIFIC_PASSWORD: 'b', APPLE_TEAM_ID: 'c' }, 'darwin', { signers: [] }).mac.notarize === false);
     const release = fs.readFileSync(new URL('../../electron-builder.release.cjs', import.meta.url), 'utf8');
     t.ok('ビルド: リリースの設定は署名の設定を win に重ねる（win.forceCodeSigning が全体の forceCodeSigning より優先される）', /config\.win = \{ \.\.\.config\.win, \.\.\.signing\.win \}/.test(release) && /forceCodeSigning: true/.test(release));
   }
