@@ -102,8 +102,8 @@ function rememberSession(id, account) {
 function serverFor(account = null) {
   if (!account) return server;
   const key = accountKey(account);
-  if (removingAccounts.has(key)) throw new Error('OpenCode account is being removed');
-  if (loggingInAccounts.has(key)) throw new Error('OpenCode account login is in progress');
+  if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
+  if (loggingInAccounts.has(key)) throw new Error(t('accounts.backend.loginRunning', { agent: 'OpenCode' }));
   prepareAccount(account);
   if (!accountServers.has(key)) {
     const srv = createOpencodeServer({ command: () => cliCommand('opencode'),
@@ -191,6 +191,7 @@ async function managedServer(contextRuntime, cwd, account = null) {
   const srv = createOpencodeServer({
     command: () => cliCommand('opencode'),
     origin: () => opencodeRelay.whenOrigin(),
+    currentOrigin: () => opencodeRelay.origin(),
     env: async () => ({ ...(await serverEnv(launch.config)), ...accountEnv, ...launch.env,
       ...(account ? { OPENCODE_CONFIG_DIR: path.join(launch.env.XDG_CONFIG_HOME, 'opencode') } : {}) }),
   });
@@ -394,8 +395,8 @@ export const backend = {
     const bound = { ...backend };
     const call = (method, args) => async (...values) => {
       const key = accountKey(account);
-      if (removingAccounts.has(key)) throw new Error('OpenCode account is being removed');
-      if (loggingInAccounts.has(key)) throw new Error('OpenCode account login is in progress');
+      if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
+      if (loggingInAccounts.has(key)) throw new Error(t('accounts.backend.loginRunning', { agent: 'OpenCode' }));
       accountTurns.set(key, (accountTurns.get(key) ?? 0) + 1);
       try { return await backend[method](...args(values)); }
       finally {
@@ -432,9 +433,9 @@ export const backend = {
   async accountLogin(args) {
     const argv = cliCommand('opencode');
     if (!argv) throw new Error(t('opencode.errors.notInstalled'));
-    if (accountBusy(args.account)) throw new Error('OpenCode account is in use');
+    if (accountBusy(args.account)) throw new Error(t('accounts.backend.inUse', { agent: 'OpenCode' }));
     const key = accountKey(args.account);
-    if (removingAccounts.has(key)) throw new Error('OpenCode account is being removed');
+    if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
     loggingInAccounts.add(key);
     try {
       const result = await loginAccount({ ...args, argv });
@@ -451,7 +452,7 @@ export const backend = {
 
   async accountRemove({ account }) {
     const key = accountKey(account);
-    if (!account || accountBusy(account) || removingAccounts.has(key)) throw new Error('OpenCode account is in use');
+    if (!account || accountBusy(account) || removingAccounts.has(key)) throw new Error(t('accounts.backend.inUse', { agent: 'OpenCode' }));
     removingAccounts.add(key);
     try {
       await accountServers.get(key)?.stop();
@@ -471,8 +472,8 @@ export const backend = {
   async runTurn(args, adopt = null, srv = null) {
     const account = selectedAccount(args.sessionId, args);
     const key = accountKey(account);
-    if (removingAccounts.has(key)) throw new Error('OpenCode account is being removed');
-    if (loggingInAccounts.has(key)) throw new Error('OpenCode account login is in progress');
+    if (removingAccounts.has(key)) throw new Error(t('accounts.backend.removing', { agent: 'OpenCode' }));
+    if (loggingInAccounts.has(key)) throw new Error(t('accounts.backend.loginRunning', { agent: 'OpenCode' }));
     accountTurns.set(key, (accountTurns.get(key) ?? 0) + 1);
     try {
     if (adopt && accountKey(adopt.card?.account) !== accountKey(account)) throw new Error('OpenCode holder account mismatch');

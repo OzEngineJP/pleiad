@@ -555,6 +555,48 @@
       "nameRequired": "Enter a name."
     }
   },
+  "agentAccounts": {
+    "title": "{{agent}} accounts",
+    "intro": "Choose a {{agent}} account for each conversation. Adding an account signs in with it. Conversations with no account chosen use the account {{agent}} is signed in with now.",
+    "close": "Close",
+    "add": "Add account",
+    "cancel": "Cancel",
+    "login": "Sign in",
+    "relogin": "Sign in again",
+    "edit": "Rename",
+    "delete": "Delete",
+    "confirmDelete": "Delete \"{{name}}\"? Conversations that use this account stop at their next message.",
+    "confirmDeleteButton": "Delete",
+    "deleteFailed": "Could not delete: {{error}}",
+    "empty": "No accounts yet.",
+    "loading": "Loading…",
+    "status": {
+      "signedIn": "Signed in",
+      "signedInAs": "Signed in ({{label}})",
+      "signedOut": "Not signed in yet"
+    },
+    "form": {
+      "addTitle": "Add a {{agent}} account",
+      "editTitle": "Rename \"{{name}}\"",
+      "name": "Name",
+      "namePlaceholder": "Work, for example",
+      "nameRequired": "Enter a name.",
+      "addAndLogin": "Add and sign in",
+      "save": "Save"
+    },
+    "flow": {
+      "title": "Sign in as \"{{name}}\"",
+      "starting": "Preparing…",
+      "openBrowser": "Continue signing in in your browser. This moves on by itself when you finish.",
+      "openLink": "Open the sign-in page",
+      "runCommand": "Run this command in a terminal and sign in. This moves on by itself when you finish.",
+      "copy": "Copy",
+      "done": "Signed in. You can choose this account in the composer.",
+      "doneAs": "Signed in as {{label}}. You can choose this account in the composer.",
+      "failed": "Could not sign in.",
+      "retry": "Try again"
+    }
+  },
   "accounts": {
     "title": "Claude accounts",
     "close": "Close",
@@ -567,7 +609,7 @@
     },
     "status": {
       "token": "Token registered",
-      "noToken": "No token",
+      "noToken": "No credentials",
       "usage": "Usage display: authorized",
       "noUsage": "Usage display: not authorized"
     },
@@ -1929,6 +1971,8 @@
       "login": "Your {{agent}} sign-in ({{email}}) has expired.",
       "loginNoEmail": "Your {{agent}} sign-in has expired.",
       "token": "The token for Claude account “{{name}}” has expired.",
+      "account": "Sign-in expired for account \"{{name}}\" ({{agent}})",
+      "openAccounts": "Open accounts",
       "tokenUnnamed": "The token for this Claude account has expired.",
       "signInAgain": "Sign in again",
       "waiting": "Sign in in your browser…",
@@ -2204,11 +2248,11 @@
     "account": {
       "signedIn": "Signed in",
       "signedInAccount": "Signed-in account",
-      "noToken": "No token",
+      "noToken": "No credentials",
       "deleted": "Deleted account",
       "chooseAgain": "Choose again",
-      "deletedWarning": "The selected Claude account was deleted. Choose another account.",
-      "noTokenWarning": "The Claude account \"{{name}}\" has no token. Paste one in Settings."
+      "deletedWarning": "The selected account was deleted. Choose another account.",
+      "noTokenWarning": "Account \"{{name}}\" has no credentials. Sign in from Accounts in Settings."
     },
     "endpoint": {
       "official": "Official",
@@ -2844,7 +2888,7 @@
     },
     "agent": "Agent",
     "account": {
-      "title": "Claude account",
+      "title": "Account",
       "compatOff": "Accounts aren't used with compatible endpoints"
     },
     "endpoint": {

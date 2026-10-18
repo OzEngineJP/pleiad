@@ -6,6 +6,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { t } from '../i18n.mjs';
 
 const exec = promisify(execFile);
 const dirs = ['sessions', 'archived_sessions', 'thread-writer-locks', 'skills', 'memories', 'rules', 'plugins', 'attachments', 'generated_images', 'packages', 'vendor_imports'];
@@ -32,7 +33,7 @@ export async function privateCodexPath(dir) {
   if (process.platform !== 'win32') return;
   const { stdout } = await exec('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { windowsHide: true });
   const sid = stdout.match(/S-1-\d+(?:-\d+)+/)?.[0];
-  if (!sid) throw new Error('Cannot determine the owner of the Codex account directory');
+  if (!sid) throw new Error(t('accounts.backend.permissionsUnknown', { agent: 'Codex' }));
   await exec('icacls.exe', [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`], { windowsHide: true });
 }
 
@@ -48,7 +49,7 @@ async function accountDir(account, { create = false } = {}) {
     if (path.dirname(p) === p) break;
   }
   if (create) await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  if (!(await stat(dir))) throw new Error('Codex account directory was removed');
+  if (!(await stat(dir))) throw new Error(t('accounts.backend.directoryRemoved', { agent: 'Codex' }));
   return dir;
 }
 
@@ -61,7 +62,7 @@ async function share(dir, home, name, directory) {
   }
   if (directory) await fs.mkdir(target, { recursive: true });
   try { await fs.symlink(target, link, directory ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file'); }
-  catch (e) { throw new Error(`Cannot share Codex ${name} (${e.code}); symbolic links are required`, { cause: e }); }
+  catch (e) { throw new Error(t('codex.accounts.shareFailed', { entry: name, code: e.code }), { cause: e }); }
 }
 
 export async function validateCodexAccount(account) {
@@ -93,8 +94,8 @@ export async function readCodexCredential(account) {
   if (!s.isFile() || s.isSymbolicLink() || s.nlink > 1) throw new Error('Unsafe Codex authentication file');
   let auth;
   try { auth = JSON.parse(await fs.readFile(file, 'utf8')); }
-  catch { throw new Error('Cannot read Codex authentication file'); }
-  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) throw new Error('Invalid Codex authentication file');
+  catch { throw new Error(t('accounts.backend.credentialUnreadable', { agent: 'Codex' })); }
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) throw new Error(t('accounts.backend.credentialUnreadable', { agent: 'Codex' }));
   return { auth };
 }
 
@@ -113,7 +114,7 @@ export async function prepareCodexAccount(account, { login = false, allowUnauthe
     // tokens on every later call. The encrypted copy is a recovery seed only.
     await fs.writeFile(path.join(dir, 'auth.json'), JSON.stringify(auth), { flag: 'wx', mode: 0o600 });
   }
-  if (!login && !allowUnauthenticated && (loggedOut || !(await readCodexCredential(account)))) throw new Error('Codex account is not logged in');
+  if (!login && !allowUnauthenticated && (loggedOut || !(await readCodexCredential(account)))) throw new Error(t('accounts.backend.notLoggedIn', { agent: 'Codex' }));
   const env = { ...process.env, CODEX_HOME: dir, CODEX_SQLITE_HOME: process.env.CODEX_SQLITE_HOME || home };
   delete env.OPENAI_API_KEY;
   delete env.CODEX_API_KEY;

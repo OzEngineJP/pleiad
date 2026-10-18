@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { runCase, summarize } from '../lib/harness.mjs';
 import { accountQuota, opencodeUsage } from '../../core/backends/opencode-usage.mjs';
 import { errorOf } from '../../core/backends/opencode-normalize.mjs';
+import { t as translate } from '../../core/i18n.mjs';
 
 export const name = 'opencode-usage';
 export const title = 'OpenCode provider quotas: OAuth headers, account isolation, unknown data, and limits';
@@ -84,8 +85,8 @@ export default async function testOpencodeUsage(t) {
     const unsupported = await accountQuota({ ...account, credential: { auth: { openai: { ...oauth, expires: 1 }, custom: oauth, key: { type: 'api', key: 'key-secret' } } } }, { fetcher });
     assert.equal(seen.length, before);
     assert.equal(unsupported.windows.length, 0);
-    assert.match(unsupported.message, /expired/);
-    assert.match(unsupported.message, /not supported/);
+    assert.ok(unsupported.message.includes(translate('opencode.usage.accessExpired')));
+    assert.ok(unsupported.message.includes(translate('opencode.usage.providerUnsupported')));
     t.ok('expired, unsupported, HTTP errors, redirects and malformed replies remain honestly unknown', true);
 
     assert.equal(errorOf({ name: 'APIError', data: { message: 'slow down', statusCode: 429 } }).limited, true);

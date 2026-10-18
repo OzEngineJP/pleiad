@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { runCase, summarize } from '../lib/harness.mjs';
 import { prepareAccount, opencodeData, loginAccount, readAccountAuth, accountLoginCommand } from '../../core/backends/opencode-accounts.mjs';
+import { t as translate } from '../../core/i18n.mjs';
 
 export const name = 'opencode-accounts';
 export const title = 'OpenCode accounts: private auth, conversations, context, limits, and holder ownership';
@@ -45,6 +46,8 @@ export default async function testOpencodeAccounts(t) {
     const signed = await signing;
     assert.equal(signed.credential.auth.openai.access, 'logged-in');
     assert.equal(emitted[0].phase, 'url');
+    assert.equal(emitted[0].message, translate('opencode.auth.accountRunCommand'));
+    assert.equal(emitted.at(-1).message, translate('opencode.auth.accountLoggedIn'));
     assert.ok(!emitted[0].url.includes('logged-in'));
     const encoded = accountLoginCommand(login, ['C:/Program Files/opencode.exe'], 'win32').split(' ').at(-1);
     const script = Buffer.from(encoded, 'base64').toString('utf16le');
@@ -52,9 +55,9 @@ export default async function testOpencodeAccounts(t) {
     const aborter = new AbortController();
     const cancelled = loginAccount({ account: login, argv: ['opencode'], signal: aborter.signal, pollMs: 10 });
     aborter.abort();
-    await assert.rejects(cancelled, { name: 'AbortError' });
+    await assert.rejects(cancelled, { name: 'AbortError', code: 'ABORT_ERR', message: translate('accounts.backend.loginCancelled', { agent: 'OpenCode' }) });
     const rejected = loginAccount({ account: login, argv: ['opencode'], timeoutMs: 25, pollMs: 5 });
-    await assert.rejects(rejected, /timed out/);
+    await assert.rejects(rejected, { message: translate('opencode.auth.loginTimeout') });
     t.ok('login publishes only an isolated terminal command, observes auth change, supports abort and timeout', true);
 
     ({ backend, stopOpencodeServer: stop } = await import('../../core/backends/opencode.mjs'));
@@ -64,7 +67,8 @@ export default async function testOpencodeAccounts(t) {
     assert.equal((await backend.accountStatus({ account: one })).hasCredential, true);
     assert.equal((await backend.accountStatus({ account: { id: 'none', dir: path.join(scratch, 'none') } })).hasCredential, false);
     const { DatabaseSync } = (await import('../../core/db.mjs')).loadSqlite();
-    for (const [account, id] of [[one, 'ses_offline_one'], [two, 'ses_offline_two']]) {
+    const offlineOne = `ses_offline_one_${path.basename(scratch)}`, offlineTwo = `ses_offline_two_${path.basename(scratch)}`;
+    for (const [account, id] of [[one, offlineOne], [two, offlineTwo]]) {
       const db = new DatabaseSync(path.join(opencodeData(account), 'opencode.db'));
       db.exec('create table session (id text, parent_id text, directory text, title text, time_created integer, time_updated integer, time_archived integer); create table message (id text, session_id text, data text, time_created integer); create table part (id text, message_id text, session_id text, data text, time_created integer)');
       db.prepare('insert into session values (?, null, ?, ?, 1000, 1000, null)').run(id, scratch, account.name);
@@ -72,9 +76,9 @@ export default async function testOpencodeAccounts(t) {
       db.prepare('insert into part values (?, ?, ?, ?, 1000)').run(`${id}_part`, `${id}_msg`, id, JSON.stringify({ type: 'text', text: `history ${account.name}` }));
       db.close();
     }
-    assert.deepEqual((await backend.listSessions({ account: one })).map(s => s.sessionId), ['ses_offline_one']);
-    assert.equal((await backend.getSession('ses_offline_two', { account: two })).title, 'Two');
-    assert.equal((await backend.getMessages('ses_offline_one', { account: one }))[0].text, 'history One');
+    assert.deepEqual((await backend.listSessions({ account: one })).map(s => s.sessionId), [offlineOne]);
+    assert.equal((await backend.getSession(offlineTwo, { account: two })).title, 'Two');
+    assert.equal((await backend.getMessages(offlineOne, { account: one }))[0].text, 'history One');
     t.ok('offline session and message database reads select the account data directory', true);
     const run = async (account, prompt, extra = {}) => {
       const events = [];
@@ -195,7 +199,7 @@ export default async function testOpencodeAccounts(t) {
     assert.notEqual(acquiredOne.id, acquiredTwo.id);
     assert.equal(restoredOne[0].opencode, acquiredOne);
     assert.equal(restoredTwo[0].opencode, acquiredTwo);
-    await assert.rejects(backend.accountRemove({ account: one }), /in use/);
+    await assert.rejects(backend.accountRemove({ account: one }), { message: translate('accounts.backend.inUse', { agent: 'OpenCode' }) });
     await assert.rejects(backend.adoptTurn({ account: one, sessionId: first.sessionId, card: { held: true, account: two }, source: { held: true } }), /holder account mismatch/);
     for (const held of [acquiredOne, acquiredTwo]) { client.emit('exit', { id: held.id, code: 0 }); held.dispose(); }
     for (const source of [...restoredOne, ...restoredTwo]) source.dispose();
@@ -207,9 +211,9 @@ export default async function testOpencodeAccounts(t) {
     const ready = new Promise(resolve => { started = resolve; });
     const running = run(one, 'slow', { signal: { signal: turnAbort.signal }, control: { onReady: started } });
     // Starting/preparing is already a use, before the prompt reaches the CLI.
-    await assert.rejects(backend.accountRemove({ account: one }), /in use/);
+    await assert.rejects(backend.accountRemove({ account: one }), { message: translate('accounts.backend.inUse', { agent: 'OpenCode' }) });
     await ready;
-    await assert.rejects(backend.accountRemove({ account: one }), /in use/);
+    await assert.rejects(backend.accountRemove({ account: one }), { message: translate('accounts.backend.inUse', { agent: 'OpenCode' }) });
     turnAbort.abort();
     await running;
     await backend.accountRemove({ account: one });

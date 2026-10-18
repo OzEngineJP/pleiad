@@ -1,5 +1,8 @@
 # Pleiad のエージェント間委譲
 
+登録アカウントの選択は Claude・Codex・OpenCode に対応する。`ply_usage` の各エージェントの行にある `account`（`login` または `acct-…`）を、同じ `backend` と一緒に `ply_delegate`・`ply_task_send` へ渡す。未登録・認証情報なし・選んだモデルの枠が満杯と分かっている場合は断り、別のアカウントへ黙って替えない。アカウントを省いた自動の振り分けでは、対応するエージェントの登録アカウントも使用量で選ぶ。認証の登録と削除は設定画面で行う。[ADR 0222](adr/0222-agent-accounts-and-provider-quota.md)。
+
+
 Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の子会話を作成できる。
 `kind`（仕事の種類）は必ず書く。`backend`（`claude` / `codex` / `antigravity`）を書けばその委譲先に固定し、
 省けば Pleiad が委譲先を選ぶ（下の「委譲先の自動振り分け」）。同じバックエンドへの委譲もできる。

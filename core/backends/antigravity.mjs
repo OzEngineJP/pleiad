@@ -283,7 +283,7 @@ export const backend = {
     rewind: false,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
     approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
     mcpApproval: 'agent',
-    claudeAccounts: false,
+    accounts: false,
     compatEndpoints: false,
     compact: false,             // 圧縮は agy が自分で決める
     autoCompactWindow: false,

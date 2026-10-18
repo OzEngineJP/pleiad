@@ -92,6 +92,8 @@ import { sweepClaudeEnvFiles } from './claude-env-file.mjs';
 import { createSecretFill } from './secret-fill.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
+import { createAgentAccounts } from './agent-accounts.mjs';
+import { createAgentAccountManager } from './agent-account-manager.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
 import { contractEmit } from './backends/contract.mjs';
 import { opencodeRelay, OPENCODE_RELAY_PATH } from './opencode-relay.mjs';
@@ -169,7 +171,7 @@ import { serveHistory } from "../web/history-sync.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
-  getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession,
+  getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession as rawBackendForSession, backendForAccount, offlineAccountBackend,
 } from "./backends/index.mjs";
 import { takeBootEnv } from './boot-env.mjs';
 import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from './review-mode.mjs';
@@ -494,6 +496,66 @@ const claudeLogin = createClaudeLogin({
   openExternal,
 });
 process.on('exit', () => claudeLogin.cancelAll());
+// Claude 以外のエージェントのアカウント（capabilities.accounts が 'agent'。ADR 0222、core/agent-accounts.mjs）。資格情報はエージェントが決めた形で暗号化してしまう
+const agentAccountSecrets = createSecretStore({ file: path.join(store.dataDir, 'agent-account-secrets.json'), cipher: secretCipher });
+agentAccountSecrets.migrate().catch(() => {});
+const agentAccounts = createAgentAccounts({ dataDir: store.dataDir, secrets: agentAccountSecrets });
+const accountManager = createAgentAccountManager({ accounts: agentAccounts, getBackend, emit: emitGlobal,
+  invalidate: () => { quotaCache.clear(); routingUsage?.refresh().catch(() => {}); }, openExternal });
+process.on('exit', () => accountManager.cancelAll());
+/** アカウントの持ち方（capabilities.accounts）。false・'token'（Claude の台帳。core/claude-accounts.mjs）・'agent'（core/agent-accounts.mjs） */
+const accountKind = backend => backend?.capabilities?.accounts || false;
+/**
+ * エージェントのアカウントの一覧（画面・委譲・使用量の共通の形）。ready はその会話で走らせられるか
+ * （Claude はトークンがある、ほかはログインして資格情報をしまった）
+ */
+async function accountRows(backend) {
+  const kind = accountKind(backend);
+  if (kind === 'token') return (await claudeAccounts.list()).accounts.map(a => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken) }));
+  if (kind === 'agent') return (await agentAccounts.list(backend.id)).map(a => ({ id: a.id, name: a.name, ready: a.hasCredential }));
+  return [];
+}
+/** そのエージェントに登録したアカウントか */
+async function accountHas(backend, id) {
+  const kind = accountKind(backend);
+  if (kind === 'token') return claudeAccounts.has(id);
+  if (kind === 'agent') return agentAccounts.has(backend.id, id);
+  return false;
+}
+/**
+ * 会話で使うアカウントを引く（runTurn が渡す）。'' はログイン中のアカウント（null）。会話の欄（claudeAccount。名前は歴史的）には
+ * ほかのエージェントのアカウントの id も入りうる（会話のエージェントを替えた）。そのときはこのエージェントのログイン中のアカウントで走らせる。
+ * 消したアカウントの id は投げる（黙ってログイン中のアカウントへ落とさない）
+ */
+/** 新しい会話の既定のアカウント（人が最後に選んだもの。エージェントごと。Claude は前からの prefs の claudeAccount も読む） */
+async function defaultAccount(backendId) {
+  const prefs = await store.getPrefs();
+  return prefs.backends?.[backendId]?.account ?? (accountKind(getBackend(backendId)) === 'token' ? prefs.claudeAccount : null) ?? '';
+}
+/** 人が選んだアカウントを、そのエージェントの新しい会話の既定にする */
+async function rememberAccount(backendId, id) {
+  await savePref('account', id || null, backendId);
+  if (accountKind(getBackend(backendId)) === 'token') await savePref('claudeAccount', id || null);
+}
+async function accountResolve(backend, id) {
+  const kind = accountKind(backend);
+  if (!id || !kind) return null;
+  if (kind === 'token') {
+    if (await agentAccounts.get(id)) return null;
+    return claudeAccounts.resolve(id);
+  }
+  return agentAccounts.resolve(backend.id, id, { known: other => claudeAccounts.has(other) });
+}
+async function resolveBackendForSession(sessionId) {
+  const b = await rawBackendForSession(sessionId);
+  if (accountKind(b) !== 'agent') return b;
+  const meta = await store.get(sessionId);
+  if (meta.compatEndpoint) return b;
+  const id = meta.claudeAccount ?? '';
+  if (!id) return b;
+  try { return await backendForAccount(b, await accountResolve(b, id)); }
+  catch (error) { return offlineAccountBackend(b, error); }
+}
 // 互換の接続先（Claude Code の Anthropic 互換 / Codex の Responses 互換。会話ごとに選ぶ。core/compat-endpoints.mjs）。
 // キーは Claude のアカウント・MCP と同じ暗号化の置き場。前の起動で消し損ねたフラグ設定のファイル（キーを含む）は起動時に片付ける
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
@@ -760,7 +822,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
   // 使用枠は読むだけなので、読み取り・計画モードでも答える。providerUsage と同じキャッシュを通す
   if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng,
-    claudeAccounts: async () => (await claudeAccounts.list()).accounts });
+    accounts: async b => accountRows(b) });
   const mutation = DELEGATING_TOOLS.includes(name);
   if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error(agentT(lng, 'delegation.readOnly'));
   // リモートのホストへ任せる（ply_delegate の host と、写しの行があるタスクへの ply_task_*。docs/agent-delegation.md「リモートのホストへ任せる」）
@@ -849,8 +911,8 @@ const TASK_SETTINGS = ['backend', 'model', 'effort', 'account'];
  * 断るのは、登録に無い・トークンが無い（子を走らせられない）・model の使用枠が満杯と分かっているとき。黙ってほかのアカウントに落とさない。
  * 返すのは { account（内部の値）, label（伏せた見出し） }
  */
-async function requestedAccount(name, model, lng) {
-  const { accounts } = await claudeAccounts.list();
+async function requestedAccount(name, model, lng, backend = getBackend('claude')) {
+  const accounts = (await accountRows(backend)).map(a => ({ ...a, hasToken: a.ready }));
   const names = () => [LOGIN_ACCOUNT, ...accounts.filter(a => a.hasToken).map(a => a.id)].join(', ');
   if (typeof name !== 'string' || name.length > 200) throw new Error(agentT(lng, 'delegation.accountUnknown', { account: String(name ?? ''), accounts: names() }));
   const id = name === LOGIN_ACCOUNT ? '' : name;
@@ -858,7 +920,7 @@ async function requestedAccount(name, model, lng) {
   if (id && !row) throw new Error(agentT(lng, 'delegation.accountUnknown', { account: name, accounts: names() }));
   if (row && !row.hasToken) throw new Error(agentT(lng, 'delegation.accountNoToken', { account: name, accounts: names() }));
   if (model) {
-    const check = selectRetryAccount(checkCandidate(`claude:${model}`, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() }), 'claude', id);
+    const check = selectRetryAccount(checkCandidate(`${backend.id}:${model}`, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() }), backend.id, id);
     if (check.reason === 'quota_full') throw new Error(agentT(lng, 'delegation.accountQuotaFull', { account: name, model }));
   }
   return { account: id, label: await accountLabelOf(id, accounts) };
@@ -866,7 +928,7 @@ async function requestedAccount(name, model, lng) {
 /** 委譲カードに出すアカウントの見出し（人が付けた名前。メールアドレスは伏せる）。'' はログイン中のアカウント */
 async function accountLabelOf(id, accounts) {
   if (!id) return maskEmail(t('claude.usage.loginAccount'));
-  const row = (accounts ?? (await claudeAccounts.list()).accounts).find(a => a.id === id);
+  const row = (accounts ?? await allAccountRows()).find(a => a.id === id);
   return row ? maskEmail(row.name) : null;
 }
 /** 子のターンが始まるところ（引き継ぎの最中を含む）・分岐の最中。この間は子の設定を書かない（reserveTurnSettings も断る） */
@@ -897,11 +959,11 @@ async function taskSettingsPlan(owner, args, lng, turn) {
   // 次のターンが走る先（予約があればそれ。予約はいつも backend を持つ）。替えるのはそこからの差分
   const reserved = meta.nextSettings?.backend ? getBackend(meta.nextSettings.backend) : null;
   const current = reserved ?? source;
-  const target = args.backend !== undefined ? getBackend(args.backend) : current;
+  let target = args.backend !== undefined ? getBackend(args.backend) : current;
   if (!target) throw new Error(agentT(lng, 'delegation.backendDisabled'));
-  // アカウントは Claude の子だけ（同じ呼び出しで Claude へ替えるときも含む）
+  // アカウントはアカウントを持てるエージェントの子だけ（同じ呼び出しでそのエージェントへ替えるときも含む。ADR 0222）
   const accountGiven = args.account !== undefined;
-  if (accountGiven && target.id !== 'claude') throw new Error(agentT(lng, 'tasks.accountClaudeOnly', { backend: target.id }));
+  if (accountGiven && !accountKind(target)) throw new Error(agentT(lng, 'tasks.accountClaudeOnly', { backend: target.id }));
   const cwd = meta.nextSettings?.cwd ?? meta.cwd ?? task.cwd;
   const before = { backend: current.id, model: (reserved ? meta.nextSettings.model : meta.model) ?? '',
     effort: (reserved ? meta.nextSettings.effort : meta.effort) ?? '', mode: (reserved ? meta.nextSettings.mode : undefined) ?? meta.mode ?? '' };
@@ -917,6 +979,10 @@ async function taskSettingsPlan(owner, args, lng, turn) {
     if (endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
   }
   if (!endpointCapable(target)) endpoint = '';
+  const beforeAccount = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
+  const preselected = accountGiven ? await requestedAccount(args.account, null, lng, target) : null;
+  const account = preselected ? preselected.account : target.id === current.id ? beforeAccount : beforeAccount && await accountHas(target, beforeAccount) ? beforeAccount : '';
+  if (!endpoint) target = await backendForAccount(getBackend(target.id), await accountResolve(target, account));
   const asked = await canonicalModel(target, args.model, cwd, endpoint);
   // 互換の接続先から公式へ移るとき（account を書いた）は、接続先のモデル名を公式へ送らず既定に戻す
   const leftEndpoint = accountGiven && (target.id === current.id ? meta.nextSettings?.endpoint ?? meta.compatEndpoint ?? '' : target.id === source.id ? meta.compatEndpoint ?? '' : '') !== '';
@@ -927,11 +993,9 @@ async function taskSettingsPlan(owner, args, lng, turn) {
     throw new Error(agentT(lng, 'tasks.modelUnknown', { model, backend: target.id, models: await knownModelNames(target, cwd, endpoint) }));
   }
   // 使用枠が満杯と分かっているときだけ断る（取り置きが無い・古いだけでは断らない。固定の ply_delegate も、account を書いたときだけ見る）
-  const beforeAccount = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
-  const chosen = accountGiven ? await requestedAccount(args.account, model, lng) : null;
-  const account = chosen ? chosen.account : beforeAccount;
+  const chosen = accountGiven ? await requestedAccount(args.account, model, lng, target) : null;
   if (!chosen && !endpoint && model) {
-    const check = selectRetryAccount(checkCandidate(`${target.id}:${model}`, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() }), target.id, target.id === 'claude' ? account : undefined);
+    const check = selectRetryAccount(checkCandidate(`${target.id}:${model}`, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() }), target.id, accountKind(target) ? account : undefined);
     if (check.reason === 'quota_full') throw new Error(agentT(lng, 'tasks.quotaFull', { model, backend: target.id }));
   }
   if (args.effort !== undefined) {
@@ -987,7 +1051,7 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   const accountLabels = await accountLabelMap();
   let retargeted = null, result;
   try {
-    retargeted = await agentTasks.retarget(owner, plan.task.taskId, { ...after, account: after.backend === 'claude' ? nextAccount : null, accountLabels }, lng);
+    retargeted = await agentTasks.retarget(owner, plan.task.taskId, { ...after, account: accountKind(getBackend(after.backend)) ? nextAccount : null, accountLabels }, lng);
     result = message === undefined ? retargeted.task : await agentTasks.call(owner, 'ply_task_send', { taskId: plan.task.taskId, message }, signal, lng);
   } catch (e) {
     if (retargeted?.changed) await agentTasks.untarget(plan.task.taskId, retargeted.previous).catch(() => {});
@@ -1018,11 +1082,16 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
     emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: plan.task.taskId });
   }
   // 即時に伝わったのはモデルだけ。ほかは子の次のターンから（走っていなければ、次に走るとき）
-  return { ...result, settings: { ...after, ...(after.backend === 'claude' ? { account: nextAccount || LOGIN_ACCOUNT } : {}), appliesTo: 'nextTurn', ...(live ? { modelLive: true } : {}) } };
+  return { ...result, settings: { ...after, ...(accountKind(getBackend(after.backend)) ? { account: nextAccount || LOGIN_ACCOUNT } : {}), appliesTo: 'nextTurn', ...(live ? { modelLive: true } : {}) } };
+}
+/** 全部のエージェントのアカウント（id はエージェントをまたいで一意） */
+async function allAccountRows() {
+  const rows = await Promise.all(listBackends().filter(b => accountKind(b)).map(b => accountRows(b).catch(() => [])));
+  return rows.flat();
 }
 /** アカウントの内部の値 → 委譲カードの見出し（'' はログイン中のアカウント）。タスクの記録の routing に残す */
 async function accountLabelMap() {
-  const { accounts } = await claudeAccounts.list().catch(() => ({ accounts: [] }));
+  const accounts = await allAccountRows().catch(() => []);
   return { '': maskEmail(t('claude.usage.loginAccount')), ...Object.fromEntries(accounts.map(a => [a.id, maskEmail(a.name)])) };
 }
 
@@ -1326,12 +1395,14 @@ async function routeDelegation(args, lng, cwd) {
   if (!KINDS.includes(args.kind)) throw new Error(agentT(lng, 'routing.kindRequired', { kinds: kindList(lng) }));
   if (args.backend !== undefined) {
     if (args.account === undefined) return { ...args, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model }) };
-    // 依頼元が選んだ Claude のアカウント（ADR 0205）。公式で走らせるので、モデルは公式の一覧で決めて使用枠を見る
-    if (args.backend !== 'claude') throw new Error(agentT(lng, 'routing.accountClaudeOnly', { backend: String(args.backend) }));
-    const backend = getBackend('claude');
+    // 依頼元が選んだアカウント（ADR 0205・0222）。公式で走らせるので、モデルは公式の一覧で決めて使用枠を見る
+    let backend = getBackend(args.backend);
+    if (backend && !accountKind(backend)) throw new Error(agentT(lng, 'routing.accountClaudeOnly', { backend: String(args.backend) }));
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
+    const preselected = await requestedAccount(args.account, null, lng, backend);
+    backend = await backendForAccount(backend, await accountResolve(backend, preselected.account));
     const model = await resolveModel(null, await canonicalModel(backend, args.model, cwd, ''), backend, cwd, '');
-    const chosen = await requestedAccount(args.account, model, lng);
+    const chosen = await requestedAccount(args.account, model, lng, backend);
     return { ...args, account: chosen.account, routing: pinnedRouting({ kind: args.kind, backend: args.backend, model: args.model, account: chosen.account, accountLabel: chosen.label }) };
   }
   // account は委譲先を固定したときだけ（自動の振り分けはアカウントも使用量で選ぶ）
@@ -2192,7 +2263,15 @@ const promptSuggestions = createSuggestionJobs({
  * （setup-token のトークンは scope が user:inference だけで使用量を読めない）。認可が済んでいないものは理由を出す。
  * 1 件も登録していなければ空＝今までどおりログイン中のアカウントだけ
  */
-async function usageAccounts() {
+async function usageAccounts(backendId = 'claude') {
+  const backend = getBackend(backendId);
+  if (accountKind(backend) === 'agent') {
+    // Claude 以外: アカウントの置き場と資格情報で、エージェントが読む（backend.usage の accounts）
+    const rows = await agentAccounts.list(backendId).catch(() => []);
+    const accounts = await Promise.all(rows.map(async a => ({ id: a.id, name: a.name, ready: a.hasCredential,
+      dir: (await agentAccounts.get(a.id))?.dir ?? null, credential: a.hasCredential ? await agentAccounts.credential(a.id).catch(() => null) : null })));
+    return accounts.length ? { accounts } : {};
+  }
   const accounts = await claudeAccounts.usageTargets().catch(() => []);
   return accounts.length ? { accounts } : {};
 }
@@ -2203,7 +2282,7 @@ async function usageAccounts() {
  */
 async function providerQuota(backend) {
   if (!backend.usage) return { windows: [], checkedAt: null, message: t('quota.unsupported') };
-  return quotaCache(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.claudeAccounts ? await usageAccounts() : {}) }));
+  return quotaCache(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.accounts ? await usageAccounts(backend.id) : {}) }));
 }
 
 /**
@@ -2906,7 +2985,7 @@ function makeEmit(turn) {
       if (event.outcome === 'error' && event.kind === 'auth' && !turn.info.endpoint) {
         const accountId = turn.info.account || '';
         event = { ...event, backend: turn.backend.id, auth: accountId
-          ? { mode: 'token', accountId, name: turn.authAccount?.id === accountId ? turn.authAccount.name : null }
+          ? { mode: accountKind(turn.backend) === 'token' ? 'token' : 'account', accountId, name: turn.authAccount?.id === accountId ? turn.authAccount.name : null }
           : { mode: 'cli', email: authAccounts.get(turn.backend.id) ?? null } };
         if (!accountId && !replay) authExpired.set(turn.backend.id, Date.now());
       }
@@ -3508,20 +3587,22 @@ async function createSession(args) {
       }
     }
     if (endpoint) await store.setSessionData(sessionId, 'compatEndpoint', endpoint);
-    const selected = await resolveModel(null, model, backend, cwd || undefined, endpoint);
+    const inheritedAccount = inherit ? source.nextSettings?.account ?? source.claudeAccount ?? '' : chosen?.account ?? await defaultAccount(backend.id);
+    const chosenAccount = inheritedAccount && await accountHas(backend, inheritedAccount) ? inheritedAccount : '';
+    const scopedBackend = !endpoint && chosenAccount ? await backendForAccount(backend, await accountResolve(backend, chosenAccount)) : backend;
+    const selected = await resolveModel(null, model, scopedBackend, cwd || undefined, endpoint);
     await store.setModel(sessionId, selected);
     const effort = args?.effort ?? (inherit ? source.nextSettings?.effort ?? source.effort : chosen?.effort);
-    const resolvedEffort = await resolveEffort(null, effort, backend, selected, cwd || undefined, await endpointRow(endpoint))
+    const resolvedEffort = await resolveEffort(null, effort, scopedBackend, selected, cwd || undefined, await endpointRow(endpoint))
       .catch(async error => {
         if (args?.effort !== undefined || inherit) throw error;
-        return resolveEffort(null, '', backend, selected, cwd || undefined, await endpointRow(endpoint));
+        return resolveEffort(null, '', scopedBackend, selected, cwd || undefined, await endpointRow(endpoint));
       });
     await store.setSessionData(sessionId, 'effort', resolvedEffort);
     await store.setMode(sessionId, await resolveMode(null, mode, backend));
-    // 引き継ぎ元の会話で選んでいた Claude のアカウントも継ぐ（予約中ならそれを）
-    // 引き継ぎ元が無ければ前回選んだアカウント（削除済みなら、ログイン中のアカウントのまま）
-    const account = inherit ? source.nextSettings?.account ?? source.claudeAccount ?? '' : chosen?.account ?? (await store.getPrefs()).claudeAccount ?? '';
-    if (account && await claudeAccounts.has(account)) await store.setSessionData(sessionId, 'claudeAccount', account);
+    // 引き継ぎ元の会話で選んでいたアカウントも継ぐ（予約中ならそれを）
+    // 引き継ぎ元が無ければ、そのエージェントで前回選んだアカウント（削除済み・ほかのエージェントのものなら、ログイン中のアカウントのまま）
+    if (chosenAccount) await store.setSessionData(sessionId, 'claudeAccount', chosenAccount);
     await store.setSessionData(sessionId, 'worktreePending', Boolean(remembered?.worktree && !worktreeHost.worktrees.lookup(cwd)));
     const selectedSettings = Object.fromEntries(['backend', 'model', 'effort', 'mode', 'endpoint', 'account'].filter(k => args?.[k] !== undefined).map(k => [k, true]));
     if (Object.keys(selectedSettings).length) await store.setSessionData(sessionId, 'selectedSettings', selectedSettings);
@@ -3555,14 +3636,14 @@ async function reserveTurnSettings(args) {
       if (!manual.model && model === undefined) model = scoped?.model ?? global.model ?? '';
       if (!manual.effort && args.effort === undefined) args = { ...args, effort: scoped?.effort ?? global.effort ?? '' };
       if (!manual.mode && mode === undefined) mode = scoped?.mode ?? global.mode;
-      if (!manual.account && account === undefined) account = scoped?.account ?? (await store.getPrefs()).claudeAccount ?? '';
+      if (!manual.account && account === undefined) account = scoped?.account ?? await defaultAccount(bid);
       if (!manual.endpoint && endpoint === undefined) endpoint = scoped?.endpoint ?? await compatEndpoints.defaultFor(bid);
       pendingWorktree = Boolean(!manual.worktree && remembered?.worktree && !worktreeHost.worktrees.lookup(requestedCwd));
     }
     if (args.worktreePending === false || requestedCwd && worktreeHost.worktrees.lookup(requestedCwd)) pendingWorktree = false;
     // 予約の行き先が今は無いエージェント（対応を終えた procway など）なら、予約は無かったものとして扱う（取り消し・選び直しができるように）
     if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
-    const target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
+    let target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
     if (!target) throw new Error(t('agents.notFound'));
     const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
       ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
@@ -3578,11 +3659,19 @@ async function reserveTurnSettings(args) {
       : endpoint ?? (target.id === previousSelection ? previousEndpoint : target.id === source.id ? currentEndpoint : await compatEndpoints.defaultFor(target.id));
     if (!cancel && endpoint && !(await compatEndpoints.has(endpoint, target.id))) throw new Error(t('settings.endpointNotRegistered'));
     const endpointChanged = selectedEndpoint !== currentEndpoint;
+    const previousBackend = current.nextSettings?.backend ?? source.id;
+    // アカウント（'' = ログイン中のアカウント。ADR 0222）。モデルと同じく次のターンから効く。
+    // エージェントを替えたとき、今のアカウントが替えた先のものでなければ、替えた先のログイン中のアカウントにする
+    if (account !== undefined && typeof account !== 'string') throw new Error(t('settings.accountInvalid'));
+    const carried = current.nextSettings?.account ?? current.claudeAccount ?? '';
+    const selectedAccount = account ?? (target.id === previousBackend || !carried || await accountHas(target, carried) ? carried : '');
+    if (!cancel && account && !(await accountHas(target, account))) throw new Error(t('settings.accountNotRegistered'));
+    const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
+    if (!cancel && !selectedEndpoint && selectedAccount) target = await backendForAccount(target, await accountResolve(target, selectedAccount));
     // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
     const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
     if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
     const selectedEndpointRow = await endpointRow(selectedEndpoint);
-    const previousBackend = current.nextSettings?.backend ?? source.id;
     const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
       : target.id === source.id ? current.effort ?? '' : (await store.getPrefs()).backends?.[target.id]?.effort ?? '';
     const choices = cancel ? { '': {} } : await effortOptions(target, selectedModel, settingsCwd, selectedEndpointRow);
@@ -3590,11 +3679,6 @@ async function reserveTurnSettings(args) {
     const selectedEffort = cancel ? '' : args.effort !== undefined
       ? await validateEffort(target, args.effort, selectedModel, settingsCwd, selectedEndpointRow)
       : Object.hasOwn(choices, previousEffort) ? previousEffort : '';
-    // Claude のアカウント（'' = ログイン中のアカウント）。モデルと同じく次のターンから効く
-    if (account !== undefined && typeof account !== 'string') throw new Error(t('settings.accountInvalid'));
-    const selectedAccount = account ?? current.nextSettings?.account ?? current.claudeAccount ?? '';
-    if (!cancel && account && !(await claudeAccounts.has(account))) throw new Error(t('settings.accountNotRegistered'));
-    const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
     let selectedCwd = current.nextSettings?.cwd;
     if (!cancel && requestedCwd !== undefined) {
       if (typeof requestedCwd !== "string" || !requestedCwd.trim() || requestedCwd.length > 8192) throw new Error(t('cwd.required'));
@@ -3625,8 +3709,8 @@ async function reserveTurnSettings(args) {
       if (args.rememberEffort && !selectedEndpoint) await savePref("effort", selectedEffort, target.id);
       if (args.rememberModel && !selectedEndpoint) await savePref("model", selectedModel, target.id);
       if (args.rememberMode && selectedMode !== undefined) await savePref("mode", selectedMode, target.id);
-      // 人が選んだ Claude のアカウントは、次に開く新しい会話の既定にする（newSession）
-      if (explicit.account !== undefined) await savePref("claudeAccount", account || null);
+      // 人が選んだアカウントは、そのエージェントで次に開く新しい会話の既定にする（newSession）
+      if (explicit.account !== undefined) await rememberAccount(target.id, account);
     }
     emitGlobal({ type: "nextSettings", sessionId, nextSettings: next });
     return next;
@@ -3792,9 +3876,10 @@ async function suggestTitleOf(args) {
     // 互換の接続先の会話は、その接続先の Haiku 相当（Codex は既定）のモデルで作る。使えない接続先なら作らない
     const saved = await store.get(sessionId);
     if (endpointCapable(backend) && saved.compatEndpoint) context.endpoint = await compatEndpoints.resolve(saved.compatEndpoint, backend.id);
-    if (!context.endpoint && backend.capabilities?.claudeAccounts) {
-      const account = await claudeAccounts.resolve(saved.claudeAccount ?? '');
-      if (account) context.oauthToken = account.token;
+    if (!context.endpoint && accountKind(backend)) {
+      const account = await accountResolve(backend, saved.claudeAccount ?? '');
+      if (account?.token) context.oauthToken = account.token;
+      else if (account) context.account = account;
     }
     title = String(await backend.suggestTitle({ transcript: gist, locale: lng, ...context }) ?? "");
   } catch (err) {
@@ -3950,10 +4035,15 @@ const opsConversations = {
 // 選べるもの（agents.*。core/ops/agents.mjs）の本体
 const opsAgents = {
   list: () => describeBackends(),
-  models: async (id, cwd) => { const backend = await pickBackend(null, id); return { backend: backend.id, models: await backend.models(cwd) }; },
+  models: async (id, cwd, accountId) => {
+    let backend = await pickBackend(null, id);
+    if (accountId) backend = await backendForAccount(backend, await accountResolve(backend, accountId));
+    return { backend: backend.id, models: await backend.models(cwd) };
+  },
   modes: async (id) => { const backend = await pickBackend(null, id); return { backend: backend.id, modes: backend.modes() }; },
-  efforts: async ({ backend: id, model, cwd, endpoint }) => {
-    const backend = await pickBackend(null, id);
+  efforts: async ({ backend: id, model, cwd, endpoint, account }) => {
+    let backend = await pickBackend(null, id);
+    if (!endpoint && account) backend = await backendForAccount(backend, await accountResolve(backend, account));
     // endpoint を渡すと互換の接続先の段（既定の段を作らない。Claude は「思考を送る」がオフなら段なし）
     const row = endpointCapable(backend) && typeof endpoint === 'string' ? await endpointRow(endpoint) : null;
     return { backend: backend.id, efforts: await effortOptions(backend, model ?? '', cwd, row) };
@@ -4829,6 +4919,7 @@ function opsDeps(lng = currentLocale()) {
       providerUsage: (id) => providerUsageOf({ backend: id }) },
     conversations: opsConversations,
     agents: opsAgents,
+    accounts: accountManager,
     prefs: () => store.getPrefs(),
     voice: { status: async () => ({ ...(await voiceHost.status()), keyRef: (await apiKeys.hasUse('voice')) ? apiKeys.usesState().voice : null }) },
     // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
@@ -4873,7 +4964,7 @@ function opsDeps(lng = currentLocale()) {
         // 語彙はエージェントごとに違う。どれか 1 つでも知っていれば通す
         return (await Promise.all(list.map(async (b) => (key === 'mode' ? Boolean(b.modes()[value]) : value in (await b.models()))))).some(Boolean);
       },
-      accountIds: async () => (await claudeAccounts.list()).accounts.map((a) => a.id),
+      accountIds: async (backendId) => (backendId ? await accountRows(getBackend(backendId)) : (await claudeAccounts.list()).accounts).map(a => a.id),
       changePlyInstructions: (action) => changePlyInstructions(plyInstructionsCache, action, currentLocale()),
       // サインイン時の起動（OS の登録。main に頼む。core/login-item.mjs）
       loginItem: { get: () => loginItem.get() },
@@ -5880,7 +5971,7 @@ agentTasks = await createAgentTasks({
     // 作業場所は元のタスクの絶対パスを渡すので、依頼元のターンが無くても決まる
     const manual = args.routing?.mode === 'manual';
     if ((!parent && !manual && !remoteReq) || signal?.aborted) throw new Error(agentT(lng, 'delegation.parentEnded'));
-    const backend = getBackend(args.backend);
+    let backend = getBackend(args.backend);
     if (!backend) throw new Error(agentT(lng, 'delegation.backendDisabled'));
     let cwd = path.resolve(parent?.info.cwd ?? (remoteReq ? os.homedir() : (await store.get(owner)).cwd) ?? process.cwd(), args.cwd ?? '.');
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
@@ -5888,15 +5979,20 @@ agentTasks = await createAgentTasks({
     // 候補は公式の使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う
     // （docs/agent-delegation.md「委譲先の自動振り分け」）
     const auto = args.routing?.mode === 'auto' || manual;
-    // 依頼元が固定の委譲で選んだ Claude のアカウント（routeDelegation の requestedAccount が確かめた内部の値。ADR 0205）。
-    // 互換の接続先は Claude のアカウントを使わないので、自動と同じく接続先は継がず公式で走らせる
-    const chosen = !auto && backend.id === 'claude' && typeof args.account === 'string';
+    // 依頼元が固定の委譲で選んだアカウント（routeDelegation の requestedAccount が確かめた内部の値。ADR 0205・0222）。
+    // 互換の接続先はアカウントを使わないので、自動と同じく接続先は継がず公式で走らせる
+    const chosen = !auto && Boolean(accountKind(backend)) && typeof args.account === 'string';
     // 接続先（決定 3）: 同じエージェントへの委譲なら親の会話の接続先を継ぐ。違うエージェントへは公式に戻す（形式が合わない）
     const parentEndpoint = (await store.get(owner)).compatEndpoint ?? '';
     const inherited = endpointCapable(backend) && !auto && !chosen ? delegatedEndpoint(parent?.backend?.id, backend.id, parentEndpoint) : '';
     // 継ぐべき接続先が消えていたら委譲を断る（黙って公式で走らせない）
     if (inherited && !(await compatEndpoints.has(inherited, backend.id))) throw new Error(agentT(lng, 'delegation.endpointDeleted'));
     const endpoint = inherited;
+    const inheritedAccount = (auto || chosen) && accountKind(backend) ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
+    const sourceBackend = parent?.backend?.id ?? (await store.get(owner)).backend;
+    const account = !inheritedAccount ? '' : auto || chosen || sourceBackend === backend.id ? inheritedAccount
+      : await accountHas(backend, inheritedAccount) ? inheritedAccount : '';
+    if (!endpoint) backend = await backendForAccount(backend, await accountResolve(backend, account));
     const asked = await canonicalModel(backend, args.model, cwd, endpoint);
     const model = await resolveModel(null, asked, backend, cwd, endpoint);
     // 依頼元が書いたモデル名が一覧に無いなら、黙って既定に落とさず断る（選べる名前を添える）。互換の接続先は形だけを見る
@@ -5916,12 +6012,12 @@ agentTasks = await createAgentTasks({
     const mode = modes[args.mode] ? args.mode : firstMode(modes);
     // 子は親の会話のアカウントで走る（親が別のエージェントでも、その会話で選んであるものを継ぐ）。
     // 自動で Claude を選んだときは使用量で選んだアカウント、依頼元が選んだときはそのアカウント（'' はログイン中のアカウント）
-    const account = (auto || chosen) && backend.id === 'claude' ? args.account ?? '' : (await store.get(owner)).claudeAccount ?? '';
+
     // 振り分けの記録（タスクと子の会話に残す）。委譲先は実際に使う値で書く（固定のときのモデルの既定への戻り・継いだアカウントも）。
     // アカウントの見出しは、選んだアカウントのまま走るときだけ残す
     const { effortTier: _tier, ...routed } = args.routing ?? {};
-    const label = backend.id === 'claude' && args.routing?.target?.accountLabel && (args.routing.target.account ?? null) === account ? { accountLabel: args.routing.target.accountLabel } : {};
-    const routing = args.routing ? { ...routed, target: { backend: backend.id, model, account: backend.id === 'claude' ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null },
+    const label = accountKind(backend) && args.routing?.target?.accountLabel && (args.routing.target.account ?? null) === account ? { accountLabel: args.routing.target.accountLabel } : {};
+    const routing = args.routing ? { ...routed, target: { backend: backend.id, model, account: accountKind(backend) ? account : null, ...label, effort: (decided?.source === 'model' ? decided.effort : effort) || null },
       ...(decided ? { effortSource: decided.source, ...(decided.tier ? { effortTier: decided.tier } : {}), ...(decided.asked ? { effortAsked: decided.asked } : {}) } : {}) } : null;
     // worktree（ADR 0089）。子の作業場所をここで作る。作れなければ（git でない・コミットが無い・失敗）今の場所のまま走らせる
     let worktree = null;
@@ -6173,14 +6269,19 @@ async function prepareTurn(args, hooks, compactionRevision) {
   const endpointInfo = endpointId ? await endpointRow(endpointId) : null;
   // Claude のアカウント。互換の接続先では使わない（接続先のキーで送る）ので引かない
   const accountId = reserved?.account !== undefined ? reserved.account : sessionId ? (await store.get(sessionId)).claudeAccount ?? "" : "";
-  const account = !endpoint && accountBackend.capabilities?.claudeAccounts ? await claudeAccounts.resolve(accountId) : null;
+  const account = !endpoint ? await accountResolve(accountBackend, accountId) : null;
+  const previousTurnBackend = backend;
+  backend = await backendForAccount(getBackend(accountBackend.id) ?? accountBackend, account);
   if (reserved) {
-    const target = getBackend(reserved.backend);
+    const target = backend;
     if (!target || !await validModel(target, reserved.model, cwd, endpointId) || (reserved.mode !== undefined && !target.modes()[reserved.mode])) throw new Error(t('turn.reservedInvalid'));
     await validateEffort(target, reserved.effort ?? '', reserved.model, cwd, endpointInfo);
-    if (target.id !== backend.id) {
-      await switchBackend(sessionId, backend, target);
-      await shellRuns.switched(sessionId, backend, target);
+    if (target.id !== previousTurnBackend.id) {
+      await switchBackend(sessionId, previousTurnBackend, target);
+      await shellRuns.switched(sessionId, previousTurnBackend, target);
+    } else if (accountKind(target) === 'agent' && accountId !== ((await store.get(sessionId)).claudeAccount ?? '')) {
+      // 認証ごとのネイティブ会話は混ぜない。保存した会話を引き継ぎ、新しい認証の実行区間を始める。
+      await switchBackend(sessionId, previousTurnBackend, target, { restart: true });
     }
     backend = target;
   }
@@ -6218,7 +6319,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
       emitGlobal({ type: "nextSettings", sessionId, nextSettings: null });
     }
     // 委譲の子なら、タスクの記録を実際に走る値に合わせる（依頼元が替えた予約を人が取り消した・替えたとき。ADR 0134）
-    const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode, account: backend.id === 'claude' ? accountId : null }).catch(() => null);
+    const synced = await agentTasks?.sync(sessionId, { backend: backend.id, model, effort, mode: permissionMode, account: accountKind(backend) ? accountId : null }).catch(() => null);
     if (synced) emitGlobal({ type: 'agentTaskChanged', sessionId: null, taskId: synced });
   }
 
@@ -6562,7 +6663,8 @@ async function beginTurn(ctx) {
     // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
     agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
     // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
-    ...(account ? { oauthToken: account.token } : {}),
+    // アカウント（ADR 0222）: Claude はトークン、ほかのエージェントはアカウントの置き場と資格情報
+    ...(account?.token ? { oauthToken: account.token } : account ? { account } : {}),
     // 互換の接続先（キーを含む。backend の中でだけ使い、ログ・イベントには出さない。core/compat-endpoints.mjs）
     ...(endpoint ? { endpoint } : {}),
     ...(autoCompactWindow ? { autoCompactWindow } : {}),
@@ -6995,8 +7097,15 @@ async function restoreTurn(card, source) {
   if (!sessionId || fields.key !== sessionId) throw new Error('no session id');
   if (runtime.turns.has(sessionId)) throw new Error('already running');
   if (!fields.presentKey || !fields.connectionTokens?.context) throw new Error('card is incomplete');
-  const backend = getBackend(fields.backendId);
+  let backend = getBackend(fields.backendId);
   if (!backend?.adoptTurn) throw new Error(`backend cannot adopt: ${fields.backendId}`);
+  // main がつながる前に復号を待たない。引き継ぐ CLI の専用ホームにある認証をバックエンドが検証する。
+  let restoredAccount = null;
+  if (!fields.endpointId && accountKind(backend) === 'agent' && fields.accountId) {
+    restoredAccount = await agentAccounts.get(fields.accountId);
+    if (!restoredAccount || restoredAccount.backend !== backend.id) throw new Error(t('accounts.deleted'));
+  }
+  backend = await backendForAccount(backend, restoredAccount);
   const meta = await store.get(sessionId);
   // 札が、この会話の走っている印（turnStartedAt）のターンのものか。合わない札は前の版のターンのもの
   if (!meta.turnStartedAt || meta.turnStartedAt !== startedAtMs) throw new Error('turn mismatch');
@@ -7104,7 +7213,7 @@ async function restoreTurn(card, source) {
     prompt,
     backend,
     cwd,
-    account: null,
+    account: restoredAccount,
     accountId: fields.accountId,
     endpoint: null,
     endpointId: fields.endpointId,
@@ -7199,7 +7308,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         releaseContext();
         ctx.runArgs = {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
-          card: ctx.card.backendCard, source,
+          card: ctx.card.backendCard, source, ...(ctx.account ? { account: ctx.account } : {}),
           ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
           emit: contractEmit((event, opts) => {
             if (opts?.replay) replayed = true;
@@ -7403,7 +7512,9 @@ async function suggestAfterTurn(turn, { delegated, bot }) {
     const saved = await store.get(id);
     const endpoint = endpointCapable(backend) && saved.compatEndpoint ? await compatEndpoints.resolve(saved.compatEndpoint, backend.id) : null;
     if (saved.compatEndpoint && !endpoint) return null;
-    return backend.suggestNext({ prompt: suggestionPrompt(gist), signal, ...(endpoint ? { endpoint } : {}) });
+    const account = !endpoint ? await accountResolve(backend, saved.claudeAccount ?? '') : null;
+    return backend.suggestNext({ prompt: suggestionPrompt(gist), signal, ...(endpoint ? { endpoint } : {}),
+      ...(account?.token ? { oauthToken: account.token } : account ? { account } : {}) });
   });
 }
 
@@ -7818,7 +7929,7 @@ async function acceptSend(sessionId, messageId, args) {
 function limitSwitched(meta, limit) {
   const account = meta.nextSettings?.account ?? meta.claudeAccount ?? '';
   const backend = meta.nextSettings?.backend ?? meta.backend;
-  return backend !== limit.backend || (limit.backend === 'claude' && account !== (limit.account ?? ''));
+  return backend !== limit.backend || (Boolean(accountKind(getBackend(limit.backend))) && account !== (limit.account ?? ''));
 }
 
 /**

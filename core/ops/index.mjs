@@ -6,6 +6,7 @@ import { appOps } from './app.mjs';
 import { sessionOps } from './sessions.mjs';
 import { conversationOps } from './conversations.mjs';
 import { agentOps } from './agents.mjs';
+import { accountOps } from './accounts.mjs';
 import { resumeOps } from './resume.mjs';
 import { statusOps } from './statuses.mjs';
 import { settingOps, settings } from './settings.mjs';
@@ -41,7 +42,7 @@ import { notificationOps } from './notifications.mjs';
 const withProbe = String(process.env.AGENT_HOST_BACKENDS ?? '').split(',').map((s) => s.trim()).includes('fake');
 
 const fullRegistry = createRegistry({
-  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...statusOps, ...settingOps, ...delegationOps,
+  ops: [...appOps, ...sessionOps, ...resumeOps, ...conversationOps, ...agentOps, ...accountOps, ...statusOps, ...settingOps, ...delegationOps,
     ...worktreeOps, ...notifyOps, ...hookOps, ...compatOps, ...computerOps, ...browserOps, ...mcpOps, ...contextOps, ...remoteOps,
     ...gitOps, ...gitPrsOps, ...shellOps, ...sessionWorkOps, ...fileOps, ...attachmentOps, ...channelOps, ...draftOps, ...botOps, ...memoryOps, ...brainOps, ...routineOps, ...notificationOps, ...voiceOps, ...apiKeyOps, ...secretOps, ...(withProbe ? probeOps : [])],
   settings: [...settings],

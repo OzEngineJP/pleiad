@@ -29,7 +29,7 @@ export default async function (t) {
   await fs.writeFile(path.join(cliDir, '.claude.json'), JSON.stringify({ oauthAccount: { organizationUuid: ORG, emailAddress: 'logged-in@example.com' } }));
   await fs.writeFile(path.join(scratch, 'claude-accounts.json'), JSON.stringify({ version: 1, accounts: [{ id: NO_TOKEN, name: 'no-token@example.com' }] }));
   const fake = await installFakeClaude(path.join(scratch, 'cli'));
-  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,claude', ...fake.env, CLAUDE_CONFIG_DIR: cliDir, AGENT_HOST_ANTHROPIC_API: api.url } });
+  const server = await startServer({ dataDir: scratch, env: { AGENT_HOST_BACKENDS: 'fake,claude', FAKE_ACCOUNTS: 'off', ...fake.env, CLAUDE_CONFIG_DIR: cliDir, AGENT_HOST_ANTHROPIC_API: api.url } });
   const c = await open({ port: server.port, token: server.token, autoAllow: true });
   const tasks = async () => c.cmd('agentTasks');
   const task = async taskId => (await tasks()).find(r => r.taskId === taskId);

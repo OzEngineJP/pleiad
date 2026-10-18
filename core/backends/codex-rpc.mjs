@@ -374,17 +374,17 @@ export class CodexRpc {
   }
 
   async releaseThread(threadId) {
-    if (this.threads.has(threadId) || this.expecting.has(threadId) || this.canReleaseThread?.(threadId) === false) throw new Error('Codex thread is busy in another account or context');
+    if (this.threads.has(threadId) || this.expecting.has(threadId) || this.canReleaseThread?.(threadId) === false) throw new Error(t('codex.accounts.threadBusy'));
     let timer, off, offDown, resolve, reject;
     const closed = new Promise((yes, no) => { resolve = yes; reject = no; });
     closed.catch(() => {});
     off = this.onNotify((method, p) => { if (method === 'thread/closed' && p.threadId === threadId) resolve(); });
     offDown = this.onDown(() => resolve());
-    timer = setTimeout(() => reject(new Error('Codex writer lock was not released')), 75_000); timer.unref?.();
+    timer = setTimeout(() => reject(new Error(t('codex.accounts.releaseTimeout'))), 75_000); timer.unref?.();
     try {
       const result = await this.request('thread/unsubscribe', { threadId }, 15_000);
       if (result?.status === 'notLoaded') resolve();
-      else if (!['unsubscribed', 'notSubscribed'].includes(result?.status)) throw new Error('Codex could not unsubscribe the previous account');
+      else if (!['unsubscribed', 'notSubscribed'].includes(result?.status)) throw new Error(t('codex.accounts.releaseFailed'));
       await closed;
       if (writers.get(threadId) === this) writers.delete(threadId);
     } finally { clearTimeout(timer); off(); offDown(); }
@@ -396,7 +396,7 @@ export class CodexRpc {
       await new Promise((resolve, reject) => {
         off = this.onNotify((method, p) => { if (method === 'thread/closed' && p.threadId === threadId) resolve(); });
         offDown = this.onDown(resolve);
-        timer = setTimeout(() => reject(new Error('Codex writer lock was not released')), 75_000); timer.unref?.();
+        timer = setTimeout(() => reject(new Error(t('codex.accounts.releaseTimeout'))), 75_000); timer.unref?.();
       });
     } finally { clearTimeout(timer); off?.(); offDown?.(); }
   }

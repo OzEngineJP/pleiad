@@ -190,11 +190,13 @@ export function accountHeldOpencode(account) {
  * 起動で引き継いだ子があればそれ（server を持つ。起こさない）、無ければ保持役の子として起こす口（spawn 前の HeldOpencode）を返す。
  * 前の起動の子が札なしで残っていれば止めてから起こす（中継の合言葉と待ち受けが分からないので、つなぎ直せない）
  */
-export async function acquireHeldOpencode({ argv, account = null }) {
+export async function acquireHeldOpencode({ argv, account = null, allowSpawn = true }) {
   if (!opencodeHeldEnabled()) return null;
   const id = opencodeChildId(account);
   if (heldOpencode(account)) return heldOpencode(account);
-  if (pendingAdopt.has(id)) { const held = pendingAdopt.get(id); pendingAdopt.delete(id); if (!held.closed) { current.set(id, held); return held; } }
+  if (pendingAdopt.has(id)) { const held = pendingAdopt.get(id); pendingAdopt.delete(id); if (!held.closed && !held.detached) { current.set(id, held); return held; } held.dispose(); }
+  // listen 前は引継ぎ済みの生存子だけを使う。保持役への新規接続・既存子の停止・新規起動はしない。
+  if (!allowSpawn) return null;
   const dataDir = dataDirOf();
   const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
   // npm の .cmd の包みは、保持役が shell 無しで起こせない

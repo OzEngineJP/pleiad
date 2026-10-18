@@ -3,15 +3,16 @@ import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawnSync } from 'node:child_process';
+import { t } from '../i18n.mjs';
 
 const privateRoots = new Set();
 let userSid;
 function privateRoot(dir) {
   if (process.platform !== 'win32' || privateRoots.has(dir)) return;
   userSid ??= /S-1-[0-9-]+/.exec(spawnSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true }).stdout ?? '')?.[0];
-  if (!userSid) throw new Error('Cannot determine Windows account permissions for OpenCode credentials');
+  if (!userSid) throw new Error(t('accounts.backend.permissionsUnknown', { agent: 'OpenCode' }));
   const acl = spawnSync('icacls.exe', [dir, '/inheritance:r', '/grant:r', `*${userSid}:(OI)(CI)F`], { windowsHide: true, stdio: 'ignore' });
-  if (acl.status !== 0) throw new Error('Cannot restrict OpenCode account directory permissions');
+  if (acl.status !== 0) throw new Error(t('accounts.backend.permissionsFailed', { agent: 'OpenCode' }));
   privateRoots.add(dir);
 }
 
@@ -99,14 +100,16 @@ export function accountLoginCommand(account, argv, platform = process.platform) 
 export async function loginAccount({ account, emit, signal, argv, timeoutMs = 600_000, pollMs = 1000 }) {
   if (!account) throw new Error('OpenCode account login requires an isolated account');
   const abortSignal = signal?.signal ?? signal;
-  abortSignal?.throwIfAborted();
+  const cancelled = cause => Object.assign(new Error(t('accounts.backend.loginCancelled', { agent: 'OpenCode' }), { cause }), { name: 'AbortError', code: 'ABORT_ERR' });
+  if (abortSignal?.aborted) throw cancelled(abortSignal.reason);
   prepareAccount(account);
   const file = path.join(opencodeData(account), 'auth.json');
   const before = (() => { try { return fs.readFileSync(file, 'utf8'); } catch { return ''; } })();
-  emit?.({ type: 'auth', phase: 'url', url: accountLoginCommand(account, argv), message: 'Run this command in a terminal to sign in to this OpenCode account.' });
+  emit?.({ type: 'auth', phase: 'url', url: accountLoginCommand(account, argv), message: t('opencode.auth.accountRunCommand') });
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
-    await delay(pollMs, undefined, { signal: abortSignal });
+    try { await delay(pollMs, undefined, { signal: abortSignal }); }
+    catch (err) { if (err.name === 'AbortError') throw cancelled(err); throw err; }
     let text;
     try { text = fs.readFileSync(file, 'utf8'); } catch { continue; }
     if (text === before) continue;
@@ -114,10 +117,10 @@ export async function loginAccount({ account, emit, signal, argv, timeoutMs = 60
     try { auth = validAuth(JSON.parse(text)); } catch { continue; }
     if (!Object.keys(auth).length) continue;
     fs.chmodSync(file, 0o600);
-    emit?.({ type: 'auth', phase: 'done', message: 'OpenCode account connected.' });
+    emit?.({ type: 'auth', phase: 'done', message: t('opencode.auth.accountLoggedIn') });
     return { credential: { auth }, label: Object.keys(auth).join(', ') };
   }
-  const message = 'OpenCode account login timed out.';
+  const message = t('opencode.auth.loginTimeout');
   emit?.({ type: 'auth', phase: 'error', message });
   throw new Error(message);
 }

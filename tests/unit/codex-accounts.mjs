@@ -9,6 +9,7 @@ export const name = 'codex-accounts';
 export const title = 'Codex accounts isolate authentication and RPC state while sharing CLI configuration, history and writer locks';
 
 export default async function test(t) {
+  const { t: translate } = await import('../../core/i18n.mjs');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-codex-accounts-'));
   const home = path.join(root, 'cli');
   const shared = path.join(root, 'state');
@@ -123,15 +124,15 @@ export default async function test(t) {
 
     // A live turn, an account operation and background work all prevent removal.
     const stopBusy = rb.attach('busy-test', {});
-    await assert.rejects(backend.accountRemove({ account: b }), /in use/);
+    await assert.rejects(backend.accountRemove({ account: b }), { message: translate('accounts.backend.inUseByTurn', { agent: 'Codex' }) });
     if (process.platform === 'win32') {
       const alias = { ...b, dir: path.join(path.dirname(b.dir).toUpperCase(), path.basename(b.dir)) };
       assert.equal(await codexRpcForAccount(alias), rb);
-      await assert.rejects(backend.accountRemove({ account: alias }), /in use/);
+      await assert.rejects(backend.accountRemove({ account: alias }), { message: translate('accounts.backend.inUseByTurn', { agent: 'Codex' }) });
     }
     stopBusy();
     await ra.request('fake/config', { unsubscribeFailure: true });
-    await assert.rejects(run(b, { sessionId: ta }), /busy/);
+    await assert.rejects(run(b, { sessionId: ta }), { code: -32000 });
     await ra.request('fake/config', { unsubscribeFailure: false });
     await run(b, { sessionId: ta });
     check('busy-account removal and failed writer transfers reject without stopping another account');
@@ -151,7 +152,7 @@ export default async function test(t) {
     let rejectBusy;
     const busyRemoval = new Promise(resolve => { rejectBusy = resolve; });
     const pending = backend.accountLogin({ account: c, signal: ac.signal, emit: () => {
-      rejectBusy(assert.rejects(backend.accountRemove({ account: c }), /in use/)); ac.abort();
+      rejectBusy(assert.rejects(backend.accountRemove({ account: c }), { message: translate('accounts.backend.inUse', { agent: 'Codex' }) })); ac.abort();
     } });
     await assert.rejects(pending);
     await busyRemoval;
@@ -178,9 +179,9 @@ export default async function test(t) {
     assert.deepEqual(JSON.parse(await fs.readFile(path.join(a.dir, 'auth.json'), 'utf8')), refreshed);
     await backend.accountRemove({ account: a });
     await removeCodexAccountDirectory(a);
-    await assert.rejects(codexBackendForAccount(a), /removed/);
-    await assert.rejects(boundA.getMessages(ta), /removed/);
-    if (process.platform === 'win32') await assert.rejects(backend.accountLogin({ account: { ...a, dir: path.join(path.dirname(a.dir).toUpperCase(), path.basename(a.dir)) } }), /removed/);
+    await assert.rejects(codexBackendForAccount(a), { message: translate('accounts.backend.removedOrRemoving', { agent: 'Codex' }) });
+    await assert.rejects(boundA.getMessages(ta), { message: translate('accounts.backend.removedOrRemoving', { agent: 'Codex' }) });
+    if (process.platform === 'win32') await assert.rejects(backend.accountLogin({ account: { ...a, dir: path.join(path.dirname(a.dir).toUpperCase(), path.basename(a.dir)) } }), { message: translate('accounts.backend.removedOrRemoving', { agent: 'Codex' }) });
     assert.equal(await fs.readFile(path.join(home, 'auth.json'), 'utf8'), originalAuth);
     assert.equal(await fs.readFile(path.join(home, 'config.toml'), 'utf8'), config);
     assert.equal(await fs.readFile(path.join(home, 'session_index.jsonl'), 'utf8'), 'original-index\n');
@@ -201,7 +202,7 @@ export default async function test(t) {
     await assert.rejects(prepareCodexAccount(hard), /Unsafe/);
     const malformed = await make('malformed', seed('bad@example.invalid', 1));
     await fs.writeFile(path.join(malformed.dir, 'auth.json'), 'broken-secret-token-do-not-report');
-    await assert.rejects(prepareCodexAccount(malformed), error => error.message === 'Cannot read Codex authentication file');
+    await assert.rejects(prepareCodexAccount(malformed), { message: translate('accounts.backend.credentialUnreadable', { agent: 'Codex' }) });
     assert.notEqual(codexAccountChildId(a), codexAccountChildId(b));
     assert.equal(codexAccountChildId({ ...a, credential: seed('other', 0) }), codexAccountChildId(a));
     check('auth symlinks, overlapping homes and unexpected existing data fail closed; holder IDs are account-specific and credential-free');

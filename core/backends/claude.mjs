@@ -684,7 +684,7 @@ export const backend = {
     alwaysAllow: true,
     login: true,
     // 会話ごとのアカウント（claude setup-token のトークン）を選べる。server は oauthToken を渡す（core/claude-accounts.mjs）
-    claudeAccounts: true,
+    accounts: 'token',
     // 互換の接続先（Anthropic 互換）を会話ごとに選べる。server は endpoint を渡す（core/compat-endpoints.mjs）
     compatEndpoints: true,
     // 入力欄の `!`: Pleiad がホストで走らせ、結果を次のターンの始めに shouldQuery: false の行で渡す（runTurn の shellAppends。ADR 0054）

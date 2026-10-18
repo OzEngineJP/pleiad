@@ -33,19 +33,19 @@ export const agentOps = [
     summary: 'agent:ops.agents.models.summary',
     risk: 'read',
     input: z.object({
-      backend: backend('models'), cwd: cwd('models'),
+      backend: backend('models'), cwd: cwd('models'), account: z.string().max(40).optional().describe(D('models', 'account')),
       limit: z.number().int().min(1).max(PAGE_MAX).optional().describe(D('models', 'limit')),
       cursor: z.string().max(400).optional().describe(D('models', 'cursor')),
     }),
     output: z.object({ backend: z.string(), total: z.number().int(), models: z.array(choice), next: z.string().nullable() }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['agents', 'models'] } },
     legacyCommand: 'models',
-    handler: async (ctx, { backend: id, cwd: dir, ...page }) => {
-      const got = await fromHost(() => ctx.agents.models(id, dir));
+    handler: async (ctx, { backend: id, cwd: dir, account, ...page }) => {
+      const got = await fromHost(() => ctx.agents.models(id, dir, account));
       const { total, items, next } = pageOf(ctx, Object.entries(got.models).map(choiceOf), page);
       return { backend: got.backend, total, models: items, next };
     },
-    uiHandler: async (ctx, { backend: id, cwd: dir }) => (await fromHost(() => ctx.agents.models(id, dir))).models,
+    uiHandler: async (ctx, { backend: id, cwd: dir, account }) => (await fromHost(() => ctx.agents.models(id, dir, account))).models,
   }),
 
   defineOp({
@@ -68,7 +68,8 @@ export const agentOps = [
     summary: 'agent:ops.agents.efforts.summary',
     risk: 'read',
     input: z.object({ backend: backend('efforts'), model: z.string().max(200).optional().describe(D('efforts', 'model')), cwd: cwd('efforts'),
-      endpoint: z.string().max(200).optional().describe(D('efforts', 'endpoint')) }),
+      endpoint: z.string().max(200).optional().describe(D('efforts', 'endpoint')),
+      account: z.string().max(40).optional().describe(D('efforts', 'account')) }),
     output: z.object({ backend: z.string(), efforts: z.array(choice) }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['agents', 'efforts'] } },
     legacyCommand: 'efforts',

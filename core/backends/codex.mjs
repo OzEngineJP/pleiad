@@ -2290,7 +2290,7 @@ const backend = {
      */
     async login({ emit, signal, openExternal }) {
       const abortSignal = signal?.signal ?? signal;
-      if (abortSignal?.aborted) throw new Error('Codex login cancelled');
+      if (abortSignal?.aborted) throw new Error(t('accounts.backend.loginCancelled', { agent: 'Codex' }));
       // Subscribe before starting: completion can precede the request response.
       const early = [];
       let loginId, accept, timer, offDown;
@@ -2354,7 +2354,7 @@ let attachedHost = null;
 
 async function usingAccount(account, fn) {
   const key = codexAccountKey(account);
-  if (removingAccounts.has(key) || removedAccounts.has(key)) throw new Error('Codex account is being removed or was removed');
+  if (removingAccounts.has(key) || removedAccounts.has(key)) throw new Error(t('accounts.backend.removedOrRemoving', { agent: 'Codex' }));
   activeAccounts.set(key, (activeAccounts.get(key) ?? 0) + 1);
   try { return await fn(); }
   finally { const count = activeAccounts.get(key) - 1; if (count) activeAccounts.set(key, count); else activeAccounts.delete(key); }
@@ -2363,7 +2363,7 @@ async function usingAccount(account, fn) {
 export async function codexBackendForAccount(account, { login = false, allowUnauthenticated = false } = {}) {
   if (!account) return initial.backend;
   const key = codexAccountKey(account);
-  if (removingAccounts.has(key) || removedAccounts.has(key)) throw new Error('Codex account is being removed or was removed');
+  if (removingAccounts.has(key) || removedAccounts.has(key)) throw new Error(t('accounts.backend.removedOrRemoving', { agent: 'Codex' }));
   let pending = accountBackends.get(key);
   if (!pending) {
     pending = (async () => {
@@ -2381,7 +2381,7 @@ export async function codexBackendForAccount(account, { login = false, allowUnau
   // Revalidate even on a cache hit: deletion or a substituted auth link must not
   // keep using in-memory credentials or silently revive the account directory.
   if (!login) {
-    try { if (!(await validateCodexAccount(account)) && !allowUnauthenticated) throw new Error('Codex account is not logged in'); }
+    try { if (!(await validateCodexAccount(account)) && !allowUnauthenticated) throw new Error(t('accounts.backend.notLoggedIn', { agent: 'Codex' })); }
     catch (e) { await instance.dispose(); accountBackends.delete(key); readyBackends.delete(key); throw e; }
   }
   return instance.backend;
@@ -2423,13 +2423,13 @@ backend.accountDispose = async ({ account }) => {
 backend.accountRemove = async ({ account }) => {
   if (!account) throw new Error('A dedicated Codex account is required');
   const key = codexAccountKey(account);
-  if (removingAccounts.has(key) || activeAccounts.get(key)) throw new Error('Codex account is in use; wait for its operations to finish');
+  if (removingAccounts.has(key) || activeAccounts.get(key)) throw new Error(t('accounts.backend.inUse', { agent: 'Codex' }));
   removingAccounts.add(key);
   try {
     const pending = accountBackends.get(key);
     if (!pending) { removedAccounts.add(key); return; }
     const instance = await pending;
-    if (instance.rpc.threads.size || instance.rpc.claims.size || instance.rpc.expecting.size || instance.rpc.pending.size || instance.hasBackground()) throw new Error('Codex account is in use by a turn or background command');
+    if (instance.rpc.threads.size || instance.rpc.claims.size || instance.rpc.expecting.size || instance.rpc.pending.size || instance.hasBackground()) throw new Error(t('accounts.backend.inUseByTurn', { agent: 'Codex' }));
     await backend.accountDispose({ account });
     removedAccounts.add(key);
   } finally { removingAccounts.delete(key); }
@@ -2449,9 +2449,9 @@ backend.accountLogin = async ({ account, emit, signal, openExternal }) => usingA
   const b = await codexBackendForAccount(account, { login: true });
   await b.auth.login({ emit, signal, openExternal });
   const credential = await readCodexCredential(account);
-  if (!credential) throw new Error('Codex login did not produce credentials');
+  if (!credential) throw new Error(t('accounts.backend.loginNoCredential', { agent: 'Codex' }));
   const s = await b.auth.status();
-  if (!s.loggedIn) throw new Error('Codex login did not authenticate');
+  if (!s.loggedIn) throw new Error(t('accounts.backend.loginFailed', { agent: 'Codex' }));
   await markCodexLoggedOut(account, false);
   return { credential, label: s.account };
 });

@@ -14,6 +14,7 @@ import { AGENTS, DEFAULT_AGENT_IDS, agentPresentation } from "./agents.mjs";
 const KNOWN = Object.fromEntries(Object.entries(AGENTS).map(([id, a]) => [id, a.module]));
 
 const enabled = new Map();   // id -> backend
+const nativeBackends = new WeakMap();
 
 // 対応を終えたバックエンド。その会話は一覧に残し、開いて読めるが続けられない（送信・設定の変更・分岐・切り替えは断る）。
 // 新しい会話の既定や委譲の行き先には出さない（getBackend / listBackends には載らない）。
@@ -27,10 +28,35 @@ export const RETIRED = {
  */
 function wrapBackend(native) {
   const wrapped = wrapNative(native);
+  nativeBackends.set(wrapped, native);
   for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(native))) {
     if (desc.get) Object.defineProperty(wrapped, key, { get: desc.get.bind(native), enumerable: true, configurable: true });
   }
   return wrapped;
+}
+
+/** 先に認証を束縛してから会話のラッパーをかける。入れ子の履歴取得・分岐でも認証を落とさない。 */
+export async function backendForAccount(backend, account) {
+  if (!backend || backend.capabilities?.accounts !== 'agent') return backend;
+  const native = nativeBackends.get(backend) ?? backend;
+  if (!account) return wrapBackend(native);
+  const scoped = wrapBackend(await native.forAccount(account));
+  nativeBackends.set(scoped, native);
+  return scoped;
+}
+
+/** 資格情報を削除しても保存済みの会話は読める。ネイティブの別アカウントへは問い合わせない。 */
+export function offlineAccountBackend(backend, error) {
+  const native = nativeBackends.get(backend) ?? backend;
+  const unavailable = async () => { throw error; };
+  return wrapBackend({ id: native.id, label: native.label,
+    capabilities: { ...native.capabilities, title: false, tag: false, forkMessage: false },
+    modes: () => native.modes(), models: unavailable,
+    listSessions: async () => [], getSession: async () => null, getMessages: async () => [], getCompactions: async () => [],
+    setTitle: async () => {}, setTag: undefined, listSubagents: async () => [], getSubagentMessages: async () => [],
+    getSubagentOrigin: async () => null, getSubagentState: async () => null,
+    runTurn: unavailable, compact: unavailable, rewind: unavailable, shell: unavailable,
+  });
 }
 
 const retired = new Map(Object.entries(RETIRED).map(([id, info]) => [id, retiredBackend(id, info)]));

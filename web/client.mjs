@@ -33,6 +33,7 @@ import { setupUsage, createUsageSource } from './usage.mjs';
 import { setupHeaderUsage } from './header-usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
+import { setupAgentAccounts, createAccountRequestCache, composerAccount } from './agent-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
 import { setupRemote } from './remote.mjs';
 import { setupNotifySettings } from './notify-settings.mjs';
@@ -3412,6 +3413,10 @@ function onEvent(ev, replay = false) {
       claudeAccounts.invalidate();
       syncTopbar().catch(() => {});
       break;
+    case 'agentAccountsChanged':
+      agentAccounts.invalidate(); accountVocabRequests.invalidate();
+      syncTopbar().catch(() => {});
+      break;
     case 'compatEndpointsChanged':
       compatEndpoints.invalidate();
       syncTopbar().catch(() => {});
@@ -3548,6 +3553,8 @@ function onEvent(ev, replay = false) {
     }
 
     case "auth":
+      // アカウントのログイン（Claude 以外。web/agent-accounts.mjs）は accountId 付き
+      if (ev.accountId) { agentAccounts.authEvent(ev); return; }
       return onAuthEvent(ev);
 
     case "present": {
@@ -3840,40 +3847,46 @@ async function loadBackends(early = null) {
 }
 
 /** そのエージェントの語彙（承認モード / モデル）。値の意味はこちらでは解釈しない。 */
-async function loadVocab(id) {
+const accountVocabs = new Map();
+async function readVocab(id, account = '') {
+  const [modes, models] = await Promise.all([
+    cmd('modes', { backend: id }).catch(() => ({})),
+    cmd('models', { backend: id, ...(account ? { account } : {}) }).catch(() => ({})),
+  ]);
+  return { modes: modes ?? {}, models: models ?? {} };
+}
+const usableVocab = v => Object.keys(v.modes).length > 0 && Object.keys(v.models).length > 0;
+const defaultVocabRequests = createAccountRequestCache({ cache: state.vocab, read: id => readVocab(id), accept: usableVocab });
+const accountVocabRequests = createAccountRequestCache({ cache: accountVocabs, read: key => readVocab(...JSON.parse(key)), accept: usableVocab });
+const vocabCache = (id, account) => ({ requests: account ? accountVocabRequests : defaultVocabRequests, key: account ? JSON.stringify([id, account]) : id });
+async function loadVocab(id, account = '') {
   if (!id) return { modes: {}, models: {} };
-  if (state.vocab.has(id)) return state.vocab.get(id);
-  return fetchVocab(id);
+  const { requests, key } = vocabCache(id, account);
+  return await requests.get(key) ?? { modes: {}, models: {} };
 }
 
-async function fetchVocab(id) {
-  const [modes, models] = await Promise.all([
-    cmd("modes", { backend: id }).catch(() => ({})),
-    cmd("models", { backend: id }).catch(() => ({})),
-  ]);
-  const v = { modes: modes ?? {}, models: models ?? {} };
-  // 失敗（切断中の cmd は即 reject する）で空になったものはキャッシュしない。
-  // 掴んだままだと承認モード・モデルの候補が空のまま固定され、選んであった値が黙って既定へ戻る
-  if (Object.keys(v.modes).length && Object.keys(v.models).length) state.vocab.set(id, v);
-  return v;
+async function fetchVocab(id, account = '') {
+  const { requests, key } = vocabCache(id, account);
+  return await requests.get(key, { force: true }) ?? { modes: {}, models: {} };
 }
 
 /**
  * 語彙を裏で取り直す（モデルの面を開いたとき）。codex のモデルは更新や入れ替えで変わる。
  * 届くまでは覚えている一覧を出したまま。空（失敗）なら fetchVocab が覚えている方を残す
  */
-function revalidateVocab(id) {
+function revalidateVocab(id, account = '') {
   if (!id) return;
-  const before = state.vocab.get(id);
-  fetchVocab(id).then((v) => {
-    if (state.vocab.get(id) !== v || JSON.stringify(before) === JSON.stringify(v)) return;
+  const { requests, key } = vocabCache(id, account);
+  const before = requests.cache.get(key);
+  fetchVocab(id, account).then((v) => {
+    if (requests.cache.get(key) !== v || JSON.stringify(before) === JSON.stringify(v)) return;
     syncTopbar().catch(() => {});
   }).catch(() => {});
 }
 
 /** ログイン・ログアウトの後。使えるモデルはアカウントで変わるので、覚えた語彙を捨てて描き直す */
 function forgetVocab(id) {
-  state.vocab.delete(id);
+  defaultVocabRequests.invalidate(id);
   syncTopbar().catch(() => {});
 }
 
@@ -3934,9 +3947,10 @@ function renderAuth() {
       btn.onclick = (e) => { e.stopPropagation(); if (loggedIn) authLogout(b); else authLogin(b); };
       row.append(btn);
     }
-    // 会話ごとに選べる Claude のアカウント（Pleiad が claude setup-token を回して発行したトークン）
-    if (b.capabilities?.claudeAccounts && st.installed !== false) {
-      const button = el('button', 'btn', t('settings.agents.accounts')); button.type = 'button'; button.onclick = () => claudeAccounts.open(); row.append(button);
+    // 会話ごとに選べるアカウント（Claude は Pleiad が claude setup-token を回して発行したトークン、ほかはエージェントがアカウントごとにログイン。ADR 0222）
+    if (b.capabilities?.accounts && st.installed !== false) {
+      const button = el('button', 'btn', t('settings.agents.accounts')); button.type = 'button';
+      button.onclick = () => (b.capabilities.accounts === 'token' ? claudeAccounts.open() : agentAccounts.open(b.id)); row.append(button);
     }
     // 互換の接続先（Claude Code の Anthropic 互換・Codex の Responses 互換）。同じページの下に管理の面を開く
     if (b.capabilities?.compatEndpoints && st.installed !== false) {
@@ -4121,13 +4135,13 @@ function authFailureRow(node, ev) {
   const auth = ev.auth;
   const pristine = ev.pristine === true;
   const before = auth.mode === 'cli' ? auth.email ?? state.auth.get(ev.backend)?.account ?? null : null;
-  const accountName = auth.mode === 'token' ? claudeAccounts.list()?.find?.((a) => a.id === auth.accountId)?.name ?? '' : '';
+  const accountName = auth.accountId ? accountList(ev.backend).find(a => a.id === auth.accountId)?.name ?? '' : '';
   const row = paintAuthFailure(node, {
     auth, pristine, agent, accountName, before, remote: Boolean(window.plyRemote) || !b,
     login: () => authLogin(b, { fromRow: true }),
     cancel: () => cmd('authCancel', { backend: ev.backend }).catch(() => {}),
     resend: ({ auto }) => resendFailedTurn({ sessionId: ev.sessionId, messageId: ev.messageId, node, auto, pristine, auth, agent }),
-    reissue: () => claudeAccounts.open({ reissue: auth.accountId }),
+    reissue: () => auth.mode === 'token' ? claudeAccounts.open({ reissue: auth.accountId }) : agentAccounts.open(ev.backend),
     spinner: () => runMark(),
   });
   authRows = authRows.filter((x) => x.node.isConnected);
@@ -4282,7 +4296,7 @@ function noteDraftChange(patch) {
 function draftView(changes) {
   const view = {};
   for (const patch of changes ?? []) {
-    if ("backend" in patch) { delete view.effort; delete view.mode; delete view.endpoint; }
+    if ("backend" in patch) { delete view.effort; delete view.mode; delete view.endpoint; if (patch.backend !== view.backend) delete view.account; }
     if ("endpoint" in patch) { delete view.effort; view.model = ""; }
     Object.assign(view, patch);
   }
@@ -4431,31 +4445,58 @@ function cwdOptions() {
 const claudeAccounts = setupClaudeAccounts({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
   onChange: () => { syncTopbar().catch(() => {}); } });
-/** Claude のアカウントの候補。選んでいたものが消えていれば、その旨の行を残す（黙って別のものに見せない） */
+// Claude 以外のエージェントのアカウントの設定（web/agent-accounts.mjs。ADR 0222）
+const agentAccounts = setupAgentAccounts({ cmd, labelOf,
+  openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
+  onChange: () => { accountVocabRequests.invalidate(); syncTopbar().catch(() => {}); } });
+/** エージェントのアカウントの一覧（共通の形 { id, name, ready }）。取ってあるもの（同期） */
+function accountList(bid) {
+  const kind = capsOf(bid).accounts;
+  if (kind === 'token') return claudeAccounts.list().map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken) }));
+  if (kind === 'agent') return agentAccounts.list(bid).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
+  return [];
+}
+/** エージェントのアカウントの一覧を取り直す */
+async function loadAccounts(bid) {
+  const kind = capsOf(bid).accounts;
+  if (kind === 'token') await claudeAccounts.load().catch(() => []);
+  else if (kind === 'agent') await agentAccounts.load(bid).catch(() => []);
+  return accountList(bid);
+}
+function composerSelection() {
+  const session = state.sessions.find(s => s.id === state.current);
+  const draft = !session || justCreated() ? draftView(state.draft.changes) : null;
+  const homeBot = unsentHere() ? homeDest.bot : null;
+  const backend = homeBot?.backend ?? draft?.backend ?? session?.nextSettings?.backend ?? activeBackendId();
+  const account = composerAccount({ backend, session, draft, prefs: state.prefs, kind: capsOf(backend).accounts, homeBot });
+  const endpoint = homeBot ? '' : draft?.endpoint ?? endpointOf(session);
+  return { session, draft, homeBot, backend, account, endpoint };
+}
+/** アカウントの候補。選んでいたものが消えていれば、その旨の行を残す（黙って別のものに見せない） */
 function accountOptions() {
-  const s = state.sessions.find((x) => x.id === state.current);
-  const value = s?.nextSettings?.account ?? s?.claudeAccount ?? "";
-  const list = claudeAccounts.list();
+  const { backend, account: value } = composerSelection();
+  const list = accountList(backend);
   return [
     { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount") },
-    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.hasToken ? "" : t("chat.account.noToken") })),
+    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? "" : t("chat.account.noToken") })),
     ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.account.deleted"), hint: t("chat.account.chooseAgain") }] : []),
   ];
 }
-function accountLabel(id) {
+function accountLabel(id, bid = null) {
   if (!id) return t("chat.account.signedInAccount");
-  return claudeAccounts.list().find((a) => a.id === id)?.name ?? t("chat.account.deleted");
+  const lists = bid ? [accountList(bid)] : state.backends.map((b) => accountList(b.id));
+  return lists.flat().find((a) => a.id === id)?.name ?? t("chat.account.deleted");
 }
 let accountWarning = "";
 /** 入力欄のアカウントの出し分け。登録が無く、選んでもいない会話には、モデルの面にアカウントの節を出さない */
-async function syncAccount(s, bid) {
-  const supported = Boolean(capsOf(bid).claudeAccounts);
-  const list = supported ? await claudeAccounts.load().catch(() => []) : [];
-  const value = s?.nextSettings?.account ?? s?.claudeAccount ?? "";
-  state.accountShown = Boolean(s) && supported && (list.length > 0 || Boolean(value));
+async function syncAccount(s, bid, { value = composerSelection().account, visible = true, current = () => true } = {}) {
+  const supported = Boolean(capsOf(bid).accounts);
+  const list = supported && visible ? await loadAccounts(bid) : [];
+  if (!current()) return;
+  state.accountShown = visible && supported && (list.length > 0 || Boolean(value));
   const chosen = list.find((a) => a.id === value);
   const warning = !state.accountShown || !value ? "" : !chosen ? t("chat.account.deletedWarning")
-    : !chosen.hasToken ? t("chat.account.noTokenWarning", { name: chosen.name }) : "";
+    : !chosen.ready ? t("chat.account.noTokenWarning", { name: chosen.name }) : "";
   if (accountWarning && $("settingsError").textContent === accountWarning) $("settingsError").textContent = "";
   accountWarning = warning;
   if (warning) $("settingsError").textContent = warning;
@@ -4481,11 +4522,12 @@ function endpointOf(s) {
 }
 let endpointWarning = "";
 /** 入力欄の接続先の出し分け。選べないエージェントでは節を出さない。消えた・確認に失敗した接続先は入力欄の上に一文 */
-async function syncEndpoint(s, bid) {
+async function syncEndpoint(s, bid, { value: selected = endpointOf(s), visible = Boolean(s), current = () => true } = {}) {
   const supported = Boolean(capsOf(bid).compatEndpoints);
   const list = supported ? await compatEndpoints.load().catch(() => []) : [];
-  const value = supported ? endpointOf(s) : "";
-  state.endpointShown = Boolean(s) && supported;
+  if (!current()) return;
+  const value = supported ? selected : '';
+  state.endpointShown = visible && supported;
   const chosen = list.find((e) => e.id === value);
   const warning = !value ? "" : !chosen ? t("chat.endpoint.deletedWarning")
     : chosen.ready === false ? t("chat.endpoint.failedWarning", { name: chosen.name }) : "";
@@ -4646,8 +4688,8 @@ const controls = chatComposer.useControls({
     },
     // モデルの面を開いた。候補を裏で取り直し、変わっていたら描き直す
     openModel: () => {
-      const backend = state.shownBackend ?? activeBackendId();
-      revalidateVocab(backend);
+      const { backend, account, endpoint } = composerSelection();
+      revalidateVocab(backend, endpoint ? '' : account);
       usageSource.load(backend).catch(() => {});
     },
   },
@@ -4934,7 +4976,7 @@ function paintInterruptLine(live) {
   const at = Number(interrupted.at);
   if (reasonOf(interrupted) === 'limit') {
     // 1 行目は「■ 使用量の上限に達したため中断しました（private · 5 時間枠）· 01:43」。2 行目に解除の時刻
-    const scope = [capsOf(interrupted.backend).claudeAccounts ? accountLabel(interrupted.account) : '',
+    const scope = [capsOf(interrupted.backend).accounts ? accountLabel(interrupted.account) : '',
       interrupted.window === 'five_hour' ? t('interrupt.limitWindowFiveHour') : interrupted.window ?? ''].filter(Boolean).join(' · ');
     // ■・本文・時刻は 1 つの流れの文にする（狭い幅でも ■ は本文の 1 文字目の前に付いたまま、時刻は本文の末尾に続く）
     const head = el('span', 'limit-interrupt-head');
@@ -7797,7 +7839,7 @@ function rowMenu(s, x, y, lead = []) {
           .then(refresh).catch((e) => sideNote(t("session.menu.modelFailed", { error: e.message }))),
       })) },
     ...(endpoints ?? (capsOf(s.nextSettings?.backend ?? s.backend).compatEndpoints ? [{ label: t('session.menu.endpoint'), pending: waitingVisible, sub: () => [] }] : [])),
-    ...(accounts ?? (capsOf(s.nextSettings?.backend ?? s.backend).claudeAccounts ? [{ label: t('session.menu.account'), pending: waitingVisible, sub: () => [] }] : [])),
+    ...(accounts ?? (capsOf(s.nextSettings?.backend ?? s.backend).accounts ? [{ label: t('session.menu.account'), pending: waitingVisible, sub: () => [] }] : [])),
     { sep: true },
     { label: t("session.menu.effort"), pending: !efforts && waitingVisible, hint: efforts ? ((s.nextSettings?.effort ?? s.effort) || efforts[""]?.resolvesTo || t("chat.model.default")) : '', sub: () =>
       Object.entries(efforts ?? {}).map(([effort, m]) => ({
@@ -7821,8 +7863,8 @@ function rowMenu(s, x, y, lead = []) {
   const repaint = () => update(paint(), title);
   setTimeout(() => { waitingVisible = true; repaint(); }, 150);
   const bid = s.nextSettings?.backend ?? s.backend;
-  (async () => { try { vocab = await loadVocab(bid); } catch { vocab = { modes: {}, models: {} }; } repaint(); })();
-  cmd("efforts", { backend: bid, model: s.nextSettings?.model ?? s.model ?? "", cwd: s.nextSettings?.cwd || s.cwd || undefined })
+  (async () => { try { vocab = await loadVocab(bid, s.nextSettings?.account ?? s.claudeAccount ?? ''); } catch { vocab = { modes: {}, models: {} }; } repaint(); })();
+  cmd("efforts", { backend: bid, account: s.nextSettings?.account ?? s.claudeAccount ?? '', model: s.nextSettings?.model ?? s.model ?? "", cwd: s.nextSettings?.cwd || s.cwd || undefined })
     .then(value => { efforts = value; repaint(); }).catch(() => { efforts = {}; repaint(); });
   rowEndpointItems(s).then(value => { endpoints = value; repaint(); });
   rowAccountItems(s).then(value => { accounts = value; repaint(); });
@@ -8105,11 +8147,12 @@ function useGitText(text) {
 let topbarVersion = 0;
 /** 右クリックメニューのアカウント（入力欄と同じ選択肢。登録が無く、選んでもいなければ出さない） */
 async function rowAccountItems(s) {
-  if (!capsOf(s.nextSettings?.backend ?? s.backend).claudeAccounts) return [];
-  const list = await claudeAccounts.load().catch(() => []);
+  const bid = s.nextSettings?.backend ?? s.backend;
+  if (!capsOf(bid).accounts) return [];
+  const list = await loadAccounts(bid);
   const value = s.nextSettings?.account ?? s.claudeAccount ?? "";
   if (!list.length && !value) return [];
-  const choices = [{ value: "", label: t("chat.account.signedInAccount"), note: "" }, ...list.map((a) => ({ value: a.id, label: a.name, note: a.hasToken ? "" : t("chat.account.noToken") }))];
+  const choices = [{ value: "", label: t("chat.account.signedInAccount"), note: "" }, ...list.map((a) => ({ value: a.id, label: a.name, note: a.ready ? "" : t("chat.account.noToken") }))];
   return [{ label: t("session.menu.account"), hint: accountLabel(value), sub: () => choices.map((c) => ({
     label: c.label, hint: c.note, checked: c.value === value,
     onClick: () => cmd("setTurnSettings", { sessionId: s.id, account: c.value })
@@ -8201,17 +8244,18 @@ async function syncTopbar() {
   const id = state.current;
   // 新しい会話の欄（まだ会話が無い）と、作ったばかりの会話（startNew が予約を流し終えるまで）は、そこで選んだ設定を見せる。
   // 流している途中に来た一覧の読み直しは書く前の予約を持つことがあり、そのまま見せるとチップが一瞬戻る（chooseSettings）
-  const chosen = !s || justCreated() ? draftView(state.draft.changes) : null;
-  const homeBot = unsentHere() ? homeDest.bot : null;
-  const bid = homeBot?.backend ?? chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
+  const { draft: chosen, homeBot, backend: bid, account: selectedAccount, endpoint: selectedEndpoint } = composerSelection();
+  const current = () => state.current === id && version === topbarVersion;
   const caps = capsOf(activeBackendId());
 
   $("titleEdit").value = s?.title === "(no title)" ? "" : (s?.title ?? held ?? "");
   syncTitleControls();
 
   if (bid) state.shownBackend = bid;
+  state.account = selectedAccount;
+  if (homeBot) state.accountShown = false;
   // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
-  headerUsage.show({ backend: bid, account: homeBot ? '' : s?.nextSettings?.account ?? s?.claudeAccount ?? "", endpoint: homeBot ? '' : endpointOf(s) });
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint });
 
   // 予約があれば次のターンの作業場所を表示する。
   if (s) state.cwd = (justCreated() && state.draft.cwd) || (s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
@@ -8221,25 +8265,25 @@ async function syncTopbar() {
   refreshGit().catch(() => {});
 
   // 語彙はエージェントごとに違う。切り替えたら取り直す
-  const { modes, models } = await loadVocab(bid);
+  const { modes, models } = await loadVocab(bid, selectedEndpoint ? '' : selectedAccount);
   if (state.current !== id || version !== topbarVersion) return;
   state.modes = modes;
   state.models = models;
   if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? s.nextSettings?.model ?? s.model ?? ""; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
   state.mode = homeBot?.mode ?? selectedMode(s, bid, modes, chosen);
-  await syncEndpoint(s, bid);
+  await syncEndpoint(s, bid, { value: selectedEndpoint, visible: !homeBot && Boolean(s), current });
   if (state.current !== id || version !== topbarVersion) return;
   // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
   if (homeBot) state.model = homeBot.model ?? '';
   if (!state.endpoint && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
-  const efforts = await cmd('efforts', { backend: bid, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(state.endpoint ? { endpoint: state.endpoint } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
+  const efforts = await cmd('efforts', { backend: bid, account: selectedEndpoint ? '' : selectedAccount, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(selectedEndpoint ? { endpoint: selectedEndpoint } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
   if (state.current !== id || version !== topbarVersion) return;
   state.efforts = efforts;
   state.effort = homeBot?.effort ?? chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
   state.effortDisabled = Object.keys(efforts).length <= 1;
   controls.paint();
-  await syncAccount(s, bid);
+  await syncAccount(s, bid, { value: selectedAccount, visible: !homeBot, current });
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
   paintSettingsNotice();
