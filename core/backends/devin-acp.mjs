@@ -28,11 +28,12 @@ function waitForExit(child, timeoutMs) {
 }
 
 export class DevinAcp {
-  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, timeoutMs = 30_000 } = {}) {
+  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, timeoutMs = 30_000 } = {}) {
     this.command = command;
     this.cwd = cwd;
     this.env = env;
     this.onUpdate = onUpdate;
+    this.onResponse = onResponse;
     this.onRequest = onRequest;
     this.onGone = onGone;
     this.timeoutMs = timeoutMs;
@@ -108,7 +109,7 @@ export class DevinAcp {
         if (!this.pending.delete(id)) return;
         reject(rpcError('Devin ACP request timed out', -32001));
       }, timeoutMs) : null;
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method, params });
       try { this.#write({ jsonrpc: '2.0', id, method, params }); }
       catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
@@ -181,7 +182,15 @@ export class DevinAcp {
     if (hasError) {
       const e = frame.error;
       pending.reject(rpcError('Devin ACP request failed', Number.isSafeInteger(e.code) ? e.code : -32000));
-    } else pending.resolve(frame.result);
+    } else {
+      // Observe ACKs in wire order, before resolving a call can queue its await.
+      try { this.onResponse({ method: pending.method, params: pending.params, result: frame.result }); }
+      catch {
+        const error = rpcError('Devin ACP response handler failed');
+        pending.reject(error); this.#fail(error); return;
+      }
+      pending.resolve(frame.result);
+    }
   }
 
   #serverRequest(frame) {

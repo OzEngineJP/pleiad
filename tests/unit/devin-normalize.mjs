@@ -30,4 +30,46 @@ export default function (t) {
   t.ok('失敗ツールと長い結果を保持し、表示用の結果を制限する', failed.messages()[1].toolCalls[0].result.isError && failed.messages()[1].toolCalls[0].result.truncated);
   const snapshot = replay.messages(); snapshot[0].text = 'modified';
   t.ok('読み出した配列を書き換えても内部履歴は変わらない', replay.messages()[0].text === 'hello');
+
+  const partialEvents = [], partial = createDevinMapper('partial', event => partialEvents.push(event));
+  partial.beginTurn('tool updates');
+  const patch = (toolCallId, fields) => partial.accept({ sessionUpdate: 'tool_call_update', toolCallId, ...fields });
+  const resultOf = id => partial.messages()[1].toolCalls.find(call => call.id === id).result;
+  const resultEvents = id => partialEvents.filter(event => event.type === 'tool.result' && event.id === id);
+  partial.accept({ sessionUpdate: 'tool_call', toolCallId: 'content-first', title: 'Execute example', rawInput: { command: 'example --target important' }, status: 'pending' });
+  patch('content-first', { status: 'in_progress', content: [{ type: 'content', content: { type: 'text', text: 'saved output' } }] });
+  patch('content-first', { status: 'completed' });
+  assert.equal(resultOf('content-first').text, 'saved output');
+  patch('content-first', { title: null, rawInput: null, rawOutput: null, content: null, status: 'completed' });
+  patch('content-first', { status: 'completed' });
+  assert.equal(resultOf('content-first').text, 'saved output');
+  assert.equal(resultEvents('content-first').length, 1);
+  assert.equal(partial.getToolCall('content-first').title, 'Execute example');
+  assert.equal(partial.getToolCall('content-first').rawInput.command, 'example --target important');
+  t.ok('出力→status-only 完了でも出力を保持し、省略・null・重複 status は空で上書きしない', true);
+
+  patch('output-first', { title: 'Output', rawInput: { path: 'owned' }, status: 'completed', rawOutput: 'later result' });
+  patch('output-first', { status: 'completed', rawOutput: null, rawInput: null });
+  assert.equal(resultOf('output-first').text, 'later result');
+  assert.equal(resultEvents('output-first').length, 1);
+  patch('output-first', { rawOutput: 'updated result' });
+  assert.equal(resultOf('output-first').text, 'updated result');
+  patch('output-first', { content: [{ type: 'content', content: { type: 'text', text: 'content after completion' } }] });
+  assert.equal(resultOf('output-first').text, 'content after completion');
+  assert.equal(resultEvents('output-first').length, 3);
+  t.ok('完了後の rawOutput-only/content-only 更新も保持済み status を使い結果を更新する', true);
+
+  patch('status-first', { status: 'completed' });
+  patch('status-first', { content: [{ type: 'content', content: { type: 'text', text: 'delayed output' } }] });
+  patch('status-first', { status: null, content: null });
+  assert.equal(resultOf('status-first').text, 'delayed output');
+  assert.equal(resultEvents('status-first').length, 2);
+  patch('status-first', { title: 'Known operation', rawInput: false, rawOutput: false });
+  patch('status-first', { rawInput: null, rawOutput: null });
+  assert.equal(partial.getToolCall('status-first').rawInput, false);
+  assert.equal(partial.getToolCall('status-first').rawOutput, false);
+  const detail = partial.getToolCall('content-first'); detail.rawInput.command = 'changed';
+  assert.equal(partial.getToolCall('content-first').rawInput.command, 'example --target important');
+  assert.equal(partial.getToolCall('unknown'), null);
+  t.ok('完了→出力の順序、非 null の falsy 値と既知詳細の参照を保ち、不明 ID は null', true);
 }

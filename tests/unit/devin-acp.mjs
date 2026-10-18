@@ -106,6 +106,17 @@ export default async function test(t) {
   const permission = { jsonrpc: '2.0', id: 'boundary-request', method: 'session/request_permission', params: { options: [] } };
   const inject = (client, frame) => client.proc.stdout.emit('data', Buffer.from(typeof frame === 'string' ? frame : `${JSON.stringify(frame)}\n`));
   try {
+    const order = [];
+    const ordered = launch('', { onResponse: ({ method, params }) => { if (method === 'session/list') order.push(`response:${params.cwd}`); }, onUpdate: () => order.push('notification') });
+    try {
+      await ordered.start();
+      const response = ordered.call('session/list', { cwd: 'wire-order' });
+      inject(ordered, `${JSON.stringify({ jsonrpc: '2.0', id: `pleiad-${ordered.nextId}`, result: { sessions: [] } })}\n${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'ordered', update: { sessionUpdate: 'current_mode_update', currentModeId: 'bypass' } } })}\n`);
+      await response; order.push('await');
+      assert.deepEqual(order, ['response:wire-order', 'notification', 'await']);
+      t.ok('onResponse は同一 batch の ACK・通知を await より先に受信順で通知する', true);
+    } finally { await ordered.close(); }
+
     let lateCalls = 0;
     const late = launch('', { onRequest: () => { lateCalls++; return {}; } });
     try {

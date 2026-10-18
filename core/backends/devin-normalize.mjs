@@ -12,7 +12,7 @@ const contentText = value => {
 const inputOf = value => value && typeof value === 'object' ? value : value == null ? {} : { value };
 
 export function createDevinMapper(sessionId, emit = () => {}) {
-  const messages = [], tools = new Map();
+  const messages = [], tools = new Map(), toolStates = new Map();
   let current = null, expectedEcho = null, echo = '', live = false;
   function row(role) {
     if (current?.role !== role) {
@@ -47,18 +47,24 @@ export function createDevinMapper(sessionId, emit = () => {}) {
     } else if (kind === 'tool_call' || kind === 'tool_call_update') {
       const id = update.toolCallId;
       if (typeof id !== 'string' || !id) return;
+      const state = toolStates.get(id) ?? { toolCallId: id };
+      for (const key of ['title', 'name', 'kind', 'status', 'rawInput', 'rawOutput', 'content', 'locations']) {
+        if (update[key] != null) state[key] = structuredClone(update[key]);
+      }
+      toolStates.set(id, state);
       let call = tools.get(id);
       if (!call) {
         const message = row('assistant');
-        call = { id, name: String(update.title ?? update.kind ?? 'tool'), input: inputOf(update.rawInput), result: null };
+        call = { id, name: String(state.title ?? state.name ?? state.kind ?? 'tool'), input: inputOf(state.rawInput), result: null };
         (message.toolCalls ??= []).push(call); tools.set(id, call);
         send({ type: 'tool.start', id, name: call.name, input: call.input });
       }
-      if (update.rawInput !== undefined) call.input = inputOf(update.rawInput);
-      if (['completed', 'failed', 'cancelled'].includes(update.status)) {
-        const raw = contentText(update.content) || contentText(update.rawOutput)
-          || (update.rawOutput != null ? JSON.stringify(update.rawOutput) : '');
-        const result = { text: cutText(raw, MAX_RESULT_CHARS, '\n…'), isError: update.status !== 'completed', truncated: raw.length > MAX_RESULT_CHARS };
+      call.name = String(state.title ?? state.name ?? state.kind ?? 'tool');
+      call.input = inputOf(state.rawInput);
+      if (['completed', 'failed', 'cancelled'].includes(state.status)) {
+        const raw = contentText(state.content) || contentText(state.rawOutput)
+          || (state.rawOutput != null ? JSON.stringify(state.rawOutput) : '');
+        const result = { text: cutText(raw, MAX_RESULT_CHARS, '\n…'), isError: state.status !== 'completed', truncated: raw.length > MAX_RESULT_CHARS };
         const changed = JSON.stringify(call.result) !== JSON.stringify(result);
         call.result = result;
         if (changed) send({ type: 'tool.result', id, ...result });
@@ -67,6 +73,7 @@ export function createDevinMapper(sessionId, emit = () => {}) {
   }
   return {
     accept,
+    getToolCall: id => toolStates.has(id) ? structuredClone(toolStates.get(id)) : null,
     beginTurn(prompt) {
       current = null; row('user').text = prompt;
       expectedEcho = prompt; echo = ''; live = true;

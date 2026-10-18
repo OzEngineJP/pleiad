@@ -4,10 +4,10 @@ import crypto from 'node:crypto';
 import readline from 'node:readline';
 
 const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
-const catalogue = { data: { families: [
+const catalogue = { families: [
   { family_uid: 'swe-2', family_label: 'SWE-2', slug: 'swe-2', variants: ['high', 'medium', 'max'].map(level => ({ model_uid: `swe-2-${level}`, label: `SWE-2 ${level}`, cost_tier: 'Free', max_context_tokens: 262000 })) },
   { family_uid: 'fixture-paid', family_label: 'Fixture paid', slug: 'fixture-paid', variants: [{ model_uid: 'paid-exact', label: 'Fixture paid', cost_tier: 'High cost', cost_summary: '$1 per unit' }] },
-] } };
+] };
 if (command === '--version' || command === 'version') { console.log('3000.11.92'); process.exit(0); }
 if (command === 'models') { console.log(process.env.FAKE_DEVIN_CATALOGUE ? fs.readFileSync(process.env.FAKE_DEVIN_CATALOGUE, 'utf8') : JSON.stringify(catalogue)); process.exit(0); }
 if (command === 'auth') { console.log('{"authenticated":true}'); process.exit(0); }
@@ -89,6 +89,29 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         session[p.configId] = p.value; persist(session);
         const options = configs(session);
         if (process.env.FAKE_DEVIN_BAD_ACK === p.configId) options.find(o => o.id === p.configId).currentValue = 'wrong';
+        const drift = process.env.FAKE_DEVIN_SETUP_DRIFT;
+        if (p.configId === 'speed' && drift) {
+          const frames = [];
+          const configFrame = values => ({ method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'config_option_update', configOptions: values } } });
+          const modeFrame = value => ({ method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'current_mode_update', currentModeId: value } } });
+          if (drift === 'before-mode') {
+            session.mode = 'bypass'; frames.push(modeFrame(session.mode));
+            frames.push({ id: request.id, result: { configOptions: configs(session) } });
+          } else {
+            if (drift === 'before-recovered') frames.push(modeFrame('bypass'));
+            frames.push({ id: request.id, result: { configOptions: options } });
+            if (drift === 'after-mode') { session.mode = 'bypass'; frames.push(modeFrame(session.mode)); }
+            if (drift === 'after-model') { session.model = 'paid-exact'; frames.push(configFrame(configs(session))); }
+            if (drift === 'after-config-mode') { session.mode = 'bypass'; frames.push(configFrame(configs(session))); }
+            if (drift === 'after-empty') frames.push(configFrame([]));
+            if (drift === 'after-duplicate') frames.push(configFrame([...options, options[0]]));
+            if (drift === 'after-recovered') { frames.push(modeFrame('bypass')); frames.push(configFrame(options)); }
+          }
+          persist(session);
+          // One write forces ACK + notifications through one transport batch.
+          process.stdout.write(frames.map(frame => JSON.stringify({ jsonrpc: '2.0', ...frame })).join('\n') + '\n');
+          return;
+        }
         update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: options });
         result = { configOptions: options }; break;
       }
@@ -114,10 +137,17 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         if (text.includes('[mode-drift]')) update(session.sessionId, { sessionUpdate: 'current_mode_update', currentModeId: 'bypass' });
         let permissionResult = null;
         const tools = [];
-        if (text.includes('[permission]') || text.includes('[tool]')) {
+        const permissionKind = ['permission', 'permission-id-only', 'permission-partial', 'permission-null', 'permission-unknown'].find(kind => text.includes(`[${kind}]`));
+        if (permissionKind || text.includes('[tool]')) {
           const tool = { id: crypto.randomUUID(), name: 'Fixture permission', input: { command: 'echo fixture' }, result: 'fixture tool result' };
-          update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, kind: 'execute', rawInput: tool.input, status: 'running' });
-          if (text.includes('[permission]')) permissionResult = await ask('session/request_permission', { sessionId: session.sessionId, toolCall: { toolCallId: tool.id, title: tool.name, rawInput: tool.input }, options: [{ optionId: 'allow_once', kind: 'allow_once', name: 'Allow once' }, { optionId: 'reject_once', kind: 'reject_once', name: 'Reject once' }] });
+          if (permissionKind !== 'permission-unknown') update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, kind: 'execute', rawInput: tool.input, status: 'running' });
+          if (permissionKind) {
+            const requestTool = permissionKind === 'permission' ? { toolCallId: tool.id, title: tool.name, rawInput: tool.input }
+              : permissionKind === 'permission-partial' ? { toolCallId: tool.id, title: 'Updated permission' }
+              : permissionKind === 'permission-null' ? { toolCallId: tool.id, title: null, rawInput: null }
+              : { toolCallId: tool.id };
+            permissionResult = await ask('session/request_permission', { sessionId: session.sessionId, toolCall: requestTool, options: [{ optionId: 'allow_once', kind: 'allow_once', name: 'Allow once' }, { optionId: 'reject_once', kind: 'reject_once', name: 'Reject once' }] });
+          }
           update(session.sessionId, { sessionUpdate: 'tool_call_update', toolCallId: tool.id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: tool.result } }] }); tools.push(tool);
         }
         update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });

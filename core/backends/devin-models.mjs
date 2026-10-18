@@ -13,7 +13,8 @@ function fail(code, key, values = {}) {
 }
 
 function catalogueRows(raw) {
-  const families = raw?.data?.families;
+  if (raw?.data && Object.hasOwn(raw.data, 'families')) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
+  const families = raw?.families;
   if (!Array.isArray(families)) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
   const seen = new Set(), rows = [];
   for (const family of families) {

@@ -58,7 +58,7 @@ export default async function (t) {
     const restored = await c.cmd('loadSession', { sessionId: sid });
     t.ok('サーバー再起動後も共通 DB の cwd でネイティブ履歴を復元する', restored.messages.filter(m => m.role === 'user').length === 2 && after.messages.every((m, i) => restored.messages[i].uuid === m.uuid), JSON.stringify({ before: after.messages.map(m => [m.uuid, m.role]), restored: restored.messages.map(m => [m.uuid, m.role]) }));
 
-    const catalogue = async () => ({ data: { families: [{ family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }] }] } });
+    const catalogue = async () => ({ families: [{ family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }] }] });
     const command = () => [process.execPath, path.join(ROOT, 'tests/lib/fake-devin.mjs')];
     class CloseFailure extends DevinAcp { async close() { await super.close(); throw new Error('fixture close failed'); } }
     const events = [];
@@ -71,5 +71,38 @@ export default async function (t) {
     const signal = new AbortController(), cancelled = [], started = Date.now();
     await bounded.runTurn({ cwd, prompt: '[stubborn]', model: 'swe-2-high', signal, emit: e => cancelled.push(e), onPromptDelivered: () => setTimeout(() => signal.abort(), 50) });
     t.ok('cancel に応じない CLI も期限内に終了する', Date.now() - started < 5000 && cancelled.filter(e => e.type === 'turnResult').length === 1 && cancelled.find(e => e.type === 'turnResult').outcome === 'aborted');
+
+    for (const drift of ['after-mode', 'after-config-mode', 'after-model', 'before-mode', 'after-empty', 'after-duplicate', 'before-recovered', 'after-recovered']) {
+      class SetupDrift extends DevinAcp { constructor(options) { super({ ...options, env: { ...options.env, FAKE_DEVIN_SETUP_DRIFT: drift } }); } }
+      const dataDir = path.join(root, drift), updates = [];
+      const guarded = createDevinBackend({ Acp: SetupDrift, catalogue, command, dataDir });
+      let delivered = false;
+      const turn = guarded.runTurn({ cwd, prompt: 'must use ask and SWE-2 High', model: 'swe-2-high', mode: 'ask', emit: event => updates.push(event), onPromptDelivered: () => { delivered = true; } });
+      const recovered = drift.endsWith('recovered');
+      if (recovered) await turn; else await assert.rejects(turn);
+      const nativeDir = path.join(dataDir, 'devin', 'sessions');
+      const [file] = await fs.readdir(nativeDir);
+      const saved = JSON.parse(await fs.readFile(path.join(nativeDir, file), 'utf8'));
+      t.ok(`最終 ACK 前後の同一 batch の最新設定で prompt の送信を判断する（${drift}）`,
+        delivered === recovered && updates.find(event => event.type === 'turnResult').outcome === (recovered ? 'ok' : 'error') && saved.messages.filter(message => message.role === 'user').length === (recovered ? 1 : 0));
+    }
+    for (const kind of ['permission-id-only', 'permission-partial', 'permission-null', 'permission-unknown']) {
+      const requests = [], decisions = [];
+      class PermissionClient extends DevinAcp {
+        constructor(options) {
+          super({ ...options, onResponse: response => { options.onResponse(response); if (response.method === 'session/prompt') decisions.push(response.result.permissionResult); } });
+        }
+      }
+      const permissionBackend = createDevinBackend({ Acp: PermissionClient, catalogue, command, dataDir: path.join(root, kind) });
+      await permissionBackend.runTurn({ cwd, prompt: `[${kind}]`, model: 'swe-2-high', emit() {}, askPermission: request => { requests.push(request); return { allow: false }; } });
+      assert.deepEqual(decisions, [{ outcome: { outcome: 'selected', optionId: 'reject_once' } }]);
+      if (kind === 'permission-unknown') assert.equal(requests.length, 0);
+      else {
+        assert.equal(requests.length, 1);
+        assert.equal(requests[0].toolName, kind === 'permission-partial' ? 'Updated permission' : 'Fixture permission');
+        assert.deepEqual(requests[0].input, { command: 'echo fixture' });
+      }
+      t.ok(`承認要求は既知の詳細を非 null patch と統合し、不明操作は拒否する（${kind}）`, true);
+    }
   } finally { c?.close(); await server?.stop(); await fs.rm(root, { recursive: true, force: true }); }
 }

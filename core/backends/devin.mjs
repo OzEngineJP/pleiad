@@ -134,6 +134,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
         let client, closePromise, sessionId = args.sessionId ?? null, mapper, verified = null, selectedMode = null, prompting = false, sent = false, fatal = null, closing = false, watchdog;
+        let latestSession = null, latestSnapshot = null, latestMode = null;
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -148,6 +149,17 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         hostSignal?.addEventListener('abort', onAbort, { once: true });
         if (hostSignal?.aborted) local.abort();
         const check = () => { if (fatal) throw fatal; if (local.signal.aborted) throw abortError(); };
+        const observe = (id, config, modeOnly = false) => {
+          if (typeof id !== 'string' || (sessionId && id !== sessionId)) return;
+          if (latestSession !== id) { latestSession = id; latestSnapshot = null; latestMode = null; }
+          if (modeOnly) latestMode = config;
+          else {
+            latestSnapshot = structuredClone(config);
+            const mode = Array.isArray(config) ? configSetting(config, 'mode') : [];
+            latestMode = mode.length === 1 ? mode[0].currentValue : null;
+          }
+          if (verified && (!matchesVerified(latestSnapshot, verified) || latestMode !== selectedMode)) stop(new Error(t('devin.errors.configChanged')));
+        };
         let error = null, outcome = 'ok';
         try {
           if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
@@ -158,22 +170,30 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           check();
           client = await openClient(cwd, {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
+            onResponse: ({ method, params, result }) => {
+              if (!['session/new', 'session/load', 'session/set_config_option'].includes(method)) return;
+              const id = params?.sessionId ?? result?.sessionId;
+              if (method === 'session/new' && typeof id === 'string') sessionId = id;
+              observe(id, result?.configOptions);
+            },
             onUpdate: params => {
-              if (params.sessionId !== sessionId) return;
+              if (sessionId && params.sessionId !== sessionId) return;
               const update = params.update;
-              if (verified) {
-                const invalid = update?.sessionUpdate === 'config_option_update' && !matchesVerified(update.configOptions, verified);
-                const modeChanged = update?.sessionUpdate === 'current_mode_update' && update.currentModeId !== selectedMode;
-                if (invalid || modeChanged) { stop(new Error(t('devin.errors.configChanged'))); return; }
-              }
+              if (update?.sessionUpdate === 'config_option_update') observe(params.sessionId, update.configOptions);
+              if (update?.sessionUpdate === 'current_mode_update') observe(params.sessionId, update.currentModeId, true);
+              if (fatal) return;
               mapper?.accept(update);
             },
             onRequest: async (method, params) => {
               if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
               if (!prompting || params.sessionId !== sessionId || local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
               const allow = params.options?.find(o => o.kind === 'allow_once'), deny = params.options?.find(o => o.kind === 'reject_once');
+              mapper.accept({ ...params.toolCall, sessionUpdate: 'tool_call_update' });
+              const tool = mapper.getToolCall(params.toolCall?.toolCallId);
+              const title = tool?.title ?? tool?.name;
+              if (typeof title !== 'string' || !title.trim()) return { outcome: typeof deny?.optionId === 'string' ? { outcome: 'selected', optionId: deny.optionId } : { outcome: 'cancelled' } };
               emit({ type: 'activity', state: 'waiting', sessionId });
-              const answer = await Promise.resolve(args.askPermission?.({ toolName: String(params.toolCall?.title ?? params.toolCall?.kind ?? 'tool'), input: params.toolCall?.rawInput ?? {}, sessionId,
+              const answer = await Promise.resolve(args.askPermission?.({ toolName: title, input: tool.rawInput ?? {}, sessionId,
                 toolUseID: params.toolCall?.toolCallId ?? null, signal: local.signal, canAlways: false, kind: 'tool', locale: args.locale }) ?? { allow: false }).catch(() => ({ allow: false }));
               if (local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
               const selected = answer?.allow ? allow : deny;
@@ -209,12 +229,14 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           }
           if (!matchesVerified(config, verified)) throw new Error(t('devin.errors.configChanged'));
           selectedMode = mode;
+          if (latestSession !== sessionId || !matchesVerified(latestSnapshot, verified) || latestMode !== mode) throw new Error(t('devin.errors.configChanged'));
           check();
           const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           mapper.beginTurn(prompt);
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
           if (control) control.handle = { sessionId };
+          check();
           prompting = true;
           const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
           sent = true; onPromptDelivered?.();
