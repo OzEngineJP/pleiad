@@ -233,7 +233,8 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   for (const chip of Object.values(chips)) { chip.removeAttribute('aria-controls'); chip.setAttribute('aria-haspopup', 'menu'); }
   let destinationPanel = null;
   let effortKey = '', threadEfforts = {};
-  const quotaCache = new Map();
+  const quotaAsked = new Set();   // 開いている面で使用量を頼んだ backend（開くたびに読み直す。結果は host.onUsage で届く）
+  host.onUsage?.(() => repaintPanel());
   const fitThreadRow = () => fitComposerRow(destChip.parentElement, { cwd: chips.cwd, who: destChip });
   addEventListener('resize', fitThreadRow);
   const rowObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(fitThreadRow) : null;
@@ -320,13 +321,13 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const changed = !bot.plain && ((s.values.model ?? '') !== (s.defaults.model ?? '') || (s.values.effort ?? '') !== (s.defaults.effort ?? ''));
     return {
       backend: s.backend, backends: host.state?.backends ?? [], backendSwitchable: Boolean(bot.plain && !s.sessionId && (host.state?.backends?.length ?? 0) > 1),
-      backendUsage: (id) => weekUsage(quotaCache.get(id)?.quota, ''),
+      backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
       models: vocab.models, model: s.values.model, efforts: threadEfforts, effort: s.values.effort,
       effortDisabled: Object.keys(threadEfforts).length <= 1,
       destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,
         backendLabel: (id) => backendLabel?.(id) ?? id,
         // bot は bot のアカウント（ADR 0224）。組み込みの bot はログイン中のアカウント
-        usage: destinationUsage(quotaCache.get(s.backend), { account: bot.plain ? '' : bot.account ?? '', open: host.openUsage }),
+        usage: destinationUsage(host.usageOf?.(s.backend), { account: bot.plain ? '' : bot.account ?? '', open: host.openUsage }),
         changed, onReset: () => apply({ model: s.defaults.model ?? '', effort: s.defaults.effort ?? '' }),
         onPick: pick },
     };
@@ -348,9 +349,10 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       const request = host.efforts?.({ backend: s.backend, model: s.values.model ?? '', cwd: s.values.cwd || undefined });
       request?.then(value => { if (effortKey === key) { threadEfforts = value ?? {}; repaintPanel(); } }).catch(() => {});
     }
-    if (!opening && quotaCache.has(s.backend)) return;
-    const quota = host.quota?.(s.backend);
-    quota?.then(value => { quotaCache.set(s.backend, value); repaintPanel(); }).catch(() => {});
+    if (opening) quotaAsked.clear();
+    if (quotaAsked.has(s.backend)) return;
+    quotaAsked.add(s.backend);
+    host.quota?.(s.backend).catch(() => {});
   }
   chips.mode.onclick = async () => {
     const bot = destNow().bot;

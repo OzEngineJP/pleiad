@@ -77,7 +77,6 @@ export function createBotPage(host) {
     sessions: () => new Map((host.state?.sessions ?? []).map((s) => [s.id, s])),
     gone: false,
     accounts: new Map(),  // backend → 登録したアカウント [{ id, name, ready }]（web/client.mjs の accountList と同じ形）。無い = まだ読んでいない
-    quota: new Map(),     // backend → 使用量（host.quota の結果。アカウントの行の週の使用量）
     quotaAsked: new Set(),// 面を開いている間に使用量を頼んだ backend（閉じたら忘れ、次に開いたとき読み直す）
     seq: 0,
     chain: Promise.resolve(),   // 保存を 1 本ずつ流す（続けて押しても順番を保つ）
@@ -248,6 +247,8 @@ export function createBotPage(host) {
     };
     return p;
   };
+  // 使用量はホストの 1 本の取得口（usageSource）を購読する。新しい値が届いたら開いている面を描き直す
+  host.onUsage?.(() => { if (modelPanel.open) { modelPanel.render(); modelPanel.place(); } });
   const modelPanel = place(panel(modelChip, modelPop, { width: 360, onHide: () => S.quotaAsked.clear(),
     render: () => { askQuota(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
   const modePanel = place(panel(modeChip, modePop, { width: 360, align: 'right', render: paintModePop }));
@@ -328,23 +329,20 @@ export function createBotPage(host) {
     const cur = vm();
     const value = cur.account ?? '';
     const list = accountsOf(cur.backend) ?? [];
-    const quota = S.quota.get(cur.backend)?.quota;
+    const quota = host.usageOf?.(cur.backend)?.quota;
     return [
       { value: '', label: t('chat.account.signedIn'), hint: t('chat.account.signedInAccount'), usage: weekUsage(quota, '') },
       ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? '' : t('chat.account.noToken'), usage: a.ready ? weekUsage(quota, a.id) : null })),
       ...(value && !list.some((a) => a.id === value) ? [{ value, label: t('chat.account.deleted'), hint: t('chat.account.chooseAgain') }] : []),
     ];
   }
-  /** モデルの面を開いている間に 1 度ずつ、エージェントの使用量を読む（アカウントの行とエージェントの行の週の使用量。読めたら面を描き直す） */
+  /** モデルの面を開いている間に 1 度ずつ、エージェントの使用量を読みに行く（アカウントの行とエージェントの行の週の使用量。結果は host.onUsage の購読で届き、面を描き直す） */
   function askQuota() {
     if (typeof host.quota !== 'function') return;
     for (const b of backends()) {
       if (S.quotaAsked.has(b.id)) continue;
       S.quotaAsked.add(b.id);
-      Promise.resolve(host.quota(b.id)).then((result) => {
-        S.quota.set(b.id, result);
-        if (modelPanel.open) { modelPanel.render(); modelPanel.place(); }
-      }).catch(() => {});
+      Promise.resolve(host.quota(b.id)).catch(() => {});
     }
   }
   /** 選んだアカウントが消えた・使えない（トークン・資格情報が無い）ときの一文（入力欄と同じ文） */
@@ -673,7 +671,7 @@ export function createBotPage(host) {
     const v = S.v ?? { modes: {}, models: {}, efforts: {} };
     return {
       backends: backends(), backend: cur.backend, backendSwitchable: backends().length > 1,
-      backendUsage: (id) => weekUsage(S.quota.get(id)?.quota, ''),
+      backendUsage: (id) => weekUsage(host.usageOf?.(id)?.quota, ''),
       models: v.models, model: cur.model ?? '',
       efforts: v.efforts, effort: cur.effort ?? '', effortDisabled: Object.keys(v.efforts ?? {}).length <= 1,
       ...(accountShown() ? { accounts: accountOptions(), account: cur.account ?? '' } : {}),

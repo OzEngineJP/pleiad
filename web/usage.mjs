@@ -98,20 +98,35 @@ export function createUsageSource(cmd) {
   function load(backend) {
     if (pending.has(backend)) return pending.get(backend);
     const task = cmd('providerUsage', { backend }).then(raw => {
-      const result = raw?.quota ? { ...raw, quota: carryQuota(raw.quota, last.get(backend)) } : raw;
+      const result = raw?.quota ? { ...raw, quota: carryQuota(raw.quota, last.get(backend)?.quota) } : raw;
       // 枠もアカウントの行も無い結果（取得の失敗）では前回を捨てない。次に 1 行だけ読めなかったときに引き継げなくなる
-      if (result?.quota?.windows?.length || result?.quota?.accounts?.length) last.set(backend, result.quota);
+      if (result?.quota?.windows?.length || result?.quota?.accounts?.length) last.set(backend, result);
       for (const listener of listeners) listener(backend, result);
       return result;
     }).finally(() => pending.delete(backend));
     pending.set(backend, task); return task;
   }
-  return { load, onResult: listener => listeners.add(listener) };
+  return {
+    load,
+    /** 前回取れた値（同期）。無ければ null。bot ページ・スレッド・入力欄が取得を待たずに描くのに使う */
+    get: backend => last.get(backend) ?? null,
+    /** 取得済みのエージェントを全部取り直す（サーバーから usageChanged の無効化が届いたとき） */
+    reload() { return Promise.allSettled([...last.keys()].map(id => load(id))); },
+    onResult: listener => listeners.add(listener),
+  };
 }
 export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
   let loading = false;
   // エージェントごとのカード。取り直しの間も前の表示を残し、取れてから差し替える（初回だけ「読み込み中…」）
   const cards = new Map();
+  async function renderCard(backend, card, result) {
+    const body = el('div'); body.append(el('h3', null, result.label));
+    renderQuota(body, result.quota, onUsageLogin);
+    if (result.quota.checkedAt) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
+    renderEndpoints(body, await endpoints(backend.id).catch(() => []));
+    renderLocal(body, result.local);
+    card.replaceChildren(...body.children); card.dataset.loaded = '1';
+  }
   async function refresh() {
     if (loading) return;
     loading = true; $('refreshUsage').disabled = true;
@@ -129,20 +144,13 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
         }
         try {
           const result = await source.load(backend.id);
-          const body = el('div'); body.append(el('h3', null, result.label));
-          renderQuota(body, result.quota, onUsageLogin);
-          if (result.quota.checkedAt) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
-          renderEndpoints(body, await endpoints(backend.id).catch(() => []));
-          renderLocal(body, result.local);
-          card.replaceChildren(...body.children); card.dataset.loaded = '1';
+          await renderCard(backend, card, result);
         } catch { if (!card.dataset.loaded) card.replaceChildren(el('h3', null, backend.label), el('p', 'usage-note', t('usage.failed'))); }
       }));
     } finally { loading = false; $('refreshUsage').disabled = false; }
   }
+  // サーバーから新しい値が届いた（usageChanged → source.load）ら、出ているカードを描き直す
+  source.onResult((backend, result) => { const card = cards.get(backend); if (card && result) renderCard({ id: backend }, card, result).catch(() => {}); });
   $('usageTab').onclick = () => { page('usage'); refresh(); };
   $('refreshUsage').onclick = refresh;
-  const timer = setInterval(() => {
-    if (isOpen() && !$('usagePanel').hidden && !document.hidden) refresh();
-  }, 60_000);
-  window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
 }

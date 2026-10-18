@@ -4,7 +4,7 @@ import { currentLocale, setLocale } from '../../core/i18n.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { codexQuota, whamQuota, claudeQuota, usageWindow, createQuotaCache, createUsageStore, createCodexMeter, agentUsage, compactQuota } from '../../core/usage.mjs';
+import { codexQuota, whamQuota, claudeQuota, usageWindow, createQuotaStore, createUsageStore, createCodexMeter, agentUsage, compactQuota } from '../../core/usage.mjs';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
 import { quotaText } from '../../web/usage.mjs';
 import { startServer } from '../lib/server.mjs';
@@ -57,19 +57,45 @@ async function japaneseCases(t) {
   t.ok('Codex累積値の過去分・重複を除外し、Claudeはモデル集計を使う', true);
 
   let now = 100000, calls = 0;
-  const cache = createQuotaCache({ now: () => now });
+  const qstore = createQuotaStore({ now: () => now });
   const fetcher = async () => { calls++; return { windows: [] }; };
-  await Promise.all([cache('codex', fetcher), cache('codex', fetcher)]);
-  await cache('codex', fetcher); assert.equal(calls, 1);
-  now += 61000; await cache('codex', fetcher); assert.equal(calls, 2);
-  cache.clear(); await cache('codex', fetcher); assert.equal(calls, 3);
-  const failed = await cache('bad', () => { throw new Error('Bearer secret'); });
+  await Promise.all([qstore.refresh('codex', fetcher), qstore.refresh('codex', fetcher)]);
+  await qstore.refresh('codex', fetcher); assert.equal(calls, 1);
+  now += 61000; await qstore.refresh('codex', fetcher); assert.equal(calls, 2);
+  qstore.invalidate(); await qstore.refresh('codex', fetcher); assert.equal(calls, 3);
+  const failed = await qstore.refresh('bad', () => { throw new Error('Bearer secret'); });
   assert.equal(failed.checkedAt, null); assert.ok(!JSON.stringify(failed).includes('secret'));
   t.ok('同時取得を共有し、キャッシュ期限と認証変更を反映する', true);
 
-  // ply_usage: 画面と同じ quotaCache を通すので、何度呼んでも各サービスへの問い合わせは増えない
+  // ストア: get・revision・subscribe・invalidate の通知
+  const notices = [];
+  qstore.subscribe((key, snapshot) => notices.push([key, snapshot?.revision ?? null]));
+  const first = await qstore.refresh('codex', fetcher);
+  assert.equal(first.revision, 1); assert.equal(first.stale, false); assert.equal(qstore.get('codex').revision, 1);
+  assert.equal(first.fetchedAt, now);
+  now += 61000; await qstore.refresh('codex', fetcher);
+  qstore.invalidate();
+  assert.deepEqual(notices, [['codex', 2], [null, null]]);
+  t.ok('ストアはスナップショットに revision・fetchedAt・stale を持ち、取得と無効化を購読へ届ける', true);
+
+  // 永続化: 取れた値を usage-quota.json に残し、次の起動は stale 付きの前回値を先に返す
+  const quotaDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-quota-'));
+  const saved = createQuotaStore({ now: () => now, dir: quotaDir });
+  await saved.refresh('claude', async () => ({ plan: 'max', windows: [usageWindow('5h', 40, null, 300)], accounts: [{ label: 'acct' }] }));
+  await saved.flush();
+  const reopened = createQuotaStore({ now: () => now, dir: quotaDir });
+  const staleEntry = reopened.get('claude');
+  assert.equal(staleEntry.stale, true); assert.equal(staleEntry.plan, 'max'); assert.deepEqual(staleEntry.accounts, [{ label: 'acct' }]);
+  let freshCalls = 0;
+  const quick = await reopened.refresh('claude', async () => { freshCalls++; await new Promise(r => setTimeout(r, 20)); return { windows: [] }; });
+  assert.equal(quick.stale, true);   // 取り直しを待たずに前回値を返す
+  await new Promise(r => setTimeout(r, 60));
+  assert.equal(freshCalls, 1); assert.equal(reopened.get('claude').stale, false);
+  t.ok('終了時の値を usage-quota.json に残し、次の起動は stale 付きで先に返し、取り直したら新しい値に替わる', true);
+
+  // ply_usage: 画面と同じ quotaStore を通すので、何度呼んでも各サービスへの問い合わせは増えない
   const fetched = {};
-  const shared = createQuotaCache({ now: () => now });
+  const shared = createQuotaStore({ now: () => now });
   const agents = [
     { id: 'claude', label: 'Claude', capabilities: { accounts: 'token' }, usage: async () => ({ plan: 'max', windows: [], accounts: [
       { label: 'ログイン中のアカウント', plan: 'max', windows: [usageWindow('5時間', 40, 1800000000000, 300)], message: null },
@@ -77,7 +103,7 @@ async function japaneseCases(t) {
     { id: 'codex', label: 'Codex', usage: async () => { throw new Error('Bearer secret'); } },
     { id: 'fake', label: 'Fake' },
   ];
-  const quotaOf = b => b.usage ? shared(b.id, () => { fetched[b.id] = (fetched[b.id] ?? 0) + 1; return b.usage(); }) : { windows: [], message: '未対応' };
+  const quotaOf = b => b.usage ? shared.refresh(b.id, () => { fetched[b.id] = (fetched[b.id] ?? 0) + 1; return b.usage(); }) : { windows: [], message: '未対応' };
   const deps = { list: () => agents, get: id => agents.find(b => b.id === id) ?? null, read: quotaOf };
   const all = await agentUsage(deps);
   assert.deepEqual(all.backends.map(b => b.backend), ['claude', 'codex']);

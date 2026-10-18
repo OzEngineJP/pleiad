@@ -1,6 +1,6 @@
 // 振り分け用の使用量の取り置き。委譲のたびに使用量を取りに行って待たないよう、既存の使用量の取得（server の providerQuota。
-// 設定の「使用量」・ply_usage と同じ quotaCache を通す）を定期的に（既定 5 分ごと、委譲の直後にも）呼び直し、
-// 振り分けは snapshot() を同期的に読む。取得中・失敗は「不明」（checkedAt が null）。
+// 設定の「使用量」・ply_usage と同じ quotaStore を通す）を定期的に（既定 5 分ごと、委譲の直後にも）呼び直し、
+// 振り分けは snapshot() を同期的に読む。取得中・失敗・前回の値（stale）は「不明」（checkedAt が null）。
 //
 // snapshot() の形（core/delegation-routing.mjs の checkCandidate が読む）:
 //   { [backend]: { available, checkedAt, windows, accounts?, models: { [model]: bool } } }
@@ -37,8 +37,8 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
     if (!b.usage) return entry;
     let quota;
     try { quota = await read(b); } catch { return entry; }
-    // 取得に失敗した値（checkedAt が null）は「不明」のまま
-    if (!quota?.checkedAt) return entry;
+    // 取得に失敗した値（checkedAt が null）と、再起動直後の前回の値（stale）は「不明」のまま
+    if (!quota?.checkedAt || quota.stale) return entry;
     entry.checkedAt = quota.checkedAt;
     entry.windows = Array.isArray(quota.windows) ? quota.windows : [];
     if (Array.isArray(quota.accounts)) {

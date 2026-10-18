@@ -2,7 +2,7 @@
 import './server-log-boot.mjs';
 import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
-import { createQuotaCache, createUsageStore, agentUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
+import { createQuotaStore, createUsageStore, agentUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
 import { migrateClaudeUsage } from './usage-migrations.mjs';
 // HTTP（web/ の配信）+ WebSocket（/ws）。token gate は constant-time 比較、既定は localhost bind。
 //
@@ -192,7 +192,9 @@ process.on('unhandledRejection', (reason) => {
   console.error('  [unhandledRejection]', String(reason?.stack ?? reason));
 });
 const updateGate = createUpdateGate();
-const quotaCache = createQuotaCache();
+// 使用枠の正本（core/usage.mjs）。取れた値は購読へ流し、usageChanged で画面へ届ける
+const quotaStore = createQuotaStore({ dir: store.dataDir });
+quotaStore.subscribe(backend => emitGlobal({ type: 'usageChanged', backend, sessionId: null }));
 // ログインの期限切れ（バックエンド id → 気づいた時刻）。会話のターンが 401（kind: 'auth'）で失敗したときに付け、
 // ログインし直す・CLI のログインのターンが通る・ログアウトで消す。メモリだけ（再起動で消える。次の 401 でまた付く。ADR 0212）
 const authExpired = new Map();
@@ -483,14 +485,14 @@ const claudeLogin = createClaudeLogin({
     const current = accountId ? (await claudeAccounts.list()).accounts.find(a => a.id === accountId) : null;
     if (accountId && !current) throw new Error(t('accounts.deleted'));
     const saved = await claudeAccounts.save({ ...(accountId ? { id: accountId } : {}), name: current?.name ?? name, token });
-    quotaCache.clear();
+    quotaStore.invalidate();
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
     return saved;
   },
   usageDir: id => claudeAccounts.usageDir(id),
   markUsageLogin: async id => {
     await claudeAccounts.markUsageLogin(id);
-    quotaCache.clear();
+    quotaStore.invalidate();
     emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
   },
   scratchDir: path.join(store.dataDir, 'claude-login-tmp'),
@@ -503,7 +505,7 @@ const agentAccountSecrets = createSecretStore({ file: path.join(store.dataDir, '
 agentAccountSecrets.migrate().catch(() => {});
 const agentAccounts = createAgentAccounts({ dataDir: store.dataDir, secrets: agentAccountSecrets });
 const accountManager = createAgentAccountManager({ accounts: agentAccounts, getBackend, emit: emitGlobal,
-  invalidate: () => { quotaCache.clear(); routingUsage?.refresh().catch(() => {}); }, openExternal });
+  invalidate: () => { quotaStore.invalidate(); routingUsage?.refresh().catch(() => {}); }, openExternal });
 process.on('exit', () => accountManager.cancelAll());
 /** アカウントの持ち方（capabilities.accounts）。false・'token'（Claude の台帳。core/claude-accounts.mjs）・'agent'（core/agent-accounts.mjs） */
 const accountKind = backend => backend?.capabilities?.accounts || false;
@@ -2370,12 +2372,12 @@ async function usageAccounts(backendId = 'claude') {
 }
 
 /**
- * プロバイダーの使用枠。設定の画面（providerUsage）とエージェント（ply_usage）が同じ quotaCache を通すので、
- * どちらから何度呼んでも各サービスへの問い合わせは 1 分に 1 回まで
+ * プロバイダーの使用枠。設定の画面（providerUsage）・エージェント（ply_usage）・委譲の監視・チャンネルの予算が
+ * 同じ quotaStore を通すので、どちらから何度呼んでも各サービスへの問い合わせは 1 分に 1 回まで
  */
 async function providerQuota(backend) {
   if (!backend.usage) return { windows: [], checkedAt: null, message: t('quota.unsupported') };
-  return quotaCache(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.accounts ? await usageAccounts(backend.id) : {}) }));
+  return quotaStore.refresh(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.accounts ? await usageAccounts(backend.id) : {}) }));
 }
 
 /**
@@ -6398,7 +6400,7 @@ botHost = createBotHost({
     await store.removeSession(id);
     return true;
   },
-  // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaCache を通す
+  // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaStore を通す
   readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
   // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
   accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
@@ -8574,14 +8576,14 @@ wss.on("connection", (ws, req) => {
         case 'saveClaudeAccount': {
           const { id, name, token } = msg.args ?? {};
           const saved = await claudeAccounts.save({ id, name, token });
-          quotaCache.clear();
+          quotaStore.invalidate();
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
           return reply(true, { ...saved, ...(await claudeAccounts.list()) });
         }
         case 'deleteClaudeAccount': {
           claudeLogin.cancelAccount(String(msg.args?.id ?? ''));
           await claudeAccounts.remove(String(msg.args?.id ?? ''));
-          quotaCache.clear();
+          quotaStore.invalidate();
           emitGlobal({ type: 'claudeAccountsChanged', sessionId: null });
           return reply(true, await claudeAccounts.list());
         }
@@ -8986,7 +8988,7 @@ wss.on("connection", (ws, req) => {
           await backend.auth.login({
             emit: (ev) => emitGlobal({ ...ev, backend: backend.id, sessionId: null }),
           });
-          quotaCache.clear();
+          quotaStore.invalidate();
           authExpired.delete(backend.id);
           return reply(true, { supported: true, ...noteAuth(backend.id, await backend.auth.status?.() ?? {}) });
         }
@@ -9021,7 +9023,7 @@ wss.on("connection", (ws, req) => {
           const backend = await pickBackend(null, msg.args?.backend);
           if (!backend.auth?.logout) return reply(true, { supported: false });
           await backend.auth.logout();
-          quotaCache.clear();
+          quotaStore.invalidate();
           authExpired.delete(backend.id);
           return reply(true, { supported: true, ...noteAuth(backend.id, await backend.auth.status?.() ?? {}) });
         }
