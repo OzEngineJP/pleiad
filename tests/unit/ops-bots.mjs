@@ -1,5 +1,6 @@
 // bots.* の操作（registry 越し。サーバーの道具は身代わり）: 作成と DM のチャンネル・AI から見える操作と見えない操作（承認モードは人だけ）・
 // 範囲を広げる向きの update は承認・狭める向きは通る・Antigravity の bot は yolo だけ・削除・一覧の使用量と状態・DM の会話。ADR 0082・0109
+// Claude のアカウント（bots.setAccount。人だけ・登録の無い id とトークンの無いアカウントは断る・会話の claudeAccount に写す。ADR 0222）
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { registry } from '../../core/ops/index.mjs';
 import { createBotService } from '../../core/bots/service.mjs';
 
 export const name = 'ops-bots';
-export const title = 'bots.* の操作: 作成と DM・human-only は承認モードだけ・広げる向きは承認・Antigravity は yolo だけ・削除・一覧の使用量';
+export const title = 'bots.* の操作: 作成と DM・human-only は承認モードとアカウント・広げる向きは承認・Antigravity は yolo だけ・削除・一覧の使用量';
 
 const human = { by: 'human', via: 'ui', local: true };
 const agent = (sessionId, via = 'mcp') => ({ by: 'agent', via, sessionId });
@@ -21,12 +22,12 @@ const CLAUDE_MODES = {
   plan: { scope: 'readonly', autonomy: 'ask' }, bypass: { scope: 'full', autonomy: 'never' },
 };
 
-/** 身代わり: バックエンド 3 つ・会話の保存・チャンネルの口・使用量・実行中のターン */
+/** 身代わり: バックエンド 3 つ（Claude だけがアカウントを使える）・会話の保存・チャンネルの口・使用量・実行中のターン・登録した Claude のアカウント */
 function fake(dataDir, { usage = [], dmFails = false } = {}) {
   const sessions = {};
   let n = 0;
   const backends = {
-    claude: { id: 'claude', modes: () => CLAUDE_MODES },
+    claude: { id: 'claude', modes: () => CLAUDE_MODES, capabilities: { claudeAccounts: true } },
     codex: { id: 'codex', modes: () => ({ ask: { scope: 'workspace', autonomy: 'ask' }, full: { scope: 'workspace', autonomy: 'never' }, yolo: { scope: 'full', autonomy: 'never' } }) },
     antigravity: { id: 'antigravity', modes: () => ({ yolo: { scope: 'full', autonomy: 'never' } }) },
   };
@@ -53,6 +54,7 @@ function fake(dataDir, { usage = [], dmFails = false } = {}) {
     },
     usageStore: { records: async ({ sessionIds, since }) => usage.filter((r) => sessionIds.includes(r.sessionId) && r.at >= since) },
     runtime: { turns: new Map(), waiting: new Map() },
+    claudeAccountList: async () => [{ id: 'acc-oz', name: 'OZ', hasToken: true }, { id: 'acc-bare', name: 'Bare', hasToken: false }],
   };
   const service = createBotService({ dataDir, channels, host, emit: (e) => calls.events.push(e), now: () => 1_000_000 });
   const approvals = [];
@@ -76,8 +78,9 @@ export default async function (t) {
     t.ok('AI（CLI）にも同じ', ids(agent('x', 'cli')) === 'bots.create,bots.delete,bots.get,bots.list,bots.update', ids(agent('x', 'cli')));
     t.ok('画面（人）には setMode も出る', ids(human).includes('bots.setMode'));
     t.ok('どの操作も直のツールではない（T4 の余りが小さい）', registry.ops.filter((o) => o.id.startsWith('bots.')).every((o) => o.surfaces.mcp !== 'direct'));
-    t.ok('危険度: list・get は read、create・update は write、delete は guarded、setMode は human-only',
-      ['bots.list:read', 'bots.get:read', 'bots.create:write', 'bots.update:write', 'bots.delete:guarded', 'bots.setMode:human-only'].every((s) => registry.get(s.split(':')[0]).risk === s.split(':')[1]));
+    t.ok('危険度: list・get は read、create・update は write、delete は guarded、setMode・setAccount は human-only',
+      ['bots.list:read', 'bots.get:read', 'bots.create:write', 'bots.update:write', 'bots.delete:guarded', 'bots.setMode:human-only', 'bots.setAccount:human-only'].every((s) => registry.get(s.split(':')[0]).risk === s.split(':')[1]));
+    t.ok('setAccount は画面（人）にだけ出る（MCP・CLI の口を持たない）', ids(human).includes('bots.setAccount') && registry.get('bots.setAccount').surfaces.mcp === false && registry.get('bots.setAccount').surfaces.cli === false);
 
     const f = fake(dir);
     await f.service.start();
@@ -139,6 +142,43 @@ export default async function (t) {
     const agy = (await call(human, 'bots.create', { name: 'Gravity', backend: 'antigravity' })).result;
     t.ok('Antigravity の bot は yolo で始まる', agy.mode === 'yolo');
     t.ok('Antigravity の bot は yolo 以外を断る', (await call(human, 'bots.setMode', { botId: agy.id, mode: 'default' })).code === 'INVALID' && (await call(human, 'bots.setMode', { botId: agy.id, mode: 'yolo' })).ok);
+
+    // ---- Claude のアカウントも人だけ（ADR 0222）
+    t.ok('作った bot のアカウントは \'\'（ログイン中）', made.result.account === '' && sessions[sess.sessionId].claudeAccount === undefined);
+    const aiAccount = await call(asking, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
+    const freeAccount = await call({ ...agent('bypass'), mode: MODES.bypass }, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
+    t.ok('AI からは bots.setAccount が存在しないのと同じ（NOT_FOUND。すべて自動のモードでも）', aiAccount.code === 'NOT_FOUND' && freeAccount.code === 'NOT_FOUND' && (await f.service.get({ botId: owl })).account === '');
+    t.ok('AI の bots.update ではアカウントを変えられない（strict で INVALID）', (await call({ ...agent('bypass'), mode: MODES.bypass }, 'bots.update', { botId: owl, account: 'acc-oz' })).code === 'INVALID'
+      && (await call(human, 'bots.update', { botId: owl, account: 'acc-oz' })).code === 'INVALID' && (await f.service.get({ botId: owl })).account === '');
+    const unknown = await call(human, 'bots.setAccount', { botId: owl, account: 'acc-gone' });
+    t.ok('登録の無いアカウントは INVALID（変わらない）', unknown.code === 'INVALID' && /not registered/.test(unknown.error) && (await f.service.get({ botId: owl })).account === '', JSON.stringify(unknown));
+    const bare = await call(human, 'bots.setAccount', { botId: owl, account: 'acc-bare' });
+    t.ok('トークンの無いアカウントは INVALID（変わらない）', bare.code === 'INVALID' && /no token/.test(bare.error) && (await f.service.get({ botId: owl })).account === '', JSON.stringify(bare));
+    t.ok('無い bot は BOT_NOT_FOUND', (await call(human, 'bots.setAccount', { botId: 'b_nope', account: '' })).code === 'BOT_NOT_FOUND');
+    const eventsBefore = calls.events.length;
+    const chosen = await call(human, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
+    t.ok('人が選ぶと変わり、返り（bots.get と同じ形）に account が出る', chosen.ok && chosen.result.account === 'acc-oz' && typeof chosen.result.usage?.weekTokens === 'number', JSON.stringify(chosen));
+    t.ok('botsChanged が出る', calls.events.slice(eventsBefore).some((e) => e.type === 'botsChanged' && e.bot?.account === 'acc-oz'));
+    t.ok('今ある DM の会話の claudeAccount も揃う（次のターンから効く）', sessions[sess.sessionId].claudeAccount === 'acc-oz');
+    t.ok('一覧と get も account を返す', (await call(human, 'bots.list', {})).result.bots.find((b) => b.id === owl)?.account === 'acc-oz'
+      && (await call(agent('s'), 'bots.get', { botId: owl })).result.account === 'acc-oz');
+    const owlThread = await f.service.createSession({ botId: owl, channel: { id: 'c_a', kind: 'channel', name: 'a', cwd: folderA }, threadId: 'p_a', kind: 'thread', rootText: 'x' });
+    const owlRoutine = await f.service.createSession({ botId: owl, channel: { id: 'c_a', kind: 'channel', name: 'a', cwd: folderA }, threadId: 'p_ar', kind: 'routine', routineId: 'r_a', rootText: 'x' });
+    t.ok('新しく作るスレッド・ルーティンの会話にも bot のアカウントが付く', sessions[owlThread.sessionId].claudeAccount === 'acc-oz' && sessions[owlRoutine.sessionId].claudeAccount === 'acc-oz');
+    const same = calls.events.length;
+    t.ok('同じアカウントをもう一度選んでも何も書かない', (await call(human, 'bots.setAccount', { botId: owl, account: 'acc-oz' })).ok && calls.events.length === same);
+    const back = await call(human, 'bots.setAccount', { botId: owl, account: '' });
+    t.ok('\'\'（ログイン中）はいつでも選べ、今ある会話（ルーティンも）も \'\' に揃う', back.ok && back.result.account === ''
+      && [sess.sessionId, owlThread.sessionId, owlRoutine.sessionId].every((id) => sessions[id].claudeAccount === ''));
+    // アカウントを使えないエージェント（Codex）の bot: 保存はできるが、会話には付けない
+    const kite = (await call(human, 'bots.create', { name: 'Kite', backend: 'codex' })).result;
+    const kiteSet = await call(human, 'bots.setAccount', { botId: kite.id, account: 'acc-oz' });
+    const kiteDm = await f.service.ensureDmSession({ botId: kite.id });
+    const kiteThread = await f.service.createSession({ botId: kite.id, channel: { id: 'c_k', kind: 'channel', name: 'k', cwd: folderA }, threadId: 'p_k', kind: 'thread', rootText: 'x' });
+    t.ok('Codex の bot にもアカウントは保存できる（Claude に戻したときに効く）', kiteSet.ok && kiteSet.result.account === 'acc-oz');
+    t.ok('Codex の会話（DM・スレッド）には claudeAccount を付けない', !('claudeAccount' in sessions[kiteDm.sessionId]) && !('claudeAccount' in sessions[kiteThread.sessionId]));
+    await call(human, 'bots.setAccount', { botId: kite.id, account: '' });
+    t.ok('Codex の bot のアカウントを変えても、会話に claudeAccount を書かない（揃えるのは Claude の会話だけ）', !('claudeAccount' in sessions[kiteDm.sessionId]) && !('claudeAccount' in sessions[kiteThread.sessionId]));
 
     // ---- update: 狭める向きは通る・広げる向きは承認
     const before = approvals.length;

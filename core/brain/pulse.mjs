@@ -149,6 +149,9 @@ export function createPulse({ dataDir, brain, channels, bots, host, budget, disp
     await host.store.setModel(sessionId, model);
     await host.store.setSessionData(sessionId, 'effort', effort);
     await host.store.setSessionData(sessionId, 'agentLocale', locale());
+    // 心拍も bot のアカウントの枠で動く（ADR 0222）。bot 自身の backend（Claude のアカウントを選べるもの）で走るときだけ。
+    // 別の backend で心拍を回す bot（pulse.backend・夜の整理の既定）に、画面に出ていない残りのアカウントを使わせない
+    if (own && backend.capabilities?.claudeAccounts && bot.account) await host.store.setSessionData(sessionId, 'claudeAccount', bot.account);
     await host.store.setSessionData(sessionId, 'bot', { botId: bot.id, kind: 'pulse', channelId: null, threadId: null }, { durable: true });
     const outcome = await host.runTurn({ sessionId, prompt }, () => {}, { internal: true });
     if (outcome !== 'ok' && outcome !== 'done') throw new Error(`pulse turn: ${outcome}`);

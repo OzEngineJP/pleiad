@@ -7,6 +7,7 @@
 //     createConversation, runTurn(args, onStarted, hooks), noticeTarget, noticeBlocked, abortSessions, emitGlobal,
 //     getBackend(id), listBackends(), resolveModel, resolveEffort, agentLocaleFor(sessionId), agentT, currentLocale(),
 //     readQuota(backendId)（使用枠。チャンネルの予算が使う。ADR 0119）、
+//     claudeAccountList()（登録した Claude のアカウント [{ id, name, hasToken }]。bots.setAccount の検査が使う。ADR 0222）、
 //     deleteHidden(sessionId)（隠れた会話をネイティブの会話ごと消す。消せなければ false。心拍・夜の整理の片付けが使う。ADR 0127）
 //   各モジュールには deps をまとめた HostTools（下の host）を渡す。emit(event) は sessionId: null で全接続へ、emitSession(sessionId, event) は会話の出来事
 //

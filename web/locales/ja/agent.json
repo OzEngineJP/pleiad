@@ -1509,6 +1509,11 @@
         "botId": "bot の id。",
         "mode": "承認モードの id（エージェントごとの一覧から）。"
       },
+      "setAccount": {
+        "summary": "bot が動く Claude のアカウントを変える（画面だけ。AI からは呼べない）。空ならログイン中のアカウント。Claude 以外のエージェントの bot では使われない。",
+        "botId": "bot の id。",
+        "account": "登録したアカウントの id（トークンのあるもの）。空ならログイン中のアカウント。"
+      },
       "delete": {
         "summary": "bot を消す。会話は残り Chats の一覧に戻り、DM のチャンネルは閉じる。承認が要る。",
         "botId": "bot の id。",

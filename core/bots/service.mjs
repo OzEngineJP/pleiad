@@ -6,7 +6,7 @@
 //   channels … ChannelService（bot を作ると DM のチャンネルを作る。createDm({ bot })。まだ無い・失敗なら dmChannelId は空のままで、
 //             start()・ensureDm() が後から作る）
 //   host    … createBotHost の道具（store・createConversation・getBackend・listBackends・resolveModel・resolveEffort・currentLocale・
-//             runtime・usageStore）。無くても定義の保存だけは動く（会話を作る・使用量・状態は host が要る）
+//             runtime・usageStore・claudeAccountList）。無くても定義の保存だけは動く（会話を作る・使用量・状態は host が要る）
 //   emit    … botsChanged を出す
 //
 // BotService（author は types.mjs の Author）:
@@ -19,6 +19,8 @@
 //                                                   pulse は渡した欄だけ変わる（{ on?, everyMin?, backend?, model?, channelId? }。ADR 0126）
 //   planUpdate(input): Promise<{ bot, next, loosens, rows }>   … update の検査と、承認カードに出す前後。riskOf・confirm・update が同じ結果を使う
 //   setMode({ botId, mode }, author): Promise<Bot>                 … 承認モード。human-only の操作から（Antigravity は 'yolo' だけ）。既存の会話の承認モードも揃える
+//   setAccount({ botId, account }, author): Promise<Bot>           … Claude のアカウント（'' = ログイン中）。human-only の操作から（ADR 0222）。
+//                                                   登録の無い id・トークンの無いアカウントは断る（host.claudeAccountList）。既存の会話（claudeAccounts を持つ backend）も揃える
 //   remove({ botId }, author): Promise<void>      … DM のチャンネルは archive。会話は消さず、bot の印を外して Chats の一覧に戻す
 //   usage({ botId }): Promise<{ weekTokens: number, cacheRatio: number|null }>   … 使用量の記録（DB の usage_records）を sessionId で引く
 //   overview({ botId? }): Promise<(Bot & { usage, state })[]>      … bots.list / get の返り。state は 'working' | 'waiting' | 'idle'
@@ -215,7 +217,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
         const backend = backendOf(backendId);
         const t = now();
         const bot = await store.put({
-          id: newId('bot', t), plain: true, name: 'Agent', icon: '✦', iconImage: '', persona: '', backend: backendId, model: '', effort: '',
+          id: newId('bot', t), plain: true, name: 'Agent', icon: '✦', iconImage: '', persona: '', backend: backendId, model: '', effort: '', account: '',
           mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
           dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
         });
@@ -293,7 +295,7 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       const iconImage = input?.iconImage ? await makeIcon(input.iconImage, id) : '';
       let bot;
       try { bot = await store.put({
-        id, name, icon, iconImage, persona, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '',
+        id, name, icon, iconImage, persona, backend: backendId, model: input?.model ?? '', effort: input?.effort ?? '', account: '',
         mode: backend ? defaultMode(backend.modes()) : '', folders: [], sendToOthers: true, sendTargets: [],
         dmChannelId: '', dmSessionId: null, createdAt: t, updatedAt: t,
       });
@@ -432,6 +434,25 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       if (modes && !modes[mode]) throw invalid(`mode: unknown for ${bot.backend}: ${mode}`);
       if (mode === bot.mode) return bot;
       const next = await store.update(botId, (b) => ({ ...b, mode, updatedAt: now() }));
+      send({ type: 'botsChanged', bot: next });
+      await syncSessions(next);
+      return next;
+    },
+
+    async setAccount({ botId, account }, _author) {
+      requireStore();
+      const bot = getBot(botId);
+      if (bot.plain) throw invalid('the built-in agent has no account of its own; choose it in each thread');
+      const id = typeof account === 'string' ? account : '';
+      // '' （ログイン中のアカウント）はいつでも選べる。登録のアカウントは、今あってトークンを持つものだけ（使えないアカウントを選ばせない）
+      if (id) {
+        if (typeof host?.claudeAccountList !== 'function') throw invalid(`account: not registered: ${id}`);
+        const row = (await host.claudeAccountList()).find((a) => a.id === id);
+        if (!row) throw invalid(`account: not registered: ${id}`);
+        if (!row.hasToken) throw invalid(`account: has no token: ${id}`);
+      }
+      if (id === bot.account) return bot;
+      const next = await store.update(botId, (b) => ({ ...b, account: id, updatedAt: now() }));
       send({ type: 'botsChanged', bot: next });
       await syncSessions(next);
       return next;

@@ -63,7 +63,7 @@ import { createInboxStore } from './inbox.mjs';
 import { strongerMode } from './approval.mjs';
 import { createBudget } from './budget.mjs';
 import { inputWithCache } from '../usage.mjs';
-import { createResting, restKey } from './resting.mjs';
+import { createResting } from './resting.mjs';
 import { LIMITS as CHANNEL_LIMITS } from '../channels/service.mjs';
 import { isSilentReply, speakingParts, stripSilentMark } from './silence.mjs';
 import { answerOf, asksQuestion, excerpt } from './reactions.mjs';
@@ -151,7 +151,8 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   const failedKeys = new Set();    // 最後のターンが失敗で終わったスレッド
   const followers = new Map();     // sessionId → その会話のターンが終わったら、ほかの bot に聞かせる処理（@ の無い人の投稿。ADR 0128）
   const budget = createBudget({ channels, host, now, log, brain });
-  const resting = createResting({ now, onChange: (key) => restingChanged(key) });
+  // アカウントごとの枠で休むのは、Claude のアカウントで動くバックエンドの bot だけ（ADR 0222）
+  const resting = createResting({ now, onChange: (key) => restingChanged(key), takesAccount: (id) => Boolean(host?.getBackend?.(id)?.capabilities?.claudeAccounts) });
   let reactionChain = Promise.resolve();   // リアクションの出来事は 1 件ずつ（連打・付け外しの重なりを見分ける）
   let closed = false;
 
@@ -965,7 +966,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   /** 休み始めた・休み終えた: 同じバックエンド・モデルの bot の画面を描き直させる（bots.overview の restingUntil） */
   async function restingChanged(key) {
     try {
-      for (const bot of await bots.list()) if (restKey(bot) === key) emit({ type: 'botsChanged', bot: { ...bot, restingUntil: resting.until(bot) } });
+      for (const bot of await bots.list()) if (resting.key(bot) === key) emit({ type: 'botsChanged', bot: { ...bot, restingUntil: resting.until(bot) } });
     } catch (e) { log('could not announce a resting bot:', errText(e)); }
   }
 

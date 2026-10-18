@@ -6,6 +6,10 @@
 //   botTurnSetup(...)                     … ターンの組み立てに足す { botInstructions, folders }（bots-host の turnExtras が使う）
 //   createBotSessions({ host, now })      … bot の会話を作る。委譲の prepare（core/server.mjs）と同じ手順
 //
+// Claude のアカウント: bot の `account`（'' = ログイン中。ADR 0222）を会話の記録の claudeAccount に写す。写すのは capabilities.claudeAccounts を
+//   持つ backend の会話だけ（ほかの backend の会話には付けない）。使えなくなったアカウント（消した・トークンが無い）でも写し、ターンの始め
+//   （claudeAccounts.resolve）で止める（黙ってログイン中のアカウントで走らせない。入力欄で選んだアカウントと同じ）。スレッドごとの上書きは無い
+//
 // フォルダー: bot の `folders`（先頭が既定の作業場所）を、バックエンドごとに次のように渡す。
 //   Claude        cwd 以外の全部を Agent SDK の additionalDirectories。ro は readOnlyRoots にして、Edit（Write・NotebookEdit を含む）の deny ルールで書き換えを断る
 //                 （acceptEdits は cwd と追加フォルダーの編集を聞かずに通すため）。シェルの rm・mv・sed などは断れない（acceptEdits の自動承認の対象）
@@ -95,6 +99,9 @@ export function defaultMode(modes) {
 
 const clip = (s, n) => { const a = [...String(s ?? '').replace(/\s+/g, ' ').trim()]; return a.length > n ? `${a.slice(0, n).join('')}…` : a.join(''); };
 
+/** その backend の会話に bot のアカウントを写すか（Claude のアカウントを選べる backend だけ） */
+const takesAccount = (backend) => Boolean(backend?.capabilities?.claudeAccounts);
+
 /** 会話の題。通知・承認カードに出る名前: 「🦉 Owl · #checkout-perf › <根の投稿の頭>」（DM は「🦉 Owl」） */
 export function sessionTitle(bot, channel, rootText) {
   const who = `${bot.icon} ${bot.name}`;
@@ -108,7 +115,8 @@ export function sessionTitle(bot, channel, rootText) {
  *   create({ bot, channel, threadId, kind, routineId?, rootText? }) → { sessionId, backend, model, effort, cwd, mode }
  *     kind: 'thread' | 'dm' | 'routine' | 'learner'。channel は Channel（DM・スレッド。learner は null でよい）
  *     作るのは会話と sidecar（`bot`）だけ。ThreadState.sessions[botId]・Bot.dmSessionId への登録は呼び出し側（dispatch・bots service）
- *   sync(sessionId, bot) … bot の変更（承認モード・モデル・エフォート）を既存の会話へ反映する（承認モードは人が bots.setMode で決めたものに揃える）
+ *   sync(sessionId, bot) … bot の変更（承認モード・モデル・エフォート・アカウント）を既存の会話へ反映する（承認モードは人が bots.setMode で、
+ *                          アカウントは bots.setAccount で決めたものに揃える。アカウントは DM・スレッド・ルーティン・心拍のどの会話も揃える）
  */
 export function createBotSessions({ host, now = Date.now } = {}) {
   const lang = () => host.currentLocale?.() ?? 'ja';
@@ -141,6 +149,7 @@ export function createBotSessions({ host, now = Date.now } = {}) {
         await store.setMode(sessionId, mode); await store.setModel(sessionId, model);
         await store.setSessionData(sessionId, 'effort', effort);
         await store.setSessionData(sessionId, 'agentLocale', lang());
+        if (takesAccount(backend) && bot.account) await store.setSessionData(sessionId, 'claudeAccount', bot.account);
         await store.setSessionData(sessionId, 'bot', sidecar, { durable: true });
       } catch (e) {
         // 作りかけの会話を残さない（委譲の prepare と同じ片付け）
@@ -168,6 +177,8 @@ export function createBotSessions({ host, now = Date.now } = {}) {
       if (!own.model && meta.model !== model) await host.store.setModel(sessionId, model);
       const effort = await host.resolveEffort(null, bot.effort || undefined, backend, model, cwd, null);
       if (!own.effort && meta.effort !== effort) await host.store.setSessionData(sessionId, 'effort', effort);
+      // アカウントは次のターンから効く（ターンの始めに claudeAccounts.resolve が引く）。スレッドごとの上書きは無いので、どの会話も bot に揃える
+      if (takesAccount(backend) && (meta.claudeAccount ?? '') !== (bot.account ?? '')) await host.store.setSessionData(sessionId, 'claudeAccount', bot.account ?? '');
       return true;
     },
   };
