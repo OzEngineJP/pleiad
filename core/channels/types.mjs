@@ -77,6 +77,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   iconImage?: string,                                   // 画像アイコンの写し（uploads/bot-icons/ の WebP）。空なら icon の絵文字を使う
  *   backend: 'claude'|'codex'|'antigravity', model: string, effort: string,
  *   mode: string,                                         // core/backends/*.mjs の MODES の id。Antigravity は 'yolo' だけ。変えるのは bots.setMode（human-only）だけ
+ *   account: string,                                      // bot のエージェントのアカウントの id（'' = ログイン中）。capabilities.accounts の backend でだけ効く。backend を替えると ''。変えるのは bots.setAccount（human-only）だけ（ADR 0224）
  *   folders: { path: string, access: 'rw'|'ro' }[],       // 先頭が既定の作業場所。書き込みの範囲を限れないモードでは「すべてのフォルダー」。bots.update の欄（足すのは広げる向き = guarded）
  *   sendToOthers: boolean,                                // 既定 true（P3 の sessions.send。bot に束縛された主体のときだけ確かめる。ON にするのは広げる向き = bots.update が guarded）
  *   sendTargets: string[],                                // 送れる会話。自動追加と bots.update の置き換えを同じ一覧に保存（ADR 0114）

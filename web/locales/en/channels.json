@@ -236,6 +236,7 @@
       "title": "How it runs"
     },
     "modeHumanOnly": "Only a person can change the approval mode",
+    "modeAccountHumanOnly": "Only a person can change the approval mode and the account",
     "modeOnly": "{{backend}} only has the approval mode “{{mode}}”",
     "folders": {
       "title": "Folders it may touch",

@@ -403,6 +403,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "bots.setAccount",
+      "risk": "human-only",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "05f09a4477c3"
+    },
+    {
       "id": "bots.setMode",
       "risk": "human-only",
       "riskOf": false,
