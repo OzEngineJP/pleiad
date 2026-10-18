@@ -9,6 +9,7 @@ const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(
 const nodes = (root) => [root, ...root.children.flatMap(nodes)];
 
 export default async function (t) {
+  const { lang: originalLanguage, setLanguage } = await import('../../web/i18n.mjs');
   const saved = { document: globalThis.document, window: globalThis.window, raf: globalThis.requestAnimationFrame };
   globalThis.document = {
     createElement: tag => new N(tag), createElementNS: (_ns, tag) => new N(tag),
@@ -17,6 +18,7 @@ export default async function (t) {
   globalThis.window = { addEventListener() {} };
   globalThis.requestAnimationFrame = fn => fn();
   try {
+    await setLanguage('ja');
     for (const capability of [false, 'turn']) for (const owner of ['native', 'ply']) {
       let body, opened = false, writes = 0, resolveBackends;
       const backends = new Promise(resolve => { resolveBackends = resolve; });
@@ -89,6 +91,7 @@ export default async function (t) {
       t.ok(`再試行の成功でも保存済み担当を変更しない（${label}）`, choices().every(n => n.getAttribute('aria-checked') === 'true') && writes === 0);
     }
   } finally {
+    await setLanguage(originalLanguage);
     globalThis.document = saved.document; globalThis.window = saved.window; globalThis.requestAnimationFrame = saved.raf;
   }
 }
