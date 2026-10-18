@@ -16,7 +16,7 @@ export const name = 'account-backend-i18n';
 export const title = 'Account backend messages switch languages without changing quota or cancellation state';
 
 export default async function testAccountBackendI18n(t) {
-  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'account-backend-i18n-'));
+  const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'account-backend-i18n-')));
   const previousLocale = currentLocale();
   const previousCodexHome = process.env.CODEX_HOME;
   process.env.CODEX_HOME = path.join(scratch, 'cli');
@@ -48,7 +48,7 @@ export default async function testAccountBackendI18n(t) {
       await assert.rejects(readCodexCredential(broken), { message: expected('accounts.backend.credentialUnreadable', { agent: 'Codex' }) });
       t.ok(`${locale}: Codex cancelled, busy and removed account paths use translated messages`, true);
 
-      const account = { id: `acct-oc-${locale}`, dir: path.join(scratch, locale) };
+      const account = { id: `acct-oc-${locale}`, dir: path.join(scratch, 'oc', `acct-oc-${locale}`) };
       const events = [];
       await assert.rejects(loginAccount({ account, argv: ['fake-opencode'], signal: aborter.signal }), {
         name: 'AbortError', code: 'ABORT_ERR', message: expected('accounts.backend.loginCancelled', { agent: 'OpenCode' }),

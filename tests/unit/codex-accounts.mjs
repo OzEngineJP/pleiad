@@ -10,7 +10,7 @@ export const title = 'Codex accounts isolate authentication and RPC state while 
 
 export default async function test(t) {
   const { t: translate } = await import('../../core/i18n.mjs');
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-codex-accounts-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-codex-accounts-')));
   const home = path.join(root, 'cli');
   const shared = path.join(root, 'state');
   await fs.mkdir(home); await fs.mkdir(shared);

@@ -90,11 +90,18 @@ jobs:
           node-version: "22.13"
           cache: npm
       - run: npm ci
-      # main の CI に macOS の脚は無い。全部のテストは windows のジョブ（または main の CI）に任せ、ここでは配布に関わるものだけ確かめる
+      # macOS 固有の実行環境と、認証用ディレクトリ・CLI の接続を公開前に検査する。実サービスや利用者の資格情報は使わない。
       - name: Release environment smoke
         run: |
+          export TMPDIR="$(cd "$RUNNER_TEMP" && pwd -P)"
+          node -p "JSON.stringify({ platform: process.platform, arch: process.arch, node: process.version })"
           node -e "require('node-pty')"
-          node tests/run.mjs desktop-updates
+          node tests/run.mjs --jobs 2 desktop-updates account usage claude-login mcp-secret-store delegation-routing opencode-adopt devin backend-contract backend-conformance backend-registry backend-test-env context-owner-capability
+      - name: macOS credential storage smoke
+        timeout-minutes: 5
+        env:
+          SMOKE_EXPECT_ENCRYPTED: "1"
+        run: npm run test:safe-storage
       # App Store Connect の API キー（.p8）は中身を Secret に置き、electron-builder にはファイルの場所を渡す（scripts/release-signing.cjs）
       - name: Prepare notarization key
         env:

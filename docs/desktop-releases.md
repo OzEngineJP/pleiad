@@ -307,7 +307,7 @@ GitHub用の自己署名証明書を作成し、暗号化PFXのBase64を `WIN_CS
 - `mac` のジョブは Developer ID Application の証明書で署名し（hardened runtime）、App Store Connect の API キーで公証する。`.app` を `codesign --verify --deep --strict`・`xcrun stapler validate`・`spctl --assess` と `lipo`（CPU）で確かめ、dmg・zip・blockmap・`latest-mac.yml` を artifact `mac-x64`・`mac-arm64` に置く。
 - `publish` のジョブは、CPU ごとの `latest-mac.yml` を `scripts/release-mac-merge.mjs` で 1 つにまとめ（版・名前・checksum が合わない、CPU が欠ける・重なると止まる）、`scripts/publish-evaluation.ps1 -WindowsAssets … -MacAssets …` で Windows の配布物と同じ下書きに入れ、`platforms=all` で照合してから一緒に公開する（`RELEASE-PLATFORMS.json`・`BUILD-INFO.json` の `platforms`）。immutable releases なので、公開した後に macOS の分を足せない。`windows` のジョブは同じスクリプトを `-BuildOnly` で呼ぶ。
 - `windows`・`mac` のどれかが落ちる・取り消されると、`publish` のジョブは走らない（macOS を欠いた版を Windows だけで公開しない）。`mac` は片方の CPU が落ちたらもう片方も止める。macOS を出さずに急ぐときは、`PLY_MAC_RELEASE` を外して手動実行し直す。
-- main の CI に macOS の脚は無い。`mac` のジョブは配布に関わるテスト（`desktop-updates`）と node-pty の読み込みだけを確かめる。全部のテストは `windows` のジョブ（または main の CI）が受け持つ。
+- main の通常 CI は Windows と Linux の全件を受け持つ。`mac` のジョブは node-pty、配布、アカウント管理・使用枠、Devin とバックエンド契約の関連試験、および本物の Electron / Keychain の暗号化を公開前に確かめる。関連試験では偽の CLI を使い、実サービスの認証やモデルは呼ばない。ビルドの CPU 指定と試験を実行する Node の CPU は別なので、実行環境もログに残す。
 - macOS の自動更新は electron-updater（Squirrel.Mac）で、zip と `latest-mac.yml` を使う。macOS には `LOCALAPPDATA` が無く、版ごとの実行場所を決められないので、無停止の更新は使わず `utilityProcess` の流れ（作業が無いのを確かめてから入れ替えて起動し直す）になる。Squirrel.Mac は更新後のアプリの署名が今のアプリと同じ Developer ID であることを求めるので、署名の無い macOS 版は自動更新できない。
 
 初回設定（Apple Developer Program の管理者）:
