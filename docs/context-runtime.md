@@ -111,12 +111,14 @@ Claude はネイティブの承認経路を使う。Codex の共通 MCP は Plei
 
 ## バックエンドの抑止
 
-| 対象 | Claude | Codex |
-|---|---|---|
-| 指示 | claudeMdExcludes（CLAUDE.md・CLAUDE.local.md・AGENTS.md・.claude/rules）、autoMemoryEnabled=false | project_doc_max_bytes=0 |
-| Skills | skills=[]、disable-slash-commands（圧縮ターンを除く）、Skill を非公開 | 発見済み SKILL.md の skills.config.enabled=false |
-| MCP | strictMcpConfig=true | ネイティブ登録を無効なプレースホルダーに置換 |
-| 指示の注入 | claude_code preset append | thread developerInstructions |
+| 対象 | Claude | Codex | OpenCode（ターンごとの専用の `opencode serve`） |
+|---|---|---|---|
+| 指示 | claudeMdExcludes（CLAUDE.md・CLAUDE.local.md・AGENTS.md・.claude/rules）、autoMemoryEnabled=false | project_doc_max_bytes=0 | `OPENCODE_DISABLE_PROJECT_CONFIG`・`OPENCODE_DISABLE_CLAUDE_CODE_PROMPT`、写した設定の置き場（`XDG_CONFIG_HOME`）に AGENTS.md を置かず、設定の instructions を外す |
+| Skills | skills=[]、disable-slash-commands（圧縮ターンを除く）、Skill を非公開 | 発見済み SKILL.md の skills.config.enabled=false | `OPENCODE_DISABLE_EXTERNAL_SKILLS`・`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`、写した置き場に skills を置かない、会話の権限の規則で `skill` を deny |
+| MCP | strictMcpConfig=true | ネイティブ登録を無効なプレースホルダーに置換 | 全体と作業場所の設定から mcp を外す |
+| 指示の注入 | claude_code preset append | thread developerInstructions | `prompt_async` の `system` |
+
+OpenCode は指示を会話ごとに止める口が無く、Skills の一覧もシステムプロンプトに入るため、Pleiad が担当するターンだけ専用のサーバーを起こし、ターンの終わりに止める（共有のサーバーや他会話には触れない。`core/backends/opencode-context.mjs`）。作業場所の設定を止めるので、エージェントに任せる種類（作業場所の指示ファイル・設定の instructions・`.opencode` の Skills・作業場所の mcp）は絶対パスと `OPENCODE_CONFIG_CONTENT` で渡し直す。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、そのターンでは読まれない。ply_context は中継の口（`/mcp/opencode/ply_context`）で渡す。
 
 Claude は設定ソースと権限を保持し、Pleiad 管理時は初期化結果を確認するまでユーザー入力を送らない。Codex は管理対象のターン専用 app-server を作り、共有 RPC や他会話の設定を書き換えない。Skills または MCP の共通管理では plugins を無効にするため、その影響を設定画面に明示する。元の設定ファイルを書き換える抑止は行わない。
 

@@ -48,6 +48,9 @@ Hooks を Pleiad がそろえる場所では、Claude Code の形の登録をそ
 
 Pleiad を更新しても、走っている OpenCode のターンは止まらない（承認待ちのままでも、新しい版で同じ承認が出る）。
 
+設定 › プラグインで指示・Skills・外部 MCP を「Pleiad がそろえる」にした場所では、Pleiad がそろえたものだけを OpenCode に渡し、OpenCode 自身の AGENTS.md・Skills・MCP は読ませない。
+そのため、そのターンだけ専用の OpenCode を起こす（起動の数秒が足される）。作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、その会話では読まれない。
+
 互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または `opencode.json` の `provider`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
 
 ## コンピューターの操作

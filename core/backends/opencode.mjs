@@ -9,6 +9,8 @@
 //   会話をそのターンの口に結び付ける。Pleiad の指示は prompt の system で毎ターン渡す
 // - 無停止の更新: 共有のサーバーは保持役の子（opencode-held.mjs）。ターンは札（control.backendCard）を置き、引き継ぎでは手を離す（control.holder.handOff）。
 //   新しいサーバーは adoptTurn で、会話の発言・答えていない承認と質問・会話の状態を OpenCode に聞き直して、走っているターンを組み立て直す
+// - Pleiad 担当のコンテキスト（ply_context）: そのターンだけ専用のサーバーを起こし、OpenCode 自身の指示・Skills・MCP のうち Pleiad が担当する種類を読ませない
+//   （opencode-context.mjs）。ply_context は中継の口で渡し、指示の文は system に入れる
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,6 +23,7 @@ import { createOpencodeServer } from './opencode-server.mjs';
 import { createTurnMapper, messagesToNormalized, sessionRow, errorOf } from './opencode-normalize.mjs';
 import { writePlugin } from './opencode-plugin.mjs';
 import { createHookRunner } from './opencode-hooks.mjs';
+import { managedLaunch } from './opencode-context.mjs';
 import { configureOpencodeHeld, acquireHeldOpencode, heldOpencode, writeOpencodeEnvFile, adoptOpencodeEnvFile } from './opencode-held.mjs';
 import { promptHash } from '../turn-card.mjs';
 import { computerPrompt } from './computer-delivery.mjs';
@@ -48,7 +51,9 @@ const TOOL_HINTS = {
 
 // ---- 承認モード（会話の権限の規則。最初に `*` を置いて、それより前に足した規則を上書きする）
 const rule = (permission, action, pattern = '*') => ({ permission, pattern, action });
-const READS = ['read', 'glob', 'grep', 'list', 'lsp', 'todoread', 'todowrite', 'skill', 'question', 'task'];
+// ply_context の指示・Skill・MCP の資源の読み出しは読むだけ（外部 MCP のツールは OpenCode が聞く）
+const READS = ['read', 'glob', 'grep', 'list', 'lsp', 'todoread', 'todowrite', 'skill', 'question', 'task',
+  'ply_context_instructions_for_path', 'ply_context_load_skill', 'ply_context_mcp_resources', 'ply_context_mcp_prompts'];
 const RULES = {
   ask: [rule('*', 'ask'), ...READS.map((p) => rule(p, 'allow'))],
   edit: [rule('*', 'ask'), ...READS.map((p) => rule(p, 'allow')), rule('edit', 'allow')],
@@ -95,36 +100,59 @@ const server = createOpencodeServer({
   currentOrigin: () => opencodeRelay.origin(),
   // 走っているターン・付け直すのを待っているターンがあれば、待ち受けが変わっても起こし直さない
   busy: () => turnsBySession.size > 0 || (heldOpencode()?.cards.size ?? 0) > 0,
-  env: async () => {
-    // 中継の口（プラグインの shell.env が会話の環境変数を取る先）は Pleiad の待ち受けが決まってから
-    await opencodeRelay.whenOrigin();
-    const plugin = writePlugin(store.dataDir);
-    return {
-      // 利用者の opencode.json は書き換えずに、Pleiad のプラグインだけを足す。Pleiad が起こした OpenCode は勝手に自分を更新しない（ADR 0037）
-      OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugin: [plugin], autoupdate: false }),
-      PLEIAD_OPENCODE_ENV_URL: opencodeRelay.envUrl(),
-      PLEIAD_OPENCODE_HOOK_URL: opencodeRelay.hookUrl(),
-      PLEIAD_OPENCODE_SECRET: opencodeRelay.secret,
-    };
-  },
+  env: () => serverEnv(),
 });
 
+/**
+ * OpenCode に渡す環境変数。中継の口（プラグインの shell.env が会話の環境変数を取る先）は Pleiad の待ち受けが決まってから。
+ * 利用者の opencode.json は書き換えずに、Pleiad のプラグインだけを足す。Pleiad が起こした OpenCode は勝手に自分を更新しない（ADR 0037）。
+ * config は OPENCODE_CONFIG_CONTENT に合わせる設定（Pleiad 担当のコンテキストの専用のサーバーが、作業場所の設定を渡し直す）
+ */
+async function serverEnv(config = {}) {
+  await opencodeRelay.whenOrigin();
+  const plugin = writePlugin(store.dataDir);
+  return {
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...config, plugin: [...(Array.isArray(config.plugin) ? config.plugin : []), plugin], autoupdate: false }),
+    PLEIAD_OPENCODE_ENV_URL: opencodeRelay.envUrl(),
+    PLEIAD_OPENCODE_HOOK_URL: opencodeRelay.hookUrl(),
+    PLEIAD_OPENCODE_SECRET: opencodeRelay.secret,
+  };
+}
+
 // 出来事は 1 本の流れで全部来る。会話の id で、走っているターンへ配る
-server.subscribe((event) => {
+const dispatch = (event) => {
   const sid = event.properties?.sessionID ?? event.properties?.info?.sessionID ?? event.properties?.part?.sessionID;
   if (!sid) return;
   turnsBySession.get(sid)?.(event);
-});
+};
+server.subscribe(dispatch);
+
+/**
+ * Pleiad 担当のコンテキストのターンの専用のサーバー（opencode-context.mjs）。OpenCode 自身の指示・Skills・MCP のうち Pleiad が担当する種類を読ませない。
+ * 保持役には載せない（ターンの終わりに止める。無停止の更新の切り替えは、このターンが終わるのを待つ。Codex の専用の app-server と同じ）
+ */
+async function managedServer(contextRuntime, cwd) {
+  const launch = await managedLaunch({ owners: contextRuntime.owners, cwd, dataDir: store.dataDir });
+  const srv = createOpencodeServer({
+    command: () => cliCommand('opencode'),
+    origin: () => opencodeRelay.whenOrigin(),
+    env: async () => ({ ...(await serverEnv(launch.config)), ...launch.env }),
+  });
+  srv.subscribe(dispatch);
+  return srv;
+}
 server.onGone((err) => { for (const fn of new Set(turnsBySession.values())) fn({ type: 'pleiad.gone', properties: { error: err } }); });
 
-async function directoryOf(sessionId) {
+async function directoryOf(sessionId, srv = server) {
   if (directories.has(sessionId)) return directories.get(sessionId);
-  const s = await server.request('GET', `/session/${encodeURIComponent(sessionId)}`).catch(() => null);
+  const s = await srv.request('GET', `/session/${encodeURIComponent(sessionId)}`).catch(() => null);
   if (s?.directory) directories.set(sessionId, s.directory);
   return s?.directory ?? null;
 }
 
-async function providers(cwd) {
+async function providers(cwd, srv = server) {
+  // 控えは共有のサーバーの分だけ（専用のサーバーはターンごとに起こす）
+  if (srv !== server) return srv.request('GET', '/config/providers', { directory: cwd || null });
   if (providersCache && Date.now() - providersCache.at < 60_000) return providersCache.data;
   const data = await server.request('GET', '/config/providers', { directory: cwd || null });
   providersCache = { at: Date.now(), data };
@@ -205,11 +233,11 @@ function modelInfo(data, ref) {
 }
 
 /** 既定のモデル（OpenCode の設定の model、無ければ opencode の既定） */
-async function defaultModelRef(cwd) {
-  const config = await server.request('GET', '/config', { directory: cwd || null }).catch(() => null);
+async function defaultModelRef(cwd, srv = server) {
+  const config = await srv.request('GET', '/config', { directory: cwd || null }).catch(() => null);
   const ref = modelRef(config?.model);
   if (ref) return ref;
-  const data = await providers(cwd).catch(() => null);
+  const data = await providers(cwd, srv).catch(() => null);
   const def = data?.default ?? {};
   const providerID = def.opencode ? 'opencode' : Object.keys(def)[0];
   return providerID ? { providerID, modelID: def[providerID] } : null;
@@ -235,20 +263,20 @@ async function listModels(cwd) {
 }
 
 /** Pleiad の MCP を、この作業場所の instance に足す（まだ足していない・つながっていないものだけ） */
-async function ensureRelay(cwd, servers) {
+async function ensureRelay(cwd, servers, srv = server) {
   if (!servers.length) return;
-  const status = await server.request('GET', '/mcp', { directory: cwd }).catch(() => ({}));
+  const status = await srv.request('GET', '/mcp', { directory: cwd }).catch(() => ({}));
   for (const name of servers) {
     if (status?.[name]?.status === 'connected') continue;
-    await server.request('POST', '/mcp', { directory: cwd, body: { name, config: { type: 'remote', url: opencodeRelay.serverUrl(name), headers: { Authorization: `Bearer ${opencodeRelay.secret}` }, enabled: true } } })
+    await srv.request('POST', '/mcp', { directory: cwd, body: { name, config: { type: 'remote', url: opencodeRelay.serverUrl(name), headers: { Authorization: `Bearer ${opencodeRelay.secret}` }, enabled: true } } })
       .catch((err) => console.error(`  opencode: could not add ${name}:`, String(err?.message ?? err).slice(0, 200)));
   }
 }
 
 /** Pleiad の指示（委譲・可視化・ブラウザー・コンピューター・操作の一覧・秘密情報・Pleiad が足した文・bot の人格）。毎ターン system で渡す */
-function systemText({ agentRuntime, visualizeInstructions, browserInstructions, computerRuntime, controlRuntime, secretsRuntime, addedInstructions, botInstructions, locale }) {
+function systemText({ contextRuntime, agentRuntime, visualizeInstructions, browserInstructions, computerRuntime, controlRuntime, secretsRuntime, addedInstructions, botInstructions, locale }) {
   return [
-    agentRuntime?.instructions, visualizeInstructions, browserInstructions,
+    contextRuntime?.prompt, agentRuntime?.instructions, visualizeInstructions, browserInstructions,
     computerPrompt(computerRuntime, { locale, agent: 'opencode' }), controlRuntime?.instructions, secretsRuntime?.instructions, addedInstructions, botInstructions,
   ].filter(Boolean).join('\n\n');
 }
@@ -293,7 +321,7 @@ export const backend = {
     autoCompactWindow: false,
     promptSuggestions: false,
     plyAgents: true,        // ply_agents を中継の口で渡し、指示を system に入れる
-    plyContext: false,      // Pleiad 担当のコンテキスト（ply_context）はまだ渡さない（OpenCode の設定がそのまま効く）
+    plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
     computerUse: { images: 'inline', waitSliceMs: null },
     shell: 'host',          // 入力欄の `!` は Pleiad が走らせ、次のターンの始めに返答を起こさない行（noReply）で渡す
     effortInModelId: false, // エフォートはモデルの variants（prompt の variant）
@@ -314,23 +342,34 @@ export const backend = {
    * adopt は付け直し（{ card, source }。adoptTurn だけが渡す。無停止の更新）。card は前のサーバーが札に置いた欄（control.backendCard）。
    * 発言は送らず、会話の発言・承認・質問・状態を OpenCode に聞き直して続きを受ける
    */
-  async runTurn(args, adopt = null) {
+  async runTurn(args, adopt = null, srv = null) {
+    // Pleiad 担当のコンテキストのターンは、そのターンだけの専用のサーバーで走らせ、終わったら止める
+    if (!srv && args.contextRuntime && !adopt) {
+      let dedicated;
+      try { dedicated = await managedServer(args.contextRuntime, args.cwd); }
+      catch (err) { args.emit({ type: 'turnResult', outcome: 'error', error: String(err?.message ?? err) }); throw undelivered(err); }
+      try { return await backend.runTurn(args, null, dedicated); } finally { await dedicated.stop(); }
+    }
+    srv ??= server;
     const { prompt, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, notes = [], shellAppends = [] } = args;
     let sessionId = args.sessionId ?? null;
     const card = adopt?.card ?? null;
-    const permission = RULES[modeOf(mode)];
+    // Skills を Pleiad が担当するターンは、OpenCode の組み込みの skill のツールも止める（中身の無いツールを見せない）。規則は承認モードと組で入れ直す
+    const noSkill = args.contextRuntime?.owners?.skill === 'ply';
+    const permission = [...RULES[modeOf(mode)], ...(noSkill ? [rule('skill', 'deny')] : [])];
+    const permissionKey = `${modeOf(mode)}${noSkill ? '+noskill' : ''}`;
     let fresh = false;
     try {
-      await server.ensure();
+      await srv.ensure();
       if (adopt) {
         // 会話も作業場所も承認モードの規則も、前のサーバーのまま
         if (card.directory) directories.set(sessionId, card.directory);
         if (card.mode) appliedMode.set(sessionId, card.mode);
       } else if (!sessionId) {
-        const created = await server.request('POST', '/session', { directory: cwd, body: { permission } });
+        const created = await srv.request('POST', '/session', { directory: cwd, body: { permission } });
         sessionId = created.id;
         directories.set(sessionId, created.directory ?? cwd);
-        appliedMode.set(sessionId, modeOf(mode));
+        appliedMode.set(sessionId, permissionKey);
         fresh = true;
         emit({ type: 'session', sessionId, first: true, ...(model ? { model } : {}) });
       } else {
@@ -340,28 +379,28 @@ export const backend = {
       emit({ type: 'turnResult', outcome: 'error', error: String(err?.code === 'NOT_INSTALLED' ? t('opencode.errors.notInstalled') : err?.message ?? err) });
       throw undelivered(err);
     }
-    const directory = (await directoryOf(sessionId)) ?? cwd;
-    if (!adopt && appliedMode.get(sessionId) !== modeOf(mode)) {
-      await server.request('PATCH', `/session/${sessionId}`, { directory, body: { permission } });
-      appliedMode.set(sessionId, modeOf(mode));
+    const directory = (await directoryOf(sessionId, srv)) ?? cwd;
+    if (!adopt && appliedMode.get(sessionId) !== permissionKey) {
+      await srv.request('PATCH', `/session/${sessionId}`, { directory, body: { permission } });
+      appliedMode.set(sessionId, permissionKey);
     }
     // Pleiad がそろえる Hooks（hooksRuntime。ADR 0049）。Claude Code の形で、Pleiad の中で走らせる（core/backends/opencode-hooks.mjs）
     const hooks = args.hooksRuntime
       ? createHookRunner(args.hooksRuntime, { onRun: (run) => emit({ type: 'hookRun', ...run }), base: { session_id: sessionId, cwd: directory } })
       : null;
     // 保持役に載せた共有のサーバー（無停止の更新）。会話のシェルの環境変数は札に入れず、データ置き場のファイルに置く（付け直す側が読む）
-    const heldServer = control ? server.held : null;
+    const heldServer = control ? srv.held : null;
     const envFile = !heldServer ? null : adopt ? await adoptOpencodeEnvFile(store.dataDir, card.envFile) : await writeOpencodeEnvFile(store.dataDir, shellEnv(args)).catch(() => null);
     // Pleiad の MCP・会話のシェルの環境変数・ツールの前後の Hooks を、この会話に結び付ける（付け直しは、札の口とファイルの環境変数で結び直す）
     const runtimes = adopt ? (card.runtimes ?? {}) : relayRuntimes(args);
     const servers = opencodeRelay.bind(sessionId, { runtimes, env: adopt ? (envFile?.vars ?? {}) : shellEnv(args),
       hooks: hooks ? { beforeTool: (p) => hooks.beforeTool(p, { signal: signal?.signal }), afterTool: (p) => hooks.afterTool(p, { signal: signal?.signal }) } : null });
-    if (!adopt) await ensureRelay(directory, servers);
+    if (!adopt) await ensureRelay(directory, servers, srv);
 
     // 「既定」でもモデルを明示して送る。省くと OpenCode は自分の覚えている最後のモデルを使い、画面の「既定」（resolvesTo）と食い違う
     // （利用者の設定の、もう使えないモデルで失敗した。2026-10-18 の実機）
-    const ref = adopt ? (card.ref ?? null) : modelRef(model) ?? await defaultModelRef(directory).catch(() => null);
-    const data = await providers(directory).catch(() => null);
+    const ref = adopt ? (card.ref ?? null) : modelRef(model) ?? await defaultModelRef(directory, srv).catch(() => null);
+    const data = await providers(directory, srv).catch(() => null);
     const windowTokens = () => modelInfo(data, ref)?.limit?.context ?? null;
 
     // ターンの終わり（session.idle）を待つ口。Stop の Hooks が続けさせたら、もう一度待つ
@@ -405,7 +444,7 @@ export const backend = {
     });
 
     // 手を離した後は、このサーバーは OpenCode に何も返さない（承認の答え・中断は新しいサーバーのもの）
-    const reply = (path, body) => (handedOff ? null : server.request('POST', path, { directory, body }).catch((err) => console.error('  opencode: reply failed:', String(err?.message ?? err).slice(0, 200))));
+    const reply = (path, body) => (handedOff ? null : srv.request('POST', path, { directory, body }).catch((err) => console.error('  opencode: reply failed:', String(err?.message ?? err).slice(0, 200))));
     async function onPermission(p) {
       if (asked.has(p.id)) return;
       asked.add(p.id);
@@ -449,11 +488,13 @@ export const backend = {
     const route = (event) => (queue ? queue.push(event) : onEvent(event));
     turnsBySession.set(sessionId, route);
     for (const child of children) { opencodeRelay.alias(child, sessionId); turnsBySession.set(child, route); }
+    // 専用のサーバー（Pleiad 担当のコンテキスト）が落ちたら、このターンに知らせる（共有のサーバーの分は全部のターンへ配る）
+    const offGone = srv !== server ? srv.onGone((err) => onEvent({ type: 'pleiad.gone', properties: { error: err } })) : null;
 
     const onAbort = () => {
       if (handedOff) return;
       aborted = true;
-      server.request('POST', `/session/${sessionId}/abort`, { directory }).catch(() => settle());
+      srv.request('POST', `/session/${sessionId}/abort`, { directory }).catch(() => settle());
     };
     signal?.signal?.addEventListener?.('abort', onAbort, { once: true });
 
@@ -465,7 +506,7 @@ export const backend = {
         const said = String(item?.args?.prompt ?? '');
         steers.push({ id: item?.id ?? null, text: said, hash: promptHash(said) });
         control.touch?.();
-        await server.request('POST', `/session/${sessionId}/prompt_async`, { directory, body: { ...(ref ? { model: ref } : {}), parts: [{ type: 'text', text: said }] } });
+        await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory, body: { ...(ref ? { model: ref } : {}), parts: [{ type: 'text', text: said }] } });
         return true;
       };
     }
@@ -479,7 +520,7 @@ export const backend = {
       control.holder = {
         label: (c) => heldServer.putCard(sessionId, c),
         // 旧サーバーの手を離す口: 札を置いて保持役へ detach し（全部のターンをまとめて 1 回）、このターンは終える（締めるのは付け直したサーバー）
-        handOff: async (c) => { heldServer.putCard(sessionId, c); await heldServer.handOff(); handedOff = true; server.handedOff(); settle(); },
+        handOff: async (c) => { heldServer.putCard(sessionId, c); await heldServer.handOff(); handedOff = true; srv.handedOff(); settle(); },
       };
       control.touch?.();
     };
@@ -488,10 +529,10 @@ export const backend = {
       if (adopt) {
         bindHeld();
         const [list, status, permissions, questions] = await Promise.all([
-          server.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory }),
-          server.request('GET', '/session/status', { directory }).catch(() => ({})),
-          server.request('GET', '/permission', { directory }).catch(() => []),
-          server.request('GET', '/question', { directory }).catch(() => []),
+          srv.request('GET', `/session/${encodeURIComponent(sessionId)}/message`, { directory }),
+          srv.request('GET', '/session/status', { directory }).catch(() => ({})),
+          srv.request('GET', '/permission', { directory }).catch(() => []),
+          srv.request('GET', '/question', { directory }).catch(() => []),
         ]);
         // このターンの発言（送った時刻より後）を組み立て直す。途中の本文は、次の部品の更新まで差分を読まない（溜めた差分と重なる）
         replaying = true;
@@ -520,7 +561,7 @@ export const backend = {
       } else {
         // 入力欄の `!` の結果は、返答を起こさない行（noReply）で先に積む（Claude の shouldQuery: false と同じ）
         for (const line of shellAppends) {
-          await server.request('POST', `/session/${sessionId}/message`, { directory, body: { noReply: true, ...(ref ? { model: ref } : {}), parts: [{ type: 'text', text: String(line) }] } });
+          await srv.request('POST', `/session/${sessionId}/message`, { directory, body: { noReply: true, ...(ref ? { model: ref } : {}), parts: [{ type: 'text', text: String(line) }] } });
         }
         // 会話の始めと発言の前の Hooks（SessionStart・UserPromptSubmit）。足す文脈は system に、止める答えなら送らない
         const extra = [];
@@ -537,7 +578,7 @@ export const backend = {
         emit({ type: 'activity', state: 'thinking' });
         since = Date.now();
         bindHeld();
-        await server.request('POST', `/session/${sessionId}/prompt_async`, {
+        await srv.request('POST', `/session/${sessionId}/prompt_async`, {
           directory,
           body: {
             ...(ref ? { model: ref } : {}),
@@ -558,7 +599,7 @@ export const backend = {
         stopRounds++;
         control?.touch?.();
         arm();
-        await server.request('POST', `/session/${sessionId}/prompt_async`, { directory, body: { ...(ref ? { model: ref } : {}), agent: modeOf(card?.mode ?? mode) === 'plan' ? 'plan' : 'build', parts: [{ type: 'text', text: reason }] } });
+        await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory, body: { ...(ref ? { model: ref } : {}), agent: modeOf(card?.mode ?? mode) === 'plan' ? 'plan' : 'build', parts: [{ type: 'text', text: reason }] } });
         await done;
       }
     } catch (err) {
@@ -567,6 +608,7 @@ export const backend = {
       throw err;
     } finally {
       signal?.signal?.removeEventListener?.('abort', onAbort);
+      offGone?.();
       if (turnsBySession.get(sessionId) === route) turnsBySession.delete(sessionId);
       for (const child of children) if (turnsBySession.get(child) === route) turnsBySession.delete(child);
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
@@ -600,11 +642,18 @@ export const backend = {
     server.handedOff();
   },
 
-  async compact({ sessionId, emit, cwd, trigger = 'manual' }) {
-    const directory = (await directoryOf(sessionId)) ?? cwd;
-    const msgs = await server.request('GET', `/session/${sessionId}/message`, { directory });
+  async compact(args, srv = null) {
+    // Pleiad 担当のコンテキストの会話の圧縮も、専用のサーバーで（OpenCode 自身の指示を要約の依頼に混ぜない）
+    if (!srv && args.contextRuntime) {
+      const dedicated = await managedServer(args.contextRuntime, args.cwd);
+      try { return await backend.compact(args, dedicated); } finally { await dedicated.stop(); }
+    }
+    srv ??= server;
+    const { sessionId, emit, cwd, trigger = 'manual' } = args;
+    const directory = (await directoryOf(sessionId, srv)) ?? cwd;
+    const msgs = await srv.request('GET', `/session/${sessionId}/message`, { directory });
     const last = [...(msgs ?? [])].reverse().find((m) => m.info?.role === 'assistant' && m.info?.providerID);
-    const ref = last ? { providerID: last.info.providerID, modelID: last.info.modelID } : await defaultModelRef(directory);
+    const ref = last ? { providerID: last.info.providerID, modelID: last.info.modelID } : await defaultModelRef(directory, srv);
     if (!ref) throw new Error(t('opencode.errors.noModel'));
     emit({ type: 'compaction', phase: 'start', trigger });
     let settle;
@@ -616,17 +665,19 @@ export const backend = {
       if (event.type === 'session.idle') settle();
     };
     turnsBySession.set(sessionId, onEvent);
+    const offGone = srv !== server ? srv.onGone((err) => onEvent({ type: 'pleiad.gone', properties: { error: err } })) : null;
     try {
-      await server.request('POST', `/session/${sessionId}/summarize`, { directory, body: { ...ref, auto: false }, timeoutMs: 15 * 60_000 });
+      await srv.request('POST', `/session/${sessionId}/summarize`, { directory, body: { ...ref, auto: false }, timeoutMs: 15 * 60_000 });
       await Promise.race([done, new Promise((r) => setTimeout(r, 10 * 60_000).unref?.())]);
     } finally {
+      offGone?.();
       if (turnsBySession.get(sessionId) === onEvent) turnsBySession.delete(sessionId);
     }
     if (error) {
       emit({ type: 'compaction', phase: 'failed', trigger, reason: String(error.message ?? error) });
       return;
     }
-    const after = await server.request('GET', `/session/${sessionId}/message`, { directory }).catch(() => []);
+    const after = await srv.request('GET', `/session/${sessionId}/message`, { directory }).catch(() => []);
     const summary = [...(after ?? [])].reverse().find((m) => m.info?.summary);
     const text = (summary?.parts ?? []).filter((p) => p.type === 'text').map((p) => p.text).join('');
     emit({ type: 'compaction', phase: 'complete', trigger, ...(text ? { summary: text } : {}), ...(summary?.info?.id ? { nativeId: summary.info.id } : {}) });

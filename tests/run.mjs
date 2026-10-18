@@ -201,6 +201,8 @@ const SUITES = [
   './unit/opencode-parts.mjs',
   // OpenCode の会話で Pleiad がそろえる Hooks（Claude Code の形。ツールの前後・発言の前・終わりの前）
   './unit/server-opencode-hooks.mjs',
+  // OpenCode に Pleiad が担当するコンテキストを渡す: そのターンだけの専用のサーバー・止め方の環境変数・写した設定の置き場・ply_context の中継・担当の組み合わせ
+  './unit/server-opencode-context.mjs',
   './unit/ops-surface.mjs',
   // 操作の一覧の中身（会話・設定・委譲）・MCP の生成器と橋・ply_control の 3 つのエージェントへの渡し方・サーバー越しの HTTP と権限の配線・CLI と pleiad mcp
   './unit/ops-sessions.mjs',
