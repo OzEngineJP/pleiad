@@ -186,11 +186,24 @@ export default async function (t) {
     const fallback = await scope.openTab({ cdp, entryId: 's' });
     assert.equal(fakeOs.calls('launchWindow').length, 3);
     assert.equal(scope.profileOf('s', fallback), 'chrome:Profile 1');
+    // chrome.exe を 1 回起こせなかった: ブラウザーを探し直して、同じプロフィールでもう 1 回だけ起こす
+    fakeOs.opts.launchFailures = 1;
+    const located = fakeOs.calls('locateBrowser').length;
+    const retried = await scope.openTab({ cdp, entryId: 's' });
+    assert.deepEqual(fakeOs.calls('launchWindow').slice(3).map(c => c.args.profileDir), ['Profile 1', 'Profile 1']);
+    assert.equal(fakeOs.calls('locateBrowser').length, located + 1);
+    assert.equal(scope.profileOf('s', retried), 'chrome:Profile 1');
     fakeOs.opts.launchFails = true;
-    await assert.rejects(scope.openTab({ cdp, entryId: 's' }), /selected Chrome profile/);
-    assert.equal(scope.windows('s').length, 4);
+    const targets = chrome.browser.targets().length;
+    const failed = await scope.openTab({ cdp, entryId: 's' }).then(() => null, error => error);
+    assert.match(failed?.message ?? '', /selected Chrome profile/);
+    assert.match(failed.message, /no window was opened in another profile/);
+    assert.match(failed.message, /use_browser_profile/);
+    assert.deepEqual(fakeOs.calls('launchWindow').slice(5).map(c => c.args.profileDir), ['Profile 1', 'Profile 1']);
+    assert.equal(scope.windows('s').length, 5);
+    assert.equal(chrome.browser.targets().length, targets, 'ほかのプロフィールのタブを残さない');
   } finally { relay.close(); await conn.close(); await chrome.stop(); }
-  t.ok('次の窓だけ指定プロフィールで開き、CDP が別プロフィールに開いたら閉じて起動し直す。失敗時に別プロフィールで続けない', true);
+  t.ok('次の窓だけ指定プロフィールで開き、CDP が別プロフィールに開いたら閉じて起動し直す。chrome.exe を起こせなければ探し直して 1 回だけやり直し、それでも駄目なら次の手を書いた失敗にする（別プロフィールで続けない）', true);
 
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-profile-server-'));
   const userData = path.join(scratch, 'chrome');

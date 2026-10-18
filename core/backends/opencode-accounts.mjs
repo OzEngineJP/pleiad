@@ -4,6 +4,7 @@ import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { spawnSync } from 'node:child_process';
 import { t } from '../i18n.mjs';
+import { loadSqlite } from '../db.mjs';
 
 const privateRoots = new Set();
 const accountId = /^[a-z0-9][a-z0-9-]*$/i;
@@ -88,6 +89,39 @@ function readAuthText(file) {
   return fs.readFileSync(file, 'utf8');
 }
 
+// Newer OpenCode keeps credentials in opencode.db (SQLite `credential` table) instead of
+// auth.json. Read it directly rather than launching the CLI; a missing, unreadable or
+// differently shaped store simply contributes nothing.
+function credentialRows(file) {
+  if (!assertSafeAuth(file)) return [];
+  let db = null;
+  try {
+    db = new (loadSqlite().DatabaseSync)(file, { readOnly: true });
+    return db.prepare('SELECT integration_id, value FROM credential').all();
+  } catch { return []; }
+  finally { try { db?.close(); } catch {} }
+}
+
+// A `credential.value` JSON blob in auth.json's per-provider shape. The store writes
+// API keys as type "key" (auth.json used "api"); OAuth expiry may be an ISO string.
+function storedCredential(value) {
+  let c;
+  try { c = JSON.parse(value); } catch { return null; }
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return null;
+  if (c.type === 'key') return { ...c, type: 'api' };
+  if (c.type === 'oauth' && typeof c.expires === 'string') return { ...c, expires: Date.parse(c.expires) };
+  return c;
+}
+
+// Credentials from opencode.db. For accounts the file must pass the same checks as
+// auth.json so a link cannot redirect the read to the shared CLI store.
+function readStoredAuth(account) {
+  let rows;
+  try { rows = credentialRows(path.join(opencodeData(account), 'opencode.db')); }
+  catch (err) { if (account) throw err; return {}; }
+  return validAuth(Object.fromEntries(rows.map(row => [row.integration_id, storedCredential(row.value)]).filter(([, c]) => c)));
+}
+
 let userSid;
 function privateRoot(dir) {
   if (process.platform !== 'win32' || privateRoots.has(dir)) return;
@@ -127,17 +161,22 @@ export function validAuth(value) {
 export function readAccountAuth(account = null) {
   const file = path.join(opencodeData(account), 'auth.json');
   // The CLI's own store stays lenient: there is no saved seed to fall back to.
-  if (!account) { try { return validAuth(JSON.parse(fs.readFileSync(file, 'utf8'))); } catch { return {}; } }
+  if (!account) {
+    const stored = readStoredAuth(null);
+    try { return { ...stored, ...validAuth(JSON.parse(fs.readFileSync(file, 'utf8'))) }; }
+    catch { return stored; }
+  }
   assertAccountTree(account, { requireExists: false });
+  const stored = readStoredAuth(account);
   // Absent CLI copy: the encrypted snapshot is the only source, so use it.
-  if (!statSafe(file)) return validAuth(account.credential?.auth);
+  if (!statSafe(file)) return { ...stored, ...validAuth(account.credential?.auth) };
   // Present CLI copy: never read it through a link or an unsafe directory tree,
   // and never silently substitute the saved seed for an unreadable file.
   assertSafeAuth(file);
   let parsed;
   try { parsed = JSON.parse(fs.readFileSync(file, 'utf8')); }
   catch { throw new Error(t('accounts.backend.credentialUnreadable', { agent: 'OpenCode' })); }
-  return validAuth(parsed);
+  return { ...stored, ...validAuth(parsed) };
 }
 
 export function prepareAccount(account) {
@@ -205,6 +244,9 @@ export async function loginAccount({ account, emit, signal, argv, timeoutMs = 60
   // therefore fails closed instead of reading the shared credentials.
   assertAccountTree(account);
   const before = readAuthText(file) ?? '';
+  // Newer OpenCode writes credentials to opencode.db instead of auth.json, so a
+  // login that only touches the store must count as a change too.
+  const storedBefore = readStoredAuth(account);
   emit?.({ type: 'auth', phase: 'url', url: accountLoginCommand(account, argv), message: t('opencode.auth.accountRunCommand') });
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
@@ -212,11 +254,15 @@ export async function loginAccount({ account, emit, signal, argv, timeoutMs = 60
     catch (err) { if (err.name === 'AbortError') throw cancelled(err); throw err; }
     assertAccountTree(account);
     const text = readAuthText(file);
-    if (text == null || text === before) continue;
-    let auth;
-    try { auth = validAuth(JSON.parse(text)); } catch { continue; }
+    const fileChanged = text != null && text !== before;
+    const stored = readStoredAuth(account);
+    const storedChanged = JSON.stringify(stored) !== JSON.stringify(storedBefore);
+    if (!fileChanged && !storedChanged) continue;
+    let auth = {};
+    if (fileChanged) { try { auth = validAuth(JSON.parse(text)); } catch { continue; } }
+    if (!Object.keys(auth).length && storedChanged) auth = stored;
     if (!Object.keys(auth).length) continue;
-    fs.chmodSync(file, 0o600);
+    if (text != null) fs.chmodSync(file, 0o600);
     emit?.({ type: 'auth', phase: 'done', message: t('opencode.auth.accountLoggedIn') });
     return { credential: { auth }, label: Object.keys(auth).join(', ') };
   }

@@ -406,6 +406,10 @@
     "thinking": "Thinking",
     "writing": "Writing",
     "compacting": "Compacting conversation…",
+    "retryLimit": "Waiting at a usage limit · retry {{attempt}} at {{time}}",
+    "retryLimitNoTime": "Waiting at a usage limit · waiting for retry {{attempt}}",
+    "retryError": "Waiting after a failure · retry {{attempt}} at {{time}}",
+    "retryErrorNoTime": "Waiting after a failure · waiting for retry {{attempt}}",
     "waiting": "Waiting for your reply",
     "running": "Running",
     "stopping": "Stopping",
@@ -3823,7 +3827,9 @@
       "quota_full": "quota exhausted",
       "pace_high": "pace too fast",
       "pace_unknown": "pace unknown",
-      "lower_priority": "another account preferred"
+      "lower_priority": "another account preferred",
+      "retry_waiting": "waiting to retry after a limit",
+      "recently_limited": "limited, waiting for reset"
     },
     "skipWithDetail": "{{reason}} ({{detail}})",
     "unavailable": {

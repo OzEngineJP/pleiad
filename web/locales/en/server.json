@@ -679,9 +679,30 @@
       "loginFailed": "Sign-in failed."
     }
   },
+  "grok": {
+    "description": "Uses local Grok Build CLI and its existing sign-in",
+    "modes": {
+      "askNote": "Asks before actions other than reading. This is not OS-enforced isolation",
+      "editNote": "Allows editing automatically. Access outside the working directory is not isolated by the OS",
+      "auto": "Auto",
+      "autoNote": "Automatically allows actions Grok judges safe, including outside the working directory",
+      "planNote": "Plans before changing code. This is not OS-enforced read-only isolation",
+      "bypassNote": "Skips confirmations"
+    },
+    "errors": {
+      "notInstalled": "Grok Build CLI (grok) was not found. Install it, then check again",
+      "loginRequired": "Grok Build CLI is not signed in. Run `grok login` (or `grok login --device-auth` without a browser), then try again",
+      "modeUnavailable": "Grok Build CLI did not confirm the selected permission mode",
+      "modelUnavailable": "The selected model is not available in Grok Build CLI ({{model}})",
+      "effortUnavailable": "Grok Build CLI did not accept the selected reasoning effort ({{effort}})",
+      "promptFailed": "The Grok Build turn did not complete successfully",
+      "notConnected": "Grok Build CLI is not connected"
+    }
+  },
   "devin": {
     "description": "Uses local Devin CLI and its existing sign-in",
     "usageUnknown": "Remaining Devin CLI quota is unavailable and is shown as unknown.",
+    "usageNoCredentials": "Devin CLI credentials were not found, so remaining quota is unknown.",
     "modes": {
       "ask": "Questions only",
       "askNote": "Answers without code changes. This is not OS-enforced read-only isolation",
@@ -725,7 +746,10 @@
       "copilotPremiumRequests": "GitHub Copilot premium requests",
       "copilotPremiumModels": "GitHub Copilot premium models",
       "copilotChat": "GitHub Copilot chat",
-      "copilotCompletions": "GitHub Copilot code completions"
+      "copilotCompletions": "GitHub Copilot code completions",
+      "keyMissing": "No API key, so usage is unknown.",
+      "openrouterNoLimit": "This OpenRouter key has no usage limit set, so there is no quota window.",
+      "zenQuotaUnavailable": "OpenCode Zen does not provide a way to read remaining quota, so usage is unknown."
     },
     "hooks": {
       "promptBlocked": "The message was blocked by a hook (UserPromptSubmit): {{reason}}"
@@ -983,7 +1007,9 @@
   "usage": {
     "window": {
       "fiveHour": "5 hours",
+      "daily": "Daily",
       "weekly": "Weekly (7 days)",
+      "monthly": "Monthly",
       "hours": "{{hours}} hours",
       "unknown": "Unknown period",
       "oauthAppsWeekly": "OAuth apps, weekly",

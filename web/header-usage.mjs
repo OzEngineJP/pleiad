@@ -60,6 +60,49 @@ export function shortLabel(w) {
   return label.replace(/\s*[（(][^（）()]*[）)]\s*$/, '') || full;
 }
 
+const familyOf = s => /(fable|opus|sonnet|haiku)/i.exec(String(s ?? ''))?.[1].toLowerCase() ?? null;
+const modelWords = s => String(s ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+/**
+ * モデルに合う枠だけに絞る。枠の持つ系譜の情報と、モデル名を照合する（server 側の windowsFor と同じ判定）。
+ * - w.provider … `openrouter/…` の `/` の前と一致するものだけ（OpenCode）。一致が無ければ空（別の接続先の枠は出せない）
+ * - w.group … モデル名の語といちばん合うグループだけ。gemini / claude / gpt の系統名を含むグループに限る（Antigravity）
+ * - w.model … モデルと同じ系統（fable/opus/sonnet/haiku）か、系統指定の無い枠だけ（Claude）
+ * 系統・グループは合うものが見つからなければ全部返す（モデル名から系統が読めないときに空になる方が悪い）
+ */
+export function windowsForModel(windows = [], model = '') {
+  const list = Array.isArray(windows) ? windows : [];
+  const m = String(model ?? '');
+  if (!m) return list;
+  if (list.some(w => w.provider)) {
+    const provider = m.split('/')[0];
+    const matched = list.filter(w => !w.provider || w.provider === provider);
+    return matched.length ? matched : [];
+  }
+  if (list.some(w => w.group)) {
+    const tokens = new Set(modelWords(m));
+    // backend-allow: モデルの系統の語（delegation-routing.mjs の windowsFor と同じ並び）。エージェントの分岐ではない
+    const family = ['gemini', 'claude', 'gpt'].find(f => tokens.has(f));
+    if (family) {
+      const scored = [...new Set(list.map(w => w.group).filter(Boolean))]
+        .filter(g => modelWords(g).includes(family))
+        .map(g => [g, modelWords(g).filter(x => tokens.has(x)).length]);
+      if (scored.length) {
+        const best = Math.max(...scored.map(([, s]) => s));
+        const groups = new Set(scored.filter(([, s]) => s === best).map(([g]) => g));
+        const matched = list.filter(w => groups.has(w.group));
+        if (matched.length) return matched;
+      }
+    }
+    return list;
+  }
+  if (list.some(w => w.model)) {
+    const family = familyOf(m);
+    return list.filter(w => !w.model || (family && familyOf(w.model) === family));
+  }
+  return list;
+}
+
 /** チップに出す枠。使用率のいちばん高いもの（不明は除く）。無ければ null */
 export function topWindow(windows, now = Date.now()) {
   let top = null;
@@ -129,7 +172,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   const data = new Map();
   // asked は一度でも取りに行ったエージェント（あとから有効にしたエージェントを、次の 5 分を待たずに取るため）
   const asked = new Set();
-  let shown = { backend: null, account: '', endpoint: '' }, loading = 0, lastRefresh = 0;
+  let shown = { backend: null, account: '', endpoint: '', model: '' }, loading = 0, lastRefresh = 0;
 
   // 枠・認可のどちらかを持つ結果だけを値として覚える。持たない（取得の失敗・未対応）ときは前の値を残す
   const usable = quota => Boolean(quota?.windows?.length || quota?.accounts?.length || needsAuth(quota));
@@ -173,7 +216,9 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
 
   function paintChip() {
     const entry = data.get(shown.backend);
-    const row = quotaOf(entry?.quota, shown.account);
+    const base = quotaOf(entry?.quota, shown.account);
+    // 枠が接続先・グループ・モデルの系統ごとに分かれているときは、会話のモデルに合うものだけを出す
+    const row = base?.windows?.length ? { ...base, windows: windowsForModel(base.windows, shown.model) } : base;
     // 互換の接続先で動く会話はサブスクの枠を使わない
     const state = chipState(shown.endpoint ? null : row);
     chip.hidden = false;
@@ -223,17 +268,30 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const endpoint = current && shown.endpoint;
     const row = endpoint ? null : quotaOf(entry?.quota, current ? shown.account : '');
     const section = el('section', 'usage-agent' + (entry?.failed ? ' usage-old' : ''));
-    const { windows, group, others, below } = groupsOf(row?.windows ?? []);
+    // 「この会話」の節はモデルに合う枠だけに絞り、残ったグループ・接続先は「ほか N グループ」にまとめる
+    const all = row?.windows ?? [];
+    const filtered = current ? windowsForModel(all, shown.model) : all;
+    const shownSet = new Set(filtered);
+    const rest = all.filter(w => !shownSet.has(w));
+    const { windows, group, others, below } = groupsOf(filtered);
+    const groupNames = new Set(filtered.map(w => w.group).filter(Boolean));
+    const groupName = group ?? (current && rest.length && groupNames.size === 1 ? [...groupNames][0] : null);
+    const now = Date.now();
+    const peak = list => Math.max(-1, ...list.map(w => usedOf(w, now) ?? -1));
+    const restPeak = peak(rest), restOthers = new Set(rest.map(w => w.group ?? w.provider).filter(Boolean)).size;
+    const totalOthers = others + restOthers;
+    const restBelow = restPeak < 0 || restPeak >= 100 ? null : Math.min(100, Math.floor(restPeak / 10) * 10 + 10);
+    const mergedBelow = below == null ? restBelow : restBelow == null ? below : Math.min(below, restBelow);
     const notes = [current && t('usage.header.thisConversation'), row && entry?.quota?.accounts?.length && row.label,
-      group && t('usage.header.group', { name: group })].filter(Boolean);
+      groupName && t('usage.header.group', { name: groupName })].filter(Boolean);
     const head = el('div', 'an', labelOf(id));
     if (notes.length) head.append(el('small', null, notes.join(' · ')));
     section.append(head);
     const stale = endpoint ? '' : staleNote(entry);
     if (stale) section.append(el('p', 'usage-note', stale));
     if (windows.length) section.append(rows(windows));
-    if (others) section.append(el('p', 'more', below == null ? t('usage.header.otherGroups', { count: others })
-      : t('usage.header.otherGroupsBelow', { count: others, percent: below })));
+    if (totalOthers) section.append(el('p', 'more', mergedBelow == null ? t('usage.header.otherGroups', { count: totalOthers })
+      : t('usage.header.otherGroupsBelow', { count: totalOthers, percent: mergedBelow })));
     if (needsAuth(row)) {
       section.append(el('p', 'usage-note', row.message || t('usage.header.unauthorized')));
       // 登録したアカウントの使用量は、アカウントごとに「使用量の表示を認可」が済んでから読める（web/usage.mjs と同じ口）
@@ -294,9 +352,9 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
 
   return {
-    /** 今の会話のエージェント・アカウント・互換の接続先。client.mjs の syncTopbar が呼ぶ */
+    /** 今の会話のエージェント・アカウント・互換の接続先・モデル。client.mjs の syncTopbar が呼ぶ */
     show(next) {
-      shown = { backend: next.backend ?? null, account: next.account ?? '', endpoint: next.endpoint ?? '' };
+      shown = { backend: next.backend ?? null, account: next.account ?? '', endpoint: next.endpoint ?? '', model: next.model ?? '' };
       if (shown.backend && getBackends().length && (!lastRefresh || !asked.has(shown.backend))) refresh(lastRefresh ? [shown.backend] : ids());
       else paint();
     },

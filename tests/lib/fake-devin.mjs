@@ -41,7 +41,7 @@ function replay(session) {
     else {
       if (message.thinking) update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: message.thinking } });
       for (const tool of message.toolCalls ?? []) {
-        update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, rawInput: tool.input, status: 'running' });
+        update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, rawInput: tool.input, ...(tool.content ? { content: tool.content } : {}), status: 'running' });
         update(session.sessionId, { sessionUpdate: 'tool_call_update', toolCallId: tool.id, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: tool.result } }] });
       }
       update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: message.text } });
@@ -66,6 +66,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     let result;
     const p = request.params ?? {};
     switch (request.method) {
+      case 'fixture/no-reply': return;
       case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
       case 'session/new': {
         const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast',
@@ -140,6 +141,14 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         let permissionResult = null;
         const tools = [];
         const permissionKind = ['permission', 'permission-id-only', 'permission-partial', 'permission-null', 'permission-unknown'].find(kind => text.includes(`[${kind}]`));
+        if (text.includes('[large-edit]')) {
+          const unchanged = 'const line = "日本語🙂";\n'.repeat(24000);
+          const tool = { id: crypto.randomUUID(), name: 'Edit file', input: { file_path: 'large.mjs', oldText: unchanged + 'before', newText: unchanged + 'after' },
+            content: [{ type: 'diff', path: 'large.mjs', oldText: unchanged + 'before', newText: unchanged + 'after' }], result: 'edited' };
+          update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, kind: 'edit', rawInput: tool.input, content: tool.content, status: 'running' });
+          update(session.sessionId, { sessionUpdate: 'tool_call_update', toolCallId: tool.id, status: 'completed' });
+          tools.push(tool);
+        }
         if (permissionKind || text.includes('[tool]')) {
           const tool = { id: crypto.randomUUID(), name: 'Fixture permission', input: { command: 'echo fixture' }, result: 'fixture tool result' };
           if (permissionKind !== 'permission-unknown') update(session.sessionId, { sessionUpdate: 'tool_call', toolCallId: tool.id, title: tool.name, kind: 'execute', rawInput: tool.input, status: 'running' });

@@ -400,6 +400,10 @@
     "thinking": "考えている",
     "writing": "書いている",
     "compacting": "会話を圧縮しています…",
+    "retryLimit": "上限で待機中・{{time}} に再試行（{{attempt}} 回目）",
+    "retryLimitNoTime": "上限で待機中・再試行を待っている（{{attempt}} 回目）",
+    "retryError": "失敗のため待機中・{{time}} に再試行（{{attempt}} 回目）",
+    "retryErrorNoTime": "失敗のため待機中・再試行を待っている（{{attempt}} 回目）",
     "waiting": "あなたの応答を待っている",
     "running": "動いている",
     "stopping": "中断している",
@@ -3710,7 +3714,9 @@
       "quota_full": "使用枠を使い切った",
       "pace_high": "ペースが速い",
       "pace_unknown": "ペースが分からない",
-      "lower_priority": "ほかの認証を優先した"
+      "lower_priority": "ほかの認証を優先した",
+      "retry_waiting": "上限で再試行を待っている",
+      "recently_limited": "上限に当たって解除を待っている"
     },
     "skipWithDetail": "{{reason}}（{{detail}}）",
     "unavailable": {

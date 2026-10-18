@@ -98,8 +98,8 @@ export default async function (t) {
   // ---- 行の分け方: 途中で切れた入力・多バイトの途中・1 行の上限
   {
     const lines = [];
-    const drops = [];
-    const reader = createLineReader({ maxBytes: 64, onLine: line => lines.push(line), onDrop: drop => drops.push(drop) });
+    const drops = [], overflows = [];
+    const reader = createLineReader({ maxBytes: 64, onLine: line => lines.push(line), onDrop: drop => drops.push(drop), onOverflow: info => overflows.push(info) });
     const whole = Buffer.from('{"a":"あ"}\n{"b":2}\n\n{"c":3}\n');
     for (let i = 0; i < whole.length; i++) reader.push(whole.subarray(i, i + 1));   // 1 バイトずつ（多バイトの途中で切れる）
     t.ok('行: 1 バイトずつ届いても行に戻る（多バイトの途中・空行は読み捨て）', lines.join('|') === '{"a":"あ"}|{"b":2}|{"c":3}' && reader.pending === 0);
@@ -112,7 +112,9 @@ export default async function (t) {
     t.ok('行: 上限を超えた行は捨て（1 回知らせる）、次の行は読める', drops.length === 1 && drops[0].reason === 'oversize' && lines.at(-1) === '{"after":1}');
     reader.push(Buffer.from('y'.repeat(50)));
     reader.push(Buffer.from('y'.repeat(50)));
+    t.ok('行: 改行なしの上限超過を直ちに一度だけ通知し、バッファーを解放する', overflows.length === 2 && overflows[1].bytes === 100 && reader.pending === 0 && drops.length === 1);
     reader.push(Buffer.from('y'.repeat(50)));
+    t.ok('行: 同じ超過行の後続チャンクでは通知を繰り返さない', overflows.length === 2 && reader.pending === 0);
     reader.push(Buffer.from('\n{"after2":1}\n'));
     t.ok('行: 上限を超えながら分かれて届いても、1 回だけ知らせて次の行から読める', drops.length === 2 && lines.at(-1) === '{"after2":1}');
     t.ok('行: 既定の上限は 16 MB', DEFAULT_MAX_LINE_BYTES === 16 * 1024 * 1024);

@@ -20,6 +20,8 @@
 //   "fail-auth"    … ログインの期限切れ（401）で失敗する（Claude と同じ kind: 'auth'・pristine: true。ADR 0212）。
 //                    "fail-auth tool" はツールを 1 回動かしてから失敗する（pristine: false）
 //   "limit <resetsAt>" … 指定時刻に解ける使用量の上限（ISO または Unix ミリ秒）
+//   "retry-wait <limit|error> <秒|none> gate:<名前> <本文>" … 再試行の待ち（OpenCode の session.status の retry を写した activity retrying と同じ形。ADR 0229）を出し、
+//                    ゲートが開いたら running に戻って本文を返す。<秒> は次の再試行までの秒（none は時刻が分からない待ち）。待ちの間に中断されたら aborted
 //   "whoami"       … 渡されたアカウントのトークン（oauthToken）の指紋を本文にする。無ければ account:none
 //   "deleted-natives" … このプロセスで deleteSession に渡されたネイティブの id と、今あるネイティブの会話の id を JSON（{ deleted, live }）で本文にする
 //                    （送った会話の削除がネイティブの会話を消さないことの検査。ADR 0147）
@@ -885,6 +887,19 @@ export const backend = {
         out.text = body || "報告";
         await say(emit, out.text, out.uuid);
         s.historyFailures = Number(count ?? 0);
+      } else if (text.startsWith("retry-wait ")) {
+        const [, kind, secs, gate, rest] = /^retry-wait (limit|error) (\d+|none) gate:([\w.-]+)\s*([\s\S]*)$/.exec(text) ?? [];
+        if (!gate) throw new Error(`fake: bad retry-wait: ${text}`);
+        emit({ type: "activity", state: "retrying", retry: { attempt: 1, next: secs === "none" ? null : Date.now() + Number(secs) * 1000,
+          message: kind === "limit" ? "Rate limit exceeded" : "Provider is overloaded", reason: null, limit: kind === "limit" } });
+        const aborted = new Promise((resolve) => {
+          if (signal?.signal?.aborted) resolve(); else signal?.signal?.addEventListener?.("abort", () => resolve(), { once: true });
+        });
+        await gateWait(gate, aborted);
+        if (signal?.signal?.aborted) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: id }; }
+        emit({ type: "activity", state: "running" });
+        out.text = rest || "retried";
+        await say(emit, out.text, out.uuid);
       } else if (/^term(\s|$)/.test(text)) {
         out.text = text.replace(/^term\s*/, "") || "端末を残した";
         await say(emit, out.text, out.uuid);

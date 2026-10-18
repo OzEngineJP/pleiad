@@ -37,7 +37,9 @@ function releaseSigning(env = process.env, platform = process.platform, { signer
     }
     // APPLE_API_KEY は .p8 の中身ではなく、そのファイルの場所
     if (!appleId.some(name => env[name]?.trim()) && !fs.existsSync(env.APPLE_API_KEY.trim())) throw new Error('APPLE_API_KEY must be the path to the App Store Connect API key (.p8)');
-    return { mac: { hardenedRuntime: true, notarize: true } };
+    // 公証は electron-builder 任せにせず afterSign（scripts/notarize-mac.cjs）で行う
+    // （@electron/notarize の既定の再試行では Apple 側の一時的な切断を拾えないため）
+    return { mac: { hardenedRuntime: true, notarize: false } };
   }
   if (platform !== 'win32') throw new Error('Signed desktop builds require Windows or macOS');
   const method = env.PLY_WINDOWS_SIGNING || 'pfx';

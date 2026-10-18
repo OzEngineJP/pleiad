@@ -137,8 +137,11 @@ export const BACKEND_EVENTS = {
   'thinking.delta': { text: optional(str), estimatedTokens: optional(num) },
   'tool.start': { id: str, name: str },
   'tool.result': { id: str, isError: optional(bool), truncated: optional(bool) },
-  activity: { state: oneOf('thinking', 'writing', 'compacting', 'waiting', 'running', 'idle', 'preparing') },
-  turnResult: { outcome: oneOf('ok', 'error', 'aborted', 'limited') },
+  // retrying はエージェントが API の失敗（上限・混雑）で再試行を待っている。retry: { attempt, next（epoch ms）, message, reason, limit }（ADR 0229）
+  activity: { state: oneOf('thinking', 'writing', 'compacting', 'waiting', 'running', 'idle', 'preparing', 'retrying'),
+    retry: optional((v) => typeof v === 'object' && optional(num)(v.next) && optional(num)(v.attempt)) },
+  // resetsAt は limited の解ける時刻（epoch ms の数。文字列は server が読めず捨てる）
+  turnResult: { outcome: oneOf('ok', 'error', 'aborted', 'limited'), resetsAt: optional(num) },
   usage: {},
   contextWindow: { usedTokens: num, windowTokens: num },
   contextBase: { tokens: num },

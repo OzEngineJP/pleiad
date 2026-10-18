@@ -8,6 +8,7 @@ import { runCase, summarize } from '../lib/harness.mjs';
 import { accountQuota, opencodeUsage } from '../../core/backends/opencode-usage.mjs';
 import { errorOf } from '../../core/backends/opencode-normalize.mjs';
 import { t as translate } from '../../core/i18n.mjs';
+import { loadSqlite } from '../../core/db.mjs';
 
 export const name = 'opencode-usage';
 export const title = 'OpenCode provider quotas: OAuth headers, account isolation, unknown data, and limits';
@@ -25,6 +26,8 @@ export default async function testOpencodeUsage(t) {
     if (scenario === 'redirect') { res.writeHead(302, { location: '/stolen-token' }); return res.end(); }
     if (scenario === 'malformed') return res.end('{invalid');
     if (scenario === 'empty') return res.end('{}');
+    if (req.url === '/api/v1/auth/key') return res.end(JSON.stringify({ data: {
+      effective_budget: { limit_usd: 100, spend_usd: 25, remaining_usd: 75, reset_interval: 'monthly', resets_at: '2033-06-01T00:00:00Z' } } }));
     if (req.url === '/backend-api/wham/usage') return res.end(JSON.stringify({ plan_type: 'plus', rate_limit: {
       primary_window: { used_percent: 27, limit_window_seconds: 18000, reset_at: 2000000000 },
       secondary_window: { used_percent: 61, limit_window_seconds: 604800, reset_at: 2000500000 },
@@ -39,7 +42,7 @@ export default async function testOpencodeUsage(t) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const fetcher = (url, init) => {
     const u = new URL(url);
-    assert.ok(['chatgpt.com', 'api.github.com'].includes(u.hostname));
+    assert.ok(['chatgpt.com', 'api.github.com', 'openrouter.ai'].includes(u.hostname));
     return fetch(`http://127.0.0.1:${server.address().port}${u.pathname}`, init);
   };
   const oauth = { type: 'oauth', access: 'access-one', refresh: 'github-token-one', expires: Date.now() + 3600000, accountId: 'chatgpt-org-one' };
@@ -71,6 +74,34 @@ export default async function testOpencodeUsage(t) {
     assert.ok(seen.some(r => r.headers.authorization === 'Bearer access-two'));
     assert.ok(!JSON.stringify(multiple).includes('access-one') && !JSON.stringify(multiple).includes('github-token-one'));
     t.ok('login and registered rows carry independent accountId, ready, checkedAt without tokens', true);
+
+    // 新しい OpenCode は資格情報を auth.json ではなく opencode.db（credential 表）に書く。そちらも読む
+    const loginDir = path.join(scratch, 'login');
+    await fs.mkdir(loginDir, { recursive: true });
+    const { DatabaseSync } = loadSqlite();
+    const db = new DatabaseSync(path.join(loginDir, 'opencode.db'));
+    db.exec('CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT, active INTEGER)');
+    const put = db.prepare('INSERT INTO credential (id, integration_id, value) VALUES (?, ?, ?)');
+    put.run('c1', 'openrouter', JSON.stringify({ type: 'key', key: 'or-db-key' }));
+    put.run('c2', 'opencode', JSON.stringify({ type: 'oauth', access: 'zen-access', refresh: 'zen-refresh', expires: Date.now() + 86_400_000 }));
+    put.run('c3', 'broken', 'not-json');
+    db.close();
+    const dbOnly = await accountQuota(null, { fetcher });
+    assert.equal(dbOnly.windows.length, 1);
+    assert.equal(dbOnly.windows[0].provider, 'openrouter');
+    assert.equal(dbOnly.windows[0].usedPercent, 25);
+    assert.equal(dbOnly.windows[0].minutes, 43200);
+    assert.equal(seen.find(r => r.url.includes('auth/key')).headers.authorization, 'Bearer or-db-key');
+    assert.ok(dbOnly.message.includes(translate('opencode.usage.zenQuotaUnavailable')));
+    assert.ok(!JSON.stringify(dbOnly).includes('or-db-key') && !JSON.stringify(dbOnly).includes('zen-access'));
+    t.ok('opencode.db の資格情報も読む。OpenRouter は月次の枠、Zen は照会口なしの正直な文、秘密は出さない', true);
+
+    // 同じ接続先が両方にあるときは auth.json が優先。db にしかない接続先も残る
+    await fs.writeFile(path.join(loginDir, 'auth.json'), JSON.stringify({ openrouter: { type: 'api', key: 'or-json-key' } }));
+    const merged = await accountQuota(null, { fetcher });
+    assert.equal(seen.filter(r => r.url.includes('auth/key')).at(-1).headers.authorization, 'Bearer or-json-key');
+    assert.ok(merged.message.includes(translate('opencode.usage.zenQuotaUnavailable')));
+    t.ok('同じ接続先は auth.json の資格情報を優先し、db にしかない接続先も読む', true);
 
     for (scenario of ['unauthorized', 'malformed', 'empty', 'redirect']) {
       const result = await accountQuota(account, { fetcher });

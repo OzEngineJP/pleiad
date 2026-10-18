@@ -3092,6 +3092,13 @@ const ACTIVITY_LABEL = {
   running: t("activity.running"),
   stopping: t("activity.stopping"),   // 中断を受け付けた。バックエンドが止まり終えるまで（server の abort が出す）
 };
+/** 上限・一時的な失敗のあと、バックエンドが再試行を待っている（ADR 0229）。人の応答待ちとは別の言い方で、次の時刻と回数を出す */
+const retryLabel = (retry) => {
+  const time = Number.isFinite(retry?.next) ? hhmm(retry.next) : "";
+  const attempt = retry?.attempt ?? 1;
+  if (retry?.limit) return time ? t("activity.retryLimit", { time, attempt }) : t("activity.retryLimitNoTime", { attempt });
+  return time ? t("activity.retryError", { time, attempt }) : t("activity.retryErrorNoTime", { attempt });
+};
 
 // ---------------------------------------------------------------- イベント
 
@@ -3518,6 +3525,7 @@ function onEvent(ev, replay = false) {
       // running / waiting は「動いている」「待っている」だけを言う汎用の事象。ツールの行が語っている間（suspend 中）は出さない
       return activity.show(ev.label || (ev.state === 'preparing'
         ? ev.current && ev.total ? t('activity.connectingMcp', { current: ev.current, total: ev.total }) : t('activity.preparing')
+        : ev.state === 'retrying' ? retryLabel(ev.retry)
         : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing', passive: ev.state === 'running' || ev.state === 'waiting' });
 
     case 'taskNotice':
@@ -8290,7 +8298,7 @@ async function syncTopbar() {
   state.account = selectedAccount;
   if (homeBot) state.accountShown = false;
   // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
-  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint });
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: chosen?.model ?? s?.nextSettings?.model ?? s?.model ?? '' });
 
   // 予約があれば次のターンの作業場所を表示する。
   if (s) state.cwd = (justCreated() && state.draft.cwd) || (s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
@@ -8321,6 +8329,8 @@ async function syncTopbar() {
   await syncAccount(s, bid, { value: selectedAccount, visible: !homeBot, current });
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
+  // 確定したモデルで使用量の札をもう一度絞り直す（先の呼び出し時点ではモデルが未確定のことがある）
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: state.model });
   paintSettingsNotice();
   refreshWorktree().catch(() => {});
   renderSessions();

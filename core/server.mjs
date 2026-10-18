@@ -67,7 +67,7 @@ import * as history from "./history.mjs";
 import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt-suggestions.mjs';
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
-import { limitHolds, limitResetsAt } from './limit-resume.mjs';
+import { limitHolds, limitResetsAt, clockText } from './limit-resume.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
@@ -1425,7 +1425,7 @@ async function routeDelegation(args, lng, cwd) {
   const rejected = {};
   let ok, routing;
   for (;;) {
-    ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected }));
+    ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked }));
     if (!ok) break;
     const picked = getBackend(routing.target.backend);
     if (picked && await validModel(picked, routing.target.model, cwd).catch(() => false)) break;
@@ -1448,7 +1448,7 @@ async function delegationRoutingState() {
   const refs = apiKeys.usesState();
   const storage = await apiKeySecrets.status().catch(() => null);
   // 候補ごとの強さの持ち方（選択肢の元。モデルの一覧から引く）と、会話の既定（エージェント設定の強さ。「会話の既定に従う（今は X）」）
-  const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now() }).map(async c => {
+  const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: slotBlocked }).map(async c => {
     const backend = c.backend ? getBackend(c.backend) : null;
     return backend ? { ...c, effort: await effortCapability(backend, c.model, process.cwd()) } : c;
   }));
@@ -1477,7 +1477,7 @@ async function retryAgentTask({ taskId, candidate, account, stop, approved } = {
   const parsed = parseCandidate(candidate);
   if (!parsed) throw new Error(t('routing.retry.badCandidate'));
   const from = original.routing?.target ?? { backend: original.backend, model: original.model, account: null };
-  const candidateCheck = checkCandidate(candidate, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now() });
+  const candidateCheck = checkCandidate(candidate, { usage: routingUsage.snapshot(), settings: routingSettingsCache, now: Date.now(), blocked: slotBlocked });
   const check = selectRetryAccount(candidateCheck, parsed.backend, account);
   if (parsed.backend === from.backend && parsed.model === from.model && (check.account ?? null) === (from.account ?? null))
     throw new Error(t('routing.retry.same'));
@@ -3095,8 +3095,33 @@ function makeEmit(turn) {
         turn.failureReason = { source: 'backend.afterReply', status: String(event.backendFailure.status ?? '').slice(0, 100),
           error: String(event.backendFailure.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
-      if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; }
+      if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; execution.limit = event.outcome === 'limited' ? turn.limit : null; }
+      // 上限で止まった枠は、委譲の振り分けでしばらく飛ばす。同じ枠のターンが通ったら戻す（ADR 0229）
+      if (!replay && !turn.info.endpoint) {
+        const key = slotKey(turn.backend.id, turn.info.model, turn.info.account);
+        // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない
+        const resetsAt = turn.limit?.resetsAt;
+        if (event.outcome === 'limited' && !(Number.isFinite(resetsAt) && resetsAt <= Date.now())) limitedSlots.set(key, { until: limitResetsAt(resetsAt) });
+        else if (event.outcome === 'ok') limitedSlots.delete(key);
+      }
+      turn.retry = null;
+      turn.retryEpisode = null;
     }
+    // エージェントが上限・一時的な失敗のあと再試行を待っている（OpenCode の session.status の retry。ADR 0229）。
+    // 委譲の子なら台帳が依頼元へ知らせ、ply_task_wait を待たずに返す（agentTasks の retrying）。
+    // 待ちの回（retryEpisode）は、再試行の間の busy では切らず、返答・思考・ツールが出たら終える（同じ待ちで何度も知らせない）
+    if (event?.type === 'activity') {
+      if (event.state === 'retrying' && event.retry) {
+        turn.retryEpisode ??= Date.now();
+        turn.retry = { ...event.retry, since: turn.retryEpisode, seenAt: Date.now() };
+        if (!replay) agentTasks?.wake();
+      } else {
+        if (turn.retry && !replay) agentTasks?.wake();
+        turn.retry = null;
+        if (['thinking', 'writing', 'waiting'].includes(event.state) || (event.state === 'running' && event.label)) turn.retryEpisode = null;
+      }
+    }
+    if (turn.retryEpisode && ['text.delta', 'thinking.delta', 'tool.start'].includes(event?.type)) { turn.retry = null; turn.retryEpisode = null; }
     // 委譲の子で、バックエンドが実行前に拒否されたコマンドを知らせた（Codex。tool.result の rejection）。依頼元へ返す結果に集める
     if (event?.type === "tool.result" && event.rejection && typeof event.rejection === "object") {
       taskExecutions.get(turn.info.sessionId)?.rejections.push(event.rejection);
@@ -5675,6 +5700,23 @@ const liveInstructions = new Map();
 // 使用量の上限で止まっている会話 -> interruptedOf の形。解除時刻を過ぎるまで、新しい指示は API に渡さず送信待ちに置き、
 // 解除時刻に流す（解除時刻が分からない上限は待たせない。limitHolds）。印は再開（resumeSession）かターンの開始で下ろす
 const limitStates = new Map();
+// 上限で止まったばかりの枠（エージェント・モデル・アカウント）-> { until: 解除時刻 ms | null }。委譲の振り分けで飛ばす（ADR 0229）。
+// 解除時刻を過ぎるか、同じ枠のターンが通ったら外す。解除時刻が分からないものは、通るまで外さない（覚えるのはこのサーバーの間だけ）
+const limitedSlots = new Map();
+const slotKey = (backend, model, account) => `${backend}\n${model ?? ''}\n${account ?? ''}`;
+/** 振り分けで使えない枠か。再試行を待っているターンがある（retry_waiting）か、上限で止まったばかり（recently_limited）なら理由を返す */
+function slotBlocked(backend, model, account) {
+  const key = slotKey(backend, model, account);
+  for (const turn of runtime.turns.values()) {
+    if (turn.ended || !turn.retry || turn.info.endpoint) continue;
+    if (slotKey(turn.backend.id, turn.info.model, turn.info.account) === key)
+      return { reason: 'retry_waiting', ...(Number.isFinite(turn.retry.next) ? { until: turn.retry.next } : {}) };
+  }
+  const limited = limitedSlots.get(key);
+  if (!limited) return null;
+  if (limited.until != null && limited.until <= Date.now()) { limitedSlots.delete(key); return null; }
+  return { reason: 'recently_limited', ...(limited.until != null ? { until: limited.until } : {}) };
+}
 const outbox = createMessageQueue({
   store,
   active: id => {
@@ -5782,7 +5824,8 @@ function completionNotice(lng, tasks) {
     taskId: task.taskId, backend: task.backend, status: task.status, task: task.task,
     result: task.result.slice(0, limit),
     more: task.result.length > limit ? agentT(lng, 'delegation.noticeMore', { offset: limit }) : '',
-    error: task.error ?? '',
+    // 上限で止まった子（row.limit。ADR 0229）は、失敗と分けて、解除の見込みと任せ直せることを添える
+    error: [task.limit ? limitNotice(lng, task.limit) : '', task.error ?? ''].filter(Boolean).join('\n'),
     // 人が委譲先を変えてやり直したタスクは、依頼元のエージェントが作ったものではないので一行添える
     retry: task.routing?.retry?.of ? agentT(lng, 'delegation.noticeRetry', { of: task.routing.retry.of }) : '',
     rejections: rejectionNotice(lng, task.rejections),
@@ -5790,6 +5833,12 @@ function completionNotice(lng, tasks) {
   }));
   if (parts.length === 1) return agentT(lng, 'delegation.notice', parts[0]);
   return agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
+}
+
+/** 上限で止まった子の完了通知の一行（解除の見込みと、待つか任せ直すか） */
+function limitNotice(lng, limit) {
+  const resetsAt = limitResetsAt(limit?.resetsAt);
+  return resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
 }
 
 /**
@@ -5876,7 +5925,7 @@ async function renewTaskWorktree(task) {
  * waitingSince は、main が返答を終えて裏の作業だけを待ち始めた時刻（watchChildBackground。ADR 0170）。付け直すターンでは札の delegation から戻す
  */
 function newExecution(card = null) {
-  return { outcome: null, error: null, rejections: [], waitingSince: Number.isFinite(card?.waitingSince) ? card.waitingSince : null, streamed: '', streamEnded: false };
+  return { outcome: null, error: null, limit: null, rejections: [], waitingSince: Number.isFinite(card?.waitingSince) ? card.waitingSince : null, streamed: '', streamEnded: false };
 }
 
 /**
@@ -5940,7 +5989,10 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   worktreeSweepSoon();
   const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
   if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, git, ...extra };
-  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git, ...extra };
+  // 上限で止まった（limited）は、解除時刻・枠を結果に添える（台帳の row.limit。失敗と分けて知らせる。ADR 0229）
+  const limit = !signal.aborted && execution.outcome === 'limited' && execution.limit
+    ? { resetsAt: execution.limit.resetsAt ?? null, window: execution.limit.window ?? null } : null;
+  return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git, ...(limit ? { limit } : {}), ...extra };
 }
 
 /**
@@ -6212,6 +6264,25 @@ agentTasks = await createAgentTasks({
       title: delegatedNoticeTitle(task), command: redactForPeer(command.command, 200), minutes: command.elapsedMinutes });
     return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
+  // 子が上限・一時的な失敗のあと再試行を待っている（OpenCode の session.status の retry。ADR 0229）。makeEmit が turn.retry に置く
+  retrying: sessionId => runtime.turns.get(sessionId)?.retry ?? null,
+  // 再試行の待ちを依頼元へ知らせる（待ちの回ごとに 1 回）。走っている依頼元のターンへは途中送信で、空いていれば新しいターンで
+  deliverRetry: async (task, retry, { accepted } = {}) => {
+    const owner = task.parentSessionId;
+    if (isRemoteOwner(owner)) return 'ok';
+    const lng = await ensureAgentLocale(owner);
+    const when = Number.isFinite(retry.next)
+      ? agentT(lng, 'delegation.retryWhen', { time: clockText(retry.next), attempt: retry.attempt ?? 1 })
+      : agentT(lng, 'delegation.retryWhenUnknown', { attempt: retry.attempt ?? 1 });
+    const vars = { taskId: task.taskId, title: delegatedNoticeTitle(task), when, message: redactForPeer(String(retry.message ?? ''), 300) };
+    const prompt = retry.limit ? agentT(lng, 'delegation.retryNoticeLimit', vars) : agentT(lng, 'delegation.retryNoticeError', vars);
+    const live = await noticeTarget(owner);
+    if (live) { const r = await steerNotice(live, owner, prompt, []); if (r === 'ok') accepted?.(); return r; }
+    if (await noticeBlocked(owner)) return 'requeue';
+    return runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
+  },
+  // 上限で止まった子の会話の解除時刻までは、積まれた指示で次の回を始めない（送信待ちの limitHolds と同じ判断）
+  held: task => { const limit = limitStates.get(task.sessionId); return limitHolds(limit) ? { resetsAt: limit.resetsAt } : null; },
   deliverSilence: async (task, minutes, { accepted } = {}) => {
     const owner = task.parentSessionId;
     if (isRemoteOwner(owner)) return 'ok';
