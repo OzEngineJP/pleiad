@@ -53,6 +53,11 @@ export const CAPABILITY_CONTRACTS = {
   instructionsAtStart: ['bot-dispatch'],
   failureDiagnostics: ['server-antigravity', 'server-devin'],
   handover: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'],
+  browser: ['agent-browser-env', 'browser-bridge', 'server-devin'],
+  plyControl: ['control-delivery', 'ops-control', 'server-devin'],
+  secrets: ['server-secrets', 'mcp-secret-store'],
+  visualize: ['server-visualize'],
+  hooks: ['server-hooks', 'server-hooks-unify'],
 };
 
 /**

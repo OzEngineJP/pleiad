@@ -95,7 +95,7 @@ import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountNam
 import { createAgentAccounts } from './agent-accounts.mjs';
 import { createAgentAccountManager } from './agent-account-manager.mjs';
 import { createPlyMcp } from './ply-mcp.mjs';
-import { contractEmit } from './backends/contract.mjs';
+import { contractEmit, gateRunArgs } from './backends/contract.mjs';
 import { opencodeRelay, OPENCODE_RELAY_PATH } from './opencode-relay.mjs';
 import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
@@ -6503,7 +6503,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
   // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）
   let hooksTurn = null;
-  try { hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+  try { if (backend.capabilities?.hooks) hooksTurn = await prepareHooksTurn({ agent: backend.id, cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
     context: { owners: policy.owners, delivered: plyContext } } }); }
   catch (e) { throw new Error(t('hooksUnify.prepareFailed', { error: String(e?.message ?? e) })); }
   if (hooksTurn) contextRecord.hooks = hooksTurn.record;
@@ -6774,26 +6774,26 @@ async function beginTurn(ctx) {
     control: turn.control,
     // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
     locale: agentLocale,
-    visualizeInstructions: delegatedChild ? null : visualizeInstructions(agentLocale),
+    visualizeInstructions: delegatedChild || !backend.capabilities?.visualize ? null : visualizeInstructions(agentLocale),
     ...(delegatedChild ? { delegatedChild: true } : {}),
-    // Chrome の層が使えないホスト（Windows 以外・Electron なし）ではエージェントのブラウザーは無く、環境・指示・ply_browser のどれも渡さない
-    browserEnv: chromeConnection?.state().state === 'unsupported' ? null : await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+    // Chrome の層が使えないホスト（Windows 以外・Electron なし）や、ブラウザーを受け取れないエージェント（印 browser）では、環境・指示・ply_browser のどれも渡さない
+    browserEnv: !backend.capabilities?.browser || chromeConnection?.state().state === 'unsupported' ? null : await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
     browserInstructions: null,
     // ply_browser。エージェントのブラウザー（Chrome）を渡すターンだけ（下で入れる）
     browserRuntime: null,
     // ply_computer（url・headers・instructions）。使えない・オフ・対応しないエージェントなら null（computerRuntimeFor）
     computerRuntime: await computerRuntimeFor(turn),
-    // ply_control（操作の一覧）。全会話に渡す。env は会話のシェルへ渡す CLI の接続情報
+    // ply_control（操作の一覧）。印 plyControl のあるエージェントに渡す。env は会話のシェルへ渡す CLI の接続情報
     // 委譲の子には指示（約 0.2k）だけ渡さない。MCP は残す: 子の設定変更の承認を依頼元へ中継する口（ADR 0088）が ply_control を通るため
-    controlRuntime: delegatedChild ? { ...controlRuntimeFor(turn), instructions: null } : controlRuntimeFor(turn),
+    controlRuntime: !backend.capabilities?.plyControl ? null : delegatedChild ? { ...controlRuntimeFor(turn), instructions: null } : controlRuntimeFor(turn),
     // ply_shell（ADR 0227 §1）。受け取れるエージェントだけ。nativeOff ならエージェントのシェルのツールを切る（§3）
     shellRuntime: await shellRuntimeFor(turn),
     addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
-    contextRuntime: ctx.runtimeContext,
+    contextRuntime: backend.capabilities?.plyContext ? ctx.runtimeContext : null,
     // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
     ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
     // 橋は会話ごとに使い回すので、Pleiad の指示はターンごとにここで足す（設定の変更が始まっている会話にも次のターンから効く）
-    agentRuntime: (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
+    agentRuntime: !backend.capabilities?.plyAgents ? null : (runtime => ({ ...runtime, instructions: withAdded(runtime.instructions, contextRecord.added) }))(agentConnection(turn)),
     // 会話で選んだアカウントのトークン。この会話の query() の env にだけ入る（core/claude-accounts.mjs）
     // アカウント（ADR 0222）: Claude はトークン、ほかのエージェントはアカウントの置き場と資格情報
     ...(account?.token ? { oauthToken: account.token } : account ? { account } : {}),
@@ -6813,7 +6813,7 @@ async function beginTurn(ctx) {
     runArgs.browserRuntime = browserRuntimeFor(turn);
   }
   // 秘密情報と変数（ADR 0217）。この会話の場所に渡す環境変数（シェルにだけ入る）と、名前だけの一覧の文。圧縮のターンには渡さない
-  if (!hooks.compact) {
+  if (!hooks.compact && backend.capabilities?.secrets) {
     const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime) });
     if (secretsRuntime) runArgs.secretsRuntime = secretsRuntime;
   }
@@ -6825,7 +6825,7 @@ async function beginTurn(ctx) {
     computer: computerPrompt(runArgs.computerRuntime, { locale: agentLocale, agent: backend.id }), control: runArgs.controlRuntime?.instructions ?? null,
     secrets: runArgs.secretsRuntime?.instructions ?? null, shell: runArgs.shellRuntime?.instructions ?? null });
   if (JSON.stringify(parts) !== JSON.stringify(contextRecord.plyParts ?? null)) { contextRecord.plyParts = parts; await ctx.saveContext(); }
-  ctx.runArgs = runArgs;
+  ctx.runArgs = gateRunArgs(runArgs, backend.capabilities);
 }
 
 /**
@@ -7426,7 +7426,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         syncRunningPoll();
         // Pleiad の Hooks の登録（札の hooks があるターン）。Claude は 2 回目の initialize でコールバックを渡し直す（2c）ので、今の設定で組み直す。
         // 記録（contextRecord.hooks）は札の会話の記録のまま。組めなければ渡さない（そのターンの残りで Pleiad の Hooks が動かない）
-        const hooksTurn = ctx.card.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
+        const hooksTurn = ctx.card.hooks && backend.capabilities?.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
           context: { owners: ctx.policy?.owners ?? {}, delivered: false } } }).catch(e => { console.error(`  Hooks を組み直せない（${sessionId}）:`, String(e?.message ?? e)); return null; }) : null;
         // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直し、外部の MCP はこのターンのために起こし直す（R15。ツールの名前は
         // 項目の id とツールの名前から決まるので同じ。状態は消えるので、起こし直した後の最初の結果にその旨を添える）。開けなければ口の無いまま続ける
@@ -7456,6 +7456,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
           control: turn.control,
           locale: agentLocale,
         };
+        gateRunArgs(ctx.runArgs, backend.capabilities);
         // 止め始めていたターン（T7）は、中断をもう一度送る（旧サーバーの中断が子に届いたか分からない。届いていても重ねて送って害は無い）。理由は札のまま。
         // 記録の再生は止めない（実行中のスナップショットは印から全部作る）。子への書き込みは付け直した後に出る（core/adopt.mjs の holderSource）
         if (ctx.card.stopping) {

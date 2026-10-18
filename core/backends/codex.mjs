@@ -1366,6 +1366,9 @@ const backend = {
     instructionsAtStart: false,
     failureDiagnostics: false,
     handover: true,          // 共有の app-server を保持役に載せ、新しいサーバーが付け直す（codex-held.mjs）
+    // runArgs の配達物: ブラウザーは shell_environment_policy と mcp_servers・指示に、ply_control も mcp_servers と env・指示に、
+    // 秘密情報は shell_environment_policy と指示に、可視化・Pleiad の Hooks の指示は developerInstructions に渡す
+    browser: true, plyControl: true, secrets: true, visualize: true, hooks: true,
   },
 
   toolHints: TOOL_HINTS,

@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
-import { t } from '../i18n.mjs';
+import { t, agentT } from '../i18n.mjs';
+import { BROWSER_SERVER } from '../browser-bridge.mjs';
+import { CONTROL_SERVER } from '../ops/surfaces/mcp.mjs';
 import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
 import { NO_CAPABILITIES } from './contract.mjs';
@@ -63,8 +65,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       return catalogue(launch, signal);
     });
   }
-  async function openClient(cwd, handlers = {}) {
-    const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir });
+  async function openClient(cwd, handlers = {}, extraEnv = null) {
+    const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: extraEnv ? { ...process.env, ...extraEnv } : process.env });
     const Client = Acp ?? (await import('./devin-acp.mjs')).DevinAcp;
     const client = new Client({ ...launch, ...handlers, onRequest: handlers.onRequest ?? (async method => {
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
@@ -91,7 +93,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   });
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true },
+    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true,
+      // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
+      browser: true, plyControl: true, secrets: true, visualize: true },
     modes,
     async usage() { return { windows: [], checkedAt: null, message: t('devin.usageUnknown') }; },
     async models(cwd = process.cwd()) { return buildDevinModels(await rawModels(cwd)); },
@@ -168,6 +172,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
           const selection = resolveDevinModel(await rawModels(cwd, local.signal), args.model ?? '');
           check();
+          // ブラウザー（AGENT_BROWSER_*）・ply_control の CLI・秘密情報と変数は、起動する CLI の env で渡す（会話のシェルへ届く）
+          const extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}), ...(args.secretsRuntime?.env ?? {}) };
           client = await openClient(cwd, {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
             onResponse: ({ method, params, result }) => {
@@ -199,14 +205,17 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               const selected = answer?.allow ? allow : deny;
               return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
             },
-          });
+          }, extraEnv);
           check();
+          // Pleiad の MCP（ply_browser・ply_control）は ACP の mcpServers で渡す（type: 'http' が要る。外すと session/new が Invalid params で断る）
+          const acpMcp = (name, runtime) => (runtime?.url ? [{ name, type: 'http', url: runtime.url, headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : []);
+          const mcpServers = [...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime)];
           let state;
           if (sessionId) {
             mapper = createDevinMapper(sessionId, emit);
-            state = await client.call('session/load', { sessionId, cwd, mcpServers: [] });
+            state = await client.call('session/load', { sessionId, cwd, mcpServers });
           } else {
-            state = await client.call('session/new', { cwd, mcpServers: [] });
+            state = await client.call('session/new', { cwd, mcpServers });
             sessionId = state?.sessionId;
             if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('devin.errors.notConnected'));
             mapper = createDevinMapper(sessionId, emit);
@@ -231,7 +240,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           selectedMode = mode;
           if (latestSession !== sessionId || !matchesVerified(latestSnapshot, verified) || latestMode !== mode) throw new Error(t('devin.errors.configChanged'));
           check();
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+          // 読み取り専用のモードでは、ブラウザーの指示を「操作しない」に読み替える（agent-browser は読むだけでもデーモンの書き込みが要る。Codex と同じ）
+          let browserInstructions = args.browserInstructions;
+          if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
+          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.visualizeInstructions, browserInstructions, args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           mapper.beginTurn(prompt);
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });

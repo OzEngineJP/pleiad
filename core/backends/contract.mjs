@@ -66,6 +66,16 @@ export const CAPABILITIES = {
   failureDiagnostics: { valid: bool },
   // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
   handover: { valid: bool, requires: (v) => (v ? ['adoptTurn'] : []) },
+  // エージェントのブラウザー（会話の Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser と指示）を受け取る（docs/inapp-browser.md）
+  browser: { valid: bool },
+  // ply_control（操作の一覧の MCP）と、会話に束縛した CLI の環境変数（PLEIAD_CONTROL_*）を受け取る（ADR 0081）
+  plyControl: { valid: bool },
+  // 秘密情報と変数（runArgs.secretsRuntime。会話のシェルの環境変数と一覧の文）を受け取る（ADR 0217）
+  secrets: { valid: bool },
+  // 可視化の指示（runArgs.visualizeInstructions）を受け取る
+  visualize: { valid: bool },
+  // Pleiad がそろえる Hooks（runArgs.hooksRuntime）を受け取る（ADR 0049）
+  hooks: { valid: bool },
 };
 
 export const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITIES));
@@ -76,6 +86,7 @@ export const NO_CAPABILITIES = Object.freeze({
   hostTools: false, approvals: 'none', alwaysAllow: false, mcpApproval: 'agent', login: false, accounts: false, compatEndpoints: false,
   compact: false, autoCompactWindow: false, promptSuggestions: false, plyAgents: false, plyContext: false, computerUse: false,
   shell: false, plyShell: false, nativeShellOff: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, handover: false,
+  browser: false, plyControl: false, secrets: false, visualize: false, hooks: false,
 });
 
 /** バックエンドの必須のメンバー（retiredBackend が持つ最小の形） */
@@ -166,6 +177,50 @@ export function checkBackendEvent(event, { outsideTurn = false } = {}) {
 
 function safe(v) {
   try { return JSON.stringify(v)?.slice(0, 160) ?? String(v); } catch { return String(v); }
+}
+
+// ---- runArgs の配達物 ----------------------------------------------------------
+//
+// runArgs のキーは 2 種類に分かれる。
+//   RUN_ARG_FEATURES … 機能の配達物。バックエンドが受け取れるかは能力の印が決め、印の無いバックエンドには server が渡さない。
+//   RUN_ARG_PLUMBING … どのバックエンドにも渡る、会話を動かすためのもの（発言・cwd・承認・中断の合図など）。
+// runArgs に配達物を足すときは、能力の印を足して RUN_ARG_FEATURES に書く。印の無い配達物は、受け取らないバックエンドが
+// 黙って捨てても気づけないので、ここで強制する（checkRunArgs。tests/unit/backend-contract.mjs が各バックエンドの参照も確かめる）。
+
+export const RUN_ARG_FEATURES = Object.freeze({
+  browserEnv: 'browser', browserInstructions: 'browser', browserRuntime: 'browser',
+  computerRuntime: 'computerUse', controlRuntime: 'plyControl', secretsRuntime: 'secrets',
+  shellRuntime: 'plyShell', agentRuntime: 'plyAgents', contextRuntime: 'plyContext',
+  visualizeInstructions: 'visualize', hooksRuntime: 'hooks',
+});
+
+/** runArgs に載ってよい、配達物でないキー。新しいキーを足すときは配達物なら RUN_ARG_FEATURES へ、どのバックエンドにも必要ならここへ */
+export const RUN_ARG_PLUMBING = Object.freeze(new Set([
+  'prompt', 'sessionId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke',
+  'signal', 'control', 'locale', 'delegatedChild', 'addedInstructions', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
+  'compact', 'oauthToken', 'account', 'endpoint', 'autoCompactWindow', 'promptSuggestions',
+  'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',
+  'authorize', 'backend', 'isActive', 'origin', 'progress',
+]));
+
+/**
+ * runArgs の配達物を能力の印で絞り、一覧に無いキーを拒否する（server.mjs が runArgs を確定する前に通す）。
+ * 印の無い配達物は消す（渡されなかったときの既定値はバックエンド側が持つ）。一覧に無いキーは、試験（strict）では例外、通常はログだけ残す。
+ */
+export function gateRunArgs(runArgs, capabilities, { strict = strictContract(), log = console.error } = {}) {
+  for (const key of Object.keys(runArgs)) {
+    if (RUN_ARG_PLUMBING.has(key)) continue;
+    const flag = RUN_ARG_FEATURES[key];
+    if (flag === undefined) {
+      // i18n-ignore: 開発者向けの契約エラー（ログ・試験の失敗にだけ出る。利用者には見えない）
+      const message = `runArgs.${key} は RUN_ARG_FEATURES・RUN_ARG_PLUMBING のどちらにも無い（core/backends/contract.mjs に登録する）`;
+      if (strict) throw new Error(message);
+      log(`[backend-contract] ${message}`);
+      continue;
+    }
+    if (!capabilities?.[flag]) delete runArgs[key];
+  }
+  return runArgs;
 }
 
 /** 試験のサーバーで、受け口ごとに確かめるか（PLEIAD_BACKEND_CONTRACT=strict。tests/lib/server.mjs が付ける） */

@@ -126,7 +126,7 @@ WS の口は `browserScreencast`・`browserScreencastStop`・`browserScreencastA
 
 ## エージェントのブラウザー（Chrome）
 
-エージェントの `agent-browser` は、PC の Chrome の専用の窓を会話ごとに使う（[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0219](adr/0219-agent-browser-in-chrome-macos.md)）。使えるのは Windows と macOS（14 以上）のデスクトップ版で、Chrome の OS の層が使えるホスト。それ以外の OS・Electron の無い `npm start` では、ブラウザー用の環境変数・指示・`ply_browser` をエージェントへ渡さない。内蔵ブラウザーへの切り替えは無い。
+エージェントの `agent-browser` は、PC の Chrome の専用の窓を会話ごとに使う（[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0219](adr/0219-agent-browser-in-chrome-macos.md)）。使えるのは Windows と macOS（14 以上）のデスクトップ版で、Chrome の OS の層が使えるホスト。それ以外の OS・Electron の無い `npm start` では、ブラウザー用の環境変数・指示・`ply_browser` をエージェントへ渡さない。受け取るかは能力の印 `browser`（`core/backends/contract.mjs`）。印の無いバックエンドには `runArgs.browserEnv`・`browserInstructions`・`browserRuntime` を渡さず、会話の中継の設定も書かない（`server.mjs`）。内蔵ブラウザーへの切り替えは無い。
 
 ### Chrome への接続
 
@@ -191,7 +191,7 @@ Chrome への ws（`core/chrome/connection.mjs` の接続）は、サーバー�
 
 **デーモンと置き場の寿命**（[ADR 0180](adr/0180-agent-browser-daemon-lifetime.md)）: デーモンは会話ごとに 1 つで、最初の `agent-browser` の呼び出しで起き、Pleiad の子ではない。暇なデーモンは `AGENT_BROWSER_IDLE_TIMEOUT_MS`（24 時間）で自分で落ちる（明示すると `--cdp` のデーモンにも効く。既定の 1 時間は効かない）。Pleiad が止めるのは、委譲の子が止まったとき（完了・失敗・取り消し）・会話を消したとき・掃除（起動の 1 分後と 1 時間ごと）で持ち主の会話が無いか終わった子と分かったとき。依頼元の会話は消すまで止めない。走っている会話・引き継ぎ中の会話は触らない。止め方は `agent-browser close` ではなく、`<セッション名>.pid` の pid の実行ファイルが agent-browser と確かめてから落とす（`close` はデーモンが居ないと新しく起こし、中継が切れた後は落ちないことがある。落としても Chrome とタブには何も送らない）。止めてからソケットの置き場と設定の置き場を消し、止めたと確かめられなければ何も消さない。Windows ではソケットの置き場を前もって作らない（デーモンが作る）。ターンの終わりに、そのターンでデーモンが起きていなければ両方の置き場を消す。掃除は、デーモンの起きていない 1 時間より古い置き場と、この Pleiad の置き場に当たらない空の `ply-ab-*`（10 分より古いもの）も消す。
 
-Claude は会話の env、Codex は共有 app-server のスレッドごとの `shell_environment_policy.set`、Antigravity は会話のプロセスの env で受け取る。`agent-browser` は同梱の本体を PATH から呼び、接続先を手で指定する必要はない。ターン終了でサイトの確認を取り下げ、エージェントが動かしている印を外す。
+Claude は会話の env、Codex は共有 app-server のスレッドごとの `shell_environment_policy.set`、Antigravity は会話のプロセスの env、OpenCode はプラグインの `shell.env`、Devin は起動する CLI のプロセスの env で受け取る。`ply_browser` は、Claude・Codex・Devin は HTTP の MCP（Devin は ACP の `session/new` の `mcpServers`）、Antigravity は `agy-context-relay` に束ねた中継、OpenCode は中継（`core/opencode-relay.mjs`）で受け取る。`agent-browser` は同梱の本体を PATH から呼び、接続先を手で指定する必要はない。ターン終了でサイトの確認を取り下げ、エージェントが動かしている印を外す。
 
 #### 会話の範囲と断る一覧
 

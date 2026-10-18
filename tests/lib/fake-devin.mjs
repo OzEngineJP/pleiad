@@ -68,7 +68,9 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
     switch (request.method) {
       case 'initialize': result = { protocolVersion: 1, agentInfo: { name: 'fake-devin', version: '3000.11.92' }, agentCapabilities: { loadSession: true, sessionCapabilities: { list: {} }, promptCapabilities: { image: false } } }; break;
       case 'session/new': {
-        const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast' };
+        const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast',
+          // 起動で届いたもの（mcpServers・Pleiad からの環境変数）。配達物の試験が読む
+          mcpServers: p.mcpServers ?? [], seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_CONTROL_)/.test(k)) };
         persist(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
         result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
       }
@@ -152,7 +154,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         }
         update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
         let reply = `fixture: ${text}`;
-        if (text.includes('[env]')) reply = JSON.stringify({ cwd: process.cwd(), configHome: process.env.DEVIN_CONFIG_HOME ?? null, sessions: process.env.DEVIN_SESSIONS_DIR });
+        if (text.includes('[env]')) reply = JSON.stringify({ cwd: process.cwd(), configHome: process.env.DEVIN_CONFIG_HOME ?? null, sessions: process.env.DEVIN_SESSIONS_DIR,
+          mcpServers: (session.mcpServers ?? []).map(s => s.name), seenEnv: session.seenEnv ?? [] });
         if (text.includes('[multi-utf8]')) {
           const frame = `${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '日本語🙂' } } } })}\n`;
           const bytes = Buffer.from(frame), split = bytes.indexOf(Buffer.from('🙂')) + 2;

@@ -33,6 +33,8 @@ export default async function (t) {
     const text = env.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     const observed = JSON.parse(text);
     t.ok('別 cwd は別プロセスで起動し native 設定の場所を保つ', observed.cwd === other && observed.configHome === nativeConfig);
+    // ply_control は ACP の mcpServers（type: 'http'）と会話束縛の CLI の env で届く（印 plyControl。ブラウザーは Chrome の層が無い試験では渡らない）
+    t.ok('ply_control を mcpServers で渡し、会話束縛の CLI の環境変数が届く', observed.mcpServers?.includes('ply_control') && observed.seenEnv?.includes('PLEIAD_CONTROL_URL') && observed.seenEnv?.includes('PLEIAD_CONTROL_TOKEN'), JSON.stringify({ mcpServers: observed.mcpServers, seenEnv: observed.seenEnv }));
     for (const marker of ['model', 'thought_level', 'speed', 'mode']) {
       const turn = await c.runTurn({ backend: 'devin', cwd, prompt: `[${marker}-drift]`, model: 'swe-2-high' });
       t.ok(`実行中の確認済み設定の変更を拒否する（${marker}）`, turn.outcome === 'error');
