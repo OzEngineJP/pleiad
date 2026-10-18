@@ -39,6 +39,7 @@ export default async function (t) {
     await fs.writeFile(path.join(src, 'plugins', 'settings.json'), '{}');
     await fs.writeFile(path.join(src, 'control.json'), '{"token":"SECRET"}');
     await fs.writeFile(path.join(src, 'mcp-secrets.json.lock'), '1');
+    await fs.writeFile(path.join(src, 'worktrees.json'), '{"entries":{"ply-1":{"path":"D:/real/repo.pleiad/ply-1"}}}');
     await fs.writeFile(path.join(src, 'prefs.json'), '{"mode":"plan"}');
     await fs.mkdir(path.join(src, 'conversations'));
     await fs.writeFile(path.join(src, 'conversations', 'a.json'), '{"messages":[]}');
@@ -49,6 +50,7 @@ export default async function (t) {
     const result = JSON.parse(await run(dst, '--source', src));
     const names = await fs.readdir(dst);
     t.ok('remote/・*-secrets.json・control.json・ロック（pleiad.lock*）を写さない', !names.includes('remote') && !names.some(name => /secrets|control|\.lock|pleiad\.lock/.test(name)), names.join(','));
+    t.ok('worktree の台帳（worktrees.json）を写さない（写しのサーバーが本物の worktree を片付けに行かない）', !names.includes('worktrees.json'), names.join(','));
     const deep = await fs.readdir(path.join(dst, 'plugins'));
     t.ok('名前に secret を含むものは、大小・形・階層を問わず写さない（secret-values.json・書きかけの .tmp・下の階層のファイルとフォルダー）',
       !names.some(name => /secret/i.test(name)) && JSON.stringify(deep) === JSON.stringify(['settings.json']), `${names.join(',')} | ${deep.join(',')}`);

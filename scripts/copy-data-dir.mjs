@@ -5,7 +5,8 @@
 // 元は既定で AGENT_HOST_DATA、無ければ ~/.agent-host。**元は読むだけ**（DB は読み取り専用の接続で VACUUM INTO する。
 // 動いているサーバーの DB のファイルをそのままコピーしない。WAL に未反映の分が -wal にあり、途中の写しは壊れる）。
 //   写さないもの: remote/（同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す）・名前に secret を含むもの（秘密の値。下の isSecret）・
-//                 *.lock・pleiad.lock*（データ置き場のロック）・control.json（接続情報）
+//                 *.lock・pleiad.lock*（データ置き場のロック）・control.json（接続情報）・
+//                 worktrees.json（worktree の台帳。下の skipFile）
 //   --keep-tasks  写しの agent_tasks（委譲のタスク）を残す。既定は空にする（委譲の続きを走らせない）。
 //                 委譲のタスクが載る送信量（running など）を測るときだけ使う
 //   --light       conversations/（会話の本文）・handoff-*.json・uploads/・presents/ などの大きなものを写さない（移行や 1 回の更新の時間を測るだけなら要らない）
@@ -33,7 +34,9 @@ const SKIP_DIRS = new Set(['remote']);
 // 外れたときに起きるのは「写しに無害なファイルが 1 つ足りない」だけで、秘密が漏れる向きには外れない（写しは画面と測定にしか使わない）
 const isSecret = name => /secret/i.test(name);
 const LIGHT_SKIP_DIRS = new Set(['conversations', 'uploads', 'presents', 'visualization-snapshots', 'context-snapshots', 'agent-browser', 'claude-login-tmp', 'mcp-locks', 'computer-use', 'antigravity', 'claude-usage', 'run', 'hooks-runtime']);
-const skipFile = name => isSecret(name) || /\.lock$/.test(name) || /^pleiad\.lock/.test(name) || name === 'control.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)
+// worktree の台帳は写さない。写すと、写しで立てたサーバーが起動の後の整理（core/worktrees.mjs の reconcile・sweep）で本物のリポジトリの
+// worktree を自分のものとして片付けに行く（git worktree prune・取り込み済みのブランチの削除・変更の無い worktree の削除。2026-10-18 に起きた）
+const skipFile = name => isSecret(name) || /\.lock$/.test(name) || /^pleiad\.lock/.test(name) || name === 'control.json' || name === 'worktrees.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)
   || (flag('--light') && name.startsWith('handoff-')) || (!flag('--keep-tasks') && name === 'agent-tasks.json');
 let files = 0, bytes = 0;
 function copyDir(from, to, top) {
