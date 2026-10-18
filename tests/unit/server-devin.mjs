@@ -6,6 +6,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { DevinAcp } from '../../core/backends/devin-acp.mjs';
 import { createDevinBackend } from '../../core/backends/devin.mjs';
+import { anchored, sameRows } from '../lib/acp-history.mjs';
 
 export const name = 'server-devin';
 export const title = 'Devin: fake ACP でターン・再開・履歴・承認・中断・設定変更の拒否・cwd と native 設定の保持';
@@ -34,6 +35,8 @@ export default async function (t) {
     t.ok('再開の送信でも同じ順で出す', nextStates[0] === 'preparing' && nextStates.includes('thinking'));
     const after = await c.cmd('loadSession', { sessionId: sid });
     t.ok('再開時の replay を重複させず前の UUID を保つ', next.outcome === 'ok' && after.messages.filter(m => m.role === 'user').length === 2 && before.every((m, i) => after.messages[i].uuid === m.uuid));
+    t.ok('ホスト記録の無い会話の text.end の発言の id は、読み直した履歴の行に当たり、記録用の印を出さない',
+      anchored(first, loaded.messages) && anchored(next, after.messages) && after.messages.every(m => !('sent' in m) && !('positional' in m) && !('liveUuid' in m)));
     const compactFrom = c.mark();
     const compactResult = await c.cmd('compactConversation', { sessionId: sid });
     const compactDone = await c.waitFor(e => e.type === 'compaction' && e.sessionId === sid && e.phase === 'complete', { from: compactFrom, ms: 20_000 });
@@ -90,6 +93,20 @@ export default async function (t) {
       heldText.includes('fixture: steer-note')
       && c.since(sm).some(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')
       && held.events.filter(e => e.type === 'turnResult').length === 1 && held.outcome === 'ok', heldText);
+    // ---- 圧縮でネイティブが履歴を書き換えた、ホスト記録の会話（指示は発言の前に足して送る）。発言は原文のまま、前の行を上書きも重複もしない
+    const compactId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
+    const compactPrompts = ['one', 'two', '[compact-rewrite] three', 'four'], compactTurns = [];
+    for (const prompt of compactPrompts.slice(0, 3)) compactTurns.push(await c.runTurn({ sessionId: compactId, prompt, model: 'swe-2-high' }));
+    const rewritten = await c.cmd('loadSession', { sessionId: compactId });
+    compactTurns.push(await c.runTurn({ sessionId: compactId, prompt: compactPrompts[3], model: 'swe-2-high' }));
+    const compacted = await c.cmd('loadSession', { sessionId: compactId });
+    const sentFirst = compactTurns[0].events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    t.ok('指示は発言の前に足してエージェントに送る', sentFirst.startsWith('fixture: ') && sentFirst.endsWith('\n\none') && sentFirst.length > 'fixture: \n\none'.length, sentFirst.slice(0, 120));
+    t.ok('圧縮で書き換わった履歴の再生でも、記録の発言は原文のまま 1 回ずつ並び、前の行の uuid と本文を保つ',
+      compactTurns.every(turn => turn.outcome === 'ok') && sameRows(compacted.messages, compactPrompts)
+      && rewritten.messages.every((m, i) => compacted.messages[i].uuid === m.uuid && compacted.messages[i].text === m.text),
+      JSON.stringify(compacted.messages.map(m => [m.uuid, m.role, m.text.slice(0, 40)])));
+    t.ok('ホスト記録の会話の text.end の発言の id は、記録の行の uuid に当たる', compactTurns.every(turn => anchored(turn, compacted.messages)));
     c.close(); c = null;
     await server.stop(); server = null;
     const conversationDir = path.join(root, 'data', 'conversations');
@@ -106,6 +123,10 @@ export default async function (t) {
     const restored = await c.cmd('loadSession', { sessionId: sid });
     t.ok('サーバー再起動後も共通 DB の cwd でネイティブ履歴を復元する', restored.messages.filter(m => m.role === 'user').length === 2 && after.messages.every((m, i) => restored.messages[i].uuid === m.uuid), JSON.stringify({ before: after.messages.map(m => [m.uuid, m.role]), restored: restored.messages.map(m => [m.uuid, m.role]) }));
 
+    const compactRestored = await c.cmd('loadSession', { sessionId: compactId });
+    t.ok('サーバー再起動後も、圧縮で書き換わった会話の発言を原文のまま、同じ uuid で重複なく復元する',
+      sameRows(compactRestored.messages, compactPrompts) && compacted.messages.every((m, i) => compactRestored.messages[i].uuid === m.uuid && compactRestored.messages[i].text === m.text),
+      JSON.stringify(compactRestored.messages.map(m => [m.uuid, m.role, m.text.slice(0, 40)])));
     const restoredEdit = await c.cmd('loadSession', { sessionId: editId });
     assert.ok(JSON.stringify(restoredEdit.messages).length < 80000);
     assert.ok(restoredEdit.messages.flatMap(m => m.toolCalls ?? []).find(call => call.name === 'Edit file').input.newText.includes('after'));

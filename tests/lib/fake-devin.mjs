@@ -204,6 +204,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           write({ id: steer.id, result: { stopReason: 'end_turn' } });
         }
         session.steerQueue = []; persist(session);
+        // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る
+        if (text.includes('[compact-rewrite]')) { session.messages.splice(0, 2); persist(session); }
         return;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);
