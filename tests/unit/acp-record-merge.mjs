@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createDevinMapper } from '../../core/backends/devin-normalize.mjs';
+import { createGrokMapper } from '../../core/backends/grok-normalize.mjs';
 import { mergeMessages } from '../../core/conversations.mjs';
 
 export const name = 'acp-record-merge';
@@ -208,4 +209,17 @@ export default function (t) {
     t.ok('6000 行の再生の照合を上限の内で終え、全部の行を保って 1 行だけ足す', elapsed < 5000, `${Math.round(elapsed)} ms`);
   }
 
+  // ---- Grok の mapper も同じ形（指示を前に足して送り、再生は位置の UUID）
+  {
+    const r = record(), mapper = createGrokMapper('nid');
+    const one = turnOf('User original', 'First answer'), two = turnOf('Second original', 'Second answer');
+    mergeMessages(r, live(mapper, one).messages(), 'grok');
+    mergeMessages(r, live(mapper, two).messages(), 'grok');
+    const before = uuids(r);
+    const replayed = createGrokMapper('nid');
+    for (const update of [chunk('user', two.sent), chunk('agent', 'Second answer')]) replayed.accept(update);
+    mergeMessages(r, replayed.messages(), 'grok');
+    assert.deepEqual(view(r), [['user', 'User original'], ['assistant', 'First answer'], ['user', 'Second original'], ['assistant', 'Second answer']]);
+    t.ok('Grok でも、発言は原文で記録し、位置のずれた再生で前の行を上書きしない', uuids(r).every((u, i) => u === before[i]));
+  }
 }

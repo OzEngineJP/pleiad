@@ -943,11 +943,11 @@ Devin の受信は 1 行 64 MiB までとし、改行までのバイト数を加
 
 この情報は表示用の抜粋であり、完全なパッチではない。Devin CLI が管理する DB や実行する編集内容は変更しない。履歴再生とライブ更新は同じ処理を通る（[ADR 0230](adr/0230-devin-large-tool-previews.md)）。
 
-## ACP の記録（Devin）の発言と再生の照合（2026-10-19）
+## ACP の記録（Devin・Grok）の発言と再生の照合（2026-10-19）
 
 ACP には指示の欄が無いので、Pleiad の指示（visualize・browser・control・secrets・bot・追加の指示）は発言の本文の前に足して送る。エージェントにはこれまでどおり全部が届く。
 
-**記録する発言.** mapper（`devin-normalize.mjs`）の `beginTurn(sent, shown)` は、行の `text` を `shown`（人が書いた分。先頭のメモと `!` の結果を含む）にする。`sent`（送った全文）は `user_message_chunk` のエコーとの照合にだけ使う。分割されたエコーは連結して照合する。`mergeMessages` は `sent` を保存せず、`promptHash`（改行コードだけを LF にそろえた全文の sha256）を残す。空白は詰めない。字下げだけが違うコードの発言を取り違えないためである。
+**記録する発言.** mapper（`devin-normalize.mjs`・`grok-normalize.mjs`）の `beginTurn(sent, shown)` は、行の `text` を `shown`（人が書いた分。先頭のメモと `!` の結果を含む）にする。`sent`（送った全文）は `user_message_chunk` のエコーとの照合にだけ使う。分割されたエコーは連結して照合する。`mergeMessages` は `sent` を保存せず、`promptHash`（改行コードだけを LF にそろえた全文の sha256）を残す。空白は詰めない。字下げだけが違うコードの発言を取り違えないためである。
 
 **再生の照合.** `session/load` の再生では、user 行が送った全文で返り、uuid は配列の位置から作られる。圧縮でネイティブが古い発言を落とすと位置がずれ、同じ uuid が別の発言を指す。そこで mapper は再生の行に `positional: true` を付ける。ライブの行は、ターンごとの乱数を uuid に入れる。`mergeMessages` は `positional` の行が来たときだけ、次の手順で照合する（`core/conversations.mjs` の `alignPositional`）。ほかのバックエンドの照合は変えない。
 

@@ -1,6 +1,7 @@
 // ACP replay and live updates use the same normalized transcript shape as the
 // existing backends: { uuid, role, text, thinking?, toolCalls? }.
 // 写し方は devin-normalize.mjs と同じ（ACP の sessionUpdate の形は共通）。
+import crypto from 'node:crypto';
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
 
 const contentText = value => {
@@ -14,10 +15,14 @@ const inputOf = value => value && typeof value === 'object' ? value : value == n
 
 export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null } = {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
-  let current = null, expectedEcho = null, echo = '', live = false, sepText = false, sepThink = false;
+  let current = null, expectedEcho = null, echo = '', live = false, turn = null, sepText = false, sepThink = false;
+  // 再生（session/load）の行の uuid は位置から作るので、ネイティブが履歴を書き換えると別の発言に当たる。positional の印を付け、
+  // 記録には順序と中身で当てさせる（core/conversations.mjs の mergeMessages）。ライブの行はターンごとの乱数を uuid に入れる
   function row(role) {
     if (current?.role !== role) {
-      current = { uuid: `${sessionId}:${role}:${messages.length}`, role, text: '', at: null };
+      current = live
+        ? { uuid: `${sessionId}:${turn}:${role}:${messages.length}`, role, text: '', at: null }
+        : { uuid: `${sessionId}:${role}:${messages.length}`, role, text: '', at: null, positional: true };
       messages.push(current);
     }
     return current;
@@ -48,9 +53,12 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
         echo += text;
         if (expectedEcho.startsWith(echo)) { if (echo === expectedEcho) expectedEcho = null; return; }
         // Preserve unexpected delivered input rather than silently losing it.
-        current.text = echo; expectedEcho = null; return;
+        current.text = current.sent = echo; expectedEcho = null; return;
       }
-      row('user').text += text;
+      // 返答の前に届いた途中送信は同じ行に続く。再生でも同じ行に続くので、送った全文にも足す（記録の照合のハッシュ）
+      const message = row('user');
+      message.text += text;
+      if (typeof message.sent === 'string') message.sent += text;
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;
       const message = row('assistant'), text = contentText(update.content);
@@ -94,9 +102,14 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
   return {
     accept,
     getToolCall: id => toolStates.has(id) ? structuredClone(toolStates.get(id)) : null,
-    beginTurn(prompt) {
-      current = null; row('user').text = prompt;
-      expectedEcho = prompt; echo = ''; live = true;
+    /**
+     * sent は送る全文（Pleiad の指示を前に足したもの）。エコーの照合にだけ使う。shown は人が書いた分（先頭のメモと `!` の結果を含む）で、
+     * 行の text にする。sent は行に持たせ、記録は全文のハッシュだけを残して、再生の全文を原文に戻すのに使う
+     */
+    beginTurn(sent, shown = sent) {
+      current = null; live = true; turn = crypto.randomUUID();
+      Object.assign(row('user'), { text: shown, sent });
+      expectedEcho = sent; echo = '';
     },
     finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid }); live = false; },
     messages: () => structuredClone(messages),
