@@ -78,6 +78,8 @@ export async function checkConformance(t, c, { id, cwd, prompt }) {
   t.ok(label('新しい会話の 1 ターンが ok で終わり、会話の id が決まる'), first.outcome === 'ok' && typeof sid === 'string' && sid.length > 0, JSON.stringify({ outcome: first.outcome, sid }));
   t.ok(label('turnResult はちょうど 1 つ'), results.length === 1, String(results.length));
   t.ok(label('本文が流れる（text.delta）'), first.events.some((e) => e.type === 'text.delta' && e.sessionId === sid));
+  const firstDelta = first.events.findIndex((e) => e.type === 'text.delta' && e.sessionId === sid);
+  t.ok(label('送信から最初の応答まで稼働表示が出る'), firstDelta > -1 && first.events.slice(0, firstDelta).some((e) => e.type === 'activity'));
 
   const load = () => c.cmd('loadSession', { sessionId: sid });
   const a = await load();
@@ -93,6 +95,8 @@ export async function checkConformance(t, c, { id, cwd, prompt }) {
   const second = await c.runTurn({ sessionId: sid, prompt: prompt('contract beta') }, { ms: 120_000 });
   const b = await load();
   t.ok(label('続きのターンも ok'), second.outcome === 'ok' && b.messages.filter((m) => m.role === 'user').length === users.length + 1, JSON.stringify(b.messages.map((m) => [m.role, m.text])));
+  const secondDelta = second.events.findIndex((e) => e.type === 'text.delta' && e.sessionId === sid);
+  t.ok(label('続きのターンでも送信から最初の応答まで稼働表示が出る'), secondDelta > -1 && second.events.slice(0, secondDelta).some((e) => e.type === 'activity'));
   t.ok(label('続きのターンで前の発言の uuid が変わらない'), a.messages.every((m, i) => b.messages[i]?.uuid === m.uuid), JSON.stringify([a.messages.map((m) => m.uuid), b.messages.map((m) => m.uuid)]));
 
   await c.cmd('setTitle', { sessionId: sid, title: 'contract title' });

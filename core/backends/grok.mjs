@@ -197,6 +197,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
           if (args.contextRuntime) throw new Error(t('context.runtime.refused', { backend: 'Grok Build' }));
           check();
+          // CLI の起動・履歴の再生・モードの適用は送る前に済ませるが、数秒黙る。
+          // その間も画面が止まって見えないよう、準備中から稼働表示に出す
+          emit({ type: 'activity', state: 'preparing' });
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
           const model = typeof args.model === 'string' && args.model ? args.model : '';
           const effort = typeof args.effort === 'string' && args.effort ? args.effort : '';
@@ -247,6 +250,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           if (control) control.handle = { sessionId };
           check();
           prompting = true;
+          // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
+          emit({ type: 'activity', state: 'thinking' });
           const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
           sent = true; onPromptDelivered?.();
           const result = await Promise.race([response, stopped]);
