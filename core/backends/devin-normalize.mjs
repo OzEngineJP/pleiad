@@ -57,7 +57,8 @@ export function createDevinMapper(sessionId, emit = () => {}) {
         const message = row('assistant');
         call = { id, name: String(state.title ?? state.name ?? state.kind ?? 'tool'), input: inputOf(state.rawInput), result: null };
         (message.toolCalls ??= []).push(call); tools.set(id, call);
-        send({ type: 'tool.start', id, name: call.name, input: call.input });
+        // ACP の kind: 'execute' はシェルのコマンド（名前は自由な題なので、名前では見分けられない。core/shell-tools.mjs）
+        send({ type: 'tool.start', id, name: call.name, input: call.input, ...(state.kind === 'execute' ? { shell: true } : {}) });
       }
       call.name = String(state.title ?? state.name ?? state.kind ?? 'tool');
       call.input = inputOf(state.rawInput);

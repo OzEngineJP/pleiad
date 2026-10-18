@@ -259,7 +259,7 @@ export const EVENTS = new Set([
   "text.end",        // { uuid? } 本文の追記が終わった。uuid は確定した発言の id（分岐の起点に使う）
   "thinking.start",  // 考え始めた
   "thinking.delta",  // { text?, estimatedTokens? }
-  "tool.start",      // { id, name, input, at, turnId?, startedAt?, processId? }。at はサーバーが受けた時刻（ms。makeEmit が付ける）、startedAt はバックエンドが申告した開始（Codex）
+  "tool.start",      // { id, name, input, at, turnId?, startedAt?, processId?, shell? }。shell: true は名前で見分けられないシェルのコマンド（core/shell-tools.mjs）。at はサーバーが受けた時刻（ms。makeEmit が付ける）、startedAt はバックエンドが申告した開始（Codex）
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|idle, label? }
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",

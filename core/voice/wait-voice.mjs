@@ -17,6 +17,8 @@ export const NARRATE_MAX = 4;
 const MS_PER_CHAR = { ja: 130, en: 70 };   // 読み上げの長さの見積もり（文字数 × これ）。鳴り終わりの目安で、実際の長さは分からないので控えめに数える
 const MAX_SPEECH_MS = 10_000;
 
+import { SHELL_TOOL_NAMES } from '../shell-tools.mjs';
+
 export const TOOL_KINDS = Object.freeze(['read', 'search', 'command', 'web', 'delegate', 'edit', 'computer', 'other']);
 export const ACK_COUNT = 4;
 
@@ -24,7 +26,7 @@ export const ACK_COUNT = 4;
 const KIND_BY_NAME = new Map([
   ...['read', 'notebookread', 'read_file', 'list_dir', 'imageview'].map((n) => [n, 'read']),
   ...['glob', 'grep', 'grep_search', 'find_by_name'].map((n) => [n, 'search']),
-  ...['bash', 'powershell', 'commandexecution', 'run_command', 'fake_shell'].map((n) => [n, 'command']),
+  ...SHELL_TOOL_NAMES.map((n) => [n.toLowerCase(), 'command']),
   ...['webfetch', 'websearch', 'read_url', 'search_web'].map((n) => [n, 'web']),
   ...['task', 'agent', 'subagentactivity', 'collabagenttoolcall'].map((n) => [n, 'delegate']),
   ...['edit', 'write', 'multiedit', 'notebookedit', 'filechange', 'write_file', 'edit_file', 'replace'].map((n) => [n, 'edit']),

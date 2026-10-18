@@ -19,6 +19,9 @@ import path from 'node:path';
  *             ネイティブの Hooks を持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）と、渡さないエージェントは null
  * contextSources  エージェントが自分で読む指示・Skills・MCP の読み込み元（core/context-settings.mjs の SOURCES）。
  *             エージェント任せの会話の「指示の量」の見積もりと、エージェントの設定に登録された MCP の一覧に使う。null は読み方を知らない
+ * shellTools  シェルのコマンドを走らせるネイティブのツールの名前（tool.start の name。大文字と小文字を区別する）。長いコマンドの知らせ・
+ *             声の待ちの案内が、この一覧で見分ける（core/shell-tools.mjs）。バックエンドの toolHints の shape: 'shell' と同じ名前を書く
+ *             （tests/unit/backend-contract.mjs が突き合わせる）。名前で見分けられないエージェントは []（tool.start に shell: true を付ける）
  */
 export const AGENTS = {
   claude: {
@@ -29,6 +32,7 @@ export const AGENTS = {
     idleCompaction: { enabled: true, delayMinutes: 50 },
     contextSources: ['claude'],
     hooksAs: null,
+    shellTools: ['Bash', 'PowerShell'],
   },
   codex: {
     module: './codex.mjs',
@@ -38,6 +42,7 @@ export const AGENTS = {
     idleCompaction: { enabled: false, delayMinutes: 25 },
     contextSources: ['codex'],
     hooksAs: null,
+    shellTools: ['commandExecution'],
   },
   antigravity: {
     module: './antigravity.mjs',
@@ -52,6 +57,7 @@ export const AGENTS = {
     idleCompaction: null,
     contextSources: null,
     hooksAs: null,
+    shellTools: ['run_command'],
   },
   opencode: {
     module: './opencode.mjs',
@@ -68,6 +74,7 @@ export const AGENTS = {
     contextSources: ['common', 'opencode'],
     // OpenCode のフックは JS のプラグインで、コマンドの Hooks の形が無い。Pleiad のプラグインと中継の口で、Claude Code の Hooks と同じ形で渡す（opencode-hooks.mjs）
     hooksAs: 'claude',
+    shellTools: ['bash'],
   },
   devin: {
     module: './devin.mjs',
@@ -81,6 +88,8 @@ export const AGENTS = {
     idleCompaction: null,
     contextSources: null,
     hooksAs: null,
+    // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
+    shellTools: [],
   },
   fake: {
     module: './fake.mjs',
@@ -90,10 +99,11 @@ export const AGENTS = {
     idleCompaction: 'claude',
     contextSources: null,
     hooksAs: null,
+    shellTools: ['fake_shell'],
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources', 'hooksAs']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources', 'hooksAs', 'shellTools']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));

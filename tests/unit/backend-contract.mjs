@@ -31,6 +31,10 @@ export default async function (t) {
     const key = idleCompactionKey(id);
     t.ok(`${id}: 自動の圧縮の行は、compact を持つときだけ（行の無い compact は黙って自動の圧縮が動かない）`,
       Boolean(key) === Boolean(natives[id]?.capabilities?.compact), JSON.stringify({ key, compact: natives[id]?.capabilities?.compact }));
+    // シェルのツールの名前（core/shell-tools.mjs の正本）は、画面の見た目の手がかり（toolHints の shape: 'shell'）と同じ
+    const hinted = Object.entries(natives[id]?.toolHints ?? {}).filter(([, h]) => h?.shape === 'shell').map(([n]) => n).sort();
+    t.ok(`${id}: 記述の shellTools が、toolHints の shape: 'shell' と同じ名前`, Array.isArray(a.shellTools) && JSON.stringify([...a.shellTools].sort()) === JSON.stringify(hinted),
+      JSON.stringify({ shellTools: a.shellTools, hinted }));
   }
   t.ok('既定で有効にするのは fake を除く全部', DEFAULT_AGENT_IDS.join() === Object.keys(AGENTS).filter((id) => id !== 'fake').join());
   t.ok('身代わりの一覧に、記述に無いエージェントが無い', Object.keys(RIGS).every((id) => Object.hasOwn(AGENTS, id)));

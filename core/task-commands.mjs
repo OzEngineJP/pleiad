@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { redactForPeer } from './redact.mjs';
+import { isShellToolCall } from './shell-tools.mjs';
 
-const TOOLS = new Set(['run_command', 'Bash', 'PowerShell', 'commandExecution']);
 const DONE = new Set(['completed', 'failed', 'stopped', 'killed', 'declined']);
 
 // 明らかに「待つためのコマンド」（until / while のループ・sleep・gh run watch・--watch など）。子が止まっているのではなく、
@@ -52,7 +52,7 @@ export function commandView(c, at) {
 export function observeCommand(row, event, at, waiting) {
   pauseCommands(row, at, waiting);
   const commands = row.activeCommands ??= [];
-  if (event.type === 'tool.start' && row.status === 'running' && TOOLS.has(event.name) && event.id && !event.input?.rejected) {
+  if (event.type === 'tool.start' && row.status === 'running' && isShellToolCall(event) && event.id && !event.input?.rejected) {
     if (commands.some(c => c.toolCallId === event.id)) return;
     const input = event.input ?? {};
     commands.push({ taskId: row.taskId, sessionId: row.sessionId, backend: row.backend,

@@ -213,6 +213,18 @@ export default async function(t) {
     t.ok('別のコマンドなら知らせる', repeat.notices[1].command.toolCallId === 'third');
   } finally { await repeat.close(); }
 
+  // シェルのツールの名前は、エージェントの記述（shellTools）から引く。名前で見分けられないもの（ACP）は shell: true
+  const names = await fixture({ silenceMinutes: 0 });
+  try {
+    names.start('oc', 'bash', { command: 'npm run dev' });
+    names.start('acp', 'Run the dev server', { command: 'npm run dev -- --port 7499' }, { shell: true });
+    names.start('bashlike', 'Bash2', { command: 'npm run lint' });
+    await names.tick(5); await until(() => names.notices.length === 2);
+    t.ok('OpenCode の bash と、shell: true の呼び出しも知らせる（記述に無い名前は数えない）',
+      names.notices.map((n) => n.command.toolCallId).sort().join() === 'acp,oc' && names.view().activeCommands.length === 2,
+      JSON.stringify(names.notices.map((n) => n.command.toolCallId)));
+  } finally { await names.close(); }
+
   for (const locale of ['en', 'ja']) for (const supported of [true, false]) {
     const args = { list: normalizePlyInstructions(), locale, supported, routing: true, canDelegate: true };
     const child = withAdded('', turnInstructions({ ...args, child: true }));
