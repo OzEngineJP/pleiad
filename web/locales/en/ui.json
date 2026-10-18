@@ -2910,7 +2910,8 @@
     "agent": "Agent",
     "account": {
       "title": "Account",
-      "compatOff": "Accounts aren't used with compatible endpoints"
+      "compatOff": "Accounts aren't used with compatible endpoints",
+      "week": "Week {{percent}}"
     },
     "endpoint": {
       "title": "Endpoint",

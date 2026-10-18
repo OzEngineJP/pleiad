@@ -283,7 +283,8 @@ function row({ on, main, sub, right, tag, mono, danger, onPick, title, key, disa
   if (sub) mid.append(el("span", "sub", sub));
   b.append(mid);
   if (tag) b.append(el("span", "tag", tag));
-  if (right) b.append(el("span", "r", right));
+  // right は字か、組み立て済みの部品（アカウントの行の週の使用量。weekRight）
+  if (right) b.append(typeof right === "object" ? right : el("span", "r", right));
   b.onclick = onPick;
   return b;
 }
@@ -394,6 +395,15 @@ export function destinationUsage(result, { account = '', open = null } = {}) {
   }
   if (open) { const button = el('button', 'clink', t('composer.destination.openUsage')); button.type = 'button'; button.onclick = open; line.append(button); }
   return line;
+}
+
+/** weekUsage の値を行の右の部品にする。小さなバー＋「週 N%」。字で率を出すので、色だけに頼らない */
+function weekRight({ used, high }) {
+  const r = el('span', `r week${high ? ' hot' : ''}`);
+  const bar = el('span', 'usage-mini'); bar.setAttribute('aria-hidden', 'true');
+  const fill = el('i'); fill.style.width = `${Math.min(100, Math.max(0, used))}%`; bar.append(fill);
+  r.append(bar, t('composer.account.week', { percent: percentText(used) }));
+  return r;
 }
 
 /** Chats とスレッドで同じ「宛先とモデル」のチップを描く。 */
@@ -532,7 +542,7 @@ export function renderModel({ pop, target: d, on, hide }) {
     const off = Boolean(ep?.row);
     if (off) parts.push(el("p", "cnote", t("composer.account.compatOff")));
     parts.push(listbox(t("composer.account.title"), d.accounts.map((a) => row({
-      on: !off && a.value === d.account, main: a.label, right: off ? "" : a.hint, tag: !off && a.value === "" ? DEFAULT_TAG() : "", key: `account:${a.value}`, disabled: off,
+      on: !off && a.value === d.account, main: a.label, right: off ? "" : a.usage ? weekRight(a.usage) : a.hint, tag: !off && a.value === "" ? DEFAULT_TAG() : "", key: `account:${a.value}`, disabled: off,
       onPick: () => { if (!off && a.value !== d.account) on.account?.(a.value); },
     }))));
   }

@@ -3731,7 +3731,8 @@ async function reserveTurnSettings(args) {
       if (!manual.model && model === undefined) model = scoped?.model ?? global.model ?? '';
       if (!manual.effort && args.effort === undefined) args = { ...args, effort: scoped?.effort ?? global.effort ?? '' };
       if (!manual.mode && mode === undefined) mode = scoped?.mode ?? global.mode;
-      if (!manual.account && account === undefined) account = scoped?.account ?? await defaultAccount(bid);
+      // bot の会話のアカウントは bot の定義（bots.setAccount。ADR 0224）。スレッドで作業場所を変えても Chats の既定に替えない
+      if (!manual.account && account === undefined && !current.bot) account = scoped?.account ?? await defaultAccount(bid);
       if (!manual.endpoint && endpoint === undefined) endpoint = scoped?.endpoint ?? await compatEndpoints.defaultFor(bid);
       pendingWorktree = Boolean(!manual.worktree && remembered?.worktree && !worktreeHost.worktrees.lookup(requestedCwd));
     }
@@ -6325,6 +6326,10 @@ botHost = createBotHost({
   },
   // チャンネルの予算（ADR 0119）が読む使用枠。設定の「使用量」・ply_usage と同じ quotaCache を通す
   readQuota: id => { const b = getBackend(id); return b ? providerQuota(b) : null; },
+  // bot のアカウント（bots.setAccount。ADR 0224）の検査: そのエージェントに登録があり、使えるものだけ選ばせる（入力欄と同じ一覧）
+  accountList: async (backendId) => { const b = getBackend(backendId); return b ? accountRows(b) : []; },
+  // bot のアカウントを、送った会話（Codex・OpenCode）では次のターンの予約にする。人の既定には覚えない
+  reserveAccount: (sessionId, account) => reserveTurnSettings({ sessionId, account, keepPrefs: true }),
 });
 // ターンの外で起きたことをバックエンドから受け取る口（docs/multi-backend.md §2.7）。
 // codex（バックグラウンド端末）が使う

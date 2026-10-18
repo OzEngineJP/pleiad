@@ -35,10 +35,11 @@ export const HUMAN_ONLY = Object.freeze({
   mode: { commands: ['setMode', 'resolvePermission'], settings: ['mode'], ops: ['bots.setMode'] },
   // 秘密の値を入れる・消す・認可する・割り当てる（API キー: 入れる・差し替える・消す・通話と判定器に使うキーを選ぶ・移行の案内の答え。互換の接続先のキー・MCP の OAuth。古い口の委譲の判定器・通話のキー）。秘密情報と変数（ADR 0217）: 人の項目の秘密の値・パスワードを入れる・差し替える・.env の取り込み・入力のカードへの答え
   secrets: { commands: ['setApiKey', 'deleteApiKey', 'setApiKeyUse', 'resolveApiKeyGuide', 'setDelegationRoutingKey', 'deleteDelegationRoutingKey', 'setVoiceKey', 'deleteVoiceKey', 'compatEndpointCheck', 'compatEndpointSave', 'mcpAuthStart', 'mcpAuthLogout'], settings: [], ops: ['routines.rotateSecret', 'secrets.save', 'secrets.import', 'secrets.answerRequest'] },
-  // アカウント（契約・課金の主体）。一覧も含む。契約の主体として、提供元の規約に同意する操作（Claude Agent SDK の取得）もここ
+  // アカウント（契約・課金の主体）。一覧も含む。契約の主体として、提供元の規約に同意する操作（Claude Agent SDK の取得）もここ。
+  // bot が動くアカウント（bots.setAccount。ADR 0224）も同じ: どの契約の枠で動くかを AI が自分で選び直せない
   accounts: { commands: ['saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'authLogin', 'authLogout', 'authSubmit', 'authCancel', 'claudeAccounts',
     // Claude Agent SDK の取得。Anthropic の規約への同意を含むので、人が案内を読んで押す（ADR 0208）
-    'claudeSdkInstall'], settings: ['claudeAccount', 'account'], ops: ['accounts.list', 'accounts.create', 'accounts.rename', 'accounts.remove', 'accounts.login', 'accounts.cancel'] },
+    'claudeSdkInstall'], settings: ['claudeAccount', 'account'], ops: ['accounts.list', 'accounts.create', 'accounts.rename', 'accounts.remove', 'accounts.login', 'accounts.cancel', 'bots.setAccount'] },
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
   endpointDefault: { commands: ['compatEndpointDefault'], settings: [] },
   // リモートのペアリングと外に開く設定（端末の一覧を含む）

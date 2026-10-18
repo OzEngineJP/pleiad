@@ -94,7 +94,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - UI の変更では必要に応じてブラウザーで表示・操作を確認する。`agent-browser` を使い（会話に専用の Chrome が渡されていればそれ）、無ければ `playwright-cli`。ユーザーによるツール・ブラウザー指定があればそれに従う。
   - LLM を呼ばずに画面を見るなら、fake バックエンドを別ポート・別のデータ置き場で立てる（実データを汚さないため）: `AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<一時ディレクトリ> AGENT_HOST_PORT=7499 node core/server.mjs`。トークン付き URL は起動ログに出る。tests/browser/*.cjs は日本語の文言で要素を引くので、OS が日本語でなければ `AGENT_HOST_LOCALE=ja` も付ける。
   - 指定ポートが埋まっていると空きポートへ移る。止めるときは起動したプロセスの PID か、起動ログの実際のポートで引いた PID を使う。**指定したポート番号で PID を引いて止めない**（そのポートを持っていた別の作業のサーバーを殺す）。
-  - 実データで測るときは `node scripts/copy-data-dir.mjs <temporary/ の下の写し先>` で `~/.agent-host` を写し（手でコピーしない。**`remote/` と `*-secrets.json` は写さない**。DB は動いている間にファイルをコピーせず、読み取り専用の接続で `VACUUM INTO` する。写しの `agent_tasks` は既定で空になる）、`AGENT_HOST_DATA=<写し>` で立てる。理由: リモートを有効にした置き場の写しは同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す。委譲の続きも走らせないため。写しには会話の中身も入るので、測り終えたら消す。委譲のタスクが載る送信量（`running` など）を測るときだけは `--keep-tasks` で残す（`docs/dev-verification.md`「重さと動きを測る」）。
+  - 実データで測るときは `node scripts/copy-data-dir.mjs <temporary/ の下の写し先>` で `~/.agent-host` を写し（手でコピーしない。**`remote/`・名前に `secret` を含むもの（`secret-values.json` など）・worktree の台帳 `worktrees.json` は写さない**。台帳を写すと、写しのサーバーが起動の後の整理で本物のリポジトリの worktree を片付けに行く。DB は動いている間にファイルをコピーせず、読み取り専用の接続で `VACUUM INTO` する。写しの `agent_tasks` は既定で空になる）、`AGENT_HOST_DATA=<写し>` で立てる。理由: リモートを有効にした置き場の写しは同じホストの鍵で中継へつなぎ、本物のホストの接続を追い出す。委譲の続きも走らせないため。写しには会話の中身も入るので、測り終えたら消す。委譲のタスクが載る送信量（`running` など）を測るときだけは `--keep-tasks` で残す（`docs/dev-verification.md`「重さと動きを測る」）。
   - fake の台本・種の置き方・測り方・デスクトップ版のハーネス、`playwright-cli` の落とし穴は `docs/dev-verification.md`。テストやブラウザーの確認でつまずいたら先に見る。
 - コミット前に差分を確認し、対象ファイルを明示してステージする。検証が失敗した場合は原因を調べ、未解決のまま完了扱いにしない。
 

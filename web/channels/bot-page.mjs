@@ -5,11 +5,14 @@
 //   名前・アイコン（絵文字ピッカー）・人格（自由文）… 離れたときに bots.update
 //   エージェント・モデル・エフォート … 入力欄と同じ 1 つの選択（composer-controls.mjs の renderModel）。bots.update
 //   承認モード … 入力欄と同じ選択（renderMode）。bots.setMode（人だけ。ADR 0082）
+//   アカウント … モデルの面の最後の節（入力欄と同じ行・週の使用量つき）。bots.setAccount（人だけ。ADR 0224）
+//     そのエージェントがアカウントを使え（capabilities.accounts。Claude はトークン・Codex などは資格情報。ADR 0222）、
+//     登録があるか bot が選んでいるときだけ出す
 //   触れてよいフォルダー … 行（パス・読み書き/読み取り）と［フォルダーを足す］。bots.update の folders（置き換え）
 //     実際に書き込みの範囲を限れないモード（範囲 full: Claude の YOLO・Codex の YOLO・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
 //   他の会話に送る … スイッチ（既定 ON）。bots.update の sendToOthers
 // 右に思考の流れ（brain-panel.mjs。心拍の入り切り・欲求・気がかり。ADR 0126）、記憶の一覧（memory-list.mjs）と今週の使用量。操作はすべて host.invoke(op, args)。出来事は botsChanged・memoryChanged・channelsChanged。
-// 認証・アカウント・1 日の上限・長い注記は出さない。
+// 認証・1 日の上限・長い注記は出さない（アカウントは、どれで動くかを選ぶ節だけ。登録・トークン・資格情報は設定の各エージェントのアカウント）。
 import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { isComposingKey } from '../keyboard.mjs';
@@ -17,6 +20,7 @@ import { runMark } from '../arc.mjs';
 import { backendLogo } from '../side.mjs';
 import { openEmojiPicker, closeEmojiPicker } from '../emoji-picker.mjs';
 import { panel, renderModel, renderMode, folderBrowser, isDanger, modelChipLabel, resolvedModel } from '../composer-controls.mjs';
+import { weekUsage } from '../header-usage.mjs';
 import { splitChipLabel } from '../composer-layout.mjs';
 import { createMemoryList } from './memory-list.mjs';
 import { botIcon } from './bot-icon.mjs';
@@ -72,6 +76,9 @@ export function createBotPage(host) {
     channels: new Map(),  // id → Channel
     sessions: () => new Map((host.state?.sessions ?? []).map((s) => [s.id, s])),
     gone: false,
+    accounts: new Map(),  // backend → 登録したアカウント [{ id, name, ready }]（web/client.mjs の accountList と同じ形）。無い = まだ読んでいない
+    quota: new Map(),     // backend → 使用量（host.quota の結果。アカウントの行の週の使用量）
+    quotaAsked: new Set(),// 面を開いている間に使用量を頼んだ backend（閉じたら忘れ、次に開いたとき読み直す）
     seq: 0,
     chain: Promise.resolve(),   // 保存を 1 本ずつ流す（続けて押しても順番を保つ）
   };
@@ -117,6 +124,10 @@ export function createBotPage(host) {
   const err = el('p', 'bp-err');
   err.setAttribute('role', 'alert');
   err.hidden = true;
+  // 選んだアカウントが消えた・トークンが無い（入力欄の上の一文と同じ文。保存の失敗とは別に、直すまで出したままにする）
+  const accountWarn = el('p', 'bp-err bp-acct-warn');
+  accountWarn.setAttribute('role', 'status');
+  accountWarn.hidden = true;
   const notice = el('p', 'bp-gone');
   notice.hidden = true;
 
@@ -157,7 +168,8 @@ export function createBotPage(host) {
   const chips = el('div', 'bp-kvr bp-chips');
   chips.append(modelChip, modeChip);
   const lockNote = el('span', 'bp-locknote');
-  lockNote.append(glyph(LOCK), t('channels:bot.modeHumanOnly'));
+  const lockText = document.createTextNode(t('channels:bot.modeHumanOnly'));
+  lockNote.append(glyph(LOCK), lockText);
   const modeFact = el('p', 'bp-nt bp-fact');
   modeFact.hidden = true;
 
@@ -216,7 +228,7 @@ export function createBotPage(host) {
   right.append(brainBlk, memBlk, usage);
   const grid = el('div', 'bp-grid');
   grid.append(left, right);
-  root.append(head, err, notice, grid, modelPop, modePop, addPop);
+  root.append(head, err, accountWarn, notice, grid, modelPop, modePop, addPop);
   body.append(root);
 
   // ---------------------------------------------------------------- 浮く面（入力欄と同じ。チップは画面の途中にあるので、広い方（なるべく下）に置き直す）
@@ -236,7 +248,8 @@ export function createBotPage(host) {
     };
     return p;
   };
-  const modelPanel = place(panel(modelChip, modelPop, { width: 360, render: () => renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }) }));
+  const modelPanel = place(panel(modelChip, modelPop, { width: 360, onHide: () => S.quotaAsked.clear(),
+    render: () => { askQuota(); renderModel({ pop: modelPop, target: modelTarget(), on: modelOn, hide: (f) => modelPanel.hide(f) }); } }));
   const modePanel = place(panel(modeChip, modePop, { width: 360, align: 'right', render: paintModePop }));
   const addPanel = place(panel(addBtn, addPop, { width: 360, render: renderAddPop, when: () => !unlimited(), onHide: () => { addPop.replaceChildren(); } }));
   const closePanels = () => { modelPanel.hide(false); modePanel.hide(false); addPanel.hide(false); closeEmojiPicker(); };
@@ -271,6 +284,81 @@ export function createBotPage(host) {
   const backends = () => host.state?.backends ?? [];
   const backendLabel = (id) => backends().find((b) => b.id === id)?.label ?? id;
 
+  // ---------------------------------------------------------------- bot のアカウント（ADR 0224）
+  /** アカウントの種類（'token' = Claude のトークン・'agent' = Codex などの資格情報・false = 持てない。ADR 0222） */
+  const accountKind = (backend) => backends().find((b) => b.id === backend)?.capabilities?.accounts || false;
+  const takesAccount = (backend) => Boolean(accountKind(backend));
+  /** その bot のエージェントの一覧（読む前は null） */
+  const accountsOf = (backend) => S.accounts.get(backend) ?? null;
+  /** 登録したアカウントを読み直す（claudeAccountsChanged・agentAccountsChanged）。読めなければ、前の一覧のまま */
+  let accountsLoading = null;
+  async function loadAccounts(backend = vm()?.backend) {
+    const kind = accountKind(backend);
+    if (!kind) return;
+    try {
+      const list = kind === 'token'
+        ? ((await host.cmd('claudeAccounts'))?.accounts ?? []).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasToken) }))
+        : ((await host.invoke('accounts.list', { backend }))?.accounts ?? []).map((a) => ({ id: a.id, name: a.name, ready: Boolean(a.hasCredential) }));
+      S.accounts.set(backend, list);
+    } catch { if (!S.accounts.has(backend)) S.accounts.set(backend, []); }
+    if (vm()) paintRun();
+    // 面を開いた後に届いたら、節を足して描き直す（使用量が届いたときと同じ）
+    if (modelPanel.open && vm()) { modelPanel.render(); modelPanel.place(); }
+  }
+  /** アカウントを使えるエージェントの bot を描くとき、まだ読んでいなければ 1 度だけ読む */
+  function ensureAccounts() {
+    const backend = vm()?.backend;
+    if (S.accounts.has(backend) || accountsLoading || !takesAccount(backend)) return;
+    accountsLoading = loadAccounts(backend).finally(() => { accountsLoading = null; });
+  }
+  /** モデルの面にアカウントの節を出すか。入力欄と同じ: 使えるエージェントで、登録があるか、この bot が選んでいる（web/client.mjs の syncAccount） */
+  function accountShown() {
+    const cur = vm();
+    return Boolean(cur) && !cur.plain && takesAccount(cur.backend) && ((accountsOf(cur.backend)?.length ?? 0) > 0 || Boolean(cur.account));
+  }
+  /** チップと名前の下に出すアカウントの名前。ログイン中（''）とアカウントを使わないエージェントは出さない。読む前も出さない */
+  function accountName() {
+    const id = vm()?.account ?? '';
+    const list = id ? accountsOf(vm().backend) : null;
+    if (!list || !takesAccount(vm().backend)) return '';
+    return list.find((a) => a.id === id)?.name ?? t('chat.account.deleted');
+  }
+  /** 入力欄と同じ候補（web/client.mjs の accountOptions）。使えるアカウントの行には週の使用量 */
+  function accountOptions() {
+    const cur = vm();
+    const value = cur.account ?? '';
+    const list = accountsOf(cur.backend) ?? [];
+    const quota = S.quota.get(cur.backend)?.quota;
+    return [
+      { value: '', label: t('chat.account.signedIn'), hint: t('chat.account.signedInAccount'), usage: weekUsage(quota, '') },
+      ...list.map((a) => ({ value: a.id, label: a.name, hint: a.ready ? '' : t('chat.account.noToken'), usage: a.ready ? weekUsage(quota, a.id) : null })),
+      ...(value && !list.some((a) => a.id === value) ? [{ value, label: t('chat.account.deleted'), hint: t('chat.account.chooseAgain') }] : []),
+    ];
+  }
+  /** モデルの面を開いている間に 1 度だけ、その bot のエージェントの使用量を読む（読めたら面を描き直す） */
+  function askQuota() {
+    const backend = vm()?.backend;
+    if (!backend || !accountShown() || S.quotaAsked.has(backend) || typeof host.quota !== 'function') return;
+    S.quotaAsked.add(backend);
+    Promise.resolve(host.quota(backend)).then((result) => {
+      S.quota.set(backend, result);
+      if (modelPanel.open && vm()?.backend === backend) { modelPanel.render(); modelPanel.place(); }
+    }).catch(() => {});
+  }
+  /** 選んだアカウントが消えた・使えない（トークン・資格情報が無い）ときの一文（入力欄と同じ文） */
+  function paintAccountWarn() {
+    const cur = vm();
+    const id = cur?.account ?? '';
+    const list = cur ? accountsOf(cur.backend) : null;
+    let text = '';
+    if (accountShown() && id && list) {
+      const chosen = list.find((a) => a.id === id);
+      text = !chosen ? t('chat.account.deletedWarning') : !chosen.ready ? t('chat.account.noTokenWarning', { name: chosen.name }) : '';
+    }
+    accountWarn.textContent = text;
+    show(accountWarn, Boolean(text) && !S.gone);
+  }
+
   // ---------------------------------------------------------------- 描画
   function paintHead() {
     const cur = vm();
@@ -283,6 +371,9 @@ export function createBotPage(host) {
       parts.push(backendLogo(cur.backend, backendLabel(cur.backend)));
       const model = S.v ? resolvedModel(S.v.models, cur.model ?? '').label : '';
       parts.push(document.createTextNode(`${backendLabel(cur.backend)}${model ? ` · ${model}` : ''}`));
+      // ログイン中でないアカウントで動くなら、その名前（「Claude Code · Opus 5.5 · OZ · 待機」）
+      const account = accountName();
+      if (account) parts.push(document.createTextNode(' · '), el('span', 'acct-sub', account));
     }
     if (!S.draft && S.bot) {
       parts.push(el('span', 'dot', '·'));
@@ -306,10 +397,16 @@ export function createBotPage(host) {
     const v = S.v;
     const label = v ? modelChipLabel(v.models, cur.model ?? '', v.efforts, cur.effort ?? '') : cur.model || '…';
     const { head: h, tail } = splitChipLabel(label);
+    // ログイン中でないアカウントは、チップの末尾に名前（「Opus 5.5 · high · OZ」）。読み上げと title にも入れる
+    const account = accountName();
     modelName.classList.add('split');
-    modelName.replaceChildren(el('span', 'mn', h), ...(tail ? [el('span', 'ef', tail)] : []));
-    modelChip.title = t('composer.model.chipTitle', { label });
-    modelChip.setAttribute('aria-label', t('composer.model.chipAria', { label }));
+    modelName.replaceChildren(el('span', 'mn', h), ...(tail ? [el('span', 'ef', tail)] : []), ...(account ? [el('span', 'ef acct-chip', ` · ${account}`)] : []));
+    const full = account ? `${label} · ${account}` : label;
+    modelChip.title = t('composer.model.chipTitle', { label: full });
+    modelChip.setAttribute('aria-label', t('composer.model.chipAria', { label: full }));
+    // アカウントも人だけが変えられる（bots.setAccount）。節を出しているときだけ注記に足す
+    lockText.data = accountShown() ? t('channels:bot.modeAccountHumanOnly') : t('channels:bot.modeHumanOnly');
+    paintAccountWarn();
     modelChip.dataset.value = cur.model ?? '';
     modelChip.dataset.backend = cur.backend ?? '';
     const m = v?.modes?.[cur.mode];
@@ -418,6 +515,7 @@ export function createBotPage(host) {
   }
 
   function paintRun() {
+    ensureAccounts();
     paintChips();
     paintHead();
     paintFolders();
@@ -503,12 +601,27 @@ export function createBotPage(host) {
     });
   }
 
-  /** 作る画面の下書きを変える（保存はしない）。エージェントを替えたら、モデル・エフォートは既定へ、承認モードは同じ id があれば保つ */
+  /** bot のアカウントを変える（人だけ。bots.setAccount）。'' はログイン中のアカウント。作る画面では下書きに持ち、作った後に付ける */
+  async function setAccount(account) {
+    if (S.draft) { S.draft.account = account; paintRun(); return; }
+    const botId = S.id;
+    setError('');
+    await queue(async () => {
+      try {
+        const bot = await host.invoke('bots.setAccount', { botId, account });
+        if (S.id === botId) applyBot(bot);
+      } catch (e) {
+        if (S.id === botId) { setError(t('channels:bot.saveFailed', { error: message(e) })); paintAll(); }
+      }
+    });
+  }
+
+  /** 作る画面の下書きを変える（保存はしない）。エージェントを替えたら、モデル・エフォート・アカウントは既定へ（アカウントの id はエージェントごと）、承認モードは同じ id があれば保つ */
   async function draftUpdate(patch) {
     const d = S.draft;
     Object.assign(d, patch);
     if ('backend' in patch) {
-      d.model = ''; d.effort = '';
+      d.model = ''; d.effort = ''; d.account = '';
       const v = await vocabOf(d.backend, '');
       if (S.draft !== d) return;
       d.mode = M.modeAfterBackend(v.modes, d.mode);
@@ -537,6 +650,7 @@ export function createBotPage(host) {
       const args = { name, icon: d.icon, backend: d.backend, ...(d.iconImage ? { iconImage: d.iconImage } : {}), ...(d.persona.trim() ? { persona: d.persona } : {}), ...(d.model ? { model: d.model } : {}), ...(d.effort ? { effort: d.effort } : {}) };
       let bot = await host.invoke('bots.create', args);
       if (d.mode && d.mode !== bot.mode) bot = await host.invoke('bots.setMode', { botId: bot.id, mode: d.mode });
+      if (d.account && takesAccount(d.backend)) bot = await host.invoke('bots.setAccount', { botId: bot.id, account: d.account });
       S.bots.set(bot.id, bot);
       navigate({ kind: 'bot', id: bot.id });
     } catch (e) {
@@ -550,6 +664,7 @@ export function createBotPage(host) {
     backend: (id) => update({ backend: id }),
     model: (id) => update({ model: id }),
     effort: (v) => update({ effort: v }),
+    account: (id) => setAccount(id),
   };
   function modelTarget() {
     const cur = vm();
@@ -558,6 +673,7 @@ export function createBotPage(host) {
       backends: backends(), backend: cur.backend, backendSwitchable: backends().length > 1,
       models: v.models, model: cur.model ?? '',
       efforts: v.efforts, effort: cur.effort ?? '', effortDisabled: Object.keys(v.efforts ?? {}).length <= 1,
+      ...(accountShown() ? { accounts: accountOptions(), account: cur.account ?? '' } : {}),
     };
   }
   function paintModePop() {
@@ -765,6 +881,14 @@ export function createBotPage(host) {
         case 'channelsChanged':
           if (!root.hidden) loadChannels();
           return;
+        case 'claudeAccountsChanged':
+        case 'agentAccountsChanged': {
+          // 登録・削除・トークンや資格情報の変更。そのエージェントの一覧を忘れ、見えていれば今の bot のエージェントの一覧を読み直す
+          const kind = ev.type === 'claudeAccountsChanged' ? 'token' : 'agent';
+          for (const backend of [...S.accounts.keys()]) if (accountKind(backend) === kind && (kind === 'token' || !ev.backend || ev.backend === backend)) S.accounts.delete(backend);
+          if (!root.hidden && accountKind(vm()?.backend) === kind) loadAccounts();
+          return;
+        }
         default:
       }
     },

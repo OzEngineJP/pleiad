@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { lang, setLanguage } from '../../web/i18n.mjs';
+import { currentLocale, setLocale } from '../../core/i18n.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -10,6 +12,20 @@ import { open } from '../lib/ws-client.mjs';
 export const name = 'usage';
 export const title = '使用枠・残量・欠損・重複通知・記録の永続化';
 export default async function(t) {
+  // These assertions require Japanese, regardless of the host or preceding suite.
+  const previousLanguage = lang;
+  const previousLocale = currentLocale();
+  try {
+    setLocale("ja");
+    await setLanguage("ja");
+    await japaneseCases(t);
+  } finally {
+    setLocale(previousLocale);
+    await setLanguage(previousLanguage);
+  }
+}
+
+async function japaneseCases(t) {
   assert.equal(usageWindow('5h', null, null, 300).remainingPercent, null);
   assert.equal(usageWindow('5h', 0, null, 300).remainingPercent, 100);
   assert.equal(usageWindow('5h', 110, null, 300).remainingPercent, 0);
