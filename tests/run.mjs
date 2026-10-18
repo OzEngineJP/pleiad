@@ -268,6 +268,10 @@ const SUITES = [
   './unit/server-delegation-notice.mjs',
   // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
   './unit/server-delegation-steer.mjs',
+  // ACP の子（Devin）への追加指示: 受理後の決着（渡った合図で delivered・既読不明は dropped で送り直さない）を指示の状態に反映する
+  './unit/server-delegation-steer-acp.mjs',
+  // acp-steer の単体: 受理後の決着の合図・早期拒否・drain・受理前の合図なし。normalize の分割 user チャンク連結と Grok の途中送信の user 行の置き場
+  './unit/acp-steer.mjs',
   './unit/background-model.mjs',
   // 委譲の行: running は終わっていない・通知が届いていない短い行だけ。会話の分は agentTasks の tree・taskIds で読み、running を重ねる
   './unit/task-cards.mjs',

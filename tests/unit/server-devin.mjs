@@ -89,10 +89,14 @@ export default async function (t) {
     await c.cmd('sendMessage', { sessionId: steerSession.sessionId, messageId: 'devin-steer-0001', prompt: 'steer-note' });
     const held = await holding;
     const heldText = held.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    const umEvents = c.since(sm);
     t.ok('途中送信が同じ回に折り込まれて答えられ、発言の行が出て turnResult は一度だけ',
       heldText.includes('fixture: steer-note')
-      && c.since(sm).some(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')
+      && umEvents.some(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')
       && held.events.filter(e => e.type === 'turnResult').length === 1 && held.outcome === 'ok', heldText);
+    t.ok('受理した発言は pending で出し、呼び出しの決着で userMessage.delivered が届く',
+      umEvents.find(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')?.pending === true
+      && umEvents.some(e => e.type === 'userMessage.delivered' && e.messageId === 'devin-steer-0001'), JSON.stringify(umEvents.filter(e => e.messageId === 'devin-steer-0001')));
     // ---- 圧縮でネイティブが履歴を書き換えた、ホスト記録の会話（指示は発言の前に足して送る）。発言は原文のまま、前の行を上書きも重複もしない
     const compactId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
     const compactPrompts = ['one', 'two', '[compact-rewrite] three', 'four'], compactTurns = [];
