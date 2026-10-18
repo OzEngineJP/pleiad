@@ -4063,7 +4063,8 @@
       "local": "プロジェクトローカル",
       "skill": "Skill {{name}}",
       "plugin": "プラグイン",
-      "managed": "管理者"
+      "managed": "管理者",
+      "compat": "互換の読み込み元"
     },
     "state": {
       "claude": "登録あり · 個別停止なし",
@@ -4370,12 +4371,14 @@
         "claude": "コールバックで渡す",
         "codex": "会話の設定（thread の config）で渡す",
         "antigravity": "一時の置き場の hooks.json で渡す",
-        "opencode": "Pleiad のプラグインとコールバックで、Claude Code と同じ形で渡す"
+        "opencode": "Pleiad のプラグインとコールバックで、Claude Code と同じ形で渡す",
+        "grok": "このターンだけのプラグインの hooks.json で、Claude Code と同じ形で渡す"
       },
       "viaAdapter": "{{via}} · 入出力のアダプター越し",
       "reason": {
         "claudeCallback": "Claude Code の {{event}} はコールバックで渡せません。",
-        "event": "このエージェントに {{event}} はありません。"
+        "event": "このエージェントに {{event}} はありません。",
+        "asyncGrok": "Grok Build は async（待たずに実行）を無視して待つため、渡せません。"
       },
       "importWhy": {
         "skill": "Skill の定義は取り込めません",
@@ -4433,7 +4436,8 @@
         "via": {
           "callback": "コールバック",
           "threadConfig": "thread の config",
-          "agyFile": "一時の置き場の hooks.json"
+          "agyFile": "一時の置き場の hooks.json",
+          "plugin": "このターンだけのプラグイン"
         },
         "stopped": "止めたネイティブの hooks",
         "noneStopped": "止めたネイティブの hooks はありません。",

@@ -74,6 +74,10 @@ export const DATA_WRITES = [
   { file: 'core/backends/antigravity-context.mjs', sites: 3, targets: [
     { name: 'antigravity/context/<pid>-<乱数>/…', limit: '1 ターン分の一時の home。数ファイル', reason: '終了時に消す一時ファイル' },
   ] },
+  { file: 'core/backends/grok-hooks.mjs', sites: 1, targets: [
+    { name: 'grok-hooks/<pid>-<乱数>/hooks/hooks.json', limit: '同時に走る Grok のターンの数まで（1 ターン 1 ファイル）。ターンの終わりに消し、持ち主の居ない残りは次の書き込みで消す',
+      reason: 'Grok へそのターンだけ渡すプラグイン（_meta.pluginDirs）。Grok はセッション限定のプラグインを保存しない' },
+  ] },
   { file: 'core/voice/usage.mjs', sites: 1, targets: [
     { name: 'voice-usage.json', limit: 'KEEP_DAYS=31 日分（1 日 3 つの数）。書くたびに古い日を捨てる', reason: '通話の使用量の台帳（費用の安全弁。docs/voice-call.md）。数秒にまとめて書く。固定の小ささ' },
   ] },

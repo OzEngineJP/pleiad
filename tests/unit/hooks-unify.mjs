@@ -1,14 +1,15 @@
 // Hooks を Pleiad がそろえる（ADR 0049）。LLM もエージェントも呼ばない。
 //   - 正本と担当の保存（<data>/hooks.json）: 検査・場所の上書きと継承・受け継ぐ値と同じ上書きを持たない・担当と取り込みを 1 回で保存
-//   - 組み立て: エージェントごとの渡し方（Claude のコールバック・Codex の表と state・agy の hooks.json）、渡せないもの
+//   - 組み立て: エージェントごとの渡し方（Claude のコールバック・Codex の表と state・agy の hooks.json・Grok のプラグインの hooks.json と互換の止め方）、渡せないもの
 //   - 実行: Claude のコールバックからコマンドを子プロセスで動かす（同じ形は exit 2 で止める、別の形はアダプター）。アダプターの同じ形・記録
 //   - 切り替えの確認: 止まる・動き続ける・取り込める行
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createPlyHooks, normalizeHook } from '../../core/ply-hooks.mjs';
 import { deliverable, planHooks, codexHooksTable, codexHooksState, agyHooksFile, claudeIdentityOutput } from '../../core/hooks-plan.mjs';
-import { claudeHookCallbacks, importCandidate, unifyPreview, readAgyRuns, mergeCallbacks } from '../../core/hooks-unify.mjs';
+import { claudeHookCallbacks, importCandidate, unifyPreview, readAgyRuns, mergeCallbacks, prepareHooksTurn, GROK_COMPAT_HOOK_ENV } from '../../core/hooks-unify.mjs';
 import { claudeContextOptions } from '../../core/backends/context-options.mjs';
 import { adapt, sameAgentOutput } from '../../core/hook-adapter.mjs';
 import { codexHookRun } from '../../core/backends/codex.mjs';
@@ -189,6 +190,58 @@ export default async function (t) {
     const again = unifyPreview({ report, raws, hooks: [{ ...candidate.value, id: 'h-00000000000e', importedFrom: candidate.value.importedFrom }] });
     t.ok('取り込み済みの定義はもう一度取り込まない', again.stops.find(s => s.scope === 'plugin').reasons.includes('already'));
     t.ok('確認: Pleiad の登録ごとの、エージェントごとの渡し方', unifyPreview({ report, raws, hooks: [hook] }).registry[0].targets.antigravity.adapter === true);
+
+    // ---------------------------------------------------------------- Grok: このターンだけのプラグインの hooks.json と、互換の読み込み元の止め方
+    const grokData = path.join(tmp, 'grok-data'), grokHome = path.join(tmp, 'grok-home'), grokRepo = path.join(tmp, 'grok-repo'), grokCwd = path.join(grokRepo, 'app');
+    await fs.mkdir(path.join(grokHome, 'hooks'), { recursive: true });
+    await fs.mkdir(path.join(grokRepo, '.git'), { recursive: true });
+    await fs.mkdir(path.join(grokCwd, '.grok', 'hooks'), { recursive: true });
+    await fs.mkdir(path.join(grokRepo, '.grok', 'hooks'), { recursive: true });
+    await fs.writeFile(path.join(grokHome, 'hooks', 'user.json'), JSON.stringify({ hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'node user-guard.mjs --token SECRET-GROK-USER' }] }] } }));
+    await fs.writeFile(path.join(grokHome, 'config.toml'), '[[hooks.Stop]]\n\n[[hooks.Stop.hooks]]\ntype = "command"\ncommand = "node stop.mjs --token SECRET-GROK-TOML"\n');
+    await fs.writeFile(path.join(grokRepo, '.grok', 'hooks', 'root.json'), JSON.stringify({ hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: 'node root.mjs' }] }] } }));
+    await fs.writeFile(path.join(grokCwd, '.grok', 'hooks', 'app.json'), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'node app.mjs' }] }] } }));
+    const grokStore = createPlyHooks(grokData);
+    const same = await grokStore.save({ name: 'same', agent: 'claude', event: 'PreToolUse', matcher: 'Bash', command: 'node same.mjs', timeout: 20, targets: ['grok'] });
+    const agyShaped = await grokStore.save({ name: 'agy', agent: 'antigravity', event: 'PreToolUse', matcher: 'run_command', command: `${node} ${agyDeny}`, targets: ['grok'] });
+    const late = await grokStore.save({ name: 'late', agent: 'claude', event: 'PostToolUse', matcher: '', command: 'node late.mjs', async: true, targets: ['grok'] });
+    const noEvent = await grokStore.save({ name: 'perm', agent: 'claude', event: 'PermissionRequest', matcher: '', command: 'node perm.mjs', targets: ['grok'] });
+    await grokStore.setOwner({ place: null, value: { owner: 'ply', disabled: [] } });
+    const grokTurn = await prepareHooksTurn({ agent: 'grok', cwd: grokCwd, ctx: { plyHooks: grokStore, dataDir: grokData, findNode: async () => process.execPath, grokHome } });
+    const gr = grokTurn?.runtime, grec = grokTurn?.record;
+    const pre = gr?.pluginHooks?.hooks?.PreToolUse ?? [];
+    t.ok('Grok: 同じ形（Claude）の登録は hooks.json にそのまま・matcher と timeout も載せる',
+      pre[0]?.matcher === 'Bash' && pre[0].hooks[0].command === 'node same.mjs' && pre[0].hooks[0].timeout === 20 && pre[0].hooks[0].type === 'command', JSON.stringify(gr?.pluginHooks));
+    t.ok('Grok: 別の形（agy）の登録はアダプター越しで Claude の形に直す（matcher は Bash）',
+      pre[1]?.matcher === 'Bash' && /hook-adapter-[^ ]+\.mjs" antigravity claude PreToolUse /.test(pre[1].hooks[0].command), JSON.stringify(pre[1]));
+    t.ok('Grok: 渡したものは via plugin で記録し、hooks.json は渡すイベントだけ',
+      grec?.supplied.map(s => `${s.id}:${s.via}`).join() === `${same.id}:plugin,${agyShaped.id}:plugin` && Object.keys(gr.pluginHooks.hooks).join() === 'PreToolUse', JSON.stringify(grec?.supplied));
+    const why = id => grec?.unsupported.find(u => u.id === id)?.reasons.map(r => r.code).join();
+    t.ok('Grok: async の登録は渡さない（Grok は待つため。理由付き）', why(late.id) === 'asyncGrok', JSON.stringify(grec?.unsupported));
+    t.ok('Grok: Grok が起こさないイベント（PermissionRequest）は渡さない（理由付き）', why(noEvent.id) === 'event', JSON.stringify(grec?.unsupported));
+    t.ok('Grok: Claude・Cursor・Codex 互換の読み込み元を止める環境変数を渡し、止める行に並べる',
+      ['GROK_CLAUDE_HOOKS_ENABLED', 'GROK_CURSOR_HOOKS_ENABLED', 'GROK_CODEX_HOOKS_ENABLED'].every(k => gr.compatHookEnv[k] === 'false') && gr.compatHookEnv === GROK_COMPAT_HOOK_ENV
+      && grec.stopped.some(s => s.scope === 'compat'), JSON.stringify(grec?.stopped));
+    const kept = grec?.kept ?? [];
+    t.ok('Grok: $GROK_HOME の hooks/*.json と config.toml、git の根から作業場所までの .grok/hooks を止めない行に並べる',
+      kept.map(k => `${k.scope}:${k.name}:${k.event}`).sort().join() === 'project:app.json:SessionStart,project:root.json:PostToolUse,user:config.toml:Stop,user:user.json:PreToolUse', JSON.stringify(kept));
+    t.ok('Grok: 止めない行のコマンドは伏せ字', !JSON.stringify(grec).includes('SECRET-GROK-'), JSON.stringify(kept.map(k => k.command)));
+    // hooks.json のコマンドを shell で走らせ、Claude の名前（tool_name: Bash）の入力を渡す。実機の Grok は自分のツール名（run_terminal_command）を送り、
+    // アダプターはそれを写さないので、この試験が確かめるのは答えの形だけ（docs/context-runtime.md「Grok の確かめたこと」）
+    const grokInput = JSON.stringify({ hook_event_name: 'PreToolUse', hookEventName: 'pre_tool_use', session_id: 'g1', cwd: grokCwd, tool_name: 'Bash', tool_input: { command: 'echo hi' }, tool_use_id: 'u1' });
+    const ran = await new Promise((resolve) => {
+      const child = spawn(pre[1].hooks[0].command, { shell: true, cwd: grokCwd, stdio: ['pipe', 'pipe', 'pipe'] });
+      let stdout = '';
+      child.stdout.on('data', d => { stdout += d; });
+      child.on('close', code => resolve({ code, stdout }));
+      child.stdin.end(grokInput);
+    });
+    let ranOut = null;
+    try { ranOut = JSON.parse(ran.stdout); } catch {}
+    t.ok('Grok: アダプター越しの agy の deny は、Grok が読む Claude の deny の形（permissionDecision）で返る',
+      ran.code === 0 && ranOut?.hookSpecificOutput?.permissionDecision === 'deny' && /agy form deny/.test(ranOut.hookSpecificOutput.permissionDecisionReason), JSON.stringify(ran));
+    await grokStore.setOwner({ place: null, value: { owner: 'native' } });
+    t.ok('Grok: 担当がエージェント任せなら何も渡さない', await prepareHooksTurn({ agent: 'grok', cwd: grokCwd, ctx: { plyHooks: grokStore, dataDir: grokData, findNode: async () => process.execPath, grokHome } }) === null);
   } finally {
     if (!containsPath(tempRoot, tmp) || !path.basename(tmp).startsWith('ply-hooks-unify-')) throw new Error('unexpected test path');
     await fs.rm(tmp, { recursive: true, force: true });

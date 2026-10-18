@@ -40,12 +40,9 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       if (live && Number.isFinite(cost) && String(update.cost?.currency ?? '').toUpperCase() === 'USD') send({ type: 'usage', costUsd: cost });
       return;
     }
-    // Grok のターンの終わり（_x.ai/session_notification で届く）。usage.totalTokens は文脈の占有
-    if (kind === 'turn_completed') {
-      const used = Number(update.usage?.totalTokens);
-      if (live && Number.isFinite(used) && Number.isFinite(windowTokens) && windowTokens > 0) send({ type: 'contextWindow', usedTokens: used, windowTokens });
-      return;
-    }
+    // Grok のターンの終わり（_x.ai/session_notification で届く）。usage はターンのモデル呼び出しの合計（課金の量）で、
+    // 呼び出しが 2 回なら文脈の占有のほぼ 2 倍になる（2026-10-19 実機）。文脈の量としては出さない
+    if (kind === 'turn_completed') return;
     // Grok のフックの実行（_x.ai/session_notification で届く）
     if (kind === 'hook_run_started') { send({ type: 'hookRun', phase: 'started' }); return; }
     if (kind === 'hook_execution') { send({ type: 'hookRun', phase: 'response' }); return; }

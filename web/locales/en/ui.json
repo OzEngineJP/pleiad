@@ -4184,7 +4184,8 @@
       "local": "Project local",
       "skill": "Skill {{name}}",
       "plugin": "Plugin",
-      "managed": "Managed"
+      "managed": "Managed",
+      "compat": "Compatibility sources"
     },
     "state": {
       "claude": "Registered · No per-hook off switch",
@@ -4491,12 +4492,14 @@
         "claude": "Passed as a callback",
         "codex": "Passed in the conversation's settings (thread config)",
         "antigravity": "Passed in hooks.json in a temporary folder",
-        "opencode": "Passed through Pleiad's plugin and callbacks, in the Claude Code form"
+        "opencode": "Passed through Pleiad's plugin and callbacks, in the Claude Code form",
+        "grok": "Passed in hooks.json of a plugin for this turn only, in the Claude Code form"
       },
       "viaAdapter": "{{via}} · through the input/output adapter",
       "reason": {
         "claudeCallback": "Claude Code's {{event}} cannot be passed as a callback.",
-        "event": "This agent has no {{event}} event."
+        "event": "This agent has no {{event}} event.",
+        "asyncGrok": "Grok Build ignores async and waits for the hook, so it cannot be passed."
       },
       "importWhy": {
         "skill": "Skill definitions cannot be imported",
@@ -4554,7 +4557,8 @@
         "via": {
           "callback": "Callback",
           "threadConfig": "Thread config",
-          "agyFile": "hooks.json in a temporary folder"
+          "agyFile": "hooks.json in a temporary folder",
+          "plugin": "Plugin for this turn only"
         },
         "stopped": "Agent hooks turned off",
         "noneStopped": "No agent hooks were turned off.",
