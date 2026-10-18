@@ -77,5 +77,13 @@ export default async function(t) {
   t.ok('週の使用量: 週の枠が無い・率が分からない・行が無いアカウントは null（先頭の行の値を借りない）',
     weekUsage(accounts, 'acc-5h') === null && weekUsage({ windows: [weekly(null)] }) === null && weekUsage(accounts, 'acc-gone') === null && weekUsage(null) === null);
   t.ok('週の使用量: 登録の無い使用量（accounts が無い）は、ログイン中だけが quota そのものの週次', weekUsage({ windows: [weekly(7)] }, '')?.used === 7 && weekUsage({ windows: [weekly(7)] }, 'acc-oz') === null);
+  // Codex など（資格情報のアカウント。ADR 0222）の使用枠: 全体の windows はログイン中、accounts の行に登録のアカウント
+  const codex = { plan: 'plus', windows: [weekly(31)], accounts: [
+    { accountId: null, label: 'Codex', ready: true, windows: [{ label: '5時間', minutes: 300, usedPercent: 3, resetsAt: later }, weekly(31)] },
+    { accountId: 'acct-cx', label: 'Work', ready: true, windows: [weekly(64)] },
+    { accountId: 'acct-off', label: 'Off', ready: false, windows: [] },
+  ] };
+  t.ok('週の使用量: Codex の使用枠も同じ形で引ける（ログイン中・登録のアカウント・資格情報の無いアカウントは null）',
+    weekUsage(codex, '')?.used === 31 && weekUsage(codex, 'acct-cx')?.used === 64 && weekUsage(codex, 'acct-off') === null);
   t.ok('週の使用量: 時刻を過ぎた週次は今の値ではない（null）', weekUsage({ windows: [weekly(50, { resetsAt: new Date(Date.now() - 1000).toISOString() })] }) === null);
 }
