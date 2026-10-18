@@ -863,8 +863,24 @@ Codexの `set_status / set_title / fork` は未接続なので、
   結び付いていない会話の id の呼び出しは断る。子の会話（サブエージェント）は親の口を使う
 - 会話のシェルの環境変数（ブラウザー・操作の一覧の CLI・秘密情報）は、プラグインの `shell.env`（会話の id を受け取る）が `/mcp/opencode/env?session=` から取る
 - Pleiad の指示（委譲・可視化・ブラウザー・コンピューター・操作の一覧・秘密情報・bot の人格）は `prompt_async` の `system` で毎ターン渡す
-- Pleiad 担当のコンテキスト（`ply_context`）はまだ渡さない（`plyContext: false`。OpenCode の設定・指示ファイルがそのまま効く）
+- Pleiad 担当のコンテキスト（`ply_context`）は下の「Pleiad 担当のコンテキスト」
 - **Hooks**: OpenCode にはコマンドの Hooks の形が無い。Pleiad がそろえる Hooks は、Claude Code の形を真似て渡す（エージェントの記述の `hooksAs`）。ツールの前後はプラグインの `tool.execute.before` / `after` が `/mcp/opencode/hook` を呼び、発言の前・会話の始め・終わりの前はバックエンドが走らせる（[context-runtime.md](context-runtime.md)「Pleiad がそろえる会話」）
+
+**Pleiad 担当のコンテキスト**（`core/backends/opencode-context.mjs`。`plyContext: 'turn'`）:
+
+- OpenCode が自分で読むもの（1.19.3 のソースと、モデルへ送った要求を受けて確かめた）: 指示は設定の置き場の AGENTS.md（無ければ `~/.claude/CLAUDE.md`）と、作業場所から Git のルートまでの
+  AGENTS.md・CLAUDE.md・CONTEXT.md（最初に見つかった名前の全部）と設定の `instructions`。Skills は設定の置き場と作業場所の `.opencode` の `skill(s)`、`.claude`・`.agents` の skills、
+  設定の `skills.paths`（名前と説明はシステムプロンプトにも並ぶ）。MCP は設定の `mcp`
+- 指示はサーバーのプロセス全体の設定でしか止められず、Skills の一覧も会話の権限の規則では消えない。そこで **Pleiad が担当するターンだけ専用の `opencode serve` を起こし、ターンの終わりに止める**
+  （保持役には載せない。無停止の更新の切り替えは、このターンが終わるのを待つ。Codex の専用の app-server と同じ）。会話は同じ DB にあるので、共有のサーバーと行き来しても続く
+- 専用のサーバーは `OPENCODE_DISABLE_PROJECT_CONFIG=1` と、全体の設定の置き場を写した置き場（`XDG_CONFIG_HOME` = データ置き場の `opencode/managed/<担当の組み合わせ>`）で起こす。
+  写した置き場は設定ファイルを担当の種類のキー（`instructions`・`mcp`・`skills`）を外して写し、フォルダーは junction でつなぐ。指示を担当するなら AGENTS.md を、Skills を担当するなら `skill(s)` を置かない
+- 作業場所の設定（`opencode.json(c)`・`.opencode/opencode.json(c)`）は担当の種類のキーを外して `OPENCODE_CONFIG_CONTENT` で渡し直す。エージェントに任せる作業場所の指示ファイルと設定の
+  `instructions`、`.opencode` の Skills は絶対パス（`instructions`・`skills.paths`）で渡し直す（作業場所の設定を止めると、OpenCode は相対パスを設定の置き場から探す）
+- 担当の種類ごとに足す環境変数: 指示 → `OPENCODE_DISABLE_CLAUDE_CODE_PROMPT`、Skills → `OPENCODE_DISABLE_EXTERNAL_SKILLS`・`OPENCODE_DISABLE_CLAUDE_CODE_SKILLS`（と会話の権限の規則で組み込みの `skill` を deny）
+- ply_context はほかの Pleiad の MCP と同じく中継の口（`ply_context` → そのターンの `contextRuntime`）。指示の文（`contextRuntime.prompt`）は `system` の先頭に入れる。
+  指示・Skill・MCP の資源の読み出しのツールは読むだけなので、どの承認モードでも聞かない。外部 MCP のツールは OpenCode の権限の規則で聞く
+- 作業場所の `.opencode` の中のエージェント・コマンド・プラグインは、Pleiad が担当するターンでは読まれない（作業場所の設定を止めるため）。圧縮も専用のサーバーで行う
 
 **無停止の更新**（`core/backends/opencode-held.mjs`。[ADR 0151](adr/0151-zero-downtime-update.md)・[zero-downtime-update/](zero-downtime-update/plan.md)）:
 

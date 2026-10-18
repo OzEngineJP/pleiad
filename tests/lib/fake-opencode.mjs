@@ -13,13 +13,17 @@
 //   "slow"          中断（/abort）されるまで終わらない
 //   "hold"          途中送信（走っている最中の prompt_async）が届くまで（最長 20 秒）待ってから答える
 //   "fail"          失敗（session.error）で終わる
+//   "show-system"   受け取った system（Pleiad の指示）をそのまま答える
 //   "gate:<名前>"   bash のツールを動かしたまま、ゲート（AGENT_HOST_FAKE_GATE_DIR/<名前> のファイル）が開くまで待ってから "gate <名前> done" と答える
 //   "stream:<名前>" 本文の前半を流したまま、ゲートが開くまで待ってから後半を流す（本文は "first half <名前> / second half <名前>"）
 // 答えていない承認・質問は GET /permission・/question、走っている会話は GET /session/status で返す（無停止の更新の付け直しが聞き直す）
+// FAKE_OPENCODE_STATE_DIR を付けると、会話をファイルに残して別のプロセスと分け合う（本物は同じ DB を使う。Pleiad 担当のコンテキストの専用のサーバーが、共有のサーバーで作った会話を続ける）
 //   それ以外        "echo: <発言>" と答える（system を受けたら "[system]" を前に付ける）
 // 走っている最中に届いた prompt_async は、同じ実行の中で次の区切りに読み（途中送信）、本文の最後に "受け取った: <本文>" を足す。
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const PASSWORD = process.env.OPENCODE_SERVER_PASSWORD ?? '';
 const AUTH = `Basic ${Buffer.from(`opencode:${PASSWORD}`).toString('base64')}`;
@@ -37,7 +41,30 @@ const waits = new Map();          // permission / question の id -> resolve
 const pending = new Map();        // 答えていない permission / question の id -> { kind, properties }
 const clients = new Set();
 
+const STATE_FILE = process.env.FAKE_OPENCODE_STATE_DIR ? path.join(process.env.FAKE_OPENCODE_STATE_DIR, 'sessions.json') : null;
+const readState = () => { try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return {}; } };
+/** 変えた会話だけをファイルに書く（ほかのプロセスが変えた会話は上書きしない） */
+function persist(id) {
+  const s = id && STATE_FILE ? sessions.get(id) : null;
+  if (!s) return;
+  const all = readState();
+  const { run, ...rest } = s;
+  all[id] = rest;
+  fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
+  fs.writeFileSync(STATE_FILE, JSON.stringify(all));
+}
+/** 会話を引く。走っていなければファイルの最新で置き換える（別のプロセスが続けたかもしれない） */
+function lookup(id) {
+  const now = sessions.get(id);
+  if (!STATE_FILE || now?.run) return now;
+  const saved = readState()[id];
+  if (saved) sessions.set(id, { ...saved, run: null });
+  return sessions.get(id);
+}
+if (STATE_FILE) for (const saved of Object.values(readState())) sessions.set(saved.id, { ...saved, run: null });
+
 function broadcast(directory, type, properties) {
+  persist(properties?.sessionID);
   const line = `data: ${JSON.stringify({ directory, payload: { id: id('evt'), type, properties } })}\n\n`;
   for (const res of clients) res.write(line);
 }
@@ -164,6 +191,11 @@ async function run(s, user, text, { system = null } = {}) {
       return;
     }
     let reply = `echo: ${text}`;
+    if (text.startsWith('show-system')) {
+      await a.text(`system: ${system ?? ''}`);
+      a.finish();
+      return;
+    }
     if (text.startsWith('stream:')) {
       const name = text.slice('stream:'.length).trim();
       await a.text('', { pause: { before: `first half ${name} / `, after: `second half ${name}`, wait: () => gate(name, ctl) } });
@@ -284,7 +316,7 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] === 'question' && parts[2] === 'reply') { const b = await body(req); waits.get(parts[1])?.({ answers: b.answers }); waits.delete(parts[1]); return send(200, true); }
     if (parts[0] === 'question' && parts[2] === 'reject') { waits.get(parts[1])?.({ rejected: true }); waits.delete(parts[1]); return send(200, true); }
     if (parts[0] === 'session' && parts[1]) {
-      const s = sessions.get(parts[1]);
+      const s = lookup(parts[1]);
       if (!s) return send(404, { error: 'not found' });
       const action = parts[2];
       if (!action && req.method === 'GET') return send(200, row(s));
@@ -348,6 +380,13 @@ const port = Number(process.argv[process.argv.indexOf('--port') + 1] ?? 0) || 0;
 // 起こされた印（試験が「一覧を作るだけでは起こさない」を確かめる）
 if (process.env.FAKE_OPENCODE_STARTED_FILE) { try { (await import('node:fs')).appendFileSync(process.env.FAKE_OPENCODE_STARTED_FILE, `${process.pid}
 `); } catch {} }
+// 起こされたときの設定（Pleiad 担当のコンテキストの専用のサーバーの確かめ。試験が FAKE_OPENCODE_LAUNCH_FILE を付けたときだけ）
+if (process.env.FAKE_OPENCODE_LAUNCH_FILE) {
+  const flags = Object.fromEntries(['OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_DISABLE_CLAUDE_CODE_PROMPT', 'OPENCODE_DISABLE_EXTERNAL_SKILLS', 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS']
+    .filter((k) => process.env[k]).map((k) => [k, process.env[k]]));
+  (await import('node:fs')).appendFileSync(process.env.FAKE_OPENCODE_LAUNCH_FILE, `${JSON.stringify({ pid: process.pid, flags, xdg: process.env.XDG_CONFIG_HOME ?? null, config: CONFIG })}
+`);
+}
 server.listen(port, '127.0.0.1', () => {
   console.log(`opencode server listening on http://127.0.0.1:${server.address().port}`);
 });

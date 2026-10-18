@@ -54,6 +54,9 @@ export const DATA_WRITES = [
   { file: 'core/backends/opencode-held.mjs', sites: 1, targets: [
     { name: 'run/opencode-env-<uuid>.json', limit: '保持役に載せた OpenCode のターンごとに 1 つ（会話のシェルの環境変数。数 KB）。ターンの終わりに消し、消し損ねは起動時に片付ける', reason: '無停止の更新で付け直す新しいサーバーが読む、秘密情報を含む環境変数（権限 0600。札には名前だけを置く）' },
   ] },
+  { file: 'core/backends/opencode-context.mjs', sites: 4, targets: [
+    { name: 'opencode/managed/<担当の組み合わせ>/opencode/…', limit: '担当の組み合わせごとに 1 つ（最大 7）。中身は OpenCode の全体の設定ファイルの写し（数 KB）と junction だけ。ターンごとに作り直す', reason: 'Pleiad 担当のコンテキストのターンの専用の OpenCode に渡す設定の置き場（担当の種類の AGENTS.md・skills・mcp を外した写し。docs/multi-backend.md §2.10）' },
+  ] },
   { file: 'core/backends/opencode-plugin.mjs', sites: 1, targets: [
     { name: 'opencode/pleiad-plugin.mjs', limit: '固定（PLUGIN_SOURCE。数 KB）', reason: 'OpenCode に読ませるプラグインの本文。中身が変わったときだけ書き直す（asar の中は OpenCode から読めない）' },
   ] },
