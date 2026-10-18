@@ -209,6 +209,10 @@ const SUITES = [
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
   './unit/server-opencode.mjs',
   './unit/opencode-parts.mjs',
+  // OpenCode の上限と再試行の待ち（ADR 0229）: retry の読み方・解除時刻・写し替え・振り分けで外して戻す
+  './unit/opencode-retry.mjs',
+  // 同じくターンと圧縮で通しで（身代わりの opencode serve）: limited で終える・待ちの表示・明けたら running・待ちの間の中断
+  './unit/opencode-retry-turn.mjs',
   // OpenCode の会話で Pleiad がそろえる Hooks（Claude Code の形。ツールの前後・発言の前・終わりの前）
   './unit/server-opencode-hooks.mjs',
   // OpenCode に Pleiad が担当するコンテキストを渡す: そのターンだけの専用のサーバー・止め方の環境変数・写した設定の置き場・ply_context の中継・担当の組み合わせ
@@ -242,6 +246,8 @@ const SUITES = [
   './unit/sessions-search-op.mjs',
   './unit/agent-tasks.mjs',
   './unit/agent-tasks-silence.mjs',
+  // 子の再試行の待ち（ADR 0229）: waiting と回ごとの知らせ・ply_task_wait・上限で止まった子の limit と指示の保留
+  './unit/agent-tasks-retry.mjs',
   './unit/task-command-notice.mjs',
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   './unit/agent-tasks-storage.mjs',
@@ -276,6 +282,8 @@ const SUITES = [
   './unit/server-permission-update.mjs',
   // 委譲の子に裏の作業が残るとき: 終わらないコマンドも自動停止しない・サブエージェントは止めない・端末は待たない（子にも親にも）
   './unit/server-delegation-background.mjs',
+  // 委譲の子の再試行の待ちと上限（ADR 0229）: 長い待ちは waiting と 1 回の知らせ・短い待ちは起こさない・上限で止まった子の解除の見込みと指示の保留
+  './unit/server-delegation-retry.mjs',
   // 依頼元が子のエージェント・モデル・思考の強さを ply_task_send で替える（走っている子・走っていない子・断る場合・記録）
   './unit/server-delegation-settings.mjs',
   './unit/server-delegation-model-name.mjs',

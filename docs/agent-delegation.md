@@ -89,6 +89,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    - **使えない（外す）:** `unavailable`（バックエンドが有効でない・CLI が無い・Claude の登録アカウントにトークンが無い）、`model_unknown`（今のモデル一覧に無い）、委譲先でのモデル再確認による `rejected`、効く枠の今の使用率が 100% 以上の `quota_full`。`unavailable` の中身は `skipped[].detail`（`disabled`・`not_installed`・`no_token`。使用量をまだ一度も取っていないときは付けない）で、画面は「使えない（未インストール）」と添える。
    - **余裕が少ない（後回し）:** `usage_unknown`（取得失敗・取得中・枠なし・不明な枠あり）、`usage_stale`（取得間隔の 3 倍＝15 分を超えて古い。閾値は設定にはなく内部の定数）、`quota_high`（効く 5 時間以外の枠のどれかが後回しの線、既定 80%、以上）、`pace_high`、`pace_unknown`。`avoidPercent` は候補を除く線ではなく後回しにする線。5 時間の枠（`minutes === 300`）は 100% 以上のときだけ使えないと判定し、100% 未満なら後回しの判定には使わない。5 時間の使用率が不明でも、それだけでは `usage_unknown` にしない。
    - **余裕あり:** 上記のどれにも当たらない候補。
+   - 上限に当たっている委譲先（[ADR 0229](adr/0229-opencode-limit-retry-wait.md)）も**使えない（外す）**に入れる。`retry_waiting`（その backend・モデル・アカウントで走っているターンが、上限・一時的な失敗のあと再試行を待っている）と `recently_limited`（その委譲先のターンが最近 `turnResult limited` で止まった。解除時刻 `resetsAt` まで。時刻が分からなければ、同じ委譲先のターンが次に通るか、Pleiad を起動し直すまで）。どちらも `skipped[].until`（ISO。分かるときだけ）に戻る見込みを載せる。記録はメモリだけ（`core/server.mjs` の `slotBlocked`）。固定の委譲（`backend` を書いた）には使わない。
    - `pace_high`: 週次の枠のペース（使用率 ÷ 経過率）が 1.2 を超える。経過率はリセット時刻と期間から出し、20% 未満は見ない。
    - `pace_unknown`: 経過率が出せない週次の枠で、使用率が 20% × 1.2 = 24% を超える（24% 以下なら、経過率がいくつでもペースで落ちないので通す）。
    - リセット時刻を過ぎた枠は、使い直しが始まっているので使用率 0 とみなす。
@@ -256,6 +257,15 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 シェルのツールの名前はエージェントの記述の `shellTools`（`core/shell-tools.mjs`）から引く。委譲の子でない会話の長いコマンドは、その会話自身へ知らせる（[ADR 0227](adr/0227-ply-shell-and-command-notices.md)。docs/design.md「長いコマンドの知らせ」）。
 
 Claude の background 起動結果（`backgroundTaskId` または起動を示す本文）は完了ではない。`task_started` / `task_updated` で background に移ったものも、実際の終了まで残す。Codex の端末は子タスクが `completed` になっても通知対象で、終了を確認するまで台帳に残る。台帳の通知は子を再実行しない。サーバー再起動後は保存済みコマンドの生存を確認できないため `state: unknown`・経過 `null` とし、再通知や自動停止はしない。
+
+## 上限と再試行の待ち
+
+[ADR 0229](adr/0229-opencode-limit-retry-wait.md)。子のエージェント（いまは OpenCode）が使用量の上限・一時的な失敗のあと再試行を待っている間は、子の会話の稼働表示を `retrying`（「上限で待機中・HH:MM に再試行（N 回目）」）にし、■ で止められる。
+
+- **待ちの間**: 走っている子の会話の `turn.retry`（`{ attempt, next, message, reason, limit, since, seenAt }`）を見る。上限による待ち・次の時刻が分からない待ち・次の再試行まで 60 秒以上の待ち（`RETRY_WAIT_MS`）は、タスクを `status: waiting` に数える（`ply_task_wait` はすぐ戻る）。`ply_task_status` / `ply_task_wait` の返り値に `retryWaiting: { attempt, nextAt, reason, message, limit }` を付ける。短い待ち（数秒〜数十秒で自分で戻るもの）は数えない。
+- **依頼元への知らせ**: 待ちの回（`since`）ごとに 1 回、依頼元へ「再試行待ち通知」（`agent:delegation.retryNoticeLimit` / `retryNoticeError`）を届ける。待つか、`ply_task_cancel` で止めて `ply_delegate` で別の委譲先に任せ直すかを選べる文面。依頼元が `ply_task_wait` で待っていれば、その戻り値が知らせを兼ねる。待ちが明ければ（子のバックエンドが `running` を出せば）実行中に戻る。印はメモリだけ。
+- **上限で止まった子**: 待っても通らない上限（OpenCode の `free_tier_limit`・残高不足・解除時刻付きの `account_rate_limit`）は、子のターンを `turnResult limited` で終える。タスクは `failed` のまま `limit: { resetsAt, window }` を付け、完了通知の結果の前に解除の見込みと任せ直せることを添える（`agent:delegation.noticeLimit` / `noticeLimitUnknown`）。この子への `ply_task_send` は指示を積むが、解除時刻までは走らせない（送信待ちの `limitHolds` と同じ判断。返り値の `warning` は `agent:tasks.limitHeld`、状態に `limitHeld: { resetsAt }`）。
+- 子が OpenCode の task ツールで起こしたサブエージェントの会話の再試行は見ていない（ADR 0229 の「やらないこと」）。
 
 ## 完了通知
 

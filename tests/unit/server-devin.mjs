@@ -29,6 +29,17 @@ export default async function (t) {
     const next = await c.runTurn({ sessionId: sid, prompt: 'beta', model: 'swe-2-max', mode: 'ask' });
     const after = await c.cmd('loadSession', { sessionId: sid });
     t.ok('再開時の replay を重複させず前の UUID を保つ', next.outcome === 'ok' && after.messages.filter(m => m.role === 'user').length === 2 && before.every((m, i) => after.messages[i].uuid === m.uuid));
+    const editId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
+    const edit = await c.runTurn({ sessionId: editId, prompt: '[large-edit]', model: 'swe-2-high' });
+    const edited = await c.cmd('loadSession', { sessionId: editId });
+    const editCall = edited.messages.flatMap(m => m.toolCalls ?? []).find(call => call.name === 'Edit file');
+    assert.equal(edit.outcome, 'ok');
+    assert.equal(editCall.input.file_path, 'large.mjs');
+    assert.ok(editCall.input.oldText.includes('before'));
+    assert.ok(JSON.stringify(edited.messages).length < 80000);
+    const resumedEdit = await c.runTurn({ sessionId: editId, prompt: 'after large edit', model: 'swe-2-high' });
+    assert.equal(resumedEdit.outcome, 'ok');
+    t.ok('巨大 Edit を保存し、その再生を通って次のプロンプトを送信できる', true);
     const env = await c.runTurn({ backend: 'devin', cwd: other, prompt: '[env]', model: 'swe-2-high' });
     const text = env.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     const observed = JSON.parse(text);
@@ -53,10 +64,24 @@ export default async function (t) {
     t.ok('中断は cancel 通知で完了し turnResult は一度だけ', stopped.outcome === 'aborted' && stopped.events.filter(e => e.type === 'turnResult').length === 1);
     c.close(); c = null;
     await server.stop(); server = null;
+    const conversationDir = path.join(root, 'data', 'conversations');
+    const saved = await Promise.all((await fs.readdir(conversationDir)).filter(name => name.endsWith('.json'))
+      .map(async name => JSON.parse(await fs.readFile(path.join(conversationDir, name), 'utf8'))));
+    const storedEdit = saved.find(record => record.messages.some(m => m.toolCalls?.some(call => call.id === editCall.id)));
+    assert.ok(storedEdit);
+    const storedCall = storedEdit.messages.flatMap(m => m.toolCalls ?? []).find(call => call.name === 'Edit file');
+    assert.ok(JSON.stringify(storedEdit).length < 80000);
+    assert.ok(storedCall.input.oldText.includes('before') && storedCall.input.newText.includes('after'));
+    t.ok('保存された会話ファイルにも巨大 diff の全文を残さない', true);
     server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: nativeConfig } });
     c = await open(server);
     const restored = await c.cmd('loadSession', { sessionId: sid });
     t.ok('サーバー再起動後も共通 DB の cwd でネイティブ履歴を復元する', restored.messages.filter(m => m.role === 'user').length === 2 && after.messages.every((m, i) => restored.messages[i].uuid === m.uuid), JSON.stringify({ before: after.messages.map(m => [m.uuid, m.role]), restored: restored.messages.map(m => [m.uuid, m.role]) }));
+
+    const restoredEdit = await c.cmd('loadSession', { sessionId: editId });
+    assert.ok(JSON.stringify(restoredEdit.messages).length < 80000);
+    assert.ok(restoredEdit.messages.flatMap(m => m.toolCalls ?? []).find(call => call.name === 'Edit file').input.newText.includes('after'));
+    t.ok('再起動後も復元するツールの入力は縮小済み', true);
 
     const catalogue = async () => ({ families: [{ family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }] }] });
     const command = () => [process.execPath, path.join(ROOT, 'tests/lib/fake-devin.mjs')];

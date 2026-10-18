@@ -19,7 +19,7 @@ import { cliCommand } from '../cli-installation.mjs';
 import * as store from '../store.mjs';
 import { opencodeRelay, RELAY_SERVERS } from '../opencode-relay.mjs';
 import { createOpencodeServer } from './opencode-server.mjs';
-import { createTurnMapper, messagesToNormalized, sessionRow, errorOf } from './opencode-normalize.mjs';
+import { createTurnMapper, messagesToNormalized, sessionRow, errorOf, retryOf } from './opencode-normalize.mjs';
 import { writePlugin, writeRelayConfig } from './opencode-plugin.mjs';
 import { createHookRunner } from './opencode-hooks.mjs';
 import { managedLaunch } from './opencode-context.mjs';
@@ -619,6 +619,7 @@ export const backend = {
     let since = card?.since ?? null;      // このターンの発言を送った時刻（付け直しは、これより後の発言を組み立て直す）
     let stopRounds = card?.stopRounds ?? 0;
     let aborted = false;
+    let limitStop = false;                // 上限の再試行を見て、こちらから止めた（中断ではなく limited で終える）
     let gone = null;
     let handedOff = false;
     let replaying = false;
@@ -704,6 +705,11 @@ export const backend = {
       // 子の会話の出来事は、承認・質問のほかは親のターンに流さない（サブエージェントの中身は getSubagentMessages で読む）
       if ((p.sessionID ?? p.info?.sessionID ?? p.part?.sessionID) !== sessionId) return;
       if (mapper.handle(event)) settle();
+      // 待っても通らない上限の再試行（無料枠・Go の枠など。ADR 0229）。OpenCode は 5 回まで待ち直すので、こちらで止めて limited で終える
+      if (mapper.limit && !limitStop && !aborted && !handedOff) {
+        limitStop = true;
+        srv.request('POST', `/session/${sessionId}/abort`, { directory }).catch(() => settle());
+      }
     }
     // 付け直しは、取り直した発言を流し終えるまで出来事を溜める（取り直しと出来事の間に、取りこぼしを作らない）
     let queue = adopt ? [] : null;
@@ -796,6 +802,8 @@ export const backend = {
           if(!Array.isArray(pending?.data))throw new Error('OpenCode v2: invalid inbox response');
           if(!pending.data.length)settle();
         }
+        // 再試行を待っている最中に引き取った。待ちの印（次の再試行の時刻）を出し直し、上限なら止める（ADR 0229）
+        else if (state === 'retry') onEvent({ type: 'session.status', properties: { sessionID: sessionId, status: status[sessionId] } });
         control?.onReady?.();
         if (signal?.signal?.aborted) onAbort();
         await done;
@@ -839,7 +847,7 @@ export const backend = {
         await done;
       }
       // 終わりの前の Hooks（Stop）。続けさせる理由なら、それを次の発言として渡して、もう一度終わりを待つ（3 回まで。付け直しをまたいで数える）
-      for (; hooks?.has('Stop') && stopRounds < 3 && !aborted && !gone && !handedOff && !mapper.error; ) {
+      for (; hooks?.has('Stop') && stopRounds < 3 && !aborted && !gone && !handedOff && !mapper.error && !mapper.limit; ) {
         const reason = await hooks.stop(stopRounds > 0, { signal: signal?.signal });
         if (!reason || handedOff) break;
         stopRounds++;
@@ -871,7 +879,11 @@ export const backend = {
     for (const s of steers) if (s.id) emit({ type: 'userMessage.dropped', messageId: s.id });
 
     const error = gone ? { message: String(gone.message ?? gone) } : mapper.error;
-    if (aborted || error?.aborted) emit({ type: 'turnResult', outcome: 'aborted' });
+    // こちらで止めた上限（止めた後に届く MessageAbortedError は中断ではない）。解ける時刻は Go の枠なら next、分からなければ付けない
+    if (limitStop && !aborted && !gone) {
+      const { message, resetsAt } = mapper.limit;
+      emit({ type: 'turnResult', outcome: 'limited', error: message, pristine: mapper.pristine, ...(resetsAt ? { resetsAt } : {}) });
+    } else if (aborted || error?.aborted) emit({ type: 'turnResult', outcome: 'aborted' });
     else if (error) emit({ type: 'turnResult', outcome: error.limited ? 'limited' : 'error', error: error.message,
       ...(error.limited ? { pristine: mapper.pristine, ...(error.resetsAt ? { resetsAt: error.resetsAt } : {}) } : {}),
       ...(error.auth ? { kind: 'auth', pristine: mapper.pristine } : {}) });
@@ -920,6 +932,23 @@ export const backend = {
     const since=Date.now();
     let failure=null,summary=null;
     const offGone=srv.onGone(error=>{failure=error;});
+    let limitStop = false;
+    const onEvent = (event) => {
+      if (event.type === 'pleiad.gone') failure = event.properties.error;
+      if (event.type === 'session.error' && !limitStop) failure = errorOf(event.properties.error);
+      // 要約の依頼も上限で再試行を待つ（ADR 0229）。待ちを画面に出し、待っても通らない上限なら止めて、その理由で失敗にする
+      const status = event.properties?.status;
+      if (event.type === 'session.status' && status?.type === 'retry') {
+        const retry = retryOf(status);
+        emit({ type: 'activity', state: 'retrying', retry: { attempt: retry.attempt, next: retry.next, message: retry.message, reason: retry.reason, limit: retry.limit } });
+        if (retry.definite && !limitStop) {
+          limitStop = true;
+          failure = { message: retry.message || 'usage limit' };
+          void srv.request('POST', `/session/${sessionId}/abort`, { directory }).catch(() => {});
+        }
+      } else if (event.type === 'session.status' && status?.type === 'busy') emit({ type: 'activity', state: 'compacting' });
+    };
+    turnsBySession.set(sessionKey(sessionId, srv), onEvent);
     try {
       const receipt=await srv.request('POST',`/session/${sessionId}/summarize`,{directory,body:{id:nativeMessageId(crypto.randomUUID(),srv.relayAccount ?? 'login')},timeoutMs:15*60_000});
       if(!receipt?.id)throw new Error('OpenCode v2: compaction admission returned no ID');
@@ -937,7 +966,10 @@ export const backend = {
     } catch(error) {
       emit({type:'compaction',phase:'failed',trigger,reason:String(error.message ?? error)});
       return;
-    } finally {offGone();}
+    } finally {
+      offGone();
+      if(turnsBySession.get(sessionKey(sessionId,srv))===onEvent)turnsBySession.delete(sessionKey(sessionId,srv));
+    }
     if(summary.info.tokens) {
       const tokens=summary.info.tokens;
       emit({type:'usage',inputTokens:(tokens.input??0)+(tokens.cache?.read??0),outputTokens:(tokens.output??0)+(tokens.reasoning??0),cachedTokens:tokens.cache?.read??0,costUsd:summary.info.cost??0});

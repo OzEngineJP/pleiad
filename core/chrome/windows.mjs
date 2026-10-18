@@ -3,7 +3,7 @@
 // 窓は最小化しない。画面の外へ置き、タスクバーと Alt+Tab から外し、透明度 0・マウスの素通しにする（OS の層の conceal。desktop/chrome-os/win32.cjs）。
 //   - 会話の最初の窓: chrome.exe --profile-directory --new-window（プロフィールは Local State の profile.last_used。AGENT_HOST_CHROME_USER_DATA があれば
 //     --user-data-dir を必ず付ける）。題に nonce を持つ data: のページで開き、題の nonce で窓を見つけて隠し、前面を取っていたら直前の前面へ返す。
-//     窓が見つからない・chrome.exe を起こせないときは、createTarget の新しい窓に落とす（プロフィールは選べない）
+//     窓が見つからない・chrome.exe を起こせない（ブラウザーを探し直して 1 回だけやり直した後）ときは、createTarget の新しい窓に落とす（プロフィールは選べない）
 //   - プロフィール（第 10 段）: 会話のプロフィール（profileFor。選んだもの・新しい会話の既定）があれば、そのプロフィールの窓を開く。
 //     そのプロフィールの窓がまだ無ければ chrome.exe --profile-directory で開き、あれば createTarget にその窓の browserContextId を渡して、
 //     開いたタブの browserContextId が同じかを確かめる（違えば閉じて chrome.exe で開き直す。どちらもできなければ失敗。違うプロフィールで開かない）。
@@ -34,6 +34,11 @@ const DEFAULT_TIMING = { hwndWaitMs: 3000, hwndPollMs: 20, targetWaitMs: 8000, t
 /** 外形で探す前に窓を置く、画面の外の位置の揺らぎ（DIP）と、最初の窓の大きさの端数。同時に外形で探す窓同士が同じ外形にならないように */
 const MARK_STEP = 8, MARK_SLOTS = 20, MARK_SIZE_EXTRA = { width: 3, height: 5 }, MARK_TOLERANCE = 2;
 
+/** 選んだプロフィールの窓を chrome.exe で開けなかった（探し直してやり直した後）。ほかのプロフィールの窓には開かないので、エージェントが次に取れる手を書く */
+export const PROFILE_LAUNCH_FAILED = 'could not open a window in the selected Chrome profile, and no window was opened in another profile instead. '
+  + 'Try the same command again in a minute. If it fails again, ask the user to check that Chrome starts with that profile, '
+  + 'or switch the conversation to another profile with list_browser_profiles and use_browser_profile.';
+
 /** 題に nonce を持つ小さなページ。窓の題が nonce になるので、層が HWND を見つけられる */
 export const nonceUrl = nonce => `data:text/html,<title>PLY-${nonce}</title>`;
 
@@ -62,6 +67,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
   // profile: 窓のプロフィールのフォルダー名（分からなければ null）。context: 窓の最初のタブの browserContextId（同じプロフィールに窓を足すときに渡す）
   const entries = new Map();
   let browser;                 // undefined: まだ探していない / null: 見つからない / { id, product }
+  let browserLayer = 0;        // browser を探したときの層の世代（os.generation）。id は main のプロセスごとの値で、層が入れ替わると新しい層は知らない
   let baseline = null;         // 直近の窓を開く前のブラウザーの窓の写し（snapshotWindows）。popup を外形で探すとき、それ以前からある窓を除く
   let markSeq = 0;
   const listeners = new Set();
@@ -87,7 +93,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
   };
 
   async function locateBrowser() {
-    if (browser === undefined || browser === null) {
+    const layer = os.generation?.() ?? 0;
+    if (browser === undefined || browser === null || browserLayer !== layer) {
+      browserLayer = layer;
       const found = await os.locateBrowser({ product: 'chrome' });
       browser = found ?? null;
       if (!found) log('chrome-windows: chrome.exe not found (opens windows with createTarget)');
@@ -154,22 +162,30 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     if (!normal) log('chrome-windows: the window did not return to the normal state');
   }
 
-  /** chrome.exe で新しい窓を開く（--profile-directory。起こせなければ false） */
+  /**
+   * chrome.exe で新しい窓を開く（--profile-directory。起こせなければ false）。
+   * 層が起こせなかったと答えた（reason がある）ときは、ブラウザーを探し直して 1 回だけやり直す。browser の id は main のプロセスごとの値で、
+   * 層が前の id を知らない（unknown-browser。main の入れ替わり・層の表から追い出された）ときも、探し直せば通る（docs/zero-downtime-update/design.md §7.2）。
+   * 返事を聞けなかった（時間切れ・層が居ない）ときは、chrome.exe が窓を開いたかもしれないので、やり直さない
+   */
   async function launch(cdp, features, nonce, profileDir) {
     if (!features.launch) return false;
-    const found = await locateBrowser();
-    if (!found) return false;
-    const layer = os.generation?.() ?? 0;
-    const result = await os.launchWindow({ browser: found, profileDir, url: nonceUrl(nonce), nonce,
-      ...(locate?.custom ? { userDataDir: locate.userDataDir } : {}) });   // --window-position・--window-size は付けない（起動中の Chrome に渡す新しい窓では無視される。実機）
-    if (result?.ok !== true) {
-      log('chrome-windows: launching chrome.exe failed');
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const found = await locateBrowser();
+      if (!found) return false;
+      const layer = os.generation?.() ?? 0;
+      const result = await os.launchWindow({ browser: found, profileDir, url: nonceUrl(nonce), nonce,
+        ...(locate?.custom ? { userDataDir: locate.userDataDir } : {}) });   // --window-position・--window-size は付けない（起動中の Chrome に渡す新しい窓では無視される。実機）
+      if (result?.ok === true) return true;
+      const reason = typeof result?.reason === 'string' && /^[a-z-]{1,32}$/.test(result.reason) ? result.reason : null;   // 層の決まった語だけ（ログに任意の文字を出さない）
+      log(`chrome-windows: launching chrome.exe failed (${reason ?? 'no answer'})`);
+      browser = undefined;   // 次は探し直す
       // 呼び出しの途中で層が入れ替わった・切れたなら、返事を聞けなかっただけで、chrome.exe は窓を開いている（隠せず、どの記録にも載らない窓になる）。
       // この呼び出しが付けた題（nonce）の窓だけを CDP で閉じる
-      if ((os.generation?.() ?? 0) !== layer) await closeStray(cdp, nonce);
-      return false;
+      if ((os.generation?.() ?? 0) !== layer) { await closeStray(cdp, nonce); return false; }
+      if (!reason) return false;
     }
-    return true;
+    return false;
   }
 
   /** 題の nonce の窓（この呼び出しが開いたもの）を CDP で閉じる。ほかの窓には触らない */
@@ -217,7 +233,9 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       if (!targetId) {
         nonce = random();
         launched = await launch(cdp, features, nonce, want);
-        if (!launched) throw new Error('could not open a window in the selected Chrome profile');
+        // ほかのプロフィールの窓には開かない（createTarget に落とさない）。エージェントに次の手を返す
+        if (!launched && os.capabilities().reason === 'pending') throw new Error('Pleiad is updating. Retry in a minute.');
+        if (!launched) throw new Error(PROFILE_LAUNCH_FAILED);
       }
       profile = want;
     } else {

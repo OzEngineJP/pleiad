@@ -356,7 +356,13 @@
     "noticeWorkspaceUnknown": "Workspace: worktree {{branch}} (state unknown; look at {{path}})",
     "noticeRetry": "The user retried {{of}} with another delegate.\n",
     "noticeRejections": "Commands rejected before running (for example by Codex's own safety check): {{count}}\n{{items}}\nRead them all in rejections from ply_task_status.",
-    "noticeRejection": "- {{command}} ({{reason}})"
+    "noticeRejection": "- {{command}} ({{reason}})",
+    "noticeLimit": "Stopped at a usage limit. It is expected to reset at {{time}}. After that, continue with ply_task_send, or if you cannot wait, hand the task to another delegate with ply_delegate.",
+    "noticeLimitUnknown": "Stopped at a usage limit. The reset time is unknown. Continue later with ply_task_send, or hand the task to another delegate with ply_delegate.",
+    "retryNoticeLimit": "[Pleiad task retry wait / {{taskId}}]\nThe child for {{title}} hit a usage limit, and its delegate is waiting to retry ({{when}}).\nReason: {{message}}\nThe child has not stopped and will continue on its own when the wait ends. Either keep waiting, or if you cannot wait, stop it with ply_task_cancel and hand the task to another delegate with ply_delegate.",
+    "retryNoticeError": "[Pleiad task retry wait / {{taskId}}]\nThe child for {{title}} hit a temporary failure at its delegate and is waiting to retry ({{when}}).\nReason: {{message}}\nThe child has not stopped and will continue on its own if the retry succeeds. Either keep waiting, or if you cannot wait, stop it with ply_task_cancel and hand the task to another delegate with ply_delegate.",
+    "retryWhen": "retry {{attempt}} at {{time}}",
+    "retryWhenUnknown": "retry {{attempt}}, time unknown"
   },
   "tasks": {
     "textLength": "{{name}} must be 1 to {{max}} characters.",
@@ -378,6 +384,7 @@
     "settingsMoved": "While the approval was pending, the child's settings or the task's state changed. Nothing was changed. Check ply_task_status and try again.",
     "settingsFailed": "Could not change the child's settings ({{error}}). Nothing was changed.",
     "steerUnknown": "It is unknown whether the follow-up reached the child's running turn. It may have arrived, so do not resend it; check ply_task_status and the child's result.",
+    "limitHeld": "The child is stopped at a usage limit. The instruction was queued but will not run until the reset at {{time}}. If you cannot wait, stop it with ply_task_cancel and hand the task to another delegate with ply_delegate.",
     "unknownTool": "Unknown Pleiad task tool.",
     "storageFailed": "Could not save the delegation record, so this was not accepted ({{code}}). Wait a moment and try again. Running child tasks have not stopped.",
     "storageFault": "The delegation record cannot be saved ({{code}}, since {{since}}). The state shown here may not be saved yet, and child tasks may still be running."

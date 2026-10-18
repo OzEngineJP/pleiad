@@ -79,8 +79,8 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `thinking.delta` | `{ text?, estimatedTokens? }` | `thinking_delta` |
 | `tool.start` | `{ id, name, input, at, startedAt?, shell? }` `shell: true` は、名前でシェルのツールと見分けられない呼び出し（ACP の自由な題。Devin の `kind: "execute"`）がシェルのコマンドであること。名前で見分けるものは、エージェントの記述（`core/backends/agents.mjs`）の `shellTools` に書く（`core/shell-tools.mjs`）。`at` はサーバーが受けた時刻（epoch ms）。バックエンドは出さず、server の `makeEmit` が 1 か所で付ける（すでに数の `at` があれば上書きしない）。実行中のスナップショット（`stream.events`）にも同じ値が残るので、開き直し・再接続の再生でも、画面は走っているツールの経過と見出しの経過を本当の開始から数える（端末の時計とのずれは `ready` の `now` で補う）。`startedAt` はバックエンドが申告した開始（Codex の `startedAtMs`。推定で埋めない） | `assistant` の `tool_use` |
 | `tool.result` | `{ id, text, isError, truncated, rejection?, images?, computer? }` `rejection` は実行前に拒否されたコマンドの構造（Codex だけ。§2.5「Codex の実行前の拒否」）。server が委譲の結果に集める。`images` は結果の画像（Codex の画像生成と、`ply_computer` のスクリーンショット）。`computer` は `ply_computer` の印の行の中身（[computer-use.md](computer-use.md)「tool.start / tool.result」。3 つのバックエンドが印から作り、名前も `mcp__ply_computer__<ツール>` にそろえる） | `user` の `tool_result` |
-| `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"idle", label? }` | `system/status`, `session_state_changed` |
-| `turnResult` | `{ outcome: "ok"\|"error"\|"aborted", turns?, costUsd?, error? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない） | `result` |
+| `activity` | `{ state: "thinking"\|"writing"\|"compacting"\|"waiting"\|"running"\|"retrying"\|"idle", label?, retry? }`（retrying は上限・一時的な失敗のあと再試行を待っている。`retry: { attempt, next, message, reason, limit }`、next は次の再試行の epoch ms。人の応答待ちの waiting とは別。ADR 0229） | `system/status`, `session_state_changed` |
+| `turnResult` | `{ outcome: "ok"\|"error"\|"aborted"\|"limited", turns?, costUsd?, error?, resetsAt? }`（costUsd はこのターンの分。aborted には server が中断の理由 `reason` を足す。バックエンドは出さない。limited は使用量の上限で止まった。resetsAt は解ける時刻の epoch ms で、分からなければ出さない。ADR 0229） | `result` |
 | `permission` | `{ id, kind: "tool"\|"question", toolName, input, title?, canAlways, questions? }` | 既存 + AskUserQuestion の特別扱い |
 | `auth` | `{ backend, phase: "url"\|"done"\|"error", url?, message? }` | 新規（ログイン誘導） |
 | `session` | `{ sessionId, first?, model? }` | 既存 + モデル通知 |
@@ -970,3 +970,13 @@ app-server のページ読みなら、codex の公開の口だけで済み、ど
 
 - `tests/unit/codex-history.mjs`: 偽の app-server。読み方・上限超え・時間切れ・overflow を確かめる。
 - `tests/unit/server-codex-large-history.mjs`: 本物の保持役と、fake の app-server の `images:14`（22 MB）。開く・追加の指示・完了・legacy の失敗を確かめる。
+
+## Devin ACP の大きなツール情報
+
+Devin の受信は 1 行 64 MiB までとし、改行までのバイト数を加算して管理する。超過した行はバッファーから解放し、次の改行まで読み飛ばす。接続は保ち、本文を含めず超過を検知した時点のバイト数をサーバーログに残す。送信側にはサイズ上限を設けない。
+
+破棄した行の ID は特定できない。既存の要求の期限は維持し、期限なしで待っている要求にも超過を検知した時点から通常の要求と同じ期限（既定 30 秒）を付ける。その間に応答があれば受け付け、無ければその要求を時間切れにする。通知や承認要求を捨てた場合、その情報は復元できない。
+
+ツールの入力・出力・content などは、各フィールドにキーを含む文字列 16,384 文字の予算を設け、値は 256 個、深さは 12 段までに制限してから、ツール状態・履歴・画面へ渡す。巨大な `oldText` / `newText` は共通の前後を除き、変更部分と前後それぞれ 160 文字、元の文字数、省略の印を残す。変更部分自体が大きいときは前後それぞれを 4,096 文字までにし、文字予算も適用する。省略の印は文字予算とは別に付ける。結果テキストは他のバックエンドと同じ `MAX_RESULT_CHARS`（2,000 文字）で切る。
+
+この情報は表示用の抜粋であり、完全なパッチではない。Devin CLI が管理する DB や実行する編集内容は変更しない。履歴再生とライブ更新は同じ処理を通る（[ADR 0230](adr/0230-devin-large-tool-previews.md)）。

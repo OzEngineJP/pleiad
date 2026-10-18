@@ -30,10 +30,12 @@
 //                                          人が「オンにしてつなぐ」を押したときだけ呼ぶ（確認なしのモードでも、自動では呼ばない）
 //
 // エージェントの専用の窓（ADR 0154。core/chrome/windows.mjs が使う）。層が出した ref・browser 以外には何もしない
-// locateBrowser({ product })             → Promise<{ id, product } | null>  ブラウザーの実行ファイル（Windows はレジストリの App Paths → 既定の 3 か所）。id は launchWindow だけが使える
+// locateBrowser({ product })             → Promise<{ id, product } | null>  ブラウザーの実行ファイル（Windows はレジストリの App Paths → 既定の 3 か所）。id は launchWindow だけが使える。
+//                                          id は main のプロセスごとの値で、main が入れ替わると新しい層は前の id を知らない（windows.mjs は世代が替われば探し直す）
 // launchWindow({ browser, profileDir, url, nonce, userDataDir?, position?, size? })
-//                                        → Promise<{ ok: boolean }>  chrome.exe --profile-directory --new-window。url は題に nonce を持つ data: のページ。
-//                                          userDataDir があれば --user-data-dir を必ず付ける（無ければ既定の User Data）。position（物理画素）・size（DIP）は一瞬見えるのを避ける
+//                                        → Promise<{ ok: boolean, reason?: string }>  chrome.exe --profile-directory --new-window。url は題に nonce を持つ data: のページ。
+//                                          userDataDir があれば --user-data-dir を必ず付ける（無ければ既定の User Data）。position（物理画素）・size（DIP）は一瞬見えるのを避ける。
+//                                          起こせなかったら reason（層の決まった語。知らない browser は unknown-browser・invalid-browser）。返事が無ければ reason は無い
 // findWindowByNonce(nonce)               → Promise<WindowRef | null>  題に nonce を持つブラウザーの窓
 // findWindowByBounds({ bounds, port, since, tolerance })
 //                                        → Promise<WindowRef | null>  外形が bounds（CDP の Browser.getWindowBounds。DIP）に合う、まだ出していない窓がちょうど 1 つのとき（popup の別窓）。

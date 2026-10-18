@@ -5,7 +5,7 @@
 //   message.updated       { info: { id, role, sessionID, error?, tokens, cost, summary? } }
 //   message.part.updated  { part: { id, messageID, sessionID, type: text | reasoning | tool | step-start | step-finish | compaction …, … } }
 //   message.part.delta    { messageID, partID, field: 'text', delta }
-//   session.status        { status: { type: busy | idle | retry, message? } }
+//   session.status        { status: { type: busy | idle } | { type: retry, attempt, message, action?, next } }（next は次の再試行の epoch ms。retryOf）
 //   session.error         { error: { name, data: { message } } }
 //   session.idle          {}
 // tool の部品は state.status が pending → running → completed / error と進み、callID が呼び出しの id
@@ -45,8 +45,34 @@ function toolResult(part, { full = false } = {}) {
 /** ツールの入力。OpenCode の state.input をそのまま */
 const toolInput = (part) => (part?.state?.input && typeof part.state.input === 'object' ? part.state.input : {});
 
-/** OpenCode のエラー -> { message, kind } */
-export function errorOf(error) {
+// 上限を言うエラーの種類（応答の本文の error.code / error.type）。FreeUsageLimitError・GoUsageLimitError は OpenCode Zen の無料枠・Go の枠
+const LIMIT_CODES = new Set(['usage_limit_reached', 'rate_limit_exceeded', 'quota_exceeded', 'insufficient_quota', 'FreeUsageLimitError', 'GoUsageLimitError']);
+
+/** 時刻の値（epoch 秒・epoch ms・ISO の文字列）-> epoch ms。読めなければ null */
+const epochMs = (v) => {
+  const at = typeof v === 'number' ? v * (v < 1e12 ? 1000 : 1) : v;
+  const ms = at == null ? NaN : new Date(at).getTime();
+  return Number.isFinite(ms) ? ms : null;
+};
+
+/** retry-after-ms・retry-after（秒か HTTP の日付）-> 解ける時刻の epoch ms。無ければ null */
+function retryAfterAt(headers, now) {
+  const h = headers && typeof headers === 'object' ? Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v])) : {};
+  const ms = Number(h['retry-after-ms']);
+  if (Number.isFinite(ms) && ms >= 0) return now + ms;
+  const raw = h['retry-after'];
+  if (raw == null || raw === '') return null;
+  const sec = Number(raw);
+  if (Number.isFinite(sec) && sec >= 0) return now + sec * 1000;
+  const date = new Date(String(raw)).getTime();
+  return Number.isFinite(date) ? date : null;
+}
+
+/**
+ * OpenCode のエラー -> { name, message, aborted, auth, limited, resetsAt? }。resetsAt は解ける時刻の epoch ms
+ * （本文の resets_at、無ければ 429 の retry-after。server の turnResult が数で受ける）
+ */
+export function errorOf(error, now = Date.now()) {
   if (!error) return null;
   const name = String(error.name ?? error.type ?? '');
   const message = String(error.data?.message ?? error.message ?? name ?? 'error');
@@ -54,12 +80,36 @@ export function errorOf(error) {
   let body = data.responseBody ?? data.response?.body;
   try { if (typeof body === 'string') body = JSON.parse(body); } catch { body = null; }
   const code = body?.error?.code ?? body?.error?.type ?? data.code;
-  const limited = Number(data.statusCode ?? data.status) === 429
-    || ['usage_limit_reached', 'rate_limit_exceeded', 'quota_exceeded', 'insufficient_quota'].includes(code);
-  const reset = body?.error?.resets_at ?? data.resetsAt;
-  const at = typeof reset === 'number' ? reset * (reset < 1e12 ? 1000 : 1) : reset;
-  const resetsAt = at != null && Number.isFinite(new Date(at).getTime()) ? new Date(at).toISOString() : null;
+  const status = Number(data.statusCode ?? data.status);
+  const limited = status === 429 || LIMIT_CODES.has(code);
+  const resetsAt = epochMs(body?.error?.resets_at ?? data.resetsAt) ?? (limited ? retryAfterAt(data.responseHeaders, now) : null);
   return { name, message, aborted: name === 'MessageAbortedError', auth: name === 'ProviderAuthError', limited, ...(resetsAt ? { resetsAt } : {}) };
+}
+
+// 再試行の待ちのうち、待っても今は通らない上限（ADR 0229）。action.reason は OpenCode が付ける理由
+// （free_tier_limit = Zen の無料枠、account_rate_limit = Go の枠。next がその枠の解ける時刻）
+const DEFINITE_REASONS = new Set(['free_tier_limit', 'account_rate_limit']);
+// action の無い再試行でも、文言が枠の使い切り・残高不足を言うものは同じ扱い。"Rate limit exceeded"・"Too Many Requests" は含めない
+// （数秒〜数分で通ることのある込み具合の 429。待ちとして見せ、止めない）
+const DEFINITE_TEXT = /free usage exceeded|usage limit reached|insufficient[ _](?:balance|quota|funds|credits?)|quota exceeded|credit balance is too low/i;
+// 上限らしい再試行（画面の文言を「上限で待機中」にする）。5xx・混雑・通信の失敗の再試行は「エラーで再試行を待っている」
+const LIMIT_TEXT = /rate.?limit|too many requests|usage limit|quota|\b429\b|limit reached/i;
+
+/**
+ * session.status の retry -> { attempt, next, message, reason, limit, definite, resetsAt }。
+ *   next      次の再試行の epoch ms（OpenCode 1.19.3 で確かめた形。分からなければ null）
+ *   limit     上限による待ちか（文言・理由から推す）。false は 5xx・混雑・通信の失敗の再試行
+ *   definite  待っても今は通らない上限（ターンを止めて limited で終える）
+ *   resetsAt  definite で、枠の解ける時刻が分かるとき（Go の枠の next）。分からなければ null
+ */
+export function retryOf(status) {
+  const attempt = Number.isFinite(status?.attempt) ? status.attempt : null;
+  const next = Number.isFinite(status?.next) ? status.next : null;
+  const message = String(status?.message ?? '').slice(0, 300);
+  const reason = typeof status?.action?.reason === 'string' ? status.action.reason : null;
+  const definite = DEFINITE_REASONS.has(reason) || DEFINITE_TEXT.test(message);
+  const limit = definite || LIMIT_TEXT.test(message);
+  return { attempt, next, message, reason, limit, definite, resetsAt: definite && reason === 'account_rate_limit' ? next : null };
 }
 
 /**
@@ -77,6 +127,8 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
   let idle = false;
   let wroteText = false;
   let usedTool = false;
+  let retrying = null;          // 今の再試行の待ち（retryOf の形）。次の busy で解ける
+  let limit = null;             // 待っても通らない上限の再試行（retryOf の形）。呼ぶ側がターンを止めて limited で終える
 
   const partOf = (part) => {
     let entry = parts.get(part.id);
@@ -182,7 +234,18 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
           return false;
         }
         case 'session.status':
-          if (p.status?.type === 'retry') emit({ type: 'activity', state: 'waiting', label: String(p.status.message ?? '').slice(0, 200) });
+          // 再試行の待ち（ADR 0229）。人の応答を待つ waiting とは別の状態で、次の再試行の時刻と回数を添える。
+          // 待っても通らない上限なら覚えておき、呼ぶ側がターンを止める
+          if (p.status?.type === 'retry') {
+            retrying = retryOf(p.status);
+            if (retrying.definite) limit ??= retrying;
+            const { attempt, next, message, reason } = retrying;
+            emit({ type: 'activity', state: 'retrying', retry: { attempt, next, message, reason, limit: retrying.limit } });
+          } else if (p.status?.type === 'busy' && retrying) {
+            // 再試行が始まった（通れば、続く出来事で考えている・書いているに替わる）
+            retrying = null;
+            emit({ type: 'activity', state: 'running' });
+          }
           return false;
         case 'session.error':
           if (p.error) error = errorOf(p.error);
@@ -201,6 +264,10 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
     get idle() { return idle; },
     get wroteText() { return wroteText; },
     get pristine() { return !wroteText && !usedTool; },
+    /** 今の再試行の待ち（retryOf の形。待っていなければ null） */
+    get retrying() { return retrying; },
+    /** 待っても通らない上限の再試行（retryOf の形。無ければ null）。呼ぶ側がターンを止め、limited で終える */
+    get limit() { return limit; },
   };
 }
 

@@ -21,7 +21,7 @@ function credentials(env) {
     return { appleId: env.APPLE_ID.trim(), appleIdPassword: env.APPLE_APP_SPECIFIC_PASSWORD.trim(), teamId: env.APPLE_TEAM_ID.trim() };
   }
   if (!apiKey.every(present)) throw new Error(`Missing notarization settings: ${apiKey.join(', ')}`);
-  return { appleApiKey: env.APPLE_API_KEY.trim(), appleApiKeyId: env.APPLE_API_KEY_ID.trim(), appleApiKeyIssuer: env.APPLE_API_ISSUER.trim() };
+  return { appleApiKey: env.APPLE_API_KEY.trim(), appleApiKeyId: env.APPLE_API_KEY_ID.trim(), appleApiIssuer: env.APPLE_API_ISSUER.trim() };
 }
 
 async function notarizeApp(context, { env = process.env, run = notarize, attempts, delayMs, wait = sleep } = {}) {
