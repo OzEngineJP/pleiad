@@ -50,6 +50,8 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
         // Preserve unexpected delivered input rather than silently losing it.
         current.text = echo; expectedEcho = null; return;
       }
+      // 直前の user 行が本文を持ち echo 待ちでなければ、届いたのは別の発言（途中送信の折り込みなど）。行を分ける
+      if (current?.role === 'user' && current.text) current = null;
       row('user').text += text;
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;

@@ -251,7 +251,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           // 途中送信: 走っているターンへ session/prompt を重ねる。Grok は内蔵の待ち行列に積み、
           // 今の回の直後に続けて回す（実測 1.0.62。決着は drain で待つので、Pleiad の同じターンに見える）
           steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted });
-          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); }
+          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
           check();
           prompting = true;
           // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
@@ -270,9 +270,12 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
           // 途中送信で待ち行列に並んだ分がまだ回っていれば、その決着まで待つ（Grok は今の回の直後に続けて回す）。
-          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる
+          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる。
+          // closing を先に立て、drain の間に届いた新しい途中送信は受理しない（次のターンで送る）。
+          // drain 中に並んだ分の回が承認を求められるよう、prompting は drain が済むまで下ろさない
+          closing = true;
           if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
-          prompting = false; closing = true; local.abort();
+          prompting = false; local.abort();
           if (client) {
             try { await closeClient(); }
             catch (closeError) {
@@ -281,7 +284,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             }
           }
           if (sessionId) active.delete(sessionId);
-          if (control) { control.handle = null; control.steer = null; }
+          if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('grok.errors.promptFailed')) } : {}) });
         }

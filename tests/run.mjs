@@ -266,6 +266,8 @@ const SUITES = [
   './unit/server-delegation-notice.mjs',
   // 追加指示を走っている子のターンへ途中送信で渡す（fake の bg 台本。合図あり・なし、受理されない、結果不明、捨てられた、合図なし）
   './unit/server-delegation-steer.mjs',
+  // ACP の子（Devin）への追加指示: 受理後の決着（渡った合図で delivered・中断で dropped）を指示の状態に反映する
+  './unit/server-delegation-steer-acp.mjs',
   './unit/background-model.mjs',
   // 委譲の行: running は終わっていない・通知が届いていない短い行だけ。会話の分は agentTasks の tree・taskIds で読み、running を重ねる
   './unit/task-cards.mjs',

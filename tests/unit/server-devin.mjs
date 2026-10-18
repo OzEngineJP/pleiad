@@ -86,10 +86,14 @@ export default async function (t) {
     await c.cmd('sendMessage', { sessionId: steerSession.sessionId, messageId: 'devin-steer-0001', prompt: 'steer-note' });
     const held = await holding;
     const heldText = held.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    const umEvents = c.since(sm);
     t.ok('途中送信が同じ回に折り込まれて答えられ、発言の行が出て turnResult は一度だけ',
       heldText.includes('fixture: steer-note')
-      && c.since(sm).some(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')
+      && umEvents.some(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')
       && held.events.filter(e => e.type === 'turnResult').length === 1 && held.outcome === 'ok', heldText);
+    t.ok('受理した発言は pending で出し、呼び出しの決着で userMessage.delivered が届く',
+      umEvents.find(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')?.pending === true
+      && umEvents.some(e => e.type === 'userMessage.delivered' && e.messageId === 'devin-steer-0001'), JSON.stringify(umEvents.filter(e => e.messageId === 'devin-steer-0001')));
     c.close(); c = null;
     await server.stop(); server = null;
     const conversationDir = path.join(root, 'data', 'conversations');
