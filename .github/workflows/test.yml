@@ -79,9 +79,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS は配布していない（publish-evaluation.ps1 は windows だけを出す）うえ、
-          # macOS の実行枠は 10 倍で計上される。12 秒の検査に 10 分請求されるので、
-          # 押すたびではなく週次・手動の safe-storage-macos に分けた。
+          # macOS の鍵束はリリース時と週次・手動の safe-storage-macos で確かめる。
           - { os: windows-latest, name: windows-dpapi, expect: "1" }
           - { os: ubuntu-latest, name: linux-gnome-keyring, keyring: true, expect: "1" }
           - { os: ubuntu-latest, name: linux-no-keyring, keyring: false, expect: "0" }
@@ -124,8 +122,7 @@ jobs:
         if: runner.os == 'Linux' && !matrix.keyring
         run: xvfb-run -a npx electron --no-sandbox tests/desktop/safe-storage-smoke.cjs
 
-  # macOS の Keychain 側。配布対象に入っていないので毎回は回さず、週次と手動でだけ確かめる。
-  # macOS を配布に加えるときは、この if を外して safe-storage の matrix に戻すこと。
+  # macOS の Keychain 側。リリース時の検査に加え、週次と手動でも確かめる。
   safe-storage-macos:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest

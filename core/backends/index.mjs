@@ -88,8 +88,8 @@ function retiredBackend(id, info) {
   return wrapped;
 }
 
-// 既定は 3 つとも。読み込めないものは skip され、codex / antigravity は最初に使うまで
-// プロセスを起こさないので、入っていない環境でも claude だけで動く
+// 既定は記述にある試験用以外の全部。読み込めないものは skip され、CLI を使うものは
+// 最初に使うまでプロセスを起こさないので、使う CLI だけ入っていれば動く
 // （一覧の取得はバックエンドごとに失敗を握るので巻き添えにならない）。
 const wanted = String(process.env.AGENT_HOST_BACKENDS ?? DEFAULT_AGENT_IDS.join(","))
   .split(",")

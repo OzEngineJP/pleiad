@@ -194,6 +194,14 @@ const SUITES = [
   // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
   // core/backends/ の外のエージェントの id の直書き（ラチェット）
   './unit/backend-contract.mjs',
+  './unit/backend-registry.mjs',
+  './unit/backend-test-env.mjs',
+  './unit/context-owner-capability.mjs',
+  './unit/devin-models.mjs',
+  './unit/devin-acp.mjs',
+  './unit/devin-config.mjs',
+  './unit/devin-normalize.mjs',
+  './unit/server-devin.mjs',
   './unit/backend-conformance.mjs',
   './unit/backends-lint.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮

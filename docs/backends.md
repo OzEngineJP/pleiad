@@ -61,6 +61,34 @@ Pleiad を更新しても、走っている OpenCode のターンは止まらな
 
 互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または `opencode.json` の `provider`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
 
+## Devin CLI
+
+ローカルの Devin CLI（`devin`）へ ACP で接続する。クラウドの Devin セッションを操作する接続ではない。
+[公式のインストール手順](https://docs.devin.ai/cli)に従い、Pleiad が動く PC に CLI を入れる。
+
+- Windows: 公式の x64 / ARM64 インストーラー、または PowerShell の `irm https://static.devin.ai/cli/setup.ps1 | iex`。
+- macOS / Linux: `curl -fsSL https://cli.devin.ai/install.sh | bash`。macOS は Homebrew の `brew install --cask devin-cli` も使える。
+
+Windows のインストール先 `%LOCALAPPDATA%\devin\cli\bin` と、macOS / Linux の `~/.local/bin`・Homebrew の置き場も探す。
+別の場所の CLI は `AGENT_HOST_DEVIN_BIN` で指定できる。
+
+ログインは同じ PC の端末で `devin auth login` を実行する（[公式コマンド一覧](https://docs.devin.ai/cli/reference/commands)）。
+Pleiad の画面からのログイン、複数アカウントの切替は未対応。
+
+Devin CLI のモデルは、モデル系列の代表と、思考の強さ・速度が別の選択肢になっている。モデル名の末尾だけを強さとして切り出さず、CLI が返す選択肢を使う
+（[モデルの公式説明](https://docs.devin.ai/cli/models)、[ACP 接続の公式説明](https://docs.devin.ai/cli/acp/zed)）。
+モデルの一覧には有料の候補も出す。既定は現在のカタログで無料と確認できる SWE-2 High を優先し、無ければ別の無料候補を使う。
+無料の既定が無い場合や有料モデルを使う場合は、モデルを明示的に選ぶ。選んだモデル・思考・標準速度を ACP が確認しない場合は開始しない。
+カタログに載っていても ACP が対応する選択肢を返さないモデルは使えない。
+無料表示はアカウント・時期によって変わる。2026-10-18 の接続確認では `swe-2-high`・`swe-2-medium`・`swe-2-max` が Free と返った。
+利用上限や請求額を保証する表示ではなく、残り使用枠を取得できないときは「不明」とする。
+
+Pleiad が読むネイティブ設定の一覧が不明なときは、指示量や MCP の一覧を推定しない。
+これは Devin 自身がネイティブ設定を読まないという保証ではない。Pleiad 管理のコンテキストを受け取れない場合は担当の切替を無効にし、
+保存済みの担当が Pleiad でも、この会話では適用されない理由を表示する。
+通常の会話では利用者のネイティブ設定とログインを保ち、会話データの置き場だけを Pleiad 専用に分ける。
+Windows では CLI 本体が予期せず先に終了した場合、既存の `taskkill` による終了処理だけでは残った子プロセスをすべて回収できる保証はない。
+
 ## コンピューターの操作
 
 デスクトップ版（Windows）では、各エージェントに Pleiad の MCP `ply_computer` を渡し、画面を撮ってマウスとキーボードでアプリを操作させられる（[`computer-use.md`](computer-use.md)）。エージェントごとの違い:

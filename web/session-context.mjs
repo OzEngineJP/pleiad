@@ -156,6 +156,7 @@ export function placeStatus(here) {
 export function setupSessionContext({ cmd, preview, session, info, refreshInfo, openSettings, labelOf, isRunning = () => false, budget = () => DEFAULT_BUDGET, askReview = null, onStateChange = () => {} }) {
   const logins = new Map();     // MCP 名 -> ログインの進み具合（ブラウザで続けてください… / ログインしました）
   const agentCache = new Map(); // cwd -> agentMcp の結果
+  const backendCache = new Map(); // backends の能力。会話の担当の選択に使う
   const nativeCache = new Map(); // cwd|エージェント -> nativeInstructions の結果（結果と取得状態）。パネルを開くたびに読み直す
   let plyOpen = false;          // 指示の量の面の「Pleiad が足す分」を開いているか
   const findingsCache = new Map(); // 会話|場所|エージェント -> contextFindings の結果（結果と取得状態）。パネルを開くたびに計算し直す
@@ -240,6 +241,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     }
     const report = data.report;
     loadPlace(cwdOf(data));
+    readPart(backendCache, 'backends', 'backends', {});
     box.append(placeFace(data));
     if (!edit) box.append(amountFace(data));
     if (data.changed?.differs && !edit) box.append(changedNotice(data));
@@ -591,13 +593,26 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   function focusIn(selector) { requestAnimationFrame(() => document.querySelector(`.scx ${selector}`)?.focus()); }
 
   // ---------------------------------------------------------------- 「この場所だけ変える」の間の種類の面
+  function contextSupport() {
+    const part = backendCache.get('backends');
+    const backend = Array.isArray(part?.value) ? part.value.find(b => b.id === session()?.backend) : null;
+    const pending = !part || part.pending;
+    const confirmed = !pending && !part.error;
+    return { part, pending, supported: confirmed && ['turn', 'conversation'].includes(backend?.capabilities?.plyContext),
+      unsupported: confirmed && backend?.capabilities?.plyContext === false };
+  }
   function ownerSeg(kind, owner) {
     const box = el('div', 'cx-seg'); box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('sessionContext.place.ownerAria', { kind: WORD[kind] }));
     for (const id of ['native', 'ply']) {
       const b = button('', 'cx-opt');
       b.setAttribute('role', 'radio'); b.setAttribute('aria-checked', String(owner === id)); b.dataset.owner = `${kind}:${id}`;
       b.append(el('b', null, OWNER[id][0]), el('span', null, OWNER[id][1][kind]));
+      const support = contextSupport();
+      b.disabled = id === 'ply' && !support.supported;
+      if (id === 'ply' && support.unsupported) b.title = t('sessionContext.guarded.unavailable', { backend: backendLabel() });
+      else if (id === 'ply' && !support.pending && !support.supported) b.title = t('sessionContext.guarded.supportUnknown');
       b.onclick = () => {
+        if (b.disabled) return;
         // 外部 MCP を Pleiad にそろえる前に、この場所でつながるものをその場で確かめる（設定 › コンテキストと同じ。ADR 0031）
         if (kind === 'mcp' && unifying) {
           if (id !== 'ply') { unifying = false; refresh(); focusIn(`[data-owner="mcp:${id}"]`); }
@@ -620,6 +635,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const k = kindBox(WORD[kind], ply ? t('sessionContext.place.plyWho') : t('sessionContext.native'), ply);
     if (!value) { k.append(el('p', 'cx-sub', t('sessionContext.place.loading'))); return k; }
     k.append(ownerSeg(kind, value.owner));
+    const support = contextSupport();
+    if (!support.supported) {
+      if (support.pending) k.append(stateLine(t('sessionContext.state.loading'), { pending: true }));
+      else if (support.unsupported) k.append(el('p', 'cx-sub', t('sessionContext.guarded.unavailable', { backend: backendLabel() })));
+      else k.append(stateLine(t('sessionContext.guarded.supportUnknown'), { error: true, retry: () => retryPart(support.part) }));
+      return k;
+    }
     if (!ply && kind === 'mcp' && unifying && !editScan) { const p = el('p', 'cx-sub'); p.append(runMark(t('context.searching')), document.createTextNode(' ' + t('context.searchingDots'))); k.append(p); return k; }
     if (!ply && kind === 'mcp' && unifying) {
       const all = editScan.entries ?? [];
@@ -1107,6 +1129,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const data = info() ?? {};
     // 開くたびに作業場所の設定を読み直す（設定の画面や別の窓で変わっていることがある）。エージェント任せの指示の見積もりも同じ
     place.stale = true;
+    for (const part of backendCache.values()) if (!part.pending) part.stale = true;
     for (const cache of [nativeCache, findingsCache]) for (const part of cache.values()) if (!part.pending) part.stale = true;
     preview.openPanel({ key: KEY, title, subtitle: data.report ? subtitle(data) : '', body: render(), label: title, element: chip,
       onClose: () => { chip?.setAttribute('aria-expanded', 'false'); edit = false; editScan = null; unifying = false; } });

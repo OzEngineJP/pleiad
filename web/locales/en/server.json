@@ -68,7 +68,7 @@
       "loginFailed": "{{agent}} sign-in could not be completed. Please try again.",
       "permissionsUnknown": "Could not determine the access permissions needed to protect this {{agent}} account's credentials.",
       "permissionsFailed": "Could not set access permissions to protect this {{agent}} account's credentials.",
-      "credentialUnreadable": "The {{agent}} credentials could not be read. Sign in again."
+      "credentialUnreadable": "Unable to read {{agent}} account credentials."
     },
     "deleted": "That account has been deleted.",
     "notRegistered": "That account is not registered.",
@@ -677,6 +677,33 @@
       "loggedIn": "Signed in.",
       "openBrowser": "Open this in your browser and allow access.",
       "loginFailed": "Sign-in failed."
+    }
+  },
+  "devin": {
+    "description": "Uses local Devin CLI and its existing sign-in",
+    "usageUnknown": "Remaining Devin CLI quota is unavailable and is shown as unknown.",
+    "modes": {
+      "ask": "Questions only",
+      "askNote": "Answers without code changes. This is not OS-enforced read-only isolation",
+      "editNote": "Allows editing. Access outside the working directory is not isolated by the OS",
+      "smart": "AI judgment",
+      "smartNote": "Automatically allows actions Devin judges safe, including outside the working directory",
+      "planNote": "Plans before changing code. This is not OS-enforced read-only isolation",
+      "bypassNote": "Normally skips confirmations. Organization policies may still require approval"
+    },
+    "errors": {
+      "notInstalled": "Devin CLI (devin) was not found. Install it, then check again",
+      "modeUnavailable": "Devin CLI did not confirm the selected permission mode",
+      "configChanged": "Stopped because a verified model, thought level, speed or permission mode changed during the turn",
+      "promptFailed": "The Devin CLI turn did not complete successfully",
+      "notConnected": "Devin CLI is not connected",
+      "timeout": "Devin CLI response timed out ({{method}}, {{ms}} ms)",
+      "invalidCatalogue": "Could not verify the Devin CLI model catalogue",
+      "modelUnavailable": "The selected model is not in the current catalogue ({{model}})",
+      "explicitModelRequired": "No free default model is available. Select a model explicitly",
+      "selectionUnavailable": "The advertised Devin CLI choices do not confirm this model setting ({{setting}})",
+      "selectionNotAcknowledged": "Devin CLI did not acknowledge the model setting ({{setting}})",
+      "startFailed": "Could not start Devin CLI"
     }
   },
   "opencode": {

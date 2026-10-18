@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,15 +13,15 @@ export const name = 'opencode-accounts';
 export const title = 'OpenCode accounts: private auth, conversations, context, limits, and holder ownership';
 
 export default async function testOpencodeAccounts(t) {
-  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'opencode-accounts-'));
+  const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'opencode-accounts-')));
   const envKeys = ['AGENT_HOST_DATA', 'AGENT_HOST_OPENCODE_DATA', 'AGENT_HOST_OPENCODE_BIN', 'AGENT_HOST_OPENCODE_HOLDER', 'AGENT_HOST_RUNTIME_ROOT', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'OPENCODE_CONFIG', 'FAKE_OPENCODE_MODEL'];
   const before = Object.fromEntries(envKeys.map(k => [k, process.env[k]]));
   Object.assign(process.env, { AGENT_HOST_DATA: path.join(scratch, 'pleiad'), AGENT_HOST_OPENCODE_DATA: path.join(scratch, 'cli'),
     AGENT_HOST_OPENCODE_BIN: `"${process.execPath}" "${fileURLToPath(new URL('../lib/fake-opencode.mjs', import.meta.url))}"`,
     AGENT_HOST_OPENCODE_HOLDER: 'off', OPENAI_API_KEY: 'unrelated-cli-api-key', GEMINI_API_KEY: 'unrelated-gemini-key', OPENCODE_CONFIG: 'unrelated-config' });
   const auth = access => ({ auth: { openai: { type: 'oauth', access, refresh: `refresh-${access}`, expires: Date.now() + 3600000 } } });
-  const one = { id: 'acct-one', name: 'One', dir: path.join(scratch, 'accounts', 'one'), credential: auth('one') };
-  const two = { id: 'acct-two', name: 'Two', dir: path.join(scratch, 'accounts', 'two'), credential: auth('two') };
+  const one = { id: 'acct-one', name: 'One', dir: path.join(scratch, 'accounts', 'acct-one'), credential: auth('one') };
+  const two = { id: 'acct-two', name: 'Two', dir: path.join(scratch, 'accounts', 'acct-two'), credential: auth('two') };
   let backend, stop;
   const resultText = events => events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
   try {
@@ -39,7 +40,128 @@ export default async function testOpencodeAccounts(t) {
     assert.equal(await fs.readFile(realAuth, 'utf8'), original);
     t.ok('account data/config/cache/state and auth isolate; refreshed CLI auth wins over saved snapshot', true);
 
-    const login = { id: 'acct-login', dir: path.join(scratch, 'accounts', 'login') };
+    // A private area that links into the CLI credential store fails closed
+    // and never chmods, reads or overwrites the user's default CLI auth.
+    const seedAccount = id => ({ id, dir: path.join(scratch, 'accounts', id), credential: auth(`seed-${id}`) });
+    const openAuthDir = async account => { await fs.mkdir(path.join(opencodeData(account)), { recursive: true }); };
+    const linked = seedAccount('acct-linked');
+    await openAuthDir(linked);
+    let fileSymlinks = true;
+    try { await fs.symlink(realAuth, path.join(opencodeData(linked), 'auth.json'), 'file'); }
+    catch (error) {
+      if (process.platform !== 'win32' || !['EPERM', 'EACCES'].includes(error.code)) throw error;
+      fileSymlinks = false;
+    }
+    if (fileSymlinks) {
+      await assert.rejects(async () => readAccountAuth(linked), /Unsafe OpenCode authentication file/);
+      await assert.rejects(async () => prepareAccount(linked), /Unsafe OpenCode authentication file/);
+      assert.equal((await fs.lstat(path.join(opencodeData(linked), 'auth.json'))).isSymbolicLink(), true);
+      assert.equal(await fs.readFile(realAuth, 'utf8'), original);
+      await fs.unlink(path.join(opencodeData(linked), 'auth.json'));
+      t.ok('an auth symlink to the CLI store is refused by read/prepare and neither the link nor the CLI auth changes', true);
+    } else {
+      t.note('File symlink scenario skipped: Windows did not grant symlink creation; hardlink isolation is tested below.');
+    }
+    const hard = seedAccount('acct-hard');
+    await openAuthDir(hard);
+    await fs.link(realAuth, path.join(opencodeData(hard), 'auth.json'));
+    await assert.rejects(async () => readAccountAuth(hard), /Unsafe OpenCode authentication file/);
+    await assert.rejects(async () => prepareAccount(hard), /Unsafe OpenCode authentication file/);
+    assert.equal((await fs.stat(path.join(opencodeData(hard), 'auth.json'))).nlink >= 2, true);
+    assert.equal(await fs.readFile(realAuth, 'utf8'), original);
+    t.ok('a hardlinked auth is refused and the shared CLI store is left untouched', true);
+
+    const dirLinked = seedAccount('acct-dirlinked');
+    await fs.mkdir(dirLinked.dir, { recursive: true });
+    await fs.mkdir(path.join(dirLinked.dir, 'data'), { recursive: true });
+    await fs.symlink(process.env.AGENT_HOST_OPENCODE_DATA, path.join(dirLinked.dir, 'data', 'opencode'), process.platform === 'win32' ? 'junction' : 'dir');
+    await assert.rejects(async () => readAccountAuth(dirLinked), /Unsafe OpenCode account directory/);
+    await assert.rejects(async () => prepareAccount(dirLinked), /Unsafe OpenCode account directory/);
+    assert.equal(await fs.readFile(realAuth, 'utf8'), original);
+    t.ok('a data directory linked to the CLI data directory is refused and the CLI auth is untouched', true);
+
+    const emptyTarget = path.join(scratch, 'empty-external');
+    await fs.mkdir(emptyTarget);
+    const absent = seedAccount('acct-absent');
+    await fs.mkdir(path.join(absent.dir, 'data'), { recursive: true });
+    await fs.symlink(emptyTarget, opencodeData(absent), process.platform === 'win32' ? 'junction' : 'dir');
+    assert.throws(() => readAccountAuth(absent), /Unsafe OpenCode account directory/);
+    assert.deepEqual(await fs.readdir(emptyTarget), []);
+    t.ok('an unsafe directory with no auth cannot silently fall back to its saved credential', true);
+
+    const changing = seedAccount('acct-changing');
+    prepareAccount(changing);
+    const cliMode = (await fs.stat(realAuth)).mode;
+    const swappingLogin = loginAccount({ account: changing, argv: ['opencode'], timeoutMs: 1000, pollMs: 5,
+      emit: e => { if (e.phase === 'url') {
+        // The replacement happens before the first poll, after initial validation.
+        fsSync.renameSync(opencodeData(changing), `${opencodeData(changing)}-saved`);
+        fsSync.symlinkSync(process.env.AGENT_HOST_OPENCODE_DATA, opencodeData(changing), process.platform === 'win32' ? 'junction' : 'dir');
+      } } });
+    await assert.rejects(swappingLogin, /Unsafe OpenCode account directory/);
+    assert.equal(await fs.readFile(realAuth, 'utf8'), original);
+    assert.equal((await fs.stat(realAuth)).mode, cliMode);
+    t.ok('a directory replaced during login is refused before reading or chmodding the CLI auth', true);
+
+    const overlapping = { id: 'acct-overlap', dir: path.join(process.env.AGENT_HOST_OPENCODE_DATA, 'acct-overlap') };
+    await assert.rejects(async () => prepareAccount(overlapping), /overlaps the CLI data directory/);
+    assert.equal(await fs.readFile(realAuth, 'utf8'), original);
+    t.ok('an account directory nested in the CLI data directory is refused', true);
+
+    const cliAlias = path.join(scratch, 'cli-alias');
+    await fs.symlink(process.env.AGENT_HOST_OPENCODE_DATA, cliAlias, process.platform === 'win32' ? 'junction' : 'dir');
+    const cliData = process.env.AGENT_HOST_OPENCODE_DATA;
+    process.env.AGENT_HOST_OPENCODE_DATA = cliAlias;
+    try { assert.throws(() => prepareAccount(overlapping), /overlaps the CLI data directory/); }
+    finally { process.env.AGENT_HOST_OPENCODE_DATA = cliData; }
+    t.ok('a CLI data alias cannot hide overlap with an account directory', true);
+
+    const ancestorOverlap = seedAccount('acct-ancestor-overlap');
+    await fs.mkdir(path.join(ancestorOverlap.dir, 'data'), { recursive: true });
+    const ancestorAlias = path.join(scratch, 'cli-parent-alias');
+    await fs.symlink(path.join(ancestorOverlap.dir, 'data'), ancestorAlias, process.platform === 'win32' ? 'junction' : 'dir');
+    process.env.AGENT_HOST_OPENCODE_DATA = path.join(ancestorAlias, 'missing', 'opencode');
+    try {
+      assert.throws(() => prepareAccount(ancestorOverlap), /overlaps the CLI data directory/);
+      assert.throws(() => readAccountAuth(ancestorOverlap), /overlaps the CLI data directory/);
+      assert.equal(fsSync.existsSync(opencodeData(ancestorOverlap)), false);
+      assert.equal(fsSync.existsSync(process.env.AGENT_HOST_OPENCODE_DATA), false);
+    } finally { process.env.AGENT_HOST_OPENCODE_DATA = cliData; }
+    t.ok('an absent CLI path below an aliased ancestor is refused before creating directories or writing a credential seed', true);
+
+    for (const phase of ['account', 'data', 'auth']) {
+      const swapped = seedAccount(`acct-swap-${phase}`);
+      const mkdir = fsSync.mkdirSync, lstat = fsSync.lstatSync;
+      let changed = false;
+      try {
+        fsSync.mkdirSync = (file, ...options) => {
+          const result = mkdir(file, ...options);
+          if (!changed && ((phase === 'account' && file === swapped.dir) || (phase === 'data' && file === path.join(swapped.dir, 'data')))) {
+            changed = true; process.env.AGENT_HOST_OPENCODE_DATA = path.join(swapped.dir, 'uncreated-cli');
+          }
+          return result;
+        };
+        fsSync.lstatSync = (file, ...options) => {
+          const result = lstat(file, ...options);
+          if (!changed && phase === 'auth' && file === path.join(opencodeData(swapped), 'auth.json')) {
+            changed = true; process.env.AGENT_HOST_OPENCODE_DATA = path.join(swapped.dir, 'uncreated-cli');
+          }
+          return result;
+        };
+        assert.throws(() => prepareAccount(swapped), /overlaps the CLI data directory/);
+        assert.equal(changed, true);
+        assert.equal(fsSync.existsSync(path.join(opencodeData(swapped), 'auth.json')), false);
+      } finally { fsSync.mkdirSync = mkdir; fsSync.lstatSync = lstat; process.env.AGENT_HOST_OPENCODE_DATA = cliData; }
+      t.ok(`account overlap is revalidated after ${phase} preparation and before credential writes`, true);
+    }
+
+    const broken = seedAccount('acct-broken');
+    await openAuthDir(broken);
+    await fs.writeFile(path.join(opencodeData(broken), 'auth.json'), '{not-json');
+    await assert.rejects(async () => readAccountAuth(broken), { message: translate('accounts.backend.credentialUnreadable', { agent: 'OpenCode' }) });
+    t.ok('an unreadable account auth fails closed instead of silently using the saved seed', true);
+
+    const login = { id: 'acct-login', dir: path.join(scratch, 'accounts', 'acct-login') };
     const emitted = [];
     const signing = loginAccount({ account: login, argv: ['opencode'], timeoutMs: 1000, pollMs: 10, emit: e => emitted.push(e) });
     await fs.writeFile(path.join(opencodeData(login), 'auth.json'), JSON.stringify(auth('logged-in').auth));

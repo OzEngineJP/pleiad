@@ -11,7 +11,7 @@ export const title = '登録アカウントの通し: 設定・会話・履歴�
 
 export default async function (t) {
   for (const backend of ['codex', 'opencode']) {
-    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), `ply-server-accounts-${backend}-`));
+    const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), `ply-server-accounts-${backend}-`)));
     const home = path.join(scratch, 'default-home');
     await fs.mkdir(home);
     await fs.mkdir(path.join(scratch, 'fake-state'));

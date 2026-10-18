@@ -13,7 +13,7 @@ export const name = 'opencode-usage';
 export const title = 'OpenCode provider quotas: OAuth headers, account isolation, unknown data, and limits';
 
 export default async function testOpencodeUsage(t) {
-  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'opencode-usage-'));
+  const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'opencode-usage-')));
   const oldData = process.env.AGENT_HOST_OPENCODE_DATA;
   process.env.AGENT_HOST_OPENCODE_DATA = path.join(scratch, 'login');
   const seen = [];
@@ -43,7 +43,7 @@ export default async function testOpencodeUsage(t) {
     return fetch(`http://127.0.0.1:${server.address().port}${u.pathname}`, init);
   };
   const oauth = { type: 'oauth', access: 'access-one', refresh: 'github-token-one', expires: Date.now() + 3600000, accountId: 'chatgpt-org-one' };
-  const account = { id: 'acct-one', name: 'One', ready: true, dir: path.join(scratch, 'one'), credential: { auth: { openai: oauth, 'github-copilot': { ...oauth, expires: 0 } } } };
+  const account = { id: 'acct-one', name: 'One', ready: true, dir: path.join(scratch, 'acct-one'), credential: { auth: { openai: oauth, 'github-copilot': { ...oauth, expires: 0 } } } };
   try {
     const quota = await accountQuota(account, { fetcher });
     assert.equal(quota.windows.length, 5);
@@ -60,8 +60,8 @@ export default async function testOpencodeUsage(t) {
     assert.equal(seen.find(r => r.url.includes('copilot')).headers.authorization, 'token github-token-one');
     t.ok('official response percentages, reset units, additional buckets and provider-specific auth', true);
 
-    const other = { ...account, id: 'acct-two', name: 'Two', dir: path.join(scratch, 'two'), credential: { auth: { openai: { ...oauth, access: 'access-two' } } } };
-    const multiple = await opencodeUsage({ accounts: [account, other, { ...other, id: 'empty', ready: false }] }, { fetcher });
+    const other = { ...account, id: 'acct-two', name: 'Two', dir: path.join(scratch, 'acct-two'), credential: { auth: { openai: { ...oauth, access: 'access-two' } } } };
+    const multiple = await opencodeUsage({ accounts: [account, other, { ...other, id: 'empty', dir: path.join(scratch, 'empty'), ready: false }] }, { fetcher });
     assert.deepEqual(multiple.accounts.map(r => r.accountId), [null, 'acct-one', 'acct-two', 'empty']);
     assert.equal(multiple.accounts[0].checkedAt, null);
     assert.ok(multiple.accounts.slice(1, 3).every(r => Number.isFinite(r.checkedAt)));

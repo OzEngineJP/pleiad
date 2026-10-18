@@ -68,7 +68,7 @@
       "loginFailed": "{{agent}} のログインを完了できませんでした。もう一度お試しください。",
       "permissionsUnknown": "{{agent}} のアカウントの認証情報を保護するためのアクセス権を確認できませんでした。",
       "permissionsFailed": "{{agent}} のアカウントの認証情報を保護するためのアクセス権を設定できませんでした。",
-      "credentialUnreadable": "{{agent}} の認証情報を読み取れません。もう一度ログインしてください。"
+      "credentialUnreadable": "{{agent}} のアカウントの認証情報を読み取れません。"
     },
     "deleted": "そのアカウントは削除されています",
     "notRegistered": "そのアカウントは登録されていません",
@@ -675,6 +675,33 @@
       "loggedIn": "ログインした",
       "openBrowser": "ブラウザで開いて許可してください",
       "loginFailed": "ログインに失敗した"
+    }
+  },
+  "devin": {
+    "description": "ローカルの Devin CLI と既存のログインを使う",
+    "usageUnknown": "Devin CLI の残り使用枠は取得できないため不明です。",
+    "modes": {
+      "ask": "質問のみ",
+      "askNote": "コードを変更せず回答する。OS の読み取り専用の隔離ではない",
+      "editNote": "編集を許可する。作業場所の外へのアクセスを OS で隔離しない",
+      "smart": "AI が判断",
+      "smartNote": "Devin が安全と判断する操作を自動で許可する。作業場所の外も対象",
+      "planNote": "変更前に計画する。OS の読み取り専用の隔離ではない",
+      "bypassNote": "原則として確認しない。組織のポリシーによる承認は残ることがある"
+    },
+    "errors": {
+      "notInstalled": "Devin CLI（devin）が見つかりません。インストールしてから再確認してください",
+      "modeUnavailable": "選んだ承認モードを Devin CLI の応答で確認できません",
+      "configChanged": "実行中に確認済みのモデル・思考・速度または承認モードが変わったため停止しました",
+      "promptFailed": "Devin CLI のターンが正常に完了しませんでした",
+      "notConnected": "Devin CLI に接続していません",
+      "timeout": "Devin CLI の応答がタイムアウトしました（{{method}}、{{ms}} ms）",
+      "invalidCatalogue": "Devin CLI のモデル一覧を確認できません",
+      "modelUnavailable": "指定したモデルを現在の一覧で確認できません（{{model}}）",
+      "explicitModelRequired": "無料の既定モデルがありません。利用するモデルを明示的に選択してください",
+      "selectionUnavailable": "Devin CLI の選択肢ではモデル設定を確認できません（{{setting}}）",
+      "selectionNotAcknowledged": "Devin CLI がモデル設定を確認しませんでした（{{setting}}）",
+      "startFailed": "Devin CLI を起動できませんでした"
     }
   },
   "opencode": {
