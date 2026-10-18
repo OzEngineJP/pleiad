@@ -9,7 +9,7 @@ import { openData } from '../../core/data-schema.mjs';
 import { sessionTable } from '../../core/db.mjs';
 
 export const name = 'copy-data-dir';
-export const title = '実データの写し: remote/ と *-secrets.json を写さない・DB は VACUUM INTO・委譲のタスクは既定で空にする';
+export const title = '実データの写し: remote/ と名前に secret を含むもの（secret-values.json を含む）を写さない・DB は VACUUM INTO・委譲のタスクは既定で空にする';
 
 const run = (...args) => new Promise((resolve, reject) => execFile(process.execPath, [path.join(ROOT, 'scripts', 'copy-data-dir.mjs'), ...args], {},
   (error, stdout, stderr) => error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)));
@@ -29,6 +29,14 @@ export default async function (t) {
     await fs.writeFile(path.join(src, 'remote', 'secrets.json'), 'SECRET');
     await fs.writeFile(path.join(src, 'mcp-secrets.json'), 'SECRET');
     await fs.writeFile(path.join(src, 'claude-account-secrets.json'), 'SECRET');
+    // 秘密情報と変数（ADR 0217）の値・その書きかけ・項目の一覧。`*-secrets.json` の形に当たらない名前
+    await fs.writeFile(path.join(src, 'secret-values.json'), 'SECRET');
+    await fs.writeFile(path.join(src, 'secret-values.json.0a1b.tmp'), 'SECRET');
+    await fs.writeFile(path.join(src, 'secrets.json'), 'SECRET');
+    await fs.mkdir(path.join(src, 'plugins', 'Secret-Store'), { recursive: true });
+    await fs.writeFile(path.join(src, 'plugins', 'Secret-Store', 'a.json'), 'SECRET');
+    await fs.writeFile(path.join(src, 'plugins', 'my-secret.key'), 'SECRET');
+    await fs.writeFile(path.join(src, 'plugins', 'settings.json'), '{}');
     await fs.writeFile(path.join(src, 'control.json'), '{"token":"SECRET"}');
     await fs.writeFile(path.join(src, 'mcp-secrets.json.lock'), '1');
     await fs.writeFile(path.join(src, 'prefs.json'), '{"mode":"plan"}');
@@ -41,6 +49,9 @@ export default async function (t) {
     const result = JSON.parse(await run(dst, '--source', src));
     const names = await fs.readdir(dst);
     t.ok('remote/・*-secrets.json・control.json・ロック（pleiad.lock*）を写さない', !names.includes('remote') && !names.some(name => /secrets|control|\.lock|pleiad\.lock/.test(name)), names.join(','));
+    const deep = await fs.readdir(path.join(dst, 'plugins'));
+    t.ok('名前に secret を含むものは、大小・形・階層を問わず写さない（secret-values.json・書きかけの .tmp・下の階層のファイルとフォルダー）',
+      !names.some(name => /secret/i.test(name)) && JSON.stringify(deep) === JSON.stringify(['settings.json']), `${names.join(',')} | ${deep.join(',')}`);
     t.ok('設定とそのほかのファイルは写す（会話の本文・引き継ぎも、--light なしなら）', names.includes('prefs.json') && names.includes('conversations') && names.includes('handoff-abc.json'));
     t.ok('DB は WAL の未反映の分ごと写る（VACUUM INTO）', readSessions(dst).live?.title === 'WAL の中だけにある' && readSessions(dst).a?.title === '会話', JSON.stringify(Object.keys(readSessions(dst))));
     t.ok('委譲のタスクは既定で空にする（委譲の続きを走らせない）', Object.keys(readAgentTasks(dst)).length === 0 && result.keepTasks === false);
