@@ -79,6 +79,17 @@ export default async function (t) {
     await c.cmd('abort', { sessionId: active.sessionId });
     const stopped = await running;
     t.ok('中断は cancel 通知で完了し turnResult は一度だけ', stopped.outcome === 'aborted' && stopped.events.filter(e => e.type === 'turnResult').length === 1);
+    // ---- 途中送信（走っている回へ session/prompt を重ねると、同じ回に折り込まれて届く）
+    const sm = c.mark();
+    const holding = c.runTurn({ backend: 'devin', cwd, prompt: '[slow] first', model: 'swe-2-high' });
+    const steerSession = await c.waitFor(e => e.type === 'session' && e.first === true, { ms: 10000, from: sm });
+    await c.cmd('sendMessage', { sessionId: steerSession.sessionId, messageId: 'devin-steer-0001', prompt: 'steer-note' });
+    const held = await holding;
+    const heldText = held.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    t.ok('途中送信が同じ回に折り込まれて答えられ、発言の行が出て turnResult は一度だけ',
+      heldText.includes('fixture: steer-note')
+      && c.since(sm).some(e => e.type === 'userMessage' && e.messageId === 'devin-steer-0001')
+      && held.events.filter(e => e.type === 'turnResult').length === 1 && held.outcome === 'ok', heldText);
     c.close(); c = null;
     await server.stop(); server = null;
     const conversationDir = path.join(root, 'data', 'conversations');

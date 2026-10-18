@@ -72,6 +72,9 @@ function replay(session) {
 function cancel(id) {
   const token = running.get(id);
   if (token && !token.stubborn) { token.cancelled = true; token.wake?.(); }
+  const session = sessions.get(id);
+  for (const queued of session?.queue ?? []) write({ id: queued.id, result: { stopReason: 'cancelled' } });
+  if (session) session.queue = [];
   for (const [key, waiter] of pending) if (waiter.sessionId === id) { pending.delete(key); waiter.resolve({ outcome: { outcome: 'cancelled' } }); }
 }
 
@@ -120,6 +123,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       }
       case 'session/prompt': {
         const session = load(p.sessionId), text = (p.prompt ?? []).map(v => v.text ?? '').join('');
+        // 走っている回への prompt は内蔵の待ち行列に積む（実機の振る舞い。今の回が終わってから続けて回す）
+        if (running.has(session.sessionId)) { (session.queue ??= []).push({ id: request.id, text }); return; }
         const token = { cancelled: false, stubborn: text.includes('[stubborn]') }; running.set(session.sessionId, token);
         session.messages.push({ role: 'user', text }); persist(session);
         update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
@@ -144,7 +149,22 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });
         session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools }); persist(session); running.delete(session.sessionId);
         notify(session.sessionId, { sessionUpdate: 'turn_completed', stop_reason: token.cancelled ? 'cancelled' : 'end_turn', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
-        result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn' }; break;
+        result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn' };
+        write({ id: request.id, result });
+        // 待ち行列に積まれた途中送信を、並んだ順に続けて回す
+        while (session.queue?.length) {
+          const queued = session.queue.shift();
+          const qtoken = { cancelled: false }; running.set(session.sessionId, qtoken);
+          session.messages.push({ role: 'user', text: queued.text }); persist(session);
+          update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
+          const qreply = `fixture: ${queued.text}`, qmiddle = Math.ceil(qreply.length / 2);
+          update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: qreply.slice(0, qmiddle) } });
+          update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: qreply.slice(qmiddle) } });
+          session.messages.push({ role: 'assistant', text: qreply, thinking: 'fixture thought' }); persist(session); running.delete(session.sessionId);
+          notify(session.sessionId, { sessionUpdate: 'turn_completed', stop_reason: qtoken.cancelled ? 'cancelled' : 'end_turn', usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 } });
+          write({ id: queued.id, result: { stopReason: qtoken.cancelled ? 'cancelled' : 'end_turn' } });
+        }
+        return;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);
     }

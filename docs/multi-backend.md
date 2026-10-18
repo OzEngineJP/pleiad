@@ -87,7 +87,7 @@ Codex も `thread/name/set` で公式クライアントとタイトルを共有�
 | `background` | `{ tasks: [{ id, kind: "agent"\|"shell"\|"terminal"\|"other", label, waitable? }] }` 裏で生きているタスクの**全量**。受けたら丸ごと置き換える。`ambient` のタスクは含めない。`waitable: true` = 終わりの通知が必ず来るので待てる（下の kind の表） | Claude `system/background_tasks_changed`（保険に `task_started` / `task_updated` / `task_notification`）。Antigravity は ACTIVE のまま残った `run_command`（§2.8「裏へ回ったコマンド」） |
 | `phase` | `{ state: "active"\|"waiting" }` `waiting` = main は返答を終えて止まっていて、かつ裏のタスクが 1 本以上生きている。それ以外は `active` | 新規（main の区切りと上の一覧から導く） |
 | `userMessage.delivered` | `{ messageId }` 途中送信が**エージェントに渡った**（走っているターンの会話に入った）。`messageId` は outbox の item の id | 新規（2026-09。Claude の replay、Codex の `item/started`） |
-| `userMessage.dropped` | `{ messageId }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残るが、今これを出すバックエンドは無い） |
+| `userMessage.dropped` | `{ messageId }` 受理した途中送信を、エージェントが読まないままターンが死んだ。server は送信待ちの保留へ戻す | 新規（2026-09。ターンの終わりより後に届くことがある。受け口は server と web に残る。ACP の 2 つ（Devin・Grok）が、呼び出しが拒否・中断で決着した分に出す） |
 
 `present` / `status` / `title` / `fork` / `mode` / `model` / `running` / `turnEnd` はそのまま。
 
@@ -101,6 +101,13 @@ web はこれを見て、一覧の行・畳んだ見出し・稼働表示の弧�
 次のターンの設定の予約（`nextSettings`。実行中に作業ディレクトリ・モデルなどのチップを変えると立つ）があっても、`waiting` の間は同じに途中送信する。
 送信は今のターンの設定のまま処理され、予約は消さずに次のターンから効く（[ADR 0077](adr/0077-steer-before-reservation-while-waiting.md)）。
 `core/message-queue.mjs` の `kick` は、予約があって main が動いている間（`active`）だけ、すぐ終わるのでターンの終わりを待つ（送信待ちの理由は `{ reason: 'turn', detail: 'reserved' }`）。
+
+途中送信の口は `control.steer`（`core/backends/acp-steer.mjs` は ACP の 2 バックエンドの共通部品）。
+ACP の `session/prompt` を走っているターンへ重ねると、**Devin は同じ回に折り込み**（実測 3000.11.92）、
+**Grok は内蔵の待ち行列に積んで今の回の直後に続けて回す**（実測 1.0.62）。どちらも応答は回の決着まで返らないので、
+「受理」は書き込みが直ぐに断られなかったこと、「渡らなかった」は呼び出しが拒否・中断で決着したこと。
+Grok のように次の回として回る分は、runTurn が drain で決着まで待つ（待たずに畳むと接続の終了で全部 dropped になる）。
+Antigravity は途中送信を持たない（送ると `reason: 'turn'` で送信待ちになる）。
 `phase` が `waiting` に変わった時点で `core/server.mjs` が `kick` し直し、待っていた送信をすぐ流す。
 終わらない裏のコマンド（headed のブラウザー・`npm run dev`）が残るターンで、予約があると裏を止めるまで送られなかった（2026-10-02 に実例）のはこれで直した。
 届かない送信を切り分けるときは、`~/.agent-host/pleiad.db` の会話の `outbox`（受理の `at`。`session_fields` の行。`tests/lib/data-store.mjs` の `readSessions` で組み直して読める）と、Claude の transcript の

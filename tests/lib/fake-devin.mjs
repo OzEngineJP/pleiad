@@ -51,6 +51,9 @@ function replay(session) {
 function cancel(id) {
   const token = running.get(id);
   if (token && !token.stubborn) { token.cancelled = true; token.wake?.(); }
+  const session = sessions.get(id);
+  for (const steer of session?.steerQueue ?? []) write({ id: steer.id, result: { stopReason: 'cancelled' } });
+  if (session) session.steerQueue = [];
   for (const [key, waiter] of pending) if (waiter.sessionId === id) { pending.delete(key); waiter.resolve({ outcome: { outcome: 'cancelled' } }); }
 }
 
@@ -121,6 +124,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       }
       case 'session/prompt': {
         const session = load(p.sessionId), text = (p.prompt ?? []).map(v => v.text ?? '').join('');
+        // 走っている回への prompt は同じ回に折り込む（実機の振る舞い。応答は回の終わりにまとめて返る）
+        if (running.has(session.sessionId)) { (session.steerQueue ??= []).push({ id: request.id, text }); return; }
         if (text === '/compact') {
           // ACP のスラッシュコマンドは prompt の本文として届く。発言は増やさず、占有だけ減らして usage_update を流す
           session.used = Math.max(20000, Math.round((session.used ?? 120000) * 0.15)); persist(session);
@@ -132,7 +137,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
         if (text.includes('[kill]')) process.exit(17);
         if (text.includes('[slow]') || token.stubborn) await new Promise(resolve => { const timer = setTimeout(resolve, token.stubborn ? 60000 : Number(process.env.FAKE_DEVIN_SLOW_MS || 5000)); token.wake = () => { clearTimeout(timer); resolve(); }; });
-        if (token.cancelled) { running.delete(session.sessionId); result = { stopReason: 'cancelled' }; break; }
+        if (token.cancelled) { running.delete(session.sessionId); for (const steer of session.steerQueue ?? []) write({ id: steer.id, result: { stopReason: 'cancelled' } }); session.steerQueue = []; result = { stopReason: 'cancelled' }; break; }
         if (text.includes('[frame-malformed]')) { process.stdout.write('{not-json}\n'); break; }
         const drift = ['model', 'thought_level', 'speed'].find(kind => text.includes(`[${kind}-drift]`));
         if (drift) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session).map(o => o.id === drift ? { ...o, currentValue: 'unexpected' } : o) });
@@ -186,7 +191,20 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools });
         session.used = Math.min(session.window, (session.used ?? 120000) + 30000); persist(session); running.delete(session.sessionId);
         update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window });
-        result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn', permissionResult }; break;
+        result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn', permissionResult };
+        write({ id: request.id, result });
+        // 折り込まれた途中送信も、同じ回の続きとして返し、並んだ順に応答を書く
+        for (const steer of session.steerQueue ?? []) {
+          session.messages.push({ role: 'user', text: steer.text });
+          update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
+          const steerReply = `fixture: ${steer.text}`, steerMiddle = Math.ceil(steerReply.length / 2);
+          update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: steerReply.slice(0, steerMiddle) } });
+          update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: steerReply.slice(steerMiddle) } });
+          session.messages.push({ role: 'assistant', text: steerReply, thinking: 'fixture thought' });
+          write({ id: steer.id, result: { stopReason: 'end_turn' } });
+        }
+        session.steerQueue = []; persist(session);
+        return;
       }
       default: throw new Error(`Unsupported method: ${request.method}`);
     }

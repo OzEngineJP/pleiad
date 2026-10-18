@@ -10,6 +10,7 @@ import { undelivered } from './undelivered.mjs';
 import { prepareDevinLaunch } from './devin-config.mjs';
 import { buildDevinModels, resolveDevinModel, applyDevinModel } from './devin-models.mjs';
 import { createDevinMapper } from './devin-normalize.mjs';
+import { createAcpSteer } from './acp-steer.mjs';
 
 const choices = values => (values ?? []).flatMap(v => Array.isArray(v?.options) ? choices(v.options) : [v?.value]);
 const abortError = () => Object.assign(new Error('Devin turn cancelled'), { aborted: true });
@@ -137,7 +138,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         const { emit, onPromptDelivered, control } = args;
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
-        let client, closePromise, sessionId = args.sessionId ?? null, mapper, verified = null, selectedMode = null, prompting = false, sent = false, fatal = null, closing = false, watchdog;
+        let client, closePromise, sessionId = args.sessionId ?? null, mapper, verified = null, selectedMode = null, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null;
         let latestSession = null, latestSnapshot = null, latestMode = null;
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
@@ -250,13 +251,16 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           mapper.beginTurn(prompt);
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
-          if (control) control.handle = { sessionId };
+          // 途中送信: 走っているターンへ session/prompt を重ねる。Devin は同じ回に折り込む（実測 3000.11.92）
+          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted });
+          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); }
           check();
           prompting = true;
           // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
           emit({ type: 'activity', state: 'thinking' });
           const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
           sent = true; onPromptDelivered?.();
+          control?.onReady?.();
           const result = await Promise.race([response, stopped]);
           if (fatal) throw fatal;
           if (local.signal.aborted || result?.stopReason === 'cancelled') outcome = 'aborted';
@@ -267,6 +271,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           outcome = !fatal && (hostSignal?.aborted || error.aborted) ? 'aborted' : 'error';
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
+          // 途中送信で並んだ分がまだ回っていれば、その決着まで待つ（区切りが来ず次の回に回った分）。
+          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる
+          if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
           prompting = false; verified = null; closing = true; local.abort();
           if (client) {
             try { await closeClient(); }
@@ -276,7 +283,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             }
           }
           if (sessionId) active.delete(sessionId);
-          if (control) control.handle = null;
+          if (control) { control.handle = null; control.steer = null; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('devin.errors.promptFailed')) } : {}) });
         }

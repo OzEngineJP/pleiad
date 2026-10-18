@@ -204,6 +204,7 @@ const SUITES = [
   './unit/devin-normalize.mjs',
   './unit/devin-usage.mjs',
   './unit/server-devin.mjs',
+  './unit/server-grok.mjs',
   './unit/backend-conformance.mjs',
   './unit/backends-lint.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
