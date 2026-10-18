@@ -31,8 +31,8 @@ export default async function(t) {
   assert.deepEqual(carried.accounts[2].windows, [], '使用量の認可が済んでいない行は引き継がない');
   assert.equal(carried.accounts[2].needsUsageLogin, true);
   assert.equal(carried.accounts[0].dim, undefined, '薄くしない');
-  // 札: ログイン中のアカウントを使う会話は枠を出し続ける（今までは chipState が null で札が消えた）
-  assert.equal(chipState(quotaOf(failed, '')), null);
+  // 札: 前回の枠が無ければ不明、引き継げればログイン中のアカウントの率を出す
+  assert.deepEqual(chipState(quotaOf(failed, '')), { kind: 'unknown' });
   assert.equal(chipState(quotaOf(carried, '')).kind, 'value');
   assert.equal(chipState(quotaOf(carried, '')).used, 48);
   assert.equal(chipState(quotaOf(carried, 'work')).kind, 'value');

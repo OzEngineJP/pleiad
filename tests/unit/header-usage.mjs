@@ -30,8 +30,8 @@ export default async function(t) {
   assert.match(resetText(week, now), /に回復$/);
   t.ok('上限は回復の時刻が先のときだけ。100 に届かない率を 100% と丸めない。回復の目安', true);
 
-  assert.equal(chipState(null), null);
-  assert.equal(chipState({ windows: [], message: '未対応' }), null, '枠の無いエージェントは出さない');
+  assert.deepEqual(chipState(null), { kind: 'unknown' });
+  assert.deepEqual(chipState({ windows: [], message: '未対応' }), { kind: 'unknown' }, '枠が無くても一覧への入口を残す');
   assert.deepEqual(chipState({ windows: [], needsUsageLogin: true, accountId: 'a' }), { kind: 'auth' });
   assert.deepEqual(chipState({ windows: [win('5時間', null, null)] }), { kind: 'unknown' });
   const quota = { windows: [], accounts: [
@@ -43,7 +43,7 @@ export default async function(t) {
   assert.equal(quotaOf(quota, 'gone').label, 'ログイン中のアカウント');
   assert.equal(quotaOf({ windows: [five] }, 'work').windows[0], five);
   assert.equal(needsAuth(quotaOf(quota, 'work')), true);
-  t.ok('Claude は会話で使うアカウントの枠。未認可は「使用量 —」、枠の無いものは出さない', true);
+  t.ok('Claude は会話で使うアカウントの枠。未認可も枠の無いものも「使用量 —」', true);
 
   assert.equal(shortLabel(week), '週次');
   assert.equal(shortLabel(win('Opus・週次', 1, null)), 'Opus・週次');
