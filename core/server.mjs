@@ -2533,6 +2533,7 @@ process.on('exit', () => shellRuns.stopAll());
 process.on('exit', () => botHost?.stop());
 process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
 process.on('exit', () => mainLink?.dispose());
+process.on('exit', () => { void contextBridge.dispose(); });
 // 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
@@ -9002,7 +9003,7 @@ async function shutdownChromeHolder() {
 }
 /** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server・OpenCode のサーバーは、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
 function exitAfterStoppingHeld(code) {
-  void Promise.race([Promise.all([stopHeldAppServer(), stopHeldOpencode()]), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
+  void Promise.race([Promise.all([stopHeldAppServer(), stopHeldOpencode(), contextBridge.dispose()]), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
     .then(() => shutdownChromeHolder()).catch(() => {})
     .finally(() => process.exit(code));
 }

@@ -28,7 +28,8 @@ export default async function(t,{open,work}) {
       t.ok(`${backend}: 共通指示・Skill・MCP の結果を受信`,body.includes('INSTRUCTION_OK')&&body.includes('MCP_OK')&&body.includes('SKILL_OK'),body.slice(0,300));
       t.ok(`${backend}: Skill 本文の読み込みと MCP 呼び出しを記録`,report?.report?.entries?.some(e=>e.kind==='skill'&&e.status==='loaded')&&report.report.entries.some(e=>e.kind==='mcp'&&e.calls>=1));
       if(backend==='codex'&&process.env.E2E_CONTEXT_CODEX_MODE==='ask')t.ok('codex: 外部 MCP の承認を Pleiad で確認',turn.permissions.some(e=>e.toolName==='fixture / echo'));
-      const after=await fs.readFile(launchFile,'utf8');t.ok(`${backend}: MCP プロセスを二重起動しない`,after.slice(before.length)==='launch\n');
+      // 同じ登録はバックエンドや会話をまたいで再利用し、最初の接続だけ起動する。
+      const after=await fs.readFile(launchFile,'utf8');t.ok(`${backend}: MCP プロセスを二重起動しない`,after.slice(before.length)===(before ? '' : 'launch\n'));
     }
   }finally{client.close();}
 }

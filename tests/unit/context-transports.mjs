@@ -3,6 +3,25 @@ import { createContextBridge } from '../../core/context-bridge.mjs';
 
 export const name = 'context-transports';
 export const title = 'HTTP・SSE の MCP 中継と resources / prompts';
+// HTTP/SSE の実際の SDK 接続を、遅延・エラーの試験でも共有する。
+export function mcpHttpFixture(result) {
+  let stream;
+  const server = http.createServer(async(req,res) => {
+    if(req.headers.authorization!=='Bearer fixture'){res.writeHead(401);res.end();return;}
+    if(req.method==='GET'&&req.url==='/sse'){
+      stream=res;res.writeHead(200,{'content-type':'text/event-stream'});res.write('event: endpoint\ndata: /messages\n\n');return;
+    }
+    if(req.method!=='POST'){res.writeHead(405);res.end();return;}
+    let body='';for await(const c of req)body+=c;
+    const m=JSON.parse(body);
+    if(m.id===undefined){res.writeHead(202);res.end();return;}
+    const data = await result(m, req);
+    const response=JSON.stringify({jsonrpc:'2.0',id:m.id,...(data.error ? {error:data.error} : {result:data})});
+    if(req.url==='/messages'){stream.write(`event: message\ndata: ${response}\n\n`);res.writeHead(202);res.end();}
+    else {res.writeHead(200,{'content-type':'application/json'});res.end(response);}
+  });
+  return { server, end: () => stream?.end() };
+}
 export default async function(t) {
   const result = m => {
     switch (m.method) {
@@ -16,20 +35,8 @@ export default async function(t) {
       default: return {};
     }
   };
-  let stream, connection;
-  const upstream = http.createServer(async(req,res) => {
-    if(req.headers.authorization!=='Bearer fixture'){res.writeHead(401);res.end();return;}
-    if(req.method==='GET'&&req.url==='/sse'){
-      stream=res;res.writeHead(200,{'content-type':'text/event-stream'});res.write('event: endpoint\ndata: /messages\n\n');return;
-    }
-    if(req.method!=='POST'){res.writeHead(405);res.end();return;}
-    let body='';for await(const c of req)body+=c;
-    const m=JSON.parse(body);
-    if(m.id===undefined){res.writeHead(202);res.end();return;}
-    const response=JSON.stringify({jsonrpc:'2.0',id:m.id,result:result(m)});
-    if(req.url==='/messages'){stream.write(`event: message\ndata: ${response}\n\n`);res.writeHead(202);res.end();}
-    else {res.writeHead(200,{'content-type':'application/json'});res.end(response);}
-  });
+  let connection;
+  const { server: upstream, end } = mcpHttpFixture(result);
   const bridge=createContextBridge(),host=http.createServer(bridge.handle);
   try {
     await new Promise(r=>upstream.listen(0,'127.0.0.1',r));await new Promise(r=>host.listen(0,'127.0.0.1',r));
@@ -41,7 +48,8 @@ export default async function(t) {
       let allowed=true;
       const progress=[];
       connection=await bridge.open({runtime,prompt:'',origin,isActive:()=>true,authorize:async()=>allowed,progress:p=>progress.push(p)});
-      t.ok(`${type}: MCP 接続の開始を順番と総数で知らせる`, progress.length===servers.length && progress.every((p,i)=>p.current===i+1&&p.total===servers.length&&p.name===servers[i].name),JSON.stringify(progress));
+      // 接続は並列。通知の到着順ではなく、各サーバーの index・総数・名前の網羅を確かめる。
+      t.ok(`${type}: MCP 接続の開始を全件の index と総数で知らせる`, progress.length===servers.length && servers.every((s,i)=>progress.some(p=>p.current===i+1&&p.total===servers.length&&p.name===s.name)),JSON.stringify(progress));
       const request=async(method,params={})=>(await(await fetch(connection.url,{method:'POST',headers:{...connection.headers,'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})})).json()).result;
       const tool=(await request('tools/list')).tools.find(t=>t.name.startsWith('m_'));
       t.ok(`${type}: 認証ヘッダーを渡してツールを呼べる`,(await request('tools/call',{name:tool.name})).content[0].text==='TOOL_OK');
@@ -55,7 +63,7 @@ export default async function(t) {
       await connection.close();connection=null;
     }
   } finally {
-    await connection?.close();stream?.end();host.closeAllConnections();upstream.closeAllConnections();
+    await connection?.close();await bridge.dispose();end();host.closeAllConnections();upstream.closeAllConnections();
     await Promise.all([new Promise(r=>host.close(r)),new Promise(r=>upstream.close(r))]);
   }
 }
