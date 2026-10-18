@@ -102,6 +102,7 @@ import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { finishShutdown } from './shutdown.mjs';
 import { stopHeldAppServer } from './backends/codex-held.mjs';
+import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
 import { createPlyHooks } from './ply-hooks.mjs';
 import { prepareHooksTurn, unifyPreview, importCandidate } from './hooks-unify.mjs';
@@ -5544,6 +5545,7 @@ if ((process.env.AGENT_HOST_ADOPT_HOLDER === '1' || HANDOVER_START || handoverEn
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
 // 同じく、秘密情報と変数を Claude のシェルへ渡すファイル（core/claude-env-file.mjs。値を含む）
 sweepClaudeEnvFiles(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.envFile).filter(Boolean) }).catch(() => {});
+sweepOpencodeEnvFiles(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.envFile).filter(Boolean) }).catch(() => {});
 await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])), keepQueued: HANDOVER_START });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
 {
@@ -8998,9 +9000,9 @@ async function shutdownChromeHolder() {
   const client = await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, launch: false }).catch(() => null) ?? chromeHolder;
   await shutdownHolderIfIdle(client);
 }
-/** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server は、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
+/** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server・OpenCode のサーバーは、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
 function exitAfterStoppingHeld(code) {
-  void Promise.race([stopHeldAppServer(), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
+  void Promise.race([Promise.all([stopHeldAppServer(), stopHeldOpencode()]), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
     .then(() => shutdownChromeHolder()).catch(() => {})
     .finally(() => process.exit(code));
 }

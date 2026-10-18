@@ -695,6 +695,7 @@ export const backend = {
     effortInModelId: false,
     instructionsAtStart: false, // 人格（botInstructions）はターンごとに append に入る
     failureDiagnostics: false,
+    handover: true,          // CLI を保持役に載せ、新しいサーバーが付け直す（claude-held.mjs）
   },
 
   // 親側の Task の説明を拾ってサブエージェントの見出しにする（server.mjs）。

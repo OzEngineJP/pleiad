@@ -37,6 +37,7 @@ export const ABOUT = {
   effortInModelId: '強さをモデルの id で選ぶ',
   instructionsAtStart: '指示は会話の始めにしか効かない（人格を直したら次のターンで渡し直す）',
   failureDiagnostics: '失敗の理由を会話の控えに残す',
+  handover: '更新で走っているターンを止めない（無停止の更新。新しいサーバーが付け直す）',
 };
 
 const cell = (v) => {

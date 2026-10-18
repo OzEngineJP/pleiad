@@ -19,6 +19,7 @@
  * - AGENT_HOST_SHELL_HOLDER: `!` の行を保持役に載せるか（無停止の更新 段階 3。core/shell-held.mjs）。同じく継がせない
  * - AGENT_HOST_CHROME_LINK: Chrome への接続を接続の子（保持役の子）に持たせるか（ADR 0167。core/chrome/link.mjs）。`off` でサーバーの中の ws。同じく継がせない
  * - AGENT_HOST_CODEX_HOLDER: Codex の共有の app-server を保持役に載せるか（無停止の更新 段階 3。core/backends/codex-held.mjs）。同上
+ * - AGENT_HOST_OPENCODE_HOLDER: OpenCode の共有のサーバーを保持役に載せるか（無停止の更新。core/backends/opencode-held.mjs）。同上
  */
 export const BOOT_ENV_NAMES = Object.freeze([
   'AGENT_HOST_HANDOVER',
@@ -26,7 +27,7 @@ export const BOOT_ENV_NAMES = Object.freeze([
   'AGENT_HOST_SYSTEM_LOCALE', 'AGENT_HOST_SERVER_LOG',
   'AGENT_HOST_RUNTIME_ROOT', 'AGENT_HOST_RUNTIME_KEY',
   'AGENT_HOST_RUNTIME_RESOURCES', 'AGENT_HOST_RUNTIME_DIR',
-  'AGENT_HOST_CLAUDE_HOLDER', 'AGENT_HOST_CODEX_HOLDER', 'AGENT_HOST_AGY_HOLDER', 'AGENT_HOST_SHELL_HOLDER',
+  'AGENT_HOST_CLAUDE_HOLDER', 'AGENT_HOST_CODEX_HOLDER', 'AGENT_HOST_OPENCODE_HOLDER', 'AGENT_HOST_AGY_HOLDER', 'AGENT_HOST_SHELL_HOLDER',
   'AGENT_HOST_CHROME_LINK',
 ]);
 const NAMES = new Set(BOOT_ENV_NAMES);

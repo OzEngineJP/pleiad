@@ -46,6 +46,8 @@ Pleiad は自分のプラグインとツール（委譲・操作の一覧・コ�
 
 Hooks を Pleiad がそろえる場所では、Claude Code の形の登録をそのまま OpenCode の会話にも渡せる（渡し先に OpenCode を選ぶ）。OpenCode 自身のプラグインは止めない。
 
+Pleiad を更新しても、走っている OpenCode のターンは止まらない（承認待ちのままでも、新しい版で同じ承認が出る）。
+
 互換の接続先（OpenRouter・LiteLLM・ローカルの Ollama など）は、Pleiad の「接続先」ではなく OpenCode の接続先としてつなぐ（`opencode auth login`、または `opencode.json` の `provider`）。つないだ接続先のモデルは、入力欄のモデルの一覧にそのまま出る。
 
 ## コンピューターの操作

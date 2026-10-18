@@ -567,6 +567,8 @@ const SUITES = [
   './unit/adopt-claude.mjs',
   // 付け直し（無停止の更新 段階 3）: 保持役に載せた Codex の共有の app-server（fake の app-server）を、承認待ち・ツールの実行中・サブエージェント・裏の端末の最中に引き継ぐ
   './unit/adopt-codex.mjs',
+  // 付け直し（無停止の更新）: 保持役に載せた OpenCode の共有のサーバー（身代わり）を、承認待ち・ツールの実行中・本文の途中・ターンの無いとき・強制終了で引き継ぐ
+  './unit/adopt-opencode.mjs',
   // Codex の app-server を保持役に載せる部品（無停止の更新 段階 3）: 載せるかの切り替え・世代つきの id・付け直すスレッドの再生と預かり・手を離す
   './unit/codex-held.mjs',
   // Codex の履歴の読み出し: 画像の base64 を運ばないページ読み・上限超えと時間切れで待ち続けない・保持役の overflow で依頼を失敗にする

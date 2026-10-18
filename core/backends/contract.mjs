@@ -59,6 +59,8 @@ export const CAPABILITIES = {
   instructionsAtStart: { valid: bool },
   // 失敗の理由を会話の控え（failureReason）に残し、失敗のログを書く（server.mjs の recordBackendFailure）
   failureDiagnostics: { valid: bool },
+  // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
+  handover: { valid: bool, requires: (v) => (v ? ['adoptTurn'] : []) },
 };
 
 export const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITIES));
@@ -68,7 +70,7 @@ export const NO_CAPABILITIES = Object.freeze({
   title: false, tag: false, fork: false, forkMessage: false, rewind: false, subagents: false, liveModel: false, liveMode: false,
   hostTools: false, approvals: 'none', alwaysAllow: false, mcpApproval: 'agent', login: false, claudeAccounts: false, compatEndpoints: false,
   compact: false, autoCompactWindow: false, promptSuggestions: false, plyAgents: false, plyContext: false, computerUse: false,
-  shell: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false,
+  shell: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, handover: false,
 });
 
 /** バックエンドの必須のメンバー（retiredBackend が持つ最小の形） */

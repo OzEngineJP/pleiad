@@ -13,6 +13,9 @@
 //   "slow"          中断（/abort）されるまで終わらない
 //   "hold"          途中送信（走っている最中の prompt_async）が届くまで（最長 20 秒）待ってから答える
 //   "fail"          失敗（session.error）で終わる
+//   "gate:<名前>"   bash のツールを動かしたまま、ゲート（AGENT_HOST_FAKE_GATE_DIR/<名前> のファイル）が開くまで待ってから "gate <名前> done" と答える
+//   "stream:<名前>" 本文の前半を流したまま、ゲートが開くまで待ってから後半を流す（本文は "first half <名前> / second half <名前>"）
+// 答えていない承認・質問は GET /permission・/question、走っている会話は GET /session/status で返す（無停止の更新の付け直しが聞き直す）
 //   それ以外        "echo: <発言>" と答える（system を受けたら "[system]" を前に付ける）
 // 走っている最中に届いた prompt_async は、同じ実行の中で次の区切りに読み（途中送信）、本文の最後に "受け取った: <本文>" を足す。
 import http from 'node:http';
@@ -31,6 +34,7 @@ const id = (prefix) => `${prefix}_${Date.now().toString(16)}${(++seq).toString(3
 const sessions = new Map();       // id -> { id, directory, title, parentID, time, permission, messages: [{ info, parts }], run }
 const mcp = new Map();            // directory -> { name: { status, config } }
 const waits = new Map();          // permission / question の id -> resolve
+const pending = new Map();        // 答えていない permission / question の id -> { kind, properties }
 const clients = new Set();
 
 function broadcast(directory, type, properties) {
@@ -65,14 +69,19 @@ function assistant(s, parentID) {
   const put = (part) => { const at = m.parts.findIndex((p) => p.id === part.id); if (at >= 0) m.parts[at] = part; else m.parts.push(part); broadcast(s.directory, 'message.part.updated', { sessionID: s.id, part, time: now() }); };
   return {
     info,
-    async text(body) {
+    async text(body, { pause = null } = {}) {
       const part = { id: id('prt'), messageID: info.id, sessionID: s.id, type: 'text', text: '', time: { start: now() } };
       put(part);
-      for (const chunk of String(body).match(/[\s\S]{1,6}/g) ?? []) {
-        part.text += chunk;
-        broadcast(s.directory, 'message.part.delta', { sessionID: s.id, messageID: info.id, partID: part.id, field: 'text', delta: chunk });
-        await wait(1);
-      }
+      const stream = async (chunk) => {
+        for (const piece of String(chunk).match(/[\s\S]{1,6}/g) ?? []) {
+          part.text += piece;
+          // 実機と同じく、部品の本文は差分で伸び、部品の更新は始まりと終わりにだけ来る（GET の発言には今の本文が入る）
+          m.parts[m.parts.findIndex((x) => x.id === part.id)] = { ...part };
+          broadcast(s.directory, 'message.part.delta', { sessionID: s.id, messageID: info.id, partID: part.id, field: 'text', delta: piece });
+          await wait(1);
+        }
+      };
+      if (pause) { await stream(pause.before); await pause.wait(); await stream(pause.after); } else await stream(body);
       put({ ...part, time: { start: part.time.start, end: now() } });
     },
     reasoning(body) {
@@ -105,9 +114,18 @@ function assistant(s, parentID) {
 function ask(s, type, properties) {
   const requestID = id(type === 'permission.asked' ? 'per' : 'que');
   return new Promise((resolve) => {
-    waits.set(requestID, resolve);
-    broadcast(s.directory, type, { id: requestID, sessionID: s.id, ...properties });
+    const props = { id: requestID, sessionID: s.id, ...properties };
+    waits.set(requestID, (answer) => { pending.delete(requestID); resolve(answer); });
+    pending.set(requestID, { kind: type === 'permission.asked' ? 'permission' : 'question', directory: s.directory, properties: props });
+    broadcast(s.directory, type, props);
   });
+}
+
+/** ゲート（tests/lib/fake-gate.mjs）が開くまで待つ */
+async function gate(name, ctl) {
+  const file = `${process.env.AGENT_HOST_FAKE_GATE_DIR ?? ''}/${name}`;
+  const fs = await import('node:fs');
+  while (!ctl.aborted && !fs.existsSync(file)) await wait(25);
 }
 
 async function mcpCall(s, server, tool, args) {
@@ -146,6 +164,12 @@ async function run(s, user, text, { system = null } = {}) {
       return;
     }
     let reply = `echo: ${text}`;
+    if (text.startsWith('stream:')) {
+      const name = text.slice('stream:'.length).trim();
+      await a.text('', { pause: { before: `first half ${name} / `, after: `second half ${name}`, wait: () => gate(name, ctl) } });
+      a.finish();
+      return;
+    }
     a.reasoning('thinking about it');
     if (text.startsWith('tool')) {
       const args = { command: text.includes('forbidden') ? 'echo forbidden' : 'echo hello' };
@@ -181,6 +205,12 @@ async function run(s, user, text, { system = null } = {}) {
       const env = res.ok ? await res.json() : { status: res.status };
       t.done(JSON.stringify(env));
       reply = `env: ${JSON.stringify(env)}`;
+    } else if (text.startsWith('gate:')) {
+      const name = text.slice('gate:'.length).trim();
+      const t = a.tool('bash', { command: `wait ${name}` });
+      await gate(name, ctl);
+      t.done(`${name} opened\n`, { exit: 0 });
+      reply = `gate ${name} done`;
     } else if (text.startsWith('hold')) {
       for (let i = 0; i < 400 && !ctl.steers.length; i++) await wait(50);
     } else if (text.startsWith('task')) {
@@ -242,6 +272,9 @@ const server = http.createServer(async (req, res) => {
       mcp.set(dir, { ...(mcp.get(dir) ?? {}), [b.name]: entry });
       return send(200, Object.fromEntries(Object.entries(mcp.get(dir)).map(([k, v]) => [k, { status: v.status }])));
     }
+    if (url.pathname === '/permission' && req.method === 'GET') return send(200, [...pending.values()].filter((x) => x.kind === 'permission' && (!dir || x.directory === dir)).map((x) => x.properties));
+    if (url.pathname === '/question' && req.method === 'GET') return send(200, [...pending.values()].filter((x) => x.kind === 'question' && (!dir || x.directory === dir)).map((x) => x.properties));
+    if (url.pathname === '/session/status' && req.method === 'GET') return send(200, Object.fromEntries([...sessions.values()].filter((x) => x.run && (!dir || x.directory === dir)).map((x) => [x.id, { type: 'busy' }])));
     if (url.pathname === '/experimental/session') return send(200, [...sessions.values()].filter((s) => !s.parentID).reverse().map(row));
     if (url.pathname === '/session' && req.method === 'POST') {
       const b = await body(req);
