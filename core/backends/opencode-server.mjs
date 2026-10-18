@@ -24,7 +24,7 @@ const REQUEST_TIMEOUT_MS = 120_000;
  * @param origin () => Promise<string>。OpenCode に渡す Pleiad の待ち受け（札に置く）。currentOrigin は今の値（待ち受ける前は null。見比べるだけで待たない）
  * @param busy () => boolean。走っているターンがあるか（待ち受けが変わったときに起こし直してよいか）
  */
-export function createOpencodeServer({ command, env = async () => ({}), held = null, origin = async () => null, currentOrigin = () => null, busy = () => false }) {
+export function createOpencodeServer({ command, env = async () => ({}), held = null, account = null, origin = async () => null, currentOrigin = () => null, busy = () => false }) {
   let proc = null;          // 起こした子（Pleiad の子のとき）
   let heldChild = null;     // 保持役の子のとき（HeldOpencode）
   let base = null;          // http://127.0.0.1:port
@@ -56,7 +56,7 @@ export function createOpencodeServer({ command, env = async () => ({}), held = n
       const [file, ...prefix] = argv;
       const url = await h.spawn({ command: file, args: [...prefix, ...args], env: childEnv, cwd: process.cwd(), timeoutMs: START_TIMEOUT_MS });
       const at = await origin();
-      h.setServer({ base: url, auth: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`, origin: at, secret: extra.PLEIAD_OPENCODE_SECRET ?? null });
+      h.setServer({ base: url, auth: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`, origin: at, secret: extra.PLEIAD_OPENCODE_SECRET ?? null, ...(account ? { account } : {}) });
       return adopt(h);
     }
     const child = spawnCli(argv, args, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });

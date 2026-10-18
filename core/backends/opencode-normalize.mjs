@@ -50,7 +50,16 @@ export function errorOf(error) {
   if (!error) return null;
   const name = String(error.name ?? '');
   const message = String(error.data?.message ?? error.message ?? name ?? 'error');
-  return { name, message, aborted: name === 'MessageAbortedError', auth: name === 'ProviderAuthError' };
+  const data = error.data ?? error;
+  let body = data.responseBody;
+  try { if (typeof body === 'string') body = JSON.parse(body); } catch { body = null; }
+  const code = body?.error?.code ?? body?.error?.type ?? data.code;
+  const limited = Number(data.statusCode ?? data.status) === 429
+    || ['usage_limit_reached', 'rate_limit_exceeded', 'quota_exceeded', 'insufficient_quota'].includes(code);
+  const reset = body?.error?.resets_at ?? data.resetsAt;
+  const at = typeof reset === 'number' ? reset * (reset < 1e12 ? 1000 : 1) : reset;
+  const resetsAt = at != null && Number.isFinite(new Date(at).getTime()) ? new Date(at).toISOString() : null;
+  return { name, message, aborted: name === 'MessageAbortedError', auth: name === 'ProviderAuthError', limited, ...(resetsAt ? { resetsAt } : {}) };
 }
 
 /**
@@ -67,6 +76,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
   let error = null;
   let idle = false;
   let wroteText = false;
+  let usedTool = false;
 
   const partOf = (part) => {
     let entry = parts.get(part.id);
@@ -106,6 +116,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
       return;
     }
     if (part.type === 'tool') {
+      usedTool = true;
       const status = part.state?.status;
       const id = String(part.callID ?? part.id);
       const name = toolName(part.tool);
@@ -189,6 +200,7 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
     get usage() { return { ...usage }; },
     get idle() { return idle; },
     get wroteText() { return wroteText; },
+    get pristine() { return !wroteText && !usedTool; },
   };
 }
 
