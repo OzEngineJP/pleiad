@@ -52,7 +52,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
   panel.className = 'mp-panel'; panel.id = 'agentAccountsPanel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'aaTitle');
   panel.innerHTML = `<div class="mp-row"><h3 id="aaTitle"></h3><button type="button" class="btn" id="aaClose" data-i18n="agentAccounts.close"></button></div>
-  <p class="mp-note" id="aaIntro"></p>
+  <p class="mp-note mp-intro" id="aaIntro"></p>
   <div id="aaList"></div><button type="button" class="btn" id="aaAdd" data-i18n="agentAccounts.add"></button>
   <section class="mp-card" id="aaFlow" hidden aria-live="polite"><h3 id="aaFlowTitle"></h3><div id="aaFlowBody"></div></section>
   <form id="aaForm" hidden><h3 id="aaFormTitle"></h3>
@@ -65,7 +65,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
 
   const lists = createAccountRequestCache({ read: async id => (await accountCmd('list', { backend: id })).accounts ?? [] });
   const cache = lists.cache;
-  let backend = null, editingId = '', confirming = '';
+  let backend = null, editingId = '', confirming = '', onOpen = () => {};
   let view = null, formVersion = 0, transition = Promise.resolve(), running = null;
   const showing = captured => view === captured && !panel.hidden;
   // Identity is immutable; presentation state belongs to this attempt alone.
@@ -257,7 +257,8 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     } catch (err) { if (sameForm()) $('aaFormState').textContent = err.message; }
     finally { if (sameForm()) $('aaSubmit').disabled = false; }
   };
-  $('aaClose').onclick = () => { panel.hidden = true; view = null; $('aaForm').hidden = true; resetForm(); void cancelFlow(); };
+  const close = () => { panel.hidden = true; view = null; $('aaForm').hidden = true; resetForm(); void cancelFlow(); };
+  $('aaClose').onclick = close;
   $('aaAdd').onclick = () => { resetForm(); confirming = ''; $('aaForm').hidden = false; draw(); $('aaName').focus(); };
   $('aaCancel').onclick = () => { $('aaForm').hidden = true; resetForm(); };
 
@@ -265,7 +266,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     if (flow && flow.attempt.backend !== id) void cancelFlow();
     const capturedView = Object.freeze({ backend: id });
     view = capturedView;
-    openSettings(); backend = id; panel.hidden = false;
+    openSettings(); backend = id; panel.hidden = false; onOpen(id);
     $('aaForm').hidden = true; resetForm(); confirming = ''; draw(); drawFlow();
     $('aaTitle').textContent = t('agentAccounts.title', { agent: labelOf(id) });
     $('aaIntro').textContent = t('agentAccounts.intro', { agent: labelOf(id) });
@@ -274,7 +275,11 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     catch (e) { if (showing(capturedView)) $('aaState').textContent = e.message; }
   }
   return {
-    open, load, authEvent,
+    open, load, authEvent, close,
+    /** 開いている面のエージェント（閉じていれば ''。設定のカードの再描画で使う） */
+    get openAgent() { return panel.hidden ? '' : (backend ?? ''); },
+    /** open() が呼ばれた（カードの「接続」の面を開く合図。web/client.mjs が受ける） */
+    onOpen(fn) { onOpen = fn; },
     /** 取ってある一覧（同期。まだ取っていなければ空） */
     list: (id) => cache.get(id) ?? [],
     invalidate: () => {

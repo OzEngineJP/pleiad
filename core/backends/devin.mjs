@@ -15,6 +15,8 @@ import { createAcpSteer } from './acp-steer.mjs';
 
 const choices = values => (values ?? []).flatMap(v => Array.isArray(v?.options) ? choices(v.options) : [v?.value]);
 const abortError = () => Object.assign(new Error('Devin turn cancelled'), { aborted: true });
+const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_DEVIN_LOGIN_MS ?? 10 * 60_000);
+const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_DEVIN_POLL_MS ?? 3_000);
 const configSetting = (options, kind) => options.filter(o => o?.id === kind || o?.category === kind);
 function matchesVerified(options, verified) {
   if (!Array.isArray(options) || options.some(o => typeof o?.id !== 'string') || new Set(options.map(o => o.id)).size !== options.length) return false;
@@ -93,9 +95,11 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     plan: { label: t('modes.plan'), note: t('devin.modes.planNote'), scope: 'readonly', autonomy: 'ask', enforced: false },
     bypass: { label: 'Bypass', note: t('devin.modes.bypassNote'), scope: 'full', autonomy: 'never', enforced: false },
   });
+  // ログインの案内が同時に走らないよう掴む旗
+  let pendingAuth = null;
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
-    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true,
+    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true,
       // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control・ply_computer を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
       browser: true, plyControl: true, secrets: true, visualize: true,
       computerUse: { images: 'inline', waitSliceMs: null } },
@@ -345,7 +349,99 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       }
     },
     async releaseConversation(id) { const client = active.get(id); if (client) await client.close(); cache.delete(id); },
+
+    // ---- 認証 ---------------------------------------------------------------
+    //
+    // `devin auth` に status / login / logout がある。ログインはブラウザーで行うので端末が要る:
+    // Pleiad はコマンドを案内し、`devin auth status` が通るのを見届ける（Antigravity と同じ流れ）。
+    // 資格情報は credentials.toml（windsurf_api_key）。使用量は同じ資格情報で読む（devin-usage.mjs）。
+
+    auth: {
+      /** `devin auth status` を読む。人向けの文（Logged in … / User: Name:）と、fixture の JSON の両方を受ける */
+      async status() {
+        const { code, out, err } = await runAuth(['auth', 'status']).catch(e => ({ code: -1, out: '', err: String(e?.message ?? e) }));
+        const text = `${out}\n${err}`.trim();
+        try {
+          const parsed = JSON.parse(out.trim());
+          if (typeof parsed.authenticated === 'boolean') return { loggedIn: parsed.authenticated, account: parsed.authenticated ? (parsed.name ?? parsed.user ?? null) : null, detail: text.slice(0, 200) || null };
+        } catch {}
+        if (/logged in/i.test(text)) {
+          const account = /^\s*Name:\s*(.+)$/m.exec(text)?.[1]?.trim() || null;
+          return { loggedIn: true, account, detail: /via\s+(.+?)[).]/i.exec(text)?.[1]?.trim() || null };
+        }
+        return { loggedIn: false, account: null, detail: text.slice(0, 200) || null };
+      },
+      /** ログインは端末でしか受け付けない（OAuth はブラウザー）。コマンドを出し、status が通るまで見張る */
+      async login({ emit }) {
+        if (pendingAuth) throw new Error(t('devin.auth.loginRunning'));
+        pendingAuth = {};
+        try {
+          if (await signedIn()) {
+            emit?.({ type: 'auth', phase: 'done', message: t('devin.auth.alreadyLoggedIn') });
+            return;
+          }
+          const command = [...argv(), 'auth', 'login'].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+          emit?.({ type: 'auth', phase: 'url', url: command, message: t('devin.auth.runCommand') });
+          const until = Date.now() + LOGIN_TIMEOUT_MS;
+          while (Date.now() < until) {
+            await new Promise(r => { const timer = setTimeout(r, LOGIN_POLL_MS); timer.unref?.(); });
+            if (await signedIn()) {
+              emit?.({ type: 'auth', phase: 'done', message: t('devin.auth.loggedIn') });
+              return;
+            }
+          }
+          const message = t('devin.auth.loginTimeout');
+          emit?.({ type: 'auth', phase: 'error', message });
+          throw new Error(message);
+        } finally {
+          pendingAuth = null;
+        }
+      },
+      /** `devin auth logout`。対話は要らないので Pleiad から実行する */
+      async logout() {
+        const { code, err, out } = await runAuth(['auth', 'logout']);
+        if (code !== 0) throw new Error((err || out || t('devin.errors.promptFailed')).trim().slice(0, 300));
+      },
+    },
+    /** 使っている devin の実行ファイルと版（設定の行の名前の下。Claude の cliInfo と同じ形） */
+    async cliInfo() {
+      const argv = command();
+      if (!argv) return null;
+      const { code, out } = await runAuth(['--version']).catch(() => ({ code: -1, out: '' }));
+      const version = code === 0 ? (/(\d[\d.]*)/.exec(out)?.[1] ?? null) : null;
+      return { path: argv[0] === process.execPath && argv[1] ? argv[1] : argv[0], ...(version ? { version } : {}) };
+    },
   };
+
+  /** 認証まわりの小さな起動（status・logout・--version）。ターン・モデル一覧の ACP・catalogue とは別経路 */
+  function runAuth(args, { timeoutMs = 15000 } = {}) {
+    return new Promise((resolve, reject) => {
+      const child = spawnCli(argv(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      let out = '', err = '', settled = false;
+      const finish = (error, code = null) => { if (settled) return; settled = true; clearTimeout(timer); error ? reject(error) : resolve({ code, out, err }); };
+      const timer = setTimeout(() => { try { child.kill(); } catch {} finish(new Error(t('devin.errors.timeout', { method: args.join(' '), ms: timeoutMs }))); }, timeoutMs);
+      timer.unref?.();
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', c => { out += c; });
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', c => { err += c; });
+      child.once('error', finish);
+      child.once('close', code => finish(null, code));
+    });
+  }
+  async function signedIn() {
+    return (await authStatusForLogin().catch(() => ({ loggedIn: false }))).loggedIn === true;
+  }
+  // login の見張りは status() と同じ判定を使う（循環を避けるため分離）
+  async function authStatusForLogin() {
+    const { out, err } = await runAuth(['auth', 'status']);
+    const text = `${out}\n${err}`.trim();
+    try {
+      const parsed = JSON.parse(out.trim());
+      if (typeof parsed.authenticated === 'boolean') return { loggedIn: parsed.authenticated };
+    } catch {}
+    return { loggedIn: /logged in/i.test(text) };
+  }
 }
 
 export const backend = createDevinBackend();

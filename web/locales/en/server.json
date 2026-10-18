@@ -701,7 +701,17 @@
       "modelUnavailable": "The selected model is not available in Grok Build CLI ({{model}})",
       "effortUnavailable": "Grok Build CLI did not accept the selected reasoning effort ({{effort}})",
       "promptFailed": "The Grok Build turn did not complete successfully",
-      "notConnected": "Grok Build CLI is not connected"
+      "notConnected": "Grok Build CLI is not connected",
+      "timeout": "Grok Build CLI response timed out ({{method}}, {{ms}} ms)"
+    },
+    "auth": {
+      "account": "Grok account",
+      "notLoggedIn": "Not signed in to Grok (run grok login in a terminal to sign in)",
+      "loginRunning": "Sign-in is already running",
+      "alreadyLoggedIn": "Already signed in",
+      "runCommand": "Run this command in a terminal and follow its prompts to sign in to Grok. (Grok sign-in is only possible from a terminal. This screen updates automatically when it finishes.)",
+      "loggedIn": "Signed in",
+      "loginTimeout": "The terminal sign-in did not finish (please try again)"
     }
   },
   "devin": {
@@ -730,6 +740,13 @@
       "selectionUnavailable": "The advertised Devin CLI choices do not confirm this model setting ({{setting}})",
       "selectionNotAcknowledged": "Devin CLI did not acknowledge the model setting ({{setting}})",
       "startFailed": "Could not start Devin CLI"
+    },
+    "auth": {
+      "loginRunning": "Sign-in is already running",
+      "alreadyLoggedIn": "Already signed in",
+      "runCommand": "Run this command in a terminal and follow its prompts to sign in to Devin. (Devin sign-in is only possible from a terminal. This screen updates automatically when it finishes.)",
+      "loggedIn": "Signed in",
+      "loginTimeout": "The terminal sign-in did not finish (please try again)"
     }
   },
   "opencode": {

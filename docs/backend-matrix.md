@@ -20,7 +20,7 @@
 | 対話の承認（none: 承認モードが確認なしだけ）（`approvals`） | interactive | interactive | none | interactive | interactive | interactive |
 | 承認に「常に許可」を返す（`alwaysAllow`） | ✓ | ✓ | — | ✓ | — | — |
 | MCP のツールの承認（host: エージェントが聞かないので Pleiad が聞く）（`mcpApproval`） | agent | host | agent | agent | agent | agent |
-| Pleiad の画面からログインする（`login`） | ✓ | ✓ | ✓ | ✓ | — | — |
+| Pleiad の画面からログインする（`login`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | 会話ごとにアカウントを選ぶ（token: Pleiad がトークンを持つ / agent: エージェントがアカウントごとの置き場でログインする）（`accounts`） | token | agent | — | agent | — | — |
 | 互換の接続先を会話ごとに選ぶ（`compatEndpoints`） | ✓ | ✓ | — | — | — | — |
 | 手動・自動の圧縮（`compact`） | ✓ | ✓ | — | ✓ | ✓ | — |

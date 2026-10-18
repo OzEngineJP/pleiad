@@ -420,6 +420,8 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
       if (panel.hidden || view !== 'form' || !form) return;
       apiKeyList(cmd).then(keys => { keyData = keys; if (view === 'form' && form && !panel.contains(document.activeElement)) draw(); }).catch(() => {});
     },
+    /** 面を閉じる（エージェントのカードの「接続」を畳むとき） */
+    close,
     /** 設定の「接続先」ボタン。同じエージェントでもう一度押すと閉じる */
     async open(which, { add = false } = {}) {
       if (!panel.hidden && agent === which && !add) { close(); return; }

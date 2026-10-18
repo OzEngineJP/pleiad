@@ -29,7 +29,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   panel.className = 'mp-panel'; panel.id = 'claudeAccountsPanel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'caTitle');
   panel.innerHTML = `<div class="mp-row"><h3 id="caTitle" data-i18n="accounts.title"></h3><button type="button" class="btn" id="caClose" data-i18n="accounts.close"></button></div>
-  <p class="mp-note" data-i18n="accounts.intro"></p>
+  <p class="mp-note mp-intro" data-i18n="accounts.intro"></p>
   <div id="caList"></div><button type="button" class="btn" id="caAdd" data-i18n="accounts.add"></button>
   <section class="mp-card" id="caFlow" hidden aria-live="polite"><h3 id="caFlowTitle"></h3><div id="caFlowBody"></div></section>
   <form id="caForm" hidden><h3 id="caFormTitle" data-i18n="accounts.form.addTitle"></h3>
@@ -298,8 +298,10 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   }
   // usageLogin: そのアカウントの「使用量の表示を認可」を始める。reissue: そのアカウントのトークンの再発行（setup-token）を始める
   // （会話の失敗の行の［トークンを再発行］。web/auth-expired.mjs、ADR 0212）
+  let onOpen = () => {};
   async function open({ usageLogin, reissue } = {}) {
-    openSettings(); panel.hidden = false; $('caState').textContent = t('accounts.loading');
+    openSettings(); panel.hidden = false; onOpen('claude');   // backend-allow: この面は Claude のアカウント専用
+    $('caState').textContent = t('accounts.loading');
     try {
       await load(true); $('caForm').hidden = true; resetForm(); confirming = ''; draw(); drawFlow(); $('caState').textContent = '';
       panel.scrollIntoView({ block: 'nearest' });
@@ -334,6 +336,12 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   };
   return {
     open, load, list: () => accounts, loginEvent,
+    /** 面を閉じる（エージェントのカードの「接続」を畳むとき。caClose と同じ） */
+    close() { panel.hidden = true; $('caForm').hidden = true; resetForm(); },
+    /** 開いている面のエージェント（閉じていれば ''。設定のカードの aria-expanded と再描画で使う） */
+    get openAgent() { return panel.hidden ? '' : 'claude'; },   // backend-allow: この面は Claude のアカウント専用
+    /** open() が呼ばれた（カードの「接続」の面を開く合図。web/client.mjs が受ける） */
+    onOpen(fn) { onOpen = fn; },
     invalidate: () => { loaded = null; if (!panel.hidden) load(true).then(() => { draw(); drawFlow(); }).catch(() => {}); },
   };
 }

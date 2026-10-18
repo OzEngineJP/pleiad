@@ -31,7 +31,8 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
     for (const [name, button, panel] of pages) {
       $(panel).hidden = name !== active;
       $(button).setAttribute('aria-pressed', String(name === active));
-      if (name === active) $('settingsPageTitle').textContent = $(button).textContent;
+      // ページの名前は選んだメニューのボタンが持つ（本文の上に重複する見出しは置かない）
+      if (name === active) $('settingsView').setAttribute('aria-labelledby', button);
     }
     if (active !== shown) { shown = active; const content = document.querySelector('.settings-content'); if (content) content.scrollTop = 0; }
   }
