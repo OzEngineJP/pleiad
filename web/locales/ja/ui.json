@@ -3014,6 +3014,8 @@
     "failed": "取得できませんでした。接続を確認して更新してください。",
     "header": {
       "title": "使用量",
+      "unavailable": "使用量を取得できません。",
+      "endpointUnavailable": "この接続先の使用量は表示できません。",
       "unauthorized": "未認可",
       "chipLabel": "{{agent}} の使用量: {{text}}",
       "chipTitle": "{{agent}} · {{label}}の枠 {{percent}} 使用 ／ {{reset}}",
