@@ -62,7 +62,12 @@ let seq = 0;
 const calls = new Map();
 // 古い版のふり（fake/config）。parentFilter: "ignore" = thread/list が parentThreadId を知らずに無視する
 let parentFilter = "support";
-const account = { loggedIn: true, email: "tester@example.invalid", planType: "pro" };
+const ACCOUNT_MODE = process.env.FAKE_CODEX_ACCOUNTS === '1';
+const AUTH_PATH = ACCOUNT_MODE ? path.join(process.env.CODEX_HOME, 'auth.json') : null;
+const authSeed = AUTH_PATH && fs.existsSync(AUTH_PATH) ? JSON.parse(fs.readFileSync(AUTH_PATH, 'utf8')) : null;
+const account = { loggedIn: ACCOUNT_MODE ? Boolean(authSeed) : true, email: authSeed?.fake?.email ?? "tester@example.invalid", planType: "pro",
+  identity: authSeed?.fake?.identity ?? (ACCOUNT_MODE ? path.basename(process.env.CODEX_HOME) : 'default'), usedPercent: authSeed?.fake?.usedPercent ?? 12 };
+let loginBehavior = 'success', rateFailure = false, readFailure = false, unsubscribeFailure = false;
 
 function makeThread({ cwd, forkedFromId = null, turns = [], parentThreadId = null, spawn = null }) {
   const id = STATE_DIR ? `th_${process.pid}_${++seq}` : `th_${++seq}`;
@@ -606,7 +611,7 @@ function emitHookRuns(t, turnId) {
 // FAKE_CODEX_LOG があれば、そのファイルへ 1 行 JSON で記録する（テストが「どの接続先・鍵・モデルでターンが走ったか」を見る）
 import fs from "node:fs";
 const LOG = process.env.FAKE_CODEX_LOG;
-const record = (entry) => { if (LOG) fs.appendFileSync(LOG, JSON.stringify({ pid: process.pid, ...entry }) + NL); };
+const record = (entry) => { if (LOG) fs.appendFileSync(LOG, JSON.stringify({ pid: process.pid, ...(ACCOUNT_MODE ? { home: process.env.CODEX_HOME, sqliteHome: process.env.CODEX_SQLITE_HOME } : {}), ...entry }) + NL); };
 // サーバーを替えて再開するテストだけ、履歴と生きている writer を別プロセスと共有する。
 const STATE_DIR = process.env.FAKE_CODEX_STATE_DIR;
 const statePath = id => path.join(STATE_DIR, `${id}.json`);
@@ -680,12 +685,19 @@ async function runComputerTurn(t, turnId, text) {
 
 async function handle(method, params) {
   calls.set(method, (calls.get(method) ?? 0) + 1);
+  if (ACCOUNT_MODE) record({ method });
   switch (method) {
     // ---- テスト用の口（本物には無い）
     case "fake/stats": return Object.fromEntries(calls);
     case "fake/config":
       if (params?.parentFilter) parentFilter = params.parentFilter;
+      if (params?.loginBehavior) loginBehavior = params.loginBehavior;
+      if (params?.rateFailure != null) rateFailure = params.rateFailure;
+      if (params?.readFailure != null) readFailure = params.readFailure;
+      if (params?.unsubscribeFailure != null) unsubscribeFailure = params.unsubscribeFailure;
       return {};
+    case 'fake/env': return { home: process.env.CODEX_HOME, sqliteHome: process.env.CODEX_SQLITE_HOME,
+      apiKey: Boolean(process.env.OPENAI_API_KEY), args: process.argv.slice(2), config: fs.readFileSync(path.join(process.env.CODEX_HOME, 'config.toml'), 'utf8') };
     case "fake/seedSubagents": return seedSubagents(params?.cwd ?? null);
 
     case "initialize":
@@ -854,21 +866,26 @@ async function handle(method, params) {
       return { terminated: true };
     }
     case "thread/unsubscribe": {
+      if (unsubscribeFailure) throw new RpcError('thread is busy', -32000);
       const gone = threads.get(params?.threadId);
       // FAKE_CODEX_CONTROL のファイルに sticky があれば、外したと答えてもロードしたまま（接続先の変更を無視する本物の場面の再現）。
       // unsubscribe-fail があれば失敗を返す
       const control = process.env.FAKE_CODEX_CONTROL ? (() => { try { return fs.readFileSync(process.env.FAKE_CODEX_CONTROL, "utf8"); } catch { return ""; } })() : "";
       if (control.includes("unsubscribe-fail")) throw new RpcError("thread is busy", -32000);
-      if (gone && !control.includes("sticky")) {
+      const release = () => {
+        if (!gone || control.includes('sticky')) return;
         gone.loaded = false;
         if (STATE_DIR && fs.existsSync(writerPath(gone.id)) && Number(fs.readFileSync(writerPath(gone.id), 'utf8')) === process.pid) fs.unlinkSync(writerPath(gone.id));
-      }
+      };
+      if (!ACCOUNT_MODE) release();
       record({ method, threadId: params?.threadId });
       if (gone?.ephemeral) threads.delete(params.threadId);
+      if (ACCOUNT_MODE && !control.includes('sticky')) setTimeout(() => { release(); notify('thread/closed', { threadId: params.threadId }); }, 15);
       return { status: "unsubscribed" };
     }
 
     case "thread/list": {
+      if (ACCOUNT_MODE && STATE_DIR) for (const name of fs.readdirSync(STATE_DIR)) if (name.endsWith('.json')) readThread(name.slice(0, -5));
       const dir = params?.sortDirection === "asc" ? 1 : -1;
       // 既定（sourceKinds 無し）は対話の会話だけ。サブエージェントの子は parentThreadId を付けたときだけ返る
       // （実機で確認）。古い版は parentThreadId を知らずに無視し、普通の一覧を返す
@@ -978,26 +995,35 @@ async function handle(method, params) {
     }
 
     case "account/read":
+      if (readFailure) throw new RpcError('account read failed', -32600);
       return {
         requiresOpenaiAuth: true,
         account: account.loggedIn
-          ? { type: "chatgpt", email: account.email, planType: account.planType }
+          ? { type: "chatgpt", email: account.email, planType: account.planType, chatgptAccountId: account.identity }
           : null,
       };
 
     case "account/login/start": {
       const loginId = `lg_${++seq}`;
       // 応答を返した直後に完了通知。**この通知は threadId を持たない**
-      setTimeout(() => {
-        account.loggedIn = true;
-        notify("account/login/completed", { loginId, success: true, error: null });
-      }, 5);
+      const finish = () => {
+        if (loginBehavior === 'hang') return;
+        account.loggedIn = loginBehavior !== 'fail';
+        if (account.loggedIn && AUTH_PATH) fs.writeFileSync(AUTH_PATH, JSON.stringify({ fake: { email: account.email, identity: account.identity, usedPercent: account.usedPercent } }), { mode: 0o600 });
+        notify("account/login/completed", { loginId, success: account.loggedIn, error: account.loggedIn ? null : 'fake login failed' });
+      };
+      if (loginBehavior === 'early') finish(); else setTimeout(finish, 5);
       return { type: "chatgpt", loginId, authUrl: "https://auth.example.invalid/codex?code=fake" };
     }
 
     case "account/logout":
       account.loggedIn = false;
+      if (AUTH_PATH && fs.existsSync(AUTH_PATH)) fs.unlinkSync(AUTH_PATH);
       return {};
+    case 'account/login/cancel': return { status: 'canceled' };
+    case 'account/rateLimits/read':
+      if (rateFailure || !account.loggedIn) throw new RpcError('rate limits unavailable', -32600);
+      return { rateLimits: { limitId: 'codex', planType: account.planType, primary: { usedPercent: account.usedPercent, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 3600 } } };
 
     default:
       throw new Error(`fake-codex は ${method} を知らない`);
