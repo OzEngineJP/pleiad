@@ -151,7 +151,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   const failedKeys = new Set();    // 最後のターンが失敗で終わったスレッド
   const followers = new Map();     // sessionId → その会話のターンが終わったら、ほかの bot に聞かせる処理（@ の無い人の投稿。ADR 0128）
   const budget = createBudget({ channels, host, now, log, brain });
-  // アカウントごとの枠で休むのは、Claude のアカウントで動くバックエンドの bot だけ（ADR 0222）
+  // アカウントごとの枠で休むのは、Claude のアカウントで動くバックエンドの bot だけ（ADR 0224）
   const resting = createResting({ now, onChange: (key) => restingChanged(key), takesAccount: (id) => Boolean(host?.getBackend?.(id)?.capabilities?.claudeAccounts) });
   let reactionChain = Promise.resolve();   // リアクションの出来事は 1 件ずつ（連打・付け外しの重なりを見分ける）
   let closed = false;

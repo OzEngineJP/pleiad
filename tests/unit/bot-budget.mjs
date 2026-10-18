@@ -186,7 +186,7 @@ export default async function (t) {
     clock += 60_001;
     t.ok('解除の時刻を過ぎたら休憩中でなくなり、知らせも出さない', r.until(a) === null && !r.noticeOnce(a, 'c/p3'));
     r.stop();
-    // Claude のアカウント（ADR 0222）: 枠はアカウントごと。アカウントを使えるバックエンドの bot だけ、key にアカウントを足す
+    // Claude のアカウント（ADR 0224）: 枠はアカウントごと。アカウントを使えるバックエンドの bot だけ、key にアカウントを足す
     const byAccount = createResting({ now: () => clock, takesAccount: (id) => id === 'claude' });
     const oz = { backend: 'claude', model: '', account: 'acc-oz' }, login = { backend: 'claude', model: '', account: '' };
     const codexLeft = { backend: 'codex', model: 'gpt', account: 'acc-oz' }, codexPlain = { backend: 'codex', model: 'gpt', account: '' };

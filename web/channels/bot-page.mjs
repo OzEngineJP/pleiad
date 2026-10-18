@@ -5,7 +5,7 @@
 //   名前・アイコン（絵文字ピッカー）・人格（自由文）… 離れたときに bots.update
 //   エージェント・モデル・エフォート … 入力欄と同じ 1 つの選択（composer-controls.mjs の renderModel）。bots.update
 //   承認モード … 入力欄と同じ選択（renderMode）。bots.setMode（人だけ。ADR 0082）
-//   Claude のアカウント … モデルの面の最後の節（入力欄と同じ行・週の使用量つき）。bots.setAccount（人だけ。ADR 0222）
+//   Claude のアカウント … モデルの面の最後の節（入力欄と同じ行・週の使用量つき）。bots.setAccount（人だけ。ADR 0224）
 //     そのエージェントがアカウントを使え（capabilities.claudeAccounts）、登録があるか bot が選んでいるときだけ出す
 //   触れてよいフォルダー … 行（パス・読み書き/読み取り）と［フォルダーを足す］。bots.update の folders（置き換え）
 //     実際に書き込みの範囲を限れないモード（範囲 full: Claude の YOLO・Codex の YOLO・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
@@ -283,7 +283,7 @@ export function createBotPage(host) {
   const backends = () => host.state?.backends ?? [];
   const backendLabel = (id) => backends().find((b) => b.id === id)?.label ?? id;
 
-  // ---------------------------------------------------------------- Claude のアカウント（ADR 0222）
+  // ---------------------------------------------------------------- Claude のアカウント（ADR 0224）
   const takesAccount = (backend) => Boolean(backends().find((b) => b.id === backend)?.capabilities?.claudeAccounts);
   /** 登録したアカウントを読み直す（claudeAccountsChanged）。読めなければ、前の一覧のまま */
   let accountsLoading = null;

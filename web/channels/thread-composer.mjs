@@ -323,7 +323,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       effortDisabled: Object.keys(threadEfforts).length <= 1,
       destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,
         backendLabel: (id) => backendLabel?.(id) ?? id,
-        // bot は bot のアカウント（ADR 0222）。組み込みの bot はログイン中のアカウント
+        // bot は bot のアカウント（ADR 0224）。組み込みの bot はログイン中のアカウント
         usage: destinationUsage(quotaCache.get(s.backend), { account: bot.plain ? '' : bot.account ?? '', open: host.openUsage }),
         changed, onReset: () => apply({ model: s.defaults.model ?? '', effort: s.defaults.effort ?? '' }),
         onPick: pick },

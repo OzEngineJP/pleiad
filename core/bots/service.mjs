@@ -19,7 +19,7 @@
 //                                                   pulse は渡した欄だけ変わる（{ on?, everyMin?, backend?, model?, channelId? }。ADR 0126）
 //   planUpdate(input): Promise<{ bot, next, loosens, rows }>   … update の検査と、承認カードに出す前後。riskOf・confirm・update が同じ結果を使う
 //   setMode({ botId, mode }, author): Promise<Bot>                 … 承認モード。human-only の操作から（Antigravity は 'yolo' だけ）。既存の会話の承認モードも揃える
-//   setAccount({ botId, account }, author): Promise<Bot>           … Claude のアカウント（'' = ログイン中）。human-only の操作から（ADR 0222）。
+//   setAccount({ botId, account }, author): Promise<Bot>           … Claude のアカウント（'' = ログイン中）。human-only の操作から（ADR 0224）。
 //                                                   登録の無い id・トークンの無いアカウントは断る（host.claudeAccountList）。既存の会話（claudeAccounts を持つ backend）も揃える
 //   remove({ botId }, author): Promise<void>      … DM のチャンネルは archive。会話は消さず、bot の印を外して Chats の一覧に戻す
 //   usage({ botId }): Promise<{ weekTokens: number, cacheRatio: number|null }>   … 使用量の記録（DB の usage_records）を sessionId で引く

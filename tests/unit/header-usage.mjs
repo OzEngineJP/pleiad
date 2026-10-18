@@ -62,7 +62,7 @@ export default async function(t) {
   assert.equal(groupsOf([five, week], now).others, 0);
   t.ok('枠の名前の括弧書きとグループ名を外し、Antigravity はいちばん使っているグループだけを出す', true);
 
-  // ---- アカウントの行の週の使用量（入力欄と bot のページのアカウントの節。ADR 0222）
+  // ---- アカウントの行の週の使用量（入力欄と bot のページのアカウントの節。ADR 0224）
   const later = new Date(Date.now() + 86400_000).toISOString();
   const weekly = (used, extra = {}) => ({ label: '週次（7日間）', minutes: 10080, usedPercent: used, resetsAt: later, ...extra });
   const accounts = { accounts: [

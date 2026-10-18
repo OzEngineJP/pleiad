@@ -1,6 +1,6 @@
 // bots.* の操作（registry 越し。サーバーの道具は身代わり）: 作成と DM のチャンネル・AI から見える操作と見えない操作（承認モードは人だけ）・
 // 範囲を広げる向きの update は承認・狭める向きは通る・Antigravity の bot は yolo だけ・削除・一覧の使用量と状態・DM の会話。ADR 0082・0109
-// Claude のアカウント（bots.setAccount。人だけ・登録の無い id とトークンの無いアカウントは断る・会話の claudeAccount に写す。ADR 0222）
+// Claude のアカウント（bots.setAccount。人だけ・登録の無い id とトークンの無いアカウントは断る・会話の claudeAccount に写す。ADR 0224）
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -143,7 +143,7 @@ export default async function (t) {
     t.ok('Antigravity の bot は yolo で始まる', agy.mode === 'yolo');
     t.ok('Antigravity の bot は yolo 以外を断る', (await call(human, 'bots.setMode', { botId: agy.id, mode: 'default' })).code === 'INVALID' && (await call(human, 'bots.setMode', { botId: agy.id, mode: 'yolo' })).ok);
 
-    // ---- Claude のアカウントも人だけ（ADR 0222）
+    // ---- Claude のアカウントも人だけ（ADR 0224）
     t.ok('作った bot のアカウントは \'\'（ログイン中）', made.result.account === '' && sessions[sess.sessionId].claudeAccount === undefined);
     const aiAccount = await call(asking, 'bots.setAccount', { botId: owl, account: 'acc-oz' });
     const freeAccount = await call({ ...agent('bypass'), mode: MODES.bypass }, 'bots.setAccount', { botId: owl, account: 'acc-oz' });

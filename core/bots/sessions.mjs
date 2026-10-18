@@ -6,7 +6,7 @@
 //   botTurnSetup(...)                     … ターンの組み立てに足す { botInstructions, folders }（bots-host の turnExtras が使う）
 //   createBotSessions({ host, now })      … bot の会話を作る。委譲の prepare（core/server.mjs）と同じ手順
 //
-// Claude のアカウント: bot の `account`（'' = ログイン中。ADR 0222）を会話の記録の claudeAccount に写す。写すのは capabilities.claudeAccounts を
+// Claude のアカウント: bot の `account`（'' = ログイン中。ADR 0224）を会話の記録の claudeAccount に写す。写すのは capabilities.claudeAccounts を
 //   持つ backend の会話だけ（ほかの backend の会話には付けない）。使えなくなったアカウント（消した・トークンが無い）でも写し、ターンの始め
 //   （claudeAccounts.resolve）で止める（黙ってログイン中のアカウントで走らせない。入力欄で選んだアカウントと同じ）。スレッドごとの上書きは無い
 //

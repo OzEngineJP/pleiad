@@ -1,4 +1,4 @@
-# 0222 bot を動かす Claude のアカウントを、bot のページで人が選ぶ
+# 0224 bot を動かす Claude のアカウントを、bot のページで人が選ぶ
 
 - 状態: 承認（2026-10-18）
 - 関連: [0082](0082-control-surface-principals-and-risk.md)（操作の主体と危険度・human-only）、[0205](0205-ai-chooses-claude-account.md)（AI が委譲の子のアカウントを選ぶ）、[0119](0119-channel-budget-and-resting.md)（チャンネルの予算と休憩）

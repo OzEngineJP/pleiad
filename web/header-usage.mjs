@@ -38,7 +38,7 @@ export function quotaOf(quota, account = '') {
 }
 
 /**
- * アカウントの行の右に出す、その週の使用量（docs/design-system.md「bot のページ」、ADR 0222）。
+ * アカウントの行の右に出す、その週の使用量（docs/design-system.md「bot のページ」、ADR 0224）。
  * quota.accounts からそのアカウントの行だけを引く（無ければ出さない。quotaOf のように先頭の行へ寄せると、別のアカウントの値に見える）。
  * 枠は全体の週次（モデルの系統だけの週次は除く）。週の枠が無い・率が分からなければ null（行は今までの補足のまま）
  */

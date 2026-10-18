@@ -1487,7 +1487,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .copt.copt-note .sub{white-space:normal;line-height:1.5}
 .copt .tag,.copt .r{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
 .copt .r{margin-left:auto}
-/* アカウントの行の週の使用量（小さなバー＋「週 N%」。ADR 0222）。高いときは字もバーも強くする（率は字で読めるので色だけに頼らない） */
+/* アカウントの行の週の使用量（小さなバー＋「週 N%」。ADR 0224）。高いときは字もバーも強くする（率は字で読めるので色だけに頼らない） */
 .copt .r.week{display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
 .copt .tag+.r.week{margin-left:8px}
 .copt .r.week.hot{color:var(--ink-strong)}
