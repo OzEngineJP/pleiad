@@ -186,6 +186,18 @@ export default async function (t) {
     clock += 60_001;
     t.ok('解除の時刻を過ぎたら休憩中でなくなり、知らせも出さない', r.until(a) === null && !r.noticeOnce(a, 'c/p3'));
     r.stop();
+    // bot のアカウント（ADR 0224）: 枠はアカウントごと。アカウントを使えるバックエンド（Claude・Codex など）の bot だけ、key にアカウントを足す
+    const byAccount = createResting({ now: () => clock, takesAccount: (id) => id === 'claude' || id === 'codex' });
+    const oz = { backend: 'claude', model: '', account: 'acc-oz' }, login = { backend: 'claude', model: '', account: '' };
+    const codexWork = { backend: 'codex', model: 'gpt', account: 'acct-cx' }, codexPlain = { backend: 'codex', model: 'gpt', account: '' };
+    const agyLeft = { backend: 'antigravity', model: 'g', account: 'acc-oz' }, agyPlain = { backend: 'antigravity', model: 'g', account: '' };
+    byAccount.rest(oz, clock + 60_000);
+    t.ok('アカウントの枠に当たった bot だけ休む（ログイン中のアカウントの bot は休まない）', byAccount.until(oz) === clock + 60_000 && byAccount.until(login) === null && byAccount.key(oz) === 'claude::acc-oz');
+    byAccount.rest(codexPlain, clock + 30_000);
+    t.ok('Codex の bot もアカウントごとの枠（ログイン中の Codex が休んでも、別のアカウントの bot は休まない）', byAccount.key(codexWork) === 'codex:gpt:acct-cx' && byAccount.until(codexWork) === null && byAccount.until(codexPlain) === clock + 30_000);
+    byAccount.rest(agyPlain, clock + 30_000);
+    t.ok('アカウントを使わないバックエンドの bot に残ったアカウントは key に入れない（同じ枠の bot と一緒に休む）', byAccount.key(agyLeft) === 'antigravity:g' && byAccount.until(agyLeft) === clock + 30_000);
+    byAccount.stop();
   }
 
   // ---------------------------------------------------------------- Antigravity の上限の文

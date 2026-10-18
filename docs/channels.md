@@ -97,10 +97,11 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 | `channels.setThreadStatus` | write | `{ channelId, threadId, status }`。スレッドに利用者の状態（会話と同じ状態のグループ。60 字まで、空で外す）を付ける。`statuses.list` の数にも入る（`history.listStatuses` の `extra`）。CLI は `pleiad channels thread-status` |
 | `channels.threadBudget` | read | `{ channelId, threadId }` → スレッドの帯の「予算」の内訳（`dispatch.threadBudget` → `budget.snapshot`）: `{ day, daily, perThread, allowance, spent, channelSpent, derived, bots: [{ botId, backend, model, today: { input, output, cached }, allowanceTokens, window, restingUntil }] }`。`allowance` = このスレッドが 1 日に使ってよい分（週の枠に対する %。`daily` が null なら null）、`spent` は根のスレッドの今日の分、`today` はこのスレッドの会話が今日（現地の 0 時から）使ったトークン（入力はキャッシュ読みを含み、`cached` はその内訳）、`allowanceTokens` は `allowance` をその bot のバックエンドのトークンにした目安、`window` はその bot のモデルに効く週の枠 `{ usedPercent, resetsAt }`。DM・チャンネルが引けないときは null。CLI は `pleiad channels thread-budget <channelId> <threadId>` |
 | `channels.stopThread` | write・`modeGate: false` | `stopped.by` に止めた主体を残す。bot が自分のスレッドから流れへ `@` を書いて起こした先のスレッド（`ThreadState.origin` で結ばれたもの。孫も）も止める |
-| `bots.list` / `get` | read | `usage: { weekTokens, cacheRatio }`・`state` を付ける |
+| `bots.list` / `get` | read | `usage: { weekTokens, cacheRatio }`・`state`・`account`（bot のエージェントのアカウントの id。`''` = ログイン中。名前は画面が登録の一覧から引く）を付ける |
 | `bots.create` | write（AI は `riskOf` で guarded） | `{ name, icon?, iconImage?, persona?, backend?, model?, effort?, reason? }`。`iconImage` は元画像のパス。backend の既定のモード（作業場所に書けて毎回聞く、いちばん弱いもの。agy は yolo だけ）・フォルダーなし・DM のチャンネルを作る。AI が作るときの承認カードに、**作られる承認モードの行**を出し、弱くない（範囲・自律が `workspace`・`ask` より上の）モードなら `loosens` |
 | `bots.update` | write（範囲を広げる向き・心拍を入れる／間隔を縮める向き（`pulse`）・AI が人格か画像アイコンを変えるのは `riskOf` で guarded） | 名前・絵文字の `icon`・画像の `iconImage`（元画像のパス。`null` で画像を外して絵文字に戻す）・人格（AI が変えるのは bot 自身の人格も承認。外から来た文に押された bot が自分の人格を書き換える足場を作らない）・backend（次の新しい会話から。モデル・エフォートは既定に戻り、承認モードは同じ id があれば保つ）・モデル・エフォート・`folders`（置き換え）・`sendToOthers`・`sendTargets`（置き換え）。広げる向き = フォルダーを足す・`ro` を `rw` にする・送る先を足す・`sendToOthers` を ON にする・承認モードが強くなる backend へ変える |
 | `bots.setMode` | human-only | 承認モード（`mode`）だけ |
+| `bots.setAccount` | human-only・画面だけ（MCP・CLI の口なし） | `{ botId, account }` → `bots.get` と同じ形。bot のエージェントのアカウント（`account`。`''` = ログイン中）だけ。そのエージェントに登録の無い id・使えない（トークン・資格情報の無い）アカウントは `INVALID`。`bots.update` では変わらない。[ADR 0224](adr/0224-bot-account.md) |
 | `bots.delete` | guarded | 会話は消さず bot の印だけ外し（Chats の一覧に戻る）、DM のチャンネルは archive |
 | `brain.view` | read | `{ botId?, limit?, before? }` → `{ botId, pulse, status, stream, loops, closed, total }`。`status` は心拍の状態（`on`・`paused`・`running`・`nextAt`・`lastBeatAt`・`drives`・家のチャンネル・予算の残り）、`stream` は活動メモ（新しい順）、`loops` は開いている気がかり。bot に束縛された主体は自分の bot だけ（`botId` を省くと自分） |
 | `brain.loopAdd` / `loopResolve` | write | 気がかり（200 字まで・起こす条件 `wakeOn`・期限 `due`）を足す・解決（`resolved`）か手放す（`dropped`）。自分の分だけ。外から来た会話（`taint`）で足した気がかりには印が付く |
@@ -137,7 +138,7 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
 - 任意の保存欄 `sendTargetSources` は会話 ID ごとの `shown`・`created`・`manual`。外した先の出どころも残し、再提示や再起動で自動復活させない。戻すには `bots.update` で明示して追加する。設定を AI が広げるときは既存の guarded。
 - `BotService.addSendTargets({ botId, sessionIds, source })` と `noteShown(post, channel)` はホスト内部の口。操作の入力から出どころを指定することはできない。
 
-`bots.list/get/create/update/setMode` の返りに任意の `sendTargetDetails: { sessionId, title, source }[]` を足す。bot ページは「他の会話に送る」の下に題・出どころ・［外す］を出し、題を押すと会話を開く。OFF でも一覧は保つ。［外す］は `bots.update` を通る。
+`bots.list/get/create/update/setMode/setAccount` の返りに任意の `sendTargetDetails: { sessionId, title, source }[]` を足す。bot ページは「他の会話に送る」の下に題・出どころ・［外す］を出し、題を押すと会話を開く。OFF でも一覧は保つ。［外す］は `bots.update` を通る。
 
 送り手は既存の `sentBy` に `botId`・`name`・`icon` を足し、流れと履歴の両方で「🦉 Owl があなたの代わりに送信」と出す。保存は既存の `relayed` で、別の記録や送信経路は作らない。
 
@@ -196,6 +197,12 @@ id は `<領域>.<動詞>`（ドットは 1 つ）。human-only は承認モー�
   - **Antigravity**: 会話を続けるときにエージェント定義を渡し直しても、最初の指示のまま動く（人格のハッシュ＋フォルダー `botSessionKey` で `agy` を起こし直しても同じ）。人格を直した後の最初のターンに、新しい人格を末尾の文脈（`<pleiad-turn-context>`。辞書 `agent:channel.personaUpdated`）として渡す。会話が最後に受け取った人格のハッシュ（`personaKey`）は sidecar の `bot` に持ち、「渡った」確定（`commit`）で進める（渡る前に失敗したターンの次も、また渡す）。フォルダーの変更は今までどおり起こし直し（`--add-dir`）。
 - **触れてよいフォルダー**（`folderPlan(bot, modeEntry, cwd)` → `{ all, additionalDirectories, writableRoots, readOnlyRoots }`）: 先頭が既定の作業場所（cwd）。Claude は cwd 以外の全部を `additionalDirectories` に渡し、`ro` のフォルダー（`readOnlyRoots`。cwd 自身を含む）は Claude Code の deny ルール（`disallowedTools: ['Edit(//c/a/b/**)']`。Edit は Write・NotebookEdit などファイルを書き換える道具に掛かる）で書き換えを断る。**シェルの `rm`・`mv`・`sed` などは `acceptEdits` が cwd と追加フォルダーの中なら聞かずに通すので、`ro` でも書けてしまう**（Claude の `ro` は「編集の道具を断る」まで。`default` 系のモードならシェルは毎回聞く）。Codex は `rw` のうち cwd 以外を `turn/start` の `sandboxPolicy.writableRoots`（`ro` は書き込みに入れないだけ。cwd そのものは sandbox が常に書けるので、cwd が `ro` のフォルダーでも Codex では書けてしまう。bot の会話は前のターンの書き込み先を引き継がず置き換える）、Antigravity は cwd 以外を `--add-dir`（ワークスペースに見せるだけ。書き込みの範囲は限れない）。**「すべてのフォルダー」（`all: true`）は、書き込みの範囲を限れないモード（`scope` が `full`: Claude の YOLO・Codex の YOLO・Antigravity の yolo）だけ**。Codex の `full` は sandbox が作業場所に限るので、選択は有効のまま（決定 7.2-2）。
 - **承認モード**: bot の `mode` は `bots.setMode`（human-only）でだけ変わる。Antigravity は `yolo` 以外を断る。
+- **アカウント**（[ADR 0224](adr/0224-bot-account.md)）: bot の `account`（`''` = ログイン中）は `bots.setAccount`（human-only・画面だけ）でだけ変わる。登録の一覧は `host.accountList(backendId)`（server の `accountRows`。Claude はトークン、Codex などは資格情報。[ADR 0222](adr/0222-agent-accounts-and-provider-quota.md)）。
+  - 効くのは、会話のエージェントが `capabilities.accounts` を持つときだけ。`createBotSessions` の `create` が会話のメタの `claudeAccount`（どのエージェントの id も入る）を入れ、`sync` が今ある会話（DM・スレッド・ルーティン・学習）の値を揃える（次のターンから）。スレッドの上書き（`bot.overrides`）はアカウントには作らない。
+  - 送った `'agent'` の会話（Codex など）は、ネイティブの会話がアカウントごとなので `host.reserveAccount`（`reserveTurnSettings` の `account`）で次のターンに替える。Claude の会話とまだ送っていない会話は `claudeAccount` を直に書く。
+  - bot のエージェントを替えると `account` は `''` に戻る（id はエージェントごと）。アカウントを持てないエージェント（Antigravity）の bot は `''` だけ。
+  - 心拍は bot 自身の backend で走るときだけ `claudeAccount` を入れる。休憩の key（`restKey`）は、アカウントを使える bot だけ `:${account}` を足す（枠がアカウントごとのため）。
+  - 消えた・使えないアカウントは、ターンの始めのアカウントの解決が止める（ログイン中へ黙って落とさない）。
 
 ## bot を起こす・配る（`core/bots/dispatch.mjs`・`inbox.mjs`。S4）
 

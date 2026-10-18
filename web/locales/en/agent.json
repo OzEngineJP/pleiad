@@ -1543,6 +1543,11 @@
         "botId": "The bot id.",
         "mode": "Approval mode id (from the agent's list)."
       },
+      "setAccount": {
+        "summary": "Change the account a bot runs on (one registered for the bot's agent; screen only; AI cannot call it). Empty = the signed-in account.",
+        "botId": "The bot id.",
+        "account": "The id of a usable account registered for the bot's agent. Empty = the signed-in account."
+      },
       "delete": {
         "summary": "Delete a bot. Its conversations stay and return to the Chats list; its DM channel is archived. Needs approval.",
         "botId": "The bot id.",
