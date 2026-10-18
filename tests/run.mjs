@@ -518,6 +518,7 @@ const SUITES = [
   './unit/system-messages-leading.mjs',
   // 入力欄の `!`（ADR 0054）: ホストで走らせる・止める・上限・同じ runId・Claude に渡す形・Codex の userShell の履歴
   './unit/shell-runs.mjs',
+  './unit/host-shell-leftover.mjs',
   // 同じく入力欄の形: `!` を打つ・貼り付けでは入らない・Backspace で戻る・使えない会話・文として送る・入力欄に写す
   './unit/shell-composer.mjs',
   // 同じくサーバー越し（fake）: 走らせる・送信待ちに入らない・次の発言で渡す・開き直した履歴・使えない会話・Codex の thread/shellCommand

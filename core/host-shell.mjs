@@ -15,6 +15,8 @@ import { classifySystemMessages } from './system-messages.mjs';
 export const OUTPUT_LIMIT = 256 * 1024;
 /** 止めた・上限のシェルが終わってから、出力のパイプが閉じるのを待つ上限 */
 const KILLED_CLOSE_GRACE_MS = 1000;
+/** 自分で終わったシェルの後、出力のパイプが閉じるのを待つ上限（過ぎたら、パイプを握ったまま残ったプロセスがあるとみなして締める） */
+export const EXIT_CLOSE_GRACE_MS = 2000;
 
 const argsFor = (file, command) => {
   const base = path.basename(file).toLowerCase().replace(/\.exe$/, '');
@@ -38,8 +40,9 @@ export function hostShell(env = process.env) {
 
 /**
  * コマンドを 1 回走らせる。
- * @returns Promise<{ exitCode, signal, stdout, stderr, durationMs, timedOut, stopped, truncated, startError? }>
+ * @returns Promise<{ exitCode, signal, stdout, stderr, durationMs, timedOut, stopped, truncated, leftover?, startError? }>
  *   exitCode は分からなければ null（止めた・上限・起動できない）
+ *   leftover は、シェルは終わったが出力のパイプを握ったプロセスが残った（裏で起こしたサーバーなど。その後の出力は読まない）
  */
 export function runHostShell({ command, cwd, timeoutMs, signal, onOutput = () => {}, env = process.env }) {
   return new Promise(resolve => {
@@ -65,9 +68,10 @@ export function runHostShell({ command, cwd, timeoutMs, signal, onOutput = () =>
       if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
       else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
     };
-    const onAbort = () => { stopped = true; kill(); };
+    let exited = null;   // シェルの終わり（exit）。close の前に来る
+    const onAbort = () => { stopped = true; if (exited) finish({}); else kill(); };
     signal?.addEventListener?.('abort', onAbort, { once: true });
-    const timer = setTimeout(() => { timedOut = true; kill(); }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; if (exited) finish({}); else kill(); }, timeoutMs);
     for (const stream of ['stdout', 'stderr']) {
       child[stream].setEncoding('utf8');
       child[stream].on('data', (text) => {
@@ -81,11 +85,18 @@ export function runHostShell({ command, cwd, timeoutMs, signal, onOutput = () =>
     }
     child.on('error', e => finish({ startError: String(e?.message ?? e) }));
     child.on('close', (code, sig) => finish(stopped || timedOut ? {} : { exitCode: code, signal: sig ?? null }));
-    // 止めたシェルが終わっても、出力のパイプを握った子が残って close が来ないことがある（Git Bash のループを止めたとき、fork の途中の子が親を失って
-    // 止まったまま残る。40 回に 1 回ほど）。止めた・上限のときは、シェルが終わってから少し待って締める
-    child.on('exit', () => {
-      if (!stopped && !timedOut) return;
-      setTimeout(() => { child.stdout?.destroy(); child.stderr?.destroy(); finish({}); }, KILLED_CLOSE_GRACE_MS).unref?.();
+    // シェルが終わっても、出力のパイプを握った子が残って close が来ないことがある。
+    //   - 止めたとき: Git Bash のループを止めると、fork の途中の子が親を失って止まったまま残る（40 回に 1 回ほど）
+    //   - 自分で終わったとき: PowerShell の `Start-Process -RedirectStandardOutput` で起こしたサーバーが、シェルの出力のパイプを継いで握り続ける
+    //     （シェルの子でなくなるので、上限で木ごと止めても届かない。2026-10-18）
+    // どちらも、シェルが終わってから少し待って締める。自分で終わったときは終了コードを残し、パイプが残ったこと（leftover）を返す
+    child.on('exit', (code, sig) => {
+      exited = { exitCode: code, signal: sig ?? null };
+      const grace = stopped || timedOut ? KILLED_CLOSE_GRACE_MS : EXIT_CLOSE_GRACE_MS;
+      setTimeout(() => {
+        child.stdout?.destroy(); child.stderr?.destroy();
+        finish(stopped || timedOut ? {} : { ...exited, leftover: true });
+      }, grace).unref?.();
     });
   });
 }
