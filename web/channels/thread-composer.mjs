@@ -10,6 +10,7 @@
 import { buildComposer, composerEls, createComposer } from '../composer/composer.mjs';
 import { renderOutbox } from '../outbox.mjs';
 import { chipCaret, chipGlyph, defaultModeOf, destinationUsage, fitComposerRow, panel, paintWhoChip, renderModel, resolvedModel } from '../composer-controls.mjs';
+import { weekUsage } from '../header-usage.mjs';
 import { setupMentionComplete } from './mention-complete.mjs';
 import { draftStore, persistDrafts } from './ch-composer.mjs';
 import { runMark } from '../arc.mjs';
@@ -319,6 +320,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     const changed = !bot.plain && ((s.values.model ?? '') !== (s.defaults.model ?? '') || (s.values.effort ?? '') !== (s.defaults.effort ?? ''));
     return {
       backend: s.backend, backends: host.state?.backends ?? [], backendSwitchable: Boolean(bot.plain && !s.sessionId && (host.state?.backends?.length ?? 0) > 1),
+      backendUsage: (id) => weekUsage(quotaCache.get(id)?.quota, ''),
       models: vocab.models, model: s.values.model, efforts: threadEfforts, effort: s.values.effort,
       effortDisabled: Object.keys(threadEfforts).length <= 1,
       destination: { selected: bot.id, groups, bot: bot.plain ? null : bot, threadPlain: Boolean(bot.plain), defaults: s.defaults,

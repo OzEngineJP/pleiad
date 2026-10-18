@@ -4640,6 +4640,8 @@ const controls = chatComposer.useControls({
       // bot を選んだ未送信の会話は、bot が実際に使う値を表示だけ（一時チャットには作業場所が無いので、bot の最初のフォルダーかホーム。core/bots/sessions.mjs の pickCwd）
       cwd: bot ? bot.folders?.[0]?.path || state.homeDir || state.cwd : state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
       backends: state.backends, backend: bid,
+      // エージェントの行の右端の週の使用量（取れないものは出さない）
+      backendUsage: (id) => weekUsage(composerQuota.get(id)?.quota, ""),
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
       models: state.models, model: state.model,
