@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText } from '../../web/header-usage.mjs';
+import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, HIGH } from '../../web/header-usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'header-usage';
@@ -61,4 +61,21 @@ export default async function(t) {
   assert.equal(grouped.below, 20);
   assert.equal(groupsOf([five, week], now).others, 0);
   t.ok('枠の名前の括弧書きとグループ名を外し、Antigravity はいちばん使っているグループだけを出す', true);
+
+  // ---- アカウントの行の週の使用量（入力欄と bot のページのアカウントの節。ADR 0222）
+  const later = new Date(Date.now() + 86400_000).toISOString();
+  const weekly = (used, extra = {}) => ({ label: '週次（7日間）', minutes: 10080, usedPercent: used, resetsAt: later, ...extra });
+  const accounts = { accounts: [
+    { label: 'ログイン中', accountId: null, windows: [{ label: '5時間', minutes: 300, usedPercent: 70, resetsAt: later }, weekly(42)] },
+    { label: 'OZ', accountId: 'acc-oz', windows: [weekly(5, { model: 'opus', label: '週次（Opus）' }), weekly(9)] },
+    { label: 'Hot', accountId: 'acc-hot', windows: [weekly(100)] },
+    { label: 'NoWeek', accountId: 'acc-5h', windows: [{ label: '5時間', minutes: 300, usedPercent: 12, resetsAt: later }] },
+  ] };
+  t.ok('週の使用量: ログイン中は accountId の無い行の週次（5 時間の枠は使わない）', JSON.stringify(weekUsage(accounts, '')) === '{"used":42,"high":false}', JSON.stringify(weekUsage(accounts, '')));
+  t.ok('週の使用量: 登録のアカウントはその行の全体の週次（モデルの系統だけの週次は除く）', weekUsage(accounts, 'acc-oz')?.used === 9);
+  t.ok(`週の使用量: ${HIGH}% 以上は強い見た目（high）`, weekUsage(accounts, 'acc-hot')?.high === true && weekUsage({ windows: [weekly(HIGH)] })?.high === true && weekUsage({ windows: [weekly(HIGH - 1)] })?.high === false);
+  t.ok('週の使用量: 週の枠が無い・率が分からない・行が無いアカウントは null（先頭の行の値を借りない）',
+    weekUsage(accounts, 'acc-5h') === null && weekUsage({ windows: [weekly(null)] }) === null && weekUsage(accounts, 'acc-gone') === null && weekUsage(null) === null);
+  t.ok('週の使用量: 登録の無い使用量（accounts が無い）は、ログイン中だけが quota そのものの週次', weekUsage({ windows: [weekly(7)] }, '')?.used === 7 && weekUsage({ windows: [weekly(7)] }, 'acc-oz') === null);
+  t.ok('週の使用量: 時刻を過ぎた週次は今の値ではない（null）', weekUsage({ windows: [weekly(50, { resetsAt: new Date(Date.now() - 1000).toISOString() })] }) === null);
 }

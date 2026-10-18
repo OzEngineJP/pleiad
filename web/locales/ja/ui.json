@@ -2760,7 +2760,8 @@
     "agent": "エージェント",
     "account": {
       "title": "Claude のアカウント",
-      "compatOff": "互換の接続先ではアカウントを使いません"
+      "compatOff": "互換の接続先ではアカウントを使いません",
+      "week": "週 {{percent}}"
     },
     "endpoint": {
       "title": "接続先",

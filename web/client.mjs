@@ -30,7 +30,7 @@ import { setupSwitchNotice } from './switch-notice.mjs';
 import { setupCliSetup } from './cli-setup.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
-import { setupHeaderUsage } from './header-usage.mjs';
+import { setupHeaderUsage, weekUsage } from './header-usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
@@ -4431,14 +4431,17 @@ function cwdOptions() {
 const claudeAccounts = setupClaudeAccounts({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
   onChange: () => { syncTopbar().catch(() => {}); } });
-/** Claude のアカウントの候補。選んでいたものが消えていれば、その旨の行を残す（黙って別のものに見せない） */
-function accountOptions() {
+/**
+ * Claude のアカウントの候補。選んでいたものが消えていれば、その旨の行を残す（黙って別のものに見せない）。
+ * 使えるアカウントの行には、その週の使用量を添える（quota はそのエージェントの使用量。web/header-usage.mjs の weekUsage）
+ */
+function accountOptions(quota) {
   const s = state.sessions.find((x) => x.id === state.current);
   const value = s?.nextSettings?.account ?? s?.claudeAccount ?? "";
   const list = claudeAccounts.list();
   return [
-    { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount") },
-    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.hasToken ? "" : t("chat.account.noToken") })),
+    { value: "", label: t("chat.account.signedIn"), hint: t("chat.account.signedInAccount"), usage: weekUsage(quota, "") },
+    ...list.map((a) => ({ value: a.id, label: a.name, hint: a.hasToken ? "" : t("chat.account.noToken"), usage: a.hasToken ? weekUsage(quota, a.id) : null })),
     ...(value && !list.some((a) => a.id === value) ? [{ value, label: t("chat.account.deleted"), hint: t("chat.account.chooseAgain") }] : []),
   ];
 }
@@ -4589,7 +4592,7 @@ const controls = chatComposer.useControls({
       backendSwitchable: state.backends.length > 1,
       models: state.models, model: state.model,
       efforts: state.efforts, effort: state.effort, effortDisabled: state.effortDisabled,
-      accounts: !bot && state.accountShown ? accountOptions() : null, account: state.account,
+      accounts: !bot && state.accountShown ? accountOptions(composerQuota.get(bid)?.quota) : null, account: state.account,
       endpoint: bot ? null : endpointView(bid),
       modes: state.modes, mode: state.mode,
       modeDisabled: Boolean(bot),
@@ -4600,7 +4603,7 @@ const controls = chatComposer.useControls({
         botSetup: bot ? homeBotSetup(bot) : '',
         openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
         backendLabel: labelOf, onPick: id => homeDest.choose(id),
-        usage: destinationUsage(composerQuota.get(bid), { account: bot ? '' : state.account,
+        usage: destinationUsage(composerQuota.get(bid), { account: bot ? bot.account ?? '' : state.account,
           open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
         groups: sent ? [] : [{ options: [
           { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },

@@ -10,7 +10,8 @@ import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
 import { isExpired } from './usage.mjs';
 
-const HIGH = 80;
+/** これ以上の使用率は強い見た目にする（帯の札・入力欄と bot のページのアカウントの行） */
+export const HIGH = 80;
 const EVERY = 5 * 60_000;
 const DAY = 24 * 3600_000;
 
@@ -34,6 +35,18 @@ export const percentText = used => used == null ? '—' : `${Math.min(Math.round
 export function quotaOf(quota, account = '') {
   if (!Array.isArray(quota?.accounts) || !quota.accounts.length) return quota ?? null;
   return quota.accounts.find(a => account ? a.accountId === account : !a.accountId) ?? quota.accounts[0];
+}
+
+/**
+ * アカウントの行の右に出す、その週の使用量（docs/design-system.md「bot のページ」、ADR 0222）。
+ * quota.accounts からそのアカウントの行だけを引く（無ければ出さない。quotaOf のように先頭の行へ寄せると、別のアカウントの値に見える）。
+ * 枠は全体の週次（モデルの系統だけの週次は除く）。週の枠が無い・率が分からなければ null（行は今までの補足のまま）
+ */
+export function weekUsage(quota, account = '') {
+  const rows = Array.isArray(quota?.accounts) && quota.accounts.length ? quota.accounts : null;
+  const row = rows ? rows.find(a => account ? a.accountId === account : !a.accountId) : account ? null : quota;
+  const used = usedOf((row?.windows ?? []).find(w => w.minutes === 10080 && !w.model && !w.limitName));
+  return used == null ? null : { used, high: used >= HIGH };
 }
 
 /** 使用量の表示の認可が要る（済んでいない・やり直し） */
