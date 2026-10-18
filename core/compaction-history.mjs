@@ -1,3 +1,8 @@
+function insertByTime(entries, entry) {
+  const before = entries.findIndex(other => (Number(other.at) || 0) > (Number(entry.at) || 0));
+  entries.splice(before < 0 ? entries.length : before, 0, entry);
+}
+
 // Native boundaries are the history source. Sidecar records add details and cover missing boundaries.
 export function mergeCompactionHistory(nativeEntries = [], savedEntries = []) {
   const unused = new Set(savedEntries);
@@ -14,16 +19,26 @@ export function mergeCompactionHistory(nativeEntries = [], savedEntries = []) {
     let match = null, best = -1, distance = Infinity;
     for (const saved of unused) {
       const candidate = score(native, saved);
-      const candidateDistance = Math.abs(Number(native.at) - Number(saved.at)) || 0;
+      const candidateDistance = native.atEstimated && candidate === 2
+        ? Number(saved.at) || 0 : Math.abs(Number(native.at) - Number(saved.at)) || 0;
       if (candidate > best || (candidate === best && candidate >= 0 && candidateDistance < distance)) {
         best = candidate; distance = candidateDistance; match = saved;
       }
     }
     if (!match || best < 0) return native;
     unused.delete(match);
-    return { ...native, ...match, id: native.id, nativeId: native.nativeId, at: native.at, phase: native.phase };
+    // An observed event time is more precise than a boundary dated from its enclosing turn.
+    const completeTurn = best !== 2 || nativeEntries.filter(x => x.turnId === native.turnId).length
+      === savedEntries.filter(x => x.turnId === native.turnId && x.phase === 'complete').length;
+    const observed = native.atEstimated && Number.isFinite(match.at) && completeTurn;
+    return { ...native, ...match, id: native.id, nativeId: native.nativeId,
+      at: observed ? match.at : native.at, phase: native.phase, ...(native.atEstimated ? { atEstimated: !observed } : {}) };
   });
-  return [...merged, ...unused].sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+  // Keep native item order when only some boundaries have an observed time.
+  for (const saved of [...unused].sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0))) {
+    insertByTime(merged, saved);
+  }
+  return merged;
 }
 
 /**
@@ -47,7 +62,7 @@ export function attachCompactSummaries(summaries = [], compactions = []) {
     if (target) { claimed.add(target); target.summary ??= m.summary; continue; }
     const entry = { id: `summary:${m.uuid ?? at}`, phase: 'complete', trigger: 'auto', at: Number.isFinite(at) ? at : 0, summary: m.summary };
     claimed.add(entry);
-    list.push(entry);
+    insertByTime(list, entry);
   }
-  return list.sort((a, b) => (Number(a.at) || 0) - (Number(b.at) || 0));
+  return list;
 }

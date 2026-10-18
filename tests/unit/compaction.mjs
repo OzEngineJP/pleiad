@@ -3,8 +3,8 @@ import { normalizeCompactionSettings, delegatedCompactWindow, delegatedCompactPl
 import { createContextBases } from '../../core/context-bases.mjs';
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory } from '../../core/backends/claude-normalize.mjs';
-import { codexContextWindow, codexCompactionEvent } from '../../core/backends/codex.mjs';
-import { mergeCompactionHistory } from '../../core/compaction-history.mjs';
+import { codexContextWindow, codexCompactionEvent, codexCompactionsFromHistory, threadToMessages } from '../../core/backends/codex.mjs';
+import { mergeCompactionHistory, attachCompactSummaries } from '../../core/compaction-history.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -53,6 +53,56 @@ export default async function (t) {
       { id: 'far', phase: 'complete', at: 500_000 }]).length === 3);
   t.ok('失敗の sidecar は近いネイティブ境界に吸収しない',
     mergeCompactionHistory(native, [{ id: 'failed', phase: 'failed', at: 100_500 }]).length === 2);
+
+  const thread = { turns: [{ id: 'long-turn', startedAt: 1, completedAt: 1000, items: [
+    { id: 'u0', type: 'userMessage', content: [{ type: 'text', text: 'start' }] },
+    { id: 'tool-before', type: 'commandExecution', command: 'first', status: 'completed', aggregatedOutput: 'ok' },
+    { id: 'c1', type: 'contextCompaction' },
+    { id: 'tool-after', type: 'commandExecution', command: 'next', status: 'completed', aggregatedOutput: 'ok' },
+    { id: 'a1', type: 'agentMessage', text: 'first reply' },
+    { id: 'c2', type: 'contextCompaction' },
+    { id: 'c2', type: 'contextCompaction' },
+    { id: 'a2', type: 'agentMessage', text: 'second reply' },
+    { id: 'c3', type: 'contextCompaction' },
+  ] }, { id: 'next-turn', startedAt: 1001, items: [
+    { id: 'u1', type: 'userMessage', content: [{ type: 'text', text: 'continue' }] },
+  ] }] };
+  const boundaries = codexCompactionsFromHistory(thread);
+  t.ok('同じ長いターンの圧縮は、発言時刻が同じでもそれぞれの前後の発言で位置を保持する',
+    boundaries.length === 3 && boundaries.map(x => x.beforeMessageId).join() === 'a1,a2,u1'
+    && boundaries.map(x => x.afterMessageId).join() === 'u0,a1,a2');
+  const messages = threadToMessages(thread);
+  t.ok('圧縮位置の復元で既存の発言のまとまりや UUID を変えない',
+    messages.map(m => m.uuid).join() === 'u0,a1,a2,u1'
+    && messages.find(m => m.uuid === 'a1')?.toolCalls.map(c => c.id).join() === 'tool-before,tool-after');
+  const observed = [3, 1, 2].map(n => ({ id: `saved-${n}`, nativeId: `c${n}`, phase: 'complete', at: n * 200_000 }));
+  const restored = mergeCompactionHistory(boundaries, observed);
+  t.ok('履歴を読み直しても圧縮の実測時刻をターン終了時刻へ置き換えない',
+    restored.length === 3 && restored.map(x => x.at).join() === '200000,400000,600000'
+    && restored.map(x => x.nativeId).join() === 'c1,c2,c3' && restored.every(x => x.atEstimated === false));
+  const withoutNativeIds = observed.map(({ nativeId, ...entry }) => ({ ...entry, turnId: 'long-turn' }));
+  const restoredByOrder = mergeCompactionHistory(boundaries, withoutNativeIds);
+  t.ok('同じターンの ID なし記録が順不同でも、実測時刻を圧縮の発生順に対応させる',
+    restoredByOrder.map(x => x.nativeId).join() === 'c1,c2,c3'
+    && restoredByOrder.map(x => x.at).join() === '200000,400000,600000');
+  t.ok('ID なし保存記録が一部しか無いターンでは、曖昧な実測時刻を確定扱いにしない',
+    mergeCompactionHistory(boundaries, withoutNativeIds.slice(1)).every(x => x.at === 1_000_000 && x.atEstimated));
+  const partiallyObserved = mergeCompactionHistory(boundaries, [observed.find(x => x.nativeId === 'c2')]);
+  t.ok('一部の圧縮にだけ実測時刻があっても、ネイティブの発生順を逆転させない',
+    partiallyObserved.map(x => x.nativeId).join() === 'c1,c2,c3'
+    && partiallyObserved.map(x => x.at).join() === '1000000,400000,1000000');
+  t.ok('要約を付ける経路でも、実測時刻が一部だけの圧縮の順序を保つ',
+    attachCompactSummaries([], partiallyObserved).map(x => x.nativeId).join() === 'c1,c2,c3');
+  const withMissing = mergeCompactionHistory(boundaries, [
+    { id: 'older', phase: 'complete', at: 0 }, { id: 'later', phase: 'failed', at: 2_000_000 },
+  ]);
+  t.ok('ネイティブに残らない区切りも時刻で補い、ネイティブの順序は保つ',
+    withMissing.map(x => x.id).join() === 'older,native:c1,native:c2,native:c3,later');
+  t.ok('実測時刻が無い・不正な圧縮は推定時刻を保つ',
+    mergeCompactionHistory(boundaries, []).every(x => x.at === 1_000_000 && x.atEstimated)
+    && mergeCompactionHistory(boundaries, [{ ...observed[0], at: null }]).every(x => x.at === 1_000_000 && x.atEstimated));
+  t.ok('ネイティブ履歴に正確な時刻がある圧縮は、その時刻を優先する',
+    mergeCompactionHistory(native, withoutId)[0].at === 100_000);
 
   const defaults = normalizeCompactionSettings();
   t.ok('既定は Claude のみ 50 分（Codex は切り・25 分）、最小 150k', defaults.enabled && defaults.minTokens === 150000

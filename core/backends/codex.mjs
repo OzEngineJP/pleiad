@@ -937,7 +937,7 @@ function toUserInputResponse(questions, answers) {
  * reasoning とツールを assistant の発言に畳んでから積む
  * （Claude の transcriptToMessages と同じ形にして、web/render.mjs をそのまま使う）。
  */
-function threadToMessages(thread, { fullResults = false } = {}) {
+function threadToMessages(thread, { fullResults = false, onCompaction = null } = {}) {
   const messages = [];
 
   for (const turn of thread?.turns ?? []) {
@@ -961,6 +961,10 @@ function threadToMessages(thread, { fullResults = false } = {}) {
     const unique = new Map();
     for (const item of turn.items ?? []) unique.set(item.id ?? Symbol(), item);
     for (const item of unique.values()) {
+      if (item?.type === 'contextCompaction') {
+        onCompaction?.(item, turn, messages.length);
+        continue;
+      }
       if (item?.type === "userMessage") {
         flushTools();
         // Codex Desktop が人の本文の先頭に付ける画面の状態（<in-app-browser-context>）は外す（ADR 0053）
@@ -1023,6 +1027,17 @@ function threadToMessages(thread, { fullResults = false } = {}) {
   }
 
   return messages;
+}
+
+function codexCompactionsFromHistory(thread) {
+  const boundaries = [];
+  const messages = threadToMessages(thread, { onCompaction: (item, turn, index) => {
+    boundaries.push({ index, id: `native:${item.id}`, nativeId: item.id, turnId: turn.id ?? null,
+      phase: 'complete', trigger: 'auto', atEstimated: true,
+      at: Number(turn.completedAt ?? turn.startedAt ?? thread.updatedAt) * 1000 });
+  } });
+  return boundaries.map(({ index, ...entry }) => ({ ...entry,
+    beforeMessageId: messages[index]?.uuid ?? null, afterMessageId: messages[index - 1]?.uuid ?? null }));
 }
 
 /** Thread -> バックエンド共通のセッション行。時刻は秒ではなく**ミリ秒**（スキーマの int64）。 */
@@ -2218,10 +2233,7 @@ const backend = {
     const hit = recentReads.get(sessionId);
     recentReads.delete(sessionId);
     const thread = hit && Date.now() - hit.at < RECENT_READ_MS ? hit.thread : await readThread(nativeRpc, sessionId);
-    return (thread?.turns ?? []).flatMap(turn => (turn.items ?? [])
-      .filter(item => item.type === 'contextCompaction')
-      .map(item => ({ id: `native:${item.id}`, nativeId: item.id, turnId: turn.id ?? null, phase: 'complete', trigger: 'auto',
-        at: Number(turn.completedAt ?? turn.startedAt ?? thread.updatedAt) * 1000 })));
+    return codexCompactionsFromHistory(thread);
   },
 
   async setTitle(sessionId, title) {
@@ -2347,11 +2359,11 @@ const dispose = async () => {
   trackers.clear();
   await rpc.stop();
 };
-return { backend, rpc, dispose, hasBackground, forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS };
+return { backend, rpc, dispose, hasBackground, forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexCompactionsFromHistory, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS };
 }
 
 const initial = createCodexBackend();
-export const { forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS } = initial;
+export const { forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexCompactionsFromHistory, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS } = initial;
 const accountBackends = new Map();
 const readyBackends = new Map();
 const activeAccounts = new Map();

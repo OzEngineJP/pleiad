@@ -623,17 +623,27 @@ function paintCompactions() {
   // 手前の発言をまだ描いていないとき（窓の手前を読んでいない・手前を足している最中）、描いた最初の発言より前の区切りは描かない
   // （最初の発言の上に出ると、手前の発言が無いのに区切りだけが見える）
   const floor = paintedFloor();
+  const messages = [...thread.querySelectorAll('.mw:not([data-compaction-id])')];
+  const byId = new Map();
+  for (const message of messages) {
+    const uuid = message.querySelector('.m[data-uuid]')?.dataset.uuid;
+    if (uuid) byId.set(uuid, message);
+  }
   for (const entry of state.compactions) {
     if (!['complete', 'failed'].includes(entry.phase)) continue;
-    if (floor && Number.isFinite(floor.at) && !(entry.at > floor.at)) continue;
+    const before = byId.get(entry.beforeMessageId);
+    const previous = byId.get(entry.afterMessageId);
+    // Item order locates boundaries even when every message in a turn has the same timestamp.
+    if (floor && (entry.beforeMessageId || entry.afterMessageId)) {
+      if ((!before && !previous) || (before === messages[0] && !previous)) continue;
+    } else if (floor && Number.isFinite(floor.at) && !(entry.at > floor.at)) continue;
     const row = append(compactionBoundary(entry), `compaction:${entry.id}`);
     row.classList.add('compaction-boundary'); row.dataset.compactionId = entry.id;
     if (open.has(entry.id)) { const details = row.querySelector('details'); if (details) details.open = true; }
-    const after = [...thread.querySelectorAll('.mw:not([data-compaction-id])')]
-      .find(message => {
-        const at = message.querySelector('.m[data-at]')?.dataset.at;
-        return at && Date.parse(at) > entry.at;
-      });
+    const after = before ?? (previous ? messages[messages.indexOf(previous) + 1] : messages.find(message => {
+      const at = message.querySelector('.m[data-at]')?.dataset.at;
+      return at && Date.parse(at) > entry.at;
+    }));
     after?.before(row);
     // 区切りの後ろの AI の発言は、前の発言の続き（見出しを省いた形）にしない。要約の行が間に無くなったので（ADR 0053）
     if (after?.classList.contains('cont')) {

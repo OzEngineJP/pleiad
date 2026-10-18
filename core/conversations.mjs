@@ -415,7 +415,17 @@ export function wrapBackend(native) {
     const r = await conversation(id);
     if (!r) return native.getCompactions(id);
     if (r.backend !== native.id) throw new Error(t('conversations.backendMismatch'));
-    return r.nativeId ? native.getCompactions(r.nativeId) : [];
+    if (!r.nativeId) return [];
+    const messageIds = new Set(r.messages.slice(r.base).map(m => m.uuid));
+    return (await native.getCompactions(r.nativeId)).map(entry => {
+      const boundary = { ...entry };
+      for (const key of ['beforeMessageId', 'afterMessageId']) {
+        if (!boundary[key]) continue;
+        const scoped = `${native.id}:${r.nativeId}:${boundary[key]}`;
+        boundary[key] = messageIds.has(scoped) || !messageIds.has(boundary[key]) ? scoped : boundary[key];
+      }
+      return boundary;
+    });
   };
   if (native.compact) wrapped.compact = async args => {
     const id = args.sessionId;

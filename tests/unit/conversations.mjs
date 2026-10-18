@@ -46,7 +46,7 @@ export default async function(t) {
 // Run in a child with its own store: other suites import the store before this test runs.
 export async function compactionContracts() {
   const calls = [], events = [], permissions = [];
-  const boundary = [{ id: 'native-boundary', phase: 'complete' }];
+  const boundary = [{ id: 'native-boundary', phase: 'complete', beforeMessageId: 'next', afterMessageId: 'previous' }];
   const native = { id: 'codex', capabilities: { compact: true },
     async compact(args) {
       calls.push(args);
@@ -76,7 +76,20 @@ export async function compactionContracts() {
   assert.deepEqual(events.map(e => e.sessionId), [id, id, 'other-native']);
   assert.equal(events[1].first, false);
   assert.equal(permissions[0].sessionId, id);
-  assert.deepEqual(await wrapped.getCompactions(id), boundary);
+  assert.deepEqual(await wrapped.getCompactions(id), [{ ...boundary[0],
+    beforeMessageId: 'codex:native-thread:next', afterMessageId: 'codex:native-thread:previous' }]);
+  assert.equal(boundary[0].beforeMessageId, 'next', 'Native anchors are not mutated');
+  entry.messages = [{ uuid: 'previous' }, { uuid: 'next' }];
+  assert.deepEqual(await wrapped.getCompactions(id), boundary, 'Preserve legacy message UUIDs used by saved history');
+  entry.base = 2;
+  assert.deepEqual(await wrapped.getCompactions(id), [{ ...boundary[0],
+    beforeMessageId: 'codex:native-thread:next', afterMessageId: 'codex:native-thread:previous' }],
+  'Do not anchor to matching raw UUIDs in an earlier execution segment');
+  entry.base = 0;
+  entry.messages = [{ uuid: 'previous' }, { uuid: 'next' }, { uuid: 'codex:native-thread:previous' }, { uuid: 'codex:native-thread:next' }];
+  assert.deepEqual(await wrapped.getCompactions(id), [{ ...boundary[0],
+    beforeMessageId: 'codex:native-thread:next', afterMessageId: 'codex:native-thread:previous' }],
+  'Prefer scoped UUIDs when both representations exist');
   assert.equal(calls.at(-1), 'native-thread');
   entry.nativeId = null;
   entry.messages = [{ role: 'user', text: 'inherited history' }];
@@ -109,7 +122,8 @@ export async function compactionContracts() {
   }
   assert.deepEqual(turns.map(a => a.sessionId), [null, 'claude-native', 'claude-native']);
   assert.deepEqual(turns.map(a => a.compact), [undefined, 'manual', 'idle']);
-  assert.deepEqual(await claude.getCompactions(cid), boundary);
+  assert.deepEqual(await claude.getCompactions(cid), [{ ...boundary[0],
+    beforeMessageId: 'claude:claude-native:next', afterMessageId: 'claude:claude-native:previous' }]);
 }
 
 export async function botContextContracts() {

@@ -5,6 +5,7 @@
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import { N } from '../lib/dom-stub.mjs';
+import { mergeCompactionHistory, attachCompactSummaries } from '../../core/compaction-history.mjs';
 
 export const name = 'compaction-boundary-position';
 export const title = '圧縮の区切りは発言を送っても動かない・放置中の圧縮の区切りは次の発言の前に置く';
@@ -98,12 +99,13 @@ export default async function (t) {
   const send = (id, text, when) => { context.ev = { type: 'userMessage', messageId: id, text, at: when }; vm.runInContext('onUserMessage(ev)', context); };
   const history = (id, text, when) => {
     const row = vm.runInContext('append', context)(userMsg(text, { at: when }), `history:${id}`);
+    row.querySelector('.m').dataset.uuid = id;
     return row;
   };
   const reply = (when) => vm.runInContext('append', context)(assistantMsg('', when), `reply:${when}`);
   const order = () => thread.children.map(w => w.dataset.compactionId ? '[圧縮]' : w.querySelector('.m').dataset.at ? `${w.querySelector('.m').className.includes('user') ? 'U' : 'A'}${new Date(w.querySelector('.m').dataset.at).getUTCMinutes()}` : '?').join(' ');
   const compaction = (id, minute, trigger = 'idle') => ({ id, phase: 'complete', trigger, at: Date.parse(at(minute)), beforeTokens: 599_000, afterTokens: 7_000 });
-  const reset = () => { thread.children = []; state.compactions = []; context.liveSeq = 0; };
+  const reset = () => { thread.children = []; state.compactions = []; context.liveSeq = 0; context.paintedFloor = () => 0; };
 
   // ---------------------------------------------------------------- 区切りが途中にある会話（読み直した後の形）で送る
   reset();
@@ -141,6 +143,38 @@ export default async function (t) {
   t.ok('複数の区切りも、それぞれ at で決まる位置に留まる（後ろの区切りは送った発言の前）', order() === 'U1 A2 [圧縮] U10 [圧縮] U20', order());
   send('m2', 'at が無い', undefined);
   t.ok('at の無い発言を送っても区切りは動かない', order().startsWith('U1 A2 [圧縮] U10 [圧縮] U20'), order());
+
+  reset();
+  for (let i = 1; i <= 4; i++) history(`u${i}`, 'same turn', at(1));
+  state.compactions = [1, 2, 3].map(n => ({ ...compaction(`c${n}`, n * 5, 'auto'),
+    afterMessageId: `u${n}`, beforeMessageId: `u${n + 1}` }));
+  const timeline = () => thread.children.map(w => w.dataset.compactionId ?? w.querySelector('.m[data-uuid]')?.dataset.uuid).join(' ');
+  vm.runInContext('paintCompactions()', context);
+  t.ok('同じ時刻の発言が続くターンでも、3 回の圧縮を末尾へ集めず元の発言の間に置く',
+    timeline() === 'u1 c1 u2 c2 u3 c3 u4', timeline());
+  vm.runInContext('paintCompactions()', context);
+  t.ok('圧縮の位置は再描画しても変わらない', timeline() === 'u1 c1 u2 c2 u3 c3 u4', timeline());
+  for (const row of [...thread.children]) if (['u1', 'u2'].includes(row.querySelector('.m[data-uuid]')?.dataset.uuid)) row.remove();
+  context.paintedFloor = () => ({ mi: 2, at: Date.parse(at(1)) });
+  vm.runInContext('paintCompactions()', context);
+  t.ok('履歴の末尾だけ描いたとき、手前の圧縮を末尾へ置かない', timeline() === 'u3 c3 u4', timeline());
+  context.paintedFloor = () => ({ mi: 2, at: Date.parse(at(40)) });
+  vm.runInContext('paintCompactions()', context);
+  t.ok('発言の推定時刻より前の圧縮も、前後の発言が描かれていれば表示する', timeline() === 'u3 c3 u4', timeline());
+  state.compactions.push({ ...compaction('tail', 30), afterMessageId: 'u4', beforeMessageId: 'missing' });
+  vm.runInContext('paintCompactions()', context);
+  t.ok('次の発言が無い圧縮は直前の発言の後に置く', timeline() === 'u3 c3 u4 tail', timeline());
+
+  reset();
+  history('u1', 'before', at(1)); history('u2', 'after', at(1));
+  state.compactions = attachCompactSummaries([], mergeCompactionHistory([1, 2].map(n => ({ ...compaction(`c${n}`, 30, 'auto'),
+    nativeId: `c${n}`, turnId: 'same-turn', atEstimated: true, afterMessageId: 'u1', beforeMessageId: 'u2' })),
+  [{ id: 'observed-c2', nativeId: 'c2', turnId: 'same-turn', phase: 'complete', at: Date.parse(at(10)) }]));
+  vm.runInContext('paintCompactions()', context);
+  t.ok('共通の発言の間にある圧縮も、一部だけ実測時刻がある場合に順序を逆転させない',
+    timeline() === 'u1 c1 c2 u2', timeline());
+  vm.runInContext('paintCompactions()', context);
+  t.ok('実測時刻が一部だけの圧縮も、再描画後の順序を保つ', timeline() === 'u1 c1 c2 u2', timeline());
 
   // ---------------------------------------------------------------- 送信待ちの行の後ろに付いた区切り・開いていた「要約を表示」
   reset();
