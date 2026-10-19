@@ -3000,7 +3000,7 @@ function makeEmit(turn) {
         // bot の会話なら核の記憶の写しを次のターンで取り直す（snapshotDue）
         if (turn.info.sessionId) botHost?.onCompacted(turn.info.sessionId);
       }
-      for (const key of ['nativeId', 'turnId', 'beforeTokens', 'afterTokens', 'summary', 'reason'])
+      for (const key of ['nativeId', 'turnId', 'beforeTokens', 'afterTokens', 'summary', 'reason', 'beforeMessageId', 'afterMessageId'])
         if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
       turn.compaction = entry;
       event = { type: 'compaction', ...entry };
