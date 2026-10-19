@@ -337,9 +337,10 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 | false | `queued` | 受理されない。待機のまま次のターンで送る |
 | throw | `dropped` | 結果不明。自動で送り直さない（届いているかもしれない）。`ply_task_send` の返り値に `warning`（`agent:tasks.steerUnknown`。送り直さず `ply_task_status` と子の結果で確かめる）を添える |
 
-`sending`（合図待ち）の指示は、`userMessage.dropped` が来たか、合図が来ないまま子のターンが終わったら（`endTurn` が結果の確定より先に片付ける）`queued` に戻し、次のターンで送る。指示の ID で照合するので、渡った後に遅れて来た捨てられた合図では戻さず、二重に送らない。人の発言と違い親からの指示なので、送り直してよい。戻した後に子の回が失敗・停止で終わったときは、待機の指示と同じく `dropped` になる。止めたタスク（`cancelled`）へ戻すときも生き返らせず `dropped`。
+途中送信で渡した `sending`（合図待ち）の指示は、`userMessage.dropped` が来たか、合図が来ないまま子のターンが終わったら（`endTurn` が結果の確定より先に片付ける）`queued` に戻し、次のターンで送る。指示の ID で照合するので、渡った後に遅れて来た捨てられた合図では戻さず、二重に送らない。人の発言と違い親からの指示なので、送り直してよい。戻した後に子の回が失敗・停止で終わったときは、待機の指示と同じく `dropped` になる。止めたタスク（`cancelled`）へ戻すときも生き返らせず `dropped`。
 
 走っている回に途中送信で渡した指示は、その回の結果が新しい指示への返答も含む（結果にするのは回の最後の返答。「子の結果」）。途中送信を受けられない場合も、待機分をまとめて次のターンへ送り、その回の結果が指示の結果になる。再起動では、合図待ちだった `sending` は渡ったものとして `delivered` に残し（子は `interrupted`）、走らせ直さない。
+ターン開始の入力にした指示も `sending` にするが、バックエンドがそのターンのプロンプトを受け取った時点（`onPromptDelivered`。新しいターンは `execute` の `onAccepted`、付け直したターンは札の合図）で `delivered` にする。ターンの終わりまで `sending` のままにはしない。
 
 ## 子の結果
 
@@ -417,8 +418,8 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 ## 保存・画面・再起動
 
 `AGENT_HOST_DATA/pleiad.db` の `agent_tasks`（1 タスク 1 行。[ADR 0115](adr/0115-records-in-sqlite.md)）にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、実行中コマンド（`activeCommands`）と通知済みの印、子の報告後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
-追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。途中送信で渡した指示は受け付け直後に `queue` から外して `sending` にし、渡れば `delivered`、渡らなければ `queued`（`queue` に元の指示順）へ戻る（「追加指示の配送」）。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
-`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。`running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、まだ渡っていない指示を「追加の指示」の発言として示す（途中送信の合図待ち＝`sending` は会話の末尾の稼働表示の前に、メインパネルの作業中の送信と同じ状態の行「次の区切りで AI に渡します」つきで。渡れば子の履歴の user 発言に代わる。待機＝`queued` は末尾に時計の印で、未配送＝`dropped` は「✕ 届かずに終わった」を残す。画面は design-system.md「バックグラウンド」）。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
+追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。`sending` は、途中送信で渡して「渡った」合図を待っている間と、ターン開始の入力にして子がプロンプトを受け取るまでの間に使う。途中送信で渡した指示は受け付け直後に `queue` から外して `sending` にし、渡れば `delivered`、渡らなければ `queued`（`queue` に元の指示順）へ戻る（「追加指示の配送」）。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
+`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。`running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、まだ渡っていない指示を「追加の指示」の発言として示す（子へ渡る途中＝`sending`（途中送信の合図待ち、またはターン開始の入力の受け取り待ち）は会話の末尾の稼働表示の前に、メインパネルの作業中の送信と同じ状態の行「次の区切りで AI に渡します」つきで。渡れば子の履歴の user 発言に代わる。待機＝`queued` は末尾に時計の印で、未配送＝`dropped` は「✕ 届かずに終わった」を残す。画面は design-system.md「バックグラウンド」）。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
 `running`（全部の端末へ配る）の `tasks` は、終わっていないタスク（`queued`・`running`・`cancelling`）と、完了通知がまだ依頼元に届いていない（`notification` が `none`・`pending`・`delivering`）タスクだけの短い行（`agentTasks.running()`。題・状態・依頼元・子の会話・委譲先・モデル・時刻・通知・失敗の理由（500 字まで）・`pendingMessages`・`instructionRevision`・`worktree`・やり直しの元 `retryOf`）。依頼文・振り分けの記録・結果は載せない。
 以前は消さない全部の記録（依頼文と振り分けの記録付き）を載せていて、実データで 1 回 3.26MB になり、中継経由のスマホで帯域を埋めていた（2026-10-03）。
