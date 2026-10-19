@@ -61,7 +61,7 @@ jobs:
       matrix:
         arch: [x64, arm64]
     name: mac (${{ matrix.arch }})
-    runs-on: macos-15
+    runs-on: ${{ matrix.arch == 'x64' && 'macos-15-intel' || 'macos-15' }}
     # 手元（Apple Silicon）で 1 つの CPU の署名・公証・dmg・zip が約 4.5 分（2026-10-17）。公証の待ちは Apple 次第で揺れるので余裕を持たせる
     timeout-minutes: 45
     permissions:
@@ -134,6 +134,9 @@ jobs:
       - name: Remove notarization key
         if: always()
         run: rm -f "$RUNNER_TEMP/apple-api-key.p8"
+      - name: Packaged UI startup smoke
+        timeout-minutes: 5
+        run: node scripts/release-ui-smoke.mjs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mac-${{ matrix.arch }}
@@ -240,6 +243,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PLY_WINDOWS_SIGNING: none
         run: ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG -BuildOnly
+      - name: Packaged UI startup smoke
+        timeout-minutes: 5
+        run: |
+          node scripts/release-ui-smoke.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged UI startup failed' }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-release

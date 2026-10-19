@@ -357,10 +357,23 @@ CIは無断でバージョンを決めたりコミット・タグを作ったり
 
 ## 配信停止と先行版
 
-配信率0は新しい更新確認を対象外にする。既にダウンロード済みの更新を撤回する機能ではない。
-公開済みバイナリは変更せず、障害版より高いバージョンの修正版を用意する。
-運用中の配信率変更ではメタデータとチェックサム一覧だけを差し替える。
-GitHubの複数アセット更新は完全な同時切り替えではないため、OSごとの反映に短い差が出る。
+公開済みの配布物は immutable なので、配信率を 0 にするメタデータの差し替えでは停止できない。重大な不具合のある版は、`scripts/release-withdrawn.json` に理由とタグを登録し、Release と添付ダウンロードを取り下げる。ソースのタグは残す。同じ版は再公開せず、障害版より高い版で修正する（[ADR 0233](adr/0233-release-startup-gate-and-withdrawal.md)）。
+
+1. `GH_REPO=OzEngineJP/pleiad` を環境に設定し、`node scripts/release-withdraw.mjs plan` で対象を確認する。既定は読み取りだけ。
+2. `node scripts/release-withdraw.mjs apply <新しい監査用ディレクトリ>` で、対象 Release の API 情報を保存してから、その ID の Release だけを削除する。配布物そのもののバックアップではない。immutable release を削除した版は再利用できない。
+3. `node scripts/release-withdraw.mjs verify` で、公開一覧から対象が消え、最新版が取り下げた版を指さないことを確認する。取り下げ前に保存した asset ID の取得口も 404 になることを確認する。
+
+既にダウンロード済みの更新を回収・適用禁止にする機能ではない。インストール済みの不具合版を旧版へ自動で戻すものでもない。起動できない利用者には、修正版のインストーラーによる更新を案内する。
+
+`release-publish.mjs` は台帳にある版の下書き作成・公開・配信率変更を拒否する。公開の完了条件は `release-feed.mjs` が実際の GitHub API から、Release が公開済み、安定版の Latest がそのタグ、ダウンロードした `latest*.yml` が同じ版で添付ファイルを指すことを確認できること。失敗した場合は再公開せず、既に公開された状態を調べる。
+
+### 公開前の画面起動検査
+
+`Evaluation release` の Windows・macOS 各ジョブと `Desktop signed release` は、ビルド後、artifact のアップロード前に `node scripts/release-ui-smoke.mjs` を必ず通す。main の通常テストを再利用できた場合も省略しない。macOS の評価版は x64 を Intel、arm64 を Apple Silicon の runner で作る。
+
+検査は実行中の runner の OS・CPU に合う展開済みパッケージを見つけ、その `core/server.mjs` と `web/` を使う。パッケージが見つからない場合は失敗する。非表示の Electron の Chromium で、本物の HTML と ESM を実行し、未処理の例外・Promise の拒否、renderer の終了、会話一覧・操作可能な入力欄の表示を確かめる。実データ・実エージェントは使わず、fake と一時データで初回起動、会話の保存、サーバー再起動後の既存会話表示を確認する。失敗時は診断と画面を一時ディレクトリに残す。
+
+これはパッケージ内のサーバー・画面の起動検査で、インストーラーの実行、デスクトップ main/preload、クロスビルドした別 CPU の実行確認は別の検査とする。main の Windows CI でも `--source` による同じ画面検査を行い、パッケージの作成前に起動の不具合を検知する。
 
 安定版の利用者へbetaは配らない。先行版は、設定の「先行版も受け取る」を選んだ利用者と、先行版（版に `-` が付いている）をインストールして選択を変えていない利用者が対象。
 受信先（`updates.json` の `channel`）の既定は版で決まり（`-` が無ければ stable、あれば beta）、起動時に保存される。保存後は版が変わっても保存した値を使う。

@@ -1,0 +1,7 @@
+{
+  "releases": [
+    { "tag": "v0.27.0", "reason": "Startup ReferenceError: usageSource is read before initialization." },
+    { "tag": "v0.28.0", "reason": "Startup ReferenceError: usageSource is read before initialization." },
+    { "tag": "v0.28.1", "reason": "Startup ReferenceError: usageSource is read before initialization." }
+  ]
+}

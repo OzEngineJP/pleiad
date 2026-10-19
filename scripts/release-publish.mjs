@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { assertReleaseAllowed } from './release-policy.mjs';
+import { verifyPublished } from './release-feed.mjs';
 const [mode, directory] = process.argv.slice(2);
 const tag = process.env.RELEASE_TAG, repo = process.env.GH_REPO;
 if (!/^v\d+\.\d+\.\d+(?:-beta\.\d+)?$/.test(tag || '') || !/^[\w.-]+\/[\w.-]+$/.test(repo || '') || !process.env.GH_TOKEN) throw new Error('Release tag, repository and token required');
+await assertReleaseAllowed(tag);
 const gh = args => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const files = (await fs.readdir(directory)).filter(n => /\.(exe|dmg|zip|blockmap|yml|txt)$/.test(n) || ['RELEASE-PLATFORMS.json', 'Pleiad-Evaluation.cer', 'evaluation-certificate.ps1', 'SIGNING-INFO.json', 'BUILD-INFO.json'].includes(n)).map(n => path.join(directory, n));
 if (mode === 'draft') {
@@ -18,4 +21,5 @@ if (mode === 'draft') {
   // Only channel metadata changes after publication. Binary assets are immutable.
   gh(['release', 'upload', tag, ...files.filter(n => /\.(yml|txt)$/.test(n) || path.basename(n) === 'RELEASE-PLATFORMS.json'), '--repo', repo, '--clobber']);
   if (mode === 'publish') gh(['release', 'edit', tag, '--repo', repo, '--draft=false', `--latest=${release.isPrerelease ? 'false' : 'true'}`]);
+  console.log(JSON.stringify(verifyPublished({ gh, repo, tag })));
 } else throw new Error('Unknown release operation');
