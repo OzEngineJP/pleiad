@@ -33,6 +33,9 @@
   --surface-thumb:#c9cbd2;    /* スクロールバーのつまみ。白の上でも脇のグレーの上でも見えて、文字より前に出ない */
   --surface-thumb-hover:#acaeb7;   /* つまみに触れたとき。掴めることが分かる一段 */
   --surface-qr:#ffffff;       /* ペアリングの QR の地。カメラが読めるよう明暗テーマによらず白（web/remote.mjs） */
+  --surface-console:#191b22;  /* ツール実行の端末面（web/tools.css の .tc-term）。明暗テーマ共通の固定の暗い面。無彩色の刻みに留める（提案の #191b26 は C=0.022 で lint の面の上限を越えるので一段落とす） */
+  --ink-console:#dfe1ee;      /* 端末面の上の本文。明暗テーマ共通 */
+  --ink-console-weak:#8f95b0; /* 端末面の上のプロンプト・補足。明暗テーマ共通 */
 
   /* -- 塗り（fill）。唯一の有彩色の面。主要操作にだけ使う。文字は --on-fill 固定 -- */
   --fill-primary:#3a499e;     /* 送信・許可・回答する */

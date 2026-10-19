@@ -19,3 +19,24 @@ export function localTime(at) {
 export function toolStartedAt(ev) {
   return localTime(ev?.startedAt) ?? localTime(ev?.at);
 }
+
+/** ツールの行の右端の時刻 HH:MM（発言の行の hhmm と同じく、この画面のローカルの時計で切る） */
+export function toolTimeShort(ms) {
+  if (ms == null) return "";
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 5);
+}
+
+/** 時刻の詳細のポップオーバー用 HH:MM:SS */
+export function toolTimeLong(ms) {
+  if (ms == null) return "";
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 8);
+}
+
+/** 所要の幅（ms）→ 「3.4」「12」の文字。10 秒未満は小数 1 位まで、それ以上は整数秒 */
+export function toolDuration(ms) {
+  const s = Math.max(0, Number(ms) / 1000);
+  if (!Number.isFinite(s)) return "";
+  return s < 10 ? s.toFixed(1) : String(Math.round(s));
+}

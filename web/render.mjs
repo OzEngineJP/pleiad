@@ -8,8 +8,9 @@ import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // テキストは必ず esc() を通してから組み立てる。生の入力が HTML として通る経路を作らない。
 // 「エスケープしてから正規表現で置換する」方式は取らない（実体参照が壊れる／取りこぼす）。
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
-import { el, chevron } from "./dom.mjs";
+import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
+import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
 import { copyIcon, downloadIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
@@ -783,7 +784,6 @@ function shortPath(p, keep = 2) {
 
 const lineCount = (s) => (String(s ?? "") ? String(s).split("\n").length : 0);
 const fmtN = (n) => fmt.number(n);
-const firstLine = (s) => String(s ?? "").split("\n").find((l) => l.trim()) ?? "";
 
 /** JSON にして返す。循環などで壊れても表示は止めない */
 function toJson(v) {
@@ -978,7 +978,7 @@ function drawShell(card, head, inp, name) {
   if (inp.description) notes.push(String(inp.description));
   if (notes.length) head.append(noteSpan(notes.join(" · ")));
 
-  if (folded) card.append(section(t("timeline.tool.fullCommand", { count: lineCount(cmd), n: fmtN(lineCount(cmd)) }), codeBlock(clip(cmd, 8000), "bash")));
+  if (folded) (card.tcInputPane ?? card).append(section(t("timeline.tool.fullCommand", { count: lineCount(cmd), n: fmtN(lineCount(cmd)) }), codeBlock(clip(cmd, 8000), "bash")));
 }
 
 function drawRead(card, head, inp) {
@@ -1050,7 +1050,7 @@ function drawTask(card, head, inp) {
     if (inp[k]) bits.push(String(inp[k]));
   }
   if (bits.length) head.append(noteSpan(bits.join(" · ")));
-  if (inp.prompt) card.append(foldCode(t("timeline.tool.prompt"), String(inp.prompt), "md"));
+  if (inp.prompt) (card.tcInputPane ?? card).append(foldCode(t("timeline.tool.prompt"), String(inp.prompt), "md"));
 }
 
 function drawWebFetch(card, head, inp) {
@@ -1135,27 +1135,21 @@ function drawMcp(card, head, inp, name) {
   head.append(textMain(parts.slice(2).join("__") || name));
   const s = summarizeInput(inp);
   if (s) head.append(noteSpan(s));
-  // ply_delegate の中身は client.mjs が依頼と内訳で描く（キーと値の格子にしない）
-  const grid = isDelegateToolName(name) ? null : kvGrid(inp);
-  if (grid) card.append(grid);
+  // キーと値の格子は「入力」の面の共通部品（renderToolCall が全ツールに入れる）。
+  // ply_delegate の中身は client.mjs が依頼と内訳で描く（そちらでは格子も出さない）
 }
 
 /** ply_computer（コンピューターの操作）。主役はエージェントが書いた title、座標などの入力は開いた中に */
 function drawComputer(card, head, inp, name) {
-  const { title, ...rest } = inp;
-  const given = String(title ?? "").trim();
+  const given = String(inp.title ?? "").trim();
   const main = textMain(given || computerToolName(name));
   if (!given) main.dataset.untitled = "1";   // 結果が届いたら、橋が補った題（印の行）に替える
   head.append(main);
-  const grid = kvGrid(rest);
-  if (grid) card.append(grid);
 }
 
 function drawUnknown(card, head, inp) {
   const s = summarizeInput(inp);
   if (s) head.append(textMain(s));
-  const grid = kvGrid(inp);
-  if (grid) card.append(grid);
 }
 
 // 動詞で揃える。並んだときに「何をしたか」が縦に読める
@@ -1232,14 +1226,222 @@ export function applySubagentTools(names) {
 /** 委譲のツール（Task / Agent / 申告されたサブエージェントのツール / ply_delegate）。右端の状態は client.mjs が子の状態で描くので、結果の要約は出さない */
 export const isDelegateToolName = (name) => DELEGATE_TOOL_NAMES.has(String(name ?? "")) || isPlyDelegateToolName(name);
 
+// ------------------------------------------------------------ 行頭のアイコンとタブ
+//
+// ツール種類ごとの 16px の線画（stroke=currentColor）。タブのボタンの小さい絵とも同じ形を使う。
+
+const TIC_PATHS = {
+  run:     [["rect", { x: 1.5, y: 2.5, width: 13, height: 11, rx: 2 }], ["path", { d: "M5 6l2.2 2.2L5 10.4M8.6 10.6h3" }]],
+  doc:     [["path", { d: "M3.5 2.5h6l3 3v8h-9z" }], ["path", { d: "M9.5 2.5v3h3M6 9h4M6 11.5h4" }]],
+  pencil:  [["path", { d: "M10.5 2.8l2.7 2.7L5.5 13.2l-3.4.7.7-3.4z" }]],
+  search:  [["circle", { cx: 7, cy: 7, r: 4.5 }], ["path", { d: "M10.5 10.5L14 14" }]],
+  person:  [["circle", { cx: 8, cy: 5, r: 3 }], ["path", { d: "M3 13.5c1-2.4 3-3.5 5-3.5s4 1.1 5 3.5" }]],
+  globe:   [["circle", { cx: 8, cy: 8, r: 6 }], ["path", { d: "M2 8h12M8 2c-1.8 1.8-1.8 10.2 0 12M8 2c1.8 1.8 1.8 10.2 0 12" }]],
+  check:   [["path", { d: "M3 8.5l3.5 3.5L13 5" }]],
+  plug:    [["path", { d: "M6 3v4M10 3v4M4.5 7h7v2.5a3.5 3.5 0 01-7 0zM8 13v2.5" }]],
+  monitor: [["rect", { x: 1.5, y: 2.5, width: 13, height: 9, rx: 2 }], ["path", { d: "M6 14h4M8 11.5V14" }]],
+  gear:    [["circle", { cx: 8, cy: 8, r: 2.2 }], ["path", { d: "M8 2.5v1.8M8 11.7v1.8M2.5 8h1.8M11.7 8h1.8M4.3 4.3l1.3 1.3M10.4 10.4l1.3 1.3M11.7 4.3l-1.3 1.3M5.6 10.4l-1.3 1.3" }]],
+  image:   [["rect", { x: 2, y: 3, width: 12, height: 10, rx: 1.5 }], ["circle", { cx: 5.5, cy: 6.5, r: 1.2 }], ["path", { d: "M3 11l3-2.5 3 2.5 3-2.5 2 1.5" }]],
+  arrow:   [["path", { d: "M8 2v7M5 6.5L8 9.5l3-3" }], ["path", { d: "M3 11v2.5h10V11" }]],
+  lock:    [["rect", { x: 4, y: 7, width: 8, height: 6.5, rx: 1.5 }], ["path", { d: "M5.8 7V5.4a2.2 2.2 0 014.4 0V7" }]],
+};
+
+const ticSvg = (kind) => {
+  const svg = svgEl("svg", { viewBox: "0 0 16 16", "aria-hidden": "true" });
+  for (const [tag, attrs] of TIC_PATHS[kind] ?? TIC_PATHS.gear) svg.append(svgEl(tag, attrs));
+  return svg;
+};
+
+/** 行頭の 16px の線画の置き場（.tic） */
+const tic = (kind) => {
+  const holder = el("span", "tic");
+  holder.setAttribute("aria-hidden", "true");
+  holder.append(ticSvg(kind));
+  return holder;
+};
+
+// 描き方（TOOL_DRAW で決まる関数）ごとの、行頭のアイコンと主タブ。
+// tab:null は 1 面だけのツール（TODO）。タブを出さず、生の JSON だけ小さな折りたたみで残す。
+// i18n-dynamic: timeline.tool.tab.
+const DRAW_FACE = new Map([
+  [drawShell,     { icon: "run",     tab: "output"  }],
+  [drawRead,      { icon: "doc",     tab: "content" }],
+  [drawWrite,     { icon: "pencil",  tab: "content" }],
+  [drawEdit,      { icon: "pencil",  tab: "diff"    }],
+  [drawMultiEdit, { icon: "pencil",  tab: "diff"    }],
+  [drawGrep,      { icon: "search",  tab: "result"  }],
+  [drawGlob,      { icon: "search",  tab: "result"  }],
+  [drawTask,      { icon: "person",  tab: "result"  }],
+  [drawWebFetch,  { icon: "globe",   tab: "result"  }],
+  [drawWebSearch, { icon: "globe",   tab: "result"  }],
+  [drawComputer,  { icon: "monitor", tab: "screen"  }],
+  [drawTodo,      { icon: "check",   tab: null      }],
+  [drawMcp,       { icon: "plug",    tab: "output"  }],
+  [drawPresent,   { icon: "image",   tab: "output"  }],
+  [drawStatus,    { icon: "gear",    tab: "output"  }],
+  [drawTitle,     { icon: "gear",    tab: "output"  }],
+  [drawFork,      { icon: "gear",    tab: "output"  }],
+  [drawFillSecret,{ icon: "lock",    tab: "output"  }],
+  [drawUnknown,   { icon: "gear",    tab: "output"  }],
+]);
+
+const tabButton = (label, iconKind) => {
+  const b = el("button", null, label);
+  b.type = "button";
+  b.setAttribute("role", "tab");
+  b.setAttribute("aria-selected", "false");
+  b.prepend(ticSvg(iconKind));
+  return b;
+};
+
+/** 「主面 ⇄ 入力」の 2 面の切り替え。タブと面の .on を同じ index で揃える */
+function selectPane(card, which) {
+  const tabs = card.querySelector(".tc-tabs");
+  if (!tabs) return;
+  const [bMain, bInput] = tabs.querySelectorAll("button");
+  const main = card.querySelector(".tc-pane-main"), input = card.querySelector(".tc-pane-input");
+  const onMain = which === "main";
+  bMain?.classList.toggle("on", onMain);    bMain?.setAttribute("aria-selected", String(onMain));
+  bInput?.classList.toggle("on", !onMain);  bInput?.setAttribute("aria-selected", String(!onMain));
+  main?.classList.toggle("on", onMain);     input?.classList.toggle("on", !onMain);
+}
+
+let paneSeq = 0;
+const wireTabs = (tabs, buttons, panes) => {
+  panes.forEach((p, i) => {
+    if (!p.id) p.id = `tc-pane-${++paneSeq}`;
+    if (!buttons[i].id) buttons[i].id = `tc-tab-${p.id}`;
+    buttons[i].setAttribute("aria-controls", p.id);
+    p.setAttribute("aria-labelledby", buttons[i].id);
+  });
+  const pick = (i) => {
+    buttons.forEach((x, j) => { x.classList.toggle("on", x === buttons[i]); x.setAttribute("aria-selected", String(x === buttons[i])); });
+    panes.forEach((p, j) => p.classList.toggle("on", j === i));
+  };
+  buttons.forEach((b, i) => {
+    b.onclick = (e) => { e.preventDefault(); e.stopPropagation(); pick(i); };
+    // タブの並びは ← → で移る（APG の tabs）
+    b.onkeydown = (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault(); e.stopPropagation();
+      const j = (i + (e.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length;
+      buttons[j].focus(); pick(j);
+    };
+  });
+};
+
+/** 「入力」タブの中身: キーと値の格子 ＋ 生の入力 JSON の折りたたみ（結果の生テキスト/JSON もこの中に追記する） */
+function rawJsonFold(inp) {
+  const json = el("details", "tc-fold tc-json");
+  json.append(el("summary", null, t("timeline.tool.rawJson")));
+  const jsonBody = el("div", "tc-json-body");
+  jsonBody.append(el("div", "tc-section-label", t("timeline.tool.input")));
+  const inputBody = el("div", "tc-input");
+  inputBody.innerHTML = codeBlock(JSON.stringify(inp, null, 2), "json");
+  jsonBody.append(inputBody);
+  json.append(jsonBody);
+  return json;
+}
+
+function fillInputPane(pane, inp, raw) {
+  const box = el("div", "tc-inp");
+  // 委譲は client.mjs が依頼と内訳を描く（キーと値の格子にしない。drawMcp と同じ判断）
+  if (!isDelegateToolName(raw)) { const kv = kvGrid(inp); if (kv) box.append(kv); }
+  box.append(rawJsonFold(inp));
+  pane.append(box);
+}
+
+// ---------------------------------------------------------------- 時刻の詳細
+
+/** 行の外のクリック・Esc で、開いている時刻のポップオーバーを全部しまう（同時に 1 枚だけ） */
+let whenCloserBound = false;
+function ensureWhenCloser() {
+  if (whenCloserBound || typeof document?.addEventListener !== "function") return;
+  whenCloserBound = true;
+  const closeAll = (e) => {
+    if (e?.type === "click" && e.target?.closest?.(".tc-time")) return;
+    if (e?.type === "keydown" && e.key !== "Escape") return;
+    for (const tc of document.querySelectorAll?.(".tc.show-when") ?? []) {
+      tc.classList.remove("show-when");
+      tc.querySelector(".tc-time")?.setAttribute("aria-expanded", "false");
+    }
+  };
+  document.addEventListener("click", closeAll);
+  document.addEventListener("keydown", closeAll);
+}
+
 /**
- * ツール呼び出しを 1 行にし、開くとツールごとの中身（差分・出力の末尾・ファイル一覧・キーと値）を読めるようにする。
- * 1 行は「動詞・主役・補足・右端に結果・開閉の印」。生の入力・出力は奥の「入力・出力（JSON）」の折りたたみに残す。
+ * 行の右端の時刻ボタン（HH:MM）とポップオーバーを、card.toolStarted / toolEnded / toolExitCode の今の分に書き直す。
+ * 始まりの時刻が無い（古い履歴）なら、ボタンもポップオーバーも出さない
+ */
+function updateWhen(card) {
+  if (!card?.querySelector) return;
+  card.updateWhen = () => updateWhen(card);   // markRunning などが後から時刻を載せたとき書き直せるように
+  const start = card.toolStarted, end = card.toolEnded, code = card.toolExitCode;
+  let btn = card.querySelector(".tc-time");
+  if (!Number.isFinite(start)) {
+    btn?.remove();
+    card.classList.remove("show-when");
+    card.querySelector(".tc-when-pop")?.replaceChildren();
+    return;
+  }
+  const parts = [t("timeline.tool.when.start", { time: toolTimeLong(start) })];
+  if (Number.isFinite(end)) {
+    parts.push(t("timeline.tool.when.end", { time: toolTimeLong(end) }));
+    const dur = Number(toolDuration(end - start));
+    if (Number.isFinite(dur)) parts.push(t("timeline.tool.when.duration", { n: fmt.number(dur) }));
+    if (code != null) parts.push(t("timeline.tool.when.exitCode", { code }));
+  }
+  const head = card.querySelector(".tc-head");
+  if (head) head.title = parts.join(" · ");
+  card.querySelector(".tc-when-pop")?.replaceChildren(...parts.map((p) => el("span", null, p)));
+  if (!btn) {
+    btn = el("button", "tc-time");
+    btn.type = "button";
+    btn.setAttribute("aria-label", t("timeline.tool.when.detail"));
+    btn.setAttribute("aria-haspopup", "dialog");
+    btn.onclick = (e) => {
+      e.preventDefault(); e.stopPropagation();   // summary の開閉を引かない
+      const tc = btn.closest(".tc");
+      const doc = tc?.ownerDocument;
+      for (const o of doc?.querySelectorAll?.(".tc.show-when") ?? []) {
+        if (o !== tc) { o.classList.remove("show-when"); o.querySelector(".tc-time")?.setAttribute("aria-expanded", "false"); }
+      }
+      const show = tc.classList.toggle("show-when");
+      btn.setAttribute("aria-expanded", String(show));
+      if (show) {
+        // fixed 配置（まとまりの .in が overflow:hidden で切るため）。ボタンの右に揃え、左端は 8px 空ける
+        const pop = tc.querySelector(".tc-when-pop");
+        const r = btn.getBoundingClientRect?.();
+        if (pop && r) {
+          const w = pop.getBoundingClientRect?.().width ?? 0;
+          pop.style.top = `${r.bottom + 4}px`;
+          pop.style.left = `${Math.max(8, r.right - w)}px`;
+        }
+      }
+    };
+    ensureWhenCloser();
+    const chev = card.querySelector(".tc-line > .tc-chev");
+    if (chev) chev.before(btn); else card.querySelector(".tc-line")?.append(btn);
+  }
+  btn.textContent = toolTimeShort(start);
+  btn.setAttribute("aria-expanded", String(card.classList.contains("show-when")));
+  card.querySelector(".tc-when-pop")?.setAttribute("role", "dialog");
+  // 重ねた矢印（.tc-go）は「値の列」の幅から位置を引く。時刻ボタンが値の列の右に居るので、分だけ --res-w を広げる
+  const res = card.querySelector(".tc-res");
+  if (res) card.style.setProperty("--res-w", `${(res.getBoundingClientRect?.().width ?? 0) + (btn.getBoundingClientRect?.().width ?? 0)}px`);
+}
+
+/**
+ * ツール呼び出しを 1 行にし、開くとツールごとの中身（差分・出力・ファイル一覧・生の入力）を読めるようにする。
+ * 1 行は「アイコン・動詞・主役・補足・右端に失敗の印と時刻・開閉の印」。結果の要約は行に出さない（開いた中身が語る）。
+ * 開いた中身は「主面 ⇄ 入力」の 2 枚のタブ（1 面だけのツールはタブなし）。
  * @param {string} name ツール名（モデル由来。信用しない）
  * @param {object} input ツール入力（同上）
- * @param {{id?:string, open?:boolean, compact?:boolean}} [opts]
+ * @param {{id?:string, open?:boolean, compact?:boolean, at?:number|string, startedAt?:number|string, endAt?:number|string}} [opts]
  *        id: tool_use_id を data 属性に持たせる（後から結果を突き合わせるため）
  *        open: 折りたたみを開いた状態で作る / compact: 余白を詰める
+ *        at・startedAt: 始まりの時刻（サーバーの時計か ISO）/ endAt: 終わりの時刻
  * @returns {HTMLElement}
  */
 export function renderToolCall(name, input, opts) {
@@ -1251,6 +1453,10 @@ export function renderToolCall(name, input, opts) {
   card.dataset.tool = raw; // dataset は属性値。中身は解釈されない
   if (o.id != null) card.dataset.id = String(o.id);
   if (o.compact) card.classList.add("tc-compact");
+  // 時刻はサーバーの時計（ms か ISO）で来るので、この画面の時計に直して持つ（web/server-clock.mjs）
+  card.toolStarted = localTime(o.startedAt) ?? localTime(o.at);
+  card.toolEnded = localTime(o.endAt);
+  card.toolExitCode = null;
 
   const details = el("details", "tc-fold tc-details");
   details.open = Boolean(o.open);
@@ -1258,12 +1464,14 @@ export function renderToolCall(name, input, opts) {
   const body = el("div", "tc-details-body");
   details.append(head, body);
   card.append(details);
+  // 時刻の詳細のポップオーバー（summary の外・行の面とは別の面。押しても行は開かない）
+  card.append(el("div", "tc-when-pop"));
+
   // 1 行目は tc-line に積む（失敗の要点・委譲の行き先は、その下の行として head に足す）
   const line = el("span", "tc-line");
   head.append(line);
   const computer = isComputerTool(raw);
   if (computer) card.classList.add("tc-computer");
-  line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (computer ? computerVerb(raw) : raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
 
   // 描き分け。対象がファイルのツールは、バックエンドごとに違うパスのキーを file_path に揃えて渡す
   // （押すと右パネル、右クリックで操作。docs/design-system.md「ファイルの操作」）
@@ -1274,22 +1482,50 @@ export function renderToolCall(name, input, opts) {
       ?? (Array.isArray(inp.files) ? inp.files.find((p) => typeof p === "string" && p) : null);
     if (target) drawInp = { ...inp, file_path: target };
   }
-  draw(body, line, drawInp, raw);
+
+  const face = DRAW_FACE.get(draw) ?? { icon: "gear", tab: "output" };
+  line.append(tic(face.icon));
+  line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (computer ? computerVerb(raw) : raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
+
+  // 開いた中身: 主面（.tc-pane-main）＋「入力」の面（.tc-pane-input）。1 面だけのツールはタブを出さない
+  const paneMain = el("div", "tc-pane tc-pane-main on");
+  paneMain.setAttribute("role", "tabpanel");
+  if (face.tab) {
+    const paneInput = el("div", "tc-pane tc-pane-input");
+    paneInput.setAttribute("role", "tabpanel");
+    paneMain.tcInputPane = paneInput;
+    const tabs = el("div", "seg tc-tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", t("timeline.tool.content"));
+    const bMain = tabButton(t(`timeline.tool.tab.${face.tab}`), face.icon);
+    const bInput = tabButton(t("timeline.tool.tab.input"), "arrow");
+    tabs.append(bMain, bInput);
+    wireTabs(tabs, [bMain, bInput], [paneMain, paneInput]);
+    body.append(tabs, paneMain, paneInput);
+    // 「入力」の面: キーと値の格子 ＋ 生の入力 JSON の折りたたみ（コンピューター操作は題を除く）
+    const kvInp = draw === drawComputer
+      ? Object.fromEntries(Object.entries(drawInp).filter(([k]) => k !== "title")) : drawInp;
+    fillInputPane(paneInput, kvInp, raw);
+  } else {
+    body.append(paneMain);
+  }
+
+  draw(paneMain, line, drawInp, raw);
+  // 1 面だけのツール（TODO）はタブを出さず、描いた中身の後ろに生の JSON の小さな折りたたみを残す
+  if (!face.tab) paneMain.append(rawJsonFold(drawInp));
+  // 主面が空なら「入力」を既定にする（差分・一覧が主面に入ったツールは主タブが既定）
+  selectPane(card, paneMain.children.length ? "main" : "input");
+
   card.toolChange = toolChange(raw, drawInp);
+  if (draw === drawShell) {
+    card.shellCommand = String(drawInp.command ?? "");
+    card.shellPrompt = raw === "PowerShell" ? "PS> " : "$ ";
+  }
 
-  // 右端: 結果（走っている間は弧と経過秒。web/tool-bundle.mjs）。続けて開閉の印
+  // 右端: 結果（走っている間は弧と経過秒。web/tool-bundle.mjs）。時刻のボタン。開閉の印
   line.append(el("span", "tc-res"));
+  updateWhen(card);
   line.append(chevron());
-
-  const json = el("details", "tc-fold tc-json");
-  json.append(el("summary", null, t("routing.detail.json")));
-  const jsonBody = el("div", "tc-json-body");
-  jsonBody.append(el("div", "tc-section-label", t("timeline.tool.input")));
-  const inputBody = el("div", "tc-input");
-  inputBody.innerHTML = codeBlock(JSON.stringify(inp, null, 2), "json");
-  jsonBody.append(inputBody);
-  json.append(jsonBody);
-  body.append(json);
   return card;
 }
 
@@ -1307,31 +1543,6 @@ function resultText(r) {
   return "";
 }
 
-/** 結果の要約（右端）。全文は出さない。行数・件数・変えた量だけ分かればよい */
-function summarizeResult(tool, body, n, change) {
-  const out = body.trim();
-  if (!out && !change) return t("timeline.result.empty");
-  if (/^No (matches|files) found/i.test(out)) return t("timeline.result.count", { count: 0, n: fmtN(0) });
-  const found = /^Found (\d+) /.exec(out);
-  if (found) return t("timeline.result.count", { count: Number(found[1]), n: fmtN(found[1]) });
-
-  // 編集の量。バックエンドが申告した shape で編集と決まったツール（Codex の fileChange・agy の edit_file）も同じ。量が分からなければ「編集した」
-  if (change && tool !== "Write") return change.add || change.del ? `${change.del ? `−${fmtN(change.del)} ` : ""}+${fmtN(change.add)}` : t("timeline.result.edited");
-
-  switch (tool) {
-    case "Glob": return t("timeline.result.count", { count: n, n: fmtN(n) });
-    case "Write":
-      return change?.add ? t("timeline.result.lines", { count: change.add, n: fmtN(change.add) }) : t("timeline.result.saved");
-    case "Edit": case "MultiEdit": case "NotebookEdit":
-      return t("timeline.result.edited");
-    case "TodoWrite": return t("timeline.result.updated");
-    default:
-      // このアプリのツールは「〜した」という短い返事を返すので、それをそのまま見せる
-      if (String(tool ?? "").startsWith("mcp__")) return out.length <= 60 ? clip(firstLine(out), 60) : t("timeline.result.ran");
-      return t("timeline.result.lines", { count: n, n: fmtN(n) });
-  }
-}
-
 /** 終了コード。出力の中の「Exit code 1」「exit status 2」「exited with code 3」の最後のもの。分からなければ null */
 export function exitCodeOf(body) {
   let code = null;
@@ -1347,30 +1558,14 @@ export function failureLine(body) {
   return clip(hit ?? lines.at(-1), 200);
 }
 
-const TAIL_LINES = 6;   // 実行の出力を開いたときに出す末尾の行数
-
-/** 実行の出力: 末尾 N 行と「全 N 行を表示」 */
-function outputTail(text) {
-  const lines = text.replace(/\n$/, "").split("\n");
-  const box = el("div", "tc-res-view tc-tail");
-  const tail = lines.length > TAIL_LINES;
-  const label = el("div", "tc-section-label", tail ? t("timeline.result.tail", { count: TAIL_LINES, n: fmtN(TAIL_LINES) }) : t("timeline.result.output"));
-  const code = el("div", "tc-output");
-  const shown = tail ? lines.slice(-TAIL_LINES) : lines;
-  while (shown.length > 1 && !shown[0].trim()) shown.shift();   // 末尾で切った先頭が空行なら落とす
-  code.innerHTML = codeBlock(shown.join("\n"), "");
-  if (tail) {
-    const more = el("button", "btn tc-more", t("timeline.result.showAll", { count: lines.length, n: fmtN(lines.length) }));
-    more.type = "button";
-    more.onclick = (e) => {
-      e.preventDefault(); e.stopPropagation();
-      code.innerHTML = codeBlock(clip(lines.join("\n"), 20000), "");
-      label.firstChild.textContent = t("timeline.result.output");
-      more.remove();
-    };
-    label.append(more);
-  }
-  box.append(label, code);
+/** 実行の出力の端末面（両テーマ共通の暗い面 .tc-term）。「$ コマンド」＋出力、失敗は末尾に終了コード */
+function termView(command, prompt, body, exitCode) {
+  const box = el("div", "tc-res-view tc-term");
+  box.append(el("span", "prompt", String(prompt ?? "$ ")));
+  const out = clip(String(body ?? "").replace(/^\n+/, ""), 20000);
+  // append は文字列をそのまま文字のノードとして足す（DOM シムも同じ）
+  box.append(String(command ?? "") + (out ? `\n${out}` : ""));
+  if (exitCode != null && exitCode !== 0) box.append(el("span", "prompt", `\nexit ${exitCode}`));
   return box;
 }
 
@@ -1416,7 +1611,7 @@ function decorateComputerRow(node, head, resEl, info, result) {
       const state = a.state === "failed" ? t("timeline.result.failed") : a.state === "stopped" ? reasonShort(a.reason) : "";
       rows.append(el("span", "k", computerVerb(COMPUTER_PREFIX + String(a.tool ?? ""))), el("span", "v", [a.app, state].filter(Boolean).join(" · ")));
     }
-    (node.querySelector(".tc-details-body") ?? node).prepend(rows);
+    (node.querySelector(".tc-pane-main") ?? node.querySelector(".tc-details-body") ?? node).prepend(rows);
   }
 }
 
@@ -1476,29 +1671,42 @@ export function applyToolResult(node, result) {
         const why = reasonLong(computer.reason, computer.app) ?? failureLine(body);
         if (why) { const line = el("span", "tc-errline tc-reason", why); line.title = why; head.append(line); }
       } else if (computer.state === "waiting") resEl.textContent = t("timeline.computer.waiting");
-    } else if (!delegate) {
-      resEl.textContent = summarizeResult(tool, body, lineCount(body), node.toolChange);
     }
+    // 成功した行の右端は空のまま。結果の要約（「N 行」「N 件」）は行に出さない——開いた中身が語る（v4）
   }
 
   if (computer) decorateComputerRow(node, head, resEl, computer, result);
 
-  // 開いた中。出力の見せ方はツール別（実行 = 末尾、検索・探す = ファイル一覧）。生の出力は JSON の折りたたみへ
+  // 時刻の詳細: 終わりの時刻（サーバーが結果に付けた at、履歴は正規化の endAt）と終了コードを覚えて書き直す
+  node.toolEnded = localTime(result?.at ?? result?.endAt) ?? node.toolEnded;
+  // 終了コードは実行系ツールの非 0 だけ（他のツールの出力に "exit 1" が含まれていても関係ない）
+  const shellCode = draw === drawShell ? exitCodeOf(body) : null;
+  node.toolExitCode = shellCode !== null && shellCode !== 0 ? shellCode : null;
+  updateWhen(node);
+
+  // 開いた中。出力の見せ方はツール別（実行 = 端末面、検索・探す = ファイル一覧）。主タブの面へ。
+  // 生の出力は「入力」の面の折りたたみの奥（ply_delegate の振り分けの JSON・実行の生テキスト）
   const detailsBody = node.querySelector(".tc-details-body");
-  const jsonFold = node.querySelector(".tc-json");
-  const view = !body ? null : draw === drawShell ? outputTail(body) : (draw === drawGlob || draw === drawGrep) ? fileList(body) : null;
-  if (view && detailsBody) { if (jsonFold) jsonFold.before(view); else detailsBody.append(view); }
+  const mainPane = node.querySelector(".tc-pane-main") ?? detailsBody;
+  const exitCode = exitCodeOf(body);
+  const view = !body ? null
+    : draw === drawShell ? termView(node.shellCommand, node.shellPrompt, body, exitCode)
+    : (draw === drawGlob || draw === drawGrep) ? fileList(body) : null;
+  if (view && mainPane) mainPane.append(view);
 
   const output = el("div", "tc-out");
   output.append(el("div", "tc-section-label", (cut ? t("timeline.result.outputPartial") : t("timeline.result.output"))));
   const code = el("div", "tc-output");
   code.innerHTML = codeBlock(body || t("timeline.result.empty"), "");
   output.append(code);
-  // 委譲・処理済みの見せ方があるツールは、生の出力を「入力・出力（JSON）」の折りたたみの奥へ。それ以外は開いた中にそのまま
+  // 処理済みの見せ方があるツール（端末面・ファイル一覧）と ply_delegate（内訳の描きは client.mjs）は、
+  // 生の出力を「入力」の面の折りたたみの奥へ。それ以外は主タブの面にそのまま（読む = 内容、委譲 = 結果のレポート）
   const raw = node.querySelector(".tc-json-body");
-  if (raw && (delegate || view)) raw.append(output);
-  else if (jsonFold) jsonFold.before(output);
+  const intoFold = Boolean(view) || isPlyDelegateToolName(tool);
+  if (raw && intoFold) raw.append(output);
+  else if (mainPane) mainPane.append(output);
   else (detailsBody ?? node).append(output);
+  if (view || !intoFold) selectPane(node, "main");
   for (const img of computer ? [] : result?.images ?? []) {
     const src = presentImg(img.url ?? img.dataUri ?? "");
     if (!src) continue;

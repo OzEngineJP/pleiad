@@ -3492,7 +3492,7 @@ function onEvent(ev, replay = false) {
       if (ev.id && state.toolCards.has(ev.id)) return state.toolCards.get(ev.id);
       endStream();
       const stick = atBottom();
-      const card = renderToolCall(ev.name, ev.input, { id: ev.id });
+      const card = renderToolCall(ev.name, ev.input, { id: ev.id, at: ev.at, startedAt: ev.startedAt });
       linkDelegateCard(card, ev.input);
       const boundary = isBoundaryTool(ev.name, subagentToolsOf(ev.backend ?? activeBackendId()));
       if (boundary) { closeBundle(); ensureTurnEl().append(card); }
@@ -6543,7 +6543,9 @@ const valueWidths = typeof ResizeObserver === 'function' ? new ResizeObserver((e
   for (const { target } of entries) {
     const host = target.closest('.tc, .task-notice');
     if (!host?.isConnected) { valueWidths.unobserve(target); continue; }
-    host.style.setProperty('--res-w', `${target.getBoundingClientRect().width}px`);
+    // 値の列のすぐ右に時刻ボタン（.tc-time）が居るときは、その分も矢印の位置に含める
+    const timeW = host.querySelector('.tc-line > .tc-time')?.getBoundingClientRect?.().width ?? 0;
+    host.style.setProperty('--res-w', `${target.getBoundingClientRect().width + timeW}px`);
   }
 }) : null;
 /** 行の右端の値の列（.tc-res / .tn-res）の幅を、重ねた矢印の位置のために宿主へ伝える */
@@ -6650,10 +6652,11 @@ function delegateRequest(card) {
   mountFold(box, text, { measure: true, labels: foldLabels() });
   return box;
 }
-/** 入力・出力の JSON は「入力・出力（JSON）」の折りたたみの奥へ（消さずに残す）。結果の読み直しもこの中に入る（render.mjs の applyToolResult） */
+/** 入力・出力の JSON は「入力」の面の折りたたみの奥へ（消さずに残す）。結果の読み直しもこの中に入る（render.mjs の applyToolResult）。
+   ツールカードは主面⇄入力のタブ構造になったので、折りたたみは .tc-pane-input の中。既にあれば足さない */
 function foldDelegateJson(card) {
   const body = card.querySelector('.tc-details-body');
-  if (!body || body.querySelector(':scope > .tc-json')) return;
+  if (!body || body.querySelector('.tc-json')) return;
   const fold = el('details', 'tc-fold tc-json');
   const summary = el('summary', null, t('routing.detail.json'));
   const inner = el('div', 'tc-json-body');
@@ -6697,7 +6700,8 @@ function decorateDelegateCard(card) {
   where.append(el('div', 'rt-request-label', t('routing.detail.target')), route);
   foldDelegateJson(card);
   const request = delegateRequest(card);
-  card.querySelector('.tc-details-body')?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
+  // 委譲の中身（依頼・委譲先・内訳）は主タブの面へ。タブの外に置くと「結果」タブが空の面になる
+  (card.querySelector('.tc-pane-main') ?? card.querySelector('.tc-details-body'))?.prepend(...(request ? [request] : []), where, delegateDetail(card, routing));
   paintRouteLine(card, routing);
   paintRetried(card);
   // 開いたとき、子の作業場所の git の要約を「変更」の行として出す（開かれるまでは引かない。ADR 0085）
@@ -8762,8 +8766,12 @@ function historyRow(m, { cont = false, refs = [], prev = null, readonly = false,
     if (readonly && m.model) node.querySelector('.who > span:not(.row-be)').textContent = modelDisplayName(state.vocab.get(backend)?.models ?? {}, m.model);
     if (m.thinking) node.append(thinkFromText(m.thinking));
     const cards = (m.toolCalls ?? []).map((c) => {
-      const card = renderToolCall(c.name, c.input, { id: c.id });
-      if (c.result) { applyToolResult(card, c.result); noteEndpointFailure(card, c.result, sessionId); }
+      const card = renderToolCall(c.name, c.input, { id: c.id, at: c.at, startedAt: c.startedAt, endAt: c.endAt });
+      if (c.result) {
+        // endAt（正規化が tool_result の時刻を持つとき）を結果に乗せて渡す。畳んだ仮の発言は result.at（サーバーの時計）が既にある
+        const res = c.result && typeof c.result === 'object' ? { ...c.result, at: c.endAt ?? c.result.at } : c.result;
+        applyToolResult(card, res); noteEndpointFailure(card, c.result, sessionId);
+      }
       if (!readonly) linkDelegateCard(card, c.input, c.result, { backend: m.backend ?? backend ?? activeBackendId() });
       if (c.id && !readonly) state.toolCards.set(c.id, card);
       return card;

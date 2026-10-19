@@ -84,7 +84,7 @@ export default async function (t) {
     t.ok("shell 形のツールは変更ではない", toolChange("commandExecution", { command: "ls" }) === null);
     const card = renderToolCall("fileChange", { files: ["D:/x/a.mjs", "D:/x/b.mjs"] });
     applyToolResult(card, { text: "ok", isError: false });
-    t.ok("Codex の fileChange: 主役は最初のファイル、右端は量が分からないので「編集した」", text(card.querySelector(".tc-main")).includes("a.mjs") && text(card.querySelector(".tc-res")) === "編集した", text(card.querySelector(".tc-res")));
+    t.ok("Codex の fileChange: 主役は最初のファイル。右端は空（結果の要約は行に出さない）", text(card.querySelector(".tc-main")).includes("a.mjs") && text(card.querySelector(".tc-res")) === "", text(card.querySelector(".tc-res")));
   }
 
   // ---- 押さずに決着した承認: 結果が届いたら承認カードを外して行を戻す
@@ -103,7 +103,7 @@ export default async function (t) {
   {
     const edit = renderToolCall("Edit", { file_path: "D:/x/a.mjs", old_string: "a\nb", new_string: "c\nd\ne" });
     applyToolResult(edit, { text: "updated", isError: false });
-    t.ok("編集: 右端に「−2 +3」、開くと差分", text(edit.querySelector(".tc-res")) === "−2 +3" && edit.querySelector(".tc-diff") != null, text(edit.querySelector(".tc-res")));
+    t.ok("編集: 右端は空（量の要約は行に出さない）・開くと主タブに差分", text(edit.querySelector(".tc-res")) === "" && edit.querySelector(".tc-diff") != null && edit.querySelector(".tc-pane-main").querySelector(".tc-diff") != null, text(edit.querySelector(".tc-res")));
     t.ok("編集: 主役は対象ファイル", text(edit.querySelector(".tc-main")).includes("a.mjs"));
 
     const bash = renderToolCall("Bash", { command: "node tests/run2.mjs", description: "全体のテスト" });
@@ -115,18 +115,18 @@ export default async function (t) {
     const out = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n");
     const run = renderToolCall("Bash", { command: "npm test" });
     applyToolResult(run, { text: out, isError: false });
-    const tail = run.querySelector(".tc-tail");
-    t.ok("実行: 出力は末尾 6 行と「全 30 行を表示」", tail != null && tail.outerHTML.includes("line 30") && !tail.outerHTML.includes("line 20") && tail.querySelector(".tc-more") != null, text(tail).slice(0, 80));
-    t.ok("実行: 右端は行数", text(run.querySelector(".tc-res")) === "30 行", text(run.querySelector(".tc-res")));
-    t.ok("実行: 生の出力は「入力・出力（JSON）」の奥に残る", run.querySelector(".tc-json").querySelector(".tc-out") != null);
+    const term = run.querySelector(".tc-term");
+    t.ok("実行: 出力は主タブの端末面（$ コマンド＋出力）", term != null && text(term).includes("$ npm test") && text(term).includes("line 30"), text(term).slice(0, 80));
+    t.ok("実行: 右端は空（行数の要約は行に出さない）", text(run.querySelector(".tc-res")) === "", text(run.querySelector(".tc-res")));
+    t.ok("実行: 生の出力は「入力」の面の折りたたみの奥に残る", run.querySelector(".tc-json").querySelector(".tc-out") != null);
 
     const glob = renderToolCall("Glob", { pattern: "tests/unit/*login*.mjs" });
     applyToolResult(glob, { text: "tests/unit/login-flow.mjs\ntests/unit/login-retry.mjs", isError: false });
-    t.ok("探す: 結果はファイルの一覧、右端は件数", glob.querySelector(".tc-files").querySelectorAll("li").length === 2 && text(glob.querySelector(".tc-res")) === "2 件", text(glob.querySelector(".tc-res")));
+    t.ok("探す: 結果は主タブのファイルの一覧、右端は空", glob.querySelector(".tc-files").querySelectorAll("li").length === 2 && text(glob.querySelector(".tc-res")) === "" && glob.querySelector(".tc-pane-main").querySelector(".tc-files") != null, text(glob.querySelector(".tc-res")));
 
     const grep = renderToolCall("Grep", { pattern: "retryLogin\\(" });
     applyToolResult(grep, { text: "No matches found", isError: false });
-    t.ok("検索: 0 件と分かる", text(grep.querySelector(".tc-res")) === "0 件");
+    t.ok("検索: 0 件は主タブの出力として読める（右端は空）", text(grep.querySelector(".tc-res")) === "" && grep.querySelector(".tc-out").outerHTML.includes("No matches found"));
 
     const mcp = renderToolCall("mcp__composio__COMPOSIO_SEARCH_TOOLS", { queries: [{ use_case: "notion" }], session: { generate_id: true } });
     t.ok("MCP: 入力は「キー 値」の格子", mcp.querySelector(".tc-kv") != null && text(mcp.querySelector(".tc-kv")).includes("queries"));

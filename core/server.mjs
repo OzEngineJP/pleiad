@@ -2970,6 +2970,7 @@ function makeEmit(turn) {
     // （画面が受けた瞬間から数えると、開き直し・再接続の再生のたびに 0 に戻る）。実行中のスナップショットにも同じ値が残る。
     // バックエンドが付けた時刻は上書きしない（docs/multi-backend.md §2.2）
     if (event?.type === 'tool.start' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
+    if (event?.type === 'tool.result' && !Number.isFinite(event.at)) event = { ...event, at: Date.now() };
     if (event?.type) { agentTasks?.observe(turn.info.sessionId, event); sessionCommands?.observe(turn.info.sessionId, event); }
     // git でしたこと（PR の作成など）をターンの終わりの要約に使う
     const gitFound = turn.gitCalls?.track(event);

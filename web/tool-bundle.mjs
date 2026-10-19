@@ -169,6 +169,8 @@ export function swapHeight(host, mutate) {
  */
 export function markRunning(card, since = null) {
   since ??= Date.now();
+  card.toolStarted = since;      // 行の右端の時刻ボタンの起点（render.mjs の updateWhen）
+  card.updateWhen?.();
   card.classList.remove("tc-waiting");
   card.classList.add("tc-running");
   const res = card.querySelector(".tc-res");
