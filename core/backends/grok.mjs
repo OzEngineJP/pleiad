@@ -13,7 +13,7 @@ import { conversation } from '../conversations.mjs';
 import { NO_CAPABILITIES } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
-import { createAcpSteer } from './acp-steer.mjs';
+import { createAcpSteer, PROTOCOL_REJECT_CODES } from './acp-steer.mjs';
 import { writeTurnPlugin } from './grok-hooks.mjs';
 import { grokQuota } from './grok-usage.mjs';
 
@@ -259,6 +259,13 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               if (fatal) return;
               mapper?.accept(params.update);
             },
+            // _x.ai/interject の受理確認通知: 通知の届いた位置へ user 行を置き、履歴の uuid を nativeId に使う
+            onInterjection: params => {
+              if (!params || (sessionId && params.sessionId !== sessionId)) return;
+              if (!steered?.hasInterjection(params.interjectionId)) return;
+              const nativeId = mapper?.injectUser?.(params.text ?? '', params.interjectionId);
+              steered?.confirmed(params.interjectionId, nativeId);
+            },
             onRequest: async (method, params) => {
               if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
               if (!prompting || params.sessionId !== sessionId || local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
@@ -326,7 +333,20 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           // 途中送信: 走っているターンへ session/prompt を重ねる。Grok は内蔵の待ち行列に積み、
           // 今の回の直後に続けて回す（実測 1.0.62。決着は drain で待つので、Pleiad の同じターンに見える）
           steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
-            onSent: text => mapper?.queueUser(text) });
+            onSent: text => mapper?.queueUser(text),
+            // 走っているターンを止めずに次のモデル呼び出しへ差し込む Grok 固有の口（1.0.62 実測。
+            // 応答は受理した時点で返る。{result:{status:'queued'}} はターン内の差し込み待ちへの受理）
+            interject: async (text, item, interjectionId) => {
+              try {
+                const result = await client.call('_x.ai/interject', { sessionId, text, interjectionId }, { timeoutMs: 15000 });
+                if (result?.result?.status !== 'queued') throw new Error('Unrecognized Grok interjection acknowledgement');
+                return true;
+              } catch (error) {
+                if (error?.code === -32601) return 'unsupported';     // この経路が無い古い版 → session/prompt へ
+                if (PROTOCOL_REJECT_CODES.has(error?.code)) return false;
+                throw error;   // 結果不明（読まれたか分からない）— 呼ぶ側は送り直さない
+              }
+            } });
           if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
           check();
           prompting = true;

@@ -244,4 +244,80 @@ export default async function (t) {
       t.ok('再生の区切りは持ち越さない', sig(mapper.messages()) === 's:user:0|user|q0;s:assistant:1|assistant|r0;s:user:2|user|q1;s:assistant:3|assistant|main;s:user:4|user|s1;s:assistant:5|assistant|r1', sig(mapper.messages()));
     }
   }
+
+  // Admission and native confirmation are separate; duplicate echoes settle once.
+  {
+    const sent = [], events = [], interjected = [];
+    const client = { call: (m, p) => { sent.push(p); return new Promise(() => {}); } };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true,
+      interject: async (text, item, key) => { interjected.push([text, item.id, key]); return true; } });
+    const ok = await steer.steer({ id: 'i1', args: { prompt: 'mid' } });
+    t.ok('interject の受理は true', ok === true);
+    t.ok('受理だけでは配送済みにしない', events.length === 0 && steer.size === 1);
+    steer.confirmed(interjected[0][2], 'native-row');
+    steer.confirmed(interjected[0][2], 'native-row');
+    t.ok('ネイティブの通知で一度だけ配送済みになる', events.length === 1 && events[0].nativeId === 'native-row');
+    t.ok('session/prompt には下らない', sent.length === 0 && interjected.length === 1 && interjected[0][0] === 'mid');
+    t.ok('drain に残らない', steer.size === 0);
+  }
+  // interject が未実装（'unsupported'）なら session/prompt へ下り、以後は試さない
+  {
+    const sent = [], events = [], resolvers = []; let interjectCalls = 0;
+    const client = { call: (m, p) => { sent.push([m, p]); return new Promise(res => resolvers.push(res)); } };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true,
+      interject: async () => { interjectCalls++; return 'unsupported'; } });
+    const p = steer.steer({ id: 'u1', args: { prompt: 'mid' } });
+    await sleep(0);
+    resolvers.shift()({ stopReason: 'end_turn' });
+    const ok1 = await p;
+    const p2 = steer.steer({ id: 'u2', args: { prompt: 'next' } });
+    await sleep(0);
+    resolvers.shift()?.({ stopReason: 'end_turn' });
+    t.ok('unsupported のあとは session/prompt に下る', ok1 === true && await p2 === true
+      && sent.length === 2 && sent.every(([m]) => m === 'session/prompt') && interjectCalls === 1, JSON.stringify({ sent, interjectCalls }));
+    await sleep(0);
+  }
+  // A native prompt ID is distinct from the normalized history row ID.
+  {
+    const events = []; let resolveNext;
+    const client = { call: () => new Promise(res => { resolveNext = res; }) };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true });
+    const p = steer.steer({ id: 'n1', args: { prompt: 'hi' } });
+    resolveNext({ stopReason: 'end_turn', _meta: { promptId: 'pid-1' } });
+    await p; await sleep(0);
+    t.ok('履歴の行と異なる promptId は照合IDに使わない', events[0]?.type === 'userMessage.delivered' && !events[0]?.nativeId, JSON.stringify(events));
+  }
+  // interject が未受理（false）を返したら送信待ちへ戻す（session/prompt には下らない）
+  {
+    const events = [];
+    const client = { call: () => new Promise(() => {}) };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true,
+      interject: async () => false });
+    t.ok('interject の未受理は false（送信待ちへ）', await steer.steer({ id: 'f1', args: { prompt: 'x' } }) === false && events.length === 0);
+  }
+  {
+    const events = []; let steer;
+    steer = createAcpSteer({ client: {}, sessionId: 's', ready: () => true, emit: e => events.push(e),
+      interject: async (text, item, key) => { steer.confirmed(key, 'early-native'); return true; } });
+    t.ok('応答より先の受信確認を失わない', await steer.steer({ id: 'early', args: { prompt: 'same' } }) === true
+      && events.length === 1 && events[0].nativeId === 'early-native' && steer.size === 0);
+  }
+  {
+    const events = [];
+    const steer = createAcpSteer({ client: {}, sessionId: 's', ready: () => true, emit: e => events.push(e), interject: async () => true });
+    await steer.steer({ id: 'uncertain', args: { prompt: 'same' } });
+    await steer.drain({ confirmationMs: 1 });
+    t.ok('終了時の未確認入力は結果不明として残す', events.length === 1 && events[0].type === 'userMessage.dropped' && events[0].unknown && steer.size === 0);
+  }
+  {
+    const mapper = createGrokMapper('s', () => {});
+    mapper.beginTurn('request');
+    mapper.accept({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before' } });
+    const first = mapper.injectUser('same', 'one');
+    const duplicate = mapper.injectUser('same', 'one');
+    const second = mapper.injectUser('same', 'two');
+    const users = mapper.messages().filter(m => m.role === 'user');
+    t.ok('途中入力は本文ではなく通知IDで区別する', users.length === 3 && first === duplicate && first !== second
+      && first === users[1].liveUuid && second === users[2].liveUuid);
+  }
 }
