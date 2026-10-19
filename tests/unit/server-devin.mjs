@@ -42,11 +42,30 @@ export default async function (t) {
     const compactDone = await c.waitFor(e => e.type === 'compaction' && e.sessionId === sid && e.phase === 'complete', { from: compactFrom, ms: 20_000 });
     await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === sid, { from: compactFrom, ms: 20_000 });
     const afterCompact = await c.cmd('loadSession', { sessionId: sid });
-    t.ok('/compact を送って手動圧縮が完了し、前後の文脈量を持つ',
+    t.ok('/compact を送って手動圧縮が完了し、前後の文脈量と要約を持つ',
       compactResult.status === 'started' && compactDone.trigger === 'manual'
-      && compactDone.beforeTokens > compactDone.afterTokens
+      && compactDone.beforeTokens > compactDone.afterTokens && compactDone.summary === 'fixture summary'
       && afterCompact.compactions?.some(x => x.phase === 'complete')
       && afterCompact.messages.filter(m => m.role === 'user').length === 2, JSON.stringify(compactDone));
+    // transcript（sessions.db の継続ノード）の区切りも読み直しで載り、保存済みの区切りと時刻で突き合わされて手動の印が残る
+    t.ok('transcript の継続ノードを区切りとして読む（自動圧縮の形）',
+      afterCompact.compactions?.some(x => x.nativeId?.startsWith('node-') && x.trigger === 'manual' && x.summary === 'fixture summary'),
+      JSON.stringify(afterCompact.compactions));
+    // ---- 圧縮するものが無い（通知も使用量の減少も継続ノードも無い）ときは、完了にせず実態の理由を出す（#104）
+    const emptyId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
+    await c.runTurn({ sessionId: emptyId, prompt: '[disable-compact] hi', model: 'swe-2-high' });
+    const noopFrom = c.mark();
+    await c.cmd('compactConversation', { sessionId: emptyId });
+    const noop = await c.waitFor(e => e.type === 'compaction' && e.sessionId === emptyId && e.phase === 'failed', { from: noopFrom, ms: 20_000 });
+    t.ok('圧縮するものが無いときは完了にせず実態の理由を出す', noop.reason === '圧縮するものがありませんでした', JSON.stringify(noop));
+    // ---- Devin 内部の自動圧縮は _cognition.ai/compaction 通知で区切りに載り、transcript の継続ノードとも突き合わされる（#104）
+    const autoId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
+    const autoTurn = await c.runTurn({ sessionId: autoId, prompt: '[auto-compact] work', model: 'swe-2-high' });
+    const autoBoundary = autoTurn.events.find(e => e.type === 'compaction' && e.phase === 'complete');
+    const autoLoaded = await c.cmd('loadSession', { sessionId: autoId });
+    t.ok('自動圧縮の通知が区切りとして届き、継続ノードと突き合わされて要約を持つ',
+      autoTurn.outcome === 'ok' && autoBoundary?.trigger === 'auto' && autoBoundary?.summary === 'fixture auto summary'
+      && autoLoaded.compactions?.some(x => x.nativeId?.startsWith('node-') && x.summary === 'fixture auto summary'), JSON.stringify({ autoBoundary, compactions: autoLoaded.compactions }));
     const editId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
     const edit = await c.runTurn({ sessionId: editId, prompt: '[large-edit]', model: 'swe-2-high' });
     const edited = await c.cmd('loadSession', { sessionId: editId });

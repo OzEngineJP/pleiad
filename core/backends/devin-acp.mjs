@@ -28,11 +28,12 @@ function waitForExit(child, timeoutMs) {
 }
 
 export class DevinAcp {
-  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  devin: dropped an oversize ACP line (${bytes} bytes)`), timeoutMs = 30_000 } = {}) {
+  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onNotification = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  devin: dropped an oversize ACP line (${bytes} bytes)`), timeoutMs = 30_000 } = {}) {
     this.command = command;
     this.cwd = cwd;
     this.env = env;
     this.onUpdate = onUpdate;
+    this.onNotification = onNotification;
     this.onResponse = onResponse;
     this.onRequest = onRequest;
     this.onGone = onGone;
@@ -172,6 +173,12 @@ export class DevinAcp {
           const result = this.onUpdate(frame.params);
           if (result && typeof result.then === 'function') result.catch(() => this.#fail(rpcError('Devin ACP update handler failed')));
         } catch { this.#fail(rpcError('Devin ACP update handler failed')); }
+      } else {
+        // session/update 以外の通知（_cognition.ai/compaction などの ext_notification）。要求（id 付き）は上で処理する
+        try {
+          const result = this.onNotification(frame.method, frame.params);
+          if (result && typeof result.then === 'function') result.catch(() => this.#fail(rpcError('Devin ACP notification handler failed')));
+        } catch { this.#fail(rpcError('Devin ACP notification handler failed')); }
       }
       return;
     }

@@ -1277,7 +1277,8 @@
     "notStarted": "Send a message before compacting this conversation.",
     "unsupported": "Manual compaction is unavailable for this agent",
     "invalidSetting": "Invalid auto compaction settings",
-    "noCompletion": "Could not confirm compaction completion"
+    "noCompletion": "Could not confirm compaction completion",
+    "nothingToCompact": "There was nothing to compact"
   },
   "hooks": {
     "file": {
