@@ -2,7 +2,7 @@
 // keep their ordinary delivery path. Shared with the server's live snapshot.
 export const streamEvents = new Set([
   // 配達の合図も replay する（開き直したときに、渡り終えた発言が「渡していない」まま固まらないように）
-  "userMessage", "userMessage.delivered", "userMessage.dropped", "text.delta", "text.end", "thinking.start", "thinking.delta",
+  "userMessage", "userMessage.delivered", "userMessage.dropped", "taskInstruction", "text.delta", "text.end", "thinking.start", "thinking.delta",
   "tool.start", "tool.result", "activity", "present", "turnResult", "turnEnd", "taskNotice", "interruptionNote", "compaction", "contextWindow",
 ]);
 

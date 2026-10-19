@@ -280,18 +280,19 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
           const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions, args.contextRuntime?.prompt, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
-          mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
+          const initialNativeId = mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
           // 途中送信: 走っているターンへ session/prompt を重ねる。Devin は同じ回に折り込む（実測 3000.11.92）
-          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted });
+          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+            onSent: text => mapper.queueUser(text) });
           if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
           check();
           prompting = true;
           // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
           emit({ type: 'activity', state: 'thinking' });
           const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
-          sent = true; onPromptDelivered?.();
+          sent = true; onPromptDelivered?.(initialNativeId);
           control?.onReady?.();
           const result = await Promise.race([response, stopped]);
           if (fatal) throw fatal;

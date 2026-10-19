@@ -316,7 +316,7 @@ async function background(text, { s, out, emit, signal, control }) {
           if (said.includes("SILENT_STEER")) continue;
           emit({ type: "userMessage.delivered", messageId: steeredId });
         }
-        push(s, { role: "user", text: said });
+        push(s, { role: "user", text: said, ...(steeredId ? { messageId: steeredId } : {}) });
         emit({ type: "phase", state: "active" });
         emit({ type: "activity", state: "thinking" });
         // 本物は受け取ってから本文が出るまで 1 秒近くかかる。すぐ返すと、server が送信済み（userMessage）を

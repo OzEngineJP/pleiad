@@ -110,16 +110,27 @@ export async function compactionContracts() {
 
   const turns = [];
   const claude = wrapBackend({ id: 'claude', capabilities: { compact: true },
-    async runTurn(args) { turns.push(args); args.emit({ type: 'session', sessionId: 'claude-native' }); },
-    async getMessages() { return [{ role: 'user', text: 'hello' }]; },
+    async runTurn(args) {
+      turns.push(args);
+      args.onPromptDelivered?.('input-uuid');
+      args.emit({ type: 'session', sessionId: 'claude-native' });
+      args.emit({ type: 'userMessage.delivered', messageId: 'delivery-id', nativeId: 'input-uuid' });
+      args.emit({ type: 'compaction', phase: 'complete', nativeId: 'native-boundary' });
+    },
+    async getMessages() { return [{ role: 'user', uuid: 'input-uuid', text: 'hello' }]; },
     async getSession() { return { title: 'hello' }; },
     async getCompactions(id) { assert.equal(id, 'claude-native'); return boundary; },
   });
   assert.equal(claude.compact, undefined, 'Keep the runTurn fallback for Claude');
   const cid = await createConversation(claude, {});
+  const deliveries = [];
   for (const compact of [undefined, 'manual', 'idle']) {
-    await claude.runTurn({ ...args, sessionId: cid, prompt: compact ? '/compact' : 'hello', compact });
+    await claude.runTurn({ ...args, sessionId: cid, prompt: compact ? '/compact' : 'hello', compact, onPromptDelivered: value => deliveries.push(value) });
   }
+  assert.deepEqual(deliveries, Array(3).fill('claude:claude-native:input-uuid'));
+  assert.equal(events.filter(e => e.type === 'userMessage.delivered').at(-1).nativeId, 'claude:claude-native:input-uuid');
+  assert.equal(events.filter(e => e.type === 'compaction').at(-1).nativeId, 'native-boundary');
+  assert.equal((await claude.getMessages(cid)).find(m => m.role === 'user').uuid, deliveries[0]);
   assert.deepEqual(turns.map(a => a.sessionId), [null, 'claude-native', 'claude-native']);
   assert.deepEqual(turns.map(a => a.compact), [undefined, 'manual', 'idle']);
   assert.deepEqual(await claude.getCompactions(cid), [{ ...boundary[0],

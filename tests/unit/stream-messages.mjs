@@ -105,7 +105,17 @@ export default async function (t) {
     task.includes("cmd('loadSession', { sessionId: item.childId, live: true })") && !task.includes('watch'));
   t.ok('詳細は出来事を畳んで保存済みの履歴の後ろに足す',
     task.includes('streamMessages(data.stream?.events') && task.includes('[...(data.messages ?? []), ...live.messages]'));
-  t.ok('指示の一覧は畳んだ発言も数える（渡った途中送信を二重に出さない）', task.includes('visibleTaskInstructions(instructionData.instructions ?? [], messages)'));
+  t.ok('指示の行は畳んだ発言を含めた一覧へ受け付けた位置で置く（件数ではなく ID で照合）', task.includes('instructions: instructionData.instructions ?? []'));
+
+  // 受付の出来事（taskInstruction）は、受け付けた位置に発言の印を置く。状態は instructions の記録が正
+  const instr = streamMessages(seq([
+    { type: 'text.delta', text: 'A' },
+    { type: 'taskInstruction', taskId: 'task1', instructionId: 'i1', text: 'ついでに', at: 1000 },
+    { type: 'text.delta', text: 'B' },
+  ]));
+  t.ok('taskInstruction は受け付けた位置に user の印の行を置く（前後の AI の発言を分ける）',
+    instr.messages.length === 3 && instr.messages[1].role === 'user' && instr.messages[1].taskInstructionId === 'i1'
+    && instr.messages[0].text === 'A' && instr.messages[2].text === 'B', json(instr.messages));
   const main = body('paintHistoryRows'), readonly = body('readonlyThread'), row = body('historyRow');
   t.ok('メインパネルと詳細は発言 1 件を historyRow で描く', main.includes('historyRow(it.m') && readonly.includes('historyRow(it.m')
     && !main.includes('renderToolCall') && !readonly.includes('renderToolCall'));

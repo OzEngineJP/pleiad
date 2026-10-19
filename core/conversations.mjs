@@ -460,6 +460,8 @@ export async function switchBackend(id, source, target, { restart = false } = {}
 function hostEvent({ liveUuid, ...event }, id, nativeId, backend) {
   return { ...event,
     ...(typeof liveUuid === 'string' && nativeId ? { uuid: `${backend}:${nativeId}:${liveUuid}` } : {}),
+    ...(['userMessage.delivered', 'userMessage.dropped'].includes(event.type) && typeof event.nativeId === 'string' && nativeId
+      ? { nativeId: `${backend}:${nativeId}:${event.nativeId}` } : {}),
     ...(event.sessionId === undefined || event.sessionId === nativeId ? { sessionId: id } : {}),
     ...(event.type === 'session' ? { first: false } : {}),
   };
@@ -855,6 +857,7 @@ export function wrapBackend(native) {
     if (r.backend !== native.id) throw new Error(t("conversations.backendMismatch"));
     if (!r.nativeId) throw new Error('adopt: the conversation has no native session');
     return native.adoptTurn({ ...args, sessionId: r.nativeId, hostSessionId: id, hostBackend: wrapped,
+      onPromptDelivered: value => args.onPromptDelivered?.(typeof value === 'string' && r.nativeId ? `${native.id}:${r.nativeId}:${value}` : value),
       askPermission: req => args.askPermission({ ...req, sessionId: id }),
       emit: (ev, opts) => args.emit(hostEvent(ev, id, r.nativeId, native.id), opts) });
   };
@@ -930,6 +933,11 @@ export function wrapBackend(native) {
       }
     }
     let checkpoint = Promise.resolve();
+    let pendingDeliveryId = null;
+    const promptDelivered = nativeMessageId => {
+      if (typeof nativeMessageId === 'string' && !r.nativeId) { pendingDeliveryId = nativeMessageId; return; }
+      args.onPromptDelivered?.(typeof nativeMessageId === 'string' && r.nativeId ? `${native.id}:${r.nativeId}:${nativeMessageId}` : nativeMessageId);
+    };
     if (!r.nativeId && r.messages.length > (r.contextStart ?? 0)) {
       // Full transcript stays on disk; bounded input plus a readable reference for long conversations.
       const presents = (await wrapped.getPresents(id)).filter((p) => !r.contextSince || p.at >= r.contextSince);
@@ -956,6 +964,7 @@ export function wrapBackend(native) {
     try {
       return await native.runTurn({ ...args, prompt, sessionId: r.nativeId, ...(rewind ? { rewind } : {}),
         hostSessionId: id, hostBackend: wrapped,
+        onPromptDelivered: promptDelivered,
         askPermission: req => args.askPermission({ ...req, sessionId: id }),
         emit: ev => {
           if (ev.type === "session" && ev.sessionId && ev.sessionId !== r.nativeId) {
@@ -965,6 +974,7 @@ export function wrapBackend(native) {
             checkpoint = save();
             checkpoint.catch(() => {});
           }
+          if (ev.type === 'session' && r.nativeId && pendingDeliveryId) { const pending = pendingDeliveryId; pendingDeliveryId = null; promptDelivered(pending); }
           args.emit(hostEvent(ev, id, r.nativeId, native.id));
         },
       });

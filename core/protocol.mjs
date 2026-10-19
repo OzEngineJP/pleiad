@@ -246,6 +246,9 @@ export const COMMANDS = new Set([
 // 全イベントに sessionId が付く（emitGlobal が補う）。
 export const EVENTS = new Set([
   'taskNotice',
+  // { taskId, instructionId, text, at } 委譲の子への追加指示を受け付けた（ply_task_send）。会話の中の位置はこの出来事の位置。
+  // 状態は instructions の記録（agentTaskInstructions）が正で、渡るまではこの行が「送信中」になる
+  'taskInstruction',
   // { text, messageId? } 中断で止めたものを、このターンの発言の前に添えてエージェントへ伝えた（text は伝えた中身。docs/design.md「中断と再開」）
   'interruptionNote',
   'usage', // { inputTokens?, outputTokens?, cachedTokens?, costUsd? } このターンの分（ターンの中では増えていき、最後の値が記録になる）。Claude は nativeSessionId と開始・終了時点の会話の累計 cumulativeStart / cumulativeEnd も付ける。分からない値は null か省略

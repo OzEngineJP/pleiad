@@ -326,22 +326,29 @@ OS の完了通知は依頼元の会話に出す。依頼元のターン後も�
 `ply_task_send` は指示を `queued` で受け付けた（保存できなければ断る）後、次の条件がそろえば待たずに**子の走っているターンへ途中送信**する。
 
 - タスクが `running` で、子が委譲の実行中のターンとして走っている。
-- 子が `control.steer` を持ち、`canSteerNotice`（`core/completion-notices.mjs`）を満たす。圧縮のターン・中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）・次ターンの設定の予約・子の会話に人の送信待ちがあるときは渡さない。
+- 子が `control.steer` を持ち、追加指示用の `childTarget` の条件を満たす。圧縮中・中断や終了に向かっているターン・途中送信を持たないバックエンド（Antigravity）・子の会話に人の送信待ちがあるときは渡さない。設定変更と同時の指示は、新設定のターンを待つ。
 - 前の途中送信の配送確認を待たず、後続も送る。待機分が複数あれば、元の順序を保ち、空行で区切って1回の途中送信で渡す。起動準備中などで送れなかった指示は、子が受信可能になった時点で現在のターンへ送る。
 
-渡す道は完了通知の `steerNotice` と同じ形（`core/server.mjs` の `steerInstruction`）。outbox は通さず、item id `task-send-<先頭の指示 ID>`（まとめた全指示の ID と照合する） で `control.steer` を呼ぶ。子の会話には通常の user 発言（`userMessage`）として出し、履歴にはバックエンドの記録が入る。
+渡す道は完了通知の `steerNotice` と同じ形（`core/server.mjs` の `steerInstruction`）。outbox は通さず、item id `task-send-<先頭の指示 ID>`（まとめた全指示の ID と照合する） で `control.steer` を呼ぶ。子の会話の中の位置は受け付けた時点で確定する: 保存できた直後に `taskInstruction` イベントを流し、画面はその出来事の位置に指示の行を置く（送信中・待機中・届かなかった分も同じ行で状態だけが変わる）。履歴にはバックエンドの記録が入る。
+
+`steerInstruction` より先に `childTarget`（完了通知の `canSteerNotice` とは別の判定）が今のターンへ渡せるかを決める。人の発言の送信待ち（outbox に未配送がある）や圧縮のターンのあいだは追い越さず待つが、それは「次のターンへ」ではなく同じターンでの再試行（`wait`。準備が整った・送信待ちが消えたときにまた試す）で、明示的に受けられないときだけ次のターンへ回す（`requeue`）。`nextSettings` の予約は「設定と同じ呼び出しで積まれた指示」だけを替えた後のターンへ送るために待ち、関係ない指示は止めない（`instruction.nextTurn`）。
 
 | `steer` の返り | 指示の状態 | 意味 |
 |---|---|---|
 | true、合図の無いバックエンド | `delivered` | 受理した時点で渡ったものとして扱う。新しいターンは走らない |
-| true、`steerConfirms`（Claude・Codex） | `sending` | 受理しただけ。`userMessage` は `pending: true`。`userMessage.delivered` で `delivered` |
-| false | `queued` | 受理されない。待機のまま次のターンで送る |
+| true、`steerConfirms`（Claude・Codex・Devin・Grok） | `sending` | 受理しただけ。`userMessage.delivered` で `delivered`（合図にはネイティブ履歴の発言の id（`nativeId`）が付くので、届いた履歴行と ID で照合する） |
+| false / 今のターンが一時的に受けられない（送信待ちの発言・圧縮中・設定の予約が残る替え先のターン宛の指示） | `queued` | 一時的な未受信。次のターンを待たず、子が受信可能になった時点で同じターンへ再送を試す |
+| false（このターンでは受けられない） | `queued` | 待機のまま次のターンで送る |
 | throw | `dropped` | 結果不明。自動で送り直さない（届いているかもしれない）。`ply_task_send` の返り値に `warning`（`agent:tasks.steerUnknown`。送り直さず `ply_task_status` と子の結果で確かめる）を添える |
 
 途中送信で渡した `sending`（合図待ち）の指示は、`userMessage.dropped` が来たか、合図が来ないまま子のターンが終わったら（`endTurn` が結果の確定より先に片付ける）`queued` に戻し、次のターンで送る。指示の ID で照合するので、渡った後に遅れて来た捨てられた合図では戻さず、二重に送らない。人の発言と違い親からの指示なので、送り直してよい。戻した後に子の回が失敗・停止で終わったときは、待機の指示と同じく `dropped` になる。止めたタスク（`cancelled`）へ戻すときも生き返らせず `dropped`。
 
 走っている回に途中送信で渡した指示は、その回の結果が新しい指示への返答も含む（結果にするのは回の最後の返答。「子の結果」）。途中送信を受けられない場合も、待機分をまとめて次のターンへ送り、その回の結果が指示の結果になる。再起動では、合図待ちだった `sending` は渡ったものとして `delivered` に残し（子は `interrupted`）、走らせ直さない。
 ターン開始の入力にした指示も `sending` にするが、バックエンドがそのターンのプロンプトを受け取った時点（`onPromptDelivered`。新しいターンは `execute` の `onAccepted`、付け直したターンは札の合図）で `delivered` にする。ターンの終わりまで `sending` のままにはしない。
+
+受付時には直前の発言・ツール呼び出し・追加指示の ID を `anchor` として指示に保存する。履歴の時刻が欠けていても、その位置へ戻し、必要ならツールのまとまりを分けて指示を挿入する。古い記録や圧縮で参照先が消えた場合は、受付時刻を使う。配送済みで履歴との ID 対応がない記録は、重複を作らずネイティブ履歴の発言を表示する。
+
+Grok は対応する CLI の `_x.ai/interject` で実行を中断せずに指示を送り、セッションの通知を受けた時点で配送を確認する。拡張が未実装の CLI では従来の `session/prompt` に戻す。確認できないまま終わった入力は結果不明として残し、自動で再送しない。Antigravity の自動実行経路は途中送信に対応しておらず、追加指示は次のターンで反映する。
 
 ## 子の結果
 
@@ -419,8 +426,8 @@ Codex は承認なしのモード（`full`・`yolo`）でも、Codex 自身の�
 ## 保存・画面・再起動
 
 `AGENT_HOST_DATA/pleiad.db` の `agent_tasks`（1 タスク 1 行。[ADR 0115](adr/0115-records-in-sqlite.md)）にタスク、管理元、親会話、実行先、子会話、待機メッセージ、結果、通知状態、振り分けの記録（`routing`）、最初の `context`（やり直し用）、実行前に拒否されたコマンド（`rejections`。伏せて切ったもの）、実行中コマンド（`activeCommands`）と通知済みの印、子の報告後に Pleiad が止めた裏の作業（`stoppedBackground`）を保存する。
-追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。`sending` は、途中送信で渡して「渡った」合図を待っている間と、ターン開始の入力にして子がプロンプトを受け取るまでの間に使う。途中送信で渡した指示は受け付け直後に `queue` から外して `sending` にし、渡れば `delivered`、渡らなければ `queued`（`queue` に元の指示順）へ戻る（「追加指示の配送」）。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
-`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。`running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、まだ渡っていない指示を「追加の指示」の発言として示す（子へ渡る途中＝`sending`（途中送信の合図待ち、またはターン開始の入力の受け取り待ち）は会話の末尾の稼働表示の前に、メインパネルの作業中の送信と同じ状態の行「次の区切りで AI に渡します」つきで。渡れば子の履歴の user 発言に代わる。待機＝`queued` は末尾に時計の印で、未配送＝`dropped` は「✕ 届かずに終わった」を残す。画面は design-system.md「バックグラウンド」）。配送済みは子の通常の user 発言として履歴から描く。同じ本文を複数回送れるので、指示 ID・状態・配送順を使い、本文の一致では重複を判定しない。現状「会話として開く」の通常画面には待機中の指示を表示しない。
+追加指示は各タスクの `instructions: [{ id, text, at, state }]` に受け付け順で保存する（[ADR 0044](adr/0044-task-instruction-delivery.md)）。配送の対応を確かにするため、配送に使った `deliveryId`（steer の item id・ターン開始の発言の messageId）と、合図が運んだ `nativeId`（届いた発言のネイティブ履歴の id。分かるバックエンドだけ）を足す。`nextTurn` は設定の変更と同じ呼び出しで積まれた印。`queue` は初回依頼の本文または `{ instructionId }` の FIFO。旧ファイルの文字列 `queue` は読み込み時に追加指示へ移し、初回依頼は区別する。`state` は `queued` → `sending` → `delivered`、受領前の再投入なら `queued`。`sending` は、途中送信で渡して「渡った」合図を待っている間と、ターン開始の入力にして子がプロンプトを受け取るまでの間に使う。途中送信で渡した指示は受け付け直後に `queue` から外して `sending` にし、渡れば `delivered`、渡らなければ `queued`（`queue` に元の指示順）へ戻る（「追加指示の配送」）。失敗・停止・再起動で待機中だったものは `dropped` として残す。子のターンに渡した `sending` は、中断や再起動でも `delivered` とし、実行の例外では渡る前に失敗したものとして `dropped` にする。件数上限は設けない。
+`ply_task_status` / `ply_task_list` は本文を含めず `pendingMessages` を保つ。`running` も待機件数と `instructionRevision` だけを含む。画面が選んだタスクの詳細を開くと `agentTaskInstructions` でそのタスクの本文を読み、指示を「追加の指示」の発言として会話の中の**受け付けた位置**に出す（`injectTaskInstructions`。走っている間は受付時の `taskInstruction` イベントが畳んだ位置の印、ターン開始の入力は `deliveryId` が付いた発言、届いた発言は `nativeId` で履歴行と照合する。どれも引けない待機中の分は受付時刻で置き、届いた分は履歴の発言が引き継ぐ。受け付け以後の発言がまだ無ければ末尾）。子へ渡る途中＝`sending` はその行に「次の区切りで AI に渡します」、待機＝`queued` は時計の印、未配送＝`dropped` は「✕ 届かずに終わった」を残す（画面は design-system.md「バックグラウンド」）。同じ本文を複数回送れるので、位置と配送の対応は指示 ID・`deliveryId`・`nativeId` で引き、発言の件数や本文の一致では重複を判定しない。ID の無い古い記録は推測で消さず、配送済みは今までどおり履歴の発言だけが出る。「会話として開く」の通常画面でも受付イベントをライブ表示する。ただし再読み込み後の通常画面はネイティブ履歴を使うため、未配送の指示は作業詳細で確認する。
 会話メタデータの `delegation` に親とタスク ID を、`routing` にどう選ばれたかを記録する。会話の分岐を表す `parent` とは別にする。
 `running`（全部の端末へ配る）の `tasks` は、終わっていないタスク（`queued`・`running`・`cancelling`）と、完了通知がまだ依頼元に届いていない（`notification` が `none`・`pending`・`delivering`）タスクだけの短い行（`agentTasks.running()`。題・状態・依頼元・子の会話・委譲先・モデル・時刻・通知・失敗の理由（500 字まで）・`pendingMessages`・`instructionRevision`・`worktree`・やり直しの元 `retryOf`）。依頼文・振り分けの記録・結果は載せない。
 以前は消さない全部の記録（依頼文と振り分けの記録付き）を載せていて、実データで 1 回 3.26MB になり、中継経由のスマホで帯域を埋めていた（2026-10-03）。

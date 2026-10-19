@@ -1,14 +1,82 @@
-// A sending prompt has reached the child's history once its turn's user entry
-// appears. Match by delivery order, never by text: identical prompts are valid.
-// totalUsers: the child's user-turn count over the whole conversation, when the
-// messages are only its tail (a host task whose older messages were omitted).
-export function visibleTaskInstructions(instructions, messages, totalUsers = null) {
-  const userCount = Number.isInteger(totalUsers) ? totalUsers : messages.filter(m => m.role === 'user' && !m.internalTaskNotice).length;
-  let startedBefore = 0;
-  return instructions.filter(instruction => {
-    const visible = instruction.state === 'queued' || instruction.state === 'dropped'
-      || (instruction.state === 'sending' && userCount < startedBefore + 2);
-    if (['sending', 'delivered'].includes(instruction.state)) startedBefore++;
-    return visible;
-  });
+// 委譲の子への追加指示（ply_task_send）の行を、会話の中の受け付けた位置へ差し込む。
+// 返すのは発言と指示の混ざった配列: 発言は元の形、指示は { role:'instruction', instruction }。
+// mergeToolTurns より前に差し込むので、ツール呼び出しのまとまりの途中にも指示の行を置ける。
+//
+// 位置は ID で引く（件数・本文での照合はしない）:
+// - 走っているターンの受付の出来事（stream-messages.mjs が畳む taskInstructionId の行）はその位置
+// - ターン開始の入力に使った発言（deliveryId = messageId）はその位置に全員分
+// - 届いた発言の履歴行（nativeId）は重複なので省く。省くのは指示の本文とまるごと一致した行だけ
+//   （API のページに無い古い指示の本文まで消さない）。指示の行は受付位置に残す（届いた位置＝
+//   受け付けた後の出力より後ろへは動かさない）
+// - 受付時の錨（instruction.anchor）: 直前に見えていたもの（発言の uuid・ツール呼び出しの id・
+//   人の発言の messageId・直前の指示）の id を受付時に記録したもの。読み直し後も同じ場所に戻る
+// - どれも無い分は受付時刻（at）。配送済みで ID も時刻の手がかりも無い旧データは履歴の発言に任せる
+export function injectTaskInstructions(instructions = [], messages = []) {
+  const byId = new Map((instructions ?? []).filter(Boolean).map(i => [i.id, i]));
+  const anchored = new Set();
+  const out = [];
+  const ins = instruction => ({ role: 'instruction', instruction, text: instruction.text, at: instruction.at });
+
+  for (const m of messages ?? []) {
+    const marker = m?.taskInstructionId ? byId.get(m.taskInstructionId) : null;
+    if (marker && !anchored.has(marker.id)) { out.push(ins(marker)); anchored.add(marker.id); continue; }
+    const viaDelivery = m?.messageId ? instructions.filter(x => x.deliveryId === m.messageId && !anchored.has(x.id)) : [];
+    if (viaDelivery.length) { for (const x of viaDelivery) { out.push(ins(x)); anchored.add(x.id); } continue; }
+    // nativeId の行は、指示が別の印（marker・deliveryId）で置き済みでも省く（消さないと二重に出る）。
+    // 省くのは指示の本文とまるごと一致した行だけ
+    const viaNative = m?.uuid ? instructions.filter(x => x.nativeId === m.uuid) : [];
+    if (viaNative.length && String(m.text ?? '') === viaNative.map(x => x.text).join('\n\n')) {
+      continue;
+    }
+    if (viaNative.length) viaNative.forEach(x => anchored.add(x.id));   // 確かめられないときは履歴の行を残し、指示は出さない
+    out.push(m);
+  }
+
+  // 錨が指すものを out の中から探す（発言の uuid / ツール呼び出しの id / 発言の messageId / 直前の指示）
+  const anchorIndex = anchor => {
+    if (!anchor) return -1;
+    if (anchor.kind === 'instruction') return out.findIndex(x => x.role === 'instruction' && x.instruction?.id === anchor.v);
+    return out.findIndex(x => (anchor.kind === 'uuid' && x.uuid === anchor.v)
+      || (anchor.kind === 'msg' && x.messageId === anchor.v)
+      || (anchor.kind === 'tool' && (x.toolCalls ?? []).some(c => c.id === anchor.v)));
+  };
+  const tsOf = m => { const t = m?.at; if (Number.isFinite(t)) return t; const p = Date.parse(t); return Number.isFinite(p) ? p : null; };
+  const eff = out.map(tsOf);
+  for (let i = 1; i < eff.length; i++) if (eff[i] == null) eff[i] = eff[i - 1];
+  const atIndex = at => { let i = 0; while (i < eff.length && (eff[i] == null || eff[i] <= at)) i++; return i; };
+  const anchorTail = new Map();   // 錨（JSON）→ 次に差す位置（同じ錨に続ける分の受付順を保つ）
+
+  for (const instruction of (instructions ?? [])) {
+    if (!instruction || anchored.has(instruction.id)) continue;
+    // 配送済みで履歴も錨も時刻も引けないものは、履歴の発言が引き継ぐ（旧データを推測で消したり二重に出したりしない）
+    if (instruction.state === 'delivered' && !instruction.nativeId) continue;
+    const ai = anchorIndex(instruction.anchor);
+    if (ai >= 0) {
+      // 同じ錨を指す指示が連続するときは、直前に置いた指示の直後へ（受付順を保つ）
+      const key = JSON.stringify(instruction.anchor);
+      const previous = anchorTail.get(key);
+      const pos = previous ? out.indexOf(previous) + 1 : ai + 1;
+      // 錨がツール呼び出しで、同じ発言の中に後の呼び出しがあるなら、その発言を錨の位置で分ける
+      // （受付後に続いたツール呼び出しは指示の後ろに残す＝元の見え方を戻す）
+      const row = out[ai];
+      if (instruction.anchor?.kind === 'tool') {
+        const calls = row.toolCalls ?? [];
+        const p = calls.findIndex(c => c.id === instruction.anchor.v);
+        if (p >= 0 && p < calls.length - 1) {
+          // ai+1 に指示を差すと、後半の呼び出しが指示の後ろへ押し出される
+          out[ai] = { ...row, toolCalls: calls.slice(0, p + 1) };
+          out.splice(ai + 1, 0, { ...row, text: '', thinking: undefined, toolCalls: calls.slice(p + 1) });
+          eff.splice(ai + 1, 0, eff[ai]);
+        }
+      }
+      const inserted = ins(instruction);
+      out.splice(pos, 0, inserted); eff.splice(pos, 0, eff[ai] ?? null);
+      anchorTail.set(key, inserted);
+      continue;
+    }
+    // 届いた行を省いた分・錨も時刻も引けない配送済み以外は、受付時刻の位置に出す
+    const i = atIndex(Number.isFinite(instruction.at) ? instruction.at : Infinity);
+    out.splice(i, 0, ins(instruction)); eff.splice(i, 0, instruction.at ?? null);
+  }
+  return out;
 }

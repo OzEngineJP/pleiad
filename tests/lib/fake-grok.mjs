@@ -216,6 +216,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         }
         return;
       }
+      case '_x.ai/interject': throw Object.assign(new Error('Unsupported method'), { code: -32601 });
       default: throw new Error(`Unsupported method: ${request.method}`);
     }
     write({ id: request.id, result });
