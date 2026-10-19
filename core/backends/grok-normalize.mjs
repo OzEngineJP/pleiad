@@ -24,6 +24,27 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
   // 送ったが回の中ではまだ置けない途中送信（エコーが来ないので自分で行を作る。{ text }）と、直近に届いた回の区切り
   const pendingUsers = [];
   let turnBoundary = false;
+  let usageTotals = {}, measuredUsage = false;
+  const usagePrompts = new Set();
+  function recordUsage(update) {
+    if (!live) return;
+    if (typeof update.prompt_id === 'string') {
+      if (usagePrompts.has(update.prompt_id)) return;
+      usagePrompts.add(update.prompt_id);
+    }
+    const raw = update.usage && typeof update.usage === 'object' ? update.usage : {};
+    const count = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const completeUsage = raw.usageIsIncomplete !== true;
+    const completeCost = completeUsage && raw.costIsPartial !== true;
+    const ticks = completeCost ? count(raw.costUsdTicks) : null;
+    const next = { inputTokens: completeUsage ? count(raw.inputTokens) : null, outputTokens: completeUsage ? count(raw.outputTokens) : null,
+      cachedTokens: completeUsage ? count(raw.cachedReadTokens) : null, costUsd: ticks == null ? null : ticks / 1e10 };
+    for (const [key, value] of Object.entries(next)) {
+      usageTotals[key] = value == null || (measuredUsage && usageTotals[key] == null) ? null : (usageTotals[key] ?? 0) + value;
+    }
+    measuredUsage = true;
+    send({ type: 'usage', ...usageTotals });
+  }
   // queued の回の出力が始まる直前に、送った順に user 行を 1 つ置く。
   // 送った時点ではなくターンの境界で置くので、流れている元の行（user の echo・assistant の本文）を分断しない
   function flushQueued() {
@@ -46,13 +67,13 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       // used/size は文脈の占有、cost はセッションの費用（形は Devin と同じ）
       const used = Number(update.used), size = Number(update.size);
       if (live && Number.isFinite(used) && Number.isFinite(size) && size > 0) send({ type: 'contextWindow', usedTokens: used, windowTokens: size });
-      const cost = Number(update.cost?.amount);
-      if (live && Number.isFinite(cost) && String(update.cost?.currency ?? '').toUpperCase() === 'USD') send({ type: 'usage', costUsd: cost });
+      // usage_update cost is session-wide; turn_completed provides this turn's bill.
       return;
     }
     // Grok のターンの終わり（_x.ai/session_notification で届く）。usage はターンのモデル呼び出しの合計（課金の量）で、
     // 呼び出しが 2 回なら文脈の占有のほぼ 2 倍になる（2026-10-19 実機）。文脈の量としては出さない
     if (kind === 'turn_completed') {
+      recordUsage(update);
       turnBoundary = true;
       return;
     }
@@ -127,6 +148,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
      */
     beginTurn(sent, shown = sent) {
       current = null; live = true; turn = crypto.randomUUID();
+      usageTotals = {}; measuredUsage = false; usagePrompts.clear();
       Object.assign(row('user'), { text: shown, sent });
       expectedEcho = sent; echo = ''; turnBoundary = false;
     },

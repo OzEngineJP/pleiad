@@ -15,6 +15,7 @@ import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
 import { writeTurnPlugin } from './grok-hooks.mjs';
+import { grokQuota } from './grok-usage.mjs';
 
 // i18n-dynamic: grok.errors.modelUnavailable
 // i18n-dynamic: grok.errors.effortUnavailable
@@ -168,6 +169,17 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       browser: true, plyControl: true, secrets: true, visualize: true, plyShell: true,
       computerUse: { images: 'path', waitSliceMs: null } },
     modes,
+    async usage({ cwd = process.cwd() } = {}) {
+      return serial(metadataQueue, async () => {
+        let client;
+        try {
+          client = await openClient(cwd);
+          return grokQuota(await client.call('_x.ai/billing', {}));
+        } catch (error) {
+          return { windows: [], checkedAt: null, message: isAuthError(error) ? t('grok.usageNoCredentials') : t('grok.usageFetchFailed') };
+        } finally { await client?.close(); }
+      });
+    },
     async models(cwd = process.cwd()) {
       const client = await serial(metadataQueue, () => openClient(cwd).catch(error => { throw isAuthError(error) ? fail('loginRequired') : error; }));
       try { return grokModels(client.init); }

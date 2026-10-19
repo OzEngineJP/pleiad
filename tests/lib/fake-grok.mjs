@@ -116,6 +116,10 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         authMethods: [{ id: 'grok.com', name: 'Grok', description: 'Sign in with Grok' }],
         _meta: { modelState: modelState(spawnModel) },
       }; break;
+      case '_x.ai/billing': result = {
+        subscription_tier: 'SuperGrok',
+        config: { creditUsagePercent: 23.5, currentPeriod: { type: 'USAGE_PERIOD_TYPE_WEEKLY', end: '2033-05-18T03:33:20Z' } },
+      }; break;
       case 'session/new': {
         if (process.env.FAKE_GROK_AUTH === '0') throw Object.assign(new Error('Authentication required'), { code: -32002 });
         const session = { sessionId: `grok-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'default', model: spawnModel, effort: spawnEffort };

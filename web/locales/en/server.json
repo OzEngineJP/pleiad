@@ -1,7 +1,7 @@
 {
   "acp": {
     "errors": {
-      "usageExhausted": "{{agent}} has exhausted its usage balance or allowance. Check your usage and plan, then send your message again.",
+      "usageExhausted": "{{agent}} reported an insufficient usage balance or allowance. Check current usage and try again later.",
       "paymentRequired": "{{agent}} reported that payment is required (HTTP 402). Check billing and your usage balance, then send your message again.",
       "rateLimited": "{{agent}} has reached its request limit. Wait before sending your message again."
     }
@@ -692,6 +692,9 @@
     }
   },
   "grok": {
+    "usageUnknown": "Remaining Grok usage allowance is currently unavailable.",
+    "usageFetchFailed": "Grok usage could not be retrieved. Please refresh later.",
+    "usageNoCredentials": "Sign in to Grok to retrieve usage.",
     "description": "Uses local Grok Build CLI and its existing sign-in",
     "modes": {
       "askNote": "Asks before actions other than reading. This is not OS-enforced isolation",
