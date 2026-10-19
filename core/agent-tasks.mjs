@@ -421,7 +421,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     return tracked;
   }
   // adopted: 付け直した子のターン（adopt）の、結果を確定する側（task, signal）=> execute と同じ形の結果。1 回目の実行だけ、実行の開始を書かずにこれを待つ
-  async function run(r, controller, adopted = null) {
+  async function run(r, controller, adopted = null, adoptedPrompt) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
     let stalled = false, requeued = false, activeInstructionIds, handedOff = false;
     // close()（正常終了）の abort。止めたことは書かず、走っていた状態のままファイルに残す（再起動で interrupted になる。
@@ -436,6 +436,8 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           // この回の指示は、旧サーバーが実行の開始で sending にしたもの。途中送信で渡している最中の分（steers の claim）は含めない
           const claims = steers.get(r.taskId) ?? new Set();
           instructionIds = (r.instructions ?? []).filter(x => x.state === 'sending' && !claims.has(x.id)).map(x => x.id);
+          // 取り直し（requeue）で元の入力へ戻す本文。instructions に無い（最初の依頼の本文）ときだけ使う
+          prompt = adoptedPrompt;
         } else try { await commit(r.taskId, row => {
           const entry = row.queue.shift();
           instructionIds = [];
@@ -455,7 +457,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         if (result?.handedOff) handedOff = true;
         if (halted()) return;
         if (result?.requeue) {
-          await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : [prompt])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');
+          await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : prompt ? [prompt] : [])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');
           activeInstructionIds = undefined; requeued = true;
           return;
         }
@@ -859,13 +861,30 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       await unclaim(r.taskId, [...(steers.get(r.taskId) ?? [])]);
     },
     /**
+     * 子のターンが、ターン開始の入力（実行の開始で送ったプロンプト）を受け取った（バックエンドの onPromptDelivered。
+     * 新しいターンは execute の onAccepted、付け直したターンは札の合図から来る）。ターン開始の入力にした指示
+     * （sending で、途中送信の合図待ち＝steers の claim に無いもの）を delivered にする（ターンの終わりを待たない）。
+     * 渡る前に戻した分（requeue で queued）や落とした分（dropped）は state が sending でないので触らない
+     */
+    async promptAccepted(taskId) {
+      const r = records[taskId];
+      if (!r || !live.has(taskId)) return;
+      const has = () => { const claims = steers.get(taskId) ?? new Set(); return (r.instructions ?? []).some(x => x.state === 'sending' && !claims.has(x.id)); };
+      if (!has()) return;
+      await record(taskId, row => {
+        const claims = steers.get(taskId) ?? new Set();
+        for (const instruction of row.instructions ?? []) if (instruction.state === 'sending' && !claims.has(instruction.id)) setInstruction(row, instruction.id, 'delivered');
+      }, 'run.accepted');
+    },
+    /**
      * 付け直した子のターン（起動の adopting に渡した taskId。無停止の更新 2b-7）の、結果の確定を引き継ぐ。
      * finish(task, signal) は execute の後半（子のターンが終わるのを待って結果を作る。execute と同じ形の結果を返す）。
      * claims は途中送信で渡している最中の追加指示の ID（旧サーバーの steers。札の liveInstructions）で、行がまだ sending のものだけ引き継ぐ
      * （旧サーバーが渡った合図を処理し終えていたら、行は delivered か queued になっていて、もう待たない）。
+     * prompt は付け直す回の本文（取り直しで queue へ戻すときに使う。最初の依頼など instructions に無い分）。
      * finish が無ければ付け直せなかったので、起動の復元と同じに interrupted にする。引き継げたら true
      */
-    adoptRun(taskId, finish, { claims = [] } = {}) {
+    adoptRun(taskId, finish, { claims = [], prompt } = {}) {
       const r = records[taskId], ac = live.get(taskId);
       if (!r || !ac || !adoptable.delete(taskId)) return false;
       if (!finish) {
@@ -879,7 +898,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       }
       const claimed = new Set(claims.filter(id => r.instructions?.find(x => x.id === id)?.state === 'sending'));
       if (claimed.size) steers.set(taskId, claimed);
-      spawn(run(r, ac, finish).catch(e => { live.delete(taskId); report({ event: 'unexpected', operation: 'adopt', taskId, code: e?.code ?? null }); }));
+      spawn(run(r, ac, finish, prompt).catch(e => { live.delete(taskId); report({ event: 'unexpected', operation: 'adopt', taskId, code: e?.code ?? null }); }));
       return true;
     },
     /** 子のバックエンドの入力が開いた。起動中に溜まった指示を現在のターンへ渡す */

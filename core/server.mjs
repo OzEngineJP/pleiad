@@ -6018,7 +6018,13 @@ function adoptChild(ctx, turnPromise, { abandon = false } = {}) {
       const renewed = await adoptedWorktree(task);
       return await finishChild(task, signal, execution, outcome, renewed);
     } finally { release(); }
-  }, { claims });
+  }, { claims, prompt: ctx.prompt });
+  if (adopted) {
+    // ターン開始の入力にした指示は、付け直したターンへプロンプトが渡ったら delivered にする（execute の onAccepted と同じ）。
+    // 旧サーバーですでに渡っていたなら付け直しの時点で確定する。渡る前に手を離した分は、札の合図（hooks.onAccepted）で
+    ctx.hooks.onAccepted = () => agentTasks.promptAccepted(taskId);
+    if (ctx.initialDelivered) void agentTasks.promptAccepted(taskId).catch(() => {});
+  }
   if (!adopted) void turnPromise.finally(() => { if (taskExecutions.get(sessionId) === execution) taskExecutions.delete(sessionId); });
   return adopted;
 }
@@ -6225,7 +6231,9 @@ agentTasks = await createAgentTasks({
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
-      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal, taskId: task.taskId });
+      // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済みにする（onAccepted。ターンの終わりを待たない）
+      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal, taskId: task.taskId,
+        onAccepted: () => agentTasks.promptAccepted(task.taskId) });
       // 子のターンを新しいサーバーへ渡した（handOffTurn）。結果は付け直した先の finishChild が確定する（このサーバーでは何も書かない）
       if (outcome === 'handedOff') return { handedOff: true };
       if (outcome === 'requeue') return { requeue: true };
