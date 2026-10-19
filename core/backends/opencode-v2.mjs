@@ -298,11 +298,15 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
       if(p.error)emit('session.error',{sessionID:sid,error:p.error});return;
     }
     if(/^session\.execution\.(succeeded|failed|interrupted)$/.test(raw.type)) {
-      if(!admitted.has(sid))return;
+      const failed=raw.type.endsWith('failed');
+      // 走っているターンの会話でなければ捨てる。受理の記録が付く前・失われた後に即終わった失敗（4xx など）は、
+      // 受理の有無に関わらずこのターンの失敗として締める。落とすと session.idle が届かず「返答が来ない」まま残る
+      if(!turns.has(sid) || (!admitted.has(sid) && !failed))return;
       // Terminal full values repair dropped deltas; existing part IDs prevent double accounting.
       const since=turns.get(sid);
       if(since)replay((await history(sid)).filter(m=>m.info.time.created>=since));
       if(p.error)emit('session.error',{sessionID:sid,error:p.error});
+      else if(failed)emit('session.error',{sessionID:sid,error:{name:'execution.failed',message:'OpenCode execution failed'}});
       if(raw.type.endsWith('interrupted'))emit('session.error',{sessionID:sid,error:{name:'MessageAbortedError',message:'Interrupted'}});
       turns.delete(sid);admitted.delete(sid);emit('session.idle',{sessionID:sid});return;
     }

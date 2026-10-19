@@ -85,6 +85,31 @@ export default async function(t) {
   inbox.set(sid,[]);await protocol.resync();assert(events.some(e=>e.type==='session.idle'));
   t.ok('A queued inbox item prevents a false idle result',true);
 
+  // プロバイダーの 4xx で即終わった失敗（issue #103）: 受理（admitted）の記録が付く前・失われた後に届いても、
+  // このターンの失敗として締める（落とすと session.idle が届かず「返答が来ない」まま残る）
+  events.length=0;
+  protocol.begin('fresh',1);            // turns はあるが admitted は無い（受理の記録より先の失敗・受理が失われた失敗）
+  await protocol.event({type:'session.execution.failed',data:{sessionID:'fresh',error:{type:'provider.invalid-request',message:'region not allowed',status:400}}});
+  const earlyError=events.find(e=>e.type==='session.error');
+  assert(earlyError&&earlyError.properties.error.message==='region not allowed'&&events.some(e=>e.type==='session.idle'));
+  events.length=0;
+  protocol.begin('fresh2',1);
+  await protocol.event({type:'session.execution.failed',data:{sessionID:'fresh2'}});
+  assert(events.some(e=>e.type==='session.error'&&e.properties.error.message==='OpenCode execution failed')&&events.some(e=>e.type==='session.idle'));
+  events.length=0;
+  protocol.begin('fresh3',1);
+  await protocol.event({type:'session.execution.succeeded',data:{sessionID:'fresh3'}});
+  await protocol.event({type:'session.execution.failed',data:{sessionID:'stranger',error:{message:'foreign'}}});
+  assert(!events.some(e=>['session.error','session.idle'].includes(e.type)));
+  t.ok('A provider failure closes the turn even before admission is recorded; foreign executions still do not end it',true);
+
+  // 履歴の idle 記録（type:'idle', outcome:'failed', error）もターンの失敗になる
+  const idleError={type:'provider.invalid-request',message:'region not allowed',status:400};
+  const idleMapper=createTurnMapper({sessionId:'s2',emit:()=>{}});
+  replayV2Messages([v2Message({id:'msg_idle',type:'idle',outcome:'failed',time:{created:1000},error:idleError},'s2')],e=>idleMapper.handle(e));
+  assert(idleMapper.error?.message==='region not allowed'&&idleMapper.error?.name==='provider.invalid-request');
+  t.ok('A failed idle record in history carries the provider error into the turn result',true);
+
   const raced=[];let read=0;
   const race=createV2Protocol({publish:event=>raced.push(event),call:async(method,url)=>{
     if(url.endsWith('/message'))return {data:[{...mixed,content:[{type:'text',text:++read===1?'Partial':'Final'}],...(read===1?{time:{created:1000},tokens:{input:0},cost:0}: {})}],cursor:{}};

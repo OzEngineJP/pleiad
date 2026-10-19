@@ -123,6 +123,9 @@ export default async function (t) {
     t.ok('中断は turnResult aborted', c.since(am).some((e) => e.type === 'turnResult' && e.sessionId === sid && e.outcome === 'aborted'));
     const failed = await c.runTurn({ sessionId: sid, prompt: 'fail' });
     t.ok('session.error は turnResult error（文を添える）', failed.outcome === 'error' && failed.events.some((e) => e.type === 'turnResult' && /fake failure/.test(e.error ?? '')));
+    const providerFailed = await c.runTurn({ sessionId: sid, prompt: 'provider-fail' });
+    t.ok('プロバイダーの 4xx（step.failed → execution.failed）も turnResult error（原因の文を添える）', providerFailed.outcome === 'error'
+      && providerFailed.events.some((e) => e.type === 'turnResult' && /region not allowed/.test(e.error ?? '')), JSON.stringify(providerFailed.events.filter((e) => e.type === 'turnResult')));
 
     // ---- サブエージェント（task）
     const task = await c.runTurn({ sessionId: sid, prompt: 'task' });

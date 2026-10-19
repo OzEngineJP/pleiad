@@ -84,6 +84,7 @@ function broadcast(directory, type, properties) {
   }
   if(type==='permission.asked')return output(type,{id:p.id,sessionID:p.sessionID,action:p.permission,resources:p.patterns,save:p.always,metadata:p.metadata,source:{type:'tool',messageID:p.tool.messageID,id:p.tool.callID}});
   if(type==='question.asked')return output('form.created',{form:formOf(p)});
+  if(type==='session.step.failed')return output('session.step.failed',{sessionID:s.id,assistantMessageID:p.assistantMessageID??s?.messages.findLast(m=>m.info.role==='assistant')?.info.id,error:p.error});
   if(type==='session.error'){s.error=p.error;return;}
   if(type==='session.idle')return output(s.error?'session.execution.failed':'session.execution.succeeded',{sessionID:s.id,...(s.error?{error:s.error}:{})});
   output(type,p);
@@ -101,9 +102,10 @@ function nativeRow(s){
 function nativeMessage(m){
   const {info,parts}=m;
   const base={id:info.id,time:Object.fromEntries(Object.entries(info.time).map(([k,v])=>[k,new Date(v).toISOString()]))};
+  if(info.role==='idle')return {...base,type:'idle',outcome:info.outcome??'failed',...(info.error?{error:info.error}:{})};
   if(info.summary)return {...base,type:'compaction',status:info.status??'completed',reason:'manual',summary:parts.filter(p=>p.type==='text').map(p=>p.text).join(''),recent:'',tokens:info.tokens,cost:info.cost,...(info.error?{error:info.error}:{})};
   if(info.role==='user')return {...base,type:info.synthetic?'synthetic':'user',text:parts.filter(p=>p.type==='text').map(p=>p.text).join(''),files:[],agents:[],skills:[]};
-  return {...base,type:'assistant',agent:'build',model:{providerID:'fake',id:'echo'},tokens:info.tokens,cost:info.cost,content:parts.filter(p=>['text','reasoning','tool'].includes(p.type)).map(p=>p.type==='tool'?{type:'tool',id:p.callID,name:p.tool,time:{created:base.time.created},state:{...p.state,...(p.state.output?{content:[{type:'text',text:p.state.output}]}:{}),...(p.state.error?{error:{type:'ToolError',message:p.state.error}}:{})}}:{type:p.type,text:p.text})};
+  return {...base,type:'assistant',agent:'build',model:{providerID:'fake',id:'echo'},tokens:info.tokens,cost:info.cost,...(info.finish?{finish:info.finish}:{}) ,...(info.error?{error:info.error}:{}) ,content:parts.filter(p=>['text','reasoning','tool'].includes(p.type)).map(p=>p.type==='tool'?{type:'tool',id:p.callID,name:p.tool,time:{created:base.time.created},state:{...p.state,...(p.state.output?{content:[{type:'text',text:p.state.output}]}:{}),...(p.state.error?{error:{type:'ToolError',message:p.state.error}}:{})}}:{type:p.type,text:p.text})};
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => Date.now();
@@ -236,6 +238,17 @@ async function run(s, user, text, { system = null } = {}) {
     }
     if (text.startsWith('fail')) {
       broadcast(s.directory, 'session.error', { sessionID: s.id, error: { name: 'UnknownError', data: { message: 'fake failure' } } });
+      return;
+    }
+    if (text.startsWith('provider-fail')) {
+      // 実機 2.0.32: プロバイダーの 4xx は step.failed → execution.failed（どちらも data.error）。
+      // 履歴の assistant メッセージには finish:'error' と error が残り、type:'idle'（outcome:'failed'）の記録も残る
+      const error = { type: 'provider.invalid-request', message: 'region not allowed for this workspace', status: 400,
+        response: { body: JSON.stringify({ error: { message: 'region not allowed for this workspace', type: 'invalid_request_error', code: 'region_denied' } }) } };
+      Object.assign(a.info, { finish: 'error', error, time: { ...a.info.time, completed: now() } });
+      s.messages.push({ info: { id: id('msg'), sessionID: s.id, role: 'idle', outcome: 'failed', error, time: { created: now() } }, parts: [] });
+      broadcast(s.directory, 'session.step.failed', { sessionID: s.id, assistantMessageID: a.info.id, error });
+      s.error = error;
       return;
     }
     if (text.startsWith('limited') || text.startsWith('partial-limited') || text.startsWith('tool-limited')) {

@@ -203,7 +203,8 @@ export function createTurnMapper({ sessionId, emit, onUserMessage = () => {}, on
         case 'message.updated': {
           const info = p.info ?? {};
           if (info.id) roles.set(info.id, info.role);
-          if (info.role === 'assistant' && info.error) error = errorOf(info.error);
+          // 失敗（finish: 'error'）は assistant の発言と、v2 の idle 記録（outcome: 'failed'）にも残る
+          if ((info.role === 'assistant' || info.role === 'idle') && info.error) error = errorOf(info.error);
           return false;
         }
         case 'message.part.updated':
