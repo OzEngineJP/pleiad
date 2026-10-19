@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import readline from 'node:readline';
+import { DatabaseSync } from 'node:sqlite';
 
 const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
 const catalogue = { families: [
@@ -50,6 +51,36 @@ const configs = session => [
 ];
 const write = frame => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...frame })}\n`);
 const update = (sessionId, value) => write({ method: 'session/update', params: { sessionId, update: value } });
+const compactionNotice = (session, params) => write({ method: '_cognition.ai/compaction', params: { sessionId: session.sessionId, ...params } });
+// 圧縮が適用されると実機は message_nodes に継続用の system ノード（metadata.summarized_from 付き）を足す。
+// 区切りの読み取り（core/backends/devin-compaction.mjs）の試験のため、同じ形で SQLite に書く
+function writeBoundary(session, summary) {
+  if (!stateDir) return;
+  try {
+    const dir = path.join(stateDir, 'cli');
+    fs.mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(path.join(dir, 'sessions.db'));
+    db.exec(`create table if not exists sessions (id TEXT PRIMARY KEY, working_directory TEXT NOT NULL, backend_type TEXT, model TEXT, agent_mode TEXT, created_at INTEGER NOT NULL, last_activity_at INTEGER NOT NULL, title TEXT, main_chain_id INTEGER);
+             create table if not exists message_nodes (row_id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, node_id INTEGER NOT NULL, parent_node_id INTEGER, chat_message TEXT NOT NULL, created_at INTEGER NOT NULL, metadata TEXT)`);
+    const now = Math.floor(Date.now() / 1000);
+    if (!db.prepare('select 1 from message_nodes where session_id = ? limit 1').get(session.sessionId)) {
+      let pid = null;
+      for (const [i, m] of session.messages.entries()) {
+        db.prepare('insert into message_nodes (session_id, node_id, parent_node_id, chat_message, created_at) values (?,?,?,?,?)')
+          .run(session.sessionId, i, pid, JSON.stringify({ role: m.role, content: m.text }), now);
+        pid = i;
+      }
+    }
+    const prev = db.prepare('select max(node_id) as n from message_nodes where session_id = ?').get(session.sessionId).n;
+    const nid = (prev ?? -1) + 1;
+    const content = `You are continuing work from a previous conversation thread. Below is a summary of the previous conversation thread:\nFull conversation history saved at fixture-history.md.\nSummary:\n<summary>${summary}</summary>`;
+    db.prepare('insert into message_nodes (session_id, node_id, parent_node_id, chat_message, created_at, metadata) values (?,?,?,?,?,?)')
+      .run(session.sessionId, nid, prev ?? null, JSON.stringify({ role: 'system', content }), now, JSON.stringify({ summarized_from: prev ?? 0 }));
+    db.prepare('insert into sessions (id, working_directory, created_at, last_activity_at, main_chain_id) values (?,?,?,?,?) on conflict(id) do update set main_chain_id = excluded.main_chain_id, last_activity_at = excluded.last_activity_at')
+      .run(session.sessionId, session.cwd ?? '', now, now, nid);
+    db.close();
+  } catch { /* fixture */ }
+}
 const ask = (method, params) => new Promise((resolve, reject) => { const id = `fixture-request-${++seq}`; pending.set(id, { resolve, reject, sessionId: params.sessionId }); write({ id, method, params }); });
 function replay(session) {
   for (const message of session.messages) {
@@ -149,12 +180,24 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           (session.steerQueue ??= []).push({ id: request.id, text }); return;
         }
         if (text === '/compact') {
-          // ACP のスラッシュコマンドは prompt の本文として届く。発言は増やさず、占有だけ減らして usage_update を流す
-          session.used = Math.max(20000, Math.round((session.used ?? 120000) * 0.15)); persist(session);
+          // ACP のスラッシュコマンドは prompt の本文として届く。実機は応答のあとで圧縮を走らせ、
+          // _cognition.ai/compaction 通知・使用量の減少・継続ノードの追加で効いたことが分かる。
+          // [disable-compact] の会話は何も起きない（「圧縮するものが無い」側の台本）
+          if (session.noCompact) {
+            update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Nothing to compact.' }, _meta: { 'cognition.ai/displayMessage': true } });
+            result = { stopReason: 'end_turn' }; break;
+          }
+          compactionNotice(session, { status: 'started' });
+          session.used = Math.max(20000, Math.round((session.used ?? 120000) * 0.15));
+          writeBoundary(session, 'fixture summary');
+          compactionNotice(session, { status: 'completed', summary: 'Full conversation history saved at fixture-history.md.\nSummary:\n<summary>fixture summary</summary>' });
+          persist(session);
           update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window });
           result = { stopReason: 'end_turn' }; break;
         }
         const token = { cancelled: false, stubborn: text.includes('[stubborn]') }; running.set(session.sessionId, token);
+        // [disable-compact]: この会話の /compact を「圧縮するものが無い」側にする。[auto-compact]: ターンの途中で内部の自動圧縮の合図を出す
+        if (text.includes('[disable-compact]')) { session.noCompact = true; }
         session.messages.push({ role: 'user', text }); persist(session);
         update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
         if (text.includes('[kill]')) process.exit(17);
@@ -224,6 +267,12 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         session.messages.push({ role: 'assistant', text: reply, thinking: 'fixture thought', toolCalls: tools });
         // 圧縮で履歴を書き換える（最初の 1 往復を落とす）。次の session/load の再生は、位置がずれて返る
         if (text.includes('[compact-rewrite]')) session.messages.splice(0, 2);
+        // Devin 内部の自動圧縮の合図（_cognition.ai/compaction 通知 + transcript の継続ノード）
+        if (text.includes('[auto-compact]')) {
+          compactionNotice(session, { status: 'started' });
+          writeBoundary(session, 'fixture auto summary');
+          compactionNotice(session, { status: 'completed', summary: 'Full conversation history saved at fixture-history.md.\nSummary:\n<summary>fixture auto summary</summary>' });
+        }
         const steers = session.steerQueue ?? []; session.steerQueue = [];
         // 保存は応答を書く前に終える。親は応答を受けるとプロセスを止めるので、後に回すと書きかけで残る
         session.used = Math.min(session.window, (session.used ?? 120000) + 30000); persist(session); running.delete(session.sessionId);

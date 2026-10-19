@@ -12,11 +12,16 @@ import { buildDevinModels, resolveDevinModel, applyDevinModel } from './devin-mo
 import { createDevinMapper } from './devin-normalize.mjs';
 import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
+import { devinCompactionsFromDb, devinCompactionFromNotification, devinSessionsDb } from './devin-compaction.mjs';
 
 const choices = values => (values ?? []).flatMap(v => Array.isArray(v?.options) ? choices(v.options) : [v?.value]);
 const abortError = () => Object.assign(new Error('Devin turn cancelled'), { aborted: true });
 const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_DEVIN_LOGIN_MS ?? 10 * 60_000);
 const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_DEVIN_POLL_MS ?? 3_000);
+// /compact の応答は圧縮の前に返る。圧縮が効いたかの合図（通知・使用量の減少・継続ノードの追加）を待つ上限と、
+// 何も合図が来なければ「圧縮するものが無い」と判断するまでの待ち（CLI 3000.11.92 は通知を 1 秒ほどで送る）
+const COMPACT_VERIFY_MS = Number(process.env.AGENT_HOST_DEVIN_COMPACT_WAIT_MS ?? 120_000);
+const COMPACT_QUIET_MS = Number(process.env.AGENT_HOST_DEVIN_COMPACT_QUIET_MS ?? 15_000);
 const configSetting = (options, kind) => options.filter(o => o?.id === kind || o?.category === kind);
 function matchesVerified(options, verified) {
   if (!Array.isArray(options) || options.some(o => typeof o?.id !== 'string') || new Set(options.map(o => o.id)).size !== options.length) return false;
@@ -202,6 +207,17 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               if (fatal) return;
               mapper?.accept(update);
             },
+            // Devin 内部の自動圧縮の合図。transcript にも残る（getCompactions が区切りとして読む）が、
+            // 走っているターンではここで区切りを出す（読み直すまで見えないため）
+            onNotification: (method, params) => {
+              if (method !== '_cognition.ai/compaction' || fatal) return;
+              if (sessionId && params?.sessionId && params.sessionId !== sessionId) return;
+              const event = devinCompactionFromNotification(params);
+              if (!event) return;
+              if (event.status === 'started') { emit({ type: 'compaction', phase: 'start', trigger: 'auto' }); emit({ type: 'activity', state: 'compacting' }); }
+              else if (event.status === 'completed') emit({ type: 'compaction', phase: 'complete', trigger: 'auto', ...(event.summary ? { summary: event.summary } : {}) });
+              else if (event.status === 'failed') emit({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: event.reason ?? t('compaction.noCompletion') });
+            },
             onRequest: async (method, params) => {
               if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
               if (!prompting || params.sessionId !== sessionId || local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
@@ -308,12 +324,20 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
      * Devin の自動圧縮は ACP の会話には出ない（CLI の変更履歴）ので、区切りはここで出す。
      * 第 1 引数の sessionId はネイティブの id（core/conversations.mjs が host の id から訳す）。
      * 前後の文脈量は、Devin が流す usage_update（文脈の占有）から取る。来なければ量は付けない
+     *
+     * /compact の応答（end_turn）は圧縮が走る**前**に返る（実測 CLI 3000.11.92。圧縮は裏で進み、
+     * `_cognition.ai/compaction` 通知と usage_update の減少があとから来る）。返っただけでは完了とせず、
+     * 実効を検証する: 通知の completed・使用量の減少・transcript（sessions.db）への継続ノードの追加の
+     * どれかを待つ。何も来なければ「圧縮するものがありませんでした」、始まって終わらなければ失敗にする
      */
     async compact({ sessionId, emit, cwd, trigger = 'manual', signal, hostSessionId, hostBackend }) {
       const dir = path.resolve(cwd ?? (await cwdFor(sessionId)) ?? process.cwd());
+      const dbFile = devinSessionsDb(dataDir);
       const hostSignal = signal?.signal ?? signal;
       const local = new AbortController();
       let client, fatal = null, usage = null;
+      const events = [];   // _cognition.ai/compaction の通知
+      let nothingShown = false;
       const onAbort = () => { local.abort(); try { client?.notify('session/cancel', { sessionId }); } catch {} };
       hostSignal?.addEventListener('abort', onAbort, { once: true });
       // 区切りの位置（issue #105）: 直前の発言の uuid を afterMessageId にする（codex.mjs の区切りと同じ形。
@@ -324,17 +348,26 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         : cache.get(sessionId)?.messages() ?? []
       ).filter(m => m?.uuid).at(-1);
       const boundary = last?.uuid ? { afterMessageId: last.uuid } : {};
+      const known = new Set(devinCompactionsFromDb({ dataDir, sessionId, dbFile }).map(e => e.nativeId));
+      const newBoundary = () => devinCompactionsFromDb({ dataDir, sessionId, dbFile }).find(e => !known.has(e.nativeId)) ?? null;
       try {
         client = await openClient(dir, {
           onGone: error => { fatal = error; local.abort(); },
           onUpdate: params => {
             if (params.sessionId !== sessionId) return;
             const u = params.update;
-            if (u?.sessionUpdate !== 'usage_update') return;
-            const used = Number(u.used), size = Number(u.size);
-            if (!Number.isFinite(used) || !Number.isFinite(size) || size <= 0) return;
-            usage = { usedTokens: used, windowTokens: size };
-            emit({ type: 'contextWindow', usedTokens: used, windowTokens: size });
+            if (u?.sessionUpdate === 'usage_update') {
+              const used = Number(u.used), size = Number(u.size);
+              if (!Number.isFinite(used) || !Number.isFinite(size) || size <= 0) return;
+              usage = { usedTokens: used, windowTokens: size };
+              emit({ type: 'contextWindow', usedTokens: used, windowTokens: size });
+            } else if (u?.sessionUpdate === 'agent_message_chunk' && u._meta?.['cognition.ai/displayMessage']
+              && /nothing to compact/i.test(String(u.content?.text ?? ''))) nothingShown = true;
+          },
+          onNotification: (method, params) => {
+            if (method !== '_cognition.ai/compaction' || (params?.sessionId && params.sessionId !== sessionId)) return;
+            const event = devinCompactionFromNotification(params);
+            if (event) events.push(event);
           },
         });
         await client.call('session/load', { sessionId, cwd: dir, mcpServers: [] });
@@ -349,14 +382,43 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             reason: result?.stopReason === 'cancelled' || local.signal.aborted ? t('turn.aborted') : t('devin.errors.promptFailed') });
           return { sessionId };
         }
-        const after = usage?.usedTokens;
-        emit({ type: 'compaction', phase: 'complete', trigger, ...boundary,
-          ...(Number.isFinite(before) && Number.isFinite(after) && after !== before ? { beforeTokens: before, afterTokens: after } : {}) });
-        return { sessionId };
+        // 実効の検証。圧縮は裏で進むので、合図を上限つきで待つ
+        const quiet = Date.now() + COMPACT_QUIET_MS, deadline = Date.now() + COMPACT_VERIFY_MS;
+        const started = () => events.some(e => e.status === 'started');
+        for (let node = null, nextDb = 0;;) {
+          const done = events.find(e => e.status === 'completed');
+          const declined = events.find(e => e.status === 'failed');
+          const after = usage?.usedTokens;
+          const dropped = Number.isFinite(before) && Number.isFinite(after) && after < before;
+          if (!node && (done || !events.length) && Date.now() >= nextDb) {
+            nextDb = Date.now() + 1000;
+            node = newBoundary();
+          }
+          if (done || dropped || node) {
+            emit({ type: 'compaction', phase: 'complete', trigger, ...boundary,
+              ...(dropped ? { beforeTokens: before, afterTokens: after } : {}),
+              ...(done?.summary ?? node?.summary ? { summary: done?.summary ?? node.summary } : {}) });
+            return { sessionId };
+          }
+          if (declined) { emit({ type: 'compaction', phase: 'failed', trigger, ...boundary, reason: declined.reason ?? t('compaction.noCompletion') }); return { sessionId }; }
+          if (fatal) throw fatal;
+          if (local.signal.aborted) { emit({ type: 'compaction', phase: 'failed', trigger, ...boundary, reason: t('turn.aborted') }); return { sessionId }; }
+          // 始まりの合図も無く静かなら「圧縮するものが無かった」。displayMessage の "Nothing to compact." は早めの確定
+          if (!started() && (Date.now() > quiet || (nothingShown && !events.length))) {
+            emit({ type: 'compaction', phase: 'failed', trigger, ...boundary, reason: t('compaction.nothingToCompact') });
+            return { sessionId };
+          }
+          if (Date.now() > deadline) { emit({ type: 'compaction', phase: 'failed', trigger, ...boundary, reason: t('compaction.noCompletion') }); return { sessionId }; }
+          await new Promise(r => { const timer = setTimeout(r, 250); timer.unref?.(); });
+        }
       } finally {
         hostSignal?.removeEventListener('abort', onAbort);
         if (client) await client.close().catch(() => {});
       }
+    },
+    // 自動圧縮を含む区切りを、会話の DB（sessions.db の継続ノード）から読む（core/compaction-history.mjs の形）
+    async getCompactions(sessionId) {
+      return devinCompactionsFromDb({ dataDir, sessionId });
     },
     async releaseConversation(id) { const client = active.get(id); if (client) await client.close(); cache.delete(id); },
 
