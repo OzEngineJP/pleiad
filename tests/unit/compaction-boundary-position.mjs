@@ -165,6 +165,22 @@ export default async function (t) {
   vm.runInContext('paintCompactions()', context);
   t.ok('次の発言が無い圧縮は直前の発言の後に置く', timeline() === 'u3 c3 u4 tail', timeline());
 
+  // ---------------------------------------------------------------- Devin の区切り（afterMessageId だけ。発言の時刻が無いので uuid アンカーだけで置く）
+  reset();
+  for (let i = 1; i <= 4; i++) history(`u${i}`, 'devin', undefined);
+  state.compactions = [{ ...compaction('c1', 30), afterMessageId: 'u2' }];
+  vm.runInContext('paintCompactions()', context);
+  t.ok('afterMessageId だけの区切りは、その発言の直後（次の発言の前）に置く', timeline() === 'u1 u2 c1 u3 u4', timeline());
+  state.compactions = [{ ...compaction('c1', 30), afterMessageId: 'u4' }];
+  vm.runInContext('paintCompactions()', context);
+  t.ok('直前の発言が末尾なら区切りは末尾', timeline() === 'u1 u2 u3 u4 c1', timeline());
+  reset();
+  for (let i = 3; i <= 4; i++) history(`u${i}`, 'devin', undefined);
+  context.paintedFloor = () => ({ mi: 2 });
+  state.compactions = [{ ...compaction('c1', 30), afterMessageId: 'u2' }];
+  vm.runInContext('paintCompactions()', context);
+  t.ok('アンカーの発言が描いた窓の手前なら区切りは出さない', timeline() === 'u3 u4' && !thread.querySelector('[data-compaction-id]'), timeline());
+
   reset();
   history('u1', 'before', at(1)); history('u2', 'after', at(1));
   state.compactions = attachCompactSummaries([], mergeCompactionHistory([1, 2].map(n => ({ ...compaction(`c${n}`, 30, 'auto'),

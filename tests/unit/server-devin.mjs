@@ -47,6 +47,11 @@ export default async function (t) {
       && compactDone.beforeTokens > compactDone.afterTokens
       && afterCompact.compactions?.some(x => x.phase === 'complete')
       && afterCompact.messages.filter(m => m.role === 'user').length === 2, JSON.stringify(compactDone));
+    const lastUuid = after.messages.at(-1).uuid;
+    t.ok('区切りは圧縮の直前の発言の uuid を持つ（Devin の発言は時刻を持たないので、画面はこのアンカーで区切りを置く）',
+      compactDone.afterMessageId === lastUuid
+      && afterCompact.compactions.find(x => x.phase === 'complete')?.afterMessageId === lastUuid,
+      JSON.stringify({ lastUuid, compactDone, saved: afterCompact.compactions }));
     const editId = (await c.cmd('newSession', { backend: 'devin', cwd })).sessionId;
     const edit = await c.runTurn({ sessionId: editId, prompt: '[large-edit]', model: 'swe-2-high' });
     const edited = await c.cmd('loadSession', { sessionId: editId });
@@ -111,6 +116,14 @@ export default async function (t) {
       && rewritten.messages.every((m, i) => compacted.messages[i].uuid === m.uuid && compacted.messages[i].text === m.text),
       JSON.stringify(compacted.messages.map(m => [m.uuid, m.role, m.text.slice(0, 40)])));
     t.ok('ホスト記録の会話の text.end の発言の id は、記録の行の uuid に当たる', compactTurns.every(turn => anchored(turn, compacted.messages)));
+    // ---- ホスト記録のある会話の圧縮の区切りは、記録の行（接頭辞付き）の uuid を持つ（issue #105）
+    const compact2From = c.mark();
+    await c.cmd('compactConversation', { sessionId: compactId });
+    const compact2Done = await c.waitFor(e => e.type === 'compaction' && e.sessionId === compactId && e.phase === 'complete', { from: compact2From, ms: 20_000 });
+    const compact2Last = compacted.messages.at(-1).uuid;
+    t.ok('ホスト記録の会話でも区切りのアンカーは描いた発言の uuid に当たる',
+      compact2Done.afterMessageId === compact2Last && compact2Last.startsWith('devin:'),
+      JSON.stringify({ compact2Last, afterMessageId: compact2Done.afterMessageId }));
     c.close(); c = null;
     await server.stop(); server = null;
     const conversationDir = path.join(root, 'data', 'conversations');

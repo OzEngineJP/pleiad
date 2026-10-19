@@ -307,13 +307,21 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
      * 第 1 引数の sessionId はネイティブの id（core/conversations.mjs が host の id から訳す）。
      * 前後の文脈量は、Devin が流す usage_update（文脈の占有）から取る。来なければ量は付けない
      */
-    async compact({ sessionId, emit, cwd, trigger = 'manual', signal }) {
+    async compact({ sessionId, emit, cwd, trigger = 'manual', signal, hostSessionId, hostBackend }) {
       const dir = path.resolve(cwd ?? (await cwdFor(sessionId)) ?? process.cwd());
       const hostSignal = signal?.signal ?? signal;
       const local = new AbortController();
       let client, fatal = null, usage = null;
       const onAbort = () => { local.abort(); try { client?.notify('session/cancel', { sessionId }); } catch {} };
       hostSignal?.addEventListener('abort', onAbort, { once: true });
+      // 区切りの位置（issue #105）: 直前の発言の uuid を afterMessageId にする（codex.mjs の区切りと同じ形。
+      // Devin の発言は時刻を持たないので、画面は uuid アンカーでしか置けない）。
+      // ホスト記録の会話は記録の行の uuid、ネイティブだけの会話は再生の行の uuid（どちらも画面の data-uuid と同じ値）
+      const last = (hostBackend && hostSessionId
+        ? await hostBackend.getMessages(hostSessionId).catch(() => [])
+        : cache.get(sessionId)?.messages() ?? []
+      ).filter(m => m?.uuid).at(-1);
+      const boundary = last?.uuid ? { afterMessageId: last.uuid } : {};
       try {
         client = await openClient(dir, {
           onGone: error => { fatal = error; local.abort(); },
@@ -330,17 +338,17 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         await client.call('session/load', { sessionId, cwd: dir, mcpServers: [] });
         if (fatal) throw fatal;
         const before = usage?.usedTokens;
-        emit({ type: 'compaction', phase: 'start', trigger });
+        emit({ type: 'compaction', phase: 'start', trigger, ...boundary });
         emit({ type: 'activity', state: 'compacting' });
         const result = await client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '/compact' }] }, { timeoutMs: 0 });
         if (fatal) throw fatal;
         if (result?.stopReason !== 'end_turn') {
-          emit({ type: 'compaction', phase: 'failed', trigger,
+          emit({ type: 'compaction', phase: 'failed', trigger, ...boundary,
             reason: result?.stopReason === 'cancelled' || local.signal.aborted ? t('turn.aborted') : t('devin.errors.promptFailed') });
           return { sessionId };
         }
         const after = usage?.usedTokens;
-        emit({ type: 'compaction', phase: 'complete', trigger,
+        emit({ type: 'compaction', phase: 'complete', trigger, ...boundary,
           ...(Number.isFinite(before) && Number.isFinite(after) && after !== before ? { beforeTokens: before, afterTokens: after } : {}) });
         return { sessionId };
       } finally {
