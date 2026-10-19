@@ -116,7 +116,8 @@ export const itemText = (locale, item) => `${agentT(locale, 'guide.heading', { n
  * agent は backend の種類。選べるエージェント（AGENTS）でなければ、全部のエージェントに入れる項目だけを入れる
  * （Codex だけの方針などは入れない。項目のエージェントを選べないエージェントには、絞った項目が当てはまらない）
  */
-export function turnInstructions({ list, locale, child, routing, supported, canDelegate, agent = null }) {
+// bridge … 委譲の橋（ply_agents）を受け取るか。汎用の指示は届いても、橋が無いエージェントに委譲の振り分けの項目は入れない（plyInstructions=true / plyAgents=false の組合せを許す契約のため）
+export function turnInstructions({ list, locale, child, routing, supported, canDelegate, bridge, agent = null }) {
   if (!supported) return child ? [{ id: 'childCommand', name: builtinName(locale, 'child'), target: 'child', inserted: true,
     text: agentT(locale, 'guide.commandLifetime') }] : null;
   return resolvePlyInstructions(list, locale).map(item => {
@@ -126,6 +127,7 @@ export function turnInstructions({ list, locale, child, routing, supported, canD
     if (!item.on) return skip('off');
     if ((item.target === 'parent' && child) || (item.target === 'child' && !child)) return skip('target');
     if (agent && (AGENTS.includes(agent) ? !item.agents.includes(agent) : !AGENTS.every(a => item.agents.includes(a)))) return skip('agent');
+    if (item.id === LINKED && !bridge) return skip('noBridge');
     if (!child && !canDelegate && item.id === LINKED) return skip('readOnly');
     return { ...base, inserted: true, text: itemText(locale, item) };
   });

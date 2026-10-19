@@ -226,7 +226,7 @@ export default async function(t) {
   } finally { await names.close(); }
 
   for (const locale of ['en', 'ja']) for (const supported of [true, false]) {
-    const args = { list: normalizePlyInstructions(), locale, supported, routing: true, canDelegate: true };
+    const args = { list: normalizePlyInstructions(), locale, supported, routing: true, canDelegate: true, bridge: true };
     const child = withAdded('', turnInstructions({ ...args, child: true }));
     const parent = withAdded('', turnInstructions({ ...args, child: false }));
     t.ok(`${locale}/${supported}: 子だけに時間上限・PIDの管理・無期限待機禁止を入れる`, child.includes(agentT(locale, 'guide.commandLifetime')) && !parent.includes('Start-Process -Wait'));

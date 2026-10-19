@@ -60,7 +60,7 @@ Skills は名前・説明・ID・元のディレクトリのみを一覧とし�
 
 ## Pleiad の指示
 
-指示ファイル・Skills・外部 MCP とは別に、Pleiad 自身が会話に毎ターン入れる指示の一覧を持つ（`core/ply-instructions.mjs`、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。種類の担当によらず、`plyInstructions` の印を持つ会話（現在の全エージェント）に入る。`plyAgents` の印を持つ会話では ply_agents の instructions の後ろに足して同じ欄で渡し（Claude は `systemPrompt.append`、Codex は `developerInstructions`）、それ以外は発言の本文の前に足して渡す（ACP の系統と antigravity。記録はどちらも `contextSession.added`）。
+指示ファイル・Skills・外部 MCP とは別に、Pleiad 自身が会話に毎ターン入れる指示の一覧を持つ（`core/ply-instructions.mjs`、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。種類の担当によらず、`plyInstructions` の印を持つ会話（現在の全エージェント）に入る。渡す欄はバックエンドごとの `addedInstructions` の実装が決める（Claude は `systemPrompt.append`、Codex は `developerInstructions`、ACP の系統と antigravity は発言の本文の前）。`plyAgents` の印を持つ会話では ply_agents の instructions の後ろに足す。記録はどちらも `contextSession.added`。委譲と連動の項目（`route`）だけは、委譲の橋（`plyAgents`）を持たないエージェントには入れない（記録の理由 `noBridge`）。
 
 - **項目**: 既定の 2 項目（`child` 委譲された会話でのコマンドの扱い = コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え自分で止める・`Start-Process -Wait` のような無期限待機をしない（委譲の深さに上限は無いので、さらに委譲してよい）、`codexPolicy` Codex の実行前の拒否 = 承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。委譲された会話・Codex だけが既定。docs/multi-backend.md「Codex の実行前の拒否」）、自分で足した項目（`u-…`。名前・本文・入れる会話 `all` / `parent` / `child`・エージェント = 本番のエージェント全部から選ぶ。保存済みの項目のエージェント一覧は広げない）、委譲と連動の項目（`route` 委譲の振り分けの使い方 = `kind` を付け `backend` は書かない。いつも最後）。既定の項目は編集でき、編集していなければ文面は辞書（`agent:guide.*`）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で辞書の文へ戻る。既定と同じ内容で保存しても編集扱いにしない）。`route` は編集・スイッチを持たない。
 - **入れる文**: 項目ごとに見出し「<名前>（Pleiad が追加した指示）:」（`agent:guide.heading`）と本文。並びの順に空行でつなぐ。

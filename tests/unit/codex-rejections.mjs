@@ -107,9 +107,9 @@ export default async function (t) {
   const list = normalizePlyInstructions(undefined);
   const item = resolvePlyInstructions(list, 'ja').find(i => i.id === 'codexPolicy');
   t.ok('既定の項目 codexPolicy は委譲された会話・Codex だけ', item?.tag === 'default' && item.target === 'child' && item.agents.join() === 'codex' && item.body === agentT('ja', 'guide.codexPolicy'));
-  const forCodexChild = turnInstructions({ list, locale: 'ja', child: true, routing: true, supported: true, canDelegate: true, agent: 'codex' });
-  const forClaudeChild = turnInstructions({ list, locale: 'ja', child: true, routing: true, supported: true, canDelegate: true, agent: 'claude' });
-  const forCodexParent = turnInstructions({ list, locale: 'ja', child: false, routing: true, supported: true, canDelegate: true, agent: 'codex' });
+  const forCodexChild = turnInstructions({ list, locale: 'ja', child: true, routing: true, supported: true, canDelegate: true, bridge: true, agent: 'codex' });
+  const forClaudeChild = turnInstructions({ list, locale: 'ja', child: true, routing: true, supported: true, canDelegate: true, bridge: true, agent: 'claude' });
+  const forCodexParent = turnInstructions({ list, locale: 'ja', child: false, routing: true, supported: true, canDelegate: true, bridge: true, agent: 'codex' });
   t.ok('Codex の子には入り、Claude の子・依頼元には入らない', forCodexChild.find(r => r.id === 'codexPolicy')?.inserted === true
     && forClaudeChild.find(r => r.id === 'codexPolicy')?.reason === 'agent' && forCodexParent.find(r => r.id === 'codexPolicy')?.reason === 'target');
   t.ok('前の版で委譲の指示を切っていても codexPolicy は入れたまま', normalizePlyInstructions(undefined, { delegation: false }).find(i => i.id === 'codexPolicy')?.on === true);

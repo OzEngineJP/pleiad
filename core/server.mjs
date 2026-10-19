@@ -6588,7 +6588,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
   const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
     child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyInstructions),
-    canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
+    canDelegate: canDelegate(backend.modes()[permissionMode]), bridge: Boolean(backend.capabilities?.plyAgents),
+    agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
   if (added) contextRecord.added = added;
   // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
   // 組み立てられなければ送らない（ネイティブと登録が二重に動くか、どちらも動かないため）

@@ -1117,7 +1117,8 @@
         "forChild": "Not added: for delegated conversations",
         "forParent": "Not added: for requesting conversations",
         "agent": "Not added for this agent",
-        "routingOff": "Not added: automatic delegation routing is off"
+        "routingOff": "Not added: automatic delegation routing is off",
+        "noBridge": "Not added: this agent has no delegation bridge (ply_agents)"
       }
     },
     "amount": {
