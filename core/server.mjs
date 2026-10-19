@@ -7021,7 +7021,7 @@ async function driveTurn(ctx, start) {
     }
     // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
     // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
-    if ((err?.undelivered || !ctx.backendInvoked) && sessionId && args.messageId) {
+    if ((err?.undelivered || !ctx.backendInvoked || !ctx.initialDelivered) && sessionId && args.messageId) {
       await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
     }
     if (!ctx.didStart) throw err;
@@ -7035,9 +7035,13 @@ async function driveTurn(ctx, start) {
 
 /** ターンの締め（driveTurn の後始末）。送信待ち・表示・コンテキスト・git の終わりを書き、endTurn で終える */
 async function closeTurn(ctx) {
-  const { turn, emit, sessionId } = ctx;
+  const { turn, emit, sessionId, args } = ctx;
   // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
   if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
+  // ターンは始まったが渡った合図（initialDelivered）の無いまま終わった発言は、送信済みのままだと本文がどこにも残らず消える。
+  // 未達（failed）に戻し、再送か取り消しを選ばせる（requeue は送信待ちに戻るので触らない。catch で戻した分は undelivered がそのまま通る）
+  if (ctx.didStart && sessionId && args.messageId && !ctx.initialDelivered && turn.outcome !== 'requeue')
+    await outbox.undelivered(sessionId, args.messageId, t('queue.undelivered')).catch(() => {});
   if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
   await turn.visualizations.close().catch(err => {
     if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };

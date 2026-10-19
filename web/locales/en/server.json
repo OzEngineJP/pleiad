@@ -1099,7 +1099,8 @@
     "idConflict": "Cannot change the content under the same send ID.",
     "full": "Up to {{max}} messages can wait to be sent.",
     "notEditable": "This message cannot be changed.",
-    "invalidAction": "Invalid action."
+    "invalidAction": "Invalid action.",
+    "undelivered": "The turn ended before the message reached the agent."
   },
   "review": {
     "needFake": "Review mode (AGENT_HOST_REVIEW=1) requires fake to be the only enabled backend (now: {{backends}}). This process will not start.",
