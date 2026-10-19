@@ -244,4 +244,53 @@ export default async function (t) {
       t.ok('再生の区切りは持ち越さない', sig(mapper.messages()) === 's:user:0|user|q0;s:assistant:1|assistant|r0;s:user:2|user|q1;s:assistant:3|assistant|main;s:user:4|user|s1;s:assistant:5|assistant|r1', sig(mapper.messages()));
     }
   }
+
+  // interject（Grok のターン内差し込み）: 受理の返事で即座に delivered + nativeId。session/prompt には下らない
+  {
+    const sent = [], events = [], interjected = [];
+    const client = { call: (m, p) => { sent.push(p); return new Promise(() => {}); } };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true,
+      interject: async (text, item) => { interjected.push([text, item.id]); return { nativeId: `ij-${item.id}` }; } });
+    const ok = await steer.steer({ id: 'i1', args: { prompt: 'mid' } });
+    t.ok('interject の受理は true', ok === true);
+    t.ok('受理で delivered + nativeId が即座に届く（回の決着を待たない）',
+      events.length === 1 && events[0].type === 'userMessage.delivered' && events[0].messageId === 'i1' && events[0].nativeId === 'ij-i1', JSON.stringify(events));
+    t.ok('session/prompt には下らない', sent.length === 0 && interjected.length === 1 && interjected[0][0] === 'mid');
+    t.ok('drain に残らない', steer.size === 0);
+  }
+  // interject が未実装（'unsupported'）なら session/prompt へ下り、以後は試さない
+  {
+    const sent = [], events = [], resolvers = []; let interjectCalls = 0;
+    const client = { call: (m, p) => { sent.push([m, p]); return new Promise(res => resolvers.push(res)); } };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true,
+      interject: async () => { interjectCalls++; return 'unsupported'; } });
+    const p = steer.steer({ id: 'u1', args: { prompt: 'mid' } });
+    await sleep(0);
+    resolvers.shift()({ stopReason: 'end_turn' });
+    const ok1 = await p;
+    const p2 = steer.steer({ id: 'u2', args: { prompt: 'next' } });
+    await sleep(0);
+    resolvers.shift()?.({ stopReason: 'end_turn' });
+    t.ok('unsupported のあとは session/prompt に下る', ok1 === true && await p2 === true
+      && sent.length === 2 && sent.every(([m]) => m === 'session/prompt') && interjectCalls === 1, JSON.stringify({ sent, interjectCalls }));
+    await sleep(0);
+  }
+  // session/prompt の決着で result._meta.promptId を nativeId として delivered に載せる
+  {
+    const events = []; let resolveNext;
+    const client = { call: () => new Promise(res => { resolveNext = res; }) };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true });
+    const p = steer.steer({ id: 'n1', args: { prompt: 'hi' } });
+    resolveNext({ stopReason: 'end_turn', _meta: { promptId: 'pid-1' } });
+    await p; await sleep(0);
+    t.ok('delivered に _meta.promptId が載る', events[0]?.type === 'userMessage.delivered' && events[0]?.nativeId === 'pid-1', JSON.stringify(events));
+  }
+  // interject が未受理（false）を返したら送信待ちへ戻す（session/prompt には下らない）
+  {
+    const events = [];
+    const client = { call: () => new Promise(() => {}) };
+    const steer = createAcpSteer({ client, sessionId: 's', emit: e => events.push(e), ready: () => true,
+      interject: async () => false });
+    t.ok('interject の未受理は false（送信待ちへ）', await steer.steer({ id: 'f1', args: { prompt: 'x' } }) === false && events.length === 0);
+  }
 }

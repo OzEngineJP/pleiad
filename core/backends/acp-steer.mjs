@@ -2,6 +2,15 @@
 //
 // 走っているターンへの session/prompt は、Devin では同じ回に折り込まれ（実測 3000.11.92）、
 // Grok では内蔵の待ち行列に積まれて今の回の直後に続けて回る（実測 1.0.62）。
+//
+// Grok はさらに `_x.ai/interject`（xai-org/grok-build interject.rs → SessionCommand::Interject）を持ち、
+// 走っているターンを中断せずに、次のモデル呼び出しの境界（safe point）で本文を合成 user メッセージとして
+// 折り込む（実測 1.0.62: 実行中の tool_call を止めず、同じ promptId の続きで読まれた）。
+// interject コールバックが渡されたら先にそちらを試し、未実装の返事（-32601）だけ session/prompt に下る。
+// interject の受理はその応答自体（`{result:{status:'queued'}}` は「ターン内の差し込み待ちへ受理」の意で、
+// ターン化されない。Grok は届け損なった interjection を queued prompt へ変換して落とさない）。
+// 受理時の userMessage.delivered には、渡した interjectionId を nativeId として載せる
+// （`_x.ai/session/interjection` 通知が同じ id をエコーするので、native 履歴との照合に使える）。
 // どちらも呼び出しの応答は回の決着まで返らないので、「受理」は「書き込みが直ぐに断られなかった」こと。
 // 受理した分は steerConfirms の約束どおり、呼び出しの決着で合図を出す: 回の決着（cancelled 以外の
 // stopReason）で userMessage.delivered。拒否・中断（cancelled・reject）は「読まれたか分からない」
@@ -18,15 +27,27 @@
 // 接続の終了で全部 dropped になり、並んだだけのメッセージが答えられない）。
 
 /** 直ぐに断られるプロトコルの拒否（届いていない＝送信待ちに戻してよい。codex.mjs と同じ基準） */
-const PROTOCOL_REJECT_CODES = new Set([-32600, -32601, -32602]);
+export const PROTOCOL_REJECT_CODES = new Set([-32600, -32601, -32602]);
 
-export function createAcpSteer({ client, sessionId, emit, ready, onSent }) {
+export function createAcpSteer({ client, sessionId, emit, ready, onSent, interject = null }) {
   const calls = new Map();   // 決着を待っている呼び出し -> { id }
+  let canInterject = interject != null;
   return {
     get size() { return calls.size; },
     async steer(item) {
       if (!ready()) return false;
       const text = String(item?.args?.prompt ?? '');
+      // ターン内へ差し込む口（Grok の _x.ai/interject）。'unsupported' ならこの接続では使えないので以後送らない
+      if (canInterject) {
+        const ack = await interject(text, item);
+        if (ack === 'unsupported') canInterject = false;
+        else if (!ack) return false;
+        else {
+          onSent?.(text);
+          if (item?.id) emit({ type: 'userMessage.delivered', messageId: item.id, ...(ack.nativeId ? { nativeId: ack.nativeId } : {}) });
+          return true;
+        }
+      }
       let call;
       try {
         call = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, { timeoutMs: 0 });
@@ -43,7 +64,7 @@ export function createAcpSteer({ client, sessionId, emit, ready, onSent }) {
         throw early;
       }
       call.then(
-        result => { if (calls.delete(call) && entry.id) emit({ type: result?.stopReason === 'cancelled' ? 'userMessage.dropped' : 'userMessage.delivered', messageId: entry.id, ...(result?.stopReason === 'cancelled' ? { unknown: true } : {}) }); },
+        result => { if (calls.delete(call) && entry.id) emit({ type: result?.stopReason === 'cancelled' ? 'userMessage.dropped' : 'userMessage.delivered', messageId: entry.id, ...(result?.stopReason === 'cancelled' ? { unknown: true } : {}), ...(result?._meta?.promptId ? { nativeId: result._meta.promptId } : {}) }); },
         () => { if (calls.delete(call) && entry.id) emit({ type: 'userMessage.dropped', messageId: entry.id, unknown: true }); });
       return true;
     },
