@@ -76,9 +76,30 @@ export function createDevinMapper(sessionId, emit = () => {}) {
     return current;
   }
   function send(event) { if (live) emit({ ...event, sessionId }); }
+  let usageTotals = {}, measuredUsage = false, lastUsageKey = null, usageActivity = 0, lastUsageActivity = 0;
+  function recordUsage(meta) {
+    if (!live || !meta || typeof meta !== 'object') return;
+    const fields = ['cognition.ai/inputTokens', 'cognition.ai/outputTokens', 'cognition.ai/cachedReadTokens'];
+    if (!fields.some(key => Object.hasOwn(meta, key))) return;
+    const count = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+    const values = fields.map(key => count(meta[key]));
+    const key = JSON.stringify(values);
+    // Devin repeats a request's counters in its subagent context refresh. A new
+    // response/tool boundary allows two distinct requests with identical counts.
+    if (key === lastUsageKey && (Object.hasOwn(meta, 'cognition.ai/subagent_context') || usageActivity === lastUsageActivity)) return;
+    lastUsageKey = key; lastUsageActivity = usageActivity;
+    for (const [index, name] of ['inputTokens', 'outputTokens', 'cachedTokens'].entries()) {
+      const value = values[index];
+      usageTotals[name] = value == null || (measuredUsage && usageTotals[name] == null) ? null : (usageTotals[name] ?? 0) + value;
+    }
+    measuredUsage = true;
+    send({ type: 'usage', ...usageTotals });
+  }
   function accept(update) {
     const kind = update?.sessionUpdate;
+    if (live && ['agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update', 'user_message_chunk'].includes(kind)) usageActivity++;
     if (kind === 'usage_update') {
+      recordUsage(update._meta);
       // Devin の使用状況（used/size は文脈の占有、cost はセッションの費用）
       const used = Number(update.used), size = Number(update.size);
       if (live && Number.isFinite(used) && Number.isFinite(size) && size > 0) send({ type: 'contextWindow', usedTokens: used, windowTokens: size });
@@ -151,6 +172,7 @@ export function createDevinMapper(sessionId, emit = () => {}) {
      */
     beginTurn(sent, shown = sent) {
       current = null; live = true; turn = crypto.randomUUID();
+      usageTotals = {}; measuredUsage = false; lastUsageKey = null; usageActivity = 0; lastUsageActivity = 0;
       Object.assign(row('user'), { text: shown, sent });
       expectedEcho = sent; echo = '';
     },
