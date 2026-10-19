@@ -50,7 +50,11 @@ function presentFile(sessionId) {
  * messages はバックエンドが返す NormalizedMessage:
  *   { role, text, uuid, at, thinking?, tools?, toolCalls? }
  *   tools     … 名前だけの配列（旧形。後方互換で残している）
- *   toolCalls … [{ id, name, input, result: { text, isError, truncated } | null }]
+ *   toolCalls … [{ id, name, input, result: { text, isError, truncated } | null,
+ *                  at?, startedAt?, endAt? }]
+ *   at / startedAt … 呼び出しの始まり（バックエンドが記録を持つときだけ。時計はバックエンドのまま。
+ *                    stream.events を畳んだ仮の発言は、サーバーが付けた tool.start の at と startedAt）
+ *   endAt          … 対応する tool_result の時刻（同じく記録があるときだけ。捏造しない）
  * ライブと履歴で同じ表示ができるよう、toolCalls は web/render.mjs の
  * renderToolCall / applyToolResult にそのまま渡せる形にしてある。
  */

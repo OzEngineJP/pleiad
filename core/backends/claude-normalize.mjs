@@ -376,6 +376,8 @@ function extract(entry, fullResults = false) {
           id: String(block.tool_use_id),
           ...cutResult(raw, fullResults),
           isError: Boolean(block.is_error),
+          // ツールが終わった時刻（この user エントリの timestamp）。紐づけたところで endAt になる
+          at: entry.timestamp ?? null,
           // ply_computer の結果は、tool_use と紐づけたところで印の行を読み直す（transcriptToMessages）
           raw,
         });
@@ -399,6 +401,8 @@ function extract(entry, fullResults = false) {
         id: block.id ? String(block.id) : null,
         name: String(block.name),
         input: isComputerTool(block.name) ? computerToolInput(block.name, input) : input,
+        // ツールが始まった時刻（この assistant エントリの timestamp。ISO。行の右端の時刻に使う）
+        at: entry.timestamp ?? null,
         result: null,
       });
     }
@@ -441,6 +445,8 @@ export function transcriptToMessages(entries, { includeNested = false, fullResul
       call.result = isComputerTool(call.name)
         ? { ...computerResult(r.raw, raw => cutResult(raw, fullResults)), isError: r.isError }
         : { text: r.text, isError: r.isError, truncated: r.truncated };
+      // 終わった時刻は、tool_result を積んだ user エントリの timestamp（無ければ付けない）
+      if (r.at != null) call.endAt = r.at;
     }
     for (const c of got.toolCalls ?? []) if (c.id) calls.set(c.id, c);
 

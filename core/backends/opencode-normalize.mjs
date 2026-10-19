@@ -295,7 +295,11 @@ export function messagesToNormalized(list, { fullResults = false } = {}) {
     const toolCalls = parts.filter((p) => p?.type === 'tool').map((p) => {
       const done = p.state?.status === 'completed' || p.state?.status === 'error';
       const result = done ? toolResult(p, { full: fullResults }) : null;
-      return { id: String(p.callID ?? p.id), name: toolName(p.tool), input: toolInput(p), result: result ? { text: result.text, isError: result.isError, truncated: result.truncated, ...(result.images ? { images: result.images } : {}) } : null };
+      // state.time.start / end は ms。記録のあるツールだけ時刻を付ける（無ければ付けない）
+      const t0 = p.state?.time?.start, t1 = p.state?.time?.end;
+      return { id: String(p.callID ?? p.id), name: toolName(p.tool), input: toolInput(p),
+        ...(Number.isFinite(t0) ? { at: t0 } : {}), ...(Number.isFinite(t1) ? { endAt: t1 } : {}),
+        result: result ? { text: result.text, isError: result.isError, truncated: result.truncated, ...(result.images ? { images: result.images } : {}) } : null };
     });
     if (!text && !thinking && !toolCalls.length) continue;
     out.push({ role: 'assistant', text, uuid: info.id, at, ...(thinking ? { thinking } : {}), ...(toolCalls.length ? { toolCalls } : {}) });

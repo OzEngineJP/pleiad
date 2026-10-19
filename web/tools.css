@@ -77,10 +77,43 @@
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tc.tc-error>.tc-details>.tc-details-body{background:var(--surface-1);margin:0 -8px;padding-left:calc(var(--tc-indent) + 8px);padding-right:8px;border-radius:0 0 var(--r-s) var(--r-s)}
 
+/* ---- 行頭のツールアイコン・時刻ボタン・時刻の詳細 ----
+   閉じた行は最小限: [アイコン] [動詞] [対象] [補足] … [失敗の印] [HH:MM] [›]。結果の要約は行に出さない */
+.tic{flex:none;width:16px;height:16px;display:inline-grid;place-items:center;align-self:center;color:var(--ink-weak)}
+.tic svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+/* 時刻はボタン。押すと行の上に小さな詳細（開始・終了・所要・終了コード）。時刻が無い古い履歴では出さない */
+.tc-time{flex:none;align-self:center;background:transparent;border:0;padding:0 2px;border-radius:4px;cursor:pointer;
+  color:var(--ink-weak);font:inherit;font-size:var(--fs-xs);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tc-time:hover{color:var(--ink)}
+.tc-time:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.tc{position:relative}
+/* まとまりの中の行は .hi>.in（overflow:hidden）に切られるので、ポップオーバーは fixed で置き、座標は押したときに測る */
+.tc-when-pop{display:none;position:fixed;z-index:10;background:var(--surface-paper);
+  box-shadow:0 4px 16px var(--shadow);border-radius:var(--r-s);padding:6px 12px;font-size:var(--fs-xs);color:var(--ink-weak);
+  white-space:nowrap;gap:4px 14px}
+.tc.show-when>.tc-when-pop{display:flex}
+
+/* ---- 開いた中身のタブ（共通部品 .seg の pill 型。主面 ⇄ 入力 の 2 枚まで） ---- */
+.tc-tabs.seg{display:inline-flex;margin:0 0 6px}
+.tc-tabs.seg button{flex:none;display:inline-flex;align-items:center;gap:5px;border:0;border-radius:var(--r-pill);
+  padding:3px 11px;font:inherit;font-size:var(--fs-s);color:var(--ink-weak);cursor:pointer}
+.tc-tabs.seg button svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tc-tabs.seg button.on{background:var(--surface-paper);color:var(--ink);box-shadow:0 1px 4px var(--shadow)}
+.tc-tabs.seg button:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.tc-pane{display:none}
+.tc-pane.on{display:block}
+/* 「入力」の面: キーと値の格子 ＋ 生の JSON の折りたたみ */
+.tc-inp{background:var(--surface-1);border-radius:var(--r-s);padding:8px 12px;min-width:0}
+.tc-inp .tc-json{margin-top:2px}
+/* 実行の出力: 両テーマ共通の暗い端末面 */
+.tc-term{background:var(--surface-console);color:var(--ink-console);border-radius:var(--r-s);padding:8px 12px;
+  font:var(--fs-s)/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
+.tc-term .prompt{color:var(--ink-console-weak);user-select:none}
+
 /* ---- 開いた中身 ---- */
 
 .tc-sec-body .code-block{margin:0 0 6px}
-.tc-tail .tc-output,.tc-out .tc-output{margin:0}
+.tc-out .tc-output{margin:0}
 .tc-fold{margin-top:3px;min-width:0;max-width:100%}
 .tc-fold>summary:not(.tc-head){list-style:none;cursor:pointer;color:var(--ink-weak);font-size:var(--fs-xs);padding:1px 0;user-select:none}
 .tc-fold>summary::-webkit-details-marker{display:none}

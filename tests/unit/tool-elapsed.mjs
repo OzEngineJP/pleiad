@@ -139,6 +139,8 @@ export default async function (t) {
       const ev2 = (again.stream?.events ?? []).find(e => e.type === 'tool.start' && e.id === ev.id);
       t.ok('別の接続（再接続・別の端末）から読んでも同じ時刻', ev2?.at === ev.at && Date.now() - ev2.at >= 1500, json(ev2));
     } finally { c2.close(); }
+    const res = await c.waitFor(e => e.type === 'tool.result' && e.id === ev.id, { from, ms: 20_000 });
+    t.ok('流れてきた tool.result にも、サーバーが受けた時刻（ms）が付く（行の右端の時刻の詳細の終わり）', Number.isFinite(res.at) && res.at >= ev.at, json(res));
     // fake の待ち（ms）は中断で切れないので、終わるまで待つ
     await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === ev.sessionId, { from, ms: 20_000 });
   } finally {

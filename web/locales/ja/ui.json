@@ -2673,23 +2673,33 @@
       "todoItems": "項目（{{n}}）",
       "forkHere": "この会話をここまで引き継ぐ",
       "moreFiles_other": "ほか {{n}} ファイル",
-      "input": "入力"
+      "input": "入力",
+      "rawJson": "生の JSON",
+      "content": "中身",
+      "tab": {
+        "output": "出力",
+        "input": "入力",
+        "diff": "差分",
+        "result": "結果",
+        "content": "内容",
+        "screen": "画面"
+      },
+      "when": {
+        "detail": "実行時刻の詳細",
+        "start": "開始 {{time}}",
+        "end": "終了 {{time}}",
+        "duration": "所要 {{n}} 秒",
+        "exitCode": "終了コード {{code}}"
+      }
     },
     "result": {
       "empty": "出力なし",
-      "count_other": "{{n}} 件",
-      "saved": "保存した",
-      "edited": "編集した",
-      "updated": "更新した",
-      "ran": "実行した",
       "lines_other": "{{n}} 行",
       "failed": "✕ 失敗",
       "output": "出力",
       "outputPartial": "出力（途中まで）",
       "generatedImage": "生成画像",
-      "failedExit": "✕ 失敗 · exit {{code}}",
-      "tail_other": "出力 · 末尾 {{n}} 行",
-      "showAll_other": "全 {{n}} 行を表示"
+      "failedExit": "✕ 失敗 · exit {{code}}"
     },
     "bundle": {
       "title": "ツール実行",

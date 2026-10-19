@@ -87,8 +87,8 @@ export function toolNodes(calls, { running = false, link = null, subagentTools =
   // 委譲はまとまりの外に 1 件ずつ出す（client.mjs の toolNodes と同じ）
   const isBoundary = (name) => isPlyDelegateToolName(name) || names.has(name);
   const cards = calls.map((c, i) => {
-    const card = renderToolCall(c.name, c.input, { id: c.id ?? undefined });
-    if (c.result) applyToolResult(card, c.result);
+    const card = renderToolCall(c.name, c.input, { id: c.id ?? undefined, at: c.at, startedAt: c.startedAt, endAt: c.endAt });
+    if (c.result) applyToolResult(card, c.result && typeof c.result === 'object' ? { ...c.result, at: c.endAt ?? c.result.at } : c.result);
     // 経過は呼び出しが始まった時刻から数える（描き直すたびに 0 に戻らない）
     else if (running && i === calls.length - 1 && c.id) markRunning(card, toolStartedAt(c));
     if (link && isBoundary(card.dataset.tool)) link(card, c);
