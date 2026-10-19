@@ -11,6 +11,8 @@ import { backend as claude, setClaudeSdkForTest } from "../../core/backends/clau
 import { normalizeSdkMessage, transcriptToMessages } from "../../core/backends/claude-normalize.mjs";
 import { backend as codex, threadToMessages } from "../../core/backends/codex.mjs";
 import { rpc } from "../../core/backends/codex-rpc.mjs";
+import { createGrokMapper } from "../../core/backends/grok-normalize.mjs";
+import { createDevinMapper } from "../../core/backends/devin-normalize.mjs";
 import { codexComputerConfig, agyComputerName, computerPrompt, withoutImageNotes } from "../../core/backends/computer-delivery.mjs";
 
 export const name = "computer-delivery";
@@ -50,6 +52,26 @@ function fakeClaudeSdk() {
 }
 
 export default async function (t) {
+  for (const [label, createMapper] of [['Grok', createGrokMapper], ['Devin', createDevinMapper]]) {
+    const events = [], mapper = createMapper('computer-fixture', event => events.push(event));
+    mapper.beginTurn('inspect');
+    mapper.accept({ sessionUpdate: 'tool_call', toolCallId: 'shot', title: 'mcp__ply_computer__screenshot', status: 'running' });
+    mapper.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'shot', status: 'completed', content: [{ type: 'content', content: { type: 'text', text: SHOT_TEXT } }] });
+    const result = events.find(e => e.type === 'tool.result');
+    t.ok(`${label}: コンピューターの撮影結果を画像と操作情報に正規化する`, result?.images?.[0]?.shot === SHOT
+      && result.computer?.tool === 'screenshot' && !result.text.includes('[ply_computer]'));
+    mapper.accept({ sessionUpdate: 'tool_call', toolCallId: 'wrapped', title: 'Use tool', rawInput: { tool_name: 'ply_computer__screenshot' }, status: 'running' });
+    mapper.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'wrapped', status: 'completed', rawOutput: JSON.stringify({ type: 'MCP', server_name: 'ply_computer', output: { OkayOutput: SHOT_TEXT + '\ndata:image/jpeg;base64,' + IMAGE } }) });
+    const wrapped = events.find(e => e.type === 'tool.result' && e.id === 'wrapped');
+    t.ok(`${label}: ACPのMCPラッパーから撮影情報を復元し、data URIを除く`, wrapped?.images?.[0]?.shot === SHOT && !wrapped.text.includes('data:image'));
+    mapper.accept({ sessionUpdate: 'tool_call', toolCallId: 'other-marker', title: 'Read file', status: 'running' });
+    mapper.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'other-marker', status: 'completed', rawOutput: SHOT_TEXT });
+    t.ok(`${label}: 他のツールの文字列をコンピューターの撮影と誤認しない`, !events.find(e => e.type === 'tool.result' && e.id === 'other-marker')?.images);
+    mapper.accept({ sessionUpdate: 'tool_call', toolCallId: 'denied', title: 'mcp__ply_computer__click', status: 'running' });
+    mapper.accept({ sessionUpdate: 'tool_call_update', toolCallId: 'denied', status: 'completed', rawOutput: '[ply_computer] {"v":1,"tool":"click","state":"blocked"}' });
+    t.ok(`${label}: MCPの通信成功でも操作の拒否はエラーとして示す`, events.find(e => e.type === 'tool.result' && e.id === 'denied')?.isError === true);
+  }
+
   // ---- 共通の補助
   t.ok("Codex の config: ply_computer（approve・required: false・tool_timeout_sec 660）と、同梱を切る 2 つのプラグインのキー", (() => {
     const c = codexComputerConfig(runtime);

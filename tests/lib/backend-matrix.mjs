@@ -29,7 +29,7 @@ export const ABOUT = {
   compatEndpoints: '互換の接続先を会話ごとに選ぶ',
   compact: '手動・自動の圧縮',
   autoCompactWindow: '委譲の子の自動圧縮の閾値を受け取る',
-  promptSuggestions: '次の発言の候補（native: ターンの中で届く / —: Pleiad がターンの後に作る）',
+  promptSuggestions: '次の発言の候補（native: ターンの中で届く / —: suggestNext がある場合だけターンの後に作る）',
   plyInstructions: 'Pleiad の指示（ユーザーが足した分・既定の項目）を受け取る',
   plyAgents: '委譲の橋（ply_agents。agentRuntime の url・headers・instructions）を受け取る',
   plyContext: 'Pleiad のコンテキスト（ply_context）の受け取り方（turn / conversation）',
@@ -71,6 +71,12 @@ export function renderMatrix(natives) {
   const head = `| 機能 | ${ids.map((id) => natives[id].label ?? id).join(' | ')} |`;
   const rule = `|---|${ids.map(() => '---').join('|')}|`;
   const rows = CAPABILITY_KEYS.map((key) => `| ${ABOUT[key] ?? key}（\`${key}\`） | ${ids.map((id) => cell(natives[id].capabilities?.[key])).join(' | ')} |`);
+  const supplementary = [
+    ['AIからの題名・状態変更・分岐（hostTools または ply_control）', b => Boolean(b.capabilities?.hostTools || b.capabilities?.plyControl)],
+    ['次の発言候補の生成（ネイティブまたは suggestNext）', b => b.capabilities?.promptSuggestions === 'native' || typeof b.suggestNext === 'function'],
+    ['会話タイトル候補の生成（suggestTitle）', b => typeof b.suggestTitle === 'function'],
+    ['プロバイダーの使用枠の取得口（usage。取得できる値はCLI・契約による）', b => typeof b.usage === 'function'],
+  ];
   return [
     '# エージェント × 機能の対応表',
     '',
@@ -83,6 +89,17 @@ export function renderMatrix(natives) {
     head,
     rule,
     ...rows,
+    '',
+    'Devin の plyContext は配達経路を表す。Pleiad担当分のネイティブ読込を止める所有者分離は未実装（[残件](https://github.com/OzEngineJP/pleiad/issues/108)）。',
+    '',
+    '## 共通処理・補助メソッドによる機能',
+    '',
+    '能力の印だけでは判定できない機能。タイトルの編集・分岐・巻き戻しは、ネイティブ実装が無くても Pleiad の共通処理が補う。',
+    '可視化の印は指示の配達を表し、HTML参照の描画・保存は全エージェントに共通。通常のシェルと ply_shell も別の機能。',
+    '',
+    head,
+    rule,
+    ...supplementary.map(([label, supported]) => `| ${label} | ${ids.map(id => cell(supported(natives[id]))).join(' | ')} |`),
     '',
   ].join('\n');
 }

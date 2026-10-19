@@ -45,6 +45,16 @@ export function computerResult(raw, cut) {
   return { ...cut(shown.text), images: shown.images, computer: shown.computer };
 }
 
+/** ACPのMCPラッパーを外す。Grokがtextへ変換した画像のdata URIは履歴へ残さない。 */
+export function acpComputerText(raw) {
+  let text = String(raw ?? '');
+  try {
+    const wrapped = JSON.parse(text);
+    if (wrapped?.type === 'MCP' && wrapped.server_name === COMPUTER_SERVER && typeof wrapped.output?.OkayOutput === 'string') text = wrapped.output.OkayOutput;
+  } catch {}
+  return text.split('\n').filter(line => !/^data:image\/[^;]+;base64,[A-Za-z0-9+/=]+$/.test(line.trim())).join('\n');
+}
+
 /** 印の state から isError（state が ok 以外のとき true。橋の isError と同じ） */
 export const computerFailed = computer => Boolean(computer && computer.state !== 'ok');
 

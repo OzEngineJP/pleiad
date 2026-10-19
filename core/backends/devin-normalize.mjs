@@ -2,6 +2,7 @@
 // existing backends: { uuid, role, text, thinking?, toolCalls? }.
 import crypto from 'node:crypto';
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
+import { computerResult, computerFailed, acpComputerText } from './computer-delivery.mjs';
 
 // Bound previews before retaining state, cloning it or emitting tool events.
 // Result text uses the shared backend limit; structured inputs and ACP diffs
@@ -135,7 +136,10 @@ export function createDevinMapper(sessionId, emit = () => {}) {
       if (['completed', 'failed', 'cancelled'].includes(state.status)) {
         const raw = contentText(state.content) || contentText(state.rawOutput)
           || (state.rawOutput != null ? JSON.stringify(state.rawOutput) : '');
-        const result = { text: cutText(raw, MAX_RESULT_CHARS, '\n…'), isError: state.status !== 'completed', truncated: Boolean(state.truncated) || raw.length > MAX_RESULT_CHARS };
+        const cut = text => ({ text: cutText(text, MAX_RESULT_CHARS, '\n…'), truncated: Boolean(state.truncated) || text.length > MAX_RESULT_CHARS });
+        const computerTool = call.name.includes('ply_computer') || String(state.rawInput?.tool_name ?? '').includes('ply_computer');
+        const result = computerTool ? computerResult(acpComputerText(raw), cut) : cut(raw);
+        result.isError = state.status !== 'completed' || computerFailed(result.computer);
         const changed = JSON.stringify(call.result) !== JSON.stringify(result);
         call.result = result;
         if (changed) send({ type: 'tool.result', id, ...result });
