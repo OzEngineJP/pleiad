@@ -300,7 +300,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           else if (result?.stopReason !== 'end_turn') throw new Error(t('devin.errors.promptFailed'));
         } catch (e) {
           error = fatal ?? e;
-          outcome = !fatal && (hostSignal?.aborted || error.aborted) ? 'aborted' : 'error';
+          // 解除時刻の分かる一時的な上限（rate limit）は limited へ。sent（session/prompt を書き込み済み）
+          // の応答だけに限る: 書き込み前の失敗は undelivered の流れを変えず、送信待ちへ戻せるようにする
+          outcome = !fatal && (hostSignal?.aborted || error.aborted) ? 'aborted'
+            : (!fatal && sent && error?.acpLimit ? 'limited' : 'error');
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
           // 途中送信で並んだ分がまだ回っていれば、その決着まで待つ（区切りが来ず次の回に回った分）。
@@ -320,7 +323,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           if (sessionId) active.delete(sessionId);
           if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
           mapper?.finish();
-          emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('devin.errors.promptFailed')) } : {}) });
+          emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('devin.errors.promptFailed')) } : {}),
+            ...(outcome === 'limited' && error?.acpLimit ? { error: String(error.message), resetsAt: error.acpLimit.resetsAt, window: null } : {}) });
         }
         if (outcome === 'error') throw sent ? error : undelivered(error);
         return { sessionId };

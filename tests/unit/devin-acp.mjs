@@ -176,6 +176,25 @@ export default async function test(t) {
       t.ok('onResponse は同一 batch の ACK・通知を await より先に受信順で通知する', true);
     } finally { await ordered.close(); }
 
+    const limited = launch('');
+    try {
+      await limited.start();
+      const { sessionId } = await limited.call('session/new', { cwd: process.cwd() });
+      const before = Date.now();
+      const failing = limited.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: '[rate-limit]' }] });
+      inject(limited, { jsonrpc: '2.0', id: `pleiad-${limited.nextId}`, error: { code: -32010, message: 'Reached free model rate limit. Your limit will reset in 5 seconds (at 00:00 UTC). (trace ID: fixture)', data: { 'cognition.ai/errorKind': 'unavailable', 'cognition.ai/retryable': true } } });
+      await assert.rejects(failing, error => {
+        assert.equal(error.code, -32010);
+        assert.ok(Number.isSafeInteger(error.acpLimit?.resetsAt) && error.acpLimit.resetsAt >= before + 5000 && error.acpLimit.resetsAt <= Date.now() + 5000);
+        assert.equal(JSON.stringify(error).includes('fixture'), false);
+        return true;
+      });
+      const plain = limited.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'x' }] });
+      inject(limited, { jsonrpc: '2.0', id: `pleiad-${limited.nextId}`, error: { code: -32010, message: 'Reached free model rate limit. Your limit will reset in 5 seconds (at 00:00 UTC).' } });
+      await assert.rejects(plain, error => error.code === -32010 && !Object.hasOwn(error, 'acpLimit'));
+      t.ok('retryable 印つき rate limit 応答だけ構造化した解除時刻を残し、印の無い応答には付けない', true);
+    } finally { await limited.close(); }
+
     let lateCalls = 0;
     const late = launch('', { onRequest: () => { lateCalls++; return {}; } });
     try {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { GrokAcp } from '../../core/backends/grok-acp.mjs';
 import { DevinAcp } from '../../core/backends/devin-acp.mjs';
+import { acpTurnLimit } from '../../core/backends/acp-error.mjs';
 import { currentLocale, setLocale, t as translate } from '../../core/i18n.mjs';
 
 export const name = 'acp-error';
@@ -48,4 +49,28 @@ export default async function test(t) {
       }
     }
   } finally { setLocale(previousLocale); }
+
+  const now = 1_792_425_600_000;
+  const retryable = { 'cognition.ai/errorKind': 'unavailable', 'cognition.ai/retryable': true };
+  const rateMsg = 'Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 12 seconds (at 15:58 UTC). (trace ID: 0000)';
+  assert.deepEqual(acpTurnLimit({ code: -32010, message: rateMsg, data: retryable }, now), { resetsAt: now + 12_000 });
+  assert.deepEqual(acpTurnLimit({ code: -32010, message: 'rate limit reset in 600 seconds', data: retryable }, now), { resetsAt: now + 600_000 });
+  t.ok('retryable + 既知の rate limit 文言 + 相対秒数 → 受信時刻+秒数の有限 resetsAt', true);
+  assert.equal(acpTurnLimit({ code: -32010, message: 'Reached free model rate limit. Your limit will reset soon.', data: retryable }, now), null);
+  t.ok('reset の秒数が読めない応答は有限の時刻を捏造せず null（枠の無期限除外を増やさない）', true);
+  assert.equal(acpTurnLimit({ code: -32010, message: rateMsg, data: { 'cognition.ai/errorKind': 'unavailable' } }, now), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: rateMsg }, now), null);
+  t.ok('provider の retryable 印が無い同じ文言は対象外', true);
+  assert.equal(acpTurnLimit({ code: -32010, message: 'Internal error', data: retryable }, now), null);
+  t.ok('retryable でも rate limit でない文言は対象外', true);
+  assert.equal(acpTurnLimit({ code: -32010, message: 'reset in 99999999999999999999 seconds rate limit', data: retryable }, now), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: 'rate limit reset in 601 seconds', data: retryable }, now), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: 'rate limit reset in 0 seconds', data: retryable }, now), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: rateMsg, data: retryable }, Number.NaN), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: rateMsg, data: { 'cognition.ai/retryable': 'true' } }, now), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: rateMsg, data: 'x' }, now), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: rateMsg, data: retryable }, 8640000000000000), null);
+  assert.equal(acpTurnLimit({ code: -32010, message: rateMsg, data: retryable }, -Number.MAX_SAFE_INTEGER), null);
+  const finite = acpTurnLimit({ code: -32010, message: rateMsg, data: retryable }, now);
+  t.ok('桁あふれ・上限超過・0 秒・無効な now・文字列の "true"・非オブジェクト data を退け、受理したものは有限の safe integer', Number.isSafeInteger(finite.resetsAt));
 }

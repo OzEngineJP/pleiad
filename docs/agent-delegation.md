@@ -266,6 +266,7 @@ Claude の background 起動結果（`backgroundTaskId` または起動を示す
 - **依頼元への知らせ**: 待ちの回（`since`）ごとに 1 回、依頼元へ「再試行待ち通知」（`agent:delegation.retryNoticeLimit` / `retryNoticeError`）を届ける。待つか、`ply_task_cancel` で止めて `ply_delegate` で別の委譲先に任せ直すかを選べる文面。依頼元が `ply_task_wait` で待っていれば、その戻り値が知らせを兼ねる。待ちが明ければ（子のバックエンドが `running` を出せば）実行中に戻る。印はメモリだけ。
 - **上限で止まった子**: 待っても通らない上限（OpenCode の `free_tier_limit`・残高不足・解除時刻付きの `account_rate_limit`）は、子のターンを `turnResult limited` で終える。タスクは `failed` のまま `limit: { resetsAt, window }` を付け、完了通知の結果の前に解除の見込みと任せ直せることを添える（`agent:delegation.noticeLimit` / `noticeLimitUnknown`）。この子への `ply_task_send` は指示を積むが、解除時刻までは走らせない（送信待ちの `limitHolds` と同じ判断。返り値の `warning` は `agent:tasks.limitHeld`、状態に `limitHeld: { resetsAt }`）。
 - 子が OpenCode の task ツールで起こしたサブエージェントの会話の再試行は見ていない（ADR 0229 の「やらないこと」）。
+- **Devin の短期レート制限**: CLI が再試行を終えて rate limit を返したとき、再試行可能の印（`cognition.ai/retryable: true`）と1〜600秒の解除予告（`reset in N seconds`）があれば、送信済みのターンを解除時刻付きの `limited` にする。相対秒数を応答受信時刻に足し、同じ枠を自動振り分けから外し、次の指示は解除まで待たせる。止まった元の指示は自動で送り直さない。解除予告が不明・異常、またはプロンプト送信前の失敗は通常のエラーとして扱う。元のエラー本文・trace ID は渡さず、安全な分類文言と解除時刻だけを残す。
 
 ## 完了通知
 

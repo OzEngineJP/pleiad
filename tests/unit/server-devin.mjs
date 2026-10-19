@@ -17,7 +17,7 @@ export default async function (t) {
   let server, c;
   const permissions = [];
   try {
-    server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: nativeConfig } });
+    server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_ROUTING_USAGE: 'on', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: nativeConfig } });
     c = await open({ port: server.port, token: server.token, onEvent: async (e, self) => { if (e.type === 'permission') { permissions.push(e); await self.cmd('resolvePermission', { id: e.id, allow: false }); } } });
     const models = await c.cmd('models', { backend: 'devin', cwd });
     t.ok('ライブカタログの無料既定と有料候補を返す', models[''].resolvesTo === 'swe-2-high' && models['paid-exact']);
@@ -282,5 +282,44 @@ export default async function (t) {
       }
       t.ok(`承認要求は既知の詳細を非 null patch と統合し、不明操作は拒否する（${kind}）`, true);
     }
+
+    for (const stop of ['max-tokens', 'max-turn-requests']) {
+      const stopped = await c.runTurn({ backend: 'devin', cwd, prompt: `[${stop}]`, model: 'swe-2-high' });
+      const result = stopped.events.find(e => e.type === 'turnResult');
+      t.ok(`${stop} の上限はエラーや解除時刻を足さず limited のまま`, stopped.outcome === 'limited' && !result.error && result.resetsAt === null);
+    }
+    class BeforePromptLimit extends DevinAcp {
+      call(method, ...args) {
+        if (method === 'session/new') return Promise.reject(Object.assign(new Error('fixture rate limit'), { acpLimit: { resetsAt: Date.now() + 5000 } }));
+        return super.call(method, ...args);
+      }
+    }
+    let deliveredBeforeLimit = false;
+    const beforeEvents = [];
+    const beforeBackend = createDevinBackend({ Acp: BeforePromptLimit, catalogue, command, dataDir: path.join(root, 'before-limit') });
+    await assert.rejects(beforeBackend.runTurn({ cwd, prompt: 'not delivered', model: 'swe-2-high', emit: e => beforeEvents.push(e), onPromptDelivered: () => { deliveredBeforeLimit = true; } }), e => e.undelivered === true);
+    t.ok('送信前の上限は未配送の失敗であり、送信済みや limited に変えない', !deliveredBeforeLimit && beforeEvents.find(e => e.type === 'turnResult')?.outcome === 'error');
+
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t3: ['devin:swe-2-high'] } } });
+    await c.cmd('delegationRouting', { refresh: true });
+    const limitBefore = Date.now();
+    const limitTurn = await c.runTurn({ backend: 'devin', cwd, prompt: '[rate-limit] pause', model: 'swe-2-high' });
+    const limitResult = limitTurn.events.find(e => e.type === 'turnResult');
+    t.ok('provider の一時的な rate limit は有限の解除時刻つき limited になる',
+      limitTurn.outcome === 'limited' && Number.isFinite(limitResult?.resetsAt) && limitResult.resetsAt >= limitBefore + 5000 && limitResult.resetsAt <= Date.now() + 5000,
+      JSON.stringify(limitResult));
+    const routeState = await c.cmd('delegationRouting');
+    const heldCandidate = routeState.candidates.find(x => x.candidate === 'devin:swe-2-high');
+    t.ok('制限中の同じモデルを自動振り分けの候補から外し、解除時刻を示す', heldCandidate?.reason === 'recently_limited' && heldCandidate.until === new Date(limitResult.resetsAt).toISOString(), JSON.stringify(heldCandidate));
+    const followFrom = c.mark(), followId = 'devin-limit-followup';
+    await c.cmd('sendMessage', { sessionId: limitTurn.sessionId, messageId: followId, prompt: 'after cooldown' });
+    const queued = (await c.cmd('listMessages', { sessionId: limitTurn.sessionId })).find(x => x.id === followId);
+    t.ok('解除前の次の指示を API に渡さず送信待ちへ保持する', queued?.waiting?.reason === 'limit', JSON.stringify(queued));
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === limitTurn.sessionId && e.outcome === 'ok', { from: followFrom, ms: 15000 });
+    const recovered = await c.cmd('loadSession', { sessionId: limitTurn.sessionId });
+    const userTexts = recovered.messages.filter(x => x.role === 'user').map(x => x.text);
+    t.ok('解除後に次の指示だけを一度送り、失敗した最初の指示は送り直さない', userTexts.filter(x => x === 'after cooldown').length === 1 && userTexts.filter(x => x.endsWith('[rate-limit] pause')).length === 1 && userTexts.length === 2, JSON.stringify(userTexts.map(x => x.slice(-40))));
+    const recoveredRouting = await c.cmd('delegationRouting');
+    t.ok('解除後は同じモデルの制限による除外を外す', recoveredRouting.candidates.find(x => x.candidate === 'devin:swe-2-high')?.reason !== 'recently_limited');
   } finally { c?.close(); await server?.stop(); await fs.rm(root, { recursive: true, force: true }); }
 }

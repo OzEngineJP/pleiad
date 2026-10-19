@@ -212,6 +212,21 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         if (text.includes('[slow]') || token.stubborn) await new Promise(resolve => { const timer = setTimeout(resolve, token.stubborn ? 60000 : Number(process.env.FAKE_DEVIN_SLOW_MS || 5000)); token.wake = () => { clearTimeout(timer); resolve(); }; });
         if (token.cancelled) { running.delete(session.sessionId); for (const steer of session.steerQueue ?? []) write({ id: steer.id, result: { stopReason: 'cancelled' } }); session.steerQueue = []; result = { stopReason: 'cancelled' }; break; }
         if (text.includes('[frame-malformed]')) { process.stdout.write('{not-json}\n'); break; }
+        if (text.includes('[max-tokens]') || text.includes('[max-turn-requests]')) {
+          running.delete(session.sessionId);
+          result = { stopReason: text.includes('[max-tokens]') ? 'max_tokens' : 'max_turn_requests' };
+          break;
+        }
+        // [rate-limit]: 実機（Cognition）の一時的な上限応答。走っている回に積まれた分も同じエラーで決着する
+        if (text.includes('[rate-limit]')) {
+          const error = { code: -32010, message: 'Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 5 seconds (at 00:00 UTC). (trace ID: fixture)', data: { 'cognition.ai/errorKind': 'unavailable', 'cognition.ai/retryable': true } };
+          running.delete(session.sessionId);
+          for (const steer of session.steerQueue ?? []) write({ id: steer.id, error });
+          session.steerQueue = [];
+          result = undefined;
+          write({ id: request.id, error });
+          return;
+        }
         const drift = ['model', 'thought_level', 'speed'].find(kind => text.includes(`[${kind}-drift]`));
         if (drift) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session).map(o => o.id === drift ? { ...o, currentValue: 'unexpected' } : o) });
         if (text.includes('[config-valid]')) update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });

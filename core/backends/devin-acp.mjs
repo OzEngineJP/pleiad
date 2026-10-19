@@ -1,4 +1,4 @@
-import { acpRequestFailure } from './acp-error.mjs';
+import { acpRequestFailure, acpTurnLimit } from './acp-error.mjs';
 import { createLineReader } from '../link-codec.mjs';
 import { spawnCli, cliCommand } from '../cli-installation.mjs';
 import { killTree } from './antigravity-background.mjs';
@@ -196,7 +196,11 @@ export class DevinAcp {
     if (hasError) {
       const e = frame.error;
       const failure = acpRequestFailure(e, 'Devin', 'Devin ACP request failed');
-      pending.reject(rpcError(failure.message, failure.code));
+      const reject = rpcError(failure.message, failure.code);
+      // 構造化した安全な印だけを載せる（wire の message/data/trace id はここから外へ出さない）
+      const limit = acpTurnLimit(e);
+      if (limit) reject.acpLimit = limit;
+      pending.reject(reject);
     } else {
       // Observe ACKs in wire order, before resolving a call can queue its await.
       try { this.onResponse({ method: pending.method, params: pending.params, result: frame.result }); }
