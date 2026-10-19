@@ -385,10 +385,10 @@ button.conn-lost:hover{color:var(--ink)}
 .agent-head .row-be svg,.agent-head .row-be img{width:18px;height:18px}
 .agent-name{font-weight:600;white-space:nowrap}
 .agent-state{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-s);color:var(--ink-weak);white-space:nowrap}
-.agent-state::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink-blue)}
+.agent-state::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;color:var(--ink-blue);background:currentColor}
 .agent-state.out{color:var(--ink-strong);font-weight:600}
-.agent-state.out::before{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-weak)}
-.agent-state.wait::before{background:var(--ink-mark)}
+.agent-state.out::before{color:var(--ink-weak);background:transparent;box-shadow:inset 0 0 0 1.5px currentColor}
+.agent-state.wait::before{color:var(--ink-mark)}
 .agent-actions{display:flex;align-items:center;gap:4px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 .agent-actions .btn{font-size:var(--fs-s);padding:4px 10px}
 .agent-actions .connect .t{white-space:nowrap}
