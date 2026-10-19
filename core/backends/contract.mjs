@@ -64,6 +64,10 @@ export const CAPABILITIES = {
   instructionsAtStart: { valid: bool },
   // 失敗の理由を会話の控え（failureReason）に残し、失敗のログを書く（server.mjs の recordBackendFailure）
   failureDiagnostics: { valid: bool },
+  // プロンプトが相手に渡った合図を、返答の出来事とは別に出せる（runArgs.onPromptDelivered → server の initialDelivered）。
+  // false なら「合図が無い = 渡っていない」とは言えない（agy は入力を受け取っても黙って捨てうる）ので、
+  // 無出力で終わった発言を未達（failed・自動再送の対象）にせず結果不明（unknown）にする（server.mjs の closeTurn）
+  promptDelivery: { valid: bool },
   // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
   handover: { valid: bool, requires: (v) => (v ? ['adoptTurn'] : []) },
   // エージェントのブラウザー（会話の Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser と指示）を受け取る（docs/inapp-browser.md）
@@ -85,7 +89,7 @@ export const NO_CAPABILITIES = Object.freeze({
   title: false, tag: false, fork: false, forkMessage: false, rewind: false, subagents: false, liveModel: false, liveMode: false,
   hostTools: false, approvals: 'none', alwaysAllow: false, mcpApproval: 'agent', login: false, accounts: false, compatEndpoints: false,
   compact: false, autoCompactWindow: false, promptSuggestions: false, plyAgents: false, plyContext: false, computerUse: false,
-  shell: false, plyShell: false, nativeShellOff: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, handover: false,
+  shell: false, plyShell: false, nativeShellOff: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: false, handover: false,
   browser: false, plyControl: false, secrets: false, visualize: false, hooks: false,
 });
 

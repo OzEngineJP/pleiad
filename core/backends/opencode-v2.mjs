@@ -245,12 +245,15 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
     if(tail==='summarize')return value('POST',`${at}/compact`,{body:{id:body.id ?? `msg_${crypto.randomUUID().replaceAll('-','')}`,delivery:'steer'}});
     if(tail==='message'&&body.noReply) return value('POST',`${at}/synthetic`,{body:{text:body.parts.map(p=>p.text??'').join(''),resume:false}});
     if(tail==='prompt_async') {
-      if(!turns.has(sid))turns.set(sid,Date.now());
+      // A stable ID also makes an ambiguous HTTP timeout safe to reconcile.
+      const id=body.id ?? `msg_${crypto.randomUUID().replaceAll('-','')}`;
+      // 受理の応答を待つ間にも出来事が届くので、送る前にターンの開始を記録する。
+      // 発言の id も控える: 受理前の終了が別の実行のものかは、発言がまだ inbox に残っているかで見分ける（下の event）
+      const slot=turns.get(sid)??turns.set(sid,{since:Date.now()}).get(sid);
+      slot.id??=id;
       if(body.model)await request('POST',`${at}/model`,{body:{model:{providerID:body.model.providerID,id:body.model.modelID,...(body.variant?{variant:body.variant}:{})}}});
       if(body.agent)await request('POST',`${at}/agent`,{body:{agent:body.agent}});
       if(body.system!==undefined)setSystem(sid,body.system);
-      // A stable ID also makes an ambiguous HTTP timeout safe to reconcile.
-      const id=body.id ?? `msg_${crypto.randomUUID().replaceAll('-','')}`;
       const receipt=await admit(sid,id,{text:body.parts.map(p=>p.text??'').join(''),delivery:body.delivery ?? 'steer'},options);
       if(turns.has(sid))admitted.add(sid);
       return receipt;
@@ -265,7 +268,7 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
     if(raw.type==='form.created') {if(p.form?.sessionID!=='global')emit('question.asked',question(p.form));return;}
     if(!sid)return;
     if(raw.type.startsWith('session.compaction.')) {
-      const since=turns.get(sid);
+      const since=turns.get(sid)?.since;
       if(since && !raw.type.endsWith('.delta'))replay((await history(sid)).filter(m=>m.info.type==='compaction' && m.info.time.created>=since));
       return;
     }
@@ -299,12 +302,25 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
     }
     if(/^session\.execution\.(succeeded|failed|interrupted)$/.test(raw.type)) {
       const failed=raw.type.endsWith('failed');
-      // 走っているターンの会話でなければ捨てる。受理の記録が付く前・失われた後に即終わった失敗（4xx など）は、
-      // 受理の有無に関わらずこのターンの失敗として締める。落とすと session.idle が届かず「返答が来ない」まま残る
-      if(!turns.has(sid) || (!admitted.has(sid) && !failed))return;
+      const slot=turns.get(sid);
+      const since=slot?.since;
+      // 走っているターンの会話でなければ捨てる。このターンの開始（since）より前に起きた終了も捨てる:
+      // 受理の応答を待つ間（admit）にも、同じ会話の別の実行（TUI 側・前のターンの遅延）の終了が届くことがあり、
+      // そのまま締めると本物の出力を捨ててしまう（実行の終了の出来事には実行の id が無いので、時刻で切る）。
+      // 受理の記録が付く前・失われた後に即終わった失敗（4xx など）は、受理の有無に関わらずこのターンの失敗として締める。
+      // 落とすと session.idle が届かず「返答が来ない」まま残る
+      const created=millis(raw.created);
+      if(since===undefined||(Number.isFinite(created)&&created<since)||(!admitted.has(sid)&&!failed))return;
+      // 受理前の失敗で、このターンの発言がまだ inbox に並んでいるなら、終わったのは前の実行（発言は順に消費される）。
+      // その場合は締めない（並んでいる発言はあとの実行が拾う）
+      if(!admitted.has(sid)&&slot.id){
+        try {
+          const inbox=await value('GET',`/api/session/${sid}/inbox`);
+          if(Array.isArray(inbox)&&inbox.some(item=>item.id===slot.id))return;
+        } catch {}
+      }
       // Terminal full values repair dropped deltas; existing part IDs prevent double accounting.
-      const since=turns.get(sid);
-      if(since)replay((await history(sid)).filter(m=>m.info.time.created>=since));
+      replay((await history(sid)).filter(m=>m.info.time.created>=since));
       if(p.error)emit('session.error',{sessionID:sid,error:p.error});
       else if(failed)emit('session.error',{sessionID:sid,error:{name:'execution.failed',message:'OpenCode execution failed'}});
       if(raw.type.endsWith('interrupted'))emit('session.error',{sessionID:sid,error:{name:'MessageAbortedError',message:'Interrupted'}});
@@ -314,8 +330,8 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
     if(raw.type==='session.step.started')emit('session.status',{sessionID:sid,status:{type:'busy'}});
   }
   async function resync({snapshot=true}={}) {
-    for(const [sid,since] of snapshot?turns:[]) {
-      replay((await history(sid)).filter(m=>m.info.time.created>=since));
+    for(const [sid,slot] of snapshot?turns:[]) {
+      replay((await history(sid)).filter(m=>m.info.time.created>=slot.since));
       emit('pleiad.resync',{sessionID:sid});
     }
     for(const p of await pending('permission'))emit('permission.asked',p);
@@ -326,10 +342,10 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
       if(!Array.isArray(inbox))throw new Error('OpenCode v2: invalid inbox response');
       if(!inbox.length) {
         // 最初の履歴取得と active の確認の間に終わった応答を回収してから締める。
-        replay((await history(sid)).filter(m=>m.info.time.created>=turns.get(sid)));
+        replay((await history(sid)).filter(m=>m.info.time.created>=turns.get(sid)?.since));
         emit('session.idle',{sessionID:sid});turns.delete(sid);admitted.delete(sid);
       }
     }
   }
-  return {request:dispatch,event,history,pending,resync,begin(sid,since,accepted=false){sessions.add(sid);if(since){turns.set(sid,since);if(accepted)admitted.add(sid);else admitted.delete(sid);}}};
+  return {request:dispatch,event,history,pending,resync,begin(sid,since,accepted=false,id){sessions.add(sid);if(since){turns.set(sid,{since,id});if(accepted)admitted.add(sid);else admitted.delete(sid);}}};
 }

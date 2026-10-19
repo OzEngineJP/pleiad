@@ -360,6 +360,10 @@ async function runTurn(text) {
       usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } });
   }
 
+  // 何も出さずに終わるまで待つターン（quiet）。プロンプトは受け取るが、本文・ツール・result を一切出さない。
+  // 「渡った」合図を出せない backend（agy）が、受け取ったまま無出力で終わる形を作る。呼び出し側の中断（kill）で終わる
+  if (text.startsWith("quiet")) return;
+
   // 中断を測るための、終わらないターン
   if (text.startsWith("slow")) {
     step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "待つ" });
@@ -528,6 +532,8 @@ process.stdin.on("data", (chunk) => {
     const text = typeof content === "string"
       ? content
       : (content ?? []).filter((b) => b?.type === "text").map((b) => b.text).join("");
+    // 受け取ったプロンプトを 1 行ずつ控える（再送で二重に届かないことを数える試験用）
+    if (process.env.FAKE_AGY_PROMPT_LOG) { try { fs.appendFileSync(process.env.FAKE_AGY_PROMPT_LOG, `${text.replaceAll("\n", " ")}\n`); } catch {} }
 
     if (needsAuth && !authorized) {
       pendingPrompt = text;

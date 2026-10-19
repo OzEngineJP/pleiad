@@ -1098,7 +1098,8 @@
     "full": "送信待ちは{{max}}件までです",
     "notEditable": "このメッセージは変更できません",
     "invalidAction": "不正な操作です",
-    "undelivered": "エージェントに渡る前にターンが終わりました"
+    "undelivered": "エージェントに渡る前にターンが終わりました",
+    "uncertain": "エージェントに届いたか分からないままターンが終わりました"
   },
   "review": {
     "needFake": "審査モード（AGENT_HOST_REVIEW=1）は、有効なバックエンドが fake だけのときに使えます（今: {{backends}}）。起動しません。",

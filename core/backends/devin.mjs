@@ -18,10 +18,12 @@ const choices = values => (values ?? []).flatMap(v => Array.isArray(v?.options) 
 const abortError = () => Object.assign(new Error('Devin turn cancelled'), { aborted: true });
 const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_DEVIN_LOGIN_MS ?? 10 * 60_000);
 const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_DEVIN_POLL_MS ?? 3_000);
+// 数値でない環境変数は NaN になり、NaN との比較は常に false で待ちが止まらなくなる。数値でなければ既定に戻す
+const envMs = (name, fallback) => { const v = Number(process.env[name]); return Number.isFinite(v) ? v : fallback; };
 // /compact の応答は圧縮の前に返る。圧縮が効いたかの合図（通知・使用量の減少・継続ノードの追加）を待つ上限と、
 // 何も合図が来なければ「圧縮するものが無い」と判断するまでの待ち（CLI 3000.11.92 は通知を 1 秒ほどで送る）
-const COMPACT_VERIFY_MS = Number(process.env.AGENT_HOST_DEVIN_COMPACT_WAIT_MS ?? 120_000);
-const COMPACT_QUIET_MS = Number(process.env.AGENT_HOST_DEVIN_COMPACT_QUIET_MS ?? 15_000);
+const COMPACT_VERIFY_MS = envMs('AGENT_HOST_DEVIN_COMPACT_WAIT_MS', 120_000);
+const COMPACT_QUIET_MS = envMs('AGENT_HOST_DEVIN_COMPACT_QUIET_MS', 15_000);
 const configSetting = (options, kind) => options.filter(o => o?.id === kind || o?.category === kind);
 function matchesVerified(options, verified) {
   if (!Array.isArray(options) || options.some(o => typeof o?.id !== 'string') || new Set(options.map(o => o.id)).size !== options.length) return false;
@@ -104,7 +106,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   let pendingAuth = null;
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
-    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true,
+    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true, promptDelivery: true,
       // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control・ply_computer・ply_context を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
       browser: true, plyControl: true, secrets: true, visualize: true,
       // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
@@ -215,8 +217,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               const event = devinCompactionFromNotification(params);
               if (!event) return;
               if (event.status === 'started') { emit({ type: 'compaction', phase: 'start', trigger: 'auto' }); emit({ type: 'activity', state: 'compacting' }); }
-              else if (event.status === 'completed') emit({ type: 'compaction', phase: 'complete', trigger: 'auto', ...(event.summary ? { summary: event.summary } : {}) });
-              else if (event.status === 'failed') emit({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: event.reason ?? t('compaction.noCompletion') });
+              // 完了・失敗のあとは稼働表示を compacting のまま残さない。ターンは続くので thinking に戻す（次の出来事で更に変わる）
+              else if (event.status === 'completed') { emit({ type: 'compaction', phase: 'complete', trigger: 'auto', ...(event.summary ? { summary: event.summary } : {}) }); emit({ type: 'activity', state: 'thinking' }); }
+              else if (event.status === 'failed') { emit({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: event.reason ?? t('compaction.noCompletion') }); emit({ type: 'activity', state: 'thinking' }); }
             },
             onRequest: async (method, params) => {
               if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
@@ -321,7 +324,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     },
     /**
      * 会話の圧縮（/compact）。ACP のスラッシュコマンドは、host が prompt の本文として送る。
-     * Devin の自動圧縮は ACP の会話には出ない（CLI の変更履歴）ので、区切りはここで出す。
+     * 手動の区切りはここで出す。Devin 内部の自動圧縮は `_cognition.ai/compaction` 通知で拾い、
+     * 走っているターンでは runTurn の onNotification が区切りを出す（transcript の継続ノードは getCompactions が読む）。
      * 第 1 引数の sessionId はネイティブの id（core/conversations.mjs が host の id から訳す）。
      * 前後の文脈量は、Devin が流す usage_update（文脈の占有）から取る。来なければ量は付けない
      *
@@ -340,17 +344,18 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       let nothingShown = false;
       const onAbort = () => { local.abort(); try { client?.notify('session/cancel', { sessionId }); } catch {} };
       hostSignal?.addEventListener('abort', onAbort, { once: true });
-      // 区切りの位置（issue #105）: 直前の発言の uuid を afterMessageId にする（codex.mjs の区切りと同じ形。
-      // Devin の発言は時刻を持たないので、画面は uuid アンカーでしか置けない）。
-      // ホスト記録の会話は記録の行の uuid、ネイティブだけの会話は再生の行の uuid（どちらも画面の data-uuid と同じ値）
-      const last = (hostBackend && hostSessionId
-        ? await hostBackend.getMessages(hostSessionId).catch(() => [])
-        : cache.get(sessionId)?.messages() ?? []
-      ).filter(m => m?.uuid).at(-1);
-      const boundary = last?.uuid ? { afterMessageId: last.uuid } : {};
-      const known = new Set(devinCompactionsFromDb({ dataDir, sessionId, dbFile }).map(e => e.nativeId));
-      const newBoundary = () => devinCompactionsFromDb({ dataDir, sessionId, dbFile }).find(e => !known.has(e.nativeId)) ?? null;
+      // リスナーを登録したあとの await は try の中へ（ここで投げるとリスナーが外れない）
       try {
+        // 区切りの位置（issue #105）: 直前の発言の uuid を afterMessageId にする（codex.mjs の区切りと同じ形。
+        // Devin の発言は時刻を持たないので、画面は uuid アンカーでしか置けない）。
+        // ホスト記録の会話は記録の行の uuid、ネイティブだけの会話は再生の行の uuid（どちらも画面の data-uuid と同じ値）
+        const last = (hostBackend && hostSessionId
+          ? await hostBackend.getMessages(hostSessionId).catch(() => [])
+          : cache.get(sessionId)?.messages() ?? []
+        ).filter(m => m?.uuid).at(-1);
+        const boundary = last?.uuid ? { afterMessageId: last.uuid } : {};
+        const known = new Set(devinCompactionsFromDb({ dataDir, sessionId, dbFile }).map(e => e.nativeId));
+        const newBoundary = () => devinCompactionsFromDb({ dataDir, sessionId, dbFile }).find(e => !known.has(e.nativeId)) ?? null;
         client = await openClient(dir, {
           onGone: error => { fatal = error; local.abort(); },
           onUpdate: params => {
@@ -396,6 +401,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           }
           if (done || dropped || node) {
             emit({ type: 'compaction', phase: 'complete', trigger, ...boundary,
+              // DB の継続ノードの id を載せると、読み直し（getCompactions）の区切りと照合できる
+              ...(node ? { nativeId: node.nativeId } : {}),
               ...(dropped ? { beforeTokens: before, afterTokens: after } : {}),
               ...(done?.summary ?? node?.summary ? { summary: done?.summary ?? node.summary } : {}) });
             return { sessionId };

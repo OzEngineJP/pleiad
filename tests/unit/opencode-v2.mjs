@@ -103,6 +103,25 @@ export default async function(t) {
   assert(!events.some(e=>['session.error','session.idle'].includes(e.type)));
   t.ok('A provider failure closes the turn even before admission is recorded; foreign executions still do not end it',true);
 
+  // 受理の応答を待つ間に届いた、同じ会話の別の実行（TUI 側・前のターンの遅延）の終了で誤って締めない（issue #101 系のレビュー）。
+  // 実行の終了の出来事には実行の id が無いので、ターンの開始（begin の時刻）より前に起きたものは捨て、
+  // 受理前の失敗でも発言がまだ inbox に残っているなら前の実行のものとして捨てる
+  events.length=0;
+  protocol.begin('stale',1000);            // ターンは始まった（受理はまだ）
+  await protocol.event({type:'session.execution.failed',created:999,data:{sessionID:'stale',error:{message:'previous run'}}});
+  assert(!events.some(e=>['session.error','session.idle'].includes(e.type)));
+  await protocol.event({type:'session.execution.failed',created:1001,data:{sessionID:'stale',error:{message:'this run'}}});
+  assert(events.some(e=>e.type==='session.error'&&e.properties.error.message==='this run')&&events.some(e=>e.type==='session.idle'));
+  events.length=0;
+  inbox.set('queued',[ {id:'msg_ours'} ]);  // 発言がまだ並んでいる間に届いた失敗は前の実行のもの
+  protocol.begin('queued',1000,false,'msg_ours');
+  await protocol.event({type:'session.execution.failed',created:1001,data:{sessionID:'queued',error:{message:'previous run'}}});
+  assert(!events.some(e=>['session.error','session.idle'].includes(e.type)));
+  inbox.set('queued',[]);
+  await protocol.event({type:'session.execution.failed',created:1002,data:{sessionID:'queued',error:{message:'ours'}}});
+  assert(events.some(e=>e.type==='session.error'&&e.properties.error.message==='ours'));
+  t.ok('A stale or still-queued foreign execution end does not close the turn; a fresh one does',true);
+
   // 履歴の idle 記録（type:'idle', outcome:'failed', error）もターンの失敗になる
   const idleError={type:'provider.invalid-request',message:'region not allowed',status:400};
   const idleMapper=createTurnMapper({sessionId:'s2',emit:()=>{}});

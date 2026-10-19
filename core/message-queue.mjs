@@ -131,6 +131,17 @@ export function createMessageQueue({ store, active, start, changed, delivered })
       item.error = error;
       await save(id, items);
     }),
+    // 渡った合図を出せないバックエンド（能力の印 promptDelivery = false）で、渡ったか分からないまま終わった発言。
+    // 届いているかもしれないので、自動で送り直すとネイティブの履歴に二重に登る。失敗（failed は再開で自動再送される）
+    // ではなく結果不明（unknown）にし、利用者が確かめてから再送か取り消しを選ぶ
+    uncertain: (id, messageId, error) => serial(id, async () => {
+      const items = await list(id);
+      const item = items.find(m => m.id === messageId);
+      if (!item || item.status !== 'sent') return;
+      item.status = 'unknown';
+      item.error = error;
+      await save(id, items);
+    }),
     // 受理された途中送信が、読まれないまま捨てられた。勝手に送り直さず、保留にして利用者に選ばせる
     // （ターンが死んだ直後なので、続けて送ってよいかは分からない）
     returned: (id, messageId) => serial(id, async () => {

@@ -143,7 +143,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   let pendingAuth = null;
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true,
+    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true, promptDelivery: true,
       // ACP の session/new・session/load の mcpServers（type: 'http'）に ply_agents を、その instructions を発言へ足して渡す。
       // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
       plyAgents: true, hooks: true },

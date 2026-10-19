@@ -57,6 +57,7 @@ export const CAPABILITY_CONTRACTS = {
   effortInModelId: ['effort', 'devin-models', 'server-devin'],
   instructionsAtStart: ['bot-dispatch'],
   failureDiagnostics: ['server-antigravity', 'server-devin'],
+  promptDelivery: ['message-queue', 'server-antigravity'],
   handover: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'],
   browser: ['agent-browser-env', 'browser-bridge', 'server-devin'],
   plyControl: ['control-delivery', 'ops-control', 'server-devin'],
