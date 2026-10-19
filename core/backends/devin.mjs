@@ -100,8 +100,11 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
     capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true,
-      // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control・ply_computer を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
+      // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control・ply_computer・ply_context を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
       browser: true, plyControl: true, secrets: true, visualize: true,
+      // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
+      // （load_skill・instructions_for_path）と外部 MCP は ply_context の MCP（type: 'http'）越しに渡す。口はターンごと
+      plyContext: 'turn',
       computerUse: { images: 'inline', waitSliceMs: null } },
     modes,
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
@@ -174,7 +177,6 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         let error = null, outcome = 'ok';
         try {
           if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
-          if (args.contextRuntime) throw new Error(t('context.runtime.refused', { backend: 'Devin CLI' }));
           check();
           // モデル一覧・CLI の起動・履歴の再生・設定の適用は送る前に済ませるが、数秒黙る。
           // その間も画面が止まって見えないよう、準備中から稼働表示に出す
@@ -217,9 +219,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             },
           }, extraEnv);
           check();
-          // Pleiad の MCP（ply_browser・ply_control）は ACP の mcpServers で渡す（type: 'http' が要る。外すと session/new が Invalid params で断る）
+          // Pleiad の MCP（ply_browser・ply_control・ply_context）は ACP の mcpServers で渡す（type: 'http' が要る。外すと session/new が Invalid params で断る）
           const acpMcp = (name, runtime) => (runtime?.url ? [{ name, type: 'http', url: runtime.url, headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : []);
-          const mcpServers = [...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime), ...acpMcp(COMPUTER_SERVER, args.computerRuntime)];
+          const mcpServers = [...acpMcp('ply_context', args.contextRuntime), ...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime), ...acpMcp(COMPUTER_SERVER, args.computerRuntime)];
           let state;
           if (sessionId) {
             mapper = createDevinMapper(sessionId, emit);
@@ -253,7 +255,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           // 読み取り専用のモードでは、ブラウザーの指示を「操作しない」に読み替える（agent-browser は読むだけでもデーモンの書き込みが要る。Codex と同じ）
           let browserInstructions = args.browserInstructions;
           if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.contextRuntime?.prompt, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
           mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });

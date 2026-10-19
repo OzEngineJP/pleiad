@@ -22,7 +22,7 @@ export default async function (t) {
     const models = await c.cmd('models', { backend: 'devin', cwd });
     t.ok('ライブカタログの無料既定と有料候補を返す', models[''].resolvesTo === 'swe-2-high' && models['paid-exact']);
     const backends = await c.cmd('backends');
-    t.ok('未実装機能を表示せず、思考は variant ID で選ぶ', backends[0].capabilities.plyContext === false && !backends[0].capabilities.accounts && backends[0].capabilities.effortInModelId && backends[0].capabilities.approvals === 'interactive');
+    t.ok('未実装機能を表示せず、思考は variant ID で選ぶ', backends[0].capabilities.plyContext === 'turn' && !backends[0].capabilities.accounts && backends[0].capabilities.effortInModelId && backends[0].capabilities.approvals === 'interactive');
     const first = await c.runTurn({ backend: 'devin', cwd, prompt: '[permission] alpha', model: 'swe-2-medium', mode: 'accept-edits' });
     const sid = first.sessionId, loaded = await c.cmd('loadSession', { sessionId: sid });
     t.ok('承認を Pleiad に渡し、本文・思考・ツールの結果を保存する', first.outcome === 'ok' && permissions.length === 1 && loaded.messages.some(m => m.role === 'assistant' && m.thinking && m.toolCalls?.length));
@@ -64,6 +64,44 @@ export default async function (t) {
     t.ok('別 cwd は別プロセスで起動し native 設定の場所を保つ', observed.cwd === other && observed.configHome === nativeConfig);
     // ply_control は ACP の mcpServers（type: 'http'）と会話束縛の CLI の env で届く（印 plyControl。ブラウザーは Chrome の層が無い試験では渡らない）
     t.ok('ply_control を mcpServers で渡し、会話束縛の CLI の環境変数が届く', observed.mcpServers?.includes('ply_control') && observed.seenEnv?.includes('PLEIAD_CONTROL_URL') && observed.seenEnv?.includes('PLEIAD_CONTROL_TOKEN'), JSON.stringify({ mcpServers: observed.mcpServers, seenEnv: observed.seenEnv }));
+
+    // ---- Pleiad 担当のコンテキスト（指示・Skills・外部 MCP。issue #102）。ACP には指示の欄が無いので、
+    // 指示と Skills の一覧は発言の前に注入文として足し、本文の読み出し（load_skill）と外部 MCP は ply_context の MCP 越しに届く
+    const contextCwd = path.join(root, 'context-project');
+    await fs.mkdir(path.join(contextCwd, '.git'), { recursive: true });
+    await fs.mkdir(path.join(contextCwd, '.claude', 'skills', 'demo'), { recursive: true });
+    await fs.writeFile(path.join(contextCwd, 'AGENTS.md'), 'PROJECT-RULE-DEVIN');
+    await fs.writeFile(path.join(contextCwd, '.claude', 'skills', 'demo', 'SKILL.md'), '---\nname: demo\ndescription: Demo skill for the devin test\n---\n\nDEMO-SKILL-BODY\n');
+    const fixtureMcp = path.join(root, 'fixture-mcp.mjs');
+    await fs.writeFile(fixtureMcp, `import readline from 'node:readline';for await(const line of readline.createInterface({input:process.stdin})){const m=JSON.parse(line);if(m.id===undefined)continue;const result=m.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'echo',description:'Echo',inputSchema:{type:'object'}}]}:m.method==='tools/call'?{content:[{type:'text',text:'echo:devin-fixture'}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');}`);
+    await fs.writeFile(path.join(contextCwd, '.mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [fixtureMcp] } } }));
+    const noScan = { sources: [], excludePaths: [] };
+    for (const kind of ['instruction', 'skill', 'mcp']) await c.cmd('setContextSettings', { cwd: contextCwd, place: contextCwd, kind, value: { owner: 'ply', user: noScan, directory: { sources: ['common', 'claude'], excludePaths: [] } } });
+    const ctxFirst = await c.runTurn({ backend: 'devin', cwd: contextCwd, prompt: 'ctx-check', model: 'swe-2-high' });
+    const ctxSent = ctxFirst.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    t.ok('Pleiad 担当の指示と Skills の一覧を注入文として発言の前に足して送る', ctxFirst.outcome === 'ok' && ctxSent.includes('PROJECT-RULE-DEVIN') && /demo: Demo skill/.test(ctxSent), ctxSent.slice(-400));
+    const ctxSession = ctxFirst.sessionId;
+    const ctxRecord = await c.cmd('sessionContext', { sessionId: ctxSession });
+    t.ok('会話の記録に Pleiad 担当として残る（外部 MCP は接続済み）', ctxRecord?.report?.status === 'ready' && !ctxRecord.report.guardedBackend
+      && ctxRecord.report.entries.find(e => e.kind === 'instruction')?.status === 'supplied'
+      && ctxRecord.report.entries.find(e => e.kind === 'skill')?.status === 'available'
+      && ctxRecord.report.entries.find(e => e.name === 'fixture')?.status === 'connected', JSON.stringify(ctxRecord?.report?.entries?.map(e => [e.name, e.status])));
+    // 再開（session/load）でもその回の ply_context を渡し直す。身代わりが口へ実際に問い合わせる
+    const toolsTurn = await c.runTurn({ sessionId: ctxSession, prompt: '[context-tools]', model: 'swe-2-high' });
+    const toolsText = toolsTurn.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    let toolsListed = []; try { toolsListed = JSON.parse(toolsText); } catch {}
+    t.ok('ply_context の口から load_skill・instructions_for_path・外部 MCP のツールが見える', toolsTurn.outcome === 'ok' && Array.isArray(toolsListed)
+      && ['load_skill', 'instructions_for_path'].every(n => toolsListed.some(x => x.name === n))
+      && toolsListed.some(x => (x.description ?? '').includes('[fixture / echo]')), toolsText.slice(0, 400));
+    const mcpTool = toolsListed.find(x => (x.description ?? '').includes('[fixture / echo]'))?.name;
+    const echoTurn = await c.runTurn({ sessionId: ctxSession, prompt: `context:{"name":${JSON.stringify(mcpTool)},"arguments":{}}`, model: 'swe-2-high' });
+    const echoText = echoTurn.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    t.ok('外部 MCP のツールを ply_context 越しに呼べる', echoTurn.outcome === 'ok' && echoText === '"echo:devin-fixture"', echoText.slice(0, 200));
+    const skillId = ctxRecord.report.entries.find(e => e.kind === 'skill')?.id;
+    const skillTurn = await c.runTurn({ sessionId: ctxSession, prompt: `context:{"name":"load_skill","arguments":{"id":${JSON.stringify(skillId)}}}`, model: 'swe-2-high' });
+    const skillText = skillTurn.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    t.ok('Skill の本文を load_skill で読める', skillTurn.outcome === 'ok' && skillText.includes('DEMO-SKILL-BODY'), skillText.slice(0, 200));
+
     for (const marker of ['model', 'thought_level', 'speed', 'mode']) {
       const turn = await c.runTurn({ backend: 'devin', cwd, prompt: `[${marker}-drift]`, model: 'swe-2-high' });
       t.ok(`実行中の確認済み設定の変更を拒否する（${marker}）`, turn.outcome === 'error');
