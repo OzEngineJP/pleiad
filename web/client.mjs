@@ -4742,6 +4742,9 @@ function homeBotSetup(bot) {
   const mode = state.modes?.[state.mode]?.label ?? state.mode ?? '';
   return [labelOf(bot.backend), modelChipLabel(state.models, state.model, state.efforts, state.effort), mode].filter(Boolean).join(' · ');
 }
+// 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）。
+// 入力欄の controls は作る時点で get() を呼ぶ（承認モードのチップの when）ので、それより前に作る
+const usageSource = createUsageSource(cmd);
 // i18n-dynamic: channels:side.botState.
 const controls = chatComposer.useControls({
   cmd,
@@ -10226,8 +10229,6 @@ function watchRemoteReason() {
   Promise.resolve(remote.status?.()).then(apply).catch(() => {});
   remote.onStatus?.(apply);
 }
-// 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）
-const usageSource = createUsageSource(cmd);
 usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); });
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });

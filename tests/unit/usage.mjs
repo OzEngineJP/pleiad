@@ -26,6 +26,13 @@ export default async function(t) {
 }
 
 async function japaneseCases(t) {
+  // 画面の起動: 入力欄の controls は作る時点で get() を呼び（承認モードのチップの when）、get() は usageSource を読む。
+  // usageSource をそれより後で作ると、起動で ReferenceError になり画面が会話の一覧を出さずに止まる（0.27.0〜0.28.1）
+  const clientSource = await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+  const sourceAt = clientSource.indexOf('const usageSource = createUsageSource(');
+  const controlsAt = clientSource.indexOf('chatComposer.useControls(');
+  assert.ok(sourceAt >= 0 && controlsAt >= 0 && sourceAt < controlsAt, 'usageSource は入力欄の controls より前に作る');
+  t.ok('usageSource を入力欄の controls より前に作る', true);
   assert.equal(usageWindow('5h', null, null, 300).remainingPercent, null);
   assert.equal(usageWindow('5h', 0, null, 300).remainingPercent, 100);
   assert.equal(usageWindow('5h', 110, null, 300).remainingPercent, 0);
