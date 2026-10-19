@@ -51,6 +51,13 @@ const configs = session => [
 ];
 const write = frame => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...frame })}\n`);
 const update = (sessionId, value) => write({ method: 'session/update', params: { sessionId, update: value } });
+function usageUpdate(session, usage = { inputTokens: 1000, outputTokens: 100, cachedReadTokens: 800 }) {
+  session.lastUsage = usage;
+  const meta = Object.fromEntries(Object.entries(usage).map(([key, value]) => [`cognition.ai/${key}`, value]));
+  update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window, _meta: meta });
+  update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window,
+    _meta: { ...meta, 'cognition.ai/subagent_context': {} } });
+}
 const compactionNotice = (session, params) => write({ method: '_cognition.ai/compaction', params: { sessionId: session.sessionId, ...params } });
 // 圧縮が適用されると実機は message_nodes に継続用の system ノード（metadata.summarized_from 付き）を足す。
 // 区切りの読み取り（core/backends/devin-compaction.mjs）の試験のため、同じ形で SQLite に書く
@@ -131,7 +138,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         // ターンごとに届く接続先（ply_context の口はターンごとのトークン）。再開でもその回の分を覚える
         session.mcpServers = p.mcpServers ?? []; persist(session);
         replay(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
-        update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used ?? 120000, size: session.window ?? 262000 });
+        if (session.lastUsage) usageUpdate(session, session.lastUsage);
+        else update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used ?? 120000, size: session.window ?? 262000 });
         result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
       }
       case 'session/list': {
@@ -275,9 +283,13 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         }
         const steers = session.steerQueue ?? []; session.steerQueue = [];
         // 保存は応答を書く前に終える。親は応答を受けるとプロセスを止めるので、後に回すと書きかけで残る
-        session.used = Math.min(session.window, (session.used ?? 120000) + 30000); persist(session); running.delete(session.sessionId);
-        update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used, size: session.window });
-        result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn', permissionResult };
+        session.used = Math.min(session.window, (session.used ?? 120000) + 30000);
+        if (text.includes('[usage-multi]')) {
+          usageUpdate(session, { inputTokens: 400, outputTokens: 10, cachedReadTokens: 100 });
+          update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'next model request' } });
+        }
+        usageUpdate(session); persist(session); running.delete(session.sessionId);
+        result = { stopReason: token.cancelled ? 'cancelled' : 'end_turn', permissionResult, usage: session.lastUsage };
         write({ id: request.id, result });
         // 折り込まれた途中送信も、同じ回の続きとして返し、並んだ順に応答を書く
         for (const steer of steers) {
@@ -288,8 +300,9 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           const steerReply = `fixture: ${steer.text}`, steerMiddle = Math.ceil(steerReply.length / 2);
           update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: steerReply.slice(0, steerMiddle) } });
           update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: steerReply.slice(steerMiddle) } });
-          session.messages.push({ role: 'assistant', text: steerReply, thinking: 'fixture thought' }); persist(session);
-          write({ id: steer.id, result: { stopReason: 'end_turn' } });
+          session.messages.push({ role: 'assistant', text: steerReply, thinking: 'fixture thought' });
+          usageUpdate(session, { inputTokens: 2000, outputTokens: 200, cachedReadTokens: 1600 }); persist(session);
+          write({ id: steer.id, result: { stopReason: 'end_turn', usage: session.lastUsage } });
         }
         return;
       }
