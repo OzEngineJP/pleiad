@@ -238,6 +238,13 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               if (fatal) return;
               mapper?.accept(params.update);
             },
+            // _x.ai/interject の受理確認通知: 通知の届いた位置へ user 行を置き、履歴の uuid を nativeId に使う
+            onInterjection: params => {
+              if (!params || (sessionId && params.sessionId !== sessionId)) return;
+              if (!steered?.hasInterjection(params.interjectionId)) return;
+              const nativeId = mapper?.injectUser?.(params.text ?? '', params.interjectionId);
+              steered?.confirmed(params.interjectionId, nativeId);
+            },
             onRequest: async (method, params) => {
               if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
               if (!prompting || params.sessionId !== sessionId || local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
@@ -302,11 +309,11 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             onSent: text => mapper?.queueUser(text),
             // 走っているターンを止めずに次のモデル呼び出しへ差し込む Grok 固有の口（1.0.62 実測。
             // 応答は受理した時点で返る。{result:{status:'queued'}} はターン内の差し込み待ちへの受理）
-            interject: async (text, item) => {
-              const interjectionId = `pleiad-${item?.id ?? randomUUID()}`;
+            interject: async (text, item, interjectionId) => {
               try {
                 const result = await client.call('_x.ai/interject', { sessionId, text, interjectionId }, { timeoutMs: 15000 });
-                return result?.result?.status === 'queued' ? { nativeId: interjectionId } : false;
+                if (result?.result?.status !== 'queued') throw new Error('Unrecognized Grok interjection acknowledgement');
+                return true;
               } catch (error) {
                 if (error?.code === -32601) return 'unsupported';     // この経路が無い古い版 → session/prompt へ
                 if (PROTOCOL_REJECT_CODES.has(error?.code)) return false;

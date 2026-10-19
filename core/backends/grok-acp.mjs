@@ -30,12 +30,13 @@ function waitForExit(child, timeoutMs) {
 
 export class GrokAcp {
   // args: `grok agent` と `stdio` の間に入れるオプション（--model・--reasoning-effort）
-  constructor({ command = cliCommand('grok'), args = [], cwd, env, onUpdate = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  grok: dropped an oversize ACP line (${bytes} bytes)`), timeoutMs = 30_000 } = {}) {
+  constructor({ command = cliCommand('grok'), args = [], cwd, env, onUpdate = () => {}, onInterjection = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  grok: dropped an oversize ACP line (${bytes} bytes)`), timeoutMs = 30_000 } = {}) {
     this.command = command;
     this.args = args;
     this.cwd = cwd;
     this.env = env;
     this.onUpdate = onUpdate;
+    this.onInterjection = onInterjection;
     this.onResponse = onResponse;
     this.onRequest = onRequest;
     this.onGone = onGone;
@@ -176,6 +177,13 @@ export class GrokAcp {
       if (frame.method === 'session/update' || frame.method === '_x.ai/session_notification') {
         try {
           const result = this.onUpdate(frame.params);
+          if (result && typeof result.then === 'function') result.catch(() => this.#fail(rpcError('Grok ACP update handler failed')));
+        } catch { this.#fail(rpcError('Grok ACP update handler failed')); }
+      }
+      // `_x.ai/interject` を受理した合図（session の流れへ入ったエコー。{ sessionId, text, interjectionId }）
+      if (frame.method === '_x.ai/session/interjection') {
+        try {
+          const result = this.onInterjection?.(frame.params);
           if (result && typeof result.then === 'function') result.catch(() => this.#fail(rpcError('Grok ACP update handler failed')));
         } catch { this.#fail(rpcError('Grok ACP update handler failed')); }
       }
