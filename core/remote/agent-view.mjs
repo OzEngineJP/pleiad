@@ -119,7 +119,10 @@ export const viewCursor = (base, list, sigs = null) => hostViewCursor({ base, me
 
 /** 追加の指示（端末が AI から受けた分の表示用）。本文を絞る */
 export const viewInstructions = (list) => (Array.isArray(list) ? list : []).slice(-VIEW_LIMITS.instructions)
-  .map(x => ({ id: String(x.id), at: x.at ?? null, state: String(x.state ?? ''), text: clip(String(x.text ?? ''), VIEW_LIMITS.instruction) }));
+  .map(x => ({ id: String(x.id), at: x.at ?? null, state: String(x.state ?? ''), text: clip(String(x.text ?? ''), VIEW_LIMITS.instruction),
+    ...(x.deliveryId ? { deliveryId: String(x.deliveryId) } : {}), ...(x.nativeId ? { nativeId: String(x.nativeId) } : {}),
+    ...(x.anchor && typeof x.anchor === 'object' && typeof x.anchor.v === 'string' ? { anchor: { kind: String(x.anchor.kind), v: x.anchor.v } } : {}),
+    ...(x.nextTurn ? { nextTurn: true } : {}) }));
 
 /**
  * 子孫の要約に載せる行を選ぶ。走っているもの、次に新しいもの（更新の新しい順）を優先して VIEW_LIMITS.descendants 件まで。

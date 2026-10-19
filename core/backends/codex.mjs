@@ -1630,7 +1630,8 @@ const backend = {
     const noteDelivered = (item) => {
       if (item?.type !== "userMessage" || !item.clientId) return;
       if (!steered.delete(item.clientId)) return;   // 一度だけ（started と completed の両方が来る）
-      emit({ type: "userMessage.delivered", messageId: item.clientId });
+      // item.id はネイティブ履歴のその発言の id。保存の照合に使う（追加指示の deliveryId と nativeId の対応）
+      emit({ type: "userMessage.delivered", messageId: item.clientId, ...(item.id ? { nativeId: item.id } : {}) });
     };
 
     const meter = createCodexMeter();

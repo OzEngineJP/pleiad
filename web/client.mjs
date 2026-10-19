@@ -114,7 +114,7 @@ import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
 import { renderOutbox } from './outbox.mjs';
-import { visibleTaskInstructions } from './task-instructions.mjs';
+import { injectTaskInstructions } from './task-instructions.mjs';
 import { openChangeLog } from './change-log.mjs';
 import { mergeToolTurns } from './tool-turns.mjs';
 import { streamMessages } from './stream-messages.mjs';
@@ -3366,8 +3366,12 @@ function onEvent(ev, replay = false) {
   switch (ev.type) {
     case 'contextWindow': state.contextWindow = ev; paintContextStrip(); return;
     case 'compaction': acceptCompaction(ev); return;
+    case 'taskInstruction':
     case 'userMessage': {
-      if (replay && ev.messageId === state.initialMessageId) {
+      // 委譲の子への追加指示の受付（taskInstruction）は、配送中の発言と同じ pending の行として出す。
+      // userMessage.delivered/dropped（messageId 照合）で解決する。会話の中の位置は出来事の並び（受付時点）
+      const pending = ev.type === 'taskInstruction' ? true : ev.pending;
+      if (replay && ev.messageId === state.initialMessageId && ev.type === 'userMessage') {
         const row = ensureMessageRow(ev.messageId, ev.text, ev.at, ev.sentBy);
         const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
         if (confirmed) row.dataset.delivered = '1';
@@ -3393,7 +3397,7 @@ function onEvent(ev, replay = false) {
       // 配達の合図が先に来ていた分（速いバックエンド）はここで消化する
       const confirmed = row.dataset.delivered === '1' || deliveredEarly.delete(ev.messageId);
       if (confirmed) row.dataset.delivered = '1';
-      if (ev.pending && ev.messageId && !confirmed) markDelivery(row, ev.initial ? 'sending' : 'pending');
+      if (pending && ev.messageId && !confirmed) markDelivery(row, ev.initial ? 'sending' : 'pending');
       else markDelivery(row, 'sent');
       syncOutboxRows(outboxes.get(state.current) ?? []);
       return;
@@ -6288,7 +6292,7 @@ async function hostTaskThread(item) {
   const until = (r.state === 'offline' ? r.since : null) ?? item.hostUntil ?? held.lastOk;
   const messages = held.messages;
   const th = readonlyThread(messages, { backend: item.backend, prompt: held.base === 0 ? item.request : null, live: item.live, item, base: held.base,
-    instructions: visibleTaskInstructions(held.instructions, messages, held.userCount),
+    instructions: held.instructions,
     hostOffline: offline ? { time: clockOf(until) } : null, omitted: held.base > 0 ? { count: held.base, item } : null });
   // 子孫の要約は、走っているもの・新しいものから 40 件まで。省いた分は件数だけ
   if (!item.hostDescendant && held.descendantsOmitted > 0) th.querySelector('.spine').after(el('div', 'work-head omitted', t('dialog.work.hostDescendantsOmitted', { count: held.descendantsOmitted })));
@@ -6355,7 +6359,7 @@ async function taskThread(item) {
   const live = streamMessages(data.stream?.events, { backend: item.backend, model: item.model, initialMessageId: data.initialMessageId });
   const messages = [...(data.messages ?? []), ...live.messages];
   const th = readonlyThread(messages, { presents: [...(data.presents ?? []), ...live.presents], backend: item.backend, prompt: item.request, live: item.live, item,
-    sessionId: item.childId, instructions: visibleTaskInstructions(instructionData.instructions ?? [], messages) });
+    sessionId: item.childId, instructions: instructionData.instructions ?? [] });
   // 子が承認を待っていれば、ここで答えられる（子の会話へ移らなくてよい）。同じ承認は依頼元の会話にも中継されている
   for (const ev of [...(data.permissions ?? []), ...state.pendingPerms.values()]) {
     if (ev.sessionId !== item.childId || th.querySelector(`.mw[data-key="perm:${CSS.escape(ev.id)}"]`)) continue;
@@ -6375,7 +6379,8 @@ async function taskThread(item) {
  * 待機（queued。途中送信できない子）なら末尾に時計の印、届かず終わったもの（dropped）は弱い字（ADR 0067。docs/design-system.md「バックグラウンド」）
  */
 function readonlyThread(messages, { presents = [], backend, prompt = null, live = false, item, instructions = [], sessionId = null, hostOffline = null, omitted = null, base = 0 } = {}) {
-  messages = mergeToolTurns(messages);
+  // 指示の行はツール呼び出しのまとまりを作る前に差し込む（まとまりの途中の受付位置にも置けるように）
+  messages = mergeToolTurns(injectTaskInstructions(instructions, messages));
   const th = el('div', 'thread bg-thread');
   const spine = svgEl('svg', { class: 'spine', 'aria-hidden': 'true' });
   spine.append(svgEl('line', { x1: 20, y1: 0, x2: 20, y2: '100%' }));
@@ -6408,6 +6413,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
       m.append(status);
     } else if (instruction.state === 'dropped') {
       m.append(el('div', 'outbox-status', t('dialog.work.instructionDropped')));
+    } else if (instruction.state === 'delivered') {
+      // 届いた分は何も付けない（発言そのものが配送の記録。待機の印は付けない）
     } else {
       // 待機中。字の代わりに、発言者の行の静止した時計の印（title・読み上げ名）
       m.classList.add('queued');
@@ -6425,18 +6432,18 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   let last = null, prevRole = null;
   if (prompt && messages[0]?.role !== 'user') { last = put(requestNode(prompt, messages[0]?.at), 'request'); prevRole = 'user'; }
   const refs = presents.map(p => p.reference);
+  // 追加指示の行は、受け付けた位置（出来事・錨・受付時刻）に置く。配送中・待機・届かなかった分も同じ行で状態だけ変わる
   for (const it of buildItems(messages, presents)) {
     // git の要約の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
     if (it.kind === 'present' && (it.p.kind === 'git' || it.p.kind === 'worktree')) continue;
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
+    if (it.m?.role === 'instruction') { last = put(pendingNode(it.m.instruction), `instr:${it.m.instruction.id}`); continue; }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
       // 古い分を省いた筋（base > 0）の最初の発言は会話の途中。依頼ではなく追加の指示として描く
       user: (m) => (it.mi === 0 && !base ? requestNode : followUp)(m.text, m.at) });
     prevRole = role;
     if (node) last = put(node, `m:${it.mi}`);
   }
-  // 途中送信で差し込み中の指示は、稼働表示の前（メインパネルの作業中の送信と同じ位置）。待機と届かなかったものは末尾
-  for (const instruction of instructions.filter(x => x.state === 'sending')) th.append(pendingNode(instruction));
   if (live) {
     const act = el('div', 'm activity');
     if (hostOffline) act.append(el('span', 'txt', t('dialog.work.hostOfflineThread')), el('span', 'el', hostOffline.time ? t('dialog.work.hostOfflineCatchUp', { time: hostOffline.time }) : t('dialog.work.hostOfflineCatchUpNoTime')));
@@ -6449,7 +6456,6 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     tip.append(mark);
     w.querySelector('.mw-gutter').append(tip);
   }
-  for (const instruction of instructions.filter(x => x.state !== 'sending')) th.append(pendingNode(instruction));
   if (th.childElementCount === 1) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
   return th;
 }

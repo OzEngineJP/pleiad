@@ -1061,7 +1061,7 @@ async function applyTaskSettings(owner, plan, lng, { message, signal } = {}) {
   let retargeted = null, result;
   try {
     retargeted = await agentTasks.retarget(owner, plan.task.taskId, { ...after, account: accountKind(getBackend(after.backend)) ? nextAccount : null, accountLabels }, lng);
-    result = message === undefined ? retargeted.task : await agentTasks.call(owner, 'ply_task_send', { taskId: plan.task.taskId, message }, signal, lng);
+    result = message === undefined ? retargeted.task : await agentTasks.call(owner, 'ply_task_send', { taskId: plan.task.taskId, message, nextTurn: true }, signal, lng);
   } catch (e) {
     if (retargeted?.changed) await agentTasks.untarget(plan.task.taskId, retargeted.previous).catch(() => {});
     await undoReserve();
@@ -3060,7 +3060,13 @@ function makeEmit(turn) {
       const sent = liveInstructions.get(event.messageId);
       liveInstructions.delete(event.messageId);
       touchCard(turn);
-      agentTasks?.steered(sent.taskId, sent.instructionIds, event.type === "userMessage.delivered" ? "delivered" : event.unknown ? "unknown" : "dropped").catch(() => {});
+      const done = event.type === "userMessage.delivered" ? "delivered" : event.unknown ? "unknown" : "dropped";
+      agentTasks?.steered(sent.taskId, sent.instructionIds, done, { nativeId: event.nativeId ?? null }).catch(() => {});
+      // 1 つの合図にまとめて届いた全指示の、表示上の「配送中」を解く（受付の taskInstruction は指示ごとの messageId）
+      for (const id of sent.instructionIds) {
+        emitGlobal({ type: done === 'delivered' ? 'userMessage.delivered' : 'userMessage.dropped',
+          sessionId: sent.sessionId, messageId: `task-send-${id}`, ...(event.nativeId ? { nativeId: event.nativeId } : {}) });
+      }
     }
     // 受理済みの途中送信（送信待ちの項目）への合図。捨てられたら送信待ちへ戻す
     const awaited = signal && event.messageId && turn.pendingSteers?.delete(event.messageId);
@@ -5886,25 +5892,34 @@ function noticeEntry(owner, prompt, items, settingNotices = null, hooks = null) 
 }
 
 /**
- * 追加指示（ply_task_send）を今すぐ渡せる、子の走っているターン（無ければ null）。委譲の子として実行中のターンだけを対象にし、
- * 渡してよい条件は完了通知と同じ（canSteerNotice。子の会話に人の送信待ちがあれば渡さない）
+ * 追加指示（ply_task_send）を今すぐ渡せる、子の走っているターン。委譲の子として実行中のターンだけを対象にする。
+ * 返り値は { turn }（渡せる）か { block }（'requeue'=このターンでは無理なので次のターン / 'wait'=このターンで
+ * まだ受けられるかもしれないので、待機のまま次の kick・ready でまた試す）。
+ * instruction は渡そうとしている指示（{ nextTurn }）。設定と同じ呼び出しで積まれた指示は、予約（nextSettings）が
+ * 残るあいだ替えた後のターンを待つ。関係ない nextSettings の予約・送信待ちの人の発言では止めない
+ * （人の送信待ちは追い越さないので待つが、消えれば同じターンで渡す）
  */
-async function childTarget(sessionId) {
+async function childTarget(sessionId, instruction = null) {
   const turn = taskExecutions.has(sessionId) && !handover.hold ? runtime.turns.get(sessionId) : null;
-  if (!turn) return null;
+  if (!turn || turn.ac?.signal?.aborted || turn.outcome || typeof turn.control?.steer !== 'function') return { block: 'requeue' };
   const unsent = (await outbox.list(sessionId)).some(m => !['sent', 'cancelled'].includes(m.status));
-  return canSteerNotice(turn, { unsent, nextSettings: (await store.get(sessionId)).nextSettings }) ? turn : null;
+  if (unsent || turn.compactTrigger) return { block: 'wait' };
+  const nextSettings = (await store.get(sessionId)).nextSettings;
+  if (nextSettings && instruction?.nextTurn) return { block: 'wait' };
+  return { turn };
 }
 
 /**
  * 追加指示を、走っている子のターンへ途中送信（control.steer）で渡す。人間の発言ではないので outbox は通さず、
- * 子の会話には通常の user 発言として出す（履歴にはバックエンドの記録が入る）。
+ * 会話への位置の確定は受付時の taskInstruction イベントに任せる（履歴にはバックエンドの記録が入る）。
  * 'delivered'=受理（合図の無いバックエンドは渡ったものとして扱う）/ 'pending'=受理して「渡った」合図を待つ（liveInstructions）/
- * 'requeue'=受理できない → 待機のまま次のターンで / 'error'=結果不明 → 自動で送り直さない
+ * 'requeue'=このターンでは受理できない → 待機のまま次のターンで / 'wait'=一時的に渡せない → 待機のままこのターンで再試行 /
+ * 'error'=結果不明 → 自動で送り直さない
  */
 async function steerInstruction(task, instruction) {
-  const turn = await childTarget(task.sessionId);
-  if (!turn) return 'requeue';
+  const target = await childTarget(task.sessionId, instruction);
+  if (!target.turn) return target.block;
+  const turn = target.turn;
   const item = { id: `task-send-${instruction.id}`, args: { prompt: instruction.text } };
   const confirms = Boolean(turn.control.steerConfirms);
   // 合図は受理の応答より先に来ることがある。先に登録しておく
@@ -5915,8 +5930,11 @@ async function steerInstruction(task, instruction) {
   let accepted;
   try { accepted = await trackIn(handover.critical, turn.control.steer?.(item)); }
   catch { if (liveInstructions.delete(item.id)) touchCard(turn); return 'error'; }
-  if (!accepted) { if (liveInstructions.delete(item.id)) touchCard(turn); return 'requeue'; }
-  emitGlobal({ type: 'userMessage', sessionId: task.sessionId, messageId: item.id, text: instruction.text, at: Date.now(), ...(confirms ? { pending: true } : {}) });
+  if (!accepted) { if (liveInstructions.delete(item.id)) touchCard(turn); return 'wait'; }
+  if (!confirms) for (const id of instruction.ids ?? [instruction.id]) {
+    // 合図の無いバックエンドは受理した時点で渡ったものとする。pending の行をここで解く
+    emitGlobal({ type: 'userMessage.delivered', sessionId: task.sessionId, messageId: `task-send-${id}` });
+  }
   return confirms ? 'pending' : 'delivered';
 }
 /** 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）。作り直したら公開の形を返す */
@@ -6028,8 +6046,12 @@ function adoptChild(ctx, turnPromise, { abandon = false } = {}) {
   if (adopted) {
     // ターン開始の入力にした指示は、付け直したターンへプロンプトが渡ったら delivered にする（execute の onAccepted と同じ）。
     // 旧サーバーですでに渡っていたなら付け直しの時点で確定する。渡る前に手を離した分は、札の合図（hooks.onAccepted）で
-    ctx.hooks.onAccepted = () => agentTasks.promptAccepted(taskId);
-    if (ctx.initialDelivered) void agentTasks.promptAccepted(taskId).catch(() => {});
+    ctx.hooks.onAccepted = nativeId => agentTasks.promptAccepted(taskId, nativeId).then(ids => {
+      for (const id of ids ?? []) emitGlobal({ type: 'userMessage.delivered', sessionId, messageId: `task-send-${id}`, ...(nativeId ? { nativeId } : {}) });
+    });
+    if (ctx.initialDelivered) void agentTasks.promptAccepted(taskId).then(ids => {
+      for (const id of ids ?? []) emitGlobal({ type: 'userMessage.delivered', sessionId, messageId: `task-send-${id}` });
+    }).catch(() => {});
   }
   if (!adopted) void turnPromise.finally(() => { if (taskExecutions.get(sessionId) === execution) taskExecutions.delete(sessionId); });
   return adopted;
@@ -6227,7 +6249,7 @@ agentTasks = await createAgentTasks({
     return { backend: backend.id, model, effort, cwd, mode, sessionId, ...(worktree ? { worktree } : {}), ...(routing ? { routing } : {}),
       ...(remoteReq ? { requester: { deviceId: remoteReq.deviceId, deviceName: remoteReq.deviceName, sessionId: remoteReq.sessionId, title: remoteReq.title } } : {}) };
   },
-  execute: async (task, prompt, signal) => {
+  execute: async (task, prompt, signal, meta = {}) => {
     if (signal.aborted) { await worktreeHost.taskDone(task).catch(() => {}); return { outcome: 'aborted' }; }
     if (sessionBusy(task.sessionId)) return { requeue: true };
     // 子の会話を人が消した（sessions.delete。ADR 0147）。追加の指示・やり直しは、消した会話を作り直さずに失敗で返す
@@ -6238,8 +6260,10 @@ agentTasks = await createAgentTasks({
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
       // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済みにする（onAccepted。ターンの終わりを待たない）
-      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal, taskId: task.taskId,
-        onAccepted: () => agentTasks.promptAccepted(task.taskId) });
+      const outcome = await runTurn({ sessionId: task.sessionId, prompt, ...(meta?.messageId ? { messageId: meta.messageId } : {}) }, () => {}, { signal, taskId: task.taskId,
+        onAccepted: nativeId => agentTasks.promptAccepted(task.taskId, nativeId).then(ids => {
+          for (const id of ids ?? []) emitGlobal({ type: 'userMessage.delivered', sessionId: task.sessionId, messageId: `task-send-${id}`, ...(nativeId ? { nativeId } : {}) });
+        }) });
       // 子のターンを新しいサーバーへ渡した（handOffTurn）。結果は付け直した先の finishChild が確定する（このサーバーでは何も書かない）
       if (outcome === 'handedOff') return { handedOff: true };
       if (outcome === 'requeue') return { requeue: true };
@@ -6250,8 +6274,37 @@ agentTasks = await createAgentTasks({
   ready: async task => isRemoteOwner(task.parentSessionId) ? remoteAgentPort.online(parseRemoteOwner(task.parentSessionId)?.deviceId) : !(await noticeBlocked(task.parentSessionId)),
   // 走っている依頼元のターンへ、今すぐ途中送信で渡せるか（無音・コマンドの通知は使わない。ADR 0057）
   steerable: async task => !isRemoteOwner(task.parentSessionId) && Boolean(await noticeTarget(task.parentSessionId)),
-  // 走っている子のターンへ、追加指示を今すぐ途中送信で渡せるか（ADR 0065）
-  childSteerable: async task => Boolean(await childTarget(task.sessionId)),
+  // 追加指示を受け付けた直後（agentTasks が保存した時点）。会話への位置はこの出来事の位置（streamSeq）で確定する。
+  // 画面の行の向こう側は instructions の記録（state）で描くので、渡るまでの表示も位置もこれだけで済む
+  accepted: (r, instruction) => {
+    if (!r.sessionId || r.host) return;
+    // messageId は配送に使う id の素（steer の item.id・ターン開始の発言の messageId の先頭）と揃えてあり、
+    // pending の行は userMessage.delivered/dropped（messageId 照合）で解決する
+    emitGlobal({ type: 'taskInstruction', sessionId: r.sessionId, taskId: r.taskId, instructionId: instruction.id,
+      messageId: `task-send-${instruction.id}`, text: instruction.text, at: instruction.at, pending: true });
+  },
+  // 受け付けた時点で直前に見えていたもの（発言の uuid・ツール呼び出し・人の発言・直前の指示）を錨として取る。
+  // 出来事（marker）が無くなる読み直し後も、同じ位置へ戻せる手がかり（永続は instruction.anchor）
+  anchorProbe: sessionId => {
+    const turn = runtime.turns.get(sessionId);
+    if (!turn) return null;
+    for (let i = turn.stream.events.length - 1; i >= 0; i--) {
+      const ev = turn.stream.events[i];
+      if (ev.type === 'taskInstruction' && ev.instructionId) return { kind: 'instruction', v: ev.instructionId };
+      if ((ev.type === 'tool.start' || ev.type === 'tool.result') && ev.id) return { kind: 'tool', v: ev.id };
+      if (ev.type === 'text.end' && ev.uuid) return { kind: 'uuid', v: ev.uuid };
+      if (ev.type === 'userMessage' && ev.messageId) return { kind: 'msg', v: ev.messageId };
+    }
+    for (let i = turn.stream.messages.length - 1; i >= 0; i--) {
+      const m = turn.stream.messages[i];
+      if (m?.uuid) return { kind: 'uuid', v: m.uuid };
+      const tc = (m?.toolCalls ?? []).at(-1);
+      if (tc?.id) return { kind: 'tool', v: tc.id };
+    }
+    return null;
+  },
+  // 走っている子のターンへ、追加指示を今すぐ途中送信で渡せるか（ADR 0065）。instruction は先頭の指示（{ nextTurn }）
+  childSteerable: async (task, instruction) => Boolean((await childTarget(task.sessionId, instruction)).turn),
   steer: steerInstruction,
   // 同じ依頼元への完了通知をまとめて 1 つ届ける。走っているターンへ渡せれば途中送信で（noticeTarget）、
   // 渡せなければ（requeue）空いてから新しいターンで
@@ -6615,7 +6668,8 @@ async function prepareTurn(args, hooks, compactionRevision) {
   const turn = {
     stream: {
       ...structuredClone(baseline),
-      user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id },
+      user: hooks.internal || hooks.compact ? null : { role: "user", text: String(prompt ?? ""), at: new Date().toISOString(), backend: backend.id,
+        ...(args.messageId ? { messageId: args.messageId } : {}) },
       initialMessageId: args.messageId ?? null,
       events: [],
     },
@@ -6743,12 +6797,12 @@ async function prepareTurn(args, hooks, compactionRevision) {
 /** 渡った合図（onPromptDelivered）と文脈の保存（saveContext）を ctx に付ける。準備（prepareTurn）と付け直し（restoreTurn）が使う */
 function bindTurnContext(ctx) {
   const { args, turn, emit } = ctx;
-  ctx.onPromptDelivered = () => {
+  ctx.onPromptDelivered = (nativeId = null) => {
     touchCard(turn);   // 札の渡った合図の印（delivery）が変わりうる
     // 内部のターン（完了通知など）の依頼元へ「受け取られた」と知らせる。以後は引き継げる。記録の確定（agentTasks・settingApprovals）が済むまで引き継ぎを待たせる
     if (ctx.hooks?.onAccepted && !ctx.acceptedSent) {
       ctx.acceptedSent = true;
-      trackIn(handover.critical, Promise.resolve().then(() => ctx.hooks.onAccepted()).catch(e => console.error('  通知の受け取りの記録に失敗:', String(e?.message ?? e))));
+      trackIn(handover.critical, Promise.resolve().then(() => ctx.hooks.onAccepted(nativeId)).catch(e => console.error('  通知の受け取りの記録に失敗:', String(e?.message ?? e))));
     }
     if (ctx.interruption && !ctx.interruptionTaken) {
       ctx.interruptionTaken = true;
@@ -6760,7 +6814,7 @@ function bindTurnContext(ctx) {
     }
     if (ctx.initialDelivered || !args.messageId) return;
     ctx.initialDelivered = true;
-    emit({ type: 'userMessage.delivered', messageId: args.messageId });
+    emit({ type: 'userMessage.delivered', messageId: args.messageId, ...(nativeId ? { nativeId } : {}) });
   };
 
   ctx.saveContext = async () => {
@@ -7702,7 +7756,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     for (const [id, sent] of [...liveInstructions]) {
       if (sent.sessionId !== turn.info.sessionId) continue;
       liveInstructions.delete(id);
-      emitGlobal({ type: 'userMessage.dropped', sessionId: sent.sessionId, messageId: id });
+      for (const iid of sent.instructionIds ?? [id]) emitGlobal({ type: 'userMessage.dropped', sessionId: sent.sessionId, messageId: `task-send-${iid}` });
     }
   }
   agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);

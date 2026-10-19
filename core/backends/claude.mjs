@@ -781,7 +781,9 @@ export const backend = {
       if (contextRuntime) await readyContext;
       if (input.closed || signal?.signal?.aborted) return;       // 走り出す前に中断された
       promptSent = true;
-      onPromptDelivered?.();
+      // 最初のプロンプトにも uuid を振る。transcript のその発言の id になり、追加指示の配送との対応を ID で引ける
+      const promptUuid = randomUUID();
+      onPromptDelivered?.(promptUuid);
       // 入力欄の `!` の結果（CLI の `!` と同じ <bash-input> / <bash-stdout><bash-stderr> の 2 行）。
       // shouldQuery: false は返答を起こさずに transcript へ積み、次に query する user 行（このプロンプト）と合わせて渡す（sdk.d.ts の SDKUserMessage）
       for (const text of shellAppends) yield { ...userMessage(text), shouldQuery: false };
@@ -789,8 +791,8 @@ export const backend = {
       if (notes.length) {
         const message = userMessage(prompt);
         message.message.content = [...notes, String(prompt ?? '')].map(text => ({ type: 'text', text }));
-        yield message;
-      } else yield userMessage(prompt);
+        yield { ...message, uuid: promptUuid };
+      } else yield { ...userMessage(prompt), uuid: promptUuid };
       yield* input;
     }
     // host ツールの結果も承認の返事も、この入力（CLI の stdin）を通って CLI へ戻る。
@@ -932,7 +934,7 @@ export const backend = {
       control.onReady?.();
     };
 
-    const takeAt = (i) => pendingSteers.splice(i, 1)[0].id;
+    const takeAt = (i) => pendingSteers.splice(i, 1)[0];   // { id, uuid, ... }。uuid がネイティブ履歴の行の id（nativeId）
     // 札から作り直した控えは本文を持たない（ハッシュで当てる）
     const sameText = (p, text) => p.text != null ? p.text === text : Boolean(p.hash) && p.hash === promptHash(text);
     /**
@@ -967,11 +969,11 @@ export const backend = {
       const byUuid = m.uuid ? pendingSteers.findIndex((p) => p.uuid === m.uuid) : -1;
       if (byUuid >= 0) {
         const hit = pendingSteers[byUuid];
-        const ids = [takeAt(byUuid)];
+        const taken = [takeAt(byUuid)];
         if (text && hit.text && text !== hit.text && text.endsWith("\n" + hit.text)) {
-          ids.unshift(...takeMerged(text.slice(0, text.length - hit.text.length - 1)));
+          taken.unshift(...takeMerged(text.slice(0, text.length - hit.text.length - 1)));
         }
-        return ids;
+        return taken;
       }
       if (text === null) return [];
       const same = pendingSteers.findIndex((p) => sameText(p, text));
@@ -1024,8 +1026,8 @@ export const backend = {
       for (const uuid of uuids) {
         const i = pendingSteers.findIndex((p) => p.uuid === uuid);
         if (i < 0) continue;   // こちらが送っていない uuid（CLI 内部の分）は無視する
-        const id = takeAt(i);
-        if (id) emit({ type: "userMessage.dropped", messageId: id });
+        const p = takeAt(i);
+        if (p?.id) emit({ type: "userMessage.dropped", messageId: p.id });
       }
     };
     const stopTurn = () => {
@@ -1091,9 +1093,10 @@ export const backend = {
         send({ type: "session", sessionId: ctx.sessionId ?? message.session_id ?? null, model }, replay);
       }
 
-      // 流し込んだ途中送信が会話に折り込まれた。どれが渡ったかを、返答より先に知らせる
-      for (const id of [...takeDelivered(message), ...takeLeftovers(message)]) {
-        if (id) send({ type: "userMessage.delivered", messageId: id }, replay);
+      // 流し込んだ途中送信が会話に折り込まれた。どれが渡ったかを、返答より先に知らせる。
+      // nativeId はその発言の transcript 上の uuid（保存済みの履歴と照合するための正確な対応）
+      for (const p of [...takeDelivered(message), ...takeLeftovers(message)]) {
+        if (p?.id) send({ type: "userMessage.delivered", messageId: p.id, nativeId: p.uuid }, replay);
       }
       // 中断を頼んだ後の result は、interrupt が効いた合図（応答より先に来ることがある）
       if (!replay && stop && message.type === "result") stopAcked();
