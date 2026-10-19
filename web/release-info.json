@@ -1,6 +1,27 @@
 {
-  "version": "0.28.2",
+  "version": "0.29.0",
   "releases": [
+    {
+      "version": "0.29.0",
+      "date": "2026-10-19",
+      "title": "Devin と Antigravity への指示の適用と委譲に対応しました",
+      "sections": [
+        {
+          "title": "Pleiad の指示と委譲",
+          "items": [
+            "設定した「Pleiad の指示」を Devin と Antigravity にも適用し、両エージェントから作業を委譲できるようになりました。",
+            "保存済みの指示の対象エージェントは自動では変更されません。Devin や Antigravity にも指示を届けたい場合は、指示の編集画面で、対象に Devin / Antigravity を追加して保存してください。",
+            "Grok・OpenCodeで対象外の指示が適用される問題を修正しました。"
+          ]
+        },
+        {
+          "title": "Antigravity の指示読み込み",
+          "items": [
+            "Antigravityでも作業場所の AGENTS.md や GEMINI.md の指示を引き継ぎ、会話を続けたときにも変更が反映されるようになりました。"
+          ]
+        }
+      ]
+    },
     {
       "version": "0.28.2",
       "date": "2026-10-19",
