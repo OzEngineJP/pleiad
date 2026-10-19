@@ -29,4 +29,10 @@ export default async function(t) {
   const mixed=buildItems(messages,[{by:"ai"},image]);
   t.ok("時刻ありなしの混在でもpresentのキーを保持",mixed[1].pi===1 && mixed.at(-1).pi===0);
   t.ok("分岐の差分描画に元メッセージの添字を渡す",items[1].anchorMi===0 && items.filter(i=>i.mi!=null).map(i=>i.mi).join() === "0,1,2,3,4");
+  // 発言の at が epoch ms の数値（正規化の出力）で、提示の at が ISO のとき: 結び付きの無い提示が時刻で末尾へ流れない
+  const t0 = Date.parse(at);
+  const numericMessages=[{...user,at:t0},{...messages[1],at:t0+2000},{...messages[2],at:t0+4000}];
+  const viz={kind:"visualization",by:"ai",path:"D:/x.html",at:"2026-09-11T12:58:53.000Z"};  // 2 番目と 3 番目の発言の間の時刻
+  const ordered=buildItems(numericMessages,[viz]);
+  t.ok("発言が ms・提示が ISO でも時刻で並ぶ", ordered.findIndex(i=>i.kind==="present") === 2);
 }
