@@ -460,7 +460,8 @@ export async function switchBackend(id, source, target, { restart = false } = {}
 function hostEvent({ liveUuid, ...event }, id, nativeId, backend) {
   return { ...event,
     ...(typeof liveUuid === 'string' && nativeId ? { uuid: `${backend}:${nativeId}:${liveUuid}` } : {}),
-    ...(typeof event.nativeId === 'string' && nativeId ? { nativeId: `${backend}:${nativeId}:${event.nativeId}` } : {}),
+    ...(['userMessage.delivered', 'userMessage.dropped'].includes(event.type) && typeof event.nativeId === 'string' && nativeId
+      ? { nativeId: `${backend}:${nativeId}:${event.nativeId}` } : {}),
     ...(event.sessionId === undefined || event.sessionId === nativeId ? { sessionId: id } : {}),
     ...(event.type === 'session' ? { first: false } : {}),
   };

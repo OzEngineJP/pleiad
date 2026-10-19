@@ -297,7 +297,8 @@ export default async function (t) {
     const reopened = await c.cmd('loadSession', { sessionId: hostId });
     t.ok('圧縮後も発言を保持し、native と sidecar の境界は重複しない',
       JSON.stringify(reopened.messages) === JSON.stringify(beforeHost.messages)
-      && reopened.compactions.filter(e => e.phase === 'complete').length === 2);
+      && reopened.compactions.filter(e => e.phase === 'complete').length === 2,
+      JSON.stringify({ before: beforeHost.messages, after: reopened.messages, compactions: reopened.compactions }));
     const idleFrom = c.mark();
     const nextHost = await c.runTurn({ sessionId: hostId, prompt: 'large-context', cwd: scratch }, { ms: 20000 });
     t.ok('圧縮後に同じ会話で次のターンを実行できる', nextHost.outcome === 'ok');
