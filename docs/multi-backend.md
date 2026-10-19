@@ -364,7 +364,7 @@ Claude の `getCompactions` は、区切りを transcript の `system:compact_bo
 - ツール: `run`（終わるまで待つ。上限は既定 2 分・最大 10 分）・`start`（裏で始めてすぐジョブの id を返す）・`output`（`since` から続きを読む）・`stop`（子のプロセスごと止める）・`list`。走らせる口は `core/host-shell.mjs`。`shell` 引数で `default`・`bash`・`powershell`・`cmd`（Windows だけ）を選ぶ。コマンドには会話のシェルの環境変数（エージェントの Chrome・`PLEIAD_CONTROL_*`・秘密情報と変数）を渡す
 - 承認: 読み取りだけのモード（scope が `none`・`readonly`）は断る。確認なし（autonomy が `never`）のほかは、走らせる前に会話へ承認のカードを出す。エージェント側では聞かない（Claude は `decidePermission` で通し、OpenCode は `ply_shell_*` を allow、Codex は `default_tools_approval_mode: approve`）
 - ジョブの出力はメモリだけ（256 KB。古い方から捨て、捨てた分を数える）。会話ごとの同時の `start` は 8 まで。`start` のジョブは会話の裏の一覧（`running` の `background`、`kind: 'shell'`、`backend: 'ply_shell'`）に出て、`sessions.stopBackground` で止められる。人が止めた・自分で終わった `start` のジョブは、その会話へ知らせる（`shell.jobDone`）。サーバーの終わり・会話の削除・巻き戻しで止める（保持役には載せない）
-- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せず、Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control は ACP の `session/new` の `mcpServers` で渡す）
+- 受け取るかは能力の印 `plyShell`（Claude・Codex・OpenCode・fake）。Antigravity は MCP を Pleiad のカスタムエージェントでしか渡せず、Devin は ply_shell をまだ受けていないので、渡していない（ply_browser・ply_control・ply_context は ACP の `session/new` の `mcpServers` で渡す）
 - **エージェントのシェルを切る**: 設定 `shellTool`（`{ <エージェントの id>: 'native' | 'ply' }`。無ければエージェントの記述の `shellDefault`。OpenCode だけ `'ply'`）が `'ply'` で、能力の印 `nativeShellOff` を持つエージェントは、`runArgs.shellRuntime.nativeOff` でエージェントのシェルのツールを切る。Claude は `disallowedTools` に `Bash`・`PowerShell`、OpenCode は会話の権限で `bash` を全面拒否（一覧から外れる。規則の印 `+noshell`）。切った会話にだけ使い方の指示（`shell.instructions`。「指示の量」の内訳 `shell`）を足す
 - シェルのツールの名前（長いコマンドの知らせ・声の待ちの案内が見分ける）は、エージェントの記述の `shellTools`（`core/shell-tools.mjs`。toolHints の `shape: 'shell'` と同じ名前）。名前で見分けられない呼び出し（ACP の自由な題）は `tool.start` の `shell: true`
 
@@ -960,6 +960,8 @@ Devin の受信は 1 行 64 MiB までとし、改行までのバイト数を加
 ## ACP の記録（Devin・Grok）の発言と再生の照合（2026-10-19）
 
 ACP には指示の欄が無いので、Pleiad の指示（visualize・browser・control・secrets・bot・追加の指示）は発言の本文の前に足して送る。エージェントにはこれまでどおり全部が届く。
+
+**Pleiad 担当のコンテキスト（Devin、issue #102）**も同じ形で届く: 指示の本文・Skills の一覧（カタログ）を注入文として発言の前に足し、本文の読み出し（`load_skill`・`instructions_for_path`）と Pleiad が中継する外部 MCP は `ply_context` を ACP の `mcpServers`（type: `http`）に載せて渡す（ply_browser・ply_control と同じ経路）。口はターンごとのトークン（`plyContext: 'turn'`）で、再開（`session/load`）でもその回の口を渡し直す。外部 MCP のツールの承認は Devin が `session/request_permission` で聞く（`mcpApproval: 'agent'`）。**Devin 自身の読み込みは止めていない**: `read_config_from` の取り込みや `.devin/`・`mcp_config.json` の rules・Skills・MCP は ACP から止める口が無く、Pleiad 担当の種類でもネイティブに読まれた分と重複して届くことがある（抑制は別課題）。
 
 **記録する発言.** mapper（`devin-normalize.mjs`・`grok-normalize.mjs`）の `beginTurn(sent, shown)` は、行の `text` を `shown`（人が書いた分。先頭のメモと `!` の結果を含む）にする。`sent`（送った全文）は `user_message_chunk` のエコーとの照合にだけ使う。分割されたエコーは連結して照合する。`mergeMessages` は `sent` を保存せず、`promptHash`（改行コードだけを LF にそろえた全文の sha256）を残す。空白は詰めない。字下げだけが違うコードの発言を取り違えないためである。
 

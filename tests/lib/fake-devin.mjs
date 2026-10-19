@@ -97,6 +97,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'session/load': {
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
+        // ターンごとに届く接続先（ply_context の口はターンごとのトークン）。再開でもその回の分を覚える
+        session.mcpServers = p.mcpServers ?? []; persist(session);
         replay(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
         update(session.sessionId, { sessionUpdate: 'usage_update', used: session.used ?? 120000, size: session.window ?? 262000 });
         result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
@@ -197,6 +199,17 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         let reply = `fixture: ${text}`;
         if (text.includes('[env]')) reply = JSON.stringify({ cwd: process.cwd(), configHome: process.env.DEVIN_CONFIG_HOME ?? null, sessions: process.env.DEVIN_SESSIONS_DIR,
           mcpServers: (session.mcpServers ?? []).map(s => s.name), seenEnv: session.seenEnv ?? [] });
+        // ply_context（Pleiad のコンテキストの口）を MCP 越しに実際に叩く。[context-tools] は一覧、末尾の行の context:{...} は tools/call
+        const contextServer = (session.mcpServers ?? []).find(s => s?.name === 'ply_context' && s.url);
+        const contextCall = async (method, params) => {
+          const headers = { 'content-type': 'application/json' };
+          for (const h of contextServer.headers ?? []) headers[h.name] = h.value;
+          const response = await fetch(contextServer.url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
+          return (await response.json()).result;
+        };
+        if (contextServer && text.includes('[context-tools]')) reply = JSON.stringify((await contextCall('tools/list'))?.tools ?? []);
+        const contextMatch = /(?:^|\n)context:(\{[^\n]*\})\s*$/.exec(text);
+        if (contextServer && contextMatch) reply = JSON.stringify((await contextCall('tools/call', JSON.parse(contextMatch[1])))?.content?.[0]?.text ?? null);
         if (text.includes('[multi-utf8]')) {
           const frame = `${JSON.stringify({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: session.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '日本語🙂' } } } })}\n`;
           const bytes = Buffer.from(frame), split = bytes.indexOf(Buffer.from('🙂')) + 2;
