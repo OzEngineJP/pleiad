@@ -208,6 +208,36 @@ export default async function (t) {
 
     const catalogue = async () => ({ families: [{ family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }] }] });
     const command = () => [process.execPath, path.join(ROOT, 'tests/lib/fake-devin.mjs')];
+    const deliveryCalls = [];
+    class DeliveryClient extends DevinAcp {
+      async call(method, params, options) { deliveryCalls.push({ method, params }); return super.call(method, params, options); }
+    }
+    const deliveryBackend = createDevinBackend({ Acp: DeliveryClient, catalogue, command, dataDir: path.join(root, 'delivery') });
+    const shellRuntime = { url: 'http://127.0.0.1:1/shell', headers: { Authorization: 'Bearer fixture-shell' }, instructions: 'fixture-shell-instructions' };
+    const deliveredShell = await deliveryBackend.runTurn({ cwd, prompt: 'shell first', model: 'swe-2-high', mode: 'ask', shellRuntime, emit: () => {} });
+    await deliveryBackend.runTurn({ cwd, sessionId: deliveredShell.sessionId, prompt: 'shell next', model: 'swe-2-high', mode: 'ask', shellRuntime, emit: () => {} });
+    t.ok('新規・再開の両方に認証付きply_shellとその指示を渡す',
+      deliveryCalls.filter(c => ['session/new', 'session/load'].includes(c.method)).every(c => c.params.mcpServers.some(s => s.name === 'ply_shell' && s.type === 'http' && s.headers[0].value === 'Bearer fixture-shell'))
+      && deliveryCalls.filter(c => c.method === 'session/prompt').every(c => c.params.prompt[0].text.includes('fixture-shell-instructions')));
+    t.ok('Devinでも入力欄の!とPleiadシェルが使える', deliveryBackend.capabilities.shell === 'host' && deliveryBackend.capabilities.plyShell);
+    const deliveryMark = deliveryCalls.length;
+    await deliveryBackend.runTurn({ cwd, prompt: 'no shell', model: 'swe-2-high', mode: 'ask', emit: () => {} });
+    t.ok('別のターンにply_shellを持ち越さない', deliveryCalls.slice(deliveryMark).find(c => c.method === 'session/new').params.mcpServers.length === 0);
+
+    let alwaysAnswer, canAlways;
+    class AlwaysClient extends DevinAcp {
+      constructor(options) { super({ ...options, onRequest: async (method, params, context) => {
+        if (method === 'session/request_permission') params.options.push({ kind: 'allow_always', optionId: 'persistent', name: 'For this session' });
+        const answer = await options.onRequest(method, params, context);
+        if (method === 'session/request_permission') alwaysAnswer = answer;
+        return answer;
+      } }); }
+    }
+    const alwaysBackend = createDevinBackend({ Acp: AlwaysClient, catalogue, command, dataDir: path.join(root, 'always') });
+    await alwaysBackend.runTurn({ cwd, prompt: '[permission]', model: 'swe-2-high', mode: 'ask', emit: () => {},
+      askPermission: async request => { canAlways = request.canAlways; return { allow: true, always: true }; } });
+    t.ok('Devin: CLIが提示した恒常許可を画面の回答へ対応させる', canAlways && alwaysAnswer.outcome.optionId === 'persistent');
+
     class CloseFailure extends DevinAcp { async close() { await super.close(); throw new Error('fixture close failed'); } }
     const events = [];
     const backend = createDevinBackend({ Acp: CloseFailure, catalogue, command, dataDir: path.join(root, 'close-data') });

@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
-import { t } from '../i18n.mjs';
+import { t, agentT } from '../i18n.mjs';
+import { BROWSER_SERVER } from '../browser-bridge.mjs';
+import { CONTROL_SERVER } from '../ops/surfaces/mcp.mjs';
+import { SHELL_SERVER } from '../shell-bridge.mjs';
+import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
 import { NO_CAPABILITIES } from './contract.mjs';
@@ -115,6 +119,20 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       if (actual && actual !== effort) throw fail('effortUnavailable', { effort });
     }
   }
+  // resume は起動引数より保存済みの設定を優先する。送信前に今回の指定へ戻し、ACKも照合する。
+  async function applySelection(client, sessionId, state, model, effort) {
+    let modelChanged = false;
+    for (const [id, wanted, failure] of [['model', model, 'modelUnavailable'], ['reasoning_effort', effort, 'effortUnavailable']]) {
+      if (!wanted) continue;
+      const option = state?.configOptions?.find(o => o.id === id);
+      const actual = option?.currentValue ?? (id === 'model' ? state?.models?.currentModelId : null);
+      if ((typeof actual !== 'string' || actual === wanted) && !(id === 'reasoning_effort' && modelChanged)) continue;
+      const result = await client.call('session/set_config_option', { sessionId, configId: id, value: wanted });
+      if (result?.configOptions?.find(o => o.id === id)?.currentValue !== wanted) throw fail(failure, { model, effort });
+      state = result;
+      if (id === 'model') modelChanged = true;
+    }
+  }
   /** 標準の ACP のモード（state.modes）。古い configOptions の形も受ける */
   async function applyMode(client, sessionId, state, mode) {
     const wanted = GROK_MODES[mode];
@@ -144,10 +162,12 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   let pendingAuth = null;
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true, promptDelivery: true,
-      // ACP の session/new・session/load の mcpServers（type: 'http'）に ply_agents を、その instructions を発言へ足して渡す。
+    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true, promptDelivery: true,
+      // ブラウザー・操作一覧・コンピューター・シェル・委譲をHTTP MCPで、接続情報と秘密の変数を起動環境で渡す。
       // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
-      plyAgents: true, plyInstructions: true, hooks: true },
+      plyAgents: true, plyInstructions: true, hooks: true, liveModel: true, liveMode: true,
+      browser: true, plyControl: true, secrets: true, visualize: true, plyShell: true,
+      computerUse: { images: 'path', waitSliceMs: null } },
     modes,
     async usage({ cwd = process.cwd() } = {}) {
       return serial(metadataQueue, async () => {
@@ -230,7 +250,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           const model = typeof args.model === 'string' && args.model ? args.model : '';
           const effort = typeof args.effort === 'string' && args.effort ? args.effort : '';
           // Pleiad がそろえる Hooks を渡すターンは、Claude・Cursor・Codex 互換の読み込み元を環境変数で止める（二重実行の防止）
-          const hookEnv = args.hooksRuntime?.compatHookEnv ?? null;
+          const extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}),
+            ...(args.secretsRuntime?.env ?? {}), ...(args.hooksRuntime?.compatHookEnv ?? {}) };
           client = await openClient(cwd, spawnArgs(model, effort), {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
             onUpdate: params => {
@@ -242,26 +263,27 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
               if (!prompting || params.sessionId !== sessionId || local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
               const allow = params.options?.find(o => o.kind === 'allow_once'), deny = params.options?.find(o => o.kind === 'reject_once');
+              const always = params.options?.find(o => o.kind === 'allow_always');
               mapper.accept({ ...params.toolCall, sessionUpdate: 'tool_call_update' });
               const tool = mapper.getToolCall(params.toolCall?.toolCallId);
               const title = tool?.title ?? tool?.name;
               if (typeof title !== 'string' || !title.trim()) return { outcome: typeof deny?.optionId === 'string' ? { outcome: 'selected', optionId: deny.optionId } : { outcome: 'cancelled' } };
               emit({ type: 'activity', state: 'waiting', sessionId });
               const answer = await Promise.resolve(args.askPermission?.({ toolName: title, input: tool.rawInput ?? {}, sessionId,
-                toolUseID: params.toolCall?.toolCallId ?? null, signal: local.signal, canAlways: false, kind: 'tool', locale: args.locale }) ?? { allow: false }).catch(() => ({ allow: false }));
+                toolUseID: params.toolCall?.toolCallId ?? null, signal: local.signal, canAlways: typeof always?.optionId === 'string', kind: 'tool', locale: args.locale }) ?? { allow: false }).catch(() => ({ allow: false }));
               if (local.signal.aborted) return { outcome: { outcome: 'cancelled' } };
-              const selected = answer?.allow ? allow : deny;
+              const selected = answer?.allow ? (answer.always && typeof always?.optionId === 'string' ? always : allow) : deny;
               return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
             },
-          }, hookEnv);
+          }, extraEnv);
           check();
           verifySelection(client.init, model, effort);
           const windowTokens = Number((client.init?._meta?.modelState?.availableModels ?? []).find(m => m.modelId === client.init?._meta?.modelState?.currentModelId)?._meta?.totalContextTokens) || null;
-          // Pleiad の MCP（ply_agents。委譲の橋）は ACP の mcpServers で渡す（type: 'http' が要る。Devin と同じ）
-          const agentRuntime = args.agentRuntime;
-          const mcpServers = agentRuntime?.url
-            ? [{ name: 'ply_agents', type: 'http', url: agentRuntime.url, headers: Object.entries(agentRuntime.headers ?? {}).map(([name, value]) => ({ name, value })) }]
-            : [];
+          // MCP は新規・再開の両方に、そのターンの接続情報だけを渡す。
+          const acpMcp = (name, runtime) => runtime?.url ? [{ name, type: 'http', url: runtime.url,
+            headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : [];
+          const mcpServers = [...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime),
+            ...acpMcp(COMPUTER_SERVER, args.computerRuntime), ...acpMcp(SHELL_SERVER, args.shellRuntime), ...acpMcp('ply_agents', args.agentRuntime)];
           // Pleiad がそろえる Hooks は、このターンだけのプラグイン（hooks/hooks.json）として _meta.pluginDirs で渡す。
           // 渡した置き場は trusted になり、保存されない（session/load でも毎回渡す）。ターンの終わりに消す（grok-hooks.mjs）
           if (args.hooksRuntime?.pluginHooks) plugin = await writeTurnPlugin(path.join(dataDir, 'grok-hooks'), args.hooksRuntime.pluginHooks);
@@ -289,9 +311,14 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           }
           remember(sessionId, mapper); active.set(sessionId, client);
           check();
+          await applySelection(client, sessionId, state, model, effort);
           await applyMode(client, sessionId, state, args.mode || 'ask');
           check();
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+          const browserInstructions = args.browserEnv && modes()[args.mode || 'ask']?.scope === 'readonly'
+            ? agentT(args.locale, 'browser.readonlyInstructions') : args.browserInstructions;
+          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions,
+            args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale }),
+            args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
           mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
@@ -341,6 +368,20 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         if (outcome === 'error') throw sent ? error : undelivered(error);
         return { sessionId };
       });
+    },
+    async setModelLive(handle, model) {
+      const client = active.get(handle?.sessionId);
+      if (!client || !model) return false;
+      try {
+        const result = await client.call('session/set_config_option', { sessionId: handle.sessionId, configId: 'model', value: model });
+        const options = result?.configOptions?.filter(o => o.id === 'model' || o.category === 'model') ?? [];
+        return options.length === 1 && options[0].currentValue === model;
+      } catch { return false; }
+    },
+    async setModeLive(handle, mode) {
+      const client = active.get(handle?.sessionId);
+      if (!client || !GROK_MODES[mode]) return false;
+      try { await applyMode(client, handle.sessionId, null, mode); return true; } catch { return false; }
     },
     async releaseConversation(id) {
       let client = active.get(id);

@@ -22,6 +22,7 @@ export default async function (t) {
   const calls = [];
   let nextId = 0;
   let rejectResume = false;
+  let holdPrompt = false, releasePrompt, permissionRequest = null, permissionResponse, selectionMismatch = false, resumeSelection = null;
   const sessions = new Map();
   class FakeAcp {
     constructor(options) { this.options = options; this.init = null; }
@@ -41,13 +42,16 @@ export default async function (t) {
         const sessionId = `grok-fixture-${++nextId}`; sessions.set(sessionId, params.cwd);
         return { sessionId };
       }
-      if (method === 'session/load') return { sessionId: params.sessionId };
+      if (method === 'session/load') return { sessionId: params.sessionId, ...resumeSelection };
       if (method === 'session/resume') {
         if (rejectResume) throw Object.assign(new Error('method not found'), { code: -32601 });
-        return { sessionId: params.sessionId, models: { currentModelId: MODEL, availableModels: [{ modelId: MODEL }] }, configOptions: [] };
+        return { sessionId: params.sessionId, models: { currentModelId: MODEL, availableModels: [{ modelId: MODEL }] }, configOptions: [], ...resumeSelection };
       }
       if (method === 'session/close') return { _meta: { 'x.ai/closeOutcome': 'closed' } };
+      if (method === 'session/set_config_option') return { configOptions: [{ id: params.configId, currentValue: selectionMismatch ? 'different' : params.value }] };
       if (method === 'session/prompt') {
+        if (holdPrompt) await new Promise(resolve => { releasePrompt = resolve; });
+        if (permissionRequest) permissionResponse = await this.options.onRequest('session/request_permission', { ...permissionRequest, sessionId: params.sessionId });
         const text = params.prompt?.map(part => part.text ?? '').join('') ?? '';
         this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } } });
         this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'fixture reply' } } });
@@ -142,6 +146,98 @@ export default async function (t) {
     t.ok('履歴 mapper が無い状態で resume しても新しい UUID は既存行と衝突しない',
       resumedMessages.length === 2 && firstMessages.length === 2
       && resumedMessages.every(m => !firstMessages.some(old => old.uuid === m.uuid)), JSON.stringify(resumedMessages.map(m => m.uuid)));
+
+    // 共通機能は新規・再開・古いCLIのloadのすべてに渡す。履歴には注入文を残さない。
+    const runtime = name => ({ url: `http://127.0.0.1:1/${name}`, headers: { Authorization: `Bearer ${name}` }, instructions: `fixture-${name}-instructions` });
+    const delivery = { agentRuntime, browserRuntime: runtime('browser'), controlRuntime: { ...runtime('control'), env: { PLEIAD_CONTROL_URL: 'fixture-control-url' } },
+      computerRuntime: runtime('computer'), shellRuntime: runtime('shell'), browserEnv: { AGENT_BROWSER_CONFIG: 'fixture-browser-config' },
+      browserInstructions: 'fixture-browser-instructions', visualizeInstructions: 'fixture-visualize-instructions',
+      secretsRuntime: { env: { PLEIAD_FIXTURE_SECRET: 'fixture-secret-value' }, instructions: 'fixture-secrets-instructions' }, hooksRuntime: { pluginHooks, compatHookEnv } };
+    let deliveryId;
+    for (const phase of ['new', 'resume', 'load']) {
+      mark = calls.length;
+      rejectResume = phase === 'load';
+      const result = await turn({ cwd, ...delivery, ...(deliveryId ? { sessionId: deliveryId } : {}) });
+      deliveryId = result.sessionId;
+      const setup = of(phase === 'new' ? 'session/new' : phase === 'load' ? 'session/load' : 'session/resume', mark)[0];
+      t.ok(`${phase}: ブラウザー・操作一覧・コンピューター・シェル・委譲のMCPに会話の認証情報を渡す`,
+        JSON.stringify(setup.params.mcpServers.map(s => s.name)) === JSON.stringify(['ply_browser', 'ply_control', 'ply_computer', 'ply_shell', 'ply_agents'])
+        && setup.params.mcpServers.every(s => s.type === 'http' && s.headers[0].name === 'Authorization'));
+      t.ok(`${phase}: 接続用・秘密情報の環境変数とHooksの互換設定を同時に渡す`,
+        setup.env.AGENT_BROWSER_CONFIG === 'fixture-browser-config' && setup.env.PLEIAD_CONTROL_URL === 'fixture-control-url'
+        && setup.env.PLEIAD_FIXTURE_SECRET === 'fixture-secret-value' && compatOff(setup.env));
+      const text = of('session/prompt', mark)[0].params.prompt[0].text;
+      t.ok(`${phase}: 全機能の指示が届き、秘密の値と注入文を発言の記録に混ぜない`,
+        ['browser', 'control', 'computer', 'shell', 'secrets', 'visualize'].every(name => text.includes(`fixture-${name}-instructions`))
+        && !text.includes('fixture-secret-value') && (await backend.getMessages(deliveryId)).filter(m => m.role === 'user').every(m => m.text === 'hello'));
+    }
+    rejectResume = false;
+    mark = calls.length;
+    await turn({ cwd, ...delivery, mode: 'plan' });
+    t.ok('計画モードでは操作用のブラウザー指示を配らない', !of('session/prompt', mark)[0].params.prompt[0].text.includes('fixture-browser-instructions'));
+    await backend.releaseConversation(deliveryId);
+    mark = calls.length;
+    await backend.getMessages(deliveryId);
+    const isolated = of('session/load', mark)[0];
+    t.ok('履歴取得に追加MCP・秘密情報・接続用環境変数を持ち込まない', isolated.params.mcpServers.length === 0
+      && isolated.env.PLEIAD_FIXTURE_SECRET === process.env.PLEIAD_FIXTURE_SECRET
+      && isolated.env.AGENT_BROWSER_CONFIG === process.env.AGENT_BROWSER_CONFIG);
+    mark = calls.length;
+    await turn({ cwd: other });
+    const separate = of('session/new', mark)[0];
+    t.ok('別会話に追加MCP・秘密情報・接続用環境変数を持ち越さない', separate.params.mcpServers.length === 0
+      && separate.env.PLEIAD_FIXTURE_SECRET === process.env.PLEIAD_FIXTURE_SECRET
+      && separate.env.AGENT_BROWSER_CONFIG === process.env.AGENT_BROWSER_CONFIG);
+
+    // 設定の途中変更は稼働中のセッションだけに渡し、モデルのACKの不一致は成功にしない。
+    let ready;
+    const readiness = new Promise(resolve => { ready = resolve; });
+    const control = { onReady: ready };
+    holdPrompt = true;
+    const running = turn({ cwd, control });
+    await readiness;
+    t.ok('Grokの稼働中のモデル・承認モードを変更できる', await backend.setModelLive(control.handle, MODEL) && await backend.setModeLive(control.handle, 'plan'));
+    selectionMismatch = true;
+    t.ok('モデルのACKが指定と異なるときは次ターンへ回す', !await backend.setModelLive(control.handle, MODEL));
+    selectionMismatch = false;
+    t.ok('未知の承認モードは送らない', !await backend.setModeLive(control.handle, 'unknown'));
+    holdPrompt = false; releasePrompt(); await running;
+    t.ok('終わったターンに設定変更を送らない', !await backend.setModelLive(control.handle, MODEL) && !await backend.setModeLive(control.handle, 'ask'));
+
+    // 保存済みのモデル・effortが起動引数を上書きしても、プロンプトを送る前に今回の指定へ戻す。
+    resumeSelection = { models: { currentModelId: 'saved-model' }, configOptions: [
+      { id: 'model', currentValue: 'saved-model' }, { id: 'reasoning_effort', currentValue: 'low' }] };
+    for (const fallback of [false, true]) {
+      rejectResume = fallback;
+      mark = calls.length;
+      await turn({ cwd, sessionId: first.sessionId, model: MODEL });
+      const restored = of('session/set_config_option', mark)[0];
+      const promptIndex = calls.slice(mark).findIndex(c => c.method === 'session/prompt');
+      t.ok(`再開後の保存済みモデルを送信前に戻す（load=${fallback}）`, restored?.params.value === MODEL
+        && calls.indexOf(restored) - mark < promptIndex);
+    }
+    rejectResume = false;
+    mark = calls.length;
+    await turn({ cwd, sessionId: first.sessionId, effort: 'high' });
+    t.ok('再開後の保存済みeffortを今回の指定へ戻す', of('session/set_config_option', mark).some(c => c.params.configId === 'reasoning_effort' && c.params.value === 'high'));
+    mark = calls.length;
+    await turn({ cwd, sessionId: first.sessionId, model: MODEL, effort: 'high' });
+    t.ok('モデルを戻した後にもeffortを再適用する', JSON.stringify(of('session/set_config_option', mark).map(c => c.params.configId)) === JSON.stringify(['model', 'reasoning_effort']));
+    selectionMismatch = true;
+    mark = calls.length;
+    let rejectedSelection = false;
+    try { await turn({ cwd, sessionId: first.sessionId, model: MODEL }); } catch { rejectedSelection = true; }
+    t.ok('モデルの復元ACKが不一致なら送信しない', rejectedSelection && of('session/prompt', mark).length === 0);
+    selectionMismatch = false; resumeSelection = null;
+
+    for (const hasAlways of [true, false]) {
+      let canAlways;
+      permissionRequest = { toolCall: { toolCallId: `permission-${hasAlways}`, title: 'Read fixture', rawInput: {} }, options: [
+        { kind: 'allow_once', optionId: 'once' }, { kind: 'reject_once', optionId: 'deny' }, ...(hasAlways ? [{ kind: 'allow_always', optionId: 'persistent' }] : [])] };
+      await turn({ cwd, askPermission: async request => { canAlways = request.canAlways; return { allow: true, always: true }; } });
+      t.ok(`Grok: CLIが提示した恒常許可だけを返す（${hasAlways}）`, canAlways === hasAlways && permissionResponse.outcome.optionId === (hasAlways ? 'persistent' : 'once'));
+    }
+    permissionRequest = null;
 
     // 7. turn_completed の usage は呼び出しの合計で、文脈の占有ではない。usage_update の used/size だけを文脈の量にする
     const events = [];

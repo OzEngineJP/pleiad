@@ -3,6 +3,7 @@
 // 写し方は devin-normalize.mjs と同じ（ACP の sessionUpdate の形は共通）。
 import crypto from 'node:crypto';
 import { MAX_RESULT_CHARS, cutText } from './shared.mjs';
+import { computerResult, computerFailed, acpComputerText } from './computer-delivery.mjs';
 
 const contentText = value => {
   if (typeof value === 'string') return value;
@@ -127,7 +128,10 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       if (['completed', 'failed', 'cancelled'].includes(state.status)) {
         const raw = contentText(state.content) || contentText(state.rawOutput)
           || (state.rawOutput != null ? JSON.stringify(state.rawOutput) : '');
-        const result = { text: cutText(raw, MAX_RESULT_CHARS, '\n…'), isError: state.status !== 'completed', truncated: raw.length > MAX_RESULT_CHARS };
+        const cut = text => ({ text: cutText(text, MAX_RESULT_CHARS, '\n…'), truncated: text.length > MAX_RESULT_CHARS });
+        const computerTool = call.name.includes('ply_computer') || String(state.rawInput?.tool_name ?? '').includes('ply_computer');
+        const result = computerTool ? computerResult(acpComputerText(raw), cut) : cut(raw);
+        result.isError = state.status !== 'completed' || computerFailed(result.computer);
         const changed = JSON.stringify(call.result) !== JSON.stringify(result);
         call.result = result;
         if (changed) send({ type: 'tool.result', id, ...result });

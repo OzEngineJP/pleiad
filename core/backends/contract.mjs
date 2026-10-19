@@ -44,7 +44,7 @@ export const CAPABILITIES = {
   compact: { valid: bool },
   // 委譲の子の自動圧縮の閾値を受け取る（runArgs.autoCompactWindow）
   autoCompactWindow: { valid: bool },
-  // 次の発言の候補をターンの中で受け取る（native）。false なら Pleiad がターンの後に suggestNext で作る
+  // 次の発言の候補をターンの中で受け取る（native）。false は suggestNext がある場合だけターンの後に作る
   promptSuggestions: { valid: oneOf(false, 'native') },
   // Pleiad の指示（core/ply-instructions.mjs。追加の文）を受け取る。委譲の橋（plyAgents）とは別の印:
   // 文を受け取れるだけのバックエンドと、委譲ツールまで繋がるバックエンドを分ける（issue #107）

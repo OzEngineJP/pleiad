@@ -19,6 +19,10 @@ export default async function (t) {
     t.ok(`${id}: 能力の印を全部明示し、印とメソッドが合う`, problems.length === 0, problems.join(' / '));
     t.ok(`${id}: id が記述のキーと同じ`, native.id === id, String(native.id));
   }
+  // 共通の配達機能をfalseへ戻しても形の検査だけでは通るため、製品としての最低限を別に守る。
+  for (const id of DEFAULT_AGENT_IDS) for (const key of ['plyInstructions', 'plyAgents', 'browser', 'plyControl', 'secrets']) {
+    t.ok(`${id}: 共通機能 ${key} を受け取れる`, Boolean(natives[id].capabilities[key]));
+  }
   t.ok('何も持たない能力（対応を終えたバックエンド）も全部のキーを持ち、値が許される形', CAPABILITY_KEYS.every((k) => Object.hasOwn(NO_CAPABILITIES, k) && CAPABILITIES[k].valid(NO_CAPABILITIES[k]))
     && Object.keys(NO_CAPABILITIES).length === CAPABILITY_KEYS.length);
 

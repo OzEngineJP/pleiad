@@ -1,6 +1,6 @@
 # コンピューターの操作（Windows・macOS）
 
-エージェントが PC の画面を撮り、マウスとキーボードで PC のアプリを操作する（[ADR 0070](adr/0070-computer-use-via-ply-computer-mcp.md)）。対象は Claude・Codex・Antigravity の 3 つで、どれにも Pleiad の MCP サーバー `ply_computer` を渡す。承認・止める・会話の中のスクリーンショット・設定は 3 つで同じにする。
+エージェントが PC の画面を撮り、マウスとキーボードで PC のアプリを操作する（[ADR 0070](adr/0070-computer-use-via-ply-computer-mcp.md)）。対象は Claude・Codex・Antigravity・OpenCode・Devin・Grok で、どれにも Pleiad の MCP サーバー `ply_computer` を渡す。承認・止める・会話の中のスクリーンショット・設定は共通にする。
 
 状態: Windows は実装済み（2026-10-01）。macOS 14 以上の層を追加（[ADR 0173](adr/0173-computer-use-macos.md)）。Mac 実機では未確認。ウィンドウ単位の撮影・背面での操作・クリップボード・OCR は第 2 段階。
 
@@ -543,6 +543,15 @@ Codex `codex-cli 0.156.1`（app-server）、Claude Agent SDK 0.3.258（CLI 2.1.2
 | ツールの出方 | `mcp__ply_computer__<ツール>`。CLI 2.1.284 は MCP のツールを遅延ロードし、モデルは `ToolSearch` で探してから呼ぶ（指示は無くても探せた）。ライブの `tool_result` に `[Image: source: <パス>]` の text ブロックを足す（transcript には無い）ので、表示の本文から除く | `mcpToolCall`（`server: 'ply_computer'`）。ツールは遅延ロードで、最初の一覧に出ない（gpt-5.x は `tool_search`、gpt-6 系は `ALL_TOOLS` で探す）。指示文で探し方を書く | `call_mcp_tool`（`{ ServerName, ToolName, Arguments }`）。`ServerName` は空のことが多い。`DONE` の `output` は text ブロックをつないだもの（印の行はそのまま届く） |
 | 名前の衝突 | — | — | agy はツールの定義をサーバー名の階層なしで `~/.gemini/antigravity-cli/mcp/<ツール>.json` に書く。`screenshot` のような名前は他のサーバーと衝突するので、agy にだけ `ply_computer_<ツール>` と見せる（Claude・Codex は Claude Desktop と API のメンバー名のまま）。`computer_batch` の `action` は接頭辞なし |
 | 同梱の computer use | — | `plugins.unified-computer-use@openai-bundled.enabled: false`（`cua_repl` を出す側）と `plugins.computer-use@openai-bundled.enabled: false`（スキルを出す側）の 2 つ。`features.computer_use: false` は効かず、`mcp_servers.cua_repl.enabled` は app-server が拒否する。`node_repl` は利用者の `config.toml` の定義なので触らない。開始時に `mcpServerStatus/list` を見て、残っていればログに 1 行出す（[ADR 0074](adr/0074-codex-bundled-computer-use-off.md)） | — |
+
+### ACP バックエンドの画像配達（2026-10-20）
+
+Devin は `{ images: 'inline', waitSliceMs: null }`、Grok は `{ images: 'path', waitSliceMs: null }`。
+新規・再開の両方に認証付きの HTTP MCP と操作指示を渡す。Grok CLI 1.0.62 では合成画像を返すMCPと保存先を使い、画像ファイルを開いて内容を読む経路を確認した。
+画像だけを返した試行では応答の完了を確認できなかったため、Grok には保存先とファイルを開く指示も渡す。
+
+ACPのツール結果は、コンピューター操作の呼び出しだけを対象に印の行から `images` と `computer` を復元する。
+Grok が返す MCP の `OkayOutput` ラッパーも展開し、文字列に変換された画像の data URI は表示・履歴に残さない。
 
 ## 決定の記録
 
