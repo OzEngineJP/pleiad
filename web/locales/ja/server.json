@@ -1,4 +1,11 @@
 {
+  "acp": {
+    "errors": {
+      "usageExhausted": "{{agent}} の利用残高または利用枠を使い切りました。利用状況とプランを確認してから、もう一度送信してください。",
+      "paymentRequired": "{{agent}} から支払いが必要との応答がありました（HTTP 402）。請求と利用残高を確認してから、もう一度送信してください。",
+      "rateLimited": "{{agent}} のリクエスト制限に達しました。時間を置いてから、もう一度送信してください。"
+    }
+  },
   "claudeSdk": {
     "missing": "Claude を使うには Anthropic の Claude Agent SDK（{{version}}）が要ります。設定の「エージェント」の Claude の行から取得してください。SDK は npm のレジストリから取得し、Anthropic の規約が適用されます。",
     "errors": {

@@ -1,4 +1,11 @@
 {
+  "acp": {
+    "errors": {
+      "usageExhausted": "{{agent}} has exhausted its usage balance or allowance. Check your usage and plan, then send your message again.",
+      "paymentRequired": "{{agent}} reported that payment is required (HTTP 402). Check billing and your usage balance, then send your message again.",
+      "rateLimited": "{{agent}} has reached its request limit. Wait before sending your message again."
+    }
+  },
   "claudeSdk": {
     "missing": "Claude needs Anthropic's Claude Agent SDK ({{version}}). Download it from the Claude row in Settings → Agents. The SDK comes from the npm registry, and Anthropic's terms apply.",
     "errors": {

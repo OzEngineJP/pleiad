@@ -1,3 +1,4 @@
+import { acpRequestFailure } from './acp-error.mjs';
 import { createLineReader } from '../link-codec.mjs';
 import { spawnCli, cliCommand } from '../cli-installation.mjs';
 import { killTree } from './antigravity-background.mjs';
@@ -194,7 +195,8 @@ export class DevinAcp {
     clearTimeout(pending.timer);
     if (hasError) {
       const e = frame.error;
-      pending.reject(rpcError('Devin ACP request failed', Number.isSafeInteger(e.code) ? e.code : -32000));
+      const failure = acpRequestFailure(e, 'Devin', 'Devin ACP request failed');
+      pending.reject(rpcError(failure.message, failure.code));
     } else {
       // Observe ACKs in wire order, before resolving a call can queue its await.
       try { this.onResponse({ method: pending.method, params: pending.params, result: frame.result }); }
