@@ -3067,6 +3067,7 @@ function makeEmit(turn) {
         emitGlobal({ type: done === 'delivered' ? 'userMessage.delivered' : 'userMessage.dropped',
           sessionId: sent.sessionId, messageId: `task-send-${id}`, ...(event.nativeId ? { nativeId: event.nativeId } : {}) });
       }
+      return;
     }
     // 受理済みの途中送信（送信待ちの項目）への合図。捨てられたら送信待ちへ戻す
     const awaited = signal && event.messageId && turn.pendingSteers?.delete(event.messageId);

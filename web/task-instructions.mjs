@@ -49,7 +49,7 @@ export function injectTaskInstructions(instructions = [], messages = []) {
   for (const instruction of (instructions ?? [])) {
     if (!instruction || anchored.has(instruction.id)) continue;
     // 配送済みで履歴も錨も時刻も引けないものは、履歴の発言が引き継ぐ（旧データを推測で消したり二重に出したりしない）
-    if (instruction.state === 'delivered' && !instruction.nativeId && !instruction.anchor) continue;
+    if (instruction.state === 'delivered' && !instruction.nativeId) continue;
     const ai = anchorIndex(instruction.anchor);
     if (ai >= 0) {
       // 同じ錨を指す指示が連続するときは、直前に置いた指示の直後へ（受付順を保つ）

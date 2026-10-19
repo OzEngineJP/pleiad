@@ -327,7 +327,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale }),
             args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
-          mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
+          const initialNativeId = mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
           emit({ type: 'session', sessionId, model: model || client.init?._meta?.modelState?.currentModelId || undefined, ...(args.sessionId ? {} : { first: true }) });
           // 途中送信: 走っているターンへ session/prompt を重ねる。Grok は内蔵の待ち行列に積み、
@@ -353,7 +353,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
           emit({ type: 'activity', state: 'thinking' });
           const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
-          sent = true; onPromptDelivered?.();
+          sent = true; onPromptDelivered?.(initialNativeId);
           control?.onReady?.();
           const result = await Promise.race([response, stopped]);
           if (fatal) throw fatal;

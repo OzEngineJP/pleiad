@@ -6437,7 +6437,12 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     // git の要約の行は、押して開く先（今の会話の右パネル）が読んでいる子の会話ではないので、読むだけの筋には出さない
     if (it.kind === 'present' && (it.p.kind === 'git' || it.p.kind === 'worktree')) continue;
     if (it.kind === 'present') { last = put(renderPresent(savedEvent(it.p)), `p:${it.pi}`); continue; }
-    if (it.m?.role === 'instruction') { last = put(pendingNode(it.m.instruction), `instr:${it.m.instruction.id}`); continue; }
+    if (it.m?.role === 'instruction') {
+      last = pendingNode(it.m.instruction);
+      th.append(last);
+      prevRole = 'user';
+      continue;
+    }
     const { node, role } = historyRow(it.m, { cont: prevRole === 'assistant', refs, prev: last, readonly: true, backend, sessionId,
       // 古い分を省いた筋（base > 0）の最初の発言は会話の途中。依頼ではなく追加の指示として描く
       user: (m) => (it.mi === 0 && !base ? requestNode : followUp)(m.text, m.at) });

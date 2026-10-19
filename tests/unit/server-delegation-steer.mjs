@@ -100,7 +100,7 @@ export default async function(t) {
       await c.cmd('setTurnSettings', { sessionId: d.task.sessionId, backend: 'fake', model: 'fast' });
       await send(d.parent, d.task, 'echo:NEXT');
       t.ok('予約と関係ない指示は、予約があっても今のターンへ途中送信で渡る', await stateOf(d.task) === 'echo:NEXT:delivered', await stateOf(d.task));
-      const outD2 = JSON.parse((await c.runTurn({ sessionId: d.parent, prompt: ply('ply_task_send', { taskId: d.task.taskId, message: 'echo:FOR_NEXT', model: 'deep' }) })
+      const outD2 = JSON.parse((await c.runTurn({ sessionId: d.parent, prompt: ply('ply_task_send', { taskId: d.task.taskId, message: 'echo:FOR_NEXT', model: 'smart' }) })
         .then(r => r.events.find(e => e.type === 'tool.result'))).text);
       t.ok('設定と同じ呼び出しの指示は、替えた後のターンを待つ', await stateOf(d.task) === 'echo:NEXT:delivered,echo:FOR_NEXT:queued' && outD2.pendingMessages === 1, await stateOf(d.task));
       await d.finish();
@@ -178,8 +178,7 @@ export default async function(t) {
 
       // 一時的に送れない間の待機分は、予約が外れたら1回で送る。
       const e5 = await child('e5');
-      await c.cmd('setTurnSettings', { sessionId: e5.task.sessionId, backend: 'fake', model: 'fast' });
-      await send(e5.parent, e5.task, 'echo:BATCH_FIRST');
+      await c.runTurn({ sessionId: e5.parent, prompt: ply('ply_task_send', { taskId: e5.task.taskId, model: 'smart', message: 'echo:BATCH_FIRST' }) });
       await send(e5.parent, e5.task, 'echo:BATCH_SECOND');
       const mark5 = c.mark();
       await c.cmd('setTurnSettings', { sessionId: e5.task.sessionId, cancel: true });

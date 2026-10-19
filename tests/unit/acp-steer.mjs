@@ -320,4 +320,15 @@ export default async function (t) {
     t.ok('途中入力は本文ではなく通知IDで区別する', users.length === 3 && first === duplicate && first !== second
       && first === users[1].liveUuid && second === users[2].liveUuid);
   }
+  {
+    const mapper = createDevinMapper('s', () => {});
+    mapper.beginTurn('request');
+    mapper.accept({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'request' } });
+    mapper.accept({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'before' } });
+    const first = mapper.queueUser('same'), second = mapper.queueUser('same');
+    for (const text of ['sa', 'me', 'same']) mapper.accept({ sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
+    const users = mapper.messages().filter(m => m.role === 'user');
+    t.ok('Devinの同文・分割エコーも配送ごとの履歴IDへ結び付く', users.length === 3 && users[1].text === 'same' && users[2].text === 'same'
+      && first.nativeId === users[1].liveUuid && second.nativeId === users[2].liveUuid && first.nativeId !== second.nativeId);
+  }
 }

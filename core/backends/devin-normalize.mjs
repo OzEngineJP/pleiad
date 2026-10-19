@@ -63,6 +63,8 @@ const inputOf = value => value && typeof value === 'object' ? value : value == n
 export function createDevinMapper(sessionId, emit = () => {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
   let current = null, expectedEcho = null, echo = '', live = false, turn = null, sepText = false, sepThink = false;
+  const pendingUsers = [];
+  let queuedEcho = null;
   // uuid は位置から作る（ホスト記録の無いネイティブの会話は、この uuid のまま再開・再起動の後も同じ行を指す）。
   // ただし圧縮で位置がずれると別の発言に当たるので、ホスト記録に重ねるときは使わない（core/conversations.mjs の mergeMessages）。
   // 再生（session/load）の行には positional の印を付け、順序と中身で当てさせる。ライブの行には、ターンごとの乱数の入った liveUuid を付ける
@@ -96,9 +98,20 @@ export function createDevinMapper(sessionId, emit = () => {}) {
         current.text = current.sent = echo; expectedEcho = null; return;
       }
       // 返答の前に届いた途中送信は同じ行に続く。再生でも同じ行に続くので、送った全文にも足す（記録の照合のハッシュ）
+      if (live && !queuedEcho && pendingUsers.length) {
+        queuedEcho = pendingUsers.shift();
+        queuedEcho.seen = 0;
+        current = null;
+        const message = row('user');
+        queuedEcho.nativeId = message.liveUuid ?? message.uuid;
+      }
       const message = row('user');
       message.text += text;
       if (typeof message.sent === 'string') message.sent += text;
+      if (queuedEcho) {
+        queuedEcho.seen += text.length;
+        if (queuedEcho.seen >= queuedEcho.text.length) queuedEcho = null;
+      }
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;
       const message = row('assistant'), text = contentText(update.content);
@@ -157,9 +170,17 @@ export function createDevinMapper(sessionId, emit = () => {}) {
       current = null; live = true; turn = crypto.randomUUID();
       Object.assign(row('user'), { text: shown, sent });
       expectedEcho = sent; echo = '';
+      return current.liveUuid ?? current.uuid;
+    },
+    queueUser(text) {
+      const entry = { text: String(text) };
+      pendingUsers.push(entry);
+      const withdraw = () => { const i = pendingUsers.indexOf(entry); if (i >= 0) pendingUsers.splice(i, 1); };
+      Object.defineProperty(withdraw, 'nativeId', { get: () => entry.nativeId });
+      return withdraw;
     },
     // 発言の id はネイティブの会話の行の uuid。ホスト記録の会話では、記録の行に合わせて liveUuid に替える（core/conversations.mjs の hostEvent）
-    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid, ...(current.liveUuid ? { liveUuid: current.liveUuid } : {}) }); live = false; },
+    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid, ...(current.liveUuid ? { liveUuid: current.liveUuid } : {}) }); live = false; pendingUsers.length = 0; queuedEcho = null; },
     messages: () => structuredClone(messages),
   };
 }

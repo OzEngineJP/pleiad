@@ -159,6 +159,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       usageTotals = {}; measuredUsage = false; usagePrompts.clear();
       Object.assign(row('user'), { text: shown, sent });
       expectedEcho = sent; echo = ''; turnBoundary = false;
+      return current.liveUuid ?? current.uuid;
     },
     // Grok は途中送信を user_message_chunk でエコーしない（実測 1.0.62）。
     // 書いた直後に pendingUsers に積み、次の回の出力が始まる直前に user 行として置く（flushQueued）。
