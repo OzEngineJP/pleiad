@@ -94,6 +94,13 @@ export function streamMessages(events = [], { backend = null, model = null, init
         if (m) { messages.splice(messages.indexOf(m), 1); users.delete(ev.messageId); undelivered.delete(m); }
         break;
       }
+      case 'taskInstruction': {
+        // 委譲の子への追加指示を受け付けた（server.mjs の steerInstruction ではなく受付時の出来事）。
+        // この位置が会話の中での位置。状態（送信中・渡った・落ちた）は instructions の記録が正なので、ここでは場所の印だけ置く
+        closeTurn();
+        messages.push({ role: 'user', taskInstructionId: ev.instructionId, text: String(ev.text ?? ''), at: isoAt(ev.at) });
+        break;
+      }
       case 'taskNotice':
         closeTurn();
         messages.push({ role: 'user', internalTaskNotice: true, text: String(ev.text ?? ''), at: isoAt(ev.at) });

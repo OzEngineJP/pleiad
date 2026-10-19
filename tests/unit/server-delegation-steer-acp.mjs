@@ -52,8 +52,8 @@ export default async function (t) {
       const out = JSON.parse((await send(a.parent, a.task, 'follow-up A').then(r => r.events.find(e => e.type === 'tool.result'))).text);
       t.ok('受理された時点では送信中（queued には戻さない・依頼元の pendingMessages は 0）',
         out.pendingMessages === 0 && await awaitState(a.task, 'follow-up A:sending') === 'follow-up A:sending', await stateOf(a.task));
-      const um = events(a.task, markA, 'userMessage');
-      t.ok('子の会話の発言は渡るまで pending で出る', um.length === 1 && um[0].pending === true && um[0].messageId.startsWith('task-send-'), JSON.stringify(um));
+      const um = events(a.task, markA, 'taskInstruction');
+      t.ok('子の会話の中の位置は受け付けの出来事（taskInstruction）で確定する', um.length === 1 && um[0].text === 'follow-up A' && Boolean(um[0].instructionId), JSON.stringify(um));
       const held = await awaitTask(a.parent, r => r.status === 'completed', 30_000);
       t.ok('回の決着で渡った合図（userMessage.delivered）が届き、指示は delivered になる',
         events(a.task, markA, 'userMessage.delivered').length === 1 && await stateOf(a.task) === 'follow-up A:delivered', await stateOf(a.task));
@@ -61,19 +61,20 @@ export default async function (t) {
       t.ok('同じ回に折り込まれて答えられる（新しいターンは増えない）', held.result.includes('follow-up A') || text.includes('fixture: follow-up A'), held.result?.slice(0, 200));
     }
 
-    // ---- 受理の判定の窓（300ms）より速い成功: 渡った合図が受理の応答（pending 付きの userMessage）より先に出ても、
-    // 指示は delivered で決着し、送信中・待機のまま残らない（server は合図の控えを steer を呼ぶ前に置く）
+    // ---- 受理の判定の窓（300ms）より速い成功: 渡った合図が受理の応答より先に出ても、
+    // 指示は delivered で決着し、送信中・待機のまま残らない（server は合図の控えを steer を呼ぶ前に置く）。
+    // 受付の出来事（taskInstruction）は常に合図より先に出るので、早い合図が表示を送信中へ戻すこともない
     {
       const f = await child('[slow] fast-steer');
       const markF = c.mark();
       const out = JSON.parse((await send(f.parent, f.task, '[fast-steer] quick').then(r => r.events.find(e => e.type === 'tool.result'))).text);
-      const order = c.since(markF).filter(e => e.sessionId === f.task.sessionId && ['userMessage', 'userMessage.delivered'].includes(e.type)).map(e => `${e.type}${e.pending ? ':pending' : ''}`);
-      t.ok('合図が受理の応答より先に出る順になっている（この試験の前提）', order.join() === 'userMessage.delivered,userMessage:pending', order.join());
+      const order = c.since(markF).filter(e => e.sessionId === f.task.sessionId && ['taskInstruction', 'userMessage.delivered'].includes(e.type)).map(e => e.type);
+      t.ok('受付の出来事が先、渡った合図が後の順になっている', order.join() === 'taskInstruction,userMessage.delivered', order.join());
       t.ok('指示は delivered で決着し、依頼元の pendingMessages は 0',
         out.pendingMessages === 0 && await awaitState(f.task, '[fast-steer] quick:delivered') === '[fast-steer] quick:delivered', await stateOf(f.task));
       await awaitTask(f.parent, r => r.status === 'completed', 30_000);
       t.ok('子のターンが終わっても送信中・待機に戻らず、送り直しも無い',
-        await stateOf(f.task) === '[fast-steer] quick:delivered' && events(f.task, markF, 'userMessage').length === 1, await stateOf(f.task));
+        await stateOf(f.task) === '[fast-steer] quick:delivered' && events(f.task, markF, 'taskInstruction').length === 1, await stateOf(f.task));
     }
 
     // ---- 受理 → 中断で決着:「渡った」合図が無いまま捨てられた分は delivered のままにせず dropped にする

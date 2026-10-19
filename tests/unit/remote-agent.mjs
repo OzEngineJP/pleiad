@@ -16,7 +16,7 @@ import { createAgentPort } from '../../core/remote/agent-port.mjs';
 import { viewMessages, viewCursor, trimViewMessage, viewAnswer, viewInstructions, pickDescendants, VIEW_LIMITS } from '../../core/remote/agent-view.mjs';
 import { maskOutput, MASK } from '../../core/ops/registry.mjs';
 import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale, hostRowRunning, HOST_ROW_STALE_MS } from '../../web/host-view.mjs';
-import { visibleTaskInstructions } from '../../web/task-instructions.mjs';
+import { injectTaskInstructions } from '../../web/task-instructions.mjs';
 import { createCardRoll } from '../../web/card-roll.mjs';
 import { AGENT_OPS, AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
 
@@ -139,8 +139,10 @@ export default async function (t) {
     t.ok('子孫が 40 件以下なら、そのまま（省いた件数は 0）', pickDescendants(rows.slice(0, 5)).omitted === 0);
     const tail = [{ role: 'assistant', text: 'a' }, { role: 'user', text: 'second' }, { role: 'assistant', text: 'b' }];
     const sending = [{ id: 'i1', state: 'delivered' }, { id: 'i2', state: 'sending' }];
-    t.ok('差し込み中の指示: 末尾だけの筋でも、会話全体の利用者の発言の数で判定する（筋に入った指示を二重に出さない）',
-      visibleTaskInstructions(sending, tail).some(x => x.id === 'i2') && !visibleTaskInstructions(sending, tail, 3).some(x => x.id === 'i2') && visibleTaskInstructions(sending, tail, 2).some(x => x.id === 'i2'));
+    const outTail = injectTaskInstructions(sending, tail);
+    const shownTail = outTail.filter(x => x.role === 'instruction').map(x => x.instruction.id);
+    t.ok('差し込み中の指示: ID で照合するので、末尾だけの筋でも件数では判定しない（届いた分は履歴が引き継ぎ、配送中は末尾に残る）',
+      shownTail.join() === 'i2' && outTail.at(-1).instruction?.id === 'i2');
     const tree = [{ taskId: 'g1', rawStatus: 'running' }, { taskId: 'g2', rawStatus: 'completed' }, { taskId: 'g3', rawStatus: 'waiting' }];
     const now = 1_000_000;
     t.ok('孫の行: 読んだばかりの走っている行は古くない', !hostRowStale(tree[0], now - 1000, now) && !hostRowStale(tree[2], now - HOST_ROW_STALE_MS, now));

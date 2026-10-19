@@ -663,9 +663,9 @@ export const backend = {
     const mapper = createTurnMapper({
       sessionId, emit: out, windowTokens,
       onUserMessage: ({ messageId, text: said }) => {
-        if (!delivered && isPrompt(said, messageId)) { delivered = true; userMessageId = messageId; onPromptDelivered?.(); control?.touch?.(); return; }
+        if (!delivered && isPrompt(said, messageId)) { delivered = true; userMessageId = messageId; onPromptDelivered?.(userMessageId); control?.touch?.(); return; }
         const i = steers.findIndex(x => x.nativeId === messageId);
-        if (i >= 0) { const [x] = steers.splice(i, 1); if (x.id) out({ type: 'userMessage.delivered', messageId: x.id }); control?.touch?.(); }
+        if (i >= 0) { const [x] = steers.splice(i, 1); if (x.id) out({ type: 'userMessage.delivered', messageId: x.id, nativeId: x.nativeId }); control?.touch?.(); }
       },
       onChild: ({ childId }) => {
         if (children.has(childId) && turnsBySession.get(sessionKey(childId, srv)) === route) return;

@@ -23,6 +23,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
   // 再生（session/load）の行には positional の印を付け、順序と中身で当てさせる。ライブの行には、ターンごとの乱数の入った liveUuid を付ける
   // 送ったが回の中ではまだ置けない途中送信（エコーが来ないので自分で行を作る。{ text }）と、直近に届いた回の区切り
   const pendingUsers = [];
+  const injectedKeys = new Map();   // interjectionId -> 置いた user 行の uuid（通知の重複で二重に置かない）
   let turnBoundary = false;
   let usageTotals = {}, measuredUsage = false;
   const usagePrompts = new Set();
@@ -48,7 +49,14 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
   // queued の回の出力が始まる直前に、送った順に user 行を 1 つ置く。
   // 送った時点ではなくターンの境界で置くので、流れている元の行（user の echo・assistant の本文）を分断しない
   function flushQueued() {
-    if (turnBoundary && pendingUsers.length) { current = null; row('user').text = pendingUsers.shift().text; turnBoundary = false; }
+    if (turnBoundary && pendingUsers.length) {
+      const entry = pendingUsers.shift();
+      current = null;
+      const message = row('user');
+      message.text = entry.text;
+      entry.nativeId = message.liveUuid ?? message.uuid;
+      turnBoundary = false;
+    }
   }
   function row(role) {
     if (current?.role !== role) {
@@ -151,6 +159,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       usageTotals = {}; measuredUsage = false; usagePrompts.clear();
       Object.assign(row('user'), { text: shown, sent });
       expectedEcho = sent; echo = ''; turnBoundary = false;
+      return current.liveUuid ?? current.uuid;
     },
     // Grok は途中送信を user_message_chunk でエコーしない（実測 1.0.62）。
     // 書いた直後に pendingUsers に積み、次の回の出力が始まる直前に user 行として置く（flushQueued）。
@@ -158,12 +167,34 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
     queueUser(text) {
       const entry = { text: String(text) };
       pendingUsers.push(entry);
-      return () => { const i = pendingUsers.indexOf(entry); if (i >= 0) pendingUsers.splice(i, 1); };
+      const withdraw = () => { const i = pendingUsers.indexOf(entry); if (i >= 0) pendingUsers.splice(i, 1); };
+      Object.defineProperty(withdraw, 'nativeId', { get: () => entry.nativeId });
+      return withdraw;
+    },
+    /**
+     * `_x.ai/session/interjection` の通知（ターン内への差し込みが session の流れに入った合図）。
+     * 通知が届いた位置へ user 行を作り、履歴と対応付ける実際の uuid を返す（delivered の nativeId に使う）。
+     * 受理時に queueUser で積んだ自分の分はここで置くので、取りこぼしの保険（finish の末尾置き）から外す。
+     */
+    injectUser(text, key = null) {
+      if (key && injectedKeys.has(key)) return injectedKeys.get(key);
+      current = null;
+      const message = row('user');
+      message.text = String(text);
+      const nativeId = message.liveUuid ?? message.uuid;
+      if (key) injectedKeys.set(key, nativeId);
+      return nativeId;
     },
     finish() {
       if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid, ...(current.liveUuid ? { liveUuid: current.liveUuid } : {}) });
       // 送ったのに回られず残った分（中断・既読不明）は、送った順に末尾へ置いて無くさない
-      while (pendingUsers.length) { current = null; row('user').text = pendingUsers.shift().text; }
+      while (pendingUsers.length) {
+        const entry = pendingUsers.shift();
+        current = null;
+        const message = row('user');
+        message.text = entry.text;
+        entry.nativeId = message.liveUuid ?? message.uuid;
+      }
       live = false;
     },
     messages: () => structuredClone(messages),

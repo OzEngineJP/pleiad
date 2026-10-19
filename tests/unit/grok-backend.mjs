@@ -49,6 +49,10 @@ export default async function (t) {
       }
       if (method === 'session/close') return { _meta: { 'x.ai/closeOutcome': 'closed' } };
       if (method === 'session/set_config_option') return { configOptions: [{ id: params.configId, currentValue: selectionMismatch ? 'different' : params.value }] };
+      if (method === '_x.ai/interject') {
+        this.options.onInterjection(params);
+        return { result: { status: 'queued' } };
+      }
       if (method === 'session/prompt') {
         if (holdPrompt) await new Promise(resolve => { releasePrompt = resolve; });
         if (permissionRequest) permissionResponse = await this.options.onRequest('session/request_permission', { ...permissionRequest, sessionId: params.sessionId });
@@ -239,6 +243,22 @@ export default async function (t) {
     }
     permissionRequest = null;
 
+    {
+    holdPrompt = true; releasePrompt = null;
+    const nativeControl = {}, nativeEvents = [];
+    const held = turn({ cwd, control: nativeControl, emit: event => nativeEvents.push(event) });
+    for (let n = 0; n < 100 && !releasePrompt; n++) await new Promise(resolve => setTimeout(resolve, 5));
+    const accepted = await nativeControl.steer({ id: 'interject-live', args: { prompt: 'follow-up' } });
+    t.ok('ネイティブの途中入力通知が応答より先に届いても配送を確認できる', accepted && nativeEvents.some(e => e.type === 'userMessage.delivered' && e.messageId === 'interject-live' && e.nativeId));
+    releasePrompt();
+    const finished = await held;
+    holdPrompt = false;
+    const delivery = nativeEvents.find(e => e.messageId === 'interject-live');
+    const transcript = await backend.getMessages(finished.sessionId);
+    t.ok('途中入力の配送IDが実際の履歴行を指す', transcript.filter(m => m.role === 'user' && m.text === 'follow-up').length === 1
+      && transcript.some(m => m.liveUuid === delivery.nativeId));
+
+    }
     // 7. turn_completed の usage は呼び出しの合計で、文脈の占有ではない。usage_update の used/size だけを文脈の量にする
     const events = [];
     const mapper = createGrokMapper('grok-fixture-usage', e => events.push(e), { windowTokens: 1000 });

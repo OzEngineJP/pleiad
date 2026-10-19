@@ -156,7 +156,8 @@ export const BACKEND_EVENTS = {
   compaction: { phase: oneOf('start', 'complete', 'failed', 'summary') },
   background: { tasks: Array.isArray },
   phase: { state: oneOf('active', 'waiting') },
-  'userMessage.delivered': { messageId: str },
+  // nativeId: 渡った発言のネイティブ履歴の id（分かるバックエンドだけ。保存の照合に使う）
+  'userMessage.delivered': { messageId: str, nativeId: optional(str) },
   'userMessage.dropped': { messageId: str },
   promptSuggestion: { text: str },
   hookRun: { phase: oneOf('started', 'response') },
