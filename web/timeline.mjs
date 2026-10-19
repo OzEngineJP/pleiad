@@ -1,5 +1,7 @@
 import { visualizeReferences } from './visualize-reference.mjs';
-const time = value => Date.parse(value ?? "") || 0;
+// 時刻は ISO の文字列と epoch ms の数値が混ざって来る（発言は正規化で ms、提示の記録は ISO）。
+// Date.parse は数値を引くと NaN になり、sortAt が 0 に潰れて結び付きの無い提示が全部末尾へ流れる
+const time = value => Number.isFinite(value) ? value : (Date.parse(value ?? "") || 0);
 const normalize = value => {
   const p = String(value ?? "").trim().replace(/\\/g, "/");
   return /^[a-z]:\//i.test(p) ? p.toLowerCase() : p;
