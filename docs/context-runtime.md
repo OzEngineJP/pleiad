@@ -60,9 +60,9 @@ Skills は名前・説明・ID・元のディレクトリのみを一覧とし�
 
 ## Pleiad の指示
 
-指示ファイル・Skills・外部 MCP とは別に、Pleiad 自身が会話に毎ターン入れる指示の一覧を持つ（`core/ply-instructions.mjs`、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。種類の担当によらず、`ply_agents` を持つ会話（Claude・Codex）に入る。antigravity は `ply_agents` を持たないので入らない（`capabilities.plyAgents`。記録も残さない）。
+指示ファイル・Skills・外部 MCP とは別に、Pleiad 自身が会話に毎ターン入れる指示の一覧を持つ（`core/ply-instructions.mjs`、[ADR 0026](adr/0026-context-global-settings-and-ply-instructions.md)）。種類の担当によらず、`plyInstructions` の印を持つ会話（現在の全エージェント）に入る。`plyAgents` の印を持つ会話では ply_agents の instructions の後ろに足して同じ欄で渡し（Claude は `systemPrompt.append`、Codex は `developerInstructions`）、それ以外は発言の本文の前に足して渡す（ACP の系統と antigravity。記録はどちらも `contextSession.added`）。
 
-- **項目**: 既定の 2 項目（`child` 委譲された会話でのコマンドの扱い = コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え自分で止める・`Start-Process -Wait` のような無期限待機をしない（委譲の深さに上限は無いので、さらに委譲してよい）、`codexPolicy` Codex の実行前の拒否 = 承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。委譲された会話・Codex だけが既定。docs/multi-backend.md「Codex の実行前の拒否」）、自分で足した項目（`u-…`。名前・本文・入れる会話 `all` / `parent` / `child`・エージェント `claude` / `codex`）、委譲と連動の項目（`route` 委譲の振り分けの使い方 = `kind` を付け `backend` は書かない。いつも最後）。既定の項目は編集でき、編集していなければ文面は辞書（`agent:guide.*`）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で辞書の文へ戻る。既定と同じ内容で保存しても編集扱いにしない）。`route` は編集・スイッチを持たない。
+- **項目**: 既定の 2 項目（`child` 委譲された会話でのコマンドの扱い = コマンドには時間上限を付ける・常駐するサーバーやアプリはバックグラウンドで起動して PID を控え自分で止める・`Start-Process -Wait` のような無期限待機をしない（委譲の深さに上限は無いので、さらに委譲してよい）、`codexPolicy` Codex の実行前の拒否 = 承認なしのモードでも Codex 自身の安全判定で拒否されることがある。言い換えで回避せず、実行できなかったコマンドと理由・残ったものを報告する。委譲された会話・Codex だけが既定。docs/multi-backend.md「Codex の実行前の拒否」）、自分で足した項目（`u-…`。名前・本文・入れる会話 `all` / `parent` / `child`・エージェント = 本番のエージェント全部から選ぶ。保存済みの項目のエージェント一覧は広げない）、委譲と連動の項目（`route` 委譲の振り分けの使い方 = `kind` を付け `backend` は書かない。いつも最後）。既定の項目は編集でき、編集していなければ文面は辞書（`agent:guide.*`）から会話の言語で引く（Pleiad の更新で新しい文面になる）。編集したら保存した文のまま（「既定に戻す」で辞書の文へ戻る。既定と同じ内容で保存しても編集扱いにしない）。`route` は編集・スイッチを持たない。
 - **入れる文**: 項目ごとに見出し「<名前>（Pleiad が追加した指示）:」（`agent:guide.heading`）と本文。並びの順に空行でつなぐ。
 - **経路**: `ply_agents` の instructions の後ろに足し、同じ指示欄で渡す（Claude は `systemPrompt.append`、Codex は `developerInstructions`）。橋（`ply_agents`）は会話ごとに使い回すので、足すのはターンごと（`core/server.mjs` の `runTurn`）。MCP の initialize の instructions とツールの説明には入れない。
 - **入れる条件**（`turnInstructions`。入れないときは理由を記録する）: スイッチが入っている（`off`）、入れる会話が合う（依頼元 = 会話の記録に `delegation` が無い、委譲された会話 = ある。`target`）、エージェントが選ばれている（fake などそれ以外はどれにも当たる。`agent`）、`route` は委譲先の自動選択が有効（`routingOff`）、`route` は読み取り・計画モードの依頼元には入れない（`ply_delegate` を受け付けないため。`readOnly`。委譲された子には読み取りのモードでも `child` を入れる）。
@@ -128,7 +128,7 @@ OpenCode は指示を会話ごとに止める口が無く、Skills の一覧も�
 
 Claude は設定ソースと権限を保持し、Pleiad 管理時は初期化結果を確認するまでユーザー入力を送らない。Codex は管理対象のターン専用 app-server を作り、共有 RPC や他会話の設定を書き換えない。Skills または MCP の共通管理では plugins を無効にするため、その影響を設定画面に明示する。元の設定ファイルを書き換える抑止は行わない。
 
-Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad の置き場の `.agents/agents/ply-context/agent.md`、`--add-dir <置き場> --agent ply-context`）で Pleiad のコンテキストを受け取る（`core/backends/antigravity-context.mjs`）。本文に指示と Skills の一覧、`mcpServers` に ply_context への stdio 中継（`core/agy-context-relay.mjs`）を書き、Skills・MCP がエージェント担当なら `inheritCustomizations` / `inheritMcp` で agy 自身の読み込みを残す。カスタムエージェントはワークスペースの AGENTS.md・GEMINI.md を読まないため、**指示も Pleiad 担当のときだけ**受け取る。指示がエージェント担当のまま Skills か MCP だけを Pleiad にした組み合わせは、その会話をエージェント任せにして理由を記録に残す（`guardedBackend` / `reason`。設定画面の Skills・MCP のカードと会話の右パネルにも出る）。
+Antigravity（agy）は、会話ごとのカスタムエージェント（Pleiad の置き場の `.agents/agents/ply-context/agent.md`、`--add-dir <置き場> --agent ply-context`）で Pleiad のコンテキストを受け取る（`core/backends/antigravity-context.mjs`）。本文に指示と Skills の一覧、`mcpServers` に ply_context への stdio 中継（`core/agy-context-relay.mjs`）を書き、Skills・MCP がエージェント担当なら `inheritCustomizations` / `inheritMcp` で agy 自身の読み込みを残す。カスタムエージェントはワークスペースの AGENTS.md・GEMINI.md を自分で読まないため、指示がエージェント任せの会話では Pleiad がネイティブと同じ探索（`nativeInstructionEntries`）で拾って発言の前に毎ターン足す（issue #107。渡した分は記録の `nativeInjected` に残る）。ply_agents（委譲の橋）も同じ中継に束ねて渡し、その説明と Pleiad の指示は発言の前に毎ターン足す。エージェント定義は起動時にしか渡せず、同じ会話の再開では開始時の定義を持ち越す既知の制約があるため、確実に届ける文は発言への前置きにする。
 
 ## Hooks
 

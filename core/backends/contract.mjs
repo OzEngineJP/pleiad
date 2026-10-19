@@ -46,7 +46,11 @@ export const CAPABILITIES = {
   autoCompactWindow: { valid: bool },
   // 次の発言の候補をターンの中で受け取る（native）。false なら Pleiad がターンの後に suggestNext で作る
   promptSuggestions: { valid: oneOf(false, 'native') },
-  // ply_agents（委譲の橋）と Pleiad の指示を受け取る
+  // Pleiad の指示（core/ply-instructions.mjs。追加の文）を受け取る。委譲の橋（plyAgents）とは別の印:
+  // 文を受け取れるだけのバックエンドと、委譲ツールまで繋がるバックエンドを分ける（issue #107）
+  plyInstructions: { valid: bool },
+  // ply_agents（委譲の橋）を受け取る。agentRuntime（url・headers・instructions）が渡る。
+  // instructions の後ろには Pleiad の指示（plyInstructions の分）も足される
   plyAgents: { valid: bool },
   // Pleiad のコンテキスト（ply_context）の受け取り方（turn: ターンごと / conversation: 会話ごとの同じトークン / false: 受け取らない）
   plyContext: { valid: oneOf(false, 'turn', 'conversation') },
@@ -88,7 +92,7 @@ export const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITIES));
 export const NO_CAPABILITIES = Object.freeze({
   title: false, tag: false, fork: false, forkMessage: false, rewind: false, subagents: false, liveModel: false, liveMode: false,
   hostTools: false, approvals: 'none', alwaysAllow: false, mcpApproval: 'agent', login: false, accounts: false, compatEndpoints: false,
-  compact: false, autoCompactWindow: false, promptSuggestions: false, plyAgents: false, plyContext: false, computerUse: false,
+  compact: false, autoCompactWindow: false, promptSuggestions: false, plyInstructions: false, plyAgents: false, plyContext: false, computerUse: false,
   shell: false, plyShell: false, nativeShellOff: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: false, handover: false,
   browser: false, plyControl: false, secrets: false, visualize: false, hooks: false,
 });
@@ -198,13 +202,17 @@ export const RUN_ARG_FEATURES = Object.freeze({
   browserEnv: 'browser', browserInstructions: 'browser', browserRuntime: 'browser',
   computerRuntime: 'computerUse', controlRuntime: 'plyControl', secretsRuntime: 'secrets',
   shellRuntime: 'plyShell', agentRuntime: 'plyAgents', contextRuntime: 'plyContext',
+  addedInstructions: 'plyInstructions',
   visualizeInstructions: 'visualize', hooksRuntime: 'hooks',
 });
 
 /** runArgs に載ってよい、配達物でないキー。新しいキーを足すときは配達物なら RUN_ARG_FEATURES へ、どのバックエンドにも必要ならここへ */
 export const RUN_ARG_PLUMBING = Object.freeze(new Set([
+  // scanOptions: コンテキスト探索の置き場（home など）。探索するバックエンド（agy のネイティブ指示の注入）だけが使う。
+  // 試験で home を差し替えるための配管で、能力の配達物ではない
+  'scanOptions',
   'prompt', 'sessionId', 'messageId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke',
-  'signal', 'control', 'locale', 'delegatedChild', 'addedInstructions', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
+  'signal', 'control', 'locale', 'delegatedChild', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
   'compact', 'oauthToken', 'account', 'endpoint', 'autoCompactWindow', 'promptSuggestions',
   'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',
   'authorize', 'backend', 'isActive', 'origin', 'progress',

@@ -870,8 +870,7 @@
       "cannotStart": "Antigravity を起動できません",
       "cannotRead": "Antigravity の使用枠を取得できません",
       "needsUpdate": "使用枠の表示には Antigravity CLI 1.1.11 以降が必要です。端末で agy update を実行してください。"
-    },
-    "contextRefusal": "Antigravity に Pleiad のプラグインを渡すと、ワークスペースの指示（AGENTS.md・GEMINI.md）を agy が読み込まなくなります。指示の担当がエージェントのままなので、この会話ではエージェント自身の読み込みに任せました。Skills や外部 MCP を Pleiad に任せるには、指示の担当も Pleiad にしてください"
+    }
   },
   "context": {
     "removedHere": "この会話では外しました",

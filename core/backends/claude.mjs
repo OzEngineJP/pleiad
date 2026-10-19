@@ -684,6 +684,7 @@ export const backend = {
     liveMode: true,
     hostTools: true,
     plyAgents: true,   // ply_agents を mcpServers に、その instructions を append に渡す
+    plyInstructions: true, // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     // ply_computer（runArgs.computerRuntime）を mcpServers に、指示を append に渡す。MCP の image はそのままモデルに見える（docs/computer-use.md）
     computerUse: { images: 'inline', waitSliceMs: null },
     alwaysAllow: true,

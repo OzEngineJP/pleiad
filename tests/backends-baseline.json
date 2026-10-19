@@ -21,7 +21,7 @@
     "core/mcp-import.mjs": 11,
     "core/ops/hooks.mjs": 3,
     "core/ops/settings.mjs": 1,
-    "core/ply-instructions.mjs": 3,
+    "core/ply-instructions.mjs": 1,
     "core/server.mjs": 12,
     "core/usage-migrations.mjs": 1,
     "core/usage.mjs": 3,
@@ -36,7 +36,6 @@
     "web/hooks-card.mjs": 32,
     "web/hooks-unify-ui.mjs": 7,
     "web/mcp-config.mjs": 1,
-    "web/ply-instructions-card.mjs": 2,
     "web/session-context.mjs": 4
   }
 }

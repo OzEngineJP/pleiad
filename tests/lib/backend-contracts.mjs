@@ -49,6 +49,7 @@ export const CAPABILITY_CONTRACTS = {
   autoCompactWindow: ['server-compaction-delegated'],
   promptSuggestions: ['server-prompt-suggestions'],
   plyAgents: ['agent-tasks'],
+  plyInstructions: ['server-added-context', 'agent-tasks'],
   plyContext: ['server-agy-context', 'server-opencode-context', 'context-owner-capability'],
   computerUse: ['computer-bridge'],
   plyShell: ['shell-bridge', 'shell-delivery'],

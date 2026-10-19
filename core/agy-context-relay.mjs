@@ -12,11 +12,12 @@
 // （docs/computer-use.md「エージェントへの渡し方」）。agy はツールの定義をサーバー名の階層なしで書くので、ツール名に
 // ply_computer_ を付けて見せ、呼び出しでは外して Pleiad へ渡す（core/backends/computer-delivery.mjs の AGY_TOOL_PREFIX）。
 // `--control` を付けて起こした中継は ply_control（/mcp/control。Pleiad の操作の一覧。ADR 0081）を中継し、PLY_CONTROL_URL / PLY_CONTROL_AUTHORIZATION を読む。
+// `--agents` を付けて起こした中継は ply_agents（/mcp/agents。委譲の橋）を中継し、PLY_AGENTS_URL / PLY_AGENTS_AUTHORIZATION を読む。
 // `--browser` を付けて起こした中継は ply_browser（/mcp/browser。エージェントのブラウザー操作。ADR 0148）を中継し、
 // PLY_BROWSER_URL / PLY_BROWSER_AUTHORIZATION を読む。ツール名（list_browser_profiles・use_browser_profile・hand_to_user・close_browser_window）は衝突しにくいので付け外ししない。
 // agy は agent.md の mcpServers に複数書いても先頭の 1 本しか起こさない（1.2.14 で実測。後ろの中継には initialize も来ない）ので、
-// 2 つ以上を渡す会話は 1 本の中継に束ねる。`--context` `--computer` `--browser` `--control` を並べて起こすと、接続先ごとの tools/list を足し合わせ、
-// 呼び出しは名前で振り分ける（ply_computer_ で始まる名前は computer、ply_control_ で始まる名前は control、list_browser_profiles・use_browser_profile・hand_to_user・close_browser_window は browser、残りは context）。
+// 2 つ以上を渡す会話は 1 本の中継に束ねる。`--context` `--agents` `--computer` `--browser` `--control` を並べて起こすと、接続先ごとの tools/list を足し合わせ、
+// 呼び出しは名前で振り分ける（ply_computer_ で始まる名前は computer、ply_control_ で始まる名前は control、list_browser_profiles・use_browser_profile・hand_to_user・close_browser_window は browser、ply_delegate・ply_task_*・ply_usage は agents、残りは context）。
 // 受け取った JSON-RPC をそのまま Pleiad へ POST し、返事を stdout へ書く。env が無ければ（利用者が手で
 // このエージェントを選んだなど）ツールを持たない MCP として振る舞う。
 import readline from 'node:readline';
@@ -29,12 +30,16 @@ const TOOL_PREFIX = 'ply_computer_';
 const CONTROL_PREFIX = 'ply_control_';
 // core/browser-bridge.mjs の browserTools に載せるツール名（ADR 0148。軽く起こすため読み込まない）
 const BROWSER_TOOLS = new Set(['list_browser_profiles', 'use_browser_profile', 'hand_to_user', 'close_browser_window']);
+// core/agent-bridge.mjs の agentTools のツール名（同上）。ply_ で始まるので他の接続先と被らないが、束ねた中継では名前で振り分ける
+const AGENTS_TOOLS = new Set(['ply_delegate', 'ply_task_status', 'ply_task_wait', 'ply_task_send', 'ply_task_cancel', 'ply_task_list', 'ply_usage']);
 const locale = process.env.PLY_CONTEXT_LOCALE;
 // ツールの呼び出しは Pleiad 側で最長 300 秒まで待つ（context-bridge.mjs）。それより少し長く待つ。
 // ply_computer のロックの待ちは、橋が 150 秒ごとに分けて返す（agy は 1 回の呼び出しを 3 分で切り、設定では伸びない）
 const CALL_TIMEOUT_MS = 330_000;
 const KINDS = {
   context: { url: 'PLY_CONTEXT_URL', authorization: 'PLY_CONTEXT_AUTHORIZATION', server: 'Pleiad Context', methods: ['initialize', 'ping', 'tools/list', 'tools/call', 'resources/list', 'resources/read', 'prompts/list', 'prompts/get'] },
+  // 委譲の橋（ply_agents。/mcp/agents。issue #107）。ツールの説明（instructions）は発言の本文に足すので、MCP の initialize では流さない
+  agents: { url: 'PLY_AGENTS_URL', authorization: 'PLY_AGENTS_AUTHORIZATION', server: 'Pleiad Agents', methods: ['initialize', 'ping', 'tools/list', 'tools/call'], timeoutMs: 60_000 },
   computer: { url: 'PLY_COMPUTER_URL', authorization: 'PLY_COMPUTER_AUTHORIZATION', server: 'Pleiad Computer', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
   browser: { url: 'PLY_BROWSER_URL', authorization: 'PLY_BROWSER_AUTHORIZATION', server: 'Pleiad Browser', methods: ['initialize', 'ping', 'tools/list', 'tools/call'] },
   // ply_control は承認が要る呼び出しも待たずに返る（ADR 0088）。ほかの Pleiad の MCP と同じ 60 秒で切る
@@ -127,6 +132,7 @@ function target(message) {
   if (typeof name === 'string' && name.startsWith(TOOL_PREFIX) && find('computer')) return find('computer');
   if (typeof name === 'string' && name.startsWith(CONTROL_PREFIX) && find('control')) return find('control');
   if (BROWSER_TOOLS.has(name) && find('browser')) return find('browser');
+  if (AGENTS_TOOLS.has(name) && find('agents')) return find('agents');
   return find('context') ?? null;
 }
 

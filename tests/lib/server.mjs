@@ -84,6 +84,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       PLEIAD_BACKEND_CONTRACT: "strict",
       // OpenCode の会話の DB・資格情報の置き場（core/backends/opencode.mjs）。利用者の本物（~/.local/share/opencode）を読まない
       AGENT_HOST_OPENCODE_DATA: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), "opencode-data"),
+      // コンテキスト探索の home（agy が発言の前に足すネイティブの指示ファイルなど）。利用者の本物（~/.gemini など）を読まない
+      PLEIAD_SCAN_HOME: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), "scan-home"),
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
       ...env,
     },

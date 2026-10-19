@@ -379,9 +379,9 @@ export function setupContext({ button: openButton, cmd, show, recentPlaces = () 
     return tier;
   }
   /**
-   * antigravity は、指示も Pleiad がそろえるときだけ Pleiad のコンテキストを受け取る（core/backends/antigravity-context.mjs の contextRefusal）。
-   * Pleiad の渡し方（カスタムエージェント）ではワークスペースの AGENTS.md・GEMINI.md を agy が読まなくなるため、
-   * 指示がエージェント任せのまま Skills・MCP だけ Pleiad にした組み合わせは、antigravity の会話ではすべてエージェント任せになる
+   * antigravity で指示以外（Skills・MCP）だけを Pleiad にした組み合わせの説明。
+   * Pleiad の渡し方（カスタムエージェント）ではワークスペースの AGENTS.md・GEMINI.md を agy が自分で読まなくなるため、
+   * 指示ファイルがエージェント任せのときは、Pleiad がその内容を探索して発言の前に足して渡す（issue #107）
    */
   function antigravityNote(kind) {
     if (kind === 'instruction' || !backends().some(b => b.id === 'antigravity')) return null;

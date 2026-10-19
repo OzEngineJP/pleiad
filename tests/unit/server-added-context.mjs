@@ -30,7 +30,7 @@ export default async function (t) {
   const formerSaved = normalizePlyInstructions({ items: former });
   t.ok('変えた後に保存した値を読んでも同じ', JSON.stringify(formerSaved) === JSON.stringify(former));
   const base = normalizePlyInstructions(undefined);
-  const same = changePlyInstructions(base, { action: 'save', id: 'child', name: agentT('ja', 'guide.names.child'), body: resolvePlyInstructions(base, 'ja')[0].body, target: 'child', agents: ['claude', 'codex'] }, 'ja');
+  const same = changePlyInstructions(base, { action: 'save', id: 'child', name: agentT('ja', 'guide.names.child'), body: resolvePlyInstructions(base, 'ja')[0].body, target: 'child', agents: resolvePlyInstructions(base, 'ja')[0].agents }, 'ja');
   t.ok('既定と同じ内容で保存しても「既定から変更」にしない', !resolvePlyInstructions(same, 'ja')[0].modified);
   t.ok('連動の項目はいつも最後で、編集・並べ替えの対象にしない', resolvePlyInstructions(base, 'ja').at(-1).id === 'route'
     && (() => { try { changePlyInstructions(base, { action: 'toggle', id: 'route', on: false }, 'ja'); return false; } catch { return true; } })());
@@ -110,8 +110,8 @@ export default async function (t) {
     t.ok('入れる会話を「委譲された会話だけ」にすると依頼元には入らない', !answer.includes(mineText) && (await added(sid)).find(r => r.id === mine.id)?.reason === 'target');
     await c.cmd('setPlyInstructions', { action: 'save', id: mine.id, name: '返答は短く', body: '- 結論から書く。', target: 'all', agents: ['codex'] });
     const badSave = await c.cmd('setPlyInstructions', { action: 'save', name: '', body: 'x', target: 'all', agents: ['claude'] }).then(() => null, e => e);
-    const badAgent = await c.cmd('setPlyInstructions', { action: 'save', name: 'x', body: 'x', target: 'all', agents: ['antigravity'] }).then(() => null, e => e);
-    t.ok('名前の無い指示・渡す口の無いエージェントは断る', Boolean(badSave) && Boolean(badAgent));
+    const badAgent = await c.cmd('setPlyInstructions', { action: 'save', name: 'x', body: 'x', target: 'all', agents: ['unknown-agent'] }).then(() => null, e => e);
+    t.ok('名前の無い指示・一覧に無いエージェントは断る', Boolean(badSave) && Boolean(badAgent));
 
     // ---- 既定の編集と「既定に戻す」
     // 依頼元でも見えるように、入れる会話も「すべて」に変える

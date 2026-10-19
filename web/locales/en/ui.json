@@ -1342,7 +1342,7 @@
       "invalid": "Enter a whole number from {{min}} to {{max}}"
     },
     "showAll": "Show all ({{n}})",
-    "antigravityNote": "In antigravity conversations, Pleiad manages this only when instruction files are also set to “Managed by Pleiad”. Instruction files are currently left to the agent, so in antigravity this kind is also left to the agent (if Pleiad provided it, agy would stop reading AGENTS.md and GEMINI.md in the workspace).",
+    "antigravityNote": "In antigravity conversations, when instruction files are left to the agent, agy can no longer read AGENTS.md and GEMINI.md in the workspace on its own, so Pleiad looks them up and prepends their content to each message.",
     "roots": {
       "add": "Add a location to search",
       "addAria": "Path of the folder to search",
@@ -1402,7 +1402,6 @@
         "tokens": "{{tokens}} tokens",
         "target": "Add to",
         "agents": "Agents",
-        "agyWhy": "Antigravity can't be selected because there is no way to pass per-conversation instructions to it.",
         "save": "Save",
         "nameRequired": "Enter a name.",
         "bodyRequired": "Enter the text."

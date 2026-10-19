@@ -1,7 +1,8 @@
 // Pleiad の指示（設定 › コンテキストの「指示」のカード。docs/context-runtime.md「Pleiad の指示」、ADR 0026）。
-// 指示ファイル・Skills・外部 MCP の担当（ADR 0014）によらず、ply_agents を持つ会話（Claude Code・Codex）へ毎ターン入れる。
-// 入れる経路は ADR 0023 のまま: core/server.mjs の runTurn が ply_agents の instructions の後ろに足し、Claude は append、
-// Codex は developerInstructions で受け取る。保存は prefs.json の plyInstructions（すべての場所に共通。場所ごとには持たない）。
+// 指示ファイル・Skills・外部 MCP の担当（ADR 0014）によらず、能力の印 plyInstructions を持つ会話へ毎ターン入れる。
+// 入れる経路は ADR 0023 のまま: core/server.mjs の runTurn が ply_agents の instructions の後ろに足す（印 plyAgents）、
+// 橋を持たないバックエンドには addedInstructions で渡す。Claude は append、Codex は developerInstructions、
+// ACP の系統（Devin・Grok）と agy は発言の前に足す形で受け取る。保存は prefs.json の plyInstructions（すべての場所に共通。場所ごとには持たない）。
 //
 // 項目は 3 種類:
 //   - 既定（child: 委譲された会話でのコマンドの扱い / codexPolicy: Codex の実行前の拒否（Codex の子だけ））。
@@ -20,9 +21,12 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { agentT, t } from './i18n.mjs';
 import { estimateTokens } from '../web/token-estimate.mjs';
+import { DEFAULT_AGENT_IDS, agentOf } from './backends/agents.mjs';
 
 export const TARGETS = ['all', 'parent', 'child'];
-export const AGENTS = ['claude', 'codex'];
+// 項目で選べるエージェント = 本番のエージェント全部（既定の有効一覧。試験用の fake は入らない）。
+// 保存済みの項目の agents は広げない: 前の版の ['claude','codex'] は「当時の全部」か「その 2 つだけ」か判別できないので、そのまま残す
+export const AGENTS = [...DEFAULT_AGENT_IDS];
 // agents を持たない既定の項目はどちらのエージェントにも入る
 const BUILTIN = { child: { target: 'child' }, codexPolicy: { target: 'child', agents: ['codex'] } };
 const builtinAgents = id => [...(BUILTIN[id].agents ?? AGENTS)];
@@ -61,7 +65,10 @@ function fromFormerDelegate(value, locale) {
   if (!parsed.success || !parsed.data.body) return null;
   const v = parsed.data;
   return { id: FORMER_DELEGATE, on: v.on !== false, name: v.name ?? agentT(locale, 'guide.formerDelegateName'), body: v.body,
-    target: v.target ?? 'parent', agents: v.agents ? AGENTS.filter(x => v.agents.includes(x)) : [...AGENTS] };
+    // 前の版にエージェントの選択が無かった=当時の全部（claude・codex）。今の全エージェントへは広げない
+    target: v.target ?? 'parent', agents: v.agents ? AGENTS.filter(x => v.agents.includes(x))
+      // backend-allow: 前の版の既定の項目が効いていた範囲（当時の全エージェント）を保つための移行だけの値
+      : ['claude', 'codex'] };
 }
 
 /**
@@ -139,7 +146,9 @@ export const NAME_SLOT = '\u0001';
 export function screenState(list, locale, { routing = true } = {}) {
   const items = resolvePlyInstructions(list, locale).map(item => ({ ...item, tokens: estimateTokens(itemText(locale, item)) }));
   const total = items.filter(i => i.on && (i.id !== LINKED || routing)).reduce((n, i) => n + i.tokens, 0);
-  return { items, total, routing, heading: agentT(locale, 'guide.heading', { name: NAME_SLOT }) };
+  // agents は画面の選ぶ一覧（エージェントの記述の短い名前。製品名なので訳さない）
+  return { items, total, routing, heading: agentT(locale, 'guide.heading', { name: NAME_SLOT }),
+    agents: AGENTS.map(id => ({ id, label: agentOf(id)?.shortLabel ?? id })) };
 }
 
 const saveSchema = z.object({

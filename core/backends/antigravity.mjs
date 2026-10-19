@@ -19,7 +19,8 @@
 // (b) それでも打ち切られたら失敗として畳み、その agy を落とす（onPrintTimeout）。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
 import { AgySession, START_TIMEOUT_MS } from "./antigravity-cli.mjs";
-import { AGENT_NAME, adoptHome, contextRefusal, prepareAgent, sweep } from "./antigravity-context.mjs";
+import { AGENT_NAME, adoptHome, prepareAgent, sweep } from "./antigravity-context.mjs";
+import { nativeInstructionEntries } from "../context-session.mjs";
 import * as pids from "./antigravity-pids.mjs";
 import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
@@ -29,7 +30,7 @@ import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, com
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
-import { t } from "../i18n.mjs";
+import { t, agentT } from "../i18n.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -226,9 +227,11 @@ const digest = (value) => (value == null ? null : crypto.createHash("sha256").up
  * 起動時にしか渡せないもの（Pleiad のコンテキスト・ブラウザー・Hooks・ply_computer・ply_control・bot の人格）の印。起動時と違う渡し方になる次のターンは agy を起こし直す。
  * トークンを含むものは頭の文字列ではなくダイジェストで持つ: 保持役に載せた agy の札（server の takeCard）にそのまま置いても秘密が出ず、付け直した先が同じ印で比べられる
  */
-function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey, secretsKey = null }) {
+function keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey = null, browserKey, controlKey, botKey, secretsKey = null, useAgent = false }) {
   return { context: digest(contextKey), shape: contextShape ?? null, browser: browserEnv?.AGENT_BROWSER_CONFIG ?? null, hooks: hooksShape ?? null,
-    computer: digest(computerKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null,
+    computer: digest(computerKey), agents: digest(agentsKey), browserTool: digest(browserKey), control: digest(controlKey), bot: botKey ?? null,
+    // custom: カスタムエージェント（agent.md）で動いているか。ターンが注入で読み替える口の判定にも使う（agent.md の本文は再開で持ち越されるため印に入れない）
+    custom: useAgent ? 1 : 0,
     // 秘密情報と変数（ADR 0217）。値はハッシュだけ（札に残る）。無い会話は今までと同じ印
     ...(secretsKey ? { secrets: digest(secretsKey) } : {}) };
 }
@@ -288,7 +291,13 @@ export const backend = {
     compact: false,             // 圧縮は agy が自分で決める
     autoCompactWindow: false,
     promptSuggestions: false,   // ターンの後に suggestNext で作る
-    plyAgents: false,           // 委譲の橋は渡さない。Pleiad の指示は addedInstructions で渡す
+    // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じくカスタムエージェントの mcpServers に束ねた中継で渡す。
+    // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため。
+    // 継続した会話でもそのターンの設定が届き、記録と実際が一致する）。カスタムエージェントが読まない作業場所の
+    // 指示ファイル（AGENTS.md・GEMINI.md）は、担当がエージェント任せの会話では Pleiad が読んで agent.md の本文へ足す
+    // （antigravity-context.mjs の prepareAgent。足さないとカスタムエージェント化で指示が抜け落ちる）
+    plyAgents: true,
+    plyInstructions: true,
     shell: false,
     // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0227）
     plyShell: false,
@@ -307,9 +316,6 @@ export const backend = {
   },
 
   toolHints: TOOL_HINTS,
-
-  /** 担当の組み合わせで Pleiad のコンテキストを渡せないときの理由（渡せるなら null）。server が見る */
-  plyContextRefusal: (owners) => contextRefusal(owners),
 
   // skip は agy の内部事情なので出さない。語彙と軸だけを返す。
   modes: () => Object.fromEntries(Object.entries(MODES).map(([id, m]) => [id, { label: m.label, note: m.note, scope: m.scope, autonomy: m.autonomy, enforced: m.enforced }])),
@@ -334,7 +340,7 @@ export const backend = {
   // ---- 実行 ---------------------------------------------------------------
 
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは antigravity-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, agentRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null, scanOptions = {} }, adopt = null) {
     if (account != null) {
       const error = new Error(t('antigravity.accounts.unavailable'));
       error.code = 'AGY_ACCOUNTS_UNSUPPORTED';
@@ -407,6 +413,8 @@ export const backend = {
     // ユーザー発言は id が分かって本文を渡したら、AI の発言はツールの完了ごと・本文は間を空けて、同じ uuid で差し替える。
     // 失敗・中断・打ち切りでも、終わりにそこまでの分を書く。書き込みは 1 本ずつ（控えの read-modify-write を重ねない）
     let delivered = Boolean(adopt);   // プロンプトを渡した（渡せなかったターンは控えに残さない）。付け直しは旧サーバーが渡し済み
+    // このターンで発言の前に足したネイティブの指示ファイル（カスタムエージェントが読めない分の補填）。server が会話の記録（contextRecord）に載せる
+    let nativeInjected = null;
     let handedOff = false;         // 旧サーバーが新しいサーバーへ手を離した（以後、このサーバーは控えに書かない・締めない）
     let handingOff = false;        // 手を離している最中（札を子に置いて detach する）
     let writes = Promise.resolve();
@@ -459,6 +467,8 @@ export const backend = {
     const hooksShape = hooksRuntime?.shape ?? null;
     // ply_computer（中継）も起動時にしか渡せない。渡す・渡さない・接続先が変われば起こし直す
     const computerKey = computerRuntime ? `${computerRuntime.url} ${computerRuntime.headers?.Authorization ?? ''}` : null;
+    // ply_agents（委譲の橋）も起動時にしか渡せない（中継の接続先は agent.md の MCP として書く）。口は会話のあいだ同じ
+    const agentsKey = agentRuntime ? `${agentRuntime.url} ${agentRuntime.headers?.Authorization ?? ''}` : null;
     // ply_browser（ADR 0148。ply_context・ply_computer と同じ 1 本の中継に束ねる）も同じ。口は会話のあいだ同じなので、渡す・渡さないが変わったときだけ
     const browserKey = browserRuntime ? `${browserRuntime.url} ${browserRuntime.headers?.Authorization ?? ''}` : null;
     // ply_control（操作の一覧。ADR 0081）と、会話のシェルへ渡す CLI の接続情報（PLEIAD_CONTROL_*）も起動時にしか渡せない。口は会話のあいだ同じ
@@ -469,7 +479,13 @@ export const backend = {
     // 秘密情報と変数（ADR 0217）も起動時にしか渡せない（プロセスの env と指示）。変われば起こし直す
     const secretsEnv = agySecretsEnv(secretsRuntime?.env);
     const secretsKey = Object.keys(secretsEnv).length || secretsRuntime?.instructions ? JSON.stringify([secretsEnv, secretsRuntime?.instructions ?? '']) : null;
-    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, browserKey, controlKey, botKey, secretsKey });
+    // カスタムエージェントを使うか。agent.md の本文は keys に入れない: 同じ会話を --conversation で再開すると agy は
+    // 開始時のエージェント定義を持ち越す（既知の制約）ので、本文の変化で起こし直しても届かない。確実に届ける文
+    // （Pleiad の指示・補填したネイティブの指示）は発言への前置きで毎ターン渡す（issue #107）
+    const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
+    const agentPrompt = [contextRuntime?.prompt, browserInstructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n');
+    const useAgent = Boolean(contextRuntime || browserInstructions || agentRuntime || computerRuntime || controlRuntime || secretsRuntime?.instructions || botInstructions);
+    const keys = keysOf({ contextKey, contextShape, browserEnv, hooksShape, computerKey, agentsKey, browserKey, controlKey, botKey, secretsKey, useAgent });
     if (session && !sameKeys(session.keys, keys)) { session.kill(); release(conversationId, session); session = null; }
 
     const fresh = !session && !adopt;
@@ -487,14 +503,14 @@ export const backend = {
       const plan = await heldPlan({ dataDir: store.dataDir, argv: cliCommand("antigravity"), bot: Boolean(botInstructions) });
       if (plan) await sweepIdle(plan.client);
       // 会話ごとのエージェント定義（Pleiad の置き場）と、中継に渡す接続先・トークン（env）
-      // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の子への指示を渡すときだけ。
+      // カスタムエージェントを使うのは、Pleiad のコンテキスト・ブラウザーの指示・委譲の橋（ply_agents の中継）を渡すときだけ。
+      // Pleiad の指示（addedInstructions / agentRuntime.instructions）は発言の前に毎ターン足すので、それだけではカスタムエージェントを作らない。
       // Hooks だけを Pleiad がそろえるときは、置き場（--add-dir）だけを作る（既定のエージェントのまま。inheritCustomizations に頼らない）
-      const computerInstructions = computerPrompt(computerRuntime, { locale: contextRuntime?.locale ?? locale, agent: 'antigravity' });
       const botDirs = botFolders?.additionalDirectories ?? [];
-      const useAgent = Boolean(contextRuntime || browserInstructions || addedInstructions || computerRuntime || controlRuntime || secretsRuntime?.instructions || botInstructions);
       const agent = useAgent || hooksRuntime ? await prepareAgent({ owners: contextRuntime?.owners ?? { instruction: 'native', skill: 'native', mcp: 'native' },
-        prompt: [contextRuntime?.prompt, browserInstructions, addedInstructions, computerInstructions, controlRuntime?.instructions, secretsRuntime?.instructions, botInstructions].filter(Boolean).join('\n\n'), cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
+        prompt: agentPrompt, cwd, url: contextRuntime?.url, authorization: contextKey, locale: contextRuntime?.locale ?? locale,
         context: useAgent, hooks: hooksRuntime, computer: computerRuntime ? { url: computerRuntime.url, authorization: computerRuntime.headers?.Authorization } : null,
+        agents: agentRuntime ? { url: agentRuntime.url, authorization: agentRuntime.headers?.Authorization } : null,
         browser: browserRuntime ? { url: browserRuntime.url, authorization: browserRuntime.headers?.Authorization } : null,
         control: controlRuntime ? { url: controlRuntime.url, authorization: controlRuntime.headers?.Authorization, env: controlRuntime.env } : null, held: Boolean(plan) }) : null;
       session = new AgySession({
@@ -753,7 +769,30 @@ export const backend = {
       if (!adopt) {
         emit({ type: "activity", state: "thinking" });
         session.held?.markTurn();   // 印は最初の行の直前（再生はここから）
-        session.prompt(sent);
+        // カスタムエージェントは作業場所の指示ファイル（AGENTS.md・GEMINI.md）を自分で読まない（antigravity-context.mjs 冒頭の実測）。
+        // 指示の担当がエージェント任せのままなら、Pleiad がネイティブと同じ探索（nativeInstructionEntries）で拾い、発言の前に毎ターン足す。
+        // 改訂が次のターンに効き、渡した分は nativeInjected で記録に残る
+        // 探索が失敗してもターンは続けるが、黙って落とさない: 失敗・診断（読めなかったファイル・上限超過）は記録に残し、
+        // コンソールにも出す（sessionContext の nativeInjected.error / diagnostics で見える）
+        let injected = [], scanError = null, scanDiagnostics = null, scanLimited = false, injectedRan = false;
+        if (session.keys?.custom && contextRuntime?.owners?.instruction !== 'ply') {
+          injectedRan = true;
+          const scan = await nativeInstructionEntries(cwd, 'antigravity', scanOptions).catch(e => ({ entries: null, error: String(e?.message ?? e) }));
+          injected = scan?.entries ?? [];
+          scanError = scan?.error ?? null;
+          scanDiagnostics = scan?.diagnostics?.length ? scan.diagnostics.slice(0, 20) : null;
+          scanLimited = Boolean(scan?.limited);
+          if (scanError) console.error(`  ネイティブの指示ファイルを読めなかったので、このターンは注入しません（${conversationId}）:`, scanError);
+        }
+        // 探したが 0 件のターンも entries:[] で記録する（前のターンの分を残さない）。注入を試みなかったターンはフィールド自体を出さない
+        nativeInjected = injectedRan
+          ? { entries: injected.map(e => ({ id: e.id, name: e.name, path: e.path, scope: e.scope, appliesTo: e.appliesTo, hash: e.hash, tokens: e.tokens })),
+              ...(scanError ? { error: scanError } : {}), ...(scanDiagnostics ? { diagnostics: scanDiagnostics } : {}), ...(scanLimited ? { limited: true } : {}) }
+          : null;
+        const injectedText = injected.map(e => agentT(locale, 'context.instructionsFrom', { path: e.path, scope: e.appliesTo ?? agentT(locale, 'context.allDirectories'), content: e.content })).join('\n\n') || null;
+        // ply_agents の説明と Pleiad の指示も発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため）。
+        // 控えに残すのは人が書いた分だけ（sent。Devin の mapper.beginTurn と同じ分け方）
+        session.prompt([injectedText, agentRuntime?.instructions ?? addedInstructions, sent].filter(Boolean).join("\n\n"));
         // 渡せた。再開した会話は id が分かっているので、ユーザー発言をここで書く（新しい会話は init で）
         delivered = true;
         save();
@@ -771,7 +810,7 @@ export const backend = {
 
       if (aborted) {
         emit({ type: "turnResult", outcome: "aborted" });
-        return { sessionId: conversationId };
+        return { sessionId: conversationId, nativeInjected };
       }
       if (failed) throw failed;
     } catch (err) {
@@ -779,6 +818,8 @@ export const backend = {
       if (resultTrace?.outcome === "ok") resultTrace = { ...resultTrace, source: "postResultException", outcome: "error",
         error: String(err?.message ?? err).slice(0, 1000) };
       else resultTrace ??= { source: "exception", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
+      // 発言を渡した後に失敗しても、注入した分は記録に残す（server が err から拾う）
+      if (nativeInjected && err && typeof err === 'object') err.nativeInjected = nativeInjected;
       throw err;
     } finally {
       clearTimeout(timer);
@@ -792,7 +833,7 @@ export const backend = {
       if (control) { control.handle = null; control.steer = null; control.holder = null; control.backendCard = null; }
     }
 
-    return { sessionId: conversationId };
+    return { sessionId: conversationId, nativeInjected };
   },
 
   /**

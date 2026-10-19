@@ -1342,6 +1342,7 @@ const backend = {
     liveMode: false,
     hostTools: false,   // set_status / set_title / fork は未接続。可視化は共通の参照形式で提供
     plyAgents: true,    // ply_agents を mcp_servers に、その instructions を developerInstructions に渡す
+    plyInstructions: true, // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     // ply_computer（runArgs.computerRuntime）を mcp_servers に、指示を developerInstructions に渡す。同梱の computer use は切る（ADR 0074）。
     // MCP の image は gpt-5.x では自動で、gpt-6 系のコードモードでは image() で渡したときモデルに見える（指示文で頼む）
     computerUse: { images: 'inline', waitSliceMs: null },

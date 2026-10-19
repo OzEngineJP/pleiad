@@ -1309,7 +1309,7 @@
       "invalid": "{{min}}〜{{max}} の整数で入れてください"
     },
     "showAll": "すべて見る（{{n}} 件）",
-    "antigravityNote": "antigravity の会話では、指示ファイルも「Pleiad がそろえる」にしたときだけ、ここを Pleiad がそろえます。今は指示ファイルがエージェント任せなので、antigravity ではこの種類もエージェント任せになります（Pleiad から渡すと、agy がワークスペースの AGENTS.md・GEMINI.md を読まなくなるため）",
+    "antigravityNote": "antigravity の会話では、指示ファイルがエージェント任せのままのとき、ワークスペースの AGENTS.md・GEMINI.md は agy が自分で読めなくなるため、その内容を Pleiad が発言の前に足して渡します",
     "roots": {
       "add": "探す場所を足す",
       "addAria": "探すフォルダーのパス",
@@ -1369,7 +1369,6 @@
         "tokens": "{{tokens}} トークン",
         "target": "入れる会話",
         "agents": "エージェント",
-        "agyWhy": "Antigravity には会話ごとの指示を渡す口が無いので選べません",
         "save": "保存",
         "nameRequired": "名前を入れてください",
         "bodyRequired": "本文を入れてください"

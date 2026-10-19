@@ -271,6 +271,22 @@ async function agentScript(text) {
 async function runTurn(text) {
   emitInit();
 
+  // Pleiad は ply_agents の説明・Pleiad の指示・（カスタムエージェントでは読めない分の）ネイティブの指示ファイルを、
+  // 発言の本文の前に空行区切りで足す（issue #107）。台本と返事は末尾の段落（利用者のプロンプト）で動く。
+  // 届いた本文全体を確かめる台本は wire-dump
+  const wire = text;
+  // 発言の本文として出す（result イベントの response だけでは、委譲された子の result に乗らない）
+  const answer = (answerText) => { step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: answerText });
+    return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: answerText, duration_seconds: 0.1, num_turns: 1,
+      usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } }); };
+  if (text.endsWith("wire-dump")) return answer(JSON.stringify({ paragraphs: wire.split("\n\n").length, head: wire.slice(0, 800), tail: wire.slice(-800) }));
+  // 前置き（ply_agents の説明・Pleiad の指示・注入したネイティブの指示）が付いた発言だけ末尾の段落へ切る。
+  // 前置きの無い複数段落のプロンプト（候補作りなどの別経路）はそのまま
+  const hasPreamble = /Pleiad が追加した指示|Pleiad の委譲ツール|の指示（適用範囲[:：]|instructions \(|Pleiad instructions/.test(wire.slice(0, wire.lastIndexOf("\n\n")));
+  if (hasPreamble && wire.includes("\n\n")) text = wire.slice(wire.lastIndexOf("\n\n") + 2);
+  // wire-has:<探す文字列> は、前置きを含む届いた本文にその文字列があるかを返す（返答の切り詰めで落ちないように 1 語だけ返す）
+  if (text.startsWith("wire-has:")) return answer(wire.includes(text.slice("wire-has:".length)) ? "wire-has:yes" : "wire-has:no");
+
   // 結果を返した直後にプロセスが終わる agy の再現。stdout を書き切ってから終了する。
   if (text === "result-then-exit") {
     step({ step_index: ++stepIndex, state: "ACTIVE", step_type: "agent_response", text_delta: "完了した返事" });

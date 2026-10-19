@@ -872,8 +872,7 @@
       "cannotStart": "Cannot start Antigravity.",
       "cannotRead": "Cannot get Antigravity usage.",
       "needsUpdate": "Showing usage requires Antigravity CLI 1.1.11 or later. Run agy update in a terminal."
-    },
-    "contextRefusal": "When Pleiad passes its context to Antigravity, agy stops reading the workspace instructions (AGENTS.md, GEMINI.md). Instructions are still handled by the agent, so this conversation leaves loading to the agent itself. To let Pleiad handle Skills or external MCP, have Pleiad handle instructions too."
+    }
   },
   "context": {
     "removedHere": "Removed for this conversation.",

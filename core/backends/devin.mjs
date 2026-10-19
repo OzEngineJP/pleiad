@@ -107,8 +107,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
     capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true, promptDelivery: true,
-      // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control・ply_computer・ply_context を、CLI の env と指示にブラウザー・秘密情報・可視化を渡す
-      browser: true, plyControl: true, secrets: true, visualize: true,
+      // ACP の session/new の mcpServers（type: 'http'）に ply_browser・ply_control・ply_computer・ply_context・ply_agents を、
+      // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
+      browser: true, plyControl: true, secrets: true, visualize: true, plyAgents: true, plyInstructions: true,
       // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
       // （load_skill・instructions_for_path）と外部 MCP は ply_context の MCP（type: 'http'）越しに渡す。口はターンごと
       plyContext: 'turn',
@@ -240,7 +241,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           check();
           // Pleiad の MCP（ply_browser・ply_control・ply_context）は ACP の mcpServers で渡す（type: 'http' が要る。外すと session/new が Invalid params で断る）
           const acpMcp = (name, runtime) => (runtime?.url ? [{ name, type: 'http', url: runtime.url, headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : []);
-          const mcpServers = [...acpMcp('ply_context', args.contextRuntime), ...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime), ...acpMcp(COMPUTER_SERVER, args.computerRuntime)];
+          const mcpServers = [...acpMcp('ply_context', args.contextRuntime), ...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime), ...acpMcp(COMPUTER_SERVER, args.computerRuntime), ...acpMcp('ply_agents', args.agentRuntime)];
           let state;
           if (sessionId) {
             mapper = createDevinMapper(sessionId, emit);
@@ -274,7 +275,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           // 読み取り専用のモードでは、ブラウザーの指示を「操作しない」に読み替える（agent-browser は読むだけでもデーモンの書き込みが要る。Codex と同じ）
           let browserInstructions = args.browserInstructions;
           if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.contextRuntime?.prompt, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions, args.contextRuntime?.prompt, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
           // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
           mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
           rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });

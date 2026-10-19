@@ -441,6 +441,7 @@ export const backend = {
     autoCompactWindow: false,
     promptSuggestions: false,
     plyAgents: true,        // ply_agents を中継の口で渡し、指示を system に入れる
+    plyInstructions: true,  // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
     computerUse: { images: 'inline', waitSliceMs: null },
     shell: 'host',          // 入力欄の `!` は Pleiad が走らせ、次のターンの始めに返答を起こさない行（noReply）で渡す

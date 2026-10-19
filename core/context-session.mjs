@@ -23,6 +23,29 @@ const nativeSources = (agent) => agentOf(agent)?.contextSources ?? null;
 /** エージェントの設定に MCP を登録できるエージェントと、その読み込み元（common は MCP を持たない） */
 const mcpAgents = () => Object.entries(AGENTS).map(([id, a]) => [id, (a.contextSources ?? []).filter((s) => s !== 'common')]).filter(([, s]) => s.length);
 
+/**
+ * エージェント任せの指示の探索の正本。そのエージェントが読む規則（エージェントの記述の contextSources）で探し、
+ * 行に本文（content）・実体のパス・ハッシュ・量（tokens）を残す。nativeInstructions の見積もりと、
+ * 自分では読めない指示ファイルを Pleiad が渡すバックエンドの注入（antigravity のカスタムエージェント。issue #107）が使う
+ */
+export async function nativeInstructionEntries(cwd, agent, scanOptions = {}) {
+  const sources = nativeSources(agent);
+  if (!sources) return { cwd, agent, entries: null };
+  const scope = { sources, excludePaths: [] };
+  const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'instruction' ? scope : null]));
+  const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
+  const seen = new Set(), entries = [];
+  for (const e of scan.entries) {
+    if (e.kind !== 'instruction' || e.status !== 'candidate' || typeof e.content !== 'string') continue;
+    // 作業場所が home だと、同じファイルがユーザーと作業場所の両方で見つかる（core/context-runtime.mjs の resolveRuntime と同じまとめ方）
+    const key = `${pathKey(e.realPath ?? e.path)}:${e.appliesTo ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    entries.push({ id: e.id, name: e.name, path: e.path, scope: e.scope, appliesTo: e.appliesTo, tokens: e.tokens, hash: e.hash, content: e.content, realPath: e.realPath });
+  }
+  return { cwd: scan.cwd, agent, entries, diagnostics: scan.diagnostics, limited: scan.limited };
+}
+
 export function createContextSession({ store, snapshots, plyServers = async () => null, liveRecord = () => null, isRunning = () => false, scanOptions = {} }) {
   async function saved(sessionId) {
     if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('context.session.sessionRequired'));
@@ -119,23 +142,7 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     return { ...found, entries: found.entries?.map(({ content, realPath, ...e }) => e) ?? null };
   }
   /** nativeInstructions の探索。行に本文（content）と実体のパスを残す（気になる所が使う） */
-  async function nativeScan(cwd, agent) {
-    const sources = nativeSources(agent);
-    if (!sources) return { cwd, agent, entries: null };
-    const scope = { sources, excludePaths: [] };
-    const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'instruction' ? scope : null]));
-    const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
-    const seen = new Set(), entries = [];
-    for (const e of scan.entries) {
-      if (e.kind !== 'instruction' || e.status !== 'candidate' || typeof e.content !== 'string') continue;
-      // 作業場所が home だと、同じファイルがユーザーと作業場所の両方で見つかる（core/context-runtime.mjs の resolveRuntime と同じまとめ方）
-      const key = `${pathKey(e.realPath ?? e.path)}:${e.appliesTo ?? ''}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      entries.push({ id: e.id, name: e.name, path: e.path, scope: e.scope, tokens: e.tokens, content: e.content, realPath: e.realPath });
-    }
-    return { cwd: scan.cwd, agent, entries };
-  }
+  const nativeScan = (cwd, agent) => nativeInstructionEntries(cwd, agent, scanOptions);
 
   /**
    * 指示の量の面の「気になる所」（ADR 0056「② 気になる所を知らせる」）。数えている指示ファイルと同じものを対象にする:

@@ -26,7 +26,8 @@
 | 手動・自動の圧縮（`compact`） | ✓ | ✓ | — | ✓ | ✓ | — |
 | 委譲の子の自動圧縮の閾値を受け取る（`autoCompactWindow`） | ✓ | — | — | — | — | — |
 | 次の発言の候補（native: ターンの中で届く / —: Pleiad がターンの後に作る）（`promptSuggestions`） | native | — | — | — | — | — |
-| 委譲の橋（ply_agents）と Pleiad の指示を受け取る（`plyAgents`） | ✓ | ✓ | — | ✓ | — | ✓ |
+| Pleiad の指示（ユーザーが足した分・既定の項目）を受け取る（`plyInstructions`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 委譲の橋（ply_agents。agentRuntime の url・headers・instructions）を受け取る（`plyAgents`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Pleiad のコンテキスト（ply_context）の受け取り方（turn / conversation）（`plyContext`） | turn | turn | conversation | turn | turn | — |
 | コンピューターの操作（ply_computer）。画像の渡し方（`computerUse`） | inline | inline | path（150 秒ごと） | inline | inline | — |
 | 入力欄の `!`（host: Pleiad が走らせる / native: エージェントが走らせる）（`shell`） | host | native | — | host | — | host |

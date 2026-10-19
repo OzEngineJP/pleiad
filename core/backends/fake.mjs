@@ -427,6 +427,7 @@ export const backend = {
     liveMode: true,
     hostTools: false,
     plyAgents: true,
+    plyInstructions: true,
     alwaysAllow: true,
     login: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）

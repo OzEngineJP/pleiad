@@ -715,8 +715,11 @@ async function postResident({ status, work } = {}) {
 }
 // 固定した指示・Skills の開始時の本文（「差分を見る」用。内容のハッシュを名前にして 1 つずつ）
 const CONTEXT_SNAPSHOTS = path.join(store.dataDir, 'context-snapshots');
+// コンテキスト探索の置き場（home など）。試験が PLEIAD_SCAN_HOME で差し替えられる（無ければ本物の home を読む）。
+// 会話の探索（contextSession）とバックエンドが探す分（agy の注入。runArgs.scanOptions）に同じものを渡す
+const SCAN_OPTIONS = process.env.PLEIAD_SCAN_HOME ? { home: process.env.PLEIAD_SCAN_HOME } : {};
 const contextSession = createContextSession({ store, snapshots: CONTEXT_SNAPSHOTS, plyServers: () => plyMcp.scanInput(),
-  liveRecord: id => runtime.turns.get(id)?.contextRecord ?? null, isRunning: id => runtime.turns.has(id) });
+  liveRecord: id => runtime.turns.get(id)?.contextRecord ?? null, isRunning: id => runtime.turns.has(id), scanOptions: SCAN_OPTIONS });
 const mcpConfig = createMcpConfig();
 // Hooks（各エージェントの元の設定ファイル。core/hooks-config.mjs）。読むのと、利用者が明示した編集だけ
 const hooksConfig = createHooksConfig();
@@ -4523,6 +4526,8 @@ const opsContext = {
     }
     return { report: saved.report, owners: saved.policy?.owners ?? saved.report.owners, pinned: Boolean(saved.pin), changed,
       startedAt: saved.policy?.at ?? null, refreshedAt: saved.policy?.refreshedAt ?? null, removedMcp: saved.policy?.removedMcp ?? [], added: saved.added ?? [],
+      // バックエンドが発言の前に足したネイティブの指示ファイル（agy のカスタムエージェントが読めない分。issue #107）
+      nativeInjected: saved.nativeInjected ?? null,
       plyParts: saved.plyParts ?? null };
   },
   diff: (sessionId) => contextSession.diff(sessionId),
@@ -6582,7 +6587,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   // Pleiad の指示（core/ply-instructions.mjs）。担当によらず、ターンごとに今の設定・モード・子かどうか・エージェントで決める。
   // 渡すのは ply_agents の instructions の後ろ（下の agentRuntime）。項目ごとに入れたか（入れなかった理由）を会話の記録に残し、右パネルに出す
   const added = turnInstructions({ list: plyInstructionsCache, locale: agentLocale, routing: routingSettingsCache.enabled,
-    child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyAgents),
+    child: Boolean(sessionId && (await store.get(sessionId)).delegation), supported: Boolean(backend.capabilities?.plyInstructions),
     canDelegate: canDelegate(backend.modes()[permissionMode]), agent: INSTRUCTION_AGENTS.includes(backend.id) ? backend.id : null });
   if (added) contextRecord.added = added;
   // Hooks の担当が Pleiad の場所（ADR 0049）。このエージェントへ渡す登録・止めるネイティブ・渡せないものを組み立て、会話の記録に残す。
@@ -6860,6 +6865,8 @@ async function beginTurn(ctx) {
     control: turn.control,
     // エージェントに渡す文（指示・ツールの説明・タイトル生成など）の言語。会話ごとに決めて保存したもの
     locale: agentLocale,
+    // コンテキスト探索の置き場（agy が発言の前に足すネイティブの指示ファイルの探索）。試験の差し替え用
+    scanOptions: SCAN_OPTIONS,
     visualizeInstructions: delegatedChild || !backend.capabilities?.visualize ? null : visualizeInstructions(agentLocale),
     ...(delegatedChild ? { delegatedChild: true } : {}),
     // Chrome の層が使えないホスト（Windows 以外・Electron なし）や、ブラウザーを受け取れないエージェント（印 browser）では、環境・指示・ply_browser のどれも渡さない
@@ -6874,7 +6881,8 @@ async function beginTurn(ctx) {
     controlRuntime: !backend.capabilities?.plyControl ? null : delegatedChild ? { ...controlRuntimeFor(turn), instructions: null } : controlRuntimeFor(turn),
     // ply_shell（ADR 0227 §1）。受け取れるエージェントだけ。nativeOff ならエージェントのシェルのツールを切る（§3）
     shellRuntime: await shellRuntimeFor(turn),
-    addedInstructions: !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
+    // Pleiad の指示を受け取るが委譲の橋を持たないバックエンドだけ addedInstructions で渡す（橋を持つものは agentRuntime.instructions の後ろに足す）
+    addedInstructions: backend.capabilities?.plyInstructions && !backend.capabilities?.plyAgents ? withAdded(null, contextRecord.added) : null,
     contextRuntime: backend.capabilities?.plyContext ? ctx.runtimeContext : null,
     // Hooks を Pleiad がそろえるターンだけ（担当がエージェントなら渡さない。エージェントの設定の hooks がそのまま動く）
     ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
@@ -6975,6 +6983,12 @@ async function launchTurn(ctx) {
 
 async function afterResult(ctx, result) {
   const { turn, emit, hooks, sessionId, attachments, prompt } = ctx;
+  // カスタムエージェントが読めない分のネイティブ指示をバックエンドが発言の前に足した（agy。issue #107）。
+  // 何を渡したかを会話の記録に残す（毎ターン。渡さなかった・読めなかったターンは null）
+  if (ctx.contextRecord && result && Object.hasOwn(result, 'nativeInjected')) {
+    ctx.contextRecord.nativeInjected = result.nativeInjected ?? null;
+    await ctx.saveContext().catch(() => {});
+  }
   if (hooks.compact && !turn.compaction?.phase?.match(/^complete$/)) {
     emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
       reason: result?.compactionFailureReason || turn.compaction?.reason || t('compaction.noCompletion') });
@@ -7023,7 +7037,10 @@ async function driveTurn(ctx, start) {
     if (turn.handedOff) return 'handedOff';
     if (hooks.compact && turn.compaction?.phase !== 'complete') emit({ type: 'compaction', phase: 'failed', trigger: hooks.compact,
       reason: String(err?.message ?? err) });
+    // 発言を渡した後に失敗したターンでも、バックエンドが注入した分は記録に残す（agy のネイティブ指示。issue #107）
+    if (ctx.contextRecord && err?.nativeInjected) { ctx.contextRecord.nativeInjected = err.nativeInjected; }
     if (ctx.resolvedContext) { ctx.contextRecord.report.status = 'failed'; await ctx.saveContext().catch(() => {}); }
+    else if (ctx.contextRecord && err?.nativeInjected) await ctx.saveContext().catch(() => {});
     if (!turn.errorShown) {
       if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
       emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });

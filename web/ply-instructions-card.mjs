@@ -9,7 +9,6 @@ import { t, fmt } from './i18n.mjs';
 import { renderMarkdown } from './render.mjs';
 import { estimateTokens } from './token-estimate.mjs';
 
-const AGENTS = [['claude', 'Claude Code'], ['codex', 'Codex']];
 const TARGETS = ['all', 'parent', 'child'];
 const NAME_SLOT = '\u0001';   // core/ply-instructions.mjs の見出しの型の、名前の位置
 const HEAVY = 4000;           // これを超えたら弱い警告の一行（毎ターン入るので）
@@ -102,7 +101,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
     const nm = el('span', 'nm', item.name);
     const badge = item.tag === 'default' ? (item.modified ? t('context.ply.badge.modified') : t('context.ply.badge.default')) : linked ? t('context.ply.badge.linked') : '';
     if (badge) nm.append(el('span', 'cbadge', badge));
-    const only = item.agents.length === AGENTS.length ? '' : t('context.ply.onlyAgent', { agent: item.agents.map(a => AGENTS.find(([id]) => id === a)?.[1] ?? a).join(t('context.ply.agentJoin')) });
+    const only = item.agents.length === (state?.agents?.length ?? item.agents.length) ? '' : t('context.ply.onlyAgent', { agent: item.agents.map(a => state?.agents?.find(x => x.id === a)?.label ?? a).join(t('context.ply.agentJoin')) });
     const sub = [t(`context.ply.target.${item.target}`), only, linked && !state.routing ? t('context.ply.routingOff') : ''].filter(Boolean).join(' · ');
     body.append(nm, el('span', 'p', sub));
     open.append(body);
@@ -205,12 +204,13 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
       return b;
     });
     targetField.append(targetLabel, targetChips);
-    // エージェント（1 つ以上）。Antigravity は会話ごとの指示を渡す口が無いので選べない
-    let agents = item ? [...item.agents] : AGENTS.map(([id]) => id);
+    // エージェント（1 つ以上）。一覧はサーバーが返す（state.agents。本番のエージェント全部）
+    const selectable = state?.agents ?? [];
+    let agents = item ? [...item.agents] : selectable.map(a => a.id);
     const agentField = el('div', 'mcp-field');
     const agentLabel = el('span', null, t('context.ply.sheet.agents')); agentLabel.id = 'plySheetAgents';
     const agentChips = el('div', 'cx-chips'); agentChips.setAttribute('role', 'group'); agentChips.setAttribute('aria-labelledby', agentLabel.id);
-    const agentButtons = AGENTS.map(([id, label]) => {
+    const agentButtons = selectable.map(({ id, label }) => {
       const b = button(label, 'cx-chip', () => {
         agents = agents.includes(id) ? (agents.length > 1 ? agents.filter(a => a !== id) : agents) : [...agents, id];
         paint();
@@ -219,11 +219,7 @@ export function createPlyInstructions({ cmd, work, saved, openDelegation, opened
       agentChips.append(b);
       return b;
     });
-    const agy = button('Antigravity', 'cx-chip');
-    agy.disabled = true; agy.setAttribute('aria-pressed', 'false'); agy.setAttribute('aria-describedby', 'plySheetAgy');
-    agentChips.append(agy);
-    const why = el('p', null, t('context.ply.sheet.agyWhy')); why.id = 'plySheetAgy';
-    agentField.append(agentLabel, agentChips, why);
+    agentField.append(agentLabel, agentChips);
     const error = el('p', 'mcp-error'); error.setAttribute('role', 'alert');
     const acts = el('div', 'mcp-acts');
     const go = button(t('context.ply.sheet.save'), 'btn btn-primary'); go.type = 'submit';

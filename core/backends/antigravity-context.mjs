@@ -18,7 +18,7 @@
 //     → 下の TOOLS で明示する
 //   - カスタムエージェントは、`inheritCustomizations: true` でもワークスペースの AGENTS.md / GEMINI.md を
 //     読み込まない（既定のエージェントは読み込む）
-//     → 指示の担当がエージェントのまま Pleiad のコンテキストを渡すと、指示が抜け落ちる。その組み合わせは受けない
+//     → そのファイルは Pleiad が探索して発言の前に足して渡す（core/backends/antigravity.mjs。issue #107）
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -57,9 +57,10 @@ const TOOLS = [
 
 /** Pleiad 担当のコンテキストを agy に渡せない担当の組み合わせなら、その理由。渡せるなら null */
 export function contextRefusal(owners = {}) {
-  const ply = Object.values(owners).some(owner => owner === 'ply');
-  if (!ply || owners.instruction === 'ply') return null;
-  return t('antigravity.contextRefusal');
+  // かつては「カスタムエージェントは作業場所の AGENTS.md / GEMINI.md を読まない」ために、指示の担当がエージェント任せのまま
+  // Skills・MCP を Pleiad にする組み合わせを断っていた。今はそのファイルを Pleiad が発言の前に足して渡す
+  // （core/backends/antigravity.mjs の注入。issue #107）ので、どの組み合わせでも受ける
+  return null;
 }
 
 /**
@@ -69,12 +70,12 @@ export function contextRefusal(owners = {}) {
  * browserEnabled は ply_browser（`--browser`）を足すか（docs/inapp-browser.md）。controlEnabled は ply_control（`--control`。ADR 0081）を足すか。
  * 2 つ以上を足すときは 1 本の中継に束ねる（servers）
  */
-export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled = true, computerEnabled = false, browserEnabled = false, controlEnabled = false, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
+export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled = true, computerEnabled = false, browserEnabled = false, controlEnabled = false, agentsEnabled = false, execPath = process.execPath, electron = Boolean(process.versions.electron) }) {
   // 配布版の Pleiad は Electron。Node として動かす印が無いと、中継ではなく Pleiad 本体が立ち上がる
   const relay = (serverName, args) => ({ serverName, command: execPath, args, ...(electron ? { env: { ELECTRON_RUN_AS_NODE: '1' } } : {}) });
   // agy は mcpServers の先頭の 1 本しか起こさない（1.2.14 で実測）ので、2 つ以上を渡すときは 1 本の中継に束ねる（agy-context-relay.mjs）。
   // 1 つだけなら従来どおりそのサーバー名と旗
-  const kinds = [contextEnabled && 'context', computerEnabled && 'computer', browserEnabled && 'browser', controlEnabled && 'control'].filter(Boolean);
+  const kinds = [contextEnabled && 'context', agentsEnabled && 'agents', computerEnabled && 'computer', browserEnabled && 'browser', controlEnabled && 'control'].filter(Boolean);
   const servers = kinds.length > 1 ? [relay(`ply_${kinds[0]}`, [RELAY, ...kinds.map(kind => `--${kind}`)])]
     : kinds[0] === 'context' ? [relay('ply_context', [RELAY])] : kinds.length ? [relay(`ply_${kinds[0]}`, [RELAY, `--${kinds[0]}`])] : [];
   const front = [
@@ -99,18 +100,18 @@ export function agentDefinition({ owners, prompt, cwd, home, locale, contextEnab
  * `--add-dir <home> --agent ply-context` で agy に見せ、env を agy の環境変数に足す。agy が終わったら cleanup で消す。
  * computer は ply_computer の接続先（{ url, authorization }）。あれば 2 本目の中継を書き、env で渡す
  */
-export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null, computer = null, browser = null, control = null, held = false }) {
+export async function prepareAgent({ owners, prompt, cwd, url, authorization, locale, context = true, hooks = null, computer = null, agents = null, browser = null, control = null, held = false }) {
   // 保持役に載せる agy（無停止の更新 段階 3）の置き場は held-<乱数>。持ち主はサーバーの pid ではなく、走っている agy（サーバーが入れ替わっても残る）なので、
   // 持ち主の pid での掃除（sweep）の対象にしない。会話が終わる（cleanup）か、前のサーバーが残したものを sweepHeldHomes が消す
   const name = held ? `held-${crypto.randomBytes(6).toString('hex')}` : `${process.pid}-${crypto.randomBytes(6).toString('hex')}`;
   const home = path.join(root(), name);
   if (held) ownHomes.add(name);
   await fs.promises.mkdir(path.join(home, '.agents'), { recursive: true, mode: 0o700 });
-  // context: カスタムエージェント（agent.md）を書くか（Pleiad のコンテキストかブラウザーの指示を渡すとき）。ply_context の中継は url があるときだけ
+  // context: カスタムエージェント（agent.md）を書くか（Pleiad のコンテキストかブラウザーの指示・委譲の橋を渡すとき）。ply_context の中継は url があるときだけ
   if (context) {
     const file = path.join(home, '.agents', 'agents', AGENT_NAME, 'agent.md');
     await fs.promises.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-    await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled: Boolean(url), computerEnabled: Boolean(computer?.url), browserEnabled: Boolean(browser?.url), controlEnabled: Boolean(control?.url) }), { encoding: 'utf8', mode: 0o600 });
+    await fs.promises.writeFile(file, agentDefinition({ owners, prompt, cwd, home, locale, contextEnabled: Boolean(url), agentsEnabled: Boolean(agents?.url), computerEnabled: Boolean(computer?.url), browserEnabled: Boolean(browser?.url), controlEnabled: Boolean(control?.url) }), { encoding: 'utf8', mode: 0o600 });
   }
   // Hooks を Pleiad がそろえる会話（ADR 0049）: 置き場の .agents/hooks.json に登録（pleiad-<id>、アダプター越し）と、ネイティブの名前ごとの
   // { enabled: false } を書く。agy は --add-dir の .agents/hooks.json も読み、同じ名前の enabled:false はスコープをまたいで止める（実機で確認。2026-09-28）。
@@ -128,6 +129,7 @@ export async function prepareAgent({ owners, prompt, cwd, url, authorization, lo
     runs,
     // PLY_CONTEXT_LOCALE は中継が agy へ返すエラーの言語（会話の言語。core/agy-context-relay.mjs）
     env: { ...(url ? { PLY_CONTEXT_URL: url, PLY_CONTEXT_AUTHORIZATION: authorization } : {}),
+      ...(agents?.url ? { PLY_AGENTS_URL: agents.url, PLY_AGENTS_AUTHORIZATION: agents.authorization } : {}),
       ...(computer?.url ? { PLY_COMPUTER_URL: computer.url, PLY_COMPUTER_AUTHORIZATION: computer.authorization } : {}),
       ...(browser?.url ? { PLY_BROWSER_URL: browser.url, PLY_BROWSER_AUTHORIZATION: browser.authorization } : {}),
       // PLY_CONTROL_* は中継の接続先（MCP の URL）。PLEIAD_CONTROL_* は会話のシェルの pleiad CLI を同じ会話に束縛する接続情報（ADR 0083）

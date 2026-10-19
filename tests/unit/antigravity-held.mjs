@@ -129,7 +129,7 @@ export default async function (t) {
       {
         const { result, error, events, calls, control } = await runAdopt({ acked: lines.length });
         assert.equal(error, null);
-        assert.deepEqual(result, { sessionId: conversationId });
+        assert.deepEqual(result, { sessionId: conversationId, nativeInjected: null });
         assert.ok(events.every(([, opts]) => opts?.replay === true), '再生の出来事は全て { replay: true }');
         assert.deepEqual(events.filter(([e]) => e.type === 'tool.result').map(([e]) => e.text), ['out-x'], 'ツールの結果は 1 回');
         assert.equal(events.filter(([e]) => e.type === 'text.delta').map(([e]) => e.text).join(''), '前置き。終わり。');
@@ -150,7 +150,7 @@ export default async function (t) {
       {
         const { result, error, events, calls } = await runAdopt({ acked: 3 });
         assert.equal(error, null);
-        assert.deepEqual(result, { sessionId: conversationId });
+        assert.deepEqual(result, { sessionId: conversationId, nativeInjected: null });
         assert.equal(events.filter(([, opts]) => opts?.replay === true).length > 0 && events.filter(([, opts]) => !opts?.replay).length > 0, true, '再生と続きの両方がある');
         assert.deepEqual(events.filter(([e, opts]) => e.type === 'tool.start' && opts?.replay).length, 1, 'ツールの開始は再生側');
         assert.deepEqual(events.filter(([e, opts]) => e.type === 'tool.result' && !opts).length, 1, 'ツールの結果は続き側（普通に流す）');

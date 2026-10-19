@@ -100,13 +100,13 @@ export default async function (t) {
     t.ok('起動できない MCP は失敗として記録される', rows.find(e => e.name === 'broken')?.status === 'failed' && Boolean(rows.find(e => e.name === 'broken')?.reason));
     t.ok('会話の記録に秘密の値を含めない', !JSON.stringify(record).includes('ENV_SECRET_SENTINEL'));
 
-    // ---- antigravity の会話。担当が Pleiad でもコンテキストを開かない
-    const launchedBefore = await fs.readFile(launches, 'utf8');
+    // ---- antigravity の会話。MCP が Pleiad 担当でも、読めない指示は注入で補うためその組み合わせを受ける（issue #107）
+    // （外部 MCP 自体は依頼元のターンで起き済み。agy のターンは会話ごとの中継経由でだけ届く）
     const agy = await client.runTurn({ prompt: 'こんにちは', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
     t.ok('antigravity の会話は進む', agy.outcome === 'ok' && Boolean(agy.sessionId), JSON.stringify(agy.events.filter(e => e.type === 'turnResult')));
-    t.ok('antigravity では外部 MCP を起動しない', (await fs.readFile(launches, 'utf8')) === launchedBefore);
     const guarded = await client.cmd('sessionContext', { sessionId: agy.sessionId });
-    t.ok('エージェント任せとして扱ったことと理由を記録する', guarded?.report?.status === 'native' && guarded.report.guardedBackend === 'antigravity' && /Antigravity/.test(guarded.report.reason ?? '') && guarded.owners.mcp === 'ply', JSON.stringify(guarded?.report));
+    // 拒否しない: 記録は Pleiad 担当のまま（instruction は native のまま残し、補填は nativeInjected が持つ）
+    t.ok('MCP を Pleiad 担当にしたまま受ける（断って native に倒さない）', guarded?.report?.status === 'ready' && !guarded.report.guardedBackend && guarded.owners.mcp === 'ply' && guarded.owners.instruction === 'native', JSON.stringify({ status: guarded?.report?.status, guarded: guarded?.report?.guardedBackend, owners: guarded?.owners }));
   } finally {
     client?.close(); await host?.stop();
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

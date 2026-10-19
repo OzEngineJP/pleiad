@@ -4,7 +4,7 @@
 //   - 中継（core/agy-context-relay.mjs）を通して、ply_context のツール（load_skill・外部 MCP）が使える
 //   - トークンは会話ごと。agy は 1 本のまま、ターンをまたいで同じトークンで使える。ターンの外では 401
 //   - エージェント定義にトークンを書かない。前の起動が残した置き場は次の起動で消す
-//   - 担当の組み合わせで渡せないとき（指示がエージェントのまま）は理由付きでエージェント任せ
+//   - 指示がエージェント任せのまま Skills・MCP を Pleiad にする組み合わせも受ける（読めない分の指示は Pleiad が発言の前に足す）
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -33,8 +33,11 @@ async function relayAlone(messages) {
 
 export default async function (t) {
   // ---- 担当の組み合わせと、エージェント定義の形（純粋な関数）
-  t.ok('指示の担当がエージェントのまま Skills・MCP を Pleiad にする組み合わせは受けない', Boolean(contextRefusal({ instruction: 'native', skill: 'native', mcp: 'ply' })) && Boolean(contextRefusal({ instruction: 'native', skill: 'ply', mcp: 'native' })));
-  t.ok('指示が Pleiad なら受ける。どれも Pleiad でなければ理由は無い', contextRefusal({ instruction: 'ply', skill: 'native', mcp: 'native' }) === null && contextRefusal({ instruction: 'native', skill: 'native', mcp: 'native' }) === null);
+  // かつては指示がエージェント任せのまま他を Pleiad にする組み合わせを断っていたが、読めない分の指示ファイルを
+  // Pleiad が発言の前に足す（issue #107）ので、どの組み合わせも受ける
+  t.ok('指示の担当がエージェントのまま Skills・MCP を Pleiad にする組み合わせも受ける（読めない指示は Pleiad が注入する）',
+    contextRefusal({ instruction: 'native', skill: 'native', mcp: 'ply' }) === null && contextRefusal({ instruction: 'native', skill: 'ply', mcp: 'native' }) === null
+    && contextRefusal({ instruction: 'ply', skill: 'native', mcp: 'native' }) === null && contextRefusal({ instruction: 'native', skill: 'native', mcp: 'native' }) === null);
   const partial = agentDefinition({ owners: { instruction: 'ply', skill: 'native', mcp: 'ply' }, prompt: 'P', cwd: 'C:/w', home: 'C:/h' });
   t.ok('Skills がエージェント担当ならネイティブの読み込みを残し、MCP は切る', /\ninheritCustomizations: true\n/.test(partial) && /\ninheritMcp: false\n/.test(partial));
   const full = agentDefinition({ owners: { instruction: 'ply', skill: 'ply', mcp: 'native' }, prompt: 'P', cwd: 'C:/w', home: 'C:/h', electron: true });
@@ -113,7 +116,7 @@ export default async function (t) {
 
     t.ok('通常の agy 会話には子のコマンド実行指示を入れない', !body.includes('Start-Process -Wait'));
     const delegated = await client.runTurn({ backend: 'fake', cwd,
-      prompt: 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'antigravity', task: 'agent-body' } }) }, { ms: 30000 });
+      prompt: 'ply:' + JSON.stringify({ name: 'ply_delegate', arguments: { kind: 'mechanical', backend: 'antigravity', task: 'wire-has:Start-Process -Wait' } }) }, { ms: 30000 });
     const task = JSON.parse(delegated.events.find(e => e.type === 'tool.result' && e.text.includes('"taskId"')).text);
     let child;
     for (let i = 0; i < 600; i++) {
@@ -121,7 +124,33 @@ export default async function (t) {
       if (child?.status === 'completed') break;
       await new Promise(r => setTimeout(r, 50));
     }
-    t.ok('agy の委譲された子には時間上限・PID管理・無期限待機禁止が実際に届く', child?.status === 'completed' && child.result.includes('Start-Process -Wait') && child.result.includes('PID'));
+    // wire-has は、前置きの指示を含む agy が実際に受け取った本文にその文字列があるかを返す
+    t.ok('agy の委譲された子には時間上限・PID管理・無期限待機禁止が実際に届く', child?.status === 'completed' && child.result === 'wire-has:yes', JSON.stringify(child?.result ?? child?.status).slice(0, 300));
+
+    // ---- 指示がエージェント任せの会話: カスタムエージェントが読めない AGENTS.md・GEMINI.md を Pleiad が発言の前に足す（issue #107）
+    // 探索は scan-home（PLEIAD_SCAN_HOME。利用者の home ではない）と作業場所。`@import` の行は agy 側で解決されないため生のまま渡す
+    const scanHome = path.join(dataDir, 'scan-home');
+    await write(path.join(cwd, 'AGENTS.md'), 'AGENTS-RULE-MARKER\n\n@./IMPORTED-NOT-RESOLVED.md\n');
+    await write(path.join(scanHome, '.gemini', 'GEMINI.md'), 'HOME-GEMINI-MARKER\n');
+    await client.cmd('setContextSettings', { cwd, place: cwd, kind: 'instruction', value: { owner: 'native', user: null, directory: null } });
+    const nat = await client.runTurn({ prompt: 'wire-has:AGENTS-RULE-MARKER', sessionId: null, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    const natText = nat.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    t.ok('エージェント任せの指示ファイルは発言の前に足して渡る', nat.outcome === 'ok' && natText.includes('wire-has:yes'), natText.slice(0, 200));
+    const nat2 = await client.runTurn({ prompt: 'wire-has:HOME-GEMINI-MARKER', sessionId: nat.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    t.ok('ユーザー範囲（探索の home の .gemini）も同じ探索で拾う', nat2.events.filter(e => e.type === 'text.delta').map(e => e.text).join('').includes('wire-has:yes'));
+    const nat3 = await client.runTurn({ prompt: 'wire-has:IMPORTED-NOT-RESOLVED.md', sessionId: nat.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    t.ok('@ の参照行は解決せず生のまま渡す（agy が解決しないため）', nat3.events.filter(e => e.type === 'text.delta').map(e => e.text).join('').includes('wire-has:yes'));
+    // 続きの会話でも毎ターン再探索される（改訂が次のターンに効く）
+    await write(path.join(cwd, 'AGENTS.md'), 'AGENTS-RULE-REVISED\n');
+    const nat4 = await client.runTurn({ prompt: 'wire-has:AGENTS-RULE-REVISED', sessionId: nat.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 });
+    t.ok('改訂は起こし直し無しで次のターンに効く', nat4.events.filter(e => e.type === 'text.delta').map(e => e.text).join('').includes('wire-has:yes'));
+    const natRec = await client.cmd('sessionContext', { sessionId: nat.sessionId });
+    t.ok('渡した分は記録に残る（ファイル・ハッシュ・量）', natRec?.nativeInjected?.entries?.some(e => e.path?.endsWith('AGENTS.md') && e.hash) && natRec.nativeInjected.entries.some(e => e.path?.endsWith('GEMINI.md')),
+      JSON.stringify(natRec?.nativeInjected).slice(0, 400));
+    // 注入した後に失敗したターンでも記録は残る
+    const natFail = await client.runTurn({ prompt: 'fail-inject', sessionId: nat.sessionId, cwd, backend: 'antigravity', mode: 'yolo' }, { ms: 60_000 }).catch(() => null);
+    const natRecAfterFail = await client.cmd('sessionContext', { sessionId: nat.sessionId });
+    t.ok('注入の後に失敗したターンでも記録に残る', Boolean(natRecAfterFail?.nativeInjected?.entries?.length), JSON.stringify(natRecAfterFail?.nativeInjected).slice(0, 200));
 
     // ---- 前の起動が残した置き場は、次の起動で消す（強制終了では agy の終了を待てないため）
     client.close(); client = null;
