@@ -16,6 +16,8 @@
 //   "outlives:<json>" … ターンが終わっても残る承認（outlivesTurn。ADR 0168）を出す／その handle を操る（update・settle・result）。tests/unit/server-permission-update.mjs
 //   "question"     … askPermission（kind:"question"）を呼び、回答を本文にする
 //   "slow"         … 中断されるまで待つ
+//   "pre-hold:<ゲート>" … プロンプトを渡す前の接続・準備に当たる区間で、ゲートが開くまで待つ（Devin が session/prompt の前に待つ形）。
+//                    待っている間に中断されたら、渡さないまま（履歴にも残さず）aborted で終わる。ゲートが開けば普通に渡して返す
 //   "fail"         … 失敗で終わる（outcome: error。離れた端末への「失敗」の通知を測る）
 //   "fail-auth"    … ログインの期限切れ（401）で失敗する（Claude と同じ kind: 'auth'・pristine: true。ADR 0212）。
 //                    "fail-auth tool" はツールを 1 回動かしてから失敗する（pristine: false）
@@ -495,6 +497,16 @@ export const backend = {
     // 実行中の切り替えが効いたことを確かめられるよう、handle にも今の値を持たせる
     const handle = { sessionId: id, mode, model };
     if (control) control.handle = handle;
+
+    // 台本 "pre-hold:<ゲート>": プロンプトを渡す前にゲートを待つ。中断されたら渡さないまま aborted で終わる
+    const preHold = !plain && /^pre-hold:([\w.-]+)\s*$/.exec(scriptOf(prompt))?.[1];
+    if (preHold) {
+      const aborted = new Promise((resolve) => {
+        if (signal?.signal?.aborted) resolve(); else signal?.signal?.addEventListener?.("abort", () => resolve(), { once: true });
+      });
+      await gateWait(preHold, aborted);
+      if (signal?.signal?.aborted) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: id }; }
+    }
 
     // 入力欄の `!` の結果（Claude の shouldQuery: false の行と同じく、返答を起こさずに履歴へ積む）
     for (const text of shellAppends) push(s, { role: "user", text });

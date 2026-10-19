@@ -5,13 +5,15 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { createMessageQueue } from '../../core/message-queue.mjs';
 import { readSessions } from '../lib/data-store.mjs';
+import { createFakeGates } from '../lib/fake-gate.mjs';
 
 export const name = 'message-queue';
 export const title = '実行中の送信を保存し、順序・取消・再接続・途中入力を保つ';
 export default async function(t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-outbox-'));
   const dataDir = path.join(scratch, 'data');
-  let server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir });
+  const gates = await createFakeGates(scratch);
+  let server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', ...gates.env }, dataDir });
   let c = await open(server);
   try {
     const { sessionId } = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
@@ -43,7 +45,7 @@ export default async function(t) {
     await c.waitFor(e => e.type === 'turnEnd', { from, ms: 3000 });
     t.ok('停止は待機メッセージも保留し、勝手に再開しない', (await c.cmd('listMessages', { sessionId }))[3].status === 'paused');
     c.close(); await server.stop();
-    server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir }); c = await open(server);
+    server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', ...gates.env }, dataDir }); c = await open(server);
     queue = await c.cmd('listMessages', { sessionId });
     t.ok('サーバー再起動後も本文を保持', queue[3].args.prompt === 'echo:paused');
     // A fresh conversation permits testing startup validation without relying on fake's volatile history.
@@ -84,6 +86,25 @@ export default async function(t) {
       && bridgeEvents.some(e => e.type === 'turnResult' && e.messageId === 'message-0007')
       && !bridgeEvents.some(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0007'),
       JSON.stringify({ item: bridgeItem, events: bridgeEvents.map(e => e.type) }));
+    // ターンは始まったが、渡す前に中断された発言（台本 pre-hold。中断は失敗でなく普通に戻る）は、
+    // sent のままにせず failed に戻す。failed はエージェントに渡っていないので、再送できる
+    const held = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    const heldFrom = c.mark();
+    await c.cmd('sendMessage', { sessionId: held.sessionId, messageId: 'message-0008', prompt: 'pre-hold:gate-lost' });
+    await c.waitFor(e => e.type === 'outbox' && e.sessionId === held.sessionId && e.messages[0]?.status === 'sent', { ms: 3000 });
+    await c.cmd('abort', { sessionId: held.sessionId });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === held.sessionId, { from: heldFrom, ms: 3000 });
+    const heldEvents = c.events.slice(heldFrom).filter(e => e.sessionId === held.sessionId);
+    const heldItem = (await c.cmd('listMessages', { sessionId: held.sessionId }))[0];
+    t.ok('渡す前の中断は送信済みにせず、エラー付きの失敗で残す',
+      heldItem.status === 'failed' && Boolean(heldItem.error), JSON.stringify(heldItem));
+    t.ok('渡す前の中断には送信済みの合図を出さない',
+      !heldEvents.some(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0008'));
+    // 失敗の発言の「再送する」は、開いたゲートを越えて普通に届く
+    await gates.open('gate-lost');
+    await c.cmd('messageAction', { sessionId: held.sessionId, messageId: 'message-0008', action: 'retry' });
+    await c.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0008', { ms: 5000 });
+    t.ok('再送すると同じ発言が届く', (await c.cmd('listMessages', { sessionId: held.sessionId }))[0].status === 'sent');
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
   // 会話をまたいだ同時実行の本数に上限は無い。ほかの会話が走っていても、新しい会話の送信は待たずに届く
