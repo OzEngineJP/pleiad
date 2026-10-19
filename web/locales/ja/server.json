@@ -1,7 +1,7 @@
 {
   "acp": {
     "errors": {
-      "usageExhausted": "{{agent}} の利用残高または利用枠を使い切りました。利用状況とプランを確認してから、もう一度送信してください。",
+      "usageExhausted": "{{agent}} から利用残高または利用枠が不足しているとの応答がありました。現在の使用状況を確認し、時間を置いてから再送してください。",
       "paymentRequired": "{{agent}} から支払いが必要との応答がありました（HTTP 402）。請求と利用残高を確認してから、もう一度送信してください。",
       "rateLimited": "{{agent}} のリクエスト制限に達しました。時間を置いてから、もう一度送信してください。"
     }
@@ -690,6 +690,9 @@
     }
   },
   "grok": {
+    "usageUnknown": "Grok の残り使用枠を取得できないため不明です。",
+    "usageFetchFailed": "Grok の使用量を取得できませんでした。しばらくしてから更新してください。",
+    "usageNoCredentials": "使用量の取得には Grok へのログインが必要です。",
     "description": "ローカルの Grok Build CLI と既存のログインを使う",
     "modes": {
       "askNote": "読む以外の操作を確認する。OS による隔離ではない",

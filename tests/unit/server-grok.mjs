@@ -16,8 +16,18 @@ export default async function (t) {
   try {
     server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'grok', AGENT_HOST_GROK_BIN: `node "${path.join(ROOT, 'tests/lib/fake-grok.mjs')}"`, GROK_HOME: path.join(root, 'grok-home') } });
     c = await open(server);
+    const usage = await c.cmd('providerUsage', { backend: 'grok' });
+    assert.equal(usage.quota.plan, 'SuperGrok');
+    assert.equal(usage.quota.windows[0].usedPercent, 23.5);
+    assert.equal(usage.quota.windows[0].remainingPercent, 76.5);
+    assert.equal(usage.quota.windows[0].resetsAt, '2033-05-18T03:33:20.000Z');
+    t.ok('Grok billing is exposed through the shared provider usage route', true);
     const first = await c.runTurn({ backend: 'grok', cwd, prompt: 'alpha', mode: 'auto' });
     assert.equal(first.outcome, 'ok');
+    const measured = await c.cmd('providerUsage', { backend: 'grok' });
+    assert.equal(measured.local.fiveHour.inputTokens.value, 100);
+    assert.equal(measured.local.fiveHour.outputTokens.value, 50);
+    assert.equal(measured.local.fiveHour.costUsd.value, null);
     t.ok('初回のターンが返る', Boolean(first.sessionId));
     // ---- ホスト記録の無い会話: ライブで出た行と、再開・再起動の後の再生の行は同じ uuid
     const loaded = await c.cmd('loadSession', { sessionId: first.sessionId });

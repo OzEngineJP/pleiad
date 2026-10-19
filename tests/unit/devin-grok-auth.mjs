@@ -11,7 +11,6 @@ export const name = 'devin-grok-auth';
 export const title = 'Devin/Grok auth status, terminal login guidance and logout';
 
 const fixture = id => path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'lib', `fake-${id}.mjs`);
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export default async function testDevinGrokAuth(t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'dg-auth-')));
@@ -31,8 +30,11 @@ export default async function testDevinGrokAuth(t) {
     let st = await devin.auth.status();
     assert.deepEqual({ loggedIn: st.loggedIn, account: st.account }, { loggedIn: false, account: null }, 'devin: 未ログインが読める');
     const events = [];
-    const login = devin.auth.login({ emit: e => events.push(e) });
-    await sleep(150);
+    let announce;
+    const guidance = new Promise(resolve => { announce = resolve; });
+    const login = devin.auth.login({ emit: e => { events.push(e); if (e.phase === 'url') announce(); } });
+    await Promise.race([guidance, login]);
+    assert.equal(events[0]?.phase, 'url');
     await fs.writeFile(authFile, 'in');   // 人が端末で `devin auth login` を済ませたのと同じ
     await login;
     assert.equal(events[0].phase, 'url', 'devin: 先にコマンドの案内が出る');
@@ -52,8 +54,11 @@ export default async function testDevinGrokAuth(t) {
     st = await grok.auth.status();
     assert.equal(st.loggedIn, false, 'grok: auth.json が無ければ未ログイン');
     const gEvents = [];
-    const gLogin = grok.auth.login({ emit: e => gEvents.push(e) });
-    await sleep(150);
+    let gAnnounce;
+    const gGuidance = new Promise(resolve => { gAnnounce = resolve; });
+    const gLogin = grok.auth.login({ emit: e => { gEvents.push(e); if (e.phase === 'url') gAnnounce(); } });
+    await Promise.race([gGuidance, gLogin]);
+    assert.equal(gEvents[0]?.phase, 'url');
     await fs.mkdir(grokHome, { recursive: true });
     await fs.writeFile(path.join(grokHome, 'auth.json'), '{"grok.com":{}}');   // `grok login` が書くのと同じ
     await gLogin;
