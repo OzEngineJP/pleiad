@@ -450,6 +450,7 @@ export const backend = {
     effortInModelId: false, // エフォートはモデルの variants（prompt の variant）
     instructionsAtStart: false,
     failureDiagnostics: false,
+    promptDelivery: true,   // inbox の受理・配送（session.inbox.delivered / メッセージの再生）で「渡った」が分かる
     handover: true,         // 共有のサーバーを保持役に載せ、新しいサーバーがつなぎ直して付け直す（opencode-held.mjs）
     // runArgs の配達物: ブラウザーは shell.env の env と中継の ply_browser に、ply_control は中継と env・指示に、
     // 秘密情報は env と指示に、可視化・Pleiad の Hooks の指示は system と hooksRuntime に渡す

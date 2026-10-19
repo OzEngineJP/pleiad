@@ -202,6 +202,7 @@ const SUITES = [
   './unit/devin-acp.mjs',
   './unit/devin-config.mjs',
   './unit/devin-normalize.mjs',
+  './unit/devin-compaction.mjs',
   './unit/acp-record-merge.mjs',
   './unit/devin-usage.mjs',
   './unit/devin-grok-auth.mjs',

@@ -30,6 +30,7 @@ export default async function (t) {
   const dataDir = path.join(scratch, "data");
   const argsFile = path.join(scratch, "agy-args.json");
   const pidFile = path.join(scratch, "agy-pids.json");
+  const promptLog = path.join(scratch, "agy-prompts.log");
 
   const readJson = async (file, fallback) => JSON.parse(await fs.readFile(file, "utf8").catch(() => fallback));
   /** 身代わりが起きた順の pid（fake-agy.mjs が控える）。 */
@@ -51,6 +52,7 @@ export default async function (t) {
       AGENT_HOST_AGY_BIN: `node "${fake}"`,
       FAKE_AGY_ARGS_FILE: argsFile,
       FAKE_AGY_PID_FILE: pidFile,
+      FAKE_AGY_PROMPT_LOG: promptLog,
     },
     dataDir,
     timeoutMs: 30_000,
@@ -319,6 +321,24 @@ export default async function (t) {
     t.ok("落として aborted になる",
       c.since(mark).some((e) => e.type === "turnResult" && e.outcome === "aborted"),
       JSON.stringify(c.since(mark).filter((e) => e.type === "turnResult")));
+
+    // ---- 渡った合図を出せない backend（capabilities.promptDelivery = false）:
+    // 発言を受け取ったかもしれないまま無出力で終わったとき、failed（再開で自動再送）にせず結果不明（unknown）にする。
+    // 自動再送されると、ネイティブの履歴に同じ発言が二重に登る
+    const quietSession = await c.cmd("newSession", { backend: "antigravity", cwd: ROOT });
+    const quietFrom = c.mark();
+    await c.cmd("sendMessage", { sessionId: quietSession.sessionId, messageId: "quiet-001", prompt: "quiet" });
+    // 身代わりが受け取るまで待ってから止める（渡したあとで無出力のまま終わる形にする）
+    for (let i = 0; i < 100 && !(await fs.readFile(promptLog, "utf8").catch(() => "")).includes("quiet"); i++) await new Promise((r) => setTimeout(r, 50));
+    await c.cmd("abort", { sessionId: quietSession.sessionId });
+    await c.waitFor((e) => e.type === "turnEnd" && e.sessionId === quietSession.sessionId, { from: quietFrom, ms: 60_000 });
+    const quietItem = (await c.cmd("listMessages", { sessionId: quietSession.sessionId }))[0];
+    t.ok("合図の無いまま終わった発言は失敗にせず結果不明にする", quietItem?.status === "unknown", JSON.stringify(quietItem));
+    const resumed = await c.cmd("resume", { sessionId: quietSession.sessionId }).catch((e) => e);
+    t.ok("再開は結果不明の発言を自動で送り直さず、確かめるよう促す", resumed instanceof Error, JSON.stringify(resumed));
+    t.ok("発言は結果不明のまま残る", (await c.cmd("listMessages", { sessionId: quietSession.sessionId }))[0]?.status === "unknown");
+    const quietPrompts = (await fs.readFile(promptLog, "utf8").catch(() => "")).split("\n").filter((line) => line.includes("quiet"));
+    t.ok("同じ発言が二重に届いていない", quietPrompts.length === 1, String(quietPrompts.length));
   } finally {
     c.close();
     await server.stop().catch(() => {});

@@ -6019,7 +6019,13 @@ function adoptChild(ctx, turnPromise, { abandon = false } = {}) {
       const renewed = await adoptedWorktree(task);
       return await finishChild(task, signal, execution, outcome, renewed);
     } finally { release(); }
-  }, { claims });
+  }, { claims, prompt: ctx.prompt });
+  if (adopted) {
+    // ターン開始の入力にした指示は、付け直したターンへプロンプトが渡ったら delivered にする（execute の onAccepted と同じ）。
+    // 旧サーバーですでに渡っていたなら付け直しの時点で確定する。渡る前に手を離した分は、札の合図（hooks.onAccepted）で
+    ctx.hooks.onAccepted = () => agentTasks.promptAccepted(taskId);
+    if (ctx.initialDelivered) void agentTasks.promptAccepted(taskId).catch(() => {});
+  }
   if (!adopted) void turnPromise.finally(() => { if (taskExecutions.get(sessionId) === execution) taskExecutions.delete(sessionId); });
   return adopted;
 }
@@ -6226,7 +6232,9 @@ agentTasks = await createAgentTasks({
     try {
       // 追加の指示（ply_task_send）で再開した子の作業場所が、前の完了で片付いていたら作り直す（元の場所に書かせない）
       const renewed = await renewTaskWorktree(task).catch(() => null);
-      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal, taskId: task.taskId });
+      // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済みにする（onAccepted。ターンの終わりを待たない）
+      const outcome = await runTurn({ sessionId: task.sessionId, prompt }, () => {}, { signal, taskId: task.taskId,
+        onAccepted: () => agentTasks.promptAccepted(task.taskId) });
       // 子のターンを新しいサーバーへ渡した（handOffTurn）。結果は付け直した先の finishChild が確定する（このサーバーでは何も書かない）
       if (outcome === 'handedOff') return { handedOff: true };
       if (outcome === 'requeue') return { requeue: true };
@@ -7023,7 +7031,12 @@ async function driveTurn(ctx, start) {
     // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
     // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
     if ((err?.undelivered || !ctx.backendInvoked || !ctx.initialDelivered) && sessionId && args.messageId) {
-      await outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err)).catch(() => {});
+      // 渡った合図を出せないバックエンド（印 promptDelivery = false）では、合図が無い=渡っていないとは言えない。
+      // 届いているかもしれない発言を自動で送り直すとネイティブの履歴に二重に登るので、結果不明（unknown）に落とす
+      const uncertain = !err?.undelivered && ctx.backendInvoked && !ctx.initialDelivered && !turn.backend.capabilities?.promptDelivery;
+      await (uncertain
+        ? outbox.uncertain(sessionId, args.messageId, String(err?.message ?? err))
+        : outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err))).catch(() => {});
     }
     if (!ctx.didStart) throw err;
   } finally {
@@ -7040,9 +7053,13 @@ async function closeTurn(ctx) {
   // 渡らずに終わった `!` の行は、また「渡さない」を切り替えられる
   if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
   // ターンは始まったが渡った合図（initialDelivered）の無いまま終わった発言は、送信済みのままだと本文がどこにも残らず消える。
-  // 未達（failed）に戻し、再送か取り消しを選ばせる（requeue は送信待ちに戻るので触らない。catch で戻した分は undelivered がそのまま通る）
+  // 未達（failed）に戻し、再送か取り消しを選ばせる（requeue は送信待ちに戻るので触らない。catch で戻した分は undelivered がそのまま通る）。
+  // 渡った合図を出せないバックエンド（印 promptDelivery = false。antigravity）では、届いたまま無出力で終わることがあるので、
+  // 失敗（再開で自動再送される）にせず結果不明（unknown）にして、利用者に確かめて選ばせる
   if (ctx.didStart && sessionId && args.messageId && !ctx.initialDelivered && turn.outcome !== 'requeue')
-    await outbox.undelivered(sessionId, args.messageId, t('queue.undelivered')).catch(() => {});
+    await (turn.backend.capabilities?.promptDelivery
+      ? outbox.undelivered(sessionId, args.messageId, t('queue.undelivered'))
+      : outbox.uncertain(sessionId, args.messageId, t('queue.uncertain'))).catch(() => {});
   if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
   await turn.visualizations.close().catch(err => {
     if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };

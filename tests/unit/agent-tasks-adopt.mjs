@@ -95,6 +95,34 @@ export default async function(t) {
     await b.close();
     b = null;
 
+    // ---- 付け直した回のターン開始の指示: promptAccepted で delivered（途中送信の claim は除く）
+    a = await open({ execute: async (task, prompt, signal) => prompt === 'work6'
+      ? { outcome: 'ok', text: 'first' }
+      : new Promise(resolve => { hands.set(task.taskId, () => resolve({ handedOff: true })); signal.addEventListener('abort', () => resolve({ outcome: 'aborted' }), { once: true }); }) });
+    const job6 = await a.call('p', 'ply_delegate', { backend: 'fake', task: 'work6' });
+    const id6 = job6.taskId;
+    await until(() => a.get(id6).status === 'completed');
+    await a.call('p', 'ply_task_send', { taskId: id6, message: 'next6' });
+    await until(() => hands.has(id6) && states(a, id6) === 'next6:sending');
+    await a.call('p', 'ply_task_send', { taskId: id6, message: 'steer6' });
+    const steer6 = a.instructions(id6).instructions[1];
+    t.ok('旧サーバー: ターン開始の指示と合図待ちの途中送信が sending で並ぶ', states(a, id6) === 'next6:sending,steer6:sending', states(a, id6));
+    hands.get(id6)();
+    await sleep(200);
+    await a.close();
+    a = null;
+    b = await open({ adopting: [id6], execute: async () => ({ outcome: 'ok', text: 'resumed' }) });
+    let finish6;
+    t.ok('付け直せる', b.adoptRun(id6, () => new Promise(resolve => { finish6 = resolve; }), { claims: [steer6.id], prompt: 'work6' }) === true);
+    await b.promptAccepted(id6);
+    t.ok('ターン開始の指示は受け取りで配送済み、途中送信の claim は送信中のまま', states(b, id6) === 'next6:delivered,steer6:sending', states(b, id6));
+    await b.steered(id6, steer6.id, 'delivered');
+    finish6({ outcome: 'ok', text: 'resumed' });
+    await until(() => b.get(id6).status === 'completed');
+    t.ok('終われば全部配送済み', states(b, id6) === 'next6:delivered,steer6:delivered');
+    await b.close();
+    b = null;
+
     // ---- 付け直しをあきらめた（待ち受けのポートが取れないなど）: interrupted
     a = await open({});
     const id4 = await start(a, 'work4');

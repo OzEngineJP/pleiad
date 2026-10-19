@@ -703,6 +703,7 @@ export const backend = {
     effortInModelId: false,
     instructionsAtStart: false, // 人格（botInstructions）はターンごとに append に入る
     failureDiagnostics: false,
+    promptDelivery: true,   // プロンプトを入力に流したら onPromptDelivered で「渡った」と知らせる
     handover: true,          // CLI を保持役に載せ、新しいサーバーが付け直す（claude-held.mjs）
     // runArgs の配達物: ブラウザーは会話の env と mcpServers に、ply_control は mcpServers と env・指示に、
     // 秘密情報は envFile と指示に、可視化の指示は append に、Pleiad の Hooks は hooksRuntime に渡す

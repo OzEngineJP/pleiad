@@ -56,7 +56,7 @@ export default async function(t) {
   try {
     // ---- 「渡った」合図を持たないバックエンド（fake の既定）
     {
-      const { c, awaitTask, settled, child, send, stateOf, turnEnds, events, userTexts } = await boot({});
+      const { c, gates, awaitTask, settled, child, send, stateOf, awaitState, turnEnds, events, userTexts } = await boot({});
 
       // 走っている子へ渡す: 同じターンに入り、その場で配送済み。新しいターンは走らない
       const a = await child('a');
@@ -101,6 +101,19 @@ export default async function(t) {
       t.ok('次ターンの設定が予約されていれば待機する', await stateOf(d.task) === 'echo:NEXT:queued', await stateOf(d.task));
       await d.finish();
       await awaitTask(d.parent, r => r.status === 'completed' && r.result === 'NEXT');
+
+      // ターン開始の入力にした指示は、子がプロンプトを受け取った時点で配送済み（ターンの終わりを待たない。Issue #106）
+      const f = await child('f');
+      const textF = 'DECLINE_STEER HOLD_TURN:f2 do it';
+      await send(f.parent, f.task, textF);
+      t.ok('走っている子へは受理されず待機', await awaitState(f.task, `${textF}:queued`) === `${textF}:queued`);
+      await f.finish();
+      await awaitTask(f.parent, r => r.status === 'running');
+      t.ok('ターン開始の入力にした指示は、子が受け取った時点で配送済み（ターンの終わりを待たない）',
+        await awaitState(f.task, `${textF}:delivered`) === `${textF}:delivered`, await stateOf(f.task));
+      await gates.open('f2');
+      await settled(f.parent);
+      t.ok('次のターンで 1 回だけ配送する', turnEnds(f.task, f.mark).length === 2 && (await userTexts(f.task)).filter(x => x === textF).length === 1);
     }
 
     // ---- 「渡った」合図を後から出すバックエンド（本物の claude / codex と同じ steerConfirms）

@@ -297,6 +297,9 @@ export const backend = {
     instructionsAtStart: true,
     // 失敗の理由を会話の控えに残し、ターンの後に agy のログを書き出す（server.mjs の recordBackendFailure）
     failureDiagnostics: true,
+    // 「渡った」合図は出せない: session.prompt は入力を書くだけで、agy が読んで会話に入れたかの応答は無い。
+    // 渡ったかは返答の中身（ANSWER_EVENTS）でしか分からない
+    promptDelivery: false,
     handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
     // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
     // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに渡す。可視化の指示は渡さない（発言に入れていない）

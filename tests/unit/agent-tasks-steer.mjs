@@ -261,6 +261,27 @@ export default async function(t) {
       t.ok('未受信分は元の順序でまとめて次ターンへ渡す', JSON.stringify(runsOf(id)) === '["hold-drops","drop-one\\n\\ndrop-two"]' && states(id) === 'drop-one:delivered,drop-two:delivered');
     }
 
+    // ---- ターン開始の入力にした指示: 子がプロンプトを受け取ったら（promptAccepted）ターンの終わりを待たず配送済み
+    {
+      outcome = 'pending'; steered.length = 0;
+      const id = await start('hold-accept');
+      release(id);
+      await until(() => manager.get(id).status === 'completed');
+      await send(id, 'hold-next');
+      await until(() => manager.get(id).status === 'running' && states(id) === 'hold-next:sending');
+      await manager.promptAccepted(id);
+      t.ok('ターン開始の入力にした指示は、子が受け取った時点で配送済み（ターンの終わりを待たない）',
+        manager.get(id).status === 'running' && states(id) === 'hold-next:delivered', states(id));
+      // 合図待ちの途中送信（claim）は、ターン開始の受け取りでは配送済みにしない
+      await send(id, 'steer-accept');
+      await manager.promptAccepted(id);
+      t.ok('途中送信の合図待ちは promptAccepted では配送済みにしない', states(id) === 'hold-next:delivered,steer-accept:sending', states(id));
+      await manager.steered(id, manager.instructions(id).instructions[1].id, 'delivered');
+      t.ok('途中送信はその合図で配送済みになる', states(id) === 'hold-next:delivered,steer-accept:delivered');
+      release(id);
+      await until(() => manager.get(id).status === 'completed');
+    }
+
     // ---- 止めたタスクは、合図待ちの指示で生き返らない
     {
       outcome = 'pending'; steered.length = 0;

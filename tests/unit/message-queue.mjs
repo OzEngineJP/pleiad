@@ -105,6 +105,18 @@ export default async function(t) {
     await c.cmd('messageAction', { sessionId: held.sessionId, messageId: 'message-0008', action: 'retry' });
     await c.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0008', { ms: 5000 });
     t.ok('再送すると同じ発言が届く', (await c.cmd('listMessages', { sessionId: held.sessionId }))[0].status === 'sent');
+    // failed の発言は、中断した会話の「再開」（resume → retryPaused({failed:true})）でも自動で送り直される。
+    // 渡った合図を出せるバックエンドでは「渡っていない」が確かなので、送り直してよい（対極: server-antigravity の quiet）
+    const held2 = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    await c.cmd('sendMessage', { sessionId: held2.sessionId, messageId: 'message-0009', prompt: 'pre-hold:gate-auto' });
+    await c.waitFor(e => e.type === 'outbox' && e.sessionId === held2.sessionId && e.messages[0]?.status === 'sent', { ms: 3000 });
+    await c.cmd('abort', { sessionId: held2.sessionId });
+    await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === held2.sessionId, { ms: 3000 });
+    await gates.open('gate-auto');
+    const resumed = await c.cmd('resume', { sessionId: held2.sessionId });
+    t.ok('中断した会話の再開は、渡らなかった発言（failed）を自動で送信待ちへ戻す', resumed?.sent === 'outbox', JSON.stringify(resumed));
+    await c.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 'message-0009', { ms: 5000 });
+    t.ok('再開の自動再送で同じ発言が届く', (await c.cmd('listMessages', { sessionId: held2.sessionId }))[0].status === 'sent');
   } finally { c.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
 
   // 会話をまたいだ同時実行の本数に上限は無い。ほかの会話が走っていても、新しい会話の送信は待たずに届く

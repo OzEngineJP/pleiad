@@ -57,17 +57,28 @@ export function devinCompactionsFromDb({ dataDir, sessionId, dbFile = devinSessi
   let db = null;
   try {
     db = open(dbFile);
+    // 継続ノードの候補を SQL 側で絞る。区切りの無い会話は、履歴の全行を読んで JSON.parse せずにここで終わる
+    // （compact() の実効の確認は最大 120 秒、1 秒ごとにこれを呼ぶ）。
+    // LIKE は文字の大小を区別せず鍵でない場所の同じ文字列にも当たるので広めに取り、正確な条件は JS で確かめる
+    const candidates = new Map();
+    for (const row of db.prepare('select node_id, parent_node_id, chat_message, metadata, created_at from message_nodes where session_id = ? and metadata like ? and chat_message like ? order by node_id')
+        .all(sessionId, '%summarized_from%', `%${CONTINUATION}%`)) {
+      candidates.set(row.node_id, { pid: row.parent_node_id, msg: parseJson(row.chat_message), meta: parseJson(row.metadata), at: Number(row.created_at) });
+    }
+    if (!candidates.size) return [];
+    // 区切りの位置（直前・直後の発言の uuid）を作るための鎖は、軽い列だけ読む。
+    // 行の role は本文（JSON）から SQL の JSON 関数で取り、全文は parse しない（継続ノードだけ parse 済み）
     const nodes = new Map();
-    for (const row of db.prepare('select node_id, parent_node_id, chat_message, metadata, created_at from message_nodes where session_id = ? order by node_id').all(sessionId)) {
-      nodes.set(row.node_id, { pid: row.parent_node_id, msg: parseJson(row.chat_message), meta: parseJson(row.metadata), at: Number(row.created_at) });
+    for (const row of db.prepare("select node_id, parent_node_id, case when json_valid(chat_message) then json_extract(chat_message, '$.role') end as role from message_nodes where session_id = ?").all(sessionId)) {
+      nodes.set(row.node_id, { pid: row.parent_node_id, role: typeof row.role === 'string' ? row.role : null });
     }
     const head = db.prepare('select main_chain_id from sessions where id = ?').get(sessionId)?.main_chain_id;
-    return compactionEntries(nodes, head, sessionId);
+    return compactionEntries(nodes, head, sessionId, candidates);
   } catch { return []; }
   finally { try { db?.close(); } catch {} }
 }
 
-function compactionEntries(nodes, head, sessionId) {
+function compactionEntries(nodes, head, sessionId, candidates) {
   const chain = [];
   for (let n = head, guard = 0; n != null && nodes.has(n) && guard++ < MAX_CHAIN; n = nodes.get(n).pid) chain.push(n);
   chain.reverse();
@@ -75,7 +86,7 @@ function compactionEntries(nodes, head, sessionId) {
 
   // 継続ノード → 区切り。複製（prior_node_ids 付き）は元のノードへ寄せる
   const byOrigin = new Map();
-  for (const [nid, node] of nodes) {
+  for (const [nid, node] of candidates) {
     const content = contentOf(node.msg);
     if (node.msg?.role !== 'system' || node.meta?.summarized_from == null || !content.includes(CONTINUATION) || !content.includes('<summary>')) continue;
     const priors = node.meta.extensions?.[PRIOR_IDS];
@@ -94,12 +105,12 @@ function compactionEntries(nodes, head, sessionId) {
       // mapper の発言と同じ並べ方で、直前・直後の行の位置の uuid を作る（devin-normalize.mjs の positional uuid）
       let idx = -1, lastRole = null, i = 0;
       for (; i < onMain.get(nid); i++) {
-        const role = visibleRole(nodes.get(chain[i]).msg?.role);
+        const role = visibleRole(nodes.get(chain[i]).role);
         if (role && role !== lastRole) { idx++; lastRole = role; }
       }
       if (lastRole) entry.afterMessageId = `${sessionId}:${lastRole}:${idx}`;
       for (; i < chain.length; i++) {
-        const role = visibleRole(nodes.get(chain[i]).msg?.role);
+        const role = visibleRole(nodes.get(chain[i]).role);
         if (!role) continue;
         entry.beforeMessageId = `${sessionId}:${role}:${role === lastRole ? idx : idx + 1}`;
         break;

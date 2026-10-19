@@ -444,6 +444,7 @@ export const backend = {
     effortInModelId: false,
     instructionsAtStart: false,
     failureDiagnostics: false,
+    promptDelivery: true,   // 「渡った」合図を出せることにする（出さない backend の形は silent: の台本で踏む）
     handover: true,          // 台本 held: のターンを保持役に載せる（試験用）
     // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）
     get computerUse() {
@@ -501,10 +502,14 @@ export const backend = {
     // 台本 "pre-hold:<ゲート>": プロンプトを渡す前にゲートを待つ。中断されたら渡さないまま aborted で終わる
     const preHold = !plain && /^pre-hold:([\w.-]+)\s*$/.exec(scriptOf(prompt))?.[1];
     if (preHold) {
+      let onAbort;
       const aborted = new Promise((resolve) => {
-        if (signal?.signal?.aborted) resolve(); else signal?.signal?.addEventListener?.("abort", () => resolve(), { once: true });
+        onAbort = () => resolve();
+        if (signal?.signal?.aborted) resolve(); else signal?.signal?.addEventListener?.("abort", onAbort, { once: true });
       });
       await gateWait(preHold, aborted);
+      // ゲートが普通に開いたときもリスナーを外す
+      signal?.signal?.removeEventListener?.("abort", onAbort);
       if (signal?.signal?.aborted) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: id }; }
     }
 
