@@ -4,7 +4,7 @@
 //
 // 位置は ID で引く（件数・本文での照合はしない）:
 // - 走っているターンの受付の出来事（stream-messages.mjs が畳む taskInstructionId の行）はその位置
-// - ターン開始の入力に使った発言（deliveryId = messageId）はその位置に全員分
+// - ターン開始の入力に使った発言（deliveryId = messageId）は省き、保存した受付位置に全員分を置く
 // - 届いた発言の履歴行（nativeId）は重複なので省く。省くのは指示の本文とまるごと一致した行だけ
 //   （API のページに無い古い指示の本文まで消さない）。指示の行は受付位置に残す（届いた位置＝
 //   受け付けた後の出力より後ろへは動かさない）
@@ -14,14 +14,23 @@
 export function injectTaskInstructions(instructions = [], messages = []) {
   const byId = new Map((instructions ?? []).filter(Boolean).map(i => [i.id, i]));
   const anchored = new Set();
+  const deliveryRows = new Set(), deliveryAnchors = new Map();
   const out = [];
   const ins = instruction => ({ role: 'instruction', instruction, text: instruction.text, at: instruction.at });
 
   for (const m of messages ?? []) {
     const marker = m?.taskInstructionId ? byId.get(m.taskInstructionId) : null;
     if (marker && !anchored.has(marker.id)) { out.push(ins(marker)); anchored.add(marker.id); continue; }
-    const viaDelivery = m?.messageId ? instructions.filter(x => x.deliveryId === m.messageId && !anchored.has(x.id)) : [];
-    if (viaDelivery.length) { for (const x of viaDelivery) { out.push(ins(x)); anchored.add(x.id); } continue; }
+    const viaDelivery = m?.messageId ? instructions.filter(x => x.deliveryId === m.messageId) : [];
+    if (viaDelivery.length) {
+      if (String(m.text ?? '') === viaDelivery.map(x => x.text).join('\n\n')) {
+        for (const x of viaDelivery) deliveryAnchors.set(x.id, m);
+        // Keep the row as a fallback anchor until every instruction is placed.
+        deliveryRows.add(m); out.push(m); continue;
+      }
+      // A partial batch may contain instructions outside the fetched page.
+      viaDelivery.forEach(x => anchored.add(x.id)); out.push(m); continue;
+    }
     // nativeId の行は、指示が別の印（marker・deliveryId）で置き済みでも省く（消さないと二重に出る）。
     // 省くのは指示の本文とまるごと一致した行だけ
     const viaNative = m?.uuid ? instructions.filter(x => x.nativeId === m.uuid) : [];
@@ -49,7 +58,7 @@ export function injectTaskInstructions(instructions = [], messages = []) {
   for (const instruction of (instructions ?? [])) {
     if (!instruction || anchored.has(instruction.id)) continue;
     // 配送済みで履歴も錨も時刻も引けないものは、履歴の発言が引き継ぐ（旧データを推測で消したり二重に出したりしない）
-    if (instruction.state === 'delivered' && !instruction.nativeId) continue;
+    if (instruction.state === 'delivered' && !instruction.nativeId && !deliveryAnchors.has(instruction.id)) continue;
     const ai = anchorIndex(instruction.anchor);
     if (ai >= 0) {
       // 同じ錨を指す指示が連続するときは、直前に置いた指示の直後へ（受付順を保つ）
@@ -75,8 +84,10 @@ export function injectTaskInstructions(instructions = [], messages = []) {
       continue;
     }
     // 届いた行を省いた分・錨も時刻も引けない配送済み以外は、受付時刻の位置に出す
-    const i = atIndex(Number.isFinite(instruction.at) ? instruction.at : Infinity);
+    const delivery = deliveryAnchors.get(instruction.id);
+    const hasTime = Number.isFinite(instruction.at) && out.some(m => m.role !== 'instruction' && !deliveryRows.has(m) && tsOf(m) != null);
+    const i = delivery && !hasTime ? out.indexOf(delivery) : atIndex(Number.isFinite(instruction.at) ? instruction.at : Infinity);
     out.splice(i, 0, ins(instruction)); eff.splice(i, 0, instruction.at ?? null);
   }
-  return out;
+  return out.filter(m => !deliveryRows.has(m));
 }

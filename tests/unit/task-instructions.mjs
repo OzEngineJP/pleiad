@@ -11,6 +11,32 @@ const at = ms => ms;   // 指示の at は epoch ms（画面の仕掛けと同�
 const seq = out => out.map((x, i) => x.role === 'instruction' ? x.instruction.id : `m${i - out.slice(0, i).filter(y => y.role === 'instruction').length}`);
 
 export default function (t) {
+  for (const state of ['queued', 'sending', 'delivered']) {
+    const instructions = [{ id: 'x', text: 'extra', state, at: at(20), deliveryId: 'task-send-x', anchor: { kind: 'uuid', v: 'before' } }];
+    const messages = [{ role: 'assistant', uuid: 'before', text: 'before' }, { role: 'assistant', text: 'after' },
+      { role: 'user', text: 'extra', messageId: 'task-send-x' }];
+    const out = injectTaskInstructions(instructions, messages);
+    t.ok(`次ターンの入力行より受付位置を優先する（${state}）`, out.map(m => m.text).join('|') === 'before|extra|after');
+  }
+  {
+    const instructions = [{ id: 'x', text: 'extra', state: 'delivered', at: at(20), deliveryId: 'task-send-x' }];
+    const messages = [{ role: 'assistant', text: 'before', at: at(10) }, { role: 'assistant', text: 'after', at: at(30) },
+      { role: 'user', text: 'extra', messageId: 'task-send-x', at: at(40) }];
+    t.ok('錨がない次ターン配送も受付時刻を使う', injectTaskInstructions(instructions, messages).map(m => m.text).join('|') === 'before|extra|after');
+  }
+  {
+    const instructions = [{ id: 'x', text: 'X', state: 'delivered', deliveryId: 'task-send-x', anchor: { kind: 'uuid', v: 'a' } },
+      { id: 'y', text: 'Y', state: 'delivered', deliveryId: 'task-send-x', anchor: { kind: 'uuid', v: 'b' } }];
+    const messages = [{ role: 'assistant', uuid: 'a', text: 'A' }, { role: 'assistant', uuid: 'b', text: 'B' },
+      { role: 'user', text: 'X\n\nY', messageId: 'task-send-x' }];
+    t.ok('次ターンでまとめて届いても各指示の受付位置を保つ', injectTaskInstructions(instructions, messages).map(m => m.text).join('|') === 'A|X|B|Y');
+  }
+  {
+    const instructions = [{ id: 'x', text: 'partial', state: 'delivered', deliveryId: 'task-send-x' }];
+    const messages = [{ role: 'user', text: 'partial\n\nnot-fetched', messageId: 'task-send-x' }];
+    const out = injectTaskInstructions(instructions, messages);
+    t.ok('次ターンの入力に未取得の指示が含まれるときは消さない', out.length === 1 && out[0] === messages[0]);
+  }
   {
     const instructions = Array.from({ length: 4 }, (_, n) => ({ id: String(n), text: 'same', state: 'queued', anchor: { kind: 'tool', v: 'tool' } }));
     const messages = [{ role: 'assistant', text: 'before', toolCalls: [{ id: 'tool' }, { id: 'later' }] }];
