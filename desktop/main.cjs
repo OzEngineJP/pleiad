@@ -28,6 +28,8 @@ const { attachBrowserViewerBridge } = require('./browser-viewer-bridge.cjs');
 const { attachBrowserScreencastBridge } = require('./browser-screencast-bridge.cjs');
 const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 const { applyLoginShellEnv } = require('./shell-env.cjs');
+// pleiad://plus/enable|disable リンクの解析（docs/plus.md「入口を出すリンク」。desktop/plus-link.cjs）
+const { plusLinkAction, plusLinkArgv } = require('./plus-link.cjs');
 // コンピューターの操作（Windows）の Win32 の層: 撮影・入力・アプリの特定（docs/computer-use.md、desktop/computer/service.cjs）
 const { attachComputerService, withPerMonitorDpi } = require('./computer/service.cjs');
 const { loadWin32 } = require('./computer/win32.cjs');
@@ -69,6 +71,20 @@ app.exit = (...args) => { exitInProgress = true; closeAgentWindows(); return nat
 function showFatalError(title, message) {
   const options = { type: 'error', title, message };
   return window && !window.isDestroyed() ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
+}
+// pleiad://plus/enable|disable を受けたときの動き。配布版はプロトコルを OS に登録している（electron-builder.yml の protocols）。
+// サーバー（worker）が居る前に届いたリンクは起動後に流す
+let pendingPlusLink = null;
+function handlePlusLink(url) {
+  const action = plusLinkAction(url);
+  if (!action) return false;
+  if (worker) worker.postMessage({ type: 'plus-entrance', action });
+  else pendingPlusLink = action;
+  return true;
+}
+function frontMainWindow() {
+  if (!window || window.isDestroyed()) return;
+  window.restore(); window.show(); window.focus();
 }
 let requestId = 0;
 const { createDesktopNotifications } = require('./notifications.cjs');
@@ -424,6 +440,10 @@ async function boot() {
   // 登録が今の exe と違っていたら直す（登録が無い人には何も書かない）
   try { if (loginItem.reconcile()) log('login item: re-registered with the current executable'); } catch { /* 登録の読み書きの失敗で起動を止めない */ }
   remoteWindows.handleArgv(process.argv);
+  // 初回起動の argv と、起動前に届いたリンクの pleiad://plus/enable|disable をサーバーへ渡す（ほかの pleiad://… は無視する）
+  if (pendingPlusLink) { const a = pendingPlusLink; pendingPlusLink = null; worker.postMessage({ type: 'plus-entrance', action: a }); }
+  const argvLink = plusLinkArgv(process.argv);
+  if (argvLink) worker.postMessage({ type: 'plus-entrance', action: argvLink });
   if (linked) serverSwitch = startServerSwitch(ready, portFile, onServerExit);
   const { autoUpdater } = require('electron-updater');
   // 記録は userData/logs/updater.log に残す。トークンと配信の署名付きの URL は伏せて書く（desktop/update-log.cjs）
@@ -528,9 +548,13 @@ function closeAgentWindows() {
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  // 配布版だけプロトコルを OS に登録する。開発（electron .）は electron.exe を登録してしまい、インストール版の登録を奪うので呼ばない
+  if (app.isPackaged) app.setAsDefaultProtocolClient('pleiad');
   app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); browserScreencastBridge?.close(); browserViewerBridge?.close(); computerOverlay?.close(); });
+  // macOS の pleiad://… の受け口（Windows・Linux は argv。扱うのは plus/enable|disable だけ。ほかの pleiad://… は無視する）
+  app.on('open-url', (event, url) => { event.preventDefault(); if (handlePlusLink(url)) frontMainWindow(); });
   // 自動起動（--hidden）が、すでに動いている Pleiad に重なっただけなら、窓を前に出さない
-  app.on('second-instance', (_event, argv) => { if (remoteWindows?.handleArgv(argv)) return; if (launchedHidden(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
+  app.on('second-instance', (_event, argv) => { const action = plusLinkArgv(argv); if (action) { worker?.postMessage({ type: 'plus-entrance', action }); frontMainWindow(); return; } if (remoteWindows?.handleArgv(argv)) return; if (launchedHidden(argv)) return; if (window) { window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { exitInProgress = true; if (!quitting && window) { event.preventDefault(); void closeSafely(); } });
   app.on('will-quit', () => { exitInProgress = true; });
   app.whenReady().then(boot).catch(e => {
