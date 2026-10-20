@@ -3,7 +3,9 @@
 //   <data>/remote/secrets.json   ホストの静的鍵（秘密鍵）と中継の登録用の秘密。core/secret-store.mjs
 //                                （デスクトップは safeStorage、npm start は 0600 の平文）
 //   <data>/remote/settings.json  { enabled, relayUrl, hostName }（秘密は入れない）
-//   <data>/remote/devices.json   { version: 1, devices: [{ id, name, platform, app, publicKey, tokenHash, createdAt, lastSeenAt, notify? }] }
+//   <data>/remote/devices.json   { version: 1, devices: [{ id, name, platform, app, publicKey, tokenHash, createdAt, lastSeenAt, via?, plusUid?, notify? }] }
+//                                via = 'own' | 'plus'（どのつながりで受け入れた端末か。無いものは 'own' とみなす。docs/remote.md §6.4）
+//                                plusUid = via:'plus' の端末を受け入れたときのアカウントの uid（'own' では書かない。状態には出さない）
 //                                notify = { settings, muted, registeredAt, lastSentAt }（離れた端末への通知。鍵は秘密の置き場の notify:<id>）
 //                                agentDelegation は前の版の「この端末の AI からの依頼を受ける」。今は読まない（デスクトップ版の端末なら受ける。ADR 0239）
 //                                invite = <招待の id>（審査の招待で入った端末の印。招待を取り消す・作り直す・期限が来ると、この印の端末をすべて外す。ADR 0172）
