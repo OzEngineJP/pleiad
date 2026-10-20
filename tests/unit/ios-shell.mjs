@@ -63,6 +63,15 @@ export default async function (t) {
   t.ok('CLI の生成物と別に remote-core を取り込む', pbx.includes('relativePath = "../remote-core"') && pbx.includes('PleiadRemote in Frameworks'));
   const plist = read(`${APP}/Info.plist`);
   t.ok('カメラの用途・URL スキーム・ローカル通信を宣言し任意の平文を許さない', plist.includes('NSCameraUsageDescription') && plist.includes('<string>pleiad</string>') && plist.includes('NSAllowsLocalNetworking') && !plist.includes('NSAllowsArbitraryLoads'));
+  const shell = read('mobile/ios/remote-core/Sources/PleiadRemote/Shell.swift');
+  t.ok('ShellBridge が auth のリンクを見分ける', /static func isAuthLink\(scheme: String\?, host: String\?\)/.test(shell));
+  const bridge = read(`${APP}/PleiadBridgeViewController.swift`);
+  const offer = bridge.slice(bridge.indexOf('func offerLink'));
+  const authAt = offer.indexOf('isAuthLink');
+  const pairAt = offer.indexOf('isPairLink');
+  t.ok('auth のリンクを pair より先に見る', authAt >= 0 && pairAt > authAt);
+  const authBranch = offer.slice(authAt, pairAt);
+  t.ok('auth は記録だけして窓もプラグインも触らない', authBranch.includes('pleiad://auth is not supported yet') && authBranch.includes('return') && !/leave\(|PleiadRemotePlugin\.offerLink/.test(authBranch));
   const pkg = JSON.parse(read('mobile/package.json'));
   const spm = read('mobile/ios/App/CapApp-SPM/Package.swift');
   t.ok('Capacitor の版が npm と SPM で一致する', pkg.dependencies['@capacitor/ios'] === pkg.dependencies['@capacitor/core'] && spm.includes(`exact: "${pkg.dependencies['@capacitor/ios']}"`));

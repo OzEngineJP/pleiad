@@ -2,9 +2,11 @@ import UIKit
 import Capacitor
 import WebKit
 import PleiadRemote
+import os
 
 /// 同梱のホスト一覧だけに Capacitor を渡す。ホストのページは別の WKWebView で開く。
 final class PleiadBridgeViewController: CAPBridgeViewController {
+    private static let linkLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "dev.pleiad.app", category: "link")
     var resumeOnLaunch = false
     private(set) var hostWindow: HostViewController?
     private var firstAppearance = true
@@ -46,6 +48,11 @@ final class PleiadBridgeViewController: CAPBridgeViewController {
     }
 
     func offerLink(_ url: URL) {
+        // ログインの戻り道。iOS ではまだ Pleiad Plus に対応しないので、記録だけして何もしない（クエリーは記録に出さない）。
+        if ShellBridge.isAuthLink(scheme: url.scheme, host: url.host) {
+            Self.linkLog.log("pleiad://auth is not supported yet")
+            return
+        }
         guard ShellBridge.isPairLink(scheme: url.scheme, host: url.host) else { return }
         resumeOnLaunch = false
         hostWindow?.leave(forget: false)

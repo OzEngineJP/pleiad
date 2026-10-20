@@ -70,6 +70,15 @@ final class ShellBridgeTests: XCTestCase {
         XCTAssertFalse(ShellBridge.isPairLink(scheme: "https", host: "pair"))
     }
 
+    func testAuthLinks() {
+        XCTAssertTrue(ShellBridge.isAuthLink(scheme: "pleiad", host: "auth"))
+        XCTAssertTrue(ShellBridge.isAuthLink(scheme: "PLEIAD", host: "AUTH"))
+        XCTAssertFalse(ShellBridge.isAuthLink(scheme: "pleiad", host: "pair"))
+        XCTAssertFalse(ShellBridge.isAuthLink(scheme: "pleiad", host: "open"))
+        XCTAssertFalse(ShellBridge.isAuthLink(scheme: "https", host: "auth"))
+        XCTAssertFalse(ShellBridge.isPairLink(scheme: "pleiad", host: "auth"))
+    }
+
     func testHostScriptFillsInLiterals() {
         let template = "const ORIGIN = __PLY_ORIGIN__; const info = __PLY_INFO__; window[__PLY_RECEIVER__] = 1;"
         let s = ShellBridge.hostScript(template: template, info: ["hostName": "a\"b</script>\u{2028}"],
