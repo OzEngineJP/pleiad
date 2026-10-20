@@ -14,6 +14,9 @@ import dev.pleiad.app.remote.LinkStatus
 import dev.pleiad.app.remote.PairError
 import dev.pleiad.app.remote.Pairing
 import dev.pleiad.app.remote.PairingCodec
+import dev.pleiad.app.remote.HostCreds
+import dev.pleiad.app.plus.PlusAdmission
+import dev.pleiad.app.plus.PlusHostList
 import java.util.concurrent.Executors
 
 /**
@@ -79,14 +82,34 @@ class PleiadRemotePlugin : Plugin() {
 
     @PluginMethod
     fun list(call: PluginCall) = bg(call) {
+        val app = context.applicationContext as PleiadApp
+        val plusState = app.plus.stateJson()
+        val usePlus = plusState.optString("plus") == "on" && plusState.optString("login") == "in" && plusState.optString("status") == "plus"
+        val fetched = if (usePlus) app.plus.fetchHosts() else app.plus.cachedHosts()
+        app.plus.currentRelayUrl()?.let {
+            device.updatePlusRelay(it)
+            app.notifyHub.plusRelayChanged()
+        }
+        val rows = PlusHostList.combine(device.store.hosts(), fetched.hosts, usePlus && fetched.error != "no-relay")
         val arr = JSArray()
-        for ((h, st) in device.list()) {
-            val o = JSObject(h.toPublicJson().toString())
-            o.put("state", st?.state ?: if (h.revokedAt != null) "revoked" else "closed")
+        val states = device.list().associate { it.first.hostId to it.second }
+        for (row in rows) {
+            val h = row.record
+            val plusHost = row.plus
+            val hostId = h?.hostId ?: plusHost?.hostId ?: continue
+            val o = JSObject((h?.toPublicJson() ?: org.json.JSONObject()).toString())
+            o.put("hostId", hostId)
+            o.put("hostName", h?.label?.takeIf { it.isNotEmpty() }
+                ?: device.store.host(hostId, "own")?.label?.takeIf { it.isNotEmpty() }
+                ?: plusHost?.name ?: h?.hostName.orEmpty())
+            o.put("via", row.via)
+            if (row.online != null) o.put("online", row.online)
+            val st = states[hostId]
+            o.put("state", st?.state ?: if (h?.revokedAt != null) "revoked" else "closed")
             o.put("open", st != null)
             arr.put(o)
         }
-        call.resolve(JSObject().put("hosts", arr))
+        call.resolve(JSObject().put("hosts", arr).put("plusError", if (usePlus) fetched.error ?: org.json.JSONObject.NULL else org.json.JSONObject.NULL))
     }
 
     /** Check a pasted / scanned payload before pairing (for the confirmation step). */
@@ -126,8 +149,26 @@ class PleiadRemotePlugin : Plugin() {
     fun open(call: PluginCall) {
         val hostId = call.getString("hostId") ?: return call.reject("hostId", "unknown-host")
         bg(call) {
-            if (device.store.host(hostId) == null) throw IllegalArgumentException("unknown-host")
-            val i = Intent(context, HostActivity::class.java).putExtra(HostActivity.EXTRA_HOST_ID, hostId)
+            val app = context.applicationContext as PleiadApp
+            val state = app.plus.stateJson()
+            val listed = app.plus.cachedHosts().hosts.find { it.hostId == hostId }
+            val plusVisible = state.optString("plus") == "on" && state.optString("login") == "in" && state.optString("status") == "plus"
+            val via = if (plusVisible && (device.store.host(hostId, "plus") != null || listed != null)) "plus" else "own"
+            val current = device.proxy(hostId)?.link?.status
+            if (via == "plus" && current?.state == "signed-out") throw PairError("plus-signed-out")
+            if (via == "plus" && current?.state == "blocked") throw PairError("plus-no-relay")
+            if (via == "plus" && current?.state == "limit") throw PairError("plus-limit")
+            if (via == "plus" && device.store.credentials(hostId, "plus") == null) {
+                val host = listed ?: throw IllegalArgumentException("unknown-host")
+                val token = app.plus.currentIdToken() ?: throw PairError("plus-signed-out")
+                val relay = app.plus.currentRelayUrl() ?: throw PairError("unreachable")
+                val creds = PlusAdmission.admit(host, relay, token, device.store.identity(), app.deviceName(), BuildConfig.VERSION_NAME)
+                device.store.saveHost(creds, "plus", app.plus.currentUid())
+                app.notifyHub.hostsChanged()
+            }
+            if (device.store.credentials(hostId, via) == null) throw IllegalArgumentException("unknown-host")
+            device.open(hostId, via)
+            val i = Intent(context, HostActivity::class.java).putExtra(HostActivity.EXTRA_HOST_ID, hostId).putExtra(HostActivity.EXTRA_VIA, via)
             activity.runOnUiThread { activity.startActivity(i) }
             call.resolve()
         }
@@ -135,14 +176,24 @@ class PleiadRemotePlugin : Plugin() {
 
     @PluginMethod
     fun rename(call: PluginCall) = bg(call) {
-        val rec = device.rename(call.getString("hostId") ?: "", call.getString("label") ?: "") ?: throw IllegalArgumentException("unknown-host")
+        val hostId = call.getString("hostId") ?: ""
+        val via = call.getString("via") ?: "own"
+        val label = call.getString("label") ?: ""
+        val rec = if (via == "plus" && device.store.host(hostId, "plus") == null) {
+            val host = (context.applicationContext as PleiadApp).plus.cachedHosts().hosts.firstOrNull { it.hostId == hostId }
+                ?: throw IllegalArgumentException("unknown-host")
+            val app = context.applicationContext as PleiadApp
+            val relay = app.plus.currentRelayUrl() ?: throw PairError("unreachable")
+            device.store.savePlusLabel(hostId, host.publicKey, host.name, relay, app.plus.currentUid(), label)
+            device.store.host(hostId, "plus")!!
+        } else device.rename(hostId, label, via) ?: throw IllegalArgumentException("unknown-host")
         call.resolve(JSObject().put("host", JSObject(rec.toPublicJson().toString())))
     }
 
     @PluginMethod
     fun remove(call: PluginCall) = bg(call) {
         val hostId = call.getString("hostId") ?: ""
-        device.remove(hostId)
+        device.remove(hostId, call.getString("via") ?: "own")
         ResumeStore(context).forget(hostId)
         (context.applicationContext as PleiadApp).notifyHub.hostsChanged()
         call.resolve()

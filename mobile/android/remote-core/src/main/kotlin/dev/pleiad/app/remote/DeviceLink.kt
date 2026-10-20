@@ -37,7 +37,14 @@ class LinkUnavailable(val state: String, val closeCode: Int? = null) : Exception
 data class Backoff(val minMs: Long = 500, val maxMs: Long = 30_000, val stableMs: Long = 10_000)
 
 object LinkRules {
-    fun classifyClose(closeCode: Int? = null, goaway: String? = null): String = when {
+    fun classifyClose(closeCode: Int? = null, goaway: String? = null, reason: String? = null, via: String = "own"): String = when {
+        via == "plus" && closeCode == 4401 && reason in setOf("revoked", "device token") -> "readmit"
+        via == "plus" && closeCode == 4401 && reason == "account" -> "blocked"
+        via == "plus" && closeCode == 4401 && reason == "token" -> "offline"
+        via == "plus" && closeCode == 4401 && reason == "plus off" -> "host-offline"
+        via == "plus" && closeCode == 4401 && reason == "plus unavailable" -> "paused"
+        via == "plus" && closeCode == 4429 && reason == "account limit" -> "limit"
+        via == "plus" && closeCode == 4429 && reason == "admit rate" -> "offline"
         goaway == "revoked" || closeCode == 4401 -> "revoked"
         goaway == "shutdown" || closeCode == 4404 || closeCode == 4408 -> "host-offline"
         // The relay's authz plugin failed transiently (docs/remote.md §5.7). Retry after a while.
@@ -57,6 +64,8 @@ class DeviceLink(
     private val connectTimeoutMs: Long = 15_000,
     private val channelFactory: ((sendFn: (ByteArray) -> Unit, transport: Transport, hello: JSONObject, buffered: () -> Long) -> Channel)? = null,
     private val log: (String) -> Unit = {},
+    private val plusIdToken: (() -> String?)? = null,
+    private val plusReadmit: ((String) -> HostCreds?)? = null,
 ) {
     companion object {
         /** Blocking handshakes run here (never on the loop). */
@@ -68,6 +77,8 @@ class DeviceLink(
     private var attempt = 0
     private var running = false
     private var generation = 0
+    private var readmitAttempts = 0
+    private var tokenFailures = 0
     private var retryTimer: Cancellable? = null
     private var stableTimer: Cancellable? = null
     private var socket: RelaySocket? = null
@@ -152,9 +163,51 @@ class DeviceLink(
 
     private fun scheduleRetry(state: String, detail: LinkStatus) {
         if (!running) return
-        if (state == "revoked") {
+        if (state == "readmit" && creds.via == "plus" && plusReadmit != null) {
+            if (readmitAttempts >= 1) {
+                running = false
+                setStatus(detail.copy(state = "revoked", since = System.currentTimeMillis()))
+                return
+            }
+            readmitAttempts++
+            generation++
+            val gen = generation
+            setStatus(LinkStatus("connecting"))
+            workers.execute {
+                var replacement: HostCreds? = null
+                var error: PairError? = null
+                try { replacement = plusReadmit.invoke(creds.hostId) } catch (e: PairError) { error = e } catch (_: Exception) {}
+                loop.post {
+                    if (gen != generation || !running) return@post
+                    if (replacement != null) {
+                        creds = replacement!!
+                        attempt = 0
+                        connect()
+                    } else {
+                        running = false
+                        val failedState = when (error?.code) {
+                            "plus-no-relay" -> "blocked"
+                            "plus-limit" -> "limit"
+                            "unreachable" -> "offline"
+                            else -> "revoked"
+                        }
+                        setStatus(LinkStatus(failedState, reason = error?.code ?: "readmit-failed"))
+                    }
+                }
+            }
+            return
+        }
+        if (creds.via == "plus" && detail.closeCode == 4401 && detail.reason == "token") {
+            tokenFailures++
+            if (tokenFailures >= 2) {
+                running = false
+                setStatus(detail.copy(state = "blocked", since = System.currentTimeMillis()))
+                return
+            }
+        }
+        if (state in setOf("revoked", "blocked", "limit", "paused", "readmit", "signed-out")) {
             running = false
-            setStatus(detail.copy(state = "revoked", since = System.currentTimeMillis()))
+            setStatus(detail.copy(state = state, since = System.currentTimeMillis()))
             return
         }
         val base = minOf(backoff.maxMs, backoff.minMs * (1L shl minOf(attempt, 20)))
@@ -174,10 +227,18 @@ class DeviceLink(
         val live = { gen == generation && running }
         setStatus(LinkStatus("connecting"))
         val c = creds
+        val accountToken = if (c.via == "plus") plusIdToken?.invoke() else null
+        if (c.via == "plus" && accountToken.isNullOrEmpty()) {
+            running = false
+            setStatus(LinkStatus("signed-out"))
+            return
+        }
+        val headers = mutableMapOf("authorization" to "Bearer ${c.token}", "x-pleiad-host" to c.hostId, "x-pleiad-device" to c.deviceId)
+        if (c.via == "plus") headers["x-pleiad-account"] = accountToken!!
         val sock = try {
             RelaySocket(
                 PairingCodec.relayWsUrl(c.relayUrl, "/v1/device"),
-                mapOf("authorization" to "Bearer ${c.token}", "x-pleiad-host" to c.hostId, "x-pleiad-device" to c.deviceId),
+                headers,
                 connectTimeoutMs,
             )
         } catch (e: Exception) {
@@ -202,7 +263,7 @@ class DeviceLink(
                         o.status != null -> LinkStatus("", httpStatus = o.status)
                         else -> LinkStatus("", reason = o.error)
                     }
-                    fail(if (closeCode != null) LinkRules.classifyClose(closeCode) else "offline", detail)
+                    fail(if (closeCode != null) LinkRules.classifyClose(closeCode, reason = "", via = c.via) else "offline", detail)
                 }
                 return@execute
             }
@@ -215,7 +276,7 @@ class DeviceLink(
                 hs.readMessage(sock.next(connectTimeoutMs))
                 transport = hs.split()
             } catch (e: RelayClosed) {
-                failure = LinkRules.classifyClose(e.code) to LinkStatus("", closeCode = e.code)
+                failure = LinkRules.classifyClose(e.code, reason = e.reason, via = c.via) to LinkStatus("", closeCode = e.code, reason = e.reason)
             } catch (e: RelayTimeout) {
                 failure = "host-offline" to LinkStatus("", reason = "timeout")
             } catch (e: Exception) {
@@ -226,7 +287,10 @@ class DeviceLink(
             loop.post {
                 if (!live()) { sock.close(); return@post }
                 val f = failure
-                if (f != null) return@post fail(f.first, f.second)
+                if (f != null) {
+                    fail(f.first, f.second)
+                    return@post
+                }
                 attach(sock, transport!!, gen, live, fail)
             }
         }
@@ -256,7 +320,7 @@ class DeviceLink(
                     loop.post {
                         if (!live()) return@post
                         val cc = closed?.code?.takeIf { it != 1006 }
-                        val state = if (timedOut && cc == null) "host-offline" else LinkRules.classifyClose(cc, goaway)
+                        val state = if (timedOut && cc == null) "host-offline" else LinkRules.classifyClose(cc, goaway, closed?.reason, creds.via)
                         fail(state, LinkStatus("", closeCode = cc, goaway = goaway, reason = if (timedOut) "timeout" else null))
                     }
                 }
@@ -269,13 +333,15 @@ class DeviceLink(
             channel = ch
             hostName = (h.opt("hostName") as? String) ?: ""
             connectedAt = System.currentTimeMillis()
+            readmitAttempts = 0
+            tokenFailures = 0
             stableTimer?.cancel()
             stableTimer = loop.schedule(backoff.stableMs) { if (channel === ch) attempt = 0 }
             setStatus(LinkStatus("connected"))
             val closedAlready = sock.closed
             if (closedAlready != null && channel === ch) {
                 channel = null
-                if (live() && state == "connected") scheduleRetry(LinkRules.classifyClose(closedAlready.code.takeIf { it != 1006 }, goaway), LinkStatus("", closeCode = closedAlready.code))
+                if (live() && state == "connected") scheduleRetry(LinkRules.classifyClose(closedAlready.code.takeIf { it != 1006 }, goaway, closedAlready.reason, creds.via), LinkStatus("", closeCode = closedAlready.code, reason = closedAlready.reason))
             }
         }
 
@@ -298,7 +364,7 @@ class DeviceLink(
                     if (!live()) return@post
                     if (state != "connected") return@post   // handled already (e.g. closed right after HELLO)
                     val cc = closed.code.takeIf { it != 1006 }
-                    scheduleRetry(LinkRules.classifyClose(cc, goaway), LinkStatus("", closeCode = cc, goaway = goaway))
+                    scheduleRetry(LinkRules.classifyClose(cc, goaway, closed.reason, creds.via), LinkStatus("", closeCode = cc, goaway = goaway, reason = closed.reason))
                 }
             }
         }

@@ -32,7 +32,7 @@ export function createPlusRelayAuthz({ verify, isBound }) {
       catch { return { ok: false, code: 4401, reason: 'token' }; }
       if (!state.looseDevices && !(await isBound(uid, ctx.hostId))) return { ok: false, code: 4401, reason: 'account' };
       if (ctx.deviceId == null) return { ok: true, tags: [`u:${uid}`], admit: true };
-      return { ok: true, tags: [`u:${uid}`] };
+      return { ok: true, tags: [`u:${uid}`, `d:${ctx.deviceId}`] };
     },
     attach(handle) { authz.handle = handle; },
   };

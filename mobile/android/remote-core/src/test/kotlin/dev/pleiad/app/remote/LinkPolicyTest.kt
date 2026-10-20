@@ -40,6 +40,23 @@ class LinkPolicyTest {
         assertEquals("offline", LinkRules.classifyClose(1013))
     }
 
+    @Test fun plusCloseReasonsUseTheAccountLinkPolicy() {
+        val cases = listOf(
+            Triple(4404, "", "host-offline"),
+            Triple(4401, "revoked", "readmit"),
+            Triple(4401, "device token", "readmit"),
+            Triple(4401, "account", "blocked"),
+            Triple(4401, "token", "offline"),
+            Triple(4401, "plus off", "host-offline"),
+            Triple(4401, "plus unavailable", "paused"),
+            Triple(4429, "account limit", "limit"),
+            Triple(4429, "admit rate", "offline"),
+            Triple(1013, "", "offline"),
+        )
+        for ((code, reason, expected) in cases) assertEquals("$code $reason", expected, LinkRules.classifyClose(code, reason = reason, via = "plus"))
+        assertEquals("revoked", LinkRules.classifyClose(4401, via = "own"))
+    }
+
     @Test fun loopbackIsTheHostsPc() {
         for (u in listOf("http://localhost:3000/", "http://LOCALHOST/", "http://app.localhost:5173/", "http://127.0.0.1:5173/",
             "http://127.1.2.3/", "http://0.0.0.0:8080/", "http://[::1]:3000/", "https://localhost./")) {

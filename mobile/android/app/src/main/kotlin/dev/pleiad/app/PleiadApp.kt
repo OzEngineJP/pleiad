@@ -8,6 +8,8 @@ import dev.pleiad.app.remote.FileDeviceStore
 import dev.pleiad.app.remote.NotifyHub
 import dev.pleiad.app.remote.ProxyTexts
 import dev.pleiad.app.remote.RemoteDevice
+import dev.pleiad.app.plus.PlusAdmission
+import dev.pleiad.app.remote.PairError
 import java.io.File
 
 /** Holds the one RemoteDevice (host list, pairing, proxies) shared by the host list and the host windows. */
@@ -20,17 +22,28 @@ class PleiadApp : Application() {
 
     /** The notification lines and what arrives on them (ADR 0086). Started by [NotifyService]; idle until notifications are on. */
     val notifyHub: NotifyHub by lazy {
-        NotifyHub(device.store, device.loop, BuildConfig.VERSION_NAME, deviceName(), NotifyPresenter(this), log = { Log.i("Pleiad", it) })
+        NotifyHub(device.store, device.loop, BuildConfig.VERSION_NAME, deviceName(), NotifyPresenter(this), log = { Log.i("Pleiad", it) }, plusIdToken = { plus.currentIdToken() })
     }
 
     override fun onCreate() {
         super.onCreate()
         val texts = object : ProxyTexts {
             override fun locale() = resources.configuration.locales[0].language
-            override fun title(state: String) = getString(if (state == "revoked") R.string.remote_revoked else R.string.remote_host_offline)
+            override fun title(state: String) = getString(when (state) {
+                "revoked" -> R.string.remote_revoked
+                "blocked" -> R.string.remote_plus_blocked
+                "limit" -> R.string.remote_plus_limit
+                "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_plus_maintenance else R.string.remote_plus_paused
+                "signed-out" -> R.string.remote_plus_signed_out
+                else -> R.string.remote_host_offline
+            })
             override fun body(state: String) = getString(
                 when (state) {
                     "revoked" -> R.string.remote_page_revoked
+                    "blocked" -> R.string.remote_page_plus_blocked
+                    "limit" -> R.string.remote_page_plus_limit
+                    "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_page_plus_maintenance else R.string.remote_page_plus_paused
+                    "signed-out" -> R.string.remote_page_plus_signed_out
                     "host-offline" -> R.string.remote_page_host_offline
                     else -> R.string.remote_page_offline
                 },
@@ -47,6 +60,14 @@ class PleiadApp : Application() {
             texts = texts,
             log = { Log.i("Pleiad", it) },
         )
+        device.plusIdToken = { plus.currentIdToken() }
+        device.plusReadmit = { hostId ->
+            val host = plus.cachedHosts().hosts.firstOrNull { it.hostId == hostId } ?: throw PairError("couldnt-connect")
+            val token = plus.currentIdToken() ?: throw PairError("plus-signed-out")
+            val relay = plus.currentRelayUrl() ?: throw PairError("unreachable")
+            PlusAdmission.admit(host, relay, token, device.store.identity(), deviceName(), BuildConfig.VERSION_NAME)
+                .copy(uid = plus.currentUid()).also { device.store.saveHost(it, "plus", plus.currentUid()) }
+        }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             private var started = 0
             override fun onActivityStarted(activity: android.app.Activity) {
