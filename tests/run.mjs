@@ -313,6 +313,8 @@ const SUITES = [
   './unit/server-delegation-history-retry.mjs',
   // 委譲先の自動選択: 規則・段・使用量で飛ばす・Claude のアカウント・自動選択のモデル（偽の fetch）・使用量の取り置き
   './unit/delegation-routing.mjs',
+  // 同じく仮想のキー Pleiad Plus: 中継の口へ ID トークンで送る・誤りの code・credit_exhausted の記憶・待ち時間（偽の Plus）
+  './unit/delegation-judges-plus.mjs',
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の自動選択のモデルと偽の agy）
   './unit/server-delegation-routing.mjs',
   './unit/server-delegation-routing-settings.mjs',
@@ -340,6 +342,8 @@ const SUITES = [
   './unit/api-keys.mjs',
   // API キーのコマンドをサーバー越しに: 引数とエラー・使う側へのイベント・通話中の差し替え／使わない／削除で通話が切れる・値が出ない
   './unit/server-api-keys.mjs',
+  // 仮想のキー「Pleiad Plus」（docs/plus.md「キー無しの機能」）: 選べる使い道・useEndpoint の表・秘密に書かない・ログインの自動選択・credit_exhausted
+  './unit/api-keys-plus.mjs',
   // 秘密情報と変数（ADR 0217）: 置き場（値を出さない・使えない名前・渡す場所の勝ち負け・worktree・.env・origin の照合・伏せる・Claude のシェルへ渡すファイル）
   './unit/secrets-store.mjs',
   // 秘密情報と変数をサーバー越しに: 操作と権限・ターンのシェルへ渡す・画面へ出る前に伏せる・`!` の行・入力のカード・サイトでの入力
@@ -879,6 +883,8 @@ const SUITES = [
   './unit/voice-turns.mjs',
   // 待っている間の声: 受け取りの一言（1.5 秒・返事が先なら言わない・渡っていなければ言わない）・待ちの実況（無音・間隔・回数・種類）・割り込み・音声のキャッシュ・設定
   './unit/voice-wait.mjs',
+  // 仮想のキー Pleiad Plus の通話: 書き起こし・読み上げに ID トークン・トークンの更新で切らない・credit_exhausted・rate_limited（偽の Plus）
+  './unit/voice-plus.mjs',
 ];
 
 const code = await main({

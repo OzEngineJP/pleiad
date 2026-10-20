@@ -29,7 +29,8 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     refreshError: null,       // 'TOKEN_EXPIRED' など
     rotateRefresh: false,     // 真なら refresh_token を替える
     down: false,              // 真の間は全部の口が接続を切る
-    calls: [],                // { method, path, client }
+    calls: [],                // { method, path, client, auth }
+    proxy: {},                // pathname -> { status?, body?, headers? } | async (req, body) => 同じ形。中継の口の応答（未設定は 404）
   };
   const codes = new Map();    // code -> { challenge, redirectUri, uid, email, expiresAt, used }
   const refreshTokens = new Map(); // refreshToken -> uid
@@ -60,13 +61,23 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
-    state.calls.push({ method: req.method, path: url.pathname + url.search, client: req.headers['x-pleiad-client'] ?? null });
+    state.calls.push({ method: req.method, path: url.pathname + url.search, client: req.headers['x-pleiad-client'] ?? null, auth: req.headers.authorization ?? null });
     if (state.down) { req.socket.destroy(); return; }
 
     for (const r of routes) {
       if (r.method !== req.method) continue;
       const m = typeof r.pattern === 'string' ? (r.pattern === url.pathname ? {} : null) : r.pattern.exec(url.pathname);
       if (m) return r.handler(req, res, url, m);
+    }
+
+    // キー無しの機能の中継の口（判定・書き起こし・読み上げ）。ID トークンを確かめ、state.proxy で試験が応答を決める
+    if (url.pathname.startsWith('/v1/proxy/') && req.method === 'POST') {
+      if (!uidOf(req)) return json(res, 401, { error: { code: 'unauthenticated', message: 'no token' } });
+      const custom = state.proxy[url.pathname];
+      if (!custom) return json(res, 404, { error: { code: 'not_found', message: 'not configured' } });
+      const r = typeof custom === 'function' ? await custom(req, await readBody(req)) : custom;
+      if (Buffer.isBuffer(r.body) || r.body instanceof Uint8Array) { res.writeHead(r.status ?? 200, r.headers ?? {}); return res.end(r.body); }
+      return json(res, r.status ?? 200, r.body ?? r, r.headers ?? {});
     }
 
     if (url.pathname === '/jwks' && req.method === 'GET') {
@@ -145,6 +156,8 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     jwksUrl: `${origin}/jwks`,
     state,
     issueIdToken,
+    /** その uid の更新トークンを発行して返す（ログインの往復を経ずにセッションの保管を仕込むため） */
+    grantRefreshToken: (uid) => { const token = `rt-${++seq}`; refreshTokens.set(token, uid); return token; },
     route,
     close: () => new Promise(r => { try { server.closeAllConnections?.(); } catch {} server.close(() => r()); }),
   };
