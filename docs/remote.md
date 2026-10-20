@@ -286,8 +286,9 @@ WS は 1 本のストリームなので、大きいメッセージの後ろに�
 | 4408 | accept が 10 秒来ない |
 | 4409 | 同じ `hostId` の新しい制御用の接続に置き換わった |
 | 4413 | 相手側に溜まる量が上限を超えた |
-| 4429 | 数の上限、ペアリングの試行の上限 |
+| 4429 | 数の上限、ペアリングの試行の上限、admit の頻度の上限（§5.7） |
 | 1009 | `RELAY_MAX_FRAME_BYTES` を超えるメッセージ |
+| 1013 | 認可の差し込みの判定が例外・時間切れ・形が違う（§5.7）。端末は少し待って張り直す |
 
 ### 5.2 状態を持たない
 
@@ -343,6 +344,7 @@ Coolify の設定: 新しいリソース → GitHub のリポジトリ → Build
 ### 5.5 試験
 
 `tests/unit/relay.mjs`（`npm test` から回す。LLM は使わない）: 登録用の秘密なし・違うトークン・取り消し済みでつながらない、入場券の 1 回きり・失効、ホストが居ないときの閉じ方（4404）、上限を超えるメッセージで切れる、背圧の上限で切れる、ホストの張り直しと `sync` で照合が戻る、2 本目の制御接続で古い方が閉じる、通知の線（溜めて渡す・`ack` で消す・寿命・取り消しで切れる）。暗号は中継の外なので、試験はバイト列が変わらずに届くことだけを見る。
+`tests/unit/relay-authz.mjs`: 認可の差し込み（§5.7）の判定・admit・タグ・出来事・`RELAY_AUTHZ_MODULE`。
 
 ### 5.6 通知の線（2026-10-03）
 
@@ -354,6 +356,43 @@ Coolify の設定: 新しいリソース → GitHub のリポジトリ → Build
 - 線は電池のために軽くする: 中継の ping は 5 分ごと（会話の線は 30 秒）、端末は OkHttp の ping を 4 分ごと。切れたら端末は 5 秒から 5 分まで延ばしながら張り直す
 - `sync`・`revoke` で表から消えた端末の線は 4401 で切り、溜めた分も捨てる
 - 互換: 古い中継には `/v1/device/notify` が無い（404）。端末は張り直しを延ばしながら続け、会話の線には影響しない。古い中継は知らない制御メッセージ `notify` を無視する
+
+### 5.7 認可の差し込み（authz）
+
+自分の中継に独自の認可（アカウントでの照合など）を足したい人のための口。`createRelay({ ...opts, authz })` に渡す。どの欄も任意。差し込みが無ければ、§5.1 の照合だけを行い、動きはまったく同じ。
+
+```js
+const authz = {
+  // /v1/host と /v1/host/accept。登録用の秘密の照合の代わりに呼ぶ
+  async host(ctx) { return { ok: true, tags: ['example:a'] }; },
+  // /v1/device と /v1/device/notify。今のトークンの照合の「前」に呼ぶ（両方通って初めてつながる）
+  async device(ctx) { return { ok: true, tags: [], admit: false }; },
+  // 中継の出来事。返り値は待たない
+  event(e) {},
+  // 待ち受けを始めた後に一度だけ呼ばれる。中継を操作する手を渡す
+  attach(handle) {},
+  // relay.close() の中で呼ぶ（待つ）
+  async close() {},
+};
+```
+
+- `ctx` = `{ route, hostId, deviceId, pairing, enrollOk, headers, ip }`
+  - `route` は 4 つの口のどれか。`hostId` は `X-Pleiad-Host` を直したもの（形が違えば、差し込みを呼ぶ前に 4400 `host id` で閉じる）
+  - `deviceId` は `X-Pleiad-Device` の値（無ければ `null`）。`pairing` は `X-Pleiad-Pairing` のヘッダーがあるか
+  - `enrollOk` は `Authorization: Bearer` が登録用の秘密と合うか（中継が計算して渡す。差し込みに秘密そのものは渡さない）
+  - `headers` は小文字のヘッダーの写し（凍結）。`ip` は `clientIp` と同じ（`RELAY_TRUST_PROXY` に従う）
+- 判定の返り値:
+  - 通す: `{ ok: true, tags?: string[], admit?: boolean }`
+  - 断る: `{ ok: false, code: 4400 | 4401 | 4404 | 4429, reason: string }`。`reason` は 32 字以内の英小文字と空白（外れていれば `'denied'`）。この 4 つ以外の code は 4401 として扱う
+  - `4401` の断りは失敗の回数（IP ごとのブロック）に数える（ただし `reason` が `plus unavailable` のときは数えない）。ほかの code は数えない
+  - 差し込みが例外を投げた・`authzTimeoutMs`（既定 5 秒。環境変数では変えない）で返らない・返り値の形が違うときは `1013 'try again later'` で閉じる。失敗の回数には数えない。端末は `1013` を「少し待って張り直す」（`classifyClose` の `'offline'`）として扱う
+- 判定を待つ間に届いたメッセージは溜めておき、通ったら着いた順に流す（制御のメッセージ、または端末の accept 待ちの溜め）。溜めるのは 64KB・10 秒まで（超えたら `4413 'buffer'` / `4408 'authz timeout'`）。断ったら捨てる
+- `admit: true` は `/v1/device` で `deviceId` も `pairing` も無いときだけ意味を持つ（ほかの経路・ほかの場合は無視する）。そのとき中継は端末のトークンを見ずに接続を始め、ホストの制御用の接続へ `{"type":"incoming","conn":"…","admit":true}` を送る（相手を確かめるのはホスト。Noise のハンドシェイクの中）。1 ホストにつき 1 分 10 回まで（`admitPerMinute`。超えたら `4429 'admit rate'`）。1 ホストあたりの接続数の上限にも数える。ホストが居ない・`sync` の前なら今と同じ 4404
+- `tags`（文字列の配列。1 つ 64 字・16 個まで。外れたものは捨てる）を接続に覚えさせる（制御用・データ用・端末・通知の線のどれも）。`/v1/host/accept` のデータ用の接続は、差し込みが返した `tags` に、対応する制御用の接続の `tags` を足す（重ねない）
+- `handle` = `{ closeTag(tag, code, reason) → 閉じた数, stats() }`。`closeTag` はその tag を持つ接続を全部閉じる（端末の接続は両側を閉じる）。`code` は 4000〜4999 か 1000/1001/1008/1013 のどれか（外れたら投げる）
+- `event(e)`: `{ type: 'host-open' | 'host-close', hostId, tags }`、`{ type: 'device-open' | 'device-close', hostId, deviceId, tags, admit }` を待たずに呼ぶ。置き換わった古い制御用の接続の close では呼ばない。例外はつかんでログに出すだけ
+- `RELAY_AUTHZ_MODULE=<絶対パス>` があれば、`node server.mjs` の起動口で `import()` し、そのモジュールの `createAuthz({ log, env: process.env })` の返り値を差し込みにする。読めない・`createAuthz` が無い・投げたときは理由を標準エラーに出して起動しない（exit 1）。`createRelay` を import して使う側はこの環境変数を見ない
+- 差し込みがあっても `RELAY_ENROLL_SECRET` は必須のまま（`enrollOk` を見て通すかは差し込みが決める）
 
 ## 6. ホスト側（#13）
 
