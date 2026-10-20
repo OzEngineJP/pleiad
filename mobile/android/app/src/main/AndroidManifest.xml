@@ -13,6 +13,21 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
 
+        <!-- The launcher entry: a trampoline that never stays (docs/remote.md §8.2). A tap on the icon brings the
+             existing task forward as it is — the host window is not recreated — and only a fresh task goes on to the
+             shell. The shell keeps singleTask so the link intents below keep their onNewIntent delivery. -->
+        <activity
+            android:name=".LauncherActivity"
+            android:theme="@style/AppTheme.Trampoline"
+            android:label="@string/app_name"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <!-- The shell (Capacitor): host list, pairing -->
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
@@ -21,11 +36,6 @@
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
             android:exported="true">
-
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
 
             <!-- pleiad://pair?... (the host's pairing QR opened by the system camera). Pairing still asks first. -->
             <intent-filter>

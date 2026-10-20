@@ -37,9 +37,12 @@ class MainActivity : BridgeActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        // This activity is singleTask, so a launcher tap while the task exists lands here instead of a new instance —
-        // and the system has already finished whatever was on top (the host window). Treat it as a launcher start so
-        // the host the user was in reopens (a system restore comes with FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY).
+        // BridgeActivity's onCreate replays the launch intent through onNewIntent — onCreate already handled it, and
+        // acting on it again would open a second host window. Only a genuinely new intent (an ACTION_MAIN that lands
+        // here on an existing task — the icon's tap is routed by LauncherActivity, docs/remote.md §8.2 — or a link)
+        // counts; by then the system has already finished whatever was on top, so treat it as a launcher start and
+        // reopen the host the user was in (a system restore comes with FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY).
+        if (intent === getIntent()) return
         resumeLastHost(intent, freshStart = true)
         takePairLink(intent)
         takeOpenLink(intent)
