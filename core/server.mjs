@@ -82,6 +82,7 @@ import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinCha
 import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, withAdded } from './ply-instructions.mjs';
 import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
+import { createMcpLedger } from './mcp-ledger.mjs';
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
 import { createApiKeys, ApiKeyError, USES as API_KEY_USES } from './api-keys.mjs';
@@ -615,7 +616,11 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
   // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs。main が居ない間は OS に直に頼む）。npm start では画面に出る URL から開く
   openExternal,
   emit: event => emitGlobal({ ...event, sessionId: null }) });
-const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth });
+// 外部 MCP の台帳と一覧の写し（pleiad.db の行。遅延起動・孤児の掃除。core/mcp-ledger.mjs）
+const mcpLedger = createMcpLedger({ dataDir: store.dataDir, log: line => console.log(`  ${line}`) });
+const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth, ledger: mcpLedger });
+// 前のサーバーが残した外部 MCP の孤児を木ごと片付ける（記録はログと台帳だけ。画面には出さない）
+try { mcpLedger.sweep(); } catch (e) { console.error('  MCP の孤児の掃除に失敗:', String(e?.message ?? e)); }
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
 // 端末からのストリームはこのサーバー自身（localOrigin）へ組み立て直し、UI トークンは接続口が差し込む
 // 端末の AI 用の口 /agent（docs/remote.md §4.5、ADR 0146）。委譲の本体は remoteAgentInvoke（下の「端末の AI からの委譲」）
@@ -6875,6 +6880,7 @@ async function beginTurn(ctx) {
     origin: localOrigin(), signal: turn.ac.signal,
     isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted, changed: ctx.saveContext,
     progress: ({ current, total }) => emit({ type: 'activity', state: 'preparing', current, total }),
+    activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }),
     authorize: mcpApprovalByHost(backend, permissionMode)
       ? async (serverName, toolName, input) => Boolean((await askPermission({ toolName: `${serverName} / ${toolName}`, input, sessionId: turn.info.sessionId, signal: turn.ac.signal, kind: 'tool', canAlways: false, locale: agentLocale }))?.allow)
       : undefined });
@@ -7616,7 +7622,8 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
           try {
             const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale });
             ctx.runtimeContext = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
-              origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted });
+              origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
+              activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });
             console.log(`  ply_context の口を開き直した（${sessionId}）: 外部の MCP ${resolved.servers.length} 件を起こし直した`);
           } catch (e) { console.error(`  ply_context の口を開き直せない（${sessionId}）:`, String(e?.message ?? e)); }
         }

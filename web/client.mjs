@@ -3535,6 +3535,7 @@ function onEvent(ev, replay = false) {
       // running / waiting は「動いている」「待っている」だけを言う汎用の事象。ツールの行が語っている間（suspend 中）は出さない
       return activity.show(ev.label || (ev.state === 'preparing'
         ? ev.current && ev.total ? t('activity.connectingMcp', { current: ev.current, total: ev.total }) : t('activity.preparing')
+        : ev.state === 'mcpStart' ? t('activity.mcpStarting', { name: ev.name ?? '' })
         : ev.state === 'retrying' ? retryLabel(ev.retry)
         : ACTIVITY_LABEL[ev.state] || ACTIVITY_LABEL.running), { delayMark: ev.state === 'preparing', passive: ev.state === 'running' || ev.state === 'waiting' });
 

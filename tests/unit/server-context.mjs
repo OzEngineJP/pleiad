@@ -66,12 +66,12 @@ export default async function (t) {
     t.ok('外した MCP は次のターンで起動しない', turn.outcome === 'ok' && await count() === 1 && record.report.entries.find(e => e.name === 'fixture')?.status === 'removed');
     const other = await client.cmd('newSession', { cwd, backend: 'fake' });
     await client.runTurn({ ...other, prompt: 'echo:other' }, { ms: 60_000 });
-    t.ok('ほかの会話では外れない', (await client.cmd('sessionContext', other)).report.entries.find(e => e.name === 'fixture')?.status === 'connected' && await count() === 2);
+    t.ok('ほかの会話では外れない（一覧の写しで広告したまま、呼ばれるまで standby）', (await client.cmd('sessionContext', other)).report.entries.find(e => e.name === 'fixture')?.status === 'standby' && await count() === 1);
     await client.cmd('setSessionMcp', { ...session, name: 'fixture', removed: false });
     turn = await client.runTurn({ ...session, prompt: 'echo:three' }, { ms: 60_000 });
     record = await client.cmd('sessionContext', session);
-    // 同じ実効定義は会話間でも共有する。other が温めた接続を、戻した会話でも再利用する。
-    t.ok('戻すと次のターンで他の会話と同じ接続を使える', record.removedMcp.length === 0 && record.report.entries.find(e => e.name === 'fixture')?.status === 'connected' && await count() === 2);
+    // 同じ実効定義は会話間でも共有する。戻した会話も同じ一覧の写しで広告し、呼ばれるまで起こさない（standby）。
+    t.ok('戻すと次のターンで他の会話と同じ一覧（standby）を使える', record.removedMcp.length === 0 && record.report.entries.find(e => e.name === 'fixture')?.status === 'standby' && await count() === 1);
     await client.cmd('setSessionMcp', { ...session, name: '../bad', removed: true }).then(() => t.ok('不正な名前は拒む', false), () => t.ok('不正な名前は拒む', true));
 
     // ---- 開始後に指示が変わった → 変わったファイルと時刻・差分・読み込み直し

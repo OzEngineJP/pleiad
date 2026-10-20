@@ -399,6 +399,7 @@
   "activity": {
     "preparing": "送信準備中",
     "connectingMcp": "外部 MCP に接続中 {{current}}/{{total}}",
+    "mcpStarting": "{{name}} を起動しています",
     "thinking": "考えている",
     "writing": "書いている",
     "compacting": "会話を圧縮しています…",
@@ -1053,7 +1054,9 @@
       "connected": "接続中 · ツール {{tools}} · {{usage}}",
       "calls_other": "呼び出し {{count}} 回",
       "unused": "未使用",
-      "pending": "次の返答でつなぎます",
+      "pending": "この返答でつなぎます",
+      "standby": "ツール {{tools}} · 使うときに起動",
+      "starting": "起動しています",
       "removed": "この会話では外しています",
       "failed": "✕ つながりませんでした",
       "unknownReason": "理由は分かりません",

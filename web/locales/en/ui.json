@@ -405,6 +405,7 @@
   "activity": {
     "preparing": "Preparing to send…",
     "connectingMcp": "Connecting to external MCP {{current}}/{{total}}",
+    "mcpStarting": "Starting {{name}}…",
     "thinking": "Thinking",
     "writing": "Writing",
     "compacting": "Compacting conversation…",
@@ -1077,7 +1078,9 @@
       "calls_one": "{{count}} call",
       "calls_other": "{{count}} calls",
       "unused": "not used",
-      "pending": "Connects on the next reply",
+      "pending": "Connects with this reply",
+      "standby": "{{tools}} tools · starts on first use",
+      "starting": "Starting…",
       "removed": "Removed from this conversation",
       "failed": "✕ Couldn't connect",
       "unknownReason": "reason unknown",
