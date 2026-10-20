@@ -35,6 +35,11 @@ class LinkPolicyTest {
         assertEquals(LinkTarget.BLOCKED, of("javascript:alert(1)"))
     }
 
+    @Test fun close1013RetriesAsOffline() {
+        // The relay's authz plugin failed transiently (docs/remote.md §5.7). Not a revocation.
+        assertEquals("offline", LinkRules.classifyClose(1013))
+    }
+
     @Test fun loopbackIsTheHostsPc() {
         for (u in listOf("http://localhost:3000/", "http://LOCALHOST/", "http://app.localhost:5173/", "http://127.0.0.1:5173/",
             "http://127.1.2.3/", "http://0.0.0.0:8080/", "http://[::1]:3000/", "https://localhost./")) {
