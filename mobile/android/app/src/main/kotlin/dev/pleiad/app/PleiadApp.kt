@@ -15,6 +15,9 @@ class PleiadApp : Application() {
     lateinit var device: RemoteDevice
         private set
 
+    /** Pleiad Plus sign-in (docs/plus.md "Android"). */
+    val plus: PlusManager by lazy { PlusManager(this, log = { Log.i("Pleiad", it) }) }
+
     /** The notification lines and what arrives on them (ADR 0086). Started by [NotifyService]; idle until notifications are on. */
     val notifyHub: NotifyHub by lazy {
         NotifyHub(device.store, device.loop, BuildConfig.VERSION_NAME, deviceName(), NotifyPresenter(this), log = { Log.i("Pleiad", it) })
@@ -44,6 +47,20 @@ class PleiadApp : Application() {
             texts = texts,
             log = { Log.i("Pleiad", it) },
         )
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private var started = 0
+            override fun onActivityStarted(activity: android.app.Activity) {
+                if (++started == 1) plus.setForeground(true)
+            }
+            override fun onActivityStopped(activity: android.app.Activity) {
+                if (--started == 0) plus.setForeground(false)
+            }
+            override fun onActivityCreated(activity: android.app.Activity, savedInstanceState: android.os.Bundle?) {}
+            override fun onActivityResumed(activity: android.app.Activity) {}
+            override fun onActivityPaused(activity: android.app.Activity) {}
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, outState: android.os.Bundle) {}
+            override fun onActivityDestroyed(activity: android.app.Activity) {}
+        })
     }
 
     fun deviceName(): String =

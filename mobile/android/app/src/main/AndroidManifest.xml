@@ -53,6 +53,23 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="pleiad" android:host="open" />
             </intent-filter>
+
+            <!-- Pleiad Plus sign-in: the page returns through this verified App Link (docs/plus.md "Android"). -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="account.pleiad.dev" android:path="/app/callback" />
+            </intent-filter>
+
+            <!-- Fallback for builds whose App Link is not verified (e.g. locally signed): the page offers
+                 pleiad://auth?code=…&state=… as the way back. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="pleiad" android:host="auth" />
+            </intent-filter>
         </activity>
 
         <!-- One host's UI: a plain WebView on the in-app loopback proxy (no Capacitor bridge) -->
