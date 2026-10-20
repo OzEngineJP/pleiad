@@ -26,8 +26,8 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
     private val clientTag = "android/${BuildConfig.VERSION_NAME}"
     private val apiBase = BuildConfig.PLUS_API
 
-    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "pleiad-plus").also { it.isDaemon = true } }
-    private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "pleiad-plus-tick").also { it.isDaemon = true } }
+    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "plus-worker").also { it.isDaemon = true } }
+    private val ticker = Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "plus-tick").also { it.isDaemon = true } }
 
     @Volatile private var config: PlusConfig? = store.config()
     @Volatile private var started = false

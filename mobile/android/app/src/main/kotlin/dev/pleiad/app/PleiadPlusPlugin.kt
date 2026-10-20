@@ -16,7 +16,7 @@ import org.json.JSONObject
 
 @CapacitorPlugin(name = "PleiadPlus")
 class PleiadPlusPlugin : Plugin() {
-    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "pleiad-plus-plugin").also { it.isDaemon = true } }
+    private val worker = Executors.newSingleThreadExecutor { r -> Thread(r, "plus-plugin").also { it.isDaemon = true } }
     private val plus get() = (context.applicationContext as PleiadApp).plus
 
     override fun load() {
