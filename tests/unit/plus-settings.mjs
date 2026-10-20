@@ -85,7 +85,9 @@ export default async function (t) {
   t.ok('plus: 今月の利用の行', tx.includes('今月の利用: 120 / 500 クレジット（11月1日 に戻ります）'), tx);
   const walk = (n) => { if (n.id === 'plusSyncSection') return n; for (const c of n.children ?? []) { const hit = walk(c); if (hit) return hit; } return null; };
   const syncBox = nodes.map(n => walk(n)).find(Boolean);
-  t.ok('plus: 同期の入れ物は隠してある', syncBox && syncBox.hidden === true);
+  t.ok('plus: 同期のまとまりが出る（見出し・スイッチ・同期するもの）', syncBox && syncBox.textContent.includes('同期') && syncBox.textContent.includes('設定・skill・指示ファイルを同期する'));
+  nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, status: 'free', plan: null } });
+  t.ok('free: 同期のまとまりは出さない', !nodes.map(n => walk(n)).find(Boolean));
   byFk(nodes, 'logout').onclick();
   t.ok('「ログアウト」は plusLogout', sent.at(-1) === 'plusLogout');
   // 上限

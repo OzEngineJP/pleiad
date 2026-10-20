@@ -31,6 +31,8 @@ const SUITES = [
   './unit/plus-verify.mjs',
   // 設定 › Pleiad Plus（web/plus-settings.mjs）: 状態ごとの行とボタン・メニューの出し入れ（DOM の代役）
   './unit/plus-settings.mjs',
+  // 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs）: 状態ごとの行とボタン・時刻と MB の書式（DOM の代役）
+  './unit/plus-sync-ui.mjs',
   './unit/remote-plus-ui.mjs',
   './unit/plus-hosts.mjs',
   // Plus の同期（core/plus/sync/）: 暗号・鍵の始め方と受け渡し・運ぶもの・2 台のホストの同期（偽の Plus と一時フォルダー）

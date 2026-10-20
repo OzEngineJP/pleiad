@@ -772,6 +772,8 @@ plusSync = createPlusSync({
   openFolder: dir => openOnHost('open', dir, { directory: true }),
   log: line => console.log(`  ${line}`),
 });
+// 同期の状態が変わるたびに全画面へ（docs/plus.md「同期」。ポーリングはしない）
+plusSync.onChange(status => emitGlobal({ type: 'plusSyncStatus', status, sessionId: null }));
 let plusDevicesNow = 0;
 const plusLink = createPlusLink({
   session: plusSession, verifier: plusVerifier, remote,
@@ -5289,8 +5291,15 @@ function opsDeps(lng = currentLocale()) {
     context: opsContext,
     remote: opsRemote,
     endpoints: { list: (agent) => compatEndpoints.list(agent) },
-    // Pleiad Plus の状態（plus.status。core/ops/plus.mjs）
-    plus: { status: (opts) => plusSession.status(opts) },
+    // Pleiad Plus の状態（plus.status。core/ops/plus.mjs）と同期（plus.sync*。docs/plus.md「同期」）
+    plus: {
+      status: (opts) => plusSession.status(opts),
+      syncStatus: () => plusSync?.getSyncStatus() ?? null,
+      syncSetEnabled: (enabled) => plusSync.setSyncEnabled(enabled),
+      syncNow: () => plusSync.engine.run(),
+      syncReset: () => plusSync.resetSync(),
+      syncOpenConflicts: () => plusSync.openConflictsFolder(),
+    },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）
     git: opsGit,
     shell: opsShell,

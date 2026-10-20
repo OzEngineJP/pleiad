@@ -3125,6 +3125,86 @@
       "input": "a85457d98cd7"
     },
     {
+      "id": "plus.syncNow",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "plus.syncOpenConflicts",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "plus.syncReset",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
+      "id": "plus.syncSetEnabled",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "5afca574c23c"
+    },
+    {
+      "id": "plus.syncStatus",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "plus",
+            "sync"
+          ]
+        }
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "remote.setResident",
       "risk": "write",
       "riskOf": false,
@@ -4980,6 +5060,15 @@
       ]
     },
     {
+      "key": "plus",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "plus"
+      ]
+    },
+    {
       "key": "plyInstructions",
       "risk": "guarded",
       "riskOf": false,
@@ -5193,6 +5282,13 @@
       "agent-bound-readonly": "human-only=hidden"
     },
     "model": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
+    },
+    "plus": {
       "human": "write=allow",
       "agent-unbound": "write=allow",
       "agent-bound-ask": "write=allow",
@@ -5991,6 +6087,11 @@
     {
       "id": "plus.status",
       "path": "plus status",
+      "positional": []
+    },
+    {
+      "id": "plus.syncStatus",
+      "path": "plus sync",
       "positional": []
     },
     {

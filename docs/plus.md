@@ -132,7 +132,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - `reachable === false` のときは、当てはまった中身の上に「サーバーへの接続に失敗しました」の 1 行を足す（⚠ は付けない）
 - アカウントの行は丸（メールの頭の 1 文字・大文字）・メール・入り方（`provider === 'google.com'` のときだけ「Google でログイン」）。プランの行は `account.plan.name`（無ければ「Pleiad Plus」）か「無料」
 - 今月の利用（`plus` かつ `usage`・`limits` があるとき）: 「今月の利用: {used} / {limit} クレジット（{date} に戻ります）」。数は `Intl.NumberFormat`、日付は `Intl.DateTimeFormat(lang, { month: 'long', day: 'numeric' })`。`used >= limit` ならその下に「上限に達しました」
-- 同期の置き場は `<div id="plusSyncSection">`（見出しは隠してある。中身は同期の画面が入れる。仕組みは下の「同期」）
+- 同期のまとまりは `<div id="plusSyncSection">`（`web/plus-sync.mjs` の `renderSync`。`account.status === 'plus'` のときだけ）。スイッチは `account.sync.enabled`（切り替えは `plus.syncSetEnabled` 操作。失敗したら戻して「変えられませんでした」）。状態の行は `plusSyncStatus` イベントで描き直し、`disabled`・`sync.enabled === false` のときは出さない。ボタンは `plus.syncNow`・`plus.syncReset`（確かめの窓あり）・`plus.syncOpenConflicts`（この PC の画面だけ）の各操作を送る（仕組みは下の「同期」）
 - この PC の行は `host.state` が `taken`（「つなぎ直す」→ 確かめの窓 → `plusHostRebind`）・`limit` のときだけ。ほかは出さない。`plusHostRebind` は後の段階が作る。知らないコマンドが返ったら何も出さない
 - 「Pleiad Plus にする」は `urls.account` に `/plus` を足した URL を、「アカウントを管理」は `urls.account` を外のブラウザーで開く。「ログアウト」は `plusLogout`
 
@@ -305,7 +305,8 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - 誤り: `429` は `Retry-After` の秒数（無ければ 60 秒）後に、ほかは 1 分・2 分・4 分…（10 分まで）後にやり直す。`401`・`not_plus`・`account_disabled` は止める（セッションが変わるまで回さない）。`403 sync_disabled` は `disabled`。`413 sync_quota` は `quota`（消すのは上げ続け、次の回でまた試す）。`413 too_large` の項目は中身が変わるまで上げない
 - ログには論理名・中身・鍵を出さない（項目は `itemId` だけ）
 - 手元の覚え: `<data>/plus/sync-state.json`（`{ keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } } }`。中身と鍵は入れない）
-- 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error }`（`totalBytes`・`limitBytes` は `state` の値）
+- 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error }`（`totalBytes`・`limitBytes` は `state` の値）。変わるたびに `plusSyncStatus` イベントを全接続へ送る（ポーリングはしない）
+- 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く。hostScreenOnly）。変更系は設定 › Pleiad Plus の画面だけが呼ぶ
 
 ### 競合
 
