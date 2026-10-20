@@ -9,7 +9,8 @@
 //   1. GET /v1/hosts → 自分の hostId があり publicKey が同じなら、違う欄だけ PATCH して終わる
 //   2. 無ければ POST /v1/hosts/challenge { hostId, publicKey } → { challengeId, nonce, serverPublicKey, expiresAt }
 //   3. proof = base64url(HMAC-SHA256(HKDF-SHA256(X25519(ホストの秘密鍵, serverPublicKey), "pleiad host proof v1"), nonce ‖ utf8(hostId) ‖ utf8("register")))
-//   4. PUT /v1/hosts/{hostId} { challengeId, proof, publicKey, name, platform, appVersion }
+//   4. PUT /v1/hosts/{hostId} { challengeId, proof, publicKey, name, platform, appVersion, syncPublicKey }
+//   同期の公開鍵（syncPublicKey。core/plus/sync/keys.mjs）は、載せずに登録済みなら 1 の PATCH で足す。
 //
 // その後: ホスト名が変わったら PATCH { name }、via:'plus' の端末の数が変わったら PATCH { deviceCount }。
 //
@@ -42,11 +43,12 @@ const PLATFORM = { win32: 'win32', darwin: 'darwin', linux: 'linux' };
  * @param {() => string} o.hostName   今のホスト名（cfg.hostName）
  * @param {() => number} o.plusDevices  via:'plus' の端末の数（PATCH deviceCount 用）
  * @param {(state: { state, hostId, error }) => void} [o.onHostState] 状態が変わるたび（session.setHost に加えて呼ぶ）
+ * @param {() => Promise<string|null>} [o.syncPublicKey] 同期の公開鍵（raw 32 バイトの base64url）。無ければ送らない
  * @param {(line: string) => void} [o.log]
  * @param {number} [o.retryMs]  ネットの誤り・5xx のやり直しの間隔（既定 1 分）
  */
 export function createPlusHost({ session, store, appVersion = '', platform = process.platform,
-  hostName, plusDevices, onHostState = () => {}, log = () => {}, retryMs = 60_000 } = {}) {
+  hostName, plusDevices, onHostState = () => {}, log = () => {}, retryMs = 60_000, syncPublicKey = async () => null } = {}) {
   let host = { state: 'none', hostId: null, error: null };
   let chain = Promise.resolve();
   let retryTimer = null;
@@ -79,6 +81,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     const { hostId } = identity;
     const publicKey = identity.publicKey.toString('base64url');
     const body = { name: hostNameFor(hostName()), platform: PLATFORM[platform] ?? 'linux', appVersion };
+    const syncPub = await syncPublicKey();
 
     setHost({ state: 'registering', hostId, error: null });
     // 1. すでに載っているか
@@ -89,6 +92,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       const patch = {};
       if (mine.name !== body.name) patch.name = body.name;
       if (mine.platform !== body.platform) patch.platform = body.platform;
+      if (syncPub && mine.syncPublicKey !== syncPub) patch.syncPublicKey = syncPub;
       if (Object.keys(patch).length) {
         await session.client.request('PATCH', `/v1/hosts/${hostId}`, { body: patch });
         registered = { ...registered, ...patch };
@@ -103,6 +107,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       proof: proof({ ...identity, hostId, nonce: challenge.nonce, serverPublicKey: challenge.serverPublicKey }),
       publicKey,
       ...body,
+      ...(syncPub ? { syncPublicKey: syncPub } : {}),
     };
     const out = await session.client.request('PUT', `/v1/hosts/${hostId}`, { body: put });
     registered = { hostId, publicKey, name: body.name, platform: body.platform, deviceCount: out?.host?.deviceCount ?? null };

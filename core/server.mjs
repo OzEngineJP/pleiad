@@ -104,6 +104,8 @@ import { createPlusConfig } from './plus/config.mjs';
 import { createPlusSession } from './plus/session.mjs';
 import { createIdTokenVerifier } from './plus/verify.mjs';
 import { createPlusHost } from './plus/hosts.mjs';
+import { createPlusSync } from './plus/sync/index.mjs';
+import { createSyncSettings } from './plus/sync/settings.mjs';
 import { createPlusLink } from './remote/plus-link.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
@@ -695,12 +697,28 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
   log: line => console.log(`  ${line}`) });
 // Pleiad Plus: この PC の登録（core/plus/hosts.mjs）と公式の中継へのつながりの provider（core/remote/plus-link.mjs。docs/plus.md）
 let plusConfigLast = null;
+let plusSync = null;
 const plusVerifier = createIdTokenVerifier({ jwksUrl: plusConfig.jwksUrl, projectId: () => plusConfigLast?.token?.projectId ?? '' });
 const plusHost = createPlusHost({
   session: plusSession, store: remote.store, appVersion: APP_VERSION,
   hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
   plusDevices: () => plusDevicesNow,
   onHostState: s => { remote.setPlusHostState(s); syncPlusLink(); },
+  syncPublicKey: () => plusSync ? plusSync.publicKey() : Promise.resolve(null),
+  log: line => console.log(`  ${line}`),
+});
+// Pleiad Plus の同期（core/plus/sync/。docs/plus.md「同期」）。設定は画面からの変更と同じ検査（normalize・write）を通して書く
+const settingsListeners = new Set();
+plusSync = createPlusSync({
+  session: plusSession, host: () => plusHost.host(), secrets: plusSecrets, dataDir: store.dataDir,
+  settings: createSyncSettings({
+    settings: opsRegistry.settings,
+    ctx: () => ({ ...opsDeps(currentLocale()), registry: opsRegistry, principal: { by: 'human' }, actor: { by: 'human' } }),
+    onWritten: keys => settingsChanged(keys),
+    log: line => console.log(`  ${line}`),
+  }),
+  settingsEvents: { subscribe: fn => { settingsListeners.add(fn); return () => settingsListeners.delete(fn); } },
+  openFolder: dir => openOnHost('open', dir, { directory: true }),
   log: line => console.log(`  ${line}`),
 });
 let plusDevicesNow = 0;
@@ -736,6 +754,7 @@ async function syncPlusLink() {
     relayUrl: cfg?.urls?.relay ?? null,
   });
   await plusHost.maybeRegister();
+  void plusSync.update().catch(() => {});
   plusInputsLast = plusInputs(st);
   remote.refreshPlus();
 }
@@ -3473,6 +3492,7 @@ async function subagentState(t, sessionId, agentId) {
 function settingsChanged(keys, actor = { by: 'human' }) {
   const who = changeBy(actor);
   emitGlobal({ type: 'settingsChanged', sessionId: null, keys, by: who.by, ...(who.via ? { via: who.via } : {}), ...(who.bySession ? { bySession: who.bySession } : {}) });
+  for (const fn of settingsListeners) { try { fn(keys); } catch {} }
 }
 
 /** 自動圧縮の設定を保存して配る。予約が走っていれば新しい設定に合わせて取り消す。保存に失敗したら元に戻す */
