@@ -32,6 +32,7 @@ export const LINK_BACKOFF = Object.freeze({ minMs: 500, maxMs: 30_000, stableMs:
 export function classifyClose({ closeCode = null, goaway = null } = {}) {
   if (goaway === 'revoked' || closeCode === 4401) return 'revoked';
   if (goaway === 'shutdown' || closeCode === 4404 || closeCode === 4408) return 'host-offline';
+  if (closeCode === 1013) return 'offline';   // 中継の差し込みの一時的な失敗（docs/remote.md §5.7）。少し待って張り直す
   return 'offline';
 }
 

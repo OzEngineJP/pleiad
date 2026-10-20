@@ -17,11 +17,12 @@ export const CLOSE = Object.freeze({
   BAD_REQUEST: 4400,   // ヘッダーや制御メッセージの形が違う
   UNAUTHORIZED: 4401,  // 登録用の秘密・トークン・入場券が合わない、取り消された
   NOT_FOUND: 4404,     // ホストが居ない（制御用の接続が無い・sync 前）、accept の conn が無い
-  TIMEOUT: 4408,       // 認証は通ったが accept が来ない
+  TIMEOUT: 4408,       // 認証は通ったが accept が来ない・差し込みの判定を待つ間の時間切れ（§5.7）
   REPLACED: 4409,      // 同じ hostId の新しい制御用の接続に置き換わった
   OVERFLOW: 4413,      // 相手側に溜まる量が上限を超えた
   LIMIT: 4429,         // 数の上限・ペアリングの試行の上限
   SHUTDOWN: 1001,      // 中継の終了
+  TRY_AGAIN: 1013,     // 差し込みの判定が例外・時間切れ・形が違う（§5.7。端末は少し待って張り直す）
 });
 
 export const DEFAULTS = Object.freeze({
@@ -44,6 +45,9 @@ export const DEFAULTS = Object.freeze({
   failureBlockMs: 10 * 60_000,
   pairingAttempts: 5,
   pairingWindowMs: 60_000,
+  // 認可の差し込み（§5.7）: 判定を待つ上限と、admit の頻度
+  authzTimeoutMs: 5_000,
+  admitPerMinute: 10,
   // 通知の線（docs/remote.md §5.6）。通知の暗号文は読めないので、大きさと数と寿命だけで抑える
   notifyMaxBlobChars: 2048,
   notifyQueueMax: 16,
@@ -60,6 +64,11 @@ const SECRET32 = /^[A-Za-z0-9_-]{43}$/;     // 256bit の base64url（パディ�
 const HASH_HEX = /^[0-9a-f]{64}$/;
 const BLOB = /^[A-Za-z0-9_-]+$/;            // 通知の暗号文（base64url）
 const MAX_FAILURE_ENTRIES = 10_000;
+// 差し込み（§5.7）の判定を待つ間に溜める上限。時間は判定の待ち（authzTimeoutMs）より長い
+const AUTHZ_BUFFER_BYTES = 64 * 1024;
+const AUTHZ_BUFFER_MS = 10_000;
+const DENY_CODES = new Set([CLOSE.BAD_REQUEST, CLOSE.UNAUTHORIZED, CLOSE.NOT_FOUND, CLOSE.LIMIT]);
+const DENY_REASON = /^[a-z ]{1,32}$/;
 
 /** 環境変数から設定を組む。おかしな値なら投げる（起動しない）。 */
 export function configFromEnv(env = process.env) {
@@ -150,6 +159,26 @@ export function createRelay(opts = {}) {
     logger({ t: new Date().toISOString(), level, event, ...fields });
   };
   const short = (hostId) => hostId?.slice(0, 8);
+  // 認可の差し込み（§5.7）。無ければ今までどおりの照合だけを行う
+  const authz = o.authz || null;
+
+  /** 差し込みへ出来事を知らせる。待たない。例外はログに残すだけ。 */
+  function emit(e) {
+    if (typeof authz?.event !== 'function') return;
+    try { authz.event(e); } catch (err) { log('warn', 'authz-event', { error: String(err?.message ?? err) }); }
+  }
+
+  /** 判定の tags: 文字列・1 つ 64 字まで・16 個まで。外れたものは捨てる。 */
+  function cleanTags(tags) {
+    const out = [];
+    if (Array.isArray(tags)) {
+      for (const t of tags) {
+        if (typeof t === 'string' && t.length <= 64 && !out.includes(t)) out.push(t);
+        if (out.length >= 16) break;
+      }
+    }
+    return out;
+  }
 
   /** hostId → 制御用の接続と照合の表。制御用の接続がある間だけ居る。 */
   const hosts = new Map();
@@ -257,11 +286,98 @@ export function createRelay(opts = {}) {
       ws.missedPongs = 0;
       ws.on('pong', () => { ws.missedPongs = 0; });
       ws.on('error', () => {});   // 1009 などは close で扱う
-      if (route === '/v1/host') onControl(ws, req);
-      else if (route === '/v1/host/accept') onAccept(ws, req, url);
-      else if (route === '/v1/device/notify') onNotifyLine(ws, req);
-      else onDevice(ws, req);
+      const decide = (route === '/v1/host' || route === '/v1/host/accept') ? authz?.host
+        : authz?.device;
+      if (typeof decide === 'function') {
+        authzGate(ws, req, url, decide).catch((err) => {
+          log('error', 'authz-gate', { route, error: String(err?.message ?? err) });
+          try { ws.terminate(); } catch { /* 閉じかけ */ }
+        });
+      } else {
+        dispatch(ws, req, url, null);
+      }
     });
+  }
+
+  function dispatch(ws, req, url, grant) {
+    if (ws.route === '/v1/host') onControl(ws, req, grant);
+    else if (ws.route === '/v1/host/accept') onAccept(ws, req, url, grant);
+    else if (ws.route === '/v1/device/notify') onNotifyLine(ws, req, grant);
+    else onDevice(ws, req, grant);
+  }
+
+  /**
+   * 差し込みの判定を待つ（§5.7）。判定が出るまで届いたメッセージは溜め、
+   * 通ったら経路ごとの処理へ着いた順に流す。溜めは 64KB・10 秒まで。
+   */
+  async function authzGate(ws, req, url, decide) {
+    const route = ws.route;
+    // hostId の形は差し込みを呼ぶ前に、今と同じ閉じ方で確かめる
+    const hostId = hostIdOf(req.headers['x-pleiad-host']);
+    if (!hostId) {
+      if (route === '/v1/host' || route === '/v1/host/accept') return closeWs(ws, CLOSE.BAD_REQUEST, 'host id');
+      return fail(ws, CLOSE.BAD_REQUEST, 'host id');
+    }
+    let gating = true;
+    const pending = [];
+    let pendingBytes = 0;
+    const ungate = () => {
+      if (!gating) return;
+      gating = false;
+      ws.off('message', onMsg);
+      clearTimeout(bufTimer);
+    };
+    const onMsg = (data, isBinary) => {
+      pendingBytes += data.length;
+      if (pendingBytes > AUTHZ_BUFFER_BYTES) { ungate(); return closeWs(ws, CLOSE.OVERFLOW, 'buffer'); }
+      pending.push([data, isBinary]);
+    };
+    ws.on('message', onMsg);
+    const bufTimer = setTimeout(() => { ungate(); closeWs(ws, CLOSE.TIMEOUT, 'authz timeout'); }, AUTHZ_BUFFER_MS);
+    bufTimer.unref();
+
+    const secret = bearer(req.headers.authorization);
+    const deviceHeader = req.headers['x-pleiad-device'];
+    const ctx = {
+      route,
+      hostId,
+      deviceId: typeof deviceHeader === 'string' ? deviceHeader : null,
+      pairing: req.headers['x-pleiad-pairing'] !== undefined,
+      enrollOk: Boolean(secret && sameHash(sha256(Buffer.from(secret, 'utf8')), secretHash)),
+      headers: Object.freeze({ ...req.headers }),
+      ip: ws.ip,
+    };
+
+    let verdict = null;
+    let verdictTimer = null;
+    try {
+      verdict = await Promise.race([
+        Promise.resolve().then(() => decide.call(authz, ctx)),
+        new Promise((_, rej) => {
+          verdictTimer = setTimeout(() => rej(new Error('authz timeout')), o.authzTimeoutMs);
+          verdictTimer.unref();
+        }),
+      ]);
+    } catch (err) {
+      log('warn', 'authz-error', { route, error: String(err?.message ?? err) });
+    } finally {
+      clearTimeout(verdictTimer);
+    }
+    ungate();
+    if (ws.readyState !== WebSocket.OPEN) return;
+
+    if (!verdict || typeof verdict !== 'object' || typeof verdict.ok !== 'boolean') {
+      if (verdict !== null) log('warn', 'authz-verdict', { route });
+      return closeWs(ws, CLOSE.TRY_AGAIN, 'try again later');
+    }
+    if (!verdict.ok) {
+      const code = DENY_CODES.has(verdict.code) ? verdict.code : CLOSE.UNAUTHORIZED;
+      const reason = typeof verdict.reason === 'string' && DENY_REASON.test(verdict.reason) ? verdict.reason : 'denied';
+      // 4401 の断りは今の失敗と同じく IP ごとの回数に数える（サーバー全体の停止中を表す 'plus unavailable' は除く）
+      if (code === CLOSE.UNAUTHORIZED && reason !== 'plus unavailable') return fail(ws, code, reason);
+      return closeWs(ws, code, reason);
+    }
+    dispatch(ws, req, url, { hostId, tags: cleanTags(verdict.tags), admit: verdict.admit === true, pending });
   }
 
   /** ホストの認証。通れば hostId、通らなければ閉じて null。 */
@@ -281,8 +397,8 @@ export function createRelay(opts = {}) {
 
   // ── ホストの制御用の接続 ──────────────────────────────────────
 
-  function onControl(ws, req) {
-    const hostId = hostAuth(ws, req);
+  function onControl(ws, req, grant = null) {
+    const hostId = grant ? grant.hostId : hostAuth(ws, req);
     if (!hostId) return;
     const old = hosts.get(hostId);
     if (!old && hosts.size >= o.maxHosts) {
@@ -297,20 +413,26 @@ export function createRelay(opts = {}) {
       notifyTimes: [],      // 通知を受け取った時刻（1 分あたりの上限）
       pairing: null,        // { hash, expiresAt }
       pairTimes: old?.pairTimes ?? [],
+      admitTimes: old?.admitTimes ?? [],   // admit の接続を受けた時刻（1 分あたりの上限。張り直しをまたぐ）
+      tags: grant?.tags ?? [],  // 差し込みの判定が返した印（§5.7）
       openedAt: Date.now(),
     };
+    ws.tags = h.tags;
     hosts.set(hostId, h);
     if (old) {
       closeWs(old.ws, CLOSE.REPLACED, 'replaced');
       closePending(hostId, CLOSE.NOT_FOUND, 'host reconnected');
     }
     log('info', 'host-open', { host: short(hostId), replaced: Boolean(old) });
+    emit({ type: 'host-open', hostId, tags: h.tags });
 
     ws.on('message', (data, isBinary) => onControlMessage(h, data, isBinary));
+    for (const [data, isBinary] of grant?.pending ?? []) onControlMessage(h, data, isBinary);
     ws.on('close', (code) => {
       log('info', 'host-close', { host: short(hostId), code, ms: Date.now() - h.openedAt });
       if (hosts.get(hostId) !== h) return;   // 置き換わった古い方
       hosts.delete(hostId);
+      emit({ type: 'host-close', hostId, tags: h.tags });
       closePending(hostId, CLOSE.NOT_FOUND, 'host offline');
     });
   }
@@ -435,9 +557,9 @@ export function createRelay(opts = {}) {
     log('debug', 'notify', { host: short(h.id), device: msg.deviceId, bytes: msg.blob.length, online: Boolean(line) });
   }
 
-  function onNotifyLine(ws, req) {
+  function onNotifyLine(ws, req, grant = null) {
     ws.notifyLine = true;
-    const hostId = hostIdOf(req.headers['x-pleiad-host']);
+    const hostId = grant ? grant.hostId : hostIdOf(req.headers['x-pleiad-host']);
     if (!hostId) return fail(ws, CLOSE.BAD_REQUEST, 'host id');
     const h = hosts.get(hostId);
     if (!h || !h.synced) return closeWs(ws, CLOSE.NOT_FOUND, 'host offline');
@@ -450,16 +572,19 @@ export function createRelay(opts = {}) {
     const old = lines.get(deviceId);
     if (!old && lines.size >= o.maxDevices) return closeWs(ws, CLOSE.LIMIT, 'too many lines');
     if (old) closeWs(old.ws, CLOSE.REPLACED, 'replaced');
-    const line = { ws, deviceId, tokenHash: hash, openedAt: Date.now() };
+    const line = { ws, deviceId, tokenHash: hash, openedAt: Date.now(), tags: grant?.tags ?? [] };
+    ws.tags = line.tags;
     lines.set(deviceId, line);
-    ws.on('message', (data, isBinary) => {
+    const onLine = (data, isBinary) => {
       if (isBinary) return;
       let msg = null;
       try { msg = JSON.parse(data.toString('utf8')); } catch { return; }
       if (msg?.type !== 'ack' || !Number.isSafeInteger(msg.i)) return;
       const queue = notifyQueues.get(hostId)?.get(deviceId);
       while (queue?.length && queue[0].i <= msg.i) queue.shift();
-    });
+    };
+    ws.on('message', onLine);
+    for (const [data, isBinary] of grant?.pending ?? []) onLine(data, isBinary);
     ws.on('close', (code) => {
       log('info', 'notify-close', { host: short(hostId), device: deviceId, code, ms: Date.now() - line.openedAt });
       if (lines.get(deviceId) === line) lines.delete(deviceId);
@@ -480,8 +605,8 @@ export function createRelay(opts = {}) {
 
   // ── 端末の接続 ──────────────────────────────────────────────
 
-  function onDevice(ws, req) {
-    const hostId = hostIdOf(req.headers['x-pleiad-host']);
+  function onDevice(ws, req, grant = null) {
+    const hostId = grant ? grant.hostId : hostIdOf(req.headers['x-pleiad-host']);
     if (!hostId) return fail(ws, CLOSE.BAD_REQUEST, 'host id');
     const h = hosts.get(hostId);
     // sync の前は表が空なので、正しい端末まで 4401 にしないよう「居ない」として返す
@@ -500,10 +625,20 @@ export function createRelay(opts = {}) {
       if (!raw || !h.pairing || !sameHash(sha256(raw), h.pairing.hash)) return fail(ws, CLOSE.UNAUTHORIZED, 'pairing ticket');
       if (active.size >= o.maxConnsPerHost) return closeWs(ws, CLOSE.LIMIT, 'too many connections');
       h.pairing = null;   // 1 回きり
-      return startConn(ws, h, { pairing: true });
+      return startConn(ws, h, { pairing: true, tags: grant?.tags, pending: grant?.pending });
     }
 
     const deviceId = req.headers['x-pleiad-device'];
+    // admit: 差し込みが deviceId も入場券も無い接続を受け入れるとき。トークンの照合をせず、
+    // 相手を確かめるのはホスト（Noise のハンドシェイクの中）。ほかの経路・ほかの場合は無視する（§5.7）
+    if (grant?.admit && deviceId == null) {
+      const now = Date.now();
+      h.admitTimes = h.admitTimes.filter((t) => now - t < 60_000);
+      if (h.admitTimes.length >= o.admitPerMinute) return closeWs(ws, CLOSE.LIMIT, 'admit rate');
+      h.admitTimes.push(now);
+      if (active.size >= o.maxConnsPerHost) return closeWs(ws, CLOSE.LIMIT, 'too many connections');
+      return startConn(ws, h, { admit: true, tags: grant.tags, pending: grant.pending });
+    }
     const raw = secret32(bearer(req.headers.authorization));
     const hash = typeof deviceId === 'string' ? h.devices.get(deviceId) : undefined;
     if (!raw || !hash || !sameHash(sha256(raw), hash)) return fail(ws, CLOSE.UNAUTHORIZED, 'device token');
@@ -512,26 +647,29 @@ export function createRelay(opts = {}) {
     if (active.size >= o.maxConnsPerHost || perDevice >= o.maxConnsPerDevice) {
       return closeWs(ws, CLOSE.LIMIT, 'too many connections');
     }
-    startConn(ws, h, { deviceId, tokenHash: hash });
+    startConn(ws, h, { deviceId, tokenHash: hash, tags: grant?.tags, pending: grant?.pending });
   }
 
-  function startConn(ws, h, { deviceId = null, tokenHash = null, pairing = false }) {
+  function startConn(ws, h, { deviceId = null, tokenHash = null, pairing = false, admit = false, tags = [], pending = [] } = {}) {
     const c = {
       id: crypto.randomBytes(16).toString('base64url'),
       hostId: h.id,
       deviceId,
       tokenHash,
       pairing,
+      admit,
+      tags: [...(tags ?? [])],
       deviceWs: ws,
       hostWs: null,
-      pending: [],
-      pendingBytes: 0,
+      pending: [...pending],
+      pendingBytes: pending.reduce((n, [data]) => n + data.length, 0),
       up: 0,
       down: 0,
       startedAt: Date.now(),
       ended: false,
       timer: null,
     };
+    ws.tags = c.tags;
     conns.set(c.id, c);
     if (!hostConns.has(h.id)) hostConns.set(h.id, new Set());
     hostConns.get(h.id).add(c);
@@ -548,24 +686,31 @@ export function createRelay(opts = {}) {
     });
     ws.on('close', (code) => endConn(c, passCode(code), 'device closed'));
 
-    log('info', 'device-open', { host: short(h.id), device: deviceId, pairing, conn: c.id });
-    sendControl(h.id, pairing ? { type: 'incoming', conn: c.id, pairing: true } : { type: 'incoming', conn: c.id, deviceId });
+    log('info', 'device-open', { host: short(h.id), device: deviceId, pairing, admit, conn: c.id });
+    emit({ type: 'device-open', hostId: h.id, deviceId, tags: c.tags, admit });
+    sendControl(h.id, admit ? { type: 'incoming', conn: c.id, admit: true }
+      : pairing ? { type: 'incoming', conn: c.id, pairing: true }
+      : { type: 'incoming', conn: c.id, deviceId });
   }
 
   // ── ホストのデータ用の接続 ────────────────────────────────────
 
-  function onAccept(ws, req, url) {
-    const hostId = hostAuth(ws, req);
+  function onAccept(ws, req, url, grant = null) {
+    const hostId = grant ? grant.hostId : hostAuth(ws, req);
     if (!hostId) return;
     const c = conns.get(url.searchParams.get('conn') ?? '');
     // 別のホストの conn は「無い」と同じに扱う（行き先は端末を登録したホストだけ）
     if (!c || c.ended || c.hostId !== hostId || c.hostWs) return closeWs(ws, CLOSE.NOT_FOUND, 'no such conn');
+    // 差し込みの tags に、対応する制御用の接続の tags を足す（重ねない。§5.7）
+    ws.tags = [...new Set([...(grant?.tags ?? []), ...(hosts.get(hostId)?.tags ?? [])])];
+    c.tags = [...new Set([...c.tags, ...ws.tags])];
     clearTimeout(c.timer);
     c.hostWs = ws;
     for (const [data, isBinary] of c.pending) forward(c, ws, data, isBinary, 'up');
     c.pending = [];
     c.pendingBytes = 0;
     ws.on('message', (data, isBinary) => { if (!c.ended) forward(c, c.deviceWs, data, isBinary, 'down'); });
+    for (const [data, isBinary] of grant?.pending ?? []) if (!c.ended) forward(c, c.deviceWs, data, isBinary, 'down');
     ws.on('close', (code) => endConn(c, passCode(code), 'host closed'));
     log('debug', 'accept', { host: short(hostId), conn: c.id });
   }
@@ -597,26 +742,58 @@ export function createRelay(opts = {}) {
       host: short(c.hostId), device: c.deviceId, pairing: c.pairing, conn: c.id,
       code, reason, up: c.up, down: c.down, ms: Date.now() - c.startedAt,
     });
+    emit({ type: 'device-close', hostId: c.hostId, deviceId: c.deviceId, tags: c.tags, admit: c.admit });
   }
 
   // ── 起動と終了 ──────────────────────────────────────────────
 
+  /** 試験と監視用の数。中身は含まない。 */
+  const stats = () => ({ hosts: hosts.size, conns: conns.size, lines: [...notifyLines.values()].reduce((n, m) => n + m.size, 0), blocked: [...failures.values()].filter((e) => e.blockedUntil > Date.now()).length });
+
+  /** 差し込みの attach(handle) に渡す、中継を操作する手（§5.7）。 */
+  const handle = {
+    stats,
+    /** その tag を持つ接続（制御・データ・端末・通知の線）を全部閉じ、閉じた数を返す。 */
+    closeTag(tag, code, reason) {
+      const ok = Number.isSafeInteger(code) && ((code >= 4000 && code <= 4999) || code === 1000 || code === 1001 || code === 1008 || code === 1013);
+      if (!ok) throw new Error(`closeTag の code が範囲外: ${code}`);
+      let n = 0;
+      for (const h of [...hosts.values()]) {
+        if (h.ws.tags?.includes(tag)) { closeWs(h.ws, code, reason); n++; }
+      }
+      for (const c of [...conns.values()]) {
+        const hit = [c.deviceWs, c.hostWs].filter((w) => w?.tags?.includes(tag)).length;
+        if (hit) { endConn(c, code, reason); n += hit; }   // 端末の接続は両側を閉じる
+      }
+      for (const lines of [...notifyLines.values()]) {
+        for (const line of [...lines.values()]) {
+          if (line.tags.includes(tag)) { closeWs(line.ws, code, reason); n++; }
+        }
+      }
+      return n;
+    },
+  };
+
   return {
     server,
     options: o,
-    /** 試験と監視用の数。中身は含まない。 */
-    stats: () => ({ hosts: hosts.size, conns: conns.size, lines: [...notifyLines.values()].reduce((n, m) => n + m.size, 0), blocked: [...failures.values()].filter((e) => e.blockedUntil > Date.now()).length }),
+    stats,
     listen(port = o.port, host) {
       return new Promise((resolve, reject) => {
         server.once('error', reject);
-        server.listen(port, host, () => { server.off('error', reject); resolve(server.address()); });
+        server.listen(port, host, () => {
+          server.off('error', reject);
+          try { authz?.attach?.(handle); } catch (err) { log('warn', 'authz-attach', { error: String(err?.message ?? err) }); }
+          resolve(server.address());
+        });
       });
     },
-    close() {
+    async close() {
       clearInterval(pinger);
       clearInterval(notifyPinger);
       for (const c of [...conns.values()]) endConn(c, CLOSE.SHUTDOWN, 'shutdown');
       for (const ws of wss.clients) closeWs(ws, CLOSE.SHUTDOWN, 'shutdown');
+      try { await authz?.close?.(); } catch (err) { log('warn', 'authz-close', { error: String(err?.message ?? err) }); }
       return new Promise((resolve) => {
         server.close(() => resolve());
         setTimeout(() => { for (const ws of wss.clients) ws.terminate(); server.closeAllConnections?.(); }, 200).unref();
@@ -630,6 +807,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   let cfg;
   try {
     cfg = configFromEnv();
+    // 認可の差し込み（§5.7）: RELAY_AUTHZ_MODULE のモジュールの createAuthz が返したものを使う。
+    // createRelay を import して使う側はこの環境変数を見ない（opts.authz だけ）
+    const authzModule = process.env.RELAY_AUTHZ_MODULE;
+    if (authzModule) {
+      const mod = await import(pathToFileURL(authzModule).href);
+      if (typeof mod.createAuthz !== 'function') throw new Error(`RELAY_AUTHZ_MODULE に createAuthz が無い: ${authzModule}`);
+      const authzLog = (level, event, fields = {}) => process.stdout.write(JSON.stringify({ t: new Date().toISOString(), level, event, ...fields }) + '\n');
+      cfg.authz = await mod.createAuthz({ log: authzLog, env: process.env });
+    }
     const relay = createRelay(cfg);
     const addr = await relay.listen(cfg.port);
     console.log(JSON.stringify({ t: new Date().toISOString(), level: 'info', event: 'listening', port: addr.port }));

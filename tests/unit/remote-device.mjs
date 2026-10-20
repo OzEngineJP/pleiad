@@ -115,6 +115,8 @@ export default async function (t) {
     classifyClose({ closeCode: 4401 }) === 'revoked' && classifyClose({ goaway: 'revoked', closeCode: 1000 }) === 'revoked'
     && classifyClose({ closeCode: 4404 }) === 'host-offline' && classifyClose({ closeCode: 4408 }) === 'host-offline'
     && classifyClose({ goaway: 'shutdown', closeCode: 1001 }) === 'host-offline' && classifyClose({ closeCode: 1006 }) === 'offline');
+  t.ok('close code 1013（中継の差し込みの一時的な失敗）は offline。少し待って張り直す',
+    classifyClose({ closeCode: 1013 }) === 'offline');
   const { safeStorageCipher } = require('../../desktop/secret-bridge.cjs');
   const fakeSafe = { isEncryptionAvailable: () => true, encryptString: s => Buffer.from(`enc:${s}`), decryptString: b => b.toString().slice(4) };
   const sc = safeStorageCipher({ safeStorage: fakeSafe, platform: 'win32' });
