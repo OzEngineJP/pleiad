@@ -1,6 +1,8 @@
 package dev.pleiad.app.remote
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ResumePolicyTest {
@@ -30,5 +32,18 @@ class ResumePolicyTest {
         assertEquals(ResumeDecision(null, true), decide("a", list = emptyList()))
         // Even when it would not have opened anyway: it does not qualify any more
         assertEquals(ResumeDecision(null, true), decide("b", fresh = false))
+    }
+
+    // The shell is singleTask: a launcher tap on an existing task comes back through onNewIntent, and the same check
+    // must open the last host again (the host window above the shell was finished by the system).
+
+    @Test fun aLauncherIntentIsAStart() {
+        assertTrue(ResumePolicy.isLauncherStart("android.intent.action.MAIN", launchedFromHistory = false))
+    }
+
+    @Test fun linksAndHistoryRestoresAreNotLauncherStarts() {
+        assertFalse(ResumePolicy.isLauncherStart("android.intent.action.VIEW", launchedFromHistory = false))
+        assertFalse(ResumePolicy.isLauncherStart(null, launchedFromHistory = false))
+        assertFalse(ResumePolicy.isLauncherStart("android.intent.action.MAIN", launchedFromHistory = true))
     }
 }

@@ -12,7 +12,7 @@ import dev.pleiad.app.remote.ResumePolicy
 class MainActivity : BridgeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // Before Capacitor builds its WebView, so the host window is already queued when the list would first draw
-        resumeLastHost(savedInstanceState)
+        resumeLastHost(intent, freshStart = savedInstanceState == null)
         registerPlugin(PleiadRemotePlugin::class.java)
         super.onCreate(savedInstanceState)
         takePairLink(intent)
@@ -25,17 +25,22 @@ class MainActivity : BridgeActivity() {
      * (savedInstanceState) and not for a pleiad://pair link. ResumePolicy decides; the user's way back to the list is the
      * host window's "back to hosts", which forgets the host (ResumeStore).
      */
-    private fun resumeLastHost(savedInstanceState: Bundle?) {
+    private fun resumeLastHost(startIntent: Intent?, freshStart: Boolean) {
         val store = ResumeStore(this)
         val saved = store.hostId() ?: return
         val device = (application as PleiadApp).device
-        val d = ResumePolicy.decide(saved, device.store.hosts(), savedInstanceState == null, intent?.action == Intent.ACTION_MAIN)
+        val fromHistory = startIntent != null && startIntent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+        val d = ResumePolicy.decide(saved, device.store.hosts(), freshStart, ResumePolicy.isLauncherStart(startIntent?.action, fromHistory))
         if (d.forget) store.forget()
         d.hostId?.let { startActivity(Intent(this, HostActivity::class.java).putExtra(HostActivity.EXTRA_HOST_ID, it)) }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // This activity is singleTask, so a launcher tap while the task exists lands here instead of a new instance —
+        // and the system has already finished whatever was on top (the host window). Treat it as a launcher start so
+        // the host the user was in reopens (a system restore comes with FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY).
+        resumeLastHost(intent, freshStart = true)
         takePairLink(intent)
         takeOpenLink(intent)
     }
