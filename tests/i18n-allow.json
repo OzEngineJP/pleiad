@@ -50,6 +50,7 @@
     "channels:routines.text.cron",
     "channels:routines.text.webhook",
     "channels:routines.where.dm",
-    "ui:chat.browserHandoff.reason.captcha"
+    "ui:chat.browserHandoff.reason.captcha",
+    "ui:settings.remote.groups.plus"
   ]
 }

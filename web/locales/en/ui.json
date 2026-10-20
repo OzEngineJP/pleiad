@@ -199,8 +199,17 @@
       "addDevice": "Add device",
       "addHost": "Add PC",
       "groups": {
-        "own": "Your own relay server",
-        "plus": "Pleiad Plus"
+        "plus": "Pleiad Plus",
+        "plusConnect": "Use the official relay",
+        "plusLogin": "Sign in to Pleiad Plus",
+        "plusUpgrade": "Get Pleiad Plus",
+        "plusBlocked": "This account can't use the official relay",
+        "plusLimit": "This account has reached its limit",
+        "plusEmpty": "PCs signed in to the same account appear here.",
+        "plusMaintenance": "Pleiad Plus is under maintenance",
+        "plusUnavailable": "Pleiad Plus is temporarily unavailable",
+        "plusNeedsUpdate": "Please update Pleiad",
+        "own": "Your own relay server"
       },
       "plus": {
         "connect": "Connect with Pleiad Plus",
@@ -257,6 +266,11 @@
         "codeLabel": "Confirmation code",
         "done": "Connected {{name}}",
         "connecting": "Connecting to the relay server…",
+        "plusSignedOut": "Not signed in · Sign in",
+        "plusNotUsing": "Not using Pleiad Plus",
+        "plusHostWait": "On the other PC, sign in to Pleiad Plus and turn on \"{{switch}}\".",
+        "account": "Account",
+        "waitingHost": "Waiting for the other PC",
         "hostCode": "Code shown on the other PC",
         "hostWait": "Waiting for approval on the other PC",
         "hostConnecting": "Connecting to the other PC…"
