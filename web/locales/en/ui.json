@@ -3828,7 +3828,6 @@
     },
     "voice": {
       "note": "Once you choose a key, call audio and the text read aloud are sent to OpenRouter (and the provider of the model you pick).",
-      "unset": "Voice calls are unavailable. Choose a key to use them.",
       "selectLabel": "Key for voice calls",
       "chosen": "Using the OpenRouter key for voice calls.",
       "unchosen": "Voice calls no longer use a key.",
@@ -3845,7 +3844,6 @@
     },
     "delegation": {
       "title": "Keys for automatic delegate selection",
-      "unset": "Not used for automatic delegate selection until you choose a key",
       "selectKey": "Choose a key",
       "selectLabel": "Key for {{service}}",
       "plusNotUsing": "Not using Pleiad Plus",

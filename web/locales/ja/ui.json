@@ -3719,7 +3719,6 @@
     },
     "voice": {
       "note": "選ぶと、通話中の音声と読み上げる文章が OpenRouter（と、選んだモデルの提供元）へ送られます。",
-      "unset": "通話は使えません。キーを選ぶと使えます。",
       "selectLabel": "通話に使うキー",
       "chosen": "OpenRouter のキーを通話に使います。",
       "unchosen": "通話にキーを使わないようにしました。",
@@ -3736,7 +3735,6 @@
     },
     "delegation": {
       "title": "委譲先の自動選択に使うキー",
-      "unset": "キーを選ぶまで、委譲先の自動選択では使われません",
       "selectKey": "キーを選ぶ",
       "selectLabel": "{{service}} に使うキー",
       "plusNotUsing": "Pleiad Plus を使っていません",
