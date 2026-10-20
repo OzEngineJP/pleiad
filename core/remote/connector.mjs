@@ -1,6 +1,8 @@
-// ホストの接続口（docs/remote.md §3.3・§4.2・§4.4・§6.1、issue #13）。サーバーのプロセスの中で動く。
+// ホストの接続口（docs/remote.md §3.3・§4.2・§4.4・§6.1・§6.4、issue #13）。サーバーのプロセスの中で動く。
 //
-// - 中継へ外向きに制御用の WebSocket を張り（/v1/host）、つながるたびに端末一覧のハッシュを sync で送り直す。
+// - 中継への制御用の接続は「つながり（link）」の単位で持つ（§6.4）。自分の中継（own）と、差し込まれた provider の
+//   中継（plus）を同時に張れ、link ごとに状態・張り直し・ping・accept を持つ。片方が落ちてももう片方は動き続ける
+// - 中継へ外向きに制御用の WebSocket を張り（/v1/host）、つながるたびにその link が引き受ける端末一覧のハッシュを sync で送り直す。
 //   切れたら 1 秒から 60 秒まで倍々（揺らぎ付き）で張り直す
 // - 中継の incoming ごとにデータ用の接続（/v1/host/accept）を張り、Noise の応答側としてハンドシェイクする。
 //   通常は IK（端末の静的鍵が端末一覧にあり、中継が名乗った deviceId の鍵と一致すること）、ペアリングは IKpsk2
@@ -72,6 +74,7 @@ function publicAgent(d, stats) {
 function publicDevice(d, connections = 0, registered = false, agentStats = null) {
   return {
     id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null,
+    via: d.via ?? 'own',
     connected: connections > 0, connections, notify: publicNotify(d, registered), agent: publicAgent(d, agentStats),
     ...(d.invite ? { invite: true } : {}),
   };
@@ -118,23 +121,12 @@ export function createRemoteHost({
   const store = createRemoteStore({ dataDir, cipher });
   let cfg = { enabled: false, relayUrl: '', secret: '', hostName: os.hostname(), relayUrlFromEnv: false, secretFromEnv: false };
   let identity = null;
-  let phase = 'disabled';          // disabled | connecting | connected | retrying | error
-  let error = null;
-  let since = Date.now();
-  let retryAt = null;
-  let generation = 0;
-  let control = null;
-  let controlOpenedAt = 0;
-  let attempt = 0;
-  let retryTimer = null;
-  let pingTimer = null;
   let offer = null;                // { secret, psk, ticketHash, expiresAt, timer }
   const requests = new Map();      // id → 承認待ち
   const deviceCache = new Map();   // id → devices.json の 1 件（照合は同期で行う）
   const notifyKeys = new Map();    // deviceId → 通知鍵（Buffer）。スマホへの通知を暗号化する（core/notify）
   const notifyPersisted = new Map();   // deviceId → lastSentAt を最後にファイルへ書いた時刻
-  const channels = new Map();      // deviceId → Set<{ ch, ws }>
-  const dataConns = new Set();
+  const channels = new Map();      // deviceId → Set<{ ch, ws, link }>
   let applying = Promise.resolve();
   let statusQueued = false;
   let invite = null;               // 今使える審査の招待（loadInvite の結果）。審査モードでなければ常に null
@@ -142,12 +134,49 @@ export function createRemoteHost({
   const inviteTimers = [];
   const admitted = [];             // 招待で通した時刻（ms）。起動し直すと消えるが、直近 1 時間の数は devices.json の createdAt からも数える
 
-  const setPhase = (next, err = null) => {
-    if (phase !== next) since = Date.now();
-    phase = next;
-    error = err;
+  // ── つながり（link）の単位 ─────────────────────────────────
+  // 1 本ぶんの状態: phase（disabled | connecting | connected | retrying | error）・error・since・retryAt・
+  // generation・control・attempt・retryTimer・pingTimer・dataConns。
+  // 中継の URL・張るときのヘッダー・引き受ける端末・ペアリングを受けるかは provider が決める:
+  //   { name, ready(), url(path), headers(), owns(device), allowPairing, onIncomingAdmit?(ctx), onClose?(code, reason) }
+  const ownProvider = {
+    name: 'own',
+    /** 張ってよいか。true / false（disabled）/ { error }（error）。 */
+    ready() {
+      if (!cfg.relayUrl || !cfg.secret) return { error: { code: 'config', message: t('remote.settings.needConfig') } };
+      try { relayWsUrl(cfg.relayUrl, '/v1/host'); } catch (e) { return { error: { code: 'config', message: e.message } }; }
+      return true;
+    },
+    url: path => relayWsUrl(cfg.relayUrl, path),
+    headers: async () => ({ authorization: `Bearer ${cfg.secret}`, 'x-pleiad-host': identity.hostId }),
+    owns: d => !d.via || d.via === 'own',
+    allowPairing: true,
+  };
+  const makeLink = (name, provider) => ({
+    name, provider,
+    phase: 'disabled', error: null, since: Date.now(), retryAt: null,
+    generation: 0, control: null, controlOpenedAt: 0, attempt: 0,
+    retryTimer: null, pingTimer: null, dataConns: new Set(),
+  });
+  const links = { own: makeLink('own', ownProvider), plus: makeLink('plus', null) };
+  const eachLink = fn => { fn(links.own); fn(links.plus); };
+  /** 端末を引き受ける link（via の無い端末は own）。 */
+  const linkFor = d => (d?.via === 'plus' ? links.plus : links.own);
+
+  const setLinkPhase = (link, next, err = null) => {
+    if (link.phase !== next) link.since = Date.now();
+    link.phase = next;
+    link.error = err;
     queueStatus();
   };
+
+  /** provider の ready() を状態に写す。張ってよい link なら true。 */
+  function linkWanted(link) {
+    const r = link.provider?.ready() ?? false;
+    if (r === true) return true;
+    setLinkPhase(link, r && typeof r === 'object' ? 'error' : 'disabled', r && typeof r === 'object' ? r.error ?? null : null);
+    return false;
+  }
 
   function queueStatus() {
     if (statusQueued) return;
@@ -184,30 +213,38 @@ export function createRemoteHost({
 
   // ── 中継への制御用の接続 ──────────────────────────────────────
 
-  function relayHeaders() {
-    return { authorization: `Bearer ${cfg.secret}`, 'x-pleiad-host': identity.hostId };
+  function sendControl(link, msg) {
+    if (link.control?.readyState === WebSocket.OPEN) link.control.send(JSON.stringify(msg));
   }
 
-  function sendControl(msg) {
-    if (control?.readyState === WebSocket.OPEN) control.send(JSON.stringify(msg));
-  }
-
-  function syncDevices() {
-    sendControl({ type: 'sync', devices: [...deviceCache.values()].map(d => ({ id: d.id, tokenHash: d.tokenHash })) });
+  /** その link が引き受ける（owns）端末だけを sync する。ペアリングの入場券と審査の招待は、受ける link（own）にだけ置く。 */
+  function syncDevices(link) {
+    sendControl(link, { type: 'sync', devices: [...deviceCache.values()].filter(d => link.provider.owns(d)).map(d => ({ id: d.id, tokenHash: d.tokenHash })) });
+    if (!link.provider.allowPairing) return;
     if (offer && offer.expiresAt > Date.now()) {
-      sendControl({ type: 'pairing', ticketHash: offer.ticketHash.toString('hex'), ttlMs: offer.expiresAt - Date.now() });
+      sendControl(link, { type: 'pairing', ticketHash: offer.ticketHash.toString('hex'), ttlMs: offer.expiresAt - Date.now() });
     }
-    placeInviteTicket();
+    placeInviteTicket(link);
   }
 
-  function connect() {
-    const gen = generation;
+  async function connect(link) {
+    const gen = link.generation;
     let url;
-    try { url = relayWsUrl(cfg.relayUrl, '/v1/host'); }
-    catch (e) { setPhase('error', { code: 'config', message: e.message }); return; }
-    setPhase(attempt ? 'retrying' : 'connecting', error);
-    const ws = new WebSocket(url, { headers: relayHeaders(), perMessageDeflate: false, handshakeTimeout: 15_000, maxPayload: 1024 * 1024, followRedirects: false });
-    control = ws;
+    try { url = link.provider.url('/v1/host'); }
+    catch (e) { setLinkPhase(link, 'error', { code: 'config', message: e.message }); return; }
+    let headers;
+    try { headers = await link.provider.headers(); }
+    catch (e) {
+      if (gen === link.generation) setLinkPhase(link, 'error', { code: 'config', message: e.message });
+      return;
+    }
+    if (gen !== link.generation) return;
+    setLinkPhase(link, link.attempt ? 'retrying' : 'connecting', link.error);
+    let ws;
+    try {
+      ws = new WebSocket(url, { headers, perMessageDeflate: false, handshakeTimeout: 15_000, maxPayload: 1024 * 1024, followRedirects: false });
+    } catch (e) { setLinkPhase(link, 'error', { code: 'config', message: e.message }); return; }
+    link.control = ws;
     let failure = null;
     ws.on('unexpected-response', (req, res) => {
       failure = res.statusCode === 429 ? t('remote.relay.rateLimited') : t('remote.relay.rejected', { status: res.statusCode });
@@ -216,84 +253,132 @@ export function createRemoteHost({
     });
     ws.on('error', e => { failure ??= t('remote.relay.unreachable', { reason: e.code || e.message }); });
     ws.on('open', () => {
-      if (gen !== generation) return closeWs(ws, 1000);
-      controlOpenedAt = Date.now();
-      retryAt = null;
-      syncDevices();
-      setPhase('connected');
-      clearInterval(pingTimer);
+      if (gen !== link.generation) return closeWs(ws, 1000);
+      link.controlOpenedAt = Date.now();
+      link.retryAt = null;
+      syncDevices(link);
+      setLinkPhase(link, 'connected');
+      clearInterval(link.pingTimer);
       let missed = 0;
       ws.on('pong', () => { missed = 0; });
-      pingTimer = setInterval(() => {
+      link.pingTimer = setInterval(() => {
         if (missed >= 2) return ws.terminate();
         missed++;
         try { ws.ping(); } catch { /* 閉じかけ */ }
       }, CONTROL_PING_MS);
-      pingTimer.unref();
+      link.pingTimer.unref();
     });
     ws.on('message', (data, isBinary) => {
-      if (gen !== generation || isBinary) return;
+      if (gen !== link.generation || isBinary) return;
       const msg = parseJson(data);
-      if (msg.type === 'incoming') onIncoming(msg);
+      if (msg.type === 'incoming') onIncoming(link, msg).catch(e => log(`remote incoming: ${e.message}`));
     });
-    ws.on('close', code => {
-      if (control === ws) control = null;
-      clearInterval(pingTimer);
-      if (gen !== generation) return;
-      const stable = controlOpenedAt && Date.now() - controlOpenedAt > STABLE_MS;
-      if (stable) attempt = 0;
-      controlOpenedAt = 0;
+    ws.on('close', (code, reason) => {
+      if (link.control === ws) link.control = null;
+      clearInterval(link.pingTimer);
+      if (gen !== link.generation) return;
+      const stable = link.controlOpenedAt && Date.now() - link.controlOpenedAt > STABLE_MS;
+      if (stable) link.attempt = 0;
+      link.controlOpenedAt = 0;
+      // provider が close の扱いを変えたいとき（plus 側の断りを張り直しにしないなど）。'retry' か無ければ今と同じ張り直し
+      const verdict = link.provider?.onClose?.(code, Buffer.isBuffer(reason) ? reason.toString('utf8') : String(reason ?? '')) ?? null;
+      if (verdict && verdict !== 'retry') { setLinkPhase(link, 'error', verdict.error ?? null); return; }
       const message = failure ?? describeClose(code);
       log(`remote: ${message}`);
-      scheduleRetry({ code: `relay-${code}`, message });
+      scheduleRetry(link, { code: `relay-${code}`, message });
     });
   }
 
-  function scheduleRetry(err) {
-    const base = Math.min(backoff.maxMs, backoff.minMs * 2 ** attempt);
+  function scheduleRetry(link, err) {
+    const base = Math.min(backoff.maxMs, backoff.minMs * 2 ** link.attempt);
     const delay = Math.round(Math.min(backoff.maxMs, base * (0.75 + Math.random() * 0.5)));
-    attempt++;
-    retryAt = Date.now() + delay;
-    setPhase('retrying', err);
-    const gen = generation;
-    clearTimeout(retryTimer);
-    retryTimer = setTimeout(() => { if (gen === generation) connect(); }, delay);
-    retryTimer.unref?.();
+    link.attempt++;
+    link.retryAt = Date.now() + delay;
+    setLinkPhase(link, 'retrying', err);
+    const gen = link.generation;
+    clearTimeout(link.retryTimer);
+    link.retryTimer = setTimeout(() => { if (gen === link.generation) connect(link); }, delay);
+    link.retryTimer.unref?.();
   }
 
-  /** 中継との接続とデータ用の接続をすべて閉じる。 */
+  /** 1 本のつながりを閉じる（制御用の接続と、その link が受けたデータ用の接続・チャネル）。 */
+  function disconnectLink(link) {
+    link.generation++;
+    clearTimeout(link.retryTimer);
+    clearInterval(link.pingTimer);
+    link.retryTimer = null;
+    link.retryAt = null;
+    link.attempt = 0;
+    if (link.control) { closeWs(link.control, 1000); link.control = null; }
+    for (const set of channels.values()) for (const { ch, link: l } of set) if (l === link) ch.goaway('shutdown', 'remote stopped');
+    for (const ws of link.dataConns) closeWs(ws, HOST_CLOSE.SHUTDOWN);
+    link.dataConns.clear();
+  }
+
+  /** 全部のつながりとデータ用の接続を閉じる。 */
   function disconnectAll() {
-    generation++;
-    clearTimeout(retryTimer);
-    clearInterval(pingTimer);
-    retryTimer = null;
-    retryAt = null;
-    attempt = 0;
-    if (control) { closeWs(control, 1000); control = null; }
-    for (const set of channels.values()) for (const { ch } of set) ch.goaway('shutdown', 'remote stopped');
-    for (const ws of dataConns) closeWs(ws, HOST_CLOSE.SHUTDOWN);
-    dataConns.clear();
+    eachLink(disconnectLink);
     clearOffer(false);
     stopInviteTimers();
   }
 
   // ── データ用の接続 ────────────────────────────────────────────
 
-  function onIncoming({ conn, deviceId, pairing }) {
+  async function onIncoming(link, { conn, deviceId, pairing, admit }) {
     if (typeof conn !== 'string' || !CONN_ID.test(conn) || !identity) return;
-    const gen = generation;
-    const ws = new WebSocket(relayWsUrl(cfg.relayUrl, `/v1/host/accept?conn=${encodeURIComponent(conn)}`), {
-      headers: relayHeaders(), perMessageDeflate: false, handshakeTimeout: 15_000, maxPayload: DATA_MAX_PAYLOAD, followRedirects: false,
-    });
-    dataConns.add(ws);
+    const gen = link.generation;
+    let url;
+    try { url = link.provider.url(`/v1/host/accept?conn=${encodeURIComponent(conn)}`); }
+    catch (e) { log(`remote accept: ${e.message}`); return; }
+    let headers;
+    try { headers = await link.provider.headers(); }
+    catch (e) { log(`remote accept: ${e.message}`); return; }
+    if (gen !== link.generation) return;
+    let ws;
+    try {
+      ws = new WebSocket(url, { headers, perMessageDeflate: false, handshakeTimeout: 15_000, maxPayload: DATA_MAX_PAYLOAD, followRedirects: false });
+    } catch (e) { log(`remote accept: ${e.message}`); return; }
+    link.dataConns.add(ws);
     ws.on('error', () => {});
-    ws.on('unexpected-response', (req, res) => { res.resume(); req.destroy(); dataConns.delete(ws); });
-    ws.on('close', () => dataConns.delete(ws));
+    ws.on('unexpected-response', (req, res) => { res.resume(); req.destroy(); link.dataConns.delete(ws); });
+    ws.on('close', () => link.dataConns.delete(ws));
     const timer = setTimeout(() => closeWs(ws, HOST_CLOSE.TIMEOUT, 'handshake timeout'), HANDSHAKE_TIMEOUT_MS);
     timer.unref();
-    ws.once('open', () => { if (gen !== generation) closeWs(ws, HOST_CLOSE.SHUTDOWN); });
-    if (pairing === true) handlePairing(ws, timer);
-    else handleDevice(ws, typeof deviceId === 'string' ? deviceId : '', timer);
+    ws.once('open', () => { if (gen !== link.generation) closeWs(ws, HOST_CLOSE.SHUTDOWN); });
+    if (pairing === true) {
+      // ペアリング（入場券）の incoming を受けない link では閉じる
+      if (!link.provider.allowPairing) { ws.once('open', () => closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'pairing')); return; }
+      handlePairing(link, ws, timer);
+      return;
+    }
+    // admit: true で deviceId の無い incoming は、その link の provider が受け入れを担う（アカウントでの受け入れ）
+    if (admit === true && !deviceId) {
+      if (typeof link.provider.onIncomingAdmit === 'function') {
+        Promise.resolve(link.provider.onIncomingAdmit(admitCtx(link, ws, conn, timer)))
+          .catch(e => { log(`remote admit: ${e.message}`); closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'admit'); });
+      } else {
+        ws.once('open', () => closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'admit'));
+      }
+      return;
+    }
+    handleDevice(link, ws, typeof deviceId === 'string' ? deviceId : '', timer);
+  }
+
+  /** onIncomingAdmit へ渡す一式。provider が Noise の応答・検証・登録・返事を済ませて閉じる。 */
+  function admitCtx(link, ws, conn, timer) {
+    return {
+      link: link.name, ws, conn, timer,
+      identity, hostName: cfg.hostName,
+      /** 端末をこの link のものとして登録し、中継へ allow を送る。token は端末へ渡す中継用トークン。 */
+      async admit({ name, platform, app, publicKey, plusUid }) {
+        const { device, raw } = issueDevice({ name, platform, app, publicKey }, { via: link.name, plusUid });
+        await store.addDevice(device);
+        deviceCache.set(device.id, device);
+        sendControl(link, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
+        queueStatus();
+        return { device, token: raw.toString('base64url') };
+      },
+    };
   }
 
   /** 最初のメッセージ（Noise のメッセージ 1）を受けて fn に渡す。文字のメッセージは形の誤り。 */
@@ -305,11 +390,12 @@ export function createRemoteHost({
     });
   }
 
-  function handleDevice(ws, deviceId, timer) {
+  function handleDevice(link, ws, deviceId, timer) {
     const device = deviceCache.get(deviceId);
-    if (!device) {
+    // 届いた link が引き受けない端末は受けない（own で登録した端末が plus から来ても、その逆でも）
+    if (!device || !link.provider.owns(device)) {
       clearTimeout(timer);
-      ws.once('open', () => closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'unknown device'));
+      ws.once('open', () => closeWs(ws, HOST_CLOSE.UNAUTHORIZED, device ? 'revoked' : 'unknown device'));
       return;
     }
     firstMessage(ws, m1 => {
@@ -317,7 +403,7 @@ export function createRemoteHost({
       hs.readMessage(m1);
       // 中継が名乗った deviceId の鍵と、ハンドシェイクで証明された鍵が一致し、今も一覧にあること（取り消しの二重の守り）
       const current = deviceCache.get(deviceId);
-      if (!current || !hs.remoteStatic.equals(Buffer.from(current.publicKey, 'base64url'))) {
+      if (!current || !link.provider.owns(current) || !hs.remoteStatic.equals(Buffer.from(current.publicKey, 'base64url'))) {
         clearTimeout(timer);
         return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'revoked');
       }
@@ -327,7 +413,7 @@ export function createRemoteHost({
         role: 'host', transport: hs.split(), send: b => ws.send(b),
         hello: { app: appVersion, hostName: cfg.hostName }, bufferedAmount: () => ws.bufferedAmount,
       });
-      const entry = { ch, ws };
+      const entry = { ch, ws, link };
       if (!channels.has(deviceId)) channels.set(deviceId, new Set());
       channels.get(deviceId).add(entry);
       ws.on('message', b => ch.receive(b));
@@ -366,11 +452,11 @@ export function createRemoteHost({
     if (!offer) return;
     clearTimeout(offer.timer);
     offer = null;
-    if (tellRelay) sendControl({ type: 'pairing', ticketHash: null });
+    if (tellRelay) eachLink(l => { if (l.provider?.allowPairing) sendControl(l, { type: 'pairing', ticketHash: null }); });
     queueStatus();
   }
 
-  function handlePairing(ws, timer) {
+  function handlePairing(link, ws, timer) {
     const o = offer && offer.expiresAt > Date.now() ? offer : null;
     // 入場券は 1 回きり（中継も消している）。次は作り直す
     clearOffer(false);
@@ -404,12 +490,12 @@ export function createRemoteHost({
         };
         const send = obj => { if (ws.readyState === WebSocket.OPEN) ws.send(transport.encrypt(Buffer.from(JSON.stringify(obj), 'utf8'))); };
         // 審査の招待は確認コードの見比べも承認の待ちも無い。上限の中なら、ここで登録して終える
-        if (inv) return admitInvite(inv, { ...label, publicKey, ws, send });
+        if (inv) return admitInvite(inv, { ...label, publicKey, ws, send }, link);
         const r = {
           id: crypto.randomBytes(9).toString('base64url'),
           ...label,
           code, createdAt: new Date(at).toISOString(), expiresAt: new Date(at + PAIRING_TTL_MS).toISOString(),
-          publicKey, ws, send,
+          publicKey, ws, send, link,
           timer: null,
         };
         r.timer = setTimeout(() => finishRequest(r, 'expired'), PAIRING_TTL_MS);
@@ -440,9 +526,10 @@ export function createRemoteHost({
   const reviewMode = () => isReviewMode(env);
 
   /** 招待の入場券を中継へ置く（同じ秘密から同じ入場券になる）。制御用の接続が無ければ、つながったときの sync が置く。 */
-  function placeInviteTicket() {
+  function placeInviteTicket(link = null) {
     if (!invite || invite.expiresAt <= now()) return;
-    sendControl({ type: 'pairing', ticketHash: invite.ticketHash.toString('hex'), ttlMs: PAIRING_TTL_MS });
+    const put = l => { if (l.provider?.allowPairing) sendControl(l, { type: 'pairing', ticketHash: invite.ticketHash.toString('hex'), ttlMs: PAIRING_TTL_MS }); };
+    if (link) put(link); else eachLink(put);
   }
 
   const inviteDevices = () => [...deviceCache.values()].filter(d => invite && d.invite === invite.id);
@@ -501,7 +588,7 @@ export function createRemoteHost({
   }
 
   /** 招待で入ってきた端末を、上限の中なら登録して approved を返す。上限を超えたら denied（承認待ちにしない）。 */
-  function admitInvite(inv, info) {
+  function admitInvite(inv, info, link) {
     const { ws, send } = info;
     const refuse = (type, reason) => { send({ type, ...(reason ? { reason } : {}) }); closeWs(ws, 1000); };
     return chainInvite(async () => {
@@ -519,10 +606,10 @@ export function createRemoteHost({
           return refuse('denied', verdict.reason);
         }
         if (again) await revokeDevice(again.id);
-        const { device, raw } = issueDevice(info, { invite: invite.id });
+        const { device, raw } = issueDevice(info, { via: link.name, invite: invite.id });
         await store.addDevice(device);
         deviceCache.set(device.id, device);
-        sendControl({ type: 'allow', id: device.id, tokenHash: device.tokenHash });
+        sendControl(link, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
         send({ type: 'approved', deviceId: device.id, token: raw.toString('base64url'), hostName: cfg.hostName });
         closeWs(ws, 1000);
         admitted.push(at);
@@ -537,8 +624,8 @@ export function createRemoteHost({
 
   // ── 端末の登録・取り消し ──────────────────────────────────────
 
-  /** 端末の記録と中継用トークンを作る（承認と招待で共通）。extra は devices.json の記録へ足す印（invite）。 */
-  function issueDevice({ name, platform, app, publicKey }, extra = {}) {
+  /** 端末の記録と中継用トークンを作る（承認・招待・link の admit で共通）。via は受け入れた link（'own' | 'plus'）、plusUid は plus のアカウントの uid、invite は審査の招待の印。 */
+  function issueDevice({ name, platform, app, publicKey }, { via = 'own', plusUid, invite } = {}) {
     const raw = crypto.randomBytes(32);
     const device = {
       id: `d${crypto.randomBytes(12).toString('base64url')}`,
@@ -547,7 +634,9 @@ export function createRemoteHost({
       tokenHash: crypto.createHash('sha256').update(raw).digest('hex'),
       createdAt: new Date(now()).toISOString(),
       lastSeenAt: null,
-      ...extra,
+      via,
+      ...(via === 'plus' && plusUid ? { plusUid } : {}),
+      ...(invite ? { invite } : {}),
     };
     return { device, raw };
   }
@@ -560,7 +649,8 @@ export function createRemoteHost({
     agent?.closeDevice(id, 'revoked');
     await agent?.stopTasks?.(id);
     await store.removeDevice(id);
-    sendControl({ type: 'revoke', id });
+    // 取り消しは両方の link へ送る（via が読めない端末や差し替えの途中でも、中継の表から消える）
+    eachLink(l => sendControl(l, { type: 'revoke', id }));
     notifyKeys.delete(id);
     await store.removeNotifyKey(id).catch(() => {});
     for (const { ch } of channels.get(id) ?? []) ch.goaway('revoked', 'device revoked');
@@ -569,6 +659,8 @@ export function createRemoteHost({
   }
 
   // ── 状態 ──────────────────────────────────────────────────────
+
+  const linkStatus = l => ({ state: l.phase, error: l.error, since: new Date(l.since).toISOString(), retryAt: l.retryAt ? new Date(l.retryAt).toISOString() : null });
 
   async function status() {
     const peek = identity ?? await store.peekIdentity().catch(() => null);
@@ -582,7 +674,8 @@ export function createRemoteHost({
       enrollSecretFromEnv: cfg.secretFromEnv,
       hostName: cfg.hostName,
       hostId: peek?.hostId ?? null,
-      connection: { state: phase, error, since: new Date(since).toISOString(), retryAt: retryAt ? new Date(retryAt).toISOString() : null },
+      connection: linkStatus(links.own),
+      links: { own: linkStatus(links.own), plus: linkStatus(links.plus) },
       pairing: {
         offer: offer ? { expiresAt: new Date(offer.expiresAt).toISOString() } : null,
         requests: [...requests.values()].map(publicRequest),
@@ -592,24 +685,44 @@ export function createRemoteHost({
     };
   }
 
-  /** 設定を読み直して、有効なら中継へつなぐ（直列に）。 */
+  /** 設定を読み直して、有効なら link ごとに中継へつなぐ（直列に）。片方が張れなくても、もう片方は張る。 */
   function apply() {
     const run = applying.catch(() => {}).then(async () => {
       disconnectAll();
       try {
         await loadConfig();
-        if (!cfg.enabled) { setPhase('disabled'); return; }
-        if (!cfg.relayUrl || !cfg.secret) { setPhase('error', { code: 'config', message: t('remote.settings.needConfig') }); return; }
-        normalizeRelayUrl(cfg.relayUrl);
+        if (!cfg.enabled) { eachLink(l => setLinkPhase(l, 'disabled')); return; }
+        const wanted = [links.own, links.plus].filter(linkWanted);
+        if (!wanted.length) return;
         identity = await store.identity();
         // 招待は、つなぐ前に読む（つながったときの sync が入場券を置く）
         await reconcileInvite();
         if (reviewMode()) logInvite();
         startInviteTimers();
-        connect();
+        for (const l of wanted) connect(l);
       } catch (e) {
-        setPhase('error', { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message });
+        const err = { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message };
+        eachLink(l => setLinkPhase(l, l.provider ? 'error' : 'disabled', l.provider ? err : null));
       }
+    });
+    applying = run;
+    return run;
+  }
+
+  /** plus の link の provider を差し替える（null なら閉じる）。張り直すのはその link だけで、own は動き続ける。 */
+  function setPlusProvider(provider) {
+    links.plus.provider = provider ?? null;
+    const run = applying.catch(() => {}).then(async () => {
+      const l = links.plus;
+      disconnectLink(l);
+      if (!cfg.enabled || !l.provider) { setLinkPhase(l, 'disabled'); return; }
+      if (!linkWanted(l)) return;
+      try { identity ??= await store.identity(); }
+      catch (e) {
+        setLinkPhase(l, 'error', { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message });
+        return;
+      }
+      connect(l);
     });
     applying = run;
     return run;
@@ -643,7 +756,7 @@ export function createRemoteHost({
       // 中継の入場券は 1 枚だけ。画面から作ると置き換わって審査の招待が使えなくなる
       if (reviewMode()) throw new Error(t('remote.review.addDeviceDisabled'));
       if (!cfg.enabled) throw new Error(t('remote.settings.disabled'));
-      if (phase !== 'connected') throw new Error(t('remote.settings.notConnected'));
+      if (links.own.phase !== 'connected') throw new Error(t('remote.settings.notConnected'));
       const secret = crypto.randomBytes(32);
       const { psk, ticketHash } = derivePairing(secret);
       clearOffer(false);
@@ -656,7 +769,7 @@ export function createRemoteHost({
         emit({ type: 'remotePairing', phase: 'expired' });
       }, PAIRING_TTL_MS);
       offer.timer.unref();
-      sendControl({ type: 'pairing', ticketHash: ticketHash.toString('hex'), ttlMs: PAIRING_TTL_MS });
+      eachLink(l => { if (l.provider?.allowPairing) sendControl(l, { type: 'pairing', ticketHash: ticketHash.toString('hex'), ttlMs: PAIRING_TTL_MS }); });
       queueStatus();
       return {
         payload: pairingPayload({ relayUrl: cfg.relayUrl, hostId: identity.hostId, publicKey: identity.publicKey, secret, hostName: cfg.hostName }),
@@ -671,10 +784,10 @@ export function createRemoteHost({
     async approve(id) {
       const r = requests.get(String(id ?? ''));
       if (!r) throw new Error(t('remote.pairing.requestGone'));
-      const { device, raw } = issueDevice(r);
+      const { device, raw } = issueDevice(r, { via: r.link?.name ?? 'own' });
       await store.addDevice(device);
       deviceCache.set(device.id, device);
-      sendControl({ type: 'allow', id: device.id, tokenHash: device.tokenHash });
+      sendControl(r.link ?? links.own, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
       r.send({ type: 'approved', deviceId: device.id, token: raw.toString('base64url'), hostName: cfg.hostName });
       finishRequest(r, 'approved', { device: publicDevice(device) });
       return publicDevice(device);
@@ -755,8 +868,9 @@ export function createRemoteHost({
 
     /** 暗号化済みの通知を中継の通知の線へ渡す。制御用の接続が無ければ false。 */
     sendNotify(deviceId, blob, ttlMs) {
-      if (control?.readyState !== WebSocket.OPEN || !deviceCache.has(deviceId)) return false;
-      sendControl({ type: 'notify', deviceId, blob, ttlMs });
+      const l = linkFor(deviceCache.get(deviceId));
+      if (l.control?.readyState !== WebSocket.OPEN || !deviceCache.has(deviceId)) return false;
+      sendControl(l, { type: 'notify', deviceId, blob, ttlMs });
       return true;
     },
 
@@ -781,7 +895,10 @@ export function createRemoteHost({
     /** 審査の招待の記録を今すぐ読み直す（取り消された・切れた・作り直された招待で入った端末を取り消す）。ふだんは 10 秒ごとに自分で読む */
     reconcileReviewInvite: () => reconcileInvite(),
 
+    /** plus のつながりの provider を差し込む・外す（null なら閉じる）。 */
+    setPlusProvider,
+
     /** 終了時。設定は変えずにつながりだけ閉じる。 */
-    stop() { disconnectAll(); setPhase('disabled'); },
+    stop() { disconnectAll(); eachLink(l => setLinkPhase(l, 'disabled')); },
   };
 }

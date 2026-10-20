@@ -397,6 +397,33 @@ main は `desktop/resident.cjs`: トレイ（Windows・Linux は押すと窓を�
 - `npm start` のホストは窓が無いので、そのまま常駐と同じ。スリープ対策は OS の設定に任せる
 - 理由: 常駐しないと、リモートの価値（外出先から続きを見る）がほぼ成り立たない。一方で勝手にスリープを止めるのは不意打ちなので、既定は「作業中だけ」
 
+### 6.4 つながり（link）
+
+ホストの接続口（`core/remote/connector.mjs`）は、中継への制御用の接続を「つながり（link）」の単位で持つ。`own`（自分の中継サーバー）と `plus`（Pleiad Plus の公式の中継。`setPlusProvider` で provider を差し込んだときだけ張る）の 2 つを同時に張れ、link ごとに状態（`disabled` / `connecting` / `connected` / `retrying` / `error`）・張り直しの間隔・ping・accept 待ちの接続を持つ。片方が落ちて張り直している間も、もう片方はそのまま動く。
+
+link ごとの振る舞いは provider が決める:
+
+```js
+{
+  name: 'own' | 'plus',
+  ready(): boolean | { error },               // 張ってよいか。false → disabled、{ error } → error
+  url(path): string,                          // '/v1/host' と '/v1/host/accept?conn=…' の行き先
+  async headers(): object,                    // 制御・accept のたびに作る認証のヘッダー
+  owns(device): boolean,                      // この端末をこのつながりで sync し・受け入れるか
+  allowPairing: boolean,                      // ペアリングの incoming を受けるか
+  onIncomingAdmit?(ctx): Promise<void>,       // incoming に admit: true があったとき（アカウントでの受け入れ）
+  onClose?(code, reason): 'retry' | { error }, // 制御用の接続が切れたときの扱い（無ければ張り直し）
+}
+```
+
+- `sync` は link ごとに、その link が `owns` する端末だけを送る。`allow`・`notify` は端末の `via` の link へ、`revoke` は両方の link へ送る
+- `incoming` の accept は届いた link の `url`・`headers` で張り、別の link の中継へは行かない
+- `pairing` の incoming は `allowPairing` の無い link では 4401（`pairing`）で閉じる。届いた link が端末を `owns` していなければ 4401（`revoked`）で閉じる（own で登録した端末が plus から来ても、その逆でも受けない）
+- `incoming { conn, admit: true }`（`deviceId` 無し）は provider の `onIncomingAdmit` へ渡す。無ければ 4401（`admit`）で閉じる
+- ペアリングの入場券と審査の招待は `own` の link だけが扱う
+- 端末の記録（devices.json）の `via` は `'own'` か `'plus'`（無いものは `'own'` とみなす。今のファイルはそのまま読める）。`plusUid` は `via: 'plus'` の端末を受け入れたアカウントの uid（状態には出さない）
+- 「ほかの端末からの操作を許可する」が off なら全部の link を閉じる。`status()` の `links.<名>` に各 link の状態が出る（`connection` は `links.own` と同じもの）
+
 ## 7. デスクトップ版の端末（#14）
 
 ### 7.1 窓と保存領域
