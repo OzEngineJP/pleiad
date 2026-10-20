@@ -23,7 +23,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     if (hooked !== d) {
       hooked = d;
       d.on('agent-state', async s => {
-        post({ type: 'remote-agent-state', hostId: s.hostId, state: s.state, allowed: s.allowed === true, view: s.view === true, hostName: s.hostName ?? '' });
+        post({ type: 'remote-agent-state', hostId: s.hostId, state: s.state, allowed: s.allowed === true, view: s.view === true, features: s.features ?? null, hostName: s.hostName ?? '' });
         post({ type: 'remote-agent-hosts', hosts: await hostsView().catch(() => []) });
       });
     }
@@ -36,7 +36,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     const rows = await d.list();
     return rows.map(h => ({
       hostId: h.hostId, name: displayName(h), hostName: h.hostName ?? '', agentUse: h.agentUse === true,
-      state: h.agent?.state ?? 'offline', allowed: h.agent?.allowed === true, view: h.agent?.view === true,
+      state: h.agent?.state ?? 'offline', allowed: h.agent?.allowed === true, view: h.agent?.view === true, features: h.agent?.features ?? null,
     }));
   }
 
@@ -64,7 +64,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
   async function resync() {
     await refresh();
     for (const h of await hostsView()) {
-      if (h.state === 'ready') post({ type: 'remote-agent-ready', hostId: h.hostId, state: h.state, allowed: h.allowed, view: h.view === true, hostName: h.hostName });
+      if (h.state === 'ready') post({ type: 'remote-agent-ready', hostId: h.hostId, state: h.state, allowed: h.allowed, view: h.view === true, features: h.features ?? null, hostName: h.hostName });
     }
   }
 

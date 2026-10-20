@@ -11,6 +11,23 @@
 // - 受付時の錨（instruction.anchor）: 直前に見えていたもの（発言の uuid・ツール呼び出しの id・
 //   人の発言の messageId・直前の指示）の id を受付時に記録したもの。読み直し後も同じ場所に戻る
 // - どれも無い分は受付時刻（at）。配送済みで ID も時刻の手がかりも無い旧データは履歴の発言に任せる
+//
+// 表示契約: この関数が読む指示の項目は INSTRUCTION_FIELDS。ホストの経過の読み出し
+// （core/remote/agent-view.mjs の viewInstructions）・手元の射影（core/ops/delegation.mjs の
+// delegation.instructions の uiHandler）・ホストが send の応答に添える記録（server.mjs の remoteAgentInvoke）は、
+// すべて同じ instructionView で作る
+export const INSTRUCTION_FIELDS = Object.freeze(['id', 'at', 'state', 'text', 'deliveryId', 'nativeId', 'anchor', 'nextTurn']);
+/** 指示の記録を表示契約の形にする。clipText で本文を絞れる（ホストの読み出しは口の上限に収めるため切る） */
+export function instructionView(x, clipText = s => s) {
+  return {
+    id: String(x?.id), at: x?.at ?? null, state: String(x?.state ?? ''), text: clipText(String(x?.text ?? '')),
+    ...(x?.deliveryId ? { deliveryId: String(x.deliveryId) } : {}),
+    ...(x?.nativeId ? { nativeId: String(x.nativeId) } : {}),
+    ...(x?.anchor && typeof x.anchor === 'object' && typeof x.anchor.v === 'string' ? { anchor: { kind: String(x.anchor.kind), v: String(x.anchor.v) } } : {}),
+    ...(x?.nextTurn ? { nextTurn: true } : {}),
+  };
+}
+
 export function injectTaskInstructions(instructions = [], messages = []) {
   const byId = new Map((instructions ?? []).filter(Boolean).map(i => [i.id, i]));
   const anchored = new Set();

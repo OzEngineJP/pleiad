@@ -9,7 +9,7 @@
 // 端末の AI が呼べる道具からは answer・view を作れない（端末側の守りと、口の種類の分離。docs/remote.md §4.5）。
 import crypto from 'node:crypto';
 import { RESET_CODE } from './frames.mjs';
-import { AGENT_OPS, AGENT_LIMITS, AGENT_PROTO, AgentError, normalizeRequester, normalizeAnswerExtras, relayReceipt, sameReceipt } from './agent-protocol.mjs';
+import { AGENT_OPS, AGENT_LIMITS, AGENT_PROTO, AGENT_FEATURES, AgentError, normalizeRequester, normalizeAnswerExtras, relayReceipt, sameReceipt } from './agent-protocol.mjs';
 
 const idOk = v => typeof v === 'string' && v.length >= 1 && v.length <= 64 && !/[\0\r\n]/.test(v);
 
@@ -190,7 +190,7 @@ export function createAgentPort({ allowed = () => false, hostName = () => '', in
       stream.on('reset', drop);
       stream.accept().then(() => {
         const ok = allowed(device.id);
-        sendTo(conn, { t: 'ready', v: AGENT_PROTO, allowed: ok, hostName: hostName(), view: typeof view === 'function', limits: { active: lim.active, perMinute: lim.perMinute } });
+        sendTo(conn, { t: 'ready', v: AGENT_PROTO, allowed: ok, hostName: hostName(), view: typeof view === 'function', features: { ...AGENT_FEATURES }, limits: { active: lim.active, perMinute: lim.perMinute } });
         if (ok) sendTo(conn, { t: 'relays', relays: relaysOf(device.id) });
       }).catch(() => drop());
     },

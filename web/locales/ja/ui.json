@@ -2531,6 +2531,7 @@
       "hostOfflineCatchUp": "{{time}} までの分 · つながり直すと追いつきます",
       "hostOfflineCatchUpNoTime": "つながり直すと追いつきます",
       "hostViewUnsupported": "このホストは経過を読めません（ホストの Pleiad を新しくすると見えます）",
+      "hostOldInstructions": "ホストの Pleiad が古いため、追加の指示は次のターンに届き、受け付けた位置ではなく末尾付近に出ます（ホストの Pleiad を新しくしてください）",
       "hostViewDenied": "ホストが AI からの依頼を受けていません",
       "hostViewNotFound": "ホストにこのタスクが見つかりません",
       "hostViewTooLarge": "経過が大きすぎて運べません",

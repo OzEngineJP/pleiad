@@ -11,6 +11,46 @@ export const AGENT_OPS = Object.freeze(['delegate', 'status', 'wait', 'send', 'c
 export const AGENT_LIMITS = Object.freeze({ active: 8, perMinute: 20, messageBytes: 256 * 1024, pending: 32, portsPerDevice: 4, pendingPerDevice: 64, viewsPerConn: 4 });
 /** 完了した便りに載せる結果の長さ（ply_task_status の 1 ページと同じ） */
 export const RESULT_PAGE = 16_000;
+/** ホストが ready で名乗る機能の印（口の版 AGENT_PROTO は上げず、追加の能力はここに足す。古い端末は知らない項目を無視する） */
+export const AGENT_FEATURES = Object.freeze({
+  instructionAnchor: true,   // 経過の読み出しが、追加の指示の受付位置（anchor・taskInstruction の印の行）を運ぶ
+  instructionSteer: true,    // send が走っている子のターンへ即座に渡す（次のターン送りにならない）
+});
+/** 端末が受け取った features を正規化する（知っている印だけ・boolean に）。古いホスト（features 無し）は全部 false */
+export function normalizeAgentFeatures(value) {
+  const f = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return Object.fromEntries(Object.keys(AGENT_FEATURES).map(k => [k, f[k] === true]));
+}
+
+/**
+ * タスクの便り（{ t:'task' } の task・delegate/status/wait/send/cancel の応答の task）の項目と、端末の写し（台帳の行）の項目の対応の正本。
+ * 送る側（core/server.mjs の remoteTaskEvent）・写す側（core/remote-delegation.mjs の patchOf）・受ける側（core/agent-tasks.mjs の MIRROR_FIELDS）は
+ * すべてここから導く（写しに載せる項目を足す・変えるときは、この表を変える）。
+ *   wire   便りの項目の名前
+ *   mirror 写しの項目の名前（省略は便りと同じ。載せない項目は書かない）
+ *   plain  true は値をそのまま写す（便りに無ければ写しから消す）。省略は値の畳み方が項目ごとに違う（status は見せかけの判定、
+ *          result は終わったものだけ、routing は形を直す、telemetry は活動の写しの各項目へ分ける）ので、写す側の個別の処理が持つ
+ */
+export const REMOTE_TASK_FIELDS = Object.freeze([
+  { wire: 'taskId' },                  // 写しの鍵（写しの項目ではない）
+  { wire: 'requesterSessionId' },      // 端末自身の会話（写しには載せない）
+  { wire: 'notification' },            // 通知の状態は端末側で決める（写さない）
+  { wire: 'createdAt' }, { wire: 'updatedAt' },   // 写しは自分の時刻を持つ
+  { wire: 'title', plain: true },
+  { wire: 'status', mirror: 'hostWaiting' },      // 'waiting' の見せかけ → 写しの hostWaiting
+  { wire: 'rawStatus', mirror: 'status' },        // 便りの rawStatus（無ければ status）が写しの status
+  { wire: 'error', plain: true },
+  { wire: 'backend', plain: true }, { wire: 'model', plain: true }, { wire: 'effort', plain: true },
+  { wire: 'mode', plain: true }, { wire: 'cwd', plain: true },
+  { wire: 'sessionId', mirror: 'remoteSessionId', plain: true },   // ホストでの会話
+  { wire: 'worktree', plain: true },
+  { wire: 'routing', mirror: 'routing' },         // 形を直して写す（mode:'host'・decidedBy:'host'）
+  { wire: 'result', mirror: 'result' }, { wire: 'resultLength', mirror: 'resultLength' },   // 終わったものだけ
+  { wire: 'instructionRevision', plain: true },   // 追加の指示の記録の変化の番号（端末の強制再読みに使う）
+  { wire: 'pendingMessages', mirror: 'hostPendingMessages', plain: true },   // ホストで待機中の追加指示の件数
+  { wire: 'telemetry', mirror: ['hostTelemetry', 'hostLockWaiting', 'hostBackground', 'lastActivityAt', 'lastOutputAt', 'activeCommands'] },
+]);
+
 /** 仮の親の ID。端末の会話の ID はホストに無いので、この形で「祖先」として扱う（ADR 0146） */
 export const REMOTE_OWNER_PREFIX = 'remote:';
 

@@ -16,9 +16,10 @@ import { createAgentPort } from '../../core/remote/agent-port.mjs';
 import { viewMessages, viewCursor, trimViewMessage, viewAnswer, viewInstructions, pickDescendants, VIEW_LIMITS } from '../../core/remote/agent-view.mjs';
 import { maskOutput, MASK } from '../../core/ops/registry.mjs';
 import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale, hostRowRunning, HOST_ROW_STALE_MS } from '../../web/host-view.mjs';
-import { injectTaskInstructions } from '../../web/task-instructions.mjs';
+import { injectTaskInstructions, instructionView, INSTRUCTION_FIELDS } from '../../web/task-instructions.mjs';
+import { streamMessages } from '../../web/stream-messages.mjs';
 import { createCardRoll } from '../../web/card-roll.mjs';
-import { AGENT_OPS, AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
+import { AGENT_OPS, AGENT_LIMITS, REMOTE_TASK_FIELDS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
 
 export const name = 'remote-agent';
 export const title = '端末の AI からの委譲の口（/agent）: 許可・防火壁・委譲と状態・承認モード・上限・承認の中継と人の答え・取り消し';
@@ -218,6 +219,7 @@ export default async function (t) {
     await sleep(10);
     const ask = async (msg) => { const before = sent.length; handlers.message(Buffer.from(JSON.stringify(msg)), true, () => {}); await sleep(30); return sent.slice(before).find(m => m.t === 'viewed'); };
     t.ok('ready に view: true（読み出しを知っているホスト）が載る', sent.find(m => m.t === 'ready')?.view === true);
+    t.ok('ready に機能の印（features。指示の受付位置・即時配送）が載る。口の版（v）は据え置き', (() => { const r = sent.find(m => m.t === 'ready'); return r?.v === 1 && r.features?.instructionAnchor === true && r.features?.instructionSteer === true; })(), JSON.stringify(sent.find(m => m.t === 'ready')));
     const ok = await ask({ t: 'view', id: 'v1', taskId: 'ply-task-1', cursor: { from: 2, check: 7, extra: 'x' } });
     t.ok('許可のある端末の読み出しは、deps.view に端末・taskId・cursor（from・check だけ）で渡る', ok.ok === true && calls[0].device.id === 'dV' && calls[0].taskId === 'ply-task-1' && JSON.stringify(calls[0].cursor) === JSON.stringify({ from: 2, check: 7 }));
     const rec = audits.find(a => a.op === 'view');
@@ -233,6 +235,50 @@ export default async function (t) {
     h2.message(Buffer.from(JSON.stringify({ t: 'view', id: 'v5', taskId: 'x' })), true, () => {});
     await sleep(30);
     t.ok('読み出しを持たない口は ready に view が無く、読み出しは UNSUPPORTED', sent2.find(m => m.t === 'ready')?.view === false && sent2.find(m => m.t === 'viewed')?.code === 'UNSUPPORTED');
+  }
+
+  // ---- 追加指示の表示契約（web/task-instructions.mjs の INSTRUCTION_FIELDS）と受付位置の印の行の存続
+  {
+    const rec = { id: 'i1', at: 1700, state: 'delivered', text: 'ついでに', deliveryId: 'task-send-i1', nativeId: 'u9', anchor: { kind: 'uuid', v: 'u3' }, nextTurn: true, internal: 'x' };
+    const v = viewInstructions([rec])[0];
+    t.ok('viewInstructions は表示契約の項目だけを運ぶ（内部の項目は出さない）',
+      Object.keys(v).every(k => INSTRUCTION_FIELDS.includes(k)) && v.id === 'i1' && v.deliveryId === 'task-send-i1' && v.nativeId === 'u9' && v.anchor?.v === 'u3' && v.nextTurn === true && v.internal === undefined, JSON.stringify(v));
+    const local = instructionView(rec);
+    t.ok('ローカル側の射影（delegation.instructions の uiHandler）も同じ形を作る', JSON.stringify(Object.keys(local).sort()) === JSON.stringify(Object.keys(v).sort()));
+    // 受付位置の印の行（streamMessages が畳む taskInstructionId の行）は、絞り込み（trimViewMessage・枠だけになる frameMessage）を通っても落ちない
+    const marker = trimViewMessage({ role: 'user', taskInstructionId: 'i1', text: 'ついでに', at: '2026-10-20T00:00:00.000Z' });
+    t.ok('指示の受付位置の印（taskInstructionId の行）は絞り込みを通っても残る', marker?.taskInstructionId === 'i1');
+    const framed = trimViewMessage({ role: 'user', taskInstructionId: 'i1', text: 'x'.repeat(200 * 1024), toolCalls: Array.from({ length: 80 }, (_, i) => ({ id: `c${i}`, name: 'Bash', input: { command: 'y'.repeat(60 * 1024) } })) });
+    t.ok('大きすぎる発言を絞っても印は残る', framed?.taskInstructionId === 'i1');
+  }
+
+  // ---- ホストの読み出しの答え → 端末の joinHostView → injectTaskInstructions（受付位置への差し込み）の往復。
+  // 現行同士と、旧ホスト（項目・marker 欠落）の 2 組で確かめる
+  {
+    const instructions = [{ id: 'i1', text: 'ついでに', at: 1000, state: 'delivered', deliveryId: 'task-send-i1', anchor: { kind: 'uuid', v: 'u-a' } }];
+    const hostAll = [{ role: 'assistant', text: 'まず', uuid: 'u-a' }, ...streamMessages([
+      { type: 'taskInstruction', instructionId: 'i1', text: 'ついでに', at: 1000 },
+      { type: 'text.delta', text: 'つづき' }, { type: 'text.end' },
+    ]).messages];
+    const answer = viewAnswer(hostAll, null, { task: { taskId: 't' }, sessionId: 's', instructions: viewInstructions(instructions) });
+    const held = joinHostView({ base: 0, messages: [], sigs: [] }, maskOutput(answer));
+    const markerAt = held.messages.findIndex(m => m.taskInstructionId === 'i1');
+    const merged = injectTaskInstructions(answer.instructions, held.messages);
+    const insAt = merged.findIndex(m => m.role === 'instruction');
+    t.ok('現行同士: view の印の行→joinHostView→差し込みで、指示の行が受付位置に出る（末尾固定ではない）',
+      markerAt >= 0 && insAt === markerAt && merged.at(-1)?.role !== 'instruction', JSON.stringify({ markerAt, insAt, n: merged.length }));
+    // 続きの読み出し（cursor）でも位置が保つ
+    const again = viewAnswer(hostAll, viewCursor(answer.from, answer.messages), { task: { taskId: 't' }, sessionId: 's', instructions: viewInstructions(instructions) });
+    const held2 = joinHostView(held, maskOutput(again));
+    const merged2 = injectTaskInstructions(again.instructions, held2.messages);
+    t.ok('cursor の続きの読み出しでも指示の行が受付位置に残る', merged2.findIndex(m => m.role === 'instruction') === held2.messages.findIndex(m => m.taskInstructionId === 'i1'), JSON.stringify({ full: again.full, n: held2.messages.length }));
+    // 旧ホスト（0.30.1 前）: 指示は {id,at,state,text} のみ・発言に印の行は無い
+    const oldIns = instructions.map(({ id, at, state, text }) => ({ id, at, state, text }));
+    const oldMsgs = held.messages.filter(m => !m.taskInstructionId);
+    const mergedOld = injectTaskInstructions(oldIns, oldMsgs);
+    t.ok('旧ホストの形では delivered の指示は行を出さない（履歴の発言が引き継ぐ現行フォールバック）', mergedOld.every(m => m.role !== 'instruction') && mergedOld.length === oldMsgs.length);
+    const mergedOldQ = injectTaskInstructions(oldIns.map(x => ({ ...x, state: 'queued' })), oldMsgs);
+    t.ok('旧ホストの形では queued の指示は受付時刻の位置に挿入される', mergedOldQ.some(m => m.role === 'instruction'));
   }
 
   // ---- 口だけの部品（サーバーなし）: 頻度の上限
@@ -315,6 +361,9 @@ export default async function (t) {
     const done1 = await a0.next(e => e.t === 'task' && e.task.taskId === taskId && e.task.status === 'completed', 15_000, '完了の便り');
     t.ok('完了すると task の便りで結果（最初のページ）が届く', done1.task.result === 'HELLO' && done1.task.resultLength === 5, JSON.stringify(done1.task).slice(0, 200));
     t.ok('承認モードは依頼元（都度確認）に合わせた', done1.task.mode === 'default');
+    const wireKeys = Object.keys(done1.task), declared = new Set(REMOTE_TASK_FIELDS.map(f => f.wire));
+    t.ok('task の便りの項目は REMOTE_TASK_FIELDS の wire と一致する（telemetry は走っているときだけの任意の項目）',
+      wireKeys.every(k => declared.has(k)) && [...declared].every(k => k === 'telemetry' || wireKeys.includes(k)), wireKeys.sort().join());
     const rows1 = await hostRows();
     const row1 = rows1.find(r => r.taskId === taskId);
     t.ok('ホストの台帳の親は仮の ID（remote:<deviceId>:<端末の会話>）で、出どころ（requester）が残る',
@@ -330,7 +379,7 @@ export default async function (t) {
     const stOther = await a0.call('status', { taskId }, requesterOf('conv-B'));
     t.ok('別の端末の会話の taskId は見えない（所有の判定は仮の親の ID で行う）', stOther.ok === false, JSON.stringify(stOther));
     const send1 = await a0.call('send', { taskId, message: 'echo:AGAIN' }, req1);
-    t.ok('send で同じ子に追加の指示が届く', send1.ok, JSON.stringify(send1));
+    t.ok('send で同じ子に追加の指示が届く（答えには受け付けた指示の記録が添える）', send1.ok && send1.result.instruction?.text === 'echo:AGAIN', JSON.stringify(send1.result?.instruction ?? send1));
     const done2 = await a0.next(e => e.t === 'task' && e.task.taskId === taskId && e.task.status === 'completed' && e.task.result === 'AGAIN', 15_000, '追加の指示の完了');
     t.ok('追加の指示の結果も便りで届く', Boolean(done2));
     const sendSettings = await a0.call('send', { taskId, message: 'x', model: 'fast' }, req1);
