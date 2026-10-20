@@ -126,7 +126,7 @@ export const settings = [
     normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.suggestions: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('composerSuggestions', v) }),
   // Pleiad Plus の画面の記憶（docs/plus.md）。ログイン時に両方へ仮想のキー plus を選んだ案内を閉じた印（plus.autoNoticeSeen）
-  defineSetting({ key: 'plus', summary: S('plus'), risk: 'write', riskReason: `Dismissed notices for Pleiad Plus. ${WRITE_ABOUT}`,
+  defineSetting({ key: 'plus', sync: false, summary: S('plus'), risk: 'write', riskReason: `Dismissed notices for Pleiad Plus. ${WRITE_ABOUT}`,
     prefKeys: ['plus'], schema: loose, default: {}, read: async (ctx) => (await prefs(ctx)).plus ?? {},
     normalize: (ctx, v) => { if (v === null) return { after: null }; if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).some(k => k !== 'autoNoticeSeen' || typeof v[k] !== 'boolean')) throw invalid(ctx, 'plus: {autoNoticeSeen:boolean}'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('plus', v) }),

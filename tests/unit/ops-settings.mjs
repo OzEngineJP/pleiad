@@ -87,6 +87,7 @@ export default async function (t) {
 
   // ---- Plus の同期（sync）: 全部の設定に同期するかの判断が書いてある（docs/plus.md「同期」の表と同じ）。設定を足したらこの表にも足す
   const SYNC_TABLE = [
+    ['plus', false, 'Pleiad Plus の案内を閉じた印。その PC の画面の記憶なので運ばない'],
     ['locale', true, '表示の言語。どの PC でも同じでよい'],
     ['linkOpen', true, 'リンクを開く場所の好み'],
     ['instructionBudget', true, '指示の量の目安の表示'],
