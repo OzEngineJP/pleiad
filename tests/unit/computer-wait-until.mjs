@@ -323,11 +323,15 @@ export default async function (t) {
     t.ok('前面が操作できないアプリ: 画面を送らず、unverified・protected_app', or.records.decisions.length === before && mark(r4).wait.status === 'unverified' && mark(r4).wait.reason === 'protected_app'
       && mark(r4).wait.screen === 'stable' && mark(r4).wait.checks === 0 && body(r4).includes('Windows Terminal') && !h2.driver.calls.some(c => c.op === 'screenshot' && !c.args.gray), JSON.stringify(mark(r4).wait) + ' ' + body(r4));
     h2.driver.setForeground(FAKE_APPS.pleiad);
-    t.ok('Pleiad 自身が前面でも送らない', mark(await callB({ until: 'Is it done?' })).wait.reason === 'protected_app' && or.records.decisions.length === before);
+    answers.push(0.9);
+    const pleiad = await callB({ until: 'Is it done?' });
+    t.ok('Pleiad が前面なら問いを送れる', mark(pleiad).wait.status === 'success' && or.records.decisions.length === before + 1);
+    h2.driver.setForeground(FAKE_APPS.terminal);
+    const protectedBefore = or.records.decisions.length;
     h2.driver.setFrames(n => (n % 2 ? 0 : 255));
     const r4b = await callB({ until: 'Is it done?', timeout: 3 });
-    t.ok('前面が操作できないアプリ・動き続ける画面: 定期の問いも送らず timeout（「前面が操作できないアプリ」と書く）', or.records.decisions.length === before && mark(r4b).wait.status === 'timeout'
-      && mark(r4b).wait.checks === 0 && body(r4b).includes('前面が操作できないアプリ（Pleiad'), body(r4b));
+    t.ok('前面が操作できないアプリ・動き続ける画面: 定期の問いも送らず timeout（「前面が操作できないアプリ」と書く）', or.records.decisions.length === protectedBefore && mark(r4b).wait.status === 'timeout'
+      && mark(r4b).wait.checks === 0 && body(r4b).includes('前面が操作できないアプリ（Windows Terminal'), body(r4b));
     h2.driver.setForeground(FAKE_APPS.notepad);
 
     const r5 = await callB({ until: 'Is it done?', timeout: 1.2 });

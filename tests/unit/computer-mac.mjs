@@ -138,7 +138,10 @@ export default async function(t) {
     const info = apps.toAppInfo({ pid: 5, bundleId: 'com.apple.TextEdit', bundlePath: '/System/Applications/TextEdit.app', name: 'テキストエディット' });
     assert.equal(info.id, 'bundle:com.apple.TextEdit'); assert.equal(info.self, false);
     assert.equal(apps.toAppInfo({ pid: 99, executable: '/dev/Electron' }).self, true);
-    assert.equal(apps.toAppInfo({ bundleId: 'jp.ply.desktop.helper', executable: '/helper' }).self, true);
+    const ownApp = apps.toAppInfo({ bundleId: 'jp.ply.desktop', executable: '/Applications/Pleiad.app/Contents/MacOS/Pleiad' });
+    assert.equal(ownApp.self, true); assert.equal(isForbiddenApp(ownApp), false);
+    const ownHelper = apps.toAppInfo({ bundleId: 'jp.ply.desktop.helper', executable: '/helper' });
+    assert.equal(ownHelper.self, true); assert.equal(isForbiddenApp(ownHelper), false);
     for (const bundle of ['com.apple.Terminal', 'com.apple.keychainaccess', 'com.apple.shortcuts', 'com.openai.chat']) assert.equal(isForbiddenApp({ id: `bundle:${bundle}` }), true);
     assert.equal(isHighRiskApp({ id: 'bundle:com.apple.finder' }), true);
     t.ok('bundle の識別・Pleiad 自身・禁止と高リスクのアプリ', true);

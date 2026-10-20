@@ -362,7 +362,7 @@
       "enable": "エージェントに PC のアプリを操作させる",
       "enableNote": "Claude・Codex・Antigravity の会話で使えます。操作の間は、マウスとキーボードをエージェントが使います。Esc で止められます。",
       "allowAll": "すべてのアプリを許可",
-      "allowAllNote": "承認を聞かずに、どのアプリも操作させます。ただし下の「操作できないアプリ」（ターミナル・パスワード管理・セキュリティソフト・Pleiad 自身など）は、オンでも操作できません。",
+      "allowAllNote": "承認を聞かずに、どのアプリも操作させます。ただし下の「操作できないアプリ」（ターミナル・パスワード管理・セキュリティソフト・エージェント自身など）は、オンでも操作できません。",
       "antigravity": "Antigravity では承認を聞きません。確認なしでしか動かないため、操作できないアプリ以外は承認なしで操作されます。",
       "allowedTitle": "常に許可したアプリ",
       "allowedAll": "すべて許可中",
@@ -375,7 +375,7 @@
         "password": { "name": "パスワード管理", "apps": "1Password、Bitwarden、KeePass、LastPass ほか" },
         "security": { "name": "セキュリティ", "apps": "Windows セキュリティ、ウイルス対策ソフト" },
         "system": { "name": "Windows の内部", "apps": "ロック画面、スタート、検索、ユーザー アカウント制御" },
-        "agent": { "name": "エージェント自身", "apps": "Pleiad、Claude、Codex、ChatGPT、Antigravity" }
+        "agent": { "name": "エージェント自身", "apps": "Claude、Codex、ChatGPT、Antigravity" }
       },
       "unsupported": {
         "desktop": "デスクトップ版の Pleiad で使えます。この起動では PC のアプリを操作できません。",

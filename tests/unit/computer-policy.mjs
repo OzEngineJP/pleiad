@@ -42,7 +42,16 @@ export default async function(t) {
     && d({ app: terminal, sessionApps: [terminal.id] }) === want && d({ app: terminal, approvals: 'none' }) === want
     && d({ app: terminal, prefs: { computerUse: { alwaysAllowed: [row(terminal)] } } }) === want));
   t.ok('禁止は拒否済みより先に効く（denied ではなく forbidden）', d({ app: terminal, deniedThisTurn: new Set([terminal.id]) }) === 'forbidden');
-  t.ok('Pleiad 自身（self）は禁止', d({ app: FAKE_APPS.pleiad, mode: BYPASS }) === 'forbidden' && isForbiddenApp({ id: 'exe:c:/x/whatever.exe', self: true }));
+  const pleiadApps = [FAKE_APPS.pleiad, exe('C:/Apps/Pleiad.exe'), exe('C:/dev/Electron.exe', { self: true }),
+    { id: 'bundle:jp.ply.desktop', kind: 'bundle', name: 'Pleiad', self: true },
+    { id: 'bundle:jp.ply.desktop.helper', kind: 'bundle', name: 'Pleiad Helper', self: true }];
+  t.ok('Pleiad は Windows・macOS・開発版とも通常の承認対象', pleiadApps.every(app => !isForbiddenApp(app) && d({ app }) === 'ask'
+    && d({ app, mode: BYPASS }) === 'allow' && d({ app, sessionApps: [app.id] }) === 'allow'
+    && d({ app, prefs: { computerUse: { alwaysAllowed: [row(app)] } } }) === 'allow'
+    && d({ app, prefs: { computerUse: { allowAllApps: true } } }) === 'allow'
+    && d({ app, deniedThisTurn: new Set([app.id]), mode: BYPASS }) === 'denied'));
+  t.ok('self は禁止一覧の判定を変えない', !isForbiddenApp({ id: 'exe:c:/x/whatever.exe', self: true })
+    && isForbiddenApp({ ...terminal, self: true }));
   t.ok('アプリが分からない（null）は forbidden に倒す', d({ app: null }) === 'forbidden');
 
   // ---- 禁止の一覧
@@ -53,7 +62,7 @@ export default async function(t) {
     'C:\\Program Files\\Avast Software\\Avast\\AvastUI.exe', 'C:\\Windows\\System32\\consent.exe', 'C:\\Windows\\SystemApps\\Microsoft.LockApp_cw5n1h2txyewy\\LockApp.exe',
     'C:\\Windows\\SystemApps\\ShellExperienceHost_cw5n1h2txyewy\\ShellExperienceHost.exe', 'C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe',
     'C:\\Windows\\SystemApps\\StartMenuExperienceHost.exe', 'C:\\Program Files\\Common Files\\microsoft shared\\ink\\TextInputHost.exe',
-    'C:\\Users\\x\\AppData\\Local\\Programs\\claude\\claude.exe', 'C:\\Users\\x\\.codex\\bin\\codex.exe', 'C:\\Users\\x\\AppData\\Local\\agy\\agy.exe', 'C:\\Users\\x\\AppData\\Local\\Programs\\Pleiad\\Ply.exe',
+    'C:\\Users\\x\\AppData\\Local\\Programs\\claude\\claude.exe', 'C:\\Users\\x\\.codex\\bin\\codex.exe', 'C:\\Users\\x\\AppData\\Local\\agy\\agy.exe',
   ];
   t.ok('ターミナル・パスワード管理・セキュリティソフト・Windows の内部・エージェント自身の exe は禁止', forbidden.every(p => isForbiddenApp(exe(p))), forbidden.filter(p => !isForbiddenApp(exe(p))).join(', '));
   const forbiddenAumid = ['Microsoft.WindowsTerminal_8wekyb3d8bbwe!App', 'Microsoft.LockApp_cw5n1h2txyewy!WindowsDefaultLockScreen', 'Microsoft.SecHealthUI_8wekyb3d8bbwe!SecHealthUI', 'AgileBits.1Password_abc!App', 'Claude_pzs8sxrjxfjjc!Claude', 'OpenAI.Codex_2p2nqsd0c76g0!App'];
