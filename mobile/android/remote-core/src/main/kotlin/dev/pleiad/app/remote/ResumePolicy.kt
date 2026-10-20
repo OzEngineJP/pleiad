@@ -11,6 +11,15 @@ data class ResumeDecision(val hostId: String?, val forget: Boolean)
  * forgotten, so it is not checked again at every start.
  */
 object ResumePolicy {
+    /**
+     * Whether the intent that reached the shell is a launcher (re)start: ACTION_MAIN and not launched from history.
+     * A singleTask root gets the launcher intent in onNewIntent when the task is brought forward again (the activities
+     * above it — the host window — have already been finished), so both onCreate and onNewIntent check this.
+     * Intent.ACTION_MAIN is "android.intent.action.MAIN"; kept as a literal so remote-core stays free of android deps.
+     */
+    fun isLauncherStart(action: String?, launchedFromHistory: Boolean): Boolean =
+        action == "android.intent.action.MAIN" && !launchedFromHistory
+
     fun decide(saved: String?, hosts: List<HostRecord>, freshStart: Boolean, launcherStart: Boolean): ResumeDecision {
         if (saved.isNullOrEmpty()) return ResumeDecision(null, false)
         val host = hosts.find { it.hostId == saved }
