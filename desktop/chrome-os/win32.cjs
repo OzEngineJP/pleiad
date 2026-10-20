@@ -769,11 +769,77 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     guard = null;
   }
 
+  /**
+   * 既定のブラウザーが Chrome 系か（HKCU の UserChoice の ProgId が ChromeHTML・ChromeBHTML・ChromeDHTML・ChromeSSHTM。
+   * 利用者ごとの導入では「ChromeHTML.<接尾辞>」）。scheme が 'html' なら HTML のファイル（openPath）の関連付け、ほかは URL のスキーム。
+   * 新しい Windows 11 が書く UserChoiceLatest を先に見る。読めない・ほかのブラウザー（MSEdgeHTM・FirefoxURL など）のときは false（無闇に Chrome の窓を前に出さない）
+   */
+  function defaultIsChrome(scheme) {
+    const base = scheme === 'html'
+      ? 'Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.html'
+      : `Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\${scheme === 'http' || scheme === 'http:' ? 'http' : 'https'}`;
+    let progId = null;
+    for (const key of [`${base}\\UserChoiceLatest\\ProgId`, `${base}\\UserChoiceLatest`, `${base}\\UserChoice`]) {
+      try { progId = win32.registryString?.('HKCU', key, 'ProgId') ?? null; } catch { progId = null; }
+      if (typeof progId === 'string' && progId) break;
+    }
+    return typeof progId === 'string' && /^Chrome(?:HTML|BHTML|DHTML|SSHTM)(?:\.|$)/i.test(progId);
+  }
+
+  /**
+   * shell.openExternal で既定のブラウザーへ URL を渡す直前の下準備（main が呼ぶ。core からの口は無い）。
+   * Chrome は受け取った URL を「最後にアクティブだった窓」で開く。エージェントの窓は作られた瞬間に一度アクティブになり、
+   * そのまま隠すと last-active が見えない窓に残るので、URL は見えない窓に開いてしまう（実機で再現）。
+   * 最後に使われていた、見える（conceal していない）Chrome の窓を前面にして last-active を戻す。
+   * 何もしない条件（{ ok: false } で返る）: 隠している窓が無い・トグルを入れる窓（ghost）の操作中・
+   * 既定のブラウザーが Chrome 系でない・隠した窓と同じ Chrome に見える窓が無い。前に出せなければ reason: 'raise'（呼び出し側はそのまま開く）。
+   * 前に出した窓は隠した窓ではないので、前面の見張り（guardBody）は取り戻さない。
+   * scheme: 'http' | 'https'（URL）・'html'（HTML のファイルを openPath で開く）
+   */
+  function raiseVisibleBrowser({ scheme = 'https' } = {}) {
+    const hidden = new Set();
+    let ghost = false;
+    for (const entry of refs.values()) {
+      if (entry.kind !== 'agent') continue;
+      if (entry.ghost) ghost = true;
+      if (entry.concealed) hidden.add(entry.hwnd);
+    }
+    if (!hidden.size) return { ok: false, reason: 'no-hidden' };
+    if (ghost) return { ok: false, reason: 'busy' };
+    if (!defaultIsChrome(scheme)) return { ok: false, reason: 'browser' };
+    // 隠した窓を持つ Chrome（プロセス）の窓だけを見る。別の User Data で起こした Chrome に隠しているなら、既定のブラウザーの last-active は動いていないので触らない
+    const pids = new Set();
+    for (const hwnd of hidden) { try { pids.add(win32.windowInfo(hwnd).pid); } catch { /* 閉じた窓 */ } }
+    // 見える Chrome の窓: 隠した窓（記録と、窓に残るスタイルの両方）でも、Edge・見えない・cloaked の窓でもないもの。最小化は含める（出すときに戻す）
+    const eligible = new Set();
+    const listed = [];
+    for (const { hwnd, info, exe } of browserWindows()) {
+      if (exe !== 'chrome.exe' || !info.visible || info.cloaked || concealStyled(info)) continue;
+      if (pids.size && !pids.has(info.pid)) continue;
+      const entry = refs.get(String(hwnd));
+      if (entry?.kind === 'agent' && entry.concealed) continue;
+      eligible.add(hwnd); listed.push(hwnd);
+    }
+    if (!eligible.size) return { ok: false, reason: 'no-visible' };
+    // 「最後に使われていた」窓は、見張りが持つ前面の履歴（その窓が前面になる直前の前面の鎖）を新しい順にたどる。尽きたら窓の列挙（Z 順）の先頭から
+    const order = [];
+    const push = hwnd => { if (eligible.has(hwnd) && !order.includes(hwnd)) order.push(hwnd); };
+    for (let hwnd = current, hop = 0; hwnd && hop < 8; hwnd = before.get(hwnd) ?? 0, hop += 1) push(hwnd);
+    for (const hwnd of listed) push(hwnd);
+    for (const hwnd of order) {
+      try {
+        const method = bring(hwnd);
+        if (method !== 'failed') { log(`raise visible browser method=${method}`); return { ok: true, method }; }
+      } catch { /* 次の窓を試す */ }
+    }
+    return { ok: false, reason: 'raise' };
+  }
+
   return {
     capabilities: () => ({ supported: true, reason: null, features: FEATURES }),
     snapshotWindows, findPermissionDialog, raise, yieldForeground, foreground, appWindow, close, allowPermission, enableRemoteDebugging, bounds, watch,
     locateBrowser, launchWindow, findWindowByNonce, findWindowByBounds, hiddenSpot, conceal, reveal, release, closeAgent,
-    exportAgent, adoptAgent, reconceal, closeAllAgents,
+    exportAgent, adoptAgent, reconceal, closeAllAgents, raiseVisibleBrowser,
     /** テスト用: 見張りを 1 回だけ回す・止める */
     guardTick, stopGuard,
   };

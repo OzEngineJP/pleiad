@@ -45,6 +45,7 @@ function createChromeOs({ platform = process.platform, win32 = null, mac = null,
     adoptAgent: () => null,
     reconceal: () => 0,
     closeAllAgents: () => 0,
+    raiseVisibleBrowser: () => ({ ok: false, reason: 'unsupported' }),
   };
 }
 

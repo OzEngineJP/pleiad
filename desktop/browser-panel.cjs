@@ -175,9 +175,15 @@ function uniquePath(dir, name, exists = fs.existsSync) {
  * @param {object} deps
  *   window: 本体の BrowserWindow。WebContentsView・BrowserWindow・session・shell・ipcMain・app は electron のもの（テストでは偽物）
  *   trust: desktop/window-trust.cjs。icon: 別の窓のアイコン
+ *   openExternal: URL を既定のブラウザーで開く（desktop/main.cjs の external。隠した Chrome の窓に開かれないよう、
+ *     先に見える Chrome の窓を前面にしてから shell.openExternal する）。省けば素の shell.openExternal（テスト用）
+ *   beforeBrowserOpen: HTML のファイルを既定のブラウザーで開く直前の下準備（openPath も同じ「最後にアクティブな窓」の問題を踏む）
  */
 function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon, log = () => {}, now,
-  dataDir = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host'), realpath = fs.realpathSync }) {
+  dataDir = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), '.agent-host'), realpath = fs.realpathSync,
+  openExternal = null, beforeBrowserOpen = null }) {
+  // 既定のブラウザーで開く出口（desktop/main.cjs の external と同じ約束: 開けたら true、失敗は呼び出し側でログに残して false）
+  const toDefaultBrowser = typeof openExternal === 'function' ? openExternal : url => Promise.resolve(shell.openExternal(url)).then(() => true, () => false);
   const tabs = new Map();          // id -> { id, view, sessionId, detached }
   let order = [];                  // タブの並び（id）
   let current = null;              // 今のタブの id
@@ -568,16 +574,14 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
         const url = externalUrl(loaded);
         if (!url) return { ok: false };
         log('external', url);
-        await shell.openExternal(url).catch(() => {});
-        return { ok: true };
+        return { ok: await toDefaultBrowser(url) };
       }
       // 会話・プレビューのリンクを既定のブラウザーへ（web/link-open.mjs）。本体の窓の setWindowOpenHandler は https しか通さないので、http の localhost もここで渡す
       case 'openExternal': {
         const url = externalUrl(args.url);
         if (!url) return { ok: false };
         log('external', url);
-        await shell.openExternal(url).catch(() => {});
-        return { ok: true };
+        return { ok: await toDefaultBrowser(url) };
       }
       case 'detach': return { ok: detach(tab?.id) };
       case 'clearSiteData': return { ok: await clearSiteData(tab) };
@@ -608,6 +612,7 @@ function createBrowserPanel({ window, WebContentsView, BrowserWindow, session, s
     } catch { return { ok: false }; }
     if (!openFileAllowed()) return { ok: false, reason: 'too-many' };
     log('external', real);
+    await beforeBrowserOpen?.();
     const error = await shell.openPath(real).catch(e => String(e?.message ?? e));
     return error ? { ok: false } : { ok: true };
   }
