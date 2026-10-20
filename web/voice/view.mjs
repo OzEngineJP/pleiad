@@ -95,7 +95,10 @@ export function createNote({ onSettings, onClose }) {
   const open = el('button', 'vc-nb', t('voice.openSettings'));
   open.type = 'button';
   open.onclick = onSettings;
-  text.append(message, open);
+  const account = el('button', 'vc-nb', t('settings.plus.manage'));
+  account.type = 'button';
+  account.hidden = true;
+  text.append(message, account, open);
   const close = el('button', 'vc-nx');
   close.type = 'button';
   close.title = t('voice.note.close');
@@ -107,9 +110,11 @@ export function createNote({ onSettings, onClose }) {
   wrap.append(inner);
   return {
     el: wrap,
-    show(msg, { settings = true } = {}) {
-      message.data = settings ? `${msg} ` : msg;
+    show(msg, { settings = true, account: accountAction = null } = {}) {
+      message.data = settings || accountAction ? `${msg} ` : msg;
       open.hidden = !settings;
+      account.hidden = !accountAction;
+      account.onclick = accountAction?.onclick ?? null;
       root.classList.add('show');
       wrap.classList.add('on');
       wrap.removeAttribute('aria-hidden');

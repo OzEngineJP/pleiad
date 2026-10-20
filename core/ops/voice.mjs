@@ -15,6 +15,8 @@ export const voiceOps = [
     output: z.object({
       hasKey: z.boolean(),
       keyRef: z.string().nullable().optional(),
+      via: z.enum(['plus', 'key']).nullable().optional(),
+      plus: z.object({}).passthrough().nullable().optional(),
       storage: z.object({ encrypted: z.boolean(), backend: z.string().optional(), reason: z.string().optional() }).nullable(),
       today: z.object({ callSeconds: z.number(), sttSeconds: z.number(), ttsChars: z.number() }),
       active: z.number().int(),

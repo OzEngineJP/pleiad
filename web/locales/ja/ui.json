@@ -187,7 +187,8 @@
         "rebind": "つなぎ直す",
         "rebindConfirm": "この PC の鍵を作り直します。自分の中継サーバーでつないだ端末は、ペアリングし直しになります。",
         "rebindYes": "作り直す",
-        "hostLimit": "このアカウントの上限に達しています"
+        "hostLimit": "このアカウントの上限に達しています",
+        "autoNotice": "委譲先の自動選択と音声通話に Pleiad Plus を使います"
       },
     "remote": {
       "tabs": {
@@ -3738,6 +3739,8 @@
       "unset": "キーを選ぶまで、委譲先の自動選択では使われません",
       "selectKey": "キーを選ぶ",
       "selectLabel": "{{service}} に使うキー",
+      "plusNotUsing": "Pleiad Plus を使っていません",
+      "plusLimit": "今月の上限に達しました（{{date}} に戻ります）",
       "note": "キーを選ぶと、委譲の依頼文と種類がそのサービスに送られます。"
     },
     "endpoint": {
@@ -4849,7 +4852,9 @@
       "notSent": "いまは送れませんでした",
       "sentOnLeave": "通話を終えたとき、まとめ待ちだった言葉を、話していた会話へ送りました",
       "start": "通話を始められませんでした ·",
-      "startTimeout": "通話の準備が整いませんでした"
+      "startTimeout": "通話の準備が整いませんでした",
+      "plusLimit": "今月の Pleiad Plus の上限に達したため、通話を始められません。",
+      "plusAccount": "このアカウントでは公式の中継を使えません"
     },
     "settings": {
       "intro": "声で話しかけると、聞き取って会話へ送り、返事を読み上げます。聞き取りと読み上げは OpenRouter を通して行います。",

@@ -16,6 +16,7 @@ import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { kindText, difficultyText, tierText, tierShortText, judgeText, skipText, usageSummary, splitCandidate } from './delegation-routing-view.mjs';
 import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from './api-key-ui.mjs';
+import { keyRadioRow, keyRadioGroup, plusKeyRow, plusRowVisible } from './plus-key-row.mjs';
 import { EFFORT_LEVELS, candidateEffort, tierEffort, withEffort } from './delegation-effort.mjs';
 import { effortSelect, effortFixed } from './effort-select.mjs';
 import { candidateOrder, moveCandidate } from './delegation-order.mjs';
@@ -266,42 +267,55 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   }
 
   function paintKeys() {
-    const out = [el('h3', null, t('apiKeys.delegation.title'))];
+    const out = [el('div', 'rm-gh', t('apiKeys.delegation.title'))];
     const deferred = keyList?.migration?.state === 'deferred';
+    const rows = [];
     for (const service of SERVICES) {
       const name = t(`routing.settings.service.${service}`);
-      const choices = (keyList?.keys ?? []).filter(k => k.provider === service);
-      const current = choices.find(k => k.id === data.keys[service]?.keyRef) ?? null;
-      const card = el('div', 'mp-card rt-key');
-      const row = el('div', 'mp-row');
-      const info = el('div', 'mp-card-info');
-      info.append(el('strong', null, name));
-      if (deferred) info.append(el('small', null, data.keys[service]?.hasKey ? t('apiKeys.deferredInUse') : t('apiKeys.deferredShort')));
-      else if (current) { const small = statusLine(current); small.append(' · ', manageLink(openPage)); info.append(small); }
-      else info.append(el('small', null, t('apiKeys.delegation.unset')));
-      row.append(info);
-      // 移行を保留している間は選び直せない（古い置き場のまま使う。設定 › API キーに理由）
-      if (keyList && !deferred) {
-        const actions = el('div', 'mp-card-actions ak-sels');
-        actions.append(el('span', 'ak-sel-l', t('apiKeys.useKey')), keySelect({ keys: choices, current: current?.id ?? null, label: t('apiKeys.delegation.selectLabel', { service: name }), focusKey: `sel:${service}`,
-          provider: service, choose: id => chooseKey(service, id), register: () => { registering = service; paintKeys(); keys.querySelector('.rt-key-form input')?.focus(); } }).element);
-        row.append(actions);
+      const info = data.keys[service] ?? {};
+      // 仮想のキー「Pleiad Plus」（state: off・AGENT_HOST_PLUS=0 なら行ごと出さない。docs/plus.md「画面の行」）
+      if (plusRowVisible(info.plus)) {
+        const { row } = plusKeyRow({ info: info.plus, checked: info.via === 'plus',
+          onChoose: () => chooseKey(service, 'plus'), onLogin: () => cmd('plusLogin').catch(() => {}) });
+        rows.push(row);
       }
-      card.append(row);
-      if (registering === service && keyList) card.append(registerForm({ provider: service, label: t('routing.settings.keyInput', { service: name }), storage: keyList.storage ?? data.storage, focusKey: `regin:${service}`,
-        onSubmit: value => registerKey(service, value), onCancel: () => { registering = ''; paintKeys(); keys.querySelector(`[data-fk="sel:${service}"]`)?.focus(); } }));
-      out.push(card);
+      // OpenRouter（今の登録の道。選ぶと via: 'key'）
+      const choices = (keyList?.keys ?? []).filter(k => k.provider === service);
+      const current = choices.find(k => k.id === info.keyRef) ?? null;
+      let orRow;
+      if (deferred) {
+        orRow = keyRadioRow({ name, checked: info.via === 'key', disabled: true,
+          sub: info.hasKey ? t('apiKeys.deferredInUse') : t('apiKeys.deferredShort') });
+      } else {
+        const sel = keySelect({ keys: choices, current: current?.id ?? null, noneLabel: choices.length ? undefined : t('apiKeys.delegation.selectKey'),
+          label: t('apiKeys.delegation.selectLabel', { service: name }), focusKey: `sel:${service}`,
+          provider: service, choose: id => chooseKey(service, id),
+          register: () => { registering = service; paintKeys(); keys.querySelector('.rt-key-form input')?.focus(); } });
+        const sub = el('span');
+        if (info.via === 'key' && current) { const small = statusLine(current); small.append(' · ', manageLink(openPage)); sub.append(small); }
+        else if (!current) sub.append(t('apiKeys.delegation.selectKey'));
+        orRow = keyRadioRow({ name, checked: info.via === 'key', disabled: !keyList, sub, end: sel.element,
+          onChoose: () => { sel.open(); }, focusKey: `row:${service}` });
+        // 行のどこを押してもキーの選択を開く（選択そのものは sel 内のクリック）
+        sel.element.addEventListener('click', e => e.stopPropagation());
+      }
+      rows.push(orRow);
+      if (registering === service && keyList) {
+        rows.push(registerForm({ provider: service, label: t('routing.settings.keyInput', { service: name }), storage: keyList.storage ?? data.storage, focusKey: `regin:${service}`,
+          onSubmit: value => registerKey(service, value), onCancel: () => { registering = ''; paintKeys(); keys.querySelector(`[data-fk="sel:${service}"]`)?.focus(); } }));
+      }
     }
+    out.push(keyRadioGroup(t('apiKeys.delegation.title'), rows));
     // 外部送信の同意はキーを選ぶこと（知らないと事故になるので 1 行だけ）。暗号化の注意は設定 › API キーへ移った
     out.push(el('p', 'mp-note', t('apiKeys.delegation.note')));
     keys.replaceChildren(...out);
   }
-  /** 自動選択に使うキーを選ぶ（null は使わない）。選んだときから送り始める */
+  /** 自動選択に使うキーを選ぶ（null は使わない。'plus' は仮想のキー Pleiad Plus）。選んだときから送り始める */
   async function chooseKey(service, id) {
     message = '';
     try { await cmd('setApiKeyUse', { use: SERVICE_USE[service], id }); await refresh(); }
     catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); paint(); }
-    keys.querySelector(`[data-fk="sel:${service}"]`)?.focus({ preventScroll: true });
+    keys.querySelector(`[data-fk="${id === 'plus' ? 'plus' : `sel:${service}`}"]`)?.focus({ preventScroll: true });
   }
   /** その場で登録して、自動選択に使う（登録先は API キー） */
   async function registerKey(service, value) {
