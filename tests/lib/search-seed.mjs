@@ -15,12 +15,12 @@ const at = (days, hm) => {
 
 /**
  * @param {string} dir データ置き場
- * @param {string} cwdRoot 作業ディレクトリの親（pleiad・vtc-web・homepage を作る）
+ * @param {string} cwdRoot 作業ディレクトリの親（pleiad・shop-app・homepage を作る）
  * @returns {{ ids: object, cwds: object }}
  */
 export function seedSearchData(dir, cwdRoot) {
   fs.mkdirSync(path.join(dir, "conversations"), { recursive: true });
-  const cwds = { pleiad: `${cwdRoot}/pleiad`, vtc: `${cwdRoot}/vtc-web`, site: `${cwdRoot}/homepage` };
+  const cwds = { pleiad: `${cwdRoot}/pleiad`, shop: `${cwdRoot}/shop-app`, site: `${cwdRoot}/homepage` };
   for (const c of Object.values(cwds)) fs.mkdirSync(c, { recursive: true });
 
   let n = 0;
@@ -30,7 +30,7 @@ export function seedSearchData(dir, cwdRoot) {
   const tool = (command, days, hm) => msg("assistant", "", days, hm, { toolCalls: [{ id: `call-${++n}`, name: "Bash", input: { command }, result: { text: "ok", isError: false } }] });
 
   const convs = {
-    "ss-gateway": { title: "gateway のログが重複する", cwd: cwds.vtc, status: "進行中", messages: [
+    "ss-gateway": { title: "gateway のログが重複する", cwd: cwds.shop, status: "進行中", messages: [
       u("gateway のログが 2 回ずつ出る。起動のたびに増えている気がする", 1, "21:20"),
       tool('rg -n "createLogger" gateway/src', 1, "21:22"),
       a("logger を 2 か所で初期化していました。gateway/src/index.ts の側を消し、logger.ts だけで作るようにします。", 1, "21:25"),
@@ -52,7 +52,7 @@ export function seedSearchData(dir, cwdRoot) {
       u("beta.73 のリリースノートを書いて", 1, "18:01"),
       a("内蔵ブラウザーで HTML を開く変更と、外部の読み込みの確認をまとめました。", 1, "18:05"),
     ] },
-    "ss-paid": { title: "有料モードの切り替え", cwd: cwds.vtc, status: "レビュー待ち", messages: [
+    "ss-paid": { title: "有料モードの切り替え", cwd: cwds.shop, status: "レビュー待ち", messages: [
       u("STT と TTS を有料と無料で切り替えるモックを作って", 2, "09:30"),
       a("有料は gateway 経由のクラウド（Soniox の認識・Cartesia の読み上げ）、無料はブラウザの SpeechRecognition を使う形でモックを作りました。", 2, "09:58"),
       u("翻訳も含めるべき？", 2, "10:05"),
@@ -62,11 +62,11 @@ export function seedSearchData(dir, cwdRoot) {
       u("モックの文言をもう少し短く", 2, "11:02"),
       a("見出しを「認識と読み上げ」に縮め、説明の段落は消しました。", 2, "11:05"),
     ] },
-    "ss-price": { title: "認識の料金を見積もる", cwd: cwds.vtc, status: null, delegation: { parentSessionId: "ss-paid" }, messages: [
+    "ss-price": { title: "認識の料金を見積もる", cwd: cwds.shop, status: null, delegation: { parentSessionId: "ss-paid" }, messages: [
       u("Soniox とブラウザの認識の料金を比べて。gateway の転送量も含めて", 2, "09:40"),
       a("1 時間あたり Soniox は約 0.12 ドル、gateway の転送は無視できる量でした。", 2, "09:50"),
     ] },
-    "ss-e2e": { title: "E2E のポートがぶつかる", cwd: cwds.vtc, status: null, messages: [
+    "ss-e2e": { title: "E2E のポートがぶつかる", cwd: cwds.shop, status: null, messages: [
       u("make e2e が EADDRINUSE で落ちる", 3, "14:00"),
       tool("Get-NetTCPConnection -State Listen", 3, "14:03"),
       a("storage の 9290 が別のスロットの auth と重なっていました。E2E_PORT_OFFSET を 300 にすれば 8 つとも空いています。", 3, "14:09"),
@@ -88,7 +88,7 @@ export function seedSearchData(dir, cwdRoot) {
       u("ダークで弱い字が読みにくい", 6, "15:10"),
       a("--ink-weak を #8a91b8 にして、どの面の上でも 4.5:1 以上にしました。", 6, "15:30"),
     ] },
-    "ss-nightly": { title: "E2E を毎晩流す", cwd: cwds.vtc, status: "完了", messages: [
+    "ss-nightly": { title: "E2E を毎晩流す", cwd: cwds.shop, status: "完了", messages: [
       u("ＣＩ でも E2E を流したい。毎晩でいい", 40, "09:00"),
       a("夜の 3 時に GitHub Actions で流すワークフローを足しました。", 40, "09:20"),
     ] },

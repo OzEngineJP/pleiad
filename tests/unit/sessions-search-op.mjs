@@ -51,7 +51,7 @@ export default async function (t) {
     t.ok('語が空でも期間で絞れる（40 日前の会話は出ない）・新しい順', recent.total > 0 && !recent.sessions.some((s) => s.sessionId === 'ss-nightly')
       && recent.sessions.every((s, i, a) => i === 0 || a[i - 1].lastModified >= s.lastModified), recent.sessions.map((s) => s.sessionId).join());
     t.ok('NFKC: 全角の ＣＩ に ci で当たる', (await search({ query: 'ci' })).sessions.some((s) => s.sessionId === 'ss-nightly'));
-    t.ok('場所はフォルダー名だけ（パスの途中の語では当たらない）', (await search({ query: 'cwd' })).total === 0 && (await search({ query: 'vtc-web' })).total > 0);
+    t.ok('場所はフォルダー名だけ（パスの途中の語では当たらない）', (await search({ query: 'cwd' })).total === 0 && (await search({ query: 'shop-app' })).total > 0);
 
     const bad = await search({ query: Array.from({ length: 13 }, (_, i) => `w${i}`).join(' ') }).catch((e) => e);
     t.ok('語が多すぎるときは INVALID（落ちない）', bad.code === 'INVALID', `${bad.code} ${bad.message}`);
