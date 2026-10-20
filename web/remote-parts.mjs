@@ -17,6 +17,7 @@ const ICONS = {
   external: [['path', { d: 'M7 3.5H4.5c-.6 0-1 .4-1 1v7c0 .6.4 1 1 1h7c.6 0 1-.4 1-1V9M9.5 3h3.5v3.5M13 3 8 8' }]],
   check: [['path', { d: 'm3.5 8.5 3 3 6-7' }]],
   copy: [['rect', { x: 5.5, y: 5.5, width: 8, height: 8, rx: 1.4 }], ['path', { d: 'M10.5 3.2V3c0-.6-.4-1-1-1H3.5c-.6 0-1 .4-1 1v6c0 .6.4 1 1 1h.2' }]],
+  user: [['circle', { cx: 8, cy: 5.8, r: 2.6 }], ['path', { d: 'M2.8 14c.7-2.5 2.8-4 5.2-4s4.5 1.5 5.2 4' }]],
 };
 
 export function rmIcon(name, cls = '') {
@@ -56,8 +57,16 @@ export function iconButton(iconName, text, onclick, className = 'btn') {
   return b;
 }
 
-/** まとまりの見出し（「自分の中継サーバー」）。行の名前より小さく弱い */
-export const groupHead = text => el('div', 'rm-gh', text);
+/** まとまりの見出し（「自分の中継サーバー」）。行の名前より小さく弱い。右側にトグル等の要素を置ける */
+export function groupHead(text, tail = null) {
+  const gh = el('div', 'rm-gh', text);
+  if (tail) {
+    const span = el('span', 'rm-gt');
+    span.append(tail);
+    gh.append(span);
+  }
+  return gh;
+}
 
 /** 一覧の 1 行。押すと詳しい画面。sub は弱い字の 2 行目（「オフライン」だけ） */
 export function listRow({ icon, name, sub = '', onclick, key }) {
@@ -134,31 +143,63 @@ export function installPcBody() {
   return box;
 }
 
-/** つなぎ方 の段で選ぶ接続方法。sub は 2 行目（アカウントか、中継のホスト名・立て方のリンク） */
-export function methodOptions(options, current, onpick) {
+/** つなぎ方 の段で選ぶ接続方法。配列、または { current, onPick, items }、または単一の sub（後方互換） */
+export function methodOptions(arg = null, currentVal = 'own', onPickFn = null) {
+  let items = [], current = 'own', onPick = () => {};
+  if (Array.isArray(arg)) {
+    items = arg;
+    current = currentVal;
+    onPick = onPickFn ?? (() => {});
+  } else if (arg && typeof arg === 'object' && Array.isArray(arg.items)) {
+    items = arg.items;
+    current = arg.current ?? 'plus';
+    onPick = arg.onPick ?? (() => {});
+  } else {
+    const sub = arg;
+    items = [{ value: 'own', label: t('settings.remote.groups.own'), sub }];
+    current = 'own';
+  }
+
   const opts = el('div', 'rm-opts');
   opts.setAttribute('role', 'radiogroup');
   opts.setAttribute('aria-label', t('settings.remote.detail.method'));
-  for (const { value, label, sub } of options) {
+
+  for (const item of items) {
+    const val = item.value ?? item.key;
+    const lbl = item.label ?? item.name;
+    const isChecked = val === current;
     const option = el('div', 'rm-row rm-opt');
     option.setAttribute('role', 'radio');
-    option.setAttribute('aria-checked', String(value === current));
-    option.tabIndex = value === current ? 0 : -1;
-    option.dataset.fk = value;
-    option.onclick = () => onpick(value);
-    option.onkeydown = e => {
-      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onpick(value); return; }
-      if (!['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.key)) return;
-      e.preventDefault();
-      const radios = [...opts.querySelectorAll('[role="radio"]')];
-      const next = (radios.indexOf(option) + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : radios.length - 1)) % radios.length;
-      onpick(radios[next].dataset.fk);
-      opts.querySelector(`[data-fk="${radios[next].dataset.fk}"]`)?.focus();
-    };
+    option.setAttribute('aria-checked', String(isChecked));
+    option.dataset.fk = val;
+    if (item.disabled) {
+      option.setAttribute('aria-disabled', 'true');
+    } else {
+      option.tabIndex = isChecked ? 0 : -1;
+      option.onclick = () => onPick(val);
+      option.onkeydown = e => {
+        if ((e.key === ' ' || e.key === 'Enter') && !e.isComposing) {
+          e.preventDefault();
+          onPick(val);
+          return;
+        }
+        if (!['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.key)) return;
+        e.preventDefault();
+        const radios = [...opts.querySelectorAll('[role="radio"]:not([aria-disabled="true"])')];
+        const next = (radios.indexOf(option) + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : radios.length - 1)) % radios.length;
+        onPick(radios[next].dataset.fk);
+        opts.querySelector(`[data-fk="${radios[next].dataset.fk}"]`)?.focus();
+      };
+    }
     const text = el('span', 'rm-rt');
-    text.append(el('span', 'rm-nm', label));
-    if (sub) { const s = el('span', 'rm-sub'); s.append(sub); text.append(s); }
-    option.append(el('span', `rm-rd${value === current ? ' on' : ''}`), text);
+    text.append(el('span', 'rm-nm', lbl));
+    if (item.sub) {
+      const s = el('span', 'rm-sub');
+      if (typeof item.sub === 'string') s.append(document.createTextNode(item.sub));
+      else s.append(item.sub);
+      text.append(s);
+    }
+    option.append(el('span', `rm-rd${isChecked ? ' on' : ''}`), text);
     opts.append(option);
   }
   return opts;

@@ -1,29 +1,54 @@
 // 設定 › リモート › ほかの PC へ（docs/remote.md §4、ADR 0239）。デスクトップ版のローカルの窓だけに出す（plyDesktop.hosts。desktop/remote-windows.cjs）。
 //
-// - 一覧: ペアリングしたホストの行（自分の中継サーバー）。行を押すと詳しい画面（つなぎ方・中継サーバー・最後の接続・開く・名前を変える・削除。古いホストには更新を勧める 1 行）
-// - ＋ の流れ（PC を追加）: アプリを入れる › つなぎ方 › つなぐ（相手の PC に出ているコードを貼り付け、確認コードを見せて相手の PC の許可を待つ）› 完了
+// - 一覧: Pleiad Plus のホスト（上）とペアリングしたホスト（下・自分の中継サーバー）。
+//   - Plus の行を押すとその PC の窓を開く（未受け入れなら自動 admit）。同じ hostId の窓は 1 枚で前面化
+//   - 自分の中継の行を押すと詳しい画面（つなぎ方・中継サーバー・最後の接続・開く・名前を変える・削除）
+// - ＋ の流れ（PC を追加）: アプリを入れる › つなぎ方（Plus / 自分の中継）› つなぐ（待つ/コード貼り付け）› 完了
 //
 // ホストの一覧と資格情報は desktop 側が持つ（サーバーの設定・AI の操作の一覧には置かない。ADR 0146）。見え方は web/manage-panel.css の .rm-*。
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import {
   button, groupHead, listRow, detailHead, keyValues, waitLine, confirmCode, createWizard, field, textInput,
-  installPcBody, methodOptions, doneBody, errorLine,
+  installPcBody, methodOptions, doneBody, errorLine, switchButton, rmIcon, deviceIcon,
 } from './remote-parts.mjs';
+import { openExternalLink } from './link-open.mjs';
 
-const STATES = ['connected', 'connecting', 'offline', 'host-offline', 'revoked', 'closed', 'stopped'];
+const STATES = ['connected', 'connecting', 'offline', 'host-offline', 'revoked', 'closed', 'stopped', 'blocked', 'limit', 'paused', 'readmit'];
 
 /**
  * 一覧の 1 行に出すもの。host は desktop/remote-windows.cjs の hostRow。
- * 2 行目は、つながらない（中継かホストがオフライン）ときの「オフライン」と、取り消されたときだけ
+ * 2 行目は、つながらない（中継かホストがオフライン）ときの「オフライン」と、取り消されたとき、Plus の拒否/制限理由
  */
-export function hostLine(host) {
-  const state = STATES.includes(host?.state) ? host.state : 'closed';
+export function hostLine(host, { plusState = null } = {}) {
+  const state = STATES.includes(host?.state) ? host.state : (host?.state || 'closed');
   const revoked = state === 'revoked';
+  const isPlus = host?.via === 'plus';
+  let sub = '';
+  if (revoked) {
+    sub = t('settings.remote.hosts.revoked');
+  } else if (isPlus) {
+    if (state === 'blocked') {
+      sub = t('settings.remote.groups.plusBlocked');
+    } else if (state === 'limit') {
+      sub = t('settings.remote.groups.plusLimit');
+    } else if (state === 'paused') {
+      if (plusState === 'maintenance') sub = t('settings.remote.groups.plusMaintenance');
+      else sub = t('settings.remote.groups.plusUnavailable');
+    } else if (state === 'connecting' || state === 'readmit') {
+      sub = t('settings.remote.wizard.connecting');
+    } else if (state === 'offline' || state === 'host-offline' || host?.plusOnline === false) {
+      sub = t('settings.remote.offline');
+    }
+  } else {
+    if (state === 'offline' || state === 'host-offline') {
+      sub = t('settings.remote.offline');
+    }
+  }
   return {
     name: host?.name || host?.hostId || '',
-    sub: revoked ? t('settings.remote.hosts.revoked') : state === 'offline' || state === 'host-offline' ? t('settings.remote.offline') : '',
-    canOpen: !revoked,
+    sub,
+    canOpen: !revoked && state !== 'blocked' && state !== 'limit',
     revoked,
   };
 }
@@ -38,38 +63,97 @@ export function agentLine(host) {
 }
 
 /** @param onChange 見え方が変わった（設定 › リモートが描き直す） */
-export function setupRemoteHosts({ onChange }) {
+export function setupRemoteHosts({ onChange, cmd, page }) {
   const bridge = typeof window !== 'undefined' && !window.plyRemote ? window.plyDesktop?.hosts : null;
   /** ホストの一覧・この PC の資格情報を暗号化できるか・読めなかった理由 */
   let hosts = [], encrypted = true, loadError = '', inited = null;
+  /** Pleiad Plus の状態 */
+  let plus = {
+    use: true,
+    ok: false,
+    state: 'on',
+    status: null,
+    email: null,
+    error: false,
+    reason: null,
+    urls: null,
+    available: true,
+    needsUpdate: false,
+    hosts: [],
+  };
   /** 詳しい画面のホスト・名前を変えている・削除の確かめ中・操作中（開く）・失敗 */
   let detailId = '', renaming = false, removing = false, message = '';
   const busy = new Set();
+  let pollTimer = null;
 
   if (bridge) {
-    bridge.onChange(list => { hosts = Array.isArray(list) ? list : hosts; onChange(); });
+    bridge.onChange(data => {
+      if (Array.isArray(data)) {
+        hosts = data;
+      } else if (data && typeof data === 'object') {
+        if (Array.isArray(data.hosts)) hosts = data.hosts;
+        if (data.plus) plus = { ...plus, ...data.plus };
+      }
+      if (wz && wz.step === 2 && wz.method === 'plus') {
+        const currentPlusHosts = plus?.hosts || [];
+        const newOnline = currentPlusHosts.find(h => !wz.initialHostIds.has(h.hostId) && h.online === true);
+        if (newOnline && (!wz.foundHost || wz.foundHost.hostId !== newOnline.hostId)) {
+          wz.foundHost = newOnline;
+          paintWizard();
+        }
+      }
+      onChange();
+    });
     bridge.onCode(code => { if (wz?.pairing) { wz.code = code; paintWizard(); } });
   }
 
   function init() {
     if (!bridge) return Promise.resolve();
     inited ??= bridge.init().then(r => {
-      if (r.ok) { hosts = r.hosts; encrypted = r.encrypted !== false; loadError = ''; }
-      else { loadError = t('settings.remote.hosts.loadFailed', { error: r.message }); inited = null; }
+      if (r.ok) {
+        hosts = r.hosts || [];
+        if (r.plus) plus = { ...plus, ...r.plus };
+        encrypted = r.encrypted !== false;
+        loadError = '';
+      } else {
+        loadError = t('settings.remote.hosts.loadFailed', { error: r.message });
+        inited = null;
+      }
       onChange();
     });
     return inited;
   }
-  async function refresh() {
+
+  async function refresh({ fresh = false } = {}) {
     if (!bridge) return;
     if (!inited) return init();
-    const r = await bridge.list();
-    if (r.ok) { hosts = r.hosts; loadError = ''; } else loadError = t('settings.remote.hosts.loadFailed', { error: r.message });
+    const r = await bridge.list({ fresh });
+    if (r.ok) {
+      hosts = r.hosts || [];
+      if (r.plus) plus = { ...plus, ...r.plus };
+      loadError = '';
+    } else {
+      loadError = t('settings.remote.hosts.loadFailed', { error: r.message });
+    }
     onChange();
   }
 
+  function startPolling() {
+    if (pollTimer) return;
+    pollTimer = setInterval(() => {
+      refresh();
+    }, 30_000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+  }
+
   function sig() {
-    return JSON.stringify([hosts, encrypted, loadError, detailId, renaming, removing, message, [...busy]]);
+    return JSON.stringify([hosts, encrypted, loadError, detailId, renaming, removing, message, [...busy], plus]);
   }
 
   // ---- 描く
@@ -83,24 +167,126 @@ export function setupRemoteHosts({ onChange }) {
   function list() {
     const out = [];
     if (loadError) out.push(errorLine(loadError));
-    if (hosts.length) {
-      const group = el('section', 'rm-group');
-      group.append(groupHead(t('settings.remote.groups.own')));
-      for (const h of hosts) {
-        const line = hostLine(h);
-        group.append(listRow({ icon: 'monitor', name: line.name, sub: line.sub, key: `host-${h.hostId}`,
-          onclick: () => { detailId = h.hostId; renaming = false; removing = false; message = ''; onChange(); } }));
+
+    // ---- まとまり 1: Pleiad Plus
+    if (plus.needsUpdate) {
+      out.push(el('p', 'rm-warn', t('settings.remote.groups.plusNeedsUpdate')));
+    } else if (plus.available !== false) {
+      const plusSec = el('section', 'rm-group');
+
+      if (!plus.status || plus.status === 'signedOut') {
+        plusSec.append(groupHead(t('settings.remote.groups.plus')));
+        plusSec.append(listRow({
+          icon: 'user',
+          name: t('settings.remote.groups.plusLogin'),
+          key: 'plus-login',
+          onclick: () => {
+            if (page) page('plus');
+            if (cmd) cmd('plusLogin');
+          },
+        }));
+        out.push(plusSec);
+      } else if (plus.status === 'free') {
+        plusSec.append(groupHead(t('settings.remote.groups.plus')));
+        plusSec.append(listRow({
+          icon: 'user',
+          name: t('settings.remote.groups.plusUpgrade'),
+          key: 'plus-upgrade',
+          onclick: () => {
+            const u = plus.urls?.account ? `${String(plus.urls.account).replace(/\/+$/, '')}/plus` : 'https://pleiad.dev/plus';
+            openExternalLink(u);
+          },
+        }));
+        out.push(plusSec);
+      } else if (plus.status === 'disabled') {
+        plusSec.append(groupHead(t('settings.remote.groups.plus')));
+        plusSec.append(el('p', 'rm-warn', t('settings.remote.groups.plusBlocked')));
+        out.push(plusSec);
+      } else if (plus.state === 'maintenance') {
+        const sw = switchButton(t('settings.remote.groups.plusConnect'), async () => {
+          const next = !plus.use;
+          plus.use = next;
+          await bridge?.setPlusUse?.(next);
+          onChange();
+        });
+        sw.setAttribute('aria-checked', String(plus.use));
+        sw.dataset.fk = 'plusConnect';
+        plusSec.append(groupHead(t('settings.remote.groups.plus'), sw));
+        plusSec.append(el('p', 'rm-warn', t('settings.remote.groups.plusMaintenance')));
+        out.push(plusSec);
+      } else {
+        // status === 'plus'
+        const sw = switchButton(t('settings.remote.groups.plusConnect'), async () => {
+          const next = !plus.use;
+          plus.use = next;
+          await bridge?.setPlusUse?.(next);
+          onChange();
+        });
+        sw.setAttribute('aria-checked', String(plus.use));
+        sw.dataset.fk = 'plusConnect';
+        plusSec.append(groupHead(t('settings.remote.groups.plus'), sw));
+
+        if (plus.use) {
+          if (plus.error) {
+            plusSec.append(el('p', 'rm-warn', t('settings.remote.failed')));
+          }
+          const plusHosts = hosts.filter(h => h.via === 'plus');
+          if (plusHosts.length === 0 && !plus.error) {
+            plusSec.append(el('p', 'rm-weak', t('settings.remote.groups.plusEmpty')));
+          } else {
+            for (const h of plusHosts) {
+              const line = hostLine(h, { plusState: plus.state });
+              plusSec.append(listRow({
+                icon: deviceIcon(h),
+                name: line.name,
+                sub: line.sub,
+                key: `host-${h.hostId}`,
+                onclick: () => {
+                  if (line.canOpen) openHost(h.hostId, { via: 'plus' });
+                },
+              }));
+            }
+          }
+        }
+        out.push(plusSec);
       }
-      out.push(group);
+    }
+
+    // ---- まとまり 2: 自分の中継サーバー
+    const ownHosts = hosts.filter(h => (h.via ?? 'own') === 'own');
+    if (ownHosts.length) {
+      const ownSec = el('section', 'rm-group');
+      ownSec.append(groupHead(t('settings.remote.groups.own')));
+      for (const h of ownHosts) {
+        const line = hostLine(h);
+        ownSec.append(listRow({
+          icon: deviceIcon(h),
+          name: line.name,
+          sub: line.sub,
+          key: `host-${h.hostId}`,
+          onclick: () => {
+            detailId = h.hostId;
+            renaming = false;
+            removing = false;
+            message = '';
+            onChange();
+          },
+        }));
+      }
+      out.push(ownSec);
     }
     return out;
   }
 
   function detail(host) {
-    const line = hostLine(host);
-    const out = detailHead({ icon: 'monitor', name: line.name, onBack: () => { detailId = ''; renaming = false; removing = false; message = ''; onChange(); } });
+    const line = hostLine(host, { plusState: plus.state });
+    const out = detailHead({
+      icon: deviceIcon(host),
+      name: line.name,
+      onBack: () => { detailId = ''; renaming = false; removing = false; message = ''; onChange(); },
+    });
     out.push(keyValues([
-      [t('settings.remote.detail.method'), t('settings.remote.groups.own')],
+      [t('settings.remote.detail.method'), host.via === 'plus' ? t('settings.remote.groups.plus') : t('settings.remote.groups.own')],
       [t('settings.remote.detail.relay'), host.relay],
       [t('settings.remote.detail.added'), host.pairedAt ? fmt.dateTime(host.pairedAt, { year: 'numeric', month: 'long', day: 'numeric' }) : ''],
       [t('settings.remote.detail.lastSeen'), host.lastConnectedAt ? fmt.relative(host.lastConnectedAt) : t('settings.remote.detail.never')],
@@ -115,7 +301,7 @@ export function setupRemoteHosts({ onChange }) {
     else {
       const acts = el('div', 'rm-acts');
       const opening = busy.has(host.hostId);
-      const open = button(opening ? t('settings.remote.hosts.opening') : t('settings.remote.hosts.open'), () => openHost(host.hostId), 'btn btn-primary');
+      const open = button(opening ? t('settings.remote.hosts.opening') : t('settings.remote.hosts.open'), () => openHost(host.hostId, { via: host.via }), 'btn btn-primary');
       open.dataset.fk = 'open';
       open.disabled = !line.canOpen || opening;
       const rename = button(t('settings.remote.hosts.rename'), () => { renaming = true; message = ''; onChange(); }, 'btn btn-quiet');
@@ -138,7 +324,7 @@ export function setupRemoteHosts({ onChange }) {
     input.maxLength = 80;
     input.setAttribute('aria-label', t('settings.remote.hosts.renameLabel'));
     const save = async () => {
-      const r = await bridge.rename(host.hostId, input.value.trim());
+      const r = await bridge.rename(host.hostId, input.value.trim(), host.via);
       message = r.ok ? '' : r.message;
       renaming = false;
       await refresh();
@@ -160,7 +346,7 @@ export function setupRemoteHosts({ onChange }) {
     const keep = button(t('settings.remote.wizard.cancel'), () => { removing = false; onChange(); }, 'btn btn-quiet');
     keep.dataset.fk = 'keep';
     const yes = button(t('settings.remote.hosts.removeYes'), async () => {
-      const r = await bridge.remove(host.hostId);
+      const r = await bridge.remove(host.hostId, host.via);
       message = r.ok ? '' : r.message;
       removing = false;
       if (r.ok) detailId = '';
@@ -173,16 +359,15 @@ export function setupRemoteHosts({ onChange }) {
     return box;
   }
 
-  async function openHost(hostId) {
+  async function openHost(hostId, opts = {}) {
     busy.add(hostId); onChange();
-    const r = await bridge.open(hostId);
+    const r = await bridge.open(hostId, opts);
     busy.delete(hostId);
     message = r.ok ? '' : r.message;
     await refresh();
   }
 
   // ---- ＋ の流れ（ほかの PC へ: PC を追加）
-  /** wz: { step, payload（入力欄）, pairing, code, error, doneName } */
   let wz = null;
   const wizard = createWizard({ id: 'remoteAddHost', onCancel: () => cancelWizard() });
 
@@ -190,37 +375,168 @@ export function setupRemoteHosts({ onChange }) {
     if (!bridge) return;
     const payload = textInput({ placeholder: 'pleiad://pair?…', key: 'payload', mono: true });
     payload.oninput = () => paintWizard();
-    payload.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing && payload.value.trim()) { e.preventDefault(); pair(); } };
-    wz = { step: 0, payload, pairing: false, code: '', error: '', doneName: '' };
+    payload.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing && payload.value.trim()) { e.preventDefault(); pairOwn(); } };
+
+    const initialHostIds = new Set((plus.hosts || hosts.filter(h => h.via === 'plus') || []).map(h => h.hostId));
+    const defaultMethod = (plus.status === 'plus' && plus.use !== false) ? 'plus' : 'own';
+
+    wz = {
+      step: 0,
+      method: defaultMethod,
+      initialHostIds,
+      foundHost: null,
+      pollTimer: null,
+      admitting: false,
+      payload,
+      pairing: false,
+      code: '',
+      error: '',
+      doneName: '',
+    };
     paintWizard();
   }
 
   function paintWizard() {
     if (!wz) { wizard.close(); return; }
     const o = { title: t('settings.remote.addHost'), step: wz.step, back: () => back() };
+
     if (wz.step === 0) {
       o.body = [installPcBody()];
       o.next = { onclick: () => { wz.step = 1; paintWizard(); } };
     } else if (wz.step === 1) {
-      o.body = [methodOptions()];
-      o.next = { onclick: () => { wz.step = 2; paintWizard(); } };
+      const plusSub = plus.status === 'plus'
+        ? (plus.email || t('settings.remote.groups.plus'))
+        : (!plus.status || plus.status === 'signedOut')
+          ? t('settings.remote.wizard.plusSignedOut')
+          : t('settings.remote.wizard.plusNotUsing');
+
+      const ownHost = hosts.find(h => (h.via ?? 'own') === 'own');
+      const ownSub = ownHost?.relay || 'relay.example.net';
+
+      const items = [
+        {
+          key: 'plus',
+          name: t('settings.remote.groups.plus'),
+          sub: plusSub,
+          disabled: plus.status !== 'plus',
+        },
+        {
+          key: 'own',
+          name: t('settings.remote.groups.own'),
+          sub: ownSub,
+          disabled: false,
+        },
+      ];
+
+      const opts = methodOptions({
+        current: wz.method,
+        onPick: k => { wz.method = k; paintWizard(); },
+        items,
+      });
+
+      o.body = [opts];
+      o.next = { onclick: () => { wz.step = 2; startStep2(); paintWizard(); } };
     } else if (wz.step === 2) {
-      if (wz.pairing) {
-        o.body = wz.code ? [confirmCode(wz.code), waitLine(t('settings.remote.wizard.hostWait'))] : [waitLine(t('settings.remote.wizard.hostConnecting'))];
-        o.next = { disabled: true };
+      if (wz.method === 'plus') {
+        const lead = el('p', 'rm-lead', t('settings.remote.wizard.plusHostWait', { switch: t('settings.remote.allow') }));
+        const acctKv = keyValues([[t('settings.remote.wizard.account'), plus.email || '']]);
+        const body = [lead, acctKv];
+
+        if (wz.foundHost) {
+          const row = el('div', 'rm-row');
+          const rt = el('span', 'rm-rt');
+          rt.append(el('span', 'rm-nm', wz.foundHost.name || wz.foundHost.hostId));
+          const end = el('span', 'rm-end rm-ok');
+          end.append(rmIcon('check'));
+          row.append(rmIcon(deviceIcon(wz.foundHost)), rt, end);
+          body.push(row);
+        } else {
+          body.push(waitLine(t('settings.remote.wizard.waitingHost')));
+        }
+        if (wz.error) body.push(errorLine(wz.error));
+        o.body = body;
+        o.next = {
+          disabled: !wz.foundHost || wz.admitting,
+          onclick: () => pairPlus(),
+        };
+        o.sig = [wz.method, Boolean(wz.foundHost), wz.foundHost?.hostId, wz.admitting, wz.error];
       } else {
-        o.body = [field(t('settings.remote.wizard.hostCode'), wz.payload), ...(wz.error ? [errorLine(wz.error)] : [])];
-        o.next = { disabled: !wz.payload.value.trim(), onclick: () => pair() };
+        // own
+        if (wz.pairing) {
+          o.body = wz.code ? [confirmCode(wz.code), waitLine(t('settings.remote.wizard.hostWait'))] : [waitLine(t('settings.remote.wizard.hostConnecting'))];
+          o.next = { disabled: true };
+        } else {
+          o.body = [field(t('settings.remote.wizard.hostCode'), wz.payload), ...(wz.error ? [errorLine(wz.error)] : [])];
+          o.next = { disabled: !wz.payload.value.trim(), onclick: () => pairOwn() };
+        }
+        o.sig = [wz.method, wz.pairing, wz.code, wz.error];
       }
-      o.sig = [wz.pairing, wz.code, wz.error];
     } else {
+      // step 3: 完了
       o.body = [doneBody(wz.doneName)];
       o.sig = wz.doneName;
+      o.next = { label: t('settings.remote.wizard.close'), onclick: () => cancelWizard() };
     }
     wizard.render(o);
   }
 
-  async function pair() {
+  function startStep2() {
+    if (wz.method === 'plus') {
+      startPlusPoll();
+    }
+  }
+
+  function startPlusPoll() {
+    stopPlusPoll();
+    const check = async () => {
+      if (!wz || wz.step !== 2 || wz.method !== 'plus') return;
+      const r = await bridge?.list?.({ fresh: true });
+      if (!wz || wz.step !== 2) return;
+      if (r?.ok && r.plus) plus = { ...plus, ...r.plus };
+      const currentPlusHosts = r?.plus?.hosts || [];
+      const newOnline = currentPlusHosts.find(h => !wz.initialHostIds.has(h.hostId) && h.online === true);
+      if (newOnline && (!wz.foundHost || wz.foundHost.hostId !== newOnline.hostId)) {
+        wz.foundHost = newOnline;
+        paintWizard();
+      }
+    };
+    check();
+    if (wz) {
+      wz.pollTimer = setInterval(check, 5000);
+    }
+  }
+
+  function stopPlusPoll() {
+    if (wz?.pollTimer) {
+      clearInterval(wz.pollTimer);
+      wz.pollTimer = null;
+    }
+  }
+
+  async function pairPlus() {
+    if (!wz || !wz.foundHost || wz.admitting) return;
+    wz.admitting = true;
+    wz.error = '';
+    paintWizard();
+    const r = await bridge.admit(wz.foundHost.hostId);
+    wz.admitting = false;
+    if (!wz) return;
+    if (r.ok) {
+      stopPlusPoll();
+      wz.doneName = wz.foundHost.name || r.host?.name || '';
+      wz.step = 3;
+      await refresh();
+    } else {
+      let msg = r.message || t('settings.remote.failed');
+      if (r.reason === 'account') msg = t('settings.remote.groups.plusBlocked');
+      else if (r.reason === 'devices') msg = t('settings.remote.groups.plusLimit');
+      else if (r.reason === 'unavailable') msg = t('settings.remote.failed');
+      wz.error = msg;
+    }
+    paintWizard();
+  }
+
+  async function pairOwn() {
     if (!wz || wz.pairing) return;
     const mine = wz;
     mine.pairing = true; mine.code = ''; mine.error = '';
@@ -235,16 +551,20 @@ export function setupRemoteHosts({ onChange }) {
     } else if (r.code !== 'aborted') wz.error = r.message;
     paintWizard();
   }
+
   function back() {
     if (!wz) return;
-    if (wz.step === 2 && wz.pairing) { bridge.cancelPair(); return; }   // 貼り付けの面に戻る（pair が aborted で返る）
+    stopPlusPoll();
+    if (wz.step === 2 && wz.method === 'own' && wz.pairing) { bridge.cancelPair(); return; }
     wz.error = '';
     wz.step = Math.max(0, wz.step - 1);
     paintWizard();
   }
+
   function cancelWizard() {
     if (!wz) return;
-    if (wz.pairing) bridge.cancelPair();
+    stopPlusPoll();
+    if (wz.method === 'own' && wz.pairing) bridge.cancelPair();
     wz = null;
     paintWizard();
   }
@@ -252,6 +572,7 @@ export function setupRemoteHosts({ onChange }) {
   return {
     available: Boolean(bridge),
     sig, build, refresh, openAdd,
+    startPolling, stopPolling,
     onOpen: fn => bridge?.onOpen?.(fn),
     get inDetail() { return Boolean(detailId); },
   };

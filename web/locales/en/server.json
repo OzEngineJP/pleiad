@@ -1204,6 +1204,9 @@
       "lost": "Lost the connection to the host",
       "tokenRequired": "A token is required (open this from the app)",
       "unknownHost": "This host is not paired",
+      "blocked": "This account can't use the official relay",
+      "limit": "This account has reached its limit",
+      "paused": "Pleiad Plus is temporarily unavailable",
       "page": {
         "revoked": "Pair this device again.",
         "hostOffline": "Make sure Pleiad is running on the host. This page opens automatically once connected.",

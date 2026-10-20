@@ -17,7 +17,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createSecretStore, plainCipher, withFileLock } from '../secret-store.mjs';
-import { Handshake, generateKeyPair, keyPairFromPrivate, prologueFor, derivePairing, confirmationCode } from './noise.mjs';
+import { Handshake, generateKeyPair, keyPairFromPrivate, prologueFor, derivePairing, confirmationCode, hostIdFor } from './noise.mjs';
 import { parsePairingPayload, relayWsUrl, cleanLabel, PAIRING_TTL_MS } from './pairing.mjs';
 import { openRelaySocket, DeviceLink } from './device-link.mjs';
 import { DeviceProxy } from './device-proxy.mjs';
@@ -32,6 +32,8 @@ function publicRecord(h) {
     hostId: h.hostId, hostName: h.hostName ?? '', label: h.label ?? '', relayUrl: h.relayUrl,
     deviceId: h.deviceId, port: h.port ?? 0, pairedAt: h.pairedAt ?? null,
     lastConnectedAt: h.lastConnectedAt ?? null, revokedAt: h.revokedAt ?? null,
+    via: h.via ?? 'own',
+    ...(h.via === 'plus' && h.uid ? { uid: h.uid } : {}),
   };
 }
 
@@ -64,55 +66,65 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
 
     /** ペアリングしたホストの一覧（秘密を含まない）。 */
     async hosts() { return (await readHosts()).hosts.map(publicRecord); },
-    async host(hostId) { return (await this.hosts()).find(h => h.hostId === hostId) ?? null; },
+    async host(hostId, via = 'own') { return (await this.hosts()).find(h => h.hostId === hostId && (h.via ?? 'own') === via) ?? null; },
 
     /** つなぐのに要るもの一式（トークンを含む。プロセスの外に出さない）。無ければ null。 */
-    async credentials(hostId) {
-      const h = (await readHosts()).hosts.find(x => x.hostId === hostId);
+    async credentials(hostId, via = 'own') {
+      const h = (await readHosts()).hosts.find(x => x.hostId === hostId && (x.via ?? 'own') === via);
       if (!h) return null;
-      const secret = await secrets.get(`host:${hostId}`);
+      const secretKey = via === 'plus' ? `host-plus:${hostId}` : `host:${hostId}`;
+      const secret = await secrets.get(secretKey);
       if (!secret?.token) return null;
       return { ...publicRecord(h), hostPublicKey: Buffer.from(h.hostPublicKey, 'base64url'), token: secret.token };
     },
 
-    /** ペアリングの結果を置く。同じホストを組み直したときは資格を差し替え、覚えたポートと名前は残す。 */
+    /** ペアリングの結果を置く。(hostId, relayUrl) または via: 'plus' の記録を置き換える。 */
     async saveHost(creds) {
       if (!HOST_ID.test(creds.hostId ?? '')) throw new Error('invalid hostId');
-      await secrets.set(`host:${creds.hostId}`, { token: creds.token });
+      const via = creds.via ?? 'own';
+      const secretKey = via === 'plus' ? `host-plus:${creds.hostId}` : `host:${creds.hostId}`;
+      await secrets.set(secretKey, { token: creds.token });
       return locked(async () => {
         const data = await readHosts();
-        const prev = data.hosts.find(h => h.hostId === creds.hostId);
+        const prev = data.hosts.find(h => h.hostId === creds.hostId && (h.via ?? 'own') === via && (via === 'plus' || h.relayUrl === creds.relayUrl));
         const rec = {
           hostId: creds.hostId, hostName: cleanLabel(creds.hostName), label: prev?.label ?? '',
           relayUrl: creds.relayUrl, hostPublicKey: Buffer.from(creds.hostPublicKey).toString('base64url'),
           deviceId: creds.deviceId, port: prev?.port ?? 0, pairedAt: new Date().toISOString(),
           lastConnectedAt: null, revokedAt: null,
+          via,
+          ...(via === 'plus' && creds.uid ? { uid: creds.uid } : {}),
         };
-        data.hosts = data.hosts.filter(h => h.hostId !== creds.hostId).concat(rec);
+        data.hosts = data.hosts.filter(h => {
+          const hVia = h.via ?? 'own';
+          if (via === 'plus') return !(h.hostId === creds.hostId && hVia === 'plus');
+          return !(h.hostId === creds.hostId && hVia === 'own' && h.relayUrl === creds.relayUrl);
+        }).concat(rec);
         await writeJson(hostsFile, data);
         return publicRecord(rec);
       });
     },
 
-    /** 秘密でない項目を変える（port・label・hostName・lastConnectedAt・revokedAt）。 */
-    async updateHost(hostId, patch) {
+    /** 秘密でない項目を変える（port・label・hostName・lastConnectedAt・revokedAt・relayUrl）。 */
+    async updateHost(hostId, patch, via = 'own') {
       return locked(async () => {
         const data = await readHosts();
-        const h = data.hosts.find(x => x.hostId === hostId);
+        const h = data.hosts.find(x => x.hostId === hostId && (x.via ?? 'own') === via);
         if (!h) return null;
-        for (const k of ['port', 'label', 'hostName', 'lastConnectedAt', 'revokedAt']) if (k in patch) h[k] = patch[k];
+        for (const k of ['port', 'label', 'hostName', 'lastConnectedAt', 'revokedAt', 'relayUrl']) if (k in patch) h[k] = patch[k];
         await writeJson(hostsFile, data);
         return publicRecord(h);
       });
     },
 
     /** 一覧から消し、トークンも消す。 */
-    async removeHost(hostId) {
-      await secrets.delete(`host:${hostId}`);
+    async removeHost(hostId, via = 'own') {
+      const secretKey = via === 'plus' ? `host-plus:${hostId}` : `host:${hostId}`;
+      await secrets.delete(secretKey);
       return locked(async () => {
         const data = await readHosts();
-        const hit = data.hosts.find(h => h.hostId === hostId) ?? null;
-        data.hosts = data.hosts.filter(h => h.hostId !== hostId);
+        const hit = data.hosts.find(h => h.hostId === hostId && (h.via ?? 'own') === via) ?? null;
+        data.hosts = data.hosts.filter(h => !(h.hostId === hostId && (h.via ?? 'own') === via));
         await writeJson(hostsFile, data);
         return hit ? publicRecord(hit) : null;
       });
@@ -126,6 +138,7 @@ function pairError(code, message, extra = {}) {
 
 function pairErrorForClose(closeCode) {
   if (closeCode === 4401) return pairError('ticket', t('remote.pair.ticket'), { closeCode });
+  if (closeCode === 4403) return pairError('blocked', t('remote.pair.denied'), { closeCode });
   if (closeCode === 4429) return pairError('rate', t('remote.pair.rate'), { closeCode });
   if (closeCode === 4404 || closeCode === 4408) return pairError('host-offline', t('remote.pair.hostOffline'), { closeCode });
   return pairError('cancelled', t('remote.pair.cancelled'), { closeCode });
@@ -198,6 +211,75 @@ export async function pairWithHost({ payload, keyPair, name = '', platform = 'de
  *   proxyOptions: DeviceProxy に足すもの（backoff・connectTimeoutMs・requestWaitMs。試験で縮める）
  * 出来事: 'status' ({ hostId, state, ... })。プロキシの状態が変わるたび
  */
+
+/**
+ * Pleiad Plus の同じアカウントのホストへの初回受け入れ（Noise IK）。
+ * 相手の静的鍵 publicKey と hostId を照合し、msg1 に plus:{idToken} を載せ、{type:"admit"} を送る。
+ * approved で { hostId, hostPublicKey, relayUrl, deviceId, token, hostName } で解決する。
+ */
+export async function admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair, idToken, name = '', platform = 'desktop', app = '', signal, timeoutMs = 20_000, connectTimeoutMs = 15_000 }) {
+  if (!HOST_ID.test(hostId ?? '')) throw pairError('bad-host', t('remote.pair.keyMismatch'));
+  const pubKey = Buffer.isBuffer(hostPublicKey) ? hostPublicKey : Buffer.from(String(hostPublicKey ?? ''), 'base64url');
+  if (pubKey.length !== 32 || hostIdFor(pubKey) !== hostId) {
+    throw pairError('bad-host', t('remote.pair.keyMismatch'));
+  }
+  if (!idToken || typeof idToken !== 'string') {
+    throw pairError('account', t('remote.pair.ticket'));
+  }
+  if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
+  const sock = openRelaySocket(relayWsUrl(relayUrl, '/v1/device'), {
+    'x-pleiad-host': hostId, 'x-pleiad-account': idToken,
+  }, { openTimeoutMs: connectTimeoutMs });
+  const onAbort = () => sock.ws.terminate();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    const o = await sock.opened;
+    if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
+    if (!o.open) {
+      if (o.closeCode != null) throw pairErrorForClose(o.closeCode);
+      throw pairError('offline', t('remote.device.offline'), o.status ? { httpStatus: o.status } : {});
+    }
+    const hs = new Handshake({ pattern: 'IK', initiator: true, prologue: prologueFor(hostId), staticKey: keyPair, remoteStatic: pubKey });
+    sock.ws.send(hs.writeMessage(Buffer.from(JSON.stringify({
+      proto: 1, name: cleanLabel(name), platform, app: String(app), plus: { idToken },
+    }))));
+    let m2;
+    try { m2 = await sock.next(connectTimeoutMs); }
+    catch (e) {
+      if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
+      if (e.closeCode != null) throw pairErrorForClose(e.closeCode);
+      throw pairError('host-offline', t('remote.pair.noResponse'));
+    }
+    try { hs.readMessage(m2); }
+    catch { throw pairError('handshake', t('remote.pair.keyMismatch')); }
+    const transport = hs.split();
+    sock.ws.send(transport.encrypt(Buffer.from(JSON.stringify({ type: 'admit' }))));
+    let msg;
+    try { msg = JSON.parse(transport.decrypt(await sock.next(timeoutMs)).toString('utf8')); }
+    catch (e) {
+      if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
+      if (e.closeCode != null) throw pairErrorForClose(e.closeCode);
+      if (e.code === 'timeout') throw pairError('timeout', t('remote.pair.timeout'));
+      throw pairError('handshake', t('remote.pair.unreadable'));
+    }
+    if (msg?.type === 'denied') {
+      const reason = msg.reason || 'denied';
+      const code = reason === 'account' ? 'blocked' : reason === 'devices' ? 'limit' : reason === 'rate' ? 'rate' : reason === 'unavailable' ? 'unavailable' : 'denied';
+      throw pairError(code, t('remote.pair.denied'), { reason });
+    }
+    if (msg?.type !== 'approved' || typeof msg.deviceId !== 'string' || typeof msg.token !== 'string') {
+      throw pairError('handshake', t('remote.pair.badResponse'));
+    }
+    return {
+      hostId, hostPublicKey: pubKey, relayUrl,
+      deviceId: msg.deviceId, token: msg.token, hostName: cleanLabel(msg.hostName || name),
+    };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    if (sock.ws.readyState === sock.ws.OPEN) sock.ws.close(1000); else sock.ws.terminate();
+  }
+}
+
 export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name = '', platform = 'desktop', proxyOptions = {}, log = () => {} }) {
   const store = createDeviceStore({ dir, cipher });
   const events = new EventEmitter();
@@ -218,21 +300,29 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     }));
   }
 
-  async function open(hostId) {
+  async function open(hostId, { via = 'own', relayUrl = null, getIdToken = null, onReadmit = null } = {}) {
     if (proxies.has(hostId)) return proxies.get(hostId);
     const run = (async () => {
-      const creds = await store.credentials(hostId);
+      const creds = await store.credentials(hostId, via);
       if (!creds) throw Object.assign(new Error(t('remote.device.unknownHost')), { code: 'unknown-host' });
+      const activeRelayUrl = (via === 'plus' && relayUrl && creds.relayUrl !== relayUrl) ? relayUrl : creds.relayUrl;
+      const activeCreds = { ...creds, relayUrl: activeRelayUrl, via };
       const keyPair = await store.identity();
-      const px = new DeviceProxy({ creds, keyPair, port: creds.port, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log,
-        staticCacheFile: staticCacheFile(hostId), ...proxyOptions });
+      const px = new DeviceProxy({
+        creds: activeCreds, keyPair, port: creds.port, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log,
+        staticCacheFile: staticCacheFile(hostId), via, getIdToken, onReadmit, ...proxyOptions,
+      });
       px.on('status', s => {
-        if (s.state === 'connected') store.updateHost(hostId, { lastConnectedAt: new Date().toISOString(), revokedAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) }).catch(() => {});
-        if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }).catch(() => {});
+        if (s.state === 'connected') {
+          const patch = { lastConnectedAt: new Date().toISOString(), revokedAt: null, ...(s.hostName ? { hostName: cleanLabel(s.hostName) } : {}) };
+          if (via === 'plus' && creds.relayUrl !== activeRelayUrl) patch.relayUrl = activeRelayUrl;
+          store.updateHost(hostId, patch, via).catch(() => {});
+        }
+        if (s.state === 'revoked') store.updateHost(hostId, { revokedAt: new Date().toISOString() }, via).catch(() => {});
         events.emit('status', { hostId, ...s });
       });
       await px.start();
-      if (px.port !== creds.port) await store.updateHost(hostId, { port: px.port });
+      if (px.port !== creds.port) await store.updateHost(hostId, { port: px.port }, via);
       return px;
     })();
     proxies.set(hostId, run);
@@ -311,12 +401,22 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     /** 開いているプロキシ（無ければ null）。 */
     async proxy(hostId) { return proxies.has(hostId) ? proxies.get(hostId).catch(() => null) : null; },
     close,
-    async rename(hostId, label) { return store.updateHost(hostId, { label: cleanLabel(label) }); },
+    async rename(hostId, label, via = 'own') { return store.updateHost(hostId, { label: cleanLabel(label) }, via); },
     /** ペアリングを忘れる（ホストの端末一覧からは消えない。ホストで取り消す）。 */
-    async remove(hostId) {
+    async remove(hostId, via = 'own') {
       await close(hostId); await agentClose(hostId);
-      await fs.rm(staticCacheFile(hostId), { force: true }).catch(() => {});
-      return store.removeHost(hostId);
+      const remaining = (await store.hosts()).filter(h => h.hostId === hostId && (h.via ?? 'own') !== via);
+      if (!remaining.length) {
+        await fs.rm(staticCacheFile(hostId), { force: true }).catch(() => {});
+      }
+      return store.removeHost(hostId, via);
+    },
+    /** Plus のホストを受け入れて保存する。 */
+    async admit({ hostId, hostPublicKey, relayUrl, idToken, uid }) {
+      const keyPair = await store.identity();
+      const creds = await admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair, idToken, name, platform, app });
+      const rec = await store.saveHost({ ...creds, via: 'plus', uid });
+      return rec;
     },
     async closeAll() { await Promise.all([...proxies.keys()].map(close)); await Promise.all([...agents.keys()].map(agentClose)); },
     agentSync,

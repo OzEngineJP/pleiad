@@ -126,8 +126,8 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   /** 自分の中継サーバー の「編集」で出している欄（relayInputs）。出していなければ null */
   let editing = null;
 
-  const hosts = setupRemoteHosts({ onChange: () => paint() });
-  hosts.onOpen?.(() => { tab = 'other'; detailId = ''; open('remote'); refresh(); });
+  const hosts = setupRemoteHosts({ onChange: () => paint(), cmd, page });
+  hosts.onOpen?.(() => { tab = 'other'; detailId = ''; open('remote'); hosts.startPolling?.(); refresh(); });
 
   // ---- 描く
   function paint() {
@@ -162,7 +162,16 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     const row = el('div', 'rm-tabrow');
     if (hosts.available) {
       row.append(segment(t('settings.remote.tabs.label'), [['this', t('settings.remote.tabs.this')], ['other', t('settings.remote.tabs.other')]], tab,
-        value => { tab = value; detailId = ''; confirming = false; editing = null; if (value === 'other') hosts.refresh(); paint(); }));
+        value => {
+          tab = value; detailId = ''; confirming = false; editing = null;
+          if (value === 'other') {
+            hosts.refresh();
+            hosts.startPolling?.();
+          } else {
+            hosts.stopPolling?.();
+          }
+          paint();
+        }));
     }
     const allowed = status?.enabled === true;
     if (tab === 'other') row.append(iconButton('plus', t('settings.remote.addHost'), () => hosts.openAdd(), 'btn rm-add'));
