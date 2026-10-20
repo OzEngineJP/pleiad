@@ -1871,6 +1871,7 @@
   "settings": {
     "account": "Default registered account per agent (human only)",
     "locale": "Display language (auto follows the OS).",
+    "plus": "Shown-once state for Pleiad Plus screens (dismissed notices).",
     "voice": "Call mode settings (speech-to-text and text-to-speech models and voice, language, per-call and per-day call length limits, echo cancellation). Only the fields you pass are overlaid; a null field returns to its default. Raising the limits needs the user's approval. The OpenRouter key is not handled here.",
     "shellTool": "The shell tool each agent uses. Per agent id, native (the agent's own) or ply (only Pleiad's ply_shell, with the agent's own shell tool turned off). Agents that can turn theirs off have the nativeShellOff capability.",
     "linkOpen": "Where links open (inapp is the built-in browser, external is the default browser).",

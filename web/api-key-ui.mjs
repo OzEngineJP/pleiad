@@ -71,10 +71,11 @@ export function spinner(label) {
  * @param {string} [o.provider]  未登録のとき「＋ <プロバイダー> のキーを登録…」を出すプロバイダー
  * @param {() => void} [o.register]  その場の登録欄を開く
  * @param {'left'|'right'} [o.align]
+ * @param {string} [o.noneLabel]  選んでいないときのボタンの字（既定は apiKeys.select.none）
  */
-export function keySelect({ keys, current, label, focusKey, choose, provider, register, align = 'right' }) {
+export function keySelect({ keys, current, label, focusKey, choose, provider, register, align = 'right', noneLabel }) {
   const cur = keys.find(k => k.id === current);
-  const text = cur ? keyName(cur) : t('apiKeys.select.none');
+  const text = cur ? keyName(cur) : (noneLabel ?? t('apiKeys.select.none'));
   const wrap = el('span', 'ak-selwrap');
   const btn = el('button', 'ak-selbtn'); btn.type = 'button';
   btn.setAttribute('aria-haspopup', 'listbox'); btn.setAttribute('aria-expanded', 'false');

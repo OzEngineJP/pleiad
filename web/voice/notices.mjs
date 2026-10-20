@@ -30,6 +30,10 @@ export const STATUS_NOTES = {
   link: { key: 'link', settings: false, tone: 'ended', clears: ['moved'] },
   start: { key: 'start', settings: true, tone: 'state', clears: [] },
   'start-timeout': { key: 'startTimeout', settings: false, tone: 'state', clears: [] },
+  // 中継（仮想のキー plus）の取り返せない誤り。終わった理由と同じく別の会話へ移ったら消える。入口は「アカウントを管理」（アプリの外の URL）
+  'credit_exhausted': { key: 'plusLimit', settings: false, account: true, tone: 'ended', clears: ['moved'] },
+  'not_plus': { key: 'plusAccount', settings: false, account: true, tone: 'ended', clears: ['moved'] },
+  'account_disabled': { key: 'plusAccount', settings: false, account: true, tone: 'ended', clears: ['moved'] },
   // マイクを使えなかった理由（engine.denied）
   denied: { key: 'denied', settings: true, tone: 'state', clears: ['fixed-permission'] },
   'no-device': { key: 'noDevice', settings: true, tone: 'state', clears: ['fixed-device'] },
@@ -62,7 +66,7 @@ export function createNotices(ui) {
   };
   const setStatus = (next) => {
     status = next;
-    ui.status(next ? { code: next.code, key: next.key, settings: next.settings, tone: next.tone } : null);
+    ui.status(next ? { code: next.code, key: next.key, settings: next.settings, account: next.account === true, tone: next.tone } : null);
   };
   const setTts = (on) => { if (tts === on) return; tts = on; ui.ttsFail(on); };
 

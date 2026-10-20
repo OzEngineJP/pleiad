@@ -146,22 +146,44 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
  * @param cmd  WS コマンド
  * @param page 設定のページを切り替える（onboarding.page）
  */
-export function setupPlusSettings({ cmd, page }) {
+export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   const $ = id => document.getElementById(id);
   const root = $('plusPanel'), tab = $('plusTab');
   let status = null;
   /** 「つなぎ直す」の確かめ中か・操作中か・画面に出す失敗 */
   let confirming = false, busy = false, message = '';
+  /** ログインで委譲と通話に plus が自動で選ばれた案内を出す（閉じたら prefs.plus.autoNoticeSeen に書いて二度と出さない） */
+  let autoNotice = false;
 
   function paint() {
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
-    const sig = JSON.stringify([status, confirming, busy, message]);
+    const sig = JSON.stringify([status, confirming, busy, message, autoNotice]);
     paintInto(root, sig, () => {
       const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming });
+      if (autoNotice) nodes.unshift(autoNoticeRow());
       if (message) nodes.push(errorLine(message));
       return nodes;
     });
+  }
+
+  /** 「委譲先の自動選択と音声通話に Pleiad Plus を使います」の 1 度きりの案内（閉じると出さない） */
+  function autoNoticeRow() {
+    const box = el('div', 'mp-card');
+    const row = el('div', 'mp-row');
+    const info = el('div', 'mp-card-info');
+    info.append(el('small', null, t('settings.plus.autoNotice')));
+    row.append(info);
+    const close = el('button', 'btn btn-quiet', t('voice.note.close'));
+    close.type = 'button';
+    close.onclick = () => {
+      autoNotice = false;
+      cmd('setPref', { key: 'plus', value: { ...(getPrefs().plus ?? {}), autoNoticeSeen: true } }).catch(() => {});
+      paint();
+    };
+    row.append(el('div', 'mp-card-actions', close));
+    box.append(row);
+    return box;
   }
 
   function askRebind() {
@@ -191,6 +213,11 @@ export function setupPlusSettings({ cmd, page }) {
     paint();
   }
   function event(ev) {
+    if (ev?.type === 'apiKeysChanged') {
+      // ログインで委譲と通話の両方に plus が自動で選ばれた（core/api-keys.mjs の onChange の autoPlus）
+      if (ev.autoPlus === true && !getPrefs().plus?.autoNoticeSeen) { autoNotice = true; paint(); }
+      return;
+    }
     if (ev?.type !== 'plusStatus') return;
     status = ev.status ?? status;
     paint();

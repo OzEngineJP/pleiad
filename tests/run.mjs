@@ -353,6 +353,8 @@ const SUITES = [
   './unit/server-api-keys.mjs',
   // 仮想のキー「Pleiad Plus」（docs/plus.md「キー無しの機能」）: 選べる使い道・useEndpoint の表・秘密に書かない・ログインの自動選択・credit_exhausted
   './unit/api-keys-plus.mjs',
+  // 設定 › 委譲「委譲先の自動選択に使うキー」が返す形（via・hasKey・keyRef・plus の状態。値・トークンは出さない）
+  './unit/delegation-settings-plus.mjs',
   // 秘密情報と変数（ADR 0217）: 置き場（値を出さない・使えない名前・渡す場所の勝ち負け・worktree・.env・origin の照合・伏せる・Claude のシェルへ渡すファイル）
   './unit/secrets-store.mjs',
   // 秘密情報と変数をサーバー越しに: 操作と権限・ターンのシェルへ渡す・画面へ出る前に伏せる・`!` の行・入力のカード・サイトでの入力

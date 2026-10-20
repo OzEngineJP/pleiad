@@ -680,7 +680,7 @@ plusSession.onChange(({ type, status }) => {
   // キー無しの機能（docs/plus.md）: ログインしたら、自動選択と通話のどちらも「使わない」のときだけ仮想のキー plus を両方に選ぶ（{ autoPlus }）
   if (type === 'signedIn') apiKeys.plusSignedIn().catch(() => {});
   // セッションの出入り・アカウントの読み直しで送り先（useEndpoint）が変わりうるので、通話の比べと画面の状態を更新する
-  if (type === 'signedIn' || type === 'signedOut' || type === 'account') {
+  if (type === 'signedIn' || type === 'signedOut' || type === 'account' || type === 'config') {
     voiceHost.keysChanged().catch(() => {});
     emitGlobal({ type: 'voiceChanged', sessionId: null });
     emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
@@ -1618,12 +1618,38 @@ async function routeDelegation(args, lng, cwd) {
   return { ...args, backend, model, account: account ?? '', routing };
 }
 
+/**
+ * 画面が「Pleiad Plus」の行を描くための、キーを含まない状態（設定 › 委譲・設定 › 通話で共用。docs/plus.md「画面の行」）。
+ * state は /v1/auth/config、status は GET /v1/account。limitReached は今月の上限に達した（使い切った、または中継が credit_exhausted を返した月）。
+ */
+async function plusKeyInfo() {
+  const snap = plusSession.snapshot?.() ?? {};
+  const account = snap.account ?? null;
+  const credit = await apiKeys.plusCredit().catch(() => null);
+  const credits = Number(account?.usage?.credits), limit = Number(account?.limits?.creditsPerMonth);
+  return {
+    available: snap.available !== false,
+    state: snap.state ?? null,
+    signedIn: snap.signedIn === true,
+    status: account?.status ?? null,
+    email: account?.email ?? null,
+    reachable: snap.reachable !== false,
+    limitReached: Boolean(credit) || (Number.isFinite(credits) && Number.isFinite(limit) && credits >= limit),
+    resetAt: credit?.resetAt ?? account?.usage?.resetAt ?? null,
+    profileUrl: snap.urls?.profile ?? null,
+  };
+}
+/** 自動選択・通話に使うキーの画面向けの形。via はどちらを選んでいるか（値は返さない）。plus は plusKeyInfo */
+async function keyChoiceInfo(use) {
+  const refs = apiKeys.usesState();
+  const ref = refs[use] ?? null;
+  const via = ref === 'plus' ? 'plus' : ref ? 'key' : null;
+  return { via, hasKey: await apiKeys.hasUse(use).catch(() => false), keyRef: via === 'key' ? ref : null, plus: await plusKeyInfo() };
+}
 /** 設定 › 委譲（段 B の画面）が読む今の状態。キーは hasKey だけ */
 async function delegationRoutingState() {
   const settings = routingSettingsCache;
   const usage = routingUsage.snapshot();
-  const has = await Promise.all(ROUTING_SERVICES.map(s => apiKeys.hasUse(`judge:${ROUTING_JUDGE[s]}`).catch(() => false)));
-  const refs = apiKeys.usesState();
   const storage = await apiKeySecrets.status().catch(() => null);
   // 候補ごとの強さの持ち方（選択肢の元。モデルの一覧から引く）と、会話の既定（エージェント設定の強さ。「会話の既定に従う（今は X）」）
   const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: slotBlocked }).map(async c => {
@@ -1633,8 +1659,9 @@ async function delegationRoutingState() {
   const prefs = await store.getPrefs();
   const conversationEfforts = Object.fromEntries(listBackends().map(b => [b.id, prefs.backends?.[b.id]?.effort ?? '']));
   const credit = await apiKeys.plusCredit().catch(() => null);
+  const keyChoice = Object.fromEntries(await Promise.all(ROUTING_SERVICES.map(async s => [s, await keyChoiceInfo(`judge:${ROUTING_JUDGE[s]}`)])));
   return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS, conversationEfforts,
-    keys: Object.fromEntries(ROUTING_SERVICES.map((s, i) => [s, { hasKey: has[i], keyRef: has[i] ? refs[`judge:${ROUTING_JUDGE[s]}`] ?? null : null }])),
+    keys: Object.fromEntries(ROUTING_SERVICES.map(s => [s, keyChoice[s] ?? { via: null, hasKey: false, keyRef: null, plus: null }])),
     // 中継が credit_exhausted を返した月の状態（{ resetAt } か null。仮想のキー plus の判定を止めている間だけ値がある）
     limit: credit,
     storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
@@ -5238,7 +5265,7 @@ function opsDeps(lng = currentLocale()) {
     agents: opsAgents,
     accounts: accountManager,
     prefs: () => store.getPrefs(),
-    voice: { status: async () => ({ ...(await voiceHost.status()), keyRef: (await apiKeys.hasUse('voice')) ? apiKeys.usesState().voice : null }) },
+    voice: { status: async () => ({ ...(await voiceHost.status()), ...(await keyChoiceInfo('voice')) }) },
     // 設定 › API キー（core/ops/api-keys.mjs）。キーの値は持たない。入れる・消す・割り当てるのは human-only の WS コマンド（ADR 0155）
     apiKeys: { list: () => apiKeys.list(), check: id => apiKeys.check(id) },
     // 設定 › 秘密情報と変数（core/ops/secrets.mjs。ADR 0217）。値は返さない（変数の値だけ）

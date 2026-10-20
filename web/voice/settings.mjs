@@ -6,6 +6,9 @@
 import { el } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from '../api-key-ui.mjs';
+import { keyRadioRow, keyRadioGroup, plusKeyRow, plusRowVisible } from '../plus-key-row.mjs';
+import { openExternalLink } from '../link-open.mjs';
+import { button } from '../remote-parts.mjs';
 
 const DEFAULTS = { sttModel: 'microsoft/mai-transcribe-2', sttFallbackModel: 'assemblyai/universal-3-5-pro', ttsModel: 'x-ai/grok-voice-tts-1.0', ttsVoice: 'eve' };
 const minutes = (seconds) => Math.round(seconds / 60);
@@ -42,10 +45,10 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
     await load();
   }
 
-  /** 通話に使うキーを選ぶ（null は使わない）。選んだときから送り始める */
+  /** 通話に使うキーを選ぶ（null は使わない。'plus' は仮想のキー Pleiad Plus）。選んだときから送り始める */
   async function chooseKey(id) {
     if (busy) return;
-    busy = true; focusKey = 'sel:voice';
+    busy = true; focusKey = id === 'plus' ? 'plus' : 'sel:voice';
     try {
       await cmd('setApiKeyUse', { use: 'voice', id });
       say(id ? t('apiKeys.voice.chosen') : t('apiKeys.voice.unchosen'));
@@ -94,23 +97,44 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
     const sec = el('section', 'nf-section');
     sec.append(el('h4', null, t('voice.settings.key.title')));
     const card = el('div', 'nf-card');
-    const row = el('div', 'mp-row');
-    const info = el('div', 'mp-card-info');
-    info.append(el('strong', null, t('apiKeys.useKey')));
+    const rows = [];
+    // 仮想のキー「Pleiad Plus」（state: off・AGENT_HOST_PLUS=0 なら行ごと出さない。docs/plus.md「画面の行」）
+    if (plusRowVisible(s.plus)) {
+      const { row } = plusKeyRow({ info: s.plus, checked: s.via === 'plus',
+        onChoose: () => chooseKey('plus'), onLogin: () => cmd('plusLogin').catch(() => {}) });
+      rows.push(row);
+      // 上限に達していると通話を始められない（選んでいるときだけ案内）
+      if (s.via === 'plus' && s.plus?.limitReached) {
+        const warn = el('p', 'rm-err', t('voice.note.plusLimit'));
+        warn.setAttribute('role', 'alert');
+        rows.push(warn);
+        if (s.plus?.profileUrl) {
+          const acts = el('div', 'rm-acts');
+          acts.append(button(t('settings.plus.manage'), () => openExternalLink(s.plus.profileUrl), 'btn btn-quiet'));
+          rows.push(acts);
+        }
+      }
+    }
+    // OpenRouter（今の登録の道。選ぶと via: 'key'）
     const openrouter = (keys?.keys ?? []).filter(k => k.provider === 'openrouter');
     const current = openrouter.find(k => k.id === s.keyRef) ?? null;
-    if (keys?.migration?.state === 'deferred') info.append(el('small', null, s.hasKey ? t('apiKeys.deferredInUse') : t('apiKeys.deferredShort')));
-    else if (current) { const small = statusLine(current); small.append(' · ', manageLink(openPage)); info.append(small); }
-    else info.append(el('small', null, t('apiKeys.voice.unset')));
-    row.append(info);
-    // 移行を保留している間は、選び直せない（古い置き場のまま使う。設定 › API キーに理由）
-    if (keys && keys.migration?.state !== 'deferred') {
-      const actions = el('div', 'mp-card-actions ak-sels');
-      actions.append(keySelect({ keys: openrouter, current: current?.id ?? null, label: t('apiKeys.voice.selectLabel'), focusKey: 'sel:voice', provider: 'openrouter', choose: chooseKey,
-        register: () => { registering = true; focusKey = 'regin'; paint(); } }).element);
-      row.append(actions);
+    let orRow;
+    if (keys?.migration?.state === 'deferred') {
+      orRow = keyRadioRow({ name: 'OpenRouter', checked: s.via === 'key', disabled: true,
+        sub: s.hasKey ? t('apiKeys.deferredInUse') : t('apiKeys.deferredShort') });
+    } else {
+      const sel = keySelect({ keys: openrouter, current: current?.id ?? null, noneLabel: openrouter.length ? undefined : t('apiKeys.delegation.selectKey'),
+        label: t('apiKeys.voice.selectLabel'), focusKey: 'sel:voice', provider: 'openrouter', choose: chooseKey,
+        register: () => { registering = true; focusKey = 'regin'; paint(); } });
+      const sub = el('span');
+      if (s.via === 'key' && current) { const small = statusLine(current); small.append(' · ', manageLink(openPage)); sub.append(small); }
+      else if (!current) sub.append(t('apiKeys.delegation.selectKey'));
+      orRow = keyRadioRow({ name: 'OpenRouter', checked: s.via === 'key', disabled: !keys, sub, end: sel.element,
+        onChoose: () => sel.open(), focusKey: 'row:voice' });
+      sel.element.addEventListener('click', e => e.stopPropagation());
     }
-    card.append(row);
+    rows.push(orRow);
+    card.append(keyRadioGroup(t('voice.settings.key.title'), rows));
     if (registering && keys) card.append(registerForm({ provider: 'openrouter', label: t('voice.settings.key.title'), storage: keys.storage ?? s.storage, focusKey: 'regin', onSubmit: registerKey,
       onCancel: () => { registering = false; focusKey = 'sel:voice'; paint(); } }));
     sec.append(card);

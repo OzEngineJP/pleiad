@@ -38,6 +38,7 @@ import { createLiveBubble, micMark } from './live-bubble.mjs';
 import { createSounds } from './sounds.mjs';
 import { createSendQueue } from './send-queue.mjs';
 import { t } from '../i18n.mjs';
+import { openExternalLink } from '../link-open.mjs';
 
 const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 /** 聞き取れなかった行の字（続けて 2 回目から回数と手がかり。キーが拒否されたときは 1 回目から別の文） */
@@ -86,8 +87,10 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
   document.body.append(live);
   const say = (text) => { live.textContent = ''; requestAnimationFrame(() => { live.textContent = text; }); };
 
+  let plusProfileUrl = null;   // 「アカウントを管理」の開き先（voice.status の plus.profileUrl）
   const loadSettings = () => invoke('voice.status', {}).then((s) => {
     settings = { ...settings, echoCancellation: s?.settings?.echoCancellation !== false, bargeIn: s?.settings?.bargeIn !== false, sounds: s?.settings?.sounds ?? 'off' };
+    plusProfileUrl = s?.plus?.profileUrl ?? null;
   }).catch(() => {});
   loadSettings();
   const sounds = createSounds({ level: () => settings.sounds, speaking: () => engine.state === 'speaking' });
@@ -280,6 +283,11 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
         if (was) { lastRec = was; cleanupRec(was); }
         active = null;
         for (const r of recs) r.board.callEnded();   // 通話を終えたら、聞き取れなかった行・読み上げの失敗の一行は消える
+        // 中継（仮想のキー plus）の取り返せない誤りで終わった理由は、通話の状態の一行に出す（「アカウントを管理」つき）
+        if (was && typeof ev.reason === 'string' && ev.reason.startsWith('error:')) {
+          const code = ev.reason.slice(6);
+          if (['credit_exhausted', 'not_plus', 'account_disabled'].includes(code)) lastRec.board.showStatus(code, keyOf(lastRec.slot.target()));
+        }
         clearInterval(clock); clearInterval(watchTimer);
         paintAll();
         announce('off');
@@ -381,7 +389,8 @@ export function setupVoice({ token, invoke, openSettings, available = () => true
         bubbleActive: () => liveBubble.active,
         status: (view) => {
           // i18n-dynamic: voice.note.
-          if (view) note.show(t(`voice.note.${view.key}`), { settings: view.settings }); else note.hide();
+          if (view) note.show(t(`voice.note.${view.key}`), { settings: view.settings,
+            account: view.account && plusProfileUrl ? { onclick: () => openExternalLink(plusProfileUrl) } : null }); else note.hide();
           syncWatch();
         },
         listen: (view) => {

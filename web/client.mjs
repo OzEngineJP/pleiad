@@ -3303,7 +3303,7 @@ function onEvent(ev, replay = false) {
   // 通話に使うキーの選び直し・差し替え・削除（設定 › 通話。core/voice/host.mjs）
   if (ev.type === 'voiceChanged') { voiceSettings.event(ev); voiceUi.refresh({ changed: true }); return; }
   // API キーの登録・差し替え・削除・割り当て・確認の結果（設定 › API キー。core/api-keys.mjs）。キーを選ぶ 3 つの画面も取り直す
-  if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); computerSettings.event(ev); compatEndpoints.keysChanged(); return; }
+  if (ev.type === 'apiKeysChanged') { apiKeysSettings.event(ev); voiceSettings.event(ev); delegationSettings.event(ev); computerSettings.event(ev); plusSettings.event(ev); compatEndpoints.keysChanged(); return; }
   if (ev.type === 'secretsChanged') { apiKeysSettings.event(ev); return; }
   // 設定の変更の承認が決着した（どの端末で答えても・取り下げても）。開いているカードを 1 行に畳む（ADR 0088）
   if (ev.type === 'settingApproval') { settleSettingCards(ev); return; }
@@ -10473,7 +10473,7 @@ setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, end
   onUsageLogin: usageLogin });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });
 // 設定 › Pleiad Plus（docs/plus.md「設定 › Pleiad Plus」）
-const plusSettings = setupPlusSettings({ cmd, page: onboarding.page });
+const plusSettings = setupPlusSettings({ cmd, page: onboarding.page, getPrefs: () => state.prefs });
 // 設定 › アプリ情報・更新 › 常駐（デスクトップ版だけ。状態は remoteStatus の resident）
 const residentSettings = setupResidentSettings({ cmd });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）

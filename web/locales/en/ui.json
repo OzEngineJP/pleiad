@@ -187,7 +187,8 @@
         "rebind": "Reconnect",
         "rebindConfirm": "This rebuilds this PC's key. Devices connected through your own relay server will need to be paired again.",
         "rebindYes": "Rebuild",
-        "hostLimit": "This account has reached its limit"
+        "hostLimit": "This account has reached its limit",
+        "autoNotice": "Pleiad Plus will be used for automatic delegation and voice calls"
       },
     "remote": {
       "tabs": {
@@ -3847,6 +3848,8 @@
       "unset": "Not used for automatic delegate selection until you choose a key",
       "selectKey": "Choose a key",
       "selectLabel": "Key for {{service}}",
+      "plusNotUsing": "Not using Pleiad Plus",
+      "plusLimit": "Monthly limit reached (resets on {{date}})",
       "note": "Once you choose a key, the delegation request text and its kind are sent to that service."
     },
     "endpoint": {
@@ -4967,7 +4970,9 @@
       "notSent": "It could not be sent right now",
       "sentOnLeave": "When the call ended, the words still waiting to be sent went to the conversation you were speaking in",
       "start": "Could not start the call ·",
-      "startTimeout": "The call did not get ready in time"
+      "startTimeout": "The call did not get ready in time",
+      "plusLimit": "You've reached this month's Pleiad Plus limit, so the call can't start.",
+      "plusAccount": "This account can't use the official relay"
     },
     "settings": {
       "intro": "Talk to the agent: your voice is transcribed and sent to the conversation, and the reply is read aloud. Both go through OpenRouter.",

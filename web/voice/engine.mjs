@@ -260,7 +260,7 @@ export function createCallEngine({ token, now = () => performance.now(), AudioCo
         if (mine !== seq) return false;
         const code = e?.reason ?? e?.code ?? 'unavailable';
         if (['denied', 'no-device', 'busy'].includes(code)) denied = code;
-        else emit({ type: 'notice', code: code === 'timeout' ? 'start-timeout' : code === 'no-key' || code === 'daily-limit' ? code : 'start' });
+        else emit({ type: 'notice', code: code === 'timeout' ? 'start-timeout' : ['no-key', 'daily-limit', 'credit_exhausted', 'not_plus', 'account_disabled'].includes(code) ? code : 'start' });
         cleanup();
         shown = 'off';
         emit({ type: 'state' });
