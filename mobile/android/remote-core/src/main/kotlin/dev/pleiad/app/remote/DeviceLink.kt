@@ -40,6 +40,8 @@ object LinkRules {
     fun classifyClose(closeCode: Int? = null, goaway: String? = null): String = when {
         goaway == "revoked" || closeCode == 4401 -> "revoked"
         goaway == "shutdown" || closeCode == 4404 || closeCode == 4408 -> "host-offline"
+        // The relay's authz plugin failed transiently (docs/remote.md §5.7). Retry after a while.
+        closeCode == 1013 -> "offline"
         else -> "offline"
     }
 }
