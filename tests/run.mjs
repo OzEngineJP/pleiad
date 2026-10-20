@@ -29,6 +29,7 @@ const SUITES = [
   // Pleiad Plus（core/plus/）: セッション（ログイン・保管・更新・状態。偽の Plus だけと話す）と ID トークンの検証
   './unit/plus-session.mjs',
   './unit/plus-verify.mjs',
+  './unit/plus-hosts.mjs',
   './unit/acp-error.mjs',
   './unit/opencode-v2.mjs',
   './unit/compaction.mjs',
@@ -738,6 +739,7 @@ const SUITES = [
   './unit/remote-host.mjs',
   // つながり（link）の作り替え: own と plus の 2 本の制御用の接続・via ごとの sync と受け入れの振り分け・provider の差し込み口
   './unit/remote-conn-links.mjs',
+  './unit/remote-plus.mjs',
   // 審査の招待（ADR 0172）: 同じコードで複数台・台数と 1 時間の上限・期限・取り消しと作り直しで端末が切れる・審査モードでしか作れない。中継とホストをこのプロセスで立てて往復する
   './unit/remote-review-invite.mjs',
   // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し

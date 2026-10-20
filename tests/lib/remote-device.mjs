@@ -37,7 +37,7 @@ function openRelay(url, headers) {
   /** 次の 1 通。閉じられたら reject（closeCode 付き）。 */
   const next = (ms = 10_000) => new Promise((resolve, reject) => {
     if (inbox.length) return resolve(inbox.shift());
-    const fail = c => reject(Object.assign(new Error(`端末: 閉じられた（${c.code}）`), { closeCode: c.code }));
+    const fail = c => reject(Object.assign(new Error(`端末: 閉じられた（${c.code}）`), { closeCode: c.code, closeReason: c.reason }));
     if (isClosed) return fail(isClosed);
     const timer = setTimeout(() => { waiters.splice(waiters.indexOf(w), 1); reject(new Error('端末: メッセージが届かない')); }, ms);
     const w = (buf, c) => { clearTimeout(timer); if (buf) resolve(buf); else fail(c); };
@@ -85,12 +85,40 @@ export function pairDevice({ payload, name = 'test device', platform = 'desktop'
 }
 
 /**
+ * Plus の「同じアカウント」の受け入れ（docs/plus.md）。ペアリングも確認コードも無しに、
+ * ID トークンを Noise IK の中で送って端末を登録する。承認されたら { hostId, hostPublicKey, relayUrl, deviceId, token, hostName, keyPair }、
+ * 断られたら { denied: true, reason }。つながらなければ reject（closeCode 付き）。
+ */
+export async function admitDevice({ relayUrl, hostId, hostPublicKey, idToken, name = 'test device', platform = 'android', app = 'test', keyPair = generateKeyPair(), timeoutMs = 10_000 }) {
+  const { ws, opened, next } = openRelay(relayWsUrl(relayUrl, '/v1/device'), {
+    'x-pleiad-host': hostId, 'x-pleiad-account': idToken,
+  });
+  try {
+    const o = await opened;
+    if (!o.open) throw new Error(`端末: 中継につながらない ${JSON.stringify(o)}`);
+    const hs = new Handshake({ pattern: 'IK', initiator: true, prologue: prologueFor(hostId), staticKey: keyPair, remoteStatic: hostPublicKey });
+    ws.send(hs.writeMessage(Buffer.from(JSON.stringify({ proto: 1, name, platform, app, plus: { idToken } }))));
+    hs.readMessage(await next());
+    const transport = hs.split();
+    ws.send(transport.encrypt(Buffer.from(JSON.stringify({ type: 'admit' }))));
+    const msg = JSON.parse(transport.decrypt(await next(timeoutMs)).toString('utf8'));
+    ws.close(1000);
+    if (msg.type !== 'approved') return { denied: true, ...msg };
+    return { hostId, hostPublicKey, relayUrl, deviceId: msg.deviceId, token: msg.token, hostName: msg.hostName, keyPair };
+  } catch (e) {
+    ws.terminate();
+    throw e;
+  }
+}
+
+/**
  * ペアリング済みの資格情報でつなぐ。ハンドシェイクと HELLO まで済んだら解決する。
  * つながらなければ reject（closeCode に中継かホストの close code）。
+ * extraHeaders は Plus のようにアカウントのヘッダーが要る中継に足す（tests/lib/plus-relay-authz.mjs）。
  */
-export async function connectDevice(creds, { name = 'test device', app = 'test', helloTimeoutMs = 10_000 } = {}) {
+export async function connectDevice(creds, { name = 'test device', app = 'test', helloTimeoutMs = 10_000, extraHeaders = {} } = {}) {
   const { ws, closed, opened, next, drainTo } = openRelay(relayWsUrl(creds.relayUrl, '/v1/device'), {
-    authorization: `Bearer ${creds.token}`, 'x-pleiad-host': creds.hostId, 'x-pleiad-device': creds.deviceId,
+    authorization: `Bearer ${creds.token}`, 'x-pleiad-host': creds.hostId, 'x-pleiad-device': creds.deviceId, ...extraHeaders,
   });
   const o = await opened;
   if (!o.open) throw Object.assign(new Error(`端末: 中継につながらない ${JSON.stringify(o)}`), { status: o.status });
