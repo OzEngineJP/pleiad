@@ -83,6 +83,7 @@ export const COMMANDS = new Set([
   'remotePairingDeny',     // { id } -> RemoteStatus
   'remoteDevices',         // {} -> 端末の一覧（RemoteStatus の devices と同じ）
   'remoteRevoke',          // { id } -> RemoteStatus。一覧と中継から消し、つながり中のチャネルを切る
+  'plusHostRebind',        // {} -> RemoteStatus。この PC の hostId がほかのアカウントに取られているとき、ホストの鍵を作り直して端末を全部取り消し、Plus へ登録し直す。人だけ
   'setRemoteDeviceAgent',  // { id, stopAll? } -> 端末の行（agent を含む）。この端末から任された作業をすべて止める。docs/remote.md §4.5（端末ごとの許可は ADR 0239 で無くした）
   'setRemoteResident',     // { keepRunning?, sleep?: 'working'|'off' } -> RemoteStatus。常駐の設定（§6.3。RemoteStatus.resident に { available, keepRunning, sleep }）
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
