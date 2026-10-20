@@ -19,6 +19,7 @@ class MainActivity : BridgeActivity() {
         takePairLink(intent)
         takeOpenLink(intent)
         takeAuthLink(intent)
+        takePlusLink(intent)
         NotifyService.sync(this)
     }
 
@@ -49,6 +50,7 @@ class MainActivity : BridgeActivity() {
         takePairLink(intent)
         takeOpenLink(intent)
         takeAuthLink(intent)
+        takePlusLink(intent)
     }
 
     /**
@@ -82,5 +84,21 @@ class MainActivity : BridgeActivity() {
     private fun takePairLink(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "pleiad" && data.host == "pair") PleiadRemotePlugin.offerLink(data.toString())
+    }
+
+    /**
+     * pleiad://plus/enable|disable: the Plus entrance mark on this device (docs/plus.md "入口を出すリンク").
+     * enable shows the entrance while the api says visibility is optin; disable clears it. Handled once.
+     */
+    private fun takePlusLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme != "pleiad" || data.host != "plus") return
+        val on = when (data.path?.removeSuffix("/")) {
+            "/enable" -> true
+            "/disable" -> false
+            else -> return   // other pleiad://plus/… links are ignored
+        }
+        intent.data = null
+        (application as PleiadApp).plus.setEntrance(on)
     }
 }
