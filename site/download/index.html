@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="dl.title">ダウンロード — Pleiad</title>
+<meta name="description" content="Pleiad の Windows・macOS 版と、スマホのアプリ。" data-i18n-attr="content:dl.description">
+<!-- i18n:head -->
+<meta name="theme-color" content="#f5f6fa">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link data-only="ja" rel="preload" href="../assets/fonts/noto-sans-jp.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../assets/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../styles.css">
+<script src="../os.js"></script>
+</head>
+<body class="dl-page">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mark" viewBox="0 0 96 96">
+    <path fill="var(--ink)" d="M8 8H57C77 8 88 22 88 42C88 48 87 53 84 58C78 68 65 72 48 75L30 78C30 85 20 91 8 94V73C8 64 16 58 30 55L50 50C61 47 66 36 55 32H31C16 32 8 24 8 8Z"/>
+    <path fill="var(--indigo)" d="M55 32C68 33 80 44 84 58C78 68 65 72 48 75L30 78V55L50 50C61 47 66 36 55 32Z"/>
+    <path fill="var(--indigo)" d="M30 55V78C30 85 20 91 8 94V73C8 64 16 58 30 55Z"/>
+  </symbol>
+  <symbol id="i-word" viewBox="0 0 346 104">
+    <g fill="var(--ink)">
+      <path fill-rule="evenodd" d="M7 14.05H38.85C60.3 14.05 73.3 22.5 73.3 42C73.3 57.6 64.85 62.8 49.9 66.7L28.45 72.55V92.7H7ZM28.45 33.55H40.8C47.950 33.55 51.85 35.5 51.85 42C51.85 46.55 49.25 48.5 44.05 50.45L28.45 56.3Z"/>
+      <path fill-rule="evenodd" d="M79.15 14.05H90.85C97.35 14.05 100.6 17.95 100.6 25.1V79.05C100.6 82.3 104.5 86.2 109.05 92.05H91.5C83.05 92.05 79.15 88.15 79.15 79.7Z"/>
+      <path fill-rule="evenodd" d="M131.15 69.95C131.15 75.15 133.1 77.75 138.95 77.75H157.8L165.6 92.05H131.8C116.2 92.05 107.75 82.3 107.75 65.4V62.15C107.75 46.55 116.85 36.8 132.45 36.8H143.5C157.8 36.8 167.55 46.55 167.55 61.5C167.55 64.1 166.9 67.35 166.25 69.95ZM130.5 59.55H146.75V58.25C146.75 54.350 144.15 52.4 138.95 52.4H137.65C133.1 52.4 130.5 55 130.5 59.55Z"/>
+      <path fill-rule="evenodd" d="M172.1 37.45H193.55V92.7H172.1Z"/>
+      <circle cx="182.83" cy="22.18" r="10.4"/>
+      <path fill-rule="evenodd" d="M224.75 36.8H259.85V79.05L268.95 92.05H224.75C208.5 92.05 198.75 82.95 198.75 65.4V64.1C198.75 47.2 208.5 36.8 224.75 36.8ZM228 53.7C222.8 53.7 220.2 56.95 220.2 62.15V68C220.2 73.85 222.8 76.45 228 76.45H238.4V53.7Z"/>
+      <path fill-rule="evenodd" d="M307.3 20.55L314.45 13.4H330.05V79.05L339.15 92.05H294.3C277.4 92.05 268.3 82.3 268.3 65.4V64.1C268.3 47.2 278.05 36.8 293.65 36.8H307.3ZM296.9 53.7C292.35 53.7 289.75 56.95 289.75 62.15V68C289.75 73.850 292.35 76.45 296.9 76.45H307.3V53.7Z"/>
+    </g>
+  </symbol>
+  <symbol id="i-gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M8 2.5v8m0 0L4.5 7M8 10.5 11.5 7M3 13.5h10"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c1.8 1.9 2.7 4 2.7 6.2S9.8 12.3 8 14.2M8 1.8C6.2 3.7 5.3 5.8 5.3 8s.9 4.3 2.7 6.2"/></g></symbol>
+  <symbol id="i-chev" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m4.5 6.5 3.5 3.5 3.5-3.5"/></symbol>
+  <symbol id="o-win" viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 2.6 6.9 1.9v5.5H1.5zM7.9 1.8l6.6-.9v6.5H7.9zM1.5 8.4h5.4v5.5l-5.4-.7zM7.9 8.4h6.6v6.6l-6.6-.9z"/></symbol>
+  <symbol id="o-mac" viewBox="0 0 16 16"><path fill="currentColor" d="M11.2 8.5c0-1.6 1.3-2.4 1.4-2.4-.8-1.1-2-1.3-2.4-1.3-1-.1-2 .6-2.5.6s-1.3-.6-2.2-.6C4.4 4.8 3.3 5.5 2.7 6.6c-1.2 2.1-.3 5.2.9 6.9.6.8 1.2 1.7 2.1 1.7.8 0 1.2-.5 2.2-.5s1.3.5 2.2.5c.9 0 1.5-.8 2-1.7.6-.9.9-1.8.9-1.9 0 0-1.8-.7-1.8-3.1ZM9.6 3.6c.5-.6.8-1.4.7-2.2-.7 0-1.5.5-2 1.1-.4.5-.8 1.3-.7 2.1.8.1 1.5-.4 2-1Z"/></symbol>
+  <symbol id="o-linux" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.8" y="2.5" width="12.4" height="11" rx="1.6"/><path d="m4.6 6.4 2 1.6-2 1.6M8.4 10h3"/></g></symbol>
+  <symbol id="o-android" viewBox="0 0 16 16"><path fill="currentColor" d="M11.5 6.2 12.7 4a.3.3 0 0 0-.5-.3L11 5.9A7 7 0 0 0 8 5.2c-1.1 0-2.1.3-3 .7L3.8 3.7a.3.3 0 0 0-.5.3l1.2 2.2A5.6 5.6 0 0 0 1.6 11h12.8a5.6 5.6 0 0 0-2.9-4.8ZM5 9.2a.7.7 0 1 1 0-1.4.7.7 0 0 1 0 1.4Zm6 0a.7.7 0 1 1 0-1.4.7.7 0 0 1 0 1.4Z"/></symbol>
+</svg>
+
+<header class="nav is-solid">
+  <a class="brand" href="../" aria-label="Pleiad">
+    <svg class="brand-mark" aria-hidden="true"><use href="#i-mark"/></svg>
+    <svg class="brand-word" aria-hidden="true"><use href="#i-word"/></svg>
+  </a>
+  <nav class="nav-links">
+    <!-- i18n:lang-switch -->
+    <a class="nav-gh" href="https://github.com/OzEngineJP/pleiad" aria-label="GitHub"><svg aria-hidden="true"><use href="#i-gh"/></svg></a>
+  </nav>
+</header>
+
+<main>
+  <section class="dl-head">
+    <h1 data-i18n="dl.h">ダウンロード</h1>
+    <p class="ver"><span data-release="version"></span><a data-release="notes" href="https://github.com/OzEngineJP/pleiad/releases" data-i18n="dl.notes">更新履歴</a><a data-release="all" href="https://github.com/OzEngineJP/pleiad/releases" data-i18n="dl.all">すべてのファイル</a></p>
+  </section>
+
+  <div class="plat">
+    <section>
+      <h2 class="os"><svg aria-hidden="true"><use href="#o-win"/></svg>Windows</h2>
+      <p class="req">Windows 10 / 11</p>
+      <div class="cta">
+        <a class="btn btn-s btn-ghost" data-primary="win" data-release="win-x64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>x64</a>
+        <a class="btn btn-s btn-ghost" data-release="win-arm64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>ARM64</a>
+      </div>
+      <p class="dl-note" data-i18n="dl.smartscreen">初めて開くときに SmartScreen の確認が出ます。［詳細情報］→［実行］で進めます。</p>
+    </section>
+    <section>
+      <h2 class="os"><svg aria-hidden="true"><use href="#o-mac"/></svg>macOS</h2>
+      <p class="req" data-i18n="dl.macReq">macOS 13 以降</p>
+      <div class="cta">
+        <a class="btn btn-s btn-ghost" data-primary="mac" data-release="mac-arm64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>Apple Silicon</a>
+        <a class="btn btn-s btn-ghost" data-release="mac-x64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>Intel</a>
+      </div>
+    </section>
+    <section>
+      <h2 class="os"><svg aria-hidden="true"><use href="#o-linux"/></svg>Linux</h2>
+      <p class="req" data-i18n="dl.linuxReq">ブラウザー版（ソースから）</p>
+      <div class="cta">
+        <a class="btn btn-s btn-ghost" data-primary="linux" href="https://github.com/OzEngineJP/pleiad#run-from-source"><svg aria-hidden="true"><use href="#i-gh"/></svg><span data-i18n="dl.linuxBtn">ソースから動かす</span></a>
+      </div>
+    </section>
+  </div>
+
+  <section class="dl-sec" id="mobile">
+    <h2 data-i18n="dl.mobileH">スマホのアプリ</h2>
+    <p class="f-sub" data-i18n="dl.mobileSub">PC の Pleiad に、スマホからつなぎます</p>
+    <p class="f-note" data-i18n="remote.note">※ 中継サーバーの用意が必要です</p>
+    <div class="plat">
+      <section>
+        <h3 class="os"><svg aria-hidden="true"><use href="#o-android"/></svg>Android</h3>
+        <p class="req" data-i18n="dl.androidReq">Android 13 以降</p>
+        <div class="cta">
+          <a class="btn btn-s btn-ghost" data-primary="android" data-release="android" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg>APK</a>
+        </div>
+      </section>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>© 2026 Pleiad</span>
+  <span>Apache-2.0</span>
+  <a href="https://github.com/OzEngineJP/pleiad">GitHub</a>
+  <a href="../privacy/" data-i18n="foot.privacy">プライバシーポリシー</a>
+</footer>
+
+</body>
+</html>

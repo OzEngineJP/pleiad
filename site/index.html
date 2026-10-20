@@ -14,6 +14,7 @@
 <link data-only="ja" rel="preload" href="assets/fonts/noto-sans-jp.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="assets/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
+<script src="os.js"></script>
 <meta name="twitter:card" content="summary_large_image">
 <script type="importmap">
 { "imports": {
@@ -62,6 +63,7 @@
   <symbol id="i-chev" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m4.5 6.5 3.5 3.5 3.5-3.5"/></symbol>
   <symbol id="i-send" viewBox="0 0 16 16"><path fill="currentColor" d="M2.3 7.2 13 2.6c.5-.2 1 .3.8.8L9.2 14c-.2.5-.9.5-1.1 0L6.6 9.8a.6.6 0 0 0-.4-.4L2.3 8.3c-.5-.2-.5-.9 0-1.1z"/></symbol>
   <symbol id="i-clip" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M10.5 5 6.3 9.2a1.2 1.2 0 0 0 1.7 1.7l4.5-4.5a2.6 2.6 0 0 0-3.7-3.7L4.3 7.2a4 4 0 0 0 5.7 5.7L13 9.9"/></symbol>
+  <symbol id="o-phone" viewBox="0 0 16 16"><rect x="4.5" y="1.5" width="7" height="13" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M7 12.8h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
   <symbol id="i-shield" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" d="M8 2 13 4v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4z"/></symbol>
 </svg>
 
@@ -71,7 +73,9 @@
     <svg class="brand-word" aria-hidden="true"><use href="#i-word"/></svg>
   </a>
   <nav class="nav-links">
-    <a class="btn btn-s nav-dl" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="nav.download">ダウンロード</span></a>
+    <a class="btn btn-s nav-dl" data-for="win" data-release="win-x64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="nav.download">ダウンロード</span></a>
+    <a class="btn btn-s nav-dl" data-for="mac" data-release="mac-arm64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="nav.download">ダウンロード</span></a>
+    <a class="btn btn-s nav-dl" data-for="any" href="download/"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="nav.download">ダウンロード</span></a>
     <!-- i18n:lang-switch -->
     <a class="nav-gh" href="https://github.com/OzEngineJP/pleiad" aria-label="GitHub"><svg aria-hidden="true"><use href="#i-gh"/></svg></a>
   </nav>
@@ -86,10 +90,12 @@
       <h1><span class="ln"><span data-i18n="hero.h1a">全ての作業を、</span></span><span class="ln"><span data-i18n="hero.h1b">一か所で。</span></span></h1>
       <p class="lede" data-i18n="hero.lede"><span class="nw"><img src="assets/claude.svg" alt="" width="16" height="16">Claude Code・</span><span class="nw"><img src="assets/openai.svg" alt="" width="16" height="16">Codex・</span><span class="nw"><img src="assets/antigravity.svg" alt="" width="16" height="16">Antigravity を、</span><span class="nw">ひとつの画面で</span><span class="nw">どこからでも。</span></p>
       <div class="cta">
-        <a class="btn" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.download">Windows 版をダウンロード</span></a>
-        <a class="btn btn-ghost" href="https://github.com/OzEngineJP/pleiad#run-from-source" data-i18n-attr="href:cta.sourceHref"><svg aria-hidden="true"><use href="#i-gh"/></svg><span data-i18n="cta.source">macOS・Linux はソースから</span></a>
+        <a class="btn" data-for="win" data-release="win-x64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.win">Windows 版をダウンロード</span></a>
+        <a class="btn" data-for="mac" data-release="mac-arm64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.mac">Mac 版をダウンロード</span></a>
+        <a class="btn" data-for="any" href="download/"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.any">ダウンロード</span></a>
+        <a class="btn btn-ghost" data-for="pc" href="download/" data-i18n="cta.other">その他の OS</a>
       </div>
-      <p class="meta" data-i18n="hero.meta">Beta · Windows 10 / 11</p>
+      <p class="meta"><span data-for="win" data-i18n="hero.metaWin">Beta · Windows 10 / 11</span><span data-for="mac" data-i18n="hero.metaMac">Beta · macOS 13 以降 · Apple Silicon</span><span data-for="any" data-i18n="hero.metaAny">Beta · Windows · macOS</span></p>
     </div>
   </section>
 
@@ -250,6 +256,7 @@
         <h2 data-i18n="remote.h2">家の PC を、<br>ポケットから。</h2>
         <p class="f-sub" data-i18n="remote.sub">どこからでも作業を継続できます</p>
         <p class="f-note" data-i18n="remote.note">※ 中継サーバーの用意が必要です</p>
+        <p class="tile-cta"><a class="btn btn-s btn-ghost" href="download/#mobile"><svg aria-hidden="true"><use href="#o-phone"/></svg><span data-i18n="remote.app">スマホのアプリ</span></a></p>
       </div>
       <div class="tile-visual">
       <div class="phone" aria-hidden="true">
@@ -280,8 +287,10 @@
     <svg class="end-mark" aria-hidden="true"><use href="#i-mark"/></svg>
     <h2 data-i18n="end.h2"><span class="nw">全ての作業を、</span><span class="nw">一か所で。</span></h2>
     <div class="cta">
-      <a class="btn" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.download">Windows 版をダウンロード</span></a>
-      <a class="btn btn-ghost" href="https://github.com/OzEngineJP/pleiad#run-from-source" data-i18n-attr="href:cta.sourceHref"><svg aria-hidden="true"><use href="#i-gh"/></svg><span data-i18n="cta.source">macOS・Linux はソースから</span></a>
+      <a class="btn" data-for="win" data-release="win-x64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.win">Windows 版をダウンロード</span></a>
+      <a class="btn" data-for="mac" data-release="mac-arm64" href="https://github.com/OzEngineJP/pleiad/releases"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.mac">Mac 版をダウンロード</span></a>
+      <a class="btn" data-for="any" href="download/"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="cta.any">ダウンロード</span></a>
+      <a class="btn btn-ghost" data-for="pc" href="download/" data-i18n="cta.other">その他の OS</a>
     </div>
     <p class="meta" data-i18n="end.meta">各エージェントの CLI とログインが必要です。</p>
   </section>

@@ -1,8 +1,9 @@
-// サイトを配る形に組む。日本語（site/index.html）を根に、英語（locales/en.json から作る）を en/ に置く。
-// 訳す要素は index.html に data-i18n="キー"（中身を置き換える）・data-i18n-attr="属性:キー;…"（属性を置き換える）で付ける。
+// サイトを配る形に組む。日本語（site/index.html・site/download/index.html）を根に、英語（locales/en.json から作る）を en/ に置く。
+// 訳す要素は data-i18n="キー"（中身を置き換える）・data-i18n-attr="属性:キー;…"（属性を置き換える）で付ける。
 // 中身は locales/en.json の値（HTML）。{claude} {openai} {antigravity} は各ロゴの <img> に展開する。
+// ダウンロードのリンクと版は、組むときに GitHub の Releases から取って焼き込む（data-release。下の「配布物」）。
 //
-//     node site/tools/build-site.mjs [--out <出力先>]   # 既定は _site/
+//     node site/tools/build-site.mjs [--out <出力先>] [--offline]   # 既定は _site/。--offline は Releases を引かない
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,8 +16,13 @@ const LANGS = {
   ja: { dir: "", locale: "ja_JP", ogImage: "assets/og.png" },
   en: { dir: "en/", locale: "en_US", ogImage: "assets/og-en.png" },
 };
+// 辞書で訳すページ。src は site/ からの正本（日本語）、path は公開先のパス（日本語は根、英語は en/ の下）
+export const PAGES = [
+  { src: "index.html", path: "" },
+  { src: "download/index.html", path: "download/" },
+];
 // 出力先へ写さないもの（生成の材料）
-const SKIP = new Set(["tools", "locales", "README.md", "index.html", "wrangler.jsonc"]);
+const SKIP = new Set(["tools", "locales", "README.md", "index.html", "download", "wrangler.jsonc"]);
 const LOGOS = {
   claude: '<img src="assets/claude.svg" alt="" width="16" height="16">',
   openai: '<img src="assets/openai.svg" alt="" width="16" height="16">',
@@ -46,19 +52,37 @@ function setAttr(attrs, name, value) {
   return re.test(attrs) ? attrs.replace(re, `$1"${escAttr(value)}"`) : `${attrs} ${name}="${escAttr(value)}"`;
 }
 
-/** data-i18n 系の属性を解いて、辞書があれば置き換える。dict が null なら（日本語）属性を外すだけ */
-export function localize(html, dict) {
+/**
+ * 印の付いた開きタグを順に渡し、属性と中身を差し替える。
+ * edit(name, attrs) は { attrs, content }（content が null なら中身はそのまま）を返す
+ */
+function rewriteTags(html, marker, edit) {
   let out = "";
   let pos = 0;
   OPEN_TAG.lastIndex = 0;
   for (let m; (m = OPEN_TAG.exec(html)); ) {
-    let [tag, name, attrs = ""] = m;
-    if (!/\sdata-i18n(-attr|-json)?=/.test(attrs)) continue;
+    const [, name, attrs = ""] = m;
+    if (!marker.test(attrs)) continue;
+    const r = edit(name, attrs);
+    out += html.slice(pos, m.index) + `<${name}${r.attrs}>`;
+    pos = OPEN_TAG.lastIndex;
+    if (r.content != null) {
+      const close = findClose(html, name, pos);
+      out += r.content;
+      pos = close.start;
+      OPEN_TAG.lastIndex = close.start;
+    }
+  }
+  return out + html.slice(pos);
+}
+
+/** data-i18n 系の属性を解いて、辞書があれば置き換える。dict が null なら（日本語）属性を外すだけ */
+export function localize(html, dict) {
+  return rewriteTags(html, /\sdata-i18n(-attr|-json)?=/, (name, attrs) => {
     const key = attrs.match(/\sdata-i18n="([^"]+)"/)?.[1];
     const attrMap = attrs.match(/\sdata-i18n-attr="([^"]+)"/)?.[1];
     const json = attrs.match(/\sdata-i18n-json="([^"]+)"/)?.[1];
     attrs = attrs.replace(/\sdata-i18n(-attr|-json)?="[^"]*"/g, "");
-    out += html.slice(pos, m.index);
     let content = null;
     if (dict) {
       if (attrMap) {
@@ -78,60 +102,124 @@ export function localize(html, dict) {
         content = "\n" + JSON.stringify(dict[json], null, 2).replace(/</g, "\\u003c") + "\n";
       }
     }
-    out += `<${name}${attrs}>`;
-    pos = OPEN_TAG.lastIndex;
-    if (content != null) {
-      const close = findClose(html, name, pos);
-      out += content;
-      pos = close.start;
-      OPEN_TAG.lastIndex = close.start;
-    }
-  }
-  return out + html.slice(pos);
+    return { attrs, content };
+  });
 }
 
-function headTags(lang) {
+// ---- 配布物 ----
+// PC の版は、pre-release・draft でない最新の vX.Y.Z の Release。Android は pre-release で出しているので、最新の android-v… の Release の APK。
+// 配布物の名前に版が入るので、決まった URL（releases/latest/download/<名前>）は使えない。Release を出した後にサイトを組み直すと新しい版になる。
+// API が使えないとき（回数の上限・ネットワーク）は、リンクを Releases のページに落とし、版の行を出さない。
+export const REPO_URL = "https://github.com/OzEngineJP/pleiad";
+const RELEASES_URL = `${REPO_URL}/releases`;
+const API_URL = "https://api.github.com/repos/OzEngineJP/pleiad/releases?per_page=50";
+const PC_ASSETS = {
+  "win-x64": /-win-x64\.exe$/,
+  "win-arm64": /-win-arm64\.exe$/,
+  "mac-arm64": /-mac-arm64\.dmg$/,
+  "mac-x64": /-mac-x64\.dmg$/,
+};
+
+/** Releases の一覧（API の返り値）から、ページに焼くリンクと版を選ぶ。選べないものは Releases のページに落とす */
+export function pickReleases(list) {
+  const links = { notes: RELEASES_URL, all: RELEASES_URL, android: RELEASES_URL };
+  for (const key of Object.keys(PC_ASSETS)) links[key] = RELEASES_URL;
+  const release = { version: null, date: null, links };
+  const pc = (list ?? []).find((r) => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(r.tag_name));
+  if (pc) {
+    release.version = pc.tag_name;
+    release.date = pc.published_at;
+    links.all = pc.html_url;
+    for (const [key, re] of Object.entries(PC_ASSETS)) {
+      links[key] = pc.assets.find((a) => re.test(a.name))?.browser_download_url ?? pc.html_url;
+    }
+  }
+  const android = (list ?? []).find((r) => !r.draft && /^android-v/.test(r.tag_name) && r.assets.some((a) => /\.apk$/.test(a.name)));
+  if (android) links.android = android.assets.find((a) => /\.apk$/.test(a.name)).browser_download_url;
+  return release;
+}
+
+export async function fetchReleases() {
+  const headers = { accept: "application/vnd.github+json", "user-agent": "pleiad-site-build" };
+  if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+  try {
+    const res = await fetch(API_URL, { headers, signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const release = pickReleases(await res.json());
+    if (!release.version) throw new Error("安定版の Release が見つからない");
+    return release;
+  } catch (err) {
+    console.warn(`! Releases を取れなかったので、ダウンロードのリンクを ${RELEASES_URL} にする（${err.message}）`);
+    return pickReleases([]);
+  }
+}
+
+function formatDate(iso, lang) {
+  const d = new Date(iso);
+  if (lang === "ja") return d.toISOString().slice(0, 10);
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/** data-release="キー" の付いた要素に、リンク（href）か版の行（version: 中身）を焼く */
+export function applyRelease(html, release, lang) {
+  return rewriteTags(html, /\sdata-release=/, (name, attrs) => {
+    const key = attrs.match(/\sdata-release="([^"]+)"/)[1];
+    attrs = attrs.replace(/\sdata-release="[^"]*"/, "");
+    if (key === "version") {
+      return { attrs, content: release.version ? `${release.version} · ${formatDate(release.date, lang)}` : "" };
+    }
+    if (!(key in release.links)) throw new Error(`知らない data-release: ${key}`);
+    return { attrs: setAttr(attrs, "href", release.links[key]), content: null };
+  });
+}
+
+function headTags(lang, page) {
   const L = LANGS[lang];
   const other = lang === "ja" ? "en" : "ja";
   return [
-    `<link rel="canonical" href="${SITE_URL}${L.dir}">`,
-    `<link rel="alternate" hreflang="ja" href="${SITE_URL}">`,
-    `<link rel="alternate" hreflang="en" href="${SITE_URL}${LANGS.en.dir}">`,
-    `<link rel="alternate" hreflang="x-default" href="${SITE_URL}">`,
-    `<meta property="og:url" content="${SITE_URL}${L.dir}">`,
+    `<link rel="canonical" href="${SITE_URL}${L.dir}${page}">`,
+    `<link rel="alternate" hreflang="ja" href="${SITE_URL}${page}">`,
+    `<link rel="alternate" hreflang="en" href="${SITE_URL}${LANGS.en.dir}${page}">`,
+    `<link rel="alternate" hreflang="x-default" href="${SITE_URL}${page}">`,
+    `<meta property="og:url" content="${SITE_URL}${L.dir}${page}">`,
     `<meta property="og:locale" content="${L.locale}">`,
     `<meta property="og:locale:alternate" content="${LANGS[other].locale}">`,
     `<meta property="og:image" content="${SITE_URL}${L.ogImage}">`,
   ].join("\n");
 }
 
-// 言語の切り替え: 地球のアイコンと今の言語の名前。開くと各言語をその言語の名前で並べる
-function langSwitch(lang) {
+const depthOf = (page) => page.split("/").filter(Boolean).length;
+
+// 言語の切り替え: 地球のアイコンと今の言語の名前。開くと各言語をその言語の名前で並べる（同じページの別の言語へ）
+function langSwitch(lang, page) {
   const ja = lang === "ja";
+  const up = "../".repeat(depthOf(page));
   const item = (code, href, name) =>
     `<a href="${href}" hreflang="${code}" lang="${code}"${code === lang ? ' aria-current="page"' : ""}>${name}</a>`;
   return [
     '<details class="lang">',
     `  <summary class="lang-btn" aria-label="${ja ? "言語" : "Language"}"><svg aria-hidden="true"><use href="#i-globe"/></svg><span class="lang-cur">${ja ? "日本語" : "English"}</span><svg class="lang-chev" aria-hidden="true"><use href="#i-chev"/></svg></summary>`,
     '  <div class="lang-menu">',
-    `    ${item("ja", ja ? "./" : "../", "日本語")}`,
-    `    ${item("en", ja ? "en/" : "./", "English")}`,
+    `    ${item("ja", ja ? "./" : `../${up}${page}`, "日本語")}`,
+    `    ${item("en", ja ? `${up}en/${page}` : "./", "English")}`,
     "  </div>",
     "</details>",
   ].join("\n");
 }
 
-export function renderPage(source, lang, dict) {
+/** page は公開先のパス（"" か "download/"）。release を省くと、ダウンロードのリンクは Releases のページになる */
+export function renderPage(source, lang, dict, { page = "", release = pickReleases([]) } = {}) {
   let html = source.replace(/\r\n/g, "\n");
-  html = html.replace("<!-- i18n:head -->", () => headTags(lang));
-  html = html.replace("<!-- i18n:lang-switch -->", () => langSwitch(lang));
+  html = html.replace("<!-- i18n:head -->", () => headTags(lang, page));
+  html = html.replace("<!-- i18n:lang-switch -->", () => langSwitch(lang, page));
   // 言語を限った要素（日本語だけの書体の先読みなど）
   html = html.replace(/<link data-only="(\w+)"([^>]*)>\n?/g, (all, only, rest) => (only === lang ? `<link${rest}>\n` : ""));
   html = localize(html, lang === "ja" ? null : dict);
+  html = applyRelease(html, release, lang);
   html = html.replace(/<html lang="ja">/, `<html lang="${lang}">`);
   if (lang !== "ja") {
-    // en/ から見た共有の資源
-    html = html.replace(/\b(src|href)="(assets\/|styles\.css|main\.js|hero\.js|branch\.js)/g, '$1="../$2');
+    // en/ から見た共有の資源（正本のページからの相対に ../ を 1 つ足す）
+    html = html.replace(/\b(src|href)="((?:\.\.\/)*)(assets\/|styles\.css|main\.js|hero\.js|branch\.js|os\.js)/g, '$1="../$2$3');
   }
   return html;
 }
@@ -143,19 +231,26 @@ function copyShared(out) {
   }
 }
 
-export function build(out) {
-  const source = fs.readFileSync(path.join(SITE, "index.html"), "utf8");
+export async function build(out, { offline = false } = {}) {
   const en = JSON.parse(fs.readFileSync(path.join(SITE, "locales", "en.json"), "utf8"));
+  const release = offline ? pickReleases([]) : await fetchReleases();
   fs.rmSync(out, { recursive: true, force: true });
   fs.mkdirSync(path.join(out, "en"), { recursive: true });
   copyShared(out);
-  fs.writeFileSync(path.join(out, "index.html"), renderPage(source, "ja", null));
-  fs.writeFileSync(path.join(out, "en", "index.html"), renderPage(source, "en", en));
+  for (const { src, path: page } of PAGES) {
+    const source = fs.readFileSync(path.join(SITE, src), "utf8");
+    for (const [lang, dict] of [["ja", null], ["en", en]]) {
+      const file = path.join(out, LANGS[lang].dir, page, "index.html");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, renderPage(source, lang, dict, { page, release }));
+    }
+  }
+  return release;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const i = process.argv.indexOf("--out");
   const out = path.resolve(i > 0 ? process.argv[i + 1] : path.join(SITE, "..", "_site"));
-  build(out);
-  console.log(`built ${out} (ja: /, en: /en/)`);
+  const release = await build(out, { offline: process.argv.includes("--offline") });
+  console.log(`built ${out} (ja: /, /download/  en: /en/, /en/download/)  ${release.version ?? "Releases のページへのリンク"}`);
 }
