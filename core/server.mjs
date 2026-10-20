@@ -1199,7 +1199,16 @@ async function remoteAgentInvoke({ device, requester, op, args, signal, valid = 
   // 許可を切る・取り消す・すべて止めるが、確かめた後に入っていたら、起こした子を止める
   if (op === 'send' && !valid()) { await agentTasks.cancel(String(clean.taskId)).catch(() => {}); throw new AgentError('NOT_ALLOWED', agentT(lng, 'delegation.remote.cutOff')); }
   // 端末が写している行を更新できるよう、タスクの今の状態を添える（ply_task_list は行の配列なので添えない）
-  if (op !== 'list' && out?.taskId) { const row = agentTasks.get(out.taskId); if (row) return { ...out, task: remoteTaskEvent(row) }; }
+  if (op !== 'list' && out?.taskId) {
+    const row = agentTasks.get(out.taskId);
+    const result = row ? { ...out, task: remoteTaskEvent(row) } : out;
+    // send は受け付けた指示の記録（表示契約の形）も添える。端末は次の読み出しを待たずに受付位置へ指示の行を出せる（古い端末はこの項目を無視する）
+    if (op === 'send') {
+      const instruction = (agentTasks.instructions(out.taskId)?.instructions ?? []).at(-1);
+      if (instruction) result.instruction = viewInstructions([instruction])[0];
+    }
+    return result;
+  }
   return out;
 }
 
@@ -5166,7 +5175,9 @@ function remoteHostsNow() {
   for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) {
     const online = h.state === 'ready' && h.allowed === true;
     // since: 線が使えなくなった時刻（画面の「オフライン · HH:MM までの分」）。分からなければ付けない
-    out[h.hostId] = { name: h.name, online, view: h.view === true, ...(!online && remoteDelegation?.offlineSince(h.hostId) ? { since: remoteDelegation.offlineSince(h.hostId) } : {}) };
+    out[h.hostId] = { name: h.name, online, view: h.view === true,
+      features: { instructionAnchor: h.features?.instructionAnchor === true, instructionSteer: h.features?.instructionSteer === true },
+      ...(!online && remoteDelegation?.offlineSince(h.hostId) ? { since: remoteDelegation.offlineSince(h.hostId) } : {}) };
   }
   return out;
 }

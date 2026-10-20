@@ -2,6 +2,7 @@
 // ホスト（core/server.mjs の remoteAgentView）が、読んだ会話を「運ぶ前に絞る」ために使う。端末は messageSig（web/history-sync.mjs）で続きの位置を確かめる。
 import { messageSig } from '../../web/history-sync.mjs';
 import { RESEND, hostViewCursor } from '../../web/host-view.mjs';
+import { instructionView } from '../../web/task-instructions.mjs';
 import { AGENT_LIMITS } from './agent-protocol.mjs';
 import { maskOutput } from '../ops/registry.mjs';
 
@@ -117,12 +118,9 @@ export function viewMessages(messages, cursor = null, { limits = VIEW_LIMITS, re
 /** 端末が持っている発言（held: { base, messages, sigs }）の、次の読み出しの続きの位置（端末の画面の計算と同じもの） */
 export const viewCursor = (base, list, sigs = null) => hostViewCursor({ base, messages: list, sigs });
 
-/** 追加の指示（端末が AI から受けた分の表示用）。本文を絞る */
+/** 追加の指示（端末が AI から受けた分の表示用）。表示契約の形（web/task-instructions.mjs の INSTRUCTION_FIELDS）で、本文を絞る */
 export const viewInstructions = (list) => (Array.isArray(list) ? list : []).slice(-VIEW_LIMITS.instructions)
-  .map(x => ({ id: String(x.id), at: x.at ?? null, state: String(x.state ?? ''), text: clip(String(x.text ?? ''), VIEW_LIMITS.instruction),
-    ...(x.deliveryId ? { deliveryId: String(x.deliveryId) } : {}), ...(x.nativeId ? { nativeId: String(x.nativeId) } : {}),
-    ...(x.anchor && typeof x.anchor === 'object' && typeof x.anchor.v === 'string' ? { anchor: { kind: String(x.anchor.kind), v: x.anchor.v } } : {}),
-    ...(x.nextTurn ? { nextTurn: true } : {}) }));
+  .map(x => instructionView(x, s => clip(s, VIEW_LIMITS.instruction)));
 
 /**
  * 子孫の要約に載せる行を選ぶ。走っているもの、次に新しいもの（更新の新しい順）を優先して VIEW_LIMITS.descendants 件まで。

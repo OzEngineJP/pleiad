@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { clip, fromHost, humanOnlyFields, pageOf, PAGE_MAX } from './host.mjs';
+import { instructionView } from '../../web/task-instructions.mjs';
 
 const D = (id, key) => `agent:ops.delegation.${id}.${key}`;
 export const TASKS_MAX = 100;
@@ -162,7 +163,8 @@ export const delegationOps = [
     uiHandler: (ctx, { taskId }) => {
       const r = ctx.delegation.instructions(taskId);
       if (!r) throw new OpError('TASK_NOT_FOUND', agentT(ctx.locale, 'ops.errors.TASK_NOT_FOUND', { id: taskId }));
-      return r;
+      // 画面（作業の詳細の指示の行）へ返すのは表示契約の形（web/task-instructions.mjs の INSTRUCTION_FIELDS）
+      return { taskId: r.taskId, revision: r.revision, instructions: (r.instructions ?? []).map(x => instructionView(x)) };
     },
   }),
 

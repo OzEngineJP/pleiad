@@ -2595,6 +2595,7 @@
       "hostOfflineCatchUp": "Up to {{time}} · catches up when it reconnects",
       "hostOfflineCatchUpNoTime": "Catches up when it reconnects",
       "hostViewUnsupported": "This host cannot show progress (update Pleiad on the host to see it)",
+      "hostOldInstructions": "The host's Pleiad is too old: additional instructions arrive on the next turn and appear near the end instead of where they were accepted (update Pleiad on the host)",
       "hostViewDenied": "The host is not accepting requests from AI",
       "hostViewNotFound": "The host doesn't have this task",
       "hostViewTooLarge": "The progress is too large to send",

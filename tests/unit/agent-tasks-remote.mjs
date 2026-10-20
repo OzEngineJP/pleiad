@@ -172,6 +172,16 @@ export default async function (t) {
         emit({ t: 'task', task: { taskId: ID(27), rawStatus: 'running', status: 'running' } });
         await sleep(50);
         t.ok('取り込み: 古いホストの便りへ戻ったら活動の写しを使わない', m2.get(ID(27)).hostTelemetry === undefined && m2.get(ID(27)).activeCommands.length === 0);
+        // 写し項目の契約: 便りが運ぶ項目は写しの行へ全部届く（対応の正本は core/remote/agent-protocol.mjs の REMOTE_TASK_FIELDS）。
+        // 指示の記録の変化番号（instructionRevision）と待機中の指示の件数（pendingMessages → 写しの hostPendingMessages）も通る
+        await add2(28);
+        emit({ t: 'task', task: { taskId: ID(28), status: 'running', rawStatus: 'running', instructionRevision: 7, pendingMessages: 3, updatedAt: 3 } });
+        await sleep(50);
+        const mir28 = m2.get(ID(28));
+        t.ok('取り込み: 指示の変化番号と待機件数が写しに届く（詳細の強制再読み・一覧の待機件数に効く）', mir28.instructionRevision === 7 && mir28.pendingMessages === 3, JSON.stringify({ r: mir28.instructionRevision, p: mir28.pendingMessages }));
+        emit({ t: 'task', task: { taskId: ID(28), status: 'running', rawStatus: 'running', updatedAt: 4 } });
+        await sleep(50);
+        t.ok('取り込み: 便りから消えた項目は写しからも消える（古いホストに戻ると 0 扱い）', m2.get(ID(28)).instructionRevision === undefined && m2.get(ID(28)).pendingMessages === 0);
         // ホストが知らない
         await add2(3);
         emit({ t: 'synced', unknown: [ID(3), 'nope', ID(2)] });

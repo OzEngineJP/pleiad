@@ -6436,6 +6436,8 @@ async function hostTaskThread(item) {
     }
   } finally { detailCardMode = false; }
   for (const id of [...cards.keys()]) if (!shown.has(id)) cards.delete(id);
+  // 読み出しはできるが指示の受付位置・即時配送を名乗らない（古い）ホスト: 追加指示の見え方が旧い動きになる旨の 1 行
+  if (info?.view === true && info.features?.instructionAnchor !== true) th.append(wrap(el('div', 'm sys', t('dialog.work.hostOldInstructions'))));
   if (r.state === 'failed' && held.ok) th.append(wrap(el('div', 'm sys', t('dialog.work.readFailed', { error: hostViewError(r) }))));
   if (item.error) th.append(wrap(el('div', 'm sys', item.error)));
   return th;

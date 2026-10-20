@@ -13,7 +13,7 @@
 //   'revoked'      この端末はホストで取り消された
 import { EventEmitter } from 'node:events';
 import { RESET_CODE } from './frames.mjs';
-import { AGENT_PATH, AGENT_PROTO, AGENT_LIMITS } from './agent-protocol.mjs';
+import { AGENT_PATH, AGENT_PROTO, AGENT_LIMITS, normalizeAgentFeatures } from './agent-protocol.mjs';
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -32,6 +32,7 @@ export class AgentLink extends EventEmitter {
     this.allowed = false;
     this.hostName = '';
     this.canView = false;    // ホストが経過の読み出しを知っているか（ready の view。古いホストには無い）
+    this.features = null;    // ホストが ready で名乗った機能（正規化済み。古いホストには無い → null）
     this.stream = null;
     this.pending = new Map();
     this.seq = 0;
@@ -45,7 +46,7 @@ export class AgentLink extends EventEmitter {
     };
   }
 
-  get status() { return { state: this.state, allowed: this.allowed, hostName: this.hostName, view: this.canView }; }
+  get status() { return { state: this.state, allowed: this.allowed, hostName: this.hostName, view: this.canView, features: this.features }; }
   /** 今すぐ依頼を出せるか（口が開いていて、ホストが許可している） */
   get usable() { return this.state === 'ready' && this.allowed; }
 
@@ -86,9 +87,11 @@ export class AgentLink extends EventEmitter {
 
   #setState(state, extra = {}) {
     const changed = state !== this.state || (extra.allowed !== undefined && extra.allowed !== this.allowed) || (extra.hostName !== undefined && extra.hostName !== this.hostName)
-      || (extra.view !== undefined && extra.view !== this.canView);
+      || (extra.view !== undefined && extra.view !== this.canView)
+      || (extra.features !== undefined && JSON.stringify(extra.features) !== JSON.stringify(this.features));
     this.state = state;
     if (extra.view !== undefined) this.canView = extra.view === true;
+    if (extra.features !== undefined) this.features = extra.features === null ? null : normalizeAgentFeatures(extra.features);
     if (extra.allowed !== undefined) this.allowed = extra.allowed === true;
     if (extra.hostName !== undefined) this.hostName = String(extra.hostName);
     if (changed) this.emit('state', this.status);
@@ -105,7 +108,7 @@ export class AgentLink extends EventEmitter {
     this.#failPending(new AgentError('OFFLINE', 'the host is offline'));
     if (had) { try { had.reset(RESET_CODE.CANCEL); } catch { /* もう無い */ } }
     // 許可の最後の値は、オフラインの間も覚える（一覧に「オフライン」の印で出すため）。知らない・取り消された間だけ捨てる
-    this.#setState(state, state === 'unsupported' || state === 'revoked' ? { allowed: false, view: false } : {});
+    this.#setState(state, state === 'unsupported' || state === 'revoked' ? { allowed: false, view: false, features: null } : {});
   }
 
   #open(ch) {
@@ -148,7 +151,7 @@ export class AgentLink extends EventEmitter {
       case 'ready':
         this.reopenAttempt = 0;
         if (msg.v !== AGENT_PROTO) { this.log(`remote agent: unknown protocol ${msg.v}`); return this.#drop('unsupported'); }
-        this.#setState('ready', { allowed: msg.allowed === true, view: msg.view === true, hostName: typeof msg.hostName === 'string' ? msg.hostName : this.hostName });
+        this.#setState('ready', { allowed: msg.allowed === true, view: msg.view === true, features: normalizeAgentFeatures(msg.features), hostName: typeof msg.hostName === 'string' ? msg.hostName : this.hostName });
         this.emit('ready', this.status);
         return;
       case 'allowed':

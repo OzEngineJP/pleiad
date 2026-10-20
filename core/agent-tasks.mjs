@@ -7,12 +7,14 @@ import { taskTitle } from './task-title.mjs';
 import { clockText } from './limit-resume.mjs';
 import { openData } from './data-schema.mjs';
 import { taskTable } from './db.mjs';
+import { REMOTE_TASK_FIELDS } from './remote/agent-protocol.mjs';
 
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
 // 完了通知がまだ依頼元に届いていない（終わった直後・送る前・送っている最中）。running にはこの間だけ終わったタスクも載せる
 const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
-// ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。結果・状態・活動の写し
-const MIRROR_FIELDS = ['title', 'status', 'error', 'backend', 'model', 'effort', 'mode', 'cwd', 'remoteSessionId', 'worktree', 'routing', 'result', 'resultLength', 'hostWaiting', 'hostLockWaiting', 'hostBackground', 'hostTelemetry', 'lastActivityAt', 'lastOutputAt', 'activeCommands', 'hostPendingMessages', 'cancelPending', 'hostLost'];
+// ホストの便りから写しの行へ写す項目（agent-tasks の mirror）。便りの項目との対応は core/remote/agent-protocol.mjs の
+// REMOTE_TASK_FIELDS が正本（cancelPending・hostLost は便りに無く、端末側が付ける印）
+const MIRROR_FIELDS = [...REMOTE_TASK_FIELDS.flatMap(f => f.mirror ? [f.mirror].flat() : f.plain ? [f.wire] : []), 'cancelPending', 'hostLost'];
 // ホストの子を止める依頼を待つ上限。応答しないホストが、会話の中断・「すべて止める」を長く止めない（届かなかった分は cancelPending でつながり直したときに送り直す）
 const CANCEL_HOST_MS = 3000;
 // ホストが便りで返す taskId の形。端末の台帳の鍵にするので、形を確かめる（__proto__ や手元のタスクの ID を入れさせない）
@@ -293,7 +295,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       ...(hold ? { limitHeld: { resetsAt: iso(hold.resetsAt) } } : {}),
       ...(bg ? { backgroundWaiting: { minutes: Math.max(0, Math.floor((now() - bg.since) / 60000)), tasks: bg.tasks } } : {}), silenceMinutes: r.status === 'running' && !bg && !waitingOf(r) && !lockWaitingOf(r) && r.lastActivityAt != null
       ? Math.max(0, Math.floor((now() - r.lastActivityAt) / 60000)) : null,
-      rejections, pendingMessages: instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
+      rejections, pendingMessages: r.host ? (r.hostPendingMessages ?? 0) : instructions.filter(x => x.state === 'queued').length, result: result.slice(offset, offset + 16000), resultOffset: offset,
       resultLength: result.length, nextOffset: offset + 16000 < result.length ? offset + 16000 : null };
   };
   // 依頼元のエージェントへ返す形。人間の承認待ちは「いま待っているか」から導く見せかけの状態で、
@@ -825,7 +827,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         taskId: r.taskId, title: taskTitle(r.title, r.task), status: r.status, parentSessionId: r.parentSessionId, sessionId: r.sessionId,
         backend: r.backend ?? null, model: r.model ?? null, effort: r.effort ?? null, createdAt: r.createdAt ?? null, updatedAt: r.updatedAt ?? null,
         notification: r.notification, error: r.error ? String(r.error).slice(0, 500) : null,
-        pendingMessages: (r.instructions ?? []).filter(x => x.state === 'queued').length, instructionRevision: r.instructionRevision ?? 0,
+        pendingMessages: r.host ? (r.hostPendingMessages ?? 0) : (r.instructions ?? []).filter(x => x.state === 'queued').length, instructionRevision: r.instructionRevision ?? 0,
         worktree: r.worktree ?? null, retryOf: r.routing?.retry?.of ?? null,
         ...(r.host ? { host: r.host, remoteSessionId: r.remoteSessionId ?? null, hostWaiting: waitingOf(r) } : {}),
       }));
