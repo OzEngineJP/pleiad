@@ -404,9 +404,9 @@ const authz = {
 作り直し（2026-10-21、[ADR 0239](adr/0239-remote-single-permission.md)。モックは承認済み）。ページは「この PC へ」「ほかの PC へ」のタブに分ける（つなぐ向き）。右端の「＋」は、この PC へ では「端末を追加」（許可がオンのときだけ）、ほかの PC へ では「PC を追加」（コードを貼る）。ほかの PC へ はデスクトップ版のローカルの窓だけ（§7.4）。
 
 - **この PC へ**: スイッチ「ほかの端末からの操作を許可する」1 つ（`settings.json` の `enabled`。端末の人の操作と、デスクトップ版の端末の AI からの依頼の両方。§4.5）。オフの間はスイッチだけを出す。オンで中継につながらないときだけ、強い字の「サーバーへの接続に失敗しました」
-- オンのときは、つないだ端末をつなぎ方ごとのまとまり（今は「自分の中継サーバー」だけ）で並べる。中継を設定していれば、端末が無くてもまとまりを出す。見出しの右の小さな文字のボタン「編集」で、＋ の流れの つなぎ方 と同じ欄（中継の URL・登録用の秘密・ホスト名）をその場に出し、「やめる」「保存」（変えた欄だけ送る。秘密は空なら今の値を残す）。つながっている間も中継の設定を変えられる行は端末の絵（スマホ・タブレット・PC）と名前。許可がオンで中継にもつながっているのに端末がつながっていないときだけ、弱い字の「オフライン」
+- オンのときは、Pleiad Plus が利用可能なら「Pleiad Plus」のまとまりを出す。見出しの右の読み上げ名「Pleiad Plus でつなぐ」のスイッチは `plusConnect` を切り替える。ログイン・契約・接続の状態はまとまり内の一行に出し、Plus 経由の端末はスイッチがオフでも残す。自分の中継サーバーのまとまりには `via: own` の端末だけを出し、Plus の端末と同じく接続中でない行には「オフライン」を添える。自分の中継サーバーの見出しの「編集」では、＋ の流れの つなぎ方 と同じ欄（中継の URL・登録用の秘密・ホスト名）をその場に出し、「やめる」「保存」（変えた欄だけ送る。秘密は空なら今の値を残す）
 - 行を押すと詳しい画面: 名前、つなぎ方・中継サーバー（ホスト名だけ）・追加した日・最後の接続、「取り消す」（その場の確認。この端末の AI から任された作業があれば「任された作業 N 件も止めます」を添える）
-- ＋ の流れ（ダイアログ）: アプリを入れる › つなぎ方 › つなぐ › 完了。どの段でも「やめる」は左下、「戻る」「次へ」は右下。アプリを入れる はスマホ（ストアの QR）か PC（配布のページ）を選ぶ。つなぎ方 は「自分の中継サーバー」1 つで、中継の URL・登録用の秘密が無いとき・つながらないときだけ、同じ段に URL・秘密（保存後は「保存済み（変えるときだけ入力）」）・ホスト名の欄を出す（環境変数を使っているときと暗号化できない起動のときだけ 1 行）。「次へ」で保存して中継へつなぎ、つながったら つなぐ の段で QR（スマホ）かコードのコピー（PC）と残り時間と ⚠ の全権限の一文。端末が来たら同じ段で確認コードを見せて「許可する」
+- ＋ の流れ（ダイアログ）: アプリを入れる › つなぎ方 › つなぐ › 完了。つなぎ方では「Pleiad Plus」と「自分の中継サーバー」から選び、既定は Plus の契約中アカウントなら Plus、それ以外は自分の中継サーバー。Plus では相手が同じアカウントでログインすると端末が一覧に加わるまで待ち、確認コードは使わない。自分の中継サーバーのつなぎ方と端末追加は従来のまま。Plus では中継の全権限に関する注意を出さない
 - 許可のスイッチは中継の設定が無くても入れられる（設定が揃うまではつながらず、ペアリングも始められない）
 - 承認のダイアログはどの画面にいても出る（承認待ちと同じく差し色の「承認を待っている」）。＋ の流れで待っている間は流れの中で聞く
 - 画面は管理の面の上に置く `.rm-*`（`web/manage-panel.css`）。設定の状態はサーバー側（WS コマンド）に置くので、リモートの窓からも この PC へ は見える・触れる（全権限のため）
@@ -416,7 +416,7 @@ QR の画像は `web/vendor/qrcode-generator.mjs`（kazuhikoarase/qrcode-generat
 
 画面（`web/remote.mjs`・`web/remote-hosts.mjs`・`web/remote-parts.mjs`、2026-10-21）: 上の通り。承認のダイアログは `<dialog>` のモーダルで、`remotePairing` の request（と開いたときの `remoteStatus` の承認待ち）で出す。既定の居場所は「拒否」、Esc では閉じない。承認待ちが消えたら（切れた・期限・ほかの画面で決めた）黙って閉じる。
 
-WS コマンド（`core/protocol.mjs`）: `setRemoteDeviceAgent { id, stopAll? }`（human-only。`stopAll` はその端末から任された作業をすべて止める。ADR 0239）・`remoteStatus`・`setRemoteSettings { enabled?, relayUrl?, enrollSecret?, hostName? }`・`remotePairingStart`（QR の文字列を返す）・`remotePairingCancel`・`remotePairingApprove { id }`・`remotePairingDeny { id }`・`remoteDevices`・`remoteRevoke { id }`。イベントは `remoteStatus { status }`（状態の丸ごと）と `remotePairing { phase, request?, device? }`。登録用の秘密・トークン・鍵は返さない。設定は `<data>/remote/settings.json`（秘密は `secrets.json`）。既定は無効で、有効にするまで鍵も作らない。
+WS コマンド（`core/protocol.mjs`）: `setRemoteDeviceAgent { id, stopAll? }`（human-only。`stopAll` はその端末から任された作業をすべて止める。ADR 0239）・`remoteStatus`・`setRemoteSettings { enabled?, relayUrl?, enrollSecret?, hostName?, plusConnect? }`・`remotePairingStart`（QR の文字列を返す）・`remotePairingCancel`・`remotePairingApprove { id }`・`remotePairingDeny { id }`・`remoteDevices`・`remoteRevoke { id }`。イベントは `remoteStatus { status }`（状態の丸ごと）と `remotePairing { phase, request?, device? }`。登録用の秘密・トークン・鍵は返さない。設定は `<data>/remote/settings.json`（秘密は `secrets.json`）。既定は無効で、有効にするまで鍵も作らない。
 
 ### 6.2 画面が離れたとき（#11 を参照）
 

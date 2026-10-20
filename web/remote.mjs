@@ -17,6 +17,7 @@ import {
   INSTALL_URL, installPcBody, methodOptions, doneBody, errorLine,
 } from './remote-parts.mjs';
 import { setupRemoteHosts } from './remote-hosts.mjs';
+import { openExternalLink } from './link-open.mjs';
 
 const RELAY_GUIDE_URL = 'https://github.com/OzEngineJP/pleiad/blob/main/relay/README.md';
 
@@ -66,13 +67,45 @@ export function connectionFailed(status) {
  * 「オフライン」は許可がオンで中継にもつながっているのに、端末がつながっていないときだけ（中継につながらないときは見出しの下の一行で伝える）
  */
 export function deviceRow(device, status) {
-  const reachable = status?.enabled === true && status.connection?.state === 'connected';
+  const reachable = status?.enabled === true && (device?.via === 'plus' ? status.plus?.link?.state === 'connected' : status.connection?.state === 'connected');
   return {
     name: device.name || t('settings.remote.devices.unnamed'),
     icon: deviceIcon(device),
-    offline: reachable && !device.connected,
+    offline: device?.via === 'plus' ? !device.connected : reachable && !device.connected,
   };
 }
+
+/** Pleiad Plus のまとまりに出す状態行（表の上から最初に当たるもの） */
+export function plusRemoteLine(plusStatus, remoteStatus) {
+  const s = plusStatus ?? {}, plus = remoteStatus?.plus ?? {};
+  if (s.needsUpdate) return { kind: 'text', text: t('settings.plus.needsUpdate') };
+  if (s.state === 'maintenance') return { kind: 'text', text: t('settings.plus.maintenance') };
+  if (!s.signedIn) return { kind: 'login', text: t('settings.remote.plus.login') };
+  if (s.account?.status === 'free') return { kind: 'getPlus', text: t('settings.plus.getPlus') };
+  if (s.account?.status === 'disabled' || plus.link?.error?.code === 'account' || s.error?.code === 'account') return { kind: 'text', text: t('settings.remote.plus.account') };
+  if (plus.host?.state === 'taken') return { kind: 'settings', text: t('settings.plus.hostTaken') };
+  if (plus.host?.state === 'limit' || plus.link?.error?.code === 'limit' || s.error?.code === 'limit') return { kind: 'text', text: t('settings.plus.hostLimit') };
+  if (s.reachable === false || plus.link?.state === 'retrying' || plus.link?.state === 'error') return { kind: 'text', text: t('settings.remote.failed') };
+  if (plus.link?.state === 'connecting') return { kind: 'text', text: t('settings.remote.plus.connecting') };
+  return null;
+}
+
+/** null=status の初期化前、hide=条件行、disabled=状態表示、enabled=操作可 */
+export function plusRemoteToggleMode(plusStatus, remoteStatus) {
+  if (!plusStatus) return 'hide';
+  const s = plusStatus;
+  if (s.needsUpdate || !s.signedIn || s.account?.status === 'free') return 'hide';
+  if (s.state === 'maintenance' || s.account?.status === 'disabled' || s.error?.code === 'account'
+    || remoteStatus?.plus?.link?.error?.code === 'account' || remoteStatus?.plus?.host?.state === 'taken') return 'disabled';
+  return 'enabled';
+}
+
+export function partitionRemoteDevices(devices = []) {
+  return { plus: devices.filter(d => d.via === 'plus'), own: devices.filter(d => d.via !== 'plus') };
+}
+
+export const plusRemoteAvailable = plusStatus => plusStatus?.available !== false;
+export const initialRemoteMethod = plusStatus => plusStatus?.account?.status === 'plus' ? 'plus' : 'own';
 
 /**
  * @param cmd  WS コマンド
@@ -84,6 +117,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   const root = $('remotePanel');
   /** 最後に届いた RemoteStatus */
   let status = null;
+  let plusStatus = null;
   /** 開いているタブ（'this' | 'other'）と、詳しい画面に出している端末の id */
   let tab = 'this', detailId = '';
   /** 取り消しの確かめ中か・操作中か・画面に出す失敗 */
@@ -115,7 +149,13 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (!status) return null;
     return [status.enabled, status.configured, connectionFailed(status), status.connection?.state === 'connected',
       status.relayUrl ?? '', status.relayUrlFromEnv, status.hasEnrollSecret, status.enrollSecretFromEnv, status.storage?.encrypted,
-      (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.createdAt, d.lastSeenAt, d.agent?.active ?? 0])];
+      status.plus?.connect, status.plus?.link?.state, status.plus?.link?.error?.code, status.plus?.host?.state, status.plus?.devices, plusSignature(),
+      (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.via, d.createdAt, d.agent?.active ?? 0])];
+  }
+  function plusSignature() {
+    const s = plusStatus ?? {}, account = s.account ?? {};
+    return [s.available, s.state, s.needsUpdate, s.signedIn, s.login?.phase, account.status, account.email,
+      s.reachable, s.error?.code, s.urls?.account, s.host?.state];
   }
 
   function tabRow() {
@@ -144,8 +184,9 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     const out = [head];
     if (message) out.push(errorLine(message));
     if (!on) return out;
-    // まとまりはつなぎ方ごと（いまは 自分の中継サーバー だけ。Pleiad Plus は上に足す）。中継を設定していれば、端末が無くても「編集」のために出す
-    const devices = status.devices ?? [];
+    if (plusRemoteAvailable(plusStatus)) out.push(plusGroup());
+    // 「自分の中継サーバー」のまとまりには own の端末だけを並べる。
+    const devices = partitionRemoteDevices(status.devices).own;
     const failed = connectionFailed(status);
     if (devices.length || failed || status.relayUrl) {
       const group = el('section', 'rm-group');
@@ -169,12 +210,47 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     return out;
   }
 
+  function plusGroup() {
+    const group = el('section', 'rm-group');
+    const head = groupHead(t('settings.remote.groups.plus'));
+    const toggleMode = plusRemoteToggleMode(plusStatus, status);
+    if (toggleMode !== 'hide') {
+      const sw = switchButton(t('settings.remote.plus.connect'), () => run(async () => {
+        status = await cmd('setRemoteSettings', { plusConnect: !(status?.plus?.connect === true) });
+      }));
+      sw.classList.add('rm-gh-switch');
+      sw.setAttribute('aria-checked', String(status?.plus?.connect === true));
+      sw.disabled = busy || !status || toggleMode === 'disabled';
+      sw.dataset.fk = 'plusConnect';
+      head.append(sw);
+    }
+    group.append(head);
+
+    const line = plusRemoteLine(plusStatus, status);
+    if (line?.kind === 'login') {
+      group.append(listRow({ icon: 'monitor', name: line.text, key: 'plusLogin', onclick: () => cmd('plusLogin').catch(() => {}) }));
+    } else if (line?.kind === 'getPlus') {
+      group.append(listRow({ icon: 'monitor', name: line.text, key: 'plusGet', onclick: () => openExternalLink(new URL('/plus', plusStatus?.urls?.account).href) }));
+    } else if (line?.kind === 'settings') {
+      const row = button(line.text, () => { page('plus'); open('plus'); }, 'rm-row rm-plus-settings');
+      row.dataset.fk = 'plusSettings';
+      group.append(row);
+    } else if (line) group.append(el('p', 'rm-warn', line.text));
+
+    for (const d of (status?.devices ?? []).filter(d => d.via === 'plus')) {
+      const view = deviceRow(d, status);
+      group.append(listRow({ icon: view.icon, name: view.name, sub: view.offline ? t('settings.remote.offline') : '', key: `device-${d.id}`,
+        onclick: () => { detailId = d.id; confirming = false; message = ''; paint(); } }));
+    }
+    return group;
+  }
+
   function deviceDetail(d) {
     const view = deviceRow(d, status);
     const out = detailHead({ icon: view.icon, name: view.name, onBack: () => { detailId = ''; confirming = false; message = ''; paint(); } });
     out.push(keyValues([
-      [t('settings.remote.detail.method'), t('settings.remote.groups.own')],
-      [t('settings.remote.detail.relay'), relayHost(status?.relayUrl)],
+      [t('settings.remote.detail.method'), d.via === 'plus' ? t('settings.remote.groups.plus') : t('settings.remote.groups.own')],
+      [t('settings.remote.detail.relay'), d.via === 'plus' ? '' : relayHost(status?.relayUrl)],
       [t('settings.remote.detail.added'), d.createdAt ? fmt.dateTime(d.createdAt, { year: 'numeric', month: 'long', day: 'numeric' }) : ''],
       [t('settings.remote.detail.lastSeen'), d.lastSeenAt ? fmt.relative(d.lastSeenAt) : t('settings.remote.detail.never')],
     ]));
@@ -214,7 +290,8 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function openWizard() {
     const inputs = relayInputs();
     for (const i of Object.values(inputs)) i.oninput = () => paintWizard();
-    wz = { step: 0, kind: 'phone', inputs, error: '', busy: false, offer: null, starting: false, offerEnd: null, request: null, ended: '', doneName: '' };
+    wz = { step: 0, kind: 'phone', method: initialRemoteMethod(plusStatus), plusDeviceIds: (status?.devices ?? []).filter(d => d.via === 'plus').map(d => d.id),
+      inputs, error: '', busy: false, offer: null, starting: false, offerEnd: null, request: null, ended: '', doneName: '' };
     paintWizard();
   }
 
@@ -290,7 +367,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function paintWizard() {
     if (!wz) { wizard.close(); stopTick(); return; }
     const connected = status?.enabled === true && status.connection?.state === 'connected';
-    if (wz.step === 2 && connected && !wz.offer && !wz.offerEnd && !wz.request && !wz.ended && !wz.starting && !wz.error) startOffer();
+    if (wz.method === 'own' && wz.step === 2 && connected && !wz.offer && !wz.offerEnd && !wz.request && !wz.ended && !wz.starting && !wz.error) startOffer();
     const o = { title: t('settings.remote.addDevice'), step: wz.step, back: () => back() };
     if (wz.step === 0) {
       o.body = [
@@ -303,12 +380,15 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     } else if (wz.step === 1) {
       const show = needRelay();
       o.body = methodBody(show);
-      o.sig = [show, status?.relayUrl ?? '', status?.relayUrlFromEnv, status?.hasEnrollSecret, status?.enrollSecretFromEnv, status?.storage?.encrypted, wz.error, wz.busy];
-      o.next = { disabled: wz.busy || !relayReady(), onclick: () => saveRelayAndConnect() };
+      o.sig = [show, wz.method, plusStatus?.account?.email, plusStatus?.signedIn, status?.relayUrl ?? '', status?.relayUrlFromEnv, status?.hasEnrollSecret, status?.enrollSecretFromEnv, status?.storage?.encrypted, wz.error, wz.busy];
+      o.next = { disabled: wz.busy || (wz.method === 'own' && !relayReady()), onclick: () => wz.method === 'plus' ? startPlusConnect() : saveRelayAndConnect() };
     } else if (wz.step === 2) {
-      o.body = connectBody(connected);
-      o.sig = [wz.kind, connected, connectionFailed(status), wz.offer?.payload ?? '', wz.offerEnd, wz.request?.id ?? '', wz.ended, wz.error, wz.busy];
-      o.next = wz.request
+      const newPlusDevice = wz.method === 'plus' ? (status?.devices ?? []).find(d => d.via === 'plus' && !wz.plusDeviceIds.includes(d.id)) : null;
+      o.body = wz.method === 'plus' ? plusConnectBody(newPlusDevice) : connectBody(connected);
+      o.sig = [wz.method, wz.kind, connected, connectionFailed(status), plusSignature(), status?.plus?.connect, status?.plus?.link?.state,
+        status?.plus?.link?.error?.code, status?.plus?.host?.state, newPlusDevice?.id, wz.offer?.payload ?? '', wz.offerEnd, wz.request?.id ?? '', wz.ended, wz.error, wz.busy];
+      o.next = newPlusDevice ? { disabled: false, onclick: () => { wz.doneName = newPlusDevice.name || t('settings.remote.devices.unnamed'); wz.step = 3; paintWizard(); } }
+        : wz.request
         ? { label: t('settings.remote.wizard.approve'), disabled: wz.busy, onclick: () => approve() }
         : { disabled: true };
     } else {
@@ -328,15 +408,46 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     return box;
   }
 
-  /** つなぎ方: いまは 自分の中継サーバー だけ（選ばれた 1 つ）。URL か秘密が無いか、つながらなければ欄を出す */
+  /** つなぎ方: Plus または自分の中継サーバー */
   function methodBody(showRelay) {
-    const out = [methodOptions(status?.relayUrl ? relayHost(status.relayUrl) : externalLink(t('settings.remote.wizard.relayGuide'), RELAY_GUIDE_URL))];
-    if (showRelay) {
+    const methods = [{ value: 'own', label: t('settings.remote.groups.own'), sub: status?.relayUrl ? relayHost(status.relayUrl) : externalLink(t('settings.remote.wizard.relayGuide'), RELAY_GUIDE_URL) }];
+    if (plusRemoteAvailable(plusStatus)) methods.unshift({ value: 'plus', label: t('settings.remote.groups.plus'), sub: plusStatus?.signedIn && plusStatus.account?.email ? plusStatus.account.email : t('settings.plus.signedOut') });
+    const out = [methodOptions(methods, wz.method, value => { wz.method = value; paintWizard(); })];
+    if (wz.method === 'own' && showRelay) {
       if (connectionFailed(status)) out.push(el('p', 'rm-warn', t('settings.remote.failed')));
       out.push(...relayFields(wz.inputs));
     }
     if (wz.error) out.push(errorLine(wz.error));
     return out;
+  }
+
+  async function startPlusConnect() {
+    wz.busy = true; wz.error = ''; paintWizard();
+    try {
+      status = await cmd('setRemoteSettings', { enabled: true, plusConnect: true });
+      if (!wz) return;
+      wz.step = 2;
+    } catch (e) { if (wz) wz.error = e.message; }
+    if (wz) wz.busy = false;
+    paint();
+  }
+
+  function plusConnectBody(newDevice) {
+    const line = plusRemoteLine(plusStatus, status);
+    if (line?.kind === 'getPlus') return [listRow({ icon: 'monitor', name: line.text, key: 'plusGet', onclick: () => openExternalLink(new URL('/plus', plusStatus?.urls?.account).href) })];
+    if (line && line.kind !== 'login') return [el('p', 'rm-warn', line.text)];
+    if (!plusStatus?.signedIn) {
+      const acts = el('div', 'rm-acts');
+      acts.append(button(t('settings.remote.plus.loginButton'), () => cmd('plusLogin').catch(() => {}), 'btn btn-primary'));
+      return [el('p', 'rm-lead', t('settings.remote.plus.signingIn')), acts];
+    }
+    if (newDevice) return [el('p', 'rm-lead', newDevice.name || t('settings.remote.devices.unnamed'))];
+    if (status?.plus?.link?.state === 'error' || status?.plus?.link?.state === 'retrying' || plusStatus?.reachable === false) return [el('p', 'rm-warn', t('settings.remote.failed'))];
+    // i18n-dynamic: settings.remote.plus.wait. / settings.remote.plus.waiting.
+    const instruction = wz.kind === 'phone' ? 'phone' : 'pc';
+    const account = keyValues([[t('settings.remote.plus.accountLabel'), plusStatus.account?.email ?? '']]);
+    // i18n-dynamic: settings.remote.plus.waiting.
+    return [el('p', 'rm-lead', t(`settings.remote.plus.wait.${instruction}`)), account, waitLine(t(`settings.remote.plus.waiting.${instruction}`))];
   }
 
   function connectBody(connected) {
@@ -550,11 +661,16 @@ export function setupRemote({ cmd, page, open = () => {} }) {
 
   // ---- サーバーから
   async function refresh() {
-    try { status = await cmd('remoteStatus'); }
+    try { [status, plusStatus] = await Promise.all([cmd('remoteStatus'), cmd('plusStatus')]); }
     catch (e) { message = e.message; }
     paint();
   }
   function event(ev) {
+    if (ev.type === 'plusStatus') {
+      plusStatus = ev.status ?? plusStatus;
+      paint();
+      return;
+    }
     if (ev.type === 'remoteStatus') {
       status = ev.status ?? status;
       // 表示中の QR の入場券が無くなった。期限なら「作り直す」、ほかの画面で取り下げたなら同じく作り直せるようにする
@@ -580,6 +696,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   }
 
   $('remoteTab').onclick = () => { page('remote'); refresh(); };
+  cmd('plusStatus').then(s => { plusStatus = s; paint(); }).catch(() => {});
   paint();
   return {
     refresh, event, get status() { return status; },

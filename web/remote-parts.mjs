@@ -134,21 +134,33 @@ export function installPcBody() {
   return box;
 }
 
-/** つなぎ方 の段の選択肢（いまは 自分の中継サーバー の 1 つだけで、選ばれている）。sub は 2 行目（中継のホスト名か、立て方のリンク） */
-export function methodOptions(sub = null) {
+/** つなぎ方 の段で選ぶ接続方法。sub は 2 行目（アカウントか、中継のホスト名・立て方のリンク） */
+export function methodOptions(options, current, onpick) {
   const opts = el('div', 'rm-opts');
   opts.setAttribute('role', 'radiogroup');
   opts.setAttribute('aria-label', t('settings.remote.detail.method'));
-  const option = el('div', 'rm-row rm-opt');
-  option.setAttribute('role', 'radio');
-  option.setAttribute('aria-checked', 'true');
-  option.tabIndex = 0;
-  option.dataset.fk = 'own';
-  const text = el('span', 'rm-rt');
-  text.append(el('span', 'rm-nm', t('settings.remote.groups.own')));
-  if (sub) { const s = el('span', 'rm-sub'); s.append(sub); text.append(s); }
-  option.append(el('span', 'rm-rd'), text);
-  opts.append(option);
+  for (const { value, label, sub } of options) {
+    const option = el('div', 'rm-row rm-opt');
+    option.setAttribute('role', 'radio');
+    option.setAttribute('aria-checked', String(value === current));
+    option.tabIndex = value === current ? 0 : -1;
+    option.dataset.fk = value;
+    option.onclick = () => onpick(value);
+    option.onkeydown = e => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onpick(value); return; }
+      if (!['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown'].includes(e.key)) return;
+      e.preventDefault();
+      const radios = [...opts.querySelectorAll('[role="radio"]')];
+      const next = (radios.indexOf(option) + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : radios.length - 1)) % radios.length;
+      onpick(radios[next].dataset.fk);
+      opts.querySelector(`[data-fk="${radios[next].dataset.fk}"]`)?.focus();
+    };
+    const text = el('span', 'rm-rt');
+    text.append(el('span', 'rm-nm', label));
+    if (sub) { const s = el('span', 'rm-sub'); s.append(sub); text.append(s); }
+    option.append(el('span', `rm-rd${value === current ? ' on' : ''}`), text);
+    opts.append(option);
+  }
   return opts;
 }
 
