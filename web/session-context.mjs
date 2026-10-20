@@ -30,7 +30,7 @@ import { unifySessionBox, unifyConfirmPanel, resetPlan } from './hooks-unify-ui.
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
 const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
-const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'connected'] };
+const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'standby', 'starting', 'connected'] };
 const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 const GROUPS = ['user', 'dir', 'extra'];
 // 「この場所だけ変える」の担当の 2 択（設定の画面と同じ文）
@@ -762,7 +762,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   }
   function mcp(data) {
     const ply = managed(data, 'mcp');
-    const rows = data.report.entries.filter(e => e.kind === 'mcp' && ['connected', 'pending', 'needs-auth', 'failed', 'removed'].includes(e.status));
+    const rows = data.report.entries.filter(e => e.kind === 'mcp' && ['connected', 'standby', 'starting', 'pending', 'needs-auth', 'failed', 'removed'].includes(e.status));
     const k = kindBox('MCP', ply ? t('sessionContext.mcp.who', { count: rows.filter(e => e.status !== 'removed').length }) : t('sessionContext.native'), ply);
     if (!ply) { nativeMcp(k, data); return k; }
     if (!rows.length) k.append(el('p', 'cx-sub', t('sessionContext.mcp.none')));
@@ -772,13 +772,15 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       const pending = removedPending.get(raw.name);
       const e = pending ? { ...raw, status: pending.removed ? 'removed' : (raw.status === 'removed' ? 'connected' : raw.status) } : raw;
       const row = el('div', 'scx-item');
-      const dot = el('span', 'cx-dot' + (e.status === 'connected' ? ' on' : e.status === 'failed' ? '' : ' off'));
+      const dot = el('span', 'cx-dot' + (e.status === 'connected' ? ' on' : e.status === 'starting' ? ' up' : e.status === 'failed' ? '' : ' off'));
       const body = el('div', 't');
       body.append(el('div', 'nm', e.name));
       const p = el('div', 'p');
       const login = logins.get(e.name);
       const where = e.origins?.[0]?.source === 'ply' ? '' : `${shortPath(e.path)} · `;
       if (e.status === 'connected') p.textContent = where + t('sessionContext.mcp.connected', { tools: e.tools ?? 0, usage: e.calls ? t('sessionContext.mcp.calls', { count: e.calls }) : t('sessionContext.mcp.unused') });
+      else if (e.status === 'standby') p.textContent = where + t('sessionContext.mcp.standby', { tools: e.tools ?? 0 });
+      else if (e.status === 'starting') p.textContent = where + t('sessionContext.mcp.starting');
       else if (e.status === 'pending') p.textContent = where + (e.reason ?? t('sessionContext.mcp.pending'));
       else if (e.status === 'removed') p.textContent = t('sessionContext.mcp.removed');
       else if (e.status === 'failed') p.append(el('span', 'cx-fail', t('sessionContext.mcp.failed')), ` · ${e.reason ?? t('sessionContext.mcp.unknownReason')}`);

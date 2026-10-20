@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { contextTools, mcpTransportConfig, hash } from './context-runtime.mjs';
@@ -60,22 +60,69 @@ async function listServerTools(client, item, config) {
   return { caps, tools };
 }
 
-export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached, onClient = () => {} } = {}) {
+/**
+ * POSIX ではプロセスグループを分けて起こす StdioClientTransport（detached: true。Windows は SDK のまま）。
+ * 取り残した MCP の掃除（core/mcp-ledger.mjs）と close の木ごとの停止が `kill(-pid)` で届くようにする。
+ * SDK の start は detached を渡せないので、同じ処理を写して detached だけを足す（SDK の版を上げたときは見直す）
+ */
+class DetachedStdioTransport extends StdioClientTransport {
+  async start() {
+    if (process.platform === 'win32') return super.start();
+    if (this._process) {
+      throw new Error('StdioClientTransport already started! If using Client class, note that connect() calls start() automatically.');
+    }
+    return new Promise((resolve, reject) => {
+      this._process = spawn(this._serverParams.command, this._serverParams.args ?? [], {
+        env: { ...getDefaultEnvironment(), ...this._serverParams.env },
+        stdio: ['pipe', 'pipe', this._serverParams.stderr ?? 'inherit'],
+        shell: false,
+        windowsHide: process.platform === 'win32',
+        cwd: this._serverParams.cwd,
+        detached: true,
+      });
+      this._process.on('error', error => { reject(error); this.onerror?.(error); });
+      this._process.on('spawn', () => { resolve(); });
+      this._process.on('close', _code => { this._process = undefined; this.onclose?.(); });
+      this._process.stdin?.on('error', error => { this.onerror?.(error); });
+      this._process.stdout?.on('data', chunk => {
+        try { this._readBuffer.append(chunk); this.processReadBuffer(); }
+        catch (error) { this.onerror?.(error); }
+      });
+      this._process.stdout?.on('error', error => { this.onerror?.(error); });
+      if (this._stderrStream && this._process.stderr) this._process.stderr.pipe(this._stderrStream);
+    });
+  }
+}
+
+export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached, onClient = () => {}, key = null, name = null, ledger = null } = {}) {
   resolved ??= await resolveServer(item, { cwd, plyMcp, oauth });
   if (resolved.status) return resolved;
   const { config, tracker, ply } = resolved;
   const client = new Client({ name: 'ply-context', version: '1.0.0' }, { capabilities: {} });
   try {
     const fetchImpl = config.fetch ?? fetch;
-    const transport = config.type === 'stdio' ? new StdioClientTransport({ command: config.command, args: config.args, cwd: config.cwd, env: config.env, stderr: 'pipe' })
+    const transport = config.type === 'stdio' ? new DetachedStdioTransport({ command: config.command, args: config.args, cwd: config.cwd, env: config.env, stderr: 'pipe' })
       : config.type === 'sse' ? new SSEClientTransport(new URL(config.url), { requestInit: { headers: config.headers, redirect: 'error' }, ...(config.fetch ? { fetch: config.fetch } : {}), eventSourceInit: { fetch: (url, options) => fetchImpl(url, { ...options, headers: { ...options?.headers, ...config.headers }, redirect: 'error' }) } })
       : new StreamableHTTPClientTransport(new URL(config.url), { requestInit: { headers: config.headers, redirect: 'error' }, ...(config.fetch ? { fetch: config.fetch } : {}) });
     transport.stderr?.resume(); // Do not publish third-party stderr (may contain credentials).
-    if (config.type === 'stdio' && process.platform === 'win32') {
+    if (config.type === 'stdio') {
+      // 起きた根の PID を台帳に記録する（spawn の確定＝ start の解決。connect に失敗しても残す。core/mcp-ledger.mjs）
+      const rawStart = transport.start.bind(transport);
+      transport.start = async () => {
+        const out = await rawStart();
+        if (transport.pid != null) transport.__ledgerSeq = ledger?.processes.record({ pid: transport.pid, command: [config.command, ...(config.args ?? []).slice(0, 1)].join(' '), cwd: config.cwd, key: key ?? name });
+        return out;
+      };
       const close = transport.close.bind(transport);
       transport.close = async () => {
         // SDK は直下のプロセスだけを止める。npx/uvx の子も、exit の同期処理で回収する。
-        if (transport.pid) spawnSync('taskkill', ['/PID', String(transport.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 2000 });
+        // POSIX は detached で分けたプロセスグループごと止める（DetachedStdioTransport）
+        if (transport.pid) {
+          if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(transport.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 2000 });
+          else { try { process.kill(-transport.pid, 'SIGKILL'); } catch { /* グループは DetachedStdioTransport だけが作る */ } }
+          ledger?.processes.close(transport.__ledgerSeq);
+          transport.__ledgerSeq = null;
+        }
         await close();
       };
     }
@@ -98,10 +145,10 @@ export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached
   }
 }
 
-export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
+export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null } = {}) {
   const bindings = new Map();
   const opening = new Set();
-  const connections = createContextConnections({ connect: connectServer, idleMs: warmIdleMs });
+  const connections = createContextConnections({ connect: (item, opts) => connectServer(item, { ...opts, plyMcp, oauth, ledger }), idleMs: warmIdleMs, snapshots: ledger?.snapshots ?? null });
   let disposed = false;
 
   // 並列の接続や一覧の更新が先に終わっても、登録・500 件の会計は常に設定の順。
@@ -114,8 +161,9 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
       if (!lease) continue;
       const { result, entry } = lease;
       const row = binding.runtime.report.entries.find(e => e.id === item.id);
-      const overflow = result.status === 'connected' && binding.tools.length + result.tools.length > MAX_TOOLS;
-      if (result.status !== 'connected' || overflow) {
+      const lazy = result.status === 'standby';
+      const overflow = (result.status === 'connected' || lazy) && binding.tools.length + result.tools.length > MAX_TOOLS;
+      if ((result.status !== 'connected' && !lazy) || overflow) {
         row.status = overflow ? 'failed' : result.status;
         row.reason = overflow ? t('context.bridge.toolTotalExceeded', { max: MAX_TOOLS }) : result.reason;
         if (result.reasonCode) row.reasonCode = result.reasonCode; else delete row.reasonCode;
@@ -128,15 +176,15 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
         }
         continue;
       }
-      const { client, caps } = result;
+      const { caps } = result;
       for (const tool of result.tools) {
         const name = `m_${hash([item.id, tool.name]).slice(0,24)}`;
         binding.tools.push({ ...tool, name, description: `[${item.name} / ${tool.name}] ${tool.description ?? ''}` });
-        binding.calls.set(name, { client, name: tool.name, item, entry, tool });
+        binding.calls.set(name, lazy ? { lazy: true, entry, item, name: tool.name, tool, lease } : { client: result.client, name: tool.name, item, entry, tool });
       }
-      row.status = 'connected'; row.tools = result.tools.length; delete row.reason; delete row.reasonCode;
+      row.status = lazy ? 'standby' : 'connected'; row.tools = result.tools.length; delete row.reason; delete row.reasonCode;
       row.capabilities = Object.keys(caps ?? {});
-      binding.entries.set(item.id, { client, item, caps });
+      binding.entries.set(item.id, { client: result.client, item, caps, lazy, entry });
     }
     if (binding.entries.size) {
       binding.tools.push({ name: 'mcp_resources', description: agentT(binding.runtime.locale, 'context.tools.mcp_resources'), inputSchema: { type:'object',properties:{uri:{type:'string'}},additionalProperties:false } });
@@ -160,11 +208,11 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
    * restarted: true は、無停止の更新で付け直したターンの開き直し（同じ token。外部の MCP は起こし直すので状態が消えている。R15）。
    * 外部の MCP ごとに、起こし直した後の最初の呼び出しの結果へその旨を添える
    */
-  async function open({ runtime, prompt, origin, isActive, changed = async () => {}, progress = () => {}, authorize = async () => true, signal, token: fixed, restarted = false }) {
+  async function open({ runtime, prompt, origin, isActive, changed = async () => {}, progress = () => {}, authorize = async () => true, signal, token: fixed, restarted = false, activity = () => {} }) {
     if (disposed) throw new Error(t('context.bridge.aborted'));
     if (fixed !== undefined && !/^[a-f0-9]{64}$/.test(fixed)) throw new Error(t('context.bridge.invalidToken'));
     const token = fixed ?? crypto.randomBytes(32).toString('hex'), helpers = contextTools(runtime, prompt);
-    const binding = { origin, isActive, runtime, helpers, controller: new AbortController(), tools: [...helpers.tools], leases: new Map(), entries: new Map(), calls: new Map(), pending: new Set(), changed, authorize, closed: false,
+    const binding = { origin, isActive, runtime, helpers, controller: new AbortController(), tools: [...helpers.tools], leases: new Map(), entries: new Map(), calls: new Map(), pending: new Set(), changed, authorize, activity, closed: false,
       restarted: new Set(restarted ? runtime.servers.map(item => item.id) : []) };
     let closing;
     const close = () => {
@@ -188,6 +236,14 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
       binding.dirty = true;
       if (binding.ready && !binding.closed) { register(binding); await changed(); }
     };
+    // 共有の接続が起きた・失敗したとき、standby（起動中）の行を確定の状態へ進める（core/context-connections.mjs が全利用者に知らせる）
+    binding.mcpStarted = (entry, result) => {
+      const row = binding.runtime.report.entries.find(e => e.id === entry.id);
+      if (!row || !['standby', 'starting'].includes(row.status)) return;
+      if (result.status === 'connected') { row.status = 'connected'; row.tools = result.tools.length; row.capabilities = Object.keys(result.caps ?? {}); delete row.reason; delete row.reasonCode; }
+      else { row.status = result.status === 'needs-auth' ? 'needs-auth' : 'failed'; row.reason = result.reason; if (result.reasonCode) row.reasonCode = result.reasonCode; }
+      void binding.changed();
+    };
     signal?.addEventListener('abort', aborted, { once: true });
     opening.add(binding);
     try {
@@ -198,13 +254,16 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
         while (next < runtime.servers.length) {
           const index = next++, item = runtime.servers[index];
           if (signal?.aborted || binding.closed) return;
-          progress({ current: index + 1, total: runtime.servers.length, name: item.name });
           const resolved = await resolveServer(item, { cwd: runtime.policy.cwd, plyMcp, oauth });
           if (signal?.aborted || binding.closed) return;
           if (resolved.status) results[index] = { result: resolved, release: () => {} };
           else {
-            keys.add(connections.keyFor(item, resolved.config));
-            const lease = await connections.acquire(item, resolved, binding, restarted);
+            const key = connections.keyFor(item, resolved.config);
+            keys.add(key);
+            // 一覧の写しがあれば起こさず standby。無いものだけ、従来どおりこの場で 1 回つないで一覧を覚える（progress はつなぐものだけ）
+            const snapshot = connections.snapshotFor(key);
+            if (!snapshot) progress({ current: index + 1, total: runtime.servers.length, name: item.name });
+            const lease = await connections.acquire(item, resolved, binding, restarted, { lazy: Boolean(snapshot) });
             if (signal?.aborted || binding.closed) { await lease.release(true); return; }
             results[index] = lease;
             binding.leases.set(item.id, lease);
@@ -221,7 +280,7 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
       register(binding);
       for (const item of runtime.servers) {
         const row = runtime.report.entries.find(e => e.id === item.id);
-        if (row.status !== 'connected') {
+        if (row.status !== 'connected' && row.status !== 'standby') {
           await binding.leases.get(item.id)?.release(true);
           binding.leases.delete(item.id);
           await changed();
@@ -246,16 +305,22 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
   async function metadata(b, kind, params = {}) {
     const resource = kind === 'resources';
     const selected = resource ? params.uri : params.name;
+    // standby の MCP は、resources/prompts が求められたときに起きる（一覧の caps が resource/prompt を持つものだけここへ来る）
+    const clientOf = async entry => entry.lazy && !entry.client ? (await connections.wake({ entry }, b)).result.client : entry.client;
     if (selected) {
       const match = /^ply-mcp:([a-f0-9]+):(.*)$/.exec(selected);
       const entry = match && b.entries.get(match[1]);
       if (!entry) throw new Error('Unknown MCP metadata');
+      const client = await clientOf(entry);
+      if (!client) throw new Error('MCP start failed');
       const key = decodeURIComponent(match[2]);
-      return resource ? entry.client.readResource({ uri:key }, { signal: b.controller.signal }) : entry.client.getPrompt({name:key,arguments:params.arguments}, { signal: b.controller.signal });
+      return resource ? client.readResource({ uri:key }, { signal: b.controller.signal }) : client.getPrompt({name:key,arguments:params.arguments}, { signal: b.controller.signal });
     }
     const rows=[];
-    for(const [id,{client,caps}] of b.entries) {
-      if(!caps?.[kind])continue;
+    for(const [id,entry] of b.entries) {
+      if(!entry.caps?.[kind])continue;
+      const client = await clientOf(entry);
+      if (!client) continue;
       let cursor;
       do {
         const data=await (resource?client.listResources(cursor?{cursor}:{}, { signal: b.controller.signal }):client.listPrompts(cursor?{cursor}:{}, { signal: b.controller.signal }));
@@ -266,6 +331,25 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs } = {}) {
     return {[kind]:rows};
   }
   async function callExternal(b, call, args) {
+    // standby の MCP は最初の呼び出しで起きる。起きる間は行を「起動しています」にし、活動の帯にも出す（承認は呼び出し側が先に済ませる）
+    if (call.lazy && !call.startFailed) {
+      const row = b.runtime.report.entries.find(e => e.id === call.item.id);
+      if (row && row.status === 'standby') { row.status = 'starting'; await b.changed(); }
+      b.activity?.('mcpStart', call.item.name);
+      let woken;
+      try { woken = await connections.wake(call.lease, b); }
+      catch (e) { woken = { result: { status: 'failed', reason: e?.message } }; }
+      b.activity?.('thinking');
+      call.entry = woken.entry;
+      if (woken.result.status !== 'connected') {
+        call.startFailed = true;
+        if (row && row.status === 'starting') { row.status = woken.result.status === 'needs-auth' ? 'needs-auth' : 'failed'; row.reason = woken.result.reason ?? t('context.bridge.connectFailed'); if (woken.result.reasonCode) row.reasonCode = woken.result.reasonCode; }
+        await b.changed();
+        throw woken.result.reason ? Object.assign(new Error(woken.result.reason), { code: 'MCP_START' }) : new Error('MCP start failed');
+      }
+      call.lazy = false; call.client = woken.result.client;
+    }
+    if (call.startFailed) throw Object.assign(new Error('MCP start failed'), { code: 'MCP_START' });
     const invoke = () => call.client.callTool({ name: call.name, arguments: args }, undefined,
       { timeout: Math.min(300000, (call.item.definition.tool_timeout_sec ?? 60) * 1000), signal: b.controller.signal });
     let result, failure;

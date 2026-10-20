@@ -146,6 +146,25 @@ CREATE TABLE IF NOT EXISTS drafts (
   data TEXT NOT NULL,
   at REAL NOT NULL
 ) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS mcp_tool_cache (
+  key TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL,
+  snapshot TEXT NOT NULL,
+  updated_at REAL NOT NULL
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS mcp_processes (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  pid INTEGER NOT NULL,
+  parent_pid INTEGER NOT NULL,
+  parent_started REAL,
+  started_at REAL NOT NULL,
+  closed_at REAL,
+  killed_at REAL,
+  reason TEXT,
+  command TEXT,
+  cwd TEXT,
+  key TEXT
+);
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -669,6 +688,60 @@ export function notificationTable(db) {
       return n;
     },
     transaction: (fn) => transaction(db, fn),
+  };
+}
+
+// ---- 外部 MCP のツール一覧の写し（遅延起動で広告する。core/mcp-ledger.mjs）-------------------------------
+// 欠けても失った記録は無い（起きたら一覧を取り直す）ので後から足す表。件数の上限は呼び出し側（MCP_CACHE_LIMIT）
+export function mcpToolCacheTable(db, { limit = 128 } = {}) {
+  ensureLateTables(db);
+  return {
+    get(key) {
+      const row = prepared(db, 'SELECT snapshot FROM mcp_tool_cache WHERE key = ?').get(key);
+      return row ? JSON.parse(row.snapshot) : undefined;
+    },
+    put(key, serverId, snapshot, at = Date.now()) {
+      prepared(db, 'INSERT INTO mcp_tool_cache (key, server_id, snapshot, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET server_id = excluded.server_id, snapshot = excluded.snapshot, updated_at = excluded.updated_at')
+        .run(key, serverId, jsonOf(snapshot), at);
+      prepared(db, 'DELETE FROM mcp_tool_cache WHERE key NOT IN (SELECT key FROM mcp_tool_cache ORDER BY updated_at DESC, key DESC LIMIT ?)').run(limit);
+    },
+    delete(key) { prepared(db, 'DELETE FROM mcp_tool_cache WHERE key = ?').run(key); },
+    /** keys に無い serverIds の分を消す（定義の変更で別キーになった古い行）。消した件数を返す */
+    prune(serverIds, keys) {
+      let n = 0;
+      for (const id of serverIds) {
+        for (const row of prepared(db, 'SELECT key FROM mcp_tool_cache WHERE server_id = ?').iterate(id)) {
+          if (!keys.has(row.key)) n += Number(prepared(db, 'DELETE FROM mcp_tool_cache WHERE key = ?').run(row.key).changes);
+        }
+      }
+      return n;
+    },
+    count() { return Number(prepared(db, 'SELECT COUNT(*) AS n FROM mcp_tool_cache').get().n); },
+  };
+}
+
+// ---- 起こした外部 MCP のプロセスの台帳（孤児の掃除。core/mcp-ledger.mjs）---------------------------------
+// 1 起動 1 行。閉じたものは closed_at、孤児として止めたものは killed_at・reason を残す。行数の上限は呼び出し側（MCP_PROCESS_LIMIT）
+export function mcpProcessTable(db, { limit = 256 } = {}) {
+  ensureLateTables(db);
+  const prune = () => prepared(db, 'DELETE FROM mcp_processes WHERE seq NOT IN (SELECT seq FROM mcp_processes ORDER BY seq DESC LIMIT ?)').run(limit);
+  const row = (r) => ({ seq: r.seq, pid: r.pid, parentPid: r.parent_pid, parentStarted: r.parent_started, startedAt: r.started_at, closedAt: r.closed_at, killedAt: r.killed_at, reason: r.reason, command: r.command, cwd: r.cwd, key: r.key });
+  return {
+    /** 起動を記録する。seq を返す */
+    add({ pid, parentPid, parentStarted = null, command = null, cwd = null, key = null, at = Date.now() }) {
+      const info = prepared(db, 'INSERT INTO mcp_processes (pid, parent_pid, parent_started, started_at, command, cwd, key) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(pid, parentPid, parentStarted, at, command, cwd, key);
+      prune();
+      return Number(info.lastInsertRowid);
+    },
+    /** 閉じたことを記録する（閉じる側は正常な終わり方。孤児の掃除から外れる） */
+    close(seq, at = Date.now()) { prepared(db, 'UPDATE mcp_processes SET closed_at = ? WHERE seq = ? AND closed_at IS NULL').run(at, seq); },
+    /** 孤児として止めたことを記録する */
+    killed(seq, reason, at = Date.now()) { prepared(db, 'UPDATE mcp_processes SET killed_at = ?, reason = ? WHERE seq = ?').run(at, reason ?? null, seq); },
+    /** 閉じた・止した記録の無い行（掃除の対象） */
+    unclosed() { return prepared(db, 'SELECT * FROM mcp_processes WHERE closed_at IS NULL AND killed_at IS NULL').all().map(row); },
+    /** 全行（作った順。テスト・調査用） */
+    rows() { return prepared(db, 'SELECT * FROM mcp_processes ORDER BY seq').all().map(row); },
   };
 }
 

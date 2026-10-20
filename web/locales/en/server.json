@@ -971,7 +971,8 @@
       "invalidToken": "Invalid context token.",
       "tooManyServers": "Up to 32 MCP servers per session. Narrow the search.",
       "aborted": "Stopped.",
-      "toolTotalExceeded": "Removed because the total number of tools exceeds the limit ({{max}})."
+      "toolTotalExceeded": "Removed because the total number of tools exceeds the limit ({{max}}).",
+      "mcpReaped": "mcp: reaped {{name}} (pid {{pid}}) — the parent is gone"
     },
     "mcp": {
       "plainValue": "{{label}} must be a string of up to 8 KiB without line breaks.",
