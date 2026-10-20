@@ -321,6 +321,35 @@ export default async function (t) {
     const secretsAfter = await fs.readFile(path.join(deviceDir, 'secrets.json'), 'utf8');
     t.ok('忘れると一覧とトークンが消え、プロキシも止まる',
       (await device.list()).length === 0 && !secretsAfter.includes(`host:${hostId}`) && (await rejects(request(port, '/', { timeoutMs: 3000 }))) != null);
+    // ---- via の後方互換と own/plus の共存
+    const legacyHosts = [
+      { hostId: 'legacyhost1234567890abcdef', hostName: 'legacy-host', relayUrl: 'http://127.0.0.1:1234', deviceId: 'd1', port: 0, pairedAt: new Date().toISOString() },
+    ];
+    await fs.writeFile(path.join(deviceDir, 'hosts.json'), JSON.stringify({ version: 1, hosts: legacyHosts }, null, 2), 'utf8');
+    const hostsAfterLegacy = await device.list();
+    t.ok('via の無い旧 hosts.json は via: "own" として読まれる', hostsAfterLegacy[0]?.via === 'own' && hostsAfterLegacy[0]?.hostId === 'legacyhost1234567890abcdef');
+
+    // own と plus の共存
+    const sharedHostId = 'sharedhost1234567890abcde';
+    await fs.writeFile(path.join(deviceDir, 'hosts.json'), JSON.stringify({ version: 1, hosts: [
+      { hostId: sharedHostId, hostName: 'shared-own', relayUrl: 'http://127.0.0.1:1001', deviceId: 'd-own', port: 0, pairedAt: new Date().toISOString(), via: 'own' },
+      { hostId: sharedHostId, hostName: 'shared-plus', relayUrl: 'http://127.0.0.1:1002', deviceId: 'd-plus', port: 0, pairedAt: new Date().toISOString(), via: 'plus', uid: 'u-123' },
+    ] }, null, 2), 'utf8');
+    const sharedList = await device.list();
+    t.ok('同じ hostId で own と plus が両方一覧に並ぶ', sharedList.length === 2 && sharedList.find(h => h.via === 'own') && sharedList.find(h => h.via === 'plus'));
+
+    await device.rename(sharedHostId, 'shared-plus-renamed', 'plus');
+    const listAfterRename = await device.list();
+    t.ok('plus 側の改名で own 側は変わらない', listAfterRename.find(h => h.via === 'plus')?.label === 'shared-plus-renamed' && listAfterRename.find(h => h.via === 'own')?.label === '');
+
+    await device.remove(sharedHostId, 'own');
+    const listAfterRemoveOwn = await device.list();
+    t.ok('own 側を削除しても plus 側は残る', listAfterRemoveOwn.length === 1 && listAfterRemoveOwn[0].via === 'plus');
+
+    await device.remove(sharedHostId, 'plus');
+    const listAfterRemovePlus = await device.list();
+    t.ok('plus 側も削除すると空になる', listAfterRemovePlus.length === 0);
+
   } finally {
     for (const s of sockets) { try { s.ws?.terminate(); } catch {} }
     await within(device.closeAll(), 5000, 'プロキシを閉じる').catch(e => t.note(e.message));

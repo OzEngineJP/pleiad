@@ -28,8 +28,30 @@ import { t } from '../i18n.mjs';
 const RELAY_MAX_PAYLOAD = 70_000;
 export const LINK_BACKOFF = Object.freeze({ minMs: 500, maxMs: 30_000, stableMs: 10_000 });
 
-/** 中継の close code とホストの GOAWAY から状態を決める。 */
-export function classifyClose({ closeCode = null, goaway = null } = {}) {
+/** 中継の close code とホストの GOAWAY から状態を決める。via: 'plus' のときは Plus 用の表に従う。 */
+export function classifyClose({ closeCode = null, reason = '', goaway = null, via = 'own' } = {}) {
+  if (via === 'plus') {
+    if (goaway === 'revoked') return 'readmit';
+    if (goaway === 'shutdown') return 'host-offline';
+    if (closeCode === 4404 || closeCode === 4408) return 'host-offline';
+    if (closeCode === 4401) {
+      const r = String(reason ?? '').trim();
+      if (r === 'revoked' || r === 'device token') return 'readmit';
+      if (r === 'account') return 'blocked';
+      if (r === 'token') return 'offline';
+      if (r === 'plus off') return 'host-offline';
+      if (r === 'plus unavailable') return 'paused';
+      return 'readmit';
+    }
+    if (closeCode === 4429) {
+      const r = String(reason ?? '').trim();
+      if (r === 'account limit') return 'limit';
+      if (r === 'admit rate') return 'offline';
+      return 'limit';
+    }
+    if (closeCode === 1013) return 'offline';
+    return 'offline';
+  }
   if (goaway === 'revoked' || closeCode === 4401) return 'revoked';
   if (goaway === 'shutdown' || closeCode === 4404 || closeCode === 4408) return 'host-offline';
   if (closeCode === 1013) return 'offline';   // 中継の差し込みの一時的な失敗（docs/remote.md §5.7）。少し待って張り直す
@@ -96,8 +118,11 @@ function closeSocket(ws, code = 1000) {
 
 function errorFor(state, detail) {
   const e = new Error(state === 'revoked' ? t('remote.device.revoked')
-    : state === 'host-offline' ? t('remote.device.hostOffline')
-      : state === 'stopped' ? t('remote.device.stopped') : t('remote.device.offline'));
+    : state === 'blocked' ? t('remote.device.blocked')
+      : state === 'limit' ? t('remote.device.limit')
+        : state === 'paused' ? t('remote.device.paused')
+          : state === 'host-offline' ? t('remote.device.hostOffline')
+            : state === 'stopped' ? t('remote.device.stopped') : t('remote.device.offline'));
   e.state = state;
   if (detail?.closeCode != null) e.closeCode = detail.closeCode;
   return e;
@@ -105,14 +130,20 @@ function errorFor(state, detail) {
 
 export class DeviceLink extends EventEmitter {
   /**
-   * creds: { hostId, hostPublicKey (Buffer), relayUrl, deviceId, token }
+   * creds: { hostId, hostPublicKey (Buffer), relayUrl, deviceId, token, via? }
    * keyPair: 端末の静的鍵 { publicKey, privateKey }
    * backoff: { minMs, maxMs, stableMs }（試験で縮める）
    * connectTimeoutMs: 中継への接続・ハンドシェイク・HELLO のそれぞれの待ちの上限
    */
-  constructor({ creds, keyPair, app = '', name = '', shell = 'desktop', backoff = {}, connectTimeoutMs = 15_000, channelOptions = {}, log = () => {} }) {
+  constructor({ creds, keyPair, app = '', name = '', shell = 'desktop', backoff = {}, connectTimeoutMs = 15_000, channelOptions = {}, log = () => {}, via = null, getIdToken = null, onReadmit = null }) {
     super();
     this.creds = creds;
+    this.via = via ?? creds.via ?? 'own';
+    this.getIdToken = getIdToken ?? creds.getIdToken ?? null;
+    this.onReadmit = onReadmit;
+    this.tokenRetries = 0;
+    this.tokenForceNext = false;
+    this.readmitRetries = 0;
     this.keyPair = keyPair;
     this.app = String(app);
     this.name = String(name);
@@ -166,7 +197,10 @@ export class DeviceLink extends EventEmitter {
 
   /** 待たずに今すぐつなぎ直す（「再試行」、取り消し後の再ペアリングで資格が変わったときも）。 */
   retryNow(creds) {
-    if (creds) this.creds = creds;
+    if (creds) {
+      this.creds = creds;
+      if (creds.via) this.via = creds.via;
+    }
     if (!this.running) { this.start(); return; }
     if (this.state === 'connecting' || this.state === 'connected') { if (!creds) return; }
     this.generation++;
@@ -202,15 +236,46 @@ export class DeviceLink extends EventEmitter {
     });
   }
 
-  #scheduleRetry(state, detail) {
+  #scheduleRetry(state, detail, { delayOverride = null } = {}) {
     if (!this.running) return;
-    if (state === 'revoked') {
+    if (state === 'revoked' || state === 'blocked' || state === 'limit') {
       this.running = false;
-      this.#setStatus('revoked', detail);
+      this.#setStatus(state, detail);
+      return;
+    }
+    if (state === 'paused') {
+      this.running = false;
+      this.#setStatus('paused', detail);
+      return;
+    }
+    if (state === 'readmit') {
+      if (this.readmitRetries >= 1 || !this.onReadmit) {
+        this.running = false;
+        this.#setStatus('revoked', detail);
+        return;
+      }
+      this.readmitRetries++;
+      this.#setStatus('connecting', detail);
+      Promise.resolve(this.onReadmit()).then(newCreds => {
+        if (!this.running) return;
+        if (newCreds) {
+          this.creds = newCreds;
+          this.attempt = 0;
+          this.readmitRetries = 0;
+          this.#connect();
+        } else {
+          this.running = false;
+          this.#setStatus('revoked', detail);
+        }
+      }).catch(() => {
+        if (!this.running) return;
+        this.running = false;
+        this.#setStatus('revoked', detail);
+      });
       return;
     }
     const base = Math.min(this.backoff.maxMs, this.backoff.minMs * 2 ** this.attempt);
-    const delay = Math.round(base * (0.75 + Math.random() * 0.5));
+    const delay = delayOverride != null ? delayOverride : Math.round(base * (0.75 + Math.random() * 0.5));
     this.attempt++;
     const retryAt = new Date(Date.now() + delay).toISOString();
     this.#setStatus(state, { ...detail, retryAt });
@@ -224,28 +289,54 @@ export class DeviceLink extends EventEmitter {
     const live = () => gen === this.generation && this.running;
     this.#setStatus('connecting');
     const { creds } = this;
+    const headers = {
+      authorization: `Bearer ${creds.token}`, 'x-pleiad-host': creds.hostId, 'x-pleiad-device': creds.deviceId,
+    };
+    if (this.via === 'plus') {
+      let idToken = null;
+      if (this.getIdToken) {
+        try { idToken = await this.getIdToken({ force: this.tokenForceNext }); } catch (e) {
+          this.log(`remote device: getIdToken failed: ${e.message}`);
+        }
+      }
+      this.tokenForceNext = false;
+      if (idToken) headers['x-pleiad-account'] = idToken;
+    }
     let sock;
     try {
-      sock = openRelaySocket(relayWsUrl(creds.relayUrl, '/v1/device'), {
-        authorization: `Bearer ${creds.token}`, 'x-pleiad-host': creds.hostId, 'x-pleiad-device': creds.deviceId,
-      }, { openTimeoutMs: this.connectTimeoutMs });
+      sock = openRelaySocket(relayWsUrl(creds.relayUrl, '/v1/device'), headers, { openTimeoutMs: this.connectTimeoutMs });
     } catch (e) {
       this.log(`remote device: ${e.message}`);
       return this.#scheduleRetry('offline', { reason: 'url' });
     }
     this.socket = sock.ws;
-    const fail = (state, detail = {}) => {
+    const fail = (state, detail = {}, retryOpts = {}) => {
       closeSocket(sock.ws, 1000);
       if (this.socket === sock.ws) this.socket = null;
-      if (live()) this.#scheduleRetry(state, detail);
+      if (live()) this.#scheduleRetry(state, detail, retryOpts);
     };
 
     const o = await sock.opened;
     if (!live()) return closeSocket(sock.ws);
     if (!o.open) {
       // 中継の Upgrade 前の拒否（429 など）・名前解決やつながりの失敗・開いた直後に閉じられた
-      const detail = o.closeCode != null ? { closeCode: o.closeCode } : o.status ? { httpStatus: o.status } : { reason: o.error };
-      return fail(o.closeCode != null ? classifyClose({ closeCode: o.closeCode }) : 'offline', detail);
+      const closedReason = (await Promise.race([sock.closed, Promise.resolve(null)]))?.reason ?? '';
+      const reason = closedReason || o.reason || o.error || '';
+      const closeCode = o.closeCode ?? (o.status ? Number(o.status) : null);
+      const detail = closeCode != null ? { closeCode, reason } : { reason };
+      const st = classifyClose({ closeCode, reason, via: this.via });
+      if (this.via === 'plus') {
+        if (closeCode === 4401 && String(reason).trim() === 'token') {
+          this.tokenRetries = (this.tokenRetries || 0) + 1;
+          if (this.tokenRetries >= 2) return fail('blocked', detail);
+          this.tokenForceNext = true;
+          return fail('offline', detail, { delayOverride: 1000 });
+        }
+        if (closeCode === 4429 && String(reason).trim() === 'admit rate') {
+          return fail('offline', detail, { delayOverride: 60_000 });
+        }
+      }
+      return fail(st, detail);
     }
 
     let transport;
@@ -256,8 +347,25 @@ export class DeviceLink extends EventEmitter {
       transport = hs.split();
     } catch (e) {
       if (!live()) return closeSocket(sock.ws);
-      // 閉じられた（4401 取り消し・4404 ホストが居ない など）か、ホストの鍵が合わない（なりすましの疑い = 取り消しと同じく張り直さない）
-      if (e.closeCode != null) return fail(classifyClose({ closeCode: e.closeCode }), { closeCode: e.closeCode });
+      const closed = await Promise.race([sock.closed, Promise.resolve(null)]);
+      const closeCode = e.closeCode ?? closed?.code ?? null;
+      const reason = closed?.reason || e.reason || '';
+      const detail = { closeCode, reason };
+      if (closeCode != null) {
+        const st = classifyClose({ closeCode, reason, via: this.via });
+        if (this.via === 'plus') {
+          if (closeCode === 4401 && String(reason).trim() === 'token') {
+            this.tokenRetries = (this.tokenRetries || 0) + 1;
+            if (this.tokenRetries >= 2) return fail('blocked', detail);
+            this.tokenForceNext = true;
+            return fail('offline', detail, { delayOverride: 1000 });
+          }
+          if (closeCode === 4429 && String(reason).trim() === 'admit rate') {
+            return fail('offline', detail, { delayOverride: 60_000 });
+          }
+        }
+        return fail(st, detail);
+      }
       if (e.code === 'timeout') return fail('host-offline', { reason: 'timeout' });
       this.log(`remote device: handshake failed: ${e.message}`);
       return fail('revoked', { reason: 'handshake' });
@@ -288,8 +396,20 @@ export class DeviceLink extends EventEmitter {
         clearTimeout(this.stableTimer);
         if (this.socket === sock.ws) this.socket = null;
         if (!live()) return;
-        const detail = { closeCode: c.code, ...(goaway ? { goaway } : {}) };
-        this.#scheduleRetry(classifyClose({ closeCode: c.code, goaway }), detail);
+        const detail = { closeCode: c.code, reason: c.reason, ...(goaway ? { goaway } : {}) };
+        const st = classifyClose({ closeCode: c.code, reason: c.reason, goaway, via: this.via });
+        if (this.via === 'plus') {
+          if (c.code === 4401 && String(c.reason).trim() === 'token') {
+            this.tokenRetries = (this.tokenRetries || 0) + 1;
+            if (this.tokenRetries >= 2) return this.#scheduleRetry('blocked', detail);
+            this.tokenForceNext = true;
+            return this.#scheduleRetry('offline', detail, { delayOverride: 1000 });
+          }
+          if (c.code === 4429 && String(c.reason).trim() === 'admit rate') {
+            return this.#scheduleRetry('offline', detail, { delayOverride: 60_000 });
+          }
+        }
+        this.#scheduleRetry(st, detail);
       }
     });
     sock.drainTo(b => ch.receive(b));
@@ -301,10 +421,15 @@ export class DeviceLink extends EventEmitter {
       const c = await Promise.race([sock.closed, new Promise(r => { const timer = setTimeout(r, 1000, null); timer.unref?.(); })]);
       if (!live()) return;
       const closeCode = c?.code ?? null;
-      return fail(h.timeout && closeCode == null ? 'host-offline' : classifyClose({ closeCode, goaway }), { ...(closeCode != null ? { closeCode } : {}), ...(goaway ? { goaway } : {}), ...(h.timeout ? { reason: 'timeout' } : {}) });
+      const reason = c?.reason ?? '';
+      const st = classifyClose({ closeCode, reason, goaway, via: this.via });
+      const detail = { ...(closeCode != null ? { closeCode } : {}), ...(reason ? { reason } : {}), ...(goaway ? { goaway } : {}), ...(h.timeout ? { reason: 'timeout' } : {}) };
+      return fail(h.timeout && closeCode == null ? 'host-offline' : st, detail);
     }
     settled = true;
     this.channel = ch;
+    this.tokenRetries = 0;
+    this.readmitRetries = 0;
     this.hostName = typeof h.hello.hostName === 'string' ? h.hello.hostName : '';
     this.stableTimer = setTimeout(() => { if (this.channel === ch) this.attempt = 0; }, this.backoff.stableMs);
     this.stableTimer.unref?.();
@@ -314,7 +439,11 @@ export class DeviceLink extends EventEmitter {
     if (sock.ws.readyState === WebSocket.CLOSED && this.channel === ch) {
       this.channel = null;
       const c = await sock.closed;
-      if (live() && this.state === 'connected') this.#scheduleRetry(classifyClose({ closeCode: c.code, goaway }), { closeCode: c.code });
+      if (live() && this.state === 'connected') {
+        const detail = { closeCode: c.code, reason: c.reason };
+        const st = classifyClose({ closeCode: c.code, reason: c.reason, via: this.via });
+        this.#scheduleRetry(st, detail);
+      }
     }
   }
 }
