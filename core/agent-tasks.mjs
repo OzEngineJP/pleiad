@@ -1159,12 +1159,15 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         // 子のターンが走っていて途中送信を受けられるなら、待たずに今のターンへ渡す（ADR 0065）
         const steered = await steerInstructions(r).catch(e => { report({ event: 'unexpected', operation: 'steer', taskId: r.taskId, code: e?.code ?? null }); });
         kick();
+        // 戻りには、この呼び出しが受け付けた指示を載せる（近接する別の send の記録を誤って指さない。
+        // リモートの口 server.mjs の remoteAgentInvoke が、send の答えに表示契約の形で添える元にする）
+        const out = { ...view(r), instruction: structuredClone(instruction) };
         // 渡ったか分からない指示は送り直さない。依頼元のエージェントには、確かめるよう一言添える
-        if (steered?.has(instructionId)) return { ...view(r), warning: agentT(locale, 'tasks.steerUnknown') };
+        if (steered?.has(instructionId)) return { ...out, warning: agentT(locale, 'tasks.steerUnknown') };
         // 上限で止まった子は、解除時刻まで指示を走らせない。待つか、止めて別の委譲先に任せ直すかを選べるよう伝える
         const hold = heldOf(r);
-        if (hold) return { ...view(r), warning: agentT(locale, 'tasks.limitHeld', { time: clockText(hold.resetsAt) }) };
-        return view(r);
+        if (hold) return { ...out, warning: agentT(locale, 'tasks.limitHeld', { time: clockText(hold.resetsAt) }) };
+        return out;
       }
       if (name === 'ply_task_cancel') {
         // 終わったタスクの結果はこの戻り値で渡る。同じ結果の完了通知を後から送らない

@@ -9,6 +9,7 @@
 // AI が呼べる道具（MCP の ply_delegate・ply_task_*）から answer・view を作る道は無い（taskCall は答えも読み出しも運ばない）。
 import { modePosition } from './modes.mjs';
 import { REMOTE_TASK_FIELDS } from './remote/agent-protocol.mjs';
+import { instructionView } from '../web/task-instructions.mjs';
 
 export const RESULT_PAGE_MAX = 20;   // 完了した結果の続きを読むページ数の上限（16,000 字 × 20）
 
@@ -99,6 +100,10 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
 const DELEGATE_KEYS = ['kind', 'task', 'title', 'backend', 'context', 'cwd', 'model', 'effort', 'isolate'];
 const FINAL = new Set(['completed', 'failed', 'cancelled', 'interrupted']);
 const ACTIVE = new Set(['queued', 'running', 'cancelling']);
+// send の答えで先に知った指示の記録（early）の上限: 1 タスクの件数（ホストの読み出しが運ぶ件数
+// core/remote/agent-view.mjs の VIEW_LIMITS.instructions と同じ）と、記録を持つタスクの件数（known と同じ）
+const EARLY_INSTRUCTIONS = 20;
+const EARLY_TASKS = 500;
 
 class DelegationError extends Error {
   constructor(message, code = 'ERROR') { super(message); this.code = code; }
@@ -133,7 +138,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
   const catching = new Map();     // hostId → { unknown: Set, timer }。つながり直した後、追いつきの答え（synced）を待っている
   const working = new Set();      // 反映の途中の task の便り（追いつきの知らせは、それが済んでから）
   const known = new Map();        // 経過の読み出しで知ったホストの子孫の taskId → hostId（読み出しの宛先を引く。端末の台帳には保存しない）
-  const early = new Map();        // taskId → Map（指示の id → 表示契約の形の記録）。新しいホストは send の答えに受け付けた指示を添えるので、次の読み出しを待たずに出せるよう持つ（ホストの答えに同じ id が来たら消す）
+  const early = new Map();        // taskId → Map（指示の id → 表示契約の形の記録）。新しいホストは send の答えに受け付けた指示を添えるので、次の読み出しを待たずに出せるよう持つ
+                                  // （ホストの答えに同じ id が来たら消す。終わった・ホストが知らない・一覧から外れた・上限で押し出された分も捨てるので溜まり続けない）
 
   const hostsNow = () => bridge?.hosts ?? [];
   const hostById = hostId => hostsNow().find(h => h.hostId === hostId) ?? null;
@@ -222,6 +228,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const host = hostById(hostId);
     let patch = patchOf(ev);
     const final = FINAL.has(patch.status);
+    // 終わったタスクの早期記録は捨てる（経過の読み出しで確かめなくても残らない）
+    if (final) early.delete(ev.taskId);
     if (final && (ev.resultLength ?? 0) > (ev.result ?? '').length && usable(host)) {
       const requester = await requesterOf(row.parentSessionId, null, null).catch(() => null);
       const full = await completeResult(host, row, ev, requester ?? { sessionId: row.parentSessionId });
@@ -352,6 +360,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     for (const id of Array.isArray(ids) ? ids : []) {
       const row = tasks()?.get(String(id));
       if (!row?.host || row.host.hostId !== hostId || (FINAL.has(row.status) && !row.hostLost)) continue;
+      early.delete(row.taskId);
       await tasks().mirror(row.taskId, { status: 'failed', hostWaiting: false, cancelPending: null, error: agentT(locale(), 'delegation.remote.hostNoRecord', { host: row.host.name }) });
     }
     changed();
@@ -469,6 +478,11 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
           const h = list.find(x => x.hostId === r.host.hostId);
           if (!h || !h.agentUse) gone.add(r.host.hostId);
         }
+        // 一覧から外れたホスト（消した・任せる設定を切った）のタスクの早期記録も捨てる（もう追えない）
+        for (const id of [...early.keys()]) {
+          const h = list.find(x => x.hostId === tasks()?.get(id)?.host?.hostId);
+          if (!h || !h.agentUse) early.delete(id);
+        }
         Promise.all([...gone].map(id => retire(id, 'unlinked'))).catch(e => log(`remote delegation: ${e?.message ?? e}`)).finally(changed);
       }),
     ];
@@ -504,9 +518,9 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       taskId: ev.taskId, parentSessionId: owner, host: { hostId: host.hostId, name: host.name }, title: ev.title ?? clean.title ?? null,
       task: clean.task, ...(clean.context !== undefined ? { context: clean.context } : {}), kind: clean.kind ?? null, ...patchOf(ev),
     }, lng);
-    const early = orphans.get(ev.taskId);
+    const orphan = orphans.get(ev.taskId);
     orphans.delete(ev.taskId);
-    if (early && (early.event.updatedAt ?? 0) >= (ev.updatedAt ?? 0)) await onTask(host.hostId, early.event);
+    if (orphan && (orphan.event.updatedAt ?? 0) >= (ev.updatedAt ?? 0)) await onTask(host.hostId, orphan.event);
     changed();
     return present(tasks().get(ev.taskId) ?? row, host.name);
   }
@@ -577,14 +591,17 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const fresh = t.get(row.taskId) ?? row;
     const { task: _task, parentSessionId: _p, sessionId: hostSession, ...rest } = out ?? {};
     // 新しいホストは send の答えに受け付けた指示の記録を添える（view の読み出しを待たずに指示の行を出せるように。古いホストは添えない）
-    if (op === 'send' && out?.instruction && typeof out.instruction === 'object' && typeof out.instruction.id === 'string') {
+    if (op === 'send' && !FINAL.has(fresh.status) && out?.instruction && typeof out.instruction === 'object' && typeof out.instruction.id === 'string') {
       let list = early.get(row.taskId);
       if (!list) early.set(row.taskId, list = new Map());
-      list.set(out.instruction.id, out.instruction);
-      while (list.size > 20) list.delete(list.keys().next().value);
+      // ホストが送ったままではなく、表示契約の形（web/task-instructions.mjs の INSTRUCTION_FIELDS）に射影して持つ
+      const ins = instructionView(out.instruction);
+      list.set(ins.id, ins);
+      while (list.size > EARLY_INSTRUCTIONS) list.delete(list.keys().next().value);
+      while (early.size > EARLY_TASKS) early.delete(early.keys().next().value);
     }
-    // 依頼元が終わった結果を受け取った。同じ結果の完了通知を後から送らない
-    if (op === 'status' || op === 'wait' || op === 'cancel') { if (FINAL.has(fresh.status)) await t.markRead(row.taskId); }
+    // 依頼元が終わった結果を受け取った。同じ結果の完了通知を後から送らない。終わったタスクの早期記録も捨てる
+    if (op === 'status' || op === 'wait' || op === 'cancel') { if (FINAL.has(fresh.status)) { await t.markRead(row.taskId); early.delete(row.taskId); } }
     return { ...rest, host: hostName, taskId: row.taskId, ...(hostSession ? { hostSessionId: hostSession } : {}), ...notesOf(fresh, hostName) };
   }
 
@@ -658,9 +675,11 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
       // send の答えで先に知った指示を、読み出しの指示の一覧に足す（同じ id はホストの分を残す。古いホストからは来ない）
       const sent = early.get(taskId);
       if (sent?.size && r) {
-        const seen = new Set((r.instructions ?? []).map(i => i?.id));
-        for (const id of [...sent.keys()]) if (seen.has(id)) sent.delete(id);
-        if (sent.size) r.instructions = [...(r.instructions ?? []), ...sent.values()]; else early.delete(taskId);
+        const listed = Array.isArray(r.instructions) ? r.instructions : [];
+        const seen = new Set(listed.map(i => i?.id));
+        // 一覧が上限いっぱいで載っていない分は、古い側へ押し出された（状態が追えない）ので捨てる
+        for (const id of [...sent.keys()]) if (seen.has(id) || listed.length >= EARLY_INSTRUCTIONS) sent.delete(id);
+        if (sent.size) r.instructions = [...listed, ...sent.values()]; else early.delete(taskId);
       }
       return { state: 'ok', ...r };
     } catch (e) {

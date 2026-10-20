@@ -19,7 +19,7 @@ import { hostViewCursor, joinHostView, hostTreeRows, mergeHostTree, hostRowStale
 import { injectTaskInstructions, instructionView, INSTRUCTION_FIELDS } from '../../web/task-instructions.mjs';
 import { streamMessages } from '../../web/stream-messages.mjs';
 import { createCardRoll } from '../../web/card-roll.mjs';
-import { AGENT_OPS, AGENT_LIMITS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
+import { AGENT_OPS, AGENT_LIMITS, REMOTE_TASK_FIELDS, remoteOwnerId, parseRemoteOwner, normalizeRequester, relayReceipt } from '../../core/remote/agent-protocol.mjs';
 
 export const name = 'remote-agent';
 export const title = '端末の AI からの委譲の口（/agent）: 許可・防火壁・委譲と状態・承認モード・上限・承認の中継と人の答え・取り消し';
@@ -361,6 +361,9 @@ export default async function (t) {
     const done1 = await a0.next(e => e.t === 'task' && e.task.taskId === taskId && e.task.status === 'completed', 15_000, '完了の便り');
     t.ok('完了すると task の便りで結果（最初のページ）が届く', done1.task.result === 'HELLO' && done1.task.resultLength === 5, JSON.stringify(done1.task).slice(0, 200));
     t.ok('承認モードは依頼元（都度確認）に合わせた', done1.task.mode === 'default');
+    const wireKeys = Object.keys(done1.task), declared = new Set(REMOTE_TASK_FIELDS.map(f => f.wire));
+    t.ok('task の便りの項目は REMOTE_TASK_FIELDS の wire と一致する（telemetry は走っているときだけの任意の項目）',
+      wireKeys.every(k => declared.has(k)) && [...declared].every(k => k === 'telemetry' || wireKeys.includes(k)), wireKeys.sort().join());
     const rows1 = await hostRows();
     const row1 = rows1.find(r => r.taskId === taskId);
     t.ok('ホストの台帳の親は仮の ID（remote:<deviceId>:<端末の会話>）で、出どころ（requester）が残る',
@@ -376,7 +379,7 @@ export default async function (t) {
     const stOther = await a0.call('status', { taskId }, requesterOf('conv-B'));
     t.ok('別の端末の会話の taskId は見えない（所有の判定は仮の親の ID で行う）', stOther.ok === false, JSON.stringify(stOther));
     const send1 = await a0.call('send', { taskId, message: 'echo:AGAIN' }, req1);
-    t.ok('send で同じ子に追加の指示が届く', send1.ok, JSON.stringify(send1));
+    t.ok('send で同じ子に追加の指示が届く（答えには受け付けた指示の記録が添える）', send1.ok && send1.result.instruction?.text === 'echo:AGAIN', JSON.stringify(send1.result?.instruction ?? send1));
     const done2 = await a0.next(e => e.t === 'task' && e.task.taskId === taskId && e.task.status === 'completed' && e.task.result === 'AGAIN', 15_000, '追加の指示の完了');
     t.ok('追加の指示の結果も便りで届く', Boolean(done2));
     const sendSettings = await a0.call('send', { taskId, message: 'x', model: 'fast' }, req1);

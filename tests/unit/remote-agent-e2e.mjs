@@ -136,7 +136,8 @@ export default async function (t) {
     t.ok('ply_task_status は同じ taskId でホストの結果を返す', st.json?.result === 'REMOTE_HELLO' && st.json.host === 'desk-test' && st.json.status === 'completed', st.text.slice(0, 200));
     const send = toolResult(await tool(sid, 'ply_task_send', { taskId, message: 'echo:SECOND' }));
     t.ok('ply_task_send でホストの子に追加の指示が届く', !send.isError, send.text.slice(0, 200));
-    t.ok('send の答えに受け付けた指示の記録（表示契約の形）が添えられる', typeof send.json?.instruction?.id === 'string' && ['delivered', 'sending', 'queued'].includes(send.json.instruction.state), JSON.stringify(send.json?.instruction ?? null));
+    t.ok('send の答えに受け付けた指示の記録（表示契約の形）が添えられる', typeof send.json?.instruction?.id === 'string' && ['delivered', 'sending', 'queued'].includes(send.json.instruction.state)
+      && send.json.instruction.text === 'echo:SECOND', JSON.stringify(send.json?.instruction ?? null));
     const sendMirror = await until(async () => (await tRows()).find(r => r.taskId === taskId && r.instructionRevision >= 1), 15_000, '写しの指示の変化番号').catch(() => null);
     t.ok('ホストの子の写しにも指示の記録の変化番号（instructionRevision）が届く', Boolean(sendMirror), JSON.stringify((await tRows()).find(r => r.taskId === taskId)?.instructionRevision));
     await until(async () => (await tRows()).find(r => r.taskId === taskId && r.result === 'SECOND' && r.status === 'completed'), 30_000, '追加の指示の完了');

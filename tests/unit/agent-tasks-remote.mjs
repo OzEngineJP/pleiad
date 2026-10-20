@@ -99,7 +99,7 @@ export default async function (t) {
     {
       const handlers = { event: [], state: [], ready: [], hosts: [] };
       const requests = [], answers = [], syncs = [], opened = [], closed = [], updated = [];
-      let online = true, nowHosts;
+      let online = true, nowHosts, respond = null, viewReply = () => ({ messages: [] });
       const bridge = {
         get hosts() { return nowHosts; },
         onEvent: f => { handlers.event.push(f); return () => {}; },
@@ -107,9 +107,10 @@ export default async function (t) {
         onReady: f => { handlers.ready.push(f); return () => {}; },
         onHosts: f => { handlers.hosts.push(f); return () => {}; },
         refresh: async () => {},
-        request: async (hostId, op, args) => { requests.push([op, args.taskId]); if (!online) throw Object.assign(new Error('offline'), { code: 'OFFLINE' }); return { ok: true }; },
+        request: async (hostId, op, args) => { requests.push([op, args.taskId]); if (respond) return respond(op, args); if (!online) throw Object.assign(new Error('offline'), { code: 'OFFLINE' }); return { ok: true }; },
         answer: async (hostId, msg) => { answers.push(msg); return { ok: true }; },
         sync: async (hostId, ids) => { syncs.push(ids); },
+        view: async (hostId, taskId) => viewReply({ hostId, taskId }),
       };
       const host = (over = {}) => ({ hostId: 'h2', name: 'desk2', agentUse: true, allowed: true, state: 'ready', ...over });
       nowHosts = [host()];
@@ -230,6 +231,64 @@ export default async function (t) {
         handlers.hosts.forEach(f => f([]));
         await sleep(100);
         t.ok('取り込み: ホストを消しても、動いていた写しは理由付きで終わる', m2.get(ID(7)).status === 'failed' && /hostUnlinked/.test(m2.get(ID(7)).error));
+
+        // ---- 早期記録（send の答えで先に知った指示）: 表示契約の形で持ち、読み出しへ足す。溜まり続けない
+        nowHosts = [host({ view: true })];
+        const CONTRACT = ['id', 'at', 'state', 'text', 'deliveryId', 'nativeId', 'anchor', 'nextTurn'];
+        const viewOf = id => rd.view({ taskId: id });
+        await add2(30);
+        respond = () => ({ ok: true, instruction: { id: 'ins-1', at: 10, state: 'sending', text: 'もう少し', extra: 'x', anchor: { kind: 'uuid', v: 'u9', bad: 1 } } });
+        await rd.taskCall({ owner: 'conv', turn: null, name: 'ply_task_send', args: { taskId: ID(30), message: 'もう少し' }, lng: 'ja' });
+        const m1 = (await viewOf(ID(30))).instructions.find(i => i.id === 'ins-1');
+        t.ok('早期記録: send の答えの指示を表示契約の形に射影して持ち、読み出しへ足す（余分な項目は載せない）',
+          Boolean(m1) && Object.keys(m1).every(k => CONTRACT.includes(k)) && m1.anchor?.v === 'u9' && m1.text === 'もう少し', JSON.stringify(m1));
+        viewReply = () => ({ task: { taskId: ID(30) }, messages: [], instructions: [{ id: 'ins-1', at: 10, state: 'delivered', text: 'もう少し' }] });
+        const seen1 = (await viewOf(ID(30))).instructions.filter(i => i.id === 'ins-1');
+        viewReply = () => ({ task: { taskId: ID(30) }, messages: [], instructions: [] });
+        t.ok('早期記録: ホストの一覧に同じ id が来たら消える（ホストの分を残し、以後は足さない）',
+          seen1.length === 1 && seen1[0].state === 'delivered' && !(await viewOf(ID(30))).instructions.some(i => i.id === 'ins-1'));
+        respond = () => ({ ok: true, instruction: { id: 'ins-2', at: 11, state: 'sending', text: 'x' } });
+        await rd.taskCall({ owner: 'conv', turn: null, name: 'ply_task_send', args: { taskId: ID(30), message: 'x' }, lng: 'ja' });
+        viewReply = () => ({ task: { taskId: ID(30) }, messages: [], instructions: Array.from({ length: 20 }, (_, i) => ({ id: `h${i}`, at: i, state: 'delivered', text: 't' })) });
+        await viewOf(ID(30));
+        viewReply = () => ({ task: { taskId: ID(30) }, messages: [], instructions: [] });
+        t.ok('早期記録: ホストの一覧がいっぱいで載らない分は、押し出されたとみなして捨てる（古い状態のまま残さない）',
+          !(await viewOf(ID(30))).instructions.some(i => i.id === 'ins-2'));
+        respond = () => ({ ok: true, instruction: { id: 'ins-3', at: 12, state: 'sending', text: 'y' } });
+        await rd.taskCall({ owner: 'conv', turn: null, name: 'ply_task_send', args: { taskId: ID(30), message: 'y' }, lng: 'ja' });
+        await m2.mirror(ID(30), { status: 'completed', result: 'DONE' });
+        respond = () => ({ ok: true, task: { taskId: ID(30), status: 'completed', rawStatus: 'completed', result: 'DONE', resultLength: 4 } });
+        await rd.taskCall({ owner: 'conv', turn: null, name: 'ply_task_status', args: { taskId: ID(30) }, lng: 'ja' });
+        t.ok('早期記録: 終わって既読になったら捨てる', !(await viewOf(ID(30))).instructions.some(i => i.id === 'ins-3'));
+        await add2(33);
+        respond = () => ({ ok: true, instruction: { id: 'ins-6', at: 13, state: 'sending', text: 'w' } });
+        await rd.taskCall({ owner: 'conv', turn: null, name: 'ply_task_send', args: { taskId: ID(33), message: 'w' }, lng: 'ja' });
+        emit({ t: 'task', task: { taskId: ID(33), status: 'completed', rawStatus: 'completed', result: 'D', resultLength: 1, updatedAt: 7 } });
+        await sleep(50);
+        t.ok('早期記録: 便りで終わった分はその時点で捨てる（詳細を開かなくても残らない）', !(await viewOf(ID(33))).instructions.some(i => i.id === 'ins-6'));
+        await add2(31); await add2(32);
+        respond = () => ({ ok: true, instruction: { id: 'ins-4', at: 14, state: 'sending', text: 'z' } });
+        await rd.taskCall({ owner: 'conv', turn: null, name: 'ply_task_send', args: { taskId: ID(31), message: 'z' }, lng: 'ja' });
+        respond = () => ({ ok: true, instruction: { id: 'ins-5', at: 15, state: 'sending', text: 'z2' } });
+        await rd.taskCall({ owner: 'conv', turn: null, name: 'ply_task_send', args: { taskId: ID(32), message: 'z2' }, lng: 'ja' });
+        emit({ t: 'synced', unknown: [ID(31)] });
+        await sleep(100);
+        t.ok('早期記録: ホストが知らない ID になったら捨てる', !(await viewOf(ID(31))).instructions.some(i => i.id === 'ins-4'));
+        handlers.hosts.forEach(f => f([{ hostId: 'h9', name: 'other', agentUse: true, allowed: true, state: 'ready', view: true }]));
+        await sleep(100);
+        nowHosts = [host({ view: true })];
+        t.ok('早期記録: ホストが一覧から外れたら捨てる', !(await viewOf(ID(32))).instructions.some(i => i.id === 'ins-5'));
+        // send の答えの指示は、その呼び出しが受け付けたもの（近接する別の send の記録を指さない）
+        const sendSrc = await m2.call('conv', 'ply_delegate', { backend: 'fake', task: 'do2', title: 'send-src' });
+        const [sA, sB] = await Promise.all([
+          m2.call('conv', 'ply_task_send', { taskId: sendSrc.taskId, message: 'first' }),
+          m2.call('conv', 'ply_task_send', { taskId: sendSrc.taskId, message: 'second' }),
+        ]);
+        const insIds = m2.instructions(sendSrc.taskId).instructions.map(i => i.id);
+        t.ok('send の答えの指示: その呼び出しが受け付けたものを載せる（並行する send で別の指示を指さない）',
+          sA.instruction?.text === 'first' && sB.instruction?.text === 'second' && sA.instruction.id !== sB.instruction.id
+          && insIds.includes(sA.instruction.id) && insIds.includes(sB.instruction.id), JSON.stringify([sA.instruction, sB.instruction]));
+        respond = null;
       } finally {
         await m2.close();
         await fs.rm(dir2, { recursive: true, force: true }).catch(() => {});

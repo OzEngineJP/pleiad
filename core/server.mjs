@@ -1135,8 +1135,9 @@ function remoteTaskEvent(row) {
     backend: row.backend ?? null, model: row.model ?? null, effort: row.effort ?? null, mode: row.mode ?? null, cwd: row.cwd ?? null,
     sessionId: row.sessionId ?? null, createdAt: row.createdAt ?? null, updatedAt: row.updatedAt ?? null,
     error: row.error ? String(row.error).slice(0, 500) : null, instructionRevision: row.instructionRevision ?? 0,
-    // 完了通知（deliver）には記録の行そのもの（結果の全文・instructions）が来て、一覧（agentTasks.list）には view（結果の最初のページ・pendingMessages）が来る。どちらも同じ形にする
-    pendingMessages: row.pendingMessages ?? (row.instructions ?? []).filter(x => x.state === 'queued').length,
+    // 完了通知（deliver）には記録の行そのもの（結果の全文・instructions）が来て、一覧（agentTasks.list）には view（結果の最初のページ・pendingMessages）が来る。どちらも同じ形にする。
+    // 中継点の写しの行は件数を hostPendingMessages に持つので、入れ子（A→B→C）でも末端の待機件数が届く
+    pendingMessages: row.pendingMessages ?? row.hostPendingMessages ?? (row.instructions ?? []).filter(x => x.state === 'queued').length,
     // 結果は終わったときだけ最初のページを載せる。続きは端末が status の offset で読む
     result: REMOTE_ACTIVE.has(row.status) ? '' : String(row.result ?? '').slice(0, RESULT_PAGE), resultLength: row.resultLength ?? String(row.result ?? '').length,
     worktree: row.worktree ? { id: row.worktree.id, branch: row.worktree.branch, path: row.worktree.path, origin: row.worktree.origin } : null,
@@ -1202,11 +1203,8 @@ async function remoteAgentInvoke({ device, requester, op, args, signal, valid = 
   if (op !== 'list' && out?.taskId) {
     const row = agentTasks.get(out.taskId);
     const result = row ? { ...out, task: remoteTaskEvent(row) } : out;
-    // send は受け付けた指示の記録（表示契約の形）も添える。端末は次の読み出しを待たずに受付位置へ指示の行を出せる（古い端末はこの項目を無視する）
-    if (op === 'send') {
-      const instruction = (agentTasks.instructions(out.taskId)?.instructions ?? []).at(-1);
-      if (instruction) result.instruction = viewInstructions([instruction])[0];
-    }
+    // send は、この呼び出しが受け付けた指示の記録（表示契約の形）も添える。端末は次の読み出しを待たずに受付位置へ指示の行を出せる（古い端末はこの項目を無視する）
+    if (op === 'send' && out.instruction) result.instruction = viewInstructions([out.instruction])[0];
     return result;
   }
   return out;
