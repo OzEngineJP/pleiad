@@ -4974,6 +4974,9 @@ const side = createSide({
       renderSessions();
       return;
     }
+    // スレッドの行（id "thread:<チャンネル>:<根>"）はスレッドの状態（channels.setThreadStatus）。会話は setStatus
+    const thread = threadOfRow(id);
+    if (thread) { setThreadStatusOf(thread, status); return; }
     side.keep(status);
     setStatusOf(id, status);
   },
@@ -5019,12 +5022,19 @@ function threadCwd(s) {
   return '';
 }
 
+/** スレッドの状態を変える（脇の行のメニュー・状態の並べ方からのドラッグ。会話と同じ状態のグループ） */
+function setThreadStatusOf({ channelId, threadId }, status) {
+  side.keep(status);
+  return cmd('invoke', { op: 'channels.setThreadStatus', args: { channelId, threadId, status } })
+    .then(() => loadThreadIndex())
+    .catch((e) => sideNote(t('session.statusFailed', { error: e.message })));
+}
+
 /** スレッドの行のメニュー: 開く・流れを開く・作業フォルダーと ID のコピー・状態（会話と同じ状態のグループ） */
 function threadMenu(s, x, y) {
   const { channelId, threadId } = s.thread;
   const known = [...new Set([...state.sessions.map((z) => z.status), ...(state.threadIndex?.threads ?? []).map((th) => th.status)].filter(Boolean))];
-  const setStatus = (status) => cmd('invoke', { op: 'channels.setThreadStatus', args: { channelId, threadId, status } })
-    .then(() => { side.keep(status); loadThreadIndex(); }).catch((e) => sideNote(t('session.statusFailed', { error: e.message })));
+  const setStatus = (status) => setThreadStatusOf({ channelId, threadId }, status);
   showMenu(x, y, [
     { label: t('channels:side.openThread'), onClick: () => viewAddress.go({ channelId, threadId }) },
     { label: t('channels:side.openFeed'), onClick: () => viewAddress.go({ channelId }) },

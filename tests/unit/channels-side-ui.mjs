@@ -78,6 +78,6 @@ export default function (t) {
     && /familiesOf\(visible\.filter\(\(s\) => !s\.bot\)/.test(side) && /"grp bot-waits"/.test(side) && /channels:side\.botWaitsHead/.test(side)
     && side.indexOf('"grp bot-waits"') < side.indexOf('for (const st of visibleGroups)'));
   t.ok('bot の会話の印: 一覧が無くても会話の題からチャンネル名を取り、id は出さない', /botTitleParts\(s\)\.channel/.test(side) && !/s\.bot\.channelId \?\? |#\$\{s\.bot\.channelId/.test(side));
-  t.ok('bot の会話の行は状態へ落とせない・印（.row-ch）が付く', /if \(!interactive \|\| s\.bot\) return r;/.test(side) && /botChannelMark\(s\)/.test(side));
+  t.ok('bot の会話の行は状態へ落とせない・印（.row-ch）が付く（スレッドの行は状態を持つので落とせる）', /if \(!interactive \|\| \(s\.bot && !s\.thread\)\) return r;/.test(side) && /botChannelMark\(s\)/.test(side));
   t.ok('検索: チャンネルの当たりを混ぜ、出どころを添える', /connectChannels\(link\)/.test(side) && /channelsLink\.matchNames/.test(side) && /"row-src"/.test(side));
 }

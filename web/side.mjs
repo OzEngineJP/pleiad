@@ -277,6 +277,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const filtering = () => filter.dir != null || filter.status !== undefined || filter.backends.length > 0 || filter.period > 0;
   const statusKey = (s) => (s.status ? String(s.status) : null);
   const iconOf = (st) => last.statuses.find((x) => x.status === st)?.icon ?? null;
+  /** 行の id → 会話かスレッドの行。ドラッグ中の行の解決に使う（スレッドは "thread:<チャンネル>:<根>"） */
+  const rowById = (id) => last.sessions.find((x) => x.id === id) ?? last.threads.find((x) => x.id === id);
 
   /**
    * 一覧に出すグループの順。listStatuses の順（既出順）のうち、今どれかのセッションに付いているか
@@ -447,7 +449,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       // 同じ状態へ落とすのは「グループから外すだけ」の意味になる（中の行のときだけ受ける）
       sec.addEventListener("dragover", (e) => {
         if (dragId == null) return;
-        const s = last.sessions.find((x) => x.id === dragId);
+        const s = rowById(dragId);
         if (!s) return;
         if (statusKey(s) === st && !(dragKind === "row" && inFamily.has(s.id))) return;
         e.preventDefault();
@@ -462,7 +464,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         const kind = dragKind;
         dragId = null;
         dragKind = null;
-        const s = last.sessions.find((x) => x.id === id);
+        const s = rowById(id);
         if (!s) return;
         if (statusKey(s) === st) {
           // 同じ状態の空きへ: 状態はそのままグループから外れるだけ
@@ -471,7 +473,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         }
         // 空になる状態はこの画面に残す（「まだ無い」）。落とした先が消えて見えるのを防ぐ
         const from = statusKey(s);
-        if (from && !last.sessions.some((x) => x.id !== id && statusKey(x) === from)) made.add(from);
+        if (from && ![...last.sessions, ...last.threads].some((x) => x.id !== id && statusKey(x) === from)) made.add(from);
         if (kind === "group") onMoveGroup?.(s, st ?? "");
         else onSetStatus?.(id, st ?? "");
       });
@@ -910,7 +912,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (onFamilyContext) box.append(menuButton("fam-more", t("session.familyMore", { title: titleOf(fam.root) || t("session.untitled") }), (x, y) => onFamilyContext(fam.root, list, x, y)));
     // 外にある枝をここへ落とすと、このグループに入る（状態も根に揃う）
     box.addEventListener("dragover", (e) => {
-      if (dragId == null || dragKind !== "row" || inFamily.has(dragId)) return;
+      // スレッドの行はグループに入れない（器は会話のまとまりだけ）
+      if (dragId == null || dragKind !== "row" || inFamily.has(dragId) || !last.sessions.some((x) => x.id === dragId)) return;
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = "move";
@@ -1030,7 +1033,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
     r.onclick = () => { if (!open) onOpen?.(s.id); };
     r.oncontextmenu = (e) => { if (!onContext || !interactive) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
-    if (!interactive || s.bot) return r;   // bot の会話は状態を持たないので、つかんで状態へ落とせない
+    if (!interactive || (s.bot && !s.thread)) return r;   // bot の会話は状態を持たないので、つかんで状態へ落とせない（スレッドは状態を持つ）
 
     // つかんで別の状態へ落とすと状態が変わる（グループの中の行はそこで外れる）。
     // 同じ状態の空きへ落とせば、状態はそのままグループから外れるだけ。

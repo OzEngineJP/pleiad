@@ -9,7 +9,7 @@ const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ESC[c]);
 const VOID = new Set(["br", "hr", "img", "input", "meta", "link"]);
 
-const textNode = (s) => ({ textContent: s, outerHTML: esc(s), shown: s, children: [], parent: null, matches: () => false, remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); } });
+const textNode = (s) => ({ textContent: s, outerHTML: esc(s), shown: s, children: [], parent: null, dataset: {}, matches: () => false, remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); } });
 
 export class N {
   constructor(tag) {
@@ -67,6 +67,14 @@ export class N {
   replaceChildren(...n) { this._text = null; this._html = null; this.children = []; this.append(...n); }
   prepend(...n) { for (const c of n.reverse()) { c.parent = this; this.children.unshift(c); } }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); }
+  // web/side.mjs の reconcile（並び替え）が使う。すでに別の親に居る node は取り込んで動かす
+  insertBefore(node, ref) {
+    if (node?.parent) node.parent.children = node.parent.children.filter((c) => c !== node);
+    node.parent = this;
+    const i = ref == null ? -1 : this.children.indexOf(ref);
+    if (i < 0) this.children.push(node); else this.children.splice(i, 0, node);
+    return node;
+  }
   before(...n) {
     const p = this.parent;
     if (!p) return;
@@ -77,6 +85,8 @@ export class N {
   contains(n) { for (let x = n; x; x = x.parent) if (x === this) return true; return false; }
   get firstChild() { return this.children[0]; }
   get lastChild() { return this.children[this.children.length - 1]; }
+  get parentNode() { return this.parent; }
+  get childElementCount() { return this.children.filter((c) => c instanceof N).length; }
 
   matches(sel) {
     const s = sel.trim();
