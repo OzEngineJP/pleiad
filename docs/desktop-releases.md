@@ -209,7 +209,7 @@ Actionsは `PLY_RELEASE_REPOSITORY` Variableや `PLY_RELEASE_TOKEN` Secretを参
 
 ## サインイン時の起動
 
-設定 › リモート › 常駐の「サインイン時に Pleiad を起動する」（既定オフ。[ADR 0175](adr/0175-launch-at-login.md)）。委譲のホストの PC が再起動したあとも Pleiad が上がるようにする。
+設定 › アプリ情報・更新 › 常駐の「サインイン時に Pleiad を起動する」（既定オフ。[ADR 0175](adr/0175-launch-at-login.md)）。委譲のホストの PC が再起動したあとも Pleiad が上がるようにする。
 
 - 登録: Windows は `HKCU\...\Run` に `process.execPath`（インストーラーが置く `$INSTDIR\Ply.exe`）と `--hidden`。版ごとの実行場所ではなく main の exe なので、更新（無停止の更新を含む）をまたいでも有効で、古い版のパスは残らない。入れ先が変わった再インストールで古いパスが残ったときは、起動のたびに今の exe へ直す
 - 状態: 画面は毎回 OS から読む。ほかの道で外されればオフに見える。タスクマネージャー・Windows の設定で無効にされた登録は、オフのまま「無効になっている」と出す

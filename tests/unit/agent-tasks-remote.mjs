@@ -112,7 +112,7 @@ export default async function (t) {
         sync: async (hostId, ids) => { syncs.push(ids); },
         view: async (hostId, taskId) => viewReply({ hostId, taskId }),
       };
-      const host = (over = {}) => ({ hostId: 'h2', name: 'desk2', agentUse: true, allowed: true, state: 'ready', ...over });
+      const host = (over = {}) => ({ hostId: 'h2', name: 'desk2', allowed: true, state: 'ready', ...over });
       nowHosts = [host()];
       let cardSeq = 0;
       const cards = { open: c => { const id = `card-${++cardSeq}`; opened.push({ id, ...c }); return id; }, close: (id, res) => closed.push([id, res]), update: (id, patch) => updated.push([id, patch]), online: () => {} };
@@ -220,17 +220,17 @@ export default async function (t) {
         const endCw = closed.find(([id]) => id === ccw.id), endTool = closed.find(([id]) => id === ctool.id);
         t.ok('取り込み: 子が待つのをやめた（abort）は、Chrome の操作待ちだけ残し、ふつうの承認は誰が答えたか分からない決着にする', endCw?.[1].by === 'abort' && endTool?.[1].by === null, JSON.stringify([endCw, endTool]));
         t.ok('取り込み: 承認待ちの行を AI に見せるとき、ホストの画面で答える旨（hostOnlyApproval）が付く', Boolean(rd.presentList({ tasks: [m2.get(ID(5))] }).tasks[0].hostOnlyApproval));
-        // 任せる設定を切る・ホストを消す
+        // ホストを消す（任せられるかはホストの許可だけが決める。ADR 0239）
         await add2(6);
-        nowHosts = [host({ agentUse: false })];
-        handlers.hosts.forEach(f => f([{ hostId: 'h2', agentUse: false }]));
+        nowHosts = [host({ allowed: true, state: 'offline' })];
+        handlers.hosts.forEach(f => f([{ hostId: 'h2', allowed: true, state: 'offline' }]));
         await sleep(100);
-        t.ok('取り込み: この PC 側で任せる設定を切ると、動いていた写しは理由付きで終わる（hostUnlinked）', m2.get(ID(6)).status === 'failed' && /hostUnlinked/.test(m2.get(ID(6)).error) && m2.get(ID(6)).hostLost === true);
+        t.ok('取り込み: 一覧に残っているホストがオフラインになっただけでは、動いていた写しは終わらない', m2.get(ID(6)).status !== 'failed');
         await add2(7);
         nowHosts = [];
         handlers.hosts.forEach(f => f([]));
         await sleep(100);
-        t.ok('取り込み: ホストを消しても、動いていた写しは理由付きで終わる', m2.get(ID(7)).status === 'failed' && /hostUnlinked/.test(m2.get(ID(7)).error));
+        t.ok('取り込み: ホストを消すと、動いていた写しは理由付きで終わる（hostUnlinked）', [6, 7].every(n => m2.get(ID(n)).status === 'failed' && /hostUnlinked/.test(m2.get(ID(n)).error) && m2.get(ID(n)).hostLost === true));
 
         // ---- 早期記録（send の答えで先に知った指示）: 表示契約の形で持ち、読み出しへ足す。溜まり続けない
         nowHosts = [host({ view: true })];
@@ -274,7 +274,7 @@ export default async function (t) {
         emit({ t: 'synced', unknown: [ID(31)] });
         await sleep(100);
         t.ok('早期記録: ホストが知らない ID になったら捨てる', !(await viewOf(ID(31))).instructions.some(i => i.id === 'ins-4'));
-        handlers.hosts.forEach(f => f([{ hostId: 'h9', name: 'other', agentUse: true, allowed: true, state: 'ready', view: true }]));
+        handlers.hosts.forEach(f => f([{ hostId: 'h9', name: 'other', allowed: true, state: 'ready', view: true }]));
         await sleep(100);
         nowHosts = [host({ view: true })];
         t.ok('早期記録: ホストが一覧から外れたら捨てる', !(await viewOf(ID(32))).instructions.some(i => i.id === 'ins-5'));

@@ -162,7 +162,7 @@ export default async function (t) {
     await cmd('setRemoteSettings', { relayUrl: `http://127.0.0.1:${relayPort}`, enrollSecret: SECRET, enabled: true, hostName: 'desk-test' });
     await c.waitFor(e => e.type === 'remoteStatus' && e.status.connection.state === 'connected', { from: 0, ms: 10_000 });
 
-    // ---- 端末の画面（中継越しの /ws）から、ホストの許可を入れられない（切る・すべて止めるはできる）
+    // ---- 端末の画面（中継越しの /ws）からの setRemoteDeviceAgent。端末ごとの許可は無い（ADR 0239）ので、enabled は何も変えない
     const lap = await pair('laptop');
     const w = await lap.d.ws('/ws');
     await w.next();   // ready
@@ -173,14 +173,10 @@ export default async function (t) {
       for (let i = 0; i < 50; i++) { const m = JSON.parse(await w.next()); if (m.kind === 'response' && m.id === id) return m; }
       throw new Error('応答が来ない');
     };
-    const tryOn = await wsCmd('setRemoteDeviceAgent', { id: lap.id, enabled: true });
-    t.ok('端末の画面（中継越し）からは、自分の「AI からの依頼を受ける」を入れられない（ホストの PC の画面だけ）',
-      tryOn.ok === false && !(await cmd('remoteDevices')).find(d => d.id === lap.id).agent.enabled, JSON.stringify(tryOn));
-    await cmd('setRemoteDeviceAgent', { id: lap.id, enabled: true });
     const tryOff = await wsCmd('setRemoteDeviceAgent', { id: lap.id, enabled: false });
-    t.ok('切るのは端末の画面からもできる', tryOff.ok === true && !(await cmd('remoteDevices')).find(d => d.id === lap.id).agent.enabled);
-    await cmd('setRemoteDeviceAgent', { id: lap.id, enabled: true });
+    t.ok('端末の画面から前の版の「切る」を送っても、デスクトップ版の端末は受けるまま', tryOff.ok === true && (await cmd('remoteDevices')).find(d => d.id === lap.id).agent.enabled === true, JSON.stringify(tryOff));
     const a = await agent(lap);
+    t.ok('つないだだけで /agent の口は allowed', a.ready.allowed === true);
 
     // ---- 取り消し・すべて止めるが、子の子孫まで止める
     const req = requesterOf('conv-G', { title: '孫を作らせる' });
@@ -202,7 +198,6 @@ export default async function (t) {
 
     // 取り消し（子の孫）
     const lap2 = await pair('laptop2');
-    await cmd('setRemoteDeviceAgent', { id: lap2.id, enabled: true });
     const a2 = await agent(lap2);
     const d2 = await a2.call('delegate', { kind: 'mechanical', backend: 'fake', task: grandPrompt, title: '子 2' }, requesterOf('conv-H'));
     const child2 = await until(async () => (await hostRows()).find(r => r.taskId === d2.result.task.taskId && r.sessionId), 30_000, '子 2');
@@ -213,7 +208,6 @@ export default async function (t) {
 
     // ---- 質問・設定の変更の承認の中継
     const lap3 = await pair('laptop3');
-    await cmd('setRemoteDeviceAgent', { id: lap3.id, enabled: true });
     const a3 = await agent(lap3);
     const reqQ = requesterOf('conv-Q');
     const q = await a3.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'question' }, reqQ);

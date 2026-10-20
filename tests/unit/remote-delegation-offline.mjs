@@ -27,7 +27,7 @@ export default async function (t) {
   const handlers = { event: [], state: [], ready: [], hosts: [] };
   const syncs = [];
   const bridge = {
-    hosts: [{ hostId: 'h1', name: 'MSI', state: 'ready', allowed: true, agentUse: true }, { hostId: 'h2', name: 'desk', state: 'ready', allowed: true, agentUse: true }],
+    hosts: [{ hostId: 'h1', name: 'MSI', state: 'ready', allowed: true }, { hostId: 'h2', name: 'desk', state: 'ready', allowed: true }],
     connected: true,
     onEvent: f => { handlers.event.push(f); return () => {}; }, onState: f => { handlers.state.push(f); return () => {}; },
     onReady: f => { handlers.ready.push(f); return () => {}; }, onHosts: f => { handlers.hosts.push(f); return () => {}; },

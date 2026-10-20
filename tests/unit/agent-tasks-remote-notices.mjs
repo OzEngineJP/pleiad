@@ -65,7 +65,7 @@ export default async function (t) {
 
     // 偽のホストから task の便りを通し、写しの取り込みから通知までを確かめる。
     const listeners = [];
-    const bridge = { hosts: [{ hostId: 'h1', name: 'MSI', state: 'ready', allowed: true, agentUse: true }],
+    const bridge = { hosts: [{ hostId: 'h1', name: 'MSI', state: 'ready', allowed: true }],
       onEvent: fn => { listeners.push(fn); return () => {}; }, onState: () => () => {}, onReady: () => () => {}, onHosts: () => () => {},
       refresh: async () => {}, sync: async () => true };
     const remote = createRemoteDelegation({ bridge, tasks: () => manager, agentT: () => '', log: () => {} });

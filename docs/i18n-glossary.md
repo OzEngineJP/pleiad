@@ -191,8 +191,13 @@
 | ペアリング / ペアリングのコード | pairing / pairing code |
 | 確認コード（ペアリング） | confirmation code |
 | 取り消す（端末の登録） | revoke |
+| この PC へ / ほかの PC へ（設定 › リモートのタブ。つなぐ向き） | To this PC / To other PCs |
+| ほかの端末からの操作を許可する（ホストのただ 1 つのスイッチ） | Allow other devices to control this PC |
+| 自分の中継サーバー（つなぎ方のまとまり） | Your own relay server |
+| つなぎ方（端末やホストがどの道でつながるか） | connection（「method」「route」は使わない） |
+| オフライン（許可しているのに今つながっていない） | Offline |
 | 窓（OS のウィンドウ） | window |
-| 常駐（窓を閉じてもホストを続ける） | keep running (in the tray) |
+| 常駐（窓を閉じても動かし続ける。設定 › アプリ情報・更新） | keep running (in the tray) |
 | フォルダーを送る | Send a folder |
 | 作業フォルダー | working directory |
 | 自動（委譲先を自動で選んだ印） | Auto |

@@ -30,12 +30,12 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
     return d;
   }
 
-  /** サーバーが知る「ホストの一覧」。線を張っているホスト（agentUse）だけが状態を持つ */
+  /** サーバーが知る「ホストの一覧」。線を張っているホスト（取り消されていないもの）が状態を持つ */
   async function hostsView() {
     const d = await device();
     const rows = await d.list();
     return rows.map(h => ({
-      hostId: h.hostId, name: displayName(h), hostName: h.hostName ?? '', agentUse: h.agentUse === true,
+      hostId: h.hostId, name: displayName(h), hostName: h.hostName ?? '',
       state: h.agent?.state ?? 'offline', allowed: h.agent?.allowed === true, view: h.agent?.view === true, features: h.agent?.features ?? null,
     }));
   }
@@ -117,7 +117,7 @@ export function createRemoteAgentService({ getDevice, post, log = () => {} }) {
 
   return {
     handle: message => { if (message?.type === 'remote-agent') return handle(message); },
-    /** agentUse が変わった・ホストが増減した。線を張り直し、一覧をサーバーへ */
+    /** ホストが増減した・名前が変わった。線を張り直し、一覧をサーバーへ */
     refresh: () => refresh().catch(e => log(`remote agent: ${e?.message ?? e}`)),
     resync: () => resync().catch(e => log(`remote agent: ${e?.message ?? e}`)),
     hostsView,

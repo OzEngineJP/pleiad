@@ -5,7 +5,7 @@
 //   <data>/remote/settings.json  { enabled, relayUrl, hostName }（秘密は入れない）
 //   <data>/remote/devices.json   { version: 1, devices: [{ id, name, platform, app, publicKey, tokenHash, createdAt, lastSeenAt, notify? }] }
 //                                notify = { settings, muted, registeredAt, lastSentAt }（離れた端末への通知。鍵は秘密の置き場の notify:<id>）
-//                                agentDelegation = true（この端末の AI からの委譲を受ける。既定は無し = オフ。デスクトップ版の端末だけ。docs/remote.md §4.5）
+//                                agentDelegation は前の版の「この端末の AI からの依頼を受ける」。今は読まない（デスクトップ版の端末なら受ける。ADR 0239）
 //                                invite = <招待の id>（審査の招待で入った端末の印。招待を取り消す・作り直す・期限が来ると、この印の端末をすべて外す。ADR 0172）
 //                                公開鍵は base64url、tokenHash は中継用トークン（生の 32 バイト）の SHA-256 の 16 進。トークンそのものは持たない
 //
@@ -137,17 +137,6 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
         const hit = data.devices.find(d => d.id === id);
         if (!hit) return null;
         hit.notify = { ...(hit.notify ?? {}), ...patch };
-        await writeJson(devicesFile, data);
-        return hit;
-      });
-    },
-    /** 端末の AI からの依頼を受けるか（docs/remote.md §4.5、ADR 0146）。既定はオフ。変えられるのは人だけ（server の setRemoteDeviceAgent） */
-    async setAgentDelegation(id, enabled) {
-      return lockedDevices(async () => {
-        const data = await readDevices();
-        const hit = data.devices.find(d => d.id === id);
-        if (!hit) return null;
-        if (enabled === true) hit.agentDelegation = true; else delete hit.agentDelegation;
         await writeJson(devicesFile, data);
         return hit;
       });

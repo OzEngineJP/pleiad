@@ -1,5 +1,6 @@
 // 設定 › リモートと常駐（docs/remote.md §6.1・§6.3、issue #13 の画面側）。
-//   - 画面の小さな部品（web/remote.mjs）: 確認コードの区切り・残り時間・QR の点・状態の一行・端末の行
+//   - 画面の小さな部品（web/remote.mjs・web/remote-hosts.mjs・web/remote-parts.mjs）: 確認コードの区切り・残り時間・QR の点・
+//     つながらないときの一行・端末とホストの行・端末の絵・中継の見せ方
 //   - 常駐の設定（core/remote/resident.mjs）: 既定・丸め・保存・main へ送る状態
 //   - main の常駐（desktop/resident.cjs）: トレイの出し入れ・スリープの抑止・窓を閉じたときの扱い（Electron は差し替える）
 //   - サーバー: RemoteStatus.resident と setRemoteResident（fake のサーバーを別プロセスで立てる）
@@ -7,8 +8,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { formatCode, remaining, qrPath, connectionLine, deviceLine, platformName } from '../../web/remote.mjs';
-import { normalizeResident, residentSignal, enabledRoutineCount, createResidentPrefs, DEFAULT_RESIDENT } from '../../core/remote/resident.mjs';
+import { formatCode, remaining, qrPath, connectionFailed, deviceRow, platformName } from '../../web/remote.mjs';
+import { hostLine, agentLine } from '../../web/remote-hosts.mjs';
+import { deviceIcon, relayHost } from '../../web/remote-parts.mjs';
+import { normalizeResident, residentSignal, enabledRoutineCount, createResidentPrefs, DEFAULT_RESIDENT, SLEEP_MODES } from '../../core/remote/resident.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
@@ -54,21 +57,42 @@ export default async function (t) {
   const finder = [0, 1, 2, 3, 4, 5, 6].every(i => cells.has(`${4 + i},4`) && cells.has(`4,${4 + i}`) && cells.has(`${4 + i},10`) && cells.has(`10,${4 + i}`));
   t.ok('QR は余白込みの正方形で、左上に位置合わせの模様がある', qr.size >= 29 + 8 && (qr.size - 8 - 17) % 4 === 0 && finder && !cells.has('5,5'), String(qr.size));
   t.ok('長い文字列ほど大きい型になる', qrPath('x').size < qr.size);
-  t.ok('無効なら「リモートは無効です」', connectionLine({ enabled: false, connection: { state: 'disabled' } }).text === 'リモートは無効です');
-  t.ok('つながっていれば端末の接続数も言う', connectionLine({ connection: { state: 'connected' }, devices: [{ connected: true }, { connected: false }] }).text === '中継につながっています · 端末 1 台が接続中');
-  const failed = connectionLine({ connection: { state: 'error', error: { code: 'config', message: '中継の URL を確かめてください' } } });
-  t.ok('つながらないときは理由を添えて強い字', failed.strong && failed.text === '中継につながりません · 中継の URL を確かめてください', failed.text);
-  const retry = connectionLine({ connection: { state: 'retrying', error: { message: 'x' }, retryAt: '2026-09-23T10:00:30Z' } }, now);
-  t.ok('つなぎ直しを待つ間は次に試す時刻も出す', retry.strong && retry.text.startsWith('中継につながりません · x（') && retry.text.endsWith('にもう一度試します）'), retry.text);
+  const on = { enabled: true, configured: true, connection: { state: 'connected' } };
+  t.ok('「サーバーへの接続に失敗しました」は、許可がオンで設定もあるのに中継につながらないときだけ',
+    connectionFailed({ ...on, connection: { state: 'error' } }) && connectionFailed({ ...on, connection: { state: 'retrying' } })
+    && !connectionFailed(on) && !connectionFailed({ ...on, connection: { state: 'connecting' } })
+    && !connectionFailed({ ...on, enabled: false, connection: { state: 'error' } })
+    && !connectionFailed({ ...on, configured: false, connection: { state: 'error' } }) && !connectionFailed(null));
   t.ok('端末の種類は名前にし、知らない値はそのまま', platformName('android') === 'Android' && platformName('ios') === 'iPhone' && platformName('toaster') === 'toaster');
-  const line = deviceLine({ platform: 'desktop', createdAt: '2026-09-20T01:00:00Z', lastSeenAt: new Date(now - 180_000).toISOString() }, now);
-  t.ok('端末の行: 種類 · 追加した日 · 最後に使った時刻', /^デスクトップ · 追加 2026\/9\/2\d · 最後に使った 3分前$/.test(line), line);
-  t.ok('まだ使っていない端末', deviceLine({ platform: 'android', createdAt: null, lastSeenAt: null }, now) === 'Android · まだ使っていません');
+  t.ok('端末の行の「オフライン」は、中継につながっているのに端末がつながっていないときだけ',
+    deviceRow({ name: 'Pixel', platform: 'android', connected: false }, on).offline === true
+    && deviceRow({ name: 'Pixel', platform: 'android', connected: true }, on).offline === false
+    && deviceRow({ name: 'Pixel', connected: false }, { ...on, connection: { state: 'error' } }).offline === false
+    && deviceRow({ name: 'Pixel', connected: false }, { ...on, enabled: false }).offline === false);
+  t.ok('名前の無い端末は「名前のない端末」の扱い', deviceRow({ name: '', platform: 'ios' }, on).name !== '' && deviceRow({ name: 'iPhone 15' }, on).name === 'iPhone 15');
+  t.ok('端末の絵: スマホ・タブレット（名前で見分ける）・PC',
+    deviceIcon({ platform: 'android', name: 'Pixel 9' }) === 'phone' && deviceIcon({ platform: 'ios', name: 'iPad Air' }) === 'tablet'
+    && deviceIcon({ platform: 'android', name: 'Galaxy Tab S9' }) === 'tablet' && deviceIcon({ platform: 'desktop', name: 'ThinkPad' }) === 'monitor'
+    && deviceIcon({ platform: 'desktop', name: 'MacBook Air' }) === 'laptop' && deviceIcon() === 'monitor');
+  t.ok('中継はホスト名だけ見せ、読めない値はそのまま',
+    relayHost('https://relay.example.com/x?y=1') === 'relay.example.com' && relayHost('relay.local') === 'relay.local' && relayHost(null) === '');
+  t.ok('ホストの行: つながらないときだけ「オフライン」、取り消されたら開けない',
+    hostLine({ hostId: 'h1', name: 'desk', state: 'offline' }).sub === 'オフライン' && hostLine({ hostId: 'h1', name: 'desk', state: 'host-offline' }).sub === 'オフライン'
+    && hostLine({ hostId: 'h1', name: 'desk', state: 'connected' }).sub === '' && hostLine({ hostId: 'h1', name: 'desk', state: 'closed' }).canOpen
+    && (h => h.revoked && !h.canOpen && h.sub === '取り消されました')(hostLine({ hostId: 'h1', name: 'desk', state: 'revoked' }))
+    && hostLine({ hostId: 'h1' }).name === 'h1');
+  t.ok('AI から任せる: オフなら何も出さず、ホストが古ければ更新を促す',
+    agentLine({ agentState: 'ready', agentAllowed: true }) === '' && agentLine({ agentState: 'offline', agentAllowed: false }) === ''
+    && agentLine({ agentState: 'ready', agentAllowed: false, name: 'desk' }) === 'desk の Pleiad を更新すると使えます'
+    && agentLine({ agentState: 'unsupported', name: 'desk' }) === 'desk の Pleiad を更新すると使えます');
 
   // ---- 常駐の設定
   t.ok('既定は「窓を閉じても続ける」「作業中だけ防ぐ」', DEFAULT_RESIDENT.keepRunning === true && DEFAULT_RESIDENT.sleep === 'working');
   t.ok('知らない値は既定に丸める', JSON.stringify(normalizeResident({ keepRunning: 'yes', sleep: 'never' })) === JSON.stringify(DEFAULT_RESIDENT)
     && normalizeResident({ keepRunning: false, sleep: 'off' }).sleep === 'off');
+  t.ok('スリープの規則は「作業中だけ防ぐ」「防がない」の 2 つ', SLEEP_MODES.join() === 'working,off');
+  t.ok('廃止した「リモートが有効な間は防ぐ」（always）は「作業中だけ防ぐ」に読み替える',
+    JSON.stringify(normalizeResident({ keepRunning: false, sleep: 'always' })) === JSON.stringify({ keepRunning: false, sleep: 'working' }));
   const status = { enabled: true, connection: { state: 'connected' }, devices: [{ connected: true }, { connected: true }, { connected: false }] };
   const idle = residentSignal({ status, prefs: DEFAULT_RESIDENT, work: { turns: [], permissions: [], count: 0 }, locale: 'ja' });
   t.ok('main へ送る状態: リモート・接続中の端末・中継の状態', idle.remote && idle.devices === 2 && idle.relay === 'connected' && !idle.working && idle.locale === 'ja', JSON.stringify(idle));
@@ -81,14 +105,25 @@ export default async function (t) {
     const prefs = createResidentPrefs({ dataDir: scratch });
     await prefs.loaded;
     t.ok('ファイルが無ければ既定', prefs.get().keepRunning === true && prefs.get().sleep === 'working');
-    await prefs.set({ sleep: 'always' });
+    await prefs.set({ sleep: 'off' });
     await prefs.set({ keepRunning: false });
     const again = createResidentPrefs({ dataDir: scratch });
     await again.loaded;
-    t.ok('保存して読み直せる（続けて変えても両方残る）', again.get().keepRunning === false && again.get().sleep === 'always', JSON.stringify(again.get()));
+    t.ok('保存して読み直せる（続けて変えても両方残る）', again.get().keepRunning === false && again.get().sleep === 'off', JSON.stringify(again.get()));
     let threw = false;
     try { prefs.set({ sleep: 'sometimes' }); } catch { threw = true; }
     t.ok('知らないスリープの規則は受け付けない', threw);
+    let retired = false;
+    try { prefs.set({ sleep: 'always' }); } catch { retired = true; }
+    t.ok('廃止した always は新しく保存できない', retired);
+
+    // 前の版が保存した always を読み込むと working に移し、ファイルも書き直す
+    await fs.writeFile(prefs.file, JSON.stringify({ keepRunning: false, sleep: 'always' }));
+    const migrated = createResidentPrefs({ dataDir: scratch });
+    await migrated.loaded;
+    const rewritten = JSON.parse(await fs.readFile(prefs.file, 'utf8'));
+    t.ok('保存されていた always は working に移り、ほかの値はそのまま', migrated.get().sleep === 'working' && migrated.get().keepRunning === false, JSON.stringify(migrated.get()));
+    t.ok('移した値で resident.json を書き直す', rewritten.sleep === 'working' && rewritten.keepRunning === false, JSON.stringify(rewritten));
   } finally { await fs.rm(scratch, { recursive: true, force: true }); }
 
   // ---- ルーティンの件数。bots-host の公開された口だけを使う
@@ -106,9 +141,9 @@ export default async function (t) {
     && residentSignal({}).routines === 0 && residentSignal({ routines: -1 }).routines === 0);
 
   // ---- main の常駐
-  const matrix = [['working', false, false], ['working', true, true], ['always', false, true], ['off', true, false]];
-  t.ok('スリープ: 作業中だけ / リモートが有効な間 / 防がない', matrix.every(([sleep, working, want]) => sleepWanted({ remote: true, sleep, working }) === want)
-    && !sleepWanted({ remote: false, sleep: 'always', working: true }));
+  const matrix = [['working', false, false], ['working', true, true], ['off', true, false], ['off', false, false]];
+  t.ok('スリープ: 作業中だけ / 防がない', matrix.every(([sleep, working, want]) => sleepWanted({ remote: true, sleep, working }) === want)
+    && !sleepWanted({ remote: false, sleep: 'working', working: true }));
   t.ok('ルーティンが無ければ、リモートが有効で設定がオンのときだけ続ける', keepRunning({ remote: true, keepRunning: true }) && !keepRunning({ remote: false, keepRunning: true }) && !keepRunning({ remote: true, keepRunning: false }));
 
   const f = fakes();
@@ -133,11 +168,11 @@ export default async function (t) {
   f.Tray.live.menu.items[3].click();
   t.ok('「終了」は窓を出してから main の確認付きの終了へ', quits === 1 && f.window.visible);
   f.window.hide();
-  r.update({ remote: false, keepRunning: true, sleep: 'always', working: true, running: 0, devices: 0, relay: 'disabled', locale: 'en' });
+  r.update({ remote: false, keepRunning: true, sleep: 'working', working: true, running: 0, devices: 0, relay: 'disabled', locale: 'en' });
   t.ok('リモートを無効にするとトレイを消し、隠れていた窓を出し直す', !r.hasTray && f.window.visible && !r.blocking);
-  r.update({ remote: true, keepRunning: false, sleep: 'always', working: false, running: 0, devices: 0, relay: 'connected', locale: 'en' });
-  t.ok('続ける設定がオフでも「常に防ぐ」は効く', !r.hasTray && !r.keepOnClose() && r.blocking);
-  r.update({ remote: false, routines: 2, keepRunning: false, sleep: 'always', working: false, locale: 'ja' });
+  r.update({ remote: true, keepRunning: false, sleep: 'working', working: true, running: 1, devices: 0, relay: 'connected', locale: 'en' });
+  t.ok('続ける設定がオフでも作業中の抑止は効く', !r.hasTray && !r.keepOnClose() && r.blocking);
+  r.update({ remote: false, routines: 2, keepRunning: false, sleep: 'working', working: false, locale: 'ja' });
   t.ok('リモートと常駐設定がオフでも、有効なルーティンがあればトレイに残る', r.hasTray && r.keepOnClose() && !r.blocking);
   t.ok('ルーティンのために残ることをメニューとツールチップへ 1 行添える',
     f.Tray.live.menu.items[1].label === 'ルーティン 2 件のために常駐しています'

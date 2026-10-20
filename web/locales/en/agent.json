@@ -301,8 +301,7 @@
       "unavailable": "This PC's Pleiad has no way to hand work to a host (only a desktop device can).",
       "hostUnknown": "The host \"{{host}}\" is not one this PC is connected to. Available hosts: {{hosts}}",
       "hostAmbiguous": "More than one host matches \"{{host}}\". Rename one or give the host's ID.",
-      "hostNotEnabled": "Handing work from this PC's AI to the host \"{{host}}\" is off (the user can change it in the Connect to other hosts window).",
-      "hostNotAllowed": "The host \"{{host}}\" is not accepting requests from this device's AI (the user can change it in the host's Settings > Remote).",
+      "hostNotAllowed": "The host \"{{host}}\" is not accepting requests from this device's AI (if the host's Pleiad is out of date, it works once the user updates it).",
       "hostOffline": "The host \"{{host}}\" is offline (the request failed immediately instead of waiting). Ask the user to check that Pleiad is running on the host and connected to the relay.",
       "hostStopped": "The host \"{{host}}\" no longer accepts requests from this device's AI, so the task can no longer be followed (the host's work has stopped, or the user can check it on the host).",
       "planChanged": "The host changed in the meantime, so the delegation was dropped. Try again.",
@@ -1467,7 +1466,7 @@
       "setResident": {
         "summary": "Change the desktop app keep-running setting (keep running when the window closes, keep the PC awake).",
         "keepRunning": "Keep running in the tray when the window closes.",
-        "sleep": "When to keep the PC awake (working: while working, always, off: never)."
+        "sleep": "When to keep the PC awake (working: while working, off: never)."
       }
     },
     "endpoints": {

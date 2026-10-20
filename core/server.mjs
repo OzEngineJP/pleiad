@@ -5175,7 +5175,7 @@ function opsDeps(lng = currentLocale()) {
 /** ホストに任せたタスクの印に使う、つないでいるホストの名前とオンラインか（running に載せる。docs/remote.md §4.5） */
 function remoteHostsNow() {
   const out = {};
-  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) {
+  for (const h of remoteAgentBridge?.hosts ?? []) {
     const online = h.state === 'ready' && h.allowed === true;
     // since: 線が使えなくなった時刻（画面の「オフライン · HH:MM までの分」）。分からなければ付けない
     out[h.hostId] = { name: h.name, online, view: h.view === true,
@@ -8651,12 +8651,10 @@ wss.on("connection", (ws, req) => {
         }
         case 'remoteRevoke':
           return reply(true, withResident(await remote.revoke(msg.args?.id)));
-        // この端末の AI からの委譲を受けるか・任された作業をすべて止める（人だけ。docs/remote.md §4.5、ADR 0146）
+        // この端末から任された作業をすべて止める（人だけ。docs/remote.md §4.5）。端末ごとの許可は無くした（ADR 0239）
         case 'setRemoteDeviceAgent': {
           const a = msg.args ?? {};
-          // 入れるのはホストの PC の画面だけ（中継越しの端末の画面からは入れられない。両側の許可を片側の判断で崩さない。ADR 0146）。切る・すべて止めるは端末の画面からもできる
-          if (a.enabled === true && connectionDevices.get(ws)) return reply(false, t('remote.agent.hostScreenOnly'));
-          return reply(true, await remote.setDeviceAgent(a.id, { ...(a.enabled !== undefined ? { enabled: a.enabled === true } : {}), ...(a.stopAll === true ? { stopAll: true } : {}) }));
+          return reply(true, await remote.setDeviceAgent(a.id, { ...(a.stopAll === true ? { stopAll: true } : {}) }));
         }
 
         // Claude のアカウント（会話ごとに選ぶ）。トークンは返さない（登録済みかどうかだけ）

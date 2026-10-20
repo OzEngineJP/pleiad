@@ -68,7 +68,7 @@ export default async function (t) {
   t.ok('リモートの窓は新しい窓を開かせず行き先で振り分け、写しは preload の無い同じ保存領域の窓で開く',
     /setWindowOpenHandler\(\(\{ url \}\) => \{\s*const kind = linkTarget\(url, entry\.origin\);/.test(rw)
       && /webPreferences: \{ session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true \}/.test(rw)
-      && !/function openSnapshot[\s\S]*?preload[\s\S]*?function openHostsWindow/.test(rw));
+      && !/function openSnapshot[\s\S]*?preload[\s\S]*?function openHostsTab/.test(rw));
   t.ok('クリップボードの許可はリモートの窓そのものだけ（同じオリジンの写しの窓には出さない）',
     /contents === windows\.get\(hostId\)\?\.win\.webContents/.test(rw));
 

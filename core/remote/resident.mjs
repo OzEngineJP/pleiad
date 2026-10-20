@@ -2,7 +2,8 @@
 //
 //   <data>/remote/resident.json  { keepRunning, sleep }
 //     keepRunning  リモートが有効な間、窓を閉じてもホストを続けてトレイに残す（既定 true）
-//     sleep        'working'（作業中だけ防ぐ。既定）| 'always'（リモートが有効な間は防ぐ）| 'off'（防がない）
+//     sleep        'working'（作業中だけ防ぐ。既定）| 'off'（防がない）
+//                  以前の 'always'（リモートが有効な間は防ぐ）は廃止。読んだら 'working' にして書き直す
 //
 // 設定はサーバーに置く（リモートの窓からも見える・触れる）。実際のトレイとスリープの抑止は Electron の main が持つので、
 // サーバーは状態が変わるたびに residentSignal を parentPort で送る（desktop/resident.cjs が受ける）。
@@ -10,14 +11,17 @@
 import path from 'node:path';
 import { readJson, writeJson } from './devices.mjs';
 
-export const SLEEP_MODES = Object.freeze(['working', 'always', 'off']);
+export const SLEEP_MODES = Object.freeze(['working', 'off']);
 export const DEFAULT_RESIDENT = Object.freeze({ keepRunning: true, sleep: 'working' });
+/** 廃止した規則と、移す先 */
+const RETIRED_SLEEP = Object.freeze({ always: 'working' });
 
-/** 読んだ値を正しい形に丸める。知らない値は既定へ */
+/** 読んだ値を正しい形に丸める。廃止した規則は移す先へ、知らない値は既定へ */
 export function normalizeResident(raw) {
+  const sleep = RETIRED_SLEEP[raw?.sleep] ?? raw?.sleep;
   return {
     keepRunning: typeof raw?.keepRunning === 'boolean' ? raw.keepRunning : DEFAULT_RESIDENT.keepRunning,
-    sleep: SLEEP_MODES.includes(raw?.sleep) ? raw.sleep : DEFAULT_RESIDENT.sleep,
+    sleep: SLEEP_MODES.includes(sleep) ? sleep : DEFAULT_RESIDENT.sleep,
   };
 }
 
@@ -26,7 +30,11 @@ export function createResidentPrefs({ dataDir }) {
   const file = path.join(dataDir, 'remote', 'resident.json');
   let current = { ...DEFAULT_RESIDENT };
   let chain = Promise.resolve();
-  const loaded = readJson(file, {}).then(raw => { current = normalizeResident(raw); }, () => {});
+  const loaded = readJson(file, {}).then(async raw => {
+    current = normalizeResident(raw);
+    // 廃止した規則が残っていたら、移した値で書き直す（次からは読み替えずに済む）
+    if (Object.hasOwn(RETIRED_SLEEP, raw?.sleep)) await writeJson(file, current).catch(() => {});
+  }, () => {});
   return {
     file,
     loaded,

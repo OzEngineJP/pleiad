@@ -1,5 +1,7 @@
 // デスクトップ版の端末（docs/remote.md §7。issue #14）。main プロセスで動く。
-//   - ほかのホストにつなぐ窓（アプリに同梱の desktop/remote-hosts.html）: ペアリングしたホストの一覧と、貼り付けでのペアリング
+//   - ほかの PC へ（ローカルの窓の 設定 › リモート › ほかの PC へ。web/remote-hosts.mjs）: ペアリングしたホストの一覧と、貼り付けでのペアリング。
+//     口はローカルの窓（信頼の種類 local）の plyDesktop.hosts だけ。ジャンプリスト・Dock・--remote-hosts はローカルの窓のこのタブを開く
+//     （2026-10-21 に同梱の別の窓 desktop/remote-hosts.html から移した）
 //   - リモートの窓: ホストごとに 1 枚。端末内プロキシ（core/remote/device-proxy.mjs）から画面を読む。
 //     保存領域はホストごとの session（persist:remote-<hostId>）。ポートはホストごとに覚える（device.mjs の hosts.json）
 //   - リモートの印: 画面の帯のバッジ（preload の plyRemote を見て web/ が描く。差しの青の字）、
@@ -10,7 +12,7 @@
 const path = require('node:path');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
-const { t, bundle } = require('./i18n.cjs');
+const { t } = require('./i18n.cjs');
 const { createDesktopNotifications } = require('./notifications.cjs');
 const { originOf } = require('./window-trust.cjs');
 const { stableLauncher } = require('./msix.cjs');
@@ -78,8 +80,9 @@ function hostRow(rec, { windowOpen = false } = {}) {
   return { hostId: rec.hostId, name: displayName(rec), hostName: rec.hostName ?? '', label: rec.label ?? '',
     relay: relayLabel(rec.relayUrl), state: rec.revokedAt && rec.state !== 'connected' ? 'revoked' : rec.state ?? 'closed',
     lastConnectedAt: rec.lastConnectedAt ?? null, pairedAt: rec.pairedAt ?? null, windowOpen,
-    // この PC の AI から任せる（docs/remote.md §4.5）: 端末側のスイッチと、ホスト側の許可（線がつながっているときの ready の allowed）
-    agentUse: rec.agentUse === true, agentAllowed: rec.agent?.allowed === true, agentState: rec.agent?.state ?? 'offline' };
+    // この PC の AI から任せられるか（docs/remote.md §4.5）: ホスト側の許可（線がつながっているときの ready の allowed）と線の状態。
+    // つながっていて受けないのは、端末ごとの許可があった古い版のホスト（詳しい画面に「更新すると使えます」）
+    agentAllowed: rec.agent?.allowed === true, agentState: rec.agent?.state ?? 'offline' };
 }
 
 const SNAPSHOT_PATH = '/visualization-snapshot';
@@ -153,7 +156,7 @@ function createRemoteWindows(deps) {
   const windows = new Map();       // hostId -> { win, name, origin, notify, state }
   const opening = new Map();       // hostId -> Promise（2 度押しで 2 枚開かない）
   const connectedAt = new Map();   // hostId -> 最後につながった時刻（ms）
-  let devicePromise = null, hostsWindow = null, pairing = null, pushTimer = null, agentBridge = null;
+  let devicePromise = null, pairing = null, pushTimer = null, agentBridge = null;
 
   function device() {
     devicePromise ??= (async () => {
@@ -185,14 +188,19 @@ function createRemoteWindows(deps) {
     pushHosts();
   }
 
-  /** ほかのホストにつなぐ窓へ一覧を送り直す（状態の変化はまとめて） */
+  /** ローカルの窓（ほかの PC へ のタブ）へ一覧を送り直す（状態の変化はまとめて） */
   function pushHosts() {
-    if (!hostsWindow || hostsWindow.isDestroyed() || pushTimer) return;
+    if (pushTimer || !localWindows().length) return;
     pushTimer = setTimeout(async () => {
       pushTimer = null;
-      try { if (hostsWindow && !hostsWindow.isDestroyed()) hostsWindow.webContents.send('ply:hosts-changed', await listHosts()); } catch {}
+      try {
+        const hosts = await listHosts();
+        for (const win of localWindows()) win.webContents.send('ply:hosts-changed', hosts);
+      } catch {}
     }, 150);
   }
+
+  function localWindows() { return trust.entries('local').map(e => e.window).filter(w => w && !w.isDestroyed()); }
 
   async function listHosts() {
     const d = await device();
@@ -307,29 +315,19 @@ function createRemoteWindows(deps) {
     child.loadURL(url).catch(() => {});
   }
 
-  function openHostsWindow() {
-    if (hostsWindow && !hostsWindow.isDestroyed()) { focus(hostsWindow); return; }
-    const file = path.join(__dirname, 'remote-hosts.html');
-    const dark = nativeTheme.shouldUseDarkColors;
-    const win = hostsWindow = new BrowserWindow({
-      width: 560, height: 680, minWidth: 360, minHeight: 420, title: t('remote.hosts.windowTitle'), icon, show: false,
-      backgroundColor: dark ? '#121318' : '#eceef4',
-      webPreferences: { preload: path.join(__dirname, 'remote-hosts-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
-    });
-    win.removeMenu();
-    trust.register(win, { kind: 'hosts', origin: pathToFileURL(file).href });
-    win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
-    win.webContents.on('will-navigate', (event, url) => { event.preventDefault(); external(url); });
-    win.once('ready-to-show', () => win.show());
-    win.on('closed', () => { if (hostsWindow === win) hostsWindow = null; pairing?.abort(); pairing = null; });
-    win.loadFile(file).catch(() => {});
+  /** ローカルの窓を前に出し、設定 › リモート › ほかの PC へ を開かせる（読み込みの前に届いた合図は plyDesktop.hosts.onOpen が後で渡す） */
+  function openHostsTab() {
+    for (const win of localWindows()) {
+      focus(win);
+      win.webContents.send('ply:open-remote-hosts-tab');
+    }
   }
 
   const fail = e => ({ ok: false, code: e?.code ?? 'error', message: String(e?.message ?? e) });
 
   function attach() {
     // ---- ローカルの窓から
-    ipcMain.handle('ply:open-remote-hosts', event => { trust.check(event, ['local']); openHostsWindow(); });
+    ipcMain.handle('ply:open-remote-hosts', event => { trust.check(event, ['local']); openHostsTab(); });
     // 承認の中継のカードの「子の会話を見る」: そのホストのリモートの窓で、ホストの子の会話を開く（見るための補助。docs/remote.md §4.5）
     ipcMain.handle('ply:open-remote-session', async (event, hostId, sessionId) => {
       trust.check(event, ['local']);
@@ -360,21 +358,21 @@ function createRemoteWindows(deps) {
     });
     ipcMain.on('ply:remote-close', event => { trust.find(event, ['remote'])?.window.close(); });
 
-    // ---- ほかのホストにつなぐ窓から
+    // ---- ほかの PC へ（ローカルの窓の 設定 › リモート）から
     ipcMain.handle('ply:hosts-init', async event => {
-      trust.check(event, ['hosts']);
+      trust.check(event, ['local']);
       try {
         const d = await device();
         const storage = await d.store.storageStatus().catch(() => ({ encrypted: false }));
-        return { ok: true, ...bundle(), platform, deviceName: os.hostname(), encrypted: Boolean(storage.encrypted), hosts: await listHosts() };
-      } catch (e) { return { ...fail(e), ...bundle(), platform }; }
+        return { ok: true, deviceName: os.hostname(), encrypted: Boolean(storage.encrypted), hosts: await listHosts() };
+      } catch (e) { return fail(e); }
     });
     ipcMain.handle('ply:hosts-list', async event => {
-      trust.check(event, ['hosts']);
+      trust.check(event, ['local']);
       try { return { ok: true, hosts: await listHosts() }; } catch (e) { return fail(e); }
     });
     ipcMain.handle('ply:hosts-pair', async (event, payload) => {
-      trust.check(event, ['hosts']);
+      trust.check(event, ['local']);
       pairing?.abort();
       const ctl = pairing = new AbortController();
       const sender = event.sender;
@@ -382,18 +380,19 @@ function createRemoteWindows(deps) {
         const d = await device();
         const rec = await d.pair(String(payload ?? '').trim(), { signal: ctl.signal,
           onCode: code => { if (!sender.isDestroyed()) sender.send('ply:hosts-code', formatCode(code)); } });
+        await agentBridge?.refresh();
         pushHosts();
         return { ok: true, host: hostRow({ ...rec, state: 'closed' }) };
       } catch (e) { return fail(e); }
       finally { if (pairing === ctl) pairing = null; }
     });
-    ipcMain.handle('ply:hosts-pair-cancel', event => { trust.check(event, ['hosts']); pairing?.abort(); pairing = null; });
+    ipcMain.handle('ply:hosts-pair-cancel', event => { trust.check(event, ['local']); pairing?.abort(); pairing = null; });
     ipcMain.handle('ply:hosts-open', async (event, hostId) => {
-      trust.check(event, ['hosts']);
+      trust.check(event, ['local']);
       try { await openHost(hostId); return { ok: true }; } catch (e) { return fail(e); }
     });
     ipcMain.handle('ply:hosts-rename', async (event, hostId, label) => {
-      trust.check(event, ['hosts']);
+      trust.check(event, ['local']);
       try {
         await (await device()).rename(hostId, String(label ?? ''));
         const w = windows.get(hostId);
@@ -405,19 +404,8 @@ function createRemoteWindows(deps) {
         return { ok: true };
       } catch (e) { return fail(e); }
     });
-    // この PC の AI からそのホストへ任せるか（人だけが変えられる。ローカルのサーバーの設定・AI の操作の一覧には置かない。remote.md §4.5）
-    ipcMain.handle('ply:hosts-agent-use', async (event, hostId, enabled) => {
-      trust.check(event, ['hosts']);
-      try {
-        if (!HOST_ID.test(String(hostId))) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
-        await (await device()).setAgentUse(hostId, enabled === true);
-        await agentBridge?.refresh();
-        pushHosts();
-        return { ok: true };
-      } catch (e) { return fail(e); }
-    });
     ipcMain.handle('ply:hosts-remove', async (event, hostId) => {
-      trust.check(event, ['hosts']);
+      trust.check(event, ['local']);
       try {
         windows.get(hostId)?.win.close();
         await (await device()).remove(hostId);
@@ -434,7 +422,7 @@ function createRemoteWindows(deps) {
         app.setUserTasks([{ program: stableLauncher(), arguments: app.isPackaged ? HOSTS_ARG : `"${app.getAppPath()}" ${HOSTS_ARG}`,
           title: t('remote.hosts.jumpTask'), description: t('remote.hosts.jumpTaskDescription'), iconPath: process.execPath, iconIndex: 0 }]);
       }
-      if (platform === 'darwin' && app.dock && Menu) app.dock.setMenu(Menu.buildFromTemplate([{ label: t('remote.hosts.jumpTask'), click: openHostsWindow }]));
+      if (platform === 'darwin' && app.dock && Menu) app.dock.setMenu(Menu.buildFromTemplate([{ label: t('remote.hosts.jumpTask'), click: openHostsTab }]));
     } catch {}
     app.on('will-quit', () => { devicePromise?.then(d => d.closeAll()).catch(() => {}); });
   }
@@ -442,7 +430,7 @@ function createRemoteWindows(deps) {
   /** 2 つ目の起動（ジャンプリスト）や最初の起動の引数。扱ったら true */
   function handleArgv(argv) {
     if (!wantsHostsWindow(argv)) return false;
-    openHostsWindow();
+    openHostsTab();
     return true;
   }
 
@@ -450,12 +438,12 @@ function createRemoteWindows(deps) {
   function attachWorker(worker) {
     const { attachRemoteAgentBridge } = require('./remote-agent-bridge.cjs');
     agentBridge = attachRemoteAgentBridge(worker, { getDevice: device, log: line => console.warn('[remote-agent]', line) });
-    // agentUse のホストへ線を張り、一覧をサーバーへ送る（サーバーはこの便りで「任せられるホスト」を知る）
+    // ペアリングしたホストへ線を張り、一覧をサーバーへ送る（サーバーはこの便りで「任せられるホスト」を知る）
     agentBridge.refresh();
     return agentBridge;
   }
 
-  return { attach, attachWorker, openHostsWindow, openHost, handleArgv, listHosts, windows };
+  return { attach, attachWorker, openHostsTab, openHost, handleArgv, listHosts, windows };
 }
 
 module.exports = {

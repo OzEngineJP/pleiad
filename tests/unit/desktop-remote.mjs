@@ -1,8 +1,7 @@
 // デスクトップ版の端末（docs/remote.md §7。issue #14）の、Electron を起こさずに確かめられる部分。
 //   - 窓ごとのオリジンの表（desktop/window-trust.cjs）: 送り元の窓・本体フレーム・オリジン・窓の種類
 //   - リモートの窓の部品（desktop/remote-windows.cjs）: partition・名前・引数の往復（秘密を入れない）・帯の色・重ねアイコン
-//   - preload の出し分け: リモートの窓に同じ PC のブリッジ（chooseFolder・update・openRemoteHosts）を出さない
-//   - ほかのホストにつなぐ窓（desktop/remote-hosts-view.cjs）の辞書と行
+//   - preload の出し分け: リモートの窓に同じ PC のブリッジ（chooseFolder・update・openRemoteHosts・hosts）を出さない
 //   - 画面のバッジ（web/remote-badge.mjs）: plyRemote の有無・状態の添え書き・再試行・この窓を閉じる
 //   - 本体の文言（desktop/i18n.cjs）: desktop の辞書を言語ごとに引く
 import fs from 'node:fs';
@@ -19,7 +18,6 @@ const require = createRequire(import.meta.url);
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const { createWindowTrust, originOf } = require('../../desktop/window-trust.cjs');
 const rw = require('../../desktop/remote-windows.cjs');
-const view = require('../../desktop/remote-hosts-view.cjs');
 const desktopI18n = require('../../desktop/i18n.cjs');
 
 export const name = 'desktop-remote';
@@ -35,15 +33,17 @@ function runPreload(file, argv = []) {
     ipcRenderer: {
       send: (ch, ...a) => sent.push([ch, ...a]),
       invoke: (ch, ...a) => { invoked.push([ch, ...a]); return Promise.resolve(null); },
-      on: () => {}, removeListener: () => {},
+      on: (ch, fn) => { (listeners[ch] ??= []).push(fn); }, removeListener: () => {},
     },
   };
+  const listeners = {};
+  const emit = (ch, ...a) => { for (const fn of listeners[ch] ?? []) fn({}, ...a); };
   const code = fs.readFileSync(path.join(ROOT, 'desktop', file), 'utf8');
   vm.runInNewContext(code, {
     require: m => { if (m === 'electron') return electron; throw new Error(`preload は ${m} を読めない（sandbox）`); },
     process: { argv, platform: 'win32' }, decodeURIComponent, JSON,
   }, { filename: file });
-  return { exposed, sent, invoked };
+  return { exposed, sent, invoked, emit };
 }
 
 function fakeWindow(url) {
@@ -59,25 +59,20 @@ export default async function (t) {
     const trust = createWindowTrust();
     const local = fakeWindow('http://127.0.0.1:7420/');
     const remote = fakeWindow('http://127.0.0.1:51001/?token=x');
-    const hostsFile = 'file:///C:/app/desktop/remote-hosts.html';
-    const hosts = fakeWindow(hostsFile);
     trust.register(local, { kind: 'local', origin: 'http://127.0.0.1:7420' });
     trust.register(remote, { kind: 'remote', origin: 'http://127.0.0.1:51001', hostId: HOST_ID });
-    trust.register(hosts, { kind: 'hosts', origin: hostsFile });
     const main = win => ({ sender: win.webContents, senderFrame: win.webContents.mainFrame });
     t.ok('ローカルの窓はローカルの口を通る', trust.find(main(local), ['local'])?.kind === 'local');
     t.ok('リモートの窓からローカルの口（choose-folder・update）は通らない', trust.find(main(remote), ['local']) === null);
     t.ok('リモートの窓はリモートの口を通り、どのホストか分かる', trust.find(main(remote), ['remote'])?.hostId === HOST_ID);
-    t.ok('ローカルの窓からリモート・同梱の窓の口は通らない', trust.find(main(local), ['remote', 'hosts']) === null);
-    t.ok('同梱の窓は同じファイルだけ（# や ? は無視）', trust.find({ sender: hosts.webContents, senderFrame: Object.assign(hosts.frame, { url: hostsFile + '#x' }) }, ['hosts'])?.kind === 'hosts');
-    hosts.frame.url = 'file:///C:/other.html';
-    t.ok('同梱の窓が別のファイルに移っていたら通らない', trust.find(main(hosts), ['hosts']) === null);
+    t.ok('ローカルの窓からリモートの口は通らない', trust.find(main(local), ['remote']) === null);
+    t.ok('ほかの PC へ の口（hosts-*）を受けるローカルの窓を一覧できる', trust.entries('local').length === 1 && trust.entries('local')[0].window === local);
     remote.frame.url = 'http://127.0.0.1:51002/';
     t.ok('リモートの窓が別のポート（別のオリジン）に移っていたら通らない', trust.find(main(remote), ['remote']) === null);
     remote.frame.url = 'http://127.0.0.1:51001/x';
     const sub = { sender: remote.webContents, senderFrame: { url: 'http://127.0.0.1:51001/' } };
     t.ok('埋め込みの枠（本体フレームでない）からは通らない', trust.find(sub, ['remote']) === null);
-    t.ok('表に無い送り元は通らない', trust.find({ sender: {}, senderFrame: {} }, ['local', 'remote', 'hosts']) === null);
+    t.ok('表に無い送り元は通らない', trust.find({ sender: {}, senderFrame: {} }, ['local', 'remote']) === null);
     remote.frame.url = 'http://evil.example/';
     let threw = false; try { trust.check(main(remote), ['remote']); } catch { threw = true; }
     t.ok('check は通らなければ例外', threw);
@@ -115,7 +110,7 @@ export default async function (t) {
     t.ok('状態が無ければ接続中', rw.publicStatus(null).state === 'connecting');
     const row = rw.hostRow({ hostId: HOST_ID, hostName: 'desk', label: '', relayUrl: 'https://r.example/', state: 'closed', revokedAt: '2026-01-01', deviceId: 'd1', port: 3 });
     t.ok('一覧の行: 取り消し済みは revoked、deviceId・port は出さない', row.state === 'revoked' && !('deviceId' in row) && !('port' in row) && row.relay === 'r.example');
-    t.ok('ジャンプリストの引数でほかのホストにつなぐ窓を開く', rw.wantsHostsWindow(['x', rw.HOSTS_ARG]) && !rw.wantsHostsWindow(['x']) && !rw.wantsHostsWindow(null));
+    t.ok('ジャンプリストの引数で 設定 › リモート › ほかの PC へ を開く', rw.wantsHostsWindow(['x', rw.HOSTS_ARG]) && !rw.wantsHostsWindow(['x']) && !rw.wantsHostsWindow(null));
     const bmp = rw.drawOverlayBitmap(32);
     const px = (x, y) => [...bmp.subarray((y * 32 + x) * 4, (y * 32 + x) * 4 + 4)];
     const blue = [...Array(32 * 32).keys()].some(i => bmp[i * 4 + 3] === 255 && bmp[i * 4] > bmp[i * 4 + 2] + 40);
@@ -129,8 +124,8 @@ export default async function (t) {
     const remote = runPreload('remote-preload.cjs', ['electron', rw.encodeRemoteArg(info)]);
     const pd = remote.exposed.plyDesktop, pr = remote.exposed.plyRemote;
     t.ok('リモートの窓: plyRemote にホストの名前（引数の読み方は decodeRemoteArg と同じ）', pr?.hostId === HOST_ID && pr.hostName === 'desk' && pr.relay === 'relay.example.net' && pr.shell === 'desktop');
-    t.ok('リモートの窓: 同じ PC のブリッジ（chooseFolder・update・onUpdate・openRemoteHosts）を出さない',
-      pd && !('chooseFolder' in pd) && !('update' in pd) && !('onUpdate' in pd) && !('openRemoteHosts' in pd));
+    t.ok('リモートの窓: 同じ PC のブリッジ（chooseFolder・update・onUpdate・openRemoteHosts・hosts）を出さない',
+      pd && !('chooseFolder' in pd) && !('update' in pd) && !('onUpdate' in pd) && !('openRemoteHosts' in pd) && !('hosts' in pd));
     t.ok('リモートの窓: 窓の枠・帯の色・完了通知は出す', pd.platform === 'win32' && typeof pd.setTitleBar === 'function' && typeof pd.notifyCompletion === 'function' && typeof pd.onNotificationClick === 'function');
     pd.setTitleBar({ color: '#3a499e', symbolColor: '#f4f5ff' });
     pd.notifyCompletion({ sessionId: 's' });
@@ -143,36 +138,27 @@ export default async function (t) {
       && Object.keys(runPreload('remote-preload.cjs', ['--ply-remote={bad']).exposed).length === 0
       && Object.keys(runPreload('remote-preload.cjs', [rw.encodeRemoteArg({ hostId: 'NOPE' })]).exposed).length === 0);
     const local = runPreload('preload.cjs');
-    t.ok('ローカルの窓: 同じ PC のブリッジとほかのホストにつなぐ窓を出し、plyRemote は出さない',
+    const hosts = local.exposed.plyDesktop?.hosts;
+    t.ok('ローカルの窓: 同じ PC のブリッジと ほかの PC へ の口を出し、plyRemote は出さない',
       typeof local.exposed.plyDesktop?.chooseFolder === 'function' && typeof local.exposed.plyDesktop.update === 'function'
-      && typeof local.exposed.plyDesktop.openRemoteHosts === 'function' && !('plyRemote' in local.exposed));
+      && typeof local.exposed.plyDesktop.openRemoteHosts === 'function' && !('plyRemote' in local.exposed)
+      && ['init', 'list', 'pair', 'cancelPair', 'open', 'rename', 'remove', 'onCode', 'onChange', 'onOpen'].every(k => typeof hosts?.[k] === 'function'));
     local.exposed.plyDesktop.openRemoteHosts();
-    t.ok('ほかのホストにつなぐ窓を開く口', local.invoked.at(-1)?.[0] === 'ply:open-remote-hosts');
-    const hosts = runPreload('remote-hosts-preload.cjs');
-    t.ok('同梱の窓: plyHosts だけ（plyDesktop・plyRemote は無い）', Object.keys(hosts.exposed).join() === 'plyHosts'
-      && ['init', 'list', 'pair', 'cancelPair', 'open', 'rename', 'remove', 'setAgentUse', 'onCode', 'onChange'].every(k => typeof hosts.exposed.plyHosts[k] === 'function'));
+    hosts.pair('pleiad://pair?x');
+    t.ok('ほかの PC へ を開く口と、ペアリングの口', local.invoked.map(s => s[0]).join() === 'ply:open-remote-hosts,ply:hosts-pair');
+    // 開く合図は画面が聞く前に来ても落とさない（ジャンプリストからの起動は読み込みの直後に届く）
+    local.emit('ply:open-remote-hosts-tab');
+    let opened = 0;
+    hosts.onOpen(() => { opened++; });
+    t.ok('聞く前に届いた開く合図は、聞いたときに 1 回だけ渡す', opened === 1);
+    local.emit('ply:open-remote-hosts-tab');
+    t.ok('聞いた後の合図はそのまま渡す', opened === 2);
   }
 
-  // ---------------------------------------------------------------- ほかのホストにつなぐ窓
+  // ---------------------------------------------------------------- ほかの PC へ の一覧の行
   {
-    const tr = view.translator({ remote: { hosts: { open: '開く', lastConnected: '最後につないだ時刻 {{when}}', state: { connected: 'オンライン', revoked: '取り消されました', closed: '閉じています' }, windowOpen: 'ウィンドウを開いています', neverConnected: 'まだ' } } });
-    t.ok('辞書: 道で引き、desktop: を外し、差し込みを埋め、無ければキー',
-      tr('remote.hosts.open') === '開く' && tr('desktop:remote.hosts.open') === '開く' && tr('remote.hosts.lastConnected', { when: 'X' }) === '最後につないだ時刻 X' && tr('remote.nope') === 'remote.nope');
-    const on = view.hostLine({ hostId: HOST_ID, name: 'desk', state: 'connected', windowOpen: true }, tr, String);
-    const off = view.hostLine({ hostId: HOST_ID, name: 'desk', state: 'closed', lastConnectedAt: 'T' }, tr, String);
-    const rv = view.hostLine({ hostId: HOST_ID, name: '', state: 'revoked' }, tr, String);
-    t.ok('行: オンラインは丸と文字、窓を開いていればそれも', on.dot === 'on' && on.detail === 'オンライン · ウィンドウを開いています' && on.canOpen);
-    t.ok('行: 閉じているホストは中抜きと最後につないだ時刻', off.dot === 'off' && off.detail === '閉じています · 最後につないだ時刻 T');
-    t.ok('行: 取り消されたホストは開けない（名前が無ければ hostId）', !rv.canOpen && rv.revoked && rv.name === HOST_ID && rv.detail === '取り消されました');
-    // この PC の AI から任せる（docs/remote.md §7.4）: オフは何も出さず、オンでホストが未許可なら許可する場所を言い、両方オンなら「使える」
-    const ta = view.translator({ remote: { hosts: { agent: { notAllowed: '{{host}} で {{device}} を許可', ready: '使える', unsupported: '古い' } } } });
-    const base = { hostId: HOST_ID, name: 'desk' };
-    t.ok('AI から任せる: オフは 1 行も出さない', view.agentLine({ ...base, agentUse: false, agentAllowed: true }, ta, 'laptop').text === '' && view.agentLine({ ...base }, ta, 'laptop').on === false);
-    t.ok('AI から任せる: オンでホストが未許可ならホスト名と端末名で案内する', view.agentLine({ ...base, agentUse: true, agentAllowed: false }, ta, 'laptop').text === 'desk で laptop を許可');
-    t.ok('AI から任せる: 両方オンは「使える」、古いホストは未対応', view.agentLine({ ...base, agentUse: true, agentAllowed: true }, ta, 'laptop').text === '使える'
-      && view.agentLine({ ...base, agentUse: true, agentState: 'unsupported' }, ta, 'laptop').text === '古い');
     const arow = rw.hostRow({ hostId: HOST_ID, hostName: 'desk', relayUrl: 'https://r.example/', state: 'connected', deviceId: 'd1', agentUse: true, agent: { allowed: true, state: 'ready' } });
-    t.ok('一覧の行に、AI から任せるスイッチとホストの許可・線の状態が載る（秘密は載らない）', arow.agentUse === true && arow.agentAllowed === true && arow.agentState === 'ready' && !('token' in arow));
+    t.ok('一覧の行に、ホストの許可と線の状態が載る（前の版の agentUse・秘密は載らない）', arow.agentAllowed === true && arow.agentState === 'ready' && !('agentUse' in arow) && !('token' in arow));
   }
 
   // ---------------------------------------------------------------- 画面のバッジ
@@ -319,11 +305,11 @@ ${emitSource}`, context);
     try {
       await desktopI18n.initDesktopI18n({ env: { AGENT_HOST_LOCALE: 'en' } });
       const en = desktopI18n.t('remote.windowTitle', { host: 'desk' });
-      const enBundle = desktopI18n.bundle();
+      const enJump = desktopI18n.t('remote.hosts.jumpTask');
       await desktopI18n.initDesktopI18n({ env: { AGENT_HOST_LOCALE: 'ja' } });
       const ja = desktopI18n.t('remote.windowTitle', { host: 'desk' });
       t.ok('OS の窓タイトルは言語ごと', en === 'Pleiad — Remote: desk' && ja === 'Pleiad — リモート: desk', `${en} / ${ja}`);
-      t.ok('同梱の窓へ渡す辞書は desktop の名前空間を丸ごと', enBundle.lang === 'en' && enBundle.strings.remote?.hosts?.open === 'Open');
+      t.ok('ジャンプリストの項目も言語ごと', enJump === 'To other PCs' && desktopI18n.t('remote.hosts.jumpTask') === 'ほかの PC へ', enJump);
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-desktop-i18n-'));
       try {
         fs.writeFileSync(path.join(tmp, 'prefs.json'), JSON.stringify({ locale: 'en' }));

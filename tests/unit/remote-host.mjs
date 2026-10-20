@@ -57,9 +57,14 @@ export default async function (t) {
     const s0 = await cmd('remoteStatus');
     t.ok('既定は無効で、中継にもつながらない', s0.enabled === false && s0.connection.state === 'disabled' && s0.hostId === null, JSON.stringify(s0.connection));
     t.ok('無効のうちは鍵もファイルも作らない', !(await fs.stat(path.join(dataDir, 'remote', 'secrets.json')).catch(() => null)));
-    t.ok('設定が無いまま有効にはできない', Boolean(await rejects(cmd('setRemoteSettings', { enabled: true }))));
     t.ok('http の中継（ループバック以外）は受け付けない', Boolean(await rejects(cmd('setRemoteSettings', { relayUrl: 'http://relay.example.com' }))));
     t.ok('無効のうちはペアリングを始められない', Boolean(await rejects(cmd('remotePairingStart'))));
+    // 許可のスイッチだけ先に入れられる（中継の URL・秘密は ＋ の流れで入れる。ADR 0239）
+    const sBare = await cmd('setRemoteSettings', { enabled: true });
+    t.ok('設定が無くても許可は入れられ、設定が揃うまでは configured が false でつながらない',
+      sBare.enabled === true && sBare.configured === false && sBare.connection.state !== 'connected', JSON.stringify({ configured: sBare.configured, connection: sBare.connection }));
+    t.ok('設定が無いうちはペアリングを始められない', Boolean(await rejects(cmd('remotePairingStart'))));
+    await cmd('setRemoteSettings', { enabled: false });
 
     // ---- 有効化
     let from = c.mark();

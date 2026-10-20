@@ -230,7 +230,7 @@ export default async function (t) {
       const events = [];
       bridge.onState((hostId, st) => events.push(`state:${hostId}:${st.state}`));
       bridge.onReady((hostId, st) => events.push(`ready:${hostId}:${st.state}`));
-      const hosts = [{ hostId: 'h1', name: 'Desk', hostName: 'DESK', agentUse: true, state: 'ready', allowed: true }, { hostId: 'h2', name: 'Lap', hostName: 'LAP', agentUse: true, state: 'offline', allowed: false }];
+      const hosts = [{ hostId: 'h1', name: 'Desk', hostName: 'DESK', state: 'ready', allowed: true }, { hostId: 'h2', name: 'Lap', hostName: 'LAP', state: 'offline', allowed: false }];
       port.say({ type: 'remote-agent-hosts', hosts });
       const inflight = bridge.request('h1', 'status', {}, null).then(() => 'resolved', error => error.code);
       t.ok('main が居る間は main に頼む（今のとおり）', port.take('remote-agent').at(-1)?.action === 'request');
@@ -255,7 +255,7 @@ export default async function (t) {
       // 既定（utilityProcess の口: 切れない・resumable でない）は何も変わらない
       const plain = parentPort();
       const bridge = parentPortRemoteAgent(plain, { timeoutMs: 5000 });
-      plain.say({ type: 'remote-agent-hosts', hosts: [{ hostId: 'h1', name: 'Desk', agentUse: true, state: 'ready', allowed: true }] });
+      plain.say({ type: 'remote-agent-hosts', hosts: [{ hostId: 'h1', name: 'Desk', state: 'ready', allowed: true }] });
       const answer = bridge.request('h1', 'status', {}, null);
       const req = plain.sent.at(-1);
       plain.say({ type: 'remote-agent', id: req.id, ok: true, result: { ok: 2 } });
