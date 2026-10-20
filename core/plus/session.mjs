@@ -387,6 +387,8 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
       if (refresh && signedIn() && now() - accountLastAt >= accountThrottleMs) void fetchAccount();
       return statusShape();
     },
+    /** derive の外側の入力（入口の印）が変わったときに、今の状態を取り直して知らせる */
+    refresh() { emit('config'); return statusShape(); },
     /** 変わるたびに知らせる。fn({ type: 'config'|'signedIn'|'signedOut'|'account'|'login', status }) */
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     /** B4 が呼ぶ。status.host を差し替えて知らせる */

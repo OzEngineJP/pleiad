@@ -9,8 +9,9 @@ import org.junit.Test
 
 class PlusConfigTest {
 
-    private fun config(state: String = "on") = PlusConfig(
+    private fun config(state: String = "on", visibility: String = "optin") = PlusConfig(
         state = state,
+        visibility = visibility,
         tokenProjectId = "test-project",
         tokenApiKey = "test-api-key",
         loginUrl = "https://account.pleiad.dev/login",
@@ -50,6 +51,15 @@ class PlusConfigTest {
         assertNull(c.tokenProjectId)
         assertNull(c.minClientAndroid)
         assertNull(PlusConfig.parse("not json"))
+    }
+
+    @Test fun visibilityDefaultsToOptin() {
+        // absent or unknown → optin (hidden until the device opts in); only "public" shows the entrance
+        assertEquals("optin", PlusConfig.parse("""{"state":"on"}""")!!.visibility)
+        assertEquals("optin", PlusConfig.parse("""{"state":"on","visibility":"beta"}""")!!.visibility)
+        assertEquals("public", PlusConfig.parse("""{"state":"on","visibility":"public"}""")!!.visibility)
+        val c = config(visibility = "public")
+        assertEquals(c, PlusConfig.parse(c.toJson().toString()))
     }
 
     @Test fun unreadableFetchFallsBackToLastGood() {

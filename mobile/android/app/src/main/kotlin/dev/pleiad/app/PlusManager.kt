@@ -204,14 +204,24 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
     fun currentRelayUrl(): String? = config?.relayUrl?.ifEmpty { null }
     fun currentUid(): String? = session.record()?.uid
 
+    /** pleiad://plus/enable|disable: set this device's mark and re-emit the state */
+    fun setEntrance(on: Boolean) {
+        if (store.entrance() == on) return
+        store.saveEntrance(on)
+        emit()
+    }
+
     // ── state for the page ──
 
     fun stateJson(): JSONObject {
         val cfg = config
         val minClient = cfg?.minClientAndroid
+        // While visibility is optin, the entrance stays hidden until this device
+        // has the mark (set by the pleiad://plus/enable link).
+        val visible = cfg?.visibility == "public" || store.entrance()
         val plus = when {
-            cfg == null -> "unknown"
-            cfg.state == "off" -> "off"
+            cfg == null -> if (visible) "unknown" else "off"
+            cfg.state == "off" || !visible -> "off"
             cfg.state == "maintenance" -> "maintenance"
             minClient != null && PlusVersion.isOlder(BuildConfig.VERSION_NAME, minClient) -> "update"
             else -> "on"

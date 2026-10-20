@@ -7,6 +7,7 @@ import org.json.JSONObject
 
 data class PlusConfig(
     val state: String,              // on | maintenance | off
+    val visibility: String,         // optin | public （欄が無い・知らない値は optin に倒す）
     val tokenProjectId: String?,
     val tokenApiKey: String?,
     val loginUrl: String,
@@ -18,6 +19,7 @@ data class PlusConfig(
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("state", state)
+        .put("visibility", visibility)
         .put("token", JSONObject().put("projectId", tokenProjectId).put("apiKey", tokenApiKey))
         .put(
             "urls",
@@ -37,6 +39,7 @@ data class PlusConfig(
             val minClient = o.optJSONObject("minClient") ?: JSONObject()
             return PlusConfig(
                 state = o.optString("state", "on").ifEmpty { "on" },
+                visibility = o.optString("visibility").let { if (it == "public") "public" else "optin" },
                 tokenProjectId = token.optString("projectId").ifEmpty { null },
                 tokenApiKey = token.optString("apiKey").ifEmpty { null },
                 loginUrl = urls.optString("login"),

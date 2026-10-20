@@ -238,7 +238,7 @@ class PlusSessionTest {
     }
 
     private fun configWithProject(pid: String) = PlusConfig(
-        state = "on", tokenProjectId = pid, tokenApiKey = "test-api-key",
+        state = "on", visibility = "public", tokenProjectId = pid, tokenApiKey = "test-api-key",
         loginUrl = "https://account.pleiad.dev/login", accountUrl = "https://account.pleiad.dev/account",
         profileUrl = "https://account.pleiad.dev/profile", relayUrl = "wss://relay.pleiad.dev",
         refreshUrl = "https://example.com/refresh", minClientAndroid = null,

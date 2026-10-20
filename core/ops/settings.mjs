@@ -125,10 +125,11 @@ export const settings = [
     prefKeys: ['composerSuggestions'], schema: z.boolean(), default: true, read: fromPrefs('composerSuggestions'),
     normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.suggestions: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('composerSuggestions', v) }),
-  // Pleiad Plus の画面の記憶（docs/plus.md）。ログイン時に両方へ仮想のキー plus を選んだ案内を閉じた印（plus.autoNoticeSeen）
-  defineSetting({ key: 'plus', sync: false, summary: S('plus'), risk: 'write', riskReason: `Dismissed notices for Pleiad Plus. ${WRITE_ABOUT}`,
+  // Pleiad Plus の画面の記憶（docs/plus.md）。ログイン時に両方へ仮想のキー plus を選んだ案内を閉じた印（plus.autoNoticeSeen）と、
+  // 入口を出す印（plus.entrance。リンク pleiad://plus/enable が立てる。visibility: optin の間だけ効く）
+  defineSetting({ key: 'plus', sync: false, summary: S('plus'), risk: 'write', riskReason: `Dismissed notices and the opt-in mark for Pleiad Plus. ${WRITE_ABOUT}`,
     prefKeys: ['plus'], schema: loose, default: {}, read: async (ctx) => (await prefs(ctx)).plus ?? {},
-    normalize: (ctx, v) => { if (v === null) return { after: null }; if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).some(k => k !== 'autoNoticeSeen' || typeof v[k] !== 'boolean')) throw invalid(ctx, 'plus: {autoNoticeSeen:boolean}'); return { after: v }; },
+    normalize: (ctx, v) => { if (v === null) return { after: null }; if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).some(k => !['autoNoticeSeen', 'entrance'].includes(k) || typeof v[k] !== 'boolean')) throw invalid(ctx, 'plus: {autoNoticeSeen:boolean,entrance:boolean}'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('plus', v) }),
   // 承認モードは人間だけが変える（design.md §8.5）。agent には出さない
   defineSetting({ key: 'mode', sync: false, summary: S('mode'), risk: 'human-only', schema: z.string(), default: '', read: fromPrefs('mode'), ...plainPref('mode', knownValue('mode')) }),

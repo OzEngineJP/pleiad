@@ -12,6 +12,7 @@ const source = fs.readFileSync(new URL('../../desktop/main.cjs', import.meta.url
 const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../desktop');
 const workerMessages = createRequire(import.meta.url)('../../desktop/worker-messages.cjs');
 const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
+const plusLink = createRequire(import.meta.url)('../../desktop/plus-link.cjs');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 async function start({ ready = true, work = { count: 0 }, argv = [], tray = false } = {}) {
@@ -30,6 +31,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     exit: () => {},
     quit: () => { calls.quits++; },
     requestSingleInstanceLock: () => true,
+    setAsDefaultProtocolClient: scheme => { calls.protocolClient = scheme; return true; },
     whenReady: () => Promise.resolve(),
     getPath: name => name === 'userData' ? 'test-user' : 'test-home',
     getPreferredSystemLanguages: () => ['ja-JP'],
@@ -96,6 +98,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     './shell-env.cjs': { applyLoginShellEnv: async () => false },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './worker-messages.cjs': workerMessages,
+    './plus-link.cjs': plusLink,
     // 起動の失敗の理由は、サーバーが書いた logs\server.log の末尾（core/server-log.mjs）
     './server-boot.cjs': { readLogTail: () => 'tail of the log' },
     './switch-screen.cjs': { createSwitchScreen: () => ({ attach() {}, reset() {}, supported: () => false, ask: async () => 'later' }) },
@@ -130,6 +133,18 @@ export default async function (t) {
     t.ok('second-instance の --hidden は窓を前に出さない', running.calls.shows === 1);
     running.app.emit('second-instance', {}, ['Ply.exe']);
     t.ok('普通の second-instance は窓を前に出す', running.calls.shows === 2);
+    // pleiad://plus/enable|disable リンク（desktop/plus-link.cjs）: 印をサーバーへ渡して窓を前に出す
+    running.app.emit('second-instance', {}, ['Ply.exe', 'pleiad://plus/enable']);
+    t.ok('plus リンクの second-instance は plus-entrance を送り窓を前に出す',
+      running.calls.messages.some(m => m.type === 'plus-entrance' && m.action === 'enable') && running.calls.shows === 3);
+    running.app.emit('second-instance', {}, ['Ply.exe', 'pleiad://pair?x']);
+    t.ok('ほかの pleiad://… は plus-entrance を送らない（今までどおり窓を前に出すだけ）',
+      running.calls.messages.filter(m => m.type === 'plus-entrance').length === 1 && running.calls.shows === 4);
+  }
+  {
+    // 初回起動の argv にリンクがあっても同じ（窓を開いたあとでサーバーへ渡す）
+    const linked = await start({ argv: ['Ply.exe', 'pleiad://plus/disable'] });
+    t.ok('起動の argv のリンクも plus-entrance を送る', linked.calls.messages.some(m => m.type === 'plus-entrance' && m.action === 'disable'));
   }
   {
     const { worker, calls, resolveDialog } = await start();

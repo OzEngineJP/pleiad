@@ -40,7 +40,7 @@ export default async function (t) {
     await fetch(url);   // /login → loopback /callback（redirect は fetch が辿る）
     for (let i = 0; i < 100; i++) {
       const st = await c.cmd('plusStatus');
-      if (st.signedIn) return;
+      if (st.signedIn && st.account) return;
       await sleep(50);
     }
     throw new Error('ログインが終わらない');

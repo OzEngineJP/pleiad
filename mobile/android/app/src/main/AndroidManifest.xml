@@ -70,6 +70,15 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="pleiad" android:host="auth" />
             </intent-filter>
+
+            <!-- pleiad://plus/enable|disable: the Plus entrance mark on this device (docs/plus.md "入口を出すリンク").
+                 Other pleiad://plus/… paths land here too and are ignored in MainActivity. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="pleiad" android:host="plus" />
+            </intent-filter>
         </activity>
 
         <!-- One host's UI: a plain WebView on the in-app loopback proxy (no Capacitor bridge) -->

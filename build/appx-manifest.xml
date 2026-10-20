@@ -54,6 +54,10 @@
             <desktop:ExecutionAlias Alias="Ply.exe" />
           </uap3:AppExecutionAlias>
         </uap3:Extension>
+        <!-- pleiad://plus/enable|disable のリンクを受ける（desktop/plus-link.cjs。NSIS・mac は electron-builder.yml の protocols） -->
+        <uap3:Extension Category="windows.protocol">
+          <uap3:Protocol Name="pleiad" />
+        </uap3:Extension>
       </Extensions>
     </Application>
   </Applications>

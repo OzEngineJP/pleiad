@@ -43,9 +43,13 @@ export function compareVersions(a, b) {
 export function parseAuthConfig(body) {
   if (!body || typeof body !== 'object') return null;
   const state = ['on', 'maintenance', 'off'].includes(body.state) ? body.state : 'off';
+  // visibility: 'public' は今までどおり誰にでも入口を出す。'optin' は、その端末でリンク
+  // （pleiad://plus/enable）を一度開くまで入口を全部隠す。欄が無い・知らない値は 'optin' に倒す
+  const visibility = body.visibility === 'public' ? 'public' : 'optin';
   const urls = body.urls && typeof body.urls === 'object' ? body.urls : {};
   return {
     state,
+    visibility,
     token: {
       projectId: typeof body.token?.projectId === 'string' ? body.token.projectId : '',
       apiKey: typeof body.token?.apiKey === 'string' ? body.token.apiKey : '',
@@ -57,18 +61,22 @@ export function parseAuthConfig(body) {
 
 /**
  * @param {object} o
- * @param {object} [o.env] 環境変数（AGENT_HOST_PLUS_API・AGENT_HOST_PLUS_JWKS_URL・AGENT_HOST_PLUS=0 で全部隠す）
+ * @param {object} [o.env] 環境変数（AGENT_HOST_PLUS_API・AGENT_HOST_PLUS_JWKS_URL・AGENT_HOST_PLUS=0 で全部隠す・=1 で印が無くても出す）
  * @param {string} o.dataDir 写し（plus-config.json）の置き場
  * @param {string} o.appVersion このアプリの版（minClient との比較用）
  * @param {string} [o.platform] minClient の自分の欄（既定 desktop）
+ * @param {() => boolean} [o.optIn] この端末の「入口を出す」印（visibility: optin のときだけ効く）
  * @param {Function} [o.fetchFn]
  * @param {Function} [o.now]
  * @param {Function} [o.log] 警告の行
  */
-export function createPlusConfig({ env = process.env, dataDir, appVersion = '0.0.0', platform = 'desktop', fetchFn = fetch, now = Date.now, log = () => {} } = {}) {
+export function createPlusConfig({ env = process.env, dataDir, appVersion = '0.0.0', platform = 'desktop', fetchFn = fetch, now = Date.now, log = () => {},
+  optIn = () => false } = {}) {
   const apiBase = normalizeApiBase(env?.AGENT_HOST_PLUS_API, { log });
   const jwksUrl = env?.AGENT_HOST_PLUS_JWKS_URL || DEFAULT_JWKS_URL;
   const enabled = String(env?.AGENT_HOST_PLUS ?? '') !== '0';
+  // 開発と試験のため: 印が無くても入口を出す（visibility: optin を飛ばす）
+  const forced = String(env?.AGENT_HOST_PLUS ?? '') === '1';
   const copyFile = dataDir ? path.join(dataDir, COPY_FILE) : null;
   let memory = null;          // { config, at }
   let reading = null;         // single-flight
@@ -108,10 +116,12 @@ export function createPlusConfig({ env = process.env, dataDir, appVersion = '0.0
     async known() { return memory?.config ?? await readCopy(); },
     /** 状態の表示に使う導出値 */
     derive(config) {
+      const visibility = config?.visibility === 'public' ? 'public' : 'optin';
       return {
         state: config?.state ?? null,
-        // off か AGENT_HOST_PLUS=0 なら入口ごと出さない
-        available: enabled && config?.state !== 'off',
+        visibility,
+        // off か AGENT_HOST_PLUS=0 なら入口ごと出さない。optin の間は端末の印（pleiad://plus/enable）か AGENT_HOST_PLUS=1 が要る
+        available: enabled && config?.state !== 'off' && (forced || visibility === 'public' || optIn() === true),
         needsUpdate: compareVersions(appVersion, config?.minClient?.[platform]) === -1,
       };
     },

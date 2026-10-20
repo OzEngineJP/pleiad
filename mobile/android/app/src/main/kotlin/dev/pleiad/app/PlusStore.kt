@@ -23,6 +23,14 @@ class PlusStore(context: Context) {
         prefs.edit().putString("config", c.toJson().toString()).apply()
     }
 
+    // This device's "show the entrance" mark (used while visibility is optin; the
+    // pleiad://plus/enable link sets it). Plain value — never synced.
+    fun entrance(): Boolean = prefs.getBoolean("entrance", false)
+
+    fun saveEntrance(on: Boolean) {
+        prefs.edit().putBoolean("entrance", on).apply()
+    }
+
     private fun seal(o: JSONObject): String =
         Base64.encodeToString(cipher.seal(o.toString().toByteArray(Charsets.UTF_8)), Base64.NO_WRAP)
 

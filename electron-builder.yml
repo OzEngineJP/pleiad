@@ -1,5 +1,9 @@
 appId: jp.ply.desktop
 productName: Pleiad
+# pleiad:// リンク（plus/enable|disable）を受けるプロトコル（desktop/plus-link.cjs・desktop/main.cjs。MSIX は build/appx-manifest.xml の Extensions）
+protocols:
+  - name: Pleiad
+    schemes: [pleiad]
 artifactName: Pleiad-${version}-${os}-${arch}.${ext}
 asar: false
 # agent-browser の同梱と、無停止の更新の実行場所の材料（公式の Node・manifest。docs/zero-downtime-update/design.md §3）。順番は scripts/after-pack.cjs

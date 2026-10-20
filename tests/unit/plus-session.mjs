@@ -3,7 +3,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createPlusConfig } from '../../core/plus/config.mjs';
+import { createPlusConfig, parseAuthConfig } from '../../core/plus/config.mjs';
 import { createPlusSession, PlusError } from '../../core/plus/session.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
 import { fakeClock } from '../lib/fake-clock.mjs';
@@ -14,13 +14,13 @@ export const title = 'Plus のセッション: ログインの往復・失敗・
 
 const tick = async (n = 8) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
 
-async function setup({ env = {}, loginTtlMs = 10 * 60_000, dataDir, appVersion = '0.32.0' } = {}) {
+async function setup({ env = {}, loginTtlMs = 10 * 60_000, dataDir, appVersion = '0.32.0', optIn } = {}) {
   const plus = await startFakePlus();
   const dir = dataDir ?? await fs.mkdtemp(path.join(os.tmpdir(), 'ply-plus-'));
   const secrets = createSecretStore({ file: path.join(dir, 'plus-secrets.json'), cipher: plainCipher });
   const clock = fakeClock(Date.now());
   const opened = [];
-  const config = createPlusConfig({ env: { AGENT_HOST_PLUS_API: plus.url, ...env }, dataDir: dir, appVersion, now: clock.now });
+  const config = createPlusConfig({ env: { AGENT_HOST_PLUS_API: plus.url, ...env }, dataDir: dir, appVersion, now: clock.now, optIn });
   const session = createPlusSession({ config, secrets, openExternal: u => opened.push(u), now: clock.now, timers: clock, loginTtlMs, fetchFn: fetch, appVersion });
   const events = [];
   session.onChange(ev => events.push(ev));
@@ -266,6 +266,40 @@ export default async function (t) {
     const calls = plus.state.calls.length;
     const st = await session.logout();
     t.ok('logout → 未ログイン・api には送らない', st.signedIn === false && plus.state.calls.length === calls);
+    await plus.close();
+  }
+
+  // ---- 12. visibility と入口の印（docs/plus.md「入口を出すリンク」）------------
+  {
+    const plus = await startFakePlus();
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-plus-vis-'));
+    const base = { env: { AGENT_HOST_PLUS_API: plus.url }, dataDir: dir, appVersion: '0.32.0' };
+    t.ok('visibility の欄が無い・知らない値 → optin に倒す',
+      parseAuthConfig({ state: 'on' }).visibility === 'optin' && parseAuthConfig({ state: 'on', visibility: 'beta' }).visibility === 'optin');
+    // optin: 印（pleiad://plus/enable）が無い端末は入口を出さない。印有り・AGENT_HOST_PLUS=1 は出す
+    plus.state.visibility = 'optin';
+    const optinCfg = await createPlusConfig(base).get({ fresh: true });
+    t.ok('optin・印無し → 入口を出さない', createPlusConfig(base).derive(optinCfg).available === false);
+    t.ok('optin・印有り → 入口を出す', createPlusConfig({ ...base, optIn: () => true }).derive(optinCfg).available === true);
+    t.ok('optin・AGENT_HOST_PLUS=1 → 印無しでも出す', createPlusConfig({ ...base, env: { ...base.env, AGENT_HOST_PLUS: '1' } }).derive(optinCfg).available === true);
+    // public は印無しでも出る。state off・AGENT_HOST_PLUS=0 はいつでも隠す
+    plus.state.visibility = 'public';
+    const pubCfg = await createPlusConfig(base).get({ fresh: true });
+    t.ok('public・印無し → 入口を出す', createPlusConfig(base).derive(pubCfg).available === true);
+    t.ok('AGENT_HOST_PLUS=0 → 全部隠す', createPlusConfig({ ...base, env: { ...base.env, AGENT_HOST_PLUS: '0' }, optIn: () => true }).derive(pubCfg).available === false);
+    t.ok('state off → 全部隠す', createPlusConfig({ ...base, optIn: () => true }).derive({ ...pubCfg, state: 'off' }).available === false);
+    await plus.close();
+  }
+  {
+    // セッションの status も同じ。印を変えて refresh() すると知らせる（plusStatus イベントが画面を描き直す）
+    let flag = false;
+    const { plus, session, events } = await setup({ optIn: () => flag });
+    plus.state.visibility = 'optin';
+    await session.init();
+    t.ok('status も optin・印無しを隠す', session.snapshot().available === false);
+    flag = true;
+    session.refresh();
+    t.ok('印を立てて refresh() → 知らせて出す', events.some(e => e.type === 'config') && session.snapshot().available === true);
     await plus.close();
   }
 }
