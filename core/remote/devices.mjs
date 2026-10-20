@@ -43,7 +43,7 @@ export async function writeJson(file, data) {
   } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
 }
 
-export const DEFAULT_SETTINGS = Object.freeze({ enabled: false, relayUrl: '', hostName: '' });
+export const DEFAULT_SETTINGS = Object.freeze({ enabled: false, relayUrl: '', hostName: '', plus: { connect: false } });
 
 /**
  * リモートの置き場。dataDir は store.dataDir（AGENT_HOST_DATA を尊重する）。
@@ -89,6 +89,13 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
       identity = keyFrom(priv);
       return identity;
     },
+    /** ホストの鍵を作り直す（hostId が変わる。Plus の「つなぎ直す」。呼んだ側は端末の取り消しと中継への張り直しを行う）。 */
+    async regenerateIdentity() {
+      const kp = generateKeyPair();
+      await secrets.set('hostKey', kp.privateKey.toString('base64url'));
+      identity = { ...kp, hostId: hostIdFor(kp.publicKey) };
+      return identity;
+    },
 
     async settings() {
       const raw = await readJson(settingsFile, {});
@@ -96,6 +103,8 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
         enabled: raw.enabled === true,
         relayUrl: typeof raw.relayUrl === 'string' ? raw.relayUrl : '',
         hostName: typeof raw.hostName === 'string' ? raw.hostName : '',
+        // Pleiad Plus の公式の中継につなぐか（docs/plus.md。無いものは false とみなす）
+        plus: { connect: raw.plus?.connect === true },
       };
     },
     async saveSettings(patch) {

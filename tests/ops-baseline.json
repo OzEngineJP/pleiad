@@ -28,6 +28,7 @@
     "remotePairingDeny": "human-only",
     "remoteDevices": "human-only",
     "remoteRevoke": "human-only",
+    "plusHostRebind": "human-only",
     "setRemoteDeviceAgent": "human-only",
     "mcpAuthStart": "human-only",
     "mcpAuthLogout": "human-only",

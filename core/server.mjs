@@ -102,6 +102,9 @@ import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
 import { createPlusConfig } from './plus/config.mjs';
 import { createPlusSession } from './plus/session.mjs';
+import { createIdTokenVerifier } from './plus/verify.mjs';
+import { createPlusHost } from './plus/hosts.mjs';
+import { createPlusLink } from './remote/plus-link.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
@@ -684,10 +687,73 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
     const status = withResident(event.status);
     emitGlobal({ ...event, status, sessionId: null });
     postResident({ status });
+    syncPlusFromRemote(status);
     // スマホの一覧（つながり・最後に送った時刻）も同じ変化で変わる
     notifyStatus().then(next => emitGlobal({ type: 'notifyStatus', status: next, sessionId: null })).catch(() => {});
   },
+  onIdentity: () => { void plusHost?.maybeRegister(); },
   log: line => console.log(`  ${line}`) });
+// Pleiad Plus: この PC の登録（core/plus/hosts.mjs）と公式の中継へのつながりの provider（core/remote/plus-link.mjs。docs/plus.md）
+let plusConfigLast = null;
+const plusVerifier = createIdTokenVerifier({ jwksUrl: plusConfig.jwksUrl, projectId: () => plusConfigLast?.token?.projectId ?? '' });
+const plusHost = createPlusHost({
+  session: plusSession, store: remote.store, appVersion: APP_VERSION,
+  hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
+  plusDevices: () => plusDevicesNow,
+  onHostState: s => { remote.setPlusHostState(s); syncPlusLink(); },
+  log: line => console.log(`  ${line}`),
+});
+let plusDevicesNow = 0;
+const plusLink = createPlusLink({
+  session: plusSession, verifier: plusVerifier, remote,
+  onAdmitted: () => { void plusHost.syncDeviceCount(); },
+  log: line => console.log(`  ${line}`),
+});
+remote.setPlusProvider(plusLink.provider);
+let lastPlusUid = null, sawSignedIn = false;
+/** ログイン・アカウント・設定が変わったときに、登録とつながりの条件を見直す。 */
+async function syncPlusLink() {
+  const snap = plusSession.snapshot();
+  if (snap.signedIn) sawSignedIn = true;
+  const cfg = await plusConfig.known().catch(() => null);
+  plusConfigLast = cfg ?? plusConfigLast;
+  const uid = snap.signedIn ? snap.account?.uid ?? null : null;
+  // ログアウト（またはアカウントの切り替え）→ 前の uid の via:'plus' の端末を全部取り消す（docs/plus.md「止める」）。
+  // 起動直後でまだ一度もログインを見ていないときは消さない
+  if ((sawSignedIn && !snap.signedIn) || (uid && uid !== lastPlusUid)) {
+    const raw = await remote.store.devices().catch(() => []);
+    for (const d of raw.filter(d => d.via === 'plus' && d.plusUid !== uid)) await remote.revoke(d.id).catch(() => {});
+  }
+  if (snap.signedIn) lastPlusUid = uid ?? lastPlusUid; else lastPlusUid = null;
+  const st = await remote.status().catch(() => null);
+  plusDevicesNow = st?.plus?.devices ?? 0;
+  plusLink.update({
+    enabled: st?.enabled === true, signedIn: snap.signedIn === true, uid,
+    accountStatus: snap.account?.status ?? null,
+    connect: st?.plus?.connect === true,
+    hostState: plusHost.host()?.state ?? null,
+    limits: snap.account?.limits ?? null,
+    relayUrl: cfg?.urls?.relay ?? null,
+  });
+  await plusHost.maybeRegister();
+  plusInputsLast = plusInputs(st);
+  remote.refreshPlus();
+}
+/** plus の link の張る条件に効く入力が、前回の見直しから変わったか（変わらなければ何もしない。状態の丸ごと配信のたびに張り直しを試みて、知らせの嵐にならないように） */
+let plusInputsLast = '';
+function plusInputs(status) {
+  return JSON.stringify([status.enabled === true, status.plus?.connect === true, plusHost.host()?.state ?? 'none', plusSession.snapshot().account?.uid ?? null, plusSession.snapshot().account?.status ?? null, plusSession.snapshot().signedIn === true]);
+}
+/** リモートの状態（enabled・plus.connect・ホスト名・端末数）が変わった側からの見直し（全件は syncPlusLink で）。 */
+function syncPlusFromRemote(status) {
+  plusLink.update({ enabled: status.enabled === true, connect: status.plus?.connect === true });
+  plusDevicesNow = status.plus?.devices ?? 0;
+  void plusHost.syncDeviceCount();
+  void plusHost.syncName();
+  const key = plusInputs(status);
+  if (key !== plusInputsLast) { plusInputsLast = key; remote.refreshPlus(); }
+}
+plusSession.onChange(() => { void syncPlusLink(); });
 // スマホ（離れた端末）への通知（ADR 0086）。判定は core/notify/policy.mjs、暗号は crypto.mjs、送り先は中継の通知の線。
 // 各画面が送る presence（見ている会話）で「見ている間は送らない」を決める。PC の通知の設定は <data>/notify.json
 const notifyPresence = createPresence();
@@ -8687,6 +8753,8 @@ wss.on("connection", (ws, req) => {
         }
         case 'remoteRevoke':
           return reply(true, withResident(await remote.revoke(msg.args?.id)));
+        case 'plusHostRebind':
+          return reply(true, withResident(await remote.plusHostRebind()));
         // この端末から任された作業をすべて止める（人だけ。docs/remote.md §4.5）。端末ごとの許可は無くした（ADR 0239）
         case 'setRemoteDeviceAgent': {
           const a = msg.args ?? {};
@@ -9535,6 +9603,8 @@ async function announce() {
   if (HANDOVER_START) console.log(`  [handover] listening at=${Date.now()} (the data lock came ${handoverLockWaitedMs} ms after the start; adopting ${adopting.length} turn(s))`);
   mainPort.postMessage(readyMessage);
   remote.start().catch(() => {});
+  // Pleiad Plus: ログインの読み込みと中継の接続のあとで、登録とつながりの条件を最初に見直す
+  void syncPlusLink();
   if (routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.start();
   // Claude Agent SDK（配布物は持たず、初めて要るときに npm から取る。ADR 0208）: 取得の状態を全端末へ配る。
   // 同意済みで固定の版が無ければ（更新で版が変わった）裏で取り、少し後に古い版を片付ける。取り終えたらモデルの一覧を引き直す

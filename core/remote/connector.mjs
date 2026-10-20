@@ -115,12 +115,13 @@ function parseJson(buf) {
 export function createRemoteHost({
   dataDir, cipher, target, token, appVersion = '', emit = () => {}, env = process.env,
   backoff = { minMs: 1000, maxMs: 60_000 }, log = () => {}, agent = null,
-  now = Date.now, reviewLimits = {},
+  now = Date.now, reviewLimits = {}, onIdentity = null,
 }) {
   const limits = { maxDevices: reviewLimits.maxDevices ?? INVITE_MAX_DEVICES, perHour: reviewLimits.perHour ?? INVITE_MAX_PER_HOUR };
   const store = createRemoteStore({ dataDir, cipher });
-  let cfg = { enabled: false, relayUrl: '', secret: '', hostName: os.hostname(), relayUrlFromEnv: false, secretFromEnv: false };
+  let cfg = { enabled: false, relayUrl: '', secret: '', hostName: os.hostname(), relayUrlFromEnv: false, secretFromEnv: false, plusConnect: false };
   let identity = null;
+  let plusHostState = null;   // この PC の Pleiad Plus への登録の状態（core/plus/hosts.mjs が setPlusHostState で渡す）
   let offer = null;                // { secret, psk, ticketHash, expiresAt, timer }
   const requests = new Map();      // id → 承認待ち
   const deviceCache = new Map();   // id → devices.json の 1 件（照合は同期で行う）
@@ -198,6 +199,7 @@ export function createRemoteHost({
       hostName: s.hostName || os.hostname(),
       relayUrlFromEnv: !s.relayUrl && Boolean(env.AGENT_HOST_RELAY_URL),
       secretFromEnv: !secretStored && Boolean(env.AGENT_HOST_RELAY_SECRET),
+      plusConnect: s.plus?.connect === true,
     };
     deviceCache.clear();
     notifyKeys.clear();
@@ -681,6 +683,13 @@ export function createRemoteHost({
         requests: [...requests.values()].map(publicRequest),
       },
       devices: [...deviceCache.values()].map(d => publicDevice(d, channels.get(d.id)?.size ?? 0, notifyKeys.has(d.id), agent?.stats?.(d.id))),
+      // Pleiad Plus のつながり（docs/plus.md）。connect は設定、link は link の状態、host はこの PC の登録、devices は via:'plus' の数
+      plus: {
+        connect: cfg.plusConnect,
+        link: linkStatus(links.plus),
+        host: plusHostState,
+        devices: [...deviceCache.values()].filter(d => d.via === 'plus').length,
+      },
       storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
     };
   }
@@ -695,6 +704,7 @@ export function createRemoteHost({
         const wanted = [links.own, links.plus].filter(linkWanted);
         if (!wanted.length) return;
         identity = await store.identity();
+        onIdentity?.(identity);
         // 招待は、つなぐ前に読む（つながったときの sync が入場券を置く）
         await reconcileInvite();
         if (reviewMode()) logInvite();
@@ -704,6 +714,28 @@ export function createRemoteHost({
         const err = { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message };
         eachLink(l => setLinkPhase(l, l.provider ? 'error' : 'disabled', l.provider ? err : null));
       }
+    });
+    applying = run;
+    return run;
+  }
+
+  /**
+   * plus の link の張る条件（provider の ready()）を今の値で見直す。
+   * アカウント・ログイン・plus.connect・この PC の登録が変わったときに呼ぶ。張っている間は何もしない。
+   */
+  function refreshPlus() {
+    const run = applying.catch(() => {}).then(async () => {
+      const l = links.plus;
+      if (!cfg.enabled || !l.provider || !linkWanted(l)) {
+        if (l.control || l.retryTimer) disconnectLink(l);
+        if (!cfg.enabled || !l.provider) setLinkPhase(l, 'disabled');
+        return;
+      }
+      if (l.phase === 'connected' || l.phase === 'connecting') return;
+      disconnectLink(l);
+      try { identity ??= await store.identity(); }
+      catch (e) { setLinkPhase(l, 'error', { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message }); return; }
+      connect(l);
     });
     applying = run;
     return run;
@@ -734,12 +766,13 @@ export function createRemoteHost({
     start: () => apply(),
     status,
 
-    /** { enabled?, relayUrl?, enrollSecret?, hostName? }。enrollSecret は undefined なら残し、'' か null で消す。 */
+    /** { enabled?, relayUrl?, enrollSecret?, hostName?, plusConnect? }。enrollSecret は undefined なら残し、'' か null で消す。 */
     async setSettings(args = {}) {
       const patch = {};
       if (args.relayUrl !== undefined) patch.relayUrl = normalizeRelayUrl(args.relayUrl);
       if (args.hostName !== undefined) patch.hostName = cleanLabel(args.hostName);
       if (args.enabled !== undefined) patch.enabled = args.enabled === true;
+      if (args.plusConnect !== undefined) patch.plus = { connect: args.plusConnect === true };
       if (args.enrollSecret !== undefined) {
         const secret = args.enrollSecret == null ? '' : String(args.enrollSecret).trim();
         if (/[\s]/.test(secret) || secret.length > 1024) throw new Error(t('remote.settings.secretWhitespace'));
@@ -897,6 +930,26 @@ export function createRemoteHost({
 
     /** plus のつながりの provider を差し込む・外す（null なら閉じる）。 */
     setPlusProvider,
+
+    /** plus の link の張る条件を今の値で見直す（ログイン・アカウント・plus.connect・この PC の登録が変わったとき）。 */
+    refreshPlus,
+
+    /** この PC の Pleiad Plus への登録の状態（status.plus.host に出す）。{ state, hostId, error } */
+    setPlusHostState(next) { plusHostState = next ?? null; queueStatus(); },
+
+    /**
+     * ほかのアカウントに hostId を取られているときの「つなぎ直す」（人だけの操作。docs/plus.md）:
+     * ホストの鍵を作り直し（hostId が変わる）、今の端末を全部取り消し、中継へ張り直す。
+     * Plus への登録し直しは、onIdentity で知らせた新しい鍵で core/plus/hosts.mjs が行う。
+     */
+    async plusHostRebind() {
+      identity = await store.regenerateIdentity();
+      onIdentity?.(identity);
+      // hostId が変わると own・plus のどちらの端末も張り直せないので、全部取り消す
+      for (const d of [...deviceCache.values()]) await revokeDevice(d.id);
+      await apply();
+      return status();
+    },
 
     /** 終了時。設定は変えずにつながりだけ閉じる。 */
     stop() { disconnectAll(); eachLink(l => setLinkPhase(l, 'disabled')); },

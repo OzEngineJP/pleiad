@@ -122,7 +122,11 @@ AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Ele
 **取り消し**: ホストの端末一覧で「取り消す」→ 一覧から消し、中継からトークンのハッシュを消し、その端末のチャネルを即座に切る。中継が古い情報のままでも、ホストがハンドシェイクで静的鍵を弾く（二重）。
 端末一覧は名前・種類・追加した日・最後に使った時刻・今つながっているかを出す。ホスト自身の窓は一覧に出さない（ローカルは今のままの一時トークン）。
 
-### 3.4 中継が知ること・知らないこと
+### 3.4 同じアカウントの端末の受け入れ（Pleiad Plus）
+
+公式の中継（Pleiad Plus）では QR のペアリングの代わりに、アカウントでの受け入れを行う（[ADR 0240](adr/0240-plus-same-account-admission.md)）。端末は `/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Account`（ID トークン）だけでつなぎ、Noise_IK のメッセージ 1 に `{ proto, name, platform, app, plus: { idToken } }` を入れる。ホストは `plus.idToken` を自分で検証し、uid が今のアカウントと同じときだけ端末を登録する（確認コードも人の承認も無い）。断りは `{ type: 'denied', reason }`（`account`・`devices`・`unavailable`・`rate`）を暗号の中で返す。登録は `devices.json` の `via: 'plus'`・`plusUid`。細部は docs/plus.md。
+
+### 3.5 中継が知ること・知らないこと
 
 | 知る | 知らない |
 |---|---|
@@ -461,6 +465,8 @@ link ごとの振る舞いは provider が決める:
 - ペアリングの入場券と審査の招待は `own` の link だけが扱う
 - 端末の記録（devices.json）の `via` は `'own'` か `'plus'`（無いものは `'own'` とみなす。今のファイルはそのまま読める）。`plusUid` は `via: 'plus'` の端末を受け入れたアカウントの uid（状態には出さない）
 - 「ほかの端末からの操作を許可する」が off なら全部の link を閉じる。`status()` の `links.<名>` に各 link の状態が出る（`connection` は `links.own` と同じもの）
+
+plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus.md「Plus のつながり」）。`enabled`・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`・この PC の登録（`core/plus/hosts.mjs`）が `registered`、の全部がそろったときだけ張り、行き先は `/v1/auth/config` の `urls.relay`、認証は `X-Pleiad-Host` と `X-Pleiad-Account`（ID トークン）。`onIncomingAdmit` で、アカウントでの受け入れ（§3.4）を担う。条件が変わったときはサーバーが `refreshPlus()` で見直す（張っている間は何もしない）。`status().plus` に `{ connect, link, host, devices }` を出す。`plusHostRebind`（人だけ）はホストの鍵を作り直して端末を全部取り消し、`onIdentity` で登録し直す。
 
 ## 7. デスクトップ版の端末（#14）
 

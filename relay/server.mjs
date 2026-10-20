@@ -496,7 +496,8 @@ export function createRelay(opts = {}) {
   /** 表から消えた・トークンが変わった端末の接続を切る。 */
   function cutRevoked(h) {
     for (const c of hostConns.get(h.id) ?? []) {
-      if (c.pairing) continue;
+      // pairing・admit（受け入れの最中）は deviceId を持たないので対象外（受け入れの結果が届く前に切らない。§5.7）
+      if (c.pairing || (c.admit && c.deviceId == null)) continue;
       const hash = h.devices.get(c.deviceId);
       if (!hash || !sameHash(hash, c.tokenHash)) endConn(c, CLOSE.UNAUTHORIZED, 'revoked');
     }

@@ -1176,6 +1176,13 @@
       "rejected": "The relay refused the connection (HTTP {{status}})",
       "unreachable": "Can't reach the relay ({{reason}})"
     },
+    "plus": {
+      "closed": {
+        "account": "This account can't use the official relay",
+        "limit": "This account has reached its limit",
+        "auth": "Account authentication failed (please sign in again)"
+      }
+    },
     "review": {
       "addDeviceDisabled": "This host is a review host. Devices join with the review invite, so \"Add a device\" is turned off here."
     },

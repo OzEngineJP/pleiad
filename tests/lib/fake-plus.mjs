@@ -9,10 +9,12 @@
 //   呼ばれた口と X-Pleiad-Client を state.calls に残す
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { generateKeyPair, dh, hkdfLabel, hostIdFor } from '../../core/remote/noise.mjs';
 
 const PROJECT_ID = 'test-project';
 const API_KEY = 'test-api-key';
 const b64url = buf => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64urlToBuf = s => Buffer.from(String(s ?? '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 const readBody = async req => { const chunks = []; for await (const c of req) chunks.push(c); return Buffer.concat(chunks).toString('utf8'); };
 const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
 
@@ -31,7 +33,10 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     down: false,              // 真の間は全部の口が接続を切る
     calls: [],                // { method, path, client, auth }
     proxy: {},                // pathname -> { status?, body?, headers? } | async (req, body) => 同じ形。中継の口の応答（未設定は 404）
+    hosts: {},                // hostId -> { hostId, publicKey, name, platform, online, lastSeenAt, syncPublicKey, createdAt, deviceCount, uid }
+    failNextProof: false,     // 真なら次の PUT /v1/hosts/{id} の証明の照合だけを 422 bad_proof にする（やり直しの試験）
   };
+  const challenges = new Map(); // challengeId -> { nonce, serverPrivateKey, publicKey, uid, expiresAt }
   const codes = new Map();    // code -> { challenge, redirectUri, uid, email, expiresAt, used }
   const refreshTokens = new Map(); // refreshToken -> uid
   let seq = 0;
@@ -141,6 +146,77 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
         const cur = state.accounts[uid] ?? accountOf(uid);
         state.accounts[uid] = { ...cur, ...(body?.sync ? { sync: { ...cur.sync, ...body.sync } } : {}) };
         return json(res, 200, state.accounts[uid]);
+      }
+    }
+    // ホストの登録（GET /v1/hosts・POST /v1/hosts/challenge・PUT/PATCH/DELETE /v1/hosts/{hostId}。Plus の利用者だけ）
+    if (url.pathname === '/v1/hosts' || url.pathname.startsWith('/v1/hosts/')) {
+      const uid = uidOf(req);
+      if (!uid) return json(res, 401, { error: { code: 'unauthenticated', message: 'no token' } });
+      if (accountOf(uid).status !== 'plus') return json(res, 403, { error: { code: 'not_plus', message: 'not plus' } });
+      const hostPath = /^\/v1\/hosts\/([a-z2-7]{26})$/.exec(url.pathname)?.[1] ?? null;
+      const publicHost = h => h && ({ hostId: h.hostId, publicKey: h.publicKey, name: h.name, platform: h.platform, online: h.online, lastSeenAt: h.lastSeenAt, syncPublicKey: h.syncPublicKey, createdAt: h.createdAt, deviceCount: h.deviceCount });
+
+      if (url.pathname === '/v1/hosts' && req.method === 'GET') {
+        return json(res, 200, { hosts: Object.values(state.hosts).filter(h => h.uid === uid).map(publicHost) });
+      }
+      if (url.pathname === '/v1/hosts/challenge' && req.method === 'POST') {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const pub = b64urlToBuf(body.publicKey);
+        if (pub.length !== 32 || body.hostId !== hostIdFor(pub)) return json(res, 422, { error: { code: 'bad_proof', message: 'bad proof' } });
+        const kp = generateKeyPair();
+        const challengeId = `ch-${++seq}`;
+        challenges.set(challengeId, { nonce: crypto.randomBytes(32), serverPrivateKey: kp.privateKey, publicKey: pub, hostId: body.hostId, uid, expiresAt: Date.now() + 30_000 });
+        return json(res, 200, { challengeId, nonce: b64url(challenges.get(challengeId).nonce), serverPublicKey: b64url(kp.publicKey), expiresAt: new Date(Date.now() + 30_000).toISOString() });
+      }
+      if (hostPath && req.method === 'PUT') {
+        const body = JSON.parse((await readBody(req)) || '{}');
+        const ch = challenges.get(body.challengeId);
+        challenges.delete(body.challengeId);
+        const pub = b64urlToBuf(body.publicKey);
+        const valid = ch && ch.uid === uid && ch.hostId === hostPath && Date.now() < ch.expiresAt && ch.publicKey.equals(pub);
+        const k = valid ? hkdfLabel(dh(ch.serverPrivateKey, pub), 'pleiad host proof v1') : null;
+        const expectedBuf = k ? crypto.createHmac('sha256', k).update(ch.nonce).update(Buffer.from(hostPath, 'utf8')).update(Buffer.from('register', 'utf8')).digest() : Buffer.alloc(32);
+        const proofBuf = b64urlToBuf(body.proof);
+        if (!valid || state.failNextProof || proofBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(proofBuf, expectedBuf)) {
+          const bug = state.failNextProof && valid;
+          state.failNextProof = false;
+          return json(res, 422, { error: { code: 'bad_proof', message: bug ? 'bad proof (injected)' : 'bad proof' } });
+        }
+        const existing = state.hosts[hostPath];
+        if (existing && existing.uid !== uid) return json(res, 409, { error: { code: 'host_taken', message: 'host taken' } });
+        if (!existing) {
+          const limit = accountOf(uid).limits?.hosts;
+          if (limit != null && Object.values(state.hosts).filter(h => h.uid === uid).length >= limit) {
+            return json(res, 429, { error: { code: 'host_limit', message: 'host limit' } });
+          }
+        }
+        const name = typeof body.name === 'string' && body.name.length >= 1 && body.name.length <= 64 ? body.name : null;
+        const platform = ['win32', 'darwin', 'linux'].includes(body.platform) ? body.platform : null;
+        if (!name || !platform) return json(res, 400, { error: { code: 'bad_request', message: 'name/platform' } });
+        const host = state.hosts[hostPath] = {
+          hostId: hostPath, publicKey: body.publicKey, name, platform,
+          online: existing?.online ?? false, lastSeenAt: existing?.lastSeenAt ?? null,
+          syncPublicKey: typeof body.syncPublicKey === 'string' ? body.syncPublicKey : (existing?.syncPublicKey ?? null),
+          createdAt: existing?.createdAt ?? new Date().toISOString(),
+          deviceCount: existing?.deviceCount ?? 0, uid,
+        };
+        return json(res, 200, { host: publicHost(host) });
+      }
+      if (hostPath && req.method === 'PATCH') {
+        const existing = state.hosts[hostPath];
+        if (!existing) return json(res, 404, { error: { code: 'not_found', message: 'not found' } });
+        if (existing.uid !== uid) return json(res, 403, { error: { code: 'forbidden', message: 'forbidden' } });
+        const body = JSON.parse((await readBody(req)) || '{}');
+        if (typeof body.name === 'string' && body.name.length >= 1 && body.name.length <= 64) existing.name = body.name;
+        if (typeof body.syncPublicKey === 'string' || body.syncPublicKey === null) existing.syncPublicKey = body.syncPublicKey;
+        if (Number.isInteger(body.deviceCount) && body.deviceCount >= 0 && body.deviceCount <= 64) existing.deviceCount = body.deviceCount;
+        if (typeof body.platform === 'string' && ['win32', 'darwin', 'linux'].includes(body.platform)) existing.platform = body.platform;
+        return json(res, 200, { host: publicHost(existing) });
+      }
+      if (hostPath && req.method === 'DELETE') {
+        const existing = state.hosts[hostPath];
+        if (existing && existing.uid === uid) delete state.hosts[hostPath];
+        res.writeHead(204); return res.end();
       }
     }
     return json(res, 404, { error: { code: 'not_found', message: 'not found' } });
