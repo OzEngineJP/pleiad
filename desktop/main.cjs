@@ -348,7 +348,7 @@ async function boot() {
   // 読み込み直した画面は別の版かもしれない。切り替えの表示を持つかは、その画面の hello で知る
   window.webContents.on('did-start-loading', () => switchScreen.reset());
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
-    icon: path.join(__dirname, 'icon.png'), external });
+    icon: path.join(__dirname, 'icon.png'), external, workerRequest });
   remoteWindows.attach();
   remoteWindows.attachWorker(messages);
   browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'),

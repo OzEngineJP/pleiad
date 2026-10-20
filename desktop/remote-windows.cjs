@@ -9,6 +9,7 @@
 //     ローカルの窓と同じ脇の面で、色は画面が ply:remote-title-bar で送ってくる）
 //   - 同じ PC を前提にしたブリッジ（フォルダーの選択・更新）はリモートの窓に出さない（desktop/remote-preload.cjs）
 // リモートの窓を閉じてもホストでは何も止めない（端末内プロキシを閉じるだけ。確認も出さない）。
+const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { pathToFileURL } = require('node:url');
@@ -80,6 +81,9 @@ function hostRow(rec, { windowOpen = false } = {}) {
   return { hostId: rec.hostId, name: displayName(rec), hostName: rec.hostName ?? '', label: rec.label ?? '',
     relay: relayLabel(rec.relayUrl), state: rec.revokedAt && rec.state !== 'connected' ? 'revoked' : rec.state ?? 'closed',
     lastConnectedAt: rec.lastConnectedAt ?? null, pairedAt: rec.pairedAt ?? null, windowOpen,
+    via: rec.via ?? 'own',
+    plusOnline: rec.plusOnline ?? false,
+    platform: rec.platform ?? 'desktop',
     // この PC の AI から任せられるか（docs/remote.md §4.5）: ホスト側の許可（線がつながっているときの ready の allowed）と線の状態。
     // つながっていて受けないのは、端末ごとの許可があった古い版のホスト（詳しい画面に「更新すると使えます」）
     agentAllowed: rec.agent?.allowed === true, agentState: rec.agent?.state ?? 'offline' };
@@ -151,9 +155,53 @@ function drawOverlayBitmap(size = 32) {
  *   desktop/main.cjs の external。隠した Chrome の窓に開かれないよう先に見える窓を前面にしてから shell.openExternal する）
  */
 function createRemoteWindows(deps) {
-  const { app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust, icon, external } = deps;
+  const { app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust, icon, external, workerRequest = null } = deps;
   const platform = deps.platform ?? process.platform;
-  const windows = new Map();       // hostId -> { win, name, origin, notify, state }
+  const remoteDir = deps.dir || path.join(app.getPath('userData'), app.isPackaged ? 'remote-hosts' : 'remote-hosts-dev');
+  const windows = new Map();       // hostId -> { win, name, origin, notify, state, via }
+
+  function readRemoteSettings(dir) {
+    try {
+      const p = path.join(dir, 'settings.json');
+      const raw = fs.readFileSync(p, 'utf8');
+      const j = JSON.parse(raw);
+      return { plus: { use: j?.plus?.use !== false } };
+    } catch {
+      return { plus: { use: true } };
+    }
+  }
+
+  function writeRemoteSettings(dir, settings) {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      const p = path.join(dir, 'settings.json');
+      fs.writeFileSync(p, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+    } catch {}
+  }
+
+  async function setPlusUse(use) {
+    const s = readRemoteSettings(remoteDir);
+    s.plus = s.plus || {};
+    s.plus.use = Boolean(use);
+    writeRemoteSettings(remoteDir, s);
+    if (!s.plus.use) {
+      for (const [hostId, entry] of windows) {
+        if (entry.via === 'plus') {
+          entry.win.close();
+        }
+      }
+      try {
+        const d = await device();
+        const recs = await d.list();
+        for (const r of recs) {
+          if (r.via === 'plus') {
+            await d.disconnect(r.hostId, 'plus').catch(() => {});
+          }
+        }
+      } catch {}
+    }
+    pushHosts();
+  }
   const opening = new Map();       // hostId -> Promise（2 度押しで 2 枚開かない）
   const connectedAt = new Map();   // hostId -> 最後につながった時刻（ms）
   let devicePromise = null, pairing = null, pushTimer = null, agentBridge = null;
@@ -164,7 +212,7 @@ function createRemoteWindows(deps) {
       const { safeStorageCipher } = require('./secret-bridge.cjs');
       // 開発版と配布版が同時に動いても、互いの資格情報とポートの記録を取り合わないよう分ける（server-port.cjs と同じ）
       const d = createRemoteDevice({
-        dir: path.join(app.getPath('userData'), app.isPackaged ? 'remote-hosts' : 'remote-hosts-dev'),
+        dir: remoteDir,
         cipher: safeStorageCipher({ safeStorage, platform }), app: app.getVersion(), name: os.hostname(), platform: 'desktop',
       });
       d.on('status', onStatus);
@@ -195,16 +243,89 @@ function createRemoteWindows(deps) {
       pushTimer = null;
       try {
         const hosts = await listHosts();
-        for (const win of localWindows()) win.webContents.send('ply:hosts-changed', hosts);
+        const plus = await getPlusMeta();
+        for (const win of localWindows()) win.webContents.send('ply:hosts-changed', { hosts, plus });
       } catch {}
     }, 150);
   }
 
   function localWindows() { return trust.entries('local').map(e => e.window).filter(w => w && !w.isDestroyed()); }
 
-  async function listHosts() {
+  async function getPlusMeta({ fresh = false } = {}) {
+    const s = readRemoteSettings(remoteDir);
+    const plusUse = s.plus?.use !== false;
+    let plusRes = null;
+    if (workerRequest) {
+      try { plusRes = await workerRequest('plus-hosts', { fresh }); } catch {}
+    }
+    return {
+      use: plusUse,
+      ok: plusRes ? plusRes.ok !== false : false,
+      state: plusRes?.state ?? 'on',
+      status: plusRes?.status ?? null,
+      email: plusRes?.email ?? null,
+      error: Boolean(plusRes?.error || (!plusRes && workerRequest)),
+      reason: plusRes?.reason ?? plusRes?.error ?? null,
+      urls: plusRes?.urls ?? null,
+      available: plusRes?.available !== false,
+      needsUpdate: plusRes?.needsUpdate === true,
+      hosts: plusRes?.hosts || [],
+    };
+  }
+
+  async function listHosts({ fresh = false } = {}) {
     const d = await device();
-    return (await d.list()).map(rec => hostRow(rec, { windowOpen: windows.has(rec.hostId) }));
+    const localHosts = await d.list();
+    const s = readRemoteSettings(remoteDir);
+    const plusUse = s.plus?.use !== false;
+
+    let plusRes = null;
+    if (plusUse && workerRequest) {
+      try { plusRes = await workerRequest('plus-hosts', { fresh }); }
+      catch {}
+    }
+    const result = [];
+    const seenHostIds = new Set();
+
+    for (const rec of localHosts) {
+      const isPlus = rec.via === 'plus';
+      if (isPlus && !plusUse) continue;
+      let ph = null;
+      if (isPlus && plusRes?.hosts) {
+        ph = plusRes.hosts.find(h => h.hostId === rec.hostId);
+      }
+      const merged = {
+        ...rec,
+        plusOnline: ph ? Boolean(ph.online) : false,
+        platform: ph?.platform || rec.platform || 'desktop',
+        lastSeenAt: ph?.lastSeenAt || rec.lastSeenAt,
+      };
+      seenHostIds.add(`${rec.hostId}:${rec.via ?? 'own'}`);
+      result.push(hostRow(merged, { windowOpen: windows.has(rec.hostId) }));
+    }
+
+    if (plusUse && plusRes?.hosts) {
+      for (const ph of plusRes.hosts) {
+        if (plusRes.ownHostId && ph.hostId === plusRes.ownHostId) continue;
+        const key = `${ph.hostId}:plus`;
+        if (seenHostIds.has(key)) continue;
+        result.push(hostRow({
+          hostId: ph.hostId,
+          name: ph.name || ph.hostId.slice(0, 8),
+          hostName: ph.name || '',
+          label: '',
+          relayUrl: plusRes.relayUrl || '',
+          state: 'unpaired',
+          plusOnline: Boolean(ph.online),
+          platform: ph.platform || 'desktop',
+          lastSeenAt: ph.lastSeenAt,
+          pairedAt: null,
+          lastConnectedAt: null,
+          via: 'plus',
+        }, { windowOpen: false }));
+      }
+    }
+    return result;
   }
 
   function remoteBar() {
@@ -220,7 +341,7 @@ function createRemoteWindows(deps) {
   function focus(win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
 
   /** sessionId を渡すと、その会話を開く（承認の中継のカードの「子の会話を見る」。docs/remote.md §4.5）。開いている窓へは IPC、新しい窓は URL の ?open= */
-  async function openHost(hostId, { sessionId = null } = {}) {
+  async function openHost(hostId, { sessionId = null, via = null } = {}) {
     if (!HOST_ID.test(String(hostId))) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
     const wanted = typeof sessionId === 'string' && sessionId && sessionId.length <= 200 ? sessionId : null;
     const existing = windows.get(hostId);
@@ -230,16 +351,53 @@ function createRemoteWindows(deps) {
       return;
     }
     if (opening.has(hostId)) return opening.get(hostId);
-    const run = createHostWindow(hostId, wanted).finally(() => opening.delete(hostId));
+    const run = createHostWindow(hostId, wanted, via).finally(() => opening.delete(hostId));
     opening.set(hostId, run);
     return run;
   }
 
-  async function createHostWindow(hostId, sessionId = null) {
+  async function createHostWindow(hostId, sessionId = null, preferredVia = null) {
     const d = await device();
-    const rec = (await d.list()).find(h => h.hostId === hostId);
+    let rec = (await d.list()).find(h => h.hostId === hostId && (!preferredVia || h.via === preferredVia));
+    if (!rec) {
+      if (workerRequest) {
+        try {
+          const tokRes = await workerRequest('plus-token');
+          const plusRes = await workerRequest('plus-hosts');
+          const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
+          if (tokRes?.ok && ph) {
+            rec = await d.admit({
+              hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
+              idToken: tokRes.idToken, uid: tokRes.uid,
+            });
+            pushHosts();
+          }
+        } catch {}
+      }
+    }
     if (!rec) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
-    const proxy = await d.open(hostId);
+
+    const via = rec.via ?? 'own';
+    const getIdToken = (via === 'plus' && workerRequest) ? async ({ force = false } = {}) => {
+      const r = await workerRequest('plus-token', { force });
+      if (!r?.ok) throw Object.assign(new Error(r?.error || 'not signed in'), { code: 'not-signed-in' });
+      return r.idToken;
+    } : null;
+    const onReadmit = (via === 'plus' && workerRequest) ? async () => {
+      try {
+        const tokRes = await workerRequest('plus-token', { force: true });
+        const plusRes = await workerRequest('plus-hosts', { fresh: true });
+        const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
+        if (tokRes?.ok && ph) {
+          await d.admit({
+            hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
+            idToken: tokRes.idToken, uid: tokRes.uid,
+          });
+        }
+      } catch {}
+    } : null;
+
+    const proxy = await d.open(hostId, { via, relayUrl: rec.relayUrl, getIdToken, onReadmit });
     const name = displayName(rec);
     const origin = `http://127.0.0.1:${proxy.port}`;
     const ses = session.fromPartition(partitionFor(hostId));
@@ -262,7 +420,7 @@ function createRemoteWindows(deps) {
     win.removeMenu();
     trust.register(win, { kind: 'remote', origin, hostId });
     const entry = { win, name, origin, state: proxy.status?.state, snapshots: new Set(),
-      notify: createDesktopNotifications({ Notification, getWindow: () => win, icon }) };
+      notify: createDesktopNotifications({ Notification, getWindow: () => win, icon }), via };
     windows.set(hostId, entry);
     // 画面の <title> ではなく、どのホストかが分かる名前を OS に出す（§7.2 の 3）
     win.on('page-title-updated', event => event.preventDefault());
@@ -364,12 +522,24 @@ function createRemoteWindows(deps) {
       try {
         const d = await device();
         const storage = await d.store.storageStatus().catch(() => ({ encrypted: false }));
-        return { ok: true, deviceName: os.hostname(), encrypted: Boolean(storage.encrypted), hosts: await listHosts() };
+        const [hosts, plus] = await Promise.all([listHosts(), getPlusMeta()]);
+        return { ok: true, deviceName: os.hostname(), encrypted: Boolean(storage.encrypted), hosts, plus };
       } catch (e) { return fail(e); }
     });
-    ipcMain.handle('ply:hosts-list', async event => {
+    ipcMain.handle('ply:hosts-list', async (event, opts) => {
       trust.check(event, ['local']);
-      try { return { ok: true, hosts: await listHosts() }; } catch (e) { return fail(e); }
+      try {
+        const fresh = Boolean(opts?.fresh);
+        const [hosts, plus] = await Promise.all([listHosts({ fresh }), getPlusMeta({ fresh })]);
+        return { ok: true, hosts, plus };
+      } catch (e) { return fail(e); }
+    });
+    ipcMain.handle('ply:hosts-set-plus-use', async (event, use) => {
+      trust.check(event, ['local']);
+      try {
+        await setPlusUse(Boolean(use));
+        return { ok: true };
+      } catch (e) { return fail(e); }
     });
     ipcMain.handle('ply:hosts-pair', async (event, payload) => {
       trust.check(event, ['local']);
@@ -387,28 +557,46 @@ function createRemoteWindows(deps) {
       finally { if (pairing === ctl) pairing = null; }
     });
     ipcMain.handle('ply:hosts-pair-cancel', event => { trust.check(event, ['local']); pairing?.abort(); pairing = null; });
-    ipcMain.handle('ply:hosts-open', async (event, hostId) => {
-      trust.check(event, ['local']);
-      try { await openHost(hostId); return { ok: true }; } catch (e) { return fail(e); }
-    });
-    ipcMain.handle('ply:hosts-rename', async (event, hostId, label) => {
+    ipcMain.handle('ply:hosts-admit', async (event, hostId) => {
       trust.check(event, ['local']);
       try {
-        await (await device()).rename(hostId, String(label ?? ''));
+        if (!workerRequest) throw new Error('workerRequest unavailable');
+        const tokRes = await workerRequest('plus-token');
+        if (!tokRes?.ok) throw new Error(tokRes?.error || 'not signed in');
+        const plusRes = await workerRequest('plus-hosts');
+        const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
+        if (!ph) throw new Error('host not found');
+        const d = await device();
+        const rec = await d.admit({
+          hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
+          idToken: tokRes.idToken, uid: tokRes.uid,
+        });
+        pushHosts();
+        return { ok: true, host: hostRow({ ...rec, state: 'closed' }) };
+      } catch (e) { return fail(e); }
+    });
+    ipcMain.handle('ply:hosts-open', async (event, hostId, opts) => {
+      trust.check(event, ['local']);
+      try { await openHost(hostId, opts || {}); return { ok: true }; } catch (e) { return fail(e); }
+    });
+    ipcMain.handle('ply:hosts-rename', async (event, hostId, label, via = 'own') => {
+      trust.check(event, ['local']);
+      try {
+        await (await device()).rename(hostId, String(label ?? ''), via);
         const w = windows.get(hostId);
         if (w && !w.win.isDestroyed()) {
-          const rec = (await (await device()).list()).find(h => h.hostId === hostId);
+          const rec = (await (await device()).list()).find(h => h.hostId === hostId && (h.via ?? 'own') === via);
           w.name = displayName(rec); w.win.setTitle(t('remote.windowTitle', { host: w.name }));
         }
         pushHosts();
         return { ok: true };
       } catch (e) { return fail(e); }
     });
-    ipcMain.handle('ply:hosts-remove', async (event, hostId) => {
+    ipcMain.handle('ply:hosts-remove', async (event, hostId, via = 'own') => {
       trust.check(event, ['local']);
       try {
         windows.get(hostId)?.win.close();
-        await (await device()).remove(hostId);
+        await (await device()).remove(hostId, via);
         await agentBridge?.refresh();
         pushHosts();
         return { ok: true };

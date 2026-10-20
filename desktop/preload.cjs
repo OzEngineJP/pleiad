@@ -19,12 +19,14 @@ contextBridge.exposeInMainWorld('plyDesktop', {
   // ローカルのサーバーの設定・操作の一覧には置かない（端末の AI が set_setting で入れられないように。ADR 0146・0239）
   hosts: {
     init: () => ipcRenderer.invoke('ply:hosts-init'),
-    list: () => ipcRenderer.invoke('ply:hosts-list'),
+    list: opts => ipcRenderer.invoke('ply:hosts-list', opts),
+    setPlusUse: use => ipcRenderer.invoke('ply:hosts-set-plus-use', use),
+    admit: hostId => ipcRenderer.invoke('ply:hosts-admit', hostId),
     pair: payload => ipcRenderer.invoke('ply:hosts-pair', payload),
     cancelPair: () => ipcRenderer.invoke('ply:hosts-pair-cancel'),
-    open: hostId => ipcRenderer.invoke('ply:hosts-open', hostId),
-    rename: (hostId, label) => ipcRenderer.invoke('ply:hosts-rename', hostId, label),
-    remove: hostId => ipcRenderer.invoke('ply:hosts-remove', hostId),
+    open: (hostId, opts) => ipcRenderer.invoke('ply:hosts-open', hostId, opts),
+    rename: (hostId, label, via) => ipcRenderer.invoke('ply:hosts-rename', hostId, label, via),
+    remove: (hostId, via) => ipcRenderer.invoke('ply:hosts-remove', hostId, via),
     onCode: listener => {
       const handler = (_event, code) => listener(code);
       ipcRenderer.on('ply:hosts-code', handler);

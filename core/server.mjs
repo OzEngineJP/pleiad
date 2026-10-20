@@ -631,7 +631,51 @@ const plusSecrets = createSecretStore({ file: path.join(store.dataDir, 'plus-sec
 plusSecrets.migrate().catch(() => {});
 const plusConfig = createPlusConfig({ env: process.env, dataDir: store.dataDir, appVersion: APP_VERSION, log: line => console.log(`  ${line}`) });
 const plusSession = createPlusSession({ config: plusConfig, secrets: plusSecrets, openExternal, appVersion: APP_VERSION, lang: () => currentLocale() });
+
+let plusHostsCache = null;
+let plusHostsCacheAt = 0;
+const PLUS_HOSTS_CACHE_TTL_MS = 30_000;
+
+async function getPlusHosts({ fresh = false } = {}) {
+  const now = Date.now();
+  if (!fresh && plusHostsCache && (now - plusHostsCacheAt < PLUS_HOSTS_CACHE_TTL_MS)) {
+    return plusHostsCache;
+  }
+  const snap = plusSession.snapshot();
+  const authCfg = await plusConfig.get().catch(() => null);
+  const relayUrl = authCfg?.urls?.relay ?? null;
+  const urls = authCfg?.urls ?? null;
+  const state = authCfg?.state ?? null;
+  const derived = plusConfig.derive(authCfg);
+  const email = snap.account?.email ?? null;
+  const status = snap.account?.status ?? null;
+  const uid = snap.uid ?? null;
+  const ownHostId = remote.hostInfo()?.hostId ?? null;
+
+  if (!snap.signedIn || status !== 'plus') {
+    plusHostsCache = { hosts: [], relayUrl, urls, uid, state, status, email, ownHostId, available: derived.available, needsUpdate: derived.needsUpdate };
+    plusHostsCacheAt = now;
+    return plusHostsCache;
+  }
+  try {
+    const res = await plusSession.client.request('GET', '/v1/hosts');
+    let hosts = Array.isArray(res?.hosts) ? res.hosts : [];
+    if (ownHostId) {
+      hosts = hosts.filter(h => h.hostId !== ownHostId);
+    }
+    hosts.sort((a, b) => (Date.parse(a.createdAt || 0) || 0) - (Date.parse(b.createdAt || 0) || 0));
+    plusHostsCache = { hosts, relayUrl, urls, uid, state, status, email, ownHostId, available: derived.available, needsUpdate: derived.needsUpdate };
+    plusHostsCacheAt = now;
+    return plusHostsCache;
+  } catch (e) {
+    const errObj = { hosts: [], relayUrl, urls, uid, state, status, email, ownHostId, available: derived.available, needsUpdate: derived.needsUpdate, error: e?.message ?? String(e) };
+    if (plusHostsCache) return { ...plusHostsCache, error: e?.message ?? String(e) };
+    return errObj;
+  }
+}
+
 plusSession.onChange(({ type, status }) => {
+  plusHostsCache = null;
   emitGlobal({ type: 'plusStatus', status, change: type, sessionId: null });
   // キー無しの機能（docs/plus.md）: ログインしたら、自動選択と通話のどちらも「使わない」のときだけ仮想のキー plus を両方に選ぶ（{ autoPlus }）
   if (type === 'signedIn') apiKeys.plusSignedIn().catch(() => {});
@@ -9522,6 +9566,27 @@ mainPort.on("message", async ({ data }) => {
   if (data?.type === 'chrome-pill-resume' && typeof data.sessionId === 'string') {
     // 戻せなかったときは必ず返す（黙って捨てるとピルが押せないままになる）
     void resumeFromPill({ control: chromeControl, reply: message => mainPort.postMessage(message), log: line => console.warn(line) }, data);
+  }
+  if (data?.type === 'plus-token') {
+    try {
+      const snap = plusSession.snapshot();
+      if (!snap.signedIn) {
+        mainPort.postMessage({ type: 'plus-token', id: data.id, ok: false, error: 'not_signed_in' });
+      } else {
+        const idToken = await plusSession.getIdToken({ force: data.force === true });
+        mainPort.postMessage({ type: 'plus-token', id: data.id, ok: true, idToken, uid: snap.uid });
+      }
+    } catch (e) {
+      mainPort.postMessage({ type: 'plus-token', id: data.id, ok: false, error: String(e?.message ?? e) });
+    }
+  }
+  if (data?.type === 'plus-hosts') {
+    try {
+      const res = await getPlusHosts({ fresh: data.fresh === true });
+      mainPort.postMessage({ type: 'plus-hosts', id: data.id, ok: !res.error, ...res });
+    } catch (e) {
+      mainPort.postMessage({ type: 'plus-hosts', id: data.id, ok: false, error: String(e?.message ?? e), hosts: [] });
+    }
   }
   if (data?.type === 'wake') { await schedule.check(); await recoverLimitWaits().catch(() => {}); }
   if (data?.type === 'update-lock') {
