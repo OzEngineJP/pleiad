@@ -164,6 +164,11 @@ button.rm-row { cursor:pointer; }
 button.rm-row:hover { background:var(--surface-hover); }
 .rm-row > svg.i { color:var(--ink-weak); }
 .rm-rt { flex:1; min-width:0; display:flex; flex-direction:column; }
+/* アカウントの行の丸（設定 › Pleiad Plus。メールの頭の 1 文字） */
+.rm-av { display:grid; place-items:center; flex:none; width:36px; height:36px; border-radius:50%;
+  background:var(--surface-2); color:var(--ink-blue); font-weight:700; }
+/* rm-lbl と同じ置き方だが、注意ではなく状態の文（太字にしない） */
+.rm-plain { font-weight:400; color:var(--ink); }
 .rm-nm { color:var(--ink); overflow-wrap:anywhere; }
 .rm-sub { font-size:var(--fs-s); color:var(--ink-weak); line-height:1.4; }
 .rm-end { display:flex; color:var(--ink-weak); }

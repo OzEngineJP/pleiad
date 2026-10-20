@@ -121,6 +121,8 @@
       <button type="button" id="notifyTab" aria-controls="notifyPanel" data-i18n="settings.nav.notify"></button>
       <button type="button" id="voiceTab" aria-controls="voicePanel" data-i18n="settings.nav.voice"></button>
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
+      <!-- Pleiad Plus（web/plus-settings.mjs）。status.available === false のときは出さない -->
+      <button type="button" id="plusTab" aria-controls="plusPanel" data-i18n="settings.nav.plus" hidden></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
     <div class="pop" id="iconPop" hidden></div>
@@ -427,6 +429,8 @@
         <section id="voicePanel" data-i18n-aria-label="settings.nav.voice" hidden></section>
         <!-- 中身は web/remote.mjs が作る -->
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
+        <!-- 中身は web/plus-settings.mjs が作る -->
+        <section id="plusPanel" data-i18n-aria-label="settings.nav.plus" hidden></section>
       </div>
     </section>
 

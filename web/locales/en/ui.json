@@ -51,7 +51,7 @@
       "notify": "Notifications",
       "voice": "Calls",
       "remote": "Remote",
-      "about": "About & updates",
+      "plus": "Pleiad Plus",      "about": "About & updates",
       "delegation": "Delegation",
       "autoCompaction": "Auto compaction",
       "browser": "Browser",
@@ -162,6 +162,33 @@
         "switch": "{{name}}: notifications"
       }
     },
+      "plus": {
+        "account": "Account",
+        "signedOut": "Not signed in",
+        "signIn": "Sign in",
+        "relogin": "Please sign in again",
+        "signingIn": "Signing in in your browser…",
+        "cancel": "Cancel",
+        "signInFailed": "Couldn't sign in",
+        "tryAgain": "Try again",
+        "providerGoogle": "Signed in with Google",
+        "plan": "Plan",
+        "free": "Free",
+        "getPlus": "Get Pleiad Plus",
+        "usage": "This month: {{used}} / {{limit}} credits (resets on {{date}})",
+        "limitReached": "Limit reached",
+        "sync": "Sync",
+        "manage": "Manage account",
+        "signOut": "Sign out",
+        "disabled": "This account is no longer available",
+        "maintenance": "Pleiad Plus is under maintenance",
+        "needsUpdate": "Please update Pleiad",
+        "hostTaken": "This PC is connected with another Pleiad Plus account.",
+        "rebind": "Reconnect",
+        "rebindConfirm": "This rebuilds this PC's key. Devices connected through your own relay server will need to be paired again.",
+        "rebindYes": "Rebuild",
+        "hostLimit": "This account has reached its limit"
+      },
     "remote": {
       "tabs": {
         "label": "Direction",
