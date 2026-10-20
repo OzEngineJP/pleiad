@@ -273,6 +273,8 @@
       "MIGRATION_PENDING": "古い置き場のキーの移行を保留しています（暗号化された古いキーを、この起動では読めません）。暗号化できる起動（Pleiad デスクトップ）で開くと移行されます",
       "TOO_MANY": "キーは {{max}} 件まで登録できます。使わないキーを削除してください",
       "UNKNOWN_USE": "知らない使い道です: {{use}}",
+      "UNSUPPORTED_USE": "Pleiad Plus はこの使い道には選べません（委譲先の自動選択と音声通話だけ）",
+      "PLUS_SIGNED_OUT": "Pleiad Plus にログインしていません",
       "FILE_BROKEN": "API キーの台帳（api-keys.json）を読めません。ファイルを直すか退避してください"
     },
     "origin": {

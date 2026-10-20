@@ -198,7 +198,8 @@ export function createTranscriber({ client, emit: emitRaw, language = 'ja', cut 
       }
       // 失敗。出した途中経過があれば、それを確定させる（途中の行が確定せずに残らないように）
       if (l.text) emit({ type: 'final', utt: l.id, text: l.text, reason: utt.reason, degraded: true, speechEndToFinalMs: now() - lastVoiceAt });
-      else emit({ type: 'error', utt: l.id, code: 'stt', kind: error?.kind ?? 'transient', status: error?.status ?? null, rateLimited: Boolean(error?.rateLimited) });
+      else emit({ type: 'error', utt: l.id, code: 'stt', kind: error?.kind ?? 'transient', status: error?.status ?? null, rateLimited: Boolean(error?.rateLimited),
+        ...(error?.code ? { upstream: error.code, resetAt: error.resetAt ?? null } : {}) });
     }
   }
 

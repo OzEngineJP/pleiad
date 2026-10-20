@@ -25,6 +25,7 @@ export const apiKeyOps = [
       keys: z.array(loose),
       uses: z.record(z.string(), z.string().nullable()),
       guide: loose.nullable(),
+      virtual: z.array(loose).optional(),
     }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['apikeys', 'list'] } },
     handler: (ctx) => mapped(() => ctx.apiKeys.list()),

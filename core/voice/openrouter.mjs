@@ -27,13 +27,15 @@ function retryWaitMs(header) {
 
 export class VoiceHttpError extends Error {
   /** @param {string} message @param {'timeout'|'permanent'|'transient'} kind */
-  constructor(message, kind, { status = null, retryAfter = null, cause } = {}) {
+  constructor(message, kind, { status = null, retryAfter = null, code = null, resetAt = null, cause } = {}) {
     super(message, cause ? { cause } : undefined);
     this.name = 'VoiceHttpError';
     this.kind = kind;
     this.status = status;
     this.retryAfter = retryAfter;
-    this.rateLimited = status === 429;
+    this.code = code;
+    this.resetAt = resetAt;
+    this.rateLimited = status === 429 && code !== 'credit_exhausted';
   }
 }
 
@@ -44,9 +46,19 @@ export function redactKey(text, apiKey) {
   return out.replace(/Bearer\s+[A-Za-z0-9._~+/=-]{8,}/g, 'Bearer [redacted]').replace(/sk-or-[A-Za-z0-9_-]{6,}/g, 'sk-or-[redacted]');
 }
 
+/** 中継（kind: 'plus'）の誤りの本文から code と resetAt を取る。本文そのものは誤りの文に入れない */
+function plusError(text) {
+  try {
+    const err = JSON.parse(text)?.error;
+    return { code: typeof err?.code === 'string' ? err.code : null, resetAt: typeof err?.resetAt === 'string' ? err.resetAt : null };
+  } catch { return { code: null, resetAt: null }; }
+}
+
 /**
  * POST して、成功（2xx）の応答を返す。失敗は VoiceHttpError。
- * @param {{ baseUrl: string, apiKey: string, fetch?: typeof fetch }} config
+ * @param {{ baseUrl: string, apiKey?: string, authorization?: (opts?: { force?: boolean }) => Promise<string>, kind?: string, fetch?: typeof fetch,
+ *           creditBlocked?: () => boolean, credit?: () => { resetAt: string }|null, noteCredit?: (resetAt: string|null) => void, refreshAccount?: () => Promise<void> }} config
+ *   authorization があるときは apiKey の代わりに、送るたびに呼んで Bearer の値を取る（Pleiad Plus の中継 kind: 'plus'。ID トークンは覚えない）
  * @param {string} path  例 '/audio/transcriptions'
  * @param {unknown} body JSON にして送る
  * @param {{ headersTimeoutMs: number, signal?: AbortSignal, retry?: boolean, retryRateLimited?: boolean, onRateLimited?: (retryAfter: string|null, retrying: boolean) => void }} options
@@ -59,16 +71,29 @@ export async function postOpenRouter(config, path, body, options) {
   const fetchImpl = config.fetch ?? ((input, init) => fetch(input, init));
   const url = `${config.baseUrl.replace(/\/$/, '')}${path}`;
   const payload = JSON.stringify(body);
+  const plus = config.kind === 'plus';
+  // 中継の credit_exhausted を覚えている間は送らない（resetAt を過ぎるか、アカウントの読み直しが上限未満を示すまで）
+  if (plus && config.creditBlocked?.()) {
+    throw new VoiceHttpError('credit_exhausted', 'permanent', { code: 'credit_exhausted', resetAt: config.credit?.().resetAt ?? null });
+  }
+  let retriedAuth = false;
   for (let attempt = 0; ; attempt++) {
     const last = attempt > 0 || options.retry === false;
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), options.headersTimeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout.signal]) : timeout.signal;
+    let authorization;
+    try {
+      authorization = config.authorization ? await config.authorization() : `Bearer ${config.apiKey}`;
+    } catch (cause) {
+      clearTimeout(timer);
+      throw new VoiceHttpError('authorization unavailable', 'permanent', { cause });
+    }
     let response;
     try {
       response = await fetchImpl(url, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${config.apiKey}`, 'Content-Type': 'application/json', 'X-Title': 'Pleiad' },
+        headers: { Authorization: authorization, 'Content-Type': 'application/json', 'X-Title': 'Pleiad' },
         body: payload,
         signal,
       });
@@ -81,6 +106,36 @@ export async function postOpenRouter(config, path, body, options) {
     }
     clearTimeout(timer);
     if (response.ok) return { response, retried: attempt > 0 };
+    if (plus) {
+      // 中継の誤り: 本文の error.code で扱いを決める（本文そのものは誤りの文に入れない）
+      const err = plusError(await response.text().catch(() => ''));
+      const code = err.code, retryAfter = response.headers.get('retry-after');
+      if (response.status === 401 && code === 'unauthenticated' && !retriedAuth) {
+        retriedAuth = true;
+        try { await config.authorization({ force: true }); }
+        catch (cause) { throw new VoiceHttpError('authorization unavailable', 'permanent', { cause }); }
+        continue;
+      }
+      if (code === 'credit_exhausted') {
+        config.noteCredit?.(err.resetAt);
+        throw new VoiceHttpError(code, 'permanent', { status: response.status, code, resetAt: err.resetAt, retryAfter });
+      }
+      if (code === 'not_plus' || code === 'account_disabled') {
+        await config.refreshAccount?.();
+        throw new VoiceHttpError(code, 'permanent', { status: response.status, code });
+      }
+      if (response.status === 429) {
+        const retryable = !last && options.retryRateLimited !== false;
+        options.onRateLimited?.(retryAfter, retryable);
+        if (retryable) { await sleep(retryWaitMs(retryAfter)); continue; }
+        throw new VoiceHttpError(code ?? 'rate_limited', 'transient', { status: 429, code, retryAfter });
+      }
+      if (response.status >= 500 || code === 'upstream_error') {
+        if (!last) { await sleep(DEFAULT_RETRY_WAIT_MS); continue; }
+        throw new VoiceHttpError(code ?? `plus_${response.status}`, 'transient', { status: response.status, code, retryAfter });
+      }
+      throw new VoiceHttpError(code ?? `plus_${response.status}`, 'permanent', { status: response.status, code, retryAfter });
+    }
     const rateLimited = response.status === 429;
     const retryable = !last && ((rateLimited && options.retryRateLimited !== false) || response.status >= 500);
     if (rateLimited) options.onRateLimited?.(response.headers.get('retry-after'), retryable);

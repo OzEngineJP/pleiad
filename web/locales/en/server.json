@@ -275,6 +275,8 @@
       "MIGRATION_PENDING": "Moving the keys from the old storage is on hold (the old encrypted keys can't be read in this launch). Open Pleiad in a launch that can decrypt (the desktop app) to move them",
       "TOO_MANY": "You can register up to {{max}} keys. Delete keys you don't use",
       "UNKNOWN_USE": "Unknown use: {{use}}",
+      "UNSUPPORTED_USE": "Pleiad Plus can't be used here (delegation routing and voice calls only)",
+      "PLUS_SIGNED_OUT": "Not signed in to Pleiad Plus",
       "FILE_BROKEN": "The API keys file (api-keys.json) can't be read. Fix or move the file"
     },
     "origin": {

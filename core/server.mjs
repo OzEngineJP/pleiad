@@ -575,6 +575,8 @@ const apiKeySecrets = createSecretStore({ file: path.join(store.dataDir, 'api-ke
 apiKeySecrets.migrate().catch(() => {});
 const apiKeys = createApiKeys({
   dataDir: store.dataDir, secrets: apiKeySecrets, legacy: { compat: compatSecrets, voice: voiceSecrets }, endpoints: () => compatEndpoints,
+  // 仮想のキー「Pleiad Plus」（docs/plus.md「キー無しの機能」）。plusConfig・plusSession は下で作るので遅れて結ぶ
+  plus: { apiBase: () => plusConfig.apiBase, session: () => plusSession },
   log: (line, fields) => console.log(`  ${line}${fields ? ` ${JSON.stringify(fields)}` : ''}`),
   onChange: change => apiKeysChanged(change),
 });
@@ -603,7 +605,7 @@ apiKeys.init().catch(() => {});
 // 通話モード（core/voice/、docs/voice-call.md）。使う OpenRouter のキーは設定 › API キーで選んだもの（ホストだけが持つ。画面へは返さない）。
 // 音声は /voice-ws（バイナリ）で受け渡し、読み上げは emitGlobal の text.delta から作る
 const voiceHost = createVoiceHost({
-  dataDir: store.dataDir, apiKey: () => apiKeys.useKey('voice'), keyStorage: () => apiKeySecrets.status(),
+  dataDir: store.dataDir, endpoint: () => apiKeys.useEndpoint('voice'), keyStorage: () => apiKeySecrets.status(),
   getPrefs: () => store.getPrefs(), uiLang: () => currentLocale(), t, isLocal: isLocalRequest,
   // bot の会話が属するスレッド（スレッドの通話が読み上げる会話を決める）
   resolveThread: async (sessionId) => {
@@ -624,7 +626,17 @@ const plusSecrets = createSecretStore({ file: path.join(store.dataDir, 'plus-sec
 plusSecrets.migrate().catch(() => {});
 const plusConfig = createPlusConfig({ env: process.env, dataDir: store.dataDir, appVersion: APP_VERSION, log: line => console.log(`  ${line}`) });
 const plusSession = createPlusSession({ config: plusConfig, secrets: plusSecrets, openExternal, appVersion: APP_VERSION, lang: () => currentLocale() });
-plusSession.onChange(({ type, status }) => emitGlobal({ type: 'plusStatus', status, change: type, sessionId: null }));
+plusSession.onChange(({ type, status }) => {
+  emitGlobal({ type: 'plusStatus', status, change: type, sessionId: null });
+  // キー無しの機能（docs/plus.md）: ログインしたら、自動選択と通話のどちらも「使わない」のときだけ仮想のキー plus を両方に選ぶ（{ autoPlus }）
+  if (type === 'signedIn') apiKeys.plusSignedIn().catch(() => {});
+  // セッションの出入り・アカウントの読み直しで送り先（useEndpoint）が変わりうるので、通話の比べと画面の状態を更新する
+  if (type === 'signedIn' || type === 'signedOut' || type === 'account') {
+    voiceHost.keysChanged().catch(() => {});
+    emitGlobal({ type: 'voiceChanged', sessionId: null });
+    emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
+  }
+});
 plusSession.init().catch(e => console.error('  plus: 起動の読み込みに失敗:', String(e?.code ?? e?.message ?? e)));
 // 外部 MCP の台帳と一覧の写し（pleiad.db の行。遅延起動・孤児の掃除。core/mcp-ledger.mjs）
 const mcpLedger = createMcpLedger({ dataDir: store.dataDir, log: line => console.log(`  ${line}`) });
@@ -1363,10 +1375,10 @@ let plyInstructionsCache = await (async () => { const prefs = await store.getPre
 /** 設定 › コンテキストの「Pleiad の指示」。文は画面の言語。委譲と連動の項目は今の委譲先の自動選択の有無を反映する */
 const plyInstructionsState = () => plyInstructionsScreen(plyInstructionsCache, currentLocale(), { routing: routingSettingsCache.enabled });
 const ROUTING_SERVICES = [...new Set(Object.values(JUDGE_SERVICE))];
-const routingKey = service => apiKeys.useKey(`judge:${ROUTING_JUDGE[service]}`);
+const routingEndpoint = service => apiKeys.useEndpoint(`judge:${ROUTING_JUDGE[service]}`);
 /** API キー・割り当てが変わったとき（core/api-keys.mjs の onChange）。使う側の画面と通話のキーを更新する */
 function apiKeysChanged(change = {}) {
-  emitGlobal({ type: 'apiKeysChanged', sessionId: null });
+  emitGlobal({ type: 'apiKeysChanged', autoPlus: change.autoPlus === true, sessionId: null });
   // API キーの値・一覧が変わった。伏せる値を読み直し、消したキーの使い道（環境変数）を外す
   secrets.invalidate();
   if (change.keys) secrets.pruneKeyUses().catch(() => {});
@@ -1444,7 +1456,7 @@ async function routeDelegation(args, lng, cwd) {
   // 依頼文は自動選択のモデルへ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
   const [judged] = await Promise.all([
-    judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToQwen, keyOf: routingKey }),
+    judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToQwen, endpointOf: routingEndpoint }),
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
@@ -1481,8 +1493,11 @@ async function delegationRoutingState() {
   }));
   const prefs = await store.getPrefs();
   const conversationEfforts = Object.fromEntries(listBackends().map(b => [b.id, prefs.backends?.[b.id]?.effort ?? '']));
+  const credit = await apiKeys.plusCredit().catch(() => null);
   return { settings, defaults: normalizeSettings({}), kinds: KINDS, judges: JUDGES, tiers: TIERS, signals: SIGNALS, conversationEfforts,
     keys: Object.fromEntries(ROUTING_SERVICES.map((s, i) => [s, { hasKey: has[i], keyRef: has[i] ? refs[`judge:${ROUTING_JUDGE[s]}`] ?? null : null }])),
+    // 中継が credit_exhausted を返した月の状態（{ resetAt } か null。仮想のキー plus の判定を止めている間だけ値がある）
+    limit: credit,
     storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
     warnings: settingsWarnings({ settings, usage }), candidates };
 }

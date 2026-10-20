@@ -20,7 +20,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { writeAtomic } from './atomic-file.mjs';
-import { SECRET_PREFIX as JUDGE_PREFIX, JUDGE_SERVICE } from './delegation-judges.mjs';
+import { SECRET_PREFIX as JUDGE_PREFIX, JUDGE_SERVICE, openRouterApiBase } from './delegation-judges.mjs';
 import { voiceBaseUrl } from './voice/openrouter.mjs';
 import { USE_PROVIDER, FIXED_HOST_PROVIDERS, providerName, providerOfEndpoint, hostOf, keyFitsEndpoint } from '../web/api-keys-model.mjs';
 import { t } from './i18n.mjs';
@@ -28,6 +28,9 @@ import { t } from './i18n.mjs';
 export { providerOfEndpoint };
 
 export const SECRET_PREFIX = 'key:';
+/** 仮想のキー「Pleiad Plus」の id。値を持たない（秘密の置き場に何も書かない）。選べるのは judge:jev と voice だけ（docs/plus.md「キー無しの機能」） */
+export const PLUS_KEY_ID = 'plus';
+const PLUS_USES = new Set(['judge:jev', 'voice']);
 /** 古い置き場（互換の接続先のキー）の項目名 */
 export const LEGACY_ENDPOINT_PREFIX = 'compat-endpoint:';
 const LEGACY_VOICE_KEY = 'openrouter';
@@ -51,7 +54,7 @@ const CHECK_TIMEOUT_MS = 5000;
 /** キーそのものだけを確かめられるプロバイダー（そうでないものは接続先の確認で確かめる） */
 const CHECKABLE = new Set(['openrouter']);
 
-/** code: INVALID_KEY / NOT_FOUND / PROVIDER_MISMATCH / MIGRATION_PENDING / TOO_MANY / UNKNOWN_USE / FILE_BROKEN */
+/** code: INVALID_KEY / NOT_FOUND / PROVIDER_MISMATCH / MIGRATION_PENDING / TOO_MANY / UNKNOWN_USE / UNSUPPORTED_USE / PLUS_SIGNED_OUT / FILE_BROKEN */
 export class ApiKeyError extends Error {
   // i18n-dynamic: apiKeys.errors.
   constructor(code, params) { super(t(`apiKeys.errors.${code}`, params)); this.code = code; }
@@ -86,11 +89,11 @@ function adoptRetiredJudge(uses, keys) {
 function clean(raw) {
   if (raw?.version !== 1 || !Array.isArray(raw.keys)) throw new Error('bad');
   // provider が 'cerebras' の既存のキーは custom（host なし）に直す。label・id・値はそのまま（起動では書き直さず、次に台帳を保存したときに書く）
-  const keys = raw.keys.filter(k => ID.test(k?.id ?? '') && PROVIDER.test(k.provider ?? '') && typeof k.label === 'string')
+  const keys = raw.keys.filter(k => (ID.test(k?.id ?? '') || k?.id === PLUS_KEY_ID) && PROVIDER.test(k.provider ?? '') && typeof k.label === 'string')
     .map(k => ({ id: k.id, provider: normalizeProvider(k.provider), label: k.label.slice(0, MAX_LABEL), createdAt: typeof k.createdAt === 'string' ? k.createdAt : null,
       host: normalizeHost(normalizeProvider(k.provider), k.host), lastCheck: k.lastCheck && typeof k.lastCheck === 'object' ? k.lastCheck : null }));
   const ids = new Set(keys.map(k => k.id));
-  const uses = Object.fromEntries(USES.map(u => [u, ids.has(raw.uses?.[u]) ? raw.uses[u] : null]));
+  const uses = Object.fromEntries(USES.map(u => [u, (ids.has(raw.uses?.[u]) || raw.uses?.[u] === PLUS_KEY_ID) ? raw.uses[u] : null]));
   if (ids.has(raw.uses?.[RETIRED_JUDGE_USE])) adoptRetiredJudge(uses, keys);
   return { version: 1, migration: raw.migration?.done ? { done: true, at: String(raw.migration.at ?? '') } : null, keys, uses,
     guide: raw.guide === 'pending' || raw.guide === 'done' ? raw.guide : null };
@@ -102,9 +105,10 @@ function clean(raw) {
  * @param {ReturnType<import('./secret-store.mjs').createSecretStore>} o.secrets  api-key-secrets.json
  * @param {{ compat?: object, voice?: object }} [o.legacy]  古い置き場（compat-endpoint-secrets.json・voice-secrets.json の秘密ストア）
  * @param {() => object|null} [o.endpoints]  createCompatEndpoints の結果（接続先の割り当て。遅れて結ぶ）
+ * @param {{ apiBase: string|(() => string), session: () => object|null }} [o.plus]  Pleiad Plus の api の基点とセッション（仮想のキー plus の送り先と ID トークンの元。遅れて結ぶ）
  * @param {(change: object) => void} [o.onChange]  キー・割り当てが変わったとき（画面への配信・通話のキーの捨て直し）
  */
-export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () => null, fetchImpl, env = process.env, now = Date.now, log = () => {}, onChange = () => {} }) {
+export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () => null, plus = null, fetchImpl, env = process.env, now = Date.now, log = () => {}, onChange = () => {} }) {
   const file = path.join(dataDir, 'api-keys.json');
   let state = emptyState();
   let deferred = null;     // 移行を保留している理由（locked / broken / write-failed）。null なら移行済み
@@ -142,7 +146,8 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
   async function mirrorUse(use) {
     if (NO_LEGACY.has(use)) return;
     const id = state.uses[use];
-    const value = id ? await keyValue(id).catch(() => null) : null;
+    // 'plus' は値を持たない仮想のキー（古い置き場には null を書いて、古い版が送らないようにする）
+    const value = id && id !== PLUS_KEY_ID ? await keyValue(id).catch(() => null) : null;
     if (use === 'voice') await mirror(legacy.voice, LEGACY_VOICE_KEY, value);
     else await mirror(legacy.compat, JUDGE_PREFIX + SERVICE_OF_USE[use], value);
   }
@@ -150,6 +155,62 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
   async function mirrorEndpoint(endpointId, keyId) {
     const value = keyId ? await keyValue(keyId).catch(() => null) : null;
     await mirror(legacy.compat, LEGACY_ENDPOINT_PREFIX + endpointId, value);
+  }
+
+  // ---- Pleiad Plus（仮想のキー plus。値を持たず、送るときは api の中継の口へ ID トークンを付ける。docs/plus.md「キー無しの機能」）
+  const plusSession = () => (typeof plus?.session === 'function' ? plus.session() : plus?.session) ?? null;
+  const plusApiBase = () => String(typeof plus?.apiBase === 'function' ? plus.apiBase() : plus?.apiBase ?? '').replace(/\/+$/, '');
+  // 中継が 429 credit_exhausted を返した月の resetAt（ISO）。resetAt を過ぎるか、アカウントの読み直しが上限未満を示すまで、plus へは送らずに断る
+  let plusResetAt = null;
+  function plusCreditBlocked() {
+    if (!plusResetAt) return false;
+    const account = plusSession()?.snapshot?.().account ?? null;
+    const credits = Number(account?.usage?.credits), limit = Number(account?.limits?.creditsPerMonth);
+    if (now() >= Date.parse(plusResetAt) || (Number.isFinite(credits) && Number.isFinite(limit) && credits < limit)) { plusResetAt = null; return false; }
+    return true;
+  }
+  const openEndpoint = (use, key, keyId) => ({
+    kind: 'openrouter', keyId, key,
+    baseUrl: use === 'voice' ? voiceBaseUrl(env) : openRouterApiBase(env),
+    authorization: async () => `Bearer ${key}`,
+  });
+  function plusEndpoint(use, session) {
+    const snap = session.snapshot?.() ?? {};
+    const base = `${plusApiBase()}/v1/proxy/${use === 'voice' ? 'voice' : 'openrouter'}`;
+    return {
+      kind: 'plus', baseUrl: base, uid: snap.uid ?? snap.account?.uid ?? null,
+      // ID トークンは送るたびに取る（期限があるので覚えない）。取れなければ「キーが無い」と同じ扱い（PLUS_SIGNED_OUT）
+      authorization: async (opts = {}) => {
+        try { return `Bearer ${await session.getIdToken({ force: opts?.force === true })}`; }
+        catch (e) { throw e instanceof ApiKeyError ? e : new ApiKeyError('PLUS_SIGNED_OUT'); }
+      },
+      creditBlocked: () => plusCreditBlocked(),
+      credit: () => (plusResetAt ? { resetAt: plusResetAt } : null),
+      noteCredit: resetAt => { if (resetAt) plusResetAt = String(resetAt); },
+      refreshAccount: async () => { await session.status?.({ refresh: true }).catch(() => {}); },
+    };
+  }
+  /** 使う側（通話・自動選択）が送る口。null か { kind: 'openrouter'|'plus', baseUrl, authorization } */
+  async function endpointFor(use) {
+    await ensure();
+    if (!USES.includes(use)) return null;
+    if (!migrated()) {
+      const key = await legacyUse(use).catch(() => null);
+      return key ? openEndpoint(use, key, null) : null;
+    }
+    const id = state.uses[use];
+    if (!id) return null;
+    if (id === PLUS_KEY_ID) {
+      const session = plusSession();
+      if (!session) return null;
+      const snap = session.snapshot?.() ?? {};
+      // ログアウト・free・disabled・state off・maintenance は「キーが無い」と同じ扱い
+      if (!snap.signedIn || snap.available === false || snap.state === 'off' || snap.state === 'maintenance') return null;
+      if (snap.account?.status === 'free' || snap.account?.status === 'disabled') return null;
+      return plusEndpoint(use, session);
+    }
+    const key = await keyValue(id).catch(() => null);
+    return key ? openEndpoint(use, key, id) : null;
   }
 
   // ---- 値
@@ -321,6 +382,8 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
         migration: migrated() ? { state: 'done' } : { state: 'deferred', reason: deferred ?? 'broken' },
         storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
         keys, uses: { ...state.uses }, guide: guideOf(),
+        // 仮想のキー「Pleiad Plus」。値を持たない（削除・名前の変更・値の確認・probe の対象にしない）。judge:jev と voice だけ選べる
+        virtual: [{ id: PLUS_KEY_ID, provider: 'plus', label: 'Pleiad Plus', virtual: true, uses: await usersOf(PLUS_KEY_ID) }],
       };
     },
     /** 値（無ければ null）。接続先の送信・確認が使う。暗号化された値を読めない起動は SECRET_LOCKED を投げる */
@@ -331,13 +394,19 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       if (!USES.includes(use)) return null;
       if (!migrated()) return legacyUse(use);
       const id = state.uses[use];
-      return id ? keyValue(id) : null;
+      // 'plus' は仮想のキー（値を持たない）。id がぶつかった実のキーがあっても、選ばれているのは仮想のほう
+      return id && id !== PLUS_KEY_ID ? keyValue(id) : null;
     },
+    /** 使う側が送る口（baseUrl・authorization）を返す。使わない・条件を満たさなければ null。詳しくは endpointFor */
+    async useEndpoint(use) { return endpointFor(use); },
     /** 使うキーが選ばれているか（値は読まない）。保留中は古い置き場に値があるか */
     async hasUse(use) {
       await ensure();
       if (!USES.includes(use)) return false;
-      if (migrated()) return Boolean(state.uses[use]) && (await secrets.keys(SECRET_PREFIX).catch(() => [])).includes(SECRET_PREFIX + state.uses[use]);
+      if (migrated()) {
+        if (state.uses[use] === PLUS_KEY_ID) return (await endpointFor(use)) !== null;
+        return Boolean(state.uses[use]) && (await secrets.keys(SECRET_PREFIX).catch(() => [])).includes(SECRET_PREFIX + state.uses[use]);
+      }
       if (NO_LEGACY.has(use)) return false;
       const names = use === 'voice' ? await legacy.voice?.keys(LEGACY_VOICE_KEY).catch(() => []) : await legacy.compat?.keys(JUDGE_PREFIX + SERVICE_OF_USE[use]).catch(() => []);
       return (names ?? []).length > 0;
@@ -390,10 +459,31 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       emit({ keys: true, uses: usesBefore, endpoints: detached.length > 0 });
       return { id, affected };
     },
+    /**
+     * Pleiad Plus にログインしたときの自動の選択（onChange に { uses: ['judge:jev','voice'], autoPlus: true } を出す）。
+     * 委譲先の自動選択と音声通話の両方が「使わない」のときだけ、両方に仮想のキー plus を選ぶ。ログアウトでは消さない
+     */
+    async plusSignedIn() {
+      await ensure();
+      if (!migrated() || state.uses['judge:jev'] || state.uses.voice) return false;
+      await mutate(s => { s.uses['judge:jev'] = PLUS_KEY_ID; s.uses.voice = PLUS_KEY_ID; });
+      for (const u of ['judge:jev', 'voice']) await mirrorUse(u);
+      emit({ uses: ['judge:jev', 'voice'], autoPlus: true });
+      return true;
+    },
+    /** 中継が credit_exhausted を返した月の状態（{ resetAt }。無ければ null）。過ぎた・上限未満に戻った値は返さない */
+    async plusCredit() { await ensure(); plusCreditBlocked(); return plusResetAt ? { resetAt: plusResetAt } : null; },
     /** 通話・自動選択・wait_until の問いに使うキーを選ぶ（id が null なら使わない）。選んだときから外部へ送り始める */
     async setUse(use, id) {
       await writable();
       if (!USES.includes(use)) throw new ApiKeyError('UNKNOWN_USE', { use: String(use) });
+      if (id === PLUS_KEY_ID) {
+        if (!PLUS_USES.has(use)) throw new ApiKeyError('UNSUPPORTED_USE', { use: String(use) });
+        await mutate(s => { s.uses[use] = PLUS_KEY_ID; });
+        await mirrorUse(use);
+        emit({ uses: [use] });
+        return { use, id: PLUS_KEY_ID };
+      }
       if (id !== null && id !== undefined) {
         const key = known(String(id));
         if (!key) throw new ApiKeyError('NOT_FOUND');
