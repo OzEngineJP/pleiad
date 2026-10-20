@@ -1,6 +1,7 @@
 package dev.pleiad.app
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
 import android.content.Intent
@@ -38,6 +39,7 @@ import dev.pleiad.app.remote.DeviceProxy
 import dev.pleiad.app.remote.LinkPolicy
 import dev.pleiad.app.remote.LinkStatus
 import dev.pleiad.app.remote.LinkTarget
+import dev.pleiad.app.remote.PickedFiles
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
@@ -90,8 +92,18 @@ class HostActivity : ComponentActivity() {
     private val statusListener: (String, LinkStatus) -> Unit = { id, s -> if (id == hostId) runOnUiThread { pushStatus(s) } }
 
     private val pickFiles = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        fileCallback?.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(r.resultCode, r.data))
+        fileCallback?.onReceiveValue(pickedUris(r.resultCode, r.data)?.toTypedArray())
         fileCallback = null
+    }
+
+    /** The uris the picker answered with: a multiple choice arrives in the intent's ClipData, not its getData() (PickedFiles). */
+    private fun pickedUris(resultCode: Int, data: Intent?): List<Uri>? {
+        val clip = data?.clipData
+        return PickedFiles.of(
+            resultCode == Activity.RESULT_OK,
+            clip?.let { c -> List(c.itemCount) { i -> c.getItemAt(i).uri } } ?: emptyList(),
+            data?.data,
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -197,7 +209,10 @@ class HostActivity : ComponentActivity() {
                 fileCallback?.onReceiveValue(null)
                 fileCallback = callback
                 return try {
-                    pickFiles.launch(params.createIntent())
+                    val intent = params.createIntent()
+                    // Some WebView versions leave EXTRA_ALLOW_MULTIPLE off createIntent() even for MODE_OPEN_MULTIPLE
+                    if (params.mode == FileChooserParams.MODE_OPEN_MULTIPLE) intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    pickFiles.launch(intent)
                     true
                 } catch (_: ActivityNotFoundException) {
                     fileCallback = null
