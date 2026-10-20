@@ -84,6 +84,33 @@ h1, h2, .leave-sticky p, .f-sub, .lede { word-break: auto-phrase; }
 .nav-dl { transition: opacity .3s var(--ease), transform .3s var(--ease), background .2s; }
 .nav-dl { transition: opacity .3s var(--ease), transform .3s var(--ease), visibility 0s, background .2s; }
 .nav:not(.show-dl) .nav-dl { opacity: 0; transform: translateY(-6px); pointer-events: none; visibility: hidden; transition: opacity .3s var(--ease), transform .3s var(--ease), visibility 0s .3s; }
+/* 項目を足しても崩れないよう、文字のリンクの形を先に決めておく（ブランドは縮めない） */
+.brand { flex: none; }
+.nav-links { min-width: 0; }
+.nav-link { display: flex; align-items: center; height: 40px; padding: 0 12px; border-radius: 999px; font-size: 14px; font-weight: 500; color: var(--ink); white-space: nowrap; transition: background .2s; }
+.nav-link:hover { background: var(--s1); }
+/* 狭い画面ではダウンロードを印だけにして、ブランドと重ねない（文字は読み上げ用に残す） */
+@media (max-width: 420px) {
+  .nav .nav-dl { width: 36px; padding: 0; }
+  .nav .nav-dl span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+}
+.nav.is-solid { background: rgba(245, 246, 250, .92); backdrop-filter: saturate(1.4) blur(20px); -webkit-backdrop-filter: saturate(1.4) blur(20px); }
+
+/* OS ごとの出し分け。<html data-os> は os.js が付ける（JS が無いときは data-os が無く、any の形になる）
+   win / mac: その OS のボタンと「その他の OS」(pc)。ほか（Linux・スマホ・不明）: 「ダウンロード」(any) → /download/ */
+:root:not([data-os="win"]) [data-for="win"],
+:root:not([data-os="mac"]) [data-for="mac"],
+:root:not([data-os="win"], [data-os="mac"]) [data-for="pc"],
+:root:is([data-os="win"], [data-os="mac"]) [data-for="any"] { display: none; }
+/* /download/ は全部を並べ、見ている OS のボタンだけを塗る */
+:root[data-os="win"] [data-primary="win"],
+:root[data-os="mac"] [data-primary="mac"],
+:root[data-os="linux"] [data-primary="linux"],
+:root[data-os="android"] [data-primary="android"] { background: var(--indigo); color: #f4f5ff; }
+:root[data-os="win"] [data-primary="win"]:hover,
+:root[data-os="mac"] [data-primary="mac"]:hover,
+:root[data-os="linux"] [data-primary="linux"]:hover,
+:root[data-os="android"] [data-primary="android"]:hover { background: #2f3c86; }
 
 /* ボタン */
 .btn {
@@ -480,8 +507,42 @@ h2 {
 .end .cta { justify-content: center; margin-top: 44px; }
 .end .meta { margin-top: 22px; }
 
-.foot { display: flex; justify-content: center; gap: 24px; padding: 32px var(--pad) 48px; font-size: 13px; color: var(--weak); }
+.foot { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 24px; padding: 32px var(--pad) 48px; font-size: 13px; color: var(--weak); }
+.foot > * { white-space: nowrap; }
 .foot a:hover { color: var(--ink); }
+
+/* /download/。面も枠も張らず、余白と見出しだけで区切る */
+.dl-page main { padding-top: 72px; }
+.dl-head { padding: 56px var(--gutter) 0; }
+.dl-head h1 { font-size: clamp(34px, 5vw, 60px); line-height: 1.05; }
+.ver { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 16px; font-size: 14px; color: var(--weak); }
+.ver span:empty { display: none; }
+.ver a { color: var(--indigo); font-weight: 500; }
+.ver a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.plat { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px 28px; padding: 44px var(--gutter) 0; }
+.os { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 20px; line-height: 1.4; letter-spacing: -.01em; font-weight: 700; color: var(--ink-strong); }
+.os svg { width: 22px; height: 22px; flex: none; color: var(--ink); }
+.req { margin-top: 6px; font-size: 14px; color: var(--weak); }
+.plat .cta { margin-top: 18px; gap: 8px; }
+.plat .btn-s { gap: 8px; padding: 0 14px; }
+.dl-note { max-width: 34em; word-break: auto-phrase; margin-top: 12px; font-size: 13px; line-height: 1.6; color: var(--weak); }
+.dl-sec { padding: 72px var(--gutter) 0; scroll-margin-top: 72px; }
+.dl-sec > h2 { margin: 0; font-size: clamp(24px, 3vw, 32px); }
+.dl-sec > .f-sub { margin-top: 10px; }
+.dl-sec .plat { padding: 28px 0 0; }
+.dl-page .foot { margin-top: 72px; }
+/* リモートの面から /download/#mobile へ */
+.tile-cta { margin-top: 20px; }
+@media (max-width: 900px) {
+  .plat { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 36px; }
+  .dl-head { padding-top: 40px; }
+  .dl-sec { padding-top: 56px; }
+  .plat .cta { flex-direction: row; align-items: center; max-width: 480px; }
+  .plat .cta .btn { flex: 1; }
+}
+@media (max-width: 520px) {
+  .dl-page main { padding-top: 60px; }
+}
 
 /* 英語。字が長い分だけ組みを調える（日本語の組みは変えない） */
 html:lang(en) .step h2 { font-size: clamp(26px, 2.3vw, 38px); }
