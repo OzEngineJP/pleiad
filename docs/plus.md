@@ -12,17 +12,35 @@
 | --- | --- | --- |
 | `AGENT_HOST_PLUS_API` | `https://api.pleiad.dev` | Pleiad Plus の api の基点。`https:` のほか、試験のために `http://127.0.0.1:<port>` と `http://localhost:<port>` だけを受ける。ほかの `http:` は起動時に警告を出して既定に戻す |
 | `AGENT_HOST_PLUS_JWKS_URL` | `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com` | ID トークンの公開鍵（JWKS） |
-| `AGENT_HOST_PLUS` | なし | `0` なら Plus を全部隠す（`state: off` と同じ。自分でビルドする人のため） |
+| `AGENT_HOST_PLUS` | なし | `0` なら Plus を全部隠す（`state: off` と同じ。自分でビルドする人のため）。`1` なら `visibility: optin` の間でも端末の印が無くても入口を出す（開発と試験のため） |
 
 ## `/v1/auth/config`（`core/plus/config.mjs`）
 
-`GET <api>/v1/auth/config`（認証なし）。クライアントが使う欄は `state`・`token`（`projectId`・`apiKey`）・`urls`（`login`・`account`・`profile`・`relay`・`refresh`）・`minClient` だけ。ほかの欄は読まない。
+`GET <api>/v1/auth/config`（認証なし）。クライアントが使う欄は `state`・`visibility`・`token`（`projectId`・`apiKey`）・`urls`（`login`・`account`・`profile`・`relay`・`refresh`）・`minClient` だけ。ほかの欄は読まない。
 
 - 覚えるのは 5 分。過ぎたら次に要るときに読み直す。同時の呼び出しは 1 本にまとめる
 - 読めた値は `<data>/plus-config.json` にも書く（秘密は入っていない）。起動直後と、api に届かないときはこの写しを使う
 - 写しも無く api にも届かないときは `state` を `null`（分からない）にする
 - `state` は `on` / `maintenance` / `off`。`off` と `AGENT_HOST_PLUS=0` のときは状態の `available` を false にする（画面は入口ごと出さない）
+- `visibility` は `public` / `optin`。`optin` の間は、その端末に「入口を出す」印（下の「入口を出すリンク」）が無い限り `available` を false にする。欄が無い・知らない値は `optin` として扱う
 - 今の版が `minClient.desktop` より古いときは `needsUpdate: true` にし、Plus の機能を使わない
+
+## 入口を出すリンク（`pleiad://plus/enable`・`pleiad://plus/disable`）
+
+`visibility: optin` の間、Plus の入口は端末ごとに隠れている。その端末で `pleiad://plus/enable` を開くと
+「入口を出す」印が立ち、設定のメニューの Pleiad Plus・委譲・通話・リモートの Plus のまとまり・初回の案内の行が
+出るようになる。`pleiad://plus/disable` で印を外す。`visibility: public` の間は印に関係なく出る。
+ログインの状態・セッションは印とは別に残る。印を外してもログアウトしない。
+
+- 印の置き場（どちらもその端末だけ。同期・バックアップの対象外）:
+  - デスクトップ・サーバー: `prefs.plus.entrance`（`core/ops/settings.mjs` の `plus` 設定は `sync: false`）
+  - Android: SharedPreferences `plus` の `entrance`（`PlusStore`）
+- デスクトップは `pleiad` プロトコルを OS に登録する（electron-builder.yml の `protocols`、MSIX は
+  build/appx-manifest.xml の Extensions、実行時は `app.setAsDefaultProtocolClient` をパッケージ版だけ）。
+  main が argv（Windows・Linux の単一インスタンス・初回起動）と `open-url`（macOS）からリンクを拾い、
+  `{ type: 'plus-entrance', action }` でサーバーへ渡す（desktop/plus-link.cjs）。ほかの `pleiad://…` は無視する
+- リンクを受け取ったら主の窓を前に出す（起動前に届いた分は起動後に流す）
+- ほかのプラットフォーム（iOS）は対象外
 
 ## ログインの流れ（`core/plus/session.mjs`）
 
@@ -335,7 +353,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 ### 設定は起動時に受け取る
 
 - 起動時と、前面にいる間は 5 分ごとに `GET <api>/v1/auth/config` を読む。使う欄だけを読む:
-  `state`・`token.projectId`・`token.apiKey`・`urls`（`login`・`account`・`profile`・`relay`・`refresh`）・
+  `state`・`visibility`・`token.projectId`・`token.apiKey`・`urls`（`login`・`account`・`profile`・`relay`・`refresh`）・
   `minClient.android`。それ以外の欄は読まない
 - api のベースの URL は `BuildConfig.PLUS_API`（既定 `https://api.pleiad.dev`）。gradle のプロパティ
   `pleiadPlusApi` で debug のビルドだけ替えられる（release では替えられない）
@@ -344,6 +362,9 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
   押せない
 - `state` が `off` のときは Plus の入口を全部隠して今の見た目に戻る。`minClient.android` より古い版は
   「Pleiad を更新してください」を出す
+- `visibility` が `optin` の間は、この端末の印（SharedPreferences `plus` の `entrance`）が無い限り入口を
+  全部隠す（`stateJson` が `off` と同じ見た目を返す）。`pleiad://plus/enable|disable` が印を変える
+  （intent-filter は host `plus`、無関係な `pleiad://plus/…` は無視。「入口を出すリンク」の節）
 
 ### ログイン（Custom Tabs + PKCE）
 

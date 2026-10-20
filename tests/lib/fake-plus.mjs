@@ -36,6 +36,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
 
   const state = {
     state: 'on',
+    visibility: 'public',     // 'optin' にすると端末の印（pleiad://plus/enable）が無い限り入口が隠れる
     minClient: { desktop: '0.0.0', android: '0.0.0' },
     nextLogin: null,          // { uid, email } | { error: 'access_denied' }
     accounts: {},             // uid -> account の欄
@@ -107,6 +108,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     if (url.pathname === '/v1/auth/config' && req.method === 'GET') {
       return json(res, 200, {
         state: state.state,
+        visibility: state.visibility ?? 'public',
         token: { projectId: PROJECT_ID, apiKey: API_KEY },
         urls: { login: `${origin}/login`, account: `${origin}/account`, profile: `${origin}/profile`, relay: relayUrl, refresh: `${origin}/v1/token` },
         minClient: state.minClient,

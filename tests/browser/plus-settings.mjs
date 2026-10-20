@@ -212,6 +212,31 @@ try {
       try { fs.rmSync(dataDir2, { recursive: true, force: true }); } catch {}
     }
   }
+
+  // ---- 12. visibility: optin で端末の印が無い → 同じく項目ごと出さない ----
+  {
+    plus.state.visibility = 'optin';
+    const dataDir3 = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-plus-optin-'));
+    const capture3 = path.join(dataDir3, 'external.log');
+    const server3 = await startServer({ dataDir: dataDir3, entry: path.join(ROOT, 'tests', 'lib', 'plus-main-port.mjs'),
+      env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS_API: plus.url, PLUS_EXTERNAL_CAPTURE: capture3 } });
+    try {
+      const ctx3 = await browser.newContext({ viewport: { width: 1280, height: 1000 }, locale: 'ja-JP' });
+      const page3 = await ctx3.newPage();
+      await page3.goto(`http://127.0.0.1:${server3.port}/?token=${server3.token}`, { waitUntil: 'load' });
+      await page3.waitForTimeout(1500);
+      await page3.evaluate(() => document.getElementById('onboardingDialog')?.close());
+      await page3.evaluate(() => document.getElementById('settings')?.click());
+      await page3.waitForSelector('#settingsView:not([hidden])');
+      const hidden = await page3.evaluate(() => document.getElementById('plusTab').hidden);
+      ok('visibility: optin・印無し → メニューに Pleiad Plus は出ない', hidden === true, `hidden=${hidden}`);
+      await ctx3.close();
+    } finally {
+      await server3.stop().catch(() => {});
+      try { fs.rmSync(dataDir3, { recursive: true, force: true }); } catch {}
+      plus.state.visibility = 'public';
+    }
+  }
 } finally {
   await browser?.close().catch(() => {});
   await server?.stop().catch(() => {});

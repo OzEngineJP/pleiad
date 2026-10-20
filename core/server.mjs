@@ -629,8 +629,20 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
 // 更新トークンだけを plus-secrets.json（ほかと同じ secretCipher）に置く。状態が変わるたびに全接続へ plusStatus を送る
 const plusSecrets = createSecretStore({ file: path.join(store.dataDir, 'plus-secrets.json'), cipher: secretCipher });
 plusSecrets.migrate().catch(() => {});
-const plusConfig = createPlusConfig({ env: process.env, dataDir: store.dataDir, appVersion: APP_VERSION, log: line => console.log(`  ${line}`) });
+// この PC の「入口を出す」印（prefs.plus.entrance。visibility: optin の間だけ効く。リンク pleiad://plus/enable が立てる。同期しない）
+let plusEntrance = false;
+const plusConfig = createPlusConfig({ env: process.env, dataDir: store.dataDir, appVersion: APP_VERSION, log: line => console.log(`  ${line}`),
+  optIn: () => plusEntrance });
 const plusSession = createPlusSession({ config: plusConfig, secrets: plusSecrets, openExternal, appVersion: APP_VERSION, lang: () => currentLocale() });
+
+/** pleiad://plus/enable|disable からの印を、この PC だけの prefs.plus.entrance に書き、状態を送り直す */
+async function setPlusEntrance(on) {
+  if (plusEntrance === on) return;
+  plusEntrance = on;
+  const prefs = await store.getPrefs();
+  await savePref('plus', { ...(prefs.plus ?? {}), entrance: on });
+  plusSession.refresh();
+}
 
 let plusHostsCache = null;
 let plusHostsCacheAt = 0;
@@ -686,7 +698,11 @@ plusSession.onChange(({ type, status }) => {
     emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
   }
 });
-plusSession.init().catch(e => console.error('  plus: 起動の読み込みに失敗:', String(e?.code ?? e?.message ?? e)));
+// 印（prefs.plus.entrance）を読んでからセッションを始める。最初の状態から入口の出し入れに反映させるため
+(async () => {
+  try { plusEntrance = (await store.getPrefs())?.plus?.entrance === true; } catch { /* 読めなければ印無し */ }
+  await plusSession.init();
+})().catch(e => console.error('  plus: 起動の読み込みに失敗:', String(e?.code ?? e?.message ?? e)));
 // 外部 MCP の台帳と一覧の写し（pleiad.db の行。遅延起動・孤児の掃除。core/mcp-ledger.mjs）
 const mcpLedger = createMcpLedger({ dataDir: store.dataDir, log: line => console.log(`  ${line}`) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth, ledger: mcpLedger });
@@ -9615,6 +9631,10 @@ mainPort.on("message", async ({ data }) => {
     } catch (e) {
       mainPort.postMessage({ type: 'plus-token', id: data.id, ok: false, error: String(e?.message ?? e) });
     }
+  }
+  // デスクトップの main が拾った pleiad://plus/enable|disable（desktop/plus-link.cjs。ほかの pleiad://… は来ない）
+  if (data?.type === 'plus-entrance' && (data.action === 'enable' || data.action === 'disable')) {
+    void setPlusEntrance(data.action === 'enable');
   }
   if (data?.type === 'plus-hosts') {
     try {
