@@ -88,14 +88,10 @@ export default async function (t) {
     const tRows = () => termCmd('agentTasks');
     const hRows = () => hostCmd('agentTasks');
 
-    // ---- 両側オフのうちは host を出さない・ホストの許可を入れても端末側がオフなら使えない
+    // ---- ホストはつないだだけで受ける（ADR 0239）が、端末側の「この PC の AI から任せる」がオフなら host は出ない
     const first = await tool(null, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:NO' });
     const sid = first.sessionId;
-    t.ok('既定（両側オフ）では ply_delegate に host の引数が無い（書くと不正な引数）', toolResult(first).isError === true && (await tRows()).length === 0, toolResult(first).text);
-    await hostCmd('setRemoteDeviceAgent', { id: deviceId, enabled: true });
-    await sleep(500);
-    const hostOnly = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:NO' }));
-    t.ok('ホストだけがオンでも、端末側がオフなら host は出ない', hostOnly.isError === true && (await tRows()).length === 0);
+    t.ok('端末側がオフ（既定）では ply_delegate に host の引数が無い（書くと不正な引数）', toolResult(first).isError === true && (await tRows()).length === 0, toolResult(first).text);
 
     // ---- 端末側もオン（窓のスイッチの代わりに hosts.json の agentUse）
     await deviceStore.updateHost(hostId, { agentUse: true });
@@ -296,13 +292,13 @@ export default async function (t) {
     const denied = toolResult(await denyTurn);
     t.ok('断ると委譲は失敗し、ホストに子は作られない', denied.isError === true && !(await hRows()).some(r => r.task === 'echo:ESC2'), denied.text.slice(0, 120));
 
-    // ---- ホストが許可を切って入れ直す: 切っている間は任せられず、入れ直すと端末の線が開き直してまた使える
-    await hostCmd('setRemoteDeviceAgent', { id: deviceId, enabled: false });
-    const cut = await until(async () => { const r = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:CUT' })); return r.isError ? r : null; }, 20_000, '許可を切ったホストへは任せられない');
-    t.ok('ホストが許可を切ると、端末の AI は任せられない（host の引数も出なくなる）', cut.isError === true);
-    await hostCmd('setRemoteDeviceAgent', { id: deviceId, enabled: true });
+    // ---- ホストが「ほかの端末からの操作を許可する」を切って入れ直す: 切っている間は任せられず、入れ直すと端末の線が開き直してまた使える
+    await hostCmd('setRemoteSettings', { enabled: false });
+    const cut = await until(async () => { const r = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:CUT' })); return r.isError ? r : null; }, 20_000, '受付を切ったホストへは任せられない');
+    t.ok('ホストが受付を切ると、端末の AI は任せられない', cut.isError === true);
+    await hostCmd('setRemoteSettings', { enabled: true });
     const back = await until(async () => { const r = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:BACK_AGAIN' })); return r.isError ? null : r; }, 40_000, '入れ直した後に任せられる');
-    t.ok('ホストが許可を入れ直すと、端末の線が開き直してまた任せられる', /^ply-task-/.test(back.json?.taskId ?? ''), back.text.slice(0, 160));
+    t.ok('ホストが受付を入れ直すと、端末の線が開き直してまた任せられる', /^ply-task-/.test(back.json?.taskId ?? ''), back.text.slice(0, 160));
 
     // ---- 取り消し: 任された作業は止まり、端末の写しはもう追えない
     const slow2 = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'slow' })).json.taskId;

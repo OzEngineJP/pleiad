@@ -14,7 +14,7 @@ import { AGENT_OPS, AGENT_LIMITS, AGENT_PROTO, AGENT_FEATURES, AgentError, norma
 const idOk = v => typeof v === 'string' && v.length >= 1 && v.length <= 64 && !/[\0\r\n]/.test(v);
 
 /**
- * @param deps.allowed(deviceId)        この端末の AI からの依頼を受けてよいか（devices.json の agentDelegation。デスクトップ版の端末だけ）
+ * @param deps.allowed(deviceId)        この端末の AI からの依頼を受けてよいか（一覧にあるデスクトップ版の端末。ADR 0239）
  * @param deps.hostName()               ready に載せるホストの名前
  * @param deps.invoke(call)             委譲の本体。call = { device, requester, op, args, signal }。結果の JSON を返すか AgentError を投げる
  * @param deps.view(call)               経過の読み出し。call = { device, taskId, cursor }。この端末が任せた子とその子孫だけを読み、結果の JSON を返すか AgentError を投げる。無ければ読み出しを受けない（古い版と同じ）

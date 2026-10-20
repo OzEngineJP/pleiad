@@ -328,30 +328,28 @@ export default async function (t) {
     const laptop = await pair('laptop', 'desktop');
     const phone = await pair('Pixel 9', 'android');
 
-    // ---- 既定はオフ
+    // ---- 許可は「ほかの端末からの操作を許可する」の 1 つ（ADR 0239）。つないだデスクトップ版の端末は、AI からの依頼も受ける
     const list0 = await cmd('remoteDevices');
     const lap0 = list0.find(d => d.id === laptop.id), pho0 = list0.find(d => d.id === phone.id);
-    t.ok('端末の行に agent が出る: デスクトップ版は available・既定オフ、スマホは available でない', lap0.agent.available === true && lap0.agent.enabled === false && pho0.agent.available === false && pho0.agent.enabled === false, JSON.stringify([lap0.agent, pho0.agent]));
+    t.ok('端末の行に agent が出る: デスクトップ版は available（受ける）、スマホは available でない', lap0.agent.available === true && lap0.agent.enabled === true && pho0.agent.available === false && pho0.agent.enabled === false, JSON.stringify([lap0.agent, pho0.agent]));
     const a0 = await agent(laptop);
-    t.ok('オフの端末でも口は開くが、ready の allowed は false', a0.accepted && a0.ready.allowed === false && a0.ready.v === 1 && a0.ready.hostName === 'desk-test');
-    const denied0 = await a0.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:NO' });
-    t.ok('許可していない端末の依頼は NOT_ALLOWED で、タスクは作られない', denied0.ok === false && denied0.code === 'NOT_ALLOWED' && (await hostRows()).length === 0, JSON.stringify(denied0));
+    t.ok('デスクトップ版の端末の口は、つないだだけで ready の allowed が true', a0.accepted && a0.ready.allowed === true && a0.ready.v === 1 && a0.ready.hostName === 'desk-test');
     const http = await laptop.d.get('/agent');
     t.ok('/agent を HTTP で取りに来ても、ローカルのサーバーへは通さない（RESET 3）', http.reset === 3, String(http.reset ?? http.status));
     const wsOther = await laptop.d.ws('/agent/x');
     t.ok('/agent の下のパスも通さない（/ws 以外の WebSocket は RESET 3）', wsOther.reset === 3, JSON.stringify(wsOther.reset ?? wsOther.status));
-    t.ok('スマホの端末では許可を入れられない（デスクトップ版の端末だけ）', Boolean(await rejects(cmd('setRemoteDeviceAgent', { id: phone.id, enabled: true }))));
-    t.ok('知らない端末の許可は変えられない', Boolean(await rejects(cmd('setRemoteDeviceAgent', { id: 'dNOPE', enabled: true }))));
+    t.ok('知らない端末の「すべて止める」は断る', Boolean(await rejects(cmd('setRemoteDeviceAgent', { id: 'dNOPE', stopAll: true }))));
     const phoneAgent = await agent(phone);
-    t.ok('スマホの端末の口の ready も allowed は false（依頼は NOT_ALLOWED）', phoneAgent.ready.allowed === false && (await phoneAgent.call('list', {})).code === 'NOT_ALLOWED');
+    t.ok('スマホの端末の口の ready は allowed が false（スマホには AI が無い）', phoneAgent.ready.allowed === false);
+    const denied0 = await phoneAgent.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:NO' });
+    t.ok('スマホの端末からの依頼は NOT_ALLOWED で、タスクは作られない', denied0.ok === false && denied0.code === 'NOT_ALLOWED' && (await hostRows()).length === 0, JSON.stringify(denied0));
 
-    // ---- 許可を入れる（人だけ）
-    const grant = await cmd('setRemoteDeviceAgent', { id: laptop.id, enabled: true });
-    t.ok('許可を入れると端末の行の agent.enabled が true になる', grant.agent?.enabled === true);
-    const allowedEv = await a0.next(e => e.t === 'allowed' && e.allowed === true, 5000, '許可の便り');
-    t.ok('つながっている口へ allowed: true が届く', Boolean(allowedEv));
+    // ---- 前の版の画面が送る「切る」（enabled: false）は効かない。端末ごとの許可はもう無い
+    const legacy = await cmd('setRemoteDeviceAgent', { id: laptop.id, enabled: false });
+    t.ok('enabled を送っても端末の行は受けるまま', legacy.agent?.enabled === true);
+    t.ok('つながっている口へ allowed: false は届かない', (await a0.none(e => e.t === 'allowed' && e.allowed === false)) === true);
     const devFile = JSON.parse(await fs.readFile(path.join(dataDir, 'remote', 'devices.json'), 'utf8'));
-    t.ok('devices.json の端末に agentDelegation: true が残る（秘密は増えない）', devFile.devices.find(d => d.id === laptop.id)?.agentDelegation === true && !devFile.devices.find(d => d.id === phone.id)?.agentDelegation);
+    t.ok('devices.json に agentDelegation は書かない', devFile.devices.every(d => !('agentDelegation' in d)));
 
     // ---- 委譲・状態・完了
     const req1 = requesterOf('conv-A', { title: 'CI を緑にする' });
@@ -458,7 +456,6 @@ export default async function (t) {
 
     // ---- 承認の中継と人の答え（別の端末 desk2 で。laptop は頻度の上限に近い）
     const desk2 = await pair('desk2', 'desktop');
-    await cmd('setRemoteDeviceAgent', { id: desk2.id, enabled: true });
     const ax = await agent(desk2);
     const otherView = await ax.view(taskId);
     t.ok('別の端末が任せた子（laptop のタスク）は、許可のある端末でも読めない（NOT_FOUND）', otherView.ok === false && otherView.code === 'NOT_FOUND', JSON.stringify(otherView));
@@ -534,23 +531,16 @@ export default async function (t) {
     t.ok('子の質問のカード（kind: question）は端末へ中継しない', (await ax.none(e => e.t === 'relay' && e.relay.taskId === qId)) === true);
     await ax.call('cancel', { taskId: qId }, reqP);
 
-    // 許可を切る: 口が閉じ、新しい依頼と答えは受けない。任された作業は止めない
+    // AI の無い端末（スマホ）は、承認の ID と受領証を知っていても答えられない
     const ask3 = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'ask' }, reqP);
     const ask3Id = ask3.result.task.taskId;
     const relay3 = (await ax.next(e => e.t === 'relay' && e.relay.taskId === ask3Id, 15_000, '3 件目の中継')).relay;
-    await cmd('setRemoteDeviceAgent', { id: desk2.id, enabled: false });
-    const closedCode = await within(ax.closed, 8000, '許可を切ったときの口');
-    t.ok('許可を切ると口が閉じる（1008）', closedCode.code === 1008, JSON.stringify(closedCode));
-    const aAgain = await agent(desk2);
-    t.ok('許可を切ると読み出しも止まる（NOT_ALLOWED）', (await aAgain.view(ask3Id)).code === 'NOT_ALLOWED');
-    t.ok('切った後に開いた口は allowed: false で、依頼は NOT_ALLOWED', aAgain.ready.allowed === false && (await aAgain.call('list', {}, reqP)).code === 'NOT_ALLOWED');
-    await aAgain.send({ t: 'answer', id: relay3.id, receipt: relay3.receipt, allow: true });
-    t.ok('許可が無い端末の答えは受けない', (await aAgain.fresh(e => e.t === 'answered' && e.id === relay3.id, 5000, '許可なしの答え')).ok === false);
-    t.ok('許可を切っても、任された作業は止めない（止めるのは「すべて止める」と取り消し）', ['running', 'queued'].includes((await hostRows()).find(r => r.taskId === ask3Id)?.status));
+    t.ok('スマホの端末からは読み出せない（NOT_ALLOWED）', (await phoneAgent.view(ask3Id)).code === 'NOT_ALLOWED');
+    await phoneAgent.send({ t: 'answer', id: relay3.id, receipt: relay3.receipt, allow: true });
+    t.ok('スマホの端末の答えは受けない', (await phoneAgent.fresh(e => e.t === 'answered' && e.id === relay3.id, 5000, 'スマホの答え')).ok === false);
 
     // ---- 取り消し: 任された作業も止まり、口は閉じる
-    await cmd('setRemoteDeviceAgent', { id: desk2.id, enabled: true });
-    const aRev = await agent(desk2);
+    const aRev = ax;
     await cmd('remoteRevoke', { id: desk2.id });
     await within((async () => { for (;;) { const rows = (await hostRows()).filter(r => r.parentSessionId?.startsWith(`remote:${desk2.id}:`)); if (rows.every(r => !['queued', 'running', 'cancelling'].includes(r.status))) return; await sleep(100); } })(), 20_000, '取り消しで止まる');
     t.ok('端末を取り消すと、任された作業もすべて止まる', (await hostRows()).filter(r => r.parentSessionId?.startsWith(`remote:${desk2.id}:`)).every(r => !['queued', 'running', 'cancelling'].includes(r.status)));

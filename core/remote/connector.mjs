@@ -60,10 +60,13 @@ function publicNotify(d, registered) {
   return { registered, enabled: registered && n.settings?.enabled === true, muted: n.muted === true, lastSentAt: n.lastSentAt ?? null };
 }
 
-/** 端末の AI からの委譲（docs/remote.md §4.5）。デスクトップ版の端末だけが対象（スマホには AI が無い）。stats は { active, waiting }（任された作業の数） */
+/**
+ * 端末の AI からの委譲（docs/remote.md §4.5）。デスクトップ版の端末だけが対象（スマホには AI が無い）。stats は { active, waiting }（任された作業の数）。
+ * 許可は「ほかの端末からの操作を許可する」の 1 つにまとめた（ADR 0239）。enabled は available と同じ（前の版の画面のために残す）
+ */
 function publicAgent(d, stats) {
   const available = d.platform === 'desktop';
-  return { available, enabled: available && d.agentDelegation === true, active: stats?.active ?? 0, waiting: stats?.waiting ?? 0 };
+  return { available, enabled: available, active: stats?.active ?? 0, waiting: stats?.waiting ?? 0 };
 }
 
 function publicDevice(d, connections = 0, registered = false, agentStats = null) {
@@ -74,8 +77,12 @@ function publicDevice(d, connections = 0, registered = false, agentStats = null)
   };
 }
 
-/** この端末の AI からの依頼を受けてよいか（デスクトップ版の端末で、人がオンにしたものだけ） */
-const agentAllowed = d => Boolean(d) && d.platform === 'desktop' && d.agentDelegation === true;
+/**
+ * この端末の AI からの依頼を受けてよいか。一覧にあるデスクトップ版の端末なら受ける（ADR 0239）。
+ * つないだ端末は人の操作でこの PC のすべての操作ができるので、AI の依頼を別に止めても許すことは狭まらない。
+ * 前の版が devices.json に書いた agentDelegation は読まない
+ */
+const agentAllowed = d => Boolean(d) && d.platform === 'desktop';
 
 /** デスクトップ版の端末以外（スマホ）。通知を受ける相手。 */
 const isMobile = d => d.platform !== 'desktop';
@@ -695,19 +702,13 @@ export function createRemoteHost({
     agentAllowed: deviceId => agentAllowed(deviceCache.get(String(deviceId ?? ''))),
 
     /**
-     * 端末ごとの「AI からの依頼を受ける」（人だけが変えられる。server の setRemoteDeviceAgent）。stopAll は、この端末から任された作業をすべて止める。
-     * 切ったときも、任された作業は止めない（止めるのは stopAll と取り消し）。口は閉じ、新しい依頼は受けない
+     * この端末から任された作業をすべて止める（人だけ。server の setRemoteDeviceAgent）。
+     * 端末ごとの「AI からの依頼を受ける」は無くした（ADR 0239）。止めたくなければ、端末を取り消すか受付を切る
      */
-    async setDeviceAgent(id, { enabled, stopAll } = {}) {
+    async setDeviceAgent(id, { stopAll } = {}) {
       id = String(id ?? '');
       const d = deviceCache.get(id);
       if (!d) throw new Error(t('remote.pairing.requestGone'));
-      if (enabled !== undefined) {
-        if (enabled === true && d.platform !== 'desktop') throw new Error(t('remote.agent.desktopOnly'));
-        await store.setAgentDelegation(id, enabled === true);
-        if (enabled === true) d.agentDelegation = true; else delete d.agentDelegation;
-        if (enabled === true) agent?.refresh(id); else agent?.closeDevice(id, 'disabled');
-      }
       if (stopAll === true) await agent?.stopTasks?.(id);
       queueStatus();
       return publicDevice(d, channels.get(id)?.size ?? 0, notifyKeys.has(id), agent?.stats?.(id));
