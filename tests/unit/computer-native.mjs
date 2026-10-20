@@ -7,6 +7,7 @@
 //   - apps: AppInfo（exe・AUMID・UWP の枠・自分の窓・昇格）・名前の検索・起動
 //   - service: 直列の列・上限時間・locked・stopped・arm と番犬・Esc・displays の版
 import { createRequire } from 'node:module';
+import { decideApp } from '../../core/computer-use/policy.mjs';
 
 const require = createRequire(import.meta.url);
 const { createInput, toAbsolute } = require('../../desktop/computer/input.cjs');
@@ -54,7 +55,6 @@ function fakeWin32(over = {}) {
     ERROR_ACCESS_DENIED: 5,
     selfElevated: () => false,
     currentPid: () => 100,
-    processParents: () => new Map(),
     processPath: () => null, processElevated: () => false, processAumid: () => null,
     windowAt: () => 0, rootOf: h => h, foreground: () => 0, topLevelWindows: () => [], childWindows: () => [],
     windowInfo: hwnd => ({ hwnd, pid: 0, title: '', className: '', exStyle: 0, visible: true, iconic: false, cloaked: false, hung: false, rect: null }),
@@ -447,7 +447,6 @@ export default async function (t) {
       const mouse = Buffer.alloc(40);
       koffi.encode(mouse, 0, types.INPUT, { type: 0, u: { mi: { dx: 100, dy: 200, mouseData: 0xffffff88, dwFlags: 0xc001, time: 0, dwExtraInfo: 0 } } });
       t.ok('マウスの INPUT: dx@8・dy@12・mouseData@16・dwFlags@20', mouse.readInt32LE(8) === 100 && mouse.readInt32LE(12) === 200 && mouse.readUInt32LE(16) === 0xffffff88 && mouse.readUInt32LE(20) === 0xc001, mouse.toString('hex'));
-      t.ok('PROCESSENTRY32W の pid・親 pid の位置（processParents が Buffer で読む）', koffi.offsetof(types.PROCESSENTRY32W, 'th32ProcessID') === 8 && koffi.offsetof(types.PROCESSENTRY32W, 'th32ParentProcessID') === 32);
     }
   }
 }
@@ -485,7 +484,9 @@ async function appsTests(t) {
   const settings = await at(11);
   t.ok('FileDescription が無ければ窓のタイトル。昇格の印', settings.name === 'Settings' && settings.elevated === true);
   t.ok('自分の exe は self', (await at(12)).self === true);
-  t.ok('Pleiad の子孫のプロセスは self（exe が違っても）', (await at(14)).self === true && (await at(13)).self === true);
+  t.ok('別の exe の子孫は self に含めず、同じ exe の子だけを識別する', (await at(14)).self === false && (await at(13)).self === true);
+  t.ok('同じ実行ファイルは区切り文字・大文字小文字が違っても self', apps.isSelf(999, 'c:/Users/u/AppData/Local/Programs/Ply/PLY.EXE'));
+  t.ok('同じ PID はパスが読めなくても self', apps.isSelf(SELF, null));
   const calc = await at(20);
   t.ok('UWP は ApplicationFrameHost の枠ではなく中のプロセス: aumid:… と kind', calc.id === 'aumid:Microsoft.WindowsCalculator_8wekyb3d8bbwe!App' && calc.kind === 'aumid' && calc.pid === 401 && calc.name === '電卓', JSON.stringify(calc));
   t.ok('点の下がクリックを通す窓（透明 + 重ね）なら、Z 順で下の窓を返す', (await at(30)).id === 'exe:c:/program files/below/below.exe');
@@ -497,6 +498,37 @@ async function appsTests(t) {
   t.ok('inspect は名前を取らずに pid・昇格・self だけ返す', insp.pid === 200 && insp.elevated === false && insp.self === false);
   w.processElevated = () => null;
   t.ok('昇格を確かめられないプロセスは昇格とみなす（uipi を返す側）', apps.inspectForeground().elevated === true);
+
+  // 起動後の窓を実際に列挙し、承認と入力まで確かめる。
+  {
+    const daw = { id: 'exe:c:/apps/daw.exe', kind: 'exe', name: 'DAW', path: 'C:/Apps/DAW.exe' };
+    let started = false;
+    const w3 = fakeWin32({
+      topLevelWindows: () => started ? [1] : [], windowAt: () => 1, foreground: () => 1,
+      windowInfo: () => ({ pid: 303, title: 'DAW', visible: true, exStyle: 0 }),
+      processPath: () => daw.path, processParents: () => new Map([[303, 302], [302, SELF]]),
+      shellOpen: async () => { started = true; return { ok: true, code: 33 }; },
+    });
+    const childApps = createApps({ win32: w3, selfPid: SELF, exists: () => true, sleep: noSleep });
+    const launched = await childApps.launch(daw);
+    const app = launched.app;
+    t.ok('起動した GUI の子孫は self にならず、許可前は承認を求める', launched.started && app.pid === 303 && app.self === false
+      && decideApp({ app, prefs: {} }) === 'ask');
+    t.ok('起動後もアプリの許可が効く', decideApp({ app, prefs: {}, sessionApps: [daw.id] }) === 'allow');
+    const output = [];
+    const service = createComputerService({ post: m => output.push(m), backend: {
+      apps: childApps, input: makeInput(w3), cursor: () => w3.cursor(),
+      listDisplays: () => [{ id: 'test', bounds: { x: 0, y: 0, width: 1920, height: 1080 } }],
+      desktop: { check: () => ({ locked: false }) },
+    } });
+    try {
+      service.handleMessage({ type: 'computer-call', id: 1, owner: 'test', op: 'input', args: {
+        expect: app, actions: [{ type: 'click', x: 5, y: 5 }, { type: 'text', text: 'x' }, { type: 'key', combo: 'Return' }],
+      } });
+      for (let i = 0; i < 100 && !output.length; i++) await new Promise(r => setTimeout(r, 5));
+      t.ok('起動後のクリック・文字・キーが main の入力ゲートを通る', output[0]?.ok && output[0].data.done === 3 && w3.sent.length > 0);
+    } finally { service.dispose(); }
+  }
 
   // 検索と起動
   const started = [];
@@ -513,9 +545,10 @@ async function appsTests(t) {
     { name: 'Paint', appId: '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\mspaint.exe' },
     { name: 'Google Chrome', appId: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' },
     { name: 'Docs', appId: 'Chrome._crx_abc' },
+    { name: 'Pleiad', appId: 'C:\\x\\Ply.exe' },
   ];
   let startCalls = 0;
-  const apps2 = createApps({ win32: w2, selfPid: 1, selfExe: 'C:\\x\\Ply.exe', env: { SystemRoot: 'C:\\Windows' }, listStartApps: async () => { startCalls++; return startApps; },
+  const apps2 = createApps({ win32: w2, selfPid: 1, selfExe: 'C:/x/Ply.exe', env: { SystemRoot: 'C:\\Windows' }, listStartApps: async () => { startCalls++; return startApps; },
     exists: p => /mspaint|chrome|notepad/i.test(p), sleep: noSleep });
   const names2 = async q => (await apps2.findApp(q)).map(a => a.name);
   t.ok('findApp: 表示名（日本語）・exe 名・AUMID・部分一致で当たる', (await names2('電卓')).join() === '電卓' && (await names2('mspaint.exe'))[0] === 'Paint' && (await names2('microsoft.windowscalculator'))[0] === '電卓' && (await names2('chro'))[0] === 'Google Chrome');
@@ -524,6 +557,7 @@ async function appsTests(t) {
   t.ok('動いているアプリが先（pid 付き）', (await apps2.findApp('メモ帳'))[0].pid === 200);
   t.ok('当たらない名前・空は空', (await apps2.findApp('zzzz')).length === 0 && (await apps2.findApp('')).length === 0);
   t.ok('スタートメニューの一覧は使い回す', startCalls === 1, startCalls);
+  t.ok('スタートメニューの self も区切り文字を揃えて識別する', (await apps2.findApp('Pleiad'))[0].self === true);
 
   const err = async fn => { try { await fn(); return null; } catch (e) { return e.code; } };
   const calcApp = (await apps2.findApp('電卓'))[0];
@@ -641,7 +675,7 @@ async function serviceTests(t) {
     t.ok('解除されれば同じ呼び出しが通る（止めた印は付かない）', (await call('input', { actions: [{ type: 'move', x: 5, y: 5 }] })).ok);
   }
 
-  // uipi と self と windows_key
+  // uipi・Pleiad への入力・windows_key
   {
     const elevated = { pid: 777, path: 'C:\\Windows\\regedit.exe' };
     const { call, w } = make({
@@ -670,15 +704,16 @@ async function serviceTests(t) {
     });
     const typed = await call('input', { actions: [{ type: 'text', text: 'x' }] });
     const key = await call('input', { actions: [{ type: 'key', combo: 'Return' }] });
-    t.ok('前面が Pleiad 自身なら text・key は self', typed.error?.code === 'self' && key.error?.code === 'self' && w.sent.length === 0);
+    t.ok('前面が Pleiad 自身でも text・key を送る', typed.ok && typed.data.done === 1 && key.ok && key.data.done === 1 && w.sent.length > 0);
     const up = await call('input', { actions: [{ type: 'keyUp', combo: 'shift' }] });
     t.ok('離す動作（keyUp）は止めない', up.ok === true);
     const win = await call('input', { actions: [{ type: 'key', combo: 'win+r' }] });
     t.ok('windows_key（送る前の検査）', win.error?.code === 'windows_key');
     const out = await call('input', { actions: [{ type: 'move', x: 99999, y: 0 }] });
     t.ok('outside', out.error?.code === 'outside');
+    w.processElevated = () => true;
     const partial = await call('input', { actions: [{ type: 'move', x: 5, y: 5 }, { type: 'text', text: 'y' }] });
-    t.ok('途中の動作で断られたら done に終えた数を載せる', partial.error?.code === 'self' && partial.error.done === 1);
+    t.ok('途中の動作で断られたら done に終えた数を載せる', partial.error?.code === 'uipi' && partial.error.done === 1);
   }
 
   // expect: 押す動作（click・down・drag）は、送る直前に点の下の窓が判定したアプリのままかを引き直して確かめる
@@ -706,18 +741,22 @@ async function serviceTests(t) {
     t.ok('expect が無ければ確かめない（これまでどおり）', (await call('input', { actions: [{ type: 'click', x: 5, y: 5 }] })).ok === true);
   }
 
-  // 点の下が Pleiad 自身の窓（撮影から外した引き継ぎのピルなど）なら、押す動作は self（キーと同じ）
+  // Pleiad の窓にも、承認した対象が変わっていなければ入力できる
   {
     const { call, w } = make({
       windowAt: () => 5, rootOf: h => h,
       windowInfo: hwnd => ({ hwnd, pid: 1, title: 'pill', className: '', exStyle: 0, visible: true, iconic: false, cloaked: false, hung: false, rect: null }),
       processPath: () => 'C:\\x\\Ply.exe',
     });
-    const click = await call('input', { actions: [{ type: 'click', x: 5, y: 5 }] });
-    t.ok('点の下が Pleiad 自身の窓なら click は self（何も送らない）', click.error?.code === 'self' && w.sent.length === 0, JSON.stringify(click.error));
+    const expect = { pid: 1, path: 'C:/x/Ply.exe' };
+    const click = await call('input', { actions: [{ type: 'click', x: 5, y: 5 }], expect });
+    t.ok('点の下が承認した Pleiad の窓ならクリックを送る', click.ok && w.sent.length > 0);
     const down = await call('input', { actions: [{ type: 'down', x: 5, y: 5 }] });
     const drag = await call('input', { actions: [{ type: 'drag', from: { x: 5, y: 5 }, to: { x: 9, y: 9 } }] });
-    t.ok('down・drag も self', down.error?.code === 'self' && drag.error?.code === 'self' && w.sent.length === 0);
+    t.ok('Pleiad に down・drag も送れる', down.ok && drag.ok);
+    w.sent.length = 0;
+    const changed = await call('input', { actions: [{ type: 'click', x: 5, y: 5 }], expect: { pid: 200, path: 'C:/Other.exe' } });
+    t.ok('承認した対象から Pleiad に替わった場合は target_changed', changed.error?.code === 'target_changed' && w.sent.length === 0);
     const move = await call('input', { actions: [{ type: 'move', x: 5, y: 5 }] });
     const scroll = await call('input', { actions: [{ type: 'scroll', x: 5, y: 5, dy: 1 }] });
     t.ok('押さない move・scroll は止めない', move.ok === true && scroll.ok === true, JSON.stringify([move.error, scroll.error]));

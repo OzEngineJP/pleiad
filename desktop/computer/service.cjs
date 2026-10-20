@@ -16,7 +16,7 @@ const WATCHDOG_MS = 30_000;
 const WATCHDOG_TICK_MS = 5_000;
 const ASYNC_METHODS = new Set(['captureRect', 'fileDescription', 'shellOpen']);
 const KEYBOARD = new Set(['text', 'key', 'keyDown', 'keyUp']);
-/** 押す・掴む動作。Pleiad 自身の窓（引き継ぎのピルなど、スクリーンショットに写らない窓も含む）の上では送らない。move・scroll は押さないので止めない */
+/** 押す・掴む動作。送る直前に、承認した対象の窓のままかを確かめる */
 const PRESS = new Set(['click', 'down', 'drag']);
 
 /** input の expect（{ pid?, path? }）。どちらも無ければ確かめない（null） */
@@ -123,7 +123,7 @@ function createComputerService({ post, win32: rawWin32 = null, backend: injected
   };
 
   /**
-   * 入力の前に毎回: 昇格したアプリには届かない（uipi）、Pleiad 自身の窓にはキーを送らず、押しもしない（self）。離す動作は止めない。
+   * 入力の前に毎回、対象アプリの昇格（uipi）を確かめる。離す動作は止めない。
    * expect（core が判定して通したアプリの pid とパス）があれば、押す点の下の窓がそのアプリのままかも確かめる（target_changed）。
    * 押す点の下は、送る直前にここで引き直す（core が appAt で判定した後に、窓が重なる・動くことがあるため）
    */
@@ -132,12 +132,9 @@ function createComputerService({ post, win32: rawWin32 = null, backend: injected
     let target;
     if (KEYBOARD.has(action.type)) {
       target = await apps.inspectForeground();
-      if (target?.self) throw new ComputerError('self', 'the foreground window belongs to Pleiad');
     } else {
       const point = action.type === 'drag' ? action.from : action.x !== undefined ? action : backend.cursor();
       target = await apps.inspectAt(point.x, point.y);
-      // 画面共有・撮影から外したピル（desktop/chrome-pill.cjs）は、写らないのに点の下にある。Pleiad の窓を押させない
-      if (PRESS.has(action.type) && target?.self) throw new ComputerError('self', 'the window under the pointer belongs to Pleiad');
       if (expect && PRESS.has(action.type) && !sameApp(target, expect)) throw new ComputerError('target_changed', 'the window under the pointer changed after it was checked');
     }
     if (target?.elevated && !selfElevated) throw new ComputerError('uipi', 'the target app runs with administrator rights and cannot receive input');

@@ -42,8 +42,8 @@ const FORBIDDEN_EXE = new Set([
   // Windows の内部
   'lockapp.exe', 'consent.exe', 'logonui.exe', 'winlogon.exe', 'credentialuibroker.exe', 'shellexperiencehost.exe', 'searchhost.exe',
   'searchapp.exe', 'startmenuexperiencehost.exe', 'textinputhost.exe', 'securityhealthhost.exe', 'cloudexperiencehosts.exe',
-  // エージェント自身（Pleiad・Claude・Codex・Antigravity）
-  'ply.exe', 'pleiad.exe', 'claude.exe', 'claude-code.exe', 'codex.exe', 'chatgpt.exe', 'agy.exe', 'antigravity.exe',
+  // エージェント自身（Claude・Codex・Antigravity）
+  'claude.exe', 'claude-code.exe', 'codex.exe', 'chatgpt.exe', 'agy.exe', 'antigravity.exe',
   // macOS のバンドルの無いシェル（exe:<パス> の最後）
   'zsh', 'bash', 'sh', 'fish', 'login', 'claude', 'codex', 'agy',
 ]);
@@ -80,18 +80,17 @@ const FORBIDDEN_BUNDLE = [
   'com.apple.securityagent', 'com.apple.loginwindow', 'com.apple.screensaver.engine',
   // スクリプトの道具（シェルと同じことができる）
   'com.apple.scripteditor2', 'com.apple.automator', 'com.apple.shortcuts',
-  // エージェント自身（Pleiad・Claude・ChatGPT・Codex・Antigravity）
-  'jp.ply.desktop', 'com.anthropic.claude', 'com.openai.chat', 'com.openai.codex', 'com.google.antigravity',
+  // エージェント自身（Claude・ChatGPT・Codex・Antigravity）
+  'com.anthropic.claude', 'com.openai.chat', 'com.openai.codex', 'com.google.antigravity',
 ];
 const HIGH_BUNDLE = [
   'com.apple.finder', 'com.apple.systempreferences', 'com.apple.settings', 'com.apple.activitymonitor',
   'com.microsoft.vscode', 'com.todesktop.230313mzl4w4u92', 'com.exafunction.windsurf', 'dev.zed.', 'com.apple.dt.xcode', 'com.jetbrains.',
 ];
 
-/** 操作させないアプリか。Pleiad 自身（self）を含む */
+/** 操作させないアプリか。Pleiad は通常のアプリと同じ承認で扱う（ADR 0235） */
 export function isForbiddenApp(app) {
   if (!app) return false;
-  if (app.self === true) return true;
   const exe = exeName(app);
   if (exe && (FORBIDDEN_EXE.has(exe) || FORBIDDEN_EXE_PREFIX.some(p => exe.startsWith(p)))) return true;
   const aumid = aumidOf(app);

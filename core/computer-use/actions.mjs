@@ -28,7 +28,7 @@ const MAC_MODIFIERS = new Set([...MODIFIERS, 'cmd', 'command']);
 const WINDOWS_KEY = /(^|[+\s,])(super|win|windows|meta|cmd|command)([+\s,]|$)/i;
 const num = v => typeof v === 'number' && Number.isFinite(v);
 // main が返す契約の code のうち、そのまま reason にするもの（permission・secure_input・system_key は macOS だけが返す）
-const PASS_CODES = new Set(['locked', 'uipi', 'self', 'windows_key', 'outside', 'not_found', 'timeout', 'unsupported', 'permission', 'secure_input', 'system_key', 'target_changed']);
+const PASS_CODES = new Set(['locked', 'uipi', 'windows_key', 'outside', 'not_found', 'timeout', 'unsupported', 'permission', 'secure_input', 'system_key', 'target_changed']);
 
 /** text の修飾キー（ctrl / shift / alt。macOS は cmd も。"ctrl+shift" の形も受ける）。不正なら invalid */
 function modifiers(text, allowed = MODIFIERS) {
@@ -406,7 +406,7 @@ export function createActions({ driver, shots, access, askPermission, translate,
       };
       let skippedApp = '';
       const askOnce = key ? async () => {
-        // 前面が操作できないアプリ（ターミナル・パスワード管理・Pleiad 自身など）の画面は送らない
+        // 前面が操作できないアプリ（ターミナル・パスワード管理など）の画面は送らない
         const { app } = await call(ctx, 'foreground', {});
         if (isForbiddenApp(app)) { skippedApp = nameOf(app); return { skip: 'protected_app' }; }
         skippedApp = '';

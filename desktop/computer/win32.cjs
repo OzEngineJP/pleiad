@@ -21,13 +21,8 @@ function defineTypes(koffi) {
   });
   const HARDWAREINPUT = koffi.struct('CU_HARDWAREINPUT', { uMsg: 'uint32_t', wParamL: 'uint16_t', wParamH: 'uint16_t' });
   const INPUT = koffi.struct('CU_INPUT', { type: 'uint32_t', u: koffi.union({ mi: MOUSEINPUT, ki: KEYBDINPUT, hi: HARDWAREINPUT }) });
-  const PROCESSENTRY32W = koffi.struct('CU_PROCESSENTRY32W', {
-    dwSize: 'uint32_t', cntUsage: 'uint32_t', th32ProcessID: 'uint32_t', th32DefaultHeapID: 'uintptr_t', th32ModuleID: 'uint32_t',
-    cntThreads: 'uint32_t', th32ParentProcessID: 'uint32_t', pcPriClassBase: 'int32_t', dwFlags: 'uint32_t',
-    szExeFile: koffi.array('char16_t', 260, 'String'),
-  });
   const MonitorEnumProc = koffi.proto('bool __stdcall CU_MonitorEnumProc(intptr_t hMonitor, intptr_t hdc, CU_RECT *rc, intptr_t lParam)');
-  const defined = { RECT, POINT, MONITORINFOEXW, MOUSEINPUT, KEYBDINPUT, INPUT, PROCESSENTRY32W, MonitorEnumProc };
+  const defined = { RECT, POINT, MONITORINFOEXW, MOUSEINPUT, KEYBDINPUT, INPUT, MonitorEnumProc };
   types.set(koffi, defined);
   return defined;
 }
@@ -43,7 +38,6 @@ const WM_IME_CONTROL = 0x283, IMC_GETOPENSTATUS = 5, IMC_SETOPENSTATUS = 6, SMTO
 const GW_HWNDNEXT = 2;
 const GW_CHILD = 5;
 const GWL_EXSTYLE = -20;
-const TH32CS_SNAPPROCESS = 0x2;
 // レジストリの親キー（64 ビットの HKEY は 32 ビットの値を符号つきで広げたもの）
 const HIVES = { HKCU: -2147483647, HKLM: -2147483646 };
 const RRF_RT_REG_SZ_OR_EXPAND = 0x6;
@@ -122,9 +116,6 @@ function createWin32(koffi) {
     GetCurrentProcessId: kernel32.func('uint32_t __stdcall GetCurrentProcessId()'),
     GetCurrentProcess: kernel32.func('intptr_t __stdcall GetCurrentProcess()'),
     GetLastError: kernel32.func('uint32_t __stdcall GetLastError()'),
-    CreateToolhelp32Snapshot: kernel32.func('intptr_t __stdcall CreateToolhelp32Snapshot(uint32_t flags, uint32_t pid)'),
-    Process32FirstW: kernel32.func('bool __stdcall Process32FirstW(intptr_t snap, _Inout_ uint8_t *entry)'),
-    Process32NextW: kernel32.func('bool __stdcall Process32NextW(intptr_t snap, _Inout_ uint8_t *entry)'),
     OpenProcessToken: advapi32.func('bool __stdcall OpenProcessToken(intptr_t h, uint32_t access, _Out_ intptr_t *token)'),
     GetTokenInformation: advapi32.func('bool __stdcall GetTokenInformation(intptr_t token, int cls, _Out_ uint8_t *info, uint32_t len, _Out_ uint32_t *ret)'),
     RegGetValueW: advapi32.func('int32_t __stdcall RegGetValueW(intptr_t hkey, const char16_t *subkey, const char16_t *value, uint32_t flags, _Out_ uint32_t *type, _Out_ uint8_t *data, _Inout_ uint32_t *len)'),
@@ -274,20 +265,6 @@ function createWin32(koffi) {
         return f.GetApplicationUserModelId(h, len, buf) === 0 ? text(buf, len[0] - 1) : null;
       });
       return r.opened ? r.value : null;
-    },
-    /** pid → 親の pid（process32 のスナップショット） */
-    processParents() {
-      const snap = f.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-      const map = new Map();
-      if (!snap || snap === -1) return map;
-      try {
-        // 構造体のまま受けると 1000 件超で 70ms かかるので、Buffer で受けて必要な 2 項目だけ読む
-        const entry = Buffer.alloc(koffi.sizeof(t.PROCESSENTRY32W));
-        const pidAt = koffi.offsetof(t.PROCESSENTRY32W, 'th32ProcessID'), parentAt = koffi.offsetof(t.PROCESSENTRY32W, 'th32ParentProcessID');
-        entry.writeUInt32LE(entry.length, 0);
-        for (let ok = f.Process32FirstW(snap, entry); ok; ok = f.Process32NextW(snap, entry)) map.set(entry.readUInt32LE(pidAt), entry.readUInt32LE(parentAt));
-      } finally { f.CloseHandle(snap); }
-      return map;
     },
     /** 版の情報の FileDescription。固まりうるので別スレッド */
     async fileDescription(path) {

@@ -12,7 +12,6 @@ const WS_EX_LAYERED = 0x80000;
 const DESCRIPTION_CACHE_MAX = 300;
 const START_APPS_TTL_MS = 5 * 60_000;
 const LAUNCH_WAIT_MS = 8000;
-const PARENTS_TTL_MS = 5000;
 
 const normalizePath = p => p.toLowerCase().replace(/\\/g, '/');
 const norm = s => String(s ?? '').normalize('NFKC').toLowerCase().trim();
@@ -66,29 +65,9 @@ function createApps({ win32, selfPid = process.pid, selfExe = process.execPath, 
     return text;
   }
 
-  // pid → 親の pid は取るのに 40ms ほどかかるので、短く使い回す（知らない pid が来たら取り直す）
-  let parentsCache = null;
-  const parentMap = fresh => {
-    if (fresh || !parentsCache || now() - parentsCache.at > PARENTS_TTL_MS) parentsCache = { at: now(), map: win32.processParents() };
-    return parentsCache.map;
-  };
-
-  /** Pleiad 自身か: 同じ pid・同じ exe・Pleiad の子孫のプロセス */
+  /** Pleiad 自身か。同じ PID・実行ファイルだけを識別する。操作の承認には使わない */
   function isSelf(pid, exePath) {
-    if (pid === selfPid) return true;
-    if (exePath && selfExe && exePath.toLowerCase() === selfExe.toLowerCase()) return true;
-    for (const fresh of [false, true]) {
-      const parents = parentMap(fresh);
-      if (!parents.has(pid)) { if (fresh) return false; continue; }
-      for (let cur = pid, hops = 0; cur && hops < 32; hops++) {
-        const parent = parents.get(cur);
-        if (!parent || parent === cur) return false;
-        if (parent === selfPid) return true;
-        cur = parent;
-      }
-      return false;
-    }
-    return false;
+    return pid === selfPid || !!(exePath && selfExe && normalizePath(exePath) === normalizePath(selfExe));
   }
 
   /** 窓の持ち主のプロセス。UWP は ApplicationFrameHost の枠の中の窓が本物のプロセス */
@@ -169,7 +148,7 @@ function createApps({ win32, selfPid = process.pid, selfExe = process.execPath, 
     if (guid && folders[guid[1].toLowerCase()]) exePath = path.win32.join(folders[guid[1].toLowerCase()], guid[2]);
     else if (/^[a-z]:\\/i.test(appId)) exePath = appId;
     if (exePath && /\.exe$/i.test(exePath)) {
-      return { id: `exe:${normalizePath(exePath)}`, kind: 'exe', name, path: exePath, elevated: false, self: !!selfExe && exePath.toLowerCase() === selfExe.toLowerCase() };
+      return { id: `exe:${normalizePath(exePath)}`, kind: 'exe', name, path: exePath, elevated: false, self: !!selfExe && normalizePath(exePath) === normalizePath(selfExe) };
     }
     return { id: `aumid:${appId}`, kind: 'aumid', name, aumid: appId, elevated: false, self: false };
   }

@@ -146,6 +146,23 @@ export default async function(t) {
       t.ok('次のターンでは覚えていない（拒否は会話にも常にも残さない）。また聞く', hd.asked.length === 2 && mark(ok).state === 'ok');
     } finally { await hd.close(); }
 
+    // Pleiad もほかのアプリと同じく、許可・拒否をアプリ単位で扱う。
+    for (const result of ['allow', 'deny']) {
+      const hp = await createHarness({ waitMs: 400, answers: [{ allow: result === 'allow', scope: 'session' }] });
+      try {
+        const p = hp.connect({ sessionId: `pleiad-${result}` });
+        hp.driver.setForeground(FAKE_APPS.pleiad);
+        await p.call('screenshot', { title: 'x' });
+        const opened = await p.call('open_application', { app: 'Pleiad', title: 'x' });
+        const typed = await p.call('type', { text: 'hello', title: 'x' });
+        const key = await p.call('key', { text: 'Return', title: 'x' });
+        t.ok(`Pleiad の承認を${result === 'allow' ? '許可すれば起動・文字・キーが通る' : '拒否すれば起動・文字・キーを送らない'}`,
+          hp.asked.length === 1 && hp.asked[0].computerApp.apps[0].id === FAKE_APPS.pleiad.id
+          && [opened, typed, key].every(r => result === 'allow' ? mark(r).state === 'ok' : mark(r).reason === 'denied')
+          && hp.ops().includes('input') === (result === 'allow') && hp.ops().includes('launch') === (result === 'allow'));
+      } finally { await hp.close(); }
+    }
+
     // 禁止
     const hb = await createHarness({ waitMs: 400, prefs: { computerUse: { allowAllApps: true } } });
     try {
@@ -156,7 +173,7 @@ export default async function(t) {
         && hb.asked.length === 0 && !hb.ops().includes('input') && body(f).includes('Windows Terminal'));
       hb.driver.setForeground(FAKE_APPS.pleiad);
       const typed = await x.call('type', { text: 'hello', title: 'x' });
-      t.ok('前面が Pleiad 自身（self）なら、type は禁止で拒む', mark(typed).reason === 'forbidden' && !hb.ops().includes('input'));
+      t.ok('確認なしなら Pleiad にも文字入力できる', mark(typed).state === 'ok' && hb.ops().includes('input'));
       hb.driver.setForeground(FAKE_APPS.notepad);
       const g = await x.call('left_click', { coordinate: [100, 100], title: 'x' });
       const g2 = await x.call('left_click', { coordinate: [120, 120], title: 'x' });
