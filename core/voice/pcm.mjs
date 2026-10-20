@@ -1,5 +1,5 @@
 // 通話モードの PCM の道具（依存なし）。s16le モノラルが前提。
-// 出どころ: vtc-web gateway/src/audio.ts（rmsOfS16・durationMsOfS16・wavFromS16）と providers/tts/openrouter.ts（先頭の無音を詰める・奇数バイトの持ち越し）を .mjs へ移した。
+// 出どころ: 運営者の別の製品の gateway/src/audio.ts（rmsOfS16・durationMsOfS16・wavFromS16）と providers/tts/openrouter.ts（先頭の無音を詰める・奇数バイトの持ち越し）を .mjs へ移した。
 
 /** 発話とみなす RMS（0..1）。クライアントの送信ゲートと区切りで同じ値を使う（片方だけ変えると「話しているのに送られない声」ができる） */
 export const VAD_THRESHOLD = 0.012;

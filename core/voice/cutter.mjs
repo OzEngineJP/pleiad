@@ -1,5 +1,5 @@
 // 発話の区切り（通話モード。docs/voice-call.md「区切りと片」）。
-// 出どころ: vtc-web gateway/src/stt/utterance-cutter.ts を .mjs へ移した（型と長い経緯のコメントを外し、値の根拠だけ残した）。
+// 出どころ: 運営者の別の製品の gateway/src/stt/utterance-cutter.ts を .mjs へ移した（型と長い経緯のコメントを外し、値の根拠だけ残した）。
 //
 // OpenRouter の音声認識（POST /audio/transcriptions）は同期で、送った音声の全文を返すだけ。ストリーミングも途中結果も無い。
 // だから「どこまでを 1 回で送るか」をこちらで決める。純粋な状態機械で、動かすのは届いたフレームの長さの積算（音声の時計）だけ（壁時計は見ない）。

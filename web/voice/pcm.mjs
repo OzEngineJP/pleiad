@@ -1,5 +1,5 @@
 // 通話の PCM の変換（純粋関数。ブラウザーの API を持ち込まない）。
-// 出どころ: vtc-web web/src/lib/audio/pcm.ts（rms・downsample・s16leToFloat32・floatTo16BitPcm）を .mjs へ移した。
+// 出どころ: 運営者の別の製品の web/src/lib/audio/pcm.ts（rms・downsample・s16leToFloat32・floatTo16BitPcm）を .mjs へ移した。
 
 /** 元レートで測った RMS（0..1）。ダウンサンプル前の信号に対して呼ぶ（送信ゲートの閾値 0.012 はこの信号で決めた） */
 export function rms(samples) {
