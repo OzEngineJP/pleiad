@@ -86,6 +86,7 @@ Detailed documentation is currently in Japanese.
 - [Design](docs/design.md)
 - [Agent setup](docs/backends.md)
 - [Releases](docs/desktop-releases.md)
+- [Pleiad Plus](docs/plus.md)
 - [Architecture decision records](docs/adr/)
 
 ## Security
