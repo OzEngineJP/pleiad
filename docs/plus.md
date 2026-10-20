@@ -121,7 +121,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - `reachable === false` のときは、当てはまった中身の上に「サーバーへの接続に失敗しました」の 1 行を足す（⚠ は付けない）
 - アカウントの行は丸（メールの頭の 1 文字・大文字）・メール・入り方（`provider === 'google.com'` のときだけ「Google でログイン」）。プランの行は `account.plan.name`（無ければ「Pleiad Plus」）か「無料」
 - 今月の利用（`plus` かつ `usage`・`limits` があるとき）: 「今月の利用: {used} / {limit} クレジット（{date} に戻ります）」。数は `Intl.NumberFormat`、日付は `Intl.DateTimeFormat(lang, { month: 'long', day: 'numeric' })`。`used >= limit` ならその下に「上限に達しました」
-- 同期の置き場は `<div id="plusSyncSection">`（見出しは隠してある。中身は同期の画面の issue が入れる）
+- 同期の置き場は `<div id="plusSyncSection">`（見出しは隠してある。中身は同期の画面が入れる。仕組みは下の「同期」）
 - この PC の行は `host.state` が `taken`（「つなぎ直す」→ 確かめの窓 → `plusHostRebind`）・`limit` のときだけ。ほかは出さない。`plusHostRebind` は後の段階が作る。知らないコマンドが返ったら何も出さない
 - 「Pleiad Plus にする」は `urls.account` に `/plus` を足した URL を、「アカウントを管理」は `urls.account` を外のブラウザーで開く。「ログアウト」は `plusLogout`
 
@@ -144,7 +144,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 リモートで使うために、この PC を鍵を持っている証明つきで api のホストの台帳（`GET /v1/hosts`）に載せる。
 
 - いつ: 起動したとき・ログインした直後・アカウントが変わったとき・ホストの鍵（identity）を作った直後。`signedIn` で `account.status === 'plus'` のときだけ行う
-- 手順: `GET /v1/hosts` で自分の `hostId`（`base32(SHA-256(公開鍵))` の先頭 26 字）を探す。あって公開鍵が同じなら違う欄だけ `PATCH`。無ければ `POST /v1/hosts/challenge { hostId, publicKey }` で `{ challengeId, nonce, serverPublicKey }` を受け、`proof = base64url(HMAC-SHA256(HKDF-SHA256(X25519(ホストの秘密鍵, serverPublicKey), "pleiad host proof v1"), nonce ‖ utf8(hostId) ‖ utf8("register")))` を作って `PUT /v1/hosts/{hostId}`（`{ challengeId, proof, publicKey, name, platform: win32|darwin|linux, appVersion }`。`name` は `cfg.hostName` を 1〜64 字に整えたもの。`syncPublicKey` はこの段階では送らない）
+- 手順: `GET /v1/hosts` で自分の `hostId`（`base32(SHA-256(公開鍵))` の先頭 26 字）を探す。あって公開鍵が同じなら違う欄だけ `PATCH`。無ければ `POST /v1/hosts/challenge { hostId, publicKey }` で `{ challengeId, nonce, serverPublicKey }` を受け、`proof = base64url(HMAC-SHA256(HKDF-SHA256(X25519(ホストの秘密鍵, serverPublicKey), "pleiad host proof v1"), nonce ‖ utf8(hostId) ‖ utf8("register")))` を作って `PUT /v1/hosts/{hostId}`（`{ challengeId, proof, publicKey, name, platform: win32|darwin|linux, appVersion }`。`name` は `cfg.hostName` を 1〜64 字に整えたもの。同期の公開鍵 `syncPublicKey`（下の「同期」）があれば載せる。載せずに登録済みなら、上の `PATCH` で足す）
 - その後: ホスト名が変わったら `PATCH { name }`、`via:'plus'` の端末の数が変わったら `PATCH { deviceCount }`（0〜64）
 - 誤り（`status.host = { state, hostId, error }` で出す。`state`: `none`・`registering`・`registered`・`taken`・`limit`・`error`）:
   - `409 host_taken`（同じ hostId がほかのアカウントのもの）→ `taken`。自動ではやり直さない。人の「つなぎ直す」（`plusHostRebind`。人だけ）でホストの鍵を作り直し、端末を全部取り消し、新しい hostId で登録し直す
@@ -184,9 +184,136 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - `state.down = true` の間は全部の口が接続を切る（届かない場合の試験に使う）
 - 呼ばれた口と `X-Pleiad-Client` を `state.calls` に残す
 - `route()` で、あとの機能（この PC の登録・キー無しの機能・同期）が口を足せる
+- 同期の口（下の「同期」の表の形。`baseRev`・`previousKeyId` を照合し、`PUT` の決めた欄以外は `400`）。試験から変えるもの: `state.syncLimitBytes`（容量）・`state.syncItemLimit`（1 項目の暗号文の上限）・`state.syncFail`（誤りの差し込み `[{ method?, path, status, code, message, headers?, extra?, count? }]`）。受けた本文は `state.syncBodies` に残す（中身が平文で届いていないことの確かめに使う）。同期を切ったアカウント（`sync.enabled: false`）には `state` 以外の口が `403 forbidden`（`sync_disabled`）
 - ホストの台帳: `GET /v1/hosts`・`POST /v1/hosts/challenge`・`PUT`/`PATCH`/`DELETE /v1/hosts/{hostId}`（証明は本物と同じく X25519+HKDF+HMAC で照合し `state.hosts` に残す。`state.failNextProof` で次の 1 回だけ 422 bad_proof）
 
 中継側の「公式の中継」の身代わりは `tests/lib/plus-relay-authz.mjs`（中継に差し込む authz。`X-Pleiad-Account` の確かめ・ペアリングの断り・`admit: true`。`remote-plus.mjs` が一連の流れを確かめる）。
+
+## 同期（`core/plus/sync/`）
+
+Plus のアカウントの PC どうしで、設定・スキル・全体の指示ファイルをそろえる。中身は PC の中で暗号化してから api に上げ、受けた PC が PC の中で開く。暗号化と復号は PC の中だけで行い、鍵は api に渡さない。
+
+### 同期するもの・しないもの
+
+| 論理名 | この PC の実体 |
+| --- | --- |
+| `settings/<key>` | `defineSetting` の設定のうち `sync` のもの（下の表）。既定の値のままのものは項目にしない |
+| `skills/claude/<相対パス>` | `<CLAUDE_CONFIG_DIR か ~/.claude>/skills/` の下 |
+| `skills/agents/<相対パス>` | `~/.agents/skills/` の下 |
+| `skills/pleiad/<相対パス>` | `<data>/skills/` の下 |
+| `instructions/claude`・`instructions/codex`・`instructions/gemini` | 全体の指示ファイル `<CLAUDE_CONFIG_DIR か ~/.claude>/CLAUDE.md`・`<CODEX_HOME か ~/.codex>/AGENTS.md`・`~/.gemini/GEMINI.md`（`core/context-scan.mjs` の `userInstructionPaths`。文脈の一覧のユーザーの段と同じ場所） |
+
+- 中身はバイト列のまま運ぶ（改行・文字コード・BOM を変えない）。受けたファイルの mtime は送った側の mtime にする
+- **「秘密情報と変数」は同期しない**。`<data>` の直下のファイル（`secrets.json`・`secret-values.json`・`plus-secrets.json`・`api-keys.json` など）は読まない
+- スキルの置き場の中でも運ばないもの: 名前に `secret` を含むもの・`.env*`・`api-keys.json` などの秘密の置き場の名前・`.git/`・`node_modules/`・`__pycache__/`・`logs/`・`backups/`・`*.log`・`*.bak`・文脈のキャッシュ・1MB を超えるファイル
+- リンク（symlink・ジャンクション）は運ばず、その先も読まない。受けたときもリンクの先には書かない・消さない。置き場や指示ファイルそのものがリンクなら、それごと運ばない
+- 項目の平文（下の JSON）が 1MB を超えるものは送らない（ログに `sync item too large`）
+
+設定は `sync`（`defineSetting` の欄。既定 true）で決める。human-only・guarded・`riskOf` を持つもの・読むだけのものは `sync: false` でなければならない（`defineSetting` が断る）。受けた値は画面からの変更と同じ `normalize`・`write` を通して書く（受けた PC に無いエージェント・知らないモデルなどは `normalize` で落ちる）。既定に戻した設定は、ほかの PC でも既定に戻る。
+
+| 運ぶ | 運ばない |
+| --- | --- |
+| `locale`・`linkOpen`・`instructionBudget`・`backend`・`memoryLearnBackend`・`memoryLearnAt`・`memoryLearnPaused`・`model`・`effort`・`shellTool`・`composer.historyRecall`・`composer.suggestions`・`compaction.auto` | human-only（`mode`・`claudeAccount`・`account`）・guarded（`launchAtLogin`・`delegationRouting`・`plyInstructions`・`addedContext`・`context.default`）・`riskOf`（`confirmAgentSites`・`chromeAutoAllow`・`confirmExternalLoads`・`agentSitePermissions`・`externalSitePermissions`・`computerUse`・`voice`）・読むだけ（`repoDefaults`）・この PC に固有（`chromeProfileNotes`・`chromeNewProfile`） |
+
+全部の判断と理由は `tests/unit/ops-settings.mjs` の表にある（設定を足すと、表に無いことで試験が落ちる）。
+
+### 暗号の形（`core/plus/sync/crypto.mjs`）
+
+1. アカウントの同期鍵 K（32 バイトの乱数）と `keyId`（8 バイトの小文字の hex）。K から 2 つの鍵を導く:
+   - `K_enc = HKDF-SHA256(K, salt 空, "pleiad sync enc v1")`（項目の中身の AES-256-GCM の鍵）
+   - `K_id = HKDF-SHA256(K, salt 空, "pleiad sync item id v1")`（項目の ID の鍵）
+2. ホストごとの同期の鍵対（X25519）。秘密鍵は手元の `plus:syncKey`、公開鍵は台帳の `syncPublicKey`（raw 32 バイトの base64url）。K を W（持つホスト）が T のために包む:
+   - `kek = HKDF-SHA256(X25519(W の秘密鍵, T の公開鍵), salt = W の公開鍵 ‖ T の公開鍵, "pleiad sync wrap v1")`
+   - `wrapped = base64url(nonce12 ‖ AES-256-GCM(kek, nonce12, K, aad = "pleiad-sync-wrap-v1|<uid>|<T の hostId>|<keyId>"))`（60 バイト）
+   - T は `wrappedBy` のホストの公開鍵で開く。開けなければ使わない
+3. 項目:
+   - `itemId = base64url(HMAC-SHA256(K_id, 論理名))` の先頭 32 字（api に論理名を見せない）
+   - 平文 = `{"v":1,"path":<論理名>,"mtime":<ISO 8601>,"deleted":<bool>,"content":<中身の base64>}`
+   - 暗号文 = `"v1." + keyId + "." + base64url(nonce12) + "." + base64url(AES-256-GCM(K_enc, nonce12, 平文, aad = "pleiad-sync-item-v1|<uid>|<itemId>|<rev>"))`（`rev` は書き込む版）
+   - 開いた平文の論理名から求めた `itemId` が、受けた `itemId` と違えば捨てる
+
+K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は `plus-secrets.json`（ほかの Plus の秘密と同じ置き場）。
+
+#### 試験ベクトル（`tests/unit/plus-sync-crypto.mjs` と同じ値）
+
+`seq(a, n)` は a, a+1, … の n バイト。
+
+| 入力 | 値 |
+| --- | --- |
+| K | `seq(0x00, 32)` |
+| keyId | `0011223344556677` |
+| uid | `test-user` |
+| W の秘密鍵・T の秘密鍵 | `seq(0x40, 32)`・`seq(0x60, 32)` |
+| T の hostId | `host-target` |
+| 包む nonce・項目の nonce | `seq(0xa0, 12)`・`seq(0xb0, 12)` |
+| 論理名・mtime・中身・rev | `skills/pleiad/demo/SKILL.md`・`2026-01-02T03:04:05.000Z`・`hello\r\n`・1 |
+
+| 出力 | 値 |
+| --- | --- |
+| W の公開鍵 | `eaYx7t4b-cmPEgMs3q3Q56B5OY_HhriMyEbsia-FpRo` |
+| T の公開鍵 | `Z13VdO13iTELPS52gfN5C0ZsdzsVIf7PNld5WDcepS8` |
+| K_enc（hex） | `5148e946bc3b28b72b9454ed12758b194eb8b7dc535c1ada0a410caa3c305c3f` |
+| K_id（hex） | `4280c95d06eb920592e3eab530cd79d123104de4dc4f4ec5418cc1c9f3b8551e` |
+| wrapped | `oKGio6SlpqeoqaqrtTglUOa9GkxgTALVD1CWBroh_HpFU5OBb_UCJmUoSiCb9eGAAD9NEAIIA_4UnMW7` |
+| itemId | `Yxk-Pddt_fEXUSeObnwpP9_aCuErsMz6` |
+| 平文 | `{"v":1,"path":"skills/pleiad/demo/SKILL.md","mtime":"2026-01-02T03:04:05.000Z","deleted":false,"content":"aGVsbG8NCg=="}` |
+| 暗号文 | `v1.0011223344556677.sLGys7S1tre4ubq7.sqVME4Kd2WWoXG3_Bz7DB7q80JMLwTpEKrfhR4RbgEoJGp9HXG-Jmx8X8qDZgApn7eCJ6v-3YSMhIrt78ZRxU1ki0seYF8niA0GsGy7sVL3LbTn7UusQec2QbeBL-fEY5DVuhTnMia5_MyCOLTF81UjwV0jp7_jnjV2eC0kGGuM823nMfWFXNg` |
+
+### 口（Plus の api）
+
+共通のヘッダーと誤りの形は上の「api を呼ぶ手」と同じ。どの口も、同期を切ったアカウントには `403 forbidden`（`message: sync_disabled`）を返しうる（`state` だけは `enabled: false` を返す）。`429 rate_limited`（`Retry-After`）と `503 unavailable` はどの口でも返りうる。容量（`limitBytes`）・本文の大きさの上限・`cursor` の扱いは、サーバーの返す値に従う（クライアントは受けた `cursor` を次の `since` にするだけ）。
+
+| メソッドとパス | 入力 | 出力 | 誤り |
+| --- | --- | --- | --- |
+| `GET /v1/sync/state` | - | `{ enabled, keyId\|null, hostsWithKey: [hostId], pending: [hostId], totalBytes, limitBytes, cursor }` | `not_plus`・`account_disabled` |
+| `GET /v1/sync/keys/{hostId}` | - | `{ keyId, wrapped, wrappedBy }` | `404 not_found`（宛てが無い） |
+| `PUT /v1/sync/keys/{hostId}` | `{ keyId, wrapped, wrappedBy }` | `204` | `409 conflict`（`message: keyId` か `wrappedBy`） |
+| `POST /v1/sync/reset` | `{ keyId, hostId, wrapped, previousKeyId }` | `state` と同じ | `409 conflict`（`message: previousKeyId`。同時にほかの PC が作り直した） |
+| `GET /v1/sync/items?since=<cursor>&limit=200` | - | `{ items: [{ itemId, rev, seq, keyId, ciphertext\|null, deleted, updatedAt }], cursor, more }` | - |
+| `PUT /v1/sync/items/{itemId}` | `{ baseRev, keyId, ciphertext, deleted, hostId }`（この 5 つだけ。ほかの欄は `400`） | `{ rev, seq }` | `409 conflict`（`message: rev` なら本文の一番外に `current`、か `keyId`）・`413 too_large`（1 項目が大きすぎる）・`413 sync_quota`（容量を超える。`error.limitBytes`） |
+
+`reset` は前の項目と包んだ鍵を消す（サーバーの返す値に従う）。消した項目も `ciphertext` 付きの `deleted: true` で上げる（平文の `deleted` も true）。
+
+### 鍵の始め方（`core/plus/sync/keys.mjs`）
+
+1. `GET /v1/sync/state`。`enabled: false` なら何もしない（`disabled`）
+2. `keyId` が null（最初の 1 台）: 新しい K を作り、自分宛てに包んで `POST /v1/sync/reset`（`previousKeyId: null`）
+3. 手元の K の `keyId` が同じなら、それを使う
+4. 違えば `GET /v1/sync/keys/{自分}` を開く。`404` なら、ほかの PC が渡すのを待つ（`waiting_key`）。`hostsWithKey` のホストが台帳（`GET /v1/hosts`）に 1 台も居なければ、作り直す（`previousKeyId` は今の `keyId`）
+5. `409 conflict`（`previousKeyId`）なら `state` を読み直す（3 回まで）
+6. K を持つ PC は、毎回 `state.pending` のホストへ包んで渡す（`PUT /v1/sync/keys/{T}`。T の公開鍵は台帳の `syncPublicKey`）
+
+ログアウト・アカウントの切り替えでは K と手元の覚えを捨てる（ホストの鍵対は残す）。「同期をやり直す」は新しい K で作り直し、手元の全部を上げ直す（ほかの PC は新しい K を受け直す）。
+
+### 回し方（`core/plus/sync/engine.mjs`）
+
+- 1 回の流れ: 鍵の始め方 → 宛ての無いホストへ鍵を渡す → 受ける → 上げる。同時に 1 本だけ回し、回っている間に頼まれたら、終わったあとにまとめて 1 回回す
+- いつ: 回し始めたとき（ログインしていて `account.status` が `plus`、この PC が台帳に載っている）・手元の変更（スキルの置き場と指示ファイルの親の `fs.watch`、設定の変更。最初の変更から 5 秒まとめる）・10 分ごと。鍵の受け渡しだけは 5 分ごとにも見る
+- 受けて書いたファイル・設定は、その出来事で上げ直さない
+- `409 conflict`（`rev`）: 受けてから競合を解き、勝った手元の版を上げ直す
+- 誤り: `429` は `Retry-After` の秒数（無ければ 60 秒）後に、ほかは 1 分・2 分・4 分…（10 分まで）後にやり直す。`401`・`not_plus`・`account_disabled` は止める（セッションが変わるまで回さない）。`403 sync_disabled` は `disabled`。`413 sync_quota` は `quota`（消すのは上げ続け、次の回でまた試す）。`413 too_large` の項目は中身が変わるまで上げない
+- ログには論理名・中身・鍵を出さない（項目は `itemId` だけ）
+- 手元の覚え: `<data>/plus/sync-state.json`（`{ keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } } }`。中身と鍵は入れない）
+- 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error }`（`totalBytes`・`limitBytes` は `state` の値）
+
+### 競合
+
+同じ項目を 2 台で変えたら、平文の `mtime` の新しい方を採る（同じなら相手の版）。負けた方は `<data>/plus/sync-conflicts/<YYYYMMDD-HHmmss>/<論理名>` に写す（日時はこの PC の時刻。設定は `<論理名>.json`）。写しのフォルダーは作ってから 30 日を過ぎたら、回し始めるときに消す。`conflicts` は残っている写しの数。
+
+### 守るもの・守らないもの
+
+守るもの:
+
+- 中身（ファイル・設定の値）と論理名（パス）は暗号文の中にある。api が受け取るのは、暗号文・包んだ鍵・項目の ID・大きさ・時刻（と書いたホストの `hostId`）だけ
+- K と同期の秘密鍵は PC の外に出さない
+- api が暗号文を書き換える・別の項目や別の版・別のアカウントの暗号文と入れ替える、は開けずに捨てる（aad に uid・itemId・rev、包んだ鍵の aad に uid・hostId・keyId）
+
+守らないもの:
+
+- 項目の数・大きさ・更新の時刻・どのホストが書いたかは api に見える
+- api が項目を返さない・前の版をそのまま返し直す、は見分けない
+- 鍵を渡す相手は、api の返すホストの台帳（`syncPublicKey`）に従う。台帳を偽られると、偽のホストにも K を包んで渡しうる
+- PC そのものが乗っ取られれば、K も中身も読まれる
 
 ## Android
 

@@ -33,6 +33,11 @@ const SUITES = [
   './unit/plus-settings.mjs',
   './unit/remote-plus-ui.mjs',
   './unit/plus-hosts.mjs',
+  // Plus の同期（core/plus/sync/）: 暗号・鍵の始め方と受け渡し・運ぶもの・2 台のホストの同期（偽の Plus と一時フォルダー）
+  './unit/plus-sync-crypto.mjs',
+  './unit/plus-sync-keys.mjs',
+  './unit/plus-sync-targets.mjs',
+  './unit/plus-sync-engine.mjs',
   './unit/acp-error.mjs',
   './unit/opencode-v2.mjs',
   './unit/compaction.mjs',

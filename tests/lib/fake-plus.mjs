@@ -5,6 +5,17 @@
 //   POST /v1/auth/token   verifier・redirectUri・期限 60 秒・1 回きりを照合。外れたら 400 invalid_grant
 //   POST /v1/token        更新（form。?key=）。state.refreshError があれば 400 {"error":{"message":…}}
 //   GET/PATCH /v1/account state.accounts[uid] から返す。無い uid は free
+//   同期の口 /v1/sync/*（state・keys・reset・items）。暗号文・包んだ鍵・itemId だけを持ち、中身は読まない:
+//     state.sync[uid] = { keyId, keys: { hostId: { keyId, wrapped, wrappedBy } }, items: { itemId: { rev, seq, keyId, ciphertext, deleted, size, updatedAt } }, seq, totalBytes }
+//     state.syncLimitBytes   アカウントの容量の上限（limitBytes。試験から変える）。超える PUT items は 413 sync_quota（error に limitBytes）
+//     state.syncItemLimit    暗号文の字数の上限（null なら本文の上限だけ）。超えると 413 too_large
+//     state.syncBodies       /v1/sync/* が受けた本文の全部（生の文字列。試験が中身を調べる）
+//     state.syncFail         誤りの差し込み [{ method?, path: RegExp, status, code, message, headers?, extra?, count? }]（count 回まで）
+//     同期を切った人（account.sync.enabled === false）は state 以外が 403 forbidden（message sync_disabled）。state は enabled: false
+//     reset は previousKeyId が今の keyId と違えば 409 previousKeyId。項目と宛てを全部消す
+//     PUT items は baseRev が今の rev と違えば 409 rev（一番外に current: { rev, updatedAt }）、keyId が違えば 409 keyId、
+//     決めた欄（baseRev・keyId・ciphertext・deleted・hostId）のほかがあれば 400（message は欄の名前）
+//     本文の上限は試験用の作り物の値（/v1/sync/items/* が 3,000,000 バイト、ほかは 100,000 バイト）
 //   state.down = true の間は全部の口が接続を切る。route() で後の issue が口を足せる
 //   呼ばれた口と X-Pleiad-Client を state.calls に残す
 import http from 'node:http';
@@ -35,6 +46,11 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     proxy: {},                // pathname -> { status?, body?, headers? } | async (req, body) => 同じ形。中継の口の応答（未設定は 404）
     hosts: {},                // hostId -> { hostId, publicKey, name, platform, online, lastSeenAt, syncPublicKey, createdAt, deviceCount, uid }
     failNextProof: false,     // 真なら次の PUT /v1/hosts/{id} の証明の照合だけを 422 bad_proof にする（やり直しの試験）
+    sync: {},                 // uid -> 同期の台帳（上の説明）
+    syncLimitBytes: 7_340_032,
+    syncItemLimit: null,
+    syncBodies: [],           // { method, path, body }
+    syncFail: [],
   };
   const challenges = new Map(); // challengeId -> { nonce, serverPrivateKey, publicKey, uid, expiresAt }
   const codes = new Map();    // code -> { challenge, redirectUri, uid, email, expiresAt, used }
@@ -215,12 +231,135 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       }
       if (hostPath && req.method === 'DELETE') {
         const existing = state.hosts[hostPath];
-        if (existing && existing.uid === uid) delete state.hosts[hostPath];
+        if (existing && existing.uid === uid) { delete state.hosts[hostPath]; if (state.sync[uid]) delete state.sync[uid].keys[hostPath]; }
         res.writeHead(204); return res.end();
       }
     }
+    if (url.pathname.startsWith('/v1/sync/')) return syncRoute(req, res, url);
     return json(res, 404, { error: { code: 'not_found', message: 'not found' } });
   });
+
+  // ---- 同期の口 ----------------------------------------------------------------------------------------------
+  const SYNC_ITEM_FIELDS = new Set(['baseRev', 'keyId', 'ciphertext', 'deleted', 'hostId']);
+  const KEY_ID_RX = /^[0-9a-f]{16}$/;
+  const ITEM_ID_RX = /^[A-Za-z0-9_-]{32}$/;
+  const CIPHERTEXT_RX = /^v1\.([^.]*)\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]+)$/;
+  const isWrapped = v => typeof v === 'string' && /^[A-Za-z0-9_-]{80}$/.test(v) && b64urlToBuf(v).length === 60;
+  const syncOf = uid => (state.sync[uid] ??= { keyId: null, keys: {}, items: {}, seq: 0, totalBytes: 0 });
+  const err = (res, status, code, message, extra = {}, headers = {}) => json(res, status, { error: { code, message, ...extra } }, headers);
+
+  function syncState(uid) {
+    const s = syncOf(uid);
+    const hosts = Object.values(state.hosts).filter(h => h.uid === uid).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+    const withKey = new Set(s.keyId ? Object.entries(s.keys).filter(([, k]) => k.keyId === s.keyId).map(([id]) => id) : []);
+    return {
+      enabled: accountOf(uid).sync?.enabled !== false,
+      keyId: s.keyId,
+      hostsWithKey: hosts.filter(h => withKey.has(h.hostId)).map(h => h.hostId),
+      pending: s.keyId ? hosts.filter(h => h.syncPublicKey && !withKey.has(h.hostId)).map(h => h.hostId) : [],
+      totalBytes: s.totalBytes,
+      limitBytes: state.syncLimitBytes,
+      cursor: s.seq,
+    };
+  }
+
+  async function syncRoute(req, res, url) {
+    const uid = uidOf(req);
+    if (!uid) return err(res, 401, 'unauthenticated', 'no token');
+    if (accountOf(uid).status !== 'plus') return err(res, 403, 'not_plus', 'not plus');
+    const itemPath = /^\/v1\/sync\/items\/([^/]+)$/.exec(url.pathname)?.[1] ?? null;
+    const raw = req.method === 'GET' ? '' : await readBody(req);
+    if (Buffer.byteLength(raw) > (itemPath ? 3_000_000 : 100_000)) return err(res, 413, 'too_large', 'too large');
+    state.syncBodies.push({ method: req.method, path: url.pathname + url.search, body: raw });
+    const fail = state.syncFail.find(f => (!f.method || f.method === req.method) && f.path.test(url.pathname) && (f.count ?? 1) > 0);
+    if (fail) {
+      fail.count = (fail.count ?? 1) - 1;
+      return err(res, fail.status, fail.code, fail.message ?? fail.code, fail.extra ?? {}, fail.headers ?? {});
+    }
+    let body = {};
+    try { body = raw ? JSON.parse(raw) : {}; } catch { return err(res, 400, 'bad_request', 'body'); }
+    const s = syncOf(uid);
+    const ownHost = id => (typeof id === 'string' && state.hosts[id]?.uid === uid ? state.hosts[id] : null);
+
+    if (url.pathname === '/v1/sync/state' && req.method === 'GET') return json(res, 200, syncState(uid));
+    if (accountOf(uid).sync?.enabled === false) return err(res, 403, 'forbidden', 'sync_disabled');
+
+    const keyPath = /^\/v1\/sync\/keys\/([^/]+)$/.exec(url.pathname)?.[1] ?? null;
+    if (keyPath && req.method === 'GET') {
+      if (!ownHost(keyPath)) return err(res, 403, 'forbidden', 'forbidden');
+      const k = s.keys[keyPath];
+      if (!k || !s.keyId || k.keyId !== s.keyId) return err(res, 404, 'not_found', 'not found');
+      return json(res, 200, { keyId: k.keyId, wrapped: k.wrapped, wrappedBy: k.wrappedBy });
+    }
+    if (keyPath && req.method === 'PUT') {
+      if (typeof body.keyId !== 'string') return err(res, 400, 'bad_request', 'keyId');
+      if (typeof body.wrappedBy !== 'string') return err(res, 400, 'bad_request', 'wrappedBy');
+      if (!isWrapped(body.wrapped)) return err(res, 400, 'bad_request', 'wrapped');
+      const target = ownHost(keyPath);
+      if (!target || !ownHost(body.wrappedBy)) return err(res, 403, 'forbidden', 'forbidden');
+      if (!target.syncPublicKey) return err(res, 400, 'bad_request', 'syncPublicKey');
+      if (!s.keyId || body.keyId !== s.keyId) return err(res, 409, 'conflict', 'keyId');
+      if (s.keys[body.wrappedBy]?.keyId !== s.keyId) return err(res, 409, 'conflict', 'wrappedBy');
+      s.keys[keyPath] = { keyId: body.keyId, wrapped: body.wrapped, wrappedBy: body.wrappedBy };
+      res.writeHead(204); return res.end();
+    }
+    if (url.pathname === '/v1/sync/reset' && req.method === 'POST') {
+      if (typeof body.keyId !== 'string' || !KEY_ID_RX.test(body.keyId)) return err(res, 400, 'bad_request', 'keyId');
+      if (typeof body.hostId !== 'string') return err(res, 400, 'bad_request', 'hostId');
+      if (!isWrapped(body.wrapped)) return err(res, 400, 'bad_request', 'wrapped');
+      if (body.previousKeyId !== null && typeof body.previousKeyId !== 'string') return err(res, 400, 'bad_request', 'previousKeyId');
+      const host = ownHost(body.hostId);
+      if (!host) return err(res, 403, 'forbidden', 'forbidden');
+      if (!host.syncPublicKey) return err(res, 400, 'bad_request', 'syncPublicKey');
+      if ((s.keyId ?? null) !== body.previousKeyId) return err(res, 409, 'conflict', 'previousKeyId');
+      s.keyId = body.keyId;
+      s.items = {};
+      s.totalBytes = 0;
+      s.keys = { [body.hostId]: { keyId: body.keyId, wrapped: body.wrapped, wrappedBy: body.hostId } };
+      return json(res, 200, syncState(uid));
+    }
+    if (url.pathname === '/v1/sync/items' && req.method === 'GET') {
+      const since = Number(url.searchParams.get('since') ?? 0);
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 200)));
+      if (!Number.isInteger(since) || since < 0) return err(res, 400, 'bad_request', 'since');
+      const all = Object.entries(s.items).filter(([, it]) => it.seq > since).sort((a, b) => a[1].seq - b[1].seq);
+      const page = all.slice(0, limit).map(([itemId, it]) => ({ itemId, rev: it.rev, seq: it.seq, keyId: it.keyId, ciphertext: it.ciphertext, deleted: it.deleted, updatedAt: it.updatedAt }));
+      return json(res, 200, { items: page, cursor: page.length ? page.at(-1).seq : since, more: all.length > limit });
+    }
+    if (itemPath && req.method === 'PUT') {
+      if (!ITEM_ID_RX.test(itemPath)) return err(res, 400, 'bad_request', 'itemId');
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return err(res, 400, 'bad_request', 'body');
+      const unknown = Object.keys(body).find(k => !SYNC_ITEM_FIELDS.has(k));
+      if (unknown) return err(res, 400, 'bad_request', unknown);
+      if (!Number.isSafeInteger(body.baseRev) || body.baseRev < 0) return err(res, 400, 'bad_request', 'baseRev');
+      if (typeof body.keyId !== 'string') return err(res, 400, 'bad_request', 'keyId');
+      if (typeof body.deleted !== 'boolean') return err(res, 400, 'bad_request', 'deleted');
+      if (typeof body.hostId !== 'string') return err(res, 400, 'bad_request', 'hostId');
+      const ciphertext = body.ciphertext ?? null;
+      if (ciphertext === null) {
+        if (!body.deleted) return err(res, 400, 'bad_request', 'ciphertext');
+      } else {
+        if (typeof ciphertext !== 'string') return err(res, 400, 'bad_request', 'ciphertext');
+        if (state.syncItemLimit != null && ciphertext.length > state.syncItemLimit) return err(res, 413, 'too_large', 'too large');
+        const m = CIPHERTEXT_RX.exec(ciphertext);
+        if (!m || m[1] !== body.keyId) return err(res, 400, 'bad_request', 'ciphertext');
+      }
+      if (!ownHost(body.hostId)) return err(res, 403, 'forbidden', 'forbidden');
+      if (!s.keyId || body.keyId !== s.keyId) return err(res, 409, 'conflict', 'keyId');
+      const cur = s.items[itemPath];
+      const curRev = cur?.rev ?? 0;
+      if (curRev !== body.baseRev) return json(res, 409, { error: { code: 'conflict', message: 'rev' }, current: { rev: curRev, updatedAt: cur?.updatedAt ?? null } });
+      const size = ciphertext === null ? 0 : ciphertext.length;
+      const totalBytes = Math.max(0, s.totalBytes - (cur?.size ?? 0)) + size;
+      if (totalBytes > state.syncLimitBytes) return err(res, 413, 'sync_quota', 'sync quota', { limitBytes: state.syncLimitBytes });
+      const rev = body.baseRev + 1;
+      const seq = ++s.seq;
+      s.items[itemPath] = { rev, seq, keyId: body.keyId, ciphertext, deleted: body.deleted, size, updatedAt: new Date().toISOString() };
+      s.totalBytes = totalBytes;
+      return json(res, 200, { rev, seq });
+    }
+    return err(res, 404, 'not_found', 'not found');
+  }
 
   const origin = await new Promise((resolve, reject) => {
     server.once('error', reject);

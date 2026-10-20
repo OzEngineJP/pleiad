@@ -85,6 +85,52 @@ export default async function (t) {
     && settings.filter((s) => s.risk === 'guarded').map((s) => s.key).sort().join() === 'addedContext,context.default,delegationRouting,launchAtLogin,plyInstructions'
     && settings.filter((s) => s.riskOf).map((s) => s.key).sort().join() === 'agentSitePermissions,chromeAutoAllow,computerUse,confirmAgentSites,confirmExternalLoads,externalSitePermissions,voice');
 
+  // ---- Plus の同期（sync）: 全部の設定に同期するかの判断が書いてある（docs/plus.md「同期」の表と同じ）。設定を足したらこの表にも足す
+  const SYNC_TABLE = [
+    ['locale', true, '表示の言語。どの PC でも同じでよい'],
+    ['linkOpen', true, 'リンクを開く場所の好み'],
+    ['instructionBudget', true, '指示の量の目安の表示'],
+    ['backend', true, '新しい会話の既定のエージェント。受けた PC に無いエージェントは normalize で落ちる'],
+    ['memoryLearnBackend', true, '記憶の学習に使うエージェント。無いエージェントは normalize で落ちる'],
+    ['memoryLearnAt', true, '記憶の学習の時刻の好み'],
+    ['memoryLearnPaused', true, '記憶の学習の一時停止の好み'],
+    ['model', true, '新しい会話の既定のモデル。知らないモデルは normalize で落ちる'],
+    ['effort', true, '新しい会話の既定の考える深さ'],
+    ['shellTool', true, 'エージェントごとのシェルのツールの好み（どちらも承認モードで聞く）'],
+    ['composer.historyRecall', true, '入力欄の呼び出しの好み'],
+    ['composer.suggestions', true, '入力欄の候補の好み'],
+    ['compaction.auto', true, '自動の圧縮のしきい値と待ち時間'],
+    ['mode', false, 'human-only（承認モードの既定）'],
+    ['claudeAccount', false, 'human-only（既定のアカウント。アカウントは PC ごと）'],
+    ['account', false, 'human-only（既定のアカウント。アカウントは PC ごと）'],
+    ['repoDefaults', false, '読むだけ。リポジトリのパスを含む'],
+    ['confirmAgentSites', false, 'riskOf（関所を緩める向きがある）'],
+    ['chromeAutoAllow', false, 'riskOf（関所を緩める向きがある）'],
+    ['confirmExternalLoads', false, 'riskOf（関所を緩める向きがある）'],
+    ['agentSitePermissions', false, 'riskOf（関所を緩める向きがある）'],
+    ['externalSitePermissions', false, 'riskOf（関所を緩める向きがある）'],
+    ['chromeProfileNotes', false, 'この PC の Chrome のプロファイルに付けるメモ（機械に固有）'],
+    ['chromeNewProfile', false, 'この PC の Chrome のプロファイルを指す（機械に固有）'],
+    ['computerUse', false, 'riskOf（関所を緩める向きがある）。アプリの実行ファイルの path を含む'],
+    ['voice', false, 'riskOf（費用の安全弁を緩める向きがある）'],
+    ['launchAtLogin', false, 'guarded。OS のログイン項目（機械に固有）'],
+    ['delegationRouting', false, 'guarded（全体の構成）'],
+    ['plyInstructions', false, 'guarded（全体の構成）'],
+    ['addedContext', false, 'guarded・読むだけ'],
+    ['context.default', false, 'guarded（全体の構成）。ファイルやフォルダーのパスを含む'],
+  ];
+  {
+    const table = new Map(SYNC_TABLE.map(([key, sync, why]) => [key, { sync, why }]));
+    const keys = settings.map((s) => s.key);
+    t.ok('同期の表: 全部の設定に sync の判断と理由があり、表に余りが無い',
+      keys.every((k) => table.has(k) && table.get(k).why) && SYNC_TABLE.every(([k]) => keys.includes(k)) && table.size === SYNC_TABLE.length,
+      JSON.stringify({ missing: keys.filter((k) => !table.has(k)), extra: SYNC_TABLE.map(([k]) => k).filter((k) => !keys.includes(k)) }));
+    const wrong = settings.filter((s) => table.has(s.key) && table.get(s.key).sync !== s.sync).map((s) => s.key);
+    t.ok('同期の表: 定義の sync が表のとおり', wrong.length === 0, wrong.join());
+    t.ok('同期の表: human-only・guarded・riskOf・読むだけの設定は全部 sync: false',
+      settings.filter((s) => s.risk === 'human-only' || s.risk === 'guarded' || s.riskOf || s.readOnly).every((s) => s.sync === false));
+  }
+
   // ---- riskOf は書いてある例のとおり（関所を緩める向きだけ guarded）
   for (const s of settings.filter((x) => x.riskOf)) {
     for (const e of s.riskExamples) t.ok(`riskOf ${s.key}: ${stableStringify(e.before).slice(0, 40)} → ${stableStringify(e.after).slice(0, 40)} は ${e.risk}`, s.riskOf(e.before, e.after) === e.risk);

@@ -84,7 +84,7 @@ export default async function (t) {
   t.ok('自己診断: 5 つに当たらない操作を human-only にすると落ちる（検査用の probe.* は除く）', checkFive({ ...good, commands: { a: 'todo', c: 'human-only' } }, { reg: createRegistry({ ops: [humanOp('x.b', 'b'), humanOp('probe.x')] }) }) === 'human-only-outside');
   t.ok('自己診断: 5 つに当たる操作を human-only 以外にすると落ちる', checkFive({ ...good, commands: { a: 'todo', b: 'ui-internal' } }, { reg: createRegistry({ ops: [op('x.c', 'c')] }) }) === 'human-only-missing');
   t.ok('自己診断: 5 つに当たらない設定を human-only にすると落ちる・当たる設定を human-only 以外にすると落ちる',
-    checkFive(good, { reg: createRegistry({ settings: [defineSetting({ key: 'p', summary: 'agent:settings.p', risk: 'human-only', schema: z.string(), default: '', read: () => '' })] }) }) === 'human-only-outside'
+    checkFive(good, { reg: createRegistry({ settings: [defineSetting({ key: 'p', summary: 'agent:settings.p', risk: 'human-only', sync: false, schema: z.string(), default: '', read: () => '' })] }) }) === 'human-only-outside'
     && checkFive(good, { reg: createRegistry({ settings: [setting('s')] }) }) === 'human-only-missing');
 
   const shrunk = shrinkBaseline({ baseline: { ...good, commands: { ...good.commands, z: 'todo' }, todoMax: 2, setPrefAllowed: 3 }, commands, registry: createRegistry({ ops: [op('x.a', 'a')] }), setPrefCalls: [call(true)] });

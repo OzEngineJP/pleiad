@@ -96,6 +96,15 @@ export function stripJsonc(text) {
   }
   return out;
 }
+/**
+ * 全体（user）の指示ファイルの場所。scanContext のユーザーの段と、Plus の同期（core/plus/sync/targets.mjs）が同じ場所を指すようにここで決める。
+ * AGENTS.override.md は含めない（scanContext は別に探す）
+ */
+export function userInstructionPaths({ home = os.homedir(), claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'),
+  codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'), geminiHome = path.join(home, '.gemini') } = {}) {
+  return { claude: path.join(claudeHome, 'CLAUDE.md'), codex: path.join(codexHome, 'AGENTS.md'), gemini: path.join(geminiHome, 'GEMINI.md') };
+}
+
 // scopes: 探す範囲。既定は両方。設定の画面のユーザーの段は ['user'] だけ（作業場所のファイルを混ぜない）
 export async function scanContext(settings, { home = os.homedir(), codexHome = process.env.CODEX_HOME ?? path.join(home, '.codex'), claudeHome = process.env.CLAUDE_CONFIG_DIR ?? path.join(home, '.claude'),
   // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
@@ -104,6 +113,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
   devinHome = process.env.DEVIN_CONFIG_HOME ? path.join(process.env.DEVIN_CONFIG_HOME, 'devin') : path.join(process.env.APPDATA ?? process.env.XDG_CONFIG_HOME ?? path.join(home, '.config'), 'devin'),
   geminiHome = path.join(home, '.gemini'), grokHome = process.env.GROK_HOME || path.join(home, '.grok') } = {}) {
   const { cwd } = settings;
+  const userInstructions = userInstructionPaths({ home, claudeHome, codexHome, geminiHome });
   // 種類ごと・範囲（user = home / directory = Git ルート〜作業場所）ごとの探し方。形式 1 の { user, directory } も受け付ける
   const plan = scanPlan(settings);
   const disabledNames = new Set(plan.mcp?.disabled ?? []);
@@ -306,13 +316,14 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
       : path.join(base, source === 'devin' ? '.devin' : source === 'antigravity' ? '.gemini' : `.${source}`);
     if (spec.kinds.includes('instruction')) {
       const dir = user && !custom ? configDir : base;
+      const userMain = user && !custom ? userInstructions : null;
       searched.push({ path: dir, kind: 'instruction', ...ctx });
       if (source === 'codex') {
         const override = await read(path.join(dir, 'AGENTS.override.md'));
         await instruction(path.join(dir, 'AGENTS.override.md'), ctx);
-        await instruction(path.join(dir, 'AGENTS.md'), ctx, override?.text.trim() ? 'shadowed' : 'candidate');
+        await instruction(userMain?.codex ?? path.join(dir, 'AGENTS.md'), ctx, override?.text.trim() ? 'shadowed' : 'candidate');
       } else if (source === 'claude') {
-        await instruction(path.join(dir, 'CLAUDE.md'), ctx);
+        await instruction(userMain?.claude ?? path.join(dir, 'CLAUDE.md'), ctx);
         if (!user || custom) { await instruction(path.join(configDir, 'CLAUDE.md'), ctx); await instruction(path.join(base, 'CLAUDE.local.md'), ctx); }
         await rules(path.join(configDir, 'rules'), ctx, user && !custom ? null : base);
       // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
@@ -338,7 +349,7 @@ export async function scanContext(settings, { home = os.homedir(), codexHome = p
         }
     // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
       } else if (source === 'antigravity') {
-        await instruction(path.join(dir, 'GEMINI.md'), ctx);
+        await instruction(userMain?.gemini ?? path.join(dir, 'GEMINI.md'), ctx);
       // backend-allow: 読み込み元（ファイルの形式。core/context-settings.mjs の SOURCES）の名前で、エージェントの分岐ではない
       } else if (source === 'grok') {
         // Grok の全体の指示は $GROK_HOME/AGENTS.md。作業場所の AGENTS.md は common、CLAUDE.* は claude が探し、ここでは Grok だけが読む別名の AGENT.md を探す

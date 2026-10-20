@@ -1,16 +1,18 @@
 // Pleiad Plus の api を呼ぶ手。ヘッダー・誤りの形・401 の取り直しをここに集める。
-// 誤りは {"error":{"code","message"}} を PlusError（status・code・message・retryAfter・resetAt）にして投げる。
+// 誤りは {"error":{"code","message"}} を PlusError（status・code・message・retryAfter・resetAt・body）にして投げる。
 // 本文が読めないとき・ネットの誤りは PlusError({ code: 'network' })。
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export class PlusError extends Error {
-  constructor({ status, code, message, retryAfter, resetAt } = {}) {
+  constructor({ status, code, message, retryAfter, resetAt, body } = {}) {
     super(message ?? code ?? 'plus error');
     this.name = 'PlusError';
     this.status = status ?? null;
     this.code = code ?? 'unknown';
     this.retryAfter = retryAfter ?? null;
     this.resetAt = resetAt ?? null;
+    // 誤りの本文の全体（409 conflict の current など、error のほかの欄を読む口のため）
+    this.body = body ?? null;
   }
 }
 
@@ -19,7 +21,7 @@ function errorFrom(status, body, headers) {
   const err = body && typeof body === 'object' ? body.error : null;
   const retryAfter = /^[\d.]+$/.test(headers?.get?.('retry-after') ?? '') ? Number(headers.get('retry-after')) : null;
   if (err && typeof err === 'object' && typeof err.code === 'string') {
-    return new PlusError({ status, code: err.code, message: typeof err.message === 'string' ? err.message : err.code, retryAfter, resetAt: typeof err.resetAt === 'string' ? err.resetAt : null });
+    return new PlusError({ status, code: err.code, message: typeof err.message === 'string' ? err.message : err.code, retryAfter, resetAt: typeof err.resetAt === 'string' ? err.resetAt : null, body });
   }
   return new PlusError({ status, code: status === 401 ? 'unauthenticated' : 'http', message: `HTTP ${status}`, retryAfter });
 }

@@ -82,7 +82,7 @@ export default async function (t) {
     const identity = await remote.store.peekIdentity();
     t.ok('ログインしていて plus なら、この PC を登録する（registered）', host.host().state === 'registered' && host.host().hostId === identity.hostId, JSON.stringify(host.host()));
     const rec = plus.state.hosts[identity.hostId];
-    t.ok('台帳には名前・platform・公開鍵が載り、syncPublicKey は送らない',
+    t.ok('台帳には名前・platform・公開鍵が載り、同期の公開鍵を渡さなければ syncPublicKey は送らない',
       rec?.name === 'desk-b4' && rec?.publicKey === identity.publicKey.toString('base64url') && rec.syncPublicKey === null
       && ['win32', 'darwin', 'linux'].includes(rec?.platform), JSON.stringify(rec));
     t.ok('GET → challenge → PUT の順で呼ぶ',
@@ -103,13 +103,32 @@ export default async function (t) {
     await host.syncDeviceCount();
     t.ok('via:plus の端末数が変わると PATCH { deviceCount }', plus.state.hosts[identity.hostId].deviceCount === 2);
 
+    // ---- 同期の公開鍵（syncPublicKey）: 載せずに登録済みなら PATCH で足し、新規の登録なら PUT に載せる
+    const syncPub = generateKeyPair().publicKey.toString('base64url');
+    const withSync = createPlusHost({
+      session, store: remote.store, appVersion: 'test', hostName: () => nameNow,
+      plusDevices: () => devicesNow, retryMs: 40, log: () => {}, syncPublicKey: async () => syncPub,
+    });
+    const putBeforeSync = callsTo(plus, 'PUT', '/v1/hosts/').length;
+    await withSync.maybeRegister();
+    t.ok('登録済みで syncPublicKey が無ければ PATCH { syncPublicKey } で足す（PUT は増えない）',
+      plus.state.hosts[identity.hostId].syncPublicKey === syncPub && callsTo(plus, 'PUT', '/v1/hosts/').length === putBeforeSync);
+    const patchesBefore = callsTo(plus, 'PATCH', '/v1/hosts/').length;
+    await withSync.maybeRegister();
+    t.ok('同じ syncPublicKey なら PATCH しない', callsTo(plus, 'PATCH', '/v1/hosts/').length === patchesBefore);
+    delete plus.state.hosts[identity.hostId];
+    await withSync.maybeRegister();
+    t.ok('新規の登録では PUT に syncPublicKey を載せる',
+      plus.state.hosts[identity.hostId]?.syncPublicKey === syncPub && callsTo(plus, 'PUT', '/v1/hosts/').length === putBeforeSync + 1);
+
     // ---- bad_proof は新しい challenge で 1 回だけやり直す
     const hostId2 = identity.hostId;   // 同じ hostId を別 uid に取らせるため、まず台帳から外す
     delete plus.state.hosts[hostId2];
     plus.state.failNextProof = true;
+    const challengesBefore = callsTo(plus, 'POST', '/v1/hosts/challenge').length;
     await host.maybeRegister();
     t.ok('bad_proof はやり直しで登録できる（challenge は 2 回）',
-      host.host().state === 'registered' && callsTo(plus, 'POST', '/v1/hosts/challenge').length === 3 && Boolean(plus.state.hosts[hostId2]));
+      host.host().state === 'registered' && callsTo(plus, 'POST', '/v1/hosts/challenge').length === challengesBefore + 2 && Boolean(plus.state.hosts[hostId2]));
 
     // ---- host_taken（ほかのアカウントに同じ hostId）
     delete plus.state.hosts[hostId2];

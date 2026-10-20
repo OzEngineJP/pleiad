@@ -156,6 +156,13 @@ export const DATA_WRITES = [
   { file: 'core/plus/config.mjs', sites: 1, targets: [
     { name: 'plus-config.json', limit: '固定（/v1/auth/config の応答の写し。秘密を含まない）', reason: 'Pleiad Plus の設定の写し。api に届かないときに使う。読めたときだけ書き直す' },
   ] },
+  { file: 'core/plus/sync/engine.mjs', sites: 2, targets: [
+    { name: 'plus/sync-state.json', limit: '同期する項目 1 つにつき 1 行（itemId・rev・sha256・mtime）。項目は skill のファイル・全体の指示ファイル 3 つ・既定でない設定で、合計はサーバーの返す limitBytes に従う。消した項目の行も残る', reason: '同期の手元の覚え（docs/plus.md「同期」）。1 回の同期の終わりに書く。中身・鍵は入れない' },
+    { name: 'plus/sync-conflicts/<日時>/<論理名>', limit: '競合で負けた版 1 つにつき 1 ファイル（ITEM_LIMIT_BYTES=1MiB 以下）。CONFLICT_KEEP_MS=30 日を過ぎたフォルダーは起動時に消す', reason: '競合で負けた版の写し。書き換えない' },
+  ] },
+  { file: 'core/plus/sync/targets.mjs', sites: 1, targets: [
+    { name: 'skills/ と (置き場の外) ~/.claude/skills・~/.agents/skills・全体の指示ファイル 3 つ', limit: '1 ファイル ITEM_LIMIT_BYTES=1MiB 以下。ユーザーの skill と指示ファイルの数', reason: 'ほかの PC から受けた skill と指示ファイル（docs/plus.md「同期」）。リンクの先には書かない' },
+  ] },
   { file: 'core/control-file.mjs', sites: 1, targets: [
     { name: 'control.json', limit: '固定', reason: '起動中ホストの接続情報' },
   ] },
