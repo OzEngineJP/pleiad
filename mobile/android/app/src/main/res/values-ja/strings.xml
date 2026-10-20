@@ -6,6 +6,16 @@
     <string name="remote_page_revoked">もう一度ペアリングしてください。</string>
     <string name="remote_page_host_offline">ホストの Pleiad が起動しているか確かめてください。つながり次第、自動で開きます。</string>
     <string name="remote_page_offline">中継につながりません。ネットワークを確かめてください。つながり次第、自動で開きます。</string>
+    <string name="remote_plus_blocked">このアカウントでは公式の中継を使えません</string>
+    <string name="remote_page_plus_blocked">このアカウントでは公式の中継を使えません。</string>
+    <string name="remote_plus_limit">このアカウントの上限に達しています</string>
+    <string name="remote_page_plus_limit">このアカウントの上限に達しています。</string>
+    <string name="remote_plus_paused">Pleiad Plus は今使えません</string>
+    <string name="remote_page_plus_paused">Pleiad Plus は今使えません。利用できるようになると接続を再開します。</string>
+    <string name="remote_plus_maintenance">Pleiad Plus はメンテナンス中です</string>
+    <string name="remote_page_plus_maintenance">Pleiad Plus はメンテナンス中です。利用できるようになると接続を再開します。</string>
+    <string name="remote_plus_signed_out">ログインしていません</string>
+    <string name="remote_page_plus_signed_out">このホストにつなぐには Pleiad Plus にログインしてください。</string>
     <string name="remote_token_required">トークンが要る（アプリから開いてください）</string>
     <string name="remote_lost">ホストとの接続が切れました</string>
     <string name="remote_back_to_hosts">ホスト一覧に戻る</string>

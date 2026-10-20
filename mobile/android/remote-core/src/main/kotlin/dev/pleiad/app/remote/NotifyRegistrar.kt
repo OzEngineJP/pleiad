@@ -29,10 +29,11 @@ class NotifyRegistrar(
     private val name: String,
     private val connectTimeoutMs: Long = 15_000,
     private val log: (String) -> Unit = {},
+    private val plusIdToken: (() -> String?)? = null,
 ) {
     /** Blocking (never call on the loop). */
     fun register(creds: HostCreds, key: ByteArray, settings: NotifySettings, timeoutMs: Long = 30_000): RegisterResult {
-        val link = DeviceLink(loop, creds, keyPair, app, name, "mobile", Backoff(500, 2_000, 1_000), connectTimeoutMs, log = log)
+        val link = DeviceLink(loop, creds, keyPair, app, name, "mobile", Backoff(500, 2_000, 1_000), connectTimeoutMs, log = log, plusIdToken = plusIdToken)
         val done = CountDownLatch(1)
         val result = java.util.concurrent.atomic.AtomicReference<RegisterResult>(RegisterResult.Failed("timeout"))
         var finished = false

@@ -39,6 +39,16 @@
   function label(h) { return h.label || h.hostName || h.hostId.slice(0, 8); }
 
   function stateLine(h) {
+    if (h.via === 'plus' || h.via === 'both') {
+      const st = h.state === 'signed-out' ? t('plus.notSignedIn')
+        : h.state === 'blocked' ? t('plus.noRelay')
+        : h.state === 'limit' ? t('plus.limit')
+        : h.state === 'paused' ? (pstate?.plus === 'maintenance' ? t('plus.maintenance') : t('plus.temporarilyUnavailable'))
+        : h.state === 'readmit' || h.state === 'connecting' ? t('plus.connecting')
+        : h.state === 'offline' ? t('plus.unreachable') : t(h.online ? 'plus.online' : 'plus.offlineHost');
+      const when = h.lastConnectedAt ? t('hosts.lastUsed', { when: ago(h.lastConnectedAt) }) : t('hosts.neverUsed');
+      return { st, when, on: !!h.online };
+    }
     const st = h.state && h.state !== 'closed' && h.state !== 'stopped' ? t(`state.${h.state}`) : '';
     const when = h.lastConnectedAt ? t('hosts.lastUsed', { when: ago(h.lastConnectedAt) }) : t('hosts.neverUsed');
     return { st, when, on: h.state === 'connected' };
@@ -48,8 +58,14 @@
 
   function render() {
     const box = $('hosts');
+    const banner = $('hostBanner');
     box.replaceChildren();
-    const list = [...hosts.values()].sort((a, b) => (b.lastConnectedAt ?? b.pairedAt ?? 0) - (a.lastConnectedAt ?? a.pairedAt ?? 0));
+    const list = [...hosts.values()].sort((a, b) => {
+      if (a.lastConnectedAt || b.lastConnectedAt) return (b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0);
+      const ap = a.via === 'plus', bp = b.via === 'plus';
+      if (ap !== bp) return ap ? 1 : -1;
+      return ap ? 0 : (b.pairedAt ?? 0) - (a.pairedAt ?? 0);
+    });
     $('empty').hidden = list.length > 0;
     box.hidden = list.length === 0;
     for (const h of list) {
@@ -86,9 +102,12 @@
   async function refresh() {
     if (!Remote) return;
     try {
-      const { hosts: list } = await Remote.list();
+      const { hosts: list, plusError } = await Remote.list();
       hosts.clear();
       for (const h of list) hosts.set(h.hostId, h);
+      banner.textContent = plusError === 'no-relay' ? t('plus.noRelay') : plusError ? t('plus.unreachable') : '';
+      banner.hidden = !banner.textContent;
+      $('empty').textContent = pstate?.login === 'in' && pstate?.status === 'plus' && list.length === 0 ? t('hosts.plusEmpty') : t('hosts.empty');
       render();
     } catch (e) { toast(errorText(e)); }
   }
@@ -116,11 +135,11 @@
     item(t('hosts.rename'), async () => {
       const v = window.prompt(t('hosts.renamePrompt'), label(h));
       if (v == null) return;
-      try { await Remote.rename({ hostId: h.hostId, label: v }); await refresh(); } catch (e) { toast(errorText(e)); }
+      try { await Remote.rename({ hostId: h.hostId, label: v, via: h.via === 'plus' || h.via === 'both' ? 'plus' : 'own' }); await refresh(); } catch (e) { toast(errorText(e)); }
     });
-    item(t('hosts.remove'), async () => {
+    if (h.via !== 'plus') item(t('hosts.remove'), async () => {
       if (!window.confirm(t('hosts.removeConfirm', { host: label(h) }))) return;
-      try { await Remote.remove({ hostId: h.hostId }); await refresh(); } catch (e) { toast(errorText(e)); }
+      try { await Remote.remove({ hostId: h.hostId, via: 'own' }); await refresh(); } catch (e) { toast(errorText(e)); }
     });
     const r = anchor.getBoundingClientRect();
     menu.style.top = `${r.bottom + window.scrollY + 4}px`;
@@ -385,11 +404,18 @@
     Remote.info().then(i => { $('plain').hidden = i.encrypted !== false; }).catch(() => {});
     // Coming back (from the system's notification settings, say): re-read what the system says
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); if (!$('notify').hidden) loadNotify(); } });
+    let pullY = null;
+    $('list').addEventListener('touchstart', e => { pullY = window.scrollY === 0 ? e.touches[0]?.clientY ?? null : null; }, { passive: true });
+    $('list').addEventListener('touchend', e => {
+      const endY = e.changedTouches[0]?.clientY;
+      if (pullY != null && endY != null && endY - pullY > 72) refresh();
+      pullY = null;
+    }, { passive: true });
     refresh().then(takeLink);
   }
   if (Plus) {
-    Plus.addListener('state', s => { pstate = s; paintPlus(); });
-    Plus.state().then(s => { pstate = s; paintPlus(); }).catch(() => {});
+    Plus.addListener('state', s => { pstate = s; paintPlus(); refresh(); });
+    Plus.state().then(s => { pstate = s; paintPlus(); refresh(); }).catch(() => {});
   }
   show('list');
 })();

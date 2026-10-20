@@ -47,10 +47,21 @@ interface ProxyTexts {
 }
 
 object DefaultTexts : ProxyTexts {
-    override fun title(state: String) = if (state == "revoked") "This device was revoked on the host" else "Can't reach the host"
+    override fun title(state: String) = when (state) {
+        "revoked" -> "This device was revoked on the host"
+        "blocked" -> "This account can't use the official relay"
+        "limit" -> "This account has reached its limit"
+        "paused" -> "Pleiad Plus is temporarily unavailable"
+        "signed-out" -> "Not signed in"
+        else -> "Can't reach the host"
+    }
     override fun body(state: String) = when (state) {
         "revoked" -> "Pair this device again."
         "host-offline" -> "Make sure Pleiad is running on the host. This page opens automatically once connected."
+        "blocked" -> "This account can't use the official relay."
+        "limit" -> "This account has reached its limit."
+        "paused" -> "Pleiad Plus is temporarily unavailable. The connection will resume when it is available."
+        "signed-out" -> "Sign in to Pleiad Plus to connect to this host."
         else -> "Can't reach the relay. Check your network. This page opens automatically once connected."
     }
     override fun tokenRequired() = "A token is required (open this from the app)"
@@ -72,6 +83,8 @@ class DeviceProxy(
     private val texts: ProxyTexts = DefaultTexts,
     private val log: (String) -> Unit = {},
     staticCacheFile: java.io.File? = null,
+    plusIdToken: (() -> String?)? = null,
+    plusReadmit: ((String) -> HostCreds?)? = null,
 ) {
     companion object {
         const val PROXY_COOKIE = "pleiad_remote_token"
@@ -100,7 +113,7 @@ class DeviceProxy(
         fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
     }
 
-    val link = DeviceLink(loop, creds, keyPair, app, name, shell, backoff, connectTimeoutMs, log = log)
+    val link = DeviceLink(loop, creds, keyPair, app, name, shell, backoff, connectTimeoutMs, log = log, plusIdToken = plusIdToken, plusReadmit = plusReadmit)
     private val wantPort = if (wantPort in 1024..65535) wantPort else 0
     @Volatile var port = 0; private set
     val token: String = PairingCodec.b64urlEncode(randomBytes(32))
@@ -117,6 +130,11 @@ class DeviceProxy(
     val url: String get() = "http://127.0.0.1:$port/?token=$token"
 
     fun onStatus(fn: (LinkStatus) -> Unit) = link.onStatus(fn)
+
+    fun updateCredentials(next: HostCreds) {
+        creds = next
+        link.retryNow(next)
+    }
 
     /** Listen and start connecting. Blocking (binds the socket); call off the main thread. */
     fun start(): DeviceProxy {

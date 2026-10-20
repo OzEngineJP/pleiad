@@ -35,6 +35,7 @@ class NotifyHub(
     private val registerRetryMs: Long = 60_000,
     private val reregisterMs: Long = 6 * 60 * 60_000L,
     private val log: (String) -> Unit = {},
+    private val plusIdToken: (() -> String?)? = null,
 ) {
     private class Reg(var version: Long = -1, var at: Long = 0, var failures: Int = 0, var unsupported: Boolean = false, var running: Boolean = false)
 
@@ -43,7 +44,7 @@ class NotifyHub(
     private val regs = ConcurrentHashMap<String, Reg>()
     private val workers = Executors.newCachedThreadPool { r -> Thread(r, "pleiad-notify-hub").also { it.isDaemon = true } }
     private val timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "pleiad-notify-timer").also { it.isDaemon = true } }
-    private val registrar by lazy { NotifyRegistrar(loop, store.identity(), app, name, log = log) }
+    private val registrar by lazy { NotifyRegistrar(loop, store.identity(), app, name, log = log, plusIdToken = plusIdToken) }
     @Volatile private var settings = NotifySettings()
     @Volatile private var settingsVersion = 0L
     @Volatile private var running = false
@@ -69,6 +70,14 @@ class NotifyHub(
     @Synchronized
     fun hostsChanged() {
         if (running) reconcile()
+    }
+
+    @Synchronized
+    fun plusRelayChanged() {
+        for (h in store.hosts().filter { it.via == "plus" }) {
+            val creds = store.credentials(h.hostId, "plus") ?: continue
+            lines[h.hostId]?.updateCredentials(creds)
+        }
     }
 
     @Synchronized
@@ -118,7 +127,7 @@ class NotifyHub(
                 creds, key,
                 onNotice = { n -> sink.act(planner.onNotice(n, settings), settings) },
                 onState = { s -> onLineState(h.hostId, s) },
-                backoff = lineBackoff, pingMs = pingMs, log = log,
+                backoff = lineBackoff, pingMs = pingMs, log = log, plusIdToken = plusIdToken,
             )
             lines[h.hostId] = line
             line.start()

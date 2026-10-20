@@ -29,6 +29,8 @@ data class HostCreds(
     val deviceId: String,
     val token: String,
     val hostName: String,
+    val via: String = "own",
+    val uid: String? = null,
 )
 
 object PairingCodec {

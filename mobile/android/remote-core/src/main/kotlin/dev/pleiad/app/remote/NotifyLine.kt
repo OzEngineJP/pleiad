@@ -29,6 +29,7 @@ class NotifyLine(
     private val pingMs: Long = 240_000,
     private val client: OkHttpClient = Http.client,
     private val log: (String) -> Unit = {},
+    private val plusIdToken: (() -> String?)? = null,
 ) {
     private val timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "pleiad-notify-line").also { it.isDaemon = true } }
         .apply { removeOnCancelPolicy = true }
@@ -71,6 +72,17 @@ class NotifyLine(
         connect()
     }
 
+    fun updateCredentials(next: HostCreds) = synchronized(lock) {
+        if (next == creds) return@synchronized
+        creds = next
+        if (!running) return@synchronized
+        generation++
+        retry?.cancel(false); retry = null
+        socket?.cancel(); socket = null
+        attempt = 0
+        connect()
+    }
+
     private fun connect() {
         val gen = ++generation
         setState("connecting")
@@ -83,8 +95,14 @@ class NotifyLine(
             .readTimeout(0, TimeUnit.MILLISECONDS)
             .connectTimeout(15, TimeUnit.SECONDS)
             .build()
-        val req = Request.Builder().url(url)
-            .header("authorization", "Bearer ${c.token}").header("x-pleiad-host", c.hostId).header("x-pleiad-device", c.deviceId).build()
+        val reqBuilder = Request.Builder().url(url)
+            .header("authorization", "Bearer ${c.token}").header("x-pleiad-host", c.hostId).header("x-pleiad-device", c.deviceId)
+        if (c.via == "plus") {
+            val accountToken = plusIdToken?.invoke()
+            if (accountToken.isNullOrEmpty()) { schedule("offline"); return }
+            reqBuilder.header("x-pleiad-account", accountToken)
+        }
+        val req = reqBuilder.build()
         socket = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 synchronized(lock) { if (gen != generation || !running) { webSocket.close(1000, null); return }; openedAt = System.currentTimeMillis(); setState("connected") }

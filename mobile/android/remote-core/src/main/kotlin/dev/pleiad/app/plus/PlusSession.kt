@@ -156,6 +156,20 @@ object PlusApi {
         )
         return PlusAccount.fromJson(o)
     }
+
+    /** GET /v1/hosts with the current account token. */
+    fun fetchHosts(client: OkHttpClient, apiBase: String, idToken: String, clientTag: String): List<PlusHost> {
+        val o = getJson(client, "$apiBase/v1/hosts", mapOf("Authorization" to "Bearer $idToken", "X-Pleiad-Client" to clientTag))
+        val rows = o.optJSONArray("hosts") ?: return emptyList()
+        return (0 until rows.length()).mapNotNull { i ->
+            val h = rows.optJSONObject(i) ?: return@mapNotNull null
+            val hostId = h.optString("hostId")
+            val publicKey = h.optString("publicKey")
+            if (hostId.isEmpty() || publicKey.isEmpty()) return@mapNotNull null
+            fun instant(name: String): Long? = try { java.time.Instant.parse(h.optString(name)).toEpochMilli() } catch (_: Exception) { null }
+            PlusHost(hostId, publicKey, h.optString("name"), h.optString("platform"), h.optBoolean("online"), instant("lastSeenAt"), instant("createdAt"))
+        }
+    }
 }
 
 /**

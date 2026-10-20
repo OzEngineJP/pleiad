@@ -2,7 +2,7 @@ package dev.pleiad.app
 
 // The shell's bridge to Pleiad Plus (docs/plus.md "Android"). Only the bundled shell page sees it.
 // Methods: state() · login() (starts the Custom Tab; the result arrives as the `state` event) · logout() ·
-// openAccount() · idToken() (for native callers; the page does not use it). Event: `state` (same shape as state()).
+// openAccount(). Event: `state` (same shape as state()). The ID token remains native-only via PlusManager.
 
 import android.net.Uri
 import androidx.browser.customtabs.CustomTabsIntent
@@ -12,7 +12,6 @@ import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.util.concurrent.Executors
-import org.json.JSONObject
 
 @CapacitorPlugin(name = "PleiadPlus")
 class PleiadPlusPlugin : Plugin() {
@@ -22,6 +21,7 @@ class PleiadPlusPlugin : Plugin() {
     override fun load() {
         plus.onChanged = {
             notifyListeners("state", JSObject(plus.stateJson().toString()))
+            (context.applicationContext as PleiadApp).device.retryPausedPlus()
         }
         plus.start()
     }
@@ -59,14 +59,6 @@ class PleiadPlusPlugin : Plugin() {
                 return@execute
             }
             openTab(url, call)
-        }
-    }
-
-    @PluginMethod
-    fun idToken(call: PluginCall) {
-        worker.execute {
-            val t = plus.currentIdToken()
-            call.resolve(JSObject().put("idToken", t ?: JSONObject.NULL))
         }
     }
 

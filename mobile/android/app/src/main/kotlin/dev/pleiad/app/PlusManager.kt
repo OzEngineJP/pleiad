@@ -13,6 +13,7 @@ import dev.pleiad.app.plus.PlusAuth
 import dev.pleiad.app.plus.PlusConfig
 import dev.pleiad.app.plus.PlusSession
 import dev.pleiad.app.plus.PlusVersion
+import dev.pleiad.app.plus.PlusHost
 import dev.pleiad.app.remote.Http
 import java.security.SecureRandom
 import java.util.concurrent.Executors
@@ -34,6 +35,8 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
     @Volatile private var foreground = false
     @Volatile private var lastAccountAt = 0L
     @Volatile private var flowError: String? = null
+    @Volatile private var hosts: List<PlusHost> = emptyList()
+    @Volatile private var hostsError: String? = null
     @Volatile var onChanged: (() -> Unit)? = null
 
     /** Called when the plugin loads (the shell page exists by then); the WebView can reload, so it's idempotent. */
@@ -155,6 +158,51 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
 
     /** The ID token for Kotlin callers (the official relay). Never exposed to the shell page. */
     fun currentIdToken(): String? = session.idToken(config?.refreshUrl, force = true)
+
+    data class HostsResult(val hosts: List<PlusHost>, val error: String? = null)
+
+    /** Refresh the account host list. On transient failures, return the last successful list. */
+    @Synchronized
+    fun fetchHosts(): HostsResult {
+        val account = session.account
+        if (config?.state != "on" || account?.status != "plus") {
+            hosts = emptyList()
+            hostsError = null
+            return HostsResult(emptyList())
+        }
+        return try {
+            var token = currentIdToken() ?: return HostsResult(hosts, "signed-out")
+            val latest = try {
+                PlusApi.fetchHosts(Http.client, apiBase, token, clientTag)
+            } catch (e: PlusApiError) {
+                if (e.status != 401) throw e
+                token = currentIdToken() ?: run { session.signOut(); hosts = emptyList(); return HostsResult(emptyList()) }
+                try { PlusApi.fetchHosts(Http.client, apiBase, token, clientTag) }
+                catch (e2: PlusApiError) { if (e2.status == 401) { session.signOut(); hosts = emptyList(); return HostsResult(emptyList()) }; throw e2 }
+            }
+            hosts = latest
+            hostsError = null
+            HostsResult(latest)
+        } catch (e: PlusApiError) {
+            if (e.status == 403 && e.code in setOf("not_plus", "account_disabled")) {
+                hosts = emptyList()
+                hostsError = "no-relay"
+                HostsResult(emptyList(), "no-relay")
+            } else {
+                log("hosts: http ${e.status} ${e.code}".trim())
+                hostsError = "unreachable"
+                HostsResult(hosts, "unreachable")
+            }
+        } catch (e: Exception) {
+            log("hosts: ${e.javaClass.simpleName}")
+            hostsError = "unreachable"
+            HostsResult(hosts, "unreachable")
+        }
+    }
+
+    fun cachedHosts(): HostsResult = HostsResult(hosts, hostsError)
+    fun currentRelayUrl(): String? = config?.relayUrl?.ifEmpty { null }
+    fun currentUid(): String? = session.record()?.uid
 
     // ── state for the page ──
 

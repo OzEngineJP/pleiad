@@ -63,6 +63,7 @@ import java.util.concurrent.Executors
 class HostActivity : ComponentActivity() {
     companion object {
         const val EXTRA_HOST_ID = "hostId"
+        const val EXTRA_VIA = "via"
         /** A conversation to open once the page is up (a tapped notification, ADR 0086). */
         const val EXTRA_OPEN_SESSION = "open"
         private const val BRIDGE = "plyRemoteBridge"
@@ -141,7 +142,7 @@ class HostActivity : ComponentActivity() {
         device.onStatus(statusListener)
         worker.execute {
             try {
-                val px = device.open(hostId)
+                val px = device.open(hostId, intent.getStringExtra(EXTRA_VIA) ?: "own")
                 runOnUiThread { if (!isFinishing && !isDestroyed) showHost(px) }
             } catch (e: Exception) {
                 runOnUiThread { showError(getString(R.string.host_open_failed)) }
