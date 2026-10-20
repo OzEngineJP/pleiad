@@ -28,7 +28,7 @@ export function createSpeaker({ tts, send, concurrency = 3, log = () => {}, onMe
     } catch (e) {
       if (job.epoch !== epoch || closed) return;
       if (sent > 0) send.end(job.id, { partial: true });
-      else { send.fail(job.id, e?.kind ?? 'error'); log('voice.tts.failed', { id: job.id, kind: e?.kind ?? null, status: e?.status ?? null }); }
+      else { send.fail(job.id, e?.kind ?? 'error', { code: e?.code ?? null, resetAt: e?.resetAt ?? null }); log('voice.tts.failed', { id: job.id, kind: e?.kind ?? null, status: e?.status ?? null, code: e?.code ?? null }); }
     } finally {
       flying.delete(job.id);
       pump();

@@ -35,6 +35,9 @@ const MAX_JSON_BYTES = 64 * 1024;
 const HELD_MAX = 40;       // 止めている間に届いた文を、続きを読むために覚えておく数（1 ターンの読み上げの上限 1500 字に対して十分）
 const WAIT_TICK_MS = 250;  // 受け取りの一言・待ちの実況の時計（一言は 1.5 秒後なので、TICK_MS（5 秒）とは別に細かく回す）
 
+/** 中継（kind: 'plus'）の、通話を終える誤り（VoiceHttpError.code） */
+const FATAL_UPSTREAM = new Set(['credit_exhausted', 'not_plus', 'account_disabled']);
+
 const targetOf = (raw) => {
   if (raw?.kind === 'thread' && typeof raw.channelId === 'string' && typeof raw.threadId === 'string') return { kind: 'thread', channelId: raw.channelId, threadId: raw.threadId };
   if (raw?.kind === 'chat') return { kind: 'chat', sessionId: typeof raw.sessionId === 'string' && raw.sessionId ? raw.sessionId : null };
@@ -131,6 +134,8 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
   const setup = async (msg) => {
     ctx = await hello();
     if (closed) return;
+    // 始める前から分かっている失敗（中継の credit_exhausted など）は上流へ送らずに終える
+    if (ctx.startError) { send({ t: 'error', fatal: true, ...ctx.startError }); close(); return; }
     if (!ctx.config && !(clients.stt && clients.tts)) { send({ t: 'error', code: 'no-key', fatal: true }); close(); return; }
     const { settings, uiLang, phrases, usage } = ctx;
     const limit = settings.dailyLimitMinutes * 60;
@@ -158,7 +163,11 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
           sendBinary(frame);
         },
         end: (id, info) => send({ t: 'seg.end', id, ...info }),
-        fail: (id, reason) => send({ t: 'seg.fail', id, reason }),
+        fail: (id, reason, extra) => {
+          // 中継の取り返せない誤りは通話を終える（ほかの文の合成を続けても同じ結果になる）
+          if (FATAL_UPSTREAM.has(extra?.code)) { send({ t: 'error', code: extra.code, ...(extra.resetAt ? { resetAt: extra.resetAt } : {}), fatal: true }); end(); close(); return; }
+          send({ t: 'seg.fail', id, reason });
+        },
       },
       onMetric: (m) => { usage.add({ ttsChars: m.chars }).catch(() => {}); },
     });
@@ -194,7 +203,11 @@ export function createVoiceSession({ send, sendBinary, close, hello, log = () =>
         send({ t: 'final', utt: ev.utt, text: ev.text, speechEndToFinalMs: ev.speechEndToFinalMs, ...(ev.degraded ? { degraded: true } : {}) });
         break;
       // 失敗の種類（kind・status）だけ渡す。本文・キー・応答の中身は渡さない（画面は 401/403 をキーの問題として出す）
-      case 'error': send({ t: 'error', code: ev.rateLimited ? 'stt-busy' : 'stt', utt: ev.utt, kind: ev.kind ?? null, status: Number.isInteger(ev.status) ? ev.status : null }); break;
+      // 中継の取り返せない誤り（credit_exhausted・not_plus・account_disabled）は通話を終える（upstream に code と resetAt が来る）
+      case 'error':
+        if (ev.upstream) { send({ t: 'error', code: ev.upstream, ...(ev.resetAt ? { resetAt: ev.resetAt } : {}), fatal: true }); end(); close(); }
+        else send({ t: 'error', code: ev.rateLimited ? 'stt-busy' : 'stt', utt: ev.utt, kind: ev.kind ?? null, status: Number.isInteger(ev.status) ? ev.status : null });
+        break;
     }
   };
 

@@ -5,10 +5,9 @@
 //   onEvent(event)              server.mjs の emitGlobal から全部の出来事を受け、通話が見ている会話（chat = 会話の id、thread = そのスレッドの bot の会話）の
 //                               text.delta・text.end・tool.start・userMessage・turnEnd だけを通話へ渡す（tool.start は名前だけ。引数・コマンド・ファイル名は通話へ渡さない。待ちの実況の種類を決めるため）。まだ見ていない会話の直近 3 秒は覚えておき、見始めたら渡す
 //                               （新しい会話は最初のターンで id が決まるため、見る先の更新が数 ms 遅れても最初の文を落とさない）
-//   status() / checkKey / keysChanged   設定 › 通話。使う OpenRouter のキーは設定 › API キー（core/api-keys.mjs。ADR 0155）で選んだもの（apiKey が返す）で、画面へも返さない
+//   status() / checkKey / keysChanged   設定 › 通話。使う送り先は設定 › API キー（core/api-keys.mjs。ADR 0155）で選んだもの（endpoint が返す { kind, baseUrl, authorization }。仮想のキー plus は送るたびに ID トークンを取る）で、画面へも返さない
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
-import { normalizeKey } from '../delegation-judges.mjs';
 import { createVoiceSession } from './session.mjs';
 import { createVoiceUsage } from './usage.mjs';
 import { normalizeVoiceSettings } from './settings.mjs';
@@ -25,7 +24,7 @@ const THREAD_CACHE = 256;
 /**
  * @param {object} d
  * @param {string} d.dataDir
- * @param {() => Promise<string|null>} d.apiKey  通話に使うキー（設定 › API キーで選んだもの。「使わない」・未登録なら null で、何も送らない）
+ * @param {() => Promise<object|null>} d.endpoint  通話に使う送り先（設定 › API キーで選んだもの。「使わない」・条件を満たさなければ null で、何も送らない）
  * @param {() => Promise<object|null>} [d.keyStorage]  キーの置き場の暗号化の状態（画面の注意の材料）
  * @param {() => Promise<object>} d.getPrefs
  * @param {() => string} d.uiLang
@@ -34,19 +33,22 @@ const THREAD_CACHE = 256;
  * @param {(req: import('node:http').IncomingMessage) => boolean} d.isLocal
  * @param {(line: string, fields?: object) => void} [d.log]
  */
-export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null, getPrefs, uiLang, t, resolveThread, isLocal, log = () => {}, fetch: fetchImpl, now = Date.now, env = process.env }) {
+export function createVoiceHost({ dataDir, endpoint, keyStorage = async () => null, getPrefs, uiLang, t, resolveThread, isLocal, log = () => {}, fetch: fetchImpl, now = Date.now, env = process.env }) {
   const usage = createVoiceUsage({ file: path.join(dataDir, 'voice-usage.json'), now });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 256 * 1024 });
   const sessions = new Set();
   const sockets = new Map();   // 通話 -> その接続（キーが変わったとき、通話の後始末だけでなく接続も閉じるため）
-  let keyCache; // undefined = 未読、null = 無い
-  let inUse = null; // 今の通話が hello で受け取ったキー（キーが差し替わった・選び直したときに、通話を切るかの比べ先）
+  let epCache; // undefined = 未読、null = 無い。覚えるのは送り先の形（kind・baseUrl など）だけで、ID トークンは持たない
+  let inUse = null; // 今の通話が hello で受け取った送り先の印（キーが差し替わった・選び直したときに、通話を切るかの比べ先）
 
-  const getKey = async () => {
-    if (keyCache === undefined) keyCache = normalizeKey(await apiKey().catch(() => null)) || null;
-    return keyCache;
+  const getEndpoint = async () => {
+    if (epCache === undefined) epCache = await endpoint().catch(() => null) ?? null;
+    return epCache;
   };
-  const config = (apiKey) => ({ baseUrl: voiceBaseUrl(env), apiKey, fetch: fetchImpl });
+  // 比べる印: OpenRouter はキーの値、plus は kind と uid（ID トークンの更新では切らない）
+  const identityOf = (ep) => !ep ? null : ep.kind === 'plus' ? `plus:${ep.uid ?? ''}` : `openrouter:${ep.key ?? ''}`;
+  const configOf = (ep) => ep ? { baseUrl: ep.baseUrl, kind: ep.kind ?? 'openrouter', authorization: ep.authorization, apiKey: ep.key ?? null,
+    creditBlocked: ep.creditBlocked, credit: ep.credit, noteCredit: ep.noteCredit, refreshAccount: ep.refreshAccount, fetch: fetchImpl } : null;
 
   // ---- 出来事の振り分け
   const threadOf = new Map();    // sessionId -> { channelId, threadId } | null
@@ -123,11 +125,15 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
       onTarget: () => replayFor(session),
       hello: async () => {
         const settings = normalizeVoiceSettings((await getPrefs()).voice);
-        const apiKey = await getKey();
-        inUse = apiKey;
+        const ep = await getEndpoint();
+        inUse = identityOf(ep);
         const lang = uiLang();
+        // 中継の credit_exhausted を覚えている間は始めない（上流へ送らずに断る）
+        const exhausted = ep?.kind === 'plus' && ep.creditBlocked?.();
         return {
-          settings, config: apiKey ? config(apiKey) : null, uiLang: lang, usage,
+          settings, config: exhausted ? null : configOf(ep),
+          ...(exhausted ? { startError: { code: 'credit_exhausted', resetAt: ep.credit?.().resetAt ?? null } } : {}),
+          uiLang: lang, usage,
           phrases: {
             code: t('voice.skip.code', { lng: lang }), table: t('voice.skip.table', { lng: lang }), log: t('voice.skip.log', { lng: lang }),
             // 受け取りの一言・待ちの実況の決まった文（core/voice/wait-voice.mjs）
@@ -158,7 +164,7 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
     onEvent,
     /** 設定 › 通話に出す状態。キーそのものは返さない */
     async status() {
-      const [hasKey, storage, today] = await Promise.all([getKey().then(Boolean), keyStorage().catch(() => null), usage.today()]);
+      const [hasKey, storage, today] = await Promise.all([getEndpoint().then(Boolean), keyStorage().catch(() => null), usage.today()]);
       return {
         hasKey,
         storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
@@ -171,8 +177,8 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
      * （切らないと、消した・差し替える前のキーで送り続ける。次の通話は新しいキーで始まる）
      */
     async keysChanged() {
-      keyCache = undefined;
-      const now = await getKey();
+      epCache = undefined;
+      const now = identityOf(await getEndpoint());
       if (sessions.size && now !== inUse) {
         // 通話の後始末（session.close）だけでは接続が残るので、画面へ終わりの理由（fatal）を送って接続も閉じる
         const code = now ? 'key-changed' : 'no-key';
@@ -182,10 +188,12 @@ export function createVoiceHost({ dataDir, apiKey, keyStorage = async () => null
         }
       }
     },
-    /** キーが通るか（OpenRouter の GET /key）。'ok' | 'invalid' | 'unreachable' | 'nokey'。本文・キーは返さない */
+    /** キーが通るか（OpenRouter の GET /key）。'ok' | 'invalid' | 'unreachable' | 'nokey'。本文・キーは返さない。plus では呼ばず、セッションの状態から答える */
     async checkKey() {
-      const apiKey = await getKey();
-      if (!apiKey) return 'nokey';
+      const ep = await getEndpoint();
+      if (!ep) return 'nokey';
+      if (ep.kind === 'plus') return 'ok';
+      const apiKey = ep.key;
       try {
         const res = await (fetchImpl ?? fetch)(`${voiceBaseUrl(env)}/key`, { headers: { Authorization: `Bearer ${apiKey}`, 'X-Title': 'Pleiad' }, signal: AbortSignal.timeout(5000) });
         await res.body?.cancel().catch(() => {});

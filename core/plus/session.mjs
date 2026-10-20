@@ -94,6 +94,7 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
       signedIn: signedIn(),
       login: { phase: loginPhase },
       account,
+      uid: stored?.uid ?? null,
       reachable,
       error,
       urls: { account: cachedCfg?.urls?.account ?? null, profile: cachedCfg?.urls?.profile ?? null },
