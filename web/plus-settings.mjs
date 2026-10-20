@@ -6,6 +6,7 @@ import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, rmIcon, keyValues, errorLine, waitLine, paintInto } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
+import { renderSync } from './plus-sync.mjs';
 
 /** ボタン。外のブラウザーで開くものは外へのリンクの印を付ける */
 function actButton(text, onclick, className, { external = false, fk } = {}) {
@@ -40,8 +41,9 @@ const plusUrl = account => `${String(account ?? '').replace(/\/+$/, '')}/plus`;
  * @param openExternal  URL を外のブラウザーで開く受け手
  * @param askRebind / cancelRebind  「つなぎ直す」の確かめの出し入れ（画面の中だけの状態）
  * @param confirming  確かめを出しているか
+ * @param syncView    「同期」の中身に渡す引数（web/plus-sync.mjs の renderSync）
  */
-export function renderPlus(status, { send = () => {}, openExternal = () => {}, askRebind = () => {}, cancelRebind = () => {}, confirming = false } = {}) {
+export function renderPlus(status, { send = () => {}, openExternal = () => {}, askRebind = () => {}, cancelRebind = () => {}, confirming = false, syncView = {} } = {}) {
   const s = status ?? {};
   const account = s.account ?? null;
   const out = [];
@@ -106,12 +108,13 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
     out.push(el('p', 'rm-weak', t('settings.plus.usage', { used, limit, date })));
     if ((account.usage.credits ?? 0) >= (account.limits.creditsPerMonth ?? Infinity)) out.push(el('p', 'rm-warn', t('settings.plus.limitReached')));
   }
-  // 同期の置き場。中身と見出しは同期の画面の issue が入れる（この issue では隠した入れ物だけ）
-  const sync = el('div', null);
-  sync.id = 'plusSyncSection';
-  sync.hidden = true;
-  sync.append(el('div', 'rm-gh', t('settings.plus.sync')));
-  out.push(sync);
+  // 同期（web/plus-sync.mjs。docs/plus.md「同期」）。plus のときだけ
+  if (account?.status === 'plus') {
+    const sync = el('div', null);
+    sync.id = 'plusSyncSection';
+    sync.append(...renderSync(syncView));
+    out.push(sync);
+  }
 
   // この PC の行（host は B4 が埋める。null なら出さない）
   if (s.host?.state === 'taken') {
@@ -154,13 +157,25 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let confirming = false, busy = false, message = '';
   /** ログインで委譲と通話に plus が自動で選ばれた案内を出す（閉じたら prefs.plus.autoNoticeSeen に書いて二度と出さない） */
   let autoNotice = false;
+  /** 同期の状態（plus.syncStatus 操作と plusSyncStatus 出来事）・「やり直す」の確かめ・同期の操作の失敗 */
+  let syncStatus = null, syncConfirming = false, syncBusy = false, syncMessage = '';
+
+  function syncView() {
+    return {
+      enabled: status?.account?.sync?.enabled !== false, sync: syncStatus,
+      confirming: syncConfirming, message: syncMessage, busy: syncBusy,
+      onToggle: syncToggle, onNow: () => syncSend('plus.syncNow'),
+      onAskReset: askSyncReset, onCancelReset: cancelSyncReset, onReset: () => syncSend('plus.syncReset'),
+      onOpenConflicts: () => syncSend('plus.syncOpenConflicts'),
+    };
+  }
 
   function paint() {
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
-    const sig = JSON.stringify([status, confirming, busy, message, autoNotice]);
+    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage]);
     paintInto(root, sig, () => {
-      const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming });
+      const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView() });
       if (autoNotice) nodes.unshift(autoNoticeRow());
       if (message) nodes.push(errorLine(message));
       return nodes;
@@ -193,6 +208,40 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   }
   function cancelRebind() { confirming = false; paint(); }
 
+  function askSyncReset() {
+    syncConfirming = true;
+    paint();
+    queueMicrotask(() => root.querySelector('[data-fk="syncResetNo"]')?.focus());
+  }
+  function cancelSyncReset() { syncConfirming = false; paint(); }
+
+  /** 同期の操作（plus.sync* 操作。docs/plus.md「同期」）。状態は届く plusSyncStatus で描き直す */
+  async function syncSend(op) {
+    if (syncBusy) return;
+    syncBusy = true; syncMessage = '';
+    if (op === 'plus.syncReset') syncConfirming = false;
+    paint();
+    try { await cmd('invoke', { op, args: {} }); }
+    catch (e) { syncMessage = e.message; }
+    finally { syncBusy = false; paint(); }
+  }
+
+  /** スイッチの入り切り（アカウントの sync.enabled）。失敗したら戻して「変えられませんでした」 */
+  async function syncToggle(next) {
+    if (syncBusy || !status?.account) return;
+    syncBusy = true; syncMessage = '';
+    const before = status.account.sync ?? null;
+    status = { ...status, account: { ...status.account, sync: { ...before, enabled: next } } };
+    paint();
+    try {
+      const out = await cmd('invoke', { op: 'plus.syncSetEnabled', args: { enabled: next } });
+      if (out && typeof out === 'object') status = { ...status, account: { ...status.account, ...out } };
+    } catch (e) {
+      status = { ...status, account: { ...status.account, sync: before } };
+      syncMessage = t('settings.plus.syncChangeFailed');
+    } finally { syncBusy = false; paint(); }
+  }
+
   async function send(command) {
     if (busy) return;
     busy = true; message = '';
@@ -210,6 +259,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   async function refresh() {
     try { status = await cmd('plusStatus', { refresh: true }); }
     catch (e) { message = e.message; }
+    cmd('invoke', { op: 'plus.syncStatus', args: {} }).then(s => { syncStatus = s; paint(); }).catch(() => {});
     paint();
   }
   function event(ev) {
@@ -218,6 +268,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       if (ev.autoPlus === true && !getPrefs().plus?.autoNoticeSeen) { autoNotice = true; paint(); }
       return;
     }
+    if (ev?.type === 'plusSyncStatus') { syncStatus = ev.status ?? syncStatus; paint(); return; }
     if (ev?.type !== 'plusStatus') return;
     status = ev.status ?? status;
     paint();

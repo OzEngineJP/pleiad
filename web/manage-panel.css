@@ -204,6 +204,14 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-ext { display:inline-flex; align-items:center; gap:4px; color:var(--ink-blue); text-decoration:none; }
 .rm-ext:hover { text-decoration:underline; }
 .rm-ext svg.i { width:13px; height:13px; }
+/* 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs） */
+.rm-plain-row { display:flex; align-items:center; gap:16px; min-height:44px; padding:0 8px; }
+.sync-what { margin:0 8px; font-size:var(--fs-s); color:var(--ink-weak); }
+.sync-what > summary { cursor:pointer; padding:2px 0; }
+.sync-what-body { padding:4px 0 8px; display:flex; flex-direction:column; gap:6px; }
+.sync-what-body .sync-what-line { margin:0; line-height:1.5; }
+.sync-confirm-title { font-weight:600; }
+.btn.rm-danger { color:var(--diff-del-ink); }
 .rm-strong { color:var(--ink-strong); font-weight:600; }
 /* ＋ の流れのダイアログ（アプリを入れる › つなぎ方 › つなぐ › 完了）。戻る・次へ・やめるはどの段でも同じ位置 */
 .rm-wiz { position:fixed; inset:0; margin:auto; width:min(540px,calc(100vw - 32px)); min-height:min(420px,calc(100dvh - 48px)); max-height:calc(100dvh - 48px); overflow:auto;

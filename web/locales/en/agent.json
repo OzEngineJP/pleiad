@@ -595,6 +595,22 @@
       "status": {
         "summary": "Pleiad Plus state (availability, signed-in, account, reachability). Never returns tokens, email, or uid.",
         "refresh": "If true, re-read the account info (at most once per 30 seconds)."
+      },
+      "syncStatus": {
+        "summary": "Sync state for settings, skills and instruction files (state, last synced, usage, conflict count). Never returns contents, item names or keys."
+      },
+      "syncSetEnabled": {
+        "summary": "Turns sync on or off (affects every PC on the account).",
+        "enabled": "true to turn sync on"
+      },
+      "syncNow": {
+        "summary": "Runs one sync round right now (receive and upload)."
+      },
+      "syncReset": {
+        "summary": "Starts sync over. Removes the synced content on the server and starts again with this PC's content."
+      },
+      "syncOpenConflicts": {
+        "summary": "Opens the folder with the older copies kept on conflict, on this PC."
       }
     },
     "accounts": {

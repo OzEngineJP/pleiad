@@ -594,6 +594,22 @@
       "status": {
         "summary": "Pleiad Plus の状態（利用可否・ログイン中か・アカウント・サーバーへの到達）。トークン・メールアドレス・uid は返さない。",
         "refresh": "true ならアカウントの情報を読み直す（30 秒に 1 回まで）。"
+      },
+      "syncStatus": {
+        "summary": "設定・スキル・指示ファイルの同期の状態（state・最後の同期・使用量・競合の数）。中身・項目名・鍵は返さない。"
+      },
+      "syncSetEnabled": {
+        "summary": "同期を入れる・切る（アカウントのすべての PC に効く）。",
+        "enabled": "入れるなら true"
+      },
+      "syncNow": {
+        "summary": "今すぐ 1 回同期する（受ける・上げる）。"
+      },
+      "syncReset": {
+        "summary": "同期をやり直す。サーバーの中身を消して、この PC の内容で始め直す。"
+      },
+      "syncOpenConflicts": {
+        "summary": "競合で残した古い方の写しのフォルダーをこの PC で開く。"
       }
     },
     "accounts": {
