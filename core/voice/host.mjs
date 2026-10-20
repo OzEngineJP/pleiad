@@ -181,8 +181,11 @@ export function createVoiceHost({ dataDir, endpoint, keyStorage = async () => nu
       const now = identityOf(await getEndpoint());
       if (sessions.size && now !== inUse) {
         // 通話の後始末（session.close）だけでは接続が残るので、画面へ終わりの理由（fatal）を送って接続も閉じる
+        // hello 前の接続はまだキーを選んでいないので切らない（inUse は開始時のもの。接続中を「違う」と断じて殺すと、
+        // 状態の読み直しの合図（plus のアカウント変化など）が届くたびに、始めようとした通話が落ちる）
         const code = now ? 'key-changed' : 'no-key';
         for (const [s, ws] of [...sockets]) {
+          if (!s.active) continue;
           try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ t: 'error', code, fatal: true })); ws.close(1000); } catch { /* 閉じていた */ }
           s.close();
         }

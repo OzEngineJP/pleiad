@@ -131,11 +131,13 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
   // ---- /v1/auth/config と tokenProjectId の照合 -----------------------------------------------------------
 
   async function loadConfig({ fresh = false } = {}) {
+    const before = cachedCfg?.state;
     cachedCfg = await config.get({ fresh });
     // 保管した tokenProjectId が /v1/auth/config の projectId と違う → 保管を消して relogin
     if (stored && cachedCfg?.token?.projectId && stored.tokenProjectId !== cachedCfg.token.projectId) {
       await clearSession({ code: 'relogin' });
     }
+    if (cachedCfg?.state !== before && listeners.size) emit('config');
     return cachedCfg;
   }
 

@@ -8,6 +8,7 @@ import { t } from '../i18n.mjs';
 import { apiKeyList, keySelect, registerForm, statusLine, manageLink } from '../api-key-ui.mjs';
 import { keyRadioRow, keyRadioGroup, plusKeyRow, plusRowVisible } from '../plus-key-row.mjs';
 import { openExternalLink } from '../link-open.mjs';
+import { button } from '../remote-parts.mjs';
 
 const DEFAULTS = { sttModel: 'microsoft/mai-transcribe-2', sttFallbackModel: 'assemblyai/universal-3-5-pro', ttsModel: 'x-ai/grok-voice-tts-1.0', ttsVoice: 'eve' };
 const minutes = (seconds) => Math.round(seconds / 60);
@@ -107,7 +108,11 @@ export function setupVoiceSettings({ cmd, page, openPage = () => {} }) {
         const warn = el('p', 'rm-err', t('voice.note.plusLimit'));
         warn.setAttribute('role', 'alert');
         rows.push(warn);
-        if (s.plus?.profileUrl) rows.push(el('div', 'rm-acts', button(t('settings.plus.manage'), () => openExternalLink(s.plus.profileUrl), 'btn btn-quiet')));
+        if (s.plus?.profileUrl) {
+          const acts = el('div', 'rm-acts');
+          acts.append(button(t('settings.plus.manage'), () => openExternalLink(s.plus.profileUrl), 'btn btn-quiet'));
+          rows.push(acts);
+        }
       }
     }
     // OpenRouter（今の登録の道。選ぶと via: 'key'）

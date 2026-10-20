@@ -680,7 +680,7 @@ plusSession.onChange(({ type, status }) => {
   // キー無しの機能（docs/plus.md）: ログインしたら、自動選択と通話のどちらも「使わない」のときだけ仮想のキー plus を両方に選ぶ（{ autoPlus }）
   if (type === 'signedIn') apiKeys.plusSignedIn().catch(() => {});
   // セッションの出入り・アカウントの読み直しで送り先（useEndpoint）が変わりうるので、通話の比べと画面の状態を更新する
-  if (type === 'signedIn' || type === 'signedOut' || type === 'account') {
+  if (type === 'signedIn' || type === 'signedOut' || type === 'account' || type === 'config') {
     voiceHost.keysChanged().catch(() => {});
     emitGlobal({ type: 'voiceChanged', sessionId: null });
     emitGlobal({ type: 'delegationRoutingChanged', change: 'settings', sessionId: null });
