@@ -122,14 +122,21 @@ export default async function (t) {
   t.ok('reachable: false → 先頭に「サーバーへの接続に失敗しました」（⚠ 無し）', nodes[0].textContent === 'サーバーへの接続に失敗しました' && !plain.includes('⚠'));
 
   // ---- メニューの出し入れ（available === false で項目ごと出さない） ----
+  // 起動の直後は WS がまだ開いていないので、setup は取らず client.mjs が ready の後に reconnected() を呼ぶ
   for (const [available, want] of [[false, true], [true, false]]) {
     const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
+    nodes2.plusTab.hidden = true;    // index.html の初期は hidden
+    nodes2.plusPanel.hidden = true;
     const savedGet = document.getElementById;
     document.getElementById = id => nodes2[id] ?? null;
+    let calls = 0;
     try {
-      setupPlusSettings({ cmd: async () => ({ ...BASE, available }), page: () => {} });
+      const settings = setupPlusSettings({ cmd: async () => { calls++; return { ...BASE, available }; }, page: () => {} });
       await new Promise(r => setImmediate(r));
-      t.ok(`available === ${available} → plusTab は ${want ? '出さない' : '出す'}`, nodes2.plusTab.hidden === want);
+      t.ok(`available === ${available} → setup は取らない（項目は隠れたまま）`, calls === 0 && nodes2.plusTab.hidden === true);
+      settings.reconnected();
+      await new Promise(r => setImmediate(r));
+      t.ok(`available === ${available} → つながったあと plusTab は ${want ? '出さない' : '出す'}`, calls > 0 && nodes2.plusTab.hidden === want);
     } finally { document.getElementById = savedGet; }
   }
 }

@@ -10036,6 +10036,8 @@ function connect() {
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
       residentSettings.refresh();
+      // 設定 › Pleiad Plus の項目の出し入れと開いているページ。WS が開くまでは取れないので、つなぐたびに取り直す
+      plusSettings.reconnected();
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
       notificationInbox.reconnected();

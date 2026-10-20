@@ -100,6 +100,9 @@ try {
   await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
   await page.evaluate(() => document.getElementById('settings')?.click());
   await page.waitForSelector('#settingsView:not([hidden])');
+  // 起動の直後（ログインの出来事を起こす前）に、設定の「Pleiad Plus」の項目が出る
+  await page.waitForSelector('#plusTab:not([hidden])');
+  ok('起動直後: 出来事を起こさなくても Pleiad Plus の項目が出る', true);
   const openPlus = async () => { await page.locator('#plusTab').click(); await page.waitForSelector('#plusPanel:not([hidden])'); };
   await openPlus();
 
@@ -264,11 +267,13 @@ try {
     await page2.evaluate(() => document.getElementById('onboardingDialog')?.close()).catch(() => {});
     await page2.evaluate(() => document.getElementById('settings')?.click());
     await page2.waitForSelector('#settingsView:not([hidden])', { timeout: 15_000 });
-    // tab は plusStatus 出来事（セッションの遷移）で開く。logout → login で出来事を起こす
+    // 起動直後の取得は ready の後に送るので、ログインの出来事を起こさなくても tab は出る
+    await page2.waitForSelector('#plusTab:not([hidden])', { timeout: 15_000 });
+    ok('en: 出来事を起こさなくても Pleiad Plus の項目が出る', true);
+    // 続きの場面はログインしていない状態から。logout で状態を戻す
     { const c = await openWs({ port: server.port, token: server.token });
       try { await c.cmd('plusLogout'); } finally { c.ws.close(); } }
     try {
-      await page2.waitForSelector('#plusTab:not([hidden])', { timeout: 15_000 });
       await page2.locator('#plusTab').click();
       await page2.waitForSelector('#plusPanel:not([hidden])', { timeout: 15_000 });
       // ログインし直す（外のブラウザーで開く → 偽の Plus の /login → 戻る）
