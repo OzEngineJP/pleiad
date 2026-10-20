@@ -158,6 +158,7 @@
   font:inherit; font-weight:400; letter-spacing:0; }
 .rm-gh-btn:hover { background:var(--surface-hover); color:var(--ink); }
 .rm-gh-btn:disabled { cursor:default; opacity:.5; }
+.rm-gh-switch { margin-left:auto; flex:none; }
 .rm-row { display:flex; align-items:center; gap:12px; width:100%; min-height:44px; padding:6px 8px; border-radius:var(--r-s);
   background:none; text-align:left; color:var(--ink); font:inherit; }
 button.rm-row { cursor:pointer; }

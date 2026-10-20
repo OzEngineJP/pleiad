@@ -49,6 +49,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
   hostName, plusDevices, onHostState = () => {}, log = () => {}, retryMs = 60_000 } = {}) {
   let host = { state: 'none', hostId: null, error: null };
   let chain = Promise.resolve();
+  let activeRegistration = null;
   let retryTimer = null;
   let registered = null;      // { hostId, publicKey, name, platform, deviceCount } — 最後に台帳へ送った/返ってきた値
   let badProofRetried = false;
@@ -149,8 +150,13 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
 
   /** 条件を満たすときだけ登録を直列に行う。条件が変わったときに呼ぶ。 */
   function maybeRegister() {
+    if (activeRegistration) return activeRegistration;
     chain = chain.catch(() => {}).then(() => (eligible() ? run() : undefined));
-    return chain;
+    const current = chain.finally(() => {
+      if (activeRegistration === current) activeRegistration = null;
+    });
+    activeRegistration = current;
+    return current;
   }
 
   /** PATCH { name }（ホスト名が変わったとき。未登録なら次の登録で送る） */

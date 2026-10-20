@@ -76,7 +76,7 @@ export const COMMANDS = new Set([
   'setNotifyDevice',      // { id, muted } -> notifyStatus。ホスト側でスマホ 1 台への通知を止める
   'notifyRegister',       // { key（base64url の 32 バイト）, settings } -> { registered, enabled, muted, lastSentAt }。端末の画面（中継越し）からだけ
   'remoteStatus',          // {} -> RemoteStatus（{ enabled, configured, relayUrl, hasEnrollSecret, hostName, hostId, connection, pairing: { offer, requests }, devices, storage }）
-  'setRemoteSettings',     // { enabled?, relayUrl?, enrollSecret?, hostName? } -> RemoteStatus。enrollSecret は省けば残し、'' で消す
+  'setRemoteSettings',     // { enabled?, relayUrl?, enrollSecret?, hostName?, plusConnect? } -> RemoteStatus。enrollSecret は省けば残し、'' で消す
   'remotePairingStart',    // {} -> { payload, expiresAt, hostId, hostName }。payload は QR とコピーに使う pleiad://pair?... の文字列（5 分・1 回）
   'remotePairingCancel',   // {} -> RemoteStatus。入場券を取り下げる
   'remotePairingApprove',  // { id } -> 追加した端末 { id, name, platform, app, createdAt, lastSeenAt, connected, connections }

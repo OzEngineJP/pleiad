@@ -199,7 +199,25 @@
       "addDevice": "端末を追加",
       "addHost": "PC を追加",
       "groups": {
-        "own": "自分の中継サーバー"
+        "own": "自分の中継サーバー",
+        "plus": "Pleiad Plus"
+      },
+      "plus": {
+        "connect": "Pleiad Plus でつなぐ",
+        "login": "Pleiad Plus にログイン",
+        "loginButton": "ブラウザーでログイン",
+        "signingIn": "Pleiad Plus にログインします",
+        "account": "このアカウントでは公式の中継を使えません",
+        "connecting": "接続しています…",
+        "accountLabel": "アカウント",
+        "wait": {
+          "phone": "スマホの Pleiad で Pleiad Plus にログインします",
+          "pc": "相手の PC の Pleiad で Pleiad Plus にログインします"
+        },
+        "waiting": {
+          "phone": "スマホを待っています",
+          "pc": "相手の PC を待っています"
+        }
       },
       "offline": "オフライン",
       "failed": "サーバーへの接続に失敗しました",

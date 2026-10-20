@@ -3334,7 +3334,7 @@ function onEvent(ev, replay = false) {
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
   if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); residentSettings.event(ev); return; }
   // Pleiad Plus のアカウントの状態（設定 › Pleiad Plus）
-  if (ev.type === 'plusStatus') { plusSettings.event(ev); return; }
+  if (ev.type === 'plusStatus') { plusSettings.event(ev); remoteSettings.event(ev); return; }
   // worktree が増えた・消えた。開いている右パネルの「残っている worktree」を取り直す
   // 委譲の子の worktree が片付くと、カードの「未取り込み」の印が変わる（worktree.live）
   if (ev.type === 'worktreesChanged') { gitPanel?.changed(); loadTaskCards(state.current).then(repaintTasks).catch(() => {}); return; }

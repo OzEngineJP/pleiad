@@ -31,6 +31,7 @@ const SUITES = [
   './unit/plus-verify.mjs',
   // 設定 › Pleiad Plus（web/plus-settings.mjs）: 状態ごとの行とボタン・メニューの出し入れ（DOM の代役）
   './unit/plus-settings.mjs',
+  './unit/remote-plus-ui.mjs',
   './unit/plus-hosts.mjs',
   './unit/acp-error.mjs',
   './unit/opencode-v2.mjs',

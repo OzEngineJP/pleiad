@@ -42,6 +42,7 @@
     "ui:saved.reason.contextChanged",
     "ui:sessionContext.hooks.ms",
     "ui:settings.remote.platform.android",
+    "ui:settings.remote.groups.plus",
     "ui:settings.nav.plus",
     "ui:settings.remote.wizard.pc",
     "channels:routines.kind.cron",

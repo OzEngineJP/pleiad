@@ -199,7 +199,25 @@
       "addDevice": "Add device",
       "addHost": "Add PC",
       "groups": {
-        "own": "Your own relay server"
+        "own": "Your own relay server",
+        "plus": "Pleiad Plus"
+      },
+      "plus": {
+        "connect": "Connect with Pleiad Plus",
+        "login": "Sign in to Pleiad Plus",
+        "loginButton": "Sign in with your browser",
+        "signingIn": "Sign in to Pleiad Plus",
+        "account": "This account can't use the official relay",
+        "connecting": "Connecting…",
+        "accountLabel": "Account",
+        "wait": {
+          "phone": "Sign in to Pleiad Plus in Pleiad on your phone",
+          "pc": "Sign in to Pleiad Plus in Pleiad on the other PC"
+        },
+        "waiting": {
+          "phone": "Waiting for your phone",
+          "pc": "Waiting for the other PC"
+        }
       },
       "offline": "Offline",
       "failed": "Couldn't connect to the server",
