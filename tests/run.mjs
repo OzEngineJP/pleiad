@@ -420,6 +420,8 @@ const SUITES = [
   './unit/sidebar-moves.mjs',
   // 脇の移動の受け口（web/client.mjs の sidebarChange・restore・deleteSessionRow）: 削除は移動の保存の後・元に戻すは生きている行だけ・失敗の札は覆われない行を知らせる
   './unit/sidebar-client-moves.mjs',
+  // 脇の「状態」の並べ方（web/side.mjs）: bot のスレッドの行をドラッグで別の状態へ移せる（channels.setThreadStatus への振り分けまで）
+  './unit/side-thread-status.mjs',
   // 入力欄のモデル・エフォートの一覧（web/composer-vocab.mjs）: 切り替えた直後は前の一覧を出さない・同じ鍵の取得は 1 本・古い取得は混ざらない
   './unit/composer-vocab.mjs',
   // 入力欄の下の帯（git のブランチ・書き込み中）の補足情報（web/composer-aux.mjs）: 確認中・失敗を安全と扱わない・作業場所が同じなら id の変更で消さない
