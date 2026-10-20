@@ -1,6 +1,6 @@
 # 審査用のホスト（ADR 0172、docs/play-store/review-host.md）。
 # 審査モード（AGENT_HOST_REVIEW=1）の Pleiad を、fake のバックエンドだけで、画面なしで動かす。
-# ビルドの文脈はリポジトリの根（Coolify の Base Directory は /、Dockerfile Location は /deploy/review-host/Dockerfile）。
+# ビルドの文脈はリポジトリの根（`docker build -f deploy/review-host/Dockerfile .`）。
 FROM node:22-alpine
 
 WORKDIR /app
