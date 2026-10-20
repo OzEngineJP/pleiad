@@ -100,6 +100,8 @@ import { contractEmit, gateRunArgs } from './backends/contract.mjs';
 import { opencodeRelay, OPENCODE_RELAY_PATH } from './opencode-relay.mjs';
 import { redactForPeer } from './redact.mjs';
 import { createMcpOAuth } from './mcp-oauth.mjs';
+import { createPlusConfig } from './plus/config.mjs';
+import { createPlusSession } from './plus/session.mjs';
 import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
@@ -616,6 +618,14 @@ const mcpOAuth = createMcpOAuth({ secrets: mcpSecrets, lockDir: path.join(store.
   // utilityProcess からはブラウザを開けないので main に頼む（desktop/main.cjs。main が居ない間は OS に直に頼む）。npm start では画面に出る URL から開く
   openExternal,
   emit: event => emitGlobal({ ...event, sessionId: null }) });
+// Pleiad Plus のセッション（core/plus/、docs/plus.md）。ログインの基盤の値は起動時に api の /v1/auth/config から読む（焼き込まない）。
+// 更新トークンだけを plus-secrets.json（ほかと同じ secretCipher）に置く。状態が変わるたびに全接続へ plusStatus を送る
+const plusSecrets = createSecretStore({ file: path.join(store.dataDir, 'plus-secrets.json'), cipher: secretCipher });
+plusSecrets.migrate().catch(() => {});
+const plusConfig = createPlusConfig({ env: process.env, dataDir: store.dataDir, appVersion: APP_VERSION, log: line => console.log(`  ${line}`) });
+const plusSession = createPlusSession({ config: plusConfig, secrets: plusSecrets, openExternal, appVersion: APP_VERSION, lang: () => currentLocale() });
+plusSession.onChange(({ type, status }) => emitGlobal({ type: 'plusStatus', status, change: type, sessionId: null }));
+plusSession.init().catch(e => console.error('  plus: 起動の読み込みに失敗:', String(e?.code ?? e?.message ?? e)));
 // 外部 MCP の台帳と一覧の写し（pleiad.db の行。遅延起動・孤児の掃除。core/mcp-ledger.mjs）
 const mcpLedger = createMcpLedger({ dataDir: store.dataDir, log: line => console.log(`  ${line}`) });
 const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth, ledger: mcpLedger });
@@ -5097,6 +5107,8 @@ function opsDeps(lng = currentLocale()) {
     context: opsContext,
     remote: opsRemote,
     endpoints: { list: (agent) => compatEndpoints.list(agent) },
+    // Pleiad Plus の状態（plus.status。core/ops/plus.mjs）
+    plus: { status: (opts) => plusSession.status(opts) },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）
     git: opsGit,
     shell: opsShell,
@@ -8510,6 +8522,15 @@ wss.on("connection", (ws, req) => {
         }
         case 'mcpReconnect':
           return await viaOp('mcp.reconnect');
+        // Pleiad Plus（docs/plus.md）。状態は plus.status 操作を通し、ログイン・取り消し・ログアウトは人だけ（HUMAN_ONLY のアカウント）
+        case 'plusStatus':
+          return await viaOp('plus.status');
+        case 'plusLogin':
+          return reply(true, await plusSession.login());
+        case 'plusLoginCancel':
+          return reply(true, await plusSession.cancelLogin());
+        case 'plusLogout':
+          return reply(true, await plusSession.logout());
         case 'contextSettings':
           return await viaOp('context.settings');
         // 会話の文脈（context.session。ADR 0105）。突き合わせはこの接続の探索の錠の中（別のスキャンが走っていれば飛ばす）
