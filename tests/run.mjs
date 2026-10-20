@@ -26,6 +26,9 @@ const ROOT = path.resolve(TESTS, "..");
 // 登録した suite（tests/ からの相対）。ファイルの `export const name` が名前。web/render.mjs はブラウザ前提なので、
 // 読み込む**前**に DOM を差し替える（runner が読み込みの直前に installDomStub する）。
 const SUITES = [
+  // Pleiad Plus（core/plus/）: セッション（ログイン・保管・更新・状態。偽の Plus だけと話す）と ID トークンの検証
+  './unit/plus-session.mjs',
+  './unit/plus-verify.mjs',
   './unit/acp-error.mjs',
   './unit/opencode-v2.mjs',
   './unit/compaction.mjs',
