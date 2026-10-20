@@ -144,13 +144,12 @@ function drawOverlayBitmap(size = 32) {
 
 /**
  * deps: Electron の部品（app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage）と、
- *   trust（desktop/window-trust.cjs）、icon（窓のアイコン）、external（https を既定のブラウザーで開く）、
- *   shell（省けば electron の shell。リモートの窓のリンクを http も含めて既定のブラウザーで開く）
+ *   trust（desktop/window-trust.cjs）、icon（窓のアイコン）、external（http・https を既定のブラウザーで開く。
+ *   desktop/main.cjs の external。隠した Chrome の窓に開かれないよう先に見える窓を前面にしてから shell.openExternal する）
  */
 function createRemoteWindows(deps) {
   const { app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust, icon, external } = deps;
   const platform = deps.platform ?? process.platform;
-  const shell = () => deps.shell ?? require('electron').shell;
   const windows = new Map();       // hostId -> { win, name, origin, notify, state }
   const opening = new Map();       // hostId -> Promise（2 度押しで 2 枚開かない）
   const connectedAt = new Map();   // hostId -> 最後につながった時刻（ms）
@@ -285,7 +284,7 @@ function createRemoteWindows(deps) {
 
   /** リモートの窓のリンクを、この PC の既定のブラウザーで（http も。linkTarget が 'external' と決めたものだけ来る） */
   function openOutside(url) {
-    try { shell().openExternal(new URL(url).href).catch(() => {}); } catch {}
+    try { void external(url); } catch {}
   }
 
   /**

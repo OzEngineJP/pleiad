@@ -663,6 +663,16 @@ export default async function (t) {
   await call('openExternal', { url: 'http://localhost:5173/' });
   assert.deepEqual(fe.log.external.at(-1), 'http://localhost:5173/', 'リンクの既定のブラウザーは http の localhost も渡す');
   assert.deepEqual(await call('openExternal', { url: 'file:///C:/a.html' }), { ok: false });
+  {
+    // openExternal の口（desktop/main.cjs の external。開く前に見える Chrome の窓を前面にする）が渡されていればそちらを通る
+    const fe2 = fakeElectron();
+    const opened = [];
+    const panel2 = bp.createBrowserPanel({ ...fe2.deps, openExternal: async url => { opened.push(url); return true; } });
+    panel2.attach();
+    assert.deepEqual(await fe2.handlers.handle['ply:browser'](local$, 'openExternal', { url: 'https://example.net/' }), { ok: true });
+    assert.deepEqual(opened, ['https://example.net/'], 'openExternal の依頼は渡された口へ');
+    assert.deepEqual(fe2.log.external, [], '素の shell.openExternal には流さない');
+  }
   await call('devtools');
   assert.deepEqual(fe.log.devtools.at(-1), ['https://example.org/', { mode: 'detach' }]);
   await call('clearSiteData');
@@ -713,7 +723,8 @@ export default async function (t) {
     const fileUrl = file => pathToFileURL(file).href;
     let clock = 0;
     const fx = fakeElectron();
-    const filePanel = bp.createBrowserPanel({ ...fx.deps, now: () => clock });
+    let prep = 0;
+    const filePanel = bp.createBrowserPanel({ ...fx.deps, now: () => clock, beforeBrowserOpen: async () => { prep++; } });
     filePanel.attach();
     const run = (action, args) => fx.handlers.handle['ply:browser'](local$, action, args);
     const now$ = s => s.tabs.find(tab => tab.id === s.current);
@@ -729,6 +740,7 @@ export default async function (t) {
     s = await run('open', { url: `${fileUrl(html)}#top` });
     assert.equal(now$(s).external, true, '画面が開いた file: の HTML は押せる');
     assert.deepEqual(await run('external'), { ok: true });
+    assert.equal(prep, 1, 'openPath の前に下準備（見える窓の前面化）を 1 回呼ぶ');
     // 製品は fs.promises.realpath（OS の解決。8.3 の短い名前も長い名前に戻す）なので、期待値も .native で作る
     assert.deepEqual(fx.log.opened, [fs.realpathSync.native(html)], '実体を解決したパスを openPath に渡す');
     assert.deepEqual(fx.log.external, [], 'file: は URL として openExternal に渡さない');

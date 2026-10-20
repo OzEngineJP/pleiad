@@ -526,6 +526,7 @@ function createMacChromeOs({
     adoptAgent,
     reconceal: () => 0,
     closeAllAgents: () => 0,
+    raiseVisibleBrowser: () => ({ ok: false, reason: 'unsupported' }),   // macOS は conceal を持たない（見える窓のままなので、戻す last-active は無い）
   };
 }
 

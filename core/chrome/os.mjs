@@ -52,6 +52,10 @@
 // exportAgent(ref)                      → Promise<string | null>  隠している窓を main の入れ替わりを越えて渡す印にする（窓は閉じない・戻さない。ADR 0167）。隠していない窓には null
 // adoptAgent(token, { revealed })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
+// raiseVisibleBrowser({ scheme })（main の中だけの口。Windows）: 既定のブラウザーで開く（shell.openExternal・HTML の openPath）直前に、
+//   最後に使われていた見える Chrome の窓を前面にして Chrome の「最後にアクティブな窓」を戻す。戻さないと URL が隠した窓に開く。
+//   scheme は 'http' | 'https'（URL）・'html'（HTML のファイル。.html の関連付けで見る）。
+//   隠した窓が無い・既定が Chrome でない・隠した窓と同じ Chrome に見える窓が無いときは何もしない
 
 const FEATURES_NONE = Object.freeze({ dialog: false, raise: false, launch: false, conceal: false, watch: false, bounds: false, allow: false, enable: false });
 
