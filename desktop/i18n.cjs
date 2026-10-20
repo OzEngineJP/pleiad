@@ -91,14 +91,9 @@ async function initDesktopI18n({ systemLanguage = '', env = process.env } = {}) 
   return current;
 }
 
-/** 今の言語の desktop の辞書を丸ごと返す（同梱の窓へ渡す。キーは t() と同じ書き方）。{{name}} は画面が埋める */
-function bundle() {
-  return { lang: current, strings: i18n.getResourceBundle(current, 'desktop') ?? i18n.getResourceBundle(FALLBACK, 'desktop') ?? {} };
-}
-
 /** 訳文。lng を渡せばその言語で */
 function t(key, options) {
   return i18n.t(key, { lng: current, ...options });
 }
 
-module.exports = { t, setLocale, currentLocale, resolveLocale, roundLocale, prefsLocale, savedLocaleSetting, initDesktopI18n, bundle, LOCALES };
+module.exports = { t, setLocale, currentLocale, resolveLocale, roundLocale, prefsLocale, savedLocaleSetting, initDesktopI18n, LOCALES };
