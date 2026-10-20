@@ -75,6 +75,8 @@ export default async function (t) {
     cancelBackfill: noop, maybeLoadOlder: noop, hideOlder: noop, splitFirstPaint: () => null, paintedFloor: () => 0, requestAnimationFrame: noop, loadBranches: (id) => context.branches.load(id), retainThread: noop, holdReading: noop, t: (k, params) => params?.error ? `${k}: ${params.error}` : k, html: { t: k => k }, sys: noop, escText: x => x, NL: '\n',
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0, stagedNext: new Map(),
+    // 予約を書いている間の選択と、書けた予約の控え（reserveSettings が出し入れする。tests/unit/composer-pending-choice.mjs が見る）
+    inflightNext: new Map(), settledNext: new Map(), refreshVersion: 0,
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
     refreshWorktree: async () => {}, activeBackendId: () => 'fake',
     // 選んだ直後に始めるエフォート・モデル一覧の取得（web/composer-vocab.mjs。tests/unit/composer-vocab.mjs が見る）。このテストは設定の流れだけ

@@ -424,6 +424,8 @@ const SUITES = [
   './unit/composer-vocab.mjs',
   // 入力欄の下の帯（git のブランチ・書き込み中）の補足情報（web/composer-aux.mjs）: 確認中・失敗を安全と扱わない・作業場所が同じなら id の変更で消さない
   './unit/composer-aux.mjs',
+  // 設定を書いている間の選択（web/client.mjs の pendingChoice・settleNext）: エージェントを選んだ直後に取り直しが走っても前のエージェントへ戻らない・書けた後の古い写しは載せ直す・失敗は保存できた値へ戻る
+  './unit/composer-pending-choice.mjs',
   // 入力欄の待ち（web/composer-wait.mjs）: 会話を開く・初めての接続・読み込みの失敗・作成中の送信の予約
   './unit/composer-wait.mjs',
   // 承認カード: 受け取られるまで送信中・失敗はカードの中・決着後の一行に対象と開閉

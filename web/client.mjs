@@ -4383,11 +4383,25 @@ let failedSettingsPatch = null;
 let failedSettingsError = "";
 let cwdSaving = 0;   // 作業ディレクトリを保存している間、チップの字を弱くする（docs/design-system.md §4.6）
 const stagedNext = new Map();   // 一覧に行が載る前に書けた予約（sessionId -> nextSettings）
+// 予約を書いている間（まだ行の nextSettings に載っていない間）の選択。入力欄の表示は、最後に選んだ意図をこれで重ねて決める。
+// 書いている間に別の会話の変更などで取り直しが走っても、チップが前の選択へ戻らない（pendingChoice）
+const inflightNext = new Map();   // sessionId -> [{ patch }]（書く順）
+// 書けた予約と、そのときの取り直しの版。それ以前に始まった取り直しの写しは書く前の値を持つので、載せ直す（settleNext）
+const settledNext = new Map();    // sessionId -> { value, version }
 function reserveSettings(patch, targetId = state.current) {
   const id = targetId;
   if (!id) return;
+  const entry = { patch };
+  inflightNext.set(id, [...(inflightNext.get(id) ?? []), entry]);
+  const release = () => {
+    const rest = (inflightNext.get(id) ?? []).filter((e) => e !== entry);
+    if (rest.length) inflightNext.set(id, rest); else inflightNext.delete(id);
+  };
   const write = settingsWrite.catch(() => {}).then(async () => {
-    const value = await cmd("setTurnSettings", { sessionId: id, ...patch });
+    let value;
+    try { value = await cmd("setTurnSettings", { sessionId: id, ...patch }); } catch (e) { release(); throw e; }
+    release();
+    settledNext.set(id, { value, version: refreshVersion });
     // 書いている間に一覧が読み直されることがあるので、行は書けた後に引く。まだ一覧に行が無いなら控えておき、
     // startNew が行が載ったところで合わせる（読み直しの写しが書く前のものでも、チップが戻らないように）
     const s = state.sessions.find(s => s.id === id);
@@ -4605,13 +4619,34 @@ async function loadAccounts(bid) {
   else if (kind === 'agent') await agentAccounts.load(bid).catch(() => []);
   return accountList(bid);
 }
+/**
+ * 会話の予約を書いている間の選択（まだ nextSettings に載っていない分）。書いている間に来た一覧の写しは書く前の予約を持つので、
+ * そのまま表示すると、選んだ直後のチップが前の選択へ戻る。最後に選んだ意図を、一覧の写しや保存の応答より優先して見せる。
+ * エージェントを変える選択は、その先の既定へ戻る（draftView と同じ）ので reset を付け、前のエージェントの予約の値を読ませない。
+ * 取り消す操作（cancel）が混ざるときは重ねない（保存できた値を見せる）
+ */
+function pendingChoice(session) {
+  const list = session ? inflightNext.get(session.id) : null;
+  if (!list?.length || list.some((e) => e.patch.cancel)) return null;
+  const view = draftView(list.map((e) => e.patch));
+  const saved = session.nextSettings?.backend ?? session.backend;
+  return view.backend !== undefined && view.backend !== saved ? { ...view, reset: true } : view;
+}
+/** 取り直しの写しを載せた後に呼ぶ。書けた予約より前に始まった取り直しなら、書けた値を載せ直す（後に始まった取り直しなら、正本として任せる） */
+function settleNext(version) {
+  for (const [id, entry] of settledNext) {
+    if (version > entry.version) { settledNext.delete(id); continue; }
+    const row = state.sessions.find((s) => s.id === id);
+    if (row) row.nextSettings = entry.value;
+  }
+}
 function composerSelection() {
   const session = state.sessions.find(s => s.id === state.current);
-  const draft = !session || justCreated() ? draftView(state.draft.changes, state.draft.base) : null;
+  const draft = !session || justCreated() ? draftView(state.draft.changes, state.draft.base) : pendingChoice(session);
   const homeBot = unsentHere() ? homeDest.bot : null;
   const backend = homeBot?.backend ?? draft?.backend ?? session?.nextSettings?.backend ?? activeBackendId();
   const account = composerAccount({ backend, session, draft, prefs: state.prefs, kind: capsOf(backend).accounts, homeBot });
-  const endpoint = homeBot ? '' : draft?.endpoint ?? endpointOf(session);
+  const endpoint = homeBot ? '' : draft?.endpoint ?? (draft?.reset ? '' : endpointOf(session));
   return { session, draft, homeBot, backend, account, endpoint };
 }
 /**
@@ -8505,7 +8540,7 @@ function syncTitleControls() {
 }
 function selectedMode(s, bid, modes, chosen = null) {
   const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {};
-  const mode = chosen?.mode ?? s?.nextSettings?.mode ?? (s?.backend === bid ? s.mode : prefs.mode);
+  const mode = chosen?.mode ?? (chosen?.reset ? undefined : s?.nextSettings?.mode) ?? (s?.backend === bid ? s.mode : prefs.mode);
   return mode in modes ? mode : "default" in modes ? "default" : Object.keys(modes)[0] ?? "";
 }
 // 前に開いていた会話の題を覚えておき、殻（スマホのアプリ）では接続を待つ間も、その題と骨組みを出す（「新しいセッション」を見せない）。
@@ -8549,10 +8584,10 @@ async function syncTopbar() {
   state.account = selectedAccount;
   if (homeBot) state.accountShown = false;
   // 帯の使用量の札は、この会話（予約があれば次のターン）のエージェントとアカウントの枠を出す
-  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: chosen?.model ?? s?.nextSettings?.model ?? s?.model ?? '' });
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: chosen?.model ?? (chosen?.reset ? '' : s?.nextSettings?.model ?? s?.model) ?? '' });
 
   // 予約があれば次のターンの作業場所を表示する。
-  if (s) state.cwd = (justCreated() && state.draft.cwd) || (s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
+  if (s) state.cwd = (justCreated() && state.draft.cwd) || (chosen?.cwd ?? s.nextSettings?.cwd ?? s.cwd ?? state.homeDir ?? "");
   else if (state.draft.cwd) state.cwd = state.draft.cwd;
   else if (state.homeDir) state.cwd = state.homeDir;
   controls.paint();
@@ -8568,7 +8603,7 @@ async function syncTopbar() {
   if (state.current !== id || version !== topbarVersion) return;
   state.modes = modes;
   state.models = models;
-  if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? s.nextSettings?.model ?? s.model ?? ""; }
+  if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? (chosen?.reset ? "" : s.nextSettings?.model ?? s.model) ?? ""; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
   state.mode = homeBot?.mode ?? selectedMode(s, bid, modes, chosen);
   refreshWorktree().catch(() => {});   // 作業場所・モードが決まったら始める（接続先・エフォート・アカウントの取得を待たない）
@@ -8583,7 +8618,7 @@ async function syncTopbar() {
   const adopted = await adoptEfforts();
   if (state.current !== id || version !== topbarVersion) return;
   if (adopted) {
-    state.effort = homeBot?.effort ?? chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
+    state.effort = homeBot?.effort ?? chosen?.effort ?? (chosen?.reset ? '' : s?.nextSettings?.effort ?? s?.effort) ?? '';
     controls.paint();
   }
   await accountRequest;
@@ -8680,6 +8715,7 @@ async function runRefresh(listed) {
   serverMoveFields.clear();
   for (const s of sessions) serverMoveFields.set(s.id, { status: s.status ?? '', ungrouped: Boolean(s.ungrouped) });
   state.sessions = applyPendingPatches(sessions);
+  settleNext(version);
   readCompletions.fromSessions(sessions);
   state.statuses = applyPendingStatuses(statuses);
   state.prefs = prefs ?? {};
