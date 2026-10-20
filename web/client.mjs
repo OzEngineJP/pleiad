@@ -78,7 +78,10 @@ import { createCardRoll } from './card-roll.mjs';
 import { mergeTasks, tasksToFetch, staleTasks, treeSessions } from './task-cards.mjs';
 import { paintTaskChrome, closeRiskOf, confirmCloseWindow } from './task-chrome.mjs';
 import { createBackgroundChip } from './background-chip.mjs';
-import { overlaySessions, rollbackSessions, currentRows } from './pending-sidebar.mjs';
+import { overlaySessions, revertFailed, currentRows } from './pending-sidebar.mjs';
+import { createMoveLanes, settleAll } from './sidebar-moves.mjs';
+import { vocabKey, vocabReady, defaultModelOf, createEffortsLoader, createEffortsView } from './composer-vocab.mjs';
+import { createAuxSlot, beginAux, settleAux, clearAux, auxState, auxData } from './composer-aux.mjs';
 import { behindOfTasks, liveTasksOf } from './work-status.mjs';
 import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, retryCandidates, splitCandidate, fallbackName, parseRoutingFailure, routingFailureParts, kindText, difficultyText } from './delegation-routing-view.mjs';
 import { setupDelegationSettings } from './delegation-settings.mjs';
@@ -401,6 +404,7 @@ const state = {
   modes: {},
   mode: "default",     // 次のターンに使う承認モード
   models: {},
+  vocabKey: null,   // models・modes がどの選択（エージェント・アカウント）の一覧か（web/composer-vocab.mjs）
   model: "",           // 次のターンに使うモデル（空 = 既定に従う）
   // 入力欄のチップ（web/composer-controls.mjs）が出す値。予約があれば予約の値
   cwd: "",             // 次のターンの作業ディレクトリ
@@ -436,8 +440,8 @@ const state = {
   contextInfoId: null, // 上の記録がどのセッションのものか
   // worktree（ADR 0136）。worktreeCheck の結果（今の場所・作成できるか・同じリポジトリに書き込み中の別の会話）。
   // 「このまま元の場所で始める」を選んだ会話×場所は stay（今回だけ。メモリだけで、送ったら外す）
-  worktree: { key: null, data: null, ticket: 0 },
-  git: { key: null, sessionId: null, data: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
+  worktree: createAuxSlot(),   // worktreeCheck の答え（web/composer-aux.mjs。確認中・失敗・確定を区別する）
+  git: { ...createAuxSlot(), fetchKey: null, sessionId: null },   // 作業場所の git の状態（gitStatus。ADR 0085）。頭の行のアイコン・入力欄のブランチ・「…」のメニューに使う
   presents: [],
   presentBase: 0,      // presents[0] の通し番号（p:<通し番号>）
   earlierCalls: [],    // 窓の手前にあるサブエージェントの呼び出しの要約（サーバーが運ぶ。subagentCalls）。作業ダイアログの過去の一覧が使う
@@ -3437,7 +3441,7 @@ function onEvent(ev, replay = false) {
       syncTopbar().catch(() => {});
       break;
     case 'agentAccountsChanged':
-      agentAccounts.invalidate(); accountVocabRequests.invalidate();
+      agentAccounts.invalidate(); accountVocabRequests.invalidate(); effortsLoader.invalidate();
       syncTopbar().catch(() => {});
       break;
     case 'compatEndpointsChanged':
@@ -3887,6 +3891,10 @@ async function readVocab(id, account = '') {
 const usableVocab = v => Object.keys(v.modes).length > 0 && Object.keys(v.models).length > 0;
 const defaultVocabRequests = createAccountRequestCache({ cache: state.vocab, read: id => readVocab(id), accept: usableVocab });
 const accountVocabRequests = createAccountRequestCache({ cache: accountVocabs, read: key => readVocab(...JSON.parse(key)), accept: usableVocab });
+/** エフォートの段。エージェント・アカウント・接続先・作業場所・モデルが同じなら取得中も取得済みも使い回す */
+const effortsLoader = createEffortsLoader({ cmd });
+const effortsView = createEffortsView({ loader: effortsLoader });
+const noEfforts = () => ({ '': { label: t('chat.next.useDefault') } });
 const vocabCache = (id, account) => ({ requests: account ? accountVocabRequests : defaultVocabRequests, key: account ? JSON.stringify([id, account]) : id });
 async function loadVocab(id, account = '') {
   if (!id) return { modes: {}, models: {} };
@@ -3909,6 +3917,7 @@ function revalidateVocab(id, account = '') {
   const before = requests.cache.get(key);
   fetchVocab(id, account).then((v) => {
     if (requests.cache.get(key) !== v || JSON.stringify(before) === JSON.stringify(v)) return;
+    effortsLoader.invalidate();
     syncTopbar().catch(() => {});
   }).catch(() => {});
 }
@@ -3916,6 +3925,7 @@ function revalidateVocab(id, account = '') {
 /** ログイン・ログアウトの後。使えるモデルはアカウントで変わるので、覚えた語彙を捨てて描き直す */
 function forgetVocab(id) {
   defaultVocabRequests.invalidate(id);
+  effortsLoader.invalidate();
   syncTopbar().catch(() => {});
 }
 
@@ -4384,7 +4394,9 @@ function reserveSettings(patch, targetId = state.current) {
     if (s) { s.nextSettings = value; stagedNext.delete(id); } else if (state.draft.created === id) stagedNext.set(id, value);
     settingsFailure = null;
     failedSettingsPatch = null;
-    if (state.current === id) { syncSettingsHold(); await syncTopbar(); }
+    // 保存の約束（settingsWrite）は保存できたところで終える。チップの描き直し（語彙・エフォート・使用量・git の取り直し）は待たない:
+    // 待たせると、次の送信と新しい会話の作成が、保存と関係のない取得の分だけ遅れ、描き直しの失敗が「保存の失敗」に見える
+    if (state.current === id) { syncSettingsHold(); syncTopbar().catch(() => {}); }
     return value;
   });
   settingsWrite = write;
@@ -4418,9 +4430,13 @@ function noteDraftChange(patch) {
   if (last && Object.keys(last).sort().join() === Object.keys(patch).sort().join()) changes[changes.length - 1] = patch;
   else changes.push(patch);
 }
-/** 集めた変更を、いまの値の見え方に畳む。エージェント・接続先を変えると、その先の既定へ戻る（core/server.mjs の reserveTurnSettings と同じ） */
-function draftView(changes) {
-  const view = {};
+/**
+ * 集めた変更を、いまの値の見え方に畳む。エージェント・接続先を変えると、その先の既定へ戻る（core/server.mjs の reserveTurnSettings と同じ）。
+ * base: 別の会話から新しい会話を作るときの、作る前に見えていた選択（startNew の draft.base）。サーバーが引き継ぐ値と同じなので、
+ * 作っている間・できた後でチップのモデルが既定（prefs）へ戻らない。別のエージェントを選んだら base は使わない（その先の既定）
+ */
+function draftView(changes, base = null) {
+  const view = base && !(changes ?? []).some((patch) => "backend" in patch && patch.backend !== base.backend) ? { ...base } : {};
   for (const patch of changes ?? []) {
     if ("backend" in patch) { delete view.effort; delete view.mode; delete view.endpoint; if (patch.backend !== view.backend) delete view.account; }
     if ("endpoint" in patch) { delete view.effort; view.model = ""; }
@@ -4570,11 +4586,11 @@ function cwdOptions() {
 // Claude のアカウントの設定（web/claude-accounts.mjs）。入力欄のチップが候補を引くので、controls より先に作る
 const claudeAccounts = setupClaudeAccounts({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
-  onChange: () => { syncTopbar().catch(() => {}); } });
+  onChange: () => { effortsLoader.invalidate(); syncTopbar().catch(() => {}); } });
 // Claude 以外のエージェントのアカウントの設定（web/agent-accounts.mjs。ADR 0222）
 const agentAccounts = setupAgentAccounts({ cmd, labelOf,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
-  onChange: () => { accountVocabRequests.invalidate(); syncTopbar().catch(() => {}); } });
+  onChange: () => { accountVocabRequests.invalidate(); effortsLoader.invalidate(); syncTopbar().catch(() => {}); } });
 /** エージェントのアカウントの一覧（共通の形 { id, name, ready }）。取ってあるもの（同期） */
 function accountList(bid) {
   const kind = capsOf(bid).accounts;
@@ -4591,7 +4607,7 @@ async function loadAccounts(bid) {
 }
 function composerSelection() {
   const session = state.sessions.find(s => s.id === state.current);
-  const draft = !session || justCreated() ? draftView(state.draft.changes) : null;
+  const draft = !session || justCreated() ? draftView(state.draft.changes, state.draft.base) : null;
   const homeBot = unsentHere() ? homeDest.bot : null;
   const backend = homeBot?.backend ?? draft?.backend ?? session?.nextSettings?.backend ?? activeBackendId();
   const account = composerAccount({ backend, session, draft, prefs: state.prefs, kind: capsOf(backend).accounts, homeBot });
@@ -4636,7 +4652,7 @@ async function syncAccount(s, bid, { value = composerSelection().account, visibl
 const compatEndpoints = setupCompatEndpoints({ cmd,
   openSettings: () => { if ($('onboardingDialog').open) $('onboardingDialog').close(); onboarding.open(); },
   openPage: name => $(`${name}Tab`)?.click(),
-  onChange: () => { syncTopbar().catch(() => {}); },
+  onChange: () => { effortsLoader.invalidate(); syncTopbar().catch(() => {}); },
   officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || t('settings.agents.loggedIn')) : ''; } });
 // 管理の面が開きたいとき、面をそのエージェントのカードの「アカウントと接続先」の中へ移す
 claudeAccounts.onOpen(() => mountPanel('claude', 'accounts', 'claudeAccountsPanel'));   // backend-allow: Claude のアカウントの面は Claude のカード専用
@@ -4694,7 +4710,7 @@ function applyCwd(v) {
   controls.paint();
   // 会話がまだ無い間、または作ったばかりで一覧に行が載る前は、作業場所は草稿（syncTopbar が読む）に持つ
   if (!state.current || justCreated()) state.draft.cwd = v;
-  if (!state.current) return;
+  if (!state.current) { adoptEfforts().catch(() => {}); return; }
   // 保存できるまでは弱い字。失敗したら reserveSettings がチップを元の値へ戻す
   const ticket = ++cwdSaving;
   $("cwdChip").classList.add("saving");
@@ -4737,7 +4753,7 @@ function syncAttachButton() {
 /** 未送信の会話で「bot なし」のときに動くエージェント（bot を選んでいる間も、bot なしの札にはこちらを出す） */
 function homeBackend() {
   const s = state.sessions.find(x => x.id === state.current);
-  const chosen = !s || justCreated() ? draftView(state.draft.changes) : null;
+  const chosen = !s || justCreated() ? draftView(state.draft.changes, state.draft.base) : null;
   return chosen?.backend ?? s?.nextSettings?.backend ?? activeBackendId();
 }
 /** Chats の未送信で選んだ bot の動かし方（表示だけ）。「Codex · Fake 1 · medium · 都度確認」 */
@@ -4746,6 +4762,45 @@ function homeBotSetup(bot) {
   const mode = state.modes?.[state.mode]?.label ?? state.mode ?? '';
   return [labelOf(bot.backend), modelChipLabel(state.models, state.model, state.efforts, state.effort), mode].filter(Boolean).join(' · ');
 }
+/** エフォートの段が見る作業場所。会話があればその次のターンの場所、まだ無い草稿では選んでいる場所（その場所のプロジェクト設定が段を変える） */
+function effortCwd(s) {
+  return s ? s.nextSettings?.cwd || s.cwd || '' : state.draft.cwd || state.cwd || '';
+}
+/** いま入力欄で選んでいるものの、エフォートの段の問い合わせ（モデル・作業場所・接続先まで。表示の鍵と取得の鍵は同じ） */
+function effortSelection() {
+  const s = state.sessions.find(x => x.id === state.current);
+  const choice = composerSelection();
+  return { backend: state.shownBackend ?? activeBackendId(), account: choice.account, endpoint: choice.endpoint, model: state.model, cwd: effortCwd(s) };
+}
+/**
+ * これから選ぶ値（予約の保存はまだ）のエフォートの段を、裏で取っておく。予約が書けたあとの描き直しは、同じ鍵の取得に相乗りする。
+ * 選び直された後の結果は、鍵が違うので使われない
+ */
+function warmEfforts(next) {
+  effortsLoader.load({ ...effortSelection(), ...next }).catch(() => {});
+}
+/** いま選んでいるもののエフォートの段を取り、まだ同じ選択なら描く。モデルを選んだ直後から始め、予約の保存を待たない */
+async function adoptEfforts() {
+  const selection = effortSelection();
+  if (effortsView.fresh(selection)) return true;
+  if (!await effortsView.adopt(selection, effortSelection, noEfforts())) return false;
+  state.efforts = effortsView.efforts;
+  state.effortDisabled = Object.keys(state.efforts).length <= 1;
+  controls.paint();
+  return true;
+}
+/**
+ * エージェントを選んだ瞬間に、そのエージェントのモデル・エフォートの取得を始める。会話があるときは、選択の予約を書き終えてから
+ * syncTopbar が描き直すので、取得をそれまで待たせない（同じ鍵の取得は相乗りする）。選び直されたら結果は使われない（鍵が違う）
+ */
+function warmAgentChoices(backend) {
+  const s = state.sessions.find(x => x.id === state.current);
+  loadVocab(backend, '').then(({ models }) => {
+    if (state.shownBackend !== backend) return;
+    effortsLoader.load({ backend, model: defaultModelOf(models), cwd: effortCwd(s) }).catch(() => {});
+  }).catch(() => {});
+}
+
 // 使用量の取得は設定の「使用量」とヘッダーのチップで共有する（同じエージェントの取得が走っていれば相乗り）。
 // 入力欄の controls は作る時点で get() を呼ぶ（承認モードのチップの when）ので、それより前に作る
 const usageSource = createUsageSource(cmd);
@@ -4756,6 +4811,10 @@ const controls = chatComposer.useControls({
     const bid = state.shownBackend ?? activeBackendId();
     const bot = homeDest.bot;
     const sent = !unsentHere();
+    // 切り替えた直後は、前のエージェントのモデル・エフォートの一覧を出さない（取れたら syncTopbar が鍵を合わせる）
+    const choice = composerSelection();
+    const wanted = vocabKey({ backend: bid, account: choice.account, endpoint: choice.endpoint });
+    const modelsReady = vocabReady(state.vocabKey, wanted), effortsReady = modelsReady && effortsView.ready(effortSelection());
     return {
       // bot を選んだ未送信の会話は、bot が実際に使う値を表示だけ（一時チャットには作業場所が無いので、bot の最初のフォルダーかホーム。core/bots/sessions.mjs の pickCwd）
       cwd: bot ? bot.folders?.[0]?.path || state.homeDir || state.cwd : state.cwd, recent: cwdOptions(), cwdDisabled: Boolean(bot),
@@ -4764,11 +4823,11 @@ const controls = chatComposer.useControls({
       backendUsage: (id) => weekUsage(usageSource.get(id)?.quota, ""),
       // エージェントが 1 つしか無ければ選ぶ口を出さない
       backendSwitchable: state.backends.length > 1,
-      models: state.models, model: state.model,
-      efforts: state.efforts, effort: state.effort, effortDisabled: state.effortDisabled,
+      models: modelsReady ? state.models : {}, modelsPending: !modelsReady, model: state.model,
+      efforts: effortsReady ? state.efforts : {}, effortsPending: !effortsReady, effort: state.effort, effortDisabled: !effortsReady || state.effortDisabled,
       accounts: !bot && state.accountShown ? accountOptions(usageSource.get(bid)?.quota) : null, account: state.account,
       endpoint: bot ? null : endpointView(bid),
-      modes: state.modes, mode: state.mode,
+      modes: modelsReady ? state.modes : {}, modesPending: !modelsReady, mode: state.mode,
       modeDisabled: Boolean(bot),
       // 押せない理由（作業ディレクトリ・承認モードのチップの title と読み上げに足す）
       lockedNote: bot ? t('composer.destination.locked', { name: bot.name }) : '',
@@ -4791,18 +4850,20 @@ const controls = chatComposer.useControls({
       worktreePending: Boolean(state.sessions.find(s => s.id === state.current)?.worktreePending),
       // 別の会話が同じリポジトリに書き込み中なら { who }。チップと面に知らせる
       worktreeBusy: worktreeBusyPlan(),
+      // 書き込み中の確認の状態（'checking' / 'failed' / 'confirmed'）。確認中・失敗を「書き込みなし」の顔で出さない
+      worktreeCheck: worktreeCheckState(),
     };
   },
   on: {
     cwd: applyCwd,
     worktreeSplit: () => startWorktree(),
     worktreeBack: () => backFromWorktree(),
-    backend: (v) => { state.shownBackend = v; controls.paint(); chooseSettings({ backend: v, model: "" }); },
-    model: (v) => { state.model = v; controls.paint(); chooseSettings({ model: v, rememberModel: true }); },
+    backend: (v) => { state.shownBackend = v; controls.paint(); warmAgentChoices(v); chooseSettings({ backend: v, model: "" }); },
+    model: (v) => { state.model = v; controls.paint(); adoptEfforts().catch(() => {}); chooseSettings({ model: v, rememberModel: true }); },
     // 互換の接続先。'' は公式。モデルは接続先の既定（メイン）に戻る（server も同じ）
-    endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); chooseSettings({ endpoint: v }); },
+    endpoint: (v) => { state.endpoint = v; state.model = ""; state.effort = ""; controls.paint(); chooseSettings({ endpoint: v }); warmEfforts({ endpoint: v, model: "" }); },
     // Claude のアカウント。'' はログイン中のアカウント（既定）
-    account: (v) => { state.account = v; controls.paint(); chooseSettings({ account: v }); },
+    account: (v) => { state.account = v; controls.paint(); chooseSettings({ account: v }); warmEfforts({ account: v }); },
     effort: (effort) => { state.effort = effort; controls.paint(); chooseSettings({ effort, rememberEffort: true }); },
     mode: (v) => {
       state.mode = v;
@@ -5275,11 +5336,20 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
   // 別の会話から作るときは、その会話の設定をサーバーが引き継ぐ（newSession の sourceSessionId）
   const carried = changes ?? (source ? [] : state.draft.changes ?? []);
   const chosen = draftView(carried);
+  // 別の会話から作るときは、作る前に見えていた選択を表示の元に残す（サーバーも同じ作業場所の会話からは同じ値を引き継ぐ。
+  // 持ち越した変更とは別: 作成の引数には載せず、「選んだ」印（selectedSettings）も付けない）
+  // サーバーが引き継ぐのは、同じリポジトリで、元の会話のエージェントのまま作るとき。ここで確実に言えるのは、同じ作業場所（同じリポジトリの
+  // 別の場所はサーバーの判定が要るので、作る前の選択は残さず、できた会話の値に合わせる）と、別のエージェントを明示していないとき
+  const sourceRow = source && !changes ? state.sessions.find((s) => s.id === source) : null;
+  const shownBackend = state.shownBackend ?? activeBackendId();
+  const base = sourceRow && requestedCwd === (sourceRow.nextSettings?.cwd ?? sourceRow.cwd) && (!backend || backend === shownBackend)
+    ? { backend: shownBackend, model: state.model ?? '', effort: state.effort ?? '', mode: state.mode, endpoint: state.endpoint ?? '', account: state.account ?? '' }
+    : null;
   pendingNewSession = { id: `pending-${randomId()}`, title: t('pending.newSession'), status: status ?? '', cwd: requestedCwd,
     backend: backend ?? chosen.backend ?? state.backendId, lastModified: new Date().toISOString(), unsent: true };
   state.current = null;
   // changes: 作っている間も集め続ける。created: できた会話の id（できた後の選び直しはその場で流す）
-  const draft = { status, cwd: pendingNewSession.cwd, changes: [...carried], created: null };
+  const draft = { status, cwd: pendingNewSession.cwd, changes: [...carried], base, created: null };
   state.draft = draft;
   state.messages = [];
   state.base = 0;
@@ -5318,7 +5388,7 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
       // 読み直しの写しが予約を書く前のものでも、書けた結果で合わせる（下の stagedNext）
       draft.created = result.sessionId;
       sendDraftSettings(draft, result.sessionId, requestedCwd);
-      const listing = refresh({ sharePending: true }).catch(() => {});
+      const listing = refresh({ sharePending: true, listedOnly: true }).catch(() => {});
       if (state.current === null) {
         // 開き直しと違い、欄に触らない（無効にしない・下書きを読み直さない）。写しも取らない:
         // 作っている間に書いた字は、終わった時点で欄にあるものがそのまま、この会話の下書きになる
@@ -5342,8 +5412,8 @@ async function startNew({ status = null, cwd = "", backend, changes, keepDrawer 
       if (row && staged !== undefined) row.nextSettings = staged;
       // 集めた設定は会話に渡し終えた（会話が消えて欄が新規に戻ったとき、古い選択を出さない）。ここから先のチップは会話の予約が元
       const touched = draft.changes.length > 0 || draft.cwd !== requestedCwd;
-      if (state.draft === draft) { draft.changes = []; draft.created = null; }
-      if (touched && state.current === result.sessionId) await syncTopbar().catch(() => {});
+      if (state.draft === draft) { draft.changes = []; draft.base = null; draft.created = null; }
+      if (touched && state.current === result.sessionId) syncTopbar().catch(() => {});   // 会話はもうできている。チップの描き直し（語彙・エフォートなど）は待たない
       return result.sessionId;
     } catch (e) {
       if (pendingNewSession) pendingRows.delete(pendingNewSession.id);
@@ -7721,55 +7791,82 @@ function pendingAfterDelay(entry, repaint = renderSessions) {
 
 /** Keep local changes while an older listSessions response is in flight. */
 function applyPendingPatches(sessions) {
-  return overlaySessions(sessions, pendingPatches, pendingDeletedRows);
+  return overlaySessions(sessions, new Map([...pendingPatches, ...moveLanes.patches()]), pendingDeletedRows);
 }
 function applyPendingStatuses(statuses) {
   return statuses.map(s => pendingStatusRenames.has(s.status) ? { ...s, status: pendingStatusRenames.get(s.status) } : s);
 }
 
-async function sidebarChange({ rows, patches, kind = 'move', run, success, retry }) {
-  rows = currentRows(rows, state.sessions);
-  if (rows.some(row => pendingRows.has(row.id))) return;
+/**
+ * 行の移動は web/sidebar-moves.mjs の列に並べる。画面へは受理した瞬間に最新の移動先を出し、保存は行ごとに 1 本ずつ流す。
+ * 保存の完了は一覧と入力欄の取り直しを待たない（取り直しは裏で走る）。
+ */
+const moveLanes = createMoveLanes({
+  onChange: () => { syncMoveRows(); renderSessions(); },
+  describe: ({ queued, target }) => (queued ? t('pending.movingTo', { status: statusWord(target) }) : t('pending.moving')),
+  stamp: () => refreshVersion,
+});
+/** 最後に受け取ったサーバーの一覧の、移動で動く項目（失敗した移動を戻す先の正本） */
+const serverMoveFields = new Map();
+function syncMoveRows() {
+  // 削除を受理した行は「削除中」の印を保つ（移動の印で上書きしない）
+  for (const [id, entry] of moveLanes.entries) if (!pendingDeletedRows.has(id)) pendingRows.set(id, entry);
+  for (const [id, entry] of pendingRows) if (entry.kind === 'move' && !moveLanes.entries.has(id)) pendingRows.delete(id);
+}
+
+/**
+ * 移動を受理する。rows・patches・run は受理の時点で確定したものを渡す（run の中で画面の状態を読み直さない）。
+ * coalesceKey が同じで、まだ送っていない移動は、この最新の 1 件へまとまる
+ */
+async function sidebarChange({ rows, patches, run, success, retry, coalesceKey }) {
+  rows = [...new Map(currentRows(rows, state.sessions).map(row => [row.id, row])).values()];
+  if (rows.some(row => pendingDeletedRows.has(row.id))) return;
   side.showUndo(null);
   const before = snapOf(rows);
-  const label = kind === 'delete' ? t('pending.deleting') : t('pending.moving');
-  for (const row of rows) {
-    const patch = patches.get(row.id) ?? {};
-    pendingPatches.set(row.id, patch);
-    Object.assign(row, patch);
-    pendingRows.set(row.id, { kind, text: label, visible: false });
+  for (const row of rows) Object.assign(row, patches.get(row.id) ?? {});
+  const result = await moveLanes.accept({ rows, patches, before: new Map(before.map(b => [b.sessionId, b])), coalesceKey, run });
+  if (result.status === 'superseded') return;
+  const settledRows = !rows.some(row => moveLanes.isActive(row.id));
+  // 全対象の意図が後続の移動に覆われていれば、失敗は札にしない（最新の意図がこの後に保存される）。一部の行だけ覆われるなら、覆われない行の失敗は知らせる
+  const covered = rows.every(row => moveLanes.isActive(row.id));
+  const snapshots = [...result.before.values()];
+  if (result.status === 'done') {
+    renderSessions();
+    refresh().catch(() => {});
+    // 先行の失敗が一部だけ保存できていたかもしれない行（uncertain）は、戻す先が確かでない。確かでない過去の値を「元に戻す」として書かない
+    if (success && settledRows && !snapshots.some(b => b.uncertain)) side.showUndo(success, () => restore(snapshots));
+    return;
   }
+  // 失敗: 列に残る移動 → 最後に受け取ったサーバーの値 → 操作前の値、の順で戻す（後から来た移動・別の端末の変更を古い値で上書きしない）。
+  // 途中まで保存できていることもあるので、サーバーへ逆向きの書き込みはせず、一覧を取り直して正本に合わせる
+  state.sessions = revertFailed(state.sessions, snapshots, result.patches, serverMoveFields, id => moveLanes.patchFor(id));
   renderSessions();
-  const timers = rows.map(row => pendingAfterDelay(pendingRows.get(row.id)));
-  try {
-    await run();
-    await refresh().catch(() => {});
-    for (const row of rows) { pendingPatches.delete(row.id); pendingRows.delete(row.id); }
-    renderSessions();
-    if (success) side.showUndo(success, () => restore(before));
-  } catch (e) {
-    for (const row of rows) { pendingPatches.delete(row.id); pendingRows.delete(row.id); }
-    state.sessions = rollbackSessions(state.sessions, before);
-    renderSessions();
-    for (const row of rows) document.querySelector(`[data-session="${CSS.escape(row.id)}"]`)?.classList.add('pending-bounce');
-    await restoreServer(before).catch(() => {});
-    await refresh().catch(() => {});
-    side.showUndo(t('pending.failed', { reason: e.message }), retry, { retry: true });
-  } finally { timers.forEach(cancel => cancel()); }
+  for (const row of rows) document.querySelector(`[data-session="${CSS.escape(row.id)}"]`)?.classList.add('pending-bounce');
+  refresh().catch(() => {});
+  const reason = result.error?.message ?? String(result.error);
+  // 再試行は操作の全対象をやり直す。後続の移動に覆われた行まで巻き戻さないよう、再試行の札は全対象が落ち着いたときだけ付ける
+  if (settledRows) side.showUndo(t('pending.failed', { reason }), retry, { retry: true });
+  else if (!covered) sideNote(t('pending.failed', { reason }));
 }
 
 /** 取り消し用に、触る前の状態と所属を覚える */
 const snapOf = (rows) => rows.map((s) => ({ sessionId: s.id, status: s.status ?? "", ungrouped: Boolean(s.ungrouped) }));
 
-/** 覚えた通りに戻す。1 本ずつ戻すので、途中の伝播（根を動かすと中も動く）は起こさない。failed(エラー文) は失敗の一行（HTML） */
+/** 覚えた通りに戻す。1 本ずつ戻すので、途中の伝播（根を動かすと中も動く）は起こさない。全部の応答が決着してから結果を返す */
 function restoreServer(before) {
-  return Promise.all(before.map(async (b) => {
+  return settleAll(before.map(async (b) => {
     await cmd("setStatus", { sessionId: b.sessionId, status: b.status, reasonKey: "undo", alone: true });
     await cmd("setGrouped", { sessionId: b.sessionId, ungrouped: b.ungrouped });
   }));
 }
+/** 元に戻す。ほかの移動と同じ列に並べるので、保存中の移動と重ならない */
 function restore(before) {
-  restoreServer(before).then(refresh).catch((e) => side.showUndo(t('pending.failed', { reason: e.message }), () => restore(before), { retry: true }));
+  // 受理の時点で一覧に居る行だけを戻す（消えた行へは書かない。表示の対象と保存の対象を同じにする）
+  const rows = before.map(b => state.sessions.find(row => row.id === b.sessionId)).filter(Boolean);
+  const live = before.filter(b => rows.some(row => row.id === b.sessionId));
+  if (!live.length) return;
+  return sidebarChange({ rows, patches: new Map(live.map(b => [b.sessionId, { status: b.status, ungrouped: b.ungrouped }])),
+    run: () => restoreServer(live), retry: () => restore(before) });
 }
 
 /** その行と同じグループに居る行（描画と同じ規則。web/family.mjs） */
@@ -7787,18 +7884,21 @@ function changeStatus(s, status) {
   if (fam) return moveGroup(s, status);
   const wasIn = familiesOf(state.sessions, state.sessions).some((f) => f.kin.some((k) => k.id === s.id));
   return sidebarChange({ rows: [s], patches: new Map([[s.id, { status }]]),
-    run: () => cmd("setStatus", { sessionId: s.id, status, reasonKey: "manual" }),
+    run: () => cmd("setStatus", { sessionId: s.id, status, reasonKey: "manual", alone: true }),
     success: wasIn ? t("session.undo.statusLeft", { title: rowLabel(s), status: statusWord(status) }) : t("session.undo.status", { title: rowLabel(s), status: statusWord(status) }),
-    retry: () => changeStatus(s, status) });
+    retry: () => changeStatus(s, status), coalesceKey: `status:${s.id}` });
 }
 
 /** グループごと別の状態へ。中の会話も一緒に動く（サーバが根の移動として広げる） */
 function moveGroup(root, status) {
   const rows = groupOf(root);
   return sidebarChange({ rows, patches: new Map(rows.map(s => [s.id, { status }])),
-    run: () => cmd("setStatus", { sessionId: root.id, status, reasonKey: "groupMove" }),
+    run: async () => {
+      await cmd("setStatus", { sessionId: root.id, status, reasonKey: "groupMove", alone: true });
+      await settleAll(rows.filter(row => row.id !== root.id).map(row => cmd("setStatus", { sessionId: row.id, status, reasonKey: "groupMove", alone: true })));
+    },
     success: t("session.undo.groupMoved", { title: rowLabel(root), status: statusWord(status), count: rows.length }),
-    retry: () => moveGroup(root, status) });
+    retry: () => moveGroup(root, status), coalesceKey: `status:${root.id}` });
 }
 
 /** グループから外す / 戻す。外すだけなら状態は動かさない */
@@ -7806,7 +7906,7 @@ function setGrouped(s, ungrouped) {
   return sidebarChange({ rows: [s], patches: new Map([[s.id, { ungrouped }]]),
     run: () => cmd("setGrouped", { sessionId: s.id, ungrouped }),
     success: ungrouped ? t("session.undo.left", { title: rowLabel(s) }) : t("session.undo.rejoined", { title: rowLabel(s) }),
-    retry: () => setGrouped(s, ungrouped) });
+    retry: () => setGrouped(s, ungrouped), coalesceKey: `grouped:${s.id}` });
 }
 
 /** そのグループへ入れる。状態を根に合わせるところまでが 1 つの操作 */
@@ -7814,18 +7914,22 @@ function joinGroup(s, root) {
   s = state.sessions.find(row => row.id === s.id) ?? s;
   root = state.sessions.find(row => row.id === root.id) ?? root;
   const rows = groupOf(s);
-  return sidebarChange({ rows, patches: new Map(rows.map(row => [row.id, { status: root.status ?? '', ungrouped: false }])),
-    run: async () => { await cmd("setGrouped", { sessionId: s.id, ungrouped: false }); await cmd("setStatus", { sessionId: s.id, status: root.status ?? "", reasonKey: "joinGroup" }); },
-    success: t("session.undo.joined", { title: rowLabel(s), group: rowLabel(root), status: statusWord(root.status) }),
-    retry: () => joinGroup(s, root) });
+  const status = root.status ?? '';
+  return sidebarChange({ rows, patches: new Map(rows.map(row => [row.id, { status, ungrouped: false }])),
+    run: async () => {
+      await cmd("setGrouped", { sessionId: s.id, ungrouped: false });
+      await settleAll(rows.map(row => cmd("setStatus", { sessionId: row.id, status, reasonKey: row.id === s.id ? "joinGroup" : "groupMove", alone: true })));
+    },
+    success: t("session.undo.joined", { title: rowLabel(s), group: rowLabel(root), status: statusWord(status) }),
+    retry: () => joinGroup(s, root), coalesceKey: `join:${s.id}` });
 }
 
 /** グループを解除する。中の会話は独立した行になり、状態はそのまま */
 function ungroupFamily(root, members) {
   return sidebarChange({ rows: members, patches: new Map(members.map(m => [m.id, { ungrouped: true }])),
-    run: () => Promise.all(members.map(m => cmd("setGrouped", { sessionId: m.id, ungrouped: true }))),
+    run: () => settleAll(members.map(m => cmd("setGrouped", { sessionId: m.id, ungrouped: true }))),
     success: t("session.undo.ungrouped", { title: rowLabel(root), count: members.length }),
-    retry: () => ungroupFamily(root, members) });
+    retry: () => ungroupFamily(root, members), coalesceKey: `ungroup:${root.id}` });
 }
 
 /** 散らばっている枝をまとめてグループにする。状態は根に揃える */
@@ -7833,15 +7937,16 @@ function gatherKin(root, loose) {
   root = state.sessions.find(row => row.id === root.id) ?? root;
   loose = loose.map(m => state.sessions.find(row => row.id === m.id) ?? m);
   const rows = [root, ...loose];
+  const status = root.status ?? '';
   const different = new Set(rows.filter(m => (m.status ?? null) !== (root.status ?? null)).map(m => m.id));
-  return sidebarChange({ rows, patches: new Map(rows.map(m => [m.id, { ungrouped: false, status: root.status ?? '' }])),
-    run: () => Promise.all(rows.map(async (m) => {
+  return sidebarChange({ rows, patches: new Map(rows.map(m => [m.id, { ungrouped: false, status }])),
+    run: () => settleAll(rows.map(async (m) => {
     await cmd("setGrouped", { sessionId: m.id, ungrouped: false });
     if (different.has(m.id)) {
-      await cmd("setStatus", { sessionId: m.id, status: root.status ?? "", reasonKey: "mergeBranches", alone: true });
+      await cmd("setStatus", { sessionId: m.id, status, reasonKey: "mergeBranches", alone: true });
     }
-  })), success: t("session.undo.gathered", { title: rowLabel(root), count: loose.length, status: statusWord(root.status) }),
-    retry: () => gatherKin(root, loose) });
+  })), success: t("session.undo.gathered", { title: rowLabel(root), count: loose.length, status: statusWord(status) }),
+    retry: () => gatherKin(root, loose), coalesceKey: `gather:${root.id}` });
 }
 
 /** その行の系譜（fork でつながった会話。グループに入っているかどうかは見ない） */
@@ -7906,6 +8011,9 @@ async function deleteSessionRow(s, command = 'deleteUnsentSession') {
   renderSessions();
   const cancel = pendingAfterDelay(pending);
   try {
+    // 受理済みの移動（待っているものも含む）の保存が決着してから消す（削除済みの会話へ移動の保存が走らない）。
+    // 削除を受理した後の新しい移動は sidebarChange が受けない
+    await moveLanes.idle(s.id);
     await cmd(command, { sessionId: s.id });
     state.drafts.delete(s.id);
     try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
@@ -8171,7 +8279,6 @@ async function refreshContextEntry({ force = false } = {}) {
 // 頭の行のアイコン（コミットしていない変更があれば右上の点）・入力欄の作業場所のチップのブランチ・狭い画面の「…」の項目。
 // 取り直しは、会話・作業場所が変わったとき、会話を開いたとき、ターンの終わり、パネルの再読み込み。git が無い・git 管理外は null（何も出さない）
 let gitPanel = null;
-let gitTicket = 0;
 function paintGitEntry() {
   const button = $('gitEntry');
   const data = state.current ? state.git.data : null;
@@ -8195,13 +8302,16 @@ async function refreshGit({ force = false } = {}) {
   // 次のターンから別の作業場所へ変える予約があるときは、その場所（使ったことのある場所だけサーバーが通す）
   const reserved = Boolean(s && state.cwd && s.cwd && state.cwd !== s.cwd);
   const key = `${sessionId ?? ''}${String.fromCharCode(10)}${reserved || !sessionId ? state.cwd ?? '' : ''}`;
-  if (!force && state.git.key === key) return;
-  if (state.git.sessionId !== sessionId) { state.git.data = null; gitPanel?.reset(); paintGit(); }
-  state.git.key = key; state.git.sessionId = sessionId;
-  const mine = ++gitTicket;
-  const res = await cmd('gitStatus', { ...(reserved || !sessionId ? { cwd: state.cwd } : { sessionId }), fresh: force }).catch(() => null);
-  if (mine !== gitTicket) return;
-  state.git.data = res?.git ?? null;
+  if (!force && state.git.fetchKey === key) return;
+  // 作業場所（scope）が同じなら、会話の id が変わっただけ（新しい会話ができた）では消さず、静かに取り直す。
+  // 別の会話へ移るときは面だけ畳む（面の中身は会話ごと）。作業場所が変われば前の場所の値を捨てる
+  const previous = state.git.scope, switched = Boolean(state.git.sessionId && sessionId && state.git.sessionId !== sessionId);
+  const ticket = beginAux(state.git, { scope: state.cwd ?? '' });
+  if (previous !== state.git.scope || switched) { gitPanel?.reset(); paintGit(); }
+  state.git.fetchKey = key; state.git.sessionId = sessionId;
+  const result = await cmd('gitStatus', { ...(reserved || !sessionId ? { cwd: state.cwd } : { sessionId }), fresh: force })
+    .then((res) => ({ ok: true, data: res?.git ?? null }), () => ({ ok: false }));
+  if (!settleAux(state.git, ticket, result)) return;
   paintGit();
 }
 function paintGit() { paintGitEntry(); controls.paint(); }
@@ -8218,22 +8328,38 @@ function worktreeNextText(cwd) {
 let worktreeTimer = 0;
 function refreshWorktree() {
   clearTimeout(worktreeTimer);
+  // 待っている 120ms の間も、前の作業場所の値は出さない（作業場所が変わっていれば、ここで確認中に変える）
+  beginWorktreeCheck();
   return new Promise((resolve) => { worktreeTimer = setTimeout(() => resolve(runWorktreeCheck()), 120); });
+}
+/** 補足情報の対象（作業場所・エージェント・モード）。会話の id は含めない（草稿からできた会話で、同じ作業場所の値を消さない） */
+const worktreeScope = () => [state.cwd ?? '', state.shownBackend ?? activeBackendId() ?? '', state.mode ?? ''].join(String.fromCharCode(10));
+/** 取り直しを始める。値が変わったら（確認中に戻る・捨てる）描き直す。返すのは応答を載せる番号（作業場所が無ければ null） */
+function beginWorktreeCheck() {
+  const owner = state.current ?? '';
+  const before = [state.worktree.scope, auxState(state.worktree, owner)].join();
+  let ticket = null;
+  if (state.cwd) ticket = beginAux(state.worktree, { scope: worktreeScope(), owner });
+  else clearAux(state.worktree, owner);
+  if (before !== [state.worktree.scope, auxState(state.worktree, owner)].join()) paintWorktree();
+  return ticket;
 }
 async function runWorktreeCheck() {
   const sessionId = state.current ?? null;
-  if (!state.cwd) { state.worktree.data = null; paintWorktree(); return; }
-  const mine = ++state.worktree.ticket;
-  const res = await cmd('worktreeCheck', { ...(sessionId ? { sessionId } : {}), cwd: state.cwd, backend: state.shownBackend ?? activeBackendId(), mode: state.mode }).catch(() => null);
-  if (mine !== state.worktree.ticket) return;
-  state.worktree.data = res?.git ? res : null;
+  const ticket = beginWorktreeCheck();
+  if (ticket === null) return;
+  const result = await cmd('worktreeCheck', { ...(sessionId ? { sessionId } : {}), cwd: state.cwd, backend: state.shownBackend ?? activeBackendId(), mode: state.mode })
+    .then((res) => ({ ok: true, data: res?.git ? res : null }), () => ({ ok: false }));
+  if (!settleAux(state.worktree, ticket, result)) return;
   paintWorktree();
 }
 function paintWorktree() { controls.paint(); paintSettingsNotice(); paintWorktreeLines(); }
-/** ほかの会話が同じリポジトリに書き込み中なら、チップと面に知らせる。 */
+/** ほかの会話が同じリポジトリに書き込み中なら、チップと面に知らせる。確認中・取得失敗は「書き込み中」とも「なし」とも扱わない（worktreeCheckState） */
 function worktreeBusyPlan() {
-  return busyPlan(state.worktree.data, { running: Boolean(state.current && state.runningIds.has(state.current)) });
+  return busyPlan(auxData(state.worktree, state.current ?? ''), { running: Boolean(state.current && state.runningIds.has(state.current)) });
 }
+/** 書き込み中の確認の状態: 'confirmed'（答えがある）/ 'checking' / 'failed' */
+function worktreeCheckState() { return auxState(state.worktree, state.current ?? ''); }
 /** worktree を作り、次のターンの作業場所に予約する（下書きなら作業場所をそれにする） */
 async function startWorktree() {
   try {
@@ -8432,32 +8558,40 @@ async function syncTopbar() {
   controls.paint();
   refreshGit().catch(() => {});
 
-  // 語彙はエージェントごとに違う。切り替えたら取り直す
-  const { modes, models } = await loadVocab(bid, selectedEndpoint ? '' : selectedAccount);
+  // 語彙はエージェントごとに違う。切り替えたら取り直す。互いに待たない問い合わせ（語彙・接続先・アカウント）は一緒に出す
+  const wanted = vocabKey({ backend: bid, account: selectedAccount, endpoint: selectedEndpoint });
+  const vocabRequest = loadVocab(bid, selectedEndpoint ? '' : selectedAccount);
+  const endpointRequest = syncEndpoint(s, bid, { value: selectedEndpoint, visible: !homeBot && Boolean(s), current });
+  const accountRequest = syncAccount(s, bid, { value: selectedAccount, visible: !homeBot, current });
+  endpointRequest.catch(() => {}); accountRequest.catch(() => {});
+  const { modes, models } = await vocabRequest;
   if (state.current !== id || version !== topbarVersion) return;
   state.modes = modes;
   state.models = models;
   if (s) { state.mode = s.mode ?? "default"; state.model = chosen?.model ?? s.nextSettings?.model ?? s.model ?? ""; }
   else { const prefs = (state.prefs.backends ? state.prefs.backends[bid] : state.prefs) ?? {}; state.mode = prefs.mode ?? "default"; state.model = chosen.model ?? prefs.model ?? ""; }
   state.mode = homeBot?.mode ?? selectedMode(s, bid, modes, chosen);
-  await syncEndpoint(s, bid, { value: selectedEndpoint, visible: !homeBot && Boolean(s), current });
+  refreshWorktree().catch(() => {});   // 作業場所・モードが決まったら始める（接続先・エフォート・アカウントの取得を待たない）
+  await endpointRequest;
   if (state.current !== id || version !== topbarVersion) return;
   // 互換の接続先のモデルは接続先の一覧＋自由入力なので、公式の一覧に無くても戻さない
   if (homeBot) state.model = homeBot.model ?? '';
-  if (!state.endpoint && !(state.model in models)) state.model = "" in models ? "" : Object.keys(models)[0] ?? "";
-  const efforts = await cmd('efforts', { backend: bid, account: selectedEndpoint ? '' : selectedAccount, model: state.model, cwd: s?.nextSettings?.cwd || s?.cwd || undefined, ...(selectedEndpoint ? { endpoint: selectedEndpoint } : {}) }).catch(() => ({ '': { label: t('chat.next.useDefault') } }));
-  if (state.current !== id || version !== topbarVersion) return;
-  state.efforts = efforts;
-  state.effort = homeBot?.effort ?? chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
-  state.effortDisabled = Object.keys(efforts).length <= 1;
+  if (!state.endpoint && !(state.model in models)) state.model = defaultModelOf(models);
+  // モデルの一覧が揃ったらすぐ描く（エフォートの段を待たない）。エフォートは取れるまで「読み込み中」
+  state.vocabKey = wanted;
   controls.paint();
-  await syncAccount(s, bid, { value: selectedAccount, visible: !homeBot, current });
+  const adopted = await adoptEfforts();
+  if (state.current !== id || version !== topbarVersion) return;
+  if (adopted) {
+    state.effort = homeBot?.effort ?? chosen?.effort ?? s?.nextSettings?.effort ?? s?.effort ?? '';
+    controls.paint();
+  }
+  await accountRequest;
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
   // 確定したモデルで使用量の札をもう一度絞り直す（先の呼び出し時点ではモデルが未確定のことがある）
   headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: state.model });
   paintSettingsNotice();
-  refreshWorktree().catch(() => {});
   renderSessions();
 }
 
@@ -8479,11 +8613,43 @@ function scheduleRefresh() {
   });
   return scheduledRefresh;
 }
-function refresh({ sharePending = false } = {}) {
+function refresh({ sharePending = false, listedOnly = false } = {}) {
+  const run = startRefresh(sharePending);
+  if (!listedOnly) return run;
+  run.catch(() => {});   // 本体（補足の取り直しまで）の失敗は、一覧だけを待つ呼び手が受けない。握らないと unhandled rejection になる
+  return run.listed;
+}
+/**
+ * refresh の本体。返す約束には、一覧・状態を載せ終えた時点の約束（listed）が付く。
+ * 補足の取り直し（syncTopbar: 語彙・エフォート・アカウント）まで待たなくてよい呼び手（新しい会話の作成）は listed だけを待つ。
+ * listed は失敗しても拒否せず終える（呼び手は一覧が古いままでも先へ進む）。
+ * 次の取り直しが待つのも一覧を載せ終えるまで（refreshRun は一覧を取っている間だけ持つ）。載せ終えた前の分が補足の遅い取得中でも、
+ * 新しい呼び出しはそれを待たずに一覧を取り直す（補足の取得は互いに待たない。syncTopbar は後の版が先の版を上書きする）
+ */
+function startRefresh(sharePending) {
   // 起動時の重複だけは未受信の写しを共有する。出来事や自分の操作後は新しい写しを取り直す。
-  if (!refreshRun) return refreshRun = runRefresh().finally(() => { refreshRun = null; refreshSnapshotReady = false; });
+  if (!refreshRun) {
+    let listed, run;
+    const listedPromise = new Promise((resolve) => { listed = resolve; });
+    const doneListing = () => { listed(); if (refreshRun === run) { refreshRun = null; refreshSnapshotReady = false; } };
+    run = runRefresh(doneListing).finally(doneListing);
+    run.listed = listedPromise;
+    return refreshRun = run;
+  }
   if (sharePending && !refreshSnapshotReady) return refreshRun;
-  return refreshAgain ??= refreshRun.catch(() => {}).then(() => { refreshAgain = null; return refresh(); });
+  if (!refreshAgain) {
+    let listed;
+    const listedPromise = new Promise((resolve) => { listed = resolve; });
+    const again = refreshRun.listed.then(() => {
+      refreshAgain = null;
+      const next = startRefresh(false);
+      next.listed.then(listed);
+      return next;
+    });
+    again.listed = listedPromise;
+    refreshAgain = again;
+  }
+  return refreshAgain;
 }
 
 let refreshVersion = 0;
@@ -8497,7 +8663,7 @@ async function listSessions(wait) {
 // 取り直しの返事を待つ上限。後の refresh() は走っている分の終わりを待つので、返事が来ないと一覧が二度と更新されず、
 // それを待つ操作（脇の移動の「移動中」・新しい会話の最初の送信）も止まったままになる
 const REFRESH_REPLY_TIMEOUT_MS = 60_000;
-async function runRefresh() {
+async function runRefresh(listed) {
   const version = ++refreshVersion;
   const wait = { timeoutMs: REFRESH_REPLY_TIMEOUT_MS };
   // 互いに待たない問い合わせ（エージェントの一覧・走っている作業）も最初に一緒に出す。順に待つと中継を通るスマホでは往復の数だけ遅くなる
@@ -8510,6 +8676,9 @@ async function runRefresh() {
   ]);
   refreshSnapshotReady = true;
   if (version !== refreshVersion) return;
+  moveLanes.confirm(version);
+  serverMoveFields.clear();
+  for (const s of sessions) serverMoveFields.set(s.id, { status: s.status ?? '', ungrouped: Boolean(s.ungrouped) });
   state.sessions = applyPendingPatches(sessions);
   readCompletions.fromSessions(sessions);
   state.statuses = applyPendingStatuses(statuses);
@@ -8527,6 +8696,7 @@ async function runRefresh() {
   const firstList = !listLoaded.sessions;
   listLoaded.sessions = true;
   if (firstList && listLoaded.threads) renderSessions();
+  listed();
   await syncTopbar();
 }
 
@@ -9918,7 +10088,7 @@ const toc = createConversationToc({ thread, log, nav, preview: filePreview, narr
 // 会話の右パネル「git」（ADR 0085）。頭の行のアイコン・返答の下の要約行・委譲カードの「変更」・狭い画面の「…」から開く
 gitPanel = setupGitPanel({ cmd, preview: filePreview, session: () => ({ id: state.current ?? null, cwd: state.cwd }),
   jump: jumpToConversation, use: useGitText, worktrees: worktreeOps, canOpen: () => Boolean(state.current && state.git.data),
-  onState: (git, { foreign }) => { if (!foreign) { state.git.data = git; paintGit(); } } });
+  onState: (git, { foreign }) => { if (!foreign) { state.git.data = git; state.git.dataOwner = ''; state.git.status = 'confirmed'; paintGit(); } } });
 gitPanel.onOpenChange(paintGitEntry);
 $('gitEntry').onclick = () => gitPanel.toggle($('gitEntry'));
 // 会話の右パネル「Chrome の窓」（ADR 0148 第 5 段）。窓のある会話の頭の行の入口から開く。映像は見るだけ（ホストの画面もリモートの端末も）

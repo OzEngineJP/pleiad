@@ -76,7 +76,9 @@ export default async function (t) {
     creatingSession: null, pendingNewSession: null, freshSessionId: null, draftTimer: null, draftSavedAt: 0, DRAFT_THROTTLE_MS: 400, queuedSend: null, settingsFailure: null, syncSettingsHold: noop,
     failedSettingsPatch: null, failedSettingsError: '', cwdSaving: 0, stagedNext: new Map(),
     settingsWrite: Promise.resolve(), modeWrite: Promise.resolve(),
-    refreshWorktree: async () => {},
+    refreshWorktree: async () => {}, activeBackendId: () => 'fake',
+    // 選んだ直後に始めるエフォート・モデル一覧の取得（web/composer-vocab.mjs。tests/unit/composer-vocab.mjs が見る）。このテストは設定の流れだけ
+    adoptEfforts: async () => true, warmAgentChoices: noop,
     DRAFT_STORE: 'drafts', draftWrites: new Map(), draftKey: () => state.current ?? '',
     localStorage: { setItem: (k, v) => storage.set(k, v), getItem: k => storage.get(k) ?? null },
     setDrawer: noop, settleDrawer: noop, takeBootPrefetch: () => null, bootSkeleton: false, paintHistorySkeleton: noop, bootHold: null, randomId: () => Math.random().toString(36).slice(2), renderAttached: noop, fitPrompt: noop, clearThread: noop, prepareHistoryHeights: noop, syncTopbar: async () => {},
@@ -439,6 +441,24 @@ export default async function (t) {
     }
   }
 
+  // 作成の完了は、チップの描き直し（syncTopbar: 語彙・エフォート・アカウントの取得）を待たない。描き直しが返らなくても、会話は開いて作成が終わる
+  {
+    const id = 's-no-topbar-wait';
+    const realTopbar = context.syncTopbar;
+    context.syncTopbar = () => new Promise(() => {});
+    state.cwd = 'C:/home'; state.attached = []; prompt.value = '';
+    const making = run('startNew()');
+    on.model('fast');   // 作っている間に選んだ（できた会話へ流し、終わりにチップを描き直す分岐に入る）
+    await reply('newSession', { sessionId: id });
+    state.sessions.push({ id, cwd: 'C:/home', nextSettings: null });
+    releaseRefresh(); releaseRefresh = null;
+    await settle();
+    await reply('loadSession', { messages: [], presents: [], draft: { text: '', attached: [] } });
+    const outcome = await Promise.race([making.then(() => 'done'), new Promise((resolve) => setTimeout(() => resolve('waiting'), 300))]);
+    t.ok('チップの描き直しが返らなくても、新しい会話の作成は終わる', outcome === 'done' && state.current === id, outcome);
+    context.syncTopbar = realTopbar;
+  }
+
   // チップの表示（syncTopbar の草稿の分岐が読む値）: 選んだ順に畳む。エージェントを変えたら、変えた先の既定に戻る
   const view = (...changes) => context.draftView(changes);
   const viewJson = (...changes) => JSON.stringify(view(...changes));
@@ -447,6 +467,14 @@ export default async function (t) {
     (v => v.backend === 'codex' && v.model === '' && !('effort' in v) && !('mode' in v) && !('endpoint' in v))(view({ mode: 'auto' }, { effort: 'low' }, { model: 'fast' }, { backend: 'codex', model: '' })));
   t.ok('エージェントを変えた後に選んだ値は残る', view({ backend: 'codex', model: '' }, { model: 'gpt', rememberModel: true }, { mode: 'auto' }).model === 'gpt' && view({ backend: 'codex', model: '' }, { mode: 'auto' }).mode === 'auto');
   t.ok('接続先を変えたらモデルと effort は接続先の既定に戻る', (v => v.endpoint === 'e1' && v.model === '' && !('effort' in v))(view({ model: 'fast' }, { effort: 'low' }, { endpoint: 'e1' })));
+
+  // 別の会話から作るとき、作る前に見えていた選択（base）をチップの元に残す。選んだ値は base より優先し、別のエージェントを選んだら base は使わない
+  const base = { backend: 'fake', model: 'fast', effort: 'low', mode: 'auto', endpoint: '', account: 'acc' };
+  t.ok('作る前に見えていたモデルが、作っている間も見える（既定へ戻らない）', context.draftView([], base).model === 'fast' && context.draftView([], base).effort === 'low');
+  t.ok('base の上に選んだ値は重なる', context.draftView([{ model: 'slow', rememberModel: true }], base).model === 'slow');
+  t.ok('同じエージェントを選び直しても base のモデルは残る', context.draftView([{ backend: 'fake' }], base).model === 'fast');
+  t.ok('別のエージェントを選んだら base は使わない（その先の既定）', (v => v.backend === 'codex' && !('model' in v) && !('account' in v))(context.draftView([{ backend: 'codex' }], base)));
+  t.ok('base が無ければ今までどおり', JSON.stringify(context.draftView([{ model: 'x' }], null)) === JSON.stringify({ model: 'x' }));
 
   // 同じ項目を続けて選び直したら最後の 1 つだけ流す。項目が違えば選んだ順のまま（モデルを替えてから effort、が効かなくならない）
   state.current = null; state.draft = { status: null, cwd: '', changes: [], created: null };

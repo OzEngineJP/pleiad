@@ -3,6 +3,7 @@
   "pending": {
     "moving": "移動中",
     "movingProgress": "移動中 {{done}}/{{total}}",
+    "movingTo": "→ {{status}}",
     "deleting": "削除中",
     "deletingProgress": "削除中 {{done}}/{{total}}",
     "creating": "作成中",
@@ -816,6 +817,9 @@
     "busySuffix": "ほかの会話も書き込み中",
     "busyTitle": "{{who}}が同じリポジトリに書き込み中です。押すと worktree で始められます",
     "busyNote": "{{who}}が同じリポジトリに書き込み中",
+    "checkingTitle": "ほかの会話が書き込み中か確認しています",
+    "unknownSuffix": "確認できません",
+    "unknownTitle": "ほかの会話が書き込み中か確認できませんでした",
     "chipSuffix": "worktree",
     "chipTitle": "worktree · 元 {{origin}}",
     "start": "worktree で始める",
@@ -2862,7 +2866,9 @@
       "notListed": "一覧にありません。Enter でこの ID をそのまま使います。",
       "noList": "一覧がありません。ID を入力してください。",
       "chipTitle": "{{label}}（エージェント・モデル・エフォート。次のターンから適用）",
-      "chipAria": "モデルとエフォート: {{label}}"
+      "chipAria": "モデルとエフォート: {{label}}",
+      "loading": "モデルの一覧を読み込んでいます",
+      "loadingAria": "{{backend}} · モデルを読み込んでいます"
     },
     "effort": {
       "title": "エフォート（考える量）",
@@ -2880,7 +2886,8 @@
       },
       "modelDefault": "（{{model}} の既定）",
       "levelDefault": "{{level}}（既定）",
-      "noLevels": "{{model}} は段を選べません"
+      "noLevels": "{{model}} は段を選べません",
+      "loading": "読み込み中…"
     },
     "mode": {
       "dangerTitle": "承認モード: 確認なし・制限なし",

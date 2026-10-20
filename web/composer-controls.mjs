@@ -399,13 +399,14 @@ function weekRight({ used, high }) {
 }
 
 /** Chats とスレッドで同じ「宛先とモデル」のチップを描く。 */
-export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend, model, effort = '', changed = false, sent = false, endpoint = false, oneM = false, title = null }) {
+export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend, model, effort = '', changed = false, sent = false, endpoint = false, oneM = false, title = null, pending = false }) {
   // bot はアイコン、互換の接続先は ◇（バックグラウンドの札と同じ）、それ以外はエージェントのロゴ
   const icon = bot ? botIcon(bot, 'av xs') : endpoint ? el('span', 'row-be compat-mark', '◇') : logo(backend);
   icon.setAttribute('aria-hidden', 'true');
   const name = el('span', 'v split');
-  const modelName = model || t('chat.model.default');
-  const effortName = String(effort).replace(/^\s*·\s*/, '').trim();
+  // モデルの一覧を取っている間は名前の場所に … を置く（前のエージェントのモデルを出さない）
+  const modelName = pending ? '…' : model || t('chat.model.default');
+  const effortName = pending ? '' : String(effort).replace(/^\s*·\s*/, '').trim();
   if (bot) name.append(el('span', 'mn', bot.name), el('span', 'mdl', ` · ${modelName}`));
   else name.append(el('span', 'mn', modelName));
   // 互換の接続先の 1M のモデルは名前の横に札（web/compat-models.mjs）
@@ -421,8 +422,10 @@ export function paintWhoChip(chip, { bot = null, backend, backendLabel = backend
     : bot ? t('composer.destination.botAria', { name: bot.name, backend: backendLabel, model: modelName, effort: effortPart })
       : t('composer.destination.plainAria', { backend: backendLabel, model: modelName, effort: effortPart });
   const full = changed ? `${label} · ${t('composer.destination.changedAria')}` : label;
-  chip.title = title ?? full;
-  chip.setAttribute('aria-label', full);
+  chip.title = pending ? t('composer.model.loadingAria', { backend: backendLabel }) : title ?? full;
+  chip.setAttribute('aria-label', pending ? t('composer.model.loadingAria', { backend: backendLabel }) : full);
+  chip.classList.toggle('checking', pending);
+  if (pending) chip.setAttribute('aria-busy', 'true'); else chip.removeAttribute('aria-busy');
 }
 
 const botMark = (bot) => { const mark = botIcon(bot, 'av xs'); mark.setAttribute('aria-hidden', 'true'); return mark; };
@@ -624,6 +627,16 @@ function compatModelSection(d, on) {
 /** 公式のモデルの一覧（版付きの名前＋補足、既定の行に「既定」の札） */
 function officialModelSection(d, on) {
   const parts = [head(t("composer.model.title"))];
+  // 取っている間は、前のエージェントの一覧の代わりに骨組みと一言（エージェントの行は押せるまま）
+  if (d.modelsPending) {
+    const box = el("div", "cskel");
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-busy", "true");
+    for (let i = 0; i < 3; i++) { const bar = el("span", "cskel-row"); bar.setAttribute("aria-hidden", "true"); box.append(bar); }
+    box.append(el("p", "cnote", t("composer.model.loading")));
+    parts.push(box);
+    return parts;
+  }
   const models = d.models ?? {};
   const { id: resolved, entry: current } = resolvedModel(models, d.model);
   const def = models[""]?.resolvesTo;
@@ -681,7 +694,7 @@ export function effortBlock(d, onPick) {
   if (!stops.length || d.effortDisabled) {
     range.disabled = true; range.max = "0"; range.value = "0";
     val.textContent = "—";
-    note.textContent = d.efforts?.[""]?.reason ?? t("composer.effort.noLevels", { model: modelLabel });
+    note.textContent = d.effortsPending ? t("composer.effort.loading") : d.efforts?.[""]?.reason ?? t("composer.effort.noLevels", { model: modelLabel });
     note.title = note.textContent;
     reset.hidden = true;
     box.classList.add("off");
@@ -721,6 +734,16 @@ export function effortBlock(d, onPick) {
  * 選択時は hide() で面を閉じ、今と違う値のときだけ変更先を呼ぶ。
  */
 export function renderMode({ pop, target: d, on, hide }) {
+  // 取っている間は、前のエージェントのモードの代わりに骨組みと一言（押せる行を出さない）
+  if (d.modesPending) {
+    const box = el("div", "cskel");
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-busy", "true");
+    for (let i = 0; i < 2; i++) { const bar = el("span", "cskel-row"); bar.setAttribute("aria-hidden", "true"); box.append(bar); }
+    box.append(el("p", "cnote", t("composer.model.loading")));
+    pop.replaceChildren(head(t("chat.composer.mode")), box);
+    return;
+  }
   const def = defaultModeOf(d.modes);
   const rows = Object.entries(d.modes ?? {}).map(([id, m]) => row({
     on: id === d.mode, main: (isDanger(m) ? "⚠ " : "") + (m.label ?? id), sub: m.note, tag: id === def ? DEFAULT_TAG() : "", danger: isDanger(m), key: `mode:${id}`,
@@ -935,8 +958,11 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     splitSuffix.hidden = !split;
     splitSuffix.textContent = split ? `· ${t("worktree.chipSuffix")}` : "";
     const busy = d.worktreeBusy ?? null;
-    busySuffix.hidden = !busy;
-    busySuffix.textContent = busy ? `· ${t("worktree.busySuffix")}` : "";
+    // 確認中（'checking'）・取得失敗（'failed'）は、確定した「書き込み中」とも「なし」とも別に出す
+    const check = busy ? "confirmed" : d.worktreeCheck ?? "confirmed";
+    busySuffix.hidden = !busy && check === "confirmed";
+    busySuffix.classList.toggle("checking", check === "checking");
+    busySuffix.textContent = busy ? `· ${t("worktree.busySuffix")}` : check === "checking" ? "· …" : check === "failed" ? `· ${t("worktree.unknownSuffix")}` : "";
     const lead = split ? splitGlyph : folderGlyph;
     if (chips.cwd.firstChild !== lead) chips.cwd.firstChild.replaceWith(lead);
     chips.cwd.setAttribute("aria-label", t("composer.cwd.chipAria", { cwd: cwd || t("composer.cwd.unset") }));
@@ -951,9 +977,9 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
       chips.cwd.title = `${chips.cwd.title} · ${t("git.chipBranch", { branch: gitName })}`;
       chips.cwd.setAttribute("aria-label", `${chips.cwd.getAttribute("aria-label")} · ${t("git.chipBranch", { branch: gitName })}`);
     }
-    // 別の会話が書き込み中なら、誰かを title と読み上げに足す
-    if (busy) {
-      const why = t("worktree.busyTitle", { who: busy.who });
+    // 別の会話が書き込み中なら、誰かを title と読み上げに足す。確認中・失敗もその旨を足す（字は「…」だけなので）
+    const why = busy ? t("worktree.busyTitle", { who: busy.who }) : check === "checking" ? t("worktree.checkingTitle") : check === "failed" ? t("worktree.unknownTitle") : "";
+    if (why) {
       chips.cwd.title = `${chips.cwd.title} · ${why}`;
       chips.cwd.setAttribute("aria-label", `${chips.cwd.getAttribute("aria-label")} · ${why}`);
     }
@@ -968,7 +994,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     paintWhoChip(chips.model, { bot: d.destination?.bot, backend: d.backend,
       backendLabel: d.destination?.backendLabel?.(d.backend) ?? d.backend,
       model: epLabel ? epLabel.head : modelHead, effort: epLabel ? epLabel.tail : modelTail,
-      sent: Boolean(d.destination?.sent), endpoint: Boolean(row), oneM: Boolean(epLabel && epModel.oneM),
+      sent: Boolean(d.destination?.sent), endpoint: Boolean(row), oneM: Boolean(epLabel && epModel.oneM), pending: Boolean(d.modelsPending && !row),
       // 互換の接続先は送る ID を含む全体を title に
       title: epLabel ? t("composer.model.chipTitle", { label: full }) : null });
     chips.model.dataset.value = d.model ?? "";
@@ -978,14 +1004,15 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     const danger = isDanger(m);
     // YOLO: 盾を ⚠ の線画に替え、強い字にする（字の頭に ⚠ は書かない・太字にしない）
     // 狭い行では短い名前（サーバーの short。「都度」など）に替える（fitRow）。読み上げは長い名前のまま
-    const modeFull = m?.label ?? d.mode ?? "";
+    // 切り替えた直後でモードの一覧が取れるまでは、前のエージェントのモードの名前も ID も出さない
+    const modeFull = d.modesPending ? "…" : m?.label ?? d.mode ?? "";
     const modeShort = m?.short && m.short !== modeFull ? m.short : "";
     modeName.replaceChildren(el("span", "full", modeFull), ...(modeShort ? [el("span", "short", modeShort)] : []));
     const icon = danger ? warn : shield;
     if (chips.mode.firstChild !== icon) chips.mode.firstChild.replaceWith(icon);
     chips.mode.classList.toggle("danger", danger);
     chips.mode.title = danger ? t("composer.mode.dangerTitle") : t("chat.composer.mode");
-    chips.mode.setAttribute("aria-label", (danger ? t("composer.mode.chipAriaDanger", { mode: m?.label ?? d.mode ?? "" }) : t("composer.mode.chipAria", { mode: m?.label ?? d.mode ?? "" })));
+    chips.mode.setAttribute("aria-label", (danger ? t("composer.mode.chipAriaDanger", { mode: modeFull }) : t("composer.mode.chipAria", { mode: modeFull })));
     chips.mode.dataset.value = d.mode ?? "";
     chips.mode.disabled = Boolean(d.modeDisabled);
     if (d.modeDisabled && d.lockedNote) addNote(chips.mode, d.lockedNote);

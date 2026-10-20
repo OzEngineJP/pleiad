@@ -416,6 +416,14 @@ const SUITES = [
   './unit/tree.mjs',
   './unit/family.mjs',
   './unit/pending-sidebar.mjs',
+  // 脇の移動の列（web/sidebar-moves.mjs）: 最新の移動先を即時に・保存は行ごとに直列・未送信は最新へまとめる・失敗しても後続は続く・応答は取り直しを待たない
+  './unit/sidebar-moves.mjs',
+  // 脇の移動の受け口（web/client.mjs の sidebarChange・restore・deleteSessionRow）: 削除は移動の保存の後・元に戻すは生きている行だけ・失敗の札は覆われない行を知らせる
+  './unit/sidebar-client-moves.mjs',
+  // 入力欄のモデル・エフォートの一覧（web/composer-vocab.mjs）: 切り替えた直後は前の一覧を出さない・同じ鍵の取得は 1 本・古い取得は混ざらない
+  './unit/composer-vocab.mjs',
+  // 入力欄の下の帯（git のブランチ・書き込み中）の補足情報（web/composer-aux.mjs）: 確認中・失敗を安全と扱わない・作業場所が同じなら id の変更で消さない
+  './unit/composer-aux.mjs',
   // 入力欄の待ち（web/composer-wait.mjs）: 会話を開く・初めての接続・読み込みの失敗・作成中の送信の予約
   './unit/composer-wait.mjs',
   // 承認カード: 受け取られるまで送信中・失敗はカードの中・決着後の一行に対象と開閉

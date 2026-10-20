@@ -98,9 +98,9 @@ function compactionMark(s) {
 }
 
 /** 保存待ちの語（移動中・削除中・作成中）。回る弧は「動いている会話」の印なので置かず、語の上を光が通る（design-system.md §4.6） */
-function pendingLabel(text) {
-  const label = el("span", "pending-label");
-  label.append(el("span", "pending-glint", text));
+function pendingLabel(text, queued = false) {
+  const label = el("span", queued ? "pending-label queued" : "pending-label");
+  label.append(queued ? text : el("span", "pending-glint", text));
   return label;
 }
 
@@ -1007,7 +1007,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     // 端末の AI から任された会話の出どころ（⇄ 端末の AI。リモートのバッジと同じ差しの青。docs/remote.md §4.5）
     if (s.delegation?.remote) meta.append(el("span", "row-remote", t("session.remoteOrigin.badge", { device: s.delegation.remote.deviceName || "" })));
     if (last.waitingIds.has(s.id)) meta.append(el("span", "wait", waitingLabel(s.id)));
-    if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text));
+    if (pendingRow?.visible) meta.append(pendingLabel(pendingRow.text, pendingRow.queued));
     else if (isStale(s)) meta.append(el("span", "stale", t("sidebar.staleDays", { count: staleDays(s.statusChangedAt) })));
     else if (!sendAt && !missed) meta.append(el("span", "row-when", s.id == null ? fmt.justNow() : relTime(s.lastModified)));
     // 状態を最後に変えたのが AI のときだけ小さな「AI」の印（理由は title。誰がいつ変えたかは行のメニューの「変更の記録」）

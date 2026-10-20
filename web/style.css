@@ -322,6 +322,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pending-status>:not(.pending-label){opacity:.55}
 .pending-label{display:inline-flex;align-items:center;gap:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap;flex:none}
 .pending-label .run{width:14px;height:14px}
+.pending-label.queued{color:var(--ink-blue)}
 /* 脇の一覧の保存待ち（移動中・削除中・作成中）。回る弧は「動いている会話」の印なので置かず、
    語の上をタイトル生成と同じ光が通る（design-system.md §4.6、ADR 0038）。色は変えず mask の濃淡だけを流す */
 .pending-glint{color:var(--ink);
@@ -1538,6 +1539,16 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .cbrowse .go .btn{font-size:var(--fs-s);padding:4px 12px}
 .cnote{margin:4px 8px;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 .cnote b{color:var(--ink);font-weight:600}
+/* モデルの一覧を取っている間の骨組み（前のエージェントの一覧を出さない）。行の高さに合わせた細い帯 3 本 */
+.cskel{display:flex;flex-direction:column;gap:6px;padding:4px 8px 2px}
+.cskel-row{display:block;height:11px;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--surface-2) 40%,var(--surface-1) 50%,var(--surface-2) 60%) 0 0/300% 100% no-repeat;animation:title-think 1.6s var(--ease-organic) infinite}
+.cskel-row:nth-child(2){width:78%}.cskel-row:nth-child(3){width:62%}
+.cskel .cnote{margin:4px 0 0}
+@media (prefers-reduced-motion:reduce){.cskel-row{animation:none}}
+/* モデルのチップ: 取っている間の … は弱くゆっくり明滅する（動きを減らす設定では止める） */
+@keyframes chip-check{50%{opacity:.4}}
+.chip.checking .v{animation:chip-check 1.1s ease-in-out infinite;color:var(--ink-weak)}
+@media (prefers-reduced-motion:reduce){.chip.checking .v{animation:none}}
 .cerr{margin:6px 8px 0;font-size:var(--fs-s);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
 .cerr:empty{display:none}
 /* 打ったパスを確かめる間の弧（欄の右端）と、確かめた結果（無いフォルダー・あるところまで・ここから選ぶ） */
@@ -2076,6 +2087,17 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 }
 @media (max-width:399px){
   .chip{padding:0 5px;gap:4px}
+}
+/* スマホの幅（480px 以下）の設定は 2 段（2026-10-20 承認）。1 段目は 添付・宛先とモデル（残りの幅いっぱい）・承認モード（アイコンだけ）・送信、
+   2 段目は作業ディレクトリ（ブランチ・「ほかの会話も書き込み中」まで全部入る幅）。1 段に収めるための詰め（fit-*）は、この幅では要らない。
+   見た目の順は DOM の順と違う（作業ディレクトリが送信の後）。タブの順は DOM の順のまま */
+@media (max-width:480px){
+  .crow{flex-wrap:wrap;row-gap:4px}
+  .crow > :is(.crow-gap,.draft-saved){display:none}
+  .crow > .chip.model{flex:1 1 0;min-width:0}
+  .crow > .chip.mode :is(.v,.cv){display:none}
+  .crow > .chip.folder{order:1;flex:1 0 100%;max-width:100%}
+  .crow > .chip.armed{order:1;max-width:100%}
 }
 
 /* ---- モバイル版の殻（plyRemote.shell === 'mobile'、web/remote-badge.mjs の setupHostBar） ----

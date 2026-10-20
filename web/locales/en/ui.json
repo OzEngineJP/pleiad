@@ -3,6 +3,7 @@
   "pending": {
     "moving": "Moving…",
     "movingProgress": "Moving… {{done}}/{{total}}",
+    "movingTo": "→ {{status}}",
     "deleting": "Deleting…",
     "deletingProgress": "Deleting… {{done}}/{{total}}",
     "creating": "Creating…",
@@ -829,6 +830,9 @@
     "busySuffix": "also in use",
     "busyTitle": "{{who}} is writing to the same repository. Open this to start in a worktree.",
     "busyNote": "{{who}} is writing to the same repository",
+    "checkingTitle": "Checking whether another conversation is writing here",
+    "unknownSuffix": "unchecked",
+    "unknownTitle": "Couldn't check whether another conversation is writing here",
     "chipSuffix": "worktree",
     "chipTitle": "Worktree · from {{origin}}",
     "start": "Start in a worktree",
@@ -2944,7 +2948,9 @@
       "notListed": "Not in the list. Press Enter to use this ID as is.",
       "noList": "No list available. Enter an ID.",
       "chipTitle": "{{label}} (agent, model, effort; applies from the next turn)",
-      "chipAria": "Model and effort: {{label}}"
+      "chipAria": "Model and effort: {{label}}",
+      "loading": "Loading the model list",
+      "loadingAria": "{{backend}} · loading models"
     },
     "effort": {
       "title": "Effort",
@@ -2962,7 +2968,8 @@
       },
       "modelDefault": "({{model}} default)",
       "levelDefault": "{{level}} (default)",
-      "noLevels": "{{model}} has no effort levels"
+      "noLevels": "{{model}} has no effort levels",
+      "loading": "Loading…"
     },
     "mode": {
       "dangerTitle": "Approval mode: no confirmation, no restrictions",

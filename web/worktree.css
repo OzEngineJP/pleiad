@@ -27,13 +27,12 @@
 .chip.wt{color:var(--ink-blue)}
 .chip .wt-sfx{white-space:nowrap}
 .chip .wt-busy{color:var(--ink-weak);font-size:var(--fs-s)}
+/* 確認中: 「…」を 1.1s で脈打たせる（確定した「書き込み中」と区別する。動きを減らす設定では止める） */
+.chip .wt-busy.checking{animation:chip-check 1.1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.chip .wt-busy.checking{animation:none}}
 .crow.fit-nosplit .wt-sfx{display:none}
 :is(#cwdChip,#thCwdChip) .wt-sfx[hidden]{display:none}
-@media (max-width:480px){
-  .crow:has(.wt-busy:not([hidden])) :is(#modelChip,#thModelChip) .v,
-  .crow:has(.wt-busy:not([hidden])) :is(#modeChip,#thModeChip) .v{display:none}
-  .crow.fit-nosplit .wt-busy{display:inline-block;min-width:24px;max-width:100px;overflow:hidden;text-overflow:ellipsis}
-}
+/* 480px 以下は作業ディレクトリが 2 段目の全幅に出る（style.css「スマホの幅の設定は 2 段」）ので、「書き込み中」を出すために宛先・モデルや承認モードの字を隠さない */
 
 /* ---------- 作業場所の面 ---------- */
 .wt-splitbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;padding:8px 10px;margin:0 2px 8px;background:var(--surface-1);border-radius:var(--r-m);font-size:var(--fs-s);color:var(--ink-weak)}
