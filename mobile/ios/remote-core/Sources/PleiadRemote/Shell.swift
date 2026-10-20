@@ -48,6 +48,9 @@ public enum ShellBridge {
     public static func isPairLink(scheme: String?, host: String?) -> Bool {
         scheme?.lowercased() == "pleiad" && host?.lowercased() == "pair"
     }
+    public static func isAuthLink(scheme: String?, host: String?) -> Bool {
+        scheme?.lowercased() == "pleiad" && host?.lowercased() == "auth"
+    }
     public static func hostScript(template: String, info: JSON, origin: String, receiver: String) -> String {
         template
             .replacingOccurrences(of: "__PLY_ORIGIN__", with: JSON.string(origin).serialized)
