@@ -44,8 +44,17 @@ export default async function (t) {
       && /val w = web \?: return backToList\(\)/.test(host) && /if \(result != "true"\) moveTaskToBack\(true\)/.test(host));
   t.ok('ホストを削除したら覚えたホストも消す', /ResumeStore\(context\)\.forget\(hostId\)/.test(plugin));
   t.ok('起動時は ResumePolicy が決める（復元でない・ACTION_MAIN）。Capacitor の WebView を作る前に HostActivity を起こす',
-    /ResumePolicy\.decide\(saved, device\.store\.hosts\(\), savedInstanceState == null, intent\?\.action == Intent\.ACTION_MAIN\)/.test(main)
-      && main.indexOf('resumeLastHost(savedInstanceState)') < main.indexOf('super.onCreate(savedInstanceState)'));
+    /ResumePolicy\.decide\(saved, device\.store\.hosts\(\), freshStart, ResumePolicy\.isLauncherStart\(startIntent\?\.action, fromHistory\)\)/.test(main)
+      && main.indexOf('resumeLastHost(intent, freshStart = savedInstanceState == null)') < main.indexOf('super.onCreate(savedInstanceState)'));
+  // ランチャーの入口は透過のトランポリン（ADR 0237）: 既存のタスクのタップはそのまま前へ出し（ホストの窓を作り直さない）、
+  // 新しいタスクだけ殻へ渡す。殻は singleTask のままなのでリンクの intent の届け方は変わらない
+  const launcherKt = read(`${APP}/kotlin/dev/pleiad/app/LauncherActivity.kt`);
+  const manifestForLaunch = read(`${APP}/AndroidManifest.xml`);
+  t.ok('ランチャーの入口は透過のトランポリン LauncherActivity（殻は singleTask・リンクの intent-filter のまま）',
+    /ResumePolicy\.launcherRoute\(isTaskRoot\)/.test(launcherKt) && /startActivity\(i\)/.test(launcherKt) && /finish\(\)/.test(launcherKt)
+      && /android:name="\.LauncherActivity"[\s\S]*?android\.intent\.action\.MAIN[\s\S]*?android\.intent\.category\.LAUNCHER/.test(manifestForLaunch)
+      && /android:name="\.MainActivity"[\s\S]*?launchMode="singleTask"/.test(manifestForLaunch)
+      && /android:name="\.MainActivity"[\s\S]*?android:scheme="pleiad" android:host="pair"/.test(manifestForLaunch));
   const proxyKt = read('mobile/android/remote-core/src/main/kotlin/dev/pleiad/app/remote/DeviceProxy.kt');
   t.ok('オフライン・取り消しの案内に「ホスト一覧に戻る」（window.backToHosts があるときだけ出す）',
     /id="back-to-hosts" hidden/.test(proxyKt) && /typeof window\.backToHosts==='function'/.test(proxyKt) && /fun backToHosts\(\): String/.test(proxyKt));

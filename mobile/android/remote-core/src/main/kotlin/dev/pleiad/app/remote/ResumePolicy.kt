@@ -11,6 +11,18 @@ data class ResumeDecision(val hostId: String?, val forget: Boolean)
  * forgotten, so it is not checked again at every start.
  */
 object ResumePolicy {
+    /** What the launcher entry does with a tap: start the shell on a fresh task, or let the existing task show itself. */
+    enum class LauncherRoute { START_SHELL, REVEAL_TASK }
+
+    /**
+     * The launcher entry is a trampoline that never stays (docs/remote.md §8.2). When the tap lands on a task that
+     * already exists, the entry is not the task's root: stepping aside leaves whatever was on top — the host window
+     * or the list — in front, so the running host window is never recreated by an icon tap. Only when the entry is
+     * the task's root (a fresh start, or a restore whose stack is gone) does the start go on to the shell.
+     */
+    fun launcherRoute(isTaskRoot: Boolean): LauncherRoute =
+        if (isTaskRoot) LauncherRoute.START_SHELL else LauncherRoute.REVEAL_TASK
+
     /**
      * Whether the intent that reached the shell is a launcher (re)start: ACTION_MAIN and not launched from history.
      * A singleTask root gets the launcher intent in onNewIntent when the task is brought forward again (the activities

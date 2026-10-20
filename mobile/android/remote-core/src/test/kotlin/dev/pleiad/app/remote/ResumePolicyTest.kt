@@ -34,8 +34,9 @@ class ResumePolicyTest {
         assertEquals(ResumeDecision(null, true), decide("b", fresh = false))
     }
 
-    // The shell is singleTask: a launcher tap on an existing task comes back through onNewIntent, and the same check
-    // must open the last host again (the host window above the shell was finished by the system).
+    // The shell is singleTask: an ACTION_MAIN that reaches it on an existing task (e.g. an explicit component start —
+    // the icon's tap is routed by the launcher entry) comes back through onNewIntent, and the same check must open
+    // the last host again (the windows above the shell were finished by the system).
 
     @Test fun aLauncherIntentIsAStart() {
         assertTrue(ResumePolicy.isLauncherStart("android.intent.action.MAIN", launchedFromHistory = false))
@@ -45,5 +46,16 @@ class ResumePolicyTest {
         assertFalse(ResumePolicy.isLauncherStart("android.intent.action.VIEW", launchedFromHistory = false))
         assertFalse(ResumePolicy.isLauncherStart(null, launchedFromHistory = false))
         assertFalse(ResumePolicy.isLauncherStart("android.intent.action.MAIN", launchedFromHistory = true))
+    }
+
+    // The launcher entry is a trampoline: a tap on a task that already has windows only brings it forward (the host
+    // window stays alive); a tap on a fresh task goes on to the shell, which runs the resume check above.
+
+    @Test fun aTapOnAnExistingTaskRevealsIt() {
+        assertEquals(ResumePolicy.LauncherRoute.REVEAL_TASK, ResumePolicy.launcherRoute(isTaskRoot = false))
+    }
+
+    @Test fun aTapOnAFreshTaskStartsTheShell() {
+        assertEquals(ResumePolicy.LauncherRoute.START_SHELL, ResumePolicy.launcherRoute(isTaskRoot = true))
     }
 }

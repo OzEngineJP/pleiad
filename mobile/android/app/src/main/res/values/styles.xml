@@ -19,4 +19,12 @@
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
         <item name="android:background">@drawable/splash</item>
     </style>
+
+    <!-- The launcher entry (LauncherActivity): invisible, and without a starting window of its own, so an icon tap on
+         an existing task only brings it forward — the shell's splash still shows on a fresh start. -->
+    <style name="AppTheme.Trampoline" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowDisablePreview">true</item>
+    </style>
 </resources>
