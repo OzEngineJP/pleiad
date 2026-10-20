@@ -37,6 +37,7 @@ export default async function test(t) {
   globalThis.window = { open: () => { const popup = { location: { href: '' }, closed: 0, close() { this.closed++; } }; popups.push(popup); return popup; } };
   const { setupAgentAccounts, createAccountRequestCache, composerAccount } = await import('../../web/agent-accounts.mjs');
   const { paintAuthFailure } = await import('../../web/auth-expired.mjs');
+  const { vocabKey, vocabReady, defaultModelOf, createEffortsLoader, createEffortsView } = await import('../../web/composer-vocab.mjs');
   const { t: tr } = i18n;
   const $ = id => nodes.get(id);
   const account = (id, name = id) => ({ id, name, hasCredential: false });
@@ -224,7 +225,13 @@ export default async function test(t) {
       const accountReads = [], vocabReads = [], effortReads = [], headers = [];
       const state = { sessions: [], current: null, prefs: { backends: { codex: { account: 'default-A' } } }, draft: { changes: [] }, backendId: 'codex' };
       const homeDest = { paint() {}, bot: null };
+      // syncTopbar は語彙の鍵（vocabKey・vocabReady・defaultModelOf）とエフォートの取得（adoptEfforts → effortsView）を使う。
+      // どちらも本物の web/composer-vocab.mjs と client.mjs の関数を渡し、エフォートの取得は cmd の境界だけを差し替える
+      const effortCmd = async (op, args) => { assert.equal(op, 'efforts'); effortReads.push(args); return { '': {} }; };
+      const effortsLoader = createEffortsLoader({ cmd: effortCmd });
+      const effortsView = createEffortsView({ loader: effortsLoader });
       const sandbox = vm.createContext({ state, composerAccount, homeDest, topbarVersion: 0, bootHold: null,
+        vocabKey, vocabReady, defaultModelOf, effortsLoader, effortsView, noEfforts: () => ({ '': {} }),
         justCreated: () => false, unsentHere: () => true, activeBackendId: () => 'codex',
         capsOf: () => ({ accounts: 'agent', compatEndpoints: false }),
         $: id => { if (!nodes.has(id)) { const node = new Node('div'); node.id = id; } return $(id); },
@@ -232,11 +239,11 @@ export default async function test(t) {
         headerUsage: { show: info => headers.push(info) }, refreshGit: async () => {}, refreshWorktree: async () => {},
         paintSettingsNotice() {}, renderSessions() {}, selectedMode: () => 'default',
         loadVocab: async (backend, account) => { vocabReads.push({ backend, account }); return { modes: { default: {} }, models: { '': {} } }; },
-        cmd: async (op, args) => { assert.equal(op, 'efforts'); effortReads.push(args); return { '': {} }; },
+        cmd: effortCmd,
         loadAccounts: backend => { const response = deferred(); accountReads.push({ backend, ...response }); return response.promise; },
         compatEndpoints: { load: async () => [] }, accountWarning: '', endpointWarning: '',
       });
-      vm.runInContext(['draftView', 'endpointOf', 'composerSelection', 'syncEndpoint', 'syncAccount', 'syncTopbar'].map(functionSource).join('\n'), sandbox);
+      vm.runInContext(['draftView', 'endpointOf', 'composerSelection', 'syncEndpoint', 'syncAccount', 'effortCwd', 'effortSelection', 'adoptEfforts', 'syncTopbar'].map(functionSource).join('\n'), sandbox);
       const old = sandbox.syncTopbar(); await tick();
       assert.equal(accountReads.length, 1);
       state.prefs.backends.codex.account = 'default-B';
@@ -254,7 +261,7 @@ export default async function test(t) {
 
       const modelReads = [], modelState = { vocab: new Map() };
       let refreshed = 0;
-      const vocabSandbox = vm.createContext({ state: modelState, createAccountRequestCache,
+      const vocabSandbox = vm.createContext({ state: modelState, createAccountRequestCache, createEffortsLoader, createEffortsView,
         cmd: async (operation, args) => {
           if (operation === 'modes') return { ask: {} };
           assert.equal(operation, 'models'); const response = deferred(); modelReads.push({ args, ...response }); return response.promise;
