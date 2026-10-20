@@ -172,7 +172,7 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
   const sleepSeg = el('div', 'seg sec rm-sleep');
   sleepSeg.setAttribute('role', 'group');
   sleepSeg.setAttribute('aria-label', t('settings.remote.resident.sleep'));
-  const SLEEP = [['working', t('settings.remote.resident.sleepWorking')], ['always', t('settings.remote.resident.sleepAlways')], ['off', t('settings.remote.resident.sleepOff')]];
+  const SLEEP = [['working', t('settings.remote.resident.sleepWorking')], ['off', t('settings.remote.resident.sleepOff')]];
   for (const [value, text] of SLEEP) {
     const b = button(text, () => setResident({ sleep: value }), '');
     b.dataset.sleep = value;

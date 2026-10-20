@@ -1466,7 +1466,7 @@
       "setResident": {
         "summary": "デスクトップ版の常駐の設定（ウィンドウを閉じても続けるか・スリープを止めるか）を変える。",
         "keepRunning": "ウィンドウを閉じてもトレイで続けるか。",
-        "sleep": "スリープを止める規則（working: 作業中だけ、always: いつも、off: 止めない）。"
+        "sleep": "スリープを止める規則（working: 作業中だけ、off: 止めない）。"
       }
     },
     "endpoints": {

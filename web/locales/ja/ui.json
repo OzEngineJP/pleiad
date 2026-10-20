@@ -248,7 +248,6 @@
         "keepRunning": "ウィンドウを閉じてもホストを続ける（トレイに残す）",
         "sleep": "スリープ",
         "sleepWorking": "作業中だけ防ぐ",
-        "sleepAlways": "リモートが有効な間は防ぐ",
         "sleepOff": "防がない",
         "launchAtLogin": "サインイン時に Pleiad を起動する（ウィンドウは出さずに起動）",
         "launchAtLoginRecommend": "リモートの受付がオンです。この PC を再起動しても委譲を受けられるよう、サインイン時の起動をおすすめします。",

@@ -1467,7 +1467,7 @@
       "setResident": {
         "summary": "Change the desktop app keep-running setting (keep running when the window closes, keep the PC awake).",
         "keepRunning": "Keep running in the tray when the window closes.",
-        "sleep": "When to keep the PC awake (working: while working, always, off: never)."
+        "sleep": "When to keep the PC awake (working: while working, off: never)."
       }
     },
     "endpoints": {

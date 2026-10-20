@@ -2,15 +2,14 @@
 // 選んだ規則でスリープを防ぐ。設定と状態はサーバーが持ち、parentPort の { type: 'resident', state } で届く
 // （core/remote/resident.mjs の residentSignal）。main.cjs からは createResident と、窓の close での keepOnClose() だけを使う。
 //
-//   state = { remote, routines, keepRunning, sleep: 'working'|'always'|'off', working, running, waiting, devices, relay, locale }
+//   state = { remote, routines, keepRunning, sleep: 'working'|'off', working, running, waiting, devices, relay, locale }
 //
-// スリープ: 'working' はターンが走っているか承認待ちがある間だけ、'always' はリモートが有効な間ずっと
-// powerSaveBlocker.start('prevent-app-suspension')。画面は消えてよい。リモートが無効なら何もしない。
+// スリープ: 'working' はターンが走っているか承認待ちがある間だけ powerSaveBlocker.start('prevent-app-suspension')。
+// 画面は消えてよい。リモートが無効なら何もしない。
 
 /** スリープを防ぐべきか */
 function sleepWanted(state) {
   if (!state?.remote) return false;
-  if (state.sleep === 'always') return true;
   if (state.sleep === 'off') return false;
   return Boolean(state.working);
 }

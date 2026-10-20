@@ -79,7 +79,7 @@ export const COMMANDS = new Set([
   'remoteDevices',         // {} -> 端末の一覧（RemoteStatus の devices と同じ）
   'remoteRevoke',          // { id } -> RemoteStatus。一覧と中継から消し、つながり中のチャネルを切る
   'setRemoteDeviceAgent',  // { id, enabled?, stopAll? } -> 端末の行（agent を含む）。この端末の AI からの委譲を受けるか（既定オフ。デスクトップ版の端末だけ）・任された作業をすべて止める。docs/remote.md §4.5
-  'setRemoteResident',     // { keepRunning?, sleep?: 'working'|'always'|'off' } -> RemoteStatus。常駐の設定（§6.3。RemoteStatus.resident に { available, keepRunning, sleep }）
+  'setRemoteResident',     // { keepRunning?, sleep?: 'working'|'off' } -> RemoteStatus。常駐の設定（§6.3。RemoteStatus.resident に { available, keepRunning, sleep }）
   'contextSettings', // { cwd? } -> { defaults, places: [{ id, path, kinds: { <kind>: { value, override, from } }, roots, overrides, current }] } 種類ごとの設定と継承（core/context-settings.mjs）
   'slashSkills',     // { cwd } -> 入力欄「/」の候補。コンテキスト画面と同じ探索結果からのスキル一覧（説明文付き）
   'sessionContext', // { sessionId } -> { report, owners, pinned, changed, startedAt, refreshedAt, removedMcp, added, plyParts } この会話が読み込んだ記録。固定された会話では今のファイルと突き合わせる。added は Pleiad が入れた指示、plyParts は Pleiad が足した文の量 [{ id, tokens }]（どちらも直前のターン。ADR 0056）
