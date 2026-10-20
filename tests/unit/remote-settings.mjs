@@ -1,5 +1,6 @@
 // 設定 › リモートと常駐（docs/remote.md §6.1・§6.3、issue #13 の画面側）。
-//   - 画面の小さな部品（web/remote.mjs）: 確認コードの区切り・残り時間・QR の点・状態の一行・端末の行
+//   - 画面の小さな部品（web/remote.mjs・web/remote-hosts.mjs・web/remote-parts.mjs）: 確認コードの区切り・残り時間・QR の点・
+//     つながらないときの一行・端末とホストの行・端末の絵・中継の見せ方
 //   - 常駐の設定（core/remote/resident.mjs）: 既定・丸め・保存・main へ送る状態
 //   - main の常駐（desktop/resident.cjs）: トレイの出し入れ・スリープの抑止・窓を閉じたときの扱い（Electron は差し替える）
 //   - サーバー: RemoteStatus.resident と setRemoteResident（fake のサーバーを別プロセスで立てる）
@@ -7,7 +8,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { formatCode, remaining, qrPath, connectionLine, deviceLine, platformName } from '../../web/remote.mjs';
+import { formatCode, remaining, qrPath, connectionFailed, deviceRow, platformName } from '../../web/remote.mjs';
+import { hostLine, agentLine } from '../../web/remote-hosts.mjs';
+import { deviceIcon, relayHost } from '../../web/remote-parts.mjs';
 import { normalizeResident, residentSignal, enabledRoutineCount, createResidentPrefs, DEFAULT_RESIDENT, SLEEP_MODES } from '../../core/remote/resident.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
@@ -54,16 +57,33 @@ export default async function (t) {
   const finder = [0, 1, 2, 3, 4, 5, 6].every(i => cells.has(`${4 + i},4`) && cells.has(`4,${4 + i}`) && cells.has(`${4 + i},10`) && cells.has(`10,${4 + i}`));
   t.ok('QR は余白込みの正方形で、左上に位置合わせの模様がある', qr.size >= 29 + 8 && (qr.size - 8 - 17) % 4 === 0 && finder && !cells.has('5,5'), String(qr.size));
   t.ok('長い文字列ほど大きい型になる', qrPath('x').size < qr.size);
-  t.ok('無効なら「リモートは無効です」', connectionLine({ enabled: false, connection: { state: 'disabled' } }).text === 'リモートは無効です');
-  t.ok('つながっていれば端末の接続数も言う', connectionLine({ connection: { state: 'connected' }, devices: [{ connected: true }, { connected: false }] }).text === '中継につながっています · 端末 1 台が接続中');
-  const failed = connectionLine({ connection: { state: 'error', error: { code: 'config', message: '中継の URL を確かめてください' } } });
-  t.ok('つながらないときは理由を添えて強い字', failed.strong && failed.text === '中継につながりません · 中継の URL を確かめてください', failed.text);
-  const retry = connectionLine({ connection: { state: 'retrying', error: { message: 'x' }, retryAt: '2026-09-23T10:00:30Z' } }, now);
-  t.ok('つなぎ直しを待つ間は次に試す時刻も出す', retry.strong && retry.text.startsWith('中継につながりません · x（') && retry.text.endsWith('にもう一度試します）'), retry.text);
+  const on = { enabled: true, configured: true, connection: { state: 'connected' } };
+  t.ok('「サーバーへの接続に失敗しました」は、許可がオンで設定もあるのに中継につながらないときだけ',
+    connectionFailed({ ...on, connection: { state: 'error' } }) && connectionFailed({ ...on, connection: { state: 'retrying' } })
+    && !connectionFailed(on) && !connectionFailed({ ...on, connection: { state: 'connecting' } })
+    && !connectionFailed({ ...on, enabled: false, connection: { state: 'error' } })
+    && !connectionFailed({ ...on, configured: false, connection: { state: 'error' } }) && !connectionFailed(null));
   t.ok('端末の種類は名前にし、知らない値はそのまま', platformName('android') === 'Android' && platformName('ios') === 'iPhone' && platformName('toaster') === 'toaster');
-  const line = deviceLine({ platform: 'desktop', createdAt: '2026-09-20T01:00:00Z', lastSeenAt: new Date(now - 180_000).toISOString() }, now);
-  t.ok('端末の行: 種類 · 追加した日 · 最後に使った時刻', /^デスクトップ · 追加 2026\/9\/2\d · 最後に使った 3分前$/.test(line), line);
-  t.ok('まだ使っていない端末', deviceLine({ platform: 'android', createdAt: null, lastSeenAt: null }, now) === 'Android · まだ使っていません');
+  t.ok('端末の行の「オフライン」は、中継につながっているのに端末がつながっていないときだけ',
+    deviceRow({ name: 'Pixel', platform: 'android', connected: false }, on).offline === true
+    && deviceRow({ name: 'Pixel', platform: 'android', connected: true }, on).offline === false
+    && deviceRow({ name: 'Pixel', connected: false }, { ...on, connection: { state: 'error' } }).offline === false
+    && deviceRow({ name: 'Pixel', connected: false }, { ...on, enabled: false }).offline === false);
+  t.ok('名前の無い端末は「名前のない端末」の扱い', deviceRow({ name: '', platform: 'ios' }, on).name !== '' && deviceRow({ name: 'iPhone 15' }, on).name === 'iPhone 15');
+  t.ok('端末の絵: スマホ・タブレット（名前で見分ける）・PC',
+    deviceIcon({ platform: 'android', name: 'Pixel 9' }) === 'phone' && deviceIcon({ platform: 'ios', name: 'iPad Air' }) === 'tablet'
+    && deviceIcon({ platform: 'android', name: 'Galaxy Tab S9' }) === 'tablet' && deviceIcon({ platform: 'desktop', name: 'ThinkPad' }) === 'monitor'
+    && deviceIcon({ platform: 'desktop', name: 'MacBook Air' }) === 'laptop' && deviceIcon() === 'monitor');
+  t.ok('中継はホスト名だけ見せ、読めない値はそのまま',
+    relayHost('https://relay.example.com/x?y=1') === 'relay.example.com' && relayHost('relay.local') === 'relay.local' && relayHost(null) === '');
+  t.ok('ホストの行: つながらないときだけ「オフライン」、取り消されたら開けない',
+    hostLine({ hostId: 'h1', name: 'desk', state: 'offline' }).sub === 'オフライン' && hostLine({ hostId: 'h1', name: 'desk', state: 'host-offline' }).sub === 'オフライン'
+    && hostLine({ hostId: 'h1', name: 'desk', state: 'connected' }).sub === '' && hostLine({ hostId: 'h1', name: 'desk', state: 'closed' }).canOpen
+    && (h => h.revoked && !h.canOpen && h.sub === '取り消されました')(hostLine({ hostId: 'h1', name: 'desk', state: 'revoked' }))
+    && hostLine({ hostId: 'h1' }).name === 'h1');
+  t.ok('AI から任せる: オフなら何も出さず、ホストが古ければ更新を促す',
+    agentLine({ agentUse: false }).text === '' && agentLine({ agentUse: true, agentAllowed: false, name: 'desk' }).text === 'desk の Pleiad を更新すると使えます'
+    && agentLine({ agentUse: true, agentAllowed: true }).text.startsWith('使える') && agentLine({ agentUse: true, agentState: 'unsupported' }).text.includes('未対応'));
 
   // ---- 常駐の設定
   t.ok('既定は「窓を閉じても続ける」「作業中だけ防ぐ」', DEFAULT_RESIDENT.keepRunning === true && DEFAULT_RESIDENT.sleep === 'working');

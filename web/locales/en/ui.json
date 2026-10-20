@@ -129,7 +129,17 @@
       "copyMcpJson": "Copy MCP config",
       "copyMcpClaude": "Copy claude mcp add",
       "copied": "Copied",
-      "copyFailed": "Couldn't copy"
+      "copyFailed": "Couldn't copy",
+      "resident": {
+        "title": "Keep running",
+        "keepRunning": "Keep running when the window is closed (stay in the tray)",
+        "launchAtLogin": "Start Pleiad when you sign in (starts without opening the window)",
+        "launchAtLoginBlockedWin": "It is turned off in Windows Settings or the Startup tab of Task Manager. Turn it on there and Pleiad will start.",
+        "launchAtLoginBlockedMac": "Allow it in System Settings under Login Items and Pleiad will start.",
+        "sleep": "Sleep",
+        "sleepWorking": "Prevent only while working",
+        "sleepOff": "Do not prevent"
+      }
     },
     "notify": {
       "pc": {
@@ -153,59 +163,94 @@
       }
     },
     "remote": {
-      "enable": "Allow remote access to this host",
-      "state": {
-        "loading": "Loading status…",
-        "disabled": "Remote access is off",
-        "connecting": "Connecting to the relay…",
-        "connected": "Connected to the relay",
-        "connectedDevices_one": "Connected to the relay · {{count}} device online",
-        "connectedDevices_other": "Connected to the relay · {{count}} devices online",
-        "failed": "Cannot reach the relay",
-        "reason": " · {{reason}}",
-        "retryAt": " (retrying at {{time}})"
+      "tabs": {
+        "label": "Direction",
+        "this": "To this PC",
+        "other": "To other PCs"
+      },
+      "allow": "Allow other devices to control this PC",
+      "addDevice": "Add device",
+      "addHost": "Add PC",
+      "groups": {
+        "own": "Your own relay server"
+      },
+      "offline": "Offline",
+      "failed": "Couldn't connect to the server",
+      "detail": {
+        "method": "Connection",
+        "relay": "Relay server",
+        "added": "Added",
+        "lastSeen": "Last connected",
+        "never": "Never connected",
+        "revoke": "Revoke"
+      },
+      "wizard": {
+        "steps": {
+          "label": "Steps",
+          "install": "Install the app",
+          "method": "Connection",
+          "connect": "Connect",
+          "done": "Done"
+        },
+        "cancel": "Cancel",
+        "back": "Back",
+        "next": "Next",
+        "close": "Close",
+        "approve": "Allow",
+        "kind": "Device to connect",
+        "phone": "Phone",
+        "pc": "PC",
+        "installPhone": "Install Pleiad on your phone",
+        "stores": "Google Play · App Store",
+        "installPc": "Install Pleiad on the other PC",
+        "relayGuide": "How to set up a relay server",
+        "scan": "Scan the QR code with Pleiad on your phone",
+        "paste": "On the other PC's Pleiad, paste this into Remote › To other PCs › Add PC",
+        "copy": "Copy",
+        "left": "{{time}} left",
+        "confirm": "Add \"{{name}}\" to this PC?",
+        "codeLabel": "Confirmation code",
+        "done": "Connected {{name}}",
+        "connecting": "Connecting to the relay server…",
+        "hostCode": "Code shown on the other PC",
+        "hostWait": "Waiting for approval on the other PC",
+        "hostConnecting": "Connecting to the other PC…"
+      },
+      "hosts": {
+        "open": "Open",
+        "opening": "Opening…",
+        "rename": "Rename",
+        "renameLabel": "PC name",
+        "renameSave": "Rename",
+        "remove": "Delete",
+        "removeConfirm": "Delete \"{{host}}\" from this PC? It stays in the other PC's device list, so revoke it there when you no longer use it.",
+        "removeYes": "Delete",
+        "revoked": "Revoked",
+        "revokedHint": "To connect again, create a new code on the other PC and paste it under \"Add PC\".",
+        "agent": {
+          "label": "Hand work over from this PC's AI",
+          "notAllowed": "Works once {{host}}'s Pleiad is updated",
+          "ready": "Available · approvals for handed-over work can also be answered in this PC's conversation",
+          "unsupported": "This PC's Pleiad is too old to accept work from an AI"
+        },
+        "loadFailed": "Couldn't read the PC list: {{error}}",
+        "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read)."
       },
       "relay": {
-        "title": "Relay",
         "url": "Relay URL",
         "urlFromEnv": "Using the AGENT_HOST_RELAY_URL environment variable.",
         "secret": "Enrollment secret",
         "secretSaved": "Saved (enter only to change)",
         "secretFromEnv": "Using the AGENT_HOST_RELAY_SECRET environment variable.",
         "hostName": "Host name",
-        "notEncrypted": "This session cannot encrypt the enrollment secret (it is saved to a file only you can read).",
-        "save": "Save",
-        "saved": "Saved."
+        "notEncrypted": "This session cannot encrypt the enrollment secret (it is saved to a file only you can read)."
       },
       "devices": {
-        "title": "Devices",
-        "empty": "No devices yet.",
         "unnamed": "Unnamed device",
-        "added": "added {{date}}",
-        "lastSeen": "last used {{when}}",
-        "neverSeen": "not used yet",
-        "online": "Online",
-        "offline": "Offline",
-        "revoke": "Revoke",
         "revokeConfirm": "Revoke \"{{name}}\"? It is disconnected right away and cannot connect until it is paired again.",
         "keep": "Cancel",
         "revokeTasks": "The {{count}} tasks handed over by this device's AI are also stopped.",
-        "revokeConfirmButton": "Revoke",
-        "revoked": "Revoked \"{{name}}\"."
-      },
-      "agent": {
-      "title": "Accept requests from this device's AI",
-      "help": "Treated like a delegation: the approval mode follows the requesting conversation, and approvals also appear there",
-      "confirm": "Accept requests from {{name}}'s AI?",
-      "confirmWarn": "⚠ If the requesting conversation runs without confirmation, it also runs without confirmation on this PC.",
-      "accept": "Accept",
-      "cancel": "Cancel",
-      "note": "If the requesting conversation runs without confirmation, it also runs without confirmation on this PC.",
-      "tasks": "Handed-over work · {{count}} running",
-      "waiting": "{{count}} waiting for approval",
-      "open": "Open the latest conversation",
-      "stopAll": "Stop all",
-      "noTasks": "No conversations have been handed over yet."
+        "revokeConfirmButton": "Revoke"
       },
       "platform": {
         "desktop": "Desktop",
@@ -213,48 +258,24 @@
         "android": "Android"
       },
       "pair": {
-        "add": "+ Add device",
-        "needEnable": "Turn on remote access to add a device.",
-        "needConnected": "You can add a device once the relay is connected.",
-        "title": "Add device",
         "qrLabel": "Pairing QR code",
-        "left": "{{time}} left",
-        "hint": "Scan the QR code with the mobile app, or paste the code into the desktop app.",
-        "copy": "Copy code",
         "copied": "Copied",
         "copyFailed": "Could not copy (the code is selected)",
-        "cancel": "Cancel",
-        "connecting": "A device connected. Waiting for your approval…",
+        "connecting": "A device connected…",
         "expired": "The code has expired.",
-        "again": "Create a new code",
-        "close": "Close"
+        "again": "Create a new code"
       },
       "approve": {
         "mark": "Waiting for your approval",
-        "title": "Add \"{{name}}\" to this host?",
+        "title": "Add \"{{name}}\" to this PC?",
         "codeLabel": "Confirmation code",
-        "hint": "Approve only if the device shows the same number.",
+        "hint": "Allow only if the device shows the same number.",
         "deny": "Deny",
-        "approve": "Approve",
-        "added": "Added \"{{name}}\".",
-        "denied": "Denied the device.",
+        "approve": "Allow",
         "cancelled": "The device disconnected before approval.",
         "expired": "The request expired without approval."
       },
-      "fullAccess": "A paired device can do everything the user of this host can, including changing approval modes and running commands.",
-      "loginOnHost": "Sign in to Claude CLI, Codex, external MCP servers, and Antigravity on this host PC.",
-      "otherHosts": "Connect to other hosts…",
-      "resident": {
-        "title": "Keep running",
-        "keepRunning": "Keep the host running when the window is closed (stay in the tray)",
-        "sleep": "Sleep",
-        "sleepWorking": "Prevent only while working",
-        "sleepOff": "Do not prevent",
-        "launchAtLogin": "Start Pleiad when you sign in (starts without opening the window)",
-        "launchAtLoginRecommend": "Remote access is on. Turn on start at sign-in so this PC can still receive delegations after a restart.",
-        "launchAtLoginBlockedWin": "It is turned off in Windows Settings or the Startup tab of Task Manager. Turn it on there and Pleiad will start.",
-        "launchAtLoginBlockedMac": "Allow it in System Settings under Login Items and Pleiad will start."
-      }
+      "fullAccess": "A connected device can do everything this PC can"
     },
     "browser": {
       "description": "Choose where links in conversations and previews open, and whether to confirm external loads.",

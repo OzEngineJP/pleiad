@@ -1,17 +1,24 @@
-// 設定 › リモート（ホスト側。docs/remote.md §3.3・§6.1・§6.3・§9）。
+// 設定 › リモート（docs/remote.md §3.3・§6.1・§9、ADR 0239）。2 つのタブを持つ。
 //
-// - 「このホストをリモートから使えるようにする」のスイッチ、中継の URL・登録用の秘密（伏せ字。保存後は表示しない）・ホスト名、状態の一行
-// - 「端末を追加」: QR（web/vendor/qrcode-generator.mjs で SVG に描く）・残り時間・コードのコピー・やめる。期限が来たら作り直せる
-// - 承認のダイアログ: remotePairing の request で、どの画面にいても出す（差し色の「承認を待っている」と確認コード）
-// - 端末一覧と「取り消す」（その場の確認）
-// - ホストとして常駐する設定（デスクトップ版のホストだけ。RemoteStatus.resident.available）
+// - この PC へ（ホスト側）: 「ほかの端末からの操作を許可する」のスイッチ 1 つ。オンのときだけ、つないだ端末の行（自分の中継サーバー）と「＋ 端末を追加」
+//   - 行を押すと詳しい画面（つなぎ方・中継サーバー・追加した日・最後の接続・取り消す）
+//   - ＋ の流れ: アプリを入れる › つなぎ方 › つなぐ（QR かコード・確認コードで許可）› 完了。中継の URL・秘密が無ければ つなぎ方 の段で入れる
+// - ほかの PC へ（デスクトップ版のローカルの窓だけ）: web/remote-hosts.mjs
+// - 承認のダイアログ: remotePairing の request で、どの画面にいても出す（＋ の流れで待っている間は流れの中で聞く）
 //
-// 状態はサーバーが持つ（remoteStatus コマンドと、変わるたびに届く remoteStatus イベント）。リモートの窓からも同じ画面が見える。
-// 面と部品は設定の管理の面（web/manage-panel.css の .mp-*）とコンテキストのスイッチ（.cx-sw）を使う。
-import { el, svgEl } from './dom.mjs';
+// 状態はサーバーが持つ（remoteStatus コマンドと、変わるたびに届く remoteStatus イベント）。リモートの窓からも この PC へ は同じ画面が見える。
+// 見え方は web/manage-panel.css の .rm-*。常駐の設定は 設定 › アプリ情報・更新（web/resident-settings.mjs）。
+import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
-import { loginItemView } from './login-item-view.mjs';
 import qrcode from './vendor/qrcode-generator.mjs';
+import {
+  relayHost, deviceIcon, button, iconButton, groupHead, listRow, detailHead, keyValues, switchButton, segment,
+  externalLink, waitLine, confirmCode, createWizard, setText, paintInto, field, textInput, qrFigure,
+  INSTALL_URL, installPcBody, methodOptions, doneBody, errorLine,
+} from './remote-parts.mjs';
+import { setupRemoteHosts } from './remote-hosts.mjs';
+
+const RELAY_GUIDE_URL = 'https://github.com/OzEngineJP/pleiad/blob/main/relay/README.md';
 
 /** 確認コードを 3 桁ずつに分ける（「482 193」）。6 桁でなければそのまま */
 export function formatCode(code) {
@@ -41,27 +48,6 @@ export function qrPath(text) {
   return { size: n + quiet * 2, d };
 }
 
-/** 中継との接続の一行。{ text, strong }。strong は困っているとき（つながらない） */
-export function connectionLine(status, now = Date.now()) {
-  const c = status?.connection ?? { state: 'disabled' };
-  const online = (status?.devices ?? []).filter(d => d.connected).length;
-  switch (c.state) {
-    case 'connected':
-      return { text: online ? t('settings.remote.state.connectedDevices', { count: online }) : t('settings.remote.state.connected'), strong: false };
-    case 'connecting':
-      return { text: t('settings.remote.state.connecting'), strong: false };
-    case 'retrying': {
-      const reason = c.error?.message ? t('settings.remote.state.reason', { reason: c.error.message }) : '';
-      const at = c.retryAt && Date.parse(c.retryAt) > now ? t('settings.remote.state.retryAt', { time: fmt.time(c.retryAt, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }) : '';
-      return { text: t('settings.remote.state.failed') + reason + at, strong: true };
-    }
-    case 'error':
-      return { text: t('settings.remote.state.failed') + (c.error?.message ? t('settings.remote.state.reason', { reason: c.error.message }) : ''), strong: true };
-    default:
-      return { text: t('settings.remote.state.disabled'), strong: false };
-  }
-}
-
 /** 端末の種類の名前。知らない値はそのまま */
 export function platformName(platform) {
   const key = String(platform ?? '').toLowerCase();
@@ -69,155 +55,369 @@ export function platformName(platform) {
   return ['desktop', 'ios', 'android'].includes(key) ? t(`settings.remote.platform.${key}`) : String(platform ?? '');
 }
 
-/** 端末の行の補足（種類 · 追加した日 · 最後に使った時刻） */
-export function deviceLine(device, now = Date.now()) {
-  const parts = [];
-  const kind = platformName(device.platform);
-  if (kind) parts.push(kind);
-  if (device.createdAt) parts.push(t('settings.remote.devices.added', { date: fmt.dateTime(device.createdAt, { year: 'numeric', month: 'numeric', day: 'numeric' }) }));
-  parts.push(device.lastSeenAt ? t('settings.remote.devices.lastSeen', { when: fmt.relative(device.lastSeenAt, now) }) : t('settings.remote.devices.neverSeen'));
-  return parts.join(' · ');
+/** 中継の設定（URL と秘密）がそろっていて、つながらない（「サーバーへの接続に失敗しました」） */
+export function connectionFailed(status) {
+  const state = status?.connection?.state;
+  return status?.enabled === true && status.configured !== false && (state === 'retrying' || state === 'error');
 }
 
-function button(text, onclick, className = 'btn') {
-  const b = el('button', className, text);
-  b.type = 'button';
-  b.onclick = onclick;
-  return b;
-}
-
-function field(labelText, input) {
-  const label = el('label', 'mp-field');
-  label.append(el('span', null, labelText), input);
-  return label;
-}
-
-function input({ type = 'text', placeholder = '', autocomplete = 'off' } = {}) {
-  const i = document.createElement('input');
-  i.type = type; i.placeholder = placeholder; i.autocomplete = autocomplete; i.spellcheck = false;
-  return i;
+/**
+ * 端末の一覧の 1 行。{ name, icon, offline }。
+ * 「オフライン」は許可がオンで中継にもつながっているのに、端末がつながっていないときだけ（中継につながらないときは見出しの下の一行で伝える）
+ */
+export function deviceRow(device, status) {
+  const reachable = status?.enabled === true && status.connection?.state === 'connected';
+  return {
+    name: device.name || t('settings.remote.devices.unnamed'),
+    icon: deviceIcon(device),
+    offline: reachable && !device.connected,
+  };
 }
 
 /**
  * @param cmd  WS コマンド
  * @param page 設定のページを切り替える（onboarding.page）
+ * @param open 設定を開く（onboarding.open）。ジャンプリストから ほかの PC へ を開くとき
  */
-export function setupRemote({ cmd, page, openSession = () => {} }) {
+export function setupRemote({ cmd, page, open = () => {} }) {
   const $ = id => document.getElementById(id);
   const root = $('remotePanel');
   /** 最後に届いた RemoteStatus */
   let status = null;
-  /** 表示中のペアリング { payload, expiresAt } と、その終わり方（null | 'expired' | 'connecting'） */
-  let offer = null, offerEnd = null, tick = null;
-  /** message は状態の一行に出す失敗、notice は端末の欄の下に出す知らせ（追加した・取り消した・失敗） */
-  let confirming = '', busy = false, message = '', notice = '';
-  /** 端末の AI からの依頼を受けるスイッチを入れる前の確かめ（端末の id）。docs/remote.md §6.1 */
-  let agentConfirming = '';
+  /** 開いているタブ（'this' | 'other'）と、詳しい画面に出している端末の id */
+  let tab = 'this', detailId = '';
+  /** 取り消しの確かめ中か・操作中か・画面に出す失敗 */
+  let confirming = false, busy = false, message = '';
+  let reviewMode = false;
 
-  // ---- 骨組み（一度だけ作る。中身は paint で入れ替える）
-  const sw = button('', () => toggle(), 'cx-sw');
-  sw.id = 'remoteEnable';
-  sw.setAttribute('role', 'switch');
-  const swLabel = el('label', 'rm-switch-label', t('settings.remote.enable'));
-  swLabel.htmlFor = 'remoteEnable';
-  sw.setAttribute('aria-label', t('settings.remote.enable'));
-  const head = el('div', 'rm-switch');
-  head.append(swLabel, sw);
-  const stateLine = el('p', 'rm-state');
-  stateLine.setAttribute('role', 'status');
-  stateLine.setAttribute('aria-live', 'polite');
+  const hosts = setupRemoteHosts({ onChange: () => paint() });
+  hosts.onOpen?.(() => { tab = 'other'; detailId = ''; open('remote'); refresh(); });
 
-  // 中継
-  const relay = el('form', 'mp-panel rm-relay');
-  const relayUrl = input({ type: 'url', placeholder: 'https://relay.example.com' });
-  const secret = input({ type: 'password', autocomplete: 'new-password' });
-  const hostName = input();
-  const relayUrlField = field(t('settings.remote.relay.url'), relayUrl);
-  const secretField = field(t('settings.remote.relay.secret'), secret);
-  const hostField = field(t('settings.remote.relay.hostName'), hostName);
-  const relayUrlNote = el('small'), secretNote = el('small');
-  relayUrlField.append(relayUrlNote); secretField.append(secretNote);
-  const storageNote = el('p', 'mp-warn rm-storage');
-  const save = button(t('settings.remote.relay.save'), null);
-  save.type = 'submit';
-  const relayState = el('p', 'mp-state');
-  relayState.setAttribute('role', 'status');
-  const relayActions = el('div', 'mp-actions');
-  relayActions.append(save);
-  relay.append(el('h3', null, t('settings.remote.relay.title')), relayUrlField, secretField, hostField, storageNote, relayActions, relayState);
-  for (const i of [relayUrl, secret, hostName]) i.oninput = () => paintSave();
-  relay.onsubmit = e => { e.preventDefault(); if (!save.disabled) saveRelay(); };
-
-  // 端末
-  const devicesPanel = el('section', 'mp-panel rm-devices-panel');
-  const devicesHead = el('h3', null, t('settings.remote.devices.title'));
-  const list = el('div', 'rm-devices');
-  const add = button(t('settings.remote.pair.add'), () => startPairing(), 'btn btn-primary');
-  const addHint = el('small', 'rm-add-hint');
-  const addRow = el('div', 'rm-add');
-  addRow.append(add, addHint);
-  const pairCard = el('section', 'mp-card rm-pair');
-  pairCard.hidden = true;
-  pairCard.setAttribute('aria-live', 'polite');
-  const pairMessage = el('p', 'mp-state rm-pair-message');
-  pairMessage.setAttribute('role', 'status');
-  const loginNote = el('p', 'mp-note rm-login-note', t('settings.remote.loginOnHost'));
-
-  // 常駐（デスクトップ版のホストだけ）
-  const resident = el('section', 'mp-panel rm-resident');
-  const keep = document.createElement('input');
-  keep.type = 'checkbox'; keep.id = 'remoteKeepRunning';
-  const keepLabel = el('label', 'mp-check');
-  keepLabel.append(keep, el('span', null, t('settings.remote.resident.keepRunning')));
-  const sleepSeg = el('div', 'seg sec rm-sleep');
-  sleepSeg.setAttribute('role', 'group');
-  sleepSeg.setAttribute('aria-label', t('settings.remote.resident.sleep'));
-  const SLEEP = [['working', t('settings.remote.resident.sleepWorking')], ['off', t('settings.remote.resident.sleepOff')]];
-  for (const [value, text] of SLEEP) {
-    const b = button(text, () => setResident({ sleep: value }), '');
-    b.dataset.sleep = value;
-    sleepSeg.append(b);
+  // ---- 描く
+  function paint() {
+    const sig = JSON.stringify([tab, detailId, confirming, busy, message, reviewMode, statusSig(), tab === 'other' ? hosts.sig() : '']);
+    paintInto(root, sig, () => {
+      if (tab === 'other' && hosts.available) {
+        const view = hosts.build();
+        return hosts.inDetail ? view : [tabRow(), ...view];
+      }
+      const device = detailId && status?.devices?.find(d => d.id === detailId);
+      if (detailId && !device) detailId = '';
+      return device ? deviceDetail(device) : [tabRow(), ...thisTab()];
+    });
+    paintWizard();
+    paintDialog();
   }
-  const residentState = el('p', 'mp-state');
-  residentState.setAttribute('role', 'status');
-  // OS にサインインしたら起動する（desktop/login-item.cjs）。この窓（ローカルのデスクトップ版）だけ。状態は開くたびに OS から読み直す
-  const loginBridge = window.plyDesktop?.loginItem && !window.plyRemote ? window.plyDesktop.loginItem : null;
-  let login = null;
-  const launch = document.createElement('input');
-  launch.type = 'checkbox'; launch.id = 'remoteLaunchAtLogin';
-  const launchLabel = el('label', 'mp-check');
-  launchLabel.append(launch, el('span', null, t('settings.remote.resident.launchAtLogin')));
-  const launchNote = el('small', 'rm-add-hint');
-  launchNote.setAttribute('role', 'status');
-  const launchRow = el('div', 'rm-launch');
-  launchRow.hidden = true;
-  launchRow.append(launchLabel, launchNote);
-  resident.append(el('h3', null, t('settings.remote.resident.title')), keepLabel,
-    el('p', 'rm-sub', t('settings.remote.resident.sleep')), sleepSeg, ...(loginBridge ? [launchRow] : []), residentState);
-  keep.onchange = () => setResident({ keepRunning: keep.checked });
-  launch.onchange = async () => {
-    residentState.textContent = '';
-    launch.disabled = true;
-    try { login = await loginBridge.set(launch.checked); }
-    catch (e) { residentState.textContent = e.message; }
-    paintResident();
-  };
-  async function refreshLogin() {
-    if (!loginBridge) return;
-    try { login = await loginBridge.get(); } catch { login = null; }
-    paintResident();
+  /** 一覧の見え方に効く状態だけ（残り時間や中継の再試行の時刻が変わっても描き直さない） */
+  function statusSig() {
+    if (!status) return null;
+    return [status.enabled, status.configured, connectionFailed(status), status.connection?.state === 'connected',
+      (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.createdAt, d.lastSeenAt, d.agent?.active ?? 0])];
   }
 
-  // ほかのホストにつなぐ（デスクトップ版の端末の機能。ローカルの窓だけ。desktop/remote-hosts.html）
-  const others = el('div', 'rm-others');
-  if (window.plyDesktop?.openRemoteHosts && !window.plyRemote) {
-    others.append(button(t('settings.remote.otherHosts'), () => window.plyDesktop.openRemoteHosts(), 'btn btn-quiet'));
+  function tabRow() {
+    const row = el('div', 'rm-tabrow');
+    if (hosts.available) {
+      row.append(segment(t('settings.remote.tabs.label'), [['this', t('settings.remote.tabs.this')], ['other', t('settings.remote.tabs.other')]], tab,
+        value => { tab = value; detailId = ''; confirming = false; if (value === 'other') hosts.refresh(); paint(); }));
+    }
+    const allowed = status?.enabled === true;
+    if (tab === 'other') row.append(iconButton('plus', t('settings.remote.addHost'), () => hosts.openAdd(), 'btn rm-add'));
+    else if (allowed && !reviewMode) row.append(iconButton('plus', t('settings.remote.addDevice'), () => openWizard(), 'btn rm-add'));
+    for (const b of row.querySelectorAll('.rm-add')) b.dataset.fk = 'add';
+    return row;
   }
 
-  devicesPanel.append(devicesHead, list, addRow, pairCard, pairMessage);
-  root.append(head, stateLine, relay, devicesPanel, loginNote, resident, others);
+  function thisTab() {
+    const on = status?.enabled === true;
+    const label = el('span', 'rm-lbl', t('settings.remote.allow'));
+    const sw = switchButton(t('settings.remote.allow'), () => toggle());
+    sw.id = 'remoteEnable';
+    sw.dataset.fk = 'allow';
+    sw.setAttribute('aria-checked', String(on));
+    sw.disabled = busy || !status;
+    const head = el('div', 'rm-mrow');
+    head.append(label, sw);
+    const out = [head];
+    if (message) out.push(errorLine(message));
+    if (!on) return out;
+    // まとまりはつなぎ方ごと（いまは 自分の中継サーバー だけ。Pleiad Plus は上に足す）
+    const devices = status.devices ?? [];
+    const failed = connectionFailed(status);
+    if (devices.length || failed) {
+      const group = el('section', 'rm-group');
+      group.append(groupHead(t('settings.remote.groups.own')));
+      if (failed) group.append(el('p', 'rm-warn', t('settings.remote.failed')));
+      for (const d of devices) {
+        const view = deviceRow(d, status);
+        group.append(listRow({ icon: view.icon, name: view.name, sub: view.offline ? t('settings.remote.offline') : '', key: `device-${d.id}`,
+          onclick: () => { detailId = d.id; confirming = false; message = ''; paint(); } }));
+      }
+      out.push(group);
+    }
+    return out;
+  }
 
-  // ---- 承認のダイアログ（どの画面にいても出す）
+  function deviceDetail(d) {
+    const view = deviceRow(d, status);
+    const out = detailHead({ icon: view.icon, name: view.name, onBack: () => { detailId = ''; confirming = false; message = ''; paint(); } });
+    out.push(keyValues([
+      [t('settings.remote.detail.method'), t('settings.remote.groups.own')],
+      [t('settings.remote.detail.relay'), relayHost(status?.relayUrl)],
+      [t('settings.remote.detail.added'), d.createdAt ? fmt.dateTime(d.createdAt, { year: 'numeric', month: 'long', day: 'numeric' }) : ''],
+      [t('settings.remote.detail.lastSeen'), d.lastSeenAt ? fmt.relative(d.lastSeenAt) : t('settings.remote.detail.never')],
+    ]));
+    const acts = el('div', 'rm-acts');
+    if (confirming) {
+      const tasks = d.agent?.active ? ` ${t('settings.remote.devices.revokeTasks', { count: d.agent.active })}` : '';
+      const ask = el('div', 'rm-confirm');
+      ask.append(el('p', null, t('settings.remote.devices.revokeConfirm', { name: view.name }) + tasks));
+      const keep = button(t('settings.remote.devices.keep'), () => { confirming = false; paint(); }, 'btn btn-quiet');
+      keep.dataset.fk = 'keep';
+      const yes = button(t('settings.remote.devices.revokeConfirmButton'), () => revoke(d), 'btn btn-primary');
+      yes.dataset.fk = 'revokeYes';
+      for (const b of [keep, yes]) b.disabled = busy;
+      const buttons = el('div', 'rm-acts');
+      buttons.append(keep, yes);
+      ask.append(buttons);
+      out.push(ask);
+      queueMicrotask(() => { if (!root.contains(document.activeElement)) keep.focus(); });
+    } else {
+      const revokeButton = button(t('settings.remote.detail.revoke'), () => { confirming = true; paint(); }, 'btn btn-quiet');
+      revokeButton.dataset.fk = 'revoke';
+      acts.append(revokeButton);
+      out.push(acts);
+    }
+    if (message) out.push(errorLine(message));
+    return out;
+  }
+
+  // ---- ＋ の流れ（この PC へ: 端末を追加）
+  /**
+   * wz: { step, kind: 'phone'|'pc', inputs, error, busy, offer: { payload, expiresAt } | null, starting,
+   *       offerEnd: null | 'connecting' | 'expired' | 'cancelled', request, ended, doneName }
+   */
+  let wz = null, tick = null;
+  const wizard = createWizard({ id: 'remoteAddDevice', onCancel: () => cancelWizard() });
+
+  function openWizard() {
+    const relayUrl = textInput({ type: 'url', placeholder: 'https://relay.example.com', key: 'relayUrl' });
+    const secret = textInput({ type: 'password', autocomplete: 'new-password', key: 'secret' });
+    const hostName = textInput({ key: 'hostName' });
+    relayUrl.value = status?.relayUrlFromEnv ? '' : status?.relayUrl ?? '';
+    hostName.value = status?.hostName ?? '';
+    for (const i of [relayUrl, secret, hostName]) i.oninput = () => paintWizard();
+    wz = { step: 0, kind: 'phone', inputs: { relayUrl, secret, hostName }, error: '', busy: false, offer: null, starting: false, offerEnd: null, request: null, ended: '', doneName: '' };
+    paintWizard();
+  }
+
+  /** 保存する欄の差分。変えていない欄は送らない（秘密は空なら今の値を残す） */
+  function relayPatch() {
+    const { relayUrl, secret, hostName } = wz.inputs;
+    const patch = {};
+    const url = relayUrl.value.trim(), host = hostName.value.trim();
+    if (url !== (status?.relayUrlFromEnv ? '' : status?.relayUrl ?? '')) patch.relayUrl = url;
+    if (host && host !== (status?.hostName ?? '')) patch.hostName = host;
+    if (secret.value.trim() !== '') patch.enrollSecret = secret.value.trim();
+    return patch;
+  }
+  /** 中継の欄を出すか（URL か秘密が無い・つながらない） */
+  const needRelay = () => !status?.relayUrl || !status?.hasEnrollSecret || status?.configured === false || connectionFailed(status);
+  const relayReady = () => Boolean((wz.inputs.relayUrl.value.trim() || status?.relayUrl) && (wz.inputs.secret.value.trim() || status?.hasEnrollSecret));
+
+  function paintWizard() {
+    if (!wz) { wizard.close(); stopTick(); return; }
+    const connected = status?.enabled === true && status.connection?.state === 'connected';
+    if (wz.step === 2 && connected && !wz.offer && !wz.offerEnd && !wz.request && !wz.ended && !wz.starting && !wz.error) startOffer();
+    const o = { title: t('settings.remote.addDevice'), step: wz.step, back: () => back() };
+    if (wz.step === 0) {
+      o.body = [
+        segment(t('settings.remote.wizard.kind'), [['phone', t('settings.remote.wizard.phone')], ['pc', t('settings.remote.wizard.pc')]], wz.kind,
+          value => { wz.kind = value; paintWizard(); }),
+        installBody(wz.kind),
+      ];
+      o.sig = wz.kind;
+      o.next = { onclick: () => { wz.step = 1; wz.error = ''; paintWizard(); } };
+    } else if (wz.step === 1) {
+      const show = needRelay();
+      o.body = methodBody(show);
+      o.sig = [show, status?.relayUrl ?? '', status?.relayUrlFromEnv, status?.hasEnrollSecret, status?.enrollSecretFromEnv, status?.storage?.encrypted, wz.error, wz.busy];
+      o.next = { disabled: wz.busy || !relayReady(), onclick: () => saveRelayAndConnect() };
+    } else if (wz.step === 2) {
+      o.body = connectBody(connected);
+      o.sig = [wz.kind, connected, connectionFailed(status), wz.offer?.payload ?? '', wz.offerEnd, wz.request?.id ?? '', wz.ended, wz.error, wz.busy];
+      o.next = wz.request
+        ? { label: t('settings.remote.wizard.approve'), disabled: wz.busy, onclick: () => approve() }
+        : { disabled: true };
+    } else {
+      o.body = [doneBody(wz.doneName)];
+      o.sig = wz.doneName;
+    }
+    wizard.render(o);
+    paintLeft();
+  }
+
+  function installBody(kind) {
+    if (kind !== 'phone') return installPcBody();
+    const box = el('div', 'rm-inst');
+    const stack = el('div', 'rm-stack');
+    stack.append(el('p', 'rm-lead', t('settings.remote.wizard.installPhone')), el('p', 'rm-weak', t('settings.remote.wizard.stores')));
+    box.append(qrFigure(qrPath(INSTALL_URL), 112), stack);
+    return box;
+  }
+
+  /** つなぎ方: いまは 自分の中継サーバー だけ（選ばれた 1 つ）。URL か秘密が無いか、つながらなければ欄を出す */
+  function methodBody(showRelay) {
+    const out = [methodOptions(status?.relayUrl ? relayHost(status.relayUrl) : externalLink(t('settings.remote.wizard.relayGuide'), RELAY_GUIDE_URL))];
+    if (showRelay) {
+      if (connectionFailed(status)) out.push(el('p', 'rm-warn', t('settings.remote.failed')));
+      const { relayUrl, secret, hostName } = wz.inputs;
+      relayUrl.placeholder = status?.relayUrlFromEnv ? status.relayUrl : 'https://relay.example.com';
+      secret.placeholder = status?.hasEnrollSecret && !status.enrollSecretFromEnv ? t('settings.remote.relay.secretSaved') : '';
+      const note = text => text ? el('small', 'rm-note', text) : null;
+      const fields = el('div', 'rm-fields');
+      fields.append(
+        field(t('settings.remote.relay.url'), relayUrl, note(status?.relayUrlFromEnv ? t('settings.remote.relay.urlFromEnv') : '')),
+        field(t('settings.remote.relay.secret'), secret, note(status?.enrollSecretFromEnv ? t('settings.remote.relay.secretFromEnv') : '')),
+        field(t('settings.remote.relay.hostName'), hostName));
+      out.push(fields);
+      if (status?.storage?.encrypted === false) out.push(el('p', 'rm-strong', `⚠ ${t('settings.remote.relay.notEncrypted')}`));
+    }
+    if (wz.error) out.push(errorLine(wz.error));
+    return out;
+  }
+
+  function connectBody(connected) {
+    if (wz.error) return [errorLine(wz.error), againButton()];
+    if (wz.request) {
+      const name = wz.request.name || t('settings.remote.devices.unnamed');
+      return [el('p', 'rm-lead', t('settings.remote.wizard.confirm', { name })), confirmCode(formatCode(wz.request.code))];
+    }
+    if (wz.ended) return [el('p', null, wz.ended), againButton()];
+    if (!connected) return [connectionFailed(status) ? el('p', 'rm-warn', t('settings.remote.failed')) : waitLine(t('settings.remote.wizard.connecting'))];
+    if (wz.offerEnd === 'connecting') return [waitLine(t('settings.remote.pair.connecting'))];
+    if (wz.offerEnd === 'expired' || wz.offerEnd === 'cancelled') return [el('p', null, t('settings.remote.pair.expired')), againButton()];
+    if (!wz.offer) return [waitLine(t('settings.remote.wizard.connecting'))];
+    const left = el('p', 'rm-weak rm-left');
+    const warn = el('p', 'rm-strong', `⚠ ${t('settings.remote.fullAccess')}`);
+    if (wz.kind === 'phone') {
+      const box = el('div', 'rm-inst');
+      const stack = el('div', 'rm-stack');
+      stack.append(el('p', 'rm-lead', t('settings.remote.wizard.scan')), left);
+      box.append(qrFigure(qrPath(wz.offer.payload), 152), stack);
+      return [box, warn];
+    }
+    const code = el('div', 'rm-code');
+    const value = el('span', 'rm-code-v', wz.offer.payload);
+    const copy = iconButton('copy', t('settings.remote.wizard.copy'), () => copyPayload(copy, value), 'btn btn-quiet');
+    copy.dataset.fk = 'copy';
+    code.append(value, copy);
+    return [el('p', 'rm-lead', t('settings.remote.wizard.paste')), code, left, warn];
+  }
+  function againButton() {
+    const b = button(t('settings.remote.pair.again'), () => { wz.ended = ''; wz.error = ''; wz.offerEnd = null; wz.offer = null; paintWizard(); }, 'btn btn-quiet');
+    b.dataset.fk = 'again';
+    const row = el('div', 'rm-acts');
+    row.append(b);
+    return row;
+  }
+
+  function paintLeft() {
+    if (!wz?.offer || wz.offerEnd || wz.step !== 2) { stopTick(); return; }
+    if (!tick) tick = setInterval(paintLeft, 1000);
+    if (Date.parse(wz.offer.expiresAt) <= Date.now()) { wz.offerEnd = 'expired'; stopTick(); paintWizard(); return; }
+    setText(wizard.dialog, '.rm-left', t('settings.remote.wizard.left', { time: remaining(wz.offer.expiresAt) }));
+  }
+  function stopTick() { clearInterval(tick); tick = null; }
+
+  async function saveRelayAndConnect() {
+    const patch = relayPatch();
+    if (!Object.keys(patch).length && !connectionFailed(status)) { wz.step = 2; paintWizard(); return; }
+    wz.busy = true; wz.error = ''; paintWizard();
+    try {
+      status = await cmd('setRemoteSettings', { ...patch, enabled: true });
+      if (!wz) return;
+      wz.inputs.secret.value = '';
+      wz.step = 2;
+    } catch (e) { if (wz) wz.error = e.message; }
+    if (wz) wz.busy = false;
+    paint();
+  }
+  async function startOffer() {
+    wz.starting = true;
+    const mine = wz;
+    try {
+      const r = await cmd('remotePairingStart');
+      if (wz !== mine || wz.step !== 2) { cmd('remotePairingCancel').catch(() => {}); return; }
+      wz.offer = { payload: r.payload, expiresAt: r.expiresAt };
+      wz.offerEnd = null;
+    } catch (e) { if (wz === mine) wz.error = e.message; }
+    finally { mine.starting = false; }
+    paintWizard();
+  }
+  function cancelOffer() {
+    if (wz?.offer && !wz.offerEnd) cmd('remotePairingCancel').then(s => { status = s; paint(); }).catch(() => {});
+    if (wz) { wz.offer = null; wz.offerEnd = null; }
+  }
+  function back() {
+    if (!wz || wz.busy) return;
+    if (wz.step === 2 && wz.request) {
+      // 確かめの段から戻る: 断って、QR かコードの面に戻す（作り直す）
+      deny(wz.request);
+      wz.request = null;
+      wz.offer = null; wz.offerEnd = null;
+      paintWizard();
+      return;
+    }
+    if (wz.step === 2) cancelOffer();
+    wz.ended = ''; wz.error = '';
+    wz.step = Math.max(0, wz.step - 1);
+    paintWizard();
+  }
+  function cancelWizard() {
+    if (!wz) return;
+    if (wz.request && wz.step === 2) deny(wz.request);
+    cancelOffer();
+    wz = null;
+    paint();
+  }
+  async function approve() {
+    const request = wz.request;
+    wz.busy = true; paintWizard();
+    try {
+      const device = await cmd('remotePairingApprove', { id: request.id });
+      dropRequest(request.id);
+      if (!wz) return;
+      wz.doneName = device?.name || request.name || t('settings.remote.devices.unnamed');
+      wz.request = null;
+      wz.step = 3;
+    } catch (e) { if (wz) wz.error = e.message; }
+    if (wz) wz.busy = false;
+    paint();
+  }
+  function deny(request) {
+    dropRequest(request.id);
+    cmd('remotePairingDeny', { id: request.id }).then(s => { if (s) status = s; paint(); }).catch(() => {});
+  }
+  function dropRequest(id) {
+    if (status?.pairing) status = { ...status, pairing: { ...status.pairing, requests: status.pairing.requests.filter(r => r.id !== id) } };
+  }
+  async function copyPayload(b, value) {
+    const label = b.lastChild;
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(wz?.offer?.payload ?? '');
+      label.textContent = t('settings.remote.pair.copied');
+    } catch {
+      // コピーできないときは文字列を選んでおく（手でコピーできる）
+      const range = document.createRange(); range.selectNodeContents(value); getSelection().removeAllRanges(); getSelection().addRange(range);
+      label.textContent = t('settings.remote.pair.copyFailed');
+    }
+    clearTimeout(b.resetTimer);
+    b.resetTimer = setTimeout(() => { label.textContent = t('settings.remote.wizard.copy'); }, 1800);
+  }
+
+  // ---- 承認のダイアログ（どの画面にいても出す。＋ の流れで QR・コードを出している間は流れの中で聞く）
   const dialog = document.createElement('dialog');
   dialog.className = 'rm-dialog';
   dialog.id = 'remotePairDialog';
@@ -227,213 +427,14 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
   let asking = '';
   dialog.addEventListener('cancel', e => e.preventDefault());   // Esc で黙って閉じない（決めるまで残す）
 
-  // ---- 描く
-  function paint() {
-    const s = status;
-    const on = s?.enabled === true;
-    sw.setAttribute('aria-checked', String(on));
-    sw.disabled = busy || !s;
-    const line = s ? connectionLine(s) : { text: t('settings.remote.state.loading'), strong: false };
-    stateLine.textContent = message || line.text;
-    stateLine.classList.toggle('rm-strong', Boolean(message) || line.strong);
-
-    if (s) {
-      if (document.activeElement !== relayUrl && !relayUrl.dataset.dirty) relayUrl.value = s.relayUrlFromEnv ? '' : s.relayUrl ?? '';
-      relayUrl.placeholder = s.relayUrlFromEnv ? s.relayUrl : 'https://relay.example.com';
-      relayUrlNote.textContent = s.relayUrlFromEnv ? t('settings.remote.relay.urlFromEnv') : '';
-      secret.placeholder = s.hasEnrollSecret && !s.enrollSecretFromEnv ? t('settings.remote.relay.secretSaved') : '';
-      secretNote.textContent = s.enrollSecretFromEnv ? t('settings.remote.relay.secretFromEnv') : '';
-      if (document.activeElement !== hostName && !hostName.dataset.dirty) hostName.value = s.hostName ?? '';
-      storageNote.textContent = s.storage && s.storage.encrypted === false ? `⚠ ${t('settings.remote.relay.notEncrypted')}` : '';
-      storageNote.hidden = !storageNote.textContent;
-    }
-    pairMessage.textContent = notice;
-    paintSave();
-    paintDevices();
-    paintPairing();
-    paintResident();
-    paintDialog();
-  }
-
-  function dirty() {
-    if (!status) return false;
-    const url = relayUrl.value.trim(), host = hostName.value.trim();
-    return (url !== (status.relayUrlFromEnv ? '' : status.relayUrl ?? '')) || secret.value !== '' || host !== (status.hostName ?? '');
-  }
-  function paintSave() {
-    const d = dirty();
-    relayUrl.dataset.dirty = d && relayUrl.value.trim() !== (status?.relayUrlFromEnv ? '' : status?.relayUrl ?? '') ? '1' : '';
-    hostName.dataset.dirty = d && hostName.value.trim() !== (status?.hostName ?? '') ? '1' : '';
-    save.disabled = busy || !d;
-  }
-  /** 保存する欄の差分。変えていない欄は送らない（秘密は空なら今の値を残す） */
-  function relayPatch() {
-    const patch = {};
-    const url = relayUrl.value.trim(), host = hostName.value.trim();
-    if (url !== (status?.relayUrlFromEnv ? '' : status?.relayUrl ?? '')) patch.relayUrl = url;
-    if (host !== (status?.hostName ?? '')) patch.hostName = host;
-    if (secret.value !== '') patch.enrollSecret = secret.value.trim();
-    return patch;
-  }
-
-  let reviewMode = false;
-  function paintDevices() {
-    const devices = status?.devices ?? [];
-    const out = [];
-    if (!devices.length) out.push(el('p', 'mp-note rm-empty', t('settings.remote.devices.empty')));
-    for (const d of devices) {
-      const card = el('div', 'mp-card rm-device');
-      const row = el('div', 'mp-row');
-      const info = el('div', 'mp-card-info');
-      const name = el('strong', null, d.name || t('settings.remote.devices.unnamed'));
-      info.append(name, el('small', null, deviceLine(d)));
-      const state = el('span', d.connected ? 'rm-online' : 'rm-offline', d.connected ? t('settings.remote.devices.online') : t('settings.remote.devices.offline'));
-      const actions = el('div', 'mp-card-actions');
-      actions.append(state, button(t('settings.remote.devices.revoke'), () => { confirming = d.id; paintDevices(); }));
-      actions.hidden = confirming === d.id;
-      row.append(info, actions);
-      card.append(row);
-      if (d.agent?.available) card.append(agentBlock(d));
-      if (confirming === d.id) {
-        const ask = el('div', 'mp-confirm');
-        const tasks = d.agent?.active ? ` ${t('settings.remote.devices.revokeTasks', { count: d.agent.active })}` : '';
-        ask.append(el('p', null, t('settings.remote.devices.revokeConfirm', { name: d.name || t('settings.remote.devices.unnamed') }) + tasks));
-        const buttons = el('div', 'mp-card-actions');
-        buttons.append(button(t('settings.remote.devices.keep'), () => { confirming = ''; paintDevices(); }),
-          button(t('settings.remote.devices.revokeConfirmButton'), () => revoke(d)));
-        ask.append(buttons);
-        card.append(ask);
-      }
-      out.push(card);
-    }
-    list.replaceChildren(...out);
-    const connected = status?.enabled && status.connection?.state === 'connected';
-    add.disabled = busy || !connected || Boolean(offer && !offerEnd);
-    addHint.textContent = !status?.enabled ? t('settings.remote.pair.needEnable') : !connected ? t('settings.remote.pair.needConnected') : '';
-    // 審査モードのホスト（hostCapabilities の reviewMode。ADR 0172）では端末を足せない
-    addRow.hidden = Boolean(offer) || reviewMode;
-  }
-
-  /**
-   * 端末の行の下の「この端末の AI からの依頼を受ける」（デスクトップ版の端末だけ。既定オフ。docs/remote.md §4.5・§6.1、ADR 0146）。
-   * 入れるときはその場で確かめる（依頼元が確認なしのモードなら、この PC でも確認なしで動く）。切るときは確かめない。
-   * 入れた後は、同じ趣旨を弱い字で残し、任された作業の数・承認待ち・最近の会話・すべて止めるを出す
-   */
-  function agentBlock(d) {
-    const name = d.name || t('settings.remote.devices.unnamed');
-    const on = d.agent.enabled === true;
-    const box = el('div', 'rm-agent');
-    const row = el('div', 'rm-agent-row');
-    const text = el('span', 'rm-agent-text');
-    text.append(el('b', null, t('settings.remote.agent.title')), el('span', 'rm-agent-help', t('settings.remote.agent.help')));
-    const sw = button('', () => { if (on) setAgent(d, false); else { agentConfirming = d.id; paintDevices(); } }, 'cx-sw');
-    sw.setAttribute('role', 'switch');
-    sw.setAttribute('aria-checked', String(on));
-    sw.setAttribute('aria-label', t('settings.remote.agent.title'));
-    sw.disabled = busy;
-    row.append(text, sw);
-    box.append(row);
-    if (!on && agentConfirming === d.id) {
-      const ask = el('div', 'mp-confirm rm-agent-confirm');
-      ask.append(el('p', 'mp-warn', t('settings.remote.agent.confirm', { name })), el('p', 'rm-agent-warn', t('settings.remote.agent.confirmWarn')));
-      const buttons = el('div', 'mp-card-actions');
-      const accept = button(t('settings.remote.agent.accept'), () => setAgent(d, true), 'btn btn-primary');
-      buttons.append(button(t('settings.remote.agent.cancel'), () => { agentConfirming = ''; paintDevices(); }), accept);
-      ask.append(buttons);
-      box.append(ask);
-      queueMicrotask(() => accept.focus?.());
-    }
-    if (on) {
-      box.append(el('p', 'rm-agent-note', t('settings.remote.agent.note')));
-      const line = el('div', 'rm-agent-tasks');
-      const label = el('span', 'rm-agent-count', t('settings.remote.agent.tasks', { count: d.agent.active ?? 0 }));
-      if (d.agent.waiting) label.append(' · ', el('span', 'rm-agent-waiting', t('settings.remote.agent.waiting', { count: d.agent.waiting })));
-      line.append(label,
-        button(t('settings.remote.agent.open'), () => openLatest(d), 'btn btn-quiet'),
-        button(t('settings.remote.agent.stopAll'), () => setAgent(d, undefined, { stopAll: true }), 'btn btn-quiet'));
-      line.querySelectorAll('button').forEach(b => { b.disabled = busy; });
-      // 止めるものが無いときは押せない（動いている作業が 0 件）
-      line.lastChild.disabled = busy || !(d.agent.active > 0);
-      box.append(line);
-    }
-    return box;
-  }
-
-  function paintPairing() {
-    if (!offer) { pairCard.hidden = true; stopTick(); return; }
-    pairCard.hidden = false;
-    const out = [el('h3', null, t('settings.remote.pair.title'))];
-    if (offerEnd === 'connecting') {
-      out.push(el('p', null, t('settings.remote.pair.connecting')));
-      out.push(actionRow(button(t('settings.remote.pair.close'), () => closeOffer())));
-    } else if (offerEnd === 'expired') {
-      out.push(el('p', 'mp-warn', t('settings.remote.pair.expired')));
-      out.push(actionRow(button(t('settings.remote.pair.close'), () => closeOffer()), button(t('settings.remote.pair.again'), () => startPairing(), 'btn btn-primary')));
-    } else {
-      const body = el('div', 'rm-pair-body');
-      const figure = el('div', 'rm-qr');
-      const { size, d } = qrPath(offer.payload);
-      const svg = svgEl('svg', { viewBox: `0 0 ${size} ${size}`, role: 'img', 'aria-label': t('settings.remote.pair.qrLabel'), 'shape-rendering': 'crispEdges' });
-      svg.append(svgEl('rect', { class: 'rm-qr-bg', width: size, height: size }), svgEl('path', { class: 'rm-qr-fg', d }));
-      figure.append(svg);
-      const side = el('div', 'rm-pair-side');
-      const left = el('p', 'rm-left');
-      left.id = 'remotePairLeft';
-      side.append(left, el('p', 'rm-pair-hint', t('settings.remote.pair.hint')),
-        el('p', 'mp-warn', `⚠ ${t('settings.remote.fullAccess')}`));
-      const code = el('code', 'rm-payload', offer.payload);
-      const copy = button(t('settings.remote.pair.copy'), () => copyPayload(copy));
-      const codeRow = el('div', 'rm-code-row');
-      codeRow.append(code, copy);
-      side.append(codeRow);
-      body.append(figure, side);
-      out.push(body, actionRow(button(t('settings.remote.pair.cancel'), () => cancelPairing())));
-      startTick();
-    }
-    pairCard.replaceChildren(...out);
-    paintLeft();
-  }
-  function actionRow(...buttons) {
-    const row = el('div', 'mp-actions');
-    row.append(...buttons);
-    return row;
-  }
-  function paintLeft() {
-    const left = $('remotePairLeft');
-    if (!left || !offer) return;
-    left.textContent = t('settings.remote.pair.left', { time: remaining(offer.expiresAt) });
-    if (Date.parse(offer.expiresAt) <= Date.now() && !offerEnd) { offerEnd = 'expired'; paintPairing(); paintDevices(); }
-  }
-  function startTick() { if (!tick) tick = setInterval(paintLeft, 1000); }
-  function stopTick() { clearInterval(tick); tick = null; }
-
-  function paintResident() {
-    const r = status?.resident;
-    resident.hidden = !r?.available;
-    if (!r?.available) return;
-    keep.checked = r.keepRunning;
-    keep.disabled = busy;
-    for (const b of sleepSeg.querySelectorAll('button')) {
-      b.classList.toggle('on', b.dataset.sleep === r.sleep);
-      b.setAttribute('aria-pressed', String(b.dataset.sleep === r.sleep));
-      b.disabled = busy;
-    }
-    if (loginBridge) {
-      const view = loginItemView(login, { remoteEnabled: status?.enabled === true });
-      launchRow.hidden = !view.visible;
-      launch.checked = view.checked;
-      launch.disabled = busy;
-      const mac = window.plyDesktop.platform === 'darwin';
-      launchNote.textContent = view.blocked ? (mac ? t('settings.remote.resident.launchAtLoginBlockedMac') : t('settings.remote.resident.launchAtLoginBlockedWin'))
-        : view.recommend ? t('settings.remote.resident.launchAtLoginRecommend') : '';
-      launchNote.hidden = !launchNote.textContent;
-    }
-  }
-
-  // ---- 承認のダイアログ
   function paintDialog() {
     const requests = status?.pairing?.requests ?? [];
-    const current = requests.find(r => r.id === asking) ?? requests[0];
+    // ＋ の流れが入場券を出して待っているなら、届いた求めは流れの中で聞く
+    if (wz?.step === 2 && !wz.request && (wz.offer || wz.offerEnd === 'connecting') && requests.length) {
+      wz.request = requests.at(-1); wz.offer = null; wz.offerEnd = null;
+      paintWizard();
+    }
+    const current = requests.find(r => r.id === asking && r.id !== wz?.request?.id) ?? requests.find(r => r.id !== wz?.request?.id);
     if (!current) {
       asking = '';
       if (dialog.open) dialog.close();
@@ -456,21 +457,15 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
     const actions = el('div', 'rm-dialog-actions');
     actions.append(deny, approve);
     dialog.replaceChildren(kind, title, ...(meta ? [el('p', 'rm-dialog-meta', meta)] : []), codeLabel, code,
-      el('p', 'rm-dialog-hint', t('settings.remote.approve.hint')), el('p', 'rm-dialog-hint', t('settings.remote.fullAccess')), state, actions);
+      el('p', 'rm-dialog-hint', t('settings.remote.approve.hint')), el('p', 'rm-dialog-hint', `⚠ ${t('settings.remote.fullAccess')}`), state, actions);
     if (!dialog.open) dialog.showModal();
-    deny.focus();   // 既定の居場所は「拒否」（Enter の押し間違いで承認しない）
+    deny.focus();   // 既定の居場所は「拒否」（Enter の押し間違いで許可しない）
   }
   async function decide(request, yes, state) {
     for (const b of dialog.querySelectorAll('button')) b.disabled = true;
     try {
-      if (yes) {
-        const device = await cmd('remotePairingApprove', { id: request.id });
-        notice = t('settings.remote.approve.added', { name: device?.name || request.name || '' });
-      } else {
-        await cmd('remotePairingDeny', { id: request.id });
-        notice = '';
-      }
-      if (status) status = { ...status, pairing: { ...status.pairing, requests: status.pairing.requests.filter(r => r.id !== request.id) } };
+      await cmd(yes ? 'remotePairingApprove' : 'remotePairingDeny', { id: request.id });
+      dropRequest(request.id);
       asking = '';
       paint();
     } catch (e) {
@@ -480,95 +475,24 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
   }
 
   // ---- 操作
-  /** 操作を 1 つずつ。失敗の理由は fail へ（既定は状態の一行） */
-  async function run(fn, fail = text => { message = text; }) {
+  /** 操作を 1 つずつ。失敗の理由は画面の一行に出す */
+  async function run(fn) {
     if (busy) return;
     busy = true; message = ''; paint();
     try { await fn(); }
-    catch (e) { fail(e.message); }
+    catch (e) { message = e.message; }
     finally { busy = false; paint(); }
   }
-  const failNotice = text => { notice = text; };
   function toggle() {
     const next = !(status?.enabled === true);
-    relayState.textContent = '';
-    return run(async () => {
-      // 有効にするときは、入力したまま保存していない中継の設定も一緒に送る（押す順番で失敗させない）
-      status = await cmd('setRemoteSettings', { ...(next ? relayPatch() : {}), enabled: next });
-      if (next) clearInputs();
-    });
+    return run(async () => { status = await cmd('setRemoteSettings', { enabled: next }); });
   }
-  function saveRelay() {
-    relayState.textContent = '';
-    return run(async () => {
-      status = await cmd('setRemoteSettings', relayPatch());
-      clearInputs();
-      relayState.textContent = t('settings.remote.relay.saved');
-    }, text => { relayState.textContent = text; });
-  }
-  function clearInputs() {
-    secret.value = '';
-    relayUrl.dataset.dirty = ''; hostName.dataset.dirty = '';
-    relayUrl.value = status?.relayUrlFromEnv ? '' : status?.relayUrl ?? '';
-    hostName.value = status?.hostName ?? '';
-  }
-  function startPairing() {
-    notice = '';
-    return run(async () => {
-      const r = await cmd('remotePairingStart');
-      offer = { payload: r.payload, expiresAt: r.expiresAt };
-      offerEnd = null;
-      paint();
-      pairCard.scrollIntoView?.({ block: 'nearest' });
-    }, failNotice);
-  }
-  function cancelPairing() {
-    const had = offer;
-    offer = null; offerEnd = null;
-    paint();
-    if (had) cmd('remotePairingCancel').then(s => { status = s; paint(); }).catch(e => { notice = e.message; paint(); });
-  }
-  function closeOffer() { offer = null; offerEnd = null; paint(); }
   function revoke(device) {
     return run(async () => {
       status = await cmd('remoteRevoke', { id: device.id });
-      confirming = '';
-      notice = t('settings.remote.devices.revoked', { name: device.name || '' });
-    }, failNotice);
-  }
-  /** この端末の AI からの依頼を受けるか（人だけ。サーバーは human-only の setRemoteDeviceAgent）・任された作業をすべて止める */
-  function setAgent(device, enabled, { stopAll = false } = {}) {
-    agentConfirming = '';
-    return run(async () => {
-      await cmd('setRemoteDeviceAgent', { id: device.id, ...(enabled !== undefined ? { enabled } : {}), ...(stopAll ? { stopAll: true } : {}) });
-    }, failNotice);
-  }
-  /** 任された作業の会話のうち、いちばん新しいものを開く（脇の一覧にも ⇄ の印つきで並ぶ） */
-  async function openLatest(device) {
-    try {
-      const rows = (await cmd('agentTasks')).filter(r => String(r.parentSessionId ?? '').startsWith(`remote:${device.id}:`) && r.sessionId);
-      rows.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-      if (rows[0]) openSession(rows[0].sessionId);
-      else { notice = t('settings.remote.agent.noTasks'); paint(); }
-    } catch (e) { notice = e.message; paint(); }
-  }
-  function setResident(patch) {
-    residentState.textContent = '';
-    return run(async () => { status = await cmd('setRemoteResident', patch); }, text => { residentState.textContent = text; });
-  }
-  async function copyPayload(b) {
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
-      await navigator.clipboard.writeText(offer?.payload ?? '');
-      b.textContent = t('settings.remote.pair.copied');
-    } catch {
-      // コピーできないときは文字列を選んでおく（手でコピーできる）
-      const code = pairCard.querySelector('.rm-payload');
-      if (code) { const range = document.createRange(); range.selectNodeContents(code); getSelection().removeAllRanges(); getSelection().addRange(range); }
-      b.textContent = t('settings.remote.pair.copyFailed');
-    }
-    clearTimeout(b.resetTimer);
-    b.resetTimer = setTimeout(() => { b.textContent = t('settings.remote.pair.copy'); }, 1800);
+      confirming = false;
+      detailId = '';
+    });
   }
 
   // ---- サーバーから
@@ -576,44 +500,36 @@ export function setupRemote({ cmd, page, openSession = () => {} }) {
     try { status = await cmd('remoteStatus'); }
     catch (e) { message = e.message; }
     paint();
-    refreshLogin();
   }
   function event(ev) {
     if (ev.type === 'remoteStatus') {
       status = ev.status ?? status;
-      // 表示中の QR の入場券が無くなった。期限なら「作り直す」、ほかの画面で取り下げたなら閉じる
+      // 表示中の QR の入場券が無くなった。期限なら「作り直す」、ほかの画面で取り下げたなら同じく作り直せるようにする
       // （使われたときは先に remotePairing の connecting が届いている）
-      if (offer && !offerEnd && !status?.pairing?.offer) {
-        if (Date.parse(offer.expiresAt) <= Date.now() + 1000) offerEnd = 'expired';
-        else { offer = null; }
-      }
+      if (wz?.offer && !wz.offerEnd && !status?.pairing?.offer) wz.offerEnd = Date.parse(wz.offer.expiresAt) <= Date.now() + 1000 ? 'expired' : 'cancelled';
       paint();
       return;
     }
     if (ev.type === 'remotePairing') {
-      if (ev.phase === 'connecting' && offer) offerEnd = 'connecting';
-      if (ev.phase === 'request') {
-        // 承認待ちに移ったら QR の面は用済み
-        if (offerEnd === 'connecting') { offer = null; offerEnd = null; }
-        if (status && ev.request && !status.pairing.requests.some(r => r.id === ev.request.id)) {
-          status = { ...status, pairing: { ...status.pairing, requests: [...status.pairing.requests, ev.request] } };
-        }
+      if (ev.phase === 'connecting' && wz?.offer) wz.offerEnd = 'connecting';
+      if (ev.phase === 'request' && status && ev.request && !status.pairing.requests.some(r => r.id === ev.request.id)) {
+        status = { ...status, pairing: { ...status.pairing, requests: [...status.pairing.requests, ev.request] } };
       }
-      if (ev.phase === 'expired' && !ev.request && offer && !offerEnd) offerEnd = 'expired';
-      if (ev.phase === 'cancelled' || (ev.phase === 'expired' && ev.request)) {
-        if (offerEnd === 'connecting') { offer = null; offerEnd = null; }
-        notice = ev.phase === 'cancelled' ? t('settings.remote.approve.cancelled') : t('settings.remote.approve.expired');
+      if (ev.phase === 'expired' && !ev.request && wz?.offer && !wz.offerEnd) wz.offerEnd = 'expired';
+      // 流れの中で聞いていた求めが、許可する前に終わった（端末が切れた・期限）
+      if (wz?.request && ev.request?.id === wz.request.id && (ev.phase === 'cancelled' || ev.phase === 'expired')) {
+        wz.request = null;
+        wz.ended = ev.phase === 'cancelled' ? t('settings.remote.approve.cancelled') : t('settings.remote.approve.expired');
       }
-      if (ev.phase === 'approved' && ev.device) notice = t('settings.remote.approve.added', { name: ev.device.name || '' });
-      if (ev.phase === 'denied') notice = t('settings.remote.approve.denied');
-      if (ev.request && ev.phase !== 'request' && status) {
-        status = { ...status, pairing: { ...status.pairing, requests: status.pairing.requests.filter(r => r.id !== ev.request.id) } };
-      }
+      if (ev.request && ev.phase !== 'request') dropRequest(ev.request.id);
       paint();
     }
   }
 
   $('remoteTab').onclick = () => { page('remote'); refresh(); };
   paint();
-  return { refresh, event, get status() { return status; }, setReviewMode(on) { reviewMode = on === true; paintDevices(); } };
+  return {
+    refresh, event, get status() { return status; },
+    setReviewMode(on) { reviewMode = on === true; paint(); },
+  };
 }

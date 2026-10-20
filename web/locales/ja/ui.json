@@ -129,7 +129,17 @@
       "copyMcpJson": "MCP の設定をコピー",
       "copyMcpClaude": "claude mcp add をコピー",
       "copied": "コピーしました",
-      "copyFailed": "コピーできませんでした"
+      "copyFailed": "コピーできませんでした",
+      "resident": {
+        "title": "常駐",
+        "keepRunning": "ウィンドウを閉じても動かし続ける（トレイに残す）",
+        "launchAtLogin": "サインイン時に Pleiad を起動する（ウィンドウは出さずに起動）",
+        "launchAtLoginBlockedWin": "Windows の設定またはタスクマネージャーの「スタートアップ」で無効になっています。そこで有効にすると起動します。",
+        "launchAtLoginBlockedMac": "システム設定の「ログイン項目」で許可すると起動します。",
+        "sleep": "スリープ",
+        "sleepWorking": "作業中だけ防ぐ",
+        "sleepOff": "防がない"
+      }
     },
     "notify": {
       "pc": {
@@ -153,58 +163,94 @@
       }
     },
     "remote": {
-      "enable": "このホストをリモートから使えるようにする",
-      "state": {
-        "loading": "状態を読み込んでいます…",
-        "disabled": "リモートは無効です",
-        "connecting": "中継につないでいます…",
-        "connected": "中継につながっています",
-        "connectedDevices_other": "中継につながっています · 端末 {{count}} 台が接続中",
-        "failed": "中継につながりません",
-        "reason": " · {{reason}}",
-        "retryAt": "（{{time}} にもう一度試します）"
+      "tabs": {
+        "label": "向き",
+        "this": "この PC へ",
+        "other": "ほかの PC へ"
+      },
+      "allow": "ほかの端末からの操作を許可する",
+      "addDevice": "端末を追加",
+      "addHost": "PC を追加",
+      "groups": {
+        "own": "自分の中継サーバー"
+      },
+      "offline": "オフライン",
+      "failed": "サーバーへの接続に失敗しました",
+      "detail": {
+        "method": "つなぎ方",
+        "relay": "中継サーバー",
+        "added": "追加した日",
+        "lastSeen": "最後の接続",
+        "never": "まだつないでいません",
+        "revoke": "取り消す"
+      },
+      "wizard": {
+        "steps": {
+          "label": "手順",
+          "install": "アプリを入れる",
+          "method": "つなぎ方",
+          "connect": "つなぐ",
+          "done": "完了"
+        },
+        "cancel": "やめる",
+        "back": "戻る",
+        "next": "次へ",
+        "close": "閉じる",
+        "approve": "許可する",
+        "kind": "つなぐもの",
+        "phone": "スマホ",
+        "pc": "PC",
+        "installPhone": "スマホに Pleiad を入れます",
+        "stores": "Google Play・App Store",
+        "installPc": "相手の PC に Pleiad を入れます",
+        "relayGuide": "中継サーバーの立て方",
+        "scan": "スマホの Pleiad で QR を読みます",
+        "paste": "相手の PC の Pleiad で、リモート › ほかの PC へ › PC を追加 に貼り付けます",
+        "copy": "コピー",
+        "left": "残り {{time}}",
+        "confirm": "「{{name}}」をこの PC に追加しますか？",
+        "codeLabel": "確認コード",
+        "done": "{{name}} をつなぎました",
+        "connecting": "中継サーバーにつないでいます…",
+        "hostCode": "相手の PC に出ているコード",
+        "hostWait": "相手の PC で許可を待っています",
+        "hostConnecting": "相手の PC につないでいます…"
+      },
+      "hosts": {
+        "open": "開く",
+        "opening": "開いています…",
+        "rename": "名前を変える",
+        "renameLabel": "PC の名前",
+        "renameSave": "変更",
+        "remove": "削除",
+        "removeConfirm": "「{{host}}」をこの PC から削除しますか。相手の PC の端末の一覧には残るので、使わなくなったら相手の PC で取り消してください。",
+        "removeYes": "削除する",
+        "revoked": "取り消されました",
+        "revokedHint": "もう一度つなぐには、相手の PC で新しいコードを作り、「PC を追加」に貼り付けます。",
+        "agent": {
+          "label": "この PC の AI から任せる",
+          "notAllowed": "{{host}} の Pleiad を更新すると使えます",
+          "ready": "使える · 任せた作業の承認は、この PC の会話でも答えられます",
+          "unsupported": "この PC の Pleiad は古く、AI から任せる機能に未対応です"
+        },
+        "loadFailed": "PC の一覧を読めません: {{error}}",
+        "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。"
       },
       "relay": {
-        "title": "中継",
         "url": "中継の URL",
         "urlFromEnv": "環境変数 AGENT_HOST_RELAY_URL の値を使っています。",
         "secret": "登録用の秘密",
         "secretSaved": "保存済み（変えるときだけ入力）",
         "secretFromEnv": "環境変数 AGENT_HOST_RELAY_SECRET の値を使っています。",
         "hostName": "ホスト名",
-        "notEncrypted": "この起動では登録用の秘密を暗号化できません（本人だけが読めるファイルに保存します）。",
-        "save": "保存",
-        "saved": "保存しました。"
+        "notEncrypted": "この起動では登録用の秘密を暗号化できません（本人だけが読めるファイルに保存します）。"
       },
       "devices": {
-        "title": "端末",
-        "empty": "まだ端末はありません。",
         "unnamed": "名前のない端末",
-        "added": "追加 {{date}}",
-        "lastSeen": "最後に使った {{when}}",
-        "neverSeen": "まだ使っていません",
-        "online": "接続中",
-        "offline": "未接続",
-        "revoke": "取り消す",
         "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
         "keep": "やめる",
         "revokeTasks": "この端末の AI から任された作業 {{count}} 件も止めます。",
-        "revokeConfirmButton": "取り消す",
-        "revoked": "「{{name}}」を取り消しました。"
-      },
-      "agent": {
-      "title": "この端末の AI からの依頼を受ける",
-      "help": "委譲と同じ扱い: 承認モードは依頼元の会話に合わせ、承認は依頼元の会話にも出ます",
-      "confirm": "{{name}} の AI からの依頼を受けますか？",
-      "confirmWarn": "⚠ 依頼元の会話が確認なしのモードなら、この PC でも確認なしで動きます。",
-      "accept": "受ける",
-      "cancel": "やめる",
-      "note": "依頼元の会話が確認なしなら、この PC でも確認なしで動きます。",
-      "tasks": "任された作業 · 動いている {{count}}",
-      "waiting": "承認待ち {{count}}",
-      "open": "最近の会話を開く",
-      "stopAll": "すべて止める",
-      "noTasks": "任された会話はまだありません。"
+        "revokeConfirmButton": "取り消す"
       },
       "platform": {
         "desktop": "デスクトップ",
@@ -212,48 +258,24 @@
         "android": "Android"
       },
       "pair": {
-        "add": "＋ 端末を追加",
-        "needEnable": "リモートを有効にすると追加できます。",
-        "needConnected": "中継につながると追加できます。",
-        "title": "端末を追加",
         "qrLabel": "ペアリングの QR コード",
-        "left": "残り {{time}}",
-        "hint": "モバイル版で QR を読むか、デスクトップ版にコードを貼り付けます。",
-        "copy": "コードをコピー",
         "copied": "コピーしました",
         "copyFailed": "コピーできませんでした（選択してあります）",
-        "cancel": "やめる",
-        "connecting": "端末がつながりました。承認を待っています…",
+        "connecting": "端末がつながりました…",
         "expired": "期限が切れました。",
-        "again": "作り直す",
-        "close": "閉じる"
+        "again": "作り直す"
       },
       "approve": {
         "mark": "承認を待っている",
-        "title": "「{{name}}」をこのホストに追加しますか？",
+        "title": "「{{name}}」をこの PC に追加しますか？",
         "codeLabel": "確認コード",
-        "hint": "端末の画面に同じ数字が出ていることを確かめてから承認してください。",
+        "hint": "端末の画面に同じ数字が出ていることを確かめてから許可してください。",
         "deny": "拒否",
-        "approve": "承認",
-        "added": "「{{name}}」を追加しました。",
-        "denied": "端末の追加を拒否しました。",
+        "approve": "許可する",
         "cancelled": "端末が承認を待たずに切れました。",
         "expired": "承認されないまま期限が切れました。"
       },
-      "fullAccess": "ペアリングした端末は、このホストの利用者と同じことがすべてできます（承認モードの変更やコマンドの実行を含む）。",
-      "loginOnHost": "Claude CLI・Codex・外部 MCP・Antigravity のログインは、このホストの PC で行ってください。",
-      "otherHosts": "ほかのホストにつなぐ…",
-      "resident": {
-        "title": "常駐",
-        "keepRunning": "ウィンドウを閉じてもホストを続ける（トレイに残す）",
-        "sleep": "スリープ",
-        "sleepWorking": "作業中だけ防ぐ",
-        "sleepOff": "防がない",
-        "launchAtLogin": "サインイン時に Pleiad を起動する（ウィンドウは出さずに起動）",
-        "launchAtLoginRecommend": "リモートの受付がオンです。この PC を再起動しても委譲を受けられるよう、サインイン時の起動をおすすめします。",
-        "launchAtLoginBlockedWin": "Windows の設定またはタスクマネージャーの「スタートアップ」で無効になっています。そこで有効にすると起動します。",
-        "launchAtLoginBlockedMac": "システム設定の「ログイン項目」で許可すると起動します。"
-      }
+      "fullAccess": "つないだ端末は、この PC でできることがすべてできます"
     },
     "browser": {
       "description": "会話やプレビューのリンクを開く場所、外部の読み込みの確認を選びます。",

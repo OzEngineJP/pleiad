@@ -36,6 +36,7 @@ import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupAgentAccounts, createAccountRequestCache, composerAccount } from './agent-accounts.mjs';
 import { setupCompatEndpoints } from './compat-endpoints.mjs';
 import { setupRemote } from './remote.mjs';
+import { setupResidentSettings } from './resident-settings.mjs';
 import { setupNotifySettings } from './notify-settings.mjs';
 import { setupInputSettings, inputPrefs } from './input-settings.mjs';
 import { createRecall } from './composer/recall.mjs';
@@ -3330,7 +3331,7 @@ function onEvent(ev, replay = false) {
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
-  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); return; }
+  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); residentSettings.event(ev); return; }
   // worktree が増えた・消えた。開いている右パネルの「残っている worktree」を取り直す
   // 委譲の子の worktree が片付くと、カードの「未取り込み」の印が変わる（worktree.live）
   if (ev.type === 'worktreesChanged') { gitPanel?.changed(); loadTaskCards(state.current).then(repaintTasks).catch(() => {}); return; }
@@ -10030,6 +10031,7 @@ function connect() {
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
+      residentSettings.refresh();
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
       notificationInbox.reconnected();
@@ -10466,7 +10468,9 @@ const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () =
   openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin });
-const remoteSettings = setupRemote({ cmd, page: onboarding.page, openSession: id => { onboarding.close(); select(id); } });
+const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });
+// 設定 › アプリ情報・更新 › 常駐（デスクトップ版だけ。状態は remoteStatus の resident）
+const residentSettings = setupResidentSettings({ cmd });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
 const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
