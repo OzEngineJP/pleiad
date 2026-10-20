@@ -7,6 +7,7 @@
   const Plugins = window.Capacitor?.Plugins ?? {};
   const Remote = Plugins.PleiadRemote;
   const Scanner = Plugins.BarcodeScanner;
+  const Plus = Plugins.PleiadPlus;
   const hosts = new Map();      // hostId -> record (+ state)
   let pairingActive = false;
   let pairHostName = '';
@@ -277,7 +278,83 @@
   $('notifyBack').onclick = () => show('list');
   $('notifySystem').onclick = () => Remote.notifyOpenSystemSettings?.();
 
+  // ── Pleiad Plus (docs/plus.md "Android") ──
+  // The native PleiadPlus plugin owns the session; the page paints state() / the `state` event.
+
+  let pstate = null;
+
+  function paintPlus() {
+    const box = $('plus');
+    const circle = $('plusAccount');
+    box.replaceChildren();
+    const s = pstate;
+    if (!s || s.plus === 'off') { box.hidden = true; circle.hidden = true; return; }
+    const loggedIn = s.login === 'in';
+    circle.hidden = !loggedIn;
+    if (loggedIn) {
+      circle.textContent = (s.email || '?').charAt(0).toUpperCase();
+      circle.setAttribute('aria-label', s.email || t('plus.account'));
+    }
+    const msg = (key, cls) => {
+      const p = document.createElement('p');
+      p.className = cls;
+      p.textContent = t(key);
+      box.append(p);
+    };
+    const btn = (key, cls, fn, disabled) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = cls;
+      b.disabled = !!disabled;
+      const span = document.createElement('span');
+      span.textContent = t(key);
+      b.append(span);
+      b.onclick = fn;
+      box.append(b);
+    };
+    const signIn = () => { Plus?.login().catch(e => toast(errorText(e))); };
+    box.hidden = false;
+    if (s.plus === 'unknown') {
+      msg('plus.offline', 'weak');
+      btn('plus.signin', 'add', signIn, true);
+      return;
+    }
+    if (s.plus === 'maintenance') { msg('plus.maintenance', 'weak'); return; }
+    if (s.plus === 'update') { msg('plus.update', 'weak'); return; }
+    if (s.error === 'failed' || s.error === 'relogin') {
+      msg(s.error === 'failed' ? 'plus.failed' : 'plus.relogin', 'error');
+      btn('plus.retry', 'btn', signIn);
+      return;
+    }
+    if (s.error === 'unreachable') msg('plus.unreachable', 'error');
+    if (s.login === 'out') btn('plus.signin', 'add', signIn);
+    else if (s.login === 'pending') msg('plus.signingIn', 'weak');
+    else if (s.status === 'free' || s.status === 'disabled') {
+      msg('plus.noRelay', 'weak');
+      btn('plus.manage', 'btn', () => { Plus?.openAccount().catch(() => {}); });
+    }
+    box.hidden = box.children.length === 0;
+  }
+
+  function acctSheet(open) {
+    const s = pstate;
+    if (open) {
+      if (!s) return;
+      $('acctAvatar').textContent = (s.email || '?').charAt(0).toUpperCase();
+      $('acctEmail').textContent = s.email || '';
+      const prov = s.provider === 'google.com' ? t('plus.google') : s.provider === 'apple.com' ? t('plus.apple') : '';
+      $('acctProvider').textContent = prov;
+      $('acctProvider').hidden = !prov;
+    }
+    $('acctSheet').hidden = !open;
+  }
+
   // ── wiring ──
+
+  $('plusAccount').onclick = () => acctSheet(true);
+  $('acctBack').onclick = () => acctSheet(false);
+  $('acctManage').onclick = () => { acctSheet(false); Plus?.openAccount().catch(() => {}); };
+  $('acctLogout').onclick = () => { acctSheet(false); Plus?.logout().catch(() => {}); };
 
   $('add').onclick = startPair;
   $('scan').onclick = scan;
@@ -288,7 +365,8 @@
 
   // Android back: close the pairing screen first, then let the app go to the background
   Plugins.App?.addListener?.('backButton', () => {
-    if (!$('pair').hidden) { cancelPair(); show('list'); }
+    if (!$('acctSheet').hidden) acctSheet(false);
+    else if (!$('pair').hidden) { cancelPair(); show('list'); }
     else if (!$('notify').hidden) show('list');
     else Plugins.App.minimizeApp?.();
   });
@@ -308,6 +386,10 @@
     // Coming back (from the system's notification settings, say): re-read what the system says
     document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); if (!$('notify').hidden) loadNotify(); } });
     refresh().then(takeLink);
+  }
+  if (Plus) {
+    Plus.addListener('state', s => { pstate = s; paintPlus(); });
+    Plus.state().then(s => { pstate = s; paintPlus(); }).catch(() => {});
   }
   show('list');
 })();
