@@ -54,7 +54,7 @@ function deviceRecord(via = 'plus') {
 }
 
 export default async function (t) {
-  const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-plus-hosts-')));
+  const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'plus-hosts-')));
   const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:9' });
   plus.state.accounts[UID] = {
     uid: UID, email: 'u@example.test', provider: 'test', status: 'plus',
