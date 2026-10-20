@@ -87,6 +87,7 @@ export function defineOp(def) {
  *     writeSchema                                   settings.set の value の形（読んだ値と違うときだけ。既定は schema）
  *   riskOf(before, after) は、関所を緩める向きだけ 'guarded' を返す（定義の risk を下げられない）。riskOf を持つ設定は riskExamples
  *   （[{ before, after, risk }]。tests/unit/ops-settings.mjs が riskOf と突き合わせる）を書く。
+ *   sync（boolean、既定 true）: Plus の同期でほかの PC へ運ぶか（docs/plus.md「同期」）。human-only・guarded・riskOf・読むだけの設定は false にする
  */
 export function defineSetting(def) {
   const key = def?.key;
@@ -103,10 +104,13 @@ export function defineSetting(def) {
   if (def.riskOf !== undefined && typeof def.riskOf !== 'function') fail(key, 'riskOf must be a function (before, after) => risk');
   if (def.riskOf && !(Array.isArray(def.riskExamples) && def.riskExamples.length && def.riskExamples.every((e) => RISKS.includes(e?.risk) && 'before' in e && 'after' in e)))
     fail(key, 'a setting with riskOf needs riskExamples: [{ before, after, risk }]');
+  if (def.sync !== undefined && typeof def.sync !== 'boolean') fail(key, 'sync must be a boolean');
+  if (def.sync !== false && (def.risk === 'human-only' || def.risk === 'guarded' || def.riskOf || def.write === undefined))
+    fail(key, 'a human-only, guarded, riskOf or read-only setting must be sync: false');
   // prefs.json に書くキー（既定は key 自身）。tests/lint-ops.mjs が「prefs に書くキーは設定の一覧にある」の照合に使う
   const prefKeys = def.prefKeys ?? [key];
   if (!Array.isArray(prefKeys) || !prefKeys.every((k) => typeof k === 'string' && k)) fail(key, 'prefKeys must be an array of strings');
-  return Object.freeze({ ...def, kind: 'setting', prefKeys, readOnly: def.write === undefined });
+  return Object.freeze({ ...def, kind: 'setting', prefKeys, readOnly: def.write === undefined, sync: def.sync !== false });
 }
 
 /** 口 → surfaces の欄。human は画面、agent は via で決まる（cli は CLI、mcp と mcp-stdio は MCP）。 */

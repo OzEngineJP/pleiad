@@ -2,6 +2,8 @@
 // 設定を 1 つ足しても MCP のツールと CLI のサブコマンドは増えない。ここに 1 件書けば settings.list / get / schema / set に出る（ADR 0081）。
 // 値は ctx から読む（サーバーが渡す。prefs.json と、自分のモジュールの持つ値）。秘密は持たない（返す前の伏せ字は registry が最後の網で掛ける）。
 //
+// 同期（Plus の同期。docs/plus.md「同期」）: sync: false の設定はほかの PC へ運ばない。パス・機械に固有の値・アカウント・
+//   関所に関わるもの（human-only・guarded・riskOf）・読むだけのものが当たる。全部の判断は tests/unit/ops-settings.mjs の表。
 // 書き方（ADR 0082）: settings.set は write の操作で、設定ごとの危険度は defineSetting の risk と riskOf（関所を緩める向きだけ guarded）で決まる。
 //   write の設定は agent も通す。guarded は会話の承認モードで決まり（承認なしのモードは通す・それ以外は承認カード・束縛なしは NEEDS_UI）、
 //   human-only（承認モード・アカウント）は agent の一覧にも set にも出ない。
@@ -124,18 +126,18 @@ export const settings = [
     normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.suggestions: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('composerSuggestions', v) }),
   // 承認モードは人間だけが変える（design.md §8.5）。agent には出さない
-  defineSetting({ key: 'mode', summary: S('mode'), risk: 'human-only', schema: z.string(), default: '', read: fromPrefs('mode'), ...plainPref('mode', knownValue('mode')) }),
+  defineSetting({ key: 'mode', sync: false, summary: S('mode'), risk: 'human-only', schema: z.string(), default: '', read: fromPrefs('mode'), ...plainPref('mode', knownValue('mode')) }),
   // 既定のアカウントを替えると、新しい会話が別の契約・課金で動く。アカウントは human-only（ADR 0082）
-  defineSetting({ key: 'claudeAccount', summary: S('claudeAccount'), risk: 'human-only', schema: z.string().nullable(), default: null, read: fromPrefs('claudeAccount'),
+  defineSetting({ key: 'claudeAccount', sync: false, summary: S('claudeAccount'), risk: 'human-only', schema: z.string().nullable(), default: null, read: fromPrefs('claudeAccount'),
     ...plainPref('claudeAccount', async (ctx, v) => { if (!(await ctx.host.accountIds()).includes(v)) throw invalid(ctx, `claudeAccount: ${String(v).slice(0, 40)}`); return v; }, { nullable: true }) }),
-  defineSetting({ key: 'account', summary: S('account'), risk: 'human-only', schema: z.string().nullable(), default: null,
+  defineSetting({ key: 'account', sync: false, summary: S('account'), risk: 'human-only', schema: z.string().nullable(), default: null,
     read: async (ctx) => { const p = await prefs(ctx); return p.backends?.[p.backend]?.account ?? null; },
     ...plainPref('account', async (ctx, v, { backend }) => {
       if (!backend || !ctx.host.hasBackend(backend) || !(await ctx.host.accountIds(backend)).includes(v)) throw invalid(ctx, 'account');
       return v;
     }, { nullable: true }) }),
   // 送信したときだけサーバーが更新する。settings.set からは書けない。
-  defineSetting({ key: 'repoDefaults', summary: S('repoDefaults'), risk: 'read', prefKeys: ['repoDefaults'],
+  defineSetting({ key: 'repoDefaults', sync: false, summary: S('repoDefaults'), risk: 'read', prefKeys: ['repoDefaults'],
     schema: z.record(z.string(), z.unknown()), default: {}, read: fromPrefs('repoDefaults') }),
   defineSetting({ key: 'compaction.auto', summary: S('compaction.auto'), risk: 'write', riskReason: `Auto compaction threshold and delay. ${WRITE_ABOUT}`, prefKeys: ['autoCompaction'],
     schema: compaction, writeSchema: compactionPatch, default: DEFAULT_COMPACTION_SETTINGS, read: (ctx) => ctx.compactionSettings?.(),
@@ -146,19 +148,19 @@ export const settings = [
     },
     write: (ctx, value) => ctx.writes.compaction(value) }),
   // 確認を切る向き（オン → オフ）は関所を緩めるので guarded（広げる向きだけ確認する。ADR 0031・0082）
-  defineSetting({ key: 'confirmAgentSites', summary: S('confirmAgentSites'), risk: 'write', riskReason: `Turning the confirmation on only narrows the gate; turning it off is raised to guarded by riskOf`,
+  defineSetting({ key: 'confirmAgentSites', sync: false, summary: S('confirmAgentSites'), risk: 'write', riskReason: `Turning the confirmation on only narrows the gate; turning it off is raised to guarded by riskOf`,
     riskOf: confirmRiskOf, riskExamples: confirmExamples, schema: z.boolean(), default: false, read: fromPrefs('confirmAgentSites'),
     normalize: (ctx, v) => { if (!validBrowserPref('confirmAgentSites', v)) throw invalid(ctx, 'confirmAgentSites: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.browserPref('confirmAgentSites', v) }),
-  defineSetting({ key: 'chromeAutoAllow', summary: S('chromeAutoAllow'), risk: 'write', riskReason: 'Turning it off only brings back the manual Chrome prompt; turning it on lets Pleiad answer Chrome\'s remote debugging prompt for connections a human or a no-confirmation mode allowed, and is raised to guarded by riskOf',
+  defineSetting({ key: 'chromeAutoAllow', sync: false, summary: S('chromeAutoAllow'), risk: 'write', riskReason: 'Turning it off only brings back the manual Chrome prompt; turning it on lets Pleiad answer Chrome\'s remote debugging prompt for connections a human or a no-confirmation mode allowed, and is raised to guarded by riskOf',
     riskOf: autoAllowRiskOf, riskExamples: autoAllowExamples, prefKeys: ['chromeAutoAllow'], schema: z.boolean(), default: true, read: fromPrefs('chromeAutoAllow'),
     normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'chromeAutoAllow: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('chromeAutoAllow', v) }),
-  defineSetting({ key: 'confirmExternalLoads', summary: S('confirmExternalLoads'), risk: 'write', riskReason: `Turning the confirmation on only narrows the gate; turning it off is raised to guarded by riskOf`,
+  defineSetting({ key: 'confirmExternalLoads', sync: false, summary: S('confirmExternalLoads'), risk: 'write', riskReason: `Turning the confirmation on only narrows the gate; turning it off is raised to guarded by riskOf`,
     riskOf: confirmRiskOf, riskExamples: confirmExamples, schema: z.boolean(), default: false, read: fromPrefs('confirmExternalLoads'),
     normalize: (ctx, v) => { if (!validBrowserPref('confirmExternalLoads', v)) throw invalid(ctx, 'confirmExternalLoads: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.browserPref('confirmExternalLoads', v) }),
-  ...['agentSitePermissions', 'externalSitePermissions'].map((key) => defineSetting({ key, summary: S(key), risk: 'write', riskReason: NARROW_ABOUT,
+  ...['agentSitePermissions', 'externalSitePermissions'].map((key) => defineSetting({ key, sync: false, summary: S(key), risk: 'write', riskReason: NARROW_ABOUT,
     riskOf: sitesRiskOf,
     riskExamples: [{ before: [], after: [siteExample], risk: 'guarded' }, { before: [siteExample], after: [], risk: 'write' }, { before: [siteExample], after: [{ ...siteExample, mode: 'ask' }], risk: 'write' }],
     schema: z.array(site), default: [], read: fromPrefs(key),
@@ -166,14 +168,14 @@ export const settings = [
     write: (ctx, v) => ctx.writes.browserPref(key, v) })),
   // Chrome・Edge のプロフィールのメモと、新しい会話のプロフィール（docs/inapp-browser.md「プロフィール」）。
   // どちらも選ぶ・書き添えるだけで、サイトの許可には触らない（許可の鍵はプロフィールごと）
-  defineSetting({ key: 'chromeProfileNotes', summary: S('chromeProfileNotes'), risk: 'write', riskReason: `Notes shown next to the Chrome profiles. ${WRITE_ABOUT}`,
+  defineSetting({ key: 'chromeProfileNotes', sync: false, summary: S('chromeProfileNotes'), risk: 'write', riskReason: `Notes shown next to the Chrome profiles. ${WRITE_ABOUT}`,
     schema: z.array(z.object({ browser: z.string(), dir: z.string(), note: z.string() })), default: [], read: fromPrefs('chromeProfileNotes'),
     ...plainPref('chromeProfileNotes', (ctx, v) => { if (!validProfileNotes(v)) throw invalid(ctx, `chromeProfileNotes: ${JSON.stringify(v)?.slice(0, 80)}`); return v; }) }),
-  defineSetting({ key: 'chromeNewProfile', summary: S('chromeNewProfile'), risk: 'write', riskReason: `The Chrome profile new conversations start with. ${PICK_ABOUT}`,
+  defineSetting({ key: 'chromeNewProfile', sync: false, summary: S('chromeNewProfile'), risk: 'write', riskReason: `The Chrome profile new conversations start with. ${PICK_ABOUT}`,
     schema: z.object({ browser: z.string(), dir: z.string() }).nullable(), default: null, read: fromPrefs('chromeNewProfile'),
     ...plainPref('chromeNewProfile', (ctx, v) => { if (!validProfileRef(v)) throw invalid(ctx, `chromeNewProfile: ${JSON.stringify(v)?.slice(0, 80)}`); return v; }, { nullable: true }) }),
   // 有効にする・全アプリの許可・常に許可を足す向きは関所を緩めるので guarded
-  defineSetting({ key: 'computerUse', summary: S('computerUse'), risk: 'write', riskReason: NARROW_ABOUT,
+  defineSetting({ key: 'computerUse', sync: false, summary: S('computerUse'), risk: 'write', riskReason: NARROW_ABOUT,
     riskOf: (before, after) => ((after?.enabled === true && before?.enabled !== true) || (after?.allowAllApps === true && before?.allowAllApps !== true)
       || (after?.alwaysAllowed?.length ?? 0) > (before?.alwaysAllowed?.length ?? 0) ? 'guarded' : 'write'),
     riskExamples: [
@@ -198,7 +200,7 @@ export const settings = [
     } }),
   // 通話モード（設定 › 通話。docs/voice-call.md）。渡した項目だけを重ねる。OpenRouter のキーは human-only の別の口（setVoiceKey）で、ここには出ない。
   // 費用の安全弁（1 回・1 日の長さの上限）を上げる向きは関所を緩めるので guarded（下げる向き・モデルと声の選びは write）
-  defineSetting({ key: 'voice', summary: S('voice'), risk: 'write', riskReason: `Models, voice and language for the call mode. ${PICK_ABOUT}. Raising the call length limits loosens the cost gate and is raised to guarded by riskOf`,
+  defineSetting({ key: 'voice', sync: false, summary: S('voice'), risk: 'write', riskReason: `Models, voice and language for the call mode. ${PICK_ABOUT}. Raising the call length limits loosens the cost gate and is raised to guarded by riskOf`,
     riskOf: (before, after) => (voiceLoosens(normalizeVoiceSettings(before), normalizeVoiceSettings(after)) ? 'guarded' : 'write'),
     riskExamples: [
       { before: { ...VOICE_DEFAULTS }, after: { ...VOICE_DEFAULTS, dailyLimitMinutes: VOICE_DEFAULTS.dailyLimitMinutes + 60 }, risk: 'guarded' },
@@ -215,7 +217,7 @@ export const settings = [
     write: (ctx, value) => ctx.writes.pref('voice', value) }),
   // OS にサインインしたら Pleiad を起動する（設定 › アップデートの「サインイン時に起動」。ADR 0175）。持ち主は OS なので prefs には持たず、読むのも書くのも main（desktop/login-item.cjs）。
   // 常駐の入口を増やす設定なので guarded（束縛なしの agent は断られ、会話の承認モードで聞く）。使えない構成（開発起動・Store 版・Linux・main が居ない起動）でのオンは断る
-  defineSetting({ key: 'launchAtLogin', summary: S('launchAtLogin'), risk: 'guarded', prefKeys: [],
+  defineSetting({ key: 'launchAtLogin', sync: false, summary: S('launchAtLogin'), risk: 'guarded', prefKeys: [],
     schema: z.boolean(), default: false, read: async (ctx) => (await ctx.host?.loginItem?.get())?.enabled === true,
     normalize: async (ctx, value) => {
       if (typeof value !== 'boolean') throw invalid(ctx, 'launchAtLogin: boolean');
@@ -232,7 +234,7 @@ export const settings = [
       catch (e) { throw invalid(ctx, `launchAtLogin: ${e?.code ?? 'failed'}`, t('loginItem.failed', { reason: e?.code ?? 'failed' })); }
     } }),
   // 渡した項目だけを重ねる。null の項目は既定に戻す。自動選択に使うキーは human-only の別の口で、ここには出ない
-  defineSetting({ key: 'delegationRouting', summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
+  defineSetting({ key: 'delegationRouting', sync: false, summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
     schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: ROUTING_DEFAULTS, read: (ctx) => ctx.routingSettings?.(),
     normalize: async (ctx, patch) => {
       // 前の版の Cerebras の自動選択の項目は Qwen の名前へ直して重ねる（core/server.mjs の applyRoutingSettings と同じ。ADR 0177）
@@ -244,7 +246,7 @@ export const settings = [
     },
     write: (ctx, arg) => ctx.writes.routing(arg.patch) }),
   // action は save / toggle / delete / reset / order（core/ply-instructions.mjs の changePlyInstructions）。読むのは項目の一覧
-  defineSetting({ key: 'plyInstructions', summary: S('plyInstructions'), risk: 'guarded', schema: loose, writeSchema: z.object({ action: z.enum(['save', 'toggle', 'delete', 'reset', 'order']) }).passthrough(),
+  defineSetting({ key: 'plyInstructions', sync: false, summary: S('plyInstructions'), risk: 'guarded', schema: loose, writeSchema: z.object({ action: z.enum(['save', 'toggle', 'delete', 'reset', 'order']) }).passthrough(),
     default: [], read: (ctx) => ctx.plyInstructions?.(),
     normalize: (ctx, action) => {
       try { return { after: ctx.host.changePlyInstructions(action) }; }
@@ -252,10 +254,10 @@ export const settings = [
     },
     write: (ctx, next) => ctx.writes.plyInstructions(next) }),
   // 前の版の委譲の指示のスイッチ。plyInstructions に置き換わっていて、読むだけ（plyInstructions を変えると片付く）
-  defineSetting({ key: 'addedContext', summary: S('addedContext'), risk: 'guarded', schema: loose, default: null, read: fromPrefs('addedContext') }),
+  defineSetting({ key: 'addedContext', sync: false, summary: S('addedContext'), risk: 'guarded', schema: loose, default: null, read: fromPrefs('addedContext') }),
   // context の既定値（設定 › コンテキストの「既定」）。prefs.json ではなく context-settings.json に持つ。読むのは全体の形、書くのは 1 か所の差分:
   //   { kind, value }  その種類の担当と探索元（null で既定に戻す）  /  { kind?, roots }  追加で探すフォルダー（null で空）
-  defineSetting({ key: 'context.default', summary: S('context.default'), risk: 'guarded', prefKeys: [], schema: loose,
+  defineSetting({ key: 'context.default', sync: false, summary: S('context.default'), risk: 'guarded', prefKeys: [], schema: loose,
     writeSchema: z.object({ kind: z.enum(CONTEXT_KINDS).optional(), value: z.unknown().optional(), roots: z.array(z.string().max(4096)).max(50).nullable().optional() }).strict(),
     default: null, read: (ctx) => ctx.contextDefaults?.(),
     normalize: async (ctx, patch, { before }) => {
