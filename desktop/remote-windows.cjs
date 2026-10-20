@@ -80,8 +80,9 @@ function hostRow(rec, { windowOpen = false } = {}) {
   return { hostId: rec.hostId, name: displayName(rec), hostName: rec.hostName ?? '', label: rec.label ?? '',
     relay: relayLabel(rec.relayUrl), state: rec.revokedAt && rec.state !== 'connected' ? 'revoked' : rec.state ?? 'closed',
     lastConnectedAt: rec.lastConnectedAt ?? null, pairedAt: rec.pairedAt ?? null, windowOpen,
-    // この PC の AI から任せる（docs/remote.md §4.5）: 端末側のスイッチと、ホスト側の許可（線がつながっているときの ready の allowed）
-    agentUse: rec.agentUse === true, agentAllowed: rec.agent?.allowed === true, agentState: rec.agent?.state ?? 'offline' };
+    // この PC の AI から任せられるか（docs/remote.md §4.5）: ホスト側の許可（線がつながっているときの ready の allowed）と線の状態。
+    // つながっていて受けないのは、端末ごとの許可があった古い版のホスト（詳しい画面に「更新すると使えます」）
+    agentAllowed: rec.agent?.allowed === true, agentState: rec.agent?.state ?? 'offline' };
 }
 
 const SNAPSHOT_PATH = '/visualization-snapshot';
@@ -379,6 +380,7 @@ function createRemoteWindows(deps) {
         const d = await device();
         const rec = await d.pair(String(payload ?? '').trim(), { signal: ctl.signal,
           onCode: code => { if (!sender.isDestroyed()) sender.send('ply:hosts-code', formatCode(code)); } });
+        await agentBridge?.refresh();
         pushHosts();
         return { ok: true, host: hostRow({ ...rec, state: 'closed' }) };
       } catch (e) { return fail(e); }
@@ -398,17 +400,6 @@ function createRemoteWindows(deps) {
           const rec = (await (await device()).list()).find(h => h.hostId === hostId);
           w.name = displayName(rec); w.win.setTitle(t('remote.windowTitle', { host: w.name }));
         }
-        pushHosts();
-        return { ok: true };
-      } catch (e) { return fail(e); }
-    });
-    // この PC の AI からそのホストへ任せるか（人だけが変えられる。ローカルのサーバーの設定・AI の操作の一覧には置かない。remote.md §4.5）
-    ipcMain.handle('ply:hosts-agent-use', async (event, hostId, enabled) => {
-      trust.check(event, ['local']);
-      try {
-        if (!HOST_ID.test(String(hostId))) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
-        await (await device()).setAgentUse(hostId, enabled === true);
-        await agentBridge?.refresh();
         pushHosts();
         return { ok: true };
       } catch (e) { return fail(e); }
@@ -447,7 +438,7 @@ function createRemoteWindows(deps) {
   function attachWorker(worker) {
     const { attachRemoteAgentBridge } = require('./remote-agent-bridge.cjs');
     agentBridge = attachRemoteAgentBridge(worker, { getDevice: device, log: line => console.warn('[remote-agent]', line) });
-    // agentUse のホストへ線を張り、一覧をサーバーへ送る（サーバーはこの便りで「任せられるホスト」を知る）
+    // ペアリングしたホストへ線を張り、一覧をサーバーへ送る（サーバーはこの便りで「任せられるホスト」を知る）
     agentBridge.refresh();
     return agentBridge;
   }

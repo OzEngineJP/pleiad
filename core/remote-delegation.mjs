@@ -78,7 +78,7 @@ export function parentPortRemoteAgent(port, { timeoutMs = 70_000 } = {}) {
   });
   const on = kind => fn => { listeners[kind].add(fn); return () => listeners[kind].delete(fn); };
   return {
-    /** main が最後に知らせたホストの一覧 [{ hostId, name, hostName, agentUse, state, allowed, view }]。view はホストが経過の読み出しを知っているか */
+    /** main が最後に知らせたホストの一覧 [{ hostId, name, hostName, state, allowed, view }]。view はホストが経過の読み出しを知っているか */
     get hosts() { return hosts; },
     /** main との口が使えるか（更新の引き継ぎの間は false）。false の間のオフラインは、ホストの不通ではない */
     get connected() { return !port.resumable || port.connected !== false; },
@@ -143,12 +143,12 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
 
   const hostsNow = () => bridge?.hosts ?? [];
   const hostById = hostId => hostsNow().find(h => h.hostId === hostId) ?? null;
-  const usable = h => Boolean(h) && h.agentUse === true && h.allowed === true && h.state === 'ready';
+  const usable = h => Boolean(h) && h.allowed === true && h.state === 'ready';
 
-  /** ply_delegate の説明に載せる、任せられるホスト（端末側がオンで、ホストが許可しているもの）。オフラインは online: false */
+  /** ply_delegate の説明に載せる、任せられるホスト（ホストが「ほかの端末からの操作を許可する」を入れているもの。ADR 0239）。オフラインは online: false */
   function describe() {
     // 名前は AI の道具の説明に入るので、改行・制御文字を空白にして短くする（ホストが名乗る名前をそのまま信じない）
-    return hostsNow().filter(h => h.agentUse === true && h.allowed === true).map(h => ({ name: String(h.name ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40), online: h.state === 'ready' }));
+    return hostsNow().filter(h => h.allowed === true).map(h => ({ name: String(h.name ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 40), online: h.state === 'ready' }));
   }
 
   function findHost(name, lng) {
@@ -160,8 +160,8 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     if (hits.length > 1) throw new DelegationError(agentT(lng, 'delegation.remote.hostAmbiguous', { host: String(name) }), 'HOST_AMBIGUOUS');
     const host = hits[0];
     if (!host) throw unknown();
-    if (!host.agentUse) throw new DelegationError(agentT(lng, 'delegation.remote.hostNotEnabled', { host: host.name }), 'HOST_NOT_ENABLED');
-    if (!host.allowed) throw new DelegationError(agentT(lng, 'delegation.remote.hostNotAllowed', { host: host.name }), 'HOST_NOT_ALLOWED');
+    // つながっているのに受けない・口が無いのは、ホストの Pleiad が古いとき（許可を切ったホストは中継から離れるので、オフラインに見える。ADR 0239）
+    if (host.state === 'unsupported' || (host.state === 'ready' && !host.allowed)) throw new DelegationError(agentT(lng, 'delegation.remote.hostNotAllowed', { host: host.name }), 'HOST_NOT_ALLOWED');
     // オフラインは待たずに失敗する（走り出す前に分かる失敗を、AI に待たせない）
     if (!usable(host)) throw new DelegationError(agentT(lng, 'delegation.remote.hostOffline', { host: host.name }), 'HOST_OFFLINE');
     return host;
@@ -471,17 +471,17 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
         Promise.resolve(done).finally(changed);
       }),
       bridge.onReady((hostId, status) => { reconnected(hostId); return catchUp(hostId, status).catch(e => log(`remote delegation: ${e?.message ?? e}`)); }),
-      // 一覧が変わった。この PC 側で任せる設定を切った・ホストを消したら、そのホストの動いていた写しは追えない（理由つきで終わらせる）
+      // 一覧が変わった。ホストを消したら、そのホストの動いていた写しは追えない（理由つきで終わらせる）
       bridge.onHosts(list => {
         const gone = new Set();
         for (const r of tasks()?.rowsWhere(x => x.host && !FINAL.has(x.status)) ?? []) {
           const h = list.find(x => x.hostId === r.host.hostId);
-          if (!h || !h.agentUse) gone.add(r.host.hostId);
+          if (!h) gone.add(r.host.hostId);
         }
-        // 一覧から外れたホスト（消した・任せる設定を切った）のタスクの早期記録も捨てる（もう追えない）
+        // 一覧から外れたホスト（消した）のタスクの早期記録も捨てる（もう追えない）
         for (const id of [...early.keys()]) {
           const h = list.find(x => x.hostId === tasks()?.get(id)?.host?.hostId);
-          if (!h || !h.agentUse) early.delete(id);
+          if (!h) early.delete(id);
         }
         Promise.all([...gone].map(id => retire(id, 'unlinked'))).catch(e => log(`remote delegation: ${e?.message ?? e}`)).finally(changed);
       }),
@@ -661,7 +661,7 @@ export function createRemoteDelegation({ bridge, tasks, agentT, titleOf = async 
     const hostId = row?.host?.hostId ?? known.get(taskId) ?? null;
     if (!hostId || (asked && asked !== hostId)) return { state: 'failed', code: 'NOT_FOUND' };
     const host = hostById(hostId);
-    if (!host || host.agentUse !== true) return { state: 'failed', code: 'NOT_FOUND' };
+    if (!host) return { state: 'failed', code: 'NOT_FOUND' };
     if (host.state !== 'ready') return { state: 'offline', since: offlineAt.get(hostId) ?? null };
     if (!host.allowed) return { state: 'denied' };
     if (host.view !== true) return { state: 'unsupported' };

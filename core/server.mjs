@@ -5175,7 +5175,7 @@ function opsDeps(lng = currentLocale()) {
 /** ホストに任せたタスクの印に使う、つないでいるホストの名前とオンラインか（running に載せる。docs/remote.md §4.5） */
 function remoteHostsNow() {
   const out = {};
-  for (const h of remoteAgentBridge?.hosts ?? []) if (h.agentUse) {
+  for (const h of remoteAgentBridge?.hosts ?? []) {
     const online = h.state === 'ready' && h.allowed === true;
     // since: 線が使えなくなった時刻（画面の「オフライン · HH:MM までの分」）。分からなければ付けない
     out[h.hostId] = { name: h.name, online, view: h.view === true,

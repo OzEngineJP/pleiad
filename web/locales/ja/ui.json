@@ -228,10 +228,7 @@
         "revoked": "取り消されました",
         "revokedHint": "もう一度つなぐには、相手の PC で新しいコードを作り、「PC を追加」に貼り付けます。",
         "agent": {
-          "label": "この PC の AI から任せる",
-          "notAllowed": "{{host}} の Pleiad を更新すると使えます",
-          "ready": "使える · 任せた作業の承認は、この PC の会話でも答えられます",
-          "unsupported": "この PC の Pleiad は古く、AI から任せる機能に未対応です"
+          "notAllowed": "{{host}} の Pleiad を更新すると使えます"
         },
         "loadFailed": "PC の一覧を読めません: {{error}}",
         "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。"

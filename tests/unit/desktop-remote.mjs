@@ -142,7 +142,7 @@ export default async function (t) {
     t.ok('ローカルの窓: 同じ PC のブリッジと ほかの PC へ の口を出し、plyRemote は出さない',
       typeof local.exposed.plyDesktop?.chooseFolder === 'function' && typeof local.exposed.plyDesktop.update === 'function'
       && typeof local.exposed.plyDesktop.openRemoteHosts === 'function' && !('plyRemote' in local.exposed)
-      && ['init', 'list', 'pair', 'cancelPair', 'open', 'rename', 'remove', 'setAgentUse', 'onCode', 'onChange', 'onOpen'].every(k => typeof hosts?.[k] === 'function'));
+      && ['init', 'list', 'pair', 'cancelPair', 'open', 'rename', 'remove', 'onCode', 'onChange', 'onOpen'].every(k => typeof hosts?.[k] === 'function'));
     local.exposed.plyDesktop.openRemoteHosts();
     hosts.pair('pleiad://pair?x');
     t.ok('ほかの PC へ を開く口と、ペアリングの口', local.invoked.map(s => s[0]).join() === 'ply:open-remote-hosts,ply:hosts-pair');
@@ -158,7 +158,7 @@ export default async function (t) {
   // ---------------------------------------------------------------- ほかの PC へ の一覧の行
   {
     const arow = rw.hostRow({ hostId: HOST_ID, hostName: 'desk', relayUrl: 'https://r.example/', state: 'connected', deviceId: 'd1', agentUse: true, agent: { allowed: true, state: 'ready' } });
-    t.ok('一覧の行に、AI から任せるスイッチとホストの許可・線の状態が載る（秘密は載らない）', arow.agentUse === true && arow.agentAllowed === true && arow.agentState === 'ready' && !('token' in arow));
+    t.ok('一覧の行に、ホストの許可と線の状態が載る（前の版の agentUse・秘密は載らない）', arow.agentAllowed === true && arow.agentState === 'ready' && !('agentUse' in arow) && !('token' in arow));
   }
 
   // ---------------------------------------------------------------- 画面のバッジ

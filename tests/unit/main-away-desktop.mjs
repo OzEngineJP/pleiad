@@ -129,9 +129,9 @@ export default async function (t) {
     const lines = new Map([['h1', new EventEmitter()], ['h2', new EventEmitter()]]);
     let synced = 0;
     device.list = async () => [
-      { hostId: 'h1', label: 'Desk', hostName: 'DESK', agentUse: true, agent: { state: 'ready', allowed: true } },
-      { hostId: 'h2', label: 'Lap', hostName: 'LAP', agentUse: true, agent: { state: 'offline', allowed: false } },
-      { hostId: 'h3', label: 'Off', hostName: 'OFF', agentUse: false },
+      { hostId: 'h1', label: 'Desk', hostName: 'DESK', agent: { state: 'ready', allowed: true } },
+      { hostId: 'h2', label: 'Lap', hostName: 'LAP', agent: { state: 'offline', allowed: false } },
+      { hostId: 'h3', label: 'Off', hostName: 'OFF' },
     ];
     device.agentSync = async () => { synced++; };
     device.store = { hosts: async () => [{ hostId: 'h1' }, { hostId: 'h2' }] };

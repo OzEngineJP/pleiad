@@ -114,7 +114,7 @@ main を**木ごと**止める（`taskkill /PID <main> /T /F`。タスクマネ�
 - **U3（実機 3）** 上の U2 と同じ。更新の間の長さを測る（`quitAndInstall` → 新しい版の窓。本物で 55〜70 秒の見込み、この PC の試験用では 47〜53 秒）
 - **U4（実機 5。本物の画面操作）** 設定で computer use を有効にし、Pleiad に別のアプリ（メモ帳）を操作させている最中に更新を押す。確かめること: オーバーレイが消える前に操作が止まる・エージェントに「Pleiad の更新中のため止めました」が伝わる・更新後、次の呼び出しで承認からやり直せる。**この PC の前面の窓を操作するので、利用者が見ている時に行う**
 - **U5（os-open・openExternal の居ない間）** MCP の OAuth の同意画面（外部の MCP の認証）を開く操作を、更新の約 1 分の間に行う。ブラウザーが開くこと（main が居ない間は OS に直に頼む）。ブラウザーが実際に開くので、利用者が見ている時に
-- **U6（ホストへ任せる口）** 「この PC の AI から任せる」を有効にした端末とホスト（`docs/remote.md`）。端末側を更新・切り替えしても、タスクと承認が戻る（居ない間は `OFFLINE`・戻ったら `sync`）
+- **U6（ホストへ任せる口）** ホストの許可（「ほかの端末からの操作を許可する」）を入れたホストと、ペアリングした端末（`docs/remote.md`）。端末側を更新・切り替えしても、タスクと承認が戻る（居ない間は `OFFLINE`・戻ったら `sync`）
 - **U7（実機 15）** 全ユーザー向け（`Program Files`。UAC）のインストールで、U1 と同じ更新。実行場所は `%LOCALAPPDATA%\agent-host-runtime`（利用者ごと）のまま、`$INSTDIR` の中ではない
 - **U8（実機 16）** Windows ARM64 の PC で U1。まず、インストール後の `resources\app` が manifest と全ファイル一致するか、`PleiadZdTest.exe` 相当の `Ply.exe`・`ffmpeg.dll` などが欠けていないか（上の「見つけて直したこと」の 3）。ARM64 の Node（81.9 MB）で実行場所が組め、`pleiad-node.exe` が動く。欠けていたら、リリースのワークフローに `ELECTRON_BUILDER_7Z_FILTER=BCJ2` を付けて作り直す
 - **U9（実機 7 の前方一致）** インストール先を `%LOCALAPPDATA%\agent-host-runtime-app` のように変えて入れ、起動後に `%LOCALAPPDATA%\jp.ply.desktop\runtime`（インストール先と前方一致でない場所）へ実行場所が移ること（`updater.log` の `runtime:`）。既存の `%LOCALAPPDATA%\jp.ply.desktop` に触れるので、別の PC か別の Windows ユーザーで

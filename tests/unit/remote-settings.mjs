@@ -82,8 +82,9 @@ export default async function (t) {
     && (h => h.revoked && !h.canOpen && h.sub === '取り消されました')(hostLine({ hostId: 'h1', name: 'desk', state: 'revoked' }))
     && hostLine({ hostId: 'h1' }).name === 'h1');
   t.ok('AI から任せる: オフなら何も出さず、ホストが古ければ更新を促す',
-    agentLine({ agentUse: false }).text === '' && agentLine({ agentUse: true, agentAllowed: false, name: 'desk' }).text === 'desk の Pleiad を更新すると使えます'
-    && agentLine({ agentUse: true, agentAllowed: true }).text.startsWith('使える') && agentLine({ agentUse: true, agentState: 'unsupported' }).text.includes('未対応'));
+    agentLine({ agentState: 'ready', agentAllowed: true }) === '' && agentLine({ agentState: 'offline', agentAllowed: false }) === ''
+    && agentLine({ agentState: 'ready', agentAllowed: false, name: 'desk' }) === 'desk の Pleiad を更新すると使えます'
+    && agentLine({ agentState: 'unsupported', name: 'desk' }) === 'desk の Pleiad を更新すると使えます');
 
   // ---- 常駐の設定
   t.ok('既定は「窓を閉じても続ける」「作業中だけ防ぐ」', DEFAULT_RESIDENT.keepRunning === true && DEFAULT_RESIDENT.sleep === 'working');

@@ -228,10 +228,7 @@
         "revoked": "Revoked",
         "revokedHint": "To connect again, create a new code on the other PC and paste it under \"Add PC\".",
         "agent": {
-          "label": "Hand work over from this PC's AI",
-          "notAllowed": "Works once {{host}}'s Pleiad is updated",
-          "ready": "Available · approvals for handed-over work can also be answered in this PC's conversation",
-          "unsupported": "This PC's Pleiad is too old to accept work from an AI"
+          "notAllowed": "Works once {{host}}'s Pleiad is updated"
         },
         "loadFailed": "Couldn't read the PC list: {{error}}",
         "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read)."

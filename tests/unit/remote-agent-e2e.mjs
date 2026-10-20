@@ -10,7 +10,7 @@ import crypto from 'node:crypto';
 import { createRelay } from '../../relay/server.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
-import { createRemoteDevice, createDeviceStore } from '../../core/remote/device.mjs';
+import { createRemoteDevice } from '../../core/remote/device.mjs';
 import { viewCursor } from '../../core/remote/agent-view.mjs';
 
 export const name = 'remote-agent-e2e';
@@ -57,7 +57,8 @@ export default async function (t) {
     const hostId = rec.hostId;
     const devices = await hostCmd('remoteDevices');
     const deviceId = devices[0].id;
-    const deviceStore = createDeviceStore({ dir: devDir });
+    // 端末のサーバーを起こす前にホストの許可を切っておく（切っている間は中継から離れ、端末の線は ready にならない）
+    await hostCmd('setRemoteSettings', { enabled: false });
 
     // ---- 端末のローカルのサーバーを main の身代わり付きで起こす
     term = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', FAKE_REMOTE_DEVICE_DIR: devDir }, dataDir: termDir, entry: path.join(ROOT, 'tests', 'lib', 'remote-agent-parent-port.mjs'), timeoutMs: 60_000 });
@@ -88,16 +89,16 @@ export default async function (t) {
     const tRows = () => termCmd('agentTasks');
     const hRows = () => hostCmd('agentTasks');
 
-    // ---- ホストはつないだだけで受ける（ADR 0239）が、端末側の「この PC の AI から任せる」がオフなら host は出ない
+    // ---- ホストの許可（「ほかの端末からの操作を許可する」）がオフの間は host は出ない。端末側に別の許可は無い（ADR 0239）
     const first = await tool(null, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:NO' });
     const sid = first.sessionId;
-    t.ok('端末側がオフ（既定）では ply_delegate に host の引数が無い（書くと不正な引数）', toolResult(first).isError === true && (await tRows()).length === 0, toolResult(first).text);
+    t.ok('ホストの許可がオフの間は ply_delegate に host の引数が無い（書くと不正な引数）', toolResult(first).isError === true && (await tRows()).length === 0, toolResult(first).text);
 
-    // ---- 端末側もオン（窓のスイッチの代わりに hosts.json の agentUse）
-    await deviceStore.updateHost(hostId, { agentUse: true });
+    // ---- ホストの許可を入れると、端末で何もしなくても任せられる
+    await hostCmd('setRemoteSettings', { enabled: true });
     const readyBy = async () => { const r = toolResult(await tool(sid, 'ply_delegate', { host: 'desk-test', kind: 'mechanical', backend: 'fake', task: 'echo:REMOTE_HELLO', title: 'ホストで挨拶' })); return r.isError ? null : r; };
-    const started = await until(readyBy, 30_000, '両側オンで host が使える');
-    t.ok('両側オンになると host が使え、taskId・host の名前・状態が返る', /^ply-task-/.test(started.json?.taskId ?? '') && started.json.host === 'desk-test' && started.json.title === 'ホストで挨拶', started.text.slice(0, 200));
+    const started = await until(readyBy, 30_000, 'ホストの許可で host が使える');
+    t.ok('ホストの許可を入れると host が使え、taskId・host の名前・状態が返る', /^ply-task-/.test(started.json?.taskId ?? '') && started.json.host === 'desk-test' && started.json.title === 'ホストで挨拶', started.text.slice(0, 200));
     const taskId = started.json.taskId;
     const done = await until(async () => (await tRows()).find(r => r.taskId === taskId && r.status === 'completed' && r.notification === 'sent'), 30_000, '完了と完了通知');
     t.ok('端末の台帳にホストのタスクの写しがあり、完了して結果が写る', done.host?.name === 'desk-test' && done.result === 'REMOTE_HELLO' && done.parentSessionId === sid, JSON.stringify([done.host, done.result]));

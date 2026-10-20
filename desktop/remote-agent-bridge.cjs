@@ -10,7 +10,7 @@ const { pathToFileURL } = require('node:url');
 
 /**
  * getDevice: () => Promise<createRemoteDevice の戻り値>（desktop/remote-windows.cjs の device()）
- * 戻り値の refresh() は、agentUse が変わった・ホストが増減したときに呼ぶ（線を張り直してサーバーへ一覧を送る）
+ * 戻り値の refresh() は、ホストが増減したときに呼ぶ（線を張り直してサーバーへ一覧を送る）
  */
 function attachRemoteAgentBridge(worker, { getDevice, log = () => {} }) {
   const service = import(pathToFileURL(path.join(__dirname, '..', 'core', 'remote', 'agent-service.mjs')).href)

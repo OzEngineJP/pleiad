@@ -1,13 +1,13 @@
 // 設定 › リモート › ほかの PC へ（docs/remote.md §4、ADR 0239）。デスクトップ版のローカルの窓だけに出す（plyDesktop.hosts。desktop/remote-windows.cjs）。
 //
-// - 一覧: ペアリングしたホストの行（自分の中継サーバー）。行を押すと詳しい画面（つなぎ方・中継サーバー・最後の接続・開く・この PC の AI から任せる・名前を変える・削除）
+// - 一覧: ペアリングしたホストの行（自分の中継サーバー）。行を押すと詳しい画面（つなぎ方・中継サーバー・最後の接続・開く・名前を変える・削除。古いホストには更新を勧める 1 行）
 // - ＋ の流れ（PC を追加）: アプリを入れる › つなぎ方 › つなぐ（相手の PC に出ているコードを貼り付け、確認コードを見せて相手の PC の許可を待つ）› 完了
 //
 // ホストの一覧と資格情報は desktop 側が持つ（サーバーの設定・AI の操作の一覧には置かない。ADR 0146）。見え方は web/manage-panel.css の .rm-*。
 import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import {
-  button, groupHead, listRow, detailHead, keyValues, switchButton, waitLine, confirmCode, createWizard, field, textInput,
+  button, groupHead, listRow, detailHead, keyValues, waitLine, confirmCode, createWizard, field, textInput,
   installPcBody, methodOptions, doneBody, errorLine,
 } from './remote-parts.mjs';
 
@@ -29,14 +29,12 @@ export function hostLine(host) {
 }
 
 /**
- * 「この PC の AI から任せる」の下の 1 行（docs/remote.md §7.4）。オフなら何も出さない。
- * オンでホストが受けていなければ、ホストの Pleiad が古い（端末ごとの許可があった版）。両方オンなら「使える」
+ * 詳しい画面の弱い字の 1 行（docs/remote.md §7.4）。この PC の AI から任せられるのは、ホストが許可を入れていればすべて（ADR 0239）。
+ * つながっているのに受けないのは、ホストの Pleiad が古い（/agent の口が無い・端末ごとの許可があった版）ときだけ。ほかは何も出さない
  */
 export function agentLine(host) {
-  if (!host?.agentUse) return { on: false, text: '' };
-  if (host.agentState === 'unsupported') return { on: true, text: t('settings.remote.hosts.agent.unsupported') };
-  if (!host.agentAllowed) return { on: true, text: t('settings.remote.hosts.agent.notAllowed', { host: host.name || host.hostId }) };
-  return { on: true, text: t('settings.remote.hosts.agent.ready') };
+  const old = host?.agentState === 'unsupported' || (host?.agentState === 'ready' && !host.agentAllowed);
+  return old ? t('settings.remote.hosts.agent.notAllowed', { host: host.name || host.hostId }) : '';
 }
 
 /** @param onChange 見え方が変わった（設定 › リモートが描き直す） */
@@ -44,7 +42,7 @@ export function setupRemoteHosts({ onChange }) {
   const bridge = typeof window !== 'undefined' && !window.plyRemote ? window.plyDesktop?.hosts : null;
   /** ホストの一覧・この PC の資格情報を暗号化できるか・読めなかった理由 */
   let hosts = [], encrypted = true, loadError = '', inited = null;
-  /** 詳しい画面のホスト・名前を変えている・削除の確かめ中・操作中（開く・任せる）・失敗 */
+  /** 詳しい画面のホスト・名前を変えている・削除の確かめ中・操作中（開く）・失敗 */
   let detailId = '', renaming = false, removing = false, message = '';
   const busy = new Set();
 
@@ -109,16 +107,8 @@ export function setupRemoteHosts({ onChange }) {
     ]));
     if (line.revoked) out.push(el('p', 'rm-weak', t('settings.remote.hosts.revokedHint')));
     else {
-      // この PC の AI から任せる（既定オフ。人だけが変える）
-      const info = agentLine(host);
-      const row = el('div', 'rm-mrow');
-      const sw = switchButton(t('settings.remote.hosts.agent.label'), () => setAgentUse(host, !info.on));
-      sw.dataset.fk = 'agent';
-      sw.setAttribute('aria-checked', String(info.on));
-      sw.disabled = busy.has(`agent:${host.hostId}`);
-      row.append(el('span', 'rm-lbl', t('settings.remote.hosts.agent.label')), sw);
-      out.push(row);
-      if (info.text) { const note = el('p', 'rm-weak rm-agent', info.text); note.setAttribute('role', 'status'); out.push(note); }
+      const text = agentLine(host);
+      if (text) { const note = el('p', 'rm-weak rm-agent', text); note.setAttribute('role', 'status'); out.push(note); }
     }
     if (renaming) out.push(renameLine(host, line.name));
     else if (removing) out.push(removeLine(host, line.name));
@@ -187,14 +177,6 @@ export function setupRemoteHosts({ onChange }) {
     busy.add(hostId); onChange();
     const r = await bridge.open(hostId);
     busy.delete(hostId);
-    message = r.ok ? '' : r.message;
-    await refresh();
-  }
-  async function setAgentUse(host, enabled) {
-    const key = `agent:${host.hostId}`;
-    busy.add(key); onChange();
-    const r = await bridge.setAgentUse(host.hostId, enabled);
-    busy.delete(key);
     message = r.ok ? '' : r.message;
     await refresh();
   }

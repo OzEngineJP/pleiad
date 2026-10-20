@@ -5,8 +5,8 @@
 //   <dir>/secrets.json  端末の静的鍵（deviceKey）と、ホストごとの中継用トークン（host:<hostId>）。core/secret-store.mjs
 //                       （デスクトップは safeStorage で包む cipher を渡す。試験・暗号化できない起動は 0600 の平文）
 //   <dir>/hosts.json    { version: 1, hosts: [{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port,
-//                         pairedAt, lastConnectedAt, revokedAt, agentUse }] }（秘密は入れない。port は §7.1 のホストごとに覚えるポート。
-//                         agentUse = この PC の AI からそのホストへ任せるか。既定オフ。docs/remote.md §4.5）
+//                         pairedAt, lastConnectedAt, revokedAt }] }（秘密は入れない。port は §7.1 のホストごとに覚えるポート。
+//                         前の版が書いた agentUse は読まない。ホストの許可だけで任せられる。ADR 0239）
 //   <dir>/static/<hostId>.bin  そのホストの画面の殻の束（core/remote/static-bundle.mjs。docs/remote.md §8.6）
 //
 //   const device = createRemoteDevice({ dir, cipher, app: '0.1.0', name: os.hostname() });
@@ -31,7 +31,7 @@ function publicRecord(h) {
   return {
     hostId: h.hostId, hostName: h.hostName ?? '', label: h.label ?? '', relayUrl: h.relayUrl,
     deviceId: h.deviceId, port: h.port ?? 0, pairedAt: h.pairedAt ?? null,
-    lastConnectedAt: h.lastConnectedAt ?? null, revokedAt: h.revokedAt ?? null, agentUse: h.agentUse === true,
+    lastConnectedAt: h.lastConnectedAt ?? null, revokedAt: h.revokedAt ?? null,
   };
 }
 
@@ -86,7 +86,7 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
           hostId: creds.hostId, hostName: cleanLabel(creds.hostName), label: prev?.label ?? '',
           relayUrl: creds.relayUrl, hostPublicKey: Buffer.from(creds.hostPublicKey).toString('base64url'),
           deviceId: creds.deviceId, port: prev?.port ?? 0, pairedAt: new Date().toISOString(),
-          lastConnectedAt: null, revokedAt: null, ...(prev?.agentUse === true ? { agentUse: true } : {}),
+          lastConnectedAt: null, revokedAt: null,
         };
         data.hosts = data.hosts.filter(h => h.hostId !== creds.hostId).concat(rec);
         await writeJson(hostsFile, data);
@@ -94,14 +94,13 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
       });
     },
 
-    /** 秘密でない項目を変える（port・label・hostName・lastConnectedAt・revokedAt・agentUse）。 */
+    /** 秘密でない項目を変える（port・label・hostName・lastConnectedAt・revokedAt）。 */
     async updateHost(hostId, patch) {
       return locked(async () => {
         const data = await readHosts();
         const h = data.hosts.find(x => x.hostId === hostId);
         if (!h) return null;
         for (const k of ['port', 'label', 'hostName', 'lastConnectedAt', 'revokedAt']) if (k in patch) h[k] = patch[k];
-        if ('agentUse' in patch) { if (patch.agentUse === true) h.agentUse = true; else delete h.agentUse; }
         await writeJson(hostsFile, data);
         return publicRecord(h);
       });
@@ -203,7 +202,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
   const store = createDeviceStore({ dir, cipher });
   const events = new EventEmitter();
   const proxies = new Map();   // hostId -> Promise<DeviceProxy>
-  const agents = new Map();    // hostId -> { link: DeviceLink, agent: AgentLink }。この PC の AI からホストへ任せる線（agentUse のホストだけ。窓を開かなくても持つ）
+  const agents = new Map();    // hostId -> { link: DeviceLink, agent: AgentLink }。この PC の AI からホストへ任せる線（取り消されていないホストすべて。窓を開かなくても持つ）
 
   /** ホストごとの画面の殻の束（docs/remote.md §8.6）。忘れたホストの分は remove で消す */
   const staticCacheFile = hostId => path.join(dir, 'static', `${hostId}.bin`);
@@ -243,7 +242,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
 
   // ---- この PC の AI からホストへ任せる線（docs/remote.md §4.5、ADR 0146）。端末の main が持ち、ローカルのサーバーとは parentPort の橋で話す
 
-  /** agentUse のホストの線を張る（窓のプロキシとは別のチャネル）。取り消し済み・資格が無いホストは張らない。張った AgentLink を返す */
+  /** ホストの線を張る（窓のプロキシとは別のチャネル）。取り消し済み・資格が無いホストは張らない。張った AgentLink を返す */
   async function agentOpen(hostId) {
     if (agents.has(hostId)) return agents.get(hostId).agent;
     const creds = await store.credentials(hostId);
@@ -273,10 +272,10 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     events.emit('agent-state', { hostId, state: 'offline', allowed: false, hostName: '' });
   }
 
-  /** hosts.json の agentUse に合わせて線を張る・閉じる（起動のとき・agentUse を替えたとき） */
+  /** hosts.json のホストに合わせて線を張る・閉じる（起動のとき・ホストが増減したとき）。任せられるかはホストの許可が決める（ADR 0239） */
   async function agentSync() {
     const hosts = await store.hosts();
-    const want = new Set(hosts.filter(h => h.agentUse && !h.revokedAt).map(h => h.hostId));
+    const want = new Set(hosts.filter(h => !h.revokedAt).map(h => h.hostId));
     for (const id of [...agents.keys()]) if (!want.has(id)) await agentClose(id);
     for (const id of want) await agentOpen(id).catch(e => log(`remote agent: ${e.message}`));
   }
@@ -320,13 +319,6 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       return store.removeHost(hostId);
     },
     async closeAll() { await Promise.all([...proxies.keys()].map(close)); await Promise.all([...agents.keys()].map(agentClose)); },
-    /** この PC の AI からそのホストへ任せるか（人だけが窓で変える。既定オフ）。入れたら線を張り、切ったら閉じる */
-    async setAgentUse(hostId, enabled) {
-      const rec = await store.updateHost(hostId, { agentUse: enabled === true });
-      if (!rec) throw Object.assign(new Error(t('remote.device.unknownHost')), { code: 'unknown-host' });
-      if (enabled === true) await agentOpen(hostId); else await agentClose(hostId);
-      return rec;
-    },
     agentSync,
     /** 張ってある線（無ければ null） */
     agent: hostId => agents.get(hostId)?.agent ?? null,

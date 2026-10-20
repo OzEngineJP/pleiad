@@ -5,7 +5,7 @@
 // 環境変数:
 //   FAKE_REMOTE_DEVICE_DIR   端末の置き場（hosts.json・secrets.json。テストが createRemoteDevice でペアリングしてから起こす）
 //   FAKE_REMOTE_DEVICE_NAME  端末の名前（ホストの端末一覧に出るものはペアリング時に決まる。ここは HELLO の名前）
-// ホストの一覧（agentUse）の変更は、本物の窓の IPC の代わりに hosts.json を見て拾う（テストが createDeviceStore の updateHost で書く）。
+// ホストの一覧の変更（増減・名前）は、本物の窓の IPC の代わりに hosts.json を見て拾う（テストが createDeviceStore の updateHost で書く）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRemoteDevice } from '../../core/remote/device.mjs';
@@ -26,12 +26,12 @@ process.parentPort = {
   },
   on(type, fn) { if (type === 'message') listeners.push(fn); },
 };
-// hosts.json の agentUse が変わったら、窓のスイッチと同じに線を張り直す
+// hosts.json のホストが変わったら、窓のペアリング・削除と同じに線を張り直す
 const hostsFile = path.join(dir, 'hosts.json');
 let last = '';
 const watch = setInterval(() => {
   let now = '';
-  try { now = JSON.stringify((JSON.parse(fs.readFileSync(hostsFile, 'utf8')).hosts ?? []).map(h => [h.hostId, h.agentUse === true, h.label ?? ''])); } catch { return; }
+  try { now = JSON.stringify((JSON.parse(fs.readFileSync(hostsFile, 'utf8')).hosts ?? []).map(h => [h.hostId, h.label ?? ''])); } catch { return; }
   if (now !== last) { const first = last === ''; last = now; if (!first) service.refresh(); }
 }, 150);
 watch.unref();
