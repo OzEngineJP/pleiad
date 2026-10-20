@@ -15,6 +15,7 @@
 - **端末ごとの「この端末の AI からの依頼を受ける」は無くす。** `agentAllowed` は「一覧にあるデスクトップ版の端末」になる（スマホには AI が無いので今どおり受けない）。前の版が `devices.json` に書いた `agentDelegation` は読まない（消しもしない。害が無く、戻す版で読める）。
 - **WS コマンド `setRemoteDeviceAgent` は `{ id, stopAll? }` だけ。** 「すべて止める」はそのまま残す（human-only の「リモートのペアリング」の組）。前の版の画面が送る `enabled` は何も変えない。端末の画面から入れられない、という規則（ADR 0146）は、入れる対象が無くなったので消える。
 - **AI の依頼を 1 台だけ止めたいときは、その端末を取り消す。** 取り消すと、任された作業も止まる（今と同じ）。全部を止めたいときは受付を切る。
+- **許可のスイッチは中継の設定が無くても入れられる。** 中継の URL・登録用の秘密は ＋ の流れの「つなぎ方」の段で入れる（画面の作り直しで、設定の欄をスイッチの下から流れの中へ移したため）。設定が揃うまでは `configured` が偽で中継につながらず、ペアリングも始められない。前は設定が無いまま入れると断っていた（`needConfigToEnable`）。
 - **端末側の許可（`agentUse`）は残す。** 「この PC の AI から任せる」は、相手のホストへ仕事を流すかを決めるのが端末の人だから。置き場は、別の窓（「ほかのホストにつなぐ」）から主の窓の 設定 › リモート › ほかの PC へ のホストの詳細に移す。IPC は主の窓（信頼の種類 `local`）からだけ受け、ローカルのサーバーの設定・操作の一覧には今どおり置かない（端末の AI が `set_setting` で入れられないように）。
 
 ## 理由
@@ -25,6 +26,7 @@
 
 ## 影響
 
+- `core/remote/connector.mjs` の `setSettings` が、設定の無いまま `enabled` を入れるのを断らなくなる（辞書の `remote.needConfigToEnable` は消す）。
 - `core/remote/connector.mjs` の `agentAllowed`・`publicAgent`（`agent.enabled` は `available` と同じ値。前の版の画面のために残す）・`setDeviceAgent`、`core/remote/devices.mjs` の `setAgentDelegation`（削除）、`core/server.mjs` の `setRemoteDeviceAgent`、`core/protocol.mjs` の説明。辞書の `server.json` の `remote.agent.hostScreenOnly`・`desktopOnly` は消す。
 - 画面は 設定 › リモート の「この PC へ」に、スイッチ 1 つ（「ほかの端末からの操作を許可する」）と端末の一覧を出す。端末の行・詳細に AI のスイッチは無い（docs/design-system.md「設定 › リモート」）。
 - 前の版でホストの許可をオフにしていたデスクトップ版の端末は、この版から AI の依頼を受ける。端末側の `agentUse` が既定オフなので、端末の人が入れるまで流れは起きない。

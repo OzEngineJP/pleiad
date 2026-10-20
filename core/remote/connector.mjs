@@ -632,12 +632,7 @@ export function createRemoteHost({
         if (/[\s]/.test(secret) || secret.length > 1024) throw new Error(t('remote.settings.secretWhitespace'));
         await store.setEnrollSecret(secret);
       }
-      if (patch.enabled) {
-        const s = await store.settings();
-        const url = patch.relayUrl ?? (s.relayUrl || env.AGENT_HOST_RELAY_URL || '');
-        const secret = (await store.enrollSecret()) || env.AGENT_HOST_RELAY_SECRET || '';
-        if (!url || !secret) throw new Error(t('remote.settings.needConfigToEnable'));
-      }
+      // 中継の URL・秘密が無くても許可だけは入れられる（設定 › リモートの ＋ の流れで入れる。ADR 0239）。無い間は status の configured が false
       if (Object.keys(patch).length) await store.saveSettings(patch);
       await apply();
       return status();

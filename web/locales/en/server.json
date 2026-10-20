@@ -1181,7 +1181,6 @@
     "settings": {
       "needConfig": "Enter the relay URL and the enrollment secret",
       "secretWhitespace": "The enrollment secret can't contain spaces",
-      "needConfigToEnable": "Enter the relay URL and the enrollment secret before turning this on",
       "disabled": "Remote access is turned off",
       "notConnected": "Not connected to the relay"
     },
