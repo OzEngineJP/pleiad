@@ -1,8 +1,8 @@
-// 設定 › 委譲（委譲先の自動振り分け。docs/design-system.md「設定 › 委譲」、docs/agent-delegation.md「委譲先の自動振り分け」）。
+// 設定 › 委譲（委譲先の自動選択。docs/design-system.md「設定 › 委譲」、docs/agent-delegation.md「委譲先の自動選択」）。
 //
 // - 先頭のスイッチ「委譲先を自動で選ぶ」
-// - 「難しさの判定」: 種類ごとの判定器（Jev / Qwen / 判定しない）の表と「Jev が迷ったら Qwen に聞き直す」
-// - 「判定器が使うキー」: OpenRouter（Jev・Qwen。どちらも OpenRouter で、キーは 1 つ）の「使うキー」を設定 › API キー（承認済み 2026-10-07）から選ぶ（WS の setApiKeyUse）。
+// - 「種類ごとの自動選択」: 種類ごとの自動選択のモデル（Jev / Qwen / しない）の表と「Jev が迷ったら Qwen に聞き直す」
+// - 「委譲先の自動選択に使うキー」: OpenRouter（Jev・Qwen。どちらも OpenRouter で、キーは 1 つ）の「使うキー」を設定 › API キー（承認済み 2026-10-07）から選ぶ（WS の setApiKeyUse）。
 //   選ぶまでは何も送らない。未登録ならその場で登録でき（登録先は API キー）、キーは返ってこない（hasKey と keyRef だけ）。送る内容の 1 行
 // - 「詳しい設定」（details）: 段ごとの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか、段の既定と候補ごとの思考の強さ。
 //   承認済み 2026-10-08・ADR 0164）・種類 × 難しさの表・使用量の方針
@@ -21,7 +21,7 @@ import { effortSelect, effortFixed } from './effort-select.mjs';
 import { candidateOrder, moveCandidate } from './delegation-order.mjs';
 
 const SERVICES = ['openrouter'];
-/** キーのサービスごとの、そのキーを使う判定器と割り当て（API キーの uses。名前は前の版のまま judge:jev） */
+/** キーのサービスごとの、そのキーを使う自動選択と割り当て（API キーの uses。名前は前の版のまま judge:jev） */
 const SERVICE_JUDGES = { openrouter: ['jev', 'qwen'] };
 const SERVICE_USE = { openrouter: 'judge:jev' };
 const DIFFICULTIES = ['low', 'mid', 'high'];
@@ -73,7 +73,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   let data = null, committed = null, message = '', registering = '', keyList = null, confirmingReset = false, refreshing = false;
   const pending = [];
   let saving = false, refreshSerial = 0, orderFocus = '', advancedDirty = false;
-  // 判定器の面で押した部品（`${kind}:${judge}` か 'escalate'）。描き直したときにフォーカスを戻す
+  // 自動選択の面で押した部品（`${kind}:${judge}` か 'escalate'）。描き直したときにフォーカスを戻す
   let judgeFocus = '';
   const names = { backend: id => labelOf(id), model: (backend, model) => modelName(backend, model) || model };
 
@@ -89,7 +89,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const stateLine = el('p', 'rm-state rm-strong');
   stateLine.setAttribute('role', 'status');
   stateLine.setAttribute('aria-live', 'polite');
-  // 自動で選ぶのに効いていない理由（判定器のキーが無い・使える候補が無い）。スイッチの直下に、問題があるときだけ ⚠ と直す入口
+  // 自動で選ぶのに効いていない理由（自動選択に使うキーが無い・使える候補が無い）。スイッチの直下に、問題があるときだけ ⚠ と直す入口
   const effective = el('div', 'rt-eff');
   effective.setAttribute('role', 'status');
 
@@ -126,7 +126,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       committed = latest;
       data = { ...latest, settings: pending.reduce((s, patch) => applyPatch(s, patch, latest.defaults), latest.settings) };
       message = '';
-      // 選べるキー。取れなくても判定器の設定は見せる（選ぶ欄だけ使えない）
+      // 選べるキー。取れなくても自動選択の設定は見せる（選ぶ欄だけ使えない）
       keyList = await apiKeyList(cmd).catch(() => null);
     }
     catch (e) { message = t('routing.settings.loadFailed', { error: e.message }); }
@@ -171,7 +171,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     if (!s) { for (const p of [judges, keys, advanced, reset]) p.hidden = true; return; }
     for (const p of [judges, keys, advanced, reset]) p.hidden = false;
     // 入力の途中（欄にフォーカス）で描き直すと打った値が消えるので、そのときは面ごとに飛ばす。
-    // 判定器の面には打つ欄が無いので常に描き直す（押したボタンにフォーカスが残り、選び直しが画面に出なかった）
+    // 自動選択の面には打つ欄が無いので常に描き直す（押したボタンにフォーカスが残り、選び直しが画面に出なかった）
     paintJudges();
     if (!keys.contains(document.activeElement) || !registering) paintKeys();
     if (!advancedBody.contains(document.activeElement) || !document.activeElement.matches('input')) paintAdvanced();
@@ -227,7 +227,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   // i18n-dynamic: routing.settings.service.
 
   /**
-   * スイッチの直下の「効いていない理由」。オンのときだけ、選んでいる判定器のキーが無い・使える候補が無い、を 1 行ずつ。
+   * スイッチの直下の「効いていない理由」。オンのときだけ、選んでいる自動選択のモデルのキーが無い・使える候補が無い、を 1 行ずつ。
    * 右に直す入口（キーの登録の欄を開く・詳しい設定の候補へ）。平常時・オフのときは何も出さない（docs/design-system.md「設定 › 委譲」）
    */
   function paintEffective() {
@@ -251,7 +251,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     p.append(button(action, onClick, 'btn link'));
     return p;
   }
-  /** 判定器が使うキーのカードへ移り、「使うキー」の選択を開いてフォーカス */
+  /** 自動選択に使うキーのカードへ移り、「使うキー」の選択を開いてフォーカス */
   function goKey(service) {
     const select = keys.querySelector(`[data-fk="sel:${service}"]`);
     keys.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -296,14 +296,14 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     out.push(el('p', 'mp-note', t('apiKeys.delegation.note')));
     keys.replaceChildren(...out);
   }
-  /** 判定器に使うキーを選ぶ（null は使わない）。選んだときから送り始める */
+  /** 自動選択に使うキーを選ぶ（null は使わない）。選んだときから送り始める */
   async function chooseKey(service, id) {
     message = '';
     try { await cmd('setApiKeyUse', { use: SERVICE_USE[service], id }); await refresh(); }
     catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); paint(); }
     keys.querySelector(`[data-fk="sel:${service}"]`)?.focus({ preventScroll: true });
   }
-  /** その場で登録して、判定器に使う（登録先は API キー） */
+  /** その場で登録して、自動選択に使う（登録先は API キー） */
   async function registerKey(service, value) {
     message = '';
     try {

@@ -565,7 +565,7 @@ async function resolveBackendForSession(sessionId) {
 // キーは Claude のアカウント・MCP と同じ暗号化の置き場。前の起動で消し損ねたフラグ設定のファイル（キーを含む）は起動時に片付ける
 const compatSecrets = createSecretStore({ file: path.join(store.dataDir, 'compat-endpoint-secrets.json'), cipher: secretCipher });
 compatSecrets.migrate().catch(() => {});
-// API キーの置き場（設定 › API キー。core/api-keys.mjs、ADR 0155）。接続先・通話・委譲の判定器のキーはここに 1 回だけ登録し、使う側は選ぶだけにする。
+// API キーの置き場（設定 › API キー。core/api-keys.mjs、ADR 0155）。接続先・通話・委譲先の自動選択に使うキーはここに 1 回だけ登録し、使う側は選ぶだけにする。
 // 古い置き場（compat-endpoint-secrets.json・voice-secrets.json）は移行で消さず、キーを変えるたびに同じ状態を書く（古い版が読む）
 const voiceSecrets = createSecretStore({ file: path.join(store.dataDir, 'voice-secrets.json'), cipher: secretCipher });
 voiceSecrets.migrate().catch(() => {});
@@ -850,7 +850,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   }
   // 一覧のホストのタスクの行は、ply_task_status と同じ形（host は名前）にする
   if (name === 'ply_task_list') return remoteDelegation.presentList(await agentTasks.call(owner, name, args, turn.ac.signal, lng));
-  // 委譲先の自動振り分け（docs/agent-delegation.md「委譲先の自動振り分け」）。backend を省けばここで選ぶ。
+  // 委譲先の自動選択（docs/agent-delegation.md「委譲先の自動選択」）。backend を省けばここで選ぶ。
   // 選んだ後は、書いた backend と同じく下の承認の強さの判定・承認カードを通る
   if (name === 'ply_delegate') args = await routeDelegation(args, lng, path.resolve(turn.info.cwd ?? process.cwd(), typeof args.cwd === 'string' ? args.cwd : '.'));
   // ply_task_send の backend・model・effort（ADR 0134）と account（ADR 0205）。何も変えないうちに確かめ、エージェントを替えるなら下の承認の強さの判定を通す
@@ -1343,10 +1343,10 @@ hosts: () => remoteDelegation?.describe() ?? [],
 // backend に書けるエージェントは、有効なもの（AGENT_HOST_BACKENDS）
 backends: () => listBackends().map(b => b.id) });
 
-// ---- 委譲先の自動振り分け ------------------------------------------------------
-// 設定は prefs.json の delegationRouting（未設定の項目は既定値）。判定器が使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
+// ---- 委譲先の自動選択 ------------------------------------------------------
+// 設定は prefs.json の delegationRouting（未設定の項目は既定値）。自動選択に使うキーは設定 › API キー（core/api-keys.mjs）で選んだもの
 // （uses の judge:jev。Jev・Qwen のどちらも OpenRouter で同じキー）で、画面へは hasKey と選んだキーの id（keyRef）だけ返す。選ぶまでは何も送らない
-// 前の版の Cerebras の判定器の項目（judgeByKind の cerebras・escalateToCerebras）は読むときに Qwen の名前へ直し、次に保存するときに書き直す（ADR 0177）
+// 前の版の Cerebras の自動選択の項目（judgeByKind の cerebras・escalateToCerebras）は読むときに Qwen の名前へ直し、次に保存するときに書き直す（ADR 0177）
 let routingSettingsCache = normalizeSettings((await store.getPrefs()).delegationRouting);
 // Pleiad の指示（core/ply-instructions.mjs）。prefs.json の plyInstructions。まだ無ければ前の版の addedContext（委譲の指示のスイッチ）から作る
 let plyInstructionsCache = await (async () => { const prefs = await store.getPrefs(); return normalizePlyInstructions(prefs.plyInstructions, prefs.addedContext, currentLocale()); })();
@@ -1431,7 +1431,7 @@ async function routeDelegation(args, lng, cwd) {
   const settings = routingSettingsCache;
   if (!settings.enabled) throw new Error(agentT(lng, 'routing.backendRequired', { backends: listBackends().map(b => b.id).join(', ') }));
   if (args.model !== undefined || args.effort !== undefined) throw new Error(agentT(lng, 'routing.pinOnly'));
-  // 依頼文は判定器へ送る前に確かめる（agentTasks と同じ上限）
+  // 依頼文は自動選択のモデルへ送る前に確かめる（agentTasks と同じ上限）
   if (typeof args.task !== 'string' || !args.task.trim() || args.task.length > 60000) throw new Error(agentT(lng, 'tasks.textLength', { name: 'task', max: 60000 }));
   const [judged] = await Promise.all([
     judgeDifficulty({ kind: args.kind, task: args.task, judge: settings.judgeByKind[args.kind], escalate: settings.escalateToQwen, keyOf: routingKey }),
@@ -3407,7 +3407,7 @@ async function applyAutoCompaction(settings) {
   return settings;
 }
 
-/** 委譲先の自動振り分けの設定。patch は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する */
+/** 委譲先の自動選択の設定。patch は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する */
 async function applyRoutingSettings(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
   const raw = { ...migrateLegacySettings((await store.getPrefs()).delegationRouting ?? {}).raw };
@@ -5063,7 +5063,7 @@ function opsDeps(lng = currentLocale()) {
         return agentTasks.get(task.taskId);
       },
       retry: (args) => retryAgentTask(args),
-      // 委譲先の自動振り分けの設定（設定 › 委譲）。キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
+      // 委譲先の自動選択の設定（設定 › 委譲）。キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
       routing: async ({ refresh } = {}) => {
         if (refresh && routingSettingsCache.enabled) await routingUsage.refresh();
         return delegationRoutingState();
@@ -6189,7 +6189,7 @@ agentTasks = await createAgentTasks({
     if (!(await fs.stat(cwd)).isDirectory()) throw new Error(agentT(lng, 'delegation.cwdNotDirectory'));
     // 自動の振り分けで選んだ委譲先（agentBridge の call の routeDelegation）と、人が使用量を見て選び直した委譲先。
     // 候補は公式の使用枠で選んでいるので、接続先は継がず公式で走らせ、アカウントも選んだものを使う
-    // （docs/agent-delegation.md「委譲先の自動振り分け」）
+    // （docs/agent-delegation.md「委譲先の自動選択」）
     const auto = args.routing?.mode === 'auto' || manual;
     // 依頼元が固定の委譲で選んだアカウント（routeDelegation の requestedAccount が確かめた内部の値。ADR 0205・0222）。
     // 互換の接続先はアカウントを使わないので、自動と同じく接続先は継がず公式で走らせる
@@ -8798,7 +8798,7 @@ wss.on("connection", (ws, req) => {
         case 'retryAgentTask':
           return await viaOp('delegation.retry', args);
 
-        // 委譲先の自動振り分けの設定（設定 › 委譲）。タスクごとの振り分けの記録は agentTasks の各行の routing。
+        // 委譲先の自動選択の設定（設定 › 委譲）。タスクごとの振り分けの記録は agentTasks の各行の routing。
         // キーは返さない（hasKey だけ）。refresh: true なら使用量を取り直してから返す
         case 'delegationRouting':
           return await viaOp('delegation.routing', args);
@@ -8806,7 +8806,7 @@ wss.on("connection", (ws, req) => {
         case 'setDelegationRouting':
           return await viaOp('settings.set', { key: 'delegationRouting', value: args?.settings }, { shape: () => delegationRoutingState() });
         // API キー（設定 › API キー。ADR 0155）。値は返さない。入れる・消す・割り当てるのは人だけ（HUMAN_ONLY の秘密の値）。
-        // 登録しただけでは送らない。送り始めるのは、通話・判定器・wait_until の問いに使うキーを選んだとき（setApiKeyUse）と、接続先で選んだとき（compatEndpointSave の keyRef）
+        // 登録しただけでは送らない。送り始めるのは、通話・自動選択・wait_until の問いに使うキーを選んだとき（setApiKeyUse）と、接続先で選んだとき（compatEndpointSave の keyRef）
         case 'setApiKey': {
           const a = msg.args ?? {};
           return reply(true, a.id ? await apiKeys.replace(String(a.id), a.key) : await apiKeys.add({ provider: a.provider, label: a.label, key: a.key }));
@@ -8819,7 +8819,7 @@ wss.on("connection", (ws, req) => {
         // 移行の案内。{ keep: キーの id }（ほかの同じプロバイダーのキーをまとめる）か { keep: null }（このままにする）。どちらでも案内は二度と出ない
         case 'resolveApiKeyGuide':
           return reply(true, await apiKeys.resolveGuide(msg.args?.keep ?? null));
-        // 古い版の口（判定器・通話のキー）。設定 › API キーへ移した後の互換で、同じ値のキーがあればそれを、無ければ登録して、使うキーに選ぶ。後片付けで外す（ADR 0155）
+        // 古い版の口（自動選択・通話のキー）。設定 › API キーへ移した後の互換で、同じ値のキーがあればそれを、無ければ登録して、使うキーに選ぶ。後片付けで外す（ADR 0155）
         case 'setDelegationRoutingKey':
         case 'deleteDelegationRoutingKey': {
           const service = String(msg.args?.service ?? '');

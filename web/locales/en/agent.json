@@ -483,7 +483,7 @@
   },
   "routing": {
     "kindRequired": "Give kind as one of the following.\n{{kinds}}",
-    "backendRequired": "Automatic delegation routing is turned off. Give backend ({{backends}}).",
+    "backendRequired": "Automatic delegate selection is turned off. Give backend ({{backends}}).",
     "pinOnly": "model and effort can be used only with backend. Omit model and effort to let Pleiad choose.",
     "accountPinOnly": "account can be used only together with backend. Omit account to let Pleiad choose.",
     "accountClaudeOnly": "Agent {{backend}} does not support account selection. Omit account.",
@@ -565,7 +565,7 @@
     "heading": "{{name}} (instructions added by Pleiad):",
     "names": {
       "child": "Commands in a delegated conversation",
-      "route": "Using delegation routing",
+      "route": "Using automatic delegate selection",
       "codexPolicy": "Commands Codex rejects before running"
     },
     "formerDelegateName": "How to delegate",
@@ -1043,7 +1043,7 @@
       "chromeNewProfile": "Chrome profile for new conversations",
       "chromeAutoAllow": "Answer Chrome's prompt automatically",
       "computerUse": "Computer use",
-      "delegationRouting": "Automatic delegation routing",
+      "delegationRouting": "Automatic delegate selection",
       "plyInstructions": "Pleiad's instructions",
       "addedContext": "Delegation instruction switch (previous version)",
       "context": {
@@ -1161,7 +1161,7 @@
     },
     "apiKeys": {
       "list": {
-        "summary": "Return the state of the API keys in Settings › Secrets and variables (each registered key's name, provider, check result and where it is used, plus the keys chosen for voice calls and judges). Never returns key values."
+        "summary": "Return the state of the API keys in Settings › Secrets and variables (each registered key's name, provider, check result and where it is used, plus the keys chosen for voice calls and automatic delegate selection). Never returns key values."
       },
       "check": {
         "summary": "Send a registered key to its own provider to see whether it is accepted, and record the result (free; separate from an endpoint check).",
@@ -1237,7 +1237,7 @@
         "approved": "Whether the stronger-approval-mode confirmation was done. Only a person (the screen); an agent gets NEEDS_UI."
       },
       "routing": {
-        "summary": "Return the current state of the automatic delegation routing (settings, warnings, usable candidates). Judge keys are never returned (only whether one is registered). settings.set delegationRouting changes the settings.",
+        "summary": "Return the current state of automatic delegate selection (settings, warnings, usable candidates). Keys for auto-select are never returned (only whether one is registered). settings.set delegationRouting changes the settings.",
         "refresh": "true re-reads the usage before returning.",
         "limit": "How many candidates to return (default 30, max 100).",
         "cursor": "The next of the previous result. Continues from there."
@@ -1895,7 +1895,7 @@
     "chromeNewProfile": "The Chrome profile new conversations start with (browser, dir). null uses Chrome's last used profile. A profile no longer listed is not used.",
     "launchAtLogin": "Whether Pleiad starts when you sign in to the OS (true / false; the value is the actual OS registration, re-read each time). It starts quietly without bringing the window to the front, so a PC that accepts delegations as a host comes back after a restart. Installed Windows / macOS builds only; it cannot be turned on where unavailable.",
     "computerUse": "Computer use settings (enabled, allow all apps, always-allowed apps).",
-    "delegationRouting": "Automatic delegation routing (judges, tiers, candidates, per-tier thinking effort; no keys).",
+    "delegationRouting": "Automatic delegate selection (per-kind auto-select, tiers, candidates, per-tier thinking effort; no keys).",
     "plyInstructions": "The instruction items Pleiad adds to conversations.",
     "addedContext": "The previous version's delegation-instruction switch (replaced by plyInstructions).",
     "context": {

@@ -1124,7 +1124,7 @@
         "forChild": "Not added: for delegated conversations",
         "forParent": "Not added: for requesting conversations",
         "agent": "Not added for this agent",
-        "routingOff": "Not added: automatic delegation routing is off",
+        "routingOff": "Not added: automatic delegate selection is off",
         "noBridge": "Not added: this agent has no delegation bridge (ply_agents)"
       }
     },
@@ -1392,7 +1392,7 @@
       },
       "onlyAgent": "{{agent}} only",
       "agentJoin": ", ",
-      "routingOff": "Not added because automatic delegation routing is off",
+      "routingOff": "Not added because automatic delegate selection is off",
       "gripAria": "Order of “{{name}}” (move with ↑↓)",
       "gripTitle": "Drag or use ↑↓ to reorder",
       "switchAria": "Add “{{name}}”",
@@ -3694,7 +3694,7 @@
       "aria": "Where {{name}} is used",
       "endpoint": "{{agent}} endpoint \"{{name}}\"",
       "voice": "Voice calls",
-      "judge": "Delegation judge {{judge}}",
+      "judge": "Automatic delegate selection ({{judge}})",
       "computer": "wait_until questions",
       "more": "{{count}} more",
       "less": "Show fewer",
@@ -3704,7 +3704,7 @@
       "endpoint": "Conversations that use it must choose again",
       "voice": "Voice calls stop working",
       "computer": "wait_until stops asking and waits by screen changes only",
-      "judge": "This judge is no longer used"
+      "judge": "No longer used for automatic delegate selection"
     },
     "replace": {
       "input": "New key for {{name}}",
@@ -3765,8 +3765,8 @@
       "registered": "Registered the OpenRouter key and using it for wait_until questions."
     },
     "delegation": {
-      "title": "Keys the judges use",
-      "unset": "This judge is not used until you choose a key",
+      "title": "Keys for automatic delegate selection",
+      "unset": "Not used for automatic delegate selection until you choose a key",
       "selectKey": "Choose a key",
       "selectLabel": "Key for {{service}}",
       "note": "Once you choose a key, the delegation request text and its kind are sent to that service."
@@ -3822,7 +3822,7 @@
       "jev": "Jev",
       "qwen": "Qwen",
       "cerebras": "Cerebras",
-      "none": "Don't judge"
+      "none": "Don't auto-select"
     },
     "signal": {
       "diagnose": "Find a cause",
@@ -3839,7 +3839,7 @@
       "network": "can't connect",
       "http": "HTTP {{status}}",
       "bad_response": "unexpected response",
-      "judge_none": "not judged for this kind"
+      "judge_none": "no auto-select for this kind"
     },
     "skip": {
       "unavailable": "unavailable",
@@ -3879,11 +3879,11 @@
       "tier": "Tier",
       "tierRaised": "{{tier}} (table says {{base}}; raised because no candidate had headroom)",
       "tierLowered": "{{tier}} (table says {{base}}; selected from a lower tier)",
-      "judge": "Judge",
+      "judge": "Difficulty model",
       "judgeFailed": "{{judge}} · {{first}}: {{reason}}",
       "judgeEscalated": "{{judge}} (asked again because Jev was unsure)",
-      "judgeNone": "Not judged for this kind (difficulty mid)",
-      "judgeUnavailable": "Couldn't judge: {{reason}} (difficulty mid)",
+      "judgeNone": "No auto-select for this kind (difficulty mid)",
+      "judgeUnavailable": "Couldn't auto-select: {{reason}} (difficulty mid)",
       "signals": "Signals that were yes",
       "noSignals": "None",
       "usageAt": "Usage checked",
@@ -3974,14 +3974,14 @@
     },
     "settings": {
       "enable": "Choose the delegate automatically",
-      "judgeTitle": "Difficulty judge",
+      "judgeTitle": "Auto-select by kind",
       "escalate": "Ask Qwen again when Jev is unsure",
       "effective": {
         "noKey": "No {{service}} key is registered, so kinds set to {{judge}} are treated as mid difficulty.",
-        "noCandidates": "No delegates are available, so automatic delegation will fail.",
+        "noCandidates": "No delegates are available, so automatic delegate selection will fail.",
         "viewCandidates": "View candidates"
       },
-      "judgeLabel": "Judge for {{kind}}",
+      "judgeLabel": "Auto-select for {{kind}}",
       "service": {
         "openrouter": "OpenRouter (Jev, Qwen)"
       },

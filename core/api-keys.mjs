@@ -1,10 +1,10 @@
 // API キーの置き場（ADR 0155。設定 › API キー、docs/design.md「API キー」）。
 //
-// 外部サービスのキーはここ 1 か所に登録し、使う側（互換の接続先・通話・委譲の判定器）は「どのキーを使うか」を選ぶだけにする。
+// 外部サービスのキーはここ 1 か所に登録し、使う側（互換の接続先・通話・委譲先の自動選択）は「どのキーを使うか」を選ぶだけにする。
 //   <data>/api-keys.json         秘密でない台帳: { keys: [{ id, provider, label, createdAt, lastCheck }], uses, guide, migration }
 //   <data>/api-key-secrets.json  キーの値（core/secret-store.mjs。エントリ key:<id>。Claude のアカウント・MCP と同じ暗号化）
 //   接続先の割り当ては compat-endpoints.json の各行の keyRef（値を持たない。書くのは compatEndpointSave・このモジュールの削除・まとめ）。
-//   通話・判定器・wait_until の問いの割り当ては uses（voice・judge:jev・computer:decider。judge:jev は OpenRouter の判定器 2 つ（Jev・Qwen）が使う）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
+//   通話・自動選択・wait_until の問いの割り当ては uses（voice・judge:jev・computer:decider。judge:jev は OpenRouter の自動選択のモデル 2 つ（Jev・Qwen）が使う）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
 // 登録しただけでは、どの機能も外部に送らない。送るのは「使うキー」を人が選んだときから（ADR 0022・0150 の「キーの登録＝同意」を選ぶ操作へ移した）。
 // キーの値は返り値・ログ・エラー文に出さない（list は値を持たず、使っている所の名前だけを返す）。
 //
@@ -13,7 +13,7 @@
 // 古い版は古い置き場だけを読む。消すのは別のリリース）。
 //
 // 移行（起動時・冪等）: 古い置き場を読み、(プロバイダー, 値の sha256) が同じものは 1 件、違う値は元の場所が分かる名前の別の件にする。
-// 通話・判定器は、今キーを登録済みの所だけそのキーを選んだ状態で引き継ぐ（接続先にしかキーが無い人は「使わない」のまま）。
+// 通話・自動選択は、今キーを登録済みの所だけそのキーを選んだ状態で引き継ぐ（接続先にしかキーが無い人は「使わない」のまま）。
 // 値の違う同じプロバイダーのキーができたときだけ guide（まとめの案内）を一度だけ出す。
 // 暗号化された古いキーを読めない起動（SECRET_LOCKED）・古い置き場が壊れていて読めない起動では保留し、古い置き場を読み続ける。
 import fs from 'node:fs/promises';
@@ -35,7 +35,7 @@ const LEGACY_VOICE_KEY = 'openrouter';
 /** キーを割り当てる先（接続先は keyRef で、ここには入らない） */
 export const USES = Object.freeze(['voice', 'judge:jev', 'computer:decider']);
 /**
- * 前の版の割り当て（Cerebras の直の判定器。2026-10-09 に廃止、ADR 0177）。読み込むたびに、判定器のキーがまだ無ければ OpenRouter のキーを judge:jev に選んだ状態にし、
+ * 前の版の割り当て（Cerebras の直の自動選択。2026-10-09 に廃止、ADR 0177）。読み込むたびに、自動選択に使うキーがまだ無ければ OpenRouter のキーを judge:jev に選んだ状態にし、
  * 台帳からは次に書くときに消える（起動だけでは書き直さない。同じ置き場を読む前の版の割り当てを、何もしないうちに消さない）
  */
 const RETIRED_JUDGE_USE = 'judge:cerebras';
@@ -78,7 +78,7 @@ function normalizeHost(provider, host) {
   return !FIXED_HOST_PROVIDERS.has(provider) && /^[a-z0-9.:\-\[\]]{1,253}$/.test(h) ? h : null;
 }
 
-/** Cerebras の判定器にキーを選んでいた人の割り当てを、OpenRouter の判定器へ移す（判定器のキーが無く、OpenRouter のキーがあるときだけ。最初に登録したもの） */
+/** Cerebras の自動選択にキーを選んでいた人の割り当てを、OpenRouter の自動選択へ移す（自動選択に使うキーが無く、OpenRouter のキーがあるときだけ。最初に登録したもの） */
 function adoptRetiredJudge(uses, keys) {
   if (!uses['judge:jev']) uses['judge:jev'] = keys.find(k => k.provider === USE_PROVIDER['judge:jev'])?.id ?? null;
 }
@@ -198,7 +198,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       }
       const value = normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + SERVICE_OF_USE['judge:jev'])))?.key);
       if (value) sources.push({ kind: 'judge', use: 'judge:jev', value, provider: USE_PROVIDER['judge:jev'] });
-      // Cerebras の判定器のキー（delegation-routing:cerebras）は取り込まない（使う所が無い。古い置き場には残す）。判定器へ選んでいたことだけ引き継ぐ
+      // Cerebras の自動選択のキー（delegation-routing:cerebras）は取り込まない（使う所が無い。古い置き場には残す）。自動選択へ選んでいたことだけ引き継ぐ
       hadRetiredJudge = Boolean(normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + 'cerebras')))?.key));
     }
     if (legacy.voice) {
@@ -325,7 +325,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     },
     /** 値（無ければ null）。接続先の送信・確認が使う。暗号化された値を読めない起動は SECRET_LOCKED を投げる */
     async keyValue(id) { await ensure(); return keyValue(String(id ?? '')); },
-    /** 使う側（通話・判定器・wait_until の問い）が送るときのキー。「使わない」・未登録は null（何も送らない） */
+    /** 使う側（通話・自動選択・wait_until の問い）が送るときのキー。「使わない」・未登録は null（何も送らない） */
     async useKey(use) {
       await ensure();
       if (!USES.includes(use)) return null;
@@ -371,7 +371,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       emit({ keys: true, uses: USES.filter(u => state.uses[u] === id), endpoints: true });
       return { id, uses: await usersOf(id) };
     },
-    /** 消す。使っていた通話・判定器・wait_until の問いは「使わない」に、接続先はキー無し（確認に失敗した扱い。黙って公式に戻らない）になる */
+    /** 消す。使っていた通話・自動選択・wait_until の問いは「使わない」に、接続先はキー無し（確認に失敗した扱い。黙って公式に戻らない）になる */
     async remove(id) {
       await writable();
       const key = known(id);
@@ -390,7 +390,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       emit({ keys: true, uses: usesBefore, endpoints: detached.length > 0 });
       return { id, affected };
     },
-    /** 通話・判定器・wait_until の問いに使うキーを選ぶ（id が null なら使わない）。選んだときから外部へ送り始める */
+    /** 通話・自動選択・wait_until の問いに使うキーを選ぶ（id が null なら使わない）。選んだときから外部へ送り始める */
     async setUse(use, id) {
       await writable();
       if (!USES.includes(use)) throw new ApiKeyError('UNKNOWN_USE', { use: String(use) });

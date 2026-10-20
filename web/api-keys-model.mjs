@@ -5,7 +5,7 @@
 export const PROVIDER_NAMES = Object.freeze({ openrouter: 'OpenRouter', zai: 'Z.ai (GLM)', kimi: 'Kimi', deepseek: 'DeepSeek', azure: 'Azure OpenAI', litellm: 'LiteLLM', vllm: 'vLLM' });
 export const providerName = provider => PROVIDER_NAMES[provider] ?? '';
 
-/** 通話・判定器・wait_until の問いに割り当てられるキーのプロバイダー（どれも OpenRouter。判定器の Jev・Qwen は judge:jev のキーを使う） */
+/** 通話・自動選択・wait_until の問いに割り当てられるキーのプロバイダー（どれも OpenRouter。自動選択の Jev・Qwen は judge:jev のキーを使う） */
 export const USE_PROVIDER = Object.freeze({ voice: 'openrouter', 'judge:jev': 'openrouter', 'computer:decider': 'openrouter' });
 
 const PRESET = /^[a-z0-9-]{1,32}$/;

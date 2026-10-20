@@ -27,7 +27,7 @@ export default async function (t) {
     const afterOn = c.mark();
     await c.cmd('setDelegationRouting', { settings: { judgeByKind: { trivial: 'none' } } });
     await sleep(250);
-    t.ok('判定器だけの変更は使用量を取り直さない', !c.since(afterOn).some(usageEvent));
+    t.ok('自動選択だけの変更は使用量を取り直さない', !c.since(afterOn).some(usageEvent));
 
     const beforeCandidate = c.mark();
     const candidateStarted = Date.now();

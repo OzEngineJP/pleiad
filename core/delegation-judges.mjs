@@ -1,4 +1,4 @@
-// 委譲の難しさの判定器（HTTP）。送るのは種類（kind）と依頼文（task）だけで、使用量・振り分けの表・会話の記録は送らない。
+// 委譲の難しさを自動選択するモデル（HTTP）。送るのは種類（kind）と依頼文（task）だけで、使用量・振り分けの表・会話の記録は送らない。
 // 答えは 6 つの手がかり（core/delegation-routing.mjs の SIGNALS）。委譲先はここでは決めない。
 //
 // キーは互換の接続先と同じ秘密の置き場（compat-endpoint-secrets.json）に `delegation-routing:<service>` で置く。
@@ -6,7 +6,7 @@
 //   no_key / key_unreadable / timeout / network / http_<status> / bad_response / judge_none
 import { SIGNALS, QUESTIONS, JEV_THRESHOLDS, JEV_UNSURE_BAND, validSignals } from './delegation-routing.mjs';
 
-// 判定器はどちらも OpenRouter（Cerebras の直の経路は 2026-10-09 に廃止。ADR 0177）。キーは 1 つ（API キーの uses の judge:jev。名前は前の版のまま）
+// 自動選択のモデルはどちらも OpenRouter（Cerebras の直の経路は 2026-10-09 に廃止。ADR 0177）。キーは 1 つ（API キーの uses の judge:jev。名前は前の版のまま）
 export const SERVICES = Object.freeze({ openrouter: 'jev' });
 export const JUDGE_SERVICE = Object.freeze({ jev: 'openrouter', qwen: 'openrouter' });
 export const SECRET_PREFIX = 'delegation-routing:';
@@ -17,7 +17,7 @@ export const QWEN_MODEL = 'qwen/qwen3.8-27b';
 /** Qwen を先に送る OpenRouter の provider（速さ。判定の待ちは JUDGE_TIMEOUT_MS まで）。Cerebras が受けない・落ちているときは、関数の呼び出しを受けるほかの provider へ */
 export const QWEN_PROVIDER = Object.freeze({ order: ['cerebras'], allow_fallbacks: true, require_parameters: true });
 export const JUDGE_TIMEOUT_MS = 3000;
-/** 判定器へ送る依頼文の上限（文字） */
+/** 自動選択のモデルへ送る依頼文の上限（文字） */
 export const TASK_LIMIT = 8000;
 const MAX_BODY = 256 * 1024;
 
@@ -103,9 +103,9 @@ const ASK = { jev: askJev, qwen: askQwen };
 
 /**
  * 難しさの手がかりを得る。{ judge, signals, probabilities, fallback }（signals が null なら難しさは mid として続ける）
- *   judge      … 答えを使った判定器（jev / qwen）。どれも答えなければ none
- *   fallback   … 最初に選んだ判定器が使えなかった理由のコード（使えれば null）
- * 選んだ判定器が使えなければ、もう一方を試す（どちらも OpenRouter のキー）。none（判定しない）を選んだ種類は試さない。
+ *   judge      … 答えを使ったモデル（jev / qwen）。どれも答えなければ none
+ *   fallback   … 最初に選んだモデルが使えなかった理由のコード（使えれば null）
+ * 選んだモデルが使えなければ、もう一方を試す（どちらも OpenRouter のキー）。none（自動選択しない）を選んだ種類は試さない。
  * escalate なら、Jev が迷った（どれかの確率が閾値 ± 0.15 以内）ときに Qwen の答えを使う
  */
 export async function judgeDifficulty({ kind, task, judge, escalate = false, keyOf, fetch: fetchImpl = globalThis.fetch, timeoutMs = JUDGE_TIMEOUT_MS }) {

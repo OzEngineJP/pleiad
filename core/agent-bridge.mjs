@@ -10,7 +10,7 @@ export const agentInstructions = (locale, backends = DEFAULT_AGENT_IDS) => agent
 const str = { type: 'string' };
 const tool = (name, description, properties, required = []) => ({ name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false } });
 // i18n-dynamic: agent:bridge.kinds.
-/** kind の一覧と定義（ツールの説明と、kind が無い・不正なときのエラーに載せる。docs/agent-delegation.md「委譲先の自動振り分け」） */
+/** kind の一覧と定義（ツールの説明と、kind が無い・不正なときのエラーに載せる。docs/agent-delegation.md「委譲先の自動選択」） */
 export const kindList = locale => KINDS.map(k => `- ${k}: ${agentT(locale, `bridge.kinds.${k}`)}`).join('\n');
 const hostList = (locale, hosts) => hosts.map(h => (h.online ? h.name : `${h.name} (${agentT(locale, 'bridge.hostOffline')})`)).join(', ');
 const delegateDescription = (locale, hosts = []) => [agentT(locale, 'bridge.tools.ply_delegate'), agentT(locale, 'bridge.title'), agentT(locale, 'bridge.kindsIntro'), kindList(locale), agentT(locale, 'bridge.kindBoundaries'),

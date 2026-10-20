@@ -65,7 +65,7 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       AGENT_HOST_ANTHROPIC_API: "off",
       // 委譲の振り分け用の使用量を定期的に取らない（agy などの子プロセスを勝手に起こさない）。確かめるテストは "on" を渡す
       AGENT_HOST_ROUTING_USAGE: "off",
-      // 判定器（OpenRouter の Jev・Qwen）へは送らない。キーを登録するテストは偽の判定器を渡す
+      // 自動選択（OpenRouter の Jev・Qwen）へは送らない。キーを登録するテストは偽の自動選択を渡す
       AGENT_HOST_OPENROUTER_API: "http://127.0.0.1:9",
       // 通話モード（core/voice/）の OpenRouter へは送らない。通話を確かめるテストは偽の送り先（tests/lib/fake-openrouter.mjs）を渡す
       AGENT_HOST_VOICE_API: "http://127.0.0.1:9",

@@ -278,7 +278,7 @@
     "origin": {
       "endpoint": "{{agent}} の接続先で使っていたキー",
       "voice": "通話で使っていたキー",
-      "judge": "委譲の判定器で使っていたキー",
+      "judge": "委譲先の自動選択で使っていたキー",
       "labeled": "{{name}}（{{origin}}）",
       "unnamed": "名前のないキー"
     },
@@ -1257,7 +1257,7 @@
       "outOfRange": "{{key}} は {{min}}〜{{max}} で指定してください",
       "notObject": "{{key}} の形が不正です",
       "unknownKind": "{{key}} に知らない種類があります: {{kind}}",
-      "unknownJudge": "{{kind}} の判定器が不正です: {{judge}}",
+      "unknownJudge": "{{kind}} の自動選択が不正です: {{judge}}",
       "unknownTier": "知らない段です: {{tier}}",
       "badCandidates": "{{tier}} の候補が不正です（backend:model の形で、重複なし、20 件まで）",
       "badRow": "{{kind}} の段の並びが不正です（低・中・高の 3 つ）",
@@ -1266,7 +1266,7 @@
       "badEffort": "{{tier}} の思考の強さが不正です（low・medium・high・xhigh・max、会話の既定に従うなら空）: {{value}}"
     },
     "key": {
-      "unknownService": "知らない判定サービスです: {{service}}",
+      "unknownService": "委譲先の自動選択で知らないサービスです: {{service}}",
       "invalid": "キーの形が不正です（空白を含まない 500 文字まで）"
     },
     "retry": {

@@ -1,5 +1,5 @@
-// 委譲先の自動振り分け（core/delegation-routing.mjs・delegation-judges.mjs・delegation-usage.mjs）。
-// 判定器は偽の fetch とだけ話す（本物の OpenRouter へは送らない）。LLM は呼ばない
+// 委譲先の自動選択（core/delegation-routing.mjs・delegation-judges.mjs・delegation-usage.mjs）。
+// 自動選択のモデルは偽の fetch とだけ話す（本物の OpenRouter へは送らない）。LLM は呼ばない
 import { KINDS, JUDGES, SIGNALS, DEFAULTS, EFFORT_LEVELS, normalizeSettings, migrateLegacySettings, pruneEfforts, fitEffort, decideEffort, effortTierFor, RoutingSettingsError, difficultyOf, judgeWindows, windowsFor, checkCandidate, selectRetryAccount, dedupeAccounts,
   route, pinnedRouting, manualRouting, candidateStates, settingsWarnings, parseCandidate, elapsedPercent, formatSkippedCandidates } from '../../core/delegation-routing.mjs';
 import { askJev, askQwen, judgeDifficulty, normalizeKey, TASK_LIMIT, JEV_MODEL, QWEN_MODEL } from '../../core/delegation-judges.mjs';
@@ -8,7 +8,7 @@ import { claudeQuota, codexQuota } from '../../core/usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'delegation-routing';
-export const title = '委譲先の自動振り分け: 規則・段・使用量の後回し・Claude のアカウント・判定器（偽の HTTP）・使用量の取り置き';
+export const title = '委譲先の自動選択: 規則・段・使用量の後回し・Claude のアカウント・自動選択のモデル（偽の HTTP）・使用量の取り置き';
 
 const NOW = Date.parse('2026-09-26T12:00:00Z');
 const HOUR = 3600_000, DAY = 24 * HOUR;
@@ -60,7 +60,7 @@ const qwenAnswer = signals => ({ choices: [{ message: { content: null, tool_call
 
 export default async function (t) {
   // ---- 設定
-  t.ok('未設定なら既定値（既定で有効、ux_* と visual は判定しない）', settings.enabled === true && settings.judgeByKind.ux_new === 'none' && settings.judgeByKind.review === 'jev'
+  t.ok('未設定なら既定値（既定で有効、ux_* と visual は自動選択しない）', settings.enabled === true && settings.judgeByKind.ux_new === 'none' && settings.judgeByKind.review === 'jev'
     && JSON.stringify(settings.tiers) === JSON.stringify(DEFAULTS.tiers) && settings.avoidPercent === 80 && settings.paceLimit === 1.2 && !Object.hasOwn(settings, 'staleMinutes'));
   const partial = normalizeSettings({ judgeByKind: { design: 'qwen' }, tiers: { t4: ['claude:fable'] }, avoidPercent: 70 });
   t.ok('一部だけの設定は既定で補う', partial.judgeByKind.design === 'qwen' && partial.judgeByKind.review === 'jev' && partial.tiers.t4.join() === 'claude:fable' && partial.tiers.t1.length === 2 && partial.avoidPercent === 70);
@@ -70,7 +70,7 @@ export default async function (t) {
   t.ok('読むとき（strict でない）は不正な項目だけ既定に戻す', normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).avoidPercent === 80 && normalizeSettings({ avoidPercent: 500, paceLimit: 2 }).paceLimit === 2);
   t.ok('保存済みの prefs に古い staleMinutes が残っていても、読むときはエラーにせず読み捨てる', !Object.hasOwn(normalizeSettings({ staleMinutes: 30 }), 'staleMinutes'));
   t.ok('外した項目（staleMinutes）が prefs に残っていても、画面からの保存（strict）は断らない', !Object.hasOwn(normalizeSettings({ staleMinutes: 30, avoidPercent: 70 }, { strict: true }), 'staleMinutes'));
-  // Cerebras の直の判定器（2026-10-09 に廃止、ADR 0177）の保存済みの設定は Qwen の名前で読み、画面からの保存（strict）も断らない
+  // Cerebras の直の自動選択（2026-10-09 に廃止、ADR 0177）の保存済みの設定は Qwen の名前で読み、画面からの保存（strict）も断らない
   const legacy = { judgeByKind: { design: 'cerebras', review: 'jev' }, escalateToCerebras: true };
   const migrated = migrateLegacySettings(legacy);
   t.ok('前の版の judgeByKind の cerebras と escalateToCerebras を qwen・escalateToQwen へ直す（元の値は変えない）', migrated.changed && migrated.raw.judgeByKind.design === 'qwen' && migrated.raw.judgeByKind.review === 'jev'
@@ -145,7 +145,7 @@ export default async function (t) {
   t.ok('S4: investigate・中 → Codex gpt-6-sol', target(routeAt('investigate', 'mid', S4)) === 'codex:gpt-6-sol');
   t.ok('S4: design・高 → 週次の使用率が低い oz', target(routeAt('design', 'high', S4)) === 'claude:opus@acct-oz');
   const s3m = routeAt('mechanical', 'mid', S3);
-  t.ok('記録: 種類・難しさ・段・判定器・取得時刻', s3m.routing.mode === 'auto' && s3m.routing.kind === 'mechanical' && s3m.routing.difficulty === 'mid' && s3m.routing.tier === 't2'
+  t.ok('記録: 種類・難しさ・段・自動選択のモデル・取得時刻', s3m.routing.mode === 'auto' && s3m.routing.kind === 'mechanical' && s3m.routing.difficulty === 'mid' && s3m.routing.tier === 't2'
     && s3m.routing.baseTier === 't2' && s3m.routing.judge === 'jev' && s3m.routing.usageAt === new Date(NOW - 60_000).toISOString() && s3m.routing.fallback === null);
   const stale = { ...S1, antigravity: { ...S1.antigravity, checkedAt: NOW - STALE_MS - 60_000 } };
   const st = routeAt('trivial', 'low', stale);
@@ -296,7 +296,7 @@ export default async function (t) {
   const warn = settingsWarnings({ settings: normalizeSettings({ tiers: { t1: ['antigravity:gemini-9', 'fake:x'] } }), usage: S1 });
   t.ok('今の一覧に無い候補・使えないバックエンドを知らせる（消さない）', warn.some(w => w.candidate === 'antigravity:gemini-9' && w.reason === 'model_unknown') && warn.some(w => w.candidate === 'fake:x' && w.reason === 'unavailable'));
 
-  // ---- 判定器（偽の HTTP）
+  // ---- 自動選択のモデル（偽の HTTP）
   const KEY = 'sk-or-test-SECRET-123';
   const jev = fakeFetch(() => ({ json: jevAnswer({ diagnose: 0.49, choose: 0.31, long_procedure: 0.9, many_parts: 0.1, writes_shared: 0.02, security_gate: 0.18 }) }));
   const long = 'x'.repeat(TASK_LIMIT + 500);
@@ -329,7 +329,7 @@ export default async function (t) {
   const keys = values => async service => values[service];
   const jevOk = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 1 }) } : { json: qwenAnswer({ ...zero, choose: true }) });
   const none = await judgeDifficulty({ kind: 'visual', task: 'x', judge: 'none', keyOf: keys({ openrouter: KEY }), fetch: jevOk });
-  t.ok('判定しない種類は送らず judge_none', none.judge === 'none' && none.signals === null && none.fallback === 'judge_none' && jevOk.calls.length === 0);
+  t.ok('自動選択しない種類は送らず judge_none', none.judge === 'none' && none.signals === null && none.fallback === 'judge_none' && jevOk.calls.length === 0);
   const noKeys = await judgeDifficulty({ kind: 'review', task: 'x', judge: 'jev', keyOf: keys({}), fetch: jevOk });
   t.ok('キーが無ければ外へは何も送らず no_key（難しさは mid）', noKeys.judge === 'none' && noKeys.fallback === 'no_key' && jevOk.calls.length === 0);
   const qwenDown = fakeFetch(url => url.includes('decisions') ? { json: jevAnswer({ diagnose: 1 }) } : { status: 502, json: {} });

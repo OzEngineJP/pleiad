@@ -1,5 +1,5 @@
-// 委譲先の自動振り分けをサーバー全体で確かめる。判定器は手元の偽の Jev（OpenRouter の decisions の形）、
-// 委譲先は偽の agy（tests/lib/fake-agy.mjs。使用量とモデル一覧を返す）。本物の判定サービス・LLM へは送らない
+// 委譲先の自動選択をサーバー全体で確かめる。自動選択のモデルは手元の偽の Jev（OpenRouter の decisions の形）、
+// 委譲先は偽の agy（tests/lib/fake-agy.mjs。使用量とモデル一覧を返す）。本物の自動選択のサービス・LLM へは送らない
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,7 +9,7 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'server-delegation-routing';
-export const title = '委譲先の自動振り分け: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
+export const title = '委譲先の自動選択: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
 const prompt = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 const SIGNALS = ['diagnose', 'choose', 'long_procedure', 'many_parts', 'writes_shared', 'security_gate'];
 
@@ -65,14 +65,14 @@ export default async function (t) {
       if (state.candidates.find(x => x.candidate === 'antigravity:gemini-3.8-flash-high')?.usable) break;
       await sleep(100);
     }
-    t.ok('設定は既定値（有効）で、9 種類・段・判定器の一覧を返す', state.settings.enabled === true && state.kinds.length === 9 && state.tiers.join() === 't1,t2,t3,t4,tv'
+    t.ok('設定は既定値（有効）で、9 種類・段・自動選択の一覧を返す', state.settings.enabled === true && state.kinds.length === 9 && state.tiers.join() === 't1,t2,t3,t4,tv'
       && state.judges.join() === 'jev,qwen,none' && state.settings.judgeByKind.visual === 'none');
     const gem = state.candidates.find(x => x.candidate === 'antigravity:gemini-3.8-flash-high');
     t.ok('候補ごとに今の使用量と使えるかどうかを返す（agy の使用量を定期的に取っている）', gem?.usable === true && gem.windows.length === 2 && gem.checkedAt
       && state.candidates.find(x => x.candidate === 'claude:opus').reason === 'unavailable', JSON.stringify(gem));
     t.ok('今の一覧に無い候補・使えないバックエンドを知らせる', state.warnings.some(w => w.candidate === 'codex:gpt-6-sol' && w.reason === 'unavailable')
       && state.warnings.some(w => w.candidate === 'antigravity:claude-opus-4-6-thinking' && w.reason === 'model_unknown'));
-    t.ok('キーは未登録（判定器のキーは OpenRouter の 1 つだけ）', state.keys.openrouter.hasKey === false && Object.keys(state.keys).join() === 'openrouter');
+    t.ok('キーは未登録（自動選択のキーは OpenRouter の 1 つだけ）', state.keys.openrouter.hasKey === false && Object.keys(state.keys).join() === 'openrouter');
 
     // ---- kind の検査
     const noKind = await call(null, { task: 'echo:X' });
@@ -86,7 +86,7 @@ export default async function (t) {
 
     // ---- キーが無い: 外へは送らず難しさは mid
     const noKey = await call(sid, { kind: 'trivial', task: 'agy-auto-nokey' });
-    t.ok('キーが無ければ判定器へ送らず、難しさ mid で選ぶ（fallback: no_key）', !noKey.isError && noKey.data.routing.mode === 'auto' && noKey.data.routing.fallback === 'no_key'
+    t.ok('キーが無ければ自動選択のモデルへ送らず、難しさ mid で選ぶ（fallback: no_key）', !noKey.isError && noKey.data.routing.mode === 'auto' && noKey.data.routing.fallback === 'no_key'
       && noKey.data.routing.judge === 'none' && noKey.data.routing.difficulty === 'mid' && jevCalls.length === 0, noKey.text.slice(0, 300));
     t.ok('自動で選んだ委譲先で子を作る（antigravity の gemini）', noKey.data.backend === 'antigravity' && noKey.data.routing.target.backend === 'antigravity'
       && noKey.data.routing.target.model === 'gemini-3.8-flash-high' && noKey.data.routing.target.account === null && noKey.data.routing.tier === 't1');

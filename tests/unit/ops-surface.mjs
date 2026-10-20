@@ -121,7 +121,7 @@ export default async function (t) {
   }
 
   // ---- T6 伏せ字: 秘密の目印を入れた依存で、全 read 操作を既定の引数で呼ぶ。返りに目印が出ない
-  // 段階 1 以降は、秘密の場所（mcp-secrets・アカウントのトークン・判定器の鍵・ヘッダー値）に目印を入れた一時のデータ置き場へ広げる
+  // 段階 1 以降は、秘密の場所（mcp-secrets・アカウントのトークン・自動選択の鍵・ヘッダー値）に目印を入れた一時のデータ置き場へ広げる
   const MARKER = 'SECRET-MARKER-7f3a';
   const EMAIL = 'someone@example.invalid';
   // どの read 操作も、秘密らしい名前の欄に目印が入った生の値を受け取っても、返りに出さない（最後の網。実際のデータ置き場でのものは ops-control.mjs）

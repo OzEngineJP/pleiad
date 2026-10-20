@@ -308,9 +308,9 @@ const SUITES = [
   // 委譲の子の履歴が一時的に読めない（Codex の 1546 disk I/O error）: 0.5・1・2 秒で読み直す・読めなければ流れた返答で注意書き付きの完了・ターン用の app-server の終わりを待つ
   './unit/history-retry.mjs',
   './unit/server-delegation-history-retry.mjs',
-  // 委譲先の自動振り分け: 規則・段・使用量で飛ばす・Claude のアカウント・判定器（偽の fetch）・使用量の取り置き
+  // 委譲先の自動選択: 規則・段・使用量で飛ばす・Claude のアカウント・自動選択のモデル（偽の fetch）・使用量の取り置き
   './unit/delegation-routing.mjs',
-  // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の判定器と偽の agy）
+  // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の自動選択のモデルと偽の agy）
   './unit/server-delegation-routing.mjs',
   './unit/server-delegation-routing-settings.mjs',
   './unit/server-delegation-effort.mjs',

@@ -1,4 +1,4 @@
-// 委譲先の自動振り分けの記録（routing）の見せ方（docs/design-system.md「委譲カード」、docs/agent-delegation.md「委譲先の自動振り分け」）。
+// 委譲先の自動選択の記録（routing）の見せ方（docs/design-system.md「委譲カード」、docs/agent-delegation.md「委譲先の自動選択」）。
 //
 // - 委譲カードの 1 行の理由（routingLine）と、開いたときの内訳（routingDetail）
 // - 内訳の「別の候補でやり直す」の面（retryPanel）。候補は設定 › 委譲と同じ delegationRouting の candidates から
@@ -32,7 +32,7 @@ export const signalText = signal => known('routing.signal', signal);
 export const skipText = (reason, detail) => (reason === 'unavailable' && detail && t(`routing.unavailable.${detail}`) !== `routing.unavailable.${detail}`
   ? t('routing.skipWithDetail', { reason: known('routing.skip', reason), detail: t(`routing.unavailable.${detail}`) })
   : known('routing.skip', reason));
-/** 判定器を使えなかった理由（no_key・http_503 …） */
+/** モデルを使えなかった理由（no_key・http_503 …） */
 export function fallbackText(code) {
   const http = /^http_(\d+)$/.exec(String(code ?? ''));
   return http ? t('routing.fallback.http', { status: http[1] }) : known('routing.fallback', code);
@@ -107,7 +107,7 @@ function lowHeadroomText(low) {
     : t('routing.line.selectedLow', { reason: skipText(low.reason) });
 }
 
-/** 判定の一行（どの判定器の答えを使ったか・使えなかった理由） */
+/** 難しさを決めたモデルの一行（どのモデルの答えを使ったか・使えなかった理由） */
 export function judgeLine(routing) {
   if (!routing) return '';
   if (!routing.judge || routing.judge === 'none') {
@@ -115,7 +115,7 @@ export function judgeLine(routing) {
       : t('routing.detail.judgeUnavailable', { reason: fallbackText(routing.fallback) });
   }
   if (routing.escalated) return t('routing.detail.judgeEscalated', { judge: judgeText(routing.judge) });
-  // もう一方の判定器に落ちた（fallback は最初に選んだ判定器の失敗の理由）
+  // もう一方のモデルに落ちた（fallback は最初に選んだモデルの失敗の理由）
   if (routing.fallback) return t('routing.detail.judgeFailed', { judge: judgeText(routing.judge),
     first: judgeText(routing.judge === 'jev' ? 'qwen' : 'jev'), reason: fallbackText(routing.fallback) });
   return judgeText(routing.judge);
@@ -358,7 +358,7 @@ function candidateCard({ n, backend, model, used, skipped, account, accountLabel
 }
 
 /**
- * 委譲カードを開いたときの内訳。種類・難しさ・段・判定・はいだった手がかり・使用量の取得時刻と、試した候補を順に。
+ * 委譲カードを開いたときの内訳。種類・難しさ・段・難しさを決めたモデル・はいだった手がかり・使用量の取得時刻と、試した候補を順に。
  * opts: { names, logo(backend), onRetry?(root), compaction? } onRetry が無ければ「別の候補でやり直す」を出さない。
  * compaction は子の自動圧縮の閾値と内訳（compactionLine）。無ければ出さない
  */
@@ -404,7 +404,7 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
 
 /**
  * 自動でない委譲を開いたときの内訳。種類・委譲先（依頼元が指定）・承認モード・作業場所の格子だけ。
- * 判定・候補・やり直しは自動のときだけの部品なので出さない。mode は表示名、cwd は子の作業場所（分からなければ出さない）、
+ * 難しさを決めたモデル・候補・やり直しは自動のときだけの部品なので出さない。mode は表示名、cwd は子の作業場所（分からなければ出さない）、
  * compaction は子の自動圧縮の閾値と内訳（compactionLine。無ければ出さない）
  */
 export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '', compaction = null } = {}) {

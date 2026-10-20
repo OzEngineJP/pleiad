@@ -482,7 +482,7 @@
   },
   "routing": {
     "kindRequired": "kind を次のどれかで指定してください。\n{{kinds}}",
-    "backendRequired": "委譲先の自動振り分けが無効になっています。backend（{{backends}}）を指定してください。",
+    "backendRequired": "委譲先の自動選択が無効になっています。backend（{{backends}}）を指定してください。",
     "pinOnly": "model と effort は backend を指定したときだけ使えます。自動で選ばせるなら model と effort を省いてください。",
     "accountPinOnly": "account は backend と一緒に指定したときだけ使えます。自動で選ばせるなら account を省いてください。",
     "accountClaudeOnly": "エージェント {{backend}} はアカウントの選択に対応していません。account を省いてください。",
@@ -564,7 +564,7 @@
     "heading": "{{name}}（Pleiad が追加した指示）:",
     "names": {
       "child": "委譲された会話でのコマンドの扱い",
-      "route": "委譲の振り分けの使い方",
+      "route": "委譲先の自動選択の使い方",
       "codexPolicy": "Codex の実行前の拒否"
     },
     "formerDelegateName": "委譲の進め方",
@@ -1042,7 +1042,7 @@
       "chromeNewProfile": "新しい会話の Chrome のプロフィール",
       "chromeAutoAllow": "Chrome の確認に自動で答える",
       "computerUse": "コンピューターの操作",
-      "delegationRouting": "委譲先の自動振り分け",
+      "delegationRouting": "委譲先の自動選択",
       "plyInstructions": "Pleiad の指示",
       "addedContext": "委譲の指示のスイッチ（前の版）",
       "context": {
@@ -1160,7 +1160,7 @@
     },
     "apiKeys": {
       "list": {
-        "summary": "設定 › 秘密情報と変数の API キーの状態を返す（登録したキーの名前・プロバイダー・確認の結果・使っている所と、通話・判定器に選んだキー）。キーの値は返さない。"
+        "summary": "設定 › 秘密情報と変数の API キーの状態を返す（登録したキーの名前・プロバイダー・確認の結果・使っている所と、通話・委譲先の自動選択に選んだキー）。キーの値は返さない。"
       },
       "check": {
         "summary": "登録したキーそのものを、そのプロバイダーに送って受け付けられるか確かめ、結果を記録する（料金はかからない。接続先の確認とは別）。",
@@ -1236,7 +1236,7 @@
         "approved": "承認モードが強くなる確認を済ませたか。人（画面）だけ。AI が渡すと NEEDS_UI。"
       },
       "routing": {
-        "summary": "委譲先の自動振り分けの今の状態（設定・警告・使える候補）を返す。判定器のキーは返さない（登録の有無だけ）。設定を変えるのは settings.set の delegationRouting。",
+        "summary": "委譲先の自動選択の今の状態（設定・警告・使える候補）を返す。自動選択に使うキーは返さない（登録の有無だけ）。設定を変えるのは settings.set の delegationRouting。",
         "refresh": "true で使用量を取り直してから返す。",
         "limit": "返す候補の件数（既定 30、最大 100）。",
         "cursor": "前の返り値の next。続きから返す。"
@@ -1894,7 +1894,7 @@
     "chromeNewProfile": "新しい会話が始めに使う Chrome のプロフィール（browser・dir）。null なら Chrome の最後に使ったもの。一覧から消えたプロフィールは使わない。",
     "launchAtLogin": "OS にサインインしたら Pleiad を起動するか（true / false。値は OS の登録を読み直した実際の状態）。起動はウィンドウを前面に出さない静かな起動。ホストとして受け付ける PC を再起動後も使えるようにする。インストールした Windows / macOS 版だけで、使えない構成ではオンにできない。",
     "computerUse": "コンピューターの操作の設定（有効・全アプリの許可・常に許可のアプリ）。",
-    "delegationRouting": "委譲先の自動振り分けの設定（判定器・段・候補・段ごとの思考の強さ。キーは含まない）。",
+    "delegationRouting": "委譲先の自動選択の設定（種類ごとの自動選択・段・候補・段ごとの思考の強さ。キーは含まない）。",
     "plyInstructions": "Pleiad が会話に足す指示の項目。",
     "addedContext": "前の版の委譲の指示のスイッチ（plyInstructions に置き換わった）。",
     "context": {

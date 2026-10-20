@@ -1,10 +1,10 @@
-// 委譲先の自動振り分け（docs/agent-delegation.md「委譲先の自動振り分け」。決定は docs/adr/0022-delegation-routing.md）。
+// 委譲先の自動選択（docs/agent-delegation.md「委譲先の自動選択」。決定は docs/adr/0022-delegation-routing.md）。
 //
-// ここはプロセスも HTTP も起こさない純粋な関数だけを置く。難しさの判定器（HTTP）は core/delegation-judges.mjs、
+// ここはプロセスも HTTP も起こさない純粋な関数だけを置く。難しさを自動で決めるモデル（HTTP）は core/delegation-judges.mjs、
 // 使用量の取り置き（定期的な取得）は core/delegation-usage.mjs。「古い」の閾値（STALE_MS）はそちらの定数を使う。
 //
 //   種類（kind）   … 親のエージェントが ply_delegate で申告する
-//   難しさ          … 判定器の 6 つの手がかり（SIGNALS）から規則（difficultyOf）で数える
+//   難しさ          … 自動選択のモデルの 6 つの手がかり（SIGNALS）から規則（difficultyOf）で数える
 //   段（tier）      … 種類 × 難しさの表（table）
 //   委譲先          … 段の候補を左から、使用量の枠で飛ばしながら選ぶ（route）。無ければ 1 つ上の段へ
 
@@ -21,7 +21,7 @@ export const TIERS = Object.freeze(['t1', 't2', 't3', 't4', 'tv']);
 const LADDER = ['t1', 't2', 't3', 't4'];
 export const JUDGES = Object.freeze(['jev', 'qwen', 'none']);
 
-// 難しさの手がかり（v3）。英語の文面がそのまま判定器への問いになる。閾値は Jev の「はい」の確率を真偽に分ける線
+// 難しさの手がかり（v3）。英語の文面がそのまま自動選択のモデルへの問いになる。閾値は Jev の「はい」の確率を真偽に分ける線
 export const SIGNALS = Object.freeze(['diagnose', 'choose', 'long_procedure', 'many_parts', 'writes_shared', 'security_gate']);
 export const QUESTIONS = Object.freeze({
   diagnose: 'The task is to find the cause of a bug, failure, or unexpected behavior, and the cause is not already stated in the request. Reading documents, listing facts, or reviewing against given criteria is not this.',
@@ -83,7 +83,7 @@ export class RoutingSettingsError extends Error {
 export const RETIRED_KEYS = Object.freeze(['staleMinutes']);
 
 /**
- * 前の版の Cerebras の判定器の設定を、OpenRouter の Qwen の名前へ直す（Cerebras の直の経路は 2026-10-09 に廃止。ADR 0177）。
+ * 前の版の Cerebras の自動選択の設定を、OpenRouter の Qwen の名前へ直す（Cerebras の直の経路は 2026-10-09 に廃止。ADR 0177）。
  * judgeByKind の cerebras は qwen に、escalateToCerebras は escalateToQwen に（両方あれば今の名前を残す）。changed は直したか
  */
 export function migrateLegacySettings(raw) {

@@ -9,7 +9,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { readFileSync } from 'node:fs';
 
 export const name = 'delegation-routing-view';
-export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分と判定器の面の描き直し';
+export const title = '委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分と自動選択の面の描き直し';
 
 export default async function(t) {
   // These assertions require Japanese, regardless of the host or preceding suite.
@@ -42,14 +42,14 @@ async function japaneseCases(t) {
   assert.equal(judgeLine({ ...routing, judge: 'qwen', fallback: 'http_503' }), 'Qwen · Jev: HTTP 503');
   assert.equal(judgeLine({ ...routing, judge: 'jev', fallback: 'timeout' }), 'Jev · Qwen: 時間切れ');
   assert.equal(judgeLine({ ...routing, judge: 'qwen', escalated: true }), 'Qwen（Jev が迷ったので聞き直した）');
-  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'judge_none' }), '判定しない種類（難しさは中）');
-  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'no_key' }), '判定できなかった: キーが無い（難しさは中）');
+  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'judge_none' }), '自動選択しない種類（難しさは中）');
+  assert.equal(judgeLine({ ...routing, judge: 'none', fallback: 'no_key' }), '自動選択できなかった: キーが無い（難しさは中）');
   assert.equal(fallbackText('http_503'), 'HTTP 503');
   assert.equal(fallbackText('something_new'), 'something_new', '知らない理由はコードのまま');
   assert.deepEqual(yesSignals(routing), ['やり方の選択', '共有物への書き込み']);
   assert.equal(tierLine({ ...routing, tier: 't4' }), '段 4（表では 段 3。余裕ありの候補が無く上げた）');
   assert.equal(tierLine({ ...routing, baseTier: 't4' }), '段 3（表では 段 4。下の段から選んだ）');
-  t.ok('判定の一行（使った判定器・もう一方に落ちた・聞き直した・判定しない・失敗）と手がかり・段', true);
+  t.ok('難しさを決めたモデルの一行（使ったモデル・もう一方に落ちた・聞き直した・自動選択しない・失敗）と手がかり・段', true);
 
   assert.equal(isAutoRouting(routing), true);
   assert.equal(isAutoRouting({ ...routing, mode: 'pinned' }), false);
@@ -116,7 +116,7 @@ async function japaneseCases(t) {
   assert.ok(factText.includes('Codex（依頼元が指定）') && factText.includes('都度確認') && factText.includes('pleiad'), factText);
   assert.equal(facts.querySelectorAll('.rt-cand').length, 0, '候補は出さない');
   assert.equal(facts.querySelector('.rt-retry-open'), null, 'やり直しは出さない');
-  t.ok('固定の委譲の 1 行と内訳（判定・候補・やり直しは出さない）', true);
+  t.ok('固定の委譲の 1 行と内訳（難しさを決めたモデル・候補・やり直しは出さない）', true);
 
   // 委譲の子の自動圧縮の閾値と内訳（ADR 0166）。タスクの記録の compaction を内訳に 1 行で出す
   const compaction = { threshold: 171000, base: 71003, source: 'own', headroom: 100000 };
@@ -207,7 +207,7 @@ async function effectiveLines(t) {
     const eff = root.querySelector('.rt-eff');
     t.ok('キーが無い・使える候補が無い: スイッチの直下に ⚠ の行が 2 つと直す入口', eff && !eff.hidden && eff.querySelectorAll('p').length === 2
       && eff.querySelectorAll('button').length === 2 && eff.textContent.includes('⚠'));
-    t.ok('判定表の下の同じ警告は出さない', !root.querySelector('.rt-judges').textContent.includes('⚠'));
+    t.ok('自動選択の表の下の同じ警告は出さない', !root.querySelector('.rt-judges').textContent.includes('⚠'));
     hasKey = true; usable = true;
     await ui.refresh();
     t.ok('平常時は何も出さない', root.querySelector('.rt-eff').hidden === true);
@@ -223,7 +223,7 @@ async function effectiveLines(t) {
   }
 }
 
-/** 設定 › 委譲の判定器の面。押したボタンにフォーカスが残っていても、選び直しが画面に出てフォーカスが戻る */
+/** 設定 › 委譲の自動選択の面。押したボタンにフォーカスが残っていても、選び直しが画面に出てフォーカスが戻る */
 async function judgePanel(t) {
   const judgeDefaults = { implement: 'jev', review: 'jev' };
   const defaults = { enabled: true, judgeByKind: judgeDefaults, escalateToQwen: false, tiers: { t1: ['claude:haiku'] }, table: { implement: ['t1', 't1', 't1'], review: ['t1', 't1', 't1'] },
@@ -250,7 +250,7 @@ async function judgePanel(t) {
   try {
     const ui = setupDelegationSettings({ cmd, page() {}, showMenu() {}, labelOf: id => id, logo: () => el('span'), modelsOf: async () => ({}), modelName: () => '' });
     await ui.refresh();
-    // 並びで引く（種類の行 × 判定器のボタン、聞き直しは面の最初の入力欄）
+    // 並びで引く（種類の行 × 自動選択のボタン、聞き直しは面の最初の入力欄）
     const control = key => {
       if (key === 'escalate') return root.querySelector('.rt-judges').querySelector('input');
       const [kind, judge] = key.split(':');
@@ -263,14 +263,14 @@ async function judgePanel(t) {
     const qwen = control('implement:qwen');
     document.activeElement = qwen;
     qwen.onclick();
-    t.ok('押した瞬間に選択が変わり、ほかの判定器も押せる', control('implement:qwen').classList.contains('on') && !control('review:none').disabled);
+    t.ok('押した瞬間に選択が変わり、ほかの自動選択も押せる', control('implement:qwen').classList.contains('on') && !control('review:none').disabled);
     control('review:none').onclick();
     t.ok('保存中の次の変更もすぐ表示し、送信は最初の保存を待つ', control('review:none').classList.contains('on') && sent.length === 1);
     releases.shift().resolve(); await tick();
     t.ok('2 件目は 1 件目の完了後に送る', sent.length === 2 && sent[1].judgeByKind.review === 'none');
     releases.shift().resolve(); await tick();
     const after = control('implement:qwen');
-    t.ok('押した判定器に選択が移る', after.classList.contains('on') && after.getAttribute('aria-pressed') === 'true'
+    t.ok('押した自動選択に選択が移る', after.classList.contains('on') && after.getAttribute('aria-pressed') === 'true'
       && !control('implement:jev').classList.contains('on') && settings.judgeByKind.implement === 'qwen' && settings.judgeByKind.review === 'none');
 
     // 別の画面から変わった（delegationRoutingChanged）ときも、フォーカスが面の中にあっても描き直す

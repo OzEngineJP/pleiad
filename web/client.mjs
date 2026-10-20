@@ -10485,7 +10485,7 @@ document.addEventListener('visibilitychange', () => presenceReporter.report());
 addEventListener('plyremote:stop', () => { shellStopped = true; presenceReporter.report(); });
 addEventListener('plyremote:start', () => { shellStopped = false; presenceReporter.report(true); });
 presenceReporter.start();
-// 設定 › 委譲（委譲先の自動振り分け）。モデルの名前は入力欄と同じ語彙から
+// 設定 › 委譲（委譲先の自動選択）。モデルの名前は入力欄と同じ語彙から
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
   modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click(),

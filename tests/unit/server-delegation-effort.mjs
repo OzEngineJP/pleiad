@@ -1,5 +1,5 @@
 // 委譲の子の思考の強さ（ADR 0164）をサーバー全体で確かめる。委譲先は fake（段を選べる Fast・Smart と、選べない Tiny）。
-// 判定器のキーは登録しない（難しさは中）ので、種類 → 段は表の「中」の列で決まる。LLM・実サービスへは送らない
+// 自動選択に使うキーは登録しない（難しさは中）ので、種類 → 段は表の「中」の列で決まる。LLM・実サービスへは送らない
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';

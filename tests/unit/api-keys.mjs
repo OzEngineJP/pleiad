@@ -1,5 +1,5 @@
 // API キーの置き場（core/api-keys.mjs。ADR 0155）。LLM は呼ばない。偽の OpenRouter・偽の互換 API とだけ話す。
-// 移行（同じ値は 1 件・違う値は別の件・通話と判定器は登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・
+// 移行（同じ値は 1 件・違う値は別の件・通話と自動選択は登録済みの所だけ引き継ぐ・冪等・保留）・値を出さない・
 // 差し替え/割り当て/削除が古い置き場にも書かれる・確認・接続先の keyRef を確かめる。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -112,7 +112,7 @@ export default async function (t) {
       t.ok('違う値の OpenRouter は別の件で、元の場所が名前で分かる', list.keys.filter(k => k.provider === 'openrouter').length === 2
         && labels.some(l => l.includes('通話')) && labels.some(l => l.includes('Claude Code の接続先')), JSON.stringify(labels));
       const firstOpenRouter = list.keys.find(k => k.provider === 'openrouter').id;
-      t.ok('Cerebras の判定器のキーは取り込まず（古い置き場に残す）、選んでいたことは最初の OpenRouter のキーで判定器へ引き継ぐ', !list.keys.some(k => k.provider === 'cerebras')
+      t.ok('Cerebras の自動選択のキーは取り込まず（古い置き場に残す）、選んでいたことは最初の OpenRouter のキーで自動選択へ引き継ぐ', !list.keys.some(k => k.provider === 'cerebras')
         && list.uses['judge:jev'] === firstOpenRouter && list.keys.find(k => k.id === firstOpenRouter).uses.some(u => u.kind === 'endpoint') && (await w.compat.get('delegation-routing:cerebras'))?.key === C);
       t.ok('案内が 1 回だけ出る（OpenRouter の 2 件）', list.guide?.provider === 'openrouter' && list.guide.keyIds.length === 2);
       const call = list.uses.voice, endpoint = list.keys.find(k => k.id !== call && k.provider === 'openrouter').id;
@@ -135,7 +135,7 @@ export default async function (t) {
       t.ok('同じプロバイダーのキーが 2 件でも、案内の後に作り直さない（再起動しても出ない）', (await (async () => { const r = wire(d2); await r.apiKeys.init(); return r.apiKeys.list(); })()).guide === null);
     }
 
-    // ---- 移行済みの台帳で Cerebras の判定器を選んでいた人（ADR 0177）: 読むときに OpenRouter の判定器へ移し、Cerebras のキーは使わないキーとして残す
+    // ---- 移行済みの台帳で Cerebras の自動選択を選んでいた人（ADR 0177）: 読むときに OpenRouter の自動選択へ移し、Cerebras のキーは使わないキーとして残す
     // （Cerebras を名前付きのプロバイダーにしなくなった ADR 0183 の後は、provider 'cerebras' のキーは custom（host なし）として読む）
     {
       const d = await fresh();
@@ -150,8 +150,8 @@ export default async function (t) {
       await w.secrets.set('key:' + CB, { key: C });
       await w.apiKeys.init();
       const list = await w.apiKeys.list();
-      t.ok('Cerebras の判定器の割り当ては OpenRouter の判定器へ移り、判定器は OpenRouter のキーで送る', list.uses['judge:jev'] === OR && !Object.hasOwn(list.uses, 'judge:cerebras') && await w.apiKeys.useKey('judge:jev') === A);
-      t.ok('Cerebras のキーは消さず、判定器・通話には使わないキーとして残る（接続先が選んでいれば接続先に使われ、値も残る）', list.keys.find(k => k.id === CB)?.uses.every(u => u.kind === 'endpoint') && (await w.secrets.get('key:' + CB))?.key === C);
+      t.ok('Cerebras の自動選択の割り当ては OpenRouter の自動選択へ移り、自動選択は OpenRouter のキーで送る', list.uses['judge:jev'] === OR && !Object.hasOwn(list.uses, 'judge:cerebras') && await w.apiKeys.useKey('judge:jev') === A);
+      t.ok('Cerebras のキーは消さず、自動選択・通話には使わないキーとして残る（接続先が選んでいれば接続先に使われ、値も残る）', list.keys.find(k => k.id === CB)?.uses.every(u => u.kind === 'endpoint') && (await w.secrets.get('key:' + CB))?.key === C);
       const cbKey = list.keys.find(k => k.id === CB);
       t.ok('provider が cerebras のキーは custom（host なし）に直り、id・名前は変わらない', cbKey?.provider === 'custom' && cbKey.host === null && cbKey.label === 'Cerebras' && list.keys.length === 2);
       t.ok('cerebras.ai の互換の接続先はそのキーに当てはまり（custom・host なし）、もう名前付きのプロバイダーではない',
@@ -168,17 +168,17 @@ export default async function (t) {
       await fs.writeFile(path.join(d2, 'api-keys.json'), JSON.stringify({ version: 1, migration: { done: true }, keys: [{ id: CB, provider: 'cerebras', label: 'Cerebras' }], uses: { 'judge:cerebras': CB } }));
       const w2 = wire(d2);
       await w2.apiKeys.init();
-      t.ok('OpenRouter のキーが無ければ判定器は「使わない」のまま（Cerebras のキーは OpenRouter へ送らない）', (await w2.apiKeys.list()).uses['judge:jev'] === null && await w2.apiKeys.useKey('judge:jev') === null);
+      t.ok('OpenRouter のキーが無ければ自動選択は「使わない」のまま（Cerebras のキーは OpenRouter へ送らない）', (await w2.apiKeys.list()).uses['judge:jev'] === null && await w2.apiKeys.useKey('judge:jev') === null);
     }
 
-    // ---- 接続先にしかキーが無い人は、通話・判定器は「使わない」のまま
+    // ---- 接続先にしかキーが無い人は、通話・自動選択は「使わない」のまま
     {
       const d = await fresh();
       await seed(d, { endpoints: [EP(EP1)], endpointKeys: { [EP1]: A } });
       const w = wire(d);
       await w.apiKeys.init();
       const list = await w.apiKeys.list();
-      t.ok('接続先だけ: キー 1 件・通話と判定器は使わない（送信を始めない）', list.keys.length === 1 && Object.values(list.uses).every(v => v === null)
+      t.ok('接続先だけ: キー 1 件・通話と自動選択は使わない（送信を始めない）', list.keys.length === 1 && Object.values(list.uses).every(v => v === null)
         && await w.apiKeys.useKey('voice') === null && await w.apiKeys.hasUse('voice') === false);
     }
 
@@ -267,11 +267,11 @@ export default async function (t) {
       t.ok('形の悪いキーは断る', (await rejects(() => w.apiKeys.add({ provider: 'openrouter', label: 'x', key: 'has space' })))?.code === 'INVALID_KEY');
       const { id } = await w.apiKeys.add({ provider: 'openrouter', label: '  仕事用  ', key: A });
       let list = await w.apiKeys.list();
-      t.ok('登録しただけでは何にも使わない（通話・判定器・接続先は選ばれない）', list.keys.length === 1 && list.keys[0].label === '仕事用' && list.keys[0].uses.length === 0 && Object.values(list.uses).every(v => v === null)
+      t.ok('登録しただけでは何にも使わない（通話・自動選択・接続先は選ばれない）', list.keys.length === 1 && list.keys[0].label === '仕事用' && list.keys[0].uses.length === 0 && Object.values(list.uses).every(v => v === null)
         && await w.apiKeys.useKey('voice') === null && !(await exists(path.join(d, 'voice-secrets.json'))));
       t.ok('登録しただけでは古い置き場にも書かない（使うキーを選ぶまで古い版も送らない）', !(await w.voice.keys('openrouter')).length && !(await w.compat.keys('delegation-routing:')).length);
       const other = (await w.apiKeys.add({ provider: 'custom', label: 'Cerebras', key: C })).id;
-      t.ok('プロバイダーの違うキーは割り当てられない（判定器は OpenRouter）・廃止した Cerebras の判定器は知らない使い道', (await rejects(() => w.apiKeys.setUse('judge:jev', other)))?.code === 'PROVIDER_MISMATCH'
+      t.ok('プロバイダーの違うキーは割り当てられない（自動選択は OpenRouter）・廃止した Cerebras の自動選択は知らない使い道', (await rejects(() => w.apiKeys.setUse('judge:jev', other)))?.code === 'PROVIDER_MISMATCH'
         && (await rejects(() => w.apiKeys.setUse('judge:cerebras', id)))?.code === 'UNKNOWN_USE'
         && (await rejects(() => w.apiKeys.setUse('computer:decider', 'key-000000000000')))?.code === 'NOT_FOUND'
         && (await rejects(() => w.apiKeys.setUse('nope', id)))?.code === 'UNKNOWN_USE' && (await rejects(() => w.apiKeys.setUse('voice', 'key-000000000000')))?.code === 'NOT_FOUND');
@@ -311,7 +311,7 @@ export default async function (t) {
       t.ok('使わないにすると通話は送らず、古い置き場の通話のキーも消える（古い版も送らない）', await w.apiKeys.useKey('voice') === null && (await w.voice.keys('openrouter')).length === 0 && await w.apiKeys.useKey('judge:jev') === B);
       // 削除
       const removed = await w.apiKeys.remove(id);
-      t.ok('削除: 使っていた所が返り、判定器は使わないに戻り、値と古い置き場の項目も消える', removed.affected.some(u => u.kind === 'judge') && await w.apiKeys.useKey('judge:jev') === null
+      t.ok('削除: 使っていた所が返り、自動選択は使わないに戻り、値と古い置き場の項目も消える', removed.affected.some(u => u.kind === 'judge') && await w.apiKeys.useKey('judge:jev') === null
         && removed.affected.some(u => u.kind === 'computer') && await w.apiKeys.useKey('computer:decider') === null && (await w.apiKeys.list()).uses['computer:decider'] === null
         && (await w.secrets.keys('key:')).length === 1 && (await w.compat.keys('delegation-routing:')).length === 0);
       t.ok('消したキーは確かめられない', (await rejects(() => w.apiKeys.check(id)))?.code === 'NOT_FOUND');

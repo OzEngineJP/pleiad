@@ -310,7 +310,7 @@ export default async function (t) {
       JSON.stringify(limitResult));
     const routeState = await c.cmd('delegationRouting');
     const heldCandidate = routeState.candidates.find(x => x.candidate === 'devin:swe-2-high');
-    t.ok('制限中の同じモデルを自動振り分けの候補から外し、解除時刻を示す', heldCandidate?.reason === 'recently_limited' && heldCandidate.until === new Date(limitResult.resetsAt).toISOString(), JSON.stringify(heldCandidate));
+    t.ok('制限中の同じモデルを自動選択の候補から外し、解除時刻を示す', heldCandidate?.reason === 'recently_limited' && heldCandidate.until === new Date(limitResult.resetsAt).toISOString(), JSON.stringify(heldCandidate));
     const followFrom = c.mark(), followId = 'devin-limit-followup';
     await c.cmd('sendMessage', { sessionId: limitTurn.sessionId, messageId: followId, prompt: 'after cooldown' });
     const queued = (await c.cmd('listMessages', { sessionId: limitTurn.sessionId })).find(x => x.id === followId);

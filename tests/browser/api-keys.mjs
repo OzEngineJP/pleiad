@@ -33,8 +33,8 @@ const compatApi = await startFakeCompatApi({ keys: [A, B, L] });
 let server, browser;
 try {
   // 古い置き場を仕込む。偽の互換 API は 127.0.0.1 なので、接続先は URL のホストが openrouter.ai ではなく、プロバイダーは custom（ホストごとに別の件）。
-  // OpenRouter のキーは判定器（A）と通話（B）の 2 件で値が違う → 案内。接続先は custom の A（OpenRouter 互換）と L（社内 LiteLLM）。
-  // Cerebras の判定器のキー C（2026-10-09 に廃止、ADR 0177）は取り込まず、古い置き場に残す
+  // OpenRouter のキーは自動選択（A）と通話（B）の 2 件で値が違う → 案内。接続先は custom の A（OpenRouter 互換）と L（社内 LiteLLM）。
+  // Cerebras の自動選択のキー C（2026-10-09 に廃止、ADR 0177）は取り込まず、古い置き場に残す
   const ep = (id, agent, name, preset) => ({ id, agent, name, preset, baseUrl: compatApi.url + (agent === 'codex' ? '/v1' : ''), authMode: 'bearer', auth: 'bearer',
     roles: agent === 'codex' ? { main: 'fake-large' } : { main: 'fake-large', opus: 'fake-large', sonnet: 'fake-large', haiku: 'fake-large' }, options: {}, models: ['fake-large'] });
   fs.writeFileSync(path.join(dataDir, 'compat-endpoints.json'), JSON.stringify({ version: 1, defaults: { claude: '', codex: '' }, endpoints: [
@@ -67,7 +67,7 @@ try {
   const { ctx, page } = await session();
   await tab(page, 'apiKeysTab');
   const panel = '#apiKeysPanel';
-  check((await page.locator(`${panel} .ak-card`).count()) === 4, '移行: 4 件（OpenRouter ×2（判定器 A・通話 B）・custom ×2（OpenRouter 互換・社内 LiteLLM）。Cerebras の判定器のキーは取り込まない。URL のホストが openrouter.ai でない接続先は OpenRouter のキーにならない）', await page.locator(`${panel} .ak-card strong`).allInnerTexts());
+  check((await page.locator(`${panel} .ak-card`).count()) === 4, '移行: 4 件（OpenRouter ×2（自動選択 A・通話 B）・custom ×2（OpenRouter 互換・社内 LiteLLM）。Cerebras の自動選択のキーは取り込まない。URL のホストが openrouter.ai でない接続先は OpenRouter のキーにならない）', await page.locator(`${panel} .ak-card strong`).allInnerTexts());
   check((await text(page, panel)).includes('OpenRouter のキーが 2 つあります'), '移行の案内が先頭に 1 回出る');
   const html = await page.locator(panel).innerHTML();
   check(![A, B, C].some(v => html.includes(v)), 'DOM にキーの値が無い');
@@ -122,10 +122,10 @@ try {
   check((await text(page, '#voicePanel')).includes('通話は使えません'), '通話: 「使わない」にすると通話は使えない');
   check(!(await fs.promises.readFile(path.join(dataDir, 'voice-secrets.json'), 'utf8')).includes('"openrouter"'), '通話: 古い置き場の通話のキーも消える（古い版も送らない）');
 
-  // 委譲: 判定器（Jev・Qwen）はどちらも OpenRouter のキー 1 つ
+  // 委譲: 自動選択（Jev・Qwen）はどちらも OpenRouter のキー 1 つ
   await tab(page, 'delegationTab');
-  check((await page.locator('#delegationPanel .rt-key').count()) === 1 && (await text(page, '#delegationPanel')).includes('判定器が使うキー') && !(await text(page, '#delegationPanel')).includes('Cerebras'),
-    '委譲: 判定器の「使うキー」は OpenRouter の 1 つだけで、Cerebras は出ない');
+  check((await page.locator('#delegationPanel .rt-key').count()) === 1 && (await text(page, '#delegationPanel')).includes('委譲先の自動選択に使うキー') && !(await text(page, '#delegationPanel')).includes('Cerebras'),
+    '委譲: 自動選択の「使うキー」は OpenRouter の 1 つだけで、Cerebras は出ない');
 
   // 接続先のフォーム: 登録済みのキーが既定
   await tab(page, 'setupTab');

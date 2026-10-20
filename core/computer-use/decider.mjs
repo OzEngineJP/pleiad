@@ -1,7 +1,7 @@
 // wait_until の問いを決定モデル（perplexity/pplx-decider-v1.1-27b、OpenRouter の decisions）に 1 回聞く（ADR 0165）。
 // 送るのは撮った画面（JPEG）と問いだけ。キーは設定 › API キーの割り当て computer:decider（ADR 0155）。
 // 失敗は決まった code（timeout / network / http_<status> / bad_response）だけで返し、キー・応答の本文は文にもログにも出さない。
-// 応答の読み方は 1 か所（parseDecision）。形は委譲の判定器（core/delegation-judges.mjs の askJev）と同じ answers.<名前>.noul。
+// 応答の読み方は 1 か所（parseDecision）。形は委譲先の自動選択（core/delegation-judges.mjs の askJev）と同じ answers.<名前>.noul。
 
 export const DECIDER_MODEL = 'perplexity/pplx-decider-v1.1-27b';
 /** 1 回の往復の上限（検証の中央値は 898ms） */
@@ -12,7 +12,7 @@ export const DECIDER_SHOT = Object.freeze({ maxEdge: 1440, maxPixels: 1_300_000,
 export const UNTIL_MAX = 500;
 const MAX_BODY = 64 * 1024;
 
-// 送り先。AGENT_HOST_OPENROUTER_API はテストの偽物用（本物へは送らない）。判定器と同じ変数
+// 送り先。AGENT_HOST_OPENROUTER_API はテストの偽物用（本物へは送らない）。自動選択と同じ変数
 const apiBase = env => String(env.AGENT_HOST_OPENROUTER_API || 'https://openrouter.ai/api').replace(/\/+$/, '');
 
 /** 送る本文。問いは「完了したか」の向き（はい = 完了） */

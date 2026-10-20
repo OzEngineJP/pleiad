@@ -1097,7 +1097,7 @@
         "forChild": "委譲された会話向けなので入れていない",
         "forParent": "依頼元の会話向けなので入れていない",
         "agent": "このエージェントには入れない設定",
-        "routingOff": "委譲の自動選択がオフなので入れていない",
+        "routingOff": "委譲先の自動選択がオフなので入れていない",
         "noBridge": "委譲の橋（ply_agents）を受け取らないエージェントなので入れていない"
       }
     },
@@ -1359,7 +1359,7 @@
       },
       "onlyAgent": "{{agent}} だけ",
       "agentJoin": "・",
-      "routingOff": "委譲の自動選択がオフなので入りません",
+      "routingOff": "委譲先の自動選択がオフなので入りません",
       "gripAria": "「{{name}}」の順番（↑↓ で動かす）",
       "gripTitle": "ドラッグか ↑↓ で並べ替え",
       "switchAria": "「{{name}}」を入れる",
@@ -3584,7 +3584,7 @@
       "aria": "{{name}} を使っている所",
       "endpoint": "{{agent}} の接続先「{{name}}」",
       "voice": "通話",
-      "judge": "委譲の判定器 {{judge}}",
+      "judge": "委譲先の自動選択（{{judge}}）",
       "computer": "wait_until の問い",
       "more": "ほか {{count}} か所",
       "less": "たたむ",
@@ -3594,7 +3594,7 @@
       "endpoint": "選んでいる会話は選び直しが必要になります",
       "voice": "通話は使えなくなります",
       "computer": "wait_until の問いは使われず、画面の差分だけで待ちます",
-      "judge": "この判定器は使われなくなります"
+      "judge": "委譲先の自動選択では使われなくなります"
     },
     "replace": {
       "input": "{{name}} の新しいキー",
@@ -3655,8 +3655,8 @@
       "registered": "OpenRouter のキーを登録し、wait_until の問いに使います。"
     },
     "delegation": {
-      "title": "判定器が使うキー",
-      "unset": "キーを選ぶまで、この判定器は使われません",
+      "title": "委譲先の自動選択に使うキー",
+      "unset": "キーを選ぶまで、委譲先の自動選択では使われません",
       "selectKey": "キーを選ぶ",
       "selectLabel": "{{service}} に使うキー",
       "note": "キーを選ぶと、委譲の依頼文と種類がそのサービスに送られます。"
@@ -3712,7 +3712,7 @@
       "jev": "Jev",
       "qwen": "Qwen",
       "cerebras": "Cerebras",
-      "none": "判定しない"
+      "none": "しない"
     },
     "signal": {
       "diagnose": "原因探し",
@@ -3729,7 +3729,7 @@
       "network": "つながらない",
       "http": "HTTP {{status}}",
       "bad_response": "応答の形が違う",
-      "judge_none": "判定しない種類"
+      "judge_none": "自動選択しない種類"
     },
     "skip": {
       "unavailable": "使えない",
@@ -3769,11 +3769,11 @@
       "tier": "段",
       "tierRaised": "{{tier}}（表では {{base}}。余裕ありの候補が無く上げた）",
       "tierLowered": "{{tier}}（表では {{base}}。下の段から選んだ）",
-      "judge": "判定",
+      "judge": "難しさを決めたモデル",
       "judgeFailed": "{{judge}} · {{first}}: {{reason}}",
       "judgeEscalated": "{{judge}}（Jev が迷ったので聞き直した）",
-      "judgeNone": "判定しない種類（難しさは中）",
-      "judgeUnavailable": "判定できなかった: {{reason}}（難しさは中）",
+      "judgeNone": "自動選択しない種類（難しさは中）",
+      "judgeUnavailable": "自動選択できなかった: {{reason}}（難しさは中）",
       "signals": "はいだった手がかり",
       "noSignals": "なし",
       "usageAt": "使用量の取得",
@@ -3863,14 +3863,14 @@
     },
     "settings": {
       "enable": "委譲先を自動で選ぶ",
-      "judgeTitle": "難しさの判定",
+      "judgeTitle": "種類ごとの自動選択",
       "escalate": "Jev が迷ったら Qwen に聞き直す",
       "effective": {
         "noKey": "{{service}} のキーが登録されていないため、{{judge}} を選んだ種類は難しさを「中」として扱います。",
         "noCandidates": "使える委譲先がないため、自動の委譲はすべて失敗します。",
         "viewCandidates": "候補を見る"
       },
-      "judgeLabel": "{{kind}} の判定",
+      "judgeLabel": "{{kind}} の自動選択",
       "service": {
         "openrouter": "OpenRouter（Jev・Qwen）"
       },

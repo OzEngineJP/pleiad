@@ -231,11 +231,11 @@ export const settings = [
       try { await ctx.writes.loginItem(value); }
       catch (e) { throw invalid(ctx, `launchAtLogin: ${e?.code ?? 'failed'}`, t('loginItem.failed', { reason: e?.code ?? 'failed' })); }
     } }),
-  // 渡した項目だけを重ねる。null の項目は既定に戻す。判定器のキーは human-only の別の口で、ここには出ない
+  // 渡した項目だけを重ねる。null の項目は既定に戻す。自動選択に使うキーは human-only の別の口で、ここには出ない
   defineSetting({ key: 'delegationRouting', summary: S('delegationRouting'), risk: 'guarded', prefKeys: ['delegationRouting'],
     schema: loose, writeSchema: z.record(z.string(), z.unknown()), default: ROUTING_DEFAULTS, read: (ctx) => ctx.routingSettings?.(),
     normalize: async (ctx, patch) => {
-      // 前の版の Cerebras の判定器の項目は Qwen の名前へ直して重ねる（core/server.mjs の applyRoutingSettings と同じ。ADR 0177）
+      // 前の版の Cerebras の自動選択の項目は Qwen の名前へ直して重ねる（core/server.mjs の applyRoutingSettings と同じ。ADR 0177）
       const raw = { ...migrateRoutingSettings((await prefs(ctx)).delegationRouting ?? {}).raw };
       for (const [key, value] of Object.entries(migrateRoutingSettings(patch).raw)) { if (value === null) delete raw[key]; else raw[key] = structuredClone(value); }
       for (const key of ROUTING_RETIRED_KEYS) delete raw[key];

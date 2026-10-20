@@ -219,7 +219,7 @@ export const delegationOps = [
     uiHandler: (ctx, args) => fromHost(() => ctx.delegation.retry(args)),
   }),
 
-  // 委譲先の自動振り分けの今の状態（設定・使える候補・警告）。判定器のキーは持たない（登録の有無だけ）。設定を変えるのは settings.set の delegationRouting
+  // 委譲先の自動選択の今の状態（設定・使える候補・警告）。自動選択に使うキーは持たない（登録の有無だけ）。設定を変えるのは settings.set の delegationRouting
   defineOp({
     id: 'delegation.routing',
     summary: 'agent:ops.delegation.routing.summary',
