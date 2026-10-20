@@ -23,8 +23,12 @@ function checkRequest(message, { stat = fs.statSync } = {}) {
   return { action: message.action, file, directory };
 }
 
-/** 依頼を受けて返すメッセージを作る（送るのは呼び出し側） */
-function createFileHandler({ shell, stat }) {
+/**
+ * 依頼を受けて返すメッセージを作る（送るのは呼び出し側）。
+ * beforeBrowserOpen: HTML のファイルを既定のブラウザーで開く直前の下準備（desktop/main.cjs。隠した Chrome の窓に
+ *   開かれないよう、先に見える窓を前面にする）。省けば何もしない（テスト用）
+ */
+function createFileHandler({ shell, stat, beforeBrowserOpen = null }) {
   return async function handle(message) {
     const reply = { type: 'os-open', id: message?.id };
     try {
@@ -32,6 +36,7 @@ function createFileHandler({ shell, stat }) {
       if (action === 'reveal' && !directory) shell.showItemInFolder(file);
       else {
         // フォルダーはその中を開き、HTML は既定のブラウザーで開く。失敗は文字列で返ってくる
+        if (!directory) await beforeBrowserOpen?.();
         const error = await shell.openPath(file);
         if (error) throw failure('open-failed', String(error).slice(0, 200));
       }
@@ -42,8 +47,8 @@ function createFileHandler({ shell, stat }) {
   };
 }
 
-function attachFileBridge(worker, { shell }) {
-  const handle = createFileHandler({ shell });
+function attachFileBridge(worker, { shell, beforeBrowserOpen }) {
+  const handle = createFileHandler({ shell, beforeBrowserOpen });
   worker.on('message', async message => {
     if (message?.type === 'os-open') worker.postMessage(await handle(message));
   });

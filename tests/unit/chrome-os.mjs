@@ -1293,4 +1293,142 @@ export default async function (t) {
     const unsupported = createChromeOs({ platform: 'linux' });
     t.ok('使えない OS の層は allow・enable が false', unsupported.capabilities().features.allow === false && unsupported.capabilities().features.enable === false);
   }
+
+  // ===== raiseVisibleBrowser: 既定のブラウザーで開く直前に、見える Chrome の窓を前面にして last-active を戻す =====
+  {
+    const PROGID = 'HKCU|Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice|ProgId';
+    const noTimers = { setInterval: () => 1, clearInterval: () => {} };
+    // winWith(): 500 = エージェントの窓（nonce の題）・700 = 利用者の窓（メモ帳）。600・601 = 見えている Chrome の窓
+    const setup = progid => {
+      const w = winWith();
+      w.add(600, { title: 'Chrome A' });
+      w.add(601, { title: 'Chrome B' });
+      if (progid !== null) w.registry[PROGID] = progid;
+      return { w, os: createWin32ChromeOs({ win32: w, timers: noTimers }) };
+    };
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.fg = 600;
+      const n = w.calls.length;
+      t.ok('隠している窓が無ければ何もしない（前面も動かさない）', os.raiseVisibleBrowser({}).reason === 'no-hidden' && w.fg === 600 && w.calls.length === n);
+    }
+    {
+      const { w, os } = setup('MSEdgeHTM');
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('既定のブラウザーが Chrome でなければ何もしない', os.raiseVisibleBrowser({}).reason === 'browser' && !w.calls.some(c => c[0] === 'setForeground'));
+    }
+    {
+      const { w, os } = setup(null);   // UserChoice が読めない
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('既定のブラウザーが読めなければ何もしない（無闇に窓を前に出さない）', os.raiseVisibleBrowser({}).reason === 'browser' && !w.calls.some(c => c[0] === 'setForeground'));
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.windows.delete(600); w.windows.delete(601);
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('見える Chrome の窓が無ければ何もしない（隠した窓自身は選ばない）', os.raiseVisibleBrowser({}).reason === 'no-visible' && !w.calls.some(c => c[0] === 'setForeground'));
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.windows.delete(600); w.windows.delete(601);
+      w.add(602, { title: 'Edge の窓', pid: 40 });
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('Edge の窓は対象にしない（既定が Chrome なら chrome.exe の窓だけ）', os.raiseVisibleBrowser({}).reason === 'no-visible' && !w.calls.some(c => c[0] === 'setForeground'));
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      os.conceal(os.findWindowByNonce(NONCE));
+      // 前面の履歴（見張りが持つ「直前の前面」の鎖）: 700 → 600 → 601 → 700。最後に使った見える Chrome の窓は 601
+      w.fg = 600; os.guardTick();
+      w.fg = 601; os.guardTick();
+      w.fg = 700; os.guardTick();
+      const r = os.raiseVisibleBrowser({});
+      t.ok('最後に使われていた見える Chrome の窓を前面にする', r.ok === true && w.fg === 601, JSON.stringify(r));
+      os.guardTick();
+      t.ok('意図した前面化を見張りは取り戻さない（隠した窓でない窓が前面なら返さない）', w.fg === 601);
+      w.fg = 500; os.guardTick();
+      t.ok('その後に隠した窓が前面を取れば、見張りは直前の前面（601）へ返す', w.fg === 601, String(w.fg));
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('履歴が無ければ、見える窓の列挙（Z 順）の先頭を前面にする', os.raiseVisibleBrowser({}).ok === true && w.fg === 600);
+    }
+    {
+      const { w, os } = setup('ChromeHTML');
+      w.windows.get(601).iconic = true;
+      os.conceal(os.findWindowByNonce(NONCE));
+      w.fg = 601; os.guardTick();
+      w.fg = 700; os.guardTick();
+      const r = os.raiseVisibleBrowser({});
+      t.ok('最小化の窓も対象（出すときに SW_RESTORE で戻す）', r.ok === true && w.fg === 601 && w.calls.some(c => c.join() === 'showWindow,601,9'), JSON.stringify(r));
+    }
+    {
+      const w = fakeWin32({ directForeground: false });
+      w.add(500, { title: `PLY-${NONCE} - Google Chrome` });
+      w.add(600, { title: 'Chrome A' });
+      w.add(700, { title: 'メモ帳', className: 'Notepad', pid: 30 });
+      w.fg = 700;
+      w.registry[PROGID] = 'ChromeHTML';
+      w.attachThreadInput = () => false;
+      const os = createWin32ChromeOs({ win32: w, timers: noTimers });
+      os.conceal(os.findWindowByNonce(NONCE));
+      const r = os.raiseVisibleBrowser({});
+      t.ok('前面ロックでどの窓も前に出せなければ reason: raise（呼び出し側はそのまま開く）', r.ok === false && r.reason === 'raise' && w.fg === 700, JSON.stringify(r));
+    }
+    {
+      // enableRemoteDebugging のトグルを入れている間（ghost の窓が前面を持つ）は、前面に触らない
+      const w = fakeWin32();
+      w.add(600, { title: 'Chrome A' });
+      w.add(1, { title: 'メモ帳', className: 'Notepad', pid: 30 });
+      w.fg = 1;
+      const exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+      const spawn = (file, args) => { const title = /<title>([a-f0-9]+)<\/title>/.exec(args.at(-1))?.[1] ?? ''; w.add(950, { title }); w.fg = 950; return { on() {}, unref() {}, pid: 77 }; };
+      let release;
+      const hold = new Promise(r => { release = r; });
+      const os = createWin32ChromeOs({ win32: w, env: ENV, exists: p => p === exe, spawn, sleep: async () => {}, timers: noTimers, uia: async () => { await hold; return { ok: true }; } });
+      const pending = os.enableRemoteDebugging({ browser: os.locateBrowser({}), profileDir: 'Default' });
+      await new Promise(r => setTimeout(r, 20));   // 窓を見つけて隠す・uia の待ちに入るまで
+      t.ok('トグルを入れている間（ghost）は何もしない', w.fg === 950 && os.raiseVisibleBrowser({}).reason === 'busy');
+      release();
+      await pending;
+    }
+    {
+      // ProgId の形: Canary（ChromeSSHTM）・利用者ごとの導入（ChromeHTML.<接尾辞>）は Chrome。似た名前のほかのものは Chrome でない
+      const judge = progid => { const { w, os } = setup(progid); os.conceal(os.findWindowByNonce(NONCE)); w.fg = 700; return os.raiseVisibleBrowser({}).ok; };
+      t.ok('Chrome の ProgId（Beta・Dev・Canary・接尾辞つき）を Chrome と見る', ['ChromeBHTML', 'ChromeDHTML', 'ChromeSSHTM', 'ChromeHTML.ABCDEF123'].every(judge));
+      t.ok('似た名前の ProgId（ChromePDF・ChromeHTMLX）は Chrome と見ない', !['ChromePDF', 'ChromeHTMLX'].some(judge));
+    }
+    {
+      // 新しい Windows 11 の UserChoiceLatest を UserChoice より先に見る
+      const { w, os } = setup('MSEdgeHTM');
+      w.registry['HKCU|Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoiceLatest\\ProgId|ProgId'] = 'ChromeHTML';
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('UserChoiceLatest の ProgId を先に見る', os.raiseVisibleBrowser({}).ok === true);
+    }
+    {
+      // HTML のファイル（openPath）は .html の関連付けで見る。http は http の関連付け
+      const { w, os } = setup('MSEdgeHTM');
+      w.registry['HKCU|Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.html\\UserChoice|ProgId'] = 'ChromeHTML';
+      w.registry['HKCU|Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\http\\UserChoice|ProgId'] = 'ChromeHTML';
+      os.conceal(os.findWindowByNonce(NONCE));
+      t.ok('HTML のファイルは .html の関連付け・http は http の関連付けで見る',
+        os.raiseVisibleBrowser({ scheme: 'html' }).ok === true && os.raiseVisibleBrowser({ scheme: 'http' }).ok === true && os.raiseVisibleBrowser({ scheme: 'https' }).reason === 'browser');
+    }
+    {
+      // 隠した窓が別の Chrome（別の User Data。pid 11）にあるなら、利用者の Chrome（pid 10）の last-active は動いていない。触らない
+      const { w, os } = setup('ChromeHTML');
+      w.windows.get(500).pid = 11;
+      os.conceal(os.findWindowByNonce(NONCE));
+      w.fg = 700;
+      t.ok('隠した窓と別の Chrome の窓は前に出さない', os.raiseVisibleBrowser({}).reason === 'no-visible' && w.fg === 700);
+      w.add(603, { title: '同じ Chrome（pid 11）の見える窓', pid: 11 });
+      t.ok('隠した窓と同じ Chrome の見える窓は前に出す', os.raiseVisibleBrowser({}).ok === true && w.fg === 603);
+    }
+    {
+      const unsupported = createChromeOs({ platform: 'linux' });
+      const mac = createMacChromeOs({});
+      t.ok('使えない OS・macOS の層の raiseVisibleBrowser は何もしない', unsupported.raiseVisibleBrowser({}).reason === 'unsupported' && mac.raiseVisibleBrowser({}).reason === 'unsupported');
+    }
+  }
 }

@@ -165,9 +165,30 @@ async function installUpdate() {
   }
 }
 
-function external(url) {
+/**
+ * 既定のブラウザーへ開く依頼（shell.openExternal・HTML のファイルの shell.openPath）の直前の下準備。
+ * エージェント用に画面の外へ隠した Chrome の窓は作られた瞬間に一度アクティブになり、Chrome の「最後にアクティブな窓」が
+ * そのまま隠した窓に残ると、開いた URL・ファイルは見えない窓に入って利用者には何も起きないように見える（実機で再現）。
+ * 見える Chrome の窓を前面にして last-active を戻す（chromeOs.raiseVisibleBrowser。隠した窓が無い・既定が Chrome でない・
+ * Windows 以外では何もしない）。前面にしたときは、Chrome が前面化を受け取って last-active を更新するまで一拍置く
+ */
+async function frontVisibleBrowser(scheme) {
+  let raised = null;
+  try { raised = chromeOs?.raiseVisibleBrowser?.({ scheme }); } catch {}
+  if (raised?.ok) log(`external: raised the last used visible browser window (${raised.method})`);
+  else if (raised?.reason === 'raise') log('external: could not raise a visible browser window');
+  if (raised?.ok) await new Promise(resolve => setTimeout(resolve, 150));
+}
+
+/**
+ * 既定のブラウザーで開く全部の経路の出口（本体の窓の window.open・外のオリジンへの遷移・内蔵ブラウザーの道具・リモートの窓・OAuth の同意）。
+ * 失敗しても投げず、ログに残して false を返す
+ */
+async function external(url) {
   const href = externalUrl(url);
-  if (href) shell.openExternal(href).catch(() => {});
+  if (!href) return false;
+  await frontVisibleBrowser(new URL(href).protocol.slice(0, -1));
+  return shell.openExternal(href).then(() => true, error => { log(`external failed: ${error?.message ?? error}`); return false; });
 }
 
 // 窓の上端を脇のパネルと同じ面にする。OS の枠を消し、閉じる・最小化のボタンだけを重ねて残す。
@@ -264,9 +285,9 @@ async function boot() {
   worker.stdout?.on('data', () => {});
   // 外部 MCP の秘密は safeStorage で暗号化する。safeStorage は main でしか使えないので、サーバーの依頼をここで受ける
   // MCP の OAuth の同意画面も、サーバー（utilityProcess）はブラウザを開けないので頼まれて開く
-  attachSecretBridge(messages, { safeStorage, openExternal: url => shell.openExternal(url).catch(() => {}) });
+  attachSecretBridge(messages, { safeStorage, openExternal: url => void external(url) });
   // 「エクスプローラーで表示」「ブラウザーで開く」。範囲と接続元はサーバーが確かめ、実行は本体の shell（窓を前に出せる）
-  attachFileBridge(messages, { shell });
+  attachFileBridge(messages, { shell, beforeBrowserOpen: () => frontVisibleBrowser('html') });
   // ply_control の設定（launchAtLogin）とリモートの窓からの変更を、OS の登録へ通す
   attachLoginItem(messages, { loginItem });
   // Esc の登録を外す・戻すのは、オーバーレイ（computerOverlay。下で作る）が持つ。Esc を拾ったら、オーバーレイが computerService.escape を呼ぶ
@@ -330,7 +351,8 @@ async function boot() {
     icon: path.join(__dirname, 'icon.png'), external });
   remoteWindows.attach();
   remoteWindows.attachWorker(messages);
-  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png') });
+  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'),
+    openExternal: external, beforeBrowserOpen: () => frontVisibleBrowser('html') });
   browserPanel.attach();
   // 名前付きパイプの経路（無停止の更新）では、タブの写しをサーバーへ渡し、付け直したときにサーバーの写しからタブを立て直す（core/browser-viewer.mjs）
   browserViewerBridge = attachBrowserViewerBridge(messages, browserPanel, { handover: Boolean(linked) });
