@@ -35,10 +35,14 @@ Conversations, statuses, branches, and approvals work the same way no matter whi
 
 ## Install
 
-Download the Windows installer (x64 or ARM64) from [Releases](https://github.com/OzEngineJP/pleiad/releases).
+Download from [pleiad.dev/download](https://pleiad.dev/download/) or [Releases](https://github.com/OzEngineJP/pleiad/releases).
 
-Beta builds are self-signed, so Windows SmartScreen may show a warning.
-See [docs/desktop-releases.md](docs/desktop-releases.md) for how to verify the certificate.
+- **Windows** 10 / 11 (x64 or ARM64). Beta builds are not signed by a trusted publisher, so Windows SmartScreen shows a warning on first launch. Choose More info → Run anyway.
+- **macOS** 13 or later (Apple Silicon or Intel). Signed and notarized.
+- **Linux**: run the browser version from source (see below).
+- **Android** 13 or later: the remote app ships as an APK in pre-releases. It connects to Pleiad on your PC through your own relay server ([docs/remote.md](docs/remote.md)).
+
+See [docs/desktop-releases.md](docs/desktop-releases.md) for how releases are built, signed, and updated.
 
 Pleiad uses the agents' own CLIs and sign-ins. Install and sign in to the agents you want to use; Pleiad does not issue credentials for them.
 See [docs/backends.md](docs/backends.md) for per-agent setup.
