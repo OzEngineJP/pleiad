@@ -30,11 +30,6 @@ docker run -d --restart unless-stopped -p 127.0.0.1:8080:8080   -e RELAY_ENROLL_
 - `RELAY_TRUST_PROXY=1` は逆プロキシの後ろに置くときだけ付ける（認証に失敗した接続元の IP を `X-Forwarded-For` から読む）
 - 永続ストレージは要らない。台数は 1 台（状態をメモリに持つ）
 
-## Coolify に置く
-
-新しいリソース → このリポジトリ → Build Pack「Dockerfile」、Base Directory `/relay`、Ports Exposes `8080`、Domains `https://relay.<自分のドメイン>`、Health Check のパス `/healthz`。
-環境変数に `RELAY_ENROLL_SECRET` と `RELAY_TRUST_PROXY=1` を入れる。永続ストレージは付けない。サーバー 1 台の構成ならレプリカの設定は無く、常に 1 つで動く。
-
 ## Pleiad につなぐ
 
 ホストの Pleiad の 設定 › リモート で、中継の URL（`https://relay.<自分のドメイン>`）と `RELAY_ENROLL_SECRET` の値を入れて有効にする。

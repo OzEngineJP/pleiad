@@ -1,5 +1,5 @@
 // マイクの取り込み（通話モード）。getUserMedia → AudioWorklet → 16kHz s16le のフレーム。
-// 出どころ: vtc-web web/src/lib/audio/web-audio-capture-source.ts と capture-source.ts（Worklet を Blob の文字列で登録する・128 サンプルを 4096 にまとめる・
+// 出どころ: 運営者の別の製品の web/src/lib/audio/web-audio-capture-source.ts と capture-source.ts（Worklet を Blob の文字列で登録する・128 サンプルを 4096 にまとめる・
 // 元レートで RMS を測ってから箱平均で 16kHz に落とす・出力を gain 0 で destination へ繋ぐ・エラーの分類）。
 import { downsample, floatTo16BitPcm, rms } from './pcm.mjs';
 

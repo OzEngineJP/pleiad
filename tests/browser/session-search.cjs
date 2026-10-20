@@ -57,7 +57,7 @@ async (page) => {
   check((await titles()).includes('E2E を毎晩流す'), 'case-insensitive and NFKC (ci finds ＣＩ)');
   await search('dev');
   check((await rows().count()) === 0 && (await page.locator('#groups').innerText()).includes('一致する会話がありません'), 'a word that is only in the middle of a path matches nothing');
-  await search('vtc-web');
+  await search('shop-app');
   check((await titles()).length === 4 && (await titles()).includes('E2E のポートがぶつかる'), 'the place matches by folder name (4 conversations; the delegated child is left out)');
   await search('"e2e_port_offset"');
   check((await rows().count()) === 0, 'a quoted word is case-sensitive');

@@ -1,5 +1,5 @@
 // 通話の聞き取り（STT）。OpenRouter の同期の音声認識（POST /audio/transcriptions）に、区切り・片・投機・予備のモデルを足す。
-// 設計の出どころ: vtc-web gateway/src/providers/stt/openrouter.ts（読んで書き直した。片と投機と予備だけを残した）。docs/voice-call.md「聞き取り」。
+// 設計の出どころ: 運営者の別の製品の gateway/src/providers/stt/openrouter.ts（読んで書き直した。片と投機と予備だけを残した）。docs/voice-call.md「聞き取り」。
 //
 //   createSttClient     1 回の認識。主のモデルが 429 なら待たずに予備へ送る（MAI は混む時間帯に送信の 4〜5 割が 429 になる共有枠）。
 //                       429 を受けたら主を「混んでいる」とみなし、Retry-After の間は片を主へ送らず予備へ直接送る（確定と投機は主を先に試す。精度の差が大きい）

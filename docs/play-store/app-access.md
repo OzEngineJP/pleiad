@@ -8,7 +8,7 @@ Pleiad のアプリは、ホスト（PC の Pleiad）とペアリングするま
 
 ## 決めたこと
 
-入り方は [ADR 0172](../adr/0172-play-review-access.md) で決めた（承認済み）。審査用の機械を Coolify に置く手順は [review-host.md](review-host.md)。
+入り方は [ADR 0172](../adr/0172-play-review-access.md) で決めた（承認済み）。審査用の機械を動かす手順は [review-host.md](review-host.md)。
 
 - 審査専用の機械で、**審査モード**（`AGENT_HOST_REVIEW=1`）の Pleiad と審査用の中継を常に動かす。バックエンドは fake だけ（LLM を呼ばない）。利用者の PC は使わない。
 - そのホストだけが出せる**審査の招待**（期限 90 日・何度でも使える・人の承認なしでペアリングを通す）のコードを、審査員に渡す。生きている端末は 8 台・自動で通すのは 1 時間に 4 台まで。取り消すと、入った端末もすべて切れる。
@@ -26,7 +26,7 @@ Pleiad のアプリは、ホスト（PC の Pleiad）とペアリングするま
 
 ## 審査用のホスト
 
-審査用のホストは `deploy/review-host/Dockerfile` の image を Coolify のコンテナで動かす（審査モード・fake のバックエンド・英語・非 root は image が決めてある。手順は [review-host.md](review-host.md)）。招待は、そのコンテナの Terminal で作る:
+審査用のホストは `deploy/review-host/Dockerfile` の image をコンテナで動かす（審査モード・fake のバックエンド・英語・非 root は image が決めてある。手順は [review-host.md](review-host.md)）。招待は、そのコンテナの中で作る:
 
 ```
 node core/review-invite.mjs create --days 90   # 作る（既定 90 日、最長 180 日。今ある招待は置き換わる）

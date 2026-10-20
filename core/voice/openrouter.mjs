@@ -1,5 +1,5 @@
 // 通話モードの OpenRouter への POST（音声認識と読み上げで共有）。
-// 出どころ: vtc-web gateway/src/providers/openrouter.ts を .mjs へ移した（ZDR の長い説明と型を外した）。
+// 出どころ: 運営者の別の製品の gateway/src/providers/openrouter.ts を .mjs へ移した（ZDR の長い説明と型を外した）。
 //
 // 失敗の種類（kind）で、呼び出し側が引き直さなくて済むようにする:
 //   timeout    ヘッダが headersTimeoutMs 以内に来ない。やり直さない（既に遅い）

@@ -37,7 +37,7 @@ index.mjs   部品の差し込み（slot の契約）                    ├ wai
 
 ## 聞き取り
 
-OpenRouter の `POST /audio/transcriptions` は**同期のみ**（ストリーミングも途中結果もない）。そこで、ホストが音声を区切って送る（出どころは vtc-web の有料モードの読解。`cutter.mjs`・`piece-text.mjs`・`stt.mjs` の冒頭に書いた）。
+OpenRouter の `POST /audio/transcriptions` は**同期のみ**（ストリーミングも途中結果もない）。そこで、ホストが音声を区切って送る（出どころは運営者の別の製品の有料モードの読解。`cutter.mjs`・`piece-text.mjs`・`stt.mjs` の冒頭に書いた）。
 
 | 仕組み | 中身 |
 |---|---|

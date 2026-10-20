@@ -1,5 +1,5 @@
 // 通話の読み上げ（TTS）。OpenRouter の POST /audio/speech に response_format: "pcm" を付けると、PCM（24kHz mono s16le）が逐次で返る。
-// 出どころ: vtc-web gateway/src/providers/tts/openrouter.ts を .mjs へ移した（検査・奇数バイトの持ち越し・先頭の無音を詰める・アイドルの中断）。docs/voice-call.md「読み上げ」。
+// 出どころ: 運営者の別の製品の gateway/src/providers/tts/openrouter.ts を .mjs へ移した（検査・奇数バイトの持ち越し・先頭の無音を詰める・アイドルの中断）。docs/voice-call.md「読み上げ」。
 //
 // レートは先に決める（既定 24000。クライアントが再生のレートに使う）。応答のヘッダが違うレート・PCM でない形式（mp3 など）を示したら、1 バイトも流さずに失敗させる
 // （違うレートで鳴らすと声の高さと速さが変わったまま最後まで流れる）。最初のバイトは 0.25〜0.45 秒（Aura-2・Grok・Qwen の実測）。

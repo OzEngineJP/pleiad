@@ -9,14 +9,14 @@ export const title = "脇の検索の手元の照合: core と同じ規則・期
 const DAY = 86_400_000;
 
 export default async function (t) {
-  const queries = ["ci", "ＣＩ", "有料 翻訳", '"E2E_PORT_OFFSET"', '"e2e_port_offset"', "dev", "vtc-web", "進行中 gateway", 'foo "bar baz', '"" a a "a"', "ｶﾞｲﾄﾞ", "  ", "gateway  ログ"];
+  const queries = ["ci", "ＣＩ", "有料 翻訳", '"E2E_PORT_OFFSET"', '"e2e_port_offset"', "dev", "shop-app", "進行中 gateway", 'foo "bar baz', '"" a a "a"', "ｶﾞｲﾄﾞ", "  ", "gateway  ログ"];
   t.ok("検索語の解釈が core の parseQuery と同じ", queries.every((q) => JSON.stringify(parseTerms(q)) === JSON.stringify(core.parseQuery(q))), queries.filter((q) => JSON.stringify(parseTerms(q)) !== JSON.stringify(core.parseQuery(q))).join("|"));
   t.ok("場所はフォルダー名（core と同じ）", ["D:\dev\pleiad\\", "/home/u/dev/app", "", null, "single"].every((p) => placeName(p) === core.placeName(p)));
 
   // 題・状態・場所だけの照合は、core の matchSession（発言なし）と同じ当たり方
   const sessions = [
-    { title: "gateway のログが重複する", status: "進行中", cwd: "D:\dev\vtc-web" },
-    { title: "有料モードの切り替え", status: "レビュー待ち", cwd: "D:\dev\vtc-web" },
+    { title: "gateway のログが重複する", status: "進行中", cwd: "D:\dev\shop-app" },
+    { title: "有料モードの切り替え", status: "レビュー待ち", cwd: "D:\dev\shop-app" },
     { title: "E2E_PORT_OFFSET の話", status: null, cwd: "D:\dev\pleiad" },
     { title: "ＣＩ の設定", status: "完了", cwd: "/home/u/dev/app" },
     { title: "ガイド", status: "完了", cwd: "D:\dev\homepage" },

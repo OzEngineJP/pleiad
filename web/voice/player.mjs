@@ -1,5 +1,5 @@
 // 読み上げの再生キュー（通話モード）。ホストが流す PCM（24kHz s16le）を、文（seg）の番号どおりに背中合わせで鳴らす。
-// 出どころ: vtc-web web/src/lib/audio/tts-player.ts の PCM の経路（キュー共通の時間カーソルへ AudioBufferSource を予約する・最初は currentTime + 20ms・
+// 出どころ: 運営者の別の製品の web/src/lib/audio/tts-player.ts の PCM の経路（キュー共通の時間カーソルへ AudioBufferSource を予約する・最初は currentTime + 20ms・
 // 鳴っている source を持っておいて止める）。話者ごとのキュー・端末の声・メディアの経路は要らないので単一キューにした。
 //
 // 合成は文ごとに並行して進むので、後の文の音が先に届くことがある。前の文が終わる（end が来る）まで、後の文の音は持っておき、順に予約する。
