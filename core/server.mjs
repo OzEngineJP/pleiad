@@ -691,16 +691,23 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
     // スマホの一覧（つながり・最後に送った時刻）も同じ変化で変わる
     notifyStatus().then(next => emitGlobal({ type: 'notifyStatus', status: next, sessionId: null })).catch(() => {});
   },
-  onIdentity: () => { void plusHost?.maybeRegister(); },
+  onIdentity: identity => {
+    if (!identity?.hostId || identity.hostId === notifiedPlusIdentity) return;
+    notifiedPlusIdentity = identity.hostId;
+    void plusHost?.maybeRegister();
+  },
   log: line => console.log(`  ${line}`) });
 // Pleiad Plus: この PC の登録（core/plus/hosts.mjs）と公式の中継へのつながりの provider（core/remote/plus-link.mjs。docs/plus.md）
 let plusConfigLast = null;
+let notifiedPlusIdentity = null;
+let plusHostRegistrationInputs = null;
 const plusVerifier = createIdTokenVerifier({ jwksUrl: plusConfig.jwksUrl, projectId: () => plusConfigLast?.token?.projectId ?? '' });
 const plusHost = createPlusHost({
   session: plusSession, store: remote.store, appVersion: APP_VERSION,
   hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
   plusDevices: () => plusDevicesNow,
-  onHostState: s => { remote.setPlusHostState(s); syncPlusLink(); },
+  // 登録中・登録済みの状態変化は中継リンクの条件へ反映する。ここから再登録を始めると onHostState と循環する。
+  onHostState: s => { remote.setPlusHostState(s); syncPlusLink({ registerHost: false }); },
   log: line => console.log(`  ${line}`),
 });
 let plusDevicesNow = 0;
@@ -712,9 +719,12 @@ const plusLink = createPlusLink({
 remote.setPlusProvider(plusLink.provider);
 let lastPlusUid = null, sawSignedIn = false;
 /** ログイン・アカウント・設定が変わったときに、登録とつながりの条件を見直す。 */
-async function syncPlusLink() {
+async function syncPlusLink({ registerHost = true } = {}) {
   const snap = plusSession.snapshot();
   if (snap.signedIn) sawSignedIn = true;
+  const registrationInputs = JSON.stringify([snap.signedIn === true, snap.account?.uid ?? null, snap.account?.status ?? null]);
+  const shouldRegisterHost = registerHost && registrationInputs !== plusHostRegistrationInputs;
+  if (registerHost) plusHostRegistrationInputs = registrationInputs;
   const cfg = await plusConfig.known().catch(() => null);
   plusConfigLast = cfg ?? plusConfigLast;
   const uid = snap.signedIn ? snap.account?.uid ?? null : null;
@@ -735,7 +745,7 @@ async function syncPlusLink() {
     limits: snap.account?.limits ?? null,
     relayUrl: cfg?.urls?.relay ?? null,
   });
-  await plusHost.maybeRegister();
+  if (shouldRegisterHost) await plusHost.maybeRegister();
   plusInputsLast = plusInputs(st);
   remote.refreshPlus();
 }
