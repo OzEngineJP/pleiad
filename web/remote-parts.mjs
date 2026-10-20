@@ -195,8 +195,7 @@ export function methodOptions(arg = null, currentVal = 'own', onPickFn = null) {
     text.append(el('span', 'rm-nm', lbl));
     if (item.sub) {
       const s = el('span', 'rm-sub');
-      if (typeof item.sub === 'string') s.append(document.createTextNode(item.sub));
-      else s.append(item.sub);
+      s.append(item.sub);
       text.append(s);
     }
     option.append(el('span', `rm-rd${isChecked ? ' on' : ''}`), text);
