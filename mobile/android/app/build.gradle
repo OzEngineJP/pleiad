@@ -5,6 +5,10 @@ apply plugin: 'org.jetbrains.kotlin.android'
 def plyVersionCode = (project.findProperty('plyVersionCode') ?: '1') as int
 def plyVersionName = project.findProperty('plyVersionName') ?: '0.1.0'
 
+// Pleiad Plus: the api base. Debug builds can override it with -PpleiadPlusApi (e.g. an emulator pointing at a
+// local fake); the release build always uses the default.
+def pleiadPlusApi = project.findProperty('pleiadPlusApi') ?: 'https://api.pleiad.dev'
+
 // Pleiad: release signing comes from the environment; without PLY_ANDROID_KEYSTORE the release build stays unsigned
 def plyKeystore = System.getenv('PLY_ANDROID_KEYSTORE')
 if (plyKeystore) {
@@ -44,10 +48,14 @@ android {
         }
     }
     buildTypes {
+        debug {
+            buildConfigField 'String', 'PLUS_API', "\"${pleiadPlusApi}\""
+        }
         release {
             if (plyKeystore) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            buildConfigField 'String', 'PLUS_API', '"https://api.pleiad.dev"'
         }
     }
 }
@@ -68,6 +76,9 @@ dependencies {
     implementation project(':remote-core')
     implementation "androidx.webkit:webkit:$androidxWebkitVersion"
     implementation "androidx.activity:activity:$androidxActivityVersion"
+    // Pleiad Plus: the sign-in page opens in a Custom Tab (docs/plus.md "Android")
+    implementation "androidx.browser:browser:$androidxBrowserVersion"
+    implementation "com.squareup.okhttp3:okhttp:$okhttpVersion"
     implementation project(':capacitor-cordova-android-plugins')
 }
 

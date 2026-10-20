@@ -14,9 +14,11 @@ class MainActivity : BridgeActivity() {
         // Before Capacitor builds its WebView, so the host window is already queued when the list would first draw
         resumeLastHost(intent, freshStart = savedInstanceState == null)
         registerPlugin(PleiadRemotePlugin::class.java)
+        registerPlugin(PleiadPlusPlugin::class.java)
         super.onCreate(savedInstanceState)
         takePairLink(intent)
         takeOpenLink(intent)
+        takeAuthLink(intent)
         NotifyService.sync(this)
     }
 
@@ -46,6 +48,19 @@ class MainActivity : BridgeActivity() {
         resumeLastHost(intent, freshStart = true)
         takePairLink(intent)
         takeOpenLink(intent)
+        takeAuthLink(intent)
+    }
+
+    /**
+     * The Pleiad Plus sign-in return: the verified App Link (https://account.pleiad.dev/app/callback) or the page's
+     * pleiad://auth fallback on builds whose App Link is not verified (docs/plus.md "Android"). Handled once.
+     */
+    private fun takeAuthLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        val url = data.toString()
+        if (!dev.pleiad.app.plus.PlusAuth.isAuthCallback(url)) return
+        intent.data = null
+        (application as PleiadApp).plus.onAuthLink(url)
     }
 
     /**

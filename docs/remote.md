@@ -540,7 +540,7 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 殻が持つのは**ホスト一覧・QR のペアリング・資格情報の保管・端末内プロキシだけ**。画面はホストが配る `web/` をそのまま全部（設定を含む）出す。
 
-- 殻の画面（アプリに同梱。Capacitor の既定のオリジン）: ホスト一覧（名前・オンライン / オフライン / 確認中・最後に使った時刻）、「＋ ホストを追加」（カメラで QR → 「ホストの画面で承認してください · 確認コード 482 193」）、行の「…」（名前を変える・削除）
+- 殻の画面（アプリに同梱。Capacitor の既定のオリジン）: ホスト一覧（名前・オンライン / オフライン / 確認中・最後に使った時刻）、「＋ ホストを追加」（カメラで QR → 「ホストの画面で承認してください · 確認コード 482 193」）、行の「…」（名前を変える・削除）。「＋ ホストを追加」の下に Pleiad Plus の入口（ログインと状態の知らせ、アカウントのシートへの丸）を出す（[docs/plus.md](plus.md)「Android」）
 - ホストを選ぶと、殻がそのホストのプロキシを立てて WebView を `http://127.0.0.1:<p>/?token=…` へ移す。殻のプラグインのブリッジはホストの画面に入れない。代わりに小さなスクリプトで `window.plyRemote = { hostId, hostName, shell: 'mobile', backToHosts() }` だけを入れる（`backToHosts` はメッセージハンドラー経由。送り元がそのプロキシのオリジンの本体フレームのときだけ受ける）
 - 今のホスト名（`⇄ desktop-home`）を出す。押すと `backToHosts()` でホスト一覧へ戻る。2026-09-23 から塗りは使わない（H1 配置・塗りなし）: 700px 以下はタイトルの下の差しの青の添え字、701px 以上（タブレット）は上端の帯（脇と同じ面）の左の「‹ ⇄ ホスト名」で、タイトル行は帯の右に上げる。「…」の中にも「ホスト一覧に戻る」
 - WebView（`HostActivity`）は縦横のスクロールバーと端引きを切る（`isVerticalScrollBarEnabled`・`isHorizontalScrollBarEnabled` を false、`overScrollMode` を `OVER_SCROLL_NEVER`）。画面密度が小数（2.625 など）だとレイアウトビューポートが整数の CSS px に丸まり、WebView の実寸より 1〜2 物理 px 大きくなる。ページ（`html`・`body`）はスクロールしない作りなので、この差で WebView 自体のネイティブのバーが右端・下端に出て、画面ごとわずかに動くのを止める。会話などページの中のスクロールは Web 側のまま（`overscroll-behavior`。docs/design-system.md「狭い画面・タッチ」）

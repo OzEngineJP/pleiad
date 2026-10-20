@@ -11,10 +11,14 @@
      no host ever serves it. Host UIs open in a separate WebView without this bridge. -->
 <main id="list" class="shell">
   <header class="top"><i class="logo"></i><b data-t="hosts.title"></b>
-    <button id="notifyOpen" class="ib push" type="button" data-t-label="notify.open"><svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0112 0v5l2 2H4zM10 21h4"/></svg></button></header>
+    <button id="notifyOpen" class="ib push" type="button" data-t-label="notify.open"><svg viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0112 0v5l2 2H4zM10 21h4"/></svg></button>
+    <!-- Pleiad Plus: the signed-in account's initial; opens the account sheet (docs/plus.md "Android") -->
+    <button id="plusAccount" class="acct" type="button" hidden></button></header>
   <div id="hosts" class="card list" role="list"></div>
   <p id="empty" class="weak" hidden data-t="hosts.empty"></p>
   <button id="add" class="add" type="button"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span data-t="hosts.add"></span></button>
+  <!-- Pleiad Plus の入口（ログイン・状態の知らせ） -->
+  <div id="plus" class="plus" hidden></div>
   <p class="foot weak" data-t="hosts.foot"></p>
   <p id="plain" class="foot weak" hidden data-t="hosts.notEncrypted"></p>
   <!-- Google Play asks for the privacy policy inside the app too (site/privacy/). An outside URL: Capacitor opens it in the browser -->
@@ -63,6 +67,18 @@
   </div>
   <p class="foot weak" data-t="notify.foot"></p>
 </main>
+
+<!-- Pleiad Plus のアカウントのシート（docs/plus.md "Android"） -->
+<div id="acctSheet" class="sheetWrap" hidden>
+  <div id="acctBack" class="sheetBack"></div>
+  <div class="sheet" role="dialog" aria-modal="true">
+    <div id="acctAvatar" class="acct big"></div>
+    <div id="acctEmail" class="sheetMail"></div>
+    <div id="acctProvider" class="weak" hidden></div>
+    <button id="acctManage" class="btn" type="button" data-t="plus.manage"></button>
+    <button id="acctLogout" class="btn" type="button"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/></svg><span data-t="plus.logout"></span></button>
+  </div>
+</div>
 
 <div id="toast" class="toast" role="status" hidden></div>
 <script src="i18n.js"></script>
