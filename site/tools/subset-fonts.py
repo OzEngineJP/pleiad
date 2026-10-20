@@ -1,6 +1,6 @@
 """サイトで使う字だけに削った woff2 を assets/fonts/ に作る。
 
-文言（index.html・main.js・hero.js・locales/en.json）を変えたら流し直す。
+文言（index.html・download/index.html・main.js・hero.js・locales/en.json）を変えたら流し直す。
 元の書体は google/fonts から temporary/fonts/ に落とす（コミットしない）。
 要るもの: python の fontTools と brotli（pip install fonttools brotli）。
 
@@ -35,7 +35,7 @@ def fetch():
 
 def used_text():
     text = ""
-    for name in ["index.html", "main.js", "hero.js"]:
+    for name in ["index.html", "download/index.html", "main.js", "hero.js"]:
         t = (SITE / name).read_text(encoding="utf-8")
         if name.endswith(".html"):
             t = re.sub(r"<svg.*?</svg>", "", t, flags=re.S)
