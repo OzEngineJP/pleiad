@@ -729,6 +729,8 @@ const SUITES = [
   // 同じ身代わりで、ターン途中の送信をその区切りへ差し込む（serve の steer）
   // リモートの中継（relay/server.mjs）。空きポートで立て、素の WebSocket で照合・行き先・上限を叩く
   './unit/relay.mjs',
+  // 中継の認可の差し込み（docs/remote.md §5.7）: 判定・admit・タグ・出来事・RELAY_AUTHZ_MODULE
+  './unit/relay-authz.mjs',
   // リモートのホスト側（core/remote/connector.mjs）。中継をこのプロセスで、fake のサーバーを別プロセスで立て、試験用の端末で往復する
   './unit/remote-host.mjs',
   // 審査の招待（ADR 0172）: 同じコードで複数台・台数と 1 時間の上限・期限・取り消しと作り直しで端末が切れる・審査モードでしか作れない。中継とホストをこのプロセスで立てて往復する
