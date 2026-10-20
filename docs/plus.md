@@ -113,6 +113,17 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 
 判定は `plus` のときだけ待ち時間の上限を 8 秒にする（`PLUS_JUDGE_TIMEOUT_MS`。OpenRouter のままなら 3 秒）。通話が続いている間に ID トークンが替わっても切らない（キーの変わりを比べる印は `kind` と `uid`）。
 
+## 画面の行（`web/plus-key-row.mjs`）
+
+設定 › 委譲の「委譲先の自動選択に使うキー」と設定 › 通話の「使うキー」は、どちらも見出し＋ラジオの行（`role=radiogroup`・`role=radio`）。Pleiad Plus が上、OpenRouter が下。サーバーは画面に `via`（`'plus'`・`'key'`・`null`）・`hasKey`・`keyRef`・`plus` を返す（`plus` は `state`・`signedIn`・`status`・`email`・`reachable`・`limitReached`・`resetAt`・`profileUrl`。キーの値・ID トークン・更新トークンは返さない）。
+
+- ログイン中: メールと状態。上限（`limitReached`）なら「今月の上限に達しました（{date} に戻ります）」を行の下に足す。選んでもよい
+- `signedIn: false`: 「ログインしていません · ログイン」（［ログイン］で `plusLogin`）。選べない
+- `account.status` が `free`・`disabled`: 「Pleiad Plus を使っていません」。選べない
+- `state` が `off`・`maintenance`、`available === false`、`AGENT_HOST_PLUS=0`: 行ごと出さない
+- 選んだ印（`uses` の `plus`）は残し続ける。ログアウト・`free`・`disabled` になっても OpenRouter へすげ替えない（効き目は「キーが無い」と同じ — `endpointFor` が `null` を返す）
+- 通話の設定では、選んでいて `limitReached` のとき、行の下に「今月の Pleiad Plus の上限に達したため、通話を始められません。」と「アカウントを管理」（`profileUrl` を外へ開く）を出す。通話の画面でも、始める前・途中の `credit_exhausted` は同じ文言の通知で終わる（やり直さない・ほかへ送らない）。`not_plus`・`account_disabled` は「このアカウントでは公式の中継を使えません」
+
 ## 設定 › Pleiad Plus（`web/plus-settings.mjs`）
 
 設定のメニューに「Pleiad Plus」を足す。`status.available === false` のときは項目ごと出さない（ページにも行けない）。ページを開いたとき `plusStatus { refresh: true }` を送り、開いている間は `plusStatus` イベントで描き直す。画面は表示とコマンドを送ることだけをする。状態から DOM を作る `renderPlus` は純粋な関数（`tests/lib/dom-stub.mjs` で試験できる）。
