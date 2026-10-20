@@ -705,7 +705,6 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   }
 
   $('remoteTab').onclick = () => { page('remote'); refresh(); };
-  cmd('plusStatus').then(s => { plusStatus = s; paint(); }).catch(() => {});
   paint();
   return {
     refresh, event, get status() { return status; },

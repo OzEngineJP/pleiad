@@ -275,8 +275,12 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   }
 
   $('plusTab').onclick = () => { page('plus'); refresh(); };
-  // メニューの出し入れのために起動時に 1 回取る
-  cmd('plusStatus').then(s => { status = s; paint(); }).catch(() => {});
+  // メニューの出し入れ・開いているページのために、つながった（つなぎ直した）あとに取る。
+  // 起動の直後は WS がまだ開いていないので client.mjs が ready の後に呼ぶ
+  function reconnected() {
+    cmd('plusStatus').then(s => { status = s; paint(); }).catch(() => {});
+    if (!root.hidden) cmd('invoke', { op: 'plus.syncStatus', args: {} }).then(s => { syncStatus = s; paint(); }).catch(() => {});
+  }
   paint();
-  return { refresh, event, get status() { return status; } };
+  return { refresh, event, reconnected, get status() { return status; } };
 }
