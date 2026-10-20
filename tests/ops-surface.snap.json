@@ -3105,6 +3105,26 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "plus.status",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": "catalog",
+        "cli": {
+          "path": [
+            "plus",
+            "status"
+          ]
+        }
+      },
+      "legacyCommand": "plusStatus",
+      "input": "a85457d98cd7"
+    },
+    {
       "id": "remote.setResident",
       "risk": "write",
       "riskOf": false,
@@ -5966,6 +5986,11 @@
     {
       "id": "notify.status",
       "path": "notify status",
+      "positional": []
+    },
+    {
+      "id": "plus.status",
+      "path": "plus status",
       "positional": []
     },
     {

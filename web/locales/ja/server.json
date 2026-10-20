@@ -1416,5 +1416,15 @@
     "key": {
       "invalid": "OpenRouter のキーの形が正しくありません（空・短すぎる・空白や改行を含む）"
     }
+  },
+  "plus": {
+    "signedIn": "ログインしました。このタブは閉じてかまいません。",
+    "signInFailed": "ログインできませんでした",
+    "maintenance": "Pleiad Plus はメンテナンス中です",
+    "needsUpdate": "Pleiad を更新してください",
+    "unreachable": "サーバーへの接続に失敗しました",
+    "unavailable": "Pleiad Plus は今は使えません",
+    "notSignedIn": "ログインしていません",
+    "signedOut": "ログインしていません"
   }
 }

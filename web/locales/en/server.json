@@ -1423,5 +1423,15 @@
     "key": {
       "invalid": "That does not look like an OpenRouter key (empty, too short, or contains whitespace)"
     }
+  },
+  "plus": {
+    "signedIn": "Signed in. You can close this tab.",
+    "signInFailed": "Couldn't sign in.",
+    "maintenance": "Pleiad Plus is under maintenance",
+    "needsUpdate": "Update Pleiad to continue",
+    "unreachable": "Couldn't reach the server",
+    "unavailable": "Pleiad Plus is not available",
+    "notSignedIn": "Not signed in",
+    "signedOut": "Not signed in"
   }
 }

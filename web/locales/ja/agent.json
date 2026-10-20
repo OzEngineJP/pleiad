@@ -590,6 +590,12 @@
     "required": "必須"
   },
   "ops": {
+    "plus": {
+      "status": {
+        "summary": "Pleiad Plus の状態（利用可否・ログイン中か・アカウント・サーバーへの到達）。トークン・メールアドレス・uid は返さない。",
+        "refresh": "true ならアカウントの情報を読み直す（30 秒に 1 回まで）。"
+      }
+    },
     "accounts": {
       "list": {
         "summary": "登録アカウントの一覧を読む",

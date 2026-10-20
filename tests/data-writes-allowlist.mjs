@@ -144,7 +144,7 @@ export const DATA_WRITES = [
     { name: 'notify.json', limit: '固定', reason: 'この PC の通知設定' },
   ] },
   { file: 'core/secret-store.mjs', sites: 8, targets: [
-    { name: 'mcp-secrets.json・claude-account-secrets.json・agent-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・secret-values.json・webhook-secrets.json・remote/secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・秘密情報（MAX_ITEMS=500）・端末の数。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
+    { name: 'mcp-secrets.json・claude-account-secrets.json・agent-account-secrets.json・compat-endpoint-secrets.json・voice-secrets.json・api-key-secrets.json・secret-values.json・webhook-secrets.json・remote/secrets.json・plus-secrets.json', limit: 'MCP サーバー・アカウント・接続先・API キー（MAX_KEYS=200）・秘密情報（MAX_ITEMS=500）・端末の数・Plus のセッション 1 件。ユーザーが数個', reason: '暗号化した秘密。1 件ごとに小さい' },
     { name: '<上の秘密ファイル>.lock', limit: '固定の小ささ（pid だけ）', reason: 'ロックファイル' },
   ] },
   { file: 'core/remote/devices.mjs', sites: 2, targets: [
@@ -152,6 +152,9 @@ export const DATA_WRITES = [
   ] },
   { file: 'core/remote/static-cache.mjs', sites: 2, targets: [
     { name: '(置き場の外) デスクトップ版の端末の置き場（userData の remote-hosts）の static/<hostId>.bin と書きかけの .tmp', limit: 'ホスト 1 つにつき 1 ファイル。BUNDLE_MAX_BYTES=64MiB（今の web/ で約 5 MB）', reason: 'ホストの画面の殻の束（docs/remote.md §8.6、ADR 0181）。版が変わったときだけ別名に書いてから置き換える。ホストを削除すると消す' },
+  ] },
+  { file: 'core/plus/config.mjs', sites: 1, targets: [
+    { name: 'plus-config.json', limit: '固定（/v1/auth/config の応答の写し。秘密を含まない）', reason: 'Pleiad Plus の設定の写し。api に届かないときに使う。読めたときだけ書き直す' },
   ] },
   { file: 'core/control-file.mjs', sites: 1, targets: [
     { name: 'control.json', limit: '固定', reason: '起動中ホストの接続情報' },

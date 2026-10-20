@@ -591,6 +591,12 @@
     "required": "required"
   },
   "ops": {
+    "plus": {
+      "status": {
+        "summary": "Pleiad Plus state (availability, signed-in, account, reachability). Never returns tokens, email, or uid.",
+        "refresh": "If true, re-read the account info (at most once per 30 seconds)."
+      }
+    },
     "accounts": {
       "list": {
         "summary": "List registered accounts",
