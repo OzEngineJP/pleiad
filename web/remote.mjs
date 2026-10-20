@@ -89,13 +89,15 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   /** 取り消しの確かめ中か・操作中か・画面に出す失敗 */
   let confirming = false, busy = false, message = '';
   let reviewMode = false;
+  /** 自分の中継サーバー の「編集」で出している欄（relayInputs）。出していなければ null */
+  let editing = null;
 
   const hosts = setupRemoteHosts({ onChange: () => paint() });
   hosts.onOpen?.(() => { tab = 'other'; detailId = ''; open('remote'); refresh(); });
 
   // ---- 描く
   function paint() {
-    const sig = JSON.stringify([tab, detailId, confirming, busy, message, reviewMode, statusSig(), tab === 'other' ? hosts.sig() : '']);
+    const sig = JSON.stringify([tab, detailId, confirming, busy, message, reviewMode, Boolean(editing), statusSig(), tab ==='other' ? hosts.sig() : '']);
     paintInto(root, sig, () => {
       if (tab === 'other' && hosts.available) {
         const view = hosts.build();
@@ -112,6 +114,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function statusSig() {
     if (!status) return null;
     return [status.enabled, status.configured, connectionFailed(status), status.connection?.state === 'connected',
+      status.relayUrl ?? '', status.relayUrlFromEnv, status.hasEnrollSecret, status.enrollSecretFromEnv, status.storage?.encrypted,
       (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.createdAt, d.lastSeenAt, d.agent?.active ?? 0])];
   }
 
@@ -119,7 +122,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     const row = el('div', 'rm-tabrow');
     if (hosts.available) {
       row.append(segment(t('settings.remote.tabs.label'), [['this', t('settings.remote.tabs.this')], ['other', t('settings.remote.tabs.other')]], tab,
-        value => { tab = value; detailId = ''; confirming = false; if (value === 'other') hosts.refresh(); paint(); }));
+        value => { tab = value; detailId = ''; confirming = false; editing = null; if (value === 'other') hosts.refresh(); paint(); }));
     }
     const allowed = status?.enabled === true;
     if (tab === 'other') row.append(iconButton('plus', t('settings.remote.addHost'), () => hosts.openAdd(), 'btn rm-add'));
@@ -141,13 +144,21 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     const out = [head];
     if (message) out.push(errorLine(message));
     if (!on) return out;
-    // まとまりはつなぎ方ごと（いまは 自分の中継サーバー だけ。Pleiad Plus は上に足す）
+    // まとまりはつなぎ方ごと（いまは 自分の中継サーバー だけ。Pleiad Plus は上に足す）。中継を設定していれば、端末が無くても「編集」のために出す
     const devices = status.devices ?? [];
     const failed = connectionFailed(status);
-    if (devices.length || failed) {
+    if (devices.length || failed || status.relayUrl) {
       const group = el('section', 'rm-group');
-      group.append(groupHead(t('settings.remote.groups.own')));
+      const gh = groupHead(t('settings.remote.groups.own'));
+      if (!editing && !reviewMode) {
+        const edit = button(t('settings.remote.relay.edit'), () => openRelayEdit(), 'rm-gh-btn');
+        edit.dataset.fk = 'relayEdit';
+        edit.disabled = busy;
+        gh.append(edit);
+      }
+      group.append(gh);
       if (failed) group.append(el('p', 'rm-warn', t('settings.remote.failed')));
+      if (editing) group.append(relayEdit());
       for (const d of devices) {
         const view = deviceRow(d, status);
         group.append(listRow({ icon: view.icon, name: view.name, sub: view.offline ? t('settings.remote.offline') : '', key: `device-${d.id}`,
@@ -201,19 +212,70 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   const wizard = createWizard({ id: 'remoteAddDevice', onCancel: () => cancelWizard() });
 
   function openWizard() {
+    const inputs = relayInputs();
+    for (const i of Object.values(inputs)) i.oninput = () => paintWizard();
+    wz = { step: 0, kind: 'phone', inputs, error: '', busy: false, offer: null, starting: false, offerEnd: null, request: null, ended: '', doneName: '' };
+    paintWizard();
+  }
+
+  /** 中継の 3 つの欄（URL・登録用の秘密・ホスト名）。今の値を入れておく（秘密は入れない） */
+  function relayInputs() {
     const relayUrl = textInput({ type: 'url', placeholder: 'https://relay.example.com', key: 'relayUrl' });
     const secret = textInput({ type: 'password', autocomplete: 'new-password', key: 'secret' });
     const hostName = textInput({ key: 'hostName' });
     relayUrl.value = status?.relayUrlFromEnv ? '' : status?.relayUrl ?? '';
     hostName.value = status?.hostName ?? '';
-    for (const i of [relayUrl, secret, hostName]) i.oninput = () => paintWizard();
-    wz = { step: 0, kind: 'phone', inputs: { relayUrl, secret, hostName }, error: '', busy: false, offer: null, starting: false, offerEnd: null, request: null, ended: '', doneName: '' };
-    paintWizard();
+    return { relayUrl, secret, hostName };
+  }
+  /** 中継の欄を並べる（＋ の流れの「つなぎ方」と、まとまりの「編集」で同じもの） */
+  function relayFields({ relayUrl, secret, hostName }) {
+    relayUrl.placeholder = status?.relayUrlFromEnv ? status.relayUrl : 'https://relay.example.com';
+    secret.placeholder = status?.hasEnrollSecret && !status.enrollSecretFromEnv ? t('settings.remote.relay.secretSaved') : '';
+    const note = text => text ? el('small', 'rm-note', text) : null;
+    const fields = el('div', 'rm-fields');
+    fields.append(
+      field(t('settings.remote.relay.url'), relayUrl, note(status?.relayUrlFromEnv ? t('settings.remote.relay.urlFromEnv') : '')),
+      field(t('settings.remote.relay.secret'), secret, note(status?.enrollSecretFromEnv ? t('settings.remote.relay.secretFromEnv') : '')),
+      field(t('settings.remote.relay.hostName'), hostName));
+    const out = [fields];
+    if (status?.storage?.encrypted === false) out.push(el('p', 'rm-strong', `⚠ ${t('settings.remote.relay.notEncrypted')}`));
+    return out;
+  }
+
+  // ---- 自分の中継サーバー の「編集」（つながっている間も中継の設定を変えられる）
+  function openRelayEdit() {
+    editing = relayInputs();
+    message = '';
+    paint();
+    queueMicrotask(() => editing?.relayUrl.focus());
+  }
+  function relayEdit() {
+    const box = el('div', 'rm-confirm rm-relay-edit');
+    const cancel = () => { editing = null; message = ''; paint(); };
+    const save = () => run(async () => {
+      const patch = relayPatch(editing);
+      if (Object.keys(patch).length) status = await cmd('setRemoteSettings', patch);
+      editing = null;
+    });
+    for (const i of Object.values(editing)) {
+      i.onkeydown = e => {
+        if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); }
+      };
+    }
+    const no = button(t('settings.remote.wizard.cancel'), cancel, 'btn btn-quiet');
+    no.dataset.fk = 'relayCancel';
+    const yes = button(t('settings.remote.relay.save'), save, 'btn btn-primary');
+    yes.dataset.fk = 'relaySave';
+    for (const b of [no, yes]) b.disabled = busy;
+    const acts = el('div', 'rm-acts');
+    acts.append(no, yes);
+    box.append(...relayFields(editing), acts);
+    return box;
   }
 
   /** 保存する欄の差分。変えていない欄は送らない（秘密は空なら今の値を残す） */
-  function relayPatch() {
-    const { relayUrl, secret, hostName } = wz.inputs;
+  function relayPatch({ relayUrl, secret, hostName }) {
     const patch = {};
     const url = relayUrl.value.trim(), host = hostName.value.trim();
     if (url !== (status?.relayUrlFromEnv ? '' : status?.relayUrl ?? '')) patch.relayUrl = url;
@@ -271,17 +333,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     const out = [methodOptions(status?.relayUrl ? relayHost(status.relayUrl) : externalLink(t('settings.remote.wizard.relayGuide'), RELAY_GUIDE_URL))];
     if (showRelay) {
       if (connectionFailed(status)) out.push(el('p', 'rm-warn', t('settings.remote.failed')));
-      const { relayUrl, secret, hostName } = wz.inputs;
-      relayUrl.placeholder = status?.relayUrlFromEnv ? status.relayUrl : 'https://relay.example.com';
-      secret.placeholder = status?.hasEnrollSecret && !status.enrollSecretFromEnv ? t('settings.remote.relay.secretSaved') : '';
-      const note = text => text ? el('small', 'rm-note', text) : null;
-      const fields = el('div', 'rm-fields');
-      fields.append(
-        field(t('settings.remote.relay.url'), relayUrl, note(status?.relayUrlFromEnv ? t('settings.remote.relay.urlFromEnv') : '')),
-        field(t('settings.remote.relay.secret'), secret, note(status?.enrollSecretFromEnv ? t('settings.remote.relay.secretFromEnv') : '')),
-        field(t('settings.remote.relay.hostName'), hostName));
-      out.push(fields);
-      if (status?.storage?.encrypted === false) out.push(el('p', 'rm-strong', `⚠ ${t('settings.remote.relay.notEncrypted')}`));
+      out.push(...relayFields(wz.inputs));
     }
     if (wz.error) out.push(errorLine(wz.error));
     return out;
@@ -331,7 +383,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function stopTick() { clearInterval(tick); tick = null; }
 
   async function saveRelayAndConnect() {
-    const patch = relayPatch();
+    const patch = relayPatch(wz.inputs);
     if (!Object.keys(patch).length && !connectionFailed(status)) { wz.step = 2; paintWizard(); return; }
     wz.busy = true; wz.error = ''; paintWizard();
     try {
@@ -485,6 +537,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   }
   function toggle() {
     const next = !(status?.enabled === true);
+    editing = null;
     return run(async () => { status = await cmd('setRemoteSettings', { enabled: next }); });
   }
   function revoke(device) {

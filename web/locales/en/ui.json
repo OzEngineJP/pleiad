@@ -240,7 +240,9 @@
         "secretSaved": "Saved (enter only to change)",
         "secretFromEnv": "Using the AGENT_HOST_RELAY_SECRET environment variable.",
         "hostName": "Host name",
-        "notEncrypted": "This session cannot encrypt the enrollment secret (it is saved to a file only you can read)."
+        "notEncrypted": "This session cannot encrypt the enrollment secret (it is saved to a file only you can read).",
+        "edit": "Edit",
+        "save": "Save"
       },
       "devices": {
         "unnamed": "Unnamed device",

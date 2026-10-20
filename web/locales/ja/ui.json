@@ -240,7 +240,9 @@
         "secretSaved": "保存済み（変えるときだけ入力）",
         "secretFromEnv": "環境変数 AGENT_HOST_RELAY_SECRET の値を使っています。",
         "hostName": "ホスト名",
-        "notEncrypted": "この起動では登録用の秘密を暗号化できません（本人だけが読めるファイルに保存します）。"
+        "notEncrypted": "この起動では登録用の秘密を暗号化できません（本人だけが読めるファイルに保存します）。",
+        "edit": "編集",
+        "save": "保存"
       },
       "devices": {
         "unnamed": "名前のない端末",
