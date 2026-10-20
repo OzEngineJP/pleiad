@@ -91,6 +91,18 @@
 | `plusLoginCancel` | `{}` → 状態 | 人だけ |
 | `plusLogout` | `{}` → 状態 | 人だけ |
 
+## 設定 › Pleiad Plus（`web/plus-settings.mjs`）
+
+設定のメニューに「Pleiad Plus」を足す。`status.available === false` のときは項目ごと出さない（ページにも行けない）。ページを開いたとき `plusStatus { refresh: true }` を送り、開いている間は `plusStatus` イベントで描き直す。画面は表示とコマンドを送ることだけをする。状態から DOM を作る `renderPlus` は純粋な関数（`tests/lib/dom-stub.mjs` で試験できる）。
+
+- 上から順に当てはめる: `needsUpdate`（更新の 1 行だけ）→ `state: maintenance`（メンテナンスの行。ログイン中ならアカウントの行だけ）→ ログインの途中（`waiting`・`finishing`。「やめる」で `plusLoginCancel`）→ ログインの失敗（「もう一度」で `plusLogin`）→ `error.code: locked`（保管が読めない文言）→ `signedIn: false`（「ログイン」。`error.code: relogin` なら「もう一度ログインしてください」）→ `account.status`（disabled / free / plus）
+- `reachable === false` のときは、当てはまった中身の上に「サーバーへの接続に失敗しました」の 1 行を足す（⚠ は付けない）
+- アカウントの行は丸（メールの頭の 1 文字・大文字）・メール・入り方（`provider === 'google.com'` のときだけ「Google でログイン」）。プランの行は `account.plan.name`（無ければ「Pleiad Plus」）か「無料」
+- 今月の利用（`plus` かつ `usage`・`limits` があるとき）: 「今月の利用: {used} / {limit} クレジット（{date} に戻ります）」。数は `Intl.NumberFormat`、日付は `Intl.DateTimeFormat(lang, { month: 'long', day: 'numeric' })`。`used >= limit` ならその下に「上限に達しました」
+- 同期の置き場は `<div id="plusSyncSection">`（見出しは隠してある。中身は同期の画面の issue が入れる）
+- この PC の行は `host.state` が `taken`（「つなぎ直す」→ 確かめの窓 → `plusHostRebind`）・`limit` のときだけ。ほかは出さない。`plusHostRebind` は後の段階が作る。知らないコマンドが返ったら何も出さない
+- 「Pleiad Plus にする」は `urls.account` に `/plus` を足した URL を、「アカウントを管理」は `urls.account` を外のブラウザーで開く。「ログアウト」は `plusLogout`
+
 ## ID トークンの検証（`core/plus/verify.mjs`）
 
 `createIdTokenVerifier({ jwksUrl, projectId, now, fetchFn })` → `verify(token)` → `{ uid, email }`。合わなければ `PlusError({ code: 'bad_token' })`。

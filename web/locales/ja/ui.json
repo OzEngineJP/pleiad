@@ -51,7 +51,7 @@
       "notify": "通知",
       "voice": "通話",
       "remote": "リモート",
-      "about": "アプリ情報・更新",
+      "plus": "Pleiad Plus",      "about": "アプリ情報・更新",
       "delegation": "委譲",
       "autoCompaction": "自動圧縮",
       "browser": "ブラウザー",
@@ -162,6 +162,33 @@
         "switch": "{{name}}：通知"
       }
     },
+      "plus": {
+        "account": "アカウント",
+        "signedOut": "ログインしていません",
+        "signIn": "ログイン",
+        "relogin": "もう一度ログインしてください",
+        "signingIn": "ブラウザーでログインしています…",
+        "cancel": "やめる",
+        "signInFailed": "ログインできませんでした",
+        "tryAgain": "もう一度",
+        "providerGoogle": "Google でログイン",
+        "plan": "プラン",
+        "free": "無料",
+        "getPlus": "Pleiad Plus にする",
+        "usage": "今月の利用: {{used}} / {{limit}} クレジット（{{date}} に戻ります）",
+        "limitReached": "上限に達しました",
+        "sync": "同期",
+        "manage": "アカウントを管理",
+        "signOut": "ログアウト",
+        "disabled": "このアカウントは使えなくなっています",
+        "maintenance": "Pleiad Plus はメンテナンス中です",
+        "needsUpdate": "Pleiad を更新してください",
+        "hostTaken": "この PC はほかの Pleiad Plus のアカウントでつないでいます。",
+        "rebind": "つなぎ直す",
+        "rebindConfirm": "この PC の鍵を作り直します。自分の中継サーバーでつないだ端末は、ペアリングし直しになります。",
+        "rebindYes": "作り直す",
+        "hostLimit": "このアカウントの上限に達しています"
+      },
     "remote": {
       "tabs": {
         "label": "向き",
