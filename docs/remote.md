@@ -55,7 +55,7 @@
 | ホストの接続口・ペアリング・端末一覧 | `core/remote/connector.mjs`、`core/remote/devices.mjs`。サーバーのプロセス内で動く（`npm start` のホストでも使える） | Node |
 | 端末の AI からの委譲（§4.5） | ホスト: `core/remote/agent-port.mjs`（`/agent` の口・許可・上限・中継する承認）。端末: `core/remote/agent-link.mjs`（main がホストへ張る線）、`desktop/remote-agent-bridge.cjs`（main とローカルのサーバーの橋）、`core/remote-delegation.mjs`（ローカルのサーバーの側。`ply_delegate` の `host`・タスクの追跡・中継の承認） | Node |
 | 端末の資格情報・ペアリング・端末内プロキシ | `core/remote/device.mjs`（置き場・ペアリング・ホストごとのプロキシの管理）、`core/remote/device-link.mjs`（中継への線・張り直し・状態）、`core/remote/device-proxy.mjs`（127.0.0.1 の HTTP と /ws）。デスクトップの main から `import()`、試験からも使う | Node |
-| リモートの窓・ほかのホストにつなぐ窓 | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/remote-hosts.html`・`remote-hosts-view.cjs`・`remote-hosts-preload.cjs`（同梱の窓）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
+| リモートの窓・ほかの PC へ | `desktop/remote-windows.cjs`（窓・IPC・印。main プロセス）、`desktop/remote-preload.cjs`（リモートの窓の preload）、`desktop/preload.cjs` の `plyDesktop.hosts`（主の窓の 設定 › リモート › ほかの PC へ が使う口）、`desktop/window-trust.cjs`（窓ごとのオリジンの表）、`desktop/i18n.cjs`（本体の文言）。画面の印は `web/remote-badge.mjs` | Node |
 | 手元のフォルダーを送る（§8.1） | `core/folder-uploads.mjs`（`upload*` コマンドの中身・置き場・パスの検査）、`web/folder-upload.mjs`（送る流れとドロップの問い）、`web/attach-menu.mjs`（添付のボタンのメニュー） | Node / JS |
 | モバイルの殻 | `mobile/`（Capacitor 8。独立した `package.json`）。Android: `mobile/android/remote-core/`（端末側の Kotlin 移植。純粋な JVM で Gradle の試験）、`mobile/android/app/`（殻・ホストの窓・Keystore）、`mobile/www/`（同梱のホスト一覧）、`mobile/scripts/fake-host.mjs`（試験用の中継 + fake のホスト）。iOS: `mobile/ios/remote-core/`（端末側の Swift 移植。Swift Package で `swift test`。§8.3）。iOS の殻は `mobile/ios/App/`（SPM・Keychain・AVFoundation・WKWebView。[ios.md](ios.md)）。Android の配布は [android-releases.md](android-releases.md) | Kotlin / Swift / JS |
 | 離れた端末への通知（§5.6・§11-5） | ホスト: `core/notify/`（`policy.mjs` 判定・`notifier.mjs` 送る・`crypto.mjs` 暗号・`presence.mjs` 見ている会話・`settings.mjs` この PC の設定）。Android: `mobile/android/remote-core/` の `Notify*.kt`（線・復号・束ね方・鍵の登録）と `mobile/android/app/` の `NotifyService`・`NotifyPresenter`・`NotifyControl`。試験の例は `tests/remote/notify-vectors.json` | Node / Kotlin |
@@ -98,7 +98,7 @@ AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Ele
 
 ### 3.3 ペアリングの流れ
 
-1. ホスト: 設定 › リモート で有効化（中継の URL と登録用の秘密）。接続口が中継へつながる
+1. ホスト: 設定 › リモート › この PC へ で「ほかの端末からの操作を許可する」を入れ、＋ の流れの「つなぎ方」で中継の URL と登録用の秘密を入れる（入れてあれば飛ばす）。接続口が中継へつながる
 2. ホスト: 「端末を追加」→ ペアリングの秘密を作り、中継に入場券のハッシュ `SHA-256(HKDF(秘密, "pleiad pair ticket"))` を 5 分・1 回の約束で登録 → QR を表示（残り時間の表示。期限が来たら作り直せる）
    QR の中身: `pleiad://pair?v=1&r=<中継の URL>&h=<hostId>&k=<ホストの公開鍵 base64url>&s=<ペアリングの秘密>&n=<ホスト名>`。
    QR の下に同じ文字列の「コードをコピー」（デスクトップ版どうしは貼り付けで足す）
@@ -359,17 +359,20 @@ Coolify の設定: 新しいリソース → GitHub のリポジトリ → Build
 
 ### 6.1 設定 › リモート
 
-- 「このホストをリモートから使えるようにする」のスイッチ、中継の URL、登録用の秘密（伏せ字。保存後は表示しない）。状態の一行（「中継につながっています」「中継につながりません · 理由」）
-- 「端末を追加」→ QR と残り時間とコードのコピー（§3.3）。承認のダイアログはどの画面にいても出る（承認待ちと同じく差し色の「あなたを待っている」）
-- 端末一覧と「取り消す」（その場の確認。この端末の AI から任された作業があれば「任された作業 N 件も止めます」を添える）
-- デスクトップ版の端末の行には「この端末の AI からの依頼を受ける」のスイッチ（既定オフ。§4.5）。入れるときはその場で確かめる（「⚠ 依頼元の会話が確認なしのモードなら、この PC でも確認なしで動きます」）。入れた後は、任された作業の数・承認待ちの数・最近の会話を開く・すべて止める（ホストの脇の一覧にも、任された会話が「⇄ 端末 の AI から」の印つきで並ぶ）。スマホの行には出さない。画面の形は [design-system.md](design-system.md)「ホストに任せた委譲」
-- ホストとして常駐する設定（§6.3）
-- 画面は既存の管理の面（`.mp-panel` など）を使う。設定の状態はサーバー側（WS コマンド）に置くので、リモートの窓からも見える・触れる（全権限のため）
+作り直し（2026-10-21、[ADR 0239](adr/0239-remote-single-permission.md)。モックは承認済み）。ページは「この PC へ」「ほかの PC へ」のタブに分ける（つなぐ向き）。右端の「＋」は、この PC へ では「端末を追加」（許可がオンのときだけ）、ほかの PC へ では「PC を追加」（コードを貼る）。ほかの PC へ はデスクトップ版のローカルの窓だけ（§7.4）。
+
+- **この PC へ**: スイッチ「ほかの端末からの操作を許可する」1 つ（`settings.json` の `enabled`。端末の人の操作と、デスクトップ版の端末の AI からの依頼の両方。§4.5）。オフの間はスイッチだけを出す。オンで中継につながらないときだけ、強い字の「サーバーへの接続に失敗しました」
+- オンのときは、つないだ端末をつなぎ方ごとのまとまり（今は「自分の中継サーバー」だけ）で並べる。行は端末の絵（スマホ・タブレット・PC）と名前。許可がオンで中継にもつながっているのに端末がつながっていないときだけ、弱い字の「オフライン」
+- 行を押すと詳しい画面: 名前、つなぎ方・中継サーバー（ホスト名だけ）・追加した日・最後の接続、「取り消す」（その場の確認。この端末の AI から任された作業があれば「任された作業 N 件も止めます」を添える）
+- ＋ の流れ（ダイアログ）: アプリを入れる › つなぎ方 › つなぐ › 完了。どの段でも「やめる」は左下、「戻る」「次へ」は右下。アプリを入れる はスマホ（ストアの QR）か PC（配布のページ）を選ぶ。つなぎ方 は「自分の中継サーバー」1 つで、中継の URL・登録用の秘密が無いとき・つながらないときだけ、同じ段に URL・秘密（保存後は「保存済み（変えるときだけ入力）」）・ホスト名の欄を出す（環境変数を使っているときと暗号化できない起動のときだけ 1 行）。「次へ」で保存して中継へつなぎ、つながったら つなぐ の段で QR（スマホ）かコードのコピー（PC）と残り時間と ⚠ の全権限の一文。端末が来たら同じ段で確認コードを見せて「許可する」
+- 許可のスイッチは中継の設定が無くても入れられる（設定が揃うまではつながらず、ペアリングも始められない）
+- 承認のダイアログはどの画面にいても出る（承認待ちと同じく差し色の「承認を待っている」）。＋ の流れで待っている間は流れの中で聞く
+- 画面は管理の面の上に置く `.rm-*`（`web/manage-panel.css`）。設定の状態はサーバー側（WS コマンド）に置くので、リモートの窓からも この PC へ は見える・触れる（全権限のため）
+- 常駐の設定は 設定 › アプリ情報・更新 に移した（§6.3）
 
 QR の画像は `web/vendor/qrcode-generator.mjs`（kazuhikoarase/qrcode-generator 2.0.4、MIT。取得元と版はファイルの頭）を同梱して SVG に描く（誤り訂正 M、余白 4 マス、明暗テーマによらず白地 `--surface-qr` に濃い点 `--ink-qr`）。
 
-画面（`web/remote.mjs`、2026-09-23）: 設定のメニューに「リモート」。上からスイッチと状態の一行（困っているときだけ強い字）、「中継」の面（URL・登録用の秘密は伏せ字で保存後は「保存済み（変えるときだけ入力）」・ホスト名・「保存」。環境変数を使っているときと暗号化できない起動のときだけ 1 行）、「端末」の面（一覧・「＋ 端末を追加」・ペアリングの面）、ログインはホストの PC での一文、「常駐」の面（デスクトップ版のホストだけ）。スイッチを入れるときは、入力したまま保存していない中継の欄も一緒に送る。
-承認のダイアログは `<dialog>` のモーダルで、`remotePairing` の request（と開いたときの `remoteStatus` の承認待ち）で出す。既定の居場所は「拒否」、Esc では閉じない。承認待ちが消えたら（切れた・期限・ほかの画面で決めた）閉じて、端末の面の下に一言を残す。
+画面（`web/remote.mjs`・`web/remote-hosts.mjs`・`web/remote-parts.mjs`、2026-10-21）: 上の通り。承認のダイアログは `<dialog>` のモーダルで、`remotePairing` の request（と開いたときの `remoteStatus` の承認待ち）で出す。既定の居場所は「拒否」、Esc では閉じない。承認待ちが消えたら（切れた・期限・ほかの画面で決めた）黙って閉じる。
 
 WS コマンド（`core/protocol.mjs`）: `setRemoteDeviceAgent { id, stopAll? }`（human-only。`stopAll` はその端末から任された作業をすべて止める。ADR 0239）・`remoteStatus`・`setRemoteSettings { enabled?, relayUrl?, enrollSecret?, hostName? }`・`remotePairingStart`（QR の文字列を返す）・`remotePairingCancel`・`remotePairingApprove { id }`・`remotePairingDeny { id }`・`remoteDevices`・`remoteRevoke { id }`。イベントは `remoteStatus { status }`（状態の丸ごと）と `remotePairing { phase, request?, device? }`。登録用の秘密・トークン・鍵は返さない。設定は `<data>/remote/settings.json`（秘密は `secrets.json`）。既定は無効で、有効にするまで鍵も作らない。
 
@@ -384,8 +387,9 @@ WS コマンド（`core/protocol.mjs`）: `setRemoteDeviceAgent { id, stopAll? }
 
 - **推奨: リモートを有効にしたら「窓を閉じてもホストを続ける」を既定でオン**にし、トレイ（macOS はメニューバー）に残す。トレイのメニュー: 状態（中継 · 接続中の端末 N · 実行中 N）、「Pleiad を開く」、「終了」（実行中なら今と同じ確認）
 - **ルーティン**: 一時停止していないものが 1 件以上あれば、リモートの有効・無効や「窓を閉じてもホストを続ける」の設定にかかわらずトレイに残す。メニューとツールチップに「ルーティン N 件のために常駐しています」を添える。「終了」は従来どおりホストを終了し、ルーティンも止まる。
+- 画面は 設定 › アプリ情報・更新 › 常駐（`web/resident-settings.mjs`。2026-10-21 に 設定 › リモートから移した。リモートに限らずアプリ全体の動き方なので）: 「ウィンドウを閉じても動かし続ける（トレイに残す）」「サインイン時に Pleiad を起動する（ウィンドウは出さずに起動）」のスイッチと、「スリープ」の「作業中だけ防ぐ / 防がない」。デスクトップ版のホストだけに出す
 - スリープ: リモートが有効な場合だけ「作業中だけ防ぐ（既定）/ 防がない」。作業中 = ターンが走っているか承認待ちがあるとき、`powerSaveBlocker.start('prevent-app-suspension')`。画面は消えてよい。以前あった「リモートが有効な間は防ぐ」（`'always'`）は 2026-10-21 に廃止した（何もしていない間も PC を起こし続け、電気代と熱の割に得るものが無い）。保存されていた `'always'` は読み込み時に `'working'` へ移して書き直す。ルーティンだけの常駐ではスリープを抑止しない（PC がスリープ中の予定は動かない）
-- ログイン時の自動起動は任意（`app.setLoginItemSettings`）。既定はオフ。設定 › リモート › 常駐の「サインイン時に Pleiad を起動する」と、設定 `launchAtLogin`。リモートの受付がオンでオフなら同じ欄に 1 行すすめる（[ADR 0175](adr/0175-launch-at-login.md)、[desktop-releases.md](desktop-releases.md)）
+- ログイン時の自動起動は任意（`app.setLoginItemSettings`）。既定はオフ。設定 › アプリ情報・更新 › 常駐の「サインイン時に Pleiad を起動する」と、設定 `launchAtLogin`（[ADR 0175](adr/0175-launch-at-login.md)、[desktop-releases.md](desktop-releases.md)）
 
 実装（2026-09-23）: 設定は `<data>/remote/resident.json` の `{ keepRunning, sleep }`（`core/remote/resident.mjs`。既定 `true` / `'working'`）。WS コマンド `setRemoteResident { keepRunning?, sleep? }`、`RemoteStatus.resident = { available, keepRunning, sleep }`（`available` はデスクトップ版のホストのとき）。
 サーバーは起動時と、リモートの状態・実行中の作業（`broadcastRunning`）・ルーティン（`routinesChanged`）が変わるたびに、parentPort で `{ type: 'resident', state: { remote, routines, keepRunning, sleep, working, running, waiting, devices, relay, locale } }` を送る（同じ内容は送らない）。`routines` は `botHost.opsDeps().routines.list()` のうち `paused: false` の件数。口が無い・0 件なら従来のリモートの条件だけで判断する。作業中 = `runningWork().count > 0`。
@@ -447,10 +451,9 @@ window.plyDesktop = { platform, setTitleBar, notifyCompletion, onNotificationCli
 
 ### 7.4 ホストへのつなぎ方
 
-- **「ほかのホストにつなぐ」はアプリに同梱の小さな窓**（`desktop/remote-hosts.html`。file: で開き、どのホストからも配らない。2026-09-23 に設定 › リモートの下半分から変更）: ペアリングしたホストの一覧（名前・オンラインかどうか・最後につないだ時刻、「開く」「名前を変える」「削除」）と「ホストを追加」（ペアリングのコードを貼る → 「ホストの画面で承認してください · 確認コード 482 193」と「やめる」）。資格情報を暗号化できない起動では末尾に一文。ホストの行には「この PC の AI から任せる」のスイッチ（既定オフ。`hosts.json` の `agentUse`。§4.5）と、下の 1 行（オフ: 何も出さない／オンでホストが未許可: 「<ホスト> の 設定 › リモートで、この端末（<端末名>）の AI からの依頼を受けると使えます」／両方オン: 「使える · 任せた作業の承認は、この PC の会話でも答えられます」）
-  - 理由: 手元のアプリの機能で、ペアリングと窓を開く口は HTTP のオリジンを持つ画面（ローカルのサーバーが配る `web/` も含む）に渡さない方が狭く守れる。ホストの版と画面の版がずれても関係ない。ホスト側の 設定 › リモート（#13）と同じ画面を取り合わない
-  - 入口: ローカルの窓の preload にだけ `plyDesktop.openRemoteHosts()`（設定 › リモートの「ほかのホストにつなぐ…」から呼ぶ。リモートの窓には出さない）、Windows のジャンプリスト（`--remote-hosts` で起動 → 2 つ目の起動として受ける）、macOS の Dock のメニュー
-  - 窓の操作は `plyHosts`（`init / list / pair / cancelPair / open / rename / remove / setAgentUse / onCode / onChange`）。送り元はその窓の本体フレームで、同梱のファイルであることを `desktop/window-trust.cjs` で確かめる
+- **ほかのホストへは 設定 › リモート › ほかの PC へ**（`web/remote-hosts.mjs`。2026-10-21 に同梱の小さな窓 `desktop/remote-hosts.html` から主の窓へ移した。ADR 0239）: ペアリングしたホストをつなぎ方ごとのまとまり（「自分の中継サーバー」）で並べる。行は PC の絵と名前、つながらないときだけ弱い字の「オフライン」、取り消されたら「取り消されました」。行を押すと詳しい画面（つなぎ方・中継サーバー・追加した日・最後の接続、「この PC の AI から任せる」のスイッチ、「開く」「名前を変える」「削除」）。＋ は「PC を追加」（ペアリングのコードを貼る → ホストの画面で承認してもらう間の確認コードと「やめる」）。資格情報を暗号化できない起動では末尾に一文。「この PC の AI から任せる」は既定オフ（`hosts.json` の `agentUse`。§4.5）で、下の 1 行（オフ: 何も出さない／オンでホストが古い: 「<ホスト> の Pleiad を更新すると使えます」／使える: 「使える · 任せた作業の承認は、この PC の会話でも答えられます」）
+  - 守り: ペアリングと窓を開く口は、主の窓（信頼の種類 `local`）の preload の `plyDesktop.hosts`（`init / list / pair / cancelPair / open / rename / remove / setAgentUse / onCode / onChange / onOpen`）からだけ受ける。IPC の送り元は `desktop/window-trust.cjs` で確かめ、リモートの窓・ローカルのサーバーの設定と操作の一覧には置かない（端末の AI が `set_setting` で入れられないように）
+  - 入口: 設定 › リモート の ほかの PC へ のタブ、Windows のジャンプリスト（`--remote-hosts` で起動 → 2 つ目の起動として受ける）、macOS の Dock のメニュー。どれも主の窓を前に出してこのタブを開かせる（`plyDesktop.hosts.onOpen`）
 - リモートの窓の状態: 画面のバッジが `plyRemote.status()` と `onStatus` で状態を受け、状態を受け取るまでは「· 接続しています…」、つながっていない間は「リモート: desktop-home · ホストがオフライン」と添え（切れた一行も同じ理由の語。design-system.md「接続の状態」）、面に「再試行」（`plyRemote.retry()` = 待ちを飛ばして張り直す）。取り消されたら本体が窓を読み直し、下のプロキシの案内（取り消されました）を出す。読み込みそのものが失敗しているとき（最初の表示・読み直し）はプロキシの案内のページが 5 秒ごとに読み直してつなぎ次第画面に移る
 - ホストがオフライン・取り消し済みなどで最初の読み込みができないときは、プロキシが小さな案内のページを返す（「ホストにつながりません。ホストの Pleiad が起動しているか確かめてください。」「この端末はホストで取り消されました。もう一度ペアリングしてください。」）。中継の close code で分ける: 4401 取り消し・認証失敗、4404 ホストが居ない、それ以外は通信の失敗。
   状態は `connecting`・`connected`・`offline`（中継につながらない）・`host-offline`（4404・4408・ホストの GOAWAY `shutdown`）・`revoked`（4401・GOAWAY `revoked`・ホストの鍵が合わない）。案内のページは 503 で、取り消し以外は 5 秒ごとに読み直してつながり次第画面に移る
