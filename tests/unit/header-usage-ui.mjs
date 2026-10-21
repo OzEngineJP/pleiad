@@ -105,6 +105,25 @@ export default async function(t) {
     ui.show({ backend: 'current' });
     assert.match(chip.textContent, /63%/);
     t.ok('未認可は同じ形の札からアカウントの認可へ進める', true);
+
+    // 短い間隔の上限で止まっている枠（Issue #111）。日次・週次が 0% でも、札と一覧に止まっていることと解除の見込みを出す
+    const heldUntil = new Date(Date.now() + 3 * 60_000).toISOString();
+    replies.set('current', () => Promise.resolve({ label: 'Current', quota: quota(0),
+      held: [{ model: 'swe-2-high', account: '', reason: 'recently_limited', until: heldUntil }] }));
+    ui.turnEnded('current'); await tick();
+    ui.show({ backend: 'current', model: 'swe-2-high' });
+    assert.equal(chip.querySelector('.lb').textContent, tr('usage.header.heldLabel'));
+    assert.ok(chip.classList.contains('high') && !chip.classList.contains('dim'));
+    assert.doesNotMatch(chip.textContent, /0%/);
+    assert.match(chip.getAttribute('title'), /swe-2-high/);
+    open();
+    const heldBox = sections()[0].querySelector('.usage-held');
+    assert.ok(heldBox && heldBox.textContent.startsWith('swe-2-high'), sections()[0].textContent);
+    documentEvents.keydown({ key: 'Escape', isComposing: false });
+    ui.show({ backend: 'current', model: 'swe-1-6' });
+    assert.notEqual(chip.querySelector('.lb').textContent, tr('usage.header.heldLabel'));
+    assert.match(chip.textContent, /0%/);
+    t.ok('会話の枠が短い上限で止まっていれば、0% の率の代わりに止まっていることを札に出し、一覧に解除の見込みを出す（別のモデルの会話には出さない）', true);
   } finally {
     for (const stop of pagehide) stop();
     globalThis.document = globals.document;

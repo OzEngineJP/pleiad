@@ -9,6 +9,33 @@ export function quotaText(window, now = Date.now()) {
     : window.usedPercent == null ? t('usage.percentUnknown')
     : t('usage.percent', { used: format(window.usedPercent), remaining: format(window.remainingPercent) });
 }
+/** 解除の見込みの時刻。24 時間より先なら日付を付ける */
+export const heldTime = (until, now = Date.now()) => new Date(until).getTime() - now < 24 * 3600_000 ? fmt.time(until)
+  : fmt.dateTime(until, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+/** 止まっている枠の名前（モデル・アカウント）。アカウントは quota.accounts の名前で引く（引けなければ出さない） */
+export function heldSlotName(slot, quota) {
+  const account = slot.account ? (quota?.accounts ?? []).find(a => a.accountId === slot.account)?.label : null;
+  return [slot.model || t('usage.held.defaultModel'), account].filter(Boolean).join(' · ');
+}
+/**
+ * 短い間隔の上限で今止まっている枠の一行（providerUsage の held。Issue #111）。
+ * 日次・週次の枠が 0% でも止まっていることがあるので、枠の表とは別に出す。until が過ぎたものは出さない
+ */
+export function heldTexts(held, quota, now = Date.now()) {
+  return (Array.isArray(held) ? held : [])
+    .filter(s => !s.until || new Date(s.until).getTime() > now)
+    .map(s => s.until ? t('usage.held.until', { slot: heldSlotName(s, quota), time: heldTime(s.until, now) })
+      : t('usage.held.unknown', { slot: heldSlotName(s, quota) }));
+}
+function renderHeld(parent, held, quota) {
+  const texts = heldTexts(held, quota);
+  if (!texts.length) return;
+  const box = el('div', 'usage-held');
+  box.setAttribute('role', 'status');
+  for (const text of texts) box.append(el('p', null, text));
+  box.append(el('small', 'usage-note', t('usage.held.note')));
+  parent.append(box);
+}
 function renderQuota(parent, quota, onUsageLogin) {
   if (quota.plan) parent.append(el('p', 'usage-note', t('usage.plan', { plan: quota.plan })));
   for (const w of quota.windows ?? []) {
@@ -121,6 +148,7 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
   const cards = new Map();
   async function renderCard(backend, card, result) {
     const body = el('div'); body.append(el('h3', null, result.label));
+    renderHeld(body, result.held, result.quota);
     renderQuota(body, result.quota, onUsageLogin);
     if (result.quota.checkedAt) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
     renderEndpoints(body, await endpoints(backend.id).catch(() => []));

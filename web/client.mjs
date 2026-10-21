@@ -5891,6 +5891,8 @@ function backgroundItems(scope = null) {
       childId: task.sessionId, taskId: task.taskId, error: task.error, notification: task.notification, routing: task.routing ?? null,
       pendingMessages: task.pendingMessages ?? 0, instructionRevision: task.instructionRevision ?? 0,
       worktree: task.worktree ?? null, updatedAt: task.updatedAt ?? null,
+      // 上限で止まった（{ resetsAt, backend, model, account }。ADR 0229・Issue #111）。カードの右端に解除の見込みを出す
+      limit: task.status === 'failed' ? task.limit ?? null : null,
       // ホストに任せたタスク: 子の会話はホストにある（childId はホストでの会話の印。孫の行の親子に使う）。オフラインの間は経過を止める
       ...(task.host ? { host: task.host, remoteSessionId: task.remoteSessionId ?? null, childId: task.remoteSessionId ? hostChildKey(task.remoteSessionId) : null,
         hostOffline, hostUntil: hostOffline ? hostUntil(task.host.hostId, task.taskId, task.updatedAt) : null } : {}),
@@ -6992,6 +6994,12 @@ function delegateStateOf(item) {
   if (item.live) return { key: 'running', mark: markOf(item), start: timeOf(item.startedAt) };
   const when = elapsedText(item);
   if (item.status === 'completed') return { key: 'done', mark: markOf(item), when };
+  // 上限で止まった子は、失敗と分けて解除の見込みを出す（過ぎていれば「上限で停止」だけ）
+  if (item.status === 'failed' && item.limit) {
+    const resetsAt = Number(item.limit.resetsAt);
+    return { key: 'failed', mark: null, when, text: Number.isFinite(resetsAt) && resetsAt > Date.now()
+      ? t('timeline.result.limitedUntil', { time: clockOf(resetsAt) }) : t('timeline.result.limited') };
+  }
   if (item.status === 'failed') return { key: 'failed', mark: null, text: t('timeline.result.failed'), when };
   return item.status ? { key: 'stopped', mark: markOf(item), when } : null;
 }
@@ -7019,7 +7027,7 @@ function paintDelegateStates(root = thread, scope = null) {
     // 走っている間の経過は署名に入れない（秒ごとの書き換えは tickDelegateElapsed）
     // worktree が終わった後も台帳に残っている（未取り込み）。閉じた行の右端に出す（ADR 0089）
     const unmerged = Boolean(item?.worktree?.live) && !item.live;
-    const sig = next ? `${next.key}|${next.when ?? ''}|${next.mark?.getAttribute('aria-label') ?? ''}|${unmerged ? 'u' : ''}` : '';
+    const sig = next ? `${next.key}|${next.when ?? ''}|${next.mark?.getAttribute('aria-label') ?? ''}|${next.text ?? ''}|${unmerged ? 'u' : ''}` : '';
     // 読み上げ名は、題・委譲先・状態。押すと開く（summary は開閉の状態を持つ）
     const head = card.querySelector('.tc-head');
     const stateName = next ? (next.key === 'waiting' ? TASK_STATUS.waiting : next.mark?.getAttribute('aria-label') ?? next.text ?? '') : '';

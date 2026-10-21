@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { codexQuota, whamQuota, claudeQuota, usageWindow, createQuotaStore, createUsageStore, createCodexMeter, agentUsage, compactQuota } from '../../core/usage.mjs';
 import { normalizeSdkMessage } from '../../core/backends/claude-normalize.mjs';
-import { quotaText } from '../../web/usage.mjs';
+import { quotaText, heldTexts } from '../../web/usage.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 export const name = 'usage';
@@ -143,6 +143,23 @@ async function japaneseCases(t) {
   assert.equal(compactQuota({ windows: [usageWindow('5時間', 90, 1000, 300)] }, 2000).windows[0].usedPercent, null);
   assert.equal(compactQuota({ windows: [usageWindow('5時間', 90, 3000, 300)] }, 2000).windows[0].usedPercent, 90);
   t.ok('ply_usage は backend 指定・不明名を扱い、画面と同じキャッシュを共有する', true);
+
+  // 短い間隔の上限で止まっている枠（Issue #111）。日次・週次の率とは別に held で返し、画面は 0% の枠の上に一行出す
+  const heldUntil = new Date(Date.now() + 3 * 60_000).toISOString();
+  const heldSlots = { claude: [{ model: 'opus', account: null, reason: 'recently_limited', until: heldUntil }, { model: null, account: 'acct-0123456789ab', reason: 'recently_limited', until: null }] };
+  const withHeld = await agentUsage({ ...deps, held: b => heldSlots[b.id] ?? [] });
+  assert.deepEqual(withHeld.backends[0].held, [
+    { model: 'opus', account: 'login', reason: 'recently_limited', until: heldUntil },
+    { model: null, account: 'acct-0123456789ab', reason: 'recently_limited', until: null }]);
+  assert.equal(withHeld.backends[1].held, undefined, '止まっている枠の無いエージェントには held を付けない');
+  const zero = { windows: [usageWindow('日次', 0, Date.now() + 86400_000, 1440), usageWindow('週次', 0, Date.now() + 7 * 86400_000, 10080)],
+    accounts: [{ accountId: 'acct-0123456789ab', label: 'Work', windows: [] }] };
+  const lines = heldTexts(withHeld.backends[0].held.map(s => ({ ...s, account: s.account === 'login' ? '' : s.account })), zero);
+  assert.equal(lines.length, 2);
+  assert.ok(lines[0].startsWith('opus: 短い間隔の上限で止まっています。') && lines[0].includes('解除の見込み'), lines[0]);
+  assert.ok(lines[1].startsWith('既定のモデル · Work: ') && lines[1].includes('解除の時刻は分かりません'), lines[1]);
+  assert.deepEqual(heldTexts([{ model: 'opus', until: new Date(Date.now() - 1000).toISOString() }], zero), [], '見込みを過ぎた枠は出さない');
+  t.ok('ply_usage・使用量の画面は、日次・週次が 0% でも短い上限で止まっている枠と解除の見込みを出す', true);
 
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-usage-'));

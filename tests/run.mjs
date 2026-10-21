@@ -41,6 +41,7 @@ const SUITES = [
   './unit/plus-sync-targets.mjs',
   './unit/plus-sync-engine.mjs',
   './unit/acp-error.mjs',
+  './unit/slot-limits.mjs',
   './unit/opencode-v2.mjs',
   './unit/compaction.mjs',
   './unit/server-compaction.mjs',

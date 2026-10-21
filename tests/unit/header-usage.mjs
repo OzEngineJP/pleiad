@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { lang, setLanguage } from '../../web/i18n.mjs';
 import { currentLocale, setLocale } from '../../core/i18n.mjs';
-import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, windowsForModel, HIGH } from '../../web/header-usage.mjs';
+import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, windowsForModel, heldSlotOf, HIGH } from '../../web/header-usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'header-usage';
@@ -119,4 +119,19 @@ async function japaneseCases(t) {
   const claudeWins = [cwin(null, 10), cwin('Opus', 20), cwin('Sonnet', 30)];
   assert.deepEqual(windowsForModel(claudeWins, 'claude-sonnet-4-5'), [claudeWins[0], claudeWins[2]]);
   t.ok('接続先・グループ・モデルの系統で会話の枠に絞る（系統が読めなければ全部・別の接続先は空）', true);
+
+  // ---- 短い間隔の上限で止まっている枠（providerUsage の held。Issue #111）
+  const heldSlots = [
+    { model: 'swe-2-high', account: '', reason: 'recently_limited', until: at(3 * 60_000) },
+    { model: 'swe-2-high', account: '', reason: 'recently_limited', until: at(10 * 60_000) },
+    { model: 'swe-1-6', account: 'acct-work', reason: 'recently_limited', until: null },
+    { model: 'swe-1-5', account: '', reason: 'recently_limited', until: at(-1000) },
+  ];
+  assert.equal(heldSlotOf(heldSlots, { model: 'swe-2-high' }, now), heldSlots[1], '同じ枠が複数なら解除のいちばん遅いもの');
+  assert.equal(heldSlotOf(heldSlots, { model: '' }, now), heldSlots[1], 'モデルの分からない会話はどのモデルの枠にも合わせる');
+  assert.equal(heldSlotOf(heldSlots, { model: 'swe-1-6' }, now), null, '別のアカウントの枠は合わせない');
+  assert.equal(heldSlotOf(heldSlots, { model: 'swe-1-6', account: 'acct-work' }, now), heldSlots[2]);
+  assert.equal(heldSlotOf(heldSlots, { model: 'swe-1-5' }, now), null, '見込みを過ぎた枠は止まっていない');
+  assert.equal(heldSlotOf(undefined, { model: 'x' }, now), null);
+  t.ok('帯の札: 会話の枠（アカウント・モデル）が短い上限で止まっていれば、その枠と解除の見込みを選ぶ', true);
 }

@@ -8,7 +8,7 @@
 // 取得に失敗したら直前の値を薄く出し、いつの値かを添える。（アカウントの行だけ読めなかったときは、その行の前回の枠を薄くせず出す。web/usage.mjs の carryQuota）
 import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
-import { isExpired } from './usage.mjs';
+import { isExpired, heldTexts, heldSlotName, heldTime } from './usage.mjs';
 
 /** これ以上の使用率は強い見た目にする（帯の札・入力欄と bot のページのアカウントの行） */
 export const HIGH = 80;
@@ -145,6 +145,23 @@ export function chipState(row, now = Date.now()) {
   return { kind: 'unknown' };
 }
 
+/**
+ * 会話の枠（アカウント・モデル）が、短い間隔の上限で今止まっているか（providerUsage の held。Issue #111）。
+ * モデルが分からない（既定）側はどのモデルの枠にも合わせる。止まっていれば解除のいちばん遅い枠（分からないものが先）、無ければ null
+ */
+export function heldSlotOf(held, { account = '', model = '' } = {}, now = Date.now()) {
+  let pick = null;
+  for (const s of Array.isArray(held) ? held : []) {
+    if ((s.account || '') !== (account || '')) continue;
+    if (model && s.model && s.model !== model) continue;
+    const until = s.until ? new Date(s.until).getTime() : null;
+    if (until != null && !(until > now)) continue;
+    if (!pick || until == null || (pick.until && until > new Date(pick.until).getTime())) pick = s;
+    if (until == null) break;
+  }
+  return pick;
+}
+
 /** 残りの時間。「3 時間 10 分」「42 分」 */
 function duration(ms) {
   const minutes = Math.max(1, Math.round(ms / 60_000));
@@ -173,13 +190,22 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   // asked は一度でも取りに行ったエージェント（あとから有効にしたエージェントを、次の 5 分を待たずに取るため）
   const asked = new Set();
   let shown = { backend: null, account: '', endpoint: '', model: '' }, loading = 0, lastRefresh = 0;
+  // 止まっている枠の解除の見込みで描き直す（次の取得を待たずに札を戻す）
+  let heldTimer = null;
+  function repaintAt(until) {
+    clearTimeout(heldTimer); heldTimer = null;
+    const left = until ? new Date(until).getTime() - Date.now() : NaN;
+    if (Number.isFinite(left) && left > 0 && left < DAY) heldTimer = setTimeout(paint, left + 500);
+  }
 
   // 枠・認可のどちらかを持つ結果だけを値として覚える。持たない（取得の失敗・未対応）ときは前の値を残す
   const usable = quota => Boolean(quota?.windows?.length || quota?.accounts?.length || needsAuth(quota));
   function take(backend, result) {
     const prev = data.get(backend);
-    if (usable(result?.quota) || !prev || !usable(prev.quota)) data.set(backend, { label: result?.label, quota: result?.quota ?? null, failed: false });
-    else data.set(backend, { ...prev, failed: true });
+    // 止まっている枠（held）は使用率の取得とは別にサーバーが持つので、届いた値をそのまま使う
+    const held = Array.isArray(result?.held) ? result.held : prev?.held ?? [];
+    if (usable(result?.quota) || !prev || !usable(prev.quota)) data.set(backend, { label: result?.label, quota: result?.quota ?? null, failed: false, held });
+    else data.set(backend, { ...prev, failed: true, held });
   }
   source.onResult((backend, result) => { take(backend, result); paint(); });
 
@@ -224,6 +250,21 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     chip.hidden = false;
     onVisibility();
     const agent = labelOf(shown.backend), stale = shown.endpoint ? '' : staleNote(entry);
+    // 短い間隔の上限で止まっている枠は、日次・週次の率（0% のこともある）より先に出す
+    const held = shown.endpoint ? null : heldSlotOf(entry?.held, shown);
+    repaintAt(held?.until);
+    if (held) {
+      const time = held.until ? heldTime(held.until) : null;
+      const text = time ? t('usage.header.heldUntil', { time }) : t('usage.header.heldUnknown');
+      const pc = el('span', 'pc');
+      pc.append(el('span', 'long', text), el('span', 'short', time ? t('usage.header.heldShort', { time }) : text));
+      chip.className = 'usage-chip high';
+      chip.replaceChildren(el('span', 'lb', t('usage.header.heldLabel')), mini(100), pc, caret());
+      chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text }));
+      chip.title = t('usage.header.heldTitle', { agent, slot: heldSlotName(held, entry?.quota),
+        when: time ? t('usage.held.whenUntil', { time }) : t('usage.held.whenUnknown') });
+      return;
+    }
     chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry?.failed ? ' dim' : '');
     if (state.kind !== 'value') {
       const text = shown.endpoint ? t('usage.header.endpointUnavailable')
@@ -289,6 +330,13 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     section.append(head);
     const stale = endpoint ? '' : staleNote(entry);
     if (stale) section.append(el('p', 'usage-note', stale));
+    // 短い間隔の上限で止まっている枠（設定の「使用量」と同じ文。web/usage.mjs の heldTexts）
+    const heldLines = endpoint ? [] : heldTexts(entry?.held, entry?.quota);
+    if (heldLines.length) {
+      const box = el('div', 'usage-held'); box.setAttribute('role', 'status');
+      for (const text of heldLines) box.append(el('p', null, text));
+      section.append(box);
+    }
     if (windows.length) section.append(rows(windows));
     if (totalOthers) section.append(el('p', 'more', mergedBelow == null ? t('usage.header.otherGroups', { count: totalOthers })
       : t('usage.header.otherGroupsBelow', { count: totalOthers, percent: mergedBelow })));

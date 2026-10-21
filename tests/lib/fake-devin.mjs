@@ -217,9 +217,12 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           result = { stopReason: text.includes('[max-tokens]') ? 'max_tokens' : 'max_turn_requests' };
           break;
         }
-        // [rate-limit]: 実機（Cognition）の一時的な上限応答。走っている回に積まれた分も同じエラーで決着する
-        if (text.includes('[rate-limit]')) {
-          const error = { code: -32010, message: 'Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in 5 seconds (at 00:00 UTC). (trace ID: fixture)', data: { 'cognition.ai/errorKind': 'unavailable', 'cognition.ai/retryable': true } };
+        // [rate-limit]: 実機（Cognition）の一時的な上限応答。走っている回に積まれた分も同じエラーで決着する。
+        // [rate-limit-minutes]: 同じ応答の分の形（実機は「N seconds」「N minute(s)」「N hours N minutes」に時:分の時刻を併記する。ここでは切り捨てて、相対の見込みで待つ）
+        if (text.includes('[rate-limit]') || text.includes('[rate-limit-minutes]')) {
+          const span = text.includes('[rate-limit-minutes]') ? 3 * 60_000 : 5000;
+          const at = new Date(Math.floor((Date.now() + span) / 60_000) * 60_000).toISOString().slice(11, 16);
+          const error = { code: -32010, message: `Reached free model rate limit. Upgrade to Max for higher limits, or switch to a different model. Your limit will reset in ${span >= 60_000 ? `${span / 60_000} minutes` : `${span / 1000} seconds`} (at ${at} UTC). (trace ID: fixture)`, data: { 'cognition.ai/errorKind': 'unavailable', 'cognition.ai/retryable': true } };
           running.delete(session.sessionId);
           for (const steer of session.steerQueue ?? []) write({ id: steer.id, error });
           session.steerQueue = [];
