@@ -31,6 +31,7 @@ class PleiadApp : Application() {
             override fun locale() = resources.configuration.locales[0].language
             override fun title(state: String) = getString(when (state) {
                 "revoked" -> R.string.remote_revoked
+                "reapprove" -> R.string.remote_reapprove
                 "blocked" -> R.string.remote_plus_blocked
                 "limit" -> R.string.remote_plus_limit
                 "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_plus_maintenance else R.string.remote_plus_paused
@@ -40,6 +41,7 @@ class PleiadApp : Application() {
             override fun body(state: String) = getString(
                 when (state) {
                     "revoked" -> R.string.remote_page_revoked
+                    "reapprove" -> R.string.remote_page_reapprove
                     "blocked" -> R.string.remote_page_plus_blocked
                     "limit" -> R.string.remote_page_plus_limit
                     "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_page_plus_maintenance else R.string.remote_page_plus_paused
@@ -65,8 +67,11 @@ class PleiadApp : Application() {
             val host = plus.cachedHosts().hosts.firstOrNull { it.hostId == hostId } ?: throw PairError("couldnt-connect")
             val token = plus.currentIdToken() ?: throw PairError("plus-signed-out")
             val relay = plus.currentRelayUrl() ?: throw PairError("unreachable")
-            PlusAdmission.admit(host, relay, token, device.store.identity(), deviceName(), BuildConfig.VERSION_NAME)
-                .copy(uid = plus.currentUid()).also { device.store.saveHost(it, "plus", plus.currentUid()) }
+            // reconnecting in the background: only a key the host already allowed gets back in (no approval window)
+            device.admitPlus(hostId, PlusAdmission.MODE_ADMIT, plus.currentUid()) { kp ->
+                PlusAdmission.admit(host, relay, token, kp, deviceName(), BuildConfig.VERSION_NAME).copy(uid = plus.currentUid())
+            }
+            device.store.credentials(hostId, "plus")
         }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             private var started = 0

@@ -13,6 +13,7 @@
 //   'offline'       中継につながらない・通信が切れた（張り直しを待っている）
 //   'host-offline'  中継は答えたがホストが居ない（4404・4408・ホストの GOAWAY shutdown）。張り直しを待っている
 //   'revoked'       この端末は取り消された・資格が合わない（4401・GOAWAY revoked）。張り直さない
+//   'reapprove'     （Plus）ホストの PC の画面でもう一度の許可が要る（受け入れのやり直しを reapprove で断られた）。張り直さない
 //   'stopped'       stop() した
 //
 // 張り直しは 0.5 秒から 30 秒まで倍々（±25% の揺らぎ）。10 秒つながり続けたら初めからに戻す。
@@ -26,6 +27,8 @@ import { t } from '../i18n.mjs';
 
 /** 中継への WebSocket の 1 メッセージの上限（中継の 66,000 に余裕を持たせる）。 */
 const RELAY_MAX_PAYLOAD = 70_000;
+/** 受け入れのやり直しの失敗（err.code）→ 状態。ここに無いもの（つながらない等）は 'revoked' */
+const READMIT_STATES = { reapprove: 'reapprove', revoked: 'revoked', blocked: 'blocked', limit: 'limit', unavailable: 'paused' };
 export const LINK_BACKOFF = Object.freeze({ minMs: 500, maxMs: 30_000, stableMs: 10_000 });
 
 /** 中継の close code とホストの GOAWAY から状態を決める。via: 'plus' のときは Plus 用の表に従う。 */
@@ -118,6 +121,7 @@ function closeSocket(ws, code = 1000) {
 
 function errorFor(state, detail) {
   const e = new Error(state === 'revoked' ? t('remote.device.revoked')
+    : state === 'reapprove' ? t('remote.device.reapprove')
     : state === 'blocked' ? t('remote.device.blocked')
       : state === 'limit' ? t('remote.device.limit')
         : state === 'paused' ? t('remote.device.paused')
@@ -196,11 +200,12 @@ export class DeviceLink extends EventEmitter {
   }
 
   /** 待たずに今すぐつなぎ直す（「再試行」、取り消し後の再ペアリングで資格が変わったときも）。 */
-  retryNow(creds) {
+  retryNow(creds, keyPair) {
     if (creds) {
       this.creds = creds;
       if (creds.via) this.via = creds.via;
     }
+    if (keyPair) this.keyPair = keyPair;
     if (!this.running) { this.start(); return; }
     if (this.state === 'connecting' || this.state === 'connected') { if (!creds) return; }
     this.generation++;
@@ -238,7 +243,7 @@ export class DeviceLink extends EventEmitter {
 
   #scheduleRetry(state, detail, { delayOverride = null } = {}) {
     if (!this.running) return;
-    if (state === 'revoked' || state === 'blocked' || state === 'limit') {
+    if (state === 'revoked' || state === 'reapprove' || state === 'blocked' || state === 'limit') {
       this.running = false;
       this.#setStatus(state, detail);
       return;
@@ -267,10 +272,11 @@ export class DeviceLink extends EventEmitter {
           this.running = false;
           this.#setStatus('revoked', detail);
         }
-      }).catch(() => {
+      }).catch(e => {
         if (!this.running) return;
         this.running = false;
-        this.#setStatus('revoked', detail);
+        // 受け入れのやり直しで断られた理由（device.mjs の admitWithHost の err.code）を状態にする
+        this.#setStatus(READMIT_STATES[e?.code] ?? 'revoked', detail);
       });
       return;
     }

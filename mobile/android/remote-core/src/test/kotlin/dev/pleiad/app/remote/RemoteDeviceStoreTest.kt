@@ -51,4 +51,46 @@ class RemoteDeviceStoreTest {
         assertEquals("plus-secret", store.credentials(hostId, "plus")?.token)
         assertEquals("device-plus", store.credentials(hostId, "plus")?.deviceId)
     }
+
+    @Test fun eachRecordKeepsItsOwnDeviceKey() {
+        val store = FileDeviceStore(temp.newFolder())
+        assertNull(store.keyFor(hostId, "plus"))
+        store.saveHost(creds("own", "https://relay.example", "own-secret"))
+        assertArrayEquals("older records use deviceKey", store.identity().publicKey, store.keyFor(hostId, "own")!!.publicKey)
+        val kp = KeyPair.generate()
+        store.saveHost(creds("plus", "https://plus-relay.example", "plus-secret"), keyPair = kp)
+        assertArrayEquals(kp.publicKey, store.keyFor(hostId, "plus")!!.publicKey)
+        assertArrayEquals(kp.publicKey, FileDeviceStore(store.dir).keyFor(hostId, "plus")!!.publicKey)
+        store.updateHost(hostId, "plus") { it.copy(reapproveAt = 5) }
+        assertEquals(5L, FileDeviceStore(store.dir).host(hostId, "plus")!!.reapproveAt)
+    }
+
+    @Test fun plusAdmissionTriesTheAllowedKeyAndAsksWithANewKeyAfterARevocation() {
+        val device = RemoteDevice(FileDeviceStore(temp.newFolder()), app = "test", name = "phone")
+        try {
+            val own = KeyPair.generate()
+            device.store.saveHost(creds("own", "https://relay.example", "own-secret"), keyPair = own)
+            val tried = mutableListOf<KeyPair>()
+            // the host already allowed this host's QR key: it is tried first
+            device.admitPlus(hostId, "admit", "user-1") { kp -> tried += kp; creds("plus", "https://plus.example", "t1") }
+            assertArrayEquals(own.publicKey, tried.single().publicKey)
+            assertArrayEquals(own.publicKey, device.store.keyFor(hostId, "plus")!!.publicKey)
+            // background reconnect of a revoked key: stays revoked
+            tried.clear()
+            assertEquals("revoked", assertThrows(PairError::class.java) {
+                device.admitPlus(hostId, "admit", "user-1") { kp -> tried += kp; throw PairError("revoked") }
+            }.code)
+            assertEquals(1, tried.size)
+            // the person asks again: a new key goes to the approval window
+            tried.clear()
+            device.admitPlus(hostId, "pair", "user-1") { kp ->
+                tried += kp
+                if (kp.publicKey.contentEquals(own.publicKey)) throw PairError("revoked") else creds("plus", "https://plus.example", "t2")
+            }
+            assertEquals(2, tried.size)
+            assertFalse(tried[1].publicKey.contentEquals(own.publicKey))
+            assertArrayEquals(tried[1].publicKey, device.store.keyFor(hostId, "plus")!!.publicKey)
+            assertEquals("t2", device.store.credentials(hostId, "plus")!!.token)
+        } finally { device.closeAll() }
+    }
 }

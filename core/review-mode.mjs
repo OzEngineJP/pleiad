@@ -82,7 +82,7 @@ export const COMMAND_REFUSE = [
   'claudeAccounts', 'saveClaudeAccount', 'deleteClaudeAccount', 'claudeLoginStart', 'claudeLoginCode', 'claudeLoginCancel', 'claudeSdkInstall',
   'compatEndpoints', 'compatEndpointCheck', 'compatEndpointSave', 'compatEndpointRecheck', 'compatEndpointDelete', 'compatEndpointDefault',
   'setNotifyPc', 'setRemoteSettings', 'remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny',
-  'remoteRevoke', 'setRemoteDeviceAgent', 'setRemoteResident', 'plusHostRebind',
+  'remoteRevoke', 'remoteRevokedHide', 'setRemoteDeviceAgent', 'setRemoteResident', 'plusHostRebind',
   'contextSettings', 'slashSkills', 'sessionContext', 'plyInstructions', 'setPlyInstructions', 'refreshContext', 'contextDiff',
   'gitStatus', 'gitPanel', 'gitDiff', 'gitHistory', 'gitCommit', 'gitWorktrees', 'gitWorktree', 'gitPrs',
   'worktreeCheck', 'worktreeSplit', 'worktreeDiscard', 'worktreeKeep', 'worktreeArchive', 'worktreeRestore',

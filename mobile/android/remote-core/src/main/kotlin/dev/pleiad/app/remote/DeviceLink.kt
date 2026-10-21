@@ -4,6 +4,7 @@ package dev.pleiad.app.remote
 // relay to the host, with reconnects and states. Loop-confined; the blocking relay handshake runs on a worker thread.
 //
 // state: connecting | connected | offline | host-offline | revoked | stopped
+//        (Plus) reapprove: the host wants this device allowed again on its screen (readmission was refused). No retries
 // Backoff 0.5 s -> 30 s doubling (±25 % jitter), reset after 10 s connected. Streams never survive a reconnect.
 
 import java.util.concurrent.Executors
@@ -38,11 +39,15 @@ data class Backoff(val minMs: Long = 500, val maxMs: Long = 30_000, val stableMs
 
 object LinkRules {
     fun classifyClose(closeCode: Int? = null, goaway: String? = null, reason: String? = null, via: String = "own"): String = when {
+        via == "plus" && goaway == "revoked" -> "readmit"
         via == "plus" && closeCode == 4401 && reason in setOf("revoked", "device token") -> "readmit"
         via == "plus" && closeCode == 4401 && reason == "account" -> "blocked"
         via == "plus" && closeCode == 4401 && reason == "token" -> "offline"
         via == "plus" && closeCode == 4401 && reason == "plus off" -> "host-offline"
         via == "plus" && closeCode == 4401 && reason == "plus unavailable" -> "paused"
+        // Any other refusal (the host closed the handshake: it wants this device allowed again, or does not know the key):
+        // ask the host again and show its answer, like the desktop's device link
+        via == "plus" && closeCode == 4401 -> "readmit"
         via == "plus" && closeCode == 4429 && reason == "account limit" -> "limit"
         via == "plus" && closeCode == 4429 && reason == "admit rate" -> "offline"
         goaway == "revoked" || closeCode == 4401 -> "revoked"
@@ -56,7 +61,7 @@ object LinkRules {
 class DeviceLink(
     val loop: Loop,
     @Volatile var creds: HostCreds,
-    private val keyPair: KeyPair,
+    private var keyPair: KeyPair,
     private val app: String = "",
     private val name: String = "",
     private val shell: String = "mobile",
@@ -115,9 +120,10 @@ class DeviceLink(
         setStatus(LinkStatus("stopped"))
     }
 
-    /** Reconnect now ("retry", foreground again, or new credentials after re-pairing). */
-    fun retryNow(newCreds: HostCreds? = null) = loop.exec {
+    /** Reconnect now ("retry", foreground again, or new credentials and key after re-pairing). */
+    fun retryNow(newCreds: HostCreds? = null, newKeyPair: KeyPair? = null) = loop.exec {
         if (newCreds != null) creds = newCreds
+        if (newKeyPair != null) keyPair = newKeyPair
         if (!running) { running = true; attempt = 0; connect(); return@exec }
         if ((state == "connecting" || state == "connected") && newCreds == null) return@exec
         generation++
@@ -188,6 +194,7 @@ class DeviceLink(
                         val failedState = when (error?.code) {
                             "plus-no-relay" -> "blocked"
                             "plus-limit" -> "limit"
+                            "plus-reapprove" -> "reapprove"
                             "unreachable" -> "offline"
                             else -> "revoked"
                         }
@@ -205,7 +212,7 @@ class DeviceLink(
                 return
             }
         }
-        if (state in setOf("revoked", "blocked", "limit", "paused", "readmit", "signed-out")) {
+        if (state in setOf("revoked", "reapprove", "blocked", "limit", "paused", "readmit", "signed-out")) {
             running = false
             setStatus(detail.copy(state = state, since = System.currentTimeMillis()))
             return

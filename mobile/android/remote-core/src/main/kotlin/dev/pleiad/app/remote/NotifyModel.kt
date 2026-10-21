@@ -41,6 +41,8 @@ object NoticeKind {
     const val FAILED = "failed"
     const val SCHEDULE_MISSED = "scheduleMissed"
     const val DONE = "done"
+    /** A new device waits on the host's approval window (ADR 0245). A notice only: it is allowed on the host's screen. */
+    const val DEVICE = "device"
     const val CANCEL = "cancel"
 }
 
@@ -53,16 +55,19 @@ data class PushNotice(
     val host: String,
     val session: String,
     val title: String,
-    /** The approval / question id (approval, question, and cancel of an approval). */
+    /** The approval / question id (approval, question, and cancel of an approval); the request id for [NoticeKind.DEVICE]. */
     val id: String?,
-    /** For [NoticeKind.CANCEL]: "approval" (decided somewhere) or "seen" (a completion / failure was looked at). */
+    /**
+     * For [NoticeKind.CANCEL]: "approval" (decided somewhere), "seen" (a completion / failure was looked at) or
+     * "device" (the device request was settled on the host).
+     */
     val cancel: String?,
 ) {
     companion object {
         fun fromJson(o: JSONObject): PushNotice? {
             if (o.optInt("v") != 1) return null
             val kind = o.optString("kind")
-            if (kind !in setOf(NoticeKind.APPROVAL, NoticeKind.QUESTION, NoticeKind.FAILED, NoticeKind.SCHEDULE_MISSED, NoticeKind.DONE, NoticeKind.CANCEL)) return null
+            if (kind !in setOf(NoticeKind.APPROVAL, NoticeKind.QUESTION, NoticeKind.FAILED, NoticeKind.SCHEDULE_MISSED, NoticeKind.DONE, NoticeKind.DEVICE, NoticeKind.CANCEL)) return null
             val seq = o.optLong("seq", 0)
             if (seq <= 0) return null
             return PushNotice(

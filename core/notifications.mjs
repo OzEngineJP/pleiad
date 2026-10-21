@@ -23,8 +23,10 @@
 //     settle(dedupeKey, outcome)  … あなた待ちの決着（outcome: allowed | answered | denied | cancelled）
 //     settleAllWaiting(outcome, { except? })・removeSession(id)・removeChannel(id)・close()
 //   emit({ type: 'notificationsChanged', unread, waiting }) … 件数が変わったとき（画面のベルの数。リモートの端末にも届く）
-//   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId? },
-//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question', title?, channelName?, home?: true（一時チャット）, threadTitle? }
+//   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId?, settings? },
+//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question' | 'device', title?, channelName?, home?: true（一時チャット）, threadTitle? }
+//   ask: 'device' は新しい端末が PC の画面の承認を待っている（ADR 0245。dedupeKey は `wait:device:<申し込みの id>`、title は端末の名前、
+//   target.settings は開く設定の面 'remote'）
 import crypto from 'node:crypto';
 import { openData } from './data-schema.mjs';
 import { notificationTable } from './db.mjs';
@@ -41,7 +43,7 @@ export const NOTIFICATION_PAGE_MAX = 100;
 const FILTERS = { all: null, wait: ['wait'], mention: ['mention'] };
 
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
-const DATA_KEYS = ['uuid', 'threadId', 'postId', 'actor', 'ask', 'title', 'channelName', 'home', 'threadTitle', 'outcome'];
+const DATA_KEYS = ['uuid', 'threadId', 'postId', 'actor', 'ask', 'title', 'channelName', 'home', 'threadTitle', 'outcome', 'settings'];
 
 export function createNotifications({ dataDir, emit = () => {}, now = Date.now } = {}) {
   let handle = null, table = null;
@@ -58,6 +60,7 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
     target: {
       ...(r.sessionId ? { sessionId: r.sessionId } : {}), ...(r.data.uuid ? { uuid: r.data.uuid } : {}),
       ...(r.channelId ? { channelId: r.channelId } : {}), ...(r.data.threadId ? { threadId: r.data.threadId } : {}), ...(r.data.postId ? { postId: r.data.postId } : {}),
+      ...(r.data.settings ? { settings: r.data.settings } : {}),
     },
     ...(r.data.actor ? { actor: r.data.actor } : {}), ...(r.data.ask ? { ask: r.data.ask } : {}),
     ...(r.data.title ? { title: r.data.title } : {}), ...(r.data.channelName ? { channelName: r.data.channelName } : {}), ...(r.data.home ? { home: true } : {}), ...(r.data.threadTitle ? { threadTitle: r.data.threadTitle } : {}),

@@ -773,6 +773,8 @@ const SUITES = [
   // つながり（link）の張り直し: 中継の障害のあらゆる失敗の仕方（拒否・DNS・shutdown・101 でない応答・headers の失敗）で張り直しが続く
   './unit/remote-reconnect.mjs',
   './unit/remote-plus.mjs',
+  // 端末の受け入れと取り消し（ADR 0245）: 同じアカウントの知らない鍵は承認の窓・取り消した鍵・一緒に外れる端末・ホストだけの操作・もう一度の許可
+  './unit/remote-admission.mjs',
   // 審査の招待（ADR 0172）: 同じコードで複数台・台数と 1 時間の上限・期限・取り消しと作り直しで端末が切れる・審査モードでしか作れない。中継とホストをこのプロセスで立てて往復する
   './unit/remote-review-invite.mjs',
   // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し

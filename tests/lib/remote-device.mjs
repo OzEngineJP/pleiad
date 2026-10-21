@@ -85,11 +85,13 @@ export function pairDevice({ payload, name = 'test device', platform = 'desktop'
 }
 
 /**
- * Plus の「同じアカウント」の受け入れ（docs/plus.md）。ペアリングも確認コードも無しに、
- * ID トークンを Noise IK の中で送って端末を登録する。承認されたら { hostId, hostPublicKey, relayUrl, deviceId, token, hostName, keyPair }、
+ * Pleiad Plus の受け入れ（docs/remote.md §3.4）。ID トークンを Noise IK の中で送る。
+ * mode 'admit' はホストが許可済みの鍵の取り直し（窓を出さない）、mode 'pair' は知らない鍵をホストの承認の窓へ回す
+ * （waiting を受けたら onCode(確認コード) を呼んで答えを待つ）。
+ * 承認されたら { hostId, hostPublicKey, relayUrl, deviceId, token, hostName, keyPair }、
  * 断られたら { denied: true, reason }。つながらなければ reject（closeCode 付き）。
  */
-export async function admitDevice({ relayUrl, hostId, hostPublicKey, idToken, name = 'test device', platform = 'android', app = 'test', keyPair = generateKeyPair(), timeoutMs = 10_000 }) {
+export async function admitDevice({ relayUrl, hostId, hostPublicKey, idToken, name = 'test device', platform = 'android', app = 'test', keyPair = generateKeyPair(), timeoutMs = 10_000, mode = 'admit', onCode = () => {}, pairTimeoutMs = 30_000 }) {
   const { ws, opened, next } = openRelay(relayWsUrl(relayUrl, '/v1/device'), {
     'x-pleiad-host': hostId, 'x-pleiad-account': idToken,
   });
@@ -100,8 +102,12 @@ export async function admitDevice({ relayUrl, hostId, hostPublicKey, idToken, na
     ws.send(hs.writeMessage(Buffer.from(JSON.stringify({ proto: 1, name, platform, app, plus: { idToken } }))));
     hs.readMessage(await next());
     const transport = hs.split();
-    ws.send(transport.encrypt(Buffer.from(JSON.stringify({ type: 'admit' }))));
-    const msg = JSON.parse(transport.decrypt(await next(timeoutMs)).toString('utf8'));
+    ws.send(transport.encrypt(Buffer.from(JSON.stringify({ type: mode }))));
+    let msg = JSON.parse(transport.decrypt(await next(timeoutMs)).toString('utf8'));
+    if (mode === 'pair' && msg.type === 'waiting') {
+      onCode(confirmationCode(hs.handshakeHash));
+      msg = JSON.parse(transport.decrypt(await next(pairTimeoutMs)).toString('utf8'));
+    }
     ws.close(1000);
     if (msg.type !== 'approved') return { denied: true, ...msg };
     return { hostId, hostPublicKey, relayUrl, deviceId: msg.deviceId, token: msg.token, hostName: msg.hostName, keyPair };

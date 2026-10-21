@@ -60,9 +60,11 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<':
 
 /** ホストにつながらないときの案内（§7.4）。取り消し以外は 5 秒ごとに読み直し、つながれば画面に移る。 */
 export function unavailablePage({ state, hostName = '' }) {
-  const revoked = state === 'revoked';
-  const title = revoked ? t('remote.device.revoked') : t('remote.device.hostOffline');
-  const body = revoked
+  const revoked = state === 'revoked' || state === 'reapprove';
+  const title = state === 'reapprove' ? t('remote.device.reapprove') : revoked ? t('remote.device.revoked') : t('remote.device.hostOffline');
+  const body = state === 'reapprove'
+    ? t('remote.device.page.reapprove')
+    : revoked
     ? t('remote.device.page.revoked')
     : state === 'host-offline'
       ? t('remote.device.page.hostOffline')
@@ -131,7 +133,7 @@ export class DeviceProxy extends EventEmitter {
   }
 
   /** つなぎ直す（「再試行」）。creds を渡せば資格を差し替える。 */
-  retryNow(creds) { if (creds) this.creds = creds; this.link.retryNow(creds); }
+  retryNow(creds, keyPair) { if (creds) this.creds = creds; this.link.retryNow(creds, keyPair); }
 
   async close() {
     if (this.closed) return;

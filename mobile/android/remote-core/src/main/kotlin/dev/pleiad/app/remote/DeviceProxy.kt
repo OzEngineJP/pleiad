@@ -49,6 +49,7 @@ interface ProxyTexts {
 object DefaultTexts : ProxyTexts {
     override fun title(state: String) = when (state) {
         "revoked" -> "This device was revoked on the host"
+        "reapprove" -> "This device needs to be allowed again on the host"
         "blocked" -> "This account can't use the official relay"
         "limit" -> "This account has reached its limit"
         "paused" -> "Pleiad Plus is temporarily unavailable"
@@ -57,6 +58,7 @@ object DefaultTexts : ProxyTexts {
     }
     override fun body(state: String) = when (state) {
         "revoked" -> "Pair this device again."
+        "reapprove" -> "Select this PC in the host list and get it allowed on the host's screen."
         "host-offline" -> "Make sure Pleiad is running on the host. This page opens automatically once connected."
         "blocked" -> "This account can't use the official relay."
         "limit" -> "This account has reached its limit."
@@ -182,9 +184,9 @@ class DeviceProxy(
         return ss
     }
 
-    fun retryNow(newCreds: HostCreds? = null) {
+    fun retryNow(newCreds: HostCreds? = null, newKeyPair: KeyPair? = null) {
         if (newCreds != null) creds = newCreds
-        link.retryNow(newCreds)
+        link.retryNow(newCreds, newKeyPair)
     }
 
     fun close() {
@@ -287,7 +289,8 @@ class DeviceProxy(
     }
 
     fun unavailablePage(state: String): String {
-        val revoked = state == "revoked"
+        // no automatic reload while the host refuses this device (revoked, or waiting to be allowed again)
+        val revoked = state == "revoked" || state == "reapprove"
         val title = texts.title(state)
         val body = texts.body(state)
         val hostName = creds.hostName

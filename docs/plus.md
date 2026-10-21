@@ -205,12 +205,13 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - 止まっている間の設定 › リモートは「このアカウントでは公式の中継を使えません」の 1 行を出す（ほかの PC へ のまとまりと同じ形。ボタンは足さない）。`account.status` が `plus` と読めている間は Pleiad Plus のスイッチを押せる（切って入れ直すとつなぎ直す）。`disabled` と読めている間は押せない（`plus` に戻れば、読めたところで張り直す）
 - `revoke` は両方の link（own・plus）へ送る
 
-## 端末の受け入れ（同じアカウント。ADR 0240）
+## 端末の受け入れ（同じアカウント + PC の画面の承認。ADR 0245）
 
 - 端末は `/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Account`（ID トークン）だけでつなぐ（deviceId・ペアリング無し）。中継の差し込みが `admit: true` で通すと、ホストが accept を張り、Noise_IK の応答側になる
-- 端末はメッセージ 1 に `{ proto, name, platform, app, plus: { idToken } }` を入れる。ホストは `plus.idToken` を自分で検証し、uid が今のアカウントと同じときだけ進める。断りは `{ type: 'denied', reason }`（`account`・`devices`・`unavailable`・`rate`）を暗号の中で送って閉じる
-- 同じ公開鍵の `via:'plus'` の端末は置き換える（数に入れない）。`limits.devicesPerHost` を超える・一度も読めていない・この 1 時間の受け入れが 20 回を超える、は断る
-- 端末の `{ type: 'admit' }` を受けたら `deviceId` と中継用トークンを発行し、`via:'plus'`・`plusUid` で登録、`{ type: 'approved', deviceId, token, hostName }` を返して 1000 で閉じる。`PATCH deviceCount` も追う
+- 端末はメッセージ 1 に `{ proto, name, platform, app, plus: { idToken } }` を入れる。ホストは `plus.idToken` を自分で検証し（`createPlusLink` の `verifyAdmission`。既定は uid が今のアカウントと同じこと）、違えば `{ type: 'denied', reason: 'account' }` を暗号の中で送って閉じる
+- 取り消した鍵は `revoked`、拒否してから 1 時間の鍵は `rejected` で断る
+- 端末はメッセージ 2 のあと `{ type: 'admit' }`（裏のつなぎ直し）か `{ type: 'pair' }`（人が選んだつなぎ）を送る。許可済みの鍵なら、どちらでも同じ deviceId で中継用トークンを出し直し、`{ type: 'approved', deviceId, token, hostName }` を返して 1000 で閉じる
+- 許可していない鍵は、`admit` なら `approval` で断る。`pair` なら、`limits.devicesPerHost` を超える（同じ鍵は数えない）・一度も読めていない・この 1 時間の申し込みが 20 件を超える、を断り、通れば `{ type: 'waiting' }` を返して PC の画面の承認の窓へ回す（QR と同じ窓・確認コード）。許可で `via:'plus'`・`plusUid`・`approvedBy: 'host'` で登録して `approved`、拒否で `rejected`。`PATCH deviceCount` も追う
 - 公式の中継はペアリングを受けない（`4401 'pairing disabled'`。ホスト側も受けない）
 - 登録した端末がつなぐのは、`deviceId`・中継用トークン・`X-Pleiad-Account` を付けた通常の接続。ホストは `via:'plus'` かつ `plusUid` が今の uid のものだけを受ける
 

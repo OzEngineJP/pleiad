@@ -23,5 +23,8 @@ class PlusAdmissionTest {
         assertEquals(null, PlusAdmission.deniedCode("rate", 0))
         assertEquals("plus-connecting", PlusAdmission.deniedCode("rate", 1))
         assertEquals("unreachable", PlusAdmission.deniedCode("unavailable", 0))
+        assertEquals("plus-reapprove", PlusAdmission.deniedCode("approval", 0))
+        assertEquals("revoked", PlusAdmission.deniedCode("revoked", 0))
+        assertEquals("denied", PlusAdmission.deniedCode("rejected", 0))
     }
 }

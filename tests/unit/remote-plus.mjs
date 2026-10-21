@@ -1,7 +1,7 @@
 // Pleiad Plus のつながり（core/remote/plus-link.mjs + core/plus/hosts.mjs、docs/plus.md、docs/remote.md §6.4）。
 // 実物の中継（relay/server.mjs）に試験の authz（tests/lib/plus-relay-authz.mjs）を差し込んで「公式の中継」にし、
 // fake の Plus（tests/lib/fake-plus.mjs）と試験用の端末（tests/lib/remote-device.mjs）で
-// 登録 → つながり → 同じアカウントの受け入れ → 再接続 → 断り・止め・張り直し を往復する。
+// 登録 → つながり → 同じアカウントの端末を PC の承認の窓で受け入れ → 再接続 → 断り・止め・張り直し を往復する。
 // 自分の中継（own）は別の実物の中継（authz 無し）で、ペアリングが変わらないことも確かめる。
 // LLM も外のネットワークも使わない。
 import fs from 'node:fs/promises';
@@ -20,9 +20,10 @@ import { plainCipher } from '../../core/secret-store.mjs';
 import { startFakePlus } from '../lib/fake-plus.mjs';
 import { admitDevice, connectDevice, pairDevice } from '../lib/remote-device.mjs';
 import { pairingPayload } from '../../core/remote/pairing.mjs';
+import { generateKeyPair } from '../../core/remote/noise.mjs';
 
 export const name = 'remote-plus';
-export const title = 'Pleiad Plus のつながり: この PC の登録・同じアカウントの受け入れ・再接続・断り・止め・張り直し・own との共存';
+export const title = 'Pleiad Plus のつながり: この PC の登録・承認の窓での受け入れ・再接続・断り・止め・張り直し・own との共存';
 
 const UID = 'user-1';
 const SECRET = crypto.randomBytes(32).toString('base64url');
@@ -68,7 +69,8 @@ export default async function (t) {
   let hostTries = 0;
   const authzHost = authz.host;
   authz.host = ctx => { hostTries++; return authzHost(ctx); };
-  const officialRelay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz });
+  // 試験は 1 分の間に何度も受け入れを試す（中継の 1 分の受け入れの上限を広げる）
+  const officialRelay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz, admitPerMinute: 100 });
   const officialAddr = await officialRelay.listen(0, '127.0.0.1');
   const officialUrl = `http://127.0.0.1:${officialAddr.port}`;
 
@@ -107,6 +109,15 @@ export default async function (t) {
   }
   const account = () => ({ 'x-pleiad-account': plus.issueIdToken(UID) });
   const admit = opts => admitDevice({ relayUrl: officialUrl, hostId: st.hostId, hostPublicKey: st.publicKey, idToken: plus.issueIdToken(UID), ...opts });
+  /** 人が選んだつなぎ（mode 'pair'）を出し、PC の承認の窓に出た申し込みへ answer（approve / deny）で答える。 */
+  async function answered(answer, opts = {}) {
+    let shown = null;
+    const pending = admit({ ...opts, mode: 'pair', onCode: code => { shown = code; } });
+    const req = await until(async () => (await remote.status()).pairing.requests.find(r => r.via === 'plus'), 10_000, '承認の窓に出る');
+    await until(() => shown, 5000, '端末に確認コードが出る');
+    if (answer === 'approve') await remote.approve(req.id); else await remote.deny(req.id);
+    return { req, shown, result: await within(pending, 15_000, '承認の答え') };
+  }
   const live = [];
 
   try {
@@ -121,11 +132,18 @@ export default async function (t) {
     t.ok('enabled・plus.connect・signedIn・plus・registered で公式の中継につながる', s1.links.plus.state === 'connected' && s1.links.own.state === 'connected', JSON.stringify(s1.links));
     t.ok('remoteStatus.plus に connect・link・host・devices が出る', s1.plus?.connect === true && s1.plus?.host?.state === 'registered' && s1.plus?.devices === 0);
 
-    // ---- 同じアカウントの端末の受け入れ（確認コードなし）
-    const creds = await within(admit({ name: 'Plus Phone', platform: 'android' }), 15_000, '端末の受け入れ');
-    t.ok('同じアカウントなら確認コードなしで端末を登録する', Boolean(creds.deviceId) && /^[A-Za-z0-9_-]{43}$/.test(creds.token ?? ''), JSON.stringify(creds.deviceId));
+    // ---- 同じアカウントでも、知らない鍵は PC の承認の窓を通す（裏のつなぎ直しでは窓を出さない）
+    const keyPair = generateKeyPair();
+    const quiet = await admit({ name: 'Plus Phone', platform: 'android', keyPair });
+    t.ok('同じアカウントでも、知らない鍵の裏のつなぎ直しは denied approval（窓を出さない）',
+      quiet?.denied === true && quiet?.reason === 'approval' && (await remote.status()).pairing.requests.length === 0, JSON.stringify(quiet));
+    const first = await answered('approve', { name: 'Plus Phone', platform: 'android', keyPair });
+    const creds = first.result;
+    t.ok('人が選んだつなぎは、QR と同じ承認の窓に確認コード付きで出る', first.req.via === 'plus' && first.req.name === 'Plus Phone' && first.req.code === first.shown, JSON.stringify(first.req));
+    t.ok('PC の画面で許可すると端末を登録する', Boolean(creds.deviceId) && /^[A-Za-z0-9_-]{43}$/.test(creds.token ?? ''), JSON.stringify(creds.deviceId));
     const rec = (await remote.store.devices()).find(d => d.id === creds.deviceId);
-    t.ok('登録した端末は via:plus と plusUid を持つ', rec?.via === 'plus' && rec?.plusUid === UID, JSON.stringify(rec && { via: rec.via, plusUid: rec.plusUid }));
+    t.ok('登録した端末は via:plus と plusUid と approvedBy: host を持つ', rec?.via === 'plus' && rec?.plusUid === UID && rec?.approvedBy === 'host',
+      JSON.stringify(rec && { via: rec.via, plusUid: rec.plusUid, approvedBy: rec.approvedBy }));
     await until(() => plus.state.hosts[st.hostId].deviceCount === 1, 3000, '台帳へ PATCH deviceCount');
 
     // ---- 再接続（deviceId + トークン + アカウントのヘッダー）
@@ -133,17 +151,20 @@ export default async function (t) {
     live.push(d1);
     t.ok('受け入れた端末がそのままつながる（IK・HELLO）', d1.hello.hostName === 'plus-desk');
 
-    // ---- 同じ公開鍵は置き換える（件数は増えない）
+    // ---- 許可した鍵の裏のつなぎ直しは、窓を出さずに同じ deviceId でトークンを出し直す
     const creds2 = await within(admit({ name: 'Plus Phone 2', keyPair: creds.keyPair }), 15_000, '同じ鍵の受け入れ');
-    // 古い端末の取り消しは登録のあとに続けて行うので、一覧が 1 件になるまで待つ
-    const after2 = await until(async () => {
-      const list = (await remote.store.devices()).filter(d => d.via === 'plus');
-      return list.length === 1 ? list : null;
-    }, 10_000, '古い端末が消える');
-    t.ok('同じ公開鍵は置き換わる（新しい deviceId、件数は増えない）',
-      Boolean(creds2.deviceId) && creds2.deviceId !== creds.deviceId && after2[0].id === creds2.deviceId, creds2.deviceId);
-    await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '取り消しに伴う張り直し');
-    live.push(await within(connectDevice(creds2, { extraHeaders: account() }), 15_000, '置き換えた端末がつながる'));
+    const after2 = (await remote.store.devices()).filter(d => d.via === 'plus');
+    t.ok('許可した鍵は窓を出さずに通る（同じ deviceId・件数は増えない・トークンは新しい）',
+      creds2.deviceId === creds.deviceId && creds2.token !== creds.token && after2.length === 1 && (await remote.status()).pairing.requests.length === 0,
+      JSON.stringify({ id: creds2.deviceId, n: after2.length }));
+    live.push(await within(connectDevice(creds2, { extraHeaders: account() }), 15_000, '出し直したトークンでつながる'));
+
+    // ---- PC の画面で拒否した鍵は、1 時間は申し込めない
+    const otherKey = generateKeyPair();
+    const no = await answered('deny', { name: 'Denied Phone', keyPair: otherKey });
+    t.ok('PC の画面で拒否すると denied rejected', no.result?.denied === true && no.result?.reason === 'rejected', JSON.stringify(no.result));
+    const noAgain = await admit({ name: 'Denied Phone', keyPair: otherKey, mode: 'pair' });
+    t.ok('拒否した鍵はすぐには窓に出ない（denied rejected）', noAgain?.denied === true && noAgain?.reason === 'rejected' && (await remote.status()).pairing.requests.length === 0, JSON.stringify(noAgain));
 
     // ---- 断り: ほかのアカウント（中継が断る経路と、ホストが暗号の中で断る経路）
     plus.state.accounts['user-2'] = { ...plus.state.accounts[UID], uid: 'user-2' };
@@ -156,24 +177,24 @@ export default async function (t) {
     const badToken = await rejects(admitDevice({ relayUrl: officialUrl, hostId: st.hostId, hostPublicKey: st.publicKey, idToken: 'not-a-token' }));
     t.ok('読めない ID トークンは中継が 4401 token で断る', badToken?.closeCode === 4401 && badToken?.closeReason === 'token', `${badToken?.closeCode} ${badToken?.closeReason}`);
 
-    // ---- 断り: 台数の上限・読めていない・回数
+    // ---- 断り: 台数の上限・読めていない・回数（窓へ回す前に確かめる。人が選んだつなぎで）
     plus.state.accounts[UID].limits.devicesPerHost = 1;
     await sync();
-    const full = await admit({ name: 'over' });
+    const full = await admit({ name: 'over', mode: 'pair' });
     t.ok('台数の上限なら denied devices', full?.denied === true && full?.reason === 'devices', JSON.stringify(full));
     st.account = { ...st.account, limits: null };
     await sync();
-    const unknown = await admit({ name: 'unknown' });
+    const unknown = await admit({ name: 'unknown', mode: 'pair' });
     t.ok('台数の上限を一度も読めていなければ denied unavailable', unknown?.denied === true && unknown?.reason === 'unavailable', JSON.stringify(unknown));
     st.account = plus.state.accounts[UID];
     plus.state.accounts[UID].limits.devicesPerHost = 8;
     await sync();
-    // 1 時間の受け入れの上限（小さい値に差し替えた provider で確かめる。直近 1 時間の端末が 1 台居るので 1 で当たる）
-    const small = createPlusLink({ session, verifier, remote, log: () => {}, admitLimit: 1 });
+    // 1 時間の申し込みの上限（上限 0 に差し替えた provider で確かめる）
+    const small = createPlusLink({ session, verifier, remote, log: () => {}, admitLimit: 0 });
     small.update({ enabled: true, signedIn: true, uid: UID, accountStatus: 'plus', connect: true, hostState: 'registered', limits: st.account.limits, relayUrl: officialUrl });
     remote.setPlusProvider(small.provider);
     await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '小さい上限の provider で張り直す');
-    const rate = await admit({ name: 'rate' });
+    const rate = await admit({ name: 'rate', mode: 'pair' });
     t.ok('この 1 時間の受け入れが上限を超えると denied rate', rate?.denied === true && rate?.reason === 'rate', JSON.stringify(rate));
     remote.setPlusProvider(plusLink.provider);
     await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '元の provider で張り直す');

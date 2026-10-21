@@ -11,6 +11,7 @@
   const hosts = new Map();      // hostId -> record (+ state)
   let pairingActive = false;
   let pairHostName = '';
+  const notes = new Map();      // hostId -> note on the row until the next try (a Plus host declined this device)
 
   apply(document);
   $('privacy').href = t('hosts.privacyUrl');
@@ -54,6 +55,8 @@
         : h.state === 'blocked' ? t('plus.noRelay')
         : h.state === 'limit' ? t('plus.limit')
         : h.state === 'paused' ? (pstate?.plus === 'maintenance' ? t('plus.maintenance') : t('plus.temporarilyUnavailable'))
+        : h.state === 'reapprove' ? t('plus.reapprove')
+        : h.state === 'revoked' ? t('state.revoked')
         : h.state === 'readmit' || h.state === 'connecting' ? t('plus.connecting')
         : h.state === 'offline' ? t('plus.unreachable') : t(h.online ? 'plus.online' : 'plus.offlineHost');
       const when = h.lastConnectedAt ? t('hosts.lastUsed', { when: ago(h.lastConnectedAt) }) : t('hosts.neverUsed');
@@ -93,8 +96,9 @@
       const dot = document.createElement('span');
       dot.className = `dot${on ? ' on' : ''}`;
       dot.hidden = !st;
-      line.append(dot, document.createTextNode([st, when].filter(Boolean).join(' · ')));
-      if (h.state === 'revoked') line.classList.add('warn');
+      const note = notes.get(h.hostId);
+      line.append(dot, document.createTextNode(note ?? [st, when].filter(Boolean).join(' · ')));
+      if (note || h.state === 'revoked' || h.state === 'reapprove') line.classList.add('warn');
       open.append(nm, line);
       open.onclick = () => openHost(h);
       const more = document.createElement('button');
@@ -122,9 +126,43 @@
     } catch (e) { toast(errorText(e)); }
   }
 
+  // A Plus host this device is not allowed on yet (or must be allowed on again, or that revoked it) is asked on its screen first.
+  const ASK_PLUS = new Set(['unpaired', 'reapprove', 'revoked']);
+
   async function openHost(h) {
+    if (h.via === 'plus' && ASK_PLUS.has(h.state)) { await askPlus(h); return; }
     if (h.state === 'revoked') { startPair(); return; }
-    try { await Remote.open({ hostId: h.hostId, via: h.via }); } catch (e) { toast(errorText(e)); }
+    try { await Remote.open({ hostId: h.hostId, via: h.via }); } catch (e) {
+      if (h.via === 'plus' && (e?.code === 'plus-unpaired' || e?.code === 'plus-reapprove')) { await askPlus(h); return; }
+      toast(errorText(e));
+    }
+  }
+
+  /** The QR pairing's wait screen for a Plus host: the host shows the same code in its approval window. */
+  async function askPlus(h) {
+    if (pairingActive) return;
+    pairingActive = true;
+    pairHostName = label(h);
+    notes.delete(h.hostId);
+    pairError('');
+    $('waitLead').textContent = t('pair.connecting');
+    $('waitCode').textContent = '';
+    $('waitNote').textContent = '';
+    pairStep('wait');
+    show('pair');
+    try {
+      await Remote.admit({ hostId: h.hostId });
+      pairingActive = false;
+      show('list');
+      await refresh();
+      await Remote.open({ hostId: h.hostId, via: 'plus' });
+    } catch (e) {
+      pairingActive = false;
+      show('list');
+      if (e?.code === 'denied') notes.set(h.hostId, t('err.denied'));
+      else if (e?.code !== 'aborted') toast(errorText(e));
+      await refresh();
+    }
   }
 
   function closeMenus() { document.querySelectorAll('.menu').forEach(m => m.remove()); }

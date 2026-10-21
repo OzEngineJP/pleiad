@@ -1,6 +1,6 @@
 # 0240 Pleiad Plus の端末の受け入れは「同じアカウント」を Noise の中で確かめる
 
-- 状態: 提案
+- 状態: 置き換え済み（[ADR 0245](0245-device-approval-and-revocation.md)。新しい鍵の端末は PC の画面の承認の窓で許可する）
 
 ## 状況
 

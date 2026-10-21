@@ -7,24 +7,31 @@ import { approvalChange, changeNotice } from './setting-change.mjs';
 /** 人に見せない bot の会話（夜の整理・心拍。core/channels/types.mjs の HIDDEN_BOT_KINDS と同じ） */
 const HIDDEN_BOT_KINDS = new Set(['learner', 'pulse']);
 
+/** 押すと設定を開く通知の行き先（デスクトップ版の通知の押下で、会話の id の代わりに届く） */
+const SETTINGS_TARGET = 'settings:';
+
 /**
  * この PC の通知（デスクトップ版の OS 通知・ブラウザーの Notification）。
  * settings は設定 › 通知 › この PC（{ done, reply, failed }。切った種類は出さない）、
- * isViewing(sessionId) はその会話を今見ているか（見ている間は出さない。ADR 0086）
+ * isViewing(sessionId) はその会話を今見ているか（見ている間は出さない。ADR 0086）、
+ * isFocused() は Pleiad の窓を見て操作しているか（承認の窓が目の前に出るので、端末の追加の通知は出さない）、
+ * openSettings(page) は設定のそのページを開く
  */
-export function createCompletionNotifications({ host = window, openSession, settings = () => ({ done: true, reply: true, failed: true }), isViewing = () => false }) {
+export function createCompletionNotifications({ host = window, openSession, openSettings = () => {}, settings = () => ({ done: true, reply: true, failed: true }),
+  isViewing = () => false, isFocused = () => false }) {
   const seen = new Map();
   const seenReplies = new Set();
   let requested = false;
-  host.plyDesktop?.onNotificationClick?.(id => { void openSession(id); });
+  const openTarget = id => String(id).startsWith(SETTINGS_TARGET) ? openSettings(String(id).slice(SETTINGS_TARGET.length)) : openSession(id);
+  host.plyDesktop?.onNotificationClick?.(id => { void openTarget(id); });
   const show = notice => {
     try {
       if (host.plyDesktop?.notifyCompletion) {
         Promise.resolve(host.plyDesktop.notifyCompletion(notice)).catch(() => {});
       } else if (host.Notification?.permission === 'granted') {
         const notification = new host.Notification(notice.title, { body: notice.body,
-          tag: notice.kind === 'reply' ? `ply:reply:${notice.noticeId}` : `ply:${notice.sessionId}` });
-        notification.onclick = () => { notification.close(); host.focus(); void openSession(notice.sessionId); };
+          tag: notice.kind === 'reply' || notice.kind === 'device' ? `ply:${notice.kind}:${notice.noticeId}` : `ply:${notice.sessionId}` });
+        notification.onclick = () => { notification.close(); host.focus(); void (notice.kind === 'device' ? openSettings('remote') : openSession(notice.sessionId)); };
       }
     } catch { /* Unsupported OS / denied permission must not affect the conversation. */ }
   };
@@ -62,6 +69,17 @@ export function createCompletionNotifications({ host = window, openSession, sett
       const change = event.settingChange ? approvalChange(event.settingChange) : null;
       show({ kind: 'reply', noticeId: event.id, sessionId: event.sessionId,
         title: computer ? approvalNotice(computer) : change ? changeNotice(change) : t('notify.waitingReply'), body: body(session?.title || event.conversationTitle) });
+    },
+    /**
+     * 新しい端末が承認を待っている（remotePairing の request。ADR 0245）。ホストの画面だけが呼ぶ。
+     * あなた待ちの一つなので「返事待ち」の設定に従う。押すと 設定 › リモート（承認の窓もそこに出ている）
+     */
+    deviceWaiting(request) {
+      if (!request?.id || seenReplies.has(`device:${request.id}`)) return;
+      seenReplies.add(`device:${request.id}`);
+      if (!settings().reply || isFocused()) return;
+      const name = String(request.name || t('settings.remote.devices.unnamed')).slice(0, 100);
+      show({ kind: 'device', noticeId: request.id, sessionId: `${SETTINGS_TARGET}remote`, title: t('notify.deviceWaiting'), body: t('notify.deviceBody', { name }) });
     },
   };
 }

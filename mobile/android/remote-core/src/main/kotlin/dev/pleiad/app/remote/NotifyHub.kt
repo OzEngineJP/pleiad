@@ -44,7 +44,7 @@ class NotifyHub(
     private val regs = ConcurrentHashMap<String, Reg>()
     private val workers = Executors.newCachedThreadPool { r -> Thread(r, "pleiad-notify-hub").also { it.isDaemon = true } }
     private val timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "pleiad-notify-timer").also { it.isDaemon = true } }
-    private val registrar by lazy { NotifyRegistrar(loop, store.identity(), app, name, log = log, plusIdToken = plusIdToken) }
+    private val registrar by lazy { NotifyRegistrar(loop, { c -> store.keyFor(c.hostId, c.via) ?: store.identity() }, app, name, log = log, plusIdToken = plusIdToken) }
     @Volatile private var settings = NotifySettings()
     @Volatile private var settingsVersion = 0L
     @Volatile private var running = false

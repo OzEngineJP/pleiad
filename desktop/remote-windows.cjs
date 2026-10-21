@@ -358,23 +358,8 @@ function createRemoteWindows(deps) {
 
   async function createHostWindow(hostId, sessionId = null, preferredVia = null) {
     const d = await device();
-    let rec = (await d.list()).find(h => h.hostId === hostId && (!preferredVia || h.via === preferredVia));
-    if (!rec) {
-      if (workerRequest) {
-        try {
-          const tokRes = await workerRequest('plus-token');
-          const plusRes = await workerRequest('plus-hosts');
-          const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
-          if (tokRes?.ok && ph) {
-            rec = await d.admit({
-              hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
-              idToken: tokRes.idToken, uid: tokRes.uid,
-            });
-            pushHosts();
-          }
-        } catch {}
-      }
-    }
+    // まだ許可されていない Plus の PC は、画面が確認コードを出して相手の PC の承認を待つ流れ（ply:hosts-admit）を先に通す
+    const rec = (await d.list()).find(h => h.hostId === hostId && (!preferredVia || h.via === preferredVia));
     if (!rec) throw Object.assign(new Error(t('remote.hosts.unknown')), { code: 'unknown-host' });
 
     const via = rec.via ?? 'own';
@@ -383,18 +368,19 @@ function createRemoteWindows(deps) {
       if (!r?.ok) throw Object.assign(new Error(r?.error || 'not signed in'), { code: 'not-signed-in' });
       return r.idToken;
     } : null;
+    // 中継のトークンの出し直し（許可済みの鍵だけ。窓は出ない）。もう一度の許可が要る・取り消された・別のアカウントは
+    // err.code のまま投げ、線がその状態で止まる（device-link.mjs）
     const onReadmit = (via === 'plus' && workerRequest) ? async () => {
-      try {
-        const tokRes = await workerRequest('plus-token', { force: true });
-        const plusRes = await workerRequest('plus-hosts', { fresh: true });
-        const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
-        if (tokRes?.ok && ph) {
-          await d.admit({
-            hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
-            idToken: tokRes.idToken, uid: tokRes.uid,
-          });
-        }
-      } catch {}
+      const tokRes = await workerRequest('plus-token', { force: true });
+      const plusRes = await workerRequest('plus-hosts', { fresh: true });
+      const ph = plusRes?.hosts?.find(h => h.hostId === hostId);
+      if (!tokRes?.ok || !ph) return null;
+      await d.admit({
+        hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
+        idToken: tokRes.idToken, uid: tokRes.uid, mode: 'admit',
+      });
+      pushHosts();
+      return { ...(await d.store.credentials(hostId, 'plus')), via: 'plus' };
     } : null;
 
     const proxy = await d.open(hostId, { via, relayUrl: rec.relayUrl, getIdToken, onReadmit });
@@ -557,8 +543,13 @@ function createRemoteWindows(deps) {
       finally { if (pairing === ctl) pairing = null; }
     });
     ipcMain.handle('ply:hosts-pair-cancel', event => { trust.check(event, ['local']); pairing?.abort(); pairing = null; });
+    // Pleiad Plus の PC に追加してもらう。許可の無いこの PC の鍵は、相手の PC の画面の承認の窓へ回る（確認コードを ply:hosts-code で画面へ）。
+    // やめるは ply:hosts-pair-cancel
     ipcMain.handle('ply:hosts-admit', async (event, hostId) => {
       trust.check(event, ['local']);
+      pairing?.abort();
+      const ctl = pairing = new AbortController();
+      const sender = event.sender;
       try {
         if (!workerRequest) throw new Error('workerRequest unavailable');
         const tokRes = await workerRequest('plus-token');
@@ -569,11 +560,13 @@ function createRemoteWindows(deps) {
         const d = await device();
         const rec = await d.admit({
           hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
-          idToken: tokRes.idToken, uid: tokRes.uid,
+          idToken: tokRes.idToken, uid: tokRes.uid, mode: 'pair', signal: ctl.signal,
+          onCode: code => { if (!sender.isDestroyed()) sender.send('ply:hosts-code', formatCode(code)); },
         });
         pushHosts();
         return { ok: true, host: hostRow({ ...rec, state: 'closed' }) };
-      } catch (e) { return fail(e); }
+      } catch (e) { pushHosts(); return { ...fail(e), ...(e?.reason ? { reason: e.reason } : {}) }; }
+      finally { if (pairing === ctl) pairing = null; }
     });
     ipcMain.handle('ply:hosts-open', async (event, hostId, opts) => {
       trust.check(event, ['local']);

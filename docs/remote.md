@@ -119,12 +119,22 @@ AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Ele
 - 設定が空のときは環境変数 `AGENT_HOST_RELAY_URL`・`AGENT_HOST_RELAY_SECRET` を代わりに使う（有効にするのは設定だけ）
 - **審査の招待（審査モードのホストだけ。[ADR 0172](adr/0172-play-review-access.md)、[play-store/review-host.md](play-store/review-host.md)）。** Play の審査員に渡す、期限つき（既定 90 日・最長 180 日）で何度でも使えるコード。ペアリングの秘密を `core/review-invite.mjs create` が secret-store に 1 つだけ置き、入場券は同じ秘密から導いて、使うたびと 4 分ごとに中継へ置き直す（中継の「5 分・1 回」の約束と中継のコードは変えない）。確認コードの突き合わせと持ち主の承認は省き、自動で通す。上限は生きている端末 8 台・自動で通すのは 1 時間に 4 台で、超えたら `denied` で閉じる（承認待ちを残さない）。入った端末は `devices.json` の `invite` に招待の id を持ち、招待の取り消し・作り直し・期限切れで、その端末がすべて取り消される。審査モードでは通常の「端末を追加」は使えない。Noise_IKpsk2 とホストの公開鍵の照合はそのまま
 
-**取り消し**: ホストの端末一覧で「取り消す」→ 一覧から消し、中継からトークンのハッシュを消し、その端末のチャネルを即座に切る。中継が古い情報のままでも、ホストがハンドシェイクで静的鍵を弾く（二重）。
+**取り消し**: ホストの端末一覧で「取り消す」→ 鍵を取り消した鍵の一覧（`<data>/remote/revoked.json`）に書き、一覧から消し、中継からトークンのハッシュを消し、その端末のチャネルを即座に切る。中継が古い情報のままでも、ホストがハンドシェイクで静的鍵を弾く（二重）。取り消した鍵は、どの中継から来ても、受け入れも通常の接続も通さない。同じ鍵の記録と、その端末が許可した端末も一緒に取り消す。取り消しは端末の画面からもできる（取り消した機器を `by` に残す）。「一覧から消す」は表示だけを外す（[ADR 0245](adr/0245-device-approval-and-revocation.md)）。
 端末一覧は名前・種類・追加した日・最後に使った時刻・今つながっているかを出す。ホスト自身の窓は一覧に出さない（ローカルは今のままの一時トークン）。
 
 ### 3.4 同じアカウントの端末の受け入れ（Pleiad Plus）
 
-公式の中継（Pleiad Plus）では QR のペアリングの代わりに、アカウントでの受け入れを行う（[ADR 0240](adr/0240-plus-same-account-admission.md)）。端末は `/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Account`（ID トークン）だけでつなぎ、Noise_IK のメッセージ 1 に `{ proto, name, platform, app, plus: { idToken } }` を入れる。ホストは `plus.idToken` を自分で検証し、uid が今のアカウントと同じときだけ端末を登録する（確認コードも人の承認も無い）。断りは `{ type: 'denied', reason }`（`account`・`devices`・`unavailable`・`rate`）を暗号の中で返す。登録は `devices.json` の `via: 'plus'`・`plusUid`。細部は docs/plus.md。
+公式の中継（Pleiad Plus）では QR の代わりに、アカウントで中継を通り、PC の画面の承認の窓で許可する（[ADR 0245](adr/0245-device-approval-and-revocation.md)。前の [ADR 0240](adr/0240-plus-same-account-admission.md) を置き換えた）。端末は `/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Account`（ID トークン）だけでつなぎ、Noise_IK のメッセージ 1 に `{ proto, name, platform, app, plus: { idToken } }` を入れる。ホストは `plus.idToken` を自分で検証し、uid が今のアカウントと違えば窓を出さずに断る。
+
+- 端末はメッセージ 2 のあと transport で 1 通送る。`{ type: 'admit' }` は裏でのつなぎ直し、`{ type: 'pair' }` は人がホストを選んだつなぎ
+- 許可済みの鍵（`approvedBy` を持つ記録の鍵。QR で足した端末の鍵も含む）なら、どちらでも窓を出さずに `{ type: 'approved', deviceId, token, hostName }` を返す（同じ deviceId でトークンを出し直す）
+- 許可していない鍵は、`admit` なら `{ type: 'denied', reason: 'approval' }`（窓を出さない）。`pair` なら台数・回数を確かめてから `{ type: 'waiting' }` を返し、QR と同じ承認の窓に同じ確認コードで出す（§3.3 の 4.）。許可で `approved`（`approvedBy: 'host'`）、拒否で `{ type: 'denied', reason: 'rejected' }`、5 分で `expired`
+- 断りの `reason`: `account`（ほかのアカウント）・`revoked`（取り消した鍵）・`rejected`（拒否してから 1 時間）・`approval`（許可していない鍵の裏のつなぎ直し）・`devices`・`unavailable`・`rate`
+- 承認を待っている間は、PC の通知の一覧（あなた待ち）・OS の通知・許可済みのスマホへの通知（ボタン無し。ロック画面は題だけ）で知らせる。許可は PC の画面だけ
+- 前の版で確認コードなしに入った `via: 'plus'` の記録（`approvedBy` が無い）は「もう一度の許可が要る端末」。通常の接続も `admit` も通さず、`pair` で同じ記録のまま窓に出る（`again`）
+- 登録は `devices.json` の `via: 'plus'`・`plusUid`・`approvedBy`・`approvedAt`。細部は docs/plus.md
+
+端末の画面（中継越し）からの接続は、ホストだけの操作（リモートの設定・ペアリングの開始と答え・Plus のつなぎ直し）を `host_only` で断る（`core/ops/policy.mjs` の `HOST_ONLY_COMMANDS`）。
 
 ### 3.5 中継が知ること・知らないこと
 

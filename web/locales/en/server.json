@@ -1214,8 +1214,10 @@
       "page": {
         "revoked": "Pair this device again.",
         "hostOffline": "Make sure Pleiad is running on the host. This page opens automatically once connected.",
-        "offline": "Can't reach the relay. Check your network. This page opens automatically once connected."
-      }
+        "offline": "Can't reach the relay. Check your network. This page opens automatically once connected.",
+        "reapprove": "Select this PC in the \"Other PCs\" list and get it allowed on the host's screen."
+      },
+      "reapprove": "This device needs to be allowed again on the host"
     },
     "pair": {
       "ticket": "This pairing code can't be used (already used or expired). Create a new one on the host",
@@ -1229,12 +1231,16 @@
       "unreadable": "Couldn't read the host's response",
       "denied": "The host declined the request",
       "expired": "The request expired while waiting for approval on the host",
-      "badResponse": "The host's response was malformed"
+      "badResponse": "The host's response was malformed",
+      "account": "This account can't connect to this host",
+      "reapprove": "This device needs to be allowed again on the host",
+      "revoked": "This device was revoked on the host"
     },
     "store": {
       "unreadable": "Can't read {{file}} (the file is corrupted)",
       "badFormat": "{{file}} has an unexpected format"
-    }
+    },
+    "hostOnly": "This can only be done on the host's own screen"
   },
   "upload": {
     "invalidName": "The folder name contains characters that can't be used.",

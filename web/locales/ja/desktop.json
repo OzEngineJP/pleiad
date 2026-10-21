@@ -53,7 +53,8 @@
   "notifications": {
     "completed": "作業が完了しました",
     "failed": "作業が失敗しました",
-    "waitingReply": "返事を待っています"
+    "waitingReply": "返事を待っています",
+    "deviceWaiting": "◆ 承認を待っています"
   },
   "secrets": {
     "unavailable": "OS の暗号化機能（safeStorage）が使えません",

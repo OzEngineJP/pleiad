@@ -44,6 +44,8 @@ const authz = createPlusRelayAuthz({
 });
 const officialRelay = createRelay({
   enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz,
+  // 試験は 1 分の間に何度も受け入れを試す（断り・承認の窓・取り直し）
+  admitPerMinute: 100,
 });
 const officialAddr = await officialRelay.listen(0, '127.0.0.1');
 const officialUrl = `http://127.0.0.1:${officialAddr.port}`;
@@ -61,6 +63,8 @@ const remote = createRemoteHost({
   dataDir: path.join(scratch, 'remote'), cipher: plainCipher,
   target: () => ({ host: '127.0.0.1', port: targetPort }), token: 'host-token', env: {},
   backoff: { minMs: 80, maxMs: 300 }, log: () => {},
+  // 承認の窓に出た申し込みを試験へ知らせる（試験は approve / deny で答える）
+  emit: ev => { if (ev.type === 'remotePairing' && ev.phase === 'request') out({ event: 'pair-request', id: ev.request.id, code: ev.request.code, via: ev.request.via }); },
 });
 const makePlusLink = (admitLimit = 20) => createPlusLink({
   session, verifier, remote, admitLimit,
@@ -141,6 +145,12 @@ try {
       } else if (command === 'revoke') {
         await remote.revoke(value);
         out({ event: 'revoked', deviceId: value });
+      } else if (command === 'approve') {
+        const device = await remote.approve(value);
+        out({ event: 'approved', requestId: value, deviceId: device.id });
+      } else if (command === 'deny') {
+        await remote.deny(value);
+        out({ event: 'denied', requestId: value });
       } else if (command === 'quit') await stop();
       else if (command) throw new Error(`unknown command: ${command}`);
     } catch (error) { out({ event: 'error', message: error.message }); }

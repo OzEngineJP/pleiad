@@ -275,7 +275,9 @@
         "plusUnavailable": "Pleiad Plus は今使えません",
         "plusNeedsUpdate": "Pleiad を更新してください",
         "own": "自分の中継サーバー",
-        "plusHead": "Pleiad Plus（公式の中継）"
+        "plusHead": "Pleiad Plus（公式の中継）",
+        "reapprove": "もう一度の許可が要る端末",
+        "revoked": "取り消した端末"
       },
       "state": {
         "connected": "つながっています · {{where}}",
@@ -314,7 +316,12 @@
         "added": "追加した日",
         "lastSeen": "最後の接続",
         "never": "まだつないでいません",
-        "revoke": "取り消す"
+        "revoke": "取り消す",
+        "approvedBy": "許可した端末",
+        "thisPc": "この PC",
+        "revokedAt": "取り消した日",
+        "revokedBy": "取り消した端末",
+        "hideRevoked": "一覧から消す"
       },
       "wizard": {
         "steps": {
@@ -371,7 +378,8 @@
           "notAllowed": "{{host}} の Pleiad を更新すると使えます"
         },
         "loadFailed": "PC の一覧を読めません: {{error}}",
-        "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。"
+        "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。",
+        "reapprove": "もう一度の許可が要ります"
       },
       "relay": {
         "url": "中継の URL",
@@ -389,7 +397,9 @@
         "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
         "keep": "やめる",
         "revokeTasks": "この端末の AI から任された作業 {{count}} 件も止めます。",
-        "revokeConfirmButton": "取り消す"
+        "revokeConfirmButton": "取り消す",
+        "quoted": "「{{name}}」",
+        "revokeChain": "この端末が許可した{{names}}も取り消します。"
       },
       "platform": {
         "desktop": "デスクトップ",
@@ -412,7 +422,9 @@
         "deny": "拒否",
         "approve": "許可する",
         "cancelled": "端末が承認を待たずに切れました。",
-        "expired": "承認されないまま期限が切れました。"
+        "expired": "承認されないまま期限が切れました。",
+        "titleAgain": "「{{name}}」をもう一度許可しますか？",
+        "addedOn": "{{date}}に追加"
       },
       "fullAccess": "つないだ端末は、この PC でできることがすべてできます"
     },
@@ -3463,12 +3475,23 @@
       "mention": {
         "named": "{{name}} が @あなた と書きました",
         "plain": "@あなた 宛ての投稿があります"
+      },
+      "device": {
+        "named": {
+          "open": "端末「{{name}}」が追加の許可を待っています",
+          "closed": "端末「{{name}}」が追加の許可を待っていました"
+        },
+        "plain": {
+          "open": "端末が追加の許可を待っています",
+          "closed": "端末が追加の許可を待っていました"
+        }
       }
     },
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "一時チャット › {{title}}"
+      "chat": "一時チャット › {{title}}",
+      "remote": "設定 › リモート"
     },
     "outcome": {
       "allowed": "承認済み",
@@ -3488,7 +3511,9 @@
       "band": "離れていても知らせますか？",
       "enable": "オンにする",
       "later": "あとで"
-    }
+    },
+    "deviceWaiting": "◆ 承認を待っています",
+    "deviceBody": "端末「{{name}}」が追加の許可を待っています"
   },
   "remote": {
     "badgeLabel": "リモート:",

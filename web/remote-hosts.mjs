@@ -1,7 +1,8 @@
 // 設定 › リモート › ほかの PC へ（docs/remote.md §4、ADR 0239）。デスクトップ版のローカルの窓だけに出す（plyDesktop.hosts。desktop/remote-windows.cjs）。
 //
 // - 一覧: Pleiad Plus のホスト（上）とペアリングしたホスト（下・自分の中継サーバー）。
-//   - Plus の行を押すとその PC の窓を開く（未受け入れなら自動 admit）。同じ hostId の窓は 1 枚で前面化
+//   - Plus の行を押すとその PC の窓を開く。同じ hostId の窓は 1 枚で前面化。まだ許可されていない（もう一度の許可が要る）PC は、
+//     確認コードを出して相手の PC の画面の承認を待つ（QR のときと同じ待ちの画面。やめるで中断）
 //   - 自分の中継の行を押すと詳しい画面（つなぎ方・中継サーバー・最後の接続・開く・名前を変える・削除）
 // - ＋ の流れ（PC を追加）: アプリを入れる › つなぎ方（Plus / 自分の中継）› つなぐ（待つ/コード貼り付け）› 完了
 //
@@ -14,7 +15,7 @@ import {
 } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
 
-const STATES = ['connected', 'connecting', 'offline', 'host-offline', 'revoked', 'closed', 'stopped', 'blocked', 'limit', 'paused', 'readmit'];
+const STATES = ['connected', 'connecting', 'offline', 'host-offline', 'revoked', 'reapprove', 'unpaired', 'closed', 'stopped', 'blocked', 'limit', 'paused', 'readmit'];
 
 /**
  * 一覧の 1 行に出すもの。host は desktop/remote-windows.cjs の hostRow。
@@ -28,7 +29,9 @@ export function hostLine(host, { plusState = null } = {}) {
   if (revoked) {
     sub = t('settings.remote.hosts.revoked');
   } else if (isPlus) {
-    if (state === 'blocked') {
+    if (state === 'reapprove') {
+      sub = t('settings.remote.hosts.reapprove');
+    } else if (state === 'blocked') {
       sub = t('settings.remote.groups.plusBlocked');
     } else if (state === 'limit') {
       sub = t('settings.remote.groups.plusLimit');
@@ -50,6 +53,8 @@ export function hostLine(host, { plusState = null } = {}) {
     sub,
     canOpen: !revoked && state !== 'blocked' && state !== 'limit',
     revoked,
+    /** 開く前に相手の PC の承認が要る（Plus のまだ許可されていない・もう一度の許可が要る PC） */
+    needsApproval: isPlus && (state === 'unpaired' || state === 'reapprove'),
   };
 }
 
@@ -104,7 +109,7 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
       }
       onChange();
     });
-    bridge.onCode(code => { if (wz?.pairing) { wz.code = code; paintWizard(); } });
+    bridge.onCode(code => { if (wz?.pairing || wz?.admitting) { wz.code = code; paintWizard(); } });
   }
 
   function init() {
@@ -242,7 +247,8 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
                 sub: line.sub,
                 key: `host-${h.hostId}`,
                 onclick: () => {
-                  if (line.canOpen) openHost(h.hostId, { via: 'plus' });
+                  if (line.needsApproval) startPlusPair(h);
+                  else if (line.canOpen) openHost(h.hostId, { via: 'plus' });
                 },
               }));
             }
@@ -371,6 +377,13 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
   let wz = null;
   const wizard = createWizard({ id: 'remoteAddHost', onCancel: () => cancelWizard() });
 
+  /** 一覧の Plus の PC から直に: 確認コードを出して相手の PC の承認を待ち、許可されたら窓を開く */
+  function startPlusPair(h) {
+    if (!bridge || wz) return;
+    wz = { step: 2, method: 'plus', direct: true, initialHostIds: new Set(), foundHost: h, pollTimer: null, admitting: false, pairing: false, code: '', error: '', doneName: '' };
+    pairPlus();
+  }
+
   function openAdd() {
     if (!bridge) return;
     const payload = textInput({ placeholder: 'pleiad://pair?…', key: 'payload', mono: true });
@@ -438,9 +451,17 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
       o.next = { onclick: () => { wz.step = 2; startStep2(); paintWizard(); } };
     } else if (wz.step === 2) {
       if (wz.method === 'plus') {
+        if (wz.admitting) {
+          // 相手の PC の画面の承認を待つ（QR のときと同じ）
+          o.body = wz.code ? [confirmCode(wz.code), waitLine(t('settings.remote.wizard.hostWait'))] : [waitLine(t('settings.remote.wizard.hostConnecting'))];
+          o.next = { disabled: true };
+          o.sig = [wz.method, 'admitting', wz.code];
+          wizard.render(o);
+          return;
+        }
         const lead = el('p', 'rm-lead', t('settings.remote.wizard.plusHostWait', { switch: t('settings.remote.allow') }));
         const acctKv = keyValues([[t('settings.remote.wizard.account'), plus.email || '']]);
-        const body = [lead, acctKv];
+        const body = wz.direct ? [] : [lead, acctKv];
 
         if (wz.foundHost) {
           const row = el('div', 'rm-row');
@@ -515,22 +536,31 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
 
   async function pairPlus() {
     if (!wz || !wz.foundHost || wz.admitting) return;
-    wz.admitting = true;
-    wz.error = '';
+    const mine = wz;
+    mine.admitting = true;
+    mine.code = '';
+    mine.error = '';
     paintWizard();
-    const r = await bridge.admit(wz.foundHost.hostId);
-    wz.admitting = false;
-    if (!wz) return;
+    const r = await bridge.admit(mine.foundHost.hostId);
+    mine.admitting = false;
+    if (wz !== mine) return;
     if (r.ok) {
       stopPlusPoll();
+      if (mine.direct) {
+        wz = null;
+        paintWizard();
+        await openHost(mine.foundHost.hostId, { via: 'plus' });
+        return;
+      }
       wz.doneName = wz.foundHost.name || r.host?.name || '';
       wz.step = 3;
       await refresh();
+    } else if (r.code === 'aborted') {
+      if (mine.direct) { wz = null; paintWizard(); return; }
     } else {
       let msg = r.message || t('settings.remote.failed');
-      if (r.reason === 'account') msg = t('settings.remote.groups.plusBlocked');
-      else if (r.reason === 'devices') msg = t('settings.remote.groups.plusLimit');
-      else if (r.reason === 'unavailable') msg = t('settings.remote.failed');
+      if (r.code === 'blocked') msg = t('settings.remote.groups.plusBlocked');
+      else if (r.code === 'limit') msg = t('settings.remote.groups.plusLimit');
       wz.error = msg;
     }
     paintWizard();
@@ -556,6 +586,8 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
     if (!wz) return;
     stopPlusPoll();
     if (wz.step === 2 && wz.method === 'own' && wz.pairing) { bridge.cancelPair(); return; }
+    if (wz.step === 2 && wz.method === 'plus' && wz.admitting) { bridge.cancelPair(); return; }
+    if (wz.direct) { cancelWizard(); return; }
     wz.error = '';
     wz.step = Math.max(0, wz.step - 1);
     paintWizard();
@@ -564,7 +596,7 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
   function cancelWizard() {
     if (!wz) return;
     stopPlusPoll();
-    if (wz.method === 'own' && wz.pairing) bridge.cancelPair();
+    if ((wz.method === 'own' && wz.pairing) || (wz.method === 'plus' && wz.admitting)) bridge.cancelPair();
     wz = null;
     paintWizard();
   }
