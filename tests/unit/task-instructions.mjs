@@ -2,6 +2,7 @@
 // 位置は受付の出来事（taskInstructionId）・配送の id（deliveryId=native 履歴 messageId）・届いた発言の id（nativeId）・
 // 受付時の錨（anchor）・受付時刻（at）で引き、件数や本文の一致には頼らない（Issue #109 / #106）
 import { injectTaskInstructions } from '../../web/task-instructions.mjs';
+import { threadToMessages } from '../../core/backends/codex.mjs';
 
 export const name = 'task-instructions';
 export const title = '追加指示は受け付けた位置・IDで会話に置き、件数・本文の照合に頼らない';
@@ -233,5 +234,33 @@ export default function (t) {
     const out = injectTaskInstructions(instructions, messages);
     t.ok('msg の錨は、置き済みの指示の行の deliveryId に当たる',
       JSON.stringify(seq(out)) === JSON.stringify(['m0', 'm1', 'a', 'b', 'm2']), JSON.stringify(seq(out)));
+  }
+  // codex の履歴は、ツールの後に書いた本文を同じ発言に畳む（textAfterTools）。ツールの錨の指示は、そのツールと後の本文の間に置く
+  // （読み直すと、ツールが走っている間に送った X が後の本文 B の後ろへ、Y が最後の答えの後ろへずれていた）
+  {
+    const thread = { turns: [{ id: 'turn-1', startedAt: 1, items: [
+      { type: 'userMessage', id: 'req', content: [{ type: 'text', text: 'request' }] },
+      { type: 'agentMessage', id: 'a', text: 'A' },
+      { type: 'userMessage', id: 'nx', content: [{ type: 'text', text: 'X' }] },
+      { type: 'commandExecution', id: 't1', command: 'sleep', status: 'completed', aggregatedOutput: '' },
+      { type: 'agentMessage', id: 'b', text: 'B' },
+      { type: 'userMessage', id: 'ny1', content: [{ type: 'text', text: 'Y' }] },
+      { type: 'userMessage', id: 'ny2', content: [{ type: 'text', text: 'Y' }] },
+      { type: 'commandExecution', id: 't2', command: 'sleep', status: 'completed', aggregatedOutput: '' },
+      { type: 'agentMessage', id: 'c', text: 'FINISHED' },
+    ] }] };
+    const messages = threadToMessages(thread);
+    t.ok('codex の履歴は、ツールの後の本文を畳んだ発言に textAfterTools を付ける',
+      messages.filter(m => m.toolCalls?.length).every(m => m.textAfterTools === true && m.text), JSON.stringify(messages.map(m => [m.uuid, m.textAfterTools ?? null])));
+    const instructions = [
+      { id: 'x', text: 'X', at: at(1), state: 'delivered', nativeId: 'nx', anchor: { kind: 'tool', v: 't1' } },
+      { id: 'y1', text: 'Y', at: at(2), state: 'delivered', nativeId: 'ny1', anchor: { kind: 'tool', v: 't2' } },
+      { id: 'y2', text: 'Y', at: at(3), state: 'delivered', nativeId: 'ny2', anchor: { kind: 'instruction', v: 'y1' } },
+      { id: 'w', text: 'W', at: at(4), state: 'queued', anchor: { kind: 'uuid', v: 'c' } },
+    ];
+    const order = injectTaskInstructions(instructions, messages)
+      .map(m => m.role === 'instruction' ? m.instruction.id : [m.text, ...(m.toolCalls ?? []).map(c => c.id)].filter(Boolean).join('+'));
+    t.ok('codex の形でも A → ツール → X → B → ツール → Y → Y → 答え の順を保ち、発言の錨は畳んだ本文の後ろに置く',
+      JSON.stringify(order) === JSON.stringify(['request', 'A', 't1', 'x', 'B', 't2', 'y1', 'y2', 'FINISHED', 'w']), JSON.stringify(order));
   }
 }

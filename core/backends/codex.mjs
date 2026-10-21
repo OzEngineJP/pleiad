@@ -990,6 +990,8 @@ function threadToMessages(thread, { fullResults = false, onCompaction = null } =
         if (toolCalls.length) {
           msg.tools = toolCalls.map((c) => c.name);
           msg.toolCalls = toolCalls;
+          // 畳んだツールは本文より前に走った（追加指示の置き場がツールの錨で発言を分けるときに使う。web/task-instructions.mjs）
+          msg.textAfterTools = true;
           toolCalls = [];
         }
         if (msg.text || msg.thinking || msg.toolCalls) messages.push(msg);
