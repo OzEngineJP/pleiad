@@ -757,6 +757,8 @@ const SUITES = [
   './unit/remote-host.mjs',
   // つながり（link）の作り替え: own と plus の 2 本の制御用の接続・via ごとの sync と受け入れの振り分け・provider の差し込み口
   './unit/remote-conn-links.mjs',
+  // つながり（link）の張り直し: 中継の障害のあらゆる失敗の仕方（拒否・DNS・shutdown・101 でない応答・headers の失敗）で張り直しが続く
+  './unit/remote-reconnect.mjs',
   './unit/remote-plus.mjs',
   // 審査の招待（ADR 0172）: 同じコードで複数台・台数と 1 時間の上限・期限・取り消しと作り直しで端末が切れる・審査モードでしか作れない。中継とホストをこのプロセスで立てて往復する
   './unit/remote-review-invite.mjs',

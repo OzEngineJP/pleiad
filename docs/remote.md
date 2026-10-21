@@ -458,6 +458,7 @@ link ごとの振る舞いは provider が決める:
 }
 ```
 
+- 張ってよい link は、つなぐ試みがどこで失敗しても張り直しを続ける（名前解決・接続の拒否・Upgrade 前に切れる・中継の shutdown・101 でない応答・`headers()` の失敗）。止められるのは `ready()` が張れないと答えるか、`onClose` が `{ error }` を返したときだけ
 - `sync` は link ごとに、その link が `owns` する端末だけを送る。`allow`・`notify` は端末の `via` の link へ、`revoke` は両方の link へ送る
 - `incoming` の accept は届いた link の `url`・`headers` で張り、別の link の中継へは行かない
 - `pairing` の incoming は `allowPairing` の無い link では 4401（`pairing`）で閉じる。届いた link が端末を `owns` していなければ 4401（`revoked`）で閉じる（own で登録した端末が plus から来ても、その逆でも受けない）
