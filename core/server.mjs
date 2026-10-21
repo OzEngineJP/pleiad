@@ -3340,9 +3340,10 @@ function makeEmit(turn) {
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; execution.limit = event.outcome === 'limited' ? turn.limit : null; }
       // 上限で止まった枠は、委譲の振り分けでしばらく飛ばす。同じ枠のターンが通ったら戻す（ADR 0229）
       // 解除の見込みを過ぎてすぐ同じ枠がまた止まったら、保留を延ばす（core/slot-limits.mjs。Issue #111）。
-      // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない
+      // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない。アカウント全体の枠（scope: 'account'。Claude の 5 時間・週）は、モデルを問わず 1 つに記録する
       if (!replay && !turn.info.endpoint) {
-        if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: turn.info.model, account: limitAccount(turn.backend, turn.info.account), resetsAt: turn.limit?.resetsAt });
+        if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: turn.info.model, account: limitAccount(turn.backend, turn.info.account),
+          resetsAt: turn.limit?.resetsAt, window: turn.limit?.window, scope: event.scope ?? null });
         else if (event.outcome === 'ok') limitedSlots.clear(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account));
       }
       turn.retry = null;
@@ -5962,7 +5963,7 @@ const liveInstructions = new Map();
 const limitStates = new Map();
 // 上限で止まったばかりの枠（エージェント・モデル・アカウント）。委譲の振り分けで飛ばす（ADR 0229）。
 // 解除の見込み（最低 1 分。見込みを過ぎてすぐの再発は延ばす）を過ぎるか、同じ枠のターンが通ったら外す。
-// 解除時刻が分からないものは、通るまで外さない（覚えるのはこのサーバーの間だけ。core/slot-limits.mjs）
+// 解除時刻が分からないものは 30 分（覚えるのはこのサーバーの間だけ。core/slot-limits.mjs）
 const limitedSlots = createSlotLimits();
 /**
  * 枠のアカウント（limitedSlots の記録・slotBlocked・heldSlots・turn.limit・完了の通知で同じ規則にする。Issue #121）。
@@ -5981,11 +5982,13 @@ function slotBlocked(backend, model, account) {
   }
   const limited = limitedSlots.get(backend, model, account);
   if (!limited) return null;
-  return { reason: 'recently_limited', ...(limited.until != null ? { until: limited.until } : {}) };
+  return { reason: 'recently_limited', until: limited.until };
 }
 /**
  * 今止まっている枠（使用量の画面・ply_usage に出す。Issue #111）。日次・週次の枠が 0% でも、短い間隔の上限で使えないことがある。
- * 再試行を待っているターンの枠（retry_waiting）と、上限で止まったばかりの枠（recently_limited）。until は解除の見込み（ISO。分からなければ null）
+ * 再試行を待っているターンの枠（retry_waiting）と、上限で止まったばかりの枠（recently_limited）。until は振り分けが外す時刻（ISO。分からなければ null）、
+ * resetsAt はエージェントが告げた解除の見込み（ISO。分からなければ null）、window は止まった枠（Claude の five_hour など。短い間隔の上限なら null）。
+ * アカウント全体の枠の上限は model: null の 1 行
  */
 function heldSlots(backend) {
   const out = [], seen = new Set();
@@ -5995,11 +5998,13 @@ function heldSlots(backend) {
     const key = slotKey(backend, turn.info.model, account);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ model: turn.info.model ?? null, account: account || null, reason: 'retry_waiting', until: Number.isFinite(turn.retry.next) ? new Date(turn.retry.next).toISOString() : null });
+    const until = Number.isFinite(turn.retry.next) ? new Date(turn.retry.next).toISOString() : null;
+    out.push({ model: turn.info.model ?? null, account: account || null, reason: 'retry_waiting', until, resetsAt: until, window: null });
   }
   for (const s of limitedSlots.list(backend)) {
     if (seen.has(slotKey(backend, s.model, s.account))) continue;
-    out.push({ model: s.model, account: s.account || null, reason: 'recently_limited', until: s.until != null ? new Date(s.until).toISOString() : null });
+    out.push({ model: s.model, account: s.account || null, reason: 'recently_limited', until: new Date(s.until).toISOString(),
+      resetsAt: s.resetsAt != null ? new Date(s.resetsAt).toISOString() : null, window: s.window ?? null });
   }
   return out;
 }
@@ -6130,7 +6135,9 @@ function limitNotice(lng, limit) {
   const head = resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
   const held = typeof limit?.backend === 'string' ? limitedSlots.get(limit.backend, limit.model, limitAccount(limit.backend, limit.account)) : null;
   if (!held) return head;
-  return [head, held.until != null ? agentT(lng, 'delegation.noticeLimitSkip', { time: clockText(held.until) }) : agentT(lng, 'delegation.noticeLimitSkipUnknown')].join('\n');
+  // アカウント全体の枠（5 時間・週）の上限は、そのアカウントのどのモデルも選ばない
+  const time = clockText(held.until);
+  return [head, held.scope === 'account' ? agentT(lng, 'delegation.noticeLimitSkipAccount', { time }) : agentT(lng, 'delegation.noticeLimitSkip', { time })].join('\n');
 }
 
 /**

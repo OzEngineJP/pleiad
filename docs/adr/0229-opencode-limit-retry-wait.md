@@ -21,7 +21,7 @@
 - **待っても通らない上限は、ターンを `turnResult limited` で終える。** OpenCode の `free_tier_limit`・残高不足・解除時刻付きの `account_rate_limit` は、OpenCode の再試行を待たずに abort し、`resetsAt`（epoch ms）を付けて limited を返す。曖昧な 429 は `retrying` のまま OpenCode の再試行に任せる。
 - **委譲の子が再試行を待っている間は、タスクを `status: waiting` に数える。** 上限による待ち・次の時刻が分からない待ち・次の再試行まで 60 秒以上の待ちに限る（数秒で戻る短い待ちのたびに依頼元を起こさない）。`ply_task_wait` はすぐ戻り、返り値に `retryWaiting` を付ける。待ちの回ごとに 1 回、依頼元へ理由と次の時刻を知らせ、待つか止めて任せ直すかを選べる文面にする。待ちが明ければ `running` に戻る。`waiting` に数えるのは依頼元へ見せる `ply_task_*` の返り値で、画面のタスク一覧は `running` のまま `retryWaiting` を添え、子の会話の稼働の表示（`retrying`）で待ちを見せる。
 - **上限で止まった子は `failed` のまま `limit: { resetsAt, window }` を付ける。** 完了通知に解除の見込みと任せ直せることを添える。この子への `ply_task_send` は指示を積むが、解除時刻までは走らせない（送信待ちの `limitHolds` と同じ判断）。
-- **振り分けは、上限に当たっている委譲先を外す。** 理由は `retry_waiting`（再試行を待っているターンがある）と `recently_limited`（最近 limited で止まった。解除時刻まで。時刻が分からなければ同じ委譲先のターンが次に通るまで）。`routing.skipped` に理由と `until` を載せる。記録はメモリだけで、起動し直すと消える。過去の解除時刻は記録しない。固定の委譲（`backend` を書いた）には効かせない。
+- **振り分けは、上限に当たっている委譲先を外す。** 理由は `retry_waiting`（再試行を待っているターンがある）と `recently_limited`（最近 limited で止まった。解除時刻まで。時刻が分からなければ 30 分。アカウント全体の枠の上限はモデルを問わずそのアカウントを外す）。`routing.skipped` に理由と `until` を載せる。記録はメモリだけで、起動し直すと消える。過去の解除時刻は記録しない。固定の委譲（`backend` を書いた）には効かせない。
 
 ## 理由
 

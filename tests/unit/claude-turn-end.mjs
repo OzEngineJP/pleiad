@@ -97,6 +97,23 @@ export default async function (t) {
     } finally { restore(); }
   }
 
+  // 実際の SDK は先に rate_limit_event（解除の時刻と枠）を出し、後の上限の assistant 行には quotaLimits が無い。
+  // 後の行で解除の時刻と枠を消すと、5 時間の枠の上限が「解除の時刻が分からない短い上限」として残った（2026-10-21）
+  {
+    const { q, restore } = fakeSdk();
+    try {
+      const turn = await startTurn();
+      q.push(init(), { type: 'rate_limit_event', session_id: SESSION,
+        rate_limit_info: { status: 'rejected', resetsAt: 1790962200, rateLimitType: 'five_hour' } },
+      { type: 'assistant', session_id: SESSION, error: 'rate_limit', message: { role: 'assistant', content: [] } }, result());
+      await until(turn.settled);
+      const limited = turn.events.filter((e) => e.type === 'turnResult');
+      t.ok('後の上限の行に見込みが無くても、先の rate_limit_event の解除の時刻と枠を残す',
+        limited.length === 1 && limited[0].outcome === 'limited' && limited[0].resetsAt === 1790962200_000
+          && limited[0].window === 'five_hour' && limited[0].scope === 'account', JSON.stringify(limited));
+    } finally { restore(); }
+  }
+
   // ---- 2. 裏へ回ったまま終わらないコマンドが残ると、報告の後もターンは終わらない
   {
     const { q, restore } = fakeSdk({

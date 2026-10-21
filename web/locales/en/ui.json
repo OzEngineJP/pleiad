@@ -3278,10 +3278,23 @@
     "staleValue": "Couldn't read it, so this shows the value from {{when}}.",
     "held": {
       "until": "{{slot}}: stopped by a short-term rate limit. Expected to reset at {{time}}",
-      "unknown": "{{slot}}: stopped by a short-term rate limit. The reset time is unknown (until a turn succeeds)",
+      "unknown": "{{slot}}: stopped by a usage limit. The reset time is unknown, so automatic delegation routing will not pick it until {{time}}",
+      "open": "{{slot}}: stopped by a usage limit. The reset time is unknown",
+      "window": "{{slot}}: stopped by the {{window}} limit. Expected to reset at {{time}}",
       "whenUntil": "expected to reset at {{time}}",
+      "whenGuess": "reset time unknown; routing will not pick it until {{time}}",
       "whenUnknown": "reset time unknown",
       "defaultModel": "Default model",
+      "allModels": "All models",
+      "windows": {
+        "five_hour": "5-hour",
+        "seven_day": "weekly",
+        "seven_day_opus": "Opus weekly",
+        "seven_day_sonnet": "Sonnet weekly",
+        "seven_day_oauth_apps": "OAuth apps weekly",
+        "seven_day_overage_included": "weekly (including extra usage)",
+        "overage": "extra usage"
+      },
       "note": "Even if daily and weekly usage is low, automatic delegation routing will not pick it during this time."
     },
     "local": {
@@ -3321,6 +3334,7 @@
       "heldShort": "Stopped {{time}}",
       "heldUnknown": "Stopped",
       "heldTitle": "{{agent}} · {{slot}} is stopped by a short-term rate limit ({{when}}). This is separate from the daily and weekly quotas",
+      "heldWindowTitle": "{{agent}} · {{slot}} is stopped by the {{window}} limit ({{when}})",
       "stale": "Couldn't fetch (value from {{when}})",
       "hoursMinutes": "{{hours}} h {{minutes}} min",
       "hours": "{{hours}} h",

@@ -257,7 +257,9 @@ export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
  * ply_usage の本体。backend を省けば使用枠を読めるバックエンドすべて。
  * read は providerUsage と同じ取得（同じ quotaStore を通す）。1 つが失敗しても他は返す。
  * accounts(b) はそのエージェントに登録したアカウントの一覧（[{ id, ready }]。資格情報の無いアカウントに runnable: false を付ける）
- * held(b) は短い間隔の上限で今止まっている枠（[{ model, account, reason, until }]。Issue #111）。日次・週次の枠には出ないので別に渡す
+ * held(b) は上限で今止まっている枠（[{ model, account, reason, until, resetsAt, window }]。Issue #111）。短い間隔の上限は日次・週次の枠には出ないので別に渡す。
+ * until は振り分けが外す時刻、resetsAt は告げられた解除の見込み（分からなければ null）。
+ * window はアカウント全体の枠（five_hour など）で止まったときの枠の名前（model は null）
  */
 export async function agentUsage({ backend, list, get, read, locale, accounts, held }) {
   let targets;
@@ -275,7 +277,8 @@ export async function agentUsage({ backend, list, get, read, locale, accounts, h
     const rows = accounts && b.capabilities?.accounts ? await accounts(b).catch(() => []) : [];
     const tokens = rows.length ? new Map(rows.map(a => [a.id, Boolean(a.ready)])) : null;
     const stopped = (held ? held(b) : []).map(s => ({ model: s.model ?? null,
-      ...(b.capabilities?.accounts ? { account: s.account || LOGIN_ACCOUNT } : {}), reason: s.reason, until: s.until ?? null }));
+      ...(b.capabilities?.accounts ? { account: s.account || LOGIN_ACCOUNT } : {}), reason: s.reason, until: s.until ?? null,
+      resetsAt: s.resetsAt ?? null, ...(s.window ? { window: s.window } : {}) }));
     return { backend: b.id, label: b.label, ...compactQuota(quota, Date.now(), { tokens }), ...(stopped.length ? { held: stopped } : {}) };
   }));
   return { backends };

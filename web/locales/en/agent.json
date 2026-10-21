@@ -358,7 +358,7 @@
     "noticeLimit": "Stopped at a usage limit. It is expected to reset at {{time}}. After that, continue with ply_task_send, or if you cannot wait, hand the task to another delegate with ply_delegate.",
     "noticeLimitUnknown": "Stopped at a usage limit. The reset time is unknown. Continue later with ply_task_send, or hand the task to another delegate with ply_delegate.",
     "noticeLimitSkip": "ply_delegate without backend will not pick this delegate (agent, model, and account) until {{time}}.",
-    "noticeLimitSkipUnknown": "ply_delegate without backend will not pick this delegate (agent, model, and account) until a turn on it succeeds.",
+    "noticeLimitSkipAccount": "The limit covers the whole account, so ply_delegate without backend will not pick this agent on this account, with any model, until {{time}}.",
     "retryNoticeLimit": "[Pleiad task retry wait / {{taskId}}]\nThe child for {{title}} hit a usage limit, and its delegate is waiting to retry ({{when}}).\nReason: {{message}}\nThe child has not stopped and will continue on its own when the wait ends. Either keep waiting, or if you cannot wait, stop it with ply_task_cancel and hand the task to another delegate with ply_delegate.",
     "retryNoticeError": "[Pleiad task retry wait / {{taskId}}]\nThe child for {{title}} hit a temporary failure at its delegate and is waiting to retry ({{when}}).\nReason: {{message}}\nThe child has not stopped and will continue on its own if the retry succeeds. Either keep waiting, or if you cannot wait, stop it with ply_task_cancel and hand the task to another delegate with ply_delegate.",
     "retryWhen": "retry {{attempt}} at {{time}}",

@@ -624,6 +624,15 @@ const heldTurns = new Map();
 
 // SDK が自分で処理して、ループへ流さない行（control_* と keep_alive・transcript_mirror。sdk.mjs の readMessages）。付け直しの記録の読み直しでも飛ばす
 const SDK_CONSUMED = new Set(["control_request", "control_response", "control_cancel_request", "keep_alive", "transcript_mirror"]);
+/**
+ * 上限の印を重ねる。分かっている解除時刻と枠は、後から来た分からない印で消さない。
+ * 範囲（scope）は枠に付くので、枠が分かる印が来たらその印の範囲にする
+ */
+export function mergeLimit(prev, ev) {
+  const window = ev.window ?? prev?.window ?? null;
+  return { resetsAt: ev.resetsAt ?? prev?.resetsAt ?? null, window, scope: (ev.window != null ? ev.scope : prev?.scope) ?? null };
+}
+const limitFields = (limit) => ({ resetsAt: limit.resetsAt, window: limit.window, ...(limit.scope ? { scope: limit.scope } : {}) });
 const parseLine = (line) => { try { const m = JSON.parse(line); return m && typeof m === "object" ? m : null; } catch { return null; } };
 
 /** hooks のコールバックの表の、どのコールバックの実行も track（server の control.track。引き継ぎが待つ）に数える。track が無ければそのまま */
@@ -1107,11 +1116,13 @@ export const backend = {
         // turnResult は「このターンが終わった」の合図で、server はそれを見て途中送信を止める。
         // 成功の分は最後の 1 つだけを query の終わりに出す。使用量（usage）は開始時点からの累計なので、その都度出してよい（server は上書きする）。
         // 中断を頼んだ後の result（打ち切られた内部ターン）は出さない。結果は最後に aborted で出す
-        if (ev.type === 'limit') { limit = ev; continue; }
+        // 上限の印は 1 回の上限で 2 度来る。先の rate_limit_event は解除時刻と枠を持ち、後のライブの assistant の error 行は持たない
+        // （SDKAssistantMessage に quotaLimits は載らない）。後の印で上書きすると解除時刻の分からない上限になり、振り分けが外さない（2026-10-21）
+        if (ev.type === 'limit') { limit = mergeLimit(limit, ev); continue; }
         if (ev.type === 'authFailed') { authFailed = { message: ev.message ?? authFailed?.message ?? null }; continue; }
         if (ev.type === 'text.delta' || ev.type === 'tool.start') produced = true;
         if (ev.type === "turnResult" && stop) continue;
-        if (ev.type === 'turnResult' && limit) { heldResult = { ...ev, outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window }; continue; }
+        if (ev.type === 'turnResult' && limit) { heldResult = { ...ev, outcome: 'limited', ...limitFields(limit) }; continue; }
         if (ev.type === "turnResult" && ev.outcome === "ok") { heldResult = ev; continue; }
         send(ev, replay);
       }
@@ -1269,7 +1280,7 @@ export const backend = {
       // 旧サーバーが手を離した（handOffClaude）。このターンはここで終わる（出来事は server が捨てる。締めるのは付け直したサーバー）
       if (held?.handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: ctx.sessionId, handedOff: true }; }
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
-      else if (limit) emit({ type: 'turnResult', outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window });
+      else if (limit) emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
       // 401 の result は subtype が success のまま（is_error だけが立つ）。例外にならずに終わっても、成功として出さない
       else if (authFailed) emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced });
       else if (heldResult) emit(heldResult);
@@ -1287,7 +1298,7 @@ export const backend = {
         return { sessionId: ctx.sessionId };
       }
       if (limit) {
-        emit({ type: 'turnResult', outcome: 'limited', resetsAt: limit.resetsAt, window: limit.window });
+        emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
         return { sessionId: ctx.sessionId };
       }
       const message = hide(err?.message ?? err);

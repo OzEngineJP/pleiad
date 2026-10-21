@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createSlotLimits, slotAccount, MAX_BACKOFF_MS, MEMORY_MS, MIN_HOLD_MS } from '../../core/slot-limits.mjs';
+import { createSlotLimits, slotAccount, MAX_BACKOFF_MS, MEMORY_MS, MIN_HOLD_MS, UNKNOWN_HOLD_MS } from '../../core/slot-limits.mjs';
 import { checkCandidate, normalizeSettings } from '../../core/delegation-routing.mjs';
 
 export const name = 'slot-limits';
@@ -46,11 +46,19 @@ export default async function test(t) {
   const afterOk = slots.record({ ...devin, resetsAt: clock + 5000 });
   t.ok('同じ枠のターンが通ったら、延ばす回数も戻す', afterOk.strikes === 0 && afterOk.until === clock + MIN_HOLD_MS);
 
-  const unknown = slots.record({ backend: 'devin', model: 'swe-1-6', account: 'work', resetsAt: null });
-  clock += 24 * 3600_000;
-  t.ok('解除時刻の分からない上限は、同じ枠のターンが通るまで止めたまま', unknown.until === null && slots.get('devin', 'swe-1-6', 'work')?.until === null);
+  // 解除時刻の分からない上限は 30 分だけ止める。通るまで止めると、振り分けがその枠を選ばないのでターンが通らず、
+  // 上限が解けた後も止まったままになる（2026-10-21、Claude の 5 時間の枠が「解除の時刻は分かりません」のまま残った）
+  const swe16 = { backend: 'devin', model: 'swe-1-6', account: 'work' };
+  const unknown = slots.record({ ...swe16, resetsAt: null });
+  t.ok('解除時刻の分からない上限は 30 分だけ止める', unknown.until === clock + UNKNOWN_HOLD_MS && unknown.resetsAt === null
+    && slots.get('devin', 'swe-1-6', 'work')?.until === clock + UNKNOWN_HOLD_MS, JSON.stringify(unknown));
   t.ok('枠はモデルとアカウントごとに分ける', slots.get('devin', 'swe-1-6', null) === null && slots.get('devin', 'swe-1-6', 'work') !== null);
-  const known = slots.record({ backend: 'devin', model: 'swe-1-6', account: 'work', resetsAt: clock + 5 * 60_000 });
+  clock = unknown.until + 1000;
+  t.ok('解除時刻の分からない上限も、30 分を過ぎたら振り分けに戻す', slots.get('devin', 'swe-1-6', 'work') === null);
+  const unknownAgain = slots.record({ ...swe16, resetsAt: null });
+  t.ok('分からない上限の再発は、30 分のまま（延ばす上限）', unknownAgain.strikes === 1 && unknownAgain.until === clock + UNKNOWN_HOLD_MS, JSON.stringify(unknownAgain));
+  clock += 60_000;
+  const known = slots.record({ ...swe16, resetsAt: clock + 5 * 60_000 });
   t.ok('分からない保留の後に解除の見込みが届いたら、見込みまでにする', known.until === clock + 5 * 60_000 && slots.get('devin', 'swe-1-6', 'work')?.until === clock + 5 * 60_000, JSON.stringify(known));
   slots.clear('devin', 'swe-1-6', 'work');
   t.ok('通ったら外す', slots.get('devin', 'swe-1-6', 'work') === null);
@@ -58,6 +66,25 @@ export default async function test(t) {
   t.ok('告げられた見込みがもう過ぎた記録は覚えない', slots.record({ backend: 'grok', model: null, resetsAt: clock - 1 }) === null && slots.list('grok').length === 0);
   slots.record({ backend: 'grok', model: null, resetsAt: clock + 120_000 });
   t.ok('一覧はエージェントで絞れる', slots.list('grok').length === 1 && slots.list('grok')[0].until === clock + 120_000 && slots.list('devin').length === 0);
+
+  // ---- アカウント全体の枠（5 時間・週。scope: 'account'）の上限は、モデルを問わずそのアカウントの枠として 1 つに記録する
+  // （2026-10-21、同じアカウントの「opus」と「既定のモデル」が、止まった枠として別々に並んだ）
+  const wide = createSlotLimits({ now: () => clock });
+  const five = clock + 2 * 3600_000;
+  wide.record({ backend: 'claude', model: 'opus', account: '', resetsAt: five, window: 'five_hour', scope: 'account' });
+  wide.record({ backend: 'claude', model: null, account: '', resetsAt: five, window: 'five_hour', scope: 'account' });
+  const wideList = wide.list('claude');
+  t.ok('5 時間の枠の上限は、モデルを問わずアカウントに 1 つ', wideList.length === 1 && wideList[0].model === null && wideList[0].window === 'five_hour'
+    && wideList[0].until === five && wideList[0].strikes === 0, JSON.stringify(wideList));
+  t.ok('アカウント全体の枠で止まっている間は、どのモデルで引いても止まっている',
+    wide.get('claude', 'opus', '')?.until === five && wide.get('claude', 'sonnet', '')?.until === five && wide.get('claude', null, '')?.until === five);
+  t.ok('別のアカウントは止めない', wide.get('claude', 'opus', 'acct-work') === null);
+  wide.record({ backend: 'claude', model: 'opus', account: 'acct-work', resetsAt: clock + 3600_000, window: 'seven_day_opus' });
+  t.ok('モデルだけの週の枠（seven_day_opus）は、そのモデルの枠のまま',
+    wide.get('claude', 'opus', 'acct-work')?.window === 'seven_day_opus' && wide.get('claude', 'sonnet', 'acct-work') === null);
+  wide.clear('claude', 'sonnet', '');
+  t.ok('同じアカウントの別のモデルのターンが通ったら、アカウント全体の記録も外す',
+    wide.get('claude', 'opus', '') === null && wide.list('claude').length === 1 && wide.list('claude')[0].account === 'acct-work');
 
   // ---- 記録と振り分けのアカウント（Issue #121）。アカウントを持たないエージェントの子も、依頼元の会話の Claude のアカウントを継いで走る。
   // 記録はその id を slotAccount で null にし、振り分け（checkCandidate は持たないエージェントを null で引く）が当たる
