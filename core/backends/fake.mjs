@@ -445,6 +445,7 @@ export const backend = {
     effortInModelId: false,
     instructionsAtStart: false,
     failureDiagnostics: false,
+    steer: true,
     promptDelivery: true,   // 「渡った」合図を出せることにする（出さない backend の形は silent: の台本で踏む）
     handover: true,          // 台本 held: のターンを保持役に載せる（試験用）
     // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）

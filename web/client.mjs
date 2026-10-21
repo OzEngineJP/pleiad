@@ -119,7 +119,7 @@ import { setupContext } from './context.mjs';
 import { setupSessionContext, chipText } from './session-context.mjs';
 import { budgetOf } from './instruction-amount.mjs';
 import { renderOutbox } from './outbox.mjs';
-import { injectTaskInstructions } from './task-instructions.mjs';
+import { injectTaskInstructions, waitsForNextTurn } from './task-instructions.mjs';
 import { openChangeLog } from './change-log.mjs';
 import { mergeToolTurns } from './tool-turns.mjs';
 import { streamMessages } from './stream-messages.mjs';
@@ -6547,6 +6547,8 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
       clock.setAttribute('aria-label', t('dialog.work.instructionQueued'));
       clock.append(clockIcon());
       m.querySelector('.who > span').after(clock);
+      // 途中で渡せない子（antigravity など）・設定の変更と一緒に積んだ指示は、今の作業が終わるまで届かない。印だけでなく字で書き添える
+      if (waitsForNextTurn(instruction, { live, steer: capsOf(backend)?.steer !== false })) m.append(el('div', 'outbox-status', t('dialog.work.instructionNextTurn')));
     }
     const w = wrap(m, `instruction:${instruction.id}`);
     if (instruction.state !== 'sending') w.classList.remove('node');

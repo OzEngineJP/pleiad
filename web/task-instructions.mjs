@@ -118,3 +118,12 @@ export function injectTaskInstructions(instructions = [], messages = []) {
   }
   return out.filter(m => !deliveryRows.has(m));
 }
+
+/**
+ * 待機中の指示が、今の作業の途中ではなく次のターンで届くか（画面はそう書き添える）。
+ * 走っている子へ途中で入力を渡せないエージェント（能力の印 steer = false）と、設定の変更と同じ呼び出しで積んだ指示（nextTurn）は、
+ * 今のターンが終わるまで待つ。待機中の子（live でない）へはすぐ新しいターンで渡すので、書き添えない
+ */
+export function waitsForNextTurn(instruction, { live = false, steer = true } = {}) {
+  return instruction?.state === 'queued' && Boolean(live) && (instruction.nextTurn === true || steer === false);
+}

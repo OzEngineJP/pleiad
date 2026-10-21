@@ -162,7 +162,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   let pendingAuth = null;
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
-    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true, promptDelivery: true,
+    capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true, promptDelivery: true, steer: true,
       // ブラウザー・操作一覧・コンピューター・シェル・委譲をHTTP MCPで、接続情報と秘密の変数を起動環境で渡す。
       // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
       plyAgents: true, plyInstructions: true, hooks: true, liveModel: true, liveMode: true,
