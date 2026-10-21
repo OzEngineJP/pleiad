@@ -1,6 +1,57 @@
 import { el } from './dom.mjs';
 import { fmt, has, t } from './i18n.mjs';
 
+export const connectionName = provider => ({ 'opencode-go': 'Go', openai: 'ChatGPT', 'github-copilot': 'GitHub Copilot' })[provider] ?? '';
+export const connectionOf = (row, model = '') => row?.connections?.find(c => c.provider === String(model).split('/')[0])
+  ?? (!model ? row?.connections?.[0] : null);
+export const connectionLabel = w => {
+  const prefix = connectionName(w?.provider);
+  return prefix && w.label.startsWith(prefix + ' ') ? w.label.slice(prefix.length + 1) : w.label;
+};
+/** Each account owns its connection snapshots. Only a failed read in the same
+ * credential generation may inherit a value; removed connections stay removed. */
+export function carryConnections(row, old) {
+  const connections = row.connections.map(c => {
+    const was = old?.connections?.find(o => o.provider === c.provider && o.identity === c.identity);
+    return c.state === 'failed' && !c.windows?.length && was?.windows?.length
+      ? { ...c, windows: was.windows, checkedAt: was.checkedAt, staleSince: was.staleSince ?? was.checkedAt } : c;
+  });
+  return { ...row, connections, windows: connections.flatMap(c => c.windows ?? []) };
+}
+
+export function renderConnections(parent, row, { model = '', renderWindows, retry, showPlan = false, request = {} } = {}) {
+  const selected = connectionOf(row, model), others = (row?.connections ?? []).filter(c => c !== selected);
+  const paint = (target, c) => {
+    const heading = el('h4', 'usage-provider', connectionName(c.provider));
+    if (showPlan && c.plan) heading.append(el('small', 'usage-note', ` ${c.plan.replace(/^[a-z]/, letter => letter.toUpperCase())}`));
+    target.append(heading);
+    renderWindows(target, { ...c, windows: (c.windows ?? []).map(w => ({ ...w, label: connectionLabel(w) })) });
+    if (c.staleSince) target.append(el('p', 'usage-note', [t('usage.checkedAt', { when: fmt.dateTime(c.checkedAt ?? c.staleSince) }), t('usage.connection.stale', { when: fmt.relative(c.staleSince) })].join(' · ')));
+    const pending = request.pending && (!c.windows?.length || c.state === 'failed');
+    if (pending) { const note = el('p', 'usage-note', t('usage.loading')); note.setAttribute('role', 'status'); target.append(note); }
+    else if (c.state === 'no-login' || c.state === 'expired') {
+      target.append(el('p', 'usage-note', c.state === 'expired' ? t('usage.connection.expired') : t('usage.connection.noLogin')));
+      const help = el('details', 'usage-other');
+      help.append(el('summary', null, t('usage.connection.loginHelp')), el('code', null, 'opencode auth login')); target.append(help);
+    } else if (c.state === 'not-subscribed') {
+      const line = el('p', 'usage-status usage-note', t('usage.connection.notSubscribed'));
+      const link = el('a', null, t('usage.connection.goLink')); link.href = 'https://opencode.ai/go'; link.target = '_blank'; link.rel = 'noopener';
+      line.append(link); target.append(line);
+    } else if (c.state === 'failed') {
+      const line = el('p', 'usage-status usage-note', t('usage.connection.failed')); line.setAttribute('role', 'status');
+      const button = el('button', 'usage-retry', t('usage.connection.retry')); button.type = 'button'; button.onclick = retry; line.append(button); target.append(line);
+    } else if (!c.windows?.length) target.append(el('p', 'usage-note', t('usage.connection.unavailable')));
+  };
+  if (selected) paint(parent, selected);
+  else parent.append(el('p', 'usage-note', t('usage.connection.unavailable')));
+  if (others.length) {
+    const details = el('details', 'usage-other');
+    details.append(el('summary', null, t('usage.connection.others', { count: others.length })));
+    for (const c of others) paint(details, c);
+    parent.append(details);
+  }
+}
+
 const format = n => n == null ? t('usage.unknown') : fmt.number(n, { maximumFractionDigits: 1 });
 /** リセット時刻を過ぎた枠。使用率は今の値ではない（更新待ち） */
 export const isExpired = (window, now = Date.now()) => Boolean(window.resetsAt) && new Date(window.resetsAt).getTime() <= now;
@@ -64,15 +115,26 @@ function renderHeld(parent, held, quota) {
   box.append(el('small', 'usage-note', t('usage.held.note')));
   parent.append(box);
 }
-function renderQuota(parent, quota, onUsageLogin, request) {
+export function renderQuota(parent, quota, onUsageLogin, request, options = {}) {
+  if (quota.accounts?.length) {
+    for (const account of quota.accounts) {
+      parent.append(el('h4', null, account.label)); renderQuota(parent, account, onUsageLogin, request, options);
+    }
+    return;
+  }
+  if (Array.isArray(quota.connections)) {
+    renderConnections(parent, quota, { ...options, request, showPlan: true,
+      renderWindows: (target, c) => renderQuota(target, { windows: c.windows, reason: c.state === 'failed' ? 'error' : null }, onUsageLogin, request) });
+    return;
+  }
   const expired = quota.windows?.some(w => isExpired(w));
   if (quota.plan) parent.append(el('p', 'usage-note', t('usage.plan', { plan: quota.plan })));
   for (const w of quota.windows ?? []) {
     const row = el('div', 'usage-window');
     row.append(el('strong', null, w.label), el('span', 'usage-value', quotaText(w)));
-    if (w.usedPercent != null && !isExpired(w)) {
+    if (w.usedPercent != null) {
       const meter = document.createElement('progress');
-      meter.max = 100; meter.value = Math.min(100, w.usedPercent);
+      meter.max = 100; meter.value = isExpired(w) ? 0 : Math.min(100, w.usedPercent);
       meter.setAttribute('aria-label', t('usage.meter', { label: w.label }));
       row.append(meter);
     }
@@ -140,7 +202,7 @@ export function renderEndpoints(parent, endpoints) {
  */
 export function carryQuota(quota, prev) {
   if (!quota || !prev) return quota;
-  const fill = (row, old) => !old?.windows?.length || row.windows?.length || row.needsUsageLogin ? row
+  const fill = (row, old) => Array.isArray(row.connections) ? carryConnections(row, old) : !old?.windows?.length || row.windows?.length || row.needsUsageLogin ? row
     : { ...row, windows: old.windows, plan: row.plan ?? old.plan, fetchState: row.fetchState === 'retry-wait' ? 'retry-wait' : 'failed',
       staleSince: row.staleSince ?? old.staleSince ?? old.checkedAt ?? prev.checkedAt };
   if (Array.isArray(quota.accounts)) {
@@ -251,7 +313,7 @@ export function createUsageSource(cmd, { now = Date.now, setTimer = setTimeout, 
     onResult: listener => listeners.add(listener),
   };
 }
-export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackends, page, isOpen, onUsageLogin, endpoints = async () => [] }) {
+export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackends, page, isOpen, onUsageLogin, current = () => ({}), endpoints = async () => [] }) {
   let loading = false;
   // エージェントごとのカード。取り直しの間も前の表示を残し、取れてから差し替える（初回だけ「読み込み中…」）
   const cards = new Map();
@@ -260,12 +322,16 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
     const version = (versions.get(backend.id) ?? 0) + 1; versions.set(backend.id, version);
     const body = el('div'); body.append(el('h3', null, result.label));
     renderHeld(body, result.held, result.quota);
-    renderQuota(body, result.quota, onUsageLogin, source.state?.(backend.id));
-    if (result.quota.checkedAt) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
+    renderQuota(body, result.quota, onUsageLogin, source.state?.(backend.id), {
+      model: current().backend === backend.id ? current().model : '', retry: () => source.load(backend.id, { force: true }).catch(() => {}),
+    });
+    if (result.quota.checkedAt && !(result.quota.accounts ?? [result.quota]).some(a => a.connections?.some(c => c.staleSince))) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
     renderEndpoints(body, await endpoints(backend.id).catch(() => []));
     renderLocal(body, result.local);
     if (versions.get(backend.id) !== version) return;
+    const opened = [...card.querySelectorAll('details')].map(d => d.open);
     card.replaceChildren(...body.children); card.dataset.loaded = '1';
+    [...card.querySelectorAll('details')].forEach((d, i) => { d.open = opened[i] ?? false; });
   }
   async function refresh({ force = false } = {}) {
     if (loading) return;

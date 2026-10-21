@@ -51,7 +51,7 @@ export default async function (t) {
     // ---- 前の版の api（券の口が無い）・426
     let mark = null;
     const issuer = createTicketIssuer({ request, admission: () => mark });
-    plus.state.tickets = false;
+    plus.state.noTickets = true;
     const before = plus.state.calls.length;
     const none = await issuer.issue({ purpose: 'host', keyPair: host, hostId });
     const none2 = await issuer.issue({ purpose: 'host', keyPair: host, hostId });
@@ -60,7 +60,7 @@ export default async function (t) {
     mark = 1;
     const thrown = await issuer.issue({ purpose: 'host', keyPair: host, hostId }).then(() => null, e => e);
     t.ok('券を出すと言う api（admission が数）なら、404 でも戻らずに投げる', thrown?.status === 404, String(thrown?.status));
-    plus.state.tickets = true;
+    plus.state.noTickets = false;
     plus.state.ticketFail = [{ path: '/v1/tickets/challenge', status: 426, code: 'update_required' }];
     const upd = await issuer.issue({ purpose: 'host', keyPair: host, hostId }).then(() => null, e => e);
     t.ok('426 は投げる（呼ぶ側が「更新してください」にする）', upd?.status === 426 && upd?.code === 'update_required');

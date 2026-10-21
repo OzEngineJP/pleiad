@@ -1,5 +1,6 @@
 // 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs）。実ブラウザーで、偽の Plus（tests/lib/fake-plus.mjs）を相手に
 // 本物の同期のエンジンを回して、状態ごとの中身・スイッチ・やり直しの確かめ・競合の行を見る。
+// 偽の Plus は券の口の無い前の版の api のふり（noTickets）。鍵の受け渡しの承認（v2）の画面は tests/browser/plus-sync-admission.mjs が見る。
 // AGENT_HOST_OS_OPEN=dry で「フォルダーを開く」は窓を開かずに成功する。
 // 実行: node tests/browser/plus-sync.mjs   （PLUS_SYNC_SHOTS=<ディレクトリ> で場面ごとの画像を撮る。明暗 × 1280/360）
 import fs from 'node:fs';
@@ -26,6 +27,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-plus-sync-'));
 const captureFile = path.join(dataDir, 'external.log');
 const plus = await startFakePlus();
+plus.state.noTickets = true;
 let server, browser, failures = 0;
 const ok = (name, cond, extra = '') => { console.log(`  ${cond ? 'OK' : 'NG'}  ${name}${cond ? '' : `  — ${extra}`}`); if (!cond) failures++; };
 
@@ -147,22 +149,24 @@ try {
   await page.waitForSelector('#plusSyncSection', { timeout: 20_000 });
   ok('plus: 「同期」のまとまりが出る（見出し・スイッチ・同期するもの）', (await syncText(page)).includes('同期') && (await syncText(page)).includes('設定・skill・指示ファイルを同期する'));
   const waitTx = await waitText('#plusSyncSection', 'ほかの PC が鍵を渡すのを待っています', 60_000);
-  ok('waiting_key: 文と下の案内と「同期をやり直す」', waitTx.includes('別の PC で Pleiad を開いてください') && waitTx.includes('同期をやり直す'), waitTx);
+  ok('waiting_key: 文と鍵を持つ PC の名前と「鍵を持つ PC が使えないとき」', waitTx.includes('鍵を持つ PC: other-pc') && waitTx.includes('鍵を持つ PC が使えないとき'), waitTx);
   await shots(page, 'waiting-key');
 
-  // 「同期をやり直す」→ 確かめ → やめる（何も送らない）
-  await page.locator('#plusSyncSection button:has-text("同期をやり直す")').click();
-  const confirmTx = await waitText('#plusSyncSection', '同期をやり直しますか？');
-  ok('確かめ: 題と本文と 2 ボタン', confirmTx.includes('サーバーから消して、この PC の内容で始め直します') && confirmTx.includes('やめる'), confirmTx);
+  // 「鍵を持つ PC が使えないとき」→ 確かめ → やめる（何も送らない）
+  await page.locator('#plusSyncSection button:has-text("鍵を持つ PC が使えないとき")').click();
+  const confirmTx = await waitText('#plusSyncSection', '同期のデータを消して、この PC で始め直しますか？');
+  ok('確かめ: 題と消えないものと「やめる」。チェックの前は「消して始め直す」を押せない', confirmTx.includes('消えないもの') && confirmTx.includes('やめる')
+    && await page.locator('#plusSyncSection [data-fk="syncResetYes"]').isDisabled(), confirmTx);
   await shots(page, 'reset-confirm');
   const resetsBefore = plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length;
   await page.locator('#plusSyncSection button:has-text("やめる")').click();
   await page.waitForTimeout(500);
   ok('やめる: reset は飛ばない', plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').length === resetsBefore);
 
-  // 「やり直す」→ POST /v1/sync/reset → 新しい鍵で始まる（waiting_key → idle）
-  await page.locator('#plusSyncSection button:has-text("同期をやり直す")').click();
-  await page.locator('#plusSyncSection button:has-text("やり直す")').click();
+  // チェックを入れて「消して始め直す」→ POST /v1/sync/reset → 新しい鍵で始まる（waiting_key → idle）
+  await page.locator('#plusSyncSection button:has-text("鍵を持つ PC が使えないとき")').click();
+  await page.locator('#plusSyncSection [data-fk="syncResetCheck"]').check();
+  await page.locator('#plusSyncSection button:has-text("消して始め直す")').click();
   {
     const deadline = Date.now() + 15_000;
     for (;;) {

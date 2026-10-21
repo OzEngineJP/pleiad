@@ -143,7 +143,7 @@ export default async function (t) {
       const control = hostTickets.filter(x => x.route === '/v1/host');
       t.ok('H: 制御の接続は中継の券（X-Pleiad-Ticket）で張り、ID トークンは送らない',
         control.length >= 1 && control.every(x => x.ticket && !x.account), JSON.stringify(control.map(x => ({ t: Boolean(x.ticket), a: x.account }))));
-      const issuedHost = plus.state.issued.filter(x => x.purpose === 'host');
+      const issuedHost = plus.state.tickets.filter(x => x.purpose === 'host');
       t.ok('H: 券は PC の鍵で取る（purpose host・役は host）', issuedHost.length >= 1, String(issuedHost.length));
 
       // 端末を 1 台入れて、accept を通す
@@ -166,7 +166,7 @@ export default async function (t) {
         accepts.length >= 1 && accepts.every(x => x.ticket === lastControl.ticket), JSON.stringify({ accepts: accepts.length }));
       t.ok('H: accept を中継が通す', authz.state.seen.filter(x => x.route === '/v1/host/accept').every(x => x.ok));
       t.ok('H: accept のたびに券を取らない（取ったのは制御の接続の分だけ）',
-        plus.state.issued.filter(x => x.purpose === 'host').length === hostTickets.filter(x => x.route === '/v1/host').length);
+        plus.state.tickets.filter(x => x.purpose === 'host').length === hostTickets.filter(x => x.route === '/v1/host').length);
 
       // 制御の接続が閉じると、その券は accept に使えない（中継の取り決め）。PC は新しい券で張り直す
       const oldTicket = lastControl.ticket;
@@ -343,7 +343,7 @@ export default async function (t) {
 
     // ---- L. 券の口が無い前の版の api
     await scene('L', async () => {
-      plus.state.tickets = false;
+      plus.state.noTickets = true;
       admission = null;
       const since = Date.now();
       const before = hostTickets.length;
@@ -362,7 +362,7 @@ export default async function (t) {
       const upd = await until(async () => { const s = await linkState(); return s.state === 'error' ? s : null; }, 10_000, 'update required で止まる');
       t.ok('L: 中継が 4401 update required で断ると、線は error update', upd.error?.code === 'update', JSON.stringify(upd));
       authz.state.v2Required = false;
-      plus.state.tickets = true;
+      plus.state.noTickets = false;
       admission = 1;
     });
   } finally {

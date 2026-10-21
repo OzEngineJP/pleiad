@@ -45,7 +45,11 @@ OpenCode v2.0.32 以降の v2（`opencode`）の接続先をそのまま使う�
 
 複数のログインを使う場合は、設定の OpenCode の「アカウント」から追加する。Pleiad が表示する専用のコマンドを、Pleiad が動いている PC の端末で実行してログインする。会話ごとにアカウントを選べ、切替時には保存した会話を引き継いで新しい実行区間を始める。既存の OpenCode のログインは書き換えない。
 
-使用枠は ChatGPT と GitHub Copilot の OAuth 接続から読み取る。枠は接続先ごとに表示し、委譲では選ぶモデルの接続先に効く枠だけを使う。API キー・未対応の接続先・期限切れの OAuth など、読めない枠は不明と理由を出す。無料モデルの使用量を他の接続先の枠で代用しない。
+使用枠は OpenCode Go・ChatGPT・GitHub Copilot の接続から読み取る。Go は既存の OpenCode OAuth access または API キーを Bearer として `GET https://opencode.ai/zen/go/v1/usage` に付け、5時間・週次・月次を取得する。`usage.{rolling,weekly,monthly}.percent` は百分率、`resetsAt` は絶対日時。月次を固定30日として扱わない。OpenRouter のキー別枠は照会・表示しない。
+
+枠はアカウント → 接続先 → 期間で一度だけ表示する。現在の接続先を先頭にし、ChatGPT・GitHub Copilot など残りを「ほかの接続先」に畳む。委譲ではモデルの接頭辞に合う枠だけを使う（Go の provider は `opencode-go`）。既定モデルも実際の接続先へ解決する。他の接続先の枠で代用しない。
+
+認証なし・OAuth 期限切れは `opencode auth login` の手順、契約なしを示す 403 EntitlementError は Go へのリンクを表示する。一般の 401/403・通信失敗・不正応答は取得失敗として再試行できる。同じ認証・接続先で取得した前回値は取得時刻つきで残すが、認証変更後は引き継がない。リセット済みの値は更新まで「—」。追加のブラウザーログインは不要（[ADR 0245](adr/0245-opencode-go-usage.md)）。
 
 Pleiad は OpenCode のサーバー（`opencode serve`）を、現在の CLI ログインでは 1 本共有する。登録したアカウントは認証・設定・データの置き場とサーバーを分ける。利用者の `opencode.json`（MCP・権限・指示）はそのまま効き、
 Pleiad は自分のプラグインとツール（委譲・操作の一覧・コンピューターの操作・ブラウザー）だけを足す。会話は OpenCode の側に残るので、OpenCode の TUI からも見える。

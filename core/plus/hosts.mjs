@@ -10,13 +10,16 @@
 //   2. 無ければ POST /v1/hosts/challenge { hostId, publicKey } → { challengeId, nonce, serverPublicKey, expiresAt }
 //   3. proof = base64url(HMAC-SHA256(HKDF-SHA256(X25519(ホストの秘密鍵, serverPublicKey), "pleiad host proof v1"), nonce ‖ utf8(hostId) ‖ utf8("register")))
 //   4. PUT /v1/hosts/{hostId} { challengeId, proof, publicKey, name, platform, appVersion, syncPublicKey }
-//   同期の公開鍵（syncPublicKey。core/plus/sync/keys.mjs）は、載せずに登録済みなら 1 の PATCH で足す。
+//   同期の公開鍵（syncPublicKey。core/plus/sync/keys.mjs）は、受け入れの v2 を知らない前の版の api にだけ送る
+//   （載せずに登録済みなら 1 の PATCH で足す）。v2 の api では台帳の同期の公開鍵は同期の口（申し込み・始め直し・回復）でだけ変わり、
+//   PUT・PATCH に載せると 400 bad_request syncPublicKey になる。api の版は /v1/auth/config の admission（無ければ前の版）で知り、
+//   覚えが古くて 400 が返ったら、載せずに 1 回だけやり直す。
 //
 // その後: ホスト名が変わったら PATCH { name }、via:'plus' の端末の数が変わったら PATCH { deviceCount }。
 //
 // 誤り: 409 host_taken → state 'taken'（自動ではやり直さない。人の「つなぎ直す」で鍵を作り直す）、
 //   429 host_limit → 'limit'、422 bad_proof → 新しい challenge で 1 回だけやり直し、
-//   403 host_removed → 'removed'（error.permanent。外した PC は同じ鍵では戻れない。人の「つなぎ直す」で鍵を作り直す）、
+//   403 host_removed → 'removed'（error.permanent。外した PC は同じ鍵では戻れない。人の「この PC を登録し直す」で鍵を作り直す）、
 //   426 update_required → 'update'（このアプリの版では登録できない。やり直さない）、
 //   ネットの誤り・5xx → 'error' で 1 分おきにやり直す。
 //
@@ -24,15 +27,19 @@
 //   台帳に自分が無いと分かったら登録し直す（鍵の行が戻る）。GET /v1/hosts の removed に自分が by: 'user' で載っていれば
 //   登録し直さず 'removed' で待つ（人の「この PC を登録し直す」= reregister で登録する）。
 //   外れていたのを登録し直したときは、状態に notice: 'reregistered' を載せる。
-//   今の api は外した PC を同じ鍵では登録し直させない（PUT が 403 host_removed）。そのときは上の 'removed'（permanent）になり、
-//   戻すには鍵を作り直す（remote.plusHostRebind。新しい hostId で登録する）。
+//   v2 の api では外された PC は同じ鍵では戻れない（403 host_removed。誰が外したかに関係なく）。
+//   'removed' に error.permanent: true を載せて待ち、やり直しの時計も回さない。戻すには鍵を作り直す
+//   （人の「この PC を登録し直す」= remote.plusHostRebind。新しい hostId で登録する）。
 //
-// 要求には X-Pleiad-Admission: 2 を付ける（client.mjs の admissionMark。syncPublicKey を載せる要求だけは付けない）。
+// 要求の印（X-Pleiad-Admission: 2）は client.mjs がどの要求にも付ける。
 //
 // 状態は { state, hostId, error, notice? } の形で session.setHost() と onHostState() に渡す
 // （state: none / registering / registered / removed / taken / limit / update / error）。
 import { cleanLabel } from '../remote/pairing.mjs';
 import { proofFor } from './tickets.mjs';
+
+/** v2 の api が、PUT・PATCH に載せた同期の公開鍵を断った（400 bad_request syncPublicKey） */
+const refusedSyncKey = e => e?.status === 400 && e?.code === 'bad_request' && /syncPublicKey/.test(String(e?.message ?? ''));
 
 /** 台帳へ送るホスト名。1〜64 字・制御文字は除く（cleanLabel と同じ整え方） */
 const hostNameFor = name => cleanLabel(name, 64) || 'host';
@@ -49,6 +56,7 @@ const PLATFORM = { win32: 'win32', darwin: 'darwin', linux: 'linux' };
  * @param {() => number} o.plusDevices  via:'plus' の端末の数（PATCH deviceCount 用）
  * @param {(state: { state, hostId, error }) => void} [o.onHostState] 状態が変わるたび（session.setHost に加えて呼ぶ）
  * @param {() => Promise<string|null>} [o.syncPublicKey] 同期の公開鍵（raw 32 バイトの base64url）。無ければ送らない
+ * @param {() => Promise<1|2|null>} [o.apiAdmission] api の受け入れの版（/v1/auth/config の admission。null = 前の版の api）
  * @param {(line: string) => void} [o.log]
  * @param {number} [o.retryMs]  ネットの誤り・5xx のやり直しの間隔（既定 1 分）
  * @param {number} [o.recheckMs]  登録が外れていないかの見直しの間隔（既定 30 分。0 で見直さない）
@@ -56,7 +64,7 @@ const PLATFORM = { win32: 'win32', darwin: 'darwin', linux: 'linux' };
  */
 export function createPlusHost({ session, store, appVersion = '', platform = process.platform,
   hostName, plusDevices, onHostState = () => {}, log = () => {}, retryMs = 60_000, recheckMs = 30 * 60_000,
-  syncPublicKey = async () => null, timers = { setTimeout, clearTimeout, setInterval } } = {}) {
+  syncPublicKey = async () => null, apiAdmission = async () => null, timers = { setTimeout, clearTimeout, setInterval } } = {}) {
   let host = { state: 'none', hostId: null, error: null };
   let chain = Promise.resolve();
   let activeRegistration = null;
@@ -66,6 +74,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
   let tombstoned = null;      // 403 host_removed で断られた hostId（同じ鍵では戻れない。条件の見直しのたびに PUT を繰り返さない）
   let rechecking = null;
   let recheckTimer = null;
+  let v2Seen = false;         // api が同期の公開鍵を断った（v2 の api）。覚えの admission が古くても送らない
 
   function setHost(next) {
     host = next;
@@ -82,13 +91,35 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     return s.signedIn === true && s.account?.status === 'plus';
   };
 
+  /** 外された PC（v2 の api では同じ鍵で戻れない） */
+  function removedForGood(hostId) {
+    log('plus host: removed (permanent)');
+    registered = null;
+    setHost({ state: 'removed', hostId, error: { code: 'host_removed', permanent: true } });
+  }
+
+  /** PUT・PATCH を送る。同期の公開鍵を v2 の api に断られたら、載せずに 1 回だけやり直す */
+  async function sendHost(method, path, body) {
+    try { return await session.client.request(method, path, { body }); }
+    catch (e) {
+      if (!refusedSyncKey(e) || body.syncPublicKey === undefined) throw e;
+      v2Seen = true;
+      const { syncPublicKey: _drop, ...rest } = body;
+      if (method === 'PATCH' && !Object.keys(rest).length) return null;
+      return await session.client.request(method, path, { body: rest });
+    }
+  }
+
   /** force: 利用者が外した PC でも登録し直す（人の「この PC を登録し直す」） */
   async function registerOnce({ force = false } = {}) {
     const identity = await store.identity();   // 登録には鍵が要る。無ければここで作る（store が直列化する）
     const { hostId } = identity;
     const publicKey = identity.publicKey.toString('base64url');
     const body = { name: hostNameFor(hostName()), platform: PLATFORM[platform] ?? 'linux', appVersion };
-    const syncPub = await syncPublicKey();
+    const admission = v2Seen ? 2 : await apiAdmission().catch(() => null);
+    const legacyApi = admission == null;
+    // 同期の公開鍵を載せるのは前の版の api にだけ
+    const syncPub = legacyApi ? await syncPublicKey() : null;
 
     setHost({ state: 'registering', hostId, error: null });
     // 1. すでに載っているか
@@ -101,24 +132,24 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       if (mine.platform !== body.platform) patch.platform = body.platform;
       if (syncPub && mine.syncPublicKey !== syncPub) patch.syncPublicKey = syncPub;
       if (Object.keys(patch).length) {
-        await session.client.request('PATCH', `/v1/hosts/${hostId}`, { body: patch });
-        registered = { ...registered, ...patch };
+        await sendHost('PATCH', `/v1/hosts/${hostId}`, patch);
+        const { syncPublicKey: _sent, ...kept } = patch;
+        registered = { ...registered, ...kept };
       }
       setHost({ state: 'registered', hostId, error: null });
       return;
     }
     // 利用者がこの PC を外した: 人が登録し直すまで待つ（運営が外した・記録が無いときは登録し直す）
     const removed = !mine && Array.isArray(list?.removed) ? list.removed.find(r => r?.hostId === hostId) : null;
+    // v2 の api: 誰が外しても戻れない（PUT は 403 host_removed）
+    if (removed && !legacyApi) return removedForGood(hostId);
     if (removed?.by === 'user' && !force) {
       log('plus host: removed by user');
       registered = null;
       setHost({ state: 'removed', hostId, error: { code: 'host_removed' } });
       return;
     }
-    if (!mine && tombstoned === hostId && !force) {
-      setHost({ state: 'removed', hostId, error: { code: 'host_removed', permanent: true } });
-      return;
-    }
+    if (!mine && tombstoned === hostId && !force) return removedForGood(hostId);
     const wasLost = !mine && (Boolean(removed) || registered?.hostId === hostId);   // つなぎ直し（hostId が替わる）は外れではない
     // 2-4. challenge → proof → PUT
     const challenge = await session.client.request('POST', '/v1/hosts/challenge', { body: { hostId, publicKey } });
@@ -129,7 +160,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       ...body,
       ...(syncPub ? { syncPublicKey: syncPub } : {}),
     };
-    const out = await session.client.request('PUT', `/v1/hosts/${hostId}`, { body: put });
+    const out = await sendHost('PUT', `/v1/hosts/${hostId}`, put);
     registered = { hostId, publicKey, name: body.name, platform: body.platform, deviceCount: out?.host?.deviceCount ?? null };
     badProofRetried = false;
     if (wasLost) log('plus host: registered again');
@@ -150,16 +181,14 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
         setHost({ state: 'taken', hostId, error: { code: 'host_taken' } });
         return;
       }
+      if (e?.status === 403 && code === 'host_removed') {
+        tombstoned = hostId;
+        removedForGood(hostId);
+        return;
+      }
       if (e?.status === 429 && code === 'host_limit') {
         log('plus host: host_limit');
         setHost({ state: 'limit', hostId, error: { code: 'host_limit' } });
-        return;
-      }
-      if (e?.status === 403 && code === 'host_removed') {
-        log('plus host: host_removed');
-        registered = null;
-        tombstoned = hostId;
-        setHost({ state: 'removed', hostId, error: { code: 'host_removed', permanent: true } });
         return;
       }
       if (e?.status === 426) {

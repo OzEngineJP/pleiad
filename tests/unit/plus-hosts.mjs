@@ -110,7 +110,9 @@ export default async function (t) {
     await host.syncDeviceCount();
     t.ok('via:plus の端末数が変わると PATCH { deviceCount }', plus.state.hosts[identity.hostId].deviceCount === 2);
 
-    // ---- 同期の公開鍵（syncPublicKey）: 載せずに登録済みなら PATCH で足し、新規の登録なら PUT に載せる
+    // ---- 同期の公開鍵（syncPublicKey）: 前の版の api（受け入れの v2 を知らない）には、載せずに登録済みなら PATCH で足し、
+    //      新規の登録なら PUT に載せる。ここから 30 分ごとの見直しまでは前の版の api のふり（v2 は最後に確かめる）
+    plus.state.noTickets = true;
     const syncPub = generateKeyPair().publicKey.toString('base64url');
     const withSync = createPlusHost({
       session, store: remote.store, appVersion: 'test', hostName: () => nameNow,
@@ -194,8 +196,7 @@ export default async function (t) {
     const putsBefore = puts();
     await host.recheck();
     t.ok('台帳に自分が居れば recheck は登録し直さない', puts() === putsBefore && host.host().state === 'registered' && !host.host().notice);
-    // ここから 30 分ごとの見直しまでは、外した hostId を登録し直せる前の版の api（今の api は下の「外した PC の墓標」）
-    plus.state.allowReregister = true;
+    // ここまでと同じく前の版の api（noTickets）: 外した hostId を登録し直せる（今の api は下の「v2 の api」）
     // 運営が外した → 確かめ直して登録し直す（鍵の行が戻る）
     plus.state.sync[UID] = { keyId: 'key-1', keys: { [hid]: { keyId: 'key-1', wrapped: 'w', wrappedBy: hid } }, items: {}, seq: 0, totalBytes: 0 };
     const hidName = plus.state.hosts[hid].name;
@@ -243,38 +244,67 @@ export default async function (t) {
       plus.state.hosts[hid]?.uid === UID && timed.host().state === 'registered' && timed.host().notice === 'reregistered', JSON.stringify(timed.host()));
     timed.stop?.();
 
-    // ---- 外した PC の墓標（今の api。外した hostId は同じ鍵では登録し直せず、PUT が 403 host_removed）
-    plus.state.allowReregister = false;
-    const callsTomb = plus.state.calls.length;
-    plus.unbindHost(hid, 'admin');
-    await host.recheck();
-    t.ok('運営が外した PC は、登録し直そうとして 403 host_removed なら removed（permanent）で止まる',
-      !plus.state.hosts[hid] && host.host().state === 'removed' && host.host().error?.code === 'host_removed' && host.host().error?.permanent === true, JSON.stringify(host.host()));
-    const putsTomb = puts();
-    await host.maybeRegister();
-    t.ok('permanent の間は、条件の見直し（maybeRegister）で登録を繰り返さない', puts() === putsTomb && host.host().state === 'removed');
-    await host.reregister();
-    t.ok('人の reregister でも同じ鍵では戻らない（permanent のまま）', !plus.state.hosts[hid] && host.host().error?.permanent === true, JSON.stringify(host.host()));
-    const out2 = await remote.plusHostRebind();
-    await until(() => host.host().state === 'registered' && host.host().hostId === out2.hostId, 3000, '鍵を作り直すと新しい hostId で登録する');
-    t.ok('鍵を作り直す（つなぎ直す）と、新しい hostId で登録できる', out2.hostId !== hid && plus.state.hosts[out2.hostId]?.uid === UID, out2.hostId);
-
-    // ---- 印（X-Pleiad-Admission: 2）と 426
-    const hostCalls = plus.state.calls.slice(callsTomb).filter(c => c.path.startsWith('/v1/hosts'));
-    t.ok('台帳の要求には X-Pleiad-Admission: 2 を付ける', hostCalls.length > 0 && hostCalls.every(c => c.admission === '2'), JSON.stringify(hostCalls.map(c => `${c.method} ${c.admission}`)));
-    plus.state.admission = 2;
-    const syncKey = crypto.randomBytes(32).toString('base64url');
-    const syncHost = createPlusHost({
-      session, store: remote.store, appVersion: 'test', hostName: () => nameNow, plusDevices: () => devicesNow,
-      retryMs: 40, log: () => {}, syncPublicKey: async () => syncKey,
+    // ---- v2 の api（受け入れの版 2）: 同期の公開鍵は台帳の登録に載せない。外された PC は同じ鍵で戻れない
+    plus.state.noTickets = false;
+    const v2 = createPlusHost({
+      session, store: remote.store, appVersion: 'test', hostName: () => nameNow,
+      plusDevices: () => devicesNow, retryMs: 40, log: () => {}, syncPublicKey: async () => syncPub, apiAdmission: async () => 2,
     });
-    await syncHost.maybeRegister();
-    t.ok('印を付けられない要求（syncPublicKey を載せる）を api が 426 で断ると、状態は update で止まる',
-      syncHost.host().state === 'update' && syncHost.host().error?.code === 'update_required', JSON.stringify(syncHost.host()));
-    const syncPatch = callsTo(plus, 'PATCH', '/v1/hosts/').at(-1);
-    t.ok('syncPublicKey を載せる要求には印を付けない', syncPatch?.admission === null, JSON.stringify(syncPatch));
-    syncHost.stop?.();
-    plus.state.admission = 1;
+    plus.state.hosts[hid].syncPublicKey = null;
+    const v2Patches = callsTo(plus, 'PATCH', '/v1/hosts/').length;
+    await v2.maybeRegister();
+    t.ok('v2 の api には、登録済みでも PATCH で同期の公開鍵を足さない',
+      v2.host().state === 'registered' && plus.state.hosts[hid].syncPublicKey === null && callsTo(plus, 'PATCH', '/v1/hosts/').length === v2Patches);
+    // admission の覚えが古い（前の版と読んでいた）: 400 bad_request syncPublicKey を受けたら、載せずにやり直す
+    const stale = createPlusHost({
+      session, store: remote.store, appVersion: 'test', hostName: () => nameNow,
+      plusDevices: () => devicesNow, retryMs: 40, log: () => {}, syncPublicKey: async () => syncPub, apiAdmission: async () => null,
+    });
+    await stale.maybeRegister();
+    t.ok('admission の覚えが古くても、400 syncPublicKey で載せずにやり直して登録のまま',
+      stale.host().state === 'registered' && plus.state.hosts[hid].syncPublicKey === null);
+    const stalePatches = callsTo(plus, 'PATCH', '/v1/hosts/').length;
+    await stale.maybeRegister();
+    t.ok('一度断られたら、その後は同期の公開鍵を送らない', callsTo(plus, 'PATCH', '/v1/hosts/').length === stalePatches);
+    // 運営が外した: v2 では誰が外しても戻れない（登録し直さず removed・permanent で待つ）
+    plus.unbindHost(hid, 'admin');
+    const v2Puts = puts();
+    await v2.recheck();
+    t.ok('v2 の api では、運営が外した PC も登録し直さず removed（permanent）で待つ',
+      v2.host().state === 'removed' && v2.host().error?.permanent === true && puts() === v2Puts && !plus.state.hosts[hid], JSON.stringify(v2.host()));
+    await v2.reregister();
+    t.ok('v2 の api では「この PC を登録し直す」でも同じ鍵では戻らない（PUT を送らない）',
+      v2.host().state === 'removed' && v2.host().error?.permanent === true && puts() === v2Puts && !plus.state.hosts[hid]);
+    // api の版を知らない（admission を読めない）PC でも、PUT の 403 host_removed で同じく止まり、やり直しの時計を回さない
+    await host.reregister();
+    t.ok('PUT の 403 host_removed は removed（permanent）で止まる',
+      host.host().state === 'removed' && host.host().error?.code === 'host_removed' && host.host().error?.permanent === true, JSON.stringify(host.host()));
+    const afterRemoved = plus.state.calls.length;
+    await sleep(150);
+    t.ok('403 host_removed のあとは自動でやり直さない', plus.state.calls.length === afterRemoved);
+    // 戻すのは人の「この PC を登録し直す」（plusHostRebind。ホストの鍵を作り直す → 新しい hostId）
+    const rebound = await remote.plusHostRebind();
+    await until(() => host.host().state === 'registered' && host.host().hostId === rebound.hostId, 3000, '鍵を作り直して新しい hostId で登録する');
+    t.ok('外された PC は、鍵を作り直すと新しい hostId で登録できる', rebound.hostId !== hid && plus.state.hosts[rebound.hostId]?.uid === UID);
+
+    // ---- 印（X-Pleiad-Admission: 2）はどの要求にも付ける。印の無い要求を断る api（admissionRequired）でも、印の付いた登録は通る
+    const hostCalls = plus.state.calls.filter(c => c.path.startsWith('/v1/hosts') || c.path.startsWith('/v1/tickets'));
+    t.ok('台帳と券の要求には、api の版にかかわらず X-Pleiad-Admission: 2 を付ける',
+      hostCalls.length > 0 && hostCalls.every(c => c.admission === '2'), JSON.stringify([...new Set(hostCalls.map(c => c.admission))]));
+    plus.state.admissionRequired = true;
+    delete plus.state.hosts[host.host().hostId];
+    await host.maybeRegister();
+    t.ok('印の付いた登録は、印の無い要求を断る api でも 426 にならず登録できる', host.host().state === 'registered', JSON.stringify(host.host()));
+    plus.state.admissionRequired = false;
+    // api が新しい版を求めて 426 update_required で断る: update で止まる（この口はここから先ずっと 426 を返すので最後に置く）
+    plus.route('PUT', /^\/v1\/hosts\/[a-z2-7]{26}$/, (req, res) => {
+      res.writeHead(426, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: { code: 'update_required', message: 'update required', feature: 'admission_v2' } }));
+    });
+    delete plus.state.hosts[host.host().hostId];
+    await host.maybeRegister();
+    t.ok('api が 426 update_required で断ると、状態は update で止まる',
+      host.host().state === 'update' && host.host().error?.code === 'update_required', JSON.stringify(host.host()));
   } finally {
     remote.stop();
     await plus.close();

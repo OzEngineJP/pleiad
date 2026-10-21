@@ -89,3 +89,23 @@
   .context-strip:has(.context-meter-clock) .usage-chip .usage-mini{display:none}
   .usage-chip{gap:5px;padding:0 8px}
 }
+
+/* Connections share the existing quota rows, with secondary connections folded. */
+.usage-agent .usage-provider{margin:10px 0 4px;font-size:var(--fs-xs);font-weight:600}
+.usage-other{margin-top:10px;font-size:var(--fs-xs);color:var(--ink-weak)}
+.usage-other summary{min-height:36px;display:list-item;align-content:center;cursor:pointer}
+.usage-other summary:focus-visible,.usage-retry:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
+.usage-other code{display:block;padding-block:6px}
+.usage-status{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.usage-status a,.usage-retry{color:var(--ink-blue)}
+.usage-retry{background:transparent;min-height:36px;padding:0;cursor:pointer;font:inherit}
+.usage-pop:not([hidden]){animation:usage-pop-in 240ms cubic-bezier(.2,.7,.2,1)}
+@keyframes usage-pop-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.usage-pop:not([hidden]){animation:none}.usage-chip .usage-mini i{transition:none}}
+
+.usage-other .usage-note{font-weight:400}
+.usage-provider small{font-weight:400;margin-left:4px}
+.usage-window progress:has(+ [role=status]){opacity:.55}
+
+.usage-screen-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.usage-screen-head h3{margin:0}

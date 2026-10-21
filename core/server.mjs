@@ -1,5 +1,6 @@
 // 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
 import './server-log-boot.mjs';
+import { createLoadTiming } from './load-timing.mjs';
 import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaStore, createUsageStore, agentUsage, readProviderUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
@@ -787,8 +788,9 @@ let notifiedPlusIdentity = null;
 let plusHostRegistrationInputs = null;
 let plusSync = null;
 const plusVerifier = createIdTokenVerifier({ jwksUrl: plusConfig.jwksUrl, projectId: () => plusConfigLast?.token?.projectId ?? '' });
-// 券（core/plus/tickets.mjs）: 中継の券を取る手と、端末の受け入れの券を確かめる手。admission は /v1/auth/config の値（券を出す api なら数）
-const plusAdmission = async () => (await plusConfig.known().catch(() => null))?.admission ?? null;
+// 券（core/plus/tickets.mjs）: 中継・同期の券を取る手（1 つ）と、端末の受け入れの券を確かめる手。
+// admission は /v1/auth/config の値（券を出す api なら数）。登録と券はこの 1 つの読み方で見る
+const plusAdmission = () => plusConfig.get().then(c => c?.admission ?? null, () => null);
 const plusTicketRequest = (method, p, body) => plusSession.client.request(method, p, { body });
 const plusTickets = createTicketIssuer({ request: plusTicketRequest, admission: plusAdmission });
 const plusTicketVerifier = createTicketVerifier({ keysUrl: () => `${plusConfig.apiBase}/.well-known/pleiad-keys` });
@@ -799,6 +801,8 @@ const plusHost = createPlusHost({
   // 登録中・登録済みの状態変化は中継リンクの条件へ反映する。ここから再登録を始めると onHostState と循環する。
   onHostState: s => { remote.setPlusHostState(s); syncPlusLink({ registerHost: false }); },
   syncPublicKey: () => plusSync ? plusSync.publicKey() : Promise.resolve(null),
+  // api の受け入れの版（/v1/auth/config の admission）。v2 なら同期の公開鍵を台帳の登録に載せない
+  apiAdmission: plusAdmission,
   log: line => console.log(`  ${line}`),
 });
 // Pleiad Plus の同期（core/plus/sync/。docs/plus.md「同期」）。設定は画面からの変更と同じ検査（normalize・write）を通して書く
@@ -815,6 +819,9 @@ plusSync = createPlusSync({
   openFolder: dir => openOnHost('open', dir, { directory: true }),
   // api の 403 host（この PC の登録が外れた）→ 台帳を見直し、外れていれば登録し直す（docs/plus.md「同期の始め直しと登録の外れ」）
   onHostLost: () => plusHost.recheck(),
+  // 同期の券（v2 の api）はホストの鍵で取る。鍵がまだ無ければ作らずに待つ
+  identity: () => remote.store.peekIdentity(),
+  issuer: plusTickets,
   log: line => console.log(`  ${line}`),
 });
 // 同期の状態が変わるたびに全画面へ（docs/plus.md「同期」。ポーリングはしない）
@@ -905,6 +912,45 @@ const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
   hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
+});
+// 同期で届いた変更の受け入れ待ち（ADR 0246）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
+plusSync.onChange(({ inbox: count, inboxAt }) => {
+  try {
+    inbox.standing('syncInbox', count > 0 && inboxAt
+      ? { version: inboxAt, at: Date.parse(inboxAt), data: { ask: 'syncInbox', count, settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// 新しい PC が同期の鍵を待っている（v2）: 承認を待つ申し込みがあれば、あなた待ちの行を 1 つ置く（PC の組が版）
+plusSync.onChange(({ approvals }) => {
+  try {
+    const list = Array.isArray(approvals) ? approvals : [];
+    inbox.standing('syncApproval', list.length
+      ? { version: list.map(a => `${a.hostId}:${a.code}`).join(','), at: Date.now(), data: { ask: 'syncApproval', count: list.length, title: list[0].name ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が同期の回復を頼んでいる（この PC は今の鍵を持っていて止められる）: 必ず知らせる。頼んだ時刻が版
+plusSync.onChange(({ recoveryAlert }) => {
+  try {
+    const at = recoveryAlert?.requestedAt ?? null;
+    inbox.standing('syncRecovery', recoveryAlert
+      ? { version: String(at ?? recoveryAlert.readyAt ?? 'recovery'), at: Number.isFinite(Date.parse(at)) ? Date.parse(at) : Date.now(),
+        data: { ask: 'syncRecovery', title: recoveryAlert.requestedByName ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が、前の鍵では確かめられない新しい鍵で始め直した（回復など）: この PC は自動で移らず、人が選ぶのを待つ。
+// 新しい keyId が版。通信の誤りの間は置いたまま（消して置き直すと、また未読になる）
+plusSync.onChange(({ state, wait }) => {
+  if (state === 'error') return;
+  try {
+    const r = state === 'waiting_key' ? wait?.restarted ?? null : null;
+    inbox.standing('syncRestarted', r
+      ? { version: `${r.keyId}${r.unverified ? ':unverified' : ''}`, at: Number.isFinite(Date.parse(r.at)) ? Date.parse(r.at) : Date.now(),
+        data: { ask: 'syncRestarted', title: r.byName ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
 });
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
@@ -5351,6 +5397,17 @@ function opsDeps(lng = currentLocale()) {
       syncReset: (confirm) => plusSync.resetSync(confirm),
       hostReregister: () => plusHost.reregister(),
       syncOpenConflicts: () => plusSync.openConflictsFolder(),
+      syncInbox: () => plusSync.inboxList(),
+      syncInboxItem: (id) => plusSync.inboxItem(id),
+      syncInboxTake: (id, seen) => plusSync.inboxTake(id, seen),
+      syncInboxDrop: (id, seen) => plusSync.inboxDrop(id, seen),
+      syncApprove: (hostId, code) => plusSync.approveSync(hostId, code),
+      syncDeny: (hostId) => plusSync.denySync(hostId),
+      syncAcceptRestart: (keyId) => plusSync.acceptRestart(keyId),
+      syncRecoveryRequest: () => plusSync.requestRecovery(),
+      syncRecoveryCancel: () => plusSync.cancelRecovery(),
+      syncRecoveryComplete: () => plusSync.completeRecovery(),
+      syncRecoveryStop: () => plusSync.stopRecovery(),
     },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）
     git: opsGit,
@@ -9235,8 +9292,17 @@ wss.on("connection", (ws, req) => {
           // Hold the reference even if the turn ends during the asynchronous reads.
           const read = { sessionId, turn: runtime.turns.get(sessionId) };
           if (msg.args?.live) liveReads.add(read);
+          const timing = createLoadTiming();
+          const loadReply = (ok, payload) => {
+            const start = performance.now();
+            try { return reply(ok, payload); } finally { timing.add('send', performance.now() - start); }
+          };
+          const serve = (...args) => {
+            const start = performance.now();
+            try { return serveHistory(...args); } finally { timing.add('window', performance.now() - start); }
+          };
           try {
-            const backend = await resolveBackendForSession(sessionId);
+            const backend = await timing.run('resolve', () => resolveBackendForSession(sessionId));
             const retired = backend?.retired ? { retired: backend.retired } : {};
             // 委譲（サブエージェント）の呼び出しは、発言を出したエージェントの申告（subagentTools）で見分ける。
             // 発言に backend が無ければ会話の持ち主、対応を終えた・申告の無いエージェントは既定の一覧で拾う
@@ -9247,13 +9313,14 @@ wss.on("connection", (ws, req) => {
               return subagentToolNames.get(key);
             };
             // A later completion cannot be acknowledged by an older history snapshot.
-            const sidecar = await store.get(sessionId);
+            const sidecar = await timing.run('sidecar', () => store.get(sessionId));
             const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
             const readStarted = Date.now();
-            const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
+            const { compactSummaries, ...data } = await timing.run('transcript', () => history.loadTranscript(sessionId, backend, { timing: timing.add }));
             // 読んだ履歴をそのまま検索の写しにも入れる（追加の読み込みは要らない）。outline は本文が縮めてあるので入れない
+            const decorating = performance.now();
             if (!msg.args?.outline) sessionSearch.ingest(sessionId, data.messages, { sig: readStarted });
             // 入力欄の `!`: Pleiad が走らせた分の終了コードを付け、まだ渡していない分・走っている分を末尾に足す（ADR 0054）。
             // 渡さなかった分は、次の人の発言の前に差す（ADR 0055）
@@ -9261,14 +9328,15 @@ wss.on("connection", (ws, req) => {
               : [...shellRuns.placeKept(shellRuns.decorate(data.messages, sidecar, backend), sidecar), ...shellRuns.rows(sessionId, sidecar)];
             // 送信予定で送った発言には、予定の時刻を付ける（画面は遅れて送ったものにだけ「9:00 の予定を 9:32 に送りました」を出す）
             if (!msg.args?.outline) data.messages = decorateScheduled(data.messages, sidecar.scheduledSends);
+            timing.add('decorate', performance.now() - decorating);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
-            if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
+            if (msg.args?.outline) return loadReply(true, { messages: data.messages.map(m => ({
               uuid: m.uuid, role: m.role, text: m.text, tools: m.tools,
               ...(m.toolCalls ? { toolCalls: m.toolCalls.map(call => ({ name: call.name })) } : {}),
             })) });
             const draft = (await store.get(sessionId)).draft ?? null;
-            const nativeCompactions = backend.getCompactions ? await backend.getCompactions(sessionId).catch(() => []) : [];
+            const nativeCompactions = backend.getCompactions ? await timing.run('compactions', () => backend.getCompactions(sessionId).catch(() => [])) : [];
             const savedCompactions = sidecar.compactions ?? [];
             // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
@@ -9276,7 +9344,7 @@ wss.on("connection", (ws, req) => {
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
-            if (!msg.args?.live) return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
+            if (!msg.args?.live) return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -9292,14 +9360,17 @@ wss.on("connection", (ws, req) => {
                 : null;
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
-              return reply(true, serveHistory({
+              return loadReply(true, serve({
                 messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
               }, msg.args, subagentToolsOf));
             }
-            return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));
-          } finally { liveReads.delete(read); }
+            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));
+          } finally {
+            liveReads.delete(read);
+            timing.finish(msg.args?.outline ? 'outline' : msg.args?.older ? 'older' : msg.args?.live ? 'live' : 'open');
+          }
         }
 
         // Allocate the host identity before the native engine has a first turn.

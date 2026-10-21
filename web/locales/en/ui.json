@@ -69,9 +69,7 @@
       "saveFailed": "Couldn't save: {{error}}"
     },
     "usage": {
-      "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
-      "refresh": "Refresh",
-      "note": "While shown, refreshes every minute. A result is reused for 1 minute after it is fetched."
+      "refresh": "Refresh"
     },
     "agents": {
       "recheck": "Recheck status",
@@ -252,10 +250,91 @@
         "syncUnregistered": "Sync is paused because this PC is no longer registered",
         "syncUnregisteredHint": "It will resume automatically once this PC is registered again.",
         "syncSharedTo": "Shared the sync key with the new PC {{name}} ({{time}})",
+        "syncWaitApproval": "Waiting for a PC with the key to approve",
+        "syncWaitApprovalHint": "Open Pleiad on {{name}} and a confirmation code appears on both screens.",
+        "syncApproveOn": "Approve on {{name}}",
+        "syncCode": "Confirmation code",
+        "syncJoinDenied": "The key was not handed over",
+        "syncJoinDeniedHint": "You can ask again in an hour.",
+        "syncHelpRemove": "Remove PCs you no longer have on the account page. A removed PC can no longer read the sync data.",
+        "syncHelpRecovery": "If no PC with the key is left, this PC can ask for recovery. After 72 hours it starts over with a new key, and the sync data on the server is deleted. A PC with the key can stop it while it waits.",
+        "syncHelpClose": "Close",
+        "syncHolderGoneAll": "Every PC with the key has been removed.",
+        "syncRecoveryAbout": "Ask for recovery to start over with a new key after 72 hours. The sync data on the server is deleted. A PC with the key can stop it while it waits.",
+        "syncRecoveryAsk": "Ask for recovery",
+        "syncRecoveryWaiting": "Waiting for recovery. You can start over with a new key from {{time}}.",
+        "syncRecoveryReady": "The recovery wait is over. You can start over with a new key.",
+        "syncRecoveryWithdraw": "Withdraw",
+        "syncRecoveryStart": "Start over with a new key",
+        "syncRecoveryOther": "{{name}} asked for recovery. After {{time}}, that PC can start over with a new key.",
+        "syncRecoveryStop": "Stop recovery",
+        "syncRecoveryAlert": "{{name}} asked to recover sync. If you don't recognize this, stop it. After {{time}}, sync starts over with a new key.",
+        "syncRecoveryNote": {
+          "reauth": "Sign in again to ask for recovery (a recent sign-in is required).",
+          "other": "Another PC already asked for recovery.",
+          "holder": "A PC with the key was found. You can get the key when that PC approves.",
+          "waiting": "The wait isn't over yet.",
+          "gone": "The recovery was canceled.",
+          "stopped": "Stopped the recovery.",
+          "stopFailed": "Couldn't stop the recovery."
+        },
+        "syncRelogin": "Sign in again",
+        "syncUpdateRequired": "This version of Pleiad can't continue syncing",
+        "syncUpdateRequiredHint": "Update Pleiad to resume.",
+        "syncApiDowngraded": "Sync stopped because the sync server answered as its previous version",
+        "syncApiDowngradedHint": "The key wasn't handed over the previous way. Restart Pleiad after the server is back to resume.",
+        "syncRestarted": "This PC's previous key can't vouch for the new key (it was made by a recovery or similar). It wasn't switched automatically.",
+        "syncRestartedHint": "If you expected this, take it. It arrives once you compare the confirmation code and approve on a PC that holds the key. Sync on this PC stays paused until then.",
+        "syncAcceptRestart": "Take the new key",
+        "syncRestartChanged": "The key changed again in the meantime. Check what's shown and choose again.",
+        "syncKeyUnverified": "The key that arrived couldn't be verified, so it wasn't taken and sync is paused",
+        "syncKeyUnverifiedHint": "Remove this PC on your Pleiad Plus account page, register it again, then get approval from a PC that holds the key.",
+        "syncStartOverOthersApproval": "Other PCs: sync pauses, and resumes once you approve them on this PC. Where both have the same item, the newer one is kept and the other stays in the sync copies for 30 days.",
+        "syncApprove": {
+          "mark": "Waiting for approval",
+          "title": "Hand the sync key to \"{{name}}\"?",
+          "hint": "Check that the same number is shown on {{name}} before handing it over.",
+          "deny": "Don't hand over",
+          "approve": "Hand over",
+          "changed": "The confirmation code changed. Compare them again.",
+          "gone": "The request was withdrawn.",
+          "noKey": "This PC doesn't have the current sync key."
+        },
         "hostRemoved": "This PC was removed from Pleiad Plus. Register it again to resume the relay and sync.",
         "hostReregister": "Register this PC again",
         "hostReregistered": "This PC had been removed from the account, so it was registered again",
-        "hostRemovedKey": "This PC was removed from Pleiad Plus. To register it again, this PC's key is rebuilt."
+        "hostRemovedKey": "This PC was removed from Pleiad Plus. To register it again, this PC's key is rebuilt.",
+        "syncInbox_one": "{{count}} change arrived",
+        "syncInbox_other": "{{count}} changes arrived",
+        "inboxTitle": "Changes that arrived",
+        "inboxKind": {
+          "change": "Changed",
+          "new": "New file",
+          "delete": "Deleted"
+        },
+        "inboxFromUnknown": "Another PC",
+        "inboxLoading": "Loading…",
+        "inboxEmpty": "No changes have arrived",
+        "inboxTake": "Apply",
+        "inboxDrop": "Discard",
+        "inboxTaken": "Applied",
+        "inboxDropped": "Discarded",
+        "inboxGone": "This change is no longer waiting",
+        "inboxLocalChanged": "The file on this PC changed after this arrived, so it was not applied. To keep the current file, press Discard.",
+        "inboxNotApplied": "Could not apply this change. Try again.",
+        "inboxBinary": "The contents can't be shown. Check them on the PC that sent this before applying.",
+        "inboxBinaryIncoming": "Arrived version: {{size}}",
+        "inboxBinaryLocal": "Current version on this PC: {{size}}",
+        "inboxBytes_one": "{{count}} byte",
+        "inboxBytes_other": "{{count}} bytes",
+        "inboxBinaryConfirm": "This applies the file without showing its contents. Did you check on the sending PC that the size and sha256 match?",
+        "inboxBinaryConfirmYes": "Checked, apply",
+        "inboxRenewed": "A newer version arrived. Review the changes again before choosing.",
+        "inboxHidden": {
+          "bidi": "Contains characters that change text direction (shown as ⟨U+…⟩ in the diff).",
+          "invisible": "Contains zero-width characters (shown as ⟨U+…⟩ in the diff).",
+          "eol": "Only the line endings differ."
+        }
       },
     "remote": {
       "tabs": {
@@ -3283,6 +3362,18 @@
     }
   },
   "usage": {
+    "connection": {
+      "unavailable": "Usage is unavailable for this connection.",
+      "noLogin": "Not signed in",
+      "expired": "Your sign-in has expired",
+      "notSubscribed": "Not subscribed",
+      "failed": "Could not retrieve usage",
+      "retry": "Retry",
+      "loginHelp": "View sign-in instructions",
+      "goLink": "View Go ↗",
+      "stale": "Value from {{when}}",
+      "others": "Other connections {{count}}"
+    },
     "unknown": "Unknown",
     "refreshing": "Refreshing…",
     "refreshFailed": "Could not retrieve usage",
@@ -3594,13 +3685,29 @@
           "open": "A device is waiting to be allowed",
           "closed": "A device was waiting to be allowed"
         }
+      },
+      "syncInbox_one": "{{count}} change arrived through sync",
+      "syncInbox_other": "{{count}} changes arrived through sync",
+      "syncApproval": {
+        "named": "{{name}} is waiting for the sync key",
+        "plain_one": "{{count}} PC is waiting for the sync key",
+        "plain_other": "{{count}} PCs are waiting for the sync key"
+      },
+      "syncRecovery": {
+        "named": "{{name}} asked to recover sync",
+        "plain": "Another PC asked to recover sync"
+      },
+      "syncRestarted": {
+        "named": "{{name}} started sync over with a new key. Choose whether to take it",
+        "plain": "Sync was started over with a new key. Choose whether to take it"
       }
     },
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
       "chat": "Quick chats › {{title}}",
-      "remote": "Settings › Remote"
+      "remote": "Settings › Remote",
+      "plus": "Settings › Pleiad Plus"
     },
     "outcome": {
       "allowed": "Approved",

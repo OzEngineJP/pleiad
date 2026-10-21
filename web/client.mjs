@@ -4981,7 +4981,7 @@ const controls = chatComposer.useControls({
         botSetup: bot ? homeBotSetup(bot) : '',
         openBot: id => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'bot', id } })),
         backendLabel: labelOf, onPick: id => homeDest.choose(id),
-        usage: destinationUsage(usageSource.get(bid), { account: bot ? bot.account ?? '' : state.account,
+        usage: destinationUsage(usageSource.get(bid), { model: state.model, models: modelsReady ? state.models : {}, account: bot ? bot.account ?? '' : state.account,
           open: () => { onboarding.open('usage'); $('usageTab').click(); } }),
         groups: sent ? [] : [{ options: [
           { id: null, name: t('channels:homeDest.none'), backend: homeBackend() },
@@ -8757,7 +8757,7 @@ async function syncTopbar() {
   if (state.current !== id || version !== topbarVersion) return;
   controls.paint();
   // 確定したモデルで使用量の札をもう一度絞り直す（先の呼び出し時点ではモデルが未確定のことがある）
-  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: state.model });
+  headerUsage.show({ backend: bid, account: selectedEndpoint ? '' : selectedAccount, endpoint: selectedEndpoint, model: state.model, models: state.models });
   paintSettingsNotice();
   renderSessions();
 }
@@ -9300,6 +9300,15 @@ async function openFromSearch(id, jump) {
  */
 async function openFromNotification(target) {
   if (narrowView.matches) setDrawer(false);
+  // 同期で届いた変更（ADR 0246）は 設定 › Pleiad Plus の「届いた変更」、鍵を待つ PC（同期の鍵の承認）は Plus の面を開く
+  if (target?.settings === 'plus') {
+    if ($('onboardingDialog').open) $('onboardingDialog').close();
+    onboarding.open('plus');
+    if (target.pane === 'inbox') plusSettings.openInbox();
+    else plusSettings.openMain();
+    return;
+  }
+  // 端末の承認待ち（ADR 0248）は 設定 › リモート
   if (target?.settings) { openSettingsPage(target.settings); return; }
   await viewAddress.go(target);
 }
@@ -10599,7 +10608,7 @@ const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
   openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
-  onUsageLogin: usageLogin });
+  onUsageLogin: usageLogin, current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });
 // 設定 › Pleiad Plus（docs/plus.md「設定 › Pleiad Plus」）
 const plusSettings = setupPlusSettings({ cmd, page: onboarding.page, getPrefs: () => state.prefs });

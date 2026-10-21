@@ -131,6 +131,12 @@ export function createSyncTargets({ dataDir, home = os.homedir(), env = process.
     return out;
   }
 
+  /** ファイルの項目 1 つの今の中身（無い・リンク・大きすぎる → null）。設定は扱わない */
+  async function readOne(logical) {
+    const file = localFile(logical);
+    return file ? readFile(file) : null;
+  }
+
   /** 書く先のファイルと、その上の段（置き場の根まで）にリンクが無いか。リンクがあれば書かない */
   async function writable(logical) {
     const p = parseLogicalPath(logical);
@@ -199,5 +205,5 @@ export function createSyncTargets({ dataDir, home = os.homedir(), env = process.
     ];
   }
 
-  return { scan, write, remove, localFile, watchPlan, parse: parseLogicalPath, skillRoots, instructions, hasSetting: key => Boolean(settings?.has(key)) };
+  return { scan, readOne, write, remove, localFile, watchPlan, parse: parseLogicalPath, skillRoots, instructions, hasSetting: key => Boolean(settings?.has(key)) };
 }

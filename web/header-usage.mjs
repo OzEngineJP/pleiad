@@ -8,7 +8,7 @@
 // 取得に失敗したら直前の値を薄く出し、いつの値かを添える。（アカウントの行だけ読めなかったときは、その行の前回の枠を薄くせず出す。web/usage.mjs の carryQuota）
 import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
-import { isExpired, heldTexts, heldSlotName, heldTime, heldWindowName, heldGuess, quotaFetchState, expiredText } from './usage.mjs';
+import { isExpired, heldTexts, heldSlotName, heldTime, heldWindowName, heldGuess, quotaFetchState, expiredText, connectionOf, connectionName, connectionLabel, renderConnections } from './usage.mjs';
 
 /** これ以上の使用率は強い見た目にする（帯の札・入力欄と bot のページのアカウントの行） */
 export const HIGH = 80;
@@ -54,7 +54,7 @@ export const needsAuth = row => Boolean(row?.needsUsageLogin || row?.reauth || r
 
 /** 枠の短い名前。Antigravity のグループ名の頭と、末尾の括弧書き（「週次（7日間）」の「（7日間）」）を外す */
 export function shortLabel(w) {
-  const full = String(w?.label ?? '');
+  const full = String(w?.provider ? connectionLabel(w) : w?.label ?? '');
   let label = full;
   if (w?.group && label.startsWith(w.group)) label = label.slice(w.group.length).replace(/^[\s·・:：]+/, '');
   return label.replace(/\s*[（(][^（）()]*[）)]\s*$/, '') || full;
@@ -195,7 +195,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   // リセットと held の解除は共通 source が一度だけ取り直し、表示も同期する。
 
   // 枠・認可のどちらかを持つ結果だけを値として覚える。持たない（取得の失敗・未対応）ときは前の値を残す
-  const usable = quota => Boolean(quota?.windows?.length || quota?.accounts?.length || needsAuth(quota));
+  const usable = quota => Boolean(quota?.windows?.length || quota?.accounts?.length || Array.isArray(quota?.connections) || needsAuth(quota));
   function take(backend, result) {
     const prev = data.get(backend);
     // 止まっている枠（held）は使用率の取得とは別にサーバーが持つので、届いた値をそのまま使う
@@ -242,14 +242,15 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
 
   function paintChip() {
     const entry = data.get(shown.backend);
-    const base = quotaOf(entry?.quota, shown.account);
+    const account = quotaOf(entry?.quota, shown.account);
+    const base = Array.isArray(account?.connections) ? connectionOf(account, shown.model) : account;
     // 枠が接続先・グループ・モデルの系統ごとに分かれているときは、会話のモデルに合うものだけを出す
     const row = base?.windows?.length ? { ...base, windows: windowsForModel(base.windows, shown.model) } : base;
     // 互換の接続先で動く会話はサブスクの枠を使わない
     const state = chipState(shown.endpoint ? null : row);
     chip.hidden = false;
     onVisibility();
-    const agent = labelOf(shown.backend), stale = shown.endpoint ? '' : staleNote(entry, base);
+    const agent = [labelOf(shown.backend), connectionName(base?.provider)].filter(Boolean).join(' '), stale = shown.endpoint ? '' : staleNote(entry, base);
     // 短い間隔の上限で止まっている枠は、日次・週次の率（0% のこともある）より先に出す
     const held = shown.endpoint ? null : heldSlotOf(entry?.held, shown);
     if (held) {
@@ -267,7 +268,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
         : t('usage.header.heldTitle', { agent, slot: heldSlotName(held, entry?.quota), when });
       return;
     }
-    chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry?.failed ? ' dim' : '');
+    chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry?.failed || base?.staleSince ? ' dim' : '');
     if (state.kind !== 'value') {
       const text = shown.endpoint ? t('usage.header.endpointUnavailable')
         : !entry ? t('usage.loading')
@@ -290,8 +291,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       text = percentText(state.used);
       chip.replaceChildren(el('span', 'lb', label), mini(state.used), el('span', 'pc', text), caret());
     }
-    chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text: state.limit ? text : `${label} ${text}` }));
-    chip.title = [t('usage.header.chipTitle', { agent, label: w.label, percent: percentText(state.used), reset: resetText(w) }), stale].filter(Boolean).join(' · ');
+    chip.setAttribute('aria-label', [t('usage.header.chipLabel', { agent, text: state.limit ? text : `${label} ${text}` }), stale, base?.state === 'failed' && t('usage.connection.failed')].filter(Boolean).join(' · '));
+    chip.title = [t('usage.header.chipTitle', { agent, label: w.label, percent: percentText(state.used), reset: resetText(w) }), stale, base?.state === 'failed' && t('usage.connection.failed')].filter(Boolean).join(' · ');
   }
 
   // ---- 一覧（浮く面） ----
@@ -301,7 +302,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       const used = usedOf(w, now), high = used != null && used >= HIGH ? ' high' : '';
       const name = el('span', 'wl', shortLabel(w)); name.title = w.label;
       const bar = el('span', 'usage-bar' + high);
-      bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', t('usage.meter', { label: w.label }));
+      bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', `${w.label} ${percentText(used)}`);
       const fill = el('i'); fill.style.width = `${Math.max(0, Math.min(100, used ?? 0))}%`; bar.append(fill);
       const note = el('span', 'rs' + high, resetText(w, now, row, request));
       if (isExpired(w, now)) note.setAttribute('role', 'status');
@@ -317,6 +318,17 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     if (entry?.failed && !request.pending) request.failed = true;
     const pending = !endpoint && quotaFetchState(row, request) === 'pending';
     section.setAttribute('aria-busy', String(pending));
+    if (!endpoint && Array.isArray(row?.connections)) {
+      const head = el('div', 'an', labelOf(id));
+      const notes = [current && t('usage.header.thisConversation'), entry?.quota?.accounts?.length && row.label].filter(Boolean);
+      if (notes.length) head.append(el('small', null, notes.join(' · ')));
+      section.append(head);
+      renderConnections(section, row, { model: current ? shown.model : '', request,
+        retry: () => refresh([id], { force: true }),
+        renderWindows: (target, c) => { if (c.windows.length) target.append(rows(c.windows, { ...c, reason: c.state === 'failed' ? 'error' : null }, request)); },
+      });
+      return section;
+    }
     // 「この会話」の節はモデルに合う枠だけに絞り、残ったグループ・接続先は「ほか N グループ」にまとめる
     const all = row?.windows ?? [];
     const filtered = current ? windowsForModel(all, shown.model) : all;
@@ -366,7 +378,9 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   function paintPop() {
     if (pop.hidden) return;
     const head = el('div', 'usage-pop-head');
-    const checked = shown.endpoint ? null : data.get(shown.backend)?.quota?.checkedAt;
+    const quota = data.get(shown.backend)?.quota;
+    const selected = connectionOf(quotaOf(quota, shown.account), shown.model);
+    const checked = shown.endpoint ? null : selected ? selected.checkedAt : Array.isArray(quotaOf(quota, shown.account)?.connections) ? null : quota?.checkedAt;
     const again = el('button', 'rf', '↻');
     const busy = ids().some(id => {
       const quota = data.get(id)?.quota, request = source.state?.(id);
@@ -390,7 +404,9 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const more = el('button', null, t('usage.header.openSettings'));
     more.type = 'button'; more.onclick = () => { close(); openSettings(); };
     foot.append(more);
+    const opened = [...pop.querySelectorAll('details')].map(d => d.open);
     pop.replaceChildren(head, ...sections, foot);
+    [...pop.querySelectorAll('details')].forEach((d, i) => { d.open = opened[i] ?? false; });
   }
   function paint() {
     paintChip(); paintPop();
@@ -405,15 +421,18 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     }
   }
 
-  function open() {
-    pop.hidden = false; chip.setAttribute('aria-expanded', 'true');
+  function positionPop() {
     const r = chip.getBoundingClientRect();
     const width = Math.min(340, document.documentElement.clientWidth - 16);
     pop.style.left = `${Math.max(8, Math.min(r.left, document.documentElement.clientWidth - width - 8))}px`;
     pop.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
     pop.style.width = `${width}px`;
-    paintPop(); refresh();
   }
+  function open() {
+    pop.hidden = false; chip.setAttribute('aria-expanded', 'true');
+    positionPop(); paintPop(); refresh();
+  }
+  window.addEventListener('resize', () => { if (!pop.hidden) positionPop(); });
   function close(focus = false) {
     if (pop.hidden) return;
     pop.hidden = true; chip.setAttribute('aria-expanded', 'false');
@@ -433,7 +452,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   return {
     /** 今の会話のエージェント・アカウント・互換の接続先・モデル。client.mjs の syncTopbar が呼ぶ */
     show(next) {
-      shown = { backend: next.backend ?? null, account: next.account ?? '', endpoint: next.endpoint ?? '', model: next.model ?? '' };
+      shown = { backend: next.backend ?? null, account: next.account ?? '', endpoint: next.endpoint ?? '', model: next.model || next.models?.['']?.resolvesTo || '' };
       if (shown.backend && getBackends().length && (!lastRefresh || !asked.has(shown.backend))) refresh(lastRefresh ? [shown.backend] : ids());
       else paint();
     },

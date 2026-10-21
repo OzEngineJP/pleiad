@@ -503,16 +503,21 @@ export function wrapBackend(native) {
     return null;
   };
   wrapped.getMessages = async (id, options) => {
+    const reading = performance.now();
     const r = await conversation(id);
+    options?.timing?.('conversation.read', performance.now() - reading);
     if (!r) return applyRewindMark(nativeView(await native.getMessages(id, options)), await pendingMark(id, id));
     if (r.nativeId) {
-      const recent = applyRewindMark(await native.getMessages(r.nativeId, { fullResults: true }), await pendingMark(id, r.nativeId));
+      const recent = applyRewindMark(await native.getMessages(r.nativeId, { fullResults: true, timing: options?.timing }), await pendingMark(id, r.nativeId));
       if (recent.length) {
+        const start = performance.now();
         mergeMessages(r, recent, native.id);
+        options?.timing?.('conversation.merge', performance.now() - start);
       }
     }
     // 保存分には、見分けを足す前に保存したシステム側の行（圧縮の要約・コマンドの行・中断など）が生のまま残っている。
     // 読むたびに文面で見分ける（core/system-messages.mjs。kind の付いた発言は触らない）
+    const preparing = performance.now();
     const messages = classifySystemMessages(structuredClone(r.messages));
     if (!options?.fullResults) for (const m of messages) for (const call of m.toolCalls ?? []) {
       if (call.result?.text?.length > MAX_RESULT_CHARS) {
@@ -520,6 +525,7 @@ export function wrapBackend(native) {
         call.result.truncated = true;
       }
     }
+    options?.timing?.('conversation.prepare', performance.now() - preparing);
     return messages;
   };
   // 入力欄の `!` をエージェントが走らせるバックエンド（Codex）。会話の id をネイティブの id に訳す。

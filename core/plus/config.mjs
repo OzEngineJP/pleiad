@@ -56,7 +56,7 @@ export function parseAuthConfig(body) {
     },
     urls: Object.fromEntries(['login', 'account', 'profile', 'relay', 'refresh'].map(k => [k, typeof urls[k] === 'string' ? urls[k] : null])),
     minClient: body.minClient && typeof body.minClient === 'object' ? { ...body.minClient } : {},
-    // 券の道（docs/plus.md「券」）を持つ api は 1（ID トークンの道も通る）か 2（券だけ）。前の版の api には欄が無い（null）
+    // 受け入れの版（docs/plus.md「券」。1 = ID トークンの道も通る、2 = 券だけ）。欄が無ければ null（受け入れの v2 を知らない前の版の api）
     admission: body.admission === 1 || body.admission === 2 ? body.admission : null,
   };
 }

@@ -3,12 +3,13 @@
 // 券は api が Ed25519 で署名した JWS のコンパクト形（header {"alg":"EdDSA","typ":"pleiad-ticket+jwt","kid"}）。
 //   中継の券     aud:"relay"        { role: 'host' | 'device', sub, hostId, lim }  中継の X-Pleiad-Ticket に載せる
 //   受け入れの券 aud:"pleiad-host"  { hostId, devicePub }                         端末が Noise のメッセージ 1 に載せ、PC が確かめる
-// どれも iss:"pleiad-tickets"・uid・iat・exp（iat + 300）・jti を持ち、一度きり。
+// どれも iss:"pleiad-tickets"・uid・iat・exp（iat + 300）・jti を持ち、一度きり（同期の券 aud:"sync" は api が確かめ、5 分の間は何度でも使う）。
 //
 // 取り方（issueTicket）: POST /v1/tickets/challenge { purpose, publicKey, hostId }
 //   → proof = b64u(HMAC-SHA256(HKDF(X25519(自分の秘密鍵, serverPublicKey), "pleiad host proof v1"), nonce ‖ utf8(hostId) ‖ utf8(purpose)))
 //   → POST /v1/tickets { challengeId, proof } → host: { relay } / device: { relay, admission }
 //   challenge の口が 404 の api（券の無い前の版）なら、createTicketIssuer は null を返す（呼ぶ側は ID トークンの道へ戻る）。
+//   同期の券（purpose 'sync' → { sync }。core/plus/sync/ticket.mjs）も同じ手で取る。
 //
 // 確かめ方（createTicketVerifier）: 公開鍵は <api>/.well-known/pleiad-keys を 5 分覚える。知らない kid の取り直しは
 //   30 秒に 1 回まで。取れないときは期限の切れた覚えでも取ってから 24 時間までは使い、覚えが無いか、それより古いときは
@@ -61,16 +62,20 @@ export async function issueTicket({ request, purpose, keyPair, hostId }) {
 }
 
 /**
- * 券を取る手。券の口が無い api（challenge が 404）なら null を返し、5 分はそのまま null を返す（ID トークンの道へ戻る）。
- * admission() が数（/v1/auth/config の admission）を返す api は券を出すので、404 でも戻らずに投げる。
+ * 券を取る手（中継・受け入れ・同期で 1 つ）。券の口が無い api（challenge が 404）なら null を返し、5 分はそのまま null を返す
+ * （ID トークンの道・券の無い同期へ戻る）。admission() が数（/v1/auth/config の admission）を返す api は券を出すので、
+ * 404 でも戻らずに投げる。
  * @param {{ request: Function, admission?: () => (number | null | Promise<number | null>), now?: () => number }} o
  */
 export function createTicketIssuer({ request, admission = () => null, now = Date.now }) {
   let unsupportedUntil = 0;
   return {
-    /** @returns {Promise<{ relay: string, admission?: string } | null>} */
-    async issue({ purpose, keyPair, hostId }) {
-      if (now() < unsupportedUntil && await admission() == null) return null;
+    /**
+     * force: 券の口が無いと覚えていても確かめ直す（券を付けない要求が断られたとき）
+     * @returns {Promise<{ relay: string, admission?: string } | { sync: string } | null>}
+     */
+    async issue({ purpose, keyPair, hostId, force = false }) {
+      if (!force && now() < unsupportedUntil && await admission() == null) return null;
       try {
         const out = await issueTicket({ request, purpose, keyPair, hostId });
         unsupportedUntil = 0;
@@ -83,6 +88,10 @@ export function createTicketIssuer({ request, admission = () => null, now = Date
         throw e;
       }
     },
+    /** 券の口が無い api と覚えている間か */
+    unsupported: () => now() < unsupportedUntil,
+    /** 覚えを捨てる（アカウントが変わったとき） */
+    forget() { unsupportedUntil = 0; },
   };
 }
 

@@ -58,16 +58,18 @@ function presentFile(sessionId) {
  * ライブと履歴で同じ表示ができるよう、toolCalls は web/render.mjs の
  * renderToolCall / applyToolResult にそのまま渡せる形にしてある。
  */
-export async function loadTranscript(sessionId, backend) {
+export async function loadTranscript(sessionId, backend, options) {
   if (!sessionId) return { messages: [], presents: [] };
 
   const [raw, presents] = await Promise.all([
-    backend?.getMessages ? backend.getMessages(sessionId) : Promise.resolve([]),
+    backend?.getMessages ? backend.getMessages(sessionId, options) : Promise.resolve([]),
     backend?.getPresents ? backend.getPresents(sessionId) : readPresents(sessionId),
   ]);
+  const preparing = performance.now();
   const messages = await prepareMessages(sessionId, raw);
   // 圧縮の要約は発言ではなく区切りの中身。分けて返し、server が区切りに入れる（core/compaction-history.mjs の attachCompactSummaries）
   const compactSummaries = messages.filter(m => m?.kind === 'compactSummary');
+  options?.timing?.('history.prepare', performance.now() - preparing);
   return { messages: compactSummaries.length ? messages.filter(m => m?.kind !== 'compactSummary') : messages, presents, compactSummaries };
 }
 
