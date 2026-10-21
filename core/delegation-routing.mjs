@@ -208,7 +208,7 @@ export function validSignals(signals) {
 
 /** 枠の今の使用率。リセット時刻を過ぎた枠は使い直しが始まっているので 0 とみなす。分からなければ null */
 function usedNow(w, now) {
-  if (w.resetsAt != null && Number.isFinite(new Date(w.resetsAt).getTime()) && new Date(w.resetsAt).getTime() <= now) return 0;
+  if (w.resetsAt != null && Number.isFinite(new Date(w.resetsAt).getTime()) && new Date(w.resetsAt).getTime() <= now) return w.resetRequiresRefresh ? null : 0;
   return typeof w.usedPercent === 'number' && Number.isFinite(w.usedPercent) ? w.usedPercent : null;
 }
 /** 枠の経過率（%）。期間とリセット時刻から出す。出せない・範囲外なら null */

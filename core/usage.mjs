@@ -70,6 +70,11 @@ export function claudeQuota(data) {
     message: windows.length ? null : t('usage.claudeUnavailable') };
 }
 
+// Retired API-key budgets must never reappear from an older persisted snapshot.
+function withoutRetiredWindows(quota) {
+  return { ...quota, ...(quota?.windows?.some(w => w.provider === 'openrouter') ? { message: null } : {}), ...(Array.isArray(quota?.windows) ? { windows: quota.windows.filter(w => w.provider !== 'openrouter') } : {}),
+    ...(quota?.accounts ? { accounts: quota.accounts.map(withoutRetiredWindows) } : {}) };
+}
 const QUOTA_SNAPSHOTS_FILE = 'usage-quota.json';
 // 写しに残すエージェントの上限（使うエージェントの種類は限られる。溢れないための上限。tests/data-writes-allowlist.mjs）
 const QUOTA_SNAPSHOTS_MAX = 20;
@@ -94,6 +99,14 @@ const quotaRows = quota => Array.isArray(quota?.accounts)
  * 前回も読めていなかった（枠が空）なら、理由の文言だけの行のまま。since は前回の値を読んだ時刻
  */
 function carryRow(row, old, since) {
+  if (Array.isArray(row?.connections)) {
+    const connections = row.connections.map(c => {
+      const was = old?.connections?.find(o => o.provider === c.provider && o.identity === c.identity);
+      return c.state === 'failed' && !c.windows?.length && was?.windows?.length
+        ? { ...c, windows: was.windows, checkedAt: was.checkedAt, staleSince: was.staleSince ?? was.checkedAt } : c;
+    });
+    return { ...row, connections, windows: connections.flatMap(c => c.windows ?? []) };
+  }
   if (!row?.reason || row.windows?.length || !old?.windows?.length) return row;
   const at = old.staleSince ?? since ?? null;
   return { ...row, windows: old.windows, plan: row.plan ?? old.plan ?? null, ...(at != null ? { staleSince: at } : {}) };
@@ -147,7 +160,7 @@ export function createQuotaStore({ now = Date.now, ttl = 60_000, backoffMax = QU
     try {
       const saved = JSON.parse(io.readFileSync(file, 'utf8'));
       for (const [key, quota] of Object.entries(saved?.backends ?? {}).slice(0, QUOTA_SNAPSHOTS_MAX))
-        cache.set(key, { ...quota, generation: serverGeneration, revision: 0, fetchedAt: quota?.checkedAt ?? 0, stale: true });
+        cache.set(key, { ...withoutRetiredWindows(quota), generation: serverGeneration, revision: 0, fetchedAt: quota?.checkedAt ?? 0, stale: true });
     } catch { /* 無い・壊れているなら空で始める */ }
   }
   const persist = () => {
@@ -271,6 +284,10 @@ export const LOGIN_ACCOUNT = 'login';
 export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
   const windows = list => (Array.isArray(list) ? list : []).map(w => ({ label: maskEmail(w.label),
     usedPercent: expired(w, now) ? null : percent(w.usedPercent), resetsAt: w.resetsAt ?? null }));
+  const connections = q => Array.isArray(q?.connections) ? { connections: q.connections.map(c => ({
+    provider: c.provider, state: c.state, windows: windows(c.windows), checkedAt: iso(c.checkedAt),
+    ...(c.staleSince ? { staleSince: iso(c.staleSince) } : {}),
+  })) } : {};
   const account = a => {
     const name = a.accountId ?? LOGIN_ACCOUNT;
     return { account: name, ...(a.ready === false || (a.accountId && tokens?.get(a.accountId) === false) ? { runnable: false } : {}) };
@@ -281,8 +298,8 @@ export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
     return { ...(q?.reason ? { reason: failureOf(q.reason) } : {}),
       ...(Number.isFinite(at) ? { staleSince: iso(at), staleMinutes: Math.max(0, Math.floor((now - at) / 60_000)) } : {}) };
   };
-  return { plan: quota?.plan ?? null, windows: windows(quota?.windows),
-    ...(Array.isArray(quota?.accounts) ? { accounts: quota.accounts.map(a => ({ ...account(a), label: maskEmail(a.label), plan: a.plan ?? null, windows: windows(a.windows), ...failure(a), message: maskEmail(a.message) })) } : {}),
+  return { plan: quota?.plan ?? null, windows: windows(quota?.windows), ...connections(quota),
+    ...(Array.isArray(quota?.accounts) ? { accounts: quota.accounts.map(a => ({ ...account(a), label: maskEmail(a.label), plan: a.plan ?? null, windows: windows(a.windows), ...connections(a), ...failure(a), message: maskEmail(a.message) })) } : {}),
     ...failure(quota), checkedAt: iso(quota?.checkedAt), message: maskEmail(quota?.message) };
 }
 

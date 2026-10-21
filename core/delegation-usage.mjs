@@ -40,7 +40,9 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
     // 取得に失敗した値（checkedAt が null）と、再起動直後の前回の値（stale）は「不明」のまま
     if (!quota?.checkedAt || quota.stale) return entry;
     entry.checkedAt = quota.checkedAt;
-    entry.windows = Array.isArray(quota.windows) ? quota.windows : [];
+    const freshWindows = row => Array.isArray(row.connections)
+      ? row.connections.filter(c => c.state === 'ready').flatMap(c => c.windows ?? []) : Array.isArray(row.windows) ? row.windows : [];
+    entry.windows = freshWindows(quota);
     if (Array.isArray(quota.accounts)) {
       // Claude は台帳の持ち主の手がかり（使用量の設定フォルダ）とトークンの有無で見る。ほかのエージェントは使用量の行（エージェントが読んだもの）のまま
       const ids = b.capabilities?.accounts === 'token' ? await claudeIdentities().catch(() => null) : null;
@@ -48,7 +50,7 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
         const account = row.accountId ?? '';
         const registered = account && ids ? ids.accounts?.find(a => a.id === account) : null;
         // 見出しは人が付けた名前で、メールアドレスを書いていることがある。振り分けの記録はエージェントにも返るので伏せる（ply_usage と同じ）
-        return { account, label: maskEmail(row.label), windows: Array.isArray(row.windows) ? row.windows : [],
+        return { account, label: maskEmail(row.label), windows: freshWindows(row),
           ...(Object.hasOwn(row, 'checkedAt') ? { checkedAt: row.checkedAt } : {}),
           identity: ids ? (account ? registered?.identity ?? null : ids.login ?? null) : row.identity ?? null,
           // 登録したアカウントは資格情報（Claude はトークン）が無いと会話を回せない。ログイン中のアカウントは使用量が読めていれば回せる

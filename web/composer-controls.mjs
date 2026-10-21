@@ -18,7 +18,7 @@ import { splitChipLabel } from "./composer-layout.mjs";
 import { runMark } from "./arc.mjs";
 import { botIcon } from "./channels/bot-icon.mjs";
 import { backendLogo } from "./side.mjs";
-import { quotaOf, shortLabel, percentText, usedOf } from "./header-usage.mjs";
+import { quotaOf, shortLabel, percentText, usedOf, windowsForModel } from "./header-usage.mjs";
 
 /** 一覧の「既定」の札 */
 const DEFAULT_TAG = () => t("chat.model.default");
@@ -373,11 +373,12 @@ function logo(id) {
 }
 
 /** 宛先の面に置く、選んだエージェントの使用量の一行。 */
-export function destinationUsage(result, { account = '', open = null } = {}) {
-  const windows = quotaOf(result?.quota, account)?.windows ?? [];
+export function destinationUsage(result, { account = '', model = '', models = {}, open = null } = {}) {
+  const all = quotaOf(result?.quota, account)?.windows ?? [], resolved = model || models['']?.resolvesTo || '';
+  const windows = !resolved && all.some(w => w.provider) ? [] : windowsForModel(all, resolved);
   if (!windows.length) return null;
   const line = el('div', 'destination-usage');
-  for (const w of windows.slice(0, 2)) {
+  for (const w of windows.slice(0, 3)) {
     const used = usedOf(w);
     const item = el('span', 'destination-usage-item');
     const bar = el('span', 'usage-mini'); bar.setAttribute('aria-hidden', 'true');

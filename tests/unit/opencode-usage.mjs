@@ -6,8 +6,12 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { runCase, summarize } from '../lib/harness.mjs';
 import { accountQuota, opencodeUsage } from '../../core/backends/opencode-usage.mjs';
+import { createQuotaStore, compactQuota } from '../../core/usage.mjs';
+import { windowsFor, checkCandidate, normalizeSettings, elapsedPercent } from '../../core/delegation-routing.mjs';
+import { windowsForModel } from '../../web/header-usage.mjs';
+import { carryQuota, renderQuota } from '../../web/usage.mjs';
+import { N } from '../lib/dom-stub.mjs';
 import { errorOf } from '../../core/backends/opencode-normalize.mjs';
-import { t as translate } from '../../core/i18n.mjs';
 import { loadSqlite } from '../../core/db.mjs';
 
 export const name = 'opencode-usage';
@@ -23,11 +27,17 @@ export default async function testOpencodeUsage(t) {
     seen.push({ url: req.url, headers: req.headers });
     res.setHeader('Content-Type', 'application/json');
     if (scenario === 'unauthorized') { res.writeHead(401); return res.end('secret-provider-response'); }
+    if (scenario === 'forbidden') { res.writeHead(403); return res.end('{}'); }
+    if (scenario === 'not-subscribed') { res.writeHead(403); return res.end('{"error":{"name":"EntitlementError"}}'); }
+    if (scenario === 'server-error') { res.writeHead(503); return res.end('secret-provider-response'); }
     if (scenario === 'redirect') { res.writeHead(302, { location: '/stolen-token' }); return res.end(); }
     if (scenario === 'malformed') return res.end('{invalid');
     if (scenario === 'empty') return res.end('{}');
-    if (req.url === '/api/v1/auth/key') return res.end(JSON.stringify({ data: {
-      effective_budget: { limit_usd: 100, spend_usd: 25, remaining_usd: 75, reset_interval: 'monthly', resets_at: '2033-06-01T00:00:00Z' } } }));
+    if (req.url === '/zen/go/v1/usage') return res.end(JSON.stringify({ usage: {
+      rolling: { percent: 3, resetsAt: '2033-05-18T03:33:20Z' },
+      weekly: { percent: 6, resetsAt: '2033-05-24T03:33:20Z' },
+      monthly: { percent: 3, resetsAt: '2033-06-01T00:00:00Z' },
+    } }));
     if (req.url === '/backend-api/wham/usage') return res.end(JSON.stringify({ plan_type: 'plus', rate_limit: {
       primary_window: { used_percent: 27, limit_window_seconds: 18000, reset_at: 2000000000 },
       secondary_window: { used_percent: 61, limit_window_seconds: 604800, reset_at: 2000500000 },
@@ -42,7 +52,7 @@ export default async function testOpencodeUsage(t) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const fetcher = (url, init) => {
     const u = new URL(url);
-    assert.ok(['chatgpt.com', 'api.github.com', 'openrouter.ai'].includes(u.hostname));
+    assert.ok(['chatgpt.com', 'api.github.com', 'opencode.ai'].includes(u.hostname));
     return fetch(`http://127.0.0.1:${server.address().port}${u.pathname}`, init);
   };
   const oauth = { type: 'oauth', access: 'access-one', refresh: 'github-token-one', expires: Date.now() + 3600000, accountId: 'chatgpt-org-one' };
@@ -87,21 +97,94 @@ export default async function testOpencodeUsage(t) {
     put.run('c3', 'broken', 'not-json');
     db.close();
     const dbOnly = await accountQuota(null, { fetcher });
-    assert.equal(dbOnly.windows.length, 1);
-    assert.equal(dbOnly.windows[0].provider, 'openrouter');
-    assert.equal(dbOnly.windows[0].usedPercent, 25);
-    assert.equal(dbOnly.windows[0].minutes, 43200);
-    assert.equal(seen.find(r => r.url.includes('auth/key')).headers.authorization, 'Bearer or-db-key');
-    assert.ok(dbOnly.message.includes(translate('opencode.usage.zenQuotaUnavailable')));
+    assert.equal(dbOnly.windows.length, 3);
+    assert.ok(dbOnly.windows.every(w => w.provider === 'opencode-go'));
+    assert.deepEqual(dbOnly.windows.map(w => w.usedPercent), [3, 6, 3]);
+    assert.deepEqual(dbOnly.windows.map(w => w.minutes), [300, 10080, null]);
+    assert.ok(dbOnly.windows.every(w => w.label.startsWith('Go ')));
+    assert.equal(seen.find(r => r.url.includes('/zen/go/')).headers.authorization, 'Bearer zen-access');
+    assert.ok(!seen.some(r => r.url.includes('/auth/key')));
     assert.ok(!JSON.stringify(dbOnly).includes('or-db-key') && !JSON.stringify(dbOnly).includes('zen-access'));
-    t.ok('opencode.db の資格情報も読む。OpenRouter は月次の枠、Zen は照会口なしの正直な文、秘密は出さない', true);
+    t.ok('Go reads existing SQLite OAuth credentials: three percentages, calendar reset, no OpenRouter request', true);
 
-    // 同じ接続先が両方にあるときは auth.json が優先。db にしかない接続先も残る
-    await fs.writeFile(path.join(loginDir, 'auth.json'), JSON.stringify({ openrouter: { type: 'api', key: 'or-json-key' } }));
+    await fs.writeFile(path.join(loginDir, 'auth.json'), JSON.stringify({ opencode: { type: 'api', key: 'old-json-key' } }));
     const merged = await accountQuota(null, { fetcher });
-    assert.equal(seen.filter(r => r.url.includes('auth/key')).at(-1).headers.authorization, 'Bearer or-db-key');
-    assert.ok(merged.message.includes(translate('opencode.usage.zenQuotaUnavailable')));
-    t.ok('移行済みの DB 資格情報を優先し、古い auth.json で上書きしない', true);
+    assert.equal(seen.filter(r => r.url.includes('/zen/go/')).at(-1).headers.authorization, 'Bearer zen-access');
+    assert.equal(merged.windows.length, 3);
+    t.ok('SQLite credentials take precedence over migrated auth.json', true);
+
+    const goAccount = { ...account, credential: { auth: { opencode: { type: 'api', key: 'go-key' }, openrouter: { type: 'api', key: 'ignored-key' } } } };
+    const api = await accountQuota(goAccount, { fetcher });
+    assert.equal(seen.at(-1).headers.authorization, 'Bearer go-key');
+    assert.deepEqual(windowsForModel([...api.windows, ...quota.windows], 'opencode-go/kimi-k2.5'), api.windows);
+    assert.deepEqual(windowsFor('opencode', 'opencode-go/kimi-k2.5', [...api.windows, ...quota.windows]), api.windows);
+    const now = Date.now(), candidate = 'opencode:opencode-go/kimi-k2.5';
+    const verdict = checkCandidate(candidate, { usage: { opencode: { available: true, checkedAt: now,
+      models: { 'opencode-go/kimi-k2.5': true }, windows: api.windows } }, settings: normalizeSettings({}), now });
+    assert.equal(verdict.ok, true);
+    assert.notEqual(verdict.reason, 'usage_unknown');
+    const passedReset = api.windows.map(w => w.minutes === null ? { ...w, resetsAt: new Date(now - 1).toISOString() } : w);
+    assert.equal(checkCandidate(candidate, { usage: { opencode: { available: true, checkedAt: now,
+      models: { 'opencode-go/kimi-k2.5': true }, windows: passedReset } }, settings: normalizeSettings({}), now }).reason, 'usage_unknown');
+    assert.equal(elapsedPercent(api.windows[2], now), null);
+    assert.equal(compactQuota(api).windows[0].label, api.windows[0].label);
+    t.ok('opencode-go model candidates and the header match Go windows; monthly never assumes 30 days', true);
+
+    for (const state of ['unauthorized', 'forbidden', 'server-error', 'not-subscribed', 'empty', 'malformed', 'redirect']) {
+      scenario = state;
+      const value = await accountQuota(goAccount, { fetcher });
+      assert.equal(value.connections[0].state, state === 'not-subscribed' ? 'not-subscribed' : 'failed');
+      assert.equal(value.windows.length, 0);
+      assert.ok(!JSON.stringify(value).includes('secret-provider-response'));
+    }
+    scenario = 'normal';
+    const expiredGo = { ...goAccount, credential: { auth: { opencode: { ...oauth, expires: 1 } } } };
+    const beforeGo = seen.length;
+    assert.equal((await accountQuota(expiredGo, { fetcher })).connections[0].state, 'expired');
+    assert.equal((await accountQuota({ ...goAccount, credential: { auth: {} } }, { fetcher })).connections[0].state, 'no-login');
+    const router = await accountQuota({ ...goAccount, credential: { auth: { openrouter: { type: 'api', key: 'ignored' } } } }, { fetcher });
+    assert.equal(router.connections.length, 0); assert.equal(router.windows.length, 0);
+    assert.equal(seen.length, beforeGo);
+    t.ok('Go separates entitlement, expired OAuth, missing auth, generic 401/403/5xx and unsupported connections', true);
+
+    const store = createQuotaStore();
+    const snapshot = value => ({ ...value, accounts: [{ ...value, accountId: null, checkedAt: Date.now() }] });
+    await store.refresh('fixture', () => snapshot(api));
+    scenario = 'server-error';
+    const failure = snapshot(await accountQuota(goAccount, { fetcher }));
+    const retained = await store.refresh('fixture', () => failure, { force: true });
+    assert.equal(retained.accounts[0].windows.length, 3);
+    assert.ok(retained.accounts[0].connections[0].staleSince);
+    assert.equal(carryQuota(failure, snapshot(api)).accounts[0].windows.length, 3);
+    const changed = { ...goAccount, credential: { auth: { opencode: { type: 'api', key: 'different-key' } } } };
+    const freshFailure = snapshot(await accountQuota(changed, { fetcher }));
+    assert.equal((await store.refresh('fixture', () => freshFailure, { force: true })).accounts[0].windows.length, 0);
+    assert.equal(carryQuota(freshFailure, snapshot(api)).accounts[0].windows.length, 0);
+    assert.equal((await store.refresh('fixture', () => snapshot(router), { force: true })).accounts[0].windows.length, 0);
+    const savedDir = path.join(scratch, 'quota-cache');
+    await fs.mkdir(savedDir);
+    const persistent = createQuotaStore({ dir: savedDir });
+    await persistent.refresh('fixture', () => snapshot(api)); await persistent.flush();
+    const restored = createQuotaStore({ dir: savedDir });
+    const afterRestart = await restored.refresh('fixture', () => failure, { force: true });
+    assert.equal(afterRestart.accounts[0].windows.length, 3);
+    assert.ok(afterRestart.accounts[0].connections[0].staleSince);
+    await restored.flush();
+    const oldSnapshot = { backends: { fixture: { windows: [{ provider: 'openrouter', usedPercent: 75 }],
+      accounts: [{ windows: [{ provider: 'openrouter', usedPercent: 75 }], message: 'retired diagnostic' }] } } };
+    await fs.writeFile(path.join(savedDir, 'usage-quota.json'), JSON.stringify(oldSnapshot));
+    const retired = createQuotaStore({ dir: savedDir }).get('fixture');
+    assert.equal(retired.windows.length, 0); assert.equal(retired.accounts[0].windows.length, 0);
+    scenario = 'normal';
+    t.ok('Server and browser retain failed reads only per connection and credential generation', true);
+
+    {
+      const root = new N('div');
+      renderQuota(root, snapshot(api), null, {}, { model: 'opencode-go/kimi-k2.5', retry() {} });
+      assert.equal(root.querySelectorAll('.usage-window').length, 3);
+      assert.equal(root.querySelectorAll('.usage-provider').length, 1);
+    }
+    t.ok('Settings render account → connection → three periods once, without the top-level copy', true);
 
     for (scenario of ['unauthorized', 'malformed', 'empty', 'redirect']) {
       const result = await accountQuota(account, { fetcher });
@@ -116,8 +199,8 @@ export default async function testOpencodeUsage(t) {
     const unsupported = await accountQuota({ ...account, credential: { auth: { openai: { ...oauth, expires: 1 }, custom: oauth, key: { type: 'api', key: 'key-secret' } } } }, { fetcher });
     assert.equal(seen.length, before);
     assert.equal(unsupported.windows.length, 0);
-    assert.ok(unsupported.message.includes(translate('opencode.usage.accessExpired')));
-    assert.ok(unsupported.message.includes(translate('opencode.usage.providerUnsupported')));
+    assert.equal(unsupported.connections[0].state, 'expired');
+    assert.equal(unsupported.connections.length, 1);
     t.ok('expired, unsupported, HTTP errors, redirects and malformed replies remain honestly unknown', true);
 
     assert.equal(errorOf({ name: 'APIError', data: { message: 'slow down', statusCode: 429 } }).limited, true);
