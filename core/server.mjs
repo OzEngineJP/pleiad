@@ -820,6 +820,7 @@ async function syncPlusLink({ registerHost = true } = {}) {
   plusLink.update({
     enabled: st?.enabled === true, signedIn: snap.signedIn === true, uid,
     accountStatus: snap.account?.status ?? null,
+    accountReadAt: snap.accountReadAt ?? 0,
     connect: st?.plus?.connect === true,
     hostState: plusHost.host()?.state ?? null,
     limits: snap.account?.limits ?? null,

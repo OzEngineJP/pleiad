@@ -15,7 +15,10 @@ export default async function (t) {
     [{ ...PLUS, signedIn: false }, REMOTE, 'Pleiad Plus にログイン', 'hide'],
     [{ ...PLUS, account: { status: 'free' } }, REMOTE, 'Pleiad Plus にする', 'hide'],
     [{ ...PLUS, account: { status: 'disabled' } }, REMOTE, 'このアカウントでは公式の中継を使えません', 'disabled'],
-    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'taken' } } }, 'この PC はほかの Pleiad Plus のアカウントでつないでいます。', 'disabled'],
+    // 中継が 4401 account で閉じた。アカウントがまだ plus と読めているなら、スイッチの切り入れでつなぎ直せる
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'error', error: { code: 'account' } } } }, 'このアカウントでは公式の中継を使えません', 'enabled'],
+    [{ ...PLUS, account: { status: 'disabled' } }, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'error', error: { code: 'account' } } } }, 'このアカウントでは公式の中継を使えません', 'disabled'],
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'taken' } } },'この PC はほかの Pleiad Plus のアカウントでつないでいます。', 'disabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'limit' } } }, 'このアカウントの上限に達しています', 'enabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'error' } } }, 'サーバーへの接続に失敗しました', 'enabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'connecting' } } }, '接続しています…', 'enabled'],

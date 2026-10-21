@@ -90,13 +90,17 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
   return null;
 }
 
-/** null=status の初期化前、hide=条件行、disabled=状態表示、enabled=操作可 */
+/**
+ * null=status の初期化前、hide=条件行、disabled=状態表示、enabled=操作可。
+ * 中継が 4401 account で閉じた（link の error account）だけなら、アカウントは plus と読めているので操作可のまま
+ * （切って入れ直すと、止まりを解いてつなぎ直す。docs/plus.md「Plus のつながり」）
+ */
 export function plusRemoteToggleMode(plusStatus, remoteStatus) {
   if (!plusStatus) return 'hide';
   const s = plusStatus;
   if (s.needsUpdate || !s.signedIn || s.account?.status === 'free') return 'hide';
   if (s.state === 'maintenance' || s.account?.status === 'disabled' || s.error?.code === 'account'
-    || remoteStatus?.plus?.link?.error?.code === 'account' || remoteStatus?.plus?.host?.state === 'taken') return 'disabled';
+    || remoteStatus?.plus?.host?.state === 'taken') return 'disabled';
   return 'enabled';
 }
 
@@ -670,7 +674,8 @@ export function setupRemote({ cmd, page, open = () => {} }) {
 
   // ---- サーバーから
   async function refresh() {
-    try { [status, plusStatus] = await Promise.all([cmd('remoteStatus'), cmd('plusStatus')]); }
+    // 開いたときに account も読み直す（30 秒に 1 回まで。中継の 4401 account の止まりは、読めて plus なら解ける）
+    try { [status, plusStatus] = await Promise.all([cmd('remoteStatus'), cmd('plusStatus', { refresh: true })]); }
     catch (e) { message = e.message; }
     paint();
   }

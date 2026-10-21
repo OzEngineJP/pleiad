@@ -3,14 +3,20 @@
 //
 // provider が決めること:
 //   ready()    「ほかの端末からの操作を許可する」・ログイン中・account.status === 'plus'・plus.connect・
-//              この PC の登録が registered、の全部がそろったときだけ true
+//              この PC の登録が registered、の全部がそろったときだけ true。
+//              そろっていても 4401 'account' で止まっている間は { error: account }（中継へ張りに行かない）
 //   url(path)  /v1/auth/config の urls.relay を行き先にする
 //   headers()  { 'x-pleiad-host': hostId, 'x-pleiad-account': <ID トークン> }。トークンは張るたびに取る
 //   owns(d)    via:'plus' で、plusUid が今のアカウントの uid の端末だけ
 //   allowPairing  false（公式の中継はペアリングを受けない。ホストも受けない）
-//   onClose()  4401 'account' → 張り直さない（error 'account'）。4429 'account limit' → 'limit'。
+//   onClose()  4401 'account' → 止まる（error 'account'。張り直さない）。4429 'account limit' → 'limit'。
 //              ほかの 4401 → ID トークンを取り直して 1 回だけ張り直す（また 4401 なら 'auth'）。
 //              1013 → 今の backoff で張り直す。ほか → 今と同じ
+//
+// 4401 'account' の止まりを解く（update() で。解いたあとは refreshPlus が張り直す）:
+//   張る条件がいったん崩れた（account が plus でなくなった・plus.connect か enabled を切った・ログアウト・登録）、
+//   ほかのアカウントになった、または止まったあとに GET /v1/account を読めて plus のまま（accountReadAt が進んだ）。
+//   止まっている間に session の知らせや設定の書き換えで見直しが来ても、これらが無ければ張りに行かない
 //
 // 受け入れ（onIncomingAdmit）: 中継が deviceId の無い端末を incoming {admit:true} で知らせたとき。
 //   Noise IK の応答側でハンドシェイクし、メッセージ 1 の plus.idToken を自分で検証し、
@@ -50,16 +56,22 @@ export function createPlusLink({ session, verifier, remote, onAdmitted = () => {
   now = Date.now, admitLimit = 20, admitWindowMs = 60 * 60_000 } = {}) {
   // 張る条件と判定の材料。update() で外（server の同期の手）から写す
   const st = {
-    enabled: false, signedIn: false, uid: null, accountStatus: null,
+    enabled: false, signedIn: false, uid: null, accountStatus: null, accountReadAt: 0,
     connect: false, hostState: null, limits: null, relayUrl: null,
   };
+  let held = null;             // 4401 'account' で止まっている間 { uid, readAt }（止まったときの uid と accountReadAt）
   let forceToken = false;      // ほかの 4401 のあと、次に張るときは ID トークンを取り直す
   let authRetried = false;     // その取り直しをもう使ったか
   const admitTimes = [];       // 直近の受け入れの時刻（上限を数える）
 
-  const ready = () => Boolean(
+  const wanted = () => Boolean(
     st.enabled && st.signedIn && st.accountStatus === 'plus' && st.connect && st.hostState === 'registered'
   );
+  const accountError = () => ({ code: 'account', message: t('remote.plus.closed.account') });
+  const ready = () => {
+    if (!wanted()) return false;
+    return held ? { error: accountError() } : true;
+  };
 
   /**
    * 端末を登録してよいかの判定。{ denied: 'account'|'devices'|'unavailable'|'rate'|null, replaceId }
@@ -83,7 +95,7 @@ export function createPlusLink({ session, verifier, remote, onAdmitted = () => {
   async function onIncomingAdmit(ctx) {
     const { ws, timer } = ctx;
     // 1. Plus のつながりが今オフ → 平文のまま 4401 'plus off'（ハンドシェイクに応じない）
-    if (!ready()) {
+    if (ready() !== true) {
       const close = () => { clearTimeout(timer); closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'plus off'); };
       if (ws.readyState === WebSocket.OPEN) close(); else ws.once('open', close);
       return;
@@ -160,7 +172,10 @@ export function createPlusLink({ session, verifier, remote, onAdmitted = () => {
     allowPairing: false,
     onIncomingAdmit: ctx => onIncomingAdmit(ctx),
     onClose(code, reason) {
-      if (code === 4401 && reason === 'account') return { error: { code: 'account', message: t('remote.plus.closed.account') } };
+      if (code === 4401 && reason === 'account') {
+        held = { uid: st.uid, readAt: st.accountReadAt ?? 0 };
+        return { error: accountError() };
+      }
       if (code === 4429 && reason === 'account limit') return { error: { code: 'limit', message: t('remote.plus.closed.limit') } };
       if (code === 4401) {
         // ID トークンを取り直して 1 回だけ張り直す。また 4401 なら 'auth'
@@ -174,7 +189,10 @@ export function createPlusLink({ session, verifier, remote, onAdmitted = () => {
 
   return {
     provider,
-    /** 張る条件と判定の材料を写す（account・ログイン・plus.connect・enabled・登録・limits・relay の URL） */
-    update(patch) { Object.assign(st, patch ?? {}); },
+    /** 張る条件と判定の材料を写す（account・accountReadAt・ログイン・plus.connect・enabled・登録・limits・relay の URL） */
+    update(patch) {
+      Object.assign(st, patch ?? {});
+      if (held && (!wanted() || st.uid !== held.uid || (st.accountReadAt ?? 0) > held.readAt)) held = null;
+    },
   };
 }

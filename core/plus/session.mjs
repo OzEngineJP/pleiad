@@ -74,6 +74,7 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
   let refreshing = null;        // single-flight
   let cachedCfg = null;         // 最後に読めた /v1/auth/config
   let accountTimer = null, accountLastAt = 0, accountPolling = null;
+  let accountReadAt = 0;        // GET /v1/account を最後に読めた時刻（読めなかった・403 のときは進めない）
   const listeners = new Set();
 
   const client = createPlusClient({
@@ -94,6 +95,7 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
       signedIn: signedIn(),
       login: { phase: loginPhase },
       account,
+      accountReadAt: accountReadAt || null,
       uid: stored?.uid ?? null,
       reachable,
       error,
@@ -110,7 +112,7 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
 
   /** 保管とメモリを消す（relogin・更新の拒否・ログアウト）。知らせは signedOut */
   async function clearSession(err) {
-    stored = null; idToken = null; idTokenExpiresAt = 0; account = null;
+    stored = null; idToken = null; idTokenExpiresAt = 0; account = null; accountReadAt = 0;
     stopAccountPoll();
     if (err) error = err;
     await secrets.delete(STORE_KEY).catch(() => {});
@@ -119,7 +121,7 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
 
   /** 保管が読めない（SECRET_LOCKED・SECRET_FILE_BROKEN）。消さずに locked */
   function lockSession() {
-    stored = null; idToken = null; idTokenExpiresAt = 0; account = null;
+    stored = null; idToken = null; idTokenExpiresAt = 0; account = null; accountReadAt = 0;
     error = { code: 'locked' };
   }
 
@@ -211,6 +213,7 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
         const next = pickAccount(await client.request('GET', '/v1/account'));
         if (next) {
           account = next;
+          accountReadAt = now();
           if (!reachable) reachable = true;
           emit('account');
         }

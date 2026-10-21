@@ -64,6 +64,10 @@ export default async function (t) {
     verify: token => verifier.verify(token),
     isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid,
   });
+  // ホストが公式の中継へ張りに来た回数（止まっている間に張りに来ないことを数える）
+  let hostTries = 0;
+  const authzHost = authz.host;
+  authz.host = ctx => { hostTries++; return authzHost(ctx); };
   const officialRelay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz });
   const officialAddr = await officialRelay.listen(0, '127.0.0.1');
   const officialUrl = `http://127.0.0.1:${officialAddr.port}`;
@@ -78,6 +82,7 @@ export default async function (t) {
     onChange: () => {},
   };
   const hostStateSeen = [];
+  let accountReadAt = 0;   // session の accountReadAt（GET /v1/account を最後に読めた時刻）の代役
 
   const remote = createRemoteHost({ dataDir, cipher: plainCipher, target: () => ({ host: '127.0.0.1', port: 1 }), token: 'tok', env: {}, backoff: { minMs: 60, maxMs: 200 }, log: () => {}, onIdentity: () => { void host.maybeRegister(); } });
   let plusCount = 0;
@@ -94,7 +99,7 @@ export default async function (t) {
     plusCount = r.plus?.devices ?? 0;
     plusLink.update({
       enabled: r.enabled, signedIn: st.signedIn, uid: st.signedIn ? st.account?.uid ?? null : null,
-      accountStatus: st.account?.status ?? null, connect: r.plus?.connect === true,
+      accountStatus: st.account?.status ?? null, accountReadAt, connect: r.plus?.connect === true,
       hostState: host.host().state, limits: st.account?.limits ?? null, relayUrl: officialUrl,
     });
     remote.refreshPlus();
@@ -206,9 +211,46 @@ export default async function (t) {
     authz.handle.closeTag(`h:${st.hostId}`, 4401, 'account');
     const sErr1 = await until(async () => (await remote.status()).links.plus.state === 'error' ? remote.status() : null, 5000, 'account は張り直さない');
     t.ok('4401 account は error account で張り直さない', sErr1.links.plus.error?.code === 'account', JSON.stringify(sErr1.links.plus));
+    // 止まっている間は、アカウントの状態が変わらなければ中継へ張りに行かない
+    // （session の知らせのたびの見直し・設定の書き換えに伴う apply() でも）
     authz.state.blockHosts = null;
+    const triesHeld = hostTries;
     await sync();
-    await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '条件を戻すと張り直す');
+    await remote.setSettings({ hostName: 'plus-desk' });
+    await sync();
+    await sleep(400);
+    const sHeld = await remote.status();
+    t.ok('account で止まっている間は、アカウントの状態が変わらなければ中継へつながない',
+      hostTries === triesHeld && sHeld.links.plus.state === 'error' && sHeld.links.plus.error?.code === 'account',
+      `tries=${hostTries - triesHeld} ${JSON.stringify(sHeld.links.plus)}`);
+    // アカウントを読み直して plus と分かった（GET /v1/account が status:'plus'）→ 止まりを解いてつなぎ直す
+    accountReadAt = Date.now();
+    await sync();
+    await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '読み直して plus ならつなぎ直す');
+    t.ok('account で止まったあと、アカウントを読み直して plus ならつなぎ直す', true);
+    // アカウントが disabled になってから plus に戻る（停止 → 再開）→ つなぎ直す
+    authz.state.blockHosts = { code: 4401, reason: 'account' };
+    authz.handle.closeTag(`h:${st.hostId}`, 4401, 'account');
+    await until(async () => (await remote.status()).links.plus.error?.code === 'account', 5000, 'もう一度 account で止まる');
+    plus.state.accounts[UID].status = 'disabled';
+    await sync();
+    await until(async () => (await remote.status()).links.plus.state === 'disabled', 5000, 'disabled なら閉じる');
+    authz.state.blockHosts = null;
+    plus.state.accounts[UID].status = 'plus';
+    await sync();
+    await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, 'plus に戻ればつなぎ直す');
+    t.ok('account で止まったあと、アカウントが disabled → plus に戻ればつなぎ直す', true);
+    // 設定 › リモートの Pleiad Plus のスイッチを切って入れ直す → つなぎ直す
+    authz.state.blockHosts = { code: 4401, reason: 'account' };
+    authz.handle.closeTag(`h:${st.hostId}`, 4401, 'account');
+    await until(async () => (await remote.status()).links.plus.error?.code === 'account', 5000, 'また account で止まる');
+    authz.state.blockHosts = null;
+    await remote.setSettings({ plusConnect: false });
+    await sync();
+    await remote.setSettings({ plusConnect: true });
+    await sync();
+    await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, 'スイッチを入れ直すとつなぎ直す');
+    t.ok('account で止まったあと、Pleiad Plus のスイッチを切って入れ直すとつなぎ直す', true);
     authz.state.blockHosts = { code: 4429, reason: 'account limit' };
     authz.handle.closeTag(`h:${st.hostId}`, 4429, 'account limit');
     const sErr2 = await until(async () => (await remote.status()).links.plus.state === 'error' ? remote.status() : null, 5000, 'account limit は張り直さない');

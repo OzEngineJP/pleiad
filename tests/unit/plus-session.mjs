@@ -175,6 +175,33 @@ export default async function (t) {
     await plus.close();
   }
 
+  // ---- 6b. accountReadAt: GET /v1/account を読めたときだけ進む（中継の 4401 account の止まりを解く手がかり） ----
+  {
+    const { plus, session, clock } = await signedInSession();
+    await tick(20);
+    const read1 = session.snapshot().accountReadAt;
+    t.ok('account を読めたら accountReadAt が入る', typeof read1 === 'number' && read1 > 0, String(read1));
+    let reply = { status: 403, body: { error: { code: 'account_disabled', message: 'stopped' } } };
+    plus.route('GET', '/v1/account', (req, res) => {
+      res.writeHead(reply.status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(reply.body));
+    });
+    await clock.advance(30_000);
+    await session.status({ refresh: true });
+    await tick(20);
+    const s2 = session.snapshot();
+    t.ok('読めなかった（403 account_disabled）ときは accountReadAt が進まない', s2.account?.status === 'disabled' && s2.accountReadAt === read1,
+      `${s2.account?.status} ${s2.accountReadAt}`);
+    reply = { status: 200, body: { uid: 'user-1', email: 'user@example.com', status: 'plus' } };
+    await clock.advance(30_000);
+    await session.status({ refresh: true });
+    await tick(20);
+    const s3 = session.snapshot();
+    t.ok('読み直して plus と分かると accountReadAt が進む', s3.account?.status === 'plus' && s3.accountReadAt > read1,
+      `${s3.account?.status} ${s3.accountReadAt}`);
+    await plus.close();
+  }
+
   // ---- 7. tokenProjectId が違う → 保管を消して relogin ----------------------
   {
     // 前の起動で別のプロジェクト宛に保管されたセッションが残っている、を模す

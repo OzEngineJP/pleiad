@@ -467,7 +467,7 @@ link ごとの振る舞いは provider が決める:
 - 端末の記録（devices.json）の `via` は `'own'` か `'plus'`（無いものは `'own'` とみなす。今のファイルはそのまま読める）。`plusUid` は `via: 'plus'` の端末を受け入れたアカウントの uid（状態には出さない）
 - 「ほかの端末からの操作を許可する」が off なら全部の link を閉じる。`status()` の `links.<名>` に各 link の状態が出る（`connection` は `links.own` と同じもの）
 
-plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus.md「Plus のつながり」）。`enabled`・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`・この PC の登録（`core/plus/hosts.mjs`）が `registered`、の全部がそろったときだけ張り、行き先は `/v1/auth/config` の `urls.relay`、認証は `X-Pleiad-Host` と `X-Pleiad-Account`（ID トークン）。`onIncomingAdmit` で、アカウントでの受け入れ（§3.4）を担う。条件が変わったときはサーバーが `refreshPlus()` で見直す（張っている間は何もしない）。`status().plus` に `{ connect, link, host, devices }` を出す。`plusHostRebind`（人だけ）はホストの鍵を作り直して端末を全部取り消し、`onIdentity` で登録し直す。
+plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus.md「Plus のつながり」）。`enabled`・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`・この PC の登録（`core/plus/hosts.mjs`）が `registered`、の全部がそろったときだけ張り、行き先は `/v1/auth/config` の `urls.relay`、認証は `X-Pleiad-Host` と `X-Pleiad-Account`（ID トークン）。`onIncomingAdmit` で、アカウントでの受け入れ（§3.4）を担う。条件が変わったときはサーバーが `refreshPlus()` で見直す（張っている間は何もしない。中継が `4401 'account'` で閉じたあとは、アカウントが Plus で使えると新しく分かるか条件がいったん崩れるまで ready() が error を返し、見直しでも張らない）。`status().plus` に `{ connect, link, host, devices }` を出す。`plusHostRebind`（人だけ）はホストの鍵を作り直して端末を全部取り消し、`onIdentity` で登録し直す。
 
 ## 7. デスクトップ版の端末（#14）
 

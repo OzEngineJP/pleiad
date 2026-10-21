@@ -88,6 +88,7 @@
   signedIn: true,
   login: { phase: 'idle' }, // 'idle' | 'waiting' | 'finishing' | 'failed'
   account: { uid, email, provider, status, plan, limits, usage, sync } | null,
+  accountReadAt: 1760000000000 | null, // GET /v1/account を最後に読めた時刻（ms。読めなかった・403 のときは進まない）
   reachable: true,          // false = サーバーに届かない（account は最後に知った値）
   error: null,              // { code: 'relogin' | 'locked' } | null
   urls: { account, profile },
@@ -186,7 +187,12 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - 張るのは「ほかの端末からの操作を許可する」（`enabled`）・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`（既定 false。`setRemoteSettings { plusConnect }` で入れる。人だけ）・登録が `registered`、が全部そろったとき
 - 行き先は `/v1/auth/config` の `urls.relay`。ヘッダーは `{ 'x-pleiad-host': hostId, 'x-pleiad-account': <ID トークン> }`（張るたびに取る）。中継の中身は Noise の暗号のまま（own と同じ）
 - `remoteStatus.plus = { connect, link: { state, error, since, retryAt }, host: { state, error }, devices }`
-- 中継が制御用の接続を閉じたとき: `4401 'account'` → 張り直さない（link の error `account`）。`4429 'account limit'` → `limit`。ほかの `4401` → ID トークンを取り直して 1 回だけ張り直す（また `4401` なら `auth`）。`1013` → 今の backoff で張り直す。ほか → 今と同じ。`account`・`accountStatus`・`plus.connect`・`enabled`・登録・ログインが変わったときに ready() から見直す
+- 中継が制御用の接続を閉じたとき: `4401 'account'` → 止まる（link の error `account`。張り直さない）。`4429 'account limit'` → `limit`。ほかの `4401` → ID トークンを取り直して 1 回だけ張り直す（また `4401` なら `auth`）。`1013` → 今の backoff で張り直す。ほか → 今と同じ。`account`・`accountStatus`・`plus.connect`・`enabled`・登録・ログインが変わったときに ready() から見直す
+- `4401 'account'` の止まり: 止まっている間は、ほかの条件がそろっていても ready() が `{ error: account }` を返し、中継へ張りに行かない（session の知らせのたびの見直し・設定の書き換えに伴う張り直しでも）。次のどれかで解いて、ready() から張り直す
+  - アカウントが Plus で使えると新しく分かった: 止まったあとに `GET /v1/account` を読めて `status: 'plus'`（`accountReadAt` が止まったときより進んだ）。読むのは 15 分ごと・設定 › リモートや設定 › Pleiad Plus を開いたとき（30 秒に 1 回まで）・ログインした直後・起動したとき。止まった瞬間には読み直さない（中継と api の言い分が食い違うと、読むたびに張り直して断られるのを繰り返すため）
+  - 張る条件がいったん崩れた: `account.status` が `plus` でなくなった（停止で `disabled` と読めた）・設定 › リモートの Pleiad Plus のスイッチ（`plus.connect`）か「ほかの端末からの操作を許可する」を切った・ログアウト・登録が `registered` でなくなった。そろい直したら張る
+  - ほかのアカウントになった（uid が変わった）・アプリを起動し直した（止まりはメモリにだけ持つ）
+- 止まっている間の設定 › リモートは「このアカウントでは公式の中継を使えません」の 1 行を出す（ほかの PC へ のまとまりと同じ形。ボタンは足さない）。`account.status` が `plus` と読めている間は Pleiad Plus のスイッチを押せる（切って入れ直すとつなぎ直す）。`disabled` と読めている間は押せない（`plus` に戻れば、読めたところで張り直す）
 - `revoke` は両方の link（own・plus）へ送る
 
 ## 端末の受け入れ（同じアカウント。ADR 0240）
