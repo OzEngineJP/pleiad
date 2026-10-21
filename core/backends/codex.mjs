@@ -38,6 +38,7 @@ import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 import * as store from '../store.mjs';
 import { t, agentT } from "../i18n.mjs";
+import { loginCancelledError, loginTimeoutError } from "../auth/login-watch.mjs";
 import { stripInjectedContext } from "../system-messages.mjs";
 
 const NL = String.fromCharCode(10);
@@ -48,6 +49,8 @@ const NL = String.fromCharCode(10);
 function createCodexBackend({ rpc = defaultRpc, account = null, env = null } = {}) {
 const nativeRpc = rpc;
 const heldAppServer = () => heldForAccount(account);
+// 待っているログインをやめる口（auth.cancel。ADR 0243）
+const loginCancels = new Set();
 class CodexRpc extends BaseCodexRpc {
   constructor(config = {}, options = {}) { super({ ...(account ? { cli_auth_credentials_store: 'file' } : {}), ...config }, { ...(env ? { env } : {}), ...options }); }
 }
@@ -2321,8 +2324,11 @@ const backend = {
       if (abortSignal?.aborted) throw new Error(t('accounts.backend.loginCancelled', { agent: 'Codex' }));
       // Subscribe before starting: completion can precede the request response.
       const early = [];
-      let loginId, accept, timer, offDown;
-      const completed = new Promise((resolve, reject) => { accept = p => p.success ? resolve() : reject(new Error(t('codex.auth.loginFailed'))); });
+      let loginId, accept, timer, offDown, stopped = null;
+      // やめた（cancel）・時間切れは、それと分かる code で返す（画面はやめたものを失敗として出さない）
+      const failure = () => stopped === 'cancel' ? loginCancelledError('Codex')
+        : stopped === 'timeout' ? loginTimeoutError(t('codex.auth.loginFailed')) : new Error(t('codex.auth.loginFailed'));
+      const completed = new Promise((resolve, reject) => { accept = p => p.success ? resolve() : reject(failure()); });
       completed.catch(() => {});
       const off = rpc.onNotify((method, params) => {
         if (method !== 'account/login/completed') return;
@@ -2330,14 +2336,18 @@ const backend = {
         if (!loginId || params?.loginId === loginId) accept(params);
       });
       const abort = () => accept({ success: false });
+      const cancel = () => { stopped ??= 'cancel'; abort(); };
+      loginCancels.add(cancel);
       abortSignal?.addEventListener('abort', abort, { once: true });
       offDown = rpc.onDown(abort);
-      timer = setTimeout(abort, 11 * 60_000); timer.unref?.();
+      timer = setTimeout(() => { stopped ??= 'timeout'; abort(); }, 11 * 60_000); timer.unref?.();
       try {
         const res = await rpc.request('account/login/start', { type: 'chatgpt' }, 60_000);
         loginId = res?.loginId ?? null;
         const url = res?.authUrl ?? res?.verificationUrl ?? null;
         for (const p of early) if (!loginId || p?.loginId === loginId) accept(p);
+        // 始める応答を待つ間にやめた。app-server の待ち受け（1455 番）は下の account/login/cancel で閉じる
+        if (stopped === 'cancel') throw failure();
         if (url) {
           emit?.({ type: 'auth', phase: 'url', url, message: t('codex.auth.openBrowser') });
           if (openExternal) await openExternal(url);
@@ -2346,11 +2356,20 @@ const backend = {
         forgetModels();
         emit?.({ type: 'auth', phase: 'done', message: t('codex.auth.loggedIn') });
       } catch (error) {
+        // app-server がログインの戻り先（localhost:1455）の待ち受けを閉じる
         if (loginId) await rpc.request('account/login/cancel', { loginId }, 5000).catch(() => {});
         throw error;
       } finally {
         clearTimeout(timer); off(); offDown?.(); abortSignal?.removeEventListener('abort', abort);
+        loginCancels.delete(cancel);
       }
+    },
+
+    /** 待っているログインをやめる。login は CANCELLED で返り、app-server に account/login/cancel を送る */
+    async cancel() {
+      if (!loginCancels.size) return { cancelled: false };
+      for (const cancel of [...loginCancels]) cancel();
+      return { cancelled: true };
     },
 
     async logout() {

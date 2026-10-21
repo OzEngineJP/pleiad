@@ -31,6 +31,7 @@ import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { t, agentT } from "../i18n.mjs";
+import { createLoginWatch, loginTimeoutError } from "../auth/login-watch.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -165,6 +166,9 @@ let modelCache = null;
 
 /** ログインを 2 本同時に走らせないための印。 */
 let pendingAuth = null;
+
+/** 待っているログインの見張りをやめる口（authCancel）。 */
+const loginWatch = createLoginWatch("Antigravity");
 
 /** 端末でのログインを待つ上限。 */
 const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_AGY_LOGIN_MS ?? 10 * 60_000);
@@ -947,6 +951,7 @@ export const backend = {
     async login({ emit }) {
       if (pendingAuth) throw new Error(t("antigravity.auth.loginRunning"));
       pendingAuth = {};
+      const watch = loginWatch.begin();
       try {
         if (await signedIn()) {
           emit?.({ type: "auth", phase: "done", message: t("antigravity.auth.alreadyLoggedIn") });
@@ -964,18 +969,26 @@ export const backend = {
 
         const until = Date.now() + LOGIN_TIMEOUT_MS;
         while (Date.now() < until) {
-          await new Promise((r) => { const t = setTimeout(r, LOGIN_POLL_MS); t.unref?.(); });
-          if (await signedIn()) {
+          await watch.pause(LOGIN_POLL_MS);
+          const done = await signedIn();
+          watch.check();
+          if (done) {
             emit?.({ type: "auth", phase: "done", message: t("antigravity.auth.loggedIn") });
             return;
           }
         }
         const message = t("antigravity.auth.loginTimeout");
-        emit?.({ type: "auth", phase: "error", message });
-        throw new Error(message);
+        emit?.({ type: "auth", phase: "error", code: "TIMEOUT", message });
+        throw loginTimeoutError(message);
       } finally {
         pendingAuth = null;
+        watch.end();
       }
+    },
+
+    /** 待っているログインをやめる（見張りを止める）。login は CANCELLED で返る */
+    async cancel() {
+      return loginWatch.cancel();
     },
 
     /**

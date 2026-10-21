@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
 import { t, agentT } from '../i18n.mjs';
+import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
 import { BROWSER_SERVER } from '../browser-bridge.mjs';
 import { CONTROL_SERVER } from '../ops/surfaces/mcp.mjs';
 import { SHELL_SERVER } from '../shell-bridge.mjs';
@@ -103,8 +104,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     plan: { label: t('modes.plan'), note: t('devin.modes.planNote'), scope: 'readonly', autonomy: 'ask', enforced: false },
     bypass: { label: 'Bypass', note: t('devin.modes.bypassNote'), scope: 'full', autonomy: 'never', enforced: false },
   });
-  // ログインの案内が同時に走らないよう掴む旗
+  // ログインの案内が同時に走らないよう掴む旗と、待っている見張りをやめる口（authCancel）
   let pendingAuth = null;
+  const loginWatch = createLoginWatch('Devin');
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
     capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true, promptDelivery: true, steer: true,
@@ -463,6 +465,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       async login({ emit }) {
         if (pendingAuth) throw new Error(t('devin.auth.loginRunning'));
         pendingAuth = {};
+        const watch = loginWatch.begin();
         try {
           if (await signedIn()) {
             emit?.({ type: 'auth', phase: 'done', message: t('devin.auth.alreadyLoggedIn') });
@@ -472,19 +475,24 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           emit?.({ type: 'auth', phase: 'url', url: command, message: t('devin.auth.runCommand') });
           const until = Date.now() + LOGIN_TIMEOUT_MS;
           while (Date.now() < until) {
-            await new Promise(r => { const timer = setTimeout(r, LOGIN_POLL_MS); timer.unref?.(); });
-            if (await signedIn()) {
+            await watch.pause(LOGIN_POLL_MS);
+            const done = await signedIn();
+            watch.check();
+            if (done) {
               emit?.({ type: 'auth', phase: 'done', message: t('devin.auth.loggedIn') });
               return;
             }
           }
           const message = t('devin.auth.loginTimeout');
-          emit?.({ type: 'auth', phase: 'error', message });
-          throw new Error(message);
+          emit?.({ type: 'auth', phase: 'error', code: 'TIMEOUT', message });
+          throw loginTimeoutError(message);
         } finally {
           pendingAuth = null;
+          watch.end();
         }
       },
+      /** 待っているログインをやめる（見張りを止める）。login は CANCELLED で返る */
+      async cancel() { return loginWatch.cancel(); },
       /** `devin auth logout`。対話は要らないので Pleiad から実行する */
       async logout() {
         const { code, err, out } = await runAuth(['auth', 'logout']);

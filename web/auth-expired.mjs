@@ -1,7 +1,8 @@
 // 会話の中の「ログインの期限切れ」の失敗の行（#53。docs/design-system.md「ログインの期限切れ」、ADR 0212）。
 // ターンが 401（turnResult の kind: 'auth'。server が auth: { mode: cli | token } を添える）で失敗したときだけ、
 // ふつうの「✕ 失敗 <エラー文>」の代わりに、何が切れたかの一文と直す入口を出す:
-//   - CLI のログイン（mode: cli）: ［ログインし直す］（設定の「ログイン」と同じ authLogin）→ 回る印と「ブラウザーでログインしてください…」・［キャンセル］
+//   - CLI のログイン（mode: cli）: ［ログインし直す］（設定の「ログイン」と同じ authLogin）→ 回る印と「ブラウザーでログインしてください…」・［やめる］
+//     （URL が届いたら［ログインの画面を開く］［リンクをコピー］も。web/auth-links.mjs、ADR 0243）
 //     → 済んだら、この行から始めた・失敗したターンで何も出ていない（pristine）・前と同じアカウント、がそろえば自動でもう一度送り
 //       （「✓ ログインし直して、もう一度送りました」）、そろわなければ「✓ ログインしました」と［もう一度送る］
 //   - Pleiad の Claude のアカウントのトークン（mode: token）: ［トークンを再発行］（Claude のアカウントの面を開いて再発行を始める）。自動では送らない
@@ -9,6 +10,7 @@
 // 行は会話の流れの中だけ（ほかの失敗の行と同じく、開き直すと出ない）。動き（ログイン・送り直し・面を開く）は呼び手（web/client.mjs）が渡す
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
+import { authLinks } from './auth-links.mjs';
 
 /** 「✕ 失敗」に続く一文。agent はエージェントの名前（Claude Code）、accountName は名前が添えられていないときの控え（アカウントの一覧） */
 export function authFailureMessage(auth, { agent = '', accountName = '' } = {}) {
@@ -30,7 +32,7 @@ export function shouldAutoResend({ fromRow = false, pristine = false, before = n
 }
 
 /**
- * 失敗の行を描く。node は会話の出来事の行（.m.sys）。返すのは { signedIn() }: ほか（設定）からのログインが済んだと伝える口
+ * 失敗の行を描く。node は会話の出来事の行（.m.sys）。返すのは { signedIn(), authUrl(url) }: ほか（設定）からのログインが済んだ・ログインの URL が届いたと伝える口
  * opts:
  *   auth, pristine, agent, accountName, before（失敗した時点のアカウント）, remote（リモートの窓）
  *   login() → Promise<{ account }>（authLogin。失敗は reject、取り消しは code: 'CANCELLED'）, cancel()
@@ -45,6 +47,7 @@ export function paintAuthFailure(node, opts) {
   acts.setAttribute('role', 'status');
   node.replaceChildren(head, acts);
   let phase = 'expired';
+  let url = '';   // 待っている間に届いたログインの URL（端末のコマンドのことも）
 
   const button = (label, onClick, primary = false) => {
     const b = el('button', primary ? 'btn btn-primary' : 'btn', label);
@@ -52,7 +55,8 @@ export function paintAuthFailure(node, opts) {
     b.onclick = (e) => { e.stopPropagation(); onClick(b); };
     return b;
   };
-  const paint = (next, { error = '' } = {}) => {
+  // focus: 押したボタンが消えるときの行き先（［ログインし直す］→［やめる］、［やめる］→［ログインし直す］）
+  const paint = (next, { error = '', focus = false } = {}) => {
     phase = next;
     acts.classList.remove('fade');
     void acts.offsetWidth;   // 状態が替わるたびに、短い出し入れ（.fade）をやり直す
@@ -67,12 +71,18 @@ export function paintAuthFailure(node, opts) {
     }
     if (next === 'expired') {
       if (remote) { acts.replaceChildren(el('span', 'auth-fail-note', t('remote.loginOnHost'))); return; }
-      acts.replaceChildren(button(t('chat.authExpired.signInAgain'), () => start(), true));
+      const again = button(t('chat.authExpired.signInAgain'), () => start(), true);
+      acts.replaceChildren(again);
       if (error) acts.append(el('span', 'auth-fail-note', error));
+      if (focus) again.focus();
     } else if (next === 'waiting') {
       const wait = el('span', 'wait');
       wait.append(spinner(), el('span', null, t('chat.authExpired.waiting')));
-      acts.replaceChildren(wait, button(t('chat.authExpired.cancel'), (b) => { b.disabled = true; cancel?.(); }));
+      const stop = button(t('chat.authExpired.cancel'), (b) => { b.disabled = true; cancel?.(); });
+      stop.setAttribute('aria-label', t('settings.agents.cancelLoginLabel', { agent }));
+      const links = authLinks(url, { cls: 'btn lnk' });
+      acts.replaceChildren(wait, ...(links ? links.childNodes : []), stop);
+      if (focus) stop.focus();
     } else if (next === 'resending') {
       acts.replaceChildren(el('span', null, t('chat.authExpired.signedIn')));
     } else if (next === 'resent') {
@@ -89,12 +99,15 @@ export function paintAuthFailure(node, opts) {
 
   async function start() {
     if (phase === 'waiting' || !login) return;
-    paint('waiting');
+    url = '';
+    paint('waiting', { focus: true });
     let after;
     try { after = await login(); }
     catch (e) {
       if (!node.isConnected) return;
-      paint('expired', { error: e?.code === 'CANCELLED' ? '' : t('chat.authExpired.loginFailed', { error: e?.message ?? '' }) });
+      // やめたときは何も言わずに［ログインし直す］へ戻し、焦点もそこへ
+      const cancelled = e?.code === 'CANCELLED';
+      paint('expired', { error: cancelled ? '' : t('chat.authExpired.loginFailed', { error: e?.message ?? '' }), focus: cancelled && acts.contains(document.activeElement) || document.activeElement === document.body });
       return;
     }
     if (!node.isConnected) return;
@@ -110,6 +123,14 @@ export function paintAuthFailure(node, opts) {
     get phase() { return phase; },
     /** 設定やほかの窓からログインが済んだ。自動では送らず［もう一度送る］にする（期限切れのまま待っている行だけ） */
     signedIn() { if (phase === 'expired' && auth?.mode === 'cli' && node.isConnected) paint('manual'); },
+    /** この行から始めたログインの URL が届いた。待っている間だけ、開く・写す入口を足す（焦点は動かさない） */
+    authUrl(next) {
+      url = String(next ?? '');
+      if (phase !== 'waiting' || !node.isConnected) return;
+      const focused = acts.contains(document.activeElement) ? document.activeElement.textContent : null;
+      paint('waiting');
+      if (focused) [...acts.querySelectorAll('button, a')].find((x) => x.textContent === focused)?.focus();
+    },
   };
 }
 

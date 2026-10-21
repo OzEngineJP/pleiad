@@ -21,6 +21,15 @@
 .onboarding-agent-item[aria-checked=true] .agent-name{color:var(--ink-blue)}
 .onboarding-agent-item .agent-desc{font-size:var(--fs-s);color:var(--ink-weak);margin-top:2px}
 .onboarding-agent-item .agent-state{font-size:var(--fs-s);color:var(--ink-weak);text-align:right;flex:none}
+/* ログインを待っている行: 回る印と「ログインを待っている」・［やめる］。開く・写す入口は名前の下（ADR 0243） */
+.onboarding-agent-item .agent-state:has(.wait){gap:6px}
+.onboarding-agent-item .agent-state:has(.wait)::before{display:none}
+.onboarding-agent-item .agent-state .wait{display:inline-flex;align-items:center;gap:5px;color:var(--ink-mark);white-space:nowrap}
+.onboarding-agent-item .agent-state .btn{font-size:var(--fs-s);padding:4px 10px}
+.onboarding-agent-item .wait .run,.agent-state.spin .run{width:12px;height:12px;color:inherit}
+.onboarding-agent-item .wait .run svg,.agent-state.spin .run svg{width:12px;height:12px;stroke-width:1.7}
+.ob-links{display:flex;flex-wrap:wrap;gap:2px;margin:4px 0 0 -8px}
+.ob-links .btn{font-size:var(--fs-s);padding:3px 8px;color:var(--ink-blue)}
 .onboarding-auth:not(:empty){background:var(--surface-1);border-radius:var(--r-m);padding:10px 8px;margin-bottom:16px}
 /* 初回の案内の作業ディレクトリ（docs/design-system.md §10）。見出しは弱い字、行はエージェントの一覧と同じグレーの地に
    フォルダーのアイコン・等幅のフルパス（ホームなら弱い字の「ホーム」）・「フォルダーを選ぶ…」。簡易ブラウザーはその下に開く */
@@ -378,7 +387,8 @@ button.conn-lost:hover{color:var(--ink)}
 .key-hint>span{white-space:nowrap}
 .key-hint kbd{font-family:var(--font-mono);font-size:var(--fs-xs);background:var(--surface-paper);border-radius:var(--r-pill);padding:0 6px;margin-right:3px;color:var(--ink)}
 /* 設定 › エージェント設定のエージェントのカード。名前・状態・操作を 1 枚にまとめ、薄いグレーの地の上に並べる。
-   「アカウントと接続先」はカードの中で開く 1 つの面（アカウント → 接続先の順に縦）。URL と手貼りの欄はカードの下 */
+   「アカウントと接続先」はカードの中に地を敷かずに開く（アカウント → 接続先の順に縦。開け閉めは右上のボタンだけ）。
+   ログインを待っている間の開く・写す入口と、時間切れ・失敗の一文もカードの中（docs/design-system.md「ログインを待っている間」） */
 .agent-list{display:flex;flex-direction:column;gap:8px;background:var(--surface-1);border-radius:var(--r-l);padding:10px}
 .agent-card{min-width:0;background:var(--surface-paper);border-radius:var(--r-m);padding:14px 16px}
 .agent-head{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
@@ -390,6 +400,8 @@ button.conn-lost:hover{color:var(--ink)}
 .agent-state.out{color:var(--ink-strong);font-weight:600}
 .agent-state.out::before{color:var(--ink-weak);background:transparent;box-shadow:inset 0 0 0 1.5px currentColor}
 .agent-state.wait::before{color:var(--ink-mark)}
+.agent-state.spin{color:var(--ink-mark)}
+.agent-state.spin::before{display:none}
 .agent-actions{display:flex;align-items:center;gap:4px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end}
 .agent-actions .btn{font-size:var(--fs-s);padding:4px 10px}
 .agent-actions .connect .t{white-space:nowrap}
@@ -399,10 +411,8 @@ button.conn-lost:hover{color:var(--ink)}
 .agent-meta .acct{overflow-wrap:anywhere}
 .agent-meta .sep{color:var(--ink-weak)}
 .agent-meta .path{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
-/* 「アカウントと接続先」の面。管理の面（.mp-panel）を節ごとの枠に入れるので、面側の地と見出し・閉じる・冒頭の説明は脱ぐ */
-.agent-conn{margin:14px 0 2px;padding:18px 18px 16px;background:var(--surface-1);border-radius:var(--r-m)}
-.agent-conn-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.agent-conn-head h3{margin:0;font-size:var(--fs-l)}
+/* 「アカウントと接続先」の節。管理の面（.mp-panel）を節ごとの枠に入れるので、面側の地と見出し・閉じる・冒頭の説明は脱ぐ */
+.agent-conn{margin:12px 0 2px;padding:4px 0 2px 28px}
 .conn-sec + .conn-sec{margin-top:22px}
 .conn-sec > h4{margin:2px 0 8px;font-size:var(--fs-s);font-weight:600}
 .conn-sec .mp-panel{margin-top:0;padding:0;background:transparent;border-radius:0}
@@ -410,6 +420,10 @@ button.conn-lost:hover{color:var(--ink)}
 .conn-sec .mp-panel .mp-intro{display:none}
 /* 「状態を再確認」は一覧の右端に寄せる */
 #refreshAgents{display:flex;width:fit-content;margin:14px 0 0 auto}
+.agent-card > .auth-note{margin:6px 0 0 28px;padding:0}
+.auth-links{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0 0 22px}
+.auth-links .btn{font-size:var(--fs-s);padding:3px 8px;color:var(--ink-blue)}
+.auth-links code{font-family:var(--font-mono);font-size:var(--fs-xs);color:var(--ink);background:var(--surface-2);border-radius:6px;padding:2px 8px;margin-right:4px;overflow-wrap:anywhere}
 .auth-note{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:0 8px 6px;font-size:var(--fs-s);color:var(--ink-strong);font-weight:600;overflow-wrap:anywhere}
 .auth-note .btn.link{border:0;background:none;padding:0;font-weight:400;font-size:var(--fs-s);color:var(--ink-blue);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 .auth-note .btn.link:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px;border-radius:4px}
@@ -551,6 +565,8 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 .remote-pop .acts{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 /* ホストで済ませるログインの一文（設定 › エージェント設定・初期設定・外部 MCP） */
 .remote-login-note{color:var(--ink-weak);font-size:var(--fs-s);flex-basis:100%}
+/* カードの短い形（長い一文は title） */
+.remote-short{color:var(--ink-weak);font-size:var(--fs-s)}
 
 /* ==================== 走っている印（web/arc.mjs） ====================
    短い固定の弧と衛星を SVG ごと回す。線や点は毎フレーム描き直さない。 */
@@ -869,6 +885,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .m.sys.auth-fail{display:flex;flex-direction:column;gap:4px}
 .auth-fail .acts{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:2px}
 .auth-fail .acts .btn{padding:2px 10px;font-size:var(--fs-xs)}
+.auth-fail .acts .btn.lnk{color:var(--ink-blue)}
 .auth-fail .wait{display:inline-flex;align-items:center;gap:6px}
 .auth-fail .wait .run{width:12px;height:12px}
 .auth-fail .wait .run svg{width:12px;height:12px}
@@ -1894,7 +1911,7 @@ main.dropping #log{background:var(--surface-1)}
   /* エージェントのカードは操作を名前行の下へ回し、ロゴの分だけ下げる */
   .agent-card{padding:11px 12px}
   .agent-actions{flex-basis:100%;margin-left:0;padding-left:28px;justify-content:flex-start}
-  .agent-conn{padding:14px 12px 12px}
+  .agent-conn{padding:4px 0 2px 0}
 }
 /* Accepted messages stay beside the composer until handed to the agent. */
 .outbox { max-height: 180px; overflow-y: auto; }

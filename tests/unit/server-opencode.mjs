@@ -65,6 +65,16 @@ export default async function (t) {
     const modes = await c.cmd('modes', { backend: 'opencode' });
     t.ok('承認モード: 都度確認が先頭で、全部自動・YOLO は聞かない', Object.keys(modes).join() === 'ask,edit,full,yolo,plan' && modes.full.autonomy === 'never' && modes.yolo.scope === 'full', JSON.stringify(Object.keys(modes)));
 
+    // ---- ログイン（端末の opencode auth login を案内して見張る）を［やめる］（ADR 0243）
+    const loginMark = c.mark();
+    const abandoned = c.cmd('authLogin', { backend: 'opencode' }).then(() => null, (e) => e);
+    const guide = await c.waitFor((e) => e.type === 'auth' && e.phase === 'url', { ms: 10_000, from: loginMark }).catch(() => null);
+    const cancel = await c.cmd('authCancel', { backend: 'opencode' });
+    const stopped = await abandoned;
+    t.ok('ログイン: 端末のコマンドを案内し、［やめる］で見張りを止めて CANCELLED で返る', /auth login/.test(guide?.url ?? '') && cancel.cancelled === true && stopped?.code === 'CANCELLED',
+      `${guide?.url} ${JSON.stringify(cancel)} ${stopped?.code} ${stopped?.message}`);
+    t.ok('ログイン: やめたものは失敗のイベントを出さない', !c.events.slice(loginMark).some((e) => e.type === 'auth' && e.phase === 'error'));
+
     // ---- 1 ターン（system に Pleiad の指示が入る）とツール
     const first = await c.runTurn({ backend: 'opencode', cwd: ROOT, prompt: 'tool please', mode: 'full', model: 'fake/echo', effort: 'high' });
     const sid = first.sessionId;

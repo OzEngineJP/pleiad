@@ -57,7 +57,8 @@
 // 環境変数: AGENT_HOST_FAKE_USAGE=1 … ターンの終わりに固定の usage を流す／AGENT_HOST_FAKE_SLOW_STEER=1 … "slow" が途中送信を受ける／
 //   AGENT_HOST_FAKE_QUOTA=<JSON のファイル> … 使用枠（usage()。{ windows: [{ label, usedPercent, resetsAt, minutes }] }）を毎回そのファイルから読む。
 //   指定が無いと usage() を持たない（使用量の上限の再開が、解除時刻の分からない上限の空きを確かめる検査用）
-//   AGENT_HOST_FAKE_LOGIN_MS=<ms> … ログイン（auth.login）が終わるまでの時間（既定 0）。その間は pending で、auth.cancel でやめられる（会話の失敗の行の「キャンセル」の確認用）
+//   AGENT_HOST_FAKE_LOGIN_MS=<ms> … ログイン（auth.login）が終わるまでの時間（既定 0）。その間は pending で、auth.cancel でやめられる（［やめる］の確認用）
+//   AGENT_HOST_FAKE_LOGIN_FAIL=timeout|<文> … 待ち終えたログインを、時間切れ（code: TIMEOUT）またはその文の失敗にする（カードの中の一文の確認用）
 //   AGENT_HOST_FAKE_SUBAGENTS=<JSON のファイル> … { "<sessionId>": [{ id, toolUseId, status, startedAt, endedAt }] }。記録にだけ在る会話（種を置いた会話）の
 //   過去のサブエージェントを引けるようにする（作業ダイアログの過去の一覧の検査用。tests/browser/history-window-seed.mjs）。ターンで生んだ子が在る会話ではそちらを使う
 //
@@ -1094,6 +1095,13 @@ export const backend = {
         });
         auth.pending = null;
         if (cancelled) throw Object.assign(new Error("fake: login cancelled"), { code: "CANCELLED" });
+      }
+      const fail = process.env.AGENT_HOST_FAKE_LOGIN_FAIL;
+      if (fail) {
+        const code = fail === "timeout" ? "TIMEOUT" : undefined;
+        const message = code ? "fake: login timed out" : fail;
+        emit?.({ type: "auth", backend: "fake", phase: "error", code, message });
+        throw Object.assign(new Error(message), code ? { code } : {});
       }
       auth.loggedIn = true;
       auth.account = "tester";

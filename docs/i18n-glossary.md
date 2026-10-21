@@ -77,6 +77,10 @@
 | 閉じる / 戻る / キャンセル | Close / Back / Cancel |
 | 保存 / 削除 / 追加 | Save / Delete / Add |
 | アカウント / ログイン / ログアウト | account / Sign in / Sign out |
+| ログインを待っている / やめる（待っているログイン。設定のカード・初回の案内・会話の失敗の行で同じ語。「キャンセル」と書かない） | Waiting for sign-in / Cancel |
+| ログインの画面を開く / リンクをコピー / コピー（待っている間の入口。コマンドはコピー） | Open the sign-in page / Copy link / Copy |
+| 時間切れになりました（10 分）。 / ログインできませんでした: 理由（カードの中の一文） | Timed out (10 minutes). / Couldn’t sign in: reason |
+| ホストの PC でログイン（リモートの窓のカード。長い文は説明に） | Sign in on the host PC |
 | 更新（アプリ） | update |
 | 先行版 | beta |
 | リリースノート | Release notes |

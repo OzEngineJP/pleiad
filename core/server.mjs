@@ -9381,15 +9381,22 @@ wss.on("connection", (ws, req) => {
           const backend = await pickBackend(null, msg.args?.backend);
           if (!backend.auth?.login) return reply(true, { supported: false });
           // URL は auth イベントで出る。完了まで待つので応答は最後に返る
+          let told = false;
           await backend.auth.login({
-            emit: (ev) => emitGlobal({ ...ev, backend: backend.id, sessionId: null }),
+            emit: (ev) => { if (ev?.phase === 'error') told = true; emitGlobal({ ...ev, backend: backend.id, sessionId: null }); },
+          }).catch((e) => {
+            // 始めた窓は応答で知るが、ほかの窓（リモートの窓も）はイベントで待ちを畳み、時間切れ・失敗の一文を出す（ADR 0243）。
+            // やめたものは失敗として出さない。エージェントが失敗を出さずに投げたもの（Codex・Claude）はここで出す
+            if (e?.code === 'CANCELLED') emitGlobal({ type: 'auth', phase: 'cancelled', backend: backend.id, sessionId: null });
+            else if (!told) emitGlobal({ type: 'auth', phase: 'error', code: e?.code, message: String(e?.message ?? e), backend: backend.id, sessionId: null });
+            throw e;
           });
           quotaStore.invalidate();
           authExpired.delete(backend.id);
           return reply(true, { supported: true, ...noteAuth(backend.id, await backend.auth.status?.() ?? {}) });
         }
 
-        // 待っているログイン（authLogin）をやめる（会話の失敗の行の「キャンセル」。ADR 0212）。authLogin は CANCELLED の失敗で返る
+        // 待っているログイン（authLogin）をやめる（設定のカード・初回の案内・会話の失敗の行の［やめる］。リモートの窓からも。ADR 0212・0243）。authLogin は CANCELLED の失敗で返る
         case "authCancel": {
           const backend = await pickBackend(null, msg.args?.backend);
           if (!backend.auth?.cancel) return reply(true, { supported: false });
