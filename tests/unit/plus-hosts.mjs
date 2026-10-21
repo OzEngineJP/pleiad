@@ -64,7 +64,7 @@ export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'plus-hosts-')));
   const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:9' });
   plus.state.accounts[UID] = {
-    uid: UID, email: 'u@example.test', provider: 'test', status: 'plus',
+    uid: UID, email: 'u@example.com', provider: 'test', status: 'plus',
     plan: { id: 'plus', name: 'Plus' },
     limits: { hosts: 2, devicesPerHost: 4, sessionsPerHost: 2 },
     usage: { devices: 0, sessions: 0 }, sync: {},

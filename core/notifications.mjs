@@ -25,7 +25,7 @@
 //   emit({ type: 'notificationsChanged', unread, waiting }) … 件数が変わったとき（画面のベルの数。リモートの端末にも届く）
 //   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId?, settings? },
 //                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question' | 'device', title?, channelName?, home?: true（一時チャット）, threadTitle? }
-//   ask: 'device' は新しい端末が PC の画面の承認を待っている（ADR 0245。dedupeKey は `wait:device:<申し込みの id>`、title は端末の名前、
+//   ask: 'device' は新しい端末が PC の画面の承認を待っている（ADR 0248。dedupeKey は `wait:device:<申し込みの id>`、title は端末の名前、
 //   target.settings は開く設定の面 'remote'）
 import crypto from 'node:crypto';
 import { openData } from './data-schema.mjs';

@@ -19,7 +19,7 @@ export const BLOB_BYTES = NONCE_BYTES + PLAIN_BYTES + TAG_BYTES;
 export const KEY_BYTES = 32;
 const AAD_PREFIX = 'pleiad-notify/1\n';
 
-/** 通知の種類。device は新しい端末が PC の画面の承認を待っている（ADR 0245）。cancel は出ている通知を消す（取り消しも同じ線で送る）。 */
+/** 通知の種類。device は新しい端末が PC の画面の承認を待っている（ADR 0248）。cancel は出ている通知を消す（取り消しも同じ線で送る）。 */
 export const KINDS = Object.freeze(['approval', 'question', 'device', 'failed', 'done', 'scheduleMissed', 'cancel']);
 /** cancel の対象: approval = 承認・質問が決着した（id 指定可）、seen = 完了・失敗をどこかで見た、device = 端末の追加の申し込みが決着した（id）。 */
 export const CANCELS = Object.freeze(['approval', 'seen', 'device']);

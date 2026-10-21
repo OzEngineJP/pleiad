@@ -41,9 +41,10 @@ export const plusOps = [
   }),
   defineOp({
     id: 'plus.syncSetEnabled', summary: 'agent:ops.plus.syncSetEnabled.summary', risk: 'write',
-    riskReason: 'Changes the account-level sync flag on the server for every PC on the account; only the settings screen calls it (not on MCP or the CLI)',
+    riskReason: 'Changes the account-level sync flag on the server for every PC on the account; only the settings screen on the host PC can call it (not on MCP or the CLI)',
     input: z.object({ enabled: z.boolean().describe('agent:ops.plus.syncSetEnabled.enabled') }),
     surfaces: { ui: true, mcp: false, cli: false },
+    hostScreenOnly: true,
     handler: (ctx, { enabled }) => run(ctx, () => ctx.plus.syncSetEnabled(enabled)),
   }),
   defineOp({
@@ -55,7 +56,7 @@ export const plusOps = [
   }),
   defineOp({
     id: 'plus.syncReset', summary: 'agent:ops.plus.syncReset.summary', risk: 'write',
-    riskReason: 'Deletes the synced content on the server and starts over with a new key on every PC; only the settings screen calls it, behind its own confirm (not on MCP or the CLI)',
+    riskReason: 'Deletes the synced content on the server and starts over with a new key on every PC; only the settings screen on the host PC can call it, behind its own confirm (not on MCP or the CLI)',
     // confirm: 鍵を持たない PC がサーバーのデータを消すとき、人が件数を見て確かめた印（無い・合わなければ confirmNeeded で今の値を返す）
     input: z.object({
       confirm: z.object({
@@ -64,13 +65,15 @@ export const plusOps = [
       }).nullable().optional().describe('agent:ops.plus.syncReset.confirm'),
     }),
     surfaces: { ui: true, mcp: false, cli: false },
+    hostScreenOnly: true,
     handler: (ctx, { confirm } = {}) => run(ctx, () => ctx.plus.syncReset(confirm ?? null)),
   }),
   defineOp({
     id: 'plus.hostReregister', summary: 'agent:ops.plus.hostReregister.summary', risk: 'write',
-    riskReason: 'Registers this PC on the Plus account again after the user removed it; only the settings screen calls it (not on MCP or the CLI)',
+    riskReason: 'Registers this PC on the Plus account again after the user removed it; only the settings screen on the host PC can call it (not on MCP or the CLI)',
     input: z.object({}),
     surfaces: { ui: true, mcp: false, cli: false },
+    hostScreenOnly: true,
     handler: (ctx) => run(ctx, async () => { await ctx.plus.hostReregister(); return { ok: true }; }),
   }),
   defineOp({

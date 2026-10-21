@@ -251,8 +251,8 @@ function createRemoteWindows(deps) {
       const before = entry.state;
       entry.state = s.state;
       entry.win.webContents.send('ply:remote-status-changed', publicStatus(s, connectedAt.get(s.hostId) ?? null));
-      // 取り消されたら張り直さない。画面は /ws を叩き続けるだけになるので、読み直してプロキシの案内（取り消されました）を出す
-      if (s.state === 'revoked' && before !== 'revoked') entry.win.webContents.reload();
+      // 取り消された・ホストの PC が Plus から外されたら張り直さない。画面は /ws を叩き続けるだけになるので、読み直してプロキシの案内を出す
+      if ((s.state === 'revoked' || s.state === 'removed') && before !== s.state) entry.win.webContents.reload();
     }
     pushHosts();
   }

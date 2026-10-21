@@ -71,7 +71,7 @@ export function createCompletionNotifications({ host = window, openSession, open
         title: computer ? approvalNotice(computer) : change ? changeNotice(change) : t('notify.waitingReply'), body: body(session?.title || event.conversationTitle) });
     },
     /**
-     * 新しい端末が承認を待っている（remotePairing の request。ADR 0245）。ホストの画面だけが呼ぶ。
+     * 新しい端末が承認を待っている（remotePairing の request。ADR 0248）。ホストの画面だけが呼ぶ。
      * あなた待ちの一つなので「返事待ち」の設定に従う。押すと 設定 › リモート（承認の窓もそこに出ている）
      */
     deviceWaiting(request) {

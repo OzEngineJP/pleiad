@@ -70,7 +70,7 @@ export default async function (t) {
 
     // ---- 確かめる（形・署名・aud・時刻）
     const now = Math.floor(Date.now() / 1000);
-    const claims = (extra = {}) => ({ iss: 'pleiad-plus', aud: 'pleiad-host', uid: UID, iat: now, exp: now + 300, jti: b64url(crypto.randomBytes(16)), hostId, devicePub: b64url(device.publicKey), ...extra });
+    const claims = (extra = {}) => ({ iss: 'pleiad-tickets', aud: 'pleiad-host', uid: UID, iat: now, exp: now + 300, jti: b64url(crypto.randomBytes(16)), hostId, devicePub: b64url(device.publicKey), ...extra });
     const reason = token => verifier.verify(token, { aud: 'pleiad-host' }).then(() => 'ok', e => (e instanceof TicketError ? e.reason : `other:${e?.message}`));
     t.ok('偽の Plus が署名した券は通る', await reason(plus.signTicket(claims())) === 'ok');
     const other = crypto.generateKeyPairSync('ed25519');
@@ -119,6 +119,17 @@ export default async function (t) {
     const later = Math.floor(clock / 1000);
     const lateOk = await v2.verify(plus.signTicket(claims({ iat: later, exp: later + 300 })), { aud: 'pleiad-host' }).then(() => true, e => e?.reason);
     t.ok('公開鍵が取れないときは、期限の切れた覚えで確かめる', lateOk === true, String(lateOk));
+    // 期限の切れた覚えを使えるのは、取ってから 24 時間まで
+    clock += 24 * 60 * 60_000;
+    const dayLater = Math.floor(clock / 1000);
+    const tooOld = await v2.verify(plus.signTicket(claims({ iat: dayLater, exp: dayLater + 300 })), { aud: 'pleiad-host' }).then(() => null, e => e);
+    t.ok('取ってから 24 時間を過ぎた覚えは使わない（unavailable）', tooOld instanceof TicketError && tooOld.reason === 'unavailable', tooOld?.reason ?? 'passed');
+    plus.state.ticketKeysDown = false;
+    clock += 31_000;
+    const keysBack = Math.floor(clock / 1000);
+    const keysBackOk = await v2.verify(plus.signTicket(claims({ iat: keysBack, exp: keysBack + 300 })), { aud: 'pleiad-host' }).then(() => true, e => e?.reason);
+    t.ok('公開鍵が取れるようになれば、また確かめる', keysBackOk === true, String(keysBackOk));
+    plus.state.ticketKeysDown = true;
     const fresh = createTicketVerifier({ keysUrl: () => plus.ticketKeysUrl });
     const freshErr = await fresh.verify(plus.signTicket(claims()), { aud: 'pleiad-host' }).then(() => null, e => e);
     t.ok('覚えが無くて公開鍵が取れないときは unavailable', freshErr instanceof TicketError && freshErr.reason === 'unavailable', freshErr?.reason);

@@ -183,7 +183,7 @@ export default async function (t) {
     return quiet.approval({ id: 'z', sessionId: 'zz', kind: 'tool', title: '' }).length === 0;
   })());
 
-  // 端末の追加の申し込み（ADR 0245）: 会話に結び付かない「返事が要るとき」。PC が会話を見ていても送り、決着したら消す
+  // 端末の追加の申し込み（ADR 0248）: 会話に結び付かない「返事が要るとき」。PC が会話を見ていても送り、決着したら消す
   reset();
   notifier.deviceRequest({ id: 'r1', name: 'Galaxy Tab' });
   t.ok('端末の追加の申し込み: 種類 device・端末の名前・申し込みの id を送る', sent.length === 2

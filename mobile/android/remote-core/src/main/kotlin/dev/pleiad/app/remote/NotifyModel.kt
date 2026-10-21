@@ -41,7 +41,7 @@ object NoticeKind {
     const val FAILED = "failed"
     const val SCHEDULE_MISSED = "scheduleMissed"
     const val DONE = "done"
-    /** A new device waits on the host's approval window (ADR 0245). A notice only: it is allowed on the host's screen. */
+    /** A new device waits on the host's approval window (ADR 0248). A notice only: it is allowed on the host's screen. */
     const val DEVICE = "device"
     const val CANCEL = "cancel"
 }

@@ -122,7 +122,7 @@ class PleiadRemotePlugin : Plugin() {
             if (row.online != null) o.put("online", row.online)
             // Only a proxy on the row's route speaks for it: an own window's state must not show on a Plus row, nor the reverse.
             val st = device.proxy(hostId)?.takeIf { it.creds.via == row.via }?.link?.status
-            // A Plus row the host has not allowed yet ("unpaired") or wants allowed again ("reapprove", ADR 0245):
+            // A Plus row the host has not allowed yet ("unpaired") or wants allowed again ("reapprove", ADR 0248):
             // tapping it asks on the host's screen (admit()) instead of opening.
             val plusRec = if (row.via == "plus") device.store.host(hostId, "plus") else null
             val idle = when {
@@ -165,7 +165,7 @@ class PleiadRemotePlugin : Plugin() {
     }
 
     /**
-     * Ask a Plus host to allow this device (ADR 0245): the host shows its approval window with the same confirmation code,
+     * Ask a Plus host to allow this device (ADR 0248): the host shows its approval window with the same confirmation code,
      * emitted here as `pairCode`. Resolves when the person on the host's screen allowed it; cancelPair() aborts.
      */
     @PluginMethod(returnType = PluginMethod.RETURN_PROMISE)
@@ -222,7 +222,8 @@ class PleiadRemotePlugin : Plugin() {
             if (via == "plus" && current?.state == "blocked") throw PairError("plus-no-relay")
             if (via == "plus" && current?.state == "limit") throw PairError("plus-limit")
             if (via == "plus" && current?.state == "update") throw PairError("plus-update")
-            // The account alone does not let this device in (ADR 0245): the page first asks the host with admit().
+            if (via == "plus" && current?.state == "removed") throw PairError("plus-removed")
+            // The account alone does not let this device in (ADR 0248): the page first asks the host with admit().
             if (via == "plus" && device.store.host(hostId, "plus")?.reapproveAt != null) throw PairError("plus-reapprove")
             if (via == "plus" && device.store.credentials(hostId, "plus") == null) throw PairError("plus-unpaired")
             if (device.store.credentials(hostId, via) == null) throw IllegalArgumentException("unknown-host")

@@ -765,7 +765,7 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
   },
   log: line => console.log(`  ${line}`) });
 /**
- * 新しい端末が PC の画面の承認を待っている（ADR 0245）。通知の一覧の「あなた待ち」と承認済みのスマホへ知らせ、決着したら消す。
+ * 新しい端末が PC の画面の承認を待っている（ADR 0248）。通知の一覧の「あなた待ち」と承認済みのスマホへ知らせ、決着したら消す。
  * OS の通知は画面（web/notifications.mjs）が出す。許可は PC の画面だけ
  */
 function devicePairingNotice({ phase, request }) {
@@ -8756,7 +8756,7 @@ wss.on("connection", (ws, req) => {
 
     // 審査モード（ADR 0172）: 許可の一覧（core/review-mode.mjs の COMMAND_PASS）にある命令だけ通す。ほかは何もせずに断る
     if (isReviewMode() && !commandAllowed(msg.command)) return reply(false, t('review.commandRefused'), 'REVIEW_MODE');
-    // ホストの PC の画面だけでできる操作（ADR 0245）。中継越しの端末から来たものは断る
+    // ホストの PC の画面だけでできる操作（ADR 0248）。中継越しの端末から来たものは断る
     if (!local && HOST_ONLY_COMMANDS.has(msg.command)) return reply(false, t('remote.hostOnly'), 'host_only');
 
     // 画面のコマンドは、操作の一覧（core/ops/）の同じ操作を人（画面）として呼ぶだけの外側。返り値は人に返す形（uiHandler）のまま。
@@ -8969,11 +8969,14 @@ wss.on("connection", (ws, req) => {
           emitGlobal({ type: 'notifyStatus', status: await notifyStatus(), sessionId: null });
           return reply(true, registered);
         }
-        // 取り消しは端末からもできる（失くした端末を別の端末から止める。ADR 0245）。by は取り消した機器
+        // 取り消しは端末からもできる（失くした端末を別の端末から止める。ADR 0248）。by は取り消した機器
         case 'remoteRevoke':
           return reply(true, withResident(await remote.revoke(msg.args?.id, { by: connectionDevices.get(ws)?.id ?? 'host' })));
         case 'remoteRevokedHide':
           return reply(true, withResident(await remote.hideRevoked(msg.args?.key)));
+        // 続けて断ったので止めていた、公式の中継からの申し込みを再開する（ホストの PC の画面だけ）
+        case 'remotePlusRequestsResume':
+          return reply(true, withResident(await remote.resumePlusRequests()));
         case 'plusHostRebind':
           return reply(true, withResident(await remote.plusHostRebind()));
         // この端末から任された作業をすべて止める（人だけ。docs/remote.md §4.5）。端末ごとの許可は無くした（ADR 0239）

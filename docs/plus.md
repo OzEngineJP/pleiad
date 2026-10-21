@@ -182,7 +182,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 
 ## 券（`core/plus/tickets.mjs`）
 
-公式の中継と、端末を受け入れる PC は、ID トークンの代わりに api が出す短い券を受ける（[ADR 0246](adr/0246-plus-tickets.md)）。券は api が Ed25519 で署名した JWS のコンパクト形（ヘッダー `{ alg: 'EdDSA', typ: 'pleiad-ticket+jwt', kid }`）。どれも `iss: 'pleiad-plus'`・`uid`・`iat`・`exp`（`iat` + 300 秒）・`jti` を持ち、一度だけ使える。
+公式の中継と、端末を受け入れる PC は、ID トークンの代わりに api が出す短い券を受ける（[ADR 0249](adr/0249-plus-tickets.md)）。券は api が Ed25519 で署名した JWS のコンパクト形（ヘッダー `{ alg: 'EdDSA', typ: 'pleiad-ticket+jwt', kid }`）。どれも `iss: 'pleiad-tickets'`・`uid`・`iat`・`exp`（`iat` + 300 秒）・`jti` を持ち、一度だけ使える。
 
 | 券 | `aud` | 中身 | 使い道 |
 | --- | --- | --- | --- |
@@ -203,7 +203,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 確かめ方（`createTicketVerifier`。PC が受け入れの券を確かめる）:
 
 1. 形: 3 つの base64url の区切り、2048 バイトまで、ヘッダーが上の形
-2. 署名: `<api>/.well-known/pleiad-keys`（Ed25519 の JWK の一覧）の `kid` の鍵。一覧は 5 分覚え、知らない `kid` が来たら 30 秒に 1 回まで読み直す。読めないときは期限の切れた覚えでも使い、覚えも無いときだけ `unavailable`
+2. 署名: `<api>/.well-known/pleiad-keys`（Ed25519 の JWK の一覧）の `kid` の鍵。一覧は 5 分覚え、知らない `kid` が来たら 30 秒に 1 回まで読み直す。読めないときは期限の切れた覚えでも読んでから 24 時間までは使い、覚えが無いか、それより古いときは `unavailable`
 3. 中身: `iss`・`aud`・`uid`・`jti` があり、`iat` ≤ いま + 60 秒、`exp` > いま − 60 秒
 4. 一度きり: `jti` を `exp` + 60 秒まで覚え、2 度目は断る（`createJtiStore`）
 
@@ -237,13 +237,14 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - 止まっている間の設定 › リモートは「このアカウントでは公式の中継を使えません」の 1 行を出す（ほかの PC へ のまとまりと同じ形。ボタンは足さない）。`account.status` が `plus` と読めている間は Pleiad Plus のスイッチを押せる（切って入れ直すとつなぎ直す）。`disabled` と読めている間は押せない（`plus` に戻れば、読めたところで張り直す）
 - `revoke` は両方の link（own・plus）へ送る
 
-## 端末の受け入れ（同じアカウント + PC の画面の承認。ADR 0245）
+## 端末の受け入れ（同じアカウント + PC の画面の承認。ADR 0248）
 
 - 端末は自分の鍵で端末の券（`purpose: 'device'`）を取り、`/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Ticket`（中継の券）だけでつなぐ（deviceId・ペアリング無し）。券の無い前の版の api の間は `X-Pleiad-Ticket` の代わりに `X-Pleiad-Account`（ID トークン）。中継の差し込みが `admit: true` で通すと、ホストが accept を張り、Noise_IK の応答側になる
 - 端末はメッセージ 1 に `{ proto, name, platform, app, plus: { ticket } }`（受け入れの券。前の版の api の間は `plus: { idToken }`）を入れる。ホストは自分で確かめ（`createPlusLink` の `verifyAdmission`）、違えば `{ type: 'denied', reason }` を暗号の中で送って閉じる
   - 既定の確かめ: 券の署名・期限（上の「券」）、`hostId` が自分、`devicePub` が Noise の相手の静的鍵、`uid` が今のアカウント、`jti` が初めて。どれかが違えば `account`。公開鍵の一覧が読めず覚えも無ければ `unavailable`
   - `/v1/auth/config` に `admission` が載る api の間は、`plus.idToken` だけの申し込みを `update_required` で断る（端末は「Pleiad を更新してください」）。前の版の api の間だけ ID トークンの uid を確かめる
 - 取り消した鍵は `revoked`、拒否してから 1 時間の鍵は `rejected` で断る
+- 同じアカウントからの申し込みをこの PC で 1 時間に 3 回拒否したら、そのアカウントの許可していない鍵を 1 時間 `rejected` で断る（鍵を作り直しても窓を出さない。`<data>/remote/plus-requests.json` に残し、再起動しても続く）。止めている間は `remoteStatus` の `plus.paused`（`{ until }`）が立ち、PC の画面に「再開する」（`remotePlusRequestsResume`）を出す
 - 端末はメッセージ 2 のあと `{ type: 'admit' }`（裏のつなぎ直し）か `{ type: 'pair' }`（人が選んだつなぎ）を送る。許可済みの鍵なら、どちらでも同じ deviceId で中継用トークンを出し直し、`{ type: 'approved', deviceId, token, hostName }` を返して 1000 で閉じる
 - 許可していない鍵は、`admit` なら `approval` で断る。`pair` なら、`limits.devicesPerHost` を超える（同じ鍵は数えない）・一度も読めていない・この 1 時間の申し込みが 20 件を超える、を断り、通れば `{ type: 'waiting' }` を返して PC の画面の承認の窓へ回す（QR と同じ窓・確認コード）。許可で `via:'plus'`・`plusUid`・`approvedBy: 'host'` で登録して `approved`、拒否で `rejected`。`PATCH deviceCount` も追う
 - 公式の中継はペアリングを受けない（`4401 'pairing disabled'`。ホスト側も受けない）
@@ -420,7 +421,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
   - `rejoinedAt`: 前の鍵を持っていて、別の鍵に替わった時刻。覚えを空にしたあと、覚えの無い設定の時刻にこれを使う（始め直したほかの PC の「初めて上げた設定」に、手元の設定が負けないように。初めて加わる PC は 0 のままで、アカウントの設定を採る）
   - `sharedTo`: 鍵を渡した新しい PC（新しい順に 3 つ `{ hostId, name, at }`。状態には 7 日の間だけ出す）
 - 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error, wait, sharedTo }`（`totalBytes`・`limitBytes` は `state` の値。`wait` は鍵を待つ間に見せるもの）。変わるたびに `plusSyncStatus` イベントを全接続へ送る（ポーリングはしない）
-- 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し。鍵を持たない PC は `confirm { keyId, itemCount }` を付ける。足りない・合わなければ `{ confirmNeeded: true, status }` を返して何も消さない）・`plus.hostReregister`（利用者が外した PC を登録し直す）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く。hostScreenOnly）。変更系は設定 › Pleiad Plus の画面だけが呼ぶ
+- 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し。鍵を持たない PC は `confirm { keyId, itemCount }` を付ける。足りない・合わなければ `{ confirmNeeded: true, status }` を返して何も消さない）・`plus.hostReregister`（利用者が外した PC を登録し直す）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く）。変更系は設定 › Pleiad Plus の画面だけが呼び、`plus.syncNow` のほかはホストの PC の画面だけ（hostScreenOnly。中継越しの端末の画面からは `HOST_SCREEN_ONLY`）
 
 ### 競合
 

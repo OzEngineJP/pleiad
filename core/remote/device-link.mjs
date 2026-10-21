@@ -14,6 +14,7 @@
 //   'host-offline'  中継は答えたがホストが居ない（4404・4408・ホストの GOAWAY shutdown）。張り直しを待っている
 //   'revoked'       この端末は取り消された・資格が合わない（4401・GOAWAY revoked）。張り直さない
 //   'reapprove'     （Plus）ホストの PC の画面でもう一度の許可が要る（受け入れのやり直しを reapprove で断られた）。張り直さない
+//   'removed'       （Plus）ホストの PC が Plus のアカウントから外された（券の発行が 403 host_removed・404）。張り直さない
 //   'stopped'       stop() した
 //
 // 張り直しは 0.5 秒から 30 秒まで倍々（±25% の揺らぎ）。10 秒つながり続けたら初めからに戻す。
@@ -127,6 +128,7 @@ function errorFor(state, detail) {
       : state === 'limit' ? t('remote.device.limit')
         : state === 'paused' ? t('remote.device.paused')
         : state === 'update' ? t('remote.device.update')
+        : state === 'removed' ? t('remote.device.removed')
           : state === 'host-offline' ? t('remote.device.hostOffline')
             : state === 'stopped' ? t('remote.device.stopped') : t('remote.device.offline'));
   e.state = state;
@@ -246,7 +248,7 @@ export class DeviceLink extends EventEmitter {
 
   #scheduleRetry(state, detail, { delayOverride = null } = {}) {
     if (!this.running) return;
-    if (state === 'revoked' || state === 'reapprove' || state === 'blocked' || state === 'limit' || state === 'update') {
+    if (state === 'revoked' || state === 'reapprove' || state === 'blocked' || state === 'limit' || state === 'update' || state === 'removed') {
       this.running = false;
       this.#setStatus(state, detail);
       return;
@@ -322,7 +324,9 @@ export class DeviceLink extends EventEmitter {
       catch (e) {
         if (!live()) return;
         this.log(`remote device: ticket failed: ${e.message}`);
-        return this.#scheduleRetry(e?.code === 'update' ? 'update' : 'offline', { reason: 'ticket' });
+        // 403 host_removed・404 は、ホストの PC が台帳に無い（外された）。券の無い前の版の api の 404 は getTicket が null で返す
+        const removed = (e?.status === 403 && e.code === 'host_removed') || e?.status === 404;
+        return this.#scheduleRetry(e?.code === 'update' ? 'update' : removed ? 'removed' : 'offline', { reason: 'ticket' });
       }
       if (!live()) return;
       if (ticket) headers['x-pleiad-ticket'] = ticket;

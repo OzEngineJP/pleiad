@@ -45,14 +45,16 @@ export const HUMAN_ONLY = Object.freeze({
   // 新しい会話の接続先の既定（会話の送り先を、人が確かめていない先へ黙って替えない）
   endpointDefault: { commands: ['compatEndpointDefault'], settings: [] },
   // リモートのペアリングと外に開く設定（端末の一覧を含む）
-  remotePairing: { commands: ['remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny', 'remoteRevoke', 'remoteRevokedHide', 'remoteDevices', 'setRemoteSettings', 'setRemoteDeviceAgent', 'plusHostRebind'], settings: [] },
+  remotePairing: { commands: ['remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny', 'remoteRevoke', 'remoteRevokedHide', 'remotePlusRequestsResume', 'remoteDevices', 'setRemoteSettings', 'setRemoteDeviceAgent', 'plusHostRebind'], settings: [] },
 });
 /**
- * ホストの PC の画面だけでできる命令（ADR 0245）。中継越しの端末の画面から来たものは 403 host_only で断る。
- * 中継の設定・「ほかの端末からの操作を許可する」・Plus のつなぎ直し・ペアリングのコードと承認。取り消しは端末からもできる
+ * ホストの PC の画面だけでできる命令（ADR 0248）。中継越しの端末の画面から来たものは 403 host_only で断る。
+ * 中継の設定・「ほかの端末からの操作を許可する」・Plus のつなぎ直し・ペアリングのコードと承認・公式の中継からの申し込みの再開・Plus のログインとログアウト。取り消しは端末からもできる。
+ * 操作の一覧の口から来る同じ種類の操作（同期のスイッチ・やり直し・登録し直し）は、操作の定義の hostScreenOnly で断る
  */
 export const HOST_ONLY_COMMANDS = new Set([
   'setRemoteSettings', 'remotePairingStart', 'remotePairingCancel', 'remotePairingApprove', 'remotePairingDeny', 'plusHostRebind',
+  'plusLogin', 'plusLoginCancel', 'plusLogout', 'remotePlusRequestsResume',
 ]);
 export const HUMAN_ONLY_COMMANDS = new Set(Object.values(HUMAN_ONLY).flatMap((x) => x.commands));
 export const HUMAN_ONLY_SETTINGS = new Set(Object.values(HUMAN_ONLY).flatMap((x) => x.settings));

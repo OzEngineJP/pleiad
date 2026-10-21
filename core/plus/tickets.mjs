@@ -3,7 +3,7 @@
 // 券は api が Ed25519 で署名した JWS のコンパクト形（header {"alg":"EdDSA","typ":"pleiad-ticket+jwt","kid"}）。
 //   中継の券     aud:"relay"        { role: 'host' | 'device', sub, hostId, lim }  中継の X-Pleiad-Ticket に載せる
 //   受け入れの券 aud:"pleiad-host"  { hostId, devicePub }                         端末が Noise のメッセージ 1 に載せ、PC が確かめる
-// どれも iss:"pleiad-plus"・uid・iat・exp（iat + 300）・jti を持ち、一度きり。
+// どれも iss:"pleiad-tickets"・uid・iat・exp（iat + 300）・jti を持ち、一度きり。
 //
 // 取り方（issueTicket）: POST /v1/tickets/challenge { purpose, publicKey, hostId }
 //   → proof = b64u(HMAC-SHA256(HKDF(X25519(自分の秘密鍵, serverPublicKey), "pleiad host proof v1"), nonce ‖ utf8(hostId) ‖ utf8(purpose)))
@@ -11,12 +11,13 @@
 //   challenge の口が 404 の api（券の無い前の版）なら、createTicketIssuer は null を返す（呼ぶ側は ID トークンの道へ戻る）。
 //
 // 確かめ方（createTicketVerifier）: 公開鍵は <api>/.well-known/pleiad-keys を 5 分覚える。知らない kid の取り直しは
-//   30 秒に 1 回まで。取れないときは期限の切れた覚えでも使い、覚えが無いときだけ unavailable を投げる。
+//   30 秒に 1 回まで。取れないときは期限の切れた覚えでも取ってから 24 時間までは使い、覚えが無いか、それより古いときは
+//   unavailable を投げる。
 //   時計のずれは ±60 秒まで（iat <= now + 60、exp > now - 60）。長さは 2048 バイトまで。
 import crypto from 'node:crypto';
 import { dh, hkdfLabel } from '../remote/noise.mjs';
 
-export const TICKET_ISS = 'pleiad-plus';
+export const TICKET_ISS = 'pleiad-tickets';
 export const TICKET_TYP = 'pleiad-ticket+jwt';
 export const TICKET_MAX_BYTES = 2048;
 const SKEW_SEC = 60;
@@ -25,6 +26,7 @@ const SPKI_ED25519 = Buffer.from('302a300506032b6570032100', 'hex');
 const SEG = /^[A-Za-z0-9_-]+$/;
 const B64U_32 = /^[A-Za-z0-9_-]{43}$/;
 const KEYS_TTL_MS = 5 * 60_000;
+const KEYS_STALE_MAX_MS = 24 * 60 * 60_000;   // 取れない間に期限の切れた覚えを使える長さ
 const KEYS_MIN_REFETCH_MS = 30_000;
 const KEYS_TIMEOUT_MS = 10_000;
 const UNSUPPORTED_MS = 5 * 60_000;
@@ -142,7 +144,7 @@ export function createTicketVerifier({ keysUrl, fetchFn = fetch, now = Date.now 
     const stale = cache.at === 0 || now() - cache.at >= KEYS_TTL_MS;
     if (!stale && !(force && now() - lastFetchAt >= KEYS_MIN_REFETCH_MS)) return;
     try { await fetchKeys(); }
-    catch (e) { if (cache.at === 0) throw new TicketError('unavailable'); }
+    catch (e) { if (cache.at === 0 || now() - cache.at >= KEYS_STALE_MAX_MS) throw new TicketError('unavailable'); }
   }
 
   return {

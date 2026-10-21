@@ -55,9 +55,10 @@
         : h.state === 'blocked' ? t('plus.noRelay')
         : h.state === 'limit' ? t('plus.limit')
         : h.state === 'update' ? t('plus.update')
+        : h.state === 'removed' ? t('plus.removed')
         : h.state === 'paused' ? (pstate?.plus === 'maintenance' ? t('plus.maintenance') : t('plus.temporarilyUnavailable'))
         : h.state === 'reapprove' ? t('plus.reapprove')
-        : h.state === 'revoked' ? t('state.revoked')
+        : h.state === 'revoked' ? t('plus.revoked')
         : h.state === 'readmit' || h.state === 'connecting' ? t('plus.connecting')
         : h.state === 'offline' ? t('plus.unreachable') : t(h.online ? 'plus.online' : 'plus.offlineHost');
       const when = h.lastConnectedAt ? t('hosts.lastUsed', { when: ago(h.lastConnectedAt) }) : t('hosts.neverUsed');
@@ -99,7 +100,7 @@
       dot.hidden = !st;
       const note = notes.get(h.hostId);
       line.append(dot, document.createTextNode(note ?? [st, when].filter(Boolean).join(' · ')));
-      if (note || h.state === 'revoked' || h.state === 'reapprove') line.classList.add('warn');
+      if (note || h.state === 'revoked' || h.state === 'reapprove' || h.state === 'removed') line.classList.add('warn');
       open.append(nm, line);
       open.onclick = () => openHost(h);
       const more = document.createElement('button');
@@ -160,7 +161,10 @@
     } catch (e) {
       pairingActive = false;
       show('list');
-      if (e?.code === 'denied') notes.set(h.hostId, t('err.denied'));
+      // a declined key is kept out for an hour on the host; a Plus request is made again from this list, not with a new code
+      if (e?.code === 'denied') notes.set(h.hostId, t('err.plus-denied'));
+      else if (e?.code === 'expired' || e?.code === 'timeout') notes.set(h.hostId, t('err.plus-expired'));
+      else if (e?.code === 'unknown-host') notes.set(h.hostId, t('err.plus-removed'));
       else if (e?.code !== 'aborted') toast(errorText(e));
       await refresh();
     }

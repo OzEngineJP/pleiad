@@ -8,7 +8,7 @@ package dev.pleiad.app.remote
 // Light on purpose: no PING frames of our own in the channel sense, a WebSocket ping only every few minutes (OkHttp
 // pingInterval, which also notices a dead line), reconnects with a long backoff.
 //
-// state: connecting | connected | offline | host-offline | revoked | stopped
+// state: connecting | connected | offline | host-offline | revoked | update | removed | stopped
 
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -43,6 +43,19 @@ class NotifyLine(
     private var retry: ScheduledFuture<*>? = null
     private var openedAt = 0L
     @Volatile var state = "stopped"; private set
+
+    companion object {
+        /** code: a WebSocket close code, or -HTTP status when the upgrade was refused, or 1006. */
+        fun classifyClose(code: Int, reason: String, via: String): String = when {
+            // the relay did not take the ticket / the account token (expired, or the clock is off): take a fresh one later
+            code == 4401 && via == "plus" && (reason == "ticket" || reason == "token") -> "offline"
+            // the relay takes tickets only and this line had none: the app needs an update (not a revocation)
+            code == 4401 && via == "plus" && reason == "update required" -> "update"
+            code == 4401 || code == -401 -> "revoked"
+            code == 4404 || code == 4408 -> "host-offline"
+            else -> "offline"
+        }
+    }
 
     private fun setState(s: String) {
         if (state == s) return
@@ -95,11 +108,19 @@ class NotifyLine(
         try {
             timer.execute {
                 var failed = false
-                val ticket = try { plusTicket?.invoke(c) } catch (e: Exception) { failed = true; log("notify line: ticket failed: ${e.javaClass.simpleName}"); null }
+                var removed = false
+                val ticket = try { plusTicket?.invoke(c) } catch (e: Exception) {
+                    failed = true
+                    // unknown-host: the PC was removed from the Plus account (no more tickets), so waiting does not help
+                    removed = e is PairError && e.code == "unknown-host"
+                    log("notify line: ticket failed: ${if (e is PairError) e.code else e.javaClass.simpleName}")
+                    null
+                }
                 val accountToken = if (ticket != null || failed) null else try { plusIdToken?.invoke() } catch (_: Exception) { null }
                 synchronized(lock) {
                     if (gen != generation || !running) return@synchronized
                     when {
+                        removed -> { running = false; setState("removed") }
                         ticket != null -> open(gen, c, "x-pleiad-ticket" to ticket)
                         accountToken.isNullOrEmpty() -> schedule("offline")
                         else -> open(gen, c, "x-pleiad-account" to accountToken)
@@ -158,13 +179,10 @@ class NotifyLine(
         if (socket === ws) socket = null
         val stable = state == "connected" && System.currentTimeMillis() - openedAt >= backoff.stableMs
         if (stable) attempt = 0
-        when {
-            // the relay did not take the ticket / the account token (expired, or the clock is off): take a fresh one later
-            code == 4401 && creds.via == "plus" && (reason == "ticket" || reason == "token") -> schedule("offline")
-            code == 4401 || code == -401 -> { running = false; setState("revoked") }
-            code == 4404 || code == 4408 -> schedule("host-offline")
-            code == 4409 -> { attempt = maxOf(attempt, 3); schedule("offline") }   // another line of ours took over: back off, don't fight
-            else -> schedule("offline")
+        if (code == 4409) { attempt = maxOf(attempt, 3); return@synchronized schedule("offline") }   // another line of ours took over: back off, don't fight
+        when (val next = classifyClose(code, reason, creds.via)) {
+            "revoked", "update" -> { running = false; setState(next) }
+            else -> schedule(next)
         }
     }
 

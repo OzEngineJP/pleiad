@@ -4,7 +4,7 @@
 //   - 行を押すと詳しい画面（つなぎ方・中継サーバー・許可した端末・追加した日・最後の接続・取り消す）
 //   - まとまりは「Pleiad Plus（公式の中継）」「もう一度の許可が要る端末」「自分の中継サーバー」「取り消した端末」。
 //     見出しのすぐ下にそれぞれの状態の一行（docs/design-system.md）。取り消した端末の行からは「一覧から消す」（鍵は PC が覚えたまま）
-//   - 端末の画面（リモートの窓）では、ホストの画面だけの操作（スイッチ・中継の編集・端末を追加・承認）を出さない。取り消しはできる（ADR 0245）
+//   - 端末の画面（リモートの窓）では、ホストの画面だけの操作（スイッチ・中継の編集・端末を追加・承認）を出さない。取り消しはできる（ADR 0248）
 //   - ＋ の流れ: アプリを入れる › つなぎ方 › つなぐ（QR かコード・確認コードで許可）。中継の URL・秘密が無ければ つなぎ方 の段で入れる。
 //     完了だけの段は無く、つなぐ の段がそのまま「つなぎました」と「閉じる」に替わる。Plus は待ちながら閉じられる（承認 2026-10-21）
 // - ほかの PC へ（デスクトップ版のローカルの窓だけ）: web/remote-hosts.mjs
@@ -206,7 +206,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (!status) return null;
     return [status.enabled, status.configured, connectionFailed(status), status.connection?.state === 'connected',
       status.relayUrl ?? '', status.relayUrlFromEnv, status.hasEnrollSecret, status.enrollSecretFromEnv, status.storage?.encrypted, status.connection?.state,
-      status.plus?.connect, status.plus?.link?.state, status.plus?.link?.error?.code, status.plus?.host?.state, status.plus?.devices, plusSignature(),
+      status.plus?.connect, status.plus?.paused?.until, status.plus?.link?.state, status.plus?.link?.error?.code, status.plus?.host?.state, status.plus?.devices, plusSignature(),
       (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.via, d.createdAt, d.agent?.active ?? 0, d.approvedBy, d.approvedByName, d.reapprove]),
       (status.revoked ?? []).map(k => [k.key, k.name, k.platform, k.via, k.revokedAt, k.by, k.byName, k.approvedBy, k.approvedByName])];
   }
@@ -325,6 +325,19 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       group.append(row);
     } else if (line && STATE_KINDS.has(line.kind)) group.append(stateLine(line.kind, line.text));
     else if (line) group.append(el('p', 'rm-warn', line.text));
+    // 公式の中継からの申し込みを何度も断ったので、新しい申し込みを止めている間の一行。解除はホストの画面だけ
+    const paused = status?.plus?.paused;
+    if (paused?.until) {
+      const warn = el('p', 'rm-warn rm-warn-acts', t('settings.remote.plus.paused', { time: fmt.dateTime(paused.until, { hour: 'numeric', minute: '2-digit' }) }));
+      warn.dataset.fk = 'plusPaused';
+      if (hostScreen && !reviewMode) {
+        const resume = button(t('settings.remote.plus.resume'), () => run(async () => { status = await cmd('remotePlusRequestsResume'); }), 'btn btn-quiet');
+        resume.dataset.fk = 'plusResume';
+        resume.disabled = busy;
+        warn.append(resume);
+      }
+      group.append(warn);
+    }
 
     for (const d of devices) group.append(deviceListRow(d));
     return group;

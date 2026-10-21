@@ -1,10 +1,12 @@
-// 端末の受け入れ・取り消し・ホストだけの操作（ADR 0245、docs/remote.md §3.4）。
+// 端末の受け入れ・取り消し・ホストだけの操作（ADR 0248、docs/remote.md §3.4）。
 // 実物の中継（relay/server.mjs）に試験の authz を差し込んだ「公式の中継」と fake の Plus で、
 //   A. 同じアカウントでも知らない鍵は、PC の承認の窓を通らないと入れない
 //   B. 取り消した鍵は、新しい ID トークンを持ってきても入れない（取り消した鍵の一覧 revoked.json）
 //   C. 取り消すと、同じ鍵の記録と、その端末が許可した端末も一緒に外れる
-//   D. 端末の画面から来た接続は、ホストだけの操作（リモートの設定・ペアリングの開始と答え）を 403 host_only で断る。取り消しは通す
+//   D. 端末の画面から来た接続は、ホストだけの操作（リモートの設定・ペアリングの開始と答え・Plus のログインとログアウト・同期のスイッチとやり直し・登録し直し）を断る。取り消しは通す
 //   E. 前の版で確認コードなしに入った via:plus の端末は「もう一度の許可が要る端末」になり、許可し直すまで通らない
+//   F. 公式の中継からの申し込みを 1 時間に 3 回断ると、そのアカウントからの申し込みを 1 時間止める（鍵を作り直しても窓を出さない）。
+//      数は plus-requests.json に残り、再起動しても止めたまま。「再開する」で解く
 // を往復する。LLM も外のネットワークも使わない。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -83,7 +85,7 @@ async function hostScenes(t, scene) {
   const ownUrl = `http://127.0.0.1:${ownAddr.port}`;
   const plus = await startFakePlus();
   plus.state.accounts[UID] = {
-    uid: UID, email: 'u@example.test', provider: 'test', status: 'plus',
+    uid: UID, email: 'u@example.com', provider: 'test', status: 'plus',
     plan: { id: 'plus', name: 'Plus' },
     limits: { hosts: 4, devicesPerHost: 16, sessionsPerHost: 2 },
     usage: { devices: 0, sessions: 0 }, sync: {},
@@ -138,13 +140,13 @@ async function hostScenes(t, scene) {
   }
   const accountHeader = () => ({ 'x-pleiad-account': plus.issueIdToken(UID) });
   const admit = opts => admitDevice({ relayUrl: officialUrl, hostId: st.hostId, hostPublicKey: st.publicKey, idToken: plus.issueIdToken(UID), ...opts });
-  const windowFor = () => remote.status().then(s => s.pairing.requests.find(r => r.via === 'plus'));
+  const windowFor = name => remote.status().then(s => s.pairing.requests.find(r => r.via === 'plus' && (!name || r.name === name)));
   /** 人が選んだつなぎ（mode 'pair'）を出し、PC の承認の窓に出た申し込みへ answer（approve / deny）で答える。 */
   async function answered(answer, opts = {}) {
     let shown = null;
     const pending = admit({ ...opts, mode: 'pair', onCode: code => { shown = code; } });
     pending.catch(() => {});   // 窓に出ないまま閉じられたときは、下の until が落ちる
-    const req = await until(() => windowFor(), 10_000, '承認の窓に出る');
+    const req = await until(() => windowFor(opts.name), 10_000, '承認の窓に出る');
     await until(() => shown, 5000, '端末に確認コードが出る');
     if (answer === 'approve') await remote.approve(req.id); else await remote.deny(req.id);
     return { req, shown, result: await within(pending, 15_000, '承認の答え') };
@@ -156,6 +158,8 @@ async function hostScenes(t, scene) {
     return { ok: true, detail: `${err.closeCode ?? ''} ${err.closeReason ?? ''} ${err.status ?? ''} ${err.message}` };
   }
   const live = [];
+  let reapproved = null;   // E で許可し直した端末（F で、止めている間も許可済みの端末は通ることを見る）
+  let restarted = null;
 
   try {
     await remote.setSettings({ relayUrl: ownUrl, enrollSecret: SECRET, enabled: true, hostName: 'admission-desk', plusConnect: true });
@@ -181,6 +185,7 @@ async function hostScenes(t, scene) {
       t.ok('E: 許可し直すと同じ端末のまま approvedBy: host が付く',
         again.result?.deviceId === migrated.record.id && rec?.approvedBy === 'host' && (await remote.status()).devices.find(x => x.id === migrated.record.id)?.reapprove !== true,
         JSON.stringify({ id: again.result?.deviceId, approvedBy: rec?.approvedBy }));
+      reapproved = again.result;
       const ch = await within(connectDevice(again.result, { extraHeaders: accountHeader() }), 15_000, '許可し直した端末のつなぎ直し');
       live.push(ch);
       t.ok('E: 許可し直した端末は新しいトークンでつながる', ch.hello?.hostName === 'admission-desk');
@@ -247,8 +252,51 @@ async function hostScenes(t, scene) {
       const back = await admit({ name: 'B', keyPair: b.keyPair, mode: 'pair', pairTimeoutMs: 3000 });
       t.ok('C: 一緒に外れた端末の鍵も入れない', back?.denied === true && back?.reason === 'revoked', JSON.stringify(back));
     });
+
+    // ---- F. 断り続けると、公式の中継からの申し込みを止める（A で 1 回断っている）
+    await scene('F', async () => {
+      const file = path.join(dataDir, 'remote', 'plus-requests.json');
+      const denials = () => fs.readFile(file, 'utf8').then(x => JSON.parse(x).accounts?.[UID]?.denials?.length ?? 0, () => 0);
+      t.ok('F: 断った数を plus-requests.json に残す', (await denials()) === 1, String(await denials()));
+      const second = await answered('deny', { name: 'Again 2', keyPair: generateKeyPair() });
+      t.ok('F: 2 回目までは止めない', second.result?.reason === 'rejected' && !(await remote.status()).plus.paused, JSON.stringify((await remote.status()).plus));
+      // 3 回目を断るとき、同じアカウントのもう 1 つの申し込みが窓で待っている
+      const waiting = admit({ name: 'Again 4', keyPair: generateKeyPair(), mode: 'pair' });
+      waiting.catch(() => {});
+      await until(async () => (await remote.status()).pairing.requests.some(r => r.name === 'Again 4'), 10_000, '4 つ目が窓に出る');
+      const third = await answered('deny', { name: 'Again 3', keyPair: generateKeyPair() }).catch(e => ({ error: e.message }));
+      const s = await remote.status();
+      const until1h = Date.parse(s.plus.paused?.until ?? '') - Date.now();
+      t.ok('F: 1 時間に 3 回断ると、申し込みを 1 時間止める', third.result?.reason === 'rejected' && until1h > 59 * 60_000 && until1h <= 60 * 60_000,
+        JSON.stringify({ third, paused: s.plus.paused }));
+      const closed = await within(waiting, 15_000, '待っていた申し込みの答え');
+      t.ok('F: 止めると、窓で待っていた申し込みも閉じる', closed?.denied === true && closed?.reason === 'rejected'
+        && !s.pairing.requests.some(r => r.via === 'plus'), JSON.stringify(closed));
+      const fresh = await admit({ name: 'New Key', keyPair: generateKeyPair(), mode: 'pair', pairTimeoutMs: 3000 });
+      t.ok('F: 止めている間は、鍵を作り直した申し込みも窓に出さず denied rejected',
+        fresh?.denied === true && fresh?.reason === 'rejected' && (await remote.status()).pairing.requests.length === 0, JSON.stringify(fresh));
+      if (reapproved) {
+        const ch = await within(connectDevice(reapproved, { extraHeaders: accountHeader() }), 15_000, '許可済みの端末のつなぎ直し');
+        live.push(ch);
+        t.ok('F: 止めている間も、許可済みの端末はつながる', ch.hello?.hostName === 'admission-desk');
+      }
+      const saved = JSON.parse(await fs.readFile(file, 'utf8')).accounts?.[UID];
+      t.ok('F: 止めた期限をファイルに残す', saved?.pausedUntil === s.plus.paused?.until, JSON.stringify(saved));
+
+      // 再起動（同じデータの置き場で作り直す）しても止めたまま
+      remote.stop();
+      restarted = createRemoteHost({ dataDir, cipher: plainCipher, target: () => ({ host: '127.0.0.1', port: 1 }), token: 'tok', env: {}, backoff: { minMs: 60, maxMs: 200 }, log: () => {} });
+      restarted.start();
+      const after = await until(async () => (await restarted.status()).plus.paused, 10_000, '再起動の後の止めている状態');
+      t.ok('F: 再起動しても止めたまま', after.until === s.plus.paused?.until, JSON.stringify(after));
+      const resumed = await restarted.resumePlusRequests();
+      const cleared = JSON.parse(await fs.readFile(file, 'utf8')).accounts ?? {};
+      t.ok('F: 「再開する」で止めた記録と断った数を消す', resumed.plus.paused === null && Object.keys(cleared).length === 0,
+        JSON.stringify({ paused: resumed.plus.paused, cleared }));
+    });
   } finally {
     for (const x of live.splice(0)) { try { x.close(); } catch {} }
+    restarted?.stop();
     remote.stop();
     await ownRelay.close().catch(() => {});
     await officialRelay.close().catch(() => {});
@@ -260,7 +308,8 @@ async function hostScenes(t, scene) {
 // ---- D. 端末の画面から来た接続（中継の接続口は x-forwarded-for と x-pleiad-device を付ける）は、ホストだけの操作を断る
 async function hostOnlyScenes(t, scene) {
   const dataDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-host-only-')));
-  const server = await startServer({ dataDir, env: { AGENT_HOST_DATA: dataDir, AGENT_HOST_BACKENDS: 'fake' } });
+  // Plus は隠す（断られなかったときに、本物の Plus へ出ていかない）
+  const server = await startServer({ dataDir, env: { AGENT_HOST_DATA: dataDir, AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_PLUS: '0' } });
   const conns = [];
   try {
     await scene('D', async () => {
@@ -275,10 +324,18 @@ async function hostOnlyScenes(t, scene) {
         ['remotePairingApprove', { id: 'nothing' }],
         ['remotePairingDeny', { id: 'nothing' }],
         ['plusHostRebind', {}],
+        ['plusLogin', {}],
+        ['plusLoginCancel', {}],
+        ['plusLogout', {}],
       ];
       for (const [command, args] of commands) {
         const got = await code(remoteScreen.cmd(command, args));
         t.ok(`D: 端末の画面からの ${command} は host_only で断る`, got === 'host_only', String(got));
+      }
+      // 操作の一覧の口（invoke { op }）で来るもの: アカウントの全部の PC に効く同期のスイッチ・やり直しと、登録し直し
+      for (const [op, args] of [['plus.syncSetEnabled', { enabled: false }], ['plus.syncReset', {}], ['plus.hostReregister', {}]]) {
+        const got = await code(remoteScreen.cmd('invoke', { op, args }));
+        t.ok(`D: 端末の画面からの invoke ${op} は HOST_SCREEN_ONLY で断る`, got === 'HOST_SCREEN_ONLY', String(got));
       }
       const settings = await local.cmd('remoteStatus', {}).catch(() => null);
       t.ok('D: 断った操作は設定を変えない', settings?.hostName !== 'changed-from-device', JSON.stringify(settings?.hostName));

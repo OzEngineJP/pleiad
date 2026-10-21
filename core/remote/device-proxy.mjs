@@ -60,10 +60,12 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<':
 
 /** ホストにつながらないときの案内（§7.4）。取り消し以外は 5 秒ごとに読み直し、つながれば画面に移る。 */
 export function unavailablePage({ state, hostName = '' }) {
-  const revoked = state === 'revoked' || state === 'reapprove';
-  const title = state === 'reapprove' ? t('remote.device.reapprove') : revoked ? t('remote.device.revoked') : t('remote.device.hostOffline');
+  const revoked = state === 'revoked' || state === 'reapprove' || state === 'removed';
+  const title = state === 'reapprove' ? t('remote.device.reapprove') : state === 'removed' ? t('remote.device.removed') : revoked ? t('remote.device.revoked') : t('remote.device.hostOffline');
   const body = state === 'reapprove'
     ? t('remote.device.page.reapprove')
+    : state === 'removed'
+    ? t('remote.device.page.removed')
     : revoked
     ? t('remote.device.page.revoked')
     : state === 'host-offline'

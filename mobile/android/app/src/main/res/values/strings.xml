@@ -24,6 +24,8 @@
     <string name="remote_page_plus_signed_out">Sign in to Pleiad Plus to connect to this host.</string>
     <string name="remote_plus_update">Please update Pleiad</string>
     <string name="remote_page_plus_update">This version of Pleiad can\'t use the official relay. Please update Pleiad.</string>
+    <string name="remote_plus_removed">This PC was removed from the Plus account</string>
+    <string name="remote_page_plus_removed">On that PC, select \"Register this PC again\" under Settings › Pleiad Plus to connect again.</string>
     <string name="remote_token_required">A token is required (open this from the app)</string>
     <string name="remote_lost">Lost the connection to the host</string>
     <string name="remote_back_to_hosts">Back to hosts</string>

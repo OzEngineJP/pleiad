@@ -109,7 +109,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
   }
   const ticketClaims = (aud, uid, extra) => {
     const iat = Math.floor(Date.now() / 1000);
-    return { iss: 'pleiad-plus', aud, uid, iat, exp: iat + 300, jti: b64url(crypto.randomBytes(16)), ...extra };
+    return { iss: 'pleiad-tickets', aud, uid, iat, exp: iat + 300, jti: b64url(crypto.randomBytes(16)), ...extra };
   };
 
   const uidOf = req => {

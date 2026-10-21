@@ -24,7 +24,7 @@
 //   ほかのアカウントになった、または止まったあとに GET /v1/account を読めて plus のまま（accountReadAt が進んだ）。
 //   止まっている間に session の知らせや設定の書き換えで見直しが来ても、これらが無ければ張りに行かない
 //
-// 受け入れ（onIncomingAdmit）: 中継が deviceId の無い端末を incoming {admit:true} で知らせたとき（ADR 0245）。
+// 受け入れ（onIncomingAdmit）: 中継が deviceId の無い端末を incoming {admit:true} で知らせたとき（ADR 0248）。
 //   Noise IK の応答側でハンドシェイクし、メッセージ 1 の plus を verifyAdmission で確かめる（今のアカウントのものでなければ
 //   窓を出さずに断る）。既定の確かめは受け入れの券 plus.ticket（aud:"pleiad-host"）: 署名（<api>/.well-known/pleiad-keys）・
 //   期限・hostId が自分・devicePub が Noise の相手の静的鍵・uid が今のアカウント・jti が初めて。どれかが違えば 'account'、
@@ -34,7 +34,9 @@
 //                        許可していない鍵は { denied, reason: 'approval' }（窓は出さない）
 //     { type: 'pair' }   人が選んだつなぎ。許可済みの鍵なら同じく通す。無ければ { waiting } を返して、
 //                        PC の画面の承認の窓（QR と同じ窓・同じ確認コード）へ回す。許可で approved、拒否で denied 'rejected'
-//   取り消した鍵は 'revoked'、拒否してから 1 時間は 'rejected'。台数（limits.devicesPerHost）と 1 時間 20 件の上限の中だけ。
+//   取り消した鍵は 'revoked'、拒否してから 1 時間は 'rejected'。同じアカウントからの申し込みを 1 時間に 3 回断ると、
+//   PC の画面で「再開する」を押すか 1 時間たつまで、許可していない鍵の pair も窓を出さずに 'rejected'（鍵を作り直しても数える）。
+//   台数（limits.devicesPerHost）と 1 時間 20 件の上限の中だけ。
 //   ID トークンと券はログにも状態にも残さない。
 import WebSocket from 'ws';
 import { Handshake, prologueFor, confirmationCode } from './noise.mjs';
@@ -210,6 +212,7 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
     }
     // 5. 許可していない鍵: 裏のつなぎ直しでは窓を出さない。人が選んだつなぎなら PC の画面の承認の窓へ
     if (msg.type === 'admit') return refuse('approval');
+    if (ctx.plusPaused?.(uid)) return refuse('rejected');
     const denied = await checkRequest({ publicKey });
     if (denied) return refuse(denied);
     requestTimes.push(now());

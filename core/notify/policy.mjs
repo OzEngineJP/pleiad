@@ -1,6 +1,6 @@
 // 離れた端末へ通知を送るかどうかの判定（docs/design.md「通知」、ADR 0086）。副作用のない関数だけ。
 //
-// 種類: approval / question / device（返事が要るとき。device は新しい端末が PC の画面の承認を待っている。ADR 0245）・failed / scheduleMissed（確認が要るとき）・done（終わったとき）。
+// 種類: approval / question / device（返事が要るとき。device は新しい端末が PC の画面の承認を待っている。ADR 0248）・failed / scheduleMissed（確認が要るとき）・done（終わったとき）。
 // 送らない: 端末がその種類を切っている・その会話を見ている（その端末自身の画面、または設定が許す他の画面）・
 //           2 分より古い完了・30 秒未満のターンの完了。委譲の子の完了は呼び出し側が渡さない（依頼元の完了に含む）。
 

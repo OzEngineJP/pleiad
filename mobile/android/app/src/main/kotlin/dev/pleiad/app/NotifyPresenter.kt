@@ -22,7 +22,7 @@ import dev.pleiad.app.remote.NotifySink
  * lock screen the conversation name is hidden unless the user allowed it (VISIBILITY_PRIVATE and a generic public
  * version). Two channels: "needs attention" (high) for approvals, questions and failures, and "finished" (default).
  * Tapping opens the conversation: pleiad://open?h=<hostId>&s=<sessionId> (a bundle opens the newest one).
- * A device waiting on the host's approval window (ADR 0245) has no buttons; tapping opens the host list.
+ * A device waiting on the host's approval window (ADR 0248) has no buttons; tapping opens the host list.
  */
 class NotifyPresenter(private val ctx: Context) : NotifySink {
     companion object {

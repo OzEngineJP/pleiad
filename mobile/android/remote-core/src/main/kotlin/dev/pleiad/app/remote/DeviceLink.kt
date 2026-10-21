@@ -201,6 +201,7 @@ class DeviceLink(
                             "plus-limit" -> "limit"
                             "plus-reapprove" -> "reapprove"
                             "plus-update" -> "update"
+                            "unknown-host" -> "removed"
                             "unreachable" -> "offline"
                             else -> "revoked"
                         }
@@ -218,7 +219,7 @@ class DeviceLink(
                 return
             }
         }
-        if (state in setOf("revoked", "reapprove", "blocked", "limit", "paused", "readmit", "signed-out", "update")) {
+        if (state in setOf("revoked", "reapprove", "blocked", "limit", "paused", "readmit", "signed-out", "update", "removed")) {
             running = false
             setStatus(detail.copy(state = state, since = System.currentTimeMillis()))
             return
@@ -248,7 +249,8 @@ class DeviceLink(
                 var failed: String? = null
                 try { relay = ticket.invoke(c.hostId, kp) }
                 catch (e: PairError) {
-                    failed = when (e.code) { "plus-update" -> "update"; "plus-signed-out" -> "signed-out"; else -> "offline" }
+                    // unknown-host: the PC was removed from the Plus account (no more tickets), so waiting does not help
+                    failed = when (e.code) { "plus-update" -> "update"; "plus-signed-out" -> "signed-out"; "unknown-host" -> "removed"; else -> "offline" }
                     log("remote device: ticket failed: ${e.code}")
                 }
                 catch (e: Exception) { failed = "offline"; log("remote device: ticket failed: ${e.javaClass.simpleName}") }

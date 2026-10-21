@@ -15,7 +15,7 @@ import dev.pleiad.app.remote.KeyPair
 import org.json.JSONObject
 
 /**
- * Connection to a listed host: prove the account identity inside the encrypted IK handshake (ADR 0245).
+ * Connection to a listed host: prove the account identity inside the encrypted IK handshake (ADR 0248).
  * With a ticket (docs/plus.md "Tickets") the relay gets the relay ticket and message 1 carries the admission ticket;
  * without one (an api that has no tickets yet) both carry the ID token.
  * The account alone does not admit a key. mode "admit" (background reconnect) only works for a key the host

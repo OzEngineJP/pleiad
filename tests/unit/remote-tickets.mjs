@@ -60,7 +60,7 @@ export default async function (t) {
   const dataDir = path.join(scratch, 'data');
   const plus = await startFakePlus();
   plus.state.accounts[UID] = {
-    uid: UID, email: 'u@example.test', provider: 'test', status: 'plus',
+    uid: UID, email: 'u@example.com', provider: 'test', status: 'plus',
     plan: { id: 'plus', name: 'Plus' },
     limits: { hosts: 4, devicesPerHost: 16, sessionsPerHost: 2 },
     usage: { devices: 0, sessions: 0 }, sync: {},
@@ -196,7 +196,7 @@ export default async function (t) {
       const { hostIdFor } = await import('../../core/remote/noise.mjs');
       const secondId = hostIdFor(second.publicKey);
       const now = Math.floor(Date.now() / 1000);
-      const limited = plus.signTicket({ iss: 'pleiad-plus', aud: 'relay', uid: UID, iat: now, exp: now + 300, jti: b64url(crypto.randomBytes(16)), role: 'host', sub: secondId, hostId: secondId, lim: { hosts: 1, devicesPerHost: 16 } });
+      const limited = plus.signTicket({ iss: 'pleiad-tickets', aud: 'relay', uid: UID, iat: now, exp: now + 300, jti: b64url(crypto.randomBytes(16)), role: 'host', sub: secondId, hostId: secondId, lim: { hosts: 1, devicesPerHost: 16 } });
       const r1 = await authz.host({ route: '/v1/host', hostId: secondId, headers: { 'x-pleiad-ticket': limited } });
       t.ok('R: 台数の上限は 4429 account limit', !r1.ok && r1.code === 4429 && r1.reason === 'account limit', JSON.stringify(r1));
       const r2 = await authz.host({ route: '/v1/host', hostId: secondId, headers: { 'x-pleiad-ticket': limited } });
@@ -314,6 +314,17 @@ export default async function (t) {
       const upd = await until(async () => { const s = await deviceState(); return s === 'update' ? s : null; }, 10_000, '端末の線が update で止まる');
       t.ok('E: 券の発行が 426 なら、端末の線は update で止まる', upd === 'update');
       await device.close(st.hostId);
+
+      // 外された PC（券の発行が 403 host_removed・404）へは、オフラインとして張り直し続けず removed で止まる
+      for (const [status, code] of [[403, 'host_removed'], [404, 'not_found']]) {
+        let calls = 0;
+        await device.open(st.hostId, { via: 'plus', relayUrl, getTicket: async () => { calls++; throw Object.assign(new Error('host removed'), { status, code }); } });
+        const got = await until(async () => { const s = await deviceState(); return s === 'removed' || s === 'offline' ? s : null; }, 10_000, `端末の線が ${status} で止まる`);
+        await sleep(1500);
+        t.ok(`E: 券の発行が ${status} なら、端末の線は removed で止まり、張り直さない`, got === 'removed' && (await deviceState()) === 'removed' && calls === 1,
+          JSON.stringify({ got, now: await deviceState(), calls }));
+        await device.close(st.hostId);
+      }
 
       authz.state.v2Required = true;
       await device.open(st.hostId, { via: 'plus', relayUrl, getTicket: async () => null, getIdToken: async () => plus.issueIdToken(UID) });

@@ -72,7 +72,7 @@ function publicAgent(d, stats) {
 }
 
 /**
- * もう一度の許可が要る端末か。via:'plus' で許可した機器の記録が無いものは、前の版で確認コードなしに入った端末（ADR 0245）。
+ * もう一度の許可が要る端末か。via:'plus' で許可した機器の記録が無いものは、前の版で確認コードなしに入った端末（ADR 0248）。
  * もう一度の許可が済むまで、操作を通さない
  */
 const needsReapproval = d => Boolean(d) && d.via === 'plus' && !d.approvedBy;
@@ -112,6 +112,13 @@ const NOTIFY_PERSIST_MS = 60_000;
 
 /** 拒否した鍵が同じ PC へもう一度申し込めるまで（Plus からの申し込み）。 */
 const DENY_COOLDOWN_MS = 60 * 60_000;
+/**
+ * 公式の中継からの申し込みを続けて断ったら、承認の窓を出すのを止める（PC とアカウントの uid ごと。鍵を作り直しても数える）。
+ * 1 時間に 3 回断ると 1 時間止める。止めている間は PC の画面に一行と「再開する」を出す
+ */
+const PLUS_DENY_LIMIT = 3;
+const PLUS_DENY_WINDOW_MS = 60 * 60_000;
+const PLUS_PAUSE_MS = 60 * 60_000;
 
 function publicRequest(r) {
   return {
@@ -153,6 +160,8 @@ export function createRemoteHost({
   const deviceCache = new Map();   // id → devices.json の 1 件（照合は同期で行う）
   const revokedKeys = new Map();   // 公開鍵 → revoked.json の 1 件（取り消した鍵。照合は同期で行う）
   const deniedUntil = new Map();   // 公開鍵 → 拒否した鍵がもう一度申し込める時刻（ms。Plus からの申し込み）
+  let plusRequests = { version: 1, accounts: {} };   // plus-requests.json の写し（断った時刻と、申し込みを止めている期限。uid ごと）
+  let plusPauseTimer = null;       // 止めている期限が来たら状態を配り直す
   const notifyKeys = new Map();    // deviceId → 通知鍵（Buffer）。スマホへの通知を暗号化する（core/notify）
   const notifyPersisted = new Map();   // deviceId → lastSentAt を最後にファイルへ書いた時刻
   const channels = new Map();      // deviceId → Set<{ ch, ws, link }>
@@ -234,6 +243,8 @@ export function createRemoteHost({
     notifyKeys.clear();
     revokedKeys.clear();
     for (const k of await store.revokedKeys()) revokedKeys.set(k.publicKey, k);
+    plusRequests = await store.plusRequests();
+    schedulePlusPause();
     for (const d of await store.devices()) {
       deviceCache.set(d.id, d);
       if (d.notify) {
@@ -421,6 +432,8 @@ export function createRemoteHost({
       isRevoked: publicKey => revokedKeys.has(keyText(publicKey)),
       /** 拒否してから 1 時間たっていない鍵か。 */
       deniedRecently: publicKey => (deniedUntil.get(keyText(publicKey)) ?? 0) > now(),
+      /** このアカウントからの申し込みを止めているか（続けて断ったとき。PC の画面の「再開する」で解く）。 */
+      plusPaused: uid => plusPausedUntil(uid) > 0,
       /** この鍵の端末の記録（無ければ null）。この link のもの（plus）を先に、無ければ own を返す。 */
       deviceFor(publicKey) {
         const key = keyText(publicKey);
@@ -510,7 +523,7 @@ export function createRemoteHost({
         return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'revoked');
       }
       // 前の版で確認コードなしに入った端末は、もう一度の許可が済むまで通さない。中継は理由を端末へ渡さないので、
-      // 端末は受け入れをやり直して { denied, reason: 'approval' } で知る（ADR 0245）
+      // 端末は受け入れをやり直して { denied, reason: 'approval' } で知る（ADR 0248）
       if (needsReapproval(current)) {
         clearTimeout(timer);
         return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'reapprove');
@@ -633,6 +646,43 @@ export function createRemoteHost({
     emit({ type: 'remotePairing', phase: 'request', request: publicRequest(r) });
     queueStatus();
     return r;
+  }
+
+  // ── 公式の中継からの申し込みを続けて断ったとき ──────────────────
+
+  /** このアカウントからの申し込みを止めている期限（ms）。止めていなければ 0 */
+  function plusPausedUntil(uid) {
+    const until = Date.parse(plusRequests.accounts[String(uid ?? '')]?.pausedUntil ?? '');
+    return Number.isFinite(until) && until > now() ? until : 0;
+  }
+  function plusPausedStatus() {
+    const until = Math.max(0, ...Object.keys(plusRequests.accounts).map(plusPausedUntil));
+    return until ? { until: new Date(until).toISOString() } : null;
+  }
+  /** 止めている期限が来たら、状態を配り直す（画面の一行を消す） */
+  function schedulePlusPause() {
+    clearTimeout(plusPauseTimer);
+    plusPauseTimer = null;
+    const until = Date.parse(plusPausedStatus()?.until ?? '');
+    if (!Number.isFinite(until)) return;
+    plusPauseTimer = setTimeout(() => { plusPauseTimer = null; queueStatus(); }, Math.max(0, until - now()) + 50);
+    plusPauseTimer.unref?.();
+  }
+  /** 公式の中継からの申し込みを断った。直近 1 時間に 3 回目なら、このアカウントからの申し込みを 1 時間止め、待っている窓も閉じる */
+  async function countPlusDenial(uid) {
+    if (!uid) return;
+    const at = now();
+    const entry = plusRequests.accounts[uid] ?? { denials: [], pausedUntil: null };
+    entry.denials = [...(Array.isArray(entry.denials) ? entry.denials : []).filter(x => at - Date.parse(x) < PLUS_DENY_WINDOW_MS), new Date(at).toISOString()];
+    if (entry.denials.length >= PLUS_DENY_LIMIT) {
+      entry.pausedUntil = new Date(at + PLUS_PAUSE_MS).toISOString();
+      entry.denials = [];
+      for (const r of [...requests.values()]) if (r.link?.name === 'plus' && r.plusUid === uid) finishRequest(r, 'denied');
+    }
+    plusRequests.accounts[uid] = entry;
+    await store.savePlusRequests(plusRequests).catch(e => log(`remote plus requests: ${e.message}`));
+    schedulePlusPause();
+    queueStatus();
   }
 
   function finishRequest(r, phaseName, extra = {}) {
@@ -855,6 +905,8 @@ export function createRemoteHost({
         link: linkStatus(links.plus),
         host: plusHostState,
         devices: [...deviceCache.values()].filter(d => d.via === 'plus').length,
+        // 続けて断ったので、公式の中継からの申し込みを止めている間 { until }（ISO 時刻）。止めていなければ null
+        paused: plusPausedStatus(),
       },
       storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
     };
@@ -1018,6 +1070,15 @@ export function createRemoteHost({
       // Pleiad Plus から来た鍵は、断ってから 1 時間は同じ鍵で頼み直せない（QR は PC の画面で始めるので要らない）
       if (r.link?.name === 'plus') deniedUntil.set(keyText(r.publicKey), now() + DENY_COOLDOWN_MS);
       finishRequest(r, 'denied');
+      if (r.link?.name === 'plus') await countPlusDenial(r.plusUid);
+      return status();
+    },
+    /** 公式の中継からの申し込みを止めていたのを解く（人だけ。ホストの PC の画面から）。断った数も数え直す */
+    async resumePlusRequests() {
+      plusRequests = { version: 1, accounts: {} };
+      await store.savePlusRequests(plusRequests);
+      schedulePlusPause();
+      queueStatus();
       return status();
     },
 

@@ -10,11 +10,14 @@
 //                                agentDelegation は前の版の「この端末の AI からの依頼を受ける」。今は読まない（デスクトップ版の端末なら受ける。ADR 0239）
 //                                invite = <招待の id>（審査の招待で入った端末の印。招待を取り消す・作り直す・期限が来ると、この印の端末をすべて外す。ADR 0172）
 //                                approvedBy = この端末の鍵を許可した機器（PC の画面なら 'host'。端末の id なら、その端末を取り消すと一緒に外れる）。
-//                                  via:'plus' で approvedBy の無い端末は、前の版で確認コードなしに入ったもの。もう一度の許可が済むまで通さない（ADR 0245）
+//                                  via:'plus' で approvedBy の無い端末は、前の版で確認コードなしに入ったもの。もう一度の許可が済むまで通さない（ADR 0248）
 //                                公開鍵は base64url、tokenHash は中継用トークン（生の 32 バイト）の SHA-256 の 16 進。トークンそのものは持たない
 //   <data>/remote/revoked.json   { version: 1, keys: [{ id, publicKey, revokedAt, by, name, platform?, via?, approvedBy?, createdAt?, hidden? }] }
 //                                取り消した端末の鍵。台帳や中継の資格に関係なく、この鍵はもう通さない。行は消さない
 //                                （「一覧から消す」は hidden を立てて表示から外すだけ）。by = 取り消した機器（'host' か端末の id）
+//   <data>/remote/plus-requests.json  { version: 1, accounts: { <uid>: { denials: [ISO 時刻], pausedUntil: ISO 時刻 | null } } }
+//                                公式の中継から来た申し込みを PC の画面で断った時刻（直近 1 時間ぶん）と、続けて断ったので
+//                                申し込みを止めている期限。アカウントの uid ごと。起動し直しても数え直さない
 //
 // ファイルは一時ファイル + rename で 0600、フォルダーは 0700 で作る（Windows では効かないが、利用者のフォルダーの中に置く）。
 import fs from 'node:fs/promises';
@@ -59,6 +62,7 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
   const settingsFile = path.join(dir, 'settings.json');
   const devicesFile = path.join(dir, 'devices.json');
   const revokedFile = path.join(dir, 'revoked.json');
+  const plusRequestsFile = path.join(dir, 'plus-requests.json');
   const secrets = createSecretStore({ file: path.join(dir, 'secrets.json'), cipher });
   let identity = null;
   let queue = Promise.resolve();
@@ -152,6 +156,12 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
         return hit;
       });
     },
+    /** 公式の中継からの申し込みを断った記録（plus-requests.json）。読めない・形が違えば空から数える。 */
+    async plusRequests() {
+      const raw = await readJson(plusRequestsFile, null).catch(() => null);
+      return raw?.version === 1 && raw.accounts && typeof raw.accounts === 'object' && !Array.isArray(raw.accounts) ? raw : { version: 1, accounts: {} };
+    },
+    async savePlusRequests(data) { return serial(() => writeJson(plusRequestsFile, data)); },
     /** 取り消した鍵の一覧（hidden のものも含む）。 */
     async revokedKeys() { return (await readRevoked()).keys; },
     /** 取り消した鍵を足す。同じ鍵がもうあれば日付と取り消した機器だけ新しくし、一覧にも戻す。 */

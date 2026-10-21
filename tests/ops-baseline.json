@@ -29,6 +29,7 @@
     "remoteDevices": "human-only",
     "remoteRevoke": "human-only",
     "remoteRevokedHide": "human-only",
+    "remotePlusRequestsResume": "human-only",
     "plusHostRebind": "human-only",
     "setRemoteDeviceAgent": "human-only",
     "mcpAuthStart": "human-only",

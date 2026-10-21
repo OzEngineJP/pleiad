@@ -176,6 +176,8 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-end { display:flex; color:var(--ink-weak); }
 .rm-end.rm-ok { color:var(--ink-blue); }
 .settings-content .rm-warn { margin:0; padding:2px 8px 6px; font-weight:600; color:var(--ink-strong); line-height:var(--lh); }
+/* 警告の一行の右に、解除のボタンを添える形（公式の中継からの申し込みを止めている間） */
+.settings-content .rm-warn-acts { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:space-between; }
 .settings-content .rm-err { margin:8px 8px 0; color:var(--ink-strong); font-weight:600; font-size:var(--fs-s); overflow-wrap:anywhere; }
 .rm-back { display:inline-flex; align-items:center; gap:4px; margin-left:2px; padding:4px 8px 4px 4px; border-radius:var(--r-pill);
   background:none; color:var(--ink-weak); cursor:pointer; font:inherit; }

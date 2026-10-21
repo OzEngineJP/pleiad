@@ -1213,11 +1213,13 @@
       "limit": "This account has reached its limit",
       "paused": "Pleiad Plus is temporarily unavailable",
       "update": "This version of Pleiad can't use the official relay. Please update Pleiad",
+      "removed": "This PC was removed from the Plus account",
       "page": {
         "revoked": "Pair this device again.",
         "hostOffline": "Make sure Pleiad is running on the host. This page opens automatically once connected.",
         "offline": "Can't reach the relay. Check your network. This page opens automatically once connected.",
-        "reapprove": "Select this PC in the \"Other PCs\" list and get it allowed on the host's screen."
+        "reapprove": "Select this PC in the \"Other PCs\" list and get it allowed on the host's screen.",
+        "removed": "On that PC, select \"Register this PC again\" under Settings › Pleiad Plus to connect again."
       },
       "reapprove": "This device needs to be allowed again on the host"
     },

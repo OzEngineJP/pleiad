@@ -15,7 +15,7 @@ import {
 } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
 
-const STATES = ['connected', 'connecting', 'offline', 'host-offline', 'revoked', 'reapprove', 'unpaired', 'closed', 'stopped', 'blocked', 'limit', 'paused', 'readmit', 'update'];
+const STATES = ['connected', 'connecting', 'offline', 'host-offline', 'revoked', 'reapprove', 'unpaired', 'closed', 'stopped', 'blocked', 'limit', 'paused', 'readmit', 'update', 'removed'];
 
 /**
  * 一覧の 1 行に出すもの。host は desktop/remote-windows.cjs の hostRow。
@@ -37,6 +37,8 @@ export function hostLine(host, { plusState = null } = {}) {
       sub = t('settings.remote.groups.plusLimit');
     } else if (state === 'update') {
       sub = t('settings.remote.groups.plusUpdate');
+    } else if (state === 'removed') {
+      sub = t('settings.remote.groups.plusRemoved');
     } else if (state === 'paused') {
       if (plusState === 'maintenance') sub = t('settings.remote.groups.plusMaintenance');
       else sub = t('settings.remote.groups.plusUnavailable');
@@ -53,7 +55,7 @@ export function hostLine(host, { plusState = null } = {}) {
   return {
     name: host?.name || host?.hostId || '',
     sub,
-    canOpen: !revoked && state !== 'blocked' && state !== 'limit' && state !== 'update',
+    canOpen: !revoked && state !== 'blocked' && state !== 'limit' && state !== 'update' && state !== 'removed',
     revoked,
     /** 開く前に相手の PC の承認が要る（Plus のまだ許可されていない・もう一度の許可が要る PC） */
     needsApproval: isPlus && (state === 'unpaired' || state === 'reapprove'),

@@ -1,5 +1,5 @@
 // 設定 › リモート「この PC へ」の Plus 経路（実ブラウザー）。偽の Plus とローカル中継だけを使う。
-// 端末の承認と取り消し（ADR 0245）: 承認の窓・取り消した端末・もう一度の許可・通知の一覧のあなた待ちも通る。
+// 端末の承認と取り消し（ADR 0248）: 承認の窓・取り消した端末・もう一度の許可・通知の一覧のあなた待ちも通る。
 // 実行: node tests/browser/remote-plus.mjs（REMOTE_PLUS_SHOTS で撮影先を変更できる。承認と取り消しの場面は DEVICE_APPROVAL_SHOTS）
 import fs from 'node:fs';
 import os from 'node:os';
@@ -209,7 +209,7 @@ try {
   catch (e) { throw new Error(`${e.message}\n${JSON.stringify({ remote: await client.cmd('remoteStatus'), plus: await client.cmd('plusStatus'), hostCalls: { count: plus.state.calls.filter(c => c.path.startsWith('/v1/hosts')).length, recent: plus.state.calls.filter(c => c.path.startsWith('/v1/hosts')).slice(-8).map(c => [c.method, c.path]) }, log: server.tail?.() })}`); }
   const token = plus.issueIdToken(ACCOUNT_ID);
   const base = { relayUrl, hostId: remote.hostId, hostPublicKey: Buffer.from(host.publicKey, 'base64url'), platform: 'android' };
-  // 新しい鍵は、同じアカウントでも PC の画面の承認の窓を通る（ADR 0245）。裏のつなぎ直し（admit）は窓を出さずに断る
+  // 新しい鍵は、同じアカウントでも PC の画面の承認の窓を通る（ADR 0248）。裏のつなぎ直し（admit）は窓を出さずに断る
   // 端末は券で申し込む（券を出す api では、ID トークンだけの申し込みを PC が 'update_required' で断る）
   const plusRequest = async (method, p, body) => {
     const r = await fetch(`${plus.url}${p}`, { method, headers: { authorization: `Bearer ${plus.issueIdToken(ACCOUNT_ID)}`, 'content-type': 'application/json', 'x-pleiad-admission': '2' }, body: JSON.stringify(body) });
@@ -287,7 +287,7 @@ try {
   await page.screenshot({ path: path.join(SHOTS, 'remote-plus-both-focus-light-1280.png') });
   await shot('both');
 
-  // 取り消し（ADR 0245）: 詳しい画面から Pixel Tablet を取り消すと「取り消した端末」に並び、その鍵は公式の中継からも入れない
+  // 取り消し（ADR 0248）: 詳しい画面から Pixel Tablet を取り消すと「取り消した端末」に並び、その鍵は公式の中継からも入れない
   await page.locator('#remotePanel button', { hasText: 'Pixel Tablet' }).first().click();
   await page.locator('#remotePanel [data-fk="revoke"]').click();
   await page.locator('#remotePanel [data-fk="revokeYes"]').click();

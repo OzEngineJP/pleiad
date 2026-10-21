@@ -274,6 +274,7 @@
         "plusBlocked": "This account can't use the official relay",
         "plusLimit": "This account has reached its limit",
         "plusUpdate": "This version of Pleiad can't use the official relay. Please update Pleiad",
+        "plusRemoved": "This PC was removed from the Plus account",
         "plusEmpty": "PCs signed in to the same account appear here.",
         "plusMaintenance": "Pleiad Plus is under maintenance",
         "plusUnavailable": "Pleiad Plus is temporarily unavailable",
@@ -297,6 +298,8 @@
         "signingIn": "Sign in to Pleiad Plus",
         "account": "This account can't use the official relay",
         "connecting": "Connecting…",
+        "paused": "Requests through the official relay are paused until {{time}}.",
+        "resume": "Resume",
         "todo": {
           "install": {
             "phone": "Install Pleiad on your phone",

@@ -40,6 +40,7 @@ class PleiadApp : Application() {
                 "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_plus_maintenance else R.string.remote_plus_paused
                 "signed-out" -> R.string.remote_plus_signed_out
                 "update" -> R.string.remote_plus_update
+                "removed" -> R.string.remote_plus_removed
                 else -> R.string.remote_host_offline
             })
             override fun body(state: String) = getString(
@@ -51,6 +52,7 @@ class PleiadApp : Application() {
                     "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_page_plus_maintenance else R.string.remote_page_plus_paused
                     "signed-out" -> R.string.remote_page_plus_signed_out
                     "update" -> R.string.remote_page_plus_update
+                    "removed" -> R.string.remote_page_plus_removed
                     "host-offline" -> R.string.remote_page_host_offline
                     else -> R.string.remote_page_offline
                 },

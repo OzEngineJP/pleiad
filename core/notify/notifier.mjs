@@ -92,7 +92,7 @@ export function createPushNotifier({ devices, presence, send, host, now = Date.n
     },
 
     /**
-     * 新しい端末が PC の画面の承認を待っている（ADR 0245）。承認済みのスマホへ知らせるだけで、許可はさせない（ボタンは付けない）。
+     * 新しい端末が PC の画面の承認を待っている（ADR 0248）。承認済みのスマホへ知らせるだけで、許可はさせない（ボタンは付けない）。
      * name は申し込んだ端末の名前。会話は無いので、見ている会話で止めない
      */
     deviceRequest({ id, name }) {

@@ -26,7 +26,7 @@ export function describeNotification(n, t, titleOf = () => '') {
   let line;
   if (n.kind === 'wait') {
     const what = ['question', 'chrome', 'command', 'device'].includes(n.ask) ? n.ask : 'approval';
-    // 端末の追加の許可待ち（ADR 0245）は、待っている端末の名前を出す（題に入れてある）
+    // 端末の追加の許可待ち（ADR 0248）は、待っている端末の名前を出す（題に入れてある）
     const who = what === 'device' ? title : name;
     line = t(`inbox.line.${what}.${who ? 'named' : 'plain'}.${open ? 'open' : 'closed'}`, { name: who });
   } else if (n.kind === 'failed') {

@@ -55,6 +55,7 @@ object DefaultTexts : ProxyTexts {
         "paused" -> "Pleiad Plus is temporarily unavailable"
         "signed-out" -> "Not signed in"
         "update" -> "Please update Pleiad"
+        "removed" -> "This PC was removed from the Plus account"
         else -> "Can't reach the host"
     }
     override fun body(state: String) = when (state) {
@@ -66,6 +67,7 @@ object DefaultTexts : ProxyTexts {
         "paused" -> "Pleiad Plus is temporarily unavailable. The connection will resume when it is available."
         "signed-out" -> "Sign in to Pleiad Plus to connect to this host."
         "update" -> "This version of Pleiad can't use the official relay. Please update Pleiad."
+        "removed" -> "On that PC, select \"Register this PC again\" under Settings › Pleiad Plus to connect again."
         else -> "Can't reach the relay. Check your network. This page opens automatically once connected."
     }
     override fun tokenRequired() = "A token is required (open this from the app)"
@@ -292,8 +294,9 @@ class DeviceProxy(
     }
 
     fun unavailablePage(state: String): String {
-        // no automatic reload while the host refuses this device (revoked, or waiting to be allowed again)
-        val revoked = state == "revoked" || state == "reapprove"
+        // no automatic reload while the host refuses this device (revoked, or waiting to be allowed again), or the PC
+        // was removed from the Plus account
+        val revoked = state == "revoked" || state == "reapprove" || state == "removed"
         val title = texts.title(state)
         val body = texts.body(state)
         val hostName = creds.hostName
