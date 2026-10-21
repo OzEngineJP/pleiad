@@ -48,6 +48,14 @@ export function keyRadioGroup(label, rows) {
   return opts;
 }
 
+/** 読み込み中の値の場所取り（.rm-skel）。読み上げは「読み込んでいます」 */
+export function loadingMark() {
+  const s = el('span', 'rm-skel');
+  s.setAttribute('role', 'img');
+  s.setAttribute('aria-label', t('settings.plus.loading'));
+  return s;
+}
+
 /** Plus の行を出すか（state: off・AGENT_HOST_PLUS=0 のときは行ごと出さない） */
 export const plusRowVisible = info => info && info.available !== false && info.state !== 'off';
 
@@ -71,6 +79,9 @@ export function plusKeyRow({ info, checked, onChoose, onLogin }) {
     box.append(document.createTextNode(p.email ?? ''));
     if (p.limitReached) box.append(el('br'), document.createTextNode(t('apiKeys.delegation.plusLimit', { date: resetDateText(p.resetAt) })));
     sub = box;
+  } else if (p.signedIn && p.status == null) {
+    // アカウントをまだ読めていない。読めるまで「使っていない」とは言わない（承認 2026-10-21）
+    sub = p.reachable === false ? t('settings.plus.loadFailed') : loadingMark();
   } else if (p.signedIn) {
     // free・disabled
     sub = t('apiKeys.delegation.plusNotUsing');

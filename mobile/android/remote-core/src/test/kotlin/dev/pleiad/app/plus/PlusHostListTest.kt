@@ -14,8 +14,22 @@ class PlusHostListTest {
         assertEquals("own", PlusHostList.combine(listOf(record("own")), emptyList(), true).single().via)
         assertEquals("plus", PlusHostList.combine(emptyList(), listOf(listed), true).single().via)
         val both = PlusHostList.combine(listOf(record("own"), record("plus")), listOf(listed), true).single()
-        assertEquals("both", both.via)
+        assertEquals("plus", both.via)
+        assertEquals(true, both.both)
         assertEquals(true, both.online)
+    }
+
+    // ToBe-A (2026-10-21): a host paired both ways stays one row and opens with Plus only while the PC is online on Plus.
+    @Test fun aHostPairedBothWaysOpensWithPlusOnlyWhileThePcIsOnlineThere() {
+        val both = listOf(record("own"), record("plus"))
+        assertEquals("plus", PlusHostList.combine(both, listOf(listed), true).single().via)
+        val offline = PlusHostList.combine(both, listOf(listed.copy(online = false)), true)
+        assertEquals(1, offline.size)
+        assertEquals("own", offline.single().via)
+        assertEquals("own", PlusHostList.combine(both, emptyList(), true).single().via)
+        // A window connected on one route keeps it, whatever the ledger says now.
+        assertEquals("own", PlusHostList.combine(both, listOf(listed), true, mapOf("h" to "own")).single().via)
+        assertEquals("plus", PlusHostList.combine(both, listOf(listed.copy(online = false)), true, mapOf("h" to "plus")).single().via)
     }
 
     @Test fun failedListCanUseLastKnownPlusRowsAndUnavailableAccountHidesThem() {

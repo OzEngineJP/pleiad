@@ -202,6 +202,55 @@ export default async function (t) {
     await plus.close();
   }
 
+  // ---- 6c. account をまだ一度も読めていないときの status({ refresh }) は間隔を待たずに読み、読み終わるまで待つ（設定の「再試行」） ----
+  {
+    const ctx = await setup();
+    await ctx.session.init();
+    let ok = false;
+    ctx.plus.route('GET', '/v1/account', (req, res) => {
+      res.writeHead(ok ? 200 : 400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(ok ? { uid: 'user-1', email: 'user@example.com', status: 'plus' } : { error: { code: 'bad_request', message: 'x' } }));
+    });
+    ctx.plus.state.nextLogin = { uid: 'user-1', email: 'user@example.com' };
+    await ctx.session.login();
+    await browse(ctx.opened);
+    await tick(20);
+    t.ok('ログインの直後に account を読めなかった → account は無い', ctx.session.snapshot().account == null, JSON.stringify(ctx.session.snapshot().account));
+    ok = true;
+    const st = await ctx.session.status({ refresh: true });
+    t.ok('読めていなければ、間隔の内でもすぐ読み直して、返す status に載せる', st.account?.status === 'plus', JSON.stringify(st.account));
+    await ctx.plus.close();
+  }
+
+  // ---- 6d. 前に届かなかった印（reachable: false）は、入り直したら消す（account を読むまでの間、プランを「読み込めませんでした」にしない） ----
+  {
+    const ctx = await setup();
+    await ctx.session.init();
+    let mode = 'fail';
+    let release = () => {};
+    ctx.plus.route('GET', '/v1/account', async (req, res) => {
+      if (mode === 'hold') await new Promise(r => { release = r; });
+      res.writeHead(mode === 'fail' ? 400 : 200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(mode === 'fail' ? { error: { code: 'bad_request', message: 'x' } } : { uid: 'user-1', email: 'user@example.com', status: 'plus' }));
+    });
+    ctx.plus.state.nextLogin = { uid: 'user-1', email: 'user@example.com' };
+    await ctx.session.login();
+    await browse(ctx.opened);
+    await tick(20);
+    t.ok('account を読めなかった → reachable: false', ctx.session.snapshot().reachable === false);
+    await ctx.session.logout();
+    mode = 'hold';
+    ctx.plus.state.nextLogin = { uid: 'user-1', email: 'user@example.com' };
+    await ctx.session.login();
+    await browse(ctx.opened);
+    await tick(20);
+    const st = ctx.session.snapshot();
+    t.ok('入り直した直後（account を読んでいる間）は reachable: true', st.signedIn === true && st.account == null && st.reachable === true, JSON.stringify({ signedIn: st.signedIn, account: st.account, reachable: st.reachable }));
+    mode = 'ok'; release();
+    await tick(20);
+    await ctx.plus.close();
+  }
+
   // ---- 7. tokenProjectId が違う → 保管を消して relogin ----------------------
   {
     // 前の起動で別のプロジェクト宛に保管されたセッションが残っている、を模す

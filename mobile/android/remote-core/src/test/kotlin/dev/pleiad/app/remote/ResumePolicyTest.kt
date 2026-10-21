@@ -6,14 +6,26 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ResumePolicyTest {
-    private fun host(id: String, revokedAt: Long? = null) = HostRecord(id, "pc-$id", "", "https://relay.example", "key", "dev", 0, 1L, 2L, revokedAt)
+    private fun host(id: String, revokedAt: Long? = null, via: String = "own") = HostRecord(id, "pc-$id", "", "https://relay.example", "key", "dev", 0, 1L, 2L, revokedAt, via)
     private val hosts = listOf(host("a"), host("b", revokedAt = 5L))
 
-    private fun decide(saved: String?, fresh: Boolean = true, launcher: Boolean = true, list: List<HostRecord> = hosts) =
-        ResumePolicy.decide(saved, list, fresh, launcher)
+    private fun decide(saved: String?, fresh: Boolean = true, launcher: Boolean = true, list: List<HostRecord> = hosts, via: String? = null) =
+        ResumePolicy.decide(saved, list, fresh, launcher, via)
 
     @Test fun opensTheSavedHostOnAFreshLauncherStart() {
-        assertEquals(ResumeDecision("a", false), decide("a"))
+        assertEquals(ResumeDecision("a", false, "own"), decide("a"))
+    }
+
+    // The last host reopens with the route it was open with; a host paired only with Plus reopens with Plus (not "own").
+    @Test fun reopensWithTheSavedRouteWhileThatPairingIsUsable() {
+        assertEquals(ResumeDecision("p", false, "plus"), decide("p", list = listOf(host("p", via = "plus"))))
+        val both = listOf(host("a"), host("a", via = "plus"))
+        assertEquals(ResumeDecision("a", false, "plus"), decide("a", list = both, via = "plus"))
+        assertEquals(ResumeDecision("a", false, "own"), decide("a", list = both, via = null))
+        assertEquals(ResumeDecision("a", false, "own"), decide("a", list = listOf(host("a"), host("a", 5L, "plus")), via = "plus"))
+        // A Plus label placeholder (renamed before the first connection) has no device credentials
+        val placeholder = host("p", via = "plus").copy(deviceId = "")
+        assertEquals(ResumeDecision(null, true), decide("p", list = listOf(placeholder), via = "plus"))
     }
 
     @Test fun showsTheListWhenNothingIsSaved() {

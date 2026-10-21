@@ -2,7 +2,9 @@
 //
 // - この PC へ（ホスト側）: 「ほかの端末からの操作を許可する」のスイッチ 1 つ。オンのときだけ、つないだ端末の行（自分の中継サーバー）と「＋ 端末を追加」
 //   - 行を押すと詳しい画面（つなぎ方・中継サーバー・追加した日・最後の接続・取り消す）
-//   - ＋ の流れ: アプリを入れる › つなぎ方 › つなぐ（QR かコード・確認コードで許可）› 完了。中継の URL・秘密が無ければ つなぎ方 の段で入れる
+//   - まとまりは「Pleiad Plus（公式の中継）」と「自分の中継サーバー」。見出しのすぐ下にそれぞれの状態の一行（docs/design-system.md）
+//   - ＋ の流れ: アプリを入れる › つなぎ方 › つなぐ（QR かコード・確認コードで許可）。中継の URL・秘密が無ければ つなぎ方 の段で入れる。
+//     完了だけの段は無く、つなぐ の段がそのまま「つなぎました」と「閉じる」に替わる。Plus は待ちながら閉じられる（承認 2026-10-21）
 // - ほかの PC へ（デスクトップ版のローカルの窓だけ）: web/remote-hosts.mjs
 // - 承認のダイアログ: remotePairing の request で、どの画面にいても出す（＋ の流れで待っている間は流れの中で聞く）
 //
@@ -14,7 +16,7 @@ import qrcode from './vendor/qrcode-generator.mjs';
 import {
   relayHost, deviceIcon, button, iconButton, groupHead, listRow, detailHead, keyValues, switchButton, segment,
   externalLink, waitLine, confirmCode, createWizard, setText, paintInto, field, textInput, qrFigure,
-  INSTALL_URL, installPcBody, methodOptions, doneBody, errorLine,
+  INSTALL_URL, installPcBody, methodOptions, doneBody, errorLine, stateLine, todoList, liveRow,
 } from './remote-parts.mjs';
 import { setupRemoteHosts } from './remote-hosts.mjs';
 import { openExternalLink } from './link-open.mjs';
@@ -75,7 +77,11 @@ export function deviceRow(device, status) {
   };
 }
 
-/** Pleiad Plus のまとまりに出す状態行（表の上から最初に当たるもの） */
+/**
+ * Pleiad Plus のまとまりの見出しの下に出す状態行（表の上から最初に当たるもの）。
+ * kind: login・getPlus・settings=押せる行、text=注意（太字）、off・connecting・ok=点つきの状態の一行（stateLine）。
+ * スイッチを切っているときも黙らない（自分の中継サーバーがあれば、スマホはそちらでつながることを添える）
+ */
 export function plusRemoteLine(plusStatus, remoteStatus) {
   const s = plusStatus ?? {}, plus = remoteStatus?.plus ?? {};
   if (s.needsUpdate) return { kind: 'text', text: t('settings.plus.needsUpdate') };
@@ -84,11 +90,25 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
   if (s.account?.status === 'free') return { kind: 'getPlus', text: t('settings.plus.getPlus') };
   if (s.account?.status === 'disabled' || plus.link?.error?.code === 'account' || s.error?.code === 'account') return { kind: 'text', text: t('settings.remote.plus.account') };
   if (plus.host?.state === 'taken') return { kind: 'settings', text: t('settings.plus.hostTaken') };
+  if (plus.connect === false) return { kind: 'off', text: remoteStatus?.relayUrl ? t('settings.remote.state.plusOff') : t('settings.remote.state.off') };
   if (plus.host?.state === 'limit' || plus.link?.error?.code === 'limit' || s.error?.code === 'limit') return { kind: 'text', text: t('settings.plus.hostLimit') };
   if (s.reachable === false || plus.link?.state === 'retrying' || plus.link?.state === 'error') return { kind: 'text', text: t('settings.remote.failed') };
-  if (plus.link?.state === 'connecting') return { kind: 'text', text: t('settings.remote.plus.connecting') };
-  return null;
+  if (plus.link?.state === 'connected') {
+    const where = s.account?.email;
+    return { kind: 'ok', text: where ? t('settings.remote.state.connected', { where }) : t('settings.remote.state.connectedPlain') };
+  }
+  return { kind: 'connecting', text: t('settings.remote.plus.connecting') };
 }
+
+/** 自分の中継サーバーのまとまりの見出しの下の状態行。つながらないとき（connectionFailed）は null で、.rm-warn の一行を出す */
+export function ownRemoteLine(remoteStatus) {
+  if (!remoteStatus?.enabled || connectionFailed(remoteStatus)) return null;
+  if (remoteStatus.configured === false || !remoteStatus.relayUrl) return { kind: 'off', text: t('settings.remote.state.notSet') };
+  if (remoteStatus.connection?.state === 'connected') return { kind: 'ok', text: t('settings.remote.state.connected', { where: relayHost(remoteStatus.relayUrl) }) };
+  return { kind: 'connecting', text: t('settings.remote.plus.connecting') };
+}
+
+const STATE_KINDS = new Set(['ok', 'off', 'connecting']);
 
 /**
  * null=status の初期化前、hide=条件行、disabled=状態表示、enabled=操作可。
@@ -152,7 +172,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function statusSig() {
     if (!status) return null;
     return [status.enabled, status.configured, connectionFailed(status), status.connection?.state === 'connected',
-      status.relayUrl ?? '', status.relayUrlFromEnv, status.hasEnrollSecret, status.enrollSecretFromEnv, status.storage?.encrypted,
+      status.relayUrl ?? '', status.relayUrlFromEnv, status.hasEnrollSecret, status.enrollSecretFromEnv, status.storage?.encrypted, status.connection?.state,
       status.plus?.connect, status.plus?.link?.state, status.plus?.link?.error?.code, status.plus?.host?.state, status.plus?.devices, plusSignature(),
       (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.via, d.createdAt, d.agent?.active ?? 0])];
   }
@@ -211,7 +231,9 @@ export function setupRemote({ cmd, page, open = () => {} }) {
         gh.append(edit);
       }
       group.append(gh);
+      const line = ownRemoteLine(status);
       if (failed) group.append(el('p', 'rm-warn', t('settings.remote.failed')));
+      else if (line) group.append(stateLine(line.kind, line.text));
       if (editing) group.append(relayEdit());
       for (const d of devices) {
         const view = deviceRow(d, status);
@@ -225,7 +247,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
 
   function plusGroup() {
     const group = el('section', 'rm-group');
-    const head = groupHead(t('settings.remote.groups.plus'));
+    const head = groupHead(t('settings.remote.groups.plusHead'));
     const toggleMode = plusRemoteToggleMode(plusStatus, status);
     if (toggleMode !== 'hide') {
       const sw = switchButton(t('settings.remote.plus.connect'), () => run(async () => {
@@ -248,7 +270,8 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       const row = button(line.text, () => { page('plus'); open('plus'); }, 'rm-row rm-plus-settings');
       row.dataset.fk = 'plusSettings';
       group.append(row);
-    } else if (line) group.append(el('p', 'rm-warn', line.text));
+    } else if (line && STATE_KINDS.has(line.kind)) group.append(stateLine(line.kind, line.text));
+    else if (line) group.append(el('p', 'rm-warn', line.text));
 
     for (const d of (status?.devices ?? []).filter(d => d.via === 'plus')) {
       const view = deviceRow(d, status);
@@ -298,7 +321,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
    *       offerEnd: null | 'connecting' | 'expired' | 'cancelled', request, ended, doneName }
    */
   let wz = null, tick = null;
-  const wizard = createWizard({ id: 'remoteAddDevice', onCancel: () => cancelWizard() });
+  const wizard = createWizard({ id: 'remoteAddDevice', onCancel: () => cancelWizard(), steps: ['install', 'method', 'connect'] });
 
   function openWizard() {
     const inputs = relayInputs();
@@ -380,7 +403,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function paintWizard() {
     if (!wz) { wizard.close(); stopTick(); return; }
     const connected = status?.enabled === true && status.connection?.state === 'connected';
-    if (wz.method === 'own' && wz.step === 2 && connected && !wz.offer && !wz.offerEnd && !wz.request && !wz.ended && !wz.starting && !wz.error) startOffer();
+    if (wz.method === 'own' && wz.step === 2 && connected && !wz.offer && !wz.offerEnd && !wz.request && !wz.ended && !wz.starting && !wz.error && !wz.doneName) startOffer();
     const o = { title: t('settings.remote.addDevice'), step: wz.step, back: () => back() };
     if (wz.step === 0) {
       o.body = [
@@ -395,18 +418,25 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       o.body = methodBody(show);
       o.sig = [show, wz.method, plusStatus?.account?.email, plusStatus?.signedIn, status?.relayUrl ?? '', status?.relayUrlFromEnv, status?.hasEnrollSecret, status?.enrollSecretFromEnv, status?.storage?.encrypted, wz.error, wz.busy];
       o.next = { disabled: wz.busy || (wz.method === 'own' && !relayReady()), onclick: () => wz.method === 'plus' ? startPlusConnect() : saveRelayAndConnect() };
-    } else if (wz.step === 2) {
-      const newPlusDevice = wz.method === 'plus' ? (status?.devices ?? []).find(d => d.via === 'plus' && !wz.plusDeviceIds.includes(d.id)) : null;
-      o.body = wz.method === 'plus' ? plusConnectBody(newPlusDevice) : connectBody(connected);
-      o.sig = [wz.method, wz.kind, connected, connectionFailed(status), plusSignature(), status?.plus?.connect, status?.plus?.link?.state,
-        status?.plus?.link?.error?.code, status?.plus?.host?.state, newPlusDevice?.id, wz.offer?.payload ?? '', wz.offerEnd, wz.request?.id ?? '', wz.ended, wz.error, wz.busy];
-      o.next = newPlusDevice ? { disabled: false, onclick: () => { wz.doneName = newPlusDevice.name || t('settings.remote.devices.unnamed'); wz.step = 3; paintWizard(); } }
-        : wz.request
+    } else if (wz.method === 'plus') {
+      // Plus の接続は つなぎ方 の「次へ」で入れてあるので、ここは待ちながらすぐ閉じられる。スマホが現れたら同じ行が「つなぎました」に替わる
+      const newPlusDevice = (status?.devices ?? []).find(d => d.via === 'plus' && !wz.plusDeviceIds.includes(d.id));
+      o.body = plusConnectBody(newPlusDevice);
+      o.sig = [wz.method, wz.kind, plusSignature(), status?.plus?.connect, status?.plus?.link?.state,
+        status?.plus?.link?.error?.code, status?.plus?.host?.state, newPlusDevice?.id, newPlusDevice?.name];
+      o.closing = true;
+    } else if (wz.doneName) {
+      // 自分の中継サーバー: 「許可する」の後は同じ段で「つなぎました」と「閉じる」（完了だけの段を挟まない）
+      o.body = [doneBody(wz.doneName)];
+      o.sig = ['done', wz.doneName];
+      o.closing = true;
+      o.back = null;
+    } else {
+      o.body = connectBody(connected);
+      o.sig = [wz.method, wz.kind, connected, connectionFailed(status), wz.offer?.payload ?? '', wz.offerEnd, wz.request?.id ?? '', wz.ended, wz.error, wz.busy];
+      o.next = wz.request
         ? { label: t('settings.remote.wizard.approve'), disabled: wz.busy, onclick: () => approve() }
         : { disabled: true };
-    } else {
-      o.body = [doneBody(wz.doneName)];
-      o.sig = wz.doneName;
     }
     wizard.render(o);
     paintLeft();
@@ -448,22 +478,29 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     paint();
   }
 
+  /**
+   * Plus の つなぐ の段: するべきことの並び（1 アプリを入れる＝済み、2 Plus にログイン＝新しい端末が現れたら済み）と、
+   * 待っている行（回る印 → チェックと「{name} をつなぎました」）。ログイン前・使えないアカウント・つながらないときはその知らせ
+   */
   function plusConnectBody(newDevice) {
     const line = plusRemoteLine(plusStatus, status);
     if (line?.kind === 'getPlus') return [listRow({ icon: 'monitor', name: line.text, key: 'plusGet', onclick: () => openExternalLink(new URL('/plus', plusStatus?.urls?.account).href) })];
-    if (line && line.kind !== 'login') return [el('p', 'rm-warn', line.text)];
+    if (line && line.kind !== 'login' && !STATE_KINDS.has(line.kind)) return [el('p', 'rm-warn', line.text)];
     if (!plusStatus?.signedIn) {
       const acts = el('div', 'rm-acts');
       acts.append(button(t('settings.remote.plus.loginButton'), () => cmd('plusLogin').catch(() => {}), 'btn btn-primary'));
       return [el('p', 'rm-lead', t('settings.remote.plus.signingIn')), acts];
     }
-    if (newDevice) return [el('p', 'rm-lead', newDevice.name || t('settings.remote.devices.unnamed'))];
-    if (status?.plus?.link?.state === 'error' || status?.plus?.link?.state === 'retrying' || plusStatus?.reachable === false) return [el('p', 'rm-warn', t('settings.remote.failed'))];
-    // i18n-dynamic: settings.remote.plus.wait. / settings.remote.plus.waiting.
-    const instruction = wz.kind === 'phone' ? 'phone' : 'pc';
-    const account = keyValues([[t('settings.remote.plus.accountLabel'), plusStatus.account?.email ?? '']]);
+    const who = wz.kind === 'phone' ? 'phone' : 'pc';
+    const name = newDevice ? newDevice.name || t('settings.remote.devices.unnamed') : '';
+    const todo = todoList([
+      // i18n-dynamic: settings.remote.plus.todo.install.
+      { text: t(`settings.remote.plus.todo.install.${who}`), done: true },
+      // i18n-dynamic: settings.remote.plus.todo.login.
+      { text: t(`settings.remote.plus.todo.login.${who}`), sub: plusStatus.account?.email ?? '', done: Boolean(newDevice) },
+    ]);
     // i18n-dynamic: settings.remote.plus.waiting.
-    return [el('p', 'rm-lead', t(`settings.remote.plus.wait.${instruction}`)), account, waitLine(t(`settings.remote.plus.waiting.${instruction}`))];
+    return [todo, liveRow(newDevice ? { ok: true, text: t('settings.remote.wizard.done', { name }) } : { ok: false, text: t(`settings.remote.plus.waiting.${who}`) })];
   }
 
   function connectBody(connected) {
@@ -502,7 +539,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   }
 
   function paintLeft() {
-    if (!wz?.offer || wz.offerEnd || wz.step !== 2) { stopTick(); return; }
+    if (!wz?.offer || wz.offerEnd || wz.step !== 2 || wz.doneName) { stopTick(); return; }
     if (!tick) tick = setInterval(paintLeft, 1000);
     if (Date.parse(wz.offer.expiresAt) <= Date.now()) { wz.offerEnd = 'expired'; stopTick(); paintWizard(); return; }
     setText(wizard.dialog, '.rm-left', t('settings.remote.wizard.left', { time: remaining(wz.offer.expiresAt) }));
@@ -569,7 +606,6 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       if (!wz) return;
       wz.doneName = device?.name || request.name || t('settings.remote.devices.unnamed');
       wz.request = null;
-      wz.step = 3;
     } catch (e) { if (wz) wz.error = e.message; }
     if (wz) wz.busy = false;
     paint();
@@ -609,7 +645,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   function paintDialog() {
     const requests = status?.pairing?.requests ?? [];
     // ＋ の流れが入場券を出して待っているなら、届いた求めは流れの中で聞く
-    if (wz?.step === 2 && !wz.request && (wz.offer || wz.offerEnd === 'connecting') && requests.length) {
+    if (wz?.step === 2 && !wz.request && !wz.doneName && (wz.offer || wz.offerEnd === 'connecting') && requests.length) {
       wz.request = requests.at(-1); wz.offer = null; wz.offerEnd = null;
       paintWizard();
     }
@@ -657,10 +693,15 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   /** 操作を 1 つずつ。失敗の理由は画面の一行に出す */
   async function run(fn) {
     if (busy) return;
+    // 操作の間は押したスイッチも disabled になってフォーカスが外れる。終わったら同じものへ戻す（キーボードで続けて操作できるように）
+    const fk = root.contains(document.activeElement) ? document.activeElement.dataset.fk : null;
     busy = true; message = ''; paint();
     try { await fn(); }
     catch (e) { message = e.message; }
-    finally { busy = false; paint(); }
+    finally {
+      busy = false; paint();
+      if (fk && !root.contains(document.activeElement)) root.querySelector(`[data-fk="${CSS.escape(fk)}"]`)?.focus();
+    }
   }
   function toggle() {
     const next = !(status?.enabled === true);

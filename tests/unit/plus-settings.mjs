@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
 import { renderPlus, setupPlusSettings } from '../../web/plus-settings.mjs';
+import { plusKeyRow } from '../../web/plus-key-row.mjs';
 
 export const name = 'plus-settings';
 export const title = '設定 › Pleiad Plus: 状態ごとの中身とボタン・コマンド・届かない行・メニューの出し入れ（DOM の代役）';
@@ -107,6 +108,30 @@ export default async function (t) {
   // provider が google.com 以外なら入り方の行は出さない
   nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, provider: 'apple.com' } });
   t.ok('provider が google.com 以外なら下の行は出さない', !text(nodes).includes('Google でログイン'));
+
+  // プランは読めるまで「無料」と言わない（承認 2026-10-21）
+  const hasClass = (list, cls) => { const walk = n => (n.className ?? '').split(' ').includes(cls) || (n.children ?? []).some(walk); return list.some(walk); };
+  nodes = render({ ...BASE, signedIn: true, account: null, email: 'user@example.com' });
+  t.ok('読み込み中: プランは場所取り（.rm-skel）で、「無料」も失敗の行も出さない', hasClass(nodes, 'rm-skel') && !text(nodes).includes('無料') && !text(nodes).includes('読み込めませんでした'), text(nodes));
+  t.ok('読み込み中: アカウントの行はログインのときのメールで出す', text(nodes).includes('user@example.com'));
+  let retried = 0;
+  nodes = renderPlus({ ...BASE, signedIn: true, account: null, reachable: false }, { ...deps, onRetry: () => { retried++; } });
+  t.ok('読めなかった: 「読み込めませんでした」と「再試行」、「無料」は出さない', text(nodes).includes('読み込めませんでした') && buttonTexts(nodes).includes('再試行') && !text(nodes).includes('無料'), text(nodes));
+  byFk(nodes, 'planRetry').onclick();
+  t.ok('「再試行」は onRetry を呼ぶ', retried === 1);
+  nodes = renderPlus({ ...BASE, signedIn: true, account: null, reachable: false }, { ...deps, retrying: true });
+  t.ok('再試行の間は場所取りに戻る', hasClass(nodes, 'rm-skel') && !buttonTexts(nodes).includes('再試行'));
+  nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, plan: { name: 'Pleiad Plus（招待）' } } });
+  t.ok('招待のプラン名はサーバーの名前をそのまま出す', text(nodes).includes('Pleiad Plus（招待）'));
+
+  // 鍵の画面の Plus の行も同じ（読めるまで「使っていない」と言わない）
+  const keyRowText = info => plusKeyRow({ info: { available: true, state: 'on', ...info }, checked: false, onChoose() {}, onLogin() {} }).row;
+  let row = keyRowText({ signedIn: true, status: null, reachable: true });
+  t.ok('鍵の行: 読み込み中は場所取りで「使っていません」を出さない', hasClass([row], 'rm-skel') && !row.textContent.includes('使っていません'), row.textContent);
+  row = keyRowText({ signedIn: true, status: null, reachable: false });
+  t.ok('鍵の行: 読めなかったら「読み込めませんでした」', row.textContent.includes('読み込めませんでした'), row.textContent);
+  row = keyRowText({ signedIn: true, status: 'free', reachable: true });
+  t.ok('鍵の行: free は「使っていません」のまま', row.textContent.includes('使っていません') && !hasClass([row], 'rm-skel'));
 
   // この PC の行: taken → 確かめ → plusHostRebind / limit / ほかは出さない
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'taken' } });

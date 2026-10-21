@@ -174,6 +174,9 @@
         "providerGoogle": "Signed in with Google",
         "plan": "Plan",
         "free": "Free",
+        "loading": "Loading",
+        "loadFailed": "Couldn't load",
+        "retry": "Retry",
         "getPlus": "Get Pleiad Plus",
         "usage": "This month: {{used}} / {{limit}} credits (resets on {{date}})",
         "limitReached": "Limit reached",
@@ -239,7 +242,15 @@
         "plusMaintenance": "Pleiad Plus is under maintenance",
         "plusUnavailable": "Pleiad Plus is temporarily unavailable",
         "plusNeedsUpdate": "Please update Pleiad",
-        "own": "Your own relay server"
+        "own": "Your own relay server",
+        "plusHead": "Pleiad Plus (official relay)"
+      },
+      "state": {
+        "connected": "Connected · {{where}}",
+        "connectedPlain": "Connected",
+        "plusOff": "Off · Your phone connects through your own relay server",
+        "off": "Off",
+        "notSet": "Not set up · Enter the relay URL and enrollment secret under \"Edit\""
       },
       "plus": {
         "connect": "Connect with Pleiad Plus",
@@ -248,10 +259,15 @@
         "signingIn": "Sign in to Pleiad Plus",
         "account": "This account can't use the official relay",
         "connecting": "Connecting…",
-        "accountLabel": "Account",
-        "wait": {
-          "phone": "Sign in to Pleiad Plus in Pleiad on your phone",
-          "pc": "Sign in to Pleiad Plus in Pleiad on the other PC"
+        "todo": {
+          "install": {
+            "phone": "Install Pleiad on your phone",
+            "pc": "Install Pleiad on the other PC"
+          },
+          "login": {
+            "phone": "Sign in to Pleiad Plus in Pleiad on your phone",
+            "pc": "Sign in to Pleiad Plus in Pleiad on the other PC"
+          }
         },
         "waiting": {
           "phone": "Waiting for your phone",

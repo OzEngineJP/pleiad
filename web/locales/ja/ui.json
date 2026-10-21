@@ -174,6 +174,9 @@
         "providerGoogle": "Google でログイン",
         "plan": "プラン",
         "free": "無料",
+        "loading": "読み込んでいます",
+        "loadFailed": "読み込めませんでした",
+        "retry": "再試行",
         "getPlus": "Pleiad Plus にする",
         "usage": "今月の利用: {{used}} / {{limit}} クレジット（{{date}} に戻ります）",
         "limitReached": "上限に達しました",
@@ -239,7 +242,15 @@
         "plusMaintenance": "Pleiad Plus はメンテナンス中です",
         "plusUnavailable": "Pleiad Plus は今使えません",
         "plusNeedsUpdate": "Pleiad を更新してください",
-        "own": "自分の中継サーバー"
+        "own": "自分の中継サーバー",
+        "plusHead": "Pleiad Plus（公式の中継）"
+      },
+      "state": {
+        "connected": "つながっています · {{where}}",
+        "connectedPlain": "つながっています",
+        "plusOff": "オフ · スマホからは自分の中継サーバーでつながります",
+        "off": "オフ",
+        "notSet": "未設定 · 「編集」で中継の URL と登録用の秘密を入れます"
       },
       "plus": {
         "connect": "Pleiad Plus でつなぐ",
@@ -248,10 +259,15 @@
         "signingIn": "Pleiad Plus にログインします",
         "account": "このアカウントでは公式の中継を使えません",
         "connecting": "接続しています…",
-        "accountLabel": "アカウント",
-        "wait": {
-          "phone": "スマホの Pleiad で Pleiad Plus にログインします",
-          "pc": "相手の PC の Pleiad で Pleiad Plus にログインします"
+        "todo": {
+          "install": {
+            "phone": "スマホに Pleiad を入れる",
+            "pc": "相手の PC に Pleiad を入れる"
+          },
+          "login": {
+            "phone": "スマホの Pleiad で Pleiad Plus にログイン",
+            "pc": "相手の PC の Pleiad で Pleiad Plus にログイン"
+          }
         },
         "waiting": {
           "phone": "スマホを待っています",

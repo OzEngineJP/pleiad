@@ -72,11 +72,13 @@ class NotifyHub(
         if (running) reconcile()
     }
 
+    /** The Plus relay moved: the lines on the Plus route follow (a line on the own route is left alone). */
     @Synchronized
     fun plusRelayChanged() {
-        for (h in store.hosts().filter { it.via == "plus" }) {
-            val creds = store.credentials(h.hostId, "plus") ?: continue
-            lines[h.hostId]?.updateCredentials(creds)
+        for ((hostId, line) in lines) {
+            if (line.creds.via != "plus") continue
+            val creds = store.credentials(hostId, "plus") ?: continue
+            line.updateCredentials(creds)
         }
     }
 
@@ -114,22 +116,29 @@ class NotifyHub(
         for (hostId in lines.keys) maybeRegister(hostId, force = false)
     }
 
+    /**
+     * One line per host, on one route: the own relay when the device is paired that way, else Plus (HostRoute.reopen).
+     * A line whose route is no longer the one to use (its pairing was removed or revoked, or an own pairing was added)
+     * is started again on the right route, with that route's credentials only.
+     */
     private fun reconcile() {
         if (!settings.enabled) return
-        val hosts = store.hosts().filter { it.revokedAt == null }
-        val keep = hosts.map { it.hostId }.toSet()
-        for ((id, line) in lines.entries.toList()) if (id !in keep) { line.stop(); lines.remove(id); regs.remove(id) }
+        val all = store.hosts()
+        val want = all.map { it.hostId }.distinct().mapNotNull { id ->
+            val via = HostRoute.reopen(id, all, null) ?: return@mapNotNull null
+            store.credentials(id, via)?.let { id to it }
+        }.toMap()
+        for ((id, line) in lines.entries.toList()) if (want[id]?.via != line.creds.via) { line.stop(); lines.remove(id); regs.remove(id) }
         val key = store.notifyKey()
-        for (h in hosts) {
-            if (lines.containsKey(h.hostId)) continue
-            val creds = store.credentials(h.hostId) ?: continue
+        for ((hostId, creds) in want) {
+            if (lines.containsKey(hostId)) continue
             val line = NotifyLine(
                 creds, key,
                 onNotice = { n -> sink.act(planner.onNotice(n, settings), settings) },
-                onState = { s -> onLineState(h.hostId, s) },
+                onState = { s -> onLineState(hostId, s) },
                 backoff = lineBackoff, pingMs = pingMs, log = log, plusIdToken = plusIdToken,
             )
-            lines[h.hostId] = line
+            lines[hostId] = line
             line.start()
         }
     }
@@ -156,7 +165,7 @@ class NotifyHub(
         val version = settingsVersion
         val snapshot = settings
         workers.execute {
-            val creds = store.credentials(hostId)
+            val creds = lines[hostId]?.creds?.via?.let { store.credentials(hostId, it) }
             val result = if (creds == null) RegisterResult.Failed("unknown-host") else try {
                 registrar.register(creds, store.notifyKey(), snapshot)
             } catch (e: Exception) { RegisterResult.Failed("error", e.message) }
