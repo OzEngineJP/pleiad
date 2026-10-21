@@ -58,6 +58,17 @@ export default async function(t) {
         const upload = steps.findIndex(s => s.uses?.startsWith('actions/upload-artifact@'));
         assert.ok(smoke >= 0 && upload > smoke, `${file}/${jobName} must gate artifact upload on UI startup`);
         assert.ok(!steps[smoke]['continue-on-error'] && !steps[smoke].if);
+        if (jobName !== 'windows') {
+          // stapler（公証 ticket の lookup）と spctl（Gatekeeper の照合）は Apple のサーバーへ出るので、
+          // 一時的な失敗だけを試し直す形（verify_apple）に固定する。裸で呼ぶ形に戻ったらここで落とす
+          const verify = steps.find(s => /stapler validate/.test(s.run ?? ''));
+          assert.ok(verify && /verify_apple xcrun stapler validate/.test(verify.run) && !/^\s*xcrun stapler/m.test(verify.run),
+            `${file}/${jobName} must retry transient stapler failures`);
+          assert.ok(verify && verify.run.includes('::warning::'), `${file}/${jobName} must annotate each retried validation`);
+          if (file === 'evaluation-release.yml') {
+            assert.ok(/verify_apple spctl --assess/.test(verify.run), `${file}/${jobName} must retry transient spctl failures`);
+          }
+        }
       }
     }
     t.ok('Every release packaging job must pass the real UI startup gate before upload', true);

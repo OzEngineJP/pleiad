@@ -96,13 +96,39 @@ jobs:
             if ($signature.Status -ne 'Valid') { throw 'Invalid Windows signature' }
             if ($signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne $env:PLY_WIN_PUBLISHER) { throw 'Unexpected signing publisher' }
           }
+      # stapler（公証 ticket の lookup）は Apple のサーバーへ出る。一時的な切れ（NSURLErrorDomain・終了コード 68 など）
+      # だけを、15 秒・30 秒と間を空けて 3 回まで試し直し、試し直すたびに ::warning:: を残す。
+      # 署名・公証の本当の失敗は試し直さずそのまま落とす
       - name: Verify macOS signature and notarization
         if: runner.os == 'macOS'
         run: |
+          verify_apple() {
+            attempt=1
+            while :; do
+              if output=$("$@" 2>&1); then
+                [ -z "$output" ] || printf '%s\n' "$output"
+                return 0
+              else
+                status=$?
+              fi
+              printf '%s\n' "$output"
+              if grep -qiE 'NSURLErrorDomain|network connection|timed out|temporarily|offline|could not connect|connection (lost|reset|closed)|service unavailable' <<<"$output"; then
+                transient=1
+              elif [ "$1" = xcrun ] && [ "$status" -eq 68 ] && ! grep -qiE 'ticket|notariz|invalid|rejected|unsigned' <<<"$output"; then
+                transient=1
+              else
+                transient=0
+              fi
+              if [ "$transient" -eq 0 ] || [ "$attempt" -ge 3 ]; then return "$status"; fi
+              echo "::warning:: $* failed with a transient error (attempt $attempt of 3); retrying"
+              sleep $((attempt * 15))
+              attempt=$((attempt + 1))
+            done
+          }
           count=0
           while IFS= read -r -d '' bundle; do
             codesign --verify --deep --strict "$bundle"
-            xcrun stapler validate "$bundle"
+            verify_apple xcrun stapler validate "$bundle"
             count=$((count + 1))
           done < <(find dist-desktop -maxdepth 2 -name '*.app' -print0)
           test "$count" -ge 2
