@@ -38,6 +38,8 @@ export default async function (tt) {
     d = describeNotification({ id: 'n5', kind: 'mention', actor: { kind: 'bot', name: 'Lynx' }, at: 1, unread: true, target: { channelId: 'c1', threadId: 't1', postId: 'p1' }, channelName: 'release-ci' }, t);
     tt.ok('@あなた は「Lynx が @あなた と書きました」・@・スレッドの題が無ければ #チャンネルだけ', d.line === 'Lynx が @あなた と書きました' && d.icon === 'mention' && d.place === '#release-ci');
     tt.ok('書いた人の名前が無い @あなた は「@あなた 宛ての投稿があります」', describeNotification({ id: 'n6', kind: 'mention', at: 1, unread: true, target: { channelId: 'c1' } }, t).line === '@あなた 宛ての投稿があります');
+    d = describeNotification({ id: 'n7', kind: 'wait', ask: 'syncInbox', count: 3, at: 1, unread: true, target: { settings: 'plus' } }, t);
+    tt.ok('同期で届いた変更は「同期で届いた変更が 3 件あります」・◆・場所は 設定 › Pleiad Plus', d.line === '同期で届いた変更が 3 件あります' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true, JSON.stringify(d));
 
     let b = badgeState({ unread: 0, waiting: 0 }, t);
     tt.ok('未読が無ければ印なし・名前は「通知」', b.show === false && b.label === '通知' && b.text === '');

@@ -6,6 +6,8 @@ export const name = 'plus-sync-ui';
 export const title = '設定 › Pleiad Plus の同期: 状態ごとの中身・確かめ・鍵を待つ場面と始め直しの窓・登録の外れ・時刻と MB の書式（DOM の代役）';
 
 const text = nodes => nodes.map(n => n.textContent).join(' ');
+// 子を足したボタン（button('') の後に append）は、代役では textContent が空のままなので葉を集める
+const deepText = n => (n.children?.length ? n.children.map(deepText).join('') : (n.textContent ?? ''));
 function byFk(nodes, fk) {
   const walk = n => {
     if (n.dataset?.fk === fk) return n;
@@ -178,6 +180,15 @@ export default async function (t) {
   t.ok('「フォルダーを開く」は onOpenConflicts', calls.at(-1)[0] === 'openConflicts');
   nodes = render({ ...BASE, conflicts: 0 });
   t.ok('競合 0: 行は出さない', !text(nodes).includes('古い方を残しました'));
+
+  // 届いた変更: 1 件以上で「届いた変更 N 件」の行（◆・山）。0 件・同期を切っているときは出さない
+  nodes = render({ ...BASE, inbox: 2 }, { onOpenInbox: () => calls.push(['openInbox']) });
+  const inx = byFk(nodes, 'syncInbox');
+  t.ok('届いた変更 2: 「届いた変更 2 件」の行（button.rm-row・◆）', inx?.tagName === 'BUTTON' && inx.className.includes('rm-row') && deepText(inx).includes('届いた変更 2 件') && deepText(inx).includes('◆'));
+  inx.onclick();
+  t.ok('「届いた変更」の行は onOpenInbox', calls.at(-1)[0] === 'openInbox');
+  t.ok('届いた変更 0: 行は出さない', byFk(render({ ...BASE, inbox: 0 }), 'syncInbox') === null && byFk(render(BASE), 'syncInbox') === null);
+  t.ok('同期を切っているとき（disabled）は、届いた変更の行も出さない', byFk(render({ ...BASE, state: 'disabled', inbox: 2 }), 'syncInbox') === null);
 
   // スイッチの失敗の文言
   nodes = render(BASE, { message: '変えられませんでした' });

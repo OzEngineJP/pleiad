@@ -879,6 +879,14 @@ const inboxSources = createNotificationSources({
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
   hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
 });
+// 同期で届いた変更の受け入れ待ち（ADR 0245）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
+plusSync.onChange(({ inbox: count, inboxAt }) => {
+  try {
+    inbox.standing('syncInbox', count > 0 && inboxAt
+      ? { version: inboxAt, at: Date.parse(inboxAt), data: { ask: 'syncInbox', count, settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
 const residentPrefs = createResidentPrefs({ dataDir: store.dataDir });
@@ -5324,6 +5332,10 @@ function opsDeps(lng = currentLocale()) {
       syncReset: (confirm) => plusSync.resetSync(confirm),
       hostReregister: () => plusHost.reregister(),
       syncOpenConflicts: () => plusSync.openConflictsFolder(),
+      syncInbox: () => plusSync.inboxList(),
+      syncInboxItem: (id) => plusSync.inboxItem(id),
+      syncInboxTake: (id) => plusSync.inboxTake(id),
+      syncInboxDrop: (id) => plusSync.inboxDrop(id),
     },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）
     git: opsGit,

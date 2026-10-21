@@ -9296,6 +9296,13 @@ async function openFromSearch(id, jump) {
  */
 async function openFromNotification(target) {
   if (narrowView.matches) setDrawer(false);
+  // 同期で届いた変更（ADR 0245）: 設定 › Pleiad Plus の「届いた変更」を開く
+  if (target?.settings === 'plus') {
+    if ($('onboardingDialog').open) $('onboardingDialog').close();
+    onboarding.open('plus');
+    plusSettings.openInbox();
+    return;
+  }
   await viewAddress.go(target);
 }
 

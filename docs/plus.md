@@ -160,6 +160,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
   - 居ない → 「ほかの PC が同期したデータがあります（約 {size}・{count} 件）」・最後の更新（書いた PC の名前つき）・登録から外れた PC の名前。ボタンは「鍵を持つ PC が使えない」。`itemCount` が無い（前の api）ときは「データがあるかもしれません」
   - 手元の鍵が古い（`wait.stale`。ほかの PC が始め直した）→ 「同期は {name} で {time} に始め直されました」
   - ボタンはどれも確かめの窓を開く。窓は消えるもの（サーバーの同期のデータの件数と大きさ）・消えないもの（手元のファイルと設定）・ほかの PC への影響と、チェック 1 つ（「サーバーの同期のデータを消して、この PC から始め直す」）。入れるまで「消して始め直す」を押せない。押すと見せた `keyId` と `itemCount` を `plus.syncReset { confirm }` に付ける。`confirmNeeded` が返る・確かめている間に `plusSyncStatus` の件数が変わったら、窓を開いたままチェックを外し、「確かめている間に、サーバーのデータが変わりました」と新しい件数を出す
+- 同期で届いて取り込むのを待っている skill・指示ファイルがあれば（状態の `inbox` が 1 以上）、同期のまとまりの終わりに「◆ 届いた変更 N 件」の行（`web/plus-inbox.mjs`）。押すと「届いた変更」の面に替わる（下の「同期で届いた skill と指示ファイル」）
 - `unregistered`（この PC の登録が外れた）は止めている旨と「登録し直すと、自動で再開します」だけ（ボタンは出さない）。`sharedTo`（7 日の間に鍵を渡した新しい PC）は「新しい PC {name} に同期の鍵を渡しました」（同期を切っているときは出さない）
 - この PC の行は `host.state` が `taken`（「つなぎ直す」→ 確かめの窓 → `plusHostRebind`）・`limit`・`removed`（利用者が外した。「この PC を登録し直す」→ `plus.hostReregister` 操作）のときと、`host.notice === 'reregistered'`（「この PC の登録が外れていたので、登録し直しました」）のときだけ。ほかは出さない。`plusHostRebind` は後の段階が作る。知らないコマンドが返ったら何も出さない
 - 「Pleiad Plus にする」は `urls.account` のオリジンの `/plus`（`new URL('/plus', urls.account)`。`urls.account` は `/account` のようなパスを持つ）を、「アカウントを管理」は `urls.account` を外のブラウザーで開く。「ログアウト」は `plusLogout`
@@ -318,7 +319,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 | `GET /v1/sync/items?since=<cursor>&limit=200` | - | `{ items: [{ itemId, rev, seq, keyId, ciphertext\|null, deleted, updatedAt }], cursor, more }` | - |
 | `PUT /v1/sync/items/{itemId}` | `{ baseRev, keyId, ciphertext, deleted, hostId }`（この 5 つだけ。ほかの欄は `400`） | `{ rev, seq }` | `409 conflict`（`message: rev` なら本文の一番外に `current`、か `keyId`）・`413 too_large`（1 項目が大きすぎる）・`413 sync_quota`（容量を超える。`error.limitBytes`） |
 
-`reset` は前の項目と包んだ鍵を消す（サーバーの返す値に従う）。消した項目も `ciphertext` 付きの `deleted: true` で上げる（平文の `deleted` も true）。どの口も、自分のものでない（外された・無い）ホストの `hostId` を渡すと `403 forbidden`（`message: host`）。
+`reset` は前の項目と包んだ鍵を消す（サーバーの返す値に従う）。消した項目も `ciphertext` 付きの `deleted: true` で上げる（平文の `deleted` も true）。`ciphertext` の無い項目・`deleted` が平文と食い違う項目は受けない。どの口も、自分のものでない（外された・無い）ホストの `hostId` を渡すと `403 forbidden`（`message: host`）。
 
 ### 同期の始め直しと登録の外れ（api とアプリの約束）
 
@@ -372,6 +373,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - 1 回の流れ: 鍵の始め方 → 宛ての無いホストへ鍵を渡す → 受ける → 上げる。同時に 1 本だけ回し、回っている間に頼まれたら、終わったあとにまとめて 1 回回す
 - いつ: 回し始めたとき（ログインしていて `account.status` が `plus`、この PC が台帳に載っている）・手元の変更（スキルの置き場と指示ファイルの親の `fs.watch`、設定の変更。最初の変更から 5 秒まとめる）・10 分ごと。鍵の受け渡しだけは 5 分ごとにも見る
 - 受けて書いたファイル・設定は、その出来事で上げ直さない
+- 受けた skill と全体の指示ファイルは書かずに待たせる（下の「同期で届いた skill と指示ファイル」）。設定は今のまま書く
 - `409 conflict`（`rev`）: 受けてから競合を解き、勝った手元の版を上げ直す
 - 誤り: `429` は `Retry-After` の秒数（無ければ 60 秒）後に、ほかは 1 分・2 分・4 分…（10 分まで）後にやり直す。`401` は止める（`error`。タイマーを外し、セッションが変わるまで回さない）。`not_plus`・`account_disabled` は下の「アカウントの停止」。`403 sync_disabled` は `disabled`。`413 sync_quota` は `quota`（消すのは上げ続け、次の回でまた試す）。`413 too_large` の項目は中身が変わるまで上げない。`403 forbidden`（`host`。この PC の登録が外れた）は `unregistered` で止め（タイマーも外す。誤りにしない）、`onHostLost` で登録を確かめ直してから回し直す。知らせるのは次にうまく回るまで 1 回だけ
 - アカウントの停止: api が `403 not_plus`・`account_disabled` を返したら、`stop` まで行う（タイマー・watch・設定の購読を外す）。状態は `stopped`（`error` に理由。誤りにしない）。条件から外れた（`account.status` が `plus` でなくなった・登録が外れた）ときも、回していれば止める（`plus` でないなら `stopped`、ほかは `off`）。次のどれかで、回し始めと同じく `start` から回し直す（10 分ごと・5 分ごとのタイマーも張り直す。人の操作は要らない）
@@ -380,15 +382,39 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
   - アプリを起動し直した
 - `401 unauthenticated` を `stopped` にしないのは、セッションの側（ID トークンの取り直し・ログアウトの扱い）が直すもので、アカウントの停止とは別だから。今のまま `error` で止め、セッションが変わる（ログインし直す）か「今すぐ同期」で回す
 - ログには論理名・中身・鍵を出さない（項目は `itemId` だけ）
-- 手元の覚え: `<data>/plus/sync-state.json`（`{ keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } }, rejoinedAt, sharedTo }`。中身と鍵は入れない）
+- 手元の覚え: `<data>/plus/sync-state.json`（`{ keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } }, rejoinedAt, sharedTo, dropped }`。中身と鍵は入れない）
   - `rejoinedAt`: 前の鍵を持っていて、別の鍵に替わった時刻。覚えを空にしたあと、覚えの無い設定の時刻にこれを使う（始め直したほかの PC の「初めて上げた設定」に、手元の設定が負けないように。初めて加わる PC は 0 のままで、アカウントの設定を採る）
   - `sharedTo`: 鍵を渡した新しい PC（新しい順に 3 つ `{ hostId, name, at }`。状態には 7 日の間だけ出す）
-- 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error, wait, sharedTo }`（`totalBytes`・`limitBytes` は `state` の値。`wait` は鍵を待つ間に見せるもの）。変わるたびに `plusSyncStatus` イベントを全接続へ送る（ポーリングはしない）
-- 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し。鍵を持たない PC は `confirm { keyId, itemCount }` を付ける。足りない・合わなければ `{ confirmNeeded: true, status }` を返して何も消さない）・`plus.hostReregister`（利用者が外した PC を登録し直す）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く。hostScreenOnly）。変更系は設定 › Pleiad Plus の画面だけが呼ぶ
+  - `dropped`: 人が「捨てる」を押した版（`{ <論理名>: 中身の sha256 か 'deleted' }`）。同じ版が届き直しても待ちに出さない。違う版が届いたら忘れる
+- 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt }`（`totalBytes`・`limitBytes` は `state` の値。`wait` は鍵を待つ間に見せるもの。`inbox` は取り込むのを待っている数、`inboxAt` はその中で一番新しく届いた時刻）。変わるたびに `plusSyncStatus` イベントを全接続へ送る（ポーリングはしない）
+- 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し。鍵を持たない PC は `confirm { keyId, itemCount }` を付ける。足りない・合わなければ `{ confirmNeeded: true, status }` を返して何も消さない）・`plus.hostReregister`（利用者が外した PC を登録し直す）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く。hostScreenOnly）・`plus.syncInbox`・`plus.syncInboxItem`・`plus.syncInboxTake`・`plus.syncInboxDrop`（受け入れ待ち。下の節）。変更系は設定 › Pleiad Plus の画面だけが呼ぶ
+
+### 同期で届いた skill と指示ファイル（ADR 0245）
+
+ほかの PC から届いた skill（`skills/…`）と全体の指示ファイル（`instructions/…`）は、すぐには書かない。人が中身を見て「取り込む」を押したものだけを書く。消すもの（`deleted`）も同じで、押すまで消さない。どの PC から届いたものでも同じに扱う（前に鍵を渡した PC でも、毎回見る）。設定（`settings/…`）は今のまま自動で書く（受けた値は `normalize` を通る）。
+
+- 置き場: `<data>/plus/sync-inbox/<id>/`（`id` は論理名の sha256 の先頭 32 字。鍵が替わっても同じ項目は同じ場所）。`incoming`（届いた中身。消すものには無い）・`base`（届いたときの手元の中身。手元に無ければ無い）・`meta.json`（`{ path, from, at, mtime, kind: change|new|delete, rev, sha256, baseSha }`）。`meta.json` を最後に書き、読めない・形の違うフォルダーは無いものとして扱う
+- 同じ項目の新しい版が届いたら、待っている版を置き換える（1 項目 1 件）。同じ版が同じ手元に対して届き直したときは、届いた時刻を変えない
+- 手元がもう届いた版と同じ中身なら、待たせずに覚えだけ進める
+- 待っている間、手元の覚えは `rev` だけ進め、`sha256` は手元の版のままにする（手元の版を上げ直さない。待っている間に手元で変えたものは、ふつうに上げる）
+- 取り込む（`plus.syncInboxTake { id }`）: 今の手元の中身が `base` と同じときだけ書く（消すものは消す）。書く道はふつうの受け取りと同じ（リンクの先には書かない）。届いた後に手元が変わっていたら書かず `{ taken: false, reason: 'local_changed' }`。`incoming` が `meta.json` の `sha256` と合わない・もう無いものは `gone` で待ちから消す。書けなかったら `not_applied`
+- 捨てる（`plus.syncInboxDrop { id }`）: 待ちから消し、その版を `dropped` に覚える。手元のファイルも api の項目も変えない
+- 一覧（`plus.syncInbox`）は新しく届いた順の `{ id, path（画面に出す形。`~/.claude/skills/…`）, kind, at, fromName（台帳の名前。読めなければ null）}`。1 件（`plus.syncInboxItem { id }`）は `before`・`after`（文字として読めないものは `binary: true`）。どれも人の画面の操作で、agent・CLI には出さない
+- 回と、取り込む・捨てるは 1 本ずつ通す（回の途中で書き換わった手元に書かない）。ログアウト・アカウントの切り替えで待ちは消える
+- 平文に上げた PC の `hostId`（`from`）を入れる。画面に「どの PC から」を出すためだけで、取り込むかどうかには使わない
+- 受けない項目: 暗号文の無いもの（中身の無い消した印）・api の `deleted` が暗号文の中の `deleted` と食い違うもの・`rev` が 1 以上の整数でないもの。消すかどうかも、暗号文の中の `deleted` だけを見る
+
+画面（設定 › Pleiad Plus › 同期 › 届いた変更。`web/plus-inbox.mjs`・`web/plus-settings.mjs`）:
+
+- 「‹ Pleiad Plus」・題「届いた変更」・1 件ごとの見出しの行（パス・「変更｜新しいファイル｜削除 · PC の名前 · 届いた時刻」・開閉の山）。開くのは 1 件だけで、面を開くと最初の 1 件が開く
+- 開いた 1 件に差分（`web/line-diff.mjs`。文脈の一覧と同じ `.scx-lines`）。変更は手元と届いたものの差、新しいファイルは + の行だけ、消すものは − の行だけ。下に「捨てる」「取り込む」
+- 押したら、その行に「取り込みました」「捨てました」を残して次の 1 件を開く（フォーカスも次の見出しへ）。手元が変わっていたら、わけを出して「取り込む」を押せなくする（「捨てる」は押せる）
+- 「すべて取り込む」は置かない
+- 通知の一覧には、待っているものがある間「同期で届いた変更が N 件あります」（あなた待ち・場所は「設定 › Pleiad Plus」）の 1 行を置く。押すとこの面を開く。新しく届くと未読で載せ直し、件数だけ変わったら同じ行を直す。0 件になったら消す。起動時に承認のあなた待ちを決着させる処理（`settleAllWaiting`）では消さない
 
 ### 競合
 
-同じ項目を 2 台で変えたら、平文の `mtime` の新しい方を採る（同じなら相手の版）。負けた方は `<data>/plus/sync-conflicts/<YYYYMMDD-HHmmss>/<論理名>` に写す（日時はこの PC の時刻。設定は `<論理名>.json`）。写しのフォルダーは作ってから 30 日を過ぎたら、回し始めるときに消す。`conflicts` は残っている写しの数。
+同じ設定を 2 台で変えたら、平文の `mtime` の新しい方を採る（同じなら相手の版）。負けた方は `<data>/plus/sync-conflicts/<YYYYMMDD-HHmmss>/<論理名>` に写す（日時はこの PC の時刻。設定は `<論理名>.json`）。skill と指示ファイルは競合にせず、届いた版を待たせる（上の節。手元の版は手元に残り、そのまま上げる）。写しのフォルダーは作ってから 30 日を過ぎたら、回し始めるときに消す。`conflicts` は残っている写しの数。
 
 ### 守るもの・守らないもの
 
@@ -396,6 +422,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 
 - 中身（ファイル・設定の値）と論理名（パス）は暗号文の中にある。api が受け取るのは、暗号文・包んだ鍵・項目の ID・大きさ・時刻（と書いたホストの `hostId`）だけ
 - K と同期の秘密鍵は PC の外に出さない
+- ほかの PC から届いた skill と指示ファイルは、人が中身を見て取り込むまで書かない（消すものも消さない）
 - api が暗号文を書き換える・別の項目や別の版・別のアカウントの暗号文と入れ替える、は開けずに捨てる（aad に uid・itemId・rev、包んだ鍵の aad に uid・hostId・keyId）
 
 守らないもの:

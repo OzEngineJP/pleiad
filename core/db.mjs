@@ -617,6 +617,8 @@ export function deletedNativeTable(db) {
 // ---- 通知の一覧（受信箱。ADR 0149）。1 件 1 行。件数・日数の上限は core/notifications.mjs（NOTIFICATION_MAX・NOTIFICATION_KEEP_MS） ----
 // 欠けても失った記録は無い（飛び先の会話・投稿の側が正本）ので後から足す表（LATE_TABLES_SQL）。形式番号は上げない
 const NOTIFICATION_COLUMNS = 'seq, id, dedupe_key, kind, at, session_id, channel_id, read_at, resolved_at, data';
+/** 続いている状態の行の dedupe_key の頭（core/notifications.mjs の standing） */
+export const STANDING_PREFIX = 'standing:';
 const notificationRow = (r) => ({ seq: Number(r.seq), id: r.id, dedupeKey: r.dedupe_key, kind: r.kind, at: r.at, sessionId: r.session_id, channelId: r.channel_id, readAt: r.read_at, resolvedAt: r.resolved_at, data: JSON.parse(r.data) });
 // ---- 入力欄の書きかけ（スレッドの欄。ADR 0157 の F35）。持ち主（スレッド）ごとに 1 行。ほかの端末でも続きを書ける ----
 export function draftTable(db) {
@@ -672,14 +674,26 @@ export function notificationTable(db) {
       prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
       return true;
     },
-    /** 決着していないあなた待ちを全部決着させる（起動時。承認はメモリにしか無く、再起動で消える）。except の dedupeKey の行は残す（付け直すターンの承認） */
+    /**
+     * 決着していないあなた待ちを全部決着させる（起動時。承認はメモリにしか無く、再起動で消える）。except の dedupeKey の行は残す（付け直すターンの承認）。
+     * 続いている状態の行（dedupe_key が standing: で始まる。手元のファイルが正本で、再起動で消えない）も残す
+     */
     resolveAllWaiting(at, outcome, except = null) {
-      const rows = prepared(db, "SELECT id, dedupe_key, data FROM notifications WHERE kind = 'wait' AND resolved_at IS NULL").all().filter(row => !except?.has(row.dedupe_key));
+      const rows = prepared(db, "SELECT id, dedupe_key, data FROM notifications WHERE kind = 'wait' AND resolved_at IS NULL").all()
+        .filter(row => !except?.has(row.dedupe_key) && !row.dedupe_key.startsWith(STANDING_PREFIX));
       for (const row of rows) prepared(db, 'UPDATE notifications SET resolved_at = ?, read_at = COALESCE(read_at, ?), data = ? WHERE id = ?').run(at, at, jsonOf({ ...JSON.parse(row.data), outcome }), row.id);
       return rows.length;
     },
     removeSession(sessionId) { return Number(prepared(db, 'DELETE FROM notifications WHERE session_id = ?').run(sessionId).changes); },
     removeChannel(channelId) { return Number(prepared(db, 'DELETE FROM notifications WHERE channel_id = ?').run(channelId).changes); },
+    /** dedupe_key が prefix で始まる行を消す（except の key は残す）。消した件数を返す */
+    removeByKeyPrefix(prefix, except = null) {
+      return Number(prepared(db, 'DELETE FROM notifications WHERE substr(dedupe_key, 1, length(?)) = ? AND dedupe_key IS NOT ?').run(prefix, prefix, except).changes);
+    },
+    /** 行の data を差し替える（既読・決着は触らない）。変えたら true */
+    updateData(dedupeKey, data) {
+      return Number(prepared(db, 'UPDATE notifications SET data = ? WHERE dedupe_key = ?').run(jsonOf(data), dedupeKey).changes) > 0;
+    },
     /** 古いものを捨てる: cutoff より前、と max 件を超えた分（既読を先に、古い順）。捨てた件数を返す */
     prune(cutoff, max) {
       let n = Number(prepared(db, 'DELETE FROM notifications WHERE at < ?').run(cutoff).changes);

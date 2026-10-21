@@ -252,7 +252,25 @@
         "syncSharedTo": "新しい PC {{name}} に同期の鍵を渡しました（{{time}}）",
         "hostRemoved": "この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。",
         "hostReregister": "この PC を登録し直す",
-        "hostReregistered": "この PC の登録が外れていたので、登録し直しました"
+        "hostReregistered": "この PC の登録が外れていたので、登録し直しました",
+        "syncInbox_other": "届いた変更 {{count}} 件",
+        "inboxTitle": "届いた変更",
+        "inboxKind": {
+          "change": "変更",
+          "new": "新しいファイル",
+          "delete": "削除"
+        },
+        "inboxFromUnknown": "ほかの PC",
+        "inboxLoading": "読み込んでいます…",
+        "inboxEmpty": "届いた変更はありません",
+        "inboxTake": "取り込む",
+        "inboxDrop": "捨てる",
+        "inboxTaken": "取り込みました",
+        "inboxDropped": "捨てました",
+        "inboxGone": "もう届いた変更から外れています",
+        "inboxLocalChanged": "届いた後に、この PC のファイルが変わったため、取り込みませんでした。今のファイルを残すなら「捨てる」を押してください。",
+        "inboxNotApplied": "取り込めませんでした。もう一度お試しください。",
+        "inboxBinary": "文字として表示できないファイルです。"
       },
     "remote": {
       "tabs": {
@@ -3463,12 +3481,14 @@
       "mention": {
         "named": "{{name}} が @あなた と書きました",
         "plain": "@あなた 宛ての投稿があります"
-      }
+      },
+      "syncInbox_other": "同期で届いた変更が {{count}} 件あります"
     },
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "一時チャット › {{title}}"
+      "chat": "一時チャット › {{title}}",
+      "plus": "設定 › Pleiad Plus"
     },
     "outcome": {
       "allowed": "承認済み",

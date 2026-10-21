@@ -23,6 +23,10 @@ export function describeNotification(n, t, titleOf = () => '') {
   const title = live || n.title || '';
   const name = n.actor?.name || '';
   const open = n.kind === 'wait' && n.resolvedAt == null;
+  // 同期で届いた変更の受け入れ待ち（ADR 0245）: 続いている状態の 1 行。開くのは設定 › Pleiad Plus
+  if (n.kind === 'wait' && n.ask === 'syncInbox') {
+    return { icon: 'wait', line: t('inbox.line.syncInbox', { count: Number.isFinite(n.count) ? n.count : 1 }), place: t('inbox.place.plus'), outcome: '', open: true };
+  }
   let line;
   if (n.kind === 'wait') {
     const what = ['question', 'chrome', 'command'].includes(n.ask) ? n.ask : 'approval';

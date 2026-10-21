@@ -7,9 +7,11 @@
 //   鍵を持つ PC が台帳に居る → その PC の名前と最後の同期。控えめな「鍵を持つ PC が使えないとき」
 //   居ない → サーバーにあるデータの件数と大きさ。「鍵を持つ PC が使えない」
 //   どちらも確かめの窓はチェック 1 つ（入れるまで「消して始め直す」を押せない）
+// 受け入れ待ち（status.inbox）が 1 件以上あれば、まとまりの終わりに「届いた変更 N 件」の行（押すと web/plus-inbox.mjs の面。ADR 0245）
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, switchButton, waitLine } from './remote-parts.mjs';
+import { inboxRow } from './plus-inbox.mjs';
 
 const MB = 1024 * 1024;
 /** バイト数を「x.x MB」に（小数 1 桁。tests/unit/plus-sync-ui.mjs が試す） */
@@ -110,7 +112,8 @@ function whatSynced() {
  */
 export function renderSync({ enabled = true, sync = null, confirming = false, message = '', busy = false,
   resetChecked = false, resetChanged = false, onResetCheck = () => {},
-  onToggle = () => {}, onNow = () => {}, onAskReset = () => {}, onCancelReset = () => {}, onReset = () => {}, onOpenConflicts = () => {} } = {}) {
+  onToggle = () => {}, onNow = () => {}, onAskReset = () => {}, onCancelReset = () => {}, onReset = () => {}, onOpenConflicts = () => {},
+  onOpenInbox = () => {} } = {}) {
   const out = [];
   out.push(el('div', 'rm-gh', t('settings.plus.sync')));
 
@@ -215,5 +218,7 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
     for (const b of acts.children ?? []) b.disabled = busy;
     out.push(acts);
   }
+  // 届いた変更（受け入れ待ち）。止まっていても、待っているものは見せる
+  if (s.state !== 'disabled' && Number.isInteger(s.inbox) && s.inbox > 0) out.push(inboxRow(s.inbox, onOpenInbox));
   return out;
 }

@@ -616,6 +616,19 @@
       },
       "syncOpenConflicts": {
         "summary": "競合で残した古い方の写しのフォルダーをこの PC で開く。"
+      },
+      "syncInbox": {
+        "summary": "ほかの PC から同期で届き、取り込むのを待っている skill・指示ファイルの一覧。"
+      },
+      "syncInboxItem": {
+        "summary": "受け入れ待ちの 1 件の中身（今の手元と届いた版）。",
+        "id": "受け入れ待ちの項目の id"
+      },
+      "syncInboxTake": {
+        "summary": "受け入れ待ちの 1 件を取り込む（手元のファイルに書く・消す）。待ちに置いた後に手元が変わっていたら書かない。"
+      },
+      "syncInboxDrop": {
+        "summary": "受け入れ待ちの 1 件を捨てる。手元のファイルは変えず、同じ版はもう出さない。"
       }
     },
     "accounts": {

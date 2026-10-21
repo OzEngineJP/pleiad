@@ -13,6 +13,8 @@
 //   - 既読は通知ごと（readAt）。会話の既読（readAt・markRead）とチャンネルの既読（channels.markRead）が進むと、対応する通知も既読になる（markSession・markChannel）
 //   - 上限: NOTIFICATION_MAX 件・NOTIFICATION_KEEP_MS（古い方から捨てる。既読を先に）。会話を消す・チャンネルをアーカイブすると、その行も消す
 //   - あなた待ちの承認はメモリにしか無く、再起動で消える。起動時に、決着していないあなた待ちを 'cancelled' で決着させる（settleAllWaiting）
+//   - 続いている状態のあなた待ち（standing。同期で届いた変更の受け入れ待ち。ADR 0245）は 1 つの名前に 1 行だけ。dedupeKey は `standing:<名前>:<版>`。
+//     版（いちばん新しく届いた時刻）が進めば前の行を消して未読で載せ直し、件数だけ変われば同じ行の件数を直す。0 件になれば消す。起動時の決着から外す
 //
 //   createNotifications({ dataDir, emit, now }) → Notifications
 //     add({ kind, dedupeKey, at, sessionId?, channelId?, viewing?, data }): 行 | null     … null は重複・上限外。新しく載せたら notificationsChanged を出す
@@ -22,12 +24,14 @@
 //     markSession(sessionId, upTo, kinds?)・markChannel(channelId, upTo)  … 会話・チャンネルの既読に合わせる
 //     settle(dedupeKey, outcome)  … あなた待ちの決着（outcome: allowed | answered | denied | cancelled）
 //     settleAllWaiting(outcome, { except? })・removeSession(id)・removeChannel(id)・close()
+//     standing(name, { version, at, data } | null)  … 続いている状態のあなた待ちを置く・直す・消す（null で消す）
 //   emit({ type: 'notificationsChanged', unread, waiting }) … 件数が変わったとき（画面のベルの数。リモートの端末にも届く）
-//   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId? },
-//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question', title?, channelName?, home?: true（一時チャット）, threadTitle? }
+//   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId?, settings? },
+//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question' | 'syncInbox', count?, title?, channelName?, home?: true（一時チャット）, threadTitle? }
+//     target.settings: 開く設定の面（'plus'）
 import crypto from 'node:crypto';
 import { openData } from './data-schema.mjs';
-import { notificationTable } from './db.mjs';
+import { notificationTable, STANDING_PREFIX } from './db.mjs';
 
 const DAY = 86_400_000;
 export const NOTIFICATION_KINDS = Object.freeze(['wait', 'failed', 'done', 'mention']);
@@ -41,7 +45,7 @@ export const NOTIFICATION_PAGE_MAX = 100;
 const FILTERS = { all: null, wait: ['wait'], mention: ['mention'] };
 
 const clip = (s, n) => [...String(s ?? '').replace(/\s+/g, ' ').trim()].slice(0, n).join('');
-const DATA_KEYS = ['uuid', 'threadId', 'postId', 'actor', 'ask', 'title', 'channelName', 'home', 'threadTitle', 'outcome'];
+const DATA_KEYS = ['uuid', 'threadId', 'postId', 'actor', 'ask', 'title', 'channelName', 'home', 'threadTitle', 'outcome', 'count', 'settings'];
 
 export function createNotifications({ dataDir, emit = () => {}, now = Date.now } = {}) {
   let handle = null, table = null;
@@ -58,10 +62,19 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
     target: {
       ...(r.sessionId ? { sessionId: r.sessionId } : {}), ...(r.data.uuid ? { uuid: r.data.uuid } : {}),
       ...(r.channelId ? { channelId: r.channelId } : {}), ...(r.data.threadId ? { threadId: r.data.threadId } : {}), ...(r.data.postId ? { postId: r.data.postId } : {}),
+      ...(r.data.settings ? { settings: r.data.settings } : {}),
     },
-    ...(r.data.actor ? { actor: r.data.actor } : {}), ...(r.data.ask ? { ask: r.data.ask } : {}),
+    ...(r.data.actor ? { actor: r.data.actor } : {}), ...(r.data.ask ? { ask: r.data.ask } : {}), ...(Number.isFinite(r.data.count) ? { count: r.data.count } : {}),
     ...(r.data.title ? { title: r.data.title } : {}), ...(r.data.channelName ? { channelName: r.data.channelName } : {}), ...(r.data.home ? { home: true } : {}), ...(r.data.threadTitle ? { threadTitle: r.data.threadTitle } : {}),
   });
+
+  const keptData = (data) => {
+    const kept = {};
+    for (const key of DATA_KEYS) if (data[key] !== undefined && data[key] !== null && data[key] !== '') kept[key] = data[key];
+    for (const key of ['title', 'channelName', 'threadTitle']) if (kept[key]) kept[key] = clip(kept[key], 120);
+    if (kept.actor) kept.actor = { kind: kept.actor.kind, name: clip(kept.actor.name, 60), ...(kept.actor.icon ? { icon: clip(kept.actor.icon, 16) } : {}) };
+    return kept;
+  };
 
   const api = {
     add({ kind, dedupeKey, at, sessionId = null, channelId = null, viewing = false, data = {} }) {
@@ -69,10 +82,7 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
       const t = now();
       const when = Number.isFinite(at) ? at : t;
       if (when < t - NOTIFICATION_KEEP_MS) return null;
-      const kept = {};
-      for (const key of DATA_KEYS) if (data[key] !== undefined && data[key] !== null && data[key] !== '') kept[key] = data[key];
-      for (const key of ['title', 'channelName', 'threadTitle']) if (kept[key]) kept[key] = clip(kept[key], 120);
-      if (kept.actor) kept.actor = { kind: kept.actor.kind, name: clip(kept.actor.name, 60), ...(kept.actor.icon ? { icon: clip(kept.actor.icon, 16) } : {}) };
+      const kept = keptData(data);
       const row = { id: `n_${crypto.randomBytes(6).toString('hex')}`, dedupeKey, kind, at: when, sessionId, channelId, readAt: viewing ? t : null, data: kept };
       const added = open().insert(row);
       if (!added) return null;
@@ -127,6 +137,29 @@ export function createNotifications({ dataDir, emit = () => {}, now = Date.now }
       const n = open().resolveAllWaiting(now(), outcome, new Set([...except].map(id => `wait:${id}`)));
       if (n) changed();
       return n;
+    },
+    /**
+     * 続いている状態のあなた待ち（1 つの名前に 1 行）。state: { version, at, data } で置く・直す、null で消す。
+     * version が前と同じなら data だけ直す（既読はそのまま）。違えば前の行を消して未読で載せ直す。at が残す期間より古ければ今の時刻で載せる
+     */
+    standing(name, state) {
+      const prefix = `${STANDING_PREFIX}${name}:`;
+      if (!state) { const n = open().removeByKeyPrefix(prefix); if (n) changed(); return null; }
+      const key = `${prefix}${state.version}`;
+      const data = keptData(state.data ?? {});
+      const was = open().byDedupeKey(key);
+      if (was) {
+        if (JSON.stringify(was.data) === JSON.stringify(data)) return publicRow(was);
+        open().updateData(key, data);
+        changed();
+        return publicRow({ ...was, data });
+      }
+      const removed = open().removeByKeyPrefix(prefix);
+      const t = now();
+      const at = Number.isFinite(state.at) && state.at >= t - NOTIFICATION_KEEP_MS ? state.at : t;
+      const row = api.add({ kind: 'wait', dedupeKey: key, at, data });
+      if (!row && removed) changed();
+      return row;
     },
     removeSession(sessionId) { const n = open().removeSession(sessionId); if (n) changed(); return n; },
     removeChannel(channelId) { const n = open().removeChannel(channelId); if (n) changed(); return n; },

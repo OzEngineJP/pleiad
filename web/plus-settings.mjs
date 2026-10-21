@@ -3,11 +3,14 @@
 // この画面は表示と、B1 のコマンド（plusLogin・plusLoginCancel・plusLogout・plusHostRebind）を送ることだけをする。
 // 利用者が外した PC（host.state removed）は「この PC を登録し直す」で plus.hostReregister 操作を送る。
 // 見た目の部品は設定 › リモートと同じ（web/remote-parts.mjs、web/manage-panel.css の .rm-*）。見出しの丸は .rm-av。
+// 「同期」の「届いた変更 N 件」を押すと、このページの中身を届いた変更の面（web/plus-inbox.mjs。ADR 0245）に替える。
+// 通知の一覧の ◆ の行からは openInbox で直に開く。届いた変更が増えたら（plusSyncStatus）一覧を読み直し、新しいものを上に足す
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, rmIcon, keyValues, errorLine, waitLine, paintInto } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
 import { renderSync } from './plus-sync.mjs';
+import { renderInbox } from './plus-inbox.mjs';
 import { loadingMark } from './plus-key-row.mjs';
 
 /** ボタン。外のブラウザーで開くものは外へのリンクの印を付ける */
@@ -198,6 +201,13 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let retrying = false;
   /** 鍵を持たない PC の確かめの窓: チェックを入れたか・確かめている間にサーバーの件数が変わったか */
   let syncChecked = false, syncChanged = false;
+  /**
+   * 届いた変更の面（null は Pleiad Plus のページ）: { items, open, details: id → 中身, results: id → 押した結果, busy, loading, message }。
+   * 押し終えた行は一覧から外さずに残す（「取り込みました」）
+   */
+  let inbox = null;
+  /** 前に受けた受け入れ待ちの件数と時刻（変わったときだけ一覧を読み直す） */
+  let inboxSeen = { at: null, count: 0 };
 
   function syncView() {
     return {
@@ -207,12 +217,108 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       onToggle: syncToggle, onNow: () => syncSend('plus.syncNow'),
       onAskReset: askSyncReset, onCancelReset: cancelSyncReset, onReset: syncReset,
       onOpenConflicts: () => syncSend('plus.syncOpenConflicts'),
+      onOpenInbox: openInbox,
     };
+  }
+
+  function inboxView() {
+    return { ...inbox, onBack: closeInbox, onToggle: toggleInboxItem, onTake: id => inboxAct(id, 'take'), onDrop: id => inboxAct(id, 'drop') };
+  }
+
+  /** 届いた変更の面を開き、一覧を読んで最初の 1 件を開く */
+  function openInbox() {
+    if (!inbox) inbox = { items: [], open: null, details: {}, results: {}, busy: false, loading: true, message: '' };
+    paint();
+    loadInbox({ openFirst: true });
+  }
+  function closeInbox() {
+    inbox = null;
+    paint();
+    queueMicrotask(() => root.querySelector('[data-fk="syncInbox"]')?.focus() ?? root.querySelector('[data-fk="syncToggle"]')?.focus());
+  }
+
+  /** 次に開く 1 件（押し終えていないもの。after の後ろを先に、無ければ前から） */
+  function nextOpen(after = null) {
+    const rest = inbox.items.filter(i => !inbox.results[i.id]?.done);
+    const at = after ? inbox.items.findIndex(i => i.id === after) : -1;
+    return (rest.find(i => inbox.items.indexOf(i) > at) ?? rest[0])?.id ?? null;
+  }
+
+  /**
+   * 一覧を読み直す。新しく届いたものは上に足し、押し終えたものは残す。同じ id で届き直した（届いた時刻が変わった）ものは
+   * 中身を読み直し、押した結果を消す（捨てた後に新しい版が届いた）
+   */
+  async function loadInbox({ openFirst = false } = {}) {
+    let list;
+    try { list = (await cmd('invoke', { op: 'plus.syncInbox', args: {} }))?.items ?? []; }
+    catch (e) { if (inbox) { inbox.loading = false; inbox.message = e.message; paint(); } return; }
+    if (!inbox) return;
+    const server = new Map(list.map(i => [i.id, i]));
+    const known = new Map(inbox.items.map(i => [i.id, i]));
+    for (const [id, was] of known) {
+      const now = server.get(id);
+      if (now && now.at !== was.at) { delete inbox.details[id]; delete inbox.results[id]; }
+    }
+    const fresh = list.filter(i => !known.has(i.id));
+    inbox.items = [...fresh, ...inbox.items.filter(i => server.has(i.id) || inbox.results[i.id]?.done).map(i => server.get(i.id) ?? i)];
+    inbox.loading = false;
+    if (inbox.open && !server.has(inbox.open)) inbox.open = null;
+    if (openFirst || !inbox.open) inbox.open = inbox.open ?? nextOpen();
+    paint();
+    if (inbox.open) loadInboxItem(inbox.open);
+  }
+
+  async function loadInboxItem(id) {
+    if (!inbox || inbox.details[id]) return;
+    try {
+      const out = await cmd('invoke', { op: 'plus.syncInboxItem', args: { id } });
+      if (!inbox) return;
+      if (out?.item) inbox.details[id] = out.item;
+      else inbox.results[id] = { done: 'gone' };
+    } catch (e) { if (inbox) inbox.message = e.message; }
+    paint();
+  }
+
+  function toggleInboxItem(id) {
+    if (!inbox || inbox.results[id]?.done) return;
+    inbox.open = inbox.open === id ? null : id;
+    paint();
+    if (inbox.open) loadInboxItem(id);
+  }
+
+  /** 取り込む（take）・捨てる（drop）。済んだら次の 1 件を開く。手元が変わっていて取り込めなかったものは開いたまま */
+  async function inboxAct(id, act) {
+    if (!inbox || inbox.busy) return;
+    inbox.busy = true; inbox.message = '';
+    delete inbox.results[id];
+    paint();
+    try {
+      const out = await cmd('invoke', { op: act === 'take' ? 'plus.syncInboxTake' : 'plus.syncInboxDrop', args: { id } });
+      if (!inbox) return;
+      if (act === 'take' && out?.taken !== true) {
+        inbox.results[id] = out?.reason === 'gone' ? { done: 'gone' } : { error: out?.reason === 'local_changed' ? 'local_changed' : 'not_applied' };
+      } else inbox.results[id] = { done: act === 'take' ? 'taken' : (out?.dropped === false ? 'gone' : 'dropped') };
+    } catch (e) { if (inbox) inbox.results[id] = { error: e.message }; }
+    if (!inbox) return;
+    inbox.busy = false;
+    if (inbox.results[id]?.done) {
+      inbox.open = nextOpen(id);
+      if (inbox.open) loadInboxItem(inbox.open);
+    }
+    paint();
+    const focus = inbox.open ? `inx:${inbox.open}` : 'back';
+    queueMicrotask(() => root.querySelector(`[data-fk="${CSS.escape(focus)}"]`)?.focus());
   }
 
   function paint() {
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
+    // 届いた変更の面は、ログインしていて Plus のときだけ（外れたら Pleiad Plus のページに戻す）
+    if (inbox && status && (status.signedIn === false || (status.account && status.account.status !== 'plus'))) inbox = null;
+    if (inbox) {
+      paintInto(root, JSON.stringify(['inbox', inbox]), () => renderInbox(inboxView()));
+      return;
+    }
     const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying, syncChecked, syncChanged]);
     paintInto(root, sig, () => {
       const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView(), retrying, onRetry: retryPlan, reregister: hostReregister });
@@ -361,6 +467,9 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       const after = waitSig(syncStatus);
       // 確かめている間にほかの PC が上げて件数が変わった: 新しい数字でもう一度チェックしてもらう
       if (syncConfirming && before && after && before !== after) { syncChecked = false; syncChanged = true; }
+      // 届いた変更の面を開いている間に、届いたもの・残りの数が変わった: 一覧を読み直す
+      if (inbox && !inbox.loading && (syncStatus?.inboxAt !== inboxSeen.at || syncStatus?.inbox !== inboxSeen.count)) loadInbox();
+      inboxSeen = { at: syncStatus?.inboxAt ?? null, count: syncStatus?.inbox ?? 0 };
       paint();
       return;
     }
@@ -369,7 +478,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     paint();
   }
 
-  $('plusTab').onclick = () => { page('plus'); refresh(); };
+  $('plusTab').onclick = () => { inbox = null; page('plus'); refresh(); };
   // メニューの出し入れ・開いているページのために、つながった（つなぎ直した）あとに取る。
   // 起動の直後は WS がまだ開いていないので client.mjs が ready の後に呼ぶ
   function reconnected() {
@@ -377,5 +486,5 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     if (!root.hidden) cmd('invoke', { op: 'plus.syncStatus', args: {} }).then(s => { syncStatus = s; paint(); }).catch(() => {});
   }
   paint();
-  return { refresh, event, reconnected, get status() { return status; } };
+  return { refresh, event, reconnected, openInbox: () => { refresh(); openInbox(); }, get status() { return status; } };
 }

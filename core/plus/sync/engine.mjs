@@ -1,13 +1,18 @@
-// 同期のエンジン（docs/plus.md「同期」）。手元の項目を暗号化して上げ、ほかの PC の項目を受けて書く。
+// 同期のエンジン（docs/plus.md「同期」）。手元の項目を暗号化して上げ、ほかの PC の項目を受ける。
 //
-//   手元の覚え: <data>/plus/sync-state.json = { keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } }, rejoinedAt, sharedTo }
+//   手元の覚え: <data>/plus/sync-state.json = { keyId, cursor, items: { <論理名>: { itemId, rev, sha256, deleted, mtime } }, rejoinedAt, sharedTo, dropped }
 //     rejoinedAt: 前の鍵を持っていて、別の鍵に替わった時刻。覚えを空にしたあと、手元の設定の mtime の代わりに使う
 //       （始め直したほかの PC の「初めて上げた設定」に負けないように。初めての PC は 0 のままで、アカウントの設定を採る）
 //     sharedTo: 鍵を渡した新しい PC（新しい順に 3 つ { hostId, name, at }。画面には 7 日の間だけ出す）
+//     dropped: 人が捨てた版 { <論理名>: 中身の sha256 | 'deleted' }。同じ版が届き直しても待ちに出さない（違う版が来たら忘れる）
+//   受け入れ待ち（ADR 0245）: ほかの PC から届いた skill・指示ファイルは書かずに <data>/plus/sync-inbox/<id>/ に置く
+//     （id = 論理名の sha256 の先頭 32 字。incoming（消すときは無い）・base（手元に無いときは無い）・meta.json）。
+//     人が「取り込む」と書き、「捨てる」と dropped に覚える。設定の項目は今のまま自動で書く。
+//     待っている間の覚えは rev だけ進め、sha256 は手元の版のまま（手元の版を上げ直さない。手元で変えたものは上げる）
 //   1 回の流れ: 鍵の始め方（keys.setup）→ 宛ての無いホストへ鍵を渡す → 受ける → 上げる。同時に 1 本だけ回す
 //   いつ: start（Plus のセッションが plus になったとき）・手元の変更（fs.watch と設定の変更を 5 秒まとめる）・10 分ごと。
 //     鍵の受け渡しだけは 5 分ごとにも見る
-//   競合: 平文の mtime の新しい方を採り（同じなら相手）、負けた方を <data>/plus/sync-conflicts/<YYYYMMDD-HHmmss>/<論理名> に写す。
+//   設定の競合: 平文の mtime の新しい方を採り（同じなら相手）、負けた方を <data>/plus/sync-conflicts/<YYYYMMDD-HHmmss>/<論理名> に写す。
 //     写しは作ってから 30 日を過ぎたら start のときに消す
 //   アカウントの停止（403 not_plus・account_disabled）: stop まで行い、状態は stopped（error に理由）。回し直すのは start（index.mjs）
 //   登録の外れ（403 forbidden・message host）: 止めて状態は unregistered。onHostLost で上（登録の確かめ直し）へ知らせる。
@@ -37,12 +42,18 @@ const STAMP_RX = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/;
 const ACCOUNT_STOP_CODES = new Set(['not_plus', 'account_disabled']);
 const SHARED_KEEP = 3;
 const SHARED_SHOW_MS = 7 * DAY;
+const INBOX_ID_RX = /^[0-9a-f]{32}$/;
+const INBOX_KINDS = new Set(['change', 'new', 'delete']);
 
 const sha256 = buf => crypto.createHash('sha256').update(buf).digest('hex');
 const pad = n => String(n).padStart(2, '0');
 const stampOf = ms => { const d = new Date(ms); return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
 const stampTime = name => { const m = STAMP_RX.exec(name); return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime() : null; };
 const emptyState = keyId => ({ keyId: keyId ?? null, cursor: 0, items: {} });
+/** 受け入れ待ちの id（鍵に依らない。鍵が替わっても同じ項目は同じ場所） */
+export const inboxIdOf = logical => sha256(Buffer.from(logical, 'utf8')).slice(0, 32);
+const isSetting = logical => logical.startsWith('settings/');
+const versionTag = sha => sha ?? 'deleted';
 
 const defaultClock = { now: () => Date.now(), setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id) };
 const defaultWatch = (dir, opts, listener) => fs.watch(dir, opts, listener);
@@ -67,13 +78,15 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   const plusDir = path.join(dataDir, 'plus');
   const stateFile = path.join(plusDir, 'sync-state.json');
   const conflictsDir = path.join(plusDir, 'sync-conflicts');
+  const inboxDir = path.join(plusDir, 'sync-inbox');
 
   let active = false;
   let key = null;               // { keyId, key, enc, id }
   let local = null;             // sync-state.json の中身
-  let status = { state: 'off', lastSyncedAt: null, totalBytes: 0, limitBytes: 0, conflicts: 0, error: null, wait: null, sharedTo: [] };
+  let status = { state: 'off', lastSyncedAt: null, totalBytes: 0, limitBytes: 0, conflicts: 0, error: null, wait: null, sharedTo: [], inbox: 0, inboxAt: null };
   let quota = false;
   let running = null, again = null;
+  let turn = Promise.resolve();   // 回と、取り込む・捨てるを 1 本ずつにする
   let debounceTimer = null, receiveTimer = null, shareTimer = null, retryTimer = null;
   let backoffMs = 0;
   const watchers = new Map();   // dir → watcher
@@ -105,6 +118,9 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
       if (Array.isArray(raw?.sharedTo)) {
         local.sharedTo = raw.sharedTo.filter(s => typeof s?.hostId === 'string' && Number.isFinite(s.at))
           .map(s => ({ hostId: s.hostId, name: typeof s.name === 'string' ? s.name : null, at: s.at })).slice(0, SHARED_KEEP);
+      }
+      if (raw?.dropped && typeof raw.dropped === 'object' && !Array.isArray(raw.dropped)) {
+        local.dropped = Object.fromEntries(Object.entries(raw.dropped).filter(([k, v]) => typeof v === 'string' && targets.parse(k) && !isSetting(k)));
       }
     } catch { local = emptyState(null); }
     showShared();
@@ -162,6 +178,126 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     return count;
   }
 
+  // ---- 受け入れ待ち ----------------------------------------------------------------------------------------
+
+  /** 1 件の meta.json。無い・形が違う・id と論理名が合わない → null */
+  async function readInboxMeta(id) {
+    if (typeof id !== 'string' || !INBOX_ID_RX.test(id)) return null;
+    try {
+      const m = JSON.parse(await fsp.readFile(path.join(inboxDir, id, 'meta.json'), 'utf8'));
+      if (typeof m?.path !== 'string' || inboxIdOf(m.path) !== id || !targets.parse(m.path) || isSetting(m.path)) return null;
+      if (!INBOX_KINDS.has(m.kind) || !Number.isInteger(m.rev) || !Number.isFinite(Date.parse(m.at))) return null;
+      return {
+        path: m.path, kind: m.kind, rev: m.rev, at: m.at, mtime: m.mtime, from: typeof m.from === 'string' ? m.from : null,
+        sha256: typeof m.sha256 === 'string' ? m.sha256 : null, baseSha: typeof m.baseSha === 'string' ? m.baseSha : null,
+      };
+    } catch { return null; }
+  }
+
+  /** 待っているもの（新しく届いた順） */
+  async function listInbox() {
+    const names = await fsp.readdir(inboxDir).catch(() => []);
+    const out = [];
+    for (const id of names) {
+      const m = await readInboxMeta(id);
+      if (m) out.push({ id, ...m });
+    }
+    return out.sort((x, y) => Date.parse(y.at) - Date.parse(x.at) || (x.path < y.path ? -1 : 1));
+  }
+
+  async function countInbox() {
+    const items = await listInbox();
+    setStatus({ inbox: items.length, inboxAt: items[0]?.at ?? null });
+  }
+
+  const removeInbox = id => fsp.rm(path.join(inboxDir, id), { recursive: true, force: true }).catch(() => {});
+
+  /** 届いた版を待ちに置く。meta.json は最後に書く（途中で止まったものは読まない） */
+  async function hold(logical, it, plain, entry) {
+    const id = inboxIdOf(logical);
+    const dir = path.join(inboxDir, id);
+    const incomingSha = plain.deleted ? null : sha256(plain.content);
+    const baseSha = entry ? sha256(entry.content) : null;
+    const prev = await readInboxMeta(id);
+    // 同じ版が同じ手元に対して届き直した（鍵が替わったときなど）: 届いた時刻を変えない（通知を出し直さない）
+    const at = prev && prev.sha256 === incomingSha && prev.baseSha === baseSha ? prev.at : new Date(clock.now()).toISOString();
+    await fsp.rm(path.join(dir, 'meta.json'), { force: true }).catch(() => {});
+    await fsp.mkdir(dir, { recursive: true });
+    for (const [name, buf] of [['incoming', plain.deleted ? null : plain.content], ['base', entry?.content ?? null]]) {
+      if (buf) await writeAtomic(path.join(dir, name), buf);
+      else await fsp.rm(path.join(dir, name), { force: true });
+    }
+    const kind = plain.deleted ? 'delete' : (entry ? 'change' : 'new');
+    await writeAtomic(path.join(dir, 'meta.json'), `${JSON.stringify({ path: logical, from: plain.from ?? null, at, mtime: plain.mtime, kind, rev: it.rev, sha256: incomingSha, baseSha })}\n`);
+    log(`sync item held ${it.itemId}`);
+  }
+
+  /** 回と、取り込む・捨てるを 1 本ずつ通す */
+  function exclusive(fn) {
+    const p = turn.then(fn, fn);
+    turn = p.catch(() => {});
+    return p;
+  }
+
+  /** 待っている 1 件の中身。{ ...meta, incoming: Buffer|null, base: Buffer|null } か null */
+  async function inboxItem(id) {
+    const meta = await readInboxMeta(id);
+    if (!meta) return null;
+    const dir = path.join(inboxDir, id);
+    const incoming = meta.kind === 'delete' ? null : await fsp.readFile(path.join(dir, 'incoming')).catch(() => null);
+    const base = meta.baseSha ? await fsp.readFile(path.join(dir, 'base')).catch(() => null) : null;
+    return { id, ...meta, incoming, base };
+  }
+
+  /**
+   * 取り込む: 待っている版を手元に書く（消すものは消す）。待ちに置いた後に手元が変わっていたら書かない。
+   * 戻り値 { taken: true } か { taken: false, reason: 'gone' | 'local_changed' | 'not_applied' }
+   */
+  function take(id) {
+    return exclusive(async () => {
+      await loadLocal();
+      const item = await inboxItem(id);
+      if (!item || (item.kind !== 'delete' && (!item.incoming || sha256(item.incoming) !== item.sha256))) {
+        if (item) await removeInbox(id);
+        await countInbox();
+        return { taken: false, reason: 'gone' };
+      }
+      const cur = await targets.readOne(item.path);
+      const curSha = cur ? sha256(cur.content) : null;
+      if (curSha !== item.sha256) {
+        if (curSha !== item.baseSha) return { taken: false, reason: 'local_changed' };
+        const plain = { deleted: item.kind === 'delete', content: item.incoming, mtime: item.mtime };
+        if (!(await applyRemote(item.path, plain))) return { taken: false, reason: 'not_applied' };
+        if (active) ensureWatchers();   // 置き場のフォルダーを今作ったときは、ここから見張る
+      }
+      const rec = local.items[item.path];
+      // 覚えの rev が待っている版のままなら、その版を持っていることにする。手元から先の版を上げていたら、取り込んだ中身を上げ直す
+      if (rec && rec.rev === item.rev) local.items[item.path] = { ...rec, sha256: item.sha256, deleted: item.kind === 'delete', mtime: item.mtime };
+      else changed();
+      if (local.dropped) delete local.dropped[item.path];
+      await removeInbox(id);
+      await saveLocal();
+      await countInbox();
+      log('sync item taken');
+      return { taken: true };
+    });
+  }
+
+  /** 捨てる: 待ちから消し、同じ版が届き直しても出さないように覚える。手元のファイルも api も変えない */
+  function drop(id) {
+    return exclusive(async () => {
+      await loadLocal();
+      const meta = await readInboxMeta(id);
+      if (meta) {
+        local.dropped = { ...(local.dropped ?? {}), [meta.path]: versionTag(meta.sha256) };
+        await saveLocal();
+      }
+      if (typeof id === 'string' && INBOX_ID_RX.test(id)) await removeInbox(id);
+      await countInbox();
+      return { dropped: Boolean(meta) };
+    });
+  }
+
   // ---- 誤り -----------------------------------------------------------------------------------------------
 
   /** 回の途中の誤りを状態とやり直しの予定にする */
@@ -206,17 +342,19 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
 
   // ---- 受ける ---------------------------------------------------------------------------------------------
 
-  /** 受けた項目の平文。開けない・形が違う → null。ciphertext の無い消した項目は覚えの itemId から論理名を引く */
+  /**
+   * 受けた項目の平文。開けない・形が違う → null。
+   * 暗号文の無いもの（中身の無い消した印）は受けない: 消すことも、暗号文の中の deleted だけを信じる。
+   * サーバーの deleted が暗号文の中と食い違うものも受けない
+   */
   function openItem(it) {
-    if (!it.ciphertext) {
-      if (!it.deleted) return null;
-      const found = Object.entries(local.items).find(([, r]) => r.itemId === it.itemId);
-      return found ? { path: found[0], mtime: it.updatedAt ?? new Date(clock.now()).toISOString(), deleted: true, content: null } : undefined;
-    }
-    return decryptItem({
+    if (typeof it.ciphertext !== 'string' || !it.ciphertext) return null;
+    const plain = decryptItem({
       encKey: key.enc, idKey: key.id, keyId: key.keyId, uid: uid(), itemId: it.itemId, rev: it.rev, ciphertext: it.ciphertext,
       validPath: p => { const parsed = targets.parse(p); return Boolean(parsed) && (parsed.kind !== 'setting' || targets.hasSetting(parsed.key)); },
     });
+    if (!plain || (it.deleted !== undefined && it.deleted !== plain.deleted)) return null;
+    return plain;
   }
 
   function localMtime(logical, entry) {
@@ -244,10 +382,9 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
       const out = await client.request('GET', `/v1/sync/items?since=${encodeURIComponent(cursor)}&limit=${PAGE_LIMIT}`);
       const items = Array.isArray(out?.items) ? out.items : [];
       for (const it of items) {
-        if (!it || !ITEM_ID_RX.test(String(it.itemId)) || !Number.isInteger(it.rev)) continue;
+        if (!it || !ITEM_ID_RX.test(String(it.itemId)) || !Number.isSafeInteger(it.rev) || it.rev < 1) continue;
         if (it.keyId !== key.keyId) { rekey = true; continue; }
         const plain = openItem(it);
-        if (plain === undefined) continue;   // 覚えに無い項目の、中身の無い消した印
         if (!plain) { log(`sync item rejected ${it.itemId}`); continue; }
         await receiveOne(it, plain, scan);
       }
@@ -268,6 +405,22 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     const recSha = rec ? (rec.deleted ? null : rec.sha256) : undefined;
     const localChanged = rec ? localSha !== recSha : entry !== null;
     const record = () => { local.items[logical] = { itemId: it.itemId, rev: it.rev, sha256: remoteSha, deleted: plain.deleted, mtime: plain.mtime }; };
+
+    if (!isSetting(logical)) {
+      // skill・指示ファイル: 書かずに待ちに置く（手元がもう同じ中身なら覚えるだけ）
+      if (localSha === remoteSha) {
+        record();
+        await removeInbox(inboxIdOf(logical));
+        return;
+      }
+      local.items[logical] = rec
+        ? { ...rec, itemId: it.itemId, rev: it.rev }
+        : { itemId: it.itemId, rev: it.rev, sha256: localSha, deleted: localSha === null, mtime: entry ? new Date(entry.mtimeMs ?? clock.now()).toISOString() : plain.mtime };
+      if (local.dropped?.[logical] === versionTag(remoteSha)) { await removeInbox(inboxIdOf(logical)); return; }
+      if (local.dropped) delete local.dropped[logical];
+      await hold(logical, it, plain, entry);
+      return;
+    }
 
     if (!localChanged || localSha === remoteSha) {
       if (localSha !== remoteSha && !(await applyRemote(logical, plain))) { log(`sync item not applied ${it.itemId}`); return; }
@@ -303,7 +456,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     const baseRev = rec?.rev ?? 0;
     const itemId = rec?.itemId ?? itemIdFor(key.id, logical);
     const mtime = deleted ? clock.now() : (entry.kind === 'setting' ? (settingsChangedAt.get(logical) ?? (rec ? clock.now() : (local.rejoinedAt ?? 0))) : entry.mtimeMs);
-    const plaintext = itemPlaintext({ path: logical, mtime, deleted, content: entry?.content ?? null });
+    const plaintext = itemPlaintext({ path: logical, mtime, deleted, content: entry?.content ?? null, from: hostId() });
     // 平文（JSON にした形）が 1MB を超える項目は運ばない（api にも送らない）
     if (Buffer.byteLength(JSON.stringify(plaintext), 'utf8') > ITEM_LIMIT_BYTES) {
       tooLarge.set(logical, sha);
@@ -382,7 +535,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
       if (status.wait) setStatus({ wait: null });
       if (r.changed || local.keyId !== key.keyId) {
         const prev = local.keyId;
-        local = { ...emptyState(key.keyId), sharedTo: local.sharedTo ?? [] };
+        local = { ...emptyState(key.keyId), sharedTo: local.sharedTo ?? [], dropped: local.dropped ?? {} };
         if (prev && prev !== key.keyId) local.rejoinedAt = clock.now();
         settingsChangedAt.clear();
         tooLarge.clear();
@@ -401,6 +554,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
         if (up.rekey) { await saveLocal(); continue; }
       } finally {
         await saveLocal();
+        await countInbox();
       }
       backoffMs = 0;
       hostLostCalled = false;   // 手元の鍵だけでは台帳に載っているか分からないので、うまく回りきってから戻す
@@ -425,7 +579,8 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
       try {
         while (active && next) {
           again = null;
-          try { last = await runOnce(next) ?? null; }
+          const opts = next;
+          try { last = await exclusive(() => runOnce(opts)) ?? null; }
           catch (e) { last = null; handleRunError(e); }
           next = again;
         }
@@ -538,6 +693,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     if (active) return run();
     active = true;
     await sweepConflicts({ remove: true });
+    await countInbox();
     ensureWatchers();
     unsubscribe = settingsEvents?.subscribe?.(onSettingsChanged) ?? null;
     scheduleReceive();
@@ -581,12 +737,17 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     stop();
     local = emptyState(null);
     await saveLocal().catch(() => {});
+    await fsp.rm(inboxDir, { recursive: true, force: true }).catch(() => {});
+    setStatus({ inbox: 0, inboxAt: null });
   }
 
   return {
     start, stop, run, reset, forget, changed, noteShared,
     status: () => ({ ...status }),
+    /** 受け入れ待ち: list（新しく届いた順の meta）・item（中身つきの 1 件）・take（取り込む）・drop（捨てる） */
+    inbox: { list: listInbox, item: inboxItem, take, drop },
     conflictsDir,
+    inboxDir,
     stateFile,
     /** 試験用: 今張っている watch の場所 */
     watching: () => [...watchers.keys()],

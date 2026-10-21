@@ -254,7 +254,26 @@
         "syncSharedTo": "Shared the sync key with the new PC {{name}} ({{time}})",
         "hostRemoved": "This PC was removed from Pleiad Plus. Register it again to resume the relay and sync.",
         "hostReregister": "Register this PC again",
-        "hostReregistered": "This PC had been removed from the account, so it was registered again"
+        "hostReregistered": "This PC had been removed from the account, so it was registered again",
+        "syncInbox_one": "{{count}} change arrived",
+        "syncInbox_other": "{{count}} changes arrived",
+        "inboxTitle": "Changes that arrived",
+        "inboxKind": {
+          "change": "Changed",
+          "new": "New file",
+          "delete": "Deleted"
+        },
+        "inboxFromUnknown": "Another PC",
+        "inboxLoading": "Loading…",
+        "inboxEmpty": "No changes have arrived",
+        "inboxTake": "Apply",
+        "inboxDrop": "Discard",
+        "inboxTaken": "Applied",
+        "inboxDropped": "Discarded",
+        "inboxGone": "This change is no longer waiting",
+        "inboxLocalChanged": "The file on this PC changed after this arrived, so it was not applied. To keep the current file, press Discard.",
+        "inboxNotApplied": "Could not apply this change. Try again.",
+        "inboxBinary": "This file can't be shown as text."
       },
     "remote": {
       "tabs": {
@@ -3567,12 +3586,15 @@
       "mention": {
         "named": "{{name}} wrote @you",
         "plain": "A post mentions @you"
-      }
+      },
+      "syncInbox_one": "{{count}} change arrived through sync",
+      "syncInbox_other": "{{count}} changes arrived through sync"
     },
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Quick chats › {{title}}"
+      "chat": "Quick chats › {{title}}",
+      "plus": "Settings › Pleiad Plus"
     },
     "outcome": {
       "allowed": "Approved",

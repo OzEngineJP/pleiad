@@ -7,10 +7,13 @@
 //   ログアウト・アカウントの切り替え: 止めて、アカウントの同期鍵（plus:syncAccountKey）と手元の覚えを捨てる。ホストの鍵対は残す
 //   api が 403 host を返した（engine が unregistered で止まる）: onHostLost（登録の確かめ直し）を待ってから update で回し直す
 //   getSyncStatus(): { state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|error, lastSyncedAt, totalBytes,
-//     limitBytes, conflicts, error, wait, sharedTo }
+//     limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt }
 //     wait: 鍵を待つ間に見せるもの（keys.mjs の waitInfo）。sharedTo: 7 日の間に鍵を渡した新しい PC
+//     inbox・inboxAt: 受け入れ待ちの件数と、いちばん新しく届いた時刻（ADR 0245）
+//   受け入れ待ち（inboxList・inboxItem・inboxTake・inboxDrop）: 画面に出す形にする。パスは ~/ からの見た目、送った PC は台帳の名前
 import fsp from 'node:fs/promises';
 import os from 'node:os';
+import path from 'node:path';
 import { createSyncKeys } from './keys.mjs';
 import { createSyncTargets } from './targets.mjs';
 import { createSyncEngine } from './engine.mjs';
@@ -87,8 +90,53 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
     await engine.start();
   }
 
+  /** 手元のファイルの見た目のパス（ホームの下なら ~/ から、区切りは /） */
+  const shownPath = logical => {
+    const file = targets.localFile(logical);
+    if (!file) return logical;
+    const rel = path.relative(home, file);
+    return rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? `~/${rel.split(path.sep).join('/')}` : file.split(path.sep).join('/');
+  };
+
+  /** hostId → 台帳の名前（読めなければ空） */
+  async function hostNames() {
+    try {
+      const list = await session.client.request('GET', '/v1/hosts');
+      return new Map((Array.isArray(list?.hosts) ? list.hosts : []).map(h => [h?.hostId, typeof h?.name === 'string' ? h.name : null]));
+    } catch { return new Map(); }
+  }
+
+  const shown = (m, names) => ({ id: m.id, path: shownPath(m.path), kind: m.kind, at: m.at, fromName: (m.from && names.get(m.from)) || null });
+
+  /** 中身を文字として見せられるか（UTF-8 として読めて、NUL を含まない） */
+  const asText = buf => {
+    if (!buf) return null;
+    try {
+      const s = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+      return s.includes('\u0000') ? undefined : s;
+    } catch { return undefined; }
+  };
+
   return {
     update,
+    /** 受け入れ待ち（新しく届いた順）: [{ id, path, kind: change|new|delete, at, fromName }] */
+    async inboxList() {
+      const items = await engine.inbox.list();
+      const names = items.length ? await hostNames() : new Map();
+      return { items: items.map(m => shown(m, names)) };
+    },
+    /** 1 件: 一覧の欄と before・after（文字。無いものは null）。文字として見せられないものは binary: true で中身を出さない */
+    async inboxItem(id) {
+      const m = await engine.inbox.item(id);
+      if (!m) return { item: null };
+      const before = asText(m.base), after = asText(m.incoming);
+      const binary = before === undefined || after === undefined;
+      return { item: { ...shown(m, await hostNames()), binary, before: binary ? null : before, after: binary ? null : after } };
+    },
+    /** 取り込む。{ taken } か { taken: false, reason: local_changed|not_applied|gone } */
+    inboxTake: id => engine.inbox.take(id),
+    /** 捨てる（同じ版はもう出さない） */
+    inboxDrop: id => engine.inbox.drop(id),
     /** createPlusHost の syncPublicKey に渡す（台帳に載せる同期の公開鍵） */
     publicKey: () => keys.publicKey(),
     getSyncStatus: () => engine.status(),

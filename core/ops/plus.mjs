@@ -66,6 +66,35 @@ export const plusOps = [
     surfaces: { ui: true, mcp: false, cli: false },
     handler: (ctx, { confirm } = {}) => run(ctx, () => ctx.plus.syncReset(confirm ?? null)),
   }),
+  // 受け入れ待ち（ADR 0245）: ほかの PC から届いた skill・指示ファイル。中身を見せるので画面だけの口にする（MCP・CLI に出さない）
+  defineOp({
+    id: 'plus.syncInbox', summary: 'agent:ops.plus.syncInbox.summary', risk: 'read',
+    input: z.object({}),
+    output: z.object({ items: z.array(loose) }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx) => run(ctx, async () => (await ctx.plus?.syncInbox?.()) ?? { items: [] }),
+  }),
+  defineOp({
+    id: 'plus.syncInboxItem', summary: 'agent:ops.plus.syncInboxItem.summary', risk: 'read',
+    input: z.object({ id: z.string().min(1).max(64).describe('agent:ops.plus.syncInboxItem.id') }),
+    output: z.object({ item: loose.nullable() }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, { id }) => run(ctx, async () => (await ctx.plus?.syncInboxItem?.(id)) ?? { item: null }),
+  }),
+  defineOp({
+    id: 'plus.syncInboxTake', summary: 'agent:ops.plus.syncInboxTake.summary', risk: 'write',
+    riskReason: 'Writes (or deletes) a skill or instruction file that arrived from another PC, after the person read its diff; only the settings screen calls it (not on MCP or the CLI)',
+    input: z.object({ id: z.string().min(1).max(64).describe('agent:ops.plus.syncInboxItem.id') }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, { id }) => run(ctx, () => ctx.plus.syncInboxTake(id)),
+  }),
+  defineOp({
+    id: 'plus.syncInboxDrop', summary: 'agent:ops.plus.syncInboxDrop.summary', risk: 'write',
+    riskReason: 'Discards a change that arrived from another PC without touching local files; only the settings screen calls it (not on MCP or the CLI)',
+    input: z.object({ id: z.string().min(1).max(64).describe('agent:ops.plus.syncInboxItem.id') }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, { id }) => run(ctx, () => ctx.plus.syncInboxDrop(id)),
+  }),
   defineOp({
     id: 'plus.hostReregister', summary: 'agent:ops.plus.hostReregister.summary', risk: 'write',
     riskReason: 'Registers this PC on the Plus account again after the user removed it; only the settings screen calls it (not on MCP or the CLI)',

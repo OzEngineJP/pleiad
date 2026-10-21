@@ -617,6 +617,19 @@
       },
       "syncOpenConflicts": {
         "summary": "Opens the folder with the older copies kept on conflict, on this PC."
+      },
+      "syncInbox": {
+        "summary": "Lists the skills and instruction files that arrived from other PCs through sync and are waiting to be taken in."
+      },
+      "syncInboxItem": {
+        "summary": "One waiting change: the local version and the version that arrived.",
+        "id": "The id of the waiting change"
+      },
+      "syncInboxTake": {
+        "summary": "Takes in one waiting change (writes or removes the local file). Nothing is written if the local file changed after the change arrived."
+      },
+      "syncInboxDrop": {
+        "summary": "Discards one waiting change. Local files stay as they are, and the same version is not shown again."
       }
     },
     "accounts": {

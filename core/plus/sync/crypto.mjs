@@ -82,9 +82,15 @@ export function itemIdFor(idKey, logicalPath) {
 
 const itemAad = (uid, itemId, rev) => Buffer.from(`${ITEM_AAD}|${uid}|${itemId}|${rev}`, 'utf8');
 
-/** 平文の形: { v: 1, path, mtime, deleted, content(base64) } */
-export function itemPlaintext({ path, mtime, deleted = false, content = null }) {
-  return { v: 1, path, mtime: new Date(mtime).toISOString(), deleted: Boolean(deleted), content: deleted ? '' : Buffer.from(content ?? '').toString('base64') };
+// 平文の from（上げた PC の hostId）の形。画面に「どの PC から」を出すためだけに使い、取り込むかどうかの判断には使わない
+const FROM_RX = /^[A-Za-z0-9._:-]{1,128}$/;
+
+/** 平文の形: { v: 1, path, mtime, deleted, content(base64), from? } */
+export function itemPlaintext({ path, mtime, deleted = false, content = null, from = null }) {
+  return {
+    v: 1, path, mtime: new Date(mtime).toISOString(), deleted: Boolean(deleted), content: deleted ? '' : Buffer.from(content ?? '').toString('base64'),
+    ...(typeof from === 'string' && FROM_RX.test(from) ? { from } : {}),
+  };
 }
 
 /**
@@ -100,6 +106,7 @@ export function encryptItem({ encKey, keyId, uid, itemId, rev, plaintext, nonce 
 
 /**
  * 受けた項目を開く。開けない・形が違う・path から作った ID が itemId と違う・path が論理名の形でない → null。
+ * from（上げた PC）は形が合うときだけ返す（無い・形が違う → null）。
  * @param {{ encKey: Buffer, idKey: Buffer, keyId: string, uid: string, itemId: string, rev: number, ciphertext: string, validPath?: (p: string) => boolean }} o
  */
 export function decryptItem({ encKey, idKey, keyId, uid, itemId, rev, ciphertext, validPath = () => true }) {
@@ -116,6 +123,9 @@ export function decryptItem({ encKey, idKey, keyId, uid, itemId, rev, ciphertext
     if (plain?.v !== 1 || typeof plain.path !== 'string' || typeof plain.deleted !== 'boolean' || typeof plain.content !== 'string') return null;
     if (!Number.isFinite(Date.parse(plain.mtime))) return null;
     if (itemIdFor(idKey, plain.path) !== itemId || !validPath(plain.path)) return null;
-    return { path: plain.path, mtime: new Date(plain.mtime).toISOString(), deleted: plain.deleted, content: plain.deleted ? null : Buffer.from(plain.content, 'base64') };
+    return {
+      path: plain.path, mtime: new Date(plain.mtime).toISOString(), deleted: plain.deleted, content: plain.deleted ? null : Buffer.from(plain.content, 'base64'),
+      from: typeof plain.from === 'string' && FROM_RX.test(plain.from) ? plain.from : null,
+    };
   } catch { return null; }
 }
