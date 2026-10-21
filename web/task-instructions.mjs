@@ -6,8 +6,9 @@
 // - 走っているターンの受付の出来事（stream-messages.mjs が畳む taskInstructionId の行）はその位置
 // - ターン開始の入力に使った発言（deliveryId = messageId）は省き、保存した受付位置に全員分を置く
 // - 届いた発言の履歴行（nativeId）は重複なので省く。省くのは指示の本文とまるごと一致した行だけ
-//   （API のページに無い古い指示の本文まで消さない）。指示の行は受付位置に残す（届いた位置＝
-//   受け付けた後の出力より後ろへは動かさない）
+//   （API のページに無い古い指示の本文まで消さない）。省いた行の位置は指示ごとに覚えておき、
+//   錨も時刻も引けない指示の置き場に使う（時刻の無い履歴でも末尾に流れない）。指示の行は
+//   受付位置に残す（届いた位置＝受け付けた後の出力より後ろへは動かさない）
 // - 受付時の錨（instruction.anchor）: 直前に見えていたもの（発言の uuid・ツール呼び出しの id・
 //   人の発言の messageId・直前の指示）の id を受付時に記録したもの。読み直し後も同じ場所に戻る
 // - どれも無い分は受付時刻（at）。配送済みで ID も時刻の手がかりも無い旧データは履歴の発言に任せる
@@ -32,6 +33,9 @@ export function injectTaskInstructions(instructions = [], messages = []) {
   const byId = new Map((instructions ?? []).filter(Boolean).map(i => [i.id, i]));
   const anchored = new Set();
   const deliveryRows = new Set(), deliveryAnchors = new Map();
+  // 位置の印として out に残すが、届いた発言そのものは出さない行（viaNative で消した行）。
+  // 時刻の足場に数えない（取り除いた行と同じ扱い）
+  const nativeRows = new Set();
   const out = [];
   const ins = instruction => ({ role: 'instruction', instruction, text: instruction.text, at: instruction.at });
 
@@ -52,7 +56,9 @@ export function injectTaskInstructions(instructions = [], messages = []) {
     // 省くのは指示の本文とまるごと一致した行だけ
     const viaNative = m?.uuid ? instructions.filter(x => x.nativeId === m.uuid) : [];
     if (viaNative.length && String(m.text ?? '') === viaNative.map(x => x.text).join('\n\n')) {
-      continue;
+      // 届いた行の位置を指示ごとに覚えておく（deliveryAnchors と同じ考え方）。行は位置の印として残し、最後に外す
+      for (const x of viaNative) deliveryAnchors.set(x.id, m);
+      deliveryRows.add(m); nativeRows.add(m); out.push(m); continue;
     }
     if (viaNative.length) viaNative.forEach(x => anchored.add(x.id));   // 確かめられないときは履歴の行を残し、指示は出さない
     out.push(m);
@@ -63,11 +69,12 @@ export function injectTaskInstructions(instructions = [], messages = []) {
     if (!anchor) return -1;
     if (anchor.kind === 'instruction') return out.findIndex(x => x.role === 'instruction' && x.instruction?.id === anchor.v);
     return out.findIndex(x => (anchor.kind === 'uuid' && x.uuid === anchor.v)
-      || (anchor.kind === 'msg' && x.messageId === anchor.v)
+      || (anchor.kind === 'msg' && (x.messageId === anchor.v || x.instruction?.deliveryId === anchor.v))
       || (anchor.kind === 'tool' && (x.toolCalls ?? []).some(c => c.id === anchor.v)));
   };
   const tsOf = m => { const t = m?.at; if (Number.isFinite(t)) return t; const p = Date.parse(t); return Number.isFinite(p) ? p : null; };
-  const eff = out.map(tsOf);
+  // 位置の印だけの行（消した届いた行）は、時刻の足場にしない（無ければ前の行の時刻を引き継ぐ＝行が無いのと同じ）
+  const eff = out.map(m => nativeRows.has(m) ? null : tsOf(m));
   for (let i = 1; i < eff.length; i++) if (eff[i] == null) eff[i] = eff[i - 1];
   const atIndex = at => { let i = 0; while (i < eff.length && (eff[i] == null || eff[i] <= at)) i++; return i; };
   const anchorTail = new Map();   // 錨（JSON）→ 次に差す位置（同じ錨に続ける分の受付順を保つ）

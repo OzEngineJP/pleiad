@@ -101,7 +101,7 @@ export function finalReply(messages) {
 // 準備中・送信待ちの消化など。待機のまま残し、次の kick や ready の通知でまた試す）/ 'error'（結果不明。送り直さない）を返す（ADR 0065）。
 // accepted は指示を受け付けて保存できた直後に 1 回だけ呼ぶ口（呼ぶ側は表示位置を確定させる）。
 // anchorProbe(sessionId) は受け付けた時点で「直前に見えていたもの」の印を返す口（保存される instruction.anchor になる。
-// 読み直し後の表示位置をその位置へ戻すための永続の錨）
+// 読み直し後の表示位置をその位置へ戻すための永続の錨）。Promise を返してよい（呼び出し側で await する）
 // deliver / deliverSilence / deliverCommand / deliverBackground の最後の引数 { accepted } は「親の会話がこの通知を受け取った」合図で、
 // 通知でターンが始まるときは、ターンが終わるまで待たずに呼ぶ。呼ぶと台帳は先に 'sent' を保存し（notify のみ）、通知を settling から外す。
 // 無停止の更新の引き継ぎ（core/handover.mjs）は settling が空になるのを待つので、ターンの終わりまで数えると、長いターンのあいだ引き継げない。
@@ -1139,6 +1139,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       if (name === 'ply_task_send') {
         text(locale, args.message, 'message');
         // 追加の指示も新しい仕事なので、保存できなければ受けない（commit が理由付きで断る）
+        // 錨（受け付けた時点で直前に見えていたもの）は会話の記録を読むことがあるので、commit の外で取る。
+        // 取れなくても指示は受け付ける（錨が無い分は、届いた行の位置か時刻で置く）
+        const anchor = await Promise.resolve().then(() => anchorProbe(r.sessionId)).catch(() => null);
         let instruction;
         await commit(r.taskId, row => {
           if (row.status === 'cancelling') throw new Error(agentT(locale, 'tasks.stopping'));
@@ -1148,7 +1151,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           // nextTurn: 設定の変更と同じ呼び出しで積まれた指示は、替えた後のターン宛にする（server.mjs の applyTaskSettings）
           instruction = { id: crypto.randomUUID(), text: args.message, at: Date.now(), state: 'queued',
             ...(args.nextTurn === true ? { nextTurn: true } : {}),
-            ...(anchorProbe(row.sessionId) ? { anchor: anchorProbe(row.sessionId) } : {}) };
+            ...(anchor ? { anchor } : {}) };
           row.instructions.push(instruction); row.instructionRevision = (row.instructionRevision ?? 0) + 1;
           row.queue.push({ instructionId: instruction.id }); row.notification = 'none'; row.error = null;
           if (!live.has(row.taskId) || !ACTIVE.has(row.status)) row.status = 'queued';

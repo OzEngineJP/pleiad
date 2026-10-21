@@ -175,4 +175,63 @@ export default function (t) {
     t.ok('届いたのに履歴行が無い分は、指示の行を残す',
       JSON.stringify(seq(injectTaskInstructions(instructions, messages))) === JSON.stringify(['m0', 'gone']));
   }
+  // devin・grok の形（履歴の全行が時刻なし、届いた発言は uuid で一致）: 錨が無い配送済みの指示は、
+  // 消した履歴の行があった位置に出す（末尾に流れない）
+  {
+    const instructions = [{ id: 'x', text: 'X', at: at(1), state: 'delivered', nativeId: 'n1' }];
+    const messages = [
+      { role: 'user', text: 'request' },
+      { role: 'assistant', text: 'first' },
+      { role: 'user', uuid: 'n1', text: 'X' },        // 届いた発言（消す）。この位置が受付位置
+      { role: 'assistant', text: 'answer' },
+    ];
+    const out = injectTaskInstructions(instructions, messages);
+    t.ok('時刻も錨も無い配送済みの指示は、消した履歴の行の位置に出る（末尾に流れない）',
+      JSON.stringify(seq(out)) === JSON.stringify(['m0', 'm1', 'x', 'm2']), JSON.stringify(seq(out)));
+  }
+  // 2 つの指示が 1 つの user 行（本文を \n\n でつないだもの・同じ nativeId）で届いたとき、同じ位置に受付順で並ぶ
+  {
+    const instructions = [
+      { id: 'x', text: 'X', at: at(1), state: 'delivered', nativeId: 'n1' },
+      { id: 'y', text: 'Y', at: at(2), state: 'delivered', nativeId: 'n1' },
+    ];
+    const messages = [
+      { role: 'user', text: 'request' },
+      { role: 'assistant', text: 'first' },
+      { role: 'user', uuid: 'n1', text: 'X\n\nY' },    // まとめて届いた発言（消す）
+      { role: 'assistant', text: 'answer' },
+    ];
+    const out = injectTaskInstructions(instructions, messages);
+    t.ok('1 行にまとめて届いた指示は、同じ位置に受付順で並ぶ',
+      JSON.stringify(seq(out)) === JSON.stringify(['m0', 'm1', 'x', 'y', 'm2']), JSON.stringify(seq(out)));
+  }
+  // 錨と nativeId の行が別の位置を指すときは、錨が勝つ
+  {
+    const instructions = [{ id: 'x', text: 'X', at: at(1), state: 'delivered', nativeId: 'n1', anchor: { kind: 'uuid', v: 'b' } }];
+    const messages = [
+      { role: 'user', text: 'request' },
+      { role: 'user', uuid: 'n1', text: 'X' },
+      { role: 'assistant', uuid: 'b', text: 'B' },
+      { role: 'assistant', text: 'C' },
+    ];
+    const out = injectTaskInstructions(instructions, messages);
+    t.ok('錨と届いた行が別の位置を指すときは錨が勝つ',
+      JSON.stringify(seq(out)) === JSON.stringify(['m0', 'm1', 'x', 'm2']), JSON.stringify(seq(out)));
+  }
+  // kind:'msg' の錨（task-send-*）は、履歴の行に messageId が残らなくても、置き済みの指示の行の deliveryId に当たる
+  {
+    const instructions = [
+      { id: 'a', text: 'A', at: at(10), state: 'sending', deliveryId: 'task-send-a' },
+      { id: 'b', text: 'B', at: at(20), state: 'queued', anchor: { kind: 'msg', v: 'task-send-a' } },
+    ];
+    const messages = [
+      { role: 'user', text: 'request', at: at(1) },
+      { role: 'assistant', text: 'first', at: at(2) },
+      { role: 'user', taskInstructionId: 'a', text: 'A' },
+      { role: 'assistant', text: 'later', at: at(3) },
+    ];
+    const out = injectTaskInstructions(instructions, messages);
+    t.ok('msg の錨は、置き済みの指示の行の deliveryId に当たる',
+      JSON.stringify(seq(out)) === JSON.stringify(['m0', 'm1', 'a', 'b', 'm2']), JSON.stringify(seq(out)));
+  }
 }

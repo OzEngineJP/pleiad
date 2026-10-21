@@ -6519,18 +6519,29 @@ agentTasks = await createAgentTasks({
   },
   // 受け付けた時点で直前に見えていたもの（発言の uuid・ツール呼び出し・人の発言・直前の指示）を錨として取る。
   // 出来事（marker）が無くなる読み直し後も、同じ位置へ戻せる手がかり（永続は instruction.anchor）
-  anchorProbe: sessionId => {
+  anchorProbe: async sessionId => {
     const turn = runtime.turns.get(sessionId);
-    if (!turn) return null;
-    for (let i = turn.stream.events.length - 1; i >= 0; i--) {
-      const ev = turn.stream.events[i];
-      if (ev.type === 'taskInstruction' && ev.instructionId) return { kind: 'instruction', v: ev.instructionId };
-      if ((ev.type === 'tool.start' || ev.type === 'tool.result') && ev.id) return { kind: 'tool', v: ev.id };
-      if (ev.type === 'text.end' && ev.uuid) return { kind: 'uuid', v: ev.uuid };
-      if (ev.type === 'userMessage' && ev.messageId) return { kind: 'msg', v: ev.messageId };
+    if (turn) {
+      for (let i = turn.stream.events.length - 1; i >= 0; i--) {
+        const ev = turn.stream.events[i];
+        if (ev.type === 'taskInstruction' && ev.instructionId) return { kind: 'instruction', v: ev.instructionId };
+        if ((ev.type === 'tool.start' || ev.type === 'tool.result') && ev.id) return { kind: 'tool', v: ev.id };
+        if (ev.type === 'text.end' && ev.uuid) return { kind: 'uuid', v: ev.uuid };
+        if (ev.type === 'userMessage' && ev.messageId) return { kind: 'msg', v: ev.messageId };
+      }
+      for (let i = turn.stream.messages.length - 1; i >= 0; i--) {
+        const m = turn.stream.messages[i];
+        if (m?.uuid) return { kind: 'uuid', v: m.uuid };
+        const tc = (m?.toolCalls ?? []).at(-1);
+        if (tc?.id) return { kind: 'tool', v: tc.id };
+      }
+      return null;
     }
-    for (let i = turn.stream.messages.length - 1; i >= 0; i--) {
-      const m = turn.stream.messages[i];
+    // ターンが走っていない（子が返答を終えて待っている）ときは、会話の記録の末尾の行を錨にする。
+    // 記録の行の uuid は画面の行と同じ形（conversations.mjs の mergeMessages・hostEvent が backend:nativeId:liveUuid に揃える）
+    const record = await conversation(sessionId).catch(() => null);
+    for (let i = (record?.messages ?? []).length - 1; i >= 0; i--) {
+      const m = record.messages[i];
       if (m?.uuid) return { kind: 'uuid', v: m.uuid };
       const tc = (m?.toolCalls ?? []).at(-1);
       if (tc?.id) return { kind: 'tool', v: tc.id };
