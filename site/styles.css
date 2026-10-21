@@ -553,6 +553,8 @@ h2 {
 /* /plus/。面も枠も張らず、トップと同じタイルの形で区切る */
 .plus-page main { padding-top: 72px; }
 .brand-plus { width: 13px; height: 13px; align-self: flex-start; margin: 5px 0 0 -7px; }
+/* 狭い画面ではナビの大きなボタンを隠し、ヒーローのボタンに任せる（ロゴと重ならない） */
+@media (max-width: 560px) { .plus-page .nav-links .btn { display: none; } }
 .p-hero { position: relative; isolation: isolate; overflow: hidden; padding: clamp(64px, 9vw, 136px) var(--gutter) clamp(72px, 9vw, 128px); }
 /* ヒーローの右に、トップと同じ星図を薄く敷く（焼いた一枚。WebGL は使わない） */
 .p-hero::before {
