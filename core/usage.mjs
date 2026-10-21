@@ -138,6 +138,7 @@ function mergeQuota(value, prev, at) {
  */
 export function createQuotaStore({ now = Date.now, ttl = 60_000, backoffMax = QUOTA_BACKOFF_MAX_MS, dir = null, io = fs, log = () => {} } = {}) {
   const cache = new Map(), pending = new Map(), listeners = new Set();
+  const serverGeneration = performance.timeOrigin;
   // key → Map(行の名前 → { reason, failures, retryAt })。読めない行だけを持つ
   const health = new Map();
   let generation = 0, writes = Promise.resolve();
@@ -146,12 +147,12 @@ export function createQuotaStore({ now = Date.now, ttl = 60_000, backoffMax = QU
     try {
       const saved = JSON.parse(io.readFileSync(file, 'utf8'));
       for (const [key, quota] of Object.entries(saved?.backends ?? {}).slice(0, QUOTA_SNAPSHOTS_MAX))
-        cache.set(key, { ...quota, revision: 0, fetchedAt: quota?.checkedAt ?? 0, stale: true });
+        cache.set(key, { ...quota, generation: serverGeneration, revision: 0, fetchedAt: quota?.checkedAt ?? 0, stale: true });
     } catch { /* 無い・壊れているなら空で始める */ }
   }
   const persist = () => {
     if (!file) return;
-    const backends = Object.fromEntries([...cache].map(([key, s]) => [key, (({ revision, fetchedAt, stale, ...q }) => q)(s)]));
+    const backends = Object.fromEntries([...cache].map(([key, s]) => [key, (({ generation, revision, fetchedAt, expiresAt, stale, ...q }) => q)(s)]));
     writes = writes.then(() => writeAtomic(file, JSON.stringify({ version: 1, backends }, null, 2) + '\n', { mode: 0o600 })).catch(() => {});
   };
   const notify = (key, snapshot) => { for (const fn of listeners) { try { fn(key, snapshot); } catch {} } };
@@ -184,15 +185,31 @@ export function createQuotaStore({ now = Date.now, ttl = 60_000, backoffMax = QU
       ? { windows: [], message: null, accounts: prev.accounts.map(a => ({ label: a.label, accountId: a.accountId ?? null, windows: [], reason, message })) }
       : { windows: [], reason, message };
   }
+  function snapshotOf(key) {
+    const hit = cache.get(key);
+    if (!hit) return null;
+    const running = pending.get(key), at = now();
+    const state = (row, name) => {
+      const healthRow = health.get(key)?.get(name);
+      const waiting = healthRow?.retryAt > at;
+      const fetchState = running && (running.force || !waiting) ? 'pending'
+        : waiting ? 'retry-wait' : row.reason ? 'failed' : null;
+      return { ...row, ...(fetchState ? { fetchState } : {}),
+      ...(healthRow ? { retryAt: healthRow.retryAt } : {}) };
+    };
+    return Array.isArray(hit.accounts)
+      ? { ...hit, accounts: hit.accounts.map(a => state(a, a.accountId ?? LOGIN_ACCOUNT)) }
+      : state(hit, '');
+  }
   return {
-    get: key => cache.get(key) ?? null,
+    get: snapshotOf,
     async refresh(key, fetcher, { force = false } = {}) {
       const hit = cache.get(key);
       if (hit && !hit.stale && !force) {
         const rows = health.get(key), at = now();
-        if (at - hit.fetchedAt < ttl) return hit;
+        if (at < (hit.expiresAt ?? hit.fetchedAt + ttl)) return snapshotOf(key);
         // 全部の行が読む間隔を延ばしている間は、取りに行かない（前回の値と理由を返す）
-        if (rows?.size && quotaRows(hit).every(([name]) => (rows.get(name)?.retryAt ?? 0) > at)) return hit;
+        if (rows?.size && quotaRows(hit).every(([name]) => (rows.get(name)?.retryAt ?? 0) > at)) return snapshotOf(key);
       }
       const running = pending.get(key);
       // 人の読み直し（force）は、間隔を延ばした行を飛ばしている取得に相乗りせず、それが済んでから全部を読み直す
@@ -204,23 +221,39 @@ export function createQuotaStore({ now = Date.now, ttl = 60_000, backoffMax = QU
           const skip = force || !rows ? [] : [...rows].filter(([name, s]) => name && s.retryAt > at).map(([name]) => name);
           return Promise.resolve().then(() => fetcher({ skip })).catch(error => thrown(error, cache.get(key)));
         }).then(value => {
-          if (version !== generation) return { windows: [], checkedAt: null, message: t('usage.authChanged') };
+          if (version !== generation) return { generation: serverGeneration + version / 1000, revision: 0, windows: [], checkedAt: null, message: t('usage.authChanged') };
           const prev = cache.get(key);
           track(key, value);
-          const snapshot = { ...mergeQuota(value, prev, now()), revision: (prev?.revision ?? 0) + 1, fetchedAt: now(), stale: false };
-          cache.set(key, snapshot); persist(); notify(key, snapshot);
-          return snapshot;
+          const at = now(), merged = mergeQuota(value, prev, at);
+          // 過去の境界を繰り返し返す提供元でも、次は通常の TTL まで待つ。
+          const boundaries = quotaRows(merged).flatMap(([, row]) => (row.windows ?? []).map(w => new Date(w.resetsAt).getTime())).filter(time => time > at);
+          const snapshot = { ...merged, generation: serverGeneration + generation / 1000, revision: (prev?.revision ?? 0) + 1, fetchedAt: at,
+            expiresAt: Math.min(at + ttl, ...boundaries), stale: false };
+          cache.set(key, snapshot);
+          if (pending.get(key)?.task === task) pending.delete(key);
+          persist(); notify(key, snapshotOf(key));
+          return snapshotOf(key);
         }).finally(() => { if (pending.get(key)?.task === task) pending.delete(key); });
         pending.set(key, { task, force });
+        notify(key, snapshotOf(key));
       }
       // 前回の終了時の値（stale）があれば、取り直しが届くまで先にそれを返す
-      if (hit?.stale && !force) return hit;
+      if (hit?.stale && !force) return snapshotOf(key);
       return pending.get(key).task;
     },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
     invalidate() { generation++; cache.clear(); health.clear(); persist(); notify(null, null); },
     flush: () => writes,
   };
+}
+
+/** ローカル集計を待っている間に更新された使用枠も、同じ応答へ反映する。 */
+export async function readProviderUsage(backend, { read, latest, summary, held }) {
+  const quota = await read();
+  let local;
+  try { local = await summary(); }
+  catch { local = { error: t('quota.localFailed') }; }
+  return { backend: backend.id, label: backend.label, quota: latest() ?? quota, local, held: held() };
 }
 
 // エージェント（ply_usage）へ渡す使用枠。委譲先を選ぶ判断に要る分だけに絞る（残率・期間の分・ローカル実績は落とす）。

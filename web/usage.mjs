@@ -4,8 +4,22 @@ import { fmt, has, t } from './i18n.mjs';
 const format = n => n == null ? t('usage.unknown') : fmt.number(n, { maximumFractionDigits: 1 });
 /** リセット時刻を過ぎた枠。使用率は今の値ではない（更新待ち） */
 export const isExpired = (window, now = Date.now()) => Boolean(window.resetsAt) && new Date(window.resetsAt).getTime() <= now;
+/** 行ごとの待ち時間を優先し、読まなかったアカウントを取得中に見せない。 */
+export function quotaFetchState(row, request = {}, now = Date.now()) {
+  if (request.pending && request.force) return 'pending';
+  if (request.failed) return 'failed';
+  if (row?.fetchState === 'pending') return 'pending';
+  if (row?.retryAt > now) return 'retry-wait';
+  if (request.pending) return 'pending';
+  if (request.failed || row?.reason || row?.fetchState === 'failed') return 'failed';
+  return 'idle';
+}
+export const expiredText = (row, request) => {
+  const state = quotaFetchState(row, request);
+  return state === 'pending' ? t('usage.refreshing') : state === 'failed' || row?.reason ? t('usage.refreshFailed') : t('usage.retryWait');
+};
 export function quotaText(window, now = Date.now()) {
-  return isExpired(window, now) ? t('usage.expired')
+  return isExpired(window, now) ? '—'
     : window.usedPercent == null ? t('usage.percentUnknown')
     : t('usage.percent', { used: format(window.usedPercent), remaining: format(window.remainingPercent) });
 }
@@ -50,7 +64,8 @@ function renderHeld(parent, held, quota) {
   box.append(el('small', 'usage-note', t('usage.held.note')));
   parent.append(box);
 }
-function renderQuota(parent, quota, onUsageLogin) {
+function renderQuota(parent, quota, onUsageLogin, request) {
+  const expired = quota.windows?.some(w => isExpired(w));
   if (quota.plan) parent.append(el('p', 'usage-note', t('usage.plan', { plan: quota.plan })));
   for (const w of quota.windows ?? []) {
     const row = el('div', 'usage-window');
@@ -61,16 +76,18 @@ function renderQuota(parent, quota, onUsageLogin) {
       meter.setAttribute('aria-label', t('usage.meter', { label: w.label }));
       row.append(meter);
     }
-    row.append(el('small', 'usage-note', w.resetsAt
-      ? t('usage.resetsAt', { when: fmt.dateTime(w.resetsAt) }) : t('usage.resetsUnknown')));
+    const note = el('small', 'usage-note', isExpired(w) ? expiredText(quota, request) : w.resetsAt
+      ? t('usage.resetsAt', { when: fmt.dateTime(w.resetsAt) }) : t('usage.resetsUnknown'));
+    if (isExpired(w)) note.setAttribute('role', 'status');
+    row.append(note);
     parent.append(row);
   }
   // 読めなかった行は、サーバーが前回の値を残して staleSince（その値の時刻）を添える（core/usage.mjs の createQuotaStore）
-  if (quota.staleSince) parent.append(el('p', 'usage-note', t('usage.staleValue', { when: fmt.relative(quota.staleSince) })));
+  if (quota.staleSince && !expired) parent.append(el('p', 'usage-note', t('usage.staleValue', { when: fmt.relative(quota.staleSince) })));
   for (const account of quota.accounts ?? []) {
-    parent.append(el('h4', null, account.label)); renderQuota(parent, account, onUsageLogin);
+    parent.append(el('h4', null, account.label)); renderQuota(parent, account, onUsageLogin, request);
   }
-  if (quota.message) parent.append(el('p', 'usage-note', quota.message));
+  if (quota.message && (!expired || quota.needsUsageLogin || quota.reauth || quota.reason === 'no-login')) parent.append(el('p', 'usage-note', quota.message));
   // 登録したアカウントの使用量は、アカウントごとに「使用量の表示を認可」が済んでから読める（core/backends/claude-usage.mjs）
   if ((quota.needsUsageLogin || quota.reauth) && quota.accountId && onUsageLogin) {
     const button = el('button', 'btn', quota.needsUsageLogin ? t('accounts.authorizeUsage') : t('usage.redoAuth'));
@@ -124,7 +141,8 @@ export function renderEndpoints(parent, endpoints) {
 export function carryQuota(quota, prev) {
   if (!quota || !prev) return quota;
   const fill = (row, old) => !old?.windows?.length || row.windows?.length || row.needsUsageLogin ? row
-    : { ...row, windows: old.windows, plan: row.plan ?? old.plan };
+    : { ...row, windows: old.windows, plan: row.plan ?? old.plan, fetchState: row.fetchState === 'retry-wait' ? 'retry-wait' : 'failed',
+      staleSince: row.staleSince ?? old.staleSince ?? old.checkedAt ?? prev.checkedAt };
   if (Array.isArray(quota.accounts)) {
     const old = new Map((prev.accounts ?? []).map(a => [a.accountId ?? '', a]));
     return { ...quota, accounts: quota.accounts.map(a => fill(a, old.get(a.accountId ?? ''))) };
@@ -137,27 +155,99 @@ export function carryQuota(quota, prev) {
  * 前回の枠の引き継ぎ（carryQuota）もここでするので、両方に同じ値が出る。
  * force は人の読み直し（ボタン）。読めない間に延ばした読む間隔を待たず、すぐ読み直す（delegation.usageRefresh）
  */
-export function createUsageSource(cmd) {
-  const pending = new Map(), listeners = new Set(), last = new Map();
-  function load(backend, { force = false } = {}) {
+export function createUsageSource(cmd, { now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout,
+  visible = () => typeof document === 'undefined' || !document.hidden } = {}) {
+  const pending = new Map(), listeners = new Set(), last = new Map(), dirty = new Map(), states = new Map(), stateListeners = new Set();
+  const accepted = new Map(), boundaries = new Map(), consumed = new Map();
+  let serial = 0, connection = 0, timer = null, disposed = false;
+  const emitState = backend => { for (const fn of stateListeners) fn(backend); };
+  function schedule() {
+    clearTimer(timer); timer = null;
+    if (disposed || !visible() || !boundaries.size) return;
+    const at = Math.min(...boundaries.values());
+    timer = setTimer(resume, Math.min(2_147_483_647, Math.max(0, at - now() + 50)));
+    timer?.unref?.();
+  }
+  function rememberBoundary(backend, result) {
+    const quota = result?.quota;
+    const rows = Array.isArray(quota?.accounts) ? quota.accounts : [quota];
+    const times = [...rows.flatMap(row => (row?.windows ?? []).map(w => new Date(w.resetsAt).getTime())),
+      ...(result?.held ?? []).map(s => new Date(s.until).getTime())];
+    const old = boundaries.get(backend), used = consumed.get(backend);
+    if (used) for (const at of used) if (!times.includes(at)) used.delete(at);
+    const next = times.filter(at => Number.isFinite(at) && !used?.has(at) && (at > now() || at === old));
+    if (next.length) boundaries.set(backend, Math.min(...next)); else boundaries.delete(backend);
+    schedule();
+  }
+  function resume() {
+    if (!visible()) { schedule(); return; }
+    for (const [backend, at] of boundaries) if (at <= now()) {
+      boundaries.delete(backend);
+      if (!consumed.has(backend)) consumed.set(backend, new Set());
+      consumed.get(backend).add(at);
+      if (pending.has(backend)) dirty.set(backend, false);
+      else load(backend).catch(() => {});
+    }
+    schedule();
+  }
+  function load(backend, { force = false, snapshot = false } = {}) {
     const running = pending.get(backend);
     if (running && (running.force || !force)) return running.task;
-    const read = force ? cmd('invoke', { op: 'delegation.usageRefresh', args: { backend } }) : cmd('providerUsage', { backend });
+    const request = ++serial, epoch = connection;
+    states.set(backend, { pending: true, failed: false, force });
+    const read = force ? cmd('invoke', { op: 'delegation.usageRefresh', args: { backend } }) : cmd('providerUsage', { backend, ...(snapshot ? { snapshot: true } : {}) });
     const task = read.then(raw => {
-      const result = raw?.quota ? { ...raw, quota: carryQuota(raw.quota, last.get(backend)?.quota) } : raw;
+      if (epoch !== connection) return last.get(backend) ?? raw;
+      const prev = last.get(backend), before = accepted.get(backend), quota = raw?.quota;
+      const older = before && (quota?.generation != null && before.generation != null && quota.generation !== before.generation
+        ? quota.generation < before.generation : quota?.revision != null && before.revision != null && quota.revision !== before.revision
+          ? quota.revision < before.revision : request < before.request);
+      if (older) return prev ?? raw;
+      // 再起動・認可の切替後の結果へ、別の世代の枠を引き継がない。
+      const sameGeneration = quota?.generation == null || prev?.quota?.generation == null || quota.generation === prev.quota.generation;
+      const result = quota ? { ...raw, quota: carryQuota(quota, sameGeneration ? prev?.quota : null) } : raw;
+      accepted.set(backend, { generation: quota?.generation, revision: quota?.revision, request });
+      const rows = Array.isArray(quota?.accounts) ? quota.accounts : [quota];
+      if (pending.get(backend)?.task === task) states.set(backend, { pending: true, force,
+        failed: !rows.some(row => row?.windows?.length || row?.fetchState === 'pending') });
       // 枠もアカウントの行も無い結果（取得の失敗）では前回を捨てない。次に 1 行だけ読めなかったときに引き継げなくなる
-      if (result?.quota?.windows?.length || result?.quota?.accounts?.length) last.set(backend, result);
+      if (!sameGeneration || result?.quota?.windows?.length || result?.quota?.accounts?.length) last.set(backend, result);
+      rememberBoundary(backend, last.get(backend) ?? result);
       for (const listener of listeners) listener(backend, result);
       return result;
-    }).finally(() => { if (pending.get(backend)?.task === task) pending.delete(backend); });
-    pending.set(backend, { task, force }); return task;
+    }).catch(error => {
+      if (epoch === connection && pending.get(backend)?.task === task) states.set(backend, { pending: false, failed: true });
+      throw error;
+    }).finally(() => {
+      if (pending.get(backend)?.task !== task) return;
+      pending.delete(backend);
+      states.set(backend, { pending: false, failed: states.get(backend)?.failed ?? false });
+      emitState(backend);
+      if (dirty.has(backend)) {
+        const snapshot = dirty.get(backend); dirty.delete(backend);
+        load(backend, { snapshot }).catch(() => {});
+      }
+    });
+    pending.set(backend, { task, force }); emitState(backend); return task;
+  }
+  function changed(backend) {
+    if (pending.has(backend)) { if (!dirty.has(backend)) dirty.set(backend, true); return pending.get(backend).task; }
+    return load(backend, { snapshot: true });
   }
   return {
-    load,
+    load, changed, resume,
+    state: backend => states.get(backend) ?? { pending: false, failed: false },
+    onState: listener => stateListeners.add(listener),
+    dispose() { disposed = true; clearTimer(timer); },
     /** 前回取れた値（同期）。無ければ null。bot ページ・スレッド・入力欄が取得を待たずに描くのに使う */
     get: backend => last.get(backend) ?? null,
     /** 取得済みのエージェントを全部取り直す（サーバーから usageChanged の無効化が届いたとき） */
-    reload() { return Promise.allSettled([...last.keys()].map(id => load(id))); },
+    reload() { return Promise.allSettled([...new Set([...last.keys(), ...states.keys(), ...pending.keys()])].map(changed)); },
+    reconnect() {
+      const ids = [...new Set([...last.keys(), ...states.keys(), ...pending.keys()])];
+      connection++; pending.clear(); dirty.clear(); states.clear();
+      return Promise.allSettled(ids.map(id => load(id)));
+    },
     onResult: listener => listeners.add(listener),
   };
 }
@@ -165,13 +255,16 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
   let loading = false;
   // エージェントごとのカード。取り直しの間も前の表示を残し、取れてから差し替える（初回だけ「読み込み中…」）
   const cards = new Map();
+  const versions = new Map();
   async function renderCard(backend, card, result) {
+    const version = (versions.get(backend.id) ?? 0) + 1; versions.set(backend.id, version);
     const body = el('div'); body.append(el('h3', null, result.label));
     renderHeld(body, result.held, result.quota);
-    renderQuota(body, result.quota, onUsageLogin);
+    renderQuota(body, result.quota, onUsageLogin, source.state?.(backend.id));
     if (result.quota.checkedAt) body.append(el('p', 'usage-note', t('usage.checkedAt', { when: fmt.dateTime(result.quota.checkedAt) })));
     renderEndpoints(body, await endpoints(backend.id).catch(() => []));
     renderLocal(body, result.local);
+    if (versions.get(backend.id) !== version) return;
     card.replaceChildren(...body.children); card.dataset.loaded = '1';
   }
   async function refresh({ force = false } = {}) {
@@ -198,6 +291,15 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
   }
   // サーバーから新しい値が届いた（usageChanged → source.load）ら、出ているカードを描き直す
   source.onResult((backend, result) => { const card = cards.get(backend); if (card && result) renderCard({ id: backend }, card, result).catch(() => {}); });
+  source.onState?.(backend => {
+    const card = cards.get(backend), result = source.get(backend);
+    if (card && result) renderCard({ id: backend }, card, result).catch(() => {});
+  });
   $('usageTab').onclick = () => { page('usage'); refresh(); };
   $('refreshUsage').onclick = () => refresh({ force: true });
+  const visible = () => !document.hidden && isOpen() && !$('usagePanel').hidden;
+  const timer = setInterval(() => { if (visible()) refresh(); }, 60_000);
+  timer.unref?.();
+  document.addEventListener?.('visibilitychange', () => { source.resume?.(); if (visible()) refresh(); });
+  globalThis.window?.addEventListener('pagehide', () => clearInterval(timer), { once: true });
 }

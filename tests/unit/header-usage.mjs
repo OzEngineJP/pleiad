@@ -56,7 +56,7 @@ async function japaneseCases(t) {
   ] };
   assert.equal(quotaOf(quota, '').label, 'ログイン中のアカウント');
   assert.equal(quotaOf(quota, 'work').label, '仕事');
-  assert.equal(quotaOf(quota, 'gone').label, 'ログイン中のアカウント');
+  assert.equal(quotaOf(quota, 'gone'), null, '別のアカウントの値を代用しない');
   assert.equal(quotaOf({ windows: [five] }, 'work').windows[0], five);
   assert.equal(needsAuth(quotaOf(quota, 'work')), true);
   t.ok('Claude は会話で使うアカウントの枠。未認可も枠の無いものも「使用量 —」', true);

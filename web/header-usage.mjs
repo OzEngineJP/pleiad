@@ -8,7 +8,7 @@
 // 取得に失敗したら直前の値を薄く出し、いつの値かを添える。（アカウントの行だけ読めなかったときは、その行の前回の枠を薄くせず出す。web/usage.mjs の carryQuota）
 import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
-import { isExpired, heldTexts, heldSlotName, heldTime, heldWindowName, heldGuess } from './usage.mjs';
+import { isExpired, heldTexts, heldSlotName, heldTime, heldWindowName, heldGuess, quotaFetchState, expiredText } from './usage.mjs';
 
 /** これ以上の使用率は強い見た目にする（帯の札・入力欄と bot のページのアカウントの行） */
 export const HIGH = 80;
@@ -30,11 +30,11 @@ export const percentText = used => used == null ? '—' : `${Math.min(Math.round
 /**
  * 会話で使うアカウントの使用量。Claude でアカウントを登録していれば quota.accounts にアカウントごとに並ぶ
  * （core/backends/claude-usage.mjs）。account は会話の設定の値で、'' はログイン中のアカウント（accountId の無い行）。
- * 見つからなければ先頭（ログイン中のアカウント）。登録が無ければ quota そのもの
+ * 見つからなければ null（別のアカウントの値を借りない）。登録が無ければ quota そのもの
  */
 export function quotaOf(quota, account = '') {
   if (!Array.isArray(quota?.accounts) || !quota.accounts.length) return quota ?? null;
-  return quota.accounts.find(a => account ? a.accountId === account : !a.accountId) ?? quota.accounts[0];
+  return quota.accounts.find(a => account ? a.accountId === account : !a.accountId) ?? null;
 }
 
 /**
@@ -176,9 +176,9 @@ const resetTime = (when, now) => new Date(when).getTime() - now < DAY ? fmt.time
   : fmt.dateTime(when, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 /** 枠の下に添える回復の目安。「あと 3 時間 10 分で回復」「9/29(月) 9:00 に回復」「14:30 に回復（あと 42 分）」 */
-export function resetText(w, now = Date.now()) {
+export function resetText(w, now = Date.now(), row, request) {
   if (!w.resetsAt) return t('usage.resetsUnknown');
-  if (isExpired(w, now)) return t('usage.expired');
+  if (isExpired(w, now)) return expiredText(row, request);
   const left = new Date(w.resetsAt).getTime() - now;
   if (left >= DAY) return t('usage.header.resetOn', { when: fmt.dateTime(w.resetsAt, { month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit' }) });
   return atLimit(w, now) ? t('usage.header.resetAtIn', { time: fmt.time(w.resetsAt), duration: duration(left) })
@@ -191,14 +191,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   const data = new Map();
   // asked は一度でも取りに行ったエージェント（あとから有効にしたエージェントを、次の 5 分を待たずに取るため）
   const asked = new Set();
-  let shown = { backend: null, account: '', endpoint: '', model: '' }, loading = 0, lastRefresh = 0;
-  // 止まっている枠の解除の見込みで描き直す（次の取得を待たずに札を戻す）
-  let heldTimer = null;
-  function repaintAt(until) {
-    clearTimeout(heldTimer); heldTimer = null;
-    const left = until ? new Date(until).getTime() - Date.now() : NaN;
-    if (Number.isFinite(left) && left > 0 && left < DAY) heldTimer = setTimeout(paint, left + 500);
-  }
+  let shown = { backend: null, account: '', endpoint: '', model: '' }, lastRefresh = 0;
+  // リセットと held の解除は共通 source が一度だけ取り直し、表示も同期する。
 
   // 枠・認可のどちらかを持つ結果だけを値として覚える。持たない（取得の失敗・未対応）ときは前の値を残す
   const usable = quota => Boolean(quota?.windows?.length || quota?.accounts?.length || needsAuth(quota));
@@ -206,17 +200,19 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const prev = data.get(backend);
     // 止まっている枠（held）は使用率の取得とは別にサーバーが持つので、届いた値をそのまま使う
     const held = Array.isArray(result?.held) ? result.held : prev?.held ?? [];
-    if (usable(result?.quota) || !prev || !usable(prev.quota)) data.set(backend, { label: result?.label, quota: result?.quota ?? null, failed: false, held });
+    const newGeneration = result?.quota?.generation != null && prev?.quota?.generation != null && result.quota.generation !== prev.quota.generation;
+    if (newGeneration || usable(result?.quota) || !prev || !usable(prev.quota)) data.set(backend, { label: result?.label, quota: result?.quota ?? null, failed: false, held });
     else data.set(backend, { ...prev, failed: true, held });
   }
   source.onResult((backend, result) => { take(backend, result); paint(); });
+  source.onState?.(() => paint());
 
   const labelOf = id => data.get(id)?.label ?? getBackends().find(b => b.id === id)?.label ?? id;
   const ids = () => getBackends().map(b => b.id);
 
   async function refresh(list = ids(), { force = false } = {}) {
     if (!list.length) return;
-    loading++; paint();
+    paint();
     if (list.length === ids().length) lastRefresh = Date.now();
     for (const id of list) asked.add(id);
     await Promise.all(list.map(id => source.load(id, { force }).catch(() => {
@@ -224,7 +220,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       data.set(id, { ...prev, failed: true });
       paint();
     })));
-    loading--; paint();
+    paint();
   }
 
   // ---- チップ ----
@@ -256,7 +252,6 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const agent = labelOf(shown.backend), stale = shown.endpoint ? '' : staleNote(entry, base);
     // 短い間隔の上限で止まっている枠は、日次・週次の率（0% のこともある）より先に出す
     const held = shown.endpoint ? null : heldSlotOf(entry?.held, shown);
-    repaintAt(held?.until);
     if (held) {
       const time = held.until ? heldTime(held.until) : null;
       // 5 時間・週の枠（window）で止まったものは、枠の上限の札と同じ言い方にする（短い間隔の上限とは言わない）
@@ -300,7 +295,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   }
 
   // ---- 一覧（浮く面） ----
-  function rows(windows) {
+  function rows(windows, row, request) {
     const grid = el('div', 'usage-rows'), now = Date.now();
     for (const w of windows) {
       const used = usedOf(w, now), high = used != null && used >= HIGH ? ' high' : '';
@@ -308,7 +303,9 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       const bar = el('span', 'usage-bar' + high);
       bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', t('usage.meter', { label: w.label }));
       const fill = el('i'); fill.style.width = `${Math.max(0, Math.min(100, used ?? 0))}%`; bar.append(fill);
-      grid.append(name, bar, el('span', 'v' + high, percentText(used)), el('span', 'rs' + high, resetText(w, now)));
+      const note = el('span', 'rs' + high, resetText(w, now, row, request));
+      if (isExpired(w, now)) note.setAttribute('role', 'status');
+      grid.append(name, bar, el('span', 'v' + high, percentText(used)), note);
     }
     return grid;
   }
@@ -316,6 +313,10 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const endpoint = current && shown.endpoint;
     const row = endpoint ? null : quotaOf(entry?.quota, current ? shown.account : '');
     const section = el('section', 'usage-agent' + (entry?.failed ? ' usage-old' : ''));
+    const request = { ...source.state?.(id) };
+    if (entry?.failed && !request.pending) request.failed = true;
+    const pending = !endpoint && quotaFetchState(row, request) === 'pending';
+    section.setAttribute('aria-busy', String(pending));
     // 「この会話」の節はモデルに合う枠だけに絞り、残ったグループ・接続先は「ほか N グループ」にまとめる
     const all = row?.windows ?? [];
     const filtered = current ? windowsForModel(all, shown.model) : all;
@@ -335,7 +336,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const head = el('div', 'an', labelOf(id));
     if (notes.length) head.append(el('small', null, notes.join(' · ')));
     section.append(head);
-    const stale = endpoint ? '' : staleNote(entry, row);
+    const stale = endpoint || row?.windows?.some(w => isExpired(w)) ? '' : staleNote(entry, row);
     if (stale) section.append(el('p', 'usage-note', stale));
     // 上限で止まっている枠（設定の「使用量」と同じ文。web/usage.mjs の heldTexts）。「この会話」の節は会話のアカウント・モデルに当たる枠だけ
     const heldLines = endpoint ? [] : heldTexts(current ? heldSlotsFor(entry?.held, shown) : entry?.held, entry?.quota);
@@ -344,7 +345,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       for (const text of heldLines) box.append(el('p', null, text));
       section.append(box);
     }
-    if (windows.length) section.append(rows(windows));
+    if (windows.length) section.append(rows(windows, row, request));
     if (totalOthers) section.append(el('p', 'more', mergedBelow == null ? t('usage.header.otherGroups', { count: totalOthers })
       : t('usage.header.otherGroupsBelow', { count: totalOthers, percent: mergedBelow })));
     if (needsAuth(row)) {
@@ -367,8 +368,20 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const head = el('div', 'usage-pop-head');
     const checked = shown.endpoint ? null : data.get(shown.backend)?.quota?.checkedAt;
     const again = el('button', 'rf', '↻');
-    again.type = 'button'; again.disabled = loading > 0;
-    again.setAttribute('aria-label', t('usage.header.refresh')); again.title = t('usage.header.refresh');
+    const busy = ids().some(id => {
+      const quota = data.get(id)?.quota, request = source.state?.(id);
+      const rows = Array.isArray(quota?.accounts) ? quota.accounts : [quota];
+      return rows.some(row => quotaFetchState(row, request) === 'pending');
+    });
+    pop.setAttribute('aria-busy', String(busy));
+    again.type = 'button'; again.disabled = busy;
+    again.setAttribute('aria-label', busy ? t('usage.header.refreshing') : t('usage.header.refresh')); again.title = t('usage.header.refresh');
+    if (busy) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'usage-refresh-icon'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
+      const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      arc.setAttribute('d', 'M20 12a8 8 0 1 1-4-6.9'); svg.append(arc); again.replaceChildren(svg);
+    }
     again.onclick = () => refresh(ids(), { force: true });
     head.append(el('b', null, t('usage.header.title')), el('span', 'when', checked ? fmt.relative(checked) : ''), again);
     const order = [shown.backend, ...ids().filter(id => id !== shown.backend)].filter(Boolean);
@@ -379,7 +392,18 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     foot.append(more);
     pop.replaceChildren(head, ...sections, foot);
   }
-  function paint() { paintChip(); paintPop(); }
+  function paint() {
+    paintChip(); paintPop();
+    const row = quotaOf(data.get(shown.backend)?.quota, shown.account);
+    if (!shown.endpoint && quotaFetchState(row, source.state?.(shown.backend)) === 'pending') {
+      const expired = windowsForModel(row?.windows, shown.model).filter(w => isExpired(w));
+      if (expired.length) {
+        const detail = t('usage.header.windowRefreshing', { window: expired.map(shortLabel).join(' · ') });
+        chip.title = [chip.getAttribute('title'), detail].filter(Boolean).join(' · ');
+        chip.setAttribute('aria-label', [chip.getAttribute('aria-label'), detail].filter(Boolean).join(' · '));
+      }
+    }
+  }
 
   function open() {
     pop.hidden = false; chip.setAttribute('aria-expanded', 'true');
@@ -403,8 +427,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   // 5 分ごと。隠れている間は取らず、見えたときに古ければ取る
   const due = () => !document.hidden && Date.now() - lastRefresh >= EVERY - 1000;
   const timer = setInterval(() => { if (due()) refresh(); }, 60_000);
-  document.addEventListener('visibilitychange', () => { if (due()) refresh(); });
-  window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
+  document.addEventListener('visibilitychange', () => { source.resume?.(); paint(); if (due()) refresh(); });
+  window.addEventListener('pagehide', () => { clearInterval(timer); source.dispose?.(); }, { once: true });
 
   return {
     /** 今の会話のエージェント・アカウント・互換の接続先・モデル。client.mjs の syncTopbar が呼ぶ */
