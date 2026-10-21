@@ -146,20 +146,28 @@ async function japaneseCases(t) {
 
   // 短い間隔の上限で止まっている枠（Issue #111）。日次・週次の率とは別に held で返し、画面は 0% の枠の上に一行出す
   const heldUntil = new Date(Date.now() + 3 * 60_000).toISOString();
-  const heldSlots = { claude: [{ model: 'opus', account: null, reason: 'recently_limited', until: heldUntil }, { model: null, account: 'acct-0123456789ab', reason: 'recently_limited', until: null }] };
+  const guessUntil = new Date(Date.now() + 30 * 60_000).toISOString(), fiveUntil = new Date(Date.now() + 2 * 3600_000).toISOString();
+  const heldSlots = { claude: [{ model: 'opus', account: null, reason: 'recently_limited', until: heldUntil, resetsAt: heldUntil, window: null },
+    { model: null, account: 'acct-0123456789ab', reason: 'recently_limited', until: guessUntil, resetsAt: null, window: null },
+    { model: null, account: null, reason: 'recently_limited', until: fiveUntil, resetsAt: fiveUntil, window: 'five_hour' }] };
   const withHeld = await agentUsage({ ...deps, held: b => heldSlots[b.id] ?? [] });
   assert.deepEqual(withHeld.backends[0].held, [
-    { model: 'opus', account: 'login', reason: 'recently_limited', until: heldUntil },
-    { model: null, account: 'acct-0123456789ab', reason: 'recently_limited', until: null }]);
+    { model: 'opus', account: 'login', reason: 'recently_limited', until: heldUntil, resetsAt: heldUntil },
+    { model: null, account: 'acct-0123456789ab', reason: 'recently_limited', until: guessUntil, resetsAt: null },
+    { model: null, account: 'login', reason: 'recently_limited', until: fiveUntil, resetsAt: fiveUntil, window: 'five_hour' }]);
   assert.equal(withHeld.backends[1].held, undefined, '止まっている枠の無いエージェントには held を付けない');
   const zero = { windows: [usageWindow('日次', 0, Date.now() + 86400_000, 1440), usageWindow('週次', 0, Date.now() + 7 * 86400_000, 10080)],
     accounts: [{ accountId: 'acct-0123456789ab', label: 'Work', windows: [] }] };
   const lines = heldTexts(withHeld.backends[0].held.map(s => ({ ...s, account: s.account === 'login' ? '' : s.account })), zero);
-  assert.equal(lines.length, 2);
+  assert.equal(lines.length, 3);
   assert.ok(lines[0].startsWith('opus: 短い間隔の上限で止まっています。') && lines[0].includes('解除の見込み'), lines[0]);
-  assert.ok(lines[1].startsWith('既定のモデル · Work: ') && lines[1].includes('解除の時刻は分かりません'), lines[1]);
+  // 解除の時刻が分からない上限は、振り分けが外す時刻までと言う（「ターンが通るまで」とは言わない。2026-10-21）
+  assert.ok(lines[1].startsWith('既定のモデル · Work: ') && lines[1].includes('解除の時刻は分からないため') && !lines[1].includes('ターンが通るまで'), lines[1]);
+  // 5 時間の枠で止まったものは、その枠の上限と言う（短い間隔の上限とは言わない。モデルを問わない 1 行）
+  assert.ok(lines[2].startsWith('すべてのモデル: 5時間の枠の上限で止まっています。') && lines[2].includes('解除の見込み'), lines[2]);
+  assert.ok(heldTexts([{ model: null, reason: 'retry_waiting', until: null }], zero)[0].includes('解除の時刻は分かりません'));
   assert.deepEqual(heldTexts([{ model: 'opus', until: new Date(Date.now() - 1000).toISOString() }], zero), [], '見込みを過ぎた枠は出さない');
-  t.ok('ply_usage・使用量の画面は、日次・週次が 0% でも短い上限で止まっている枠と解除の見込みを出す', true);
+  t.ok('ply_usage・使用量の画面は、日次・週次が 0% でも上限で止まっている枠と解除の見込みを出し、5 時間・週の枠の上限はその枠の名前で出す', true);
 
 
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-usage-'));

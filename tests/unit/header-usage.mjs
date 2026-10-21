@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { lang, setLanguage } from '../../web/i18n.mjs';
 import { currentLocale, setLocale } from '../../core/i18n.mjs';
-import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, windowsForModel, heldSlotOf, HIGH } from '../../web/header-usage.mjs';
+import { usedOf, atLimit, percentText, quotaOf, needsAuth, shortLabel, topWindow, groupsOf, chipState, resetText, weekUsage, windowsForModel, heldSlotOf, heldSlotsFor, HIGH } from '../../web/header-usage.mjs';
 import { antigravityQuota } from '../../core/backends/antigravity-usage.mjs';
 
 export const name = 'header-usage';
@@ -133,5 +133,12 @@ async function japaneseCases(t) {
   assert.equal(heldSlotOf(heldSlots, { model: 'swe-1-6', account: 'acct-work' }, now), heldSlots[2]);
   assert.equal(heldSlotOf(heldSlots, { model: 'swe-1-5' }, now), null, '見込みを過ぎた枠は止まっていない');
   assert.equal(heldSlotOf(undefined, { model: 'x' }, now), null);
+  // アカウント全体の枠（model: null）はどのモデルの会話にも当たり、別のアカウントの枠は当たらない
+  const wide = [{ model: null, account: '', reason: 'recently_limited', until: at(2 * 3600_000), window: 'five_hour' },
+    { model: null, account: 'acct-work', reason: 'recently_limited', until: at(60_000) }];
+  assert.deepEqual(heldSlotsFor(wide, { model: 'opus' }), [wide[0]]);
+  assert.deepEqual(heldSlotsFor(wide, { model: 'opus', account: 'acct-work' }), [wide[1]]);
+  assert.equal(heldSlotOf(wide, { model: 'sonnet' }, now), wide[0]);
+  assert.deepEqual(heldSlotsFor(undefined, { model: 'opus' }), []);
   t.ok('帯の札: 会話の枠（アカウント・モデル）が短い上限で止まっていれば、その枠と解除の見込みを選ぶ', true);
 }

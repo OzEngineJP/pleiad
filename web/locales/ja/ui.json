@@ -3187,10 +3187,23 @@
     "staleValue": "読めなかったため、{{when}}の値を出しています。",
     "held": {
       "until": "{{slot}}: 短い間隔の上限で止まっています。{{time}} に解除の見込みです",
-      "unknown": "{{slot}}: 短い間隔の上限で止まっています。解除の時刻は分かりません（ターンが通るまで）",
+      "unknown": "{{slot}}: 上限で止まっています。解除の時刻は分からないため、{{time}} まで委譲の自動の振り分けで選びません",
+      "open": "{{slot}}: 上限で止まっています。解除の時刻は分かりません",
+      "window": "{{slot}}: {{window}}の枠の上限で止まっています。{{time}} に解除の見込みです",
       "whenUntil": "{{time}} に解除の見込み",
+      "whenGuess": "解除の時刻は不明。{{time}} まで振り分けで選びません",
       "whenUnknown": "解除の時刻は不明",
       "defaultModel": "既定のモデル",
+      "allModels": "すべてのモデル",
+      "windows": {
+        "five_hour": "5時間",
+        "seven_day": "週次",
+        "seven_day_opus": "Opus・週次",
+        "seven_day_sonnet": "Sonnet・週次",
+        "seven_day_oauth_apps": "OAuth アプリ・週次",
+        "seven_day_overage_included": "週次（追加の使用量を含む）",
+        "overage": "追加の使用量"
+      },
       "note": "日次・週次の使用率が低くても、この間は委譲の自動の振り分けがここを選びません。"
     },
     "local": {
@@ -3229,6 +3242,7 @@
       "heldShort": "停止 {{time}}",
       "heldUnknown": "停止中",
       "heldTitle": "{{agent}} · {{slot}} は短い間隔の上限で止まっています（{{when}}）。日次・週次の枠とは別です",
+      "heldWindowTitle": "{{agent}} · {{slot}} は{{window}}の枠の上限で止まっています（{{when}}）",
       "stale": "取得できませんでした（{{when}}の値）",
       "hoursMinutes": "{{hours}} 時間 {{minutes}} 分",
       "hours": "{{hours}} 時間",

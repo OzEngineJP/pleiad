@@ -272,7 +272,7 @@ export const EVENTS = new Set([
   "tool.result",     // { id, text, isError, truncated }
   "activity",        // { state: thinking|writing|compacting|waiting|running|retrying|idle, label?, retry? }。retrying はバックエンドが上限・一時的な失敗のあと再試行を待っている。retry: { attempt, next（epoch ms）, message, reason, limit }（ADR 0229）
   "compaction", "contextWindow", "compactionSchedule", "autoCompactionSettings", "conversationAutoCompaction",
-  "turnResult",      // { outcome: ok|error|aborted|limited, turns?, costUsd?, error?, reason?, resetsAt? }。limited は使用量の上限で止まった（resetsAt は解ける時刻の epoch ms。分からなければ無い。ADR 0229）。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
+  "turnResult",      // { outcome: ok|error|aborted|limited, turns?, costUsd?, error?, reason?, resetsAt?, window?, scope? }。limited は使用量の上限で止まった（resetsAt は解ける時刻の epoch ms。分からなければ無い。window は止まった枠の名前、scope: 'account' はアカウント全体の枠。ADR 0229）。costUsd はこのターンの推計費用（Claude はターン開始時の累計からの差分）。reason は aborted のときの中断の理由（user|update|quit|hostAway）
   //   kind: 'auth' はログインの期限切れ（401）の失敗。pristine はツールの実行も返答の本文もまだ出ていなかった（最初の API 呼び出しで断られた）。
   //   server が auth: { mode: cli, email? } | { mode: token, accountId, name? } と backend を添える（互換の接続先の会話には添えない。ADR 0212）
   // { text } 次の発言の候補（1 行）。Claude はターンの中（turnResult より前のこともある）、Codex・Antigravity はターンの後に届く。保存しない（core/prompt-suggestions.mjs）

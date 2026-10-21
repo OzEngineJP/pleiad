@@ -1,5 +1,5 @@
 import { el } from './dom.mjs';
-import { fmt, t } from './i18n.mjs';
+import { fmt, has, t } from './i18n.mjs';
 
 const format = n => n == null ? t('usage.unknown') : fmt.number(n, { maximumFractionDigits: 1 });
 /** リセット時刻を過ぎた枠。使用率は今の値ではない（更新待ち） */
@@ -12,20 +12,34 @@ export function quotaText(window, now = Date.now()) {
 /** 解除の見込みの時刻。24 時間より先なら日付を付ける */
 export const heldTime = (until, now = Date.now()) => new Date(until).getTime() - now < 24 * 3600_000 ? fmt.time(until)
   : fmt.dateTime(until, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-/** 止まっている枠の名前（モデル・アカウント）。アカウントは quota.accounts の名前で引く（引けなければ出さない） */
+/**
+ * 止まっている枠の名前（モデル・アカウント）。アカウントは quota.accounts の名前で引く（引けなければ出さない）。
+ * アカウント全体の枠（window があり model が無い）の上限は、どのモデルでも止まっている
+ */
 export function heldSlotName(slot, quota) {
   const account = slot.account ? (quota?.accounts ?? []).find(a => a.accountId === slot.account)?.label : null;
-  return [slot.model || t('usage.held.defaultModel'), account].filter(Boolean).join(' · ');
+  return [slot.model || (slot.window ? t('usage.held.allModels') : t('usage.held.defaultModel')), account].filter(Boolean).join(' · ');
 }
+/** 止まった枠の名前（Claude の five_hour など）。訳の無い名前（Codex の枠の名前）はそのまま */
+// i18n-dynamic: usage.held.windows.
+export const heldWindowName = window => has(`usage.held.windows.${window}`) ? t(`usage.held.windows.${window}`) : String(window);
+/** 解除の時刻が分からないまま、振り分けが一定の間だけ外している枠（until は解除の見込みではない） */
+export const heldGuess = slot => slot.reason === 'recently_limited' && !slot.resetsAt;
 /**
- * 短い間隔の上限で今止まっている枠の一行（providerUsage の held。Issue #111）。
- * 日次・週次の枠が 0% でも止まっていることがあるので、枠の表とは別に出す。until が過ぎたものは出さない
+ * 上限で今止まっている枠の一行（providerUsage の held。Issue #111）。until が過ぎたものは出さない。
+ * 短い間隔の上限は日次・週次の枠が 0% でも止まっていることがあるので、枠の表とは別に出す。
+ * 5 時間・週の枠（window）で止まったものは、その枠の上限として出す（短い間隔の上限とは言わない）
  */
 export function heldTexts(held, quota, now = Date.now()) {
   return (Array.isArray(held) ? held : [])
     .filter(s => !s.until || new Date(s.until).getTime() > now)
-    .map(s => s.until ? t('usage.held.until', { slot: heldSlotName(s, quota), time: heldTime(s.until, now) })
-      : t('usage.held.unknown', { slot: heldSlotName(s, quota) }));
+    .map(s => {
+      const slot = heldSlotName(s, quota);
+      if (!s.until) return t('usage.held.open', { slot });
+      const time = heldTime(s.until, now);
+      if (s.window) return t('usage.held.window', { slot, window: heldWindowName(s.window), time });
+      return heldGuess(s) ? t('usage.held.unknown', { slot, time }) : t('usage.held.until', { slot, time });
+    });
 }
 function renderHeld(parent, held, quota) {
   const texts = heldTexts(held, quota);

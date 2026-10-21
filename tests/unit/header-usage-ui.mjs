@@ -124,6 +124,25 @@ export default async function(t) {
     assert.notEqual(chip.querySelector('.lb').textContent, tr('usage.header.heldLabel'));
     assert.match(chip.textContent, /0%/);
     t.ok('会話の枠が短い上限で止まっていれば、0% の率の代わりに止まっていることを札に出し、一覧に解除の見込みを出す（別のモデルの会話には出さない）', true);
+
+    // 5 時間の枠の上限（モデルを問わないアカウントの枠）。札は枠の名前で出し、「この会話」の一覧は会話のアカウントの枠だけ（2026-10-21、
+    // 別のアカウントの枠や「opus」「既定のモデル」が 3 行並んだ）
+    const fiveUntil = new Date(Date.now() + 2 * 3600_000).toISOString();
+    await tick(); // 前の一覧を開いたときの取り直しが済んでから、返す値を替える
+    replies.set('current', () => Promise.resolve({ label: 'Current', quota: quota(0),
+      held: [{ model: null, account: '', reason: 'recently_limited', until: fiveUntil, resetsAt: fiveUntil, window: 'five_hour' },
+        { model: null, account: 'work', reason: 'recently_limited', until: fiveUntil, resetsAt: null }] }));
+    ui.turnEnded('current'); await tick();
+    ui.show({ backend: 'current', model: 'opus' });
+    assert.equal(chip.querySelector('.lb').textContent, tr('usage.held.windows.five_hour'));
+    assert.ok(chip.classList.contains('high'));
+    assert.match(chip.getAttribute('title'), new RegExp(tr('usage.held.windows.five_hour')));
+    open();
+    const fiveBox = sections()[0].querySelector('.usage-held');
+    assert.equal(fiveBox.querySelectorAll('p').length, 1, fiveBox.textContent);
+    assert.ok(fiveBox.textContent.startsWith(tr('usage.held.allModels')), fiveBox.textContent);
+    documentEvents.keydown({ key: 'Escape', isComposing: false });
+    t.ok('5 時間・週の枠の上限は札に枠の名前で出し、「この会話」の一覧には会話のアカウントの枠だけを 1 行で出す', true);
   } finally {
     for (const stop of pagehide) stop();
     globalThis.document = globals.document;

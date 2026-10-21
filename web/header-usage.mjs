@@ -8,7 +8,7 @@
 // 取得に失敗したら直前の値を薄く出し、いつの値かを添える。（アカウントの行だけ読めなかったときは、その行の前回の枠を薄くせず出す。web/usage.mjs の carryQuota）
 import { el } from './dom.mjs';
 import { fmt, t } from './i18n.mjs';
-import { isExpired, heldTexts, heldSlotName, heldTime } from './usage.mjs';
+import { isExpired, heldTexts, heldSlotName, heldTime, heldWindowName, heldGuess } from './usage.mjs';
 
 /** これ以上の使用率は強い見た目にする（帯の札・入力欄と bot のページのアカウントの行） */
 export const HIGH = 80;
@@ -145,15 +145,17 @@ export function chipState(row, now = Date.now()) {
   return { kind: 'unknown' };
 }
 
+/** 会話の枠（アカウント・モデル）に当たる止まっている枠。モデルが分からない（既定・アカウント全体）側はどのモデルの枠にも合わせる */
+export function heldSlotsFor(held, { account = '', model = '' } = {}) {
+  return (Array.isArray(held) ? held : []).filter(s => (s.account || '') === (account || '') && !(model && s.model && s.model !== model));
+}
 /**
- * 会話の枠（アカウント・モデル）が、短い間隔の上限で今止まっているか（providerUsage の held。Issue #111）。
- * モデルが分からない（既定）側はどのモデルの枠にも合わせる。止まっていれば解除のいちばん遅い枠（分からないものが先）、無ければ null
+ * 会話の枠（アカウント・モデル）が、上限で今止まっているか（providerUsage の held。Issue #111）。
+ * 止まっていれば解除のいちばん遅い枠（分からないものが先）、無ければ null
  */
-export function heldSlotOf(held, { account = '', model = '' } = {}, now = Date.now()) {
+export function heldSlotOf(held, shown = {}, now = Date.now()) {
   let pick = null;
-  for (const s of Array.isArray(held) ? held : []) {
-    if ((s.account || '') !== (account || '')) continue;
-    if (model && s.model && s.model !== model) continue;
+  for (const s of heldSlotsFor(held, shown)) {
     const until = s.until ? new Date(s.until).getTime() : null;
     if (until != null && !(until > now)) continue;
     if (!pick || until == null || (pick.until && until > new Date(pick.until).getTime())) pick = s;
@@ -257,14 +259,17 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     repaintAt(held?.until);
     if (held) {
       const time = held.until ? heldTime(held.until) : null;
-      const text = time ? t('usage.header.heldUntil', { time }) : t('usage.header.heldUnknown');
+      // 5 時間・週の枠（window）で止まったものは、枠の上限の札と同じ言い方にする（短い間隔の上限とは言わない）
+      const window = held.window ? heldWindowName(held.window) : null;
+      const text = !time ? t('usage.header.heldUnknown') : window ? t('usage.header.limitUntil', { time }) : t('usage.header.heldUntil', { time });
       const pc = el('span', 'pc');
-      pc.append(el('span', 'long', text), el('span', 'short', time ? t('usage.header.heldShort', { time }) : text));
+      pc.append(el('span', 'long', text), el('span', 'short', !time ? text : window ? t('usage.header.limitShort', { time }) : t('usage.header.heldShort', { time })));
       chip.className = 'usage-chip high';
-      chip.replaceChildren(el('span', 'lb', t('usage.header.heldLabel')), mini(100), pc, caret());
+      chip.replaceChildren(el('span', 'lb', window ?? t('usage.header.heldLabel')), mini(100), pc, caret());
       chip.setAttribute('aria-label', t('usage.header.chipLabel', { agent, text }));
-      chip.title = t('usage.header.heldTitle', { agent, slot: heldSlotName(held, entry?.quota),
-        when: time ? t('usage.held.whenUntil', { time }) : t('usage.held.whenUnknown') });
+      const when = !time ? t('usage.held.whenUnknown') : heldGuess(held) ? t('usage.held.whenGuess', { time }) : t('usage.held.whenUntil', { time });
+      chip.title = window ? t('usage.header.heldWindowTitle', { agent, slot: heldSlotName(held, entry?.quota), window, when })
+        : t('usage.header.heldTitle', { agent, slot: heldSlotName(held, entry?.quota), when });
       return;
     }
     chip.className = 'usage-chip' + (state.high ? ' high' : '') + (state.kind !== 'value' || entry?.failed ? ' dim' : '');
@@ -332,8 +337,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     section.append(head);
     const stale = endpoint ? '' : staleNote(entry, row);
     if (stale) section.append(el('p', 'usage-note', stale));
-    // 短い間隔の上限で止まっている枠（設定の「使用量」と同じ文。web/usage.mjs の heldTexts）
-    const heldLines = endpoint ? [] : heldTexts(entry?.held, entry?.quota);
+    // 上限で止まっている枠（設定の「使用量」と同じ文。web/usage.mjs の heldTexts）。「この会話」の節は会話のアカウント・モデルに当たる枠だけ
+    const heldLines = endpoint ? [] : heldTexts(current ? heldSlotsFor(entry?.held, shown) : entry?.held, entry?.quota);
     if (heldLines.length) {
       const box = el('div', 'usage-held'); box.setAttribute('role', 'status');
       for (const text of heldLines) box.append(el('p', null, text));
