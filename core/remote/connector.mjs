@@ -233,11 +233,12 @@ export function createRemoteHost({
     const gen = link.generation;
     let url;
     try { url = link.provider.url('/v1/host'); }
-    catch (e) { setLinkPhase(link, 'error', { code: 'config', message: e.message }); return; }
+    catch (e) { scheduleRetry(link, { code: 'config', message: e.message }); return; }
     let headers;
     try { headers = await link.provider.headers(); }
     catch (e) {
-      if (gen === link.generation) setLinkPhase(link, 'error', { code: 'config', message: e.message });
+      // 一時的な失敗（plus のトークンの取り直しが届かないなど）で止まらないよう張り直す
+      if (gen === link.generation) scheduleRetry(link, { code: 'config', message: e.message });
       return;
     }
     if (gen !== link.generation) return;
@@ -245,13 +246,24 @@ export function createRemoteHost({
     let ws;
     try {
       ws = new WebSocket(url, { headers, perMessageDeflate: false, handshakeTimeout: 15_000, maxPayload: 1024 * 1024, followRedirects: false });
-    } catch (e) { setLinkPhase(link, 'error', { code: 'config', message: e.message }); return; }
+    } catch (e) { scheduleRetry(link, { code: 'config', message: e.message }); return; }
     link.control = ws;
     let failure = null;
+    let settled = false;   // この試みの行き先（張り直し・断念）は 1 回だけ決める
+    const retryOnce = err => {
+      if (settled || gen !== link.generation) return;
+      settled = true;
+      if (link.control === ws) link.control = null;
+      log(`remote: ${err.message}`);
+      scheduleRetry(link, err);
+    };
     ws.on('unexpected-response', (req, res) => {
+      // 101 でない応答（中継が立つ前に前段が 502 などを返す・遮断の 429 など）。ws はこのあと 'close' を
+      // 出さない（socket が張られる前なので）。ここで張り直しを予定しないと link は二度と張り直さない
       failure = res.statusCode === 429 ? t('remote.relay.rateLimited') : t('remote.relay.rejected', { status: res.statusCode });
       res.resume();
       req.destroy();
+      retryOnce({ code: `relay-http-${res.statusCode}`, message: failure });
     });
     ws.on('error', e => { failure ??= t('remote.relay.unreachable', { reason: e.code || e.message }); });
     ws.on('open', () => {
@@ -278,16 +290,14 @@ export function createRemoteHost({
     ws.on('close', (code, reason) => {
       if (link.control === ws) link.control = null;
       clearInterval(link.pingTimer);
-      if (gen !== link.generation) return;
+      if (settled || gen !== link.generation) return;
       const stable = link.controlOpenedAt && Date.now() - link.controlOpenedAt > STABLE_MS;
       if (stable) link.attempt = 0;
       link.controlOpenedAt = 0;
       // provider が close の扱いを変えたいとき（plus 側の断りを張り直しにしないなど）。'retry' か無ければ今と同じ張り直し
       const verdict = link.provider?.onClose?.(code, Buffer.isBuffer(reason) ? reason.toString('utf8') : String(reason ?? '')) ?? null;
-      if (verdict && verdict !== 'retry') { setLinkPhase(link, 'error', verdict.error ?? null); return; }
-      const message = failure ?? describeClose(code);
-      log(`remote: ${message}`);
-      scheduleRetry(link, { code: `relay-${code}`, message });
+      if (verdict && verdict !== 'retry') { settled = true; setLinkPhase(link, 'error', verdict.error ?? null); return; }
+      retryOnce({ code: `relay-${code}`, message: failure ?? describeClose(code) });
     });
   }
 
