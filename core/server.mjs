@@ -202,7 +202,8 @@ process.on('unhandledRejection', (reason) => {
 });
 const updateGate = createUpdateGate();
 // 使用枠の正本（core/usage.mjs）。取れた値は購読へ流し、usageChanged で画面へ届ける
-const quotaStore = createQuotaStore({ dir: store.dataDir });
+// 読めなくなった・読めるようになった行は server.log に 1 行（core/usage.mjs の createQuotaStore）
+const quotaStore = createQuotaStore({ dir: store.dataDir, log: line => console.log(`  [usage] ${line}`) });
 quotaStore.subscribe(backend => emitGlobal({ type: 'usageChanged', backend, sessionId: null }));
 // ログインの期限切れ（バックエンド id → 気づいた時刻）。会話のターンが 401（kind: 'auth'）で失敗したときに付け、
 // ログインし直す・CLI のログインのターンが通る・ログアウトで消す。メモリだけ（再起動で消える。次の 401 でまた付く。ADR 0212）
@@ -2601,9 +2602,10 @@ async function usageAccounts(backendId = 'claude') {
  * プロバイダーの使用枠。設定の画面（providerUsage）・エージェント（ply_usage）・委譲の監視・チャンネルの予算が
  * 同じ quotaStore を通すので、どちらから何度呼んでも各サービスへの問い合わせは 1 分に 1 回まで
  */
-async function providerQuota(backend) {
+async function providerQuota(backend, { force = false } = {}) {
   if (!backend.usage) return { windows: [], checkedAt: null, message: t('quota.unsupported') };
-  return quotaStore.refresh(backend.id, async () => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.accounts ? await usageAccounts(backend.id) : {}) }));
+  // skip … 読めない間、読む間隔を延ばしているアカウントの行（読まずに前回の行を残す）
+  return quotaStore.refresh(backend.id, async ({ skip } = {}) => backend.usage({ cwd: process.cwd(), ...(backend.capabilities?.accounts ? await usageAccounts(backend.id) : {}), ...(skip?.length ? { skip } : {}) }), { force });
 }
 
 /**
@@ -4276,10 +4278,10 @@ async function renameStatusGroup(args, actor) {
 }
 
 /** 設定の「使用量」の 1 エージェント分（delegation.usage。WS の providerUsage の中身） */
-async function providerUsageOf(args) {
+async function providerUsageOf(args, { force = false } = {}) {
   const backend = getBackend(args?.backend);
   if (!backend) throw new Error(t('agents.notFound'));
-  const quota = await providerQuota(backend);
+  const quota = await providerQuota(backend, { force });
   let local;
   try { local = await usageStore.summary(backend.id); }
   catch { local = { error: t('quota.localFailed') }; }
@@ -5280,7 +5282,7 @@ function opsDeps(lng = currentLocale()) {
         if (refresh && routingSettingsCache.enabled) await routingUsage.refresh();
         return delegationRoutingState();
       },
-      providerUsage: (id) => providerUsageOf({ backend: id }) },
+      providerUsage: (id, { force } = {}) => providerUsageOf({ backend: id }, { force }) },
     conversations: opsConversations,
     agents: opsAgents,
     accounts: accountManager,

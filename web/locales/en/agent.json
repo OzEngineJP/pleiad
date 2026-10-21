@@ -1239,6 +1239,7 @@
       "taskCancel": { "summary": "Stop your child task.", "taskId": "Child task id." },
       "taskList": { "summary": "List your child tasks." },
       "usage": { "summary": "Read quota usage for delegation targets.", "backend": "Agent to check; omit for all." },
+      "usageRefresh": { "summary": "Read one agent's quota again right away from Settings › Usage, without waiting for the longer interval used while reads fail. Used only by the screen (a person).", "backend": "Agent to read again." },
       "instructions": {
         "summary": "Return the history of follow-up instructions sent to a delegated child, newest first (text is cut at 1,000 characters).",
         "taskId": "Task id.",

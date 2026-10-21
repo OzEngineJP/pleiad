@@ -51,6 +51,8 @@ function renderQuota(parent, quota, onUsageLogin) {
       ? t('usage.resetsAt', { when: fmt.dateTime(w.resetsAt) }) : t('usage.resetsUnknown')));
     parent.append(row);
   }
+  // 読めなかった行は、サーバーが前回の値を残して staleSince（その値の時刻）を添える（core/usage.mjs の createQuotaStore）
+  if (quota.staleSince) parent.append(el('p', 'usage-note', t('usage.staleValue', { when: fmt.relative(quota.staleSince) })));
   for (const account of quota.accounts ?? []) {
     parent.append(el('h4', null, account.label)); renderQuota(parent, account, onUsageLogin);
   }
@@ -118,20 +120,23 @@ export function carryQuota(quota, prev) {
 /**
  * providerUsage の取得。設定の「使用量」と会話のヘッダーのチップ（web/header-usage.mjs）が共有する。
  * 同じエージェントの取得が走っている間は、それに相乗りする（同時に 2 本投げない）。届いた結果は onResult で両方へ配る。
- * 前回の枠の引き継ぎ（carryQuota）もここでするので、両方に同じ値が出る
+ * 前回の枠の引き継ぎ（carryQuota）もここでするので、両方に同じ値が出る。
+ * force は人の読み直し（ボタン）。読めない間に延ばした読む間隔を待たず、すぐ読み直す（delegation.usageRefresh）
  */
 export function createUsageSource(cmd) {
   const pending = new Map(), listeners = new Set(), last = new Map();
-  function load(backend) {
-    if (pending.has(backend)) return pending.get(backend);
-    const task = cmd('providerUsage', { backend }).then(raw => {
+  function load(backend, { force = false } = {}) {
+    const running = pending.get(backend);
+    if (running && (running.force || !force)) return running.task;
+    const read = force ? cmd('invoke', { op: 'delegation.usageRefresh', args: { backend } }) : cmd('providerUsage', { backend });
+    const task = read.then(raw => {
       const result = raw?.quota ? { ...raw, quota: carryQuota(raw.quota, last.get(backend)?.quota) } : raw;
       // 枠もアカウントの行も無い結果（取得の失敗）では前回を捨てない。次に 1 行だけ読めなかったときに引き継げなくなる
       if (result?.quota?.windows?.length || result?.quota?.accounts?.length) last.set(backend, result);
       for (const listener of listeners) listener(backend, result);
       return result;
-    }).finally(() => pending.delete(backend));
-    pending.set(backend, task); return task;
+    }).finally(() => { if (pending.get(backend)?.task === task) pending.delete(backend); });
+    pending.set(backend, { task, force }); return task;
   }
   return {
     load,
@@ -155,7 +160,7 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
     renderLocal(body, result.local);
     card.replaceChildren(...body.children); card.dataset.loaded = '1';
   }
-  async function refresh() {
+  async function refresh({ force = false } = {}) {
     if (loading) return;
     loading = true; $('refreshUsage').disabled = true;
     const root = $('usageCards'), list = getBackends();
@@ -171,7 +176,7 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
           cards.set(backend.id, card); root.append(card);
         }
         try {
-          const result = await source.load(backend.id);
+          const result = await source.load(backend.id, { force });
           await renderCard(backend, card, result);
         } catch { if (!card.dataset.loaded) card.replaceChildren(el('h3', null, backend.label), el('p', 'usage-note', t('usage.failed'))); }
       }));
@@ -180,5 +185,5 @@ export function setupUsage({ $, cmd, source = createUsageSource(cmd), getBackend
   // サーバーから新しい値が届いた（usageChanged → source.load）ら、出ているカードを描き直す
   source.onResult((backend, result) => { const card = cards.get(backend); if (card && result) renderCard({ id: backend }, card, result).catch(() => {}); });
   $('usageTab').onclick = () => { page('usage'); refresh(); };
-  $('refreshUsage').onclick = refresh;
+  $('refreshUsage').onclick = () => refresh({ force: true });
 }

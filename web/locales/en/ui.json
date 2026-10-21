@@ -3225,6 +3225,7 @@
     "resetsAt": "Resets: {{when}}",
     "resetsUnknown": "Reset time: unknown",
     "redoAuth": "Authorize again",
+    "staleValue": "Couldn't read it, so this shows the value from {{when}}.",
     "held": {
       "until": "{{slot}}: stopped by a short-term rate limit. Expected to reset at {{time}}",
       "unknown": "{{slot}}: stopped by a short-term rate limit. The reset time is unknown (until a turn succeeds)",

@@ -189,6 +189,19 @@ export const delegationOps = [
     },
   }),
 
+  // 設定の「使用量」の読み直し（人の操作）。読めない間に延ばした読む間隔と 1 分のキャッシュを待たず、すぐ全部を読み直す。
+  // AI の道具には出さない（ply_usage は 1 分に 1 回までの共有の値を読む）
+  defineOp({
+    id: 'delegation.usageRefresh',
+    summary: 'agent:ops.delegation.usageRefresh.summary',
+    risk: 'read',
+    input: z.object({ backend: z.string().min(1).max(40).describe(D('usageRefresh', 'backend')) }),
+    output: z.unknown(),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx) => { throw new OpError('NEEDS_UI', agentT(ctx.locale, 'ops.errors.NEEDS_UI', { id: ctx.op.id })); },
+    uiHandler: (ctx, { backend }) => fromHost(() => ctx.delegation.providerUsage(backend, { force: true })),
+  }),
+
   // 別の候補で同じ依頼をやり直す（新しい子のタスクを作る）。AI は自分が委譲した子だけ。承認モードが強くなる（依頼元より強い子になる）ときの
   // 確認（approved）と、Claude のアカウントの選択（account）は人だけ: AI が渡すと、または確認が要ると NEEDS_UI で画面へ誘導する
   defineOp({

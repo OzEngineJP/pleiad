@@ -2055,6 +2055,21 @@
       "input": "e713b07977ab"
     },
     {
+      "id": "delegation.usageRefresh",
+      "risk": "read",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "c5d0f7298cb2"
+    },
+    {
       "id": "drafts.load",
       "risk": "read",
       "riskOf": false,

@@ -348,6 +348,8 @@ const SUITES = [
   './unit/header-usage-ui.mjs',
   // 取れなかった行は前回の枠を引き継ぐ（札・一覧・設定で同じ値）。設定の「使用量」は取り直しの間も前の表示を残す
   './unit/usage-carry.mjs',
+  // 使用量が読めないとき: トークンが無ければ再ログインの案内・前回の値を残して「◯分前」・失敗のログは 1 行・読む間隔を延ばす
+  './unit/usage-failures.mjs',
   './unit/effort.mjs',
   './unit/composer-agy.mjs',
   // 互換の接続先（保存・確認・キーを出さない・env と Codex の上書き）。偽の互換 API とだけ話す

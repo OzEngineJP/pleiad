@@ -662,7 +662,7 @@ export function muteClaudeHeld(sessionId, muted) {
 
 export const backend = {
   // 登録したアカウントがあれば、アカウントごとに見出しを付けて返す（server が accounts を解いて渡す）
-  usage: ({ accounts, loginLabel } = {}) => readClaudeAccountsUsage({ accounts, loginLabel }),
+  usage: ({ accounts, loginLabel, skip } = {}) => readClaudeAccountsUsage({ accounts, loginLabel, skip }),
   id: "claude",
   label: "Claude Code",
   get description() { return t("claude.description"); },
