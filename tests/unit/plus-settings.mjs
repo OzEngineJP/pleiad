@@ -25,7 +25,8 @@ const buttonTexts = nodes => {
 };
 
 const BASE = { available: true, state: 'on', needsUpdate: false, signedIn: false, login: { phase: 'idle' }, account: null, reachable: true, error: null, urls: { account: 'https://account.example.com', profile: null }, host: null, checkedAt: '' };
-const ACCOUNT = { uid: 'u1', email: 'user@example.com', provider: 'google.com', status: 'plus', plan: { name: 'Pleiad Plus' }, limits: { creditsPerMonth: 500 }, usage: { credits: 120, resetAt: '2026-11-01T00:00:00+09:00' } };
+// resetAt は UTC の正午にする（日付はその場の時間帯で出すので、真夜中にすると UTC の CI で前の日になる）
+const ACCOUNT = { uid: 'u1', email: 'user@example.com', provider: 'google.com', status: 'plus', plan: { name: 'Pleiad Plus' }, limits: { creditsPerMonth: 500 }, usage: { credits: 120, resetAt: '2026-11-01T12:00:00Z' } };
 
 export default async function (t) {
   const sent = [], opened = [];
@@ -91,7 +92,7 @@ export default async function (t) {
   byFk(nodes, 'logout').onclick();
   t.ok('「ログアウト」は plusLogout', sent.at(-1) === 'plusLogout');
   // 上限
-  nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, usage: { credits: 500, resetAt: '2026-11-01T00:00:00+09:00' } } });
+  nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, usage: { credits: 500, resetAt: '2026-11-01T12:00:00Z' } } });
   t.ok('used >= limit: 「上限に達しました」', text(nodes).includes('上限に達しました'));
   // usage・limits が無ければ行は出さない
   nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, usage: null } });
