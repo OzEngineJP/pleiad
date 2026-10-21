@@ -786,6 +786,8 @@ const SUITES = [
   './unit/remote-upload.mjs',
   // モバイルの殻（mobile/）の取り決め: plyRemote の形・平文はループバックだけ・依存の版の固定・殻の辞書
   './unit/mobile-shell.mjs',
+  // 殻のホスト一覧の読み直し（mobile/www/app.js を DOM とネイティブの代役で動かす）
+  './unit/mobile-host-list.mjs',
   './unit/ios-shell.mjs',
   // モバイルのアイコン・スプラッシュ: 置いてある PNG が SVG からの再生成と一致・テーマアイコンと暗いスプラッシュの宣言
   './unit/mobile-icons.mjs',

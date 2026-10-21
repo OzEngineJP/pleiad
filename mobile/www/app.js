@@ -58,7 +58,6 @@
 
   function render() {
     const box = $('hosts');
-    const banner = $('hostBanner');
     box.replaceChildren();
     const list = [...hosts.values()].sort((a, b) => {
       if (a.lastConnectedAt || b.lastConnectedAt) return (b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0);
@@ -105,6 +104,7 @@
       const { hosts: list, plusError } = await Remote.list();
       hosts.clear();
       for (const h of list) hosts.set(h.hostId, h);
+      const banner = $('hostBanner');
       banner.textContent = plusError === 'no-relay' ? t('plus.noRelay') : plusError ? t('plus.unreachable') : '';
       banner.hidden = !banner.textContent;
       $('empty').textContent = pstate?.login === 'in' && pstate?.status === 'plus' && list.length === 0 ? t('hosts.plusEmpty') : t('hosts.empty');
