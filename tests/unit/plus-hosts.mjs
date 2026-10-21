@@ -27,6 +27,13 @@ async function until(fn, ms, label) {
     await sleep(30);
   }
 }
+/** 約束を待つ。来ないときだけ ms で落とす（通るときは実時間に頼らない） */
+async function withTimeout(promise, ms, label) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} が ${ms}ms で終わらない`)), ms); })]);
+  } finally { clearTimeout(timer); }
+}
 const callsTo = (plus, method, prefix) => plus.state.calls.filter(c => c.method === method && c.path.startsWith(prefix));
 
 /** session の身代わり（本物の client を使い、snapshot/setHost だけ差し替える）。 */
@@ -215,15 +222,23 @@ export default async function (t) {
     t.ok('前の api（removed を返さない）では、外れていたら登録し直す', plus.state.hosts[hid]?.uid === UID && host.host().state === 'registered');
     plus.state.legacySync = false;
 
-    // ---- 30 分ごとの見直し（試験では recheckMs 50ms）
+    // ---- 30 分ごとの見直し（タイマーは差し替え、試験から刻む。実時間は待たない）
+    const intervals = [];
+    let onTimedState = () => {};
     const timed = createPlusHost({
       session, store: remote.store, appVersion: 'test', hostName: () => nameNow,
-      plusDevices: () => devicesNow, retryMs: 40, recheckMs: 50, log: () => {},
+      plusDevices: () => devicesNow, retryMs: 40, log: () => {}, onHostState: s => onTimedState(s),
+      timers: { setTimeout, clearTimeout, setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; } },
     });
     await timed.maybeRegister();
+    t.ok('登録すると 30 分ごとの見直しのタイマーを 1 つ張る', intervals.length === 1 && intervals[0].ms === 30 * 60_000, JSON.stringify(intervals.map(i => i.ms)));
     plus.unbindHost(hid, 'admin');
-    await until(() => plus.state.hosts[hid]?.uid === UID, 3000, '見直しで外れに気付いて登録し直す');
-    t.ok('登録したあとは recheckMs ごとに見直し、外れていたら登録し直す', timed.host().state === 'registered' && timed.host().notice === 'reregistered');
+    // 刻んだ見直しが登録し直して、この PC の側の状態が変わるのを待つ（台帳の側は PUT の応答より先に変わる）
+    const reregistered = new Promise(resolve => { onTimedState = s => { if (s.state === 'registered' && s.notice === 'reregistered') resolve(s); }; });
+    intervals[0].fn();
+    await withTimeout(reregistered, 10_000, '見直しで外れに気付いて登録し直す');
+    t.ok('登録したあとは recheckMs ごとに見直し、外れていたら登録し直す',
+      plus.state.hosts[hid]?.uid === UID && timed.host().state === 'registered' && timed.host().notice === 'reregistered', JSON.stringify(timed.host()));
   } finally {
     remote.stop();
     await plus.close();

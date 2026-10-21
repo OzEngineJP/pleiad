@@ -53,16 +53,14 @@ export default async function (t) {
     const calls = [];
     const errors = [];
     let inFlight = 0, maxInFlight = 0;
-    const activity = { inFlight: () => inFlight, last: 0 };
     const base = createPlusClient({ config, getIdToken: async () => plus.issueIdToken(uid), appVersion: 'test' });
     const client = {
       async request(method, p, opts) {
         calls.push(`${method} ${p.split('?')[0]}`);
-        activity.last = performance.now();
         inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
         try { return await base.request(method, p, opts); }
         catch (e) { errors.push(`${method} ${p.split('/').slice(0, 4).join('/')} ${e.status} ${e.code} ${e.message}${e.body?.current ? ' +current' : ''}`); throw e; }
-        finally { inFlight--; activity.last = performance.now(); }
+        finally { inFlight--; }
       },
     };
     const secrets = createSecretStore({ file: path.join(dataDir, 'plus-secrets.json'), cipher: plainCipher });
@@ -107,17 +105,15 @@ export default async function (t) {
     const skill = (...rel) => path.join(targets.skillRoots.claude, ...rel);
     return {
       label, hostId, home, dataDir, clock, logs, calls, errors, engine, targets, keys, secrets, store, changeSetting, emit, statuses, skill,
-      activity, maxInFlight: () => maxInFlight, resetInFlight: () => { maxInFlight = 0; }, hostLost: () => hostLost,
+      maxInFlight: () => maxInFlight, resetInFlight: () => { maxInFlight = 0; }, hostLost: () => hostLost,
       claudeMd: targets.instructions.claude,
     };
   }
 
-  // タイマーから始まった回は待てる約束を返さないので、api の呼び出しが止んで少したつまで実時間で待つ
+  // タイマーから始まった回は待てる約束を返さないので、engine.idle() で回と回の外の続き（watch の出来事の確かめなど）が終わるのを待つ
   const settle = async (h) => {
-    for (let i = 0; i < 400; i++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-      if (h.activity.inFlight() === 0 && performance.now() - h.activity.last > 80) return;
-    }
+    await h.clock.flush();
+    await h.engine.idle();
   };
   const adv = async (h, ms) => { await h.clock.advance(ms); await settle(h); };
   const itemPuts = () => plus.state.syncBodies.filter(b => b.method === 'PUT' && b.path.startsWith('/v1/sync/items/'));
@@ -414,13 +410,10 @@ export default async function (t) {
     let snap = { signedIn: true, account: { uid: UID, status: 'plus' }, accountReadAt: readAt };
     const readAccount = status => { readAt += 1; snap = { ...snap, account: { ...snap.account, status }, accountReadAt: readAt }; };
     const baseS = createPlusClient({ config, getIdToken: async () => plus.issueIdToken(UID), appVersion: 'test' });
-    let inFlightS = 0;
-    const hs = { clock: clockS, activity: { inFlight: () => inFlightS, last: 0 } };
     const clientS = {
       async request(m, p, o) {
         callsS.push(`${m} ${p.split('?')[0]}`);
-        inFlightS++; hs.activity.last = performance.now();
-        try { return await baseS.request(m, p, o); } finally { inFlightS--; hs.activity.last = performance.now(); }
+        return baseS.request(m, p, o);
       },
     };
     const sync = createPlusSync({
@@ -429,6 +422,7 @@ export default async function (t) {
       clock: clockS, watch: () => ({ close() {}, on() {} }),
     });
     engines.push(sync.engine);
+    const hs = { clock: clockS, engine: sync.engine };
     const countS = what => callsS.filter(c => c === what).length;
     await sync.update();
     t.ok('停止の前: update() で回して idle', sync.getSyncStatus().state === 'idle', JSON.stringify(sync.getSyncStatus()));
