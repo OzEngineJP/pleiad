@@ -1017,12 +1017,13 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     chips.mode.disabled = Boolean(d.modeDisabled);
     if (d.modeDisabled && d.lockedNote) addNote(chips.mode, d.lockedNote);
     // 開いている面も描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す）。
+    // 戻すときは面をスクロールさせない（開いたときに焦点を置いた上の行へ、なぞって下げた一覧が引き戻される）。
     // 作業ディレクトリの面は打ち込み中・辿っている途中を消さないよう、位置だけ合わせる
     for (const p of [model, mode]) {
       if (!p.open) continue;
       const key = p.pop.contains(document.activeElement) ? document.activeElement.dataset?.key : null;
       p.render(); p.place();
-      if (key) (p.pop.querySelector(`[data-key="${CSS.escape(key)}"]:not([hidden]):not(:disabled)`) ?? p.pop.querySelector('[aria-selected="true"]'))?.focus();
+      if (key) (p.pop.querySelector(`[data-key="${CSS.escape(key)}"]:not([hidden]):not(:disabled)`) ?? p.pop.querySelector('[aria-selected="true"]'))?.focus({ preventScroll: true });
     }
     folder.place();
     fitRow();
