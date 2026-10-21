@@ -79,6 +79,8 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   const watchers = new Map();   // dir → watcher
   const ownWrites = new Map();  // 絶対パス → { sha, at }（自分で書いたものを fs.watch が拾っても上げ直さない）
   const ownSettings = new Map(); // 設定の key → at
+  const background = new Set();  // 回の外で走る続き（watch の出来事の確かめ・覚えの保存・onHostLost）。idle() が待つ
+  const track = p => { background.add(p); void p.finally(() => background.delete(p)).catch(() => {}); return p; };
   const settingsChangedAt = new Map();
   const tooLarge = new Map();   // 論理名 → sha（413 too_large のものは中身が変わるまで上げない）
   let unsubscribe = null;
@@ -127,7 +129,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     if (!local || typeof to !== 'string') return;
     local.sharedTo = [{ hostId: to, name, at: clock.now() }, ...(local.sharedTo ?? []).filter(s => s.hostId !== to)].slice(0, SHARED_KEEP);
     showShared();
-    void saveLocal().catch(() => {});
+    void track(saveLocal().catch(() => {}));
   }
 
   // ---- 競合の写し ------------------------------------------------------------------------------------------
@@ -173,7 +175,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
       setStatus({ state: 'unregistered', error: null, wait: null });
       if (!hostLostCalled) {
         hostLostCalled = true;
-        try { void Promise.resolve(onHostLost()).catch(() => {}); } catch {}
+        try { void track(Promise.resolve(onHostLost()).catch(() => {})); } catch {}
       }
       return;
     }
@@ -468,11 +470,11 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     const own = abs ? ownWrites.get(abs) : null;
     if (own && clock.now() - own.at < OWN_WRITE_MS) {
       // 自分で書いた中身と同じなら上げ直さない
-      void fsp.readFile(abs).then(buf => sha256(buf), () => null).then(sha => {
+      void track(fsp.readFile(abs).then(buf => sha256(buf), () => null).then(sha => {
         if (sha === own.sha) return;
         ownWrites.delete(abs);
         changed();
-      });
+      }));
       return;
     }
     if (abs) ownWrites.delete(abs);
@@ -588,5 +590,12 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     stateFile,
     /** 試験用: 今張っている watch の場所 */
     watching: () => [...watchers.keys()],
+    /** 試験用: 回っている回（タイマーから始まった回を含む）と、回の外の続きが終わるまで待つ */
+    async idle() {
+      while (running || background.size) {
+        await running?.catch(() => {});
+        await Promise.allSettled([...background]);
+      }
+    },
   };
 }

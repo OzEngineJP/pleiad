@@ -52,10 +52,11 @@ const PLATFORM = { win32: 'win32', darwin: 'darwin', linux: 'linux' };
  * @param {(line: string) => void} [o.log]
  * @param {number} [o.retryMs]  ネットの誤り・5xx のやり直しの間隔（既定 1 分）
  * @param {number} [o.recheckMs]  登録が外れていないかの見直しの間隔（既定 30 分。0 で見直さない）
+ * @param {{ setTimeout: Function, clearTimeout: Function, setInterval: Function }} [o.timers] 試験の時計用
  */
 export function createPlusHost({ session, store, appVersion = '', platform = process.platform,
   hostName, plusDevices, onHostState = () => {}, log = () => {}, retryMs = 60_000, recheckMs = 30 * 60_000,
-  syncPublicKey = async () => null } = {}) {
+  syncPublicKey = async () => null, timers = { setTimeout, clearTimeout, setInterval } } = {}) {
   let host = { state: 'none', hostId: null, error: null };
   let chain = Promise.resolve();
   let activeRegistration = null;
@@ -70,8 +71,8 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     session.setHost(next);
     onHostState(next);
     if (next.state === 'registered' && !recheckTimer && recheckMs > 0) {
-      recheckTimer = setInterval(() => { void recheck(); }, recheckMs);
-      recheckTimer.unref?.();
+      recheckTimer = timers.setInterval(() => { void recheck(); }, recheckMs);
+      recheckTimer?.unref?.();
     }
   }
 
@@ -141,7 +142,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
   }
 
   async function run({ force = false } = {}) {
-    retryTimer && clearTimeout(retryTimer);
+    retryTimer && timers.clearTimeout(retryTimer);
     retryTimer = null;
     if (!eligible()) return;
     try {
@@ -173,8 +174,8 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     // ネットの誤り・5xx・残った 422 は error。1 分おきにやり直す
     log(`plus host: ${e?.code ?? 'error'} (${e?.status ?? '-'})`);
     setHost({ state: 'error', hostId, error: { code: e?.code ?? 'error' } });
-    retryTimer = setTimeout(() => { retryTimer = null; void maybeRegister(); }, retryMs);
-    retryTimer.unref?.();
+    retryTimer = timers.setTimeout(() => { retryTimer = null; void maybeRegister(); }, retryMs);
+    retryTimer?.unref?.();
   }
 
   /** 条件を満たすときだけ登録を直列に行う。条件が変わったときに呼ぶ。 */

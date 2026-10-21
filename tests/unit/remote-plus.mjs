@@ -286,7 +286,8 @@ export default async function (t) {
       return s.links.plus.state === 'error' && s.links.plus.error?.code === 'host' ? s : null;
     }, 5000, '4401 host は error host');
     t.ok('4401 host は error host（auth にしない）', sHost.links.plus.error?.code === 'host', JSON.stringify(sHost.links.plus));
-    await until(() => (plus.state.hosts[st.hostId] ? true : null), 10_000, '外されたら登録し直す');
+    // この PC の側の状態を待つ（台帳の側は PUT の応答より先に変わり、notice はまだ載っていないことがある）
+    await until(() => hostStateSeen.slice(seenBefore).some(s => s.state === 'registered' && s.notice === 'reregistered'), 10_000, '外されたら登録し直す');
     t.ok('4401 host で onHostLost を呼び、運営が外した PC は登録し直す（台帳に戻る）', hostLostCalls >= 1 && plus.state.hosts[st.hostId]?.uid === UID, `calls=${hostLostCalls}`);
     t.ok('登録し直したときは状態に notice: reregistered を載せる',
       hostStateSeen.slice(seenBefore).some(s => s.state === 'registered' && s.notice === 'reregistered'), JSON.stringify(hostStateSeen.slice(seenBefore)));
