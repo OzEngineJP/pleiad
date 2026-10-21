@@ -91,8 +91,18 @@ class PleiadRemotePlugin : Plugin() {
             device.updatePlusRelay(it)
             app.notifyHub.plusRelayChanged()
         }
+        // A PC gone from the Plus ledger read just now is forgotten here too (not when the read failed). Its own-relay pairing stays.
+        val ledgerRead = usePlus && fetched.read
+        if (ledgerRead) {
+            val gone = PlusHostList.gone(device.store.hosts(), fetched.hosts)
+            for (rec in gone) {
+                device.remove(rec.hostId, "plus")
+                if (device.store.hosts().none { it.hostId == rec.hostId }) ResumeStore(context).forget(rec.hostId)
+            }
+            if (gone.isNotEmpty()) app.notifyHub.hostsChanged()
+        }
         // One row per host; `via` is the route a tap opens with (PlusHostList.combine), `both` that the device is paired each way.
-        val rows = PlusHostList.combine(device.store.hosts(), fetched.hosts, usePlus && fetched.error != "no-relay", device.connectedVia())
+        val rows = PlusHostList.combine(device.store.hosts(), fetched.hosts, usePlus && fetched.error != "no-relay", device.connectedVia(), ledgerRead)
         val arr = JSArray()
         for (row in rows) {
             val h = row.record

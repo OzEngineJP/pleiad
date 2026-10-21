@@ -4,7 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { methodOptions, stateLine, todoList, liveRow } from '../../web/remote-parts.mjs';
 import { createRemoteStore } from '../../core/remote/devices.mjs';
-import { plusRemoteLine, ownRemoteLine, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, initialRemoteMethod } from '../../web/remote.mjs';
+import { plusRemoteLine, ownRemoteLine, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
+import { N } from '../lib/dom-stub.mjs';
 
 export const name = 'remote-plus-ui';
 export const title = '設定 › リモート「この PC へ」: Plus の状態・操作可否・端末の分け方・つなぎ方';
@@ -102,4 +103,32 @@ export default async function (t) {
   t.ok('選択した radio は aria-checked と tabindex に反映する', options[0].getAttribute('aria-checked') === 'true' && options[0].getAttribute('tabindex') === '0' && options[1].getAttribute('aria-checked') === 'false');
   options[1].onclick();
   t.ok('radio を押すと選択が変わる', picked === 'own');
+
+  // ---- 「この PC へ」の画面（setupRemote を DOM の代役で描く）
+  // 自分の中継サーバーを何も設定していなくても、まとまりと「未設定」の一行と「編集」を出す（承認 2026-10-21。docs/remote.md）
+  const drawn = async (remote, plus = { available: false }) => {
+    const saved = { getElementById: document.getElementById, createTextNode: document.createTextNode, body: document.body };
+    const nodes = { remotePanel: new N('div'), remoteTab: new N('button') };
+    document.getElementById = id => nodes[id] ?? null;
+    document.createTextNode = text => String(text);   // 代役の append は文字列を文字のノードにする
+    document.body = new N('body');   // createWizard は setup の時点で dialog を body に足す
+    try {
+      const panel = setupRemote({ cmd: async name => name === 'remoteStatus' ? remote : name === 'plusStatus' ? plus : {}, page: () => {} });
+      await panel.refresh();
+      return nodes.remotePanel;
+    } finally {
+      document.getElementById = saved.getElementById;
+      document.createTextNode = saved.createTextNode;
+      document.body = saved.body;
+    }
+  };
+  const ownGroup = root => root.querySelectorAll('.rm-group').find(g => g.querySelector('.rm-gh')?.textContent === '自分の中継サーバー') ?? null;
+  const unset = await drawn({ enabled: true, configured: false, relayUrl: null, connection: { state: 'idle' }, devices: [], plus: { connect: true }, pairing: { requests: [] } });
+  const group = ownGroup(unset);
+  t.ok('設定が無くても「自分の中継サーバー」のまとまりを出す', Boolean(group), unset.shown);
+  t.ok('設定が無いときは中抜きの点で「未設定 · …」の一行', group?.querySelector('.rm-st')?.dataset.state === 'off'
+    && group.querySelector('.rm-st').textContent === '未設定 · 「編集」で中継の URL と登録用の秘密を入れます', group?.shown);
+  t.ok('設定が無いときも見出しの右に「編集」', group?.querySelector('.rm-gh-btn')?.dataset.fk === 'relayEdit' && group.querySelector('.rm-gh-btn').textContent === '編集');
+  const off = await drawn({ enabled: false, configured: false, connection: { state: 'idle' }, devices: [], plus: { connect: true }, pairing: { requests: [] } });
+  t.ok('許可がオフならまとまりは出さない', !ownGroup(off));
 }
