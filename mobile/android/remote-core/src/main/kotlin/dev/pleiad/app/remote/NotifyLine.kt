@@ -87,6 +87,21 @@ class NotifyLine(
         val gen = ++generation
         setState("connecting")
         val c = creds
+        if (c.via != "plus") return open(gen, c, null)
+        // The account token may be refreshed over the network, and connect() runs on the caller's thread (the service
+        // starts the lines on the main thread): fetch it on the line's own thread, outside the lock.
+        try {
+            timer.execute {
+                val accountToken = try { plusIdToken?.invoke() } catch (_: Exception) { null }
+                synchronized(lock) {
+                    if (gen != generation || !running) return@synchronized
+                    if (accountToken.isNullOrEmpty()) schedule("offline") else open(gen, c, accountToken)
+                }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {}
+    }
+
+    private fun open(gen: Int, c: HostCreds, accountToken: String?) {
         val url = try { PairingCodec.relayWsUrl(c.relayUrl, "/v1/device/notify") } catch (e: Exception) {
             log("notify line: ${e.message}"); return schedule("offline")
         }
@@ -97,11 +112,7 @@ class NotifyLine(
             .build()
         val reqBuilder = Request.Builder().url(url)
             .header("authorization", "Bearer ${c.token}").header("x-pleiad-host", c.hostId).header("x-pleiad-device", c.deviceId)
-        if (c.via == "plus") {
-            val accountToken = plusIdToken?.invoke()
-            if (accountToken.isNullOrEmpty()) { schedule("offline"); return }
-            reqBuilder.header("x-pleiad-account", accountToken)
-        }
+        if (accountToken != null) reqBuilder.header("x-pleiad-account", accountToken)
         val req = reqBuilder.build()
         socket = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
