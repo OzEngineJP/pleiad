@@ -32,6 +32,33 @@ class PlusHostListTest {
         assertEquals("plus", PlusHostList.combine(both, listOf(listed.copy(online = false)), true, mapOf("h" to "plus")).single().via)
     }
 
+    // A PC removed from the Plus ledger (GET /v1/hosts read just now) leaves the list, and its saved Plus pairing is forgotten.
+    @Test fun aPlusOnlyHostGoneFromTheLedgerLeavesTheList() {
+        val saved = listOf(record("plus"))
+        assertEquals(0, PlusHostList.combine(saved, emptyList(), true, ledgerRead = true).size)
+        assertEquals(saved, PlusHostList.gone(saved, emptyList()))
+        // Still on the ledger: kept, nothing to forget.
+        assertEquals(1, PlusHostList.combine(saved, listOf(listed), true, ledgerRead = true).size)
+        assertEquals(emptyList<HostRecord>(), PlusHostList.gone(saved, listOf(listed)))
+    }
+
+    // The read failed: the last known list (or none) is not the ledger's word, so saved Plus rows stay.
+    @Test fun aFailedLedgerReadKeepsSavedPlusRows() {
+        val row = PlusHostList.combine(listOf(record("plus")), emptyList(), true, ledgerRead = false).single()
+        assertEquals("plus", row.via)
+    }
+
+    // Paired with the own relay too: the host stays as its own-relay row; only the Plus record goes.
+    @Test fun aHostAlsoPairedWithTheOwnRelayStaysAsItsOwnRow() {
+        val saved = listOf(record("own"), record("plus"))
+        val row = PlusHostList.combine(saved, emptyList(), true, mapOf("h" to "plus"), ledgerRead = true).single()
+        assertEquals("own", row.via)
+        assertEquals("own", row.record?.via)
+        assertEquals(false, row.both)
+        assertNull(row.plus)
+        assertEquals(listOf(record("plus")), PlusHostList.gone(saved, emptyList()))
+    }
+
     @Test fun failedListCanUseLastKnownPlusRowsAndUnavailableAccountHidesThem() {
         assertEquals(1, PlusHostList.combine(listOf(record("plus")), listOf(listed), true).size)
         assertEquals(0, PlusHostList.combine(listOf(record("plus")), listOf(listed), false).size)

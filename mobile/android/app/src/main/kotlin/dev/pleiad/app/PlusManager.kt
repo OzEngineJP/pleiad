@@ -159,7 +159,8 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
     /** The ID token for Kotlin callers (the official relay). Never exposed to the shell page. */
     fun currentIdToken(): String? = session.idToken(config?.refreshUrl, force = true)
 
-    data class HostsResult(val hosts: List<PlusHost>, val error: String? = null)
+    /** [read]: [hosts] is the ledger read just now, not the last known list (PlusHostList.combine's ledgerRead). */
+    data class HostsResult(val hosts: List<PlusHost>, val error: String? = null, val read: Boolean = false)
 
     /** Refresh the account host list. On transient failures, return the last successful list. */
     @Synchronized
@@ -182,7 +183,7 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
             }
             hosts = latest
             hostsError = null
-            HostsResult(latest)
+            HostsResult(latest, read = true)
         } catch (e: PlusApiError) {
             if (e.status == 403 && e.code in setOf("not_plus", "account_disabled")) {
                 hosts = emptyList()

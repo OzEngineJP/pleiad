@@ -218,30 +218,28 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (message) out.push(errorLine(message));
     if (!on) return out;
     if (plusRemoteAvailable(plusStatus)) out.push(plusGroup());
-    // 「自分の中継サーバー」のまとまりには own の端末だけを並べる。
+    // 「自分の中継サーバー」のまとまりには own の端末だけを並べる。設定が無くても出し、「未設定」の一行と「編集」で入れられるようにする
     const devices = partitionRemoteDevices(status.devices).own;
     const failed = connectionFailed(status);
-    if (devices.length || failed || status.relayUrl) {
-      const group = el('section', 'rm-group');
-      const gh = groupHead(t('settings.remote.groups.own'));
-      if (!editing && !reviewMode) {
-        const edit = button(t('settings.remote.relay.edit'), () => openRelayEdit(), 'rm-gh-btn');
-        edit.dataset.fk = 'relayEdit';
-        edit.disabled = busy;
-        gh.append(edit);
-      }
-      group.append(gh);
-      const line = ownRemoteLine(status);
-      if (failed) group.append(el('p', 'rm-warn', t('settings.remote.failed')));
-      else if (line) group.append(stateLine(line.kind, line.text));
-      if (editing) group.append(relayEdit());
-      for (const d of devices) {
-        const view = deviceRow(d, status);
-        group.append(listRow({ icon: view.icon, name: view.name, sub: view.offline ? t('settings.remote.offline') : '', key: `device-${d.id}`,
-          onclick: () => { detailId = d.id; confirming = false; message = ''; paint(); } }));
-      }
-      out.push(group);
+    const group = el('section', 'rm-group');
+    const gh = groupHead(t('settings.remote.groups.own'));
+    if (!editing && !reviewMode) {
+      const edit = button(t('settings.remote.relay.edit'), () => openRelayEdit(), 'rm-gh-btn');
+      edit.dataset.fk = 'relayEdit';
+      edit.disabled = busy;
+      gh.append(edit);
     }
+    group.append(gh);
+    const line = ownRemoteLine(status);
+    if (failed) group.append(el('p', 'rm-warn', t('settings.remote.failed')));
+    else if (line) group.append(stateLine(line.kind, line.text));
+    if (editing) group.append(relayEdit());
+    for (const d of devices) {
+      const view = deviceRow(d, status);
+      group.append(listRow({ icon: view.icon, name: view.name, sub: view.offline ? t('settings.remote.offline') : '', key: `device-${d.id}`,
+        onclick: () => { detailId = d.id; confirming = false; message = ''; paint(); } }));
+    }
+    out.push(group);
     return out;
   }
 
