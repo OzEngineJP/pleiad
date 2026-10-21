@@ -1,8 +1,11 @@
 // Pleiad Plus の同期（docs/plus.md「同期」）。鍵（keys.mjs）・運ぶもの（targets.mjs）・回すもの（engine.mjs）を束ね、状態を出す。
 //
 //   回す条件: Plus にログインしていて（account.status が plus）、この PC が台帳に載っている（hosts.mjs の state が registered）
+//   条件から外れた（Plus でなくなった・登録が外れた）: 回していても止める。そろい直したら start から回し直す（タイマーも張り直す）
+//   api が 403 not_plus・account_disabled を返した（engine が stopped で止まる）: セッションがまだ plus と読んでいても、
+//     止まったあとに GET /v1/account を読めて plus と分かる（accountReadAt が進む）か、条件がいったん外れるまで回さない
 //   ログアウト・アカウントの切り替え: 止めて、アカウントの同期鍵（plus:syncAccountKey）と手元の覚えを捨てる。ホストの鍵対は残す
-//   getSyncStatus(): { state: off|disabled|waiting_key|syncing|idle|quota|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error }
+//   getSyncStatus(): { state: off|disabled|waiting_key|syncing|idle|quota|stopped|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error }
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import { createSyncKeys } from './keys.mjs';
@@ -29,31 +32,48 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
   const hostId = () => host()?.hostId ?? null;
   const keys = createSyncKeys({ client: session.client, secrets, uid, hostId, log });
   const targets = createSyncTargets({ dataDir, home, env, settings, log });
+  let runningUid = null;   // 回している uid
+  let keptUid = null;      // 同期鍵と手元の覚えを持っている uid（ログアウト・切り替えで捨てる）
+  let held = null;         // engine が api の 403 で止まった: { readAt }（止まったときの accountReadAt）
   const engine = createSyncEngine({
     client: session.client, keys, targets, dataDir, uid, hostId, log, settingsEvents,
     ...(clock ? { clock } : {}), ...(watch ? { watch } : {}),
-    onStatus: status => { for (const fn of listeners) { try { fn(status); } catch {} } },
+    onStatus: status => {
+      if (status.state === 'stopped' && runningUid) {
+        held = { readAt: session.snapshot?.()?.accountReadAt ?? 0 };
+        runningUid = null;
+      }
+      for (const fn of listeners) { try { fn(status); } catch {} }
+    },
   });
-  let runningUid = null;
 
   const eligible = () => {
     const s = session.snapshot?.() ?? {};
     return s.signedIn === true && s.account?.status === 'plus' && host()?.state === 'registered' && Boolean(hostId()) && Boolean(uid());
   };
 
+  /** 条件から外れたときの止め方: ログイン中で Plus でないなら stopped（理由つき）、ほかは off */
+  const stopReason = s => {
+    if (s.signedIn !== true || !s.account?.status || s.account.status === 'plus') return null;
+    return s.account.status === 'disabled' ? 'account_disabled' : 'not_plus';
+  };
+
   /** セッション・登録の状態が変わったときに呼ぶ。条件を満たせば回し始め、外れたら止める */
   async function update() {
     const s = session.snapshot?.() ?? {};
     const now = s.signedIn ? uid() : null;
-    if (runningUid && now !== runningUid) {
+    if (keptUid && now !== keptUid) {
       // ログアウト・アカウントの切り替え: 前のアカウントの同期鍵と覚えを捨てる
-      runningUid = null;
+      runningUid = null; keptUid = null; held = null;
       await engine.forget();
       await keys.forget();
     }
-    if (!eligible()) { if (!runningUid) engine.stop(); return; }
+    if (!eligible()) { runningUid = null; held = null; engine.stop({ reason: stopReason(s) }); return; }
     if (runningUid) return;
-    runningUid = now;
+    // api の 403 で止まったあとは、plus と新しく読めるまで待つ（読むたびに 1 回だけ試す）
+    if (held && (s.accountReadAt ?? 0) <= held.readAt) return;
+    held = null;
+    runningUid = keptUid = now;
     await engine.start();
   }
 
@@ -76,7 +96,7 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
       await fsp.mkdir(engine.conflictsDir, { recursive: true });
       return openFolder(engine.conflictsDir);
     },
-    stop: () => { runningUid = null; engine.stop(); },
+    stop: () => { runningUid = null; held = null; engine.stop(); },
     engine, keys, targets,
   };
 }

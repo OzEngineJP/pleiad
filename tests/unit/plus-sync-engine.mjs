@@ -14,6 +14,7 @@ import { createSyncKeys, SYNC_ACCOUNT_KEY } from '../../core/plus/sync/keys.mjs'
 import { createSyncTargets } from '../../core/plus/sync/targets.mjs';
 import { createSyncSettings } from '../../core/plus/sync/settings.mjs';
 import { createSyncEngine, SYNC_DEBOUNCE_MS, SYNC_RECEIVE_MS, CONFLICT_KEEP_MS } from '../../core/plus/sync/engine.mjs';
+import { createPlusSync } from '../../core/plus/sync/index.mjs';
 import { decryptItem, deriveItemKeys, fromB64url } from '../../core/plus/sync/crypto.mjs';
 
 export const name = 'plus-sync-engine';
@@ -397,6 +398,69 @@ export default async function (t) {
     // ---- 止める
     a.engine.stop();
     t.ok('stop で off・タイマーも watch も残らない', a.engine.status().state === 'off' && a.clock.pending() === 0 && a.engine.watching().length === 0);
+
+    // ================= アカウントの停止と再開（index.mjs の update()）=================
+    // A の置き場と鍵のまま、セッションと登録を差し替えて createPlusSync から回す。人の操作（今すぐ同期・起動し直し）はしない
+    const clockS = fakeClock(a.clock.now());
+    const callsS = [];
+    let readAt = 1;
+    let snap = { signedIn: true, account: { uid: UID, status: 'plus' }, accountReadAt: readAt };
+    const readAccount = status => { readAt += 1; snap = { ...snap, account: { ...snap.account, status }, accountReadAt: readAt }; };
+    const baseS = createPlusClient({ config, getIdToken: async () => plus.issueIdToken(UID), appVersion: 'test' });
+    let inFlightS = 0;
+    const hs = { clock: clockS, activity: { inFlight: () => inFlightS, last: 0 } };
+    const clientS = {
+      async request(m, p, o) {
+        callsS.push(`${m} ${p.split('?')[0]}`);
+        inFlightS++; hs.activity.last = performance.now();
+        try { return await baseS.request(m, p, o); } finally { inFlightS--; hs.activity.last = performance.now(); }
+      },
+    };
+    const sync = createPlusSync({
+      session: { client: clientS, snapshot: () => snap },
+      host: () => ({ state: 'registered', hostId: a.hostId }), secrets: a.secrets, dataDir: a.dataDir, home: a.home, env: {},
+      clock: clockS, watch: () => ({ close() {}, on() {} }),
+    });
+    engines.push(sync.engine);
+    const countS = what => callsS.filter(c => c === what).length;
+    await sync.update();
+    t.ok('停止の前: update() で回して idle', sync.getSyncStatus().state === 'idle', JSON.stringify(sync.getSyncStatus()));
+
+    // 10 分ごとの受け取りで 403 account_disabled
+    plus.state.syncFail.push({ method: 'GET', path: /^\/v1\/sync\/state$/, status: 403, code: 'account_disabled', message: 'disabled', count: 100 });
+    await adv(hs, SYNC_RECEIVE_MS);
+    const stopped = sync.getSyncStatus();
+    t.ok('403 account_disabled: error ではなく stopped（理由は account_disabled）', stopped.state === 'stopped' && stopped.error === 'account_disabled', JSON.stringify(stopped));
+    t.ok('403 account_disabled: タイマーを残さない（受け取りも鍵の受け渡しも張り直さない）', clockS.pending() === 0, String(clockS.pending()));
+    const stoppedState = countS('GET /v1/sync/state');
+    readAccount('disabled');
+    await sync.update();
+    await adv(hs, SYNC_RECEIVE_MS * 2);
+    t.ok('停止の間（disabled と読めている）: api を呼ばず、stopped のまま', countS('GET /v1/sync/state') === stoppedState && sync.getSyncStatus().state === 'stopped');
+
+    // 再開: アカウントを plus と読み直して update() → 1 回回って idle（error が残らない）
+    plus.state.syncFail.length = 0;
+    readAccount('plus');
+    await sync.update();
+    t.ok('再開: plus と読めた update() で 1 回回って idle', sync.getSyncStatus().state === 'idle' && sync.getSyncStatus().error === null && countS('GET /v1/sync/state') === stoppedState + 1,
+      JSON.stringify({ s: sync.getSyncStatus(), n: countS('GET /v1/sync/state') - stoppedState }));
+    const itemsBefore = countS('GET /v1/sync/items');
+    await adv(hs, SYNC_RECEIVE_MS);
+    t.ok('再開: 10 分たつと受け取りが走る（タイマーを張り直している）', countS('GET /v1/sync/items') === itemsBefore + 1 && sync.getSyncStatus().state === 'idle',
+      JSON.stringify({ n: countS('GET /v1/sync/items') - itemsBefore, s: sync.getSyncStatus() }));
+
+    // セッションがまだ plus と読んでいる間に api が not_plus を返した: 新しく plus と読めるまで回さない
+    plus.state.syncFail.push({ method: 'GET', path: /^\/v1\/sync\/state$/, status: 403, code: 'not_plus', message: 'not plus', count: 100 });
+    await adv(hs, SYNC_RECEIVE_MS);
+    t.ok('403 not_plus: stopped（理由は not_plus）', sync.getSyncStatus().state === 'stopped' && sync.getSyncStatus().error === 'not_plus', JSON.stringify(sync.getSyncStatus()));
+    plus.state.syncFail.length = 0;
+    const notPlusState = countS('GET /v1/sync/state');
+    await sync.update();
+    t.ok('not_plus のあと、アカウントを読み直さないままの update() では回さない', countS('GET /v1/sync/state') === notPlusState && sync.getSyncStatus().state === 'stopped');
+    readAccount('plus');
+    await sync.update();
+    t.ok('not_plus のあと、plus と読み直した update() で回して idle', sync.getSyncStatus().state === 'idle' && countS('GET /v1/sync/state') === notPlusState + 1);
+    sync.stop();
   } finally {
     for (const e of engines) e.stop();
     await plus.close();

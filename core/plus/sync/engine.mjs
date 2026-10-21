@@ -6,6 +6,7 @@
 //     鍵の受け渡しだけは 5 分ごとにも見る
 //   競合: 平文の mtime の新しい方を採り（同じなら相手）、負けた方を <data>/plus/sync-conflicts/<YYYYMMDD-HHmmss>/<論理名> に写す。
 //     写しは作ってから 30 日を過ぎたら start のときに消す
+//   アカウントの停止（403 not_plus・account_disabled）: stop まで行い、状態は stopped（error に理由）。回し直すのは start（index.mjs）
 //
 // ログには論理名・中身・鍵を出さない（項目は itemId だけ）。
 import crypto from 'node:crypto';
@@ -27,7 +28,7 @@ const PAGE_LIMIT = 200;
 const MAX_PAGES = 10_000;
 const OWN_WRITE_MS = 10_000;
 const STAMP_RX = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/;
-const STOP_CODES = new Set(['not_plus', 'account_disabled', 'unauthenticated']);
+const ACCOUNT_STOP_CODES = new Set(['not_plus', 'account_disabled']);
 
 const sha256 = buf => crypto.createHash('sha256').update(buf).digest('hex');
 const pad = n => String(n).padStart(2, '0');
@@ -133,7 +134,13 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   function handleRunError(e) {
     const code = e?.code ?? 'error';
     if (e?.status === 403 && e.message === 'sync_disabled') { setStatus({ state: 'disabled', error: null }); return; }
-    if (STOP_CODES.has(code) || e?.status === 401) {
+    if (ACCOUNT_STOP_CODES.has(code)) {
+      // アカウントが Plus で使えない: 止める（タイマーも watch も外す）。Plus と分かり直したら index.mjs が start から回す
+      log(`sync stopped (${code})`);
+      stop({ reason: code });
+      return;
+    }
+    if (code === 'unauthenticated' || e?.status === 401) {
       // セッションの扱い（B1）に従う。ここでは止めるだけ
       log(`sync stopped (${code})`);
       setStatus({ state: 'error', error: code });
@@ -482,7 +489,8 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     return done;
   }
 
-  function stop() {
+  /** 止める。reason（not_plus・account_disabled）があれば stopped（アカウントの停止。誤りではない）、無ければ off */
+  function stop({ reason = null } = {}) {
     active = false;
     clearTimers();
     closeWatchers();
@@ -490,7 +498,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     unsubscribe = null;
     key = null;
     quota = false;
-    setStatus({ state: 'off', error: null });
+    setStatus({ state: reason ? 'stopped' : 'off', error: reason });
   }
 
   /** 同期をやり直す: 新しい鍵で作り直し、手元の全部を上げ直す */

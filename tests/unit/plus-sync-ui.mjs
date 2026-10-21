@@ -90,6 +90,14 @@ export default async function (t) {
     t.ok(`error(${error}): 「今すぐ同期」と「同期をやり直す」`, buttonTexts(nodes).includes('今すぐ同期') && buttonTexts(nodes).includes('同期をやり直す'));
   }
 
+  // stopped: アカウントの停止（403 account_disabled・not_plus）。誤りではないので「同期できませんでした」は出さず、自動で戻ることを書く
+  for (const [error, want] of [['account_disabled', 'このアカウントでは今は同期を使えません'], ['not_plus', 'Pleiad Plus に戻ると']]) {
+    nodes = render({ ...BASE, state: 'stopped', error });
+    const tx = text(nodes);
+    t.ok(`stopped(${error}): 「同期は止まっています」と「${want}」、「同期できませんでした」は出さない`, tx.includes('同期は止まっています') && tx.includes(want) && tx.includes('自動で再開します') && !tx.includes('同期できませんでした'), tx);
+    t.ok(`stopped(${error}): ボタンは出さない（回しても断られる）`, buttonTexts(nodes).length === 0, buttonTexts(nodes).join());
+  }
+
   // 確かめ: 題・本文・「やり直す」「やめる」
   nodes = render(BASE, { confirming: true });
   t.ok('確かめ: 題と本文と 2 ボタン', text(nodes).includes('同期をやり直しますか？') && text(nodes).includes('サーバーから消して、この PC の内容で始め直します') && buttonTexts(nodes).includes('やり直す') && buttonTexts(nodes).includes('やめる'));

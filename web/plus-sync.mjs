@@ -2,6 +2,7 @@
 // 状態から DOM を作る純粋な関数（tests/unit/plus-sync-ui.mjs が tests/lib/dom-stub.mjs で動かす）。
 // スイッチはアカウントの sync.enabled（status.account.sync）、状態の行は getSyncStatus() の形。
 // enabled が false・state が disabled のときは状態の行を出さない（スイッチだけが残る）。
+// stopped（アカウントの停止で止まっている）は誤りにしない。Plus と分かり直せば自動で回し直すので、ボタンも出さない。
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, switchButton, waitLine } from './remote-parts.mjs';
@@ -93,6 +94,10 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
         el('p', 'rm-sub', t('settings.plus.syncQuotaUsage', { used: megaBytes(s.totalBytes), limit: megaBytes(s.limitBytes) })),
         el('p', 'rm-sub', t('settings.plus.syncQuotaNote')));
       act(t('settings.plus.syncReset'), onAskReset, 'btn btn-quiet', 'syncReset');
+      break;
+    case 'stopped':
+      live.append(el('p', 'rm-weak', t('settings.plus.syncStopped')),
+        el('p', 'rm-sub', s.error === 'not_plus' ? t('settings.plus.syncStoppedNotPlus') : t('settings.plus.syncStoppedDisabled')));
       break;
     case 'error': {
       const code = s.error;
