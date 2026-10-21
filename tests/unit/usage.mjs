@@ -48,7 +48,7 @@ async function japaneseCases(t) {
   assert.equal(codexQuota({}).windows.length, 0);
   assert.equal(whamQuota({ rate_limit: { primary_window: { used_percent: 40, limit_window_seconds: 18000, reset_at: 1800000000 } } }).windows[0].remainingPercent, 60);
   assert.equal(claudeQuota({ subscription_type: 'max', rate_limits: { five_hour: { utilization: null }, seven_day: { utilization: 30 }, model_scoped: [{ display_name: 'Fable', utilization: 97 }] } }).windows[2].remainingPercent, 3);
-  assert.match(quotaText(usageWindow('5h', 20, '2020-01-01', 300)), /更新待ち/);
+  assert.equal(quotaText(usageWindow('5h', 20, '2020-01-01', 300)), '—');
   t.ok('欠損を0とせず、複数枠・秒の時刻・モデル別枠を表示する', true);
 
   const meter = createCodexMeter();
@@ -82,7 +82,7 @@ async function japaneseCases(t) {
   assert.equal(first.fetchedAt, now);
   now += 61000; await qstore.refresh('codex', fetcher);
   qstore.invalidate();
-  assert.deepEqual(notices, [['codex', 2], [null, null]]);
+  assert.deepEqual(notices, [['codex', 1], ['codex', 2], [null, null]]);
   t.ok('ストアはスナップショットに revision・fetchedAt・stale を持ち、取得と無効化を購読へ届ける', true);
 
   // 永続化: 取れた値を usage-quota.json に残し、次の起動は stale 付きの前回値を先に返す

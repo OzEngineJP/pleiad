@@ -3344,7 +3344,7 @@ function onEvent(ev, replay = false) {
   // 委譲の振り分けの設定・キー・使用量が変わった。設定 › 委譲を開いていれば取り直す
   if (ev.type === 'delegationRoutingChanged') { delegationSettings.event(ev); return; }
   // 使用枠の正本に新しい値が届いた・無効化した（backend が無ければ全部）。購読している面へ結果を配る
-  if (ev.type === 'usageChanged') { ev.backend ? usageSource.load(ev.backend).catch(() => {}) : usageSource.reload(); return; }
+  if (ev.type === 'usageChanged') { ev.backend ? usageSource.changed(ev.backend).catch(() => {}) : usageSource.reload(); return; }
   // 依頼元が委譲の子の設定を替えた（ADR 0134）。持っている行なら読み直す（終わったタスクは running に載らないため）
   if (ev.type === 'agentTaskChanged') { if (taskCards.rows.has(ev.taskId)) fetchTaskCards([ev.taskId]).catch(() => {}); return; }
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
@@ -10108,6 +10108,7 @@ function connect() {
       }
       // 画面を配ったのと違う版のサーバーにつながった（無停止の更新の切り替え）。下書きを保存して 1 回だけ読み直す
       if (reloadForVersion(m)) return;
+      usageSource.reconnect();
       if (m.homeDir) state.homeDir = m.homeDir;
       // サーバーの起動時刻。これより前の更新による中断だけを「更新の後」の一行に数える（syncResumeStrip）
       state.serverStartedAt = Number.isFinite(m.startedAt) ? m.startedAt : null;

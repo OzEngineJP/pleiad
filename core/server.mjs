@@ -2,7 +2,7 @@
 import './server-log-boot.mjs';
 import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
-import { createQuotaStore, createUsageStore, agentUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
+import { createQuotaStore, createUsageStore, agentUsage, readProviderUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
 import { migrateClaudeUsage } from './usage-migrations.mjs';
 // HTTP（web/ の配信）+ WebSocket（/ws）。token gate は constant-time 比較、既定は localhost bind。
 //
@@ -4286,12 +4286,11 @@ async function renameStatusGroup(args, actor) {
 async function providerUsageOf(args, { force = false } = {}) {
   const backend = getBackend(args?.backend);
   if (!backend) throw new Error(t('agents.notFound'));
-  const quota = await providerQuota(backend, { force });
-  let local;
-  try { local = await usageStore.summary(backend.id); }
-  catch { local = { error: t('quota.localFailed') }; }
-  // 短い間隔の上限で今止まっている枠（日次・週次の枠には出ない。Issue #111）
-  return { backend: backend.id, label: backend.label, quota, local, held: heldSlots(backend.id) };
+  return readProviderUsage(backend, {
+    read: () => args?.snapshot && !force ? quotaStore.get(backend.id) ?? providerQuota(backend) : providerQuota(backend, { force }),
+    latest: () => quotaStore.get(backend.id), summary: () => usageStore.summary(backend.id),
+    held: () => heldSlots(backend.id),
+  });
 }
 
 /**
