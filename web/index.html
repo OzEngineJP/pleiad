@@ -189,6 +189,7 @@
       <p class="cerr" id="onboardingCwdError" role="alert"></p>
     </div>
     <p id="onboardingError" role="status" aria-live="polite"></p>
+    <p id="onboardingLive" class="visually-hidden" role="status" aria-live="polite"></p>
     <div class="onboarding-actions">
       <small class="muted" data-i18n="dialog.onboarding.note"></small>
       <button type="button" class="btn btn-primary" id="completeSetup" data-i18n="dialog.onboarding.start"></button>
@@ -328,6 +329,7 @@
           <div id="settingsAgentSlot">
             <div id="agentControls">
               <div id="authSec" hidden></div>
+              <p id="authLive" class="visually-hidden" role="status" aria-live="polite"></p>
               <button type="button" class="btn" id="refreshAgents" data-i18n="settings.agents.recheck"></button>
               <p id="setupError" role="status" aria-live="polite"></p>
             </div>

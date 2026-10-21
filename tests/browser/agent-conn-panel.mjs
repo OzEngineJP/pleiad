@@ -50,7 +50,7 @@ try {
   }
   const card = id => `#authSec .agent-card[data-agent="${id}"]`;
   const toggle = async (page, id) => { await page.locator(`${card(id)} .connect`).click(); await page.waitForTimeout(600); };
-  const closeConn = async (page, id) => { await page.locator(`${card(id)} .agent-conn-head button`).click(); await page.waitForTimeout(300); };
+  const closeConn = async (page, id) => { await page.locator(`${card(id)} .connect`).click(); await page.waitForTimeout(300); };
   // ［状態を再確認］。カードが描き直される（renderAuth）
   // keepFocus: フォーカスを動かさずに押す（打っている間の裏の描き直し。SDK の取得・接続先の変更のイベントと同じ）
   const recheck = async (page, { keepFocus = false } = {}) => {

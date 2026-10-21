@@ -1,5 +1,6 @@
 import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
+import { runMark } from './arc.mjs';
 
 // ページを足したら、下の `$('<名前>Tab').onclick = () => page('<名>')` も足す（無いと札は出るが切り替わらない）
 const pages = [['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'apiKeysPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['input', 'inputTab', 'inputPanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['voice', 'voiceTab', 'voicePanel'], ['remote', 'remoteTab', 'remotePanel'], ['plus', 'plusTab', 'plusPanel'], ['updates', 'updatesTab', 'updatesPanel']];
@@ -15,8 +16,10 @@ export function shouldShowOnboarding(status, auth) {
 
 /**
  * folderBrowser はブラウザー版の「フォルダーを選ぶ…」の簡易ブラウザー（web/composer-controls.mjs。入力欄の面と同じ部品）
+ * authLinks(id) はログインを待っている間の開く・写す入口（web/auth-links.mjs。URL が届くまでは null）、cancelLogin(agent) は［やめる］、
+ * authNote(id) は直前のログインの時間切れ・失敗の一文（ADR 0243）
  */
-export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlBox, begin, folderBrowser, onClose }) {
+export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, cancelLogin, authLinks, authNote, authUrlBox, begin, folderBrowser, onClose }) {
   const $ = id => document.getElementById(id);
   const welcome = $('onboardingDialog');
   let status = null, selected = '', checked = false, locked = false;
@@ -25,6 +28,10 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
   const currentCwd = () => chosenCwd || status?.cwd || status?.homeDir || '';
   const error = message => { $('onboardingError').textContent = message; };
   const isOpen = () => document.body.classList.contains('settings');
+  // ［ログイン］→［やめる］、［やめる］→［ログイン］と、押したボタンが消える行の焦点の行き先（{ agent, pending: 待つ状態 }）
+  let loginFocus = null;
+  // 読み上げに伝えたエージェントごとの状態（変わったときだけ #onboardingLive に書く）
+  const spoken = new Map();
   // 別のページへ移ったら本文を先頭に戻す（前のページの位置のまま途中から始まらないように）。同じページを押し直したときは動かさない
   let shown = null;
   function page(active = 'setup') {
@@ -78,9 +85,13 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
       // 行は毎回作り直す。押した行ごと消えるので、居場所が一覧の中にあったら選択中の行へ戻す。
       // 戻さないと body に落ち、そのあと矢印キーが効かない
       const keepFocus = focus || list.contains(document.activeElement);
+      // 行の［ログイン］［やめる］に居たら、描き直した同じ行の同じ役のボタンへ戻す
+      const keepAct = !focus && list.contains(document.activeElement) && document.activeElement.closest('[data-act]')
+        ? document.activeElement.closest('.onboarding-agent-item')?.dataset.agent : null;
       list.replaceChildren(...agents.map(agent => {
         const row = document.createElement('div');
         row.className = 'onboarding-agent-item';
+        row.dataset.agent = agent.id;
         row.setAttribute('role', 'radio');
         const isSelected = selected === agent.id;
         row.setAttribute('aria-checked', String(isSelected));
@@ -125,7 +136,26 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
         } else if (st?.loggedIn) {
           stateEl.textContent = st.account || t('settings.agents.loggedIn');
         } else if (st?.pending) {
-          stateEl.textContent = t('settings.agents.loginPending');
+          // 回る印と「ログインを待っている」・［やめる］（リモートの窓からも押せる）。開く・写す入口は名前の下
+          const wait = document.createElement('span');
+          wait.className = 'wait';
+          wait.append(runMark(), t('settings.agents.loginPending'));
+          const stop = document.createElement('button');
+          stop.type = 'button';
+          stop.className = 'btn';
+          stop.dataset.act = 'login';
+          stop.textContent = t('settings.agents.cancelLogin');
+          stop.setAttribute('aria-label', t('settings.agents.cancelLoginLabel', { agent: agent.label }));
+          stop.disabled = Boolean(st.cancelling);
+          stop.onclick = e => {
+            e.stopPropagation();
+            stop.disabled = true;
+            loginFocus = { agent: agent.id, pending: false };
+            cancelLogin?.(agent);
+          };
+          stateEl.append(wait, stop);
+          const links = authLinks?.(agent.id);
+          if (links) { links.className = 'ob-links'; info.append(links); }
         } else if (globalThis.window?.plyRemote) {
           // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）
           stateEl.textContent = t('remote.loginOnHostShort');
@@ -135,8 +165,10 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
           btn.type = 'button';
           btn.className = 'btn';
           btn.textContent = t('settings.agents.signIn');
+          btn.dataset.act = 'login';
           btn.onclick = e => {
             e.stopPropagation();
+            loginFocus = { agent: agent.id, pending: true };
             if (authLogin) authLogin(agent);
           };
           stateEl.append(btn);
@@ -145,7 +177,22 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
         row.append(info, stateEl);
         return row;
       }));
-      if (keepFocus) list.querySelector('[aria-checked=true]')?.focus();
+      const act = keepAct && [...list.children].find(r => r.dataset.agent === keepAct)?.querySelector('[data-act=login]');
+      if (act) act.focus();
+      else if (keepFocus) list.querySelector('[aria-checked=true]')?.focus();
+      // 押したボタンが消えた行では、入れ替わったボタン（［やめる］か［ログイン］）へ焦点を移す
+      if (loginFocus && Boolean(auth.get(loginFocus.agent)?.pending) === loginFocus.pending) {
+        const index = agents.findIndex(a => a.id === loginFocus.agent);
+        loginFocus = null;
+        list.children[index]?.querySelector('[data-act=login]')?.focus();
+      }
+      const live = $('onboardingLive');
+      for (const agent of agents) {
+        const st = auth.get(agent.id);
+        const said = st?.pending ? t('settings.agents.loginPending') : st?.loggedIn ? t('settings.agents.loggedIn') : t('settings.agents.loggedOut');
+        if (spoken.has(agent.id) && spoken.get(agent.id) !== said && live) live.textContent = `${agent.label}: ${said}`;
+        spoken.set(agent.id, said);
+      }
     }
 
     // ログインの URL と手貼りの欄。ダイアログは modal なので、設定画面に出しても届かない
@@ -158,7 +205,7 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, authUrlB
     error(ready ? ''
       : agent?.installed === false ? t('onboarding.installHint')
       : st.pending ? t('onboarding.waitingLogin')
-      : t('onboarding.signInHint'));
+      : authNote?.(selected) || t('onboarding.signInHint'));
   }
   async function refresh() {
     status = await cmd('onboardingStatus');

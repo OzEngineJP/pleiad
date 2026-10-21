@@ -21,6 +21,7 @@ import { setupMessagePeek } from './message-peek.mjs';
 import { actionButtons, copyToClipboard, messageMenuPlan, hoverless, setupMessageMenu, openSourceDialog, announce, writeClipboard, reportAiContent } from './message-actions.mjs';
 import { tailInfo, penGlyph } from './resend-band.mjs';
 import { paintAuthFailure, resentNote } from './auth-expired.mjs';
+import { authLinks } from './auth-links.mjs';
 import { mountFold, revealFold } from './fold.mjs';
 import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
@@ -457,6 +458,7 @@ const state = {
   thinkTokens: 0,
   auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending? }）
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
+  authNote: new Map(),     // backendId -> 直前のログインの時間切れ・失敗の一文（カードの中に出す。次のログインで消える。ADR 0243）
   busy: false,             // 枝の動きの最中。重ねて動かさない
   compactions: [],
   schedules: [],
@@ -834,7 +836,7 @@ function sys(html) {
  * 操作の失敗・知らせは会話の流れに入れない（ADR 0067）。会話の中の出来事の行（sys）は、その会話のターンの失敗・履歴を読めない・
  * 圧縮と接続の問題のように、会話そのものの出来事だけにする。
  * 脇の行・メニューからの操作は脇の帯（side.showUndo。失敗は再試行の無い形）へ、入力欄・メッセージ・タイトルからの操作は入力欄の上のエラー行（#settingsError）へ、
- * ログインは設定の面（#setupError）へ出す
+ * ログインの時間切れ・失敗はそのエージェントのカードの中（state.authNote）へ出す
  */
 const sideNote = (text, { failed = true } = {}) => side.showUndo(text, null, { retry: failed });
 const composerError = (text) => { $("settingsError").textContent = text; };
@@ -4043,11 +4045,22 @@ function restoreConnFocus(focus) {
   if (focus.start !== null) try { focus.el.setSelectionRange(focus.start, focus.end); } catch {}
 }
 
+/** ［やめる］を押して、ログインの終わりを待っているエージェント（描き直しても押せないままにする） */
+const authCancelling = new Set();
+/** ［ログイン］→［やめる］、［やめる］→［ログイン］と、押したボタンが消えるカードの焦点の行き先（{ agent, pending: 待つ状態 }） */
+let authFocus = null;
+/** 読み上げに伝えたカードの状態（変わったときだけ #authLive に書く） */
+const authSpoken = new Map();
+
 function renderAuth() {
   const sec = $("authSec");
   const targets = state.backends.filter((b) => b.capabilities?.login);
   sec.hidden = targets.length === 0;
   const focus = parkConnPanels(sec);
+  // 描き直しで消えるカードのボタン（［ログイン］［やめる］）に居たら、同じカードの同じ役のボタンへ戻す
+  const actFocus = document.activeElement?.closest?.("#authSec [data-act]");
+  const keepAct = actFocus ? { agent: actFocus.closest(".agent-card")?.dataset.agent, act: actFocus.dataset.act } : null;
+  for (const id of authCancelling) if (!state.auth.get(id)?.pending) authCancelling.delete(id);
   sec.replaceChildren();
   if (!targets.length) { $("authNeed").hidden = true; return; }
   const need = [];
@@ -4065,21 +4078,37 @@ function renderAuth() {
     const stEl = el("span", "agent-state", text);
     if (st.detail && st.loggedIn) stEl.title = st.detail;
     if (st.installed === false || !st.supported || (!st.loggedIn && !st.pending)) stEl.classList.add("out");
-    else if (st.pending) stEl.classList.add("wait");
+    else if (st.pending) { stEl.classList.add("wait", "spin"); stEl.prepend(runMark()); }
     head.append(stEl);
     const actions = el("div", "agent-actions");
     if (st.installed === false && st.installUrl) {
       const link = el("a", "btn", t("settings.agents.install"));
       link.href = st.installUrl; link.target = "_blank"; link.rel = "noreferrer";
       actions.append(link);
-    } else if (st.supported && !st.pending && !st.loggedIn && window.plyRemote) {
+    } else if (st.supported && st.pending) {
+      // 待っている間は［ログイン］の場所に［やめる］（リモートの窓からも押せる。docs/design-system.md「ログインを待っている間」、ADR 0243）
+      const stop = el("button", "btn", t("settings.agents.cancelLogin"));
+      stop.type = "button";
+      stop.dataset.act = "login";
+      stop.setAttribute("aria-label", t("settings.agents.cancelLoginLabel", { agent: b.label }));
+      stop.disabled = authCancelling.has(b.id);
+      stop.onclick = (e) => { e.stopPropagation(); stop.disabled = true; authFocus = { agent: b.id, pending: false }; cancelLogin(b); };
+      actions.append(stop);
+    } else if (st.supported && !st.loggedIn && window.plyRemote) {
       // リモートの窓: ログインの戻り先はホストの PC なので、ここからは始めない（docs/remote.md §7.3）。状態はそのまま見える
-      actions.append(el("span", "remote-login-note", t("remote.loginOnHost")));
-    } else if (st.supported && !st.pending) {
+      const note = el("span", "remote-short", t("remote.loginOnHostShort"));
+      note.title = t("remote.loginOnHost");
+      actions.append(note);
+    } else if (st.supported) {
       const loggedIn = st.loggedIn;
       const btn = el("button", "btn", loggedIn ? t("settings.agents.signOut") : t("settings.agents.signIn"));
       btn.type = "button";
-      btn.onclick = (e) => { e.stopPropagation(); if (loggedIn) authLogout(b); else authLogin(b); };
+      btn.dataset.act = "login";
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        if (loggedIn) authLogout(b);
+        else { authFocus = { agent: b.id, pending: true }; authLogin(b); }
+      };
       actions.append(btn);
     }
     // アカウントと接続先。持っているものだけ（アカウントのみのエージェントは「アカウント」）。1 つの面に両方を縦に並べる
@@ -4110,15 +4139,9 @@ function renderAuth() {
     if (meta.childNodes.length) card.append(meta);
     // 「アカウントと接続先」の面（アカウント → 接続先の順に縦に並ぶ）
     if (accounts || endpoints) {
+      // 開け閉めはカードの右上のボタンだけ（面に見出しと［閉じる］は置かない）
       const conn = el("div", "agent-conn");
       conn.hidden = true;
-      const chead = el("div", "agent-conn-head");
-      chead.append(el("h3", null, t("settings.agents.connections")));
-      const closeBtn = el("button", "btn", t("compat.action.close"));
-      closeBtn.type = "button";
-      closeBtn.onclick = () => closeAgentConns();
-      chead.append(closeBtn);
-      conn.append(chead);
       if (accounts) conn.append(connSection('accounts'));
       if (endpoints) conn.append(connSection('endpoints'));
       card.append(conn);
@@ -4128,8 +4151,11 @@ function renderAuth() {
       const note = el("div", "auth-note");
       note.setAttribute("role", "status");
       note.append(el("span", null, t("settings.agents.expired")));
-      if (window.plyRemote) note.append(el("span", "remote-login-note", t("remote.loginOnHost")));
-      else {
+      if (window.plyRemote) {
+        const host = el("span", "remote-short", t("remote.loginOnHostShort"));
+        host.title = t("remote.loginOnHost");
+        note.append(host);
+      } else {
         const again = el("button", "btn link", t("settings.agents.signInAgain"));
         again.type = "button";
         again.onclick = (e) => { e.stopPropagation(); authLogin(b); };
@@ -4137,24 +4163,45 @@ function renderAuth() {
       }
       card.append(note);
     }
+    // 直前のログインの時間切れ・失敗（やめたものは出さない）
+    const failed = !st.pending && state.authNote.get(b.id);
+    if (failed) card.append(el("div", "auth-note", failed));
+    // 待っている間の、ログインの画面を開く・リンクを写す入口（URL はホストの窓にだけ届く）
+    const pend = st.pending && state.authUrl.get(b.id);
+    const links = pend && authLinks(pend.url);
+    if (links) card.append(links);
     if (st.installed !== false && st.supported && !st.loggedIn && !st.pending) need.push(b.label);
 
     const box = authUrlBox(b.id);
     if (box) card.append(box);
     list.append(card);
+    // 状態が変わったカードだけ読み上げる（初めて描くときは読まない）
+    const said = [text, failed].filter(Boolean).join(" ");
+    if (authSpoken.has(b.id) && authSpoken.get(b.id) !== said) $("authLive").textContent = `${b.label}: ${said}`;
+    authSpoken.set(b.id, said);
   }
   sec.append(list);
   restoreConnPanels();
   restoreConnFocus(focus);
+  // 押したボタンが消えたカードでは、入れ替わったボタンへ。描き直しで消えたボタンは同じ役のボタンへ戻す
+  const lost = !document.activeElement || document.activeElement === document.body;
+  if (authFocus && Boolean(state.auth.get(authFocus.agent)?.pending) === authFocus.pending) {
+    const target = sec.querySelector(`[data-agent="${authFocus.agent}"] [data-act="login"]`);
+    authFocus = null;
+    if (lost) target?.focus();
+  } else if (keepAct && lost) {
+    sec.querySelector(`[data-agent="${keepAct.agent}"] [data-act="${keepAct.act}"]`)?.focus();
+  }
   const line = $("authNeed");
   line.hidden = need.length === 0;
   if (need.length) line.textContent = t("app.authNeed", { agents: need.join(t("app.listSeparator")) });
 }
 
 /**
- * Claude Agent SDK の取得の案内とログインの URL と、コールバックを取れないときの手貼り。
+ * Claude Agent SDK の取得の案内と、端末で打つコマンドの案内と、コールバックを取れないときの手貼り。
  * 設定画面と初期設定ダイアログの両方に出す。**初期設定は modal なので、
  * ここを設定画面にしか出さないと、初回の利用者はログインを終われない。**
+ * ログインの画面を開く・リンクを写す入口は、カード（初回の案内は行）の authLinks
  */
 function authUrlBox(id) {
   const b = state.backends.find((x) => x.id === id);
@@ -4163,14 +4210,8 @@ function authUrlBox(id) {
   if (!pend) return sdk;
   const frag = document.createDocumentFragment();
   if (sdk) frag.append(sdk);
-  const box = el("div", "auth-url");
-  if (/^https?:\/\//i.test(pend.url)) {
-    const a = el("a", null, pend.url);
-    a.href = pend.url; a.target = "_blank"; a.rel = "noreferrer";
-    box.append(a);
-  } else box.append(el("span", null, pend.url));
-  if (pend.message) box.append(el("div", null, pend.message));
-  frag.append(box);
+  // ブラウザーで開く URL は入口のボタンだけで足りる。端末で打つコマンドは、どこで打つかの案内を添える
+  if (pend.message && !/^https?:\/\//i.test(pend.url)) frag.append(el("div", "auth-url", pend.message));
   // 貼り戻しを受けられるバックエンドにだけ入力欄を出す。
   // 受け取る口が無いのに出すと、貼っても何も起きない欄になる（agy がそれ）
   if (pend.message && b.capabilities?.submitCode) {
@@ -4187,7 +4228,9 @@ function authUrlBox(id) {
       try {
         await cmd("authSubmit", { backend: b.id, input: v });
       } catch (err) {
-        $("setupError").textContent = t("settings.agents.loginFailed", { agent: b.label, error: err.message });
+        state.authNote.set(b.id, t("settings.agents.loginFailed", { error: err.message }));
+        renderAuth();
+        onboarding.paint();
         send.disabled = false;
       }
     };
@@ -4196,7 +4239,7 @@ function authUrlBox(id) {
     paste.append(inp, send);
     frag.append(paste);
   }
-  return frag;
+  return frag.childNodes.length ? frag : null;
 }
 
 /** Anthropic の規約（Claude Code の Legal and compliance。商用・消費者の規約と利用ポリシーへの入口） */
@@ -4261,6 +4304,7 @@ function installClaudeSdk() {
 function authLogin(b, { fromRow = false } = {}) {
   if (window.plyRemote) { sys(html.t("remote.loginOnHost")); return Promise.resolve(null); }   // リモートの窓からは始めない（renderAuth と同じ理由）
   state.auth.set(b.id, { ...(state.auth.get(b.id) ?? {}), supported: true, pending: true });
+  state.authNote.delete(b.id);
   renderAuth();
   onboarding.paint();
   if (fromRow) rowLogins.add(b.id);
@@ -4272,15 +4316,35 @@ function authLogin(b, { fromRow = false } = {}) {
       rowLogins.delete(b.id);
       state.authUrl.delete(b.id);
       forgetVocab(b.id);
+      // やめた（［やめる］）は失敗として出さない。失敗の行から始めたものは、行が理由を出す
+      if (failure && failure.code !== 'CANCELLED' && !fromRow) state.authNote.set(b.id, authFailureNote(failure));
       await refreshAuth().catch(() => {});
-      // 取り消し（失敗の行の［キャンセル］）は失敗として出さない。失敗の行から始めたものは、行が理由を出す
-      if (failure && failure.code !== 'CANCELLED' && !fromRow) $("setupError").textContent = t("settings.agents.loginFailedRetry", { agent: b.label, error: failure.message });
       // ログインが済んだ: 期限切れのまま待っているほかの失敗の行を［もう一度送る］にする（自動では送らない。始めた行は待っている最中なので触らない）
       if (!failure) authRowsSignedIn(b.id);
     })
     .then(() => { if (failure) throw failure; return result; });
   if (!fromRow) done.catch(() => {});
   return done;
+}
+
+/** カードに出す時間切れ・失敗の一文 */
+function authFailureNote(e) {
+  return e?.code === 'TIMEOUT' ? t("settings.agents.loginTimedOut") : t("settings.agents.loginFailed", { error: e?.message ?? "" });
+}
+
+/**
+ * ［やめる］（設定のカード・初回の案内）。待っている authLogin は CANCELLED で返り、カードは未ログインに戻る（一文は出さない。ADR 0243）。
+ * ほかの窓が始めたログインもやめられる（その窓はサーバーの cancelled のイベントで待ちを畳む）
+ */
+async function cancelLogin(b) {
+  if (authCancelling.has(b.id)) return;
+  authCancelling.add(b.id);
+  onboarding.paint();
+  const r = await cmd("authCancel", { backend: b.id }).catch(() => null);
+  if (r?.supported && r.cancelled) return;
+  // 待っているログインがもう無い・やめられない。いまの状態を読み直して描き直す
+  authCancelling.delete(b.id);
+  await refreshAuth().catch(() => {});
 }
 
 // 失敗の行から始めたログイン（バックエンドの id）。設定の面を開かず、済んだの一行を会話に足さない（onAuthEvent）
@@ -4378,12 +4442,21 @@ function onAuthEvent(ev) {
   const b = state.backends.find((x) => x.id === ev.backend);
   const name = b?.label ?? ev.backend ?? "";
   if (ev.phase === "url") {
-    // URL はサーバ経由とはいえ外から来うる。http(s) だと確かめたものだけリンクにする
+    // ほかの窓が始めたログインでも、待っている間はカードに［やめる］を出す
+    state.auth.set(ev.backend, { ...(state.auth.get(ev.backend) ?? {}), supported: true, pending: true });
+    state.authNote.delete(ev.backend);
+    // URL はホストの窓にだけ出す（リモートの窓で開いても、ログインの戻り先はホストの PC。docs/remote.md §7.3）
+    if (window.plyRemote) { renderAuth(); onboarding.paint(); return; }
+    // URL はサーバ経由とはいえ外から来うる。http(s) だと確かめたものだけリンクにする（web/auth-links.mjs）
     state.authUrl.set(ev.backend, { url: String(ev.url ?? ""), message: ev.message ? String(ev.message) : "" });
     renderAuth();
     onboarding.paint();             // 初期設定ダイアログの中でログインを始めたときは、そちらに出す
-    // 進め方が見える場所に居てもらう。会話の失敗の行から始めたログインは、その行が待っている様子を出すので開かない（URL の一行は会話に残す）
-    if (!rowLogins.has(ev.backend)) openSettings();
+    // 設定・初回の案内から始めたログインは、カード（行）が待っている様子と開く・写す入口を出すので、会話に URL の一行を足さない（ADR 0243）
+    // 開いている設定・案内はそのまま（開き直すと、押した［やめる］から焦点が外れる）
+    if (!rowLogins.has(ev.backend)) { if (!onboarding.isOpen()) openSettings(); return; }
+    // 会話の失敗の行から始めたログインは、設定の面を開かず、その行に開く・写す入口を出す（URL の一行も会話に残す）
+    authRows = authRows.filter((x) => x.node.isConnected);
+    for (const x of authRows) if (x.backend === ev.backend) x.row.authUrl?.(String(ev.url ?? ""));
     const row = el("div", "m sys", t("settings.agents.loginUrl", { agent: name }));
     const url = String(ev.url ?? "");
     const a = el("a", null, url);
@@ -4394,7 +4467,9 @@ function onAuthEvent(ev) {
   }
   state.authUrl.delete(ev.backend);
   const fromRow = rowLogins.has(ev.backend);
-  if (ev.phase === "error") { if (!fromRow) $("setupError").textContent = t("settings.agents.loginFailed", { agent: name, error: ev.message ?? "" }); }
+  // やめた（どの窓の［やめる］でも）: 一文は出さず、未ログインに戻す
+  if (ev.phase === "cancelled") { refreshAuth().catch(() => {}); return; }
+  if (ev.phase === "error") { if (!fromRow) state.authNote.set(ev.backend, authFailureNote(ev)); }
   // 失敗の行から始めたログインは、その行が「✓ ログインしました」に替わるので、会話に一行を足さない
   else if (!fromRow) {
     sys(html.t("settings.agents.loginMessage", { agent: name, message: ev.message ?? t("settings.agents.loginDone") }));
@@ -10448,7 +10523,11 @@ $("titleWand").onclick = async () => {
   $("titleEdit").select();
 };
 
-const onboarding = setupOnboarding({ cmd, refreshAuth, getAuth: () => state.auth, authLogin, authUrlBox, folderBrowser, onClose: () => side.redraw(),
+const onboarding = setupOnboarding({ cmd, refreshAuth,
+  getAuth: () => new Map([...state.auth].map(([id, st]) => [id, authCancelling.has(id) ? { ...st, cancelling: true } : st])),
+  authLogin, cancelLogin, authUrlBox,
+  authLinks: (id) => (state.auth.get(id)?.pending && state.authUrl.get(id) ? authLinks(state.authUrl.get(id).url) : null),
+  authNote: (id) => state.authNote.get(id) ?? '', folderBrowser, onClose: () => side.redraw(),
   begin: async (settings, prompt) => {
     if (state.busy || creatingSession) throw new Error(t("dialog.onboarding.busy"));
     const id = await startNew(settings);
