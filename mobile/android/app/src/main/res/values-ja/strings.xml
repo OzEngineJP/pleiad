@@ -18,6 +18,8 @@
     <string name="remote_page_plus_maintenance">Pleiad Plus はメンテナンス中です。利用できるようになると接続を再開します。</string>
     <string name="remote_plus_signed_out">ログインしていません</string>
     <string name="remote_page_plus_signed_out">このホストにつなぐには Pleiad Plus にログインしてください。</string>
+    <string name="remote_plus_update">Pleiad を更新してください</string>
+    <string name="remote_page_plus_update">この版の Pleiad では公式の中継を使えません。Pleiad を更新してください。</string>
     <string name="remote_token_required">トークンが要る（アプリから開いてください）</string>
     <string name="remote_lost">ホストとの接続が切れました</string>
     <string name="remote_back_to_hosts">ホスト一覧に戻る</string>

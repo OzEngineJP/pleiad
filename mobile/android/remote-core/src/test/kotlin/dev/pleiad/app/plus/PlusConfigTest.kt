@@ -73,6 +73,16 @@ class PlusConfigTest {
     @Test fun roundTripsThroughJson() {
         val c = config()
         assertEquals(c, PlusConfig.parse(c.toJson().toString()))
+        val v2 = c.copy(admission = 2)
+        assertEquals(v2, PlusConfig.parse(v2.toJson().toString()))
+    }
+
+    @Test fun admissionIsTheNumberOrAbsent() {
+        // a number: the api issues tickets. Absent: an api from before tickets
+        assertEquals(1, PlusConfig.parse("""{"state":"on","admission":1}""")!!.admission)
+        assertNull(PlusConfig.parse("""{"state":"on"}""")!!.admission)
+        assertNull(PlusConfig.parse("""{"state":"on","admission":"2"}""")!!.admission)
+        assertFalse(config().toJson().has("admission"))
     }
 
     @Test fun versionComparesNumerically() {

@@ -183,7 +183,8 @@ class PleiadRemotePlugin : Plugin() {
                 val uid = app.plus.currentUid()
                 val rec = device.admitPlus(hostId, PlusAdmission.MODE_PAIR, uid) { kp ->
                     PlusAdmission.admit(host, relay, token, kp, app.deviceName(), BuildConfig.VERSION_NAME, mode = PlusAdmission.MODE_PAIR,
-                        onCode = { code -> notifyListeners("pairCode", JSObject().put("code", code)) }, handle = handle).copy(uid = uid)
+                        onCode = { code -> notifyListeners("pairCode", JSObject().put("code", code)) }, handle = handle,
+                        ticket = { app.plus.deviceTicket(hostId, kp) }).copy(uid = uid)
                 }
                 app.notifyHub.hostsChanged()
                 call.resolve(JSObject().put("host", JSObject(rec.toPublicJson().toString())))
@@ -220,6 +221,7 @@ class PleiadRemotePlugin : Plugin() {
             if (via == "plus" && current?.state == "signed-out") throw PairError("plus-signed-out")
             if (via == "plus" && current?.state == "blocked") throw PairError("plus-no-relay")
             if (via == "plus" && current?.state == "limit") throw PairError("plus-limit")
+            if (via == "plus" && current?.state == "update") throw PairError("plus-update")
             // The account alone does not let this device in (ADR 0245): the page first asks the host with admit().
             if (via == "plus" && device.store.host(hostId, "plus")?.reapproveAt != null) throw PairError("plus-reapprove")
             if (via == "plus" && device.store.credentials(hostId, "plus") == null) throw PairError("plus-unpaired")

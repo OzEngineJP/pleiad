@@ -3,6 +3,13 @@
 // 本文が読めないとき・ネットの誤りは PlusError({ code: 'network' })。
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * 券の道に対応したクライアントの印（X-Pleiad-Admission: 2）を付けるか。
+ * 同期の口（/v1/sync/*）は同期の券をまだ使わないので付けない。syncPublicKey を載せる登録も、印つきでは api が受けないので付けない
+ */
+export const admissionMark = (path, body) => !String(path).startsWith('/v1/sync/')
+  && !(body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'syncPublicKey'));
+
 export class PlusError extends Error {
   constructor({ status, code, message, retryAfter, resetAt, body } = {}) {
     super(message ?? code ?? 'plus error');
@@ -38,6 +45,7 @@ function errorFrom(status, body, headers) {
 export function createPlusClient({ config, getIdToken, appVersion = '0.0.0', fetchFn = fetch, onAuthFailure = () => {}, onAccountDisabled = () => {} }) {
   async function send(method, path, { body, auth, signal, token } = {}) {
     const headers = { 'x-pleiad-client': `desktop/${appVersion}` };
+    if (admissionMark(path, body)) headers['x-pleiad-admission'] = '2';
     if (auth) headers.authorization = `Bearer ${token ?? await getIdToken()}`;
     if (body !== undefined) headers['content-type'] = 'application/json';
     let res;

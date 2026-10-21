@@ -223,6 +223,27 @@ function createRemoteWindows(deps) {
     return devicePromise;
   }
 
+  // Pleiad Plus の端末の券（core/plus/tickets.mjs の purpose 'device'）。api の呼び出しは worker（ID トークンを持つ）、
+  // 鍵の持ち主の証明はこの main（端末の鍵を持つ）が作る。券の無い前の版の api なら issue は null（ID トークンの道へ戻る）
+  let ticketsPromise = null;
+  function plusTickets() {
+    ticketsPromise ??= (async () => {
+      const { createTicketIssuer } = await import(pathToFileURL(path.join(__dirname, '..', 'core', 'plus', 'tickets.mjs')).href);
+      let admission = null;
+      const request = async (method, p, body) => {
+        const r = await workerRequest('plus-ticket', { path: p, body });
+        admission = r?.admission ?? null;
+        if (!r?.ok) throw Object.assign(new Error(r?.error || 'ticket failed'), { status: r?.status ?? null, code: r?.code ?? null });
+        return r.body;
+      };
+      return createTicketIssuer({ request, admission: () => admission });
+    })();
+    ticketsPromise.catch(() => { ticketsPromise = null; });
+    return ticketsPromise;
+  }
+  /** その鍵の端末の券 { relay, admission }（無ければ null） */
+  const deviceTicket = async (hostId, keyPair) => (await plusTickets()).issue({ purpose: 'device', keyPair, hostId });
+
   function onStatus(s) {
     if (s.state === 'connected') connectedAt.set(s.hostId, Date.now());
     const entry = windows.get(s.hostId);
@@ -368,6 +389,11 @@ function createRemoteWindows(deps) {
       if (!r?.ok) throw Object.assign(new Error(r?.error || 'not signed in'), { code: 'not-signed-in' });
       return r.idToken;
     } : null;
+    // 中継の券（role:device）。426 は線を 'update' で止める
+    const getTicket = (via === 'plus' && workerRequest) ? async ({ keyPair }) => {
+      try { return (await deviceTicket(hostId, keyPair))?.relay ?? null; }
+      catch (e) { throw e?.status === 426 ? Object.assign(new Error(e.message), { code: 'update' }) : e; }
+    } : null;
     // 中継のトークンの出し直し（許可済みの鍵だけ。窓は出ない）。もう一度の許可が要る・取り消された・別のアカウントは
     // err.code のまま投げ、線がその状態で止まる（device-link.mjs）
     const onReadmit = (via === 'plus' && workerRequest) ? async () => {
@@ -377,13 +403,13 @@ function createRemoteWindows(deps) {
       if (!tokRes?.ok || !ph) return null;
       await d.admit({
         hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
-        idToken: tokRes.idToken, uid: tokRes.uid, mode: 'admit',
+        idToken: tokRes.idToken, ticketFor: kp => deviceTicket(hostId, kp), uid: tokRes.uid, mode: 'admit',
       });
       pushHosts();
       return { ...(await d.store.credentials(hostId, 'plus')), via: 'plus' };
     } : null;
 
-    const proxy = await d.open(hostId, { via, relayUrl: rec.relayUrl, getIdToken, onReadmit });
+    const proxy = await d.open(hostId, { via, relayUrl: rec.relayUrl, getIdToken, getTicket, onReadmit });
     const name = displayName(rec);
     const origin = `http://127.0.0.1:${proxy.port}`;
     const ses = session.fromPartition(partitionFor(hostId));
@@ -560,7 +586,7 @@ function createRemoteWindows(deps) {
         const d = await device();
         const rec = await d.admit({
           hostId, hostPublicKey: ph.publicKey, relayUrl: plusRes.relayUrl,
-          idToken: tokRes.idToken, uid: tokRes.uid, mode: 'pair', signal: ctl.signal,
+          idToken: tokRes.idToken, ticketFor: kp => deviceTicket(hostId, kp), uid: tokRes.uid, mode: 'pair', signal: ctl.signal,
           onCode: code => { if (!sender.isDestroyed()) sender.send('ply:hosts-code', formatCode(code)); },
         });
         pushHosts();

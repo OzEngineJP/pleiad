@@ -54,6 +54,7 @@
       const st = h.state === 'signed-out' ? t('plus.notSignedIn')
         : h.state === 'blocked' ? t('plus.noRelay')
         : h.state === 'limit' ? t('plus.limit')
+        : h.state === 'update' ? t('plus.update')
         : h.state === 'paused' ? (pstate?.plus === 'maintenance' ? t('plus.maintenance') : t('plus.temporarilyUnavailable'))
         : h.state === 'reapprove' ? t('plus.reapprove')
         : h.state === 'revoked' ? t('state.revoked')

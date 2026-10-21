@@ -47,6 +47,10 @@ class LinkPolicyTest {
             Triple(4401, "device token", "readmit"),
             Triple(4401, "account", "blocked"),
             Triple(4401, "token", "offline"),
+            // a ticket that did not pass (expired, used): take a new one
+            Triple(4401, "ticket", "offline"),
+            // the relay takes tickets only
+            Triple(4401, "update required", "update"),
             Triple(4401, "plus off", "host-offline"),
             Triple(4401, "plus unavailable", "paused"),
             Triple(4401, "host closed", "readmit"),

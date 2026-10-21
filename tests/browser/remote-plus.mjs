@@ -14,6 +14,7 @@ import { createPlusRelayAuthz } from '../lib/plus-relay-authz.mjs';
 import { admitDevice, connectDevice } from '../lib/remote-device.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { generateKeyPair } from '../../core/remote/noise.mjs';
+import { issueTicket } from '../../core/plus/tickets.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
@@ -28,7 +29,7 @@ const results = [];
 const check = (ok, label, detail) => { if (!ok) throw new Error(`${label}${detail === undefined ? '' : ` ${JSON.stringify(detail)}`}`); results.push(label); };
 
 let verifier;
-const authz = createPlusRelayAuthz({ verify: token => verifier.verify(token), isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid });
+const authz = createPlusRelayAuthz({ verify: token => verifier.verify(token), keysUrl: () => plus.ticketKeysUrl, isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid });
 const relay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz });
 const relayAddr = await relay.listen(0, '127.0.0.1');
 const relayUrl = `http://127.0.0.1:${relayAddr.port}`;
@@ -209,12 +210,21 @@ try {
   const token = plus.issueIdToken(ACCOUNT_ID);
   const base = { relayUrl, hostId: remote.hostId, hostPublicKey: Buffer.from(host.publicKey, 'base64url'), platform: 'android' };
   // 新しい鍵は、同じアカウントでも PC の画面の承認の窓を通る（ADR 0245）。裏のつなぎ直し（admit）は窓を出さずに断る
-  const quiet = await admitDevice({ ...base, idToken: token, name: 'Pixel 9' });
+  // 端末は券で申し込む（券を出す api では、ID トークンだけの申し込みを PC が 'update_required' で断る）
+  const plusRequest = async (method, p, body) => {
+    const r = await fetch(`${plus.url}${p}`, { method, headers: { authorization: `Bearer ${plus.issueIdToken(ACCOUNT_ID)}`, 'content-type': 'application/json', 'x-pleiad-admission': '2' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error ?? `HTTP ${r.status}`), { status: r.status });
+    return j;
+  };
+  const admitWithTicket = async ({ keyPair = generateKeyPair(), ...opts }) =>
+    admitDevice({ ...base, ...opts, keyPair, ticket: await issueTicket({ request: plusRequest, purpose: 'device', keyPair, hostId: remote.hostId }) });
+  const quiet = await admitWithTicket({ name: 'Pixel 9' });
   check(quiet.denied && quiet.reason === 'approval', '許可していない鍵の裏のつなぎ直しは窓を出さずに断る', quiet);
   /** 人がつなぐ（pair）→ 承認の窓に端末と同じ確認コード。shotName があれば撮る。answer が false なら答えずに { pending } を返す */
   const pairThroughWindow = async (opts, { shotName = '', answer = true } = {}) => {
     let code = '';
-    const pending = admitDevice({ ...base, idToken: plus.issueIdToken(ACCOUNT_ID), ...opts, mode: 'pair', onCode: c => { code = c; } });
+    const pending = admitWithTicket({ ...opts, mode: 'pair', onCode: c => { code = c; } });
     pending.catch(() => {});
     await page.waitForSelector('#remotePairDialog[open]');
     await until(() => code, '端末の確認コード');
@@ -284,8 +294,8 @@ try {
   await page.waitForSelector('#remotePanel .rm-group:has-text("取り消した端末"):has-text("Pixel Tablet")');
   check(!(await page.locator('#remotePanel .rm-group:has-text("Pleiad Plus")').first().innerText()).includes('Pixel Tablet'), '取り消した端末は Plus のまとまりから外れる');
   await approvalShot('revoked-list');
-  const revokedAgain = await admitDevice({ ...base, idToken: plus.issueIdToken(ACCOUNT_ID), name: 'Pixel Tablet', keyPair: second.keyPair, mode: 'pair' });
-  check(revokedAgain.denied && revokedAgain.reason === 'revoked', '取り消した鍵は、新しい ID トークンでも窓を出さずに断る', revokedAgain);
+  const revokedAgain = await admitWithTicket({ name: 'Pixel Tablet', keyPair: second.keyPair, mode: 'pair' });
+  check(revokedAgain.denied && revokedAgain.reason === 'revoked', '取り消した鍵は、新しい券でも窓を出さずに断る', revokedAgain);
   check(!(await page.locator('#remotePairDialog').evaluate(d => d.open)), '取り消した鍵には承認の窓を出さない');
   await page.locator('#remotePanel .rm-group:has-text("取り消した端末") button', { hasText: 'Pixel Tablet' }).click();
   await page.waitForSelector('#remotePanel [data-fk="hideRevoked"]');
@@ -308,7 +318,7 @@ try {
   await gotoRemote();
   await page.waitForSelector('#remotePanel .rm-group:has-text("もう一度の許可が要る端末"):has-text("Pixel 9")');
   await approvalShot('reapprove-list');
-  const quietOld = await admitDevice({ ...base, idToken: plus.issueIdToken(ACCOUNT_ID), name: 'Pixel 9', keyPair: firstKey });
+  const quietOld = await admitWithTicket({ name: 'Pixel 9', keyPair: firstKey });
   check(quietOld.denied && quietOld.reason === 'approval', 'もう一度の許可が要る端末の裏のつなぎ直しは断る', quietOld);
   const { pending: reapproved } = await pairThroughWindow({ name: 'Pixel 9', keyPair: firstKey }, { shotName: 'approve-again', answer: false });
   const againText = await page.locator('#remotePairDialog').innerText();

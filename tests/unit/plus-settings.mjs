@@ -155,6 +155,23 @@ export default async function (t) {
   t.ok('host removed: 外されている旨と「この PC を登録し直す」', text(nodes).includes('この PC は Pleiad Plus の登録から外されています') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
   byFk(nodes, 'hostReregister').onclick();
   t.ok('「この PC を登録し直す」は reregister を呼ぶ', rereg === 1);
+  // 外した hostId を api が登録し直さない（host.error.permanent）: 同じボタンが鍵の作り直しの確かめを開く
+  const permanent = { state: 'removed', hostId: 'h1', error: { code: 'host_removed', permanent: true } };
+  let askedKey = false;
+  rereg = 0;
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: permanent }, { ...deps, reregister: () => { rereg++; }, askRebind: () => { askedKey = true; } });
+  t.ok('host removed（登録し直せない）: 鍵を作り直す旨と「この PC を登録し直す」', text(nodes).includes('この PC の鍵を作り直します') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
+  byFk(nodes, 'hostReregister').onclick();
+  t.ok('登録し直せないときの「この PC を登録し直す」は確かめを開く（reregister は呼ばない）', askedKey && rereg === 0);
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: permanent }, { ...deps, confirming: true });
+  t.ok('確かめの窓: 「作り直す」「やめる」', buttonTexts(nodes).includes('作り直す') && buttonTexts(nodes).includes('やめる'));
+  byFk(nodes, 'rebindYes').onclick();
+  t.ok('「作り直す」は plusHostRebind', sent.at(-1) === 'plusHostRebind');
+  // api が更新を求めた（host.state update）
+  nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'update' } });
+  t.ok('host update: 「Pleiad を更新してください」（ボタンは出さない）', text(nodes).includes('Pleiad を更新してください') && !byFk(nodes, 'hostReregister') && !byFk(nodes, 'rebind'), text(nodes));
+  nodes = render({ ...BASE, needsUpdate: true, signedIn: true, account: ACCOUNT, host: { state: 'update' } });
+  t.ok('host update と needsUpdate が重なっても、更新の行は 1 つ', text(nodes).split('Pleiad を更新してください').length === 2, text(nodes));
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered', notice: 'reregistered' } });
   t.ok('notice reregistered: 「登録が外れていたので、登録し直しました」（ボタンは出さない）', text(nodes).includes('この PC の登録が外れていたので、登録し直しました') && !byFk(nodes, 'hostReregister'));
 

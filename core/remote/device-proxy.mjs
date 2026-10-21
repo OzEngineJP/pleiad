@@ -88,7 +88,7 @@ main{max-width:28rem;padding:24px}h1{font-size:16px;margin:0 0 8px}p{margin:0;co
  * 出来事: 'status'（DeviceLink の状態 + { port }）
  */
 export class DeviceProxy extends EventEmitter {
-  constructor({ creds, keyPair, port = 0, app = '', name = '', shell = 'desktop', backoff, connectTimeoutMs, requestWaitMs = 10_000, staticCacheFile = null, channelOptions, log = () => {}, via, getIdToken, onReadmit }) {
+  constructor({ creds, keyPair, port = 0, app = '', name = '', shell = 'desktop', backoff, connectTimeoutMs, requestWaitMs = 10_000, staticCacheFile = null, channelOptions, log = () => {}, via, getIdToken, getTicket, onReadmit }) {
     super();
     this.creds = creds;
     this.wantPort = Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 0;
@@ -96,7 +96,7 @@ export class DeviceProxy extends EventEmitter {
     this.token = crypto.randomBytes(32).toString('base64url');
     this.requestWaitMs = requestWaitMs;
     this.log = log;
-    this.link = new DeviceLink({ creds, keyPair, app, name, shell, backoff, connectTimeoutMs, channelOptions, log, via: via ?? creds.via, getIdToken, onReadmit });
+    this.link = new DeviceLink({ creds, keyPair, app, name, shell, backoff, connectTimeoutMs, channelOptions, log, via: via ?? creds.via, getIdToken, getTicket, onReadmit });
     this.link.on('status', s => this.emit('status', { ...s, port: this.port }));
     this.staticCache = staticCacheFile ? new StaticCache({ file: staticCacheFile, log }) : null;
     this.staticCheck = null;   // 最後の読み込みで確かめた束（Promise<束 | null>）。読み込みの後の静的ファイルはこれを使う

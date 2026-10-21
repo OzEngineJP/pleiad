@@ -254,7 +254,8 @@
         "syncSharedTo": "Shared the sync key with the new PC {{name}} ({{time}})",
         "hostRemoved": "This PC was removed from Pleiad Plus. Register it again to resume the relay and sync.",
         "hostReregister": "Register this PC again",
-        "hostReregistered": "This PC had been removed from the account, so it was registered again"
+        "hostReregistered": "This PC had been removed from the account, so it was registered again",
+        "hostRemovedKey": "This PC was removed from Pleiad Plus. To register it again, this PC's key is rebuilt."
       },
     "remote": {
       "tabs": {
@@ -272,6 +273,7 @@
         "plusUpgrade": "Get Pleiad Plus",
         "plusBlocked": "This account can't use the official relay",
         "plusLimit": "This account has reached its limit",
+        "plusUpdate": "This version of Pleiad can't use the official relay. Please update Pleiad",
         "plusEmpty": "PCs signed in to the same account appear here.",
         "plusMaintenance": "Pleiad Plus is under maintenance",
         "plusUnavailable": "Pleiad Plus is temporarily unavailable",

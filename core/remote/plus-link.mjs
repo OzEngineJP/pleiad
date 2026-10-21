@@ -6,12 +6,17 @@
 //              この PC の登録が registered、の全部がそろったときだけ true。
 //              そろっていても 4401 'account' で止まっている間は { error: account }（中継へ張りに行かない）
 //   url(path)  /v1/auth/config の urls.relay を行き先にする
-//   headers()  { 'x-pleiad-host': hostId, 'x-pleiad-account': <ID トークン> }。トークンは張るたびに取る
+//   headers()  { 'x-pleiad-host': hostId, 'x-pleiad-ticket': <中継の券 role:host> }。券は制御の接続を張るたびに api から取り
+//              （core/plus/tickets.mjs）、accept（headers({ accept: true })）は今の制御の接続と同じ券を使う。
+//              券の口が無い前の版の api なら { 'x-pleiad-account': <ID トークン> }（張るたびに取る）。
+//              券が取れないとき: 403 host_removed・404（この PC が台帳に無い）→ error 'host'（onHostLost で登録を確かめ直す）、
+//              426 → error 'update'。ほかは今の backoff で張り直す
 //   owns(d)    via:'plus' で、plusUid が今のアカウントの uid の端末だけ
 //   allowPairing  false（公式の中継はペアリングを受けない。ホストも受けない）
 //   onClose()  4401 'account' → 止まる（error 'account'。張り直さない）。4429 'account limit' → 'limit'。
 //              4401 'host' → この PC の登録が外れた（error 'host'）。onHostLost で登録を確かめ直す（登録し直すと張り直す）。
-//              ほかの 4401 → ID トークンを取り直して 1 回だけ張り直す（また 4401 なら 'auth'）。
+//              4401 'update required' → error 'update'（券の無い接続を中継が受けない）。
+//              ほかの 4401（券の 'ticket' を含む）→ 券か ID トークンを取り直して 1 回だけ張り直す（また 4401 なら 'auth'）。
 //              1013 → 今の backoff で張り直す。ほか → 今と同じ
 //
 // 4401 'account' の止まりを解く（update() で。解いたあとは refreshPlus が張り直す）:
@@ -21,16 +26,20 @@
 //
 // 受け入れ（onIncomingAdmit）: 中継が deviceId の無い端末を incoming {admit:true} で知らせたとき（ADR 0245）。
 //   Noise IK の応答側でハンドシェイクし、メッセージ 1 の plus を verifyAdmission で確かめる（今のアカウントのものでなければ
-//   窓を出さずに断る）。同じアカウントであることは承認の代わりにしない。端末はメッセージ 2 のあと 1 通だけ送る:
+//   窓を出さずに断る）。既定の確かめは受け入れの券 plus.ticket（aud:"pleiad-host"）: 署名（<api>/.well-known/pleiad-keys）・
+//   期限・hostId が自分・devicePub が Noise の相手の静的鍵・uid が今のアカウント・jti が初めて。どれかが違えば 'account'、
+//   公開鍵が取れなければ 'unavailable'。券を出す api（admission が数）なのに ID トークン（plus.idToken）だけなら 'update_required'。
+//   前の版の api の間だけ ID トークンを確かめる。同じアカウントであることは承認の代わりにしない。端末はメッセージ 2 のあと 1 通だけ送る:
 //     { type: 'admit' }  裏でのつなぎ直し。PC の画面か許可済みの端末で許可した鍵なら中継用トークンを出し直す。
 //                        許可していない鍵は { denied, reason: 'approval' }（窓は出さない）
 //     { type: 'pair' }   人が選んだつなぎ。許可済みの鍵なら同じく通す。無ければ { waiting } を返して、
 //                        PC の画面の承認の窓（QR と同じ窓・同じ確認コード）へ回す。許可で approved、拒否で denied 'rejected'
 //   取り消した鍵は 'revoked'、拒否してから 1 時間は 'rejected'。台数（limits.devicesPerHost）と 1 時間 20 件の上限の中だけ。
-//   ID トークンはログにも状態にも残さない。
+//   ID トークンと券はログにも状態にも残さない。
 import WebSocket from 'ws';
 import { Handshake, prologueFor, confirmationCode } from './noise.mjs';
 import { relayWsUrl, cleanLabel } from './pairing.mjs';
+import { createJtiStore, TicketError } from '../plus/tickets.mjs';
 import { t } from '../i18n.mjs';
 
 const HOST_CLOSE = { BAD_REQUEST: 4400, UNAUTHORIZED: 4401 };
@@ -51,10 +60,22 @@ export class AdmissionError extends Error {
   constructor(reason, message = reason) { super(message); this.reason = reason; }
 }
 
+/** 券が取れなかったときの link の誤り（connector が張り直さずに error で止まる）。null なら今の backoff で張り直す */
+function linkErrorForIssue(e, onHostLost) {
+  if ((e?.status === 403 && e.code === 'host_removed') || (e?.status === 404 && !e.unsupported)) {
+    try { onHostLost(); } catch {}
+    return { code: 'host', message: t('remote.plus.closed.host') };
+  }
+  if (e?.status === 426) return { code: 'update', message: t('remote.plus.closed.update') };
+  return null;
+}
+
 /**
  * @param {object} o
  * @param {object} o.session    createPlusSession（snapshot()・getIdToken()）
- * @param {object} o.verifier   createIdTokenVerifier（verify(idToken) → { uid }）
+ * @param {object} o.verifier   createIdTokenVerifier（verify(idToken) → { uid }。前の版の api の間だけ使う）
+ * @param {object} [o.issuer]   createTicketIssuer（issue({ purpose, keyPair, hostId }) → { relay } | null）。無ければ ID トークンで張る
+ * @param {object} [o.ticketVerifier]  createTicketVerifier（受け入れの券の確かめ）
  * @param {object} o.remote     createRemoteHost（store・revoke・status。張り直しの制御は refreshPlus で外から行う）
  * @param {(o: { hello, remoteStatic: Buffer, hostId: string, uid: string|null }) => Promise<{ uid: string }>} [o.verifyAdmission]
  *        メッセージ 1 の plus を確かめる。通らなければ AdmissionError（reason は端末へ返す）を投げる。
@@ -65,15 +86,17 @@ export class AdmissionError extends Error {
  * @param {number} [o.admitLimit]      1 時間の申し込みの上限（既定 20）
  * @param {number} [o.admitWindowMs]   上限を数える窓（既定 1 時間）
  */
-export function createPlusLink({ session, verifier, remote, verifyAdmission = null, onAdmitted = () => {}, onHostLost = () => {}, log = () => {},
+export function createPlusLink({ session, verifier, issuer = null, ticketVerifier = null, remote, verifyAdmission = null, onAdmitted = () => {}, onHostLost = () => {}, log = () => {},
   now = Date.now, admitLimit = 20, admitWindowMs = 60 * 60_000 } = {}) {
   // 張る条件と判定の材料。update() で外（server の同期の手）から写す
   const st = {
     enabled: false, signedIn: false, uid: null, accountStatus: null, accountReadAt: 0,
-    connect: false, hostState: null, limits: null, relayUrl: null,
+    connect: false, hostState: null, limits: null, relayUrl: null, admission: null,
   };
   let held = null;             // 4401 'account' で止まっている間 { uid, readAt }（止まったときの uid と accountReadAt）
   let forceToken = false;      // ほかの 4401 のあと、次に張るときは ID トークンを取り直す
+  let controlAuth = null;      // 今の制御の接続のヘッダー { hostId, headers }（accept が同じものを使う）
+  const jtis = createJtiStore({ now });
   let authRetried = false;     // その取り直しをもう使ったか
   const requestTimes = [];     // 直近の承認の窓への申し込みの時刻（上限を数える）
 
@@ -86,8 +109,23 @@ export function createPlusLink({ session, verifier, remote, verifyAdmission = nu
     return held ? { error: accountError() } : true;
   };
 
-  /** 既定の確かめ: ID トークンの uid が今のアカウントと同じこと。 */
-  async function verifyIdToken({ hello }) {
+  /** 既定の確かめ: 受け入れの券（前の版の api の間は ID トークン）の uid が今のアカウントと同じこと。 */
+  async function verifyHello({ hello, remoteStatic, hostId }) {
+    const ticket = hello.plus?.ticket;
+    if (typeof ticket === 'string' && ticket) {
+      if (!ticketVerifier) throw new AdmissionError('account');
+      let p;
+      try { p = await ticketVerifier.verify(ticket, { aud: 'pleiad-host' }); }
+      catch (e) { throw new AdmissionError(e instanceof TicketError && e.reason === 'unavailable' ? 'unavailable' : 'account'); }
+      if (p.hostId !== hostId || p.devicePub !== Buffer.from(remoteStatic).toString('base64url') || !st.uid || p.uid !== st.uid) {
+        throw new AdmissionError('account');
+      }
+      let fresh;
+      try { fresh = jtis.consume(p.jti, p.exp); } catch { throw new AdmissionError('unavailable'); }
+      if (!fresh) throw new AdmissionError('account');
+      return { uid: p.uid };
+    }
+    if (st.admission != null) throw new AdmissionError('update_required');
     let v;
     try { v = await verifier.verify(hello.plus?.idToken); } catch { throw new AdmissionError('account'); }
     if (!v?.uid || v.uid !== st.uid) throw new AdmissionError('account');
@@ -143,7 +181,7 @@ export function createPlusLink({ session, verifier, remote, verifyAdmission = nu
     // 2. メッセージ 1 の plus を確かめる（別のアカウントのものは窓を出さずに断る）
     let uid;
     try {
-      ({ uid } = await (verifyAdmission ?? verifyIdToken)({ hello, remoteStatic: publicKey, hostId: identity.hostId, uid: st.uid }));
+      ({ uid } = await (verifyAdmission ?? verifyHello)({ hello, remoteStatic: publicKey, hostId: identity.hostId, uid: st.uid }));
     } catch (e) {
       if (!(e instanceof AdmissionError)) log(`plus admit: ${e.message}`);
       return refuse(e instanceof AdmissionError ? e.reason : 'account');
@@ -184,16 +222,34 @@ export function createPlusLink({ session, verifier, remote, verifyAdmission = nu
     name: 'plus',
     ready,
     url: path => relayWsUrl(st.relayUrl, path),
-    async headers() {
+    async headers({ accept = false } = {}) {
       const identity = await remote.store.peekIdentity();
-      const token = await session.getIdToken({ force: forceToken });
-      forceToken = false;
-      return { 'x-pleiad-host': identity.hostId, 'x-pleiad-account': token };
+      if (accept && controlAuth?.hostId === identity.hostId) return { ...controlAuth.headers };
+      let out = null;
+      if (issuer) {
+        try { out = await issuer.issue({ purpose: 'host', keyPair: identity, hostId: identity.hostId }); }
+        catch (e) {
+          const linkError = linkErrorForIssue(e, onHostLost);
+          if (linkError) throw Object.assign(new Error(linkError.message), { linkError });
+          throw e;
+        }
+      }
+      let headers;
+      if (out?.relay) headers = { 'x-pleiad-host': identity.hostId, 'x-pleiad-ticket': out.relay };
+      else {
+        const token = await session.getIdToken({ force: forceToken });
+        forceToken = false;
+        headers = { 'x-pleiad-host': identity.hostId, 'x-pleiad-account': token };
+      }
+      if (!accept) controlAuth = { hostId: identity.hostId, headers };
+      return { ...headers };
     },
     owns: d => Boolean(d && d.via === 'plus' && d.plusUid === st.uid),
     allowPairing: false,
     onIncomingAdmit: ctx => onIncomingAdmit(ctx),
     onClose(code, reason) {
+      controlAuth = null;
+      if (code === 4401 && reason === 'update required') return { error: { code: 'update', message: t('remote.plus.closed.update') } };
       if (code === 4401 && reason === 'account') {
         held = { uid: st.uid, readAt: st.accountReadAt ?? 0 };
         return { error: accountError() };
@@ -204,7 +260,7 @@ export function createPlusLink({ session, verifier, remote, verifyAdmission = nu
         return { error: { code: 'host', message: t('remote.plus.closed.host') } };
       }
       if (code === 4401) {
-        // ID トークンを取り直して 1 回だけ張り直す。また 4401 なら 'auth'
+        // 券（前の版の api なら ID トークン）を取り直して 1 回だけ張り直す。また 4401 なら 'auth'
         if (!authRetried) { authRetried = true; forceToken = true; return 'retry'; }
         return { error: { code: 'auth', message: t('remote.plus.closed.auth') } };
       }
@@ -215,7 +271,7 @@ export function createPlusLink({ session, verifier, remote, verifyAdmission = nu
 
   return {
     provider,
-    /** 張る条件と判定の材料を写す（account・accountReadAt・ログイン・plus.connect・enabled・登録・limits・relay の URL） */
+    /** 張る条件と判定の材料を写す（account・accountReadAt・ログイン・plus.connect・enabled・登録・limits・relay の URL・admission） */
     update(patch) {
       Object.assign(st, patch ?? {});
       if (held && (!wanted() || st.uid !== held.uid || (st.accountReadAt ?? 0) > held.readAt)) held = null;

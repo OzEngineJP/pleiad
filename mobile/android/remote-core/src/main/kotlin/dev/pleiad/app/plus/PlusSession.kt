@@ -75,6 +75,10 @@ data class TokenBundle(
 class PlusApiError(val status: Int, val code: String, val detail: String = "") : Exception("http $status $code")
 
 object PlusApi {
+    // The admission mark (docs/plus.md "Tickets"): every request to the Plus api says this client takes tickets.
+    // Not sent to the token refresh endpoint (not the Plus api).
+    const val ADMISSION_HEADER = "X-Pleiad-Admission"
+    const val ADMISSION_MARK = "2"
     private val JSON = "application/json; charset=utf-8".toMediaType()
     private val FORM = "application/x-www-form-urlencoded".toMediaType()
 
@@ -88,7 +92,7 @@ object PlusApi {
     }
 
     private fun getJson(client: OkHttpClient, url: String, headers: Map<String, String> = emptyMap()): JSONObject {
-        val req = Request.Builder().url(url).apply { for ((k, v) in headers) header(k, v) }.build()
+        val req = Request.Builder().url(url).apply { for ((k, v) in headers) header(k, v) }.header(ADMISSION_HEADER, ADMISSION_MARK).build()
         client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) throw errorFrom(r)
             return JSONObject(r.body?.string().orEmpty().ifEmpty { "{}" })
@@ -96,7 +100,7 @@ object PlusApi {
     }
 
     private fun postJson(client: OkHttpClient, url: String, payload: JSONObject, headers: Map<String, String> = emptyMap()): JSONObject {
-        val req = Request.Builder().url(url).post(body(payload)).apply { for ((k, v) in headers) header(k, v) }.build()
+        val req = Request.Builder().url(url).post(body(payload)).apply { for ((k, v) in headers) header(k, v) }.header(ADMISSION_HEADER, ADMISSION_MARK).build()
         client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) throw errorFrom(r)
             return JSONObject(r.body?.string().orEmpty().ifEmpty { "{}" })
@@ -156,6 +160,10 @@ object PlusApi {
         )
         return PlusAccount.fromJson(o)
     }
+
+    /** POST <apiBase><path> with the ID token (the ticket calls). Throws PlusApiError. */
+    fun postAuthed(client: OkHttpClient, apiBase: String, idToken: String, clientTag: String, path: String, payload: JSONObject): JSONObject =
+        postJson(client, "$apiBase$path", payload, mapOf("Authorization" to "Bearer $idToken", "X-Pleiad-Client" to clientTag))
 
     /** GET /v1/hosts with the current account token. */
     fun fetchHosts(client: OkHttpClient, apiBase: String, idToken: String, clientTag: String): List<PlusHost> {

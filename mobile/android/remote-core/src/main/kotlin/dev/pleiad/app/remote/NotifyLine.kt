@@ -30,6 +30,8 @@ class NotifyLine(
     private val client: OkHttpClient = Http.client,
     private val log: (String) -> Unit = {},
     private val plusIdToken: (() -> String?)? = null,
+    // The relay ticket (role device) for one connection (docs/plus.md "Tickets"); null: the api has no tickets yet
+    private val plusTicket: ((HostCreds) -> String?)? = null,
 ) {
     private val timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "pleiad-notify-line").also { it.isDaemon = true } }
         .apply { removeOnCancelPolicy = true }
@@ -88,20 +90,27 @@ class NotifyLine(
         setState("connecting")
         val c = creds
         if (c.via != "plus") return open(gen, c, null)
-        // The account token may be refreshed over the network, and connect() runs on the caller's thread (the service
-        // starts the lines on the main thread): fetch it on the line's own thread, outside the lock.
+        // The ticket and the account token are fetched over the network, and connect() runs on the caller's thread (the
+        // service starts the lines on the main thread): fetch them on the line's own thread, outside the lock.
         try {
             timer.execute {
-                val accountToken = try { plusIdToken?.invoke() } catch (_: Exception) { null }
+                var failed = false
+                val ticket = try { plusTicket?.invoke(c) } catch (e: Exception) { failed = true; log("notify line: ticket failed: ${e.javaClass.simpleName}"); null }
+                val accountToken = if (ticket != null || failed) null else try { plusIdToken?.invoke() } catch (_: Exception) { null }
                 synchronized(lock) {
                     if (gen != generation || !running) return@synchronized
-                    if (accountToken.isNullOrEmpty()) schedule("offline") else open(gen, c, accountToken)
+                    when {
+                        ticket != null -> open(gen, c, "x-pleiad-ticket" to ticket)
+                        accountToken.isNullOrEmpty() -> schedule("offline")
+                        else -> open(gen, c, "x-pleiad-account" to accountToken)
+                    }
                 }
             }
         } catch (_: java.util.concurrent.RejectedExecutionException) {}
     }
 
-    private fun open(gen: Int, c: HostCreds, accountToken: String?) {
+    /** account: the relay's account header for via "plus" (the ticket, or the ID token). */
+    private fun open(gen: Int, c: HostCreds, account: Pair<String, String>?) {
         val url = try { PairingCodec.relayWsUrl(c.relayUrl, "/v1/device/notify") } catch (e: Exception) {
             log("notify line: ${e.message}"); return schedule("offline")
         }
@@ -112,7 +121,7 @@ class NotifyLine(
             .build()
         val reqBuilder = Request.Builder().url(url)
             .header("authorization", "Bearer ${c.token}").header("x-pleiad-host", c.hostId).header("x-pleiad-device", c.deviceId)
-        if (accountToken != null) reqBuilder.header("x-pleiad-account", accountToken)
+        if (account != null) reqBuilder.header(account.first, account.second)
         val req = reqBuilder.build()
         socket = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -134,7 +143,7 @@ class NotifyLine(
                 try { webSocket.close(1000, null) } catch (_: Exception) {}
             }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = ended(gen, webSocket, code)
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = ended(gen, webSocket, code, reason)
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 ended(gen, webSocket, response?.let { -it.code } ?: 1006)
@@ -144,12 +153,14 @@ class NotifyLine(
     }
 
     /** code: a WebSocket close code, or -HTTP status when the upgrade was refused, or 1006. */
-    private fun ended(gen: Int, ws: WebSocket, code: Int) = synchronized(lock) {
+    private fun ended(gen: Int, ws: WebSocket, code: Int, reason: String = "") = synchronized(lock) {
         if (gen != generation || !running) return@synchronized
         if (socket === ws) socket = null
         val stable = state == "connected" && System.currentTimeMillis() - openedAt >= backoff.stableMs
         if (stable) attempt = 0
         when {
+            // the relay did not take the ticket / the account token (expired, or the clock is off): take a fresh one later
+            code == 4401 && creds.via == "plus" && (reason == "ticket" || reason == "token") -> schedule("offline")
             code == 4401 || code == -401 -> { running = false; setState("revoked") }
             code == 4404 || code == 4408 -> schedule("host-offline")
             code == 4409 -> { attempt = maxOf(attempt, 3); schedule("offline") }   // another line of ours took over: back off, don't fight

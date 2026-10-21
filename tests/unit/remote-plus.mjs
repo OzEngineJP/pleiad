@@ -62,7 +62,7 @@ export default async function (t) {
   };
   const verifier = createIdTokenVerifier({ jwksUrl: plus.jwksUrl, projectId: () => 'test-project' });
   const authz = createPlusRelayAuthz({
-    verify: token => verifier.verify(token),
+    verify: token => verifier.verify(token), keysUrl: plus.ticketKeysUrl,
     isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid,
   });
   // ホストが公式の中継へ張りに来た回数（止まっている間に張りに来ないことを数える）
@@ -299,6 +299,8 @@ export default async function (t) {
     t.ok('1013 は今の backoff で張り直す', true);
 
     // ---- 運営がこの PC を外した → 中継は 4401 host。登録を確かめ直して登録し直し、つなぎ直す
+    // 外した hostId を登録し直せる前の版の api のふり（今の api の墓標は plus-hosts で確かめる）
+    plus.state.allowReregister = true;
     const seenBefore = hostStateSeen.length;
     plus.unbindHost(st.hostId, 'admin');
     authz.handle.closeTag(`h:${st.hostId}`, 4401, 'host');
@@ -315,6 +317,7 @@ export default async function (t) {
     await sync();
     await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '登録し直すとつなぎ直す');
     t.ok('登録し直すと公式の中継へつなぎ直す', true);
+    plus.state.allowReregister = false;
 
     // ---- アカウントが free に落ちる → link は閉じるが記録は残る
     plus.state.accounts[UID].status = 'free';

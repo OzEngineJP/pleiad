@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -109,11 +110,28 @@ class PlusInteropTest {
     }
 
     private fun admit(idToken: String = token, keyPair: KeyPair = device.store.identity(),
-                      mode: String = PlusAdmission.MODE_ADMIT, onCode: (String) -> Unit = {}): HostCreds =
+                      mode: String = PlusAdmission.MODE_ADMIT, onCode: (String) -> Unit = {},
+                      ticket: (() -> PlusTicket?)? = null): HostCreds =
         PlusAdmission.admit(
             listedHost, ready.getString("relayUrl"), idToken, keyPair, "kt-plus-phone", "kt-plus-test",
             connectTimeoutMs = 4_000, sleepMs = {}, mode = mode, onCode = onCode, pairTimeoutMs = 20_000,
+            ticket = ticket,
         )
+
+    /** Tickets from the local Plus API, as PlusManager takes them (the ID token, X-Pleiad-Admission). */
+    private fun ticketIssuer(admission: Int? = 2): PlusTicketIssuer {
+        val client = OkHttpClient()
+        return PlusTicketIssuer(
+            post = { path, body -> PlusApi.postAuthed(client, ready.getString("apiUrl"), token, "kt-plus-test", path, body) },
+            admission = { admission },
+        )
+    }
+
+    private fun lastDeviceSeen(): JSONObject {
+        send("seen 1")
+        val seen = event("seen").getJSONArray("seen")
+        return seen.getJSONObject(seen.length() - 1)
+    }
 
     /** Runs [run] in the background, waits for the host's approval window and answers it ("approve" / "deny"). */
     private fun <T> answered(answer: String, run: ((String) -> Unit) -> T): T {
@@ -224,5 +242,50 @@ class PlusInteropTest {
         answered("approve") { onCode -> pairPlus(onCode) }
         assertNotEquals(firstKey.publicKey.toList(), device.store.keyFor(listedHost.hostId, "plus")!!.publicKey.toList())
         assertNotEquals(firstDeviceId, device.store.credentials(listedHost.hostId, "plus")!!.deviceId)
+    }
+
+    @Test fun ticketsAdmitAndConnectAndTheIdTokenAsksForAnUpdate() {
+        val issuer = ticketIssuer()
+        val hostId = listedHost.hostId
+        device.plusTicket = { hid, kp -> issuer.issue(PlusTickets.PURPOSE_DEVICE, kp, hid)?.relay }
+
+        // the host takes tickets only; the relay still lets the ID token through
+        send("v2-on host")
+        event("v2-ready")
+        assertEquals("plus-update", assertThrows(PairError::class.java) { admit(mode = PlusAdmission.MODE_PAIR) }.code)
+        // the relay takes tickets only too
+        send("v2-on")
+        event("v2-ready")
+        assertEquals("plus-update", assertThrows(PairError::class.java) { admit(mode = PlusAdmission.MODE_PAIR) }.code)
+        assertEquals("update required", lastDeviceSeen().optString("reason"))
+
+        // with tickets: the window, then the link
+        val rec = answered("approve") { onCode ->
+            device.admitPlus(hostId, PlusAdmission.MODE_PAIR, ready.getString("uid")) { kp ->
+                admit(keyPair = kp, mode = PlusAdmission.MODE_PAIR, onCode = onCode,
+                    ticket = { issuer.issue(PlusTickets.PURPOSE_DEVICE, kp, hostId) })
+            }
+        }
+        assertEquals("plus", rec.via)
+        val proxy = device.open(hostId, "plus")
+        waitState("connected")
+        val seen = lastDeviceSeen()
+        assertEquals("ticket", seen.optString("by"))
+        assertTrue(seen.optBoolean("ok"))
+        val (status, body) = get(proxy.port, "/?token=${proxy.token}")
+        assertEquals(200, status)
+        assertTrue(body.contains("Fake Plus Host"))
+
+        // an allowed key comes back without the window, with new tickets
+        val key = device.store.keyFor(hostId, "plus")!!
+        val again = admit(keyPair = key, ticket = { issuer.issue(PlusTickets.PURPOSE_DEVICE, key, hostId) })
+        assertEquals(rec.deviceId, again.deviceId)
+
+        // the api asks for an update
+        send("ticket-fail 426")
+        event("ticket-fail")
+        assertEquals("plus-update", assertThrows(PairError::class.java) {
+            admit(keyPair = key, ticket = { issuer.issue(PlusTickets.PURPOSE_DEVICE, key, hostId) })
+        }.code)
     }
 }

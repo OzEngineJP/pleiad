@@ -167,7 +167,8 @@ export function createRemoteHost({
   // 1 本ぶんの状態: phase（disabled | connecting | connected | retrying | error）・error・since・retryAt・
   // generation・control・attempt・retryTimer・pingTimer・dataConns。
   // 中継の URL・張るときのヘッダー・引き受ける端末・ペアリングを受けるかは provider が決める:
-  //   { name, ready(), url(path), headers(), owns(device), allowPairing, onIncomingAdmit?(ctx), onClose?(code, reason) }
+  //   { name, ready(), url(path), headers({ accept }), owns(device), allowPairing, onIncomingAdmit?(ctx), onClose?(code, reason) }
+  // headers() が linkError（{ code, message }）の付いた誤りを投げたら、張り直さずに error で止まる。
   const ownProvider = {
     name: 'own',
     /** 張ってよいか。true / false（disabled）/ { error }（error）。 */
@@ -267,6 +268,8 @@ export function createRemoteHost({
     let headers;
     try { headers = await link.provider.headers(); }
     catch (e) {
+      // 張り直しても直らない誤り（plus の券で台帳に無い・更新が要る）は error で止まる
+      if (e?.linkError) { if (gen === link.generation) setLinkPhase(link, 'error', e.linkError); return; }
       // 一時的な失敗（plus のトークンの取り直しが届かないなど）で止まらないよう張り直す
       if (gen === link.generation) scheduleRetry(link, { code: 'config', message: e.message });
       return;
@@ -373,7 +376,7 @@ export function createRemoteHost({
     try { url = link.provider.url(`/v1/host/accept?conn=${encodeURIComponent(conn)}`); }
     catch (e) { log(`remote accept: ${e.message}`); return; }
     let headers;
-    try { headers = await link.provider.headers(); }
+    try { headers = await link.provider.headers({ accept: true }); }
     catch (e) { log(`remote accept: ${e.message}`); return; }
     if (gen !== link.generation) return;
     let ws;

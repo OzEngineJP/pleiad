@@ -252,7 +252,8 @@
         "syncSharedTo": "新しい PC {{name}} に同期の鍵を渡しました（{{time}}）",
         "hostRemoved": "この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。",
         "hostReregister": "この PC を登録し直す",
-        "hostReregistered": "この PC の登録が外れていたので、登録し直しました"
+        "hostReregistered": "この PC の登録が外れていたので、登録し直しました",
+        "hostRemovedKey": "この PC は Pleiad Plus の登録から外されています。登録し直すには、この PC の鍵を作り直します。"
       },
     "remote": {
       "tabs": {
@@ -270,6 +271,7 @@
         "plusUpgrade": "Pleiad Plus にする",
         "plusBlocked": "このアカウントでは公式の中継を使えません",
         "plusLimit": "このアカウントの上限に達しています",
+        "plusUpdate": "この版の Pleiad では公式の中継を使えません。Pleiad を更新してください",
         "plusEmpty": "同じアカウントでログインした PC がここに並びます。",
         "plusMaintenance": "Pleiad Plus はメンテナンス中です",
         "plusUnavailable": "Pleiad Plus は今使えません",

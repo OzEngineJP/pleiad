@@ -16,23 +16,23 @@
 //
 // 誤り: 409 host_taken → state 'taken'（自動ではやり直さない。人の「つなぎ直す」で鍵を作り直す）、
 //   429 host_limit → 'limit'、422 bad_proof → 新しい challenge で 1 回だけやり直し、
+//   403 host_removed → 'removed'（error.permanent。外した PC は同じ鍵では戻れない。人の「つなぎ直す」で鍵を作り直す）、
+//   426 update_required → 'update'（このアプリの版では登録できない。やり直さない）、
 //   ネットの誤り・5xx → 'error' で 1 分おきにやり直す。
 //
 // 登録の外れ（docs/plus.md「同期の始め直しと登録の外れ」）: 同期の 403 host・中継の 4401 host・30 分ごとの見直し（recheck）で
 //   台帳に自分が無いと分かったら登録し直す（鍵の行が戻る）。GET /v1/hosts の removed に自分が by: 'user' で載っていれば
 //   登録し直さず 'removed' で待つ（人の「この PC を登録し直す」= reregister で登録する）。
 //   外れていたのを登録し直したときは、状態に notice: 'reregistered' を載せる。
+//   今の api は外した PC を同じ鍵では登録し直させない（PUT が 403 host_removed）。そのときは上の 'removed'（permanent）になり、
+//   戻すには鍵を作り直す（remote.plusHostRebind。新しい hostId で登録する）。
+//
+// 要求には X-Pleiad-Admission: 2 を付ける（client.mjs の admissionMark。syncPublicKey を載せる要求だけは付けない）。
 //
 // 状態は { state, hostId, error, notice? } の形で session.setHost() と onHostState() に渡す
-// （state: none / registering / registered / removed / taken / limit / error）。
-import crypto from 'node:crypto';
-import { dh, hkdfLabel, hostIdFor } from '../remote/noise.mjs';
+// （state: none / registering / registered / removed / taken / limit / update / error）。
 import { cleanLabel } from '../remote/pairing.mjs';
-
-const PROOF_INFO = 'pleiad host proof v1';
-const PROOF_PURPOSE = 'register';
-const b64url = buf => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const b64urlToBuf = s => Buffer.from(String(s ?? '').replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+import { proofFor } from './tickets.mjs';
 
 /** 台帳へ送るホスト名。1〜64 字・制御文字は除く（cleanLabel と同じ整え方） */
 const hostNameFor = name => cleanLabel(name, 64) || 'host';
@@ -63,6 +63,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
   let retryTimer = null;
   let registered = null;      // { hostId, publicKey, name, platform, deviceCount } — 最後に台帳へ送った/返ってきた値
   let badProofRetried = false;
+  let tombstoned = null;      // 403 host_removed で断られた hostId（同じ鍵では戻れない。条件の見直しのたびに PUT を繰り返さない）
   let rechecking = null;
   let recheckTimer = null;
 
@@ -80,16 +81,6 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     const s = session.snapshot?.() ?? {};
     return s.signedIn === true && s.account?.status === 'plus';
   };
-
-  function proof({ publicKey, privateKey, hostId, nonce, serverPublicKey }) {
-    const shared = dh(privateKey, b64urlToBuf(serverPublicKey));
-    const k = hkdfLabel(shared, PROOF_INFO);
-    const mac = crypto.createHmac('sha256', k);
-    mac.update(b64urlToBuf(nonce));
-    mac.update(Buffer.from(hostId, 'utf8'));
-    mac.update(Buffer.from(PROOF_PURPOSE, 'utf8'));
-    return b64url(mac.digest());
-  }
 
   /** force: 利用者が外した PC でも登録し直す（人の「この PC を登録し直す」） */
   async function registerOnce({ force = false } = {}) {
@@ -124,12 +115,16 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       setHost({ state: 'removed', hostId, error: { code: 'host_removed' } });
       return;
     }
+    if (!mine && tombstoned === hostId && !force) {
+      setHost({ state: 'removed', hostId, error: { code: 'host_removed', permanent: true } });
+      return;
+    }
     const wasLost = !mine && (Boolean(removed) || registered?.hostId === hostId);   // つなぎ直し（hostId が替わる）は外れではない
     // 2-4. challenge → proof → PUT
     const challenge = await session.client.request('POST', '/v1/hosts/challenge', { body: { hostId, publicKey } });
     const put = {
       challengeId: challenge.challengeId,
-      proof: proof({ ...identity, hostId, nonce: challenge.nonce, serverPublicKey: challenge.serverPublicKey }),
+      proof: proofFor({ privateKey: identity.privateKey, hostId, nonce: challenge.nonce, serverPublicKey: challenge.serverPublicKey, purpose: 'register' }),
       publicKey,
       ...body,
       ...(syncPub ? { syncPublicKey: syncPub } : {}),
@@ -158,6 +153,18 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       if (e?.status === 429 && code === 'host_limit') {
         log('plus host: host_limit');
         setHost({ state: 'limit', hostId, error: { code: 'host_limit' } });
+        return;
+      }
+      if (e?.status === 403 && code === 'host_removed') {
+        log('plus host: host_removed');
+        registered = null;
+        tombstoned = hostId;
+        setHost({ state: 'removed', hostId, error: { code: 'host_removed', permanent: true } });
+        return;
+      }
+      if (e?.status === 426) {
+        log('plus host: update required');
+        setHost({ state: 'update', hostId, error: { code: 'update_required' } });
         return;
       }
       if (e?.status === 422 && code === 'bad_proof' && !badProofRetried) {

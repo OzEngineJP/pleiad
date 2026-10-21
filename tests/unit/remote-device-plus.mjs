@@ -102,7 +102,7 @@ export default async function (t) {
   const verifier = createIdTokenVerifier({ jwksUrl: plus.jwksUrl, projectId: () => 'test-project' });
   const relayAuthzCalls = [];
   const authz = createPlusRelayAuthz({
-    verify: token => verifier.verify(token),
+    verify: token => verifier.verify(token), keysUrl: plus.ticketKeysUrl,
     isBound: async (uid, hostId) => {
       const bound = plus.state.hosts[hostId]?.uid === uid;
       relayAuthzCalls.push({ uid, hostId, bound });

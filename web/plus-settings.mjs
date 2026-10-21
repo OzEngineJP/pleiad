@@ -2,6 +2,8 @@
 // 状態はサーバーが持つ（plusStatus コマンドと、変わるたびに届く plusStatus イベント）。
 // この画面は表示と、B1 のコマンド（plusLogin・plusLoginCancel・plusLogout・plusHostRebind）を送ることだけをする。
 // 利用者が外した PC（host.state removed）は「この PC を登録し直す」で plus.hostReregister 操作を送る。
+// 外した hostId を api が登録し直さないとき（host.error.permanent）は、同じボタンが鍵の作り直し（plusHostRebind）の確かめを出す。
+// api が更新を求めたとき（host.state update）は「Pleiad を更新してください」。
 // 見た目の部品は設定 › リモートと同じ（web/remote-parts.mjs、web/manage-panel.css の .rm-*）。見出しの丸は .rm-av。
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
@@ -162,6 +164,24 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
     }
   } else if (s.host?.state === 'limit') {
     out.push(el('p', 'rm-warn', t('settings.plus.hostLimit')));
+  } else if (s.host?.state === 'removed' && s.host.error?.permanent) {
+    // 外した PC の hostId は登録し直せない api: 「この PC を登録し直す」は鍵を作り直す（つなぎ直すと同じ確かめを通す）
+    out.push(el('p', 'rm-warn', t('settings.plus.hostRemovedKey')));
+    if (confirming) {
+      const box = el('div', 'rm-confirm');
+      box.append(el('p', null, t('settings.plus.rebindConfirm')));
+      const acts = el('div', 'rm-acts');
+      acts.append(actButton(t('settings.plus.cancel'), cancelRebind, 'btn btn-quiet', { fk: 'rebindNo' }),
+        actButton(t('settings.plus.rebindYes'), () => send('plusHostRebind'), 'btn btn-primary', { fk: 'rebindYes' }));
+      box.append(acts);
+      out.push(box);
+    } else {
+      const acts = el('div', 'rm-acts');
+      acts.append(actButton(t('settings.plus.hostReregister'), askRebind, 'btn', { fk: 'hostReregister' }));
+      out.push(acts);
+    }
+  } else if (s.host?.state === 'update') {
+    if (!s.needsUpdate) out.push(el('p', 'rm-warn', t('settings.plus.needsUpdate')));
   } else if (s.host?.state === 'removed') {
     // 利用者がこの PC を外した: 自分では登録し直さない（docs/plus.md「同期の始め直しと登録の外れ」）
     out.push(el('p', 'rm-warn', t('settings.plus.hostRemoved')));

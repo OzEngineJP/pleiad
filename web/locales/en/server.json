@@ -1184,7 +1184,8 @@
         "account": "This account can't use the official relay",
         "limit": "This account has reached its limit",
         "auth": "Account authentication failed (please sign in again)",
-        "host": "This PC is no longer registered (checking the registration again)"
+        "host": "This PC is no longer registered (checking the registration again)",
+        "update": "This version of Pleiad can't use the official relay. Please update Pleiad"
       }
     },
     "review": {
@@ -1211,6 +1212,7 @@
       "blocked": "This account can't use the official relay",
       "limit": "This account has reached its limit",
       "paused": "Pleiad Plus is temporarily unavailable",
+      "update": "This version of Pleiad can't use the official relay. Please update Pleiad",
       "page": {
         "revoked": "Pair this device again.",
         "hostOffline": "Make sure Pleiad is running on the host. This page opens automatically once connected.",
@@ -1234,7 +1236,8 @@
       "badResponse": "The host's response was malformed",
       "account": "This account can't connect to this host",
       "reapprove": "This device needs to be allowed again on the host",
-      "revoked": "This device was revoked on the host"
+      "revoked": "This device was revoked on the host",
+      "update": "This version of Pleiad can't connect to this host. Please update Pleiad"
     },
     "store": {
       "unreadable": "Can't read {{file}} (the file is corrupted)",

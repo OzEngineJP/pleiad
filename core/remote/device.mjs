@@ -230,6 +230,7 @@ const ADMIT_DENIED = {
   account: ['blocked', 'remote.pair.account'], devices: ['limit', 'remote.device.limit'], rate: ['rate', 'remote.pair.rate'],
   unavailable: ['unavailable', 'remote.device.paused'], approval: ['reapprove', 'remote.pair.reapprove'],
   revoked: ['revoked', 'remote.pair.revoked'], rejected: ['denied', 'remote.pair.denied'],
+  update_required: ['update', 'remote.pair.update'],
 };
 export function admitDeniedError(reason) {
   const [code, key] = ADMIT_DENIED[reason] ?? ['denied', 'remote.pair.denied'];
@@ -237,26 +238,39 @@ export function admitDeniedError(reason) {
 }
 
 /**
+ * 端末の券（core/plus/tickets.mjs の purpose 'device'）が取れなかったときの誤り。
+ * 426 → 'update'、404（そのホストが台帳に無い）→ 'unknown-host'、ほか → 'offline'
+ */
+export function ticketIssueError(e) {
+  if (e?.status === 426) return pairError('update', t('remote.pair.update'));
+  if (e?.status === 404) return pairError('unknown-host', t('remote.device.unknownHost'));
+  return pairError('offline', t('remote.device.offline'), e?.status ? { httpStatus: e.status } : {});
+}
+
+/**
  * Pleiad Plus の同じアカウントのホストへの受け入れ（Noise IK。docs/remote.md §3.4）。
- * 相手の静的鍵 publicKey と hostId を照合し、msg1 に plus:{idToken} を載せ、{ type: mode } を送る。
+ * 相手の静的鍵 publicKey と hostId を照合し、{ type: mode } を送る。
+ * 券（ticket: { relay, admission }。keyPair の鍵で取ったもの）があれば中継に X-Pleiad-Ticket で relay を、msg1 に
+ * plus:{ ticket: admission } を載せる。券の無い前の版の api の間は X-Pleiad-Account と plus:{ idToken }。
  *   mode 'admit': 許可済みの鍵のつなぎ直し（窓を出さない）。許可の無い鍵は reapprove で断られる
  *   mode 'pair':  人の操作。許可の無い鍵は PC の承認の窓へ回り、{ type: 'waiting' } のあと onCode(確認コード) を呼んで承認を待つ
  * approved で { hostId, hostPublicKey, relayUrl, deviceId, token, hostName } で解決する。
- * 断られたら reject（err.code: 'reapprove' | 'revoked' | 'denied' | 'expired' | 'blocked' | 'limit' | 'rate' | 'unavailable' ほか pairWithHost と同じ）
+ * 断られたら reject（err.code: 'reapprove' | 'revoked' | 'denied' | 'expired' | 'blocked' | 'limit' | 'rate' | 'unavailable' | 'update' ほか pairWithHost と同じ）
  */
-export async function admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair, idToken, name = '', platform = 'desktop', app = '', mode = 'admit', onCode = () => {}, signal, timeoutMs = 20_000, pairTimeoutMs = PAIRING_TTL_MS + 30_000, connectTimeoutMs = 15_000 }) {
+export async function admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair, idToken = null, ticket = null, name = '', platform = 'desktop', app = '', mode = 'admit', onCode = () => {}, signal, timeoutMs = 20_000, pairTimeoutMs = PAIRING_TTL_MS + 30_000, connectTimeoutMs = 15_000 }) {
   if (!HOST_ID.test(hostId ?? '')) throw pairError('bad-host', t('remote.pair.keyMismatch'));
   const pubKey = Buffer.isBuffer(hostPublicKey) ? hostPublicKey : Buffer.from(String(hostPublicKey ?? ''), 'base64url');
   if (pubKey.length !== 32 || hostIdFor(pubKey) !== hostId) {
     throw pairError('bad-host', t('remote.pair.keyMismatch'));
   }
-  if (!idToken || typeof idToken !== 'string') {
+  const useTicket = typeof ticket?.relay === 'string' && ticket.relay && typeof ticket.admission === 'string' && ticket.admission;
+  if (!useTicket && (!idToken || typeof idToken !== 'string')) {
     throw pairError('account', t('remote.pair.ticket'));
   }
   if (signal?.aborted) throw pairError('aborted', t('remote.pair.aborted'));
-  const sock = openRelaySocket(relayWsUrl(relayUrl, '/v1/device'), {
-    'x-pleiad-host': hostId, 'x-pleiad-account': idToken,
-  }, { openTimeoutMs: connectTimeoutMs });
+  const sock = openRelaySocket(relayWsUrl(relayUrl, '/v1/device'), useTicket
+    ? { 'x-pleiad-host': hostId, 'x-pleiad-ticket': ticket.relay }
+    : { 'x-pleiad-host': hostId, 'x-pleiad-account': idToken }, { openTimeoutMs: connectTimeoutMs });
   const onAbort = () => sock.ws.terminate();
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
@@ -268,7 +282,7 @@ export async function admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair, 
     }
     const hs = new Handshake({ pattern: 'IK', initiator: true, prologue: prologueFor(hostId), staticKey: keyPair, remoteStatic: pubKey });
     sock.ws.send(hs.writeMessage(Buffer.from(JSON.stringify({
-      proto: 1, name: cleanLabel(name), platform, app: String(app), plus: { idToken },
+      proto: 1, name: cleanLabel(name), platform, app: String(app), plus: useTicket ? { ticket: ticket.admission } : { idToken },
     }))));
     let m2;
     try { m2 = await sock.next(connectTimeoutMs); }
@@ -331,7 +345,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
     }));
   }
 
-  async function open(hostId, { via = 'own', relayUrl = null, getIdToken = null, onReadmit = null } = {}) {
+  async function open(hostId, { via = 'own', relayUrl = null, getIdToken = null, getTicket = null, onReadmit = null } = {}) {
     if (proxies.has(hostId)) return proxies.get(hostId);
     const run = (async () => {
       const creds = await store.credentials(hostId, via);
@@ -341,7 +355,7 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       const keyPair = await store.keyFor(hostId, via);
       const px = new DeviceProxy({
         creds: activeCreds, keyPair, port: creds.port, app, name, shell: platform === 'desktop' ? 'desktop' : 'mobile', log,
-        staticCacheFile: staticCacheFile(hostId), via, getIdToken, onReadmit, ...proxyOptions,
+        staticCacheFile: staticCacheFile(hostId), via, getIdToken, getTicket, onReadmit, ...proxyOptions,
       });
       px.on('status', s => {
         if (s.state === 'connected') {
@@ -458,10 +472,17 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
      *   mode 'pair':  人の操作。許可の無い鍵は PC の承認の窓へ回り、onCode(確認コード) のあと承認を待つ
      * 鍵は Plus の記録の鍵 → 同じホストの QR の記録の鍵（許可済みなら窓を出さずに通る）→ 端末の鍵の順に使う。
      * 'pair' で鍵が取り消されていたら、新しい鍵で一度だけやり直す（PC の承認の窓へ回る）
+     * ticketFor(keyPair) は、その鍵の端末の券 { relay, admission } を返す（券の無い前の版の api なら null で、idToken を使う）
      */
-    async admit({ hostId, hostPublicKey, relayUrl, idToken, uid, mode = 'admit', onCode, signal }) {
+    async admit({ hostId, hostPublicKey, relayUrl, idToken = null, ticketFor = null, uid, mode = 'admit', onCode, signal }) {
       const keyPair = (await store.keyFor(hostId, 'plus')) ?? (await store.keyFor(hostId, 'own')) ?? (await store.identity());
-      const run = kp => admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair: kp, idToken, name, platform, app, mode, onCode, signal });
+      const run = async kp => {
+        let ticket = null;
+        if (ticketFor) {
+          try { ticket = await ticketFor(kp); } catch (e) { throw typeof e?.status === 'number' ? ticketIssueError(e) : e; }
+        }
+        return admitWithHost({ hostId, hostPublicKey, relayUrl, keyPair: kp, idToken, ticket, name, platform, app, mode, onCode, signal });
+      };
       let used = keyPair, creds;
       try { creds = await run(keyPair); }
       catch (e) {

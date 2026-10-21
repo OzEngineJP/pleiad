@@ -124,12 +124,12 @@ AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Ele
 
 ### 3.4 同じアカウントの端末の受け入れ（Pleiad Plus）
 
-公式の中継（Pleiad Plus）では QR の代わりに、アカウントで中継を通り、PC の画面の承認の窓で許可する（[ADR 0245](adr/0245-device-approval-and-revocation.md)。前の [ADR 0240](adr/0240-plus-same-account-admission.md) を置き換えた）。端末は `/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Account`（ID トークン）だけでつなぎ、Noise_IK のメッセージ 1 に `{ proto, name, platform, app, plus: { idToken } }` を入れる。ホストは `plus.idToken` を自分で検証し、uid が今のアカウントと違えば窓を出さずに断る。
+公式の中継（Pleiad Plus）では QR の代わりに、アカウントで中継を通り、PC の画面の承認の窓で許可する（[ADR 0245](adr/0245-device-approval-and-revocation.md)。前の [ADR 0240](adr/0240-plus-same-account-admission.md) を置き換えた）。端末は自分の鍵で api から券（docs/plus.md「券」。[ADR 0246](adr/0246-plus-tickets.md)）を取り、`/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Ticket`（中継の券）だけでつなぎ、Noise_IK のメッセージ 1 に `{ proto, name, platform, app, plus: { ticket } }`（受け入れの券）を入れる。ホストは券を自分で確かめ（署名・期限・`hostId` が自分・`devicePub` が相手の静的鍵・uid が今のアカウント・一度きり）、合わなければ窓を出さずに断る。券の無い前の版の api の間は `X-Pleiad-Account`（ID トークン）と `plus: { idToken }` を使い、ホストは ID トークンの uid を確かめる。
 
 - 端末はメッセージ 2 のあと transport で 1 通送る。`{ type: 'admit' }` は裏でのつなぎ直し、`{ type: 'pair' }` は人がホストを選んだつなぎ
 - 許可済みの鍵（`approvedBy` を持つ記録の鍵。QR で足した端末の鍵も含む）なら、どちらでも窓を出さずに `{ type: 'approved', deviceId, token, hostName }` を返す（同じ deviceId でトークンを出し直す）
 - 許可していない鍵は、`admit` なら `{ type: 'denied', reason: 'approval' }`（窓を出さない）。`pair` なら台数・回数を確かめてから `{ type: 'waiting' }` を返し、QR と同じ承認の窓に同じ確認コードで出す（§3.3 の 4.）。許可で `approved`（`approvedBy: 'host'`）、拒否で `{ type: 'denied', reason: 'rejected' }`、5 分で `expired`
-- 断りの `reason`: `account`（ほかのアカウント）・`revoked`（取り消した鍵）・`rejected`（拒否してから 1 時間）・`approval`（許可していない鍵の裏のつなぎ直し）・`devices`・`unavailable`・`rate`
+- 断りの `reason`: `account`（ほかのアカウント・確かめに落ちた券）・`update_required`（券を出す api なのに ID トークンだけで申し込んだ。端末は更新を促す）・`revoked`（取り消した鍵）・`rejected`（拒否してから 1 時間）・`approval`（許可していない鍵の裏のつなぎ直し）・`devices`・`unavailable`・`rate`
 - 承認を待っている間は、PC の通知の一覧（あなた待ち）・OS の通知・許可済みのスマホへの通知（ボタン無し。ロック画面は題だけ）で知らせる。許可は PC の画面だけ
 - 前の版で確認コードなしに入った `via: 'plus'` の記録（`approvedBy` が無い）は「もう一度の許可が要る端末」。通常の接続も `admit` も通さず、`pair` で同じ記録のまま窓に出る（`again`）
 - 登録は `devices.json` の `via: 'plus'`・`plusUid`・`approvedBy`・`approvedAt`。細部は docs/plus.md
@@ -479,7 +479,7 @@ link ごとの振る舞いは provider が決める:
 - 端末の記録（devices.json）の `via` は `'own'` か `'plus'`（無いものは `'own'` とみなす。今のファイルはそのまま読める）。`plusUid` は `via: 'plus'` の端末を受け入れたアカウントの uid（状態には出さない）
 - 「ほかの端末からの操作を許可する」が off なら全部の link を閉じる。`status()` の `links.<名>` に各 link の状態が出る（`connection` は `links.own` と同じもの）
 
-plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus.md「Plus のつながり」）。`enabled`・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`・この PC の登録（`core/plus/hosts.mjs`）が `registered`、の全部がそろったときだけ張り、行き先は `/v1/auth/config` の `urls.relay`、認証は `X-Pleiad-Host` と `X-Pleiad-Account`（ID トークン）。`onIncomingAdmit` で、アカウントでの受け入れ（§3.4）を担う。条件が変わったときはサーバーが `refreshPlus()` で見直す（張っている間は何もしない。中継が `4401 'account'` で閉じたあとは、アカウントが Plus で使えると新しく分かるか条件がいったん崩れるまで ready() が error を返し、見直しでも張らない）。`status().plus` に `{ connect, link, host, devices }` を出す。`plusHostRebind`（人だけ）はホストの鍵を作り直して端末を全部取り消し、`onIdentity` で登録し直す。
+plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus.md「Plus のつながり」）。`enabled`・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`・この PC の登録（`core/plus/hosts.mjs`）が `registered`、の全部がそろったときだけ張り、行き先は `/v1/auth/config` の `urls.relay`、認証は `X-Pleiad-Host` と `X-Pleiad-Ticket`（張るたびに取る中継の券。accept は今の制御の接続と同じ券。券の無い前の版の api の間は `X-Pleiad-Account` の ID トークン）。`onIncomingAdmit` で、アカウントでの受け入れ（§3.4）を担う。条件が変わったときはサーバーが `refreshPlus()` で見直す（張っている間は何もしない。中継が `4401 'account'` で閉じたあとは、アカウントが Plus で使えると新しく分かるか条件がいったん崩れるまで ready() が error を返し、見直しでも張らない）。`status().plus` に `{ connect, link, host, devices }` を出す。`plusHostRebind`（人だけ）はホストの鍵を作り直して端末を全部取り消し、`onIdentity` で登録し直す。
 
 ## 7. デスクトップ版の端末（#14）
 

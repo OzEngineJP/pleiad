@@ -90,7 +90,7 @@ async function hostScenes(t, scene) {
   };
   const verifier = createIdTokenVerifier({ jwksUrl: plus.jwksUrl, projectId: () => 'test-project' });
   const authz = createPlusRelayAuthz({
-    verify: token => verifier.verify(token),
+    verify: token => verifier.verify(token), keysUrl: plus.ticketKeysUrl,
     isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid,
   });
   // 試験は 1 分の間に何度も受け入れを試す（中継の 1 分の受け入れの上限を広げる）

@@ -245,6 +245,8 @@ class RemoteDevice(
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, LinkStatus) -> Unit>()
     @Volatile var plusIdToken: (() -> String?)? = null
     @Volatile var plusReadmit: ((String) -> HostCreds?)? = null
+    /** The relay ticket (role device) for one connection to hostId with this key; null: the api has no tickets yet. */
+    @Volatile var plusTicket: ((hostId: String, keyPair: KeyPair) -> String?)? = null
 
     fun onStatus(fn: (hostId: String, status: LinkStatus) -> Unit) { listeners.add(fn) }
     fun offStatus(fn: (hostId: String, status: LinkStatus) -> Unit) { listeners.remove(fn) }
@@ -307,6 +309,7 @@ class RemoteDevice(
         val px = DeviceProxy(
             loop, creds, store.keyFor(hostId, via) ?: store.identity(), rec?.port ?: 0, app, name, "mobile", backoff, connectTimeoutMs, requestWaitMs, texts, log,
             staticCacheFile(hostId), if (via == "plus") plusIdToken else null, if (via == "plus") plusReadmit else null,
+            if (via == "plus") plusTicket else null,
         )
         px.onStatus { s ->
             try {

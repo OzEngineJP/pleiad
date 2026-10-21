@@ -54,6 +54,7 @@ object DefaultTexts : ProxyTexts {
         "limit" -> "This account has reached its limit"
         "paused" -> "Pleiad Plus is temporarily unavailable"
         "signed-out" -> "Not signed in"
+        "update" -> "Please update Pleiad"
         else -> "Can't reach the host"
     }
     override fun body(state: String) = when (state) {
@@ -64,6 +65,7 @@ object DefaultTexts : ProxyTexts {
         "limit" -> "This account has reached its limit."
         "paused" -> "Pleiad Plus is temporarily unavailable. The connection will resume when it is available."
         "signed-out" -> "Sign in to Pleiad Plus to connect to this host."
+        "update" -> "This version of Pleiad can't use the official relay. Please update Pleiad."
         else -> "Can't reach the relay. Check your network. This page opens automatically once connected."
     }
     override fun tokenRequired() = "A token is required (open this from the app)"
@@ -87,6 +89,7 @@ class DeviceProxy(
     staticCacheFile: java.io.File? = null,
     plusIdToken: (() -> String?)? = null,
     plusReadmit: ((String) -> HostCreds?)? = null,
+    plusTicket: ((String, KeyPair) -> String?)? = null,
 ) {
     companion object {
         const val PROXY_COOKIE = "pleiad_remote_token"
@@ -115,7 +118,7 @@ class DeviceProxy(
         fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
     }
 
-    val link = DeviceLink(loop, creds, keyPair, app, name, shell, backoff, connectTimeoutMs, log = log, plusIdToken = plusIdToken, plusReadmit = plusReadmit)
+    val link = DeviceLink(loop, creds, keyPair, app, name, shell, backoff, connectTimeoutMs, log = log, plusIdToken = plusIdToken, plusReadmit = plusReadmit, plusTicket = plusTicket)
     private val wantPort = if (wantPort in 1024..65535) wantPort else 0
     @Volatile var port = 0; private set
     val token: String = PairingCodec.b64urlEncode(randomBytes(32))

@@ -105,6 +105,7 @@ import { createMcpOAuth } from './mcp-oauth.mjs';
 import { createPlusConfig } from './plus/config.mjs';
 import { createPlusSession } from './plus/session.mjs';
 import { createIdTokenVerifier } from './plus/verify.mjs';
+import { createTicketIssuer, createTicketVerifier } from './plus/tickets.mjs';
 import { createPlusHost } from './plus/hosts.mjs';
 import { createPlusSync } from './plus/sync/index.mjs';
 import { createSyncSettings } from './plus/sync/settings.mjs';
@@ -786,6 +787,11 @@ let notifiedPlusIdentity = null;
 let plusHostRegistrationInputs = null;
 let plusSync = null;
 const plusVerifier = createIdTokenVerifier({ jwksUrl: plusConfig.jwksUrl, projectId: () => plusConfigLast?.token?.projectId ?? '' });
+// 券（core/plus/tickets.mjs）: 中継の券を取る手と、端末の受け入れの券を確かめる手。admission は /v1/auth/config の値（券を出す api なら数）
+const plusAdmission = async () => (await plusConfig.known().catch(() => null))?.admission ?? null;
+const plusTicketRequest = (method, p, body) => plusSession.client.request(method, p, { body });
+const plusTickets = createTicketIssuer({ request: plusTicketRequest, admission: plusAdmission });
+const plusTicketVerifier = createTicketVerifier({ keysUrl: () => `${plusConfig.apiBase}/.well-known/pleiad-keys` });
 const plusHost = createPlusHost({
   session: plusSession, store: remote.store, appVersion: APP_VERSION,
   hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
@@ -815,7 +821,7 @@ plusSync = createPlusSync({
 plusSync.onChange(status => emitGlobal({ type: 'plusSyncStatus', status, sessionId: null }));
 let plusDevicesNow = 0;
 const plusLink = createPlusLink({
-  session: plusSession, verifier: plusVerifier, remote,
+  session: plusSession, verifier: plusVerifier, issuer: plusTickets, ticketVerifier: plusTicketVerifier, remote,
   onAdmitted: () => { void plusHost.syncDeviceCount(); },
   // 中継の 4401 host（この PC の登録が外れた）→ 同期の 403 host と同じく台帳を見直す
   onHostLost: () => { void plusHost.recheck(); },
@@ -851,6 +857,7 @@ async function syncPlusLink({ registerHost = true } = {}) {
     hostState: plusHost.host()?.state ?? null,
     limits: snap.account?.limits ?? null,
     relayUrl: cfg?.urls?.relay ?? null,
+    admission: cfg?.admission ?? null,
   });
   if (shouldRegisterHost) await plusHost.maybeRegister();
   void plusSync.update().catch(() => {});
@@ -9725,6 +9732,20 @@ mainPort.on("message", async ({ data }) => {
       }
     } catch (e) {
       mainPort.postMessage({ type: 'plus-token', id: data.id, ok: false, error: String(e?.message ?? e) });
+    }
+  }
+  // 端末の券を取る api の呼び出し（desktop/remote-windows.cjs。証明は端末の鍵を持つ main が作る）。通すのは券の 2 つの口だけ
+  if (data?.type === 'plus-ticket') {
+    const admission = await plusAdmission();
+    const p = data.path === '/v1/tickets/challenge' || data.path === '/v1/tickets' ? data.path : null;
+    try {
+      if (!p) throw Object.assign(new Error('bad path'), { status: 400, code: 'bad_request' });
+      if (!plusSession.snapshot().signedIn) throw Object.assign(new Error('not signed in'), { code: 'not_signed_in' });
+      const body = await plusTicketRequest('POST', p, data.body && typeof data.body === 'object' ? data.body : {});
+      mainPort.postMessage({ type: 'plus-ticket', id: data.id, ok: true, body, admission });
+    } catch (e) {
+      mainPort.postMessage({ type: 'plus-ticket', id: data.id, ok: false, status: typeof e?.status === 'number' ? e.status : null,
+        code: typeof e?.code === 'string' ? e.code : null, error: String(e?.message ?? e), admission });
     }
   }
   // デスクトップの main が拾った pleiad://plus/enable|disable（desktop/plus-link.cjs。ほかの pleiad://… は来ない）

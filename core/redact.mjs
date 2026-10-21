@@ -25,7 +25,7 @@ const TOKEN_RULES = [
   // JWT（ヘッダー.本体.署名）
   [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g, () => MASK],
   // Pleiad Plus のセッションの値（docs/plus.md）。誤りの code（"code":"invalid_grant" など）は伏せない
-  [/\b(X-Pleiad-Account)(\s*[:=]\s*)[^\s;,]+/gi, (_, name, sep) => `${name}${sep}${MASK}`],
+  [/\b(X-Pleiad-(?:Account|Ticket))(\s*[:=]\s*)[^\s;,]+/gi, (_, name, sep) => `${name}${sep}${MASK}`],
   // password=… / --token … / "api_key": "…" のような名前付きの値
   [/((?:^|[^A-Za-z0-9])-{0,2}(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|idToken|refreshToken|id_token|refresh_token|codeVerifier|code_verifier)["']?\s*[=:]\s*["']?)[^\s"'&,;]+/gi, (_, head) => `${head}${MASK}`],
 ];

@@ -22,6 +22,8 @@
     <string name="remote_page_plus_maintenance">Pleiad Plus is under maintenance. The connection will resume when it is available.</string>
     <string name="remote_plus_signed_out">Not signed in</string>
     <string name="remote_page_plus_signed_out">Sign in to Pleiad Plus to connect to this host.</string>
+    <string name="remote_plus_update">Please update Pleiad</string>
+    <string name="remote_page_plus_update">This version of Pleiad can\'t use the official relay. Please update Pleiad.</string>
     <string name="remote_token_required">A token is required (open this from the app)</string>
     <string name="remote_lost">Lost the connection to the host</string>
     <string name="remote_back_to_hosts">Back to hosts</string>

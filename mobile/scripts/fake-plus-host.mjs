@@ -1,4 +1,6 @@
 // Android の Plus 接続を試すためのローカルホスト。偽の Plus と relay/server.mjs だけを使う。
+// 中継と PC は券（docs/plus.md「券」）も ID トークンも受ける。v2-on で券だけにする（中継は券の無い接続を
+// 4401 'update required'、PC は ID トークンだけの申し込みを 'update_required' で断る）。
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -12,6 +14,7 @@ import { createPlusHost } from '../../core/plus/hosts.mjs';
 import { createPlusConfig } from '../../core/plus/config.mjs';
 import { createPlusClient } from '../../core/plus/client.mjs';
 import { createIdTokenVerifier } from '../../core/plus/verify.mjs';
+import { createTicketIssuer, createTicketVerifier } from '../../core/plus/tickets.mjs';
 import { createPlusRelayAuthz } from '../../tests/lib/plus-relay-authz.mjs';
 import { startFakePlus } from '../../tests/lib/fake-plus.mjs';
 import { plainCipher } from '../../core/secret-store.mjs';
@@ -39,7 +42,7 @@ plus.state.accounts[uid] = {
 plus.state.accounts['user-2'] = { ...plus.state.accounts[uid], uid: 'user-2', email: 'other@example.com' };
 const verifier = createIdTokenVerifier({ jwksUrl: plus.jwksUrl, projectId: () => 'test-project' });
 const authz = createPlusRelayAuthz({
-  verify: token => verifier.verify(token),
+  verify: token => verifier.verify(token), keysUrl: plus.ticketKeysUrl,
   isBound: async (accountUid, hostId) => plus.state.hosts[hostId]?.uid === accountUid,
 });
 const officialRelay = createRelay({
@@ -57,6 +60,9 @@ const session = {
   client: createPlusClient({ config: plusConfig, getIdToken: async () => plus.issueIdToken(uid), appVersion: 'test' }),
   setHost: () => {}, onChange: () => {},
 };
+const issuer = createTicketIssuer({ request: (method, p, body) => session.client.request(method, p, { body }), admission: () => admission });
+const ticketVerifier = createTicketVerifier({ keysUrl: () => plus.ticketKeysUrl });
+let admission = null;   // v2-on で 2（券だけを受ける PC）
 let plusCount = 0;
 let host;
 const remote = createRemoteHost({
@@ -67,7 +73,7 @@ const remote = createRemoteHost({
   emit: ev => { if (ev.type === 'remotePairing' && ev.phase === 'request') out({ event: 'pair-request', id: ev.request.id, code: ev.request.code, via: ev.request.via }); },
 });
 const makePlusLink = (admitLimit = 20) => createPlusLink({
-  session, verifier, remote, admitLimit,
+  session, verifier, issuer, ticketVerifier, remote, admitLimit,
   onAdmitted: async () => { plusCount = (await remote.store.devices()).filter(d => d.via === 'plus').length; await host.syncDeviceCount(); },
   log: line => out({ event: 'error', message: line }),
 });
@@ -86,9 +92,18 @@ async function sync() {
   plusLink.update({
     enabled: status.enabled === true, signedIn: sessionState.signedIn, uid: uid,
     accountStatus: sessionState.account?.status ?? null, connect: status.plus?.connect === true,
-    hostState: host.host().state, limits: sessionState.account?.limits ?? null, relayUrl: officialUrl,
+    hostState: host.host().state, limits: sessionState.account?.limits ?? null, relayUrl: officialUrl, admission,
   });
   remote.refreshPlus();
+}
+
+// 制御の接続を張り直した（中継が新しい /v1/host を通した）ところまで待つ。券を取る分だけ張り直しが遅いので、
+// 前の接続の「connected」のうちに端末を送ると、張り直しで閉じられる
+const controlOpens = () => authz.state.seen.filter(s => s.route === '/v1/host' && s.ok).length;
+async function swapProvider(provider) {
+  const before = controlOpens();
+  await remote.setPlusProvider(provider);
+  await until(async () => controlOpens() > before && (await remote.status()).links.plus.state === 'connected');
 }
 
 async function until(fn, timeoutMs = 12_000) {
@@ -111,7 +126,7 @@ try {
   const identity = await remote.store.peekIdentity();
   out({
     event: 'ready', hostId: identity.hostId, publicKey: identity.publicKey.toString('base64url'),
-    hostName: 'fake-plus-host', relayUrl: officialUrl,
+    hostName: 'fake-plus-host', relayUrl: officialUrl, apiUrl: plus.url,
     idToken: plus.issueIdToken(uid), otherIdToken: plus.issueIdToken('user-2'), uid,
   });
 
@@ -131,14 +146,35 @@ try {
         await sync();
       } else if (command === 'rate-on') {
         const limited = makePlusLink(0);
-        limited.update({ enabled: true, signedIn: true, uid, accountStatus: 'plus', connect: true, hostState: 'registered', limits: sessionState.account.limits, relayUrl: officialUrl });
-        await remote.setPlusProvider(limited.provider);
-        await until(async () => (await remote.status()).links.plus.state === 'connected');
+        limited.update({ enabled: true, signedIn: true, uid, accountStatus: 'plus', connect: true, hostState: 'registered', limits: sessionState.account.limits, relayUrl: officialUrl, admission });
+        await swapProvider(limited.provider);
         out({ event: 'rate-ready' });
       } else if (command === 'rate-off') {
-        await remote.setPlusProvider(plusLink.provider);
-        await until(async () => (await remote.status()).links.plus.state === 'connected');
+        await swapProvider(plusLink.provider);
         out({ event: 'rate-restored' });
+      } else if (command === 'v2-on' || command === 'v2-off') {
+        // v2-on host: PC だけを券だけにする（中継は ID トークンも通す。PC の 'update_required' を確かめる）
+        const on = command === 'v2-on';
+        authz.state.v2Required = on && value !== 'host';
+        admission = on ? 2 : null;
+        plus.state.admission = on ? 2 : 1;
+        await sync();
+        out({ event: on ? 'v2-ready' : 'v2-restored' });
+      } else if (command === 'tickets-off') {
+        // 券の口が無い前の版の api（challenge が 404、/v1/auth/config に admission が無い）
+        plus.state.tickets = false;
+        out({ event: 'tickets-off' });
+      } else if (command === 'ticket-fail') {
+        // 次の券の発行を value の状態で断る（426 update_required・404 not_found など）
+        const status = Number(value);
+        plus.state.ticketFail = [{ path: '/v1/tickets/challenge', status, code: status === 426 ? 'update_required' : status === 404 ? 'not_found' : 'internal' }];
+        out({ event: 'ticket-fail', status });
+      } else if (command === 'ticket-fail-off') {
+        plus.state.ticketFail = [];
+        out({ event: 'ticket-fail-off' });
+      } else if (command === 'seen') {
+        // 中継が端末の接続で見たもの（券か ID トークンか）
+        out({ event: 'seen', seen: authz.state.seen.filter(s => s.route.startsWith('/v1/device')).slice(-Number(value || 5)) });
       } else if (command === 'close-device') {
         const closed = authz.handle.closeTag(`d:${value}`, 4401, 'revoked');
         out({ event: 'closed-revoked', deviceId: value, count: closed });
