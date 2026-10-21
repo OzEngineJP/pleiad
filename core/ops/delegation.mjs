@@ -5,6 +5,7 @@ import { agentT } from '../i18n.mjs';
 import { defineOp, OpError } from './registry.mjs';
 import { clip, fromHost, humanOnlyFields, pageOf, PAGE_MAX } from './host.mjs';
 import { instructionView } from '../../web/task-instructions.mjs';
+import { plusIdentityShown } from './plus.mjs';
 
 const D = (id, key) => `agent:ops.delegation.${id}.${key}`;
 export const TASKS_MAX = 100;
@@ -248,7 +249,11 @@ export const delegationOps = [
     handler: async (ctx, { refresh, ...page }) => {
       const state = await fromHost(() => ctx.delegation.routing({ refresh }));
       const { total, items, next } = pageOf(ctx, state.candidates ?? [], page);
-      return { settings: state.settings, warnings: state.warnings ?? [], keys: state.keys, total, candidates: items, next };
+      // keys の各行の plus は Plus の行（メールを含む）。agent には名指しする欄を伏せる（core/ops/plus.mjs）
+      const keys = state.keys && typeof state.keys === 'object'
+        ? Object.fromEntries(Object.entries(state.keys).map(([s, k]) => [s, k && typeof k === 'object' && 'plus' in k ? { ...k, plus: plusIdentityShown(ctx, k.plus) } : k]))
+        : state.keys;
+      return { settings: state.settings, warnings: state.warnings ?? [], keys, total, candidates: items, next };
     },
     uiHandler: (ctx, { refresh }) => fromHost(() => ctx.delegation.routing({ refresh })),
   }),

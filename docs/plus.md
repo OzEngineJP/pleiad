@@ -89,6 +89,7 @@
   login: { phase: 'idle' }, // 'idle' | 'waiting' | 'finishing' | 'failed'
   account: { uid, email, provider, status, plan, limits, usage, sync } | null,
   accountReadAt: 1760000000000 | null, // GET /v1/account を最後に読めた時刻（ms。読めなかった・403 のときは進まない）
+  uid: '...' | null,        // 保管したログインの uid（account を読む前から分かる。中継・同期が使う）
   reachable: true,          // false = サーバーに届かない（account は最後に知った値）
   error: null,              // { code: 'relogin' | 'locked' } | null
   urls: { account, profile },
@@ -105,7 +106,7 @@
 
 | コマンド | 入力 → 出力 | 誰が |
 | --- | --- | --- |
-| `plusStatus` | `{ refresh? }` → 上の状態 | 操作 `plus.status`（risk `read`）を通す。agent には `account.email` と `account.uid` を伏せる |
+| `plusStatus` | `{ refresh? }` → 上の状態 | 操作 `plus.status`（risk `read`）を通す。agent（`pleiad plus status`・ply_control・`pleiad mcp`）には `uid`・`account.uid`・`account.email` を伏せる。Plus の行を混ぜて返す `voice.status` の `plus`・`delegation.routing` の `keys.*.plus` も、agent には `email` を伏せる（`core/ops/plus.mjs` の `plusIdentityShown`） |
 | `plusLogin` | `{}` → `{ started: true }` | 人だけ |
 | `plusLoginCancel` | `{}` → 状態 | 人だけ |
 | `plusLogout` | `{}` → 状態 | 人だけ |

@@ -4,6 +4,7 @@
 import { z } from 'zod';
 import { defineOp } from './registry.mjs';
 import { normalizeVoiceSettings } from '../voice/settings.mjs';
+import { plusIdentityShown } from './plus.mjs';
 
 export const voiceOps = [
   // 設定 › 通話の画面と、AI が「通話が使えるか・今日どれだけ使ったか」を見るための読み取り。キーそのものは返さない（hasKey だけ）
@@ -23,6 +24,10 @@ export const voiceOps = [
       settings: z.object({}).passthrough(),
     }),
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['voice', 'status'] } },
-    handler: async (ctx) => ({ ...(await ctx.voice.status()), settings: normalizeVoiceSettings((await ctx.prefs?.())?.voice) }),
+    // plus は Plus の行（メールを含む）。agent には名指しする欄を伏せる（core/ops/plus.mjs）
+    handler: async (ctx) => {
+      const status = await ctx.voice.status();
+      return { ...status, plus: plusIdentityShown(ctx, status?.plus), settings: normalizeVoiceSettings((await ctx.prefs?.())?.voice) };
+    },
   }),
 ];

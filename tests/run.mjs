@@ -29,6 +29,8 @@ const SUITES = [
   // Pleiad Plus（core/plus/）: セッション（ログイン・保管・更新・状態。偽の Plus だけと話す）と ID トークンの検証
   './unit/plus-session.mjs',
   './unit/plus-verify.mjs',
+  // Plus の操作（plus.status・voice.status・delegation.routing）: agent には uid・メールを出さない
+  './unit/plus-ops-identity.mjs',
   // 設定 › Pleiad Plus（web/plus-settings.mjs）: 状態ごとの行とボタン・メニューの出し入れ（DOM の代役）
   './unit/plus-settings.mjs',
   // 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs）: 状態ごとの行とボタン・時刻と MB の書式（DOM の代役）
