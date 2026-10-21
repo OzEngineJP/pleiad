@@ -131,8 +131,10 @@ export default recording;
   };
   const pick = async (kind) => { await wizard.locator(`[data-fk="seg-${kind}"]`).click(); await page.waitForTimeout(150); };
   const next = async () => { await wizard.locator('[data-fk="next"]').click(); await page.waitForTimeout(150); };
+  // Plus の つなぐ の段は「やめる」が無く、すぐ押せる「閉じる」で閉じる
   const cancel = async () => {
-    await wizard.locator('[data-fk="cancel"]').click();
+    const hasCancel = await wizard.locator('[data-fk="cancel"]').count() > 0;
+    await wizard.locator(hasCancel ? '[data-fk="cancel"]' : '[data-fk="next"]').click();
     await until(async () => !(await wizard.isVisible()), '端末追加の窓を閉じる');
   };
 

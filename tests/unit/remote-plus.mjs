@@ -86,10 +86,11 @@ export default async function (t) {
 
   const remote = createRemoteHost({ dataDir, cipher: plainCipher, target: () => ({ host: '127.0.0.1', port: 1 }), token: 'tok', env: {}, backoff: { minMs: 60, maxMs: 200 }, log: () => {}, onIdentity: () => { void host.maybeRegister(); } });
   let plusCount = 0;
+  let hostLostCalls = 0;   // 中継の 4401 host で onHostLost が呼ばれた回数（server と同じく登録を確かめ直す）
   const plusLink = createPlusLink({ session, verifier, remote, onAdmitted: async () => {
     plusCount = (await remote.store.devices()).filter(d => d.via === 'plus').length;
     await host.syncDeviceCount();
-  }, log: () => {} });
+  }, onHostLost: () => { hostLostCalls++; void host.recheck(); }, log: () => {} });
   const host = createPlusHost({ session, store: remote.store, appVersion: 'test', hostName: () => 'plus-desk', plusDevices: () => plusCount, retryMs: 40, log: () => {}, onHostState: s => remote.setPlusHostState(s) });
   remote.setPlusProvider(plusLink.provider);
   /** server の syncPlusLink と同じ見直し（条件を変えたあとに呼ぶ） */
@@ -275,6 +276,23 @@ export default async function (t) {
       return s.links.plus.state === 'connected' && Date.parse(s.links.plus.since) >= since1013;
     }, 10_000, '1013 でも張り直す');
     t.ok('1013 は今の backoff で張り直す', true);
+
+    // ---- 運営がこの PC を外した → 中継は 4401 host。登録を確かめ直して登録し直し、つなぎ直す
+    const seenBefore = hostStateSeen.length;
+    plus.unbindHost(st.hostId, 'admin');
+    authz.handle.closeTag(`h:${st.hostId}`, 4401, 'host');
+    const sHost = await until(async () => {
+      const s = await remote.status();
+      return s.links.plus.state === 'error' && s.links.plus.error?.code === 'host' ? s : null;
+    }, 5000, '4401 host は error host');
+    t.ok('4401 host は error host（auth にしない）', sHost.links.plus.error?.code === 'host', JSON.stringify(sHost.links.plus));
+    await until(() => (plus.state.hosts[st.hostId] ? true : null), 10_000, '外されたら登録し直す');
+    t.ok('4401 host で onHostLost を呼び、運営が外した PC は登録し直す（台帳に戻る）', hostLostCalls >= 1 && plus.state.hosts[st.hostId]?.uid === UID, `calls=${hostLostCalls}`);
+    t.ok('登録し直したときは状態に notice: reregistered を載せる',
+      hostStateSeen.slice(seenBefore).some(s => s.state === 'registered' && s.notice === 'reregistered'), JSON.stringify(hostStateSeen.slice(seenBefore)));
+    await sync();
+    await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '登録し直すとつなぎ直す');
+    t.ok('登録し直すと公式の中継へつなぎ直す', true);
 
     // ---- アカウントが free に落ちる → link は閉じるが記録は残る
     plus.state.accounts[UID].status = 'free';

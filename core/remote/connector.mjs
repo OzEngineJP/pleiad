@@ -199,7 +199,7 @@ export function createRemoteHost({
       hostName: s.hostName || os.hostname(),
       relayUrlFromEnv: !s.relayUrl && Boolean(env.AGENT_HOST_RELAY_URL),
       secretFromEnv: !secretStored && Boolean(env.AGENT_HOST_RELAY_SECRET),
-      plusConnect: s.plus?.connect === true,
+      plusConnect: s.plus?.connect !== false,
     };
     deviceCache.clear();
     notifyKeys.clear();
@@ -782,7 +782,7 @@ export function createRemoteHost({
       if (args.relayUrl !== undefined) patch.relayUrl = normalizeRelayUrl(args.relayUrl);
       if (args.hostName !== undefined) patch.hostName = cleanLabel(args.hostName);
       if (args.enabled !== undefined) patch.enabled = args.enabled === true;
-      if (args.plusConnect !== undefined) patch.plus = { connect: args.plusConnect === true };
+      if (args.plusConnect !== undefined) patch.plus = { connect: args.plusConnect === true, userSet: true };
       if (args.enrollSecret !== undefined) {
         const secret = args.enrollSecret == null ? '' : String(args.enrollSecret).trim();
         if (/[\s]/.test(secret) || secret.length > 1024) throw new Error(t('remote.settings.secretWhitespace'));

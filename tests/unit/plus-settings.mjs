@@ -2,9 +2,10 @@
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
 import { renderPlus, setupPlusSettings } from '../../web/plus-settings.mjs';
+import { plusKeyRow } from '../../web/plus-key-row.mjs';
 
 export const name = 'plus-settings';
-export const title = '設定 › Pleiad Plus: 状態ごとの中身とボタン・コマンド・届かない行・メニューの出し入れ（DOM の代役）';
+export const title = '設定 › Pleiad Plus: 状態ごとの中身とボタン・コマンド・届かない行・メニューの出し入れ・登録の外れ・始め直しの確かめ（DOM の代役）';
 
 const text = nodes => nodes.map(n => n.textContent).join(' ');
 // dom-stub の querySelector は [data-fk=…] を読めないので自前で探す
@@ -108,6 +109,30 @@ export default async function (t) {
   nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, provider: 'apple.com' } });
   t.ok('provider が google.com 以外なら下の行は出さない', !text(nodes).includes('Google でログイン'));
 
+  // プランは読めるまで「無料」と言わない（承認 2026-10-21）
+  const hasClass = (list, cls) => { const walk = n => (n.className ?? '').split(' ').includes(cls) || (n.children ?? []).some(walk); return list.some(walk); };
+  nodes = render({ ...BASE, signedIn: true, account: null, email: 'user@example.com' });
+  t.ok('読み込み中: プランは場所取り（.rm-skel）で、「無料」も失敗の行も出さない', hasClass(nodes, 'rm-skel') && !text(nodes).includes('無料') && !text(nodes).includes('読み込めませんでした'), text(nodes));
+  t.ok('読み込み中: アカウントの行はログインのときのメールで出す', text(nodes).includes('user@example.com'));
+  let retried = 0;
+  nodes = renderPlus({ ...BASE, signedIn: true, account: null, reachable: false }, { ...deps, onRetry: () => { retried++; } });
+  t.ok('読めなかった: 「読み込めませんでした」と「再試行」、「無料」は出さない', text(nodes).includes('読み込めませんでした') && buttonTexts(nodes).includes('再試行') && !text(nodes).includes('無料'), text(nodes));
+  byFk(nodes, 'planRetry').onclick();
+  t.ok('「再試行」は onRetry を呼ぶ', retried === 1);
+  nodes = renderPlus({ ...BASE, signedIn: true, account: null, reachable: false }, { ...deps, retrying: true });
+  t.ok('再試行の間は場所取りに戻る', hasClass(nodes, 'rm-skel') && !buttonTexts(nodes).includes('再試行'));
+  nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, plan: { name: 'Pleiad Plus（招待）' } } });
+  t.ok('招待のプラン名はサーバーの名前をそのまま出す', text(nodes).includes('Pleiad Plus（招待）'));
+
+  // 鍵の画面の Plus の行も同じ（読めるまで「使っていない」と言わない）
+  const keyRowText = info => plusKeyRow({ info: { available: true, state: 'on', ...info }, checked: false, onChoose() {}, onLogin() {} }).row;
+  let row = keyRowText({ signedIn: true, status: null, reachable: true });
+  t.ok('鍵の行: 読み込み中は場所取りで「使っていません」を出さない', hasClass([row], 'rm-skel') && !row.textContent.includes('使っていません'), row.textContent);
+  row = keyRowText({ signedIn: true, status: null, reachable: false });
+  t.ok('鍵の行: 読めなかったら「読み込めませんでした」', row.textContent.includes('読み込めませんでした'), row.textContent);
+  row = keyRowText({ signedIn: true, status: 'free', reachable: true });
+  t.ok('鍵の行: free は「使っていません」のまま', row.textContent.includes('使っていません') && !hasClass([row], 'rm-skel'));
+
   // この PC の行: taken → 確かめ → plusHostRebind / limit / ほかは出さない
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'taken' } });
   t.ok('host taken: 文と「つなぎ直す」', text(nodes).includes('ほかの Pleiad Plus のアカウントでつないでいます') && buttonTexts(nodes).includes('つなぎ直す'));
@@ -123,6 +148,15 @@ export default async function (t) {
   t.ok('host limit: 「このアカウントの上限に達しています」', text(nodes).includes('このアカウントの上限に達しています') && !buttonTexts(nodes).includes('つなぎ直す'));
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'ok' } });
   t.ok('ほかの host.state ならこの PC の行は出さない', !text(nodes).includes('つないでいます'));
+
+  // 登録の外れ（docs/plus.md「同期の始め直しと登録の外れ」）: 利用者が外した PC は自分では登録し直さない
+  let rereg = 0;
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'removed' } }, { ...deps, reregister: () => { rereg++; } });
+  t.ok('host removed: 外されている旨と「この PC を登録し直す」', text(nodes).includes('この PC は Pleiad Plus の登録から外されています') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
+  byFk(nodes, 'hostReregister').onclick();
+  t.ok('「この PC を登録し直す」は reregister を呼ぶ', rereg === 1);
+  nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered', notice: 'reregistered' } });
+  t.ok('notice reregistered: 「登録が外れていたので、登録し直しました」（ボタンは出さない）', text(nodes).includes('この PC の登録が外れていたので、登録し直しました') && !byFk(nodes, 'hostReregister'));
 
   // reachable === false: 中身の上に 1 行（⚠ は付けない）
   nodes = render({ ...BASE, reachable: false, signedIn: true, account: ACCOUNT });
@@ -145,6 +179,62 @@ export default async function (t) {
       settings.reconnected();
       await new Promise(r => setImmediate(r));
       t.ok(`available === ${available} → つながったあと plusTab は ${want ? '出さない' : '出す'}`, calls > 0 && nodes2.plusTab.hidden === want);
+    } finally { document.getElementById = savedGet; }
+  }
+
+  // ---- 始め直しの確かめ（鍵を待つ PC）: 見せた keyId と件数を confirm に付けて送る・数字が変わったらチェックを外す ----
+  {
+    const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
+    const savedGet = document.getElementById;
+    document.getElementById = id => nodes2[id] ?? null;
+    const invoked = [];
+    let resetReply = null;
+    const WAIT = { keyId: 'key-1', itemCount: 312, totalBytes: 4_404_019, updatedAt: '2026-10-21T04:00:00Z', holder: false, holders: [] };
+    try {
+      const settings = setupPlusSettings({
+        cmd: async (name, args) => {
+          if (name !== 'invoke') return {};
+          invoked.push([args.op, args.args]);
+          return args.op === 'plus.syncReset' ? resetReply : {};
+        },
+        page: () => {}, getPrefs: () => ({}),
+      });
+      const panel = () => [nodes2.plusPanel];
+      settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered' } } });
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: WAIT } });
+      byFk(panel(), 'syncReset').onclick();
+      t.ok('窓を開いた直後はチェックが外れていて押せない', byFk(panel(), 'syncResetCheck')?.checked === false && byFk(panel(), 'syncResetYes')?.disabled === true);
+      byFk(panel(), 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('チェックの前に「消して始め直す」を呼んでも送らない', !invoked.some(([op]) => op === 'plus.syncReset'));
+      const check = byFk(panel(), 'syncResetCheck');
+      check.checked = true; check.onchange();
+      resetReply = { confirmNeeded: true, status: { state: 'waiting_key', wait: { ...WAIT, itemCount: 315 } } };
+      byFk(panel(), 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      const sentReset = invoked.filter(([op]) => op === 'plus.syncReset').at(-1);
+      t.ok('plus.syncReset に見せた keyId と件数を confirm で付ける', sentReset?.[1]?.confirm?.keyId === 'key-1' && sentReset[1].confirm.itemCount === 312, JSON.stringify(sentReset));
+      t.ok('confirmNeeded なら窓を開いたまま、新しい件数でチェックを外す',
+        nodes2.plusPanel.textContent.includes('確かめている間に、サーバーのデータが変わりました') && nodes2.plusPanel.textContent.includes('315 件') && byFk(panel(), 'syncResetCheck')?.checked === false);
+      // もう一度チェックして送る → 今度は始め直せた
+      byFk(panel(), 'syncResetCheck').checked = true; byFk(panel(), 'syncResetCheck').onchange();
+      resetReply = { confirmNeeded: false, status: { state: 'idle', wait: null } };
+      byFk(panel(), 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      const sent2 = invoked.filter(([op]) => op === 'plus.syncReset').at(-1);
+      t.ok('2 回目は新しい件数で送り、窓を閉じる', sent2?.[1]?.confirm?.itemCount === 315 && !byFk(panel(), 'syncResetCheck'), JSON.stringify(sent2));
+      // 窓を開いている間に、ほかの PC が上げて件数が変わった（plusSyncStatus）
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: WAIT } });
+      byFk(panel(), 'syncReset').onclick();
+      byFk(panel(), 'syncResetCheck').checked = true; byFk(panel(), 'syncResetCheck').onchange();
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { ...WAIT, itemCount: 320 } } });
+      t.ok('確かめている間に件数が変わったら、チェックを外して変わった旨を出す',
+        byFk(panel(), 'syncResetCheck')?.checked === false && nodes2.plusPanel.textContent.includes('320 件') && nodes2.plusPanel.textContent.includes('サーバーのデータが変わりました'));
+      // 利用者が外した PC: 「この PC を登録し直す」は plus.hostReregister
+      settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'removed' } } });
+      byFk(panel(), 'hostReregister').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('「この PC を登録し直す」は plus.hostReregister を送る', invoked.some(([op]) => op === 'plus.hostReregister'));
     } finally { document.getElementById = savedGet; }
   }
 

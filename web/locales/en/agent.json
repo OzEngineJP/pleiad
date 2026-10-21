@@ -609,7 +609,11 @@
         "summary": "Runs one sync round right now (receive and upload)."
       },
       "syncReset": {
-        "summary": "Starts sync over. Removes the synced content on the server and starts again with this PC's content."
+        "summary": "Starts sync over. Removes the synced content on the server and starts again with this PC's content.",
+        "confirm": "The item count a person saw and confirmed (keyId and itemCount), needed when a PC without the key removes the data on the server. If missing or out of date, nothing is removed and the current values are returned."
+      },
+      "hostReregister": {
+        "summary": "Registers this PC on the Plus account again after it was removed by the user."
       },
       "syncOpenConflicts": {
         "summary": "Opens the folder with the older copies kept on conflict, on this PC."

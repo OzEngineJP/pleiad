@@ -29,6 +29,10 @@ const authz = createPlusRelayAuthz({ verify: token => verifier.verify(token), is
 const relay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz });
 const relayAddr = await relay.listen(0, '127.0.0.1');
 const relayUrl = `http://127.0.0.1:${relayAddr.port}`;
+const ownSecret = crypto.randomBytes(32).toString('base64url');
+const ownRelay = createRelay({ enrollSecret: ownSecret, trustProxy: false, logger: () => {} });
+const ownRelayAddr = await ownRelay.listen(0, '127.0.0.1');
+const ownRelayUrl = `http://127.0.0.1:${ownRelayAddr.port}`;
 const plus = await startFakePlus({ relayUrl });
 plus.state.accounts[ACCOUNT_ID] = ACCOUNT;
 verifier = createIdTokenVerifier({ jwksUrl: plus.jwksUrl, projectId: () => 'test-project' });
@@ -81,6 +85,8 @@ try {
   await page.locator('#remotePanel #remoteEnable').click();
   await until(async () => (await client.cmd('remoteStatus')).enabled, 'リモート許可');
   await page.waitForSelector('#remotePanel .rm-group');
+  check((await client.cmd('remoteStatus')).plus?.connect === true, '公式の中継の既定は入');
+  check(await page.locator('#remotePanel .rm-group').first().innerText().then(s => s.includes('Pleiad Plus（公式の中継）')), 'Plus のまとまりの見出し');
   check(await page.locator('#remotePanel .rm-tabrow [data-fk="seg-this"]').innerText() === 'この PC へ'
     && await page.locator('#remotePanel .rm-tabrow [data-fk="seg-other"]').innerText() === 'ほかの PC へ', '設定 › リモートの両タブを表示');
 
@@ -127,8 +133,10 @@ try {
   await page.waitForSelector('#remoteAddDevice:has-text("ブラウザーでログイン")');
   const loginStep = await page.locator('#remoteAddDevice').innerText();
   check(loginStep.includes('Pleiad Plus にログインします') && loginStep.includes('ブラウザーでログイン'), 'つなぐ: ログイン案内とブラウザーの入口', loginStep);
+  check(await page.locator('#remoteAddDevice .rm-stp li').count() === 3, '端末を追加は 3 段（アプリを入れる › つなぎ方 › つなぐ）');
   await shot('wizard-login', '#remoteAddDevice');
-  await page.locator('#remoteAddDevice [data-fk="cancel"]').click();
+  await page.locator('#remoteAddDevice [data-fk="next"]').click();
+  await until(async () => !(await page.locator('#remoteAddDevice').isVisible()), 'ログイン前の つなぐ の段から閉じる');
 
   // free: 既存の「Pleiad Plus にする」を再利用する。
   plus.state.accounts[ACCOUNT_ID] = { ...ACCOUNT, status: 'free', plan: null, limits: null, usage: null };
@@ -159,9 +167,19 @@ try {
   await shot('method', '#remoteAddDevice');
   await page.locator('#remoteAddDevice [data-fk="next"]').click();
   await page.waitForSelector('#remoteAddDevice:has-text("スマホを待っています")');
-  check(await page.locator('#remoteAddDevice').innerText().then(s => s.includes('スマホの Pleiad で Pleiad Plus にログインします') && s.includes('user@example.com')), 'つなぐ: スマホのログイン案内とアカウント');
-  check(await page.locator('#remoteAddDevice .rm-wait').count() === 1, 'つなぐ: 同じアカウントの待機表示は一行');
+  const waitingText = await page.locator('#remoteAddDevice').innerText();
+  check(waitingText.includes('スマホに Pleiad を入れる') && waitingText.includes('スマホの Pleiad で Pleiad Plus にログイン') && waitingText.includes('user@example.com'),
+    'つなぐ: するべきこと 2 つ（入れる・ログイン）とアカウント', waitingText);
+  check(await page.locator('#remoteAddDevice .rm-todo li.done').count() === 1, 'つなぐ: 入れるは済み、ログインはまだ');
+  check(await page.locator('#remoteAddDevice .rm-live:not(.rm-live-ok)').count() === 1, 'つなぐ: 待っている行は一行');
+  check(await page.locator('#remoteAddDevice [data-fk="cancel"]').count() === 0
+    && await page.locator('#remoteAddDevice [data-fk="next"]').innerText() === '閉じる'
+    && await page.locator('#remoteAddDevice [data-fk="next"]').isEnabled()
+    && await page.locator('#remoteAddDevice [data-fk="back"]').isVisible(), 'つなぐ: 下は「戻る」と押せる「閉じる」（やめるは無い）');
   await shot('waiting', '#remoteAddDevice');
+  // キーボード: 閉じるにフォーカスを当てられる
+  await page.locator('#remoteAddDevice [data-fk="next"]').focus();
+  check(await page.evaluate(() => document.activeElement?.dataset.fk) === 'next', 'キーボード: 閉じるにフォーカスが乗る');
 
   const remote = await client.cmd('remoteStatus');
   const host = await until(() => plus.state.hosts[remote.hostId], 'この PC の登録');
@@ -175,15 +193,15 @@ try {
   const second = await admitDevice({ relayUrl, hostId: remote.hostId, hostPublicKey: Buffer.from(host.publicKey, 'base64url'), idToken: token, name: 'Pixel Tablet', platform: 'android' });
   await until(async () => (await client.cmd('remoteStatus')).devices?.filter(d => d.via === 'plus').length === 2, 'Plus の端末 2 台');
   await page.waitForSelector('#remotePanel .rm-group:has-text("Pixel 9"):has-text("Pixel Tablet")');
-  await page.waitForSelector('#remoteAddDevice:has-text("Pixel 9")');
-  await shot('device-name', '#remoteAddDevice');
-  await page.locator('#remoteAddDevice [data-fk="next"]').click();
-  await page.waitForSelector('#remoteAddDevice:has-text("Pixel 9 をつなぎました")');
-  check(await page.locator('#remoteAddDevice').innerText().then(s => s.includes('Pixel 9 をつなぎました')), '完了: 新しい Plus 端末の名前');
+  // 同じ段のまま、待っている行がチェックと「Pixel 9 をつなぎました」に替わる
+  await page.waitForSelector('#remoteAddDevice .rm-live-ok:has-text("Pixel 9 をつなぎました")');
+  check(await page.locator('#remoteAddDevice .rm-todo li.done').count() === 2 && await page.locator('#remoteAddDevice .rm-stp li').count() === 3,
+    '完了: 同じ段で 2 つとも済み、待つ行が「つなぎました」');
   await shot('done', '#remoteAddDevice');
   await page.locator('#remoteAddDevice [data-fk="next"]').click();
   await until(async () => !(await page.locator('#remoteAddDevice').isVisible()), '端末追加の窓を閉じる');
   check(await page.locator('#remotePanel .rm-group:has-text("Pixel 9"):has-text("Pixel Tablet")').isVisible(), '一覧の撮影前に端末追加の窓を閉じる');
+  check(await page.locator('#remotePanel .rm-st-ok').first().innerText() === 'つながっています · user@example.com', 'Plus の状態行: つながっています · メール');
   await shot('two-devices-one-offline');
 
   // オフライン端末は Plus のスイッチを切っても一覧に残る。
@@ -192,10 +210,32 @@ try {
   await page.waitForSelector('#remotePanel .rm-group:has-text("Pixel Tablet"):has-text("オフライン")');
   const text = await page.locator('#remotePanel').innerText();
   check(text.includes('Pixel 9') && text.includes('Pixel Tablet') && text.includes('オフライン'), 'Plus の端末 2 台が残り、未接続端末にオフラインが出る');
+  check(await page.locator('#remotePanel .rm-st-off').count() >= 1, '切ったときも Plus のまとまりは「オフ」の一行を出す');
   check(await page.locator('#remotePanel [data-fk="plusConnect"]').getAttribute('aria-label') === 'Pleiad Plus でつなぐ', 'Plus スイッチは読み上げ名だけを持つ');
   await shot('two-devices-off');
 
-  // 中継が届かない状態と利用不可の状態も、まとまりの一行に出す。
+  // 自分の中継サーバーも入れると、まとまりが二つ並ぶ。Plus を切っている間は「スマホからは自分の中継サーバーでつながります」
+  await client.cmd('setRemoteSettings', { relayUrl: ownRelayUrl, enrollSecret: ownSecret });
+  await until(async () => (await client.cmd('remoteStatus')).connection?.state === 'connected', '自分の中継サーバーへ接続');
+  await page.waitForSelector('#remotePanel .rm-group:has-text("自分の中継サーバー") .rm-st-ok');
+  check(await page.locator('#remotePanel .rm-st-off').first().innerText() === 'オフ · スマホからは自分の中継サーバーでつながります', 'Plus を切って自分の中継サーバーがあるときの一行');
+  check(await page.locator('#remotePanel .rm-group:has-text("自分の中継サーバー") .rm-st-ok').innerText() === `つながっています · 127.0.0.1:${ownRelayAddr.port}`, '自分の中継サーバーの状態行');
+  await shot('both-plus-off');
+  // キーボード: Tab で Plus のスイッチへ移り、Space で入れる
+  await page.locator('#remotePanel [data-fk="plusConnect"]').evaluate(b => { const all = [...document.querySelectorAll('#remotePanel button')]; all[all.indexOf(b) - 1]?.focus(); });
+  await page.keyboard.press('Tab');
+  check(await page.evaluate(() => document.activeElement?.dataset.fk) === 'plusConnect', 'キーボード: Tab で Plus のスイッチにフォーカス');
+  await page.keyboard.press('Space');
+  await until(async () => (await client.cmd('remoteStatus')).plus?.connect === true, 'Plus 接続をオン');
+  await page.waitForSelector('#remotePanel .rm-group:has-text("Pleiad Plus") .rm-st-ok');
+  check(await page.locator('#remotePanel .rm-st-ok').count() === 2, '二つのまとまりがどちらも「つながっています」');
+  const afterFocus = await page.evaluate(() => ({ fk: document.activeElement?.dataset?.fk ?? null, tag: document.activeElement?.tagName }));
+  check(afterFocus.fk === 'plusConnect', 'キーボード: 切り替えた後もフォーカスはスイッチに残る', afterFocus);
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(SHOTS, 'remote-plus-both-focus-light-1280.png') });
+  await shot('both');
+
+  // 中継が届かない状態と利用不可の状態も、まとまりの一行に出す（切っている間は「オフ」が先なので、入れ直してから）。
   plus.state.down = true;
   await until(async () => (await client.cmd('plusStatus', { refresh: true })).reachable === false, '接続失敗の状態', 40_000);
   await page.waitForSelector('#remotePanel:has-text("サーバーへの接続に失敗しました")');
@@ -222,5 +262,6 @@ try {
   await server?.stop();
   await plus.close();
   await relay.close();
+  await ownRelay.close();
   fs.rmSync(SCRATCH, { recursive: true, force: true });
 }

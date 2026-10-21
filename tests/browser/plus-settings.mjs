@@ -161,6 +161,48 @@ try {
   await shots(page, 'unreachable');
   plus.state.down = false;
 
+  // ---- 8b. プランは読めるまで「無料」と言わない: 読み込み中は場所取り、読めなければ「再試行」、招待の名前はそのまま（承認 2026-10-21） ----
+  let accountMode = 'ok';
+  plus.route('GET', '/v1/account', async (req, res) => {
+    if (accountMode === 'slow') await new Promise(r => setTimeout(r, 5000));
+    const failed = accountMode === 'fail';
+    res.writeHead(failed ? 503 : 200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(failed ? { error: { code: 'unavailable', message: 'unavailable' } } : plus.state.accounts['user-1']));
+  });
+  await signOut();
+  accountMode = 'slow';
+  plus.state.accounts['user-1'] = { ...PLUS_ACCOUNT, plan: { name: 'Pleiad Plus（招待）' } };
+  // signIn() は account のメールが出るまで待つので、読み込み中・読めなかったときを見るためにここでは入るだけにする
+  async function signInNoWait() {
+    await page.locator('#plusPanel button:has-text("ログイン")').first().click();
+    const ext = await ctx.newPage();
+    await ext.goto(await nextExternal());
+    await page.waitForSelector('#plusPanel button:has-text("ログアウト")', { timeout: 15_000 });
+    await ext.close();
+  }
+  await signInNoWait();
+  await page.waitForSelector('#plusPanel .rm-skel', { timeout: 3000 });
+  ok('読み込み中: プランは場所取りで「無料」と出さない、メールは出る', !(await panelText(page)).includes('無料') && (await panelText(page)).includes('@example.com'), await panelText(page));
+  await shots(page, 'plan-loading');
+  await page.waitForSelector('#plusPanel :text("Pleiad Plus（招待）")', { timeout: 15_000 });
+  ok('招待: サーバーのプラン名をそのまま出す', (await panelText(page)).includes('Pleiad Plus（招待）'));
+  await shots(page, 'plan-invited');
+  await signOut();
+  accountMode = 'fail';
+  await signInNoWait();
+  await page.waitForSelector('#plusPanel :text("読み込めませんでした")', { timeout: 15_000 });
+  ok('読めなかった: 「読み込めませんでした」と「再試行」で、「無料」は出さない', (await panelText(page)).includes('再試行') && !(await panelText(page)).includes('無料'), await panelText(page));
+  await shots(page, 'plan-failed');
+  // キーボード: 「再試行」の手前の要素から Tab で移り、Enter で読み直す
+  await page.locator('#plusPanel [data-fk="planRetry"]').evaluate(b => { const all = [...document.querySelectorAll('#plusPanel button, #plusPanel a[href]')]; all[all.indexOf(b) - 1]?.focus(); });
+  await page.keyboard.press('Tab');
+  ok('キーボード: 「再試行」にフォーカスが乗る', await page.evaluate(() => document.activeElement?.dataset.fk) === 'planRetry');
+  if (SHOTS) { await page.waitForTimeout(600); await shot(page, 'plan-failed-focus-light-1280'); } // 明暗を戻した後の色の移りを待つ
+  accountMode = 'ok';
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#plusPanel :text("Pleiad Plus（招待）")', { timeout: 15_000 });
+  ok('「再試行」で読み直してプラン名が出る', !(await panelText(page)).includes('読み込めませんでした'));
+
   // ---- 9. maintenance（ログインのたびに config を取り直すので、入り直して出す） ----
   await signOut();
   plus.state.state = 'maintenance';

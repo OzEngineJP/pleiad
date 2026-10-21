@@ -41,8 +41,15 @@
 
   function label(h) { return h.label || h.hostName || h.hostId.slice(0, 8); }
 
+  // A host paired both ways is one row (`both`); `via` is the route a tap opens it with. Its state names that route.
   function stateLine(h) {
-    if (h.via === 'plus' || h.via === 'both') {
+    const s = routeState(h);
+    if (!h.both || !s.st) return s;
+    return { st: `${s.st} · ${t(h.via === 'plus' ? 'hosts.route.plus' : 'hosts.route.own')}`, when: s.on ? '' : s.when, on: s.on };
+  }
+
+  function routeState(h) {
+    if (h.via === 'plus') {
       const st = h.state === 'signed-out' ? t('plus.notSignedIn')
         : h.state === 'blocked' ? t('plus.noRelay')
         : h.state === 'limit' ? t('plus.limit')
@@ -117,7 +124,7 @@
 
   async function openHost(h) {
     if (h.state === 'revoked') { startPair(); return; }
-    try { await Remote.open({ hostId: h.hostId }); } catch (e) { toast(errorText(e)); }
+    try { await Remote.open({ hostId: h.hostId, via: h.via }); } catch (e) { toast(errorText(e)); }
   }
 
   function closeMenus() { document.querySelectorAll('.menu').forEach(m => m.remove()); }
@@ -138,9 +145,9 @@
     item(t('hosts.rename'), async () => {
       const v = window.prompt(t('hosts.renamePrompt'), label(h));
       if (v == null) return;
-      try { await Remote.rename({ hostId: h.hostId, label: v, via: h.via === 'plus' || h.via === 'both' ? 'plus' : 'own' }); await refresh(); } catch (e) { toast(errorText(e)); }
+      try { await Remote.rename({ hostId: h.hostId, label: v, via: h.both ? 'both' : h.via }); await refresh(); } catch (e) { toast(errorText(e)); }
     });
-    if (h.via !== 'plus') item(t('hosts.remove'), async () => {
+    if (h.via === 'own' || h.both) item(t('hosts.remove'), async () => {
       if (!window.confirm(t('hosts.removeConfirm', { host: label(h) }))) return;
       try { await Remote.remove({ hostId: h.hostId, via: 'own' }); await refresh(); } catch (e) { toast(errorText(e)); }
     });

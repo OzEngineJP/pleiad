@@ -14,7 +14,7 @@ import { generateKeyPair, hostIdFor } from '../../core/remote/noise.mjs';
 import crypto from 'node:crypto';
 
 export const name = 'plus-hosts';
-export const title = 'この PC の Pleiad Plus への登録: 証明つきの登録・同じ鍵なら PATCH・host_taken・host_limit・bad_proof の 1 回のやり直し・届かない・名前と端末数・つなぎ直し';
+export const title = 'この PC の Pleiad Plus への登録: 証明つきの登録・同じ鍵なら PATCH・host_taken・host_limit・bad_proof の 1 回のやり直し・届かない・名前と端末数・つなぎ直し・登録の外れ';
 
 const UID = 'user-1';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -180,6 +180,50 @@ export default async function (t) {
       out.hostId !== oldId && out.devices.length === 0 && (await remote.store.devices()).length === 0, out.hostId);
     await until(() => host.host().state === 'registered' && host.host().hostId === out.hostId, 3000, '新しい鍵で登録し直す');
     t.ok('新しい hostId が台帳に載る', Boolean(plus.state.hosts[out.hostId]), out.hostId);
+
+    // ---- 登録の外れ（docs/plus.md「同期の始め直しと登録の外れ」）
+    const hid = host.host().hostId;
+    const puts = () => callsTo(plus, 'PUT', '/v1/hosts/').length;
+    const putsBefore = puts();
+    await host.recheck();
+    t.ok('台帳に自分が居れば recheck は登録し直さない', puts() === putsBefore && host.host().state === 'registered' && !host.host().notice);
+    // 運営が外した → 確かめ直して登録し直す（鍵の行が戻る）
+    plus.state.sync[UID] = { keyId: 'key-1', keys: { [hid]: { keyId: 'key-1', wrapped: 'w', wrappedBy: hid } }, items: {}, seq: 0, totalBytes: 0 };
+    const hidName = plus.state.hosts[hid].name;
+    plus.unbindHost(hid, 'admin');
+    t.ok('外すと鍵の行は消えず、detachedAt と名前が付く', Boolean(plus.state.sync[UID].keys[hid]?.detachedAt) && plus.state.sync[UID].keys[hid].name === hidName);
+    await host.recheck();
+    t.ok('運営が外した PC は recheck で登録し直す', plus.state.hosts[hid]?.uid === UID && host.host().state === 'registered', JSON.stringify(host.host()));
+    t.ok('外れていたのを登録し直したら notice: reregistered', host.host().notice === 'reregistered');
+    t.ok('登録し直すと外した記録（removed）は消える', !plus.state.hostsRemoved[hid]);
+    t.ok('登録し直すと鍵の行が戻る（detachedAt が外れ、同じ包みのまま）', plus.state.sync[UID].keys[hid]?.detachedAt === null && plus.state.sync[UID].keys[hid].wrapped === 'w');
+    // 利用者が外した → 登録し直さず removed で待つ
+    await st.client.request('DELETE', `/v1/hosts/${hid}`);
+    t.ok('利用者の DELETE は removed に by: user で残る', plus.state.hostsRemoved[hid]?.by === 'user');
+    await host.recheck();
+    t.ok('利用者が外した PC は recheck で登録し直さず removed で待つ',
+      !plus.state.hosts[hid] && host.host().state === 'removed' && host.host().error?.code === 'host_removed', JSON.stringify(host.host()));
+    await host.maybeRegister();
+    t.ok('removed の間は、条件の見直し（maybeRegister）でも登録し直さない', !plus.state.hosts[hid] && host.host().state === 'removed');
+    await host.reregister();
+    t.ok('人の「この PC を登録し直す」（reregister）なら登録する', plus.state.hosts[hid]?.uid === UID && host.host().state === 'registered' && !plus.state.hostsRemoved[hid]);
+    t.ok('利用者が外した PC も、登録し直せば鍵の行が戻る', plus.state.sync[UID].keys[hid]?.detachedAt === null);
+    // 台帳の removed を返さない前の api: 外れていたら登録し直す
+    plus.state.legacySync = true;
+    plus.unbindHost(hid, 'user');
+    await host.recheck();
+    t.ok('前の api（removed を返さない）では、外れていたら登録し直す', plus.state.hosts[hid]?.uid === UID && host.host().state === 'registered');
+    plus.state.legacySync = false;
+
+    // ---- 30 分ごとの見直し（試験では recheckMs 50ms）
+    const timed = createPlusHost({
+      session, store: remote.store, appVersion: 'test', hostName: () => nameNow,
+      plusDevices: () => devicesNow, retryMs: 40, recheckMs: 50, log: () => {},
+    });
+    await timed.maybeRegister();
+    plus.unbindHost(hid, 'admin');
+    await until(() => plus.state.hosts[hid]?.uid === UID, 3000, '見直しで外れに気付いて登録し直す');
+    t.ok('登録したあとは recheckMs ごとに見直し、外れていたら登録し直す', timed.host().state === 'registered' && timed.host().notice === 'reregistered');
   } finally {
     remote.stop();
     await plus.close();

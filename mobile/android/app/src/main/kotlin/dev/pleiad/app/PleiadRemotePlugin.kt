@@ -15,6 +15,7 @@ import dev.pleiad.app.remote.PairError
 import dev.pleiad.app.remote.Pairing
 import dev.pleiad.app.remote.PairingCodec
 import dev.pleiad.app.remote.HostCreds
+import dev.pleiad.app.remote.HostRoute
 import dev.pleiad.app.plus.PlusAdmission
 import dev.pleiad.app.plus.PlusHostList
 import java.util.concurrent.Executors
@@ -90,22 +91,27 @@ class PleiadRemotePlugin : Plugin() {
             device.updatePlusRelay(it)
             app.notifyHub.plusRelayChanged()
         }
-        val rows = PlusHostList.combine(device.store.hosts(), fetched.hosts, usePlus && fetched.error != "no-relay")
+        // One row per host; `via` is the route a tap opens with (PlusHostList.combine), `both` that the device is paired each way.
+        val rows = PlusHostList.combine(device.store.hosts(), fetched.hosts, usePlus && fetched.error != "no-relay", device.connectedVia())
         val arr = JSArray()
-        val states = device.list().associate { it.first.hostId to it.second }
         for (row in rows) {
             val h = row.record
             val plusHost = row.plus
             val hostId = h?.hostId ?: plusHost?.hostId ?: continue
+            val other = if (row.both) device.store.host(hostId, if (row.via == "own") "plus" else "own") else null
             val o = JSObject((h?.toPublicJson() ?: org.json.JSONObject()).toString())
             o.put("hostId", hostId)
             o.put("hostName", h?.label?.takeIf { it.isNotEmpty() }
+                ?: other?.label?.takeIf { it.isNotEmpty() }
                 ?: device.store.host(hostId, "own")?.label?.takeIf { it.isNotEmpty() }
                 ?: plusHost?.name ?: h?.hostName.orEmpty())
             o.put("via", row.via)
+            o.put("both", row.both)
+            o.put("lastConnectedAt", listOfNotNull(h?.lastConnectedAt, other?.lastConnectedAt).maxOrNull() ?: org.json.JSONObject.NULL)
             if (row.online != null) o.put("online", row.online)
-            val st = states[hostId]
-            o.put("state", st?.state ?: if (h?.revokedAt != null) "revoked" else "closed")
+            // Only a proxy on the row's route speaks for it: an own window's state must not show on a Plus row, nor the reverse.
+            val st = device.proxy(hostId)?.takeIf { it.creds.via == row.via }?.link?.status
+            o.put("state", st?.state ?: if (h?.revokedAt != null && h.via == row.via) "revoked" else "closed")
             o.put("open", st != null)
             arr.put(o)
         }
@@ -148,12 +154,19 @@ class PleiadRemotePlugin : Plugin() {
     @PluginMethod
     fun open(call: PluginCall) {
         val hostId = call.getString("hostId") ?: return call.reject("hostId", "unknown-host")
+        val requested = call.getString("via")?.takeIf { it == "own" || it == "plus" }
         bg(call) {
             val app = context.applicationContext as PleiadApp
             val state = app.plus.stateJson()
             val listed = app.plus.cachedHosts().hosts.find { it.hostId == hostId }
             val plusVisible = state.optString("plus") == "on" && state.optString("login") == "in" && state.optString("status") == "plus"
-            val via = if (plusVisible && (device.store.host(hostId, "plus") != null || listed != null)) "plus" else "own"
+            val hasOwn = device.store.credentials(hostId, "own") != null
+            val hasPlus = plusVisible && (device.store.host(hostId, "plus") != null || listed != null)
+            // The row's route when the page gives one (the list chose it), else the same rule: a connected window keeps its route,
+            // Plus while the PC is online on the Plus ledger, otherwise own. Not "Plus whenever the account can see the host".
+            val via = requested?.takeIf { (it == "own" && hasOwn) || (it == "plus" && hasPlus) }
+                ?: HostRoute.choose(hasOwn, hasPlus, listed?.online, device.connectedVia()[hostId])
+                ?: throw IllegalArgumentException("unknown-host")
             val current = device.proxy(hostId)?.link?.status
             if (via == "plus" && current?.state == "signed-out") throw PairError("plus-signed-out")
             if (via == "plus" && current?.state == "blocked") throw PairError("plus-no-relay")
@@ -179,7 +192,11 @@ class PleiadRemotePlugin : Plugin() {
         val hostId = call.getString("hostId") ?: ""
         val via = call.getString("via") ?: "own"
         val label = call.getString("label") ?: ""
-        val rec = if (via == "plus" && device.store.host(hostId, "plus") == null) {
+        val rec = if (via == "both") {
+            // One row for a host paired both ways: both records carry the name, so whichever route opens shows it.
+            (device.rename(hostId, label, "own") ?: throw IllegalArgumentException("unknown-host"))
+                .also { if (device.store.host(hostId, "plus") != null) device.rename(hostId, label, "plus") }
+        } else if (via == "plus" && device.store.host(hostId, "plus") == null) {
             val host = (context.applicationContext as PleiadApp).plus.cachedHosts().hosts.firstOrNull { it.hostId == hostId }
                 ?: throw IllegalArgumentException("unknown-host")
             val app = context.applicationContext as PleiadApp

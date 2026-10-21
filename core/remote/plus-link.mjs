@@ -10,6 +10,7 @@
 //   owns(d)    via:'plus' で、plusUid が今のアカウントの uid の端末だけ
 //   allowPairing  false（公式の中継はペアリングを受けない。ホストも受けない）
 //   onClose()  4401 'account' → 止まる（error 'account'。張り直さない）。4429 'account limit' → 'limit'。
+//              4401 'host' → この PC の登録が外れた（error 'host'）。onHostLost で登録を確かめ直す（登録し直すと張り直す）。
 //              ほかの 4401 → ID トークンを取り直して 1 回だけ張り直す（また 4401 なら 'auth'）。
 //              1013 → 今の backoff で張り直す。ほか → 今と同じ
 //
@@ -52,7 +53,7 @@ function closeWs(ws, code, reason = '') {
  * @param {number} [o.admitLimit]      1 時間の受け入れの上限（既定 20）
  * @param {number} [o.admitWindowMs]   上限を数える窓（既定 1 時間）
  */
-export function createPlusLink({ session, verifier, remote, onAdmitted = () => {}, log = () => {},
+export function createPlusLink({ session, verifier, remote, onAdmitted = () => {}, onHostLost = () => {}, log = () => {},
   now = Date.now, admitLimit = 20, admitWindowMs = 60 * 60_000 } = {}) {
   // 張る条件と判定の材料。update() で外（server の同期の手）から写す
   const st = {
@@ -177,6 +178,10 @@ export function createPlusLink({ session, verifier, remote, onAdmitted = () => {
         return { error: accountError() };
       }
       if (code === 4429 && reason === 'account limit') return { error: { code: 'limit', message: t('remote.plus.closed.limit') } };
+      if (code === 4401 && reason === 'host') {
+        try { onHostLost(); } catch {}
+        return { error: { code: 'host', message: t('remote.plus.closed.host') } };
+      }
       if (code === 4401) {
         // ID トークンを取り直して 1 回だけ張り直す。また 4401 なら 'auth'
         if (!authRetried) { authRetried = true; forceToken = true; return 'retry'; }

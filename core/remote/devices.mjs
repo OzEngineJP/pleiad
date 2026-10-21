@@ -43,7 +43,7 @@ export async function writeJson(file, data) {
   } finally { await fs.rm(tmp, { force: true }).catch(() => {}); }
 }
 
-export const DEFAULT_SETTINGS = Object.freeze({ enabled: false, relayUrl: '', hostName: '', plus: { connect: false } });
+export const DEFAULT_SETTINGS = Object.freeze({ enabled: false, relayUrl: '', hostName: '', plus: { connect: true, userSet: false } });
 
 /**
  * リモートの置き場。dataDir は store.dataDir（AGENT_HOST_DATA を尊重する）。
@@ -103,8 +103,11 @@ export function createRemoteStore({ dataDir, cipher = plainCipher }) {
         enabled: raw.enabled === true,
         relayUrl: typeof raw.relayUrl === 'string' ? raw.relayUrl : '',
         hostName: typeof raw.hostName === 'string' ? raw.hostName : '',
-        // Pleiad Plus の公式の中継につなぐか（docs/plus.md。無いものは false とみなす）
-        plus: { connect: raw.plus?.connect === true },
+        // Pleiad Plus の公式の中継につなぐか（docs/plus.md §既定）。既定は入（リモートが入で Plus にログインしているときだけ張る）。
+        // userSet は人が切り替えた印。印の無い connect は、既定が切だった頃に何もしなくても書かれた値と区別できないので入とみなす
+        plus: raw.plus?.userSet === true
+          ? { connect: raw.plus.connect === true, userSet: true }
+          : { connect: true, userSet: false },
       };
     },
     async saveSettings(patch) {

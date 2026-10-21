@@ -94,7 +94,12 @@ export function detailHead({ icon, name, onBack }) {
 /** 項目と値の表。値が空の行は出さない */
 export function keyValues(pairs) {
   const dl = el('dl', 'rm-kv');
-  for (const [k, v] of pairs) if (v) dl.append(el('dt', null, k), el('dd', null, v));
+  for (const [k, v] of pairs) {
+    if (!v) continue;
+    const dd = el('dd', null, typeof v === 'object' ? null : v);
+    if (typeof v === 'object') dd.append(v);
+    dl.append(el('dt', null, k), dd);
+  }
   return dl;
 }
 
@@ -219,13 +224,55 @@ export function errorLine(text) {
   return p;
 }
 
+function spinner() {
+  const spin = svgEl('svg', { class: 'rm-spin', viewBox: '0 0 16 16', 'aria-hidden': 'true' });
+  spin.append(svgEl('circle', { class: 'rm-spin-track', cx: 8, cy: 8, r: 6 }), svgEl('path', { class: 'rm-spin-arc', d: 'M8 2a6 6 0 0 1 6 6' }));
+  return spin;
+}
+
 /** 待っている間の一行（回る印と文字） */
 export function waitLine(text) {
   const p = el('p', 'rm-wait');
   p.setAttribute('role', 'status');
-  const spin = svgEl('svg', { class: 'rm-spin', viewBox: '0 0 16 16', 'aria-hidden': 'true' });
-  spin.append(svgEl('circle', { class: 'rm-spin-track', cx: 8, cy: 8, r: 6 }), svgEl('path', { class: 'rm-spin-arc', d: 'M8 2a6 6 0 0 1 6 6' }));
-  p.append(spin, el('span', null, text));
+  p.append(spinner(), el('span', null, text));
+  return p;
+}
+
+/**
+ * まとまりの見出しのすぐ下の状態の一行（docs/design-system.md「リモートのまとまりの状態の行」）。
+ * kind: ok=つながっている（塗りの点）、off=切っている・未設定（中抜きの点）、connecting=接続中（回る印）。失敗はここではなく .rm-warn
+ */
+export function stateLine(kind, text) {
+  const p = el('p', `rm-st rm-st-${kind}`);
+  p.setAttribute('role', 'status');
+  p.dataset.state = kind;
+  p.append(kind === 'connecting' ? spinner() : el('span', `rm-dot${kind === 'ok' ? ' rm-dot-ok' : ' rm-dot-off'}`), el('span', null, text));
+  return p;
+}
+
+/** するべきことの番号つきの並び。items: [{ text, sub?, done }]。済んだものは番号がチェックになる */
+export function todoList(items) {
+  const ol = el('ol', 'rm-todo');
+  items.forEach((item, i) => {
+    const li = el('li', item.done ? 'done' : '');
+    const n = el('span', 'rm-n');
+    if (item.done) n.append(rmIcon('check')); else n.textContent = String(i + 1);
+    const text = el('span', 'rm-rt');
+    text.append(el('span', null, item.text));
+    if (item.sub) text.append(el('span', 'rm-sub', item.sub));
+    li.append(n, text);
+    ol.append(li);
+  });
+  return ol;
+}
+
+/** 待っている間は回る印、つながったらチェックと強い字に、同じ場所で替わる一行（端末を追加 › つなぐ） */
+export function liveRow({ ok, text }) {
+  const p = el('p', `rm-live${ok ? ' rm-live-ok' : ''}`);
+  p.setAttribute('role', 'status');
+  const ic = el('span', 'rm-live-ic');
+  ic.append(ok ? rmIcon('check') : spinner());
+  p.append(ic, el('span', null, text));
   return p;
 }
 
@@ -262,11 +309,13 @@ export function confirmCode(code) {
 export const STEP_KEYS = ['install', 'method', 'connect', 'done'];
 
 /**
- * ＋ の流れのダイアログ。どの段も下の並びは「やめる」|（空き）|「戻る」「次へ」で、最後の段だけ「閉じる」。
+ * ＋ の流れのダイアログ。どの段も下の並びは「やめる」|（空き）|「戻る」「次へ」で、閉じる段だけ（空き）|「戻る」「閉じる」。
+ * 閉じる段は、完了の段（steps の 'done'）か、render で closing を渡した段（端末を追加 の つなぐ。待ちながら閉じられる）。
  * 中身は render で渡す。sig が前と同じなら作り直さない（状態の知らせのたびに打ち込み中の欄や居場所を崩さない）
  * @param onCancel やめる・Esc・閉じる
+ * @param steps    段の名前（settings.remote.wizard.steps.*）。端末を追加 は install・method・connect の 3 段（承認 2026-10-21）
  */
-export function createWizard({ id, onCancel }) {
+export function createWizard({ id, onCancel, steps: stepKeys = STEP_KEYS }) {
   const dialog = document.createElement('dialog');
   dialog.className = 'rm-wiz';
   dialog.id = id;
@@ -277,14 +326,16 @@ export function createWizard({ id, onCancel }) {
 
   /**
    * @param o.title    「端末を追加」「PC を追加」
-   * @param o.step     0〜3
+   * @param o.step     段の番号（0 から）
    * @param o.body     中身の要素の配列
-   * @param o.next     { label?, disabled?, onclick }。最後の段では閉じる
-   * @param o.back     戻る（0 段目は場所だけ取って見せない）
+   * @param o.next     { label?, disabled?, onclick }。閉じる段では閉じる
+   * @param o.back     戻る（0 段目は場所だけ取って見せない。閉じる段では closing: true で渡した段だけ出す）
+   * @param o.closing  この段の下の並びを「戻る」「閉じる」にする（既定は 'done' の段だけ）
    * @param o.sig      中身の見え方を決める値。同じなら作り直さない（next.disabled は作り直さずに直す）
    */
   function render(o) {
-    const nextSig = JSON.stringify([o.title, o.step, o.sig ?? null, o.next?.label ?? '']);
+    const closing = o.closing ?? stepKeys[o.step] === 'done';
+    const nextSig = JSON.stringify([o.title, o.step, o.sig ?? null, o.next?.label ?? '', closing, o.closing === true && Boolean(o.back)]);
     if (dialog.open && nextSig === sig) {
       // 押せるかどうかだけ変わったときは、ボタンだけ直す（打ち込み中の欄を作り直さない）
       const next = dialog.querySelector('[data-fk=next]');
@@ -297,7 +348,7 @@ export function createWizard({ id, onCancel }) {
     title.id = `${id}Title`;
     const steps = el('ol', 'rm-stp');
     steps.setAttribute('aria-label', t('settings.remote.wizard.steps.label'));
-    STEP_KEYS.forEach((key, i) => {
+    stepKeys.forEach((key, i) => {
       const li = el('li', i < o.step ? 'done' : i === o.step ? 'cur' : '');
       if (i === o.step) li.setAttribute('aria-current', 'step');
       const n = el('span', 'rm-n');
@@ -309,13 +360,19 @@ export function createWizard({ id, onCancel }) {
     const body = el('div', 'rm-wiz-b');
     body.append(...o.body);
     const foot = el('div', 'rm-wiz-f');
-    const last = o.step === STEP_KEYS.length - 1;
-    const next = button(o.next?.label ?? (last ? t('settings.remote.wizard.close') : t('settings.remote.wizard.next')),
-      last && !o.next?.onclick ? onCancel : o.next?.onclick, 'btn btn-primary');
+    const next = button(o.next?.label ?? (closing ? t('settings.remote.wizard.close') : t('settings.remote.wizard.next')),
+      closing && !o.next?.onclick ? onCancel : o.next?.onclick, 'btn btn-primary');
     next.dataset.fk = 'next';
     next.disabled = Boolean(o.next?.disabled);
-    if (last) foot.append(el('span', 'rm-sp'), next);
-    else {
+    if (closing) {
+      foot.append(el('span', 'rm-sp'));
+      if (o.closing === true && o.back) {
+        const back = button(t('settings.remote.wizard.back'), o.back, 'btn btn-quiet');
+        back.dataset.fk = 'back';
+        foot.append(back);
+      }
+      foot.append(next);
+    } else {
       const cancel = button(t('settings.remote.wizard.cancel'), onCancel);
       cancel.dataset.fk = 'cancel';
       const back = button(t('settings.remote.wizard.back'), o.back, 'btn btn-quiet');

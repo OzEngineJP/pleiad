@@ -3120,6 +3120,21 @@
       "input": "25c7d85c859a"
     },
     {
+      "id": "plus.hostReregister",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": false,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "25c7d85c859a"
+    },
+    {
       "id": "plus.status",
       "risk": "read",
       "riskOf": false,
@@ -3182,7 +3197,7 @@
         "cli": false
       },
       "legacyCommand": null,
-      "input": "25c7d85c859a"
+      "input": "b394a926c275"
     },
     {
       "id": "plus.syncSetEnabled",

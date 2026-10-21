@@ -180,6 +180,9 @@
         "providerGoogle": "Google でログイン",
         "plan": "プラン",
         "free": "無料",
+        "loading": "読み込んでいます",
+        "loadFailed": "読み込めませんでした",
+        "retry": "再試行",
         "getPlus": "Pleiad Plus にする",
         "usage": "今月の利用: {{used}} / {{limit}} クレジット（{{date}} に戻ります）",
         "limitReached": "上限に達しました",
@@ -223,7 +226,33 @@
         "syncConflicts": "ほかの PC と同時に変えたため、{{n}} 件の古い方を残しました。",
         "syncOpenFolder": "フォルダーを開く",
         "syncConflictDays": "30 日で消えます。",
-        "syncChangeFailed": "変えられませんでした"
+        "syncChangeFailed": "変えられませんでした",
+        "syncUnnamedPc": "名前の無い PC",
+        "syncWaitHolder": "鍵を持つ PC: {{name}}（最後の同期: {{time}}）。その PC で Pleiad を開くと、数分で受け取れます。",
+        "syncWaitHolderNoTime": "鍵を持つ PC: {{name}}。その PC で Pleiad を開くと、数分で受け取れます。",
+        "syncHolderUnavailable": "鍵を持つ PC が使えないとき",
+        "syncDataFound_other": "このアカウントには、ほかの PC が同期したデータがあります（約 {{size}}・{{count}} 件）。",
+        "syncDataMaybe": "このアカウントには、ほかの PC が同期したデータがあるかもしれません。",
+        "syncDataUpdated": "最後の更新: {{time}}",
+        "syncDataUpdatedBy": "最後の更新: {{time}}（{{name}}）",
+        "syncHolderGone": "鍵を持つ PC が登録から外れているかもしれません。その PC で Pleiad を開くと、登録し直して鍵を渡します。",
+        "syncHolderGoneNames": "登録から外れた PC: {{names}}",
+        "syncNoHolder": "鍵を持つ PC が使えない",
+        "syncResetBy": "同期は {{name}} で {{time}} に始め直されました",
+        "syncStartOverTitle": "同期のデータを消して、この PC で始め直しますか？",
+        "syncStartOverLost_other": "消えるもの: サーバーにある同期のデータ（約 {{size}}・{{count}} 件）。ほかの PC が同期したスキル・指示ファイル・設定の、サーバーの写しです。",
+        "syncStartOverLostMaybe": "消えるもの: サーバーにある同期のデータ。ほかの PC が同期したスキル・指示ファイル・設定の、サーバーの写しです。",
+        "syncStartOverKept": "消えないもの: どの PC でも、手元のファイルと設定は消えません。",
+        "syncStartOverOthers": "ほかの PC: 同期が止まり、この PC から鍵を受け取ると、また同期します。同じものがあるときは新しい方が残り、もう一方は「同期の写し」に 30 日残ります。",
+        "syncStartOverCheck": "サーバーの同期のデータを消して、この PC から始め直す",
+        "syncStartOverYes": "消して始め直す",
+        "syncStartOverChanged": "確かめている間に、サーバーのデータが変わりました。新しい数字を見て、もう一度チェックしてください。",
+        "syncUnregistered": "この PC の登録が外れているため、同期を止めています",
+        "syncUnregisteredHint": "登録し直すと、自動で再開します。",
+        "syncSharedTo": "新しい PC {{name}} に同期の鍵を渡しました（{{time}}）",
+        "hostRemoved": "この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。",
+        "hostReregister": "この PC を登録し直す",
+        "hostReregistered": "この PC の登録が外れていたので、登録し直しました"
       },
     "remote": {
       "tabs": {
@@ -245,7 +274,15 @@
         "plusMaintenance": "Pleiad Plus はメンテナンス中です",
         "plusUnavailable": "Pleiad Plus は今使えません",
         "plusNeedsUpdate": "Pleiad を更新してください",
-        "own": "自分の中継サーバー"
+        "own": "自分の中継サーバー",
+        "plusHead": "Pleiad Plus（公式の中継）"
+      },
+      "state": {
+        "connected": "つながっています · {{where}}",
+        "connectedPlain": "つながっています",
+        "plusOff": "オフ · スマホからは自分の中継サーバーでつながります",
+        "off": "オフ",
+        "notSet": "未設定 · 「編集」で中継の URL と登録用の秘密を入れます"
       },
       "plus": {
         "connect": "Pleiad Plus でつなぐ",
@@ -254,10 +291,15 @@
         "signingIn": "Pleiad Plus にログインします",
         "account": "このアカウントでは公式の中継を使えません",
         "connecting": "接続しています…",
-        "accountLabel": "アカウント",
-        "wait": {
-          "phone": "スマホの Pleiad で Pleiad Plus にログインします",
-          "pc": "相手の PC の Pleiad で Pleiad Plus にログインします"
+        "todo": {
+          "install": {
+            "phone": "スマホに Pleiad を入れる",
+            "pc": "相手の PC に Pleiad を入れる"
+          },
+          "login": {
+            "phone": "スマホの Pleiad で Pleiad Plus にログイン",
+            "pc": "相手の PC の Pleiad で Pleiad Plus にログイン"
+          }
         },
         "waiting": {
           "phone": "スマホを待っています",
