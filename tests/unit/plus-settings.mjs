@@ -147,4 +147,30 @@ export default async function (t) {
       t.ok(`available === ${available} → つながったあと plusTab は ${want ? '出さない' : '出す'}`, calls > 0 && nodes2.plusTab.hidden === want);
     } finally { document.getElementById = savedGet; }
   }
+
+  // ---- ログインで委譲と通話に plus が自動で選ばれた案内（apiKeysChanged の autoPlus。1 度きり） ----
+  {
+    const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
+    const savedGet = document.getElementById;
+    document.getElementById = id => nodes2[id] ?? null;
+    const calls = [];
+    let prefs = {};
+    try {
+      const settings = setupPlusSettings({ cmd: async (name, args) => { calls.push([name, args]); return {}; }, page: () => {}, getPrefs: () => prefs });
+      settings.event({ type: 'apiKeysChanged', autoPlus: true });
+      const notice = nodes2.plusPanel.children.find(n => n.className === 'mp-card');
+      const noticeText = nodes2.plusPanel.textContent;
+      t.ok('案内: 本文が出る', notice && noticeText.includes('委譲先の自動選択と音声通話に Pleiad Plus を使います'), noticeText);
+      const closeBtn = notice?.querySelector('button');
+      t.ok('案内: 閉じるは BUTTON の要素（[object …] の文字に化けない）', closeBtn && closeBtn.tagName === 'BUTTON' && !noticeText.includes('[object'));
+      closeBtn?.onclick();
+      const setPref = calls.find(([n]) => n === 'setPref');
+      t.ok('「閉じる」は plus.autoNoticeSeen を保存する', setPref && setPref[1].key === 'plus' && setPref[1].value.autoNoticeSeen === true, JSON.stringify(setPref));
+      t.ok('閉じたあと案内は消える', !nodes2.plusPanel.textContent.includes('委譲先の自動選択'));
+      // 既に閉じたことがある（prefs.plus.autoNoticeSeen）なら出さない
+      prefs = { plus: { autoNoticeSeen: true } };
+      settings.event({ type: 'apiKeysChanged', autoPlus: true });
+      t.ok('autoNoticeSeen があれば案内は出さない', !nodes2.plusPanel.textContent.includes('委譲先の自動選択'));
+    } finally { document.getElementById = savedGet; }
+  }
 }

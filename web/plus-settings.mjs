@@ -197,7 +197,9 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       cmd('setPref', { key: 'plus', value: { ...(getPrefs().plus ?? {}), autoNoticeSeen: true } }).catch(() => {});
       paint();
     };
-    row.append(el('div', 'mp-card-actions', close));
+    const actions = el('div', 'mp-card-actions');
+    actions.append(close);
+    row.append(actions);
     box.append(row);
     return box;
   }
