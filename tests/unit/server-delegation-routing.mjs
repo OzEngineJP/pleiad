@@ -7,6 +7,7 @@ import http from 'node:http';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readAgentTasks } from '../lib/data-store.mjs';
+import { clockText } from '../../core/limit-resume.mjs';
 
 export const name = 'server-delegation-routing';
 export const title = '委譲先の自動選択: kind の検査・自動で選んで子を作る・記録・設定とキーの口・キーを出さない';
@@ -197,6 +198,66 @@ export default async function (t) {
     const files = [JSON.stringify(readAgentTasks(scratch)), JSON.stringify(readSessions(scratch)), await fs.readFile(path.join(scratch, 'prefs.json'), 'utf8').catch(() => '')];
     t.ok('キーをタスク・会話の記録・設定に書かない', files.every(f => !f.includes(KEY)) && files[0].includes('"routing"'));
     t.ok('キーをサーバーのログに出さない', !server.tail(200).includes(KEY));
+
+    // ---- 上限で止まった子の枠（Issue #121）。依頼元が登録した Claude のアカウントの会話でも、アカウントを持たない agy の子が
+    // 止まった枠を、完了の通知が言う時刻まで自動の振り分けが飛ばす。対照はログイン中のアカウントの会話
+    const settle = async taskId => {
+      let got;
+      for (let i = 0; i < 1200 && !(got?.status === 'failed' && got.notification === 'sent'); i++) { got = (await c.cmd('agentTasks')).find(x => x.taskId === taskId); await sleep(50); }
+      return got;
+    };
+    // 完了の通知の「〜まで選びません」の時刻（clockText の形）
+    const skipTime = async sessionId => {
+      const notices = (await c.cmd('loadSession', { sessionId })).messages.filter(m => m.internalTaskNotice).map(m => m.text).join('\n');
+      return /backend を省いた ply_delegate は、(.+?) までこの委譲先|will not pick this delegate .*? until (.+?)\.$/m.exec(notices)?.slice(1).find(Boolean) ?? notices.slice(0, 600);
+    };
+    const parentOn = async account => {
+      const id = (await c.cmd('newSession', { backend: 'fake', cwd: ROOT })).sessionId;
+      await c.cmd('setTurnSettings', { sessionId: id, account });
+      return id;
+    };
+    const registered = (await c.cmd('saveClaudeAccount', { name: 'routing', token: 'sk-ant-oat01-' + 'R'.repeat(48) })).id;
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-flash-high', 'antigravity:gemini-3.8-pro-high'] } } });
+    await c.cmd('delegationRouting', { refresh: true });
+    const owner = await parentOn(registered);
+    const limited = await call(owner, { kind: 'trivial', task: 'limit-no-reply' });
+    t.ok('（準備）登録した Claude のアカウントの会話から、自動で agy に任せる', limited.data?.routing?.target?.model === 'gemini-3.8-flash-high'
+      && (await c.cmd('listSessions')).find(s => s.id === owner)?.claudeAccount === registered, limited.text.slice(0, 300));
+    const stoppedRow = await settle(limited.data?.taskId);
+    t.ok('agy の子は依頼元の会話の Claude のアカウントを継いで走り、上限で止まる',
+      stoppedRow?.status === 'failed' && stoppedRow.limit?.backend === 'antigravity' && (await c.cmd('listSessions')).find(s => s.id === limited.data.sessionId)?.claudeAccount === registered,
+      JSON.stringify(stoppedRow?.limit ?? stoppedRow?.status));
+    t.ok('止まった枠の記録は、アカウントを持たないエージェントなので account: null（継いだ id を載せない）', stoppedRow?.limit && stoppedRow.limit.account === null && stoppedRow.routing?.target?.account === null, JSON.stringify(stoppedRow?.limit));
+    const told = await skipTime(owner);
+    const after = await call(owner, { kind: 'trivial', task: 'agy-after-limit' });
+    const skippedFlash = after.data?.routing?.skipped?.find(s => s.candidate === 'antigravity:gemini-3.8-flash-high');
+    t.ok('次の自動の振り分けは、止まった枠を recently_limited で飛ばして次の候補を選ぶ',
+      !after.isError && after.data.routing.target.model === 'gemini-3.8-pro-high' && skippedFlash?.reason === 'recently_limited', after.text.slice(0, 600));
+    t.ok('完了の通知の「〜まで選びません」の時刻と、飛ばした until が一致する', Boolean(skippedFlash?.until) && clockText(Date.parse(skippedFlash.until)) === told,
+      JSON.stringify({ told, until: skippedFlash?.until }));
+    const heldAgy = (await c.cmd('providerUsage', { backend: 'antigravity' })).held ?? [];
+    t.ok('使用量（providerUsage の held）の agy の行に、継いだ Claude のアカウントを載せない',
+      heldAgy.some(x => x.model === 'gemini-3.8-flash-high' && x.reason === 'recently_limited' && x.account === null) && !JSON.stringify(heldAgy).includes(registered), JSON.stringify(heldAgy));
+    const usageFrom = c.mark();
+    await turnOn(owner, prompt('ply_usage', { backend: 'antigravity' }));
+    const usageText = (await c.waitFor(e => e.type === 'tool.result' && e.sessionId === owner, { from: usageFrom, ms: 60000 })).text;
+    const plyHeld = JSON.parse(usageText).backends[0].held ?? [];
+    t.ok('ply_usage の agy の行にも、継いだ Claude のアカウントを載せない', plyHeld.some(x => x.model === 'gemini-3.8-flash-high' && !('account' in x)) && !usageText.includes(registered), usageText.slice(0, 600));
+
+    // 対照: ログイン中のアカウント（claudeAccount が空）の会話。別のモデルの枠で同じことをする
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: ['antigravity:gemini-3.8-pro-high'] } } });
+    const loginOwner = await parentOn('');
+    const loginStopped = await call(loginOwner, { kind: 'trivial', task: 'limit-no-reply' });
+    const loginRow = await settle(loginStopped.data?.taskId);
+    t.ok('（対照）ログイン中のアカウントの会話から任せた agy の子も上限で止まる', loginStopped.data?.routing?.target?.model === 'gemini-3.8-pro-high'
+      && (await c.cmd('listSessions')).find(s => s.id === loginOwner)?.claudeAccount === '' && loginRow?.status === 'failed' && loginRow.limit?.model === 'gemini-3.8-pro-high', JSON.stringify(loginRow?.limit ?? loginStopped.text.slice(0, 300)));
+    const loginTold = await skipTime(loginOwner);
+    const loginAfter = await call(loginOwner, { kind: 'trivial', task: 'agy-after-limit' });
+    // 次の段の候補（既定の t2 の flash-high）が使えれば選ばれ、使えなければ全部だめのエラーになる。どちらでも pro-high は飛ばす
+    const loginUntil = loginAfter.data?.routing?.skipped?.find(s => s.candidate === 'antigravity:gemini-3.8-pro-high' && s.reason === 'recently_limited')?.until
+      ?? /^- antigravity:gemini-3\.8-pro-high \(t\d\): recently_limited until (\S+)$/m.exec(loginAfter.text ?? '')?.[1];
+    t.ok('（対照）ログイン中のアカウントの会話でも、止まった枠を飛ばし、通知の時刻と一致する',
+      loginAfter.data?.routing?.target?.model !== 'gemini-3.8-pro-high' && Boolean(loginUntil) && clockText(Date.parse(loginUntil)) === loginTold, JSON.stringify({ loginTold, text: loginAfter.text?.slice(0, 600) }));
     // 後片付け: 走っている子を止める
     for (const task of await c.cmd('agentTasks')) if (['queued', 'running'].includes(task.status)) await c.cmd('cancelAgentTask', { taskId: task.taskId }).catch(() => {});
   } finally {

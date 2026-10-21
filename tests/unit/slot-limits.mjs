@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { createSlotLimits, MAX_BACKOFF_MS, MEMORY_MS, MIN_HOLD_MS } from '../../core/slot-limits.mjs';
+import { createSlotLimits, slotAccount, MAX_BACKOFF_MS, MEMORY_MS, MIN_HOLD_MS } from '../../core/slot-limits.mjs';
+import { checkCandidate, normalizeSettings } from '../../core/delegation-routing.mjs';
 
 export const name = 'slot-limits';
 export const title = 'Slots stopped by short provider limits stay held, and a recurrence just after the reset extends the hold';
@@ -57,4 +58,20 @@ export default async function test(t) {
   t.ok('告げられた見込みがもう過ぎた記録は覚えない', slots.record({ backend: 'grok', model: null, resetsAt: clock - 1 }) === null && slots.list('grok').length === 0);
   slots.record({ backend: 'grok', model: null, resetsAt: clock + 120_000 });
   t.ok('一覧はエージェントで絞れる', slots.list('grok').length === 1 && slots.list('grok')[0].until === clock + 120_000 && slots.list('devin').length === 0);
+
+  // ---- 記録と振り分けのアカウント（Issue #121）。アカウントを持たないエージェントの子も、依頼元の会話の Claude のアカウントを継いで走る。
+  // 記録はその id を slotAccount で null にし、振り分け（checkCandidate は持たないエージェントを null で引く）が当たる
+  const now = Date.parse('2026-10-21T11:07:13Z');
+  const routed = createSlotLimits({ now: () => now });
+  routed.record({ backend: 'devin', model: 'swe-2-high', account: slotAccount(false, 'acct-parent'), resetsAt: Date.parse('2026-10-21T18:01:00Z') });
+  const blocked = (b, m, a) => { const s = routed.get(b, m, a); return s ? { reason: 'recently_limited', until: s.until } : null; };
+  const settings = normalizeSettings({ enabled: true, tiers: { t1: [], t2: [], t3: ['devin:swe-2-high'], t4: [], tv: [] } });
+  const usage = { devin: { available: true, accountable: false, checkedAt: now - 1000, models: { 'swe-2-high': true },
+    windows: [{ label: 'day', minutes: 1440, usedPercent: 0 }, { label: 'week', minutes: 10080, usedPercent: 0 }] } };
+  const check = checkCandidate('devin:swe-2-high', { usage, settings, now, blocked });
+  t.ok('アカウントを持たないエージェントの枠は、継いだ Claude のアカウントで記録しても振り分けが飛ばす（日次・週次が 0% でも）',
+    check.ok === false && check.reason === 'recently_limited' && check.until === Date.parse('2026-10-21T18:01:00Z'), JSON.stringify(check));
+  t.ok('アカウントを持たないエージェントの枠のアカウントは null', slotAccount(false, 'acct-parent') === null && slotAccount(false, '') === null && slotAccount(false, undefined) === null);
+  t.ok('アカウントを持つエージェントは今のまま、アカウントごとに分ける（ログイン中は \'\'）',
+    slotAccount(true, 'acct-work') === 'acct-work' && slotAccount(true, '') === '' && slotAccount(true, null) === '' && slotAccount(true, undefined) === '');
 }

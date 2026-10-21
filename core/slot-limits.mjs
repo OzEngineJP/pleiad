@@ -7,12 +7,19 @@
 // - 保留の間に別の子が同じ枠で止まった（並べて走っていた）ものは、延ばす回数に数えない（遅い方の見込みに合わせるだけ）。
 // - 解除時刻が分からない上限は、同じ枠のターンが通るまで外さない（until: null）。
 // - 同じ枠のターンが通ったら、記録ごと消す（延ばす回数も戻る）。
+// - 枠のアカウントは、記録する側も引く側も slotAccount で決める（Issue #121）。
 
 export const MIN_HOLD_MS = 60_000;
 export const MAX_BACKOFF_MS = 30 * 60_000;
 export const MEMORY_MS = 30 * 60_000;
 
 export const slotKey = (backend, model, account) => `${backend}\n${model ?? ''}\n${account ?? ''}`;
+/**
+ * 枠のアカウント。アカウントを持つエージェント（accountable）は会話のアカウント（ログイン中は ''）、持たないエージェントは null。
+ * 持たないエージェントの子も、依頼元の会話の Claude のアカウントを継いで走る。その id で記録すると、
+ * 振り分け（null で引く）が記録に当たらない
+ */
+export const slotAccount = (accountable, account) => accountable ? (account ?? '') : null;
 
 export function createSlotLimits({ now = Date.now } = {}) {
   /** key -> { backend, model, account, until: ms | null, hold: ms | null, strikes, since, resetsAt } */

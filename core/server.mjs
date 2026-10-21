@@ -68,7 +68,7 @@ import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt, clockText } from './limit-resume.mjs';
-import { createSlotLimits, slotKey } from './slot-limits.mjs';
+import { createSlotLimits, slotKey, slotAccount } from './slot-limits.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
@@ -3308,7 +3308,7 @@ function makeEmit(turn) {
       turn.outcome = event.outcome;
       if (event.outcome === 'limited') {
         turn.limit = { resetsAt: Number.isFinite(event.resetsAt) ? event.resetsAt : null,
-          window: event.window ?? null, account: turn.info.account ?? null, backend: turn.backend.id, model: turn.info.model ?? null };
+          window: event.window ?? null, account: limitAccount(turn.backend, turn.info.account), backend: turn.backend.id, model: turn.info.model ?? null };
         event = { ...event, ...turn.limit };
       }
       // ログインの期限切れ（401。バックエンドの kind: 'auth'）。互換の接続先の会話は接続先のキーの問題なので、ふつうの失敗のまま。
@@ -3338,8 +3338,8 @@ function makeEmit(turn) {
       // 解除の見込みを過ぎてすぐ同じ枠がまた止まったら、保留を延ばす（core/slot-limits.mjs。Issue #111）。
       // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない
       if (!replay && !turn.info.endpoint) {
-        if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: turn.info.model, account: turn.info.account, resetsAt: turn.limit?.resetsAt });
-        else if (event.outcome === 'ok') limitedSlots.clear(turn.backend.id, turn.info.model, turn.info.account);
+        if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: turn.info.model, account: limitAccount(turn.backend, turn.info.account), resetsAt: turn.limit?.resetsAt });
+        else if (event.outcome === 'ok') limitedSlots.clear(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account));
       }
       turn.retry = null;
       turn.retryEpisode = null;
@@ -5959,12 +5959,19 @@ const limitStates = new Map();
 // 解除の見込み（最低 1 分。見込みを過ぎてすぐの再発は延ばす）を過ぎるか、同じ枠のターンが通ったら外す。
 // 解除時刻が分からないものは、通るまで外さない（覚えるのはこのサーバーの間だけ。core/slot-limits.mjs）
 const limitedSlots = createSlotLimits();
+/**
+ * 枠のアカウント（limitedSlots の記録・slotBlocked・heldSlots・turn.limit・完了の通知で同じ規則にする。Issue #121）。
+ * アカウントを持たないエージェントは、会話が継いだ Claude のアカウントがあっても null（振り分けは null で引く）
+ */
+function limitAccount(backend, account) {
+  return slotAccount(Boolean(accountKind(typeof backend === 'string' ? getBackend(backend) : backend)), account);
+}
 /** 振り分けで使えない枠か。再試行を待っているターンがある（retry_waiting）か、上限で止まったばかり（recently_limited）なら理由を返す */
 function slotBlocked(backend, model, account) {
   const key = slotKey(backend, model, account);
   for (const turn of runtime.turns.values()) {
     if (turn.ended || !turn.retry || turn.info.endpoint) continue;
-    if (slotKey(turn.backend.id, turn.info.model, turn.info.account) === key)
+    if (slotKey(turn.backend.id, turn.info.model, limitAccount(turn.backend, turn.info.account)) === key)
       return { reason: 'retry_waiting', ...(Number.isFinite(turn.retry.next) ? { until: turn.retry.next } : {}) };
   }
   const limited = limitedSlots.get(backend, model, account);
@@ -5979,10 +5986,11 @@ function heldSlots(backend) {
   const out = [], seen = new Set();
   for (const turn of runtime.turns.values()) {
     if (turn.ended || !turn.retry || turn.info.endpoint || turn.backend.id !== backend) continue;
-    const key = slotKey(backend, turn.info.model, turn.info.account);
+    const account = limitAccount(turn.backend, turn.info.account);
+    const key = slotKey(backend, turn.info.model, account);
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ model: turn.info.model ?? null, account: turn.info.account || null, reason: 'retry_waiting', until: Number.isFinite(turn.retry.next) ? new Date(turn.retry.next).toISOString() : null });
+    out.push({ model: turn.info.model ?? null, account: account || null, reason: 'retry_waiting', until: Number.isFinite(turn.retry.next) ? new Date(turn.retry.next).toISOString() : null });
   }
   for (const s of limitedSlots.list(backend)) {
     if (seen.has(slotKey(backend, s.model, s.account))) continue;
@@ -6115,7 +6123,7 @@ function completionNotice(lng, tasks) {
 function limitNotice(lng, limit) {
   const resetsAt = limitResetsAt(limit?.resetsAt);
   const head = resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
-  const held = typeof limit?.backend === 'string' ? limitedSlots.get(limit.backend, limit.model, limit.account) : null;
+  const held = typeof limit?.backend === 'string' ? limitedSlots.get(limit.backend, limit.model, limitAccount(limit.backend, limit.account)) : null;
   if (!held) return head;
   return [head, held.until != null ? agentT(lng, 'delegation.noticeLimitSkip', { time: clockText(held.until) }) : agentT(lng, 'delegation.noticeLimitSkipUnknown')].join('\n');
 }
@@ -8554,7 +8562,7 @@ async function recoverLimitWaits() {
   for (const [id, limit] of [...limitStates]) {
     const meta = await store.get(id).catch(() => null);
     if (meta?.interrupted?.reason !== 'limit') { limitStates.delete(id); continue; }
-    if (limitSwitched(meta, limit) || (meta.claudeAccount ?? '') !== (limit.account ?? '')) { leaveLimit(id); continue; }
+    if (limitSwitched(meta, limit) || limitAccount(limit.backend, meta.claudeAccount) !== limitAccount(limit.backend, limit.account)) { leaveLimit(id); continue; }
     releaseLimitWait(id);
   }
 }
