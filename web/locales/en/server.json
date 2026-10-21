@@ -1171,7 +1171,8 @@
         "limit": "This account has reached its limit",
         "auth": "Account authentication failed (please sign in again)",
         "host": "This PC is no longer registered (checking the registration again)",
-        "update": "This version of Pleiad can't use the official relay. Please update Pleiad"
+        "update": "This version of Pleiad can't use the official relay. Please update Pleiad",
+        "unavailable": "Pleiad Plus is temporarily unavailable (waiting for it to come back)"
       }
     },
     "review": {

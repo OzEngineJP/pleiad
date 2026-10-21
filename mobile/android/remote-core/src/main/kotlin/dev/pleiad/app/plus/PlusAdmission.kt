@@ -46,10 +46,16 @@ object PlusAdmission {
         else -> "couldnt-connect"
     }
 
-    /** A failed ticket issue: 426 → update the app, 404 → the host is not on the account (any more), else unreachable. */
+    /**
+     * A failed ticket issue, told like the relay's close reasons: 426 → update the app; 404 / 403 host_removed → the host
+     * is not on the account (any more; 4401 'host'); 403 account_disabled / not_plus → the account cannot use the relay
+     * (4401 'account'); 503 → Plus is paused (4401 'plus unavailable'); else unreachable.
+     */
     fun ticketError(e: PlusApiError): PairError = when {
         e.status == 426 -> PairError("plus-update", e.code)
         e.status == 404 || (e.status == 403 && e.code == "host_removed") -> PairError("unknown-host", e.code)
+        e.status == 403 && (e.code == "account_disabled" || e.code == "not_plus") -> PairError("plus-no-relay", e.code)
+        e.status == 503 -> PairError("plus-paused", e.code)
         else -> PairError("unreachable", "ticket-${e.status}")
     }
 

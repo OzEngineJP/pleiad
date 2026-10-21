@@ -3,8 +3,10 @@
 // fake の Plus が出す券で、
 //   H. この PC の制御の接続は中継の券で張り、受け入れ（accept）は今の制御の接続の券を使う。閉じると新しい券で張り直す
 //   D. 端末は中継の券と受け入れの券で入る。PC は受け入れの券の署名・aud・hostId・devicePub・uid・jti を確かめる
-//   U. 券を出す api なのに ID トークンだけの端末は update_required。426・中継の 'update required' は「更新してください」
-//   E. 端末の側（core/remote/device.mjs）: 券で受け入れを受け、券で中継へつなぐ。券の 426・中継の 'update required' は 'update' で止まる
+//   U. 券を出す api なのに ID トークンだけの端末は update_required。426・中継の 'update required' は「更新してください」。
+//      PC の券が断られたら、種類ごとに止める（426）・止めて伝える（403 account_disabled・not_plus）・待つ（503）
+//   E. 端末の側（core/remote/device.mjs）: 券で受け入れを受け、券で中継へつなぐ。券の 426・中継の 'update required' は 'update' で止まる。
+//      券の 503 は paused、403 account_disabled・not_plus は blocked、外された PC（404・403 host_removed・中継の 4401 host）は removed
 //   L. 券の口が無い前の版の api なら ID トークンの道へ戻る
 // を往復する。LLM も外のネットワークも使わない。
 import fs from 'node:fs/promises';
@@ -24,7 +26,7 @@ import { plainCipher } from '../../core/secret-store.mjs';
 import { startFakePlus } from '../lib/fake-plus.mjs';
 import { admitDevice, connectDevice } from '../lib/remote-device.mjs';
 import { createRemoteDevice } from '../../core/remote/device.mjs';
-import { generateKeyPair } from '../../core/remote/noise.mjs';
+import { generateKeyPair, hostIdFor } from '../../core/remote/noise.mjs';
 
 export const name = 'remote-tickets';
 export const title = '券での中継と受け入れ: 制御の接続の券・accept・受け入れの券の確かめ（他のアカウント・鍵違い・使い回し）・端末の側・更新の要求・前の版の api';
@@ -288,6 +290,44 @@ export default async function (t) {
       plus.state.ticketFail = [];
       await sync();
       await connected('戻れば張り直す');
+
+      // 券の発行が 403 account_disabled・not_plus → 中継の 4401 account と同じく error account で止まり、張り直さない。
+      // 条件の見直しだけでは解かず、GET /v1/account を読み直せた（accountReadAt が進んだ）ときに張り直す
+      for (const code of ['account_disabled', 'not_plus']) {
+        plus.state.ticketFail = [{ purpose: 'host', path: '/v1/tickets/challenge', status: 403, code, count: 1000 }];
+        const c1 = challenges();
+        authz.handle.closeTag(`h:${st.hostId}`, 1013, 'try again');
+        await until(async () => challenges() > c1, 10_000, `${code} の券を取りに行く`);
+        await sleep(600);
+        const held = await linkState();
+        t.ok(`U: 券の発行が 403 ${code} なら、線は error account で止まり、張り直さない`,
+          held.state === 'error' && held.error?.code === 'account' && challenges() === c1 + 1, JSON.stringify({ held, tries: challenges() - c1 }));
+        plus.state.ticketFail = [];
+        await sync();
+        await sleep(300);
+        const still = await linkState();
+        t.ok(`U: ${code} の止まりは、アカウントを読み直すまで条件の見直しでは解かない`, still.state === 'error' && still.error?.code === 'account', JSON.stringify(still));
+        plusLink.update({ accountReadAt: Date.now() });
+        remote.refreshPlus();
+        await connected(`${code} のあと、アカウントを読み直せば張り直す`);
+      }
+
+      // 券の発行が 503（Plus が止まっている）→ 中継の 4401 plus unavailable と同じく、待って張り直す（止めない）
+      plus.state.ticketFail = [{ purpose: 'host', path: '/v1/tickets/challenge', status: 503, code: 'unavailable', count: 1000 }];
+      const c2 = challenges();
+      authz.handle.closeTag(`h:${st.hostId}`, 1013, 'try again');
+      const waiting = await until(async () => { const s = await linkState(); return s.state === 'retrying' && s.error?.code === 'unavailable' && challenges() >= c2 + 2 ? s : null; }, 5000, '503 で待つ').catch(() => null);
+      t.ok('U: 券の発行が 503 なら、線は retrying（unavailable）で待ち、券を取り直し続ける', waiting?.retryAt != null, JSON.stringify(waiting ?? await linkState()));
+      plus.state.ticketFail = [];
+      await connected('Plus が戻れば、そのまま張り直す');
+
+      // 中継の 4401 plus unavailable も待つ（券の取り直しの 1 回で使い切って 'auth' で止まらない）
+      for (const n of [1, 2]) {
+        const since = Date.now();
+        authz.handle.closeTag(`h:${st.hostId}`, 4401, 'plus unavailable');
+        const back = await until(async () => { const s = await linkState(); return s.state === 'error' || (s.state === 'connected' && Date.parse(s.since) >= since) ? s : null; }, 10_000, `plus unavailable の ${n} 回目`);
+        t.ok(`U: 中継の 4401 plus unavailable（${n} 回目）は待って張り直す`, back.state === 'connected', JSON.stringify(back));
+      }
     });
 
     // ---- E. 端末の側（createRemoteDevice の admit / open）
@@ -326,6 +366,40 @@ export default async function (t) {
         await device.close(st.hostId);
       }
 
+      // Plus が止まっている（503）→ paused、アカウントが止まった・Plus でない（403）→ blocked。中継の切断の理由と同じ状態で止まる
+      for (const [status, code, want] of [[503, 'unavailable', 'paused'], [403, 'account_disabled', 'blocked'], [403, 'not_plus', 'blocked']]) {
+        let calls = 0;
+        await device.open(st.hostId, { via: 'plus', relayUrl, getTicket: async () => { calls++; throw Object.assign(new Error(code), { status, code }); } });
+        const got = await until(async () => { const s = await deviceState(); return s && s !== 'connecting' ? s : null; }, 10_000, `端末の線が ${status} ${code} で止まる`);
+        await sleep(1500);
+        t.ok(`E: 券の発行が ${status} ${code} なら、端末の線は ${want} で止まり、張り直さない`, got === want && (await deviceState()) === want && calls === 1,
+          JSON.stringify({ got, now: await deviceState(), calls }));
+        await device.close(st.hostId);
+      }
+
+      // 中継が 4401 host で閉じた（PC が外された）→ 受け入れ直しに回さず removed
+      {
+        let sub = null;
+        await device.open(st.hostId, { via: 'plus', relayUrl, getTicket: async ({ keyPair }) => { sub = hostIdFor(keyPair.publicKey); return (await deviceTicket(keyPair)).relay; } });
+        await until(async () => (await deviceState()) === 'connected', 10_000, '端末の線がつながる（4401 host の前）');
+        authz.handle.closeTag(`k:${sub}`, 4401, 'host');
+        const got = await until(async () => { const s = await deviceState(); return s && s !== 'connected' && s !== 'connecting' ? s : null; }, 10_000, '4401 host で止まる');
+        t.ok('E: 中継の 4401 host なら、端末の線は removed で止まる', got === 'removed', got);
+        await device.close(st.hostId);
+      }
+
+      // 受け入れのやり直しで券が取れない: 外された PC → removed、アカウント → blocked、Plus が止まっている → paused
+      for (const [status, code, want] of [[403, 'host_removed', 'removed'], [404, 'not_found', 'removed'], [403, 'account_disabled', 'blocked'], [503, 'unavailable', 'paused']]) {
+        let sub = null;
+        const onReadmit = () => device.admit({ ...base, mode: 'admit', ticketFor: async () => { throw Object.assign(new Error(code), { status, code }); } });
+        await device.open(st.hostId, { via: 'plus', relayUrl, onReadmit, getTicket: async ({ keyPair }) => { sub = hostIdFor(keyPair.publicKey); return (await deviceTicket(keyPair)).relay; } });
+        await until(async () => (await deviceState()) === 'connected', 10_000, `端末の線がつながる（受け入れ直し ${status} ${code} の前）`);
+        authz.handle.closeTag(`k:${sub}`, 4401, 'revoked');
+        const got = await until(async () => { const s = await deviceState(); return s && s !== 'connected' && s !== 'connecting' ? s : null; }, 10_000, `受け入れ直しが ${status} ${code} で止まる`);
+        t.ok(`E: 受け入れ直しの券の発行が ${status} ${code} なら、端末の線は ${want} で止まる`, got === want, got);
+        await device.close(st.hostId);
+      }
+
       authz.state.v2Required = true;
       await device.open(st.hostId, { via: 'plus', relayUrl, getTicket: async () => null, getIdToken: async () => plus.issueIdToken(UID) });
       const upd2 = await until(async () => { const s = await deviceState(); return s === 'update' ? s : null; }, 10_000, '中継の update required で止まる');
@@ -337,6 +411,11 @@ export default async function (t) {
       t.ok('E: 受け入れの券の発行が 426 なら update', e426?.code === 'update', e426?.code);
       const e404 = await rejects(device.admit({ ...base, ticketFor: async () => { throw Object.assign(new Error('not found'), { status: 404, code: 'not_found' }); } }));
       t.ok('E: 受け入れの券の発行が 404（PC が台帳に無い）なら unknown-host', e404?.code === 'unknown-host', e404?.code);
+      const admitFails = [[403, 'host_removed', 'unknown-host'], [403, 'account_disabled', 'blocked'], [403, 'not_plus', 'blocked'], [503, 'unavailable', 'unavailable']];
+      for (const [status, code, want] of admitFails) {
+        const e = await rejects(device.admit({ ...base, ticketFor: async () => { throw Object.assign(new Error(code), { status, code }); } }));
+        t.ok(`E: 受け入れの券の発行が ${status} ${code} なら ${want}`, e?.code === want, e?.code);
+      }
       const eOld = await rejects(device.admit({ ...base, idToken: plus.issueIdToken(UID) }));
       t.ok('E: 券を出す api のホストへ ID トークンだけで入ろうとすると update', eOld?.code === 'update', eOld?.code);
     });

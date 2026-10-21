@@ -178,6 +178,8 @@ export function createRemoteHost({
   // 中継の URL・張るときのヘッダー・引き受ける端末・ペアリングを受けるかは provider が決める:
   //   { name, ready(), url(path), headers({ accept }), owns(device), allowPairing, onIncomingAdmit?(ctx), onClose?(code, reason) }
   // headers() が linkError（{ code, message }）の付いた誤りを投げたら、張り直さずに error で止まる。
+  // linkRetry（{ code, message }）なら、その誤りを出して今の backoff で張り直す（待つ）。
+  // onClose() は null・'retry'（今と同じ張り直し）・{ error }（止まる）・{ retry: { code, message } }（その誤りを出して待つ）を返す。
   const ownProvider = {
     name: 'own',
     /** 張ってよいか。true / false（disabled）/ { error }（error）。 */
@@ -281,8 +283,8 @@ export function createRemoteHost({
     catch (e) {
       // 張り直しても直らない誤り（plus の券で台帳に無い・更新が要る）は error で止まる
       if (e?.linkError) { if (gen === link.generation) setLinkPhase(link, 'error', e.linkError); return; }
-      // 一時的な失敗（plus のトークンの取り直しが届かないなど）で止まらないよう張り直す
-      if (gen === link.generation) scheduleRetry(link, { code: 'config', message: e.message });
+      // 一時的な失敗（plus のトークンの取り直しが届かない・Plus が止まっているなど）で止まらないよう張り直す
+      if (gen === link.generation) scheduleRetry(link, e?.linkRetry ?? { code: 'config', message: e.message });
       return;
     }
     if (gen !== link.generation) return;
@@ -340,6 +342,7 @@ export function createRemoteHost({
       link.controlOpenedAt = 0;
       // provider が close の扱いを変えたいとき（plus 側の断りを張り直しにしないなど）。'retry' か無ければ今と同じ張り直し
       const verdict = link.provider?.onClose?.(code, Buffer.isBuffer(reason) ? reason.toString('utf8') : String(reason ?? '')) ?? null;
+      if (verdict?.retry) return retryOnce(verdict.retry);
       if (verdict && verdict !== 'retry') { settled = true; setLinkPhase(link, 'error', verdict.error ?? null); return; }
       retryOnce({ code: `relay-${code}`, message: failure ?? describeClose(code) });
     });

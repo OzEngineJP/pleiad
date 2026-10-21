@@ -149,7 +149,7 @@ class NotifyHub(
     private fun onLineState(hostId: String, state: String) {
         try { sink.lineState(hostId, state) } catch (_: Exception) {}
         if (state == "connected") maybeRegister(hostId, force = false)
-        if (state == "revoked" || state == "removed") {
+        if (state == "revoked" || state == "removed" || state == "blocked") {
             lines.remove(hostId)?.stop()
             regs.remove(hostId)
         }

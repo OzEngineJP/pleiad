@@ -42,6 +42,8 @@ object LinkRules {
         via == "plus" && goaway == "revoked" -> "readmit"
         via == "plus" && closeCode == 4401 && reason in setOf("revoked", "device token") -> "readmit"
         via == "plus" && closeCode == 4401 && reason == "account" -> "blocked"
+        // the PC was removed from the Plus account: asking it to admit this device again cannot help
+        via == "plus" && closeCode == 4401 && reason == "host" -> "removed"
         via == "plus" && closeCode == 4401 && (reason == "token" || reason == "ticket") -> "offline"
         // the relay takes tickets only and this connection had none: the app needs an update
         via == "plus" && closeCode == 4401 && reason == "update required" -> "update"
@@ -56,6 +58,32 @@ object LinkRules {
         goaway == "shutdown" || closeCode == 4404 || closeCode == 4408 -> "host-offline"
         // The relay's authz plugin failed transiently (docs/remote.md §5.7). Retry after a while.
         closeCode == 1013 -> "offline"
+        else -> "offline"
+    }
+
+    /** The state after asking the host to admit this device again failed (PairError.code; null: no answer). */
+    fun readmitFailedState(code: String?): String = when (code) {
+        "plus-no-relay" -> "blocked"
+        "plus-limit" -> "limit"
+        "plus-reapprove" -> "reapprove"
+        "plus-update" -> "update"
+        "unknown-host" -> "removed"
+        "plus-paused" -> "paused"
+        "unreachable" -> "offline"
+        else -> "revoked"
+    }
+
+    /**
+     * The state after the relay ticket could not be taken (PairError.code), told like the relay's close reasons:
+     * the PC was removed (unknown-host, 4401 'host'), the account cannot use the relay (plus-no-relay, 4401 'account')
+     * and Plus is paused (plus-paused, 4401 'plus unavailable') stop; anything else is retried as offline.
+     */
+    fun ticketFailedState(code: String?): String = when (code) {
+        "plus-update" -> "update"
+        "plus-signed-out" -> "signed-out"
+        "unknown-host" -> "removed"
+        "plus-no-relay" -> "blocked"
+        "plus-paused" -> "paused"
         else -> "offline"
     }
 }
@@ -196,16 +224,7 @@ class DeviceLink(
                         connect()
                     } else {
                         running = false
-                        val failedState = when (error?.code) {
-                            "plus-no-relay" -> "blocked"
-                            "plus-limit" -> "limit"
-                            "plus-reapprove" -> "reapprove"
-                            "plus-update" -> "update"
-                            "unknown-host" -> "removed"
-                            "unreachable" -> "offline"
-                            else -> "revoked"
-                        }
-                        setStatus(LinkStatus(failedState, reason = error?.code ?: "readmit-failed"))
+                        setStatus(LinkStatus(LinkRules.readmitFailedState(error?.code), reason = error?.code ?: "readmit-failed"))
                     }
                 }
             }
@@ -249,8 +268,7 @@ class DeviceLink(
                 var failed: String? = null
                 try { relay = ticket.invoke(c.hostId, kp) }
                 catch (e: PairError) {
-                    // unknown-host: the PC was removed from the Plus account (no more tickets), so waiting does not help
-                    failed = when (e.code) { "plus-update" -> "update"; "plus-signed-out" -> "signed-out"; "unknown-host" -> "removed"; else -> "offline" }
+                    failed = LinkRules.ticketFailedState(e.code)
                     log("remote device: ticket failed: ${e.code}")
                 }
                 catch (e: Exception) { failed = "offline"; log("remote device: ticket failed: ${e.javaClass.simpleName}") }

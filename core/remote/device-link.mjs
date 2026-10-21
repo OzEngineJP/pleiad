@@ -14,7 +14,9 @@
 //   'host-offline'  中継は答えたがホストが居ない（4404・4408・ホストの GOAWAY shutdown）。張り直しを待っている
 //   'revoked'       この端末は取り消された・資格が合わない（4401・GOAWAY revoked）。張り直さない
 //   'reapprove'     （Plus）ホストの PC の画面でもう一度の許可が要る（受け入れのやり直しを reapprove で断られた）。張り直さない
-//   'removed'       （Plus）ホストの PC が Plus のアカウントから外された（券の発行が 403 host_removed・404）。張り直さない
+//   'blocked'       （Plus）このアカウントでは公式の中継を使えない（4401 account・券の発行が 403 account_disabled・not_plus）。張り直さない
+//   'paused'        （Plus）Plus が止まっている（4401 plus unavailable・券の発行が 503）。張り直さない
+//   'removed'       （Plus）ホストの PC が Plus のアカウントから外された（4401 host・券の発行が 403 host_removed・404）。張り直さない
 //   'stopped'       stop() した
 //
 // 張り直しは 0.5 秒から 30 秒まで倍々（±25% の揺らぎ）。10 秒つながり続けたら初めからに戻す。
@@ -28,9 +30,22 @@ import { t } from '../i18n.mjs';
 
 /** 中継への WebSocket の 1 メッセージの上限（中継の 66,000 に余裕を持たせる）。 */
 const RELAY_MAX_PAYLOAD = 70_000;
-/** 受け入れのやり直しの失敗（err.code）→ 状態。ここに無いもの（つながらない等）は 'revoked' */
-const READMIT_STATES = { reapprove: 'reapprove', revoked: 'revoked', blocked: 'blocked', limit: 'limit', unavailable: 'paused', update: 'update' };
+/** 受け入れのやり直しの失敗（err.code）→ 状態。ここに無いもの（つながらない等）は 'revoked'。unknown-host は外された PC */
+const READMIT_STATES = { reapprove: 'reapprove', revoked: 'revoked', blocked: 'blocked', limit: 'limit', unavailable: 'paused', update: 'update', 'unknown-host': 'removed' };
 export const LINK_BACKOFF = Object.freeze({ minMs: 500, maxMs: 30_000, stableMs: 10_000 });
+
+/**
+ * 中継の券が取れなかったとき（getTicket の誤り）の状態。中継の切断の理由と同じに決める:
+ * 403 host_removed・404（ホストの PC が台帳に無い。券の無い前の版の api の 404 は getTicket が null で返す）→ 'removed'（4401 host）、
+ * 403 account_disabled・not_plus → 'blocked'（4401 account）、503 → 'paused'（4401 plus unavailable）、ほかは張り直す
+ */
+export function ticketFailureState(e) {
+  if (e?.code === 'update') return 'update';
+  if ((e?.status === 403 && e.code === 'host_removed') || e?.status === 404) return 'removed';
+  if (e?.status === 403 && (e.code === 'account_disabled' || e.code === 'not_plus')) return 'blocked';
+  if (e?.status === 503) return 'paused';
+  return 'offline';
+}
 
 /** 中継の close code とホストの GOAWAY から状態を決める。via: 'plus' のときは Plus 用の表に従う。 */
 export function classifyClose({ closeCode = null, reason = '', goaway = null, via = 'own' } = {}) {
@@ -42,6 +57,7 @@ export function classifyClose({ closeCode = null, reason = '', goaway = null, vi
       const r = String(reason ?? '').trim();
       if (r === 'revoked' || r === 'device token') return 'readmit';
       if (r === 'account') return 'blocked';
+      if (r === 'host') return 'removed';
       if (r === 'token' || r === 'ticket') return 'offline';
       if (r === 'update required') return 'update';
       if (r === 'plus off') return 'host-offline';
@@ -324,9 +340,7 @@ export class DeviceLink extends EventEmitter {
       catch (e) {
         if (!live()) return;
         this.log(`remote device: ticket failed: ${e.message}`);
-        // 403 host_removed・404 は、ホストの PC が台帳に無い（外された）。券の無い前の版の api の 404 は getTicket が null で返す
-        const removed = (e?.status === 403 && e.code === 'host_removed') || e?.status === 404;
-        return this.#scheduleRetry(e?.code === 'update' ? 'update' : removed ? 'removed' : 'offline', { reason: 'ticket' });
+        return this.#scheduleRetry(ticketFailureState(e), { reason: 'ticket' });
       }
       if (!live()) return;
       if (ticket) headers['x-pleiad-ticket'] = ticket;

@@ -8,7 +8,9 @@ package dev.pleiad.app.remote
 // Light on purpose: no PING frames of our own in the channel sense, a WebSocket ping only every few minutes (OkHttp
 // pingInterval, which also notices a dead line), reconnects with a long backoff.
 //
-// state: connecting | connected | offline | host-offline | revoked | update | removed | stopped
+// state: connecting | connected | offline | host-offline | paused | revoked | update | removed | blocked | stopped
+// (removed: the PC was taken off the Plus account; blocked: the account cannot use the relay; paused: Plus is paused,
+// waited out with the backoff, since nothing restarts a stopped line when Plus comes back)
 
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -51,6 +53,9 @@ class NotifyLine(
             code == 4401 && via == "plus" && (reason == "ticket" || reason == "token") -> "offline"
             // the relay takes tickets only and this line had none: the app needs an update (not a revocation)
             code == 4401 && via == "plus" && reason == "update required" -> "update"
+            code == 4401 && via == "plus" && reason == "host" -> "removed"
+            code == 4401 && via == "plus" && reason == "account" -> "blocked"
+            code == 4401 && via == "plus" && reason == "plus unavailable" -> "paused"
             code == 4401 || code == -401 -> "revoked"
             code == 4404 || code == 4408 -> "host-offline"
             else -> "offline"
@@ -108,11 +113,16 @@ class NotifyLine(
         try {
             timer.execute {
                 var failed = false
-                var removed = false
+                var stopAs: String? = null
+                var waitAs = "offline"
                 val ticket = try { plusTicket?.invoke(c) } catch (e: Exception) {
                     failed = true
-                    // unknown-host: the PC was removed from the Plus account (no more tickets), so waiting does not help
-                    removed = e is PairError && e.code == "unknown-host"
+                    // the PC was removed from the Plus account / the account cannot use the relay: waiting does not help
+                    when ((e as? PairError)?.code) {
+                        "unknown-host" -> stopAs = "removed"
+                        "plus-no-relay" -> stopAs = "blocked"
+                        "plus-paused" -> waitAs = "paused"
+                    }
                     log("notify line: ticket failed: ${if (e is PairError) e.code else e.javaClass.simpleName}")
                     null
                 }
@@ -120,9 +130,9 @@ class NotifyLine(
                 synchronized(lock) {
                     if (gen != generation || !running) return@synchronized
                     when {
-                        removed -> { running = false; setState("removed") }
+                        stopAs != null -> { running = false; setState(stopAs!!) }
                         ticket != null -> open(gen, c, "x-pleiad-ticket" to ticket)
-                        accountToken.isNullOrEmpty() -> schedule("offline")
+                        accountToken.isNullOrEmpty() -> schedule(waitAs)
                         else -> open(gen, c, "x-pleiad-account" to accountToken)
                     }
                 }
@@ -181,7 +191,7 @@ class NotifyLine(
         if (stable) attempt = 0
         if (code == 4409) { attempt = maxOf(attempt, 3); return@synchronized schedule("offline") }   // another line of ours took over: back off, don't fight
         when (val next = classifyClose(code, reason, creds.via)) {
-            "revoked", "update" -> { running = false; setState(next) }
+            "revoked", "update", "removed", "blocked" -> { running = false; setState(next) }
             else -> schedule(next)
         }
     }

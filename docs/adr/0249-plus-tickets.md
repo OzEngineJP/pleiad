@@ -17,7 +17,8 @@ api が、用途と鍵に結びついた短い券を出すようになった（`
 - **api のすべての要求に `X-Pleiad-Admission: 2` を付ける。** 券の道に対応した版であることの印。同期の口（`/v1/sync/*`）と登録も含め、例外を作らない（前の版の api は印を読まずに通す）。
 - **券の無い前の版の api では ID トークンの道に戻る。** `/v1/tickets/challenge` が `404` で、`/v1/auth/config` に `admission` が無いときだけ。5 分は問い直さない。
 - **券だけを受ける api と中継では、古い道を「更新が要る」として扱う。** 中継の `4401 'update required'`・api の `426 update_required`・PC の `denied 'update_required'` は、どれも「Pleiad を更新してください」で止まり、自動ではやり直さない。
-- **券の発行で台帳に無いと分かったら、登録を確かめ直す。** PC は `404`・`403 host_removed` で link の error を `host` にし、登録を見直す。端末は「ホストが見つかりません」。
+- **券の発行で台帳に無いと分かったら、登録を確かめ直す。** PC は `404`・`403 host_removed` で link の error を `host` にし、登録を見直す。端末は `removed`（「この PC は Plus のアカウントから外されています」）で止まる。
+- **券の発行の断りは、中継の切断の理由と同じに扱う。** `404`・`403 host_removed` は `4401 'host'`、`403 account_disabled`・`not_plus` は `4401 'account'`（止めて伝える）、`503` は `4401 'plus unavailable'`（PC は待って張り直し、端末は `paused`）と同じ状態にする。
 - **外した PC の hostId が登録し直せないときは、鍵を作り直して戻る。** 登録が `403 host_removed` なら `removed`（`permanent`）にして問い直さず、「この PC を登録し直す」は鍵の作り直し（`plusHostRebind`）の確かめを出す。
 - **券の公開鍵が取れないときは、期限の切れた覚えを、読んでから 24 時間まで使う。** 覚えが無いか、それより古いときは受け入れを `unavailable` で断る。
 

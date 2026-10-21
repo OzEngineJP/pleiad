@@ -36,6 +36,11 @@ class PlusAdmissionTest {
         assertEquals("plus-update", PlusAdmission.ticketError(PlusApiError(426, "update_required")).code)
         assertEquals("unknown-host", PlusAdmission.ticketError(PlusApiError(404, "not_found")).code)
         assertEquals("unknown-host", PlusAdmission.ticketError(PlusApiError(403, "host_removed")).code)
+        // the account is disabled / not on Plus: like the relay's 4401 'account'
+        assertEquals("plus-no-relay", PlusAdmission.ticketError(PlusApiError(403, "account_disabled")).code)
+        assertEquals("plus-no-relay", PlusAdmission.ticketError(PlusApiError(403, "not_plus")).code)
+        // Plus is paused: like the relay's 4401 'plus unavailable'
+        assertEquals("plus-paused", PlusAdmission.ticketError(PlusApiError(503, "unavailable")).code)
         val other = PlusAdmission.ticketError(PlusApiError(500, "internal"))
         assertEquals("unreachable", other.code)
         assertEquals("ticket-500", other.detail)

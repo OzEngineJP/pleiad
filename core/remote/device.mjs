@@ -238,12 +238,15 @@ export function admitDeniedError(reason) {
 }
 
 /**
- * 端末の券（core/plus/tickets.mjs の purpose 'device'）が取れなかったときの誤り。
- * 426 → 'update'、404（そのホストが台帳に無い）→ 'unknown-host'、ほか → 'offline'
+ * 端末の券（core/plus/tickets.mjs の purpose 'device'）が取れなかったときの誤り。中継の切断の理由と同じに決める:
+ * 426 → 'update'、404・403 host_removed（そのホストが台帳に無い）→ 'unknown-host'、
+ * 403 account_disabled・not_plus → 'blocked'、503（Plus が止まっている）→ 'unavailable'、ほか → 'offline'
  */
 export function ticketIssueError(e) {
   if (e?.status === 426) return pairError('update', t('remote.pair.update'));
-  if (e?.status === 404) return pairError('unknown-host', t('remote.device.unknownHost'));
+  if (e?.status === 404 || (e?.status === 403 && e.code === 'host_removed')) return pairError('unknown-host', t('remote.device.unknownHost'));
+  if (e?.status === 403 && (e.code === 'account_disabled' || e.code === 'not_plus')) return pairError('blocked', t('remote.pair.account'));
+  if (e?.status === 503) return pairError('unavailable', t('remote.device.paused'));
   return pairError('offline', t('remote.device.offline'), e?.status ? { httpStatus: e.status } : {});
 }
 

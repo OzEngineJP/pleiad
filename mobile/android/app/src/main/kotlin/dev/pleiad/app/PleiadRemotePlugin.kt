@@ -23,7 +23,8 @@ import java.util.concurrent.Executors
 /**
  * The host list's bridge to the device side (only the bundled shell page sees it; host pages never do).
  * Errors are rejected with a stable `code` (payload, relay-url, denied, expired, ticket, rate, host-offline, offline,
- * cancelled, aborted, timeout, handshake, bad-response, storage, unknown-host, plus-unpaired, plus-reapprove, revoked);
+ * cancelled, aborted, timeout, handshake, bad-response, storage, unknown-host, plus-unpaired, plus-reapprove, plus-no-relay,
+ * plus-paused, revoked);
  * the page translates them.
  * Events: `status` { hostId, state, ... }, `pairCode` { code } (QR pairing and admit()), `pairLink` {} (then call takePairLink()).
  */

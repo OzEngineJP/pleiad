@@ -9,17 +9,22 @@
 //   headers()  { 'x-pleiad-host': hostId, 'x-pleiad-ticket': <中継の券 role:host> }。券は制御の接続を張るたびに api から取り
 //              （core/plus/tickets.mjs）、accept（headers({ accept: true })）は今の制御の接続と同じ券を使う。
 //              券の口が無い前の版の api なら { 'x-pleiad-account': <ID トークン> }（張るたびに取る）。
-//              券が取れないとき: 403 host_removed・404（この PC が台帳に無い）→ error 'host'（onHostLost で登録を確かめ直す）、
-//              426 → error 'update'。ほかは今の backoff で張り直す
+//              券が取れないとき（断られた種類ごとに、中継の切断の理由と同じに決める）:
+//                403 host_removed・404（この PC が台帳に無い）→ error 'host'（中継の 4401 'host'。onHostLost で登録を確かめ直す）
+//                426 → error 'update'（4401 'update required'）
+//                403 account_disabled・not_plus → error 'account'（4401 'account'。下の止まりと同じく張り直さない）
+//                503（Plus が止まっている）→ 'unavailable' を出して今の backoff で待つ（4401 'plus unavailable'）
+//                ほか → 今の backoff で張り直す
 //   owns(d)    via:'plus' で、plusUid が今のアカウントの uid の端末だけ
 //   allowPairing  false（公式の中継はペアリングを受けない。ホストも受けない）
 //   onClose()  4401 'account' → 止まる（error 'account'。張り直さない）。4429 'account limit' → 'limit'。
+//              4401 'plus unavailable'（Plus が止まっている）→ 'unavailable' を出して今の backoff で待つ。
 //              4401 'host' → この PC の登録が外れた（error 'host'）。onHostLost で登録を確かめ直す（登録し直すと張り直す）。
 //              4401 'update required' → error 'update'（券の無い接続を中継が受けない）。
 //              ほかの 4401（券の 'ticket' を含む）→ 券か ID トークンを取り直して 1 回だけ張り直す（また 4401 なら 'auth'）。
 //              1013 → 今の backoff で張り直す。ほか → 今と同じ
 //
-// 4401 'account' の止まりを解く（update() で。解いたあとは refreshPlus が張り直す）:
+// 4401 'account'（と券の 403 account_disabled・not_plus）の止まりを解く（update() で。解いたあとは refreshPlus が張り直す）:
 //   張る条件がいったん崩れた（account が plus でなくなった・plus.connect か enabled を切った・ログアウト・登録）、
 //   ほかのアカウントになった、または止まったあとに GET /v1/account を読めて plus のまま（accountReadAt が進んだ）。
 //   止まっている間に session の知らせや設定の書き換えで見直しが来ても、これらが無ければ張りに行かない
@@ -62,16 +67,6 @@ export class AdmissionError extends Error {
   constructor(reason, message = reason) { super(message); this.reason = reason; }
 }
 
-/** 券が取れなかったときの link の誤り（connector が張り直さずに error で止まる）。null なら今の backoff で張り直す */
-function linkErrorForIssue(e, onHostLost) {
-  if ((e?.status === 403 && e.code === 'host_removed') || (e?.status === 404 && !e.unsupported)) {
-    try { onHostLost(); } catch {}
-    return { code: 'host', message: t('remote.plus.closed.host') };
-  }
-  if (e?.status === 426) return { code: 'update', message: t('remote.plus.closed.update') };
-  return null;
-}
-
 /**
  * @param {object} o
  * @param {object} o.session    createPlusSession（snapshot()・getIdToken()）
@@ -106,6 +101,24 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
     st.enabled && st.signedIn && st.accountStatus === 'plus' && st.connect && st.hostState === 'registered'
   );
   const accountError = () => ({ code: 'account', message: t('remote.plus.closed.account') });
+  const hostError = () => ({ code: 'host', message: t('remote.plus.closed.host') });
+  const updateError = () => ({ code: 'update', message: t('remote.plus.closed.update') });
+  const unavailableError = () => ({ code: 'unavailable', message: t('remote.plus.closed.unavailable') });
+  /** アカウントで断られた。止まったときの uid と accountReadAt を覚え、update() で解けるまで張りに行かない */
+  const hold = () => { held = { uid: st.uid, readAt: st.accountReadAt ?? 0 }; return { error: accountError() }; };
+  const hostLost = () => { try { onHostLost(); } catch {} return { error: hostError() }; };
+
+  /**
+   * 券が取れなかったときの扱い（中継の切断の理由と同じに決める）。
+   * { error } は張り直さずに error で止まる、{ retry } はその誤りを出して今の backoff で待つ、null は今の backoff で張り直す
+   */
+  function issueRefusal(e) {
+    if ((e?.status === 403 && e.code === 'host_removed') || (e?.status === 404 && !e.unsupported)) return hostLost();
+    if (e?.status === 426) return { error: updateError() };
+    if (e?.status === 403 && (e.code === 'account_disabled' || e.code === 'not_plus')) return hold();
+    if (e?.status === 503) return { retry: unavailableError() };
+    return null;
+  }
   const ready = () => {
     if (!wanted()) return false;
     return held ? { error: accountError() } : true;
@@ -232,8 +245,9 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
       if (issuer) {
         try { out = await issuer.issue({ purpose: 'host', keyPair: identity, hostId: identity.hostId }); }
         catch (e) {
-          const linkError = linkErrorForIssue(e, onHostLost);
-          if (linkError) throw Object.assign(new Error(linkError.message), { linkError });
+          const v = issueRefusal(e);
+          if (v?.error) throw Object.assign(new Error(v.error.message), { linkError: v.error });
+          if (v?.retry) throw Object.assign(new Error(v.retry.message), { linkRetry: v.retry });
           throw e;
         }
       }
@@ -252,16 +266,11 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
     onIncomingAdmit: ctx => onIncomingAdmit(ctx),
     onClose(code, reason) {
       controlAuth = null;
-      if (code === 4401 && reason === 'update required') return { error: { code: 'update', message: t('remote.plus.closed.update') } };
-      if (code === 4401 && reason === 'account') {
-        held = { uid: st.uid, readAt: st.accountReadAt ?? 0 };
-        return { error: accountError() };
-      }
+      if (code === 4401 && reason === 'update required') return { error: updateError() };
+      if (code === 4401 && reason === 'account') return hold();
       if (code === 4429 && reason === 'account limit') return { error: { code: 'limit', message: t('remote.plus.closed.limit') } };
-      if (code === 4401 && reason === 'host') {
-        try { onHostLost(); } catch {}
-        return { error: { code: 'host', message: t('remote.plus.closed.host') } };
-      }
+      if (code === 4401 && reason === 'host') return hostLost();
+      if (code === 4401 && reason === 'plus unavailable') return { retry: unavailableError() };
       if (code === 4401) {
         // 券（前の版の api なら ID トークン）を取り直して 1 回だけ張り直す。また 4401 なら 'auth'
         if (!authRetried) { authRetried = true; forceToken = true; return 'retry'; }
