@@ -99,7 +99,7 @@
 
 - サーバーは今も `ELECTRON_RUN_AS_NODE=1` の素の Node として走っていて（`desktop/server.cjs`）、Electron の API は使っていない。main との口は `process.parentPort` だけ【確認】。これは §7.1 で名前付きパイプに替える
 - 本番の依存のネイティブモジュールは koffi と node-pty で、どちらも N-API の prebuild（`electron-builder.yml` の注記、`npmRebuild: false`）【確認】。koffi は Node 24.14.0 で読み込めた【実測】。**node-pty も公式の Node 24.21.0（x64）で読め、疑似端末が動き、`npm test`（302 本・11,588 判定）が全て通った**【実測。stage1-0 §1。node-pty は配布物と同じ prebuilds だけ】。arm64 は prebuild と公式の `node.exe` が arm64・N-API であることまで確認した【確認】が、動かしていない【未確認】
-- 開発とテストは素の Node（手元は 24.14.0）で `core/server.mjs` を走らせている【確認】ので、素の Node で動くことは毎日確かめられている。Electron 44.5.1 が持つ Node は 24.21.0。**同梱する Node は Electron の Node と同じメジャー版（24）にそろえる**
+- 開発とテストは素の Node（手元は 24.14.0）で `core/server.mjs` を走らせている【確認】ので、素の Node で動くことは毎日確かめられている。Electron 44.9.3 が持つ Node は 24.22.0。**同梱する Node は Electron の Node と同じメジャー版（24）にそろえる**
 - 比べた案: Electron の一式（`Ply.exe` と DLL・pak）を写す。入れた版全体で約 730 MB あり、版ごとに写すのは重い。`Ply.exe` だけでは `ELECTRON_RUN_AS_NODE` でも ICU・snapshot が要るので動かない【推測】
 - 名前を `Ply.exe` にしない。NSIS は PowerShell が無いと `taskkill /IM Ply.exe` で**名前で**止める【確認】。`pleiad-node.exe` は名前が違うので当たらない
 - 署名: 公式の `node.exe` は OpenJS Foundation の署名のまま使う。名前を替えても署名は効く【推測】
