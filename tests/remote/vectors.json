@@ -221,6 +221,66 @@
         { "input": "a\u001bb\u000e\u001fc", "output": "a b c" },
         { "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "output": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
         { "input": "", "output": "" }
+      ],
+      "_payloadsComment": "payloads はペアリングの QR の文字列（parsePairingPayload）。ok の公開鍵と秘密は host.publicKey と pairing.secret。build のある事例は、pairingPayload がその引数から input をそのまま作る。error は読めないときの sub。installUrl はデスクトップがアプリの入れ方に出す QR（web/remote-parts.mjs の INSTALL_URL）。",
+      "installUrl": "https://pleiad.dev/",
+      "payloads": [
+        {
+          "name": "正しい QR",
+          "build": { "relayUrl": "https://relay.example.com/", "hostName": "desk top" },
+          "input": "pleiad://pair?v=1&r=https%3A%2F%2Frelay.example.com&h=trleh4p5diok2b3hxpcck5nsba&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=desk+top",
+          "ok": { "relayUrl": "https://relay.example.com", "hostId": "trleh4p5diok2b3hxpcck5nsba", "hostName": "desk top" }
+        },
+        {
+          "name": "ホスト名の + と空白と日本語（pairingPayload が作る形）",
+          "build": { "relayUrl": "https://relay.example.com", "hostName": "DESKTOP A+B 太郎" },
+          "input": "pleiad://pair?v=1&r=https%3A%2F%2Frelay.example.com&h=trleh4p5diok2b3hxpcck5nsba&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=DESKTOP+A%2BB+%E5%A4%AA%E9%83%8E",
+          "ok": { "relayUrl": "https://relay.example.com", "hostId": "trleh4p5diok2b3hxpcck5nsba", "hostName": "DESKTOP A+B 太郎" }
+        },
+        {
+          "name": "ホスト名の + と %20 と %2B",
+          "input": "pleiad://pair?v=1&r=https%3A%2F%2Frelay.example.com&h=trleh4p5diok2b3hxpcck5nsba&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=DESKTOP+A%20B%2B1",
+          "ok": { "relayUrl": "https://relay.example.com", "hostId": "trleh4p5diok2b3hxpcck5nsba", "hostName": "DESKTOP A B+1" }
+        },
+        {
+          "name": "前後の空白と改行、大文字の h",
+          "input": "  pleiad://pair?v=1&r=https%3A%2F%2Frelay.example.com&h=TRLEH4P5DIOK2B3HXPCCK5NSBA&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8\n",
+          "ok": { "relayUrl": "https://relay.example.com", "hostId": "trleh4p5diok2b3hxpcck5nsba", "hostName": "" }
+        },
+        { "name": "アプリの入れ方の QR", "input": "https://pleiad.dev/", "error": "installLink" },
+        { "name": "アプリの入れ方（/ なし）", "input": "https://pleiad.dev", "error": "installLink" },
+        { "name": "アプリの入れ方（サブドメインとパス）", "input": "https://www.pleiad.dev/ja/download?x=1", "error": "installLink" },
+        { "name": "アプリの入れ方（大文字・http）", "input": "HTTP://Pleiad.Dev/", "error": "installLink" },
+        { "name": "似たホスト（後ろに続く）", "input": "https://pleiad.dev.example.com/", "error": "notCode" },
+        { "name": "似たホスト（前に付く）", "input": "https://evilpleiad.dev/", "error": "notCode" },
+        { "name": "パスにだけ含む", "input": "https://example.com/pleiad.dev", "error": "notCode" },
+        { "name": "スキームが無い", "input": "pleiad.dev", "error": "notCode" },
+        { "name": "ただの文字", "input": "hello", "error": "notCode" },
+        {
+          "name": "版が 2",
+          "input": "pleiad://pair?v=2&r=https%3A%2F%2Frelay.example.com&h=trleh4p5diok2b3hxpcck5nsba&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=desk",
+          "error": "unsupportedVersion"
+        },
+        {
+          "name": "h が鍵と合わない",
+          "input": "pleiad://pair?v=1&r=https%3A%2F%2Frelay.example.com&h=aaaaaaaaaaaaaaaaaaaaaaaaaa&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=desk",
+          "error": "hostIdMismatch"
+        },
+        {
+          "name": "中継の URL が空",
+          "input": "pleiad://pair?v=1&r=&h=trleh4p5diok2b3hxpcck5nsba&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=desk",
+          "error": "broken"
+        },
+        {
+          "name": "中継の URL が無い",
+          "input": "pleiad://pair?v=1&h=trleh4p5diok2b3hxpcck5nsba&k=MeAwP9ZBjS-MDni5HyLoyu0Pvkhlbc9HZ-SDT3Abj2I&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=desk",
+          "error": "broken"
+        },
+        {
+          "name": "鍵が短い",
+          "input": "pleiad://pair?v=1&r=https%3A%2F%2Frelay.example.com&h=trleh4p5diok2b3hxpcck5nsba&k=AAAA&s=AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8&n=desk",
+          "error": "broken"
+        }
       ]
     },
     "host": {

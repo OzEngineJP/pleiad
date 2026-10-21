@@ -101,9 +101,18 @@ public enum PairingCodec {
     public static func b64urlEncode(_ b: Bytes) -> String { Base64URL.encode(b) }
     public static func b64urlDecode(_ s: String) -> Bytes? { Base64URL.decode(s) }
 
-    /// parsePairingPayload. Throws PairError("payload", sub) with sub = notCode | unsupportedVersion | broken | hostIdMismatch.
+    /// isInstallLink: the app-download QR (https://pleiad.dev/ and below) the desktop shows next to the pairing QR.
+    public static func isInstallLink(_ text: String?) -> Bool {
+        let s = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let u = URLComponents(string: s), let scheme = u.scheme?.lowercased(), let host = u.host?.lowercased() else { return false }
+        return (scheme == "https" || scheme == "http") && (host == "pleiad.dev" || host.hasSuffix(".pleiad.dev"))
+    }
+
+    /// parsePairingPayload. Throws PairError("payload", sub) with
+    /// sub = installLink | notCode | unsupportedVersion | broken | hostIdMismatch | relay-<normalizeRelayUrl sub>.
     public static func parse(_ text: String?) throws -> PairingOffer {
         let s = (text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if isInstallLink(s) { throw PairError("payload", "installLink") }
         guard s.hasPrefix("\(PAIR_SCHEME)?") else { throw PairError("payload", "notCode") }
         let q = try query(s.dropFirst(PAIR_SCHEME.count + 1))
         if q["v"] != PAIR_VERSION { throw PairError("payload", "unsupportedVersion") }

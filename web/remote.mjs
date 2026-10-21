@@ -386,9 +386,9 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       o.body = [
         segment(t('settings.remote.wizard.kind'), [['phone', t('settings.remote.wizard.phone')], ['pc', t('settings.remote.wizard.pc')]], wz.kind,
           value => { wz.kind = value; paintWizard(); }),
-        installBody(wz.kind),
+        ...installBody(wz.kind),
       ];
-      o.sig = wz.kind;
+      o.sig = [wz.kind, wz.method, plusRemoteAvailable(plusStatus)];
       o.next = { onclick: () => { wz.step = 1; wz.error = ''; paintWizard(); } };
     } else if (wz.step === 1) {
       const show = needRelay();
@@ -412,13 +412,16 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     paintLeft();
   }
 
+  /** アプリを入れる。スマホなら入れ方の QR と、ペアリングの QR ではないことの一行（Plus のときは、この後 QR を使わないことも） */
   function installBody(kind) {
-    if (kind !== 'phone') return installPcBody();
+    if (kind !== 'phone') return [installPcBody()];
     const box = el('div', 'rm-inst');
     const stack = el('div', 'rm-stack');
     stack.append(el('p', 'rm-lead', t('settings.remote.wizard.installPhone')), el('p', 'rm-weak', t('settings.remote.wizard.stores')));
-    box.append(qrFigure(qrPath(INSTALL_URL), 112), stack);
-    return box;
+    box.append(qrFigure(qrPath(INSTALL_URL), 112, t('settings.remote.wizard.installQrLabel')), stack);
+    const out = [box, el('p', 'rm-weak', t('settings.remote.wizard.installQrNote'))];
+    if (wz.method === 'plus' && plusRemoteAvailable(plusStatus)) out.push(el('p', null, t('settings.remote.wizard.plusNext')));
+    return out;
   }
 
   /** つなぎ方: Plus または自分の中継サーバー */
@@ -480,7 +483,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       const box = el('div', 'rm-inst');
       const stack = el('div', 'rm-stack');
       stack.append(el('p', 'rm-lead', t('settings.remote.wizard.scan')), left);
-      box.append(qrFigure(qrPath(wz.offer.payload), 152), stack);
+      box.append(qrFigure(qrPath(wz.offer.payload), 152, t('settings.remote.pair.qrLabel')), stack);
       return [box, warn];
     }
     const code = el('div', 'rm-code');

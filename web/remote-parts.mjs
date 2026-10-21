@@ -245,9 +245,9 @@ export function textInput({ type = 'text', placeholder = '', autocomplete = 'off
   return i;
 }
 
-/** 入場券の QR（web/remote.mjs の qrPath の点）を px の大きさで */
-export function qrFigure({ size, d }, px) {
-  const svg = svgEl('svg', { class: 'rm-qr', width: px, height: px, viewBox: `0 0 ${size} ${size}`, role: 'img', 'aria-label': t('settings.remote.pair.qrLabel'), 'shape-rendering': 'crispEdges' });
+/** QR（web/remote.mjs の qrPath の点）を px の大きさで。label は読み上げ名（アプリの入れ方とペアリングで言い分ける） */
+export function qrFigure({ size, d }, px, label) {
+  const svg = svgEl('svg', { class: 'rm-qr', width: px, height: px, viewBox: `0 0 ${size} ${size}`, role: 'img', 'aria-label': label, 'shape-rendering': 'crispEdges' });
   svg.append(svgEl('rect', { class: 'rm-qr-bg', width: size, height: size }), svgEl('path', { class: 'rm-qr-fg', d }));
   return svg;
 }

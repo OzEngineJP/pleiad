@@ -125,6 +125,36 @@ final class NoiseVectorsTests: XCTestCase {
         }
         XCTAssertEqual("482 193", Pleiad.formatConfirmationCode("482193"))
     }
+
+    /// The pairing QR strings: what parse returns, or the sub it throws (the shell picks its message from the sub).
+    func testPairingPayloads() throws {
+        let p = try loadVectors()["pleiad"]!
+        let pairing = p["pairing"]!
+        let publicKey = hex(p["host"]!["publicKey"]!.string!)
+        let secret = hex(pairing["secret"]!.string!)
+        let cases = pairing["payloads"]!.array!
+        XCTAssertFalse(cases.isEmpty)
+        var installUrlSeen = false
+        for c in cases {
+            let name = c["name"]!.string!
+            let input = c["input"]!.string!
+            if let ok = c["ok"] {
+                let offer = try PairingCodec.parse(input)
+                XCTAssertEqual(ok["relayUrl"]!.string!, offer.relayUrl, name)
+                XCTAssertEqual(ok["hostId"]!.string!, offer.hostId, name)
+                XCTAssertEqual(ok["hostName"]!.string!, offer.hostName, name)
+                XCTAssertEqual(publicKey, offer.publicKey, name)
+                XCTAssertEqual(secret, offer.secret, name)
+            } else {
+                let error = c["error"]!.string!
+                XCTAssertThrowsError(try PairingCodec.parse(input), name) {
+                    XCTAssertEqual(PairError("payload", error), $0 as? PairError, name)
+                }
+                if input == pairing["installUrl"]!.string! { installUrlSeen = error == "installLink" }
+            }
+        }
+        XCTAssertTrue(installUrlSeen, "the desktop's install URL is read as installLink")
+    }
 }
 
 final class FramesVectorsTests: XCTestCase {

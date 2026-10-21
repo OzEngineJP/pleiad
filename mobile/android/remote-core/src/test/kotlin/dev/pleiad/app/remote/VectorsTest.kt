@@ -133,6 +133,41 @@ class PairingRulesVectorsTest {
             assertEquals("cleanLabel vector $i", v.getString("output"), PairingCodec.cleanLabel(v.getString("input")))
         }
     }
+
+    /** The pairing QR strings: what parse returns, or the sub it throws (the shell picks its message from the sub). */
+    @Test fun pairingPayloadsMatchSharedVectors() {
+        val p = loadVectors().getJSONObject("pleiad")
+        val pairing = p.getJSONObject("pairing")
+        val publicKey = hex(p.getJSONObject("host").getString("publicKey"))
+        val secret = hex(pairing.getString("secret"))
+        val cases = pairing.getJSONArray("payloads")
+        assertTrue(cases.length() > 0)
+        var installUrlSeen = false
+        for (i in 0 until cases.length()) {
+            val v = cases.getJSONObject(i)
+            val name = v.getString("name")
+            val input = v.getString("input")
+            if (v.has("ok")) {
+                val ok = v.getJSONObject("ok")
+                val offer = PairingCodec.parse(input)
+                assertEquals(name, ok.getString("relayUrl"), offer.relayUrl)
+                assertEquals(name, ok.getString("hostId"), offer.hostId)
+                assertEquals(name, ok.getString("hostName"), offer.hostName)
+                assertArrayEquals(name, publicKey, offer.publicKey)
+                assertArrayEquals(name, secret, offer.secret)
+            } else {
+                try {
+                    PairingCodec.parse(input)
+                    fail("$name: accepted")
+                } catch (e: PairError) {
+                    assertEquals(name, "payload", e.code)
+                    assertEquals(name, v.getString("error"), e.detail)
+                }
+                if (input == pairing.getString("installUrl")) installUrlSeen = v.getString("error") == "installLink"
+            }
+        }
+        assertTrue("the desktop's install URL is read as installLink", installUrlSeen)
+    }
 }
 
 class FramesVectorsTest {

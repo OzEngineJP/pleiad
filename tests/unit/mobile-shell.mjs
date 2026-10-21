@@ -111,6 +111,16 @@ export default async function (t) {
   t.ok('ネイティブが返す失敗のコードはどれも殻で訳せる', codes.every(c => `err.${c}` in dict.en && `err.${c}` in dict.ja));
   t.ok('殻の文言の差し込み', tr('pair.approveOn', { host: 'desk' }) === 'desk の画面で承認してください');
 
+  // ---- 読めないコードの訳は sub（ネイティブの reject の data.detail = PairingCodec.parse の sub）で言い分ける
+  const errorSrc = read('mobile/www/app.js').match(/function errorText\(e\) \{[\s\S]*?\r?\n {2}\}/)?.[0] ?? '';
+  const errorText = errorSrc ? vm.runInNewContext(`${errorSrc}; errorText`, { t: tr }) : () => '';
+  const reject = detail => ({ code: 'payload', message: `payload (${detail})`, data: { detail, closeCode: null } });
+  t.ok('アプリの入れ方の QR を読んだ: 入れるための QR で、デスクトップで次へ進むか Plus にログインする',
+    errorText(reject('installLink')) === dict.ja['err.payload.installLink'] && dict.ja['err.payload.installLink'].includes('アプリを入れるための QR です'), errorText(reject('installLink')));
+  t.ok('新しい版のコードを読んだ: アプリを更新する', errorText(reject('unsupportedVersion')) === 'アプリを更新してください。', errorText(reject('unsupportedVersion')));
+  t.ok('ほかの sub はこれまでの文言', ['notCode', 'broken', 'hostIdMismatch', 'relay-invalid'].every(d => errorText(reject(d)) === dict.ja['err.payload'])
+    && errorText({ code: 'payload', message: 'payload' }) === dict.ja['err.payload']);
+
   // ---- プライバシーポリシーへのリンク（Google Play はアプリの中にも求める。docs/android-releases.md「Google Play」）
   const page = (url) => url.match(/^https:\/\/pleiad\.dev\/(.*)$/)?.[1];
   t.ok('ホスト一覧からプライバシーポリシーを開ける（言語ごとのサイトのページがある）',

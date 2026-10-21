@@ -1158,6 +1158,7 @@
     },
     "pairingCode": {
       "notCode": "This is not a pairing code",
+      "installLink": "This QR code is for installing the app, not a pairing code",
       "unsupportedVersion": "This pairing code is from an unsupported version",
       "broken": "The pairing code is corrupted",
       "hostIdMismatch": "The pairing code's hostId doesn't match its public key"

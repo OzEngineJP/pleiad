@@ -31,6 +31,9 @@
 
   function errorText(e) {
     const code = e?.code || 'internal';
+    // 読めないコードの訳（e.data.detail は PairingCodec.parse の sub）。アプリの入れ方の QR はデスクトップでペアリングの QR と並ぶので言い分ける
+    if (code === 'payload' && e?.data?.detail === 'installLink') return t('err.payload.installLink');
+    if (code === 'payload' && e?.data?.detail === 'unsupportedVersion') return t('err.payload.unsupportedVersion');
     return t(`err.${code}`, { detail: e?.message ?? '' }) || t('err.internal', { detail: e?.message ?? code });
   }
 

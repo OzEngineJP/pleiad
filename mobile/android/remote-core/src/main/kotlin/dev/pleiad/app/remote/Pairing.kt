@@ -82,9 +82,21 @@ object PairingCodec {
     fun b64urlEncode(b: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(b)
     fun b64urlDecode(s: String): ByteArray = Base64.getUrlDecoder().decode(s.trimEnd('='))
 
-    /** parsePairingPayload. Throws PairError("payload", sub) with sub = notCode | unsupportedVersion | broken | hostIdMismatch. */
+    /** isInstallLink: the app-download QR (https://pleiad.dev/ and below) the desktop shows next to the pairing QR. */
+    fun isInstallLink(text: String?): Boolean {
+        val u = try { URI((text ?: "").trim()) } catch (_: Exception) { return false }
+        val scheme = u.scheme?.lowercase()
+        val host = u.host?.lowercase() ?: return false
+        return (scheme == "https" || scheme == "http") && (host == "pleiad.dev" || host.endsWith(".pleiad.dev"))
+    }
+
+    /**
+     * parsePairingPayload. Throws PairError("payload", sub) with
+     * sub = installLink | notCode | unsupportedVersion | broken | hostIdMismatch | relay-<normalizeRelayUrl sub>.
+     */
     fun parse(text: String?): PairingOffer {
         val s = (text ?: "").trim()
+        if (isInstallLink(s)) throw PairError("payload", "installLink")
         if (!s.startsWith("$PAIR_SCHEME?")) throw PairError("payload", "notCode")
         val q = try { query(s.substring(PAIR_SCHEME.length + 1)) } catch (_: Exception) { throw PairError("payload", "broken") }
         if (q["v"] != PAIR_VERSION) throw PairError("payload", "unsupportedVersion")

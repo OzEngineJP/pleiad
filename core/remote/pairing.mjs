@@ -59,9 +59,18 @@ export function pairingPayload({ relayUrl, hostId, publicKey, secret, hostName }
   return `${PAIR_SCHEME}?${q}`;
 }
 
+/** アプリの入れ方の QR（https://pleiad.dev/ とその下）か。ペアリングの QR と並んで出るので、読み違えたときに言い分ける。 */
+export function isInstallLink(text) {
+  let u;
+  try { u = new URL(String(text ?? '').trim()); } catch { return false; }
+  const host = u.hostname.toLowerCase();
+  return (u.protocol === 'https:' || u.protocol === 'http:') && (host === 'pleiad.dev' || host.endsWith('.pleiad.dev'));
+}
+
 /** QR の文字列を読む。形が違えば投げる。hostId が公開鍵と合うことも確かめる。 */
 export function parsePairingPayload(text) {
   const s = String(text ?? '').trim();
+  if (isInstallLink(s)) throw new Error(t('remote.pairingCode.installLink'));
   if (!s.startsWith(`${PAIR_SCHEME}?`)) throw new Error(t('remote.pairingCode.notCode'));
   const q = new URLSearchParams(s.slice(PAIR_SCHEME.length + 1));
   if (q.get('v') !== PAIR_VERSION) throw new Error(t('remote.pairingCode.unsupportedVersion'));
@@ -70,7 +79,9 @@ export function parsePairingPayload(text) {
   if (publicKey.length !== 32 || secret.length !== 32) throw new Error(t('remote.pairingCode.broken'));
   const hostId = String(q.get('h') ?? '').toLowerCase();
   if (hostId !== hostIdFor(publicKey)) throw new Error(t('remote.pairingCode.hostIdMismatch'));
-  return { relayUrl: normalizeRelayUrl(q.get('r')), hostId, publicKey, secret, hostName: q.get('n') ?? '' };
+  const relayUrl = normalizeRelayUrl(q.get('r'));
+  if (!relayUrl) throw new Error(t('remote.pairingCode.broken'));
+  return { relayUrl, hostId, publicKey, secret, hostName: q.get('n') ?? '' };
 }
 
 /** 端末から来た名前などを表示できる形に（制御文字を落とし、長さを抑える）。 */

@@ -1156,6 +1156,7 @@
     },
     "pairingCode": {
       "notCode": "ペアリングのコードではありません",
+      "installLink": "アプリを入れるための QR です。ペアリングのコードではありません",
       "unsupportedVersion": "対応していない版のペアリングのコードです",
       "broken": "ペアリングのコードが壊れています",
       "hostIdMismatch": "ペアリングのコードの hostId が公開鍵と合いません"
