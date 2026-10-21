@@ -57,7 +57,8 @@
   "notifications": {
     "completed": "Work finished",
     "failed": "Work failed",
-    "waitingReply": "Waiting for your reply"
+    "waitingReply": "Waiting for your reply",
+    "deviceWaiting": "◆ Waiting for your approval"
   },
   "secrets": {
     "unavailable": "The OS encryption feature (safeStorage) is not available.",

@@ -58,6 +58,8 @@ function deviceRecord({ name, via } = {}) {
       tokenHash: crypto.createHash('sha256').update(token).digest('hex'),
       createdAt: new Date().toISOString(), lastSeenAt: null,
       ...(via ? { via } : {}),
+      // via:'plus' は PC の画面で許可した端末として置く（approvedBy の無い plus は、もう一度の許可が済むまで通らない）
+      ...(via === 'plus' ? { approvedBy: 'host', approvedAt: new Date().toISOString() } : {}),
     },
   };
 }
@@ -240,7 +242,7 @@ export default async function (t) {
     await host.setPlusProvider(plusProvider(fake.url, {
       async onIncomingAdmit(ctx) {
         seen = ctx;
-        const { device } = await ctx.admit({ name: 'admitted device', platform: 'android', app: 'test', publicKey: admitKey.publicKey, plusUid: 'uid-test' });
+        const { device } = await ctx.admit({ name: 'admitted device', platform: 'android', app: 'test', publicKey: admitKey.publicKey, plusUid: 'uid-test', approvedBy: 'host' });
         admittedId = device.id;
         ctx.ws.close(1000);
       },

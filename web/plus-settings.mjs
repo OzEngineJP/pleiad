@@ -2,6 +2,8 @@
 // 状態はサーバーが持つ（plusStatus コマンドと、変わるたびに届く plusStatus イベント）。
 // この画面は表示と、B1 のコマンド（plusLogin・plusLoginCancel・plusLogout・plusHostRebind）を送ることだけをする。
 // 利用者が外した PC（host.state removed）は「この PC を登録し直す」で plus.hostReregister 操作を送る。
+// 外した hostId を api が登録し直さないとき（host.error.permanent）は、同じボタンが鍵の作り直し（plusHostRebind）の確かめを出す。
+// api が更新を求めたとき（host.state update）は「Pleiad を更新してください」。
 // 見た目の部品は設定 › リモートと同じ（web/remote-parts.mjs、web/manage-panel.css の .rm-*）。見出しの丸は .rm-av。
 // 「同期」の「届いた変更 N 件」を押すと、このページの中身を届いた変更の面（web/plus-inbox.mjs。ADR 0246）に替える。
 // 通知の一覧の ◆ の行からは openInbox で直に開く。届いた変更が増えたら（plusSyncStatus）一覧を読み直し、新しいものを上に足す
@@ -147,8 +149,9 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
   }
 
   // この PC の行（host は B4 が埋める。null なら出さない）
-  // つなぎ直す（ホストの鍵を作り直す）: ほかのアカウントの PC と同じ鍵のとき・外されて同じ鍵では戻れないとき
-  const rebindRow = () => {
+  // ホストの鍵を作り直す: ほかのアカウントの PC と同じ鍵のとき（「つなぎ直す」）・外されて同じ鍵では戻れないとき
+  // （「この PC を登録し直す」）。どちらも同じ確かめを通す
+  const rebindRow = ({ label = t('settings.plus.rebind'), fk = 'rebind', cls = 'btn btn-quiet' } = {}) => {
     if (confirming) {
       // 確かめの窓は今の設定の画面の確かめと同じ作り（.rm-confirm）
       const box = el('div', 'rm-confirm');
@@ -160,7 +163,7 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
       out.push(box);
     } else {
       const acts = el('div', 'rm-acts');
-      acts.append(actButton(t('settings.plus.rebind'), askRebind, 'btn btn-quiet', { fk: 'rebind' }));
+      acts.append(actButton(label, askRebind, cls, { fk }));
       out.push(acts);
     }
   };
@@ -170,9 +173,11 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
   } else if (s.host?.state === 'limit') {
     out.push(el('p', 'rm-warn', t('settings.plus.hostLimit')));
   } else if (s.host?.state === 'removed' && s.host.error?.permanent) {
-    // 外された PC は同じ鍵では戻れない（受け入れの v2 の api）。続けるにはつなぎ直す
-    out.push(el('p', 'rm-warn', t('settings.plus.hostRemovedForGood')));
-    rebindRow();
+    // 外された PC は同じ鍵では戻れない（受け入れの v2 の api）: 「この PC を登録し直す」は鍵を作り直す
+    out.push(el('p', 'rm-warn', t('settings.plus.hostRemovedKey')));
+    rebindRow({ label: t('settings.plus.hostReregister'), fk: 'hostReregister', cls: 'btn' });
+  } else if (s.host?.state === 'update') {
+    if (!s.needsUpdate) out.push(el('p', 'rm-warn', t('settings.plus.needsUpdate')));
   } else if (s.host?.state === 'removed') {
     // 利用者がこの PC を外した: 自分では登録し直さない（docs/plus.md「同期の始め直しと登録の外れ」）
     out.push(el('p', 'rm-warn', t('settings.plus.hostRemoved')));

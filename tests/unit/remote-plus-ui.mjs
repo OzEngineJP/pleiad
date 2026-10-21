@@ -106,7 +106,7 @@ export default async function (t) {
 
   // ---- 「この PC へ」の画面（setupRemote を DOM の代役で描く）
   // 自分の中継サーバーを何も設定していなくても、まとまりと「未設定」の一行と「編集」を出す（承認 2026-10-21。docs/remote.md）
-  const drawn = async (remote, plus = { available: false }) => {
+  const drawn = async (remote, plus = { available: false }, hostScreen = true) => {
     const saved = { getElementById: document.getElementById, createTextNode: document.createTextNode, body: document.body };
     const nodes = { remotePanel: new N('div'), remoteTab: new N('button') };
     document.getElementById = id => nodes[id] ?? null;
@@ -114,6 +114,7 @@ export default async function (t) {
     document.body = new N('body');   // createWizard は setup の時点で dialog を body に足す
     try {
       const panel = setupRemote({ cmd: async name => name === 'remoteStatus' ? remote : name === 'plusStatus' ? plus : {}, page: () => {} });
+      panel.setHostScreen(hostScreen);
       await panel.refresh();
       return nodes.remotePanel;
     } finally {
@@ -129,6 +130,9 @@ export default async function (t) {
   t.ok('設定が無いときは中抜きの点で「未設定 · …」の一行', group?.querySelector('.rm-st')?.dataset.state === 'off'
     && group.querySelector('.rm-st').textContent === '未設定 · 「編集」で中継の URL と登録用の秘密を入れます', group?.shown);
   t.ok('設定が無いときも見出しの右に「編集」', group?.querySelector('.rm-gh-btn')?.dataset.fk === 'relayEdit' && group.querySelector('.rm-gh-btn').textContent === '編集');
+  // 端末から開いた設定では、中継の設定はホストの画面だけの操作なので「編集」を出さない
+  const fromDevice = ownGroup(await drawn({ enabled: true, configured: false, relayUrl: null, connection: { state: 'idle' }, devices: [], plus: { connect: true }, pairing: { requests: [] } }, { available: false }, false));
+  t.ok('端末の画面では「編集」を出さない', Boolean(fromDevice) && !fromDevice.querySelector('.rm-gh-btn'));
   const off = await drawn({ enabled: false, configured: false, connection: { state: 'idle' }, devices: [], plus: { connect: true }, pairing: { requests: [] } });
   t.ok('許可がオフならまとまりは出さない', !ownGroup(off));
 }

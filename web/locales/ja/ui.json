@@ -299,9 +299,9 @@
           "noKey": "この PC は今の同期の鍵を持っていません。"
         },
         "hostRemoved": "この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。",
-        "hostRemovedForGood": "この PC は Pleiad Plus の登録から外されています。同じ鍵では戻せないので、続けるときはつなぎ直してください。",
         "hostReregister": "この PC を登録し直す",
         "hostReregistered": "この PC の登録が外れていたので、登録し直しました",
+        "hostRemovedKey": "この PC は Pleiad Plus の登録から外されています。登録し直すには、この PC の鍵を作り直します。",
         "syncInbox_other": "届いた変更 {{count}} 件",
         "inboxTitle": "届いた変更",
         "inboxKind": {
@@ -348,12 +348,16 @@
         "plusUpgrade": "Pleiad Plus にする",
         "plusBlocked": "このアカウントでは公式の中継を使えません",
         "plusLimit": "このアカウントの上限に達しています",
+        "plusUpdate": "この版の Pleiad では公式の中継を使えません。Pleiad を更新してください",
+        "plusRemoved": "この PC は Plus のアカウントから外されています",
         "plusEmpty": "同じアカウントでログインした PC がここに並びます。",
         "plusMaintenance": "Pleiad Plus はメンテナンス中です",
         "plusUnavailable": "Pleiad Plus は今使えません",
         "plusNeedsUpdate": "Pleiad を更新してください",
         "own": "自分の中継サーバー",
-        "plusHead": "Pleiad Plus（公式の中継）"
+        "plusHead": "Pleiad Plus（公式の中継）",
+        "reapprove": "もう一度の許可が要る端末",
+        "revoked": "取り消した端末"
       },
       "state": {
         "connected": "つながっています · {{where}}",
@@ -369,6 +373,8 @@
         "signingIn": "Pleiad Plus にログインします",
         "account": "このアカウントでは公式の中継を使えません",
         "connecting": "接続しています…",
+        "paused": "公式の中継からの申し込みを一時的に止めています（{{time}} まで）",
+        "resume": "再開する",
         "todo": {
           "install": {
             "phone": "スマホに Pleiad を入れる",
@@ -392,7 +398,12 @@
         "added": "追加した日",
         "lastSeen": "最後の接続",
         "never": "まだつないでいません",
-        "revoke": "取り消す"
+        "revoke": "取り消す",
+        "approvedBy": "許可した端末",
+        "thisPc": "この PC",
+        "revokedAt": "取り消した日",
+        "revokedBy": "取り消した端末",
+        "hideRevoked": "一覧から消す"
       },
       "wizard": {
         "steps": {
@@ -449,7 +460,8 @@
           "notAllowed": "{{host}} の Pleiad を更新すると使えます"
         },
         "loadFailed": "PC の一覧を読めません: {{error}}",
-        "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。"
+        "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。",
+        "reapprove": "もう一度の許可が要ります"
       },
       "relay": {
         "url": "中継の URL",
@@ -467,7 +479,9 @@
         "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
         "keep": "やめる",
         "revokeTasks": "この端末の AI から任された作業 {{count}} 件も止めます。",
-        "revokeConfirmButton": "取り消す"
+        "revokeConfirmButton": "取り消す",
+        "quoted": "「{{name}}」",
+        "revokeChain": "この端末が許可した{{names}}も取り消します。"
       },
       "platform": {
         "desktop": "デスクトップ",
@@ -490,7 +504,9 @@
         "deny": "拒否",
         "approve": "許可する",
         "cancelled": "端末が承認を待たずに切れました。",
-        "expired": "承認されないまま期限が切れました。"
+        "expired": "承認されないまま期限が切れました。",
+        "titleAgain": "「{{name}}」をもう一度許可しますか？",
+        "addedOn": "{{date}}に追加"
       },
       "fullAccess": "つないだ端末は、この PC でできることがすべてできます"
     },
@@ -3554,6 +3570,16 @@
         "named": "{{name}} が @あなた と書きました",
         "plain": "@あなた 宛ての投稿があります"
       },
+      "device": {
+        "named": {
+          "open": "端末「{{name}}」が追加の許可を待っています",
+          "closed": "端末「{{name}}」が追加の許可を待っていました"
+        },
+        "plain": {
+          "open": "端末が追加の許可を待っています",
+          "closed": "端末が追加の許可を待っていました"
+        }
+      },
       "syncInbox_other": "同期で届いた変更が {{count}} 件あります",
       "syncApproval": {
         "named": "{{name}} が同期の鍵を待っています",
@@ -3572,6 +3598,7 @@
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
       "chat": "一時チャット › {{title}}",
+      "remote": "設定 › リモート",
       "plus": "設定 › Pleiad Plus"
     },
     "outcome": {
@@ -3592,7 +3619,9 @@
       "band": "離れていても知らせますか？",
       "enable": "オンにする",
       "later": "あとで"
-    }
+    },
+    "deviceWaiting": "◆ 承認を待っています",
+    "deviceBody": "端末「{{name}}」が追加の許可を待っています"
   },
   "remote": {
     "badgeLabel": "リモート:",

@@ -47,14 +47,23 @@ class LinkPolicyTest {
             Triple(4401, "device token", "readmit"),
             Triple(4401, "account", "blocked"),
             Triple(4401, "token", "offline"),
+            // a ticket that did not pass (expired, used): take a new one
+            Triple(4401, "ticket", "offline"),
+            // the relay takes tickets only
+            Triple(4401, "update required", "update"),
             Triple(4401, "plus off", "host-offline"),
             Triple(4401, "plus unavailable", "paused"),
+            Triple(4401, "host closed", "readmit"),
+            Triple(4401, "", "readmit"),
             Triple(4429, "account limit", "limit"),
             Triple(4429, "admit rate", "offline"),
             Triple(1013, "", "offline"),
         )
         for ((code, reason, expected) in cases) assertEquals("$code $reason", expected, LinkRules.classifyClose(code, reason = reason, via = "plus"))
         assertEquals("revoked", LinkRules.classifyClose(4401, via = "own"))
+        // the host dropped this device's channel (revoked, or it must be allowed again): ask the host again for its answer
+        assertEquals("readmit", LinkRules.classifyClose(1000, goaway = "revoked", via = "plus"))
+        assertEquals("revoked", LinkRules.classifyClose(1000, goaway = "revoked", via = "own"))
     }
 
     @Test fun loopbackIsTheHostsPc() {

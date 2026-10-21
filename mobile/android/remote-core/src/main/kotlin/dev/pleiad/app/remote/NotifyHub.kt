@@ -36,6 +36,7 @@ class NotifyHub(
     private val reregisterMs: Long = 6 * 60 * 60_000L,
     private val log: (String) -> Unit = {},
     private val plusIdToken: (() -> String?)? = null,
+    private val plusTicket: ((hostId: String, keyPair: KeyPair) -> String?)? = null,
 ) {
     private class Reg(var version: Long = -1, var at: Long = 0, var failures: Int = 0, var unsupported: Boolean = false, var running: Boolean = false)
 
@@ -44,7 +45,8 @@ class NotifyHub(
     private val regs = ConcurrentHashMap<String, Reg>()
     private val workers = Executors.newCachedThreadPool { r -> Thread(r, "pleiad-notify-hub").also { it.isDaemon = true } }
     private val timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "pleiad-notify-timer").also { it.isDaemon = true } }
-    private val registrar by lazy { NotifyRegistrar(loop, store.identity(), app, name, log = log, plusIdToken = plusIdToken) }
+    private val keyFor = { c: HostCreds -> store.keyFor(c.hostId, c.via) ?: store.identity() }
+    private val registrar by lazy { NotifyRegistrar(loop, keyFor, app, name, log = log, plusIdToken = plusIdToken, plusTicket = plusTicket) }
     @Volatile private var settings = NotifySettings()
     @Volatile private var settingsVersion = 0L
     @Volatile private var running = false
@@ -137,6 +139,7 @@ class NotifyHub(
                 onNotice = { n -> sink.act(planner.onNotice(n, settings), settings) },
                 onState = { s -> onLineState(hostId, s) },
                 backoff = lineBackoff, pingMs = pingMs, log = log, plusIdToken = plusIdToken,
+                plusTicket = plusTicket?.let { t -> { c: HostCreds -> t(c.hostId, keyFor(c)) } },
             )
             lines[hostId] = line
             line.start()
@@ -146,7 +149,7 @@ class NotifyHub(
     private fun onLineState(hostId: String, state: String) {
         try { sink.lineState(hostId, state) } catch (_: Exception) {}
         if (state == "connected") maybeRegister(hostId, force = false)
-        if (state == "revoked") {
+        if (state == "revoked" || state == "removed") {
             lines.remove(hostId)?.stop()
             regs.remove(hostId)
         }

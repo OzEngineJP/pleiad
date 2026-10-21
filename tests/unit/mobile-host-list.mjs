@@ -26,7 +26,7 @@ function element(tag = 'div') {
   return el;
 }
 
-async function run(list, calls = []) {
+async function run(list, calls = [], extra = {}) {
   const nodes = new Map();
   const toasts = [];
   const document = {
@@ -48,6 +48,7 @@ async function run(list, calls = []) {
     open: async a => { calls.push(['open', a]); },
     rename: async a => { calls.push(['rename', a]); },
     remove: async a => { calls.push(['remove', a]); },
+    ...extra,
   };
   const window = {
     shellI18n: { t: k => k, apply() {}, ago: () => '' },
@@ -120,4 +121,20 @@ export default async function (t) {
   await pick(r, 'hosts.remove');
   t.ok('削除は自分の中継の組み合わせを消す', calls[0]?.[0] === 'remove' && calls[0][1].via === 'own', JSON.stringify(calls));
   t.ok('Plus だけの行には「削除」が無い', !(await menu(r, rows.laptop)).includes('hosts.remove'));
+
+  // Plus の行: 外された PC・取り消された端末（押すとホストに承認を頼む）
+  const removed = { hostId: 'h6', hostName: 'gone', via: 'plus', state: 'removed' };
+  const revoked = { hostId: 'h7', hostName: 'asked', via: 'plus', state: 'revoked' };
+  r = await run({ hosts: [removed, revoked], plusError: null });
+  const prow = Object.fromEntries(r.hosts.children.map(row => [row.children[0].children[0].textContent, row]));
+  t.ok('外された PC の行: 「Plus のアカウントから外されています」', rowText(prow.gone).startsWith('plus.removed'), rowText(prow.gone));
+  t.ok('取り消された Plus の行: 押すと承認を頼むと書く', rowText(prow.asked).startsWith('plus.revoked'), rowText(prow.asked));
+
+  // 承認を頼んだ結果: 断られた・期限切れ・外された PC は、行に理由を出す
+  for (const [code, text] of [['denied', 'err.plus-denied'], ['expired', 'err.plus-expired'], ['unknown-host', 'err.plus-removed']]) {
+    const asked = [];
+    r = await run({ hosts: [revoked], plusError: null }, asked, { admit: async a => { asked.push(['admit', a]); throw Object.assign(new Error(code), { code }); } });
+    r.hosts.children[0].children[0].onclick(); await settle();
+    t.ok(`承認を頼んで ${code}: 行に ${text}`, asked[0]?.[0] === 'admit' && rowText(r.hosts.children[0]) === text, `${JSON.stringify(asked)} ${rowText(r.hosts.children[0])}`);
+  }
 }

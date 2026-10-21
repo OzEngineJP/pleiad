@@ -22,6 +22,7 @@ import dev.pleiad.app.remote.NotifySink
  * lock screen the conversation name is hidden unless the user allowed it (VISIBILITY_PRIVATE and a generic public
  * version). Two channels: "needs attention" (high) for approvals, questions and failures, and "finished" (default).
  * Tapping opens the conversation: pleiad://open?h=<hostId>&s=<sessionId> (a bundle opens the newest one).
+ * A device waiting on the host's approval window (ADR 0248) has no buttons; tapping opens the host list.
  */
 class NotifyPresenter(private val ctx: Context) : NotifySink {
     companion object {
@@ -82,6 +83,7 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         NoticeKind.QUESTION -> if (a.pending > 1) ctx.getString(R.string.notify_question_many, a.pending) else ctx.getString(R.string.notify_question)
         NoticeKind.FAILED -> ctx.getString(R.string.notify_failed)
         NoticeKind.SCHEDULE_MISSED -> ctx.getString(R.string.notify_schedule_missed)
+        NoticeKind.DEVICE -> ctx.getString(R.string.notify_approval)
         else -> ctx.getString(R.string.notify_done)
     }
 
@@ -90,6 +92,7 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         NoticeKind.QUESTION -> R.string.notify_public_question
         NoticeKind.FAILED -> R.string.notify_public_failed
         NoticeKind.SCHEDULE_MISSED -> R.string.notify_public_schedule_missed
+        NoticeKind.DEVICE -> R.string.notify_public_device
         else -> R.string.notify_public_done
     })
 
@@ -115,12 +118,20 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         return b
     }
 
+    /** The host list (a device notice belongs to no conversation). */
+    private fun listIntent(key: String): PendingIntent {
+        val i = Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(ctx, idOf(key), i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    }
+
     private fun post(a: NotifyAction.Post, settings: NotifySettings): Notification {
-        val body = a.title.ifBlank { ctx.getString(R.string.notify_untitled) }
+        val device = a.kind == NoticeKind.DEVICE
+        val body = if (device) ctx.getString(R.string.notify_device_body, a.title.ifBlank { "?" })
+            else a.title.ifBlank { ctx.getString(R.string.notify_untitled) }
         val b = base(if (a.attention) CH_ATTENTION else CH_DONE, a.key, a.host, a.at, settings, publicText(a.kind))
             .setContentTitle(title(a)).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setContentIntent(intent(a.hostId, a.session, false, a.key))
+            .setContentIntent(if (device) listIntent(a.key) else intent(a.hostId, a.session, false, a.key))
         if (a.silent) b.setOnlyAlertOnce(true).setSilent(true)
         return b.build()
     }

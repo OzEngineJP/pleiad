@@ -301,9 +301,9 @@
           "noKey": "This PC doesn't have the current sync key."
         },
         "hostRemoved": "This PC was removed from Pleiad Plus. Register it again to resume the relay and sync.",
-        "hostRemovedForGood": "This PC was removed from Pleiad Plus and can't return with the same key. To continue, reconnect it.",
         "hostReregister": "Register this PC again",
         "hostReregistered": "This PC had been removed from the account, so it was registered again",
+        "hostRemovedKey": "This PC was removed from Pleiad Plus. To register it again, this PC's key is rebuilt.",
         "syncInbox_one": "{{count}} change arrived",
         "syncInbox_other": "{{count}} changes arrived",
         "inboxTitle": "Changes that arrived",
@@ -352,12 +352,16 @@
         "plusUpgrade": "Get Pleiad Plus",
         "plusBlocked": "This account can't use the official relay",
         "plusLimit": "This account has reached its limit",
+        "plusUpdate": "This version of Pleiad can't use the official relay. Please update Pleiad",
+        "plusRemoved": "This PC was removed from the Plus account",
         "plusEmpty": "PCs signed in to the same account appear here.",
         "plusMaintenance": "Pleiad Plus is under maintenance",
         "plusUnavailable": "Pleiad Plus is temporarily unavailable",
         "plusNeedsUpdate": "Please update Pleiad",
         "own": "Your own relay server",
-        "plusHead": "Pleiad Plus (official relay)"
+        "plusHead": "Pleiad Plus (official relay)",
+        "reapprove": "Devices that need approval again",
+        "revoked": "Revoked devices"
       },
       "state": {
         "connected": "Connected · {{where}}",
@@ -373,6 +377,8 @@
         "signingIn": "Sign in to Pleiad Plus",
         "account": "This account can't use the official relay",
         "connecting": "Connecting…",
+        "paused": "Requests through the official relay are paused until {{time}}.",
+        "resume": "Resume",
         "todo": {
           "install": {
             "phone": "Install Pleiad on your phone",
@@ -396,7 +402,12 @@
         "added": "Added",
         "lastSeen": "Last connected",
         "never": "Never connected",
-        "revoke": "Revoke"
+        "revoke": "Revoke",
+        "approvedBy": "Allowed by",
+        "thisPc": "This PC",
+        "revokedAt": "Revoked",
+        "revokedBy": "Revoked by",
+        "hideRevoked": "Remove from list"
       },
       "wizard": {
         "steps": {
@@ -453,7 +464,8 @@
           "notAllowed": "Works once {{host}}'s Pleiad is updated"
         },
         "loadFailed": "Couldn't read the PC list: {{error}}",
-        "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read)."
+        "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read).",
+        "reapprove": "Needs to be allowed again"
       },
       "relay": {
         "url": "Relay URL",
@@ -471,7 +483,9 @@
         "revokeConfirm": "Revoke \"{{name}}\"? It is disconnected right away and cannot connect until it is paired again.",
         "keep": "Cancel",
         "revokeTasks": "The {{count}} tasks handed over by this device's AI are also stopped.",
-        "revokeConfirmButton": "Revoke"
+        "revokeConfirmButton": "Revoke",
+        "quoted": "\"{{name}}\"",
+        "revokeChain": "{{names}}, allowed by this device, will also be revoked."
       },
       "platform": {
         "desktop": "Desktop",
@@ -494,7 +508,9 @@
         "deny": "Deny",
         "approve": "Allow",
         "cancelled": "The device disconnected before approval.",
-        "expired": "The request expired without approval."
+        "expired": "The request expired without approval.",
+        "titleAgain": "Allow \"{{name}}\" again?",
+        "addedOn": "Added {{date}}"
       },
       "fullAccess": "A connected device can do everything this PC can"
     },
@@ -3660,6 +3676,16 @@
         "named": "{{name}} wrote @you",
         "plain": "A post mentions @you"
       },
+      "device": {
+        "named": {
+          "open": "Device \"{{name}}\" is waiting to be allowed",
+          "closed": "Device \"{{name}}\" was waiting to be allowed"
+        },
+        "plain": {
+          "open": "A device is waiting to be allowed",
+          "closed": "A device was waiting to be allowed"
+        }
+      },
       "syncInbox_one": "{{count}} change arrived through sync",
       "syncInbox_other": "{{count}} changes arrived through sync",
       "syncApproval": {
@@ -3680,6 +3706,7 @@
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
       "chat": "Quick chats › {{title}}",
+      "remote": "Settings › Remote",
       "plus": "Settings › Pleiad Plus"
     },
     "outcome": {
@@ -3701,7 +3728,9 @@
       "band": "Get notified when you're away?",
       "enable": "Turn on",
       "later": "Later"
-    }
+    },
+    "deviceWaiting": "◆ Waiting for your approval",
+    "deviceBody": "Device \"{{name}}\" is waiting to be allowed"
   },
   "remote": {
     "badgeLabel": "Remote:",

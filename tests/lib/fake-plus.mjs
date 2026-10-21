@@ -37,6 +37,13 @@
 //   DELETE /v1/hosts/{id} は最近のログイン（auth_time が 300 秒以内）が要り、鍵の行を消さず detachedAt・name を付けて残し、
 //   state.hostsRemoved に by: 'user' を書く（unbindHost(hostId, by) で運営が外したのも作れる）。墓標は消えず、同じ PC の登録・券は
 //   403 host_removed。GET /v1/hosts は removed も返す
+//   券（docs/plus.md「券」）: 本物の api の順で確かめて、中継の券・受け入れの券・同期の券を出す（iss は pleiad-tickets）
+//     state.ticketKeysDown = true の間は /.well-known/pleiad-keys が 503
+//     state.ticketFail  券の口への誤りの差し込み [{ purpose?, path?, status, code, message?, extra?, count? }]（count 回まで）
+//     state.tickets     出した券 [{ purpose, hostId, uid, relay?, admission?, sync?, expiresAt }]
+//     signTicket(payload, { kid?, privateKey?, header? }) で試験が任意の券を作れる（payload をそのまま載せる）
+//   印 X-Pleiad-Admission: 2 はどの口でも受ける。印つきの PUT・PATCH に syncPublicKey があれば 400。
+//     state.admissionRequired の間は、印の無い登録と syncPublicKey つきの PATCH が 426 update_required
 //   state.noTickets = true の間は券を知らない前の版の api のふり（券の口・承認の口が 404、墓標は登録し直すと消え、syncPublicKey を受ける）
 //   state.legacySync = true の間はさらに前の版の api のふり（noTickets に加えて、足した欄・removed・confirm の照合が無く、
 //   外すと鍵の行を消し、403 の message は forbidden）
@@ -86,12 +93,14 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     noTickets: false,         // 真なら券を知らない前の版の api のふり（上の説明）
     legacySync: false,        // 真ならさらに前の版の api のふり（上の説明）
     admissionRequired: false, // ADMISSION_V2_REQUIRED（真なら券・印の無い要求を 426 で断る）
-    tickets: [],              // 出した券 { purpose, hostId, uid, jti }
+    tickets: [],              // 出した券 { purpose, hostId, uid, relay?, admission?, sync?, expiresAt }
     syncLimitBytes: 7_340_032,
     syncItemLimit: null,
     recoveryWaitMs: 72 * 3_600_000,
     syncBodies: [],           // { method, path, body }
     syncFail: [],
+    ticketKeysDown: false,    // 真の間は /.well-known/pleiad-keys が 503
+    ticketFail: [],           // 券の口への誤りの差し込み（上の説明）
   };
   const challenges = new Map(); // challengeId -> { nonce, serverPrivateKey, publicKey, hostId, uid, purpose, expiresAt }
   const codes = new Map();    // code -> { challenge, redirectUri, uid, email, expiresAt, used }
@@ -113,6 +122,17 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     return `${header}.${payload}.${signature}`;
   }
 
+  /** 券を署名する（JWS のコンパクト形。payload はそのまま載せる。試験が形の違う券・ほかのアカウントの券を作るのにも使う） */
+  function signTicket(payload, { kid: k = ticketKid, privateKey: key = ticketKey.privateKey, header = {} } = {}) {
+    const h = b64url(JSON.stringify({ alg: 'EdDSA', typ: TICKET_TYP, kid: k, ...header }));
+    const p = b64url(JSON.stringify(payload));
+    return `${h}.${p}.${b64url(crypto.sign(null, Buffer.from(`${h}.${p}`, 'ascii'), key))}`;
+  }
+  const ticketClaims = (aud, uid, extra) => {
+    const iat = nowSec();
+    return { iss: 'pleiad-tickets', aud, uid, iat, exp: iat + 300, jti: b64url(crypto.randomBytes(16)), ...extra };
+  };
+
   const tokenOf = req => {
     const token = /^Bearer (.+)$/.exec(req.headers.authorization ?? '')?.[1];
     try { return token ? JSON.parse(Buffer.from(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')) : null; } catch { return null; }
@@ -123,12 +143,6 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
   const accountOf = uid => state.accounts[uid] ?? { uid, status: 'free', plan: null, limits: null, usage: null, sync: null };
 
   // ---- 券 -------------------------------------------------------------------------------------------------------
-  function signTicket(claims) {
-    const iat = nowSec();
-    const header = b64url(JSON.stringify({ alg: 'EdDSA', typ: TICKET_TYP, kid: ticketKid }));
-    const payload = b64url(JSON.stringify({ iss: 'fake-plus', iat, exp: iat + 300, jti: b64url(crypto.randomBytes(16)), ...claims }));
-    return `${header}.${payload}.${b64url(crypto.sign(null, Buffer.from(`${header}.${payload}`), ticketKey.privateKey))}`;
-  }
   /** 同期の券を確かめ、payload か null */
   function verifySyncTicket(token, uid) {
     if (typeof token !== 'string' || token.length > 2048) return null;
@@ -140,7 +154,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       if (!crypto.verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), ticketKey.publicKey, b64urlToBuf(parts[2]))) return null;
       const p = JSON.parse(b64urlToBuf(parts[1]).toString('utf8'));
       const now = nowSec();
-      if (p.iss !== 'fake-plus' || p.aud !== 'sync' || p.uid !== uid || !(p.iat <= now + 60) || !(p.exp > now - 60)) return null;
+      if (p.iss !== 'pleiad-tickets' || p.aud !== 'sync' || p.uid !== uid || !(p.iat <= now + 60) || !(p.exp > now - 60)) return null;
       return p;
     } catch { return null; }
   }
@@ -188,6 +202,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       return json(res, 200, { keys: [jwk] }, { 'cache-control': 'public, max-age=3600' });
     }
     if (url.pathname === '/.well-known/pleiad-keys' && req.method === 'GET' && !oldApi()) {
+      if (state.ticketKeysDown) return json(res, 503, { error: { code: 'unavailable', message: 'unavailable' } });
       const x = b64url(ticketKey.publicKey.export({ format: 'der', type: 'spki' }).subarray(-32));
       return json(res, 200, { keys: [{ kty: 'OKP', crv: 'Ed25519', x, kid: ticketKid, alg: 'EdDSA', use: 'sig' }] }, { 'cache-control': 'public, max-age=300' });
     }
@@ -256,43 +271,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     }
     // 券の発行（POST /v1/tickets/challenge・POST /v1/tickets）。前の版の api には無い
     if ((url.pathname === '/v1/tickets/challenge' || url.pathname === '/v1/tickets') && req.method === 'POST' && !oldApi()) {
-      const uid = uidOf(req);
-      if (!uid) return err(res, 401, 'unauthenticated', 'no token');
-      if (accountOf(uid).status !== 'plus') return err(res, 403, 'not_plus', 'not plus');
-      let body = {};
-      try { body = JSON.parse((await readBody(req)) || '{}'); } catch { return err(res, 400, 'bad_request', 'body'); }
-      if (url.pathname === '/v1/tickets/challenge') {
-        if (!['host', 'device', 'sync'].includes(body.purpose)) return err(res, 400, 'bad_request', 'purpose');
-        const pub = b64urlToBuf(body.publicKey);
-        if (pub.length !== 32 || typeof body.hostId !== 'string') return err(res, 400, 'bad_request', 'publicKey');
-        if (body.purpose !== 'device' && body.hostId !== hostIdFor(pub)) return err(res, 422, 'bad_proof', 'bad proof');
-        const recent = (ticketRate.get(uid) ?? []).filter(at => Date.now() - at < 60_000);
-        if (recent.length >= 60) return err(res, 429, 'rate_limited', 'rate limited');
-        ticketRate.set(uid, [...recent, Date.now()]);
-        if (body.purpose !== 'device' && state.hostsRemoved[body.hostId]) return err(res, 403, 'host_removed', 'host removed');
-        return json(res, 200, newChallenge({ publicKey: pub, hostId: body.hostId, uid, purpose: body.purpose }));
-      }
-      const ch = challenges.get(body.challengeId);
-      challenges.delete(body.challengeId);
-      if (!ch || ch.uid !== uid || Date.now() >= ch.expiresAt || !proofOk(ch, ch.publicKey, ch.hostId, ch.purpose, body.proof)) return err(res, 422, 'bad_proof', 'bad proof');
-      if (state.hostsRemoved[ch.hostId]) return ch.purpose === 'device' ? err(res, 404, 'not_found', 'not found') : err(res, 403, 'host_removed', 'host removed');
-      const host = state.hosts[ch.hostId];
-      if (!host || host.uid !== uid) return err(res, 404, 'not_found', 'not found');
-      if (ch.purpose !== 'device' && !b64urlToBuf(host.publicKey).equals(ch.publicKey)) return err(res, 422, 'bad_proof', 'bad proof');
-      if (state.state !== 'on') return err(res, 503, 'unavailable', 'unavailable');
-      if (ch.purpose === 'sync' && accountOf(uid).sync?.enabled === false) return err(res, 403, 'forbidden', 'sync_disabled');
-      const expiresAt = new Date((nowSec() + 300) * 1000).toISOString();
-      if (ch.purpose === 'sync') {
-        const ticket = signTicket({ aud: 'sync', uid, hostId: ch.hostId });
-        state.tickets.push({ purpose: 'sync', hostId: ch.hostId, uid });
-        return json(res, 200, { sync: ticket, expiresAt });
-      }
-      const lim = { hosts: accountOf(uid).limits?.hosts ?? 3, devicesPerHost: accountOf(uid).limits?.devicesPerHost ?? 5 };
-      const sub = hostIdFor(ch.publicKey);
-      state.tickets.push({ purpose: ch.purpose, hostId: ch.hostId, uid });
-      const relay = signTicket({ aud: 'relay', uid, role: ch.purpose, sub, hostId: ch.hostId, lim });
-      if (ch.purpose === 'host') return json(res, 200, { relay, expiresAt });
-      return json(res, 200, { relay, admission: signTicket({ aud: 'pleiad-host', uid, hostId: ch.hostId, devicePub: b64url(ch.publicKey) }), expiresAt });
+      return ticketRoute(req, res, url);
     }
     // ホストの登録（GET /v1/hosts・POST /v1/hosts/challenge・PUT/PATCH/DELETE /v1/hosts/{hostId}。Plus の利用者だけ）
     if (url.pathname === '/v1/hosts' || url.pathname.startsWith('/v1/hosts/')) {
@@ -849,6 +828,58 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     return err(res, 404, 'not_found', 'not found');
   }
 
+  // ---- 券の口（本物の api の順に確かめる） ---------------------------------------------------------------------
+  async function ticketRoute(req, res, url) {
+    const uid = uidOf(req);
+    if (!uid) return err(res, 401, 'unauthenticated', 'no token');
+    if (accountOf(uid).status !== 'plus') return err(res, 403, 'not_plus', 'not plus');
+    let body = {};
+    try { body = JSON.parse((await readBody(req)) || '{}'); } catch { return err(res, 400, 'bad_request', 'body'); }
+    const challenge = url.pathname === '/v1/tickets/challenge';
+    const purposeOf = challenge ? body.purpose : challenges.get(body.challengeId)?.purpose;
+    const fail = state.ticketFail.find(f => (!f.path || f.path === url.pathname) && (!f.purpose || f.purpose === purposeOf) && (f.count ?? 1) > 0);
+    if (fail) {
+      fail.count = (fail.count ?? 1) - 1;
+      return err(res, fail.status, fail.code, fail.message ?? fail.code, fail.extra ?? {});
+    }
+    if (challenge) {
+      if (!['host', 'device', 'sync'].includes(body.purpose)) return err(res, 400, 'bad_request', 'purpose');
+      const pub = b64urlToBuf(body.publicKey);
+      if (pub.length !== 32 || typeof body.hostId !== 'string' || !/^[a-z2-7]{26}$/.test(body.hostId)) return err(res, 400, 'bad_request', 'publicKey');
+      if (body.purpose !== 'device' && hostIdFor(pub) !== body.hostId) return err(res, 422, 'bad_proof', 'bad proof');
+      const recent = (ticketRate.get(uid) ?? []).filter(at => Date.now() - at < 60_000);
+      if (recent.length >= 60) return err(res, 429, 'rate_limited', 'rate limited');
+      ticketRate.set(uid, [...recent, Date.now()]);
+      if (body.purpose !== 'device' && state.hostsRemoved[body.hostId]) return err(res, 403, 'host_removed', 'host removed');
+      return json(res, 200, newChallenge({ publicKey: pub, hostId: body.hostId, uid, purpose: body.purpose }));
+    }
+    const ch = challenges.get(body.challengeId);
+    challenges.delete(body.challengeId);
+    if (!ch || ch.purpose === 'register' || ch.uid !== uid || Date.now() >= ch.expiresAt || !proofOk(ch, ch.publicKey, ch.hostId, ch.purpose, body.proof)) {
+      return err(res, 422, 'bad_proof', 'bad proof');
+    }
+    const { purpose, hostId } = ch;
+    if (state.hostsRemoved[hostId]) return purpose === 'device' ? err(res, 404, 'not_found', 'not found') : err(res, 403, 'host_removed', 'host removed');
+    const host = state.hosts[hostId];
+    if (!host || host.uid !== uid) return err(res, 404, 'not_found', 'not found');
+    if (purpose !== 'device' && host.publicKey !== b64url(ch.publicKey)) return err(res, 422, 'bad_proof', 'bad proof');
+    if (state.state !== 'on') return err(res, 503, 'unavailable', 'unavailable');
+    if (purpose === 'sync' && accountOf(uid).sync?.enabled === false) return err(res, 403, 'forbidden', 'sync_disabled');
+    const expiresAt = new Date((nowSec() + 300) * 1000).toISOString();
+    if (purpose === 'sync') {
+      const out = { sync: signTicket(ticketClaims('sync', uid, { hostId })), expiresAt };
+      state.tickets.push({ purpose, hostId, uid, ...out });
+      return json(res, 200, out);
+    }
+    const limits = accountOf(uid).limits ?? {};
+    const lim = { hosts: Number.isInteger(limits.hosts) ? limits.hosts : null, devicesPerHost: Number.isInteger(limits.devicesPerHost) ? limits.devicesPerHost : null };
+    const sub = hostIdFor(ch.publicKey);
+    const out = { relay: signTicket(ticketClaims('relay', uid, { role: purpose, sub, hostId, lim })), expiresAt };
+    if (purpose === 'device') out.admission = signTicket(ticketClaims('pleiad-host', uid, { hostId, devicePub: b64url(ch.publicKey) }));
+    state.tickets.push({ purpose, hostId, uid, ...out });
+    return json(res, 200, out);
+  }
+
   const origin = await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(`http://127.0.0.1:${server.address().port}`); });
@@ -863,6 +894,9 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     grantRefreshToken: (uid, { authTime = nowSec() } = {}) => { const token = `rt-${++seq}`; refreshTokens.set(token, { uid, authTime }); return token; },
     /** ホストを外す（by: 'admin' は運営の管理画面から外したとき。'user' は利用者の DELETE と同じ） */
     unbindHost,
+    signTicket,
+    /** 券の公開鍵の一覧の URL */
+    ticketKeysUrl: `${origin}/.well-known/pleiad-keys`,
     /** 券の署名の鍵を替える（生きている券が ticket_invalid になる） */
     rotateTicketKey,
     route,

@@ -1,46 +1,38 @@
 // 同期の券（docs/plus.md「同期」）。v2 の api の /v1/sync/* は、ID トークンに加えて X-Pleiad-Sync-Ticket が要る。
 //
-// 取り方: POST /v1/tickets/challenge { purpose: 'sync', hostId, publicKey } → POST /v1/tickets { challengeId, proof } → { sync, expiresAt }。
-//   proof は登録と同じ式で、最後の語だけ 'sync'（core/plus/hosts.mjs の hostProof）。
-// 券は 5 分使える（一度きりではない）。4 分で取り直す。
+// 取り方は中継・受け入れの券と同じ手（core/plus/tickets.mjs の createTicketIssuer。purpose 'sync' → { sync, expiresAt }）。
+//   proof は登録と同じ式で、最後の語だけ 'sync'（tickets.mjs の proofFor）。
+// 同期の券は 5 分使える（一度きりではない）。4 分で取り直す。
 // 403 ticket_invalid は、券を取り直して 1 回だけやり直す。
 //
-// 前の版の api（券を知らない）: challenge が 404 なら券を付けずに呼ぶ（今までの同期の流れ。legacy）。
-//   10 分ごとに確かめ直し、券を付けない要求に 403 ticket_invalid が返ったら（api が新しくなった）すぐ確かめ直す。
-import { hostProof } from '../hosts.mjs';
+// 前の版の api（券を知らない）: 券の手が null を返したら券を付けずに呼ぶ（今までの同期の流れ。legacy）。
+//   確かめ直すまでの間は券の手が決める（中継の券と同じ 5 分）。券を付けない要求に 403 ticket_invalid が返ったら
+//   （api が新しくなった）すぐ確かめ直す。
+import { createTicketIssuer } from '../tickets.mjs';
 
 const REFRESH_MS = 4 * 60_000;
-const PROBE_MS = 10 * 60_000;
 
 /**
  * @param {object} o
  * @param {{ request: Function }} o.client createPlusClient の結果
  * @param {() => Promise<{ hostId: string, publicKey: Buffer, privateKey: Buffer }|null>} o.identity ホストの鍵（無ければ null）
+ * @param {ReturnType<typeof createTicketIssuer>|null} [o.issuer]  券の手（中継の券と同じものを渡す）。無ければ client で作る
  * @param {() => number} [o.now]
  */
-export function createSyncTicket({ client, identity, now = Date.now }) {
+export function createSyncTicket({ client, identity, issuer = null, now = Date.now }) {
+  const tickets = issuer ?? createTicketIssuer({ request: (m, p, body) => client.request(m, p, { body }), now });
   let held = null;            // { ticket, hostId, at }
-  let legacyAt = 0;           // challenge が 404 だった時刻（0 = 券を取る api）
   let getting = null;
 
-  async function issue() {
+  async function issue(force) {
     const id = await identity();
     if (!id) throw Object.assign(new Error('no host key'), { code: 'no_identity' });
-    const publicKey = Buffer.from(id.publicKey).toString('base64url');
-    let ch;
-    try {
-      ch = await client.request('POST', '/v1/tickets/challenge', { body: { purpose: 'sync', hostId: id.hostId, publicKey } });
-    } catch (e) {
-      // 前の版の api は券の口を知らない
-      if (e?.status === 404) { legacyAt = now(); held = null; return null; }
-      throw tagged(e);
-    }
-    const proof = hostProof({ privateKey: id.privateKey, hostId: id.hostId, nonce: ch.nonce, serverPublicKey: ch.serverPublicKey, purpose: 'sync' });
     let out;
-    try { out = await client.request('POST', '/v1/tickets', { body: { challengeId: ch.challengeId, proof } }); }
-    catch (e) { throw tagged(e); }
+    // 券を出すと言う api の券の口が 404（unsupported）なのは台帳の外れではないので、印を付けない
+    try { out = await tickets.issue({ purpose: 'sync', keyPair: id, hostId: id.hostId, force }); }
+    catch (e) { throw e?.unsupported ? e : tagged(e); }
+    if (out === null) { held = null; return null; }   // 前の版の api
     if (typeof out?.sync !== 'string') throw Object.assign(new Error('no sync ticket'), { code: 'bad_ticket' });
-    legacyAt = 0;
     held = { ticket: out.sync, hostId: id.hostId, at: now() };
     return held.ticket;
   }
@@ -48,12 +40,12 @@ export function createSyncTicket({ client, identity, now = Date.now }) {
   /** 今の券（前の版の api なら null）。force で取り直す */
   async function get({ force = false } = {}) {
     if (!force) {
-      if (legacyAt && now() - legacyAt < PROBE_MS) return null;
+      if (tickets.unsupported()) return null;
       // つなぎ直し（ホストの鍵の作り直し）の後は、前の hostId の券を使わない
       if (held && held.hostId !== (await identity())?.hostId) held = null;
       if (held && now() - held.at < REFRESH_MS) return held.ticket;
     }
-    getting ??= issue().finally(() => { getting = null; });
+    getting ??= issue(force).finally(() => { getting = null; });
     return getting;
   }
 
@@ -67,7 +59,7 @@ export function createSyncTicket({ client, identity, now = Date.now }) {
       return await client.request(method, path, withTicket(opts, ticket));
     } catch (e) {
       if (!(e?.status === 403 && e?.code === 'ticket_invalid')) throw e;
-      held = null; legacyAt = 0;
+      held = null;
       const again = await get({ force: true });
       if (!again) throw e;
       return await client.request(method, path, withTicket(opts, again));
@@ -78,9 +70,9 @@ export function createSyncTicket({ client, identity, now = Date.now }) {
     get,
     request,
     /** 前の版の api（券を知らない）と分かっているか。まだ確かめていなければ false */
-    legacy: () => legacyAt > 0 && now() - legacyAt < PROBE_MS,
+    legacy: () => tickets.unsupported(),
     /** 覚えを捨てる（アカウント・ホストの鍵が変わったとき） */
-    forget() { held = null; legacyAt = 0; },
+    forget() { held = null; tickets.forget(); },
   };
 }
 

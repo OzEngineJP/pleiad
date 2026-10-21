@@ -384,8 +384,8 @@ let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
 let shellStopped = false;
 const watchingNow = () => !shellStopped && document.visibilityState === 'visible';
-const completionNotifications = createCompletionNotifications({ openSession: id => select(id),
-  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id });
+const completionNotifications = createCompletionNotifications({ openSession: id => select(id), openSettings: page => openSettingsPage(page),
+  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id, isFocused: () => watchingNow() && document.hasFocus() });
 
 let ws = null;
 let seq = 0;
@@ -3334,7 +3334,11 @@ function onEvent(ev, replay = false) {
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
-  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); residentSettings.event(ev); return; }
+  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') {
+    // 端末の追加の承認待ちは、ホストの画面だけが OS の通知でも知らせる（端末の画面では許可できない）
+    if (ev.type === 'remotePairing' && ev.phase === 'request' && state.osActions === true) completionNotifications.deviceWaiting(ev.request);
+    remoteSettings.event(ev); residentSettings.event(ev); return;
+  }
   // Pleiad Plus のアカウントの状態（設定 › Pleiad Plus）
   if (ev.type === 'plusStatus') { plusSettings.event(ev); remoteSettings.event(ev); return; }
   if (ev.type === 'plusSyncStatus') { plusSettings.event(ev); return; }
@@ -9304,7 +9308,14 @@ async function openFromNotification(target) {
     else plusSettings.openMain();
     return;
   }
+  // 端末の承認待ち（ADR 0248）は 設定 › リモート
+  if (target?.settings) { openSettingsPage(target.settings); return; }
   await viewAddress.go(target);
+}
+/** 設定のそのページを開く（通知から。リモートなら状態も読み直す） */
+function openSettingsPage(page) {
+  onboarding.open(page);
+  if (page === 'remote') remoteSettings.refresh();
 }
 
 /**
@@ -10145,6 +10156,7 @@ function connect() {
         // エージェントのブラウザー（PC の Chrome）への接続の入口。使える環境なら今の状態を取る（設定 › ブラウザー）
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
+        remoteSettings.setHostScreen(state.osActions);
         filePreview.osChanged();
         syncAttachButton();
         renderAttached();

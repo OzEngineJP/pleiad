@@ -155,17 +155,23 @@ export default async function (t) {
   t.ok('host removed: 外されている旨と「この PC を登録し直す」', text(nodes).includes('この PC は Pleiad Plus の登録から外されています') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
   byFk(nodes, 'hostReregister').onclick();
   t.ok('「この PC を登録し直す」は reregister を呼ぶ', rereg === 1);
-  // 同じ鍵では戻れない（受け入れの v2 の api）: 登録し直すではなく、つなぎ直す（鍵を作り直す）
-  asked = false;
-  const gone = { state: 'removed', error: { code: 'host_removed', permanent: true } };
-  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: gone }, { ...deps, askRebind: () => { asked = true; } });
-  t.ok('host removed（permanent）: 同じ鍵では戻せない旨と「つなぎ直す」（「この PC を登録し直す」は出さない）',
-    text(nodes).includes('同じ鍵では戻せない') && byFk(nodes, 'rebind')?.textContent === 'つなぎ直す' && !byFk(nodes, 'hostReregister'), text(nodes));
-  byFk(nodes, 'rebind').onclick();
-  t.ok('外された PC の「つなぎ直す」も確かめを開く', asked);
-  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: gone }, { ...deps, confirming: true });
+  // 外した hostId を api が登録し直さない（host.error.permanent）: 同じボタンが鍵の作り直しの確かめを開く
+  const permanent = { state: 'removed', hostId: 'h1', error: { code: 'host_removed', permanent: true } };
+  let askedKey = false;
+  rereg = 0;
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: permanent }, { ...deps, reregister: () => { rereg++; }, askRebind: () => { askedKey = true; } });
+  t.ok('host removed（登録し直せない）: 鍵を作り直す旨と「この PC を登録し直す」', text(nodes).includes('この PC の鍵を作り直します') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
+  byFk(nodes, 'hostReregister').onclick();
+  t.ok('登録し直せないときの「この PC を登録し直す」は確かめを開く（reregister は呼ばない）', askedKey && rereg === 0);
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: permanent }, { ...deps, confirming: true });
+  t.ok('確かめの窓: 「作り直す」「やめる」', buttonTexts(nodes).includes('作り直す') && buttonTexts(nodes).includes('やめる'));
   byFk(nodes, 'rebindYes').onclick();
-  t.ok('確かめの「作り直す」は plusHostRebind', sent.at(-1) === 'plusHostRebind');
+  t.ok('「作り直す」は plusHostRebind', sent.at(-1) === 'plusHostRebind');
+  // api が更新を求めた（host.state update）
+  nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'update' } });
+  t.ok('host update: 「Pleiad を更新してください」（ボタンは出さない）', text(nodes).includes('Pleiad を更新してください') && !byFk(nodes, 'hostReregister') && !byFk(nodes, 'rebind'), text(nodes));
+  nodes = render({ ...BASE, needsUpdate: true, signedIn: true, account: ACCOUNT, host: { state: 'update' } });
+  t.ok('host update と needsUpdate が重なっても、更新の行は 1 つ', text(nodes).split('Pleiad を更新してください').length === 2, text(nodes));
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered', notice: 'reregistered' } });
   t.ok('notice reregistered: 「登録が外れていたので、登録し直しました」（ボタンは出さない）', text(nodes).includes('この PC の登録が外れていたので、登録し直しました') && !byFk(nodes, 'hostReregister'));
 

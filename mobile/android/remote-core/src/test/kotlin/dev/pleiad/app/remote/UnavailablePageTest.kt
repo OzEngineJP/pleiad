@@ -36,6 +36,9 @@ class UnavailablePageTest {
     @Test fun keepsTheAutoRefreshExceptWhenRevoked() {
         assertTrue(page("offline").contains("""<meta http-equiv="refresh" content="5">"""))
         assertFalse(page("revoked").contains("http-equiv=\"refresh\""))
+        // waiting for the person on the host's screen: reloading does not help
+        assertFalse(page("reapprove").contains("http-equiv=\"refresh\""))
+        assertTrue(page("reapprove").contains("allowed again on the host"))
         assertEquals(-1, page("offline").indexOf("Content-Security-Policy"))
     }
 }

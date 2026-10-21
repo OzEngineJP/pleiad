@@ -39,15 +39,16 @@ const defaultTimers = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout
  * @param {(line: string) => void} [o.log]
  * @param {() => unknown} [o.onHostLost]  api が 403 host を返した（createPlusHost の recheck を渡す）
  * @param {(() => Promise<object|null>|object|null)|null} [o.identity]  ホストの鍵（remote の store.peekIdentity）。同期の券に使う
+ * @param {object|null} [o.issuer]  券の手（core/plus/tickets.mjs の createTicketIssuer。中継の券と同じもの）
  * @param {object} [o.clock] @param {Function} [o.watch]  試験の差し替え用
  */
 export function createPlusSync({ session, host, secrets, dataDir, settings = null, settingsEvents = null, openFolder = async () => {},
-  home = os.homedir(), env = process.env, log = () => {}, onHostLost = async () => {}, identity = null, clock, watch }) {
+  home = os.homedir(), env = process.env, log = () => {}, onHostLost = async () => {}, identity = null, issuer = null, clock, watch }) {
   const listeners = new Set();
   const uid = () => session.snapshot?.()?.account?.uid ?? null;
   const hostId = () => host()?.hostId ?? null;
   let engine = null;
-  const ticket = identity ? createSyncTicket({ client: session.client, identity: async () => (await identity()) ?? null }) : null;
+  const ticket = identity ? createSyncTicket({ client: session.client, issuer, identity: async () => (await identity()) ?? null }) : null;
   /** 同期の口（券を付ける）。前の版の api では券を付けずに呼ぶ */
   const syncClient = ticket ? { request: (m, p, o) => ticket.request(m, p, o) } : session.client;
   const keys = createSyncKeys({ client: session.client, ticket, secrets, uid, hostId, log, onShared: to => engine?.noteShared(to) });

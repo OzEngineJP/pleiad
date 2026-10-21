@@ -3125,7 +3125,7 @@
       "riskOf": false,
       "scope": "global",
       "modeGate": true,
-      "hostScreenOnly": false,
+      "hostScreenOnly": true,
       "surfaces": {
         "ui": true,
         "mcp": false,
@@ -3355,7 +3355,7 @@
       "riskOf": false,
       "scope": "global",
       "modeGate": true,
-      "hostScreenOnly": false,
+      "hostScreenOnly": true,
       "surfaces": {
         "ui": true,
         "mcp": false,
@@ -3370,7 +3370,7 @@
       "riskOf": false,
       "scope": "global",
       "modeGate": true,
-      "hostScreenOnly": false,
+      "hostScreenOnly": true,
       "surfaces": {
         "ui": true,
         "mcp": false,

@@ -86,6 +86,17 @@ class NotifyPlannerTest {
         assertEquals(listOf<NotifyAction>(NotifyAction.Cancel(slot("s1"))), c)
     }
 
+    @Test fun aDeviceWaitingOnTheHostIsANoticeOfItsOwnAndFollowsTheReplySetting() {
+        val post = p.onNotice(notice(NoticeKind.DEVICE, "", "Pixel 9", id = "r1"), on).single() as NotifyAction.Post
+        assertEquals(NotifyPlanner.deviceKey(host, "r1"), post.key); assertTrue(post.attention); assertEquals("Pixel 9", post.title)
+        assertEquals(NoticeKind.DEVICE, post.kind)
+        assertEquals(listOf<NotifyAction>(NotifyAction.Cancel(NotifyPlanner.deviceKey(host, "r1"))),
+            p.onNotice(notice(NoticeKind.CANCEL, "", id = "r1", cancel = "device"), on))
+        assertEquals(0, p.onNotice(notice(NoticeKind.DEVICE, "", id = "r2"), NotifySettings(enabled = true, reply = false)).size)
+        val json = JSONObject().put("v", 1).put("seq", 999).put("kind", "device").put("hostId", host).put("title", "Pixel 9").put("id", "r3")
+        assertEquals(NoticeKind.DEVICE, PushNotice.fromJson(json)!!.kind)
+    }
+
     @Test fun twoApprovalsInOneConversationShareOneNotification() {
         p.onNotice(notice(NoticeKind.APPROVAL, "s1", id = "p1"), on)
         val second = p.onNotice(notice(NoticeKind.QUESTION, "s1", id = "p2"), on).single() as NotifyAction.Post

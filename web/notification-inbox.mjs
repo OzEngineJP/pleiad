@@ -45,8 +45,10 @@ export function describeNotification(n, t, titleOf = () => '') {
   }
   let line;
   if (n.kind === 'wait') {
-    const what = ['question', 'chrome', 'command'].includes(n.ask) ? n.ask : 'approval';
-    line = t(`inbox.line.${what}.${name ? 'named' : 'plain'}.${open ? 'open' : 'closed'}`, { name });
+    const what = ['question', 'chrome', 'command', 'device'].includes(n.ask) ? n.ask : 'approval';
+    // 端末の追加の許可待ち（ADR 0248）は、待っている端末の名前を出す（題に入れてある）
+    const who = what === 'device' ? title : name;
+    line = t(`inbox.line.${what}.${who ? 'named' : 'plain'}.${open ? 'open' : 'closed'}`, { name: who });
   } else if (n.kind === 'failed') {
     line = name ? t('inbox.line.failed.named', { name }) : title ? t('inbox.line.failed.titled', { title }) : t('inbox.line.failed.plain');
   } else if (n.kind === 'done') {
@@ -62,6 +64,7 @@ export function describeNotification(n, t, titleOf = () => '') {
       ? (n.threadTitle ? t('inbox.place.thread', { channel: n.channelName, thread: n.threadTitle }) : t('inbox.place.channel', { channel: n.channelName }))
       : (n.threadTitle || '');
   } else if (n.target?.sessionId) place = t('inbox.place.chat', { title: title || t('session.untitled') });
+  else if (n.target?.settings === 'remote') place = t('inbox.place.remote');
   // Chrome の操作待ちが済んだことは「承認済み」と言わない（承認ではない）。「…待っていました」だけで足りる。戻らないコマンド（ADR 0227）の決着も同じ
   const outcome = n.kind === 'wait' && n.outcome && !(n.ask === 'chrome' && n.outcome === 'allowed') && n.ask !== 'command' ? t(`inbox.outcome.${n.outcome}`) : '';
   const icon = n.kind === 'wait' ? (open ? 'wait' : 'closed') : n.kind;

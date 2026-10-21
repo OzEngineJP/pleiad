@@ -13,6 +13,8 @@
 //   'offline'       中継につながらない・通信が切れた（張り直しを待っている）
 //   'host-offline'  中継は答えたがホストが居ない（4404・4408・ホストの GOAWAY shutdown）。張り直しを待っている
 //   'revoked'       この端末は取り消された・資格が合わない（4401・GOAWAY revoked）。張り直さない
+//   'reapprove'     （Plus）ホストの PC の画面でもう一度の許可が要る（受け入れのやり直しを reapprove で断られた）。張り直さない
+//   'removed'       （Plus）ホストの PC が Plus のアカウントから外された（券の発行が 403 host_removed・404）。張り直さない
 //   'stopped'       stop() した
 //
 // 張り直しは 0.5 秒から 30 秒まで倍々（±25% の揺らぎ）。10 秒つながり続けたら初めからに戻す。
@@ -26,6 +28,8 @@ import { t } from '../i18n.mjs';
 
 /** 中継への WebSocket の 1 メッセージの上限（中継の 66,000 に余裕を持たせる）。 */
 const RELAY_MAX_PAYLOAD = 70_000;
+/** 受け入れのやり直しの失敗（err.code）→ 状態。ここに無いもの（つながらない等）は 'revoked' */
+const READMIT_STATES = { reapprove: 'reapprove', revoked: 'revoked', blocked: 'blocked', limit: 'limit', unavailable: 'paused', update: 'update' };
 export const LINK_BACKOFF = Object.freeze({ minMs: 500, maxMs: 30_000, stableMs: 10_000 });
 
 /** 中継の close code とホストの GOAWAY から状態を決める。via: 'plus' のときは Plus 用の表に従う。 */
@@ -38,7 +42,8 @@ export function classifyClose({ closeCode = null, reason = '', goaway = null, vi
       const r = String(reason ?? '').trim();
       if (r === 'revoked' || r === 'device token') return 'readmit';
       if (r === 'account') return 'blocked';
-      if (r === 'token') return 'offline';
+      if (r === 'token' || r === 'ticket') return 'offline';
+      if (r === 'update required') return 'update';
       if (r === 'plus off') return 'host-offline';
       if (r === 'plus unavailable') return 'paused';
       return 'readmit';
@@ -118,9 +123,12 @@ function closeSocket(ws, code = 1000) {
 
 function errorFor(state, detail) {
   const e = new Error(state === 'revoked' ? t('remote.device.revoked')
+    : state === 'reapprove' ? t('remote.device.reapprove')
     : state === 'blocked' ? t('remote.device.blocked')
       : state === 'limit' ? t('remote.device.limit')
         : state === 'paused' ? t('remote.device.paused')
+        : state === 'update' ? t('remote.device.update')
+        : state === 'removed' ? t('remote.device.removed')
           : state === 'host-offline' ? t('remote.device.hostOffline')
             : state === 'stopped' ? t('remote.device.stopped') : t('remote.device.offline'));
   e.state = state;
@@ -135,11 +143,12 @@ export class DeviceLink extends EventEmitter {
    * backoff: { minMs, maxMs, stableMs }（試験で縮める）
    * connectTimeoutMs: 中継への接続・ハンドシェイク・HELLO のそれぞれの待ちの上限
    */
-  constructor({ creds, keyPair, app = '', name = '', shell = 'desktop', backoff = {}, connectTimeoutMs = 15_000, channelOptions = {}, log = () => {}, via = null, getIdToken = null, onReadmit = null }) {
+  constructor({ creds, keyPair, app = '', name = '', shell = 'desktop', backoff = {}, connectTimeoutMs = 15_000, channelOptions = {}, log = () => {}, via = null, getIdToken = null, getTicket = null, onReadmit = null }) {
     super();
     this.creds = creds;
     this.via = via ?? creds.via ?? 'own';
     this.getIdToken = getIdToken ?? creds.getIdToken ?? null;
+    this.getTicket = getTicket;
     this.onReadmit = onReadmit;
     this.tokenRetries = 0;
     this.tokenForceNext = false;
@@ -196,11 +205,12 @@ export class DeviceLink extends EventEmitter {
   }
 
   /** 待たずに今すぐつなぎ直す（「再試行」、取り消し後の再ペアリングで資格が変わったときも）。 */
-  retryNow(creds) {
+  retryNow(creds, keyPair) {
     if (creds) {
       this.creds = creds;
       if (creds.via) this.via = creds.via;
     }
+    if (keyPair) this.keyPair = keyPair;
     if (!this.running) { this.start(); return; }
     if (this.state === 'connecting' || this.state === 'connected') { if (!creds) return; }
     this.generation++;
@@ -238,7 +248,7 @@ export class DeviceLink extends EventEmitter {
 
   #scheduleRetry(state, detail, { delayOverride = null } = {}) {
     if (!this.running) return;
-    if (state === 'revoked' || state === 'blocked' || state === 'limit') {
+    if (state === 'revoked' || state === 'reapprove' || state === 'blocked' || state === 'limit' || state === 'update' || state === 'removed') {
       this.running = false;
       this.#setStatus(state, detail);
       return;
@@ -267,10 +277,11 @@ export class DeviceLink extends EventEmitter {
           this.running = false;
           this.#setStatus('revoked', detail);
         }
-      }).catch(() => {
+      }).catch(e => {
         if (!this.running) return;
         this.running = false;
-        this.#setStatus('revoked', detail);
+        // 受け入れのやり直しで断られた理由（device.mjs の admitWithHost の err.code）を状態にする
+        this.#setStatus(READMIT_STATES[e?.code] ?? 'revoked', detail);
       });
       return;
     }
@@ -284,6 +295,20 @@ export class DeviceLink extends EventEmitter {
     this.retryTimer.unref?.();
   }
 
+  /** Plus の中継が券・トークンで断ったときの張り直し（4401 'token' / 'ticket' は取り直して 1 回だけ、4429 'admit rate' は 1 分後）。無ければ null */
+  #plusRetry(closeCode, reason) {
+    if (this.via !== 'plus') return null;
+    const r = String(reason ?? '').trim();
+    if (closeCode === 4401 && (r === 'token' || r === 'ticket')) {
+      this.tokenRetries = (this.tokenRetries || 0) + 1;
+      if (this.tokenRetries >= 2) return { state: 'blocked' };
+      this.tokenForceNext = true;
+      return { state: 'offline', opts: { delayOverride: 1000 } };
+    }
+    if (closeCode === 4429 && r === 'admit rate') return { state: 'offline', opts: { delayOverride: 60_000 } };
+    return null;
+  }
+
   async #connect() {
     const gen = ++this.generation;
     const live = () => gen === this.generation && this.running;
@@ -292,7 +317,21 @@ export class DeviceLink extends EventEmitter {
     const headers = {
       authorization: `Bearer ${creds.token}`, 'x-pleiad-host': creds.hostId, 'x-pleiad-device': creds.deviceId,
     };
-    if (this.via === 'plus') {
+    if (this.via === 'plus' && this.getTicket) {
+      // 中継の券（role:device。この端末の鍵で取る）。券の無い前の版の api なら null で、ID トークンへ戻る
+      let ticket = null;
+      try { ticket = await this.getTicket({ hostId: creds.hostId, keyPair: this.keyPair }); }
+      catch (e) {
+        if (!live()) return;
+        this.log(`remote device: ticket failed: ${e.message}`);
+        // 403 host_removed・404 は、ホストの PC が台帳に無い（外された）。券の無い前の版の api の 404 は getTicket が null で返す
+        const removed = (e?.status === 403 && e.code === 'host_removed') || e?.status === 404;
+        return this.#scheduleRetry(e?.code === 'update' ? 'update' : removed ? 'removed' : 'offline', { reason: 'ticket' });
+      }
+      if (!live()) return;
+      if (ticket) headers['x-pleiad-ticket'] = ticket;
+    }
+    if (this.via === 'plus' && !headers['x-pleiad-ticket']) {
       let idToken = null;
       if (this.getIdToken) {
         try { idToken = await this.getIdToken({ force: this.tokenForceNext }); } catch (e) {
@@ -325,17 +364,8 @@ export class DeviceLink extends EventEmitter {
       const closeCode = o.closeCode ?? (o.status ? Number(o.status) : null);
       const detail = closeCode != null ? { closeCode, reason } : { reason };
       const st = classifyClose({ closeCode, reason, via: this.via });
-      if (this.via === 'plus') {
-        if (closeCode === 4401 && String(reason).trim() === 'token') {
-          this.tokenRetries = (this.tokenRetries || 0) + 1;
-          if (this.tokenRetries >= 2) return fail('blocked', detail);
-          this.tokenForceNext = true;
-          return fail('offline', detail, { delayOverride: 1000 });
-        }
-        if (closeCode === 4429 && String(reason).trim() === 'admit rate') {
-          return fail('offline', detail, { delayOverride: 60_000 });
-        }
-      }
+      const again = this.#plusRetry(closeCode, reason);
+      if (again) return fail(again.state, detail, again.opts);
       return fail(st, detail);
     }
 
@@ -353,17 +383,8 @@ export class DeviceLink extends EventEmitter {
       const detail = { closeCode, reason };
       if (closeCode != null) {
         const st = classifyClose({ closeCode, reason, via: this.via });
-        if (this.via === 'plus') {
-          if (closeCode === 4401 && String(reason).trim() === 'token') {
-            this.tokenRetries = (this.tokenRetries || 0) + 1;
-            if (this.tokenRetries >= 2) return fail('blocked', detail);
-            this.tokenForceNext = true;
-            return fail('offline', detail, { delayOverride: 1000 });
-          }
-          if (closeCode === 4429 && String(reason).trim() === 'admit rate') {
-            return fail('offline', detail, { delayOverride: 60_000 });
-          }
-        }
+        const again = this.#plusRetry(closeCode, reason);
+        if (again) return fail(again.state, detail, again.opts);
         return fail(st, detail);
       }
       if (e.code === 'timeout') return fail('host-offline', { reason: 'timeout' });
@@ -398,17 +419,8 @@ export class DeviceLink extends EventEmitter {
         if (!live()) return;
         const detail = { closeCode: c.code, reason: c.reason, ...(goaway ? { goaway } : {}) };
         const st = classifyClose({ closeCode: c.code, reason: c.reason, goaway, via: this.via });
-        if (this.via === 'plus') {
-          if (c.code === 4401 && String(c.reason).trim() === 'token') {
-            this.tokenRetries = (this.tokenRetries || 0) + 1;
-            if (this.tokenRetries >= 2) return this.#scheduleRetry('blocked', detail);
-            this.tokenForceNext = true;
-            return this.#scheduleRetry('offline', detail, { delayOverride: 1000 });
-          }
-          if (c.code === 4429 && String(c.reason).trim() === 'admit rate') {
-            return this.#scheduleRetry('offline', detail, { delayOverride: 60_000 });
-          }
-        }
+        const again = this.#plusRetry(c.code, c.reason);
+        if (again) return this.#scheduleRetry(again.state, detail, again.opts);
         this.#scheduleRetry(st, detail);
       }
     });

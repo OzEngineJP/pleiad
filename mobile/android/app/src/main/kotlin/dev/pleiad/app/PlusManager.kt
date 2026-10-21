@@ -12,9 +12,14 @@ import dev.pleiad.app.plus.PlusApiError
 import dev.pleiad.app.plus.PlusAuth
 import dev.pleiad.app.plus.PlusConfig
 import dev.pleiad.app.plus.PlusSession
+import dev.pleiad.app.plus.PlusTicket
+import dev.pleiad.app.plus.PlusTicketIssuer
+import dev.pleiad.app.plus.PlusTickets
 import dev.pleiad.app.plus.PlusVersion
 import dev.pleiad.app.plus.PlusHost
 import dev.pleiad.app.remote.Http
+import dev.pleiad.app.remote.KeyPair
+import dev.pleiad.app.remote.PairError
 import java.security.SecureRandom
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -158,6 +163,28 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
 
     /** The ID token for Kotlin callers (the official relay). Never exposed to the shell page. */
     fun currentIdToken(): String? = session.idToken(config?.refreshUrl, force = true)
+
+    // Tickets for the relay and the host (docs/plus.md "Tickets"). The ID token is refreshed only near its expiry here
+    // (one connection asks for a ticket each time); a 401 refreshes it and asks once more.
+    private val tickets = PlusTicketIssuer(
+        post = { path, body ->
+            val first = session.idToken(config?.refreshUrl) ?: throw PairError("plus-signed-out")
+            try { PlusApi.postAuthed(Http.client, apiBase, first, clientTag, path, body) }
+            catch (e: PlusApiError) {
+                if (e.status != 401) throw e
+                val again = currentIdToken() ?: throw PairError("plus-signed-out")
+                PlusApi.postAuthed(Http.client, apiBase, again, clientTag, path, body)
+            }
+        },
+        admission = { config?.admission },
+    )
+
+    /**
+     * The relay ticket and the admission ticket for connecting to hostId with this device key. Null when the api has
+     * no tickets yet (use the ID token). Throws PlusApiError (426: update the app) or PairError("plus-signed-out").
+     * Blocking: call from a worker.
+     */
+    fun deviceTicket(hostId: String, keyPair: KeyPair): PlusTicket? = tickets.issue(PlusTickets.PURPOSE_DEVICE, keyPair, hostId)
 
     /** [read]: [hosts] is the ledger read just now, not the last known list (PlusHostList.combine's ledgerRead). */
     data class HostsResult(val hosts: List<PlusHost>, val error: String? = null, val read: Boolean = false)

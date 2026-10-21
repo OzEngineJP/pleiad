@@ -102,14 +102,15 @@ export default async function (t) {
   const verifier = createIdTokenVerifier({ jwksUrl: plus.jwksUrl, projectId: () => 'test-project' });
   const relayAuthzCalls = [];
   const authz = createPlusRelayAuthz({
-    verify: token => verifier.verify(token),
+    verify: token => verifier.verify(token), keysUrl: plus.ticketKeysUrl,
     isBound: async (uid, hostId) => {
       const bound = plus.state.hosts[hostId]?.uid === uid;
       relayAuthzCalls.push({ uid, hostId, bound });
       return bound;
     },
   });
-  const officialRelay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz });
+  // 試験は 1 分の間に何度も受け入れを試す（中継の 1 分の受け入れの上限を広げる）
+  const officialRelay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz, admitPerMinute: 100 });
   const officialAddr = await officialRelay.listen(0, '127.0.0.1');
   const officialUrl = `http://127.0.0.1:${officialAddr.port}`;
 
@@ -210,12 +211,20 @@ export default async function (t) {
     }));
     t.ok('idToken が空の場合は account で拒否される', errNoToken?.code === 'account');
 
-    // ---- 初回受け入れ (admit) ----
-    const idToken1 = plus.issueIdToken(UID);
-    const admitted = await device.admit({
-      hostId, hostPublicKey, relayUrl: officialUrl, idToken: idToken1, uid: UID,
+    // ---- 初回受け入れ: 裏のつなぎ直し（admit）では許可の無い鍵は通らない。人が選んだつなぎ（pair）は PC の承認の窓へ ----
+    const errQuiet = await rejects(device.admit({ hostId, hostPublicKey, relayUrl: officialUrl, idToken: plus.issueIdToken(UID), uid: UID }));
+    t.ok('許可の無い鍵の裏のつなぎ直しは reapprove（ホストに窓を出さない）',
+      errQuiet?.code === 'reapprove' && (await remoteHost.status()).pairing.requests.length === 0, errQuiet?.code);
+    let shownCode = null;
+    const admitting = device.admit({
+      hostId, hostPublicKey, relayUrl: officialUrl, idToken: plus.issueIdToken(UID), uid: UID, mode: 'pair', onCode: c => { shownCode = c; },
     });
-    t.ok('初回受け入れに成功し、ホスト情報が返る', admitted?.hostId === hostId && admitted?.via === 'plus');
+    const req = await until(async () => (await remoteHost.status()).pairing.requests.find(r => r.via === 'plus'), 10_000, 'ホストの承認の窓');
+    await until(() => shownCode, 5000, '端末の確認コード');
+    t.ok('端末とホストの窓に同じ確認コードが出る', req.code === shownCode, `${req.code} ${shownCode}`);
+    await remoteHost.approve(req.id);
+    const admitted = await admitting;
+    t.ok('ホストで許可すると受け入れに成功し、ホスト情報が返る', admitted?.hostId === hostId && admitted?.via === 'plus');
 
     const hostsList = await device.list();
     const savedHost = hostsList.find(h => h.hostId === hostId && h.via === 'plus');
@@ -276,20 +285,18 @@ export default async function (t) {
     authz.state.looseDevices = false;
     t.ok('別アカウントのトークンは denied account -> blocked になる', errDeniedAccount?.code === 'blocked');
 
+    // 台数・limits の断りは、許可の無い鍵を窓へ回す前に確かめる（新しい鍵の人が選んだつなぎで見る）
+    const newcomer = () => admitWithHost({ hostId, hostPublicKey, relayUrl: officialUrl, keyPair: generateKeyPair(), idToken: plus.issueIdToken(UID), mode: 'pair' });
     // ホストから denied: 'devices' が返る場合（端末上限オーバー）
     st.account.limits = { ...st.account.limits, devicesPerHost: 0 };
     await syncHost();
-    const errDeniedDevices = await rejects(device.admit({
-      hostId, hostPublicKey, relayUrl: officialUrl, idToken: plus.issueIdToken(UID), uid: UID,
-    }));
+    const errDeniedDevices = await rejects(newcomer());
     t.ok('端末台数制限オーバーは denied devices -> limit になる', errDeniedDevices?.code === 'limit');
 
     // ホストから denied: 'unavailable' が返る場合（limits が null）
     st.account.limits = null;
     await syncHost();
-    const errDeniedUnavailable = await rejects(device.admit({
-      hostId, hostPublicKey, relayUrl: officialUrl, idToken: plus.issueIdToken(UID), uid: UID,
-    }));
+    const errDeniedUnavailable = await rejects(newcomer());
     t.ok('limits 未設定時は denied unavailable -> unavailable になる', errDeniedUnavailable?.code === 'unavailable');
 
     // limits を元に戻す

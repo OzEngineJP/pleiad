@@ -16,6 +16,8 @@ data class PlusConfig(
     val relayUrl: String,
     val refreshUrl: String,
     val minClientAndroid: String?,
+    // 受け入れの版（1 | 2）。数なら券を出す api（docs/plus.md「券」）。欄が無ければ券の口が無い前の版の api
+    val admission: Int? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("state", state)
@@ -31,6 +33,7 @@ data class PlusConfig(
                 .put("refresh", refreshUrl),
         )
         .put("minClient", JSONObject().put("android", minClientAndroid))
+        .apply { if (admission != null) put("admission", admission) }
 
     companion object {
         fun fromJson(o: JSONObject): PlusConfig {
@@ -48,6 +51,7 @@ data class PlusConfig(
                 relayUrl = urls.optString("relay"),
                 refreshUrl = urls.optString("refresh"),
                 minClientAndroid = minClient.optString("android").ifEmpty { null },
+                admission = (o.opt("admission") as? Number)?.toInt(),
             )
         }
 
