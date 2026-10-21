@@ -118,6 +118,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // 子が返答を終えて裏の作業だけを待っているか（ADR 0170）。待っていれば { since（待ち始めた時刻 ms）, tasks: [{ kind, label }] }、無ければ null。
   // 待っている間は止めず、依頼元へ deliverBackground で知らせ、backgroundMinutes ごとに知らせ直す
   backgroundWaiting = () => null, deliverBackground = async () => 'ok',
+  // 止まったタスクに残った裏のコマンド（state: background）が、まだ生きているか（docs/agent-delegation.md「子に残った裏の作業」）。
+  // (sessionId, { toolCallId, nativeTaskId, processId }) で引き、true / false、分からなければ null。false なら記録から外す。
+  // OS のプロセス ID を渡すバックエンドは無いので、server はバックエンドが挙げている裏の作業の一覧（findBackgroundTask）で答える
+  commandAlive = () => null,
   // 子が上限・一時的な失敗のあと再試行を待っているか（ADR 0229）。待っていれば { attempt, next（次の再試行の時刻 ms）, message, reason, limit, since（待ちの回の始まり）, seenAt }、
   // 無ければ null。長い・上限による待ちは status: waiting にし（ply_task_wait を待たずに返す）、待ちの回ごとに 1 回 deliverRetry で依頼元へ知らせる
   retrying = () => null, deliverRetry = async () => 'ok',
@@ -161,6 +165,24 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   const waitingOf = r => r.host ? r.hostWaiting === true || remoteWaiting(r) : waiting(r.sessionId) || Boolean(retryWaitOf(r));
   const lockWaitingOf = r => r.host ? r.hostLockWaiting === true : lockWaiting(r.sessionId);
   const backgroundOf = r => r.host ? r.hostBackground ?? null : backgroundWaiting(r.sessionId);
+  // 子の回が終わった（run.result・run.error）。前景のコマンド（running・承認待ち）は回と一緒に終わっている。
+  // 終わりの合図（tool.result・task.command）が来ないまま回が終わった分（上限・バックエンドの異常終了で途中で止まった）を外す。
+  // 裏へ回ったもの（background）と、再起動・app-server の入れ替わりで生存が分からないもの（unknown）は残す
+  // （docs/agent-delegation.md「子に残った裏の作業」）
+  const endTurnCommands = r => {
+    if (r.activeCommands?.length) r.activeCommands = r.activeCommands.filter(c => ['background', 'unknown'].includes(c.state));
+  };
+  // 止まったタスク（完了・失敗・取り消し・中断）に残った裏のコマンドは、バックエンドがまだ裏の作業として挙げている間だけ残す。
+  // 挙げなくなった（終わった・プロセスが居ない）ものは外す。commandAlive が分からない（null）と答えたものは残す
+  const settleCommands = r => {
+    if (r.host || ACTIVE.has(r.status) || !r.activeCommands?.length) return;
+    r.activeCommands = r.activeCommands.filter(c => {
+      if (c.state !== 'background') return true;
+      let alive = null;
+      try { alive = commandAlive(r.sessionId, { toolCallId: c.toolCallId, nativeTaskId: c.nativeTaskId ?? null, processId: c.processId ?? null }); } catch { alive = null; }
+      return alive !== false;
+    });
+  };
   for (const r of Object.values(records)) {
     r.instructions ??= [];
     const initial = !r.revision && !r.result && r.status === 'queued' && r.createdAt === r.updatedAt;
@@ -515,17 +537,18 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           if (row.status === 'failed' && result?.outcome === 'limited') row.limit = { resetsAt: result.limit?.resetsAt ?? null, window: result.limit?.window ?? null, ...slotOf(result.limit) };
           else delete row.limit;
           if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
+          endTurnCommands(row); settleCommands(row);
         }, 'run.result');
         activeInstructionIds = undefined;
         if (r.status !== 'queued') break;
       }
     } catch (e) {
-      if (!halted()) await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); for (const id of activeInstructionIds ?? []) setInstruction(row, id, 'dropped'); dropInstructions(row); }, 'run.error');
+      if (!halted()) await record(r.taskId, row => { row.status = controller.signal.aborted ? 'cancelled' : 'failed'; row.error = String(e.message ?? e); for (const id of activeInstructionIds ?? []) setInstruction(row, id, 'dropped'); dropInstructions(row); endTurnCommands(row); settleCommands(row); }, 'run.error');
     } finally {
       if (halted()) { live.delete(r.taskId); return; }
       // 止まった後（run.result / run.error で cancelled）に ply_task_send で積まれた指示は、止めた回の分ではない。
       // cancelled に戻して捨てず、下の kick で次の実行にする（docs/agent-delegation.md「ツール」の ply_task_send）
-      if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); }, 'run.cancelled');
+      if (r.status === 'cancelling' || controller.signal.aborted) await record(r.taskId, row => { if (!requeued && row.status === 'queued' && row.queue.length) return; row.status = 'cancelled'; dropInstructions(row); endTurnCommands(row); settleCommands(row); }, 'run.cancelled');
       live.delete(r.taskId); settlingInstructions.delete(r.taskId);
       if (!stalled || controller.signal.aborted) {
         if (r.queue.length && !controller.signal.aborted) await record(r.taskId, row => { row.status = 'queued'; row.notification = 'none'; }, 'run.queued');
@@ -630,7 +653,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
     const current = () => r.activeCommands?.find(c => c.noticeId === id);
     const eligible = () => {
       const c = current();
-      return c && (!r.host || (r.hostTelemetry && r.status === 'running')) && commandFit(r, c) && !waitingOf(r) && commandElapsed(c, now()) >= commandMs;
+      return c && r.status === 'running' && (!r.host || r.hostTelemetry) && commandFit(r, c) && !waitingOf(r) && commandElapsed(c, now()) >= commandMs;
     };
     // 同じ子で同じコマンドは、もう知らせた（繰り返しの確認・再実行で何度も知らせない）
     const key = command.command;
@@ -745,9 +768,11 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         continue;
       }
       pauseCommands(r, now(), waitingOf(r));
-      // 返答を終えて裏の作業だけを待つ子は、裏待ちの知らせ（ADR 0170）が受け持つ。「黙っている」「コマンドが長い」は重ねて送らない
+      settleCommands(r);
+      // 返答を終えて裏の作業だけを待つ子は、裏待ちの知らせ（ADR 0170）が受け持つ。「黙っている」「コマンドが長い」は重ねて送らない。
+      // 長いコマンドを知らせるのは子が走っている間だけ。止まった子に残った裏のコマンドは知らせない（止める口は ply_task_cancel に残る）
       const bg = r.status === 'running' ? backgroundWaiting(r.sessionId) : null;
-      for (const c of bg ? [] : r.activeCommands ?? []) {
+      for (const c of bg || r.status !== 'running' ? [] : r.activeCommands ?? []) {
         if (commandMs && commandFit(r, c) && !waitingOf(r) && !c.notified && !commandNoticed(r, c)
           && commandElapsed(c, now()) >= commandMs && !commandNotices.has(c.noticeId)) {
           spawn(notifyCommand(r, c).catch(e => report({ event: 'unexpected', operation: 'command', taskId: r.taskId, code: e?.code ?? null })));

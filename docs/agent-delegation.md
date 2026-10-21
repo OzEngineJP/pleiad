@@ -243,6 +243,7 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 待つためのコマンド（`until` / `while` のループ・`sleep`・`gh run watch` など。`isWaitingCommand`）が走っている間は、黙っていても知らせない。知らせるのは同じ子の同じ状態（走っているコマンドの組）で 1 回だけで、動きが戻って再び黙っても繰り返さない（別のコマンド・別の状態になれば知らせる。[ADR 0138](adr/0138-quiet-wait-notices.md)）。
 
 コマンドの時間は無音とは別に数える。`AGENT_HOST_TASK_COMMAND_MINUTES`（既定 5 分、`0` で無効）に達すると、そのコマンドについて一度だけ親へ通知する。時計は人間の承認待ちだけを差し引く（出力・思考・別のツールの活動では延ばさない）。ただし、待つためのコマンド、実際の出力が伸びている間（最後の出力から 1 分以内。Codex のコマンド出力・Antigravity のステップだけが出力として数え、Claude の `tool_progress` の心拍は数えない）、子が別の作業で動いている間の裏のコマンドは知らせない。同じ子の同じコマンドは、やり直しても 2 回目を知らせない（[ADR 0138](adr/0138-quiet-wait-notices.md)）。親が忙しい間は保留し、未受領（`requeue`）だけ再送する。受領が不明な失敗は再送しない。通知はコマンド固有の ID を持ち、無音通知や完了通知とは区別する。
+知らせるのは子が走っている（`running`）間だけで、止まった子（`completed`・`failed`・`cancelled`・`interrupted`）に残ったコマンドは知らせない（[ADR 0242](adr/0242-settle-commands-of-stopped-children.md)）。
 
 `ply_task_status` / `ply_task_list` の `activeCommands` は、コマンドごとに `toolCallId`、`command`、`cwd`、`observedAt`、`startedAt`、`startKnown`、`elapsedMinutes`、`state`、分かれば `turnId`・`nativeTaskId`・`processId` を返す。本文と cwd は既存の秘密値の伏せ方を使い、本文は台帳で 2000 字、通知で 200 字に切る。既知の形式以外の秘密は伏せきれない。開始時刻がないものは最初の観測から数え、開始を推定して埋めない。`processId` はバックエンドの識別子であり OS の PID とは限らない。`stopSupported` はこの台帳が個別停止を提供するかを表し、現在は false。
 
@@ -256,7 +257,7 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 
 シェルのツールの名前はエージェントの記述の `shellTools`（`core/shell-tools.mjs`）から引く。委譲の子でない会話の長いコマンドは、その会話自身へ知らせる（[ADR 0227](adr/0227-ply-shell-and-command-notices.md)。docs/design.md「長いコマンドの知らせ」）。
 
-Claude の background 起動結果（`backgroundTaskId` または起動を示す本文）は完了ではない。`task_started` / `task_updated` で background に移ったものも、実際の終了まで残す。Codex の端末は子タスクが `completed` になっても通知対象で、終了を確認するまで台帳に残る。台帳の通知は子を再実行しない。サーバー再起動後は保存済みコマンドの生存を確認できないため `state: unknown`・経過 `null` とし、再通知や自動停止はしない。
+Claude の background 起動結果（`backgroundTaskId` または起動を示す本文）は完了ではない。`task_started` / `task_updated` で background に移ったものも、実際の終了まで残す。子の回が終わったら、終わりの合図が来ていない前景のコマンド（上限・異常終了で途中で止まった回の分）を外し、止まった子に残った裏のコマンドはバックエンドが挙げている間だけ残す（「子に残った裏の作業」）。台帳の通知は子を再実行しない。サーバー再起動後は保存済みコマンドの生存を確認できないため `state: unknown`・経過 `null` とし、再通知や自動停止はしない。
 
 ## 上限と再試行の待ち
 
@@ -394,10 +395,18 @@ Codex の履歴が大きすぎて読めない・30 秒で応答が無い（`core
   - 送る前に、送った回数と時刻をタスクの行（`backgroundNotice`）に保存する。待ち始めた時刻は札（turn card の `delegation`）に載るので、無停止の更新の後も最初からやり直さない。ホストに任せたタスクの依頼元（リモート）には送らない。
   - `ply_task_status` / `ply_task_list` のタスクには `backgroundWaiting`（`{ minutes, tasks }`）が載り、`silenceMinutes` は null になる。
   - 裏の作業が終わると CLI が main を再開させ、ターンが終わる。結果は今までどおり最後の返答で、完了通知で届く。
-- **Codex**: 端末はターンの外に残り、終わっても main は再開しない。子の結果と完了通知は端末を待たず、コマンドの監視は続ける。子の完了後も `ply_task_cancel` で、台帳とバックグラウンド一覧の ID が一致する端末を明示的に止められる。
+- **Codex**: 端末はターンの外に残り、終わっても main は再開しない。子の結果と完了通知は端末を待たない。端末はターンの終わりに `background` になり、Codex が挙げている間は子の完了後も `activeCommands` に残る（長いコマンドの通知は送らない）。子の完了後も `ply_task_cancel` で、台帳とバックグラウンド一覧の ID が一致する端末を明示的に止められる。
 - **Antigravity**: バックグラウンド移行の情報がなくても、`run_command` の ACTIVE から DONE まで監視する。
 
 コマンドの 5 分通知は開始から数え、裏作業通知は返答後の待機から数える。再起動時、実行中だった子タスクは従来どおり `interrupted` にし、再実行しない。
+
+**止まった子に残ったコマンド**（[ADR 0242](adr/0242-settle-commands-of-stopped-children.md)）:
+
+- 子の回が終わったら（`run.result`・`run.error`・取り消しで止まった回）、前景のコマンド（`running`・承認待ち）を `activeCommands` から外す。終わりの合図（`tool.result`・`task.command`）を出さないまま止まるバックエンド（Devin が上限で止まったときなど）の分が残らない。裏へ回ったもの（`background`）と生存が分からないもの（`unknown`）は残す。
+- 止まった子に残った裏のコマンドは、バックエンドがまだ裏の作業として挙げている間だけ残す。見回り（500 ms ごと）が `commandAlive` に問い合わせ、挙げなくなったものを外す。server は `findBackgroundTask`（Codex の `runtime.background`・Claude のターンの `turn.info.background`・`ply_shell` の裏のジョブ）で答える。どのバックエンドも OS のプロセス ID を渡さないので、OS の上で生死は確かめない。
+- 止まった子のコマンドは、長いコマンドとして知らせない。
+- 子が意図して切り離した作業（`Start-Process`・`nohup`・デーモンを立てる CLI・エミュレーター・Electron・dev サーバー）は追わない。記録するのは起動したコマンドだけで、そのコマンドが終われば消える。後始末は子の仕事（子への指示 `agent:guide.commandLifetime`）。エージェントのブラウザーのデーモンだけは、子が止まったら Pleiad が止める（[ADR 0180](adr/0180-agent-browser-daemon-lifetime.md)）。
+- CLI が裏の作業として挙げ続けている間（Claude の `phase: waiting`）は、[ADR 0170](adr/0170-delegation-background-notify-not-stop.md) のとおり止めずに知らせる。挙げられた作業が本当に動いているかは確かめられないので、`agent-browser open` のようにデーモンが出力を握ったまま bash が終わらない形（未確認）でも、依頼元が `ply_task_cancel` で止めるまで残る。
 
 ## 実行前に拒否されたコマンド
 
@@ -475,6 +484,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 追加指示の途中送信は `tests/unit/agent-tasks-steer.mjs`（受理・合図待ち・合図が先に来る・捨てられた・合図なしでターンが終わった・受理されない・結果不明・渡せない・順序・合図待ちの間の次の指示・止めた後・再起動。管理側だけを身代わりで）と `tests/unit/server-delegation-steer.mjs`（fake の `bg` 台本で、同じターンに入り新しいターンを走らせない・`DECLINE_STEER`/`THROW_STEER`/次ターンの設定の予約で待機か未配送・`steerConfirms` の送信中と `DROP_STEER`/`SILENT_STEER` が次のターンで 1 回だけ）。
 保存障害は `tests/unit/agent-tasks-storage.mjs`（rename に EPERM を差し込む。回復・閉じない・障害中の読み取りと断り・requeue を書かない・再起動後の送り直し）。
 実行前の拒否は `tests/unit/codex-rejections.mjs`（rollout の解析・読む範囲・伏せ方）と `tests/unit/server-codex-rejections.mjs`（身代わりの Codex が rollout に拒否を書き、会話・`ply_task_status`・完了通知・`ply_task_send` の次の回まで）。
+止まった子に残ったコマンドは `tests/unit/agent-tasks-command-settle.mjs`（上限の `failed`・例外・取り消しの後に `activeCommands` が空で通知が出ない・返答の後の裏の作業はバックエンドが挙げている間だけ残る・止まった後の終わりの合図）と `tests/unit/task-command-notice.mjs`（Codex の端末は子の完了後も残るが知らせない）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
 履歴が一時的に読めないときは `tests/unit/history-retry.mjs`（見分け・0.5・1・2 秒の読み直し・一時的でないエラーはすぐ投げる・`CodexRpc.stop()` がプロセスの終わりを待つ）と `tests/unit/server-delegation-history-retry.mjs`（fake の台本 `history-ioerr <回数>` で、読み直して読める・取り込みを見送っても結果は読める・読めないままなら流れた返答で注意書き付きの `completed`）。
 振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。自動選択のモデルは偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、自動選択のモデルの送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API`。本物へは送らない）。

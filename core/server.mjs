@@ -6596,6 +6596,9 @@ agentTasks = await createAgentTasks({
     const prompt = completionNotice(await ensureAgentLocale(owner), tasks);
     return live ? steerNotice(live, owner, prompt, tasks) : runTurn({ sessionId: owner, prompt }, () => {}, { internal: true, onAccepted: accepted });
   },
+  // 止まった子に残った裏のコマンドが、まだ生きているか。OS のプロセス ID はどのバックエンドも渡さないので、
+  // バックエンドが裏の作業として挙げているか（Codex の端末・Claude のターンが抱える裏の作業・ply_shell の裏のジョブ）で答える
+  commandAlive: (sessionId, command) => Boolean(findBackgroundTask(sessionId, command.nativeTaskId ?? command.toolCallId)),
   cancelBackground: async task => {
     for (const command of task.activeCommands) {
       const found = findBackgroundTask(task.sessionId, command.nativeTaskId ?? command.toolCallId);
