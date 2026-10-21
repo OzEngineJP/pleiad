@@ -119,7 +119,7 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: npm run desktop:dist -- --config electron-builder.release.cjs --mac --publish never
       # stapler（公証 ticket の lookup）と spctl（Gatekeeper の照合）は Apple のサーバーへ出る。一時的な切れ
-      # （NSURLErrorDomain・stapler の終了コード 68 など）だけを、15 秒・30 秒と間を空けて 3 回まで試し直し、
+      # （NSURLErrorDomain・stapler の終了コード 68・CloudKit の問い合わせの失敗など）だけを、15 秒・30 秒と間を空けて 3 回まで試し直し、
       # 試し直すたびに ::warning:: を残す。署名が無い・公証が無い失敗は試し直さずそのまま落とす
       - name: Verify macOS signature and notarization
         run: |
@@ -133,7 +133,7 @@ jobs:
                 status=$?
               fi
               printf '%s\n' "$output"
-              if grep -qiE 'NSURLErrorDomain|network connection|timed out|temporarily|offline|could not connect|connection (lost|reset|closed)|service unavailable' <<<"$output"; then
+              if grep -qiE 'NSURLErrorDomain|network connection|timed out|temporarily|offline|could not connect|connection (lost|reset|closed)|service unavailable|CloudKit query' <<<"$output"; then
                 transient=1
               elif [ "$1" = xcrun ] && [ "$status" -eq 68 ] && ! grep -qiE 'ticket|notariz|invalid|rejected|unsigned' <<<"$output"; then
                 transient=1

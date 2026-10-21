@@ -65,6 +65,8 @@ export default async function(t) {
           assert.ok(verify && /verify_apple xcrun stapler validate/.test(verify.run) && !/^\s*xcrun stapler/m.test(verify.run),
             `${file}/${jobName} must retry transient stapler failures`);
           assert.ok(verify && verify.run.includes('::warning::'), `${file}/${jobName} must annotate each retried validation`);
+          // 公証の直後は ticket の問い合わせ（CloudKit）が「(null)」で失敗し、stapler が 65 で落ちることがある。これも一時的な失敗として試し直す
+          assert.ok(verify && /CloudKit query/.test(verify.run), `${file}/${jobName} must retry a failed CloudKit ticket lookup`);
           if (file === 'evaluation-release.yml') {
             assert.ok(/verify_apple spctl --assess/.test(verify.run), `${file}/${jobName} must retry transient spctl failures`);
           }
