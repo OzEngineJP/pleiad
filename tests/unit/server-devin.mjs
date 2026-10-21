@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
-import { open } from '../lib/ws-client.mjs';
+import { open, sleep } from '../lib/ws-client.mjs';
 import { DevinAcp } from '../../core/backends/devin-acp.mjs';
 import { createDevinBackend } from '../../core/backends/devin.mjs';
 import { anchored, sameRows } from '../lib/acp-history.mjs';
@@ -192,7 +192,7 @@ export default async function (t) {
     assert.ok(JSON.stringify(storedEdit).length < 80000);
     assert.ok(storedCall.input.oldText.includes('before') && storedCall.input.newText.includes('after'));
     t.ok('保存された会話ファイルにも巨大 diff の全文を残さない', true);
-    server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'devin', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: nativeConfig } });
+    server = await startServer({ dataDir: path.join(root, 'data'), env: { AGENT_HOST_BACKENDS: 'devin,fake', AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: nativeConfig } });
     c = await open(server);
     const restored = await c.cmd('loadSession', { sessionId: sid });
     t.ok('サーバー再起動後も共通 DB の cwd でネイティブ履歴を復元する', restored.messages.filter(m => m.role === 'user').length === 2 && after.messages.every((m, i) => restored.messages[i].uuid === m.uuid), JSON.stringify({ before: after.messages.map(m => [m.uuid, m.role]), restored: restored.messages.map(m => [m.uuid, m.role]) }));
@@ -310,7 +310,9 @@ export default async function (t) {
       JSON.stringify(limitResult));
     const routeState = await c.cmd('delegationRouting');
     const heldCandidate = routeState.candidates.find(x => x.candidate === 'devin:swe-2-high');
-    t.ok('制限中の同じモデルを自動選択の候補から外し、解除時刻を示す', heldCandidate?.reason === 'recently_limited' && heldCandidate.until === new Date(limitResult.resetsAt).toISOString(), JSON.stringify(heldCandidate));
+    // 戻す時刻は告げられた見込み以上で、短い見込み（5 秒）でも最低 1 分は外す（core/slot-limits.mjs）
+    const heldUntil = Date.parse(heldCandidate?.until);
+    t.ok('制限中の同じモデルを自動選択の候補から外し、戻す時刻を示す（短い見込みでも最低 1 分）', heldCandidate?.reason === 'recently_limited' && heldUntil >= limitResult.resetsAt && heldUntil >= limitBefore + 60_000, JSON.stringify(heldCandidate));
     const followFrom = c.mark(), followId = 'devin-limit-followup';
     await c.cmd('sendMessage', { sessionId: limitTurn.sessionId, messageId: followId, prompt: 'after cooldown' });
     const queued = (await c.cmd('listMessages', { sessionId: limitTurn.sessionId })).find(x => x.id === followId);
@@ -321,5 +323,42 @@ export default async function (t) {
     t.ok('解除後に次の指示だけを一度送り、失敗した最初の指示は送り直さない', userTexts.filter(x => x === 'after cooldown').length === 1 && userTexts.filter(x => x.endsWith('[rate-limit] pause')).length === 1 && userTexts.length === 2, JSON.stringify(userTexts.map(x => x.slice(-40))));
     const recoveredRouting = await c.cmd('delegationRouting');
     t.ok('解除後は同じモデルの制限による除外を外す', recoveredRouting.candidates.find(x => x.candidate === 'devin:swe-2-high')?.reason !== 'recently_limited');
+
+    // ---- 委譲の子が「N minutes」の上限で止まった（Issue #111）。日次・週次は 0% のままでも、通知・使用量・自動の振り分けに止まった枠が出る
+    const pc = await open({ port: server.port, token: server.token, autoAllow: true });
+    try {
+      const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
+      // 依頼元の会話（fake）から Pleiad の MCP ツールを 1 回呼び、その会話に届いた tool.result を返す
+      const callTool = async (name, args) => {
+        const from = pc.mark();
+        const turn = await pc.runTurn({ backend: 'fake', cwd, prompt: ply(name, args) });
+        return pc.waitFor(e => e.type === 'tool.result' && e.sessionId === turn.sessionId, { from, ms: 60000 });
+      };
+      const childFrom = Date.now();
+      const pinned = await callTool('ply_delegate', { kind: 'implement', backend: 'devin', model: 'swe-2-high', task: '[rate-limit-minutes] child' });
+      const taskId = JSON.parse(pinned.text).taskId;
+      let row;
+      for (let i = 0; i < 1200 && !(row?.status === 'failed' && row.notification === 'sent'); i++) { row = (await pc.cmd('agentTasks')).find(x => x.taskId === taskId); await sleep(50); }
+      const childReset = typeof row?.limit?.resetsAt === 'number' ? row.limit.resetsAt : Date.parse(row?.limit?.resetsAt);
+      t.ok('分の形（reset in 3 minutes）の上限も limited になり、委譲の記録に解除の見込みと止まった枠を残す',
+        row?.status === 'failed' && childReset >= childFrom + 170_000 && childReset <= Date.now() + 190_000
+          && row.limit.backend === 'devin' && row.limit.model === 'swe-2-high', JSON.stringify(row?.limit ?? row));
+      const parent = await pc.cmd('loadSession', { sessionId: pinned.sessionId });
+      const notice = parent.messages.filter(m => m.internalTaskNotice).map(m => m.text).join('\n');
+      t.ok('上限で止まった子の完了通知に、自動の振り分けがいつまでその枠を選ばないかを添える',
+        /backend を省いた ply_delegate は、.+まで|ply_delegate without backend will not pick .+ until/.test(notice), notice.slice(0, 600));
+
+      const usage = await pc.cmd('providerUsage', { backend: 'devin' });
+      const heldSlot = usage.held?.find(x => x.model === 'swe-2-high');
+      t.ok('使用量（providerUsage の held）に止まった枠と戻す時刻を出す',
+        heldSlot?.reason === 'recently_limited' && Date.parse(heldSlot.until) >= childReset, JSON.stringify(usage.held));
+
+      await pc.cmd('setDelegationRouting', { settings: { tiers: { t1: ['devin:swe-2-high'], t2: ['devin:swe-2-high'], t3: ['devin:swe-2-high'], t4: ['devin:swe-2-high'] } } });
+      await pc.cmd('delegationRouting', { refresh: true });
+      const auto = await callTool('ply_delegate', { kind: 'implement', task: 'after the limit' });
+      const skipLine = /^- devin:swe-2-high \(t\d\): recently_limited until (\S+)$/m.exec(auto.text ?? '');
+      t.ok('backend を省いた ply_delegate は止まった枠を選ばず、飛ばした理由と戻す時刻を返す',
+        auto.isError === true && skipLine?.[1] === heldSlot?.until && (await pc.cmd('agentTasks')).filter(x => x.backend === 'devin').length === 1, auto.text?.slice(0, 600));
+    } finally { pc.close(); }
   } finally { c?.close(); await server?.stop(); await fs.rm(root, { recursive: true, force: true }); }
 }

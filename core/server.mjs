@@ -68,6 +68,7 @@ import { createSuggestionJobs, suggestionGist, suggestionPrompt } from './prompt
 import { createMessageQueue } from "./message-queue.mjs";
 import { createSchedule } from './schedule.mjs';
 import { limitHolds, limitResetsAt, clockText } from './limit-resume.mjs';
+import { createSlotLimits, slotKey } from './slot-limits.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
@@ -1015,7 +1016,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   if (!turn || turn.ac.signal.aborted) throw new Error(agentT(lng, 'delegation.notRunning'));
   // 使用枠は読むだけなので、読み取り・計画モードでも答える。providerUsage と同じキャッシュを通す
   if (name === 'ply_usage') return agentUsage({ backend: args.backend, list: listBackends, get: getBackend, read: providerQuota, locale: lng,
-    accounts: async b => accountRows(b) });
+    accounts: async b => accountRows(b), held: b => heldSlots(b.id) });
   const mutation = DELEGATING_TOOLS.includes(name);
   if (mutation && !canDelegate(turn.backend.modes()[turn.info.mode])) throw new Error(agentT(lng, 'delegation.readOnly'));
   // リモートのホストへ任せる（ply_delegate の host と、写しの行があるタスクへの ply_task_*。docs/agent-delegation.md「リモートのホストへ任せる」）
@@ -3331,12 +3332,11 @@ function makeEmit(turn) {
       const execution = taskExecutions.get(turn.info.sessionId);
       if (execution) { execution.outcome = event.outcome; execution.error = event.error ?? null; execution.limit = event.outcome === 'limited' ? turn.limit : null; }
       // 上限で止まった枠は、委譲の振り分けでしばらく飛ばす。同じ枠のターンが通ったら戻す（ADR 0229）
+      // 解除の見込みを過ぎてすぐ同じ枠がまた止まったら、保留を延ばす（core/slot-limits.mjs。Issue #111）。
+      // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない
       if (!replay && !turn.info.endpoint) {
-        const key = slotKey(turn.backend.id, turn.info.model, turn.info.account);
-        // 解除時刻がもう過ぎている（取得元が古い）上限は覚えない
-        const resetsAt = turn.limit?.resetsAt;
-        if (event.outcome === 'limited' && !(Number.isFinite(resetsAt) && resetsAt <= Date.now())) limitedSlots.set(key, { until: limitResetsAt(resetsAt) });
-        else if (event.outcome === 'ok') limitedSlots.delete(key);
+        if (event.outcome === 'limited') limitedSlots.record({ backend: turn.backend.id, model: turn.info.model, account: turn.info.account, resetsAt: turn.limit?.resetsAt });
+        else if (event.outcome === 'ok') limitedSlots.clear(turn.backend.id, turn.info.model, turn.info.account);
       }
       turn.retry = null;
       turn.retryEpisode = null;
@@ -4282,7 +4282,8 @@ async function providerUsageOf(args) {
   let local;
   try { local = await usageStore.summary(backend.id); }
   catch { local = { error: t('quota.localFailed') }; }
-  return { backend: backend.id, label: backend.label, quota, local };
+  // 短い間隔の上限で今止まっている枠（日次・週次の枠には出ない。Issue #111）
+  return { backend: backend.id, label: backend.label, quota, local, held: heldSlots(backend.id) };
 }
 
 /**
@@ -5951,10 +5952,10 @@ const liveInstructions = new Map();
 // 使用量の上限で止まっている会話 -> interruptedOf の形。解除時刻を過ぎるまで、新しい指示は API に渡さず送信待ちに置き、
 // 解除時刻に流す（解除時刻が分からない上限は待たせない。limitHolds）。印は再開（resumeSession）かターンの開始で下ろす
 const limitStates = new Map();
-// 上限で止まったばかりの枠（エージェント・モデル・アカウント）-> { until: 解除時刻 ms | null }。委譲の振り分けで飛ばす（ADR 0229）。
-// 解除時刻を過ぎるか、同じ枠のターンが通ったら外す。解除時刻が分からないものは、通るまで外さない（覚えるのはこのサーバーの間だけ）
-const limitedSlots = new Map();
-const slotKey = (backend, model, account) => `${backend}\n${model ?? ''}\n${account ?? ''}`;
+// 上限で止まったばかりの枠（エージェント・モデル・アカウント）。委譲の振り分けで飛ばす（ADR 0229）。
+// 解除の見込み（最低 1 分。見込みを過ぎてすぐの再発は延ばす）を過ぎるか、同じ枠のターンが通ったら外す。
+// 解除時刻が分からないものは、通るまで外さない（覚えるのはこのサーバーの間だけ。core/slot-limits.mjs）
+const limitedSlots = createSlotLimits();
 /** 振り分けで使えない枠か。再試行を待っているターンがある（retry_waiting）か、上限で止まったばかり（recently_limited）なら理由を返す */
 function slotBlocked(backend, model, account) {
   const key = slotKey(backend, model, account);
@@ -5963,10 +5964,28 @@ function slotBlocked(backend, model, account) {
     if (slotKey(turn.backend.id, turn.info.model, turn.info.account) === key)
       return { reason: 'retry_waiting', ...(Number.isFinite(turn.retry.next) ? { until: turn.retry.next } : {}) };
   }
-  const limited = limitedSlots.get(key);
+  const limited = limitedSlots.get(backend, model, account);
   if (!limited) return null;
-  if (limited.until != null && limited.until <= Date.now()) { limitedSlots.delete(key); return null; }
   return { reason: 'recently_limited', ...(limited.until != null ? { until: limited.until } : {}) };
+}
+/**
+ * 今止まっている枠（使用量の画面・ply_usage に出す。Issue #111）。日次・週次の枠が 0% でも、短い間隔の上限で使えないことがある。
+ * 再試行を待っているターンの枠（retry_waiting）と、上限で止まったばかりの枠（recently_limited）。until は解除の見込み（ISO。分からなければ null）
+ */
+function heldSlots(backend) {
+  const out = [], seen = new Set();
+  for (const turn of runtime.turns.values()) {
+    if (turn.ended || !turn.retry || turn.info.endpoint || turn.backend.id !== backend) continue;
+    const key = slotKey(backend, turn.info.model, turn.info.account);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ model: turn.info.model ?? null, account: turn.info.account || null, reason: 'retry_waiting', until: Number.isFinite(turn.retry.next) ? new Date(turn.retry.next).toISOString() : null });
+  }
+  for (const s of limitedSlots.list(backend)) {
+    if (seen.has(slotKey(backend, s.model, s.account))) continue;
+    out.push({ model: s.model, account: s.account || null, reason: 'recently_limited', until: s.until != null ? new Date(s.until).toISOString() : null });
+  }
+  return out;
 }
 const outbox = createMessageQueue({
   store,
@@ -6086,10 +6105,16 @@ function completionNotice(lng, tasks) {
   return agentT(lng, 'delegation.noticeBatch', { count: parts.length, sections: parts.map(part => agentT(lng, 'delegation.noticeSection', part)).join('') });
 }
 
-/** 上限で止まった子の完了通知の一行（解除の見込みと、待つか任せ直すか） */
+/**
+ * 上限で止まった子の完了通知（解除の見込みと、待つか任せ直すか）。
+ * 枠がまだ止まっていれば、自動の振り分けがいつまでその枠を選ばないかを添える（解除の見込みより長いことがある。Issue #111）
+ */
 function limitNotice(lng, limit) {
   const resetsAt = limitResetsAt(limit?.resetsAt);
-  return resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
+  const head = resetsAt ? agentT(lng, 'delegation.noticeLimit', { time: clockText(resetsAt) }) : agentT(lng, 'delegation.noticeLimitUnknown');
+  const held = typeof limit?.backend === 'string' ? limitedSlots.get(limit.backend, limit.model, limit.account) : null;
+  if (!held) return head;
+  return [head, held.until != null ? agentT(lng, 'delegation.noticeLimitSkip', { time: clockText(held.until) }) : agentT(lng, 'delegation.noticeLimitSkipUnknown')].join('\n');
 }
 
 /**
@@ -6252,9 +6277,11 @@ async function finishChild(task, signal, execution, outcome, renewed = null) {
   worktreeSweepSoon();
   const withNote = error => [error, historyNote].filter(Boolean).join('\n') || null;
   if (agentTasks.list(task.sessionId).some(r => r.notification === 'unknown')) return { outcome: 'error', text, error: withNote(agentT(await agentLocaleFor(task.parentSessionId), 'delegation.noticeUnknown')), rejections, git, ...extra };
-  // 上限で止まった（limited）は、解除時刻・枠を結果に添える（台帳の row.limit。失敗と分けて知らせる。ADR 0229）
+  // 上限で止まった（limited）は、解除時刻・枠と、止まった委譲先（エージェント・モデル・アカウント）を結果に添える
+  // （台帳の row.limit。失敗と分けて知らせ、自動の振り分けがいつまで選ばないかを添える。ADR 0229、Issue #111）
   const limit = !signal.aborted && execution.outcome === 'limited' && execution.limit
-    ? { resetsAt: execution.limit.resetsAt ?? null, window: execution.limit.window ?? null } : null;
+    ? { resetsAt: execution.limit.resetsAt ?? null, window: execution.limit.window ?? null,
+      backend: execution.limit.backend ?? null, model: execution.limit.model ?? null, account: execution.limit.account ?? null } : null;
   return { outcome: signal.aborted ? 'aborted' : execution.outcome ?? outcome, text, error: withNote(execution.error), rejections, git, ...(limit ? { limit } : {}), ...extra };
 }
 

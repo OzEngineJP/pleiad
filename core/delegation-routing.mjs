@@ -577,7 +577,8 @@ export function candidateStates({ settings, usage, now = Date.now(), blocked }) 
 
 /** エージェント向けエラーの言語によらない行。画面もこの形を読む。 */
 export function formatSkippedCandidates(skipped) {
-  const reasonLine = s => `${s.reason}${s.detail ? ` (${s.detail})` : ''}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}`;
+  // until は上限で止まった枠の戻る見込み（ISO。Issue #111）。依頼元が「いつ頼み直せるか」を読めるように残す
+  const reasonLine = s => `${s.reason}${s.detail ? ` (${s.detail})` : ''}${s.window?.usedPercent != null ? ` ${s.window.label ?? ''} ${s.window.usedPercent}%` : ''}${s.window?.pace != null ? ` pace ${s.window.pace}` : ''}${s.until ? ` until ${s.until}` : ''}`;
   return skipped.map(s => {
     const label = s.account === undefined ? '' : ` [${String(s.accountLabel || (s.account === '' ? 'login' : 'account')).replace(/[\]\r\n]/g, ' ')}]`;
     return `- ${s.candidate}${label} (${s.tier}): ${reasonLine(s)}`;

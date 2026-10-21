@@ -229,6 +229,8 @@ export default async function (t) {
     reason: a.reason, window: a.window })));
   t.ok('エラー用の候補行はアカウントごとに異なる理由と枠を全部出す', reasonLines.includes('- claude:opus [week] (t4): quota_full week 100%')
     && reasonLines.includes('- claude:opus [five] (t4): quota_full 5h 100%'), reasonLines);
+  const heldLine = formatSkippedCandidates([{ candidate: 'devin:swe-2-high', tier: 't3', reason: 'recently_limited', until: '2026-10-21T07:36:12.346Z' }]);
+  t.ok('上限で止まった枠の候補行には、戻す時刻（until）を添える（Issue #111）', heldLine.includes('- devin:swe-2-high (t3): recently_limited until 2026-10-21T07:36:12.346Z'), heldLine);
   const perAccountStates = candidateStates({ settings: softSettings, usage: fullUsage, now: NOW }).find(s => s.candidate === 'claude:opus');
   t.ok('設定の状態は Claude の認証ごとに使えるか・理由と枠を持つ', perAccountStates.accounts.length === 2
     && perAccountStates.accounts.every(a => !a.usable && a.reason === 'quota_full' && a.window.usedPercent === 100));

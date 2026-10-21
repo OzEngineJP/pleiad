@@ -8,6 +8,10 @@
 .usage-window progress::-moz-progress-bar { background: var(--fill-primary); color: var(--on-fill); border-radius: var(--r-pill); }
 .usage-window small { grid-column: 1 / -1; }
 .usage-note { color: var(--ink-weak); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+/* 短い間隔の上限で今止まっている枠（Issue #111）。日次・週次の枠が 0% でも使えないことを、枠の表より先に出す */
+.usage-held { background: var(--surface-2); border-radius: var(--r-s); padding: 8px 12px; margin-block: 12px; color: var(--ink-strong); }
+.usage-held p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.usage-held small { display: block; }
 .usage-table { width: 100%; font-size: 12px; border-collapse: collapse; }
 .usage-table th, .usage-table td { padding: 8px 4px; text-align: right; font-weight: normal; }
 .usage-table th:first-child { text-align: left; }
@@ -52,6 +56,7 @@
 .usage-agent .an{display:flex;gap:8px;align-items:baseline;font-weight:600;min-width:0}
 .usage-agent .an small{font-weight:400;color:var(--ink-weak);font-size:var(--fs-xs);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .usage-agent .usage-note{margin:4px 0}
+.usage-agent .usage-held{margin:6px 0;padding:6px 10px;font-size:var(--fs-xs)}
 .usage-agent .btn{margin-top:6px}
 .usage-agent.usage-old .usage-rows{opacity:.55}
 /* 行ごとに grid を分けると名前の幅で棒の頭がずれるので、エージェントごとに 1 つの grid に並べる */

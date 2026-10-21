@@ -17,6 +17,8 @@ const UNDELIVERED = new Set(['none', 'pending', 'delivering']);
 const MIRROR_FIELDS = [...REMOTE_TASK_FIELDS.flatMap(f => f.mirror ? [f.mirror].flat() : f.plain ? [f.wire] : []), 'cancelPending', 'hostLost'];
 // ホストの子を止める依頼を待つ上限。応答しないホストが、会話の中断・「すべて止める」を長く止めない（届かなかった分は cancelPending でつながり直したときに送り直す）
 const CANCEL_HOST_MS = 3000;
+// 上限で止まった枠（エージェント・モデル・アカウント）。完了通知が、自動の振り分けでいつまで飛ばすかを引くのに使う（Issue #111）
+const slotOf = limit => typeof limit?.backend === 'string' ? { backend: limit.backend, model: limit.model ?? null, account: limit.account ?? null } : {};
 // ホストが便りで返す taskId の形。端末の台帳の鍵にするので、形を確かめる（__proto__ や手元のタスクの ID を入れさせない）
 const TASK_ID = /^ply-task-[0-9a-f-]{36}$/;
 // 保存障害の間、スケジューラーが保存をやり直す間隔の上限（ms）。500ms から倍にしていく
@@ -510,7 +512,7 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
           delete row.stoppedBackground;
           row.status = controller.signal.aborted ? 'cancelled' : result?.outcome === 'ok' ? (row.queue.length ? 'queued' : 'completed') : 'failed';
           // 使用量の上限で止まった（失敗のうち、待てば同じ委譲先で続けられるもの）。解除時刻と枠を残す（ADR 0229）
-          if (row.status === 'failed' && result?.outcome === 'limited') row.limit = { resetsAt: result.limit?.resetsAt ?? null, window: result.limit?.window ?? null };
+          if (row.status === 'failed' && result?.outcome === 'limited') row.limit = { resetsAt: result.limit?.resetsAt ?? null, window: result.limit?.window ?? null, ...slotOf(result.limit) };
           else delete row.limit;
           if (['failed', 'cancelled'].includes(row.status)) dropInstructions(row);
         }, 'run.result');

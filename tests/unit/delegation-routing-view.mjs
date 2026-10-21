@@ -1,6 +1,6 @@
 // 委譲カードの振り分けの理由と設定 › 委譲の組み立て（web/delegation-routing-view.mjs・web/delegation-settings.mjs）。DOM の大半は触らず、文と並びだけ見る
 import assert from 'node:assert/strict';
-import { lang, setLanguage } from '../../web/i18n.mjs';
+import { lang, setLanguage, fmt } from '../../web/i18n.mjs';
 import { routingLine, skippedPhrase, judgeLine, tierLine, yesSignals, fallbackText, retryCandidates, retryPanel, usageRows, usageSummary, isAutoRouting, fallbackName, routingDetail, pinnedDetail, compactionLine,
   skipText, parseRoutingFailure, groupSkipped, groupText, routingFailureParts } from '../../web/delegation-routing-view.mjs';
 import { diffFromDefaults, setupDelegationSettings } from '../../web/delegation-settings.mjs';
@@ -34,6 +34,11 @@ async function japaneseCases(t) {
   assert.equal(routingLine({ ...routing, baseTier: 't4', tier: 't3', skipped: [] }, names), '実装・中 → Codex gpt-6-sol · 下の段から選んだ');
   assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'pace_high', window: { label: '週次', pace: 1.83 } }, names), 'Sonnet は週次のペースが 1.83 倍で飛ばした');
   assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'unavailable' }, names), 'Sonnet は使えないため飛ばした');
+  // 上限で止まった枠は、日次・週次が 0% でも止まっている。いつまで飛ばすかを出す（Issue #111）
+  const heldUntil = '2026-10-21T07:36:12.000Z';
+  assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'recently_limited', until: heldUntil }, names),
+    `Sonnet は上限に当たって解除を待っているため ${fmt.time(new Date(heldUntil))} まで飛ばす`);
+  assert.equal(skippedPhrase({ candidate: 'claude:sonnet', reason: 'recently_limited', until: 'x' }, names), skippedPhrase({ candidate: 'claude:sonnet', reason: 'recently_limited' }, names), '読めない時刻は添えない');
   t.ok('1 行の理由は「種類・難しさ → 委譲先」と、飛ばした最初の候補と理由', true);
 
   assert.equal(judgeLine(routing), 'Jev');
@@ -169,6 +174,11 @@ function failure(t, names) {
   const en = 'No delegation target is usable (kind implement, difficulty high). Skipped candidates:\n- claude:opus (t4): unavailable\nRetry with an explicit backend, or ask the user.';
   assert.deepEqual(parseRoutingFailure(en), { kind: 'implement', difficulty: 'high', skipped: [{ candidate: 'claude:opus', tier: 't4', reason: 'unavailable' }] });
   assert.equal(parseRoutingFailure('kind は必須です'), null, '振り分けの失敗でない文は読まない');
+  // 上限で止まった枠の行は、戻る見込み（until）も読み、候補ごとの一覧に出す（Issue #111）
+  const held = parseRoutingFailure('使える委譲先がありません（種類 implement、難しさ mid）。飛ばした候補:\n- devin:swe-2-high (t3): recently_limited until 2026-10-21T07:36:12.346Z');
+  assert.deepEqual(held.skipped, [{ candidate: 'devin:swe-2-high', tier: 't3', reason: 'recently_limited', until: '2026-10-21T07:36:12.346Z' }]);
+  const [, heldFold] = routingFailureParts(held, { names });
+  assert.ok(heldFold.textContent.includes(`${fmt.time(new Date('2026-10-21T07:36:12.346Z'))} まで`), heldFold.textContent);
   t.ok('エラー文から種類・難しさ・候補の行（理由・中身・枠・ペース）を読む。文の言語によらない', true);
 
   const groups = groupSkipped(parsed.skipped);

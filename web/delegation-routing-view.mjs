@@ -67,6 +67,12 @@ export function targetText(target, names = defaultNames) {
 }
 const accountName = row => row.accountLabel || (row.account === '' ? t('routing.detail.loginAccount') : row.account ?? '');
 
+/** 上限で止まって飛ばした候補の戻る見込み（Date）。無い・読めなければ null */
+function untilOf(skipped) {
+  const until = ['retry_waiting', 'recently_limited'].includes(skipped.reason) && skipped.until ? new Date(skipped.until) : null;
+  return until && Number.isFinite(until.getTime()) ? until : null;
+}
+
 /** 飛ばした候補の一言（「Sonnet は週次 73% で飛ばした」） */
 export function skippedPhrase(skipped, names = defaultNames) {
   const { backend, model } = splitCandidate(skipped.candidate);
@@ -75,6 +81,9 @@ export function skippedPhrase(skipped, names = defaultNames) {
   if (skipped.reason === 'pace_high' && w?.pace != null) return t('routing.line.skippedPace', { name, window: w.label ?? '', pace: w.pace });
   if (['quota_high', 'pace_unknown'].includes(skipped.reason) && percent(w?.usedPercent) != null)
     return t('routing.line.skippedWindow', { name, window: w.label ?? '', percent: percent(w.usedPercent) });
+  // 上限で止まった枠は、いつまで飛ばすかを添える（日次・週次が 0% でも止まっていることがある。Issue #111）
+  const until = untilOf(skipped);
+  if (until) return t('routing.line.skippedUntil', { name, reason: skipText(skipped.reason), time: fmt.time(until) });
   return t('routing.line.skippedReason', { name, reason: skipText(skipped.reason) });
 }
 
@@ -213,11 +222,11 @@ export function parseRoutingFailure(text) {
       (skipped.at(-1).accounts ??= []).push({ label, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
       continue;
     }
-    const m = /^- ([a-z]+:\S+)(?: \[([^\]]+)\])? \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?\s*$/.exec(line);
+    const m = /^- ([a-z]+:\S+)(?: \[([^\]]+)\])? \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?(?: until (\S+))?\s*$/.exec(line);
     if (!m) continue;
-    const [, candidate, accountLabel, tier, reason, detail, label, used, pace] = m;
+    const [, candidate, accountLabel, tier, reason, detail, label, used, pace, until] = m;
     const window = used != null || pace != null ? { label: label ?? '', ...(used != null ? { usedPercent: Number(used) } : {}), ...(pace != null ? { pace: Number(pace) } : {}) } : null;
-    skipped.push({ candidate, ...(accountLabel ? { accountLabel } : {}), tier, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
+    skipped.push({ candidate, ...(accountLabel ? { accountLabel } : {}), tier, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}), ...(until ? { until } : {}) });
   }
   return { kind: head[1], difficulty: head[2], skipped };
 }
@@ -295,7 +304,8 @@ export function routingFailureParts(failure, { names = defaultNames, open = () =
     li.title = s.candidate;
     const w = s.window;
     const reason = skipText(s.reason, s.detail) + (w?.pace != null && s.reason === 'pace_high' ? `${t('routing.line.join')}${w.label ?? ''} ${t('routing.detail.pace', { pace: w.pace })}`
-      : percent(w?.usedPercent) != null ? `${t('routing.line.join')}${w.label ?? ''} ${percent(w.usedPercent)}%` : '');
+      : percent(w?.usedPercent) != null ? `${t('routing.line.join')}${w.label ?? ''} ${percent(w.usedPercent)}%` : '')
+      + (untilOf(s) ? `${t('routing.line.join')}${t('routing.detail.until', { time: fmt.time(untilOf(s)) })}` : '');
     li.append(el('span', 'tier', tierText(s.tier)), el('span', 'nm', [names.model(backend, model) || model, names.backend(backend), s.accountLabel].filter(Boolean).join(t('routing.line.join'))), el('span', 'rs', reason));
     for (const a of s.accounts ?? []) {
       const name = a.label || a.account || t('routing.detail.loginAccount');
