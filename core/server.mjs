@@ -775,6 +775,8 @@ const plusHost = createPlusHost({
   // 登録中・登録済みの状態変化は中継リンクの条件へ反映する。ここから再登録を始めると onHostState と循環する。
   onHostState: s => { remote.setPlusHostState(s); syncPlusLink({ registerHost: false }); },
   syncPublicKey: () => plusSync ? plusSync.publicKey() : Promise.resolve(null),
+  // api の受け入れの版（/v1/auth/config の admission）。v2 なら同期の公開鍵を台帳の登録に載せない
+  apiAdmission: () => plusConfig.get().then(c => c?.admission ?? null),
   log: line => console.log(`  ${line}`),
 });
 // Pleiad Plus の同期（core/plus/sync/。docs/plus.md「同期」）。設定は画面からの変更と同じ検査（normalize・write）を通して書く
@@ -791,6 +793,8 @@ plusSync = createPlusSync({
   openFolder: dir => openOnHost('open', dir, { directory: true }),
   // api の 403 host（この PC の登録が外れた）→ 台帳を見直し、外れていれば登録し直す（docs/plus.md「同期の始め直しと登録の外れ」）
   onHostLost: () => plusHost.recheck(),
+  // 同期の券（v2 の api）はホストの鍵で取る。鍵がまだ無ければ作らずに待つ
+  identity: () => remote.store.peekIdentity(),
   log: line => console.log(`  ${line}`),
 });
 // 同期の状態が変わるたびに全画面へ（docs/plus.md「同期」。ポーリングはしない）
@@ -879,6 +883,45 @@ const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
   hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
+});
+// 同期で届いた変更の受け入れ待ち（ADR 0246）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
+plusSync.onChange(({ inbox: count, inboxAt }) => {
+  try {
+    inbox.standing('syncInbox', count > 0 && inboxAt
+      ? { version: inboxAt, at: Date.parse(inboxAt), data: { ask: 'syncInbox', count, settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// 新しい PC が同期の鍵を待っている（v2）: 承認を待つ申し込みがあれば、あなた待ちの行を 1 つ置く（PC の組が版）
+plusSync.onChange(({ approvals }) => {
+  try {
+    const list = Array.isArray(approvals) ? approvals : [];
+    inbox.standing('syncApproval', list.length
+      ? { version: list.map(a => `${a.hostId}:${a.code}`).join(','), at: Date.now(), data: { ask: 'syncApproval', count: list.length, title: list[0].name ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が同期の回復を頼んでいる（この PC は今の鍵を持っていて止められる）: 必ず知らせる。頼んだ時刻が版
+plusSync.onChange(({ recoveryAlert }) => {
+  try {
+    const at = recoveryAlert?.requestedAt ?? null;
+    inbox.standing('syncRecovery', recoveryAlert
+      ? { version: String(at ?? recoveryAlert.readyAt ?? 'recovery'), at: Number.isFinite(Date.parse(at)) ? Date.parse(at) : Date.now(),
+        data: { ask: 'syncRecovery', title: recoveryAlert.requestedByName ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が、前の鍵では確かめられない新しい鍵で始め直した（回復など）: この PC は自動で移らず、人が選ぶのを待つ。
+// 新しい keyId が版。通信の誤りの間は置いたまま（消して置き直すと、また未読になる）
+plusSync.onChange(({ state, wait }) => {
+  if (state === 'error') return;
+  try {
+    const r = state === 'waiting_key' ? wait?.restarted ?? null : null;
+    inbox.standing('syncRestarted', r
+      ? { version: `${r.keyId}${r.unverified ? ':unverified' : ''}`, at: Number.isFinite(Date.parse(r.at)) ? Date.parse(r.at) : Date.now(),
+        data: { ask: 'syncRestarted', title: r.byName ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
 });
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
@@ -5325,6 +5368,17 @@ function opsDeps(lng = currentLocale()) {
       syncReset: (confirm) => plusSync.resetSync(confirm),
       hostReregister: () => plusHost.reregister(),
       syncOpenConflicts: () => plusSync.openConflictsFolder(),
+      syncInbox: () => plusSync.inboxList(),
+      syncInboxItem: (id) => plusSync.inboxItem(id),
+      syncInboxTake: (id, seen) => plusSync.inboxTake(id, seen),
+      syncInboxDrop: (id, seen) => plusSync.inboxDrop(id, seen),
+      syncApprove: (hostId, code) => plusSync.approveSync(hostId, code),
+      syncDeny: (hostId) => plusSync.denySync(hostId),
+      syncAcceptRestart: (keyId) => plusSync.acceptRestart(keyId),
+      syncRecoveryRequest: () => plusSync.requestRecovery(),
+      syncRecoveryCancel: () => plusSync.cancelRecovery(),
+      syncRecoveryComplete: () => plusSync.completeRecovery(),
+      syncRecoveryStop: () => plusSync.stopRecovery(),
     },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）
     git: opsGit,

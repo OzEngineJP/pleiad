@@ -9296,6 +9296,14 @@ async function openFromSearch(id, jump) {
  */
 async function openFromNotification(target) {
   if (narrowView.matches) setDrawer(false);
+  // 同期で届いた変更（ADR 0246）は 設定 › Pleiad Plus の「届いた変更」、鍵を待つ PC（同期の鍵の承認）は Plus の面を開く
+  if (target?.settings === 'plus') {
+    if ($('onboardingDialog').open) $('onboardingDialog').close();
+    onboarding.open('plus');
+    if (target.pane === 'inbox') plusSettings.openInbox();
+    else plusSettings.openMain();
+    return;
+  }
   await viewAddress.go(target);
 }
 

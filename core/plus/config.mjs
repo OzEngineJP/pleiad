@@ -56,6 +56,8 @@ export function parseAuthConfig(body) {
     },
     urls: Object.fromEntries(['login', 'account', 'profile', 'relay', 'refresh'].map(k => [k, typeof urls[k] === 'string' ? urls[k] : null])),
     minClient: body.minClient && typeof body.minClient === 'object' ? { ...body.minClient } : {},
+    // 受け入れの版（1 = 古い道も通る、2 = 古い道は無い）。欄が無ければ null（受け入れの v2 を知らない前の版の api）
+    admission: body.admission === 1 || body.admission === 2 ? body.admission : null,
   };
 }
 

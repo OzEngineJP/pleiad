@@ -36,6 +36,8 @@ const SUITES = [
   './unit/plus-settings.mjs',
   // 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs）: 状態ごとの行とボタン・時刻と MB の書式（DOM の代役）
   './unit/plus-sync-ui.mjs',
+  // 同期の「届いた変更」の面（web/plus-inbox.mjs）: 1 件ずつ開く・差分・取り込む／捨てる（DOM の代役）
+  './unit/plus-inbox-ui.mjs',
   './unit/remote-plus-ui.mjs',
   './unit/plus-hosts.mjs',
   // Plus の同期（core/plus/sync/）: 暗号・鍵の始め方と受け渡し・運ぶもの・2 台のホストの同期（偽の Plus と一時フォルダー）
@@ -43,6 +45,10 @@ const SUITES = [
   './unit/plus-sync-keys.mjs',
   './unit/plus-sync-targets.mjs',
   './unit/plus-sync-engine.mjs',
+  // 同期で届いた skill・指示ファイルの受け入れ待ち（取り込む・捨てる・手元の変更を上書きしない・中身の無い消した印を受けない）
+  './unit/plus-sync-inbox.mjs',
+  // 同期の鍵の受け渡しの承認（同期の券・確認コード・外した PC の締め出しと作り直し・回復・前の版の K からの移行）
+  './unit/plus-sync-admission.mjs',
   './unit/acp-error.mjs',
   './unit/slot-limits.mjs',
   './unit/opencode-v2.mjs',

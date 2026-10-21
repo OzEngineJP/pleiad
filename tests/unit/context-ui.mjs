@@ -2,7 +2,8 @@
 //   - 会話の頭の札の文言（Pleiad が渡したものだけ数え、エージェント任せの種類は名前で言う）
 //   - 開始時と今の差分（行単位）
 //   - MCP の追加シートのコマンドの分け方
-import { chipText, lineDiff, placeStatus } from '../../web/session-context.mjs';
+import { chipText, placeStatus } from '../../web/session-context.mjs';
+import { lineDiff } from '../../web/line-diff.mjs';
 import { estimateTokens } from '../../web/token-estimate.mjs';
 import { splitCommand, joinCommand } from '../../web/mcp-config.mjs';
 

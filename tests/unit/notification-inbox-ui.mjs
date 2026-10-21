@@ -1,7 +1,7 @@
 // 通知の一覧の画面（web/notification-inbox.mjs）の、DOM を持たない部分: 通知 1 件の文（種類・名前・題・場所・決着）とベルの印・名前。
 // 描画・キー・飛ぶ・強調は tests/browser/notification-inbox.cjs。辞書は日本語と英語の両方で、組み立てたキーがどれも訳されていることを見る。
 import { t, setLanguage } from '../../web/i18n.mjs';
-import { describeNotification, badgeState } from '../../web/notification-inbox.mjs';
+import { describeNotification, badgeState, notificationTarget } from '../../web/notification-inbox.mjs';
 
 export const name = 'notification-inbox-ui';
 export const title = '通知の一覧の画面: 通知の文（あなた待ち・失敗・完了・@あなた）・場所・決着・ベルの印と名前（日本語・英語）';
@@ -38,6 +38,31 @@ export default async function (tt) {
     d = describeNotification({ id: 'n5', kind: 'mention', actor: { kind: 'bot', name: 'Lynx' }, at: 1, unread: true, target: { channelId: 'c1', threadId: 't1', postId: 'p1' }, channelName: 'release-ci' }, t);
     tt.ok('@あなた は「Lynx が @あなた と書きました」・@・スレッドの題が無ければ #チャンネルだけ', d.line === 'Lynx が @あなた と書きました' && d.icon === 'mention' && d.place === '#release-ci');
     tt.ok('書いた人の名前が無い @あなた は「@あなた 宛ての投稿があります」', describeNotification({ id: 'n6', kind: 'mention', at: 1, unread: true, target: { channelId: 'c1' } }, t).line === '@あなた 宛ての投稿があります');
+    d = describeNotification({ id: 'n7', kind: 'wait', ask: 'syncInbox', count: 3, at: 1, unread: true, target: { settings: 'plus' } }, t);
+    tt.ok('同期で届いた変更は「同期で届いた変更が 3 件あります」・◆・場所は 設定 › Pleiad Plus', d.line === '同期で届いた変更が 3 件あります' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true, JSON.stringify(d));
+
+    d = describeNotification({ id: 'n8', kind: 'wait', ask: 'syncApproval', count: 1, title: 'lap', at: 1, unread: true, target: { settings: 'plus' } }, t);
+    tt.ok('新しい PC 1 台が鍵を待つ: 「lap が同期の鍵を待っています」・◆・場所は 設定 › Pleiad Plus', d.line === 'lap が同期の鍵を待っています' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true, JSON.stringify(d));
+    d = describeNotification({ id: 'n9', kind: 'wait', ask: 'syncApproval', count: 2, title: 'lap', at: 1, unread: true, target: { settings: 'plus' } }, t);
+    tt.ok('2 台以上・名前の無い 1 台は台数で書く', d.line === '2 台の PC が同期の鍵を待っています'
+      && describeNotification({ id: 'n10', kind: 'wait', ask: 'syncApproval', count: 1, title: '', at: 1, unread: true, target: { settings: 'plus' } }, t).line === '1 台の PC が同期の鍵を待っています', d.line);
+    d = describeNotification({ id: 'n11', kind: 'wait', ask: 'syncRecovery', title: 'tablet', at: 1, unread: true, target: { settings: 'plus' } }, t);
+    tt.ok('ほかの PC の回復: 「tablet が同期の回復を頼んでいます」・◆・場所は 設定 › Pleiad Plus（名前が無ければ「ほかの PC が」）',
+      d.line === 'tablet が同期の回復を頼んでいます' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true
+      && describeNotification({ id: 'n12', kind: 'wait', ask: 'syncRecovery', title: '', at: 1, unread: true, target: { settings: 'plus' } }, t).line === 'ほかの PC が同期の回復を頼んでいます', JSON.stringify(d));
+    d = describeNotification({ id: 'n13', kind: 'wait', ask: 'syncRestarted', title: 'tablet', at: 1, unread: true, target: { settings: 'plus' } }, t);
+    tt.ok('新しい鍵で始め直された: 受け取るか選ぶ行・◆・場所は 設定 › Pleiad Plus',
+      d.line === 'tablet が新しい鍵で同期を始め直しました。受け取るか選んでください' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true
+      && describeNotification({ id: 'n14', kind: 'wait', ask: 'syncRestarted', title: '', at: 1, unread: true, target: { settings: 'plus' } }, t).line.startsWith('同期が新しい鍵で始め直されました'), JSON.stringify(d));
+
+    tt.ok('開く先: 届いた変更の通知は「届いた変更」の面、鍵を待つ PC の通知は Plus の面、会話はそのまま',
+      notificationTarget({ ask: 'syncInbox', target: { settings: 'plus' } }).pane === 'inbox'
+      && notificationTarget({ ask: 'syncApproval', target: { settings: 'plus' } }).pane === undefined
+      && notificationTarget({ ask: 'syncApproval', target: { settings: 'plus' } }).settings === 'plus'
+      && notificationTarget({ ask: 'syncRecovery', target: { settings: 'plus' } }).pane === undefined
+      && notificationTarget({ ask: 'syncRestarted', target: { settings: 'plus' } }).settings === 'plus'
+      && notificationTarget({ kind: 'done', target: { sessionId: 's1' } }).sessionId === 's1'
+      && Object.keys(notificationTarget({})).length === 0);
 
     let b = badgeState({ unread: 0, waiting: 0 }, t);
     tt.ok('未読が無ければ印なし・名前は「通知」', b.show === false && b.label === '通知' && b.text === '');

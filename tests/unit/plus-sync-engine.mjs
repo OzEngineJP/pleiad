@@ -1,5 +1,6 @@
 // 同期のエンジン（core/plus/sync/engine.mjs、docs/plus.md「同期」）。偽の Plus（tests/lib/fake-plus.mjs）と 2 台のホストで、
 // バイト列のまま運ぶ・秘密情報と変数を運ばない・api に届くのは暗号文だけ・消すのが伝わる・競合と写しの片付け・5 秒まとめ・10 分ごと・同時に 1 本・
+// （skill と指示ファイルは受け入れ待ちに置き、取り込んでから書く。待ちそのものは plus-sync-inbox で見る）
 // 容量の上限と戻り・同期を切る・自分で書いたものを上げ直さない・決めた欄だけを送る、を確かめる。
 // 登録が外れた PC（403 host）・鍵を持つ PC が外れてもデータを消さない・始め直したあとの設定の勝ち負け（docs/plus.md「同期の始め直しと登録の外れ」）も見る。
 // 時計と fs.watch は差し替える。LLM も外のネットワークも使わない。
@@ -34,6 +35,8 @@ export default async function (t) {
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ps-eng-')));
   const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:9' });
   plus.state.syncLimitBytes = LIMIT;
+  // 券を知らない前の版の api の流れ（券・承認のある v2 の流れは plus-sync-admission）
+  plus.state.noTickets = true;
   for (const uid of [UID, UID2]) {
     plus.state.accounts[uid] = { uid, email: 'user@example.com', provider: 'test', status: 'plus', plan: { id: 'plus', name: 'Plus' }, limits: null, usage: null, sync: {} };
   }
@@ -118,6 +121,9 @@ export default async function (t) {
   const adv = async (h, ms) => { await h.clock.advance(ms); await settle(h); };
   const itemPuts = () => plus.state.syncBodies.filter(b => b.method === 'PUT' && b.path.startsWith('/v1/sync/items/'));
   const count = (h, what) => h.calls.filter(c => c === what).length;
+  // 届いた skill・指示ファイルは受け入れ待ちに置かれる。人が一覧で見た版（sha256・rev）を取り込んだことにする
+  const seenOf = m => ({ sha256: m.sha256 ?? null, rev: m.rev });
+  const takeAll = async h => { for (const m of await h.engine.inbox.list()) await h.engine.inbox.take(m.id, seenOf(m)); };
 
   try {
     // ================= A: 最初の 1 台 =================
@@ -150,6 +156,9 @@ export default async function (t) {
     t.ok('A: 5 分ごとの見回りで B に鍵を渡す', ledger.keys[b.hostId]?.wrappedBy === a.hostId, JSON.stringify(Object.keys(ledger.keys)));
     await b.engine.run();
     t.ok('B: 鍵を受けて idle', b.engine.status().state === 'idle', JSON.stringify({ s: b.engine.status(), logs: b.logs }));
+    t.ok('B: 届いた skill・指示ファイルは取り込むまで書かない', !(await exists(b.skill('demo', 'SKILL.md'))) && !(await exists(b.claudeMd)) && b.engine.status().inbox === 3,
+      JSON.stringify(b.engine.status()));
+    await takeAll(b);
     const bSkill = await fs.readFile(b.skill('demo', 'SKILL.md')).catch(() => null);
     t.ok('B: BOM・CRLF・末尾の改行の無さを含めて同じバイト列で届く', bSkill?.equals(crlfBom) === true);
     t.ok('B: 全体の指示ファイルと Pleiad の skill も届く', (await fs.readFile(b.claudeMd, 'utf8').catch(() => '')) === 'global instructions\n'
@@ -158,6 +167,7 @@ export default async function (t) {
     t.ok('B: 秘密の名前・.env のファイルは届かない', !(await exists(b.skill('demo', 'secret-notes.md'))) && !(await exists(b.skill('demo', '.env'))));
     t.ok('B: 受けたファイルの mtime は送った側の mtime', Math.abs((await fs.stat(b.skill('demo', 'SKILL.md'))).mtimeMs - (await fs.stat(a.skill('demo', 'SKILL.md'))).mtimeMs) < 2000);
     await a.engine.run();
+    await takeAll(a);
     t.ok('A: B の skill を受ける', (await fs.readFile(a.skill('from-b', 'SKILL.md'), 'utf8').catch(() => '')) === 'written on b\n');
 
     // ---- 自分で書いたものは上げ直さない
@@ -228,6 +238,7 @@ export default async function (t) {
     await adv(b, T0 + SYNC_RECEIVE_MS - 1 - b.clock.now());   // B を start したのは T0
     t.ok('B: 10 分たつまでは受けに行かない（5 分の見回りは鍵だけ）', count(b, 'GET /v1/sync/items') === bState0);
     await adv(b, 1);
+    await takeAll(b);
     t.ok('B: 10 分ごとに受ける', count(b, 'GET /v1/sync/items') > bState0 && (await fs.readFile(b.skill('demo', 'extra2.md'), 'utf8').catch(() => '')) === 'two' && b.store.colorish === 'green');
     t.ok('B: sync: false の設定は変えても届かない', b.store.machineOnly === undefined);
 
@@ -246,39 +257,53 @@ export default async function (t) {
     const delPut = itemPuts().at(-1);
     t.ok('A: 消した項目を deleted: true で上げる', JSON.parse(delPut.body).deleted === true);
     await b.engine.run();
+    await takeAll(b);
     t.ok('B: 消したのが届いてファイルが消える', !(await exists(b.skill('demo', 'extra.md'))) && (await exists(b.skill('demo', 'extra2.md'))));
     a.changeSetting('colorish', 'red');   // 既定に戻す → 項目は消える
     await adv(a, SYNC_DEBOUNCE_MS);
     await b.engine.run();
     t.ok('既定に戻した設定は、ほかの PC でも既定に戻る', b.store.colorish === 'red');
 
-    // ================= 競合 =================
+    // ================= 両方で変えたファイル: 待ちに置き、どちらの手元も書き換えない =================
     const target = 'conflict.md';
+    const conflictPath = `skills/claude/demo/${target}`;
     await put(a.skill('demo', target), 'base');
-    await a.engine.run(); await b.engine.run();
-    // 両方で変える。A が先に上げるが、B の方が新しい
-    await put(a.skill('demo', target), 'from a (older)');
-    await fs.utimes(a.skill('demo', target), new Date(T0 + 1000), new Date(T0 + 1000));
-    await put(b.skill('demo', target), 'from b (newer)');
-    await fs.utimes(b.skill('demo', target), new Date(T0 + 5000), new Date(T0 + 5000));
+    await a.engine.run(); await b.engine.run(); await takeAll(b);
+    await put(a.skill('demo', target), 'from a');
+    await put(b.skill('demo', target), 'from b');
     await a.engine.run();
     await b.engine.run();
-    t.ok('競合: mtime の新しい方（B）を採る', (await fs.readFile(b.skill('demo', target), 'utf8')) === 'from b (newer)');
     const conflictFiles = async h => (await fs.readdir(h.engine.conflictsDir, { recursive: true, withFileTypes: true }).catch(() => [])).filter(f => f.isFile());
+    const heldOnB = (await b.engine.inbox.list()).find(m => m.path === conflictPath);
+    t.ok('両方で変えたファイル: 相手の版は待ちに置き（変更）、手元の版はそのまま', (await fs.readFile(b.skill('demo', target), 'utf8')) === 'from b'
+      && heldOnB?.kind === 'change' && (await b.engine.inbox.item(heldOnB.id))?.incoming?.toString('utf8') === 'from a', JSON.stringify(heldOnB));
+    t.ok('ファイルでは写し（sync-conflicts）を作らない', (await conflictFiles(b)).length === 0 && b.engine.status().conflicts === 0);
+    await a.engine.run();
+    const heldOnA = (await a.engine.inbox.list()).find(m => m.path === conflictPath);
+    t.ok('手元の版は上げ直され、もう一方でも待ちに置かれる', (await fs.readFile(a.skill('demo', target), 'utf8')) === 'from a'
+      && (await a.engine.inbox.item(heldOnA?.id))?.incoming?.toString('utf8') === 'from b', JSON.stringify(heldOnA));
+    // A は B の版を取り込み、B は A の版を捨てる → 両方 B の版でそろい、何も上げ直さない
+    await a.engine.inbox.take(heldOnA.id, seenOf(heldOnA));
+    await b.engine.inbox.drop(heldOnB.id, seenOf(heldOnB));
+    const putsSettled = itemPuts().length;
+    await a.engine.run(); await b.engine.run();
+    t.ok('取り込む・捨てるでそろったあとは上げ直さない', itemPuts().length === putsSettled && (await fs.readFile(a.skill('demo', target), 'utf8')) === 'from b'
+      && (await a.engine.inbox.list()).length === 0 && (await b.engine.inbox.list()).length === 0);
+
+    // ---- 設定は今のまま: 両方で変えたら新しい方を採り、負けた方を写す
+    await adv(b, Math.max(0, a.clock.now() - b.clock.now()) + 60_000);
+    a.changeSetting('colorish', 'purple');   // A の時計で先
+    await adv(a, SYNC_DEBOUNCE_MS);
+    b.changeSetting('colorish', 'orange');   // B の時計で後
+    await adv(b, SYNC_DEBOUNCE_MS);
     const bc = await conflictFiles(b);
     const bcContent = bc.length ? await fs.readFile(path.join(bc[0].parentPath ?? bc[0].path, bc[0].name), 'utf8') : '';
-    t.ok('競合: 負けた方（A の版）を sync-conflicts/<日時>/<論理名> に写す', bc.length === 1 && bcContent === 'from a (older)'
-      && path.relative(b.engine.conflictsDir, path.join(bc[0].parentPath ?? bc[0].path, bc[0].name)).split(path.sep).slice(1).join('/') === `skills/claude/demo/${target}`,
-      JSON.stringify(bc.map(f => path.join(f.parentPath ?? f.path, f.name))));
-    t.ok('競合: 状態に写しの数が出る', b.engine.status().conflicts === 1);
+    t.ok('設定の競合: 新しい方（B）を採り、負けた方（A の値）を sync-conflicts/<日時>/<論理名> に写す', b.store.colorish === 'orange' && bc.length === 1
+      && bcContent.includes('purple') && path.relative(b.engine.conflictsDir, path.join(bc[0].parentPath ?? bc[0].path, bc[0].name)).split(path.sep).slice(1).join('/') === 'settings/colorish.json',
+      JSON.stringify({ v: b.store.colorish, files: bc.map(f => path.join(f.parentPath ?? f.path, f.name)) }));
+    t.ok('設定の競合: 状態に写しの数が出る', b.engine.status().conflicts === 1);
     await a.engine.run();
-    t.ok('競合: 勝った版がもう一方にも届く', (await fs.readFile(a.skill('demo', target), 'utf8')) === 'from b (newer)');
-    // 同じ mtime なら相手
-    await put(a.skill('demo', target), 'tie a');
-    await put(b.skill('demo', target), 'tie b');
-    for (const h of [a, b]) await fs.utimes(h.skill('demo', target), new Date(T0 + 9000), new Date(T0 + 9000));
-    await a.engine.run(); await b.engine.run();
-    t.ok('競合: mtime が同じなら相手の版を採る', (await fs.readFile(b.skill('demo', target), 'utf8')) === 'tie a');
+    t.ok('設定の競合: 勝った値がもう一方にも届く', a.store.colorish === 'orange');
 
     // ---- 30 日を過ぎた写しは start のときに消す
     const pad = n => String(n).padStart(2, '0');
@@ -324,11 +349,12 @@ export default async function (t) {
     await a.engine.run();
     t.ok('上限が空けば戻り、残っていた項目を上げる', a.engine.status().state === 'idle' && a.engine.status().limitBytes === LIMIT && JSON.parse(itemPuts().at(-1).body).deleted === false);
     await b.engine.run();
+    await takeAll(b);
     t.ok('戻ったあとの項目はほかの PC に届く', (await fs.readFile(b.skill('demo', 'quota.md'), 'utf8').catch(() => '')) === 'q'.repeat(2000));
 
     // ================= 409 rev を受けたら、受けてから上げ直す =================
     await put(a.skill('demo', 'race.md'), 'r0');
-    await a.engine.run(); await b.engine.run();
+    await a.engine.run(); await b.engine.run(); await takeAll(b);
     await put(b.skill('demo', 'race.md'), 'r-b');
     await fs.utimes(b.skill('demo', 'race.md'), new Date(T0 + 20_000), new Date(T0 + 20_000));
     await b.engine.run();
@@ -341,9 +367,13 @@ export default async function (t) {
     await a.engine.run();
     const racePuts = plus.state.syncBodies.slice(raceBodies).filter(x => x.method === 'PUT' && x.path.startsWith('/v1/sync/items/'));
     t.ok('409 rev（current 付き）を受ける', a.errors.slice(raceErrors).some(e => e === 'PUT /v1/sync/items 409 conflict rev +current'), JSON.stringify(a.errors.slice(raceErrors)));
-    t.ok('409 rev のあと、相手の版を受けて、新しい手元の版を上げ直す', (await fs.readFile(a.skill('demo', 'race.md'), 'utf8')) === 'r-a'
+    t.ok('409 rev のあと、相手の版を受けて、手元の版を上げ直す', (await fs.readFile(a.skill('demo', 'race.md'), 'utf8')) === 'r-a'
       && racePuts.length === 2 && JSON.parse(racePuts[1].body).baseRev === JSON.parse(racePuts[0].body).baseRev + 1, JSON.stringify(racePuts.map(x => x.body.slice(0, 40))));
+    const raceHeld = (await a.engine.inbox.list()).find(m => m.path === 'skills/claude/demo/race.md');
+    t.ok('409 rev で受けた相手の版は、A の待ちに置く', raceHeld?.kind === 'change', JSON.stringify(raceHeld));
+    if (raceHeld) await a.engine.inbox.drop(raceHeld.id, seenOf(raceHeld));
     await b.engine.run();
+    await takeAll(b);
     t.ok('上げ直した版がほかの PC に届く', (await fs.readFile(b.skill('demo', 'race.md'), 'utf8')) === 'r-a');
     plus.state.syncFail.length = 0;
 
@@ -508,11 +538,13 @@ export default async function (t) {
     t.ok('鍵を渡した PC の状態の sharedTo に、渡した先（名前つき）が載る',
       a2.engine.status().sharedTo.length === 1 && a2.engine.status().sharedTo[0].hostId === c2.hostId && a2.engine.status().sharedTo[0].name === 'c2', JSON.stringify(a2.engine.status().sharedTo));
     await c2.engine.run();
+    await takeAll(c2);
     t.ok('C2 は鍵を受けて、A2 の項目を受ける', c2.engine.status().state === 'idle' && c2.engine.status().wait === null
       && (await fs.readFile(c2.skill('mine-a2', 'more.md'), 'utf8').catch(() => '')) === 'while removed\n');
     t.ok('初めて加わる PC は、アカウントの設定を採る（手元の pink ではなく blue）', c2.store.colorish === 'blue');
     t.ok('どの PC の手元のファイルも消えない', await exists(a2.skill('mine-a2', 'SKILL.md')) && await exists(c2.skill('mine-c2', 'SKILL.md')));
     await a2.engine.run();
+    await takeAll(a2);
     t.ok('C2 の手元にあったものも A2 に届く', (await fs.readFile(a2.skill('mine-c2', 'SKILL.md'), 'utf8').catch(() => '')) === 'skill on c2\n');
 
     // ================= 始め直したあと、鍵を受けた PC の設定が負けない =================
