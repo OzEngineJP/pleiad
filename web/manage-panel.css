@@ -211,7 +211,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .sync-what-body { padding:4px 0 8px; display:flex; flex-direction:column; gap:6px; }
 .sync-what-body .sync-what-line { margin:0; line-height:1.5; }
 .sync-confirm-title { font-weight:600; }
-.btn.rm-danger { color:var(--diff-del-ink); }
+.btn.rm-danger { color:var(--ink-strong); font-weight:600; }
 .rm-strong { color:var(--ink-strong); font-weight:600; }
 /* ＋ の流れのダイアログ（アプリを入れる › つなぎ方 › つなぐ › 完了）。戻る・次へ・やめるはどの段でも同じ位置 */
 .rm-wiz { position:fixed; inset:0; margin:auto; width:min(540px,calc(100vw - 32px)); min-height:min(420px,calc(100dvh - 48px)); max-height:calc(100dvh - 48px); overflow:auto;
