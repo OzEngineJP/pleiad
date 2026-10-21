@@ -222,4 +222,30 @@ export default function (t) {
     assert.deepEqual(view(r), [['user', 'User original'], ['assistant', 'First answer'], ['user', 'Second original'], ['assistant', 'Second answer']]);
     t.ok('Grok でも、発言は原文で記録し、位置のずれた再生で前の行を上書きしない', uuids(r).every((u, i) => u === before[i]));
   }
+
+  // ---- Grok の途中送信: 再生では包み（The user sent a message while you were working: <user_query>…）に入って返り、
+  //      続けて送った分は 1 行につながる。包みを外して 1 通ずつにし、ライブで置いた行と重ねる（読み直しで二重に出さない。Issue #109）
+  {
+    const wrap = text => `The user sent a message while you were working:\n<user_query>\n${text}\n</user_query>\nIf the user is asking for a response, address the user first. After replying, complete any unfinished tasks from previous turns.`;
+    const turn = turnOf('Run the steps');
+    const r = record(), mapper = createGrokMapper('nid');
+    mapper.beginTurn(turn.sent, turn.shown);
+    mapper.accept(chunk('user', turn.sent));
+    for (const u of [chunk('agent', 'STEP_A'), ...tool('t1', 'ok')]) mapper.accept(u);
+    mapper.injectUser('Instruction X', 'ix');
+    for (const u of [chunk('agent', 'STEP_B'), ...tool('t2', 'ok')]) mapper.accept(u);
+    mapper.injectUser('Instruction Y', 'iy1');
+    mapper.injectUser('Instruction Y', 'iy2');
+    mapper.accept(chunk('agent', 'FINISHED'));
+    mapper.finish();
+    mergeMessages(r, mapper.messages(), 'grok');
+    const before = view(r);
+    const replayed = createGrokMapper('nid');
+    for (const u of [chunk('user', turn.sent), chunk('agent', 'STEP_A'), ...tool('t1', 'ok'), chunk('user', wrap('Instruction X')),
+      chunk('agent', 'STEP_B'), ...tool('t2', 'ok'), chunk('user', wrap('Instruction Y') + wrap('Instruction Y')), chunk('agent', 'FINISHED')]) replayed.accept(u);
+    mergeMessages(r, replayed.messages(), 'grok');
+    assert.deepEqual(view(r), before);
+    assert.deepEqual(view(r).filter(([role]) => role === 'user').map(([, text]) => text), ['Run the steps', 'Instruction X', 'Instruction Y', 'Instruction Y']);
+    t.ok('Grok の途中送信の再生は、包みを外して 1 通ずつライブの行に重なり、読み直しても同じ指示が二重に出ない', true);
+  }
 }

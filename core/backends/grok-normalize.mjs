@@ -13,6 +13,18 @@ const contentText = value => {
   return '';
 };
 const inputOf = value => value && typeof value === 'object' ? value : value == null ? {} : { value };
+// Grok が途中送信（_x.ai/interject）を履歴に残すときの包み（session/load の再生でだけ返る。実測 1.0.62）
+const INTERJECTION = /The user sent a message while you were working:\n<user_query>\n([\s\S]*?)\n<\/user_query>\nIf the user is asking for a response, address the user first\. After replying, complete any unfinished tasks from previous turns\./g;
+/** 本文の末尾に続く包みを外す。{ head: 包みの前の本文, parts: 包みの中身 }。末尾が包みで終わらなければ null */
+function splitInterjections(text) {
+  const found = [...text.matchAll(INTERJECTION)];
+  let end = text.length;
+  const parts = [];
+  for (let i = found.length - 1; i >= 0 && found[i].index + found[i][0].length === end; i--) {
+    parts.unshift(found[i][1]); end = found[i].index;
+  }
+  return parts.length ? { head: text.slice(0, end), parts } : null;
+}
 
 export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = null, messageNamespace = null } = {}) {
   const messages = [], tools = new Map(), toolStates = new Map();
@@ -58,6 +70,17 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       turnBoundary = false;
     }
   }
+  // 再生の途中送信は Grok の包み（INTERJECTION）に入って返り、続けて送った分は 1 行につながる。
+  // 包みを外して 1 通ずつ別の user 行にする（ライブで置いた行と同じ本文にし、記録に重ねたとき二重に出さない）。
+  // 包みの前の本文（返答の前に届いた分が続いたターンの発言）はその行に残す
+  function unwrapInterjections(message) {
+    const split = splitInterjections(message.text);
+    if (!split) return;
+    const [head, ...parts] = split.head ? [split.head, ...split.parts] : split.parts;
+    message.text = head;
+    for (const part of parts) { current = null; row('user').text = part; }
+    current = null;
+  }
   function row(role) {
     if (current?.role !== role) {
       const uuid = `${sessionId}:${messageNamespace ? `${messageNamespace}:` : ''}${role}:${messages.length}`;
@@ -100,6 +123,7 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       const message = row('user');
       message.text += text;
       if (typeof message.sent === 'string') message.sent += text;
+      if (!live) unwrapInterjections(message);
     } else if (kind === 'agent_message_chunk') {
       expectedEcho = null;
       flushQueued();

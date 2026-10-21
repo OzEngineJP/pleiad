@@ -68,8 +68,9 @@ export function injectTaskInstructions(instructions = [], messages = []) {
   const anchorIndex = anchor => {
     if (!anchor) return -1;
     if (anchor.kind === 'instruction') return out.findIndex(x => x.role === 'instruction' && x.instruction?.id === anchor.v);
-    return out.findIndex(x => (anchor.kind === 'uuid' && x.uuid === anchor.v)
-      || (anchor.kind === 'msg' && (x.messageId === anchor.v || x.instruction?.deliveryId === anchor.v))
+    // ツールの錨で分けた発言は前後とも同じ uuid。発言の錨（本文を書き終えた後）は後ろの片に付ける
+    if (anchor.kind === 'uuid') return out.findLastIndex(x => x.role !== 'instruction' && x.uuid === anchor.v);
+    return out.findIndex(x => (anchor.kind === 'msg' && (x.messageId === anchor.v || x.instruction?.deliveryId === anchor.v))
       || (anchor.kind === 'tool' && (x.toolCalls ?? []).some(c => c.id === anchor.v)));
   };
   const tsOf = m => { const t = m?.at; if (Number.isFinite(t)) return t; const p = Date.parse(t); return Number.isFinite(p) ? p : null; };
@@ -95,10 +96,12 @@ export function injectTaskInstructions(instructions = [], messages = []) {
       if (instruction.anchor?.kind === 'tool') {
         const calls = row.toolCalls ?? [];
         const p = calls.findIndex(c => c.id === instruction.anchor.v);
-        if (p >= 0 && p < calls.length - 1) {
-          // ai+1 に指示を差すと、後半の呼び出しが指示の後ろへ押し出される
-          out[ai] = { ...row, toolCalls: calls.slice(0, p + 1) };
-          out.splice(ai + 1, 0, { ...row, text: '', thinking: undefined, toolCalls: calls.slice(p + 1) });
+        // ツールの後に書いた本文を同じ発言に畳む形（codex の textAfterTools）では、本文も受付後の出力
+        const textAfter = Boolean(row.textAfterTools && row.text);
+        if (p >= 0 && (p < calls.length - 1 || textAfter)) {
+          // ai+1 に指示を差すと、後半の呼び出し（と後の本文）が指示の後ろへ押し出される
+          out[ai] = { ...row, toolCalls: calls.slice(0, p + 1), ...(textAfter ? { text: '' } : {}) };
+          out.splice(ai + 1, 0, { ...row, text: textAfter ? row.text : '', thinking: undefined, toolCalls: calls.slice(p + 1) });
           eff.splice(ai + 1, 0, eff[ai]);
         }
       }
@@ -114,4 +117,13 @@ export function injectTaskInstructions(instructions = [], messages = []) {
     out.splice(i, 0, ins(instruction)); eff.splice(i, 0, instruction.at ?? null);
   }
   return out.filter(m => !deliveryRows.has(m));
+}
+
+/**
+ * 待機中の指示が、今の作業の途中ではなく次のターンで届くか（画面はそう書き添える）。
+ * 走っている子へ途中で入力を渡せないエージェント（能力の印 steer = false）と、設定の変更と同じ呼び出しで積んだ指示（nextTurn）は、
+ * 今のターンが終わるまで待つ。待機中の子（live でない）へはすぐ新しいターンで渡すので、書き添えない
+ */
+export function waitsForNextTurn(instruction, { live = false, steer = true } = {}) {
+  return instruction?.state === 'queued' && Boolean(live) && (instruction.nextTurn === true || steer === false);
 }

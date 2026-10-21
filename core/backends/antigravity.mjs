@@ -309,6 +309,7 @@ export const backend = {
     // 「渡った」合図は出せない: session.prompt は入力を書くだけで、agy が読んで会話に入れたかの応答は無い。
     // 渡ったかは返答の中身（ANSWER_EVENTS）でしか分からない
     promptDelivery: false,
+    steer: false,   // agy の stream-json は走っているターンへ入力を足せない（2 行目は別のターンになる）。追加指示は次のターンで渡す
     handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
     // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
     // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに渡す。可視化の指示は渡さない（発言に入れていない）

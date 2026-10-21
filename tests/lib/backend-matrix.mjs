@@ -41,6 +41,7 @@ export const ABOUT = {
   instructionsAtStart: '指示は会話の始めにしか効かない（人格を直したら次のターンで渡し直す）',
   failureDiagnostics: '失敗の理由を会話の控えに残す',
   promptDelivery: '発言が相手に渡った合図を返答の中身と別に出せる（— なら合図が無くても届いていることがある）',
+  steer: '走っている作業へ追加指示を途中で渡す（— なら次のターンで渡す）',
   handover: '更新で走っているターンを止めない（無停止の更新。新しいサーバーが付け直す）',
   browser: 'エージェントのブラウザー（Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser）を受け取る',
   plyControl: '操作の一覧（ply_control）と会話に束縛した CLI（PLEIAD_CONTROL_*）を受け取る',

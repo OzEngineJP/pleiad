@@ -72,6 +72,9 @@ export const CAPABILITIES = {
   // false なら「合図が無い = 渡っていない」とは言えない（agy は入力を受け取っても黙って捨てうる）ので、
   // 無出力で終わった発言を未達（failed・自動再送の対象）にせず結果不明（unknown）にする（server.mjs の closeTurn）
   promptDelivery: { valid: bool },
+  // 走っているターンへ途中で入力を渡せる（runArgs.control.steer。委譲の追加指示・完了通知）。
+  // false なら追加指示は待機のまま、次のターンの入力として渡す（server.mjs の childTarget。画面は「次のターンで届く」と出す）
+  steer: { valid: bool },
   // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
   handover: { valid: bool, requires: (v) => (v ? ['adoptTurn'] : []) },
   // エージェントのブラウザー（会話の Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser と指示）を受け取る（docs/inapp-browser.md）
@@ -93,7 +96,7 @@ export const NO_CAPABILITIES = Object.freeze({
   title: false, tag: false, fork: false, forkMessage: false, rewind: false, subagents: false, liveModel: false, liveMode: false,
   hostTools: false, approvals: 'none', alwaysAllow: false, mcpApproval: 'agent', login: false, accounts: false, compatEndpoints: false,
   compact: false, autoCompactWindow: false, promptSuggestions: false, plyInstructions: false, plyAgents: false, plyContext: false, computerUse: false,
-  shell: false, plyShell: false, nativeShellOff: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: false, handover: false,
+  shell: false, plyShell: false, nativeShellOff: false, effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: false, steer: false, handover: false,
   browser: false, plyControl: false, secrets: false, visualize: false, hooks: false,
 });
 

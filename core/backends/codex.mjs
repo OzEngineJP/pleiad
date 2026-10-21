@@ -990,6 +990,8 @@ function threadToMessages(thread, { fullResults = false, onCompaction = null } =
         if (toolCalls.length) {
           msg.tools = toolCalls.map((c) => c.name);
           msg.toolCalls = toolCalls;
+          // 畳んだツールは本文より前に走った（追加指示の置き場がツールの錨で発言を分けるときに使う。web/task-instructions.mjs）
+          msg.textAfterTools = true;
           toolCalls = [];
         }
         if (msg.text || msg.thinking || msg.toolCalls) messages.push(msg);
@@ -1366,6 +1368,7 @@ const backend = {
     effortInModelId: false,
     instructionsAtStart: false,
     failureDiagnostics: false,
+    steer: true,   // turn/steer で走っているターンへ足す
     promptDelivery: true,   // turn/start の受理と userMessage イベントで「渡った」が分かる
     handover: true,          // 共有の app-server を保持役に載せ、新しいサーバーが付け直す（codex-held.mjs）
     // runArgs の配達物: ブラウザーは shell_environment_policy と mcp_servers・指示に、ply_control も mcp_servers と env・指示に、

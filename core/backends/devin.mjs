@@ -107,7 +107,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   let pendingAuth = null;
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
-    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true, promptDelivery: true,
+    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true, promptDelivery: true, steer: true,
       // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
       // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
       browser: true, plyControl: true, secrets: true, visualize: true, plyAgents: true, plyInstructions: true,

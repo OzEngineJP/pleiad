@@ -59,6 +59,7 @@ export const CAPABILITY_CONTRACTS = {
   instructionsAtStart: ['bot-dispatch'],
   failureDiagnostics: ['server-antigravity', 'server-devin'],
   promptDelivery: ['message-queue', 'server-antigravity'],
+  steer: ['server-delegation-steer', 'server-delegation-steer-acp', 'task-instructions'],
   handover: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'],
   browser: ['agent-browser-env', 'browser-bridge', 'server-devin', 'grok-backend'],
   plyControl: ['control-delivery', 'ops-control', 'server-devin', 'grok-backend'],

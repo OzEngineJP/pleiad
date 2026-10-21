@@ -2687,6 +2687,7 @@
       "instruction": "Follow-up instruction",
       "instructionQueued": "Waiting · delivered when the current work ends",
       "instructionDropped": "✕ Ended without being delivered",
+      "instructionNextTurn": "Arrives in the next turn · can't be passed in mid-task",
       "yesterday": "Yesterday",
       "showFull": "Show full request",
       "collapse": "Collapse",

@@ -2626,6 +2626,7 @@
       "instruction": "追加の指示",
       "instructionQueued": "待機中 · 今の作業が終わると届く",
       "instructionDropped": "✕ 届かずに終わった",
+      "instructionNextTurn": "次のターンで届く · 今の作業の途中には渡せない",
       "yesterday": "昨日",
       "showFull": "全文を表示",
       "collapse": "たたむ",
