@@ -1,6 +1,7 @@
 // 設定 › Pleiad Plus（docs/plus.md「設定 › Pleiad Plus」）。ログイン・プラン・今月の利用・アカウントの管理・ログアウト。
 // 状態はサーバーが持つ（plusStatus コマンドと、変わるたびに届く plusStatus イベント）。
 // この画面は表示と、B1 のコマンド（plusLogin・plusLoginCancel・plusLogout・plusHostRebind）を送ることだけをする。
+// 利用者が外した PC（host.state removed）は「この PC を登録し直す」で plus.hostReregister 操作を送る。
 // 見た目の部品は設定 › リモートと同じ（web/remote-parts.mjs、web/manage-panel.css の .rm-*）。見出しの丸は .rm-av。
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
@@ -64,9 +65,10 @@ const plusUrl = account => new URL('/plus', account).href;
  * @param confirming  確かめを出しているか
  * @param syncView    「同期」の中身に渡す引数（web/plus-sync.mjs の renderSync）
  * @param retrying / onRetry  プランを読めなかったときの「再試行」（読み直している間は場所取りに戻す）
+ * @param reregister  利用者が外した PC を登録し直す（plus.hostReregister 操作）
  */
 export function renderPlus(status, { send = () => {}, openExternal = () => {}, askRebind = () => {}, cancelRebind = () => {}, confirming = false, syncView = {},
-  retrying = false, onRetry = () => {} } = {}) {
+  retrying = false, onRetry = () => {}, reregister = () => {} } = {}) {
   const s = status ?? {};
   const account = s.account ?? null;
   const out = [];
@@ -160,6 +162,14 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
     }
   } else if (s.host?.state === 'limit') {
     out.push(el('p', 'rm-warn', t('settings.plus.hostLimit')));
+  } else if (s.host?.state === 'removed') {
+    // 利用者がこの PC を外した: 自分では登録し直さない（docs/plus.md「同期の始め直しと登録の外れ」）
+    out.push(el('p', 'rm-warn', t('settings.plus.hostRemoved')));
+    const acts = el('div', 'rm-acts');
+    acts.append(actButton(t('settings.plus.hostReregister'), reregister, 'btn', { fk: 'hostReregister' }));
+    out.push(acts);
+  } else if (s.host?.notice === 'reregistered') {
+    out.push(el('p', 'rm-weak', t('settings.plus.hostReregistered')));
   }
 
   const acts = el('div', 'rm-acts');
@@ -186,13 +196,16 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let syncStatus = null, syncConfirming = false, syncBusy = false, syncMessage = '';
   /** プランの「再試行」で読み直している間 */
   let retrying = false;
+  /** 鍵を持たない PC の確かめの窓: チェックを入れたか・確かめている間にサーバーの件数が変わったか */
+  let syncChecked = false, syncChanged = false;
 
   function syncView() {
     return {
       enabled: status?.account?.sync?.enabled !== false, sync: syncStatus,
       confirming: syncConfirming, message: syncMessage, busy: syncBusy,
+      resetChecked: syncChecked, resetChanged: syncChanged, onResetCheck: v => { syncChecked = v === true; paint(); },
       onToggle: syncToggle, onNow: () => syncSend('plus.syncNow'),
-      onAskReset: askSyncReset, onCancelReset: cancelSyncReset, onReset: () => syncSend('plus.syncReset'),
+      onAskReset: askSyncReset, onCancelReset: cancelSyncReset, onReset: syncReset,
       onOpenConflicts: () => syncSend('plus.syncOpenConflicts'),
     };
   }
@@ -200,9 +213,9 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   function paint() {
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
-    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying]);
+    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying, syncChecked, syncChanged]);
     paintInto(root, sig, () => {
-      const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView(), retrying, onRetry: retryPlan });
+      const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView(), retrying, onRetry: retryPlan, reregister: hostReregister });
       if (autoNotice) nodes.unshift(autoNoticeRow());
       if (message) nodes.push(errorLine(message));
       return nodes;
@@ -238,17 +251,50 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   function cancelRebind() { confirming = false; paint(); }
 
   function askSyncReset() {
-    syncConfirming = true;
+    syncConfirming = true; syncChecked = false; syncChanged = false;
     paint();
     queueMicrotask(() => root.querySelector('[data-fk="syncResetNo"]')?.focus());
   }
-  function cancelSyncReset() { syncConfirming = false; paint(); }
+  function cancelSyncReset() { syncConfirming = false; syncChecked = false; syncChanged = false; paint(); }
+
+  /** 確かめの窓で見せている数字（鍵を待つときの keyId と件数）。変わったらチェックを外す */
+  const waitSig = s => (s?.state === 'waiting_key' && s.wait ? `${s.wait.keyId ?? ''}:${s.wait.itemCount ?? ''}` : '');
+
+  /**
+   * 「同期をやり直す」「消して始め直す」。鍵を待つ PC は、見せた keyId と件数を confirm に付けて送る。
+   * 数字が変わっていた（confirmNeeded）ら窓を開いたまま、新しい数字でもう一度チェックしてもらう
+   */
+  async function syncReset() {
+    if (syncBusy) return;
+    const waiting = syncStatus?.state === 'waiting_key';
+    if (waiting && !syncChecked) return;
+    const w = waiting ? syncStatus.wait : null;
+    const confirm = w?.keyId && Number.isInteger(w.itemCount) ? { keyId: w.keyId, itemCount: w.itemCount } : null;
+    syncBusy = true; syncMessage = '';
+    paint();
+    try {
+      const out = await cmd('invoke', { op: 'plus.syncReset', args: confirm ? { confirm } : {} });
+      if (out?.status && typeof out.status === 'object') syncStatus = out.status;
+      if (out?.confirmNeeded) { syncChecked = false; syncChanged = true; }
+      else { syncConfirming = false; syncChecked = false; syncChanged = false; }
+    } catch (e) { syncMessage = e.message; syncConfirming = false; syncChecked = false; }
+    finally { syncBusy = false; paint(); }
+  }
+
+  /** 利用者が外した PC を登録し直す。状態は届く plusStatus で描き直す */
+  async function hostReregister() {
+    if (busy) return;
+    busy = true; message = '';
+    paint();
+    try { await cmd('invoke', { op: 'plus.hostReregister', args: {} }); }
+    catch (e) { message = e.message; }
+    finally { busy = false; paint(); }
+  }
 
   /** 同期の操作（plus.sync* 操作。docs/plus.md「同期」）。状態は届く plusSyncStatus で描き直す */
   async function syncSend(op) {
     if (syncBusy) return;
     syncBusy = true; syncMessage = '';
-    if (op === 'plus.syncReset') syncConfirming = false;
     paint();
     try { await cmd('invoke', { op, args: {} }); }
     catch (e) { syncMessage = e.message; }
@@ -309,7 +355,15 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       if (ev.autoPlus === true && !getPrefs().plus?.autoNoticeSeen) { autoNotice = true; paint(); }
       return;
     }
-    if (ev?.type === 'plusSyncStatus') { syncStatus = ev.status ?? syncStatus; paint(); return; }
+    if (ev?.type === 'plusSyncStatus') {
+      const before = waitSig(syncStatus);
+      syncStatus = ev.status ?? syncStatus;
+      const after = waitSig(syncStatus);
+      // 確かめている間にほかの PC が上げて件数が変わった: 新しい数字でもう一度チェックしてもらう
+      if (syncConfirming && before && after && before !== after) { syncChecked = false; syncChanged = true; }
+      paint();
+      return;
+    }
     if (ev?.type !== 'plusStatus') return;
     status = ev.status ?? status;
     paint();

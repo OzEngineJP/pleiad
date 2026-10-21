@@ -1,6 +1,8 @@
 // 同期のエンジン（core/plus/sync/engine.mjs、docs/plus.md「同期」）。偽の Plus（tests/lib/fake-plus.mjs）と 2 台のホストで、
 // バイト列のまま運ぶ・秘密情報と変数を運ばない・api に届くのは暗号文だけ・消すのが伝わる・競合と写しの片付け・5 秒まとめ・10 分ごと・同時に 1 本・
-// 容量の上限と戻り・同期を切る・自分で書いたものを上げ直さない・決めた欄だけを送る、を確かめる。時計と fs.watch は差し替える。LLM も外のネットワークも使わない。
+// 容量の上限と戻り・同期を切る・自分で書いたものを上げ直さない・決めた欄だけを送る、を確かめる。
+// 登録が外れた PC（403 host）・鍵を持つ PC が外れてもデータを消さない・始め直したあとの設定の勝ち負け（docs/plus.md「同期の始め直しと登録の外れ」）も見る。
+// 時計と fs.watch は差し替える。LLM も外のネットワークも使わない。
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -18,9 +20,10 @@ import { createPlusSync } from '../../core/plus/sync/index.mjs';
 import { decryptItem, deriveItemKeys, fromB64url } from '../../core/plus/sync/crypto.mjs';
 
 export const name = 'plus-sync-engine';
-export const title = '同期のエンジン: 2 台で運ぶ・バイト列のまま・秘密情報と変数を運ばない・api には暗号文だけ・消す・競合・5 秒まとめ・10 分ごと・1 本だけ・容量・切る・自分の書き込み';
+export const title = '同期のエンジン: 2 台で運ぶ・バイト列のまま・秘密情報と変数を運ばない・api には暗号文だけ・消す・競合・5 秒まとめ・10 分ごと・1 本だけ・容量・切る・自分の書き込み・登録の外れ・始め直しの設定';
 
 const UID = 'test-user';
+const UID2 = 'test-user-rejoin';                  // 登録の外れと始め直しを見るアカウント
 const SECRET = 'SECRET-VALUE-zq81x';           // 秘密情報と変数の値（作り物）
 const MACHINE = 'machine-only-value-k3';         // sync: false の設定の値
 const LIMIT = 9_876_543;                          // 偽の容量の上限（作り物）
@@ -31,7 +34,9 @@ export default async function (t) {
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ps-eng-')));
   const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:9' });
   plus.state.syncLimitBytes = LIMIT;
-  plus.state.accounts[UID] = { uid: UID, email: 'user@example.com', provider: 'test', status: 'plus', plan: { id: 'plus', name: 'Plus' }, limits: null, usage: null, sync: {} };
+  for (const uid of [UID, UID2]) {
+    plus.state.accounts[uid] = { uid, email: 'user@example.com', provider: 'test', status: 'plus', plan: { id: 'plus', name: 'Plus' }, limits: null, usage: null, sync: {} };
+  }
   const config = createPlusConfig({ env: { AGENT_HOST_PLUS_API: plus.url }, dataDir: path.join(tmp, 'cfg'), appVersion: 'test' });
   const put = async (file, data) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, data); };
   const exists = p => fs.stat(p).then(() => true, () => false);
@@ -39,7 +44,7 @@ export default async function (t) {
   let hostSeq = 0;
 
   /** 1 台のホスト: 自分の home・<data>・秘密の置き場・設定・時計・watch・api の客（呼んだ口を数える） */
-  async function makeHost(label) {
+  async function makeHost(label, { uid = UID } = {}) {
     const root = path.join(tmp, label);
     const home = path.join(root, 'home'), dataDir = path.join(root, 'data');
     const hostId = `host-${label}`;
@@ -49,7 +54,7 @@ export default async function (t) {
     const errors = [];
     let inFlight = 0, maxInFlight = 0;
     const activity = { inFlight: () => inFlight, last: 0 };
-    const base = createPlusClient({ config, getIdToken: async () => plus.issueIdToken(UID), appVersion: 'test' });
+    const base = createPlusClient({ config, getIdToken: async () => plus.issueIdToken(uid), appVersion: 'test' });
     const client = {
       async request(method, p, opts) {
         calls.push(`${method} ${p.split('?')[0]}`);
@@ -85,22 +90,24 @@ export default async function (t) {
         if (!rel.startsWith('..') && !path.isAbsolute(rel)) w.listener('change', rel);
       }
     };
-    const keys = createSyncKeys({ client, secrets, uid: () => UID, hostId: () => hostId, log: l => logs.push(l) });
+    let engine = null;
+    const keys = createSyncKeys({ client, secrets, uid: () => uid, hostId: () => hostId, log: l => logs.push(l), onShared: to => engine?.noteShared(to) });
     const targets = createSyncTargets({ dataDir, home, env: {}, settings, log: l => logs.push(l) });
     const statuses = [];
-    const engine = createSyncEngine({
-      client, keys, targets, dataDir, uid: () => UID, hostId: () => hostId, log: l => logs.push(l), settingsEvents, clock, watch,
-      onStatus: s => statuses.push(s),
+    let hostLost = 0;   // onHostLost（403 host）の回数
+    engine = createSyncEngine({
+      client, keys, targets, dataDir, uid: () => uid, hostId: () => hostId, log: l => logs.push(l), settingsEvents, clock, watch,
+      onStatus: s => statuses.push(s), onHostLost: () => { hostLost++; },
     });
     engines.push(engine);
     plus.state.hosts[hostId] = {
-      hostId, uid: UID, publicKey: 'not-used', name: label, platform: 'linux', online: false, lastSeenAt: null,
+      hostId, uid, publicKey: 'not-used', name: label, platform: 'linux', online: false, lastSeenAt: null,
       syncPublicKey: await keys.publicKey(), createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, ++hostSeq)).toISOString(), deviceCount: 0,
     };
     const skill = (...rel) => path.join(targets.skillRoots.claude, ...rel);
     return {
       label, hostId, home, dataDir, clock, logs, calls, errors, engine, targets, keys, secrets, store, changeSetting, emit, statuses, skill,
-      activity, maxInFlight: () => maxInFlight, resetInFlight: () => { maxInFlight = 0; },
+      activity, maxInFlight: () => maxInFlight, resetInFlight: () => { maxInFlight = 0; }, hostLost: () => hostLost,
       claudeMd: targets.instructions.claude,
     };
   }
@@ -461,6 +468,76 @@ export default async function (t) {
     await sync.update();
     t.ok('not_plus のあと、plus と読み直した update() で回して idle', sync.getSyncStatus().state === 'idle' && countS('GET /v1/sync/state') === notPlusState + 1);
     sync.stop();
+
+    // ================= 鍵を持つ PC が外れた（運営の画面）→ 新しい PC は消さずに待つ → 外れた PC が登録し直す =================
+    const a2 = await makeHost('a2', { uid: UID2 });
+    await put(a2.skill('mine-a2', 'SKILL.md'), 'skill on a2\n');
+    await put(a2.claudeMd, 'instructions on a2\n');
+    a2.store.colorish = 'blue';
+    await a2.engine.start();
+    const l2 = plus.state.sync[UID2];
+    const key1 = l2.keyId;
+    const live = () => Object.values(l2.items).filter(it => it.deleted !== true).length;
+    const items1 = live();
+    t.ok('外れの前: A2 が鍵を作って項目を上げる', a2.engine.status().state === 'idle' && Boolean(key1) && items1 >= 3, JSON.stringify({ s: a2.engine.status(), items1 }));
+    const a2Row = { ...plus.state.hosts[a2.hostId] };
+    plus.unbindHost(a2.hostId, 'admin');
+    const c2 = await makeHost('c2', { uid: UID2 });
+    await put(c2.skill('mine-c2', 'SKILL.md'), 'skill on c2\n');
+    c2.store.colorish = 'pink';
+    const resets2 = plus.state.syncBodies.filter(x => x.path === '/v1/sync/reset').length;
+    await c2.engine.start();
+    const c2Wait = c2.engine.status();
+    t.ok('鍵を持つ PC が外れても、データがあれば新しい PC は始め直さずに待つ（reset を送らない・項目と keyId はそのまま）',
+      c2Wait.state === 'waiting_key' && plus.state.syncBodies.filter(x => x.path === '/v1/sync/reset').length === resets2 && l2.keyId === key1 && live() === items1,
+      JSON.stringify(c2Wait));
+    t.ok('待つ間の状態の wait: 鍵を持つ PC は外れている（holder: false）・件数はサーバーの項目の数',
+      c2Wait.wait?.holder === false && c2Wait.wait.itemCount === items1 && c2Wait.wait.holders.some(h => h.hostId === a2.hostId && h.registered === false), JSON.stringify(c2Wait.wait));
+    const c2Reset = await c2.engine.reset();
+    t.ok('確かめ無しの「やり直す」は confirmNeeded を返し、何も消えない',
+      c2Reset.confirmNeeded === true && c2Reset.status.state === 'waiting_key' && c2Reset.status.wait?.itemCount === items1 && l2.keyId === key1 && live() === items1, JSON.stringify(c2Reset));
+    // 外れた A2: 403 host → unregistered で止まり、上へ 1 回だけ知らせる
+    await put(a2.skill('mine-a2', 'more.md'), 'while removed\n');
+    await a2.engine.run();
+    t.ok('外れた PC は 403 host で unregistered（error にしない・やり直しのタイマーを残さない）',
+      a2.engine.status().state === 'unregistered' && a2.engine.status().error === null && a2.clock.pending() === 0, JSON.stringify(a2.engine.status()));
+    t.ok('403 host で onHostLost を 1 回呼ぶ', a2.hostLost() === 1);
+    await a2.engine.start();
+    t.ok('外れたままもう一度回しても、onHostLost は呼び直さない', a2.engine.status().state === 'unregistered' && a2.hostLost() === 1, JSON.stringify({ s: a2.engine.status(), n: a2.hostLost(), logs: a2.logs.slice(-4) }));
+    // 登録し直す（PUT /v1/hosts が鍵の行の detachedAt を外す。登録の側の動きは plus-hosts で確かめる）
+    plus.state.hosts[a2.hostId] = a2Row;
+    l2.keys[a2.hostId].detachedAt = null;
+    delete plus.state.hostsRemoved[a2.hostId];
+    await a2.engine.start();
+    t.ok('登録し直した A2 は、元の鍵のまま回り直す（作り直さない）', a2.engine.status().state === 'idle' && l2.keyId === key1 && (await a2.secrets.get(SYNC_ACCOUNT_KEY))?.keyId === key1);
+    t.ok('登録し直した A2 が C2 に鍵を渡す', l2.keys[c2.hostId]?.wrappedBy === a2.hostId && l2.keys[c2.hostId].keyId === key1);
+    t.ok('鍵を渡した PC の状態の sharedTo に、渡した先（名前つき）が載る',
+      a2.engine.status().sharedTo.length === 1 && a2.engine.status().sharedTo[0].hostId === c2.hostId && a2.engine.status().sharedTo[0].name === 'c2', JSON.stringify(a2.engine.status().sharedTo));
+    await c2.engine.run();
+    t.ok('C2 は鍵を受けて、A2 の項目を受ける', c2.engine.status().state === 'idle' && c2.engine.status().wait === null
+      && (await fs.readFile(c2.skill('mine-a2', 'more.md'), 'utf8').catch(() => '')) === 'while removed\n');
+    t.ok('初めて加わる PC は、アカウントの設定を採る（手元の pink ではなく blue）', c2.store.colorish === 'blue');
+    t.ok('どの PC の手元のファイルも消えない', await exists(a2.skill('mine-a2', 'SKILL.md')) && await exists(c2.skill('mine-c2', 'SKILL.md')));
+    await a2.engine.run();
+    t.ok('C2 の手元にあったものも A2 に届く', (await fs.readFile(a2.skill('mine-c2', 'SKILL.md'), 'utf8').catch(() => '')) === 'skill on c2\n');
+
+    // ================= 始め直したあと、鍵を受けた PC の設定が負けない =================
+    // A2 を止めた（PC を落とした）間に、A2 の設定を変える。C2 が同期をやり直す（鍵を持つので確かめは要らない）
+    a2.engine.stop();
+    a2.store.colorish = 'green';
+    const c2Reset2 = await c2.engine.reset();
+    const key2 = plus.state.sync[UID2].keyId;
+    t.ok('鍵を持つ PC の「やり直す」は確かめ無しで作り直す', c2Reset2.confirmNeeded === false && key2 !== key1 && c2.engine.status().state === 'idle', JSON.stringify(c2Reset2));
+    // A2 を起動し直す（C2 より後の時刻）。新しい鍵を受けて、覚えを空にしてから受ける
+    await a2.clock.advance(c2.clock.now() - a2.clock.now() + 60_000);
+    await a2.engine.start();
+    t.ok('起動し直した A2 は新しい鍵で idle', a2.engine.status().state === 'idle' && (await a2.secrets.get(SYNC_ACCOUNT_KEY))?.keyId === key2, JSON.stringify(a2.engine.status()));
+    t.ok('鍵が替わったあと、手元で変えていた設定は、始め直した PC の「初めて上げた設定」に負けない', a2.store.colorish === 'green');
+    const a2Local = JSON.parse(await fs.readFile(a2.engine.stateFile, 'utf8'));
+    t.ok('手元の覚えに rejoinedAt（鍵が替わった時刻）が残る（起動し直しても使う）', a2Local.keyId === key2 && a2Local.rejoinedAt === a2.clock.now(), JSON.stringify({ k: a2Local.keyId === key2, r: a2Local.rejoinedAt }));
+    t.ok('鍵を渡した先（sharedTo）は起動し直しても、鍵が替わっても残る', a2.engine.status().sharedTo.some(s => s.hostId === c2.hostId));
+    await c2.engine.run();
+    t.ok('勝った A2 の設定が C2 に届く', c2.store.colorish === 'green');
   } finally {
     for (const e of engines) e.stop();
     await plus.close();

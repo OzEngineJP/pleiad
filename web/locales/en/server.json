@@ -1183,7 +1183,8 @@
       "closed": {
         "account": "This account can't use the official relay",
         "limit": "This account has reached its limit",
-        "auth": "Account authentication failed (please sign in again)"
+        "auth": "Account authentication failed (please sign in again)",
+        "host": "This PC is no longer registered (checking the registration again)"
       }
     },
     "review": {
