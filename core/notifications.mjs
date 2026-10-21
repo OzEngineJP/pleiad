@@ -13,7 +13,7 @@
 //   - 既読は通知ごと（readAt）。会話の既読（readAt・markRead）とチャンネルの既読（channels.markRead）が進むと、対応する通知も既読になる（markSession・markChannel）
 //   - 上限: NOTIFICATION_MAX 件・NOTIFICATION_KEEP_MS（古い方から捨てる。既読を先に）。会話を消す・チャンネルをアーカイブすると、その行も消す
 //   - あなた待ちの承認はメモリにしか無く、再起動で消える。起動時に、決着していないあなた待ちを 'cancelled' で決着させる（settleAllWaiting）
-//   - 続いている状態のあなた待ち（standing。同期で届いた変更の受け入れ待ち。ADR 0245）は 1 つの名前に 1 行だけ。dedupeKey は `standing:<名前>:<版>`。
+//   - 続いている状態のあなた待ち（standing。同期で届いた変更の受け入れ待ち（ADR 0245）・同期の鍵を待つ PC）は 1 つの名前に 1 行だけ。dedupeKey は `standing:<名前>:<版>`。
 //     版（いちばん新しく届いた時刻）が進めば前の行を消して未読で載せ直し、件数だけ変われば同じ行の件数を直す。0 件になれば消す。起動時の決着から外す
 //
 //   createNotifications({ dataDir, emit, now }) → Notifications
@@ -27,7 +27,7 @@
 //     standing(name, { version, at, data } | null)  … 続いている状態のあなた待ちを置く・直す・消す（null で消す）
 //   emit({ type: 'notificationsChanged', unread, waiting }) … 件数が変わったとき（画面のベルの数。リモートの端末にも届く）
 //   行（公開）: { id, seq, kind, at, unread, resolvedAt?, outcome?, target: { sessionId?, uuid?, channelId?, threadId?, postId?, settings? },
-//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question' | 'syncInbox', count?, title?, channelName?, home?: true（一時チャット）, threadTitle? }
+//                actor?: { kind: 'bot' | 'agent', name, icon? }, ask?: 'approval' | 'question' | 'syncInbox' | 'syncApproval', count?, title?, channelName?, home?: true（一時チャット）, threadTitle? }
 //     target.settings: 開く設定の面（'plus'）
 import crypto from 'node:crypto';
 import { openData } from './data-schema.mjs';

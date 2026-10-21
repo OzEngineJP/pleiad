@@ -24,6 +24,8 @@ const T0 = Date.parse('2026-03-01T00:00:00.000Z');
 export default async function (t) {
   const tmp = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ps-inbox-')));
   const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:9' });
+  // 券を知らない前の版の api の流れ（券・承認のある v2 の流れは plus-sync-admission）
+  plus.state.noTickets = true;
   plus.state.accounts[UID] = { uid: UID, email: 'user@example.com', provider: 'test', status: 'plus', plan: { id: 'plus', name: 'Plus' }, limits: null, usage: null, sync: {} };
   const config = createPlusConfig({ env: { AGENT_HOST_PLUS_API: plus.url }, dataDir: path.join(tmp, 'cfg'), appVersion: 'test' });
   const put = async (file, data) => { await fs.mkdir(path.dirname(file), { recursive: true }); await fs.writeFile(file, data); };

@@ -20,6 +20,8 @@ let hostSeq = 0;
 export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ps-keys-')));
   const plus = await startFakePlus({ relayUrl: 'http://127.0.0.1:9' });
+  // 券を知らない前の版の api の流れ（券・承認のある v2 の流れは plus-sync-admission）
+  plus.state.noTickets = true;
   const account = uid => {
     plus.state.accounts[uid] = { uid, email: 'user@example.com', provider: 'test', status: 'plus', plan: { id: 'plus', name: 'Plus' }, limits: null, usage: null, sync: {} };
   };

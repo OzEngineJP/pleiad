@@ -91,7 +91,9 @@ export default async function (t) {
     plusCount = (await remote.store.devices()).filter(d => d.via === 'plus').length;
     await host.syncDeviceCount();
   }, onHostLost: () => { hostLostCalls++; void host.recheck(); }, log: () => {} });
-  const host = createPlusHost({ session, store: remote.store, appVersion: 'test', hostName: () => 'plus-desk', plusDevices: () => plusCount, retryMs: 40, log: () => {}, onHostState: s => remote.setPlusHostState(s) });
+  const host = createPlusHost({ session, store: remote.store, appVersion: 'test', hostName: () => 'plus-desk', plusDevices: () => plusCount, retryMs: 40, log: () => {}, onHostState: s => remote.setPlusHostState(s),
+    // api の受け入れの版（server は /v1/auth/config の admission を渡す。前の版の api のふりの間は null）
+    apiAdmission: async () => (plus.state.noTickets ? null : 2) });
   remote.setPlusProvider(plusLink.provider);
   /** server の syncPlusLink と同じ見直し（条件を変えたあとに呼ぶ） */
   async function sync() {
@@ -277,7 +279,8 @@ export default async function (t) {
     }, 10_000, '1013 でも張り直す');
     t.ok('1013 は今の backoff で張り直す', true);
 
-    // ---- 運営がこの PC を外した → 中継は 4401 host。登録を確かめ直して登録し直し、つなぎ直す
+    // ---- 運営がこの PC を外した → 中継は 4401 host。登録を確かめ直して登録し直し、つなぎ直す（前の版の api のふり）
+    plus.state.noTickets = true;
     const seenBefore = hostStateSeen.length;
     plus.unbindHost(st.hostId, 'admin');
     authz.handle.closeTag(`h:${st.hostId}`, 4401, 'host');
@@ -294,6 +297,22 @@ export default async function (t) {
     await sync();
     await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '登録し直すとつなぎ直す');
     t.ok('登録し直すと公式の中継へつなぎ直す', true);
+    plus.state.noTickets = false;
+
+    // ---- v2 の api: 外された PC は同じ鍵では戻れない。4401 host で確かめ直しても登録し直さず removed（permanent）で待つ
+    const seenV2 = hostStateSeen.length;
+    const putsV2 = plus.state.calls.filter(c => c.method === 'PUT' && c.path.startsWith('/v1/hosts/')).length;
+    plus.unbindHost(st.hostId, 'admin');
+    authz.handle.closeTag(`h:${st.hostId}`, 4401, 'host');
+    const removedV2 = await until(() => hostStateSeen.slice(seenV2).find(s => s.state === 'removed'), 10_000, 'v2 では removed で待つ');
+    t.ok('v2 の api では、4401 host で外されたと分かっても登録し直さない（removed・permanent）',
+      removedV2.error?.permanent === true && !plus.state.hosts[st.hostId]
+      && plus.state.calls.filter(c => c.method === 'PUT' && c.path.startsWith('/v1/hosts/')).length === putsV2, JSON.stringify(removedV2));
+    // 後の場面のために台帳を戻す（試験の都合で墓標を消してから登録し直す）
+    delete plus.state.hostsRemoved[st.hostId];
+    await host.reregister();
+    await sync();
+    await until(async () => (await remote.status()).links.plus.state === 'connected', 10_000, '戻した後はつなぎ直す');
 
     // ---- アカウントが free に落ちる → link は閉じるが記録は残る
     plus.state.accounts[UID].status = 'free';

@@ -9,7 +9,7 @@ import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, rmIcon, keyValues, errorLine, waitLine, paintInto } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
-import { renderSync } from './plus-sync.mjs';
+import { renderSync, syncCodeText, pcPlatform } from './plus-sync.mjs';
 import { renderInbox } from './plus-inbox.mjs';
 import { loadingMark } from './plus-key-row.mjs';
 
@@ -147,8 +147,8 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
   }
 
   // この PC の行（host は B4 が埋める。null なら出さない）
-  if (s.host?.state === 'taken') {
-    out.push(el('p', 'rm-warn', t('settings.plus.hostTaken')));
+  // つなぎ直す（ホストの鍵を作り直す）: ほかのアカウントの PC と同じ鍵のとき・外されて同じ鍵では戻れないとき
+  const rebindRow = () => {
     if (confirming) {
       // 確かめの窓は今の設定の画面の確かめと同じ作り（.rm-confirm）
       const box = el('div', 'rm-confirm');
@@ -163,8 +163,16 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
       acts.append(actButton(t('settings.plus.rebind'), askRebind, 'btn btn-quiet', { fk: 'rebind' }));
       out.push(acts);
     }
+  };
+  if (s.host?.state === 'taken') {
+    out.push(el('p', 'rm-warn', t('settings.plus.hostTaken')));
+    rebindRow();
   } else if (s.host?.state === 'limit') {
     out.push(el('p', 'rm-warn', t('settings.plus.hostLimit')));
+  } else if (s.host?.state === 'removed' && s.host.error?.permanent) {
+    // 外された PC は同じ鍵では戻れない（受け入れの v2 の api）。続けるにはつなぎ直す
+    out.push(el('p', 'rm-warn', t('settings.plus.hostRemovedForGood')));
+    rebindRow();
   } else if (s.host?.state === 'removed') {
     // 利用者がこの PC を外した: 自分では登録し直さない（docs/plus.md「同期の始め直しと登録の外れ」）
     out.push(el('p', 'rm-warn', t('settings.plus.hostRemoved')));
@@ -208,6 +216,8 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let inbox = null;
   /** 前に受けた受け入れ待ちの件数と時刻（変わったときだけ一覧を読み直す） */
   let inboxSeen = { at: null, count: 0 };
+  /** 回復の操作の結果の一言（plus-sync.mjs の recoveryNote） */
+  let recoveryNote = '';
 
   function syncView() {
     return {
@@ -218,6 +228,8 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       onAskReset: askSyncReset, onCancelReset: cancelSyncReset, onReset: syncReset,
       onOpenConflicts: () => syncSend('plus.syncOpenConflicts'),
       onOpenInbox: openInbox,
+      recoveryNote, onRecovery: syncRecovery, onLogin: () => send('plusLogin'),
+      onOpenAccount: status?.urls?.account ? () => openExternalLink(status.urls.account) : null,
     };
   }
 
@@ -311,6 +323,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   }
 
   function paint() {
+    paintApproval();
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
     // 届いた変更の面は、ログインしていて Plus のときだけ（外れたら Pleiad Plus のページに戻す）
@@ -319,7 +332,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       paintInto(root, JSON.stringify(['inbox', inbox]), () => renderInbox(inboxView()));
       return;
     }
-    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying, syncChecked, syncChanged]);
+    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying, syncChecked, syncChanged, recoveryNote]);
     paintInto(root, sig, () => {
       const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView(), retrying, onRetry: retryPlan, reregister: hostReregister });
       if (autoNotice) nodes.unshift(autoNoticeRow());
@@ -359,7 +372,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   function askSyncReset() {
     syncConfirming = true; syncChecked = false; syncChanged = false;
     paint();
-    queueMicrotask(() => root.querySelector('[data-fk="syncResetNo"]')?.focus());
+    queueMicrotask(() => (root.querySelector('[data-fk="syncResetNo"]') ?? root.querySelector('[data-fk="syncHelpClose"]'))?.focus());
   }
   function cancelSyncReset() { syncConfirming = false; syncChecked = false; syncChanged = false; paint(); }
 
@@ -385,6 +398,91 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       else { syncConfirming = false; syncChecked = false; syncChanged = false; }
     } catch (e) { syncMessage = e.message; syncConfirming = false; syncChecked = false; }
     finally { syncBusy = false; paint(); }
+  }
+
+  /**
+   * 回復の操作（plus.syncRecovery*）。結果を一言にして出す（最近のログインが要る・ほかの PC が先に頼んだ など）。
+   * complete は「新しい鍵で始め直す」の確かめの窓から（チェックを入れたときだけ）
+   */
+  async function syncRecovery(action) {
+    if (syncBusy) return;
+    if (action === 'complete' && !syncChecked) return;
+    const op = { request: 'plus.syncRecoveryRequest', cancel: 'plus.syncRecoveryCancel', complete: 'plus.syncRecoveryComplete', stop: 'plus.syncRecoveryStop' }[action];
+    if (!op) return;
+    syncBusy = true; syncMessage = ''; recoveryNote = '';
+    paint();
+    try {
+      const out = await cmd('invoke', { op, args: {} });
+      if (out?.status && typeof out.status === 'object') syncStatus = out.status;
+      recoveryNote = out?.reauth ? 'reauth' : out?.other ? 'other' : out?.holder ? 'holder' : out?.waiting ? 'waiting' : out?.gone ? 'gone'
+        : action === 'stop' ? (out?.stopped ? 'stopped' : 'stopFailed') : '';
+      if (action === 'complete') { syncConfirming = false; syncChecked = false; syncChanged = false; }
+    } catch (e) { syncMessage = e.message; if (action === 'complete') { syncConfirming = false; syncChecked = false; } }
+    finally { syncBusy = false; paint(); }
+  }
+
+  // ---- 同期の鍵を渡す承認の窓（端末の承認の窓と同じ組み方。どの画面にいても出す）
+  /** 窓（初めて要るときに作る）・出している申し込み（hostId:code）・次に窓に出す一言 */
+  let approvalDialog = null, approving = '', approvalNote = '';
+  function paintApproval() {
+    const list = Array.isArray(syncStatus?.approvals) ? syncStatus.approvals : [];
+    const current = list.find(a => `${a.hostId}:${a.code}` === approving) ?? list[0];
+    if (!current) {
+      approving = '';
+      if (approvalDialog?.open) approvalDialog.close();
+      return;
+    }
+    const sig = `${current.hostId}:${current.code}`;
+    if (sig === approving && approvalDialog?.open) return;
+    if (!approvalDialog) {
+      approvalDialog = document.createElement('dialog');
+      approvalDialog.className = 'rm-dialog';
+      approvalDialog.id = 'plusSyncApproval';
+      approvalDialog.setAttribute('aria-labelledby', 'plusSyncApprovalTitle');
+      approvalDialog.addEventListener('cancel', e => e.preventDefault());   // Esc で黙って閉じない（決めるまで残す）
+      document.body.append(approvalDialog);
+    }
+    approving = sig;
+    const name = current.name || t('settings.plus.syncUnnamedPc');
+    const kind = el('p', 'rm-dialog-kind');
+    kind.append(el('span', 'card-kind', `◆ ${t('settings.plus.syncApprove.mark')}`));
+    const title = el('h2', null, t('settings.plus.syncApprove.title', { name }));
+    title.id = 'plusSyncApprovalTitle';
+    const meta = [pcPlatform(current.platform), current.app].filter(Boolean).join(' · ');
+    const state = el('p', 'mp-state rm-dialog-state', approvalNote);
+    state.setAttribute('role', 'status');
+    approvalNote = '';
+    const deny = button(t('settings.plus.syncApprove.deny'), () => decideApproval(current, false, state), 'btn btn-quiet');
+    const approve = button(t('settings.plus.syncApprove.approve'), () => decideApproval(current, true, state), 'btn btn-primary');
+    deny.dataset.fk = 'syncApproveNo';
+    approve.dataset.fk = 'syncApproveYes';
+    const actions = el('div', 'rm-dialog-actions');
+    actions.append(deny, approve);
+    approvalDialog.replaceChildren(kind, title, ...(meta ? [el('p', 'rm-dialog-meta', meta)] : []),
+      el('p', 'rm-dialog-label', t('settings.plus.syncCode')), el('p', 'rm-dialog-code', syncCodeText(current.code)),
+      el('p', 'rm-dialog-hint', t('settings.plus.syncApprove.hint', { name })), state, actions);
+    if (!approvalDialog.open) approvalDialog.showModal();
+    deny.focus();   // 既定の居場所は「渡さない」（Enter の押し間違いで渡さない）
+  }
+  /** 渡す・渡さない。渡す前にコードを読み直し、変わっていたら新しいコードで窓を出し直す */
+  async function decideApproval(a, yes, state) {
+    for (const b of approvalDialog.querySelectorAll('button')) b.disabled = true;
+    try {
+      const out = await cmd('invoke', yes
+        ? { op: 'plus.syncApprove', args: { hostId: a.hostId, code: a.code } }
+        : { op: 'plus.syncDeny', args: { hostId: a.hostId } });
+      if (out?.status && typeof out.status === 'object') syncStatus = out.status;
+      if (yes && out?.shared === false) {
+        // i18n-dynamic: settings.plus.syncApprove.
+        const note = t(`settings.plus.syncApprove.${out.reason === 'changed' ? 'changed' : out.reason === 'no_key' ? 'noKey' : 'gone'}`);
+        if (out.reason === 'changed') approvalNote = note; else syncMessage = note;
+      }
+      approving = '';
+      paint();
+    } catch (e) {
+      state.textContent = e.message;
+      for (const b of approvalDialog.querySelectorAll('button')) b.disabled = false;
+    }
   }
 
   /** 利用者が外した PC を登録し直す。状態は届く plusStatus で描き直す */
@@ -478,7 +576,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     paint();
   }
 
-  $('plusTab').onclick = () => { inbox = null; page('plus'); refresh(); };
+  $('plusTab').onclick = () => { inbox = null; recoveryNote = ''; page('plus'); refresh(); };
   // メニューの出し入れ・開いているページのために、つながった（つなぎ直した）あとに取る。
   // 起動の直後は WS がまだ開いていないので client.mjs が ready の後に呼ぶ
   function reconnected() {
@@ -486,5 +584,5 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     if (!root.hidden) cmd('invoke', { op: 'plus.syncStatus', args: {} }).then(s => { syncStatus = s; paint(); }).catch(() => {});
   }
   paint();
-  return { refresh, event, reconnected, openInbox: () => { refresh(); openInbox(); }, get status() { return status; } };
+  return { refresh, event, reconnected, openInbox: () => { refresh(); openInbox(); }, openMain: () => { inbox = null; refresh(); paint(); }, get status() { return status; } };
 }

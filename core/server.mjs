@@ -774,6 +774,8 @@ const plusHost = createPlusHost({
   // 登録中・登録済みの状態変化は中継リンクの条件へ反映する。ここから再登録を始めると onHostState と循環する。
   onHostState: s => { remote.setPlusHostState(s); syncPlusLink({ registerHost: false }); },
   syncPublicKey: () => plusSync ? plusSync.publicKey() : Promise.resolve(null),
+  // api の受け入れの版（/v1/auth/config の admission）。v2 なら同期の公開鍵を台帳の登録に載せない
+  apiAdmission: () => plusConfig.get().then(c => c?.admission ?? null),
   log: line => console.log(`  ${line}`),
 });
 // Pleiad Plus の同期（core/plus/sync/。docs/plus.md「同期」）。設定は画面からの変更と同じ検査（normalize・write）を通して書く
@@ -790,6 +792,8 @@ plusSync = createPlusSync({
   openFolder: dir => openOnHost('open', dir, { directory: true }),
   // api の 403 host（この PC の登録が外れた）→ 台帳を見直し、外れていれば登録し直す（docs/plus.md「同期の始め直しと登録の外れ」）
   onHostLost: () => plusHost.recheck(),
+  // 同期の券（v2 の api）はホストの鍵で取る。鍵がまだ無ければ作らずに待つ
+  identity: () => remote.store.peekIdentity(),
   log: line => console.log(`  ${line}`),
 });
 // 同期の状態が変わるたびに全画面へ（docs/plus.md「同期」。ポーリングはしない）
@@ -884,6 +888,15 @@ plusSync.onChange(({ inbox: count, inboxAt }) => {
   try {
     inbox.standing('syncInbox', count > 0 && inboxAt
       ? { version: inboxAt, at: Date.parse(inboxAt), data: { ask: 'syncInbox', count, settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// 新しい PC が同期の鍵を待っている（v2）: 承認を待つ申し込みがあれば、あなた待ちの行を 1 つ置く（PC の組が版）
+plusSync.onChange(({ approvals }) => {
+  try {
+    const list = Array.isArray(approvals) ? approvals : [];
+    inbox.standing('syncApproval', list.length
+      ? { version: list.map(a => `${a.hostId}:${a.code}`).join(','), at: Date.now(), data: { ask: 'syncApproval', count: list.length, title: list[0].name ?? '', settings: 'plus' } }
       : null);
   } catch (e) { console.error(`  notifications: ${e.message}`); }
 });
@@ -5336,6 +5349,12 @@ function opsDeps(lng = currentLocale()) {
       syncInboxItem: (id) => plusSync.inboxItem(id),
       syncInboxTake: (id) => plusSync.inboxTake(id),
       syncInboxDrop: (id) => plusSync.inboxDrop(id),
+      syncApprove: (hostId, code) => plusSync.approveSync(hostId, code),
+      syncDeny: (hostId) => plusSync.denySync(hostId),
+      syncRecoveryRequest: () => plusSync.requestRecovery(),
+      syncRecoveryCancel: () => plusSync.cancelRecovery(),
+      syncRecoveryComplete: () => plusSync.completeRecovery(),
+      syncRecoveryStop: () => plusSync.stopRecovery(),
     },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）
     git: opsGit,

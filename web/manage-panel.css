@@ -211,6 +211,10 @@ button.rm-row:hover { background:var(--surface-hover); }
 .sync-what-body { padding:4px 0 8px; display:flex; flex-direction:column; gap:6px; }
 .sync-what-body .sync-what-line { margin:0; line-height:1.5; }
 .sync-confirm-title { font-weight:600; }
+/* 鍵を待つ PC の確認コード（鍵を持つ PC の承認の窓と同じ数字） */
+.sync-code { margin:8px 8px 0; }
+/* 状態の行の下の補足（失敗の詳細・更新の案内・渡した PC など）: ほかの行と同じ左の端にそろえる */
+.sync-live > p.rm-sub { margin:4px 8px 0; }
 /* 届いた変更（web/plus-inbox.mjs。ADR 0245）: 1 件ずつ開き、差分（.scx-lines）と取り込む / 捨てる。押し終えた行は名前を弱く */
 .inx-list { margin-top:12px; }
 .inx { border-radius:var(--r-s); }

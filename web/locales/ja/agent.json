@@ -629,6 +629,26 @@
       },
       "syncInboxDrop": {
         "summary": "受け入れ待ちの 1 件を捨てる。手元のファイルは変えず、同じ版はもう出さない。"
+      },
+      "syncApprove": {
+        "summary": "同期の鍵を待っている PC に鍵を渡す。人が両方の画面の確認コードを見比べてから呼ぶ。",
+        "hostId": "鍵を待っている PC の hostId",
+        "code": "この PC の画面に出した 6 桁の確認コード。読み直して違えば渡さない"
+      },
+      "syncDeny": {
+        "summary": "同期の鍵を待っている PC に鍵を渡さない。その PC は 1 時間申し込み直せない。"
+      },
+      "syncRecoveryRequest": {
+        "summary": "鍵を持つ PC が 1 台も無いとき、新しい鍵で始め直す回復を頼む。最近のログインが要り、72 時間待つ。"
+      },
+      "syncRecoveryCancel": {
+        "summary": "この PC が頼んだ回復を取り下げる。"
+      },
+      "syncRecoveryComplete": {
+        "summary": "待ちが明けた回復を仕上げる。新しい鍵で始め直し、サーバーの同期のデータは消える。"
+      },
+      "syncRecoveryStop": {
+        "summary": "ほかの PC が頼んだ回復を、今の同期の鍵で止める。"
       }
     },
     "accounts": {

@@ -47,6 +47,8 @@ const SUITES = [
   './unit/plus-sync-engine.mjs',
   // 同期で届いた skill・指示ファイルの受け入れ待ち（取り込む・捨てる・手元の変更を上書きしない・中身の無い消した印を受けない）
   './unit/plus-sync-inbox.mjs',
+  // 同期の鍵の受け渡しの承認（同期の券・確認コード・外した PC の締め出しと作り直し・回復・前の版の K からの移行）
+  './unit/plus-sync-admission.mjs',
   './unit/acp-error.mjs',
   './unit/slot-limits.mjs',
   './unit/opencode-v2.mjs',

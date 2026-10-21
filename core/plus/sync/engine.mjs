@@ -18,6 +18,10 @@
 //   登録の外れ（403 forbidden・message host）: 止めて状態は unregistered。onHostLost で上（登録の確かめ直し）へ知らせる。
 //     知らせるのは、次にうまく回るまで 1 回だけ（同じ誤りで確かめ直しを繰り返さない）
 //   鍵を待つ（waiting_key）: 状態の wait に、鍵を持つ PC・サーバーの件数と大きさを載せる（keys.mjs の waitInfo）
+//   v2 の api（同期の券。keys.mjs）: 鍵を持つ PC は、新しい PC の申し込みを approvals に並べ、人が承認したら渡す（approve・deny）。
+//     申し込んでいる間（受け取る側）は 15 分まで 10 秒ごと、その後は 1 分ごとに見る。渡す側は、明かされるのを待つ間 3 分まで 5 秒ごとに見る
+//   426 update_required（この版では使えない api）: 止めて状態は update_required。回し直すのは start
+//   券を取れない（404 not_found・403 host_removed）は 403 host と同じ（登録が外れた）
 //
 // ログには論理名・中身・鍵を出さない（項目は itemId だけ）。
 import crypto from 'node:crypto';
@@ -33,6 +37,11 @@ const DAY = 24 * 60 * MINUTE;
 export const SYNC_DEBOUNCE_MS = 5_000;
 export const SYNC_RECEIVE_MS = 10 * MINUTE;
 export const SYNC_SHARE_MS = 5 * MINUTE;
+export const SYNC_JOIN_POLL_MS = 10_000;
+export const SYNC_JOIN_SLOW_MS = MINUTE;
+export const SYNC_JOIN_FAST_FOR_MS = 15 * MINUTE;
+export const SYNC_CHALLENGE_POLL_MS = 5_000;
+export const SYNC_CHALLENGE_FOR_MS = 3 * MINUTE;
 export const CONFLICT_KEEP_MS = 30 * DAY;
 const BACKOFF_MAX_MS = 10 * MINUTE;
 const PAGE_LIMIT = 200;
@@ -83,11 +92,13 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   let active = false;
   let key = null;               // { keyId, key, enc, id }
   let local = null;             // sync-state.json の中身
-  let status = { state: 'off', lastSyncedAt: null, totalBytes: 0, limitBytes: 0, conflicts: 0, error: null, wait: null, sharedTo: [], inbox: 0, inboxAt: null };
+  let status = { state: 'off', lastSyncedAt: null, totalBytes: 0, limitBytes: 0, conflicts: 0, error: null, wait: null, sharedTo: [], inbox: 0, inboxAt: null, approvals: [] };
   let quota = false;
   let running = null, again = null;
   let turn = Promise.resolve();   // 回と、取り込む・捨てるを 1 本ずつにする
-  let debounceTimer = null, receiveTimer = null, shareTimer = null, retryTimer = null;
+  let debounceTimer = null, receiveTimer = null, shareTimer = null, retryTimer = null, pollTimer = null;
+  let joinSince = null;         // 鍵を受け取る申し込みを見始めた時刻（v2）
+  let challengeSince = null;    // 渡す側として明かされるのを待ち始めた時刻（v2）
   let backoffMs = 0;
   const watchers = new Map();   // dir → watcher
   const ownWrites = new Map();  // 絶対パス → { sha, at }（自分で書いたものを fs.watch が拾っても上げ直さない）
@@ -304,11 +315,18 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   function handleRunError(e) {
     const code = e?.code ?? 'error';
     if (e?.status === 403 && e.message === 'sync_disabled') { setStatus({ state: 'disabled', error: null, wait: null }); return; }
-    if (e?.status === 403 && e.message === 'host') {
+    if (e?.status === 426) {
+      // この版では使えない api（受け入れの v2 が要る）: 更新を促して止める
+      log('sync stopped (update_required)');
+      halt();
+      setStatus({ state: 'update_required', error: 'update_required', wait: null, approvals: [] });
+      return;
+    }
+    if ((e?.status === 403 && (e.message === 'host' || e.code === 'host_removed')) || (e?.ticket && e.status === 404)) {
       // この PC の登録が外れた: やり直しを重ねず止め、上へ知らせる（登録し直したら index.mjs が start から回す）
       log('sync stopped (host)');
       halt();
-      setStatus({ state: 'unregistered', error: null, wait: null });
+      setStatus({ state: 'unregistered', error: null, wait: null, approvals: [] });
       if (!hostLostCalled) {
         hostLostCalled = true;
         try { void track(Promise.resolve(onHostLost()).catch(() => {})); } catch {}
@@ -527,11 +545,17 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
       forceNew = false;
       confirm = null;
       if (r.state) setStatus({ totalBytes: Number(r.state.totalBytes) || 0, limitBytes: Number(r.state.limitBytes) || 0 });
-      if (r.status === 'disabled') { key = null; setStatus({ state: 'disabled', error: null, wait: null }); return; }
+      if (r.status === 'disabled') { key = null; setStatus({ state: 'disabled', error: null, wait: null, approvals: [] }); return; }
       // 待つ・確かめが要る: 自分宛ての鍵を api に聞けた（台帳に載っている）ので、403 host の知らせをまた出せるようにする
-      if (r.status === 'waiting_key') { key = null; hostLostCalled = false; setStatus({ state: 'waiting_key', error: null, wait: r.wait ?? null }); return; }
-      if (r.status === 'confirm_needed') { key = null; hostLostCalled = false; setStatus({ state: 'waiting_key', error: null, wait: r.wait ?? null }); return 'confirm_needed'; }
+      if (r.status === 'waiting_key') {
+        key = null; hostLostCalled = false; challengeSince = null;
+        setStatus({ state: 'waiting_key', error: null, wait: r.wait ?? null, approvals: [] });
+        pollJoin(r.wait?.join);
+        return;
+      }
+      if (r.status === 'confirm_needed') { key = null; hostLostCalled = false; setStatus({ state: 'waiting_key', error: null, wait: r.wait ?? null, approvals: [] }); return 'confirm_needed'; }
       key = r.key;
+      joinSince = null;
       if (status.wait) setStatus({ wait: null });
       if (r.changed || local.keyId !== key.keyId) {
         const prev = local.keyId;
@@ -542,7 +566,12 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
         await saveLocal();
       }
       if (quota && r.state && (Number(r.state.totalBytes) || 0) < (Number(r.state.limitBytes) || 0)) quota = false;
-      if ((await keys.sharePending(r.state, key)) === 'rekey') continue;
+      if (r.v2) {
+        // 新しい PC の申し込み: 確認コードを付けて並べる。渡すのは人が承認したときだけ
+        const a = await keys.approvals(r.state, key);
+        setStatus({ approvals: a.list });
+        pollChallenge(a.waiting);
+      } else if ((await keys.sharePending(r.state, key)) === 'rekey') continue;
       if (!full) { setStatus({ state: quota ? 'quota' : (status.state === 'syncing' ? 'syncing' : 'idle'), error: null }); return; }
 
       setStatus({ state: 'syncing', error: null });
@@ -593,8 +622,27 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   // ---- いつ回すか -----------------------------------------------------------------------------------------
 
   function clearTimers() {
-    for (const id of [debounceTimer, receiveTimer, shareTimer, retryTimer]) if (id) clock.clearTimeout(id);
-    debounceTimer = receiveTimer = shareTimer = retryTimer = null;
+    for (const id of [debounceTimer, receiveTimer, shareTimer, retryTimer, pollTimer]) if (id) clock.clearTimeout(id);
+    debounceTimer = receiveTimer = shareTimer = retryTimer = pollTimer = null;
+  }
+  /** 申し込み・承認の途中を短い間隔で見る（鍵の受け渡しだけ。項目は受けない） */
+  function schedulePoll(ms) {
+    if (!active) return;
+    if (pollTimer) clock.clearTimeout(pollTimer);
+    pollTimer = clock.setTimeout(() => { pollTimer = null; void run({ full: false }); }, ms);
+    pollTimer?.unref?.();
+  }
+  /** 受け取る側: 申し込んでいる間は 15 分まで 10 秒ごと、その後は 1 分ごと。断られた（denied）・申し込みが無いなら止める */
+  function pollJoin(join) {
+    if (!join || join.state === 'denied') { joinSince = null; return; }
+    joinSince ??= clock.now();
+    schedulePoll(clock.now() - joinSince < SYNC_JOIN_FAST_FOR_MS ? SYNC_JOIN_POLL_MS : SYNC_JOIN_SLOW_MS);
+  }
+  /** 渡す側: nonceH を置いて、明かされるのを待つ間は 3 分まで 5 秒ごと */
+  function pollChallenge(waiting) {
+    if (!waiting) { challengeSince = null; return; }
+    challengeSince ??= clock.now();
+    if (clock.now() - challengeSince < SYNC_CHALLENGE_FOR_MS) schedulePoll(SYNC_CHALLENGE_POLL_MS);
   }
   function scheduleRetry(ms) {
     if (!active) return;
@@ -717,7 +765,18 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
   function stop({ reason = null } = {}) {
     halt();
     quota = false;
-    setStatus({ state: reason ? 'stopped' : 'off', error: reason, wait: null });
+    joinSince = challengeSince = null;
+    setStatus({ state: reason ? 'stopped' : 'off', error: reason, wait: null, approvals: [] });
+  }
+
+  /**
+   * 鍵の受け渡しと回復の操作（v2）。回と重ねずに通し、終わったら鍵の受け渡しだけを見直す。
+   * fn は keys の関数（approve・deny・recoveryRequest・recoveryCancel・recoveryComplete）
+   */
+  async function keyAction(fn) {
+    const out = await exclusive(fn);
+    if (active) await run({ full: Boolean(out?.done) });
+    return { ...out, status: { ...status } };
   }
 
   /**
@@ -743,6 +802,18 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
 
   return {
     start, stop, run, reset, forget, changed, noteShared,
+    /** 新しい PC に鍵を渡す（人が確認コードを見比べて承認した） */
+    approve: (target, code) => keyAction(() => keys.approve(target, code)),
+    /** 渡さない */
+    deny: target => keyAction(() => keys.deny(target)),
+    /** 回復（鍵を持つ PC が 1 台も無いとき）: 頼む・取り下げる・待ちが明けたら仕上げる */
+    recovery: {
+      request: () => keyAction(() => keys.recoveryRequest()),
+      cancel: () => keyAction(() => keys.recoveryCancel()),
+      complete: () => keyAction(() => keys.recoveryComplete()),
+    },
+    /** 状態に足す（回の外で分かったこと。外された PC の回復の見張りなど） */
+    note: patch => setStatus(patch),
     status: () => ({ ...status }),
     /** 受け入れ待ち: list（新しく届いた順の meta）・item（中身つきの 1 件）・take（取り込む）・drop（捨てる） */
     inbox: { list: listInbox, item: inboxItem, take, drop },

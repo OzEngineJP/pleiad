@@ -1,6 +1,7 @@
 // Pleiad Plus の api を呼ぶ手。ヘッダー・誤りの形・401 の取り直しをここに集める。
 // 誤りは {"error":{"code","message"}} を PlusError（status・code・message・retryAfter・resetAt・body）にして投げる。
 // 本文が読めないとき・ネットの誤りは PlusError({ code: 'network' })。
+// どの要求にも X-Pleiad-Admission: 2 を付ける（受け入れの v2 を知っているクライアントの印。前の版の api は読まない）。
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export class PlusError extends Error {
@@ -36,8 +37,8 @@ function errorFrom(status, body, headers) {
  * @param {Function} [o.onAccountDisabled] 403 account_disabled のとき（覚えているアカウントを disabled に）
  */
 export function createPlusClient({ config, getIdToken, appVersion = '0.0.0', fetchFn = fetch, onAuthFailure = () => {}, onAccountDisabled = () => {} }) {
-  async function send(method, path, { body, auth, signal, token } = {}) {
-    const headers = { 'x-pleiad-client': `desktop/${appVersion}` };
+  async function send(method, path, { body, auth, signal, token, headers: extra } = {}) {
+    const headers = { ...extra, 'x-pleiad-client': `desktop/${appVersion}`, 'x-pleiad-admission': '2' };
     if (auth) headers.authorization = `Bearer ${token ?? await getIdToken()}`;
     if (body !== undefined) headers['content-type'] = 'application/json';
     let res;
@@ -56,10 +57,11 @@ export function createPlusClient({ config, getIdToken, appVersion = '0.0.0', fet
   /**
    * api を呼ぶ。auth のときは ID トークンを付け、401 unauthenticated は 1 回だけ取り直してやり直す。
    * 2 回目も 401 なら onAuthFailure を呼んでから投げる。403 account_disabled は onAccountDisabled を呼ぶ。
+   * headers は足すヘッダー（同期の券 X-Pleiad-Sync-Ticket など。core/plus/sync/ticket.mjs）。
    */
-  async function request(method, path, { body, auth = true, signal } = {}) {
+  async function request(method, path, { body, auth = true, signal, headers } = {}) {
     try {
-      return await send(method, path, { body, auth, signal });
+      return await send(method, path, { body, auth, signal, headers });
     } catch (e) {
       if (!(e instanceof PlusError) || !auth) throw followup(e);
       if (e.status === 401 && e.code === 'unauthenticated') {
@@ -67,7 +69,7 @@ export function createPlusClient({ config, getIdToken, appVersion = '0.0.0', fet
         let token;
         try { token = await getIdToken({ force: true }); }
         catch (re) { throw followup(re); }
-        try { return await send(method, path, { body, auth, signal, token }); }
+        try { return await send(method, path, { body, auth, signal, token, headers }); }
         catch (re) {
           if (re instanceof PlusError && re.status === 401) { try { onAuthFailure(); } catch {} }
           throw followup(re);

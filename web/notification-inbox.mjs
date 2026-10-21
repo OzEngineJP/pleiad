@@ -27,6 +27,12 @@ export function describeNotification(n, t, titleOf = () => '') {
   if (n.kind === 'wait' && n.ask === 'syncInbox') {
     return { icon: 'wait', line: t('inbox.line.syncInbox', { count: Number.isFinite(n.count) ? n.count : 1 }), place: t('inbox.place.plus'), outcome: '', open: true };
   }
+  // 新しい PC が同期の鍵を待っている（承認は鍵を持つ PC の設定 › Pleiad Plus で）
+  if (n.kind === 'wait' && n.ask === 'syncApproval') {
+    const count = Number.isFinite(n.count) ? n.count : 1;
+    const line = count === 1 && n.title ? t('inbox.line.syncApproval.named', { name: n.title }) : t('inbox.line.syncApproval.plain', { count });
+    return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
+  }
   let line;
   if (n.kind === 'wait') {
     const what = ['question', 'chrome', 'command'].includes(n.ask) ? n.ask : 'approval';
@@ -59,6 +65,12 @@ export function badgeState({ unread = 0, waiting = 0 } = {}, t) {
   const wait = waiting > 0;
   const label = !n ? t('inbox.bell') : wait ? t('inbox.bellWait', { n }) : t('inbox.bellUnread', { n });
   return { text, wait, label, show: Boolean(n || wait) };
+}
+
+/** 行を押したときに開く先。設定 › Pleiad Plus の通知は、届いた変更（syncInbox）だけ「届いた変更」の面（pane: 'inbox'）、ほかは Plus の面 */
+export function notificationTarget(n) {
+  const target = n?.target ?? {};
+  return target.settings === 'plus' && n.ask === 'syncInbox' ? { ...target, pane: 'inbox' } : target;
 }
 
 /**
@@ -234,7 +246,7 @@ export function setupNotificationInbox({ bell, panel, veil, invoke, t, relTime, 
       paintBell();
       invoke('notifications.markRead', { ids: [n.id] }).catch(() => {});
     }
-    open(n.target ?? {});
+    open(notificationTarget(n));
   }
 
   bell.setAttribute('aria-haspopup', 'dialog');

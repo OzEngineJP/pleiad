@@ -250,7 +250,50 @@
         "syncUnregistered": "この PC の登録が外れているため、同期を止めています",
         "syncUnregisteredHint": "登録し直すと、自動で再開します。",
         "syncSharedTo": "新しい PC {{name}} に同期の鍵を渡しました（{{time}}）",
+        "syncWaitApproval": "鍵を持つ PC の承認を待っています",
+        "syncWaitApprovalHint": "{{name}} で Pleiad を開くと、両方の画面に確認コードが出ます。",
+        "syncApproveOn": "{{name}} の画面で承認してください",
+        "syncCode": "確認コード",
+        "syncJoinDenied": "鍵の受け渡しが断られました",
+        "syncJoinDeniedHint": "1 時間たつと、もう一度申し込めます。",
+        "syncHelpRemove": "手元に無い PC は、アカウントのページで外してください。外した PC は同期のデータを読めなくなります。",
+        "syncHelpRecovery": "鍵を持つ PC が 1 台も残らなければ、この PC から回復を頼めます。72 時間待ってから新しい鍵で始め直し、サーバーの同期のデータは消えます。待っている間は、鍵を持つ PC から止められます。",
+        "syncHelpClose": "閉じる",
+        "syncHolderGoneAll": "鍵を持つ PC はどれも登録から外れています。",
+        "syncRecoveryAbout": "回復を頼むと、72 時間後に新しい鍵で始め直せます。サーバーの同期のデータは消えます。待っている間は、鍵を持つ PC から止められます。",
+        "syncRecoveryAsk": "回復を頼む",
+        "syncRecoveryWaiting": "回復を待っています。{{time}} から新しい鍵で始め直せます。",
+        "syncRecoveryReady": "回復の待ちが明けました。新しい鍵で始め直せます。",
+        "syncRecoveryWithdraw": "取り下げる",
+        "syncRecoveryStart": "新しい鍵で始め直す",
+        "syncRecoveryOther": "{{name}} が回復を頼んでいます。{{time}} を過ぎると、その PC が新しい鍵で始め直せます。",
+        "syncRecoveryStop": "回復を止める",
+        "syncRecoveryAlert": "{{name}} が同期の回復を頼んでいます。心当たりが無ければ止めてください。{{time}} を過ぎると、新しい鍵で始め直されます。",
+        "syncRecoveryNote": {
+          "reauth": "回復を頼むには、ログインし直してください（最近のログインが要ります）。",
+          "other": "ほかの PC が先に回復を頼みました。",
+          "holder": "鍵を持つ PC が見つかりました。その PC の承認で受け取れます。",
+          "waiting": "まだ待ちが明けていません。",
+          "gone": "回復は取り消されました。",
+          "stopped": "回復を止めました。",
+          "stopFailed": "回復を止められませんでした。"
+        },
+        "syncRelogin": "ログインし直す",
+        "syncUpdateRequired": "この版の Pleiad では同期を続けられません",
+        "syncUpdateRequiredHint": "Pleiad を新しい版に更新すると、再開します。",
+        "syncStartOverOthersApproval": "ほかの PC: 同期が止まり、この PC の画面で承認すると、また同期します。同じものがあるときは新しい方が残り、もう一方は「同期の写し」に 30 日残ります。",
+        "syncApprove": {
+          "mark": "承認を待っている",
+          "title": "「{{name}}」に同期の鍵を渡しますか？",
+          "hint": "{{name}} の画面に同じ数字が出ていることを確かめてから渡してください。",
+          "deny": "渡さない",
+          "approve": "渡す",
+          "changed": "確認コードが変わりました。もう一度見比べてください。",
+          "gone": "申し込みが取り下げられました。",
+          "noKey": "この PC は今の同期の鍵を持っていません。"
+        },
         "hostRemoved": "この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。",
+        "hostRemovedForGood": "この PC は Pleiad Plus の登録から外されています。同じ鍵では戻せないので、続けるときはつなぎ直してください。",
         "hostReregister": "この PC を登録し直す",
         "hostReregistered": "この PC の登録が外れていたので、登録し直しました",
         "syncInbox_other": "届いた変更 {{count}} 件",
@@ -3482,7 +3525,11 @@
         "named": "{{name}} が @あなた と書きました",
         "plain": "@あなた 宛ての投稿があります"
       },
-      "syncInbox_other": "同期で届いた変更が {{count}} 件あります"
+      "syncInbox_other": "同期で届いた変更が {{count}} 件あります",
+      "syncApproval": {
+        "named": "{{name}} が同期の鍵を待っています",
+        "plain_other": "{{count}} 台の PC が同期の鍵を待っています"
+      }
     },
     "place": {
       "thread": "#{{channel}} › {{thread}}",

@@ -155,6 +155,17 @@ export default async function (t) {
   t.ok('host removed: 外されている旨と「この PC を登録し直す」', text(nodes).includes('この PC は Pleiad Plus の登録から外されています') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
   byFk(nodes, 'hostReregister').onclick();
   t.ok('「この PC を登録し直す」は reregister を呼ぶ', rereg === 1);
+  // 同じ鍵では戻れない（受け入れの v2 の api）: 登録し直すではなく、つなぎ直す（鍵を作り直す）
+  asked = false;
+  const gone = { state: 'removed', error: { code: 'host_removed', permanent: true } };
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: gone }, { ...deps, askRebind: () => { asked = true; } });
+  t.ok('host removed（permanent）: 同じ鍵では戻せない旨と「つなぎ直す」（「この PC を登録し直す」は出さない）',
+    text(nodes).includes('同じ鍵では戻せない') && byFk(nodes, 'rebind')?.textContent === 'つなぎ直す' && !byFk(nodes, 'hostReregister'), text(nodes));
+  byFk(nodes, 'rebind').onclick();
+  t.ok('外された PC の「つなぎ直す」も確かめを開く', asked);
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: gone }, { ...deps, confirming: true });
+  byFk(nodes, 'rebindYes').onclick();
+  t.ok('確かめの「作り直す」は plusHostRebind', sent.at(-1) === 'plusHostRebind');
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered', notice: 'reregistered' } });
   t.ok('notice reregistered: 「登録が外れていたので、登録し直しました」（ボタンは出さない）', text(nodes).includes('この PC の登録が外れていたので、登録し直しました') && !byFk(nodes, 'hostReregister'));
 
@@ -236,6 +247,97 @@ export default async function (t) {
       await new Promise(r => setImmediate(r));
       t.ok('「この PC を登録し直す」は plus.hostReregister を送る', invoked.some(([op]) => op === 'plus.hostReregister'));
     } finally { document.getElementById = savedGet; }
+  }
+
+  // ---- 同期の鍵を渡す承認の窓（status.approvals。端末の承認の窓と同じ rm-dialog）・回復の操作 ----
+  {
+    const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
+    const savedGet = document.getElementById, savedCreate = document.createElement, savedBody = document.body;
+    document.getElementById = id => nodes2[id] ?? null;
+    // 代役の dialog: showModal・close・open だけ
+    document.createElement = tag => {
+      const n = savedCreate(tag);
+      if (tag === 'dialog') {
+        let open = false;
+        Object.defineProperty(n, 'open', { get: () => open, set: v => { open = Boolean(v); } });
+        n.showModal = () => { open = true; };
+        n.close = () => { open = false; };
+      }
+      return n;
+    };
+    document.body = new N('body');
+    const invoked = [];
+    const replies = {};
+    try {
+      const settings = setupPlusSettings({
+        cmd: async (name, args) => {
+          if (name !== 'invoke') return {};
+          invoked.push([args.op, args.args]);
+          return replies[args.op] ?? {};
+        },
+        page: () => {}, getPrefs: () => ({}),
+      });
+      const dialog = () => document.body.children.find(n => n.id === 'plusSyncApproval') ?? null;
+      const LAP = { hostId: 'h-lap', name: 'lap', platform: 'win32', app: '0.34.0', code: '731058', at: '2026-10-21T05:00:00Z' };
+      settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered' } } });
+      t.ok('承認の窓: 申し込みが無ければ窓は作らない', dialog() === null);
+      settings.event({ type: 'plusSyncStatus', status: { state: 'idle', approvals: [LAP] } });
+      let d = dialog();
+      t.ok('承認の窓: 申し込みが来たら、どの画面にいても rm-dialog の窓を開く', d?.open === true && d.className === 'rm-dialog' && d.getAttribute('aria-labelledby') === 'plusSyncApprovalTitle');
+      t.ok('承認の窓: 題・PC の種類と版・3 桁ずつの確認コード・見比べる案内',
+        d.textContent.includes('「lap」に同期の鍵を渡しますか？') && d.textContent.includes('Windows · 0.34.0') && d.textContent.includes('731 058') && d.textContent.includes('同じ数字が出ている'), d.textContent);
+      let prevented = false;
+      d.dispatchEvent({ type: 'cancel', preventDefault: () => { prevented = true; } });
+      t.ok('承認の窓: Esc では黙って閉じない', prevented && d.open === true);
+      // 同じ申し込みのまま状態が届き直しても、窓を作り直さない
+      const before = d.children[1];
+      settings.event({ type: 'plusSyncStatus', status: { state: 'idle', approvals: [LAP] } });
+      t.ok('承認の窓: 同じ申し込みなら描き直さない', d.children[1] === before);
+      // 渡さない
+      replies['plus.syncDeny'] = { status: { state: 'idle', approvals: [] } };
+      byFk([d], 'syncApproveNo').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('「渡さない」は plus.syncDeny（hostId）を送り、窓を閉じる', invoked.at(-1)?.[0] === 'plus.syncDeny' && invoked.at(-1)[1].hostId === 'h-lap' && d.open === false, JSON.stringify(invoked.at(-1)));
+      // 渡す: 読み直したらコードが変わっていた → 新しいコードで出し直す
+      settings.event({ type: 'plusSyncStatus', status: { state: 'idle', approvals: [LAP] } });
+      replies['plus.syncApprove'] = { shared: false, reason: 'changed', status: { state: 'idle', approvals: [{ ...LAP, code: '222333' }] } };
+      byFk([dialog()], 'syncApproveYes').onclick();
+      await new Promise(r => setImmediate(r));
+      d = dialog();
+      t.ok('「渡す」は見せたコードを付けて plus.syncApprove を送る', invoked.at(-1)?.[0] === 'plus.syncApprove' && invoked.at(-1)[1].hostId === 'h-lap' && invoked.at(-1)[1].code === '731058', JSON.stringify(invoked.at(-1)));
+      t.ok('コードが変わっていたら、新しいコードと「変わりました」で窓を出し直す', d.open === true && d.textContent.includes('222 333') && d.textContent.includes('確認コードが変わりました'), d.textContent);
+      replies['plus.syncApprove'] = { shared: true, status: { state: 'idle', approvals: [] } };
+      byFk([d], 'syncApproveYes').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('渡せたら窓を閉じる（2 回目は新しいコードで送る）', d.open === false && invoked.at(-1)[1].code === '222333');
+      // 申し込みが取り下げられた（gone）: 窓を閉じ、同期の行に一言
+      settings.event({ type: 'plusSyncStatus', status: { state: 'idle', approvals: [LAP] } });
+      replies['plus.syncApprove'] = { shared: false, reason: 'gone', status: { state: 'idle', approvals: [] } };
+      byFk([dialog()], 'syncApproveYes').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('取り下げられていたら窓を閉じ、同期の行に「取り下げられました」', dialog().open === false && nodes2.plusPanel.textContent.includes('申し込みが取り下げられました'), nodes2.plusPanel.textContent);
+      // 回復を頼む: 最近のログインが要る → 一言とログインし直すボタン
+      const NOHOLD = { keyId: 'key-1', itemCount: 3, totalBytes: 1000, updatedAt: null, v2: true, holder: false, holders: [], recovery: null };
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: NOHOLD } });
+      replies['plus.syncRecoveryRequest'] = { reauth: true, status: { state: 'waiting_key', wait: NOHOLD } };
+      byFk([nodes2.plusPanel], 'syncRecoveryRequest').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('「回復を頼む」は plus.syncRecoveryRequest を送り、reauth ならログインし直す案内', invoked.at(-1)?.[0] === 'plus.syncRecoveryRequest'
+        && nodes2.plusPanel.textContent.includes('ログインし直してください') && byFk([nodes2.plusPanel], 'syncRelogin') !== null);
+      // 待ちが明けた: 始め直すはチェックを入れてからだけ plus.syncRecoveryComplete
+      const R = { requestedBy: 'me', requestedAt: '2026-01-01T00:00:00Z', readyAt: '2026-01-04T00:00:00Z', requestedByName: 'me' };
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { ...NOHOLD, recovery: R, recoveryMine: true } } });
+      byFk([nodes2.plusPanel], 'syncReset').onclick();
+      byFk([nodes2.plusPanel], 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('回復の始め直し: チェックの前は送らない', !invoked.some(([op]) => op === 'plus.syncRecoveryComplete'));
+      byFk([nodes2.plusPanel], 'syncResetCheck').checked = true; byFk([nodes2.plusPanel], 'syncResetCheck').onchange();
+      replies['plus.syncRecoveryComplete'] = { done: true, status: { state: 'idle' } };
+      byFk([nodes2.plusPanel], 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('回復の始め直し: チェックを入れたら plus.syncRecoveryComplete を送り、窓を閉じる',
+        invoked.at(-1)?.[0] === 'plus.syncRecoveryComplete' && !byFk([nodes2.plusPanel], 'syncResetCheck') && !invoked.some(([op]) => op === 'plus.syncReset'));
+    } finally { document.getElementById = savedGet; document.createElement = savedCreate; document.body = savedBody; }
   }
 
   // ---- ログインで委譲と通話に plus が自動で選ばれた案内（apiKeysChanged の autoPlus。1 度きり） ----
