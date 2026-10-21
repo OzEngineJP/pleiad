@@ -49,8 +49,8 @@ export function weekUsage(quota, account = '') {
   return used == null ? null : { used, high: used >= HIGH };
 }
 
-/** 使用量の表示の認可が要る（済んでいない・やり直し） */
-export const needsAuth = row => Boolean(row?.needsUsageLogin || row?.reauth);
+/** 使用量の表示の認可が要る（済んでいない・やり直し・ログイン情報にトークンが無く再ログインが要る） */
+export const needsAuth = row => Boolean(row?.needsUsageLogin || row?.reauth || row?.reason === 'no-login');
 
 /** 枠の短い名前。Antigravity のグループ名の頭と、末尾の括弧書き（「週次（7日間）」の「（7日間）」）を外す */
 export function shortLabel(w) {
@@ -212,12 +212,12 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   const labelOf = id => data.get(id)?.label ?? getBackends().find(b => b.id === id)?.label ?? id;
   const ids = () => getBackends().map(b => b.id);
 
-  async function refresh(list = ids()) {
+  async function refresh(list = ids(), { force = false } = {}) {
     if (!list.length) return;
     loading++; paint();
     if (list.length === ids().length) lastRefresh = Date.now();
     for (const id of list) asked.add(id);
-    await Promise.all(list.map(id => source.load(id).catch(() => {
+    await Promise.all(list.map(id => source.load(id, { force }).catch(() => {
       const prev = data.get(id);
       data.set(id, { ...prev, failed: true });
       paint();
@@ -238,7 +238,9 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'M7 10l5 5 5-5');
     svg.append(path); return svg;
   };
-  const staleNote = entry => (entry?.failed || entry?.quota?.stale) && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) }) : '';
+  // 取得そのものが失敗した（前の値を薄く出す）か、アカウントの行だけ読めずサーバーが前回の値を残した（行の staleSince）
+  const staleNote = (entry, row) => (entry?.failed || entry?.quota?.stale) && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) })
+    : row?.staleSince ? t('usage.header.stale', { when: fmt.relative(row.staleSince) }) : '';
 
   function paintChip() {
     const entry = data.get(shown.backend);
@@ -249,7 +251,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const state = chipState(shown.endpoint ? null : row);
     chip.hidden = false;
     onVisibility();
-    const agent = labelOf(shown.backend), stale = shown.endpoint ? '' : staleNote(entry);
+    const agent = labelOf(shown.backend), stale = shown.endpoint ? '' : staleNote(entry, base);
     // 短い間隔の上限で止まっている枠は、日次・週次の率（0% のこともある）より先に出す
     const held = shown.endpoint ? null : heldSlotOf(entry?.held, shown);
     repaintAt(held?.until);
@@ -328,7 +330,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const head = el('div', 'an', labelOf(id));
     if (notes.length) head.append(el('small', null, notes.join(' · ')));
     section.append(head);
-    const stale = endpoint ? '' : staleNote(entry);
+    const stale = endpoint ? '' : staleNote(entry, row);
     if (stale) section.append(el('p', 'usage-note', stale));
     // 短い間隔の上限で止まっている枠（設定の「使用量」と同じ文。web/usage.mjs の heldTexts）
     const heldLines = endpoint ? [] : heldTexts(entry?.held, entry?.quota);
@@ -362,7 +364,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const again = el('button', 'rf', '↻');
     again.type = 'button'; again.disabled = loading > 0;
     again.setAttribute('aria-label', t('usage.header.refresh')); again.title = t('usage.header.refresh');
-    again.onclick = () => refresh();
+    again.onclick = () => refresh(ids(), { force: true });
     head.append(el('b', null, t('usage.header.title')), el('span', 'when', checked ? fmt.relative(checked) : ''), again);
     const order = [shown.backend, ...ids().filter(id => id !== shown.backend)].filter(Boolean);
     const sections = order.map(id => agentSection(id, data.get(id), id === shown.backend));

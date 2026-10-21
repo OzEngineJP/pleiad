@@ -534,7 +534,9 @@
       "needsLogin": "To show usage, complete \"Authorize usage display\" under \"Claude accounts\" in Settings.",
       "loginAccount": "Signed-in account",
       "failed": "Could not get usage: {{message}}",
-      "failedReauth": "Could not get usage: {{message}}. If this keeps happening, redo \"Authorize usage display\"."
+      "failedReauth": "Could not get usage: {{message}}. If this keeps happening, redo \"Authorize usage display\".",
+      "relogin": "Can't read usage because the sign-in details have no token. You need to sign in again: run claude auth login in a terminal.",
+      "reauthNeeded": "Usage authorization for this account has expired (the sign-in details have no token). You need to sign in again: press \"Authorize again\"."
     },
     "redacted": {
       "token": "[token]",

@@ -258,7 +258,7 @@ export default async function (t) {
     'settings.get': registry.settings.map((x) => ({ key: x.key })), 'settings.schema': registry.settings.map((x) => ({ key: x.key })),
     'sessions.search': [{ query: 'こんにちは' }], 'sessions.get': [{ sessionId: 's1' }], 'sessions.read': [{ sessionId: 's1' }], 'delegation.status': [{ taskId: 't' }],
     'sessions.listMessages': [{ sessionId: 's1' }], 'sessions.changes': [{ sessionId: 's1' }], 'sessions.lineage': [{ sessionId: 's1' }], 'sessions.suggestTitle': [{ sessionId: 's1' }],
-    'delegation.instructions': [{ taskId: 't' }], 'delegation.hostView': [{ taskId: 't' }],
+    'delegation.instructions': [{ taskId: 't' }], 'delegation.hostView': [{ taskId: 't' }], 'delegation.usageRefresh': [{ backend: 'x' }],
     'mcp.nativeList': [{ format: 'claude', scope: 'user', cwd: 'x' }], 'mcp.nativeRead': [{ format: 'codex', scope: 'directory', cwd: 'x', name: 'a' }], 'mcp.read': [{ name: 'a' }],
     'hooks.read': [{ agent: 'claude', scope: 'user', loc: { event: 'PreToolUse', group: 0, handler: 0 } }], 'hooks.readPly': [{ id: 'h-1' }],
     'git.diff': [{ path: 'a' }], 'sessions.readSubagent': [{ sessionId: 's1', agentId: 'a' }], 'sessions.background': [{ sessionId: 's1', taskId: 't' }],

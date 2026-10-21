@@ -73,21 +73,73 @@ export function claudeQuota(data) {
 const QUOTA_SNAPSHOTS_FILE = 'usage-quota.json';
 // 写しに残すエージェントの上限（使うエージェントの種類は限られる。溢れないための上限。tests/data-writes-allowlist.mjs）
 const QUOTA_SNAPSHOTS_MAX = 20;
+/** 読めなかった理由（行の reason。ply_usage にもそのまま出す）。no-login はログイン情報のトークンが無い（再ログインが要る） */
+export const QUOTA_FAILURES = Object.freeze(['no-login', 'rate-limited', 'timeout', 'error']);
+/** 読めない行が続く間に延ばす、読む間隔の上限 */
+export const QUOTA_BACKOFF_MAX_MS = 15 * 60_000;
+const failureOf = reason => QUOTA_FAILURES.includes(reason) ? reason : 'error';
+/** 取得の例外から読めなかった理由を引く。印（error.reason）があればそれ、無ければ文言の 429・時間切れ */
+export function quotaFailure(error) {
+  if (QUOTA_FAILURES.includes(error?.reason)) return error.reason;
+  const text = String(error?.message ?? error);
+  if (/\b429\b|rate[ _-]?limit/i.test(text)) return 'rate-limited';
+  return /\btime[ds]?[ _-]?out\b/i.test(text) ? 'timeout' : 'error';
+}
+
+/** 使用枠の行。[行の名前, 行]。アカウントごとの行（accounts）があればその行（ログイン中は 'login'）、無ければ全体の 1 行（''） */
+const quotaRows = quota => Array.isArray(quota?.accounts)
+  ? quota.accounts.map(a => [a?.accountId ?? LOGIN_ACCOUNT, a]) : [['', quota]];
+/**
+ * 読めなかった行（reason があり、枠が空）には前回の枠とプランを残し、いつの値か（staleSince）を添える。
+ * 前回も読めていなかった（枠が空）なら、理由の文言だけの行のまま。since は前回の値を読んだ時刻
+ */
+function carryRow(row, old, since) {
+  if (!row?.reason || row.windows?.length || !old?.windows?.length) return row;
+  const at = old.staleSince ?? since ?? null;
+  return { ...row, windows: old.windows, plan: row.plan ?? old.plan ?? null, ...(at != null ? { staleSince: at } : {}) };
+}
+/**
+ * 今回の値に前回の値を重ねる。読まなかった行（skipped。読む間隔を延ばしている間）は前回の行のまま、
+ * 読めなかった行は carryRow。checkedAt は全体の値を読んだ時刻（前回の値を残したなら、その値の時刻）
+ */
+function mergeQuota(value, prev, at) {
+  const since = prev?.checkedAt ?? null;
+  if (Array.isArray(value?.accounts)) {
+    const old = new Map(prev ? quotaRows(prev) : []);
+    const accounts = value.accounts.map(a => {
+      const was = old.get(a.accountId ?? LOGIN_ACCOUNT);
+      if (a.skipped) return was ? { ...was, label: a.label ?? was.label } : (({ skipped, ...rest }) => rest)(a);
+      const row = carryRow(a, was, since);
+      // 前回の値を残した行は、その値の時刻を行に持たせる（委譲の振り分けが古い値を新しい値と取り違えない。core/delegation-routing.mjs）
+      return row.staleSince != null ? { ...row, checkedAt: row.staleSince } : row;
+    });
+    return { ...value, accounts, checkedAt: at };
+  }
+  const row = carryRow(value, prev && !Array.isArray(prev.accounts) ? prev : null, since);
+  return { ...row, checkedAt: row.staleSince ?? (row.reason ? null : at) };
+}
 
 /**
  * プロバイダーの使用枠の正本（単一のストア。設定の画面・ply_usage・委譲の監視・チャンネルの予算・
- * ヘッダーの札が同じスナップショットを読む）。成功した値だけをキャッシュし、同時の取得は相乗りする。
+ * ヘッダーの札が同じスナップショットを読む）。同時の取得は相乗りする。
  *   get(key)                    … 前回のスナップショット（同期）。無ければ null
- *   refresh(key, fetcher, opt)  … 取得。ttl 内はキャッシュを返す。force は ttl を待たず取り直す
- *   subscribe(fn)               … 値が取れた（key）・無効化した（key が null）通知。画面への push に使う
+ *   refresh(key, fetcher, opt)  … 取得。ttl 内はキャッシュを返す。force は ttl と読む間隔の延長を待たず、全部の行を取り直す（人の読み直し）
+ *   subscribe(fn)               … 値が届いた（key）・無効化した（key が null）通知。画面への push に使う
  *   invalidate()                … 認可・キーが変わった。次の取得は必ず取り直す
  *   flush()                     … 残っている書き出しが済むまで待つ（テスト用）
  * スナップショット: { revision, fetchedAt, stale, ...quota（windows・accounts・checkedAt・message…） }。
  * dir を渡すと、取れた値を usage-quota.json に原子的に残し、起動時に stale: true で読み戻す
  * （再起動しても札が残る。stale の値は取り直しが届くまで先に返し、届いたら subscribe で知らせる）
+ *
+ * 読めなかった行（reason。ログインなし・429・時間切れ・例外）は、前回の値を空の結果で上書きせず残し、staleSince（その値の時刻）を添える。
+ * 行ごとに、読めない間は読む間隔を ttl の倍々に延ばし（上限 backoffMax）、読めたら戻す。延ばしている行は fetcher に
+ * skip（行の名前の一覧）で渡し、読まない（行を { skipped: true } で返せば前回の行のまま）。全部の行が延ばしている間は取りに行かない。
+ * 読めなくなったとき・理由が変わったとき・読めるようになったときだけ log に 1 行書く（続く間は書かない。秘密は渡さない）
  */
-export function createQuotaStore({ now = Date.now, ttl = 60_000, dir = null, io = fs } = {}) {
+export function createQuotaStore({ now = Date.now, ttl = 60_000, backoffMax = QUOTA_BACKOFF_MAX_MS, dir = null, io = fs, log = () => {} } = {}) {
   const cache = new Map(), pending = new Map(), listeners = new Set();
+  // key → Map(行の名前 → { reason, failures, retryAt })。読めない行だけを持つ
+  const health = new Map();
   let generation = 0, writes = Promise.resolve();
   const file = dir ? path.join(dir, QUOTA_SNAPSHOTS_FILE) : null;
   if (file) {
@@ -103,28 +155,70 @@ export function createQuotaStore({ now = Date.now, ttl = 60_000, dir = null, io 
     writes = writes.then(() => writeAtomic(file, JSON.stringify({ version: 1, backends }, null, 2) + '\n', { mode: 0o600 })).catch(() => {});
   };
   const notify = (key, snapshot) => { for (const fn of listeners) { try { fn(key, snapshot); } catch {} } };
+  const write = line => { try { log(line); } catch {} };
+  const where = (key, row) => row ? `${key} account=${row}` : key;
+  /** 今回の行の結果で、読む間隔とログを進める。読まなかった行（skipped）は変えない */
+  function track(key, value) {
+    const rows = health.get(key) ?? new Map();
+    const at = now(), seen = new Set();
+    for (const [name, row] of quotaRows(value)) {
+      seen.add(name);
+      if (row?.skipped) continue;
+      const was = rows.get(name);
+      if (row?.reason) {
+        const reason = failureOf(row.reason), failures = (was?.failures ?? 0) + 1;
+        rows.set(name, { reason, failures, retryAt: at + Math.min(ttl * 2 ** failures, backoffMax) });
+        if (was?.reason !== reason) write(`${where(key, name)} read failed reason=${reason} at=${new Date(at).toISOString()}`);
+      } else if (was) {
+        rows.delete(name);
+        write(`${where(key, name)} read again after reason=${was.reason} at=${new Date(at).toISOString()}`);
+      }
+    }
+    for (const name of [...rows.keys()]) if (!seen.has(name)) rows.delete(name);
+    if (rows.size) health.set(key, rows); else health.delete(key);
+  }
+  /** 例外で何も返らなかった。前回の行を、同じ理由で読めなかった行として扱う */
+  function thrown(error, prev) {
+    const reason = quotaFailure(error), message = t('usage.fetchFailed');
+    return Array.isArray(prev?.accounts)
+      ? { windows: [], message: null, accounts: prev.accounts.map(a => ({ label: a.label, accountId: a.accountId ?? null, windows: [], reason, message })) }
+      : { windows: [], reason, message };
+  }
   return {
     get: key => cache.get(key) ?? null,
     async refresh(key, fetcher, { force = false } = {}) {
       const hit = cache.get(key);
-      if (hit && !hit.stale && !force && now() - hit.fetchedAt < ttl) return hit;
-      if (!pending.has(key)) {
+      if (hit && !hit.stale && !force) {
+        const rows = health.get(key), at = now();
+        if (at - hit.fetchedAt < ttl) return hit;
+        // 全部の行が読む間隔を延ばしている間は、取りに行かない（前回の値と理由を返す）
+        if (rows?.size && quotaRows(hit).every(([name]) => (rows.get(name)?.retryAt ?? 0) > at)) return hit;
+      }
+      const running = pending.get(key);
+      // 人の読み直し（force）は、間隔を延ばした行を飛ばしている取得に相乗りせず、それが済んでから全部を読み直す
+      if (!running || (force && !running.force)) {
         const version = generation;
-        const task = Promise.resolve().then(fetcher).then(value => {
+        const before = running?.task ?? Promise.resolve();
+        const task = before.catch(() => {}).then(() => {
+          const rows = health.get(key), at = now();
+          const skip = force || !rows ? [] : [...rows].filter(([name, s]) => name && s.retryAt > at).map(([name]) => name);
+          return Promise.resolve().then(() => fetcher({ skip })).catch(error => thrown(error, cache.get(key)));
+        }).then(value => {
           if (version !== generation) return { windows: [], checkedAt: null, message: t('usage.authChanged') };
-          const snapshot = { ...value, checkedAt: now(), revision: (cache.get(key)?.revision ?? 0) + 1, fetchedAt: now(), stale: false };
+          const prev = cache.get(key);
+          track(key, value);
+          const snapshot = { ...mergeQuota(value, prev, now()), revision: (prev?.revision ?? 0) + 1, fetchedAt: now(), stale: false };
           cache.set(key, snapshot); persist(); notify(key, snapshot);
           return snapshot;
-        }).catch(() => ({ windows: [], checkedAt: null, message: t('usage.fetchFailed') }))
-          .finally(() => pending.delete(key));
-        pending.set(key, task);
+        }).finally(() => { if (pending.get(key)?.task === task) pending.delete(key); });
+        pending.set(key, { task, force });
       }
       // 前回の終了時の値（stale）があれば、取り直しが届くまで先にそれを返す
-      if (hit?.stale) return hit;
-      return pending.get(key);
+      if (hit?.stale && !force) return hit;
+      return pending.get(key).task;
     },
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
-    invalidate() { generation++; cache.clear(); persist(); notify(null, null); },
+    invalidate() { generation++; cache.clear(); health.clear(); persist(); notify(null, null); },
     flush: () => writes,
   };
 }
@@ -148,9 +242,15 @@ export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
     const name = a.accountId ?? LOGIN_ACCOUNT;
     return { account: name, ...(a.ready === false || (a.accountId && tokens?.get(a.accountId) === false) ? { runnable: false } : {}) };
   };
+  // 読めなかった行の理由（QUOTA_FAILURES）と、前回の値を出しているならその時刻・何分前か（読めていれば付けない）
+  const failure = q => {
+    const at = q?.staleSince != null ? new Date(q.staleSince).getTime() : NaN;
+    return { ...(q?.reason ? { reason: failureOf(q.reason) } : {}),
+      ...(Number.isFinite(at) ? { staleSince: iso(at), staleMinutes: Math.max(0, Math.floor((now - at) / 60_000)) } : {}) };
+  };
   return { plan: quota?.plan ?? null, windows: windows(quota?.windows),
-    ...(Array.isArray(quota?.accounts) ? { accounts: quota.accounts.map(a => ({ ...account(a), label: maskEmail(a.label), plan: a.plan ?? null, windows: windows(a.windows), message: maskEmail(a.message) })) } : {}),
-    checkedAt: iso(quota?.checkedAt), message: maskEmail(quota?.message) };
+    ...(Array.isArray(quota?.accounts) ? { accounts: quota.accounts.map(a => ({ ...account(a), label: maskEmail(a.label), plan: a.plan ?? null, windows: windows(a.windows), ...failure(a), message: maskEmail(a.message) })) } : {}),
+    ...failure(quota), checkedAt: iso(quota?.checkedAt), message: maskEmail(quota?.message) };
 }
 
 /**
@@ -171,7 +271,7 @@ export async function agentUsage({ backend, list, get, read, locale, accounts, h
   const backends = await Promise.all(targets.map(async b => {
     let quota;
     try { quota = await read(b); }
-    catch { quota = { windows: [], checkedAt: null, message: agentT(locale, 'usage.failed') }; }
+    catch (e) { quota = { windows: [], checkedAt: null, reason: quotaFailure(e), message: agentT(locale, 'usage.failed') }; }
     const rows = accounts && b.capabilities?.accounts ? await accounts(b).catch(() => []) : [];
     const tokens = rows.length ? new Map(rows.map(a => [a.id, Boolean(a.ready)])) : null;
     const stopped = (held ? held(b) : []).map(s => ({ model: s.model ?? null,
