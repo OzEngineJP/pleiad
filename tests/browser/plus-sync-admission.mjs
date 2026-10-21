@@ -3,7 +3,7 @@
 //   1. 鍵を持つ PC が 1 台も残っていない desk: 回復を頼む → 待つ → 待ちが明けて新しい鍵で始め直す
 //   2. 新しい PC の lap: 承認を待つ（「鍵を持つ PC が使えないとき」）→ 両方に同じ確認コード → desk の承認の窓と通知の行 → 渡す
 //   3. この版では使えない api（426）: 更新を促す
-//   4. 外された desk が今の鍵を持っていて、ほかの PC が回復を頼んだ: 知らせと「回復を止める」
+//   4. 外された desk が今の鍵を持っていて、ほかの PC が回復を頼んだ: 知らせ（通知の一覧にも残る）と「回復を止める」
 // 鍵の仕組みそのもの（断る・承認の途中から戻る・外した PC の締め出し・移行・券）は tests/unit/plus-sync-admission.mjs が見る。
 // ホームと CLAUDE_CONFIG_DIR は試験の置き場に向ける（本物の ~/.claude には触らない）。
 // 実行: node tests/browser/plus-sync-admission.mjs   （PLUS_SYNC_SHOTS=<ディレクトリ> で場面ごとの画像を撮る。明暗 × 1280/360）
@@ -275,9 +275,25 @@ try {
   tx = await desk.waitText('#plusSyncSection', 'UNKNOWN-PC が同期の回復を頼んでいます', 60_000);
   ok('外された desk: 回復の知らせと「回復を止める」', !!(await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').count()), tx);
   await desk.shots('recovery-alert');
+  // 通知の一覧にも、あなた待ちの行で残る。押すと設定 › Pleiad Plus に戻る
+  await desk.page.locator('#backToChat').click();
+  await desk.page.locator('#notifBell').click();
+  const recTx = await desk.waitText('#notifPanel', 'UNKNOWN-PC が同期の回復を頼んでいます', 15_000);
+  ok('通知: 回復の頼みがあなた待ちに 1 行・場所は「設定 › Pleiad Plus」', recTx.includes('設定 › Pleiad Plus'), recTx.slice(0, 300));
+  await desk.shots('recovery-notice');
+  await desk.page.locator('#notifPanel .nrow', { hasText: '同期の回復を頼んでいます' }).first().click();
+  await desk.page.waitForSelector('#plusSyncSection [data-fk="syncRecoveryStop"]', { timeout: 15_000 });
+  ok('通知の行から「回復を止める」のある同期のまとまりに戻る', (await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').count()) === 1);
   await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').click();
   await desk.waitText('#plusSyncSection', '回復を止めました', 15_000);
   ok('回復を止める: 今の鍵の署名で止まる', !ledger().recovery, JSON.stringify(ledger().recovery));
+  await desk.page.locator('#backToChat').click();
+  await desk.page.locator('#notifBell').click();
+  {
+    const deadline = Date.now() + 10_000;
+    while ((await desk.page.locator('#notifPanel').innerText()).includes('同期の回復を頼んでいます') && Date.now() < deadline) await desk.page.waitForTimeout(200);
+  }
+  ok('回復を止めたら通知の行も消える', !(await desk.page.locator('#notifPanel').innerText()).includes('同期の回復を頼んでいます'));
 
   for (const pc of [desk, lap]) await pc.ctx.close();
 } finally {

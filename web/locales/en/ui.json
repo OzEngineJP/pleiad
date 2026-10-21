@@ -283,6 +283,14 @@
         "syncRelogin": "Sign in again",
         "syncUpdateRequired": "This version of Pleiad can't continue syncing",
         "syncUpdateRequiredHint": "Update Pleiad to resume.",
+        "syncApiDowngraded": "Sync stopped because the sync server answered as its previous version",
+        "syncApiDowngradedHint": "The key wasn't handed over the previous way. Restart Pleiad after the server is back to resume.",
+        "syncRestarted": "This PC's previous key can't vouch for the new key (it was made by a recovery or similar). It wasn't switched automatically.",
+        "syncRestartedHint": "If you expected this, take it. It arrives once you compare the confirmation code and approve on a PC that holds the key. Sync on this PC stays paused until then.",
+        "syncAcceptRestart": "Take the new key",
+        "syncRestartChanged": "The key changed again in the meantime. Check what's shown and choose again.",
+        "syncKeyUnverified": "The key that arrived couldn't be verified, so it wasn't taken and sync is paused",
+        "syncKeyUnverifiedHint": "Remove this PC on your Pleiad Plus account page, register it again, then get approval from a PC that holds the key.",
         "syncStartOverOthersApproval": "Other PCs: sync pauses, and resumes once you approve them on this PC. Where both have the same item, the newer one is kept and the other stays in the sync copies for 30 days.",
         "syncApprove": {
           "mark": "Waiting for approval",
@@ -316,7 +324,19 @@
         "inboxGone": "This change is no longer waiting",
         "inboxLocalChanged": "The file on this PC changed after this arrived, so it was not applied. To keep the current file, press Discard.",
         "inboxNotApplied": "Could not apply this change. Try again.",
-        "inboxBinary": "This file can't be shown as text."
+        "inboxBinary": "The contents can't be shown. Check them on the PC that sent this before applying.",
+        "inboxBinaryIncoming": "Arrived version: {{size}}",
+        "inboxBinaryLocal": "Current version on this PC: {{size}}",
+        "inboxBytes_one": "{{count}} byte",
+        "inboxBytes_other": "{{count}} bytes",
+        "inboxBinaryConfirm": "This applies the file without showing its contents. Did you check on the sending PC that the size and sha256 match?",
+        "inboxBinaryConfirmYes": "Checked, apply",
+        "inboxRenewed": "A newer version arrived. Review the changes again before choosing.",
+        "inboxHidden": {
+          "bidi": "Contains characters that change text direction (shown as ⟨U+…⟩ in the diff).",
+          "invisible": "Contains zero-width characters (shown as ⟨U+…⟩ in the diff).",
+          "eol": "Only the line endings differ."
+        }
       },
     "remote": {
       "tabs": {
@@ -3636,6 +3656,14 @@
         "named": "{{name}} is waiting for the sync key",
         "plain_one": "{{count}} PC is waiting for the sync key",
         "plain_other": "{{count}} PCs are waiting for the sync key"
+      },
+      "syncRecovery": {
+        "named": "{{name}} asked to recover sync",
+        "plain": "Another PC asked to recover sync"
+      },
+      "syncRestarted": {
+        "named": "{{name}} started sync over with a new key. Choose whether to take it",
+        "plain": "Sync was started over with a new key. Choose whether to take it"
       }
     },
     "place": {

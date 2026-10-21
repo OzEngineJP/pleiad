@@ -12,6 +12,10 @@
 //   K を持つことの証明（api は K を知らない）: seed = HKDF-SHA256(K, salt 空, "pleiad sync reset key v1") → Ed25519 の鍵対。
 //     始め直しは古い K の鍵で "pleiad sync reset v1\n" + uid + "\n" + (previousKeyId ?? "-") + "\n" + keyId + "\n" + hostId + "\n" + 新しい K の公開鍵 に署名する。
 //     回復の取り消しは今の K の鍵で "pleiad sync recovery cancel v1\n" + uid + "\n" + keyId + "\n" + requestedAt に署名する。
+//   作り直した K を前の K を持つ PC へ渡す（carry）: 包みの nonce12 を、前の K から作った鍵の HMAC にする（包みの形は変えない）。
+//     nonce12 = HMAC-SHA256(HKDF-SHA256(前の K, salt 空, "pleiad sync carry v1"),
+//       "pleiad sync carry v1\n" + uid + "\n" + previousKeyId + "\n" + keyId + "\n" + resetPublicKey + "\n" + T.hostId) の先頭 12 バイト。
+//     受けた PC は、開いた K から resetPublicKey を作り、手元の前の K で同じ値になるかを確かめてから切り替える
 //   鍵の受け渡し（新しい PC N が、鍵を持つ PC H の承認で受け取る）:
 //     commit = base64url(SHA-256(nonceN ‖ syncPubN))。N が先に出し、後から nonceN と syncPubN を明かす
 //     確認コード = SHA-256("pleiad sync code" ‖ nonceN ‖ nonceH ‖ syncPubN ‖ syncPubH) の先頭 4 バイト（BE）mod 10^6、0 埋め 6 桁
@@ -24,6 +28,7 @@ const WRAP_INFO = 'pleiad sync wrap v1';
 const WRAP_AAD = 'pleiad-sync-wrap-v1';
 const ITEM_AAD = 'pleiad-sync-item-v1';
 const RESET_INFO = 'pleiad sync reset key v1';
+const CARRY_INFO = 'pleiad sync carry v1';
 const CODE_LABEL = 'pleiad sync code';
 // Ed25519 の秘密鍵（seed 32 バイト）の PKCS#8 の頭
 const ED25519_PKCS8 = Buffer.from('302e020100300506032b657004220420', 'hex');
@@ -148,6 +153,24 @@ export function resetKeyPair(key) {
   const priv = crypto.createPrivateKey({ key: Buffer.concat([ED25519_PKCS8, hkdf(K, Buffer.alloc(0), RESET_INFO)]), format: 'der', type: 'pkcs8' });
   const publicKey = crypto.createPublicKey(priv).export({ format: 'jwk' }).x;
   return { publicKey, sign: msg => b64url(crypto.sign(null, Buffer.from(msg, 'utf8'), priv)) };
+}
+
+/**
+ * carry の包みの nonce（12 バイト）。前の K を持つ PC だけが作れる。
+ * @param {{ prevKey: Buffer, uid: string, previousKeyId: string, keyId: string, resetPublicKey: string, targetHostId: string }} o
+ */
+export function carryNonce({ prevKey, uid, previousKeyId, keyId, resetPublicKey, targetHostId }) {
+  const K = Buffer.from(prevKey);
+  if (K.length !== 32) throw new Error('sync key must be 32 bytes');
+  const mac = crypto.createHmac('sha256', hkdf(K, Buffer.alloc(0), CARRY_INFO))
+    .update(Buffer.from(`${CARRY_INFO}\n${uid}\n${previousKeyId}\n${keyId}\n${resetPublicKey}\n${targetHostId}`, 'utf8')).digest();
+  return mac.subarray(0, NONCE);
+}
+
+/** 包みが carryNonce の nonce で作られたか（定数時間で比べる） */
+export function isCarryWrap(wrapped, nonce) {
+  const raw = fromB64url(wrapped);
+  return raw.length === NONCE + 32 + TAG && nonce.length === NONCE && crypto.timingSafeEqual(raw.subarray(0, NONCE), nonce);
 }
 
 /** 始め直しの署名の文（previousKeyId が無ければ "-"） */

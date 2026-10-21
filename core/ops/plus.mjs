@@ -6,6 +6,12 @@ import { defineOp, MASK } from './registry.mjs';
 import { byAgent, run } from './redact.mjs';
 
 const loose = z.record(z.string(), z.unknown());
+/** 取り込む・捨てるの入力: 待っている 1 件と、人が見た版（plus.syncInboxItem が返した sha256・rev）。版が違えば書かずに changed */
+const inboxVersion = z.object({
+  id: z.string().min(1).max(64).describe('agent:ops.plus.syncInboxItem.id'),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/).nullable().describe('agent:ops.plus.syncInboxTake.sha256'),
+  rev: z.number().int().describe('agent:ops.plus.syncInboxTake.rev'),
+});
 
 const IDENTITY = ['uid', 'email'];
 const record = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -66,7 +72,8 @@ export const plusOps = [
     surfaces: { ui: true, mcp: false, cli: false },
     handler: (ctx, { confirm } = {}) => run(ctx, () => ctx.plus.syncReset(confirm ?? null)),
   }),
-  // 受け入れ待ち（ADR 0245）: ほかの PC から届いた skill・指示ファイル。中身を見せるので画面だけの口にする（MCP・CLI に出さない）
+  // 受け入れ待ち（ADR 0246）: ほかの PC から届いた skill・指示ファイル。中身を見せるので画面だけの口にする（MCP・CLI に出さない）。
+  // 取り込む・捨てるは ~/.claude などに書くので、この PC の画面だけ（つないだ端末からは呼べない）
   defineOp({
     id: 'plus.syncInbox', summary: 'agent:ops.plus.syncInbox.summary', risk: 'read',
     input: z.object({}),
@@ -83,17 +90,19 @@ export const plusOps = [
   }),
   defineOp({
     id: 'plus.syncInboxTake', summary: 'agent:ops.plus.syncInboxTake.summary', risk: 'write',
-    riskReason: 'Writes (or deletes) a skill or instruction file that arrived from another PC, after the person read its diff; only the settings screen calls it (not on MCP or the CLI)',
-    input: z.object({ id: z.string().min(1).max(64).describe('agent:ops.plus.syncInboxItem.id') }),
+    riskReason: 'Writes (or deletes) a skill or instruction file that arrived from another PC, after the person read its diff; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
+    input: inboxVersion,
     surfaces: { ui: true, mcp: false, cli: false },
-    handler: (ctx, { id }) => run(ctx, () => ctx.plus.syncInboxTake(id)),
+    hostScreenOnly: true,
+    handler: (ctx, { id, sha256, rev }) => run(ctx, () => ctx.plus.syncInboxTake(id, { sha256, rev })),
   }),
   defineOp({
     id: 'plus.syncInboxDrop', summary: 'agent:ops.plus.syncInboxDrop.summary', risk: 'write',
-    riskReason: 'Discards a change that arrived from another PC without touching local files; only the settings screen calls it (not on MCP or the CLI)',
-    input: z.object({ id: z.string().min(1).max(64).describe('agent:ops.plus.syncInboxItem.id') }),
+    riskReason: 'Discards a change that arrived from another PC without touching local files; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
+    input: inboxVersion,
     surfaces: { ui: true, mcp: false, cli: false },
-    handler: (ctx, { id }) => run(ctx, () => ctx.plus.syncInboxDrop(id)),
+    hostScreenOnly: true,
+    handler: (ctx, { id, sha256, rev }) => run(ctx, () => ctx.plus.syncInboxDrop(id, { sha256, rev })),
   }),
   defineOp({
     id: 'plus.hostReregister', summary: 'agent:ops.plus.hostReregister.summary', risk: 'write',
@@ -124,10 +133,19 @@ export const plusOps = [
   }),
   defineOp({
     id: 'plus.syncDeny', summary: 'agent:ops.plus.syncDeny.summary', risk: 'write',
-    riskReason: 'Refuses a PC that asked for the sync key; only the settings screen calls it (not on MCP or the CLI)',
+    riskReason: 'Refuses a PC that asked for the sync key; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
     input: z.object({ hostId: z.string().min(1).max(64).describe('agent:ops.plus.syncApprove.hostId') }),
     surfaces: { ui: true, mcp: false, cli: false },
+    hostScreenOnly: true,
     handler: (ctx, { hostId }) => run(ctx, () => ctx.plus.syncDeny(hostId)),
+  }),
+  defineOp({
+    id: 'plus.syncAcceptRestart', summary: 'agent:ops.plus.syncAcceptRestart.summary', risk: 'write',
+    riskReason: 'Moves this PC to a sync key that its previous key cannot vouch for (after a recovery), through the approval window; only the host PC\'s settings screen can call it (not on MCP or the CLI)',
+    input: z.object({ keyId: z.string().min(1).max(128).describe('agent:ops.plus.syncAcceptRestart.keyId') }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    hostScreenOnly: true,
+    handler: (ctx, { keyId }) => run(ctx, () => ctx.plus.syncAcceptRestart(keyId)),
   }),
   defineOp({
     id: 'plus.syncRecoveryRequest', summary: 'agent:ops.plus.syncRecoveryRequest.summary', risk: 'write',

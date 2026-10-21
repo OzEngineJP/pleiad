@@ -9,7 +9,7 @@
 //   getSyncStatus(): { state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|error, lastSyncedAt, totalBytes,
 //     limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt }
 //     wait: 鍵を待つ間に見せるもの（keys.mjs の waitInfo）。sharedTo: 7 日の間に鍵を渡した新しい PC
-//     inbox・inboxAt: 受け入れ待ちの件数と、いちばん新しく届いた時刻（ADR 0245）
+//     inbox・inboxAt: 受け入れ待ちの件数と、いちばん新しく届いた時刻（ADR 0246）
 //     approvals: 鍵を渡す承認を待っている新しい PC [{ hostId, name, platform, code, at }]（v2 の api）
 //     recoveryAlert: この PC は外されたが今の鍵を持っていて、ほかの PC が回復を頼んでいる { requestedByName, readyAt, … }
 //   同期の券（ticket.mjs）: identity（ホストの鍵）を渡したときだけ使う。券の口が 404 の api では前の版の流れ
@@ -167,18 +167,25 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
       const names = items.length ? await hostNames() : new Map();
       return { items: items.map(m => shown(m, names)) };
     },
-    /** 1 件: 一覧の欄と before・after（文字。無いものは null）。文字として見せられないものは binary: true で中身を出さない */
+    /**
+     * 1 件: 一覧の欄と before・after（文字。無いものは null）、版（sha256・rev。取り込む・捨てるに渡し返す）。
+     * 文字として見せられないものは binary: true で中身を出さず、大きさ（size・baseSize）だけ出す
+     */
     async inboxItem(id) {
       const m = await engine.inbox.item(id);
       if (!m) return { item: null };
       const before = asText(m.base), after = asText(m.incoming);
       const binary = before === undefined || after === undefined;
-      return { item: { ...shown(m, await hostNames()), binary, before: binary ? null : before, after: binary ? null : after } };
+      return { item: {
+        ...shown(m, await hostNames()), sha256: m.sha256, rev: m.rev, binary,
+        before: binary ? null : before, after: binary ? null : after,
+        size: m.incoming ? m.incoming.length : null, baseSize: m.base ? m.base.length : null,
+      } };
     },
-    /** 取り込む。{ taken } か { taken: false, reason: local_changed|not_applied|gone } */
-    inboxTake: id => engine.inbox.take(id),
-    /** 捨てる（同じ版はもう出さない） */
-    inboxDrop: id => engine.inbox.drop(id),
+    /** 取り込む。seen: 画面が受けた { sha256, rev }。{ taken } か { taken: false, reason: changed|local_changed|not_applied|gone } */
+    inboxTake: (id, seen) => engine.inbox.take(id, seen),
+    /** 捨てる（同じ版はもう出さない）。seen は inboxTake と同じ */
+    inboxDrop: (id, seen) => engine.inbox.drop(id, seen),
     /** createPlusHost の syncPublicKey に渡す（台帳に載せる同期の公開鍵） */
     publicKey: () => keys.publicKey(),
     getSyncStatus: () => engine.status(),
@@ -200,6 +207,8 @@ export function createPlusSync({ session, host, secrets, dataDir, settings = nul
     approveSync: (target, code) => engine.approve(target, code),
     /** 渡さない（その PC は 1 時間申し込み直せない） */
     denySync: target => engine.deny(target),
+    /** 前の鍵では確かめられない新しい鍵へ移る（人が選んだ）。{ accepted } か { changed }（その間にまた替わった） */
+    acceptRestart: keyId => engine.acceptRestart(keyId),
     /** 回復を頼む。{ recovery } か { reauth }（最近のログインが要る）か { holder } か { other } */
     requestRecovery: () => engine.recovery.request(),
     cancelRecovery: () => engine.recovery.cancel(),

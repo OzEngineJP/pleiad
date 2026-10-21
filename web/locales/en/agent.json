@@ -626,7 +626,9 @@
         "id": "The id of the waiting change"
       },
       "syncInboxTake": {
-        "summary": "Takes in one waiting change (writes or removes the local file). Nothing is written if the local file changed after the change arrived."
+        "summary": "Takes in one waiting change (writes or removes the local file). Nothing is written if the local file changed after the change arrived, or if a newer version arrived after the person read it.",
+        "sha256": "The sha256 of the version the person read (from the waiting change; null for a deletion)",
+        "rev": "The rev of the version the person read (from the waiting change)"
       },
       "syncInboxDrop": {
         "summary": "Discards one waiting change. Local files stay as they are, and the same version is not shown again."
@@ -638,6 +640,10 @@
       },
       "syncDeny": {
         "summary": "Refuses to hand the sync key to a waiting PC. That PC can't ask again for an hour."
+      },
+      "syncAcceptRestart": {
+        "summary": "Moves to a new sync key that another PC made (such as by recovery) and the previous key can't vouch for. The key then arrives through the approval window.",
+        "keyId": "The keyId of the new key shown on screen. If it changed again in the meantime, nothing moves"
       },
       "syncRecoveryRequest": {
         "summary": "When no PC holds the key, asks to restart sync with a new key. Needs a recent sign-in and waits 72 hours."

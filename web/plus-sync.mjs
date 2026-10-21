@@ -7,13 +7,15 @@
 //   鍵を持つ PC が台帳に居る → その PC の名前と最後の同期。控えめな「鍵を持つ PC が使えないとき」
 //   居ない → サーバーにあるデータの件数と大きさ。「鍵を持つ PC が使えない」
 //   どちらも確かめの窓はチェック 1 つ（入れるまで「消して始め直す」を押せない）
-// 受け入れ待ち（status.inbox）が 1 件以上あれば、まとまりの終わりに「届いた変更 N 件」の行（押すと web/plus-inbox.mjs の面。ADR 0245）
+// 受け入れ待ち（status.inbox）が 1 件以上あれば、まとまりの終わりに「届いた変更 N 件」の行（押すと web/plus-inbox.mjs の面。ADR 0246）
 // 受け入れの v2 の api（wait.v2。docs/plus.md「同期の鍵の受け渡し」）では、鍵は鍵を持つ PC の承認でだけ届く:
 //   鍵を持つ PC が居る → 承認を待つ行。明かし終えたら「{PC} の画面で承認してください」と確認コード。断られたら 1 時間待つ
 //     「鍵を持つ PC が使えないとき」は、PC の外し方と回復の説明（始め直しの窓は出さない）
 //   居ない → データの件数と回復（頼む・待つ・取り下げる・待ちが明けたら始め直す。ほかの PC の回復は今の鍵で止める）
 //   外された PC が今の鍵を持っていて、回復が頼まれている（status.recoveryAlert）→ 知らせと「回復を止める」
-//   update_required（この版では使えない api）→ 更新を促す
+//   前の鍵を持つ PC で、前の鍵では確かめられない新しい鍵が置かれた（wait.restarted。回復など）→ 自動では移らず「新しい鍵を受け取る」。
+//   届いた鍵を確かめられなかった（wait.unverified・restarted.unverified）→ 受け取らずに止めていることと、直し方
+//   update_required（この版では使えない api）→ 更新を促す。error が api_downgraded（券を取れた後に api が前の版を名乗った）→ 止めたことを知らせる
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, switchButton, waitLine } from './remote-parts.mjs';
@@ -82,7 +84,17 @@ function dataLines(w, text) {
  * 鍵を待つ間の中身（v2）。行は live に、ボタンは act で足す。
  * 鍵を持つ PC が居れば承認を待つ・確認コード・断られた。居なければデータと回復
  */
-function approvalLines(w, live, act, { onAskReset, onRecovery, now }) {
+function approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, now }) {
+  if (w.unverified || w.restarted?.unverified) {
+    live.append(el('p', 'rm-err', t('settings.plus.syncKeyUnverified')), el('p', 'rm-sub', t('settings.plus.syncKeyUnverifiedHint')));
+    return;
+  }
+  if (w.restarted) {
+    // 前の鍵では確かめられない新しい鍵（回復など）: 人が選ぶまで申し込まない
+    live.append(el('p', 'rm-warn', t('settings.plus.syncRestarted')), el('p', 'rm-sub', t('settings.plus.syncRestartedHint')));
+    act(t('settings.plus.syncAcceptRestart'), () => onAcceptRestart(w.restarted.keyId), 'btn', 'syncAcceptRestart');
+    return;
+  }
   const text = el('span', 'rm-rt');
   const box = el('div', 'rm-row rm-plain-row');
   box.append(text);
@@ -191,6 +203,7 @@ function whatSynced() {
  * @param resetChanged  確かめている間にサーバーの件数が変わった（もう一度確かめてもらう）
  * @param recoveryNote  回復の操作の結果の一言（reauth・other・holder・waiting・gone・stopped・stopFailed。'' なら出さない）
  * @param onRecovery  回復の操作（'request'・'cancel'・'complete'・'stop'）
+ * @param onAcceptRestart  (keyId) 前の鍵では確かめられない新しい鍵を受け取ると選んだ
  * @param onLogin     ログインし直す（回復を頼むのに最近のログインが要るとき）
  * @param onOpenAccount  アカウントのページを開く（「鍵を持つ PC が使えないとき」の説明から。無ければボタンを出さない）
  * @param now         いまの時刻（回復の待ちが明けたか・時刻の書式）
@@ -198,7 +211,7 @@ function whatSynced() {
 export function renderSync({ enabled = true, sync = null, confirming = false, message = '', busy = false,
   resetChecked = false, resetChanged = false, onResetCheck = () => {},
   onToggle = () => {}, onNow = () => {}, onAskReset = () => {}, onCancelReset = () => {}, onReset = () => {}, onOpenConflicts = () => {},
-  onOpenInbox = () => {}, recoveryNote = '', onRecovery = () => {}, onLogin = null, onOpenAccount = null, now = new Date() } = {}) {
+  onOpenInbox = () => {}, recoveryNote = '', onRecovery = () => {}, onAcceptRestart = () => {}, onLogin = null, onOpenAccount = null, now = new Date() } = {}) {
   const out = [];
   out.push(el('div', 'rm-gh', t('settings.plus.sync')));
 
@@ -229,7 +242,7 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
       if (w?.stale && w.resetAt) {
         live.append(el('p', 'rm-weak', t('settings.plus.syncResetBy', { name: pcName(w.resetBy?.name), time: syncTimeText(w.resetAt) })));
       }
-      if (w?.v2) { approvalLines(w, live, act, { onAskReset, onRecovery, now }); break; }
+      if (w?.v2) { approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, now }); break; }
       const text = el('span', 'rm-rt');
       let label = t('settings.plus.syncReset'), className = 'btn btn-quiet';
       if (w) ({ label, className } = waitingLines(w, text));
@@ -244,6 +257,11 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
       live.append(el('p', 'rm-weak', t('settings.plus.syncUnregistered')), el('p', 'rm-sub', t('settings.plus.syncUnregisteredHint')));
       break;
     case 'update_required':   // この版では使えない api。更新すると再開する
+      if (sync.error === 'api_downgraded') {
+        // 券を取れたアカウントで、api が前の版を名乗った。前の版のやり方では鍵を渡さずに止めている
+        live.append(el('p', 'rm-err', t('settings.plus.syncApiDowngraded')), el('p', 'rm-sub', t('settings.plus.syncApiDowngradedHint')));
+        break;
+      }
       live.append(el('p', 'rm-err', t('settings.plus.syncUpdateRequired')), el('p', 'rm-sub', t('settings.plus.syncUpdateRequiredHint')));
       break;
     case 'syncing':

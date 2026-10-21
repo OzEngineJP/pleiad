@@ -883,7 +883,7 @@ const inboxSources = createNotificationSources({
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
   hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
 });
-// 同期で届いた変更の受け入れ待ち（ADR 0245）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
+// 同期で届いた変更の受け入れ待ち（ADR 0246）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
 plusSync.onChange(({ inbox: count, inboxAt }) => {
   try {
     inbox.standing('syncInbox', count > 0 && inboxAt
@@ -897,6 +897,28 @@ plusSync.onChange(({ approvals }) => {
     const list = Array.isArray(approvals) ? approvals : [];
     inbox.standing('syncApproval', list.length
       ? { version: list.map(a => `${a.hostId}:${a.code}`).join(','), at: Date.now(), data: { ask: 'syncApproval', count: list.length, title: list[0].name ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が同期の回復を頼んでいる（この PC は今の鍵を持っていて止められる）: 必ず知らせる。頼んだ時刻が版
+plusSync.onChange(({ recoveryAlert }) => {
+  try {
+    const at = recoveryAlert?.requestedAt ?? null;
+    inbox.standing('syncRecovery', recoveryAlert
+      ? { version: String(at ?? recoveryAlert.readyAt ?? 'recovery'), at: Number.isFinite(Date.parse(at)) ? Date.parse(at) : Date.now(),
+        data: { ask: 'syncRecovery', title: recoveryAlert.requestedByName ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が、前の鍵では確かめられない新しい鍵で始め直した（回復など）: この PC は自動で移らず、人が選ぶのを待つ。
+// 新しい keyId が版。通信の誤りの間は置いたまま（消して置き直すと、また未読になる）
+plusSync.onChange(({ state, wait }) => {
+  if (state === 'error') return;
+  try {
+    const r = state === 'waiting_key' ? wait?.restarted ?? null : null;
+    inbox.standing('syncRestarted', r
+      ? { version: `${r.keyId}${r.unverified ? ':unverified' : ''}`, at: Number.isFinite(Date.parse(r.at)) ? Date.parse(r.at) : Date.now(),
+        data: { ask: 'syncRestarted', title: r.byName ?? '', settings: 'plus' } }
       : null);
   } catch (e) { console.error(`  notifications: ${e.message}`); }
 });
@@ -5347,10 +5369,11 @@ function opsDeps(lng = currentLocale()) {
       syncOpenConflicts: () => plusSync.openConflictsFolder(),
       syncInbox: () => plusSync.inboxList(),
       syncInboxItem: (id) => plusSync.inboxItem(id),
-      syncInboxTake: (id) => plusSync.inboxTake(id),
-      syncInboxDrop: (id) => plusSync.inboxDrop(id),
+      syncInboxTake: (id, seen) => plusSync.inboxTake(id, seen),
+      syncInboxDrop: (id, seen) => plusSync.inboxDrop(id, seen),
       syncApprove: (hostId, code) => plusSync.approveSync(hostId, code),
       syncDeny: (hostId) => plusSync.denySync(hostId),
+      syncAcceptRestart: (keyId) => plusSync.acceptRestart(keyId),
       syncRecoveryRequest: () => plusSync.requestRecovery(),
       syncRecoveryCancel: () => plusSync.cancelRecovery(),
       syncRecoveryComplete: () => plusSync.completeRecovery(),

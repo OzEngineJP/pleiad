@@ -4,9 +4,12 @@
 //   plus:syncAccountKey  アカウントの同期鍵 { keyId, key }（key は raw 32 バイトの base64url）。ログアウトで消す
 //   plus:syncJoin        鍵を受け取る側の申し込み { uid, syncPub, nonceN, commit, approverHostId, approverPub, nonceH, code }
 //   plus:syncApprovals   鍵を渡す側の承認の途中 { [申し込んだ hostId]: { nonceH, commit, keyId } }
-//   plus:syncCarry       作り直した K を引き継ぐ PC のうち、まだ渡せていないもの { keyId, hosts: [hostId] }
+//   plus:syncCarry       作り直した K を引き継ぐ PC のうち、まだ渡せていないもの { keyId, hosts: [hostId], nonces: { [hostId]: nonce } }
+//   plus:syncRestart     前の K では確かめられない新しい K（回復・移行）へ移ると人が選んだ印 { uid, keyId }
+//   plus:syncV2Seen      券を一度でも取れたアカウント { [uid]: 初めて取れた時刻 }。ログアウトでも残す
 //
 // api の版で 2 つの道がある。同期の券（ticket.mjs）を取れる api が v2、券の口が 404 の api は前の版（legacy）。
+// 一度券を取れたアカウントで券の口が 404 になったら、前の版の道（K を自動で包んで渡す）へ戻らず止める（api_downgraded）。
 //
 // 前の版（setupLegacy・sharePending）:
 //   1. GET /v1/sync/state?hostId=<自分>。enabled が false なら disabled
@@ -30,10 +33,17 @@
 //   申し込み（受け取る側 N）: nonceN と自分の同期の公開鍵の commit を置く → 渡す側 H が nonceH を置く（challenged）→ N が中身を明かす（revealed）
 //     → 両方が同じ 6 桁の確認コードを出し、H の人が見比べて渡す・渡さないを選ぶ。
 //     途中で committed に戻った（承認していた PC が外された・新しい K が置かれた）ら、承認の窓を最初からやり直す
+//   受け取った包みの確かめ（サーバーが渡す K をそのまま受けない）:
+//   - K を持たない PC: 承認の窓で確認コードに使った PC（approverHostId）が、その公開鍵（approverPub）で包んだものだけを開く。
+//     台帳の syncPublicKey は使わない
+//   - 前の K を持つ PC: 作り直した PC が前の K から作った印（crypto.mjs の carryNonce）を包みに入れる。手元の前の K で
+//     確かめられたものだけに切り替える。確かめられなければ切り替えず、手元の状態も消さない
+//   - 回復・移行で作った K は前の K の印を持たない。前の K を持つ PC は自動で切り替えず（wait.restarted を出す）、
+//     人が「新しい鍵を受け取る」を選んでから（acceptRestart）申し込み、承認の窓を通して受け取る
 import crypto from 'node:crypto';
 import {
   b64url, fromB64url, deriveItemKeys, newAccountKey, newSyncKeyPair, syncKeyPairFromPrivate, wrapKey, unwrapKey, KEY_ID_RX,
-  resetKeyPair, resetMessage, recoveryCancelMessage, joinCommit, joinCode,
+  resetKeyPair, resetMessage, recoveryCancelMessage, joinCommit, joinCode, carryNonce, isCarryWrap,
 } from './crypto.mjs';
 
 export const SYNC_KEY_PAIR = 'plus:syncKey';
@@ -41,6 +51,8 @@ export const SYNC_ACCOUNT_KEY = 'plus:syncAccountKey';
 export const SYNC_JOIN = 'plus:syncJoin';
 export const SYNC_APPROVALS = 'plus:syncApprovals';
 export const SYNC_CARRY = 'plus:syncCarry';
+export const SYNC_RESTART = 'plus:syncRestart';
+export const SYNC_V2_SEEN = 'plus:syncV2Seen';
 const RESET_TRIES = 3;
 const DENY_WAIT_MS = 60 * 60_000;
 
@@ -62,11 +74,24 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
   /** 同期の口（券があれば付ける）。台帳（/v1/hosts）と券の要らない回復の口は client で呼ぶ */
   const api = (method, path, opts) => (ticket ? ticket.request(method, path, opts) : client.request(method, path, opts));
 
-  /** この api が v2（券を取れる）か。券を取れない誤り（登録が無い・外された）はそのまま投げる */
+  /**
+   * この api が v2（券を取れる）か。券を取れない誤り（登録が無い・外された）はそのまま投げる。
+   * 券を取れたアカウントは覚え、それ以後に券の口が 404 になったら前の版とは見なさず 426 api_downgraded を投げる
+   */
   async function isV2() {
     if (!ticket) return false;
     await ticket.get();
-    return !ticket.legacy();
+    const id = uid();
+    if (!ticket.legacy()) {
+      if (id) await secrets.update(SYNC_V2_SEEN, cur => (cur?.[id] ? cur : { ...(cur ?? {}), [id]: now() }));
+      return true;
+    }
+    const seen = await secrets.get(SYNC_V2_SEEN).catch(() => null);
+    if (id && seen?.[id]) {
+      log('sync api answered as the previous version after a ticket was issued');
+      throw Object.assign(new Error('api_downgraded'), { status: 426, code: 'api_downgraded' });
+    }
+    return false;
   }
 
   /** このホストの同期の鍵対（無ければ作って保管する） */
@@ -243,6 +268,9 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     const { self, kp, k, wrapped } = await newKeyForSelf();
     const resetPublicKey = resetKeyPair(k.key).publicKey;
     const previousKeyId = state.keyId ?? null;
+    // 引き継ぐ PC ごとの印（前の K から作る）。置いた後に前の K を捨てても carry を続けられるよう、先に作って覚える
+    const nonces = prev && previousKeyId ? Object.fromEntries(carryTo.map(t => [t,
+      b64url(carryNonce({ prevKey: prev.key, uid: uid(), previousKeyId, keyId: k.keyId, resetPublicKey, targetHostId: t }))])) : {};
     const body = { keyId: k.keyId, hostId: self, wrapped, previousKeyId, resetPublicKey, syncPublicKey: b64url(kp.publicKey) };
     if (prev) body.signature = resetKeyPair(prev.key).sign(resetMessage({ uid: uid(), previousKeyId, keyId: k.keyId, hostId: self, resetPublicKey }));
     let next;
@@ -254,8 +282,9 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     await saveAccountKey(k);
     await secrets.delete(SYNC_APPROVALS).catch(() => {});
     log(previousKeyId == null ? 'sync key created' : prev ? 'sync key rotated' : 'sync key migrated');
-    if (carryTo.length) {
-      await secrets.set(SYNC_CARRY, { keyId: k.keyId, hosts: carryTo });
+    await clearRestart();
+    if (carryTo.length && Object.keys(nonces).length) {
+      await secrets.set(SYNC_CARRY, { keyId: k.keyId, hosts: carryTo, nonces });
       await carry(k);
     } else {
       await secrets.delete(SYNC_CARRY).catch(() => {});
@@ -263,7 +292,10 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     return ready(k, next, true, true);
   }
 
-  /** 作り直した K を、引き継ぐ PC（carry）へ承認なしで渡す。渡せた・断られた（もう carry に居ない）ものは覚えから外す */
+  /**
+   * 作り直した K を、引き継ぐ PC（carry）へ承認なしで渡す。渡せた・断られた（もう carry に居ない）ものは覚えから外す。
+   * 包みの nonce は前の K から作った印（受け取る PC が確かめる）。印の無い覚え（前の版の覚え）は渡さずに捨てる
+   */
   async function carry(k) {
     const held = await secrets.get(SYNC_CARRY).catch(() => null);
     if (!held || held.keyId !== k.keyId || !Array.isArray(held.hosts) || !held.hosts.length) return;
@@ -271,9 +303,11 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     const kp = await keyPair();
     const left = [];
     for (const target of held.hosts) {
+      const nonce = fromB64url(held.nonces?.[target]);
+      if (nonce.length !== 12) continue;   // 印が無い: 受け取る PC が確かめられないので渡さない
       const pub = pub32(hosts.find(h => h?.hostId === target)?.syncPublicKey);
       if (!pub) continue;   // 台帳に居ない（外された）
-      const wrapped = wrapKey({ key: k.key, keyId: k.keyId, uid: uid(), privateKey: kp.privateKey, publicKey: kp.publicKey, targetPublicKey: pub, targetHostId: target });
+      const wrapped = wrapKey({ key: k.key, keyId: k.keyId, uid: uid(), privateKey: kp.privateKey, publicKey: kp.publicKey, targetPublicKey: pub, targetHostId: target, nonce });
       try {
         await api('PUT', `/v1/sync/keys/${encodeURIComponent(target)}`, { body: { keyId: k.keyId, wrapped, wrappedBy: hostId() } });
         log('sync key carried');
@@ -284,8 +318,27 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
         left.push(target);
       }
     }
-    if (left.length) await secrets.set(SYNC_CARRY, { keyId: k.keyId, hosts: left });
+    if (left.length) await secrets.set(SYNC_CARRY, { keyId: k.keyId, hosts: left, nonces: held.nonces });
     else await secrets.delete(SYNC_CARRY).catch(() => {});
+  }
+
+  /** 前の K では確かめられない新しい K（keyId）へ移ると人が選んだか */
+  async function acceptedRestart(keyId) {
+    const v = await secrets.get(SYNC_RESTART).catch(() => null);
+    return !!v && v.uid === uid() && v.keyId === keyId;
+  }
+  const clearRestart = () => secrets.delete(SYNC_RESTART).catch(() => {});
+
+  /**
+   * 人が「新しい鍵を受け取る」を選んだ（回復・移行で作り直された K）。今の keyId が見せたものと同じときだけ覚える。
+   * この後の回で申し込み、承認の窓を通して受け取る。戻り値 { accepted } か { changed: true }（その間にまた替わった）
+   */
+  async function acceptRestart(keyId) {
+    const state = await api('GET', '/v1/sync/state');
+    if (!state?.keyId || state.keyId !== keyId) return { changed: true };
+    await secrets.set(SYNC_RESTART, { uid: uid(), keyId });
+    log('sync restart accepted');
+    return { accepted: true };
   }
 
   /** 受け取る側の申し込みの覚え（このアカウント・この同期の鍵対のものだけ） */
@@ -375,6 +428,41 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     return { state: 'revealed', code, approver, deniedAt: null };
   }
 
+  /**
+   * v2 の自分宛ての包みを開く（サーバーが渡す K をそのまま受けない）。
+   * - 手元に前の K がある: 前の K から作った印（carry）が合うものだけ。合わなければ、人が移ると選んでいて
+   *   承認した PC が包んだものだけ（accepted）
+   * - 手元に K が無い: 承認した PC（approverHostId）が、承認の窓で見た公開鍵で包んだものだけ
+   * 戻り値 { missing } | { key } | { key: null, unverified }（開けたが確かめられなかった）
+   */
+  async function openV2(state, local, accepted) {
+    const self = hostId();
+    let got;
+    try { got = await api('GET', `/v1/sync/keys/${encodeURIComponent(self)}`); }
+    catch (e) {
+      if (e?.status === 404) return { missing: true };
+      throw e;
+    }
+    if (got?.keyId !== state.keyId || typeof got.wrappedBy !== 'string') return { missing: false, key: null };
+    const kp = await keyPair();
+    const open = pub => unwrapKey({ wrapped: got.wrapped, keyId: got.keyId, uid: uid(), privateKey: kp.privateKey, publicKey: kp.publicKey, wrapperPublicKey: pub, hostId: self });
+    if (local && local.keyId !== got.keyId) {
+      const pub = pub32((await hostsList()).find(h => h?.hostId === got.wrappedBy)?.syncPublicKey);
+      const key = pub ? open(pub) : null;
+      if (key) {
+        const nonce = carryNonce({ prevKey: local.key, uid: uid(), previousKeyId: local.keyId, keyId: got.keyId, resetPublicKey: resetKeyPair(key).publicKey, targetHostId: self });
+        if (isCarryWrap(got.wrapped, nonce)) return { missing: false, key: { keyId: got.keyId, key } };
+      }
+    }
+    const approver = !local || accepted ? (await approverPubs())?.get(got.wrappedBy) : null;
+    if (approver) {
+      const key = open(approver);
+      if (key) return { missing: false, key: { keyId: got.keyId, key } };
+    }
+    log('sync key unverified');
+    return { missing: false, key: null, unverified: true };
+  }
+
   async function setupV2({ forceNew = false } = {}) {
     for (let i = 0; i < RESET_TRIES; i++) {
       const self = hostId();
@@ -386,12 +474,17 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
         if (made) return made;
         continue;
       }
+      // 手元の K が前のもの: 前の K で確かめられる包み（carry）か、人が移ると選んだ後の承認だけで替える
+      const stale = !!local && local.keyId !== state.keyId;
+      const restartOk = stale ? await acceptedRestart(state.keyId) : false;
+      let unverified = false;
       if (state.self?.holder) {
         let k = local?.keyId === state.keyId ? local : null;
         let changed = false;
         if (!k) {
-          const mine = await openMine(state, await approverPubs());
-          if (mine.key) { k = mine.key; await saveAccountKey(k); changed = true; log('sync key received'); }
+          const mine = await openV2(state, local, restartOk);
+          if (mine.key) { k = mine.key; await saveAccountKey(k); await clearRestart(); changed = true; log('sync key received'); }
+          else unverified = !!mine.unverified;
         }
         if (k) {
           // 鍵を受け取ったら、残っている自分の申し込みは取り下げる（ほかの PC の承認の窓に残さない）
@@ -421,7 +514,16 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
       // 回復を頼まれていて、今の K をこの PC が持っている（外されて受け取り直す前など）: K の署名で止められる
       wait.recoveryStop = !!state.recovery && !wait.recoveryMine && local?.keyId === state.keyId;
       wait.v2 = true;
-      if (wait.holder) wait.join = await joinStep(state, listed);
+      // 確かめられない包みが来ている（サーバーはこの PC を鍵を持つ PC と見ている）: 受けずに止める。申し込みもしない
+      wait.unverified = unverified;
+      if (stale && (!restartOk || unverified)) {
+        // 前の K を持つ PC: 前の K で確かめられない新しい K へは自動で移らない（人が選ぶ。確かめられない包みが来ていたら止める）
+        wait.restarted = {
+          keyId: state.keyId, unverified,
+          by: state.resetBy?.hostId ?? null, byName: state.resetBy?.name ?? listed.get(state.resetBy?.hostId)?.name ?? null,
+          at: state.resetAt ?? null,
+        };
+      } else if (wait.holder && !unverified) wait.join = await joinStep(state, listed);
       return { status: 'waiting_key', state, wait, v2: true };
     }
     return { status: 'waiting_key', state: null, wait: null, v2: true };
@@ -595,6 +697,7 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     await clearJoin();
     await secrets.delete(SYNC_APPROVALS).catch(() => {});
     await secrets.delete(SYNC_CARRY).catch(() => {});
+    await clearRestart();
     log('sync recovery completed');
     return { done: true };
   }
@@ -630,11 +733,11 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
 
   /** ログアウト: アカウントの同期鍵と、申し込み・承認の途中の覚えを消す（ホストの鍵対は残す） */
   const forget = async () => {
-    for (const name of [SYNC_ACCOUNT_KEY, SYNC_JOIN, SYNC_APPROVALS, SYNC_CARRY]) await secrets.delete(name).catch(() => {});
+    for (const name of [SYNC_ACCOUNT_KEY, SYNC_JOIN, SYNC_APPROVALS, SYNC_CARRY, SYNC_RESTART]) await secrets.delete(name).catch(() => {});
   };
 
   return {
     keyPair, publicKey, setup, sharePending, forget, storedAccountKey,
-    approvals, approve, deny, recoveryRequest, recoveryCancel, recoveryComplete, recoveryWatch, recoveryStop,
+    approvals, approve, deny, acceptRestart, recoveryRequest, recoveryCancel, recoveryComplete, recoveryWatch, recoveryStop,
   };
 }

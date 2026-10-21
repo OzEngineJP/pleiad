@@ -1,9 +1,9 @@
 // 設定 › Pleiad Plus › 同期の「届いた変更」（web/plus-inbox.mjs）: 1 件ずつ開く・差分の行・取り込む／捨てる・押した後の 1 行（DOM の代役）
 import { t as tr, setLanguage } from '../../web/i18n.mjs';
-import { renderInbox, inboxDiffOps, inboxSub, inboxRow } from '../../web/plus-inbox.mjs';
+import { renderInbox, inboxDiffOps, inboxSub, inboxRow, inboxHiddenNotes, sizeText } from '../../web/plus-inbox.mjs';
 
 export const name = 'plus-inbox-ui';
-export const title = '同期の届いた変更: 1 件ずつ開く・差分（変更・新しいファイル・削除）・取り込む／捨てる・押した後の 1 行・手元が変わったときは取り込めない・「すべて取り込む」は無い（DOM の代役）';
+export const title = '同期の届いた変更: 1 件ずつ開く・差分（変更・新しいファイル・削除）・取り込む／捨てる・押した後の 1 行・手元が変わったときは取り込めない・新しい版が届いた・文字でない中身は大きさと sha256 ともう一度の確かめ・見えない文字・「すべて取り込む」は無い（DOM の代役）';
 
 // 子を足したボタン（button('') の後に append）は、代役では textContent が空のままなので葉を集める
 const deepText = n => (n.children?.length ? n.children.map(deepText).join('') : (n.textContent ?? ''));
@@ -33,7 +33,8 @@ export default async function (t) {
   try {
     await setLanguage('ja');
     const calls = [];
-    const deps = { onBack: () => calls.push(['back']), onToggle: id => calls.push(['toggle', id]), onTake: id => calls.push(['take', id]), onDrop: id => calls.push(['drop', id]) };
+    const deps = { onBack: () => calls.push(['back']), onToggle: id => calls.push(['toggle', id]), onTake: id => calls.push(['take', id]), onDrop: id => calls.push(['drop', id]),
+      onAskTake: id => calls.push(['ask', id]), onCancelTake: () => calls.push(['cancel']) };
 
     // 差分の行
     t.ok('差分: 変更は手元と届いたものの差（- と + が並ぶ）', JSON.stringify(inboxDiffOps(DETAILS.a).filter(o => o.t !== ' ').map(o => o.t + o.s)) === JSON.stringify(['-two', '+TWO']));
@@ -80,9 +81,42 @@ export default async function (t) {
     nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: DETAILS.a }, results: { a: { error: 'local_changed' } }, ...deps });
     t.ok('手元が変わっていたら、わけを出して「取り込む」を押せなくする（「捨てる」は押せる）', text(nodes).includes(tr('settings.plus.inboxLocalChanged')) && byFk(nodes, 'take:a').disabled === true && byFk(nodes, 'drop:a').disabled === false);
 
-    // 中身が文字でない
-    nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: { ...DETAILS.a, binary: true, before: null, after: null } }, ...deps });
-    t.ok('文字でない中身は差分の代わりに一言', byClass(nodes, 'scx-lines').length === 0 && text(nodes).includes(tr('settings.plus.inboxBinary')));
+    // 中身が文字でない: 警告・大きさ・sha256。「取り込む」はもう一度確かめてから
+    const SHA = 'ab'.repeat(32);
+    const BIN = { ...DETAILS.a, binary: true, before: null, after: null, size: 2048, sha256: SHA, baseSize: 10 };
+    nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: BIN }, ...deps });
+    t.ok('文字でない中身は差分の代わりに警告', byClass(nodes, 'scx-lines').length === 0 && text(nodes).includes(tr('settings.plus.inboxBinary')));
+    t.ok('文字でない中身は届いた版の大きさと sha256、手元の大きさを出す', text(nodes).includes(tr('settings.plus.inboxBinaryIncoming', { size: '2.0 KB' }))
+      && byClass(nodes, 'inx-sha')[0]?.textContent === `sha256 ${SHA}` && text(nodes).includes(tr('settings.plus.inboxBinaryLocal', { size: tr('settings.plus.inboxBytes', { count: 10 }) })));
+    t.ok('大きさの見せ方（バイト・KB・MB）', sizeText(10) === tr('settings.plus.inboxBytes', { count: 10 }) && sizeText(2048) === '2.0 KB' && sizeText(3 * 1024 * 1024) === '3.0 MB' && sizeText(undefined) === '');
+    byFk(nodes, 'take:a').onclick();
+    t.ok('文字でない中身の「取り込む」は、すぐ取り込まずに確かめを開く（onAskTake）', calls.at(-1)[0] === 'ask' && calls.at(-1)[1] === 'a');
+    nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: BIN }, confirming: 'a', ...deps });
+    t.ok('確かめの間は「取り込む」「捨てる」の代わりに、問いと「やめる」「確かめたので取り込む」', byFk(nodes, 'take:a') === null && byFk(nodes, 'drop:a') === null
+      && text(nodes).includes(tr('settings.plus.inboxBinaryConfirm')) && byFk(nodes, 'takeYes:a')?.textContent === tr('settings.plus.inboxBinaryConfirmYes'));
+    byFk(nodes, 'takeNo:a').onclick();
+    t.ok('「やめる」は onCancelTake', calls.at(-1)[0] === 'cancel');
+    byFk(nodes, 'takeYes:a').onclick();
+    t.ok('「確かめたので取り込む」で onTake(id)', calls.at(-1)[0] === 'take' && calls.at(-1)[1] === 'a');
+    nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: BIN }, confirming: 'a', busy: true, ...deps });
+    t.ok('送っている間は確かめのボタンも押せない', byFk(nodes, 'takeYes:a').disabled === true && byFk(nodes, 'takeNo:a').disabled === true);
+    nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: DETAILS.a }, confirming: 'a', ...deps });
+    t.ok('文字の中身には確かめを出さない', byFk(nodes, 'takeYes:a') === null && byFk(nodes, 'take:a') !== null);
+
+    // 見ている間に新しい版が届いた
+    nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: DETAILS.a }, renewed: { a: true }, ...deps });
+    t.ok('新しい版が届いたら「新しい版が届きました」を差分の上に出す', byClass(nodes, 'inx-renewed')[0]?.textContent === tr('settings.plus.inboxRenewed') && byClass(nodes, 'scx-lines').length === 1);
+    nodes = renderInbox({ items: ITEMS, open: 'a', details: {}, renewed: { a: true }, ...deps });
+    t.ok('読み直している間も「新しい版が届きました」は残し、押せない', byClass(nodes, 'inx-renewed').length === 1 && byFk(nodes, 'take:a').disabled === true);
+
+    // 見えない文字・改行コードだけの違い
+    const hid = { id: 'a', kind: 'change', before: 'one\ntwo\n', after: 'one\ntw\u202Eo\u200B\n' };
+    t.ok('向きを変える制御文字・幅の無い文字を見つける', inboxHiddenNotes(hid).join() === 'bidi,invisible');
+    t.ok('差分の中では ⟨U+XXXX⟩ と書く', inboxDiffOps(hid).some(o => o.t === '+' && o.s === 'tw⟨U+202E⟩o⟨U+200B⟩'));
+    t.ok('改行コードだけの違いを見つける', inboxHiddenNotes({ kind: 'change', before: 'a\nb\n', after: 'a\r\nb\r\n' }).join() === 'eol');
+    t.ok('頭の BOM と消すものは数えない', inboxHiddenNotes({ kind: 'new', after: '\uFEFF# x\n' }).length === 0 && inboxHiddenNotes({ kind: 'delete', before: '\u202E' }).length === 0);
+    nodes = renderInbox({ items: ITEMS, open: 'a', details: { a: hid }, ...deps });
+    t.ok('見えない文字の印を差分の上に出す', text(nodes).includes(tr('settings.plus.inboxHidden.bidi')) && text(nodes).includes(tr('settings.plus.inboxHidden.invisible')));
 
     // 読み込み中・空
     t.ok('一覧の読み込み中', text(renderInbox({ loading: true, ...deps })).includes(tr('settings.plus.inboxLoading')));

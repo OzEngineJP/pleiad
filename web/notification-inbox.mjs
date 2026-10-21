@@ -23,7 +23,7 @@ export function describeNotification(n, t, titleOf = () => '') {
   const title = live || n.title || '';
   const name = n.actor?.name || '';
   const open = n.kind === 'wait' && n.resolvedAt == null;
-  // 同期で届いた変更の受け入れ待ち（ADR 0245）: 続いている状態の 1 行。開くのは設定 › Pleiad Plus
+  // 同期で届いた変更の受け入れ待ち（ADR 0246）: 続いている状態の 1 行。開くのは設定 › Pleiad Plus
   if (n.kind === 'wait' && n.ask === 'syncInbox') {
     return { icon: 'wait', line: t('inbox.line.syncInbox', { count: Number.isFinite(n.count) ? n.count : 1 }), place: t('inbox.place.plus'), outcome: '', open: true };
   }
@@ -31,6 +31,16 @@ export function describeNotification(n, t, titleOf = () => '') {
   if (n.kind === 'wait' && n.ask === 'syncApproval') {
     const count = Number.isFinite(n.count) ? n.count : 1;
     const line = count === 1 && n.title ? t('inbox.line.syncApproval.named', { name: n.title }) : t('inbox.line.syncApproval.plain', { count });
+    return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
+  }
+  // ほかの PC が同期の回復を頼んでいる（止めるのは今の鍵を持つ PC の設定 › Pleiad Plus で）
+  if (n.kind === 'wait' && n.ask === 'syncRecovery') {
+    const line = n.title ? t('inbox.line.syncRecovery.named', { name: n.title }) : t('inbox.line.syncRecovery.plain');
+    return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
+  }
+  // ほかの PC が前の鍵では確かめられない新しい鍵で始め直した（受け取るかは設定 › Pleiad Plus で選ぶ）
+  if (n.kind === 'wait' && n.ask === 'syncRestarted') {
+    const line = n.title ? t('inbox.line.syncRestarted.named', { name: n.title }) : t('inbox.line.syncRestarted.plain');
     return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
   }
   let line;

@@ -5,7 +5,7 @@
 //       （始め直したほかの PC の「初めて上げた設定」に負けないように。初めての PC は 0 のままで、アカウントの設定を採る）
 //     sharedTo: 鍵を渡した新しい PC（新しい順に 3 つ { hostId, name, at }。画面には 7 日の間だけ出す）
 //     dropped: 人が捨てた版 { <論理名>: 中身の sha256 | 'deleted' }。同じ版が届き直しても待ちに出さない（違う版が来たら忘れる）
-//   受け入れ待ち（ADR 0245）: ほかの PC から届いた skill・指示ファイルは書かずに <data>/plus/sync-inbox/<id>/ に置く
+//   受け入れ待ち（ADR 0246）: ほかの PC から届いた skill・指示ファイルは書かずに <data>/plus/sync-inbox/<id>/ に置く
 //     （id = 論理名の sha256 の先頭 32 字。incoming（消すときは無い）・base（手元に無いときは無い）・meta.json）。
 //     人が「取り込む」と書き、「捨てる」と dropped に覚える。設定の項目は今のまま自動で書く。
 //     待っている間の覚えは rev だけ進め、sha256 は手元の版のまま（手元の版を上げ直さない。手元で変えたものは上げる）
@@ -260,11 +260,15 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     return { id, ...meta, incoming, base };
   }
 
+  /** 人が見た版（画面が受けた sha256・rev）が、今待っている版と同じか */
+  const sameVersion = (meta, seen) => !!seen && seen.rev === meta.rev && (seen.sha256 ?? null) === meta.sha256;
+
   /**
    * 取り込む: 待っている版を手元に書く（消すものは消す）。待ちに置いた後に手元が変わっていたら書かない。
-   * 戻り値 { taken: true } か { taken: false, reason: 'gone' | 'local_changed' | 'not_applied' }
+   * seen: 人が見た版 { sha256, rev }。見ている間に新しい版が届いていたら書かずに changed を返す（画面が差分を出し直す）。
+   * 戻り値 { taken: true } か { taken: false, reason: 'gone' | 'changed' | 'local_changed' | 'not_applied' }
    */
-  function take(id) {
+  function take(id, seen) {
     return exclusive(async () => {
       await loadLocal();
       const item = await inboxItem(id);
@@ -273,6 +277,7 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
         await countInbox();
         return { taken: false, reason: 'gone' };
       }
+      if (!sameVersion(item, seen)) return { taken: false, reason: 'changed' };
       const cur = await targets.readOne(item.path);
       const curSha = cur ? sha256(cur.content) : null;
       if (curSha !== item.sha256) {
@@ -294,11 +299,15 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     });
   }
 
-  /** 捨てる: 待ちから消し、同じ版が届き直しても出さないように覚える。手元のファイルも api も変えない */
-  function drop(id) {
+  /**
+   * 捨てる: 待ちから消し、同じ版が届き直しても出さないように覚える。手元のファイルも api も変えない。
+   * seen は take と同じ（見ていない版は捨てない）。戻り値 { dropped } か { dropped: false, reason: 'changed' }
+   */
+  function drop(id, seen) {
     return exclusive(async () => {
       await loadLocal();
       const meta = await readInboxMeta(id);
+      if (meta && !sameVersion(meta, seen)) return { dropped: false, reason: 'changed' };
       if (meta) {
         local.dropped = { ...(local.dropped ?? {}), [meta.path]: versionTag(meta.sha256) };
         await saveLocal();
@@ -316,10 +325,12 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     const code = e?.code ?? 'error';
     if (e?.status === 403 && e.message === 'sync_disabled') { setStatus({ state: 'disabled', error: null, wait: null }); return; }
     if (e?.status === 426) {
-      // この版では使えない api（受け入れの v2 が要る）: 更新を促して止める
-      log('sync stopped (update_required)');
+      // この版では使えない api（受け入れの v2 が要る）か、券を取れたアカウントで api が前の版を名乗った（api_downgraded）:
+      // 前の版の道で K を渡さず、止めて知らせる
+      const why = code === 'api_downgraded' ? 'api_downgraded' : 'update_required';
+      log(`sync stopped (${why})`);
       halt();
-      setStatus({ state: 'update_required', error: 'update_required', wait: null, approvals: [] });
+      setStatus({ state: 'update_required', error: why, wait: null, approvals: [] });
       return;
     }
     if ((e?.status === 403 && (e.message === 'host' || e.code === 'host_removed')) || (e?.ticket && e.status === 404)) {
@@ -806,6 +817,8 @@ export function createSyncEngine({ client, keys, targets, dataDir, uid, hostId, 
     approve: (target, code) => keyAction(() => keys.approve(target, code)),
     /** 渡さない */
     deny: target => keyAction(() => keys.deny(target)),
+    /** 前の鍵では確かめられない新しい鍵（回復など）へ移ると人が選んだ。この後は承認の窓を通して受け取る */
+    acceptRestart: keyId => keyAction(() => keys.acceptRestart(keyId)),
     /** 回復（鍵を持つ PC が 1 台も無いとき）: 頼む・取り下げる・待ちが明けたら仕上げる */
     recovery: {
       request: () => keyAction(() => keys.recoveryRequest()),

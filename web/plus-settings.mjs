@@ -3,7 +3,7 @@
 // この画面は表示と、B1 のコマンド（plusLogin・plusLoginCancel・plusLogout・plusHostRebind）を送ることだけをする。
 // 利用者が外した PC（host.state removed）は「この PC を登録し直す」で plus.hostReregister 操作を送る。
 // 見た目の部品は設定 › リモートと同じ（web/remote-parts.mjs、web/manage-panel.css の .rm-*）。見出しの丸は .rm-av。
-// 「同期」の「届いた変更 N 件」を押すと、このページの中身を届いた変更の面（web/plus-inbox.mjs。ADR 0245）に替える。
+// 「同期」の「届いた変更 N 件」を押すと、このページの中身を届いた変更の面（web/plus-inbox.mjs。ADR 0246）に替える。
 // 通知の一覧の ◆ の行からは openInbox で直に開く。届いた変更が増えたら（plusSyncStatus）一覧を読み直し、新しいものを上に足す
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
@@ -228,18 +228,19 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       onAskReset: askSyncReset, onCancelReset: cancelSyncReset, onReset: syncReset,
       onOpenConflicts: () => syncSend('plus.syncOpenConflicts'),
       onOpenInbox: openInbox,
-      recoveryNote, onRecovery: syncRecovery, onLogin: () => send('plusLogin'),
+      recoveryNote, onRecovery: syncRecovery, onAcceptRestart: acceptSyncRestart, onLogin: () => send('plusLogin'),
       onOpenAccount: status?.urls?.account ? () => openExternalLink(status.urls.account) : null,
     };
   }
 
   function inboxView() {
-    return { ...inbox, onBack: closeInbox, onToggle: toggleInboxItem, onTake: id => inboxAct(id, 'take'), onDrop: id => inboxAct(id, 'drop') };
+    return { ...inbox, onBack: closeInbox, onToggle: toggleInboxItem, onTake: id => inboxAct(id, 'take'), onDrop: id => inboxAct(id, 'drop'),
+      onAskTake: askInboxTake, onCancelTake: cancelInboxTake };
   }
 
   /** 届いた変更の面を開き、一覧を読んで最初の 1 件を開く */
   function openInbox() {
-    if (!inbox) inbox = { items: [], open: null, details: {}, results: {}, busy: false, loading: true, message: '' };
+    if (!inbox) inbox = { items: [], open: null, details: {}, results: {}, renewed: {}, confirming: null, busy: false, loading: true, message: '' };
     paint();
     loadInbox({ openFirst: true });
   }
@@ -258,7 +259,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
 
   /**
    * 一覧を読み直す。新しく届いたものは上に足し、押し終えたものは残す。同じ id で届き直した（届いた時刻が変わった）ものは
-   * 中身を読み直し、押した結果を消す（捨てた後に新しい版が届いた）
+   * 中身を読み直し、押した結果を消す（捨てた後に新しい版が届いた）。開いていたものなら「新しい版が届きました」を出す
    */
   async function loadInbox({ openFirst = false } = {}) {
     let list;
@@ -269,7 +270,11 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     const known = new Map(inbox.items.map(i => [i.id, i]));
     for (const [id, was] of known) {
       const now = server.get(id);
-      if (now && now.at !== was.at) { delete inbox.details[id]; delete inbox.results[id]; }
+      if (now && now.at !== was.at) {
+        if (inbox.open === id && inbox.details[id]) inbox.renewed[id] = true;
+        if (inbox.confirming === id) inbox.confirming = null;
+        delete inbox.details[id]; delete inbox.results[id];
+      }
     }
     const fresh = list.filter(i => !known.has(i.id));
     inbox.items = [...fresh, ...inbox.items.filter(i => server.has(i.id) || inbox.results[i.id]?.done).map(i => server.get(i.id) ?? i)];
@@ -294,19 +299,53 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   function toggleInboxItem(id) {
     if (!inbox || inbox.results[id]?.done) return;
     inbox.open = inbox.open === id ? null : id;
+    inbox.confirming = null;
     paint();
     if (inbox.open) loadInboxItem(id);
   }
 
-  /** 取り込む（take）・捨てる（drop）。済んだら次の 1 件を開く。手元が変わっていて取り込めなかったものは開いたまま */
+  /** 文字として見せられないものの「取り込む」: もう一度確かめる */
+  function askInboxTake(id) {
+    if (!inbox || inbox.busy || !inbox.details[id]) return;
+    inbox.confirming = id;
+    paint();
+    queueMicrotask(() => root.querySelector(`[data-fk="${CSS.escape(`takeNo:${id}`)}"]`)?.focus());
+  }
+  function cancelInboxTake() {
+    if (!inbox) return;
+    const id = inbox.confirming;
+    inbox.confirming = null;
+    paint();
+    if (id) queueMicrotask(() => root.querySelector(`[data-fk="${CSS.escape(`take:${id}`)}"]`)?.focus());
+  }
+
+  /**
+   * 取り込む（take）・捨てる（drop）。人が見た版（sha256・rev）を一緒に送る。済んだら次の 1 件を開く。
+   * 手元が変わっていて取り込めなかったものは開いたまま。見ている間に新しい版が届いていたら（changed）、差分を読み直す
+   */
   async function inboxAct(id, act) {
     if (!inbox || inbox.busy) return;
+    const seen = inbox.details[id];
+    if (!seen) return;
     inbox.busy = true; inbox.message = '';
+    inbox.confirming = null;
     delete inbox.results[id];
+    delete inbox.renewed[id];
     paint();
     try {
-      const out = await cmd('invoke', { op: act === 'take' ? 'plus.syncInboxTake' : 'plus.syncInboxDrop', args: { id } });
+      const op = act === 'take' ? 'plus.syncInboxTake' : 'plus.syncInboxDrop';
+      const out = await cmd('invoke', { op, args: { id, sha256: seen.sha256 ?? null, rev: seen.rev } });
       if (!inbox) return;
+      if (out?.reason === 'changed') {
+        inbox.renewed[id] = true;
+        delete inbox.details[id];
+        inbox.busy = false;
+        inbox.open = id;
+        paint();
+        await loadInbox();
+        queueMicrotask(() => root.querySelector(`[data-fk="${CSS.escape(`inx:${id}`)}"]`)?.focus());
+        return;
+      }
       if (act === 'take' && out?.taken !== true) {
         inbox.results[id] = out?.reason === 'gone' ? { done: 'gone' } : { error: out?.reason === 'local_changed' ? 'local_changed' : 'not_applied' };
       } else inbox.results[id] = { done: act === 'take' ? 'taken' : (out?.dropped === false ? 'gone' : 'dropped') };
@@ -418,6 +457,19 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
         : action === 'stop' ? (out?.stopped ? 'stopped' : 'stopFailed') : '';
       if (action === 'complete') { syncConfirming = false; syncChecked = false; syncChanged = false; }
     } catch (e) { syncMessage = e.message; if (action === 'complete') { syncConfirming = false; syncChecked = false; } }
+    finally { syncBusy = false; paint(); }
+  }
+
+  /** 前の鍵では確かめられない新しい鍵を受け取る（回復など）。この後、鍵を持つ PC の承認の窓を通して届く */
+  async function acceptSyncRestart(keyId) {
+    if (syncBusy || !keyId) return;
+    syncBusy = true; syncMessage = '';
+    paint();
+    try {
+      const out = await cmd('invoke', { op: 'plus.syncAcceptRestart', args: { keyId } });
+      if (out?.status && typeof out.status === 'object') syncStatus = out.status;
+      if (out?.changed) syncMessage = t('settings.plus.syncRestartChanged');
+    } catch (e) { syncMessage = e.message; }
     finally { syncBusy = false; paint(); }
   }
 

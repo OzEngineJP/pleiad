@@ -1,9 +1,10 @@
 // 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs）: 状態ごとの行とボタン・書式（DOM の代役）
 import assert from 'node:assert/strict';
 import { renderSync, syncTimeText, megaBytes, syncCodeText } from '../../web/plus-sync.mjs';
+import { t as tr } from '../../web/i18n.mjs';
 
 export const name = 'plus-sync-ui';
-export const title = '設定 › Pleiad Plus の同期: 状態ごとの中身・確かめ・鍵を待つ場面と始め直しの窓・登録の外れ・時刻と MB の書式（DOM の代役）';
+export const title = '設定 › Pleiad Plus の同期: 状態ごとの中身・確かめ・鍵を待つ場面と始め直しの窓・登録の外れ・前の鍵で確かめられない鍵・前の版の api・時刻と MB の書式（DOM の代役）';
 
 const text = nodes => nodes.map(n => n.textContent).join(' ');
 // 子を足したボタン（button('') の後に append）は、代役では textContent が空のままなので葉を集める
@@ -264,6 +265,27 @@ export default async function (t) {
   nodes = render({ ...BASE, state: 'update_required' });
   tx = text(nodes);
   t.ok('update_required: 更新を促す文と、回すボタンは出さない', tx.includes('この版の Pleiad では同期を続けられません') && tx.includes('新しい版に更新') && !buttonTexts(nodes).includes('今すぐ同期'), tx);
+  nodes = render({ ...BASE, state: 'update_required', error: 'api_downgraded' });
+  tx = text(nodes);
+  t.ok('update_required（api_downgraded）: 止めたことを知らせる文で、回すボタンは出さない',
+    tx.includes(tr('settings.plus.syncApiDowngraded')) && !tx.includes('この版の Pleiad では同期を続けられません') && !buttonTexts(nodes).includes('今すぐ同期'), tx);
+
+  // 前の鍵では確かめられない新しい鍵: 人が選ぶまで移らない
+  const restarts = [];
+  const RS = { keyId: 'key-9', unverified: false, by: 'h-tab', byName: 'tablet', at: '2026-10-21T05:00:00Z' };
+  nodes = render({ ...BASE, state: 'waiting_key', wait: { ...V2, holder: false, restarted: RS } }, { onAcceptRestart: k => restarts.push(k) });
+  tx = text(nodes);
+  t.ok('新しい鍵で始め直された: 自動では移らないことと「新しい鍵を受け取る」',
+    tx.includes(tr('settings.plus.syncRestarted')) && buttonTexts(nodes).includes(tr('settings.plus.syncAcceptRestart')), tx);
+  byFk(nodes, 'syncAcceptRestart').onclick();
+  t.ok('「新しい鍵を受け取る」は onAcceptRestart(見せた keyId)', restarts.at(-1) === 'key-9');
+  // 届いた鍵を確かめられなかった: 受け取らずに止めていることと直し方。受け取るボタンは出さない
+  for (const [label, wait] of [['包み', { ...V2, holder: false, unverified: true }], ['始め直し', { ...V2, holder: false, restarted: { ...RS, unverified: true } }]]) {
+    nodes = render({ ...BASE, state: 'waiting_key', wait }, { onAcceptRestart: k => restarts.push(k) });
+    tx = text(nodes);
+    t.ok(`確かめられない鍵（${label}）: 受け取らずに止めていることと直し方。受け取るボタンは出さない`,
+      tx.includes(tr('settings.plus.syncKeyUnverified')) && tx.includes(tr('settings.plus.syncKeyUnverifiedHint')) && byFk(nodes, 'syncAcceptRestart') === null, tx);
+  }
   t.ok('確認コードの書式: 6 桁は 3 桁ずつ、ほかはそのまま', syncCodeText('731058') === '731 058' && syncCodeText('12') === '12' && syncCodeText(null) === '');
 
   // スイッチの失敗の文言

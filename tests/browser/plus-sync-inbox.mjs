@@ -1,5 +1,6 @@
-// 同期で届いた skill・指示ファイルの受け入れ待ち（ADR 0245）。実ブラウザーで、偽の Plus（tests/lib/fake-plus.mjs）を相手に本物の同期のエンジンを回し、
-// 待ちに置いた 3 件（変更・新しいファイル・削除）を、設定 › Pleiad Plus の「届いた変更」と通知の一覧から開いて、取り込む・捨てる・手元が変わったときを見る。
+// 同期で届いた skill・指示ファイルの受け入れ待ち（ADR 0246）。実ブラウザーで、偽の Plus（tests/lib/fake-plus.mjs）を相手に本物の同期のエンジンを回し、
+// 待ちに置いた 3 件（変更・新しいファイル・削除）を、設定 › Pleiad Plus の「届いた変更」と通知の一覧から開いて、取り込む・捨てる・手元が変わったとき・
+// 見ている間に新しい版が届いたときを見る。最後に、文字でない中身（大きさ・sha256・もう一度の確かめ）を見る。
 // 待ちの中身は試験が <data>/plus/sync-inbox/ に置く（暗号の道は tests/unit/plus-sync-inbox.mjs が見る）。
 // ホームと CLAUDE_CONFIG_DIR は試験の置き場に向ける（パスは ~/.claude/… と出る。本物の ~/.claude には触らない）。
 // 実行: node tests/browser/plus-sync-inbox.mjs   （PLUS_SYNC_SHOTS=<ディレクトリ> で場面ごとの画像を撮る。明暗 × 1280/360）
@@ -43,15 +44,19 @@ const SKILL_BEFORE = '---\nname: release\ndescription: リリースの手順\n--
 const SKILL_AFTER = '---\nname: release\ndescription: リリースの手順\n---\n# リリース\n\n1. 版を上げる\n2. 変更の一覧を確かめる\n3. タグを付ける\n4. ノートを書く\n';
 const CLAUDE_MD = '# 全体の指示\n\n- 日本語で答える\n- commit の前に試験を回す\n';
 const OLD_NOTES = '---\nname: old-notes\n---\n# 古いメモ\n\nもう使わない手順。\n';
+// 見ている間に届き直した版
+const SKILL_AFTER2 = SKILL_AFTER.replace('4. ノートを書く\n', '4. ノートの下書きを作る\n5. ノートを書く\n');
+// 文字として読めない中身（PNG の頭 + でたらめなバイト。2048 バイト）
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00, 0x00]), crypto.randomBytes(2036)]);
 
 /** 待ちに 1 件置く（engine の hold と同じ形） */
-function hold(logical, { kind, incoming = null, base = null, minutesAgo }) {
+function hold(logical, { kind, incoming = null, base = null, minutesAgo, rev = 2 }) {
   const dir = path.join(dataDir, 'plus', 'sync-inbox', inboxIdOf(logical));
   fs.mkdirSync(dir, { recursive: true });
   if (incoming != null) fs.writeFileSync(path.join(dir, 'incoming'), incoming);
   if (base != null) fs.writeFileSync(path.join(dir, 'base'), base);
   const at = new Date(Date.now() - minutesAgo * 60_000).toISOString();
-  fs.writeFileSync(path.join(dir, 'meta.json'), `${JSON.stringify({ path: logical, from: OTHER_HOST, at, mtime: at, kind, rev: 2,
+  fs.writeFileSync(path.join(dir, 'meta.json'), `${JSON.stringify({ path: logical, from: OTHER_HOST, at, mtime: at, kind, rev,
     sha256: incoming != null ? sha(Buffer.from(incoming)) : null, baseSha: base != null ? sha(Buffer.from(base)) : null })}\n`);
 }
 
@@ -156,11 +161,22 @@ try {
   ok('差分: 足した行が出る', diff.includes('変更の一覧を確かめる'), diff);
   await shots('pane');
 
+  // ---- 見ている間に新しい版が届いた → 「取り込む」を押しても書かない・「新しい版が届きました」・差分を読み直す ----
+  hold('skills/claude/release/SKILL.md', { kind: 'change', incoming: SKILL_AFTER2, base: SKILL_BEFORE, minutesAgo: 1, rev: 3 });
+  await page.locator('#plusPanel .inx.open button[data-act="take"]').click();
+  await waitText('#plusPanel .inx.open', '新しい版が届きました', 15_000);
+  const renewedDiff = await waitText('#plusPanel .inx.open .scx-lines', 'ノートの下書きを作る', 15_000);
+  ok('新しい版が届いていたら、取り込まずに「新しい版が届きました」と新しい差分を出す',
+    fs.readFileSync(path.join(home, '.claude/skills/release/SKILL.md'), 'utf8') === SKILL_BEFORE && renewedDiff.includes('変更の一覧を確かめる'), renewedDiff);
+  await page.waitForSelector('#plusPanel .inx.open button[data-act="take"]:not([disabled])', { timeout: 15_000 });
+  ok('新しい版を読み直したら、もう一度「取り込む」を押せる', await page.locator('#plusPanel .inx.open button[data-act="take"]').isEnabled());
+  await shots('renewed');
+
   // ---- 取り込む → 書く・「取り込みました」・次の 1 件（新しいファイル）が開く ----
   await page.locator('#plusPanel .inx.open button[data-act="take"]').click();
   await waitText('#plusPanel', '取り込みました', 15_000);
   await page.waitForSelector('#plusPanel .inx.open .scx-lines', { timeout: 15_000 });
-  ok('取り込む: 手元のファイルが届いた版になる', fs.readFileSync(path.join(home, '.claude/skills/release/SKILL.md'), 'utf8') === SKILL_AFTER);
+  ok('取り込む: 手元のファイルが見直した版になる', fs.readFileSync(path.join(home, '.claude/skills/release/SKILL.md'), 'utf8') === SKILL_AFTER2);
   const open2 = await page.locator('#plusPanel .inx.open .rm-nm').innerText();
   ok('取り込んだら次の 1 件（新しいファイル）が開く。+ の行だけ', open2 === '~/.claude/CLAUDE.md' && (await page.locator('#plusPanel .inx.open .scx-lines').innerText()).includes('日本語で答える'), open2);
   const focused = await page.evaluate(() => document.activeElement?.dataset?.fk ?? '');
@@ -196,6 +212,28 @@ try {
   await page.locator('#notifBell').click();
   await page.waitForTimeout(800);
   ok('すべて済んだら通知の行も消える', !(await page.locator('#notifPanel').innerText()).includes('同期で届いた変更'));
+
+  // ---- 文字でない中身: 差分の代わりに警告・大きさ・sha256。「取り込む」はもう一度確かめてから書く ----
+  hold('skills/claude/release/logo.png', { kind: 'new', incoming: PNG, minutesAgo: 3 });
+  await page.evaluate(() => document.getElementById('settings')?.click());
+  await page.locator('#plusTab').click();
+  await page.waitForSelector('#plusSyncSection', { timeout: 10_000 });
+  await page.locator('#plusSyncSection button:has-text("今すぐ同期")').click();
+  await waitText('#plusSyncSection', '届いた変更 1 件', 30_000);
+  await page.locator('#plusSyncSection [data-fk="syncInbox"]').click();
+  await page.waitForSelector('#plusPanel .inx.open .inx-sha', { timeout: 15_000 });
+  const binTx = await page.locator('#plusPanel .inx.open').innerText();
+  ok('文字でない中身: 差分を出さず、警告・届いた版の大きさ・sha256 を出す',
+    binTx.includes('中身を表示できません') && binTx.includes('2.0 KB') && binTx.includes(`sha256 ${sha(PNG)}`) && !(await page.locator('#plusPanel .inx.open .scx-lines').count()), binTx);
+  await page.locator('#plusPanel .inx.open button[data-act="take"]').click();
+  await page.waitForSelector('#plusPanel .inx.open button[data-act="takeYes"]', { timeout: 10_000 });
+  const askTx = await page.locator('#plusPanel .inx.open').innerText();
+  const logo = path.join(home, '.claude/skills/release/logo.png');
+  ok('「取り込む」を押すと、まだ書かずにもう一度確かめる', !fs.existsSync(logo) && askTx.includes('sha256 が同じことを確かめましたか') && !(await page.locator('#plusPanel .inx.open button[data-act="take"]').count()), askTx);
+  await shots('binary-confirm');
+  await page.locator('#plusPanel .inx.open button[data-act="takeYes"]').click();
+  await waitText('#plusPanel', '取り込みました', 15_000);
+  ok('「確かめたので取り込む」で届いた版をそのまま書く', fs.existsSync(logo) && fs.readFileSync(logo).equals(PNG));
   await ctx.close();
 } finally {
   await browser?.close().catch(() => {});

@@ -3,6 +3,8 @@
 // 承認を通した受け渡し・確認コード・断る・承認の途中から戻る・PC を外したときの作り直し（carry）・回復・前の版の K からの移行・
 // 券の取り直し・券の口の無い api（今の流れのまま）・426 で更新を促す、を確かめる。
 // 承認の無い受け渡し・鍵を持たない PC の始め直し・外した PC の読み出しが断られることも見る。
+// サーバーが渡す包みをそのまま受けないこと（承認した PC 以外の包み・台帳の公開鍵のすり替え・前の K の印の無い包み・
+// 前の K では確かめられない新しい K へは人が選ぶまで移らない）と、券を取れたアカウントで前の版の api に戻されたら止めることも見る。
 // LLM も外のネットワークも使わない。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -13,7 +15,7 @@ import { fakeClock } from '../lib/fake-clock.mjs';
 import { createPlusConfig } from '../../core/plus/config.mjs';
 import { createPlusClient } from '../../core/plus/client.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
-import { createSyncKeys, SYNC_JOIN } from '../../core/plus/sync/keys.mjs';
+import { createSyncKeys, SYNC_JOIN, SYNC_ACCOUNT_KEY, SYNC_CARRY } from '../../core/plus/sync/keys.mjs';
 import { createSyncTicket } from '../../core/plus/sync/ticket.mjs';
 import { createSyncTargets } from '../../core/plus/sync/targets.mjs';
 import { createSyncEngine } from '../../core/plus/sync/engine.mjs';
@@ -21,7 +23,7 @@ import { b64url, newAccountKey, resetKeyPair, resetMessage, wrapKey, newSyncKeyP
 import { generateKeyPair, hostIdFor } from '../../core/remote/noise.mjs';
 
 export const name = 'plus-sync-admission';
-export const title = '同期の鍵の受け渡しの承認: 確認コード・断る・承認の途中から戻る・外した PC の締め出しと作り直し・回復・移行・券・前の版の api・426';
+export const title = '同期の鍵の受け渡しの承認: 確認コード・断る・承認の途中から戻る・外した PC の締め出しと作り直し・届いた包みの確かめ・回復・移行・券・前の版の api・426';
 
 const T0 = Date.parse('2026-03-01T00:00:00.000Z');
 let hostSeq = 0;
@@ -208,6 +210,64 @@ export default async function (t) {
     const ew = await e.keys.setup();
     t.ok('戻された申し込みの PC は承認の窓を最初から', ew.wait?.join?.state === 'committed' && ew.wait.join.code === null);
 
+    // ================= 届いた包みの確かめ（サーバーが渡す K をそのまま受けない） =================
+    const keyIdF = ledger(UID).keyId;
+    await holderPass(a);   // a が e の申し込みを担う
+    const ew2 = await e.keys.setup();
+    t.ok('（準備）e は a の承認の窓まで進む', ew2.wait?.join?.state === 'revealed' && ew2.wait.join.approver?.hostId === a.hostId);
+    const ePub = Buffer.from(plus.state.hosts[e.hostId].syncPublicKey, 'base64url');
+    // 承認していない PC（d・今の K を持つ）が包んだものを、サーバーが e に渡す
+    const dKp = await d.keys.keyPair();
+    ledger(UID).keys[e.hostId] = { keyId: keyIdF, wrappedBy: d.hostId,
+      wrapped: wrapKey({ key: rd.key.key, keyId: keyIdF, uid: UID, privateKey: dKp.privateKey, publicKey: dKp.publicKey, targetPublicKey: ePub, targetHostId: e.hostId }) };
+    const eNot = await e.keys.setup();
+    t.ok('新しい PC は、承認した PC 以外が包んだ K を受けない（台帳の公開鍵で開けても）',
+      eNot.status === 'waiting_key' && eNot.wait?.unverified === true && !e.logs.includes('sync key received') && (await e.secrets.get(SYNC_ACCOUNT_KEY)) == null,
+      JSON.stringify({ status: eNot.status, unverified: eNot.wait?.unverified }));
+    // 台帳の承認した PC（a）の公開鍵をすり替え、その鍵で包んだものを渡す
+    const evil = newSyncKeyPair();
+    const aPubReal = plus.state.hosts[a.hostId].syncPublicKey;
+    plus.state.hosts[a.hostId].syncPublicKey = b64url(evil.publicKey);
+    ledger(UID).keys[e.hostId] = { keyId: keyIdF, wrappedBy: a.hostId,
+      wrapped: wrapKey({ key: rd.key.key, keyId: keyIdF, uid: UID, privateKey: evil.privateKey, publicKey: evil.publicKey, targetPublicKey: ePub, targetHostId: e.hostId }) };
+    const eSpoof = await e.keys.setup();
+    t.ok('新しい PC は、承認の窓で見た公開鍵でしか開かない（台帳の公開鍵のすり替えでは受けない）',
+      eSpoof.status === 'waiting_key' && eSpoof.wait?.unverified === true && (await e.secrets.get(SYNC_ACCOUNT_KEY)) == null);
+    plus.state.hosts[a.hostId].syncPublicKey = aPubReal;
+    delete ledger(UID).keys[e.hostId];
+    await a.keys.approve(e.hostId, ew2.wait.join.code);
+    const eOk = await e.keys.setup();
+    t.ok('承認した PC が渡し直せば受け取る', eOk.status === 'ready' && eOk.key.keyId === keyIdF);
+
+    // 前の K を持つ PC: 作り直しの包みに前の K の印が無ければ切り替えない
+    const rf2 = await a.keys.setup({ forceNew: true });
+    const keyIdG = rf2.key.keyId;
+    const carried = ledger(UID).keys[d.hostId];
+    t.ok('（準備）作り直すと d に前の K の印の付いた包みが置かれる', carried?.keyId === keyIdG && carried.wrappedBy === a.hostId);
+    const aKp2 = await a.keys.keyPair();
+    const dPub = Buffer.from(plus.state.hosts[d.hostId].syncPublicKey, 'base64url');
+    ledger(UID).keys[d.hostId] = { keyId: keyIdG, wrappedBy: a.hostId,
+      wrapped: wrapKey({ key: rf2.key.key, keyId: keyIdG, uid: UID, privateKey: aKp2.privateKey, publicKey: aKp2.publicKey, targetPublicKey: dPub, targetHostId: d.hostId }) };
+    const dLogs0 = d.logs.length;
+    const dJoinAt = ledger(UID).joins[d.hostId]?.updatedAt;
+    const dNot = await d.keys.setup();
+    const dLocal = await d.secrets.get(SYNC_ACCOUNT_KEY);
+    t.ok('前の K の印の無い包みでは切り替えない（手元の K はそのまま・申し込みもしない）',
+      dNot.status === 'waiting_key' && dNot.wait?.unverified === true && dLocal?.keyId === keyIdF && !d.logs.slice(dLogs0).includes('sync key received')
+      && ledger(UID).joins[d.hostId]?.updatedAt === dJoinAt, JSON.stringify({ status: dNot.status, wait: dNot.wait, local: dLocal?.keyId }));
+    ledger(UID).keys[d.hostId] = carried;
+    const dOk = await d.keys.setup();
+    t.ok('前の K の印が合う包みなら承認なしで切り替える', dOk.status === 'ready' && dOk.key.keyId === keyIdG && dOk.changed === true);
+    // 前の版の覚え（印の無い carry）は渡さずに捨てる
+    await a.secrets.set(SYNC_CARRY, { keyId: keyIdG, hosts: [e.hostId] });
+    ledger(UID).carry = [e.hostId];
+    const keyE = ledger(UID).keys[e.hostId];
+    delete ledger(UID).keys[e.hostId];
+    await holderPass(a);
+    t.ok('印の無い carry の覚えは渡さずに捨てる', !ledger(UID).keys[e.hostId] && (await a.secrets.get(SYNC_CARRY)) == null);
+    ledger(UID).keys[e.hostId] = keyE;
+    ledger(UID).carry = [];
+
     // ================= 回復（鍵を持つ PC が 1 台も無い） =================
     const UID2 = 'adm-recovery';
     account(UID2);
@@ -275,8 +335,15 @@ export default async function (t) {
       mr1.status === 'ready' && mr1.key.keyId !== lr1.key.keyId && !!ledger(UID3).resetPublicKey && m1.logs.includes('sync key migrated'));
     t.ok('移行ではほかの PC に承認なしで渡さない（carry が空）', !(ledger(UID3).carry ?? []).length && !ledger(UID3).keys[m2old.hostId]?.keyId?.startsWith(mr1.key.keyId));
     const m2 = upgrade(m2old);
+    const mw0 = await m2.keys.setup();
+    t.ok('前の K を持つほかの PC は、前の K で確かめられない新しい K へ自動で移らない（申し込まずに人が選ぶのを待つ）',
+      mw0.status === 'waiting_key' && mw0.wait?.restarted?.keyId === mr1.key.keyId && mw0.wait.restarted.unverified === false
+      && !mw0.wait.join && !ledger(UID3).joins?.[m2.hostId], JSON.stringify(mw0.wait));
+    t.ok('「新しい鍵を受け取る」は、見せた keyId がその間に替わっていたら移らない（changed）',
+      (await m2.keys.acceptRestart('0000000000000000')).changed === true);
+    t.ok('「新しい鍵を受け取る」を選ぶ', (await m2.keys.acceptRestart(mr1.key.keyId)).accepted === true);
     const mw = await m2.keys.setup();
-    t.ok('ほかの PC は申し込んで承認を待つ', mw.status === 'waiting_key' && mw.wait?.join?.state === 'committed');
+    t.ok('選んだ後は申し込んで承認を待つ', mw.status === 'waiting_key' && !mw.wait?.restarted && mw.wait?.join?.state === 'committed');
     await holderPass(m1);
     const mw2 = await m2.keys.setup();
     await m1.keys.approve(m2.hostId, mw2.wait?.join?.code);
@@ -303,6 +370,21 @@ export default async function (t) {
     const lres = await l1.keys.setup();
     t.ok('券の口が 404 の api（前の版）では、今の流れで K を作る（券を付けない）',
       lres.status === 'ready' && !lres.v2 && l1.ticket.legacy() === true && syncCalls().slice(lc0).every(cl => cl.ticket === false));
+    plus.state.noTickets = false;
+
+    // ================= 券を取れたアカウントで、api が前の版に戻った =================
+    // 同じ PC（同じ secret-store）の新しい券・keys で、券の口が 404 を返す
+    plus.state.noTickets = true;
+    const aTicket = createSyncTicket({ client: a.client, identity: async () => a.identity });
+    const aKeys = createSyncKeys({ client: a.client, ticket: aTicket, secrets: a.secrets, uid: () => UID, hostId: () => a.hostId, log: l => a.logs.push(l), onShared: to => a.shared.push(to) });
+    const dc0 = syncCalls().length;
+    const keyIdNow = ledger(UID).keyId;
+    const down = await caught(aKeys.setup());
+    t.ok('券を 1 度でも取れたアカウントで api が前の版を名乗ったら、前の版の道に戻らず 426 api_downgraded で止まる',
+      down?.status === 426 && down.code === 'api_downgraded' && syncCalls().length === dc0 && ledger(UID).keyId === keyIdNow,
+      JSON.stringify({ status: down?.status, code: down?.code, calls: syncCalls().slice(dc0).map(cl => cl.path) }));
+    const downShare = await caught(aKeys.setup({ forceNew: true }));
+    t.ok('始め直し（forceNew）でも前の版の道で作り直さない', downShare?.code === 'api_downgraded' && syncCalls().length === dc0 && ledger(UID).keyId === keyIdNow);
     plus.state.noTickets = false;
 
     // ================= engine: 状態に申し込みが並び、承認で渡す。426 で止まる =================
@@ -347,6 +429,15 @@ export default async function (t) {
     const stopped = plus.state.calls.length;
     await ea.clock.advance(30 * 60_000); await settle(ea);
     t.ok('engine: 426 の後は自分で回し直さない', plus.state.calls.length === stopped);
+    // 券を取れていた PC で api が前の版に戻る → 前の版の道で K を渡さず、更新を促す状態で止まる
+    plus.state.noTickets = true;
+    eb.ticket.forget();
+    const ebc0 = syncCalls().length;
+    await eb.engine.run(); await settle(eb);
+    t.ok('engine: 券を取れていたアカウントで api が前の版に戻ったら update_required（api_downgraded）で止まる',
+      eb.engine.status().state === 'update_required' && eb.engine.status().error === 'api_downgraded' && syncCalls().length === ebc0,
+      JSON.stringify({ status: eb.engine.status(), calls: syncCalls().slice(ebc0).map(cl => cl.path) }));
+    plus.state.noTickets = false;
   } finally {
     for (const en of engines) en.stop();
     await plus.close();

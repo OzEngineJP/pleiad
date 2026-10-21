@@ -215,7 +215,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .sync-code { margin:8px 8px 0; }
 /* 状態の行の下の補足（失敗の詳細・更新の案内・渡した PC など）: ほかの行と同じ左の端にそろえる */
 .sync-live > p.rm-sub { margin:4px 8px 0; }
-/* 届いた変更（web/plus-inbox.mjs。ADR 0245）: 1 件ずつ開き、差分（.scx-lines）と取り込む / 捨てる。押し終えた行は名前を弱く */
+/* 届いた変更（web/plus-inbox.mjs。ADR 0246）: 1 件ずつ開き、差分（.scx-lines）と取り込む / 捨てる。押し終えた行は名前を弱く */
 .inx-list { margin-top:12px; }
 .inx { border-radius:var(--r-s); }
 .inx-h .rm-end svg { transition:transform var(--dur-fast) var(--ease-out); }
@@ -227,6 +227,8 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .inx-b .rm-acts { margin:12px 0 0; justify-content:flex-end; }
 .settings-content .inx-b .rm-err { margin:8px 0 0; }
 .settings-content .inx-b > .rm-sub { margin:0; }
+/* 文字でない中身の sha256（64 文字）: 狭い幅では折り返す */
+.inx-sha { overflow-wrap:anywhere; }
 .settings-content .inx-done { margin:-6px 8px 6px; }
 .inx.done .inx-h .rm-nm { color:var(--ink-weak); }
 @media (prefers-reduced-motion:reduce) { .inx-h .rm-end svg { transition:none; } }

@@ -281,6 +281,14 @@
         "syncRelogin": "ログインし直す",
         "syncUpdateRequired": "この版の Pleiad では同期を続けられません",
         "syncUpdateRequiredHint": "Pleiad を新しい版に更新すると、再開します。",
+        "syncApiDowngraded": "同期のサーバーが前の版の応答を返したため、同期を止めました",
+        "syncApiDowngradedHint": "前の版のやり方では鍵を渡していません。サーバーが元に戻った後、Pleiad を起動し直すと再開します。",
+        "syncRestarted": "新しい鍵は、この PC の前の鍵では確かめられません（回復の仕上げなどで作られた鍵です）。自動では切り替えていません。",
+        "syncRestartedHint": "心当たりがあれば受け取ってください。鍵を持つ PC の画面で確認コードを見比べて承認すると届きます。受け取るまで、この PC の同期は止まったままです。",
+        "syncAcceptRestart": "新しい鍵を受け取る",
+        "syncRestartChanged": "その間に鍵がまた替わりました。表示を確かめてから、もう一度選んでください。",
+        "syncKeyUnverified": "届いた鍵を確かめられなかったため、受け取らずに止めています",
+        "syncKeyUnverifiedHint": "この PC を Pleiad Plus のアカウントのページで外し、登録し直してから、鍵を持つ PC の承認を受けてください。",
         "syncStartOverOthersApproval": "ほかの PC: 同期が止まり、この PC の画面で承認すると、また同期します。同じものがあるときは新しい方が残り、もう一方は「同期の写し」に 30 日残ります。",
         "syncApprove": {
           "mark": "承認を待っている",
@@ -313,7 +321,18 @@
         "inboxGone": "もう届いた変更から外れています",
         "inboxLocalChanged": "届いた後に、この PC のファイルが変わったため、取り込みませんでした。今のファイルを残すなら「捨てる」を押してください。",
         "inboxNotApplied": "取り込めませんでした。もう一度お試しください。",
-        "inboxBinary": "文字として表示できないファイルです。"
+        "inboxBinary": "中身を表示できません。送った PC で確かめてから取り込んでください。",
+        "inboxBinaryIncoming": "届いた版: {{size}}",
+        "inboxBinaryLocal": "この PC の今の版: {{size}}",
+        "inboxBytes_other": "{{count}} バイト",
+        "inboxBinaryConfirm": "中身を見ないまま取り込みます。送った PC で、大きさと sha256 が同じことを確かめましたか？",
+        "inboxBinaryConfirmYes": "確かめたので取り込む",
+        "inboxRenewed": "新しい版が届きました。差分を見直してから選んでください。",
+        "inboxHidden": {
+          "bidi": "文字の向きを変える制御文字が入っています（差分では ⟨U+…⟩ と書いています）。",
+          "invisible": "幅の無い文字が入っています（差分では ⟨U+…⟩ と書いています）。",
+          "eol": "改行コードだけが違います。"
+        }
       },
     "remote": {
       "tabs": {
@@ -3529,6 +3548,14 @@
       "syncApproval": {
         "named": "{{name}} が同期の鍵を待っています",
         "plain_other": "{{count}} 台の PC が同期の鍵を待っています"
+      },
+      "syncRecovery": {
+        "named": "{{name}} が同期の回復を頼んでいます",
+        "plain": "ほかの PC が同期の回復を頼んでいます"
+      },
+      "syncRestarted": {
+        "named": "{{name}} が新しい鍵で同期を始め直しました。受け取るか選んでください",
+        "plain": "同期が新しい鍵で始め直されました。受け取るか選んでください"
       }
     },
     "place": {

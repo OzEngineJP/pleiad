@@ -3155,6 +3155,21 @@
       "input": "a85457d98cd7"
     },
     {
+      "id": "plus.syncAcceptRestart",
+      "risk": "write",
+      "riskOf": false,
+      "scope": "global",
+      "modeGate": true,
+      "hostScreenOnly": true,
+      "surfaces": {
+        "ui": true,
+        "mcp": false,
+        "cli": false
+      },
+      "legacyCommand": null,
+      "input": "935166e3b5c9"
+    },
+    {
       "id": "plus.syncApprove",
       "risk": "write",
       "riskOf": false,
@@ -3175,7 +3190,7 @@
       "riskOf": false,
       "scope": "global",
       "modeGate": true,
-      "hostScreenOnly": false,
+      "hostScreenOnly": true,
       "surfaces": {
         "ui": true,
         "mcp": false,
@@ -3205,14 +3220,14 @@
       "riskOf": false,
       "scope": "global",
       "modeGate": true,
-      "hostScreenOnly": false,
+      "hostScreenOnly": true,
       "surfaces": {
         "ui": true,
         "mcp": false,
         "cli": false
       },
       "legacyCommand": null,
-      "input": "8e648f8576fc"
+      "input": "40c27295d5d7"
     },
     {
       "id": "plus.syncInboxItem",
@@ -3235,14 +3250,14 @@
       "riskOf": false,
       "scope": "global",
       "modeGate": true,
-      "hostScreenOnly": false,
+      "hostScreenOnly": true,
       "surfaces": {
         "ui": true,
         "mcp": false,
         "cli": false
       },
       "legacyCommand": null,
-      "input": "8e648f8576fc"
+      "input": "40c27295d5d7"
     },
     {
       "id": "plus.syncNow",

@@ -121,8 +121,9 @@ export default async function (t) {
   const adv = async (h, ms) => { await h.clock.advance(ms); await settle(h); };
   const itemPuts = () => plus.state.syncBodies.filter(b => b.method === 'PUT' && b.path.startsWith('/v1/sync/items/'));
   const count = (h, what) => h.calls.filter(c => c === what).length;
-  // 届いた skill・指示ファイルは受け入れ待ちに置かれる。人が取り込んだことにする
-  const takeAll = async h => { for (const m of await h.engine.inbox.list()) await h.engine.inbox.take(m.id); };
+  // 届いた skill・指示ファイルは受け入れ待ちに置かれる。人が一覧で見た版（sha256・rev）を取り込んだことにする
+  const seenOf = m => ({ sha256: m.sha256 ?? null, rev: m.rev });
+  const takeAll = async h => { for (const m of await h.engine.inbox.list()) await h.engine.inbox.take(m.id, seenOf(m)); };
 
   try {
     // ================= A: 最初の 1 台 =================
@@ -282,8 +283,8 @@ export default async function (t) {
     t.ok('手元の版は上げ直され、もう一方でも待ちに置かれる', (await fs.readFile(a.skill('demo', target), 'utf8')) === 'from a'
       && (await a.engine.inbox.item(heldOnA?.id))?.incoming?.toString('utf8') === 'from b', JSON.stringify(heldOnA));
     // A は B の版を取り込み、B は A の版を捨てる → 両方 B の版でそろい、何も上げ直さない
-    await a.engine.inbox.take(heldOnA.id);
-    await b.engine.inbox.drop(heldOnB.id);
+    await a.engine.inbox.take(heldOnA.id, seenOf(heldOnA));
+    await b.engine.inbox.drop(heldOnB.id, seenOf(heldOnB));
     const putsSettled = itemPuts().length;
     await a.engine.run(); await b.engine.run();
     t.ok('取り込む・捨てるでそろったあとは上げ直さない', itemPuts().length === putsSettled && (await fs.readFile(a.skill('demo', target), 'utf8')) === 'from b'
@@ -370,7 +371,7 @@ export default async function (t) {
       && racePuts.length === 2 && JSON.parse(racePuts[1].body).baseRev === JSON.parse(racePuts[0].body).baseRev + 1, JSON.stringify(racePuts.map(x => x.body.slice(0, 40))));
     const raceHeld = (await a.engine.inbox.list()).find(m => m.path === 'skills/claude/demo/race.md');
     t.ok('409 rev で受けた相手の版は、A の待ちに置く', raceHeld?.kind === 'change', JSON.stringify(raceHeld));
-    if (raceHeld) await a.engine.inbox.drop(raceHeld.id);
+    if (raceHeld) await a.engine.inbox.drop(raceHeld.id, seenOf(raceHeld));
     await b.engine.run();
     await takeAll(b);
     t.ok('上げ直した版がほかの PC に届く', (await fs.readFile(b.skill('demo', 'race.md'), 'utf8')) === 'r-a');

@@ -1,6 +1,7 @@
-// 同期で届いた skill・指示ファイルの受け入れ待ち（core/plus/sync/engine.mjs、docs/plus.md「届いた変更」、ADR 0245）。
+// 同期で届いた skill・指示ファイルの受け入れ待ち（core/plus/sync/engine.mjs、docs/plus.md「届いた変更」、ADR 0246）。
 // 偽の Plus と 2 台のホストで、届いたものを人の「取り込む」まで書かない・取り込むと書く・捨てた版は出し直さない（新しい版は出す）・
 // 自分の PC が出した変更は待ちに置かない・手元が変わっていたら取り込まない・消すのも待ちに置く・中身の無い消した印を受けない、を確かめる。
+// 取り込む・捨てるは人が見た版（sha256・rev）に結び、見ている間に新しい版が届いていたら何も書かずに changed を返すことも見る。
 // 設定の項目は今のまま自動で書く。時計と fs.watch は差し替える。LLM も外のネットワークも使わない。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -16,7 +17,7 @@ import { createSyncSettings } from '../../core/plus/sync/settings.mjs';
 import { createSyncEngine, SYNC_DEBOUNCE_MS } from '../../core/plus/sync/engine.mjs';
 
 export const name = 'plus-sync-inbox';
-export const title = '同期の受け入れ待ち: 届いた skill・指示ファイルは取り込むまで書かない・取り込む・捨てた版は出し直さない・自分の変更は待たない・手元の変更を上書きしない・中身の無い消した印を受けない';
+export const title = '同期の受け入れ待ち: 届いた skill・指示ファイルは取り込むまで書かない・取り込む・捨てた版は出し直さない・自分の変更は待たない・手元の変更を上書きしない・見た版と違えば書かない・中身の無い消した印を受けない';
 
 const UID = 'inbox-user';
 const T0 = Date.parse('2026-03-01T00:00:00.000Z');
@@ -79,8 +80,13 @@ export default async function (t) {
   // 直す前のエンジンには受け入れ待ちの口が無い。落ちる形（空・undefined）で読む
   const list = async h => (await h.engine.inbox?.list?.()) ?? [];
   const find = async (h, logical) => (await list(h)).find(x => x.path === logical) ?? null;
-  const take = async (h, id) => (await h.engine.inbox?.take?.(id)) ?? null;
-  const drop = async (h, id) => (await h.engine.inbox?.drop?.(id)) ?? null;
+  // 画面と同じく、一覧で見た版（sha256・rev）を付けて取り込む・捨てる。seen を渡せば、その版を見たことにする
+  const seenOf = async (h, id) => {
+    const it = (await list(h)).find(x => x.id === id);
+    return it ? { sha256: it.sha256 ?? null, rev: it.rev } : null;
+  };
+  const take = async (h, id, seen) => (await h.engine.inbox?.take?.(id, seen === undefined ? await seenOf(h, id) : seen)) ?? null;
+  const drop = async (h, id, seen) => (await h.engine.inbox?.drop?.(id, seen === undefined ? await seenOf(h, id) : seen)) ?? null;
   const SKILL = 'skills/claude/shared/SKILL.md';
   const CLAUDE = 'instructions/claude';
 
@@ -157,6 +163,25 @@ export default async function (t) {
     const aSkill3 = await find(a, SKILL);
     t.ok('新しい版が来たら、また出す', aSkill3?.kind === 'change' && (await read(path.join(a.dataDir, 'plus', 'sync-inbox', aSkill3.id, 'incoming'))) === 'v3 from b\n',
       JSON.stringify(aSkill3));
+
+    // ================= 見ている間に新しい版が届いた =================
+    const seen3 = aSkill3 ? { sha256: aSkill3.sha256, rev: aSkill3.rev } : null;
+    await put(b.skill('shared', 'SKILL.md'), 'v4 from b\n');
+    b.emit(b.skill('shared', 'SKILL.md'));
+    await settle(b);
+    await adv(b, SYNC_DEBOUNCE_MS);
+    await a.engine.run();
+    const aSkill4 = await find(a, SKILL);
+    t.ok('（準備）見ている間に新しい版が待ちに届く', aSkill4?.id === aSkill3?.id && aSkill4.rev > (seen3?.rev ?? 0) && aSkill4.sha256 !== seen3?.sha256, JSON.stringify(aSkill4));
+    const staleTake = aSkill4 ? await take(a, aSkill4.id, seen3) : null;
+    t.ok('見た版と違えば取り込まない（changed・ファイルも待ちもそのまま）', staleTake?.taken === false && staleTake.reason === 'changed'
+      && (await read(a.skill('shared', 'SKILL.md'))) === 'v1\n' && (await find(a, SKILL))?.rev === aSkill4.rev, JSON.stringify(staleTake));
+    const staleDrop = aSkill4 ? await drop(a, aSkill4.id, seen3) : null;
+    t.ok('見た版と違えば捨てない（changed・待ちに残る）', staleDrop?.dropped === false && staleDrop.reason === 'changed' && Boolean(await find(a, SKILL)), JSON.stringify(staleDrop));
+    const blindTake = aSkill4 ? await take(a, aSkill4.id, null) : null;
+    const blindDrop = aSkill4 ? await drop(a, aSkill4.id, null) : null;
+    t.ok('見た版を付けない取り込む・捨てるは何もしない（changed）', blindTake?.reason === 'changed' && blindDrop?.reason === 'changed'
+      && (await read(a.skill('shared', 'SKILL.md'))) === 'v1\n' && Boolean(await find(a, SKILL)));
 
     // ================= 手元が変わっていたら取り込まない =================
     await put(a.skill('shared', 'SKILL.md'), 'edited on a\n');
