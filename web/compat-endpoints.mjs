@@ -23,11 +23,10 @@ const STEPS = [t('compat.step.kind'), t('compat.step.connection'), t('compat.ste
 const when = (iso) => fmt.dateTime(iso, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
 export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, onChange = () => {}, officialLine = () => '' }) {
-  const $ = id => document.getElementById(id);
   const panel = document.createElement('section');
   panel.className = 'mp-panel'; panel.id = 'compatEndpointsPanel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'epTitle');
-  $('agentControls').append(panel);
+  document.getElementById('agentControls').append(panel);
 
   let endpoints = [], defaults = { claude: '', codex: '' }, storage = null, loaded = null;
   /** 設定 › API キーの一覧（キーの欄で選ぶ）。取れなければ null（古い置き場の入力欄にする） */
@@ -410,6 +409,8 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
 
   return {
     load,
+    /** 管理の面（web/client.mjs がカードの枠へ移し、描き直しの前に元の置き場へ戻す） */
+    panel,
     /** 読み込み済みの一覧（入力欄の面が読む）。まだなら空 */
     list: (a) => endpoints.filter(e => !a || e.agent === a),
     defaults: () => ({ ...defaults }),

@@ -24,8 +24,9 @@ function withCode(node, text, code) {
 }
 
 export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) {
-  const $ = id => document.getElementById(id);
   const panel = document.createElement('section');
+  // 面の中の要素は面の中で探す。面はカードの枠へ移り、カードの描き直しで文書から外れることがある（そのときも例外で止めない）
+  const $ = id => panel.querySelector(`#${id}`);
   panel.className = 'mp-panel'; panel.id = 'claudeAccountsPanel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'caTitle');
   panel.innerHTML = `<div class="mp-row"><h3 id="caTitle" data-i18n="accounts.title"></h3><button type="button" class="btn" id="caClose" data-i18n="accounts.close"></button></div>
@@ -45,7 +46,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   <p class="mp-note" id="caStorage"></p><p class="mp-state" id="caState" role="status"></p>`;
   applyDom(panel);
   withCode(panel.querySelector('#caManualNote'), t('accounts.form.manualNote', { command: 'claude setup-token' }), 'claude setup-token');
-  $('agentControls').append(panel);
+  document.getElementById('agentControls').append(panel);
 
   let accounts = [], storage = null, loaded = null, editingId = '', saving = false, confirming = '';
   /** 進行中の認可。{ loginId, kind, accountId, name, phase, url, message, popup } */
@@ -336,6 +337,8 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   };
   return {
     open, load, list: () => accounts, loginEvent,
+    /** 管理の面（web/client.mjs がカードの枠へ移し、描き直しの前に元の置き場へ戻す） */
+    panel,
     /** 面を閉じる（エージェントのカードの「接続」を畳むとき。caClose と同じ） */
     close() { panel.hidden = true; $('caForm').hidden = true; resetForm(); },
     /** 開いている面のエージェント（閉じていれば ''。設定のカードの aria-expanded と再描画で使う） */
