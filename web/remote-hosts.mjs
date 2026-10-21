@@ -193,7 +193,7 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
           name: t('settings.remote.groups.plusUpgrade'),
           key: 'plus-upgrade',
           onclick: () => {
-            const u = plus.urls?.account ? `${String(plus.urls.account).replace(/\/+$/, '')}/plus` : 'https://pleiad.dev/plus';
+            const u = plus.urls?.account ? new URL('/plus', plus.urls.account).href : 'https://pleiad.dev/plus';
             openExternalLink(u);
           },
         }));

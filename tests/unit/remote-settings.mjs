@@ -9,7 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { formatCode, remaining, qrPath, connectionFailed, deviceRow, platformName } from '../../web/remote.mjs';
-import { hostLine, agentLine } from '../../web/remote-hosts.mjs';
+import { hostLine, agentLine, setupRemoteHosts } from '../../web/remote-hosts.mjs';
+import { N } from '../lib/dom-stub.mjs';
 import { deviceIcon, relayHost } from '../../web/remote-parts.mjs';
 import { normalizeResident, residentSignal, enabledRoutineCount, createResidentPrefs, DEFAULT_RESIDENT, SLEEP_MODES } from '../../core/remote/resident.mjs';
 import { startServer } from '../lib/server.mjs';
@@ -85,6 +86,34 @@ export default async function (t) {
     agentLine({ agentState: 'ready', agentAllowed: true }) === '' && agentLine({ agentState: 'offline', agentAllowed: false }) === ''
     && agentLine({ agentState: 'ready', agentAllowed: false, name: 'desk' }) === 'desk の Pleiad を更新すると使えます'
     && agentLine({ agentState: 'unsupported', name: 'desk' }) === 'desk の Pleiad を更新すると使えます');
+
+  // ---- 「ほかの PC へ」の Pleiad Plus の行（web/remote-hosts.mjs の setupRemoteHosts）
+  {
+    const savedWindow = globalThis.window, savedCreate = document.createElement, savedBody = document.body;
+    const clicked = [];
+    globalThis.window = { plyDesktop: { hosts: {
+      onChange: () => {}, onCode: () => {},
+      init: async () => ({ ok: true, hosts: [], encrypted: true, plus: { status: 'free', available: true, urls: { account: 'https://account.example.com/account' }, hosts: [] } }),
+      list: async () => ({ ok: true, hosts: [] }),
+    } } };
+    document.body = new N('body');   // createWizard は setup の時点で dialog を body に足す
+    try {
+      const hostsPanel = setupRemoteHosts({ onChange: () => {}, cmd: async () => {}, page: () => {} });
+      await hostsPanel.refresh();
+      const walk = ns => { for (const n of ns ?? []) { if (n?.dataset?.fk === 'plus-upgrade') return n; const hit = walk(n?.children); if (hit) return hit; } return null; };
+      const upgrade = walk(hostsPanel.build());
+      t.ok('Pleiad Plus が無料なら「Pleiad Plus にする」の行がある', Boolean(upgrade));
+      // 開き先の末端（新しいタブの a.click）だけを拾う
+      const anchor = { href: '', target: '', rel: '', click() { clicked.push(this.href); }, remove() {} };
+      document.createElement = () => anchor;
+      upgrade.onclick();
+      t.ok('urls.account がパスを持っても /account/plus ではなくオリジンの /plus を開く', clicked.at(-1) === 'https://account.example.com/plus', String(clicked.at(-1)));
+    } finally {
+      globalThis.window = savedWindow;
+      document.createElement = savedCreate;
+      document.body = savedBody;
+    }
+  }
 
   // ---- 常駐の設定
   t.ok('既定は「窓を閉じても続ける」「作業中だけ防ぐ」', DEFAULT_RESIDENT.keepRunning === true && DEFAULT_RESIDENT.sleep === 'working');

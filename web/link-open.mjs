@@ -16,6 +16,9 @@ export function configureLinkOpen({ getPrefs: read, chooseRemote: choose } = {})
   if (typeof choose === 'function') chooseRemote = choose;
 }
 
+/** 設定の画面が開いているか。その間は内蔵ブラウザーのパネルを開けない（web/file-preview.mjs が body.settings で閉じる） */
+const settingsOpen = () => globalThis.document?.body?.classList?.contains('settings') === true;
+
 /**
  * external: 既定のブラウザーへ（Ctrl/⌘+クリック・中クリック・右クリックのメニュー）。inapp: 設定によらず内蔵ブラウザーへ（右クリックのメニュー）。
  * どちらも無いときは設定に従う
@@ -26,6 +29,8 @@ export function openExternalLink(url, { newWindow = true, external = false, inap
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return false;
   // direct: the chooser already picked this device
   if (!direct && chooseRemote(parsed.href, () => openExternalLink(parsed.href, { newWindow, external, inapp, direct: true }))) return true;
+  // 設定の画面では内蔵ブラウザーへ回さず既定のブラウザーで開く（external と同じ）
+  if (settingsOpen()) external = true;
   const available = browserPanelAvailable();
   if (!external && (inapp ? available : linkOpenTarget({ available, prefs: getPrefs() }) === 'inapp') &&
       openInBrowserPanel(parsed.href, { newTab: true })) return true;
@@ -48,7 +53,7 @@ export const modifierKey = () => (typeof navigator !== 'undefined' && /Mac/.test
 
 /** 押すと今の設定で内蔵ブラウザーに開くか（external は Ctrl/⌘+クリック・中クリック）。内蔵ブラウザーの無い画面・リモートの画面は false */
 export function opensInApp({ external = false } = {}) {
-  return !external && linkOpenTarget({ available: browserPanelAvailable(), prefs: getPrefs() }) === 'inapp';
+  return !external && !settingsOpen() && linkOpenTarget({ available: browserPanelAvailable(), prefs: getPrefs() }) === 'inapp';
 }
 
 /** アプリの中の外部リンク（http/https）。文中の URL・名前付きのリンク・取得の見出し。ファイルリンクは含まない（target が無い） */

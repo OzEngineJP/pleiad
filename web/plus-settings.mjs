@@ -32,7 +32,8 @@ function accountRow(account) {
   return row;
 }
 
-const plusUrl = account => `${String(account ?? '').replace(/\/+$/, '')}/plus`;
+// urls.account はパスを持ちうる（本番は <オリジン>/account）。/plus はパスの下ではなくオリジンの直下
+const plusUrl = account => new URL('/plus', account).href;
 
 /**
  * 状態から DOM を作る純粋な関数（tests/unit/plus-settings.mjs が tests/lib/dom-stub.mjs で動かす）。

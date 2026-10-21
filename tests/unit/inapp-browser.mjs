@@ -15,6 +15,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { applySlots, fileSlots, visualizationSlots, customSlots, browserSlots } from '../../web/side-panel.mjs';
 import { normalizeAddress, addressParts, tabLabel, isLocalHost, linkOpenPref, linkOpenTarget } from '../../web/browser-address.mjs';
 import { browserPanelAvailable, openInBrowserPanel, createBrowserPanel } from '../../web/browser-panel.mjs';
+import { openExternalLink } from '../../web/link-open.mjs';
 import { setupBrowserSettings } from '../../web/browser-settings.mjs';
 import { setupBrowserEntry } from '../../web/header-entries.mjs';
 
@@ -297,6 +298,24 @@ export default async function (t) {
     assert.equal(emptied, 2, '同じ会話で最後のタブを閉じたら閉じる');
   });
   t.ok('画面: openInBrowserPanel は正規化して開き、枠の位置を送り、状態から戻る・進む・印・タブを描き、隠すと外す', true);
+
+  // ---- 設定の画面を開いている間は、外部リンクを内蔵ブラウザーへ回さない（パネルが body.settings で閉じられるので既定のブラウザーへ）
+  await withWindow({ plyDesktop: { browser: fakeBridge() } }, async () => {
+    const bridge = window.plyDesktop.browser;
+    const panel = createBrowserPanel({ bridge, showMenu: () => {}, getSessionId: () => 's1' });
+    panel.connect({ openPanel: () => panel.show() });
+    panel.body.rect = { left: 700, top: 120, right: 1180, bottom: 820, width: 480, height: 700 };
+    panel.body.isConnected = true; panel.body.parentElement = new N('div');
+    assert.equal(openExternalLink('https://example.com/a'), true);
+    assert.equal(bridge.calls.at(-1)[0], 'open', 'ふつうの画面では内蔵ブラウザーのタブ');
+    document.body.classList.add('settings');
+    assert.equal(openExternalLink('https://example.com/b'), true);
+    assert.deepEqual(bridge.calls.at(-1), ['openExternal', { url: 'https://example.com/b' }], '設定の画面では既定のブラウザー');
+    document.body.classList.remove('settings');
+    assert.equal(openExternalLink('https://example.com/c'), true);
+    assert.equal(bridge.calls.at(-1)[0], 'open', '設定を閉じれば内蔵ブラウザーへ戻る');
+  });
+  t.ok('設定の画面のあいだ、外部リンクは設定によらず既定のブラウザーで開く', true);
 
   // ---- 画面: 画面が開いた PC のファイルのタブ（止めた件数の一行・⋯ のファイルの操作・アドレス欄・使い回しの合図）
   await withWindow({ plyDesktop: { browser: null } }, async () => {

@@ -79,6 +79,13 @@ export default async function (t) {
   byFk(nodes, 'manage').onclick();
   t.ok('「アカウントを管理」は urls.account を開く', opened.at(-1) === 'https://account.example.com');
 
+  // urls.account がパスを持つとき（本番は <オリジン>/account）: /account/plus ではなくオリジンの /plus を開く
+  nodes = render({ ...BASE, signedIn: true, account: { ...ACCOUNT, status: 'free', plan: null, limits: null, usage: null }, urls: { account: 'https://account.example.com/account', profile: null } });
+  byFk(nodes, 'getPlus').onclick();
+  t.ok('urls.account がパスを持つとき「Pleiad Plus にする」はオリジンの /plus を開く', opened.at(-1) === 'https://account.example.com/plus', opened.at(-1));
+  byFk(nodes, 'manage').onclick();
+  t.ok('urls.account がパスを持つとき「アカウントを管理」は urls.account そのものを開く', opened.at(-1) === 'https://account.example.com/account', opened.at(-1));
+
   // plus: プラン名・今月の利用・同期の置き場・ログアウト
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT });
   const tx = text(nodes);
