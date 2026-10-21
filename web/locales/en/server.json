@@ -765,27 +765,12 @@
   },
   "opencode": {
     "usage": {
-      "providerMessage": "{{provider}}: {{message}}",
-      "credentialTypeUnavailable": "Subscription quota is unavailable for this credential type.",
-      "providerUnsupported": "Quota retrieval is not supported for this provider.",
-      "accessMissing": "The OAuth access token is missing, so quota is unknown.",
-      "accessExpired": "The OAuth access token has expired. Send a message in a conversation or sign in again to refresh it.",
-      "chatgptUnavailable": "ChatGPT quota snapshots were unavailable or invalid.",
-      "enterpriseUnsupported": "Quota retrieval from a custom GitHub Copilot enterprise endpoint is not supported.",
-      "githubTokenMissing": "The GitHub OAuth token is missing, so quota is unknown.",
-      "httpUnavailable": "Quota is unavailable ({{status}}).",
-      "requestFailed": "The quota request failed or returned invalid data.",
-      "noCredentials": "No OpenCode provider credentials are available, so subscription quota is unknown.",
-      "accountNotReady": "This account has no usable credentials.",
       "cliLogin": "OpenCode signed-in account",
       "copilotUnavailable": "GitHub Copilot returned no finite quota snapshot. Quota is unlimited or unavailable.",
-      "copilotPremiumRequests": "GitHub Copilot premium requests",
-      "copilotPremiumModels": "GitHub Copilot premium models",
-      "copilotChat": "GitHub Copilot chat",
-      "copilotCompletions": "GitHub Copilot code completions",
-      "keyMissing": "No API key, so usage is unknown.",
-      "openrouterNoLimit": "This OpenRouter key has no usage limit set, so there is no quota window.",
-      "zenQuotaUnavailable": "OpenCode Zen does not provide a way to read remaining quota, so usage is unknown."
+      "copilotPremiumRequests": "GitHub Copilot Premium requests",
+      "copilotPremiumModels": "GitHub Copilot Premium models",
+      "copilotChat": "GitHub Copilot Chat",
+      "copilotCompletions": "GitHub Copilot Code completions"
     },
     "hooks": {
       "promptBlocked": "The message was blocked by a hook (UserPromptSubmit): {{reason}}"
@@ -1056,6 +1041,7 @@
     }
   },
   "usage": {
+    "connection": { "unavailable": "Usage is unavailable for this connection." },
     "window": {
       "fiveHour": "5 hours",
       "daily": "Daily",

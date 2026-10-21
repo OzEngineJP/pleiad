@@ -763,27 +763,12 @@
   },
   "opencode": {
     "usage": {
-      "providerMessage": "{{provider}}：{{message}}",
-      "credentialTypeUnavailable": "この認証方法では、契約プランの使用枠を取得できません。",
-      "providerUnsupported": "この接続先の使用枠の取得には対応していません。",
-      "accessMissing": "OAuth のアクセストークンがないため、使用枠は不明です。",
-      "accessExpired": "OAuth のアクセストークンの有効期限が切れています。会話でメッセージを送るか、ログインし直して更新してください。",
-      "chatgptUnavailable": "ChatGPT の使用枠を取得できなかったか、応答の形式を確認できませんでした。",
-      "enterpriseUnsupported": "GitHub Copilot の Enterprise 専用の接続先からの使用枠取得には対応していません。",
-      "githubTokenMissing": "GitHub の OAuth トークンがないため、使用枠は不明です。",
-      "httpUnavailable": "使用枠を取得できませんでした（{{status}}）。",
-      "requestFailed": "使用枠の取得に失敗したか、応答の形式を確認できませんでした。",
-      "noCredentials": "OpenCode の接続先の認証情報がないため、契約プランの使用枠は不明です。",
-      "accountNotReady": "このアカウントには利用できる認証情報がありません。",
       "cliLogin": "OpenCode のログイン中のアカウント",
       "copilotUnavailable": "GitHub Copilot の有限の使用枠は返されませんでした。無制限か、取得できない状態です。",
-      "copilotPremiumRequests": "GitHub Copilot のプレミアム要求",
-      "copilotPremiumModels": "GitHub Copilot のプレミアムモデル",
-      "copilotChat": "GitHub Copilot のチャット",
-      "copilotCompletions": "GitHub Copilot のコード補完",
-      "keyMissing": "API キーがないため、使用枠は不明です。",
-      "openrouterNoLimit": "OpenRouter のこのキーには利用上限が設定されていないため、使用枠はありません。",
-      "zenQuotaUnavailable": "OpenCode Zen は残り使用枠を照会する口を提供していないため、使用枠は不明です。"
+      "copilotPremiumRequests": "GitHub Copilot Premium requests",
+      "copilotPremiumModels": "GitHub Copilot プレミアムモデル",
+      "copilotChat": "GitHub Copilot チャット",
+      "copilotCompletions": "GitHub Copilot コード補完"
     },
     "hooks": {
       "promptBlocked": "発言は Hooks（UserPromptSubmit）に止められました：{{reason}}"
@@ -1054,6 +1039,7 @@
     }
   },
   "usage": {
+    "connection": { "unavailable": "この接続先の使用量は表示できません。" },
     "window": {
       "fiveHour": "5時間",
       "daily": "日次",

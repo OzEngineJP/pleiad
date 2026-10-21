@@ -1,19 +1,22 @@
-import { whamQuota, usageWindow, number } from '../usage.mjs';
+import { createHash } from 'node:crypto';
+import { whamQuota, usageWindow } from '../usage.mjs';
 import { readAccountAuth } from './opencode-accounts.mjs';
 import { t } from '../i18n.mjs';
 
 const nonnegative = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
-const INTERVAL_MINUTES = { monthly: 30 * 24 * 60, weekly: 7 * 24 * 60, daily: 24 * 60 };
+// Stable credential generation allows persisted quotas to survive a restart.
+// Only the digest is retained; credentials never enter quota snapshots or logs.
+const identityOf = c => createHash('sha256').update(JSON.stringify(c ?? null)).digest('hex');
 
-// OpenRouter のキー自身の利用上限（GET /api/v1/auth/key の effective_budget）。
-// 上限を付けていないキーは使い放題なので枠にならない
-export function openrouterQuota(data) {
-  const d = data?.data, budget = d?.effective_budget;
-  const limit = number(budget?.limit_usd) ?? number(d?.limit);
-  const spend = number(budget?.spend_usd) ?? number(d?.usage_monthly);
-  if (!limit || spend == null) return { plan: null, windows: [], message: t('opencode.usage.openrouterNoLimit') };
-  return { plan: null, message: null, windows: [{ ...usageWindow(`OpenRouter ${t('usage.window.monthly')}`,
-    spend / limit * 100, budget?.resets_at ?? null, INTERVAL_MINUTES[budget?.reset_interval] ?? null), provider: 'openrouter' }] };
+export function goQuota(data) {
+  const periods = [['rolling', 'fiveHour', 300], ['weekly', 'weekly', 10080], ['monthly', 'monthly', null]];
+  const windows = periods.map(([key, label, minutes]) => {
+    const w = data?.usage?.[key];
+    if (!nonnegative(w?.percent) || w.percent > 100 || typeof w.resetsAt !== 'string' || !Number.isFinite(Date.parse(w.resetsAt)))
+      throw new Error('Invalid Go usage');
+    return { ...usageWindow(`Go ${t(`usage.window.${label}`)}`, w.percent, w.resetsAt, minutes), provider: 'opencode-go', resetRequiresRefresh: true };
+  });
+  return { plan: null, windows, message: null };
 }
 
 export function copilotQuota(data) {
@@ -36,60 +39,70 @@ async function getJson(fetcher, url, headers) {
   const res = await fetcher(url, { headers, redirect: 'error', signal: AbortSignal.timeout(15_000) });
   // Never include a provider response body or a transport exception in a report:
   // either can contain credentials or account details.
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    const error = new Error('Usage request failed');
+    error.status = res.status;
+    // A generic forbidden response is insufficient evidence of no subscription.
+    if (res.status === 403) {
+      const data = await res.json().catch(() => null);
+      error.entitlement = [data?.name, data?.code, data?.error?.name, data?.error?.code, data?.error]
+        .some(code => code === 'EntitlementError' || code === 'entitlement_error');
+    }
+    throw error;
+  }
   return res.json();
 }
 
 export async function accountQuota(account = null, { fetcher = fetch } = {}) {
   const auth = readAccountAuth(account);
-  const results = await Promise.all(Object.entries(auth).map(async ([provider, c]) => {
-    const unknown = message => ({ windows: [], message: t('opencode.usage.providerMessage', { provider, message }) });
+  const providers = ['opencode-go', 'openai', 'github-copilot'];
+  const connections = await Promise.all(providers.filter(provider => provider === 'opencode-go'
+    ? auth.opencode || auth['opencode-go'] || !Object.keys(auth).length : auth[provider]).map(async provider => {
+    const c = (provider === 'opencode-go' ? auth.opencode ?? auth['opencode-go'] : auth[provider]) ?? {};
+    const base = { provider, identity: identityOf(c), windows: [], checkedAt: null };
+    const state = value => ({ ...base, state: value });
     try {
-      // OpenRouter の残量はキー自身を聞く（OAuth ではなく API キーの接続先）
-      if (provider === 'openrouter') {
-        if (typeof c.key !== 'string' || !c.key) return unknown(t('opencode.usage.keyMissing'));
-        return openrouterQuota(await getJson(fetcher, 'https://openrouter.ai/api/v1/auth/key', { authorization: `Bearer ${c.key}` }));
+      if (provider === 'opencode-go') {
+        const token = c.type === 'oauth' ? c.access : c.key;
+        if (!token) return state('no-login');
+        if (c.type === 'oauth' && c.expires <= Date.now()) return state('expired');
+        const result = goQuota(await getJson(fetcher, 'https://opencode.ai/zen/go/v1/usage', {
+          authorization: `Bearer ${token}`, accept: 'application/json',
+        }));
+        return { ...base, ...result, state: 'ready', checkedAt: Date.now() };
       }
       if (provider === 'openai') {
-        if (c.type !== 'oauth') return unknown(t('opencode.usage.credentialTypeUnavailable'));
-        if (!c.access) return unknown(t('opencode.usage.accessMissing'));
-        if (c.expires <= Date.now()) return unknown(t('opencode.usage.accessExpired'));
+        if (c.type !== 'oauth') return state('unsupported');
+        if (!c.access) return state('no-login');
+        if (c.expires <= Date.now()) return state('expired');
         const data = await getJson(fetcher, 'https://chatgpt.com/backend-api/wham/usage', {
           authorization: `Bearer ${c.access}`, 'User-Agent': 'codex-cli', ...(c.accountId ? { 'ChatGPT-Account-Id': c.accountId } : {}),
         });
         const result = whamQuota(data);
         const windows = result.windows.filter(w => nonnegative(w.usedPercent) && w.usedPercent <= 100)
           .map(w => ({ ...w, label: `ChatGPT ${w.label}`, provider }));
-        return { ...result, windows, message: windows.length ? null : t('opencode.usage.chatgptUnavailable') };
+        return { ...base, plan: result.plan, windows, state: windows.length ? 'ready' : 'failed', checkedAt: windows.length ? Date.now() : null };
       }
-      if (provider === 'github-copilot') {
-        if (c.type !== 'oauth') return unknown(t('opencode.usage.credentialTypeUnavailable'));
-        // OpenCode's Copilot OAuth refresh field contains the long-lived GitHub
-        // token; access may be an ephemeral Copilot inference token.
-        if (c.enterpriseUrl) return unknown(t('opencode.usage.enterpriseUnsupported'));
-        if (!c.refresh) return unknown(t('opencode.usage.githubTokenMissing'));
-        return copilotQuota(await getJson(fetcher, 'https://api.github.com/copilot_internal/user', {
-          authorization: `token ${c.refresh}`, 'X-GitHub-Api-Version': '2025-04-01', 'User-Agent': 'Pleiad', accept: 'application/json',
-        }));
-      }
-      // OpenCode Zen（無料枠・Go プランとも）に残り使用枠を照会する口は無い
-      if (provider === 'opencode') return unknown(t('opencode.usage.zenQuotaUnavailable'));
-      return unknown(t('opencode.usage.providerUnsupported'));
-    } catch (err) {
-      return unknown(/^HTTP \d+$/.test(err?.message) ? t('opencode.usage.httpUnavailable', { status: err.message }) : t('opencode.usage.requestFailed'));
+      if (c.type !== 'oauth' || c.enterpriseUrl) return state('unsupported');
+      if (!c.refresh) return state('no-login');
+      const result = copilotQuota(await getJson(fetcher, 'https://api.github.com/copilot_internal/user', {
+        authorization: `token ${c.refresh}`, 'X-GitHub-Api-Version': '2025-04-01', 'User-Agent': 'Pleiad', accept: 'application/json',
+      }));
+      return { ...base, ...result, state: result.windows.length ? 'ready' : 'unsupported', checkedAt: result.windows.length ? Date.now() : null };
+    } catch (error) {
+      return state(provider === 'opencode-go' && error.status === 403 && error.entitlement ? 'not-subscribed' : 'failed');
     }
   }));
-  return {
-    plan: results.map(r => r.plan).filter(Boolean).join(', ') || null,
-    windows: results.flatMap(r => r.windows),
-    message: results.map(r => r.message).filter(Boolean).join(' ') || (results.length ? null : t('opencode.usage.noCredentials')),
-  };
+  const windows = connections.flatMap(c => c.windows);
+  return { plan: null, connections, windows,
+    ...(connections.some(c => c.state === 'failed') ? { reason: 'error' } : {}),
+    message: connections.length && windows.length ? null : t('usage.connection.unavailable') };
 }
 
 export async function opencodeUsage({ accounts = [], account } = {}, options) {
   const rows = await Promise.all((account ? [account] : [null, ...accounts]).map(async account => {
     const ready = account ? account.ready ?? Object.keys(readAccountAuth(account)).length > 0 : true;
-    const quota = !ready ? { windows: [], message: t('opencode.usage.accountNotReady') } : await accountQuota(account, options);
+    const quota = await accountQuota(ready ? account : { ...account, credential: { auth: {} } }, options);
     return { accountId: account?.id ?? null,
       label: account?.name || (account ? account.id : t('opencode.usage.cliLogin')), ready,
       ...quota, checkedAt: quota.windows.length ? Date.now() : null };

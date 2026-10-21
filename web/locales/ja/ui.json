@@ -69,9 +69,7 @@
       "saveFailed": "保存できませんでした: {{error}}"
     },
     "usage": {
-      "description": "サブスクの枠はアカウント全体の値です。使用率・残量・リセット日時を表示します。",
-      "refresh": "更新",
-      "note": "表示中は1分ごとに更新します。取得後1分間は同じ結果を使います。"
+      "refresh": "更新"
     },
     "agents": {
       "recheck": "状態を再確認",
@@ -3175,6 +3173,18 @@
     }
   },
   "usage": {
+    "connection": {
+      "unavailable": "この接続先の使用量は表示できません。",
+      "noLogin": "ログインしていません",
+      "expired": "ログインの有効期限が切れました",
+      "notSubscribed": "未契約",
+      "failed": "取得できませんでした",
+      "retry": "再試行",
+      "loginHelp": "ログイン方法を見る",
+      "goLink": "Go を確認 ↗",
+      "stale": "{{when}}の値",
+      "others": "ほかの接続先 {{count}}"
+    },
     "unknown": "不明",
     "refreshing": "更新中…",
     "refreshFailed": "取得できませんでした",

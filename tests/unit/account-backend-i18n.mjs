@@ -63,12 +63,14 @@ export default async function testAccountBackendI18n(t) {
       const auth = { type: 'oauth', access: 'expired-secret', refresh: 'refresh-secret', expires: 1 };
       const unknown = await accountQuota({ ...account, credential: { auth: { openai: auth } } }, { fetcher: () => { throw new Error('must not fetch an expired credential'); } });
       assert.deepEqual(unknown.windows, []);
-      assert.equal(unknown.message, expected('opencode.usage.providerMessage', { provider: 'openai', message: expected('opencode.usage.accessExpired') }));
+      assert.equal(unknown.message, expected('usage.connection.unavailable'));
+      assert.equal(unknown.connections[0].state, 'expired');
       const unused = await opencodeUsage({ account: { ...account, ready: false } });
       assert.equal(unused.ready, false);
       assert.equal(unused.checkedAt, null);
       assert.deepEqual(unused.windows, []);
-      assert.equal(unused.message, expected('opencode.usage.accountNotReady'));
+      assert.equal(unused.message, expected('usage.connection.unavailable'));
+      assert.equal(unused.connections[0].state, 'no-login');
       const finite = copilotQuota({ quota_snapshots: { chat: { percent_remaining: 72 } } });
       assert.equal(finite.windows[0].label, expected('opencode.usage.copilotChat'));
       assert.equal(finite.windows[0].usedPercent, 28);

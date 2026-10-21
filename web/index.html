@@ -317,9 +317,10 @@
     <section class="settings-view" id="settingsView" aria-labelledby="setupTab">
       <div class="settings-content">
         <section id="usagePanel" data-i18n-aria-label="settings.nav.usage" hidden>
-          <p data-i18n="settings.usage.description"></p>
-          <button type="button" class="btn" id="refreshUsage" data-i18n="settings.usage.refresh"></button>
-          <p class="usage-note" data-i18n="settings.usage.note"></p>
+          <div class="usage-screen-head">
+            <h3 data-i18n="settings.nav.usage"></h3>
+            <button type="button" class="btn" id="refreshUsage" data-i18n="settings.usage.refresh"></button>
+          </div>
           <div id="usageCards" aria-live="polite"></div>
         </section>
         <!-- 委譲先の自動選択。中身は web/delegation-settings.mjs が作る -->

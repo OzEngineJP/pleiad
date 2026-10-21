@@ -69,9 +69,7 @@
       "saveFailed": "Couldn't save: {{error}}"
     },
     "usage": {
-      "description": "Subscription limits apply to the whole account. Shows usage, remaining amount, and reset time.",
-      "refresh": "Refresh",
-      "note": "While shown, refreshes every minute. A result is reused for 1 minute after it is fetched."
+      "refresh": "Refresh"
     },
     "agents": {
       "recheck": "Recheck status",
@@ -3266,6 +3264,18 @@
     }
   },
   "usage": {
+    "connection": {
+      "unavailable": "Usage is unavailable for this connection.",
+      "noLogin": "Not signed in",
+      "expired": "Your sign-in has expired",
+      "notSubscribed": "Not subscribed",
+      "failed": "Could not retrieve usage",
+      "retry": "Retry",
+      "loginHelp": "View sign-in instructions",
+      "goLink": "View Go ↗",
+      "stale": "Value from {{when}}",
+      "others": "Other connections {{count}}"
+    },
     "unknown": "Unknown",
     "refreshing": "Refreshing…",
     "refreshFailed": "Could not retrieve usage",

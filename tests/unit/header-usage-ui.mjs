@@ -183,6 +183,33 @@ export default async function(t) {
     assert.equal(sections()[0].querySelector('.v'), null);
     assert.doesNotMatch(sections()[0].textContent, /64%/);
     t.ok('認可や世代が変わった後の空応答へ、前の対象の値を持ち越さない', true);
+    const goWindows = [3, 6, 3].map((used, i) => ({ ...quota(used).windows[0], provider: 'opencode-go',
+      label: ['Go 5h', 'Go week', 'Go month'][i], minutes: [300, 10080, null][i] }));
+    const go = { provider: 'opencode-go', identity: 'go', state: 'ready', windows: goWindows, checkedAt: Date.now() };
+    const chat = { provider: 'openai', identity: 'chat', state: 'ready', windows: [{ ...quota(24).windows[0], provider: 'openai', label: 'ChatGPT 5h' }] };
+    const sendConnections = async connections => {
+      replies.set('current', () => Promise.resolve({ label: 'Current', quota: { connections, windows: connections.flatMap(c => c.windows), generation: 3 }, held: [] }));
+      ui.turnEnded('current'); await tick();
+    };
+    await sendConnections([go, chat]);
+    ui.show({ backend: 'current', model: '', models: { '': { resolvesTo: 'opencode-go/kimi-k2.5' } } });
+    assert.match(chip.textContent, /6%/); assert.doesNotMatch(chip.textContent, /24%/);
+    assert.equal(sections()[0].querySelectorAll('.usage-provider')[0].textContent, 'Go');
+    assert.match(sections()[0].querySelector('summary').textContent, /1/);
+    ui.show({ backend: 'current', model: 'openai/gpt-6-sol' });
+    assert.match(chip.textContent, /24%/);
+    assert.equal(sections()[0].querySelectorAll('.usage-provider')[0].textContent, 'ChatGPT');
+    ui.show({ backend: 'current', model: 'openrouter/model' }); unknownChip();
+    assert.ok(sections()[0].textContent.includes(tr('usage.connection.unavailable')));
+    ui.show({ backend: 'current', model: 'opencode-go/kimi-k2.5' });
+    for (const [state, key] of [['expired', 'expired'], ['no-login', 'noLogin'], ['not-subscribed', 'notSubscribed'], ['failed', 'failed']]) {
+      await sendConnections([{ ...go, state, windows: [], identity: state }]); unknownChip();
+      assert.ok(sections()[0].textContent.includes(tr(`usage.connection.${key}`)));
+    }
+    await sendConnections([{ ...go, state: 'failed', staleSince: Date.now() - 600000 }]);
+    assert.match(chip.textContent, /6%/); assert.ok(chip.classList.contains('dim'));
+    assert.ok(chip.getAttribute('aria-label').includes(tr('usage.connection.failed')));
+    t.ok('Go default resolves provider; current connection leads, others fold, states and stale chip stay distinct', true);
   } finally {
     for (const stop of pagehide) stop();
     globalThis.document = globals.document;
