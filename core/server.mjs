@@ -1659,7 +1659,7 @@ async function plusKeyInfo() {
 }
 /** 自動選択・通話に使うキーの画面向けの形。via はどちらを選んでいるか（値は返さない）。plus は plusKeyInfo */
 async function keyChoiceInfo(use) {
-  const refs = apiKeys.usesState();
+  const refs = await apiKeys.usesState();
   const ref = refs[use] ?? null;
   const via = ref === 'plus' ? 'plus' : ref ? 'key' : null;
   return { via, hasKey: await apiKeys.hasUse(use).catch(() => false), keyRef: via === 'key' ? ref : null, plus: await plusKeyInfo() };

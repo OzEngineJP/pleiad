@@ -334,6 +334,8 @@ const SUITES = [
   './unit/delegation-routing-view.mjs',
   './unit/delegation-effort-view.mjs',
   './unit/delegation-order.mjs',
+  // 設定 › 委譲「委譲先の自動選択に使うキー」: 登録欄を開いたまま別の行を選ぶと畳んで印が動く
+  './unit/delegation-key-choice.mjs',
   // Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチ・Codex のロード済みスレッド
   './unit/server-added-context.mjs',
   './unit/usage.mjs',

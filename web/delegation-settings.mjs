@@ -313,6 +313,8 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   /** 自動選択に使うキーを選ぶ（null は使わない。'plus' は仮想のキー Pleiad Plus）。選んだときから送り始める */
   async function chooseKey(service, id) {
     message = '';
+    // 登録欄を開いたまま別の行を選んだときも、畳んでから描き直す（登録中は paintKeys が飛ばされて印が動かない）
+    registering = '';
     try { await cmd('setApiKeyUse', { use: SERVICE_USE[service], id }); await refresh(); }
     catch (e) { message = t('routing.settings.saveFailed', { error: e.message }); paint(); }
     keys.querySelector(`[data-fk="${id === 'plus' ? 'plus' : `sel:${service}`}"]`)?.focus({ preventScroll: true });

@@ -327,7 +327,8 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     catch (e) { deferred = 'write-failed'; log('apikeys.migrate_failed', { code: String(e?.code ?? '') }); }
     if (deferred) { state = emptyState(); log('apikeys.migrate_deferred', { reason: deferred }); }
   }
-  const ensure = () => (initPromise ??= init());
+  // 台帳の読み込み・移行（保留も含む）が終わったら、開いている画面へ今の状態を届ける（読み込み中に描いた画面が古いまま残らないように）
+  const ensure = () => (initPromise ??= init().then(() => { emit({ keys: true, uses: [...USES], endpoints: true }); }));
 
   /** 書く操作の前に。移行が済んでいなければ断る（古い置き場を読み続けている間は、ここへ書かない） */
   async function writable() {
@@ -411,7 +412,8 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       const names = use === 'voice' ? await legacy.voice?.keys(LEGACY_VOICE_KEY).catch(() => []) : await legacy.compat?.keys(JUDGE_PREFIX + SERVICE_OF_USE[use]).catch(() => []);
       return (names ?? []).length > 0;
     },
-    usesState() { return { ...state.uses }; },
+    /** 割り当ての今の状態（値は持たない）。台帳の読み込み（init）を待つ */
+    async usesState() { await ensure(); return { ...state.uses }; },
 
     async add({ provider, label, key, host }) {
       await writable();

@@ -466,6 +466,21 @@ export default async function (t) {
       const everything = JSON.stringify({ list: await apiKeys.list(), logs, events, err: String((await rejects(() => apiKeys.add({ provider: 'openrouter', key: 'bad key with space ' + A })))?.message) });
       t.ok('一覧・ログ・イベント・エラー文にキーの値が出ない', ![A, B, 'z'.repeat(24)].some(v => everything.includes(v)));
     }
+
+    // ---- 台帳の読み込みが終わる前に読んでも、読み込みを待って保存どおりの割り当てが返る。終わったら変化の通知が出る
+    {
+      const d = await fresh();
+      const w0 = wire(d);
+      await w0.apiKeys.init();
+      const added = await w0.apiKeys.add({ provider: 'openrouter', key: A });
+      await w0.apiKeys.setUse('judge:jev', added.id);
+      // 別のインスタンスで、init を呼ばず（読み込みの途中）に読む
+      const w = wire(d);
+      const reading = w.apiKeys.usesState();
+      const uses = await reading;
+      t.ok('読み込みの途中で呼んでも、読み込みを待って保存どおりの割り当てが返る', uses['judge:jev'] === added.id);
+      t.ok('読み込みが終わると変化の通知（割り当てを含む）が出る', w.events.some(e => e.uses?.includes('judge:jev')));
+    }
   } finally {
     await fake.close();
     await compatApi.close();
