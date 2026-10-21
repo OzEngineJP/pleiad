@@ -90,7 +90,7 @@ export class N {
 
   matches(sel) {
     const s = sel.trim();
-    return s.startsWith(".") ? this._classes().includes(s.slice(1)) : this.tagName === s.toUpperCase();
+    return s.startsWith(".") ? this._classes().includes(s.slice(1)) : s.startsWith("#") ? this.id === s.slice(1) : this.tagName === s.toUpperCase();
   }
   querySelectorAll(sel) {
     const parts = sel.split(",").map((s) => s.trim()).filter(Boolean);

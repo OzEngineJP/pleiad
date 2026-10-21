@@ -3963,10 +3963,12 @@ function connSection(which) {
   return sec;
 }
 
-/** 管理の面を、そのエージェントのカードの中の枠へ移して開く（各モジュールの onOpen が呼ぶ） */
-function mountPanel(agentId, sec, panelId) {
+/**
+ * 管理の面を、そのエージェントのカードの中の枠へ移して開く（各モジュールの onOpen が呼ぶ）。
+ * 面は ID で探さず、モジュールが返した参照で受ける（カードの描き直しで文書から外れていても見失わない）
+ */
+function mountPanel(agentId, sec, panel) {
   const slot = document.querySelector(`#authSec [data-agent="${agentId}"] .agent-conn [data-sec="${sec}"] .conn-slot`);
-  const panel = $(panelId);
   if (!slot || !panel) return;
   slot.append(panel);
   openConnAgent = agentId;
@@ -4012,18 +4014,40 @@ function restoreConnPanels() {
     accounts: conn.querySelector('[data-sec="accounts"] .conn-slot'),
     endpoints: conn.querySelector('[data-sec="endpoints"] .conn-slot'),
   };
-  if (claudeAccounts.openAgent === openConnAgent && slots.accounts) slots.accounts.append($('claudeAccountsPanel'));
-  if (agentAccounts.openAgent === openConnAgent && slots.accounts) slots.accounts.append($('agentAccountsPanel'));
-  if (compatEndpoints.openAgent === openConnAgent && slots.endpoints) slots.endpoints.append($('compatEndpointsPanel'));
+  if (claudeAccounts.openAgent === openConnAgent && slots.accounts) slots.accounts.append(claudeAccounts.panel);
+  if (agentAccounts.openAgent === openConnAgent && slots.accounts) slots.accounts.append(agentAccounts.panel);
+  if (compatEndpoints.openAgent === openConnAgent && slots.endpoints) slots.endpoints.append(compatEndpoints.panel);
   conn.hidden = false;
   conn.closest('.agent-card')?.classList.add('open');
   conn.closest('.agent-card')?.querySelector('.connect')?.setAttribute('aria-expanded', 'true');
+}
+
+/**
+ * 描き直しの前に、カードの枠へ移した管理の面を元の置き場（#agentControls。#authSec の外）へ戻す。
+ * 戻さないと、面は古いカードごと文書から外れて二度と出せない。面は作り直さないので、打ちかけのフォームと認可の途中はそのまま。
+ * 面の中で打っていた欄を返す（移すとフォーカスが外れるので、描き直しの後に restoreConnFocus で戻す）
+ */
+function parkConnPanels(sec) {
+  const panels = [claudeAccounts.panel, agentAccounts.panel, compatEndpoints.panel].filter((p) => sec.contains(p));
+  const active = document.activeElement;
+  const focus = active && panels.some((p) => p.contains(active))
+    ? { el: active, start: active.selectionStart ?? null, end: active.selectionEnd ?? null } : null;
+  if (panels.length) $("agentControls").append(...panels);
+  return focus;
+}
+
+/** parkConnPanels が覚えた欄が描き直しの後も見えていれば、フォーカスと選択の位置を戻す */
+function restoreConnFocus(focus) {
+  if (!focus?.el.isConnected || focus.el.closest("[hidden]")) return;
+  focus.el.focus({ preventScroll: true });
+  if (focus.start !== null) try { focus.el.setSelectionRange(focus.start, focus.end); } catch {}
 }
 
 function renderAuth() {
   const sec = $("authSec");
   const targets = state.backends.filter((b) => b.capabilities?.login);
   sec.hidden = targets.length === 0;
+  const focus = parkConnPanels(sec);
   sec.replaceChildren();
   if (!targets.length) { $("authNeed").hidden = true; return; }
   const need = [];
@@ -4121,6 +4145,7 @@ function renderAuth() {
   }
   sec.append(list);
   restoreConnPanels();
+  restoreConnFocus(focus);
   const line = $("authNeed");
   line.hidden = need.length === 0;
   if (need.length) line.textContent = t("app.authNeed", { agents: need.join(t("app.listSeparator")) });
@@ -4696,9 +4721,9 @@ const compatEndpoints = setupCompatEndpoints({ cmd,
   onChange: () => { effortsLoader.invalidate(); syncTopbar().catch(() => {}); },
   officialLine: (agent) => { const st = state.auth.get(agent); return st?.loggedIn ? (st.account || t('settings.agents.loggedIn')) : ''; } });
 // 管理の面が開きたいとき、面をそのエージェントのカードの「アカウントと接続先」の中へ移す
-claudeAccounts.onOpen(() => mountPanel('claude', 'accounts', 'claudeAccountsPanel'));   // backend-allow: Claude のアカウントの面は Claude のカード専用
-agentAccounts.onOpen(id => mountPanel(id, 'accounts', 'agentAccountsPanel'));
-compatEndpoints.onOpen(id => { if (id) mountPanel(id, 'endpoints', 'compatEndpointsPanel'); });
+claudeAccounts.onOpen(() => mountPanel('claude', 'accounts', claudeAccounts.panel));   // backend-allow: Claude のアカウントの面は Claude のカード専用
+agentAccounts.onOpen(id => mountPanel(id, 'accounts', agentAccounts.panel));
+compatEndpoints.onOpen(id => { if (id) mountPanel(id, 'endpoints', compatEndpoints.panel); });
 function endpointLabel(id) {
   if (!id) return t("chat.endpoint.official");
   return compatEndpoints.get(id)?.name ?? t("chat.endpoint.deleted");

@@ -46,9 +46,10 @@ export function composerAccount({ backend, session = null, draft = null, prefs =
 }
 
 export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, onChange = () => {} }) {
-  const $ = (id) => document.getElementById(id);
   const accountCmd = (operation, args) => cmd('invoke', { op: `accounts.${operation}`, args });
   const panel = document.createElement('section');
+  // 面の中の要素は面の中で探す。面はカードの枠へ移り、カードの描き直しで文書から外れることがある（そのときも例外で止めない）
+  const $ = (id) => panel.querySelector(`#${id}`);
   panel.className = 'mp-panel'; panel.id = 'agentAccountsPanel'; panel.hidden = true;
   panel.setAttribute('aria-labelledby', 'aaTitle');
   panel.innerHTML = `<div class="mp-row"><h3 id="aaTitle"></h3><button type="button" class="btn" id="aaClose" data-i18n="agentAccounts.close"></button></div>
@@ -61,7 +62,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
   <p class="mp-state" id="aaFormState" role="status"></p></form>
   <p class="mp-state" id="aaState" role="status"></p>`;
   applyDom(panel);
-  $('agentControls').append(panel);
+  document.getElementById('agentControls').append(panel);
 
   const lists = createAccountRequestCache({ read: async id => (await accountCmd('list', { backend: id })).accounts ?? [] });
   const cache = lists.cache;
@@ -276,6 +277,8 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
   }
   return {
     open, load, authEvent, close,
+    /** 管理の面（web/client.mjs がカードの枠へ移し、描き直しの前に元の置き場へ戻す） */
+    panel,
     /** 開いている面のエージェント（閉じていれば ''。設定のカードの再描画で使う） */
     get openAgent() { return panel.hidden ? '' : (backend ?? ''); },
     /** open() が呼ばれた（カードの「接続」の面を開く合図。web/client.mjs が受ける） */
