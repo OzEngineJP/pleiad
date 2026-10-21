@@ -1,5 +1,6 @@
 // 先頭に置く: AGENT_HOST_SERVER_LOG があれば、他のモジュールの読み込みの失敗も含めて出力をファイルへ向ける（stdio の無い起動）
 import './server-log-boot.mjs';
+import { createLoadTiming } from './load-timing.mjs';
 import { effortOptions, validateEffort, effortCapability } from './effort.mjs';
 import { listDirs } from './list-dirs.mjs';
 import { createQuotaStore, createUsageStore, agentUsage, readProviderUsage, maskEmail, LOGIN_ACCOUNT } from './usage.mjs';
@@ -9200,8 +9201,17 @@ wss.on("connection", (ws, req) => {
           // Hold the reference even if the turn ends during the asynchronous reads.
           const read = { sessionId, turn: runtime.turns.get(sessionId) };
           if (msg.args?.live) liveReads.add(read);
+          const timing = createLoadTiming();
+          const loadReply = (ok, payload) => {
+            const start = performance.now();
+            try { return reply(ok, payload); } finally { timing.add('send', performance.now() - start); }
+          };
+          const serve = (...args) => {
+            const start = performance.now();
+            try { return serveHistory(...args); } finally { timing.add('window', performance.now() - start); }
+          };
           try {
-            const backend = await resolveBackendForSession(sessionId);
+            const backend = await timing.run('resolve', () => resolveBackendForSession(sessionId));
             const retired = backend?.retired ? { retired: backend.retired } : {};
             // 委譲（サブエージェント）の呼び出しは、発言を出したエージェントの申告（subagentTools）で見分ける。
             // 発言に backend が無ければ会話の持ち主、対応を終えた・申告の無いエージェントは既定の一覧で拾う
@@ -9212,13 +9222,14 @@ wss.on("connection", (ws, req) => {
               return subagentToolNames.get(key);
             };
             // A later completion cannot be acknowledged by an older history snapshot.
-            const sidecar = await store.get(sessionId);
+            const sidecar = await timing.run('sidecar', () => store.get(sessionId));
             const completedAt = sidecar.completedAt ?? null;
             // 中断の印（一覧の行と同じ形）。会話の末尾の「中断しました」を保存された状態から描くため
             const interrupted = runtime.turns.has(sessionId) ? null : interruptedOf((await store.get(sessionId)).interrupted);
             const readStarted = Date.now();
-            const { compactSummaries, ...data } = await history.loadTranscript(sessionId, backend);
+            const { compactSummaries, ...data } = await timing.run('transcript', () => history.loadTranscript(sessionId, backend, { timing: timing.add }));
             // 読んだ履歴をそのまま検索の写しにも入れる（追加の読み込みは要らない）。outline は本文が縮めてあるので入れない
+            const decorating = performance.now();
             if (!msg.args?.outline) sessionSearch.ingest(sessionId, data.messages, { sig: readStarted });
             // 入力欄の `!`: Pleiad が走らせた分の終了コードを付け、まだ渡していない分・走っている分を末尾に足す（ADR 0054）。
             // 渡さなかった分は、次の人の発言の前に差す（ADR 0055）
@@ -9226,14 +9237,15 @@ wss.on("connection", (ws, req) => {
               : [...shellRuns.placeKept(shellRuns.decorate(data.messages, sidecar, backend), sidecar), ...shellRuns.rows(sessionId, sidecar)];
             // 送信予定で送った発言には、予定の時刻を付ける（画面は遅れて送ったものにだけ「9:00 の予定を 9:32 に送りました」を出す）
             if (!msg.args?.outline) data.messages = decorateScheduled(data.messages, sidecar.scheduledSends);
+            timing.add('decorate', performance.now() - decorating);
             // 系譜の照合（web/branches.mjs）は uuid・役割・本文・ツール名しか見ない。
             // ツール結果や提示まで載せると、家族を開くたびに数十MBが流れて画面が止まる
-            if (msg.args?.outline) return reply(true, { messages: data.messages.map(m => ({
+            if (msg.args?.outline) return loadReply(true, { messages: data.messages.map(m => ({
               uuid: m.uuid, role: m.role, text: m.text, tools: m.tools,
               ...(m.toolCalls ? { toolCalls: m.toolCalls.map(call => ({ name: call.name })) } : {}),
             })) });
             const draft = (await store.get(sessionId)).draft ?? null;
-            const nativeCompactions = backend.getCompactions ? await backend.getCompactions(sessionId).catch(() => []) : [];
+            const nativeCompactions = backend.getCompactions ? await timing.run('compactions', () => backend.getCompactions(sessionId).catch(() => [])) : [];
             const savedCompactions = sidecar.compactions ?? [];
             // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
@@ -9241,7 +9253,7 @@ wss.on("connection", (ws, req) => {
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
-            if (!msg.args?.live) return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
+            if (!msg.args?.live) return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
             // カードが出ず、一覧だけが「承認待ち」のまま止まる。
@@ -9257,14 +9269,17 @@ wss.on("connection", (ws, req) => {
                 : null;
               // Use a fixed pre-turn history, never an independently sampled partial
               // transcript: it may overlap the events or lag behind them.
-              return reply(true, serveHistory({
+              return loadReply(true, serve({
                 messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
                 stream: { events: live.events }, streamCursor: streamSequence, permissions,
                 initialMessageId: live.initialMessageId,
               }, msg.args, subagentToolsOf));
             }
-            return reply(true, serveHistory({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));
-          } finally { liveReads.delete(read); }
+            return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));
+          } finally {
+            liveReads.delete(read);
+            timing.finish(msg.args?.outline ? 'outline' : msg.args?.older ? 'older' : msg.args?.live ? 'live' : 'open');
+          }
         }
 
         // Allocate the host identity before the native engine has a first turn.

@@ -279,12 +279,22 @@ export function claudeCompactionsFromHistory(rows) {
  * 本文やツール結果の大きい行は、印になる文字列を含むときだけ parse する。
  */
 export function transcriptSystemMarks(text) {
+  const collector = systemMarkCollector();
+  if (typeof text === 'string') for (const line of text.split('\n')) {
+    if (!['"compact_boundary"', '"isCompactSummary":true', '<command-name>', '<command-message>', '<bash-input>', '<local-command-std', '<bash-std', '"type":"attachment"'].some(s => line.includes(s))) continue;
+    let row;
+    try { row = JSON.parse(line); } catch {}
+    collector.add(line, row);
+  }
+  return collector.finish();
+}
+
+function systemMarkCollector() {
   const summaries = new Map();
   const outputs = new Map();
   const compactions = [];
-  if (typeof text !== "string") return { summaries, outputs, compactions };
   const needs = ['"compact_boundary"', '"isCompactSummary":true', "<local-command-std", "<bash-std"];
-  if (!needs.some((s) => text.includes(s))) return { summaries, outputs, compactions };
+  let enabled = false;
   const parentOf = new Map();
   const boundaries = new Map();
   const heads = new Set();
@@ -295,47 +305,50 @@ export function transcriptSystemMarks(text) {
     if (typeof c === "string") return c;
     return Array.isArray(c) ? c.filter((b) => b?.type === "text").map((b) => b.text ?? "").join("") : "";
   };
-  for (const line of text.split("\n")) {
+  const add = (line, row) => {
+    if (needs.some(s => line.includes(s))) enabled = true;
     const boundary = line.includes('"compact_boundary"');
     const summary = line.includes('"isCompactSummary":true');
     const mark = line.includes("<command-name>") || line.includes("<command-message>") || line.includes("<bash-input>")
       || line.includes("<local-command-std") || line.includes("<bash-std");
     const attachment = line.includes('"type":"attachment"');
-    if (!boundary && !summary && !mark && !attachment) continue;
-    let row;
-    try { row = JSON.parse(line); } catch { continue; }
-    if (!row || typeof row !== "object" || typeof row.uuid !== "string" || row.isSidechain) continue;
+    if (!boundary && !summary && !mark && !attachment) return;
+    if (!row || typeof row !== "object" || typeof row.uuid !== "string" || row.isSidechain) return;
     parentOf.set(row.uuid, row.parentUuid ?? null);
-    if (row.type === "system" && row.subtype === "compact_boundary") { boundaries.set(row.uuid, row); continue; }
-    if (row.type !== "user" || row.isMeta) continue;
-    if (row.isCompactSummary === true) { summaryRows.push(row); continue; }
+    if (row.type === "system" && row.subtype === "compact_boundary") { boundaries.set(row.uuid, row); return; }
+    if (row.type !== "user" || row.isMeta) return;
+    if (row.isCompactSummary === true) { summaryRows.push(row); return; }
     const body = userText(row).trimStart();
     if (body.startsWith("<command-name>") || body.startsWith("<command-message>") || body.startsWith("<bash-input>")) heads.add(row.uuid);
     else if (body.startsWith("<local-command-std") || body.startsWith("<bash-std")) outputRows.push(row);
-  }
-  for (const row of outputRows) if (heads.has(row.parentUuid)) outputs.set(row.uuid, row.parentUuid);
-  const summaryOf = new Map();
-  for (const row of summaryRows) {
-    // 親を 3 歩まで遡って区切りを探す（間に attachment:date などが挟まる。2026-09-28 実測）
-    let cursor = row.parentUuid ?? null;
-    for (let hops = 0; cursor && !boundaries.has(cursor) && hops < 3; hops++) cursor = parentOf.get(cursor) ?? null;
-    const boundaryId = cursor && boundaries.has(cursor) ? cursor : null;
-    summaries.set(row.uuid, boundaryId);
-    if (boundaryId && !summaryOf.has(boundaryId)) summaryOf.set(boundaryId, userText(row).trim());
-  }
-  for (const [uuid, row] of boundaries) {
-    const meta = row.compactMetadata ?? row.compact_metadata ?? {};
-    const before = meta.preTokens ?? meta.pre_tokens;
-    const after = meta.postTokens ?? meta.post_tokens;
-    compactions.push({ id: `native:${uuid}`, nativeId: uuid, phase: "complete",
-      trigger: meta.trigger === "manual" ? "manual" : "auto",
-      at: Date.parse(row.timestamp ?? "") || 0,
-      ...(Number.isFinite(before) ? { beforeTokens: before } : {}),
-      ...(Number.isFinite(after) ? { afterTokens: after } : {}),
-      ...(summaryOf.has(uuid) ? { summary: summaryOf.get(uuid) } : {}) });
-  }
-  compactions.sort((a, b) => a.at - b.at);
-  return { summaries, outputs, compactions };
+  };
+  const finish = () => {
+    if (!enabled) return { summaries, outputs, compactions };
+    for (const row of outputRows) if (heads.has(row.parentUuid)) outputs.set(row.uuid, row.parentUuid);
+    const summaryOf = new Map();
+    for (const row of summaryRows) {
+      // 親を 3 歩まで遡って区切りを探す（間に attachment:date などが挟まる。2026-09-28 実測）
+      let cursor = row.parentUuid ?? null;
+      for (let hops = 0; cursor && !boundaries.has(cursor) && hops < 3; hops++) cursor = parentOf.get(cursor) ?? null;
+      const boundaryId = cursor && boundaries.has(cursor) ? cursor : null;
+      summaries.set(row.uuid, boundaryId);
+      if (boundaryId && !summaryOf.has(boundaryId)) summaryOf.set(boundaryId, userText(row).trim());
+    }
+    for (const [uuid, row] of boundaries) {
+      const meta = row.compactMetadata ?? row.compact_metadata ?? {};
+      const before = meta.preTokens ?? meta.pre_tokens;
+      const after = meta.postTokens ?? meta.post_tokens;
+      compactions.push({ id: `native:${uuid}`, nativeId: uuid, phase: "complete",
+        trigger: meta.trigger === "manual" ? "manual" : "auto",
+        at: Date.parse(row.timestamp ?? "") || 0,
+        ...(Number.isFinite(before) ? { beforeTokens: before } : {}),
+        ...(Number.isFinite(after) ? { afterTokens: after } : {}),
+        ...(summaryOf.has(uuid) ? { summary: summaryOf.get(uuid) } : {}) });
+    }
+    compactions.sort((a, b) => a.at - b.at);
+    return { summaries, outputs, compactions };
+  };
+  return { add, finish };
 }
 
 // ------------------------------------------------------------------ 履歴
@@ -511,34 +524,70 @@ const LOOKUP_TOOLS = new Set([
  * 大きい transcript を毎回全部 parse しないよう、止めた stop_hook_summary が最初に出る行から後だけを読む。
  */
 export function stopHookFollowUps(text) {
+  const collector = followUpCollector();
+  const first = typeof text === 'string' ? text.indexOf('"hookErrors":["') : -1;
+  if (first >= 0) for (const line of text.slice(text.lastIndexOf('\n', first) + 1).split('\n')) {
+    let row;
+    try { row = JSON.parse(line); } catch {}
+    collector.add(line, row);
+  }
+  return collector.finish();
+}
+
+/** 1 回の行走査・JSON 解析を SDK と extras で共有する。本文は戻り値に残さない。 */
+export function parseSessionTranscript(text) {
+  const entries = [], rows = [];
+  const marks = systemMarkCollector(), followUps = followUpCollector();
+  let candidates = 0, valid = 0, version = null, lineNumber = 0;
+  // split の配列と大きい行の文字列を保持しない。
+  for (let at = 0; at <= text.length;) {
+    const end = text.indexOf('\n', at);
+    const line = text.slice(at, end < 0 ? text.length : end);
+    let row;
+    try { row = JSON.parse(line); entries.push(row); } catch {}
+    if (lineNumber++ < 20 && version === null && typeof row?.version === 'string') version = row.version;
+    marks.add(line, row);
+    followUps.add(line, row);
+    if (line.includes('"attachment"')) {
+      if (row?.type === 'attachment' && row.uuid) rows.push(row);
+      if (line.includes('queued_command')) {
+        candidates++;
+        if (row?.type === 'attachment' && typeof row.uuid === 'string' && row.attachment?.type === 'queued_command' && typeof row.attachment.prompt === 'string') valid++;
+      }
+    }
+    if (end < 0) break;
+    at = end + 1;
+  }
+  return { entries, rows: candidates ? rows : [], marks: marks.finish(), followUps: followUps.finish(),
+    version, invalidQueued: candidates > 0 && candidates !== valid };
+}
+
+function followUpCollector() {
   const out = new Set();
-  if (typeof text !== "string") return out;
-  const first = text.indexOf('"hookErrors":["');
-  if (first < 0) return out;
+  let started = false;
   const segments = [];
   let segment = null;
-  for (const line of text.slice(text.lastIndexOf("\n", first) + 1).split("\n")) {
-    if (!line.trim()) continue;
-    let row;
-    try { row = JSON.parse(line); } catch { continue; }
-    if (!row || typeof row !== "object" || row.isSidechain) continue;
+  const add = (line, row) => {
+    if (line.includes('"hookErrors":["')) started = true;
+    if (!started) return;
+    if (!row || typeof row !== "object" || row.isSidechain) return;
     if (row.type === "system" && row.subtype === "stop_hook_summary") {
       if (Array.isArray(row.hookErrors) && row.hookErrors.length && row.preventedContinuation !== true) {
         segment = { uuids: [], tools: [] };
         segments.push(segment);
       }
-      continue;
+      return;
     }
     if (row.type === "attachment") {
       if (row.attachment?.type === "queued_command") segment = null;
-      continue;
+      return;
     }
     if (row.type === "user") {
-      if (row.isMeta) continue;
+      if (row.isMeta) return;
       const content = row.message?.content;
       const onlyResults = Array.isArray(content) && content.length > 0 && content.every((b) => b?.type === "tool_result");
       if (!onlyResults) segment = null;
-      continue;
+      return;
     }
     if (row.type === "assistant" && segment && row.uuid) {
       segment.uuids.push(row.uuid);
@@ -546,11 +595,14 @@ export function stopHookFollowUps(text) {
         if (b?.type === "tool_use" && b.name) segment.tools.push(String(b.name));
       }
     }
-  }
-  for (const s of segments) {
-    if (s.tools.every((name) => LOOKUP_TOOLS.has(name))) for (const uuid of s.uuids) out.add(uuid);
-  }
-  return out;
+  };
+  const finish = () => {
+    for (const s of segments) {
+      if (s.tools.every((name) => LOOKUP_TOOLS.has(name))) for (const uuid of s.uuids) out.add(uuid);
+    }
+    return out;
+  };
+  return { add, finish };
 }
 
 /**
