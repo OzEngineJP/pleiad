@@ -213,7 +213,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .sync-confirm-title { font-weight:600; }
 .btn.rm-danger { color:var(--ink-strong); font-weight:600; }
 .rm-strong { color:var(--ink-strong); font-weight:600; }
-/* ＋ の流れのダイアログ（アプリを入れる › つなぎ方 › つなぐ › 完了）。戻る・次へ・やめるはどの段でも同じ位置 */
+/* ＋ の流れのダイアログ（端末を追加: アプリを入れる › つなぎ方 › つなぐ。PC を追加 は › 完了 まで）。戻る・次へ・やめるはどの段でも同じ位置 */
 .rm-wiz { position:fixed; inset:0; margin:auto; width:min(540px,calc(100vw - 32px)); min-height:min(420px,calc(100dvh - 48px)); max-height:calc(100dvh - 48px); overflow:auto;
   padding:24px 24px 20px; border:0; border-radius:var(--r-l); background:var(--surface-paper); color:var(--ink); box-shadow:0 8px 28px var(--shadow); }
 .rm-wiz[open] { display:flex; flex-direction:column; }
@@ -255,6 +255,28 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-done { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding-top:8px; }
 .rm-ck { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:var(--surface-2); color:var(--ink-blue); }
 .rm-ck svg.i { width:20px; height:20px; stroke-width:2; }
+/* まとまりの見出しのすぐ下の状態の一行（塗りの点=つながっている・中抜きの点=オフ／未設定・回る印=接続中）。失敗は .rm-warn（承認 2026-10-21） */
+.settings-content .rm-st { display:flex; align-items:center; gap:6px; margin:0; padding:2px 8px 6px; font-size:var(--fs-s); color:var(--ink-weak); overflow-wrap:anywhere; }
+.rm-st > span:last-child { min-width:0; }
+.rm-dot { flex:none; width:7px; height:7px; border-radius:50%; }
+.rm-dot-ok { background:var(--fill-primary); color:var(--on-fill); }
+.rm-dot-off { box-shadow:inset 0 0 0 1.5px var(--line-strong); }
+/* 端末を追加 › つなぐ（Plus）の、するべきことの並びと、同じ場所で「つなぎました」に替わる一行 */
+.rm-todo { display:flex; flex-direction:column; gap:var(--sp-3); margin:0; padding:0; list-style:none; }
+.rm-todo li { display:flex; align-items:flex-start; gap:var(--sp-3); }
+.rm-todo .rm-n { flex:none; width:22px; height:22px; margin-top:1px; font-weight:600; color:var(--ink-weak);
+  transition:background-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out); }
+.rm-todo li.done .rm-n { background:var(--fill-primary); color:var(--on-fill); }
+.rm-todo .rm-sub { overflow-wrap:anywhere; }
+.rm-live { display:flex; align-items:center; gap:var(--sp-3); min-height:44px; margin-top:var(--sp-2); padding:0 2px; color:var(--ink-weak); }
+.rm-live-ic { display:grid; place-items:center; flex:none; width:22px; height:22px; }
+.rm-live-ic svg.i { width:16px; height:16px; stroke-width:2; color:var(--ink-blue); }
+.rm-live-ok { color:var(--ink-strong); font-weight:600; }
+/* 読み込み中の値の場所取り（設定 › Pleiad Plus のプラン）。読めるまで「無料」などの仮の値を出さない */
+.rm-skel { display:inline-block; width:110px; height:12px; border-radius:6px; vertical-align:middle;
+  background:linear-gradient(90deg,var(--surface-2),var(--surface-1),var(--surface-2)); background-size:200% 100%; animation:rm-shim 1.4s linear infinite; }
+.rm-plan-failed { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+@keyframes rm-shim { from { background-position:200% 0; } to { background-position:-200% 0; } }
 .rm-opts { display:flex; flex-direction:column; gap:2px; margin:0 -8px; }
 .rm-opt { align-items:flex-start; padding:10px 8px; cursor:default; }
 .rm-rd { flex:none; width:18px; height:18px; margin-top:2px; border-radius:50%; box-shadow:inset 0 0 0 1.6px var(--line-strong); transition:box-shadow var(--dur-fast); }
@@ -292,4 +314,4 @@ button.rm-row:hover { background:var(--surface-hover); }
   .rm-stp li + li::before { margin:0 6px; }
   .rm-tabrow .rm-add { margin-left:0; }
 }
-@media (prefers-reduced-motion:reduce) { .rm-spin { animation:none; } }
+@media (prefers-reduced-motion:reduce) { .rm-spin, .rm-skel { animation:none; } .rm-todo .rm-n { transition:none; } }

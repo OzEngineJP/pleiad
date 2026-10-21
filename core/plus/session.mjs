@@ -97,6 +97,8 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
       account,
       accountReadAt: accountReadAt || null,
       uid: stored?.uid ?? null,
+      // ログインのときに覚えたメール。account を読めるまでの間も、設定のアカウントの行に出す
+      email: stored?.email ?? null,
       reachable,
       error,
       urls: { account: cachedCfg?.urls?.account ?? null, profile: cachedCfg?.urls?.profile ?? null },
@@ -277,6 +279,8 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
     flow = null;
     loginPhase = 'idle';
     error = null;
+    // トークンの交換でサーバーに届いた。前に届かなかった印を残すと、account を読むまでの間もプランが「読み込めませんでした」になる
+    reachable = true;
     emit('login');
     emit('signedIn');
     startAccountPoll();
@@ -383,11 +387,13 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
     getIdToken,
     /**
      * 今の状態。{ refresh: true } で account を読み直す（30 秒に 1 回まで）。
+     * まだ 1 度も読めていない（account が null）ときは、間引かずに読み、読み終えてから返す（設定 › Pleiad Plus のプランの「再試行」）。
      * 秘密（トークン・apiKey・codeVerifier）は絶対に入れない。
      */
     async status({ refresh = false } = {}) {
       await loadConfig();
-      if (refresh && signedIn() && now() - accountLastAt >= accountThrottleMs) void fetchAccount();
+      if (refresh && signedIn() && account === null) await fetchAccount();
+      else if (refresh && signedIn() && now() - accountLastAt >= accountThrottleMs) void fetchAccount();
       return statusShape();
     },
     /** derive の外側の入力（入口の印）が変わったときに、今の状態を取り直して知らせる */

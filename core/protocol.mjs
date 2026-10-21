@@ -65,8 +65,8 @@ export const COMMANDS = new Set([
   'compatEndpointDefault',  // { agent, id } -> 一覧。新しい会話の既定（'' = 公式）
   // リモート（ホスト側。core/remote/connector.mjs、docs/remote.md §6.1）。どの画面からも触れる（全権限）。秘密・トークンは返さない
   // スマホ・この PC への通知（core/notify、ADR 0086）。presence は各画面の「いま見ている会話」、notifyRegister は中継越しのスマホの通知鍵と設定の登録
-  // Pleiad Plus（core/plus/。docs/plus.md）。状態は plusStatus イベントで全接続へ。トークン・メールは返さない
-  'plusStatus',           // { refresh? } -> PlusStatus（{ available, state, needsUpdate, signedIn, login, account, reachable, error, urls, host, checkedAt }）。操作 plus.status と同じ
+  // Pleiad Plus（core/plus/。docs/plus.md）。状態は plusStatus イベントで全接続へ。トークンは返さない
+  'plusStatus',           // { refresh? } -> PlusStatus（{ available, state, needsUpdate, signedIn, login, account, email, reachable, error, urls, host, checkedAt }）。操作 plus.status と同じ
   'plusLogin',            // {} -> { started: true }。外のブラウザーでログインを始める。人だけ
   'plusLoginCancel',      // {} -> PlusStatus。進行中のログインをやめる。人だけ
   'plusLogout',           // {} -> PlusStatus。人だけ

@@ -90,6 +90,7 @@
   account: { uid, email, provider, status, plan, limits, usage, sync } | null,
   accountReadAt: 1760000000000 | null, // GET /v1/account を最後に読めた時刻（ms。読めなかった・403 のときは進まない）
   uid: '...' | null,        // 保管したログインの uid（account を読む前から分かる。中継・同期が使う）
+  email: '...' | null,      // 保管したログインのメール（account を読む前の画面のアカウントの行に使う）
   reachable: true,          // false = サーバーに届かない（account は最後に知った値）
   error: null,              // { code: 'relogin' | 'locked' } | null
   urls: { account, profile },
@@ -100,7 +101,7 @@
 
 変わるたびに `onChange(fn)` で `fn({ type, status })`（`type` は `config`・`signedIn`・`signedOut`・`account`・`login`）。サーバーは変わるたびに全接続へ `{ type: 'plusStatus', status }` を送る。`setHost(host)` は後の段階が呼ぶ。
 
-`GET <api>/v1/account` は起動したとき・ログインした直後・画面が `{ refresh: true }` で状態を求めたとき（30 秒に 1 回まで）・ログイン中は 15 分ごとに読む。読めなかったときは前の値を残して `reachable: false`。
+`GET <api>/v1/account` は起動したとき・ログインした直後・画面が `{ refresh: true }` で状態を求めたとき（30 秒に 1 回まで）・ログイン中は 15 分ごとに読む。読めなかったときは前の値を残して `reachable: false`。ログインでトークンを交換できたら `reachable: true` に戻す（前に届かなかった印が残ると、account を読むまでの間もプランが「読み込めませんでした」になるため）。
 
 ## WS のコマンド
 
@@ -140,6 +141,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - ログイン中: メールと状態。上限（`limitReached`）なら「今月の上限に達しました（{date} に戻ります）」を行の下に足す。選んでもよい
 - `signedIn: false`: 「ログインしていません · ログイン」（［ログイン］で `plusLogin`）。選べない
 - `account.status` が `free`・`disabled`: 「Pleiad Plus を使っていません」。選べない
+- ログイン中で `status` がまだ無い（アカウントを読んでいる）: 場所取り（`.rm-skel`、読み上げは「読み込んでいます」）。`reachable === false` なら「読み込めませんでした」。どちらも「使っていません」とは言わない。選べない（2026-10-21 承認）
 - `state` が `off`・`maintenance`、`available === false`、`AGENT_HOST_PLUS=0`: 行ごと出さない
 - 選んだ印（`uses` の `plus`）は残し続ける。ログアウト・`free`・`disabled` になっても OpenRouter へすげ替えない（効き目は「キーが無い」と同じ — `endpointFor` が `null` を返す）
 - 通話の設定では、選んでいて `limitReached` のとき、行の下に「今月の Pleiad Plus の上限に達したため、通話を始められません。」と「アカウントを管理」（`profileUrl` を外へ開く）を出す。通話の画面でも、始める前・途中の `credit_exhausted` は同じ文言の通知で終わる（やり直さない・ほかへ送らない）。`not_plus`・`account_disabled` は「このアカウントでは公式の中継を使えません」
@@ -150,7 +152,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 
 - 上から順に当てはめる: `needsUpdate`（更新の 1 行だけ）→ `state: maintenance`（メンテナンスの行。ログイン中ならアカウントの行だけ）→ ログインの途中（`waiting`・`finishing`。「やめる」で `plusLoginCancel`）→ ログインの失敗（「もう一度」で `plusLogin`）→ `error.code: locked`（保管が読めない文言）→ `signedIn: false`（「ログイン」。`error.code: relogin` なら「もう一度ログインしてください」）→ `account.status`（disabled / free / plus）
 - `reachable === false` のときは、当てはまった中身の上に「サーバーへの接続に失敗しました」の 1 行を足す（⚠ は付けない）
-- アカウントの行は丸（メールの頭の 1 文字・大文字）・メール・入り方（`provider === 'google.com'` のときだけ「Google でログイン」）。プランの行は `account.plan.name`（無ければ「Pleiad Plus」）か「無料」
+- アカウントの行は丸（メールの頭の 1 文字・大文字）・メール・入り方（`provider === 'google.com'` のときだけ「Google でログイン」）。プランの行（`planValue`。2026-10-21 承認）は、`plus` ならサーバーの `account.plan.name` をそのまま（無ければ「Pleiad Plus」。招待の人はサーバーが「Pleiad Plus（招待）」を返す）、`free` と読めたときだけ「無料」。アカウントをまだ読めていない間は場所取り（`.rm-skel`）、`reachable === false` で読めていなければ強い字の「読み込めませんでした」と「再試行」（`plusStatus { refresh: true }`。送っている間は場所取りに戻し、終わったら「再試行」へフォーカスを戻す）。読み込み中・失敗のときに「無料」は出さない。アカウントの行は、読めるまでログインのときに覚えたメール（`status.email`）を出す
 - 今月の利用（`plus` かつ `usage`・`limits` があるとき）: 「今月の利用: {used} / {limit} クレジット（{date} に戻ります）」。数は `Intl.NumberFormat`、日付は `Intl.DateTimeFormat(lang, { month: 'long', day: 'numeric' })`。`used >= limit` ならその下に「上限に達しました」
 - 同期のまとまりは `<div id="plusSyncSection">`（`web/plus-sync.mjs` の `renderSync`。`account.status === 'plus'` のときだけ）。スイッチは `account.sync.enabled`（切り替えは `plus.syncSetEnabled` 操作。失敗したら戻して「変えられませんでした」）。状態の行は `plusSyncStatus` イベントで描き直し、`disabled`・`sync.enabled === false` のときは出さない。`stopped` は「同期は止まっています」と、自動で再開することの一言（「同期できませんでした」は出さない。ボタンも出さない）。ボタンは `plus.syncNow`・`plus.syncReset`（確かめの窓あり）・`plus.syncOpenConflicts`（この PC の画面だけ）の各操作を送る（仕組みは下の「同期」）
 - この PC の行は `host.state` が `taken`（「つなぎ直す」→ 確かめの窓 → `plusHostRebind`）・`limit` のときだけ。ほかは出さない。`plusHostRebind` は後の段階が作る。知らないコマンドが返ったら何も出さない
@@ -185,7 +187,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 
 ## Plus のつながり（`core/remote/plus-link.mjs`。docs/remote.md §6.4）
 
-- 張るのは「ほかの端末からの操作を許可する」（`enabled`）・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`（既定 false。`setRemoteSettings { plusConnect }` で入れる。人だけ）・登録が `registered`、が全部そろったとき
+- 張るのは「ほかの端末からの操作を許可する」（`enabled`）・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`（既定 true、2026-10-21 承認。`setRemoteSettings { plusConnect }` で切り替える。人だけ。人が決めた値には `plus.userSet: true` が付き、印の無い古い値はオンと読む）・登録が `registered`、が全部そろったとき
 - 行き先は `/v1/auth/config` の `urls.relay`。ヘッダーは `{ 'x-pleiad-host': hostId, 'x-pleiad-account': <ID トークン> }`（張るたびに取る）。中継の中身は Noise の暗号のまま（own と同じ）
 - `remoteStatus.plus = { connect, link: { state, error, since, retryAt }, host: { state, error }, devices }`
 - 中継が制御用の接続を閉じたとき: `4401 'account'` → 止まる（link の error `account`。張り直さない）。`4429 'account limit'` → `limit`。ほかの `4401` → ID トークンを取り直して 1 回だけ張り直す（また `4401` なら `auth`）。`1013` → 今の backoff で張り直す。ほか → 今と同じ。`account`・`accountStatus`・`plus.connect`・`enabled`・登録・ログインが変わったときに ready() から見直す
@@ -446,7 +448,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 ### Android のホスト一覧と接続
 
 - ログイン中でアカウントが `plus` のとき、`GET <api>/v1/hosts` を読み、ホスト名・オンライン状態・最後に見えた時刻を一覧へ反映する。取得に失敗したら前回の一覧を残して「サーバーへの接続に失敗しました」を出す。`403 not_plus` または `account_disabled` なら Plus の行を隠し、「このアカウントでは公式の中継を使えません」を出す。
-- 自前の中継と Plus のホストは見出しで分けず、`hostId` ごとに 1 行にまとめる。自前の記録と Plus の記録が両方ある行は、Plus が使えるとき Plus で開き、使えないときは自前で開く。最後に使った時刻が新しい行を先にし、まだ使っていない Plus のホストは API の順に後ろへ置く。
+- 自前の中継と Plus のホストは見出しで分けず、`hostId` ごとに 1 行にまとめる。自前の記録と Plus の記録が両方ある行は、Plus の一覧でその PC がオンラインなら Plus で、そうでなければ自前で開く。すでにつながっている窓があればその経路のまま開き、状態の行には開く経路（「オンライン · Pleiad Plus」「オンライン · 自分の中継サーバー」）を出す（2026-10-21 承認。規則は `HostRoute`、docs/remote.md §8.2）。最後に使った時刻が新しい行を先にし、まだ使っていない Plus のホストは API の順に後ろへ置く。
 - 行名はホスト名を使い、この端末で付けた名前があればそちらを優先する。Plus の行では名前を変えられる。Plus の記録は端末側から削除できない。自前の記録もある行では、自前の記録だけを削除できる。
 - ログイン後にホストが 1 台も無いときは、同じアカウントでログインした PC がここに並ぶ案内と「ホストを追加」を出す。ログアウト、利用資格の変更、Plus の停止中は Plus の行を表示しない。Plus の記録は端末内に残り、再び利用できるときに使う。
 - Plus のホストを初めて開くと、公開鍵から `hostId` を確かめて Noise IK で接続する。相手の静的鍵はホスト一覧の公開鍵を使い、確認コードやホスト側での承認は使わない。受け入れが完了したら `deviceId` とトークンを暗号化して記録し、通常の接続を張る。失敗時は `account` を公式の中継が使えない、`devices` を上限、`rate` を 60 秒後に 1 回だけ再試行、`unavailable` をサーバー接続失敗として扱う。

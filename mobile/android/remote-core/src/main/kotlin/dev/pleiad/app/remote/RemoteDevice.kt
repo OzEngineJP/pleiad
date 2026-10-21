@@ -233,16 +233,30 @@ class RemoteDevice(
     fun onStatus(fn: (hostId: String, status: LinkStatus) -> Unit) { listeners.add(fn) }
     fun offStatus(fn: (hostId: String, status: LinkStatus) -> Unit) { listeners.remove(fn) }
 
-    /** Host list with the live state ("closed" when no proxy is open, "revoked" when the host removed us). */
-    fun list(): List<Pair<HostRecord, LinkStatus?>> = store.hosts().map { h -> h to proxies[h.hostId]?.link?.status }
+    /** Host list with the live state ("closed" when no proxy is open, "revoked" when the host removed us). A record's state is its own route's proxy only. */
+    fun list(): List<Pair<HostRecord, LinkStatus?>> = store.hosts().map { h -> h to proxies[h.hostId]?.takeIf { it.creds.via == h.via }?.link?.status }
+
+    /** The route of each host window that is connected now (HostRoute: opening the host again keeps it). */
+    fun connectedVia(): Map<String, String> = proxies.filterValues { it.link.status.state == "connected" }.mapValues { it.value.creds.via }
+
+    /** The route to open [hostId] with when nothing chose one: the open proxy's, else [preferred], else own, else Plus. */
+    fun routeFor(hostId: String, preferred: String? = null): String? =
+        proxies[hostId]?.creds?.via ?: HostRoute.reopen(hostId, store.hosts(), preferred)
 
     /** Pair and save (blocking). An open proxy for the same host reconnects with the new credentials. */
     fun pair(payload: String, onCode: (String) -> Unit, handle: Pairing = Pairing()): HostRecord {
         val kp = store.identity()
         val creds = Pairing.pair(payload, kp, name, platform, app, onCode, handle)
         val rec = store.saveHost(creds)
-        proxies[rec.hostId]?.let { px -> store.credentials(rec.hostId)?.let { px.retryNow(it) } }
+        repaired(rec)
         return rec
+    }
+
+    /** A new pairing was saved: an open proxy on the same route reconnects with it. A proxy on the other route keeps its own credentials. */
+    internal fun repaired(rec: HostRecord) {
+        val px = proxies[rec.hostId] ?: return
+        if (px.creds.via != rec.via) return
+        store.credentials(rec.hostId, rec.via)?.let { px.retryNow(it) }
     }
 
     /** Open (or reuse) the host's proxy. Blocking (binds the port). */
@@ -295,7 +309,7 @@ class RemoteDevice(
         if (store.hosts().none { it.hostId == hostId }) {
             close(hostId)
             staticCacheFile(hostId).delete()
-        }
+        } else if (proxies[hostId]?.creds?.via == via) close(hostId)   // its credentials are gone; the other route stays paired
         return removed
     }
 

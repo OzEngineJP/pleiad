@@ -33,9 +33,9 @@ class MainActivity : BridgeActivity() {
         val saved = store.hostId() ?: return
         val device = (application as PleiadApp).device
         val fromHistory = startIntent != null && startIntent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
-        val d = ResumePolicy.decide(saved, device.store.hosts(), freshStart, ResumePolicy.isLauncherStart(startIntent?.action, fromHistory))
+        val d = ResumePolicy.decide(saved, device.store.hosts(), freshStart, ResumePolicy.isLauncherStart(startIntent?.action, fromHistory), store.via())
         if (d.forget) store.forget()
-        d.hostId?.let { startActivity(Intent(this, HostActivity::class.java).putExtra(HostActivity.EXTRA_HOST_ID, it)) }
+        d.hostId?.let { startActivity(Intent(this, HostActivity::class.java).putExtra(HostActivity.EXTRA_HOST_ID, it).putExtra(HostActivity.EXTRA_VIA, d.via)) }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -68,6 +68,7 @@ class MainActivity : BridgeActivity() {
     /**
      * pleiad://open?h=<hostId>&s=<sessionId> (a notification was tapped, ADR 0086): open that host's window on that conversation.
      * The notification system forgets the tapped notification; the planner is told so a bundle can shrink or go.
+     * No route is given: the host window keeps an open proxy's route, else takes own, else Plus (RemoteDevice.routeFor).
      */
     private fun takeOpenLink(intent: Intent?) {
         val (hostId, session, bundle) = NotifyControl.parseOpen(this, intent?.data) ?: return

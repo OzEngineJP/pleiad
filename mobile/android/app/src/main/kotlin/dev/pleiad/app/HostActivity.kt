@@ -110,7 +110,6 @@ class HostActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         hostId = intent.getStringExtra(EXTRA_HOST_ID) ?: return finish()
-        ResumeStore(this).remember(hostId)
         pendingOpen = intent.getStringExtra(EXTRA_OPEN_SESSION)
         NotifyService.sync(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -142,7 +141,11 @@ class HostActivity : ComponentActivity() {
         device.onStatus(statusListener)
         worker.execute {
             try {
-                val px = device.open(hostId, intent.getStringExtra(EXTRA_VIA) ?: "own")
+                // The route: the caller's (the host list chose it), else the open proxy's, else own, else Plus (HostRoute.reopen).
+                // Never a fixed "own": a host paired only with Plus would not open, and a Plus window would be closed for own.
+                val via = intent.getStringExtra(EXTRA_VIA) ?: device.routeFor(hostId) ?: "own"
+                ResumeStore(this).remember(hostId, via)
+                val px = device.open(hostId, via)
                 runOnUiThread { if (!isFinishing && !isDestroyed) showHost(px) }
             } catch (e: Exception) {
                 runOnUiThread { showError(getString(R.string.host_open_failed)) }

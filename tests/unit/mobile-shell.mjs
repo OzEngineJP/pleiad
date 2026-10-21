@@ -39,12 +39,13 @@ export default async function (t) {
   // ---- 起動時に前回のホストを開く（2026-10-01）。覚える・消す・開くの 3 か所がそろっている
   const main = read(`${APP}/kotlin/dev/pleiad/app/MainActivity.kt`);
   const plugin = read(`${APP}/kotlin/dev/pleiad/app/PleiadRemotePlugin.kt`);
-  t.ok('ホストの窓を開いたら覚え、一覧へ戻る口（back・戻るボタンで窓が無いとき）で消す。背面へ回すだけでは消さない',
-    /ResumeStore\(this\)\.remember\(hostId\)/.test(host) && /"back" -> backToList\(\)/.test(host) && /ResumeStore\(this\)\.forget\(hostId\)/.test(host)
+  t.ok('ホストの窓を開いたら開いた経路（自分の中継 / Plus）ごと覚え、一覧へ戻る口（back・戻るボタンで窓が無いとき）で消す。背面へ回すだけでは消さない',
+    /ResumeStore\(this\)\.remember\(hostId, via\)/.test(host) && /"back" -> backToList\(\)/.test(host) && /ResumeStore\(this\)\.forget\(hostId\)/.test(host)
       && /val w = web \?: return backToList\(\)/.test(host) && /if \(result != "true"\) moveTaskToBack\(true\)/.test(host));
   t.ok('ホストを削除したら覚えたホストも消す', /ResumeStore\(context\)\.forget\(hostId\)/.test(plugin));
-  t.ok('起動時は ResumePolicy が決める（復元でない・ACTION_MAIN）。Capacitor の WebView を作る前に HostActivity を起こす',
-    /ResumePolicy\.decide\(saved, device\.store\.hosts\(\), freshStart, ResumePolicy\.isLauncherStart\(startIntent\?\.action, fromHistory\)\)/.test(main)
+  t.ok('起動時は ResumePolicy が決める（復元でない・ACTION_MAIN）。覚えた経路で開く。Capacitor の WebView を作る前に HostActivity を起こす',
+    /ResumePolicy\.decide\(saved, device\.store\.hosts\(\), freshStart, ResumePolicy\.isLauncherStart\(startIntent\?\.action, fromHistory\), store\.via\(\)\)/.test(main)
+      && /putExtra\(HostActivity\.EXTRA_VIA, d\.via\)/.test(main)
       && main.indexOf('resumeLastHost(intent, freshStart = savedInstanceState == null)') < main.indexOf('super.onCreate(savedInstanceState)'));
   // ランチャーの入口は透過のトランポリン（ADR 0237）: 既存のタスクのタップはそのまま前へ出し（ホストの窓を作り直さない）、
   // 新しいタスクだけ殻へ渡す。殻は singleTask のままなのでリンクの intent の届け方は変わらない

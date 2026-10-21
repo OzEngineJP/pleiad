@@ -7,6 +7,7 @@ import { t, lang } from './i18n.mjs';
 import { button, rmIcon, keyValues, errorLine, waitLine, paintInto } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
 import { renderSync } from './plus-sync.mjs';
+import { loadingMark } from './plus-key-row.mjs';
 
 /** ボタン。外のブラウザーで開くものは外へのリンクの印を付ける */
 function actButton(text, onclick, className, { external = false, fk } = {}) {
@@ -32,6 +33,25 @@ function accountRow(account) {
   return row;
 }
 
+/**
+ * プランの行の値。名前はサーバーの plan.name をそのまま出す（招待の人は「Pleiad Plus（招待）」）。
+ * 「無料」は status が free と読めたときだけ。読み込み中は場所取り、読めなかったときは「読み込めませんでした」と「再試行」（承認 2026-10-21）
+ */
+export function planValue(s, { retrying = false, onRetry = () => {} } = {}) {
+  const account = s?.account ?? null;
+  if (account?.status === 'plus') return account.plan?.name || 'Pleiad Plus';
+  if (account?.status === 'free') return t('settings.plus.free');
+  if (account?.status) return account.plan?.name || '';
+  if (s?.reachable === false && !retrying) {
+    const box = el('span', 'rm-plan-failed');
+    const retry = button(t('settings.plus.retry'), onRetry, 'btn btn-quiet');
+    retry.dataset.fk = 'planRetry';
+    box.append(el('span', 'rm-strong', t('settings.plus.loadFailed')), retry);
+    return box;
+  }
+  return loadingMark();
+}
+
 // urls.account はパスを持ちうる（本番は <オリジン>/account）。/plus はパスの下ではなくオリジンの直下
 const plusUrl = account => new URL('/plus', account).href;
 
@@ -43,13 +63,16 @@ const plusUrl = account => new URL('/plus', account).href;
  * @param askRebind / cancelRebind  「つなぎ直す」の確かめの出し入れ（画面の中だけの状態）
  * @param confirming  確かめを出しているか
  * @param syncView    「同期」の中身に渡す引数（web/plus-sync.mjs の renderSync）
+ * @param retrying / onRetry  プランを読めなかったときの「再試行」（読み直している間は場所取りに戻す）
  */
-export function renderPlus(status, { send = () => {}, openExternal = () => {}, askRebind = () => {}, cancelRebind = () => {}, confirming = false, syncView = {} } = {}) {
+export function renderPlus(status, { send = () => {}, openExternal = () => {}, askRebind = () => {}, cancelRebind = () => {}, confirming = false, syncView = {},
+  retrying = false, onRetry = () => {} } = {}) {
   const s = status ?? {};
   const account = s.account ?? null;
   const out = [];
-  // 届かないときは、当てはまった中身（最後に知ったアカウント）の上に 1 行（⚠ は付けない）
-  if (s.reachable === false) out.push(el('p', 'rm-warn', t('settings.remote.failed')));
+  // 届かないときは、当てはまった中身（最後に知ったアカウント）の上に 1 行（⚠ は付けない）。
+  // まだ 1 度も読めていないときは、プランの行の「読み込めませんでした」と「再試行」で伝える
+  if (s.reachable === false && (account || !s.signedIn)) out.push(el('p', 'rm-warn', t('settings.remote.failed')));
 
   if (s.needsUpdate) {
     out.push(el('p', 'rm-warn', t('settings.plus.needsUpdate')));
@@ -91,7 +114,9 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
 
   // ---- ログインしている ----
   out.push(el('div', 'rm-gh', t('settings.plus.account')));
-  out.push(accountRow(account));
+  // account を読めるまでは、ログインのときに覚えたメールだけで行を出す
+  if (account) out.push(accountRow(account));
+  else if (s.email) out.push(accountRow({ email: s.email }));
   if (account?.status === 'disabled') {
     out.push(el('p', 'rm-warn', t('settings.plus.disabled')));
     const acts = el('div', 'rm-acts');
@@ -99,8 +124,7 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
     out.push(acts);
     return out;
   }
-  const planName = account?.status === 'plus' ? (account?.plan?.name || 'Pleiad Plus') : t('settings.plus.free');
-  out.push(keyValues([[t('settings.plus.plan'), planName]]));
+  out.push(keyValues([[t('settings.plus.plan'), planValue(s, { retrying, onRetry })]]));
 
   if (account?.status === 'plus' && account?.usage && account?.limits) {
     const num = new Intl.NumberFormat(lang);
@@ -160,6 +184,8 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let autoNotice = false;
   /** 同期の状態（plus.syncStatus 操作と plusSyncStatus 出来事）・「やり直す」の確かめ・同期の操作の失敗 */
   let syncStatus = null, syncConfirming = false, syncBusy = false, syncMessage = '';
+  /** プランの「再試行」で読み直している間 */
+  let retrying = false;
 
   function syncView() {
     return {
@@ -174,9 +200,9 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   function paint() {
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
-    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage]);
+    const sig = JSON.stringify([status, confirming, busy, message, autoNotice, syncStatus, syncConfirming, syncBusy, syncMessage, retrying]);
     paintInto(root, sig, () => {
-      const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView() });
+      const nodes = renderPlus(status, { send, openExternal: openExternalLink, askRebind, cancelRebind, confirming, syncView: syncView(), retrying, onRetry: retryPlan });
       if (autoNotice) nodes.unshift(autoNoticeRow());
       if (message) nodes.push(errorLine(message));
       return nodes;
@@ -257,6 +283,18 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       // plusHostRebind は B4 が作る。B4 が入る前の「知らないコマンド」は何も出さない
       if (command !== 'plusHostRebind') message = e.message;
     } finally { busy = false; paint(); }
+  }
+
+  /** プランの「再試行」: アカウントを読み直す（まだ読めていないときは 30 秒の間引きを越えて読み、読み終えるまで待つ） */
+  async function retryPlan() {
+    if (retrying) return;
+    retrying = true; paint();
+    try { status = await cmd('plusStatus', { refresh: true }); }
+    catch (e) { message = e.message; }
+    finally {
+      retrying = false; paint();
+      queueMicrotask(() => { if (!root.contains(document.activeElement)) root.querySelector('[data-fk="planRetry"]')?.focus(); });
+    }
   }
 
   async function refresh() {
