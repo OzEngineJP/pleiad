@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title data-i18n="pl.title">Pleiad Plus — Pleiad の便利な機能を、もっと手軽に。</title>
+<meta name="description" content="中継・委譲先の自動選択・同期・通話を、ログインするだけで使えるようにするプランです。" data-i18n-attr="content:pl.description">
+<!-- i18n:head -->
+<meta name="theme-color" content="#f5f6fa">
+<meta property="og:title" content="Pleiad Plus — Pleiad の便利な機能を、もっと手軽に。" data-i18n-attr="content:pl.title">
+<meta property="og:description" content="中継・委譲先の自動選択・同期・通話を、ログインするだけで使えるようにするプランです。" data-i18n-attr="content:pl.description">
+<meta property="og:type" content="website">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link data-only="ja" rel="preload" href="../assets/fonts/noto-sans-jp.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="../assets/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../styles.css">
+<script type="module" src="../plus.js"></script>
+</head>
+<body class="plus-page">
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mark" viewBox="0 0 96 96">
+    <path fill="var(--ink)" d="M8 8H57C77 8 88 22 88 42C88 48 87 53 84 58C78 68 65 72 48 75L30 78C30 85 20 91 8 94V73C8 64 16 58 30 55L50 50C61 47 66 36 55 32H31C16 32 8 24 8 8Z"/>
+    <path fill="var(--indigo)" d="M55 32C68 33 80 44 84 58C78 68 65 72 48 75L30 78V55L50 50C61 47 66 36 55 32Z"/>
+    <path fill="var(--indigo)" d="M30 55V78C30 85 20 91 8 94V73C8 64 16 58 30 55Z"/>
+  </symbol>
+  <symbol id="i-word" viewBox="0 0 346 104">
+    <g fill="var(--ink)">
+      <path fill-rule="evenodd" d="M7 14.05H38.85C60.3 14.05 73.3 22.5 73.3 42C73.3 57.6 64.85 62.8 49.9 66.7L28.45 72.55V92.7H7ZM28.45 33.55H40.8C47.950 33.55 51.85 35.5 51.85 42C51.85 46.55 49.25 48.5 44.05 50.45L28.45 56.3Z"/>
+      <path fill-rule="evenodd" d="M79.15 14.05H90.85C97.35 14.05 100.6 17.95 100.6 25.1V79.05C100.6 82.3 104.5 86.2 109.05 92.05H91.5C83.05 92.05 79.15 88.15 79.15 79.7Z"/>
+      <path fill-rule="evenodd" d="M131.15 69.95C131.15 75.15 133.1 77.75 138.95 77.75H157.8L165.6 92.05H131.8C116.2 92.05 107.75 82.3 107.75 65.4V62.15C107.75 46.55 116.85 36.8 132.45 36.8H143.5C157.8 36.8 167.55 46.55 167.55 61.5C167.55 64.1 166.9 67.35 166.25 69.95ZM130.5 59.55H146.75V58.25C146.75 54.350 144.15 52.4 138.95 52.4H137.65C133.1 52.4 130.5 55 130.5 59.55Z"/>
+      <path fill-rule="evenodd" d="M172.1 37.45H193.55V92.7H172.1Z"/>
+      <circle cx="182.83" cy="22.18" r="10.4"/>
+      <path fill-rule="evenodd" d="M224.75 36.8H259.85V79.05L268.95 92.05H224.75C208.5 92.05 198.75 82.95 198.75 65.4V64.1C198.75 47.2 208.5 36.8 224.75 36.8ZM228 53.7C222.8 53.7 220.2 56.95 220.2 62.15V68C220.2 73.85 222.8 76.45 228 76.45H238.4V53.7Z"/>
+      <path fill-rule="evenodd" d="M307.3 20.55L314.45 13.4H330.05V79.05L339.15 92.05H294.3C277.4 92.05 268.3 82.3 268.3 65.4V64.1C268.3 47.2 278.05 36.8 293.65 36.8H307.3ZM296.9 53.7C292.35 53.7 289.75 56.95 289.75 62.15V68C289.75 73.850 292.35 76.45 296.9 76.45H307.3V53.7Z"/>
+    </g>
+  </symbol>
+  <symbol id="i-pplus" viewBox="0 0 16 16"><rect x="6.1" y="1" width="3.8" height="14" rx="1.9" fill="var(--indigo)"/><rect x="1" y="6.1" width="14" height="3.8" rx="1.9" fill="var(--indigo)"/></symbol>
+  <symbol id="i-gh" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2"/><path d="M1.8 8h12.4M8 1.8c1.8 1.9 2.7 4 2.7 6.2S9.8 12.3 8 14.2M8 1.8C6.2 3.7 5.3 5.8 5.3 8s.9 4.3 2.7 6.2"/></g></symbol>
+  <symbol id="i-chev" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m4.5 6.5 3.5 3.5 3.5-3.5"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3 8h10m-3.5-3.5L13 8l-3.5 3.5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M8 2.5v8m0 0L4.5 7M8 10.5 11.5 7M3 13.5h10"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4"><rect x="1.75" y="2.5" width="12.5" height="8.5" rx="1.2"/><path d="M6 14h4M8 11v3" stroke-linecap="round"/></g></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="m3.5 8.5 3 3 6-7"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3.5" y="7" width="9" height="6.5" rx="1.4"/><path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7"/></g></symbol>
+  <symbol id="i-mic" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="6" y="1.75" width="4" height="7.5" rx="2"/><path d="M3.75 7.5a4.25 4.25 0 0 0 8.5 0M8 11.75v2.5"/></g></symbol>
+</svg>
+
+<header class="nav is-solid">
+  <a class="brand" href="../" aria-label="Pleiad Plus">
+    <svg class="brand-mark" aria-hidden="true"><use href="#i-mark"/></svg>
+    <svg class="brand-word" aria-hidden="true"><use href="#i-word"/></svg>
+    <svg class="brand-plus" aria-hidden="true"><use href="#i-pplus"/></svg>
+  </a>
+  <nav class="nav-links">
+    <a class="btn btn-s" href="https://account.pleiad.dev/plus"><span data-i18n="pl.cta">Pleiad Plus にする</span></a>
+    <!-- i18n:lang-switch -->
+    <a class="nav-gh" href="https://github.com/OzEngineJP/pleiad" aria-label="GitHub"><svg aria-hidden="true"><use href="#i-gh"/></svg></a>
+  </nav>
+</header>
+
+<main>
+
+  <section class="p-hero">
+    <div class="p-hero-copy">
+      <p class="f-kicker">Pleiad Plus</p>
+      <h1><span data-i18n="pl.h1a"><span class="nw">便利な機能を、</span></span><span data-i18n="pl.h1b"><span class="nw">もっと手軽に。</span></span></h1>
+      <p class="lede" data-i18n="pl.lede">中継・委譲先の自動選択・同期・通話を、ログインするだけで使えるようにするプランです。</p>
+      <div class="cta">
+        <a class="btn" href="https://account.pleiad.dev/plus"><span data-i18n="pl.cta">Pleiad Plus にする</span></a>
+        <a class="btn btn-ghost" href="../download/"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="pl.dl">Pleiad をダウンロード</span></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="feat car" aria-roledescription="カルーセル" data-i18n-attr="aria-roledescription:car.aria" aria-labelledby="feat-h">
+    <div class="feat-head">
+      <div>
+        <p class="f-kicker" data-i18n="pl.featKicker">できること</p>
+        <h2 id="feat-h" data-i18n="pl.featH">ひとつのアカウントで。</h2>
+      </div>
+      <div class="car-ctl">
+        <button type="button" class="car-btn prev" data-dir="-1" aria-label="前のスライド" data-i18n-attr="aria-label:car.prev"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+        <button type="button" class="car-btn next" data-dir="1" aria-label="次のスライド" data-i18n-attr="aria-label:car.next"><svg aria-hidden="true"><use href="#i-arrow"/></svg></button>
+      </div>
+    </div>
+    <div class="car-track">
+
+      <article class="slide" id="remote" role="group" aria-roledescription="スライド" data-i18n-attr="aria-roledescription:car.slide;aria-label:s1.aria" aria-label="1 / 4：外から">
+        <div class="s-copy">
+          <p class="f-kicker" data-i18n="s1.k">外から</p>
+          <h3 data-i18n="s1.h">中継を用意せずに、<br>家の PC をポケットから。</h3>
+          <p class="f-sub" data-i18n="s1.sub">同じアカウントでログインした PC が、スマホの一覧に並びます。</p>
+        </div>
+        <div class="s-vis bleed">
+          <div class="phone" aria-hidden="true">
+            <div class="ph-screen">
+              <p class="ph-top"><b data-i18n="pl.hosts">ホスト</b><span>you@example.com</span></p>
+              <ul class="hl">
+                <li><span class="hn">DESKTOP-HOME</span><span class="hs" data-i18n="pl.online">オンライン</span></li>
+                <li><span class="hn">work-laptop</span><span class="hs" data-i18n="pl.online">オンライン</span></li>
+                <li class="off"><span class="hn">STUDIO-PC</span><span class="hs" data-i18n="pl.offline">オフライン</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide" id="delegate" role="group" aria-roledescription="スライド" data-i18n-attr="aria-roledescription:car.slide;aria-label:s2.aria" aria-label="2 / 4：任せる">
+        <div class="s-copy">
+          <p class="f-kicker" data-i18n="s2.k">任せる</p>
+          <h3 data-i18n="s2.h">委譲先の自動選択を、<br>キーなしで。</h3>
+          <p class="f-sub" data-i18n="s2.sub">種類・難しさ・使用量から選びます。OpenRouter のキーは要りません。</p>
+        </div>
+        <div class="s-vis">
+          <div class="v-deleg" aria-hidden="true">
+            <p class="dg-head"><b data-i18n="dg.title">委譲</b><span class="dg-auto" data-i18n="dg.auto">自動</span><img src="../assets/openai.svg" alt=""><span class="dg-why" data-i18n="dg.why">実装 · 難しさ 中 → Codex</span></p>
+            <ol class="dg-cands">
+              <li class="c-skip"><em>1</em><img src="../assets/claude.svg" alt=""><span class="c-name">Claude Code</span><span class="c-st" data-i18n="dg.skipped">飛ばした · 使用量が多い</span><span class="c-use"><span data-i18n="dg.weekly">週次</span><span class="c-bar"><i style="--v:.83"></i></span><span class="c-pct">83%</span></span></li>
+              <li class="c-pick"><em>2</em><img src="../assets/openai.svg" alt=""><span class="c-name">Codex</span><span class="c-st" data-i18n="dg.used">✓ 使った</span><span class="c-use"><span data-i18n="dg.weekly">週次</span><span class="c-bar"><i style="--v:.22"></i></span><span class="c-pct">22%</span></span></li>
+              <li class="c-next"><em>3</em><img src="../assets/antigravity.svg" alt=""><span class="c-name">Antigravity</span><span class="c-st"></span><span class="c-use"><span data-i18n="dg.weekly">週次</span><span class="c-bar"><i style="--v:.10"></i></span><span class="c-pct">10%</span></span></li>
+            </ol>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide" id="sync" role="group" aria-roledescription="スライド" data-i18n-attr="aria-roledescription:car.slide;aria-label:s3.aria" aria-label="3 / 4：そろえる">
+        <div class="s-copy">
+          <p class="f-kicker" data-i18n="s3.k">そろえる</p>
+          <h3 data-i18n="s3.h">どの PC でも、<br>同じ設定で。</h3>
+          <p class="f-sub" data-i18n="s3.sub">設定・skill・指示ファイルを同期します。秘密情報と変数は、その PC に残ります。</p>
+        </div>
+        <div class="s-vis">
+          <div class="v-sync" aria-hidden="true">
+            <div class="pc a">
+              <p class="pc-hd"><svg aria-hidden="true"><use href="#i-monitor"/></svg><b>DESKTOP-HOME</b></p>
+              <ul>
+                <li><span data-i18n="pc.item1">設定</span><svg aria-hidden="true"><use href="#i-check"/></svg></li>
+                <li><span data-i18n="pc.item2">skill</span><svg aria-hidden="true"><use href="#i-check"/></svg></li>
+                <li><span data-i18n="pc.item3">指示ファイル</span><svg aria-hidden="true"><use href="#i-check"/></svg></li>
+                <li class="loc"><span data-i18n="pc.item4">秘密情報と変数</span><span class="loc-v"><svg aria-hidden="true"><use href="#i-lock"/></svg><span data-i18n="pc.loc">この PC だけ</span></span></li>
+              </ul>
+            </div>
+            <div class="pc b">
+              <p class="pc-hd"><svg aria-hidden="true"><use href="#i-monitor"/></svg><b>work-laptop</b></p>
+              <ul>
+                <li><span data-i18n="pc.item1">設定</span><svg aria-hidden="true"><use href="#i-check"/></svg></li>
+                <li><span data-i18n="pc.item2">skill</span><svg aria-hidden="true"><use href="#i-check"/></svg></li>
+                <li><span data-i18n="pc.item3">指示ファイル</span><svg aria-hidden="true"><use href="#i-check"/></svg></li>
+                <li class="loc"><span data-i18n="pc.item4">秘密情報と変数</span><span class="loc-v"><svg aria-hidden="true"><use href="#i-lock"/></svg><span data-i18n="pc.loc">この PC だけ</span></span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide" id="voice" role="group" aria-roledescription="スライド" data-i18n-attr="aria-roledescription:car.slide;aria-label:s4.aria" aria-label="4 / 4：話す">
+        <div class="s-copy">
+          <p class="f-kicker" data-i18n="s4.k">話す</p>
+          <h3 data-i18n="s4.h">キーなしで、<br>声で話す。</h3>
+          <p class="f-sub" data-i18n="s4.sub">通話は、月ごとの上限の中で使えます。</p>
+        </div>
+        <div class="s-vis">
+          <div class="v-call" aria-hidden="true">
+            <div class="call">
+              <p class="call-st" data-i18n="call.st">通話</p>
+              <b data-i18n="row.db">DB の移行手順</b>
+              <div class="wave"><i style="height:10px"></i><i style="height:18px"></i><i style="height:30px"></i><i style="height:22px"></i><i style="height:40px"></i><i style="height:52px"></i><i style="height:34px"></i><i style="height:26px"></i><i style="height:44px"></i><i style="height:58px"></i><i style="height:38px"></i><i style="height:24px"></i><i style="height:16px"></i><i style="height:28px"></i><i style="height:46px"></i><i style="height:36px"></i><i style="height:20px"></i><i style="height:12px"></i><i style="height:22px"></i><i style="height:34px"></i><i style="height:48px"></i><i style="height:30px"></i><i style="height:18px"></i><i style="height:10px"></i><i class="q" style="height:8px"></i><i class="q" style="height:6px"></i><i class="q" style="height:6px"></i><i class="q" style="height:6px"></i><i class="q" style="height:6px"></i><i class="q" style="height:6px"></i></div>
+              <div class="call-btns"><span class="call-mic"><svg aria-hidden="true"><use href="#i-mic"/></svg></span><span class="call-end" data-i18n="call.end">通話を終える · 04:12</span></div>
+            </div>
+            <div class="quota"><span data-i18n="call.quota">今月の通話</span><span class="c-bar"><i style="--v:.31"></i></span><span class="c-pct">31%</span></div>
+          </div>
+        </div>
+      </article>
+
+    </div>
+    <div class="car-tabs" role="group" aria-label="スライドを選ぶ" data-i18n-attr="aria-label:car.tabs">
+      <button type="button" class="car-tab" data-go="0" aria-label="1 枚目：外から" data-i18n-attr="aria-label:s1.tab" aria-current="true"><span data-i18n="s1.k">外から</span></button>
+      <button type="button" class="car-tab" data-go="1" aria-label="2 枚目：任せる" data-i18n-attr="aria-label:s2.tab"><span data-i18n="s2.k">任せる</span></button>
+      <button type="button" class="car-tab" data-go="2" aria-label="3 枚目：そろえる" data-i18n-attr="aria-label:s3.tab"><span data-i18n="s3.k">そろえる</span></button>
+      <button type="button" class="car-tab" data-go="3" aria-label="4 枚目：話す" data-i18n-attr="aria-label:s4.tab"><span data-i18n="s4.k">話す</span></button>
+    </div>
+    <p class="sr" aria-live="polite"></p>
+  </section>
+
+  <section class="faq">
+    <div>
+      <p class="f-kicker" data-i18n="pl.faqKicker">よくある質問</p>
+      <h2 data-i18n="pl.faqH">使う前に。</h2>
+    </div>
+    <div class="faq-list">
+      <details>
+        <summary><span data-i18n="pl.q1">自分の中継サーバーは使えなくなりますか？</span><svg aria-hidden="true"><use href="#i-chev"/></svg></summary>
+        <p data-i18n="pl.a1">いいえ。これまでどおり使えます。Pleiad Plus と並べて使うこともできます。</p>
+      </details>
+      <details>
+        <summary><span data-i18n="pl.q2">秘密情報と変数も同期されますか？</span><svg aria-hidden="true"><use href="#i-chev"/></svg></summary>
+        <p data-i18n="pl.a2">いいえ。秘密情報と変数は同期せず、それぞれの PC に残ります。</p>
+      </details>
+      <details>
+        <summary><span data-i18n="pl.q3">やめるときは？</span><svg aria-hidden="true"><use href="#i-chev"/></svg></summary>
+        <p data-i18n="pl.a3"><a href="https://account.pleiad.dev/plus">account.pleiad.dev</a> からいつでも解約できます。解約した後も、自分の中継サーバーと自分のキーで、これまでどおり Pleiad を使えます。</p>
+      </details>
+    </div>
+  </section>
+
+  <section class="end p-end">
+    <svg class="end-mark" aria-hidden="true"><use href="#i-mark"/></svg>
+    <h2 data-i18n="pl.endH"><span class="nw">便利な機能を、</span><span class="nw">もっと手軽に。</span></h2>
+    <div class="cta">
+      <a class="btn" href="https://account.pleiad.dev/plus"><span data-i18n="pl.cta">Pleiad Plus にする</span></a>
+      <a class="btn btn-ghost" href="../download/"><svg aria-hidden="true"><use href="#i-down"/></svg><span data-i18n="pl.dl">Pleiad をダウンロード</span></a>
+    </div>
+    <p class="meta" data-i18n="end.meta">各エージェントの CLI とログインが必要です。</p>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <span>© 2026 Pleiad</span>
+  <span>Apache-2.0</span>
+  <a href="https://github.com/OzEngineJP/pleiad">GitHub</a>
+  <a href="../privacy/" data-i18n="foot.privacy">プライバシーポリシー</a>
+</footer>
+
+</body>
+</html>

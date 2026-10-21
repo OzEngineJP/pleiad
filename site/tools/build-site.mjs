@@ -20,9 +20,10 @@ const LANGS = {
 export const PAGES = [
   { src: "index.html", path: "" },
   { src: "download/index.html", path: "download/" },
+  { src: "plus/index.html", path: "plus/" },
 ];
 // 出力先へ写さないもの（生成の材料）
-const SKIP = new Set(["tools", "locales", "README.md", "index.html", "download", "wrangler.jsonc"]);
+const SKIP = new Set(["tools", "locales", "README.md", "index.html", "download", "plus", "wrangler.jsonc"]);
 const LOGOS = {
   claude: '<img src="assets/claude.svg" alt="" width="16" height="16">',
   openai: '<img src="assets/openai.svg" alt="" width="16" height="16">',
@@ -219,7 +220,7 @@ export function renderPage(source, lang, dict, { page = "", release = pickReleas
   html = html.replace(/<html lang="ja">/, `<html lang="${lang}">`);
   if (lang !== "ja") {
     // en/ から見た共有の資源（正本のページからの相対に ../ を 1 つ足す）
-    html = html.replace(/\b(src|href)="((?:\.\.\/)*)(assets\/|styles\.css|main\.js|hero\.js|branch\.js|os\.js)/g, '$1="../$2$3');
+    html = html.replace(/\b(src|href)="((?:\.\.\/)*)(assets\/|styles\.css|main\.js|hero\.js|branch\.js|os\.js|plus\.js)/g, '$1="../$2$3');
   }
   return html;
 }

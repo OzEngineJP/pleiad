@@ -1,6 +1,6 @@
 # ランディングサイト
 
-Pleiad の紹介ページ（`/`）とダウンロードのページ（`/download/`）。日本語と英語（`/en/`・`/en/download/`）の 2 言語。正本は `index.html`・`download/index.html`（日本語）で、英語は 1 つの辞書から生成する。辞書で訳すページは `tools/build-site.mjs` の `PAGES`。
+Pleiad の紹介ページ（`/`）とダウンロードのページ（`/download/`）と Pleiad Plus のページ（`/plus/`）。日本語と英語（`/en/`・`/en/download/`・`/en/plus/`）の 2 言語。正本は `index.html`・`download/index.html`・`plus/index.html`（日本語）で、英語は 1 つの辞書から生成する。辞書で訳すページは `tools/build-site.mjs` の `PAGES`。
 
 ```bash
 node site/tools/check-i18n.mjs                 # 辞書と各ページの突き合わせ
@@ -10,7 +10,7 @@ python -m http.server 8799 --directory _site   # http://127.0.0.1:8799/ ・/down
 
 `site/` を直接配ると日本語だけが見える（言語の切り替えと英語は生成物にだけある）。公開は Cloudflare Workers の静的アセット（https://pleiad.dev/）。main への push で、Cloudflare がリポジトリの根でビルドコマンド `node site/tools/check-i18n.mjs && node site/tools/build-site.mjs` を走らせ（検査が落ちたら公開しない）、デプロイコマンド `npx wrangler deploy --config site/wrangler.jsonc` で `_site` を配る。
 
-- `index.html`・`styles.css`・`main.js`: ページと、スクロールで場面を切り替えるアプリ画面の再現。
+- `index.html`・`styles.css`・`main.js`: ページと、スクロールで場面を切り替えるアプリ画面の再現。`plus/index.html`・`plus.js`: Pleiad Plus のページと、機能のカルーセル。
 - 訳す要素には `data-i18n="キー"`（中身を置き換える。`<br>` や `<span class="nw">` を含めてよい）か、`data-i18n-attr="属性:キー;属性:キー"` を付け、英語を `locales/en.json` に書く。値の `{claude}` `{openai}` `{antigravity}` は各ロゴの `<img>` になる。
 - JS が使う文言（星図の状態・状態の印・スマホの「許可した」など）は `index.html` の `<script id="strings">` に置く。英語は `en.json` の `strings`。分岐の札の文言は `<template>` の `data-i18n`。JS の中に文言を書かない（check が落とす）。
 - ダウンロードのリンクはビルドのときに GitHub の Releases（API）から焼き込む。`data-release="キー"` の要素の href を置き換える（`version` だけは中身を「v0.31.1 · 日付」にする）。キーは `win-x64`・`win-arm64`・`mac-arm64`・`mac-x64`・`android`・`notes`・`all`。デスクトップは先行版を除いた最新の `vX.Y.Z`、Android は最新の `android-v*` の `.apk`。取れないとき（API の失敗・ファイルが無い・`--offline`）は Releases の一覧に向ける。環境変数 `GITHUB_TOKEN` があれば使う（無くても公開の API で足りる）。リリースした後は、サイトをビルドし直すまでリンクが前の版のまま。

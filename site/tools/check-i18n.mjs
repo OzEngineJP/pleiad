@@ -84,7 +84,7 @@ for (const rel of ["privacy/index.html"]) {
 }
 
 // JS の中の文言
-for (const name of ["main.js", "hero.js", "branch.js", "os.js"]) {
+for (const name of ["main.js", "hero.js", "branch.js", "os.js", "plus.js"]) {
   const code = fs.readFileSync(path.join(SITE, name), "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|\s)\/\/.*$/gm, "$1");

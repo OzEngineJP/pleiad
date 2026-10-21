@@ -35,7 +35,7 @@ def fetch():
 
 def used_text():
     text = ""
-    for name in ["index.html", "download/index.html", "main.js", "hero.js"]:
+    for name in ["index.html", "download/index.html", "plus/index.html", "main.js", "hero.js", "plus.js"]:
         t = (SITE / name).read_text(encoding="utf-8")
         if name.endswith(".html"):
             t = re.sub(r"<svg.*?</svg>", "", t, flags=re.S)
