@@ -29,6 +29,8 @@ const SUITES = [
   // Pleiad Plus（core/plus/）: セッション（ログイン・保管・更新・状態。偽の Plus だけと話す）と ID トークンの検証
   './unit/plus-session.mjs',
   './unit/plus-verify.mjs',
+  // Plus の操作（plus.status・voice.status・delegation.routing）: agent には uid・メールを出さない
+  './unit/plus-ops-identity.mjs',
   // 設定 › Pleiad Plus（web/plus-settings.mjs）: 状態ごとの行とボタン・メニューの出し入れ（DOM の代役）
   './unit/plus-settings.mjs',
   // 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs）: 状態ごとの行とボタン・時刻と MB の書式（DOM の代役）
@@ -274,6 +276,7 @@ const SUITES = [
   // 子の再試行の待ち（ADR 0229）: waiting と回ごとの知らせ・ply_task_wait・上限で止まった子の limit と指示の保留
   './unit/agent-tasks-retry.mjs',
   './unit/task-command-notice.mjs',
+  './unit/agent-tasks-command-settle.mjs',
   // 委譲の保存障害: rename のやり直し・閉じない・障害中の読み取り・requeue を書かない・再起動後の pending の送り直し（失敗は注入）
   './unit/agent-tasks-storage.mjs',
   './unit/agent-tasks-command-storage.mjs',

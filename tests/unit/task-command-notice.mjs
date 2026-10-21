@@ -92,9 +92,12 @@ export default async function(t) {
     t.ok('構造化結果がない場合も background の起動結果を識別', bg.view().activeCommands[0].nativeTaskId === 'txt-1');
     bg.sdk({ type: 'system', subtype: 'task_notification', task_id: 'txt-1', status: 'failed' });
     bg.start('terminal', 'commandExecution', { command: 'serve codex', cwd: 'D:/codex' }, { startedAt: 4 * minute, turnId: 'turn', processId: 'process' });
+    // ターンの終わりに Codex が走ったままの端末を裏へ回す（codex.mjs の endTurn → task.command background）
+    bg.emit({ type: 'task.command', id: 'terminal', state: 'background' });
     bg.release(); await until(() => bg.view().status === 'completed');
-    await bg.tick(9); await until(() => bg.notices.length === 2);
-    t.ok('Codex: 既知の開始から数え、ターン・子の完了後も監視する', bg.view().activeCommands[0].startKnown && bg.notices[1].command.toolCallId === 'terminal');
+    await bg.tick(9); await sleep(25);
+    t.ok('Codex: 既知の開始から数え、子の完了後も裏の端末を記録に残す', bg.view().activeCommands[0]?.startKnown && bg.view().activeCommands[0].elapsedMinutes === 5);
+    t.ok('Codex: 子が止まった後は長いコマンドを知らせない（止める口は ply_task_cancel に残る）', bg.notices.length === 1);
     bg.codex('item/completed', { item: { id: 'terminal', type: 'commandExecution' } });
     t.ok('Codex: ターン外の item/completed で閉じる', bg.view().activeCommands.length === 0);
   } finally { await bg.close(); }
@@ -137,6 +140,7 @@ export default async function(t) {
   const restored = await fixture({ silenceMinutes: 0 });
   try {
     restored.start('survivor', 'commandExecution');
+    restored.emit({ type: 'task.command', id: 'survivor', state: 'background' });
     restored.release(); await until(() => !restored.manager.busy);
     restored.manager.close();
     let count = 0;
