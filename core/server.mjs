@@ -788,6 +788,8 @@ plusSync = createPlusSync({
   }),
   settingsEvents: { subscribe: fn => { settingsListeners.add(fn); return () => settingsListeners.delete(fn); } },
   openFolder: dir => openOnHost('open', dir, { directory: true }),
+  // api の 403 host（この PC の登録が外れた）→ 台帳を見直し、外れていれば登録し直す（docs/plus.md「同期の始め直しと登録の外れ」）
+  onHostLost: () => plusHost.recheck(),
   log: line => console.log(`  ${line}`),
 });
 // 同期の状態が変わるたびに全画面へ（docs/plus.md「同期」。ポーリングはしない）
@@ -796,6 +798,8 @@ let plusDevicesNow = 0;
 const plusLink = createPlusLink({
   session: plusSession, verifier: plusVerifier, remote,
   onAdmitted: () => { void plusHost.syncDeviceCount(); },
+  // 中継の 4401 host（この PC の登録が外れた）→ 同期の 403 host と同じく台帳を見直す
+  onHostLost: () => { void plusHost.recheck(); },
   log: line => console.log(`  ${line}`),
 });
 remote.setPlusProvider(plusLink.provider);
@@ -5317,7 +5321,8 @@ function opsDeps(lng = currentLocale()) {
       syncStatus: () => plusSync?.getSyncStatus() ?? null,
       syncSetEnabled: (enabled) => plusSync.setSyncEnabled(enabled),
       syncNow: () => plusSync.engine.run(),
-      syncReset: () => plusSync.resetSync(),
+      syncReset: (confirm) => plusSync.resetSync(confirm),
+      hostReregister: () => plusHost.reregister(),
       syncOpenConflicts: () => plusSync.openConflictsFolder(),
     },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）

@@ -6,16 +6,24 @@
 //   POST /v1/token        更新（form。?key=）。state.refreshError があれば 400 {"error":{"message":…}}
 //   GET/PATCH /v1/account state.accounts[uid] から返す。無い uid は free
 //   同期の口 /v1/sync/*（state・keys・reset・items）。暗号文・包んだ鍵・itemId だけを持ち、中身は読まない:
-//     state.sync[uid] = { keyId, keys: { hostId: { keyId, wrapped, wrappedBy } }, items: { itemId: { rev, seq, keyId, ciphertext, deleted, size, updatedAt } }, seq, totalBytes }
+//     state.sync[uid] = { keyId, keys: { hostId: { keyId, wrapped, wrappedBy, lastSyncAt?, detachedAt?, name? } },
+//                         items: { itemId: { rev, seq, keyId, ciphertext, deleted, size, updatedAt, updatedBy } }, seq, totalBytes,
+//                         lastWriteAt, lastWriterHostId, resetAt, resetBy, resetByName }
+//     state は docs/plus.md の「同期の始め直しと登録の外れ」の欄（itemCount・updatedAt・lastWriter・holders・resetAt・resetBy）も返す
 //     state.syncLimitBytes   アカウントの容量の上限（limitBytes。試験から変える）。超える PUT items は 413 sync_quota（error に limitBytes）
 //     state.syncItemLimit    暗号文の字数の上限（null なら本文の上限だけ）。超えると 413 too_large
 //     state.syncBodies       /v1/sync/* が受けた本文の全部（生の文字列。試験が中身を調べる）
 //     state.syncFail         誤りの差し込み [{ method?, path: RegExp, status, code, message, headers?, extra?, count? }]（count 回まで）
 //     同期を切った人（account.sync.enabled === false）は state 以外が 403 forbidden（message sync_disabled）。state は enabled: false
-//     reset は previousKeyId が今の keyId と違えば 409 previousKeyId。項目と宛てを全部消す
+//     reset は previousKeyId が今の keyId と違えば 409 previousKeyId。項目（墓標を除く）があり、呼んだホストが今の鍵を持たないときは
+//     confirm: { keyId, itemCount }（今の値）が要り、無い・合わなければ 409 reset_confirm（今の値を載せる）。項目と宛てを全部消す
+//     自分のものでないホストを渡すと 403 forbidden（message host）
 //     PUT items は baseRev が今の rev と違えば 409 rev（一番外に current: { rev, updatedAt }）、keyId が違えば 409 keyId、
 //     決めた欄（baseRev・keyId・ciphertext・deleted・hostId）のほかがあれば 400（message は欄の名前）
 //     本文の上限は試験用の作り物の値（/v1/sync/items/* が 3,000,000 バイト、ほかは 100,000 バイト）
+//   DELETE /v1/hosts/{id} は鍵の行を消さず detachedAt・name を付けて残し、state.hostsRemoved に by: 'user' を書く
+//   （unbindHost(hostId, by) で運営が外したのも作れる）。PUT で登録し直すと戻る。GET /v1/hosts は removed も返す
+//   state.legacySync = true の間は前の版の api のふり（足した欄・removed・confirm の照合が無く、外すと鍵の行を消し、403 の message は forbidden）
 //   state.down = true の間は全部の口が接続を切る。route() で後の issue が口を足せる
 //   呼ばれた口と X-Pleiad-Client を state.calls に残す
 import http from 'node:http';
@@ -48,6 +56,8 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     hosts: {},                // hostId -> { hostId, publicKey, name, platform, online, lastSeenAt, syncPublicKey, createdAt, deviceCount, uid }
     failNextProof: false,     // 真なら次の PUT /v1/hosts/{id} の証明の照合だけを 422 bad_proof にする（やり直しの試験）
     sync: {},                 // uid -> 同期の台帳（上の説明）
+    hostsRemoved: {},         // hostId -> { uid, hostId, by: 'user' | 'admin', at }
+    legacySync: false,        // 真なら前の版の api のふり（上の説明）
     syncLimitBytes: 7_340_032,
     syncItemLimit: null,
     syncBodies: [],           // { method, path, body }
@@ -175,7 +185,11 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       const publicHost = h => h && ({ hostId: h.hostId, publicKey: h.publicKey, name: h.name, platform: h.platform, online: h.online, lastSeenAt: h.lastSeenAt, syncPublicKey: h.syncPublicKey, createdAt: h.createdAt, deviceCount: h.deviceCount });
 
       if (url.pathname === '/v1/hosts' && req.method === 'GET') {
-        return json(res, 200, { hosts: Object.values(state.hosts).filter(h => h.uid === uid).map(publicHost) });
+        const hosts = Object.values(state.hosts).filter(h => h.uid === uid).map(publicHost);
+        if (state.legacySync) return json(res, 200, { hosts });
+        const removed = Object.values(state.hostsRemoved).filter(r => r.uid === uid)
+          .sort((a, b) => String(a.at).localeCompare(String(b.at))).map(r => ({ hostId: r.hostId, by: r.by, at: r.at }));
+        return json(res, 200, { hosts, removed });
       }
       if (url.pathname === '/v1/hosts/challenge' && req.method === 'POST') {
         const body = JSON.parse((await readBody(req)) || '{}');
@@ -218,6 +232,11 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
           createdAt: existing?.createdAt ?? new Date().toISOString(),
           deviceCount: existing?.deviceCount ?? 0, uid,
         };
+        if (!state.legacySync) {
+          const k = state.sync[uid]?.keys[hostPath];
+          if (k?.detachedAt) k.detachedAt = null;
+          delete state.hostsRemoved[hostPath];
+        }
         return json(res, 200, { host: publicHost(host) });
       }
       if (hostPath && req.method === 'PATCH') {
@@ -233,7 +252,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       }
       if (hostPath && req.method === 'DELETE') {
         const existing = state.hosts[hostPath];
-        if (existing && existing.uid === uid) { delete state.hosts[hostPath]; if (state.sync[uid]) delete state.sync[uid].keys[hostPath]; }
+        if (existing && existing.uid === uid) unbindHost(hostPath, 'user');
         res.writeHead(204); return res.end();
       }
     }
@@ -249,12 +268,43 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
   const isWrapped = v => typeof v === 'string' && /^[A-Za-z0-9_-]{80}$/.test(v) && b64urlToBuf(v).length === 60;
   const syncOf = uid => (state.sync[uid] ??= { keyId: null, keys: {}, items: {}, seq: 0, totalBytes: 0 });
   const err = (res, status, code, message, extra = {}, headers = {}) => json(res, status, { error: { code, message, ...extra } }, headers);
+  const liveKey = (k, keyId) => !!k && !!keyId && k.keyId === keyId && !k.detachedAt;
+  const itemCountOf = s => Object.values(s.items).filter(it => it.deleted !== true).length;
+  const HOUR = 3_600_000;
+
+  // ホストを外す（利用者の DELETE と同じ処理。by: 'admin' は運営が外したとき）。前の版の api は鍵の行も消した
+  function unbindHost(hostId, by = 'admin') {
+    const existing = state.hosts[hostId];
+    if (!existing) return;
+    const uid = existing.uid;
+    delete state.hosts[hostId];
+    const k = state.sync[uid]?.keys[hostId];
+    if (state.legacySync) { if (k) delete state.sync[uid].keys[hostId]; return; }
+    if (k) { k.detachedAt = new Date().toISOString(); k.name = existing.name ?? null; }
+    state.hostsRemoved[hostId] = { uid, hostId, by, at: new Date().toISOString() };
+  }
+
+  // 今の keyId の鍵の行（外した行も registered: false で）。登録中 → lastSyncAt の新しい順 → hostId
+  function holdersOf(uid, s) {
+    if (!s.keyId) return [];
+    return Object.entries(s.keys).filter(([, k]) => k.keyId === s.keyId).map(([hostId, k]) => {
+      const host = state.hosts[hostId]?.uid === uid ? state.hosts[hostId] : null;
+      return { hostId, name: host?.name ?? k.name ?? null, lastSyncAt: k.lastSyncAt ?? null, registered: !!host && !k.detachedAt };
+    }).sort((a, b) => (Number(b.registered) - Number(a.registered))
+      || String(b.lastSyncAt ?? '').localeCompare(String(a.lastSyncAt ?? '')) || a.hostId.localeCompare(b.hostId));
+  }
+
+  function touchLastSync(s, hostId) {
+    const k = s.keys[hostId];
+    if (!liveKey(k, s.keyId)) return;
+    if (!k.lastSyncAt || Date.now() - Date.parse(k.lastSyncAt) >= HOUR) k.lastSyncAt = new Date().toISOString();
+  }
 
   function syncState(uid) {
     const s = syncOf(uid);
     const hosts = Object.values(state.hosts).filter(h => h.uid === uid).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-    const withKey = new Set(s.keyId ? Object.entries(s.keys).filter(([, k]) => k.keyId === s.keyId).map(([id]) => id) : []);
-    return {
+    const withKey = new Set(Object.entries(s.keys).filter(([, k]) => liveKey(k, s.keyId)).map(([id]) => id));
+    const out = {
       enabled: accountOf(uid).sync?.enabled !== false,
       keyId: s.keyId,
       hostsWithKey: hosts.filter(h => withKey.has(h.hostId)).map(h => h.hostId),
@@ -262,6 +312,17 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       totalBytes: s.totalBytes,
       limitBytes: state.syncLimitBytes,
       cursor: s.seq,
+    };
+    if (state.legacySync) return out;
+    const nameOf = id => state.hosts[id]?.name ?? s.keys[id]?.name ?? null;
+    return {
+      ...out,
+      itemCount: itemCountOf(s),
+      updatedAt: s.lastWriteAt ?? null,
+      lastWriter: s.lastWriterHostId ? { hostId: s.lastWriterHostId, name: nameOf(s.lastWriterHostId) } : null,
+      holders: holdersOf(uid, s),
+      resetAt: s.resetAt ?? null,
+      resetBy: s.resetBy ? { hostId: s.resetBy, name: state.hosts[s.resetBy]?.name ?? s.resetByName ?? null } : null,
     };
   }
 
@@ -282,15 +343,21 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     try { body = raw ? JSON.parse(raw) : {}; } catch { return err(res, 400, 'bad_request', 'body'); }
     const s = syncOf(uid);
     const ownHost = id => (typeof id === 'string' && state.hosts[id]?.uid === uid ? state.hosts[id] : null);
+    const notOwn = () => err(res, 403, 'forbidden', state.legacySync ? 'forbidden' : 'host');
 
-    if (url.pathname === '/v1/sync/state' && req.method === 'GET') return json(res, 200, syncState(uid));
+    if (url.pathname === '/v1/sync/state' && req.method === 'GET') {
+      const self = url.searchParams.get('hostId');
+      if (!state.legacySync && self && ownHost(self)) touchLastSync(s, self);
+      return json(res, 200, syncState(uid));
+    }
     if (accountOf(uid).sync?.enabled === false) return err(res, 403, 'forbidden', 'sync_disabled');
 
     const keyPath = /^\/v1\/sync\/keys\/([^/]+)$/.exec(url.pathname)?.[1] ?? null;
     if (keyPath && req.method === 'GET') {
-      if (!ownHost(keyPath)) return err(res, 403, 'forbidden', 'forbidden');
+      if (!ownHost(keyPath)) return notOwn();
       const k = s.keys[keyPath];
       if (!k || !s.keyId || k.keyId !== s.keyId) return err(res, 404, 'not_found', 'not found');
+      if (!state.legacySync) touchLastSync(s, keyPath);
       return json(res, 200, { keyId: k.keyId, wrapped: k.wrapped, wrappedBy: k.wrappedBy });
     }
     if (keyPath && req.method === 'PUT') {
@@ -298,10 +365,10 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       if (typeof body.wrappedBy !== 'string') return err(res, 400, 'bad_request', 'wrappedBy');
       if (!isWrapped(body.wrapped)) return err(res, 400, 'bad_request', 'wrapped');
       const target = ownHost(keyPath);
-      if (!target || !ownHost(body.wrappedBy)) return err(res, 403, 'forbidden', 'forbidden');
+      if (!target || !ownHost(body.wrappedBy)) return notOwn();
       if (!target.syncPublicKey) return err(res, 400, 'bad_request', 'syncPublicKey');
       if (!s.keyId || body.keyId !== s.keyId) return err(res, 409, 'conflict', 'keyId');
-      if (s.keys[body.wrappedBy]?.keyId !== s.keyId) return err(res, 409, 'conflict', 'wrappedBy');
+      if (!liveKey(s.keys[body.wrappedBy], s.keyId)) return err(res, 409, 'conflict', 'wrappedBy');
       s.keys[keyPath] = { keyId: body.keyId, wrapped: body.wrapped, wrappedBy: body.wrappedBy };
       res.writeHead(204); return res.end();
     }
@@ -310,14 +377,34 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       if (typeof body.hostId !== 'string') return err(res, 400, 'bad_request', 'hostId');
       if (!isWrapped(body.wrapped)) return err(res, 400, 'bad_request', 'wrapped');
       if (body.previousKeyId !== null && typeof body.previousKeyId !== 'string') return err(res, 400, 'bad_request', 'previousKeyId');
+      const confirm = state.legacySync ? null : (body.confirm ?? null);
+      if (confirm !== null && (typeof confirm !== 'object' || Array.isArray(confirm)
+        || typeof confirm.keyId !== 'string' || !KEY_ID_RX.test(confirm.keyId)
+        || !Number.isSafeInteger(confirm.itemCount) || confirm.itemCount < 0)) return err(res, 400, 'bad_request', 'confirm');
       const host = ownHost(body.hostId);
-      if (!host) return err(res, 403, 'forbidden', 'forbidden');
+      if (!host) return notOwn();
       if (!host.syncPublicKey) return err(res, 400, 'bad_request', 'syncPublicKey');
       if ((s.keyId ?? null) !== body.previousKeyId) return err(res, 409, 'conflict', 'previousKeyId');
+      if (!state.legacySync) {
+        const itemCount = itemCountOf(s);
+        const byHolder = liveKey(s.keys[body.hostId], s.keyId);
+        const needConfirm = !!s.keyId && itemCount > 0 && !byHolder;
+        if (needConfirm && !(confirm?.keyId === s.keyId && confirm?.itemCount === itemCount)) {
+          return err(res, 409, 'reset_confirm', 'confirm', {
+            keyId: s.keyId, itemCount, totalBytes: s.totalBytes, updatedAt: s.lastWriteAt ?? null, holders: holdersOf(uid, s),
+          });
+        }
+      }
+      const now = new Date().toISOString();
       s.keyId = body.keyId;
       s.items = {};
       s.totalBytes = 0;
-      s.keys = { [body.hostId]: { keyId: body.keyId, wrapped: body.wrapped, wrappedBy: body.hostId } };
+      s.lastWriteAt = null;
+      s.lastWriterHostId = null;
+      s.resetAt = now;
+      s.resetBy = body.hostId;
+      s.resetByName = host.name ?? null;
+      s.keys = { [body.hostId]: { keyId: body.keyId, wrapped: body.wrapped, wrappedBy: body.hostId, lastSyncAt: now } };
       return json(res, 200, syncState(uid));
     }
     if (url.pathname === '/v1/sync/items' && req.method === 'GET') {
@@ -346,7 +433,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
         const m = CIPHERTEXT_RX.exec(ciphertext);
         if (!m || m[1] !== body.keyId) return err(res, 400, 'bad_request', 'ciphertext');
       }
-      if (!ownHost(body.hostId)) return err(res, 403, 'forbidden', 'forbidden');
+      if (!ownHost(body.hostId)) return notOwn();
       if (!s.keyId || body.keyId !== s.keyId) return err(res, 409, 'conflict', 'keyId');
       const cur = s.items[itemPath];
       const curRev = cur?.rev ?? 0;
@@ -356,8 +443,12 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
       if (totalBytes > state.syncLimitBytes) return err(res, 413, 'sync_quota', 'sync quota', { limitBytes: state.syncLimitBytes });
       const rev = body.baseRev + 1;
       const seq = ++s.seq;
-      s.items[itemPath] = { rev, seq, keyId: body.keyId, ciphertext, deleted: body.deleted, size, updatedAt: new Date().toISOString() };
+      const updatedAt = new Date().toISOString();
+      s.items[itemPath] = { rev, seq, keyId: body.keyId, ciphertext, deleted: body.deleted, size, updatedAt, updatedBy: body.hostId };
       s.totalBytes = totalBytes;
+      s.lastWriteAt = updatedAt;
+      s.lastWriterHostId = body.hostId;
+      if (!state.legacySync) touchLastSync(s, body.hostId);
       return json(res, 200, { rev, seq });
     }
     return err(res, 404, 'not_found', 'not found');
@@ -375,6 +466,8 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
     issueIdToken,
     /** その uid の更新トークンを発行して返す（ログインの往復を経ずにセッションの保管を仕込むため） */
     grantRefreshToken: (uid) => { const token = `rt-${++seq}`; refreshTokens.set(token, uid); return token; },
+    /** ホストを外す（by: 'admin' は運営の管理画面から外したとき。'user' は利用者の DELETE と同じ） */
+    unbindHost,
     route,
     close: () => new Promise(r => { try { server.closeAllConnections?.(); } catch {} server.close(() => r()); }),
   };

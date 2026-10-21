@@ -56,9 +56,22 @@ export const plusOps = [
   defineOp({
     id: 'plus.syncReset', summary: 'agent:ops.plus.syncReset.summary', risk: 'write',
     riskReason: 'Deletes the synced content on the server and starts over with a new key on every PC; only the settings screen calls it, behind its own confirm (not on MCP or the CLI)',
+    // confirm: 鍵を持たない PC がサーバーのデータを消すとき、人が件数を見て確かめた印（無い・合わなければ confirmNeeded で今の値を返す）
+    input: z.object({
+      confirm: z.object({
+        keyId: z.string().min(1).max(200),
+        itemCount: z.number().int().min(0),
+      }).nullable().optional().describe('agent:ops.plus.syncReset.confirm'),
+    }),
+    surfaces: { ui: true, mcp: false, cli: false },
+    handler: (ctx, { confirm } = {}) => run(ctx, () => ctx.plus.syncReset(confirm ?? null)),
+  }),
+  defineOp({
+    id: 'plus.hostReregister', summary: 'agent:ops.plus.hostReregister.summary', risk: 'write',
+    riskReason: 'Registers this PC on the Plus account again after the user removed it; only the settings screen calls it (not on MCP or the CLI)',
     input: z.object({}),
     surfaces: { ui: true, mcp: false, cli: false },
-    handler: (ctx) => run(ctx, () => ctx.plus.syncReset()),
+    handler: (ctx) => run(ctx, async () => { await ctx.plus.hostReregister(); return { ok: true }; }),
   }),
   defineOp({
     id: 'plus.syncOpenConflicts', summary: 'agent:ops.plus.syncOpenConflicts.summary', risk: 'write',

@@ -4,7 +4,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { renderPlus, setupPlusSettings } from '../../web/plus-settings.mjs';
 
 export const name = 'plus-settings';
-export const title = '設定 › Pleiad Plus: 状態ごとの中身とボタン・コマンド・届かない行・メニューの出し入れ（DOM の代役）';
+export const title = '設定 › Pleiad Plus: 状態ごとの中身とボタン・コマンド・届かない行・メニューの出し入れ・登録の外れ・始め直しの確かめ（DOM の代役）';
 
 const text = nodes => nodes.map(n => n.textContent).join(' ');
 // dom-stub の querySelector は [data-fk=…] を読めないので自前で探す
@@ -124,6 +124,15 @@ export default async function (t) {
   nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'ok' } });
   t.ok('ほかの host.state ならこの PC の行は出さない', !text(nodes).includes('つないでいます'));
 
+  // 登録の外れ（docs/plus.md「同期の始め直しと登録の外れ」）: 利用者が外した PC は自分では登録し直さない
+  let rereg = 0;
+  nodes = renderPlus({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'removed' } }, { ...deps, reregister: () => { rereg++; } });
+  t.ok('host removed: 外されている旨と「この PC を登録し直す」', text(nodes).includes('この PC は Pleiad Plus の登録から外されています') && byFk(nodes, 'hostReregister')?.textContent === 'この PC を登録し直す', text(nodes));
+  byFk(nodes, 'hostReregister').onclick();
+  t.ok('「この PC を登録し直す」は reregister を呼ぶ', rereg === 1);
+  nodes = render({ ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered', notice: 'reregistered' } });
+  t.ok('notice reregistered: 「登録が外れていたので、登録し直しました」（ボタンは出さない）', text(nodes).includes('この PC の登録が外れていたので、登録し直しました') && !byFk(nodes, 'hostReregister'));
+
   // reachable === false: 中身の上に 1 行（⚠ は付けない）
   nodes = render({ ...BASE, reachable: false, signedIn: true, account: ACCOUNT });
   const plain = nodes.map(n => n.outerHTML).join('');
@@ -145,6 +154,62 @@ export default async function (t) {
       settings.reconnected();
       await new Promise(r => setImmediate(r));
       t.ok(`available === ${available} → つながったあと plusTab は ${want ? '出さない' : '出す'}`, calls > 0 && nodes2.plusTab.hidden === want);
+    } finally { document.getElementById = savedGet; }
+  }
+
+  // ---- 始め直しの確かめ（鍵を待つ PC）: 見せた keyId と件数を confirm に付けて送る・数字が変わったらチェックを外す ----
+  {
+    const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
+    const savedGet = document.getElementById;
+    document.getElementById = id => nodes2[id] ?? null;
+    const invoked = [];
+    let resetReply = null;
+    const WAIT = { keyId: 'key-1', itemCount: 312, totalBytes: 4_404_019, updatedAt: '2026-10-21T04:00:00Z', holder: false, holders: [] };
+    try {
+      const settings = setupPlusSettings({
+        cmd: async (name, args) => {
+          if (name !== 'invoke') return {};
+          invoked.push([args.op, args.args]);
+          return args.op === 'plus.syncReset' ? resetReply : {};
+        },
+        page: () => {}, getPrefs: () => ({}),
+      });
+      const panel = () => [nodes2.plusPanel];
+      settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'registered' } } });
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: WAIT } });
+      byFk(panel(), 'syncReset').onclick();
+      t.ok('窓を開いた直後はチェックが外れていて押せない', byFk(panel(), 'syncResetCheck')?.checked === false && byFk(panel(), 'syncResetYes')?.disabled === true);
+      byFk(panel(), 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('チェックの前に「消して始め直す」を呼んでも送らない', !invoked.some(([op]) => op === 'plus.syncReset'));
+      const check = byFk(panel(), 'syncResetCheck');
+      check.checked = true; check.onchange();
+      resetReply = { confirmNeeded: true, status: { state: 'waiting_key', wait: { ...WAIT, itemCount: 315 } } };
+      byFk(panel(), 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      const sentReset = invoked.filter(([op]) => op === 'plus.syncReset').at(-1);
+      t.ok('plus.syncReset に見せた keyId と件数を confirm で付ける', sentReset?.[1]?.confirm?.keyId === 'key-1' && sentReset[1].confirm.itemCount === 312, JSON.stringify(sentReset));
+      t.ok('confirmNeeded なら窓を開いたまま、新しい件数でチェックを外す',
+        nodes2.plusPanel.textContent.includes('確かめている間に、サーバーのデータが変わりました') && nodes2.plusPanel.textContent.includes('315 件') && byFk(panel(), 'syncResetCheck')?.checked === false);
+      // もう一度チェックして送る → 今度は始め直せた
+      byFk(panel(), 'syncResetCheck').checked = true; byFk(panel(), 'syncResetCheck').onchange();
+      resetReply = { confirmNeeded: false, status: { state: 'idle', wait: null } };
+      byFk(panel(), 'syncResetYes').onclick();
+      await new Promise(r => setImmediate(r));
+      const sent2 = invoked.filter(([op]) => op === 'plus.syncReset').at(-1);
+      t.ok('2 回目は新しい件数で送り、窓を閉じる', sent2?.[1]?.confirm?.itemCount === 315 && !byFk(panel(), 'syncResetCheck'), JSON.stringify(sent2));
+      // 窓を開いている間に、ほかの PC が上げて件数が変わった（plusSyncStatus）
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: WAIT } });
+      byFk(panel(), 'syncReset').onclick();
+      byFk(panel(), 'syncResetCheck').checked = true; byFk(panel(), 'syncResetCheck').onchange();
+      settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: { ...WAIT, itemCount: 320 } } });
+      t.ok('確かめている間に件数が変わったら、チェックを外して変わった旨を出す',
+        byFk(panel(), 'syncResetCheck')?.checked === false && nodes2.plusPanel.textContent.includes('320 件') && nodes2.plusPanel.textContent.includes('サーバーのデータが変わりました'));
+      // 利用者が外した PC: 「この PC を登録し直す」は plus.hostReregister
+      settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT, host: { state: 'removed' } } });
+      byFk(panel(), 'hostReregister').onclick();
+      await new Promise(r => setImmediate(r));
+      t.ok('「この PC を登録し直す」は plus.hostReregister を送る', invoked.some(([op]) => op === 'plus.hostReregister'));
     } finally { document.getElementById = savedGet; }
   }
 

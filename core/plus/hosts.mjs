@@ -18,8 +18,13 @@
 //   429 host_limit → 'limit'、422 bad_proof → 新しい challenge で 1 回だけやり直し、
 //   ネットの誤り・5xx → 'error' で 1 分おきにやり直す。
 //
-// 状態は { state, hostId, error } の形で session.setHost() と onHostState() に渡す
-// （state: none / registering / registered / taken / limit / error）。
+// 登録の外れ（docs/plus.md「同期の始め直しと登録の外れ」）: 同期の 403 host・中継の 4401 host・30 分ごとの見直し（recheck）で
+//   台帳に自分が無いと分かったら登録し直す（鍵の行が戻る）。GET /v1/hosts の removed に自分が by: 'user' で載っていれば
+//   登録し直さず 'removed' で待つ（人の「この PC を登録し直す」= reregister で登録する）。
+//   外れていたのを登録し直したときは、状態に notice: 'reregistered' を載せる。
+//
+// 状態は { state, hostId, error, notice? } の形で session.setHost() と onHostState() に渡す
+// （state: none / registering / registered / removed / taken / limit / error）。
 import crypto from 'node:crypto';
 import { dh, hkdfLabel, hostIdFor } from '../remote/noise.mjs';
 import { cleanLabel } from '../remote/pairing.mjs';
@@ -46,20 +51,28 @@ const PLATFORM = { win32: 'win32', darwin: 'darwin', linux: 'linux' };
  * @param {() => Promise<string|null>} [o.syncPublicKey] 同期の公開鍵（raw 32 バイトの base64url）。無ければ送らない
  * @param {(line: string) => void} [o.log]
  * @param {number} [o.retryMs]  ネットの誤り・5xx のやり直しの間隔（既定 1 分）
+ * @param {number} [o.recheckMs]  登録が外れていないかの見直しの間隔（既定 30 分。0 で見直さない）
  */
 export function createPlusHost({ session, store, appVersion = '', platform = process.platform,
-  hostName, plusDevices, onHostState = () => {}, log = () => {}, retryMs = 60_000, syncPublicKey = async () => null } = {}) {
+  hostName, plusDevices, onHostState = () => {}, log = () => {}, retryMs = 60_000, recheckMs = 30 * 60_000,
+  syncPublicKey = async () => null } = {}) {
   let host = { state: 'none', hostId: null, error: null };
   let chain = Promise.resolve();
   let activeRegistration = null;
   let retryTimer = null;
   let registered = null;      // { hostId, publicKey, name, platform, deviceCount } — 最後に台帳へ送った/返ってきた値
   let badProofRetried = false;
+  let rechecking = null;
+  let recheckTimer = null;
 
   function setHost(next) {
     host = next;
     session.setHost(next);
     onHostState(next);
+    if (next.state === 'registered' && !recheckTimer && recheckMs > 0) {
+      recheckTimer = setInterval(() => { void recheck(); }, recheckMs);
+      recheckTimer.unref?.();
+    }
   }
 
   const eligible = () => {
@@ -77,7 +90,8 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     return b64url(mac.digest());
   }
 
-  async function registerOnce() {
+  /** force: 利用者が外した PC でも登録し直す（人の「この PC を登録し直す」） */
+  async function registerOnce({ force = false } = {}) {
     const identity = await store.identity();   // 登録には鍵が要る。無ければここで作る（store が直列化する）
     const { hostId } = identity;
     const publicKey = identity.publicKey.toString('base64url');
@@ -101,6 +115,15 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       setHost({ state: 'registered', hostId, error: null });
       return;
     }
+    // 利用者がこの PC を外した: 人が登録し直すまで待つ（運営が外した・記録が無いときは登録し直す）
+    const removed = !mine && Array.isArray(list?.removed) ? list.removed.find(r => r?.hostId === hostId) : null;
+    if (removed?.by === 'user' && !force) {
+      log('plus host: removed by user');
+      registered = null;
+      setHost({ state: 'removed', hostId, error: { code: 'host_removed' } });
+      return;
+    }
+    const wasLost = !mine && (Boolean(removed) || registered?.hostId === hostId);   // つなぎ直し（hostId が替わる）は外れではない
     // 2-4. challenge → proof → PUT
     const challenge = await session.client.request('POST', '/v1/hosts/challenge', { body: { hostId, publicKey } });
     const put = {
@@ -113,15 +136,16 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     const out = await session.client.request('PUT', `/v1/hosts/${hostId}`, { body: put });
     registered = { hostId, publicKey, name: body.name, platform: body.platform, deviceCount: out?.host?.deviceCount ?? null };
     badProofRetried = false;
-    setHost({ state: 'registered', hostId, error: null });
+    if (wasLost) log('plus host: registered again');
+    setHost({ state: 'registered', hostId, error: null, ...(wasLost ? { notice: 'reregistered' } : {}) });
   }
 
-  async function run() {
+  async function run({ force = false } = {}) {
     retryTimer && clearTimeout(retryTimer);
     retryTimer = null;
     if (!eligible()) return;
     try {
-      await registerOnce();
+      await registerOnce({ force });
     } catch (e) {
       const code = e?.code;
       const hostId = host.hostId ?? (await store.peekIdentity().catch(() => null))?.hostId ?? null;
@@ -137,7 +161,7 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
       }
       if (e?.status === 422 && code === 'bad_proof' && !badProofRetried) {
         badProofRetried = true;
-        try { await registerOnce(); setHost({ state: 'registered', hostId, error: null }); }
+        try { await registerOnce({ force }); }
         catch (e2) { fail(e2, hostId); }
         return;
       }
@@ -164,6 +188,29 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
     return current;
   }
 
+  /** 人の「この PC を登録し直す」: 利用者が外した PC でも登録する */
+  function reregister() {
+    chain = chain.catch(() => {}).then(() => (eligible() ? run({ force: true }) : undefined));
+    return chain;
+  }
+
+  /**
+   * 登録が外れていないか確かめ直す（同期の 403 host・中継の 4401 host・30 分ごと）。
+   * 台帳に自分が無ければ maybeRegister（利用者が外したなら removed で止まる）。同時に 1 本だけ
+   */
+  function recheck() {
+    if (rechecking) return rechecking;
+    rechecking = (async () => {
+      if (!eligible() || host.state !== 'registered' || !host.hostId) return;
+      const list = await session.client.request('GET', '/v1/hosts');
+      const listed = Array.isArray(list?.hosts) && list.hosts.some(h => h?.hostId === host.hostId);
+      if (listed) return;
+      log('plus host: registration lost');
+      await maybeRegister();
+    })().catch(e => log(`plus host: recheck failed (${e?.code ?? 'error'})`)).finally(() => { rechecking = null; });
+    return rechecking;
+  }
+
   /** PATCH { name }（ホスト名が変わったとき。未登録なら次の登録で送る） */
   async function syncName() {
     const next = hostNameFor(hostName());
@@ -184,6 +231,8 @@ export function createPlusHost({ session, store, appVersion = '', platform = pro
 
   return {
     maybeRegister,
+    recheck,
+    reregister,
     /** ホスト名・端末数の変更の通知（失敗は記録だけ。次の登録で帳尻が合う） */
     syncName: () => syncName().catch(e => log(`plus host: name patch failed (${e?.code ?? e})`)),
     syncDeviceCount: () => syncDeviceCount().catch(e => log(`plus host: deviceCount patch failed (${e?.code ?? e})`)),
