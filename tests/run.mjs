@@ -610,6 +610,8 @@ const SUITES = [
   './unit/claude-turn-end.mjs',
   // Claude のログインの期限切れ（401）: 見分け・pristine・失敗の行に添える auth・設定の行の期限切れの印と CLI の在り処（ADR 0212）
   './unit/claude-auth-expired.mjs',
+  // 待っているログインをやめる: 見張り・Grok・Devin・Codex の cancel と、時間切れの code（ADR 0243）
+  './unit/login-cancel.mjs',
   // Claude のモデル一覧: CLI の実体（版）が変わったら 30 分の TTL の中でも引き直す
   './unit/claude-catalog-cli-version.mjs',
   // Claude のモデル一覧: 手元に古い一覧・別の作業場所の一覧があれば、引き直しを待たずに返す

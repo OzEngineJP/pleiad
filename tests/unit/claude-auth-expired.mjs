@@ -111,6 +111,26 @@ export default async function (t) {
     t.ok('取り消した後は次のログインを始められる（待ちが残らない）', (await auth.status()).pending !== true);
   }
 
+  // ---- 1d. Claude のアカウント（Pro・Max）の認可の URL（claude.com）も画面へ出す（CLI 2.1.303 の CLAUDE_AI_AUTHORIZE_URL。ADR 0243）
+  {
+    let loginChild = null;
+    const auth = createClaudeAuth((args) => {
+      const child = new EventEmitter(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
+      child.kill = () => queueMicrotask(() => child.emit('close', null));
+      loginChild = child;
+      return child;
+    });
+    const urls = [];
+    const login = auth.login({ emit: (ev) => { if (ev.phase === 'url') urls.push(ev.url); } }).then(() => null, (e) => e);
+    await new Promise((r) => setTimeout(r, 5));
+    loginChild.stdout.write('Opening browser to sign in…\nIf the browser didn\'t open, visit: https://claude.com/cai/oauth/authorize?code=true&client_id=x&state=y\n');
+    loginChild.stdout.write('https://example.com/not-a-login\n');
+    await new Promise((r) => setTimeout(r, 5));
+    t.ok('claude.com の認可の URL を拾い、ほかのホストは拾わない', urls.length === 1 && urls[0].startsWith('https://claude.com/cai/oauth/authorize'), JSON.stringify(urls));
+    await auth.cancel();
+    t.ok('やめたら CANCELLED で返る', (await login)?.code === 'CANCELLED');
+  }
+
   // ---- 2. claude バックエンドの turnResult
   {
     const events = await runClaude([init(), authAssistant(), authResult()], THROWN);
@@ -189,7 +209,7 @@ export default async function (t) {
       && tokenFailed.auth.accountId === saved.id && tokenFailed.auth.name === '仕事用' && !('email' in tokenFailed.auth), JSON.stringify(tokenFailed));
     t.ok('トークンの期限切れは CLI のログインの期限切れにしない', !(await status()).expired);
 
-    // ログインの取り消し（会話の失敗の行の「キャンセル」）。待っていなければ何もしない
+    // ログインをやめる（設定のカード・初回の案内・会話の失敗の行の［やめる］）。待っていなければ何もしない
     const idle = await c.cmd('authCancel', { backend: 'fake' });
     t.ok('待っているログインが無ければ authCancel は何もしない', idle.supported === true && idle.cancelled === false, JSON.stringify(idle));
     await c.cmd('authLogout', { backend: 'fake' });
@@ -201,11 +221,12 @@ export default async function (t) {
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }
 
-  // ---- 4. 待っているログインを取り消す（fake のログインを遅らせる）
+  // ---- 4. 待っているログインをやめる（fake のログインを遅らせる）。ほかの窓は cancelled のイベントで待ちを畳む（ADR 0243）
   {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-auth-cancel-'));
     const slow = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_LOGIN_MS: '20000' }, dataDir: dir });
     const w = await open({ port: slow.port, token: slow.token, autoAllow: true });
+    const other = await open({ port: slow.port, token: slow.token, autoAllow: true });
     try {
       const login = w.cmd('authLogin', { backend: 'fake' }).then(() => null, (e) => e);
       let pending = false;
@@ -215,9 +236,31 @@ export default async function (t) {
       const error = await login;
       t.ok('authCancel で待っているログインが CANCELLED の失敗で返る', cancelled.cancelled === true && error?.code === 'CANCELLED', `${JSON.stringify(cancelled)} ${error?.code} ${error?.message}`);
       t.ok('取り消した後はログインしていない', (await w.cmd('authStatus', { backend: 'fake' })).loggedIn === false);
+      const ev = await other.waitFor((e) => e.type === 'auth' && e.phase === 'cancelled', { ms: 5000 }).catch(() => null);
+      t.ok('ほかの窓には cancelled のイベントが届き、失敗のイベントは届かない', ev?.backend === 'fake' && !other.events.some((e) => e.type === 'auth' && e.phase === 'error'), JSON.stringify(other.events.filter((e) => e.type === 'auth')));
     } finally {
       w.close?.();
+      other.close?.();
       await slow.stop();
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  // ---- 5. 時間切れ・失敗は、どの窓にも error のイベントで届く（時間切れは code: TIMEOUT。カードの中に一文を出す。ADR 0243）
+  for (const [fail, code] of [['timeout', 'TIMEOUT'], ['fake: boom', undefined]]) {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-claude-auth-fail-'));
+    const srv = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_FAKE_LOGIN_FAIL: fail }, dataDir: dir });
+    const w = await open({ port: srv.port, token: srv.token, autoAllow: true });
+    const other = await open({ port: srv.port, token: srv.token, autoAllow: true });
+    try {
+      const error = await w.cmd('authLogin', { backend: 'fake' }).then(() => null, (e) => e);
+      const ev = await other.waitFor((e) => e.type === 'auth' && e.phase === 'error', { ms: 5000 }).catch(() => null);
+      t.ok(`${fail}: 応答は失敗で返り、ほかの窓に error のイベントが 1 つだけ届く`, error && ev?.code === code
+        && other.events.filter((e) => e.type === 'auth' && e.phase === 'error').length === 1, `${error?.code} ${JSON.stringify(ev)}`);
+    } finally {
+      w.close?.();
+      other.close?.();
+      await srv.stop();
       await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   }

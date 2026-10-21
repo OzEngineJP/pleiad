@@ -86,6 +86,17 @@ export default async function (t) {
     //
     // agy は認可コードを端末からしか読まない（パイプした stdin は無視され 60 秒で時間切れ。
     // 実機で確認）。公式も「Authenticate once with an interactive agy session first」と書いている
+    // 先に 1 度［やめる］: 見張りを止めて CANCELLED で返り、ほかの窓には cancelled が届く（ADR 0243）
+    const first = c.mark();
+    const abandoned = c.cmd("authLogin", { backend: "antigravity" }).then(() => null, (e) => e);
+    await c.waitFor((e) => e.type === "auth" && e.phase === "url", { ms: 30_000, from: first });
+    const cancel = await c.cmd("authCancel", { backend: "antigravity" });
+    const stopped = await abandoned;
+    t.ok("待っているログインをやめられる", cancel.cancelled === true && stopped?.code === "CANCELLED",
+      `${JSON.stringify(cancel)} ${stopped?.code} ${stopped?.message}`);
+    const told = await c.waitFor((e) => e.type === "auth" && e.phase === "cancelled", { ms: 5000, from: first }).catch(() => null);
+    t.ok("やめたことは cancelled のイベントで届く", told?.backend === "antigravity", JSON.stringify(told));
+
     const mark = c.mark();
     const login = c.cmd("authLogin", { backend: "antigravity" });
     const card = await c.waitFor((e) => e.type === "auth" && e.phase === "url", { ms: 30_000, from: mark });

@@ -69,7 +69,7 @@
       "removedOrRemoving": "{{agent}} のアカウントは削除中、または削除済みです。",
       "directoryRemoved": "{{agent}} のアカウントの保存先は削除されています。アカウントを登録し直してください。",
       "loginRunning": "この {{agent}} のアカウントはログインの途中です。",
-      "loginCancelled": "{{agent}} のログインを取り消しました。",
+      "loginCancelled": "{{agent}} のログインをやめました。",
       "notLoggedIn": "この {{agent}} のアカウントでログインしてください。",
       "loginNoCredential": "{{agent}} のログイン後に認証情報を確認できませんでした。もう一度ログインしてください。",
       "loginFailed": "{{agent}} のログインを完了できませんでした。もう一度お試しください。",

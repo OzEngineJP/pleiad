@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
 import { t, agentT } from '../i18n.mjs';
+import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
 import { BROWSER_SERVER } from '../browser-bridge.mjs';
 import { CONTROL_SERVER } from '../ops/surfaces/mcp.mjs';
 import { SHELL_SERVER } from '../shell-bridge.mjs';
@@ -158,8 +159,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     const actual = result?.configOptions?.find(o => o.id === modeOption[0].id)?.currentValue;
     if (typeof actual === 'string' && actual !== wanted) throw fail('modeUnavailable');
   }
-  // ログインの案内が同時に走らないよう掴む旗
+  // ログインの案内が同時に走らないよう掴む旗と、待っている見張りをやめる口（authCancel）
   let pendingAuth = null;
+  const loginWatch = createLoginWatch('Grok');
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
     capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true, promptDelivery: true, steer: true,
@@ -435,6 +437,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       async login({ emit }) {
         if (pendingAuth) throw new Error(t('grok.auth.loginRunning'));
         pendingAuth = {};
+        const watch = loginWatch.begin();
         try {
           if (await signedIn()) {
             emit?.({ type: 'auth', phase: 'done', message: t('grok.auth.alreadyLoggedIn') });
@@ -444,19 +447,24 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           emit?.({ type: 'auth', phase: 'url', url: command, message: t('grok.auth.runCommand') });
           const until = Date.now() + LOGIN_TIMEOUT_MS;
           while (Date.now() < until) {
-            await new Promise(r => { const timer = setTimeout(r, LOGIN_POLL_MS); timer.unref?.(); });
-            if (await signedIn()) {
+            await watch.pause(LOGIN_POLL_MS);
+            const done = await signedIn();
+            watch.check();
+            if (done) {
               emit?.({ type: 'auth', phase: 'done', message: t('grok.auth.loggedIn') });
               return;
             }
           }
           const message = t('grok.auth.loginTimeout');
-          emit?.({ type: 'auth', phase: 'error', message });
-          throw new Error(message);
+          emit?.({ type: 'auth', phase: 'error', code: 'TIMEOUT', message });
+          throw loginTimeoutError(message);
         } finally {
           pendingAuth = null;
+          watch.end();
         }
       },
+      /** 待っているログインをやめる（見張りを止める）。login は CANCELLED で返る */
+      async cancel() { return loginWatch.cancel(); },
       /** `grok logout`。対話は要らないので Pleiad から実行する */
       async logout() {
         const { code, err, out } = await runAuth(['logout']);

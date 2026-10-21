@@ -3,7 +3,7 @@ import { t } from '../i18n.mjs';
 
 export function createClaudeAuth(launch = (args) => spawnCli(cliCommand('claude'), args, { stdio: ['ignore', 'pipe', 'pipe'] })) {
   let pending = null;
-  // 待っている `claude auth login` の子と、取り消しを頼まれたか（cancel。会話の失敗の行の「キャンセル」。ADR 0212）
+  // 待っている `claude auth login` の子と、取り消しを頼まれたか（cancel。設定のカード・初回の案内・会話の失敗の行の［やめる］。ADR 0212・0243）
   let loginChild = null;
   let cancelled = false;
   function run(args, { emit, timeout = 15_000, onChild } = {}) {
@@ -13,13 +13,14 @@ export function createClaudeAuth(launch = (args) => spawnCli(cliCommand('claude'
       let output = '';
       let stdout = '';
       let lastUrl = '';
-      const timer = setTimeout(() => { child.kill(); reject(new Error(t('claude.auth.timeout'))); }, timeout);
+      const timer = setTimeout(() => { child.kill(); reject(Object.assign(new Error(t('claude.auth.timeout')), { code: 'TIMEOUT' })); }, timeout);
       const read = data => {
         output = (output + data.toString().replace(/\x1b\[[0-9;]*m/g, '')).slice(-64_000);
         const urls = output.match(/https:\/\/[^\s<>"\x1b]+/g) || [];
         for (const url of urls) {
           let parsed; try { parsed = new URL(url); } catch { continue; }
-          if (!['claude.ai', 'console.anthropic.com', 'platform.claude.com'].includes(parsed.hostname) || url === lastUrl) continue;
+          // claude.com は Claude のアカウント（Pro・Max）の認可の入口（CLI 2.1.303 の同梱コードの CLAUDE_AI_AUTHORIZE_URL: https://claude.com/cai/oauth/authorize）
+          if (!['claude.ai', 'claude.com', 'console.anthropic.com', 'platform.claude.com'].includes(parsed.hostname) || url === lastUrl) continue;
           lastUrl = url;
           emit?.({ type: 'auth', phase: 'url', url });
         }

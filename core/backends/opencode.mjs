@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { t } from '../i18n.mjs';
+import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
 import { loadSqlite } from '../db.mjs';
 import { cliCommand } from '../cli-installation.mjs';
 import * as store from '../store.mjs';
@@ -25,6 +26,8 @@ import {backupV1Database,verifyV1Conversation,v2MigrationComplete,opencodeDataba
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const LOGIN_POLL_MS = 3_000;
+// 待っているログインの見張りをやめる口（authCancel）
+const loginWatch = createLoginWatch('OpenCode');
 const nativeMessageId = (id, account) => id ? 'msg_'+crypto.createHash('sha256').update(`${account}:${id}`).digest('hex').slice(0,40) : undefined;
 const databaseFor=account=>opencodeDatabase(opencodeData(account),account?{}:process.env);
 const instructionOmissions=messages=>{
@@ -1155,22 +1158,28 @@ export const backend = {
       emit?.({ type: 'auth', phase: 'url', url: command, message: t('opencode.auth.runCommand') });
       const until = Date.now() + LOGIN_TIMEOUT_MS;
       let seen = authStamp();
-      while (Date.now() < until) {
-        await new Promise((r) => { const timer = setTimeout(r, LOGIN_POLL_MS); timer.unref?.(); });
-        // 資格情報は OpenCode が auth.json に書く。走っているサーバーは読み直さないので、ファイルが変わったときだけ起こし直して確かめる
-        // （サーバーは 1 本で約 760 MB。見張りのたびには起こさない）
-        const stamp = authStamp();
-        if (stamp === seen) continue;
-        seen = stamp;
-        providersCache = null;
-        await server.stop();
-        const now = ((await server.request('GET', '/provider').catch(() => null))?.connected) ?? [];
-        if (now.length) { emit?.({ type: 'auth', phase: 'done', message: t('opencode.auth.loggedIn') }); return; }
-      }
+      const watch = loginWatch.begin();
+      try {
+        while (Date.now() < until) {
+          await watch.pause(LOGIN_POLL_MS);
+          // 資格情報は OpenCode が auth.json に書く。走っているサーバーは読み直さないので、ファイルが変わったときだけ起こし直して確かめる
+          // （サーバーは 1 本で約 760 MB。見張りのたびには起こさない）
+          const stamp = authStamp();
+          if (stamp === seen) continue;
+          seen = stamp;
+          providersCache = null;
+          await server.stop();
+          const now = ((await server.request('GET', '/provider').catch(() => null))?.connected) ?? [];
+          watch.check();
+          if (now.length) { emit?.({ type: 'auth', phase: 'done', message: t('opencode.auth.loggedIn') }); return; }
+        }
+      } finally { watch.end(); }
       const message = t('opencode.auth.loginTimeout');
-      emit?.({ type: 'auth', phase: 'error', message });
-      throw new Error(message);
+      emit?.({ type: 'auth', phase: 'error', code: 'TIMEOUT', message });
+      throw loginTimeoutError(message);
     },
+    /** 待っているログインをやめる（見張りを止める）。login は CANCELLED で返る */
+    async cancel() { return loginWatch.cancel(); },
     async logout() {
       throw new Error(t('opencode.auth.logoutInCli'));
     },
