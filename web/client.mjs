@@ -1,3 +1,4 @@
+import { delegateResult, delegateTaskId } from './delegate-result.mjs';
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
@@ -6810,17 +6811,25 @@ function linkDelegateCard(card, input = null, result = null, ctx = null) {
   if (said && card) card.dataset.bgTitle = String(said).slice(0, 120);
   // ply_delegate の見出しの主役は依頼の題（無ければ依頼の 1 行目）。バックグラウンドの一覧と同じ語
   if (name && isDelegateTool(name) && input) retitleDelegate(card, input.title || said);
-  if (!name || card.querySelector(':scope > .tc-go')) return;
+  if (!name) return;
   if (isDelegateTool(name)) {
-    const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
+    const id = delegateTaskId(result);
     if (!id) { decorateFailedDelegate(card, result); return; }
+    if (card.dataset.taskId && card.dataset.taskId !== id) {
+      // 結果を読み直したら、前のタスクの内訳や操作を残さない。
+      for (const node of card.querySelectorAll('.rt-target-logo, .host-mark, .rt-request, .rt-where, .rt-detail, .git-delegate, .wt-delegate')) node.remove();
+      for (const key of ['routed', 'routeSig', 'hostId', 'dstate']) delete card.dataset[key];
+      cardRouting.delete(card);
+      const res = card.querySelector('.tc-res');
+      if (res) delete res.dataset.sig;
+    }
     card.dataset.taskId = id;
     // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
     const routing = delegateResult(result)?.routing;
     if (routing) cardRouting.set(card, routing);
-  } else if (!subagentToolsOf(ctx?.backend ?? activeBackendId()).has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
+  } else if (card.querySelector(':scope > .tc-go') || !subagentToolsOf(ctx?.backend ?? activeBackendId()).has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
   card.classList.add('tc-delegate');
-  card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
+  if (!card.querySelector(':scope > .tc-go')) card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
   const res = card.querySelector('.tc-res');
   if (res) watchValueWidth(res);
   if (card.dataset.taskId) decorateDelegateCard(card);
@@ -6846,12 +6855,6 @@ function retitleDelegate(card, title) {
 
 /** カード -> 結果から読んだ routing（タスクの一覧から外れていても出せるように） */
 const cardRouting = new WeakMap();
-/** ply_delegate の結果の JSON。エラーの文なら null */
-function delegateResult(result) {
-  const text = typeof result === 'string' ? result : typeof result?.text === 'string' ? result.text : '';
-  if (!text.trim().startsWith('{')) return null;
-  try { return JSON.parse(text); } catch { return null; }
-}
 const routingNames = {
   backend: (id) => fallbackName('backend', id, labelOf(id)),
   model: (backend, model) => (model ? fallbackName('model', backend, modelDisplayName(state.vocab.get(backend)?.models ?? {}, model)) : ''),
@@ -6919,7 +6922,7 @@ function decorateDelegateCard(card) {
   const auto = isAutoRouting(routing);
   // モデル・承認モードの表示名は語彙から。まだ無ければ取りに行き、届いたら理由の行を書き直す
   const missing = [routing.target, ...(routing.skipped ?? []).map(s => splitCandidate(s.candidate))].map(x => x?.backend).filter(b => b && !state.vocab.has(b));
-  for (const b of new Set(missing)) loadVocab(b).then(() => paintRouteLine(card, routing)).catch(() => {});
+  for (const b of new Set(missing)) loadVocab(b).then(() => { if (card.dataset.taskId === taskId) paintRouteLine(card, routing); }).catch(() => {});
   const head = card.querySelector('.tc-head');
   const label = head.querySelector('.tc-label');
   label.textContent = t('timeline.tool.label.delegate');
@@ -6957,7 +6960,7 @@ function decorateDelegateCard(card) {
     shell.dataset.gitHook = '1';
     shell.addEventListener('toggle', () => { if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); } });
     if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
-  }
+  } else if (shell?.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
 }
 /** 委譲カードの「作業場所」の行（worktree のとき。ブランチと「worktree」。ADR 0089）。開いたときに出す */
 function paintDelegateWorkspace(card) {
@@ -6978,7 +6981,7 @@ async function paintDelegateGit(card) {
   const task = taskById(card.dataset.taskId);
   if (!task?.sessionId) return;
   const res = await cmd('gitStatus', { sessionId: task.sessionId, summary: true }).catch(() => null);
-  if (!card.isConnected) return;
+  if (!card.isConnected || card.dataset.taskId !== task.taskId) return;
   card.querySelector('.git-delegate')?.remove();
   const row = renderDelegateGit(res?.git, { sessionId: task.sessionId });
   if (row) card.querySelector('.rt-where')?.after(row);

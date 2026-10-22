@@ -216,6 +216,8 @@ worktree はユーザーが指定したときだけ作る。ただし前回 work
 
 ### 委譲カード（2026-09-26）
 
+カードと子のタスクは、`ply_delegate` の結果の JSON にある `taskId` で結び付ける。結果が届くまでは子の会話への矢印を付けない。依頼文にほかのタスクの id があっても使わず、履歴の描き直しでも結果の値から結び付ける。
+
 会話の中の `ply_delegate` のツールカード（`web/client.mjs` の `decorateDelegateCard`・`paintDelegateStates`、文と内訳は `web/delegation-routing-view.mjs`）。**ツールのまとまり（§4.5）の外に 1 件ずつ出し、まとまりはここで切れる**（子は親のターンの後も動くので、閉じても状態が見える）。
 Channels のスレッドの作業ログに出る委譲ツールも同じカードで描く（`linkDelegateCard` に範囲を渡す。矢印はスレッドの一覧を開く。[ADR 0139](adr/0139-thread-subagents.md)）。
 **委譲先を指定した固定の委譲も自動と同じ形**（承認済み（2026-09-27）、[ADR 0032](adr/0032-pinned-delegation-card.md)）。
