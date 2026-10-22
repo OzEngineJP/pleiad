@@ -290,7 +290,7 @@
         "syncAcceptRestart": "Take the new key",
         "syncRestartChanged": "The key changed again in the meantime. Check what's shown and choose again.",
         "syncKeyUnverified": "The key that arrived couldn't be verified, so it wasn't taken and sync is paused",
-        "syncKeyUnverifiedHint": "Remove this PC on your Pleiad Plus account page, register it again, then get approval from a PC that holds the key.",
+        "syncKeyUnverifiedHint": "Removing this PC on your Pleiad Plus account page and registering it again means getting approval from a PC that holds the key once more. If this is the only PC that holds the key, removing it leads to recovery (a 72-hour wait; the sync data on the server is erased).",
         "syncStartOverOthersApproval": "Other PCs: sync pauses, and resumes once you approve them on this PC. Where both have the same item, the newer one is kept and the other stays in the sync copies for 30 days.",
         "syncApprove": {
           "mark": "Waiting for approval",

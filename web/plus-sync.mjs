@@ -14,7 +14,7 @@
 //   居ない → データの件数と回復（頼む・待つ・取り下げる・待ちが明けたら始め直す。ほかの PC の回復は今の鍵で止める）
 //   外された PC が今の鍵を持っていて、回復が頼まれている（status.recoveryAlert）→ 知らせと「回復を止める」
 //   前の鍵を持つ PC で、前の鍵では確かめられない新しい鍵が置かれた（wait.restarted。回復など）→ 自動では移らず「新しい鍵を受け取る」。
-//   届いた鍵を確かめられなかった（wait.unverified・restarted.unverified）→ 受け取らずに止めていることと、直し方
+//   届いた鍵を確かめられなかった（wait.unverified・restarted.unverified）→ 受け取らずに止めていることと、直し方（外して登録し直す・鍵を持つ PC が 1 台だけなら回復）
 //   update_required（この版では使えない api）→ 更新を促す。error が api_downgraded（券を取れた後に api が前の版を名乗った）→ 止めたことを知らせる
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
