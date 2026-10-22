@@ -23,6 +23,7 @@ Plus の api は、同期の口に券（`aud: "sync"`）を求め、鍵の受け
   - 新しい PC は、承認の窓で確認コードに使った PC が、そのとき受けた公開鍵で包んだ K だけを受ける。台帳の公開鍵は使わない。
   - 承認なしの引き継ぎ（`carry`）の包みには、前の K から作った印（HMAC）を nonce に入れる。前の K を持つ PC は、その印を確かめられたときだけ切り替える。確かめられなければ切り替えず、手元の状態も変えない。
   - 前の K の印を持たない K（回復・移行で作ったもの）へは、前の K を持つ PC は自動で移らない。人が「新しい鍵を受け取る」を選んでから、承認の窓を通して受け取る。
+- ログアウトで K を捨てても、受け取った・作った K の指紋（`keyId` と `resetPublicKey`。公開鍵だけ）は uid ごとに残す。ログインし直して手元に K が無いときは、台帳の公開鍵で開いた K が指紋と合う包みか、自分で包んだ（`wrappedBy` が自分）包みだけを受け取る。
 - 券を一度でも取れたアカウントで券の口が `404` を返したら、前の版の流れに戻らず止める（`update_required`・`api_downgraded`）。
 - 券の口が `404` の api（前の版。券を一度も取れていないアカウント）では、今までの流れ（自動の包み・確かめの窓つきの始め直し）で回す。10 分ごとに確かめ直す。
 - 鍵を渡す・渡さない・新しい鍵を受け取るは、このホストの画面からだけ呼べる。外された PC に回復が頼まれていることは、通知の一覧にもあなた待ちで出す。
@@ -43,9 +44,9 @@ Plus の api は、同期の口に券（`aud: "sync"`）を求め、鍵の受け
 
 - 新しい PC で同期を始めるには、鍵を持つ PC を開いて承認する手間が 1 回要る。鍵を持つ PC が申し込みに気付くのは、5 分ごとの見回りか「今すぐ同期」のとき。
 - 鍵を持つ PC がどれも使えないときは、始め直すまで 72 時間かかる。
-- 手元の秘密に `plus:syncJoin`・`plus:syncApprovals`・`plus:syncCarry`・`plus:syncRestart`・`plus:syncV2Seen` が増える。状態に `approvals`・`recoveryAlert`・`wait.unverified`・`wait.restarted` と `update_required` が増える。通知の一覧に、鍵を待つ PC・回復の頼み・新しい鍵での始め直しの行（`ask: 'syncApproval'`・`'syncRecovery'`・`'syncRestarted'`）が入る。
+- 手元の秘密に `plus:syncJoin`・`plus:syncApprovals`・`plus:syncCarry`・`plus:syncRestart`・`plus:syncV2Seen`・`plus:syncV2Fingerprints` が増える。状態に `approvals`・`recoveryAlert`・`wait.unverified`・`wait.restarted` と `update_required` が増える。通知の一覧に、鍵を待つ PC・回復の頼み・新しい鍵での始め直しの行（`ask: 'syncApproval'`・`'syncRecovery'`・`'syncRestarted'`）が入る。
 - 回復や移行のあと、前の K を持つ PC では、人が「新しい鍵を受け取る」を選び、承認を通す手間が 1 回要る。
-- 確かめられない包みを受けた PC は、受け取らずに止まる。直すには、その PC を外して登録し直し、承認を受け直す。
+- 確かめられない包みを受けた PC は、受け取らずに止まる。直すには、その PC を外して登録し直し、承認を受け直す。ログアウトして戻った PC は、指紋か自分で包んだ包みで、承認なしに元へ戻る。
 - 外した PC の手元には、外す前に受けた項目と前の K が残る。
 - 前の版の api の間は、今までの守り方のまま。
 - 仕組みと画面は [plus.md](../plus.md) の「同期の券と鍵の承認」に記載する。
