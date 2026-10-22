@@ -466,7 +466,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|update_required|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt, approvals, recoveryAlert }`（`totalBytes`・`limitBytes` は `state` の値。`wait` は鍵を待つ間に見せるもの。`approvals`・`recoveryAlert` は上の「同期の券と鍵の承認」。`inbox` は取り込むのを待っている数、`inboxAt` はその中で一番新しく届いた時刻）。変わるたびに `plusSyncStatus` イベントを全接続へ送る（ポーリングはしない）
 - 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し。鍵を持たない PC は `confirm { keyId, itemCount }` を付ける。足りない・合わなければ `{ confirmNeeded: true, status }` を返して何も消さない）・`plus.hostReregister`（利用者が外した PC を登録し直す）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く。hostScreenOnly）・`plus.syncApprove`・`plus.syncDeny`・`plus.syncAcceptRestart`・`plus.syncRecoveryRequest`・`plus.syncRecoveryCancel`・`plus.syncRecoveryComplete`・`plus.syncRecoveryStop`（v2 の api。上の節）・`plus.syncInbox`・`plus.syncInboxItem`・`plus.syncInboxTake`・`plus.syncInboxDrop`（受け入れ待ち。下の節）。変更系は設定 › Pleiad Plus の画面だけが呼ぶ。そのうち `plus.syncNow`・`plus.syncRecoveryCancel` のほか（同期の入り切り・やり直し・登録し直し・鍵を渡す・渡さない・新しい鍵を受け取る・回復・届いたものを書く・捨てる・写しを開く）は hostScreenOnly（このホストの画面からだけ。リモートの端末の画面からは `HOST_SCREEN_ONLY`、agent・CLI には出さない）
 
-### 同期で届いた skill と指示ファイル（ADR 0246）
+### 同期で届いた skill と指示ファイル（ADR 0250）
 
 ほかの PC から届いた skill（`skills/…`）と全体の指示ファイル（`instructions/…`）は、すぐには書かない。人が中身を見て「取り込む」を押したものだけを書く。消すもの（`deleted`）も同じで、押すまで消さない。どの PC から届いたものでも同じに扱う（前に鍵を渡した PC でも、毎回見る）。設定（`settings/…`）は今のまま自動で書く（受けた値は `normalize` を通る）。
 

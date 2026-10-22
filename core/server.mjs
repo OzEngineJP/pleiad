@@ -922,7 +922,7 @@ const inboxSources = createNotificationSources({
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
   hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
 });
-// 同期で届いた変更の受け入れ待ち（ADR 0246）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
+// 同期で届いた変更の受け入れ待ち（ADR 0250）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
 plusSync.onChange(({ inbox: count, inboxAt }) => {
   try {
     inbox.standing('syncInbox', count > 0 && inboxAt

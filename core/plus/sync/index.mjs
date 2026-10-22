@@ -9,7 +9,7 @@
 //   getSyncStatus(): { state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|error, lastSyncedAt, totalBytes,
 //     limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt }
 //     wait: 鍵を待つ間に見せるもの（keys.mjs の waitInfo）。sharedTo: 7 日の間に鍵を渡した新しい PC
-//     inbox・inboxAt: 受け入れ待ちの件数と、いちばん新しく届いた時刻（ADR 0246）
+//     inbox・inboxAt: 受け入れ待ちの件数と、いちばん新しく届いた時刻（ADR 0250）
 //     approvals: 鍵を渡す承認を待っている新しい PC [{ hostId, name, platform, code, at }]（v2 の api）
 //     recoveryAlert: この PC は外されたが今の鍵を持っていて、ほかの PC が回復を頼んでいる { requestedByName, readyAt, … }
 //   同期の券（ticket.mjs）: identity（ホストの鍵）を渡したときだけ使う。券の口が 404 の api では前の版の流れ

@@ -13,7 +13,7 @@
 //   - 既読は通知ごと（readAt）。会話の既読（readAt・markRead）とチャンネルの既読（channels.markRead）が進むと、対応する通知も既読になる（markSession・markChannel）
 //   - 上限: NOTIFICATION_MAX 件・NOTIFICATION_KEEP_MS（古い方から捨てる。既読を先に）。会話を消す・チャンネルをアーカイブすると、その行も消す
 //   - あなた待ちの承認はメモリにしか無く、再起動で消える。起動時に、決着していないあなた待ちを 'cancelled' で決着させる（settleAllWaiting）
-//   - 続いている状態のあなた待ち（standing。同期で届いた変更の受け入れ待ち（ADR 0246）・同期の鍵を待つ PC）は 1 つの名前に 1 行だけ。dedupeKey は `standing:<名前>:<版>`。
+//   - 続いている状態のあなた待ち（standing。同期で届いた変更の受け入れ待ち（ADR 0250）・同期の鍵を待つ PC）は 1 つの名前に 1 行だけ。dedupeKey は `standing:<名前>:<版>`。
 //     版（いちばん新しく届いた時刻）が進めば前の行を消して未読で載せ直し、件数だけ変われば同じ行の件数を直す。0 件になれば消す。起動時の決着から外す
 //
 //   createNotifications({ dataDir, emit, now }) → Notifications

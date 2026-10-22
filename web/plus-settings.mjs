@@ -5,7 +5,7 @@
 // 外した hostId を api が登録し直さないとき（host.error.permanent）は、同じボタンが鍵の作り直し（plusHostRebind）の確かめを出す。
 // api が更新を求めたとき（host.state update）は「Pleiad を更新してください」。
 // 見た目の部品は設定 › リモートと同じ（web/remote-parts.mjs、web/manage-panel.css の .rm-*）。見出しの丸は .rm-av。
-// 「同期」の「届いた変更 N 件」を押すと、このページの中身を届いた変更の面（web/plus-inbox.mjs。ADR 0246）に替える。
+// 「同期」の「届いた変更 N 件」を押すと、このページの中身を届いた変更の面（web/plus-inbox.mjs。ADR 0250）に替える。
 // 通知の一覧の ◆ の行からは openInbox で直に開く。届いた変更が増えたら（plusSyncStatus）一覧を読み直し、新しいものを上に足す
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';

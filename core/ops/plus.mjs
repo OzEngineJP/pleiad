@@ -74,7 +74,7 @@ export const plusOps = [
     hostScreenOnly: true,
     handler: (ctx, { confirm } = {}) => run(ctx, () => ctx.plus.syncReset(confirm ?? null)),
   }),
-  // 受け入れ待ち（ADR 0246）: ほかの PC から届いた skill・指示ファイル。中身を見せるので画面だけの口にする（MCP・CLI に出さない）。
+  // 受け入れ待ち（ADR 0250）: ほかの PC から届いた skill・指示ファイル。中身を見せるので画面だけの口にする（MCP・CLI に出さない）。
   // 取り込む・捨てるは ~/.claude などに書くので、この PC の画面だけ（つないだ端末からは呼べない）
   defineOp({
     id: 'plus.syncInbox', summary: 'agent:ops.plus.syncInbox.summary', risk: 'read',
