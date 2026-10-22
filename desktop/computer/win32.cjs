@@ -74,6 +74,7 @@ function createWin32(koffi) {
   const version = koffi.load('version.dll');
   const imm32 = koffi.load('imm32.dll');
   const iphlpapi = koffi.load('iphlpapi.dll');
+  const ole32 = koffi.load('ole32.dll');
   const f = {
     GetSystemMetrics: user32.func('int __stdcall GetSystemMetrics(int index)'),
     EnumDisplayMonitors: user32.func('bool __stdcall EnumDisplayMonitors(intptr_t hdc, void *clip, CU_MonitorEnumProc *cb, intptr_t lParam)'),
@@ -131,6 +132,7 @@ function createWin32(koffi) {
     QueryFullProcessImageNameW: kernel32.func('bool __stdcall QueryFullProcessImageNameW(intptr_t h, uint32_t flags, _Out_ uint8_t *buf, _Inout_ uint32_t *len)'),
     GetApplicationUserModelId: kernel32.func('int32_t __stdcall GetApplicationUserModelId(intptr_t h, _Inout_ uint32_t *len, _Out_ uint8_t *buf)'),
     SHGetPropertyStoreForWindow: shell32.func('int32_t __stdcall SHGetPropertyStoreForWindow(intptr_t hwnd, _In_ PLY_GUID *riid, _Out_ intptr_t *ppv)'),
+    CoTaskMemFree: ole32.func('void __stdcall CoTaskMemFree(intptr_t pv)'),
     GetCurrentProcessId: kernel32.func('uint32_t __stdcall GetCurrentProcessId()'),
     GetCurrentProcess: kernel32.func('intptr_t __stdcall GetCurrentProcess()'),
     GetLastError: kernel32.func('uint32_t __stdcall GetLastError()'),
@@ -305,10 +307,15 @@ function createWin32(koffi) {
         if (!ptr) return null;
         // NUL まで 1 文字ずつ読む（文字列の長さが分からないので、まとめて読んで確保の外へ出ないようにする）。AUMID は 128 文字まで
         let out = '';
-        for (let i = 0; i < 129; i += 1) {
-          const code = Number(koffi.decode(ptr + BigInt(i * 2), 'char16_t'));
-          if (!code) break;
-          out += String.fromCharCode(code);
+        try {
+          for (let i = 0; i < 129; i += 1) {
+            const code = Number(koffi.decode(ptr + BigInt(i * 2), 'char16_t'));
+            if (!code) break;
+            out += String.fromCharCode(code);
+          }
+        } finally {
+          // VT_LPWSTR の文字列は呼び出し側が CoTaskMemFree で放す（PropVariantClear と同じ。放さないと読むたびに漏れる）
+          try { f.CoTaskMemFree(ptr); } catch { /* 放せなくても値は使える */ }
         }
         return out || null;
       } catch { return null; }
