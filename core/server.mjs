@@ -2089,7 +2089,7 @@ const SHELL_JOBS_HOST = {
   stopBackground: async (sessionId, taskId) => ({ stopped: await shellBridge.stop(sessionId, taskId) }),
   getBackgroundTask: async (sessionId, taskId) => {
     const job = shellBridge.job(sessionId, taskId);
-    return job ? { id: job.jobId, kind: 'shell', label: job.command, status: job.running ? 'running' : 'completed', output: job.output } : null;
+    return job?.kind === 'start' ? { id: job.jobId, kind: 'shell', label: job.command, status: job.running ? 'running' : 'completed', output: job.output, command: job.command, cwd: job.cwd, startedAtMs: job.startedAt, exitCode: job.exitCode, stopped: Boolean(job.stopped), endedAt: job.endedAt } : null;
   },
 };
 function shellJobsChanged(sessionId) {
@@ -5061,7 +5061,7 @@ const opsSessionWork = {
   // 詳細の読み出しは停止から独立した操作
   background: async (sessionId, taskId) => {
     const found = findBackgroundTask(sessionId, taskId);
-    if (!found) return { task: null };
+    if (!found) return { task: await SHELL_JOBS_HOST.getBackgroundTask(sessionId, taskId) };
     const detail = await found.backend?.getBackgroundTask?.(sessionId, taskId);
     return { task: detail ?? { ...found.task, status: 'running', output: null } };
   },
@@ -5574,7 +5574,7 @@ async function runningWork() {
   // ply_shell の裏のジョブ（ADR 0227）。Pleiad のサーバーの子なので、引き継ぎでは止まる（held を付けない）
   for (const sessionId of shellBridge.sessionsWithJobs()) {
     const tasks = shellBackground(sessionId);
-    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString() });
+    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, capabilities: { backgroundDetails: true, stopBackground: true }, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString() });
   }
 
   const dueRows = schedule.list();

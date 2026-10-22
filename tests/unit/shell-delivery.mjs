@@ -79,11 +79,28 @@ export default async function (t) {
     const jobsOf = async () => (await c.cmd('running')).background.filter((x) => x.sessionId === sessionId).flatMap((x) => x.tasks);
     const listed = await until(async () => (await jobsOf()).find((x) => x.id === jobId));
     t.ok('start のジョブは会話の裏の一覧に kind: shell で出る', listed?.kind === 'shell', JSON.stringify(listed));
+    const entry = (await c.cmd('running')).background.find(x => x.sessionId === sessionId && x.tasks.some(y => y.id === jobId));
+    t.ok('ply_shell advertises output and stop capabilities to the UI', entry?.capabilities?.backgroundDetails === true && entry.capabilities.stopBackground === true);
+    const detail = await until(async () => {
+      const r = await c.cmd('loadBackground', { sessionId, taskId: jobId });
+      return r.task?.output?.includes('server up') ? r.task : null;
+    });
+    t.ok('Background details return real output, command, cwd and start time', detail?.output.includes('server up') && detail.command.includes('server up') && detail.cwd === ROOT && Number.isFinite(detail.startedAtMs));
     const notice = await until(async () => (await transcript(sessionId)).includes('Pleiad コマンド長時間通知'));
     t.ok('長い start のジョブは、止めずに会話へ知らせる（空いていれば新しいターン）', Boolean(notice));
     await c.cmd('stopBackground', { sessionId, taskId: jobId });
     const done = await until(async () => (await transcript(sessionId)).includes(`Pleiad シェルのジョブの終わり / ${jobId}`));
     t.ok('人が止めたジョブの終わりを会話へ知らせる', Boolean(done));
+    const final = await c.cmd('loadBackground', { sessionId, taskId: jobId });
+    t.ok('Completed background details keep final output and exit status', final.task?.status === 'completed' && final.task.output.includes('server up') && final.task.stopped === true && final.task.exitCode === null);
+    const { sessionId: naturalSession } = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
+    const natural = await reply(naturalSession, shell({ name: 'start', arguments: { command: 'echo final-output' } }), 'sd-start-0002');
+    const naturalId = /ジョブ (sh-[a-f0-9]+)/.exec(natural)?.[1];
+    const finished = await until(async () => {
+      const r = await c.cmd('loadBackground', { sessionId: naturalSession, taskId: naturalId });
+      return r.task?.status === 'completed' ? r.task : null;
+    });
+    t.ok('Naturally completed commands retain final output and exit 0', finished?.exitCode === 0 && finished.output.includes('final-output'));
     const after = await jobsOf();
     t.ok('止めたジョブは裏の一覧から消える', !after.some((x) => x.id === jobId), JSON.stringify(after));
   } finally {
