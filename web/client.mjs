@@ -6712,11 +6712,11 @@ async function paintCommandDetail(view) {
   }
   const got = data.task;
   if (got.status === 'completed') {
-    Object.assign(view.item, { live: false, status: got.stopped ? 'stopped' : got.exitCode ? 'failed' : 'completed', endedAt: got.endedAt });
+    Object.assign(view.item, { live: false, status: got.stopped ? 'stopped' : got.failed || got.exitCode ? 'failed' : 'completed', endedAt: got.endedAt });
     paintDetailHead(view.item);
   }
   status.textContent = [(got.status === 'completed' ? t('dialog.work.ended') : t('dialog.work.live')), ...(got.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(got.startedAtMs) })] : []),
-    ...(got.outputTruncated ? [t('dialog.work.truncated')] : [])].join(' · ');
+    ...(got.outputTruncated ? [got.outputTotalBytes != null ? t('dialog.work.truncatedOf', { size: formatBytes(got.outputTotalBytes) }) : t('dialog.work.truncated')] : [])].join(' · ');
   if (got.status === 'completed') for (const b of $('workHead').querySelectorAll('.work-stop')) b.disabled = true;
   const command = got.command || got.label || task.label || task.id;
   cwd.textContent = got.cwd ? t('dialog.work.cwd', { cwd: got.cwd }) : '';
