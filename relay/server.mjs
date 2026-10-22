@@ -373,8 +373,13 @@ export function createRelay(opts = {}) {
     if (!verdict.ok) {
       const code = DENY_CODES.has(verdict.code) ? verdict.code : CLOSE.UNAUTHORIZED;
       const reason = typeof verdict.reason === 'string' && DENY_REASON.test(verdict.reason) ? verdict.reason : 'denied';
-      // 4401 の断りは今の失敗と同じく IP ごとの回数に数える（サーバー全体の停止中を表す 'plus unavailable' は除く）
-      if (code === CLOSE.UNAUTHORIZED && reason !== 'plus unavailable') return fail(ws, code, reason);
+      // 4401 の断りは今の失敗と同じく IP ごとの回数に数える。数えないのは、サーバー全体の停止中を表す
+      // 'plus unavailable' と、差し込みが count: false を付けた断り（正しいクライアントでも起きる断り。
+      // 数えると同じ IP のほかの接続まで止めてしまう）
+      if (code === CLOSE.UNAUTHORIZED && reason !== 'plus unavailable' && verdict.count !== false) {
+        return fail(ws, code, reason);
+      }
+      if (verdict.count === false) log('info', 'auth-denied', { path: route, reason });
       return closeWs(ws, code, reason);
     }
     dispatch(ws, req, url, { hostId, tags: cleanTags(verdict.tags), admit: verdict.admit === true, pending });
