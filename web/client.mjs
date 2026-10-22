@@ -1,3 +1,4 @@
+import { terminalView, updateTerminal } from './terminal.mjs';
 import { delegateResult, delegateTaskId } from './delegate-result.mjs';
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
@@ -6175,7 +6176,7 @@ function renderScopedList(list, items) {
 /** 一覧を描き直す。詳細は選んでいる項目が変わったときだけ描き直す（読んでいる位置を保つ） */
 function renderBackground() {
   const items = dialogItems();
-  if (!items.some(x => x.key === bg.selected)) bg.selected = items[0]?.key ?? null;
+  if (!items.some(x => x.key === bg.selected) && !(bg.view?.item.group === 'command' && bg.view.key === bg.selected)) bg.selected = items[0]?.key ?? null;
   const { live, ended } = backgroundTotals(items);
   $('workCount').textContent = t('dialog.work.count', { live, ended });
   const list = $('workList');
@@ -6205,7 +6206,9 @@ function renderBackground() {
   if (commands.length) list.append(el('div', 'bg-group', t('dialog.work.groupCommands')), ...commands.map(listRow));
   if (!items.length) list.append(el('div', 'bg-empty', t('dialog.work.none')));
   $('workSplit').classList.toggle('showing', bg.narrowDetail && Boolean(bg.selected));
-  const item = items.find(x => x.key === bg.selected) ?? null;
+  let item = items.find(x => x.key === bg.selected) ?? null;
+  // Keep an open command's last output when it leaves the running list.
+  if (!item && bg.view?.item.group === 'command' && bg.view.key === bg.selected) item = { ...bg.view.item, live: false };
   if (bg.view?.key !== item?.key) return openDetail(item);
   // 同じ項目。見出し（状態・経過時間）だけ更新し、動いている子は続きを読み直す
   bg.view.item = item;
@@ -6314,7 +6317,7 @@ function paintDetailHead(item) {
       actions.append(stop);
     }
   }
-  if (item.group === 'command' && capsOf(item.entry.backend).stopBackground) {
+  if (item.group === 'command' && item.live !== false && (item.entry.capabilities ?? capsOf(item.entry.backend)).stopBackground) {
     actions.append(backgroundStopButton(item.entry.sessionId, item.task));
   }
   head.append(actions);
@@ -6328,6 +6331,7 @@ function detailNote(text) {
 /** 詳細を描く。項目の種類ごとに読み方が違うだけで、描く部品は会話と同じ */
 function openDetail(item) {
   const body = $('workBody');
+  clearTimeout(bg.view?.commandTimer);
   bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined } : null;
   body.replaceChildren();
   delete body.dataset.sessionId;
@@ -6368,6 +6372,11 @@ async function refreshDetail({ first = false, force = false } = {}) {
     if (bg.view === view) body.replaceChildren(el('div', 'work-head', t('dialog.work.readFailed', { error: e.message })));
   } finally {
     view.busy = false;
+    clearTimeout(view.commandTimer);
+    // The running list suppresses identical broadcasts; command output still changes.
+    if (bg.view === view && view.item.group === 'command' && view.item.live && $('workDialog').open) {
+      view.commandTimer = setTimeout(() => { if (bg.view === view) refreshDetail(); }, 4000);
+    }
     if (view.pendingRefresh && bg.view === view) {
       view.pendingRefresh = false;
       queueMicrotask(() => refreshDetail({ force: true }));
@@ -6667,40 +6676,48 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   return th;
 }
 
-/** 裏のコマンドの詳細: コマンド・作業場所・起動時刻・取れた出力。表示中は running の配信のたびに取り直す */
+/** 裏のコマンドの詳細。表示中は定期的に出力を取り直す。 */
 async function paintCommandDetail(view) {
   const body = $('workBody');
   const { task, entry } = view.item;
   if (!view.nodes) {
     const status = el('div', 'work-head');
     status.setAttribute('role', 'status');
-    const command = el('pre', 'work-command', task.label || task.id);
     const cwd = el('div', 'work-location');
-    const output = el('pre', 'work-output', '');
+    const output = terminalView();
     output.setAttribute('aria-label', t('dialog.work.outputLabel'));
-    view.nodes = { status, command, cwd, output };
-    body.replaceChildren(status, el('div', 'work-head', t('dialog.work.command')), command, cwd,
-      el('div', 'work-head', t('dialog.work.output')), output);
+    view.nodes = { status, cwd, output };
+    body.replaceChildren(status, cwd, output);
   }
-  const { status, command, cwd, output } = view.nodes;
-  const canRead = capsOf(entry.backend).backgroundDetails;
+  const { status, cwd, output } = view.nodes;
+  const canRead = (entry.capabilities ?? capsOf(entry.backend)).backgroundDetails;
   const live = backgroundHere().some(x => x.entry.sessionId === entry.sessionId && x.task.id === task.id);
   const data = canRead
     ? await cmd('loadBackground', { sessionId: entry.sessionId, taskId: task.id })
     : { task: live ? { ...task, output: null } : null };
   if (bg.view !== view) return;
   if (!data.task) {
+    view.item.live = false;
+    view.item.status = 'completed';
+    paintDetailHead(view.item);
     status.textContent = t('dialog.work.ended');
+    updateTerminal(output, { ...view.terminal, running: false, note: t('dialog.work.ended') });
     for (const b of $('workHead').querySelectorAll('.work-stop')) b.disabled = true;
     return;
   }
   const got = data.task;
-  status.textContent = [t('dialog.work.live'), ...(got.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(got.startedAtMs) })] : []),
+  if (got.status === 'completed') {
+    Object.assign(view.item, { live: false, status: got.stopped ? 'stopped' : got.exitCode ? 'failed' : 'completed', endedAt: got.endedAt });
+    paintDetailHead(view.item);
+  }
+  status.textContent = [(got.status === 'completed' ? t('dialog.work.ended') : t('dialog.work.live')), ...(got.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(got.startedAtMs) })] : []),
     ...(got.outputTruncated ? [t('dialog.work.truncated')] : [])].join(' · ');
-  command.textContent = got.command || got.label || task.label || task.id;
+  if (got.status === 'completed') for (const b of $('workHead').querySelectorAll('.work-stop')) b.disabled = true;
+  const command = got.command || got.label || task.label || task.id;
   cwd.textContent = got.cwd ? t('dialog.work.cwd', { cwd: got.cwd }) : '';
-  const text = got.output === null ? t('dialog.work.outputUnsupported') : got.output || t('dialog.work.noOutput');
-  if (output.textContent !== text) output.textContent = text;
+  view.terminal = { command, output: got.output ?? '', running: got.status !== 'completed' && got.output !== null,
+    exitCode: got.exitCode ?? null, note: got.output === null ? t('dialog.work.outputUnsupported') : got.stopped ? t('dialog.work.state.stopped') : '' };
+  updateTerminal(output, view.terminal);
 }
 
 function backgroundStopButton(sessionId, task) {
@@ -6947,7 +6964,8 @@ function paintDelegateWorkspace(card) {
 /** 委譲カードの「変更」の行。子の会話の作業場所で、会話の間に変わったファイルとコミットがあるときだけ */
 async function paintDelegateGit(card) {
   const task = taskById(card.dataset.taskId);
-  if (!task?.sessionId) return;
+  card.querySelector('.git-delegate')?.remove();
+  if (!task?.sessionId || !task.worktree) return;
   const res = await cmd('gitStatus', { sessionId: task.sessionId, summary: true }).catch(() => null);
   if (!card.isConnected || card.dataset.taskId !== task.taskId) return;
   card.querySelector('.git-delegate')?.remove();
@@ -7193,7 +7211,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { bg.view = null; bg.extra.clear(); bg.scope = null; });
+$('workDialog').addEventListener('close', () => { clearTimeout(bg.view?.commandTimer); bg.view = null; bg.extra.clear(); bg.scope = null; });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。

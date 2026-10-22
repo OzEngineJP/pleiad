@@ -47,6 +47,27 @@ export default async function(t) {
   assert.equal(card.querySelectorAll('.tc-go').length, 1);
   t.ok('結果が届いたら自分の id を使い、古い結び付きと内訳を残さない', true);
 
+  // Shared workspaces must never be attributed to one delegated child.
+  const gitStart = source.indexOf('async function paintDelegateGit(');
+  const gitCode = source.slice(gitStart, source.indexOf('\n}', gitStart) + 2) + '\npaintDelegateGit';
+  let gitCalls = 0, rendered = 0;
+  const gitTask = { taskId: B, sessionId: 'child' };
+  const paintGit = vm.runInNewContext(gitCode, {
+    taskById: () => gitTask,
+    cmd: async () => { gitCalls++; return { git: {} }; },
+    renderDelegateGit: () => { rendered++; return null; },
+  });
+  card.isConnected = true;
+  card.append(el('div', 'git-delegate', 'stale'));
+  await paintGit(card);
+  assert.equal(gitCalls, 0);
+  assert.equal(card.querySelector('.git-delegate'), null);
+  gitTask.worktree = { path: '/isolated', branch: 'work' };
+  await paintGit(card);
+  assert.equal(gitCalls, 1);
+  assert.equal(rendered, 1);
+  t.ok('Only worktree children query and render changes; shared children remove stale changes', true);
+
   const history = renderToolCall('mcp__ply_agents__ply_delegate', input);
   applyToolResult(history, result);
   link(history, input, result);

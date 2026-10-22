@@ -10,6 +10,7 @@ import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // 構造をパースし、葉のテキストを出力する瞬間にだけエスケープする。
 import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
+import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
 import { copyIcon, downloadIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
@@ -995,7 +996,7 @@ function drawRead(card, head, inp) {
 
 function drawWrite(card, head, inp) {
   head.append(pathSpan(inp.file_path));
-  const body = String(inp.content ?? "");
+  const body = String(inp.content ?? inp.CodeContent ?? "");
   if (body) card.append(diffBox("", body).box);
 }
 
@@ -1003,8 +1004,8 @@ function drawEdit(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   // Codex の fileChange: 変更したファイルが複数あれば、最初の 1 つに「ほか n ファイル」を添える
   if (Array.isArray(inp.files) && inp.files.length > 1) head.append(noteSpan(t("timeline.tool.moreFiles", { count: inp.files.length - 1, n: fmtN(inp.files.length - 1) })));
-  const a = String(inp.old_string ?? "");
-  const b = String(inp.new_string ?? "");
+  const a = String(inp.old_string ?? inp.TargetContent ?? "");
+  const b = String(inp.new_string ?? inp.ReplacementContent ?? "");
   if (inp.replace_all) head.append(noteSpan(t("timeline.tool.replaceAll")));
   if (a || b) card.append(diffBox(a, b).box);
 }
@@ -1013,7 +1014,7 @@ function drawMultiEdit(card, head, inp) {
   head.append(pathSpan(inp.file_path));
   const edits = Array.isArray(inp.edits) ? inp.edits : [];
   head.append(noteSpan(t("timeline.tool.edits", { count: edits.length, n: fmtN(edits.length) })));
-  for (const [i, e] of edits.slice(0, 10).entries()) {
+  for (const [i, e] of edits.filter(e => e?.old_string || e?.new_string).slice(0, 10).entries()) {
     const d = diffFold(e?.old_string, e?.new_string);
     d.firstChild.textContent = `${i + 1}. ${d.firstChild.textContent}`;
     card.append(d);
@@ -1307,7 +1308,7 @@ function selectPane(card, which) {
 }
 
 let paneSeq = 0;
-const wireTabs = (tabs, buttons, panes) => {
+const wireTabs = (tabs, buttons, panes, onPick) => {
   panes.forEach((p, i) => {
     if (!p.id) p.id = `tc-pane-${++paneSeq}`;
     if (!buttons[i].id) buttons[i].id = `tc-tab-${p.id}`;
@@ -1315,6 +1316,7 @@ const wireTabs = (tabs, buttons, panes) => {
     p.setAttribute("aria-labelledby", buttons[i].id);
   });
   const pick = (i) => {
+    onPick?.();
     buttons.forEach((x, j) => { x.classList.toggle("on", x === buttons[i]); x.setAttribute("aria-selected", String(x === buttons[i])); });
     panes.forEach((p, j) => p.classList.toggle("on", j === i));
   };
@@ -1462,6 +1464,8 @@ export function renderToolCall(name, input, opts) {
   details.open = Boolean(o.open);
   const head = el("summary", "tc-head");
   const body = el("div", "tc-details-body");
+  card.toolPaneChosen = Boolean(o.open);
+  details.addEventListener("toggle", () => { if (details.open) card.toolPaneChosen = true; });
   details.append(head, body);
   card.append(details);
   // 時刻の詳細のポップオーバー（summary の外・行の面とは別の面。押しても行は開かない）
@@ -1500,7 +1504,7 @@ export function renderToolCall(name, input, opts) {
     const bMain = tabButton(t(`timeline.tool.tab.${face.tab}`), face.icon);
     const bInput = tabButton(t("timeline.tool.tab.input"), "arrow");
     tabs.append(bMain, bInput);
-    wireTabs(tabs, [bMain, bInput], [paneMain, paneInput]);
+    wireTabs(tabs, [bMain, bInput], [paneMain, paneInput], () => { card.toolPaneChosen = true; });
     body.append(tabs, paneMain, paneInput);
     // 「入力」の面: キーと値の格子 ＋ 生の入力 JSON の折りたたみ（コンピューター操作は題を除く）
     const kvInp = draw === drawComputer
@@ -1514,12 +1518,14 @@ export function renderToolCall(name, input, opts) {
   // 1 面だけのツール（TODO）はタブを出さず、描いた中身の後ろに生の JSON の小さな折りたたみを残す
   if (!face.tab) paneMain.append(rawJsonFold(drawInp));
   // 主面が空なら「入力」を既定にする（差分・一覧が主面に入ったツールは主タブが既定）
-  selectPane(card, paneMain.children.length ? "main" : "input");
+  card.toolHasInputContent = Boolean(paneMain.querySelector(".tc-diff, .tc-todo, .tc-batch"));
+  selectPane(card, card.toolHasInputContent ? "main" : "input");
 
   card.toolChange = toolChange(raw, drawInp);
   if (draw === drawShell) {
     card.shellCommand = String(drawInp.command ?? "");
     card.shellPrompt = raw === "PowerShell" ? "PS> " : "$ ";
+    paneMain.append(termView(card.shellCommand, card.shellPrompt, "", null, true));
   }
 
   // 右端: 結果（走っている間は弧と経過秒。web/tool-bundle.mjs）。時刻のボタン。開閉の印
@@ -1539,6 +1545,7 @@ function resultText(r) {
   if (typeof r === "object") {
     if (typeof r.text === "string") return r.text;
     if (r.content != null) return resultText(r.content);
+    if (Object.keys(r).some(k => !["isError", "is_error", "truncated", "at", "endAt", "images"].includes(k))) return toJson(r);
   }
   return "";
 }
@@ -1558,15 +1565,11 @@ export function failureLine(body) {
   return clip(hit ?? lines.at(-1), 200);
 }
 
-/** 実行の出力の端末面（両テーマ共通の暗い面 .tc-term）。「$ コマンド」＋出力、失敗は末尾に終了コード */
-function termView(command, prompt, body, exitCode) {
-  const box = el("div", "tc-res-view tc-term");
-  box.append(el("span", "prompt", String(prompt ?? "$ ")));
-  const out = clip(String(body ?? "").replace(/^\n+/, ""), 20000);
-  // append は文字列をそのまま文字のノードとして足す（DOM シムも同じ）
-  box.append(String(command ?? "") + (out ? `\n${out}` : ""));
-  if (exitCode != null && exitCode !== 0) box.append(el("span", "prompt", `\nexit ${exitCode}`));
-  return box;
+/** 実行の出力の端末面（両テーマ共通の暗い面 .tc-term）。「$ コマンド」＋出力、末尾に判明した終了コード */
+function termView(command, prompt, body, exitCode, running = false) {
+  const box = terminalView();
+  box.classList.add("tc-res-view");
+  return updateTerminal(box, { command, prompt, output: clip(String(body ?? "").replace(/^\n+/, ""), 20000), exitCode, running });
 }
 
 /** 検索・探すの結果: 全部がファイルのパスなら、ファイルリンクの一覧。そうでなければ null */
@@ -1625,8 +1628,11 @@ function decorateComputerRow(node, head, resEl, info, result) {
 export function applyToolResult(node, result) {
   if (!node || typeof node.querySelector !== "function") return node;
 
+  if (node.querySelector(".tc-details")?.open) node.toolPaneChosen = true;
   // 呼び直されても二重に付かないよう、前回の結果を落としてから積む
-  for (const old of [...node.querySelectorAll(".tc-out, .tc-preview, .tc-res-view, .tc-errline")]) old.remove();
+  for (const old of [...node.querySelectorAll(".tc-out, .tc-preview, .tc-res-view, .tc-errline")]) {
+    if (!old.classList.contains("tc-term")) old.remove();
+  }
   // 結果が届いたなら承認は決着している（別の端末で押した・自動で通った・中断）。行を置き換えていた承認カードは外して行を戻す
   const pending = node.querySelector(".tc-appr, .tc-lockwait");
   if (pending) {
@@ -1689,10 +1695,13 @@ export function applyToolResult(node, result) {
   const detailsBody = node.querySelector(".tc-details-body");
   const mainPane = node.querySelector(".tc-pane-main") ?? detailsBody;
   const exitCode = exitCodeOf(body);
-  const view = !body ? null
-    : draw === drawShell ? termView(node.shellCommand, node.shellPrompt, body, exitCode)
+  const terminal = node.querySelector(".tc-term");
+  const view = draw === drawShell ? (terminal
+    ? updateTerminal(terminal, { command: node.shellCommand, prompt: node.shellPrompt, output: clip(body, 20000), exitCode })
+    : termView(node.shellCommand, node.shellPrompt, body, exitCode))
+    : !body.trim() ? null
     : (draw === drawGlob || draw === drawGrep) ? fileList(body) : null;
-  if (view && mainPane) mainPane.append(view);
+  if (view && mainPane && view.parentNode !== mainPane) mainPane.append(view);
 
   const output = el("div", "tc-out");
   output.append(el("div", "tc-section-label", (cut ? t("timeline.result.outputPartial") : t("timeline.result.output"))));
@@ -1702,11 +1711,15 @@ export function applyToolResult(node, result) {
   // 処理済みの見せ方があるツール（端末面・ファイル一覧）と ply_delegate（内訳の描きは client.mjs）は、
   // 生の出力を「入力」の面の折りたたみの奥へ。それ以外は主タブの面にそのまま（読む = 内容、委譲 = 結果のレポート）
   const raw = node.querySelector(".tc-json-body");
-  const intoFold = Boolean(view) || isPlyDelegateToolName(tool);
+  const intoFold = Boolean(view) || (isPlyDelegateToolName(tool) && !isError);
   if (raw && intoFold) raw.append(output);
   else if (mainPane) mainPane.append(output);
   else (detailsBody ?? node).append(output);
-  if (view || !intoFold) selectPane(node, "main");
+  // Only unopened cards follow arriving results; a person keeps the pane they opened.
+  const hasResult = Boolean(body.trim() || result?.images?.length);
+  const plan = tool === "ExitPlanMode" && !isError;
+  if (!node.toolPaneChosen) selectPane(node, !plan && (hasResult || node.toolHasInputContent) ? "main" : "input");
+  if (isError && mainPane && !intoFold) mainPane.prepend(output);
   for (const img of computer ? [] : result?.images ?? []) {
     const src = presentImg(img.url ?? img.dataUri ?? "");
     if (!src) continue;

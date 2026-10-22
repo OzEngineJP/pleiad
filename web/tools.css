@@ -109,6 +109,9 @@
 .tc-term{background:var(--surface-console);color:var(--ink-console);border-radius:var(--r-s);padding:8px 12px;
   font:var(--fs-s)/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
 .tc-term .prompt{color:var(--ink-console-weak);user-select:none}
+.tc-term-cursor{display:inline-block;width:.6em;height:1em;vertical-align:text-bottom;background:currentColor;animation:term-cursor 1s step-end infinite}
+@keyframes term-cursor{50%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.tc-term-cursor{animation:none}}
 
 /* ---- 開いた中身 ---- */
 

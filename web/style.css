@@ -1829,8 +1829,6 @@ main.dropping #log{background:var(--surface-1)}
 .state-mark{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}
 .state-mark svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .work-stop{flex:none}
-.work-command,.work-output{margin:0;padding:12px;background:var(--surface-1);border-radius:var(--r-m);white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--fs-xs);min-width:0}
-.work-output{max-height:none;overflow:auto}
 .work-location{font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 @media (max-width:700px){
   #workDialog{width:100vw;height:100dvh;border-radius:0}
