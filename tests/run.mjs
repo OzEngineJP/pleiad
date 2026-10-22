@@ -487,6 +487,7 @@ const SUITES = [
   './unit/audit-self.mjs',
   './unit/markdown-xss.mjs',
   './unit/tools-render.mjs',
+  './unit/delegate-card.mjs',
   './unit/tool-bundle.mjs',
   // ツールの行（v4）: 行頭アイコン・時刻ボタンとポップオーバー・主面⇄入力のタブ・端末面・履歴の at/endAt
   './unit/tool-run-ui.mjs',
