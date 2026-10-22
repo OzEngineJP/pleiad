@@ -159,6 +159,22 @@ class FileDeviceStore(val dir: File, private val cipher: SecretCipher = PlainCip
     fun host(hostId: String, via: String = "own"): HostRecord? = hosts().find { it.hostId == hostId && it.via == via }
 
     private fun secretKeyOf(hostId: String, via: String) = if (via == "plus") "plus:$hostId" else "host:$hostId"
+    private fun pendingKeyOf(hostId: String) = "plusPending:$hostId"
+
+    /**
+     * The new key a Plus request uses after the host revoked this device's key. Kept until the host allows it: the host
+     * remembers a denied key for a while, so asking again with the same key gets the same answer (not a new window).
+     */
+    fun pendingPlusKey(hostId: String): KeyPair = synchronized(lock) {
+        val secrets = readSecrets()
+        secrets.optString(pendingKeyOf(hostId)).takeIf { it.isNotEmpty() }?.let { return KeyPair.fromPrivate(PairingCodec.b64urlDecode(it)) }
+        KeyPair.generate().also { writeSecrets(secrets.put(pendingKeyOf(hostId), PairingCodec.b64urlEncode(it.privateKey))) }
+    }
+
+    fun dropPendingPlusKey(hostId: String) = synchronized(lock) {
+        val secrets = readSecrets()
+        if (secrets.remove(pendingKeyOf(hostId)) != null) writeSecrets(secrets)
+    }
 
     fun credentials(hostId: String, via: String = "own"): HostCreds? = synchronized(lock) {
         val h = readHosts().find { it.hostId == hostId && it.via == via } ?: return null
@@ -179,7 +195,9 @@ class FileDeviceStore(val dir: File, private val cipher: SecretCipher = PlainCip
         require(Regex("^[a-z2-7]{26}$").matches(c.hostId)) { "invalid hostId" }
         val secret = JSONObject().put("token", c.token)
         if (keyPair != null) secret.put("key", PairingCodec.b64urlEncode(keyPair.privateKey))
-        writeSecrets(readSecrets().put(secretKeyOf(c.hostId, via), secret))
+        val secrets = readSecrets().put(secretKeyOf(c.hostId, via), secret)
+        if (via == "plus") secrets.remove(pendingKeyOf(c.hostId))
+        writeSecrets(secrets)
         val list = readHosts()
         val prev = list.find { it.hostId == c.hostId && it.via == via }
         val rec = HostRecord(
@@ -204,6 +222,7 @@ class FileDeviceStore(val dir: File, private val cipher: SecretCipher = PlainCip
     fun removeHost(hostId: String, via: String = "own"): HostRecord? = synchronized(lock) {
         val secrets = readSecrets()
         secrets.remove(secretKeyOf(hostId, via))
+        if (via == "plus") secrets.remove(pendingKeyOf(hostId))
         writeSecrets(secrets)
         val list = readHosts()
         val hit = list.find { it.hostId == hostId && it.via == via }
@@ -278,15 +297,22 @@ class RemoteDevice(
      *   mode "admit": background reconnect of a key the host already allowed (no window on the host).
      *   mode "pair":  the person picked the host; an unknown key goes to the approval window on the host's screen.
      * Key order: the Plus record's key, then this host's QR record's key (already allowed: no window), then deviceKey.
-     * In "pair" mode a revoked key is replaced by a new one once (that one goes to the approval window).
+     * In "pair" mode a revoked key is replaced by a new one once (that one goes to the approval window). The new key is kept
+     * until the host allows it, so asking again after a deny gets the host's answer for that key (no new window within its wait).
      */
     fun admitPlus(hostId: String, mode: String, uid: String?, run: (KeyPair) -> HostCreds): HostRecord {
         val first = store.keyFor(hostId, "plus") ?: store.keyFor(hostId, "own") ?: store.identity()
         var used = first
         val creds = try { run(first) } catch (e: PairError) {
             if (!(mode == "pair" && e.code == "revoked")) throw e
-            used = KeyPair.generate()
-            run(used)
+            used = store.pendingPlusKey(hostId)
+            try { run(used) } catch (e2: PairError) {
+                // the kept key was allowed and then revoked without this device saving it: start over with another new key
+                if (e2.code != "revoked") throw e2
+                store.dropPendingPlusKey(hostId)
+                used = store.pendingPlusKey(hostId)
+                run(used)
+            }
         }
         val rec = store.saveHost(creds, via = "plus", uid = uid, keyPair = used)
         if (mode == "pair") repaired(rec, used)

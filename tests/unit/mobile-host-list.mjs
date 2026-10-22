@@ -137,4 +137,18 @@ export default async function (t) {
     r.hosts.children[0].children[0].onclick(); await settle();
     t.ok(`承認を頼んで ${code}: 行に ${text}`, asked[0]?.[0] === 'admit' && rowText(r.hosts.children[0]) === text, `${JSON.stringify(asked)} ${rowText(r.hosts.children[0])}`);
   }
+
+  // 断られた直後の読み直し（一覧の取り直し）が遅くても、断られた旨はすぐ行に出る。1 時間の間にもう一度選んでも、PC が断れば同じ説明
+  {
+    let lists = 0;
+    const asked = [];
+    r = await run(null, asked, {
+      list: () => (++lists === 1 ? Promise.resolve({ hosts: [revoked], plusError: null }) : new Promise(() => {})),
+      admit: async a => { asked.push(['admit', a]); throw Object.assign(new Error('denied'), { code: 'denied' }); },
+    });
+    r.hosts.children[0].children[0].onclick(); await settle();
+    t.ok('断られた旨は、一覧の取り直しを待たずに出る', lists === 2 && rowText(r.hosts.children[0]) === 'err.plus-denied', `${lists} ${rowText(r.hosts.children[0])}`);
+    r.hosts.children[0].children[0].onclick(); await settle();
+    t.ok('もう一度選んで断られても、待ち続けずに同じ説明', asked.length === 2 && rowText(r.hosts.children[0]) === 'err.plus-denied', `${asked.length} ${rowText(r.hosts.children[0])}`);
+  }
 }

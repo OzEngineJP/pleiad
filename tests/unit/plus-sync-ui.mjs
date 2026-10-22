@@ -152,11 +152,17 @@ export default async function (t) {
   t.ok('quota: 「同期をやり直す」は出るが「今すぐ同期」は出さない', buttonTexts(nodes).includes('同期をやり直す') && !buttonTexts(nodes).includes('今すぐ同期'));
 
   // error: 誤りの code ごとの一言と「今すぐ同期」「同期をやり直す」
-  for (const [error, want] of [['unavailable', 'サーバーにつながりません'], ['network', 'サーバーにつながりません'], ['rate_limited', '自動でやり直します'], ['conflict', 'もう一度お試しください']]) {
+  for (const [error, want] of [['network', 'サーバーにつながりません'], ['rate_limited', '自動でやり直します'], ['conflict', 'もう一度お試しください']]) {
     nodes = render({ ...BASE, state: 'error', error });
     t.ok(`error(${error}): 「同期できませんでした」と「${want}」`, text(nodes).includes('同期できませんでした') && text(nodes).includes(want), text(nodes));
     t.ok(`error(${error}): 「今すぐ同期」と「同期をやり直す」`, buttonTexts(nodes).includes('今すぐ同期') && buttonTexts(nodes).includes('同期をやり直す'));
   }
+
+  // Plus が止まっている（api の 503 unavailable）: 誤りではなく待ち。「同期できませんでした」「サーバーにつながりません」は出さない
+  nodes = render({ ...BASE, state: 'error', error: 'unavailable' });
+  const pausedTx = text(nodes);
+  t.ok('error(unavailable): 「Pleiad Plus が一時的に止まっています（再開を待っています）」と自動で再開する旨', pausedTx.includes('Pleiad Plus が一時的に止まっています（再開を待っています）') && pausedTx.includes('再開したら自動で同期します') && !pausedTx.includes('同期できませんでした') && !pausedTx.includes('サーバーにつながりません'), pausedTx);
+  t.ok('error(unavailable): 「今すぐ同期」だけ（やり直しも断られる）', buttonTexts(nodes).includes('今すぐ同期') && !buttonTexts(nodes).includes('同期をやり直す'), buttonTexts(nodes).join());
 
   // stopped: アカウントの停止（403 account_disabled・not_plus）。誤りではないので「同期できませんでした」は出さず、自動で戻ることを書く
   for (const [error, want] of [['account_disabled', 'このアカウントでは今は同期を使えません'], ['not_plus', 'Pleiad Plus に戻ると']]) {

@@ -303,6 +303,22 @@ export default async function (t) {
     st.account.limits = { hosts: 4, devicesPerHost: 4, sessionsPerHost: 2 };
     await syncHost();
 
+    // ---- 取り消された鍵で人が選び直す: 新しい鍵は PC の窓へ。拒否されたら次もその鍵で申し込む（1 時間は窓を出さずに断られる） ----
+    await device.close(hostId);
+    const plusDevice = (await remoteHost.status()).devices.find(d => d.via === 'plus');
+    await remoteHost.revoke(plusDevice.id);
+    const pairAgain = () => device.admit({ hostId, hostPublicKey, relayUrl: officialUrl, idToken: plus.issueIdToken(UID), uid: UID, mode: 'pair', onCode: () => {} });
+    const asking = rejects(pairAgain());
+    const freshReq = await until(async () => (await remoteHost.status()).pairing.requests.find(r => r.via === 'plus'), 10_000, '取り消し後の承認の窓');
+    await remoteHost.deny(freshReq.id);
+    const errDenied = await asking;
+    t.ok('取り消された鍵で選び直すと新しい鍵で窓に出て、拒否で denied', errDenied?.code === 'denied', errDenied?.code ?? String(errDenied));
+    const errAgain = await rejects(within(pairAgain(), 5000, '拒否の直後の申し込み'));
+    const windowsAfter = (await remoteHost.status()).pairing.requests.filter(r => r.via === 'plus');
+    t.ok('拒否の直後にもう一度選んでも、同じ鍵で申し込むので窓を出さずに denied',
+      errAgain?.code === 'denied' && windowsAfter.length === 0, `${errAgain?.code ?? String(errAgain)} windows=${windowsAfter.length}`);
+    for (const r of windowsAfter) await remoteHost.deny(r.id).catch(() => {});
+
     // ---- 忘れる (remove) ----
     await device.remove(hostId, 'plus');
     const hostsAfterRemove = await device.list();

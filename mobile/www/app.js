@@ -166,6 +166,7 @@
       else if (e?.code === 'expired' || e?.code === 'timeout') notes.set(h.hostId, t('err.plus-expired'));
       else if (e?.code === 'unknown-host') notes.set(h.hostId, t('err.plus-removed'));
       else if (e?.code !== 'aborted') toast(errorText(e));
+      render(); // show the reason now: the list read below can take a while
       await refresh();
     }
   }

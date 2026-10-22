@@ -94,6 +94,8 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
   if (plus.host?.state === 'taken') return { kind: 'settings', text: t('settings.plus.hostTaken') };
   if (plus.connect === false) return { kind: 'off', text: remoteStatus?.relayUrl ? t('settings.remote.state.plusOff') : t('settings.remote.state.off') };
   if (plus.host?.state === 'limit' || plus.link?.error?.code === 'limit' || s.error?.code === 'limit') return { kind: 'text', text: t('settings.plus.hostLimit') };
+  // Plus が止まっている（api の 503・中継の 4401 plus unavailable）: つながらないのではなく、再開を待っている
+  if (plus.link?.error?.code === 'unavailable') return { kind: 'text', text: t('settings.plus.paused') };
   if (s.reachable === false || plus.link?.state === 'retrying' || plus.link?.state === 'error') return { kind: 'text', text: t('settings.remote.failed') };
   if (plus.link?.state === 'connected') {
     const where = s.account?.email;

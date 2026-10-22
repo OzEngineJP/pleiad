@@ -236,8 +236,8 @@ try {
   // ---- error（503 unavailable。手元の変更で run を起こす） ----
   plus.state.syncFail.push({ method: 'GET', path: /^\/v1\/sync\/items/, status: 503, code: 'unavailable', count: 200 });
   await touchSkill('skill-b');
-  const errTx = await waitText('#plusSyncSection', '同期できませんでした', 60_000);
-  ok('error: 「同期できませんでした」と「サーバーにつながりません」と「今すぐ同期」', errTx.includes('サーバーにつながりません') && errTx.includes('今すぐ同期'), errTx);
+  const errTx = await waitText('#plusSyncSection', '一時的に止まっています', 60_000);
+  ok('503: 「Pleiad Plus が一時的に止まっています（再開を待っています）」と「今すぐ同期」、「同期できませんでした」は出さない', errTx.includes('再開したら自動で同期します') && errTx.includes('今すぐ同期') && !errTx.includes('同期できませんでした'), errTx);
   await shots(page, 'error');
   plus.state.syncFail.length = 0;
 

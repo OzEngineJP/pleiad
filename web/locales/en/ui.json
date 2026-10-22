@@ -213,6 +213,8 @@
         "syncErrUnavailable": "Can't reach the server. It will retry automatically.",
         "syncErrRetry": "It will retry automatically.",
         "syncErrOther": "Please try again.",
+        "paused": "Pleiad Plus is paused for now (waiting for it to resume)",
+        "syncPausedNote": "Sync resumes on its own when it's back.",
         "syncStopped": "Sync is paused",
         "syncStoppedDisabled": "Sync isn't available for this account right now. It will resume automatically once it is.",
         "syncStoppedNotPlus": "It will resume automatically when you're back on Pleiad Plus.",
@@ -2752,6 +2754,17 @@
     "connLostHost": "Host is offline. Reconnecting…",
     "reconnected": "Reconnected.",
     "reconnectedAt": "Reconnected at {{time}}.",
+    "remotePaused": "Pleiad Plus is paused for now (waiting for it to resume)",
+    "remoteStop": {
+      "back": "Back to hosts",
+      "revoked": { "title": "The host revoked this device", "body": "Go back to the host list to ask for approval again." },
+      "reapprove": { "title": "The host needs to approve this device again", "body": "Go back to the host list, pick this PC, and approve on the PC's screen." },
+      "removed": { "title": "This PC was removed from the Pleiad Plus account", "body": "On that PC, open Settings › Pleiad Plus and press \"Register this PC again\" to connect again." },
+      "blocked": { "title": "This account can't use the official relay", "body": "Check the state of your Pleiad Plus account." },
+      "limit": { "title": "This account has reached its limit", "body": "Remove a device or PC you no longer use to connect again." },
+      "update": { "title": "This version of Pleiad can't use the official relay", "body": "Update Pleiad." },
+      "signed-out": { "title": "Signed out of Pleiad Plus", "body": "Go back to the host list and sign in again." }
+    },
     "authStale": {
       "title": "This page's access token is out of date, so it can't connect.",
       "body": "Reopen the page with the URL shown when the server started. Your unsent text is kept.",
@@ -3741,6 +3754,13 @@
       "offline": "Can't reach the relay",
       "host-offline": "Host is offline",
       "revoked": "Revoked",
+      "reapprove": "Needs approval again",
+      "removed": "Removed from Plus",
+      "blocked": "Can't use the official relay",
+      "limit": "Limit reached",
+      "update": "Update needed",
+      "signed-out": "Signed out",
+      "paused": "Plus is paused",
       "stopped": "Disconnected"
     },
     "pop": {

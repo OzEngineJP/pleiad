@@ -213,6 +213,8 @@
         "syncErrUnavailable": "サーバーにつながりません。しばらくして自動でやり直します。",
         "syncErrRetry": "しばらくして自動でやり直します。",
         "syncErrOther": "もう一度お試しください。",
+        "paused": "Pleiad Plus が一時的に止まっています（再開を待っています）",
+        "syncPausedNote": "再開したら自動で同期します。",
         "syncStopped": "同期は止まっています",
         "syncStoppedDisabled": "このアカウントでは今は同期を使えません。使えるようになると自動で再開します。",
         "syncStoppedNotPlus": "Pleiad Plus に戻ると自動で再開します。",
@@ -2688,6 +2690,17 @@
     "connLostHost": "ホストがオフラインです。再接続しています…",
     "reconnected": "再接続しました。",
     "reconnectedAt": "{{time}} に再接続しました。",
+    "remotePaused": "Pleiad Plus が一時的に止まっています（再開を待っています）",
+    "remoteStop": {
+      "back": "ホストの一覧へ",
+      "revoked": { "title": "この端末はホストで取り消されました", "body": "ホストの一覧に戻ると、承認を頼み直せます。" },
+      "reapprove": { "title": "ホストでもう一度の許可が要ります", "body": "ホストの一覧に戻ってこの PC を選び、PC の画面で許可してください。" },
+      "removed": { "title": "この PC は Pleiad Plus のアカウントから外されています", "body": "その PC の 設定 › Pleiad Plus で「この PC を登録し直す」を押すと、またつなげます。" },
+      "blocked": { "title": "このアカウントでは公式の中継を使えません", "body": "Pleiad Plus のアカウントの状態を確かめてください。" },
+      "limit": { "title": "このアカウントの上限に達しています", "body": "使っていない端末や PC を外すと、またつなげます。" },
+      "update": { "title": "この版の Pleiad では公式の中継を使えません", "body": "Pleiad を更新してください。" },
+      "signed-out": { "title": "Pleiad Plus からログアウトしています", "body": "ホストの一覧に戻って、ログインし直してください。" }
+    },
     "authStale": {
       "title": "このページの認証が古いため、接続できません。",
       "body": "サーバーの起動時に表示された URL で、ページを開き直してください。書きかけの文章は残ります。",
@@ -3632,6 +3645,13 @@
       "offline": "中継につながりません",
       "host-offline": "ホストがオフライン",
       "revoked": "取り消されました",
+      "reapprove": "もう一度の許可が要ります",
+      "removed": "Plus から外されました",
+      "blocked": "公式の中継を使えません",
+      "limit": "上限に達しています",
+      "update": "更新が要ります",
+      "signed-out": "ログインしていません",
+      "paused": "Plus が止まっています",
       "stopped": "接続を止めました"
     },
     "pop": {

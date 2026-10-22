@@ -179,7 +179,8 @@ class PleiadRemotePlugin : Plugin() {
             try {
                 val app = context.applicationContext as PleiadApp
                 val host = app.plus.cachedHosts().hosts.find { it.hostId == hostId } ?: throw IllegalArgumentException("unknown-host")
-                val token = app.plus.currentIdToken() ?: throw PairError("plus-signed-out")
+                // the ticket call refreshes the ID token itself on a 401; the person is waiting, so no forced refresh first
+                val token = app.plus.idToken() ?: throw PairError("plus-signed-out")
                 val relay = app.plus.currentRelayUrl() ?: throw PairError("unreachable")
                 val uid = app.plus.currentUid()
                 val rec = device.admitPlus(hostId, PlusAdmission.MODE_PAIR, uid) { kp ->

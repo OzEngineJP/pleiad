@@ -284,7 +284,13 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
       break;
     case 'error': {
       const code = s.error;
-      const detail = code === 'unavailable' || code === 'network' ? t('settings.plus.syncErrUnavailable')
+      if (code === 'unavailable') {
+        // api の 503: Pleiad Plus が止まっている。誤りではなく待ち（engine が間をおいてやり直す）。やり直し（reset）も断られるので出さない
+        live.append(el('p', 'rm-weak', t('settings.plus.paused')), el('p', 'rm-sub', t('settings.plus.syncPausedNote')));
+        act(t('settings.plus.syncNow'), onNow, 'btn', 'syncNow');
+        break;
+      }
+      const detail = code === 'network' ? t('settings.plus.syncErrUnavailable')
         : code === 'rate_limited' ? t('settings.plus.syncErrRetry') : t('settings.plus.syncErrOther');
       live.append(el('p', 'rm-err', t('settings.plus.syncFailed')), el('p', 'rm-sub', detail));
       act(t('settings.plus.syncNow'), onNow, 'btn', 'syncNow');

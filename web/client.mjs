@@ -369,7 +369,9 @@ const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args
   visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
-  time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
+  time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState(),
+  // モバイルの殻: 線が止まった案内から、ホストの一覧へ戻れる（殻の plyRemote は文書の頭で入る）
+  leave: remoteInfo(window.plyRemote)?.shell === "mobile" && typeof window.plyRemote.backToHosts === "function" ? () => window.plyRemote.backToHosts() : null });
 // 作ったばかりで、いま select している会話の id。開き直しと違い入力欄が正本（saveDraft・送信の予約・送信ボタンが見る）
 let freshSessionId = null;
 // 新しい会話を作っている間に押された送信の予約（submit）。「取り消す」で null
@@ -10594,11 +10596,14 @@ updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: o
 // 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。
 // 設定の間は引き出しの見た目が効かないので、閉じないと「会話に戻る」で会話ではなく引き出しが出ていた
 function openSettings() { setDrawer(false); onboarding.open(); }
-/** リモートの窓: 中継・ホストにつながらない間は、切れた一行もバッジと同じ理由の語で書く（web/remote-badge.mjs の状態） */
+/**
+ * リモートの窓: 線の状態（web/remote-badge.mjs と同じ値）を接続の状態へ渡す。中継・ホストにつながらない間は理由の語で、
+ * 取り消し・外された・止められた ほかは「何が起きたか・どうすればよいか」、Plus が止まっている間は待っている旨を出す
+ */
 function watchRemoteReason() {
   const remote = window.plyRemote;
   if (!remoteInfo(remote)) return;
-  const apply = (s) => connStatus.setReason(s?.state === "offline" ? "relay" : s?.state === "host-offline" ? "host" : null);
+  const apply = (s) => connStatus.setRemoteState(s?.state ?? null);
   Promise.resolve(remote.status?.()).then(apply).catch(() => {});
   remote.onStatus?.(apply);
 }

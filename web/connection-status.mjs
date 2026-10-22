@@ -5,6 +5,10 @@
 //   操作が要る（このページのトークンが古い）: 続けて 2 回開けなかったら HTTP で 1 回だけ確かめる（check）。
 //     401 なら再接続をやめ、入力欄の上に強い字の見出しと次の一手（起動時に表示された URL で開き直す）、「再確認」を出す。
 //     脇の幅によらず出し、送信は押せなくする（blocksSend）。押したら「確認しています…」→ 確かめた時刻と結果をその場に書く
+//   リモートの窓で線が止まった（取り消し・外された・止められた・上限・更新が要る・ログアウト）: 待っても戻らない。
+//     回る印も「再接続しています」も出さず、開き直さない。入力欄の上に強い字の見出しと次の一手（モバイルの殻なら「ホストの一覧へ」）。
+//     Plus が止まっている（paused）は待つ状態: 「一時的に止まっています（再開を待っています）」の一行。どちらも脇の幅によらず出し、送信は押せない。
+//     線が戻ったら（接続中・接続済み・中継やホストを待つ）、すぐ開き直して上の「切れた」に戻る
 //
 // 読み上げは画面外の role=status（live）1 か所だけ。切れたとき・戻ったとき・案内に替えたとき・確かめた結果を 1 回ずつ読む。
 // DOM は触る要素だけ受け取る（tests/unit/connection-status.mjs が最小の DOM で回す）。
@@ -20,8 +24,12 @@
  * @param {() => Promise<'ok'|'denied'|'unreachable'>} o.check  今のトークンが HTTP で通るか
  * @param {() => void} o.reconnect  WebSocket を開き直す
  * @param {() => void} [o.onChange] 送信の押せる・押せないが変わったとき
+ * @param {() => void} [o.leave]    ホストの一覧へ戻る（モバイルの殻の backToHosts）。無ければ止まった案内にボタンを出さない
  */
-export function createConnectionStatus({ note, sideLine, live, t, time, runMark, check, reconnect, onChange = () => {},
+/** 待っても戻らない線の状態（core/remote/device-link.mjs・Android の DeviceLink）。stopped は窓を開いた直後にも出るので含めない */
+const STOP_STATES = new Set(['revoked', 'reapprove', 'removed', 'blocked', 'limit', 'update', 'signed-out']);
+
+export function createConnectionStatus({ note, sideLine, live, t, time, runMark, check, reconnect, onChange = () => {}, leave = null,
   delay = 1500, retryMs = 1500, minBusy = 500, doneMs = 6000, setTimer = setTimeout, clearTimer = clearTimeout, now = () => Date.now() }) {
   let phase = 'online';     // online | down（自動で戻る見込み）| stale（トークンが古い）
   let shown = false;        // 切れた一行を出したか（1.5 秒続いた）
@@ -29,6 +37,7 @@ export function createConnectionStatus({ note, sideLine, live, t, time, runMark,
   let failedOpens = 0;      // 続けて開けなかった回数
   let checking = false;
   let reason = null;        // リモートの窓で、中継・ホストにつながらない理由（relay | host）
+  let held = null;          // リモートの窓で線が止まっている状態（STOP_STATES の 1 つ | paused）。この間は開き直さない
   let result = null;        // 案内の中の確認の結果 { kind: checking | stale | unreachable, at }
   let manual = false;       // 「再確認」から戻ろうとしている
   let done = null;          // 「再確認」から戻った時刻（しばらく出して消す）
@@ -45,9 +54,24 @@ export function createConnectionStatus({ note, sideLine, live, t, time, runMark,
   button.onclick = () => recheck();
   const panelText = document.createElement('div');
   panelText.append(title, body, status);
+  // 線が止まったときの案内
+  const stopTitle = document.createElement('b');
+  const stopBody = document.createElement('div');
+  const stopText = document.createElement('div');
+  stopText.append(stopTitle, stopBody);
+  let leaveButton = null;
+  if (typeof leave === 'function') {
+    leaveButton = document.createElement('button');
+    leaveButton.type = 'button';
+    leaveButton.className = 'btn';
+    leaveButton.onclick = () => { try { Promise.resolve(leave()).catch(() => {}); } catch {} };
+  }
 
   const lostText = () => (reason === 'relay' ? t('app.connLostRelay') : reason === 'host' ? t('app.connLostHost') : t('app.connLost'));
   const staleText = () => `${t('app.authStale.title')} ${t('app.authStale.body')}`;
+  // i18n-dynamic: app.remoteStop.
+  const heldHead = () => (held === 'paused' ? t('app.remotePaused') : t(`app.remoteStop.${held}.title`));
+  const heldText = () => (held === 'paused' ? heldHead() : `${heldHead()} ${t(`app.remoteStop.${held}.body`)}`);
   function resultText() {
     if (!result) return '';
     if (result.kind === 'checking') return t('app.authStale.checking');
@@ -57,6 +81,26 @@ export function createConnectionStatus({ note, sideLine, live, t, time, runMark,
   function announce(text) { live.textContent = text; }
 
   function render() {
+    if (held) {
+      // 線が止まっている: 切れた一行・トークンの案内より先に出す
+      const kind = held === 'paused' ? 'paused' : 'stop';
+      sideLine.textContent = heldHead();
+      sideLine.dataset.kind = kind;
+      sideLine.hidden = false;
+      if (kind === 'stop') {
+        stopTitle.textContent = heldHead();
+        stopBody.textContent = t(`app.remoteStop.${held}.body`);
+        if (leaveButton) leaveButton.textContent = t('app.remoteStop.back');
+        if (note.dataset.kind !== 'stop') note.replaceChildren(stopText, ...(leaveButton ? [leaveButton] : []));
+      } else {
+        const span = document.createElement('span');
+        span.textContent = heldHead();
+        note.replaceChildren(span);
+      }
+      note.dataset.kind = kind;
+      note.hidden = false;
+      return;
+    }
     if (phase === 'stale') {
       sideLine.textContent = t('app.authStale.title');
       sideLine.dataset.kind = 'stale';
@@ -90,7 +134,7 @@ export function createConnectionStatus({ note, sideLine, live, t, time, runMark,
 
   function scheduleReconnect(ms = retryMs) {
     clearTimer(retryTimer);
-    retryTimer = setTimer(() => { retryTimer = null; if (phase !== 'stale') reconnect(); }, ms);
+    retryTimer = setTimer(() => { retryTimer = null; if (phase !== 'stale' && !held) reconnect(); }, ms);
   }
 
   function goStale() {
@@ -110,7 +154,7 @@ export function createConnectionStatus({ note, sideLine, live, t, time, runMark,
     let answer;
     try { answer = await check(); } catch { answer = 'unreachable'; }
     checking = false;
-    if (phase !== 'down') return;
+    if (phase !== 'down' || held) return;
     if (answer === 'denied') return goStale();
     scheduleReconnect();
   }
@@ -173,6 +217,8 @@ export function createConnectionStatus({ note, sideLine, live, t, time, runMark,
       const wasOpen = socketOpen;
       socketOpen = false;
       if (phase === 'stale') return;
+      // 線が止まっている間は開き直さない（線が戻ったら setRemoteState が開き直す）
+      if (held) { if (phase === 'online') phase = 'down'; shown = true; return; }
       if (!wasOpen) failedOpens++;
       if (phase === 'online') {
         phase = 'down';
@@ -190,16 +236,41 @@ export function createConnectionStatus({ note, sideLine, live, t, time, runMark,
       if (!checking && failedOpens >= 2 && failedOpens % 2 === 0) { autoCheck(); return; }
       if (!checking) scheduleReconnect();
     },
-    /** リモートの窓の理由（中継・ホストにつながらない）。一行の文言をバッジと同じ理由の語にそろえる */
-    setReason(next) {
-      const value = next === 'relay' || next === 'host' ? next : null;
-      if (value === reason) return;
-      reason = value;
+    /**
+     * リモートの窓の線の状態（plyRemote.status / onStatus の state）。
+     * 中継・ホストにつながらない間は一行の文言をバッジと同じ理由の語にそろえる。止まった・Plus が止まっている間は案内に替える
+     */
+    setRemoteState(state) {
+      const nextReason = state === 'offline' ? 'relay' : state === 'host-offline' ? 'host' : null;
+      const nextHeld = STOP_STATES.has(state) || state === 'paused' ? state : null;
+      if (nextReason === reason && nextHeld === held) return;
+      const was = held;
+      reason = nextReason;
+      held = nextHeld;
+      if (held) {
+        clearTimer(showTimer); showTimer = null;
+        clearTimer(retryTimer); retryTimer = null;
+        clearTimer(doneTimer); doneTimer = null;
+        done = null; manual = false;
+        if (phase === 'down') shown = true;
+        render();
+        if (held !== was) announce(heldText());
+        onChange();
+        return;
+      }
+      if (was) {
+        // 線が戻った。ページの接続が切れたままなら、待たずに開き直す（戻れば「再接続しました」）
+        failedOpens = 0;
+        render();
+        onChange();
+        if (phase === 'down') reconnect();
+        return;
+      }
       render();
     },
     recheck,
-    /** トークンが古いと分かった間は送信を押せない（押しても届かない口を残さない） */
-    blocksSend: () => phase === 'stale',
+    /** トークンが古いと分かった間・線が止まっている間は送信を押せない（押しても届かない口を残さない） */
+    blocksSend: () => phase === 'stale' || held != null,
     get phase() { return phase; },
   };
 }

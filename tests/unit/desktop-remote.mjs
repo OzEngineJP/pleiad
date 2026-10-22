@@ -200,6 +200,11 @@ export default async function (t) {
     statusListener({ state: 'revoked' });
     t.ok('取り消し: 再試行は出さない（本体が読み直して案内を出す）', retryBtn.hidden === true && ui.badge.textContent.includes('取り消されました'));
     t.ok('知らない状態は接続中として扱う', badgeView(remoteInfo(remote), { state: 'weird' }).state === 'connected');
+    // 止まった線・Plus が止まっている: 接続済みに見せず、状態を添える（再試行は出さない）
+    for (const state of ['reapprove', 'removed', 'blocked', 'limit', 'update', 'signed-out', 'paused']) {
+      const v = badgeView(remoteInfo(remote), { state });
+      t.ok(`${state}: バッジに状態を添え、再試行は出さない`, v.state === state && v.suffix && !v.suffix.startsWith('remote.') && v.retry === false, JSON.stringify(v));
+    }
 
     // モバイル版の殻（docs/remote.md §8.2）: 上端のホスト名の帯。押すとホスト一覧へ（面は出さない）
     let backs = 0;

@@ -29,6 +29,8 @@ import { t } from '../i18n.mjs';
 
 const HOST_ID = /^[a-z2-7]{26}$/;
 const secretKeyOf = (hostId, via = 'own') => via === 'plus' ? `host-plus:${hostId}` : `host:${hostId}`;
+/** 取り消された後に Plus で申し込む新しい鍵の置き場（許可されるまで同じ鍵を使う） */
+const pendingKeyOf = hostId => `host-plus-pending:${hostId}`;
 const keyText = k => Buffer.from(k).toString('base64url');
 
 function publicRecord(h) {
@@ -76,6 +78,16 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
       return secret.key ? keyPairFromPrivate(Buffer.from(secret.key, 'base64url')) : this.identity();
     },
 
+    /**
+     * 取り消された後に Plus で申し込む新しい鍵。許可されるまで残す: PC は拒否した鍵を 1 時間覚えているので、
+     * 同じ鍵でもう一度申し込めば同じ答え（窓を出さずに断り）が返る。鍵を作り直して窓を出し直させない
+     */
+    async pendingPlusKey(hostId) {
+      const priv = await secrets.update(pendingKeyOf(hostId), cur => cur ?? generateKeyPair().privateKey.toString('base64url'));
+      return keyPairFromPrivate(Buffer.from(priv, 'base64url'));
+    },
+    async dropPendingPlusKey(hostId) { await secrets.delete(pendingKeyOf(hostId)); },
+
     /** ペアリングしたホストの一覧（秘密を含まない）。 */
     async hosts() { return (await readHosts()).hosts.map(publicRecord); },
     async host(hostId, via = 'own') { return (await this.hosts()).find(h => h.hostId === hostId && (h.via ?? 'own') === via) ?? null; },
@@ -94,6 +106,7 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
       if (!HOST_ID.test(creds.hostId ?? '')) throw new Error('invalid hostId');
       const via = creds.via ?? 'own';
       await secrets.set(secretKeyOf(creds.hostId, via), { token: creds.token, ...(creds.keyPair ? { key: keyText(creds.keyPair.privateKey) } : {}) });
+      if (via === 'plus') await secrets.delete(pendingKeyOf(creds.hostId));
       return locked(async () => {
         const data = await readHosts();
         const prev = data.hosts.find(h => h.hostId === creds.hostId && (h.via ?? 'own') === via && (via === 'plus' || h.relayUrl === creds.relayUrl));
@@ -131,6 +144,7 @@ export function createDeviceStore({ dir, cipher = plainCipher }) {
     /** 一覧から消し、トークンも消す。 */
     async removeHost(hostId, via = 'own') {
       await secrets.delete(secretKeyOf(hostId, via));
+      if (via === 'plus') await secrets.delete(pendingKeyOf(hostId));
       return locked(async () => {
         const data = await readHosts();
         const hit = data.hosts.find(h => h.hostId === hostId && (h.via ?? 'own') === via) ?? null;
@@ -474,7 +488,8 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
      *   mode 'admit': 許可済みの鍵のつなぎ直し（窓を出さない。中継のトークンの出し直し）
      *   mode 'pair':  人の操作。許可の無い鍵は PC の承認の窓へ回り、onCode(確認コード) のあと承認を待つ
      * 鍵は Plus の記録の鍵 → 同じホストの QR の記録の鍵（許可済みなら窓を出さずに通る）→ 端末の鍵の順に使う。
-     * 'pair' で鍵が取り消されていたら、新しい鍵で一度だけやり直す（PC の承認の窓へ回る）
+     * 'pair' で鍵が取り消されていたら、新しい鍵で一度だけやり直す（PC の承認の窓へ回る）。新しい鍵は許可されるまで残し、
+     * 拒否のあとにもう一度選んでも同じ鍵で申し込む（PC はその鍵の答えを返し、1 時間は窓を出さない）
      * ticketFor(keyPair) は、その鍵の端末の券 { relay, admission } を返す（券の無い前の版の api なら null で、idToken を使う）
      */
     async admit({ hostId, hostPublicKey, relayUrl, idToken = null, ticketFor = null, uid, mode = 'admit', onCode, signal }) {
@@ -490,8 +505,15 @@ export function createRemoteDevice({ dir, cipher = plainCipher, app = '', name =
       try { creds = await run(keyPair); }
       catch (e) {
         if (!(mode === 'pair' && e.code === 'revoked')) throw e;
-        used = generateKeyPair();
-        creds = await run(used);
+        used = await store.pendingPlusKey(hostId);
+        try { creds = await run(used); }
+        catch (e2) {
+          // 残した鍵が許可されたあと、この端末が保存する前に取り消された: 別の新しい鍵で始め直す
+          if (e2.code !== 'revoked') throw e2;
+          await store.dropPendingPlusKey(hostId);
+          used = await store.pendingPlusKey(hostId);
+          creds = await run(used);
+        }
       }
       const rec = await store.saveHost({ ...creds, via: 'plus', uid, keyPair: used });
       if (mode === 'pair') await reconnect(hostId, 'plus', used);

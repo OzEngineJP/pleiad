@@ -134,6 +134,7 @@ AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Ele
 - 承認を待っている間は、PC の通知の一覧（あなた待ち）・OS の通知・許可済みのスマホへの通知（ボタン無し。ロック画面は題だけ）で知らせる。許可は PC の画面だけ
 - 前の版で確認コードなしに入った `via: 'plus'` の記録（`approvedBy` が無い）は「もう一度の許可が要る端末」。通常の接続も `admit` も通さず、`pair` で同じ記録のまま窓に出る（`again`）
 - 登録は `devices.json` の `via: 'plus'`・`plusUid`・`approvedBy`・`approvedAt`。細部は docs/plus.md
+- 端末の鍵の順: Plus の記録の鍵 → 同じホストの QR の記録の鍵 → 端末の鍵。`pair` で `revoked` と断られたら新しい鍵で申し込み直す。その新しい鍵は許可されるまで手元に残し（デスクトップは秘密の `host-plus-pending:<hostId>`、Android は `plusPending:<hostId>`）、拒否のあとにもう一度選んでも同じ鍵で申し込む。PC は拒否した鍵を 1 時間 `rejected` で断るので、端末は待たずに「ホストで断られました」を出し、PC に窓は出ない（2026-10-22。前は選ぶたびに鍵を作り直し、拒否の 1 時間をすり抜けて窓を出し直させていた）。残した鍵が許可されたあと保存する前に取り消されていたら、別の新しい鍵で 1 度だけ始め直す
 
 端末の画面（中継越し）からの接続は、ホストだけの操作（リモートの設定・ペアリングの開始と答え・Plus のつなぎ直し・Plus のログインとログアウト・止めた申し込みの再開）を `host_only` で断る（`core/ops/policy.mjs` の `HOST_ONLY_COMMANDS`）。操作の一覧の口（`invoke { op }`）で来る Plus の同期のスイッチ・やり直し・登録し直し（`plus.syncSetEnabled`・`plus.syncReset`・`plus.hostReregister`）は、操作の `hostScreenOnly` で `HOST_SCREEN_ONLY` を返す。
 

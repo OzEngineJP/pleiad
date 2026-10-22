@@ -164,6 +164,9 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
     /** The ID token for Kotlin callers (the official relay). Never exposed to the shell page. */
     fun currentIdToken(): String? = session.idToken(config?.refreshUrl, force = true)
 
+    /** The ID token it has, refreshed only near its expiry: for calls the screen waits on (a 401 then asks currentIdToken). */
+    fun idToken(): String? = session.idToken(config?.refreshUrl)
+
     // Tickets for the relay and the host (docs/plus.md "Tickets"). The ID token is refreshed only near its expiry here
     // (one connection asks for a ticket each time); a 401 refreshes it and asks once more.
     private val tickets = PlusTicketIssuer(
@@ -199,7 +202,7 @@ class PlusManager(context: Context, private val log: (String) -> Unit = {}) {
             return HostsResult(emptyList())
         }
         return try {
-            var token = currentIdToken() ?: return HostsResult(hosts, "signed-out")
+            var token = idToken() ?: return HostsResult(hosts, "signed-out")
             val latest = try {
                 PlusApi.fetchHosts(Http.client, apiBase, token, clientTag)
             } catch (e: PlusApiError) {

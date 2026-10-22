@@ -26,6 +26,8 @@ export default async function (t) {
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'taken' } } },'この PC はほかの Pleiad Plus のアカウントでつないでいます。', 'disabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'limit' } } }, 'このアカウントの上限に達しています', 'enabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'error' } } }, 'サーバーへの接続に失敗しました', 'enabled'],
+    // Plus が止まっている（api の 503・中継の 4401 plus unavailable）: つながらないのではなく、再開を待っている
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'retrying', error: { code: 'unavailable' } } } }, 'Pleiad Plus が一時的に止まっています（再開を待っています）', 'enabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'connecting' } } }, '接続しています…', 'enabled', 'connecting'],
     // つながっているときも、切っているときも、見出しの下で一行を言う（承認 2026-10-21）
     [PLUS, REMOTE, 'つながっています · user@example.com', 'enabled', 'ok'],

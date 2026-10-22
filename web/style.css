@@ -373,7 +373,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 button.conn-lost{cursor:pointer}
 button.conn-lost:hover{color:var(--ink)}
 /* トークンが古い（操作が要る）ときの脇の下の一行。自動で戻る「切れた」と差を付けて強い字にする（web/connection-status.mjs） */
-.conn-lost[data-kind=stale]{color:var(--ink-strong);font-weight:600}
+.conn-lost[data-kind=stale],.conn-lost[data-kind=stop]{color:var(--ink-strong);font-weight:600}
 /* 画面には出さず、読み上げにだけ渡す（接続の状態の role=status） */
 .visually-hidden{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 /* 会話一覧はひとつのツリー（フォーカスは #groups 1 つ、web/side.mjs）。指している項目はキーボードのときだけ 2px の輪（§8）。
@@ -1407,10 +1407,10 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .conn-note[hidden]{display:none}
 .conn-note[data-kind=lost]{display:none}
 :root.side-closed .conn-note[data-kind=lost]:not([hidden]){display:flex}
-.conn-note[data-kind=stale]{gap:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 16px;margin-bottom:10px;overflow-wrap:anywhere}
-.conn-note[data-kind=stale] b{display:block;font-weight:600;color:var(--ink-strong)}
+.conn-note[data-kind=stale],.conn-note[data-kind=stop]{gap:12px;background:var(--surface-2);border-radius:var(--r-m);padding:10px 16px;margin-bottom:10px;overflow-wrap:anywhere}
+.conn-note[data-kind=stale] b,.conn-note[data-kind=stop] b{display:block;font-weight:600;color:var(--ink-strong)}
 .conn-note .conn-result{margin-top:4px;color:var(--ink-weak)}
-.conn-note[data-kind=stale] .btn{margin-left:auto;flex:none;font-size:var(--fs-s);color:var(--ink-blue)}
+.conn-note[data-kind=stale] .btn,.conn-note[data-kind=stop] .btn{margin-left:auto;flex:none;font-size:var(--fs-s);color:var(--ink-blue)}
 .conn-note .btn[aria-disabled=true]{cursor:progress}
 /* 予約した送信。塗りをやめて弧を中に（押せないのではなく、待っている） */
 .send.wait,.send.wait:hover{background:var(--surface-3);color:var(--ink);cursor:progress}
@@ -1888,7 +1888,7 @@ main.dropping #log{background:var(--surface-1)}
   :root.mac .brand-wordmark{display:none}
   .next-settings{flex-wrap:wrap;padding:10px}
   .conn-note[data-kind=lost]:not([hidden]){display:flex}
-  .conn-note[data-kind=stale]{flex-wrap:wrap;padding:10px}
+  .conn-note[data-kind=stale],.conn-note[data-kind=stop]{flex-wrap:wrap;padding:10px}
   .row-meta{flex-wrap:wrap}
   .row-meta > span{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .row-cwd{text-align:left}
