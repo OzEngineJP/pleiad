@@ -3,6 +3,8 @@
 // 実行場所で走るプロセス（サーバー・保持役。docs/zero-downtime-update/design.md §3.5）は、起動時に run\<版>-<pid>.lock.db を
 // 排他ロックで開いたまま持つ。掃除する側（main の desktop/runtime.cjs）は、その版の lock を全部開けられたら誰も使っていないとみなす。
 // core/data-lock.mjs と同じく、**OS がプロセスの終了で必ず外すロック**で判断する（PID の生死は見ない。Windows は PID をすぐ使い回す）。
+// 普通に終わるときは、process の exit で自分から外してファイルも消す（core/data-lock.mjs と同じ）。OS が外すのはハンドルを閉じる
+// 終了の最後で、PID が終わったと見えた後も数 ms〜十数 ms は使用中に見える。落ちたときだけ OS に任せる。
 // pleiad CLI のような短いプロセスは印を持たない。
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,8 +15,12 @@ const LOCK_SUFFIX = '.lock.db';
 /** ファイル名 <版>-<pid>.lock.db の分解（版にも - が入る: 0.9.1-0123456789ab） */
 const LOCK_NAME = /^(.+)-(\d+)\.lock\.db$/;
 
-/** 付けている印の接続。呼び出し側が外す関数を捨てても、接続（=ロック）が GC で閉じないよう、外すまでここで持つ（core/data-lock.mjs の held と同じ） */
+/** 付けている印を外す関数（接続を持つ）。呼び出し側が外す関数を捨てても、接続（=ロック）が GC で閉じないよう、外すまでここで持つ（core/data-lock.mjs の held と同じ） */
 const held = new Set();
+
+process.on('exit', () => {
+  for (const release of [...held]) release();
+});
 
 const isBusy = e => e?.errcode === 5 || e?.errcode === 6 || /database is locked|SQLITE_BUSY|SQLITE_LOCKED/i.test(String(e?.message ?? ''));
 
@@ -38,7 +44,7 @@ function lockDatabase(file) {
 }
 
 /**
- * root の版 key を使っている印を付ける。戻り値は外す関数（何度呼んでもよい）。プロセスが終われば OS が外す。
+ * root の版 key を使っている印を付ける。戻り値は外す関数（何度呼んでもよい）。プロセスの exit で外し、落ちたときは OS が外す。
  * 印を付けられなくても（書き込めない置き場など）起動は止めず、null を返す。戻り値を捨てても印は外れない（接続はモジュールが持つ）
  */
 export function markRuntimeInUse({ root, key, pid = process.pid }) {
@@ -47,15 +53,16 @@ export function markRuntimeInUse({ root, key, pid = process.pid }) {
     fs.mkdirSync(path.join(root, RUN_DIR), { recursive: true });
     db = lockDatabase(runtimeLockFile(root, key, pid));
   } catch { return null; }
-  held.add(db);
   let released = false;
-  return () => {
+  const release = () => {
     if (released) return;
     released = true;
-    held.delete(db);
+    held.delete(release);
     try { db.close(); } catch { /* 閉じるだけ */ }
     try { fs.rmSync(runtimeLockFile(root, key, pid), { force: true }); } catch { /* 残っても次の掃除が拾う */ }
   };
+  held.add(release);
+  return release;
 }
 
 /**

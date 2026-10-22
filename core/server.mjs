@@ -227,7 +227,7 @@ function noteAuth(id, status) {
 // 無停止の更新の新サーバー（--handover。core/handover.mjs）は、モジュールの読み込みを済ませたうえで、旧サーバーがデータ置き場を放すのを待って取る（数十 ms 刻み）
 const HANDOVER_START = handoverStart();
 // 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
-// 印は閉じない: プロセスの終了で OS が外す。データ置き場のロックより前に付ける: 引き継ぎの新サーバー（--handover）は、印ができたら
+// 外す関数は捨てる: プロセスの exit で外れる（落ちたときは OS が外す）。データ置き場のロックより前に付ける: 引き継ぎの新サーバー（--handover）は、印ができたら
 // モジュールの読み込みが済んでロックを待っているとみなされ、main が旧サーバーに handover を頼む（desktop/switch.cjs）
 if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
 // 審査モード（AGENT_HOST_REVIEW=1。ADR 0172）: fake だけ・審査用の置き場でなければ、データ置き場に触れる前に起動を止める（core/review-mode.mjs）
