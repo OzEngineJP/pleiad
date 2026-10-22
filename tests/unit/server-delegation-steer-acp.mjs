@@ -117,18 +117,24 @@ export default async function (t) {
           catch (e) { if (i >= 60 || !String(e?.message ?? e).includes('切り替え中')) throw e; await sleep(100); }
         }
       };
+      // 待っている子へ送った指示は子の新しいターンになる。依頼元のタスクは前の回から completed・sent のままなので、
+      // done だけでは子のターンの終わりを待てない（負荷が高いと、終わる前に記録を読んでしまう）。子の turnEnd を待つ
+      const sendAndSettle = async (parent, task, message) => {
+        const from = c.mark();
+        await sendIdle(parent, task, message);
+        await c.waitFor(e => e.type === 'turnEnd' && e.sessionId === task.sessionId, { from, ms: 30_000 });
+        await done(parent);
+      };
       const g = await child('anchor-check');
       await done(g.parent);
       const before = await c.cmd('loadSession', { sessionId: g.task.sessionId });
       const tailUuid = before.messages.at(-1)?.uuid;
       t.ok('第 1 ターンの履歴の末尾の行は uuid を持つ', Boolean(tailUuid));
-      await sendIdle(g.parent, g.task, 'idle-follow');
-      await done(g.parent);
+      await sendAndSettle(g.parent, g.task, 'idle-follow');
       const instrA = (await instructions(g.task)).find(x => x.text === 'idle-follow');
       t.ok('ターンが走っていないときに受け付けた指示に、記録の末尾の行の uuid の錨が付く',
         instrA?.anchor?.kind === 'uuid' && instrA.anchor.v === tailUuid, JSON.stringify(instrA?.anchor ?? null));
-      await sendIdle(g.parent, g.task, 'idle-second');
-      await done(g.parent);
+      await sendAndSettle(g.parent, g.task, 'idle-second');
 
       const after = await c.cmd('loadSession', { sessionId: g.task.sessionId });
       const all = await instructions(g.task);
