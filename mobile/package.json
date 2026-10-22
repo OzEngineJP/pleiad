@@ -2,7 +2,7 @@
   "name": "pleiad-mobile",
   "private": true,
   "license": "Apache-2.0",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pleiad mobile shell (Capacitor). Host list, QR pairing and the in-app loopback proxy; the UI itself is served by the host.",
   "scripts": {
     "sync:ios": "cap sync ios",

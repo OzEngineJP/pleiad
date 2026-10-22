@@ -1,9 +1,11 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
-// Pleiad: the release build's version comes from CI (-PplyVersionCode / -PplyVersionName, docs/android-releases.md)
+// Pleiad: the release build's version comes from CI (-PplyVersionCode / -PplyVersionName, docs/android-releases.md).
+// Without it the name is mobile/package.json's version, so a local build is not taken for an older app (the api's
+// minimum client version compares this name).
 def plyVersionCode = (project.findProperty('plyVersionCode') ?: '1') as int
-def plyVersionName = project.findProperty('plyVersionName') ?: '0.1.0'
+def plyVersionName = project.findProperty('plyVersionName') ?: new groovy.json.JsonSlurper().parse(rootProject.file('../package.json')).version
 
 // Pleiad Plus: the api base. Debug builds can override it with -PpleiadPlusApi (e.g. an emulator pointing at a
 // local fake); the release build always uses the default.
