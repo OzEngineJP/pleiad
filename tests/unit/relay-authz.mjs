@@ -153,6 +153,37 @@ export default async function (t) {
     }
   }
   {
+    // count: false の 4401 は数えない。false 以外（省略・0・'false'）は数える
+    const verdicts = [
+      { ok: false, code: 4401, reason: 'ticket', count: false },
+      { ok: false, code: 4401, reason: 'ticket', count: 0 },
+    ];
+    let next = verdicts[0];
+    const { relay, port } = await startRelay({ async host() { return next; } }, { failureLimit: 2 });
+    try {
+      const ip = newIp();
+      let denied = 0;
+      for (let i = 0; i < 3; i++) {
+        const c = client(port, '/v1/host', noSecretHeaders(newHostId(), ip));
+        const cl = (await c.opened).open === true ? await c.closedWithin() : null;
+        if (cl?.code === CLOSE.UNAUTHORIZED && cl?.reason === 'ticket') denied++;
+      }
+      t.ok('count: false の 4401 は失敗の回数に数えない（何度でも Upgrade して 4401）', denied === 3 && relay.stats().blocked === 0,
+        JSON.stringify({ denied, blocked: relay.stats().blocked }));
+      next = verdicts[1];
+      const ip2 = newIp();
+      await client(port, '/v1/host', noSecretHeaders(newHostId(), ip2)).closedWithin();
+      await client(port, '/v1/host', noSecretHeaders(newHostId(), ip2)).closedWithin();
+      const c3 = client(port, '/v1/host', noSecretHeaders(newHostId(), ip2));
+      t.ok('count が false 以外の 4401 は今までどおり数える', (await c3.opened).status === 429);
+      const c4 = client(port, '/v1/host', noSecretHeaders(newHostId(), ip));
+      t.ok('数えなかった IP は止まっていない', (await c4.opened).open === true);
+      c4.ws.terminate();
+    } finally {
+      await relay.close();
+    }
+  }
+  {
     const { relay, port } = await startRelay(
       { async host() { return { ok: false, code: 4429, reason: 'busy' }; } },
       { failureLimit: 2 },

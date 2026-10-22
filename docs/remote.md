@@ -398,8 +398,8 @@ const authz = {
   - `headers` は小文字のヘッダーの写し（凍結）。`ip` は `clientIp` と同じ（`RELAY_TRUST_PROXY` に従う）
 - 判定の返り値:
   - 通す: `{ ok: true, tags?: string[], admit?: boolean }`
-  - 断る: `{ ok: false, code: 4400 | 4401 | 4404 | 4429, reason: string }`。`reason` は 32 字以内の英小文字と空白（外れていれば `'denied'`）。この 4 つ以外の code は 4401 として扱う
-  - `4401` の断りは失敗の回数（IP ごとのブロック）に数える（ただし `reason` が `plus unavailable` のときは数えない）。ほかの code は数えない
+  - 断る: `{ ok: false, code: 4400 | 4401 | 4404 | 4429, reason: string, count?: false }`。`reason` は 32 字以内の英小文字と空白（外れていれば `'denied'`）。この 4 つ以外の code は 4401 として扱う
+  - `4401` の断りは失敗の回数（IP ごとのブロック）に数える。数えないのは、`reason` が `plus unavailable` のときと、`count: false` を付けたとき（正しいクライアントでも起きる断り。例: 正しく署名された券の使い回し・期限切れ。数えると同じ IP のほかの接続まで止めてしまう）。`count` が `false` 以外なら数える。ほかの code は数えない
   - 差し込みが例外を投げた・`authzTimeoutMs`（既定 5 秒。環境変数では変えない）で返らない・返り値の形が違うときは `1013 'try again later'` で閉じる。失敗の回数には数えない。端末は `1013` を「少し待って張り直す」（`classifyClose` の `'offline'`）として扱う
 - 判定を待つ間に届いたメッセージは溜めておき、通ったら着いた順に流す（制御のメッセージ、または端末の accept 待ちの溜め）。溜めるのは 64KB・10 秒まで（超えたら `4413 'buffer'` / `4408 'authz timeout'`）。断ったら捨てる
 - `admit: true` は `/v1/device` で `deviceId` も `pairing` も無いときだけ意味を持つ（ほかの経路・ほかの場合は無視する）。そのとき中継は端末のトークンを見ずに接続を始め、ホストの制御用の接続へ `{"type":"incoming","conn":"…","admit":true}` を送る（相手を確かめるのはホスト。Noise のハンドシェイクの中）。1 ホストにつき 1 分 10 回まで（`admitPerMinute`。超えたら `4429 'admit rate'`）。1 ホストあたりの接続数の上限にも数える。ホストが居ない・`sync` の前なら今と同じ 4404
