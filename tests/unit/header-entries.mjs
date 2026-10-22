@@ -101,6 +101,20 @@ export default async function (t) {
   installDomStub();
   document.addEventListener = () => {};
   {
+    let viewer = false, chrome = true, openedAt = null;
+    const entryButton = new N('button'), menuAnchor = new N('button');
+    const entry = setupBrowserEntry({ button: entryButton, mac: false,
+      browser: { available: () => viewer }, preview: { browserOpen: () => false, close() {}, openBrowser() {} },
+      chrome: () => ({ isOpen: () => false, open: anchor => { openedAt = anchor; } }),
+      windows: { has: () => false, operating: () => false }, getSessionId: () => 'a', chromeAvailable: () => chrome });
+    assert.equal(entryButton.hidden, true);
+    assert.equal(entry.available(), true, 'Chrome can be opened from menu before a window exists');
+    entry.toggle(menuAnchor); assert.equal(openedAt, menuAnchor);
+    chrome = false; assert.equal(entry.available(), false);
+    viewer = true; assert.equal(entry.available(), true);
+    t.ok('スマホのブラウザー入口はビューアかChromeの利用可否で決め、窓が無くてもメニューから開ける', true);
+  }
+  {
     let current = 'a', chromeIsOpen = false, viewerIsOpen = false;
     const opened = [];
     const entryButton = new N('button');
@@ -110,6 +124,7 @@ export default async function (t) {
       preview: { browserOpen: () => viewerIsOpen, openBrowser: () => {}, close: () => { chromeIsOpen = false; viewerIsOpen = false; } },
       chrome: () => ({ isOpen: () => chromeIsOpen, open: () => { chromeIsOpen = true; opened.push('chrome'); } }),
       windows: { has: () => true, operating: () => false }, getSessionId: () => current, chromeAvailable: () => true });
+    assert.equal(entry.available(), true, 'viewer or Chrome can be reached from mobile menu');
     // 会話 a で Chrome の窓が（人の操作でなく）開いたまま、会話 b へ移って描き直す
     chromeIsOpen = true;
     entry.paint(); current = 'b'; entry.paint();

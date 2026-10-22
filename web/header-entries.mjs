@@ -142,17 +142,17 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   }
 
   /** 開いたときだけ、Chrome の動き・依頼待ちを優先する。開いている間の切り替えはタブから行う */
-  function toggle() {
+  function toggle(anchor = button) {
     if (open()) {
       preview.close(false);
-      button.focus({ preventScroll: true });
+      anchor.focus({ preventScroll: true });
     } else {
       const id = activeId();
       const state = id ? getChromeState(id) : 'idle';
       const urgent = id && (waiting(id) || windows?.operating(id) || state === 'running' || state === 'paused');
       const view = browserViewToOpen({ viewer: viewable(), chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
-      if (view === 'chrome') chrome()?.open(button);
-      else if (view === 'viewer') { preview.openBrowser(button); browser.open(); }
+      if (view === 'chrome') chrome()?.open(anchor);
+      else if (view === 'viewer') { preview.openBrowser(anchor); browser.open(); }
       if (id && view) lastView.set(id, view);
     }
     paint();
@@ -164,7 +164,7 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
     if (id && (view === 'chrome' || view === 'viewer')) lastView.set(id, view);
   }
 
-  button.addEventListener('click', toggle);
+  button.addEventListener('click', () => toggle());
   document.addEventListener('keydown', (event) => {
     if (!isBrowserShortcut(event, mac) || button.hidden || blocked()) return;
     event.preventDefault();
@@ -173,5 +173,5 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   // 内蔵ブラウザーのページにフォーカスがあるときの近道（desktop/browser-panel.cjs の before-input-event）
   bridge?.onShortcut?.(() => { if (!button.hidden && !blocked()) toggle(); });
   paint();
-  return { paint, toggle, noteView, lastView, currentMark };
+  return { paint, toggle, noteView, lastView, currentMark, available: () => viewable() || (chromeAvailable() && !!activeId()) };
 }

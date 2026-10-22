@@ -109,3 +109,40 @@
 
 .usage-screen-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .usage-screen-head h3{margin:0}
+
+/* Conversation menus and sheets share the quota bar, with no new surface inside the sheet. */
+.conversation-menu-icon{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.conversation-menu-meter{display:inline-flex;align-items:center;gap:6px}
+.conversation-menu-meter .usage-mini{width:47px;height:4px}
+.conversation-sheet{position:fixed;inset:auto 0 0;margin:0;max-width:none;width:100%;max-height:85dvh;padding:0;border:0;border-radius:var(--r-l) var(--r-l) 0 0;background:var(--surface-paper);color:var(--ink);box-shadow:0 -8px 28px var(--shadow);animation:conversation-sheet-in var(--dur) var(--ease-out)}
+.conversation-sheet::backdrop{background:var(--surface-veil)}
+.conversation-sheet{overflow:auto;overscroll-behavior:contain}
+.conversation-sheet-head{display:flex;align-items:center;gap:12px;padding:12px 16px 0}
+.conversation-sheet-head strong{font-size:18px}
+.conversation-sheet-close{margin-left:auto;min-width:44px;min-height:44px;font:inherit;font-size:24px;color:var(--ink-weak);background:transparent;border-radius:var(--r-pill);cursor:pointer}
+.conversation-sheet-body{padding:0 16px max(16px,env(safe-area-inset-bottom,0px))}
+.conversation-sheet .usage-pop{position:static;max-height:none;padding:0;box-shadow:none;border:0;background:transparent;animation:none}
+.conversation-sheet .usage-pop-head{margin-bottom:12px}
+.conversation-sheet-head .usage-pop-head{margin:0 0 0 auto}
+.conversation-sheet-head:has(.usage-pop-head) .conversation-sheet-close{margin-left:0}
+.conversation-context{padding:8px 0 16px}
+.conversation-graph{display:grid;grid-template-columns:1fr auto;gap:6px 12px;margin-top:12px;font-size:14px}
+.conversation-graph .value{font-variant-numeric:tabular-nums}
+.conversation-graph .usage-bar,.conversation-graph small{grid-column:1/-1}
+.conversation-graph small{color:var(--ink-weak);font-size:13px}
+.usage-other-agents{margin-top:16px}
+.usage-other-agents > summary{min-height:44px;align-content:center;cursor:pointer;color:var(--ink-blue)}
+.conversation-auto-toggle{display:flex;align-items:center;gap:12px;min-height:44px;margin-top:16px;padding:0;width:100%;background:transparent;color:var(--ink);text-align:left;font:inherit;cursor:pointer}
+.conversation-switch{width:32px;height:20px;margin-left:auto;flex:none;background:var(--surface-3);border-radius:var(--r-pill);padding:3px}
+.conversation-switch::before{content:"";display:block;width:14px;height:14px;border-radius:50%;color:var(--ink-weak);background:currentColor}
+.conversation-auto-toggle[aria-checked=true] .conversation-switch{background:var(--fill-primary);color:var(--on-fill)}
+.conversation-auto-toggle[aria-checked=true] .conversation-switch::before{color:var(--on-fill);background:currentColor;transform:translateX(12px)}
+@keyframes conversation-sheet-in{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.conversation-sheet{animation:none}}
+@media(max-width:700px){
+  #usageChip{display:none}
+  .conversation-sheet .usage-rows{font-size:14px;gap:4px 10px}
+  .conversation-sheet .usage-rows .usage-bar{height:6px}
+  .conversation-sheet .usage-rows .rs,.conversation-sheet .usage-agent .an small{font-size:13px}
+  .conversation-sheet .usage-note{font-size:13px}
+}

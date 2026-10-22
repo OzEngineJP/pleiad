@@ -34,6 +34,7 @@ import { setupCliSetup } from './cli-setup.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
 import { setupHeaderUsage, weekUsage } from './header-usage.mjs';
+import { contextMetrics, conversationMenuItems, menuMeter, createConversationSheet, renderContextUsage } from './conversation-usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupAgentAccounts, createAccountRequestCache, composerAccount } from './agent-accounts.mjs';
@@ -485,15 +486,16 @@ function closeMeterPop(focus = false) {
 /** 入力欄の上の帯の左（文脈）が描いたか。右端のバックグラウンドの入口（syncWorkEntry）と合わせて、帯ごと出すか決める */
 let contextShown = false;
 const stripNarrow = matchMedia('(max-width:480px)');
-// 480px 以下: 頭に残すのは通話・目次・「…」だけ（プラグインと git は「…」の先頭）。docs/design-system.md「会話の頭の行のアイコン」
+// 文脈メーターの省略は480px以下。上部の入口の集約はnarrowView（700px以下）に従う。
 const phoneView = stripNarrow;
 function syncStripVisible() {
   const strip = $('contextStrip');
-  strip.hidden = !contextShown && $('usageChip').hidden && $('workEntry').hidden;
+  strip.hidden = (narrowView.matches || !contextShown) && (narrowView.matches || $('usageChip').hidden) && $('workEntry').hidden;
   if (strip.hidden) closeMeterPop();
 }
 /** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
 function paintContextStrip() {
+  document.dispatchEvent(new Event('ply-context-usage'));
   const usage = state.contextWindow;
   const show = Boolean(state.current && (usage || state.compactionAt || state.compactionPhase));
   contextShown = show;
@@ -3299,7 +3301,7 @@ function onEvent(ev, replay = false) {
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
-  if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
+  if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
     paintOutbox(); renderSessions();
@@ -3326,6 +3328,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'conversationAutoCompaction') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.autoCompactionOff = ev.off;
+    if (ev.sessionId === state.current) document.dispatchEvent(new Event('ply-context-usage'));
     return;
   }
   if (ev.type === 'compaction' && ev.sessionId) {
@@ -7370,6 +7373,7 @@ let sidebarMoving;
 // 狭い画面（style.css の「狭い画面・タッチ」と同じ 700px）では、脇は会話の上に重ねる引き出し（docs/remote.md §8.4）。
 // 開閉は side-open で持ち、覚えない（広い画面の好み side-closed はそのまま残す）。会話を選ぶ・幕を押す・Esc で閉じる
 const narrowView = matchMedia("(max-width:700px)");
+narrowView.addEventListener('change', syncStripVisible);
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
 // タップの中では開閉の印（side-open・aria-expanded）だけを付け、動き（--dur）を次のフレームから始める。
@@ -8199,8 +8203,7 @@ async function deleteSessionRow(s, command = 'deleteUnsentSession') {
 }
 
 /**
- * 会話の操作のメニュー（脇の行の右クリック・「…」・タイトル行の「…」）。lead はメニューの頭に足す項目
- * （タイトル行の「…」の 700px 以下: タイトルを生成・ホスト一覧に戻る）
+ * 会話の操作のメニュー（脇の行の右クリック・「…」、701px以上のタイトル行の「…」）。lead は先頭への追加項目。
  */
 function rowMenu(s, x, y, lead = []) {
   let vocab = null, efforts = null, endpoints = null, accounts = null;
@@ -8270,7 +8273,7 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
           .then(refresh).catch(e => sideNote(t("session.menu.effortFailed", { error: e.message }))),
       })) },
-    // 480px 以下は「…」の先頭の「開く」行に出す（sessionMoreLead）
+    // サイドバーの全操作メニューにも git の入口を残す。
     ...(s.id === state.current && narrowView.matches && !phoneView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
@@ -8401,10 +8404,10 @@ function paintContextEntryStatus() {
   for (const hint of document.querySelectorAll('.context-entry-status')) hint.textContent = $('contextEntry').dataset.contextStatus || '';
   paintMoreEntry();
 }
-/** 「…」の右上の変更ありの点。「…」へ逃がしたものだけを見る（480px 以下のプラグイン・700px 以下の git） */
+/** 「…」の右上の変更ありの点。700px 以下で移したプラグイン・git の状態を見る。 */
 function paintMoreEntry() {
   const button = $('sessionMore');
-  const changed = (phoneView.matches && !!state.contextInfo?.changed?.differs) || (narrowView.matches && !!state.current && (state.git.data?.dirty ?? 0) > 0);
+  const changed = narrowView.matches && !!state.current && (!!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0);
   const dot = button.querySelector('.entry-dot');
   if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
   else if (!changed) dot?.remove();
@@ -10465,34 +10468,72 @@ $("sessionMore").onclick = () => {
   const s = state.sessions.find((x) => x.id === state.current);
   if (!s) return;
   const r = $("sessionMore").getBoundingClientRect();
-  rowMenu(s, r.right, r.bottom + 4, sessionMoreLead());
+  if (narrowView.matches) openConversationMenu(s, r);
+  else rowMenu(s, r.right, r.bottom + 4);
 };
-/**
- * タイトル行の「…」の頭に足す項目。700px 以下では ✦ をタイトル行に出さないので「タイトルを生成」をここに置く。
- * モバイル版の殻では、タイトルの下の添え字と同じ「ホスト一覧に戻る」も置く
- */
-function sessionMoreLead() {
-  if (!narrowView.matches) return [];
-  const lead = [];
-  if (phoneView.matches) {
-    lead.push({ head: t('session.menu.open') });
-    if (!$('contextEntry').hidden) lead.push({ label: t('session.context.label'), hint: () => el('span', 'hint context-entry-status', $('contextEntry').dataset.contextStatus || ''),
-      onClick: () => sessionContext.open($('sessionMore')) });
-    if (!$('gitEntry').hidden) lead.push({ label: $('gitEntry').getAttribute('aria-label'),
-      hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) });
-  }
-  const wand = $("titleWand");
-  if (!wand.hidden) lead.push({ label: t("session.titleWand"), disabled: wand.disabled, onClick: () => { if (!wand.disabled) wand.onclick(); } });
-  const info = remoteInfo(window.plyRemote);
-  if (info?.shell === "mobile") lead.push({ label: t("remote.backToHosts"), hint: info.host, onClick: () => backToHosts() });
-  return lead;
+function conversationContext() {
+  const session = state.sessions.find(s => s.id === state.current);
+  const auto = state.prefs.autoCompaction;
+  const key = state.backends.find(b => b.id === activeBackendId())?.idleCompaction;
+  return { usage: state.contextWindow, auto: { ...auto, enabled: auto?.enabled && auto?.[key]?.enabled }, session,
+    compact: canCompactHere(), agent: labelOf(activeBackendId()),
+    scheduled: state.compactionAt ? compactTime(state.compactionAt) : null };
 }
-/** モバイル版の殻のホスト一覧へ戻る（plyRemote.backToHosts、無ければ殻が入れる window.backToHosts） */
-function backToHosts() {
-  const fn = typeof window.plyRemote?.backToHosts === "function" ? () => window.plyRemote.backToHosts() : window.backToHosts;
-  if (typeof fn === "function") Promise.resolve().then(fn).catch(() => {});
+function openCompactionSheet() {
+  const sessionId = state.current;
+  const sheet = createConversationSheet(t('compaction.short'), $('sessionMore'));
+  let saving = false, failure = '';
+  const paint = () => {
+    const focus = sheet.body.contains(document.activeElement) ? document.activeElement?.dataset.action : null;
+    const info = conversationContext();
+    if (state.current !== sessionId) { sheet.dialog.close(); return; }
+    const now = el('button', 'btn btn-primary', t('compaction.now'));
+    now.dataset.action = 'compact';
+    now.type = 'button'; now.disabled = !canCompactHere() || state.compactionPhase?.phase === 'start';
+    now.onclick = () => { sheet.dialog.close(); requestCompaction(); };
+    const toggle = el('button', 'conversation-auto-toggle'); toggle.type = 'button';
+    toggle.dataset.action = 'auto'; toggle.disabled = saving;
+    toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(Boolean(info.session?.autoCompactionOff)));
+    toggle.append(el('span', null, t('compaction.disableConversation')), el('span', 'conversation-switch'));
+    const error = el('p', 'cerr', failure); error.setAttribute('role', 'alert');
+    toggle.onclick = async () => {
+      if (saving) return;
+      saving = true; failure = ''; toggle.disabled = true;
+      try {
+        const { off } = await cmd('setConversationAutoCompaction', { sessionId, off: !info.session.autoCompactionOff });
+        info.session.autoCompactionOff = off; renderSessions();
+      } catch (e) { failure = t('compaction.settingFailed', { error: e.message }); }
+      finally { saving = false; paint(); sheet.body.querySelector('[role=switch]')?.focus(); }
+    };
+    sheet.body.replaceChildren(renderContextUsage(info), now, ...(canCompactHere() ? [toggle] : []), error);
+    if (state.compactionPhase) sheet.body.append(el('p', 'usage-note', state.compactionPhase.phase === 'start' ? t('compaction.running') : t('compaction.failed')));
+    if (info.scheduled) {
+      const cancel = el('button', 'btn btn-quiet', t('compaction.cancel')); cancel.type = 'button';
+      cancel.dataset.action = 'cancel';
+      cancel.onclick = () => { sheet.dialog.close(); cancelScheduledCompaction(); }; sheet.body.append(cancel);
+    }
+    if (focus) sheet.body.querySelector(`[data-action="${focus}"]`)?.focus();
+  };
+  document.addEventListener('ply-context-usage', paint);
+  sheet.dialog.addEventListener('close', () => document.removeEventListener('ply-context-usage', paint), { once: true });
+  paint(); sheet.open();
 }
-
+function openConversationMenu(s, r) {
+  const used = headerUsage.currentPercent();
+  const supported = capsOf(s.backend).compact;
+  const items = conversationMenuItems({
+    plugins: !$('contextEntry').hidden && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
+    git: !$('gitEntry').hidden && { label: $('gitEntry').getAttribute('aria-label'), onClick: () => gitPanel?.open($('sessionMore')) },
+    browser: browserEntry?.available() && { label: t('browser.unifiedEntryLabel'), onClick: () => browserEntry.toggle($('sessionMore')) },
+    usage: { label: t('usage.header.title'), hint: used == null ? null : () => menuMeter(used), onClick: () => headerUsage.open($('sessionMore')) },
+    compact: { label: t('compaction.short'), disabled: !supported,
+      note: supported ? '' : t('compaction.agentManaged', { agent: labelOf(s.backend) }),
+      hint: contextMetrics(conversationContext()).percent == null ? null : () => menuMeter(contextMetrics(conversationContext()).percent), onClick: openCompactionSheet },
+    // ADR 0254: 作業場所の面にコピーが無いため、この入口を残す。
+    copy: { label: t('session.menu.copyCwd'), onClick: () => copy(s.cwd, t('session.menu.cwdCopied'), t('session.menu.cwdCopyFailed')) },
+  });
+  showMenu(r.right, r.bottom + 4, items, null, { alignRight: true });
+}
 /**
  * モバイル版の殻の戻る（戻るボタン・画面端のスワイプ）。開いている面を手前から 1 つ閉じる:
  * ダイアログ → メニュー・浮く面 → ファイルのプレビュー・設定 → 引き出し。どれも Esc と同じ閉じ方にする。
@@ -10608,7 +10649,7 @@ usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); }
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
-  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
+  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible, context: conversationContext });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin, current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });

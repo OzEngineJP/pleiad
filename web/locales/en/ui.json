@@ -3424,6 +3424,8 @@
     "checkedAt": "Last fetched: {{when}}",
     "failed": "Couldn't fetch. Check the connection and refresh.",
     "header": {
+      "close": "Close",
+      "otherAgents": "Other agents",
       "title": "Usage",
       "unavailable": "Usage is unavailable.",
       "endpointUnavailable": "Usage is unavailable for this endpoint.",
@@ -4446,6 +4448,13 @@
     "markName": "warning triangle"
   },
   "compaction": {
+    "contextUsage": "Context",
+    "graphTokens": "{{used}} / {{window}} tokens",
+    "short": "Compact",
+    "now": "Compact now",
+    "automatic": "Auto-compaction",
+    "remaining": "{{tokens}} tokens until auto-compaction",
+    "autoOff": "Auto-compaction is off",
     "context": "Context",
     "meter": "{{rate}}% · {{used}} / {{window}}",
     "running": "Compacting conversation…",
