@@ -63,7 +63,7 @@ export default async function (t) {
     t.ok('エフォート: 既定のモデルでも段が選べる（OpenCode は既定の variant を返さないので「既定」の段は作らない）',
       Object.keys(ocEfforts).join() === ',low,high' && !ocEfforts[''].resolvesTo, JSON.stringify(ocEfforts));
     const modes = await c.cmd('modes', { backend: 'opencode' });
-    t.ok('承認モード: 都度確認が先頭で、全部自動・YOLO は聞かない', Object.keys(modes).join() === 'ask,edit,full,yolo,plan' && modes.full.autonomy === 'never' && modes.yolo.scope === 'full', JSON.stringify(Object.keys(modes)));
+    t.ok('承認モード: 都度確認が先頭で、全部自動・Bypass は聞かない', Object.keys(modes).join() === 'ask,edit,full,yolo,plan' && modes.full.autonomy === 'never' && modes.yolo.scope === 'full', JSON.stringify(Object.keys(modes)));
 
     // ---- ログイン（端末の opencode auth login を案内して見張る）を［やめる］（ADR 0243）
     const loginMark = c.mark();

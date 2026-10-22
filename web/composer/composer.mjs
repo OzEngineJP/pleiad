@@ -20,10 +20,10 @@ import { createEditMode } from './edit-mode.mjs';
 /** 入力欄の中の要素の役割（id は頭 + 役割。頭が空なら役割そのもの） */
 export const COMPOSER_PARTS = ['composer', 'contextStrip', 'contextMeterWrap', 'contextMeter', 'contextMeterPop', 'meterCompact', 'meterSettings', 'usageChip',
   'contextStripStatus', 'contextStripText', 'workEntry', 'workEntryButton', 'outbox', 'nextSettings', 'nextSettingsText', 'nextSettingsBehind',
-  'nextHandoff', 'cancelSettings', 'settingsError', 'skillList', 'composerNote', 'connNote', 'cbox', 'attached', 'shellHead', 'prompt', 'composerBusy',
+  'nextHandoff', 'cancelSettings', 'settingsError', 'skillList', 'composerNote', 'connNote', 'cbox', 'shellHead', 'prompt', 'composerBusy',
   'composerBusyText', 'slashHint', 'draftFail', 'draftFailText', 'draftFailRetry', 'attach', 'fileIn', 'cwdChip', 'draftSaved', 'armedChip', 'armedText',
-  'armedRemove', 'modelChip', 'modeChip', 'abort', 'resume', 'resumeLabel', 'resumeShort', 'send', 'sendMore', 'resumeNote', 'armedNote', 'cwdPop',
-  'modelPop', 'modePop', 'sendPop', 'sendVeil'];
+  'armedRemove', 'modelChip', 'abort', 'resume', 'resumeLabel', 'resumeShort', 'send', 'sendMore', 'resumeNote', 'armedNote', 'cwdPop',
+  'modelPop', 'sendPop', 'sendVeil'];
 
 /** 役割 → id（頭が空なら今の Chats の id） */
 export const composerId = (prefix, part) => (prefix ? prefix + part[0].toUpperCase() + part.slice(1) : part);
@@ -65,7 +65,7 @@ export function composerEls(prefix, root = document) {
  * @param {Record<string, HTMLElement>} o.els composerEls の結果
  * @param {string} [o.prefix] 頭（候補の id などに使う）
  * @param {Function} o.t
- * @param {object} o.attach createComposerAttachments の引数（strip は els.attached を使う）
+ * @param {object} o.attach createComposerAttachments の引数
  * @param {() => boolean} [o.isPlain] 平文の形（シェルの形の間）
  * @param {object} o.wait createComposerWait の残りの引数 { runMark, onChange, ... }
  * @param {Array<(e: KeyboardEvent) => boolean>} [o.keys] 送信より先にキーを取る部品（シェル・候補）。true を返したら取った
@@ -75,7 +75,7 @@ export function composerEls(prefix, root = document) {
 export function createComposer({ els, prefix = '', t, attach, isPlain = () => false, wait, keys = [], onSubmit, onSchedule = () => {} }) {
   const prompt = els.prompt;
   const parts = {};
-  const att = createComposerAttachments({ ...attach, strip: els.attached });
+  const att = createComposerAttachments(attach);
   const editor = createMarkdownEditor(prompt, { ...att.editorOptions, isPlain });
   att.bind(editor, prompt);
   const composerWait = createComposerWait({ box: els.cbox, prompt, send: els.send, note: els.composerNote,
@@ -133,11 +133,11 @@ export function createComposer({ els, prefix = '', t, attach, isPlain = () => fa
       parts.edit = createEditMode({ composer: this, t, ...o });
       return parts.edit;
     },
-    /** 設定のチップ（作業ディレクトリ・モデル・承認モード。web/composer-controls.mjs） */
+    /** 設定のチップ（モデルと承認モード・作業ディレクトリ。web/composer-controls.mjs） */
     useControls({ cmd, get, on }) {
       parts.controls = setupComposerControls({ cmd, get, on, els: {
-        chips: { cwd: els.cwdChip, model: els.modelChip, mode: els.modeChip },
-        pops: { cwd: els.cwdPop, model: els.modelPop, mode: els.modePop } } });
+        chips: { cwd: els.cwdChip, model: els.modelChip },
+        pops: { cwd: els.cwdPop, model: els.modelPop } } });
       return parts.controls;
     },
     /** 送信の日時の面（▾・送信の円の右クリックと長押し・Ctrl+Shift+Enter。web/send-menu.mjs） */

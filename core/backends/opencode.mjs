@@ -103,7 +103,7 @@ const MODES = {
   ask: { get label() { return t('modes.ask'); }, get short() { return t('modesShort.ask'); }, get note() { return t('opencode.modes.ask'); }, scope: 'workspace', autonomy: 'ask', enforced: true },
   edit: { get label() { return t('modes.acceptEdits'); }, get short() { return t('modesShort.acceptEdits'); }, get note() { return t('opencode.modes.edit'); }, scope: 'workspace', autonomy: 'judge', enforced: true },
   full: { get label() { return t('modes.full'); }, get short() { return t('modesShort.full'); }, get note() { return t('opencode.modes.full'); }, scope: 'workspace', autonomy: 'never', enforced: true },
-  yolo: { label: 'YOLO', get note() { return t('opencode.modes.yolo'); }, scope: 'full', autonomy: 'never', enforced: false },
+  yolo: { label: 'Bypass', get note() { return t('opencode.modes.yolo'); }, scope: 'full', autonomy: 'never', enforced: false },
   plan: { get label() { return t('modes.plan'); }, get short() { return t('modesShort.plan'); }, get note() { return t('opencode.modes.plan'); }, scope: 'readonly', autonomy: 'ask', enforced: true },
 };
 const vocab = ({ label, short, note, scope, autonomy, enforced }) => ({ label, ...(short ? { short } : {}), note, scope, autonomy, enforced });

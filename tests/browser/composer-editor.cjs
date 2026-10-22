@@ -2,8 +2,9 @@
 // 入力欄の編集欄（web/md-editor.mjs、ADR 0060）を本物のブラウザーで確かめる。認証済みの、実データと分離した fake サーバーを開いてから実行する
 // （AGENT_HOST_BACKENDS=fake AGENT_HOST_DATA=<一時> AGENT_HOST_PORT=<空き> AGENT_HOST_LOCALE=ja で起動し、最初の案内は「あとで」）。
 //   1. 整形: 見出し・箇条書き・番号・引用・コードブロック・太字・斜体・コード・リンク・書式バー。整えた直後の元に戻す・やり直し
-//   2. 文中の添付: 貼り付けた画像が位置に入る・直後の Backspace で外れる・元に戻す・一覧の面・下書きの復元・送信（印は 1 回、位置のまま）
-//   3. 送っている途中・失敗の添付: 進み具合・送信を止める・再試行・中止
+//   2. 文中の添付: 貼り付けた画像が位置に入る・直後の Backspace で外れる・元に戻す・下書きの復元・送信（印は 1 回、位置のまま）・文中に無い添付は末尾に札
+//   3. 送っている途中・失敗の添付: 進み具合・送信を止める（× キャンセル）・再試行・外す
+//   6. ＋のメニュー: どの接続でも 2 つの見出し・開いている間は aria-expanded（＋が × に回る）
 //   4. 複数行の貼り付け・コピー・シェルの形（!）・スキル候補（/）
 //   5. 日本語入力: 変換中は整えない・強調の直後で始めても外に入る
 async page => {
@@ -16,15 +17,16 @@ async page => {
   const val = () => page.evaluate(() => document.querySelector('#prompt').value);
   const kinds = () => page.evaluate(() => [...document.querySelector('#prompt').children].map(b => b.dataset.k + (b.dataset.pad !== undefined ? '(pad)' : '')).join(','));
   const html = () => page.evaluate(() => document.querySelector('#prompt').innerHTML.replace(/ data-[a-z]+="[^"]*"/g, '').replace(/ style="[^"]*"/g, ''));
-  const strip = () => page.evaluate(() => { const s = document.querySelector('#attached'); return s.hidden ? '' : s.textContent; });
+  // 入力欄に添付の一覧（「添付 N 件 ▾」）は無い（ADR 0252）。添付は字の欄の札だけなので、札の数で見る
+  const strip = () => page.evaluate(() => document.querySelectorAll('#prompt .md-att').length);
   const marks = (v) => v.split('\n').map(l => l.startsWith('[添付]') ? 'A' : l).join('|');
   const reset = () => page.evaluate(() => { const p = document.querySelector('#prompt'); p.value = ''; p.focus(); });
   const clean = async () => {
-    for (let n = 0; n < 12; n++) {
-      if (await page.evaluate(() => document.querySelector('#attached').hidden)) break;
-      await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
-      await page.evaluate(() => { [...document.querySelectorAll('dialog.att-list .att-list-action')].find(b => b.textContent === '外す' || b.textContent.includes('やめる'))?.click(); });
-      await K.press('Escape'); await page.waitForTimeout(80);
+    // 札は利用者の操作（全部選んで消す）で外す。値を入れ替えるだけでは添付の実体が残り、末尾の札として戻る
+    for (let n = 0; n < 6; n++) {
+      if (!(await strip())) break;
+      await page.evaluate(() => document.querySelector('#prompt').focus());
+      await K.press('Control+a'); await K.press('Delete'); await page.waitForTimeout(80);
     }
     await reset();
   };
@@ -157,6 +159,8 @@ async page => {
   await reset(); await K.type('- a');
   await K.press('Control+Enter'); await page.waitForSelector('#log .m.user', { timeout: 8000 });
   check('Ctrl+Enter は箇条書きの行でも送る', [await val(), await page.evaluate(() => [...document.querySelectorAll('#log .m.user .body')].at(-1).dataset.raw)], ['', '- a']);
+  // 前の送信の後片付け（下書きを空にする書き込み）が終わるまで送信は押せない。その数十 ms の間の Ctrl+Enter は送らない
+  await page.waitForFunction(() => !document.querySelector('#send').disabled, null, { timeout: 8000 });
   await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.type('b'); await K.press('Control+Enter');
   await page.waitForFunction(() => [...document.querySelectorAll('#log .m.user .body')].at(-1)?.dataset.raw === '- a\n  b', null, { timeout: 8000 });
   check('項目の中の改行も、そのままの形で送られる', await val(), '');
@@ -167,7 +171,7 @@ async page => {
   await K.type('x'); await K.press('Enter'); await K.type('y'); await K.press('ArrowUp'); await K.press('End');
   await pasteImage('pasted.png');
   await page.waitForFunction(() => document.querySelectorAll('#prompt .md-att[data-state=ok]').length === 1, null, { timeout: 10000 });
-  check('貼り付けた画像はキャレットの位置に入る', [await kinds(), marks(await val()), await strip()], ['p,att,p', 'x|A|y', '添付 1 件▾']);
+  check('貼り付けた画像はキャレットの位置に入る', [await kinds(), marks(await val()), await strip()], ['p,att,p', 'x|A|y', 1]);
   // 空の行に入れると、続きはその添付の次の行に書ける（キャレットが先頭へ飛ばない）
   await K.press('Control+End'); await K.press('Enter');
   await pasteImage('second.png');
@@ -175,21 +179,17 @@ async page => {
   await K.type('z');
   check('空の行への添付のあと、続きは添付の次に書ける', marks(await val()), 'x|A|y|A|z');
   await K.press('Control+z'); await K.press('Control+z'); await K.press('Control+z');
-  check('元に戻すで 2 枚目の添付も外れる', [marks(await val()), await strip()], ['x|A|y', '添付 1 件▾']);
+  check('元に戻すで 2 枚目の添付も外れる', [marks(await val()), await strip()], ['x|A|y', 1]);
   await K.press('ArrowDown'); await K.press('Home'); await K.press('Backspace');
-  check('直後の Backspace 1 回で外れる', [await kinds(), await val(), await strip()], ['p,p', 'x\ny', '']);
+  check('直後の Backspace 1 回で外れる', [await kinds(), await val(), await strip()], ['p,p', 'x\ny', 0]);
   await K.press('Control+z');
-  check('元に戻すで位置も添付の実体も戻る', [await kinds(), marks(await val()), await strip()], ['p,att,p', 'x|A|y', '添付 1 件▾']);
-  await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
-  check('一覧の区分は「文中の添付」', await page.evaluate(() => [...document.querySelectorAll('dialog.att-list .att-list-caption')].map(c => c.textContent)), ['文中の添付']);
-  await page.evaluate(() => [...document.querySelectorAll('dialog.att-list .att-list-action')].find(b => b.textContent.includes('文中の位置')).click());
-  await page.waitForTimeout(200);
-  check('文中の位置へ移動は札を強調する', await page.evaluate(() => Boolean(document.querySelector('#prompt .md-att.jump'))), true);
-  await page.waitForTimeout(500);
+  check('元に戻すで位置も添付の実体も戻る', [await kinds(), marks(await val()), await strip()], ['p,att,p', 'x|A|y', 1]);
+  check('入力欄に添付の一覧の入口は無い', await page.locator('.cbox .att-entry, #attached, dialog.att-list').count(), 0);
+  await page.waitForTimeout(700);
   const before = await val();
   await page.reload(); await page.waitForTimeout(800);
   await ready();
-  check('下書きを読み直しても位置が残る', [await val(), await kinds(), await strip()], [before, 'p,att,p', '添付 1 件▾']);
+  check('下書きを読み直しても位置が残る', [await val(), await kinds(), await strip()], [before, 'p,att,p', 1]);
   await page.evaluate(() => document.querySelector('#prompt').focus());
   await K.press('Control+Home'); await K.press('Enter'); await K.press('ArrowUp'); await K.type('# Title');
   await K.press('Control+Enter');
@@ -197,9 +197,9 @@ async page => {
   await page.waitForTimeout(800);
   const msg = await page.evaluate(() => { const m = [...document.querySelectorAll('#log .m.user')].at(-1); return { raw: m.querySelector('.body').dataset.raw, imgs: m.querySelectorAll('.msg-att-img').length, cards: document.querySelectorAll('#log .present').length }; });
   check('送信: 印は 1 回・位置のまま・別カードは出ない', [msg.raw.split('\n').filter(l => l.startsWith('[添付]')).length, marks(msg.raw).replace(/^# Title\|/, ''), msg.imgs, msg.cards], [1, 'x|A|y', 1, 0]);
-  check('送信: 欄は空', [await val(), await strip()], ['', '']);
+  check('送信: 欄は空', [await val(), await strip()], ['', 0]);
 
-  // 旧形式の下書きと同じ状態（添付の実体があり、本文には印が無い）は「文末に付く」。位置に入れて送ると、文中の印は位置のまま・文末に付く分だけ末尾
+  // 旧形式の下書きと同じ状態（添付の実体があり、本文には印が無い）は、読み直すと字の欄の末尾に札で置く（一覧の面は無い。ADR 0252）。送ると印は末尾の位置のまま
   await clean();
   await page.evaluate(() => {
     const dt = new DataTransfer();
@@ -208,19 +208,16 @@ async page => {
   });
   await page.waitForFunction(() => document.querySelectorAll('#prompt .md-att[data-state=ok]').length === 2, null, { timeout: 15000 });
   await page.evaluate(() => { const p = document.querySelector('#prompt'); p.value = '古い下書き\n続き'; p.dispatchEvent(new Event('input', { bubbles: true })); });
-  await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
-  check('印の無い添付は「文末に付く」', await page.evaluate(() => ({ sections: [...document.querySelectorAll('dialog.att-list .att-list-caption')].map(c => c.textContent), actions: [...document.querySelectorAll('dialog.att-list .att-list-action')].map(b => b.textContent).slice(0, 2) })), { sections: ['文末に付く'], actions: ['カーソルの位置に入れる', '外す'] });
-  await K.press('Escape');
-  await page.evaluate(() => document.querySelector('#prompt').focus()); await K.press('Control+Home'); await K.press('End');
-  await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
-  await page.evaluate(() => [...document.querySelectorAll('dialog.att-list .att-list-row')].find(r => r.textContent.includes('a.txt')).querySelector('.att-list-action').click());
-  await page.waitForTimeout(300);
-  check('カーソルの位置に入れる', marks(await val()), '古い下書き|A|続き');
+  check('値を入れ替えた直後は札が無い（実体だけが残る）', await strip(), 0);
+  await page.waitForTimeout(700);
+  await page.reload(); await page.waitForTimeout(800);
+  await ready();
+  check('読み直すと、文中に無い添付は末尾に札で置く', [marks(await val()), await strip()], ['古い下書き|続き|A|A', 2]);
   await page.evaluate(() => document.querySelector('#prompt').focus());
   await K.press('Control+Enter');
   await page.waitForFunction(() => [...document.querySelectorAll('#log .m.user .body')].some(b => b.dataset.raw?.includes('古い下書き')), null, { timeout: 10000 });
   const raw = await page.evaluate(() => [...document.querySelectorAll('#log .m.user .body')].find(b => b.dataset.raw?.includes('古い下書き')).dataset.raw);
-  check('送信: 文中の印は位置のまま・文末に付く分は末尾に 1 つ', raw.split('\n').map(l => l.startsWith('[添付]') ? l.replace(/^.*Z_/, '[添付] ') : l), ['古い下書き', '[添付] a.txt', '続き', '', '[添付] b.txt']);
+  check('送信: 末尾に置いた札の印はその位置のまま（重ねて足さない）', raw.split('\n').map(l => l.startsWith('[添付]') ? l.replace(/^.*Z_/, '[添付] ') : l), ['古い下書き', '続き', '[添付] a.txt', '[添付] b.txt']);
 
   // ---------------------------------------------------------------- 3. 送っている途中・失敗
   await clean();
@@ -238,13 +235,13 @@ async page => {
   });
   const snap = () => page.evaluate(() => ({
     atoms: [...document.querySelectorAll('#prompt .md-att')].map(a => a.dataset.state + ':' + (a.querySelector('.md-att-up-pct')?.textContent ?? a.querySelector('.md-att-up-err')?.textContent ?? '')),
-    strip: document.querySelector('#attached').hidden ? '' : document.querySelector('#attached').textContent,
+    acts: [...document.querySelectorAll('#prompt .md-att')].map(a => [...a.querySelectorAll('.md-att-act')].map(b => `${b.dataset.act}:${b.getAttribute('aria-label')}`).join(',')),
     sendDisabled: document.querySelector('#send').disabled, sendTitle: document.querySelector('#send').title,
   }));
   await K.type('hello');
   await dropBig(); await page.waitForTimeout(300);
   let s = await snap();
-  check('送信中: 札に %・入口に「1 件送信中」・送信は押せず理由が title', [s.atoms[0].startsWith('sending:'), s.strip.includes('1 件送信中'), s.sendDisabled, s.sendTitle], [true, true, true, '添付を送っている間は送れません']);
+  check('送信中: 札に % と × キャンセル・送信は押せず理由が title', [s.atoms[0].startsWith('sending:'), s.acts[0], s.sendDisabled, s.sendTitle], [true, 'cancel:キャンセル', true, '添付を送っている間は送れません']);
   await K.press('Control+Enter'); await page.waitForTimeout(150);
   check('送っている間は Ctrl+Enter でも送らない', await page.evaluate(() => document.querySelector('#prompt').value.length > 0), true);
   await page.waitForFunction(() => document.querySelector('#prompt .md-att')?.dataset.state === 'ok', null, { timeout: 15000 });
@@ -252,7 +249,7 @@ async page => {
   await dropBig();
   await page.waitForFunction(() => [...document.querySelectorAll('#prompt .md-att')].some(a => a.dataset.state === 'failed'), null, { timeout: 15000 });
   s = await snap();
-  check('失敗: 札に理由・入口に「1 件失敗」・送信は押せない', [s.atoms.some(a => a.startsWith('failed:送れませんでした')), s.strip.includes('1 件失敗'), s.sendDisabled], [true, true, true]);
+  check('失敗: 札に理由と ↻ 再試行・外す・送信は押せない', [s.atoms.some(a => a.startsWith('failed:送れませんでした')), s.acts.find(a => a.startsWith('retry')), s.sendDisabled], [true, 'retry:再試行,remove:外す', true]);
   await page.evaluate(() => { window.__fail = false; window.__slow = 0; });
   await page.click('#prompt .md-att-act[data-act=retry]');
   await page.waitForFunction(() => [...document.querySelectorAll('#prompt .md-att')].every(a => a.dataset.state === 'ok'), null, { timeout: 15000 });
@@ -262,7 +259,16 @@ async page => {
   await dropBig(); await page.waitForSelector('#prompt .md-att[data-state=sending]');
   await page.click('#prompt .md-att-act[data-act=cancel]'); await page.waitForTimeout(1600);
   s = await snap();
-  check('送信をやめると札は外れたまま', [s.atoms.length, s.strip], [2, '添付 2 件▾']);
+  check('送信をやめると札は外れたまま', [s.atoms.length, s.atoms.every(a => a.startsWith('ok:'))], [2, true]);
+  // 失敗した札の「外す」は札ごと外す
+  await page.evaluate(() => { window.__fail = true; window.__slow = 1; });
+  await dropBig();
+  await page.waitForFunction(() => [...document.querySelectorAll('#prompt .md-att')].some(a => a.dataset.state === 'failed'), null, { timeout: 15000 });
+  // 普通の札にも × （外す）があるので、失敗した札の「外す」を押す
+  await page.click('#prompt .md-att[data-state=failed] .md-att-act[data-act=remove]'); await page.waitForTimeout(300);
+  s = await snap();
+  check('失敗した札の「外す」で札が外れ、送信できる', [s.atoms.length, s.sendDisabled], [2, false]);
+  await page.evaluate(() => { window.__fail = false; });
   await page.evaluate(() => { window.__slow = 0; });
 
   // ---------------------------------------------------------------- 4. 貼り付け・コピー・シェル・スキル候補
@@ -367,17 +373,17 @@ async page => {
     return { prevented: ev.defaultPrevented, value: p.value, marks: [...p.children].map(d => d.dataset.m ?? '').join('|') };
   }), { prevented: true, value: '- abc\n- ', marks: '- |- ' });
   await clean();
-  // 一覧の「外す」を押した後も、フォーカスは <body> に落ちない（同じ位置の行のボタンへ。全部外したら入力欄へ）
-  await pasteImage('one.png'); await page.waitForTimeout(700); await pasteImage('two.png'); await page.waitForTimeout(700);
-  await page.click('.att-entry'); await page.waitForSelector('dialog.att-list[open]');
-  await page.evaluate(() => document.querySelector('dialog.att-list .att-list-row .att-list-action:last-child').focus());
-  await K.press('Enter'); await page.waitForTimeout(150);
-  check('一覧の「外す」の後も、フォーカスは面の中の同じ位置のボタン', await page.evaluate(() => {
-    const a = document.activeElement;
-    return { inDialog: Boolean(a.closest('dialog.att-list')), label: a.textContent, rows: document.querySelectorAll('dialog.att-list .att-list-row').length, heading: document.querySelector('dialog.att-list h3').textContent };
-  }), { inDialog: true, label: '外す', rows: 1, heading: '添付 1 件' });
-  await K.press('Enter'); await page.waitForTimeout(250);
-  check('全部外して面が閉じたら、フォーカスは入力欄へ', await page.evaluate(() => ({ id: document.activeElement.id, open: document.querySelectorAll('dialog.att-list[open]').length })), { id: 'prompt', open: 0 });
+
+  // ---------------------------------------------------------------- 6. ＋のメニュー
+  // ホストの画面でも開き、2 つの見出しを出す。開いている間は aria-expanded（＋が × に回る）。Esc で閉じて＋へ戻る
+  await page.click('#attach');
+  await page.waitForSelector('.at-pop:not([hidden])');
+  check('＋のメニューはホストの画面でも 2 つの見出し', await page.evaluate(() => ({
+    heads: [...document.querySelectorAll('.at-pop:not([hidden]) .chead')].map(h => h.firstChild.textContent),
+    expanded: document.querySelector('#attach').getAttribute('aria-expanded'),
+  })), { heads: ['この端末から', 'ホストから'], expanded: 'true' });
+  await K.press('Escape'); await page.waitForTimeout(150);
+  check('Esc で閉じると＋に戻り、フォーカスも＋', await page.evaluate(() => ({ expanded: document.querySelector('#attach').getAttribute('aria-expanded'), focus: document.activeElement.id })), { expanded: 'false', focus: 'attach' });
   await reset();
   return `${results.length} 件通過\n${results.join('\n')}`;
 }

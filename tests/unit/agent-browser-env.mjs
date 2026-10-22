@@ -102,10 +102,10 @@ export default async function (t) {
       await codex.runTurn({ ...args, mode: 'full', sessionId: first.sessionId });
       t.ok('通常モードへ戻しても追加ルートを増やさない', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && !turns.at(-1).sandboxPolicy.writableRoots.includes(env.AGENT_BROWSER_SOCKET_DIR));
       await codex.runTurn({ ...args, mode: 'yolo', sessionId: first.sessionId });
-      t.ok('YOLO に workspace の追加ルートを持ち込まない', !('sandbox_workspace_write.writable_roots' in requests.at(-1).params.config) && turns.at(-1).sandboxPolicy.type === 'dangerFullAccess');
+      t.ok('Bypass に workspace の追加ルートを持ち込まない', !('sandbox_workspace_write.writable_roots' in requests.at(-1).params.config) && turns.at(-1).sandboxPolicy.type === 'dangerFullAccess');
       returnedSandbox = { type: 'dangerFullAccess' };
       await codex.runTurn({ ...args, mode: 'full', sessionId: first.sessionId });
-      t.ok('YOLO から戻るターンもブラウザー用の追加ルートを作らない', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && !turns.at(-1).sandboxPolicy.writableRoots);
+      t.ok('Bypass から戻るターンもブラウザー用の追加ルートを作らない', turns.at(-1).sandboxPolicy.type === 'workspaceWrite' && !turns.at(-1).sandboxPolicy.writableRoots);
       t.ok('通常の Codex は共有 app-server を使いターン後も止めない', stopped === 0 && !(await readFile(process.env.FAKE_BROWSER_ENV_FILE).then(() => true, () => false)));
     } finally { Object.assign(nativeRpc, originalRpc); }
 

@@ -2,9 +2,8 @@
 // デスクトップは動線（呼び出したボタン）の近くに浮く面、700px 以下は下からのシート。native の <dialog>（showModal）なので、
 // Tab は面の中に留まり、Esc で閉じ、閉じたら呼び出したボタンへフォーカスを戻す。
 //
-// 送信後の発言（web/user-message.mjs）は読み取り用（開く・パスをコピー）。段階 2 の入力欄は同じ面に、行の操作
-// （文中の位置へ移動・外す）と、送信中の進み具合・区分（文中の添付 / 文末に付く）を差し替えて出す。
-// そのため行の操作は actions(item) で渡し、行の中身は items の欄（status・progress・section）で決める。更新は update(items)。
+// 使うのは送信後の発言（web/user-message.mjs）の「📎 N ▾」だけで、読み取り用（開く・パスをコピー）。
+// 入力欄には一覧の面を置かない（添付は字の欄の中の札だけ。ADR 0252）。行の操作は actions(item) で渡す。
 import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { formatBytes } from './folder-upload.mjs';
@@ -24,11 +23,9 @@ let open = null;
  *   thumb     画像の縮小の src（画像だけ。無ければ札のアイコン）
  *   origin    'host' | 'device' | null（分かるときだけ）
  *   size      バイト数 | null（分かるときだけ）
- *   status    弱い字で添える一語（「送信済み」「送信中」など）| null
- *   progress  0〜100 | null（送信中の進み具合。あれば細い棒を出す）
- *   section   区分の見出し（前の行と違うときだけ行の上に出す）| null
- * actions(item) は [{ label, run(item), keepOpen? }]。押すと面を閉じてから run する（keepOpen は閉じない）。
- * @returns {{ close(): void, update(items: object[], title?: string): void, dialog: HTMLDialogElement }}
+ *   status    弱い字で添える一語（「送信済み」「パスで渡した」など）| null
+ * actions(item) は [{ label, run(item) }]。押すと面を閉じてから run する。
+ * @returns {{ close(): void, dialog: HTMLDialogElement }}
  */
 export function openAttachmentList({ anchor = null, title, items = [], actions = () => [], onClose = null }) {
   open?.close();
@@ -48,19 +45,8 @@ export function openAttachmentList({ anchor = null, title, items = [], actions =
   inner.append(el('div', 'att-list-handle'), head, body);
   dialog.append(inner);
 
-  let list = items;
   const close = () => { if (dialog.open) dialog.close(); };
-  const paint = () => {
-    let section = null;
-    body.replaceChildren(...list.flatMap(item => {
-      const rows = [];
-      if (item.section && item.section !== section) rows.push(el('div', 'att-list-caption', item.section));
-      section = item.section ?? section;
-      rows.push(row(item, actions(item), close));
-      return rows;
-    }));
-  };
-  paint();
+  body.replaceChildren(...items.map(item => row(item, actions(item), close)));
 
   closeButton.onclick = close;
   // ダイアログ自身が click の対象になるのは背後の覆いを押したときだけ（中身は inner が覆う）
@@ -78,32 +64,7 @@ export function openAttachmentList({ anchor = null, title, items = [], actions =
   place(dialog, anchor);
   (dialog.querySelector('.att-list-row button') ?? closeButton).focus?.({ preventScroll: true });
   open = { dialog, close };
-  return {
-    dialog, close,
-    update(next, nextTitle = null) {
-      if (nextTitle) heading.textContent = nextTitle;
-      // 行を作り直すので、フォーカスのあった行・ボタンの位置を覚え、作り直した後の同じ位置（無ければ前の行）へ戻す
-      // （「外す」を押した後にフォーカスが <body> へ落ちない）
-      const at = dialog.contains(document.activeElement) ? focusPath(body, document.activeElement) : null;
-      list = next; paint(); place(dialog, anchor);
-      if (at) restoreFocus(body, at, closeButton);
-    },
-  };
-}
-
-/** フォーカスのある行の添字と、行の中のボタンの添字。行の外（閉じるボタンなど）なら null */
-function focusPath(body, active) {
-  const row = active.closest?.('.att-list-row');
-  if (!row || !body.contains(row)) return null;
-  return { row: [...body.querySelectorAll('.att-list-row')].indexOf(row), action: [...row.querySelectorAll('button')].indexOf(active) };
-}
-
-/** 同じ添字の行のボタンへ。その行が無ければ前の行、行が 1 つも無ければ閉じるボタン */
-function restoreFocus(body, at, fallback) {
-  const rows = [...body.querySelectorAll('.att-list-row')];
-  const buttons = [...(rows[at.row] ?? rows[at.row - 1] ?? body).querySelectorAll('button')];
-  const target = buttons.length ? buttons[Math.min(Math.max(at.action, 0), buttons.length - 1)] : fallback;
-  target.focus?.({ preventScroll: true });
+  return { dialog, close };
 }
 
 function row(item, actions, close) {
@@ -123,14 +84,6 @@ function row(item, actions, close) {
   const meta = [item.origin ? `${ORIGIN_MARK[item.origin] ?? ''} ${t(`chat.attachList.origin.${item.origin}`)}`.trim() : null,
     item.size ? formatBytes(item.size) : null, item.hint, item.status].filter(Boolean);
   if (meta.length) copy.append(el('small', 'att-list-meta', meta.join(' · ')));
-  if (item.progress != null) {
-    const bar = el('span', 'att-list-bar');
-    bar.setAttribute('role', 'progressbar');
-    bar.setAttribute('aria-valuenow', String(Math.round(item.progress)));
-    bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
-    bar.style.setProperty('--p', `${Math.round(item.progress)}%`);
-    copy.append(bar);
-  }
   if (item.path) copy.append(el('span', 'att-list-path', item.path));
   const buttons = actions.filter(Boolean);
   if (buttons.length) {
@@ -138,7 +91,7 @@ function row(item, actions, close) {
     for (const action of buttons) {
       const b = el('button', 'att-list-action', action.label);
       b.type = 'button';
-      b.onclick = () => { if (!action.keepOpen) close(); action.run(item); };
+      b.onclick = () => { close(); action.run(item); };
       bar.append(b);
     }
     copy.append(bar);

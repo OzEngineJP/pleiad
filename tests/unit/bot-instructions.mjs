@@ -2,7 +2,7 @@
 //   - 人格の文は決定的（毎ターン同じバイト列。時刻・件数を入れない）で、人格・名前・アイコンを直したときだけ変わる
 //   - Claude: systemPrompt.append の最後（snapshot: false）・additionalDirectories・組み込みの自動メモリを切る設定。Codex: 毎ターンの turn/start の collaborationMode（developerInstructions には入れない）・sandboxPolicy の writableRoots。
 //     Antigravity: エージェント定義の本文・--add-dir と、人格のハッシュによる起こし直しの判定（別プロセス）
-//   - 「すべてのフォルダー」は書き込みの範囲を限れないモードだけ（Claude の YOLO・Codex の YOLO・Antigravity）。Codex の full は選択が有効のまま
+//   - 「すべてのフォルダー」は書き込みの範囲を限れないモードだけ（Claude の Bypass・Codex の Bypass・Antigravity）。Codex の full は選択が有効のまま
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
@@ -90,7 +90,7 @@ export default async function (t) {
   ok('cwd を省くと先頭のフォルダーが cwd', folderPlan(owl, ask).additionalDirectories.join() === '/work/b,/docs');
   ok('書き込みの範囲を限れないモード（scope が full）は「すべてのフォルダー」で、writableRoots は空', folderPlan(owl, yolo, '/work/a').all === true && folderPlan(owl, yolo, '/work/a').writableRoots.length === 0);
   ok('Codex の full は sandbox が作業場所に限るので選択は有効のまま（すべてではない）', unrestrictedMode(codexFull) === false && folderPlan(owl, codexFull, '/work/a').all === false);
-  ok('Claude の YOLO・Codex の YOLO・Antigravity だけが「すべて」', unrestrictedMode(yolo) && !unrestrictedMode(ask) && !unrestrictedMode({ scope: 'readonly', autonomy: 'ask' }) && !unrestrictedMode(undefined));
+  ok('Claude の Bypass・Codex の Bypass・Antigravity だけが「すべて」', unrestrictedMode(yolo) && !unrestrictedMode(ask) && !unrestrictedMode({ scope: 'readonly', autonomy: 'ask' }) && !unrestrictedMode(undefined));
   const same = path.resolve('/work/a');
   ok('cwd と同じフォルダーは重ねない（末尾の区切り・大小の違いも同じ）', folderPlan({ folders: [{ path: `${same}/`, access: 'rw' }, { path: '/z', access: 'rw' }] }, ask, same).additionalDirectories.join() === '/z');
   ok('フォルダーが無い bot は空', folderPlan({ folders: [] }, ask).additionalDirectories.length === 0);

@@ -1,11 +1,12 @@
 // 入力欄の下の設定（docs/design-system.md「入力欄の設定」）。
 //
 // 「どこで」（作業ディレクトリ）「誰が・どれだけ考えて」（エージェント・モデル・エフォート・アカウント）
-// 「どこまで任せるか」（承認モード）の 3 つのチップにまとめる。チップは押すと上へ浮く面（ポップオーバー）を開く。
+// 「どこまで任せるか」（承認モード）を 2 つのチップにまとめる。承認モードはモデルの面の下端の切り替えで、
+// 既定から外れているときだけモデルのチップに印を出す（ADR 0252）。チップは押すと上へ浮く面（ポップオーバー）を開く。
 //
 //   - チップの字は全部同じ色・太さ。「既定から外れている」を色で示さない（既定が見えないと意味が伝わらないため）。
 //     代わりにチップは**実際に使う値**を出す（例: Opus 5.5 · high）。一覧では「既定」は札として添えるだけ。
-//     差を付けるのは承認モードが YOLO（範囲 full・自律 never）のときだけ: ⚠ と強い字
+//     承認モードの印だけは既定から外れたときに出す（盾と名前を --ink-blue。Bypass（範囲 full・自律 never）は ⚠ と強い字）
 //   - 値はここでは持たない。get() が毎回 client.mjs の状態から読み、変更は on.*() で client.mjs に返す
 //   - キーボード: チップは button（Enter / Space で開く）。Esc で閉じてチップへ戻る。一覧の中は ↑↓ で移る。
 //     面の外を押すと閉じる。面は画面の幅に収める（360px の画面でもはみ出さない）
@@ -26,7 +27,7 @@ const DEFAULT_TAG = () => t("chat.model.default");
 const FOLDER = "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z";
 const FOLDER_ADD = "M12 11v5M9.5 13.5h5";
 const SHIELD = "M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z";
-// YOLO のときに盾と入れ替える ⚠ の線画（字には ⚠ を書かない。記号は 1 つ）
+// Bypass のときに盾と入れ替える ⚠ の線画（字には ⚠ を書かない。記号は 1 つ）
 const WARN = ["M12 3.5l9.5 16.5h-19z", "M12 10v4.5M12 17.2v.3"];
 // モデルのアイコン（チップの形を 3 つそろえるため。2026-09-23 に足した）
 const MODEL = ["M8 6h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z", "M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3"];
@@ -63,6 +64,7 @@ const FIT_CLASSES = ["fit-nosplit", "fit-nobranch", "fit-short", "fit-noef", "fi
  * ① ブランチ・段を外す・承認モードを短い名前に ② bot なら「· モデル」を外して名前だけ
  * ③ 作業ディレクトリ 9 → 7 字・宛先とモデル 6 字（bot なしのモデル名は 4 字）まで … で詰める
  * ④ それでも入らなければ 作業ディレクトリ → 承認モード → 宛先とモデル の順にアイコンだけ。送信は常に右端
+ * 承認モードは、スレッドの欄ではチップ（.chip.mode）、Chats の欄ではモデルのチップの中の印（.mk）。どちらも同じ段で縮む
  */
 export function fitComposerRow(row, { cwd, who }) {
   if (!row || !row.isConnected || !row.offsetParent) return;
@@ -144,7 +146,7 @@ let openPanel = null;   // 同時に開くのは 1 枚だけ
 /**
  * チップ（押すもの）の上に浮く面。同時に開くのは 1 枚だけで、面の外を押すと閉じる。
  * width は面の幅（px。関数なら開くたび・置き直すたびに読む）。添付のメニュー（web/attach-menu.mjs）も使う。
- * when は開いてよいか（false なら押しても開かない。添付のメニューはホストの画面では開かず、クリップがすぐファイルを選ぶ）。
+ * when は開いてよいか（false なら押しても開かない）。
  * onHide は閉じたとき（Esc・面の外・チップ・選んで閉じた、のどれでも）
  */
 export function panel(chip, pop, { align = "left", render, onShow, onHide, width: wantWidth = 360, when }) {
@@ -471,6 +473,67 @@ function destinationTop(d) {
   return parts;
 }
 
+/**
+ * モデルの面の下端の承認モードの切り替え（Chats の入力欄。ADR 0252）。選んだ瞬間に効き、面は閉じない（モデルは次に送るときから）。
+ * 名前は短い名前（狭い面に 5 つ並べるため）、長い名前と説明は選んでいるものの分だけ下に 1 行。Bypass は ⚠ と強い字。
+ * 押せない（bot の会話）ときは薄くし、説明の代わりに理由を出す。←→ / Home / End で移る（移った先がそのまま効く。radio と同じ）
+ */
+export function modeSegment(d, on) {
+  const label = t("chat.composer.mode");
+  if (d.modesPending) {
+    const box = el("div", "cskel");
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-busy", "true");
+    const bar = el("span", "cskel-row");
+    bar.setAttribute("aria-hidden", "true");
+    box.append(bar);
+    return [head(label), box];
+  }
+  const entries = Object.entries(d.modes ?? {});
+  if (!entries.length) return [];
+  const off = Boolean(d.modeDisabled);
+  const area = el("div", `mode-area${off ? " off" : ""}`);
+  const seg = el("div", "seg");
+  seg.setAttribute("role", "radiogroup");
+  seg.setAttribute("aria-label", label);
+  const current = d.modes?.[d.mode];
+  const hint = el("p", "mode-hint");
+  hint.id = `modeHint-${Math.random().toString(36).slice(2, 8)}`;
+  if (off) hint.textContent = d.lockedNote ?? "";
+  else if (current) hint.append(el("b", null, current.label ?? d.mode), current.note ? ` ${current.note}` : "");
+  const pick = (id) => { if (!off && id !== d.mode) on.mode(id); };
+  for (const [id, m] of entries) {
+    const picked = id === d.mode, danger = isDanger(m);
+    const name = m.label ?? id;
+    const b = el("button", [picked ? "on" : "", danger ? "danger" : ""].filter(Boolean).join(" ") || null);
+    b.type = "button";
+    b.dataset.key = `mode:${id}`;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(picked));
+    b.setAttribute("aria-label", danger ? t("composer.mode.chipAriaDanger", { mode: name }) : name);
+    if (picked) b.setAttribute("aria-describedby", hint.id);
+    b.tabIndex = picked || (!current && id === entries[0][0]) ? 0 : -1;
+    b.title = m.note ? `${name}: ${m.note}` : name;
+    if (off) b.setAttribute("aria-disabled", "true");
+    if (danger) b.append(glyph(...WARN));
+    b.append(el("span", null, m.short && m.short !== name ? m.short : name));
+    b.onclick = () => pick(id);
+    seg.append(b);
+  }
+  seg.addEventListener("keydown", (e) => {
+    const ids = entries.map(([id]) => id);
+    const at = Math.max(0, ids.indexOf(e.target.dataset?.key?.slice(5)));
+    const next = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: ids.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    const id = ids[(next + ids.length) % ids.length];
+    seg.querySelector(`[data-key="mode:${CSS.escape(id)}"]`)?.focus();
+    pick(id);
+  });
+  area.append(seg, hint);
+  return [head(label), area];
+}
+
 export function renderModel({ pop, target: d, on, hide }) {
   const parts = [];
   parts.push(...destinationTop(d));
@@ -731,7 +794,7 @@ export function effortBlock(d, onPick) {
 
 // ---- 承認モード
 /**
- * 承認モードの面を描く。target は { mode, modes }、on.mode(id) が変更先。
+ * 承認モードの面を描く（bot のページ・ルーティンのシート。Chats の入力欄はモデルの面の modeSegment）。target は { mode, modes }、on.mode(id) が変更先。
  * 選択時は hide() で面を閉じ、今と違う値のときだけ変更先を呼ぶ。
  */
 export function renderMode({ pop, target: d, on, hide }) {
@@ -760,14 +823,14 @@ export function renderMode({ pop, target: d, on, hide }) {
  * @param {(command:string, args?:object) => Promise<any>} o.cmd
  * @param {() => object} o.get 今の値と候補（client.mjs の状態を読む）
  * @param {object} o.on 変更を返す口 { cwd, backend, model, effort, account, mode }。openModel はモデルの面を開いたとき
- * @param {{ chips?: { cwd, model, mode }, pops?: { cwd, model, mode } }} [o.els] チップと面の要素。省けば Chats の入力欄の固定の id
+ * @param {{ chips?: { cwd, model }, pops?: { cwd, model } }} [o.els] チップと面の要素。省けば Chats の入力欄の固定の id
  */
 export function setupComposerControls({ cmd, get, on, els = {} }) {
   const $ = (id) => document.getElementById(id);
-  const chips = els.chips ?? { cwd: $("cwdChip"), model: $("modelChip"), mode: $("modeChip") };
-  const pops = els.pops ?? { cwd: $("cwdPop"), model: $("modelPop"), mode: $("modePop") };
+  const chips = els.chips ?? { cwd: $("cwdChip"), model: $("modelChip") };
+  const pops = els.pops ?? { cwd: $("cwdPop"), model: $("modelPop") };
 
-  // チップの骨組み（アイコン + 字 + ▾）。3 つとも同じ形（docs/design-system.md「入力欄の設定」）
+  // チップの骨組み（アイコン + 字 + ▾）。2 つとも同じ形（docs/design-system.md「入力欄の設定」）
   const cwdName = el("span", "v");
   // ブランチ（作業場所が git のときだけ。ADR 0085）。狭いときは fitRow が最初に削る
   const gitBranch = el("span", "git-br");
@@ -776,18 +839,13 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
   const folderGlyph = glyph(FOLDER), splitGlyph = branchGlyph();
   const splitSuffix = el("span", "wt-sfx");
   splitSuffix.hidden = true;
-  // 別の会話も書き込み中なら、末尾に弱い字で知らせる。狭い画面では省略表示する
-  const busySuffix = el("span", "wt-sfx wt-busy");
-  busySuffix.hidden = true;
-  chips.cwd.append(folderGlyph, cwdName, splitSuffix, gitBranch, busySuffix, glyph(CARET));
+  // 別の会話も書き込み中なのは、チップには出さず作業ディレクトリの面の中だけで知らせる（title と読み上げには足す。ADR 0252）
+  chips.cwd.append(folderGlyph, cwdName, splitSuffix, gitBranch, glyph(CARET));
   chips.cwd.lastChild.classList.add("caret");
   const modelName = el("span", "v");
   chips.model.append(glyph(...MODEL), modelName, glyph(CARET));
   chips.model.lastChild.classList.add("caret");
-  const modeName = el("span", "v");
-  const shield = glyph(SHIELD), warn = glyph(...WARN);
-  chips.mode.append(shield, modeName, glyph(CARET));
-  chips.mode.lastChild.classList.add("caret");
+  let markedMode;   // 前に描いた承認モード（印が替わったときだけ出る動きを付ける）
 
   // ---- 作業ディレクトリ
   let browsing = null;          // 簡易ブラウザーで開いているフォルダー（ブラウザー版だけ）
@@ -899,7 +957,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     const bar = current ? splitBar(current) : null;
     // worktree を作れる場所では、末尾から明示的に始められる
     const start = d.worktree?.canSplit ? splitItem() : null;
-    const busy = d.worktreeBusy && start ? el("p", "wt-busy-note", t("worktree.busyNote", { who: d.worktreeBusy.who })) : null;
+    const busy = d.worktreeBusy ? el("p", "wt-busy-note", t("worktree.busyNote", { who: d.worktreeBusy.who })) : null;
     pop.replaceChildren(...(bar ? [bar] : []), inputWrap, msg, head(t("composer.cwd.recent")),
       recent.length ? listbox(t("composer.cwd.recent"), recent) : el("p", "cnote", t("composer.cwd.noRecent")),
       pick, ...(busy ? [busy] : []), ...(start ? [start] : []), box, err);
@@ -934,16 +992,15 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     input.select?.();
   }
 
-  // ---- エージェント・モデル・エフォート・アカウント / 承認モード
+  // ---- エージェント・モデル・エフォート・アカウント・承認モード（下端の切り替え）
   const model = panel(chips.model, pops.model, {
     align: "right",
-    render: () => renderModel({ pop: pops.model, target: get(), on, hide: (focus) => model.hide(focus) }),
+    render: () => {
+      const d = get();
+      renderModel({ pop: pops.model, target: d, on, hide: (focus) => model.hide(focus) });
+      pops.model.append(...modeSegment(d, on));
+    },
     onShow: () => on.openModel?.(),
-  });
-  const mode = panel(chips.mode, pops.mode, {
-    align: "right",
-    render: () => renderMode({ pop: pops.mode, target: get(), on, hide: () => mode.hide() }),
-    when: () => !get().modeDisabled,
   });
 
   /** チップの字を今の値に合わせる。開いている面も描き直す（値が変わった・候補が届いた） */
@@ -961,9 +1018,6 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     const busy = d.worktreeBusy ?? null;
     // 確認中（'checking'）・取得失敗（'failed'）は、確定した「書き込み中」とも「なし」とも別に出す
     const check = busy ? "confirmed" : d.worktreeCheck ?? "confirmed";
-    busySuffix.hidden = !busy && check === "confirmed";
-    busySuffix.classList.toggle("checking", check === "checking");
-    busySuffix.textContent = busy ? `· ${t("worktree.busySuffix")}` : check === "checking" ? "· …" : check === "failed" ? `· ${t("worktree.unknownSuffix")}` : "";
     const lead = split ? splitGlyph : folderGlyph;
     if (chips.cwd.firstChild !== lead) chips.cwd.firstChild.replaceWith(lead);
     chips.cwd.setAttribute("aria-label", t("composer.cwd.chipAria", { cwd: cwd || t("composer.cwd.unset") }));
@@ -1000,27 +1054,33 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
       title: epLabel ? t("composer.model.chipTitle", { label: full }) : null });
     chips.model.dataset.value = d.model ?? "";
     chips.model.dataset.backend = d.backend ?? "";
-    // 承認モード
-    const m = d.modes?.[d.mode];
+    // 承認モード。既定から外れているときだけ、モデルのチップの ▾ の前に「· 盾 名前」を --ink-blue で出す（ADR 0252）。
+    // Bypass は盾を ⚠ の線画に替え、強い字にする（字の頭に ⚠ は書かない・太字にしない）。
+    // 狭い行では短い名前（サーバーの short。「都度」など）に替える（fitRow）。読み上げは長い名前のまま。
+    // 切り替えた直後でモードの一覧が取れるまでは、前のエージェントのモードを出さない
+    const m = d.modesPending ? null : d.modes?.[d.mode];
     const danger = isDanger(m);
-    // YOLO: 盾を ⚠ の線画に替え、強い字にする（字の頭に ⚠ は書かない・太字にしない）
-    // 狭い行では短い名前（サーバーの short。「都度」など）に替える（fitRow）。読み上げは長い名前のまま
-    // 切り替えた直後でモードの一覧が取れるまでは、前のエージェントのモードの名前も ID も出さない
-    const modeFull = d.modesPending ? "…" : m?.label ?? d.mode ?? "";
-    const modeShort = m?.short && m.short !== modeFull ? m.short : "";
-    modeName.replaceChildren(el("span", "full", modeFull), ...(modeShort ? [el("span", "short", modeShort)] : []));
-    const icon = danger ? warn : shield;
-    if (chips.mode.firstChild !== icon) chips.mode.firstChild.replaceWith(icon);
-    chips.mode.classList.toggle("danger", danger);
-    chips.mode.title = danger ? t("composer.mode.dangerTitle") : t("chat.composer.mode");
-    chips.mode.setAttribute("aria-label", (danger ? t("composer.mode.chipAriaDanger", { mode: modeFull }) : t("composer.mode.chipAria", { mode: modeFull })));
-    chips.mode.dataset.value = d.mode ?? "";
-    chips.mode.disabled = Boolean(d.modeDisabled);
-    if (d.modeDisabled && d.lockedNote) addNote(chips.mode, d.lockedNote);
+    chips.model.dataset.mode = d.mode ?? "";
+    if (m) {
+      const modeFull = m.label ?? d.mode ?? "";
+      const modeAria = danger ? t("composer.mode.chipAriaDanger", { mode: modeFull }) : t("composer.mode.chipAria", { mode: modeFull });
+      chips.model.setAttribute("aria-label", `${chips.model.getAttribute("aria-label")} · ${modeAria}`);
+      chips.model.title = `${chips.model.title} · ${danger ? t("composer.mode.dangerTitle") : modeAria}`;
+      if (d.mode !== defaultModeOf(d.modes)) {
+        const modeShort = m.short && m.short !== modeFull ? m.short : "";
+        const mark = el("span", `mk${danger ? " danger" : ""}${markedMode !== undefined && markedMode !== d.mode ? " in" : ""}`);
+        mark.setAttribute("aria-hidden", "true");
+        mark.append(glyph(...(danger ? WARN : [SHIELD])), el("span", "full", modeFull), ...(modeShort ? [el("span", "short", modeShort)] : []));
+        const sep = el("span", "dotsep", "·");
+        sep.setAttribute("aria-hidden", "true");
+        chips.model.querySelector(".caret")?.before(sep, mark);
+      }
+      markedMode = d.mode;
+    }
     // 開いている面も描き直す。触っていた部品へフォーカスを戻す（data-key で引き直す）。
     // 戻すときは面をスクロールさせない（開いたときに焦点を置いた上の行へ、なぞって下げた一覧が引き戻される）。
     // 作業ディレクトリの面は打ち込み中・辿っている途中を消さないよう、位置だけ合わせる
-    for (const p of [model, mode]) {
+    for (const p of [model]) {
       if (!p.open) continue;
       const key = p.pop.contains(document.activeElement) ? document.activeElement.dataset?.key : null;
       p.render(); p.place();
@@ -1033,7 +1093,7 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
   /**
    * チップの行を 1 行に収める（docs/design-system.md「入力欄と上端」）。短い値は詰めない。足りない分だけ、この順に削る:
    *   0. worktree の札と競合の知らせを畳み、次に作業場所のブランチを外す（ADR 0136）
-   *   1. 承認モードを短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
+   *   1. 承認モードの印を短い名前に（都度確認 → 都度）  2. モデルの「 · 段」を外す
    *   3. モデル名を … で詰める（「Smart…」くらいまで）  4. 作業ディレクトリの名前を … で詰める（9 字くらいまでは残す）
    * 縮める前の幅は、チップを縮めない状態（.measuring）で測る。行の幅・中身が変わるたびに呼ぶ（paint・窓の幅・中断の出入り）
    */
@@ -1049,5 +1109,5 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
     if (openPanel && Object.values(pops).includes(openPanel.pop)) openPanel.hide(false);
   }
 
-  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model, mode }, typeCwd, destroy };
+  return { paint, fit: fitRow, close: () => openPanel?.hide(false), panels: { folder, model }, typeCwd, destroy };
 }

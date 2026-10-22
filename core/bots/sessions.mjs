@@ -17,7 +17,7 @@
 //                 （acceptEdits は cwd と追加フォルダーの編集を聞かずに通すため）。シェルの rm・mv・sed などは断れない（acceptEdits の自動承認の対象）
 //   Codex         rw のうち cwd 以外を turn/start の sandboxPolicy.workspaceWrite.writableRoots（ro は書き込みに入れないだけ。cwd そのものは sandbox が常に書ける）
 //   Antigravity   cwd 以外の全部を --add-dir（ワークスペースに見せるだけ。書き込みは範囲を限れない）
-//   書き込みの範囲を限れないモード（modes() の scope が full。Claude の YOLO・Codex の YOLO・Antigravity の yolo）では、
+//   書き込みの範囲を限れないモード（modes() の scope が full。Claude の Bypass・Codex の Bypass・Antigravity の yolo）では、
 //   フォルダーの選択は無効で「すべてのフォルダー」（all: true。ADR 0109・計画 §7.2-2）。Codex の full は sandbox で書き込みを
 //   作業場所に限るので scope が workspace のまま、選択は有効
 import path from 'node:path';

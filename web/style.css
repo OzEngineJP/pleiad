@@ -589,7 +589,14 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .top input:focus{outline:none;background:var(--surface-2)}
 .top input::placeholder{color:var(--ink-weak);font-weight:400}
 .top input:disabled{background:transparent}
-.title-field{flex:1;min-width:0;display:flex;position:relative}
+.title-field{flex:1;min-width:0;display:flex;align-items:center;gap:2px;position:relative}
+/* AI にタイトルを考えてもらうボタンは、題の右に。題にポインターを置いたとき・題か杖にフォーカスがあるときだけ出す（ADR 0252）。
+   題の欄は字の幅（field-sizing）にして、杖が題の直後に来るようにする。触る端末では題を編集している間だけ */
+#titleEdit{flex:0 1 auto;field-sizing:content;min-width:4em;max-width:100%}
+#titleWand{flex:none;opacity:0;transform:translateX(-4px);transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur) var(--ease-out),background-color var(--dur-fast) var(--ease-out)}
+.title-field:is(:hover,:focus-within) #titleWand,#titleWand.busy{opacity:1;transform:none}
+@media (hover:none){.title-field:hover:not(:focus-within) #titleWand:not(.busy){opacity:0;transform:translateX(-4px)}}
+@media (prefers-reduced-motion:reduce){#titleWand{transition:none;transform:none}}
 /* タイトル行の右の、右パネルを開くアイコンボタン（目次・プラグイン・内蔵ブラウザー。docs/design-system.md「会話の頭の行のアイコン」）。
    プラグインの「変更あり」は右上の強い字の点（紙の色の 2px の切り欠き）。件数は字にせず名前にだけ入れる。
    内蔵ブラウザーの操作中は右上の走っている弧（§6。14px の紙の色の丸の中に半径 4.4・線 1.5） */
@@ -631,9 +638,20 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 
 /* ---- 会話と溝。#log の左の余白は 8px（溝の外側）。溝は 72px: 筋 x=20（24px の当たり判定を左端 8px から置く）
    + 曲線の横幅 30 + 3 本目までの逃げ 16 + 端の余白 6。溝の中には筋・節・分岐点の曲線しか置かない ---- */
-#log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 22px 24px 8px}
+#log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 22px 24px 8px;scrollbar-gutter:stable}
 #log.branch-transition{overflow-anchor:none}
 .thread{position:relative;max-width:860px;min-width:0}
+/* 列（ADR 0252）: 履歴と入力欄は同じ 760px の列（--col）に入れ、本文の領域（#log の左右の余白 8px と 22px + スクロールバー 10px の内側）の
+   中央に置く。溝（時間の線）は本文の領域の左端に固定する。列が溝にかかる幅では、列を溝の右へ寄せる（左端は溝の右）。
+   中央に寄せる余白は発言の中身（.mw-body）の左右の padding。padding の内側までは .mw-body の overflow で切られないので、
+   可視化を「広げる」（.present-visualization.wide）は溝の右から本文の領域の右端まで使える。入力欄（#composer）の左右の余白は同じ式 */
+:root{--col:760px}
+#thread{max-width:none}
+#thread .mw-body{padding-left:max(0px,calc((100% - var(--col) + 32px - 8px - var(--gut,72px)) / 2));
+  padding-right:max(0px,calc((100% - var(--col) + 8px + var(--gut,72px) - 32px) / 2))}
+@media (min-width:701px){
+  #composer{padding-left:max(calc(8px + var(--gut,72px)),calc((100% - var(--col)) / 2));padding-right:max(32px,calc((100% - var(--col)) / 2))}
+}
 .spine{position:absolute;left:0;top:0;width:var(--gut,72px);height:100%;overflow:visible;pointer-events:none}
 .spine path{fill:none;stroke:var(--line);stroke-width:var(--hair);transition:stroke var(--dur) var(--ease-out),stroke-width var(--dur) var(--ease-out)}
 /* 現在の会話軸。分岐グループ内の曲線は branch-view.mjs が描く。 */
@@ -702,7 +720,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .msg-att-zoom{display:block;padding:0;background:transparent;border-radius:var(--r-s);cursor:zoom-in;line-height:0}
 .msg-att-zoom img{display:block;width:auto;height:auto;max-width:min(240px,100%);max-height:144px;border-radius:var(--r-s);background:var(--surface-paper)}
 .msg-att-img figcaption{margin-top:4px;font-size:var(--fs-xs);line-height:1.5;color:var(--ink-weak);overflow-wrap:anywhere}
-.msg-att-file{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 10px;background:var(--surface-paper);border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-blue);text-decoration:none}
+.msg-att-file{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 10px;background:var(--surface-paper);border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-blue);text-decoration:none} /* allow-blue: ファイルを開くリンク */
 .msg-att-file span{min-width:0;overflow-wrap:anywhere}
 .msg-att-file[aria-current=true]{background:var(--surface-3)}
 @media (max-width:700px){.msg-att-img{max-width:min(220px,100%)}.msg-att-zoom img{max-width:min(220px,100%)}}
@@ -798,7 +816,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .att-list-head{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .att-list-head h3{margin:0;font-size:var(--fs-l);font-weight:600}
 .att-list-close{font-size:var(--fs-s);padding:3px 10px}
-.att-list-caption{margin:16px 0 4px;font-size:var(--fs-xs);color:var(--ink-weak)}
 .att-list-row{display:flex;align-items:flex-start;gap:12px;padding:10px 0;min-width:0}
 .att-list-thumb,.att-list-file{flex:none;width:48px;height:48px;border-radius:var(--r-s);background:var(--surface-1)}
 .att-list-thumb{object-fit:cover}
@@ -808,8 +825,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .att-list-name{display:block;font-size:var(--fs-s);font-weight:600;overflow-wrap:anywhere}
 .att-list-meta{display:block;margin:3px 0;font-size:var(--fs-xs);color:var(--ink-weak)}
 .att-list-path{display:block;font:var(--fs-xs)/1.5 var(--font-mono);color:var(--ink-weak);overflow-wrap:anywhere}
-.att-list-bar{display:block;height:3px;margin:6px 0;background:var(--surface-3);border-radius:var(--r-s);overflow:hidden}
-.att-list-bar::after{content:"";display:block;width:var(--p,0%);height:100%;background:var(--fill-primary);color:var(--on-fill)}
 .att-list-actions{display:flex;flex-wrap:wrap;gap:0 16px;margin-top:4px}
 .att-list-action{padding:2px 0;background:transparent;font-size:var(--fs-s);color:var(--ink-blue);cursor:pointer}
 .att-list-action:hover{text-decoration:underline}
@@ -1065,6 +1080,13 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .visualize-seamless:is(:hover,:focus-within) .present-tools{opacity:1;pointer-events:auto}
 .visualize-seamless .present-tools .h-icon:hover{background:var(--surface-1);color:var(--ink)}
 .visualize-seamless .visualize-title{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* 広げる（web/visualize-widen.mjs、ADR 0252）。左右の margin は .mw-body の padding の箱の 4px 内側までを JS が測る。
+   動きを減らす設定では --dur-slow が 0ms になり、すぐ切り替わる */
+.present-visualization.visualize-widen-able{transition:box-shadow var(--dur-fast) var(--ease-out),margin var(--dur-slow) var(--ease-organic)}
+.present-visualization.visualize-widened{margin-left:var(--widen-l,-4px);margin-right:var(--widen-r,-4px)}
+/* 出すのは会話の列（#thread の .mw-body）の中だけ。幅 700px 以下は列の左右に余りが無いので出さない */
+.present-tools .visualize-widen{display:none}
+@media (min-width:701px){#thread .mw-body .present-tools .visualize-widen{display:inline-flex}}
 @media (hover:none){
   .present-visualization.visualize-seamless:is(:hover,:focus-within){box-shadow:none}
   .visualize-seamless .present-tools{position:static;margin:2px 4px 0;padding:0;background:transparent;box-shadow:none;opacity:1;pointer-events:auto}
@@ -1209,17 +1231,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 @keyframes bgc-chip-in{from{opacity:0;transform:translateY(4px)}}
 @media (prefers-reduced-motion:reduce){.bg-chip.enter,.bgc-slot.in,.bgc-more.in,.bgc-n.bump,.bgc-more.bump{animation:none}.bgc-slot.out{animation:none;opacity:0}}
 .cbox{background:var(--surface-1);border-radius:var(--r-l);padding:2px 4px 4px;min-width:0}
-/* 添付の入口「添付 N 件 ▾」（web/client.mjs の renderAttached）。0 件なら出さない。状態（送信中・失敗）は同じ行の強い字。
-   押すと一覧の面（web/attachment-list.mjs）。添付そのものは字の欄の中の、置いた位置にある（下の .md-att） */
-.att-strip{padding:6px 8px 0;min-width:0}
-.att-strip[hidden]{display:none}
-.att-entry{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:3px 8px;border-radius:var(--r-pill);background:transparent;color:var(--ink-weak);font-size:var(--fs-s);cursor:pointer;min-width:0}
-.att-entry:hover,.att-entry[aria-expanded=true]{background:var(--surface-2)}
-.att-entry svg.i{width:14px;height:14px;flex:none}
-.att-entry .att-state{color:var(--ink-strong);white-space:nowrap}
-.att-entry[data-state=failed] .att-state{font-weight:600}
-.att-entry.flash{animation:note-flash 1.2s var(--ease-out)}
-@media (prefers-reduced-motion:reduce){.att-entry.flash{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
 /* 字の欄（web/md-editor.mjs）。Markdown をその場で整える編集欄。1 行から始め、中身に合わせて伸ばす。上限はマウス 10 行・タッチ 6 行で、
    その先は中でスクロール（client.mjs の fitPrompt が max-height を決める）。1 行 = 1 ブロック（.md-b）。記号は見せず、種類は見た目で表す */
 :is(#prompt,#thPrompt){position:relative;width:100%;display:block;background:transparent;border-radius:var(--r-m);padding:9px 12px 3px;line-height:1.6;
@@ -1287,7 +1298,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 @keyframes cg-nudge-still{0%,80%{color:var(--ink-blue);box-shadow:0 0 0 2px var(--line-blue)}}
 :is(#prompt,#thPrompt)[data-ghost][data-empty=true]::before{content:none}
 :is(#prompt,#thPrompt)[data-ghost=touch]{padding-right:48px}
-.cg-take{position:absolute;right:10px;z-index:2;width:28px;height:28px;padding:0;border-radius:50%;background:var(--surface-paper);color:var(--ink-blue);
+.cg-take{position:absolute;right:10px;z-index:2;width:28px;height:28px;padding:0;border-radius:50%;background:var(--surface-paper);color:var(--ink-strong);
   display:inline-grid;place-items:center;box-shadow:0 1px 2px var(--shadow);cursor:pointer}
 .cg-take[hidden]{display:none}
 .cg-take svg.i{width:15px;height:15px}
@@ -1320,17 +1331,31 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .md-b.md-att{display:block;margin:4px 0;user-select:none;-webkit-user-select:none;border-radius:var(--r-s);cursor:default}
 .md-b.md-att+.md-b.md-att{margin-top:0}
 .md-b.md-att .msg-att-img{display:inline-block;vertical-align:top;margin-right:8px}
-.md-b.md-att.sel,.md-b.md-att.jump{outline:2px solid var(--line-blue);outline-offset:2px}
+.md-b.md-att.sel{outline:2px solid var(--line-blue);outline-offset:2px}
 .md-b.md-att .msg-att-file{cursor:pointer}
-/* 送っている途中・失敗の札。進み具合（%）と細い棒、中止・再試行・外す */
-.md-att-up{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;position:relative;max-width:min(420px,100%);padding:6px 12px 8px;background:var(--surface-paper);border-radius:var(--r-m);font-size:var(--fs-s);line-height:1.5}
-.md-att-up-name{min-width:0;overflow-wrap:anywhere;color:var(--ink)}
+/* 送れない間に送ろうとしたとき、送っている途中・失敗の札を短く強調する（web/composer/attachments.mjs の flash） */
+.md-b.md-att.flash .md-att-up{animation:note-flash 1.2s var(--ease-out)}
+@media (prefers-reduced-motion:reduce){.md-b.md-att.flash .md-att-up{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
+/* 送っている途中・失敗の札。名前・進み具合（%）・細い棒（左から右へ伸びる）と、右端の操作（キャンセル・再試行・外す） */
+.md-att-up{display:flex;align-items:center;gap:8px;position:relative;max-width:min(420px,100%);min-height:40px;padding:6px 4px 8px 12px;background:var(--surface-paper);border-radius:var(--r-m);font-size:var(--fs-s);line-height:1.5}
+.md-att-up-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
 .md-att-up-pct{flex:none;font-family:var(--font-mono);color:var(--ink-weak)}
-.md-att-up-err{flex:1 1 100%;color:var(--ink-strong);overflow-wrap:anywhere}
+.md-att-up-err{flex:1 1 0;min-width:0;color:var(--ink-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .md-att-up-bar{position:absolute;left:12px;right:12px;bottom:3px;height:2px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden}
 .md-att-up-bar::after{content:"";display:block;height:100%;width:var(--p,0%);background:var(--fill-primary);color:var(--on-fill);transition:width var(--dur-fast) linear}
-.md-att-act{font-size:var(--fs-s);color:var(--ink-blue);padding:0 6px;margin-left:auto}
-.md-att-up-err ~ .md-att-act{margin-left:0}
+/* 札の操作（web/md-editor.mjs の actions）。アイコンだけの、色の無い字のボタン。面はポインターを置いたときだけ（.btn:hover）。
+   送った後の札の × は、ポインターを置いたとき・札にフォーカスがあるときだけ出す（触る端末では常に） */
+.md-att-acts{display:inline-flex;flex:none;margin-left:auto}
+.md-att-act.btn-icon{width:28px;height:28px}
+.md-att-act svg.i{width:15px;height:15px}
+.md-b.md-att .msg-att-img{position:relative}
+.md-b.md-att .msg-att-img > .md-att-acts{position:absolute;top:4px;right:4px}
+.md-b.md-att .msg-att-img > .md-att-acts .btn-icon{background:var(--surface-paper);color:var(--ink)}
+.md-b.md-att .msg-att-img > .md-att-acts .btn-icon:hover{background:var(--surface-2)}
+.md-b.md-att > .md-att-acts{vertical-align:middle;margin-left:4px}
+.md-b.md-att[data-state=ok] .md-att-acts{opacity:0;transition:opacity var(--dur-fast) var(--ease-out)}
+.md-b.md-att[data-state=ok]:is(:hover,:focus-within) .md-att-acts{opacity:1}
+@media (hover:none){.md-b.md-att[data-state=ok] .md-att-acts{opacity:1}}
 /* 取り込み中の札（貼り付けた HTML の画像をホストが取りに行く間。ADR 0141）。進み具合は分からないので、細い棒の中を光が往復する。
    取得元のホスト名は等幅の弱い字。取れたら画像の札に替わり、取れなかった札は 160ms で薄れて外れる（動きを減らす設定では、光は止めて棒の左 1/3 を塗ったまま・消えるのは即座） */
 .md-att-up[data-state=importing]{animation:att-in var(--dur) var(--ease-out)}
@@ -1348,7 +1373,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .md-b.md-att[data-gal] .msg-att-zoom img{width:72px;height:54px;max-width:none;max-height:none;object-fit:cover}
 .md-b.md-att[data-gal] figcaption{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .md-b.md-att[data-gal] .md-att-up{width:72px;height:54px;max-width:none;padding:0;flex-direction:column;justify-content:center;align-items:center;gap:4px;font-size:var(--fs-xs)}
-.md-b.md-att[data-gal] .md-att-up-name,.md-b.md-att[data-gal] .md-att-up-host,.md-b.md-att[data-gal] .md-att-act{display:none}
+.md-b.md-att[data-gal] .md-att-up-name,.md-b.md-att[data-gal] .md-att-up-host,.md-b.md-att[data-gal] .md-att-up .md-att-acts{display:none}
+.md-b.md-att[data-gal] .msg-att-img > .md-att-acts{top:2px;right:2px}
+.md-b.md-att[data-gal] .msg-att-img > .md-att-acts .btn-icon{width:24px;height:24px;min-width:0;min-height:0}
 .md-b.md-att[data-gal] .md-att-up-bar{left:8px;right:8px;bottom:5px}
 /* 範囲を選んだときだけ出る書式バー（B / I / コード / リンク） */
 .md-bar{position:absolute;z-index:20;display:flex;align-items:center;gap:0;padding:3px;background:var(--surface-paper);border-radius:var(--r-s);box-shadow:0 4px 18px var(--shadow)}
@@ -1435,14 +1462,19 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .resume-note{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 10px 0;min-height:22px}
 .resume-note[hidden]{display:none}
 .resume-note.quiet{visibility:hidden}
-/* 「保存済み」: 行の空きに弱い字で。詰めるときは最初に消える（字が詰まる） */
-.crow .draft-saved{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-xs);color:var(--ink-weak);padding:2px 6px}
+/* 下書きを保存できなかったときだけ、行の空きに強い字で（保存できている間は何も出さない。ADR 0252）。詰めるときは最初に消える（字が詰まる） */
+.crow .draft-saved{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-xs);color:var(--ink-strong);padding:2px 6px}
 /* ---- 入力欄の設定のチップ（web/composer-controls.mjs、design-system.md「入力欄の設定」） ----
-   作業ディレクトリ・モデル・承認モードの 3 つ。3 つとも同じ書体（本文）・大きさ（14px）・太さ（400）・高さ（マウス 30px / タッチ 36px。
+   モデル・作業ディレクトリの 2 つ（スレッドの欄は承認モードのチップも）。同じ書体（本文）・大きさ（14px）・太さ（400）・高さ（マウス 30px / タッチ 36px。
    添付・中断と同じ）・余白・アイコン（15px の線画）・▾（12px）。既定から外れても色を変えない。
-   差を付けるのは承認モードが YOLO のときだけ: 盾のアイコンを ⚠ に替え、アイコンと字を強い字にする（太字にはしない）。
+   承認モードは、既定から外れているときだけモデルのチップの ▾ の前に「· 盾 名前」（.mk）を --ink-blue で出す（ADR 0252）。
+   Bypass は盾のアイコンを ⚠ に替え、アイコンと字を強い字にする（太字にはしない）。
    足りないときは作業ディレクトリ → モデル名の順に … で詰める（段「high」と承認モードは削らない）。押すと上に浮く面（.cpop）が開く */
 .crow-gap{flex:1 1 0;min-width:0}
+/* 添付のボタン（+）。メニューを開いている間は 45° 回って × になる（ADR 0252） */
+.attach-plus svg.i{transition:transform var(--dur) var(--ease-out)}
+.attach-plus[aria-expanded=true] svg.i{transform:rotate(45deg)}
+@media (prefers-reduced-motion:reduce){.attach-plus svg.i{transition:none}}
 /* 外から差し込む部品（通話のマイク・スピーカー）の枠。中身は行の子と同じに並ぶ（web/composer/composer.mjs の partSlot） */
 .crow-slot{display:contents}
 .chip{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;height:30px;padding:0 8px;border-radius:var(--r-pill);
@@ -1469,6 +1501,37 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .crow.fit-nomodel .chip.model.with-bot .mdl{display:none}
 .crow.fit-cwd-icon .chip.folder :is(.v,.caret,.cv,.git-br,.wt-sfx){display:none}
 .crow.fit-mode-icon .chip.mode :is(.v,.caret,.cv){display:none}
+/* モデルのチップの中の承認モードの印（.mk）。区切りの「·」は弱い字。狭い行では短い名前、さらに狭ければ盾（⚠）だけ */
+.chip .dotsep{color:var(--ink-weak);flex:none}
+.chip .mk{display:inline-flex;align-items:center;gap:3px;color:var(--ink-blue);flex:none}
+.chip .mk svg.i{width:14px;height:14px;color:inherit}
+.chip .mk.danger{color:var(--ink-strong)}
+.chip .mk .short{display:none}
+.crow.fit-short .chip .mk .full:has(+ .short){display:none}
+.crow.fit-short .chip .mk .short{display:inline}
+.crow.fit-mode-icon .chip .mk :is(.full,.short){display:none}
+.crow.fit-model-icon .chip.model .dotsep{display:none}
+.chip .mk.in{animation:mk-in var(--dur) var(--ease-out)}
+@keyframes mk-in{from{opacity:0;transform:scale(.6)}}
+@media (prefers-reduced-motion:reduce){.chip .mk.in{animation:none}}
+/* モデルの面の下端の承認モードの切り替え（web/composer-controls.mjs の modeSegment）。選んでいるものだけ紙の面に本文色。
+   Bypass を選んでいるときは強い字。説明は選んでいるものの分だけ下に 1 行。bot の会話では薄くして押せない */
+.cpop .mode-area{padding:4px 6px}
+.cpop .seg{display:flex;gap:2px;background:var(--surface-1);border-radius:var(--r-pill);padding:2px}
+.cpop .seg button{flex:1 1 0;display:inline-flex;align-items:center;justify-content:center;gap:3px;min-width:0;min-height:28px;padding:2px 6px;border-radius:var(--r-pill);
+  background:transparent;color:var(--ink-weak);font:inherit;font-size:var(--fs-s);white-space:nowrap;cursor:pointer;
+  transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
+.cpop .seg button > span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cpop .seg button svg.i{width:13px;height:13px;flex:none}
+.cpop .seg button:hover{color:var(--ink)}
+.cpop .seg button.on{background:var(--surface-paper);color:var(--ink);box-shadow:0 1px 4px var(--shadow)}
+.cpop .seg button.on.danger{color:var(--ink-strong);font-weight:600}
+.cpop .seg button:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
+.cpop .mode-area.off .seg{opacity:.5}
+.cpop .mode-area.off .seg button{cursor:default}
+.cpop .mode-area .mode-hint{margin:0;padding:6px 4px 0;min-height:22px;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5}
+.cpop .mode-area .mode-hint b{color:var(--ink);font-weight:500;margin-right:4px}
+@media (pointer:coarse){.cpop .seg button{min-height:36px}}
 .crow.fit-model-icon .chip.model :is(.v,.caret){display:none}
 .chip.model{position:relative}
 .chip.model .av{flex:none}
@@ -1648,7 +1711,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .hf-row svg.i{width:16px;height:16px;color:var(--ink-weak);flex:none}
 .hf-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hf-meta{flex:none;font:var(--fs-xs)/1 var(--font-mono);color:var(--ink-weak);white-space:nowrap}
-.hf-ck{display:grid;place-items:center;flex:none;width:18px;height:18px;border-radius:6px;background:var(--surface-3);color:var(--ink-blue);font-size:var(--fs-s);font-weight:700}
+.hf-ck{display:grid;place-items:center;flex:none;width:18px;height:18px;border-radius:6px;background:var(--surface-3);color:var(--ink-blue);font-size:var(--fs-s);font-weight:700} /* allow-blue: 選んだ印 */
 .hf-foot{display:flex;align-items:center;gap:8px;padding:8px 4px 2px}
 .hf-note{flex:1;min-width:0;font-size:var(--fs-s);color:var(--ink-weak)}
 .hf-foot .btn{font-size:var(--fs-s);padding:5px 12px}
@@ -2111,6 +2174,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .crow > :is(.crow-gap,.draft-saved){display:none}
   .crow > .chip.model{flex:1 1 0;min-width:0}
   .crow > .chip.mode :is(.v,.cv){display:none}
+  .crow > .chip.model .mk :is(.full,.short){display:none}
   .crow > .chip.folder{order:1;flex:1 0 100%;max-width:100%}
   .crow > .chip.armed{order:1;max-width:100%}
 }

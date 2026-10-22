@@ -174,7 +174,7 @@
 .brain-time{flex:none;width:7.5em;font-size:var(--fs-xs);color:var(--ink-weak);font-family:var(--font-mono);padding-top:2px}
 .brain-kind{display:inline-block;padding:0 6px;margin-right:6px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-size:var(--fs-xs);line-height:1.6;vertical-align:1px}
 .brain-row.k-quiet .tx-text{color:var(--ink-weak)}
-.brain-row.k-act .brain-kind,.brain-row.k-result .brain-kind{color:var(--ink-blue)}
+.brain-row.k-act .brain-kind,.brain-row.k-result .brain-kind{color:var(--ink-strong)}
 .brain-meta{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
 @media (pointer:coarse){
   .brain-loop .forget{opacity:1}

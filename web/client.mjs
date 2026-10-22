@@ -72,7 +72,6 @@ import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
 import { createHomeDest } from "./composer/home-dest.mjs";
 import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
-import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
@@ -336,6 +335,9 @@ async function recalledAttachments(item) {
   const index = data?.messages?.findIndex(row => row.uuid === item.uuid) ?? -1;
   if (index < 0 || $('prompt').value !== item.text || !chatRecall.active) return;
   state.attached = messageAttachments(data, index);
+  // 印は添付の実体があるときだけ札になる。実体を置いたので値を入れ直す（入れ直さないと印が字のまま残り、末尾にも札が付く）
+  $('prompt').value = item.text;
+  fitPrompt();
   renderAttached();
 }
 // 次のメッセージの候補（web/composer/suggestion.mjs。設定 › 入力）。会話ごとに最後に届いたもの（promptSuggestion の出来事）を持つ。
@@ -4888,15 +4890,15 @@ const folderUpload = canSendFolders() ? createFolderUpload({
   },
   onChange: () => attachMenu?.refresh(),
 }) : null;
-let attachMenu = null;   // 添付のボタンのメニュー（wireDropZone で作る。出どころを選べる接続でだけ開く）
+let attachMenu = null;   // 添付のボタン（+）のメニュー（wireDropZone で作る。どの接続でも開く。ADR 0252）
 
-/** 添付のボタンの読み上げと title を、出どころを選ばせるかに合わせる（hostCapabilities が届いたときにも） */
+/** 添付のボタンの読み上げと title（いつもメニューを開く。開いている間は + が × に回る。style.css の .attach-plus） */
 function syncAttachButton() {
-  const b = $("attach"), menu = Boolean(currentAttachSources());
-  b.title = menu ? t("chat.attach.source.buttonTitle") : t("chat.composer.attach");
+  const b = $("attach");
+  b.title = t("chat.attach.source.buttonTitle");
   b.setAttribute("aria-label", b.title);
-  if (menu) { b.setAttribute("aria-haspopup", "dialog"); if (!b.hasAttribute("aria-expanded")) b.setAttribute("aria-expanded", "false"); }
-  else { b.removeAttribute("aria-haspopup"); b.removeAttribute("aria-expanded"); }
+  b.setAttribute("aria-haspopup", "dialog");
+  if (!b.hasAttribute("aria-expanded")) b.setAttribute("aria-expanded", "false");
 }
 
 /** 未送信の会話で「bot なし」のときに動くエージェント（bot を選んでいる間も、bot なしの札にはこちらを出す） */
@@ -7489,7 +7491,7 @@ function persistDraft(id, value) {
   state.drafts.set(id, value);
   try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch { /* report server result below */ }
   if (!id) return Promise.resolve();
-  if (state.current === id) setDraftNote(t("chat.draft.saving"), "saving");
+  if (state.current === id) setDraftNote("saving");
   const work = (draftWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(() => cmd("saveDraft", { sessionId: id, ...value }));
   draftWrites.set(id, work);
   work.then(() => {
@@ -7499,9 +7501,9 @@ function persistDraft(id, value) {
     }
     const s = state.sessions.find(s => s.id === id);
     if (s) s.hasDraft = Boolean(value.text || value.attached.length);
-    if (state.current === id && draftWrites.get(id) === work) setDraftNote(t("chat.draft.saved"), "saved");
+    if (state.current === id && draftWrites.get(id) === work) setDraftNote("saved");
   }, () => {
-    if (state.current === id) setDraftNote(t("chat.draft.saveFailed"), "failed");
+    if (state.current === id) setDraftNote("failed");
   });
   return work;
 }
@@ -7514,14 +7516,16 @@ function dropBlankDraft() {
   try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
 }
 /**
- * 入力欄の行の「保存済み」。state は saving | saved | failed | restored。
- * 700px 以下は行に出さず、失敗だけをチップの行の上の一行（#draftFail）に出す（行の隙間では文が途中で切れるため。style.css）
+ * 下書きの保存の状態。state は saving | saved | failed | restored。保存できている間は何も出さず、失敗だけを
+ * 行の空き（「保存できませんでした … · 再試行」）に出す（ADR 0252）。700px 以下は行に出さず、チップの行の上の一行（#draftFail）に出す
+ * （行の隙間では文が途中で切れるため。style.css）
  */
-function setDraftNote(text, st) {
+function setDraftNote(st) {
   const b = $("draftSaved");
-  b.textContent = text;
-  b.dataset.state = st;
   const failed = st === "failed";
+  b.textContent = failed ? t("chat.draft.saveFailed") : "";
+  b.hidden = !failed;
+  b.dataset.state = st;
   $("draftFail").hidden = !failed;
   $("draftFailText").textContent = failed ? t("chat.draft.saveFailedNote") : "";
 }
@@ -7537,7 +7541,7 @@ function loadDraft() {
   renderAttached();
   // ホストのファイルの面で選んでいたもの・開いていた場所は会話ごと（次は新しい会話の作業ディレクトリから）
   attachMenu?.reset();
-  setDraftNote(d?.text || d?.attached?.length ? t("chat.draft.restored") : "", "restored");
+  setDraftNote("restored");
   // 編集中だった会話は、元の発言がまだあれば「編集中」に戻す（無ければ脇の書きかけを足して編集をやめる）
   if (d?.edit && state.current) chatEdit.restore(d.edit, id => { const f = editTarget(id); return f ? { tail: f.tail } : null; });
 }
@@ -7721,7 +7725,7 @@ addEventListener("pagehide", () => saveDraft().catch(() => {}));
 // 送るときに末尾へ印を足す。会話に載るのは送信のとき（runTurn の attachments → present）。
 // 札・入口・一覧・送っている途中のものは入力欄の部品（web/composer/attachments.mjs の chatAttach）が持つ。
 
-/** 添付で出どころを選ばせるか（null ならクリップはすぐファイルを選ぶ）。composer-layout.mjs の attachSources */
+/** 添付の札に出どころを付けるか（null ならホストの画面で、付けない）。composer-layout.mjs の attachSources */
 const currentAttachSources = () => attachSources({ remote: window.plyRemote, osActions: state.hostCaps?.osActions });
 
 const attachedKey = (path) => `p:${normalizeAttachmentPath(path)}`;
@@ -7751,10 +7755,15 @@ function uploadBlockReason() {
 function orderedAttachments() {
   return chatAttach.ordered();
 }
-/** 添付の入口「添付 N 件 ▾」を描き直す（字の欄の上の 1 行。0 件なら出さない）。描いた後に送信ボタンの状態を合わせる */
+/**
+ * 添付の実体が替わった。文中に無い添付（古い下書き・予定から戻したもの）は字の欄の末尾に札で置き（一覧の面は無い。ADR 0252）、
+ * 送信ボタンの状態を合わせる。字の欄の値を入れた後に呼ぶ
+ */
 function renderAttached() {
+  chatAttach.placeTail();
   chatAttach.render();
 }
+/** 送れない理由を知らせたとき、理由の札（送信中・失敗）を短く強調する */
 function flashAttachEntry() {
   chatAttach.flash();
 }
@@ -7818,10 +7827,10 @@ function fitPrompt() {
 }
 
 function wireDropZone() {
-  // クリップ → 隠した file input。選んだものはドロップ・貼り付けと同じ列に入る。
-  // 出どころを選べる接続（リモートの窓・ホストの画面ではないブラウザー）では「この端末から / ホストから」のメニュー（web/attach-menu.mjs）
+  // + → 「この端末から / ホストから」のメニュー（web/attach-menu.mjs）。ホストの PC の画面でも同じ面を出す（ADR 0252）。
+  // 「ファイル…」は隠した file input。選んだものはドロップ・貼り付けと同じ列に入る。フォルダーを送るのはリモートの窓だけ
   attachMenu = setupAttachMenu({
-    button: $("attach"), sources: currentAttachSources, upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions, cmd,
+    button: $("attach"), sources: () => currentAttachSources() ?? { folder: false }, upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions, cmd,
     hostName: () => remoteInfo(window.plyRemote)?.host ?? state.hostCaps?.hostName ?? "",
     startDir: () => state.cwd.trim(),
     attachHost: (files) => { if (attachHostFiles(files)) $("prompt").focus(); },
@@ -7829,7 +7838,6 @@ function wireDropZone() {
   // クリップを押す前の字の欄の位置を覚える（メニューやファイルの選択でフォーカスが移っても、そこへ札を置く）
   $("attach").addEventListener("pointerdown", chatAttach.rememberAt, true);
   $("attach").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") chatAttach.rememberAt(); }, true);
-  $("attach").addEventListener("click", () => { if (!currentAttachSources()) $("fileIn").click(); });
   syncAttachButton();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
@@ -10139,7 +10147,7 @@ function connect() {
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
-      // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
+      // 同じ答えで、添付の札に出どころを付けるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
       cmd("hostCapabilities").then((c) => {
         state.hostCaps = c ?? null;
         remoteSettings.setReviewMode(c?.reviewMode === true);

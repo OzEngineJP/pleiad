@@ -9,7 +9,7 @@
 //     そのエージェントがアカウントを使え（capabilities.accounts。Claude はトークン・Codex などは資格情報。ADR 0222）、
 //     登録があるか bot が選んでいるときだけ出す
 //   触れてよいフォルダー … 行（パス・読み書き/読み取り）と［フォルダーを足す］。bots.update の folders（置き換え）
-//     実際に書き込みの範囲を限れないモード（範囲 full: Claude の YOLO・Codex の YOLO・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
+//     実際に書き込みの範囲を限れないモード（範囲 full: Claude の Bypass・Codex の Bypass・Antigravity）だけ「すべてのフォルダー」で非活性（計画 §7.2-2）
 //   他の会話に送る … スイッチ（既定 ON）。bots.update の sendToOthers
 // 右に思考の流れ（brain-panel.mjs。心拍の入り切り・欲求・気がかり。ADR 0126）、記憶の一覧（memory-list.mjs）と今週の使用量。操作はすべて host.invoke(op, args)。出来事は botsChanged・memoryChanged・channelsChanged。
 // 認証・1 日の上限・長い注記は出さない（アカウントは、どれで動くかを選ぶ節だけ。登録・トークン・資格情報は設定の各エージェントのアカウント）。

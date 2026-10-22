@@ -1,10 +1,11 @@
 // デザインの lint。「薄い地 + 同系の濃い文字」の札・枠線・片側の線を機械的に落とす。
 //
 // 規則と閾値の理由は docs/design-system.md §5。ここは web/ の CSS と index.html を
-// --strict 相当で検査し、1 件でも違反があれば落とす。lint 自身の自己診断も一緒に回す
-// （lint が壊れて何も検出しなくなった、を見逃さないため）。
+// --strict 相当で検査し、1 件でも違反があれば落とす。web/ の .mjs（locales・vendor を除く）は、
+// quiet-blue がクラスの組み合わせ（el('button', 'btn-quiet on') など）を拾うために一緒に渡す。
+// lint 自身の自己診断も一緒に回す（lint が壊れて何も検出しなくなった、を見逃さないため）。
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { lint, selftest, readFiles } from "../lint-design.mjs";
 
@@ -16,7 +17,16 @@ const WEB = (f) => path.join(ROOT, "web", f);
 
 // トークンを先頭に置く。定義は渡した全ファイルから集めるので順序は判定に効かないが、
 // 違反の並びが「トークン → 各 CSS → index.html」になって読みやすい
-const FILES = ["tokens.css", "style.css", "tools.css", "tree.css", "context.css", "manage-panel.css", "updates.css", "usage.css", "file-preview.css", "conversation-nav.css", "computer-settings.css", "notify-settings.css", "notification-inbox.css", "git.css", "worktree.css", "chrome-control.css", "channels-side.css", "channels-feed.css", "channels-thread.css", "bot-page.css", "routines.css", "voice.css", "api-keys.css", "index.html"].map(WEB);
+const FILES = ["tokens.css", "style.css", "tools.css", "tree.css", "context.css", "manage-panel.css", "updates.css", "usage.css", "file-preview.css", "conversation-nav.css", "computer-settings.css", "notify-settings.css", "notification-inbox.css", "git.css", "worktree.css", "chrome-control.css", "channels-side.css", "channels-feed.css", "channels-thread.css", "bot-page.css", "routines.css", "voice.css", "api-keys.css", "compaction.css", "remote-browser.css", "chrome-panel.css", "index.html"].map(WEB);
+
+function scripts(dir, out = []) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) { if (e.name !== "locales" && e.name !== "vendor") scripts(p, out); }
+    else if (e.name.endsWith(".mjs")) out.push(p);
+  }
+  return out;
+}
 
 export default function (t) {
   const lines = [];
@@ -27,7 +37,7 @@ export default function (t) {
   t.ok("検査対象のファイルが全部ある", missing.length === 0, missing.map((f) => path.relative(ROOT, f)).join(", "));
   if (missing.length) return;
 
-  const V = lint(readFiles(FILES), { strict: true });
+  const V = lint(readFiles([...FILES, ...scripts(path.join(ROOT, "web"))]), { strict: true });
   const byRule = {};
   for (const v of V) byRule[v.rule] = (byRule[v.rule] ?? 0) + 1;
   for (const v of V.slice(0, 30)) t.note(`${path.relative(ROOT, v.file)}:${v.line}  [${v.rule}]  ${v.message}`);

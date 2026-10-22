@@ -53,14 +53,20 @@ export default async function (t) {
   const css = fs.readFileSync(new URL('../../web/style.css', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
   const box = html.slice(html.indexOf('class="cbox"'), html.indexOf('id="cwdPop"'));
-  t.ok('箱の中に 添付 → 字の欄 → チップと送信の行', box.indexOf('id="attached"') < box.indexOf('id="prompt"') && box.indexOf('id="prompt"') < box.indexOf('class="crow"')
-    && ['id="attach"', 'id="cwdChip"', 'id="modelChip"', 'id="modeChip"', 'id="abort"', 'id="send"', 'id="draftSaved"'].every(k => box.includes(k)));
+  const crow = box.slice(box.indexOf('class="crow"'));
+  t.ok('箱の中は 字の欄 → チップと送信の行（「添付 N 件 ▾」の行は無い。ADR 0252）', box.indexOf('id="prompt"') < box.indexOf('class="crow"') && !box.includes('id="attached"') && !/att-entry/.test(box));
+  t.ok('行は ＋ → 宛先とモデル → 作業ディレクトリ → … → 送信。承認モードのチップは無い（モデルの面の区分け）',
+    ['id="attach"', 'id="modelChip"', 'id="cwdChip"', 'class="crow-gap"', 'id="abort"', 'id="send"'].every((k, i, a) => crow.includes(k) && (i === 0 || crow.indexOf(a[i - 1]) < crow.indexOf(k)))
+      && !html.includes('id="modeChip"') && !html.includes('id="modePop"') && /class="btn btn-icon attach-plus" id="attach"/.test(crow));
+  t.ok('＋は開いている間 45° 回って × に（aria-expanded。動きを減らす設定では回さない）', /\.attach-plus\[aria-expanded=true\] svg\.i\{[^}]*rotate\(45deg\)/.test(css)
+    && /@media \(prefers-reduced-motion:reduce\)\{\.attach-plus svg\.i\{transition:none\}\}/.test(css));
+  t.ok('承認モードの印は既定でないときだけ --ink-blue、Bypass は強い字', /\.chip \.mk\{[^}]*color:var\(--ink-blue\)/.test(css) && /\.chip \.mk\.danger\{color:var\(--ink-strong\)\}/.test(css));
   t.ok('字の欄は 1 行から（編集欄の最小の高さは 1 行。上限は fitPrompt が max-height で決める）', /<div id="prompt"/.test(html) && /:is\(#prompt,#thPrompt\)\{[^}]*min-height:calc\(1\.6em \+ 12px\)/.test(css) && /:is\(#prompt,#thPrompt\)\{[^}]*overflow-y:auto/.test(css));
   t.ok('作業ディレクトリのチップは等幅にしない（逸脱 a）', /id="cwdChip"/.test(html) && !/class="chip mono/.test(html) && !/\.chip\.mono\{/.test(css));
   t.ok('チップの行は折り返さない（700px 以下の flex-wrap:wrap を外した）', /\.crow\{[^}]*flex-wrap:nowrap/.test(css) && !/\.crow\{flex-wrap:wrap\}/.test(css));
   const chip = /\n\.chip\{([^}]*)\}/.exec(css)?.[1] ?? '';
   t.ok('チップは 3 つとも同じ字（本文の書体・14px・400）と高さ 30px・余白 0 8px', /font:400 var\(--fs\)\/1\.5 var\(--font\)/.test(chip) && /height:30px/.test(chip) && /padding:0 8px/.test(chip), chip);
-  t.ok('YOLO は太字にしない（逸脱 b）', /\.chip\.danger\{color:var\(--ink-strong\)\}/.test(css) && !/\.chip\.danger\{[^}]*font-weight/.test(css));
+  t.ok('Bypass は太字にしない（逸脱 b）', /\.chip\.danger\{color:var\(--ink-strong\)\}/.test(css) && !/\.chip\.danger\{[^}]*font-weight/.test(css));
   t.ok('1 行に収める順: 承認モードの短い名前 → モデルの段を外す → モデル名 → 作業ディレクトリ（fitRow の印と縮める比）',
     /\.crow\.fit-short \.chip\.mode \.v \.short\{display:inline\}/.test(css) && /\.crow\.fit-noef \.chip \.v \.ef\{display:none\}/.test(css)
       && /\.crow\.measuring > \*\{flex-shrink:0\}/.test(css) && /\.chip\.model\{flex-shrink:20\}/.test(css) && /\.chip\.folder\{flex-shrink:1\}/.test(css) && /\.chip\.mode\{flex-shrink:0\}/.test(css));

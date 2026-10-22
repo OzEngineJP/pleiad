@@ -8,7 +8,7 @@
 .context-meter[aria-expanded=true] { background:var(--surface-3); }
 .context-meter-clock { color:var(--ink); }
 .context-meter-bar { display:inline-block; width:47px; height:5px; border-radius:10px; background:var(--surface-3); overflow:hidden; }
-.context-meter-bar > span { display:block; height:100%; background:var(--ink-blue); }
+.context-meter-bar > span { display:block; height:100%; color:var(--ink-blue); background:currentColor; }
 .context-meter svg.caret { width:12px; height:12px; color:var(--ink-weak); margin-left:-2px; }
 .pop.menu.context-meter-pop { position:absolute; top:auto; right:auto; bottom:calc(100% + 5px); left:0; z-index:60; min-width:180px; width:max-content; max-width:min(300px,calc(100vw - 16px)); padding:4px; }
 .context-meter[aria-expanded=true] .context-meter-bar { background:var(--surface-2); }

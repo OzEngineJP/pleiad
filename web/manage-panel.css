@@ -168,7 +168,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-rt { flex:1; min-width:0; display:flex; flex-direction:column; }
 /* アカウントの行の丸（設定 › Pleiad Plus。メールの頭の 1 文字） */
 .rm-av { display:grid; place-items:center; flex:none; width:36px; height:36px; border-radius:50%;
-  background:var(--surface-2); color:var(--ink-blue); font-weight:700; }
+  background:var(--surface-2); color:var(--ink-strong); font-weight:700; }
 /* rm-lbl と同じ置き方だが、注意ではなく状態の文（太字にしない） */
 .rm-plain { font-weight:400; color:var(--ink); }
 .rm-nm { color:var(--ink); overflow-wrap:anywhere; }
@@ -276,7 +276,7 @@ button.rm-row.inx-h:disabled:hover { background:none; }
 .rm-spin-arc { stroke:var(--ink-blue); stroke-linecap:round; }
 @keyframes rm-spin { to { transform:rotate(360deg); } }
 .rm-done { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding-top:8px; }
-.rm-ck { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:var(--surface-2); color:var(--ink-blue); }
+.rm-ck { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:var(--surface-2); color:var(--ink-blue); } /* allow-blue: 済んだ印 */
 .rm-ck svg.i { width:20px; height:20px; stroke-width:2; }
 /* まとまりの見出しのすぐ下の状態の一行（塗りの点=つながっている・中抜きの点=オフ／未設定・回る印=接続中）。失敗は .rm-warn（承認 2026-10-21） */
 .settings-content .rm-st { display:flex; align-items:center; gap:6px; margin:0; padding:2px 8px 6px; font-size:var(--fs-s); color:var(--ink-weak); overflow-wrap:anywhere; }

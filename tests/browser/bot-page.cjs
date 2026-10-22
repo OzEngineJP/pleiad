@@ -193,7 +193,7 @@ async page => {
   check(await page.locator('#botView .bp-fold.allf').isVisible() && await page.locator('#botAddFolder').isDisabled(), 'Antigravity の bot は「すべてのフォルダー」で非活性');
   await shot('06-antigravity');
 
-  // ---- Codex: 全部自動 (full) は書き込みを作業場所に限るので、フォルダーは活性のまま。YOLO は非活性
+  // ---- Codex: 全部自動 (full) は書き込みを作業場所に限るので、フォルダーは活性のまま。Bypass は非活性
   await botPage('new');
   await page.locator('#botName').fill('Lynx');
   await pickChip('#botModelChip', 'backend:codex');
@@ -205,9 +205,9 @@ async page => {
   await waitBot('Lynx', b => b.mode === 'full', 'Codex の全部自動にする');
   check(await page.locator('#botView .bp-fold.allf').count() === 0 && await page.locator('#botAddFolder').isEnabled(), 'Codex の全部自動はフォルダーを限れるので、活性のまま');
   await pickChip('#botModeChip', 'mode:yolo');
-  await waitBot('Lynx', b => b.mode === 'yolo', 'Codex の YOLO にする');
-  check(await page.locator('#botView .bp-fold.allf').isVisible() && await page.locator('#botAddFolder').isDisabled(), 'Codex の YOLO は sandbox を外すので「すべてのフォルダー」で非活性');
-  check(await page.locator('#botModeChip').evaluate(n => n.classList.contains('danger')), 'YOLO は入力欄と同じ ⚠ の印');
+  await waitBot('Lynx', b => b.mode === 'yolo', 'Codex の Bypass にする');
+  check(await page.locator('#botView .bp-fold.allf').isVisible() && await page.locator('#botAddFolder').isDisabled(), 'Codex の Bypass は sandbox を外すので「すべてのフォルダー」で非活性');
+  check(await page.locator('#botModeChip').evaluate(n => n.classList.contains('danger')), 'Bypass は入力欄と同じ ⚠ の印');
 
   // ---- 見た目: 360 幅で横にはみ出さない・ダーク
   await botPage((await botOf('Owl2')).id);

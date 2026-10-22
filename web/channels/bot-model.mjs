@@ -1,7 +1,7 @@
 // bot のページの、DOM に触れない決まりごと（テストから直接呼ぶ。ADR 0109・docs/channels.md）。
 // 画面の部品は bot-page.mjs・memory-list.mjs。
 
-/** 読み書きの範囲を限れないモードか。範囲 full（Claude の YOLO・Antigravity の yolo・Codex の sandbox なしの yolo）だけ。
+/** 読み書きの範囲を限れないモードか。範囲 full（Claude の Bypass・Antigravity の yolo・Codex の sandbox なしの yolo）だけ。
  *  Codex の「全部自動」(full) は sandbox が作業場所に書き込みを限るので、限れる扱いのまま（実際の動きと表示を合わせる。計画 §7.2-2） */
 export const foldersUnlimited = (mode) => mode?.scope === 'full';
 

@@ -1087,11 +1087,9 @@
     "who": "“{{title}}”",
     "whoMany": "“{{title}}” and {{count}} more",
     "whoAnother": "another conversation",
-    "busySuffix": "also in use",
     "busyTitle": "{{who}} is writing to the same repository. Open this to start in a worktree.",
     "busyNote": "{{who}} is writing to the same repository",
     "checkingTitle": "Checking whether another conversation is writing here",
-    "unknownSuffix": "unchecked",
     "unknownTitle": "Couldn't check whether another conversation is writing here",
     "chipSuffix": "worktree",
     "chipTitle": "Worktree · from {{origin}}",
@@ -2433,14 +2431,7 @@
       "copyPath": "Copy path",
       "close": "Close",
       "sent": "Sent",
-      "importing": "Importing",
       "byPath": "Passed by path",
-      "jump": "Go to its place in the text",
-      "insert": "Insert at the cursor",
-      "section": {
-        "inline": "In the text",
-        "tail": "Added at the end"
-      },
       "origin": {
         "host": "Host",
         "device": "This device"
@@ -2450,12 +2441,6 @@
       "retry": "Retry",
       "cancelled": "Stopped",
       "failed": "Couldn't send: {{error}}",
-      "entrySending_one": "{{count}} sending",
-      "entrySending_other": "{{count}} sending",
-      "entryFailed_one": "{{count}} failed",
-      "entryFailed_other": "{{count}} failed",
-      "entryImporting_one": "{{count}} importing",
-      "entryImporting_other": "{{count}} importing",
       "blockSending": "Can't send while attachments are still uploading",
       "blockImporting": "Images are still being imported",
       "blockFailed": "Some attachments couldn't be sent. Retry or remove them."
@@ -2463,7 +2448,6 @@
     "paste": {
       "importing": "Importing…",
       "importingTitle": "Importing {{name}} from {{host}}",
-      "cancelImport": "Stop importing",
       "startedLive_one": "Importing {{count}} image",
       "startedLive_other": "Importing {{count}} images",
       "doneLive_one": "Imported {{count}} image",
@@ -2563,12 +2547,9 @@
       "failedNote": "⚠ Check failed"
     },
     "draft": {
-      "saving": "Saving…",
-      "saved": "Saved",
       "saveFailed": "Couldn't save. Your text is kept · Retry",
       "saveFailedNote": "Couldn't save the draft. Your text is kept.",
-      "retry": "Retry",
-      "restored": "Draft restored"
+      "retry": "Retry"
     },
     "attach": {
       "enlarge": "{{name}} (click to enlarge)",
@@ -2606,7 +2587,7 @@
       },
       "sending": "{{percent}}%",
       "sendingTitle": "Sending {{name}} ({{size}}) to the host",
-      "cancelSending": "Stop sending",
+      "cancel": "Cancel",
       "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again.",
       "deviceFolder": "this device",
       "already": "This file is already attached"
@@ -2959,6 +2940,8 @@
       "copyPath": "Copy path",
       "download": "Save HTML",
       "browser": "Open in browser",
+      "widen": "Widen",
+      "narrow": "Back to normal width",
       "truncated": "Omitted because it's too large.",
       "badImage": "This image can't be displayed.",
       "loadingBody": "Loading…",
@@ -5125,7 +5108,7 @@
     },
     "toc": {
       "title": "Contents",
-      "entry": "Contents and search in this conversation ({{key}})",
+      "entry": "Search this conversation ({{key}})",
       "close": "Close (Esc)",
       "search": "Search this conversation",
       "prevHit": "Previous match (Shift+Enter)",
