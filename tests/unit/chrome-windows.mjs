@@ -95,6 +95,7 @@ export default async function (t) {
       t.ok('窓は最小化せず、決めた大きさ（Browser.setWindowBounds。画面の外へは conceal が動かす）', r.fake.windows().find(w => w.windowId === tab?.windowId)?.state === 'normal' && r.fake.windowBounds(tab.windowId).width === WINDOW_DIP.width && r.fake.windowBounds(tab.windowId).height === WINDOW_DIP.height);
       const hw = hwndOf(r, tab?.windowId);
       t.ok('題の nonce で窓を見つけて隠す（画面の外・タスクバーと Alt+Tab から外す・透明度 0・マウスの素通し）', concealedOk(hw) && hw.agent, JSON.stringify(hw));
+      t.ok('層に窓のプロフィールを渡す（AUMID と対応づけ、人がプロフィールを開こうとしたときに見える窓を開ける。ADR 0246）', r.os.calls('conceal').length > 0 && r.os.calls('conceal').every(c => c.profile === 'Default'), JSON.stringify(r.os.calls('conceal')));
       t.ok('最初のタブは nonce のページでなく、頼まれた URL（about:blank）', tab?.url === 'about:blank' && !a.raw.some(text => text.includes('PLY-')) && !r.logs.some(line => line.includes(args.nonce)));
       t.ok('エージェントには自分のタブだけが見える', JSON.stringify((await a.cmd('Target.getTargets')).result.targetInfos.map(x => x.targetId)) === JSON.stringify([tabId]));
       t.ok('前面は取られていない（最初から前に戻す対象が無いか、取られても返す）', r.os.getForeground() === before);
@@ -130,6 +131,7 @@ export default async function (t) {
       const args = r.os.calls('launchWindow')[0]?.args ?? {};
       t.ok('既定の User Data（custom でない）のときは --user-data-dir を付けない', args.userDataDir == null && !JSON.stringify(args).includes('user-data-dir') && !JSON.stringify(args).includes(r.chrome.userDataDir), JSON.stringify(args));
       t.ok('プロフィールは Local State の profile.last_used', args.profileDir === 'Profile 2');
+      t.ok('隠すときも窓のプロフィールを層に渡す（プロフィール名はログに出さない）', r.os.calls('conceal').length > 0 && r.os.calls('conceal').every(c => c.profile === 'Profile 2') && !r.logs.join('\n').includes('Profile 2'));
       t.ok('プロフィール名・アカウント・鍵は、ログにも OS の層にも出ない', ![secret, 'Alice Secret', 'SECRET-KEY', 'Work'].some(s => JSON.stringify(r.os.log).includes(s) || r.logs.join('\n').includes(s)));
     } finally { await r.stop(); }
     const dir = (await startFakeChrome({ permission: 'auto' }));
@@ -636,6 +638,7 @@ export default async function (t) {
       r.os.setPending(false);
       const again = await r.scope.readopt();
       t.ok('層が戻ってからの引き継ぎでは、残した記録から窓を引き継げる（interrupted ではない）', again.length === 0 && !again.interrupted && r.scope.windows('one').length === 1 && agentWindows(r).filter(h => !h.closed).length === 1, JSON.stringify({ again, hwnds: r.os.hwnds() }));
+      t.ok('引き継ぎ直すときも窓のプロフィールを層に渡す（AUMID の対応を失わない）', r.os.calls('adoptAgent').at(-1)?.profile === 'Default', JSON.stringify(r.os.calls('adoptAgent').at(-1)));
       // 層が入れ替わっていないのに窓が見つからなければ、これまで通り lost（引き継げなかった窓）
       r.os.opts.adoptFails = true;
       const gone = await r.scope.readopt();

@@ -121,7 +121,7 @@ function committedOrigin(frame) {
  * @param [deps.connectWaitText] (sessionId) => 20 秒待ってもつながらないときに（setup・permission で）エージェントへ返す文。会話の言語。無ければ英語の固定
  */
 export function createChromeRelay({ connection, os, locate, log = () => {}, profileFor, profileUsed, scope = createChromeWindows({ os, locate, log, profileFor, profileUsed }), authorize = async () => ({ allow: false }), deniedMessage = () => 'navigation denied',
-  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, turnLive = null, turnSignal = () => undefined, carryExtra = null } = {}) {
+  connectWaitMs = CONNECT_WAIT_MS, commandTimeoutMs = COMMAND_TIMEOUT_MS, handoff = null, connectWaitText = null, turnLive = null, turnSignal = () => undefined, carryExtra = null, now = Date.now } = {}) {
   const entries = new Map();   // 会話の id -> entry
   const byKey = new Map();
   const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
@@ -149,7 +149,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       v: 1,
       port: address?.port ?? null,
       chrome: chromeId,
-      entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null })),
+      entries: [...entries.values()].map(entry => ({ id: entry.id, key: entry.key, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastUsedAt: entry.lastUsedAt ?? null })),
       windows,
     };
     const extra = carryExtra?.snapshot?.();
@@ -348,9 +348,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     entry.windows.add(windowId);
   }
 
+  /** その会話の Chrome の窓を使った（最後に使った時刻。24 時間使われない会話の窓を閉じるのに使う。ADR 0246） */
+  function noteUsed(entry) { if (entry) entry.lastUsedAt = now(); }
+
   /** タブを会話の範囲に入れる。発見中の接続に targetCreated を送り、真似た自動 attach と確認の Fetch を付ける */
   function adopt(state, entry, info, { windowId = null, opener = null } = {}) {
     if (state.tabs.has(info.targetId)) return state.tabs.get(info.targetId);
+    noteUsed(entry);
     const tab = newTab(entry, info, windowId, opener);
     state.tabs.set(tab.targetId, tab);
     addWindow(state, entry, windowId);
@@ -386,9 +390,13 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   /** エージェントが動かしているタブか（一時停止中は人が動かしているので、いつも false。確認にかけるかを決める） */
   const driven = tab => tab.active && !tab.entry.paused;
 
+  /** タブの窓のプロフィールのフォルダー名（'chrome:<dir>' を外す。分からなければ null）。popup の窓を隠すときに渡す */
+  const profileDirOfTab = tab => scope.profileOf?.(tab.entry.id, { windowId: tab.windowId, context: tab.info?.browserContextId ?? null })?.replace(/^chrome:/, '') ?? null;
+
   /** エージェントが触れたタブを「今のタブ」として覚える（映像が追う。agent-browser の「今のタブ」は自分の側で持つので、コマンドの宛先から知る）。操作中の印も見直す */
   function touch(tab) {
     const entry = tab.entry;
+    noteUsed(entry);
     if (entry.current !== tab.targetId) { entry.current = tab.targetId; notifyView(entry.id, 'current'); }
     refreshOperating(entry);
   }
@@ -412,7 +420,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         tab.windowId = where.windowId; addWindow(state, tab.entry, where.windowId);
         notifyView(tab.entry.id, 'tabs');   // 映像の側がタブの窓を知る（開いた直後は窓が分からない）
         // popup の別窓は画面の左上などに出て前面を取る。同じ置き方（画面の外・透明）を当てる（ADR 0154）
-        if (isNewWindow) Promise.resolve(scope.adoptPopup?.({ cdp: state.cdp, entryId: tab.entry.id, windowId: where.windowId })).catch(() => {});
+        if (isNewWindow) Promise.resolve(scope.adoptPopup?.({ cdp: state.cdp, entryId: tab.entry.id, windowId: where.windowId, profile: profileDirOfTab(opener) })).catch(() => {});
       }
       return;
     }
@@ -746,6 +754,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     if (client.entry.stopped) { try { client.ws.close(1008, 'stopped'); } catch { /* 閉じていてもよい */ } return; }
     const reply = body => send(client, { id, ...body, ...(sessionId ? { sessionId } : {}) });
     if (client.entry.paused) { reply({ error: { code: -32000, message: PAUSED_MESSAGE } }); return; }   // 引き継ぎ中は全部断る（接続は切らない）
+    noteUsed(client.entry);
     try {
       const state = await upFor(client);
       if (client.closed) return;
@@ -1007,7 +1016,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) throw new Error('invalid session');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: invalidCarry && !unlock, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); carryChanged(); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: invalidCarry && !unlock, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false, lastUsedAt: now() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); carryChanged(); }
+      noteUsed(entry);
       if (unlock) { this.resume(sessionId); invalidCarry = false; }   // 人が送った: 無効だった預かり物の代わりに、ここから始める
       // 端点を渡すのはターンの始まり（core/agent-browser.mjs の browserEnvironment）。ターンの間、窓のタブに focus emulation を保つ
       if (!entry.stopped && !entry.turn) { entry.turn = true; changed(entry); if (up) syncFocus(up, entry); }
@@ -1024,7 +1034,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (typeof url !== 'string' || !/^https?:/i.test(url) || !safeUrl(url)) throw denied('navigation');
       await ensureListening();
       let entry = entries.get(sessionId);
-      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      if (!entry) { entry = { id: sessionId, key: random(), stopped: false, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false, lastUsedAt: now() }; entries.set(sessionId, entry); byKey.set(entry.key, entry); }
+      noteUsed(entry);
       const state = up && !up.cdp.closed ? up : await bind(await connection.demand({ signal }));
       const { targetId, windowId } = await scope.openTab({ cdp: state.cdp, url, entryId: entry.id });
       const fresh = await state.cdp.send('Target.getTargetInfo', { targetId }).catch(() => null);
@@ -1056,6 +1067,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (!entry || entry.paused) return false;
       // by・viewport は引き継ぎの印として carry に載り、更新を越えて残る（端末が引き継いでいる印）
       entry.paused = { at, ...(typeof by === 'string' ? { by } : {}), ...(viewport ? { viewport: { ...viewport } } : {}) };
+      noteUsed(entry);
       suspendAgent(entry);
       changed(entry);
       return true;
@@ -1089,7 +1101,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
         tab.windowId = where.windowId;
         const isNew = !entry.windows.has(where.windowId);
         addWindow(state, entry, where.windowId);
-        if (isNew) await scope.adoptPopup?.({ cdp: state.cdp, entryId: entry.id, windowId: where.windowId });
+        if (isNew) await scope.adoptPopup?.({ cdp: state.cdp, entryId: entry.id, windowId: where.windowId, profile: profileDirOfTab(tab) });
       }
       if (answered !== tabs.length) return;   // 引けないタブがあれば、窓の記録は捨てない
       for (const windowId of [...entry.windows]) {
@@ -1104,6 +1116,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (!entry?.paused) return null;
       const { at } = entry.paused;
       entry.paused = null;
+      noteUsed(entry);
       changed(entry);
       return at;
     },
@@ -1112,6 +1125,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const entry = entries.get(sessionId);
       return entry ? { turn: entry.turn, stopped: entry.stopped, paused: entry.paused ? { ...entry.paused } : null, lastWindowId: up?.tabs.get(entry.current)?.windowId ?? null } : null;
     },
+    /** その会話で Chrome の窓を最後に使った時刻（ms）。中継に無ければ null（ADR 0246 の 24 時間の掃除） */
+    lastUsed(sessionId) { const entry = entries.get(sessionId); return Number.isFinite(entry?.lastUsedAt) ? entry.lastUsedAt : null; },
     /** 窓の作り方（core/chrome/windows.mjs。control が引き継ぎで窓を見える形に戻す・隠し直すのに使う） */
     get scope() { return scope; },
     get cdp() { return up && !up.cdp.closed ? up.cdp : null; },
@@ -1223,7 +1238,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       if (carry && carry.v === 1 && Array.isArray(carry.entries)) {
         for (const item of carry.entries) {
           if (typeof item?.id !== 'string' || !item.id || item.id.length > 200 || !/^[a-f0-9]{48}$/.test(item.key ?? '') || entries.has(item.id) || byKey.has(item.key)) continue;
-          const entry = { id: item.id, key: item.key, stopped: item.stopped === true, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false };
+          const entry = { id: item.id, key: item.key, stopped: item.stopped === true, clients: new Set(), windows: new Set(), turn: false, current: null, operating: false,
+            lastUsedAt: Number.isFinite(item.lastUsedAt) ? item.lastUsedAt : now() };   // 更新で窓を持ち越しても、最後に使った時刻は戻さない（ADR 0246）
           // 一時停止は更新を越えて解けない（人が窓を操作している間に、エージェントのコマンドが通らない）。at・by は始まりの時刻と押した人
           if (item.paused && typeof item.paused === 'object') entry.paused = restoredPause(item.paused);
           entries.set(entry.id, entry); byKey.set(entry.key, entry);
@@ -1304,6 +1320,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     },
     /** 中継が知っている会話の id（画面がつなぎ直したときに、今の状態を配るため） */
     sessionIds() { return [...entries.keys()]; },
+    /** 引き継ぎで出ていった（更新の途中。24 時間の掃除をしない。ADR 0246・0167） */
+    isHandedOff() { return handedOff; },
     /** サイトの利用の確認（confirmAgentSites）。ON なら範囲のタブに確認の Fetch を付け、OFF なら外す（止めている要求は通す） */
     setConfirm(enabled) {
       const next = enabled === true;

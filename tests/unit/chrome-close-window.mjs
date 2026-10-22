@@ -21,18 +21,18 @@ export const title = '会話の Chrome の窓を閉じる: 撮影・人の ×・
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) return false; await sleep(10); } return true; }
 
-async function rig() {
+async function rig({ now = () => Date.now() } = {}) {
   const chrome = await startFakeChrome();
   const desktop = fakeChromeOs({ chrome });
   const connection = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: desktop, pollMs: 20 });
-  const relay = createChromeRelay({ connection, os: desktop, locate: { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true } });
+  const relay = createChromeRelay({ connection, os: desktop, locate: { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true }, now });
   const screencast = createChromeScreencast({ host: relay.view });
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-chrome-close-'));
   const records = [], cards = [], openCards = new Set();
   let recordHook = null;
   const closer = createChromeWindowCloser({ relay, screencast, handoffs: { forget: id => { cards.push(id); openCards.delete(id); }, current: id => openCards.has(id) ? { reason: 'login' } : null }, dataDir,
-    record: async (id, payload) => { await recordHook?.(id); records.push({ id, ...payload }); } });
-  return { chrome, desktop, connection, relay, screencast, dataDir, records, cards, openCards, closer, setRecordHook: hook => { recordHook = hook; },
+    record: async (id, payload) => { await recordHook?.(id); records.push({ id, ...payload }); }, now });
+  return { chrome, desktop, connection, relay, screencast, dataDir, records, cards, openCards, closer, now, setRecordHook: hook => { recordHook = hook; },
     async stop() { closer.stop(); screencast.close(); relay.close(); await connection.close(); await chrome.stop(); await fs.rm(dataDir, { recursive: true, force: true }); } };
 }
 
@@ -238,6 +238,57 @@ export default async function (t) {
       r.relay.unpause('multi');
       const last = await r.closer.close('multi', { by: 'human', windowId: wb });
       t.ok('最後の 1 つを windowId 付きで閉じると、全部閉じる通常の経路（静止画と閉じた行を残す）', last.closed === true && r.relay.view.tabs('multi').length === 0 && r.records.some(x => x.id === 'multi' && x.chromeClosed?.by === 'human'));
+    }
+
+    {
+      // 長く使われていない会話の隠した窓を閉じる（ADR 0246）。24 時間の既定・実行中・引き継ぎ・依頼の待ちは除く
+      const HOUR = 60 * 60_000;
+      const clock = { value: 1_000_000_000 };
+      const idle = await rig({ now: () => clock.value });
+      try {
+        const old = await idle.relay.openForConversation('idle-old', 'https://old.test/');
+        idle.relay.endTurn('idle-old');
+        t.ok('窓を使った時刻を会話ごとに覚える（最後に使った時刻）', idle.relay.lastUsed('idle-old') === clock.value);
+        clock.value += 24 * HOUR + 1;
+        await idle.relay.openForConversation('idle-new', 'https://new.test/');
+        idle.relay.endTurn('idle-new');
+        const closed = await idle.closer.sweepIdle();
+        const record = idle.records.find(x => x.id === 'idle-old');
+        t.ok('24 時間使われていない会話の隠した窓を閉じ、close_browser_window と同じ静止画と行を残す', JSON.stringify(closed) === '["idle-old"]'
+          && record?.chromeClosed?.by === 'idle' && record.path?.endsWith('.png') && (await fs.readFile(record.path)).length > 0);
+        t.ok('最近使った会話の窓は閉じない', idle.relay.view.tabs('idle-new').length > 0 && !idle.records.some(x => x.id === 'idle-new'));
+
+        await idle.relay.endpoint('idle-turn');   // ターンが走っている
+        await idle.relay.openForConversation('idle-turn', 'https://turn.test/');
+        clock.value += 24 * HOUR + 1;
+        const duringTurn = await idle.closer.sweepIdle();
+        t.ok('実行中の会話の窓は閉じない', !duringTurn.includes('idle-turn') && idle.relay.view.tabs('idle-turn').length > 0, JSON.stringify(duringTurn));
+        idle.relay.endTurn('idle-turn');
+        t.ok('ターンが終われば、同じ 24 時間の条件で閉じる', JSON.stringify(await idle.closer.sweepIdle()) === '["idle-turn"]');
+
+        await idle.relay.openForConversation('idle-paused', 'https://paused.test/');
+        idle.relay.endTurn('idle-paused');
+        idle.relay.pause('idle-paused');
+        clock.value += 24 * HOUR + 1;
+        t.ok('人が引き継いでいる会話の窓は閉じない', JSON.stringify(await idle.closer.sweepIdle()) === '[]' && idle.relay.state('idle-paused')?.paused);
+        idle.relay.unpause('idle-paused');
+        clock.value += 24 * HOUR + 1;
+        t.ok('引き継ぎが終われば、閉じる', JSON.stringify(await idle.closer.sweepIdle()) === '["idle-paused"]');
+
+        await idle.relay.openForConversation('idle-wait', 'https://wait.test/');
+        idle.relay.endTurn('idle-wait');
+        idle.openCards.add('idle-wait');
+        clock.value += 24 * HOUR + 1;
+        t.ok('人への依頼（hand_to_user）の答えを待っている会話の窓は閉じない', JSON.stringify(await idle.closer.sweepIdle()) === '[]' && idle.relay.view.tabs('idle-wait').length > 0);
+        idle.openCards.delete('idle-wait');
+        t.ok('依頼が済めば、閉じる', JSON.stringify(await idle.closer.sweepIdle()) === '["idle-wait"]');
+
+        await idle.relay.openForConversation('idle-live', 'https://live.test/');
+        idle.relay.endTurn('idle-live');
+        clock.value += 24 * HOUR + 1;
+        t.ok('中継の外で動いていると分かる会話（isLive）は閉じない', JSON.stringify(await idle.closer.sweepIdle({ isLive: id => id === 'idle-live' })) === '[]');
+        t.ok('動きが無くなれば、その会話も閉じる', JSON.stringify(await idle.closer.sweepIdle()) === '["idle-live"]');
+      } finally { await idle.stop(); }
     }
 
     await r.relay.openForConversation('crash', 'https://crash.test/');

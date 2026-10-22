@@ -42,7 +42,10 @@
 //                                          port（つないだ Chrome の DevToolsActivePort）の待ち受けのプロセスの窓だけ。持ち主が分からなければ null（利用者の窓・Edge の窓を取り違えて隠さない）。
 //                                          since（snapshotWindows の写し）の窓は除く。tolerance は位置・大きさの許容（DIP。既定 16、最小 1）
 // hiddenSpot()                           → Promise<{ x, y } | null>  仮想デスクトップの右の外（物理画素）。createTarget の left・top と --window-position に使う
-// conceal(ref)                           → Promise<boolean>  画面の外へ置き、タスクバーと Alt+Tab から外し、透明度 0・マウスの素通しにする。最小化はしない。かけ直せる
+// conceal(ref, { profile })                     → Promise<boolean>  画面の外へ置き、タスクバーと Alt+Tab から外し、透明度 0・マウスの素通しにする。最小化はしない。かけ直せる
+//                                          profile は窓の Chrome のプロフィールのフォルダー名（core の記録。分からなければ省く）。層は隠した窓の
+//                                          AUMID と対応づけて持ち、人がプロフィールを開こうとしたときに見える窓を開くのに使う（ADR 0246）。
+//                                          userDataDir は見える窓を開くときの --user-data-dir（確かめ専用の User Data のときだけ）
 //                                          隠している間、層が前面の見張りを持ち、隠した窓が前面を取ったら直前の前面へ返す（第 6 段の引き継ぎの外）
 // reveal(ref, { near })                  → Promise<boolean>  conceal の逆。near（層が出した ref）のあるモニターの中へ戻す。前には出さない（第 6 段の「引き継ぐ」）
 // release(ref)                           → Promise<boolean>  窓の記録だけを捨てる（窓には触らない。窓が閉じた）
@@ -50,7 +53,7 @@
 //                                          （画面の外・透明のまま誰にも戻せない窓を残さない）。Chrome との接続が切れたとき・窓の開きかけの失敗に使う。
 //                                          main は Pleiad の終了でも、隠している窓を全部これと同じに片付ける（closeAllAgents。main の中だけの口で、core からは呼ばない）
 // exportAgent(ref)                      → Promise<string | null>  隠している窓を main の入れ替わりを越えて渡す印にする（窓は閉じない・戻さない。ADR 0167）。隠していない窓には null
-// adoptAgent(token, { revealed })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
+// adoptAgent(token, { revealed, profile })        → Promise<WindowRef | null>  印から窓の記録を作り直す（新しい main の層）。窓がもう無い・ブラウザーの窓でなければ null。作った窓は隠しているものとして見張る（revealed: true は人が操作中の見せている窓。隠さず見張らない）
 // 画面の構成が変わったときの置き直し（reconceal）は main が Electron の screen のイベントで呼ぶので、core から呼ぶ口は無い
 // raiseVisibleBrowser({ scheme })（main の中だけの口。Windows）: 既定のブラウザーで開く（shell.openExternal・HTML の openPath）直前に、
 //   最後に使われていた見える Chrome の窓を前面にして Chrome の「最後にアクティブな窓」を戻す。戻さないと URL が隠した窓に開く。
@@ -193,11 +196,11 @@ export function parentPortChromeOs(port, { timeoutMs = CALL_TIMEOUT_MS, readyWai
     findWindowByNonce: nonce => call('findWindowByNonce', { nonce }, null),
     findWindowByBounds: ({ bounds, port = null, since = [], tolerance = null } = {}) => call('findWindowByBounds', { bounds, port, since, tolerance }, null),
     hiddenSpot: () => call('hiddenSpot', {}, null),
-    conceal: ref => call('conceal', { ref }, false),
+    conceal: (ref, { profile = null, userDataDir = null } = {}) => call('conceal', { ref, profile, userDataDir }, false),
     reveal: (ref, { near = null } = {}) => call('reveal', { ref, near }, false),
     release: ref => call('release', { ref }, false),
     closeAgent: ref => call('closeAgent', { ref }, false),
     exportAgent: ref => call('exportAgent', { ref }, null),
-    adoptAgent: (token, options = {}) => call('adoptAgent', { token, revealed: options.revealed === true }, null),
+    adoptAgent: (token, options = {}) => call('adoptAgent', { token, revealed: options.revealed === true, profile: options.profile ?? null, userDataDir: options.userDataDir ?? null }, null),
   };
 }

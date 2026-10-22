@@ -34,6 +34,12 @@ const GUARD_MS = 100;
 const PLACE_CHECK_MS = 1000;
 /** 閉じる依頼（WM_CLOSE）を出した窓が、これだけ経っても残っていたら（beforeunload の確認など）、見える形へ戻す */
 const CLOSE_GRACE_MS = 3000;
+/**
+ * 人かエージェントかの見分け（ADR 0246）。隠した窓を層が隠した・引き継いだ直後の前面取りは、エージェントの操作
+ * （開きかけの窓・window.open の popup）とみなす。同じプロフィールの見える窓を開く間隔（同じ窓が前面を取り直すたびに何枚も開かない）
+ */
+const AGENT_GRACE_MS = 2000;
+const OPEN_VISIBLE_COOLDOWN_MS = 30_000;
 
 const PRODUCTS = {
   chrome: {
@@ -78,10 +84,18 @@ const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
  */
 function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn, env = process.env, exists = fs.existsSync,
   timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null, pointToDip = null,
-  uia = createUiaRunner({ env, log }), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
-  const refs = new Map();   // id -> { hwnd, kind: 'dialog' | 'foreign' | 'agent', ex0?, concealed?, ghost? }
+  uia = createUiaRunner({ env, log }), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  agentGraceMs = AGENT_GRACE_MS, openVisibleCooldownMs = OPEN_VISIBLE_COOLDOWN_MS }) {
+  const refs = new Map();   // id -> { hwnd, kind: 'dialog' | 'foreign' | 'agent', ex0?, concealed?, ghost?, profileDir?, aumid?, agentAt? }
   const browsers = new Map();   // id -> { path, product }
   let browserSeq = 0;
+  // プロフィールの手がかり: chrome.exe で開いたときの nonce → フォルダー名、AUMID → フォルダー名（ADR 0246）。
+  // 窓は 1 つの Chrome のプロセスを共有するので、プロフィールは窓ごとの AUMID で見分ける。AUMID は不透明な鍵として比べ、
+  // 見える窓を開くときのフォルダー名は core の記録か、開いたときに覚えた対応から取る
+  const launchProfiles = new Map();
+  const aumidProfiles = new Map();
+  const visibleOpenedAt = new Map();   // AUMID -> そのプロフィールの見える窓を開いた時刻
+  let lastUserDataDir = null;
   const remember = (hwnd, kind) => {
     const id = String(hwnd);
     const known = refs.get(id);
@@ -100,11 +114,29 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     const out = remember(hwnd, 'agent');
     const agents = [...refs].filter(([, e]) => e.kind === 'agent');
     if (agents.length > MAX_AGENT_REFS) { const [key, old] = agents[0]; if (!old.concealed) refs.delete(key); }
+    const entry = refs.get(out.id);
+    if (entry) markAgent(entry);
     return out;
   };
   const known = ref => (ref && typeof ref.id === 'string' ? refs.get(ref.id) : undefined);
   const knownAgent = ref => { const entry = known(ref); return entry?.kind === 'agent' ? entry : undefined; };
   const alive = hwnd => { try { return win32.isWindow ? win32.isWindow(hwnd) : true; } catch { return false; } };
+
+  /** 窓の AUMID（読めなければ null。win32 の表に無い・古い層でも投げない） */
+  const aumidOf = hwnd => { try { return win32.windowAumid?.(hwnd) ?? null; } catch { return null; } };
+  /** 隠した窓のプロフィールのフォルダー名（core の記録が確か。無ければ、開いたときに覚えた AUMID の対応） */
+  const profileDirOf = entry => entry?.profileDir ?? (entry?.aumid ? aumidProfiles.get(entry.aumid) ?? null : null);
+  /** 窓のプロフィールの鍵（比べるだけに使う。AUMID はプロフィールごとに違う。読めなければ null） */
+  const profileKeyOf = entry => entry?.aumid ?? null;
+  /** 隠した窓のプロフィールの手がかりを取り直す。core から渡されたフォルダー名があれば、AUMID との対応も覚える */
+  function noteProfile(entry, profileDir, userDataDir = null) {
+    if (typeof profileDir === 'string' && PROFILE_DIR.test(profileDir)) entry.profileDir = profileDir;
+    // 見える窓を開くときの --user-data-dir（確かめ専用の User Data を、利用者の既定の Chrome に開かない）
+    if (typeof userDataDir === 'string' && userDataDir && path.win32.isAbsolute(userDataDir) && !/[\r\n\0]/.test(userDataDir)) entry.userDataDir = userDataDir;
+    if (!entry.aumid) entry.aumid = aumidOf(entry.hwnd);
+    if (entry.aumid && entry.profileDir) aumidProfiles.set(entry.aumid, entry.profileDir);
+  }
+  const markAgent = entry => { entry.agentAt = now(); if (entry.aumid === undefined) entry.aumid = aumidOf(entry.hwnd); };
 
   /** 今あるブラウザー（chrome.exe・msedge.exe）の最上位の窓 */
   function browserWindows() {
@@ -122,6 +154,19 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       out.push({ hwnd, info, exe });
     }
     return out;
+  }
+
+  /**
+   * 隠していない Chrome の窓か（プロフィールの選択画面・利用者の窓）。直前の前面がこれだったときだけ、人がプロフィールを
+   * 開こうとしたと見る（ADR 0246）。隠した窓・透明の窓・最小化・cloaked の窓は数えない
+   */
+  function visibleChromeWindow(hwnd) {
+    if (!hwnd) return false;
+    try {
+      const info = win32.windowInfo(hwnd);
+      if (info.className !== BROWSER_CLASS || !BROWSER_EXES.has(exeName(win32.processPath(info.pid)))) return false;
+      return Boolean(info.visible && !info.iconic && !info.cloaked && !concealStyled(info));
+    } catch { return false; }
   }
 
   const dipScale = hwnd => 96 / (win32.dpiForWindow?.(hwnd) || 96);
@@ -416,6 +461,9 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       const child = spawn(found.path, args, { detached: true, stdio: 'ignore', windowsHide: false });
       child.on?.('error', error => log(`launch failed: ${error.message}`));
       child.unref?.();
+      launchProfiles.set(nonce, { profileDir, userDataDir: userDataDir || null });
+      if (launchProfiles.size > 16) launchProfiles.delete(launchProfiles.keys().next().value);
+      lastUserDataDir = userDataDir || null;
       log('launch window');
       return { ok: true };
     } catch (error) {
@@ -428,7 +476,13 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
   function findWindowByNonce(nonce) {
     if (typeof nonce !== 'string' || !NONCE.test(nonce)) return null;
     const hit = browserWindows().find(({ info }) => info.title.includes(nonce));
-    return hit ? rememberAgent(hit.hwnd) : null;
+    if (!hit) return null;
+    const out = rememberAgent(hit.hwnd);
+    const entry = out && refs.get(out.id);
+    const launched = launchProfiles.get(nonce);
+    if (entry) noteProfile(entry, launched?.profileDir ?? null, launched?.userDataDir ?? null);
+    launchProfiles.delete(nonce);
+    return out;
   }
 
   /**
@@ -478,11 +532,12 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
    * 画面の外・タスクバーと Alt+Tab から外す・透明度 0・マウスの素通し。何度でもかけ直せる（画面の構成が変わったときの置き直し）。
    * エージェントの窓として出した ref だけ
    */
-  function conceal(ref) {
+  function conceal(ref, { profile = null, userDataDir = null } = {}) {
     const entry = knownAgent(ref);
     if (!entry) return false;
     try {
       if (!alive(entry.hwnd)) { refs.delete(ref.id); return false; }
+      noteProfile(entry, profile, userDataDir);
       const info = win32.windowInfo(entry.hwnd);
       if (!entry.concealed) entry.ex0 = info.exStyle;
       entry.concealed = true;   // 途中で投げても、隠しかけた窓を追えるようにする（閉じる・戻す・見張る）
@@ -604,7 +659,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
    * exportAgent の印から、隠している窓の記録を作り直す（新しい main）。窓がもう無い・ブラウザーの窓でない印には null（窓には触らない）。
    * 作り直した窓は隠しているものとして前面の見張りに入る（revealed: true の窓は人が操作中なので、隠さず見張りにも入れない）。画面の中へ動いていた窓は隠し直す
    */
-  function adoptAgent(token, { revealed = false } = {}) {
+  function adoptAgent(token, { revealed = false, profile = null, userDataDir = null } = {}) {
     const match = /^(\d{1,20}):(\d{1,10}):(\d{1,10})$/.exec(String(token ?? ''));
     if (!match) return null;
     const hwnd = Number(match[1]);
@@ -626,6 +681,7 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (!ref) return null;
       const entry = refs.get(ref.id);
       entry.ex0 = Number(match[2]) >>> 0;
+      noteProfile(entry, profile, userDataDir);
       // 人が操作している窓（revealed）は隠さない・見張らない（戻すときの conceal が元のスタイルで隠す）
       entry.concealed = !revealed;
       entry.closeAt = 0;
@@ -666,6 +722,75 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     }
     if (count) log(`reconceal windows=${count}`);
     return count;
+  }
+
+  // ---- 人がプロフィールを開こうとしたとき（ADR 0246） ---------------------------------------------
+  /**
+   * そのプロフィールに見えている Chrome の窓があるか。隠した窓・透明の窓・cloaked・最小化の窓は「見える」に数えない
+   * （最小化は、プロフィールを選んでも前に出ないので、開き直したほうがよい）。プロフィールは窓の AUMID で比べる
+   */
+  function hasVisibleProfileWindow(entry, hidden) {
+    if (!profileKeyOf(entry)) return true;   // プロフィールが分からなければ、重ねて開かない（分からないまま窓を増やさない）
+    for (const { hwnd, info, exe } of browserWindows()) {
+      if (exe !== 'chrome.exe' || !info.visible || info.iconic || info.cloaked || !info.rect) continue;
+      if (hidden.has(hwnd) || concealStyled(info)) continue;
+      const known_ = refs.get(String(hwnd));
+      if (known_?.kind === 'agent' && known_.concealed) continue;
+      const aumid = aumidOf(hwnd);
+      if (!aumid) continue;
+      if (aumid === entry.aumid) return true;
+    }
+    return false;
+  }
+
+  /**
+   * そのプロフィールの見える新しい窓を chrome.exe --profile-directory --new-window で開き、前に出す（URL は渡さない）。
+   * 隠した窓には触らない（隠したまま・エージェントの作業は続く）。開けなければ false（呼び出し側は今までどおり前面を返す）
+   */
+  function openVisibleWindow(entry) {
+    const dir = profileDirOf(entry);
+    if (!dir) { log('guard: the profile of the raised window is unknown, so no visible window was opened'); return false; }
+    let browser = [...browsers.values()].find(value => value.product === 'chrome') ?? null;
+    if (!browser) {
+      const found = locateBrowser({ product: 'chrome' });
+      browser = found ? browsers.get(found.id) ?? null : null;
+    }
+    if (!browser) { log('guard: chrome.exe not found, so no visible window was opened'); return false; }
+    const args = [];
+    const userDataDir = entry.userDataDir ?? lastUserDataDir;
+    if (userDataDir) args.push(`--user-data-dir=${userDataDir}`);
+    args.push(`--profile-directory=${dir}`, '--new-window');
+    try {
+      const child = spawn(browser.path, args, { detached: true, stdio: 'ignore', windowsHide: false });
+      child.on?.('error', error => log(`guard: opening a visible window failed: ${error.message}`));
+      child.unref?.();
+      if (entry.aumid) visibleOpenedAt.set(entry.aumid, now());
+      else if (entry.profileDir) visibleOpenedAt.set(`profile:${entry.profileDir}`, now());
+      log('guard: opened a visible Chrome window for the profile of the raised window');
+      return true;
+    } catch (error) {
+      log(`guard: opening a visible window failed: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * 隠した窓が前面を取ったのが、エージェントの操作ではない（人がプロフィールを開こうとした）なら、そのプロフィールの見える窓を開く。
+   * エージェントの操作とみなす: トグルを入れている窓（ghost）・閉じる依頼中・引き継ぎで見せている・隠した／引き継いだ直後（開きかけ・popup）・
+   * 直前に前面だったのが同じ Chrome の隠した窓（エージェントが窓を切り替えた）。見分けられないときは開かない（今までどおり前面を返すだけ）
+   */
+  function openVisibleIfHuman(entry, previous, hidden, cameFromVisibleChrome) {
+    if (!entry || !entry.concealed || entry.ghost || entry.closeAt) return false;
+    // 直前の前面が、隠していない Chrome の窓（プロフィールの選択画面・利用者の窓）だったときだけ、人が開こうとしたと見る。
+    // エージェントの窓（隠した窓）から移った・ほかのアプリから移ったときは、エージェントの操作（または分からない）として開かない
+    if (cameFromVisibleChrome !== true) return false;
+    if (now() - (entry.agentAt ?? 0) < agentGraceMs) return false;
+    if (previous && hidden.has(previous)) return false;
+    if (!profileKeyOf(entry)) return false;
+    const key = profileKeyOf(entry);
+    if (now() - (visibleOpenedAt.get(key) ?? 0) < openVisibleCooldownMs) return false;
+    if (hasVisibleProfileWindow(entry, hidden)) return false;
+    return openVisibleWindow(entry);
   }
 
   // ---- 前面の見張り -------------------------------------------------------------------------------
@@ -710,8 +835,10 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
   }
   let guard = null;
   let current = 0;
+  let currentVisibleChrome = false;
   let placedAt = 0;
   const before = new Map();
+  const beforeVisibleChrome = new Map();   // 窓 → その窓が前面になる直前の前面が、隠していない Chrome の窓だったか
   let ticking = false;
   function guardTick() {
     if (ticking) return;   // conceal の最後の guardTick から、見張りの中の conceal を呼び直さない
@@ -742,10 +869,20 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
     concealOwned(hidden);
     if (!fg) return;
     if (fg !== current) {
-      if (current) { before.set(fg, current); if (before.size > 64) before.delete(before.keys().next().value); }
+      if (current) {
+        before.set(fg, current); if (before.size > 64) before.delete(before.keys().next().value);
+        beforeVisibleChrome.set(fg, currentVisibleChrome); if (beforeVisibleChrome.size > 64) beforeVisibleChrome.delete(beforeVisibleChrome.keys().next().value);
+      }
       current = fg;
+      currentVisibleChrome = visibleChromeWindow(fg) && !hidden.has(fg);
     }
     if (!hidden.has(fg) || ghosts.has(fg)) return;
+    // 人がプロフィールを開こうとして、Chrome がこのプロフィールの最後の窓（隠した窓）を前に出したなら、
+    // 前面を返すだけでなく、そのプロフィールの見える窓を開く（ADR 0246）。エージェントの操作のときは開かない
+    const raised = refs.get(String(fg));
+    let opened = false;
+    try { opened = openVisibleIfHuman(raised, before.get(fg), hidden, beforeVisibleChrome.get(fg) === true); } catch (error) { log(`guard: opening a visible window failed: ${error.message}`); }
+    if (opened) return;   // 見える窓を開いた。前面はその新しい窓に任せる（ここで返すと、開く窓と前面を奪い合う）
     // 隠した窓が前面を取った。直前の前面（隠した窓でも、最小化・閉じた窓でもない）へ返す。直前も隠した窓なら、その前をたどる
     let target = before.get(fg);
     for (let hop = 0; target && hop < 4 && (hidden.has(target) || !alive(target)); hop += 1) target = before.get(target);
@@ -754,12 +891,13 @@ function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn
       if (win32.windowInfo(target).iconic) return;
       const method = bring(target);
       log(`guard yield method=${method}`);
-      if (method !== 'failed') current = target;
+      if (method !== 'failed') { current = target; currentVisibleChrome = visibleChromeWindow(target); }
     } catch (error) { log(`guard failed: ${error.message}`); }
   }
   function startGuard() {
     if (guard) return;
     try { current = win32.foreground(); } catch { current = 0; }
+    currentVisibleChrome = visibleChromeWindow(current) && refs.get(String(current))?.concealed !== true;
     guard = timers.setInterval(guardTick, guardMs);
     guard?.unref?.();
   }

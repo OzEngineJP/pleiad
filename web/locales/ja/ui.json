@@ -4739,7 +4739,7 @@
     "banner": "一時停止中 · あなたが Chrome で操作しています",
     "error": { "concealFailed": "ウィンドウを隠せなかったので、一時停止のままです。もう一度「戻す」を押してください" },
     "handover": "あなたが引き継ぎ · {{name}} に戻しました · {{duration}}",
-    "closed": { "agent": "{{name}} がウィンドウを閉じました", "human": "Chrome のウィンドウが閉じました", "image": "閉じたウィンドウの最後の画面" },
+    "closed": { "agent": "{{name}} がウィンドウを閉じました", "human": "Chrome のウィンドウが閉じました", "idle": "24 時間使われなかったので Chrome のウィンドウを閉じました", "image": "閉じたウィンドウの最後の画面" },
     "duration": { "minutes": "{{m}} 分 {{s}} 秒", "seconds": "{{s}} 秒" }
   },
   "browser": {
