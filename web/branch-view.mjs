@@ -2,6 +2,7 @@ import { el, svgEl } from "./dom.mjs";
 import { t } from "./i18n.mjs";
 
 export const BRANCH = { X: 20, SPLIT: 16, Y: 96, HEIGHT: 176, STEP: 104 };
+const originX = node => parseFloat(globalThis.getComputedStyle?.(node)?.getPropertyValue('--gut')) === 24 ? 12 : BRANCH.X;
 export const EASING = "cubic-bezier(.22,.72,.18,1)";
 export function curve(a, b) {
   const h = (b.y - a.y) * .48;
@@ -88,7 +89,7 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
   // DOM/tab order matches the visual order, including after a selection.
   for (const id of order) track.append(nodes.find(n => n.id === id).tip);
   const step = () => Math.min(BRANCH.STEP, Math.max(64, (row.clientWidth - 48) / Math.max(1, nodes.length - 1)));
-  const target = n => BRANCH.X + order.indexOf(n.id) * step();
+  const target = n => originX(row) + order.indexOf(n.id) * step();
   function draw() {
     const gap = step();
     const width = Math.max(row.clientWidth, 48 + (nodes.length - 1) * gap);
@@ -99,7 +100,7 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
     svg.replaceChildren();
     for (const n of nodes) {
       n.tip.style.left = `${n.x}px`;
-      const p = svgEl("path", { d: curve({ x: BRANCH.X, y: BRANCH.SPLIT }, { x: n.x, y: BRANCH.Y }), class: n.id === selected || n.growth != null ? "active" : "" });
+      const p = svgEl("path", { d: curve({ x: originX(row), y: BRANCH.SPLIT }, { x: n.x, y: BRANCH.Y }), class: n.id === selected || n.growth != null ? "active" : "" });
       p.dataset.session = n.id;
       if (n.growth != null) {
         p.setAttribute("pathLength", "1");
@@ -109,7 +110,7 @@ export function makeBranchRow(key, entries, selected, onPick, previous) {
       svg.append(p);
     }
     const n = nodes.find(n => n.id === selected);
-    if (n) svg.append(svgEl("path", { class: "active branch-lower", d: curve({ x: n.x, y: BRANCH.Y }, { x: BRANCH.X, y: BRANCH.HEIGHT }) }));
+    if (n) svg.append(svgEl("path", { class: "active branch-lower", d: curve({ x: n.x, y: BRANCH.Y }, { x: originX(row), y: BRANCH.HEIGHT }) }));
   }
   row.layout = () => { if (!row.locked) for (const n of nodes) n.x = target(n); draw(); };
   row.snapshot = () => ({ order, positions: Object.fromEntries(nodes.map(n => [n.id, n.x])) });
@@ -164,16 +165,16 @@ export function layoutBranchSpine(thread) {
   const tip = last?.querySelector(".activity-tip");
   // Follow the circle's actual position, including its 1px outer outline.
   const end = last ? last.offsetTop + (tip ? tip.offsetTop - 1 : 16) : thread.offsetHeight;
-  const previous = spineGeometry.get(svg);
-  if (previous?.end === end && previous.rows.length === rows.length &&
+  const x = originX(thread), previous = spineGeometry.get(svg);
+  if (previous?.x === x && previous.end === end && previous.rows.length === rows.length &&
       rows.every((item, i) => item.row === previous.rows[i].row &&
         item.top === previous.rows[i].top && item.width === previous.rows[i].width)) return;
-  spineGeometry.set(svg, { rows, end });
+  spineGeometry.set(svg, { rows, end, x });
 
   const paths = [];
   let y = 0;
   const segment = to => {
-    if (to > y) paths.push(svgEl("path", { d: curve({ x: BRANCH.X, y }, { x: BRANCH.X, y: to }) }));
+    if (to > y) paths.push(svgEl("path", { d: curve({ x, y }, { x, y: to }) }));
   };
   for (const { row, top } of rows) {
     row.layout(); segment(top + BRANCH.SPLIT); y = top + BRANCH.HEIGHT;

@@ -3333,6 +3333,8 @@
     "checkedAt": "最終取得: {{when}}",
     "failed": "取得できませんでした。接続を確認して更新してください。",
     "header": {
+      "close": "閉じる",
+      "otherAgents": "ほかのエージェント",
       "title": "使用量",
       "unavailable": "使用量を取得できません。",
       "endpointUnavailable": "この接続先の使用量は表示できません。",
@@ -4326,6 +4328,13 @@
     "markName": "注意の三角"
   },
   "compaction": {
+    "contextUsage": "コンテキスト",
+    "graphTokens": "{{used}} / {{window}} トークン",
+    "short": "圧縮",
+    "now": "今すぐ圧縮",
+    "automatic": "自動圧縮",
+    "remaining": "自動圧縮まで残り {{tokens}} トークン",
+    "autoOff": "自動圧縮はオフ",
     "context": "文脈",
     "meter": "{{rate}}% · {{used}} / {{window}}",
     "running": "会話を圧縮しています…",

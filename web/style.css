@@ -663,7 +663,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* 初期表示では画面外の発言を省き、client.mjs が末尾から小分けに実寸を確定する。 */
 #thread > .mw:not(.activity):not(.height-ready){content-visibility:auto;contain-intrinsic-size:auto 160px}
 /* 700px 以下は溝を 40px に（本文の幅を取り戻す）。筋は x=20 のまま、分岐の曲線（web/branch-view.mjs）は溝の外の自分の行に描くので崩れない */
-@media (max-width:700px){:is(.thread,.bg-thread){--gut:40px}}
+@media (max-width:700px){:is(.thread,.bg-thread){--gut:24px}}
 .mw-gutter,.mw-body{min-height:0;overflow:hidden;min-width:0}
 .mw-gutter{position:relative}
 .mw-body{transition:transform var(--dur-fast) var(--ease-out)}
@@ -1937,7 +1937,7 @@ main.dropping #log{background:var(--surface-1)}
   .top{padding-left:10px;padding-right:10px;gap:4px}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])){flex-wrap:wrap}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])) .title-field{flex-basis:calc(100% - 40px)}
-  .composer{padding-left:8px;padding-right:8px}
+  .composer{padding-left:4px;padding-right:4px}
   :is(#skillList,#thSkillList){max-height:240px}
   /* 「保存済み」は出さない（下書きがあることは脇の行の「未送信」で分かる）。保存の失敗は行の隙間では文が途中で切れるので、
      チップの行の上の一行（:is(#draftFail,#thDraftFail)）に出す */
@@ -2136,8 +2136,8 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   #sessionMore:not([hidden]){display:inline-flex}
   /* 脇の見出しは 1 行（引き出しの幅なら入る） */
   :root.desktop:not(.remote) #sidebar header{-webkit-app-region:no-drag}
-  /* 会話の左の溝を縮める（筋と節の位置はそのまま。左右の余白だけ） */
-  #log{padding-left:2px;padding-right:10px;padding-bottom:12px}   /* 末尾の余白 24→12px（conversation-nav-view.mjs の END_GAP_NARROW） */
+  /* 履歴の外側。筋と節も24pxの溝の中心に合わせる。 */
+  #log{padding-left:0;padding-right:8px;padding-bottom:12px}   /* 末尾の余白 24→12px（conversation-nav-view.mjs の END_GAP_NARROW） */
   /* デスクトップ版の紙の角: 脇は重なるだけなので、紙の左上は窓の縁に接する */
   :root.desktop body:not(.settings) > main{--paper-tl:0px}
   :root.desktop body:not(.settings,.file-preview-open) > .titlebar{background:var(--surface-paper);--bar-end:var(--surface-paper)}
@@ -2219,6 +2219,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 /* ---- 700px 以下のタイトル行: 題の下に所属と出どころを置く ---- */
 @media (max-width:700px){
   #titleWand{display:none}
+  main > .top:has(#titleEdit:focus,#titleWand:focus) #titleWand:not([hidden]){display:inline-flex}
   main > .top{min-width:0;overflow:hidden}
   .title-col{flex-direction:column;align-items:stretch;gap:0}
   .title-col .title-field{flex:0 1 auto;min-width:0}
@@ -2247,6 +2248,25 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   main > .top :is(#contextEntry,#gitEntry,#browserEntry){display:none}
   main > .top #browserEntry[data-mobile-chrome]:not([hidden]){display:inline-flex}
   #sessionMore{position:relative}
+}
+
+/* 承認済み（2026-10-22）: スマホの会話の文字と左右の余白。 */
+@media (max-width:700px){
+  #log .m > .body{font-size:17px;line-height:1.7}
+  #log .m.user > .body{padding-left:8px;padding-right:8px}
+  .mw.node .mw-gutter::before{left:8.5px}
+  .mw.card .mw-gutter::before{left:6.5px}
+  .activity-tip{left:0;width:24px;height:24px}
+  .bg-thread > .spine{left:-8px}
+  .branch-tip{transform:translateX(-12px)}
+  .branch-ring{margin-left:4px}
+  .cbox{padding-left:2px;padding-right:2px}
+  #prompt{font-size:17px!important;line-height:1.5;padding-left:8px;padding-right:8px}
+  .row-title{font-size:16px}
+  .row-meta{font-size:13px}
+  .title-col .title-field input{font-size:20px!important}
+  .title-sub{font-size:13px}
+  main > .top :is(#contextEntry,#gitEntry,#browserEntry){display:none!important}
 }
 
 /* ==================== 端末の AI からホストへ任せる（docs/remote.md §4.5、ADR 0146） ====================
