@@ -41,6 +41,16 @@ export default async function(t) {
     assert.equal(renderContextUsage({ ...info, usage: null }).querySelectorAll('.usage-bar').length, 0);
     assert.equal(renderContextUsage({ ...info, session: { autoCompactionOff: true } }).querySelectorAll('.usage-bar').length, 1);
     t.ok('シートに文脈・閾値の棒を出し、自動圧縮オフでは文脈だけを出す', true);
+    for (const usedTokens of [150000, 164000, 220000]) {
+      const full = renderContextUsage({ ...info, usage: { usedTokens, windowTokens: 200000 } });
+      assert.equal(full.querySelectorAll('.conversation-graph')[1].querySelector('.value').textContent, '100%');
+      assert.equal(full.querySelectorAll('.usage-bar')[1].children[0].style.width, '100%');
+      assert.ok(!full.textContent.includes('残り') && !full.textContent.includes('0k'));
+      assert.ok(!full.querySelectorAll('.usage-bar')[1].getAttribute('aria-label').includes('109%'));
+    }
+    const near = renderContextUsage({ ...info, usage: { usedTokens: 149999, windowTokens: 200000 } });
+    assert.ok(near.textContent.includes('残り 1 トークン'));
+    t.ok('基準以上は満杯の100%で残りを省き、基準未満は1トークンまで整数で表示する', true);
     const doc = globalThis.document;
     doc.body = new N('body'); doc.documentElement = { clientWidth: 390 }; doc.addEventListener = () => {};
     doc.createElement = tag => {

@@ -22,6 +22,7 @@ async page => page.evaluate(async () => {
   fixture.remove();
   if (!mobile) {
     check(getComputedStyle(document.querySelector('#usageChip')).display !== 'none', 'PC keeps the usage chip');
+    check(document.querySelector('#contextMeter').getBoundingClientRect().height > 0, 'PC keeps the context strip');
     document.querySelector('#usageChip').click(); await wait();
     check(!document.querySelector('dialog.conversation-sheet[open]'), 'PC keeps its anchored usage popover');
     check(!document.querySelector('#usagePop').hidden, 'PC usage popover opens');
@@ -29,6 +30,21 @@ async page => page.evaluate(async () => {
     return { results };
   }
   check(getComputedStyle(document.querySelector('#usageChip')).display === 'none', 'Mobile hides the composer usage chip');
+  check(document.querySelector('#contextMeter').getBoundingClientRect().height === 0, 'Mobile hides the context strip');
+  const controlRow = document.querySelector('#modelChip').parentElement;
+  const chips = [document.querySelector('#modelChip'), document.querySelector('#cwdChip')];
+  const send = controlRow.querySelector('.send');
+  const boxes = [...chips, send].map(n => n.getBoundingClientRect());
+  check(boxes.every(b => Math.abs(b.top - boxes[0].top) < 1), 'Model, directory and send share one row');
+  check(boxes.at(-1).right <= innerWidth && boxes[0].left >= 0, 'Composer controls fit the viewport');
+  check(chips.every(n => n.querySelector('.v').getBoundingClientRect().width > 0), 'Both chips keep their names');
+  check([...controlRow.querySelectorAll('.ef,.git-br,.wt-sfx')].every(n => n.getBoundingClientRect().width === 0), 'Effort and branch stay inside sheets');
+  const names = chips.map(n => n.querySelector('.mn') ?? n.querySelector('.v'));
+  const originals = names.map(n => n.textContent);
+  names.forEach(n => { n.textContent = 'a-very-long-model-or-directory-name-for-mobile'; });
+  check(names.every(n => n.clientWidth > 0 && n.scrollWidth > n.clientWidth && getComputedStyle(n).textOverflow === 'ellipsis'), 'Long model and directory names truncate with ellipses');
+  check(send.getBoundingClientRect().right <= innerWidth, 'Long names keep send inside the viewport');
+  names.forEach((n, i) => { n.textContent = originals[i]; });
   check(getComputedStyle(document.querySelector('#prompt')).fontSize === '17px', 'Mobile input is 17px');
   check(getComputedStyle(document.querySelector('#titleEdit')).fontSize === '20px', 'Mobile title is 20px');
   check(getComputedStyle(document.querySelector('.m.ai > .body')).fontSize === '17px', 'Mobile body is 17px');
@@ -52,6 +68,8 @@ async page => page.evaluate(async () => {
   row(t('compaction.short')).click(); await wait();
   let dialog = document.querySelector('dialog.conversation-sheet[open]');
   check(dialog && dialog.querySelector('.conversation-graph'), 'Compact opens a context sheet');
+  check([...dialog.querySelectorAll('.conversation-graph .value')].every(n => parseInt(n.textContent) <= 100), 'Compression progress never exceeds 100%');
+  check(!dialog.textContent.includes('残り 0') && !dialog.textContent.includes('0k'), 'Threshold reached omits zero remaining tokens');
   check(dialog.querySelector('[role=switch]'), 'Compact sheet contains per-conversation toggle');
   check([...dialog.querySelectorAll('button')].some(b => b.textContent === t('compaction.now')), 'Compact sheet has compact-now action');
   const toggle = dialog.querySelector('[role=switch]');

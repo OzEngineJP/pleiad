@@ -2166,17 +2166,15 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:399px){
   .chip{padding:0 5px;gap:4px}
 }
-/* スマホの幅（480px 以下）の設定は 2 段（2026-10-20 承認）。1 段目は 添付・宛先とモデル（残りの幅いっぱい）・承認モード（アイコンだけ）・送信、
-   2 段目は作業ディレクトリ（ブランチ・「ほかの会話も書き込み中」まで全部入る幅）。1 段に収めるための詰め（fit-*）は、この幅では要らない。
-   見た目の順は DOM の順と違う（作業ディレクトリが送信の後）。タブの順は DOM の順のまま */
-@media (max-width:480px){
-  .crow{flex-wrap:wrap;row-gap:4px}
+/* スマホの設定は名前を省略して 1 行に収め、文脈は上部のメニューから開く（design-system.md「入力欄の設定」「使用量の札とスマホのシート」）。 */
+@media (max-width:700px){
+  .crow{flex-wrap:nowrap}
   .crow > :is(.crow-gap,.draft-saved){display:none}
-  .crow > .chip.model{flex:1 1 0;min-width:0}
-  .crow > .chip.mode :is(.v,.cv){display:none}
-  .crow > .chip.model .mk :is(.full,.short){display:none}
-  .crow > .chip.folder{order:1;flex:1 0 100%;max-width:100%}
-  .crow > .chip.armed{order:1;max-width:100%}
+  .crow > :is(.chip.model,.chip.folder){flex:1 1 0;min-width:0}
+  .crow > .chip.mode .v{display:none}
+  .crow > .chip.model :is(.ef,.mdl,.dotsep),.crow > .chip.model .mk :is(.full,.short){display:none}
+  .crow > .chip.folder :is(.git-br,.wt-sfx){display:none}
+  #contextStrip > :is(.context-meter-wrap,.context-strip-status){display:none}
 }
 
 /* ---- モバイル版の殻（plyRemote.shell === 'mobile'、web/remote-badge.mjs の setupHostBar） ----

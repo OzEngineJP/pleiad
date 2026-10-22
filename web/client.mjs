@@ -490,7 +490,7 @@ const stripNarrow = matchMedia('(max-width:480px)');
 const phoneView = stripNarrow;
 function syncStripVisible() {
   const strip = $('contextStrip');
-  strip.hidden = !contextShown && (narrowView.matches || $('usageChip').hidden) && $('workEntry').hidden;
+  strip.hidden = (narrowView.matches || !contextShown) && (narrowView.matches || $('usageChip').hidden) && $('workEntry').hidden;
   if (strip.hidden) closeMeterPop();
 }
 /** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
@@ -7373,6 +7373,7 @@ let sidebarMoving;
 // 狭い画面（style.css の「狭い画面・タッチ」と同じ 700px）では、脇は会話の上に重ねる引き出し（docs/remote.md §8.4）。
 // 開閉は side-open で持ち、覚えない（広い画面の好み side-closed はそのまま残す）。会話を選ぶ・幕を押す・Esc で閉じる
 const narrowView = matchMedia("(max-width:700px)");
+narrowView.addEventListener('change', syncStripVisible);
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
 // タップの中では開閉の印（side-open・aria-expanded）だけを付け、動き（--dur）を次のフレームから始める。

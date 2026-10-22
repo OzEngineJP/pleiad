@@ -62,12 +62,13 @@ export function createConversationSheet(title, opener) {
 
 export function renderContextUsage(info = {}) {
   const metrics = contextMetrics(info), section = el('section', 'conversation-context');
-  const number = value => `${Math.round(value / 1000)}k`;
+  const number = value => fmt.number(Math.round(value));
   function graph(label, value, maximum, note) {
     const row = el('div', 'conversation-graph');
-    row.append(el('span', null, label), el('span', 'value', `${Math.round(100 * value / maximum)}%`));
+    const rate = Math.min(100, Math.round(100 * value / maximum));
+    row.append(el('span', null, label), el('span', 'value', `${rate}%`));
     const bar = el('div', 'usage-bar');
-    bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', t('compaction.meterLabel', { rate: Math.round(100 * value / maximum), used: number(value), window: number(maximum) }));
+    bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', t('compaction.meterLabel', { rate, used: number(value), window: number(maximum) }));
     const fill = el('i'); fill.style.width = `${Math.min(100, 100 * value / maximum)}%`; bar.append(fill);
     row.append(bar);
     row.append(el('small', null, t('compaction.graphTokens', { used: fmt.number(value), window: fmt.number(maximum) })));
@@ -77,7 +78,7 @@ export function renderContextUsage(info = {}) {
   section.append(el('strong', null, t('compaction.context')));
   if (metrics.percent != null) graph(t('compaction.contextUsage'), metrics.used, metrics.window);
   else section.append(el('p', 'usage-note', t('usage.unknown')));
-  if (metrics.remaining != null) graph(t('compaction.automatic'), metrics.used, metrics.threshold, t('compaction.remaining', { tokens: number(metrics.remaining) }));
+  if (metrics.remaining != null) graph(t('compaction.automatic'), metrics.used, metrics.threshold, metrics.remaining > 0 ? t('compaction.remaining', { tokens: number(metrics.remaining) }) : null);
   else section.append(el('p', 'usage-note', !info.compact ? t('compaction.agentManaged', { agent: info.agent }) : metrics.automatic ? t('usage.unknown') : t('compaction.autoOff')));
   if (info.scheduled) section.append(el('p', 'usage-note', t('compaction.scheduled', { time: info.scheduled })));
   return section;

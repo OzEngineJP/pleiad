@@ -70,6 +70,8 @@ export function fitComposerRow(row, { cwd, who }) {
   if (!row || !row.isConnected || !row.offsetParent) return;
   row.classList.remove(...FIT_CLASSES);
   cwd.style.minWidth = ""; who.style.minWidth = "";
+  // スマホは両方の名前を同じ行で省略する。最小字数やアイコンだけにする段は使わない。
+  if (matchMedia("(max-width:700px)").matches) return;
   row.classList.add("measuring");
   // 最後の部品（送信）の右端が行の右端に収まるか（scrollWidth は整数に丸められ、1px 足りないのを見逃す）
   const fits = () => {
