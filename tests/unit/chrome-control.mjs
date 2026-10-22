@@ -46,9 +46,9 @@ const refused = url => agent(url).then(client => { client.close(); return false;
 
 const TIMING = { hwndWaitMs: 200, hwndPollMs: 10, targetWaitMs: 500, targetPollMs: 10, popupWaitMs: 200, boundsWaitMs: 100 };
 
-async function rig({ authorize } = {}) {
+async function rig({ authorize, features } = {}) {
   const chrome = await startFakeChrome({ permission: 'auto' });
-  const os_ = fakeChromeOs({ chrome });
+  const os_ = fakeChromeOs({ chrome, ...(features ? { features } : {}) });
   const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
   const logs = [];
   const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
@@ -196,6 +196,22 @@ export default async function (t) {
       await a.cmd('Target.createTarget', { url: 'about:blank' });
       const failed = await r.control.takeOver('one').then(() => null, error => error);
       t.ok('窓を見つけられていなければ（隠していない）引き継げない。一時停止を残さない', failed?.code === 'NO_WINDOW' && !(await a.cmd('Browser.getVersion')).error && r.control.captureBlocked('one') === false);
+    } finally { await r.stop(); }
+  }
+
+  // ===== 4b. 隠す層の無い OS（macOS。ADR 0219）: 見えたままの窓を前に出して引き継ぎ、戻しても隠さずに解く =====
+  {
+    const r = await rig({ features: { dialog: true, raise: true, launch: true, conceal: false, watch: false, bounds: true } });
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const created = await a.cmd('Target.createTarget', { url: 'about:blank' });
+      const hw = () => hwndOf(r, tabInfo(r, created.result.targetId).windowId);
+      t.ok('macOS: 窓は隠さずに開き、窓を覚える', !created.error && hw()?.concealed !== true && r.os.calls('conceal').length === 0 && r.scope.windows('one').some(w => w.ref), JSON.stringify(r.scope.windows('one')));
+      const taken = await r.control.takeOver('one');
+      t.ok('macOS: 引き継げる（NO_WINDOW にならない）。窓を前に出し、エージェントの接続を切る', taken.state === 'paused' && r.os.getForeground() === hw().id && (await a.closed).code !== undefined, JSON.stringify(taken));
+      const back = await r.control.resume('one');
+      t.ok('macOS: 戻すと隠さずに解ける（隠せなかった扱いで paused に残らない）', back.state === 'running' && back.error == null && r.os.calls('conceal').length === 0, JSON.stringify(back));
     } finally { await r.stop(); }
   }
 

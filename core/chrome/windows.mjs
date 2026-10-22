@@ -267,6 +267,8 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         else if ((os.generation?.() ?? 0) !== layer) throw new Error('Pleiad is updating. Retry in a minute.');   // 層が入れ替わる間に探せなかった。隠せていない窓を残さず、閉じて失敗にする（下の catch）
         else log('chrome-windows: window not found, so it was not hidden');
       }
+      // 隠す層の無い OS（macOS。ADR 0219）: 窓は見えたまま使う。引き継ぎ（control.mjs）で前に出せるように、題の nonce で窓だけ覚える
+      if (!features.conceal && features.raise) ref = await waitFor(() => os.findWindowByNonce(nonce), time.hwndWaitMs, time.hwndPollMs);
       // 大きさを決める。最大化のまま開いた窓（前回の最大化がプロフィールに残っている chrome.exe の最初の窓）には、先に通常へ戻してから大きさを送る（normalize）。
       // 通常に戻った窓は Chrome が保存していた画面の中の位置へ動くので、隠し直してから印（token）を作る。Chrome が後から動かした分は、層の見張りが隠し直す
       await normalize(cdp, windowId);
@@ -275,7 +277,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       // 隠し直すときに渡し、層が AUMID と対応づける（ADR 0246）
       const context = await contextOf(cdp, targetId);
       if (!profile && context) profile = records.find(record => record.context === context && record.profile)?.profile ?? null;
-      if (ref) await os.conceal(ref, { profile, userDataDir });
+      if (ref && features.conceal) await os.conceal(ref, { profile, userDataDir });
       const token = ref ? await os.exportAgent(ref) : null;
       entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra', token, profile, context });
       changed();
@@ -363,6 +365,8 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       const fg = await os.foreground();
       const to = fg && !own.has(fg.id) ? fg : near;
       const features = os.capabilities().features;
+      // 隠す層の無い OS（macOS）: 窓は引き継ぐ前から見えていたので、見えたまま戻す
+      if (!features.conceal) { changed(); return { concealed: 0, failed: 0 }; }
       let concealed = 0, failed = 0;
       for (const [windowId, record] of records) {
         if (record.ref) {
