@@ -288,7 +288,7 @@
         "syncAcceptRestart": "新しい鍵を受け取る",
         "syncRestartChanged": "その間に鍵がまた替わりました。表示を確かめてから、もう一度選んでください。",
         "syncKeyUnverified": "届いた鍵を確かめられなかったため、受け取らずに止めています",
-        "syncKeyUnverifiedHint": "この PC を Pleiad Plus のアカウントのページで外し、登録し直してから、鍵を持つ PC の承認を受けてください。",
+        "syncKeyUnverifiedHint": "この PC を Pleiad Plus のアカウントのページで外して登録し直すと、鍵を持つ PC の承認を 1 回受け直します。鍵を持つ PC がこの 1 台だけのときは、外すと回復（72 時間待ち。サーバーの同期のデータは消えます）になります。",
         "syncStartOverOthersApproval": "ほかの PC: 同期が止まり、この PC の画面で承認すると、また同期します。同じものがあるときは新しい方が残り、もう一方は「同期の写し」に 30 日残ります。",
         "syncApprove": {
           "mark": "承認を待っている",

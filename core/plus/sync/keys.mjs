@@ -7,6 +7,7 @@
 //   plus:syncCarry       作り直した K を引き継ぐ PC のうち、まだ渡せていないもの { keyId, hosts: [hostId], nonces: { [hostId]: nonce } }
 //   plus:syncRestart     前の K では確かめられない新しい K（回復・移行）へ移ると人が選んだ印 { uid, keyId }
 //   plus:syncV2Seen      券を一度でも取れたアカウント { [uid]: 初めて取れた時刻 }。ログアウトでも残す
+//   plus:syncV2Fingerprints  受け取った・作った K の指紋 { [uid]: { keyId, resetPublicKey } }。ログアウトでも残す
 //
 // api の版で 2 つの道がある。同期の券（ticket.mjs）を取れる api が v2、券の口が 404 の api は前の版（legacy）。
 // 一度券を取れたアカウントで券の口が 404 になったら、前の版の道（K を自動で包んで渡す）へ戻らず止める（api_downgraded）。
@@ -40,6 +41,10 @@
 //     確かめられたものだけに切り替える。確かめられなければ切り替えず、手元の状態も消さない
 //   - 回復・移行で作った K は前の K の印を持たない。前の K を持つ PC は自動で切り替えず（wait.restarted を出す）、
 //     人が「新しい鍵を受け取る」を選んでから（acceptRestart）申し込み、承認の窓を通して受け取る
+//   ログアウトの後（K を消しても戻れるようにする）:
+//   - K を受け取る・作るたびに、uid ごとに { keyId, resetPublicKey }（公開鍵だけ）を plus:syncV2Fingerprints に覚える。forget では消さない
+//   - 手元に K が無く承認した PC の覚えも無いときは、wrappedBy の台帳の公開鍵で開き、keyId と resetPublicKey が指紋と合うものだけを受ける
+//   - wrappedBy が自分の hostId で、自分の鍵対で開けたもの（自分で作った・作り直した・回復した K）も受ける
 import crypto from 'node:crypto';
 import {
   b64url, fromB64url, deriveItemKeys, newAccountKey, newSyncKeyPair, syncKeyPairFromPrivate, wrapKey, unwrapKey, KEY_ID_RX,
@@ -53,6 +58,7 @@ export const SYNC_APPROVALS = 'plus:syncApprovals';
 export const SYNC_CARRY = 'plus:syncCarry';
 export const SYNC_RESTART = 'plus:syncRestart';
 export const SYNC_V2_SEEN = 'plus:syncV2Seen';
+export const SYNC_V2_FINGERPRINTS = 'plus:syncV2Fingerprints';
 const RESET_TRIES = 3;
 const DENY_WAIT_MS = 60 * 60_000;
 
@@ -114,6 +120,23 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     return typeof v?.keyId === 'string' && KEY_ID_RX.test(v.keyId) && key.length === 32 ? { keyId: v.keyId, key } : null;
   }
   const saveAccountKey = k => secrets.set(SYNC_ACCOUNT_KEY, { keyId: k.keyId, key: b64url(k.key) });
+
+  /** 受け取った・作った K の指紋（keyId と resetPublicKey。公開鍵だけ）を uid ごとに覚える。ログアウトでは消さない */
+  async function rememberKey(k) {
+    const id = uid();
+    if (!id || !k) return;
+    const resetPublicKey = resetKeyPair(k.key).publicKey;
+    const prev = (await secrets.get(SYNC_V2_FINGERPRINTS).catch(() => null))?.[id];
+    if (prev?.keyId === k.keyId && prev.resetPublicKey === resetPublicKey) return;   // 変わっていなければ書かない
+    await secrets.update(SYNC_V2_FINGERPRINTS, cur => ({ ...(cur ?? {}), [id]: { keyId: k.keyId, resetPublicKey } }));
+  }
+
+  /** 覚えた指紋（このアカウントのもの。無ければ null） */
+  async function rememberedKey() {
+    const v = await secrets.get(SYNC_V2_FINGERPRINTS).catch(() => null);
+    const f = v?.[uid()];
+    return f && KEY_ID_RX.test(String(f.keyId)) && typeof f.resetPublicKey === 'string' ? f : null;
+  }
 
   const ready = (k, state, changed, v2 = false) => ({ status: 'ready', key: { keyId: k.keyId, key: k.key, ...deriveItemKeys(k.key) }, state, changed, v2 });
 
@@ -217,7 +240,10 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
    * confirm: 人が件数を見て確かめた印 { keyId, itemCount }（前の版の api で forceNew のときだけ送る）
    */
   async function setup(opts = {}) {
-    return (await isV2()) ? setupV2(opts) : setupLegacy(opts);
+    const out = (await isV2()) ? await setupV2(opts) : await setupLegacy(opts);
+    // K を受け取る・作るたびに指紋を覚える（ログアウトで K を消しても、ログインし直したときに戻れるように）。覚えられなくても同期は続ける
+    if (out?.status === 'ready' && out.key) await rememberKey(out.key).catch(() => {});
+    return out;
   }
 
   async function setupLegacy({ forceNew = false, confirm = null } = {}) {
@@ -432,7 +458,9 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
    * v2 の自分宛ての包みを開く（サーバーが渡す K をそのまま受けない）。
    * - 手元に前の K がある: 前の K から作った印（carry）が合うものだけ。合わなければ、人が移ると選んでいて
    *   承認した PC が包んだものだけ（accepted）
-   * - 手元に K が無い: 承認した PC（approverHostId）が、承認の窓で見た公開鍵で包んだものだけ
+   * - 手元に K が無い: 承認した PC（approverHostId）が、承認の窓で見た公開鍵で包んだもの。
+   *   承認の覚えが無ければ、台帳の公開鍵で開いた K の指紋（keyId・resetPublicKey）が覚えたものと合う包み、
+   *   または自分で包んだ包み（wrappedBy が自分）
    * 戻り値 { missing } | { key } | { key: null, unverified }（開けたが確かめられなかった）
    */
   async function openV2(state, local, accepted) {
@@ -454,10 +482,25 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
         if (isCarryWrap(got.wrapped, nonce)) return { missing: false, key: { keyId: got.keyId, key } };
       }
     }
-    const approver = !local || accepted ? (await approverPubs())?.get(got.wrappedBy) : null;
+    const approved = !local || accepted ? await approverPubs() : null;
+    const approver = approved?.get(got.wrappedBy);
     if (approver) {
       const key = open(approver);
       if (key) return { missing: false, key: { keyId: got.keyId, key } };
+    }
+    // 自分で包んだ K（自分で作った・作り直した・回復した PC）。包む鍵は自分の秘密鍵からしか作れない
+    if (got.wrappedBy === self) {
+      const key = open(kp.publicKey);
+      if (key) return { missing: false, key: { keyId: got.keyId, key } };
+    }
+    // ログアウトで K と承認の覚えを消した PC: 台帳の公開鍵で開き、覚えた指紋（keyId と resetPublicKey）と合うときだけ受ける
+    if (!local && !approved) {
+      const seen = await rememberedKey();
+      if (seen && seen.keyId === got.keyId) {
+        const pub = pub32((await hostsList()).find(h => h?.hostId === got.wrappedBy)?.syncPublicKey);
+        const key = pub ? open(pub) : null;
+        if (key && resetKeyPair(key).publicKey === seen.resetPublicKey) return { missing: false, key: { keyId: got.keyId, key } };
+      }
     }
     log('sync key unverified');
     return { missing: false, key: null, unverified: true };
@@ -694,6 +737,7 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
       throw e;
     }
     await saveAccountKey(k);
+    await rememberKey(k).catch(() => {});
     await clearJoin();
     await secrets.delete(SYNC_APPROVALS).catch(() => {});
     await secrets.delete(SYNC_CARRY).catch(() => {});
@@ -731,7 +775,7 @@ export function createSyncKeys({ client, ticket = null, secrets, uid, hostId, lo
     return { stopped: true };
   }
 
-  /** ログアウト: アカウントの同期鍵と、申し込み・承認の途中の覚えを消す（ホストの鍵対は残す） */
+  /** ログアウト: アカウントの同期鍵と、申し込み・承認の途中の覚えを消す（ホストの鍵対と K の指紋は残す） */
   const forget = async () => {
     for (const name of [SYNC_ACCOUNT_KEY, SYNC_JOIN, SYNC_APPROVALS, SYNC_CARRY, SYNC_RESTART]) await secrets.delete(name).catch(() => {});
   };

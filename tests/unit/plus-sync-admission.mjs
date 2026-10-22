@@ -5,6 +5,7 @@
 // 承認の無い受け渡し・鍵を持たない PC の始め直し・外した PC の読み出しが断られることも見る。
 // サーバーが渡す包みをそのまま受けないこと（承認した PC 以外の包み・台帳の公開鍵のすり替え・前の K の印の無い包み・
 // 前の K では確かめられない新しい K へは人が選ぶまで移らない）と、券を取れたアカウントで前の版の api に戻されたら止めることも見る。
+// ログアウト（forget）で K を消した後も、覚えた指紋か自分で包んだ包みで戻れること（指紋と違う K・承認していない PC の包みは受けない）も見る。
 // LLM も外のネットワークも使わない。
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -15,7 +16,7 @@ import { fakeClock } from '../lib/fake-clock.mjs';
 import { createPlusConfig } from '../../core/plus/config.mjs';
 import { createPlusClient } from '../../core/plus/client.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
-import { createSyncKeys, SYNC_JOIN, SYNC_ACCOUNT_KEY, SYNC_CARRY } from '../../core/plus/sync/keys.mjs';
+import { createSyncKeys, SYNC_JOIN, SYNC_ACCOUNT_KEY, SYNC_CARRY, SYNC_V2_FINGERPRINTS } from '../../core/plus/sync/keys.mjs';
 import { createSyncTicket } from '../../core/plus/sync/ticket.mjs';
 import { createSyncTargets } from '../../core/plus/sync/targets.mjs';
 import { createSyncEngine } from '../../core/plus/sync/engine.mjs';
@@ -267,6 +268,63 @@ export default async function (t) {
     t.ok('印の無い carry の覚えは渡さずに捨てる', !ledger(UID).keys[e.hostId] && (await a.secrets.get(SYNC_CARRY)) == null);
     ledger(UID).keys[e.hostId] = keyE;
     ledger(UID).carry = [];
+
+    // ================= ログアウトの後（K を消しても、指紋か自分で包んだ K で戻る） =================
+    const UID6 = 'adm-forget';
+    account(UID6);
+    const g1 = await makeHost(UID6, 'g1');
+    const gr1 = await g1.keys.setup();                 // 最初の 1 台（K を自分で作る）
+    const g2 = await makeHost(UID6, 'g2');
+    await g2.keys.setup();
+    await holderPass(g1);
+    const g2w = await g2.keys.setup();
+    await g1.keys.approve(g2.hostId, g2w.wait?.join?.code);
+    const g2r = await g2.keys.setup();
+    t.ok('（準備）g2 は承認で K を受け取る', g2r.status === 'ready' && g2r.key.keyId === gr1.key.keyId, JSON.stringify(g2r.status));
+    const fingerprint = resetKeyPair(gr1.key.key).publicKey;
+    const g2Seen = (await g2.secrets.get(SYNC_V2_FINGERPRINTS))?.[UID6];
+    t.ok('受け取った K の指紋（keyId・resetPublicKey。公開鍵だけ）を uid ごとに覚える',
+      g2Seen?.keyId === gr1.key.keyId && g2Seen.resetPublicKey === fingerprint && !('key' in (g2Seen ?? {})), JSON.stringify(g2Seen));
+    await g2.keys.forget();
+    const g2SeenAfter = (await g2.secrets.get(SYNC_V2_FINGERPRINTS))?.[UID6];
+    t.ok('指紋は forget（ログアウト）で消えない',
+      (await g2.secrets.get(SYNC_ACCOUNT_KEY)) == null && g2SeenAfter?.keyId === gr1.key.keyId && g2SeenAfter.resetPublicKey === fingerprint);
+    const keyIdH = ledger(UID6).keyId;
+    const g2Back = await g2.keys.setup();
+    t.ok('承認で受け取った PC は、ログアウトして戻っても承認なしで ready（指紋）',
+      g2Back.status === 'ready' && g2Back.key.keyId === keyIdH && g2Back.changed === true
+      && ledger(UID6).joins?.[g2.hostId]?.state === 'granted' && (await g2.secrets.get(SYNC_JOIN)) == null,
+      JSON.stringify({ status: g2Back.status, key: g2Back.key?.keyId }));
+
+    // B: K を自分で作った PC（指紋を入れる前の版と同じく、指紋が無くても戻る）
+    await g1.keys.forget();
+    await g1.secrets.delete(SYNC_V2_FINGERPRINTS);
+    const g1Back = await g1.keys.setup();
+    t.ok('K を自分で作った PC は、指紋が無くてもログアウトから戻れる（自分で包んだ包み）',
+      g1Back.status === 'ready' && g1Back.key.keyId === keyIdH && g1Back.changed === true, JSON.stringify(g1Back.status));
+
+    // 指紋と違う K の包み（承認した PC の鍵で包み直したもの）は受けない
+    await g2.keys.forget();
+    const g1Kp = await g1.keys.keyPair();
+    const g2Pub = (await g2.keys.keyPair()).publicKey;
+    const otherKey = newAccountKey();
+    ledger(UID6).keys[g2.hostId] = { keyId: keyIdH, wrappedBy: g1.hostId,
+      wrapped: wrapKey({ key: otherKey.key, keyId: keyIdH, uid: UID6, privateKey: g1Kp.privateKey, publicKey: g1Kp.publicKey, targetPublicKey: g2Pub, targetHostId: g2.hostId }) };
+    const g2Mismatch = await g2.keys.setup();
+    t.ok('forget の後、指紋と違う K の包みは受けない（unverified）',
+      g2Mismatch.status === 'waiting_key' && g2Mismatch.wait?.unverified === true && (await g2.secrets.get(SYNC_ACCOUNT_KEY)) == null,
+      JSON.stringify({ status: g2Mismatch.status, unverified: g2Mismatch.wait?.unverified }));
+
+    // 承認していない PC の包み（台帳の公開鍵で開けても、指紋と違う K）は受けない
+    const g3 = await makeHost(UID6, 'g3');
+    await g3.keys.setup();
+    const g3Kp = await g3.keys.keyPair();
+    plus.state.hosts[g3.hostId].syncPublicKey = b64url(g3Kp.publicKey);
+    ledger(UID6).keys[g2.hostId] = { keyId: keyIdH, wrappedBy: g3.hostId,
+      wrapped: wrapKey({ key: otherKey.key, keyId: keyIdH, uid: UID6, privateKey: g3Kp.privateKey, publicKey: g3Kp.publicKey, targetPublicKey: g2Pub, targetHostId: g2.hostId }) };
+    const g2Other = await g2.keys.setup();
+    t.ok('承認していない PC の包みは受けない（unverified のまま）',
+      g2Other.status === 'waiting_key' && g2Other.wait?.unverified === true && (await g2.secrets.get(SYNC_ACCOUNT_KEY)) == null);
 
     // ================= 回復（鍵を持つ PC が 1 台も無い） =================
     const UID2 = 'adm-recovery';
