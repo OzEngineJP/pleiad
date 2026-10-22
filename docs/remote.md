@@ -119,12 +119,24 @@ AEAD は AES-256-GCM にする（2026-09-23 に ChaChaPoly から変更）。Ele
 - 設定が空のときは環境変数 `AGENT_HOST_RELAY_URL`・`AGENT_HOST_RELAY_SECRET` を代わりに使う（有効にするのは設定だけ）
 - **審査の招待（審査モードのホストだけ。[ADR 0172](adr/0172-play-review-access.md)、[play-store/review-host.md](play-store/review-host.md)）。** Play の審査員に渡す、期限つき（既定 90 日・最長 180 日）で何度でも使えるコード。ペアリングの秘密を `core/review-invite.mjs create` が secret-store に 1 つだけ置き、入場券は同じ秘密から導いて、使うたびと 4 分ごとに中継へ置き直す（中継の「5 分・1 回」の約束と中継のコードは変えない）。確認コードの突き合わせと持ち主の承認は省き、自動で通す。上限は生きている端末 8 台・自動で通すのは 1 時間に 4 台で、超えたら `denied` で閉じる（承認待ちを残さない）。入った端末は `devices.json` の `invite` に招待の id を持ち、招待の取り消し・作り直し・期限切れで、その端末がすべて取り消される。審査モードでは通常の「端末を追加」は使えない。Noise_IKpsk2 とホストの公開鍵の照合はそのまま
 
-**取り消し**: ホストの端末一覧で「取り消す」→ 一覧から消し、中継からトークンのハッシュを消し、その端末のチャネルを即座に切る。中継が古い情報のままでも、ホストがハンドシェイクで静的鍵を弾く（二重）。
+**取り消し**: ホストの端末一覧で「取り消す」→ 鍵を取り消した鍵の一覧（`<data>/remote/revoked.json`）に書き、一覧から消し、中継からトークンのハッシュを消し、その端末のチャネルを即座に切る。中継が古い情報のままでも、ホストがハンドシェイクで静的鍵を弾く（二重）。取り消した鍵は、どの中継から来ても、受け入れも通常の接続も通さない。同じ鍵の記録も一緒に取り消す（その端末が許可した端末もたどるが、今は許可が PC の画面だけなので、ここで外れる端末は無い）。取り消しは端末の画面からもできる（取り消した機器を `by` に残す）。「一覧から消す」は表示だけを外す（[ADR 0248](adr/0248-device-approval-and-revocation.md)）。
 端末一覧は名前・種類・追加した日・最後に使った時刻・今つながっているかを出す。ホスト自身の窓は一覧に出さない（ローカルは今のままの一時トークン）。
 
 ### 3.4 同じアカウントの端末の受け入れ（Pleiad Plus）
 
-公式の中継（Pleiad Plus）では QR のペアリングの代わりに、アカウントでの受け入れを行う（[ADR 0240](adr/0240-plus-same-account-admission.md)）。端末は `/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Account`（ID トークン）だけでつなぎ、Noise_IK のメッセージ 1 に `{ proto, name, platform, app, plus: { idToken } }` を入れる。ホストは `plus.idToken` を自分で検証し、uid が今のアカウントと同じときだけ端末を登録する（確認コードも人の承認も無い）。断りは `{ type: 'denied', reason }`（`account`・`devices`・`unavailable`・`rate`）を暗号の中で返す。登録は `devices.json` の `via: 'plus'`・`plusUid`。細部は docs/plus.md。
+公式の中継（Pleiad Plus）では QR の代わりに、アカウントで中継を通り、PC の画面の承認の窓で許可する（[ADR 0248](adr/0248-device-approval-and-revocation.md)。前の [ADR 0240](adr/0240-plus-same-account-admission.md) を置き換えた）。端末は自分の鍵で api から券（docs/plus.md「券」。[ADR 0249](adr/0249-plus-tickets.md)）を取り、`/v1/device` に `X-Pleiad-Host`・`X-Pleiad-Ticket`（中継の券）だけでつなぎ、Noise_IK のメッセージ 1 に `{ proto, name, platform, app, plus: { ticket } }`（受け入れの券）を入れる。ホストは券を自分で確かめ（署名・期限・`hostId` が自分・`devicePub` が相手の静的鍵・uid が今のアカウント・一度きり）、合わなければ窓を出さずに断る。券の無い前の版の api の間は `X-Pleiad-Account`（ID トークン）と `plus: { idToken }` を使い、ホストは ID トークンの uid を確かめる。
+
+- 端末はメッセージ 2 のあと transport で 1 通送る。`{ type: 'admit' }` は裏でのつなぎ直し、`{ type: 'pair' }` は人がホストを選んだつなぎ
+- 許可済みの鍵（`approvedBy` を持つ記録の鍵。QR で足した端末の鍵も含む）なら、どちらでも窓を出さずに `{ type: 'approved', deviceId, token, hostName }` を返す（同じ deviceId でトークンを出し直す）
+- 許可していない鍵は、`admit` なら `{ type: 'denied', reason: 'approval' }`（窓を出さない）。`pair` なら台数・回数を確かめてから `{ type: 'waiting' }` を返し、QR と同じ承認の窓に同じ確認コードで出す（§3.3 の 4.）。許可で `approved`（`approvedBy: 'host'`）、拒否で `{ type: 'denied', reason: 'rejected' }`、5 分で `expired`
+- 断りの `reason`: `account`（ほかのアカウント・確かめに落ちた券）・`update_required`（券を出す api なのに ID トークンだけで申し込んだ。端末は更新を促す）・`revoked`（取り消した鍵）・`rejected`（拒否してから 1 時間・続けて断ったアカウントの申し込みを止めている間）・`approval`（許可していない鍵の裏のつなぎ直し）・`devices`・`unavailable`・`rate`
+- 同じアカウントからの申し込みをこの PC で 1 時間に 3 回拒否したら、そのアカウントの許可していない鍵の `pair` を 1 時間、窓を出さずに `rejected` で断る（待っている窓も閉じる。許可済みの鍵は通る）。記録は `<data>/remote/plus-requests.json`。止めている間は PC の画面の「Pleiad Plus」のまとまりに警告の一行と「再開する」（`remotePlusRequestsResume`、ホストだけの操作）を出す
+- 承認を待っている間は、PC の通知の一覧（あなた待ち）・OS の通知・許可済みのスマホへの通知（ボタン無し。ロック画面は題だけ）で知らせる。許可は PC の画面だけ
+- 前の版で確認コードなしに入った `via: 'plus'` の記録（`approvedBy` が無い）は「もう一度の許可が要る端末」。通常の接続も `admit` も通さず、`pair` で同じ記録のまま窓に出る（`again`）
+- 登録は `devices.json` の `via: 'plus'`・`plusUid`・`approvedBy`・`approvedAt`。細部は docs/plus.md
+- 端末の鍵の順: Plus の記録の鍵 → 同じホストの QR の記録の鍵 → 端末の鍵。`pair` で `revoked` と断られたら新しい鍵で申し込み直す。その新しい鍵は許可されるまで手元に残し（デスクトップは秘密の `host-plus-pending:<hostId>`、Android は `plusPending:<hostId>`）、拒否のあとにもう一度選んでも同じ鍵で申し込む。PC は拒否した鍵を 1 時間 `rejected` で断るので、端末は待たずに「ホストで断られました」を出し、PC に窓は出ない（2026-10-22。前は選ぶたびに鍵を作り直し、拒否の 1 時間をすり抜けて窓を出し直させていた）。残した鍵が許可されたあと保存する前に取り消されていたら、別の新しい鍵で 1 度だけ始め直す
+
+端末の画面（中継越し）からの接続は、ホストだけの操作（リモートの設定・ペアリングの開始と答え・Plus のつなぎ直し・Plus のログインとログアウト・止めた申し込みの再開）を `host_only` で断る（`core/ops/policy.mjs` の `HOST_ONLY_COMMANDS`）。操作の一覧の口（`invoke { op }`）で来る Plus の同期のスイッチ・やり直し・登録し直し（`plus.syncSetEnabled`・`plus.syncReset`・`plus.hostReregister`）は、操作の `hostScreenOnly` で `HOST_SCREEN_ONLY` を返す。
 
 ### 3.5 中継が知ること・知らないこと
 
@@ -386,8 +398,8 @@ const authz = {
   - `headers` は小文字のヘッダーの写し（凍結）。`ip` は `clientIp` と同じ（`RELAY_TRUST_PROXY` に従う）
 - 判定の返り値:
   - 通す: `{ ok: true, tags?: string[], admit?: boolean }`
-  - 断る: `{ ok: false, code: 4400 | 4401 | 4404 | 4429, reason: string }`。`reason` は 32 字以内の英小文字と空白（外れていれば `'denied'`）。この 4 つ以外の code は 4401 として扱う
-  - `4401` の断りは失敗の回数（IP ごとのブロック）に数える（ただし `reason` が `plus unavailable` のときは数えない）。ほかの code は数えない
+  - 断る: `{ ok: false, code: 4400 | 4401 | 4404 | 4429, reason: string, count?: false }`。`reason` は 32 字以内の英小文字と空白（外れていれば `'denied'`）。この 4 つ以外の code は 4401 として扱う
+  - `4401` の断りは失敗の回数（IP ごとのブロック）に数える。数えないのは、`reason` が `plus unavailable` のときと、`count: false` を付けたとき（正しいクライアントでも起きる断り。例: 正しく署名された券の使い回し・期限切れ。数えると同じ IP のほかの接続まで止めてしまう）。`count` が `false` 以外なら数える。ほかの code は数えない
   - 差し込みが例外を投げた・`authzTimeoutMs`（既定 5 秒。環境変数では変えない）で返らない・返り値の形が違うときは `1013 'try again later'` で閉じる。失敗の回数には数えない。端末は `1013` を「少し待って張り直す」（`classifyClose` の `'offline'`）として扱う
 - 判定を待つ間に届いたメッセージは溜めておき、通ったら着いた順に流す（制御のメッセージ、または端末の accept 待ちの溜め）。溜めるのは 64KB・10 秒まで（超えたら `4413 'buffer'` / `4408 'authz timeout'`）。断ったら捨てる
 - `admit: true` は `/v1/device` で `deviceId` も `pairing` も無いときだけ意味を持つ（ほかの経路・ほかの場合は無視する）。そのとき中継は端末のトークンを見ずに接続を始め、ホストの制御用の接続へ `{"type":"incoming","conn":"…","admit":true}` を送る（相手を確かめるのはホスト。Noise のハンドシェイクの中）。1 ホストにつき 1 分 10 回まで（`admitPerMinute`。超えたら `4429 'admit rate'`）。1 ホストあたりの接続数の上限にも数える。ホストが居ない・`sync` の前なら今と同じ 4404
@@ -469,7 +481,7 @@ link ごとの振る舞いは provider が決める:
 - 端末の記録（devices.json）の `via` は `'own'` か `'plus'`（無いものは `'own'` とみなす。今のファイルはそのまま読める）。`plusUid` は `via: 'plus'` の端末を受け入れたアカウントの uid（状態には出さない）
 - 「ほかの端末からの操作を許可する」が off なら全部の link を閉じる。`status()` の `links.<名>` に各 link の状態が出る（`connection` は `links.own` と同じもの）
 
-plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus.md「Plus のつながり」）。`enabled`・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`・この PC の登録（`core/plus/hosts.mjs`）が `registered`、の全部がそろったときだけ張り、行き先は `/v1/auth/config` の `urls.relay`、認証は `X-Pleiad-Host` と `X-Pleiad-Account`（ID トークン）。`onIncomingAdmit` で、アカウントでの受け入れ（§3.4）を担う。条件が変わったときはサーバーが `refreshPlus()` で見直す（張っている間は何もしない。中継が `4401 'account'` で閉じたあとは、アカウントが Plus で使えると新しく分かるか条件がいったん崩れるまで ready() が error を返し、見直しでも張らない）。`status().plus` に `{ connect, link, host, devices }` を出す。`plusHostRebind`（人だけ）はホストの鍵を作り直して端末を全部取り消し、`onIdentity` で登録し直す。
+plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus.md「Plus のつながり」）。`enabled`・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`・この PC の登録（`core/plus/hosts.mjs`）が `registered`、の全部がそろったときだけ張り、行き先は `/v1/auth/config` の `urls.relay`、認証は `X-Pleiad-Host` と `X-Pleiad-Ticket`（張るたびに取る中継の券。accept は今の制御の接続と同じ券。券の無い前の版の api の間は `X-Pleiad-Account` の ID トークン）。`onIncomingAdmit` で、アカウントでの受け入れ（§3.4）を担う。条件が変わったときはサーバーが `refreshPlus()` で見直す（張っている間は何もしない。中継が `4401 'account'` で閉じたあとは、アカウントが Plus で使えると新しく分かるか条件がいったん崩れるまで ready() が error を返し、見直しでも張らない）。`status().plus` に `{ connect, link, host, devices }` を出す。`plusHostRebind`（人だけ）はホストの鍵を作り直して端末を全部取り消し、`onIdentity` で登録し直す。
 
 ## 7. デスクトップ版の端末（#14）
 

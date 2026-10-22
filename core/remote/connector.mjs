@@ -71,12 +71,31 @@ function publicAgent(d, stats) {
   return { available, enabled: available, active: stats?.active ?? 0, waiting: stats?.waiting ?? 0 };
 }
 
-function publicDevice(d, connections = 0, registered = false, agentStats = null) {
+/**
+ * もう一度の許可が要る端末か。via:'plus' で許可した機器の記録が無いものは、前の版で確認コードなしに入った端末（ADR 0248）。
+ * もう一度の許可が済むまで、操作を通さない
+ */
+const needsReapproval = d => Boolean(d) && d.via === 'plus' && !d.approvedBy;
+
+function publicDevice(d, connections = 0, registered = false, agentStats = null, nameOf = () => null) {
   return {
     id: d.id, name: d.name, platform: d.platform, app: d.app ?? null, createdAt: d.createdAt, lastSeenAt: d.lastSeenAt ?? null,
     via: d.via ?? 'own',
+    approvedBy: d.approvedBy ?? null,
+    approvedByName: d.approvedBy && d.approvedBy !== 'host' ? nameOf(d.approvedBy) : null,
+    ...(needsReapproval(d) ? { reapprove: true } : {}),
     connected: connections > 0, connections, notify: publicNotify(d, registered), agent: publicAgent(d, agentStats),
     ...(d.invite ? { invite: true } : {}),
+  };
+}
+
+/** 取り消した端末（設定 › リモートの「取り消した端末」）。key は「一覧から消す」に使う公開鍵。 */
+function publicRevoked(k, nameOf) {
+  return {
+    key: k.publicKey, name: k.name ?? '', platform: k.platform ?? null, via: k.via ?? 'own',
+    createdAt: k.createdAt ?? null, revokedAt: k.revokedAt,
+    by: k.by ?? 'host', byName: k.by && k.by !== 'host' ? nameOf(k.by) : null,
+    approvedBy: k.approvedBy ?? null, approvedByName: k.approvedBy && k.approvedBy !== 'host' ? nameOf(k.approvedBy) : null,
   };
 }
 
@@ -91,8 +110,22 @@ const agentAllowed = d => Boolean(d) && d.platform === 'desktop';
 const isMobile = d => d.platform !== 'desktop';
 const NOTIFY_PERSIST_MS = 60_000;
 
+/** 拒否した鍵が同じ PC へもう一度申し込めるまで（Plus からの申し込み）。 */
+const DENY_COOLDOWN_MS = 60 * 60_000;
+/**
+ * 公式の中継からの申し込みを続けて断ったら、承認の窓を出すのを止める（PC とアカウントの uid ごと。鍵を作り直しても数える）。
+ * 1 時間に 3 回断ると 1 時間止める。止めている間は PC の画面に一行と「再開する」を出す
+ */
+const PLUS_DENY_LIMIT = 3;
+const PLUS_DENY_WINDOW_MS = 60 * 60_000;
+const PLUS_PAUSE_MS = 60 * 60_000;
+
 function publicRequest(r) {
-  return { id: r.id, name: r.name, platform: r.platform, app: r.app, code: r.code, createdAt: r.createdAt, expiresAt: r.expiresAt };
+  return {
+    id: r.id, name: r.name, platform: r.platform, app: r.app, code: r.code, createdAt: r.createdAt, expiresAt: r.expiresAt,
+    via: r.link?.name ?? 'own',
+    ...(r.again ? { again: true, addedAt: r.addedAt ?? null } : {}),
+  };
 }
 
 function parseJson(buf) {
@@ -125,6 +158,10 @@ export function createRemoteHost({
   let offer = null;                // { secret, psk, ticketHash, expiresAt, timer }
   const requests = new Map();      // id → 承認待ち
   const deviceCache = new Map();   // id → devices.json の 1 件（照合は同期で行う）
+  const revokedKeys = new Map();   // 公開鍵 → revoked.json の 1 件（取り消した鍵。照合は同期で行う）
+  const deniedUntil = new Map();   // 公開鍵 → 拒否した鍵がもう一度申し込める時刻（ms。Plus からの申し込み）
+  let plusRequests = { version: 1, accounts: {} };   // plus-requests.json の写し（断った時刻と、申し込みを止めている期限。uid ごと）
+  let plusPauseTimer = null;       // 止めている期限が来たら状態を配り直す
   const notifyKeys = new Map();    // deviceId → 通知鍵（Buffer）。スマホへの通知を暗号化する（core/notify）
   const notifyPersisted = new Map();   // deviceId → lastSentAt を最後にファイルへ書いた時刻
   const channels = new Map();      // deviceId → Set<{ ch, ws, link }>
@@ -139,7 +176,12 @@ export function createRemoteHost({
   // 1 本ぶんの状態: phase（disabled | connecting | connected | retrying | error）・error・since・retryAt・
   // generation・control・attempt・retryTimer・pingTimer・dataConns。
   // 中継の URL・張るときのヘッダー・引き受ける端末・ペアリングを受けるかは provider が決める:
-  //   { name, ready(), url(path), headers(), owns(device), allowPairing, onIncomingAdmit?(ctx), onClose?(code, reason) }
+  //   { name, ready(), url(path), headers({ accept }), owns(device), allowPairing, onIncomingAdmit?(ctx), onOpen?(headers), onClose?(code, reason) }
+  // 試みは 1 本ずつ（inFlight）。headers() を待つ間も張る途中で、見直しが来ても別の試みを重ねない。
+  // onOpen(headers) は、制御の接続が開いた試みのヘッダーを渡す（捨てた試みのヘッダーは渡らない。accept はこれを使う）。
+  // headers() が linkError（{ code, message }）の付いた誤りを投げたら、張り直さずに error で止まる。
+  // linkRetry（{ code, message }）なら、その誤りを出して今の backoff で張り直す（待つ）。
+  // onClose() は null・'retry'（今と同じ張り直し）・{ error }（止まる）・{ retry: { code, message } }（その誤りを出して待つ）を返す。
   const ownProvider = {
     name: 'own',
     /** 張ってよいか。true / false（disabled）/ { error }（error）。 */
@@ -156,7 +198,7 @@ export function createRemoteHost({
   const makeLink = (name, provider) => ({
     name, provider,
     phase: 'disabled', error: null, since: Date.now(), retryAt: null,
-    generation: 0, control: null, controlOpenedAt: 0, attempt: 0,
+    generation: 0, control: null, controlOpenedAt: 0, attempt: 0, inFlight: null,
     retryTimer: null, pingTimer: null, dataConns: new Set(),
   });
   const links = { own: makeLink('own', ownProvider), plus: makeLink('plus', null) };
@@ -173,6 +215,8 @@ export function createRemoteHost({
 
   /** provider の ready() を状態に写す。張ってよい link なら true。 */
   function linkWanted(link) {
+    // plus.connect を切った設定は、provider がまだ知らなくても張らない（切るときに一度張り直してから止まらないよう）
+    if (link === links.plus && !cfg.plusConnect) { setLinkPhase(link, 'disabled'); return false; }
     const r = link.provider?.ready() ?? false;
     if (r === true) return true;
     setLinkPhase(link, r && typeof r === 'object' ? 'error' : 'disabled', r && typeof r === 'object' ? r.error ?? null : null);
@@ -203,6 +247,10 @@ export function createRemoteHost({
     };
     deviceCache.clear();
     notifyKeys.clear();
+    revokedKeys.clear();
+    for (const k of await store.revokedKeys()) revokedKeys.set(k.publicKey, k);
+    plusRequests = await store.plusRequests();
+    schedulePlusPause();
     for (const d of await store.devices()) {
       deviceCache.set(d.id, d);
       if (d.notify) {
@@ -231,14 +279,18 @@ export function createRemoteHost({
 
   async function connect(link) {
     const gen = link.generation;
+    link.inFlight = gen;
+    const settle = () => { if (link.inFlight === gen) link.inFlight = null; };
     let url;
     try { url = link.provider.url('/v1/host'); }
     catch (e) { scheduleRetry(link, { code: 'config', message: e.message }); return; }
     let headers;
     try { headers = await link.provider.headers(); }
     catch (e) {
-      // 一時的な失敗（plus のトークンの取り直しが届かないなど）で止まらないよう張り直す
-      if (gen === link.generation) scheduleRetry(link, { code: 'config', message: e.message });
+      // 張り直しても直らない誤り（plus の券で台帳に無い・更新が要る）は error で止まる
+      if (e?.linkError) { if (gen === link.generation) { settle(); setLinkPhase(link, 'error', e.linkError); } return; }
+      // 一時的な失敗（plus のトークンの取り直しが届かない・Plus が止まっているなど）で止まらないよう張り直す
+      if (gen === link.generation) scheduleRetry(link, e?.linkRetry ?? { code: 'config', message: e.message });
       return;
     }
     if (gen !== link.generation) return;
@@ -268,7 +320,9 @@ export function createRemoteHost({
     ws.on('error', e => { failure ??= t('remote.relay.unreachable', { reason: e.code || e.message }); });
     ws.on('open', () => {
       if (gen !== link.generation) return closeWs(ws, 1000);
+      settle();
       link.controlOpenedAt = Date.now();
+      link.provider?.onOpen?.({ ...headers });
       link.retryAt = null;
       syncDevices(link);
       setLinkPhase(link, 'connected');
@@ -296,7 +350,8 @@ export function createRemoteHost({
       link.controlOpenedAt = 0;
       // provider が close の扱いを変えたいとき（plus 側の断りを張り直しにしないなど）。'retry' か無ければ今と同じ張り直し
       const verdict = link.provider?.onClose?.(code, Buffer.isBuffer(reason) ? reason.toString('utf8') : String(reason ?? '')) ?? null;
-      if (verdict && verdict !== 'retry') { settled = true; setLinkPhase(link, 'error', verdict.error ?? null); return; }
+      if (verdict?.retry) return retryOnce(verdict.retry);
+      if (verdict && verdict !== 'retry') { settled = true; settle(); setLinkPhase(link, 'error', verdict.error ?? null); return; }
       retryOnce({ code: `relay-${code}`, message: failure ?? describeClose(code) });
     });
   }
@@ -305,6 +360,7 @@ export function createRemoteHost({
     const base = Math.min(backoff.maxMs, backoff.minMs * 2 ** link.attempt);
     const delay = Math.round(Math.min(backoff.maxMs, base * (0.75 + Math.random() * 0.5)));
     link.attempt++;
+    link.inFlight = null;
     link.retryAt = Date.now() + delay;
     setLinkPhase(link, 'retrying', err);
     const gen = link.generation;
@@ -343,7 +399,7 @@ export function createRemoteHost({
     try { url = link.provider.url(`/v1/host/accept?conn=${encodeURIComponent(conn)}`); }
     catch (e) { log(`remote accept: ${e.message}`); return; }
     let headers;
-    try { headers = await link.provider.headers(); }
+    try { headers = await link.provider.headers({ accept: true }); }
     catch (e) { log(`remote accept: ${e.message}`); return; }
     if (gen !== link.generation) return;
     let ws;
@@ -376,14 +432,70 @@ export function createRemoteHost({
     handleDevice(link, ws, typeof deviceId === 'string' ? deviceId : '', timer);
   }
 
-  /** onIncomingAdmit へ渡す一式。provider が Noise の応答・検証・登録・返事を済ませて閉じる。 */
+  /**
+   * onIncomingAdmit へ渡す一式。provider が Noise の応答・検証・登録・返事を済ませて閉じる。
+   * 新しい鍵を通すのは request（PC の画面の承認の窓）だけ。admitKnown は許可済みの鍵に中継用トークンを出し直すだけ
+   */
   function admitCtx(link, ws, conn, timer) {
     return {
       link: link.name, ws, conn, timer,
       identity, hostName: cfg.hostName,
-      /** 端末をこの link のものとして登録し、中継へ allow を送る。token は端末へ渡す中継用トークン。 */
-      async admit({ name, platform, app, publicKey, plusUid }) {
-        const { device, raw } = issueDevice({ name, platform, app, publicKey }, { via: link.name, plusUid });
+      /** 取り消した鍵か（台帳や中継の資格に関係なく通さない）。 */
+      isRevoked: publicKey => revokedKeys.has(keyText(publicKey)),
+      /** 拒否してから 1 時間たっていない鍵か。 */
+      deniedRecently: publicKey => (deniedUntil.get(keyText(publicKey)) ?? 0) > now(),
+      /** このアカウントからの申し込みを止めているか（続けて断ったとき。PC の画面の「再開する」で解く）。 */
+      plusPaused: uid => plusPausedUntil(uid) > 0,
+      /** この鍵の端末の記録（無ければ null）。この link のもの（plus）を先に、無ければ own を返す。 */
+      deviceFor(publicKey) {
+        const key = keyText(publicKey);
+        const all = [...deviceCache.values()].filter(d => d.publicKey === key);
+        return all.find(d => (d.via ?? 'own') === link.name) ?? all[0] ?? null;
+      },
+      /**
+       * 許可済みの鍵（PC の画面か許可済みの端末で許可したもの）に、この link の中継用トークンを出し直す。
+       * この link の記録があれば同じ id のまま、無ければ（QR で足した端末が Plus から来た）許可の記録を写した記録を作る。
+       * 許可済みでなければ null（承認の窓へ回す）
+       */
+      async admitKnown({ name, platform, app, publicKey, plusUid }) {
+        const key = keyText(publicKey);
+        if (revokedKeys.has(key)) return null;
+        const all = [...deviceCache.values()].filter(d => d.publicKey === key && !d.invite);
+        const approved = all.filter(d => !needsReapproval(d));
+        if (!approved.length) return null;
+        const mine = all.find(d => (d.via ?? 'own') === link.name);
+        const src = mine && !needsReapproval(mine) ? mine : approved[0];
+        const approval = { approvedBy: src.approvedBy ?? 'host', approvedAt: src.approvedAt ?? src.createdAt ?? new Date(now()).toISOString() };
+        const raw = crypto.randomBytes(32);
+        const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
+        let device;
+        if (mine) {
+          const patch = { tokenHash, ...(link.name === 'plus' && plusUid ? { plusUid } : {}), ...(needsReapproval(mine) ? approval : {}) };
+          if (!(await store.updateDevice(mine.id, patch))) return null;
+          device = Object.assign(mine, patch);
+        } else {
+          device = { ...issueDevice({ name, platform, app, publicKey }, { via: link.name, plusUid }).device, ...approval, tokenHash };
+          await store.addDevice(device);
+        }
+        deviceCache.set(device.id, device);
+        sendControl(link, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
+        queueStatus();
+        return { device, token: raw.toString('base64url') };
+      },
+      /**
+       * PC の画面の承認の窓へ回す（QR と同じ窓・同じ確認コード）。許可されると端末へ approved を送り、onApproved(device) を呼ぶ。
+       * 同じ鍵の申し込みは 1 つまで（前のものを切って置き換える）。5 分で切れる。
+       * again は、もう一度の許可が要る端末の記録（同じ id のまま許可し直す）
+       */
+      request({ name, platform, app, publicKey, plusUid, code, send, onApproved }) {
+        const key = keyText(publicKey);
+        for (const r of [...requests.values()]) if (keyText(r.publicKey) === key) finishRequest(r, 'cancelled');
+        const again = [...deviceCache.values()].find(d => d.publicKey === key && needsReapproval(d)) ?? null;
+        return openRequest({ name, platform, app }, { publicKey: Buffer.from(publicKey), code, ws, send, link, timer: null, plusUid, again, onApproved });
+      },
+      /** 端末をこの link のものとして登録し、中継へ allow を送る（試験の provider 用。approvedBy を渡さなければ、もう一度の許可が要る端末になる）。 */
+      async admit({ name, platform, app, publicKey, plusUid, approvedBy }) {
+        const { device, raw } = issueDevice({ name, platform, app, publicKey }, { via: link.name, plusUid, approvedBy });
         await store.addDevice(device);
         deviceCache.set(device.id, device);
         sendControl(link, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
@@ -392,6 +504,8 @@ export function createRemoteHost({
       },
     };
   }
+
+  const keyText = publicKey => (Buffer.isBuffer(publicKey) || publicKey instanceof Uint8Array ? Buffer.from(publicKey).toString('base64url') : String(publicKey ?? ''));
 
   /** 最初のメッセージ（Noise のメッセージ 1）を受けて fn に渡す。文字のメッセージは形の誤り。 */
   function firstMessage(ws, fn) {
@@ -415,9 +529,16 @@ export function createRemoteHost({
       hs.readMessage(m1);
       // 中継が名乗った deviceId の鍵と、ハンドシェイクで証明された鍵が一致し、今も一覧にあること（取り消しの二重の守り）
       const current = deviceCache.get(deviceId);
-      if (!current || !link.provider.owns(current) || !hs.remoteStatic.equals(Buffer.from(current.publicKey, 'base64url'))) {
+      if (!current || !link.provider.owns(current) || !hs.remoteStatic.equals(Buffer.from(current.publicKey, 'base64url'))
+        || revokedKeys.has(current.publicKey)) {
         clearTimeout(timer);
         return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'revoked');
+      }
+      // 前の版で確認コードなしに入った端末は、もう一度の許可が済むまで通さない。中継は理由を端末へ渡さないので、
+      // 端末は受け入れをやり直して { denied, reason: 'approval' } で知る（ADR 0248）
+      if (needsReapproval(current)) {
+        clearTimeout(timer);
+        return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'reapprove');
       }
       ws.send(hs.writeMessage());
       clearTimeout(timer);
@@ -494,40 +615,94 @@ export function createRemoteHost({
         try { msg = parseJson(transport.decrypt(Buffer.from(data))); } catch { msg = null; }
         clearTimeout(timer);
         if (msg?.type !== 'pair') return closeWs(ws, HOST_CLOSE.UNAUTHORIZED, 'pairing');
-        const at = Date.now();
         const label = {
           name: cleanLabel(hello.name) || t('remote.unnamedDevice'),
           platform: cleanLabel(hello.platform, 32) || 'unknown',
           app: cleanLabel(hello.app, 32) || null,
         };
         const send = obj => { if (ws.readyState === WebSocket.OPEN) ws.send(transport.encrypt(Buffer.from(JSON.stringify(obj), 'utf8'))); };
+        // 取り消した鍵は、QR を読んでいても通さない（端末は鍵を作り直してペアリングし直す）
+        if (revokedKeys.has(publicKey.toString('base64url'))) {
+          send({ type: 'denied', reason: 'revoked' });
+          return closeWs(ws, 1000);
+        }
         // 審査の招待は確認コードの見比べも承認の待ちも無い。上限の中なら、ここで登録して終える
         if (inv) return admitInvite(inv, { ...label, publicKey, ws, send }, link);
-        const r = {
-          id: crypto.randomBytes(9).toString('base64url'),
-          ...label,
-          code, createdAt: new Date(at).toISOString(), expiresAt: new Date(at + PAIRING_TTL_MS).toISOString(),
-          publicKey, ws, send, link,
-          timer: null,
-        };
-        r.timer = setTimeout(() => finishRequest(r, 'expired'), PAIRING_TTL_MS);
-        r.timer.unref();
-        requests.set(r.id, r);
-        ws.on('close', () => {
-          if (requests.get(r.id) !== r) return;
-          finishRequest(r, 'cancelled');
-        });
-        emit({ type: 'remotePairing', phase: 'request', request: publicRequest(r) });
-        queueStatus();
+        openRequest(label, { publicKey, code, ws, send, link });
       });
     });
+  }
+
+  /**
+   * 承認待ちを作り、PC の画面の承認の窓へ出す（QR と Plus で共通）。
+   * extra: { publicKey, code, ws, send, link, plusUid?, again?, onApproved? }
+   */
+  function openRequest(label, extra) {
+    const at = Date.now();
+    const r = {
+      id: crypto.randomBytes(9).toString('base64url'),
+      ...label,
+      createdAt: new Date(at).toISOString(), expiresAt: new Date(at + PAIRING_TTL_MS).toISOString(),
+      ...extra,
+      again: extra.again?.id ?? null,
+      addedAt: extra.again?.createdAt ?? null,
+      timer: null,
+    };
+    r.timer = setTimeout(() => finishRequest(r, 'expired'), PAIRING_TTL_MS);
+    r.timer.unref();
+    requests.set(r.id, r);
+    r.ws.on('close', () => {
+      if (requests.get(r.id) !== r) return;
+      finishRequest(r, 'cancelled');
+    });
+    emit({ type: 'remotePairing', phase: 'request', request: publicRequest(r) });
+    queueStatus();
+    return r;
+  }
+
+  // ── 公式の中継からの申し込みを続けて断ったとき ──────────────────
+
+  /** このアカウントからの申し込みを止めている期限（ms）。止めていなければ 0 */
+  function plusPausedUntil(uid) {
+    const until = Date.parse(plusRequests.accounts[String(uid ?? '')]?.pausedUntil ?? '');
+    return Number.isFinite(until) && until > now() ? until : 0;
+  }
+  function plusPausedStatus() {
+    const until = Math.max(0, ...Object.keys(plusRequests.accounts).map(plusPausedUntil));
+    return until ? { until: new Date(until).toISOString() } : null;
+  }
+  /** 止めている期限が来たら、状態を配り直す（画面の一行を消す） */
+  function schedulePlusPause() {
+    clearTimeout(plusPauseTimer);
+    plusPauseTimer = null;
+    const until = Date.parse(plusPausedStatus()?.until ?? '');
+    if (!Number.isFinite(until)) return;
+    plusPauseTimer = setTimeout(() => { plusPauseTimer = null; queueStatus(); }, Math.max(0, until - now()) + 50);
+    plusPauseTimer.unref?.();
+  }
+  /** 公式の中継からの申し込みを断った。直近 1 時間に 3 回目なら、このアカウントからの申し込みを 1 時間止め、待っている窓も閉じる */
+  async function countPlusDenial(uid) {
+    if (!uid) return;
+    const at = now();
+    const entry = plusRequests.accounts[uid] ?? { denials: [], pausedUntil: null };
+    entry.denials = [...(Array.isArray(entry.denials) ? entry.denials : []).filter(x => at - Date.parse(x) < PLUS_DENY_WINDOW_MS), new Date(at).toISOString()];
+    if (entry.denials.length >= PLUS_DENY_LIMIT) {
+      entry.pausedUntil = new Date(at + PLUS_PAUSE_MS).toISOString();
+      entry.denials = [];
+      for (const r of [...requests.values()]) if (r.link?.name === 'plus' && r.plusUid === uid) finishRequest(r, 'denied');
+    }
+    plusRequests.accounts[uid] = entry;
+    await store.savePlusRequests(plusRequests).catch(e => log(`remote plus requests: ${e.message}`));
+    schedulePlusPause();
+    queueStatus();
   }
 
   function finishRequest(r, phaseName, extra = {}) {
     if (requests.get(r.id) !== r) return;
     requests.delete(r.id);
     clearTimeout(r.timer);
-    if (phaseName === 'denied' || phaseName === 'expired') r.send({ type: phaseName });
+    if (phaseName === 'denied') r.send({ type: 'denied', reason: 'rejected' });
+    if (phaseName === 'expired') r.send({ type: 'expired' });
     closeWs(r.ws, 1000);
     emit({ type: 'remotePairing', phase: phaseName, request: publicRequest(r), ...extra });
     queueStatus();
@@ -567,7 +742,7 @@ export function createRemoteHost({
     for (const d of [...deviceCache.values()]) {
       if (d.invite && d.invite !== invite?.id) {
         log(`review invite: revoking device ${d.id.slice(0, 6)} (its invite ended)`);
-        await revokeDevice(d.id).catch(e => log(`review invite: revoke failed (${e.message})`));
+        await revokeDevice(d.id, { record: false }).catch(e => log(`review invite: revoke failed (${e.message})`));
       }
     }
     if (invite?.id !== before?.id) {
@@ -617,7 +792,7 @@ export function createRemoteHost({
           log(`review invite: refused a device (${verdict.reason === 'devices' ? 'device limit' : 'hourly limit'})`);
           return refuse('denied', verdict.reason);
         }
-        if (again) await revokeDevice(again.id);
+        if (again) await revokeDevice(again.id, { record: false });
         const { device, raw } = issueDevice(info, { via: link.name, invite: invite.id });
         await store.addDevice(device);
         deviceCache.set(device.id, device);
@@ -637,25 +812,57 @@ export function createRemoteHost({
   // ── 端末の登録・取り消し ──────────────────────────────────────
 
   /** 端末の記録と中継用トークンを作る（承認・招待・link の admit で共通）。via は受け入れた link（'own' | 'plus'）、plusUid は plus のアカウントの uid、invite は審査の招待の印。 */
-  function issueDevice({ name, platform, app, publicKey }, { via = 'own', plusUid, invite } = {}) {
+  function issueDevice({ name, platform, app, publicKey }, { via = 'own', plusUid, invite, approvedBy } = {}) {
     const raw = crypto.randomBytes(32);
+    const at = new Date(now()).toISOString();
     const device = {
       id: `d${crypto.randomBytes(12).toString('base64url')}`,
       name, platform, app,
-      publicKey: publicKey.toString('base64url'),
+      publicKey: keyText(publicKey),
       tokenHash: crypto.createHash('sha256').update(raw).digest('hex'),
-      createdAt: new Date(now()).toISOString(),
+      createdAt: at,
       lastSeenAt: null,
       via,
       ...(via === 'plus' && plusUid ? { plusUid } : {}),
+      ...(approvedBy ? { approvedBy, approvedAt: at } : {}),
       ...(invite ? { invite } : {}),
     };
     return { device, raw };
   }
 
-  /** 取り消し: 一覧から消し、中継からも消し、つながり中のチャネルを切る。 */
-  async function revokeDevice(id) {
+  /**
+   * 取り消し: 取り消した鍵に書き、一覧から消し、中継からも消し、つながり中のチャネルを切る。
+   * 同じ鍵の記録（own と plus の両方にあるとき）と、この端末が許可した端末も一緒に取り消す。
+   * by は取り消した機器（'host' か端末の id）。record: false は鍵を取り消した鍵に書かない
+   * （ログアウト・別のアカウント・PC の鍵の作り直し・審査の招待の終わりのように、端末の鍵を疑う理由が無い外し方）
+   */
+  async function revokeDevice(id, { by = 'host', record = true } = {}, seen = new Set()) {
     id = String(id ?? '');
+    if (seen.has(id)) return status();
+    seen.add(id);
+    const d = deviceCache.get(id) ?? (await store.devices()).find(x => x.id === id) ?? null;
+    if (record && d?.publicKey) {
+      const entry = {
+        id: d.id, publicKey: d.publicKey, revokedAt: new Date(now()).toISOString(), by,
+        name: d.name ?? '', platform: d.platform ?? null, via: d.via ?? 'own',
+        ...(d.approvedBy ? { approvedBy: d.approvedBy } : {}), ...(d.createdAt ? { createdAt: d.createdAt } : {}),
+      };
+      revokedKeys.set(d.publicKey, { ...(revokedKeys.get(d.publicKey) ?? {}), ...entry, hidden: false });
+      await store.addRevoked(entry);
+      // 承認待ちの同じ鍵も切る（許可されても入れない）
+      for (const r of [...requests.values()]) if (keyText(r.publicKey) === d.publicKey) finishRequest(r, 'cancelled');
+    }
+    await removeDevice(id);
+    if (!record || !d) { queueStatus(); return status(); }
+    for (const other of [...deviceCache.values()]) {
+      if (other.publicKey === d.publicKey || other.approvedBy === id) await revokeDevice(other.id, { by, record }, seen);
+    }
+    queueStatus();
+    return status();
+  }
+
+  /** 一覧・中継・つながり中のチャネルから外す（取り消した鍵には書かない）。 */
+  async function removeDevice(id) {
     deviceCache.delete(id);   // 照合は先に止める（消し終わるのを待つ間にハンドシェイクを通さない）
     // 任された作業も止める（ADR 0146）。口を閉じてから、動いているタスクを止める
     agent?.closeDevice(id, 'revoked');
@@ -671,6 +878,15 @@ export function createRemoteHost({
   }
 
   // ── 状態 ──────────────────────────────────────────────────────
+
+  /** 端末の id から名前（許可した端末・取り消した端末の表示）。取り消した後の端末は取り消した鍵の記録から引く */
+  function deviceName(id) {
+    if (!id || id === 'host') return null;
+    const live = deviceCache.get(id);
+    if (live) return live.name ?? '';
+    for (const k of revokedKeys.values()) if (k.id === id) return k.name ?? '';
+    return null;
+  }
 
   const linkStatus = l => ({ state: l.phase, error: l.error, since: new Date(l.since).toISOString(), retryAt: l.retryAt ? new Date(l.retryAt).toISOString() : null });
 
@@ -692,13 +908,17 @@ export function createRemoteHost({
         offer: offer ? { expiresAt: new Date(offer.expiresAt).toISOString() } : null,
         requests: [...requests.values()].map(publicRequest),
       },
-      devices: [...deviceCache.values()].map(d => publicDevice(d, channels.get(d.id)?.size ?? 0, notifyKeys.has(d.id), agent?.stats?.(d.id))),
+      devices: [...deviceCache.values()].map(d => publicDevice(d, channels.get(d.id)?.size ?? 0, notifyKeys.has(d.id), agent?.stats?.(d.id), deviceName)),
+      // 取り消した端末（「一覧から消す」を押したものは出さない）。鍵はずっと通さない
+      revoked: [...revokedKeys.values()].filter(k => !k.hidden).map(k => publicRevoked(k, deviceName)),
       // Pleiad Plus のつながり（docs/plus.md）。connect は設定、link は link の状態、host はこの PC の登録、devices は via:'plus' の数
       plus: {
         connect: cfg.plusConnect,
         link: linkStatus(links.plus),
         host: plusHostState,
         devices: [...deviceCache.values()].filter(d => d.via === 'plus').length,
+        // 続けて断ったので、公式の中継からの申し込みを止めている間 { until }（ISO 時刻）。止めていなければ null
+        paused: plusPausedStatus(),
       },
       storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
     };
@@ -741,7 +961,8 @@ export function createRemoteHost({
         if (!cfg.enabled || !l.provider) setLinkPhase(l, 'disabled');
         return;
       }
-      if (l.phase === 'connected' || l.phase === 'connecting') return;
+      // 張っている・張る途中（券を取っている間を含む）なら重ねない
+      if (l.phase === 'connected' || l.phase === 'connecting' || l.inFlight === l.generation) return;
       disconnectLink(l);
       try { identity ??= await store.identity(); }
       catch (e) { setLinkPhase(l, 'error', { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message }); return; }
@@ -827,18 +1048,50 @@ export function createRemoteHost({
     async approve(id) {
       const r = requests.get(String(id ?? ''));
       if (!r) throw new Error(t('remote.pairing.requestGone'));
-      const { device, raw } = issueDevice(r, { via: r.link?.name ?? 'own' });
-      await store.addDevice(device);
-      deviceCache.set(device.id, device);
-      sendControl(r.link ?? links.own, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
+      // 窓を開いている間に取り消された鍵は通さない
+      if (revokedKeys.has(keyText(r.publicKey))) { finishRequest(r, 'denied'); throw new Error(t('remote.pairing.requestGone')); }
+      const link = r.link ?? links.own;
+      const at = new Date(now()).toISOString();
+      let device, raw;
+      const again = r.again ? deviceCache.get(r.again) : null;
+      if (again) {
+        // もう一度の許可: 同じ id のまま、許可した機器を書いてトークンを出し直す
+        raw = crypto.randomBytes(32);
+        const patch = {
+          tokenHash: crypto.createHash('sha256').update(raw).digest('hex'),
+          approvedBy: 'host', approvedAt: at,
+          name: r.name, platform: r.platform, app: r.app,
+          ...(r.plusUid ? { plusUid: r.plusUid } : {}),
+        };
+        await store.updateDevice(again.id, patch);
+        device = Object.assign(again, patch);
+      } else {
+        ({ device, raw } = issueDevice(r, { via: link.name, plusUid: r.plusUid, approvedBy: 'host' }));
+        await store.addDevice(device);
+        deviceCache.set(device.id, device);
+      }
+      sendControl(link, { type: 'allow', id: device.id, tokenHash: device.tokenHash });
       r.send({ type: 'approved', deviceId: device.id, token: raw.toString('base64url'), hostName: cfg.hostName });
-      finishRequest(r, 'approved', { device: publicDevice(device) });
-      return publicDevice(device);
+      const shown = publicDevice(device, 0, notifyKeys.has(device.id), null, deviceName);
+      finishRequest(r, 'approved', { device: shown });
+      r.onApproved?.(device);
+      return shown;
     },
     async deny(id) {
       const r = requests.get(String(id ?? ''));
       if (!r) throw new Error(t('remote.pairing.requestGone'));
+      // Pleiad Plus から来た鍵は、断ってから 1 時間は同じ鍵で頼み直せない（QR は PC の画面で始めるので要らない）
+      if (r.link?.name === 'plus') deniedUntil.set(keyText(r.publicKey), now() + DENY_COOLDOWN_MS);
       finishRequest(r, 'denied');
+      if (r.link?.name === 'plus') await countPlusDenial(r.plusUid);
+      return status();
+    },
+    /** 公式の中継からの申し込みを止めていたのを解く（人だけ。ホストの PC の画面から）。断った数も数え直す */
+    async resumePlusRequests() {
+      plusRequests = { version: 1, accounts: {} };
+      await store.savePlusRequests(plusRequests);
+      schedulePlusPause();
+      queueStatus();
       return status();
     },
 
@@ -903,7 +1156,7 @@ export function createRemoteHost({
       const out = [];
       for (const [id, key] of notifyKeys) {
         const d = deviceCache.get(id);
-        if (!d || !isMobile(d) || !d.notify?.settings) continue;
+        if (!d || !isMobile(d) || !d.notify?.settings || needsReapproval(d)) continue;
         out.push({ id, platform: d.platform, key, settings: d.notify.settings, muted: d.notify.muted === true });
       }
       return out;
@@ -932,8 +1185,25 @@ export function createRemoteHost({
     /** 通知の本文の頭に付けるホスト名と hostId（hostId は公開）。接続前は null。 */
     hostInfo: () => identity ? { hostId: identity.hostId, hostName: cfg.hostName } : null,
 
-    /** 取り消し: 一覧から消し、中継からも消し、つながり中のチャネルを切る。 */
-    revoke: id => revokeDevice(id),
+    /**
+     * 取り消し: 鍵を取り消した鍵に書き、一覧から消し、中継からも消し、つながり中のチャネルを切る。
+     * この端末が許可した端末も一緒に取り消す。opts = { by: 取り消した機器（'host' か端末の id）, record: false で鍵を書かない }
+     */
+    revoke: (id, opts) => revokeDevice(id, opts),
+
+    /** 取り消した端末を一覧から消す（鍵は通さないまま） */
+    async hideRevoked(publicKey) {
+      const key = String(publicKey ?? '');
+      const hit = revokedKeys.get(key);
+      if (!hit) throw new Error(t('remote.pairing.requestGone'));
+      await store.hideRevoked(key);
+      hit.hidden = true;
+      queueStatus();
+      return status();
+    },
+
+    /** この鍵は取り消してあるか（端末の画面から来た操作の確かめに使う） */
+    isRevoked: publicKey => revokedKeys.has(String(publicKey ?? '')),
 
     /** 審査の招待の記録を今すぐ読み直す（取り消された・切れた・作り直された招待で入った端末を取り消す）。ふだんは 10 秒ごとに自分で読む */
     reconcileReviewInvite: () => reconcileInvite(),
@@ -956,7 +1226,7 @@ export function createRemoteHost({
       identity = await store.regenerateIdentity();
       onIdentity?.(identity);
       // hostId が変わると own・plus のどちらの端末も張り直せないので、全部取り消す
-      for (const d of [...deviceCache.values()]) await revokeDevice(d.id);
+      for (const d of [...deviceCache.values()]) await revokeDevice(d.id, { record: false });
       await apply();
       return status();
     },

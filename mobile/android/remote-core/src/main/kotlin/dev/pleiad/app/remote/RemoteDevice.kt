@@ -3,9 +3,11 @@ package dev.pleiad.app.remote
 // Kotlin port of core/remote/device.mjs (docs/remote.md §3.1・§3.3・§7): the device's key, the paired hosts, pairing,
 // and one loopback proxy per open host.
 //
-//   <dir>/secrets.bin  device static key + per-host relay tokens, sealed by a SecretCipher (Android Keystore in the app)
+//   <dir>/secrets.bin  device static key + per-host { token, key? }, sealed by a SecretCipher (Android Keystore in the app).
+//                      key is the device key used for that host only (a revoked key never gets back in, so each pairing
+//                      makes a new one; a record without key, written by an older version, uses deviceKey)
 //   <dir>/hosts.json   { version: 1, hosts: [{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port,
-//                        pairedAt, lastConnectedAt, revokedAt }] }   (no secrets; same shape as the desktop's hosts.json)
+//                        pairedAt, lastConnectedAt, revokedAt, reapproveAt? }] }   (no secrets; same shape as the desktop's hosts.json)
 //   <dir>/static/<hostId>.bin  the host's web/ shell as last confirmed (StaticCache.kt, docs/remote.md §8.6)
 
 import java.io.File
@@ -39,6 +41,8 @@ data class HostRecord(
     val revokedAt: Long?,
     val via: String = "own",
     val uid: String? = null,
+    /** When the host said this device must be allowed again on its screen (cleared on the next connection). */
+    val reapproveAt: Long? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("hostId", hostId).put("hostName", hostName).put("label", label).put("relayUrl", relayUrl)
@@ -46,6 +50,7 @@ data class HostRecord(
         .put("pairedAt", pairedAt ?: JSONObject.NULL).put("lastConnectedAt", lastConnectedAt ?: JSONObject.NULL)
         .put("revokedAt", revokedAt ?: JSONObject.NULL)
         .put("via", via).put("uid", uid ?: JSONObject.NULL)
+        .apply { if (reapproveAt != null) put("reapproveAt", reapproveAt) }
 
     /** For the shell UI: no key material. */
     fun toPublicJson(): JSONObject = toJson().apply { remove("hostPublicKey"); remove("uid") }
@@ -61,7 +66,7 @@ data class HostRecord(
             o.getString("hostId"), o.optString("hostName"), o.optString("label"), o.getString("relayUrl"),
             o.getString("hostPublicKey"), o.getString("deviceId"), o.optInt("port", 0),
             time(o, "pairedAt"), time(o, "lastConnectedAt"), time(o, "revokedAt"),
-            o.optString("via", "own").ifEmpty { "own" }, o.optString("uid").ifEmpty { null },
+            o.optString("via", "own").ifEmpty { "own" }, o.optString("uid").ifEmpty { null }, time(o, "reapproveAt"),
         )
     }
 }
@@ -153,17 +158,46 @@ class FileDeviceStore(val dir: File, private val cipher: SecretCipher = PlainCip
     fun hosts(): List<HostRecord> = synchronized(lock) { readHosts() }
     fun host(hostId: String, via: String = "own"): HostRecord? = hosts().find { it.hostId == hostId && it.via == via }
 
+    private fun secretKeyOf(hostId: String, via: String) = if (via == "plus") "plus:$hostId" else "host:$hostId"
+    private fun pendingKeyOf(hostId: String) = "plusPending:$hostId"
+
+    /**
+     * The new key a Plus request uses after the host revoked this device's key. Kept until the host allows it: the host
+     * remembers a denied key for a while, so asking again with the same key gets the same answer (not a new window).
+     */
+    fun pendingPlusKey(hostId: String): KeyPair = synchronized(lock) {
+        val secrets = readSecrets()
+        secrets.optString(pendingKeyOf(hostId)).takeIf { it.isNotEmpty() }?.let { return KeyPair.fromPrivate(PairingCodec.b64urlDecode(it)) }
+        KeyPair.generate().also { writeSecrets(secrets.put(pendingKeyOf(hostId), PairingCodec.b64urlEncode(it.privateKey))) }
+    }
+
+    fun dropPendingPlusKey(hostId: String) = synchronized(lock) {
+        val secrets = readSecrets()
+        if (secrets.remove(pendingKeyOf(hostId)) != null) writeSecrets(secrets)
+    }
+
     fun credentials(hostId: String, via: String = "own"): HostCreds? = synchronized(lock) {
         val h = readHosts().find { it.hostId == hostId && it.via == via } ?: return null
-        val key = if (via == "plus") "plus:$hostId" else "host:$hostId"
-        val token = readSecrets().optJSONObject(key)?.optString("token")?.takeIf { it.isNotEmpty() } ?: return null
+        val token = readSecrets().optJSONObject(secretKeyOf(hostId, via))?.optString("token")?.takeIf { it.isNotEmpty() } ?: return null
         HostCreds(h.hostId, PairingCodec.b64urlDecode(h.hostPublicKey), h.relayUrl, h.deviceId, token, h.hostName, via, h.uid)
     }
 
-    fun saveHost(c: HostCreds, via: String = c.via, uid: String? = c.uid): HostRecord = synchronized(lock) {
+    /** The device key used for that host's record (deviceKey when the record has none). Null when there is no record. */
+    fun keyFor(hostId: String, via: String = "own"): KeyPair? {
+        val secret = synchronized(lock) { readSecrets().optJSONObject(secretKeyOf(hostId, via)) } ?: return null
+        if (secret.optString("token").isEmpty()) return null
+        val key = secret.optString("key")
+        return if (key.isNotEmpty()) KeyPair.fromPrivate(PairingCodec.b64urlDecode(key)) else identity()
+    }
+
+    /** keyPair is the device key used for this record (null keeps using deviceKey, as older versions did). */
+    fun saveHost(c: HostCreds, via: String = c.via, uid: String? = c.uid, keyPair: KeyPair? = null): HostRecord = synchronized(lock) {
         require(Regex("^[a-z2-7]{26}$").matches(c.hostId)) { "invalid hostId" }
-        val secretKey = if (via == "plus") "plus:${c.hostId}" else "host:${c.hostId}"
-        writeSecrets(readSecrets().put(secretKey, JSONObject().put("token", c.token)))
+        val secret = JSONObject().put("token", c.token)
+        if (keyPair != null) secret.put("key", PairingCodec.b64urlEncode(keyPair.privateKey))
+        val secrets = readSecrets().put(secretKeyOf(c.hostId, via), secret)
+        if (via == "plus") secrets.remove(pendingKeyOf(c.hostId))
+        writeSecrets(secrets)
         val list = readHosts()
         val prev = list.find { it.hostId == c.hostId && it.via == via }
         val rec = HostRecord(
@@ -187,7 +221,8 @@ class FileDeviceStore(val dir: File, private val cipher: SecretCipher = PlainCip
 
     fun removeHost(hostId: String, via: String = "own"): HostRecord? = synchronized(lock) {
         val secrets = readSecrets()
-        secrets.remove(if (via == "plus") "plus:$hostId" else "host:$hostId")
+        secrets.remove(secretKeyOf(hostId, via))
+        if (via == "plus") secrets.remove(pendingKeyOf(hostId))
         writeSecrets(secrets)
         val list = readHosts()
         val hit = list.find { it.hostId == hostId && it.via == via }
@@ -229,6 +264,8 @@ class RemoteDevice(
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<(String, LinkStatus) -> Unit>()
     @Volatile var plusIdToken: (() -> String?)? = null
     @Volatile var plusReadmit: ((String) -> HostCreds?)? = null
+    /** The relay ticket (role device) for one connection to hostId with this key; null: the api has no tickets yet. */
+    @Volatile var plusTicket: ((hostId: String, keyPair: KeyPair) -> String?)? = null
 
     fun onStatus(fn: (hostId: String, status: LinkStatus) -> Unit) { listeners.add(fn) }
     fun offStatus(fn: (hostId: String, status: LinkStatus) -> Unit) { listeners.remove(fn) }
@@ -243,20 +280,50 @@ class RemoteDevice(
     fun routeFor(hostId: String, preferred: String? = null): String? =
         proxies[hostId]?.creds?.via ?: HostRoute.reopen(hostId, store.hosts(), preferred)
 
-    /** Pair and save (blocking). An open proxy for the same host reconnects with the new credentials. */
+    /**
+     * Pair and save (blocking). Each pairing makes a new device key (a revoked key is refused even with a QR code,
+     * and the code is single-use). An open proxy for the same host reconnects with the new credentials and key.
+     */
     fun pair(payload: String, onCode: (String) -> Unit, handle: Pairing = Pairing()): HostRecord {
-        val kp = store.identity()
+        val kp = KeyPair.generate()
         val creds = Pairing.pair(payload, kp, name, platform, app, onCode, handle)
-        val rec = store.saveHost(creds)
-        repaired(rec)
+        val rec = store.saveHost(creds, keyPair = kp)
+        repaired(rec, kp)
+        return rec
+    }
+
+    /**
+     * Get admitted by a Plus host and save (blocking; docs/remote.md §3.4). [run] does the admission with the given key.
+     *   mode "admit": background reconnect of a key the host already allowed (no window on the host).
+     *   mode "pair":  the person picked the host; an unknown key goes to the approval window on the host's screen.
+     * Key order: the Plus record's key, then this host's QR record's key (already allowed: no window), then deviceKey.
+     * In "pair" mode a revoked key is replaced by a new one once (that one goes to the approval window). The new key is kept
+     * until the host allows it, so asking again after a deny gets the host's answer for that key (no new window within its wait).
+     */
+    fun admitPlus(hostId: String, mode: String, uid: String?, run: (KeyPair) -> HostCreds): HostRecord {
+        val first = store.keyFor(hostId, "plus") ?: store.keyFor(hostId, "own") ?: store.identity()
+        var used = first
+        val creds = try { run(first) } catch (e: PairError) {
+            if (!(mode == "pair" && e.code == "revoked")) throw e
+            used = store.pendingPlusKey(hostId)
+            try { run(used) } catch (e2: PairError) {
+                // the kept key was allowed and then revoked without this device saving it: start over with another new key
+                if (e2.code != "revoked") throw e2
+                store.dropPendingPlusKey(hostId)
+                used = store.pendingPlusKey(hostId)
+                run(used)
+            }
+        }
+        val rec = store.saveHost(creds, via = "plus", uid = uid, keyPair = used)
+        if (mode == "pair") repaired(rec, used)
         return rec
     }
 
     /** A new pairing was saved: an open proxy on the same route reconnects with it. A proxy on the other route keeps its own credentials. */
-    internal fun repaired(rec: HostRecord) {
+    internal fun repaired(rec: HostRecord, keyPair: KeyPair? = null) {
         val px = proxies[rec.hostId] ?: return
         if (px.creds.via != rec.via) return
-        store.credentials(rec.hostId, rec.via)?.let { px.retryNow(it) }
+        store.credentials(rec.hostId, rec.via)?.let { px.retryNow(it, keyPair) }
     }
 
     /** Open (or reuse) the host's proxy. Blocking (binds the port). */
@@ -266,15 +333,18 @@ class RemoteDevice(
         val creds = store.credentials(hostId, via) ?: throw IllegalArgumentException("unknown-host")
         val rec = store.host(hostId, via)
         val px = DeviceProxy(
-            loop, creds, store.identity(), rec?.port ?: 0, app, name, "mobile", backoff, connectTimeoutMs, requestWaitMs, texts, log,
+            loop, creds, store.keyFor(hostId, via) ?: store.identity(), rec?.port ?: 0, app, name, "mobile", backoff, connectTimeoutMs, requestWaitMs, texts, log,
             staticCacheFile(hostId), if (via == "plus") plusIdToken else null, if (via == "plus") plusReadmit else null,
+            if (via == "plus") plusTicket else null,
         )
         px.onStatus { s ->
             try {
                 if (s.state == "connected") store.updateHost(hostId, via) {
-                    it.copy(lastConnectedAt = System.currentTimeMillis(), revokedAt = null, hostName = if (s.hostName.isNotEmpty()) PairingCodec.cleanLabel(s.hostName) else it.hostName)
+                    it.copy(lastConnectedAt = System.currentTimeMillis(), revokedAt = null, reapproveAt = null,
+                        hostName = if (s.hostName.isNotEmpty()) PairingCodec.cleanLabel(s.hostName) else it.hostName)
                 }
                 if (s.state == "revoked") store.updateHost(hostId, via) { it.copy(revokedAt = System.currentTimeMillis()) }
+                if (s.state == "reapprove") store.updateHost(hostId, via) { it.copy(reapproveAt = System.currentTimeMillis()) }
             } catch (e: Exception) { log("remote device: ${e.message}") }
             for (l in listeners) try { l(hostId, s) } catch (_: Exception) {}
         }

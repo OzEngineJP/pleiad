@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { methodOptions, stateLine, todoList, liveRow } from '../../web/remote-parts.mjs';
 import { createRemoteStore } from '../../core/remote/devices.mjs';
-import { plusRemoteLine, ownRemoteLine, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
+import { plusRemoteLine, ownRemoteLine, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, plusRemoteShown, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
 import { N } from '../lib/dom-stub.mjs';
 
 export const name = 'remote-plus-ui';
@@ -25,7 +25,12 @@ export default async function (t) {
     [{ ...PLUS, account: { status: 'disabled' } }, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'error', error: { code: 'account' } } } }, 'このアカウントでは公式の中継を使えません', 'disabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'taken' } } },'この PC はほかの Pleiad Plus のアカウントでつないでいます。', 'disabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, host: { state: 'limit' } } }, 'このアカウントの上限に達しています', 'enabled'],
+    // アカウントから外された PC（つながりは disabled に落ち、誤りを持たない）: 「接続しています…」ではなく、登録し直す行
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'disabled' }, host: { state: 'removed' } } }, 'この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。', 'disabled', 'settings'],
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'disabled' }, host: { state: 'removed', error: { code: 'host_removed', permanent: true } } } }, 'この PC は Pleiad Plus の登録から外されています。登録し直すには、この PC の鍵を作り直します。', 'disabled', 'settings'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'error' } } }, 'サーバーへの接続に失敗しました', 'enabled'],
+    // Plus が止まっている（api の 503・中継の 4401 plus unavailable）: つながらないのではなく、再開を待っている
+    [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'retrying', error: { code: 'unavailable' } } } }, 'Pleiad Plus が一時的に止まっています（再開を待っています）', 'enabled'],
     [PLUS, { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'connecting' } } }, '接続しています…', 'enabled', 'connecting'],
     // つながっているときも、切っているときも、見出しの下で一行を言う（承認 2026-10-21）
     [PLUS, REMOTE, 'つながっています · user@example.com', 'enabled', 'ok'],
@@ -86,6 +91,11 @@ export default async function (t) {
   t.ok('Plus が利用できないときも status line に異常値を必要としない', plusRemoteLine({ ...PLUS, signedIn: false }, REMOTE).kind === 'login');
   t.ok('available: false はまとまりと手順の Plus 選択肢を隠す', !plusRemoteAvailable({ available: false }));
   t.ok('available: true は Plus 選択肢を出す', plusRemoteAvailable({ available: true }));
+  // Plus が止まって（state off）入口が隠れても、つながりが再開を待っている間は「この PC へ」にまとまりと一行を出す
+  const PLUS_OFF = { ...PLUS, available: false, state: 'off' };
+  const WAITING = { ...REMOTE, plus: { ...REMOTE.plus, link: { state: 'retrying', error: { code: 'unavailable' } } } };
+  t.ok('Plus が止まっている間はまとまりを出す', plusRemoteShown(PLUS_OFF, WAITING) && !plusRemoteShown(PLUS_OFF, REMOTE));
+  t.ok('Plus が止まっている間の一行', plusRemoteLine(PLUS_OFF, WAITING)?.text === 'Pleiad Plus が一時的に止まっています（再開を待っています）');
   t.ok('Plus 契約中だけ手順の既定選択が Plus', initialRemoteMethod({ account: { status: 'plus' } }) === 'plus' && initialRemoteMethod({ account: { status: 'free' } }) === 'own');
 
   const devices = partitionRemoteDevices([
@@ -106,7 +116,7 @@ export default async function (t) {
 
   // ---- 「この PC へ」の画面（setupRemote を DOM の代役で描く）
   // 自分の中継サーバーを何も設定していなくても、まとまりと「未設定」の一行と「編集」を出す（承認 2026-10-21。docs/remote.md）
-  const drawn = async (remote, plus = { available: false }) => {
+  const drawn = async (remote, plus = { available: false }, hostScreen = true) => {
     const saved = { getElementById: document.getElementById, createTextNode: document.createTextNode, body: document.body };
     const nodes = { remotePanel: new N('div'), remoteTab: new N('button') };
     document.getElementById = id => nodes[id] ?? null;
@@ -114,6 +124,7 @@ export default async function (t) {
     document.body = new N('body');   // createWizard は setup の時点で dialog を body に足す
     try {
       const panel = setupRemote({ cmd: async name => name === 'remoteStatus' ? remote : name === 'plusStatus' ? plus : {}, page: () => {} });
+      panel.setHostScreen(hostScreen);
       await panel.refresh();
       return nodes.remotePanel;
     } finally {
@@ -129,6 +140,14 @@ export default async function (t) {
   t.ok('設定が無いときは中抜きの点で「未設定 · …」の一行', group?.querySelector('.rm-st')?.dataset.state === 'off'
     && group.querySelector('.rm-st').textContent === '未設定 · 「編集」で中継の URL と登録用の秘密を入れます', group?.shown);
   t.ok('設定が無いときも見出しの右に「編集」', group?.querySelector('.rm-gh-btn')?.dataset.fk === 'relayEdit' && group.querySelector('.rm-gh-btn').textContent === '編集');
+  // 端末から開いた設定では、中継の設定はホストの画面だけの操作なので「編集」を出さない
+  const fromDevice = ownGroup(await drawn({ enabled: true, configured: false, relayUrl: null, connection: { state: 'idle' }, devices: [], plus: { connect: true }, pairing: { requests: [] } }, { available: false }, false));
+  t.ok('端末の画面では「編集」を出さない', Boolean(fromDevice) && !fromDevice.querySelector('.rm-gh-btn'));
   const off = await drawn({ enabled: false, configured: false, connection: { state: 'idle' }, devices: [], plus: { connect: true }, pairing: { requests: [] } });
   t.ok('許可がオフならまとまりは出さない', !ownGroup(off));
+  const plusGroupOf = root => root.querySelectorAll('.rm-group').find(g => g.querySelector('.rm-gh')?.textContent?.includes('Pleiad Plus')) ?? null;
+  const stopped = plusGroupOf(await drawn({ enabled: true, configured: false, connection: { state: 'idle' }, devices: [], pairing: { requests: [] },
+    plus: { connect: true, link: { state: 'retrying', error: { code: 'unavailable' } } } }, PLUS_OFF));
+  t.ok('Plus が止まっている間も「この PC へ」に Plus のまとまりと「一時的に止まっています」', Boolean(stopped)
+    && (stopped.textContent ?? '').includes('Pleiad Plus が一時的に止まっています（再開を待っています）'), stopped?.textContent);
 }

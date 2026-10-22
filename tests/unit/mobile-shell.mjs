@@ -96,6 +96,10 @@ export default async function (t) {
   t.ok('ルートの package.json に Capacitor を入れない', !Object.keys({ ...root.dependencies, ...root.devDependencies }).some(k => k.startsWith('@capacitor')));
   const vars = read('mobile/android/variables.gradle');
   t.ok('最低の版は Android 13（API 33。標準の XDH が使える最初の版）', /minSdkVersion = 33\b/.test(vars));
+  const gradle = read(`${APP.replace('/src/main', '')}/build.gradle`);
+  t.ok('CI が版を渡さないビルドの versionName は mobile/package.json の version（api の最低の版と比べる名前）',
+    /plyVersionName = project\.findProperty\('plyVersionName'\) \?: new groovy\.json\.JsonSlurper\(\)\.parse\(rootProject\.file\('\.\.\/package\.json'\)\)\.version/.test(gradle)
+      && /^\d+\.\d+\.\d+$/.test(pkg.version));
   const x = read('mobile/android/remote-core/src/main/kotlin/dev/pleiad/app/remote/X25519.kt');
   t.ok('X25519 は標準の XDH だけ（自前の実装を持たない）', /KeyAgreement\.getInstance\("XDH"\)/.test(x) && !/scalarMult|car25519|Portable/.test(x));
 

@@ -183,6 +183,23 @@ export default async function (t) {
     return quiet.approval({ id: 'z', sessionId: 'zz', kind: 'tool', title: '' }).length === 0;
   })());
 
+  // 端末の追加の申し込み（ADR 0248）: 会話に結び付かない「返事が要るとき」。PC が会話を見ていても送り、決着したら消す
+  reset();
+  notifier.deviceRequest({ id: 'r1', name: 'Galaxy Tab' });
+  t.ok('端末の追加の申し込み: 種類 device・端末の名前・申し込みの id を送る', sent.length === 2
+    && sent.every(s => s.notice?.kind === 'device' && s.notice.title === 'Galaxy Tab' && s.notice.id === 'r1' && s.notice.session === '') && sent[0].ttl === ttlFor('device'), sent);
+  reset();
+  notifier.deviceResolved({ id: 'r1' });
+  t.ok('申し込みが決着したら取り消し（device・id 付き）を送る', sent.length === 2 && sent.every(s => s.notice?.kind === 'cancel' && s.notice.cancel === 'device' && s.notice.id === 'r1'), sent);
+  reset();
+  notifier.deviceResolved({ id: 'r1' });
+  t.ok('同じ申し込みの取り消しは二度送らない', sent.length === 0);
+  targets[1].settings = { ...targets[1].settings, reply: false };
+  notifier.deviceRequest({ id: 'r2', name: 'x' });
+  t.ok('「返事が要るとき」を切った端末には送らない', sent.length === 1 && sent[0].id === 'dPhone');
+  targets[1].settings = { ...targets[1].settings, reply: true };
+  reset();
+
   // ── 完了と失敗の保留（画面が居なくても、落ち着いたら 1 回） ──
   const readyCalls = [], screen = [];
   const busy = { v: false, connected: true };

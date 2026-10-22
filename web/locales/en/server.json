@@ -1170,7 +1170,9 @@
         "account": "This account can't use the official relay",
         "limit": "This account has reached its limit",
         "auth": "Account authentication failed (please sign in again)",
-        "host": "This PC is no longer registered (checking the registration again)"
+        "host": "This PC is no longer registered (checking the registration again)",
+        "update": "This version of Pleiad can't use the official relay. Please update Pleiad",
+        "unavailable": "Pleiad Plus is temporarily unavailable (waiting for it to come back)"
       }
     },
     "review": {
@@ -1197,11 +1199,16 @@
       "blocked": "This account can't use the official relay",
       "limit": "This account has reached its limit",
       "paused": "Pleiad Plus is temporarily unavailable",
+      "update": "This version of Pleiad can't use the official relay. Please update Pleiad",
+      "removed": "This PC was removed from the Plus account",
       "page": {
         "revoked": "Pair this device again.",
         "hostOffline": "Make sure Pleiad is running on the host. This page opens automatically once connected.",
-        "offline": "Can't reach the relay. Check your network. This page opens automatically once connected."
-      }
+        "offline": "Can't reach the relay. Check your network. This page opens automatically once connected.",
+        "reapprove": "Select this PC in the \"Other PCs\" list and get it allowed on the host's screen.",
+        "removed": "On that PC, select \"Register this PC again\" under Settings › Pleiad Plus to connect again."
+      },
+      "reapprove": "This device needs to be allowed again on the host"
     },
     "pair": {
       "ticket": "This pairing code can't be used (already used or expired). Create a new one on the host",
@@ -1215,12 +1222,17 @@
       "unreadable": "Couldn't read the host's response",
       "denied": "The host declined the request",
       "expired": "The request expired while waiting for approval on the host",
-      "badResponse": "The host's response was malformed"
+      "badResponse": "The host's response was malformed",
+      "account": "This account can't connect to this host",
+      "reapprove": "This device needs to be allowed again on the host",
+      "revoked": "This device was revoked on the host",
+      "update": "This version of Pleiad can't connect to this host. Please update Pleiad"
     },
     "store": {
       "unreadable": "Can't read {{file}} (the file is corrupted)",
       "badFormat": "{{file}} has an unexpected format"
-    }
+    },
+    "hostOnly": "This can only be done on the host's own screen"
   },
   "upload": {
     "invalidName": "The folder name contains characters that can't be used.",

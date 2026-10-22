@@ -37,7 +37,7 @@ const enrollSecret = crypto.randomBytes(32).toString('base64url');
 // 自分の中継サーバー（登録の合言葉だけ）と、公式の中継の代わり（Plus のアカウントで通す）
 const ownRelay = createRelay({ enrollSecret, trustProxy: false, logger: () => {} });
 const ownRelayUrl = `http://127.0.0.1:${(await ownRelay.listen(0, '127.0.0.1')).port}`;
-const authz = createPlusRelayAuthz({ verify: token => verifier.verify(token), isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid });
+const authz = createPlusRelayAuthz({ verify: token => verifier.verify(token), keysUrl: () => plus.ticketKeysUrl, isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid });
 const relay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz });
 const relayAddr = await relay.listen(0, '127.0.0.1');
 const relayUrl = `http://127.0.0.1:${relayAddr.port}`;

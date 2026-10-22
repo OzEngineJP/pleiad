@@ -21,7 +21,7 @@ Google Play へは、同じ鍵・同じ版の決め方の AAB を、手動のワ
 ## 版とタグ
 
 - `versionCode` = `git rev-list --count HEAD`（`main` で単調に増える）。
-- `versionName` = `<mobile/package.json の version>-<versionCode>`（例 `0.1.0-1234`）。
+- `versionName` = `<mobile/package.json の version>-<versionCode>`（例 `0.2.0-1234`）。
 - タグ = `android-v<versionName>`。そのタグ（またはリリース）が既にあるときは、リリースを作らずに正常終了する。
 
 リリースは prerelease で、`--latest=false` で作る。成果物は `Pleiad-Android-<versionName>.apk` と `SHA256SUMS.txt`。本文は、Android 版であること・インストールの仕方・提供元不明のアプリの許可・上書き更新・対応 Android 13 以上（`minSdk` 33）だけの短い定型で、コミットの羅列は載せない。
@@ -55,7 +55,7 @@ PLY_ANDROID_KEY_ALIAS=…
 PLY_ANDROID_KEY_PASSWORD=…
 ```
 
-環境変数を付けて `mobile/` で `npm run build:release`（`cap sync android` → `gradlew assembleRelease`）。版を決めるときは `-PplyVersionCode=<整数> -PplyVersionName=<文字列>` を `gradlew assembleRelease` に付ける（省くと `1` / `0.1.0`）。出力は `mobile/android/app/build/outputs/apk/release/app-release.apk`。JDK 21 と Android SDK（`local.properties` の `sdk.dir`）が要る。
+環境変数を付けて `mobile/` で `npm run build:release`（`cap sync android` → `gradlew assembleRelease`）。版を決めるときは `-PplyVersionCode=<整数> -PplyVersionName=<文字列>` を `gradlew assembleRelease` に付ける（省くと `1` / `mobile/package.json` の `version`）。出力は `mobile/android/app/build/outputs/apk/release/app-release.apk`。JDK 21 と Android SDK（`local.properties` の `sdk.dir`）が要る。
 
 ## やり直し
 

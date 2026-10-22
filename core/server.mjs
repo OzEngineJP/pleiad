@@ -58,6 +58,7 @@ import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
 import { OpError, approvalWords, targetText as settingTarget } from './ops/registry.mjs';
 import { FAILED } from './ops/host.mjs';
+import { HOST_ONLY_COMMANDS } from './ops/policy.mjs';
 import { createControlBridge, CONTROL_MCP_PATH, controlInstructions } from './ops/surfaces/control.mjs';
 import { createOpsHttp, OPS_PATH } from './ops/surfaces/http.mjs';
 import { writeControlFile, removeControlFile } from './control-file.mjs';
@@ -105,6 +106,7 @@ import { createMcpOAuth } from './mcp-oauth.mjs';
 import { createPlusConfig } from './plus/config.mjs';
 import { createPlusSession } from './plus/session.mjs';
 import { createIdTokenVerifier } from './plus/verify.mjs';
+import { createTicketIssuer, createTicketVerifier } from './plus/tickets.mjs';
 import { createPlusHost } from './plus/hosts.mjs';
 import { createPlusSync } from './plus/sync/index.mjs';
 import { createSyncSettings } from './plus/sync/settings.mjs';
@@ -225,7 +227,7 @@ function noteAuth(id, status) {
 // 無停止の更新の新サーバー（--handover。core/handover.mjs）は、モジュールの読み込みを済ませたうえで、旧サーバーがデータ置き場を放すのを待って取る（数十 ms 刻み）
 const HANDOVER_START = handoverStart();
 // 版ごとの実行場所で走っているなら、その版を使っている印を付ける（desktop/runtime.cjs の掃除がこの版を消さない。core/runtime-use.mjs）。
-// 印は閉じない: プロセスの終了で OS が外す。データ置き場のロックより前に付ける: 引き継ぎの新サーバー（--handover）は、印ができたら
+// 外す関数は捨てる: プロセスの exit で外れる（落ちたときは OS が外す）。データ置き場のロックより前に付ける: 引き継ぎの新サーバー（--handover）は、印ができたら
 // モジュールの読み込みが済んでロックを待っているとみなされ、main が旧サーバーに handover を頼む（desktop/switch.cjs）
 if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRuntimeInUse({ root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY });
 // 審査モード（AGENT_HOST_REVIEW=1。ADR 0172）: fake だけ・審査用の置き場でなければ、データ置き場に触れる前に起動を止める（core/review-mode.mjs）
@@ -757,6 +759,7 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
   },
   target: () => { const u = new URL(localOrigin()); return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port) }; },
   emit: event => {
+    if (event.type === 'remotePairing') devicePairingNotice(event);
     if (event.type !== 'remoteStatus') return emitGlobal({ ...event, sessionId: null });
     const status = withResident(event.status);
     emitGlobal({ ...event, status, sessionId: null });
@@ -771,12 +774,35 @@ const remote = createRemoteHost({ dataDir: store.dataDir, cipher: secretCipher, 
     void plusHost?.maybeRegister();
   },
   log: line => console.log(`  ${line}`) });
+/**
+ * 新しい端末が PC の画面の承認を待っている（ADR 0248）。通知の一覧の「あなた待ち」と承認済みのスマホへ知らせ、決着したら消す。
+ * OS の通知は画面（web/notifications.mjs）が出す。許可は PC の画面だけ
+ */
+function devicePairingNotice({ phase, request }) {
+  if (!request?.id) return;
+  const dedupeKey = `wait:device:${request.id}`;
+  try {
+    if (phase === 'request') {
+      inbox.add({ kind: 'wait', dedupeKey, data: { ask: 'device', title: request.name, settings: 'remote' } });
+      pushNotifier.deviceRequest({ id: request.id, name: request.name });
+      return;
+    }
+    inbox.settle(dedupeKey, phase === 'approved' ? 'allowed' : phase === 'denied' ? 'denied' : 'cancelled');
+    pushNotifier.deviceResolved({ id: request.id });
+  } catch (e) { console.error(`  device pairing notice: ${e.message}`); }
+}
 // Pleiad Plus: この PC の登録（core/plus/hosts.mjs）と公式の中継へのつながりの provider（core/remote/plus-link.mjs。docs/plus.md）
 let plusConfigLast = null;
 let notifiedPlusIdentity = null;
 let plusHostRegistrationInputs = null;
 let plusSync = null;
 const plusVerifier = createIdTokenVerifier({ jwksUrl: plusConfig.jwksUrl, projectId: () => plusConfigLast?.token?.projectId ?? '' });
+// 券（core/plus/tickets.mjs）: 中継・同期の券を取る手（1 つ）と、端末の受け入れの券を確かめる手。
+// admission は /v1/auth/config の値（券を出す api なら数）。登録と券はこの 1 つの読み方で見る
+const plusAdmission = () => plusConfig.get().then(c => c?.admission ?? null, () => null);
+const plusTicketRequest = (method, p, body) => plusSession.client.request(method, p, { body });
+const plusTickets = createTicketIssuer({ request: plusTicketRequest, admission: plusAdmission });
+const plusTicketVerifier = createTicketVerifier({ keysUrl: () => `${plusConfig.apiBase}/.well-known/pleiad-keys` });
 const plusHost = createPlusHost({
   session: plusSession, store: remote.store, appVersion: APP_VERSION,
   hostName: () => remote.hostInfo()?.hostName ?? os.hostname(),
@@ -784,6 +810,8 @@ const plusHost = createPlusHost({
   // 登録中・登録済みの状態変化は中継リンクの条件へ反映する。ここから再登録を始めると onHostState と循環する。
   onHostState: s => { remote.setPlusHostState(s); syncPlusLink({ registerHost: false }); },
   syncPublicKey: () => plusSync ? plusSync.publicKey() : Promise.resolve(null),
+  // api の受け入れの版（/v1/auth/config の admission）。v2 なら同期の公開鍵を台帳の登録に載せない
+  apiAdmission: plusAdmission,
   log: line => console.log(`  ${line}`),
 });
 // Pleiad Plus の同期（core/plus/sync/。docs/plus.md「同期」）。設定は画面からの変更と同じ検査（normalize・write）を通して書く
@@ -800,13 +828,16 @@ plusSync = createPlusSync({
   openFolder: dir => openOnHost('open', dir, { directory: true }),
   // api の 403 host（この PC の登録が外れた）→ 台帳を見直し、外れていれば登録し直す（docs/plus.md「同期の始め直しと登録の外れ」）
   onHostLost: () => plusHost.recheck(),
+  // 同期の券（v2 の api）はホストの鍵で取る。鍵がまだ無ければ作らずに待つ
+  identity: () => remote.store.peekIdentity(),
+  issuer: plusTickets,
   log: line => console.log(`  ${line}`),
 });
 // 同期の状態が変わるたびに全画面へ（docs/plus.md「同期」。ポーリングはしない）
 plusSync.onChange(status => emitGlobal({ type: 'plusSyncStatus', status, sessionId: null }));
 let plusDevicesNow = 0;
 const plusLink = createPlusLink({
-  session: plusSession, verifier: plusVerifier, remote,
+  session: plusSession, verifier: plusVerifier, issuer: plusTickets, ticketVerifier: plusTicketVerifier, remote,
   onAdmitted: () => { void plusHost.syncDeviceCount(); },
   // 中継の 4401 host（この PC の登録が外れた）→ 同期の 403 host と同じく台帳を見直す
   onHostLost: () => { void plusHost.recheck(); },
@@ -828,7 +859,8 @@ async function syncPlusLink({ registerHost = true } = {}) {
   // 起動直後でまだ一度もログインを見ていないときは消さない
   if ((sawSignedIn && !snap.signedIn) || (uid && uid !== lastPlusUid)) {
     const raw = await remote.store.devices().catch(() => []);
-    for (const d of raw.filter(d => d.via === 'plus' && d.plusUid !== uid)) await remote.revoke(d.id).catch(() => {});
+    // 端末の鍵を疑う理由は無いので、取り消した鍵には書かない（同じアカウントで入り直せば、もう一度の許可で戻れる）
+    for (const d of raw.filter(d => d.via === 'plus' && d.plusUid !== uid)) await remote.revoke(d.id, { record: false }).catch(() => {});
   }
   if (snap.signedIn) lastPlusUid = uid ?? lastPlusUid; else lastPlusUid = null;
   const st = await remote.status().catch(() => null);
@@ -841,6 +873,7 @@ async function syncPlusLink({ registerHost = true } = {}) {
     hostState: plusHost.host()?.state ?? null,
     limits: snap.account?.limits ?? null,
     relayUrl: cfg?.urls?.relay ?? null,
+    admission: cfg?.admission ?? null,
   });
   if (shouldRegisterHost) await plusHost.maybeRegister();
   void plusSync.update().catch(() => {});
@@ -888,6 +921,45 @@ const inboxSources = createNotificationSources({
   inbox, store, viewing: sessionId => notifyPresence.viewing(sessionId), titleOf: sessionId => conversationTitleOf(sessionId),
   channels: () => botHost?.opsDeps().channels ?? null, bots: () => botHost?.opsDeps().bots ?? null,
   hiddenKinds: HIDDEN_BOT_KINDS, log: line => console.error(`  ${line}`),
+});
+// 同期で届いた変更の受け入れ待ち（ADR 0246）: 1 件以上あれば、あなた待ちの行を 1 つ置く（いちばん新しく届いた時刻が版。件数は同じ行で直す）
+plusSync.onChange(({ inbox: count, inboxAt }) => {
+  try {
+    inbox.standing('syncInbox', count > 0 && inboxAt
+      ? { version: inboxAt, at: Date.parse(inboxAt), data: { ask: 'syncInbox', count, settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// 新しい PC が同期の鍵を待っている（v2）: 承認を待つ申し込みがあれば、あなた待ちの行を 1 つ置く（PC の組が版）
+plusSync.onChange(({ approvals }) => {
+  try {
+    const list = Array.isArray(approvals) ? approvals : [];
+    inbox.standing('syncApproval', list.length
+      ? { version: list.map(a => `${a.hostId}:${a.code}`).join(','), at: Date.now(), data: { ask: 'syncApproval', count: list.length, title: list[0].name ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が同期の回復を頼んでいる（この PC は今の鍵を持っていて止められる）: 必ず知らせる。頼んだ時刻が版
+plusSync.onChange(({ recoveryAlert }) => {
+  try {
+    const at = recoveryAlert?.requestedAt ?? null;
+    inbox.standing('syncRecovery', recoveryAlert
+      ? { version: String(at ?? recoveryAlert.readyAt ?? 'recovery'), at: Number.isFinite(Date.parse(at)) ? Date.parse(at) : Date.now(),
+        data: { ask: 'syncRecovery', title: recoveryAlert.requestedByName ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
+});
+// ほかの PC が、前の鍵では確かめられない新しい鍵で始め直した（回復など）: この PC は自動で移らず、人が選ぶのを待つ。
+// 新しい keyId が版。通信の誤りの間は置いたまま（消して置き直すと、また未読になる）
+plusSync.onChange(({ state, wait }) => {
+  if (state === 'error') return;
+  try {
+    const r = state === 'waiting_key' ? wait?.restarted ?? null : null;
+    inbox.standing('syncRestarted', r
+      ? { version: `${r.keyId}${r.unverified ? ':unverified' : ''}`, at: Number.isFinite(Date.parse(r.at)) ? Date.parse(r.at) : Date.now(),
+        data: { ask: 'syncRestarted', title: r.byName ?? '', settings: 'plus' } }
+      : null);
+  } catch (e) { console.error(`  notifications: ${e.message}`); }
 });
 // ホストとして常駐する設定（docs/remote.md §6.3。core/remote/resident.mjs）。使うのはデスクトップ版のホストだけ（available）。
 // トレイとスリープの抑止は main（desktop/resident.cjs）が持つ。リモート・実行中の作業・ルーティンの変更時に送る
@@ -5334,6 +5406,17 @@ function opsDeps(lng = currentLocale()) {
       syncReset: (confirm) => plusSync.resetSync(confirm),
       hostReregister: () => plusHost.reregister(),
       syncOpenConflicts: () => plusSync.openConflictsFolder(),
+      syncInbox: () => plusSync.inboxList(),
+      syncInboxItem: (id) => plusSync.inboxItem(id),
+      syncInboxTake: (id, seen) => plusSync.inboxTake(id, seen),
+      syncInboxDrop: (id, seen) => plusSync.inboxDrop(id, seen),
+      syncApprove: (hostId, code) => plusSync.approveSync(hostId, code),
+      syncDeny: (hostId) => plusSync.denySync(hostId),
+      syncAcceptRestart: (keyId) => plusSync.acceptRestart(keyId),
+      syncRecoveryRequest: () => plusSync.requestRecovery(),
+      syncRecoveryCancel: () => plusSync.cancelRecovery(),
+      syncRecoveryComplete: () => plusSync.completeRecovery(),
+      syncRecoveryStop: () => plusSync.stopRecovery(),
     },
     // git・会話のシェル・会話の裏の処理とサブエージェント・フォルダーの一覧（core/ops/git.mjs・shell.mjs・session-work.mjs・files.mjs。ADR 0105）
     git: opsGit,
@@ -8740,6 +8823,8 @@ wss.on("connection", (ws, req) => {
 
     // 審査モード（ADR 0172）: 許可の一覧（core/review-mode.mjs の COMMAND_PASS）にある命令だけ通す。ほかは何もせずに断る
     if (isReviewMode() && !commandAllowed(msg.command)) return reply(false, t('review.commandRefused'), 'REVIEW_MODE');
+    // ホストの PC の画面だけでできる操作（ADR 0248）。中継越しの端末から来たものは断る
+    if (!local && HOST_ONLY_COMMANDS.has(msg.command)) return reply(false, t('remote.hostOnly'), 'host_only');
 
     // 画面のコマンドは、操作の一覧（core/ops/）の同じ操作を人（画面）として呼ぶだけの外側。返り値は人に返す形（uiHandler）のまま。
     // viaOp(id)                  msg.args をそのまま渡す。then（成功の返り値を画面の形に直す）は第 2 引数に関数で渡せる
@@ -8951,8 +9036,14 @@ wss.on("connection", (ws, req) => {
           emitGlobal({ type: 'notifyStatus', status: await notifyStatus(), sessionId: null });
           return reply(true, registered);
         }
+        // 取り消しは端末からもできる（失くした端末を別の端末から止める。ADR 0248）。by は取り消した機器
         case 'remoteRevoke':
-          return reply(true, withResident(await remote.revoke(msg.args?.id)));
+          return reply(true, withResident(await remote.revoke(msg.args?.id, { by: connectionDevices.get(ws)?.id ?? 'host' })));
+        case 'remoteRevokedHide':
+          return reply(true, withResident(await remote.hideRevoked(msg.args?.key)));
+        // 続けて断ったので止めていた、公式の中継からの申し込みを再開する（ホストの PC の画面だけ）
+        case 'remotePlusRequestsResume':
+          return reply(true, withResident(await remote.resumePlusRequests()));
         case 'plusHostRebind':
           return reply(true, withResident(await remote.plusHostRebind()));
         // この端末から任された作業をすべて止める（人だけ。docs/remote.md §4.5）。端末ごとの許可は無くした（ADR 0239）
@@ -9725,6 +9816,20 @@ mainPort.on("message", async ({ data }) => {
       }
     } catch (e) {
       mainPort.postMessage({ type: 'plus-token', id: data.id, ok: false, error: String(e?.message ?? e) });
+    }
+  }
+  // 端末の券を取る api の呼び出し（desktop/remote-windows.cjs。証明は端末の鍵を持つ main が作る）。通すのは券の 2 つの口だけ
+  if (data?.type === 'plus-ticket') {
+    const admission = await plusAdmission();
+    const p = data.path === '/v1/tickets/challenge' || data.path === '/v1/tickets' ? data.path : null;
+    try {
+      if (!p) throw Object.assign(new Error('bad path'), { status: 400, code: 'bad_request' });
+      if (!plusSession.snapshot().signedIn) throw Object.assign(new Error('not signed in'), { code: 'not_signed_in' });
+      const body = await plusTicketRequest('POST', p, data.body && typeof data.body === 'object' ? data.body : {});
+      mainPort.postMessage({ type: 'plus-ticket', id: data.id, ok: true, body, admission });
+    } catch (e) {
+      mainPort.postMessage({ type: 'plus-ticket', id: data.id, ok: false, status: typeof e?.status === 'number' ? e.status : null,
+        code: typeof e?.code === 'string' ? e.code : null, error: String(e?.message ?? e), admission });
     }
   }
   // デスクトップの main が拾った pleiad://plus/enable|disable（desktop/plus-link.cjs。ほかの pleiad://… は来ない）

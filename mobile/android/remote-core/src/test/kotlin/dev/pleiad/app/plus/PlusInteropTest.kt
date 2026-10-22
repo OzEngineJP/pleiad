@@ -2,18 +2,25 @@ package dev.pleiad.app.plus
 
 import dev.pleiad.app.remote.Backoff
 import dev.pleiad.app.remote.FileDeviceStore
+import dev.pleiad.app.remote.HostCreds
+import dev.pleiad.app.remote.KeyPair
 import dev.pleiad.app.remote.PairError
 import dev.pleiad.app.remote.RemoteDevice
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.net.Socket
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import okhttp3.OkHttpClient
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -21,7 +28,10 @@ import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 
-/** Kotlin Android device -> local Plus API -> authenticated relay -> fake host. */
+/**
+ * Kotlin Android device -> local Plus API -> authenticated relay -> fake host. The account alone does not admit a key:
+ * a new key waits on the host's approval window (the fake host reports it as `pair-request`; the test answers).
+ */
 class PlusInteropTest {
     private lateinit var process: Process
     private lateinit var input: BufferedReader
@@ -84,12 +94,7 @@ class PlusInteropTest {
         device.plusIdToken = { token }
         device.plusReadmit = { hostId ->
             readmitCount.incrementAndGet()
-            val replacement = PlusAdmission.admit(
-                listedHost, ready.getString("relayUrl"), token, device.store.identity(), "kt-plus-phone", "kt-plus-test",
-                connectTimeoutMs = 4_000, sleepMs = {},
-            )
-            assertEquals(hostId, replacement.hostId)
-            device.store.saveHost(replacement, via = "plus", uid = ready.getString("uid"))
+            device.admitPlus(hostId, PlusAdmission.MODE_ADMIT, ready.getString("uid")) { kp -> admit(keyPair = kp) }
             admittedAgain.countDown()
             device.store.credentials(hostId, "plus")
         }
@@ -104,11 +109,48 @@ class PlusInteropTest {
         if (::dir.isInitialized) dir.deleteRecursively()
     }
 
-    private fun admit(idToken: String = token, sleepMs: (Long) -> Unit = {}): dev.pleiad.app.remote.HostCreds =
+    private fun admit(idToken: String = token, keyPair: KeyPair = device.store.identity(),
+                      mode: String = PlusAdmission.MODE_ADMIT, onCode: (String) -> Unit = {},
+                      ticket: (() -> PlusTicket?)? = null): HostCreds =
         PlusAdmission.admit(
-            listedHost, ready.getString("relayUrl"), idToken, device.store.identity(), "kt-plus-phone", "kt-plus-test",
-            connectTimeoutMs = 4_000, sleepMs = sleepMs,
+            listedHost, ready.getString("relayUrl"), idToken, keyPair, "kt-plus-phone", "kt-plus-test",
+            connectTimeoutMs = 4_000, sleepMs = {}, mode = mode, onCode = onCode, pairTimeoutMs = 20_000,
+            ticket = ticket,
         )
+
+    /** Tickets from the local Plus API, as PlusManager takes them (the ID token, X-Pleiad-Admission). */
+    private fun ticketIssuer(admission: Int? = 2): PlusTicketIssuer {
+        val client = OkHttpClient()
+        return PlusTicketIssuer(
+            post = { path, body -> PlusApi.postAuthed(client, ready.getString("apiUrl"), token, "kt-plus-test", path, body) },
+            admission = { admission },
+        )
+    }
+
+    private fun lastDeviceSeen(): JSONObject {
+        send("seen 1")
+        val seen = event("seen").getJSONArray("seen")
+        return seen.getJSONObject(seen.length() - 1)
+    }
+
+    /** Runs [run] in the background, waits for the host's approval window and answers it ("approve" / "deny"). */
+    private fun <T> answered(answer: String, run: ((String) -> Unit) -> T): T {
+        val code = AtomicReference<String>()
+        val result = CompletableFuture.supplyAsync { run { code.set(it) } }
+        val request = event("pair-request")
+        assertEquals("plus", request.optString("via"))
+        val end = System.currentTimeMillis() + 5_000
+        while (code.get() == null && System.currentTimeMillis() < end) Thread.sleep(20)
+        assertEquals("the device shows the code of the host's window", request.getString("code"), code.get())
+        send("$answer ${request.getString("id")}")
+        event(if (answer == "approve") "approved" else "denied")
+        return try { result.get(20, TimeUnit.SECONDS) } catch (e: ExecutionException) { throw e.cause ?: e }
+    }
+
+    private fun pairPlus(onCode: (String) -> Unit) =
+        device.admitPlus(listedHost.hostId, PlusAdmission.MODE_PAIR, ready.getString("uid")) { kp ->
+            admit(keyPair = kp, mode = PlusAdmission.MODE_PAIR, onCode = onCode)
+        }
 
     private fun waitState(want: String, timeoutMs: Long = 12_000) {
         val end = System.currentTimeMillis() + timeoutMs
@@ -143,23 +185,31 @@ class PlusInteropTest {
         assertEquals("plus-no-relay", account.code)
         send("loose off")
 
+        // the same account's token does not admit a key the host has not allowed (background reconnect: no window)
+        assertEquals("plus-reapprove", assertThrows(PairError::class.java) { admit() }.code)
+
         send("limit 0")
-        assertEquals("plus-limit", assertThrows(PairError::class.java) { admit() }.code)
+        assertEquals("plus-limit", assertThrows(PairError::class.java) { admit(mode = PlusAdmission.MODE_PAIR) }.code)
         send("unavailable")
-        assertEquals("unreachable", assertThrows(PairError::class.java) { admit() }.code)
+        assertEquals("unreachable", assertThrows(PairError::class.java) { admit(mode = PlusAdmission.MODE_PAIR) }.code)
         send("restore")
         send("rate-on")
         event("rate-ready")
-        val sleeps = mutableListOf<Long>()
-        assertEquals("plus-connecting", assertThrows(PairError::class.java) { admit(sleepMs = { sleeps += it }) }.code)
-        assertEquals(listOf(60_000L), sleeps)
+        assertEquals("rate", assertThrows(PairError::class.java) { admit(mode = PlusAdmission.MODE_PAIR) }.code)
         send("rate-off")
         event("rate-restored")
 
-        val admitted = admit()
-        assertEquals("plus", admitted.via)
-        device.store.saveHost(admitted, via = "plus", uid = ready.getString("uid"))
-        assertEquals(admitted.deviceId, device.store.credentials(listedHost.hostId, "plus")!!.deviceId)
+        // declined on the host's screen: that key may not ask again for a while
+        val other = KeyPair.generate()
+        assertEquals("denied", assertThrows(PairError::class.java) {
+            answered("deny") { onCode -> admit(keyPair = other, mode = PlusAdmission.MODE_PAIR, onCode = onCode) }
+        }.code)
+        assertEquals("denied", assertThrows(PairError::class.java) { admit(keyPair = other, mode = PlusAdmission.MODE_PAIR) }.code)
+
+        // allowed on the host's screen
+        val rec = answered("approve") { onCode -> pairPlus(onCode) }
+        assertEquals("plus", rec.via)
+        val firstKey = device.store.keyFor(listedHost.hostId, "plus")!!
         val proxy = device.open(listedHost.hostId, "plus")
         waitState("connected")
         val (status, body) = get(proxy.port, "/?token=${proxy.token}")
@@ -175,15 +225,67 @@ class PlusInteropTest {
             admittedAgain.await(15, TimeUnit.SECONDS),
         )
         waitState("connected")
-        val nextDeviceId = device.store.credentials(listedHost.hostId, "plus")!!.deviceId
-        assertTrue(nextDeviceId != firstDeviceId)
+        // an allowed key gets a new relay token for the same device record, without the window
+        assertEquals(firstDeviceId, device.store.credentials(listedHost.hostId, "plus")!!.deviceId)
         assertEquals(1, readmitCount.get())
 
-        send("limit 0")
-        send("close-device $nextDeviceId")
-        event("closed-revoked")
-        waitState("limit")
-        assertEquals("one readmission attempt is made after the second revocation", 2, readmitCount.get())
-        assertNotNull(device.store.host(listedHost.hostId, "plus"))
+        // revoked on the host: the account's token does not bring that key back
+        send("revoke $firstDeviceId")
+        event("revoked")
+        waitState("revoked")
+        assertEquals("one readmission attempt is made after the revocation", 2, readmitCount.get())
+        val again = assertThrows(PairError::class.java) { admit(keyPair = firstKey) }
+        assertEquals(again.detail, "revoked", again.code)
+        assertNotNull(device.store.host(listedHost.hostId, "plus")!!.revokedAt)
+
+        // asking again uses a new key, which goes to the window
+        answered("approve") { onCode -> pairPlus(onCode) }
+        assertNotEquals(firstKey.publicKey.toList(), device.store.keyFor(listedHost.hostId, "plus")!!.publicKey.toList())
+        assertNotEquals(firstDeviceId, device.store.credentials(listedHost.hostId, "plus")!!.deviceId)
+    }
+
+    @Test fun ticketsAdmitAndConnectAndTheIdTokenAsksForAnUpdate() {
+        val issuer = ticketIssuer()
+        val hostId = listedHost.hostId
+        device.plusTicket = { hid, kp -> issuer.issue(PlusTickets.PURPOSE_DEVICE, kp, hid)?.relay }
+
+        // the host takes tickets only; the relay still lets the ID token through
+        send("v2-on host")
+        event("v2-ready")
+        assertEquals("plus-update", assertThrows(PairError::class.java) { admit(mode = PlusAdmission.MODE_PAIR) }.code)
+        // the relay takes tickets only too
+        send("v2-on")
+        event("v2-ready")
+        assertEquals("plus-update", assertThrows(PairError::class.java) { admit(mode = PlusAdmission.MODE_PAIR) }.code)
+        assertEquals("update required", lastDeviceSeen().optString("reason"))
+
+        // with tickets: the window, then the link
+        val rec = answered("approve") { onCode ->
+            device.admitPlus(hostId, PlusAdmission.MODE_PAIR, ready.getString("uid")) { kp ->
+                admit(keyPair = kp, mode = PlusAdmission.MODE_PAIR, onCode = onCode,
+                    ticket = { issuer.issue(PlusTickets.PURPOSE_DEVICE, kp, hostId) })
+            }
+        }
+        assertEquals("plus", rec.via)
+        val proxy = device.open(hostId, "plus")
+        waitState("connected")
+        val seen = lastDeviceSeen()
+        assertEquals("ticket", seen.optString("by"))
+        assertTrue(seen.optBoolean("ok"))
+        val (status, body) = get(proxy.port, "/?token=${proxy.token}")
+        assertEquals(200, status)
+        assertTrue(body.contains("Fake Plus Host"))
+
+        // an allowed key comes back without the window, with new tickets
+        val key = device.store.keyFor(hostId, "plus")!!
+        val again = admit(keyPair = key, ticket = { issuer.issue(PlusTickets.PURPOSE_DEVICE, key, hostId) })
+        assertEquals(rec.deviceId, again.deviceId)
+
+        // the api asks for an update
+        send("ticket-fail 426")
+        event("ticket-fail")
+        assertEquals("plus-update", assertThrows(PairError::class.java) {
+            admit(keyPair = key, ticket = { issuer.issue(PlusTickets.PURPOSE_DEVICE, key, hostId) })
+        }.code)
     }
 }

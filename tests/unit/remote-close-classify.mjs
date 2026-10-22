@@ -29,6 +29,9 @@ export default function (t) {
   // 4401 reason account -> blocked
   t.ok('plus: 4401 account は blocked', classifyClose({ closeCode: 4401, reason: 'account', via: 'plus' }) === 'blocked');
 
+  // 4401 reason host -> removed（ホストの PC が Plus のアカウントから外された。受け入れ直さない）
+  t.ok('plus: 4401 host は removed', classifyClose({ closeCode: 4401, reason: 'host', via: 'plus' }) === 'removed');
+
   // 4401 reason token -> offline
   t.ok('plus: 4401 token は offline', classifyClose({ closeCode: 4401, reason: 'token', via: 'plus' }) === 'offline');
 

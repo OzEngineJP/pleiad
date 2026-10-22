@@ -213,6 +213,8 @@
         "syncErrUnavailable": "サーバーにつながりません。しばらくして自動でやり直します。",
         "syncErrRetry": "しばらくして自動でやり直します。",
         "syncErrOther": "もう一度お試しください。",
+        "paused": "Pleiad Plus が一時的に止まっています（再開を待っています）",
+        "syncPausedNote": "再開したら自動で同期します。",
         "syncStopped": "同期は止まっています",
         "syncStoppedDisabled": "このアカウントでは今は同期を使えません。使えるようになると自動で再開します。",
         "syncStoppedNotPlus": "Pleiad Plus に戻ると自動で再開します。",
@@ -248,9 +250,89 @@
         "syncUnregistered": "この PC の登録が外れているため、同期を止めています",
         "syncUnregisteredHint": "登録し直すと、自動で再開します。",
         "syncSharedTo": "新しい PC {{name}} に同期の鍵を渡しました（{{time}}）",
+        "syncWaitApproval": "鍵を持つ PC の承認を待っています",
+        "syncWaitApprovalHint": "{{name}} で Pleiad を開くと、両方の画面に確認コードが出ます。",
+        "syncApproveOn": "{{name}} の画面で承認してください",
+        "syncCode": "確認コード",
+        "syncJoinDenied": "鍵の受け渡しが断られました",
+        "syncJoinDeniedHint": "1 時間たつと、もう一度申し込めます。",
+        "syncHelpRemove": "手元に無い PC は、アカウントのページで外してください。外した PC は同期のデータを読めなくなります。",
+        "syncHelpRecovery": "鍵を持つ PC が 1 台も残らなければ、この PC から回復を頼めます。72 時間待ってから新しい鍵で始め直し、サーバーの同期のデータは消えます。待っている間は、鍵を持つ PC から止められます。",
+        "syncHelpClose": "閉じる",
+        "syncHolderGoneAll": "鍵を持つ PC はどれも登録から外れています。",
+        "syncRecoveryAbout": "回復を頼むと、72 時間後に新しい鍵で始め直せます。サーバーの同期のデータは消えます。待っている間は、鍵を持つ PC から止められます。",
+        "syncRecoveryAsk": "回復を頼む",
+        "syncRecoveryWaiting": "回復を待っています。{{time}} から新しい鍵で始め直せます。",
+        "syncRecoveryReady": "回復の待ちが明けました。新しい鍵で始め直せます。",
+        "syncRecoveryWithdraw": "取り下げる",
+        "syncRecoveryStart": "新しい鍵で始め直す",
+        "syncRecoveryOther": "{{name}} が回復を頼んでいます。{{time}} を過ぎると、その PC が新しい鍵で始め直せます。",
+        "syncRecoveryStop": "回復を止める",
+        "syncRecoveryAlert": "{{name}} が同期の回復を頼んでいます。心当たりが無ければ止めてください。{{time}} を過ぎると、新しい鍵で始め直されます。",
+        "syncRecoveryNote": {
+          "reauth": "回復を頼むには、ログインし直してください（最近のログインが要ります）。",
+          "other": "ほかの PC が先に回復を頼みました。",
+          "holder": "鍵を持つ PC が見つかりました。その PC の承認で受け取れます。",
+          "waiting": "まだ待ちが明けていません。",
+          "gone": "回復は取り消されました。",
+          "stopped": "回復を止めました。",
+          "stopFailed": "回復を止められませんでした。"
+        },
+        "syncRelogin": "ログインし直す",
+        "syncUpdateRequired": "この版の Pleiad では同期を続けられません",
+        "syncUpdateRequiredHint": "Pleiad を新しい版に更新すると、再開します。",
+        "syncApiDowngraded": "同期のサーバーが前の版の応答を返したため、同期を止めました",
+        "syncApiDowngradedHint": "前の版のやり方では鍵を渡していません。サーバーが元に戻った後、Pleiad を起動し直すと再開します。",
+        "syncRestarted": "新しい鍵は、この PC の前の鍵では確かめられません（回復の仕上げなどで作られた鍵です）。自動では切り替えていません。",
+        "syncRestartedHint": "心当たりがあれば受け取ってください。鍵を持つ PC の画面で確認コードを見比べて承認すると届きます。受け取るまで、この PC の同期は止まったままです。",
+        "syncAcceptRestart": "新しい鍵を受け取る",
+        "syncRestartChanged": "その間に鍵がまた替わりました。表示を確かめてから、もう一度選んでください。",
+        "syncKeyUnverified": "届いた鍵を確かめられなかったため、受け取らずに止めています",
+        "syncKeyUnverifiedHint": "この PC を Pleiad Plus のアカウントのページで外し、登録し直してから、鍵を持つ PC の承認を受けてください。",
+        "syncStartOverOthersApproval": "ほかの PC: 同期が止まり、この PC の画面で承認すると、また同期します。同じものがあるときは新しい方が残り、もう一方は「同期の写し」に 30 日残ります。",
+        "syncApprove": {
+          "mark": "承認を待っている",
+          "title": "「{{name}}」に同期の鍵を渡しますか？",
+          "hint": "{{name}} の画面に同じ数字が出ていることを確かめてから渡してください。",
+          "deny": "渡さない",
+          "approve": "渡す",
+          "changed": "確認コードが変わりました。もう一度見比べてください。",
+          "gone": "申し込みが取り下げられました。",
+          "noKey": "この PC は今の同期の鍵を持っていません。"
+        },
         "hostRemoved": "この PC は Pleiad Plus の登録から外されています。登録し直すと、中継と同期が再開します。",
         "hostReregister": "この PC を登録し直す",
-        "hostReregistered": "この PC の登録が外れていたので、登録し直しました"
+        "hostReregistered": "この PC の登録が外れていたので、登録し直しました",
+        "hostRemovedKey": "この PC は Pleiad Plus の登録から外されています。登録し直すには、この PC の鍵を作り直します。",
+        "syncInbox_other": "届いた変更 {{count}} 件",
+        "inboxTitle": "届いた変更",
+        "inboxKind": {
+          "change": "変更",
+          "new": "新しいファイル",
+          "delete": "削除"
+        },
+        "inboxFromUnknown": "ほかの PC",
+        "inboxLoading": "読み込んでいます…",
+        "inboxEmpty": "届いた変更はありません",
+        "inboxTake": "取り込む",
+        "inboxDrop": "捨てる",
+        "inboxTaken": "取り込みました",
+        "inboxDropped": "捨てました",
+        "inboxGone": "もう届いた変更から外れています",
+        "inboxLocalChanged": "届いた後に、この PC のファイルが変わったため、取り込みませんでした。今のファイルを残すなら「捨てる」を押してください。",
+        "inboxNotApplied": "取り込めませんでした。もう一度お試しください。",
+        "inboxBinary": "中身を表示できません。送った PC で確かめてから取り込んでください。",
+        "inboxBinaryIncoming": "届いた版: {{size}}",
+        "inboxBinaryLocal": "この PC の今の版: {{size}}",
+        "inboxBytes_other": "{{count}} バイト",
+        "inboxBinaryConfirm": "中身を見ないまま取り込みます。送った PC で、大きさと sha256 が同じことを確かめましたか？",
+        "inboxBinaryConfirmYes": "確かめたので取り込む",
+        "inboxRenewed": "新しい版が届きました。差分を見直してから選んでください。",
+        "inboxHidden": {
+          "bidi": "文字の向きを変える制御文字が入っています（差分では ⟨U+…⟩ と書いています）。",
+          "invisible": "幅の無い文字が入っています（差分では ⟨U+…⟩ と書いています）。",
+          "eol": "改行コードだけが違います。"
+        }
       },
     "remote": {
       "tabs": {
@@ -268,12 +350,16 @@
         "plusUpgrade": "Pleiad Plus にする",
         "plusBlocked": "このアカウントでは公式の中継を使えません",
         "plusLimit": "このアカウントの上限に達しています",
+        "plusUpdate": "この版の Pleiad では公式の中継を使えません。Pleiad を更新してください",
+        "plusRemoved": "この PC は Plus のアカウントから外されています",
         "plusEmpty": "同じアカウントでログインした PC がここに並びます。",
         "plusMaintenance": "Pleiad Plus はメンテナンス中です",
         "plusUnavailable": "Pleiad Plus は今使えません",
         "plusNeedsUpdate": "Pleiad を更新してください",
         "own": "自分の中継サーバー",
-        "plusHead": "Pleiad Plus（公式の中継）"
+        "plusHead": "Pleiad Plus（公式の中継）",
+        "reapprove": "もう一度の許可が要る端末",
+        "revoked": "取り消した端末"
       },
       "state": {
         "connected": "つながっています · {{where}}",
@@ -289,6 +375,8 @@
         "signingIn": "Pleiad Plus にログインします",
         "account": "このアカウントでは公式の中継を使えません",
         "connecting": "接続しています…",
+        "paused": "公式の中継からの申し込みを一時的に止めています（{{time}} まで）",
+        "resume": "再開する",
         "todo": {
           "install": {
             "phone": "スマホに Pleiad を入れる",
@@ -312,7 +400,12 @@
         "added": "追加した日",
         "lastSeen": "最後の接続",
         "never": "まだつないでいません",
-        "revoke": "取り消す"
+        "revoke": "取り消す",
+        "approvedBy": "許可した端末",
+        "thisPc": "この PC",
+        "revokedAt": "取り消した日",
+        "revokedBy": "取り消した端末",
+        "hideRevoked": "一覧から消す"
       },
       "wizard": {
         "steps": {
@@ -369,7 +462,8 @@
           "notAllowed": "{{host}} の Pleiad を更新すると使えます"
         },
         "loadFailed": "PC の一覧を読めません: {{error}}",
-        "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。"
+        "storagePlain": "この PC では資格情報を暗号化できません（本人だけが読めるファイルに保存します）。",
+        "reapprove": "もう一度の許可が要ります"
       },
       "relay": {
         "url": "中継の URL",
@@ -387,7 +481,9 @@
         "revokeConfirm": "「{{name}}」を取り消しますか。この端末はすぐに切れ、もう一度ペアリングするまで使えません。",
         "keep": "やめる",
         "revokeTasks": "この端末の AI から任された作業 {{count}} 件も止めます。",
-        "revokeConfirmButton": "取り消す"
+        "revokeConfirmButton": "取り消す",
+        "quoted": "「{{name}}」",
+        "revokeChain": "この端末が許可した{{names}}も取り消します。"
       },
       "platform": {
         "desktop": "デスクトップ",
@@ -410,7 +506,9 @@
         "deny": "拒否",
         "approve": "許可する",
         "cancelled": "端末が承認を待たずに切れました。",
-        "expired": "承認されないまま期限が切れました。"
+        "expired": "承認されないまま期限が切れました。",
+        "titleAgain": "「{{name}}」をもう一度許可しますか？",
+        "addedOn": "{{date}}に追加"
       },
       "fullAccess": "つないだ端末は、この PC でできることがすべてできます"
     },
@@ -2592,6 +2690,17 @@
     "connLostHost": "ホストがオフラインです。再接続しています…",
     "reconnected": "再接続しました。",
     "reconnectedAt": "{{time}} に再接続しました。",
+    "remotePaused": "Pleiad Plus が一時的に止まっています（再開を待っています）",
+    "remoteStop": {
+      "back": "ホストの一覧へ",
+      "revoked": { "title": "この端末はホストで取り消されました", "body": "ホストの一覧に戻ると、承認を頼み直せます。" },
+      "reapprove": { "title": "ホストでもう一度の許可が要ります", "body": "ホストの一覧に戻ってこの PC を選び、PC の画面で許可してください。" },
+      "removed": { "title": "この PC は Pleiad Plus のアカウントから外されています", "body": "その PC の 設定 › Pleiad Plus で「この PC を登録し直す」を押すと、またつなげます。" },
+      "blocked": { "title": "このアカウントでは公式の中継を使えません", "body": "Pleiad Plus のアカウントの状態を確かめてください。" },
+      "limit": { "title": "このアカウントの上限に達しています", "body": "使っていない端末や PC を外すと、またつなげます。" },
+      "update": { "title": "この版の Pleiad では公式の中継を使えません", "body": "Pleiad を更新してください。" },
+      "signed-out": { "title": "Pleiad Plus からログアウトしています", "body": "ホストの一覧に戻って、ログインし直してください。" }
+    },
     "authStale": {
       "title": "このページの認証が古いため、接続できません。",
       "body": "サーバーの起動時に表示された URL で、ページを開き直してください。書きかけの文章は残ります。",
@@ -3473,12 +3582,37 @@
       "mention": {
         "named": "{{name}} が @あなた と書きました",
         "plain": "@あなた 宛ての投稿があります"
+      },
+      "device": {
+        "named": {
+          "open": "端末「{{name}}」が追加の許可を待っています",
+          "closed": "端末「{{name}}」が追加の許可を待っていました"
+        },
+        "plain": {
+          "open": "端末が追加の許可を待っています",
+          "closed": "端末が追加の許可を待っていました"
+        }
+      },
+      "syncInbox_other": "同期で届いた変更が {{count}} 件あります",
+      "syncApproval": {
+        "named": "{{name}} が同期の鍵を待っています",
+        "plain_other": "{{count}} 台の PC が同期の鍵を待っています"
+      },
+      "syncRecovery": {
+        "named": "{{name}} が同期の回復を頼んでいます",
+        "plain": "ほかの PC が同期の回復を頼んでいます"
+      },
+      "syncRestarted": {
+        "named": "{{name}} が新しい鍵で同期を始め直しました。受け取るか選んでください",
+        "plain": "同期が新しい鍵で始め直されました。受け取るか選んでください"
       }
     },
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "一時チャット › {{title}}"
+      "chat": "一時チャット › {{title}}",
+      "remote": "設定 › リモート",
+      "plus": "設定 › Pleiad Plus"
     },
     "outcome": {
       "allowed": "承認済み",
@@ -3498,7 +3632,9 @@
       "band": "離れていても知らせますか？",
       "enable": "オンにする",
       "later": "あとで"
-    }
+    },
+    "deviceWaiting": "◆ 承認を待っています",
+    "deviceBody": "端末「{{name}}」が追加の許可を待っています"
   },
   "remote": {
     "badgeLabel": "リモート:",
@@ -3509,6 +3645,13 @@
       "offline": "中継につながりません",
       "host-offline": "ホストがオフライン",
       "revoked": "取り消されました",
+      "reapprove": "もう一度の許可が要ります",
+      "removed": "Plus から外されました",
+      "blocked": "公式の中継を使えません",
+      "limit": "上限に達しています",
+      "update": "更新が要ります",
+      "signed-out": "ログインしていません",
+      "paused": "Plus が止まっています",
       "stopped": "接続を止めました"
     },
     "pop": {

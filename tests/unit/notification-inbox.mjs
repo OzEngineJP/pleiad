@@ -73,6 +73,23 @@ export default async function (t) {
     t.ok('会話を消すとその会話の行が消える', inbox.removeSession('s4') === 2 && inbox.list().items.every((x) => x.target.sessionId !== 's4') && n.unread === 0);
     t.ok('チャンネルをアーカイブすると（removeChannel）そのチャンネルの行が消える', inbox.removeChannel('c2') === 2 && inbox.list().items.every((x) => x.target.channelId !== 'c2'));
 
+    // ---- 続いている待ち（standing。同期で届いた変更など、会話の外で人を待つもの）
+    const standingRows = () => inbox.list({ filter: 'wait', limit: 100 }).items.filter((x) => x.ask === 'syncInbox');
+    const s1 = inbox.standing('syncInbox', { version: 'v1', at: clock, data: { ask: 'syncInbox', count: 2, settings: 'plus' } });
+    t.ok('standing: 未読のあなた待ちとして 1 行載る。飛び先は設定（target.settings）・件数（count）', s1 && s1.unread === true && s1.kind === 'wait' && s1.count === 2 && s1.target.settings === 'plus' && standingRows().length === 1);
+    const unreadBefore = inbox.counts().unread;
+    inbox.markRead({ ids: [s1.id] });
+    const s1b = inbox.standing('syncInbox', { version: 'v1', at: clock, data: { ask: 'syncInbox', count: 1, settings: 'plus' } });
+    t.ok('standing: 同じ版で件数だけ変わったら、同じ行の件数を直す（既読のまま。行は増えない）', s1b.id === s1.id && s1b.count === 1 && s1b.unread === false && standingRows().length === 1 && standingRows()[0].count === 1 && inbox.counts().unread === unreadBefore - 1);
+    clock += 1000;
+    const s2 = inbox.standing('syncInbox', { version: 'v2', at: clock, data: { ask: 'syncInbox', count: 3, settings: 'plus' } });
+    t.ok('standing: 新しい版（新しく届いた）は、前の行を消して未読で載せ直す', s2 && s2.id !== s1.id && s2.unread === true && standingRows().length === 1 && standingRows()[0].count === 3);
+    t.ok('standing: 起動時の settleAllWaiting では決着させない（承認と違い、待ちは DB の外に残っている）', (inbox.settleAllWaiting('cancelled'), standingRows()[0].resolvedAt == null) && inbox.counts().waiting === 1);
+    t.ok('standing: null で行を消す', inbox.standing('syncInbox', null) === null && standingRows().length === 0 && inbox.counts().waiting === 0);
+    const old = inbox.standing('syncInbox', { version: 'v3', at: clock - NOTIFICATION_KEEP_MS - 1000, data: { ask: 'syncInbox', count: 1, settings: 'plus' } });
+    t.ok('standing: 残す日数より古い時刻の版は、いまの時刻で載せる（すぐ消されない）', old && old.at === clock);
+    inbox.standing('syncInbox', null);
+
     // ---- 上限
     const room = await fs.mkdtemp(path.join(os.tmpdir(), 'notifications-cap-'));
     const cap = createNotifications({ dataDir: room, now });

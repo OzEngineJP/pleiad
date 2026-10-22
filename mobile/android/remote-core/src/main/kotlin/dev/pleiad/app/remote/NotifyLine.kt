@@ -8,7 +8,9 @@ package dev.pleiad.app.remote
 // Light on purpose: no PING frames of our own in the channel sense, a WebSocket ping only every few minutes (OkHttp
 // pingInterval, which also notices a dead line), reconnects with a long backoff.
 //
-// state: connecting | connected | offline | host-offline | revoked | stopped
+// state: connecting | connected | offline | host-offline | paused | revoked | update | removed | blocked | stopped
+// (removed: the PC was taken off the Plus account; blocked: the account cannot use the relay; paused: Plus is paused,
+// waited out with the backoff, since nothing restarts a stopped line when Plus comes back)
 
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
@@ -30,6 +32,8 @@ class NotifyLine(
     private val client: OkHttpClient = Http.client,
     private val log: (String) -> Unit = {},
     private val plusIdToken: (() -> String?)? = null,
+    // The relay ticket (role device) for one connection (docs/plus.md "Tickets"); null: the api has no tickets yet
+    private val plusTicket: ((HostCreds) -> String?)? = null,
 ) {
     private val timer = ScheduledThreadPoolExecutor(1) { r -> Thread(r, "pleiad-notify-line").also { it.isDaemon = true } }
         .apply { removeOnCancelPolicy = true }
@@ -41,6 +45,22 @@ class NotifyLine(
     private var retry: ScheduledFuture<*>? = null
     private var openedAt = 0L
     @Volatile var state = "stopped"; private set
+
+    companion object {
+        /** code: a WebSocket close code, or -HTTP status when the upgrade was refused, or 1006. */
+        fun classifyClose(code: Int, reason: String, via: String): String = when {
+            // the relay did not take the ticket / the account token (expired, or the clock is off): take a fresh one later
+            code == 4401 && via == "plus" && (reason == "ticket" || reason == "token") -> "offline"
+            // the relay takes tickets only and this line had none: the app needs an update (not a revocation)
+            code == 4401 && via == "plus" && reason == "update required" -> "update"
+            code == 4401 && via == "plus" && reason == "host" -> "removed"
+            code == 4401 && via == "plus" && reason == "account" -> "blocked"
+            code == 4401 && via == "plus" && reason == "plus unavailable" -> "paused"
+            code == 4401 || code == -401 -> "revoked"
+            code == 4404 || code == 4408 -> "host-offline"
+            else -> "offline"
+        }
+    }
 
     private fun setState(s: String) {
         if (state == s) return
@@ -87,6 +107,41 @@ class NotifyLine(
         val gen = ++generation
         setState("connecting")
         val c = creds
+        if (c.via != "plus") return open(gen, c, null)
+        // The ticket and the account token are fetched over the network, and connect() runs on the caller's thread (the
+        // service starts the lines on the main thread): fetch them on the line's own thread, outside the lock.
+        try {
+            timer.execute {
+                var failed = false
+                var stopAs: String? = null
+                var waitAs = "offline"
+                val ticket = try { plusTicket?.invoke(c) } catch (e: Exception) {
+                    failed = true
+                    // the PC was removed from the Plus account / the account cannot use the relay: waiting does not help
+                    when ((e as? PairError)?.code) {
+                        "unknown-host" -> stopAs = "removed"
+                        "plus-no-relay" -> stopAs = "blocked"
+                        "plus-paused" -> waitAs = "paused"
+                    }
+                    log("notify line: ticket failed: ${if (e is PairError) e.code else e.javaClass.simpleName}")
+                    null
+                }
+                val accountToken = if (ticket != null || failed) null else try { plusIdToken?.invoke() } catch (_: Exception) { null }
+                synchronized(lock) {
+                    if (gen != generation || !running) return@synchronized
+                    when {
+                        stopAs != null -> { running = false; setState(stopAs!!) }
+                        ticket != null -> open(gen, c, "x-pleiad-ticket" to ticket)
+                        accountToken.isNullOrEmpty() -> schedule(waitAs)
+                        else -> open(gen, c, "x-pleiad-account" to accountToken)
+                    }
+                }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {}
+    }
+
+    /** account: the relay's account header for via "plus" (the ticket, or the ID token). */
+    private fun open(gen: Int, c: HostCreds, account: Pair<String, String>?) {
         val url = try { PairingCodec.relayWsUrl(c.relayUrl, "/v1/device/notify") } catch (e: Exception) {
             log("notify line: ${e.message}"); return schedule("offline")
         }
@@ -97,11 +152,7 @@ class NotifyLine(
             .build()
         val reqBuilder = Request.Builder().url(url)
             .header("authorization", "Bearer ${c.token}").header("x-pleiad-host", c.hostId).header("x-pleiad-device", c.deviceId)
-        if (c.via == "plus") {
-            val accountToken = plusIdToken?.invoke()
-            if (accountToken.isNullOrEmpty()) { schedule("offline"); return }
-            reqBuilder.header("x-pleiad-account", accountToken)
-        }
+        if (account != null) reqBuilder.header(account.first, account.second)
         val req = reqBuilder.build()
         socket = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
@@ -123,7 +174,7 @@ class NotifyLine(
                 try { webSocket.close(1000, null) } catch (_: Exception) {}
             }
 
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = ended(gen, webSocket, code)
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = ended(gen, webSocket, code, reason)
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 ended(gen, webSocket, response?.let { -it.code } ?: 1006)
@@ -133,16 +184,15 @@ class NotifyLine(
     }
 
     /** code: a WebSocket close code, or -HTTP status when the upgrade was refused, or 1006. */
-    private fun ended(gen: Int, ws: WebSocket, code: Int) = synchronized(lock) {
+    private fun ended(gen: Int, ws: WebSocket, code: Int, reason: String = "") = synchronized(lock) {
         if (gen != generation || !running) return@synchronized
         if (socket === ws) socket = null
         val stable = state == "connected" && System.currentTimeMillis() - openedAt >= backoff.stableMs
         if (stable) attempt = 0
-        when {
-            code == 4401 || code == -401 -> { running = false; setState("revoked") }
-            code == 4404 || code == 4408 -> schedule("host-offline")
-            code == 4409 -> { attempt = maxOf(attempt, 3); schedule("offline") }   // another line of ours took over: back off, don't fight
-            else -> schedule("offline")
+        if (code == 4409) { attempt = maxOf(attempt, 3); return@synchronized schedule("offline") }   // another line of ours took over: back off, don't fight
+        when (val next = classifyClose(code, reason, creds.via)) {
+            "revoked", "update", "removed", "blocked" -> { running = false; setState(next) }
+            else -> schedule(next)
         }
     }
 

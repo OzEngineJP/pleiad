@@ -11,6 +11,7 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "list", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "parse", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "pair", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "admit", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "cancelPair", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "open", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "rename", returnType: CAPPluginReturnPromise),
@@ -87,6 +88,11 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
             let rec = try device.pair(payload, onCode: { code in self?.notifyListeners("pairCode", data: ["code": code]) }, handle: handle)
             call.resolve(["host": ShellBridge.foundation(rec.publicJson)])
         }
+    }
+
+    // Pleiad Plus (the official relay) is not on iOS yet: no Plus hosts are listed, so every hostId is unknown here
+    @objc func admit(_ call: CAPPluginCall) {
+        call.reject("hostId", "unknown-host")
     }
 
     @objc func cancelPair(_ call: CAPPluginCall) {

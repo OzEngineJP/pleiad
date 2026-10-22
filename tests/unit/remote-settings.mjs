@@ -82,6 +82,8 @@ export default async function (t) {
     && hostLine({ hostId: 'h1', name: 'desk', state: 'connected' }).sub === '' && hostLine({ hostId: 'h1', name: 'desk', state: 'closed' }).canOpen
     && (h => h.revoked && !h.canOpen && h.sub === '取り消されました')(hostLine({ hostId: 'h1', name: 'desk', state: 'revoked' }))
     && hostLine({ hostId: 'h1' }).name === 'h1');
+  t.ok('Plus のホストの行: 中継が更新を求めたら「Pleiad を更新してください」で開けない',
+    (h => !h.canOpen && h.sub === 'この版の Pleiad では公式の中継を使えません。Pleiad を更新してください')(hostLine({ hostId: 'h1', name: 'desk', via: 'plus', state: 'update' })));
   t.ok('AI から任せる: オフなら何も出さず、ホストが古ければ更新を促す',
     agentLine({ agentState: 'ready', agentAllowed: true }) === '' && agentLine({ agentState: 'offline', agentAllowed: false }) === ''
     && agentLine({ agentState: 'ready', agentAllowed: false, name: 'desk' }) === 'desk の Pleiad を更新すると使えます'

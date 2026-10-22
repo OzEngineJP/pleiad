@@ -18,6 +18,8 @@ export function createPushNotifier({ devices, presence, send, host, now = Date.n
   let seq = 0;
   /** deviceId -> sessionId -> { approvals: Set<id>, seen: boolean }。出ているはずの通知（取り消しを送る相手を絞る）。 */
   const outstanding = new Map();
+  /** 端末の追加の申し込みの id -> 知らせた端末の id。決着したら消す（取り消しを送る相手） */
+  const deviceAsks = new Map();
 
   const nextSeq = () => { seq = Math.max(seq + 1, now()); return seq; };
 
@@ -86,6 +88,30 @@ export function createPushNotifier({ devices, presence, send, host, now = Date.n
         if (!entry.approvals.size && !entry.seen) outstanding.get(device.id).delete(sessionId);
         if (cancelTo(device, { session: sessionId, cancel: 'approval', id })) sent.push(device.id);
       }
+      return sent;
+    },
+
+    /**
+     * 新しい端末が PC の画面の承認を待っている（ADR 0248）。承認済みのスマホへ知らせるだけで、許可はさせない（ボタンは付けない）。
+     * name は申し込んだ端末の名前。会話は無いので、見ている会話で止めない
+     */
+    deviceRequest({ id, name }) {
+      if (!id) return [];
+      const sent = toEach('device', { sessionId: null }, device => deliver(device, { kind: 'device', id, title: name ?? '' }));
+      if (sent.length) {
+        if (deviceAsks.size >= OUTSTANDING_MAX) deviceAsks.delete(deviceAsks.keys().next().value);
+        deviceAsks.set(id, new Set(sent));
+      }
+      return sent;
+    },
+
+    /** 端末の追加の申し込みが決着した（許可・拒否・期限切れ・取り下げ）。出ている通知を消す。 */
+    deviceResolved({ id }) {
+      const to = deviceAsks.get(id);
+      if (!to) return [];
+      deviceAsks.delete(id);
+      const sent = [];
+      for (const device of devices()) if (to.has(device.id) && cancelTo(device, { cancel: 'device', id })) sent.push(device.id);
       return sent;
     },
 

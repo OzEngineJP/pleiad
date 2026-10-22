@@ -12,7 +12,7 @@ import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
 import { codeBlock } from './render.mjs';
 import { copyIcon } from './icons.mjs';
-import { lineDiff } from './session-context.mjs';
+import { lineDiff, diffView } from './line-diff.mjs';
 import { unifyConfirmPanel, plyRegistryTier, brokenNotice } from './hooks-unify-ui.mjs';
 
 export const HOOK_AGENTS = [['claude', 'Claude Code'], ['codex', 'Codex'], ['antigravity', 'Antigravity']];
@@ -816,22 +816,3 @@ export async function openCopySheet(ctx, entry) {
   await refresh();
 }
 
-/** 差分の行（web/session-context.mjs の差分と同じ見た目。色ではなく − / + の記号と面の階調）。変わった行の前後 2 行だけ残し、あとは「n 行同じ」に畳む */
-function diffView(ops) {
-  const box = el('div', 'scx-lines');
-  const keep = ops.map((o, i) => o.t !== ' ' || ops.slice(Math.max(0, i - 2), i + 3).some(n => n.t !== ' '));
-  for (let i = 0; i < ops.length;) {
-    if (!keep[i]) {
-      let j = i;
-      while (j < ops.length && !keep[j]) j++;
-      box.append(el('div', 'skip', t('sessionContext.diff.same', { count: j - i })));
-      i = j;
-      continue;
-    }
-    const o = ops[i++];
-    const r = el('div', o.t === '-' ? 'del' : o.t === '+' ? 'add' : '');
-    r.append(el('span', 'g', o.t === '-' ? '−' : o.t === '+' ? '+' : ''), el('span', null, o.s || ' '));
-    box.append(r);
-  }
-  return box;
-}

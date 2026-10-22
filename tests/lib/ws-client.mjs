@@ -14,9 +14,10 @@ export const CMD_TIMEOUT_MS = 60_000;
  * @param autoAllow 承認要求が来たら即 allow する（承認フロー自体を測らないテスト用）。
  *   fake-codex の既定の台本はコマンドの承認を求めるので、そのターンを走らせるなら付ける。
  *   引数は 1 つだけ: `open({ ...host, autoAllow: true })`（`open(host, { autoAllow: true })` は効かない）。
+ * @param headers 接続の要求に足すヘッダー（端末の中継を通った接続を装う x-forwarded-for など）。
  */
-export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow = false } = {}) {
-  const ws = new WebSocket(`ws://${host}:${port}/ws?token=${token}`);
+export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow = false, headers } = {}) {
+  const ws = new WebSocket(`ws://${host}:${port}/ws?token=${token}`, headers ? { headers } : undefined);
   const pending = new Map();
   const events = [];
   const watchers = new Set();

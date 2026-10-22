@@ -75,6 +75,10 @@ data class TokenBundle(
 class PlusApiError(val status: Int, val code: String, val detail: String = "") : Exception("http $status $code")
 
 object PlusApi {
+    // The admission mark (docs/plus.md "Tickets"): every request to the Plus api says this client takes tickets.
+    // Not sent to the token refresh endpoint (not the Plus api).
+    const val ADMISSION_HEADER = "X-Pleiad-Admission"
+    const val ADMISSION_MARK = "2"
     private val JSON = "application/json; charset=utf-8".toMediaType()
     private val FORM = "application/x-www-form-urlencoded".toMediaType()
 
@@ -88,7 +92,7 @@ object PlusApi {
     }
 
     private fun getJson(client: OkHttpClient, url: String, headers: Map<String, String> = emptyMap()): JSONObject {
-        val req = Request.Builder().url(url).apply { for ((k, v) in headers) header(k, v) }.build()
+        val req = Request.Builder().url(url).apply { for ((k, v) in headers) header(k, v) }.header(ADMISSION_HEADER, ADMISSION_MARK).build()
         client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) throw errorFrom(r)
             return JSONObject(r.body?.string().orEmpty().ifEmpty { "{}" })
@@ -96,7 +100,7 @@ object PlusApi {
     }
 
     private fun postJson(client: OkHttpClient, url: String, payload: JSONObject, headers: Map<String, String> = emptyMap()): JSONObject {
-        val req = Request.Builder().url(url).post(body(payload)).apply { for ((k, v) in headers) header(k, v) }.build()
+        val req = Request.Builder().url(url).post(body(payload)).apply { for ((k, v) in headers) header(k, v) }.header(ADMISSION_HEADER, ADMISSION_MARK).build()
         client.newCall(req).execute().use { r ->
             if (!r.isSuccessful) throw errorFrom(r)
             return JSONObject(r.body?.string().orEmpty().ifEmpty { "{}" })
@@ -157,6 +161,10 @@ object PlusApi {
         return PlusAccount.fromJson(o)
     }
 
+    /** POST <apiBase><path> with the ID token (the ticket calls). Throws PlusApiError. */
+    fun postAuthed(client: OkHttpClient, apiBase: String, idToken: String, clientTag: String, path: String, payload: JSONObject): JSONObject =
+        postJson(client, "$apiBase$path", payload, mapOf("Authorization" to "Bearer $idToken", "X-Pleiad-Client" to clientTag))
+
     /** GET /v1/hosts with the current account token. */
     fun fetchHosts(client: OkHttpClient, apiBase: String, idToken: String, clientTag: String): List<PlusHost> {
         val o = getJson(client, "$apiBase/v1/hosts", mapOf("Authorization" to "Bearer $idToken", "X-Pleiad-Client" to clientTag))
@@ -175,12 +183,13 @@ object PlusApi {
 /**
  * Keeps the sealed session record and the in-memory ID token. All blocking calls run on the caller's thread
  * (the plugin's worker); `idToken()` is synchronized so concurrent asks share one refresh.
+ * A refresh is one request per call: the gap between retries is a time to wait for, never a sleep while the
+ * session is held (the screen's calls queue on the same lock).
  */
 class PlusSession(
     private val store: SessionStore,
     private val client: OkHttpClient = Http.client,
     private val nowMs: () -> Long = { System.currentTimeMillis() },
-    private val sleepMs: (Long) -> Unit = { Thread.sleep(it) },
     private val log: (String) -> Unit = {},
 ) {
     interface SessionStore {
@@ -205,8 +214,10 @@ class PlusSession(
     @Volatile var error: String? = null
         private set
 
-    /** Set when the retry budget was spent; only a UI poke (force) tries again. */
-    @Volatile private var exhausted = false
+    /** Failed refreshes in a row; at [MAX_ATTEMPTS] only a UI poke (force) tries again. */
+    @Volatile private var failures = 0
+    /** A background ask does not refresh again before this time (the gap after a failure). */
+    @Volatile private var retryAt = 0L
 
     fun record(): SessionRecord? = store.load()
 
@@ -230,7 +241,8 @@ class PlusSession(
         idToken = t.idToken
         idTokenExpiresAt = t.expiresAtMs
         error = null
-        exhausted = false
+        failures = 0
+        retryAt = 0
     }
 
     fun signOut() {
@@ -240,51 +252,48 @@ class PlusSession(
         account = null
     }
 
-    /** The current ID token; refreshes when it expires within [EXPIRY_MARGIN_MS]. Null when signed out. */
+    /**
+     * The current ID token; refreshes when it expires within [EXPIRY_MARGIN_MS]. Null when signed out.
+     * A failed refresh hands back the token it has. force (the screen asked): try now, once.
+     */
     @Synchronized
     fun idToken(refreshUrl: String?, force: Boolean = false): String? {
         val s = store.load() ?: return null
         val t = idToken
         if (!force && t != null && idTokenExpiresAt - nowMs() > EXPIRY_MARGIN_MS) return t
-        if (exhausted && !force) return t // retry budget spent: hand back what we have until a UI poke
+        // after a failure, wait out the gap; with the budget spent, hand back what we have until a UI poke
+        if (!force && (failures >= MAX_ATTEMPTS || nowMs() < retryAt)) return t
         val url = refreshUrl ?: return t
-        refreshWithRetry(url, s)
+        refreshOnce(url, s)
         return idToken
     }
 
-    private fun refreshWithRetry(refreshUrl: String, first: SessionRecord) {
-        var cur = first
-        repeat(MAX_ATTEMPTS) { attempt ->
-            try {
-                val r = PlusApi.refresh(client, refreshUrl, cur.apiKey, cur.refreshToken)
-                idToken = r.idToken
-                idTokenExpiresAt = nowMs() + r.expiresInSec * 1000
-                if (r.refreshToken != null && r.refreshToken != cur.refreshToken) {
-                    cur = cur.copy(refreshToken = r.refreshToken)
-                    store.save(cur)
-                }
-                error = null
-                exhausted = false
+    private fun refreshOnce(refreshUrl: String, cur: SessionRecord) {
+        try {
+            val r = PlusApi.refresh(client, refreshUrl, cur.apiKey, cur.refreshToken)
+            idToken = r.idToken
+            idTokenExpiresAt = nowMs() + r.expiresInSec * 1000
+            if (r.refreshToken != null && r.refreshToken != cur.refreshToken) store.save(cur.copy(refreshToken = r.refreshToken))
+            error = null
+            failures = 0
+            retryAt = 0
+            return
+        } catch (e: PlusApiError) {
+            if (e.status == 400 && e.detail in FATAL_REFRESH_ERRORS) {
+                log("refresh: permanent error ${e.detail}; signed out")
+                signOut()
+                error = null // signed out, not an error banner
                 return
-            } catch (e: PlusApiError) {
-                if (e.status == 400 && e.detail in FATAL_REFRESH_ERRORS) {
-                    log("refresh: permanent error ${e.detail}; signed out")
-                    signOut()
-                    error = null // signed out, not an error banner
-                    return
-                }
-                log("refresh: http ${e.status} ${e.code}".trim())
-                error = "unreachable"
-            } catch (e: IOException) {
-                log("refresh: network error")
-                error = "unreachable"
-            } catch (e: Exception) {
-                log("refresh: ${e.javaClass.simpleName}")
-                error = "unreachable"
             }
-            if (attempt < MAX_ATTEMPTS - 1) sleepMs(RETRY_DELAY_MS)
+            log("refresh: http ${e.status} ${e.code}".trim())
+        } catch (e: IOException) {
+            log("refresh: network error")
+        } catch (e: Exception) {
+            log("refresh: ${e.javaClass.simpleName}")
         }
-        exhausted = true
+        error = "unreachable"
+        failures = minOf(failures + 1, MAX_ATTEMPTS)
+        retryAt = nowMs() + RETRY_DELAY_MS
     }
 
     /**

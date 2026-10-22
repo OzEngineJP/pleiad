@@ -105,10 +105,10 @@ export default async function (t) {
 
   // ---- Plus のセッションの値（core/redact.mjs の名前・ヘッダー・JWT・URL のクエリ）
   const jwt = `eyJ${'A'.repeat(12)}.${'B'.repeat(12)}.${'C'.repeat(12)}`;
-  const plusLine = `{"idToken":"${jwt}","refreshToken":"rt-xyz","id_token":"it-abc","refresh_token":"rt-abc","codeVerifier":"cv-123","code_verifier":"cv-456","state":"st-ok"} X-Pleiad-Account: uid-9 http://127.0.0.1:9/callback?code=secret-code&state=secret-state&keep=1 grant_type=refresh_token&refresh_token=r3fresh`;
+  const plusLine = `{"idToken":"${jwt}","refreshToken":"rt-xyz","id_token":"it-abc","refresh_token":"rt-abc","codeVerifier":"cv-123","code_verifier":"cv-456","state":"st-ok"} X-Pleiad-Account: uid-9 x-pleiad-ticket: tk-short http://127.0.0.1:9/callback?code=secret-code&state=secret-state&keep=1 grant_type=refresh_token&refresh_token=r3fresh`;
   const redPlus = redactSecrets(plusLine);
-  t.ok('Plus: JWT・名前付きの値（idToken/refreshToken/id_token/refresh_token/codeVerifier/code_verifier）・X-Pleiad-Account を伏せる',
-    !redPlus.includes(jwt) && !/rt-xyz|it-abc|rt-abc|cv-123|cv-456|uid-9|secret-code|secret-state|r3fresh/.test(redPlus) && redPlus.includes('X-Pleiad-Account: ***'), redPlus);
+  t.ok('Plus: JWT・名前付きの値（idToken/refreshToken/id_token/refresh_token/codeVerifier/code_verifier）・X-Pleiad-Account・X-Pleiad-Ticket を伏せる',
+    !redPlus.includes(jwt) && !/rt-xyz|it-abc|rt-abc|cv-123|cv-456|uid-9|tk-short|secret-code|secret-state|r3fresh/.test(redPlus) && redPlus.includes('X-Pleiad-Account: ***') && redPlus.includes('x-pleiad-ticket: ***'), redPlus);
   t.ok('Plus: 誤りの code・keep・state の名前は残す', redPlus.includes('"state":"st-ok"') && redPlus.includes('keep=***') && redPlus.includes('grant_type=refresh_token'), redPlus);
   t.ok('Plus: 誤りの code の値（invalid_grant）は伏せない', redactSecrets('{"error":{"code":"invalid_grant"}}') === '{"error":{"code":"invalid_grant"}}');
 

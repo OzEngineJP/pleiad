@@ -323,6 +323,18 @@ export default async function (t) {
       dropper.kill();
       await droppedClosed;
       isRuntimeInUse({ root: lockRoot, key });
+      // 普通に終わるときは exit で外す: 終了の後片付け（後から足した exit の処理）の間にも、もう使用中でない。
+      // OS が外すのはハンドルを閉じる終了の最後なので、PID が終わったと見えた直後も使用中に見えていた（本物のサーバーの試験が時々落ちた）
+      const exitSignal = path.join(scratch, 'lock-exit-signal');
+      const exiter = spawn(process.execPath, [path.join(ROOT, 'tests', 'lib', 'runtime-lock-holder.mjs'), lockRoot, key, 'exit', exitSignal], { stdio: ['pipe', 'pipe', 'inherit'] });
+      const exiting = await new Promise((resolve, reject) => { exiter.stdout.once('data', d => resolve(String(d).trim())); exiter.once('error', reject); exiter.once('exit', () => resolve('exit')); });
+      const exiterClosed = new Promise(resolve => exiter.once('exit', resolve));
+      exiter.stdin.end();
+      for (const end = Date.now() + 10_000; !exists(exitSignal) && Date.now() < end;) await new Promise(resolve => setTimeout(resolve, 10));
+      const leftDuringExit = listRuntimeLockKeys(lockRoot);
+      t.ok('使用中の印: 普通に終わるときは exit で外してファイルも消す（終了の後片付けの間に、もう使用中でない）',
+        exiting === 'held' && exists(exitSignal) && leftDuringExit.length === 0 && isRuntimeInUse({ root: lockRoot, key }) === false, `${exiting} keys=${leftDuringExit.join(',')}`);
+      await exiterClosed;
       // 壊れた印のファイル（SQLite でない）は持ち主のいない印として消す
       fs.mkdirSync(path.join(lockRoot, 'run'), { recursive: true });
       fs.writeFileSync(path.join(lockRoot, 'run', `${key}-999999.lock.db`), 'not a database');

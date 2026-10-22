@@ -30,12 +30,16 @@ const SUITES = [
   // Pleiad Plus（core/plus/）: セッション（ログイン・保管・更新・状態。偽の Plus だけと話す）と ID トークンの検証
   './unit/plus-session.mjs',
   './unit/plus-verify.mjs',
+  // 券（core/plus/tickets.mjs）: 取り方・確かめ方・公開鍵の覚え・jti の一度きり
+  './unit/plus-tickets.mjs',
   // Plus の操作（plus.status・voice.status・delegation.routing）: agent には uid・メールを出さない
   './unit/plus-ops-identity.mjs',
   // 設定 › Pleiad Plus（web/plus-settings.mjs）: 状態ごとの行とボタン・メニューの出し入れ（DOM の代役）
   './unit/plus-settings.mjs',
   // 設定 › Pleiad Plus の「同期」（web/plus-sync.mjs）: 状態ごとの行とボタン・時刻と MB の書式（DOM の代役）
   './unit/plus-sync-ui.mjs',
+  // 同期の「届いた変更」の面（web/plus-inbox.mjs）: 1 件ずつ開く・差分・取り込む／捨てる（DOM の代役）
+  './unit/plus-inbox-ui.mjs',
   './unit/remote-plus-ui.mjs',
   './unit/plus-hosts.mjs',
   // Plus の同期（core/plus/sync/）: 暗号・鍵の始め方と受け渡し・運ぶもの・2 台のホストの同期（偽の Plus と一時フォルダー）
@@ -43,6 +47,10 @@ const SUITES = [
   './unit/plus-sync-keys.mjs',
   './unit/plus-sync-targets.mjs',
   './unit/plus-sync-engine.mjs',
+  // 同期で届いた skill・指示ファイルの受け入れ待ち（取り込む・捨てる・手元の変更を上書きしない・中身の無い消した印を受けない）
+  './unit/plus-sync-inbox.mjs',
+  // 同期の鍵の受け渡しの承認（同期の券・確認コード・外した PC の締め出しと作り直し・回復・前の版の K からの移行）
+  './unit/plus-sync-admission.mjs',
   './unit/acp-error.mjs',
   './unit/slot-limits.mjs',
   './unit/opencode-v2.mjs',
@@ -774,6 +782,10 @@ const SUITES = [
   // つながり（link）の張り直し: 中継の障害のあらゆる失敗の仕方（拒否・DNS・shutdown・101 でない応答・headers の失敗）で張り直しが続く
   './unit/remote-reconnect.mjs',
   './unit/remote-plus.mjs',
+  // 端末の受け入れと取り消し（ADR 0248）: 同じアカウントの知らない鍵は承認の窓・取り消した鍵・一緒に外れる端末・ホストだけの操作・もう一度の許可
+  './unit/remote-admission.mjs',
+  // 券での中継と受け入れ: 制御の接続の券と accept・受け入れの券の確かめ（他のアカウント・鍵違い・使い回し）・更新の要求・前の版の api
+  './unit/remote-tickets.mjs',
   // 審査の招待（ADR 0172）: 同じコードで複数台・台数と 1 時間の上限・期限・取り消しと作り直しで端末が切れる・審査モードでしか作れない。中継とホストをこのプロセスで立てて往復する
   './unit/remote-review-invite.mjs',
   // 端末の AI からの委譲の口 /agent（ホスト側。core/remote/agent-port.mjs）: 許可・防火壁・委譲と状態・承認モードの継承と引き上げ・上限・承認の中継と人の答え・取り消し

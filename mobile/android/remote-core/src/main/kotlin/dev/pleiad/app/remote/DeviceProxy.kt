@@ -49,19 +49,25 @@ interface ProxyTexts {
 object DefaultTexts : ProxyTexts {
     override fun title(state: String) = when (state) {
         "revoked" -> "This device was revoked on the host"
+        "reapprove" -> "This device needs to be allowed again on the host"
         "blocked" -> "This account can't use the official relay"
         "limit" -> "This account has reached its limit"
         "paused" -> "Pleiad Plus is temporarily unavailable"
         "signed-out" -> "Not signed in"
+        "update" -> "Please update Pleiad"
+        "removed" -> "This PC was removed from the Plus account"
         else -> "Can't reach the host"
     }
     override fun body(state: String) = when (state) {
         "revoked" -> "Pair this device again."
+        "reapprove" -> "Select this PC in the host list and get it allowed on the host's screen."
         "host-offline" -> "Make sure Pleiad is running on the host. This page opens automatically once connected."
         "blocked" -> "This account can't use the official relay."
         "limit" -> "This account has reached its limit."
         "paused" -> "Pleiad Plus is temporarily unavailable. The connection will resume when it is available."
         "signed-out" -> "Sign in to Pleiad Plus to connect to this host."
+        "update" -> "This version of Pleiad can't use the official relay. Please update Pleiad."
+        "removed" -> "On that PC, select \"Register this PC again\" under Settings › Pleiad Plus to connect again."
         else -> "Can't reach the relay. Check your network. This page opens automatically once connected."
     }
     override fun tokenRequired() = "A token is required (open this from the app)"
@@ -85,6 +91,7 @@ class DeviceProxy(
     staticCacheFile: java.io.File? = null,
     plusIdToken: (() -> String?)? = null,
     plusReadmit: ((String) -> HostCreds?)? = null,
+    plusTicket: ((String, KeyPair) -> String?)? = null,
 ) {
     companion object {
         const val PROXY_COOKIE = "pleiad_remote_token"
@@ -113,7 +120,7 @@ class DeviceProxy(
         fun escapeHtml(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;")
     }
 
-    val link = DeviceLink(loop, creds, keyPair, app, name, shell, backoff, connectTimeoutMs, log = log, plusIdToken = plusIdToken, plusReadmit = plusReadmit)
+    val link = DeviceLink(loop, creds, keyPair, app, name, shell, backoff, connectTimeoutMs, log = log, plusIdToken = plusIdToken, plusReadmit = plusReadmit, plusTicket = plusTicket)
     private val wantPort = if (wantPort in 1024..65535) wantPort else 0
     @Volatile var port = 0; private set
     val token: String = PairingCodec.b64urlEncode(randomBytes(32))
@@ -132,6 +139,7 @@ class DeviceProxy(
     fun onStatus(fn: (LinkStatus) -> Unit) = link.onStatus(fn)
 
     fun updateCredentials(next: HostCreds) {
+        if (next == creds) return
         creds = next
         link.retryNow(next)
     }
@@ -182,9 +190,9 @@ class DeviceProxy(
         return ss
     }
 
-    fun retryNow(newCreds: HostCreds? = null) {
+    fun retryNow(newCreds: HostCreds? = null, newKeyPair: KeyPair? = null) {
         if (newCreds != null) creds = newCreds
-        link.retryNow(newCreds)
+        link.retryNow(newCreds, newKeyPair)
     }
 
     fun close() {
@@ -287,7 +295,9 @@ class DeviceProxy(
     }
 
     fun unavailablePage(state: String): String {
-        val revoked = state == "revoked"
+        // no automatic reload while the host refuses this device (revoked, or waiting to be allowed again), or the PC
+        // was removed from the Plus account
+        val revoked = state == "revoked" || state == "reapprove" || state == "removed"
         val title = texts.title(state)
         val body = texts.body(state)
         val hostName = creds.hostName

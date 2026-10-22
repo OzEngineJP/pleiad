@@ -50,8 +50,7 @@ private class FakeStore : PlusSession.SessionStore {
 
 private const val TAG = "android/0.1.0-test"
 
-private fun sessionOf(store: FakeStore, sleeps: MutableList<Long> = mutableListOf(), now: () -> Long = { 1_000_000L }) =
-    PlusSession(store, nowMs = now, sleepMs = { sleeps.add(it) })
+private fun sessionOf(store: FakeStore, now: () -> Long = { 1_000_000L }) = PlusSession(store, nowMs = now)
 
 private fun bundle(idToken: String = "id-1", refreshToken: String = "refresh-1", expiresAtMs: Long = 1_000_000L + 3600_000) =
     TokenBundle(idToken, refreshToken, expiresAtMs, uid = "u1", email = "user@example.com", tokenProjectId = "test-project", apiKey = "test-api-key")
@@ -149,29 +148,51 @@ class PlusSessionTest {
         val api = api()
         api.respond = { 503 to "{}" }
         val store = FakeStore()
-        val sleeps = mutableListOf<Long>()
-        val s = sessionOf(store, sleeps)
-        s.signIn(bundle(expiresAtMs = 1_000_000L + 4 * 60_000L))
-        s.idToken(api.url)
-        assertEquals(5, api.hits.size)
-        assertEquals(List(4) { 60_000L }, sleeps)
+        var clock = 1_000_000L
+        val s = sessionOf(store, now = { clock })
+        s.signIn(bundle(expiresAtMs = clock + 4 * 60_000L))
+        repeat(5) { i ->
+            s.idToken(api.url)
+            assertEquals(i + 1, api.hits.size)
+            clock += 59_000L
+            s.idToken(api.url) // inside the gap: no new try
+            assertEquals(i + 1, api.hits.size)
+            clock += 1_000L
+        }
         assertEquals("unreachable", s.error)
         // the budget is spent: a non-forced ask does not retry
         s.idToken(api.url)
         assertEquals(5, api.hits.size)
-        // a UI poke tries again
+        // a UI poke tries again, once
         s.idToken(api.url, force = true)
-        assertEquals(10, api.hits.size)
+        assertEquals(6, api.hits.size)
+    }
+
+    // The screen waits on these calls (picking a host, the host list): a failed refresh tries once and returns.
+    // It never sleeps for the retry gap while holding the session, which kept every other ask waiting for minutes.
+    @Test fun aFailedRefreshReturnsAtOnceAndLetsOthersIn() {
+        val api = api()
+        api.respond = { 503 to "{}" }
+        val store = FakeStore()
+        val s = sessionOf(store)
+        s.signIn(bundle(expiresAtMs = 1_000_000L + 4 * 60_000L))
+        val started = System.nanoTime()
+        assertEquals("the token it has", "id-1", s.idToken(api.url, force = true))
+        assertEquals(1, api.hits.size)
+        assertTrue("returns at once", System.nanoTime() - started < 5_000_000_000L)
+        assertEquals("unreachable", s.error)
+        // a background ask right after waits for the retry time instead of asking again
+        assertEquals("id-1", s.idToken(api.url))
+        assertEquals(1, api.hits.size)
     }
 
     @Test fun networkErrorsRetryThenGiveUp() {
         val dead = api().also { it.stop() }.url
         val store = FakeStore()
-        val sleeps = mutableListOf<Long>()
-        val s = sessionOf(store, sleeps)
-        s.signIn(bundle(expiresAtMs = 1_000_000L + 4 * 60_000L))
-        s.idToken(dead)
-        assertEquals(List(4) { 60_000L }, sleeps)
+        var clock = 1_000_000L
+        val s = sessionOf(store, now = { clock })
+        s.signIn(bundle(expiresAtMs = clock + 4 * 60_000L))
+        repeat(6) { s.idToken(dead); clock += 60_000L }
         assertEquals("unreachable", s.error)
         assertTrue(s.signedIn()) // a network problem does not drop the session
     }

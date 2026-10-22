@@ -8,6 +8,8 @@
     <string name="remote_revoked">This device was revoked on the host</string>
     <string name="remote_host_offline">Can\'t reach the host</string>
     <string name="remote_page_revoked">Pair this device again.</string>
+    <string name="remote_reapprove">This device needs to be allowed again on the host</string>
+    <string name="remote_page_reapprove">Select this PC in the host list and get it allowed on the host\'s screen.</string>
     <string name="remote_page_host_offline">Make sure Pleiad is running on the host. This page opens automatically once connected.</string>
     <string name="remote_page_offline">Can\'t reach the relay. Check your network. This page opens automatically once connected.</string>
     <string name="remote_plus_blocked">This account can\'t use the official relay</string>
@@ -20,6 +22,10 @@
     <string name="remote_page_plus_maintenance">Pleiad Plus is under maintenance. The connection will resume when it is available.</string>
     <string name="remote_plus_signed_out">Not signed in</string>
     <string name="remote_page_plus_signed_out">Sign in to Pleiad Plus to connect to this host.</string>
+    <string name="remote_plus_update">Please update Pleiad</string>
+    <string name="remote_page_plus_update">This version of Pleiad can\'t use the official relay. Please update Pleiad.</string>
+    <string name="remote_plus_removed">This PC was removed from the Plus account</string>
+    <string name="remote_page_plus_removed">On that PC, select \"Register this PC again\" under Settings › Pleiad Plus to connect again.</string>
     <string name="remote_token_required">A token is required (open this from the app)</string>
     <string name="remote_lost">Lost the connection to the host</string>
     <string name="remote_back_to_hosts">Back to hosts</string>
@@ -54,6 +60,9 @@
     <string name="notify_public_failed">Work failed in a conversation</string>
     <string name="notify_public_schedule_missed">Check the scheduled message</string>
     <string name="notify_public_done">A conversation finished</string>
+    <!-- A new device waits on the host's approval window (notice only: it is allowed on the host's screen) -->
+    <string name="notify_device_body">Device \"%1$s\" is waiting to be allowed</string>
+    <string name="notify_public_device">A device is waiting to be allowed</string>
     <string name="notify_battery_title">Keep notifications reliable</string>
     <string name="notify_battery_message">Battery optimization can delay notifications while the screen is off. Open the setting to exclude Pleiad?</string>
     <string name="notify_battery_open">Open settings</string>

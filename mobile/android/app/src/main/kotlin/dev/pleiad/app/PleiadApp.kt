@@ -9,6 +9,8 @@ import dev.pleiad.app.remote.NotifyHub
 import dev.pleiad.app.remote.ProxyTexts
 import dev.pleiad.app.remote.RemoteDevice
 import dev.pleiad.app.plus.PlusAdmission
+import dev.pleiad.app.plus.PlusApiError
+import dev.pleiad.app.remote.KeyPair
 import dev.pleiad.app.remote.PairError
 import java.io.File
 
@@ -22,7 +24,8 @@ class PleiadApp : Application() {
 
     /** The notification lines and what arrives on them (ADR 0086). Started by [NotifyService]; idle until notifications are on. */
     val notifyHub: NotifyHub by lazy {
-        NotifyHub(device.store, device.loop, BuildConfig.VERSION_NAME, deviceName(), NotifyPresenter(this), log = { Log.i("Pleiad", it) }, plusIdToken = { plus.currentIdToken() })
+        NotifyHub(device.store, device.loop, BuildConfig.VERSION_NAME, deviceName(), NotifyPresenter(this), log = { Log.i("Pleiad", it) },
+            plusIdToken = { plus.currentIdToken() }, plusTicket = ::relayTicket)
     }
 
     override fun onCreate() {
@@ -31,19 +34,25 @@ class PleiadApp : Application() {
             override fun locale() = resources.configuration.locales[0].language
             override fun title(state: String) = getString(when (state) {
                 "revoked" -> R.string.remote_revoked
+                "reapprove" -> R.string.remote_reapprove
                 "blocked" -> R.string.remote_plus_blocked
                 "limit" -> R.string.remote_plus_limit
                 "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_plus_maintenance else R.string.remote_plus_paused
                 "signed-out" -> R.string.remote_plus_signed_out
+                "update" -> R.string.remote_plus_update
+                "removed" -> R.string.remote_plus_removed
                 else -> R.string.remote_host_offline
             })
             override fun body(state: String) = getString(
                 when (state) {
                     "revoked" -> R.string.remote_page_revoked
+                    "reapprove" -> R.string.remote_page_reapprove
                     "blocked" -> R.string.remote_page_plus_blocked
                     "limit" -> R.string.remote_page_plus_limit
                     "paused" -> if (plus.stateJson().optString("plus") == "maintenance") R.string.remote_page_plus_maintenance else R.string.remote_page_plus_paused
                     "signed-out" -> R.string.remote_page_plus_signed_out
+                    "update" -> R.string.remote_page_plus_update
+                    "removed" -> R.string.remote_page_plus_removed
                     "host-offline" -> R.string.remote_page_host_offline
                     else -> R.string.remote_page_offline
                 },
@@ -61,12 +70,17 @@ class PleiadApp : Application() {
             log = { Log.i("Pleiad", it) },
         )
         device.plusIdToken = { plus.currentIdToken() }
+        device.plusTicket = ::relayTicket
         device.plusReadmit = { hostId ->
             val host = plus.cachedHosts().hosts.firstOrNull { it.hostId == hostId } ?: throw PairError("couldnt-connect")
             val token = plus.currentIdToken() ?: throw PairError("plus-signed-out")
             val relay = plus.currentRelayUrl() ?: throw PairError("unreachable")
-            PlusAdmission.admit(host, relay, token, device.store.identity(), deviceName(), BuildConfig.VERSION_NAME)
-                .copy(uid = plus.currentUid()).also { device.store.saveHost(it, "plus", plus.currentUid()) }
+            // reconnecting in the background: only a key the host already allowed gets back in (no approval window)
+            device.admitPlus(hostId, PlusAdmission.MODE_ADMIT, plus.currentUid()) { kp ->
+                PlusAdmission.admit(host, relay, token, kp, deviceName(), BuildConfig.VERSION_NAME,
+                    ticket = { plus.deviceTicket(hostId, kp) }).copy(uid = plus.currentUid())
+            }
+            device.store.credentials(hostId, "plus")
         }
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             private var started = 0
@@ -83,6 +97,10 @@ class PleiadApp : Application() {
             override fun onActivityDestroyed(activity: android.app.Activity) {}
         })
     }
+
+    /** The relay ticket (role device) for one connection; null when the api has no tickets yet. Blocking. */
+    private fun relayTicket(hostId: String, keyPair: KeyPair): String? =
+        try { plus.deviceTicket(hostId, keyPair)?.relay } catch (e: PlusApiError) { throw PlusAdmission.ticketError(e) }
 
     fun deviceName(): String =
         Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME)?.takeIf { it.isNotBlank() }

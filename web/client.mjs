@@ -369,7 +369,9 @@ const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args
   visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
-  time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
+  time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState(),
+  // モバイルの殻: 線が止まった案内から、ホストの一覧へ戻れる（殻の plyRemote は文書の頭で入る）
+  leave: remoteInfo(window.plyRemote)?.shell === "mobile" && typeof window.plyRemote.backToHosts === "function" ? () => window.plyRemote.backToHosts() : null });
 // 作ったばかりで、いま select している会話の id。開き直しと違い入力欄が正本（saveDraft・送信の予約・送信ボタンが見る）
 let freshSessionId = null;
 // 新しい会話を作っている間に押された送信の予約（submit）。「取り消す」で null
@@ -384,8 +386,8 @@ let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
 let shellStopped = false;
 const watchingNow = () => !shellStopped && document.visibilityState === 'visible';
-const completionNotifications = createCompletionNotifications({ openSession: id => select(id),
-  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id });
+const completionNotifications = createCompletionNotifications({ openSession: id => select(id), openSettings: page => openSettingsPage(page),
+  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id, isFocused: () => watchingNow() && document.hasFocus() });
 
 let ws = null;
 let seq = 0;
@@ -3334,7 +3336,11 @@ function onEvent(ev, replay = false) {
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
-  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); residentSettings.event(ev); return; }
+  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') {
+    // 端末の追加の承認待ちは、ホストの画面だけが OS の通知でも知らせる（端末の画面では許可できない）
+    if (ev.type === 'remotePairing' && ev.phase === 'request' && state.osActions === true) completionNotifications.deviceWaiting(ev.request);
+    remoteSettings.event(ev); residentSettings.event(ev); return;
+  }
   // Pleiad Plus のアカウントの状態（設定 › Pleiad Plus）
   if (ev.type === 'plusStatus') { plusSettings.event(ev); remoteSettings.event(ev); return; }
   if (ev.type === 'plusSyncStatus') { plusSettings.event(ev); return; }
@@ -9296,7 +9302,22 @@ async function openFromSearch(id, jump) {
  */
 async function openFromNotification(target) {
   if (narrowView.matches) setDrawer(false);
+  // 同期で届いた変更（ADR 0246）は 設定 › Pleiad Plus の「届いた変更」、鍵を待つ PC（同期の鍵の承認）は Plus の面を開く
+  if (target?.settings === 'plus') {
+    if ($('onboardingDialog').open) $('onboardingDialog').close();
+    onboarding.open('plus');
+    if (target.pane === 'inbox') plusSettings.openInbox();
+    else plusSettings.openMain();
+    return;
+  }
+  // 端末の承認待ち（ADR 0248）は 設定 › リモート
+  if (target?.settings) { openSettingsPage(target.settings); return; }
   await viewAddress.go(target);
+}
+/** 設定のそのページを開く（通知から。リモートなら状態も読み直す） */
+function openSettingsPage(page) {
+  onboarding.open(page);
+  if (page === 'remote') remoteSettings.refresh();
 }
 
 /**
@@ -10137,6 +10158,7 @@ function connect() {
         // エージェントのブラウザー（PC の Chrome）への接続の入口。使える環境なら今の状態を取る（設定 › ブラウザー）
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
+        remoteSettings.setHostScreen(state.osActions);
         filePreview.osChanged();
         syncAttachButton();
         renderAttached();
@@ -10574,11 +10596,14 @@ updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: o
 // 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。
 // 設定の間は引き出しの見た目が効かないので、閉じないと「会話に戻る」で会話ではなく引き出しが出ていた
 function openSettings() { setDrawer(false); onboarding.open(); }
-/** リモートの窓: 中継・ホストにつながらない間は、切れた一行もバッジと同じ理由の語で書く（web/remote-badge.mjs の状態） */
+/**
+ * リモートの窓: 線の状態（web/remote-badge.mjs と同じ値）を接続の状態へ渡す。中継・ホストにつながらない間は理由の語で、
+ * 取り消し・外された・止められた ほかは「何が起きたか・どうすればよいか」、Plus が止まっている間は待っている旨を出す
+ */
 function watchRemoteReason() {
   const remote = window.plyRemote;
   if (!remoteInfo(remote)) return;
-  const apply = (s) => connStatus.setReason(s?.state === "offline" ? "relay" : s?.state === "host-offline" ? "host" : null);
+  const apply = (s) => connStatus.setRemoteState(s?.state ?? null);
   Promise.resolve(remote.status?.()).then(apply).catch(() => {});
   remote.onStatus?.(apply);
 }
