@@ -923,6 +923,8 @@ const SUITES = [
   './unit/release-bump.mjs',
   // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
   './unit/android-play-workflow.mjs',
+  // TestFlight へ上げるワークフロー: main の iOS の変更と手動で動き、試験の後に Android と同じ版の決め方で上げる（docs/ios.md「TestFlight への自動の配布」）
+  './unit/ios-testflight-workflow.mjs',
   // --- 通話モード (core/voice/、web/voice/。docs/voice-call.md) ---
   // 中核: PCM・WAV・先頭の無音・発話の区切り（無音・短い声・最長・投機・片）・片の重なりの除去・設定の検査・使用量の台帳
   './unit/voice-core.mjs',

@@ -1,0 +1,119 @@
+# iOS の殻を署名して TestFlight へ上げる（docs/ios.md「TestFlight への自動の配布」）。
+#
+# main への push で iOS に効く変更があったとき（android-release.yml と同じ考え方）と、手動の起動（workflow_dispatch）で動く。
+# どちらも main の上でしか上げない。先に ios-app.yml の試験（シミュレーターのビルドと Keychain の試験）を通す。
+# ビルド番号（CFBundleVersion）は Android の versionCode と同じ git rev-list --count HEAD、
+# 版（CFBundleShortVersionString）は mobile/package.json の version。同じビルド番号が App Store Connect に
+# もうあれば、何もせずに正常終了する（同じコミットのやり直しで二重に上げない）。
+name: iOS TestFlight
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/ios/**'
+      - 'mobile/www/**'
+      - 'mobile/capacitor.config.json'
+      - 'mobile/package.json'
+      - 'mobile/package-lock.json'
+      - 'mobile/scripts/ios-testflight.sh'
+      - 'mobile/scripts/asc-build.mjs'
+      - '.github/workflows/ios-testflight.yml'
+      - '!mobile/ios/App/AppTests/**'
+      - '!mobile/ios/remote-core/Tests/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+jobs:
+  test:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ios-app.yml
+  upload:
+    needs: test
+    # 署名・ストアの Secrets は Environment「release」にだけ置く（main と v* のタグからしか使えない。ADR 0214）
+    environment: release
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      # 重い手順の前に、Secrets を確かめる（足りなければ名前を出して止まる。値は出さない）
+      - name: Check secrets
+        env:
+          REF: ${{ github.ref }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+        run: |
+          fail() { echo "::error::$1 (docs/ios.md)"; exit 1; }
+          [ "$REF" = "refs/heads/main" ] || fail "Run this workflow on main (got $REF)"
+          missing=""
+          for name in IOS_TEAM_ID IOS_DISTRIBUTION_P12_BASE64 IOS_DISTRIBUTION_P12_PASSWORD IOS_PROVISION_PROFILE_BASE64 ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_BASE64; do
+            [ -n "${!name}" ] || missing="$missing secrets.$name"
+          done
+          [ -z "$missing" ] || fail "TestFlight upload is not configured. Empty:$missing"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      # android-release.yml の「Decide version」と同じ決め方（tests/unit/ios-testflight-workflow.mjs が突き合わせる）
+      - name: Decide version
+        id: version
+        run: |
+          code=$(git rev-list --count HEAD)
+          base=$(node -p "require('./mobile/package.json').version")
+          bundle=$(node -p "require('./mobile/capacitor.config.json').appId")
+          { echo "code=$code"; echo "base=$base"; echo "bundle=$bundle"; } >> "$GITHUB_OUTPUT"
+          echo "Uploading $bundle $base ($code) to TestFlight"
+      - name: Check App Store Connect
+        id: asc
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+          BUNDLE: ${{ steps.version.outputs.bundle }}
+          CODE: ${{ steps.version.outputs.code }}
+        run: node mobile/scripts/asc-build.mjs --bundle-id "$BUNDLE" --build "$CODE"
+      - name: Install and sync
+        if: steps.asc.outputs.exists != 'true'
+        working-directory: mobile
+        run: |
+          npm ci
+          npm run sync:ios
+      - name: Archive and upload to TestFlight
+        if: steps.asc.outputs.exists != 'true'
+        env:
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+          IOS_BUNDLE_ID: ${{ steps.version.outputs.bundle }}
+          IOS_BUILD_NUMBER: ${{ steps.version.outputs.code }}
+          IOS_MARKETING_VERSION: ${{ steps.version.outputs.base }}
+        run: bash mobile/scripts/ios-testflight.sh
+      - name: Summary
+        if: success()
+        env:
+          EXISTS: ${{ steps.asc.outputs.exists }}
+          BUNDLE: ${{ steps.version.outputs.bundle }}
+          BASE: ${{ steps.version.outputs.base }}
+          CODE: ${{ steps.version.outputs.code }}
+        run: |
+          if [ "$EXISTS" = "true" ]; then
+            echo "$BUNDLE $BASE ($CODE) は App Store Connect にもうあるので、上げませんでした。" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "$BUNDLE $BASE ($CODE) を TestFlight へ上げました。App Store Connect の処理が終わると TestFlight に出ます。" >> "$GITHUB_STEP_SUMMARY"
+          fi
