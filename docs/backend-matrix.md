@@ -58,3 +58,5 @@ Devin の plyContext は配達経路を表す。Pleiad担当分のネイティ�
 | 次の発言候補の生成（ネイティブまたは suggestNext） | ✓ | ✓ | ✓ | — | — | — |
 | 会話タイトル候補の生成（suggestTitle） | ✓ | ✓ | — | — | — | — |
 | プロバイダーの使用枠の取得口（usage。取得できる値はCLI・契約による） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 裏のコマンドを作業ダイアログから止める（stopBackground） | ✓ | ✓ | ✓ | — | — | — |
+| 裏のコマンドの出力を作業ダイアログで読む（getBackgroundTask → backgroundDetails） | ✓ | ✓ | — | — | — | — |

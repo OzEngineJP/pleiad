@@ -98,6 +98,7 @@
     "claude-rewind": 356,
     "claude-steer-stop": 766,
     "claude-turn-end": 300,
+    "claude-background-output": 300,
     "claude-usage-delta": 207,
     "cli-launcher": 1809,
     "codex-background": 3,

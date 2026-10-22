@@ -11,7 +11,8 @@
 //   { mcp: { server, tool, arguments } }          SDK の MCP（in-process の host など）のツールを mcp_message で呼ぶ
 //   { http: { server, tool, arguments } }         --mcp-config の HTTP の MCP（ply_context など）のツールを呼ぶ。tool は説明の頭（"[fixture / count]" など）で探す
 //   { compact: true, gate? }    圧縮: PreCompact のコールバック（gate までは答えを待つ形にする）→ compact_boundary → PostCompact
-//   { bg: { gate } }            裏のコマンドを始める（gate が開くと終わり、main が再開して一言答える）
+//   { bg: { gate, description?, command?, everyMs?, prefill? } }  裏のコマンドを始める（gate が開くと終わり、main が再開して一言答える）。
+//                               command は Bash の tool_use の入力。出力は prefill 行から everyMs ごとに 1 行増え、get_task_output で読める。stop_task で止まる
 // 途中送信（uuid つきの user）は次のツールの区切りで折り込み、isReplay の echo を返し、最後の本文に「受け取った: <本文>」を足す。
 // --version は "2.1.288 (Claude Code)"、auth status は ログイン済みの JSON を返す。
 import fs from 'node:fs';
@@ -106,6 +107,17 @@ const waitGate = async name => { while (!interrupted && !fs.existsSync(path.join
 const queue = [];            // 発言・途中送信 { text, uuid }
 let busy = false, ended = false, interrupted = false;
 const background = new Map();   // task_id -> { task_id, task_type, description }
+const outputs = new Map();      // task_id -> { at, everyMs, prefill, endedAt }。裏のコマンドの出力（get_task_output）。終わった後も残す
+/** 裏のコマンドの出力。everyMs ごとに 1 行増える（色の制御文字つき）。本物と同じく末尾 8 KiB と全体の大きさを返す */
+function taskOutput(id) {
+  const o = outputs.get(id);
+  const n = Math.floor(((o.endedAt ?? Date.now()) - o.at) / o.everyMs) + 1 + o.prefill;
+  const lines = Array.from({ length: n }, (_, i) => `\x1b[32mline ${i + 1}\x1b[0m`);
+  const all = `${lines.join('\n')}\n${o.endedAt ? 'finished\n' : ''}`;
+  const bytes = Buffer.from(all, 'utf8');
+  const TAIL = 8192;
+  return { output: bytes.subarray(Math.max(0, bytes.length - TAIL)).toString('utf8'), total_bytes: bytes.length, truncated: bytes.length > TAIL };
+}
 let folded = [];             // このターンに折り込んだ途中送信の本文
 let lastText = '';
 
@@ -201,11 +213,17 @@ async function turn(item) {
       const id = `bg_${uuid().slice(0, 8)}`;
       const task = { task_id: id, task_type: 'local_bash', description: step.bg.description ?? 'fake background' };
       background.set(id, task);
-      out({ type: 'system', subtype: 'task_started', task_id: id, task_type: 'local_bash', description: task.description, is_backgrounded: true, session_id: sessionId, uuid: uuid() });
+      outputs.set(id, { at: Date.now(), everyMs: step.bg.everyMs ?? 300, prefill: step.bg.prefill ?? 0, endedAt: null });
+      // command があれば、本物と同じく Bash（run_in_background）の tool_use から始め、task_started の tool_use_id でつなぐ
+      const toolId = step.bg.command ? `toolu_${uuid().slice(0, 8)}` : null;
+      if (toolId) out({ type: 'assistant', message: { id: `msg_${uuid()}`, role: 'assistant', model: MODEL, content: [{ type: 'tool_use', id: toolId, name: 'Bash', input: { command: step.bg.command, description: task.description, run_in_background: true } }] }, parent_tool_use_id: null, session_id: sessionId, uuid: uuid() });
+      out({ type: 'system', subtype: 'task_started', task_id: id, task_type: 'local_bash', description: task.description, ...(toolId ? { tool_use_id: toolId } : {}), is_backgrounded: true, session_id: sessionId, uuid: uuid() });
+      if (toolId) out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: `Command running in background with ID: ${id}` }] }, parent_tool_use_id: null, session_id: sessionId, uuid: uuid() });
       bgChanged();
       void waitGate(step.bg.gate).then(() => {
         if (!background.has(id)) return;
         background.delete(id);
+        outputs.get(id).endedAt = Date.now();
         out({ type: 'system', subtype: 'task_notification', task_id: id, status: 'completed', summary: 'done', session_id: sessionId, uuid: uuid() });
         bgChanged();
         enqueue({ text: '<task-notification>', uuid: uuid(), notice: true });
@@ -288,6 +306,22 @@ function onControlRequest(m) {
     case 'get_context_usage': reply({ totalTokens: 1000, rawMaxTokens: 200_000, memoryFiles: [] }); return;
     case 'mcp_status': reply({ mcpServers: [] }); return;
     case 'get_settings': reply({ applied: {} }); return;
+    case 'get_task_output':
+      if (!outputs.has(req.task_id)) { out({ type: 'control_response', response: { subtype: 'error', request_id: m.request_id, error: `No task found with ID: ${req.task_id}` } }); return; }
+      reply(taskOutput(req.task_id));
+      return;
+    case 'stop_task': {
+      // 止めると stopped の完了通知と一覧の更新を出し、main を再開させる（tests/unit/claude-turn-end.mjs の形）
+      const id = req.task_id;
+      if (background.delete(id)) {
+        outputs.get(id).endedAt = Date.now();
+        out({ type: 'system', subtype: 'task_notification', task_id: id, status: 'stopped', summary: 'stopped', session_id: sessionId, uuid: uuid() });
+        bgChanged();
+        enqueue({ text: '<task-notification>', uuid: uuid(), notice: true });
+      }
+      reply({});
+      return;
+    }
     default: reply({}); return;
   }
 }

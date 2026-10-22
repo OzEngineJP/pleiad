@@ -547,7 +547,18 @@ backend.getBackgroundTask?.(sessionId, taskId) // WS loadBackground から端末
 CLI は `status: "stopped"` の `task_notification` を返し、tracker がそれで一覧から消す（**先回りして印を消さない**）。
 SDK の `perTaskStopAffordance` は**宣言しない**。宣言すると中断（interrupt）がバックグラウンドのタスクを
 殺さなくなり、「中断はターンごと」の約束が変わってしまう。`stopTask` はこの宣言なしで効く。
-出力の取得（`getBackgroundTask`）は持たないので、詳細は「出力の取得に対応していません」と出る。
+
+**Claude の出力の取得**（`getBackgroundTask`、2026-10）: 同じく走っている `query` の `Query.getTaskOutput(taskId)`
+（control の `get_task_output`。SDK 0.3.288 で実在。`sdk.d.ts` の `Query` には宣言が無いので `typeof` で確かめて呼ぶ）。
+返り値は `{ output, total_bytes, truncated }` で、`output` は**末尾 8 KiB**（UTF-8・端末の制御文字を含む）。
+シェルと Monitor のタスクが対象で、走っている間も終わった直後も読める。知らない id・シェル以外は CLI が断る（null を返す）。
+Pleiad は制御文字を落とし（`stripAnsi`）、`outputTruncated` と `outputTotalBytes`（画面の「出力は末尾のみ（全体 10.8 KB）」）を付ける。
+コマンドの本文は SDK の `description` ではなく、`task_started` の `tool_use_id` でつないだ Bash の `tool_use` の `input.command`
+（tracker の `taskDetail`）。状態・時刻も tracker から引く。サブエージェント（`kind: "agent"`）は出力ではなく `loadSubagent` で読むので null。
+一覧から外れた（完了通知の来た）タスクも、ターンが走っている間は server が走っているターンのバックエンドへ尋ね、最後の出力を 1 回読める。
+ターンが終わると `Query` を手放すので null（画面は最後に取った出力と「終了」を残す）。
+試験は `tests/unit/claude-background-output.mjs`（SDK の身代わり）と `tests/browser/claude-background-output.mjs`
+（偽の CLI `tests/lib/fake-claude-cli.mjs` が `get_task_output`・`stop_task` に本物と同じ口で答える）。
 
 `sessionId` は**Pleiad の会話 id**（`runTurn` の `hostSessionId`）。バックエンドを乗り換えた会話では
 ネイティブ id と別物なので、通知を引く鍵と報告先を分けて持つこと。
