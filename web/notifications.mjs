@@ -14,7 +14,8 @@ const SETTINGS_TARGET = 'settings:';
  * この PC の通知（デスクトップ版の OS 通知・ブラウザーの Notification）。
  * settings は設定 › 通知 › この PC（{ done, reply, failed }。切った種類は出さない）、
  * isViewing(sessionId) はその会話を今見ているか（見ている間は出さない。ADR 0086）、
- * isFocused() は Pleiad の窓を見て操作しているか（承認の窓が目の前に出るので、端末の追加の通知は出さない）、
+ * isFocused() は Pleiad の窓を見て操作しているか（承認の窓が目の前に出るので、端末の追加の通知は出さない。
+ * デスクトップ版では使わない: 裏で起動した窓でも hasFocus が true になるので、本体が OS の前面の窓で決める）、
  * openSettings(page) は設定のそのページを開く
  */
 export function createCompletionNotifications({ host = window, openSession, openSettings = () => {}, settings = () => ({ done: true, reply: true, failed: true }),
@@ -77,7 +78,7 @@ export function createCompletionNotifications({ host = window, openSession, open
     deviceWaiting(request) {
       if (!request?.id || seenReplies.has(`device:${request.id}`)) return;
       seenReplies.add(`device:${request.id}`);
-      if (!settings().reply || isFocused()) return;
+      if (!settings().reply || (!host.plyDesktop?.notifyCompletion && isFocused())) return;
       const name = String(request.name || t('settings.remote.devices.unnamed')).slice(0, 100);
       show({ kind: 'device', noticeId: request.id, sessionId: `${SETTINGS_TARGET}remote`, title: t('notify.deviceWaiting'), body: t('notify.deviceBody', { name }) });
     },

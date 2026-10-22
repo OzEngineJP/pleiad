@@ -49,7 +49,8 @@ class RemovedHostTest {
     }
 
     // A disabled account / an account not on Plus (PairError("plus-no-relay")) stops like the relay's 4401 'account';
-    // Plus being paused (PairError("plus-paused")) is told as "paused", like the relay's 4401 'plus unavailable'
+    // Plus being paused (PairError("plus-paused")) is told as "paused", like the relay's 4401 'plus unavailable', and asked again
+    // only after a while (UnchangedCredsTest)
     @Test fun theDeviceLinkStopsWhenTheAccountOrPlusIsStopped() {
         for ((code, want) in listOf("plus-no-relay" to "blocked", "plus-paused" to "paused")) {
             val loop = Loop("test-loop")

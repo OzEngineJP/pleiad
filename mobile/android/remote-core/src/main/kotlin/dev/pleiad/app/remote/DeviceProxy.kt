@@ -139,6 +139,7 @@ class DeviceProxy(
     fun onStatus(fn: (LinkStatus) -> Unit) = link.onStatus(fn)
 
     fun updateCredentials(next: HostCreds) {
+        if (next == creds) return
         creds = next
         link.retryNow(next)
     }

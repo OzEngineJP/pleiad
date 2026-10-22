@@ -271,6 +271,28 @@ export default async function (t) {
     const closed2 = await acc2.closed;
     t.ok('via:plus の端末が own の link から来ても 4401 revoked', closed2.code === 4401 && closed2.reason === 'revoked', JSON.stringify(closed2));
 
+    // ---- 張り直しの見直しが続けて来ても、試みは重ねない。provider には open した試みのヘッダーを渡す
+    let wantPlus = false;
+    let headerCalls = 0;
+    const opened = [];
+    await host.setPlusProvider(plusProvider(fake.url, {
+      ready: () => wantPlus,
+      async headers() {
+        const n = ++headerCalls;
+        // 先に始めた試みほど遅く返す（券の取りに時間がかかる）
+        await sleep(n === 1 ? 300 : 20);
+        return { authorization: `Bearer ${SECRET2}`, 'x-pleiad-host': (await host.store.identity()).hostId, 'x-test-attempt': String(n) };
+      },
+      onOpen: h => opened.push(h['x-test-attempt']),
+    }));
+    await until(async () => (await host.status()).links.plus.state === 'disabled', 5000, 'ready が false の plus は disabled');
+    wantPlus = true;
+    for (let i = 0; i < 5; i++) host.refreshPlus();
+    await until(async () => (await host.status()).links.plus.state === 'connected' && fake.hasControl(), 10_000, '続けた見直しの後につながる');
+    await sleep(400);
+    t.ok('見直しが続けて来ても、つなぐ試みは 1 つだけ（ヘッダーを 1 回だけ取る）', headerCalls === 1, String(headerCalls));
+    t.ok('provider の onOpen には、open した試みのヘッダーを渡す', opened.length === 1 && opened[0] === String(headerCalls), JSON.stringify(opened));
+
     // ---- setPlusProvider(null) で plus だけ閉じる
     const ownSince = (await host.status()).links.own.since;
     await host.setPlusProvider(null);

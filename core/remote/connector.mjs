@@ -176,7 +176,9 @@ export function createRemoteHost({
   // 1 本ぶんの状態: phase（disabled | connecting | connected | retrying | error）・error・since・retryAt・
   // generation・control・attempt・retryTimer・pingTimer・dataConns。
   // 中継の URL・張るときのヘッダー・引き受ける端末・ペアリングを受けるかは provider が決める:
-  //   { name, ready(), url(path), headers({ accept }), owns(device), allowPairing, onIncomingAdmit?(ctx), onClose?(code, reason) }
+  //   { name, ready(), url(path), headers({ accept }), owns(device), allowPairing, onIncomingAdmit?(ctx), onOpen?(headers), onClose?(code, reason) }
+  // 試みは 1 本ずつ（inFlight）。headers() を待つ間も張る途中で、見直しが来ても別の試みを重ねない。
+  // onOpen(headers) は、制御の接続が開いた試みのヘッダーを渡す（捨てた試みのヘッダーは渡らない。accept はこれを使う）。
   // headers() が linkError（{ code, message }）の付いた誤りを投げたら、張り直さずに error で止まる。
   // linkRetry（{ code, message }）なら、その誤りを出して今の backoff で張り直す（待つ）。
   // onClose() は null・'retry'（今と同じ張り直し）・{ error }（止まる）・{ retry: { code, message } }（その誤りを出して待つ）を返す。
@@ -196,7 +198,7 @@ export function createRemoteHost({
   const makeLink = (name, provider) => ({
     name, provider,
     phase: 'disabled', error: null, since: Date.now(), retryAt: null,
-    generation: 0, control: null, controlOpenedAt: 0, attempt: 0,
+    generation: 0, control: null, controlOpenedAt: 0, attempt: 0, inFlight: null,
     retryTimer: null, pingTimer: null, dataConns: new Set(),
   });
   const links = { own: makeLink('own', ownProvider), plus: makeLink('plus', null) };
@@ -213,6 +215,8 @@ export function createRemoteHost({
 
   /** provider の ready() を状態に写す。張ってよい link なら true。 */
   function linkWanted(link) {
+    // plus.connect を切った設定は、provider がまだ知らなくても張らない（切るときに一度張り直してから止まらないよう）
+    if (link === links.plus && !cfg.plusConnect) { setLinkPhase(link, 'disabled'); return false; }
     const r = link.provider?.ready() ?? false;
     if (r === true) return true;
     setLinkPhase(link, r && typeof r === 'object' ? 'error' : 'disabled', r && typeof r === 'object' ? r.error ?? null : null);
@@ -275,6 +279,8 @@ export function createRemoteHost({
 
   async function connect(link) {
     const gen = link.generation;
+    link.inFlight = gen;
+    const settle = () => { if (link.inFlight === gen) link.inFlight = null; };
     let url;
     try { url = link.provider.url('/v1/host'); }
     catch (e) { scheduleRetry(link, { code: 'config', message: e.message }); return; }
@@ -282,7 +288,7 @@ export function createRemoteHost({
     try { headers = await link.provider.headers(); }
     catch (e) {
       // 張り直しても直らない誤り（plus の券で台帳に無い・更新が要る）は error で止まる
-      if (e?.linkError) { if (gen === link.generation) setLinkPhase(link, 'error', e.linkError); return; }
+      if (e?.linkError) { if (gen === link.generation) { settle(); setLinkPhase(link, 'error', e.linkError); } return; }
       // 一時的な失敗（plus のトークンの取り直しが届かない・Plus が止まっているなど）で止まらないよう張り直す
       if (gen === link.generation) scheduleRetry(link, e?.linkRetry ?? { code: 'config', message: e.message });
       return;
@@ -314,7 +320,9 @@ export function createRemoteHost({
     ws.on('error', e => { failure ??= t('remote.relay.unreachable', { reason: e.code || e.message }); });
     ws.on('open', () => {
       if (gen !== link.generation) return closeWs(ws, 1000);
+      settle();
       link.controlOpenedAt = Date.now();
+      link.provider?.onOpen?.({ ...headers });
       link.retryAt = null;
       syncDevices(link);
       setLinkPhase(link, 'connected');
@@ -343,7 +351,7 @@ export function createRemoteHost({
       // provider が close の扱いを変えたいとき（plus 側の断りを張り直しにしないなど）。'retry' か無ければ今と同じ張り直し
       const verdict = link.provider?.onClose?.(code, Buffer.isBuffer(reason) ? reason.toString('utf8') : String(reason ?? '')) ?? null;
       if (verdict?.retry) return retryOnce(verdict.retry);
-      if (verdict && verdict !== 'retry') { settled = true; setLinkPhase(link, 'error', verdict.error ?? null); return; }
+      if (verdict && verdict !== 'retry') { settled = true; settle(); setLinkPhase(link, 'error', verdict.error ?? null); return; }
       retryOnce({ code: `relay-${code}`, message: failure ?? describeClose(code) });
     });
   }
@@ -352,6 +360,7 @@ export function createRemoteHost({
     const base = Math.min(backoff.maxMs, backoff.minMs * 2 ** link.attempt);
     const delay = Math.round(Math.min(backoff.maxMs, base * (0.75 + Math.random() * 0.5)));
     link.attempt++;
+    link.inFlight = null;
     link.retryAt = Date.now() + delay;
     setLinkPhase(link, 'retrying', err);
     const gen = link.generation;
@@ -952,7 +961,8 @@ export function createRemoteHost({
         if (!cfg.enabled || !l.provider) setLinkPhase(l, 'disabled');
         return;
       }
-      if (l.phase === 'connected' || l.phase === 'connecting') return;
+      // 張っている・張る途中（券を取っている間を含む）なら重ねない
+      if (l.phase === 'connected' || l.phase === 'connecting' || l.inFlight === l.generation) return;
       disconnectLink(l);
       try { identity ??= await store.identity(); }
       catch (e) { setLinkPhase(l, 'error', { code: e.code === 'SECRET_LOCKED' ? 'locked' : 'config', message: e.message }); return; }

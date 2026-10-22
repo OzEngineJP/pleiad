@@ -92,6 +92,8 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
   if (s.account?.status === 'free') return { kind: 'getPlus', text: t('settings.plus.getPlus') };
   if (s.account?.status === 'disabled' || plus.link?.error?.code === 'account' || s.error?.code === 'account') return { kind: 'text', text: t('settings.remote.plus.account') };
   if (plus.host?.state === 'taken') return { kind: 'settings', text: t('settings.plus.hostTaken') };
+  // アカウントから外された PC: つなぎ直しても戻らない。Plus の画面の「この PC を登録し直す」へ
+  if (plus.host?.state === 'removed') return { kind: 'settings', text: t(plus.host.error?.permanent ? 'settings.plus.hostRemovedKey' : 'settings.plus.hostRemoved') };
   if (plus.connect === false) return { kind: 'off', text: remoteStatus?.relayUrl ? t('settings.remote.state.plusOff') : t('settings.remote.state.off') };
   if (plus.host?.state === 'limit' || plus.link?.error?.code === 'limit' || s.error?.code === 'limit') return { kind: 'text', text: t('settings.plus.hostLimit') };
   // Plus が止まっている（api の 503・中継の 4401 plus unavailable）: つながらないのではなく、再開を待っている
@@ -124,7 +126,7 @@ export function plusRemoteToggleMode(plusStatus, remoteStatus) {
   const s = plusStatus;
   if (s.needsUpdate || !s.signedIn || s.account?.status === 'free') return 'hide';
   if (s.state === 'maintenance' || s.account?.status === 'disabled' || s.error?.code === 'account'
-    || remoteStatus?.plus?.host?.state === 'taken') return 'disabled';
+    || remoteStatus?.plus?.host?.state === 'taken' || remoteStatus?.plus?.host?.state === 'removed') return 'disabled';
   return 'enabled';
 }
 
@@ -157,6 +159,8 @@ export function approverName(approvedBy, approvedByName) {
 }
 
 export const plusRemoteAvailable = plusStatus => plusStatus?.available !== false;
+/** 「この PC へ」に Plus のまとまりを出すか。Plus が止まって入口が隠れている（available: false）間も、つながりが再開を待っているなら出す */
+export const plusRemoteShown = (plusStatus, remoteStatus) => plusRemoteAvailable(plusStatus) || remoteStatus?.plus?.link?.error?.code === 'unavailable';
 export const initialRemoteMethod = plusStatus => plusStatus?.account?.status === 'plus' ? 'plus' : 'own';
 
 /**
@@ -254,7 +258,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (message) out.push(errorLine(message));
     if (!on) return out;
     const parts = partitionRemoteDevices(status.devices);
-    if (plusRemoteAvailable(plusStatus)) out.push(plusGroup(parts.plus));
+    if (plusRemoteShown(plusStatus, status)) out.push(plusGroup(parts.plus));
     if (parts.reapprove.length) out.push(deviceGroup(t('settings.remote.groups.reapprove'), parts.reapprove));
     // 「自分の中継サーバー」のまとまりには own の端末だけを並べる。設定が無くても出し、「未設定」の一行と「編集」で入れられるようにする
     const devices = parts.own;

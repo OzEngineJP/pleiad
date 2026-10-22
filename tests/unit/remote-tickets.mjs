@@ -188,6 +188,48 @@ export default async function (t) {
         ch.hello?.hostName === 'ticket-desk' && hostTickets.filter(x => x.route === '/v1/host/accept').at(-1).ticket === control2.at(-1).ticket);
     });
 
+    // ---- C. 入り直しの見直しが重なっても、accept は実際の制御の接続の券を使う。切るときは張り直さない
+    await scene('C', async () => {
+      const { creds, keyPair } = st.device;
+      const hostIssued = () => plus.state.tickets.filter(x => x.purpose === 'host').length;
+      const issuedAtOff = hostIssued();
+      await remote.setSettings({ plusConnect: false });
+      await sleep(300);
+      t.ok('C: Plus の接続を切るときは、張り直さない（券を取りに行かない）', hostIssued() === issuedAtOff, String(hostIssued() - issuedAtOff));
+      await sync();
+      await until(async () => (await linkState()).state === 'disabled', 10_000, 'plus を切る');
+
+      const realIssue = issuer.issue;
+      let n = 0;
+      // 先に始めた券の取りほど遅く返す
+      issuer.issue = async args => { const i = n++; const out = await realIssue.call(issuer, args); await sleep(i === 0 ? 400 : 20); return out; };
+      try {
+        await remote.setSettings({ plusConnect: true });
+        const issuedBefore = hostIssued();
+        const controlBefore = hostTickets.filter(x => x.route === '/v1/host').length;
+        // ログイン・設定の知らせが続けて届く（張る条件の見直しが重なる）
+        await sync();
+        for (let i = 0; i < 4; i++) remote.refreshPlus();
+        await connected('重なった見直しの後につながる');
+        await sleep(600);   // 遅れた券の取りが返り終わる
+        const control = hostTickets.filter(x => x.route === '/v1/host').slice(controlBefore);
+        t.ok('C: 見直しが重なっても、券は 1 枚だけ取り、制御の接続も 1 本',
+          hostIssued() - issuedBefore === 1 && control.length === 1, JSON.stringify({ issued: hostIssued() - issuedBefore, control: control.length }));
+        const results = [];
+        const acceptBefore = hostTickets.filter(x => x.route === '/v1/host/accept').length;
+        for (let k = 1; k <= 3; k++) {
+          const r = await within(connectDevice(creds, { extraHeaders: { 'x-pleiad-ticket': (await deviceTicket(keyPair)).relay } }), 15_000, `入り直した後の ${k} 回目のつなぎ`)
+            .then(ch => { ch.close(); return ch.hello?.hostName ?? 'no hello'; }, e => `fail ${e?.closeCode ?? ''} ${e?.closeReason ?? e?.message ?? ''}`);
+          results.push(r);
+        }
+        const accepts = hostTickets.filter(x => x.route === '/v1/host/accept').slice(acceptBefore);
+        t.ok('C: 入り直した後のつなぎは、2 回目以降も通る', results.every(r => r === 'ticket-desk'), JSON.stringify(results));
+        t.ok('C: accept は実際の制御の接続の券を使う', accepts.length === 3 && accepts.every(x => x.ticket === control.at(-1)?.ticket), String(accepts.length));
+      } finally {
+        issuer.issue = realIssue;
+      }
+    });
+
     // ---- 中継の取り決め: 4429 は券を使い切らない
     await scene('R', async () => {
       const other = generateKeyPair();

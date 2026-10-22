@@ -5,8 +5,12 @@ package dev.pleiad.app.remote
 // Call drainTo() only after the consumer's listeners are attached (the ordering race found in the desktop work:
 // message 2 of the handshake and the host's HELLO can arrive in the same read).
 
+import java.io.IOException
+import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import okhttp3.ConnectionPool
+import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -22,14 +26,39 @@ class RelayTimeout(msg: String) : Exception(msg)
 data class OpenResult(val open: Boolean = false, val status: Int? = null, val closeCode: Int? = null, val error: String? = null)
 
 object Http {
+    private val pool = ConnectionPool()
+
     /** One client for the process: shares the connection pool and threads. No automatic redirects (like followRedirects: false). */
     val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .followRedirects(false)
             .followSslRedirects(false)
+            // OkHttp's own retry can send a request again after the server got it; freshConnections retries reads only
             .retryOnConnectionFailure(false)
+            .connectionPool(pool)
+            .addInterceptor(::freshConnections)
             .pingInterval(0, TimeUnit.MILLISECONDS)   // the relay pings us (§4.4); PING frames in the channel do the rest
             .build()
+    }
+
+    /**
+     * After the app sat idle, a kept-alive connection in the pool may already be closed by the server, and its first use fails.
+     * A read (GET / HEAD) that fails on the wire is tried once more on a new connection. Anything else is sent once only, on a
+     * new connection (the idle ones are dropped first), so it never goes out twice. WebSocket upgrades carry one-time tickets
+     * and are not tried again (the link's backoff does that).
+     */
+    internal fun freshConnections(chain: Interceptor.Chain): Response {
+        val req = chain.request()
+        if (req.header("Upgrade") != null) return chain.proceed(req)
+        if (req.method != "GET" && req.method != "HEAD") {
+            pool.evictAll()
+            return chain.proceed(req)
+        }
+        return try { chain.proceed(req) } catch (e: IOException) {
+            if (e is SocketTimeoutException || chain.call().isCanceled()) throw e
+            pool.evictAll()
+            chain.proceed(req)
+        }
     }
 }
 

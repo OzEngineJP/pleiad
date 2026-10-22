@@ -229,7 +229,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 ## Plus のつながり（`core/remote/plus-link.mjs`。docs/remote.md §6.4）
 
 - 張るのは「ほかの端末からの操作を許可する」（`enabled`）・`signedIn`・`account.status === 'plus'`・`remote/settings.json` の `plus.connect`（既定 true、2026-10-21 承認。`setRemoteSettings { plusConnect }` で切り替える。人だけ。人が決めた値には `plus.userSet: true` が付き、印の無い古い値はオンと読む）・登録が `registered`、が全部そろったとき
-- 行き先は `/v1/auth/config` の `urls.relay`。ヘッダーは `{ 'x-pleiad-host': hostId, 'x-pleiad-ticket': <中継の券（role:host）> }`。券は制御の接続を張るたびに取り（上の「券」）、accept（端末ごとの接続）は今の制御の接続と同じ券を付ける（中継は制御の接続の券と同じ文字列なら通し、制御の接続が閉じると通さない）。券の無い前の版の api の間は `{ 'x-pleiad-host': hostId, 'x-pleiad-account': <ID トークン> }`（張るたびに取る）。中継の中身は Noise の暗号のまま（own と同じ）
+- 行き先は `/v1/auth/config` の `urls.relay`。ヘッダーは `{ 'x-pleiad-host': hostId, 'x-pleiad-ticket': <中継の券（role:host）> }`。券は制御の接続を張るたびに取り（上の「券」）、accept（端末ごとの接続）は今の制御の接続と同じ券を付ける（中継は制御の接続の券と同じ文字列なら通し、制御の接続が閉じると通さない）。張る試みは 1 本ずつで、券を取っている間・つないでいる間の見直しは新しい試みを始めない。accept に付けるのは、制御の接続が開いた試みの券だけ（開かなかった試みの券は覚えない）。券の無い前の版の api の間は `{ 'x-pleiad-host': hostId, 'x-pleiad-account': <ID トークン> }`（張るたびに取る）。中継の中身は Noise の暗号のまま（own と同じ）
 - 券が取れないとき（中継の切断の理由と同じに決める）: `403 host_removed`・`404` → link の error `host`（登録を確かめ直す）。`426` → link の error `update`（「Pleiad を更新してください」。張り直さない）。`403 account_disabled`・`not_plus` → `4401 'account'` と同じ止まり（link の error `account`）。`503` → link を `retrying`（error `unavailable`）にして、今の backoff で待って張り直す。ほか → 今の backoff で張り直す
 - `remoteStatus.plus = { connect, link: { state, error, since, retryAt }, host: { state, error }, devices }`
 - 中継が制御用の接続を閉じたとき: `4401 'account'` → 止まる（link の error `account`。張り直さない）。`4401 'host'` → この PC の登録が外れた（link の error `host`）。登録を確かめ直し（上の `recheck`）、登録し直したら張り直す。`4429 'account limit'` → `limit`。`4401 'update required'` → link の error `update`（中継が券の無い接続を受けない）。`4401 'plus unavailable'` → link を `retrying`（error `unavailable`）にして、今の backoff で待って張り直す（回数で止めない）。ほかの `4401`（券の `ticket` を含む）→ 券（前の版の api なら ID トークン）を取り直して 1 回だけ張り直す（また `4401` なら `auth`）。`1013` → 今の backoff で張り直す。ほか → 今と同じ。`account`・`accountStatus`・`plus.connect`・`enabled`・登録・ログインが変わったときに ready() から見直す
@@ -238,6 +238,8 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
   - 張る条件がいったん崩れた: `account.status` が `plus` でなくなった（停止で `disabled` と読めた）・設定 › リモートの Pleiad Plus のスイッチ（`plus.connect`）か「ほかの端末からの操作を許可する」を切った・ログアウト・登録が `registered` でなくなった。そろい直したら張る
   - ほかのアカウントになった（uid が変わった）・アプリを起動し直した（止まりはメモリにだけ持つ）
 - 止まっている間の設定 › リモートは「このアカウントでは公式の中継を使えません」の 1 行を出す（ほかの PC へ のまとまりと同じ形。ボタンは足さない）。`account.status` が `plus` と読めている間は Pleiad Plus のスイッチを押せる（切って入れ直すとつなぎ直す）。`disabled` と読めている間は押せない（`plus` に戻れば、読めたところで張り直す）
+- この PC が登録から外された（登録が `removed`）ときの設定 › リモートは、Plus のまとまりに「この PC は Pleiad Plus の登録から外されています。…」の行を出し、押すと設定 › Pleiad Plus（「この PC を登録し直す」）を開く。スイッチは押せない
+- Plus が止まって（`state: 'off'`）入口が隠れている間も、link が再開を待っている（error `unavailable`）なら、設定 › リモートに Plus のまとまりと「Pleiad Plus が一時的に止まっています（再開を待っています）」を出す（同期の欄と同じ文）
 - `revoke` は両方の link（own・plus）へ送る
 
 ## 端末の受け入れ（同じアカウント + PC の画面の承認。ADR 0248）
@@ -613,6 +615,8 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - ログイン後にホストが 1 台も無いときは、同じアカウントでログインした PC がここに並ぶ案内と「ホストを追加」を出す。ログアウト、利用資格の変更、Plus の停止中は Plus の行を表示しない。Plus の記録は端末内に残り、再び利用できるときに使う。
 - Plus のホストを初めて開くと、公開鍵から `hostId` を確かめて Noise IK で接続する。相手の静的鍵はホスト一覧の公開鍵を使い、確認コードやホスト側での承認は使わない。受け入れが完了したら `deviceId` とトークンを暗号化して記録し、通常の接続を張る。失敗時は `account` を公式の中継が使えない、`devices` を上限、`rate` を 60 秒後に 1 回だけ再試行、`unavailable` をサーバー接続失敗として扱う。
 - 受け入れ・通常の接続・通知の線は、この端末の鍵で接続ごとに券を取り（`PlusTicketIssuer`。上の「券」）、中継には `X-Pleiad-Ticket`、受け入れのメッセージ 1 には受け入れの券を載せる。通常の接続と通知の線は記録した device token も送る。券の無い前の版の api の間は、券の代わりに接続ごとに取得した ID トークンを送る。券も ID トークンも取得できないときは接続しない。券の発行（受け入れ・受け入れのやり直し・通常の接続・通知の線で同じ）が `426` なら「Pleiad を更新してください」で止まる。`404`・`403 host_removed` は下の `4401` `host`、`403 account_disabled`・`not_plus` は `4401` `account`、`503` は `4401` `plus unavailable` と同じ状態にする。
+- ホストの一覧を読み直して同じ記録（中身が同じ）が渡っても、線は切らない。止まった線は止まったまま、待っている線は今の間隔のまま。中継の URL などが変わったときだけ張り直す。
+- api への要求は、アイドルの間にサーバーが閉じた接続を使わない。読み（`GET`・`HEAD`）は通信の失敗のときだけ新しい接続で 1 回やり直す。ほかの要求は、はじめから新しい接続で 1 回だけ送る（サーバーが受け取ったかもしれない要求を送り直さない）。中継への WebSocket はやり直さない（券は一度だけ使える）。
 
 閉じたときの扱い:
 
@@ -625,7 +629,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 | `4401` `token` / `ticket` | 券（前の版の api なら ID トークン）を取り直して 1 回再接続。続けて失敗したら止める。通知の線はオフラインとして再接続 |
 | `4401` `update required` | 接続を止め、「Pleiad を更新してください」 |
 | `4401` `plus off` | オフラインとして通常の間隔で再接続 |
-| `4401` `plus unavailable` | 一時停止し、設定を読み直す。利用可能になるまで自動接続しない。通知の線は止めず、長い間隔で再接続する |
+| `4401` `plus unavailable` | 一時停止（「Pleiad Plus が一時的に止まっています」）。「接続しています」を出さずに、5 秒から 30 秒まで間を倍に広げながら券を取り直し、取れたらつなぐ。通知の線も止めず、長い間隔で再接続する |
 | `4429` `account limit` | 接続を止め、「このアカウントの上限に達しています」 |
 | `4429` `admit rate` / `1013` | オフラインとして再接続 |
 

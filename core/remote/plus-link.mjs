@@ -8,6 +8,7 @@
 //   url(path)  /v1/auth/config の urls.relay を行き先にする
 //   headers()  { 'x-pleiad-host': hostId, 'x-pleiad-ticket': <中継の券 role:host> }。券は制御の接続を張るたびに api から取り
 //              （core/plus/tickets.mjs）、accept（headers({ accept: true })）は今の制御の接続と同じ券を使う。
+//              覚えるのは制御の接続が開いた試みの券だけ（onOpen）。取ったが使わなかった券は accept に使わない。
 //              券の口が無い前の版の api なら { 'x-pleiad-account': <ID トークン> }（張るたびに取る）。
 //              券が取れないとき（断られた種類ごとに、中継の切断の理由と同じに決める）:
 //                403 host_removed・404（この PC が台帳に無い）→ error 'host'（中継の 4401 'host'。onHostLost で登録を確かめ直す）
@@ -92,7 +93,7 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
   };
   let held = null;             // 4401 'account' で止まっている間 { uid, readAt }（止まったときの uid と accountReadAt）
   let forceToken = false;      // ほかの 4401 のあと、次に張るときは ID トークンを取り直す
-  let controlAuth = null;      // 今の制御の接続のヘッダー { hostId, headers }（accept が同じものを使う）
+  let controlAuth = null;      // 今の制御の接続のヘッダー { hostId, headers }（accept が同じものを使う。開いた試みのものだけを onOpen で覚える）
   const jtis = createJtiStore({ now });
   let authRetried = false;     // その取り直しをもう使ったか
   const requestTimes = [];     // 直近の承認の窓への申し込みの時刻（上限を数える）
@@ -258,12 +259,13 @@ export function createPlusLink({ session, verifier, issuer = null, ticketVerifie
         forceToken = false;
         headers = { 'x-pleiad-host': identity.hostId, 'x-pleiad-account': token };
       }
-      if (!accept) controlAuth = { hostId: identity.hostId, headers };
       return { ...headers };
     },
     owns: d => Boolean(d && d.via === 'plus' && d.plusUid === st.uid),
     allowPairing: false,
     onIncomingAdmit: ctx => onIncomingAdmit(ctx),
+    // 制御の接続が開いた試みのヘッダー。取ったが使わなかった券（捨てた試みの分）を accept に使わないよう、ここでだけ覚える
+    onOpen(headers) { controlAuth = { hostId: headers['x-pleiad-host'], headers: { ...headers } }; },
     onClose(code, reason) {
       controlAuth = null;
       if (code === 4401 && reason === 'update required') return { error: updateError() };

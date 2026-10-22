@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { createCompletionNotifications } from '../../web/notifications.mjs';
 import { createCompletionNotices, hasPendingChild } from '../../core/completion-notices.mjs';
-const { createDesktopNotifications } = createRequire(import.meta.url)('../../desktop/notifications.cjs');
+const { createDesktopNotifications, windowInFront } = createRequire(import.meta.url)('../../desktop/notifications.cjs');
 export const name = 'notifications';
 export const title = '完了と返事待ちの通知・保留・重複抑止';
 export default async function(t) {
@@ -126,4 +126,38 @@ export default async function(t) {
   unsupported = false; fail = true;
   t.ok('OSエラーは会話処理に伝播させない', !notify({ ...native[0], completedAt: 30 }));
   t.ok('不正な通知データは受け付けない', !notify({}) && !notify(null));
+
+  // 端末の追加の承認待ち: 「見ている」は窓が実際に前面で見えているときだけ。
+  // 裏で起動して一度も前に出ていない窓は、画面の hasFocus も本体の isFocused も true になるので、デスクトップ版は本体が OS の前面の窓で決める
+  const device = { id: 'req-1', name: 'Pixel' };
+  const toNative = [];
+  const desktopDevice = createCompletionNotifications({ host: { plyDesktop: { notifyCompletion: n => { toNative.push(n); return Promise.resolve(true); } } },
+    openSession: () => {}, isFocused: () => true });
+  desktopDevice.deviceWaiting(device);
+  t.ok('デスクトップ版は画面の hasFocus で端末の承認待ちを止めず、本体へ渡す', toNative.length === 1 && toNative[0].kind === 'device');
+  const shownInBrowser = [];
+  class TabNotice { static permission = 'granted'; constructor(title) { shownInBrowser.push(title); } }
+  createCompletionNotifications({ host: { Notification: TabNotice }, openSession: () => {}, isFocused: () => true }).deviceWaiting(device);
+  t.ok('ブラウザーでは、タブを見ている間は出さない（今まで通り）', shownInBrowser.length === 0);
+  let inFront = true;
+  const deviceNotices = [];
+  class DeviceNotice extends EventEmitter {
+    static isSupported() { return true; }
+    constructor(options) { super(); deviceNotices.push(options); }
+    show() {}
+  }
+  const notifyDevice = createDesktopNotifications({ Notification: DeviceNotice, icon: 'icon.png', getWindow: () => null, isInFront: () => inFront });
+  t.ok('窓が前面で見えている間は、端末の承認待ちを出さない', !notifyDevice(toNative[0]) && deviceNotices.length === 0);
+  inFront = false;
+  t.ok('窓が前面でなければ出す', notifyDevice(toNative[0]) && deviceNotices.length === 1);
+  inFront = true;
+  t.ok('前面の判定は端末の承認待ちだけに効く（完了は今まで通り）', notifyDevice({ sessionId: 'b', completedAt: 1, body: 'x' }) && deviceNotices.length === 2);
+
+  const win = (o = {}) => ({ isDestroyed: () => false, isVisible: () => true, isMinimized: () => false, isFocused: () => true,
+    getNativeWindowHandle: () => { const b = Buffer.alloc(8); b.writeBigUInt64LE(100n); return b; }, ...o });
+  t.ok('isFocused でも、OS の前面がほかの窓なら前面ではない（裏で起動した窓）', typeof windowInFront === 'function' && !windowInFront(win(), () => 200));
+  t.ok('OS の前面がこの窓なら前面', windowInFront?.(win(), () => 100) === true);
+  t.ok('前面の窓を読めない OS では isFocused まで', windowInFront?.(win(), null) === true);
+  t.ok('最小化・隠れた・フォーカスの無い窓は前面ではない', [{ isMinimized: () => true }, { isVisible: () => false }, { isFocused: () => false }]
+    .every(o => windowInFront?.(win(o), () => 100) === false) && windowInFront?.(null) === false);
 }
