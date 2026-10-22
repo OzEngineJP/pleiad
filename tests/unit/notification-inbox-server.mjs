@@ -53,6 +53,10 @@ export default async function (t) {
     const perm = await host.waitFor((e) => e.type === 'permission' && !e.relay, { from, ms: 15_000 });
     const waitRow = await until(async () => (await list({ filter: 'wait' })).items.find((x) => x.target.sessionId === perm.sessionId), { label: 'あなた待ちの行' });
     t.ok('承認が成立すると、あなた待ちの行（未読・待っている）になる。件数の waiting も 1', waitRow.unread === true && waitRow.ask === 'approval' && waitRow.resolvedAt === undefined && (await call('notifications.count', {})).waiting === 1);
+    await call('notifications.markRead', { ids: [waitRow.id] });
+    t.ok('通知を既読にしても承認の waiting は残る', (await call('notifications.count', {})).waiting === 1);
+    await call('notifications.markRead', { all: true });
+    t.ok('すべて既読は件数だけ消し、解決前の waiting は残る', (await call('notifications.count', {})).unread === 0 && (await call('notifications.count', {})).waiting === 1);
     await host.cmd('resolvePermission', { id: perm.id, allow: true });
     await asking;
     const settled = await until(async () => { const x = (await list({ filter: 'wait' })).items.find((r) => r.id === waitRow.id); return x?.outcome ? x : null; }, { label: '決着' });

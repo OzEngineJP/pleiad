@@ -258,7 +258,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 /* グループの ＋。触れたときだけ現れる。押すとこの状態で新しいセッションが始まる */
 .grp-add{opacity:0;width:26px;height:26px;transition:opacity var(--dur-fast) var(--ease-out)}
 .grp-head:hover .grp-add,.grp-add:focus-visible,.grp-head:focus-within .grp-add{opacity:1}
-.grp.collapsed .rows{display:none}
+.grp.collapsed > .rows{display:none}
 /* 行は見出しより一段右。所属が分かる */
 .rows{display:flex;flex-direction:column;gap:2px;padding-left:16px}
 .pending-new-top{flex:none}

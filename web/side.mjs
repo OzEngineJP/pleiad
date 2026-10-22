@@ -17,7 +17,7 @@ import { openEmojiPicker, closeEmojiPicker } from "./emoji-picker.mjs";
 // 絞り込み（作業ディレクトリ × 状態、AND）と畳んだ状態・開いたグループは端末ごとの好みなので
 // localStorage に持つ。
 //
-// 一覧はひとつのツリー（role=tree、フォーカスは #groups 1 つ）。状態の見出し・グループの器・行が treeitem で、
+// 一覧は置き場所の木（role=tree、フォーカスは #groups 1 つ）。置き場所・状態・グループの器・行が treeitem で、
 // 指している項目は aria-activedescendant で伝える。Tab 1 回で入って 1 回で抜ける（行が何百あっても）。
 // 矢印は指す項目を動かすだけで会話は開かない。Enter / Space で開く（docs/design-system.md §4.1「キーボード」）。
 import { runMark, satMark } from "./arc.mjs";
@@ -29,7 +29,6 @@ import { timeText } from "./schedule-times.mjs";
 import { warnMark, interruptLabel, showsReasonInMeta } from "./interrupt.mjs";
 import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
-import { captureRows, playRows } from "./flip.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
 import { agentBrand } from "./agent-brands.mjs";
 
@@ -137,9 +136,10 @@ function loadPrefs() {
       sort: p.sort === "recent" ? "recent" : "relevance",
       chCollapsed: new Set(Array.isArray(p.chCollapsed) ? p.chCollapsed : []),
       chMore: new Set(Array.isArray(p.chMore) ? p.chMore : []),
+      statusMore: new Set(Array.isArray(p.statusMore) ? p.statusMore : []),
     };
   } catch {
-    return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance", chCollapsed: new Set(), chMore: new Set() };
+    return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance", chCollapsed: new Set(), chMore: new Set(), statusMore: new Set() };
   }
 }
 
@@ -166,9 +166,9 @@ function loadRecentSearches() {
  * @param {(root: object, status: string) => void} [o.onMoveGroup]  グループごと別の状態へ移す
  * @param {(x: number, y: number) => void} [o.onListContext]  一覧の空白の右クリック
  * @param {() => string} o.cwdNow  入力欄の今の作業ディレクトリ（絞っていないときの引き継ぎ元）
- * @param {(channelId: string) => void} [o.onOpenChannel]  チャンネルの並べ方の見出しの名前を押した（流れを開く）
+ * @param {(channelId: string) => void} [o.onOpenChannel]  置き場所の木の見出しの名前を押した（流れを開く）
  * @param {(channelId: string) => void} [o.onNewInChannel]  チャンネルの見出しの ＋（そのチャンネルの流れの入力欄へ）
- * @param {() => Element[]} [o.channelExtras]  チャンネルの並べ方の末尾に置く節（Bots・ルーティン。web/channels/sidebar.mjs が描く）
+ * @param {() => Element[]} [o.channelExtras]  置き場所の木の末尾に置く節（Bots・ルーティン。web/channels/sidebar.mjs が描く）
  */
 export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, onGroupContext, onFamilyContext,
                              onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow, visible: isVisible = () => true,
@@ -187,12 +187,12 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const filter = prefs.filter;                 // { dir: string|null, status: string|null|undefined }
   const collapsed = prefs.collapsed;
   const expanded = prefs.expanded;              // 開いている家族（根の sessionId）。既定は畳んだ状態
-  const chCollapsed = prefs.chCollapsed;        // チャンネルの並べ方で畳んだ見出し（"home" かチャンネルの id）
-  const chMore = prefs.chMore;                  // チャンネルの並べ方で「ほか n 件」を開いた見出し
-  let drawnOrder = null;                        // 前に描いた並べ方（切り替えたときだけ行を滑らせる）
+  const chCollapsed = prefs.chCollapsed;        // 畳んだ置き場所（"home" かチャンネルの id）
+  const chMore = prefs.chMore;                  // 最近 3 件の先を開いたチャンネル
+  const statusMore = prefs.statusMore;          // 最近 5 件の先を開いた状態
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
-  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), chromeWaitIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [], order: "status" };
+  let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), chromeWaitIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [] };
   // Channels（web/channels/sidebar.mjs）から借りるもの。bot の会話の行の印（アイコン・#チャンネル）と、検索の横断
   let directory = { channels: new Map(), bots: new Map() };   // id → Channel / Bot
   let channelsLink = null;                      // connectChannels() の口。無ければ Chats だけを探す
@@ -267,6 +267,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         collapsed: [...collapsed],
         chCollapsed: [...chCollapsed],
         chMore: [...chMore],
+        statusMore: [...statusMore],
         // 消えたセッションの id は溜めない（一覧を受け取る前は間引かない）
         expanded: last.sessions.length ? [...expanded].filter((id) => last.sessions.some((s) => s.id === id)) : [...expanded],
       }));
@@ -286,8 +287,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
    * （削除したグループが空のまま残らないように）。まだ listStatuses に無いもの（付けた直後・この画面で
    * 作った仮のもの）を足し、最後に「状態なし」
    */
-  function groupOrder() {
-    const inUse = new Set([...last.sessions, ...last.threads].map(statusKey).filter(Boolean));
+  function groupOrder(rows = [...last.sessions, ...last.threads]) {
+    const inUse = new Set(rows.map(statusKey).filter(Boolean));
     const known = [...new Set(last.statuses.filter((x) => inUse.has(x.status) || x.kept).map((x) => x.status))];
     const extra = new Set(inUse);
     if (last.draft?.status) extra.add(last.draft.status);
@@ -316,72 +317,42 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     resetRemote();
     const wanted = document.createElement('div');
     nextRows = new Map();
-    // 並べ方を切り替えたときだけ、行を元の位置から今の位置へ滑らせる（FLIP。web/flip.mjs）
-    const from = drawnOrder && drawnOrder !== last.order ? captureRows(root) : null;
-    if (last.order === "channel") buildChannelOrder(wanted); else buildStatusOrder(wanted);
-    root.dataset.order = last.order;
+    buildPlaces(wanted);
 
     const old = new Map([...root.querySelectorAll('[data-side-key]')].map((n) => [n.dataset.sideKey, n]));
-    // Bots・ルーティンの節（web/channels/sidebar.mjs が描く）は、チャンネルの並べ方の間だけこの一覧の末尾に入る
+    // Bots・ルーティンの節（web/channels/sidebar.mjs が描く）は、絞り込んでいないとき、この一覧の末尾に入る
     for (const node of channelExtras()) if (node?.dataset.sideKey) old.set(node.dataset.sideKey, node);
     reconcile(root, wanted, old);
     renderedRows = nextRows;
     dirty = false;
-    drawnOrder = last.order;
-    if (from) playRows(root, from);
 
     $("filterBtn").classList.toggle("on", filtering());
     renderChips();
     paintActive();
   }
 
-  /** 状態の並べ方: 会話とスレッドを利用者の状態のグループで。先頭に「あなたを待っている」 */
-  function buildStatusOrder(wanted) {
-    const visible = last.sessions.filter(matchesFilter);
-    const threads = last.threads.filter(matchesFilter);
-    // あなたを待っているもの（bot の DM の会話・bot のスレッド）。利用者の状態のグループには入れず、
-    // 一覧の先頭（全グループの上）に短い見出しを付けて置く（いちばん上で目に入る位置）
-    const botWaits = [...visible.filter((s) => s.bot), ...threads.filter((s) => last.waitingIds.has(s.id))]
-      .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
-    if (botWaits.length) {
-      const sec = keyed(el("section", "grp bot-waits"), "bot-waits", true);
-      sec.setAttribute("role", "none");
-      const head = el("div", "grp-head bot-waits-head");
-      head.setAttribute("role", "none");
-      head.append(el("span", "wait", t("channels:side.botWaitsHead")));
-      const rowsEl = keyed(el("div", "rows"), "rows:bot-waits", true);
-      rowsEl.setAttribute("role", "none");
-      for (const s of botWaits) rowsEl.append(row(s, 1));
-      sec.append(head, rowsEl);
-      wanted.append(sec);
-    }
+  /** 一時チャットの中。状態の見出しと fork の器、ドラッグは従来と同じ。 */
+  function buildHomeStatuses(wanted, homeRows) {
+    const visible = homeRows.filter((s) => s !== last.pendingNew);
     if (last.pendingNew) {
       const top = keyed(el('div', 'rows pending-new-top'), 'pending-new', true);
       top.setAttribute("role", "none");
-      top.append(row(last.pendingNew, 1));
+      top.append(row(last.pendingNew, 2));
       wanted.append(top);
     }
-    const groups = groupOrder();
+    const groups = groupOrder(homeRows);
     const visibleGroups = filter.status === undefined ? groups : groups.filter((g) => g === filter.status);
 
     // グループ（根とその子孫）にまとめる。器は根の状態の見出しの下に入り、枝は器の中だけに出る。
     // 親が絞り込みで消えている枝は、入れる一番近い祖先に付く。付ける先が無ければ自分が根（= ただの行）
     const byGroup = new Map();
     inFamily.clear();
-    for (const fam of familiesOf(visible.filter((s) => !s.bot), last.sessions)) {
+    for (const fam of familiesOf(visible, last.sessions)) {
       const k = statusKey(fam.root);
       if (!byGroup.has(k)) byGroup.set(k, []);
       byGroup.get(k).push(fam);
       if (fam.kin.length) for (const s of members(fam)) inFamily.add(s.id);
     }
-    // bot のスレッドは 1 スレッド 1 行で、自分の状態のグループに入る（あなた待ちの間は先頭の節だけに出る）
-    for (const s of threads) {
-      if (last.waitingIds.has(s.id)) continue;
-      const k = statusKey(s);
-      if (!byGroup.has(k)) byGroup.set(k, []);
-      byGroup.get(k).push({ root: s, kin: [] });
-    }
-
     for (const st of visibleGroups) {
       // 放置は上に浮く。それ以外は新しい順。家族は中で一番新しい行で並ぶ（枝が動けば器ごと上に来る）
       const fams = (byGroup.get(st) ?? []).sort((a, b) => (famStale(b) - famStale(a)) || (famWhen(b) - famWhen(a)));
@@ -400,7 +371,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
       const head = el("div", "grp-head");
       const setOpen = (open) => { const k = st ?? ""; if (open) collapsed.delete(k); else collapsed.add(k); save(); render(); };
-      treeItem(head, `g:${st ?? ""}`, 1, {
+      treeItem(head, `g:${st ?? ""}`, 2, {
         expanded: !isCollapsed,
         open: () => setOpen(isCollapsed),
         expand: setOpen,
@@ -424,9 +395,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       }
       // 畳んだ中に走っているものがあれば見出しに弧。走っていないときは印そのものを置かない（置くと回り続ける）
       // 動いているものが 1 つでもあれば弧、裏を待っているだけなら衛星（docs/design-system.md §6）
-      // 印は 1 つだけ。弧 → 衛星 → 中断の三角 → 未読の順に強い
+      // 印は 1 つだけ。あなた待ち → 弧 → 衛星 → 中断の三角 → 未読の順に強い
       let stoppedMark = null;
-      if (isCollapsed && active) head.append(runMark(t("sidebar.somethingRunning")));
+      if (isCollapsed && rows.some((s) => last.waitingIds.has(s.id))) head.append(waitMark(1));
+      else if (isCollapsed && active) head.append(runMark(t("sidebar.somethingRunning")));
       else if (isCollapsed && behind) head.append(satMark(behind, t("activity.behindCount", { count: behind })));
       else if (isCollapsed && (stoppedMark = stoppedIn(rows))) head.append(stoppedMark);
       else if (isCollapsed && rows.some(s => last.unreadIds.has(s.id))) head.append(unreadMark());
@@ -480,8 +452,24 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
       const rowsEl = keyed(el("div", "rows"), `rows:${st ?? ''}`, true);
       rowsEl.setAttribute("role", "group");
-      if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }, 2));
-      for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam) : row(fam.root, 2));
+      if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }, 3));
+      // fork の器は分断しない。開いている会話と、あなた待ちを含む器は件数の外でも残す。
+      const all = statusMore.has(st ?? "");
+      let count = 0;
+      const shown = fams.filter((fam) => {
+        const list = members(fam);
+        const show = all || count < STATUS_RECENT || list.some((s) => s.id === last.currentId || last.waitingIds.has(s.id));
+        count += list.length;
+        return show;
+      });
+      for (const fam of shown) rowsEl.append(fam.kin.length ? family(fam, 3) : row(fam.root, 3));
+      const hidden = rows.length - shown.reduce((n, fam) => n + members(fam).length, 0);
+      if (hidden || all && rows.length > STATUS_RECENT) {
+        rowsEl.append(moreRow(`status:${st ?? ''}`, 3, all, hidden, () => {
+          if (all) statusMore.delete(st ?? ""); else statusMore.add(st ?? "");
+          save(); render();
+        }));
+      }
       if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
       sec.append(rowsEl);
       wanted.append(sec);
@@ -489,18 +477,19 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (!wanted.childElementCount) wanted.append(el("div", "empty", filtering() ? t("sidebar.noMatch") : t("sidebar.empty")));
   }
 
-  // ---- チャンネルの並べ方 ---------------------------------------------------
+  // ---- 置き場所の木 ---------------------------------------------------
   // 一時チャット（会話のスレッド）を先頭に、チャンネルごとに開閉できる見出し・最近のスレッド・「ほか n 件」。続けて Bots・ルーティン（channelExtras）
 
+  const STATUS_RECENT = 5;
   const CHANNEL_RECENT = 3;   // 見出しの下に出す最近のスレッドの数（開いているものは数えずに足す）
 
   /** ◆ の字。待っているものが Chrome の操作だけなら、承認ではないのでそう言う */
   const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : t("sidebar.waiting");
 
-  /** 1 行の行（チャンネルの並べ方）: 印（弧・◆・青い丸）・題・時刻 */
+  /** チャンネルのスレッドの 1 行: 印（弧・◆・青い丸）・題・時刻 */
   function oneRow(s, level) {
     const key = `one:${s.id ?? ''}`;
-    const signature = JSON.stringify([s.id, s.title, s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id),
+    const signature = JSON.stringify([s.id, s.title, s.status, iconOf(statusKey(s)), s.lastModified, level, s.id === last.currentId, last.runningIds.has(s.id), last.waitingIds.has(s.id), last.chromeWaitIds.has(s.id),
       last.unreadIds.has(s.id), last.bgWaiting.get(s.id), document.documentElement.lang, Math.floor(Date.now() / 60000), s.bot?.botId ? directory.bots.get(s.bot.botId)?.icon : null]);
     const cached = renderedRows.get(key);
     if (cached?.signature === signature && cached.node.isConnected) {
@@ -533,7 +522,15 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       av.setAttribute("aria-hidden", "true");
       r.insertBefore(av, when);
     }
-    r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([glyph, when])].filter(Boolean).join(", "));
+    const status = el("span", "row-status", iconOf(statusKey(s)) ?? "");
+    if (!iconOf(statusKey(s))) status.append(icon(FOLDER));
+    const statusLabel = statusKey(s) ?? t("session.status.none");
+    status.title = statusLabel;
+    status.setAttribute("role", "img");
+    status.setAttribute("aria-label", statusLabel);
+    r.insertBefore(status, when);
+    if (onContext) r.append(menuButton("row-more", t("session.rowMore", { title: titleOf(s) || t("session.untitled") }), (x, y) => onContext(s, x, y)));
+    r.setAttribute("aria-label", [titleOf(s) || t("session.untitled"), spoken([glyph, status, when])].filter(Boolean).join(", "));
     r.onclick = () => { if (!open) onOpen?.(s.id); };
     r.oncontextmenu = (e) => { if (!onContext || s.id == null) return; e.preventDefault(); onContext(s, e.clientX, e.clientY); };
     return r;
@@ -582,23 +579,32 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     sec.append(head);
     const rowsEl = keyed(el("div", "rows"), `chrows:${key}`, true);
     rowsEl.setAttribute("role", "group");
+    if (home) {
+      buildHomeStatuses(rowsEl, rows);
+      sec.append(rowsEl);
+      return sec;
+    }
     const all = chMore.has(key);
-    const shown = all ? rows : rows.filter((s, i) => i < CHANNEL_RECENT || s.id === last.currentId);
+    const shown = all ? rows : rows.filter((s, i) => i < CHANNEL_RECENT || s.id === last.currentId || last.waitingIds.has(s.id));
     for (const s of shown) rowsEl.append(oneRow(s, 2));
-    if (rows.length > CHANNEL_RECENT) {
-      const more = keyed(el("div", "row one more"), `chmore:${key}`);
-      const text = all ? t("channels:side.less") : t("channels:side.more", { count: rows.length - shown.length });
-      treeItem(more, `m:${key}`, 2, { open: () => { if (all) chMore.delete(key); else chMore.add(key); save(); render(); } });
-      more.append(el("span", "one-mark"), el("span", "row-t", text));
-      more.onclick = () => more.treeOpen();
-      rowsEl.append(more);
+    const hidden = rows.length - shown.length;
+    if (hidden || all && rows.length > CHANNEL_RECENT) {
+      rowsEl.append(moreRow(key, 2, all, hidden, () => { if (all) chMore.delete(key); else chMore.add(key); save(); render(); }));
     }
     if (!rows.length) rowsEl.append(el("div", "empty", t("channels:side.noThreads")));
     sec.append(rowsEl);
     return sec;
   }
 
-  function buildChannelOrder(wanted) {
+  function moreRow(key, level, all, hidden, open) {
+    const more = keyed(el("div", "row one more"), `chmore:${key}`);
+    treeItem(more, `m:${key}`, level, { open });
+    more.append(el("span", "one-mark"), el("span", "row-t", all ? t("channels:side.less") : t("channels:side.more", { count: hidden })));
+    more.onclick = open;
+    return more;
+  }
+
+  function buildPlaces(wanted) {
     // 一時チャット: 会話のスレッド（bot の会話・委譲の子は除く）と、一時チャットで bot に話しかけたスレッドを新しい順。作成中の新しい会話は先頭
     const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
     const homeRows = [...(last.pendingNew ? [last.pendingNew] : []),
@@ -607,18 +613,19 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
       onAdd: () => onNew?.({ cwd: filter.dir ?? cwdNow?.() ?? "" }), addLabel: t("channels:side.newHome") }));
     const channels = [...directory.channels.values()].filter((c) => c.kind === "channel" && !c.archivedAt && !c.home)
-      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" }));
     const byChannel = new Map();
-    for (const s of last.threads) {
+    for (const s of last.threads.filter(matchesFilter)) {
       if (!byChannel.has(s.thread.channelId)) byChannel.set(s.thread.channelId, []);
       byChannel.get(s.thread.channelId).push(s);
     }
     for (const c of channels) {
       const rows = (byChannel.get(c.id) ?? []).sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0));
+      if (filtering() && !rows.length) continue;
       wanted.append(channelSection(c.id, { name: c.name, unread: (c.unread ?? 0) > 0, mentions: c.mentions ?? 0, rows,
         onName: () => onOpenChannel?.(c.id), onAdd: onNewInChannel && (() => onNewInChannel(c.id)), addLabel: t("channels:side.newInChannel", { name: c.name }) }));
     }
-    for (const node of channelExtras()) {
+    for (const node of filtering() ? [] : channelExtras()) {
       if (!node) continue;
       node.dataset.sideKey ??= `extra:${node.dataset.sec ?? ''}`;
       const keep = keyed(el("span"), node.dataset.sideKey);
@@ -684,7 +691,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   /** 親の項目（行 → 器の見出し・状態の見出し、器の見出し → 状態の見出し） */
   function parentItem(n) {
     if (n.classList.contains("row") && n.closest(".fam")) return n.closest(".fam").querySelector(":scope > .fam-head");
-    return n.closest(".grp")?.querySelector(":scope > .grp-head") ?? null;
+    return (n.classList.contains("grp-head") ? n.closest(".grp")?.parentElement?.closest(".grp") : n.closest(".grp"))?.querySelector(":scope > .grp-head") ?? null;
   }
 
   root.setAttribute("role", "tree");
@@ -857,7 +864,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   /** 家族の器。中に根と枝が平らに並ぶ（枝の枝も同じ器。入れ子の器は作らない） */
-  function family(fam) {
+  function family(fam, level = 3) {
     const list = members(fam);
     const id = fam.root.id;
     // 今いる会話が中にあれば開いたまま出す（人が閉じるまで）。それ以外の既定は畳んだ状態
@@ -874,7 +881,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       save();
       render();
     };
-    treeItem(head, `f:${id}`, 2, {
+    treeItem(head, `f:${id}`, level, {
       expanded: open,
       open: () => setOpen(!open),
       expand: setOpen,
@@ -935,7 +942,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const kids = keyed(el("div", "fam-rows"), `family-rows:${id}`, true);
       kids.id = `fam-${id}`;
       kids.setAttribute("role", "group");
-      for (const s of list) kids.append(row(s, 3));
+      for (const s of list) kids.append(row(s, level + 1));
       box.append(kids);
     }
     return box;
@@ -943,7 +950,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
 
   /**
    * 一覧の行。id が null なら、まだ id の無い新しいセッション（印は付かず、掴めない）
-   * @param {number} level ツリーの深さ（先頭の作成中 1・状態の見出しの下 2・器の中 3）
+   * @param {number} level ツリーの深さ（一時チャットの作成中 2・状態の見出しの下 3・器の中 4）
    */
   function row(s, level) {
     const key = `session:${level}:${s.id ?? ''}`;
@@ -1555,7 +1562,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     const dirs = new Map();
     for (const s of last.sessions) { const dir = s.worktree?.origin ?? s.cwd; if (dir) dirs.set(dir, (dirs.get(dir) ?? 0) + 1); }
     const counts = new Map();
-    for (const s of last.sessions) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
+    for (const s of [...last.sessions.filter((s) => !s.bot), ...last.threads]) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
     const pick = (f) => { f(); save(); render(); p.hidden = true; };
     $("recentPop").hidden = true;
     const paint = () => {
@@ -1712,8 +1719,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         pendingNew: o.pendingNew ?? null,
         // bot のスレッドの行（会話に似た形: id "thread:<チャンネル>:<根>"・thread・bot・title・status・lastModified）
         threads: o.threads ?? [],
-        // 並べ方: "status"（利用者の状態のグループ）| "channel"（一時チャット・チャンネル・Bots・ルーティン）
-        order: o.order === "channel" ? "channel" : "status",
       };
       // 使われなくなった仮のグループは捨てる。使われ始めたものは statuses 側に移る
       for (const k of made) if (sessions.some((s) => statusKey(s) === k)) made.delete(k);

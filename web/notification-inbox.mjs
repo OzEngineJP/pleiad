@@ -71,12 +71,12 @@ export function describeNotification(n, t, titleOf = () => '') {
   return { icon, line, place, outcome, open };
 }
 
-/** ベルの印。waiting は未読のあなた待ち。{ text, wait, label }（text が '' なら印なし） */
+/** ベルの印。waiting は未解決のあなた待ち。text は未読件数（空でも wait なら ◆ を出す）。 */
 export function badgeState({ unread = 0, waiting = 0 } = {}, t) {
   const n = Math.max(0, unread | 0);
   const text = n > COUNT_CAP ? `${COUNT_CAP}+` : n ? String(n) : '';
   const wait = waiting > 0;
-  const label = !n ? t('inbox.bell') : wait ? t('inbox.bellWait', { n }) : t('inbox.bellUnread', { n });
+  const label = wait ? (n ? t('inbox.bellWait', { n }) : t('inbox.bellWaiting')) : !n ? t('inbox.bell') : t('inbox.bellUnread', { n });
   return { text, wait, label, show: Boolean(n || wait) };
 }
 
@@ -255,7 +255,6 @@ export function setupNotificationInbox({ bell, panel, veil, invoke, t, relTime, 
     if (n.unread) {
       n.unread = false;
       S.unread = Math.max(0, S.unread - 1);
-      if (n.kind === 'wait' && n.resolvedAt == null) S.waiting = Math.max(0, S.waiting - 1);
       paintBell();
       invoke('notifications.markRead', { ids: [n.id] }).catch(() => {});
     }

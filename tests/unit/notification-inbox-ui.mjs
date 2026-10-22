@@ -66,6 +66,8 @@ export default async function (tt) {
 
     let b = badgeState({ unread: 0, waiting: 0 }, t);
     tt.ok('未読が無ければ印なし・名前は「通知」', b.show === false && b.label === '通知' && b.text === '');
+    b = badgeState({ unread: 0, waiting: 1 }, t);
+    tt.ok('既読でも解決まで ◆ と読み上げ名が残る', b.show && b.wait && b.text === '' && b.label === '通知（あなた待ちあり）');
     b = badgeState({ unread: 3, waiting: 0 }, t);
     tt.ok('未読があれば件数・名前に件数', b.show && b.text === '3' && b.wait === false && b.label === '通知（未読 3 件）');
     b = badgeState({ unread: 4, waiting: 2 }, t);

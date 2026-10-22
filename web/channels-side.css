@@ -1,17 +1,13 @@
 /* ==================== 脇（web/side.mjs・web/channels/sidebar.mjs。docs/design-system.md「脇」） ====================
-   脇は 1 つ。検索欄の下の並べ方「チャンネル｜状態」で、同じスレッドを 2 通りに並べる（メインの面は替えない）。
+   一時チャット（状態ごと）→ チャンネル → Bots → ルーティンの木。
    面は --surface-*、字は --ink-*、枠線は使わない（選んでいる側は面の持ち上がりで示す） */
 
-/* ---- 並べ方の切り替え（.seg と同じ pill の 2 択） */
-.side-order{display:inline-flex;gap:2px;margin:6px 12px 4px;padding:2px;background:var(--surface-3);border-radius:var(--r-pill);align-self:flex-start;flex:none}
-.side-order button{height:26px;padding:0 12px;border-radius:var(--r-pill);background:transparent;font-size:var(--fs-s);color:var(--ink-weak);cursor:pointer;
-  transition:background-color var(--dur-fast) var(--ease-out)}
-.side-order button:hover{color:var(--ink)}
-.side-order button[aria-checked=true]{background:var(--surface-paper);color:var(--ink-strong);font-weight:600;box-shadow:0 1px 3px var(--shadow)}
-/* 設定を開いている間は、一覧と同じく隠す。語を入れている間は結果だけを出す */
-body.settings > #sidebar > .side-order,html.side-searching .side-order{display:none}
-
-/* ---- チャンネルの並べ方（一時チャット・チャンネルの見出し・最近のスレッド・ほか n 件） */
+/* ---- 置き場所の木（一時チャットの状態の見出し・チャンネルの最近のスレッド） */
+.chsec .grp .grp-head{padding-left:0}
+.chsec > .rows{gap:6px}
+.chsec > .rows > .grp > .grp-head{min-height:26px;padding-bottom:2px}
+.row-status{flex:none;display:inline-grid;place-items:center;width:14px;color:var(--ink-weak);font-size:var(--fs-xs)}
+.row-status .i{width:14px;height:14px}
 .chsec-head{gap:6px}
 .chsec-chev{display:inline-grid;place-items:center;width:16px;height:18px;padding:0;background:transparent;cursor:pointer;flex:none}
 .chsec-chev .fam-chev{margin:0;transform:rotate(90deg)}
@@ -41,7 +37,7 @@ body.channels.home-split:not(.settings) .channels-view::after{content:"";positio
 .crumb-hash{color:var(--ink-weak)}
 .crumb-sep{flex:none;color:var(--ink-weak);margin:0 2px}
 
-/* ---- Bots・ルーティンの節の置き場（#channelsSide）。節はチャンネルの並べ方の間 #groups の末尾へ移るので、置き場そのものは出さない */
+/* ---- Bots・ルーティンの節の置き場（#channelsSide）。節は #groups の末尾に入るので、置き場そのものは出さない */
 .channels-side{display:none}
 .cs-icon{cursor:default}
 .cs-icon:hover{background:transparent}
@@ -75,7 +71,6 @@ body.channels.home-split:not(.settings) .channels-view::after{content:"";positio
 .cs-new-err{padding:0 10px 2px;font-size:var(--fs-xs);color:var(--ink-strong)}
 
 /* Chats の一覧: あなた待ちの bot の会話の印（bot のアイコンと #チャンネル）と、検索の結果の出どころ */
-.bot-waits-head{padding-left:8px;font-weight:600}
 .row-ch{display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap}
 .row-ch .av.xs{width:16px;height:16px;flex:none;display:inline-grid;place-items:center;font-size:11px;line-height:1}
 .row-ch-name{min-width:0;overflow:hidden;text-overflow:ellipsis}

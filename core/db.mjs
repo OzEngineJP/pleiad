@@ -648,9 +648,9 @@ export function notificationTable(db) {
     },
     get(id) { const r = prepared(db, `SELECT ${NOTIFICATION_COLUMNS} FROM notifications WHERE id = ?`).get(id); return r ? notificationRow(r) : null; },
     byDedupeKey(key) { const r = prepared(db, `SELECT ${NOTIFICATION_COLUMNS} FROM notifications WHERE dedupe_key = ?`).get(key); return r ? notificationRow(r) : null; },
-    /** { total, unread, waiting }。waiting は未読で、まだ決着していないあなた待ち */
+    /** { total, unread, waiting }。waiting は既読かどうかに関係なく、まだ決着していないあなた待ち */
     counts() {
-      const r = prepared(db, "SELECT COUNT(*) AS total, SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) AS unread, SUM(CASE WHEN read_at IS NULL AND kind = 'wait' AND resolved_at IS NULL THEN 1 ELSE 0 END) AS waiting FROM notifications").get();
+      const r = prepared(db, "SELECT COUNT(*) AS total, SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) AS unread, SUM(CASE WHEN kind = 'wait' AND resolved_at IS NULL THEN 1 ELSE 0 END) AS waiting FROM notifications").get();
       return { total: Number(r.total ?? 0), unread: Number(r.unread ?? 0), waiting: Number(r.waiting ?? 0) };
     },
     /** 既読にする。変えた件数を返す（巻き戻さない: 既に既読の行は触らない） */
@@ -694,11 +694,11 @@ export function notificationTable(db) {
     updateData(dedupeKey, data) {
       return Number(prepared(db, 'UPDATE notifications SET data = ? WHERE dedupe_key = ?').run(jsonOf(data), dedupeKey).changes) > 0;
     },
-    /** 古いものを捨てる: cutoff より前、と max 件を超えた分（既読を先に、古い順）。捨てた件数を返す */
+    /** 未解決の待ちは残し、ほかの行の cutoff より前と max 件を超えた分を捨てる（既読を先に、古い順）。捨てた件数を返す */
     prune(cutoff, max) {
-      let n = Number(prepared(db, 'DELETE FROM notifications WHERE at < ?').run(cutoff).changes);
-      const excess = Number(prepared(db, 'SELECT COUNT(*) AS n FROM notifications').get().n) - max;
-      if (excess > 0) n += Number(prepared(db, 'DELETE FROM notifications WHERE seq IN (SELECT seq FROM notifications ORDER BY (read_at IS NULL) ASC, at ASC, seq ASC LIMIT ?)').run(excess).changes);
+      let n = Number(prepared(db, "DELETE FROM notifications WHERE at < ? AND NOT (kind = 'wait' AND resolved_at IS NULL)").run(cutoff).changes);
+      const excess = Number(prepared(db, "SELECT COUNT(*) AS n FROM notifications WHERE NOT (kind = 'wait' AND resolved_at IS NULL)").get().n) - max;
+      if (excess > 0) n += Number(prepared(db, "DELETE FROM notifications WHERE seq IN (SELECT seq FROM notifications WHERE NOT (kind = 'wait' AND resolved_at IS NULL) ORDER BY (read_at IS NULL) ASC, at ASC, seq ASC LIMIT ?)").run(excess).changes);
       return n;
     },
     transaction: (fn) => transaction(db, fn),
