@@ -210,6 +210,7 @@
     "instruction-amount": 1018,
     "limit-resume": 23,
     "lineage": 1,
+    "live-snapshot": 9000,
     "main-away": 924,
     "main-away-desktop": 967,
     "main-away-server": 7528,
