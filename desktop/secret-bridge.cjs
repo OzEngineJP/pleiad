@@ -85,4 +85,21 @@ function safeStorageCipher({ safeStorage, platform = process.platform }) {
   };
 }
 
-module.exports = { attachSecretBridge, createSecretHandler, encryptionState, openableAuthUrl, safeStorageCipher };
+/**
+ * サーバーを起こす前に、safeStorage の鍵を一度取り出しておく。macOS では最初の取り出しでキーチェーンの確認が出ることがあり
+ * （別の署名のアプリが作った項目など）、答えるまで main が止まる。サーバーの起動の待ち（60 秒）や暗号化の依頼の待ち（10 秒）が
+ * 走っている間に止まると、どちらも時間切れになる。先に済ませれば、確認は起動の最初に 1 回だけ出て、後の依頼は待たない。
+ * 拒否された・使えないときは何もしない（依頼のときに今までどおり失敗を返す）。戻り値は試験用
+ */
+function warmSecretStorage(safeStorage, { log = () => {} } = {}) {
+  try {
+    if (!safeStorage?.isEncryptionAvailable?.()) return false;
+    safeStorage.decryptString(safeStorage.encryptString('pleiad'));
+    return true;
+  } catch (error) {
+    log(`safeStorage warm-up failed: ${error?.message ?? error}`);
+    return false;
+  }
+}
+
+module.exports = { attachSecretBridge, createSecretHandler, encryptionState, openableAuthUrl, safeStorageCipher, warmSecretStorage };
