@@ -18,8 +18,6 @@
     "openDm": "DM を開く",
     "openBot": "bot のページを開く",
     "dm": "DM",
-    "botWaitsHead": "あなたを待っている",
-    "order": { "label": "脇の並べ方", "channel": "チャンネル", "status": "状態" },
     "home": "一時チャット",
     "newHome": "一時チャットに新しいスレッド",
     "newInChannel": "{{name}} に新しいスレッド",

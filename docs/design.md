@@ -81,12 +81,12 @@
 
 ## Channels と bot（2026-10-03）
 
-仕事が**始まる**場として、チャンネル・スレッド・bot を入れた。今の動き（データ・操作・出来事・起こし方・記憶・画面の部品）は [channels.md](channels.md)、画面の決まった形は [design-system.md](design-system.md) の先頭（脇の Chats / Channels・チャンネルの流れ・スレッドの空間モデル・bot のページ）に書く。
+仕事が**始まる**場として、チャンネル・スレッド・bot を入れた。今の動き（データ・操作・出来事・起こし方・記憶・画面の部品）は [channels.md](channels.md)、画面の決まった形は [design-system.md](design-system.md) の先頭（脇の置き場所の木・チャンネルの流れ・スレッドの空間モデル・bot のページ）に書く。
 
 - **チャンネルと投稿**: 正本は Pleiad のデータ置き場（`channels/`。投稿・編集・リアクションの追記だけの記録）。投稿は発言者の欄（人・bot・システム・ルーティン）を持つ。「編集済み」の印は本文が実際に変わったときだけ付く。
 - **bot**: 定義（人格・エージェント・モデル・承認モード・触れてよいフォルダー）とスレッドごとの会話で動く。起こすのは投稿の `@` だけ。承認モードとフォルダーを広げることと記憶を直す・忘れることは人だけが決める。
-- **スレッド**: 実体は bot の作業の会話。Chats には出さず（あなたを待っている間だけ一覧の先頭に出す）、スレッドの画面がそのまま会話の画面になる。
-- **脇**: Chats と Channels の 2 つ組のタブ。並べ方と操作が違うものを 1 本に混ぜない。
+- **スレッド**: 実体は bot の作業の会話。脇ではチャンネルの中に 1 スレッド 1 行で出し、あなた待ちも元の場所に ◆ を付けて残す。スレッドの画面がそのまま会話の画面になる。
+- **脇**: 一時チャット（中は状態ごと）→ チャンネル（名前順）→ Bots → ルーティンの木。並べ方は 1 つ。状態だけで見たいときはフィルターで絞る（承認済み（2026-10-22）、[ADR 0251](adr/0251-sidebar-place-tree.md)）。
 
 ## 多言語対応（2026-09-23）
 
@@ -186,8 +186,8 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
   - **飛び先**: 会話の通知は `sessionId` と、ターンの最後の発言の `uuid`（`text.end` の uuid。無いバックエンドは会話の末尾へ）。bot の会話のターン・承認はチャンネルとスレッド（`channelId`・`threadId`）、`@あなた` は加えて `postId`。名前（会話の題・bot・チャンネル・スレッドの題）は載せた時点の控え（画面は会話の題だけ今のものを先に使う）。
   - **重複しない**: `dedupeKey`（完了・失敗 `done:<会話>:<completedAt>`・`failed:…`、あなた待ち `wait:<承認の id>`、メンション `mention:<投稿の id>`）が同じなら載せない。同じ出来事を何度渡してもよい。
   - **既読**: 通知ごと（`read_at`）。会話の `markRead`（`readAt` まで）・その会話を見た（`presence`）・チャンネルの `channels.markRead`（`readAt` まで。bot の会話の通知はチャンネルの既読でも）で、対応する通知も既読になる。いま見ている会話で起きたものは最初から既読で載る。
-  - **上限**: 200 件・30 日（`NOTIFICATION_MAX`・`NOTIFICATION_KEEP_MS`。超えたら古い方から、既読を先に捨てる）。会話を消す・チャンネルをアーカイブすると、その行も消す。あなた待ちの承認はメモリにしか無く再起動で消えるので、起動時に決着していないあなた待ちを `cancelled` で決着させる。
-  - **操作**: `notifications.list { filter?: all|wait|mention, before?, limit? }`（新しい順・既定 50 件・最大 100 件。`before` は行の `seq`。未読とあなた待ちの件数も返す）・`notifications.count`（件数だけ。ベルの数）・`notifications.markRead { ids?, all? }`。件数が変わると出来事 `notificationsChanged { unread, waiting }` が全画面へ（リモートの端末にも届く。`waiting` は未読で決着していないあなた待ち）。画面は `web/notification-inbox.mjs`、見た目は [design-system.md](design-system.md)「通知の一覧」。
+  - **上限**: 未解決の待ちを除き 200 件・30 日（`NOTIFICATION_MAX`・`NOTIFICATION_KEEP_MS`。超えたら古い方から、既読を先に捨てる）。会話を消す・チャンネルをアーカイブすると、その行も消す。あなた待ちの承認はメモリにしか無く再起動で消えるので、起動時に決着していないあなた待ちを `cancelled` で決着させる。
+  - **操作**: `notifications.list { filter?: all|wait|mention, before?, limit? }`（新しい順・既定 50 件・最大 100 件。`before` は行の `seq`。未読とあなた待ちの件数も返す）・`notifications.count`（件数だけ。ベルの数）・`notifications.markRead { ids?, all? }`。件数が変わると出来事 `notificationsChanged { unread, waiting }` が全画面へ（リモートの端末にも届く。`waiting` は既読・未読によらず決着していないあなた待ち）。画面は `web/notification-inbox.mjs`、見た目は [design-system.md](design-system.md)「通知の一覧」。
 - **WS コマンド**: `presence`・`notifyStatus`・`setNotifyPc { done?, reply?, failed? }`・`setNotifyDevice { id, muted }`（操作 `notify.setPc`・`notify.setDevice`。AI も使える）・`notifyRegister { key, settings }`（中継越しの端末の画面からだけ。画面の内部）。変わるたびに `notifyStatus` イベントを全画面へ。`ready` に `notify: 1`。
 
 ## タイトル生成（2026-09-15）

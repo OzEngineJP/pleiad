@@ -3515,6 +3515,7 @@
   },
   "inbox": {
     "bell": "通知",
+    "bellWaiting": "通知（あなた待ちあり）",
     "bellUnread": "通知（未読 {{n}} 件）",
     "bellWait": "通知（未読 {{n}} 件・あなた待ちあり）",
     "panel": "通知",

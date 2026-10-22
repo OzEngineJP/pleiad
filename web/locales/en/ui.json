@@ -3621,6 +3621,7 @@
   },
   "inbox": {
     "bell": "Notifications",
+    "bellWaiting": "Notifications (waiting for you)",
     "bellUnread": "Notifications ({{n}} unread)",
     "bellWait": "Notifications ({{n}} unread, waiting for you)",
     "panel": "Notifications",

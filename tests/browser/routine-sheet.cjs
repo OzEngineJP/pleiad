@@ -95,7 +95,6 @@ async page => {
   // ---- チャンネルを作って開く。ルーティンが無い間も［ルーティン］の入口がある（数は付けない）
   const name = 'daily' + String(Date.now()).slice(-5);
   const ch = await rpc('channels.create', { name, purpose: '毎日の見回りとまとめ' });
-  await page.locator('#sideOrder [data-order="channel"]').click();
   await showChannel(ch.id);
   await page.locator('#chFeed').waitFor();
   await page.waitForSelector('.ch-routines');

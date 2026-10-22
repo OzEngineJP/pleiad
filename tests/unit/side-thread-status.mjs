@@ -1,6 +1,4 @@
-// 脇の「状態」の並べ方で、bot のスレッドの行をドラッグで別の状態へ移せる（channels.setThreadStatus）。
-// 起きていた不具合: スレッドの行は s.bot で早く return するので draggable にすらならず、状態の節の
-// dragover/drop は last.sessions だけを引くので "thread:<チャンネル>:<根>" の id を解けず、落とせなかった。
+// 脇の置き場所の木（docs/design-system.md「脇」）。一時チャットは状態へドラッグ、チャンネルは行のメニュー。
 // web/side.mjs を dom-stub で実際に描き、行の dragstart → 節の dragover → drop で onSetStatus が呼ばれるまで確かめる。
 // onSetStatus からサーバーへの振り分け（スレッドの行 id → channels.setThreadStatus。会話は今までどおり setStatus）は、
 // web/client.mjs の該当部分を vm で走らせて確かめる（tests/unit/sidebar-client-moves.mjs と同じやり方）。
@@ -10,7 +8,7 @@ import { N } from '../lib/dom-stub.mjs';
 import { createSide } from '../../web/side.mjs';
 
 export const name = 'side-thread-status';
-export const title = '脇の状態の並べ方: スレッドの行をドラッグで別の状態へ移せる';
+export const title = '脇の木: 会話のドラッグ・スレッドのメニュー・畳み・待ち・フィルター';
 
 // createSide が触る要素の id（web/index.html の脇）。無いと getElementById が null を返して落ちるので全部置く
 const IDS = ['groups', 'q', 'fchips', 'filterBtn', 'filterOutside', 'keyHint', 'clearFilterOutside', 'newSession',
@@ -18,7 +16,7 @@ const IDS = ['groups', 'q', 'fchips', 'filterBtn', 'filterOutside', 'keyHint', '
   'searchHint', 'sideUndo'];
 
 /** dom-stub（document.createElement だけ）に、createSide が要る面を足す。終わったら元に戻す（同じ worker の後の suite へ残さない） */
-function installDom() {
+function installDom(prefs = {}) {
   const els = new Map(IDS.map((id) => [id, new N(id === 'q' ? 'input' : 'div')]));
   els.get('q').value = '';
   const saved = {
@@ -36,7 +34,8 @@ function installDom() {
   document.activeElement = null;
   document.createTextNode = (text) => { const node = new N('span'); node.textContent = text; return node; };
   document.addEventListener = () => {};
-  globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+  const storage = new Map([['agent-host-side', JSON.stringify(prefs)]]);
+  globalThis.localStorage = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: (k) => storage.delete(k) };
   return {
     els,
     restore() {
@@ -68,9 +67,11 @@ export default async function (t) {
     const calls = [];
     const side = createSide({
       onOpen: () => {},
+      onContext: (s) => calls.push(['context', s.id]),
       onSetStatus: (id, status) => calls.push(['setStatus', id, status]),
       onSetGrouped: (s, ungrouped) => calls.push(['setGrouped', s.id, ungrouped]),
     });
+    side.setDirectory({ channels: [{ id: 'c1', kind: 'channel', name: 'dev' }] });
     const threadRow = {
       id: 'thread:c1:t1',
       thread: { channelId: 'c1', threadId: 't1' },
@@ -80,51 +81,88 @@ export default async function (t) {
     side.render([{ id: 's1', title: '会話の行', status: 'A', cwd: '/work', lastModified: 1000 }], {
       statuses: [{ status: 'A' }, { status: 'B', kept: true }],
       threads: [threadRow],
-      order: 'status',
     });
     const root = dom.els.get('groups');
     const secA = sectionOf(root, 'A'), secB = sectionOf(root, 'B');
     t.ok('状態ごとの節（A と B）が描かれる', Boolean(secA && secB));
     const threadEl = rowOf(root, 'thread:c1:t1'), sessEl = rowOf(root, 's1');
-    t.ok('スレッドと会話の行が状態 A の下に出る', Boolean(threadEl && sessEl));
-
-    // スレッドの行を状態 B へ落とす
-    t.ok('スレッドの行は掴める（draggable）', threadEl.draggable === true, String(threadEl.draggable));
-    threadEl.dispatchEvent(dragEvent('dragstart'));
+    t.ok('会話は一時チャットの状態の中、スレッドはチャンネルの中', Boolean(threadEl && sessEl) && rowOf(secA, 's1') === sessEl && !rowOf(secA, threadRow.id));
+    t.ok('チャンネルのスレッドはドラッグしない', threadEl.draggable !== true);
+    threadEl.treeMenu(0, 0);
+    t.ok('スレッドのメニューはスレッドの行を受け取る', calls[0]?.[0] === 'context' && calls[0]?.[1] === threadRow.id);
+    calls.length = 0;
+    t.ok('一時チャットの会話は掴める', sessEl.draggable === true);
+    sessEl.dispatchEvent(dragEvent('dragstart'));
     const overB = dragEvent('dragover');
     secB.dispatchEvent(overB);
-    t.ok('別の状態の節はドロップを受ける（dragover で preventDefault）', overB.defaultPrevented === true);
+    t.ok('別の状態の節はドロップを受ける', overB.defaultPrevented === true);
     secB.dispatchEvent(dragEvent('drop'));
-    t.ok('落とすと onSetStatus へスレッドの行 id と新しい状態が届く',
-      calls.length === 1 && calls[0][0] === 'setStatus' && calls[0][1] === 'thread:c1:t1' && calls[0][2] === 'B', JSON.stringify(calls));
+    t.ok('落とすと会話の状態が変わる', calls.length === 1 && calls[0][1] === 's1' && calls[0][2] === 'B', JSON.stringify(calls));
 
     // 同じ状態へは落とせない（節が受けないので drop も来ない）
-    threadEl.dispatchEvent(dragEvent('dragstart'));
+    sessEl.dispatchEvent(dragEvent('dragstart'));
     const overA = dragEvent('dragover');
     secA.dispatchEvent(overA);
     t.ok('同じ状態の節は受けない', overA.defaultPrevented !== true);
-    threadEl.dispatchEvent(dragEvent('dragend'));
+    sessEl.dispatchEvent(dragEvent('dragend'));
     t.ok('同じ状態へ落としても状態の変更は呼ばれない', calls.length === 1, JSON.stringify(calls));
-
-    // 会話の行は今までどおり
-    sessEl.dispatchEvent(dragEvent('dragstart'));
-    const overB2 = dragEvent('dragover');
-    secB.dispatchEvent(overB2);
-    secB.dispatchEvent(dragEvent('drop'));
-    t.ok('会話の行も今までどおり別の状態へ移せる',
-      calls.some((c) => c[0] === 'setStatus' && c[1] === 's1' && c[2] === 'B'), JSON.stringify(calls));
 
     // bot の会話（スレッドではない s.bot の行）は、今までどおり掴めない
     side.render([{ id: 's2', title: 'bot の会話', status: 'A', cwd: '/work', lastModified: 900, bot: { botId: 'b1', kind: 'dm' } }], {
       statuses: [{ status: 'A' }, { status: 'B', kept: true }],
       threads: [threadRow],
-      order: 'status',
     });
-    // bot の会話は先頭の「あなたを待っている」の節には入らず（waiting でない）、状態のグループにも入らない
+    // bot の DM は Bots の行で示し、一時チャットには入れない
     t.ok('bot の会話の行は掴めないまま（状態を持たない）', !rowOf(root, 's2') || rowOf(root, 's2').draggable !== true);
   } finally {
     dom.restore();
   }
+
+  // ---- 最近 5 件・開いている会話とあなた待ちは残す・手動の畳みの印
+  const rows = Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, title: `chat ${i}`, status: 'A', backend: 'fake', cwd: '/work', lastModified: 10000 - i }));
+  for (const prefs of [{}, { filter: { status: 'A' } }, { filter: { backends: ['fake'] } }, { filter: { dir: '/work' } }]) {
+    const d = installDom(prefs);
+    try {
+      const extra = new N('section'); extra.dataset.sec = 'bots';
+      const side = createSide({ channelExtras: () => [extra] });
+      side.setDirectory({ channels: [{ id: 'z', name: 'Zulu', kind: 'channel' }, { id: 'a', name: 'Alpha', kind: 'channel' }] });
+      const threads = Array.from({ length: 7 }, (_, i) => ({ id: `thread:a:t${i}`, title: `thread ${i}`, thread: { channelId: 'a', threadId: `t${i}` }, status: i === 0 ? 'B' : 'A', lastModified: 10000 - i }));
+      side.render(rows, { statuses: [{ status: 'A', icon: '◐' }, { status: 'B' }], threads, currentId: 's7', waitingIds: new Set(['s8', 'thread:a:t6']) });
+      const root = d.els.get('groups');
+      const a = sectionOf(root, 'A');
+      t.ok('5 件と開いている行・待ちが残り、残りの正しい件数を出す', !!rowOf(a, 's4') && !rowOf(a, 's5') && !!rowOf(a, 's7') && !!rowOf(a, 's8') && a.textContent.includes('ほか 2 件'));
+      const more = find(a, n => n.dataset.key === 'm:status:A');
+      more.treeOpen();
+      t.ok('ほか n 件を開くと全部出て、少なく表示で戻せる', !!rowOf(sectionOf(root, 'A'), 's5') && sectionOf(root, 'A').textContent.includes('少なく表示'));
+      find(sectionOf(root, 'A'), n => n.dataset.key === 'm:status:A').treeOpen();
+      find(sectionOf(root, 'A'), n => n.dataset.key === 'g:A').treeExpand(false);
+      t.ok('畳んだ状態の見出しに待ちの印', sectionOf(root, 'A').classList.contains('collapsed') && !!find(sectionOf(root, 'A').children[0], n => n.classList.contains('wait')));
+      const home = find(root, n => n.dataset.sideKey === 'chsec:home');
+      home.children[0].treeExpand(false);
+      t.ok('一時チャットも畳むと待ちの印', !!find(find(root, n => n.dataset.sideKey === 'chsec:home').children[0], n => n.classList.contains('wait')));
+      t.ok('あなたを待っている区画は無い', !find(root, n => n.classList.contains('bot-waits')));
+      const channel = find(root, n => n.dataset.sideKey === 'chsec:a');
+      if (prefs.filter?.dir || prefs.filter?.backends) {
+        t.ok('スレッドの持たない値で絞る間はチャンネルを見せない', !channel && !find(root, n => n.dataset.sideKey === 'chsec:z'));
+      } else {
+        t.ok('チャンネルも同じ状態フィルターと最近 3 件・待ちを守る', !!channel && !!rowOf(channel, 'thread:a:t6') && !rowOf(channel, 'thread:a:t4') && (!prefs.filter || !rowOf(channel, 'thread:a:t0')));
+        t.ok('スレッドの行の状態アイコンに名前がある', !!find(channel, n => n.classList.contains('row-status') && n.getAttribute('aria-label') === 'A'));
+      }
+      t.ok('フィルター中は Bots を隠す', prefs.filter ? !root.children.includes(extra) : root.children.includes(extra));
+      t.ok('状態の絞り込みでは空のチャンネルを出さない', !prefs.filter || !find(root, n => n.dataset.sideKey === 'chsec:z'));
+    } finally { d.restore(); }
+  }
+
+  const familyDom = installDom();
+  try {
+    const side = createSide({});
+    const root = familyDom.els.get('groups');
+    const parent = { id: 'parent', title: 'parent', status: 'A', lastModified: 9990 };
+    const child = { id: 'child', title: 'child', status: 'A', lastModified: 9989, parent: { sessionId: 'parent' } };
+    side.render([...rows, parent, child], { statuses: [{ status: 'A' }], currentId: 'child' });
+    t.ok('5 件の外の開いている枝は、fork の器ごと残す', !!find(root, n => n.dataset.sideKey === 'family:parent') && !!rowOf(root, 'parent') && !!rowOf(root, 'child'));
+    t.ok('fork の器の中の行は level 4', rowOf(root, 'child')?.getAttribute('aria-level') === '4');
+  } finally { familyDom.restore(); }
 
   // ---- onSetStatus → サーバーへの振り分け（web/client.mjs を vm で切り出して走らせる）
   {

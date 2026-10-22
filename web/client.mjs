@@ -395,7 +395,7 @@ let seq = 0;
 const pending = new Map();
 
 const state = {
-  threadIndex: { threads: [], totals: {} },   // bot のスレッドの索引（channels.threads。脇の 2 つの並べ方）
+  threadIndex: { threads: [], totals: {} },   // bot のスレッドの索引（channels.threads。脇の置き場所の木）
   current: null,      // 選択中の sessionId（null = 新規）
   loadingSession: null,
   homeDir: "",
@@ -5051,12 +5051,7 @@ const slashSkills = chatComposer.useSlash({
 
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
 
-// 脇の並べ方（「チャンネル」|「状態」。docs/design-system.md「脇」）。端末ごとに覚える。前の版の札（Chats / Channels）を選んでいたら、その並びから始める
-const SIDE_ORDER_KEY = 'agent-host-side-order';
-let sideOrder = 'status';
-try { sideOrder = localStorage.getItem(SIDE_ORDER_KEY) ?? (localStorage.getItem('agent-host-side-tab') === 'channels' ? 'channel' : 'status'); } catch {}
-if (sideOrder !== 'channel') sideOrder = 'status';
-// Bots・ルーティンの節（web/channels/sidebar.mjs が描く）。チャンネルの並べ方の間、一覧の末尾に入る
+// Bots・ルーティンの節（web/channels/sidebar.mjs が描く）。絞り込んでいないとき一覧の末尾に入る
 const channelExtraNodes = [...document.querySelectorAll('#channelsSide .cs-sec[data-sec="bots"], #channelsSide .cs-sec[data-sec="routines"]')];
 // メインの面（会話 / Channels）。channelsUi はこの後で作るので、作る前（起動の途中）は会話の面とみなす
 const surface = () => { try { return channelsUi.tab; } catch { return 'chats'; } };
@@ -5107,7 +5102,7 @@ const side = createSide({
   visible: () => !document.body.classList.contains("settings") && (narrowView.matches ? drawerOpen() : !document.documentElement.classList.contains("side-closed")),
 });
 
-// ---- 脇のスレッドの行（channels.threads の索引。web/side.mjs の 2 つの並べ方）
+// ---- 脇のスレッドの行（channels.threads の索引。web/side.mjs の置き場所の木）
 const THREAD_INDEX_EVENTS = new Set(['channelThread', 'channelPost', 'channelsChanged', 'channelRead', 'botsChanged']);
 let threadIndexTimer = 0;
 // 起動の最初の一覧は、会話（listSessions）とスレッド（この索引）の両方が届いてから 1 度だけ描く。それまでは骨組み（web/side.mjs の skeleton）。
@@ -5135,9 +5130,8 @@ function threadCwd(s) {
   return '';
 }
 
-/** スレッドの状態を変える（脇の行のメニュー・状態の並べ方からのドラッグ。会話と同じ状態のグループ） */
+/** スレッドの状態を変える（脇の行のメニュー。会話と同じ状態のグループ） */
 function setThreadStatusOf({ channelId, threadId }, status) {
-  side.keep(status);
   return cmd('invoke', { op: 'channels.setThreadStatus', args: { channelId, threadId, status } })
     .then(() => loadThreadIndex())
     .catch((e) => sideNote(t('session.statusFailed', { error: e.message })));
@@ -5163,36 +5157,11 @@ function threadMenu(s, x, y) {
   ], s.title || t('session.untitled'));
 }
 
-// 並べ方の切り替え（#sideOrder）。押す・←→ で替える。メインの面は替えない
-{
-  const box = $('sideOrder');
-  const buttons = [...box.querySelectorAll('[data-order]')];
-  const paintOrder = () => {
-    for (const b of buttons) { const on = b.dataset.order === sideOrder; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; }
-    document.documentElement.classList.toggle('side-order-channel', sideOrder === 'channel');
-  };
-  const setOrder = (next, focus = false) => {
-    if (next !== 'channel' && next !== 'status') return;
-    sideOrder = next;
-    try { localStorage.setItem(SIDE_ORDER_KEY, next); } catch {}
-    paintOrder();
-    renderSessions();
-    if (focus) buttons.find((b) => b.dataset.order === next)?.focus();
-  };
-  for (const b of buttons) b.addEventListener('click', () => setOrder(b.dataset.order));
-  box.addEventListener('keydown', (e) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
-    e.preventDefault();
-    setOrder(e.key === 'Home' || e.key === 'ArrowLeft' ? 'channel' : 'status', true);
-  });
-  paintOrder();
-}
-
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
   // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
   // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）は会話としては出さない。スレッドは下の threadRows が 1 スレッド 1 行で出す。
-  // DM・ルーティンの会話は、あなたを待っている間だけ出る
+  // DM・ルーティンの待ちは Bots の行に出す。待っている会話は脇を開く入口の印にも数える
   // 端末の AI から任された会話（delegation.remote）は、依頼元の会話がこの PC に無いので一覧に出す（⇄ の印つき）
   const ids = new Set(state.sessions.map(s => s.id));
   const listed = state.sessions.filter(s => (!s.delegation || s.delegation.remote || !ids.has(s.delegation.parentSessionId)) && (!s.bot || (state.waitingIds.has(s.id) && s.bot.kind !== 'thread')));
@@ -5222,7 +5191,6 @@ function renderSessions() {
     waitingIds,
     chromeWaitIds: state.chromeWaitIds,
     threads: threadRows,
-    order: sideOrder,
     bgWaiting: state.bgWaiting,
     unreadIds,
     // 中断した会話（注意の三角）。未読は --ink、既読は --ink-weak（web/interrupt.mjs）
