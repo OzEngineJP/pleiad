@@ -17,10 +17,16 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 | バックエンド | つなぎ方 | 検証した版 | 最低の版 | 頼っている非公開のもの |
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.160.0 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）、`thread/shellCommand` の `userShell` の item の `command` の包み方と止めたときの `exitCode: -1`・`command aborted by user`、`!` のターンの間の `turn/start` の扱い（[ADR 0054](adr/0054-shell-from-composer.md)） |
-| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.283 | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId`、`system:compact_boundary` の `compactMetadata`・`isCompactSummary`・`parentUuid`、コマンド・`!` の行のタグと中断の文字列（[ADR 0053](adr/0053-system-messages-display.md)）、`shouldQuery: false` の行をつないだ 1 つの user 行（[ADR 0054](adr/0054-shell-from-composer.md)） |
+| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.288、CLI 2.1.303（2026-10-22、承認待ちの A → B 付け直し・履歴・使用量） | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId`、`system:compact_boundary` の `compactMetadata`・`isCompactSummary`・`parentUuid`、コマンド・`!` の行のタグと中断の文字列（[ADR 0053](adr/0053-system-messages-display.md)）、`shouldQuery: false` の行をつないだ 1 つの user 行（[ADR 0054](adr/0054-shell-from-composer.md)） |
 | Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.4.2（Pleiad 指示・委譲の実機検証）。CLI 1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
+| OpenCode | `opencode serve`（v2 HTTP/SSE・plugin） | CLI 2.0.32（v2 の接続・MCP・承認・Hooks・指示分離。[ADR 0232](adr/0232-opencode-v2-http-plugin-contract.md)） | 2.0.32（v2） | v2 のイベント形と plugin の hook、停止中の履歴・v1 移行の確認に読む `opencode.db` の `session_message`・旧 `message` / `part` 等 |
+| Grok Build | `grok`（ACP） | CLI 1.0.62（ACP・途中送信・画像ファイルの読み取り。機能の範囲は [backends.md](backends.md#grok-build)） | なし | ACP のイベント・`_x.ai/session/usage` の応答の形。ネイティブの会話ファイルは直接読まない |
 | Devin | `devin`（ACP） | CLI 3000.11.92（Pleiad 指示・委譲・ACP 接続の実機検証。[ADR 0223](adr/0223-devin-acp-backend.md)） | なし | ACP のイベント形と、圧縮区切りの取得における `devin/sessions/cli/sessions.db`（`sessions` 表の `main_chain_id`、`message_nodes` 表のノード鎖・継続ノードと `metadata.summarized_from` 等） |
 | 内蔵ブラウザー操作 | `agent-browser` と会話別 CDP 中継 | 0.38.1（同梱） | 同梱版を使用 | なし |
+
+2026-10-22 に Windows x64 の手元の版を見直した。Codex 0.160.0・OpenCode 2.0.32・Devin 3000.11.92・Grok 1.0.62 は記録の版と同じ。Claude 2.1.303 / SDK 0.3.288 は実サービスで承認待ちを A → B に付け直し、同じ承認 ID が 1 回だけ戻り、許可後の完了・使用量が 1 回だけ保存され、履歴が読めることを確認した。CLI のログインは変更していない。保持役に載せる下限は 2.1.284 のまま。
+
+Antigravity の手元は 1.4.5。使用枠取得と `limited` の上限通知は確認したが、個人の使用上限により正常な会話・再開を確認できていない。会話動作の検証版と診断用の `VERIFIED.antigravity` は 1.4.2 を維持し、上限が解けてから再確認する。
 
 非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity の stream-json には版がないため `unknown` と記録する。
 
