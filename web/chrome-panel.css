@@ -102,9 +102,9 @@
 .cp-sw-ag{display:grid;place-items:center;width:0;height:16px;transform:scale(0);transition:transform var(--dur) var(--ease-out),width var(--dur) var(--ease-out)}
 .cp-sw-chip[data-agent] .cp-sw-ag{width:16px;transform:scale(1)}
 .cp-sw-ag .run{transform:scale(.8)}
-.cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-weak)}
-.cp-sw-dot{display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-weak)}
-.cp-sw-dot.wait{background:var(--ink-mark)}
+.cp-sw-chip[data-agent][data-idle] .cp-sw-ag::after{content:"";display:block;width:7px;height:7px;border-radius:50%;color:var(--ink-weak);background:currentColor}
+.cp-sw-dot{display:block;width:7px;height:7px;border-radius:50%;color:var(--ink-weak);background:currentColor}
+.cp-sw-dot.wait{color:var(--ink-mark)}
 /* 会話の題のチップ・タブのチップ（題を省略して並べる。印は題の前） */
 .cp-sw-chip.cp-sw-conv,.cp-sw-chip.cp-tab-b{width:auto;max-width:180px;padding:0 10px;gap:6px}
 .cp-sw-chip + .cp-sw-conv{margin-left:6px}

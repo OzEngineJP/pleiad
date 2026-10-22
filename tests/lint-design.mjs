@@ -5,7 +5,8 @@
 
      node tests/lint-design.mjs <file...> [--strict] [--json] [--selftest]
 
-   .css と .html（<style> ブロックと style 属性）を受け取る。トークンの定義は渡された全ファイルから
+   .css と .html（<style> ブロックと style 属性）を受け取る。.mjs / .cjs / .js は、--strict の quiet-blue が
+   クラスの組み合わせ（el('button', 'btn-quiet on') など）を拾うためだけに読む。トークンの定義は渡された全ファイルから
    集めるので、tokens.css を一緒に渡さないと var(--ink) が unknown-token になる。
    これは意図した動作。「解決できない色は判定できない」を黙って見逃さないため。
 
@@ -58,6 +59,12 @@ const ONE_SIDED = /^border-(top|right|bottom|left|inline-start|inline-end|block-
    outline はフォーカスの輪なので枠線に数えない。角丸（border-*-radius）も線ではないので数えない。 */
 const BORDER_PROP = /^border(?!.*-radius$)(-(width|style|color|top|right|bottom|left|inline|block)(-\w+)*)?$/;
 const ALLOW_BORDER_MARK = /allow-border\s*:/;
+/* 無彩色の面（--surface-*）に青い字（--ink-blue）が載る要素（--strict: quiet-blue）。.btn-quiet の灰色の面に
+   青い字を重ねると「押せる主要操作」とも「リンク」とも読めて、どちらでもない。同じ規則に書いていなくても、
+   JS が組み合わせるクラス（'btn btn-quiet on' など）で重なるので、.mjs の文字列と html の class 属性からクラスの組を集める。
+   青の役割（リンク・今のブランチ・効いている絞り込み・選んでいる印）として残す行は、同じ行に `allow-blue:` と役割を書く。 */
+const ALLOW_BLUE_MARK = /allow-blue\s*:/;
+const SCRIPT_FILE = /\.(mjs|cjs|js)$/;
 /* トークンを定義してよいスコープ（--strict）。ここ以外に色リテラルを置くとテーマが片肺になる。 */
 const THEME_SCOPES = [':root', ':root:not([data-theme="light"])', ':root[data-theme="dark"]'];
 
@@ -310,10 +317,13 @@ const resolveColor = (value, theme, tokens) => {
 
 /* ==================== 規則 ==================== */
 export function lint(files, opts) {
+  const scripts = files.filter(f => SCRIPT_FILE.test(f.name));
+  files = files.filter(f => !SCRIPT_FILE.test(f.name));
   const rules = files.flatMap(f => parseCss(stripComments(f.name.endsWith('.html') ? htmlToCss(f.text) : f.text), f.name));
   const tokens = collectTokens(rules);
   /* コメントは剥がしてから解析するので、allow-border の印だけ先に行番号で控えておく */
   const allowLines = new Map(files.map(f => [f.name, new Set(f.text.split('\n').map((l, i) => ALLOW_BORDER_MARK.test(l) ? i + 1 : 0).filter(Boolean))]));
+  const blueLines = new Map(files.map(f => [f.name, new Set(f.text.split('\n').map((l, i) => ALLOW_BLUE_MARK.test(l) ? i + 1 : 0).filter(Boolean))]));
   const V = [];
   const add = (file, line, rule, message) => V.push({ file, line, rule, message });
 
@@ -446,9 +456,85 @@ export function lint(files, opts) {
       add(r.file, r.line, 'fill-without-on-fill', `${r.selector}：background に --fill-* を使うなら color:var(--on-fill) も同じ規則に書くこと`);
   }
 
+  /* --- G: quiet-blue（--strict。無彩色の面のボタンに青い字） --- */
+  if (opts.strict) for (const v of quietBlue(rules, files, scripts, blueLines)) add(v.file, v.line, 'quiet-blue', v.message);
+
   const order = new Map(files.map((f, i) => [f.name, i]));
   V.sort((a, b) => (order.get(a.file) - order.get(b.file)) || a.line - b.line || a.rule.localeCompare(b.rule));
   return V;
+}
+/* 規則の主語（セレクターの最後の複合）のクラスと属性。:hover・::before などの状態違い・別の要素は問わないので null。
+   :not() :is() :where() :has() は中身ごと落とす（主語のクラスを足さない側に倒す）。 */
+function subjects(selector) {
+  const out = [];
+  for (const sel of splitTop(selector, 'comma')) {
+    const flat = sel.replace(/:(not|is|where|has)\((?:[^()]|\([^()]*\))*\)/g, '').trim();
+    const parts = flat.split(/\s*[\s>+~]\s*/).filter(Boolean), subject = parts.pop() ?? '';
+    if (subject.includes(':')) continue;
+    const classes = [...subject.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)].map(m => m[1]);
+    if (!classes.length) continue;
+    const attrs = subject.match(/\[[^\]]*\]/g) ?? [];
+    const spec = (flat.match(/#[\w-]+/g)?.length ?? 0) * 100 + (flat.match(/\.[\w-]+|\[[^\]]*\]|:[\w-]+/g)?.length ?? 0);
+    /* 祖先の側のクラス（.gp .wbadge.here の gp）。別の場所の規則どうしを重ねないために使う */
+    const context = parts.flatMap(p => [...p.matchAll(/[.#](-?[_a-zA-Z][\w-]*)/g)].map(m => m[1]));
+    out.push({ classes, attrs, spec, context });
+  }
+  return out;
+}
+/* クラスの組を集める。CSS の主語・html の class 属性・.mjs の文字列（クラスの名前だけが空白で並ぶもの。${…} は外す）。
+   知らないクラスは捨て、知っているクラスが 1 つ以上あれば組にする（1 つだけの組は、そのクラスの規則どうしの重なり） */
+function compositions(rules, files, scripts, known) {
+  const sets = new Map();
+  const put = (names, where) => {
+    const c = [...new Set(names.filter(n => known.has(n)))].sort();
+    if (c.length && !sets.has(c.join(' '))) sets.set(c.join(' '), { classes: new Set(c), where });
+  };
+  for (const r of rules) for (const s of subjects(r.selector)) put(s.classes, `${r.file}:${r.line}`);
+  for (const f of files) if (f.name.endsWith('.html'))
+    for (const m of f.text.matchAll(/\sclass\s*=\s*"([^"]*)"/g)) put(m[1].split(/\s+/), `${f.name}:${f.text.slice(0, m.index).split('\n').length}`);
+  for (const f of scripts)
+    for (const m of f.text.matchAll(/(['"`])((?:(?!\1)[^\\\n]|\\.)*)\1/g)) {
+      const s = m[2].replace(/\$\{[^}]*\}/g, ' ').trim();
+      if (!/^-?[a-z][\w-]*(\s+-?[a-z][\w-]*)*$/.test(s)) continue;
+      put(s.split(/\s+/), `${f.name}:${f.text.slice(0, m.index).split('\n').length}`);
+    }
+  return [...sets.values()];
+}
+function quietBlue(rules, files, scripts, blueLines) {
+  /* 色の宣言を主語ごとに並べる。順序は渡したファイルの順と行（後ろが勝つ） */
+  const decls = [];
+  let order = 0;
+  for (const r of rules) {
+    if (r.step) continue;
+    for (const d of r.decls) {
+      const kind = d.prop === 'color' ? 'color' : (d.prop === 'background' || d.prop === 'background-color') ? 'bg' : null;
+      if (!kind) continue;
+      order++;
+      for (const s of subjects(r.selector)) decls.push({ ...s, kind, value: d.value, file: r.file, line: d.line, order });
+    }
+  }
+  const known = new Set(decls.flatMap(d => d.classes));
+  const win = (list) => list.reduce((a, b) => (!a || b.spec > a.spec || (b.spec === a.spec && b.order > a.order)) ? b : a, null);
+  const found = new Map();
+  for (const c of compositions(rules, files, scripts, known)) {
+    const on = decls.filter(d => d.classes.every(n => c.classes.has(n)));
+    /* 面はいつもの状態（属性の付かない主語）で決まるものだけを見る */
+    const bg = win(on.filter(d => d.kind === 'bg' && !d.attrs.length));
+    if (!bg || !/^var\(\s*--surface-/.test(bg.value.trim())) continue;
+    /* 祖先の条件は、片方がもう片方を含むときだけ同じ場所と見なす（.a .btn の面と .b .btn の青は重ねない） */
+    const near = (x, y) => x.context.every(n => y.context.includes(n)) || y.context.every(n => x.context.includes(n));
+    for (const blue of on.filter(d => d.kind === 'color' && /var\(\s*--ink-blue\s*\)/.test(d.value) && near(d, bg))) {
+      /* その青の規則が効く状態で、ほかの color が勝っていないか */
+      const rival = win(on.filter(d => d.kind === 'color' && d.attrs.every(a => blue.attrs.includes(a))));
+      if (rival !== blue) continue;
+      const key = `${blue.file}:${blue.line}`;
+      if (found.has(key) || (blueLines.get(blue.file) ?? new Set()).has(blue.line)) continue;
+      found.set(key, { file: blue.file, line: blue.line,
+        message: `.${[...c.classes].join('.')}（${c.where}）は ${bg.file}:${bg.line} の無彩色の面 ${bg.value} に青い字：`
+          + `ボタンは --ink / --ink-strong の字にする。青の役割（リンク・今のブランチ・効いている絞り込み・選んでいる印）なら同じ行に /* allow-blue: 役割 */` });
+    }
+  }
+  return [...found.values()];
 }
 const last = (arr, f) => { let r = null; for (const x of arr) if (f(x)) r = x; return r; };
 const label = v => { const n = varNames(v); return n.length ? n[0] + ' ' : ''; };
@@ -501,7 +587,7 @@ export function selftest(log = console.log) {
   const chip = ':root{--danger-bg:#fbe3da;--danger-fg:#9c3312}\n.chip{background:var(--danger-bg);color:var(--danger-fg)}';
   const cases = [
     ['薄赤の面 + 濃赤の文字は落ちる', [{ name: 'a.css', text: chip }], {}, V => V.some(v => v.rule === 'same-hue-pair')],
-    ['無彩色の面 + 青い文字は通る', [{ name: 'b.css', text: ':root{--surface-1:#f7f8fb;--ink-blue:#3a499e}\n.a{background:var(--surface-1);color:var(--ink-blue)}' }], { strict: true },
+    ['無彩色の面 + 青い文字は同系色の規則では通る', [{ name: 'b.css', text: ':root{--surface-1:#f7f8fb;--ink-blue:#3a499e}\n.a{background:var(--surface-1);color:var(--ink-blue)}' }], { strict: true },
       V => !V.some(v => v.rule === 'same-hue-pair' || v.rule === 'family')],
     ['-bg/-fg の語幹ペアを検出', [{ name: 'a.css', text: chip }], {}, V => V.some(v => v.rule === 'paired-token' && /--danger-bg/.test(v.message))],
     ['会話軸の節だけ線色で塗れる（一般の面は拒否）', [{ name: 'node.css', text: ':root{--line-blue:#5665cd}\n.thread.branched .mw.node:not(.card) .mw-gutter::before{background:var(--line-blue)}\n.button{background:var(--line-blue)}' }], { strict: true },
@@ -522,6 +608,10 @@ export function selftest(log = console.log) {
     ['html の <style> と style 属性の直書きの色が、その行番号で落ちる',
       [{ name: 'g.html', text: '<html>\n<style>\n.a{color:#9c3312}\n</style>\n<div style="background:#fbe3da;width:10px">x</div>\n</html>' }], {},
       V => V.filter(v => v.rule === 'color-literal').map(v => v.line).join(',') === '3,5'],
+    ['JS が組み合わせるクラス（無彩色の面のボタン + 青い字）を落とし、allow-blue と面の無い組み合わせは通す',
+      [{ name: 'h.css', text: ':root{--surface-2:#eef0f6;--ink:#1c2247;--ink-blue:#3a499e}\n.btn-quiet{background:var(--surface-2);color:var(--ink)}\n.on{color:var(--ink-blue)}\n.link{background:var(--surface-2);color:var(--ink-blue)} /* allow-blue: リンク */' },
+       { name: 'h.mjs', text: "el('button', 'btn-quiet on');\nel('span', 'on');\nel('a', 'link');" }], { strict: true },
+      V => V.filter(v => v.rule === 'quiet-blue').map(v => `${v.file}:${v.line}`).join() === 'h.css:3'],
   ];
   let ok = true;
   for (const [name, files, opt, check] of cases) {
@@ -551,15 +641,16 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
   else if (!paths.length) {
     console.log(`使い方: node tests/lint-design.mjs <file...> [--strict] [--json] [--selftest]
 
-  .css と .html（<style> ブロックと style 属性）を検査する。トークン定義は渡された全ファイルから集めるので、
+  .css と .html（<style> ブロックと style 属性）を検査する。.mjs などはクラスの組み合わせを拾うために読む。
+  トークン定義は渡された全ファイルから集めるので、
   var(--…) を解決するには tokens.css も一緒に渡すこと。
 
-    --strict    族の検査（family / fill-without-on-fill / token-outside-root / border-use）も行う
+    --strict    族の検査（family / fill-without-on-fill / token-outside-root / border-use / quiet-blue）も行う
     --json      {file,line,rule,message} の配列で出す
     --selftest  内蔵のテストを走らせる
 
   規則: color-literal / same-hue-pair / tinted-surface / paired-token / one-sided-line / family
-        fill-without-on-fill / token-outside-root / border-use / unknown-token`);
+        fill-without-on-fill / token-outside-root / border-use / quiet-blue / unknown-token`);
     process.exit(0);
   } else {
     let files;

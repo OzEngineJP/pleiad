@@ -1,15 +1,15 @@
 // playwright-cli run-code --filename=tests/browser/preferences.cjs
 // Use a fresh isolated fake,codex server with tests/lib/fake-codex.mjs. Open its authenticated URL first.
-// 入力欄の設定はチップ（web/composer-controls.mjs）。値は data-value / data-backend に id で出る
+// 入力欄の設定はチップ（web/composer-controls.mjs）。値は data-value / data-backend / data-mode に id で出る（承認モードはモデルの面の区分け。ADR 0252）
 async page => {
  await page.locator('#settings').click();
  await page.locator('#setupTab').click();
  if(await page.locator('#worktreeSettings, #worktreeAlways').count()) throw Error('removed worktree setting is still visible');
  await page.locator('#backToChat').click();
  const pick=async(chip,key)=>{await page.locator('#'+chip).click();await page.locator(`[data-key="${key}"]`).click();await page.keyboard.press('Escape');};
- const choose={backend:v=>pick('modelChip','backend:'+v),model:v=>pick('modelChip','model:'+v),mode:v=>pick('modeChip','mode:'+v)};
- const values=async()=>page.evaluate(()=>({backend:document.getElementById('modelChip').dataset.backend,model:document.getElementById('modelChip').dataset.value,mode:document.getElementById('modeChip').dataset.value}));
- const modeIs=v=>page.waitForFunction(v=>document.getElementById('modeChip').dataset.value===v,v);
+ const choose={backend:v=>pick('modelChip','backend:'+v),model:v=>pick('modelChip','model:'+v),mode:v=>pick('modelChip','mode:'+v)};
+ const values=async()=>page.evaluate(()=>({backend:document.getElementById('modelChip').dataset.backend,model:document.getElementById('modelChip').dataset.value,mode:document.getElementById('modelChip').dataset.mode}));
+ const modeIs=v=>page.waitForFunction(v=>document.getElementById('modelChip').dataset.mode===v,v);
  const fresh=async()=>{
   const before=await page.locator('.row.sel').getAttribute('data-session');
   await page.locator('#newSession').click();
@@ -31,7 +31,7 @@ async page => {
  if(JSON.stringify(await values())!==JSON.stringify(expected)) throw Error('reload lost preferences');
  await choose.backend('fake');
  await fresh();
- await page.waitForFunction(()=>document.getElementById('modeChip').dataset.value!=='readonly');
+ await page.waitForFunction(()=>document.getElementById('modelChip').dataset.mode!=='readonly');
  await choose.mode('auto');
  await choose.backend('codex');
  await page.waitForFunction(()=>document.getElementById('modelChip').dataset.value!=='fake-model-2');

@@ -870,7 +870,7 @@ Codexの `set_status / set_title / fork` は未接続なので、
 | 送信・途中送信 | `prompt { id, text, delivery: steer }`。受付と配送を区別し、発言 ID を照合する。応答消失は inbox と履歴で確認する |
 | 本文・推論・ツール | native event envelope を内部イベントへ変換。text と reasoning は種類ごとの ordinal を使う |
 | 承認・質問 | 会話別の permission・form と reply。選択肢は表示名から native の値に戻し、拒否・取り消しも返す |
-| 承認モード | `permissions: [{ action, resource, effect }]`。Code Mode 自体も都度確認・編集・計画モードの承認にかける。移動・外部 worktree は YOLO に限る |
+| 承認モード | `permissions: [{ action, resource, effect }]`。Code Mode 自体も都度確認・編集・計画モードの承認にかける。移動・外部 worktree は Bypass に限る |
 | 中断 | inbox の未配送入力を取り消し、`interrupt?resume=false` で止める |
 | 履歴 | message を cursor でページ取得。起動していなければ SQLite を読み取り専用で開く。移行途中は旧テーブルを読む |
 | 分岐・巻き戻し | `fork { before }` に次の発言 ID を渡して選んだ発言までを含める。ファイルの巻き戻しは Pleiad の snapshot を使う |

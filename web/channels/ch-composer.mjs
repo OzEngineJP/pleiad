@@ -107,7 +107,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     onChange: () => { dismissWake(); saveDraft(); paintHint(); },
   });
   row.append(attach.button, note, send);
-  box.append(attach.strip, input, row);
+  box.append(input, row);
   form.append(hint, wakeCard, list, box, attach.fileInput);
 
   const editor = createMarkdownEditor(input, { resolve: () => null, ...attach.editorOptions });
@@ -244,6 +244,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
       const d = key ? draftStore().get(key) : null;
       attach.restore(d?.attached);   // 添付の実体が先（本文の印は、ここにあるものだけが札になる）
       input.value = d?.text ?? '';
+      attach.placeTail();   // 文中に無い添付は末尾に札で（一覧の面が無いので）
       say('');
       paintHint();
     },

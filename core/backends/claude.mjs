@@ -84,7 +84,7 @@ const QUESTION_TOOL = "AskUserQuestion";
 // Claude は sandbox を持たず、範囲は「約束」にすぎないので enforced は全部 false。
 //
 // bypassPermissions は以前ここに出していなかったが、出すことにした。理由は2つ:
-// 他のエンジンには YOLO 相当があり、Claude だけ無いと委任のときに「親と同じ強さ」を継げない。
+// 他のエンジンには Bypass 相当があり、Claude だけ無いと委任のときに「親と同じ強さ」を継げない。
 // そして危険の度合いは軸（full / never / 強制なし）で表せるようになったので、
 // 隠すのではなく「選んだことが見える」形で扱うほうがよい。
 // 表示名と説明は言語が実行中に変わるので、読むたびに引く（ゲッター）
@@ -93,7 +93,7 @@ const MODES = {
   auto:        { label: "auto",                                  get note() { return t("claude.modes.autoNote"); },        scope: "workspace", autonomy: "judge", enforced: false },
   acceptEdits: { get label() { return t("modes.acceptEdits"); }, get short() { return t("modesShort.acceptEdits"); }, get note() { return t("claude.modes.acceptEditsNote"); }, scope: "workspace", autonomy: "judge", enforced: false },
   plan:        { get label() { return t("modes.plan"); },        get short() { return t("modesShort.plan"); },        get note() { return t("claude.modes.planNote"); },        scope: "none",      autonomy: "ask",   enforced: false },
-  bypass:      { label: "YOLO",                                  get note() { return t("claude.modes.bypassNote"); },      scope: "full", autonomy: "never", enforced: false },
+  bypass:      { label: "Bypass",                                  get note() { return t("claude.modes.bypassNote"); },      scope: "full", autonomy: "never", enforced: false },
 };
 
 // SDK の PermissionMode 名。食い違うのは bypass だけ。

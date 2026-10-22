@@ -70,8 +70,8 @@ export default async function (t) {
   };
 
   try {
-    t.ok("UI 用の選択肢に YOLO とアクセス範囲の説明がある",
-      backend.modes().yolo?.label === "YOLO" && backend.modes().yolo.note.includes("全ファイル"));
+    t.ok("UI 用の選択肢に Bypass とアクセス範囲の説明がある",
+      backend.modes().yolo?.label === "Bypass" && backend.modes().yolo.note.includes("全ファイル"));
     const initial = await run("ask");
     t.ok("ask: 確認あり", initial.approvals === 1 && initial.policy === "untrusted");
     // E1-6: Codex の承認要求は title を運ばない（commandExecution は null）。承認カード・スレッドの承認の見出しが空にならないよう、コマンドの先頭で補う
@@ -103,9 +103,9 @@ export default async function (t) {
     t.ok("不明な mode は確認ありに戻る", invalid.approvals === 1 && invalid.policy === "untrusted");
 
     const yolo = await run("yolo", initial.id);
-    t.ok("既存会話の YOLO は確認なし・制限解除", yolo.policy === "never" && yolo.approvals === 0
+    t.ok("既存会話の Bypass は確認なし・制限解除", yolo.policy === "never" && yolo.approvals === 0
       && JSON.stringify(yolo.sandbox) === JSON.stringify({ type: "dangerFullAccess" }));
-    t.ok("resume にも YOLO の設定を送る", lastThread.sandbox === "danger-full-access" && lastThread.approvalPolicy === "never");
+    t.ok("resume にも Bypass の設定を送る", lastThread.sandbox === "danger-full-access" && lastThread.approvalPolicy === "never");
     for (const [mode, policy, type] of [
       ["full", "never", "workspaceWrite"],
       ["auto", "on-request", "workspaceWrite"],
@@ -115,11 +115,11 @@ export default async function (t) {
     ]) {
       await run("yolo", initial.id);
       const restored = await run(mode, initial.id);
-      t.ok(`YOLO → ${mode}: 承認設定と sandbox 制限を復元`, restored.policy === policy
+      t.ok(`Bypass → ${mode}: 承認設定と sandbox 制限を復元`, restored.policy === policy
         && restored.sandbox.type === type && restored.sandbox.networkAccess === false);
     }
     const freshYolo = await run("yolo");
-    t.ok("新規 YOLO も両方の設定を送る", lastThread.sandbox === "danger-full-access"
+    t.ok("新規 Bypass も両方の設定を送る", lastThread.sandbox === "danger-full-access"
       && lastThread.approvalPolicy === "never" && lastTurn.sandboxPolicy.type === "dangerFullAccess"
       && freshYolo.policy === "never");
   } finally {

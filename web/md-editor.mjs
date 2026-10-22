@@ -8,7 +8,7 @@
 // - 元に戻す・やり直しは自前の履歴（記号のままの状態と整えた後を別々に積む）。ブラウザーの履歴は使わない。
 // - textarea と同じ窓口（value・selectionStart / End・setSelectionRange・setRangeText・placeholder・disabled・readOnly・focus・input イベント）を
 //   要素に生やす。呼び出し側（web/client.mjs・slash-skills.mjs・shell-composer.mjs・composer-wait.mjs）はほとんど変えずに済む。
-import { el } from './dom.mjs';
+import { el, icon } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { formatBytes } from './folder-upload.mjs';
 import { attachmentHtml } from './user-message.mjs';
@@ -21,6 +21,9 @@ import {
   posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy, indentList, indentLevel, quoteDepth,
 } from './md-doc.mjs';
 
+/** 札の操作のアイコン（外す・キャンセルの ×、再試行の ↻） */
+const X = 'M6 6l12 12M18 6L6 18';
+const RETRY = 'M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4.2h-4.2';
 const KINDS = new Set(['p', 'h', 'ul', 'ol', 'quote', 'cont', 'code', 'att']);
 
 const HTML_BLOCK = /^(?:ADDRESS|ARTICLE|ASIDE|BLOCKQUOTE|DD|DIV|DL|DT|FIELDSET|FIGCAPTION|FIGURE|FOOTER|FORM|H[1-6]|HEADER|HR|LI|MAIN|NAV|OL|P|PRE|SECTION|TABLE|TR|UL)$/;
@@ -296,6 +299,8 @@ export function createMarkdownEditor(root, o) {
       // 出どころは札に触れたときの説明に。同じ名前の札にだけ、見分けの付くフォルダーを添える（web/composer-layout.mjs の attachFolderHints）
       if (body && (info.from === 'host' || info.from === 'device')) body.title = info.from === 'host' ? t('chat.attach.fromHost', { path: info.path }) : t('chat.attach.fromDevice', { name: info.name });
       if (info.hint) div.querySelector('figcaption, a')?.append(el('span', 'md-att-dir', info.hint));
+      // 外す × は札の右上。ポインターを置いたとき・札にフォーカスがあるときだけ出す（触る端末では常に。style.css）
+      (div.querySelector('figure') ?? div).append(actions(['remove', t('chat.attach.remove'), X]));
       return;
     }
     const pend = opts.pending(b.pid) ?? { name: '', state: 'failed', error: t('chat.composerAtt.cancelled') };
@@ -307,7 +312,7 @@ export function createMarkdownEditor(root, o) {
       box.title = t('chat.paste.importingTitle', { name: pend.name, host: pend.host ?? '' });
       box.append(el('span', 'md-att-up-name', pend.name));
       if (pend.host) box.append(el('span', 'md-att-up-host', pend.host));
-      box.append(el('span', 'md-att-up-pct', t('chat.paste.importing')), el('span', 'md-att-up-bar'), actionButton('cancel', t('chat.paste.cancelImport')));
+      box.append(el('span', 'md-att-up-pct', t('chat.paste.importing')), el('span', 'md-att-up-bar'), actions(['cancel', t('chat.attach.cancel'), X]));
       div.append(box);
       return;
     }
@@ -318,18 +323,31 @@ export function createMarkdownEditor(root, o) {
       pct.setAttribute('role', 'status');
       const bar = el('span', 'md-att-up-bar');
       bar.style.setProperty('--p', `${pend.percent ?? 0}%`);
-      box.append(pct, bar, actionButton('cancel', t('chat.attach.cancelSending')));
+      box.append(pct, bar, actions(['cancel', t('chat.attach.cancel'), X]));
     } else {
-      box.append(el('span', 'md-att-up-err', t('chat.composerAtt.failed', { error: pend.error ?? '' })), actionButton('retry', t('chat.composerAtt.retry')), actionButton('remove', t('chat.attach.remove')));
+      // 理由は 1 行で切れることがある。全文は札の説明（title）に
+      box.title = `${pend.name}\n${t('chat.composerAtt.failed', { error: pend.error ?? '' })}`;
+      box.append(el('span', 'md-att-up-err', t('chat.composerAtt.failed', { error: pend.error ?? '' })), actions(['retry', t('chat.composerAtt.retry'), RETRY], ['remove', t('chat.attach.remove'), X]));
     }
     div.append(box);
   }
 
-  function actionButton(act, label) {
-    const b = el('button', 'btn btn-quiet md-att-act', label);
-    b.type = 'button';
-    b.dataset.act = act;
-    return b;
+  /**
+   * 札の操作（キャンセル・外す・再試行）。アイコンだけのボタンで、名前は title と aria-label に持たせる（ADR 0252）。
+   * 色の無い字で、ポインターを置くと面が出る（無彩の面に --ink-blue の字は載せない。docs/design-system.md）
+   */
+  function actions(...items) {
+    const box = el('span', 'md-att-acts');
+    for (const [act, label, d] of items) {
+      const b = el('button', 'btn btn-icon md-att-act');
+      b.type = 'button';
+      b.dataset.act = act;
+      b.title = label;
+      b.setAttribute('aria-label', label);
+      b.append(icon(d));
+      box.append(b);
+    }
+    return box;
   }
 
   function renderBlock(b, i, roles) {
@@ -1031,18 +1049,28 @@ export function createMarkdownEditor(root, o) {
     },
     hasAttachment(key) { return atomsNow().has(key); },
     attachmentKeys() { return new Set(atomsNow()); },
-    /** 添付の位置へ移動（見える所へ寄せ、短く強調） */
-    reveal(key) {
-      const div = blockDivs().find(d => d.dataset.k === 'att' && (d.dataset.path ? `p:${normalizeAttachmentPath(d.dataset.path)}` : `i:${d.dataset.pid}`) === key);
-      if (!div) return false;
-      div.scrollIntoView?.({ block: 'nearest' });
-      div.classList.add('jump');
-      setTimeout(() => div.classList.remove('jump'), 1600);
-      const i = blockDivs().indexOf(div);
-      root.focus({ preventScroll: true });
-      const b = Math.min(i + 1, blockDivs().length - 1);
-      setDomSel(caret(b, 0));
-      return true;
+    /**
+     * 文の中に札の無い添付を、末尾に札として置く（下書き・履歴から戻した添付で、文に印が無いもの。添付の一覧の面は無い。ADR 0252）。
+     * 戻す・やり直しの起点にする（置いたことは戻す対象にしない）。置いた数を返す
+     */
+    placeAtEnd(paths) {
+      if (plain()) return 0;
+      if (whenIdle(() => editor.placeAtEnd(paths))) return 0;
+      let st = getState(), n = 0;
+      for (const path of paths) {
+        if (atomKeys(st.blocks).has(`p:${normalizeAttachmentPath(path)}`)) continue;
+        st = insertAtom({ blocks: st.blocks, sel: endSel(st.blocks) }, newAtom({ path, locale: opts.locale() }));
+        n++;
+      }
+      if (!n) return 0;
+      clearAtomSel();
+      paint(st.blocks);
+      lastSel = st.sel;
+      if (hasFocus()) setDomSel(st.sel);
+      history.reset(st);
+      known = atomKeys(st.blocks);
+      syncEmpty();
+      return n;
     },
     /** 末尾に Markdown の文字を足す（入力欄へ写す。記法は整える）。input イベントは出さない（呼び出し側が出す） */
     append(text) {

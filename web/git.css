@@ -301,7 +301,7 @@ a.gp-pr:focus-visible,.gp-more:focus-visible{outline:2px solid var(--line-blue);
 .gp .wrow .m{font-size:var(--fs-xs);color:var(--ink-weak)}
 .gp .wrow .tm{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap;display:inline-flex;align-items:center;gap:4px}
 .gp .wbadge{font-size:var(--fs-xs);padding:0 7px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);font-weight:400;white-space:nowrap}
-.gp .wbadge.here{background:var(--surface-3);color:var(--ink-blue);font-weight:600}
+.gp .wbadge.here{background:var(--surface-3);color:var(--ink-blue);font-weight:600} /* allow-blue: 今いる worktree */
 .gp .wbadge.wait{color:var(--ink);font-weight:600}
 .gp .wdet{padding:2px 8px 12px 34px}
 .gp .wdet .gh{font-size:var(--fs-xs);color:var(--ink-weak);font-weight:600;letter-spacing:.04em;margin:6px 0 2px}

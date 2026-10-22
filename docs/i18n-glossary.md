@@ -6,7 +6,7 @@
 - ボタン・見出し・メニュー・チップ: Sentence case（先頭だけ大文字）。末尾のピリオド無し。例 "Back to chat", "New session"
 - 説明文・エラー文: 完全な文でピリオドあり。主語は省いてよい。利用者は "you"
 - 日本語側の文体（常体・敬体の揺れ）は直さない。英語は平易で短く
-- 固有名は訳さない: Pleiad, Claude Code, Codex, Antigravity, MCP, Skills, Opus/Sonnet/Haiku, YOLO, auto, Fast mode
+- 固有名は訳さない: Pleiad, Claude Code, Codex, Antigravity, MCP, Skills, Opus/Sonnet/Haiku, Bypass, auto, Fast mode
 - 件数は i18next の複数形（`_one` / `_other`）。"1 session" / "3 sessions"
 - キーボード: "Ctrl+Enter" など表記はそのまま
 
@@ -41,6 +41,8 @@
 | 編集は自動 | Auto-accept edits |
 | 計画のみ | Plan only |
 | 読むだけ | Read only |
+| Bypass（確認なし・制限なしの承認モードの表示名。内部の値は yolo・bypass のまま。「YOLO」と書かない） | Bypass |
+| 広げる / 元の幅に戻す（会話の中の可視化を本文の領域の幅まで） | Widen / Back to normal width |
 | あなたを待っている | Waiting for you |
 | 承認を待っている | waiting for approval |
 | 設定 › {節} / オン / オフ（設定の変更の承認カード） | Settings › {section} / On / Off |

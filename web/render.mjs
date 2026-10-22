@@ -1,6 +1,7 @@
 import { withoutVisualizeReferences } from './visualize-reference.mjs';
 import { fileReference, looksLikePath, findWindowsPaths, baseName, dirName, WINDOWS_PATH_SOURCE } from './file-reference.mjs';
 import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
+import { wireWiden } from './visualize-widen.mjs';
 import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // md 描画と present カードの描画。外部ライブラリを足さない方針なので自前で持つ（設計メモ §11）。
 //
@@ -669,6 +670,8 @@ export function renderPresent(ev) {
         controls.append(b);
         return b;
       };
+      // 左端は「広げる / 元の幅に戻す」（列の幅を越えて本文の領域の右端まで。web/visualize-widen.mjs、ADR 0252）
+      wireWiden(card, tool('', ''));
       // コピーと保存は右パネル（⋯・下の行）と同じ処理を呼ぶ。知らせの文言も同じ（web/file-actions.mjs・web/visualize-frame.mjs）
       if (e.path) tool(copyIcon, t('timeline.present.copyPath')).onclick = () => copyPathText(String(e.path));
 

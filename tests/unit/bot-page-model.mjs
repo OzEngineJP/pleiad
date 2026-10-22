@@ -11,10 +11,10 @@ const CODEX = { ask: { scope: 'workspace', autonomy: 'ask' }, full: { scope: 'wo
 const AGY = { yolo: { scope: 'full', autonomy: 'never' } };
 
 export default async function (t) {
-  t.ok('Claude の YOLO は書き込みの範囲を限れない', foldersUnlimited(CLAUDE.bypass));
+  t.ok('Claude の Bypass は書き込みの範囲を限れない', foldersUnlimited(CLAUDE.bypass));
   t.ok('Claude の都度確認・計画は限れる', !foldersUnlimited(CLAUDE.default) && !foldersUnlimited(CLAUDE.plan));
   t.ok('Codex の全部自動は sandbox が作業場所に限るので、限れる扱いのまま（決定 5 の変更）', !foldersUnlimited(CODEX.full));
-  t.ok('Codex の YOLO（sandbox なし）は限れない', foldersUnlimited(CODEX.yolo));
+  t.ok('Codex の Bypass（sandbox なし）は限れない', foldersUnlimited(CODEX.yolo));
   t.ok('Antigravity の yolo は限れない', foldersUnlimited(AGY.yolo));
   t.ok('モードが分からないときは限れる扱い（誤って無効にしない）', !foldersUnlimited(undefined));
 

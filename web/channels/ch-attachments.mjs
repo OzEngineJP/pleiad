@@ -15,5 +15,5 @@ import { createComposerAttachments } from '../composer/attachments.mjs';
  * @param {(owner: string, item: object) => void} o.adopt 別の下書きへ移った後に届いた添付を、その持ち主の下書きへ入れる
  */
 export function createChAttachments({ host, bucket, owner, accepts = () => true, say, onChange, adopt }) {
-  return createComposerAttachments({ host, bucket, owner, accepts, say, onChange, adopt, controls: true, originOf: () => 'device' });
+  return createComposerAttachments({ host, bucket, owner, accepts, say, onChange, adopt, controls: true });
 }

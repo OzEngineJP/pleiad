@@ -131,7 +131,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
   const c = createComposer({
     els, prefix: PREFIX, t,
     attach: {
-      host, bucket, owner: () => draftKey ?? '', accepts: () => !disabled, say, adopt, originOf: () => 'device',
+      host, bucket, owner: () => draftKey ?? '', accepts: () => !disabled, say, adopt,
       onChange: () => { dismissWake(); saveDraft(); paintHint(); },
     },
     wait: { runMark, onChange: () => syncSend() },
@@ -154,7 +154,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     kind: 'reply', texts: { running: t('channels:thread.resend.running') }, announce: (text) => announce(text),
     host: {
       read: () => ({ text: input.value, attached: att.ordered() }),
-      write: ({ text, attached }) => { c.shell?.reset?.(); att.restore(attached); input.value = text; c.fit(); paintHint(); },
+      write: ({ text, attached }) => { c.shell?.reset?.(); att.restore(attached); input.value = text; att.placeTail(); c.fit(); paintHint(); },
       send: (ctx) => editHost.send(ctx), branch: (ctx) => editHost.branch(ctx),
       decorate: (id, on, tail) => editHost.decorate?.(id, on, tail), locate: (id) => editHost.locate?.(id),
       change: () => saveDraftSoon(),
@@ -228,7 +228,11 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
     return { bot: all.find((b) => b.id === id) ?? null, all, d };
   };
   // ---- 宛先の bot の設定のチップ（モックの 02。押すと一覧が浮く。選んだものはこのスレッドだけに効く）
-  const chips = { cwd: els.cwdChip, model: els.modelChip, mode: els.modeChip };
+  // 承認モードのチップはスレッドだけが持つ（Chats の入力欄はモデルの面の下端で切り替える。ADR 0252）。宛先の bot ごとの承認モードを選ぶ一覧
+  const modeChip = el('button', 'chip mode');
+  modeChip.type = 'button';
+  els.cwdChip.after(modeChip);
+  const chips = { cwd: els.cwdChip, model: els.modelChip, mode: modeChip };
   chips.model.hidden = true;
   for (const chip of Object.values(chips)) { chip.removeAttribute('aria-controls'); chip.setAttribute('aria-haspopup', 'menu'); }
   let destinationPanel = null;
@@ -518,6 +522,7 @@ export function createThreadComposer({ host, bucket = () => null, candidates, su
       const d = key ? draftStore().get(key) : null;
       att.restore(d?.attached);
       input.value = d?.text ?? '';
+      att.placeTail();
       // 編集中だったスレッドは、投稿を読み込んだあと（syncEdit）に「編集中」へ戻す
       if (d?.edit) pendingEdit = d.edit;
       if (!d) void loadServerDraft(key);   // この端末に写しが無い: サーバーの写しを読む（ほかの端末で書いた続き）

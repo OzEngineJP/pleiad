@@ -559,11 +559,11 @@ v1 は `canUseTool` から host に問い、**会話の流れの中にカード�
 | `auto` | モデルの分類器が判断し、迷うものだけ聞く |
 | `acceptEdits` 編集は自動 | ファイル編集は自動、他は聞く |
 | `plan` 計画のみ | ツールを実行しない |
-| `bypass` YOLO | 確認なし・制限なし。Claude Code の権限層を通さない |
+| `bypass` Bypass | 確認なし・制限なし。Claude Code の権限層を通さない |
 
 - `bypass` は SDK の `bypassPermissions`。`allowDangerouslySkipPermissions: true` を同時に渡す必要があり、
   このモードでは `canUseTool` が呼ばれない＝**承認カードが出ない**。
-  以前は出さない判断だったが、他のエンジンには YOLO 相当があり、Claude だけ無いと委譲のときに
+  以前は出さない判断だったが、他のエンジンには Bypass 相当があり、Claude だけ無いと委譲のときに
   親と同じ強さを継げない。危険の度合いは承認モードの2軸（`docs/multi-backend.md` §2.5）で表せるので、
   隠すのではなく「選んだことが見える」形で扱う
 - モードはセッションに覚えさせる。入力欄のチップは今のモードの名前を出す（既定かどうかで色は変えない。確認なし・制限なしのモードだけ ⚠ と強い字。docs/design-system.md「入力欄の設定」）

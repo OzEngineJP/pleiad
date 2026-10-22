@@ -1,10 +1,9 @@
-// 添付（クリップ）のボタンのメニュー（docs/remote.md §8.1、
+// 添付（+）のボタンのメニュー（docs/remote.md §8.1、
 // docs/design-system.md「添付の出どころ」）。
 //
-// 出どころを選べる接続（composer-layout.mjs の attachSources）でだけ開く:
-//   - デスクトップ版のリモートの窓・モバイル版の殻（plyRemote）
-//   - ホストの画面ではないブラウザー（hostCapabilities の osActions === false）
-// ホストの PC の画面（ローカルの窓・ホストで開いたブラウザー）ではホスト＝この端末なので選ばせず、クリップはすぐファイルを選ぶ。
+// どの接続でも開く（ADR 0252）。ホストの PC の画面（ローカルの窓・ホストで開いたブラウザー）でも、見出しは同じ 2 つ:
+// 「この端末から」の「ファイル…」と「ホストから」の「ファイルを選ぶ…」（ホストのパスのまま添付する。送らない）。
+// 開いている間、+ は × に回る（style.css の .attach-plus。aria-expanded で切り替わる）。
 //
 // 面は出どころで見出しを分ける:
 //   「この端末から」: ファイル…（今までのクリップの動き）。デスクトップ版のリモートの窓だけ、フォルダーを送る…（web/folder-upload.mjs）
@@ -26,7 +25,7 @@ const NEXT = 'M9 6l6 6-6 6';
 /**
  * @param {object} o
  * @param {HTMLButtonElement} o.button 添付のボタン
- * @param {() => (null | { folder: boolean })} o.sources 出どころを選ばせるか（null ならメニューを開かない）
+ * @param {() => { folder: boolean }} o.sources 出せる出どころ（folder: この端末のフォルダーを送れるか）
  * @param {ReturnType<import('./folder-upload.mjs').createFolderUpload> | null} o.upload フォルダーを送る（デスクトップ版のリモートの窓だけ）
  * @param {() => void} o.pickFiles この端末のファイルを選ぶ（今までのクリップの動き）
  * @param {() => Array<{value:string,time?:number}>} o.recent 最近の作業フォルダー（送り先の候補）
@@ -59,7 +58,6 @@ export function setupAttachMenu({ button, sources, upload = null, pickFiles, rec
     // スマホの幅（480px 以下）は入力欄の幅いっぱい（面は画面の幅から 16px 引いたところで止まる）
     width: () => ((document.documentElement.clientWidth || innerWidth) <= 480 ? 9999 : view === 'menu' ? 260 : 360),
     render,
-    when: () => Boolean(sources()),
   });
   // 送る流れを開いたときは面そのものにフォーカスを置く（先頭のボタンは「中断」や除外の × なので、Enter で押さないように）
   button.addEventListener('click', () => { if (self.open && view === 'upload') pop.focus(); });
@@ -82,7 +80,7 @@ export function setupAttachMenu({ button, sources, upload = null, pickFiles, rec
       return;
     }
     if (view === 'host') { renderHost(); return; }
-    const src = sources() ?? { folder: false };
+    const src = sources();
     const list = el('div', 'fu-menu at-menu');
     const device = el('div', 'chead', t('chat.attach.source.device'));
     const hostHead = el('div', 'chead');
