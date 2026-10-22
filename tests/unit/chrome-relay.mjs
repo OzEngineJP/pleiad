@@ -439,8 +439,9 @@ export default async function (t) {
         let last = null;
         r4.relay.onCarry(carry => { last = carry; });
         const carried = { v: 1, port: 0, chrome: same ? r4.chrome.wsPath : '/devtools/browser/00000000-0000-0000-0000-000000000000',
-          entries: [{ id: 'k2', key: 'cd'.repeat(24), stopped: false, paused: null }], windows: [{ id: 'k2', windows: [{ windowId: 101, role: 'main', token: 'fake:hw101' }] }] };
+          entries: [{ id: 'k2', key: 'cd'.repeat(24), stopped: false, paused: null, lastUsedAt: 123456789 }], windows: [{ id: 'k2', windows: [{ windowId: 101, role: 'main', token: 'fake:hw101' }] }] };
         await r4.relay.restore(carried);
+        t.ok('最後に使った時刻も更新を越えて戻る（24 時間の掃除が更新で窓を閉じない。ADR 0246）', r4.relay.lastUsed('k2') === 123456789, String(r4.relay.lastUsed('k2')));
         a4 = await agent(await r4.relay.endpoint('k2'));
         await a4.cmd('Browser.getVersion');
         await until(() => last?.chrome === r4.chrome.wsPath);

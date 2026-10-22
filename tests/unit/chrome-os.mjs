@@ -27,12 +27,13 @@ function fakeWin32({ directForeground = true } = {}) {
     directForeground,
     add(hwnd, props) {
       windows.set(hwnd, { hwnd, pid: 10, title: '', className: 'Chrome_WidgetWin_1', visible: true, iconic: false, cloaked: false, owner: 0, dpi: 144, thread: hwnd,
-        rect: { left: 0, top: 0, right: 1040, bottom: 531 }, exStyle: 0, hung: false, ...props });
+        rect: { left: 0, top: 0, right: 1040, bottom: 531 }, exStyle: 0, hung: false, aumid: null, ...props });
       return hwnd;
     },
     topLevelWindows: () => [...windows.keys()],
     windowInfo(hwnd) { const x = windows.get(hwnd); if (!x) throw new Error('no window'); return { ...x }; },
     processPath: pid => exes.get(pid) ?? null,
+    windowAumid: hwnd => windows.get(hwnd)?.aumid ?? null,
     dpiForWindow: hwnd => windows.get(hwnd)?.dpi ?? 96,
     ownerOf: hwnd => windows.get(hwnd)?.owner ?? 0,
     foreground: () => w.fg,
@@ -1007,6 +1008,97 @@ export default async function (t) {
     t.ok('最小化した窓の矩形は返さない', os.bounds(ref) === null);
     w.windows.delete(800);
     t.ok('閉じた窓・知らない ref の矩形は返さない', os.bounds(ref) === null && os.bounds({ id: 'unknown' }) === null);
+  }
+
+  // ===== 人がプロフィールを開こうとしたとき（ADR 0246）: 隠した窓が前面を取ったら、そのプロフィールの見える窓を開く =====
+  {
+    const EXE = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+    const setup = ({ profile = 'Default', aumid = 'Chrome', others = [], hideAumid = false } = {}) => {
+      let clock = 1_000_000_000;
+      const w = fakeWin32();
+      w.add(500, { title: `PLY-${NONCE} - Google Chrome`, aumid: hideAumid ? null : aumid, rect: { left: 100, top: 100, right: 1700, bottom: 1180 } });
+      for (const other of others) w.add(other.hwnd, { pid: 10, ...other });
+      w.fg = others[0]?.hwnd ?? 700;
+      const spawned = [];
+      const spawn = (exe, args) => { spawned.push({ exe, args }); return { on() {}, unref() {} }; };
+      const logs = [];
+      const os = createWin32ChromeOs({ win32: w, env: ENV, exists: p => p === EXE, spawn, now: () => clock, log: line => logs.push(line) });
+      const browser = os.locateBrowser({});
+      const ref = os.findWindowByNonce(NONCE);
+      os.conceal(ref, { profile });
+      return { w, os, ref, browser, spawned, logs, clock: () => clock, setClock: value => { clock = value; }, advance: ms => { clock += ms; } };
+    };
+    const USER_WINDOW = { hwnd: 700, title: 'メモ帳', className: 'Notepad', pid: 30, aumid: null };
+    const OTHER_PROFILE = { hwnd: 701, title: 'ふつうの Chrome の窓', aumid: 'Chrome.UserData.Profile1' };
+    {
+      const r = setup({ others: [USER_WINDOW, OTHER_PROFILE] });
+      r.advance(5000);
+      r.w.fg = 701; r.os.guardTick();   // 人が Chrome の窓（プロフィールの選択画面・別のプロフィールの窓）に居る
+      r.w.fg = 500; r.os.guardTick();   // Chrome がこのプロフィールの最後の窓（隠した窓）を前に出した
+      const call = r.spawned[0];
+      t.ok('隠した窓が前面を取り、そのプロフィールの見える窓が無ければ、chrome.exe --profile-directory --new-window で見える窓を開く',
+        r.spawned.length === 1 && call.exe === EXE && JSON.stringify(call.args) === JSON.stringify(['--profile-directory=Default', '--new-window']), JSON.stringify({ spawned: r.spawned, logs: r.logs }));
+      t.ok('隠した窓は隠したまま（戻さない・閉じない）・プロフィール以外の窓には触らない', r.w.windows.get(500).alpha === 0 && (r.w.windows.get(500).exStyle & WS_EX_TOOLWINDOW) !== 0
+        && r.w.windows.get(701).alpha === undefined && r.logs.some(line => line.includes('opened a visible Chrome window')));
+      r.advance(1000);
+      r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();
+      t.ok('同じプロフィールで続けて前面を取っても、短い間は窓を重ねて開かない', r.spawned.length === 1);
+      r.os.stopGuard();
+    }
+    {
+      const r = setup({ others: [USER_WINDOW, OTHER_PROFILE, { hwnd: 702, title: 'Default の見える窓', aumid: 'Chrome' }] });
+      r.advance(5000);
+      r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();
+      t.ok('そのプロフィールの見える窓が既にあれば、窓を開かない（前面を返すだけ）', r.spawned.length === 0 && r.w.fg === 701, JSON.stringify(r.spawned));
+      r.os.stopGuard();
+    }
+    {
+      const r = setup({ others: [USER_WINDOW, OTHER_PROFILE] });
+      r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();   // 隠した直後（2 秒以内）
+      t.ok('隠した直後（開きかけの窓・window.open の popup）は、エージェントの操作とみなして窓を開かない', r.spawned.length === 0);
+      r.os.stopGuard();
+    }
+    {
+      const r = setup({ others: [USER_WINDOW, OTHER_PROFILE] });
+      r.w.add(501, { title: `PLY-${NONCE.replace(/0/g, '1')} - Google Chrome`, aumid: 'Chrome', rect: { left: 100, top: 100, right: 1700, bottom: 1180 } });
+      const second = r.os.findWindowByNonce(NONCE.replace(/0/g, '1'));
+      r.os.conceal(second, { profile: 'Default' });
+      r.advance(5000);
+      r.w.fg = 700; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();   // エージェントの隠した窓 500 が前面（ほかのアプリから）
+      r.w.fg = 501; r.os.guardTick();                                  // 隠した窓から隠した窓へ
+      t.ok('直前に前面だったのが同じ Chrome の隠した窓なら、エージェントが窓を切り替えたとみなして開かない', r.spawned.length === 0);
+      r.os.stopGuard();
+    }
+    {
+      const r = setup({ profile: 'Default', others: [USER_WINDOW, OTHER_PROFILE], hideAumid: true });
+      r.advance(5000);
+      r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();
+      t.ok('プロフィール（AUMID）が分からないときは、重ねて開かない（今までどおり前面を返すだけ）', r.spawned.length === 0 && r.w.fg === 701);
+      r.os.stopGuard();
+    }
+    {
+      const r = setup({ others: [USER_WINDOW, OTHER_PROFILE] });
+      r.os.conceal(r.ref, { profile: 'Default', userDataDir: 'C:\\dev\\pleiad-chrome-test' });
+      r.advance(5000);
+      r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();
+      t.ok('確かめ専用の User Data のときは、見える窓にも同じ --user-data-dir を渡す（利用者の既定の Chrome に開かない）',
+        r.spawned.length === 1 && r.spawned[0].args[0] === '--user-data-dir=C:\\dev\\pleiad-chrome-test' && r.spawned[0].args.includes('--profile-directory=Default'), JSON.stringify(r.spawned));
+      r.os.stopGuard();
+    }
+    {
+      const r = setup({ others: [USER_WINDOW, OTHER_PROFILE, { hwnd: 703, title: 'Default の最小化した窓', aumid: 'Chrome', iconic: true }] });
+      r.advance(5000);
+      r.w.fg = 701; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();
+      t.ok('同じプロフィールでも最小化した窓しか無ければ、見える窓を開く（最小化は前に出ない）', r.spawned.length === 1);
+      r.os.stopGuard();
+    }
+    {
+      const r = setup({ others: [USER_WINDOW, OTHER_PROFILE] });
+      r.advance(5000);
+      r.w.fg = 700; r.os.guardTick(); r.w.fg = 500; r.os.guardTick();   // ほかのアプリ（メモ帳）から隠した窓へ
+      t.ok('直前の前面が Chrome の見える窓でなければ（ほかのアプリから移った）、見分けられないので開かない', r.spawned.length === 0);
+      r.os.stopGuard();
+    }
   }
 
   // ===== macOS の層（mac.cjs）と index.cjs の darwin 選択・非同期の往復 =====

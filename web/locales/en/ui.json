@@ -4858,7 +4858,7 @@
     "banner": "Paused · you are operating Chrome",
     "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },
     "handover": "You took over · handed back to {{name}} · {{duration}}",
-    "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "image": "Last image of the closed window" },
+    "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "idle": "The Chrome window closed after 24 hours without use", "image": "Last image of the closed window" },
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },
   "browser": {

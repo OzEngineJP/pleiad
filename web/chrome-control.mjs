@@ -171,7 +171,7 @@ export function renderChromeHandoverLine(ev) {
 export function renderChromeClosedLine(ev) {
   // i18n-dynamic: chromeControl.closed.
   const box = el('div', 'cc-closed');
-  const by = ev?.chromeClosed?.by === 'agent' ? 'agent' : 'human';
+  const by = ['agent', 'idle'].includes(ev?.chromeClosed?.by) ? ev.chromeClosed.by : 'human';
   const row = el('div', 'cc-line');
   row.append(el('span', 'cc-line-t', t(`chromeControl.closed.${by}`, { name: agentName() })));
   box.append(row);

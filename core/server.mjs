@@ -355,6 +355,15 @@ const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { da
 // その会話の agent-browser の置き場を今は触れないか: ターンが走っている（ID 確定前の id も）・中継でターンの印が付いている・人が引き継いでいる（ADR 0180）
 const agentBrowserBusy = id => [...runtime.turns.values()].some(turn => turn.key === id || turn.browserRelayId === id || turn.info?.sessionId === id)
   || Boolean(chromeRelay?.state?.(id)?.turn || chromeRelay?.state?.(id)?.paused);
+// 長く使われていない会話の Chrome の窓を閉じる（既定 24 時間。ADR 0246）。閉じた行と静止画は close_browser_window と同じ道。
+// 1 時間ごとに見る。ターンの実行・人の引き継ぎ・人への依頼の待ち（close-window.mjs が見る）と、更新の途中（OS の層が pending）は触らない。
+// タイマーはプロセスを生かさない（unref）。無停止の更新で手を離すときは release で止める
+const chromeIdleTimer = chromeWindowCloser ? setInterval(() => {
+  void chromeWindowCloser.sweepIdle({
+    isLive: id => agentBrowserBusy(id) || chromeOs?.capabilities?.().reason === 'pending' || chromeRelay?.isHandedOff?.() === true,
+  }).catch(error => console.error('  chrome-close: idle sweep failed:', String(error?.message ?? error)));
+}, 60 * 60_000) : null;
+chromeIdleTimer?.unref?.();
 // A nested server may inherit another conversation's shell environment; only this process's bridge can issue browser access.
 delete process.env.AGENT_BROWSER_CONFIG;
 delete process.env.AGENT_BROWSER_SESSION;
@@ -7653,6 +7662,7 @@ const handoverRun = createHandover({
   // DB を書き切り、main へ答えてから、データ置き場のロックを放して終わる（以後このプロセスは何も書かない）
   release: async result => {
     await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    clearInterval(chromeIdleTimer);
     chromeWindowCloser?.stop();
     chromeScreencast?.close();
     chromeHandoffs?.close();
@@ -9758,6 +9768,7 @@ mainPort.on("message", async ({ data }) => {
   if (data?.type === "shutdown") {
     void voiceHost.close();   // 通話の使用量の台帳を書き切る
     // Chrome に許可の確認を残して終わらない（確認が出ていれば閉じる）。main の返事を待つので、長くても 2 秒まで
+    clearInterval(chromeIdleTimer);
     chromeWindowCloser?.stop();
     chromeScreencast?.close();
     chromeHandoffs?.close();
