@@ -64,6 +64,12 @@ export function connectionFailed(status) {
   return status?.enabled === true && status.configured !== false && (state === 'retrying' || state === 'error');
 }
 
+/** 秘密を読めずに止まっている理由（サーバーの文）。止まっていなければ '' */
+export function lockedReason(status) {
+  const link = [status?.links?.own ?? status?.connection, status?.links?.plus].find(l => l?.error?.code === 'locked');
+  return link ? String(link.error.message || t('settings.remote.locked')) : '';
+}
+
 /**
  * 端末の一覧の 1 行。{ name, icon, offline }。
  * 「オフライン」は許可がオンで中継にもつながっているのに、端末がつながっていないときだけ（中継につながらないときは見出しの下の一行で伝える）
@@ -103,6 +109,8 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
 /** 自分の中継サーバーのまとまりの見出しの下の状態行。つながらないとき（connectionFailed）は null で、.rm-warn の一行を出す */
 export function ownRemoteLine(remoteStatus) {
   if (!remoteStatus?.enabled || connectionFailed(remoteStatus)) return null;
+  // 秘密を読めずに止まっている（locked）。「未設定」ではないので、理由はスイッチの下の一行（lockedReason）だけで伝える
+  if (remoteStatus.connection?.error?.code === 'locked') return null;
   if (remoteStatus.configured === false || !remoteStatus.relayUrl) return { kind: 'off', text: t('settings.remote.state.notSet') };
   if (remoteStatus.connection?.state === 'connected') return { kind: 'ok', text: t('settings.remote.state.connected', { where: relayHost(remoteStatus.relayUrl) }) };
   return { kind: 'connecting', text: t('settings.remote.plus.connecting') };
@@ -216,6 +224,9 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     head.append(label, sw);
     const out = [head];
     if (message) out.push(errorLine(message));
+    // 秘密（ホストの鍵・登録用の秘密）を読めずに止まっている。許可を入れても中継につながらないので、理由をスイッチの下に出す
+    const locked = lockedReason(status);
+    if (locked) out.push(errorLine(locked));
     if (!on) return out;
     if (plusRemoteAvailable(plusStatus)) out.push(plusGroup());
     // 「自分の中継サーバー」のまとまりには own の端末だけを並べる。設定が無くても出し、「未設定」の一行と「編集」で入れられるようにする

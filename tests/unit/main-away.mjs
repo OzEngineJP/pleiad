@@ -134,16 +134,23 @@ export default async function (t) {
       t.ok('main が戻らないとき、暗号化の可否が分からないまま平文で書かない（失敗にする）', wrote !== 'wrote' && !(await fs.stat(file).catch(() => null)));
       const failed = await sealed.status().then(() => 'ok', () => 'rejected');
       away.connect();
-      const status = sealed.status();
-      const statusReq = away.take('secret').at(-1);
+      // 一度答えを得られなかった後は、裏で問い合わせを 1 本だけ送り、待たずに「応答待ち」で返す。その答えが届いたら通る
+      const fast = await sealed.status().then(() => 'ok', e => e.pending === true ? 'pending' : e.message);
+      const statusReq = away.take('secret').filter(m => m.op === 'status').at(-1);
       away.say({ type: 'secret', id: statusReq.id, ok: true, value: { available: true, backend: 'dpapi' } });
-      t.ok('答えを得られなかった status は覚えず、戻ってからの status は通る', failed === 'rejected' && (await status).encrypted === true);
+      await new Promise(r => setImmediate(r));
+      t.ok('答えを得られなかった status は覚えず、戻ってからの問い合わせの答えで通る', failed === 'rejected' && fast === 'pending' && (await sealed.status()).encrypted === true);
 
-      // 既定（utilityProcess の口）: 失敗も覚えて平文扱い・復号を保持しない（今のまま）
+      // 既定（utilityProcess の口）: main が答えなければ失敗にして覚えない。遅れて答えたら知らせ、次の status は通る。復号は保持しない
       const plain = parentPort();
       const legacy = parentPortCipher(plain, { timeoutMs: 40 });
-      const state = await legacy.status();
-      t.ok('既定: main が答えなければ今までどおり平文扱い（失敗も覚える）', state.encrypted === false && plain.sent.filter(m => m.op === 'status').length === 1 && (await legacy.status()).encrypted === false && plain.sent.length === 1);
+      let woke = 0;
+      legacy.onAvailable(() => { woke++; });
+      const missed = await legacy.status().then(() => null, e => e);
+      t.ok('既定: main が答えなければ SECRET_LOCKED（pending）で失敗にし、平文扱いにしない', missed?.code === 'SECRET_LOCKED' && missed.pending === true);
+      const lateReq = plain.sent.at(-1);
+      plain.say({ type: 'secret', id: lateReq.id, ok: true, value: { available: true, backend: 'keychain' } });
+      t.ok('既定: 上限を過ぎた後の答えで onAvailable を呼び、その答えを覚える', woke === 1 && (await legacy.status()).encrypted === true && plain.sent.filter(m => m.op === 'status').length === 1);
       const first1 = legacy.decrypt('x');
       plain.say({ type: 'secret', id: plain.sent.at(-1).id, ok: true, value: 'v' });
       await first1;

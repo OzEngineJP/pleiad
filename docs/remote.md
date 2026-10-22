@@ -486,6 +486,7 @@ plus の link の provider は `core/remote/plus-link.mjs` が作る（docs/plus
 - プロキシの Cookie の名前は `pleiad_remote_token`（ローカルの `agent_host_token` と別。`?token=` が合った応答に付ける）。`?token=` と Cookie はホストへ送らない。HTTP は GET と HEAD だけで、ほかは 405（ホストの接続口に届く前に断る）。防火壁の RESET 3 は 403
 - 端末の置き場（デスクトップは userData の下）: `secrets.json`（`core/secret-store.mjs`。端末の静的鍵 `deviceKey` と、ホストごとの中継用トークン `host:<hostId>`）、`hosts.json`（`{ hostId, hostName, label, relayUrl, hostPublicKey, deviceId, port, pairedAt, lastConnectedAt, revokedAt }`。秘密は入れない）。端末の静的鍵は 1 つで、すべてのホストに使う
 - Electron の main は safeStorage を直接使える（`desktop/secret-bridge.cjs` の `safeStorageCipher`）。暗号化できない環境ではホストと同じく 0600 の平文
+- ホストのサーバーは main に暗号化・復号を頼む（`core/secret-store.mjs` の `parentPortCipher`）。main が答えを返せない間（macOS でキーチェーンの確認を待っている）は、依頼を `SECRET_LOCKED`（`pending`）で失敗にして覚えず、平文にも落とさない。接続口は link を `locked` で止め、保存した許可と中継の URL は状態に出し、設定 › リモートのスイッチの下に理由を出す。後から main が答えたら（`onAvailable`）、`locked` の link を設定から読み直してつなぐ（再起動は要らない）。Plus のログインの保管も同じく読み直す
 
 ### 7.2 リモートの印（3 箇所。消せない）
 

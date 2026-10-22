@@ -378,4 +378,29 @@ export default async function (t) {
     t.ok('印を立てて refresh() → 知らせて出す', events.some(e => e.type === 'config') && session.snapshot().available === true);
     await plus.close();
   }
+
+  // ---- 9. 保管を読めない起動（暗号化の口が答えない）→ retryLocked で、再起動せずにログイン中へ戻る ----------------
+  {
+    const { plus, dir, secrets, clock } = await signedInSession();
+    let locked = true;
+    const gated = new Proxy(secrets, { get: (target, key) => key === 'get'
+      ? async k => { if (locked) throw Object.assign(new Error('pending'), { code: 'SECRET_LOCKED', pending: true }); return target.get(k); }
+      : Reflect.get(target, key) });
+    const config = createPlusConfig({ env: { AGENT_HOST_PLUS_API: plus.url }, dataDir: dir, appVersion: '0.32.0', now: clock.now });
+    const session = createPlusSession({ config, secrets: gated, openExternal: () => {}, now: clock.now, timers: clock, fetchFn: fetch, appVersion: '0.32.0' });
+    const events = [];
+    session.onChange(ev => events.push(ev));
+    await session.init();
+    const stuck = await session.status();
+    t.ok('保管を読めない間は locked・未ログイン（保管は消さない）', stuck.error?.code === 'locked' && stuck.signedIn === false && (await secrets.get('plus:session'))?.refreshToken);
+    await session.retryLocked();
+    t.ok('まだ読めなければ locked のまま', (await session.status()).error?.code === 'locked');
+    locked = false;
+    events.length = 0;
+    await session.retryLocked();
+    await tick(20);
+    const back = await session.status();
+    t.ok('読めるようになった後の retryLocked で、ログイン中に戻って知らせる', back.signedIn === true && back.error == null && events.some(e => e.type === 'config'), JSON.stringify(back.error));
+    await plus.close();
+  }
 }

@@ -853,6 +853,15 @@ function syncPlusFromRemote(status) {
   if (key !== plusInputsLast) { plusInputsLast = key; remote.refreshPlus(); }
 }
 plusSession.onChange(() => { void syncPlusLink(); });
+// 暗号化の口（main の safeStorage）が答えを返せないまま待ちの上限を過ぎた後に答えた（macOS でキーチェーンの確認に答えた）。
+// 秘密を読めずに止まったリモートの接続・Plus のログインを読み直し、起動時に回せなかった平文の暗号化し直しを回す。再起動は要らない
+secretCipher.onAvailable?.(() => {
+  console.log('  secrets: 暗号化の口が答えたので、読めなかった秘密を読み直す');
+  for (const s of [mcpSecrets, claudeAccountSecrets, agentAccountSecrets, compatSecrets, voiceSecrets, apiKeySecrets, secretValueStore, plusSecrets]) s.migrate().catch(() => {});
+  remote.retryLocked().catch(() => {});
+  plusSession.retryLocked().catch(() => {});
+  void plusHost.maybeRegister();
+});
 // スマホ（離れた端末）への通知（ADR 0086）。判定は core/notify/policy.mjs、暗号は crypto.mjs、送り先は中継の通知の線。
 // 各画面が送る presence（見ている会話）で「見ている間は送らない」を決める。PC の通知の設定は <data>/notify.json
 const notifyPresence = createPresence();
