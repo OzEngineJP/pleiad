@@ -95,6 +95,18 @@
   --font-mono:ui-monospace,"Cascadia Mono",Consolas,Menlo,"Yu Gothic UI","Hiragino Sans","Noto Sans JP",monospace;
   --fs-xs:11px;--fs-s:12px;--fs:14px;--fs-l:15px;--fs-xl:18px;
   --lh:1.6;
+  /* 役割の大きさ。部品は段（--fs-*）ではなく役割で指す。PC は上の段と同じ値で、700px 以下だけ下の @media で上げる。
+     ポップ・メニューは本文の子とは限らないので :root に置く。承認済み（2026-10-23、ADR 0256・docs/design-system.md「スマホの大きさの段階」） */
+  --fs-body:var(--fs);        /* 本文・入力欄 */
+  --fs-title:var(--fs-l);     /* 上部の題 */
+  --fs-ui:var(--fs-s);        /* 操作の字: メニュー・候補・ポップ・待ちの文言（PC のチップは --fs のまま） */
+  --fs-meta:var(--fs-xs);     /* 補足: 発言者・時刻・所属・脇の補足・メニューの補足・ツールの補足と結果 */
+  --fs-verb:var(--fs-xs);     /* ツールの動詞 */
+  --fs-target:var(--fs-s);    /* 行の主役: ツールの対象・脇の行の題 */
+  --fs-term:var(--fs-s);      /* 端末の出力・添付の札 */
+  --icon:16px;                /* 主要なアイコン */
+  --icon-s:12px;              /* 補助のアイコン: 開閉の印・まとまりの印・札の中の印 */
+  --hit:30px;                 /* 押せる大きさ（実体の箱。擬似要素で広げない） */
 
   /* -- 動き。有機的 = ゆっくり抜ける。速い動きは状態の切り替えだけ -- */
   --dur-fast:120ms;           /* ホバー・フォーカス */
@@ -106,6 +118,13 @@
   --ease-organic:cubic-bezier(.65,0,.25,1);  /* 枝。ゆっくり始まり、ゆっくり止まる */
 
   color-scheme:light}
+
+/* スマホの大きさの段階（700px 以下）。本文 17・操作 15・補足 13・ツールの対象 16・動詞 14・端末と添付 14・題 20、
+   アイコンは主要 20・補助 16、押せる大きさ 44。余白は --sp-1〜4（4・8・12・16）を使う */
+@media (max-width:700px){
+  :root{--fs-body:17px;--fs-title:20px;--fs-ui:15px;--fs-meta:13px;--fs-verb:14px;--fs-target:16px;--fs-term:14px;
+    --icon:20px;--icon-s:16px;--hit:44px}
+}
 
 /* OS がダーク、かつ利用者がライトを選んでいない */
 @media (prefers-color-scheme:dark){

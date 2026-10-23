@@ -7,7 +7,7 @@
    横に長い中身（コマンド・パス・パターン）は必ずこの枠の内側で止める。
    body に横スクロールを出さないため、入れ子のどこかで min-width:0 が切れないようにする。 */
 
-.tc{--tc-indent:calc(3.4 * var(--fs-xs) + 10px);font-size:var(--fs-s);color:var(--ink-weak);padding:0;margin:0 0 2px;border-radius:var(--r-s);max-width:100%;min-width:0}
+.tc{--tc-indent:calc(3.4 * var(--fs-verb) + 10px);font-size:var(--fs-s);color:var(--ink-weak);padding:0;margin:0 0 2px;border-radius:var(--r-s);max-width:100%;min-width:0}
 .tc-task-chrome{display:flex;align-items:center;gap:8px;padding:0 0 3px var(--tc-indent);font-size:var(--fs-xs);color:var(--ink-weak);min-width:0}
 .tc-task-chrome-mark{color:var(--ink-blue)}
 .tc-task-chrome-profile{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -37,7 +37,7 @@
 .tc-details>.tc-head:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px;background:var(--surface-hover)}
 
 /* 動詞。UI の字・弱い色。並ぶと「何をしたか」が縦に読める */
-.tc-head .tc-label{flex:none;min-width:3.4em;font-size:var(--fs-xs);white-space:nowrap;max-width:14em;overflow:hidden;text-overflow:ellipsis}
+.tc-head .tc-label{flex:none;min-width:3.4em;font-size:var(--fs-verb);white-space:nowrap;max-width:14em;overflow:hidden;text-overflow:ellipsis}
 /* `!` の行（style.css の .cmdline）と、開いた中の見出しは従来の等幅のまま */
 .cmdline .tc-label{font-family:var(--font-mono);letter-spacing:.04em;flex:none;min-width:3.6em;white-space:nowrap}
 
@@ -47,17 +47,17 @@
 .tc-code{font-size:var(--fs-s)}
 
 /* 主役。何をしたかが分かる一番大事な部分なので、ここだけ本文色にする。1 行に収め、はみ出しは … （全文は title） */
-.tc-main{flex:0 1 auto;min-width:0;max-width:100%;color:var(--ink);font-family:var(--font);font-size:var(--fs-s);
+.tc-main{flex:0 1 auto;min-width:0;max-width:100%;color:var(--ink);font-family:var(--font);font-size:var(--fs-target);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tc-main.tc-link{color:var(--ink-blue);white-space:nowrap;text-overflow:ellipsis}   /* 取得の URL。押すと設定の開き先 */
 /* 読む・書く・編集の対象はファイルリンク（押すと右パネル、右クリックで操作）。色はリンクに戻す */
 .tc-main.tc-file{color:var(--ink-blue);text-decoration:underline;text-decoration-color:var(--line-strong);text-underline-offset:2px}
 
 /* 補足（行範囲・オプション・description）。幅が足りないと主役より先に縮み、消える */
-.tc-note{flex:0 100 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;font-size:var(--fs-xs)}
+.tc-note{flex:0 100 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%;font-size:var(--fs-meta)}
 
 /* 右端の結果。成功は主張しない。走っている間は弧と経過秒 */
-.tc-res{flex:none;margin-left:auto;font-family:var(--font);font-variant-numeric:tabular-nums;font-size:var(--fs-xs);white-space:nowrap;
+.tc-res{flex:none;margin-left:auto;font-family:var(--font);font-variant-numeric:tabular-nums;font-size:var(--fs-meta);white-space:nowrap;
   display:inline-flex;align-items:center;gap:6px;align-self:center}
 .tc-res:empty{display:none}
 .tc-res .run{width:14px;height:14px}
@@ -83,7 +83,7 @@
 .tic svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
 /* 時刻はボタン。押すと行の上に小さな詳細（開始・終了・所要・終了コード）。時刻が無い古い履歴では出さない */
 .tc-time{flex:none;align-self:center;background:transparent;border:0;padding:0 2px;border-radius:4px;cursor:pointer;
-  color:var(--ink-weak);font:inherit;font-size:var(--fs-xs);font-variant-numeric:tabular-nums;white-space:nowrap}
+  color:var(--ink-weak);font:inherit;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;white-space:nowrap}
 .tc-time:hover{color:var(--ink)}
 .tc-time:focus-visible{outline:2px solid var(--line-blue);outline-offset:1px}
 .tc{position:relative}
@@ -107,7 +107,7 @@
 .tc-inp .tc-json{margin-top:2px}
 /* 実行の出力: 両テーマ共通の暗い端末面 */
 .tc-term{background:var(--surface-console);color:var(--ink-console);border-radius:var(--r-s);padding:8px 12px;
-  font:var(--fs-s)/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
+  font:var(--fs-term)/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
 .tc-term .prompt{color:var(--ink-console-weak);user-select:none}
 .tc-term-cursor{display:inline-block;width:.6em;height:1em;vertical-align:text-bottom;background:currentColor;animation:term-cursor 1s step-end infinite}
 @keyframes term-cursor{50%{opacity:0}}
@@ -186,11 +186,11 @@
 .bundle:has(>.rhead:focus-visible) :is(.tc-error>.tc-details>.tc-head,.tc-error>.tc-details>.tc-details-body,.tc-appr),
 .bundle:has(>.rhead:active) :is(.tc-error>.tc-details>.tc-head,.tc-error>.tc-details>.tc-details-body,.tc-appr){background:var(--surface-2)}
 .bundle:has(>.rhead:focus-visible){outline:2px solid var(--line-blue);outline-offset:1px}
-.rhead .verb{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0;font-size:var(--fs-xs)}
-.rhead .stk{width:12px;height:12px;flex:none;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;align-self:center}
+.rhead .verb{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0;font-size:var(--fs-meta)}
+.rhead .stk{width:var(--icon-s);height:var(--icon-s);flex:none;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;align-self:center}
 .rhead .mix{color:var(--ink);white-space:nowrap}
 .rhead .n{margin-left:4px;font-variant-numeric:tabular-nums;white-space:nowrap}
-.rhead .res{flex:none;margin-left:auto;display:inline-flex;align-items:baseline;gap:8px;align-self:center;font-family:var(--font);font-size:var(--fs-xs);font-variant-numeric:tabular-nums}
+.rhead .res{flex:none;margin-left:auto;display:inline-flex;align-items:baseline;gap:8px;align-self:center;font-family:var(--font);font-size:var(--fs-meta);font-variant-numeric:tabular-nums}
 .rhead .xm{color:var(--ink-strong);font-weight:700}
 .rhead .tc-chev{transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur) var(--ease-out)}
 .rhead:hover .tc-chev,.rhead:focus-visible .tc-chev,.rhead[aria-expanded="true"] .tc-chev{opacity:1}
@@ -405,9 +405,15 @@ dialog.tc-shot-dlg::backdrop{background:var(--surface-veil)}
 .card-actions .res:empty:has(+.bh-left){display:none}
 @media (max-width:560px){.card-actions .bh-left{flex-basis:100%}}
 
+/* 狭い画面（ADR 0256）: 字の大きさは tokens.css の役割の変数（動詞 14・対象 16・補足 13・端末 14）が上げる。ここは並びと押せる大きさ。
+   動詞の欄を 2.5 字・間を 6px に詰めるので、開いた中身の字下げ（--tc-indent）も同じ式で対象の字の頭に揃える */
 @media(max-width:700px){
-  .tc-details > .tc-head{padding:4px;margin:0 -4px;min-height:44px;align-content:center}
+  .tc{--tc-indent:calc(2.5 * var(--fs-verb) + 6px)}
+  .tc-details > .tc-head{padding:4px;margin:0 -4px;min-height:var(--hit);align-content:center}
   .tc-head .tc-line{gap:6px}
-  .tc-head .tc-label{font-size:13px;min-width:2.5em}
-  .tc-head .tc-main{font-size:15px}
+  .tc-head .tc-label{min-width:2.5em}
+  .tic{width:var(--icon);height:var(--icon)}
+  .tic svg{width:calc(var(--icon) - 2px);height:calc(var(--icon) - 2px)}
+  .tc-chev{width:var(--icon-s);height:var(--icon-s)}
+  .rhead{align-items:center;min-height:var(--hit)}
 }
