@@ -74,9 +74,7 @@ export default function (t) {
   t.ok('開くのは channels:show（チャンネル・DM・bot を作る画面）', /new CustomEvent\('channels:show'/.test(sidebar) && /kind: 'bot', id: 'new'/.test(sidebar) && /b\.dmChannelId/.test(sidebar));
   t.ok('web/client.mjs・core/server.mjs には依存を足していない', !/client\.mjs|server\.mjs/.test(sidebar + read('web/channels/side-model.mjs')));
   const side = read('web/side.mjs');
-  t.ok('Chats の木: bot の会話は状態のグループに入れず、全グループの上に「あなたを待っている」の見出しで置く', /visible\.filter\(\(s\) => s\.bot\)/.test(side)
-    && /familiesOf\(visible\.filter\(\(s\) => !s\.bot\)/.test(side) && /"grp bot-waits"/.test(side) && /channels:side\.botWaitsHead/.test(side)
-    && side.indexOf('"grp bot-waits"') < side.indexOf('for (const st of visibleGroups)'));
+  t.ok('脇は置き場所の木だけ。待ち専用の区画は作らない', /buildPlaces\(wanted\)/.test(side) && /buildHomeStatuses/.test(side) && !/bot-waits|last\.order/.test(side));
   t.ok('bot の会話の印: 一覧が無くても会話の題からチャンネル名を取り、id は出さない', /botTitleParts\(s\)\.channel/.test(side) && !/s\.bot\.channelId \?\? |#\$\{s\.bot\.channelId/.test(side));
   t.ok('bot の会話の行は状態へ落とせない・印（.row-ch）が付く（スレッドの行は状態を持つので落とせる）', /if \(!interactive \|\| \(s\.bot && !s\.thread\)\) return r;/.test(side) && /botChannelMark\(s\)/.test(side));
   t.ok('検索: チャンネルの当たりを混ぜ、出どころを添える', /connectChannels\(link\)/.test(side) && /channelsLink\.matchNames/.test(side) && /"row-src"/.test(side));

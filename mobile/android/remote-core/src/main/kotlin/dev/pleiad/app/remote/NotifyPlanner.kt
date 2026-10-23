@@ -12,6 +12,8 @@ package dev.pleiad.app.remote
 //     state for (the service restarted since) still cancels, because cancelling a notification that is not there is harmless
 //   - notices are applied once, in order: a sequence number not above the last one seen for a host is a replay
 //   - the settings are applied again here (the host filters first, but the settings may have changed since)
+//   - a device waiting on the host's approval window is its own "needs attention" notification (no conversation, no
+//     buttons: it is allowed on the host's screen), removed when the host settles the request
 
 class NotifyPlanner {
     private class Slot(var kind: String, var title: String, var host: String, var at: Long, val ids: MutableSet<String> = LinkedHashSet()) {
@@ -33,6 +35,7 @@ class NotifyPlanner {
         const val MAX_SLOTS = 100
         fun slotKey(hostId: String, session: String) = "$hostId|$session"
         fun bundleKey(hostId: String) = "$hostId|bundle"
+        fun deviceKey(hostId: String, id: String) = "$hostId|device:$id"
         private fun attention(kind: String) = kind != NoticeKind.DONE
     }
 
@@ -47,6 +50,9 @@ class NotifyPlanner {
             NoticeKind.APPROVAL, NoticeKind.QUESTION -> if (s.enabled && s.reply) post(h, n) else emptyList()
             NoticeKind.FAILED, NoticeKind.SCHEDULE_MISSED -> if (s.enabled && s.failed) post(h, n) else emptyList()
             NoticeKind.DONE -> if (s.enabled && s.done) post(h, n) else emptyList()
+            NoticeKind.DEVICE -> if (s.enabled && s.reply && n.id != null) listOf(
+                NotifyAction.Post(deviceKey(n.hostId, n.id), NoticeKind.DEVICE, n.hostId, h.host, "", n.title, n.at, attention = true),
+            ) else emptyList()
             else -> emptyList()
         }
     }
@@ -111,6 +117,7 @@ class NotifyPlanner {
                     else listOf(NotifyAction.Post(key, slot.kind, hostId, h.host, n.session, slot.title, slot.at, attention = true, silent = true, pending = slot.ids.size))
                 }
             }
+            "device" -> if (n.id != null) listOf(NotifyAction.Cancel(deviceKey(hostId, n.id))) else emptyList()
             "seen" -> when {
                 slot == null -> listOf(NotifyAction.Cancel(key))
                 slot.kind == NoticeKind.DONE || slot.kind == NoticeKind.FAILED || slot.kind == NoticeKind.SCHEDULE_MISSED -> {

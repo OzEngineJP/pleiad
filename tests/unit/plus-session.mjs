@@ -168,7 +168,15 @@ export default async function (t) {
     const p = session.getIdToken({ force: true }).then(() => null, e => e);
     await tick();
     t.ok('届かない間は reachable: false', (await session.status()).reachable === false);
-    await clock.advance(5 * 60_000);
+    // 1 分ずつ進める。切られた接続の失敗は実の通信で返るので（macOS では setImmediate の数回では返らない）、
+    // 次の 1 分の待ちが入った（または諦めた）のを実時間で待ってから進める
+    let settled = false;
+    p.finally(() => { settled = true; });
+    for (let i = 0; i < 5 && !settled; i++) {
+      const deadline = Date.now() + 10_000;
+      while (!settled && !clock.dueWithin(60_000) && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
+      await clock.advance(60_000);
+    }
     const err = await p;
     const tries = plus.state.calls.filter(c => c.path.startsWith('/v1/token')).length;
     t.ok('5 回で諦める', err?.code === 'network' && tries === 5, `tries=${tries}`);

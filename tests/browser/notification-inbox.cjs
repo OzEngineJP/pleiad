@@ -141,8 +141,8 @@ async page => {
   await bell.click();
   await panel.waitFor();
   await page.locator('#notifPanel .nhead .btn').click();
-  await until(() => !document.querySelector('#notifPanel .nrow.unread') && !document.querySelector('#notifBell .bell-badge'), 'read all');
-  check((await counts()).unread === 0, 'すべて既読 clears the unread dots and the bell count');
+  await until(() => !document.querySelector('#notifPanel .nrow.unread') && document.querySelector('#notifBell .bell-badge')?.textContent === '◆', 'read all');
+  check((await counts()).unread === 0, 'すべて既読 clears unread dots and count while unresolved waiting keeps ◆');
   const before = await rows.count();
   await turn('fail');
   await until((n) => document.querySelectorAll('#notifPanel .nrow').length > n, 'a new notification appears while the panel is open', 8000).catch(() => {});

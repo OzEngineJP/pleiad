@@ -584,7 +584,6 @@ try {
       await sleep(150);
     }
     const { page, context } = await newPage({ width: 1280, height: 820, scheme: 'dark' });
-    await page.locator('#sideOrder [data-order="channel"]').click();
     await page.evaluate(([id, threadId]) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id, threadId } })), [ch.id, root.id]);
     await page.waitForSelector('#chThread .th-top .vc-call', { timeout: 15000 });
     const call = page.locator('#chThread .th-top .vc-call');

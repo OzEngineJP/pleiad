@@ -223,7 +223,7 @@ Claude は会話の env、Codex は共有 app-server のスレッドごとの `s
 
 最初の窓は会話で選んだプロフィール（未選択なら Chrome の最後に使ったもの）を `--profile-directory` に渡し、`chrome.exe --new-window` から開く。題の nonce で窓を見つけて隠す。chrome.exe を起こせない（OS の層が理由を返した）ときは、ブラウザーを探し直して 1 回だけやり直す（層の browser の id は main のプロセスごとに替わる。[無停止の更新の設計](zero-downtime-update/design.md) §7.2）。それでも未選択で起こせなければ `Target.createTarget` を使う。選択済みの場合は、別のプロフィールで開く代わりに失敗を返し、エラーにはエージェントの次の手（時間を置いてやり直す・人に Chrome がそのプロフィールで開くか確かめてもらう・`use_browser_profile` で切り替える）を書く。2 枚目以降も、裏のタブの描画が間引かれないよう別の窓に作る。agent-browser はつないだとき会話にタブが無いと空のタブを 1 つ作り、続けて自分のタブを作る。中継は、同じ接続が次のタブを作った時点で、まだ `about:blank` のままの最初のタブを閉じる。最初の `open` で開く窓は 1 つになる。ページが `window.open` で開いたタブは同じ窓に入ることがあり、popup の別窓は範囲に取り込んで隠す。
 
-OS の層は、隠した窓が前面を取ったら直前の前面へ返す。モニター・DPI の変更やスリープ復帰では置き直す。Chrome が隠した窓を画面の中へ動かしたときも、見張りが 1 秒以内に隠し直す。最大化のまま開いた窓は、先に通常へ戻してから大きさを決める（`Browser.setWindowBounds` は最大化の窓に大きさを当てない）。窓が見つからなければ隠せなかったことをログに残す。起動や popup で短く窓が見える場合があり、裏になったタブの撮影や操作が遅くなる場合もある。
+OS の層は、隠した窓が前面を取ったら直前の前面へ返す。ただし、人がプロフィールを開こうとした（直前の前面が、隠していない Chrome の窓＝プロフィールの選択画面や利用者の窓だった）ときは、返すだけで終わらせず、そのプロフィールの見える新しい窓を `chrome.exe --profile-directory --new-window` で開く（[ADR 0246](adr/0246-chrome-profile-window-and-idle-window-cleanup.md)）。プロフィールは窓ごとの AppUserModelID（`Chrome` が Default、ほかは `Chrome.UserData.*`）で見分け、開くときのフォルダー名は core の記録（`record.profile`）を使う。隠した直後（開きかけの窓・`window.open` の popup）・ghost・閉じる依頼中・直前に隠した窓が前面だったときは、エージェントの操作とみなして開かない。分からないときは開かずに前面を返す。同じプロフィールで続けて前面を取っても窓を重ねないよう、AUMID ごとに 30 秒の間隔を置く。隠した窓は隠したままで、エージェントの作業は止めない。モニター・DPI の変更やスリープ復帰では置き直す。Chrome が隠した窓を画面の中へ動かしたときも、見張りが 1 秒以内に隠し直す。最大化のまま開いた窓は、先に通常へ戻してから大きさを決める（`Browser.setWindowBounds` は最大化の窓に大きさを当てない）。窓が見つからなければ隠せなかったことをログに残す。起動や popup で短く窓が見える場合があり、裏になったタブの撮影や操作が遅くなる場合もある。
 
 隠した窓は作られた瞬間に一度アクティブになるため、そのままでは Chrome の「最後にアクティブな窓」が見えない窓に残り、`shell.openExternal`（と HTML のファイルの `shell.openPath`）の URL・ファイルがそこへ開いてしまう。Windows では main が開く直前に、最後に使われていた見える Chrome の窓を前面にして last-active を戻す（`raiseVisibleBrowser`。隠した窓が無い・既定のブラウザーが Chrome でない・隠した窓と同じ Chrome に見える窓が無いときは何もしない）。既定かどうかは、URL はそのスキームの、HTML のファイルは `.html` の関連付けの ProgId で見る。前に出した窓は隠した窓ではないので、前面の見張りは取り戻さない。前面ロックで前に出せなければ、そのまま開く。
 
@@ -240,7 +240,7 @@ OS の層は、隠した窓が前面を取ったら直前の前面へ返す。�
 
 ### プロフィール
 
-`core/chrome/profiles.mjs` は Local State の `profile.info_cache` のキー（フォルダー名）と `name`（表示名）だけを取り出す。ファイルを JSON として解析するが、メールアドレス・アカウント・画像などの項目は参照せず、出力・記録・ログに載せない。最初の窓の既定に使う `profile.last_used` は従来の `locate.mjs` が読む。Cookie・履歴・パスワードのファイルは読まない。
+`core/chrome/profiles.mjs` は Local State の `profile.info_cache` のキー（フォルダー名）と `name`（表示名）だけを取り出す。ファイルを JSON として解析するが、メールアドレス・アカウント・画像などの項目は参照せず、出力・記録・ログに載せない。最初の窓の既定に使う `profile.last_used` は従来の `locate.mjs` が読む。Cookie・履歴・パスワードのファイルは読まない。OS の層が窓のプロフィールを見分けるときは、窓ごとの AppUserModelID を読む（`Chrome` が Default、ほかは `Chrome.UserData.*`。ADR 0246）。
 
 設定 › ブラウザーには `chromeProfileNotes: [{ browser, dir, note }]`（メモは200字まで）と `chromeNewProfile: { browser, dir } | null`（新しい会話の既定）を置く。メモはエージェントのプロフィール一覧にも載る。既定が一覧から消えていたら適用せず、Chrome の最後に使ったものを使う。会話の選択はメタの `chromeProfile: { browser, dir }` に保存し、既存の会話の選択は設定の既定を変えても変わらない。新規会話で id が決まるまでは仮の id に持ち、確定時に `rebind` で保存する。
 
@@ -364,6 +364,8 @@ PC で操作している間（`by: 'pc'`）のリモートの端末は、映像�
 
 `ply_browser.close_browser_window` は引数なしなら呼び出した会話の専用窓を閉じる。`{ task: '<taskId>' }` なら、この会話が直接委譲したローカルの子の窓を閉じる。タスクと子の会話メタの親子関係を両方確かめ、別の親・孫・リモートのホストの子・孤立した記録は断る。右パネルでは Chrome の道具の列の ⋯ に「表示中のウィンドウを閉じる」を置き、`browser.chromeCloseWindow` を呼ぶ（子の窓は上の列の会話の題で映してから閉じる。「会話とタブを選ぶ」）。PC の画面とリモートの端末で使える。MCP と CLI の ops には出さない。窓は使い終えたときに閉じられるが、続きに使う画面やログイン中の窓は開いたままにできる。閉じた後にブラウザーを使うと新しい専用窓が黙って開く（agent-browser の縛りを外してつなぎ直させる。「中継とエージェントへの渡し方」）。
 
+**使われなくなった窓**（[ADR 0246](adr/0246-chrome-profile-window-and-idle-window-cleanup.md)）: 会話ごとに Chrome の窓を最後に使った時刻を持ち、既定 24 時間（`CHROME_WINDOW_IDLE_MS`）使っていない会話の隠した窓は、サーバーが 1 時間ごとに `core/chrome/close-window.mjs` の `sweepIdle()` で閉じる。閉じ方は `close_browser_window` と同じで、静止画と `chromeClosed` の行（`by: 'idle'`）を残す。ターンの実行中・人の引き継ぎ中・`hand_to_user` の答え待ち・更新の途中（OS の層が `pending`、または中継が引き継ぎで出ていく途中）は閉じない。最後に使った時刻は無停止の更新の carry に載り、更新を越えて数え続ける。会話のアーカイブに当たる操作はコードに無い（`sessions.delete` は削除で、既にこの道を通る）。
+
 親の委譲カードの下には、子の窓が開いている間だけ Chrome の印・プロフィール・状態・子の Chrome を右パネルで映す操作（会話は移らない）・窓を閉じる × を出す。`browser.chromeWindows({ sessionId })` は、この会話と直接委譲した子の開いている窓を `{ sessionId, taskId, title, windows, profile, profileName, state, waiting }[]` で返す（この会話の行は `taskId: null`。`waiting` は人への依頼待ち）。タブの窓の数と右パネルの上の列（会話の題）は、この読み取り口を使う。窓が開閉したら `chromeWindow`、プロフィールが替わったら `chromeProfile`、操作状態が替わったら `chromeControl` で読み直す。
 
 閉じる直前の `Page.captureScreenshot` を `<data>/uploads/chrome-window/<会話 ID の SHA-256>/<時刻>-<UUID>.png` に置き、会話の `chromeClosed` の行にファイルのパスだけを記録する。人が Chrome の × で直接閉じたときと、撮影できないときは最後に受けた映像の JPEG を `.jpg` として残す。画像が無いときも閉じた行は残る。会話を消すと、窓とその会話の静止画を片付ける。分岐した会話は、写した `chromeClosed` の行の静止画を自分の置き場へ複製して指す（元の会話を消しても残る。ネイティブの分岐も同じ。docs/message-fork.md）。
@@ -372,4 +374,4 @@ PC で操作している間（`by: 'pc'`）のリモートの端末は、映像�
 
 ### 検証
 
-`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。窓を閉じる流れは `chrome-close-window.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。委譲は `chrome-delegation.mjs` がプロフィール・窓の所有関係・同じサイトを待つ 2 つの子・窓ごとの停止を確かめる。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。
+`tests/unit/chrome-connection.mjs`・`chrome-os.mjs`・`server-chrome.mjs`・`chrome-settings.mjs` が接続と OS の層、`chrome-relay.mjs` が範囲・断る一覧・サイトの確認、`chrome-windows.mjs` が専用の窓を確かめる。`chrome-os.mjs` は、隠した窓が前面を取ったときにプロフィールの見える窓を開く条件（AUMID・見える窓の有無・エージェントの操作との見分け・重複の抑制）も確かめる。`chrome-relay.mjs` は最後に使った時刻が carry を越えること、`chrome-close-window.mjs` は 24 時間使われていない窓の掃除（実行中・引き継ぎ・依頼待ちは閉じない）を確かめる。映像は `chrome-screencast.mjs`・`server-chrome-screencast.mjs`、引き継ぎは `chrome-control.mjs`・`chrome-control-ui.mjs`。窓を閉じる流れは `chrome-close-window.mjs`。操作待ちと端末入力は `chrome-handoff.mjs`・`chrome-handoff-flow.mjs`・`chrome-device.mjs`・`browser-bridge.mjs`。委譲は `chrome-delegation.mjs` がプロフィール・窓の所有関係・同じサイトを待つ 2 つの子・窓ごとの停止を確かめる。いずれも偽の Chrome・OS の層で、本物の利用者の Chrome は使わない。

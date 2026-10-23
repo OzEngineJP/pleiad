@@ -1,12 +1,14 @@
 // 設定 › リモート（docs/remote.md §3.3・§6.1・§9、ADR 0239）。2 つのタブを持つ。
 //
 // - この PC へ（ホスト側）: 「ほかの端末からの操作を許可する」のスイッチ 1 つ。オンのときだけ、つないだ端末の行（自分の中継サーバー）と「＋ 端末を追加」
-//   - 行を押すと詳しい画面（つなぎ方・中継サーバー・追加した日・最後の接続・取り消す）
-//   - まとまりは「Pleiad Plus（公式の中継）」と「自分の中継サーバー」。見出しのすぐ下にそれぞれの状態の一行（docs/design-system.md）
+//   - 行を押すと詳しい画面（つなぎ方・中継サーバー・許可した端末・追加した日・最後の接続・取り消す）
+//   - まとまりは「Pleiad Plus（公式の中継）」「もう一度の許可が要る端末」「自分の中継サーバー」「取り消した端末」。
+//     見出しのすぐ下にそれぞれの状態の一行（docs/design-system.md）。取り消した端末の行からは「一覧から消す」（鍵は PC が覚えたまま）
+//   - 端末の画面（リモートの窓）では、ホストの画面だけの操作（スイッチ・中継の編集・端末を追加・承認）を出さない。取り消しはできる（ADR 0248）
 //   - ＋ の流れ: アプリを入れる › つなぎ方 › つなぐ（QR かコード・確認コードで許可）。中継の URL・秘密が無ければ つなぎ方 の段で入れる。
 //     完了だけの段は無く、つなぐ の段がそのまま「つなぎました」と「閉じる」に替わる。Plus は待ちながら閉じられる（承認 2026-10-21）
 // - ほかの PC へ（デスクトップ版のローカルの窓だけ）: web/remote-hosts.mjs
-// - 承認のダイアログ: remotePairing の request で、どの画面にいても出す（＋ の流れで待っている間は流れの中で聞く）
+// - 承認のダイアログ: remotePairing の request で、ホストの画面ならどこにいても出す（＋ の流れで待っている間は流れの中で聞く）
 //
 // 状態はサーバーが持つ（remoteStatus コマンドと、変わるたびに届く remoteStatus イベント）。リモートの窓からも この PC へ は同じ画面が見える。
 // 見え方は web/manage-panel.css の .rm-*。常駐の設定は 設定 › アプリ情報・更新（web/resident-settings.mjs）。
@@ -96,8 +98,12 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
   if (s.account?.status === 'free') return { kind: 'getPlus', text: t('settings.plus.getPlus') };
   if (s.account?.status === 'disabled' || plus.link?.error?.code === 'account' || s.error?.code === 'account') return { kind: 'text', text: t('settings.remote.plus.account') };
   if (plus.host?.state === 'taken') return { kind: 'settings', text: t('settings.plus.hostTaken') };
+  // アカウントから外された PC: つなぎ直しても戻らない。Plus の画面の「この PC を登録し直す」へ
+  if (plus.host?.state === 'removed') return { kind: 'settings', text: t(plus.host.error?.permanent ? 'settings.plus.hostRemovedKey' : 'settings.plus.hostRemoved') };
   if (plus.connect === false) return { kind: 'off', text: remoteStatus?.relayUrl ? t('settings.remote.state.plusOff') : t('settings.remote.state.off') };
   if (plus.host?.state === 'limit' || plus.link?.error?.code === 'limit' || s.error?.code === 'limit') return { kind: 'text', text: t('settings.plus.hostLimit') };
+  // Plus が止まっている（api の 503・中継の 4401 plus unavailable）: つながらないのではなく、再開を待っている
+  if (plus.link?.error?.code === 'unavailable') return { kind: 'text', text: t('settings.plus.paused') };
   if (s.reachable === false || plus.link?.state === 'retrying' || plus.link?.state === 'error') return { kind: 'text', text: t('settings.remote.failed') };
   if (plus.link?.state === 'connected') {
     const where = s.account?.email;
@@ -128,15 +134,41 @@ export function plusRemoteToggleMode(plusStatus, remoteStatus) {
   const s = plusStatus;
   if (s.needsUpdate || !s.signedIn || s.account?.status === 'free') return 'hide';
   if (s.state === 'maintenance' || s.account?.status === 'disabled' || s.error?.code === 'account'
-    || remoteStatus?.plus?.host?.state === 'taken') return 'disabled';
+    || remoteStatus?.plus?.host?.state === 'taken' || remoteStatus?.plus?.host?.state === 'removed') return 'disabled';
   return 'enabled';
 }
 
+/** 端末をまとまりに分ける。もう一度の許可が要る端末（reapprove）は Plus のまとまりに入れない */
 export function partitionRemoteDevices(devices = []) {
-  return { plus: devices.filter(d => d.via === 'plus'), own: devices.filter(d => d.via !== 'plus') };
+  return {
+    plus: devices.filter(d => d.via === 'plus' && !d.reapprove),
+    reapprove: devices.filter(d => d.reapprove),
+    own: devices.filter(d => d.via !== 'plus' && !d.reapprove),
+  };
+}
+
+/** 取り消すと一緒に取り消される端末（その端末が許可した端末と、その先） */
+export function chainedDevices(id, devices = []) {
+  const out = [], seen = new Set([id]);
+  for (let i = 0, ids = [id]; i < ids.length; i++) {
+    for (const d of devices) {
+      if (d.approvedBy !== ids[i] || seen.has(d.id)) continue;
+      seen.add(d.id); ids.push(d.id); out.push(d);
+    }
+  }
+  return out;
+}
+
+/** 「許可した端末」「取り消した端末」の値。この PC・ほかの端末の名前・分からなければ空（行を出さない） */
+export function approverName(approvedBy, approvedByName) {
+  if (approvedBy === 'host') return t('settings.remote.detail.thisPc');
+  if (!approvedBy) return '';
+  return approvedByName || t('settings.remote.devices.unnamed');
 }
 
 export const plusRemoteAvailable = plusStatus => plusStatus?.available !== false;
+/** 「この PC へ」に Plus のまとまりを出すか。Plus が止まって入口が隠れている（available: false）間も、つながりが再開を待っているなら出す */
+export const plusRemoteShown = (plusStatus, remoteStatus) => plusRemoteAvailable(plusStatus) || remoteStatus?.plus?.link?.error?.code === 'unavailable';
 export const initialRemoteMethod = plusStatus => plusStatus?.account?.status === 'plus' ? 'plus' : 'own';
 
 /**
@@ -155,15 +187,21 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   /** 取り消しの確かめ中か・操作中か・画面に出す失敗 */
   let confirming = false, busy = false, message = '';
   let reviewMode = false;
+  /** この画面がホストの画面か（hostCapabilities の osActions）。端末の画面ではホストの画面だけの操作を出さない */
+  let hostScreen = false;
+  /** 詳しい画面に出している取り消した端末の鍵 */
+  let revokedKey = '';
   /** 自分の中継サーバー の「編集」で出している欄（relayInputs）。出していなければ null */
   let editing = null;
+  /** 「編集」の中で、中継の設定を消すかの確かめを出しているか */
+  let removingRelay = false;
 
   const hosts = setupRemoteHosts({ onChange: () => paint(), cmd, page });
   hosts.onOpen?.(() => { tab = 'other'; detailId = ''; open('remote'); hosts.startPolling?.(); refresh(); });
 
   // ---- 描く
   function paint() {
-    const sig = JSON.stringify([tab, detailId, confirming, busy, message, reviewMode, Boolean(editing), statusSig(), tab ==='other' ? hosts.sig() : '']);
+    const sig = JSON.stringify([tab, detailId, revokedKey, confirming, busy, message, reviewMode, hostScreen, Boolean(editing), removingRelay, statusSig(), tab ==='other' ? hosts.sig() : '']);
     paintInto(root, sig, () => {
       if (tab === 'other' && hosts.available) {
         const view = hosts.build();
@@ -171,7 +209,10 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       }
       const device = detailId && status?.devices?.find(d => d.id === detailId);
       if (detailId && !device) detailId = '';
-      return device ? deviceDetail(device) : [tabRow(), ...thisTab()];
+      const revoked = revokedKey && status?.revoked?.find(k => k.key === revokedKey);
+      if (revokedKey && !revoked) revokedKey = '';
+      if (device) return deviceDetail(device);
+      return revoked ? revokedDetail(revoked) : [tabRow(), ...thisTab()];
     });
     paintWizard();
     paintDialog();
@@ -181,8 +222,9 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (!status) return null;
     return [status.enabled, status.configured, connectionFailed(status), status.connection?.state === 'connected',
       status.relayUrl ?? '', status.relayUrlFromEnv, status.hasEnrollSecret, status.enrollSecretFromEnv, status.storage?.encrypted, status.connection?.state,
-      status.plus?.connect, status.plus?.link?.state, status.plus?.link?.error?.code, status.plus?.host?.state, status.plus?.devices, plusSignature(),
-      (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.via, d.createdAt, d.agent?.active ?? 0])];
+      status.plus?.connect, status.plus?.paused?.until, status.plus?.link?.state, status.plus?.link?.error?.code, status.plus?.host?.state, status.plus?.devices, plusSignature(),
+      (status.devices ?? []).map(d => [d.id, d.name, d.platform, d.connected, d.via, d.createdAt, d.agent?.active ?? 0, d.approvedBy, d.approvedByName, d.reapprove]),
+      (status.revoked ?? []).map(k => [k.key, k.name, k.platform, k.via, k.revokedAt, k.by, k.byName, k.approvedBy, k.approvedByName])];
   }
   function plusSignature() {
     const s = plusStatus ?? {}, account = s.account ?? {};
@@ -195,7 +237,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (hosts.available) {
       row.append(segment(t('settings.remote.tabs.label'), [['this', t('settings.remote.tabs.this')], ['other', t('settings.remote.tabs.other')]], tab,
         value => {
-          tab = value; detailId = ''; confirming = false; editing = null;
+          tab = value; detailId = ''; revokedKey = ''; confirming = false; editing = null; removingRelay = false;
           if (value === 'other') {
             hosts.refresh();
             hosts.startPolling?.();
@@ -207,7 +249,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     }
     const allowed = status?.enabled === true;
     if (tab === 'other') row.append(iconButton('plus', t('settings.remote.addHost'), () => hosts.openAdd(), 'btn rm-add'));
-    else if (allowed && !reviewMode) row.append(iconButton('plus', t('settings.remote.addDevice'), () => openWizard(), 'btn rm-add'));
+    else if (allowed && !reviewMode && hostScreen) row.append(iconButton('plus', t('settings.remote.addDevice'), () => openWizard(), 'btn rm-add'));
     for (const b of row.querySelectorAll('.rm-add')) b.dataset.fk = 'add';
     return row;
   }
@@ -219,7 +261,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     sw.id = 'remoteEnable';
     sw.dataset.fk = 'allow';
     sw.setAttribute('aria-checked', String(on));
-    sw.disabled = busy || !status;
+    sw.disabled = busy || !status || !hostScreen;
     const head = el('div', 'rm-mrow');
     head.append(label, sw);
     const out = [head];
@@ -228,13 +270,15 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     const locked = lockedReason(status);
     if (locked) out.push(errorLine(locked));
     if (!on) return out;
-    if (plusRemoteAvailable(plusStatus)) out.push(plusGroup());
+    const parts = partitionRemoteDevices(status.devices);
+    if (plusRemoteShown(plusStatus, status)) out.push(plusGroup(parts.plus));
+    if (parts.reapprove.length) out.push(deviceGroup(t('settings.remote.groups.reapprove'), parts.reapprove));
     // 「自分の中継サーバー」のまとまりには own の端末だけを並べる。設定が無くても出し、「未設定」の一行と「編集」で入れられるようにする
-    const devices = partitionRemoteDevices(status.devices).own;
+    const devices = parts.own;
     const failed = connectionFailed(status);
     const group = el('section', 'rm-group');
     const gh = groupHead(t('settings.remote.groups.own'));
-    if (!editing && !reviewMode) {
+    if (!editing && !reviewMode && hostScreen) {
       const edit = button(t('settings.remote.relay.edit'), () => openRelayEdit(), 'rm-gh-btn');
       edit.dataset.fk = 'relayEdit';
       edit.disabled = busy;
@@ -245,16 +289,35 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (failed) group.append(el('p', 'rm-warn', t('settings.remote.failed')));
     else if (line) group.append(stateLine(line.kind, line.text));
     if (editing) group.append(relayEdit());
-    for (const d of devices) {
-      const view = deviceRow(d, status);
-      group.append(listRow({ icon: view.icon, name: view.name, sub: view.offline ? t('settings.remote.offline') : '', key: `device-${d.id}`,
-        onclick: () => { detailId = d.id; confirming = false; message = ''; paint(); } }));
-    }
+    for (const d of devices) group.append(deviceListRow(d));
     out.push(group);
+    const revoked = status.revoked ?? [];
+    if (revoked.length) {
+      const box = el('section', 'rm-group');
+      box.append(groupHead(t('settings.remote.groups.revoked')));
+      for (const k of revoked) {
+        box.append(listRow({ icon: deviceIcon(k), name: k.name || t('settings.remote.devices.unnamed'), sub: k.revokedAt ? dateText(k.revokedAt) : '',
+          key: `revoked-${k.key}`, onclick: () => { revokedKey = k.key; confirming = false; message = ''; paint(); } }));
+      }
+      out.push(box);
+    }
     return out;
   }
 
-  function plusGroup() {
+  const dateText = when => fmt.dateTime(when, { year: 'numeric', month: 'long', day: 'numeric' });
+  function deviceListRow(d) {
+    const view = deviceRow(d, status);
+    return listRow({ icon: view.icon, name: view.name, sub: view.offline && !d.reapprove ? t('settings.remote.offline') : '', key: `device-${d.id}`,
+      onclick: () => { detailId = d.id; confirming = false; message = ''; paint(); } });
+  }
+  function deviceGroup(title, devices) {
+    const group = el('section', 'rm-group');
+    group.append(groupHead(title));
+    for (const d of devices) group.append(deviceListRow(d));
+    return group;
+  }
+
+  function plusGroup(devices) {
     const group = el('section', 'rm-group');
     const head = groupHead(t('settings.remote.groups.plusHead'));
     const toggleMode = plusRemoteToggleMode(plusStatus, status);
@@ -264,7 +327,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       }));
       sw.classList.add('rm-gh-switch');
       sw.setAttribute('aria-checked', String(status?.plus?.connect === true));
-      sw.disabled = busy || !status || toggleMode === 'disabled';
+      sw.disabled = busy || !status || toggleMode === 'disabled' || !hostScreen;
       sw.dataset.fk = 'plusConnect';
       head.append(sw);
     }
@@ -281,12 +344,21 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       group.append(row);
     } else if (line && STATE_KINDS.has(line.kind)) group.append(stateLine(line.kind, line.text));
     else if (line) group.append(el('p', 'rm-warn', line.text));
-
-    for (const d of (status?.devices ?? []).filter(d => d.via === 'plus')) {
-      const view = deviceRow(d, status);
-      group.append(listRow({ icon: view.icon, name: view.name, sub: view.offline ? t('settings.remote.offline') : '', key: `device-${d.id}`,
-        onclick: () => { detailId = d.id; confirming = false; message = ''; paint(); } }));
+    // 公式の中継からの申し込みを何度も断ったので、新しい申し込みを止めている間の一行。解除はホストの画面だけ
+    const paused = status?.plus?.paused;
+    if (paused?.until) {
+      const warn = el('p', 'rm-warn rm-warn-acts', t('settings.remote.plus.paused', { time: fmt.dateTime(paused.until, { hour: 'numeric', minute: '2-digit' }) }));
+      warn.dataset.fk = 'plusPaused';
+      if (hostScreen && !reviewMode) {
+        const resume = button(t('settings.remote.plus.resume'), () => run(async () => { status = await cmd('remotePlusRequestsResume'); }), 'btn btn-quiet');
+        resume.dataset.fk = 'plusResume';
+        resume.disabled = busy;
+        warn.append(resume);
+      }
+      group.append(warn);
     }
+
+    for (const d of devices) group.append(deviceListRow(d));
     return group;
   }
 
@@ -296,7 +368,8 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     out.push(keyValues([
       [t('settings.remote.detail.method'), d.via === 'plus' ? t('settings.remote.groups.plus') : t('settings.remote.groups.own')],
       [t('settings.remote.detail.relay'), d.via === 'plus' ? '' : relayHost(status?.relayUrl)],
-      [t('settings.remote.detail.added'), d.createdAt ? fmt.dateTime(d.createdAt, { year: 'numeric', month: 'long', day: 'numeric' }) : ''],
+      [t('settings.remote.detail.approvedBy'), d.reapprove ? '' : approverName(d.approvedBy, d.approvedByName)],
+      [t('settings.remote.detail.added'), d.createdAt ? dateText(d.createdAt) : ''],
       [t('settings.remote.detail.lastSeen'), d.lastSeenAt ? fmt.relative(d.lastSeenAt) : t('settings.remote.detail.never')],
     ]));
     const acts = el('div', 'rm-acts');
@@ -304,6 +377,11 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       const tasks = d.agent?.active ? ` ${t('settings.remote.devices.revokeTasks', { count: d.agent.active })}` : '';
       const ask = el('div', 'rm-confirm');
       ask.append(el('p', null, t('settings.remote.devices.revokeConfirm', { name: view.name }) + tasks));
+      const chained = chainedDevices(d.id, status?.devices);
+      if (chained.length) {
+        const names = fmt.list(chained.map(c => t('settings.remote.devices.quoted', { name: c.name || t('settings.remote.devices.unnamed') })));
+        ask.append(el('p', null, t('settings.remote.devices.revokeChain', { names })));
+      }
       const keep = button(t('settings.remote.devices.keep'), () => { confirming = false; paint(); }, 'btn btn-quiet');
       keep.dataset.fk = 'keep';
       const yes = button(t('settings.remote.devices.revokeConfirmButton'), () => revoke(d), 'btn btn-primary');
@@ -320,6 +398,29 @@ export function setupRemote({ cmd, page, open = () => {} }) {
       acts.append(revokeButton);
       out.push(acts);
     }
+    if (message) out.push(errorLine(message));
+    return out;
+  }
+
+  /** 取り消した端末の詳しい画面。できるのは「一覧から消す」だけ（鍵は PC が覚えたまま） */
+  function revokedDetail(k) {
+    const name = k.name || t('settings.remote.devices.unnamed');
+    const out = detailHead({ icon: deviceIcon(k), name, onBack: () => { revokedKey = ''; message = ''; paint(); } });
+    out.push(keyValues([
+      [t('settings.remote.detail.method'), k.via === 'plus' ? t('settings.remote.groups.plus') : t('settings.remote.groups.own')],
+      [t('settings.remote.detail.approvedBy'), approverName(k.approvedBy, k.approvedByName)],
+      [t('settings.remote.detail.revokedAt'), k.revokedAt ? dateText(k.revokedAt) : ''],
+      [t('settings.remote.detail.revokedBy'), approverName(k.by, k.byName)],
+    ]));
+    const acts = el('div', 'rm-acts');
+    const hide = button(t('settings.remote.detail.hideRevoked'), () => run(async () => {
+      status = await cmd('remoteRevokedHide', { key: k.key });
+      revokedKey = '';
+    }), 'btn btn-quiet');
+    hide.dataset.fk = 'hideRevoked';
+    hide.disabled = busy || reviewMode;
+    acts.append(hide);
+    out.push(acts);
     if (message) out.push(errorLine(message));
     return out;
   }
@@ -367,17 +468,19 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   // ---- 自分の中継サーバー の「編集」（つながっている間も中継の設定を変えられる）
   function openRelayEdit() {
     editing = relayInputs();
+    removingRelay = false;
     message = '';
     paint();
     queueMicrotask(() => editing?.relayUrl.focus());
   }
   function relayEdit() {
+    if (removingRelay) return relayRemoveConfirm();
     const box = el('div', 'rm-confirm rm-relay-edit');
     const cancel = () => { editing = null; message = ''; paint(); };
     const save = () => run(async () => {
       const patch = relayPatch(editing);
       if (Object.keys(patch).length) status = await cmd('setRemoteSettings', patch);
-      editing = null;
+      editing = null; removingRelay = false;
     });
     for (const i of Object.values(editing)) {
       i.onkeydown = e => {
@@ -392,9 +495,38 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     for (const b of [no, yes]) b.disabled = busy;
     const acts = el('div', 'rm-acts');
     acts.append(no, yes);
+    // 保存した中継の設定を消す（環境変数の値は画面から消せないので、保存した値が無ければ出さない）
+    if (relayStored()) {
+      const remove = button(t('settings.remote.relay.remove'), () => { removingRelay = true; message = ''; paint(); }, 'btn btn-quiet rm-relay-remove');
+      remove.dataset.fk = 'relayRemove';
+      remove.disabled = busy;
+      acts.append(remove);
+    }
     box.append(...relayFields(editing), acts);
     return box;
   }
+  /** 中継の設定（URL と登録用の秘密）を消す前の確かめ。この中継でつないだ端末は取り消さず、設定し直すまでつながらない */
+  function relayRemoveConfirm() {
+    const box = el('div', 'rm-confirm rm-relay-edit');
+    const own = partitionRemoteDevices(status?.devices).own.length;
+    box.append(el('p', null, t('settings.remote.relay.removeConfirm')
+      + (own ? ` ${t('settings.remote.relay.removeDevices', { count: own })}` : '')));
+    const keep = button(t('settings.remote.devices.keep'), () => { removingRelay = false; paint(); }, 'btn btn-quiet');
+    keep.dataset.fk = 'relayRemoveKeep';
+    const yes = button(t('settings.remote.relay.removeConfirmButton'), () => run(async () => {
+      status = await cmd('setRemoteSettings', { relayUrl: '', enrollSecret: '' });
+      editing = null; removingRelay = false;
+    }), 'btn btn-primary');
+    yes.dataset.fk = 'relayRemoveYes';
+    for (const b of [keep, yes]) b.disabled = busy;
+    const acts = el('div', 'rm-acts');
+    acts.append(keep, yes);
+    box.append(acts);
+    queueMicrotask(() => { if (!root.contains(document.activeElement)) keep.focus(); });
+    return box;
+  }
+  /** 画面から消せる中継の設定（環境変数ではなく保存した URL か登録用の秘密）があるか */
+  const relayStored = () => Boolean((status?.relayUrl && !status.relayUrlFromEnv) || (status?.hasEnrollSecret && !status.enrollSecretFromEnv));
 
   /** 保存する欄の差分。変えていない欄は送らない（秘密は空なら今の値を残す） */
   function relayPatch({ relayUrl, secret, hostName }) {
@@ -652,7 +784,8 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   dialog.addEventListener('cancel', e => e.preventDefault());   // Esc で黙って閉じない（決めるまで残す）
 
   function paintDialog() {
-    const requests = status?.pairing?.requests ?? [];
+    // 承認はホストの画面だけ（端末の画面からの許可は host_only で断られる）
+    const requests = hostScreen ? status?.pairing?.requests ?? [] : [];
     // ＋ の流れが入場券を出して待っているなら、届いた求めは流れの中で聞く
     if (wz?.step === 2 && !wz.request && !wz.doneName && (wz.offer || wz.offerEnd === 'connecting') && requests.length) {
       wz.request = requests.at(-1); wz.offer = null; wz.offerEnd = null;
@@ -669,11 +802,14 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     const name = current.name || t('settings.remote.devices.unnamed');
     const kind = el('p', 'rm-dialog-kind');
     kind.append(el('span', 'card-kind', `◆ ${t('settings.remote.approve.mark')}`));
-    const title = el('h2', null, t('settings.remote.approve.title', { name }));
+    // もう一度の許可（移行で止めた Plus の端末）は題を変え、前に追加した日を添える
+    // i18n-dynamic: settings.remote.approve.title
+    const title = el('h2', null, t(current.again ? 'settings.remote.approve.titleAgain' : 'settings.remote.approve.title', { name }));
     title.id = 'remotePairTitle';
     const codeLabel = el('p', 'rm-dialog-label', t('settings.remote.approve.codeLabel'));
     const code = el('p', 'rm-dialog-code', formatCode(current.code));
-    const meta = [platformName(current.platform), current.app].filter(Boolean).join(' · ');
+    const meta = [platformName(current.platform), current.app, current.via === 'plus' ? t('settings.remote.groups.plus') : '',
+      current.again && current.addedAt ? t('settings.remote.approve.addedOn', { date: dateText(current.addedAt) }) : ''].filter(Boolean).join(' · ');
     const state = el('p', 'mp-state rm-dialog-state');
     state.setAttribute('role', 'status');
     const deny = button(t('settings.remote.approve.deny'), () => decide(current, false, state), 'btn btn-quiet');
@@ -767,5 +903,6 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   return {
     refresh, event, get status() { return status; },
     setReviewMode(on) { reviewMode = on === true; paint(); },
+    setHostScreen(on) { hostScreen = on === true; paint(); },
   };
 }

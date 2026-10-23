@@ -109,6 +109,9 @@
 .tc-term{background:var(--surface-console);color:var(--ink-console);border-radius:var(--r-s);padding:8px 12px;
   font:var(--fs-s)/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:340px;overflow:auto}
 .tc-term .prompt{color:var(--ink-console-weak);user-select:none}
+.tc-term-cursor{display:inline-block;width:.6em;height:1em;vertical-align:text-bottom;background:currentColor;animation:term-cursor 1s step-end infinite}
+@keyframes term-cursor{50%{opacity:0}}
+@media(prefers-reduced-motion:reduce){.tc-term-cursor{animation:none}}
 
 /* ---- 開いた中身 ---- */
 
@@ -401,3 +404,10 @@ dialog.tc-shot-dlg::backdrop{background:var(--surface-veil)}
 /* 足の左の一言があるときは、空の結果の欄を詰める（左の一言が左端に付く） */
 .card-actions .res:empty:has(+.bh-left){display:none}
 @media (max-width:560px){.card-actions .bh-left{flex-basis:100%}}
+
+@media(max-width:700px){
+  .tc-details > .tc-head{padding:4px;margin:0 -4px;min-height:44px;align-content:center}
+  .tc-head .tc-line{gap:6px}
+  .tc-head .tc-label{font-size:13px;min-width:2.5em}
+  .tc-head .tc-main{font-size:15px}
+}

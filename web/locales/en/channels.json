@@ -19,8 +19,6 @@
     "openDm": "Open DM",
     "openBot": "Open bot page",
     "dm": "DM",
-    "botWaitsHead": "Waiting on you",
-    "order": { "label": "Sidebar order", "channel": "Channels", "status": "Status" },
     "home": "Quick chats",
     "newHome": "New thread in Quick chats",
     "newInChannel": "New thread in {{name}}",

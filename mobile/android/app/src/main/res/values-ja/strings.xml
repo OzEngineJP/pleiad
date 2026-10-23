@@ -4,6 +4,8 @@
     <string name="remote_revoked">この端末はホストで取り消されました</string>
     <string name="remote_host_offline">ホストにつながりません</string>
     <string name="remote_page_revoked">もう一度ペアリングしてください。</string>
+    <string name="remote_reapprove">この端末はホストでもう一度の許可が要ります</string>
+    <string name="remote_page_reapprove">ホストの一覧でこの PC を押し、ホストの画面で許可を受けてください。</string>
     <string name="remote_page_host_offline">ホストの Pleiad が起動しているか確かめてください。つながり次第、自動で開きます。</string>
     <string name="remote_page_offline">中継につながりません。ネットワークを確かめてください。つながり次第、自動で開きます。</string>
     <string name="remote_plus_blocked">このアカウントでは公式の中継を使えません</string>
@@ -16,6 +18,10 @@
     <string name="remote_page_plus_maintenance">Pleiad Plus はメンテナンス中です。利用できるようになると接続を再開します。</string>
     <string name="remote_plus_signed_out">ログインしていません</string>
     <string name="remote_page_plus_signed_out">このホストにつなぐには Pleiad Plus にログインしてください。</string>
+    <string name="remote_plus_update">Pleiad を更新してください</string>
+    <string name="remote_page_plus_update">この版の Pleiad では公式の中継を使えません。Pleiad を更新してください。</string>
+    <string name="remote_plus_removed">この PC は Plus のアカウントから外されています</string>
+    <string name="remote_page_plus_removed">その PC の 設定 › Pleiad Plus で「この PC を登録し直す」を押すと、またつなげます。</string>
     <string name="remote_token_required">トークンが要る（アプリから開いてください）</string>
     <string name="remote_lost">ホストとの接続が切れました</string>
     <string name="remote_back_to_hosts">ホスト一覧に戻る</string>
@@ -49,6 +55,9 @@
     <string name="notify_public_failed">作業が失敗した会話があります</string>
     <string name="notify_public_schedule_missed">送信予定を確認してください</string>
     <string name="notify_public_done">作業が終わった会話があります</string>
+    <!-- 新しい端末がホストの承認の窓で待っている（知らせるだけ。許可はホストの画面で） -->
+    <string name="notify_device_body">端末「%1$s」が追加の許可を待っています</string>
+    <string name="notify_public_device">端末が追加の許可を待っています</string>
     <string name="notify_battery_title">通知を確実に届けるために</string>
     <string name="notify_battery_message">電池の最適化の対象だと、画面を消している間に通知が遅れることがあります。Pleiad を対象から外す設定を開きますか？</string>
     <string name="notify_battery_open">設定を開く</string>

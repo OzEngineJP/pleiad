@@ -43,6 +43,7 @@ import { ADOPT_TURN_MARK } from "../adopt.mjs";
 import { createHeldCli, heldPlan, cliVersion } from "./claude-held.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
+import { stripAnsi } from "../claude-login.mjs";
 
 const NL = String.fromCharCode(10);
 
@@ -84,7 +85,7 @@ const QUESTION_TOOL = "AskUserQuestion";
 // Claude は sandbox を持たず、範囲は「約束」にすぎないので enforced は全部 false。
 //
 // bypassPermissions は以前ここに出していなかったが、出すことにした。理由は2つ:
-// 他のエンジンには YOLO 相当があり、Claude だけ無いと委任のときに「親と同じ強さ」を継げない。
+// 他のエンジンには Bypass 相当があり、Claude だけ無いと委任のときに「親と同じ強さ」を継げない。
 // そして危険の度合いは軸（full / never / 強制なし）で表せるようになったので、
 // 隠すのではなく「選んだことが見える」形で扱うほうがよい。
 // 表示名と説明は言語が実行中に変わるので、読むたびに引く（ゲッター）
@@ -93,7 +94,7 @@ const MODES = {
   auto:        { label: "auto",                                  get note() { return t("claude.modes.autoNote"); },        scope: "workspace", autonomy: "judge", enforced: false },
   acceptEdits: { get label() { return t("modes.acceptEdits"); }, get short() { return t("modesShort.acceptEdits"); }, get note() { return t("claude.modes.acceptEditsNote"); }, scope: "workspace", autonomy: "judge", enforced: false },
   plan:        { get label() { return t("modes.plan"); },        get short() { return t("modesShort.plan"); },        get note() { return t("claude.modes.planNote"); },        scope: "none",      autonomy: "ask",   enforced: false },
-  bypass:      { label: "YOLO",                                  get note() { return t("claude.modes.bypassNote"); },      scope: "full", autonomy: "never", enforced: false },
+  bypass:      { label: "Bypass",                                  get note() { return t("claude.modes.bypassNote"); },      scope: "full", autonomy: "never", enforced: false },
 };
 
 // SDK の PermissionMode 名。食い違うのは bypass だけ。
@@ -568,6 +569,8 @@ async function readCostBase(sessionId) {
 // SDK の options には `perTaskStopAffordance` があるが**宣言しない**。宣言すると中断（interrupt）が
 // バックグラウンドのタスクを見逃すようになる（sdk.d.ts）。停止は 1 本ずつ、中断はターンごと、で分けたまま置く。
 const liveQueries = new Map();   // sessionId -> Query
+// 同じ鍵で、そのターンの tracker。裏のコマンドの詳細（getBackgroundTask）がコマンド・状態・時刻を引く。外すのも同じ所（finally）
+const liveTrackers = new Map();  // sessionId -> tracker
 
 // サブエージェントの状態（getSubagentState）。**Claude のネイティブ id** -> そのターンの tracker。
 // 状態はターンの中で流れる SDK メッセージ（task_* と委譲ツールの結果）からしか取らない。
@@ -836,7 +839,7 @@ export const backend = {
     // 裏のコマンドの停止ボタンはターンの外（WS の stopBackground）から来る。**Pleiad の会話 id**で引けるようにする
     // （バックエンドを乗り換えた会話では、Claude の id と会話 id が別物になる）。保持役に載せたターンは、旧サーバーの手を離す口（handOffClaude）がネイティブ id で引く
     const holdQuery = (id) => {
-      const key = hostSessionId ?? id; if (key && q) liveQueries.set(key, q);
+      const key = hostSessionId ?? id; if (key && q) { liveQueries.set(key, q); liveTrackers.set(key, tracker); }
       if (id) turnTrackers.set(id, tracker);   // getSubagentState はネイティブ id で来る（conversations.mjs が訳す）
       if (id && held) heldTurns.set(id, { held, get q() { return q; } });
     };
@@ -1268,6 +1271,7 @@ export const backend = {
       if (!held?.handedOff) { await flag?.dispose(); await envFile?.dispose(); }
       signal?.signal?.removeEventListener?.("abort", stopTurn);
       for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
+      for (const [id, x] of liveTrackers) if (x === tracker) liveTrackers.delete(id);
       for (const [id, x] of heldTurns) if (x.held === held) heldTurns.delete(id);
       closeInput();
       if (contextRuntime) { q.close(); releaseContext(); }
@@ -1307,6 +1311,33 @@ export const backend = {
     if (typeof q.stopTask !== "function") throw new Error(t("claude.errors.stopUnsupported"));
     await q.stopTask(taskId);
     return { stopped: true };
+  },
+
+  /**
+   * 裏のコマンドの出力を読む（作業ダイアログの詳細。開いている間、画面が定期的に呼ぶ。停止や再開はしない）。
+   *
+   * SDK の `Query.getTaskOutput`（control の get_task_output）は、シェルと Monitor のタスクの出力の**末尾 8 KiB**と
+   * 全体の大きさを返す。走っている間も、終わった直後も読める。読む相手は走っているターンの query なので、
+   * ターンが終わった後は読めない（null。画面は最後に取った出力を残す）。サブエージェントは出力ではなく会話（loadSubagent）で読む。
+   * 出力は端末の制御文字を含みうるので、落とした本文にする。読めなかった（古い CLI が断った・知らない id）ときも null
+   */
+  async getBackgroundTask(sessionId, taskId) {
+    const q = liveQueries.get(sessionId);
+    if (typeof q?.getTaskOutput !== "function") return null;
+    const info = liveTrackers.get(sessionId)?.taskDetail(taskId) ?? null;
+    if (info?.kind === "agent") return null;
+    const got = await q.getTaskOutput(taskId).catch(() => null);
+    if (!got || typeof got.output !== "string") return null;
+    const ended = Boolean(info?.status && info.status !== "running");
+    const startedAtMs = info?.startedAt ? Date.parse(info.startedAt) : NaN;
+    return {
+      id: taskId, kind: info?.kind ?? "shell", label: info?.label ?? "", command: info?.command ?? info?.label ?? "",
+      output: stripAnsi(got.output), outputTruncated: Boolean(got.truncated),
+      ...(Number.isFinite(got.total_bytes) ? { outputTotalBytes: got.total_bytes } : {}),
+      ...(Number.isFinite(startedAtMs) ? { startedAtMs } : {}),
+      status: ended ? "completed" : "running",
+      ...(ended ? { stopped: info.status === "stopped", failed: info.status === "failed", endedAt: info.endedAt } : {}),
+    };
   },
 
   /** 走っている最中のモデル切り替え。効かなければ false（web は「次のターンから」になる）。 */

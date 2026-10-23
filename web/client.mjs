@@ -1,3 +1,5 @@
+import { terminalView, updateTerminal } from './terminal.mjs';
+import { delegateResult, delegateTaskId } from './delegate-result.mjs';
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
@@ -32,6 +34,7 @@ import { setupCliSetup } from './cli-setup.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
 import { setupHeaderUsage, weekUsage } from './header-usage.mjs';
+import { contextMetrics, conversationMenuItems, menuMeter, createConversationSheet, renderContextUsage } from './conversation-usage.mjs';
 import { setupOnboarding } from "./onboarding.mjs";
 import { setupClaudeAccounts } from './claude-accounts.mjs';
 import { setupAgentAccounts, createAccountRequestCache, composerAccount } from './agent-accounts.mjs';
@@ -70,7 +73,6 @@ import { attachedImageSrc } from "./composer/attachments.mjs";
 import { createComposer, composerEls, rememberComposerTemplate } from "./composer/composer.mjs";
 import { createHomeDest } from "./composer/home-dest.mjs";
 import { createViewAddress, readAddress, toShowDetail } from "./view-address.mjs";
-import { openAttachmentList } from "./attachment-list.mjs";
 import { runMark, satMark, stillMark } from "./arc.mjs";
 import { approvalTarget } from "./approval-summary.mjs";
 import { isComputerTool, approvalApps, approvalBody, approvalHeading, approvalSaid, lockWaitBox, relayLabel } from "./computer-use.mjs";
@@ -334,6 +336,9 @@ async function recalledAttachments(item) {
   const index = data?.messages?.findIndex(row => row.uuid === item.uuid) ?? -1;
   if (index < 0 || $('prompt').value !== item.text || !chatRecall.active) return;
   state.attached = messageAttachments(data, index);
+  // 印は添付の実体があるときだけ札になる。実体を置いたので値を入れ直す（入れ直さないと印が字のまま残り、末尾にも札が付く）
+  $('prompt').value = item.text;
+  fitPrompt();
   renderAttached();
 }
 // 次のメッセージの候補（web/composer/suggestion.mjs。設定 › 入力）。会話ごとに最後に届いたもの（promptSuggestion の出来事）を持つ。
@@ -369,7 +374,9 @@ const homeDest = createHomeDest({ invoke: (op, args) => cmd("invoke", { op, args
   visible: () => unsentHere(), onChange: () => { syncTopbar().catch(() => {}); } });
 // 接続の状態（web/connection-status.mjs）。切れた一行は 1.5 秒続いてから、トークンが古いと分かったら案内に替えて再接続をやめる
 const connStatus = createConnectionStatus({ note: $("connNote"), sideLine: $("connLost"), live: $("connLive"), t, runMark,
-  time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState() });
+  time: (ms) => fmt.time(ms), check: checkToken, reconnect: () => connect(), onChange: () => syncRunState(),
+  // モバイルの殻: 線が止まった案内から、ホストの一覧へ戻れる（殻の plyRemote は文書の頭で入る）
+  leave: remoteInfo(window.plyRemote)?.shell === "mobile" && typeof window.plyRemote.backToHosts === "function" ? () => window.plyRemote.backToHosts() : null });
 // 作ったばかりで、いま select している会話の id。開き直しと違い入力欄が正本（saveDraft・送信の予約・送信ボタンが見る）
 let freshSessionId = null;
 // 新しい会話を作っている間に押された送信の予約（submit）。「取り消す」で null
@@ -384,15 +391,15 @@ let notifyPc = { done: true, reply: true, failed: true };
 // スマホのアプリの殻が背面に回っている間は、画面が可視でも見ていない（殻が plyremote:stop / plyremote:start を投げる）
 let shellStopped = false;
 const watchingNow = () => !shellStopped && document.visibilityState === 'visible';
-const completionNotifications = createCompletionNotifications({ openSession: id => select(id),
-  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id });
+const completionNotifications = createCompletionNotifications({ openSession: id => select(id), openSettings: page => openSettingsPage(page),
+  settings: () => notifyPc, isViewing: id => watchingNow() && state.current === id, isFocused: () => watchingNow() && document.hasFocus() });
 
 let ws = null;
 let seq = 0;
 const pending = new Map();
 
 const state = {
-  threadIndex: { threads: [], totals: {} },   // bot のスレッドの索引（channels.threads。脇の 2 つの並べ方）
+  threadIndex: { threads: [], totals: {} },   // bot のスレッドの索引（channels.threads。脇の置き場所の木）
   current: null,      // 選択中の sessionId（null = 新規）
   loadingSession: null,
   homeDir: "",
@@ -479,15 +486,16 @@ function closeMeterPop(focus = false) {
 /** 入力欄の上の帯の左（文脈）が描いたか。右端のバックグラウンドの入口（syncWorkEntry）と合わせて、帯ごと出すか決める */
 let contextShown = false;
 const stripNarrow = matchMedia('(max-width:480px)');
-// 480px 以下: 頭に残すのは通話・目次・「…」だけ（プラグインと git は「…」の先頭）。docs/design-system.md「会話の頭の行のアイコン」
+// 文脈メーターの省略は480px以下。上部の入口の集約はnarrowView（700px以下）に従う。
 const phoneView = stripNarrow;
 function syncStripVisible() {
   const strip = $('contextStrip');
-  strip.hidden = !contextShown && $('usageChip').hidden && $('workEntry').hidden;
+  strip.hidden = (narrowView.matches || !contextShown) && (narrowView.matches || $('usageChip').hidden) && $('workEntry').hidden;
   if (strip.hidden) closeMeterPop();
 }
 /** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
 function paintContextStrip() {
+  document.dispatchEvent(new Event('ply-context-usage'));
   const usage = state.contextWindow;
   const show = Boolean(state.current && (usage || state.compactionAt || state.compactionPhase));
   contextShown = show;
@@ -3293,7 +3301,7 @@ function onEvent(ev, replay = false) {
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
   if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
-  if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); return; }
+  if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
     paintOutbox(); renderSessions();
@@ -3320,6 +3328,7 @@ function onEvent(ev, replay = false) {
   if (ev.type === 'conversationAutoCompaction') {
     const row = state.sessions.find(s => s.id === ev.sessionId);
     if (row) row.autoCompactionOff = ev.off;
+    if (ev.sessionId === state.current) document.dispatchEvent(new Event('ply-context-usage'));
     return;
   }
   if (ev.type === 'compaction' && ev.sessionId) {
@@ -3334,7 +3343,11 @@ function onEvent(ev, replay = false) {
   // Claude のアカウントの認可（claude setup-token / 使用量の claude auth login）の進み具合。設定のアカウントの画面へ渡す
   if (ev.type === 'claudeLogin') { claudeAccounts.loginEvent(ev); return; }
   // リモート（ホスト側）の状態とペアリング。承認のダイアログはどの画面にいても出す（web/remote.mjs）
-  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') { remoteSettings.event(ev); residentSettings.event(ev); return; }
+  if (ev.type === 'remoteStatus' || ev.type === 'remotePairing') {
+    // 端末の追加の承認待ちは、ホストの画面だけが OS の通知でも知らせる（端末の画面では許可できない）
+    if (ev.type === 'remotePairing' && ev.phase === 'request' && state.osActions === true) completionNotifications.deviceWaiting(ev.request);
+    remoteSettings.event(ev); residentSettings.event(ev); return;
+  }
   // Pleiad Plus のアカウントの状態（設定 › Pleiad Plus）
   if (ev.type === 'plusStatus') { plusSettings.event(ev); remoteSettings.event(ev); return; }
   if (ev.type === 'plusSyncStatus') { plusSettings.event(ev); return; }
@@ -4880,15 +4893,15 @@ const folderUpload = canSendFolders() ? createFolderUpload({
   },
   onChange: () => attachMenu?.refresh(),
 }) : null;
-let attachMenu = null;   // 添付のボタンのメニュー（wireDropZone で作る。出どころを選べる接続でだけ開く）
+let attachMenu = null;   // 添付のボタン（+）のメニュー（wireDropZone で作る。どの接続でも開く。ADR 0252）
 
-/** 添付のボタンの読み上げと title を、出どころを選ばせるかに合わせる（hostCapabilities が届いたときにも） */
+/** 添付のボタンの読み上げと title（いつもメニューを開く。開いている間は + が × に回る。style.css の .attach-plus） */
 function syncAttachButton() {
-  const b = $("attach"), menu = Boolean(currentAttachSources());
-  b.title = menu ? t("chat.attach.source.buttonTitle") : t("chat.composer.attach");
+  const b = $("attach");
+  b.title = t("chat.attach.source.buttonTitle");
   b.setAttribute("aria-label", b.title);
-  if (menu) { b.setAttribute("aria-haspopup", "dialog"); if (!b.hasAttribute("aria-expanded")) b.setAttribute("aria-expanded", "false"); }
-  else { b.removeAttribute("aria-haspopup"); b.removeAttribute("aria-expanded"); }
+  b.setAttribute("aria-haspopup", "dialog");
+  if (!b.hasAttribute("aria-expanded")) b.setAttribute("aria-expanded", "false");
 }
 
 /** 未送信の会話で「bot なし」のときに動くエージェント（bot を選んでいる間も、bot なしの札にはこちらを出す） */
@@ -5044,12 +5057,7 @@ const slashSkills = chatComposer.useSlash({
 
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
 
-// 脇の並べ方（「チャンネル」|「状態」。docs/design-system.md「脇」）。端末ごとに覚える。前の版の札（Chats / Channels）を選んでいたら、その並びから始める
-const SIDE_ORDER_KEY = 'agent-host-side-order';
-let sideOrder = 'status';
-try { sideOrder = localStorage.getItem(SIDE_ORDER_KEY) ?? (localStorage.getItem('agent-host-side-tab') === 'channels' ? 'channel' : 'status'); } catch {}
-if (sideOrder !== 'channel') sideOrder = 'status';
-// Bots・ルーティンの節（web/channels/sidebar.mjs が描く）。チャンネルの並べ方の間、一覧の末尾に入る
+// Bots・ルーティンの節（web/channels/sidebar.mjs が描く）。絞り込んでいないとき一覧の末尾に入る
 const channelExtraNodes = [...document.querySelectorAll('#channelsSide .cs-sec[data-sec="bots"], #channelsSide .cs-sec[data-sec="routines"]')];
 // メインの面（会話 / Channels）。channelsUi はこの後で作るので、作る前（起動の途中）は会話の面とみなす
 const surface = () => { try { return channelsUi.tab; } catch { return 'chats'; } };
@@ -5100,7 +5108,7 @@ const side = createSide({
   visible: () => !document.body.classList.contains("settings") && (narrowView.matches ? drawerOpen() : !document.documentElement.classList.contains("side-closed")),
 });
 
-// ---- 脇のスレッドの行（channels.threads の索引。web/side.mjs の 2 つの並べ方）
+// ---- 脇のスレッドの行（channels.threads の索引。web/side.mjs の置き場所の木）
 const THREAD_INDEX_EVENTS = new Set(['channelThread', 'channelPost', 'channelsChanged', 'channelRead', 'botsChanged']);
 let threadIndexTimer = 0;
 // 起動の最初の一覧は、会話（listSessions）とスレッド（この索引）の両方が届いてから 1 度だけ描く。それまでは骨組み（web/side.mjs の skeleton）。
@@ -5128,9 +5136,8 @@ function threadCwd(s) {
   return '';
 }
 
-/** スレッドの状態を変える（脇の行のメニュー・状態の並べ方からのドラッグ。会話と同じ状態のグループ） */
+/** スレッドの状態を変える（脇の行のメニュー。会話と同じ状態のグループ） */
 function setThreadStatusOf({ channelId, threadId }, status) {
-  side.keep(status);
   return cmd('invoke', { op: 'channels.setThreadStatus', args: { channelId, threadId, status } })
     .then(() => loadThreadIndex())
     .catch((e) => sideNote(t('session.statusFailed', { error: e.message })));
@@ -5156,36 +5163,11 @@ function threadMenu(s, x, y) {
   ], s.title || t('session.untitled'));
 }
 
-// 並べ方の切り替え（#sideOrder）。押す・←→ で替える。メインの面は替えない
-{
-  const box = $('sideOrder');
-  const buttons = [...box.querySelectorAll('[data-order]')];
-  const paintOrder = () => {
-    for (const b of buttons) { const on = b.dataset.order === sideOrder; b.setAttribute('aria-checked', String(on)); b.tabIndex = on ? 0 : -1; }
-    document.documentElement.classList.toggle('side-order-channel', sideOrder === 'channel');
-  };
-  const setOrder = (next, focus = false) => {
-    if (next !== 'channel' && next !== 'status') return;
-    sideOrder = next;
-    try { localStorage.setItem(SIDE_ORDER_KEY, next); } catch {}
-    paintOrder();
-    renderSessions();
-    if (focus) buttons.find((b) => b.dataset.order === next)?.focus();
-  };
-  for (const b of buttons) b.addEventListener('click', () => setOrder(b.dataset.order));
-  box.addEventListener('keydown', (e) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
-    e.preventDefault();
-    setOrder(e.key === 'Home' || e.key === 'ArrowLeft' ? 'channel' : 'status', true);
-  });
-  paintOrder();
-}
-
 function renderSessions() {
   // 委譲された子の会話（Pleiad タスク）は一覧に出さない。開くのは「Pleiad タスク」の一覧から。
   // 依頼元の会話を消した子（ADR 0147）は、開く口が無くなるので一覧に出す
   // bot の会話（Channels のスレッド・DM・ルーティン。ADR 0109）は会話としては出さない。スレッドは下の threadRows が 1 スレッド 1 行で出す。
-  // DM・ルーティンの会話は、あなたを待っている間だけ出る
+  // DM・ルーティンの待ちは Bots の行に出す。待っている会話は脇を開く入口の印にも数える
   // 端末の AI から任された会話（delegation.remote）は、依頼元の会話がこの PC に無いので一覧に出す（⇄ の印つき）
   const ids = new Set(state.sessions.map(s => s.id));
   const listed = state.sessions.filter(s => (!s.delegation || s.delegation.remote || !ids.has(s.delegation.parentSessionId)) && (!s.bot || (state.waitingIds.has(s.id) && s.bot.kind !== 'thread')));
@@ -5215,7 +5197,6 @@ function renderSessions() {
     waitingIds,
     chromeWaitIds: state.chromeWaitIds,
     threads: threadRows,
-    order: sideOrder,
     bgWaiting: state.bgWaiting,
     unreadIds,
     // 中断した会話（注意の三角）。未読は --ink、既読は --ink-weak（web/interrupt.mjs）
@@ -6200,7 +6181,7 @@ function renderScopedList(list, items) {
 /** 一覧を描き直す。詳細は選んでいる項目が変わったときだけ描き直す（読んでいる位置を保つ） */
 function renderBackground() {
   const items = dialogItems();
-  if (!items.some(x => x.key === bg.selected)) bg.selected = items[0]?.key ?? null;
+  if (!items.some(x => x.key === bg.selected) && !(bg.view?.item.group === 'command' && bg.view.key === bg.selected)) bg.selected = items[0]?.key ?? null;
   const { live, ended } = backgroundTotals(items);
   $('workCount').textContent = t('dialog.work.count', { live, ended });
   const list = $('workList');
@@ -6230,7 +6211,9 @@ function renderBackground() {
   if (commands.length) list.append(el('div', 'bg-group', t('dialog.work.groupCommands')), ...commands.map(listRow));
   if (!items.length) list.append(el('div', 'bg-empty', t('dialog.work.none')));
   $('workSplit').classList.toggle('showing', bg.narrowDetail && Boolean(bg.selected));
-  const item = items.find(x => x.key === bg.selected) ?? null;
+  let item = items.find(x => x.key === bg.selected) ?? null;
+  // Keep an open command's last output when it leaves the running list.
+  if (!item && bg.view?.item.group === 'command' && bg.view.key === bg.selected) item = { ...bg.view.item, live: false };
   if (bg.view?.key !== item?.key) return openDetail(item);
   // 同じ項目。見出し（状態・経過時間）だけ更新し、動いている子は続きを読み直す
   bg.view.item = item;
@@ -6339,7 +6322,7 @@ function paintDetailHead(item) {
       actions.append(stop);
     }
   }
-  if (item.group === 'command' && capsOf(item.entry.backend).stopBackground) {
+  if (item.group === 'command' && item.live !== false && (item.entry.capabilities ?? capsOf(item.entry.backend)).stopBackground) {
     actions.append(backgroundStopButton(item.entry.sessionId, item.task));
   }
   head.append(actions);
@@ -6353,6 +6336,7 @@ function detailNote(text) {
 /** 詳細を描く。項目の種類ごとに読み方が違うだけで、描く部品は会話と同じ */
 function openDetail(item) {
   const body = $('workBody');
+  clearTimeout(bg.view?.commandTimer);
   bg.view = item ? { key: item.key, item, busy: false, wasLive: item.live, at: 0, hostOffline: item.host ? item.hostOffline : undefined } : null;
   body.replaceChildren();
   delete body.dataset.sessionId;
@@ -6393,6 +6377,11 @@ async function refreshDetail({ first = false, force = false } = {}) {
     if (bg.view === view) body.replaceChildren(el('div', 'work-head', t('dialog.work.readFailed', { error: e.message })));
   } finally {
     view.busy = false;
+    clearTimeout(view.commandTimer);
+    // The running list suppresses identical broadcasts; command output still changes.
+    if (bg.view === view && view.item.group === 'command' && view.item.live && $('workDialog').open) {
+      view.commandTimer = setTimeout(() => { if (bg.view === view) refreshDetail(); }, 4000);
+    }
     if (view.pendingRefresh && bg.view === view) {
       view.pendingRefresh = false;
       queueMicrotask(() => refreshDetail({ force: true }));
@@ -6692,40 +6681,48 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
   return th;
 }
 
-/** 裏のコマンドの詳細: コマンド・作業場所・起動時刻・取れた出力。表示中は running の配信のたびに取り直す */
+/** 裏のコマンドの詳細。表示中は定期的に出力を取り直す。 */
 async function paintCommandDetail(view) {
   const body = $('workBody');
   const { task, entry } = view.item;
   if (!view.nodes) {
     const status = el('div', 'work-head');
     status.setAttribute('role', 'status');
-    const command = el('pre', 'work-command', task.label || task.id);
     const cwd = el('div', 'work-location');
-    const output = el('pre', 'work-output', '');
+    const output = terminalView();
     output.setAttribute('aria-label', t('dialog.work.outputLabel'));
-    view.nodes = { status, command, cwd, output };
-    body.replaceChildren(status, el('div', 'work-head', t('dialog.work.command')), command, cwd,
-      el('div', 'work-head', t('dialog.work.output')), output);
+    view.nodes = { status, cwd, output };
+    body.replaceChildren(status, cwd, output);
   }
-  const { status, command, cwd, output } = view.nodes;
-  const canRead = capsOf(entry.backend).backgroundDetails;
+  const { status, cwd, output } = view.nodes;
+  const canRead = (entry.capabilities ?? capsOf(entry.backend)).backgroundDetails;
   const live = backgroundHere().some(x => x.entry.sessionId === entry.sessionId && x.task.id === task.id);
   const data = canRead
     ? await cmd('loadBackground', { sessionId: entry.sessionId, taskId: task.id })
     : { task: live ? { ...task, output: null } : null };
   if (bg.view !== view) return;
   if (!data.task) {
+    view.item.live = false;
+    view.item.status = 'completed';
+    paintDetailHead(view.item);
     status.textContent = t('dialog.work.ended');
+    updateTerminal(output, { ...view.terminal, running: false, note: t('dialog.work.ended') });
     for (const b of $('workHead').querySelectorAll('.work-stop')) b.disabled = true;
     return;
   }
   const got = data.task;
-  status.textContent = [t('dialog.work.live'), ...(got.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(got.startedAtMs) })] : []),
-    ...(got.outputTruncated ? [t('dialog.work.truncated')] : [])].join(' · ');
-  command.textContent = got.command || got.label || task.label || task.id;
+  if (got.status === 'completed') {
+    Object.assign(view.item, { live: false, status: got.stopped ? 'stopped' : got.failed || got.exitCode ? 'failed' : 'completed', endedAt: got.endedAt });
+    paintDetailHead(view.item);
+  }
+  status.textContent = [(got.status === 'completed' ? t('dialog.work.ended') : t('dialog.work.live')), ...(got.startedAtMs ? [t('dialog.work.startedAt', { time: fmt.dateTime(got.startedAtMs) })] : []),
+    ...(got.outputTruncated ? [got.outputTotalBytes != null ? t('dialog.work.truncatedOf', { size: formatBytes(got.outputTotalBytes) }) : t('dialog.work.truncated')] : [])].join(' · ');
+  if (got.status === 'completed') for (const b of $('workHead').querySelectorAll('.work-stop')) b.disabled = true;
+  const command = got.command || got.label || task.label || task.id;
   cwd.textContent = got.cwd ? t('dialog.work.cwd', { cwd: got.cwd }) : '';
-  const text = got.output === null ? t('dialog.work.outputUnsupported') : got.output || t('dialog.work.noOutput');
-  if (output.textContent !== text) output.textContent = text;
+  view.terminal = { command, output: got.output ?? '', running: got.status !== 'completed' && got.output !== null,
+    exitCode: got.exitCode ?? null, note: got.output === null ? t('dialog.work.outputUnsupported') : got.stopped ? t('dialog.work.state.stopped') : '' };
+  updateTerminal(output, view.terminal);
 }
 
 function backgroundStopButton(sessionId, task) {
@@ -6804,17 +6801,25 @@ function linkDelegateCard(card, input = null, result = null, ctx = null) {
   if (said && card) card.dataset.bgTitle = String(said).slice(0, 120);
   // ply_delegate の見出しの主役は依頼の題（無ければ依頼の 1 行目）。バックグラウンドの一覧と同じ語
   if (name && isDelegateTool(name) && input) retitleDelegate(card, input.title || said);
-  if (!name || card.querySelector(':scope > .tc-go')) return;
+  if (!name) return;
   if (isDelegateTool(name)) {
-    const id = /ply-task-[0-9a-f-]{36}/.exec(card.querySelector('.tc-output, .tc-result, .tc-details-body')?.textContent ?? '')?.[0];
+    const id = delegateTaskId(result);
     if (!id) { decorateFailedDelegate(card, result); return; }
+    if (card.dataset.taskId && card.dataset.taskId !== id) {
+      // 結果を読み直したら、前のタスクの内訳や操作を残さない。
+      for (const node of card.querySelectorAll('.rt-target-logo, .host-mark, .rt-request, .rt-where, .rt-detail, .git-delegate, .wt-delegate')) node.remove();
+      for (const key of ['routed', 'routeSig', 'hostId', 'dstate']) delete card.dataset[key];
+      cardRouting.delete(card);
+      const res = card.querySelector('.tc-res');
+      if (res) delete res.dataset.sig;
+    }
     card.dataset.taskId = id;
     // 振り分けの記録。ply_delegate の結果（JSON）にある。タスクの一覧（running）にあればそちらを使う
     const routing = delegateResult(result)?.routing;
     if (routing) cardRouting.set(card, routing);
-  } else if (!subagentToolsOf(ctx?.backend ?? activeBackendId()).has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
+  } else if (card.querySelector(':scope > .tc-go') || !subagentToolsOf(ctx?.backend ?? activeBackendId()).has(name) || !card.dataset.id || capsOf(ctx?.backend ?? activeBackendId()).subagents === false) return;
   card.classList.add('tc-delegate');
-  card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
+  if (!card.querySelector(':scope > .tc-go')) card.append(goButton(t('timeline.delegate.openChild'), (b) => openFromCard(card, b)));
   const res = card.querySelector('.tc-res');
   if (res) watchValueWidth(res);
   if (card.dataset.taskId) decorateDelegateCard(card);
@@ -6840,12 +6845,6 @@ function retitleDelegate(card, title) {
 
 /** カード -> 結果から読んだ routing（タスクの一覧から外れていても出せるように） */
 const cardRouting = new WeakMap();
-/** ply_delegate の結果の JSON。エラーの文なら null */
-function delegateResult(result) {
-  const text = typeof result === 'string' ? result : typeof result?.text === 'string' ? result.text : '';
-  if (!text.trim().startsWith('{')) return null;
-  try { return JSON.parse(text); } catch { return null; }
-}
 const routingNames = {
   backend: (id) => fallbackName('backend', id, labelOf(id)),
   model: (backend, model) => (model ? fallbackName('model', backend, modelDisplayName(state.vocab.get(backend)?.models ?? {}, model)) : ''),
@@ -6913,7 +6912,7 @@ function decorateDelegateCard(card) {
   const auto = isAutoRouting(routing);
   // モデル・承認モードの表示名は語彙から。まだ無ければ取りに行き、届いたら理由の行を書き直す
   const missing = [routing.target, ...(routing.skipped ?? []).map(s => splitCandidate(s.candidate))].map(x => x?.backend).filter(b => b && !state.vocab.has(b));
-  for (const b of new Set(missing)) loadVocab(b).then(() => paintRouteLine(card, routing)).catch(() => {});
+  for (const b of new Set(missing)) loadVocab(b).then(() => { if (card.dataset.taskId === taskId) paintRouteLine(card, routing); }).catch(() => {});
   const head = card.querySelector('.tc-head');
   const label = head.querySelector('.tc-label');
   label.textContent = t('timeline.tool.label.delegate');
@@ -6951,7 +6950,7 @@ function decorateDelegateCard(card) {
     shell.dataset.gitHook = '1';
     shell.addEventListener('toggle', () => { if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); } });
     if (shell.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
-  }
+  } else if (shell?.open) { paintDelegateGit(card); paintDelegateWorkspace(card); }
 }
 /** 委譲カードの「作業場所」の行（worktree のとき。ブランチと「worktree」。ADR 0089）。開いたときに出す */
 function paintDelegateWorkspace(card) {
@@ -6970,9 +6969,10 @@ function paintDelegateWorkspace(card) {
 /** 委譲カードの「変更」の行。子の会話の作業場所で、会話の間に変わったファイルとコミットがあるときだけ */
 async function paintDelegateGit(card) {
   const task = taskById(card.dataset.taskId);
-  if (!task?.sessionId) return;
+  card.querySelector('.git-delegate')?.remove();
+  if (!task?.sessionId || !task.worktree) return;
   const res = await cmd('gitStatus', { sessionId: task.sessionId, summary: true }).catch(() => null);
-  if (!card.isConnected) return;
+  if (!card.isConnected || card.dataset.taskId !== task.taskId) return;
   card.querySelector('.git-delegate')?.remove();
   const row = renderDelegateGit(res?.git, { sessionId: task.sessionId });
   if (row) card.querySelector('.rt-where')?.after(row);
@@ -7216,7 +7216,7 @@ async function openFromCard(card, button) {
   finally { button.disabled = false; }
 }
 
-$('workDialog').addEventListener('close', () => { bg.view = null; bg.extra.clear(); bg.scope = null; });
+$('workDialog').addEventListener('close', () => { clearTimeout(bg.view?.commandTimer); bg.view = null; bg.extra.clear(); bg.scope = null; });
 
 // ---------------------------------------------------------------- 配色
 // 明示的に選んだらそれを守る。選んでいなければ OS の設定に従う。端末ごとの好みなのでブラウザ側に覚える。
@@ -7373,6 +7373,7 @@ let sidebarMoving;
 // 狭い画面（style.css の「狭い画面・タッチ」と同じ 700px）では、脇は会話の上に重ねる引き出し（docs/remote.md §8.4）。
 // 開閉は side-open で持ち、覚えない（広い画面の好み side-closed はそのまま残す）。会話を選ぶ・幕を押す・Esc で閉じる
 const narrowView = matchMedia("(max-width:700px)");
+narrowView.addEventListener('change', syncStripVisible);
 const drawerOpen = () => document.documentElement.classList.contains("side-open");
 
 // タップの中では開閉の印（side-open・aria-expanded）だけを付け、動き（--dur）を次のフレームから始める。
@@ -7494,7 +7495,7 @@ function persistDraft(id, value) {
   state.drafts.set(id, value);
   try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch { /* report server result below */ }
   if (!id) return Promise.resolve();
-  if (state.current === id) setDraftNote(t("chat.draft.saving"), "saving");
+  if (state.current === id) setDraftNote("saving");
   const work = (draftWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(() => cmd("saveDraft", { sessionId: id, ...value }));
   draftWrites.set(id, work);
   work.then(() => {
@@ -7504,9 +7505,9 @@ function persistDraft(id, value) {
     }
     const s = state.sessions.find(s => s.id === id);
     if (s) s.hasDraft = Boolean(value.text || value.attached.length);
-    if (state.current === id && draftWrites.get(id) === work) setDraftNote(t("chat.draft.saved"), "saved");
+    if (state.current === id && draftWrites.get(id) === work) setDraftNote("saved");
   }, () => {
-    if (state.current === id) setDraftNote(t("chat.draft.saveFailed"), "failed");
+    if (state.current === id) setDraftNote("failed");
   });
   return work;
 }
@@ -7519,14 +7520,16 @@ function dropBlankDraft() {
   try { localStorage.setItem(DRAFT_STORE, JSON.stringify([...state.drafts])); } catch {}
 }
 /**
- * 入力欄の行の「保存済み」。state は saving | saved | failed | restored。
- * 700px 以下は行に出さず、失敗だけをチップの行の上の一行（#draftFail）に出す（行の隙間では文が途中で切れるため。style.css）
+ * 下書きの保存の状態。state は saving | saved | failed | restored。保存できている間は何も出さず、失敗だけを
+ * 行の空き（「保存できませんでした … · 再試行」）に出す（ADR 0252）。700px 以下は行に出さず、チップの行の上の一行（#draftFail）に出す
+ * （行の隙間では文が途中で切れるため。style.css）
  */
-function setDraftNote(text, st) {
+function setDraftNote(st) {
   const b = $("draftSaved");
-  b.textContent = text;
-  b.dataset.state = st;
   const failed = st === "failed";
+  b.textContent = failed ? t("chat.draft.saveFailed") : "";
+  b.hidden = !failed;
+  b.dataset.state = st;
   $("draftFail").hidden = !failed;
   $("draftFailText").textContent = failed ? t("chat.draft.saveFailedNote") : "";
 }
@@ -7542,7 +7545,7 @@ function loadDraft() {
   renderAttached();
   // ホストのファイルの面で選んでいたもの・開いていた場所は会話ごと（次は新しい会話の作業ディレクトリから）
   attachMenu?.reset();
-  setDraftNote(d?.text || d?.attached?.length ? t("chat.draft.restored") : "", "restored");
+  setDraftNote("restored");
   // 編集中だった会話は、元の発言がまだあれば「編集中」に戻す（無ければ脇の書きかけを足して編集をやめる）
   if (d?.edit && state.current) chatEdit.restore(d.edit, id => { const f = editTarget(id); return f ? { tail: f.tail } : null; });
 }
@@ -7726,7 +7729,7 @@ addEventListener("pagehide", () => saveDraft().catch(() => {}));
 // 送るときに末尾へ印を足す。会話に載るのは送信のとき（runTurn の attachments → present）。
 // 札・入口・一覧・送っている途中のものは入力欄の部品（web/composer/attachments.mjs の chatAttach）が持つ。
 
-/** 添付で出どころを選ばせるか（null ならクリップはすぐファイルを選ぶ）。composer-layout.mjs の attachSources */
+/** 添付の札に出どころを付けるか（null ならホストの画面で、付けない）。composer-layout.mjs の attachSources */
 const currentAttachSources = () => attachSources({ remote: window.plyRemote, osActions: state.hostCaps?.osActions });
 
 const attachedKey = (path) => `p:${normalizeAttachmentPath(path)}`;
@@ -7756,10 +7759,15 @@ function uploadBlockReason() {
 function orderedAttachments() {
   return chatAttach.ordered();
 }
-/** 添付の入口「添付 N 件 ▾」を描き直す（字の欄の上の 1 行。0 件なら出さない）。描いた後に送信ボタンの状態を合わせる */
+/**
+ * 添付の実体が替わった。文中に無い添付（古い下書き・予定から戻したもの）は字の欄の末尾に札で置き（一覧の面は無い。ADR 0252）、
+ * 送信ボタンの状態を合わせる。字の欄の値を入れた後に呼ぶ
+ */
 function renderAttached() {
+  chatAttach.placeTail();
   chatAttach.render();
 }
+/** 送れない理由を知らせたとき、理由の札（送信中・失敗）を短く強調する */
 function flashAttachEntry() {
   chatAttach.flash();
 }
@@ -7823,10 +7831,10 @@ function fitPrompt() {
 }
 
 function wireDropZone() {
-  // クリップ → 隠した file input。選んだものはドロップ・貼り付けと同じ列に入る。
-  // 出どころを選べる接続（リモートの窓・ホストの画面ではないブラウザー）では「この端末から / ホストから」のメニュー（web/attach-menu.mjs）
+  // + → 「この端末から / ホストから」のメニュー（web/attach-menu.mjs）。ホストの PC の画面でも同じ面を出す（ADR 0252）。
+  // 「ファイル…」は隠した file input。選んだものはドロップ・貼り付けと同じ列に入る。フォルダーを送るのはリモートの窓だけ
   attachMenu = setupAttachMenu({
-    button: $("attach"), sources: currentAttachSources, upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions, cmd,
+    button: $("attach"), sources: () => currentAttachSources() ?? { folder: false }, upload: folderUpload, pickFiles: () => $("fileIn").click(), recent: cwdOptions, cmd,
     hostName: () => remoteInfo(window.plyRemote)?.host ?? state.hostCaps?.hostName ?? "",
     startDir: () => state.cwd.trim(),
     attachHost: (files) => { if (attachHostFiles(files)) $("prompt").focus(); },
@@ -7834,7 +7842,6 @@ function wireDropZone() {
   // クリップを押す前の字の欄の位置を覚える（メニューやファイルの選択でフォーカスが移っても、そこへ札を置く）
   $("attach").addEventListener("pointerdown", chatAttach.rememberAt, true);
   $("attach").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") chatAttach.rememberAt(); }, true);
-  $("attach").addEventListener("click", () => { if (!currentAttachSources()) $("fileIn").click(); });
   syncAttachButton();
   $("fileIn").onchange = () => { attachFiles([...$("fileIn").files]); $("fileIn").value = ""; };
   // 会話に載った画像も同じライトボックスで大きく見る
@@ -8196,8 +8203,7 @@ async function deleteSessionRow(s, command = 'deleteUnsentSession') {
 }
 
 /**
- * 会話の操作のメニュー（脇の行の右クリック・「…」・タイトル行の「…」）。lead はメニューの頭に足す項目
- * （タイトル行の「…」の 700px 以下: タイトルを生成・ホスト一覧に戻る）
+ * 会話の操作のメニュー（脇の行の右クリック・「…」、701px以上のタイトル行の「…」）。lead は先頭への追加項目。
  */
 function rowMenu(s, x, y, lead = []) {
   let vocab = null, efforts = null, endpoints = null, accounts = null;
@@ -8267,7 +8273,7 @@ function rowMenu(s, x, y, lead = []) {
         onClick: () => cmd("setTurnSettings", { sessionId: s.id, effort, rememberEffort: true })
           .then(refresh).catch(e => sideNote(t("session.menu.effortFailed", { error: e.message }))),
       })) },
-    // 480px 以下は「…」の先頭の「開く」行に出す（sessionMoreLead）
+    // サイドバーの全操作メニューにも git の入口を残す。
     ...(s.id === state.current && narrowView.matches && !phoneView.matches && state.git.data ? [{ label: t('git.entry'), hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) }] : []),
     { label: t("session.menu.copyCwd"), hint: s.cwd ?? "", onClick: () => copy(s.cwd, t("session.menu.cwdCopied"), t("session.menu.cwdCopyFailed")) },
     { label: t("session.menu.copyId"), onClick: () => copy(s.id, t("session.menu.idCopied"), t("session.menu.idCopyFailed")) },
@@ -8398,10 +8404,10 @@ function paintContextEntryStatus() {
   for (const hint of document.querySelectorAll('.context-entry-status')) hint.textContent = $('contextEntry').dataset.contextStatus || '';
   paintMoreEntry();
 }
-/** 「…」の右上の変更ありの点。「…」へ逃がしたものだけを見る（480px 以下のプラグイン・700px 以下の git） */
+/** 「…」の右上の変更ありの点。700px 以下で移したプラグイン・git の状態を見る。 */
 function paintMoreEntry() {
   const button = $('sessionMore');
-  const changed = (phoneView.matches && !!state.contextInfo?.changed?.differs) || (narrowView.matches && !!state.current && (state.git.data?.dirty ?? 0) > 0);
+  const changed = narrowView.matches && !!state.current && (!!state.contextInfo?.changed?.differs || (state.git.data?.dirty ?? 0) > 0);
   const dot = button.querySelector('.entry-dot');
   if (changed && !dot) { const mark = el('span', 'entry-dot'); mark.setAttribute('aria-hidden', 'true'); button.append(mark); }
   else if (!changed) dot?.remove();
@@ -9296,7 +9302,22 @@ async function openFromSearch(id, jump) {
  */
 async function openFromNotification(target) {
   if (narrowView.matches) setDrawer(false);
+  // 同期で届いた変更（ADR 0250）は 設定 › Pleiad Plus の「届いた変更」、鍵を待つ PC（同期の鍵の承認）は Plus の面を開く
+  if (target?.settings === 'plus') {
+    if ($('onboardingDialog').open) $('onboardingDialog').close();
+    onboarding.open('plus');
+    if (target.pane === 'inbox') plusSettings.openInbox();
+    else plusSettings.openMain();
+    return;
+  }
+  // 端末の承認待ち（ADR 0248）は 設定 › リモート
+  if (target?.settings) { openSettingsPage(target.settings); return; }
   await viewAddress.go(target);
+}
+/** 設定のそのページを開く（通知から。リモートなら状態も読み直す） */
+function openSettingsPage(page) {
+  onboarding.open(page);
+  if (page === 'remote') remoteSettings.refresh();
 }
 
 /**
@@ -9586,6 +9607,8 @@ async function syncHistory() {
   if (state.busy) { pendingHistorySync = true; return; }
   const id = state.current;
   if (!id) return;
+  // 走っている間に開いた窓は、ターンの頭を畳んだ仮の発言（live。ADR 0257）を持つ。保存された履歴とは並びが違うので、添字で照合せずに読み直す
+  if (state.messages.some(m => m?.live)) { await select(id, { reload: true }); return; }
   const before = state.messages.length;
   const data = await loadHistory({ sessionId: id }, { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase }, { window: true }).catch(() => null);
   if (!data || state.current !== id) return;
@@ -10129,7 +10152,7 @@ function connect() {
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
-      // 同じ答えで、添付の出どころを選ばせるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
+      // 同じ答えで、添付の札に出どころを付けるか（ホストの画面でない接続）も決める（composer-layout.mjs の attachSources）
       cmd("hostCapabilities").then((c) => {
         state.hostCaps = c ?? null;
         remoteSettings.setReviewMode(c?.reviewMode === true);
@@ -10137,6 +10160,7 @@ function connect() {
         // エージェントのブラウザー（PC の Chrome）への接続の入口。使える環境なら今の状態を取る（設定 › ブラウザー）
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
+        remoteSettings.setHostScreen(state.osActions);
         filePreview.osChanged();
         syncAttachButton();
         renderAttached();
@@ -10446,34 +10470,72 @@ $("sessionMore").onclick = () => {
   const s = state.sessions.find((x) => x.id === state.current);
   if (!s) return;
   const r = $("sessionMore").getBoundingClientRect();
-  rowMenu(s, r.right, r.bottom + 4, sessionMoreLead());
+  if (narrowView.matches) openConversationMenu(s, r);
+  else rowMenu(s, r.right, r.bottom + 4);
 };
-/**
- * タイトル行の「…」の頭に足す項目。700px 以下では ✦ をタイトル行に出さないので「タイトルを生成」をここに置く。
- * モバイル版の殻では、タイトルの下の添え字と同じ「ホスト一覧に戻る」も置く
- */
-function sessionMoreLead() {
-  if (!narrowView.matches) return [];
-  const lead = [];
-  if (phoneView.matches) {
-    lead.push({ head: t('session.menu.open') });
-    if (!$('contextEntry').hidden) lead.push({ label: t('session.context.label'), hint: () => el('span', 'hint context-entry-status', $('contextEntry').dataset.contextStatus || ''),
-      onClick: () => sessionContext.open($('sessionMore')) });
-    if (!$('gitEntry').hidden) lead.push({ label: $('gitEntry').getAttribute('aria-label'),
-      hint: branchLabel(state.git.data), onClick: () => gitPanel?.open($('sessionMore')) });
-  }
-  const wand = $("titleWand");
-  if (!wand.hidden) lead.push({ label: t("session.titleWand"), disabled: wand.disabled, onClick: () => { if (!wand.disabled) wand.onclick(); } });
-  const info = remoteInfo(window.plyRemote);
-  if (info?.shell === "mobile") lead.push({ label: t("remote.backToHosts"), hint: info.host, onClick: () => backToHosts() });
-  return lead;
+function conversationContext() {
+  const session = state.sessions.find(s => s.id === state.current);
+  const auto = state.prefs.autoCompaction;
+  const key = state.backends.find(b => b.id === activeBackendId())?.idleCompaction;
+  return { usage: state.contextWindow, auto: { ...auto, enabled: auto?.enabled && auto?.[key]?.enabled }, session,
+    compact: canCompactHere(), agent: labelOf(activeBackendId()),
+    scheduled: state.compactionAt ? compactTime(state.compactionAt) : null };
 }
-/** モバイル版の殻のホスト一覧へ戻る（plyRemote.backToHosts、無ければ殻が入れる window.backToHosts） */
-function backToHosts() {
-  const fn = typeof window.plyRemote?.backToHosts === "function" ? () => window.plyRemote.backToHosts() : window.backToHosts;
-  if (typeof fn === "function") Promise.resolve().then(fn).catch(() => {});
+function openCompactionSheet() {
+  const sessionId = state.current;
+  const sheet = createConversationSheet(t('compaction.short'), $('sessionMore'));
+  let saving = false, failure = '';
+  const paint = () => {
+    const focus = sheet.body.contains(document.activeElement) ? document.activeElement?.dataset.action : null;
+    const info = conversationContext();
+    if (state.current !== sessionId) { sheet.dialog.close(); return; }
+    const now = el('button', 'btn btn-primary', t('compaction.now'));
+    now.dataset.action = 'compact';
+    now.type = 'button'; now.disabled = !canCompactHere() || state.compactionPhase?.phase === 'start';
+    now.onclick = () => { sheet.dialog.close(); requestCompaction(); };
+    const toggle = el('button', 'conversation-auto-toggle'); toggle.type = 'button';
+    toggle.dataset.action = 'auto'; toggle.disabled = saving;
+    toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(Boolean(info.session?.autoCompactionOff)));
+    toggle.append(el('span', null, t('compaction.disableConversation')), el('span', 'conversation-switch'));
+    const error = el('p', 'cerr', failure); error.setAttribute('role', 'alert');
+    toggle.onclick = async () => {
+      if (saving) return;
+      saving = true; failure = ''; toggle.disabled = true;
+      try {
+        const { off } = await cmd('setConversationAutoCompaction', { sessionId, off: !info.session.autoCompactionOff });
+        info.session.autoCompactionOff = off; renderSessions();
+      } catch (e) { failure = t('compaction.settingFailed', { error: e.message }); }
+      finally { saving = false; paint(); sheet.body.querySelector('[role=switch]')?.focus(); }
+    };
+    sheet.body.replaceChildren(renderContextUsage(info), now, ...(canCompactHere() ? [toggle] : []), error);
+    if (state.compactionPhase) sheet.body.append(el('p', 'usage-note', state.compactionPhase.phase === 'start' ? t('compaction.running') : t('compaction.failed')));
+    if (info.scheduled) {
+      const cancel = el('button', 'btn btn-quiet', t('compaction.cancel')); cancel.type = 'button';
+      cancel.dataset.action = 'cancel';
+      cancel.onclick = () => { sheet.dialog.close(); cancelScheduledCompaction(); }; sheet.body.append(cancel);
+    }
+    if (focus) sheet.body.querySelector(`[data-action="${focus}"]`)?.focus();
+  };
+  document.addEventListener('ply-context-usage', paint);
+  sheet.dialog.addEventListener('close', () => document.removeEventListener('ply-context-usage', paint), { once: true });
+  paint(); sheet.open();
 }
-
+function openConversationMenu(s, r) {
+  const used = headerUsage.currentPercent();
+  const supported = capsOf(s.backend).compact;
+  const items = conversationMenuItems({
+    plugins: !$('contextEntry').hidden && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
+    git: !$('gitEntry').hidden && { label: $('gitEntry').getAttribute('aria-label'), onClick: () => gitPanel?.open($('sessionMore')) },
+    browser: browserEntry?.available() && { label: t('browser.unifiedEntryLabel'), onClick: () => browserEntry.toggle($('sessionMore')) },
+    usage: { label: t('usage.header.title'), hint: used == null ? null : () => menuMeter(used), onClick: () => headerUsage.open($('sessionMore')) },
+    compact: { label: t('compaction.short'), disabled: !supported,
+      note: supported ? '' : t('compaction.agentManaged', { agent: labelOf(s.backend) }),
+      hint: contextMetrics(conversationContext()).percent == null ? null : () => menuMeter(contextMetrics(conversationContext()).percent), onClick: openCompactionSheet },
+    // ADR 0254: 作業場所の面にコピーが無いため、この入口を残す。
+    copy: { label: t('session.menu.copyCwd'), onClick: () => copy(s.cwd, t('session.menu.cwdCopied'), t('session.menu.cwdCopyFailed')) },
+  });
+  showMenu(r.right, r.bottom + 4, items, null, { alignRight: true });
+}
 /**
  * モバイル版の殻の戻る（戻るボタン・画面端のスワイプ）。開いている面を手前から 1 つ閉じる:
  * ダイアログ → メニュー・浮く面 → ファイルのプレビュー・設定 → 引き出し。どれも Esc と同じ閉じ方にする。
@@ -10574,11 +10636,14 @@ updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: o
 // 狭い画面の引き出しから開いたなら閉じておく（docs/design-system.md「幕・会話の行・設定・Esc で閉じる」）。
 // 設定の間は引き出しの見た目が効かないので、閉じないと「会話に戻る」で会話ではなく引き出しが出ていた
 function openSettings() { setDrawer(false); onboarding.open(); }
-/** リモートの窓: 中継・ホストにつながらない間は、切れた一行もバッジと同じ理由の語で書く（web/remote-badge.mjs の状態） */
+/**
+ * リモートの窓: 線の状態（web/remote-badge.mjs と同じ値）を接続の状態へ渡す。中継・ホストにつながらない間は理由の語で、
+ * 取り消し・外された・止められた ほかは「何が起きたか・どうすればよいか」、Plus が止まっている間は待っている旨を出す
+ */
 function watchRemoteReason() {
   const remote = window.plyRemote;
   if (!remoteInfo(remote)) return;
-  const apply = (s) => connStatus.setReason(s?.state === "offline" ? "relay" : s?.state === "host-offline" ? "host" : null);
+  const apply = (s) => connStatus.setRemoteState(s?.state ?? null);
   Promise.resolve(remote.status?.()).then(apply).catch(() => {});
   remote.onStatus?.(apply);
 }
@@ -10586,7 +10651,7 @@ usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); }
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
-  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
+  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible, context: conversationContext });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin, current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });

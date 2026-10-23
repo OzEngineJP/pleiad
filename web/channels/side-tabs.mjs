@@ -1,4 +1,4 @@
-// メインの面の切り替え（会話の面 / Channels の面 #channelsView）。脇の札はやめた（脇は 1 つで、並べ方を切り替える。docs/design-system.md「脇」）。
+// メインの面の切り替え（会話の面 / Channels の面 #channelsView）。脇の札はやめた（脇は 1 本の置き場所の木。docs/design-system.md「脇」）。
 // 面は開いたもので決まる: 会話を開けば会話の面、チャンネル・スレッド・bot のページを開けば Channels の面。切り替えは body.channels の付け外しで、
 // 最後の面は覚える（再読み込みで同じ面に戻す。場所は web/view-address.mjs）。札の点の口（setDot）は残すが何もしない。
 const KEY = 'agent-host-side-tab';

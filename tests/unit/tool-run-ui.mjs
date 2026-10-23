@@ -2,7 +2,7 @@
 // 時刻のボタンは、始まりの時刻（サーバーの at・履歴の at/endAt）があるときだけ出る。
 //
 // DOM シムは tests/run.mjs が入口で入れている（セレクタは単純なクラス・タグだけ）。
-import { renderToolCall, applyToolResult } from "../../web/render.mjs";
+import { renderToolCall, applyToolResult, applyToolHints } from "../../web/render.mjs";
 import { markRunning } from "../../web/tool-bundle.mjs";
 import { toolTimeShort, toolTimeLong, toolDuration, syncServerClock } from "../../web/server-clock.mjs";
 import { transcriptToMessages } from "../../core/backends/claude-normalize.mjs";
@@ -67,6 +67,55 @@ export default function (t) {
     applyToolResult(ok, { text: "20 passed", at: end });
     t.ok("成功した行の右端は空（時刻のボタンだけ）", (ok.querySelector(".tc-res")?.textContent ?? "") === "" && HHMM.test(ok.querySelector(".tc-time")?.textContent ?? ""), ok.querySelector(".tc-res")?.textContent);
   }
+
+  // Initial panes depend on available data, across the registered tool shapes.
+  applyToolHints({ fileChange: { shape: 'edit' }, agEdit: { shape: 'edit' }, agWrite: { shape: 'write' }, arbitrary: { shape: 'generic' } });
+  const matrix = [
+    ['Read', { file_path: 'a' }, false], ['Bash', { command: 'echo hi' }, false],
+    ['fileChange', { files: ['a'] }, false], ['Edit', { file_path: 'a' }, false],
+    ['agEdit', { TargetFile: 'a', TargetContent: 'old', ReplacementContent: 'new' }, true],
+    ['agWrite', { TargetFile: 'a', CodeContent: 'new' }, true],
+    ['MultiEdit', { file_path: 'a', edits: [{}] }, false],
+    ['Grep', { pattern: 'x' }, false], ['Glob', { pattern: '*.js' }, false],
+    ['WebFetch', { url: 'https://example.com' }, false], ['Agent', { prompt: 'look' }, false],
+    ['mcp__x__unknown', { x: 1 }, false], ['arbitrary', {}, false],
+    ['mcp__ply_agents__ply_delegate', { task: 'look' }, false],
+  ];
+  for (const [tool, input, initial] of matrix) {
+    const c = renderToolCall(tool, input);
+    const main = () => c.querySelector('.tc-pane-main').classList.contains('on');
+    t.ok(`${tool}: unopened row and data-based default`, !c.querySelector('.tc-details').open && main() === initial);
+    applyToolResult(c, { text: '' });
+    t.ok(`${tool}: empty result preserves data-based default`, main() === initial);
+    applyToolResult(c, { text: 'result' });
+    t.ok(`${tool}: result selects main before opening`, main());
+  }
+  for (const payload of [{ text: '0 matches' }, { count: 0 }, { images: [{ url: 'data:image/png;base64,AA==' }] }]) {
+    const c = renderToolCall('mcp__x__unknown', {});
+    applyToolResult(c, payload);
+    t.ok('Explicit zero, JSON and image results select main', c.querySelector('.tc-pane-main').classList.contains('on'));
+  }
+  const plan = renderToolCall('ExitPlanMode', { plan: 'Review this plan' });
+  applyToolResult(plan, { text: 'approved' });
+  t.ok('Plan stays on input after success', plan.querySelector('.tc-pane-input').classList.contains('on'));
+  applyToolResult(plan, { text: 'Error: rejected', isError: true });
+  t.ok('Plan failure selects main', plan.querySelector('.tc-pane-main').classList.contains('on'));
+  const picked = renderToolCall('Read', { file_path: 'a' });
+  picked.querySelector('.tc-tabs').children[1].onclick({ preventDefault() {}, stopPropagation() {} });
+  applyToolResult(picked, { text: 'arrived' });
+  t.ok('Person-selected input survives arriving results', picked.querySelector('.tc-pane-input').classList.contains('on'));
+  const opened = renderToolCall('Read', { file_path: 'a' }, { open: true });
+  applyToolResult(opened, { text: 'arrived' });
+  t.ok('Opening the initial input freezes it', opened.querySelector('.tc-pane-input').classList.contains('on'));
+  const terminal = renderToolCall('PowerShell', { command: 'Get-Date' });
+  t.ok('Pending shell has a prompt and cursor', terminal.querySelector('.tc-term').textContent.includes('PS> Get-Date') && Boolean(terminal.querySelector('.tc-term-cursor')));
+  const surface = terminal.querySelector('.tc-term');
+  Object.assign(surface, { scrollTop: 12, scrollHeight: 900, clientHeight: 200 });
+  applyToolResult(terminal, { text: 'done exit 0' });
+  t.ok('Result reuses terminal, preserves scrollback, removes cursor and shows exit 0', terminal.querySelector('.tc-term') === surface && surface.scrollTop === 12 && !surface.querySelector('.tc-term-cursor') && surface.textContent.endsWith('exit 0'));
+  surface.scrollTop = 700;
+  applyToolResult(terminal, { text: 'more exit 0' });
+  t.ok('Terminal follows only at the tail', surface.scrollTop === surface.scrollHeight);
 
   // ---- 時刻の整形
   {

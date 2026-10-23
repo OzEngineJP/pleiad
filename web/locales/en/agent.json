@@ -572,7 +572,7 @@
     "formerDelegateName": "How to delegate",
     "route": "When delegating, give ply_delegate a kind and leave out backend (Pleiad chooses). Write backend only when the user asks for a specific agent or model. When the user asks for a specific agent account, write backend: \"claude\" and account (the account value from ply_usage). If it reports that no candidate has quota left, tell the user. Use ply_delegate, not native subagents (such as Claude's Agent tool). Give ply_delegate a short title for the background list. Set isolate: true only when the user instructed you to use a worktree. Ask the user whether to use worktrees before running children that write to the same repository in parallel. Omission uses the current workspace. When a completion notice or ply_task_status says \"Workspace: worktree … (not merged)\", merging that workspace branch back into the original workspace is your job; resolve conflicts yourself. Pleiad cleans up afterwards.",
     "commandLifetime": "Run commands with a time limit. Start persistent processes (servers and graphical apps) in the background, record their PIDs, and stop them yourself; do not wait indefinitely for exit with commands such as `Start-Process -Wait`. When backgrounding with PowerShell `Start-Process`, do not add `-RedirectStandardOutput` or `-RedirectStandardError` (the started process keeps holding the shell's output and the command never returns). If you need a log, redirect inside the started process, for example `Start-Process cmd -ArgumentList '/c','<command> > <log> 2>&1'`.",
-    "codexPolicy": "Even in Codex modes without approvals (full, YOLO), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on)."
+    "codexPolicy": "Even in Codex modes without approvals (full, Bypass), Codex's own safety check may reject some commands before they run (for example `blocked by policy`). If a command is rejected, do not try to get around it by rewording it or using a different command. Report the commands that could not run, the reasons, and what was left behind as a result (files that could not be deleted, processes that could not be stopped, and so on)."
   },
   "cli": {
     "usage": "Usage: pleiad [--json] [--lang ja|en] <command> [arguments]",
@@ -617,6 +617,45 @@
       },
       "syncOpenConflicts": {
         "summary": "Opens the folder with the older copies kept on conflict, on this PC."
+      },
+      "syncInbox": {
+        "summary": "Lists the skills and instruction files that arrived from other PCs through sync and are waiting to be taken in."
+      },
+      "syncInboxItem": {
+        "summary": "One waiting change: the local version and the version that arrived.",
+        "id": "The id of the waiting change"
+      },
+      "syncInboxTake": {
+        "summary": "Takes in one waiting change (writes or removes the local file). Nothing is written if the local file changed after the change arrived, or if a newer version arrived after the person read it.",
+        "sha256": "The sha256 of the version the person read (from the waiting change; null for a deletion)",
+        "rev": "The rev of the version the person read (from the waiting change)"
+      },
+      "syncInboxDrop": {
+        "summary": "Discards one waiting change. Local files stay as they are, and the same version is not shown again."
+      },
+      "syncApprove": {
+        "summary": "Hands the sync key to a PC that is waiting for it. Call it only after the person compared the confirmation code on both screens.",
+        "hostId": "The hostId of the PC waiting for the key",
+        "code": "The 6-digit confirmation code shown on this PC. If it no longer matches, the key is not handed over"
+      },
+      "syncDeny": {
+        "summary": "Refuses to hand the sync key to a waiting PC. That PC can't ask again for an hour."
+      },
+      "syncAcceptRestart": {
+        "summary": "Moves to a new sync key that another PC made (such as by recovery) and the previous key can't vouch for. The key then arrives through the approval window.",
+        "keyId": "The keyId of the new key shown on screen. If it changed again in the meantime, nothing moves"
+      },
+      "syncRecoveryRequest": {
+        "summary": "When no PC holds the key, asks to restart sync with a new key. Needs a recent sign-in and waits 72 hours."
+      },
+      "syncRecoveryCancel": {
+        "summary": "Withdraws the recovery this PC asked for."
+      },
+      "syncRecoveryComplete": {
+        "summary": "Finishes a recovery whose wait is over. Sync restarts with a new key and the sync data on the server is deleted."
+      },
+      "syncRecoveryStop": {
+        "summary": "Stops a recovery another PC asked for, using the current sync key."
       }
     },
     "accounts": {

@@ -78,7 +78,7 @@
 .react-add:hover{background:var(--surface-3);color:var(--ink)}
 
 /* ---- スレッドの要約の行 */
-.thread-summary{display:inline-flex;background:transparent;align-items:center;gap:6px;margin:6px 0 0 -8px;padding:3px 10px 3px 8px;border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-blue);max-width:calc(100% + 8px);min-width:0;cursor:pointer;
+.thread-summary{display:inline-flex;background:transparent;align-items:center;gap:6px;margin:6px 0 0 -8px;padding:3px 10px 3px 8px;border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-blue);max-width:calc(100% + 8px);min-width:0;cursor:pointer; /* allow-blue: スレッドを開くリンク */
   transition:background-color var(--dur-fast) var(--ease-out)}
 .thread-summary:hover{background:var(--surface-2)}
 .ts-count{flex:none;white-space:nowrap}

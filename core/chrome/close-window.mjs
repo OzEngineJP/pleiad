@@ -5,13 +5,15 @@ import crypto from 'node:crypto';
 import { windowShotFolder as folderOf } from './window-shots.mjs';
 
 const MAX_IMAGE = 10 * 1024 * 1024;
+/** 会話の窓を、最後に Chrome を使った時刻からこれだけ経っても動いていなければ閉じる（既定 24 時間。ADR 0246） */
+export const CHROME_WINDOW_IDLE_MS = 24 * 60 * 60 * 1000;
 
 /** エージェントが閉じようとしたが、人への依頼の待ち・人の引き継ぎの最中（code: BUSY、reason: waiting | human。profile-choice の busy と同じ理由の名前） */
 export class ChromeWindowBusyError extends Error {
   constructor(reason) { super('BUSY'); this.code = 'BUSY'; this.detail = { reason }; }
 }
 
-export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir, record, log = () => {} }) {
+export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir, record, log = () => {}, now = Date.now, idleMs = CHROME_WINDOW_IDLE_MS }) {
   const active = new Map();
   const pending = new Map();
   const forgotten = new Set();
@@ -63,6 +65,9 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
   }
 
   function close(sessionId, { by = 'agent', discard = false, windowId = null } = {}) {
+    // 掃除（idle）は、確認した後に会話が動き始めたら閉じない（ターンの開始・人の引き継ぎ・依頼の待ちに競合しない）
+    const idleBlocked = () => relay.state(sessionId)?.turn || relay.state(sessionId)?.paused || Boolean(handoffs?.current?.(sessionId));
+    if (by === 'idle' && idleBlocked()) return Promise.resolve({ closed: false });
     if (windowId != null && !discard) {
       const ids = new Set(relay.view.tabs(sessionId).map(tab => tab.windowId).filter(id => id != null));
       if (!ids.has(windowId)) return Promise.resolve({ closed: false });
@@ -85,6 +90,7 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
         if (reason) { if (file) await fs.rm(file, { force: true }).catch(() => {}); throw new ChromeWindowBusyError(reason); }
       }
       if (file && relay.state(sessionId)?.paused) { await fs.rm(file, { force: true }).catch(() => {}); file = null; }
+      if (by === 'idle' && idleBlocked()) { if (file) await fs.rm(file, { force: true }).catch(() => {}); return { closed: false }; }
       handoffs?.forget(sessionId); // 操作待ちのカードを中断し、hand_to_user の待ちも解く
       let recorded = false;
       try {
@@ -126,6 +132,29 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
 
   return {
     close,
+    /**
+     * 長く使われていない会話の隠した窓を閉じる（ADR 0246）。動いている会話（ターンの間・人の引き継ぎ・人への依頼の待ち・サーバーの実行中）は触らない。
+     * 閉じた窓は close と同じ道（静止画と chromeClosed の行）で残す。閉じた会話の id を返す
+     * @param [options.isLive] (sessionId) => boolean  中継の外で「今その会話が動いている」ことを見る（ターンの実行・更新の途中など）
+     */
+    async sweepIdle({ isLive = () => false } = {}) {
+      if (relay.isHandedOff?.() === true) return [];   // 更新の引き継ぎで出ていく途中（窓は閉じない）
+      const closed = [];
+      for (const sessionId of relay.sessionIds?.() ?? []) {
+        if (forgotten.has(sessionId) || active.has(sessionId)) continue;
+        const state = relay.state(sessionId);
+        if (!state || state.turn || state.paused) continue;   // 実行中・人の引き継ぎ中は閉じない
+        if (handoffs?.current?.(sessionId)) continue;          // 人への依頼（hand_to_user）の答え待ち
+        if (isLive(sessionId)) continue;
+        const lastUsed = relay.lastUsed?.(sessionId);
+        if (!Number.isFinite(lastUsed) || now() - lastUsed < idleMs) continue;
+        const has = relay.view.summary(sessionId).tabs > 0 || (relay.scope.windows?.(sessionId)?.length ?? 0) > 0;
+        if (!has) continue;
+        const result = await close(sessionId, { by: 'idle' }).catch(error => { log(`chrome-close: idle close failed: ${error?.message ?? error}`); return null; });
+        if (result?.closed) closed.push(sessionId);
+      }
+      return closed;
+    },
     async forget(sessionId) {
       forgotten.add(sessionId);
       await close(sessionId, { discard: true });

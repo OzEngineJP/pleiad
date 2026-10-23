@@ -168,7 +168,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-rt { flex:1; min-width:0; display:flex; flex-direction:column; }
 /* アカウントの行の丸（設定 › Pleiad Plus。メールの頭の 1 文字） */
 .rm-av { display:grid; place-items:center; flex:none; width:36px; height:36px; border-radius:50%;
-  background:var(--surface-2); color:var(--ink-blue); font-weight:700; }
+  background:var(--surface-2); color:var(--ink-strong); font-weight:700; }
 /* rm-lbl と同じ置き方だが、注意ではなく状態の文（太字にしない） */
 .rm-plain { font-weight:400; color:var(--ink); }
 .rm-nm { color:var(--ink); overflow-wrap:anywhere; }
@@ -176,6 +176,8 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-end { display:flex; color:var(--ink-weak); }
 .rm-end.rm-ok { color:var(--ink-blue); }
 .settings-content .rm-warn { margin:0; padding:2px 8px 6px; font-weight:600; color:var(--ink-strong); line-height:var(--lh); }
+/* 警告の一行の右に、解除のボタンを添える形（公式の中継からの申し込みを止めている間） */
+.settings-content .rm-warn-acts { display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:space-between; }
 .settings-content .rm-err { margin:8px 8px 0; color:var(--ink-strong); font-weight:600; font-size:var(--fs-s); overflow-wrap:anywhere; }
 .rm-back { display:inline-flex; align-items:center; gap:4px; margin-left:2px; padding:4px 8px 4px 4px; border-radius:var(--r-pill);
   background:none; color:var(--ink-weak); cursor:pointer; font:inherit; }
@@ -191,6 +193,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .settings-content .rm-confirm p { margin:0; line-height:var(--lh); }
 .rm-confirm .rm-acts, .rm-wiz .rm-acts { margin:0; }
 .rm-confirm.rm-relay-edit { margin:8px 8px 20px; }
+.rm-relay-remove { margin-left:auto; }
 .settings-content .rm-weak { margin:16px 8px 0; color:var(--ink-weak); font-size:var(--fs-s); line-height:var(--lh); }
 .settings-content .rm-note-row { margin:-4px 8px 0; }
 .settings-content .rm-agent { margin:12px 8px 0; }
@@ -211,6 +214,27 @@ button.rm-row:hover { background:var(--surface-hover); }
 .sync-what-body { padding:4px 0 8px; display:flex; flex-direction:column; gap:6px; }
 .sync-what-body .sync-what-line { margin:0; line-height:1.5; }
 .sync-confirm-title { font-weight:600; }
+/* 鍵を待つ PC の確認コード（鍵を持つ PC の承認の窓と同じ数字） */
+.sync-code { margin:8px 8px 0; }
+/* 状態の行の下の補足（失敗の詳細・更新の案内・渡した PC など）: ほかの行と同じ左の端にそろえる */
+.sync-live > p.rm-sub { margin:4px 8px 0; }
+/* 届いた変更（web/plus-inbox.mjs。ADR 0250）: 1 件ずつ開き、差分（.scx-lines）と取り込む / 捨てる。押し終えた行は名前を弱く */
+.inx-list { margin-top:12px; }
+.inx { border-radius:var(--r-s); }
+.inx-h .rm-end svg { transition:transform var(--dur-fast) var(--ease-out); }
+.inx.open .inx-h .rm-end svg { transform:rotate(180deg); }
+button.rm-row.inx-h:disabled { cursor:default; }
+button.rm-row.inx-h:disabled:hover { background:none; }
+.inx-b { display:none; padding:2px 8px 12px; }
+.inx.open .inx-b { display:block; }
+.inx-b .rm-acts { margin:12px 0 0; justify-content:flex-end; }
+.settings-content .inx-b .rm-err { margin:8px 0 0; }
+.settings-content .inx-b > .rm-sub { margin:0; }
+/* 文字でない中身の sha256（64 文字）: 狭い幅では折り返す */
+.inx-sha { overflow-wrap:anywhere; }
+.settings-content .inx-done { margin:-6px 8px 6px; }
+.inx.done .inx-h .rm-nm { color:var(--ink-weak); }
+@media (prefers-reduced-motion:reduce) { .inx-h .rm-end svg { transition:none; } }
 .btn.rm-danger { color:var(--ink-strong); font-weight:600; }
 .rm-strong { color:var(--ink-strong); font-weight:600; }
 /* ＋ の流れのダイアログ（端末を追加: アプリを入れる › つなぎ方 › つなぐ。PC を追加 は › 完了 まで）。戻る・次へ・やめるはどの段でも同じ位置 */
@@ -253,7 +277,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-spin-arc { stroke:var(--ink-blue); stroke-linecap:round; }
 @keyframes rm-spin { to { transform:rotate(360deg); } }
 .rm-done { display:flex; flex-direction:column; align-items:flex-start; gap:12px; padding-top:8px; }
-.rm-ck { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:var(--surface-2); color:var(--ink-blue); }
+.rm-ck { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:var(--surface-2); color:var(--ink-blue); } /* allow-blue: 済んだ印 */
 .rm-ck svg.i { width:20px; height:20px; stroke-width:2; }
 /* まとまりの見出しのすぐ下の状態の一行（塗りの点=つながっている・中抜きの点=オフ／未設定・回る印=接続中）。失敗は .rm-warn（承認 2026-10-21） */
 .settings-content .rm-st { display:flex; align-items:center; gap:6px; margin:0; padding:2px 8px 6px; font-size:var(--fs-s); color:var(--ink-weak); overflow-wrap:anywhere; }

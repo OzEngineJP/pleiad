@@ -22,7 +22,13 @@ function defineTypes(koffi) {
   const HARDWAREINPUT = koffi.struct('CU_HARDWAREINPUT', { uMsg: 'uint32_t', wParamL: 'uint16_t', wParamH: 'uint16_t' });
   const INPUT = koffi.struct('CU_INPUT', { type: 'uint32_t', u: koffi.union({ mi: MOUSEINPUT, ki: KEYBDINPUT, hi: HARDWAREINPUT }) });
   const MonitorEnumProc = koffi.proto('bool __stdcall CU_MonitorEnumProc(intptr_t hMonitor, intptr_t hdc, CU_RECT *rc, intptr_t lParam)');
-  const defined = { RECT, POINT, MONITORINFOEXW, MOUSEINPUT, KEYBDINPUT, INPUT, MonitorEnumProc };
+  // 窓のプロパティ（プロフィールの見分け。ADR 0246）。SHGetPropertyStoreForWindow → IPropertyStore::GetValue
+  const GUID = koffi.struct('PLY_GUID', { Data1: 'uint32_t', Data2: 'uint16_t', Data3: 'uint16_t', Data4: koffi.array('uint8_t', 8) });
+  const PROPERTYKEY = koffi.struct('PLY_PROPERTYKEY', { fmtid: GUID, pid: 'uint32_t' });
+  const PROPVARIANT = koffi.struct('PLY_PROPVARIANT', { vt: 'uint16_t', r1: 'uint16_t', r2: 'uint16_t', r3: 'uint16_t', data: koffi.array('uint8_t', 16) });
+  const GetValueProc = koffi.proto('int32_t __stdcall PLY_IPropertyStore_GetValue(intptr_t self, _In_ PLY_PROPERTYKEY *key, _Out_ PLY_PROPVARIANT *value)');
+  const ReleaseProc = koffi.proto('uint32_t __stdcall PLY_IUnknown_Release(intptr_t self)');
+  const defined = { RECT, POINT, MONITORINFOEXW, MOUSEINPUT, KEYBDINPUT, INPUT, MonitorEnumProc, GUID, PROPERTYKEY, PROPVARIANT, GetValueProc, ReleaseProc };
   types.set(koffi, defined);
   return defined;
 }
@@ -44,6 +50,17 @@ const RRF_RT_REG_SZ_OR_EXPAND = 0x6;
 
 const text = (buf, chars) => buf.toString('utf16le', 0, Math.max(0, chars) * 2);
 
+// PKEY_AppUserModel_ID（{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}, 5）と IID_IPropertyStore（{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}）。
+// 窓ごとの AppUserModelID で Chrome のプロフィールを見分ける（同じ User Data でも、プロフィールごとに別の値。ADR 0246）
+const IID_IPROPERTYSTORE = { Data1: 0x886D8EEB, Data2: 0x8CF2, Data3: 0x4446, Data4: [0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99] };
+const PKEY_APP_USER_MODEL_ID = {
+  fmtid: { Data1: 0x9F4C2855, Data2: 0x9F79, Data3: 0x4B39, Data4: [0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3] },
+  pid: 5,
+};
+/** IPropertyStore の vtable: IUnknown（0-2）・GetCount(3)・GetAt(4)・GetValue(5)・SetValue(6)・Commit(7) */
+const VTABLE_GET_VALUE = 5, VTABLE_RELEASE = 2;
+const VT_LPWSTR = 31;
+
 /** @param koffi require('koffi') */
 function createWin32(koffi) {
   const t = defineTypes(koffi);
@@ -57,6 +74,7 @@ function createWin32(koffi) {
   const version = koffi.load('version.dll');
   const imm32 = koffi.load('imm32.dll');
   const iphlpapi = koffi.load('iphlpapi.dll');
+  const ole32 = koffi.load('ole32.dll');
   const f = {
     GetSystemMetrics: user32.func('int __stdcall GetSystemMetrics(int index)'),
     EnumDisplayMonitors: user32.func('bool __stdcall EnumDisplayMonitors(intptr_t hdc, void *clip, CU_MonitorEnumProc *cb, intptr_t lParam)'),
@@ -113,6 +131,8 @@ function createWin32(koffi) {
     CloseHandle: kernel32.func('bool __stdcall CloseHandle(intptr_t h)'),
     QueryFullProcessImageNameW: kernel32.func('bool __stdcall QueryFullProcessImageNameW(intptr_t h, uint32_t flags, _Out_ uint8_t *buf, _Inout_ uint32_t *len)'),
     GetApplicationUserModelId: kernel32.func('int32_t __stdcall GetApplicationUserModelId(intptr_t h, _Inout_ uint32_t *len, _Out_ uint8_t *buf)'),
+    SHGetPropertyStoreForWindow: shell32.func('int32_t __stdcall SHGetPropertyStoreForWindow(intptr_t hwnd, _In_ PLY_GUID *riid, _Out_ intptr_t *ppv)'),
+    CoTaskMemFree: ole32.func('void __stdcall CoTaskMemFree(intptr_t pv)'),
     GetCurrentProcessId: kernel32.func('uint32_t __stdcall GetCurrentProcessId()'),
     GetCurrentProcess: kernel32.func('intptr_t __stdcall GetCurrentProcess()'),
     GetLastError: kernel32.func('uint32_t __stdcall GetLastError()'),
@@ -265,6 +285,43 @@ function createWin32(koffi) {
         return f.GetApplicationUserModelId(h, len, buf) === 0 ? text(buf, len[0] - 1) : null;
       });
       return r.opened ? r.value : null;
+    },
+    /**
+     * 窓ごとの AppUserModelID（PKEY_AppUserModel_ID）。Chrome はプロフィールごとに別の値を持つ（Default は "Chrome"、
+     * ほかのプロフィールは "Chrome.UserData.<フォルダー名から空白を除いたもの>" など。実機 2026-10-22。ADR 0246）。
+     * 読めない・空・文字列でないときは null（投げない）。窓のプロフィールを、core の記録が無い窓でも見分けるのに使う
+     */
+    windowAumid(hwnd) {
+      const store = [0];
+      try {
+        if (f.SHGetPropertyStoreForWindow(hwnd, IID_IPROPERTYSTORE, store) < 0 || !store[0]) return null;
+      } catch { return null; }
+      let fns = null;
+      try {
+        const vtable = koffi.decode(store[0], 'void *');
+        fns = koffi.decode(vtable, koffi.array('void *', 8));
+        const value = {};
+        // S_FALSE（1）でも値は入っている（プロパティのある窓で実測）。負の HRESULT だけを失敗とする
+        if (koffi.call(fns[VTABLE_GET_VALUE], t.GetValueProc, store[0], PKEY_APP_USER_MODEL_ID, value) < 0 || value.vt !== VT_LPWSTR) return null;
+        const ptr = Buffer.from(value.data).readBigUInt64LE(0);
+        if (!ptr) return null;
+        // NUL まで 1 文字ずつ読む（文字列の長さが分からないので、まとめて読んで確保の外へ出ないようにする）。AUMID は 128 文字まで
+        let out = '';
+        try {
+          for (let i = 0; i < 129; i += 1) {
+            const code = Number(koffi.decode(ptr + BigInt(i * 2), 'char16_t'));
+            if (!code) break;
+            out += String.fromCharCode(code);
+          }
+        } finally {
+          // VT_LPWSTR の文字列は呼び出し側が CoTaskMemFree で放す（PropVariantClear と同じ。放さないと読むたびに漏れる）
+          try { f.CoTaskMemFree(ptr); } catch { /* 放せなくても値は使える */ }
+        }
+        return out || null;
+      } catch { return null; }
+      finally {
+        try { if (fns) koffi.call(fns[VTABLE_RELEASE], t.ReleaseProc, store[0]); } catch { /* 読むだけ。解放できなくても続ける */ }
+      }
     },
     /** 版の情報の FileDescription。固まりうるので別スレッド */
     async fileDescription(path) {

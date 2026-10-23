@@ -4,7 +4,7 @@
 .cu-switch{min-height:34px}
 .cu-body .cu-switch{margin-top:18px}
 .cu-h{display:flex;align-items:center;gap:8px;margin:22px 0 6px;font-size:var(--fs-s);font-weight:600;color:var(--ink)}
-.cu-tag{padding:1px 8px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink-blue);font-size:var(--fs-xs);font-weight:600}
+.cu-tag{padding:1px 8px;border-radius:var(--r-pill);background:var(--surface-1);color:var(--ink-strong);font-size:var(--fs-xs);font-weight:600}
 .cu-apps{display:flex;flex-direction:column;gap:4px}
 .cu-apps.dim{opacity:.4}
 .cu-app{display:flex;align-items:center;gap:10px;min-width:0;padding:8px 12px;border-radius:var(--r-m);background:var(--surface-1)}

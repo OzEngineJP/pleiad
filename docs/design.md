@@ -81,12 +81,12 @@
 
 ## Channels と bot（2026-10-03）
 
-仕事が**始まる**場として、チャンネル・スレッド・bot を入れた。今の動き（データ・操作・出来事・起こし方・記憶・画面の部品）は [channels.md](channels.md)、画面の決まった形は [design-system.md](design-system.md) の先頭（脇の Chats / Channels・チャンネルの流れ・スレッドの空間モデル・bot のページ）に書く。
+仕事が**始まる**場として、チャンネル・スレッド・bot を入れた。今の動き（データ・操作・出来事・起こし方・記憶・画面の部品）は [channels.md](channels.md)、画面の決まった形は [design-system.md](design-system.md) の先頭（脇の置き場所の木・チャンネルの流れ・スレッドの空間モデル・bot のページ）に書く。
 
 - **チャンネルと投稿**: 正本は Pleiad のデータ置き場（`channels/`。投稿・編集・リアクションの追記だけの記録）。投稿は発言者の欄（人・bot・システム・ルーティン）を持つ。「編集済み」の印は本文が実際に変わったときだけ付く。
 - **bot**: 定義（人格・エージェント・モデル・承認モード・触れてよいフォルダー）とスレッドごとの会話で動く。起こすのは投稿の `@` だけ。承認モードとフォルダーを広げることと記憶を直す・忘れることは人だけが決める。
-- **スレッド**: 実体は bot の作業の会話。Chats には出さず（あなたを待っている間だけ一覧の先頭に出す）、スレッドの画面がそのまま会話の画面になる。
-- **脇**: Chats と Channels の 2 つ組のタブ。並べ方と操作が違うものを 1 本に混ぜない。
+- **スレッド**: 実体は bot の作業の会話。脇ではチャンネルの中に 1 スレッド 1 行で出し、あなた待ちも元の場所に ◆ を付けて残す。スレッドの画面がそのまま会話の画面になる。
+- **脇**: 一時チャット（中は状態ごと）→ チャンネル（名前順）→ Bots → ルーティンの木。並べ方は 1 つ。状態だけで見たいときはフィルターで絞る（承認済み（2026-10-22）、[ADR 0251](adr/0251-sidebar-place-tree.md)）。
 
 ## 多言語対応（2026-09-23）
 
@@ -186,8 +186,8 @@ setup-token が発行するトークンの scope は `user:inference` だけで�
   - **飛び先**: 会話の通知は `sessionId` と、ターンの最後の発言の `uuid`（`text.end` の uuid。無いバックエンドは会話の末尾へ）。bot の会話のターン・承認はチャンネルとスレッド（`channelId`・`threadId`）、`@あなた` は加えて `postId`。名前（会話の題・bot・チャンネル・スレッドの題）は載せた時点の控え（画面は会話の題だけ今のものを先に使う）。
   - **重複しない**: `dedupeKey`（完了・失敗 `done:<会話>:<completedAt>`・`failed:…`、あなた待ち `wait:<承認の id>`、メンション `mention:<投稿の id>`）が同じなら載せない。同じ出来事を何度渡してもよい。
   - **既読**: 通知ごと（`read_at`）。会話の `markRead`（`readAt` まで）・その会話を見た（`presence`）・チャンネルの `channels.markRead`（`readAt` まで。bot の会話の通知はチャンネルの既読でも）で、対応する通知も既読になる。いま見ている会話で起きたものは最初から既読で載る。
-  - **上限**: 200 件・30 日（`NOTIFICATION_MAX`・`NOTIFICATION_KEEP_MS`。超えたら古い方から、既読を先に捨てる）。会話を消す・チャンネルをアーカイブすると、その行も消す。あなた待ちの承認はメモリにしか無く再起動で消えるので、起動時に決着していないあなた待ちを `cancelled` で決着させる。
-  - **操作**: `notifications.list { filter?: all|wait|mention, before?, limit? }`（新しい順・既定 50 件・最大 100 件。`before` は行の `seq`。未読とあなた待ちの件数も返す）・`notifications.count`（件数だけ。ベルの数）・`notifications.markRead { ids?, all? }`。件数が変わると出来事 `notificationsChanged { unread, waiting }` が全画面へ（リモートの端末にも届く。`waiting` は未読で決着していないあなた待ち）。画面は `web/notification-inbox.mjs`、見た目は [design-system.md](design-system.md)「通知の一覧」。
+  - **上限**: 未解決の待ちを除き 200 件・30 日（`NOTIFICATION_MAX`・`NOTIFICATION_KEEP_MS`。超えたら古い方から、既読を先に捨てる）。会話を消す・チャンネルをアーカイブすると、その行も消す。あなた待ちの承認はメモリにしか無く再起動で消えるので、起動時に決着していないあなた待ちを `cancelled` で決着させる。
+  - **操作**: `notifications.list { filter?: all|wait|mention, before?, limit? }`（新しい順・既定 50 件・最大 100 件。`before` は行の `seq`。未読とあなた待ちの件数も返す）・`notifications.count`（件数だけ。ベルの数）・`notifications.markRead { ids?, all? }`。件数が変わると出来事 `notificationsChanged { unread, waiting }` が全画面へ（リモートの端末にも届く。`waiting` は既読・未読によらず決着していないあなた待ち）。画面は `web/notification-inbox.mjs`、見た目は [design-system.md](design-system.md)「通知の一覧」。
 - **WS コマンド**: `presence`・`notifyStatus`・`setNotifyPc { done?, reply?, failed? }`・`setNotifyDevice { id, muted }`（操作 `notify.setPc`・`notify.setDevice`。AI も使える）・`notifyRegister { key, settings }`（中継越しの端末の画面からだけ。画面の内部）。変わるたびに `notifyStatus` イベントを全画面へ。`ready` に `notify: 1`。
 
 ## タイトル生成（2026-09-15）
@@ -263,6 +263,7 @@ Codex は `model/list` の `supportedReasoningEfforts` を候補として `turn/
 - **開いた直後（C1）**: 末尾の 16 発言を先に描き、残りの窓は手が空いたとき（`requestIdleCallback`。無ければ 16ms の `setTimeout`）に 24ms を目安に 2〜48 発言ずつ、先頭へ向けて足す。足している間は位置を動かさず、実寸の確定・行ごとの i18n・末尾判定の読みは足し終えてから 1 回にまとめる。静かな読み直しで末尾にいない・残す行がある・遷移の演出がある・`keepUpTo` / 編集中 / `initialMessageId` があるときは分けず、全量を 1 回で描く。
 - **窓の外の見え方**: 窓の手前の発言を指す提示は、読み足すまでその場に単独で出る。窓の境をまたぐ同名の `visualize` の参照は、読み足すまで対が入れ替わりうる。親の会話に戻る分岐の印・圧縮の区切りが窓の手前にあるときは、読み足したときに現れる。静かな読み直しで窓ごと置き換わると、読み足した分は捨てて窓から取り直す。
 - **測った値**（449 発言・提示 40 件、CPU 4 倍・8 Mbps）: 開く → 触れるまで 4638ms → 946ms（直結）、9934ms → 1399ms（中継 100ms）、16801ms → 1063ms（中継 300ms）。Long Task の最大 2582〜3032ms → 334〜371ms。返事 6551 KB → 19 KB。
+- **走っているターン**（[ADR 0257](adr/0257-fold-running-turn-on-open.md)（提案））: `live` の返事は、ターン前の履歴とターンを始めた発言の後ろに、ターンの出来事のうちもう変わらない頭を畳んだ発言（`live: true`。ツールの結果は履歴と同じ 2,000 字に切る）を並べ、全体を同じ窓で運ぶ。頭と末尾の境は、新しい発言が始まる出来事のうち最も後ろのもので、その手前に結果の無いツール・渡っていない人の発言・吹き出しより先に届いた配達の合図が無い所（`web/stream-messages.mjs` の `splitLive`・`core/live-snapshot.mjs`）。`stream.events` には動いている末尾だけが入り、画面は今までどおり `onEvent` で再生する（頭にあった稼働表示・文脈の量は最後の 1 件、圧縮・中断の知らせ・ターンの結果と終わりは全部を、末尾の前に付ける）。走っている間の手前の読み込み（`older`）も同じ並びから返す。ターンが終わったら、畳んだ発言を持つ窓は添字で照合せずに読み直す（`syncHistory`）。測った値（fake。ツール 600 回・結果およそ 16 MB のターンの途中で開く）: 返事 17 MB → 0.87 MB、表示まで 3.3 秒 → 0.18 秒。
 
 ## 長い履歴の実寸の確定（2026-09-29）
 
@@ -559,11 +560,11 @@ v1 は `canUseTool` から host に問い、**会話の流れの中にカード�
 | `auto` | モデルの分類器が判断し、迷うものだけ聞く |
 | `acceptEdits` 編集は自動 | ファイル編集は自動、他は聞く |
 | `plan` 計画のみ | ツールを実行しない |
-| `bypass` YOLO | 確認なし・制限なし。Claude Code の権限層を通さない |
+| `bypass` Bypass | 確認なし・制限なし。Claude Code の権限層を通さない |
 
 - `bypass` は SDK の `bypassPermissions`。`allowDangerouslySkipPermissions: true` を同時に渡す必要があり、
   このモードでは `canUseTool` が呼ばれない＝**承認カードが出ない**。
-  以前は出さない判断だったが、他のエンジンには YOLO 相当があり、Claude だけ無いと委譲のときに
+  以前は出さない判断だったが、他のエンジンには Bypass 相当があり、Claude だけ無いと委譲のときに
   親と同じ強さを継げない。危険の度合いは承認モードの2軸（`docs/multi-backend.md` §2.5）で表せるので、
   隠すのではなく「選んだことが見える」形で扱う
 - モードはセッションに覚えさせる。入力欄のチップは今のモードの名前を出す（既定かどうかで色は変えない。確認なし・制限なしのモードだけ ⚠ と強い字。docs/design-system.md「入力欄の設定」）
@@ -634,7 +635,7 @@ WS が切れているあいだ、承認が要るツールを**その場で deny 
 利用者にとってネイティブのサブエージェントと Pleiad タスクの違いは意味が無いので、入力欄の上の札 1 つにまとめ、どちらも「サブエージェント」と呼ぶ（[ADR 0025](adr/0025-persistent-background-entry-and-task-titles.md)）。稼働中の本数と、完了後の件数をこの札に出す。代わりにモデル名を出す。
 モデル名は、Claude は子の記録の assistant 行の `message.model`、Codex は委譲ツールの入力の `model`、Pleiad タスクは記録の `model`（空なら既定の解決先）から取る（`running.subagents[].model`）。
 終わったネイティブの子はターンの一覧から外れるので、会話の委譲ツールカードの id（`origin`）から `findSubagent` で引き直し、完了一覧に残す。Pleiad タスクは保存済みの全件から子会話 ID を辿り、子孫を親の下に並べる。子会話の初期タイトルは `ply_delegate.title` を依頼元が付け、無い場合は依頼の最初の空でない行を使う。
-詳細はメインパネルと同じ部品（発言 1 件を描く `historyRow`）で描く。Pleiad タスクの子は普通の会話なので、会話を開くときと同じ読み込み（`loadSession` の `live`。`watch` は付けない）の結果を描き、承認待ちならその場で答えられる。子のターンが走っている間は、ターン前の履歴に続けて、ここまでの出来事（`stream.events`）を仮の発言に畳んで描く（`web/stream-messages.mjs`）。Antigravity はターンが終わるまで履歴を書かないので、畳まないと途中の本文もツールも出ない。詳細は 2.5 秒ごとに読み直す。読み直しは筋を作り直すので、作り直す前に開いたツールの詳細・まとまり・畳みを控え（`captureViewState`）、画面に置く前に同じ所へ戻す（`restoreViewState`。`web/view-state.mjs`。行は `.mw` の `data-key`、ツール行は `data-id` と種類ごとの出てくる順で引く）。読むだけの筋なので、発言の操作・分岐は出さず、委譲のカードに子の会話へ移る矢印も付けない（`openFromCard` はメインパネルの会話を親として探す）。
+詳細はメインパネルと同じ部品（発言 1 件を描く `historyRow`）で描く。Pleiad タスクの子は普通の会話なので、会話を開くときと同じ読み込み（`loadSession` の `live`。`watch` は付けない）の結果を描き、承認待ちならその場で答えられる。子のターンが走っている間は、サーバーが畳んだ頭（「会話を開くときの窓」の「走っているターン」）に続けて、残りの出来事（`stream.events`）を仮の発言に畳んで描く（`web/stream-messages.mjs`）。Antigravity はターンが終わるまで履歴を書かないので、畳まないと途中の本文もツールも出ない。詳細は 2.5 秒ごとに読み直す。読み直しは筋を作り直すので、作り直す前に開いたツールの詳細・まとまり・畳みを控え（`captureViewState`）、画面に置く前に同じ所へ戻す（`restoreViewState`。`web/view-state.mjs`。行は `.mw` の `data-key`、ツール行は `data-id` と種類ごとの出てくる順で引く）。読むだけの筋なので、発言の操作・分岐は出さず、委譲のカードに子の会話へ移る矢印も付けない（`openFromCard` はメインパネルの会話を親として探す）。
 
 ### 完了・未確認（2026-09-12）
 

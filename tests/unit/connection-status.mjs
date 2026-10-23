@@ -3,6 +3,8 @@
 //   - 続けて 2 回開けなかったら HTTP で 1 回確かめ、401 なら再接続をやめて案内に替える（送信は押せない）
 //   - 案内の「再確認」: 「確認しています…」→ 確かめた時刻と結果。通れば開き直し、戻ったら時刻を出す
 //   - サーバーの /auth-check: トークンが合えば 204、合わなければ 401（本物のサーバーを起動する）
+//   - リモートの窓で線が止まった（取り消し・外された・止められた ほか）: 回る印も「再接続しています」も出さず、何が起きたかと次の一手。
+//     Plus が止まっている（paused）: 待っていることを出す。どちらも開き直さず、線が戻ったら開き直す
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,7 +18,7 @@ export const title = '接続の状態（切れた一行・読み上げ・古い�
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-function setup({ answers = [] } = {}) {
+function setup({ answers = [], leave } = {}) {
   const note = new N('div'), sideLine = new N('div'), live = new N('div');
   note.hidden = true; sideLine.hidden = true;
   let timers = [];
@@ -31,7 +33,7 @@ function setup({ answers = [] } = {}) {
   const c = createConnectionStatus({ note, sideLine, live: liveProxy, runMark: () => { const s = new N('span'); s.className = 'run'; return s; },
     t: (k, o) => (o ? `[${k}|${Object.values(o).join(',')}]` : `[${k}]`), time: (ms) => `T${ms}`,
     check: async () => { checks.push(clock); return answers.shift() ?? 'unreachable'; },
-    reconnect: () => { reconnects++; }, onChange: () => { changes++; }, setTimer, clearTimer, now: () => clock });
+    reconnect: () => { reconnects++; }, onChange: () => { changes++; }, leave, setTimer, clearTimer, now: () => clock });
   return { c, note, sideLine, said, flush, timers: () => timers, checks, reconnects: () => reconnects, changes: () => changes, advance: (ms) => { clock += ms; } };
 }
 
@@ -54,9 +56,11 @@ export default async function (t) {
     t.ok('1.5 秒ごとに開き直す', s.reconnects() === 1);
     s.c.closed();   // 開き直しが 1 回失敗（まだ確かめない）
     t.ok('開けなかったのが 1 回なら確かめない', s.checks.length === 0);
-    s.c.setReason('relay');
+    s.c.setRemoteState('offline');
     t.ok('リモートの窓で中継につながらない間は、同じ理由の語で書く', s.note.textContent === '[app.connLostRelay]' && s.sideLine.textContent === '[app.connLostRelay]');
-    s.c.setReason(null);
+    s.c.setRemoteState('host-offline');
+    t.ok('ホストがオフラインの間も、同じ理由の語で書く', s.note.textContent === '[app.connLostHost]' && s.sideLine.textContent === '[app.connLostHost]');
+    s.c.setRemoteState('connected');
     s.c.opened(); s.c.ready();
     t.ok('戻れば消え、「再接続しました」を 1 回読む', s.note.hidden && s.sideLine.hidden && s.said.join() === '[app.connLost],[app.reconnected]');
     t.ok('送信は止めない（自動で戻る見込みがある）', !s.c.blocksSend());
@@ -109,6 +113,64 @@ export default async function (t) {
       && s.note.getAttribute('data-kind') === 'done' && s.said.at(-1) === '[app.reconnected]');
     s.flush();
     t.ok('しばらくして消える', s.note.hidden);
+  }
+  // ---- リモートの窓で線が止まった: 何が起きたかと次の一手。回る印・「再接続しています」・開き直しは出さない
+  for (const state of ['revoked', 'reapprove', 'removed', 'blocked', 'limit', 'update', 'signed-out']) {
+    const s = setup();
+    s.c.opened(); s.c.ready();
+    s.c.closed(); s.flush();          // 切れた一行が出て、1 回開き直した
+    const before = s.reconnects();
+    s.c.setRemoteState(state);
+    const title = `[app.remoteStop.${state}.title]`, body = `[app.remoteStop.${state}.body]`;
+    t.ok(`${state}: 入力欄の上に見出しと次の一手（回る印も「再接続しています」も出さない）`, !s.note.hidden && s.note.getAttribute('data-kind') === 'stop'
+      && s.note.textContent.includes(title) && s.note.textContent.includes(body) && !s.note.querySelector('.run') && !s.note.textContent.includes('[app.connLost'), s.note.textContent);
+    t.ok(`${state}: 脇の下は見出しを強い字で`, !s.sideLine.hidden && s.sideLine.textContent === title && s.sideLine.getAttribute('data-kind') === 'stop', s.sideLine.textContent);
+    t.ok(`${state}: 次の開き直しを置かない・送信は押せない`, s.timers().length === 0 && s.c.blocksSend());
+    t.ok(`${state}: 見出しと次の一手を 1 回読む`, s.said.at(-1) === `${title} ${body}`);
+    s.c.closed(); s.c.closed(); s.c.closed();
+    await tick();
+    t.ok(`${state}: 閉じても開き直さず、トークンも確かめない`, s.reconnects() === before && s.timers().length === 0 && s.checks.length === 0 && s.note.getAttribute('data-kind') === 'stop');
+  }
+  // つながっている間に止まった知らせが先に届いても、その場で出す
+  {
+    const s = setup();
+    s.c.opened(); s.c.ready();
+    s.c.setRemoteState('revoked');
+    t.ok('つながっている間に取り消しが届いたら、その場で案内', s.note.getAttribute('data-kind') === 'stop' && !s.note.hidden && s.c.blocksSend());
+    t.ok('ホストの一覧へ戻る口が無い窓（デスクトップ）ではボタンを出さない', !s.note.querySelector('button'));
+  }
+  // モバイルの殻: 「ホストの一覧へ」で戻る
+  {
+    let left = 0;
+    const s = setup({ leave: () => { left++; } });
+    s.c.opened(); s.c.ready(); s.c.closed(); s.flush();
+    s.c.setRemoteState('removed');
+    const button = s.note.querySelector('button');
+    t.ok('止まった案内に「ホストの一覧へ」', button && button.textContent === '[app.remoteStop.back]');
+    button.onclick();
+    t.ok('押すとホストの一覧へ', left === 1);
+  }
+  // Plus が止まっている（paused）: 待っていることを出す。線が戻ったら開き直す
+  {
+    const s = setup();
+    s.c.opened(); s.c.ready();
+    s.c.closed(); s.flush();
+    const before = s.reconnects();
+    s.c.setRemoteState('paused');
+    t.ok('paused: 入力欄の上と脇の下に「Plus が止まっている（再開を待っている）」、回る印は出さない', !s.note.hidden && s.note.getAttribute('data-kind') === 'paused'
+      && s.note.textContent === '[app.remotePaused]' && !s.note.querySelector('.run') && s.sideLine.textContent === '[app.remotePaused]' && s.sideLine.getAttribute('data-kind') === 'paused', s.note.textContent);
+    t.ok('paused: 開き直さない・送信は押せない・1 回読む', s.timers().length === 0 && s.c.blocksSend() && s.said.at(-1) === '[app.remotePaused]');
+    s.c.closed(); s.c.closed();
+    await tick();
+    t.ok('paused: 閉じても開き直さない', s.reconnects() === before && s.timers().length === 0 && s.checks.length === 0);
+    s.c.setRemoteState('connected');
+    t.ok('線が戻ったら、すぐ開き直す（切れた一行に戻る）', s.reconnects() === before + 1 && s.note.getAttribute('data-kind') === 'lost' && !s.c.blocksSend());
+    s.c.opened(); s.c.ready();
+    t.ok('ページの接続が戻れば消え、「再接続しました」を読む', s.note.hidden && s.sideLine.hidden && s.said.at(-1) === '[app.reconnected]');
+  }
+  {
+    const client = await fs.readFile(new URL('../../web/client.mjs', import.meta.url), 'utf8');
+    t.ok('リモートの窓は、線の状態をそのまま接続の状態へ渡す（中継・ホストの 2 つだけにしない）', /connStatus\.setRemoteState\(s\?\.state/.test(client));
   }
   // ---- サイドバーを開くボタンの印
   {

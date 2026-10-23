@@ -60,6 +60,9 @@ const stops = (reason) => reason != null && reason !== "tool_use" && reason !== 
 
 const DONE = new Set(["completed", "failed", "killed", "stopped"]);
 
+/** 1 ターンで覚えておくシェルのコマンドの数（tool_use id・task_id のそれぞれ）。前面で終わる分も入るので上限を置く */
+const COMMAND_MEMO = 200;
+
 // サブエージェントの状態（getSubagentState の契約。docs/multi-backend.md §2.3）へ SDK の語彙を写す。
 // task_updated の patch.status と task_notification の status の両方をここで受ける。知らない語は写さない
 const STATE_OF = {
@@ -102,6 +105,16 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
   // 追加の I/O はしない。すでに流れている SDK メッセージだけで埋める
   const states = new Map();
   const toolTasks = new Map();      // 委譲ツールの tool_use id -> task_id（task_started から）
+  // 裏のコマンドの詳細（taskDetail）に出すコマンド。SDK の task 系のメッセージは説明（description）しか運ばないので、
+  // シェルのツールの tool_use の入力（input.command）を覚え、task_started の tool_use_id で task_id へ移す。
+  // 前面で終わるシェルの分も入るので、古いものから捨てる
+  const toolCommands = new Map();   // tool_use id -> コマンド
+  const taskCommands = new Map();   // task_id -> コマンド
+  const remember = (map, key, value) => {
+    map.delete(key);
+    map.set(key, value);
+    if (map.size > COMMAND_MEMO) map.delete(map.keys().next().value);
+  };
 
   const iso = (v) => {
     const d = v == null ? now() : new Date(v);
@@ -178,6 +191,7 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
           known.set(m.task_id, { type: m.task_type, label: m.description });
           record(m.task_id, "running");
           if (m.tool_use_id) toolTasks.set(m.tool_use_id, m.task_id);
+          if (toolCommands.has(m.tool_use_id)) remember(taskCommands, m.task_id, toolCommands.get(m.tool_use_id));
           if (m.is_backgrounded === true) add(m.task_id, m.task_type, m.description, m.ambient || m.skip_transcript);
           return;
         case "task_updated": {
@@ -207,6 +221,12 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
     }
     if (m.type === "user" && !m.isReplay) {
       toolResult(m);
+      return;
+    }
+    if (m.type === "assistant") {
+      for (const b of Array.isArray(m.message?.content) ? m.message.content : []) {
+        if (b?.type === "tool_use" && b.id && typeof b.input?.command === "string") remember(toolCommands, b.id, b.input.command);
+      }
       return;
     }
     if (m.type === "result") {
@@ -255,6 +275,17 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
     subagentState(id) {
       const s = states.get(id);
       return s ? { ...s } : null;
+    },
+    /**
+     * 裏の作業 1 本の詳細（getBackgroundTask が出力に添える）。種類・説明・コマンド・状態・時刻。見ていない id は null。
+     * 状態は subagentStatus の語（running / completed / failed / stopped）。一覧から外れた後も残る（終わった直後の読み直しに使う）
+     */
+    taskDetail(id) {
+      const k = known.get(id);
+      const s = states.get(id);
+      if (!k && !s) return null;
+      return { id, kind: taskKind(k?.type), label: String(k?.label ?? ""), command: taskCommands.get(id) ?? null,
+        status: s?.status ?? null, startedAt: s?.startedAt ?? null, endedAt: s?.endedAt ?? null };
     },
     /** バックグラウンド作業（ambient・完了通知を含む）を一度でも見たか。見たターンでは、閉じる前に main の自動再開を待つ */
     get sawWaitable() { return sawWaitable; },

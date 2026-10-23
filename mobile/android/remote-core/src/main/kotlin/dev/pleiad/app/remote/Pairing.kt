@@ -31,7 +31,16 @@ data class HostCreds(
     val hostName: String,
     val via: String = "own",
     val uid: String? = null,
-)
+) {
+    // The same record read again is equal (the key is compared by content), so the links can skip an unchanged update
+    override fun equals(other: Any?): Boolean = other is HostCreds && hostId == other.hostId && hostPublicKey.contentEquals(other.hostPublicKey) &&
+        relayUrl == other.relayUrl && deviceId == other.deviceId && token == other.token && hostName == other.hostName && via == other.via && uid == other.uid
+
+    override fun hashCode(): Int = listOf(hostId, hostPublicKey.contentHashCode(), relayUrl, deviceId, token, hostName, via, uid).hashCode()
+
+    /** Never shows the token (a failed comparison or a log line prints this) */
+    override fun toString(): String = "HostCreds(hostId=$hostId, relayUrl=$relayUrl, deviceId=$deviceId, hostName=$hostName, via=$via)"
+}
 
 object PairingCodec {
     private val LOOPBACK = setOf("localhost", "127.0.0.1", "[::1]", "::1")

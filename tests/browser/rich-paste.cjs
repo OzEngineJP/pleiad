@@ -114,14 +114,13 @@ async page => {
     sock.send(JSON.stringify({ kind: 'command', command: 'invoke', id, args: { op: o, args: a } }));
   }), [op, args]);
   const ch = await rpc('channels.create', { name: 'paste' + String(Date.now()).slice(-5), purpose: '貼り付け' });
-  await page.locator('#sideOrder [data-order="channel"]').click();
   await page.evaluate((id) => document.dispatchEvent(new CustomEvent('channels:show', { detail: { kind: 'channel', id } })), ch.id);
   await page.locator('#chFeedComposerInput').waitFor();
   const sel = '#chFeedComposerInput';
   await paste(sel, { html: `<h3>手順</h3><p><strong>先に</strong>これ</p><ul><li>a</li><li>b</li></ul><p><img src="${imgs[0]}" alt="one"></p>`, text: '手順\n先にこれ\na\nb' });
   await page.waitForFunction(() => document.querySelectorAll('#chFeedComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
   check((await value(sel)).startsWith('### 手順\n**先に**これ\n- a\n- b\n[添付] '), 'Channels: the composer pastes formatting and a card the same way: ' + JSON.stringify(await value(sel)));
-  check(await page.locator('#chFeedComposer .att-count').textContent() === '添付 1 件', 'Channels: the strip counts the image');
+  check(await page.locator('#chFeedComposer .md-b.md-att').count() === 1, 'Channels: the image becomes one card');
   await page.keyboard.press('Control+z');
   check(await value(sel) === '' && (await cards('#chFeedComposer')).length === 0, 'Channels: Ctrl+Z undoes the paste');
   return results;

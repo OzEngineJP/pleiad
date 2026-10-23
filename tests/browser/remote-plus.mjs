@@ -1,5 +1,6 @@
 // 設定 › リモート「この PC へ」の Plus 経路（実ブラウザー）。偽の Plus とローカル中継だけを使う。
-// 実行: node tests/browser/remote-plus.mjs（REMOTE_PLUS_SHOTS で撮影先を変更できる）
+// 端末の承認と取り消し（ADR 0248）: 承認の窓・取り消した端末・もう一度の許可・通知の一覧のあなた待ちも通る。
+// 実行: node tests/browser/remote-plus.mjs（REMOTE_PLUS_SHOTS で撮影先を変更できる。承認と取り消しの場面は DEVICE_APPROVAL_SHOTS）
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,10 +13,13 @@ import { createIdTokenVerifier } from '../../core/plus/verify.mjs';
 import { createPlusRelayAuthz } from '../lib/plus-relay-authz.mjs';
 import { admitDevice, connectDevice } from '../lib/remote-device.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { generateKeyPair } from '../../core/remote/noise.mjs';
+import { issueTicket } from '../../core/plus/tickets.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PW_CORE || 'C:/Program Files/nodejs/node_modules/@playwright/cli/node_modules/playwright-core');
 const SHOTS = process.env.REMOTE_PLUS_SHOTS || path.join(process.cwd(), 'temporary', 'screenshots', 'remote-plus');
+const APPROVAL_SHOTS = process.env.DEVICE_APPROVAL_SHOTS || SHOTS;
 const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-remote-plus-ui-'));
 const captureFile = path.join(SCRATCH, 'external.log');
 const ACCOUNT_ID = 'user-1';
@@ -25,7 +29,7 @@ const results = [];
 const check = (ok, label, detail) => { if (!ok) throw new Error(`${label}${detail === undefined ? '' : ` ${JSON.stringify(detail)}`}`); results.push(label); };
 
 let verifier;
-const authz = createPlusRelayAuthz({ verify: token => verifier.verify(token), isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid });
+const authz = createPlusRelayAuthz({ verify: token => verifier.verify(token), keysUrl: () => plus.ticketKeysUrl, isBound: async (uid, hostId) => plus.state.hosts[hostId]?.uid === uid });
 const relay = createRelay({ enrollSecret: crypto.randomBytes(32).toString('base64url'), trustProxy: false, logger: () => {}, authz });
 const relayAddr = await relay.listen(0, '127.0.0.1');
 const relayUrl = `http://127.0.0.1:${relayAddr.port}`;
@@ -75,13 +79,17 @@ try {
   });
   const page = await ctx.newPage();
   let externalSeen = 0;
-  await page.goto(url, { waitUntil: 'load' });
-  await page.waitForTimeout(1200);
-  await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
-  await page.evaluate(() => document.getElementById('settings')?.click());
-  await page.waitForSelector('#settingsView:not([hidden])');
-  await page.locator('#remoteTab').click();
-  await page.waitForSelector('#remotePanel:not([hidden])');
+  /** 開き直して 設定 › リモート へ */
+  const gotoRemote = async () => {
+    await page.goto(url, { waitUntil: 'load' });
+    await page.waitForTimeout(1200);
+    await page.evaluate(() => document.getElementById('onboardingDialog')?.close());
+    await page.evaluate(() => document.getElementById('settings')?.click());
+    await page.waitForSelector('#settingsView:not([hidden])');
+    await page.locator('#remoteTab').click();
+    await page.waitForSelector('#remotePanel:not([hidden])');
+  };
+  await gotoRemote();
   await page.locator('#remotePanel #remoteEnable').click();
   await until(async () => (await client.cmd('remoteStatus')).enabled, 'リモート許可');
   await page.waitForSelector('#remotePanel .rm-group');
@@ -103,6 +111,20 @@ try {
     await page.screenshot({ path: path.join(SHOTS, `remote-plus-${name}-dark-360.png`), fullPage: false });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     check(!overflow, `${name}: 360px で横にはみ出さない`);
+    await page.setViewportSize({ width: 1280, height: 1000 });
+    await page.emulateMedia({ colorScheme: 'light' });
+  };
+  /** 端末の承認と取り消しの場面: device-approval-<場面>-<幅>-<light|dark>.png */
+  const approvalShot = async (name, widths = [1280, 360]) => {
+    fs.mkdirSync(APPROVAL_SHOTS, { recursive: true });
+    for (const width of widths) {
+      for (const scheme of ['light', 'dark']) {
+        await page.setViewportSize({ width, height: width === 360 ? 780 : 1000 });
+        await page.emulateMedia({ colorScheme: scheme });
+        await page.waitForTimeout(150);
+        await page.screenshot({ path: path.join(APPROVAL_SHOTS, `device-approval-${name}-${width}-${scheme}.png`) });
+      }
+    }
     await page.setViewportSize({ width: 1280, height: 1000 });
     await page.emulateMedia({ colorScheme: 'light' });
   };
@@ -186,12 +208,42 @@ try {
   try { await until(async () => (await client.cmd('remoteStatus')).plus?.link?.state === 'connected', '公式の中継へ接続'); }
   catch (e) { throw new Error(`${e.message}\n${JSON.stringify({ remote: await client.cmd('remoteStatus'), plus: await client.cmd('plusStatus'), hostCalls: { count: plus.state.calls.filter(c => c.path.startsWith('/v1/hosts')).length, recent: plus.state.calls.filter(c => c.path.startsWith('/v1/hosts')).slice(-8).map(c => [c.method, c.path]) }, log: server.tail?.() })}`); }
   const token = plus.issueIdToken(ACCOUNT_ID);
-  const first = await admitDevice({ relayUrl, hostId: remote.hostId, hostPublicKey: Buffer.from(host.publicKey, 'base64url'), idToken: token, name: 'Pixel 9', platform: 'android' });
+  const base = { relayUrl, hostId: remote.hostId, hostPublicKey: Buffer.from(host.publicKey, 'base64url'), platform: 'android' };
+  // 新しい鍵は、同じアカウントでも PC の画面の承認の窓を通る（ADR 0248）。裏のつなぎ直し（admit）は窓を出さずに断る
+  // 端末は券で申し込む（券を出す api では、ID トークンだけの申し込みを PC が 'update_required' で断る）
+  const plusRequest = async (method, p, body) => {
+    const r = await fetch(`${plus.url}${p}`, { method, headers: { authorization: `Bearer ${plus.issueIdToken(ACCOUNT_ID)}`, 'content-type': 'application/json', 'x-pleiad-admission': '2' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error ?? `HTTP ${r.status}`), { status: r.status });
+    return j;
+  };
+  const admitWithTicket = async ({ keyPair = generateKeyPair(), ...opts }) =>
+    admitDevice({ ...base, ...opts, keyPair, ticket: await issueTicket({ request: plusRequest, purpose: 'device', keyPair, hostId: remote.hostId }) });
+  const quiet = await admitWithTicket({ name: 'Pixel 9' });
+  check(quiet.denied && quiet.reason === 'approval', '許可していない鍵の裏のつなぎ直しは窓を出さずに断る', quiet);
+  /** 人がつなぐ（pair）→ 承認の窓に端末と同じ確認コード。shotName があれば撮る。answer が false なら答えずに { pending } を返す */
+  const pairThroughWindow = async (opts, { shotName = '', answer = true } = {}) => {
+    let code = '';
+    const pending = admitWithTicket({ ...opts, mode: 'pair', onCode: c => { code = c; } });
+    pending.catch(() => {});
+    await page.waitForSelector('#remotePairDialog[open]');
+    await until(() => code, '端末の確認コード');
+    const text = await page.locator('#remotePairDialog').innerText();
+    check(text.includes(opts.name) && text.includes('Pleiad Plus') && text.replace(/\D/g, '').includes(code),
+      `${opts.name}: 承認の窓に名前・公式の中継・端末と同じ確認コード`, { text, code });
+    if (shotName) await approvalShot(shotName);
+    if (!answer) return { pending };
+    await page.locator('#remotePairDialog .btn-primary').click();
+    return pending;
+  };
+  const firstKey = generateKeyPair();
+  const first = await pairThroughWindow({ name: 'Pixel 9', keyPair: firstKey }, { shotName: 'approve-plus' });
   check(!first.denied, 'Plus 端末の登録', { ...first, hostUid: plus.state.hosts[remote.hostId]?.uid, accountUid: (await client.cmd('plusStatus')).uid, tokenUid: (await verifier.verify(token)).uid, hostId: remote.hostId, log: server.tail?.() });
   const live = await connectDevice(first, { extraHeaders: { 'x-pleiad-account': token } });
   devices.push(live);
-  const second = await admitDevice({ relayUrl, hostId: remote.hostId, hostPublicKey: Buffer.from(host.publicKey, 'base64url'), idToken: token, name: 'Pixel Tablet', platform: 'android' });
-  await until(async () => (await client.cmd('remoteStatus')).devices?.filter(d => d.via === 'plus').length === 2, 'Plus の端末 2 台');
+  const second = await pairThroughWindow({ name: 'Pixel Tablet' });
+  check(!second.denied, '2 台目も承認の窓で許可して登録', second);
+  await until(async () => (await client.cmd('remoteStatus')).devices?.filter(d => d.via === 'plus' && d.approvedBy === 'host').length === 2, 'Plus の端末 2 台（PC の画面で許可）');
   await page.waitForSelector('#remotePanel .rm-group:has-text("Pixel 9"):has-text("Pixel Tablet")');
   // 同じ段のまま、待っている行がチェックと「Pixel 9 をつなぎました」に替わる
   await page.waitForSelector('#remoteAddDevice .rm-live-ok:has-text("Pixel 9 をつなぎました")');
@@ -234,6 +286,58 @@ try {
   await page.waitForTimeout(300);
   await page.screenshot({ path: path.join(SHOTS, 'remote-plus-both-focus-light-1280.png') });
   await shot('both');
+
+  // 取り消し（ADR 0248）: 詳しい画面から Pixel Tablet を取り消すと「取り消した端末」に並び、その鍵は公式の中継からも入れない
+  await page.locator('#remotePanel button', { hasText: 'Pixel Tablet' }).first().click();
+  await page.locator('#remotePanel [data-fk="revoke"]').click();
+  await page.locator('#remotePanel [data-fk="revokeYes"]').click();
+  await page.waitForSelector('#remotePanel .rm-group:has-text("取り消した端末"):has-text("Pixel Tablet")');
+  check(!(await page.locator('#remotePanel .rm-group:has-text("Pleiad Plus")').first().innerText()).includes('Pixel Tablet'), '取り消した端末は Plus のまとまりから外れる');
+  await approvalShot('revoked-list');
+  const revokedAgain = await admitWithTicket({ name: 'Pixel Tablet', keyPair: second.keyPair, mode: 'pair' });
+  check(revokedAgain.denied && revokedAgain.reason === 'revoked', '取り消した鍵は、新しい券でも窓を出さずに断る', revokedAgain);
+  check(!(await page.locator('#remotePairDialog').evaluate(d => d.open)), '取り消した鍵には承認の窓を出さない');
+  await page.locator('#remotePanel .rm-group:has-text("取り消した端末") button', { hasText: 'Pixel Tablet' }).click();
+  await page.waitForSelector('#remotePanel [data-fk="hideRevoked"]');
+  const revokedDetail = await page.locator('#remotePanel').innerText();
+  check(revokedDetail.includes('この PC'), '取り消した端末の詳しい画面: 取り消した機器（この PC）', revokedDetail);
+  await approvalShot('revoked-detail');
+  await page.locator('#remotePanel [data-fk="back"]').click();
+
+  // もう一度の許可: 前の版で確認コードなしに入った Plus の端末（approvedBy の無い記録）は、許可し直すまで通らない。
+  // 台帳を前の版の形にして読み直させ、画面を開き直す
+  const closing = live.close?.();
+  if (closing?.catch) await closing.catch(() => {});
+  devices.length = 0;
+  const ledgerFile = path.join(SCRATCH, 'data', 'remote', 'devices.json');
+  const ledger = JSON.parse(fs.readFileSync(ledgerFile, 'utf8'));
+  const old = ledger.devices.find(d => d.id === first.deviceId);
+  delete old.approvedBy; delete old.approvedAt;
+  fs.writeFileSync(ledgerFile, JSON.stringify(ledger, null, 2));
+  await client.cmd('setRemoteSettings', {});   // 台帳を読み直す（起動時の読み込みと同じ）
+  await gotoRemote();
+  await page.waitForSelector('#remotePanel .rm-group:has-text("もう一度の許可が要る端末"):has-text("Pixel 9")');
+  await approvalShot('reapprove-list');
+  const quietOld = await admitWithTicket({ name: 'Pixel 9', keyPair: firstKey });
+  check(quietOld.denied && quietOld.reason === 'approval', 'もう一度の許可が要る端末の裏のつなぎ直しは断る', quietOld);
+  const { pending: reapproved } = await pairThroughWindow({ name: 'Pixel 9', keyPair: firstKey }, { shotName: 'approve-again', answer: false });
+  const againText = await page.locator('#remotePairDialog').innerText();
+  check(againText.includes('「Pixel 9」をもう一度許可しますか？'), 'もう一度の許可の題', againText);
+  // 通知の一覧: 承認待ちが「あなた待ち」（◆）に出る。窓を閉じ、会話へ戻ってベルから開く
+  await page.locator('#remotePairDialog').evaluate(d => d.close());
+  await page.locator('#backToChat').click();
+  await until(async () => (await page.locator('#notifBell').getAttribute('aria-label'))?.includes('あなた待ち') ?? false, 'ベルにあなた待ち');
+  await page.locator('#notifBell').click();
+  await page.waitForSelector('#notifPanel:not([hidden]):has-text("端末「Pixel 9」が追加の許可を待っています")');
+  check(true, '通知の一覧のあなた待ちに承認待ちの端末');
+  await approvalShot('inbox-wait', [1280]);
+  await page.keyboard.press('Escape');
+  const reqId = (await client.cmd('remoteStatus')).pairing?.requests?.[0]?.id;
+  await client.cmd('remotePairingApprove', { id: reqId });
+  const back = await reapproved;
+  check(!back.denied && back.deviceId === first.deviceId, 'もう一度の許可は同じ端末の記録のまま', back);
+  await until(async () => (await client.cmd('remoteStatus')).devices?.some(d => d.id === first.deviceId && !d.reapprove && d.approvedBy === 'host'), '許可し直した記録');
+  await gotoRemote();
 
   // 中継が届かない状態と利用不可の状態も、まとまりの一行に出す（切っている間は「オフ」が先なので、入れ直してから）。
   plus.state.down = true;

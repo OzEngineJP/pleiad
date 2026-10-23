@@ -4,6 +4,22 @@
 
 ## テスト
 
+### ツールの表示
+
+実データと分離した fake サーバーの認証済み画面で、`tests/browser/tools-display.cjs` の関数を呼ぶ。実寸のタブ・端末・スクロールを確認し、委譲の変更欄は制御した git 応答でも確認する。PowerShell からは次の形で実行する。
+
+```powershell
+$OutputEncoding = New-Object System.Text.UTF8Encoding $false
+$toolsCheck = Get-Content tests/browser/tools-display.cjs -Encoding utf8 -Raw
+('(' + $toolsCheck + ')()') | agent-browser eval --stdin
+```
+
+`tools-background.cjs` は、実際に起動した ply_shell のコマンドを背景ダイアログで開いてから同じ形で呼ぶ。出力更新・追従・位置保持を調べ、最後にそのコマンドを画面の停止ボタンで止めて最終出力の保持を確認する。十分な行数があり、継続して出力する試験用のコマンドを使う。
+
+`node tests/browser/claude-background-output.mjs` は、偽の Claude Code CLI（`tests/lib/fake-claude-cli.mjs`）で Claude の会話に裏のコマンドを走らせ、作業ダイアログの詳細でコマンド・出力・末尾だけの大きさ・追従・位置保持・［停止］の後の出力の保持を確かめる（LLM は呼ばない。一時のデータ置き場と別ポート）。`SHOT=<png>` で詳細を撮る。
+
+`tools-delegation.cjs` は、完了した委譲カードを開き、共有の子なら `)(false)`、変更のある worktree の子なら `)(true)` を末尾に付けて呼ぶ。主タブ・作業場所の種類・変更欄の有無を調べる。1280px / 390px、ライト / ダークで表示も確認する。
+
 ### OpenCode v2
 
 `npm test -- opencode data-writes handover --jobs 2` は v2 の fixture で配送・再接続・引き継ぎ・権限・履歴と移行の退行を調べる。公開 backend の 22 メソッドは次の 5 群で確認する。件数は公開口の割り当てであり、全経路の実行網羅率ではない。

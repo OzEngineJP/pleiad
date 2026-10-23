@@ -112,6 +112,25 @@ export default async function (t) {
   t.ok('読み取りモードでも自分の子を止められる', (await registry.invoke(readonly, 'delegation.taskCancel', { taskId: 'ply-task-1' }, compatDeps)).result?.stopped === true);
   t.ok('読み取りモードから子に追加指示は送れない', (await registry.invoke(readonly, 'delegation.taskSend', { taskId: 'ply-task-1', message: 'work' }, compatDeps)).code === 'READ_ONLY_MODE');
 
+  // 同期で届いたものを書く・鍵を渡す／渡さない・新しい鍵へ移るは、ホストの画面からだけ（遠隔の画面・AI からは呼べない）
+  const sha = 'a'.repeat(64);
+  const screenOps = {
+    'plus.syncInboxTake': { id: 'x', sha256: sha, rev: 1 },
+    'plus.syncInboxDrop': { id: 'x', sha256: null, rev: 1 },
+    'plus.syncApprove': { hostId: 'h', code: '123456' },
+    'plus.syncDeny': { hostId: 'h' },
+    'plus.syncAcceptRestart': { keyId: 'k' },
+  };
+  for (const [id, args] of Object.entries(screenOps)) {
+    const called = [];
+    const plus = new Proxy({}, { get: (_, name) => (...a) => { called.push(name); return { ok: true }; } });
+    const remoteUi = await registry.invoke({ by: 'human', via: 'ui', local: false }, id, args, { locale: 'ja', plus });
+    const agent = await registry.invoke({ by: 'agent', via: 'mcp', sessionId: 's' }, id, args, { locale: 'ja', plus, modeOf: async () => ({ scope: 'full', autonomy: 'never' }) });
+    const local = await registry.invoke({ by: 'human', via: 'ui', local: true }, id, args, { locale: 'ja', plus });
+    t.ok(`${id}: ホストの画面だけが呼べる（遠隔の画面は HOST_SCREEN_ONLY・AI には無い）`,
+      remoteUi.code === 'HOST_SCREEN_ONLY' && agent.ok === false && local.ok === true && called.length === 1, JSON.stringify({ remote: remoteUi.code, agent: agent.code, local: local.code, called }));
+  }
+
   // ---- T4 文の量: 実際に会話へ渡す指示と tools/list（pleiad mcp と同じ生成器）を数える
   for (const lng of LOCALES) {
     const tools = mcpTools({ catalog: registry.describe({ by: 'agent', via: 'mcp' }, lng), texts: controlTexts(lng) });
@@ -273,6 +292,7 @@ export default async function (t) {
     'git.commit': [{ hash: 'abc1234' }], 'git.worktree': [{ worktree: 'C:/r' }],
     'bots.get': [{ botId: 'b_1' }], 'brain.view': [{ botId: 'b_1' }], 'brain.wakeList': [{ botId: 'b_1' }],
     'routines.get': [{ routineId: 'r_000000000aaaaaa' }],
+    'plus.syncInboxItem': [{ id: '0123456789abcdef0123456789abcdef' }],
   };
   for (const op of registry.ops.filter((o) => o.risk === 'read' && o.surfaces.ui)) {
     const needs = Object.keys(op.input.shape).length && Object.values(op.input.shape).some((f) => !f.safeParse(undefined).success);

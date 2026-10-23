@@ -7,6 +7,7 @@
 // 更新: 5 分ごと（見えている間）・ターンが終わった直後（そのエージェントの分）・一覧を開いたとき・↻。
 // 取得に失敗したら直前の値を薄く出し、いつの値かを添える。（アカウントの行だけ読めなかったときは、その行の前回の枠を薄くせず出す。web/usage.mjs の carryQuota）
 import { el } from './dom.mjs';
+import { createConversationSheet, renderContextUsage } from './conversation-usage.mjs';
 import { fmt, t } from './i18n.mjs';
 import { isExpired, heldTexts, heldSlotName, heldTime, heldWindowName, heldGuess, quotaFetchState, expiredText, connectionOf, connectionName, connectionLabel, renderConnections } from './usage.mjs';
 
@@ -185,8 +186,11 @@ export function resetText(w, now = Date.now(), row, request) {
     : t('usage.header.resetIn', { duration: duration(left) });
 }
 
-export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {} }) {
+export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {}, context = () => ({}) }) {
   const chip = $('usageChip'), pop = $('usagePop');
+  const mobile = globalThis.matchMedia?.('(max-width:700px)') ?? { matches: false, addEventListener() {} };
+  let sheet = null, anchor = chip;
+  mobile.addEventListener('change', () => { close(); onVisibility(); });
   // エージェントごとの最後の値。{ label, quota, failed }。failed は直前の取得に失敗した（quota はその前の値）
   const data = new Map();
   // asked は一度でも取りに行ったエージェント（あとから有効にしたエージェントを、次の 5 分を待たずに取るため）
@@ -240,6 +244,12 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   const staleNote = (entry, row) => (entry?.failed || entry?.quota?.stale) && entry.quota?.checkedAt ? t('usage.header.stale', { when: fmt.relative(entry.quota.checkedAt) })
     : row?.staleSince ? t('usage.header.stale', { when: fmt.relative(row.staleSince) }) : '';
 
+  function currentRow() {
+    const entry = data.get(shown.backend);
+    const account = quotaOf(entry?.quota, shown.account);
+    const base = Array.isArray(account?.connections) ? connectionOf(account, shown.model) : account;
+    return shown.endpoint ? null : base?.windows?.length ? { ...base, windows: windowsForModel(base.windows, shown.model) } : base;
+  }
   function paintChip() {
     const entry = data.get(shown.backend);
     const account = quotaOf(entry?.quota, shown.account);
@@ -397,7 +407,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       arc.setAttribute('d', 'M20 12a8 8 0 1 1-4-6.9'); svg.append(arc); again.replaceChildren(svg);
     }
     again.onclick = () => refresh(ids(), { force: true });
-    head.append(el('b', null, t('usage.header.title')), el('span', 'when', checked ? fmt.relative(checked) : ''), again);
+    if (!sheet) head.append(el('b', null, t('usage.header.title')));
+    head.append(el('span', 'when', checked ? fmt.relative(checked) : ''), again);
     const order = [shown.backend, ...ids().filter(id => id !== shown.backend)].filter(Boolean);
     const sections = order.map(id => agentSection(id, data.get(id), id === shown.backend));
     const foot = el('div', 'foot');
@@ -405,8 +416,19 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     more.type = 'button'; more.onclick = () => { close(); openSettings(); };
     foot.append(more);
     const opened = [...pop.querySelectorAll('details')].map(d => d.open);
-    pop.replaceChildren(head, ...sections, foot);
+    const othersOpen = pop.querySelector('.usage-other-agents')?.open ?? false;
+    if (sheet) {
+      const others = el('details', 'usage-other-agents');
+      others.append(el('summary', null, t('usage.header.otherAgents')), ...sections.slice(shown.backend ? 1 : 0));
+      others.open = othersOpen;
+      const sheetHead = sheet.dialog.querySelector('.conversation-sheet-head');
+      sheetHead.querySelector('.usage-pop-head')?.remove();
+      sheetHead.insertBefore(head, sheetHead.querySelector('.conversation-sheet-close'));
+      pop.replaceChildren(renderContextUsage(context()), ...(shown.backend ? [sections[0]] : []), ...(others.children.length > 1 ? [others] : []), foot);
+    } else pop.replaceChildren(head, ...sections, foot);
     [...pop.querySelectorAll('details')].forEach((d, i) => { d.open = opened[i] ?? false; });
+    const otherAgents = pop.querySelector('.usage-other-agents');
+    if (otherAgents) otherAgents.open = othersOpen;
   }
   function paint() {
     paintChip(); paintPop();
@@ -422,25 +444,40 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   }
 
   function positionPop() {
+    if (sheet) { pop.style.cssText = ''; return; }
     const r = chip.getBoundingClientRect();
     const width = Math.min(340, document.documentElement.clientWidth - 16);
     pop.style.left = `${Math.max(8, Math.min(r.left, document.documentElement.clientWidth - width - 8))}px`;
     pop.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
     pop.style.width = `${width}px`;
   }
-  function open() {
+  function open(opener = chip) {
+    anchor = opener;
+    if (mobile.matches && !sheet) {
+      sheet = createConversationSheet(t('usage.header.title'), anchor);
+      pop.removeAttribute('role');
+      sheet.body.append(pop);
+      sheet.dialog.addEventListener('close', () => {
+        pop.hidden = true; document.body.append(pop); sheet = null;
+        pop.setAttribute('role', 'dialog');
+        chip.setAttribute('aria-expanded', 'false');
+      }, { once: true });
+    }
     pop.hidden = false; chip.setAttribute('aria-expanded', 'true');
     positionPop(); paintPop(); refresh();
+    sheet?.open();
   }
   window.addEventListener('resize', () => { if (!pop.hidden) positionPop(); });
+  document.addEventListener('ply-context-usage', () => { if (sheet) paintPop(); });
   function close(focus = false) {
     if (pop.hidden) return;
+    if (sheet) { sheet.dialog.close(); return; }
     pop.hidden = true; chip.setAttribute('aria-expanded', 'false');
-    if (focus) chip.focus();
+    if (focus) anchor.focus();
   }
   chip.onclick = e => { e.stopPropagation(); if (pop.hidden) open(); else close(); };
   // 面の中の押下は描き直しで要素が外れることがあるので、closest ではなく押した時点の経路で見る
-  document.addEventListener('click', e => { if (!pop.hidden && !e.composedPath().includes(pop)) close(); });
+  document.addEventListener('click', e => { if (!sheet && !pop.hidden && !e.composedPath().includes(pop)) close(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.isComposing && !pop.hidden) close(true); });
 
   // 5 分ごと。隠れている間は取らず、見えたときに古ければ取る
@@ -450,6 +487,8 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   window.addEventListener('pagehide', () => { clearInterval(timer); source.dispose?.(); }, { once: true });
 
   return {
+    open,
+    currentPercent: () => usedOf(topWindow(currentRow()?.windows)),
     /** 今の会話のエージェント・アカウント・互換の接続先・モデル。client.mjs の syncTopbar が呼ぶ */
     show(next) {
       shown = { backend: next.backend ?? null, account: next.account ?? '', endpoint: next.endpoint ?? '', model: next.model || next.models?.['']?.resolvesTo || '' };

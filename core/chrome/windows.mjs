@@ -63,6 +63,9 @@ async function waitFor(check, totalMs, pollMs) {
  */
 export function createChromeWindows({ os, locate, log = () => {}, random = () => crypto.randomBytes(8).toString('hex'), timing = {}, profileFor = () => null, profileUsed = () => {} }) {
   const time = { ...DEFAULT_TIMING, ...timing };
+  // 確かめ専用の User Data（AGENT_HOST_CHROME_USER_DATA）。人がプロフィールを開こうとしたときに開く見える窓にも同じ値を渡し、
+  // 利用者の既定の Chrome に窓を開かない（ADR 0246）
+  const userDataDir = locate?.custom ? locate.userDataDir : null;
   // 会話の id -> { windows: Map<windowId, { ref, nonce, role, token, profile, context }>, queue: Promise }
   // profile: 窓のプロフィールのフォルダー名（分からなければ null）。context: 窓の最初のタブの browserContextId（同じプロフィールに窓を足すときに渡す）
   const entries = new Map();
@@ -104,8 +107,8 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
   }
 
   /** 窓を隠す。前面を取っていたら、窓を開く前の前面（before）へ返す。見張り（層）が残りの取りこぼしを拾う */
-  async function hide(ref, before) {
-    const concealed = await os.conceal(ref);
+  async function hide(ref, before, profile = null) {
+    const concealed = await os.conceal(ref, { profile, userDataDir });
     if (!concealed) log('chrome-windows: conceal failed');
     if (before && await os.yieldForeground(ref, { to: before })) log('chrome-windows: gave the foreground back');
     return concealed;
@@ -251,7 +254,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     try {
       if (features.conceal) {
         ref = await waitFor(() => os.findWindowByNonce(nonce), time.hwndWaitMs, time.hwndPollMs);
-        if (ref) await hide(ref, before);
+        if (ref) await hide(ref, before, profile);
       }
       targetId ??= await waitFor(() => findTarget(cdp, nonce), time.targetWaitMs, time.targetPollMs);
       if (!targetId) throw new Error('the agent browser window did not open in Chrome');
@@ -260,18 +263,22 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
         // 題で見つからなかった（題が付く前・窓が遅れて出た）。もう一度題で、次に外形で探す
         ref = await os.findWindowByNonce(nonce);
         if (!ref && features.bounds) ref = await findByBounds(cdp, windowId, since, { resize: true });
-        if (ref) await hide(ref, before);
+        if (ref) await hide(ref, before, profile);
         else if ((os.generation?.() ?? 0) !== layer) throw new Error('Pleiad is updating. Retry in a minute.');   // 層が入れ替わる間に探せなかった。隠せていない窓を残さず、閉じて失敗にする（下の catch）
         else log('chrome-windows: window not found, so it was not hidden');
       }
+      // 隠す層の無い OS（macOS。ADR 0219）: 窓は見えたまま使う。引き継ぎ（control.mjs）で前に出せるように、題の nonce で窓だけ覚える
+      if (!features.conceal && features.raise) ref = await waitFor(() => os.findWindowByNonce(nonce), time.hwndWaitMs, time.hwndPollMs);
       // 大きさを決める。最大化のまま開いた窓（前回の最大化がプロフィールに残っている chrome.exe の最初の窓）には、先に通常へ戻してから大きさを送る（normalize）。
       // 通常に戻った窓は Chrome が保存していた画面の中の位置へ動くので、隠し直してから印（token）を作る。Chrome が後から動かした分は、層の見張りが隠し直す
       await normalize(cdp, windowId);
       await cdp.send('Browser.setWindowBounds', { windowId, bounds: { ...WINDOW_DIP } }).catch(() => {});
-      if (ref) await os.conceal(ref);
-      const token = ref ? await os.exportAgent(ref) : null;
+      // プロフィールは、窓の最初のタブの browserContextId からも引ける（同じ context の記録があれば同じプロフィール）。
+      // 隠し直すときに渡し、層が AUMID と対応づける（ADR 0246）
       const context = await contextOf(cdp, targetId);
       if (!profile && context) profile = records.find(record => record.context === context && record.profile)?.profile ?? null;
+      if (ref && features.conceal) await os.conceal(ref, { profile, userDataDir });
+      const token = ref ? await os.exportAgent(ref) : null;
       entry.windows.set(windowId, { ref, nonce, role: first ? 'main' : 'extra', token, profile, context });
       changed();
       if (!want && launched) {
@@ -302,10 +309,11 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
     },
 
     /** 範囲のタブが window.open の popup で開いた別窓。外形で窓を見つけて、同じ置き方を当てる */
-    async adoptPopup({ cdp, entryId, windowId }) {
+    async adoptPopup({ cdp, entryId, windowId, profile = null }) {
       const entry = entryOf(entryId);
       if (entry.windows.has(windowId)) return;
-      const record = { ref: null, nonce: null, role: 'popup', token: null, profile: null, context: null };
+      const known = [...entry.windows.values()].find(record => record.profile)?.profile ?? null;
+      const record = { ref: null, nonce: null, role: 'popup', token: null, profile: profile ?? known, context: null };
       entry.windows.set(windowId, record);
       try { await osReady(); } catch (error) { log(`chrome-windows: ${error.message}`); return; }
       const features = os.capabilities().features;
@@ -315,7 +323,7 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); return; }
       if (entry.windows.get(windowId) !== record) { await os.closeAgent(ref).catch(() => {}); return; }   // 先に閉じられた
       record.ref = ref;
-      await hide(ref, null);
+      await hide(ref, null, record.profile);
       record.token = await os.exportAgent(ref);
       changed();
     },
@@ -357,15 +365,17 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
       const fg = await os.foreground();
       const to = fg && !own.has(fg.id) ? fg : near;
       const features = os.capabilities().features;
+      // 隠す層の無い OS（macOS）: 窓は引き継ぐ前から見えていたので、見えたまま戻す
+      if (!features.conceal) { changed(); return { concealed: 0, failed: 0 }; }
       let concealed = 0, failed = 0;
       for (const [windowId, record] of records) {
         if (record.ref) {
-          if (await hide(record.ref, to)) concealed += 1; else failed += 1;
+          if (await hide(record.ref, to, record.profile)) concealed += 1; else failed += 1;
         } else if (record.role === 'popup') {
           const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
           if (!ref) { log('chrome-windows: popup window not found, so it was not hidden'); failed += 1; continue; }
           record.ref = ref;
-          if (await hide(ref, to)) { concealed += 1; record.token = await os.exportAgent(ref); } else failed += 1;
+          if (await hide(ref, to, record.profile)) { concealed += 1; record.token = await os.exportAgent(ref); } else failed += 1;
         }
       }
       changed();
@@ -477,13 +487,13 @@ export function createChromeWindows({ os, locate, log = () => {}, random = () =>
             // main が居ない間に開いた popup（隠せず、窓の ID だけ残っている）。層が戻ったので、外形で探して隠す。探せない・cdp が無いなら、見える窓を残さないよう lost で返して閉じさせる
             if (record.role !== 'popup' || record.ref || entry.revealed) continue;
             const ref = cdp && features.conceal && features.bounds ? await findByBounds(cdp, windowId, baseline, { waitMs: time.popupWaitMs }).catch(() => null) : null;
-            if (ref) { record.ref = ref; await hide(ref, null); record.token = await os.exportAgent(ref); changed(); }
+            if (ref) { record.ref = ref; await hide(ref, null, record.profile); record.token = await os.exportAgent(ref); changed(); }
             else if (cut()) { lost.interrupted = true; break scan; }
             else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: false }); }
             continue;
           }
           // 見せている窓は、層に「隠していない窓」として引き継がせる（前面の見張りが人の窓を画面の外へ戻さない）
-          const ref = await os.adoptAgent(record.token, { revealed: entry.revealed === true }).catch(() => null);
+          const ref = await os.adoptAgent(record.token, { revealed: entry.revealed === true, profile: record.profile, userDataDir }).catch(() => null);
           if (ref) record.ref = ref;
           else if (cut()) { lost.interrupted = true; break scan; }
           else { entry.windows.delete(windowId); lost.push({ entryId, windowId, revealed: entry.revealed === true }); }

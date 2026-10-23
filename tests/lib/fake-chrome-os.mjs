@@ -152,10 +152,11 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       return { id: hits[0].id };
     },
     async hiddenSpot() { note({ op: 'hiddenSpot' }); return { ...OFFSCREEN }; },
-    async conceal(ref) {
-      note({ op: 'conceal', ref: ref?.id });
+    async conceal(ref, { profile = null, userDataDir = null } = {}) {
+      note({ op: 'conceal', ref: ref?.id, profile, userDataDir });
       const h = knownAgent(ref);
       if (!h || opts.concealFails) return false;
+      if (typeof profile === 'string') h.profile = profile;
       h.concealed = true; h.rect = { ...h.rect, left: OFFSCREEN.x, top: OFFSCREEN.y };
       h.alpha = 0; h.ex = { toolwindow: true, layered: true, transparent: true, appwindow: false };
       return true;
@@ -173,8 +174,8 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
       const h = knownAgent(ref);
       return h && h.concealed ? `fake:${h.id}` : null;
     },
-    async adoptAgent(token, { revealed = false } = {}) {
-      note({ op: 'adoptAgent', token, revealed });
+    async adoptAgent(token, { revealed = false, profile = null, userDataDir = null } = {}) {
+      note({ op: 'adoptAgent', token, revealed, profile, userDataDir });
       if (!caps.supported) return null;
       const h = typeof token === 'string' && token.startsWith('fake:') ? hw.get(token.slice(5)) : null;
       if (!h || h.gone || h.closed || opts.adoptFails) return null;
@@ -216,7 +217,7 @@ export function fakeChromeOs({ chrome = null, supported = true, reason = 'platfo
     },
     /** 窓が（Chrome ごと）無くなった */
     killWindow(id) { const h = hw.get(id); if (h) h.gone = true; },
-    hwnds: () => [...hw.values()].map(h => ({ id: h.id, windowId: h.windowId, pid: h.pid, title: titleOf(h), rect: { ...rectOf(h) }, concealed: h.concealed, agent: h.agent, released: h.released, closed: h.closed, gone: h.gone, alpha: h.alpha, ex: { ...h.ex }, prevFg: h.prevFg })),
+    hwnds: () => [...hw.values()].map(h => ({ id: h.id, windowId: h.windowId, pid: h.pid, title: titleOf(h), rect: { ...rectOf(h) }, concealed: h.concealed, agent: h.agent, released: h.released, closed: h.closed, gone: h.gone, alpha: h.alpha, ex: { ...h.ex }, prevFg: h.prevFg, profile: h.profile ?? null })),
     hwndOfWindow: windowId => { const h = [...hw.values()].find(x => x.windowId === windowId); return h ? { id: h.id } : null; },
   };
   return self;
@@ -244,12 +245,12 @@ export function fakeMainPort(os, { delayMs = 20, epoch = 'main-1' } = {}) {
       case 'launchWindow': return os.launchWindow(a);
       case 'findWindowByNonce': return os.findWindowByNonce(a.nonce);
       case 'findWindowByBounds': return os.findWindowByBounds({ bounds: a.bounds, port: a.port, since: a.since, tolerance: a.tolerance });
-      case 'conceal': return os.conceal(a.ref);
+      case 'conceal': return os.conceal(a.ref, { profile: a.profile, userDataDir: a.userDataDir });
       case 'reveal': return os.reveal(a.ref, { near: a.near });
       case 'release': return os.release(a.ref);
       case 'closeAgent': return os.closeAgent(a.ref);
       case 'exportAgent': return os.exportAgent(a.ref);
-      case 'adoptAgent': return os.adoptAgent(a.token, { revealed: a.revealed === true });
+      case 'adoptAgent': return os.adoptAgent(a.token, { revealed: a.revealed === true, profile: a.profile ?? null, userDataDir: a.userDataDir ?? null });
       default: return os[action]();
     }
   };

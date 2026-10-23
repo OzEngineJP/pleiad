@@ -149,6 +149,8 @@ export const DATA_WRITES = [
   ] },
   { file: 'core/remote/devices.mjs', sites: 2, targets: [
     { name: 'remote/settings.json・remote/devices.json・remote/resident.json', limit: 'リモートの設定と、ペアリングした端末の一覧。ユーザーが数個', reason: '設定の台帳' },
+    { name: 'remote/revoked.json', limit: '取り消した端末の鍵 1 つにつき 1 行。同じ鍵は 1 行にまとめる。ユーザーが取り消した数だけ', reason: '取り消した鍵の一覧。台帳やトークンが残っていても、この鍵は受けない' },
+    { name: 'remote/plus-requests.json', limit: 'Plus のアカウント 1 つにつき、直近 1 時間に断った時刻（3 つまで）と止めている期限', reason: '公式の中継からの申し込みを続けて断ったときに止める数。再起動しても続ける' },
   ] },
   { file: 'core/remote/static-cache.mjs', sites: 2, targets: [
     { name: '(置き場の外) デスクトップ版の端末の置き場（userData の remote-hosts）の static/<hostId>.bin と書きかけの .tmp', limit: 'ホスト 1 つにつき 1 ファイル。BUNDLE_MAX_BYTES=64MiB（今の web/ で約 5 MB）', reason: 'ホストの画面の殻の束（docs/remote.md §8.6、ADR 0181）。版が変わったときだけ別名に書いてから置き換える。ホストを削除すると消す' },
@@ -156,9 +158,10 @@ export const DATA_WRITES = [
   { file: 'core/plus/config.mjs', sites: 1, targets: [
     { name: 'plus-config.json', limit: '固定（/v1/auth/config の応答の写し。秘密を含まない）', reason: 'Pleiad Plus の設定の写し。api に届かないときに使う。読めたときだけ書き直す' },
   ] },
-  { file: 'core/plus/sync/engine.mjs', sites: 2, targets: [
+  { file: 'core/plus/sync/engine.mjs', sites: 4, targets: [
     { name: 'plus/sync-state.json', limit: '同期する項目 1 つにつき 1 行（itemId・rev・sha256・mtime）。項目は skill のファイル・全体の指示ファイル 3 つ・既定でない設定で、合計はサーバーの返す limitBytes に従う。消した項目の行も残る', reason: '同期の手元の覚え（docs/plus.md「同期」）。1 回の同期の終わりに書く。中身・鍵は入れない' },
     { name: 'plus/sync-conflicts/<日時>/<論理名>', limit: '競合で負けた版 1 つにつき 1 ファイル（ITEM_LIMIT_BYTES=1MiB 以下）。CONFLICT_KEEP_MS=30 日を過ぎたフォルダーは起動時に消す', reason: '競合で負けた版の写し。書き換えない' },
+    { name: 'plus/sync-inbox/<id>/{incoming,base,meta.json}', limit: '同期で届いて取り込むのを待っている skill・指示ファイル 1 つにつき 1 フォルダー（id は論理名から決まり、同じ項目は置き換える）。1 ファイル ITEM_LIMIT_BYTES=1MiB 以下。取り込む・捨てるで消える', reason: '受け入れ待ち（docs/plus.md「同期で届いた skill と指示ファイル」）。届いた版と、届いたときの手元の版の写し' },
   ] },
   { file: 'core/plus/sync/targets.mjs', sites: 1, targets: [
     { name: 'skills/ と (置き場の外) ~/.claude/skills・~/.agents/skills・全体の指示ファイル 3 つ', limit: '1 ファイル ITEM_LIMIT_BYTES=1MiB 以下。ユーザーの skill と指示ファイルの数', reason: 'ほかの PC から受けた skill と指示ファイル（docs/plus.md「同期」）。リンクの先には書かない' },

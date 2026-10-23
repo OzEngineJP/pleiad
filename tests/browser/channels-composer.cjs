@@ -62,7 +62,6 @@ async page => {
   const suffix = String(Date.now()).slice(-5);
   const ch = await rpc('channels.create', { name: 'attach' + suffix, purpose: '添付の確認' });
   const ch2 = await rpc('channels.create', { name: 'other' + suffix });
-  await page.locator('#sideOrder [data-order="channel"]').click();
   await show(ch.id);
   await page.locator('#chFeed').waitFor();
   await page.waitForFunction(() => !document.querySelector('#chFeed .ch-loading'));
@@ -79,18 +78,14 @@ async page => {
   await page.keyboard.press('Enter');
   await paste('#chFeedComposerInput', 'shot1.png', '#3a7');
   await page.waitForFunction(() => document.querySelectorAll('#chFeedComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
-  check(await page.locator('#chFeedComposer .att-count').textContent() === '添付 1 件', 'pasting an image puts it in the editor and the strip says 添付 1 件');
+  check(await page.locator('#chFeedComposer .md-b.md-att').count() === 1 && await page.locator('#chFeedComposer .att-entry, #chFeedComposer .att-strip').count() === 0, 'pasting an image puts one card in the editor (no 添付 N 件 strip)');
   const value = await page.evaluate(() => document.getElementById('chFeedComposerInput').value);
   check(/^スクショです\n\[添付\] .*shot1\.png$/.test(value), 'the editor value carries the 添付 mark line (what a bot reads): ' + JSON.stringify(value));
 
-  // ---- ファイルの選択（クリップ）と一覧
+  // ---- ファイルの選択（＋）
   await page.setInputFiles('#chFeedComposer input[type=file]', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hello attach') });
   await page.waitForFunction(() => document.querySelectorAll('#chFeedComposer .md-b.md-att').length === 2 && !document.querySelector('#chFeedComposer .md-att-up'), null, { timeout: 8000 });
-  check(await page.locator('#chFeedComposer .att-count').textContent() === '添付 2 件', 'the file picker adds a second attachment');
-  await page.locator('#chFeedComposer .att-entry').click();
-  await page.locator('dialog.att-list[open]').waitFor();
-  check(await page.locator('dialog.att-list .att-list-row').count() === 2, 'the list shows both attachments');
-  await page.keyboard.press('Escape');
+  check(await page.locator('#chFeedComposer .md-b.md-att').count() === 2, 'the file picker adds a second attachment card');
 
   // ---- 送信（Ctrl+Enter）
   await input.click();
@@ -104,7 +99,7 @@ async page => {
   check((first.text.match(/\[添付\]/g) ?? []).length === 2, 'the post text keeps both marks');
   check(await page.locator('#chFeed .post-body .msg-att-img img').count() === 1 && await page.locator('#chFeed .post-body .msg-att-file').count() === 1, 'the post shows the image and the file chip');
   check(await page.evaluate(() => { const i = document.querySelector('#chFeed .post-body .msg-att-img img'); return i.complete && i.naturalWidth > 0; }), 'the attached image loads');
-  check(await page.evaluate(() => document.getElementById('chFeedComposerInput').value) === '' && await page.locator('#chFeedComposer .att-strip').isHidden(), 'the composer is empty after posting');
+  check(await page.evaluate(() => document.getElementById('chFeedComposerInput').value) === '' && await page.locator('#chFeedComposer .md-b.md-att').count() === 0, 'the composer is empty after posting');
 
   // ---- 画像を押すと大きく見る
   await page.locator('#chFeed .msg-att-zoom').click();
@@ -123,14 +118,14 @@ async page => {
   });
   check(await page.evaluate(() => window.__dropping), 'dragging files over the feed highlights the feed (and not Chats)');
   await page.waitForFunction(() => document.querySelectorAll('#chFeedComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
-  check(await page.evaluate(() => document.getElementById('prompt').value === '' && document.getElementById('attached').hidden), 'the drop lands in the channel composer, not the Chats composer');
+  check(await page.evaluate(() => document.getElementById('prompt').value === '' && !document.querySelector('#prompt .md-att')), 'the drop lands in the channel composer, not the Chats composer');
 
   // ---- 書きかけ: 別のチャンネルへ移って戻る・再読み込み
   await input.click();
   await page.keyboard.type('下書きのテキスト');
   await show(ch2.id);
   await page.waitForFunction((n) => document.getElementById('channelsPageTitle').textContent === `#${n}`, 'other' + suffix);
-  check(await page.evaluate(() => document.getElementById('chFeedComposerInput').value) === '' && await page.locator('#chFeedComposer .att-strip').isHidden(), 'another channel starts with an empty composer');
+  check(await page.evaluate(() => document.getElementById('chFeedComposerInput').value) === '' && await page.locator('#chFeedComposer .md-b.md-att').count() === 0, 'another channel starts with an empty composer');
   await show(ch.id);
   await page.waitForFunction((n) => document.getElementById('channelsPageTitle').textContent === `#${n}`, 'attach' + suffix);
   await page.waitForTimeout(300);
@@ -138,7 +133,6 @@ async page => {
   await page.reload();
   await later.click({ timeout: 4000 }).catch(() => {});
   await page.waitForFunction(() => window.__sockets?.at(-1)?.readyState === 1 && document.getElementById('channelsView'));
-  await page.locator('#sideOrder [data-order="channel"]').click();
   await show(ch.id);
   await page.waitForFunction((n) => !document.querySelector('#chFeed .ch-loading') && document.getElementById('channelsPageTitle').textContent === `#${n}`, 'attach' + suffix);
   await page.waitForTimeout(400);
@@ -152,7 +146,7 @@ async page => {
   await page.keyboard.type('スレッドの返信');
   await paste('#thPrompt', 'reply.png', '#37a');
   await page.waitForFunction(() => document.querySelectorAll('#thComposer .md-b.md-att img').length === 1, null, { timeout: 8000 });
-  check(await page.locator('#thComposer .att-count').textContent() === '添付 1 件', 'the thread composer takes attachments too');
+  check(await page.locator('#thComposer .md-b.md-att').count() === 1, 'the thread composer takes attachments too');
   await page.keyboard.press('Control+Enter');
   await page.waitForFunction(() => document.querySelectorAll('#chThread .th-replies .post .msg-att-img').length === 1, null, { timeout: 8000 });
   const reply = (await rpc('channels.read', { channelId: ch.id, threadId: first.id })).posts.at(-1);
@@ -165,7 +159,7 @@ async page => {
   await page.keyboard.type('待ちの返信');
   await paste('#thPrompt', 'slow.png', '#555');
   await page.waitForFunction(() => document.querySelector('#thComposer .md-att-up'), null, { timeout: 8000 });
-  check(/送信中/.test(await page.locator('#thComposer .att-state').textContent()), 'the strip says the attachment is being sent');
+  check(await page.locator('#thComposer .md-att[data-state=sending] .md-att-act[data-act=cancel]').count() === 1, 'the card says the attachment is being sent and can be cancelled');
   const before = (await rpc('channels.read', { channelId: ch.id, threadId: first.id })).posts.length;
   const shown = await page.locator('#chThread .th-replies .post').count();
   await page.keyboard.press('Control+Enter');

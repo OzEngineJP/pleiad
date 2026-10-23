@@ -4,7 +4,9 @@ package dev.pleiad.app.remote
 // relay to the host, with reconnects and states. Loop-confined; the blocking relay handshake runs on a worker thread.
 //
 // state: connecting | connected | offline | host-offline | revoked | stopped
+//        (Plus) reapprove: the host wants this device allowed again on its screen (readmission was refused). No retries
 // Backoff 0.5 s -> 30 s doubling (±25 % jitter), reset after 10 s connected. Streams never survive a reconnect.
+// (Plus) paused: Plus comes back on its own, so the line keeps asking, 5 s -> 30 s doubling, without showing "connecting".
 
 import java.util.concurrent.Executors
 import org.json.JSONObject
@@ -34,15 +36,23 @@ data class LinkStatus(
 
 class LinkUnavailable(val state: String, val closeCode: Int? = null) : Exception("link $state")
 
-data class Backoff(val minMs: Long = 500, val maxMs: Long = 30_000, val stableMs: Long = 10_000)
+data class Backoff(val minMs: Long = 500, val maxMs: Long = 30_000, val stableMs: Long = 10_000, val pausedMinMs: Long = 5_000, val pausedMaxMs: Long = 30_000)
 
 object LinkRules {
     fun classifyClose(closeCode: Int? = null, goaway: String? = null, reason: String? = null, via: String = "own"): String = when {
+        via == "plus" && goaway == "revoked" -> "readmit"
         via == "plus" && closeCode == 4401 && reason in setOf("revoked", "device token") -> "readmit"
         via == "plus" && closeCode == 4401 && reason == "account" -> "blocked"
-        via == "plus" && closeCode == 4401 && reason == "token" -> "offline"
+        // the PC was removed from the Plus account: asking it to admit this device again cannot help
+        via == "plus" && closeCode == 4401 && reason == "host" -> "removed"
+        via == "plus" && closeCode == 4401 && (reason == "token" || reason == "ticket") -> "offline"
+        // the relay takes tickets only and this connection had none: the app needs an update
+        via == "plus" && closeCode == 4401 && reason == "update required" -> "update"
         via == "plus" && closeCode == 4401 && reason == "plus off" -> "host-offline"
         via == "plus" && closeCode == 4401 && reason == "plus unavailable" -> "paused"
+        // Any other refusal (the host closed the handshake: it wants this device allowed again, or does not know the key):
+        // ask the host again and show its answer, like the desktop's device link
+        via == "plus" && closeCode == 4401 -> "readmit"
         via == "plus" && closeCode == 4429 && reason == "account limit" -> "limit"
         via == "plus" && closeCode == 4429 && reason == "admit rate" -> "offline"
         goaway == "revoked" || closeCode == 4401 -> "revoked"
@@ -51,12 +61,38 @@ object LinkRules {
         closeCode == 1013 -> "offline"
         else -> "offline"
     }
+
+    /** The state after asking the host to admit this device again failed (PairError.code; null: no answer). */
+    fun readmitFailedState(code: String?): String = when (code) {
+        "plus-no-relay" -> "blocked"
+        "plus-limit" -> "limit"
+        "plus-reapprove" -> "reapprove"
+        "plus-update" -> "update"
+        "unknown-host" -> "removed"
+        "plus-paused" -> "paused"
+        "unreachable" -> "offline"
+        else -> "revoked"
+    }
+
+    /**
+     * The state after the relay ticket could not be taken (PairError.code), told like the relay's close reasons:
+     * the PC was removed (unknown-host, 4401 'host'), the account cannot use the relay (plus-no-relay, 4401 'account')
+     * stop, Plus being paused (plus-paused, 4401 'plus unavailable') waits for it; anything else is retried as offline.
+     */
+    fun ticketFailedState(code: String?): String = when (code) {
+        "plus-update" -> "update"
+        "plus-signed-out" -> "signed-out"
+        "unknown-host" -> "removed"
+        "plus-no-relay" -> "blocked"
+        "plus-paused" -> "paused"
+        else -> "offline"
+    }
 }
 
 class DeviceLink(
     val loop: Loop,
     @Volatile var creds: HostCreds,
-    private val keyPair: KeyPair,
+    private var keyPair: KeyPair,
     private val app: String = "",
     private val name: String = "",
     private val shell: String = "mobile",
@@ -66,6 +102,9 @@ class DeviceLink(
     private val log: (String) -> Unit = {},
     private val plusIdToken: (() -> String?)? = null,
     private val plusReadmit: ((String) -> HostCreds?)? = null,
+    // The relay ticket for one connection (docs/plus.md "Tickets"). Runs on a worker. Null: the api has no tickets yet
+    // (use the ID token). Throws PairError("plus-update") when the app is too old for the api.
+    private val plusTicket: ((hostId: String, keyPair: KeyPair) -> String?)? = null,
 ) {
     companion object {
         /** Blocking handshakes run here (never on the loop). */
@@ -79,6 +118,7 @@ class DeviceLink(
     private var generation = 0
     private var readmitAttempts = 0
     private var tokenFailures = 0
+    private var pausedAttempts = 0
     private var retryTimer: Cancellable? = null
     private var stableTimer: Cancellable? = null
     private var socket: RelaySocket? = null
@@ -115,9 +155,13 @@ class DeviceLink(
         setStatus(LinkStatus("stopped"))
     }
 
-    /** Reconnect now ("retry", foreground again, or new credentials after re-pairing). */
-    fun retryNow(newCreds: HostCreds? = null) = loop.exec {
+    /** Reconnect now ("retry", foreground again, or new credentials and key after re-pairing). */
+    fun retryNow(newCreds: HostCreds? = null, newKeyPair: KeyPair? = null) = loop.exec {
+        // The same credentials again (the host list read again with an unchanged relay) are no reason to cut the line:
+        // a stopped line stays stopped and a waiting one keeps its backoff
+        if (newCreds != null && newKeyPair == null && newCreds == creds) return@exec
         if (newCreds != null) creds = newCreds
+        if (newKeyPair != null) keyPair = newKeyPair
         if (!running) { running = true; attempt = 0; connect(); return@exec }
         if ((state == "connecting" || state == "connected") && newCreds == null) return@exec
         generation++
@@ -185,19 +229,13 @@ class DeviceLink(
                         connect()
                     } else {
                         running = false
-                        val failedState = when (error?.code) {
-                            "plus-no-relay" -> "blocked"
-                            "plus-limit" -> "limit"
-                            "unreachable" -> "offline"
-                            else -> "revoked"
-                        }
-                        setStatus(LinkStatus(failedState, reason = error?.code ?: "readmit-failed"))
+                        setStatus(LinkStatus(LinkRules.readmitFailedState(error?.code), reason = error?.code ?: "readmit-failed"))
                     }
                 }
             }
             return
         }
-        if (creds.via == "plus" && detail.closeCode == 4401 && detail.reason == "token") {
+        if (creds.via == "plus" && detail.closeCode == 4401 && (detail.reason == "token" || detail.reason == "ticket")) {
             tokenFailures++
             if (tokenFailures >= 2) {
                 running = false
@@ -205,7 +243,20 @@ class DeviceLink(
                 return
             }
         }
-        if (state in setOf("revoked", "blocked", "limit", "paused", "readmit", "signed-out")) {
+        if (state == "paused" && creds.via == "plus") {
+            // Plus comes back on its own: ask again, slower each time but within half a minute, and keep showing "paused"
+            val delay = minOf(backoff.pausedMaxMs, backoff.pausedMinMs * (1L shl minOf(pausedAttempts, 20)))
+            pausedAttempts++
+            val now = System.currentTimeMillis()
+            setStatus(detail.copy(state = state, since = if (status.state == "paused") status.since else now, retryAt = now + delay))
+            val gen = generation
+            retryTimer = loop.schedule(delay) {
+                retryTimer = null
+                if (gen == generation && running) connect(quiet = true)
+            }
+            return
+        }
+        if (state in setOf("revoked", "reapprove", "blocked", "limit", "readmit", "signed-out", "update", "removed")) {
             running = false
             setStatus(detail.copy(state = state, since = System.currentTimeMillis()))
             return
@@ -221,20 +272,57 @@ class DeviceLink(
         }
     }
 
-    /** Loop. Starts one attempt; the blocking part runs on a worker, the result comes back to the loop. */
-    private fun connect() {
+    /**
+     * Loop. Starts one attempt; the blocking part runs on a worker, the result comes back to the loop.
+     * quiet: asking again while Plus is paused keeps "paused" until a ticket is given.
+     */
+    private fun connect(quiet: Boolean = false) {
         val gen = ++generation
-        val live = { gen == generation && running }
-        setStatus(LinkStatus("connecting"))
         val c = creds
-        val accountToken = if (c.via == "plus") plusIdToken?.invoke() else null
-        if (c.via == "plus" && accountToken.isNullOrEmpty()) {
+        val ticket = plusTicket
+        if (!quiet || c.via != "plus" || ticket == null) setStatus(LinkStatus("connecting"))
+        if (c.via == "plus" && ticket != null) {
+            // a ticket is taken over the network: on a worker, then open on the loop
+            val kp = keyPair
+            workers.execute {
+                var relay: String? = null
+                var failed: String? = null
+                try { relay = ticket.invoke(c.hostId, kp) }
+                catch (e: PairError) {
+                    failed = LinkRules.ticketFailedState(e.code)
+                    log("remote device: ticket failed: ${e.code}")
+                }
+                catch (e: Exception) { failed = "offline"; log("remote device: ticket failed: ${e.javaClass.simpleName}") }
+                loop.post {
+                    if (gen != generation || !running) return@post
+                    val f = failed
+                    if (f != null) return@post scheduleRetry(f, LinkStatus(f, reason = "ticket"))
+                    if (quiet) setStatus(LinkStatus("connecting"))
+                    if (relay != null) open(c, gen, "x-pleiad-ticket" to relay!!)
+                    else withIdToken(c, gen)
+                }
+            }
+            return
+        }
+        if (c.via == "plus") withIdToken(c, gen) else open(c, gen, null)
+    }
+
+    /** Loop. The connection with the ID token (an api without tickets). */
+    private fun withIdToken(c: HostCreds, gen: Int) {
+        val accountToken = plusIdToken?.invoke()
+        if (accountToken.isNullOrEmpty()) {
             running = false
             setStatus(LinkStatus("signed-out"))
             return
         }
+        open(c, gen, "x-pleiad-account" to accountToken)
+    }
+
+    /** Loop. account: the relay's account header for via "plus" (the ticket, or the ID token). */
+    private fun open(c: HostCreds, gen: Int, account: Pair<String, String>?) {
+        val live = { gen == generation && running }
         val headers = mutableMapOf("authorization" to "Bearer ${c.token}", "x-pleiad-host" to c.hostId, "x-pleiad-device" to c.deviceId)
-        if (c.via == "plus") headers["x-pleiad-account"] = accountToken!!
+        if (account != null) headers[account.first] = account.second
         val sock = try {
             RelaySocket(
                 PairingCodec.relayWsUrl(c.relayUrl, "/v1/device"),
@@ -335,6 +423,7 @@ class DeviceLink(
             connectedAt = System.currentTimeMillis()
             readmitAttempts = 0
             tokenFailures = 0
+            pausedAttempts = 0
             stableTimer?.cancel()
             stableTimer = loop.schedule(backoff.stableMs) { if (channel === ch) attempt = 0 }
             setStatus(LinkStatus("connected"))

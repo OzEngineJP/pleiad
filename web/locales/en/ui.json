@@ -213,6 +213,8 @@
         "syncErrUnavailable": "Can't reach the server. It will retry automatically.",
         "syncErrRetry": "It will retry automatically.",
         "syncErrOther": "Please try again.",
+        "paused": "Pleiad Plus is paused for now (waiting for it to resume)",
+        "syncPausedNote": "Sync resumes on its own when it's back.",
         "syncStopped": "Sync is paused",
         "syncStoppedDisabled": "Sync isn't available for this account right now. It will resume automatically once it is.",
         "syncStoppedNotPlus": "It will resume automatically when you're back on Pleiad Plus.",
@@ -250,9 +252,91 @@
         "syncUnregistered": "Sync is paused because this PC is no longer registered",
         "syncUnregisteredHint": "It will resume automatically once this PC is registered again.",
         "syncSharedTo": "Shared the sync key with the new PC {{name}} ({{time}})",
+        "syncWaitApproval": "Waiting for a PC with the key to approve",
+        "syncWaitApprovalHint": "Open Pleiad on {{name}} and a confirmation code appears on both screens.",
+        "syncApproveOn": "Approve on {{name}}",
+        "syncCode": "Confirmation code",
+        "syncJoinDenied": "The key was not handed over",
+        "syncJoinDeniedHint": "You can ask again in an hour.",
+        "syncHelpRemove": "Remove PCs you no longer have on the account page. A removed PC can no longer read the sync data.",
+        "syncHelpRecovery": "If no PC with the key is left, this PC can ask for recovery. After 72 hours it starts over with a new key, and the sync data on the server is deleted. A PC with the key can stop it while it waits.",
+        "syncHelpClose": "Close",
+        "syncHolderGoneAll": "Every PC with the key has been removed.",
+        "syncRecoveryAbout": "Ask for recovery to start over with a new key after 72 hours. The sync data on the server is deleted. A PC with the key can stop it while it waits.",
+        "syncRecoveryAsk": "Ask for recovery",
+        "syncRecoveryWaiting": "Waiting for recovery. You can start over with a new key from {{time}}.",
+        "syncRecoveryReady": "The recovery wait is over. You can start over with a new key.",
+        "syncRecoveryWithdraw": "Withdraw",
+        "syncRecoveryStart": "Start over with a new key",
+        "syncRecoveryOther": "{{name}} asked for recovery. After {{time}}, that PC can start over with a new key.",
+        "syncRecoveryStop": "Stop recovery",
+        "syncRecoveryAlert": "{{name}} asked to recover sync. If you don't recognize this, stop it. After {{time}}, sync starts over with a new key.",
+        "syncRecoveryNote": {
+          "reauth": "Sign in again to ask for recovery (a recent sign-in is required).",
+          "other": "Another PC already asked for recovery.",
+          "holder": "A PC with the key was found. You can get the key when that PC approves.",
+          "waiting": "The wait isn't over yet.",
+          "gone": "The recovery was canceled.",
+          "stopped": "Stopped the recovery.",
+          "stopFailed": "Couldn't stop the recovery."
+        },
+        "syncRelogin": "Sign in again",
+        "syncUpdateRequired": "This version of Pleiad can't continue syncing",
+        "syncUpdateRequiredHint": "Update Pleiad to resume.",
+        "syncApiDowngraded": "Sync stopped because the sync server answered as its previous version",
+        "syncApiDowngradedHint": "The key wasn't handed over the previous way. Restart Pleiad after the server is back to resume.",
+        "syncRestarted": "This PC's previous key can't vouch for the new key (it was made by a recovery or similar). It wasn't switched automatically.",
+        "syncRestartedHint": "If you expected this, take it. It arrives once you compare the confirmation code and approve on a PC that holds the key. Sync on this PC stays paused until then.",
+        "syncAcceptRestart": "Take the new key",
+        "syncRestartChanged": "The key changed again in the meantime. Check what's shown and choose again.",
+        "syncKeyUnverified": "The key that arrived couldn't be verified, so it wasn't taken and sync is paused",
+        "syncKeyUnverifiedHint": "Removing this PC on your Pleiad Plus account page and registering it again means getting approval from a PC that holds the key once more. If this is the only PC that holds the key, removing it leads to recovery (a 72-hour wait; the sync data on the server is erased).",
+        "syncStartOverOthersApproval": "Other PCs: sync pauses, and resumes once you approve them on this PC. Where both have the same item, the newer one is kept and the other stays in the sync copies for 30 days.",
+        "syncApprove": {
+          "mark": "Waiting for approval",
+          "title": "Hand the sync key to \"{{name}}\"?",
+          "hint": "Check that the same number is shown on {{name}} before handing it over.",
+          "deny": "Don't hand over",
+          "approve": "Hand over",
+          "changed": "The confirmation code changed. Compare them again.",
+          "gone": "The request was withdrawn.",
+          "noKey": "This PC doesn't have the current sync key."
+        },
         "hostRemoved": "This PC was removed from Pleiad Plus. Register it again to resume the relay and sync.",
         "hostReregister": "Register this PC again",
-        "hostReregistered": "This PC had been removed from the account, so it was registered again"
+        "hostReregistered": "This PC had been removed from the account, so it was registered again",
+        "hostRemovedKey": "This PC was removed from Pleiad Plus. To register it again, this PC's key is rebuilt.",
+        "syncInbox_one": "{{count}} change arrived",
+        "syncInbox_other": "{{count}} changes arrived",
+        "inboxTitle": "Changes that arrived",
+        "inboxKind": {
+          "change": "Changed",
+          "new": "New file",
+          "delete": "Deleted"
+        },
+        "inboxFromUnknown": "Another PC",
+        "inboxLoading": "Loading…",
+        "inboxEmpty": "No changes have arrived",
+        "inboxTake": "Apply",
+        "inboxDrop": "Discard",
+        "inboxTaken": "Applied",
+        "inboxDropped": "Discarded",
+        "inboxGone": "This change is no longer waiting",
+        "inboxLocalChanged": "The file on this PC changed after this arrived, so it was not applied. To keep the current file, press Discard.",
+        "inboxNotApplied": "Could not apply this change. Try again.",
+        "inboxBinary": "The contents can't be shown. Check them on the PC that sent this before applying.",
+        "inboxBinaryIncoming": "Arrived version: {{size}}",
+        "inboxBinaryLocal": "Current version on this PC: {{size}}",
+        "inboxBytes_one": "{{count}} byte",
+        "inboxBytes_other": "{{count}} bytes",
+        "inboxBinaryConfirm": "This applies the file without showing its contents. Did you check on the sending PC that the size and sha256 match?",
+        "inboxBinaryConfirmYes": "Checked, apply",
+        "inboxRenewed": "A newer version arrived. Review the changes again before choosing.",
+        "inboxHidden": {
+          "bidi": "Contains characters that change text direction (shown as ⟨U+…⟩ in the diff).",
+          "invisible": "Contains zero-width characters (shown as ⟨U+…⟩ in the diff).",
+          "eol": "Only the line endings differ."
+        }
       },
     "remote": {
       "tabs": {
@@ -271,12 +355,16 @@
         "plusUpgrade": "Get Pleiad Plus",
         "plusBlocked": "This account can't use the official relay",
         "plusLimit": "This account has reached its limit",
+        "plusUpdate": "This version of Pleiad can't use the official relay. Please update Pleiad",
+        "plusRemoved": "This PC was removed from the Plus account",
         "plusEmpty": "PCs signed in to the same account appear here.",
         "plusMaintenance": "Pleiad Plus is under maintenance",
         "plusUnavailable": "Pleiad Plus is temporarily unavailable",
         "plusNeedsUpdate": "Please update Pleiad",
         "own": "Your own relay server",
-        "plusHead": "Pleiad Plus (official relay)"
+        "plusHead": "Pleiad Plus (official relay)",
+        "reapprove": "Devices that need approval again",
+        "revoked": "Revoked devices"
       },
       "state": {
         "connected": "Connected · {{where}}",
@@ -292,6 +380,8 @@
         "signingIn": "Sign in to Pleiad Plus",
         "account": "This account can't use the official relay",
         "connecting": "Connecting…",
+        "paused": "Requests through the official relay are paused until {{time}}.",
+        "resume": "Resume",
         "todo": {
           "install": {
             "phone": "Install Pleiad on your phone",
@@ -315,7 +405,12 @@
         "added": "Added",
         "lastSeen": "Last connected",
         "never": "Never connected",
-        "revoke": "Revoke"
+        "revoke": "Revoke",
+        "approvedBy": "Allowed by",
+        "thisPc": "This PC",
+        "revokedAt": "Revoked",
+        "revokedBy": "Revoked by",
+        "hideRevoked": "Remove from list"
       },
       "wizard": {
         "steps": {
@@ -372,7 +467,8 @@
           "notAllowed": "Works once {{host}}'s Pleiad is updated"
         },
         "loadFailed": "Couldn't read the PC list: {{error}}",
-        "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read)."
+        "storagePlain": "Credentials can't be encrypted on this PC (they are saved in a file only you can read).",
+        "reapprove": "Needs to be allowed again"
       },
       "relay": {
         "url": "Relay URL",
@@ -383,14 +479,21 @@
         "hostName": "Host name",
         "notEncrypted": "This session cannot encrypt the enrollment secret (it is saved to a file only you can read).",
         "edit": "Edit",
-        "save": "Save"
+        "save": "Save",
+        "remove": "Remove relay settings",
+        "removeConfirm": "Remove the relay URL and enrollment secret? This PC will stop connecting to this relay.",
+        "removeDevices_one": "The {{count}} device connected through this relay will not connect until you set up a relay again (it is not revoked).",
+        "removeDevices_other": "The {{count}} devices connected through this relay will not connect until you set up a relay again (they are not revoked).",
+        "removeConfirmButton": "Remove"
       },
       "devices": {
         "unnamed": "Unnamed device",
         "revokeConfirm": "Revoke \"{{name}}\"? It is disconnected right away and cannot connect until it is paired again.",
         "keep": "Cancel",
         "revokeTasks": "The {{count}} tasks handed over by this device's AI are also stopped.",
-        "revokeConfirmButton": "Revoke"
+        "revokeConfirmButton": "Revoke",
+        "quoted": "\"{{name}}\"",
+        "revokeChain": "{{names}}, allowed by this device, will also be revoked."
       },
       "platform": {
         "desktop": "Desktop",
@@ -413,7 +516,9 @@
         "deny": "Deny",
         "approve": "Allow",
         "cancelled": "The device disconnected before approval.",
-        "expired": "The request expired without approval."
+        "expired": "The request expired without approval.",
+        "titleAgain": "Allow \"{{name}}\" again?",
+        "addedOn": "Added {{date}}"
       },
       "fullAccess": "A connected device can do everything this PC can"
     },
@@ -988,11 +1093,9 @@
     "who": "“{{title}}”",
     "whoMany": "“{{title}}” and {{count}} more",
     "whoAnother": "another conversation",
-    "busySuffix": "also in use",
     "busyTitle": "{{who}} is writing to the same repository. Open this to start in a worktree.",
     "busyNote": "{{who}} is writing to the same repository",
     "checkingTitle": "Checking whether another conversation is writing here",
-    "unknownSuffix": "unchecked",
     "unknownTitle": "Couldn't check whether another conversation is writing here",
     "chipSuffix": "worktree",
     "chipTitle": "Worktree · from {{origin}}",
@@ -2334,14 +2437,7 @@
       "copyPath": "Copy path",
       "close": "Close",
       "sent": "Sent",
-      "importing": "Importing",
       "byPath": "Passed by path",
-      "jump": "Go to its place in the text",
-      "insert": "Insert at the cursor",
-      "section": {
-        "inline": "In the text",
-        "tail": "Added at the end"
-      },
       "origin": {
         "host": "Host",
         "device": "This device"
@@ -2351,12 +2447,6 @@
       "retry": "Retry",
       "cancelled": "Stopped",
       "failed": "Couldn't send: {{error}}",
-      "entrySending_one": "{{count}} sending",
-      "entrySending_other": "{{count}} sending",
-      "entryFailed_one": "{{count}} failed",
-      "entryFailed_other": "{{count}} failed",
-      "entryImporting_one": "{{count}} importing",
-      "entryImporting_other": "{{count}} importing",
       "blockSending": "Can't send while attachments are still uploading",
       "blockImporting": "Images are still being imported",
       "blockFailed": "Some attachments couldn't be sent. Retry or remove them."
@@ -2364,7 +2454,6 @@
     "paste": {
       "importing": "Importing…",
       "importingTitle": "Importing {{name}} from {{host}}",
-      "cancelImport": "Stop importing",
       "startedLive_one": "Importing {{count}} image",
       "startedLive_other": "Importing {{count}} images",
       "doneLive_one": "Imported {{count}} image",
@@ -2464,12 +2553,9 @@
       "failedNote": "⚠ Check failed"
     },
     "draft": {
-      "saving": "Saving…",
-      "saved": "Saved",
       "saveFailed": "Couldn't save. Your text is kept · Retry",
       "saveFailedNote": "Couldn't save the draft. Your text is kept.",
-      "retry": "Retry",
-      "restored": "Draft restored"
+      "retry": "Retry"
     },
     "attach": {
       "enlarge": "{{name}} (click to enlarge)",
@@ -2507,7 +2593,7 @@
       },
       "sending": "{{percent}}%",
       "sendingTitle": "Sending {{name}} ({{size}}) to the host",
-      "cancelSending": "Stop sending",
+      "cancel": "Cancel",
       "largeImage": "Attached {{name}} ({{size}}). Agents read images from the path. Some agents can't read images over 5 MB as images; if that happens, shrink the image and attach it again.",
       "deviceFolder": "this device",
       "already": "This file is already attached"
@@ -2655,6 +2741,17 @@
     "connLostHost": "Host is offline. Reconnecting…",
     "reconnected": "Reconnected.",
     "reconnectedAt": "Reconnected at {{time}}.",
+    "remotePaused": "Pleiad Plus is paused for now (waiting for it to resume)",
+    "remoteStop": {
+      "back": "Back to hosts",
+      "revoked": { "title": "The host revoked this device", "body": "Go back to the host list to ask for approval again." },
+      "reapprove": { "title": "The host needs to approve this device again", "body": "Go back to the host list, pick this PC, and approve on the PC's screen." },
+      "removed": { "title": "This PC was removed from the Pleiad Plus account", "body": "On that PC, open Settings › Pleiad Plus and press \"Register this PC again\" to connect again." },
+      "blocked": { "title": "This account can't use the official relay", "body": "Check the state of your Pleiad Plus account." },
+      "limit": { "title": "This account has reached its limit", "body": "Remove a device or PC you no longer use to connect again." },
+      "update": { "title": "This version of Pleiad can't use the official relay", "body": "Update Pleiad." },
+      "signed-out": { "title": "Signed out of Pleiad Plus", "body": "Go back to the host list and sign in again." }
+    },
     "authStale": {
       "title": "This page's access token is out of date, so it can't connect.",
       "body": "Reopen the page with the URL shown when the server started. Your unsent text is kept.",
@@ -2702,15 +2799,13 @@
       "backToList": "Back to list",
       "loading": "Loading…",
       "outputLabel": "Terminal output",
-      "command": "Command",
-      "output": "Output",
       "ended": "Ended. The output is the last one fetched.",
       "live": "Running",
       "startedAt": "Started {{time}}",
       "truncated": "Output shows the last 64K chars",
+      "truncatedOf": "Output shows the end only (of {{size}})",
       "cwd": "Location: {{cwd}}",
-      "outputUnsupported": "This agent doesn't support reading the output.",
-      "noOutput": "No output yet.",
+      "outputUnsupported": "Output is unavailable",
       "kind": {
         "terminal": "Background terminal",
         "agent": "Subagent",
@@ -2852,6 +2947,8 @@
       "copyPath": "Copy path",
       "download": "Save HTML",
       "browser": "Open in browser",
+      "widen": "Widen",
+      "narrow": "Back to normal width",
       "truncated": "Omitted because it's too large.",
       "badImage": "This image can't be displayed.",
       "loadingBody": "Loading…",
@@ -3334,6 +3431,8 @@
     "checkedAt": "Last fetched: {{when}}",
     "failed": "Couldn't fetch. Check the connection and refresh.",
     "header": {
+      "close": "Close",
+      "otherAgents": "Other agents",
       "title": "Usage",
       "unavailable": "Usage is unavailable.",
       "endpointUnavailable": "Usage is unavailable for this endpoint.",
@@ -3511,6 +3610,7 @@
   },
   "inbox": {
     "bell": "Notifications",
+    "bellWaiting": "Notifications (waiting for you)",
     "bellUnread": "Notifications ({{n}} unread)",
     "bellWait": "Notifications ({{n}} unread, waiting for you)",
     "panel": "Notifications",
@@ -3578,12 +3678,39 @@
       "mention": {
         "named": "{{name}} wrote @you",
         "plain": "A post mentions @you"
+      },
+      "device": {
+        "named": {
+          "open": "Device \"{{name}}\" is waiting to be allowed",
+          "closed": "Device \"{{name}}\" was waiting to be allowed"
+        },
+        "plain": {
+          "open": "A device is waiting to be allowed",
+          "closed": "A device was waiting to be allowed"
+        }
+      },
+      "syncInbox_one": "{{count}} change arrived through sync",
+      "syncInbox_other": "{{count}} changes arrived through sync",
+      "syncApproval": {
+        "named": "{{name}} is waiting for the sync key",
+        "plain_one": "{{count}} PC is waiting for the sync key",
+        "plain_other": "{{count}} PCs are waiting for the sync key"
+      },
+      "syncRecovery": {
+        "named": "{{name}} asked to recover sync",
+        "plain": "Another PC asked to recover sync"
+      },
+      "syncRestarted": {
+        "named": "{{name}} started sync over with a new key. Choose whether to take it",
+        "plain": "Sync was started over with a new key. Choose whether to take it"
       }
     },
     "place": {
       "thread": "#{{channel}} › {{thread}}",
       "channel": "#{{channel}}",
-      "chat": "Quick chats › {{title}}"
+      "chat": "Quick chats › {{title}}",
+      "remote": "Settings › Remote",
+      "plus": "Settings › Pleiad Plus"
     },
     "outcome": {
       "allowed": "Approved",
@@ -3604,7 +3731,9 @@
       "band": "Get notified when you're away?",
       "enable": "Turn on",
       "later": "Later"
-    }
+    },
+    "deviceWaiting": "◆ Waiting for your approval",
+    "deviceBody": "Device \"{{name}}\" is waiting to be allowed"
   },
   "remote": {
     "badgeLabel": "Remote:",
@@ -3615,6 +3744,13 @@
       "offline": "Can't reach the relay",
       "host-offline": "Host is offline",
       "revoked": "Revoked",
+      "reapprove": "Needs approval again",
+      "removed": "Removed from Plus",
+      "blocked": "Can't use the official relay",
+      "limit": "Limit reached",
+      "update": "Update needed",
+      "signed-out": "Signed out",
+      "paused": "Plus is paused",
       "stopped": "Disconnected"
     },
     "pop": {
@@ -4319,6 +4455,13 @@
     "markName": "warning triangle"
   },
   "compaction": {
+    "contextUsage": "Context",
+    "graphTokens": "{{used}} / {{window}} tokens",
+    "short": "Compact",
+    "now": "Compact now",
+    "automatic": "Auto-compaction",
+    "remaining": "{{tokens}} tokens until auto-compaction",
+    "autoOff": "Auto-compaction is off",
     "context": "Context",
     "meter": "{{rate}}% · {{used}} / {{window}}",
     "running": "Compacting conversation…",
@@ -4859,7 +5002,7 @@
     "banner": "Paused · you are operating Chrome",
     "error": { "concealFailed": "The window could not be hidden, so it is still paused. Press hand back again" },
     "handover": "You took over · handed back to {{name}} · {{duration}}",
-    "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "image": "Last image of the closed window" },
+    "closed": { "agent": "{{name}} closed the window", "human": "The Chrome window closed", "idle": "The Chrome window closed after 24 hours without use", "image": "Last image of the closed window" },
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },
   "browser": {
@@ -4981,7 +5124,7 @@
     },
     "toc": {
       "title": "Contents",
-      "entry": "Contents and search in this conversation ({{key}})",
+      "entry": "Search this conversation ({{key}})",
       "close": "Close (Esc)",
       "search": "Search this conversation",
       "prevHit": "Previous match (Shift+Enter)",

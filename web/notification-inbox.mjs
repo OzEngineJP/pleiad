@@ -23,10 +23,32 @@ export function describeNotification(n, t, titleOf = () => '') {
   const title = live || n.title || '';
   const name = n.actor?.name || '';
   const open = n.kind === 'wait' && n.resolvedAt == null;
+  // 同期で届いた変更の受け入れ待ち（ADR 0250）: 続いている状態の 1 行。開くのは設定 › Pleiad Plus
+  if (n.kind === 'wait' && n.ask === 'syncInbox') {
+    return { icon: 'wait', line: t('inbox.line.syncInbox', { count: Number.isFinite(n.count) ? n.count : 1 }), place: t('inbox.place.plus'), outcome: '', open: true };
+  }
+  // 新しい PC が同期の鍵を待っている（承認は鍵を持つ PC の設定 › Pleiad Plus で）
+  if (n.kind === 'wait' && n.ask === 'syncApproval') {
+    const count = Number.isFinite(n.count) ? n.count : 1;
+    const line = count === 1 && n.title ? t('inbox.line.syncApproval.named', { name: n.title }) : t('inbox.line.syncApproval.plain', { count });
+    return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
+  }
+  // ほかの PC が同期の回復を頼んでいる（止めるのは今の鍵を持つ PC の設定 › Pleiad Plus で）
+  if (n.kind === 'wait' && n.ask === 'syncRecovery') {
+    const line = n.title ? t('inbox.line.syncRecovery.named', { name: n.title }) : t('inbox.line.syncRecovery.plain');
+    return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
+  }
+  // ほかの PC が前の鍵では確かめられない新しい鍵で始め直した（受け取るかは設定 › Pleiad Plus で選ぶ）
+  if (n.kind === 'wait' && n.ask === 'syncRestarted') {
+    const line = n.title ? t('inbox.line.syncRestarted.named', { name: n.title }) : t('inbox.line.syncRestarted.plain');
+    return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
+  }
   let line;
   if (n.kind === 'wait') {
-    const what = ['question', 'chrome', 'command'].includes(n.ask) ? n.ask : 'approval';
-    line = t(`inbox.line.${what}.${name ? 'named' : 'plain'}.${open ? 'open' : 'closed'}`, { name });
+    const what = ['question', 'chrome', 'command', 'device'].includes(n.ask) ? n.ask : 'approval';
+    // 端末の追加の許可待ち（ADR 0248）は、待っている端末の名前を出す（題に入れてある）
+    const who = what === 'device' ? title : name;
+    line = t(`inbox.line.${what}.${who ? 'named' : 'plain'}.${open ? 'open' : 'closed'}`, { name: who });
   } else if (n.kind === 'failed') {
     line = name ? t('inbox.line.failed.named', { name }) : title ? t('inbox.line.failed.titled', { title }) : t('inbox.line.failed.plain');
   } else if (n.kind === 'done') {
@@ -42,19 +64,26 @@ export function describeNotification(n, t, titleOf = () => '') {
       ? (n.threadTitle ? t('inbox.place.thread', { channel: n.channelName, thread: n.threadTitle }) : t('inbox.place.channel', { channel: n.channelName }))
       : (n.threadTitle || '');
   } else if (n.target?.sessionId) place = t('inbox.place.chat', { title: title || t('session.untitled') });
+  else if (n.target?.settings === 'remote') place = t('inbox.place.remote');
   // Chrome の操作待ちが済んだことは「承認済み」と言わない（承認ではない）。「…待っていました」だけで足りる。戻らないコマンド（ADR 0227）の決着も同じ
   const outcome = n.kind === 'wait' && n.outcome && !(n.ask === 'chrome' && n.outcome === 'allowed') && n.ask !== 'command' ? t(`inbox.outcome.${n.outcome}`) : '';
   const icon = n.kind === 'wait' ? (open ? 'wait' : 'closed') : n.kind;
   return { icon, line, place, outcome, open };
 }
 
-/** ベルの印。waiting は未読のあなた待ち。{ text, wait, label }（text が '' なら印なし） */
+/** ベルの印。waiting は未解決のあなた待ち。text は未読件数（空でも wait なら ◆ を出す）。 */
 export function badgeState({ unread = 0, waiting = 0 } = {}, t) {
   const n = Math.max(0, unread | 0);
   const text = n > COUNT_CAP ? `${COUNT_CAP}+` : n ? String(n) : '';
   const wait = waiting > 0;
-  const label = !n ? t('inbox.bell') : wait ? t('inbox.bellWait', { n }) : t('inbox.bellUnread', { n });
+  const label = wait ? (n ? t('inbox.bellWait', { n }) : t('inbox.bellWaiting')) : !n ? t('inbox.bell') : t('inbox.bellUnread', { n });
   return { text, wait, label, show: Boolean(n || wait) };
+}
+
+/** 行を押したときに開く先。設定 › Pleiad Plus の通知は、届いた変更（syncInbox）だけ「届いた変更」の面（pane: 'inbox'）、ほかは Plus の面 */
+export function notificationTarget(n) {
+  const target = n?.target ?? {};
+  return target.settings === 'plus' && n.ask === 'syncInbox' ? { ...target, pane: 'inbox' } : target;
 }
 
 /**
@@ -226,11 +255,10 @@ export function setupNotificationInbox({ bell, panel, veil, invoke, t, relTime, 
     if (n.unread) {
       n.unread = false;
       S.unread = Math.max(0, S.unread - 1);
-      if (n.kind === 'wait' && n.resolvedAt == null) S.waiting = Math.max(0, S.waiting - 1);
       paintBell();
       invoke('notifications.markRead', { ids: [n.id] }).catch(() => {});
     }
-    open(n.target ?? {});
+    open(notificationTarget(n));
   }
 
   bell.setAttribute('aria-haspopup', 'dialog');

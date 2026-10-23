@@ -228,7 +228,7 @@ async page => {
   const folderC = 'D:\\dev\\pleiad\\temporary\\cwd-race\\folder-A';
   const chips = () => page.evaluate(() => ({
     cwd: document.querySelector('#cwdChip .v')?.textContent, model: document.querySelector('#modelChip')?.dataset.value,
-    mode: document.querySelector('#modeChip')?.dataset.value,
+    mode: document.querySelector('#modelChip')?.dataset.mode,
   }));
   // 基準: モデルは smart・承認モードは default・作業場所は folder-A 以外にしておく（選んだ値が変化として見える）
   await page.evaluate(() => Object.assign(window.__hold.delay, { newSession: 0, listSessions: 0, loadSession: 0 }));
@@ -244,16 +244,16 @@ async page => {
   // newSession の応答が来て、一覧の読み直し(listSessions)を送ったところで選ぶ
   await page.waitForFunction(() => { const l = window.__hold.log, i = l.map(x => x.command).lastIndexOf('newSession'); return i >= 0 && l.slice(i).some(x => x.command === 'listSessions'); }, null, { timeout: 10000 });
   await page.evaluate(() => {
-    const read = () => ({ cwd: document.querySelector('#cwdChip .v')?.textContent, model: document.querySelector('#modelChip')?.dataset.value, mode: document.querySelector('#modeChip')?.dataset.value });
+    const read = () => ({ cwd: document.querySelector('#cwdChip .v')?.textContent, model: document.querySelector('#modelChip')?.dataset.value, mode: document.querySelector('#modelChip')?.dataset.mode });
     window.__sampler = setInterval(() => window.__samples.push({ t: Date.now(), ...read() }), 40);
   });
   await page.locator('#modelChip').click();
   await page.locator('#modelPop [data-key="model:fast"]').click();
   await page.waitForTimeout(150);
   await page.keyboard.press('Escape');
-  await page.locator('#modeChip').click();
-  const modeOpts = page.locator('#modePop .copt');
-  for (let i = 0, n = await modeOpts.count(); i < n; i++) { if (!(await modeOpts.nth(i).locator('.tick').textContent())) { await modeOpts.nth(i).click(); break; } }
+  // 承認モードはモデルの面の下端の区分け（ADR 0252）。選んでいない段を 1 つ押す
+  await page.locator('#modelChip').click();
+  await page.locator('#modelPop .seg [role="radio"][aria-checked="false"]').first().click();
   await page.waitForTimeout(150);
   await page.keyboard.press('Escape');
   await page.locator('#cwdChip').click();

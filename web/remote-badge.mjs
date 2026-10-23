@@ -3,13 +3,14 @@
 // 帯の左に差しの青のホスト名のバッジを常に出す（閉じるボタンは無い）。押すと接続の情報と「この窓を閉じる」の小さな面。
 // 帯の色は脇と同じ面（style.css の :root.desktop.remote .titlebar。client.mjs の paintTitleBar が読んで OS へ送る）。
 // つながらないとき（中継・ホストがオフライン）はバッジに状態を添え、面に「再試行」を出す。取り消されたら本体が読み直して
-// プロキシの案内のページを出す（desktop/remote-windows.cjs）。
+// プロキシの案内のページを出す（desktop/remote-windows.cjs）。線が止まった（外された・止められた ほか）・Plus が止まっている間も
+// 状態を添える（再試行は出さない。何をすればよいかは会話の画面の案内 web/connection-status.mjs）。
 import { t, fmt } from './i18n.mjs';
 import { el, icon } from './dom.mjs';
 
 const ARROWS = 'M4 8h13l-3-3M20 16H7l3 3';
 const RETRYABLE = new Set(['offline', 'host-offline']);
-const STATES = new Set(['connecting', 'connected', 'offline', 'host-offline', 'revoked', 'stopped']);
+const STATES = new Set(['connecting', 'connected', 'offline', 'host-offline', 'revoked', 'reapprove', 'removed', 'blocked', 'limit', 'update', 'signed-out', 'paused', 'stopped']);
 
 /** plyRemote を画面で使う形に。無い・形が違えば null（ローカルの窓・ブラウザー版） */
 export function remoteInfo(remote) {

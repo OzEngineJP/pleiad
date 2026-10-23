@@ -17,10 +17,16 @@ Claude Agent SDK に加えて **OpenAI Codex**（公式 `codex` CLI の app-serv
 | バックエンド | つなぎ方 | 検証した版 | 最低の版 | 頼っている非公開のもの |
 |---|---|---|---|---|
 | Codex | `codex app-server` | CLI 0.160.0 | なし | rollout の `session_meta.cli_version`、`response_item` の `turn_id` とツール出力。拒否の読み取り（[ADR 0035](adr/0035-read-codex-rollout-for-rejections.md)）、`thread/shellCommand` の `userShell` の item の `command` の包み方と止めたときの `exitCode: -1`・`command aborted by user`、`!` のターンの間の `turn/start` の扱い（[ADR 0054](adr/0054-shell-from-composer.md)） |
-| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.258、CLI 2.1.283 | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId`、`system:compact_boundary` の `compactMetadata`・`isCompactSummary`・`parentUuid`、コマンド・`!` の行のタグと中断の文字列（[ADR 0053](adr/0053-system-messages-display.md)）、`shouldQuery: false` の行をつないだ 1 つの user 行（[ADR 0054](adr/0054-shell-from-composer.md)） |
-| Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.4.2（Pleiad 指示・委譲の実機検証）。CLI 1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
+| Claude Code | Agent SDK の `query()` と利用者の `claude` CLI | SDK 0.3.288、CLI 2.1.303（2026-10-22、承認待ちの A → B 付け直し・履歴・使用量） | なし | `projects/*.jsonl` の attachment と `cost-state`（使用量の累計）、`subagents/*.jsonl` の親子鎖、`*.meta.json` の `toolUseId`、`system:compact_boundary` の `compactMetadata`・`isCompactSummary`・`parentUuid`、コマンド・`!` の行のタグと中断の文字列（[ADR 0053](adr/0053-system-messages-display.md)）、`shouldQuery: false` の行をつないだ 1 つの user 行（[ADR 0054](adr/0054-shell-from-composer.md)） |
+| Antigravity | `agy --print= --input-format stream-json --output-format stream-json` | CLI 1.4.5（Gemini 3.8 Flash Low・`gemini-3.8-flash-low`。会話・履歴・サーバー再起動後の再開、2026-10-23）。CLI 1.4.2（Pleiad 指示・委譲の実機検証）。CLI 1.2.12（Hooks の実機検証。[ADR 0049](adr/0049-hooks-pleiad-managed.md)） | 1.1.11（古い版では `/usage` がモデルへの依頼になる） | ファイルなし。stream-json のイベント形 |
+| OpenCode | `opencode serve`（v2 HTTP/SSE・plugin） | CLI 2.0.32（v2 の接続・MCP・承認・Hooks・指示分離。[ADR 0232](adr/0232-opencode-v2-http-plugin-contract.md)） | 2.0.32（v2） | v2 のイベント形と plugin の hook、停止中の履歴・v1 移行の確認に読む `opencode.db` の `session_message`・旧 `message` / `part` 等 |
+| Grok Build | `grok`（ACP） | CLI 1.0.62（ACP・途中送信・画像ファイルの読み取り。機能の範囲は [backends.md](backends.md#grok-build)） | なし | ACP のイベント・`_x.ai/session/usage` の応答の形。ネイティブの会話ファイルは直接読まない |
 | Devin | `devin`（ACP） | CLI 3000.11.92（Pleiad 指示・委譲・ACP 接続の実機検証。[ADR 0223](adr/0223-devin-acp-backend.md)） | なし | ACP のイベント形と、圧縮区切りの取得における `devin/sessions/cli/sessions.db`（`sessions` 表の `main_chain_id`、`message_nodes` 表のノード鎖・継続ノードと `metadata.summarized_from` 等） |
 | 内蔵ブラウザー操作 | `agent-browser` と会話別 CDP 中継 | 0.38.1（同梱） | 同梱版を使用 | なし |
+
+2026-10-22 に Windows x64 の手元の版を見直した。Codex 0.160.0・OpenCode 2.0.32・Devin 3000.11.92・Grok 1.0.62 は記録の版と同じ。Claude 2.1.303 / SDK 0.3.288 は実サービスで承認待ちを A → B に付け直し、同じ承認 ID が 1 回だけ戻り、許可後の完了・使用量が 1 回だけ保存され、履歴が読めることを確認した。CLI のログインは変更していない。保持役に載せる下限は 2.1.284 のまま。
+
+Antigravity 1.4.5 は、2026-10-23 に Windows x64 で Gemini 3.8 Flash Low（`gemini-3.8-flash-low`）の会話・履歴と、サーバー再起動後に同じ会話 ID で続けられることを確認した。モデル一覧の取得後に ID を指定し、再起動の前後とも同じモデルが CLI へ渡ることを確かめた。
 
 非公開形式の不一致は `AGENT_HOST_DATA/backend-shape-errors.log` に、バックエンド・種類・検知した版・検証した版・時刻だけを記録する。同じ組合せはログに残る間は一度だけ記録する。Claude の transcript は行の `version`、Codex の rollout は先頭の `session_meta.cli_version` を使う。Antigravity の stream-json には版がないため `unknown` と記録する。
 
@@ -541,7 +547,18 @@ backend.getBackgroundTask?.(sessionId, taskId) // WS loadBackground から端末
 CLI は `status: "stopped"` の `task_notification` を返し、tracker がそれで一覧から消す（**先回りして印を消さない**）。
 SDK の `perTaskStopAffordance` は**宣言しない**。宣言すると中断（interrupt）がバックグラウンドのタスクを
 殺さなくなり、「中断はターンごと」の約束が変わってしまう。`stopTask` はこの宣言なしで効く。
-出力の取得（`getBackgroundTask`）は持たないので、詳細は「出力の取得に対応していません」と出る。
+
+**Claude の出力の取得**（`getBackgroundTask`、2026-10）: 同じく走っている `query` の `Query.getTaskOutput(taskId)`
+（control の `get_task_output`。SDK 0.3.288 で実在。`sdk.d.ts` の `Query` には宣言が無いので `typeof` で確かめて呼ぶ）。
+返り値は `{ output, total_bytes, truncated }` で、`output` は**末尾 8 KiB**（UTF-8・端末の制御文字を含む）。
+シェルと Monitor のタスクが対象で、走っている間も終わった直後も読める。知らない id・シェル以外は CLI が断る（null を返す）。
+Pleiad は制御文字を落とし（`stripAnsi`）、`outputTruncated` と `outputTotalBytes`（画面の「出力は末尾のみ（全体 10.8 KB）」）を付ける。
+コマンドの本文は SDK の `description` ではなく、`task_started` の `tool_use_id` でつないだ Bash の `tool_use` の `input.command`
+（tracker の `taskDetail`）。状態・時刻も tracker から引く。サブエージェント（`kind: "agent"`）は出力ではなく `loadSubagent` で読むので null。
+一覧から外れた（完了通知の来た）タスクも、ターンが走っている間は server が走っているターンのバックエンドへ尋ね、最後の出力を 1 回読める。
+ターンが終わると `Query` を手放すので null（画面は最後に取った出力と「終了」を残す）。
+試験は `tests/unit/claude-background-output.mjs`（SDK の身代わり）と `tests/browser/claude-background-output.mjs`
+（偽の CLI `tests/lib/fake-claude-cli.mjs` が `get_task_output`・`stop_task` に本物と同じ口で答える）。
 
 `sessionId` は**Pleiad の会話 id**（`runTurn` の `hostSessionId`）。バックエンドを乗り換えた会話では
 ネイティブ id と別物なので、通知を引く鍵と報告先を分けて持つこと。
@@ -870,7 +887,7 @@ Codexの `set_status / set_title / fork` は未接続なので、
 | 送信・途中送信 | `prompt { id, text, delivery: steer }`。受付と配送を区別し、発言 ID を照合する。応答消失は inbox と履歴で確認する |
 | 本文・推論・ツール | native event envelope を内部イベントへ変換。text と reasoning は種類ごとの ordinal を使う |
 | 承認・質問 | 会話別の permission・form と reply。選択肢は表示名から native の値に戻し、拒否・取り消しも返す |
-| 承認モード | `permissions: [{ action, resource, effect }]`。Code Mode 自体も都度確認・編集・計画モードの承認にかける。移動・外部 worktree は YOLO に限る |
+| 承認モード | `permissions: [{ action, resource, effect }]`。Code Mode 自体も都度確認・編集・計画モードの承認にかける。移動・外部 worktree は Bypass に限る |
 | 中断 | inbox の未配送入力を取り消し、`interrupt?resume=false` で止める |
 | 履歴 | message を cursor でページ取得。起動していなければ SQLite を読み取り専用で開く。移行途中は旧テーブルを読む |
 | 分岐・巻き戻し | `fork { before }` に次の発言 ID を渡して選んだ発言までを含める。ファイルの巻き戻しは Pleiad の snapshot を使う |

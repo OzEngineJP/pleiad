@@ -1,6 +1,8 @@
 const { app, BrowserWindow, WebContentsView, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+// 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
+require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
 const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
 const { packagedIdentity } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
@@ -87,8 +89,11 @@ function frontMainWindow() {
   window.restore(); window.show(); window.focus();
 }
 let requestId = 0;
-const { createDesktopNotifications } = require('./notifications.cjs');
-const notifyCompletion = createDesktopNotifications({ Notification, getWindow: () => window, icon: path.join(__dirname, 'icon.png') });
+const { createDesktopNotifications, windowInFront } = require('./notifications.cjs');
+// OS の前面の窓（Win32 が読めたときだけ。下の loadWin32 で入る）。通知を止める「見ている」は、窓が実際に前面のときだけ
+let foregroundWindow = null;
+const notifyCompletion = createDesktopNotifications({ Notification, getWindow: () => window, icon: path.join(__dirname, 'icon.png'),
+  isInFront: () => windowInFront(window, foregroundWindow) });
 // electron-builder.yml の appId と、スタートメニューのショートカットの AUMID（build/installer.nsh）に揃える。
 // 開発起動（electron.exe）が同じ ID で「Electron」としてシェルに覚えられないよう、別の ID にする
 const APP_USER_MODEL_ID = app.isPackaged ? 'jp.ply.desktop' : 'jp.ply.desktop.dev';
@@ -310,6 +315,7 @@ async function boot() {
   // koffi（Win32）は 1 回だけ読み、コンピューターの操作と Chrome の OS の層で共有する。読めなかったら両方とも unsupported
   let win32 = null, win32Reason = 'native';
   try { win32 = loadWin32(); } catch (error) { win32Reason = error.reason ?? 'native'; if (win32Reason !== 'platform') console.warn('[computer]', `win32 unavailable: ${error.message}`); }
+  if (win32) foregroundWindow = () => win32.foreground();
   const computerEscape = { suspend: () => computerOverlay?.suspendEscape() ?? (() => {}) };
   // macOS はヘルパー（Contents/Helpers/pleiad-computer-helper）の backend を渡す。見つからなければ unsupported（理由は native）
   let macBackend = null, computerReason = win32Reason;

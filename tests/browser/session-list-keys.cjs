@@ -57,7 +57,7 @@ async (page) => {
   // Home は先頭（状態の見出し）。← で畳み、→ で開く
   await page.keyboard.press('Home');
   s = await state();
-  check(s.activeClass.includes('grp-head') && s.level === '1' && s.expanded === 'true', 'Home goes to the first status heading');
+  check(s.activeClass.includes('grp-head') && s.level === '1' && s.expanded === 'true', 'Home goes to the quick chats heading');
   await page.keyboard.press('ArrowLeft');
   check((await state()).expanded === 'false', 'ArrowLeft collapses a heading');
   await page.keyboard.press('ArrowDown');
@@ -88,7 +88,7 @@ async (page) => {
   check((await state()).expanded === 'true', 'ArrowRight opens the group');
   await page.keyboard.press('ArrowRight');
   s = await state();
-  check(s.level === '3', 'ArrowRight moves into the group');
+  check(s.level === '4', 'ArrowRight moves into the group');
   await page.keyboard.press('ArrowLeft');
   check((await state()).activeClass.includes('fam-head'), 'ArrowLeft returns to the group header');
 

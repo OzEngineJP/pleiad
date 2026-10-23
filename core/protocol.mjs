@@ -82,7 +82,9 @@ export const COMMANDS = new Set([
   'remotePairingApprove',  // { id } -> 追加した端末 { id, name, platform, app, createdAt, lastSeenAt, connected, connections }
   'remotePairingDeny',     // { id } -> RemoteStatus
   'remoteDevices',         // {} -> 端末の一覧（RemoteStatus の devices と同じ）
-  'remoteRevoke',          // { id } -> RemoteStatus。一覧と中継から消し、つながり中のチャネルを切る
+  'remoteRevoke',          // { id } -> RemoteStatus。鍵を取り消した鍵に書き、一覧と中継から消し、つながり中のチャネルを切る。この端末が許可した端末も一緒に取り消す（端末からもできる）
+  'remoteRevokedHide',     // { key } -> RemoteStatus。取り消した端末を一覧から消す（鍵は通さないまま）
+  'remotePlusRequestsResume', // {} -> RemoteStatus。続けて断ったので止めていた、公式の中継からの申し込みを再開する（RemoteStatus.plus.paused を消す）。ホストの PC の画面だけ
   'plusHostRebind',        // {} -> RemoteStatus。この PC の hostId がほかのアカウントに取られているとき、ホストの鍵を作り直して端末を全部取り消し、Plus へ登録し直す。人だけ
   'setRemoteDeviceAgent',  // { id, stopAll? } -> 端末の行（agent を含む）。この端末から任された作業をすべて止める。docs/remote.md §4.5（端末ごとの許可は ADR 0239 で無くした）
   'setRemoteResident',     // { keepRunning?, sleep?: 'working'|'off' } -> RemoteStatus。常駐の設定（§6.3。RemoteStatus.resident に { available, keepRunning, sleep }）

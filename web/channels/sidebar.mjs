@@ -319,7 +319,7 @@ export function createSidebar(host, getTabs) {
   }
 
   // ---------------------------------------------------------------- キーボード（一覧は Tab 1 回で入り、↑↓ で行を移る）
-  // 行は節（Bots・ルーティン）の中から引く。節はチャンネルの並べ方の間 #groups へ移る（web/side.mjs の channelExtras）
+  // 行は節（Bots・ルーティン）の中から引く。節は絞り込んでいないとき #groups の末尾に置く（web/side.mjs の channelExtras）
   const rowNodes = () => Object.values(secs).filter(Boolean).flatMap((sec) => [...sec.querySelectorAll('.cs-row')]);
   const keyOf = (n) => `${n.dataset.kind}:${n.dataset.id}`;
   function roving(refocus) {

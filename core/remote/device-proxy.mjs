@@ -60,9 +60,13 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<':
 
 /** ホストにつながらないときの案内（§7.4）。取り消し以外は 5 秒ごとに読み直し、つながれば画面に移る。 */
 export function unavailablePage({ state, hostName = '' }) {
-  const revoked = state === 'revoked';
-  const title = revoked ? t('remote.device.revoked') : t('remote.device.hostOffline');
-  const body = revoked
+  const revoked = state === 'revoked' || state === 'reapprove' || state === 'removed';
+  const title = state === 'reapprove' ? t('remote.device.reapprove') : state === 'removed' ? t('remote.device.removed') : revoked ? t('remote.device.revoked') : t('remote.device.hostOffline');
+  const body = state === 'reapprove'
+    ? t('remote.device.page.reapprove')
+    : state === 'removed'
+    ? t('remote.device.page.removed')
+    : revoked
     ? t('remote.device.page.revoked')
     : state === 'host-offline'
       ? t('remote.device.page.hostOffline')
@@ -86,7 +90,7 @@ main{max-width:28rem;padding:24px}h1{font-size:16px;margin:0 0 8px}p{margin:0;co
  * 出来事: 'status'（DeviceLink の状態 + { port }）
  */
 export class DeviceProxy extends EventEmitter {
-  constructor({ creds, keyPair, port = 0, app = '', name = '', shell = 'desktop', backoff, connectTimeoutMs, requestWaitMs = 10_000, staticCacheFile = null, channelOptions, log = () => {}, via, getIdToken, onReadmit }) {
+  constructor({ creds, keyPair, port = 0, app = '', name = '', shell = 'desktop', backoff, connectTimeoutMs, requestWaitMs = 10_000, staticCacheFile = null, channelOptions, log = () => {}, via, getIdToken, getTicket, onReadmit }) {
     super();
     this.creds = creds;
     this.wantPort = Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : 0;
@@ -94,7 +98,7 @@ export class DeviceProxy extends EventEmitter {
     this.token = crypto.randomBytes(32).toString('base64url');
     this.requestWaitMs = requestWaitMs;
     this.log = log;
-    this.link = new DeviceLink({ creds, keyPair, app, name, shell, backoff, connectTimeoutMs, channelOptions, log, via: via ?? creds.via, getIdToken, onReadmit });
+    this.link = new DeviceLink({ creds, keyPair, app, name, shell, backoff, connectTimeoutMs, channelOptions, log, via: via ?? creds.via, getIdToken, getTicket, onReadmit });
     this.link.on('status', s => this.emit('status', { ...s, port: this.port }));
     this.staticCache = staticCacheFile ? new StaticCache({ file: staticCacheFile, log }) : null;
     this.staticCheck = null;   // 最後の読み込みで確かめた束（Promise<束 | null>）。読み込みの後の静的ファイルはこれを使う
@@ -131,7 +135,7 @@ export class DeviceProxy extends EventEmitter {
   }
 
   /** つなぎ直す（「再試行」）。creds を渡せば資格を差し替える。 */
-  retryNow(creds) { if (creds) this.creds = creds; this.link.retryNow(creds); }
+  retryNow(creds, keyPair) { if (creds) this.creds = creds; this.link.retryNow(creds, keyPair); }
 
   async close() {
     if (this.closed) return;

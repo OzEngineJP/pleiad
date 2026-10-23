@@ -23,8 +23,10 @@ import java.util.concurrent.Executors
 /**
  * The host list's bridge to the device side (only the bundled shell page sees it; host pages never do).
  * Errors are rejected with a stable `code` (payload, relay-url, denied, expired, ticket, rate, host-offline, offline,
- * cancelled, aborted, timeout, handshake, bad-response, storage, unknown-host); the page translates them.
- * Events: `status` { hostId, state, ... }, `pairCode` { code }, `pairLink` {} (then call takePairLink()).
+ * cancelled, aborted, timeout, handshake, bad-response, storage, unknown-host, plus-unpaired, plus-reapprove, plus-no-relay,
+ * plus-paused, revoked);
+ * the page translates them.
+ * Events: `status` { hostId, state, ... }, `pairCode` { code } (QR pairing and admit()), `pairLink` {} (then call takePairLink()).
  */
 @CapacitorPlugin(
     name = "PleiadRemote",
@@ -121,7 +123,16 @@ class PleiadRemotePlugin : Plugin() {
             if (row.online != null) o.put("online", row.online)
             // Only a proxy on the row's route speaks for it: an own window's state must not show on a Plus row, nor the reverse.
             val st = device.proxy(hostId)?.takeIf { it.creds.via == row.via }?.link?.status
-            o.put("state", st?.state ?: if (h?.revokedAt != null && h.via == row.via) "revoked" else "closed")
+            // A Plus row the host has not allowed yet ("unpaired") or wants allowed again ("reapprove", ADR 0248):
+            // tapping it asks on the host's screen (admit()) instead of opening.
+            val plusRec = if (row.via == "plus") device.store.host(hostId, "plus") else null
+            val idle = when {
+                row.via == "plus" && plusRec?.reapproveAt != null -> "reapprove"
+                h?.revokedAt != null && h.via == row.via -> "revoked"
+                row.via == "plus" && device.store.credentials(hostId, "plus") == null -> "unpaired"
+                else -> "closed"
+            }
+            o.put("state", st?.state ?: idle)
             o.put("open", st != null)
             arr.put(o)
         }
@@ -147,6 +158,37 @@ class PleiadRemotePlugin : Plugin() {
             try {
                 val rec = device.pair(payload, { code -> notifyListeners("pairCode", JSObject().put("code", code)) }, handle)
                 (context.applicationContext as PleiadApp).notifyHub.hostsChanged()
+                call.resolve(JSObject().put("host", JSObject(rec.toPublicJson().toString())))
+            } finally {
+                if (pairing === handle) pairing = null
+            }
+        }
+    }
+
+    /**
+     * Ask a Plus host to allow this device (ADR 0248): the host shows its approval window with the same confirmation code,
+     * emitted here as `pairCode`. Resolves when the person on the host's screen allowed it; cancelPair() aborts.
+     */
+    @PluginMethod(returnType = PluginMethod.RETURN_PROMISE)
+    fun admit(call: PluginCall) {
+        val hostId = call.getString("hostId") ?: return call.reject("hostId", "unknown-host")
+        val handle = Pairing()
+        pairing?.cancel()
+        pairing = handle
+        bg(call) {
+            try {
+                val app = context.applicationContext as PleiadApp
+                val host = app.plus.cachedHosts().hosts.find { it.hostId == hostId } ?: throw IllegalArgumentException("unknown-host")
+                // the ticket call refreshes the ID token itself on a 401; the person is waiting, so no forced refresh first
+                val token = app.plus.idToken() ?: throw PairError("plus-signed-out")
+                val relay = app.plus.currentRelayUrl() ?: throw PairError("unreachable")
+                val uid = app.plus.currentUid()
+                val rec = device.admitPlus(hostId, PlusAdmission.MODE_PAIR, uid) { kp ->
+                    PlusAdmission.admit(host, relay, token, kp, app.deviceName(), BuildConfig.VERSION_NAME, mode = PlusAdmission.MODE_PAIR,
+                        onCode = { code -> notifyListeners("pairCode", JSObject().put("code", code)) }, handle = handle,
+                        ticket = { app.plus.deviceTicket(hostId, kp) }).copy(uid = uid)
+                }
+                app.notifyHub.hostsChanged()
                 call.resolve(JSObject().put("host", JSObject(rec.toPublicJson().toString())))
             } finally {
                 if (pairing === handle) pairing = null
@@ -181,14 +223,11 @@ class PleiadRemotePlugin : Plugin() {
             if (via == "plus" && current?.state == "signed-out") throw PairError("plus-signed-out")
             if (via == "plus" && current?.state == "blocked") throw PairError("plus-no-relay")
             if (via == "plus" && current?.state == "limit") throw PairError("plus-limit")
-            if (via == "plus" && device.store.credentials(hostId, "plus") == null) {
-                val host = listed ?: throw IllegalArgumentException("unknown-host")
-                val token = app.plus.currentIdToken() ?: throw PairError("plus-signed-out")
-                val relay = app.plus.currentRelayUrl() ?: throw PairError("unreachable")
-                val creds = PlusAdmission.admit(host, relay, token, device.store.identity(), app.deviceName(), BuildConfig.VERSION_NAME)
-                device.store.saveHost(creds, "plus", app.plus.currentUid())
-                app.notifyHub.hostsChanged()
-            }
+            if (via == "plus" && current?.state == "update") throw PairError("plus-update")
+            if (via == "plus" && current?.state == "removed") throw PairError("plus-removed")
+            // The account alone does not let this device in (ADR 0248): the page first asks the host with admit().
+            if (via == "plus" && device.store.host(hostId, "plus")?.reapproveAt != null) throw PairError("plus-reapprove")
+            if (via == "plus" && device.store.credentials(hostId, "plus") == null) throw PairError("plus-unpaired")
             if (device.store.credentials(hostId, via) == null) throw IllegalArgumentException("unknown-host")
             device.open(hostId, via)
             val i = Intent(context, HostActivity::class.java).putExtra(HostActivity.EXTRA_HOST_ID, hostId).putExtra(HostActivity.EXTRA_VIA, via)

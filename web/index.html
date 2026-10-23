@@ -86,10 +86,6 @@
       <div class="pop recent" id="recentPop" role="listbox" data-i18n-aria-label="sidebar.search.recent" hidden></div>
     </div>
     <!-- 脇の並べ方（docs/design-system.md「脇」）。同じスレッドを「チャンネル」（一時チャット・チャンネル・Bots・ルーティン）と「状態」（利用者の状態のグループ）の 2 通りに並べる。メインの面は替えない -->
-    <div class="side-order" id="sideOrder" role="radiogroup" data-i18n-aria-label="channels:side.order.label">
-      <button type="button" role="radio" data-order="channel" aria-checked="false" data-i18n="channels:side.order.channel"></button>
-      <button type="button" role="radio" data-order="status" aria-checked="true" data-i18n="channels:side.order.status"></button>
-    </div>
     <div class="fchips" id="fchips"></div>
     <div class="filter-outside" id="filterOutside" hidden><span data-i18n="app.filterOutside"></span><button type="button" class="btn" id="clearFilterOutside" data-i18n="app.clearFilter"></button></div>
     <div class="res-head" id="resHead" hidden>
@@ -206,7 +202,7 @@
            701px 以上は 1 行で、#titleSub（パンくず「# 一時チャット ›」）を題の左に置く。700px 以下は 2 行で、題の下に
            「# 一時チャット · ⇄ ホスト名」（モバイル版の殻。web/remote-badge.mjs）・「↖ 依頼元の会話」・「⇄ 端末の AI から」を弱い字で並べる -->
       <div class="title-col">
-        <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled></span>
+        <span class="title-field" id="titleField"><input id="titleEdit" data-i18n-placeholder="session.untitled" data-i18n-aria-label="session.titleLabel" autocomplete="off" disabled><button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button></span>
         <div class="title-sub" id="titleSub">
           <!-- パンくず（一時チャットの会話のとき。押すと一時チャットの流れ。流れの右に並べているときは出さない） -->
           <button type="button" class="btn crumb-home" id="crumbHome" hidden data-i18n-title="channels:side.openHome"><span class="crumb-hash" aria-hidden="true">#</span><span data-i18n="channels:side.home"></span></button>
@@ -215,10 +211,9 @@
           <span class="remote-origin" id="remoteOriginLine" hidden></span>
         </div>
       </div>
-      <button type="button" class="btn btn-icon" id="titleWand" data-i18n-title="session.titleWand" disabled><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg></button>
       <!-- 右パネルを開くアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。目次・プラグイン・内蔵ブラウザーの順に同じ大きさで並べる -->
-      <!-- 目次と会話内検索（web/conversation-toc.mjs）。発言がある会話でだけ出す。開くと右パネル（狭い画面は下からのシート） -->
-      <button type="button" class="btn btn-icon" id="tocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control+F" data-shortcut="F" data-i18n-title="nav.toc.entry" data-i18n-aria-label="nav.toc.entry"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1"/></svg></button>
+      <!-- 会話内の検索（web/conversation-toc.mjs）。虫眼鏡で、開くのは目次のパネル（検索の欄にフォーカス）。発言がある会話でだけ出す。開くと右パネル（狭い画面は下からのシート） -->
+      <button type="button" class="btn btn-icon" id="tocEntry" hidden aria-controls="filePreview" aria-expanded="false" aria-keyshortcuts="Control+F" data-shortcut="F" data-i18n-title="nav.toc.entry" data-i18n-aria-label="nav.toc.entry"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/></svg></button>
       <!-- 会話の右パネル「この会話のプラグイン」の入口（web/session-context.mjs）。件数は title と名前にだけ入れ、「変更あり」は右上の点（web/header-entries.mjs）。
            data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
       <button type="button" class="btn btn-icon" id="contextEntry" data-i18n-title="session.context.entryTitle" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v4M15 3v4"/><path d="M6 7h12v3.5a6 6 0 0 1-12 0z"/><path d="M12 16.5V21"/></svg></button>
@@ -262,10 +257,9 @@
       <!-- 接続の一行（脇が見えていないときだけ）と、トークンが古いときの案内（脇の幅によらず）。web/connection-status.mjs -->
       <div class="conn-note" id="connNote" hidden></div>
       <!-- 入力の箱（docs/design-system.md「入力欄と上端」）。1 つの角丸の面に
-           添付の入口（1 行）→ 字の欄（1 行から伸びる）→ チップと送信の行 を入れる。デスクトップもスマホも同じ -->
+           字の欄（1 行から伸びる）→ チップと送信の行 を入れる。デスクトップもスマホも同じ。
+           添付は字の欄の中の、置いた位置にある札だけで見せる（取り消し・外す・再試行も札の上。ADR 0252） -->
       <div class="cbox" id="cbox">
-        <!-- 添付の入口「添付 N 件 ▾」（0 件なら出さない）。押すと一覧の面（web/attachment-list.mjs）。添付は字の欄の中の、置いた位置にある -->
-        <div class="att-strip" id="attached" hidden></div>
         <!-- 入力欄の `!`（web/shell-composer.mjs）。シェルの形の間だけ、欄の上に「シェル · 作業ディレクトリ · 文として送る」。使えない会話では理由の一行 -->
         <div class="shell-head" id="shellHead" hidden></div>
         <!-- 字の欄。Markdown をその場で整える編集欄（web/md-editor.mjs、ADR 0060）。textarea と同じ窓口（value・selectionStart・placeholder など）を持つ -->
@@ -277,22 +271,23 @@
         <!-- 下書きを保存できなかった（700px 以下だけ。チップの行には入らないので、その上に一行で。広い幅は行の「保存済み」の位置に出す） -->
         <p class="draft-fail" id="draftFail" role="status" hidden><span id="draftFailText"></span><button type="button" class="btn draft-fail-retry" id="draftFailRetry" data-i18n="chat.draft.retry"></button></p>
         <div class="crow">
-          <button type="button" class="btn btn-icon" id="attach" data-i18n-title="chat.composer.attach" data-i18n-aria-label="chat.composer.attach"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.4 11.05l-9.2 9.2a6 6 0 0 1-8.5-8.5l9.9-9.9a4 4 0 0 1 5.66 5.66l-9.9 9.9a2 2 0 0 1-2.83-2.83l9.2-9.2"/></svg></button>
+          <!-- 添付の + 。押すと添付の面（web/attach-menu.mjs）。開いている間は × に回る -->
+          <button type="button" class="btn btn-icon attach-plus" id="attach" data-i18n-title="chat.composer.attach" data-i18n-aria-label="chat.composer.attach"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
           <input type="file" id="fileIn" multiple hidden>
-          <!-- 入力欄の設定は 3 つのチップ（web/composer-controls.mjs、docs/design-system.md「入力欄の設定」）。
-               どこで（作業ディレクトリ）・誰が・どれだけ考えて（エージェント・モデル・エフォート・アカウント）・どこまで任せるか（承認モード）。
-               3 つとも同じ書体・大きさ・太さ・高さ・余白・アイコン・▾。チップは実際に使う値を出す。中身は押すと上に浮く面で選ぶ。
+          <!-- 入力欄の設定は 2 つのチップ（web/composer-controls.mjs、docs/design-system.md「入力欄の設定」）。
+               誰が・どれだけ考えて・どこまで任せるか（エージェント・モデル・エフォート・アカウント・承認モード）と、どこで（作業ディレクトリ）。
+               承認モードはモデルの面の下端の切り替えで選び、既定でないときだけモデルのチップに印を出す（ADR 0252）。
+               2 つとも同じ書体・大きさ・太さ・高さ・余白・アイコン・▾。チップは実際に使う値を出す。中身は押すと上に浮く面で選ぶ。
                1 行に並べ、折り返さない。足りなければ作業ディレクトリ → モデル名の順に … で詰める（送信は常に右端） -->
           <button type="button" class="chip model" id="modelChip" aria-controls="modelPop"></button>
           <button type="button" class="chip folder" id="cwdChip" aria-controls="cwdPop"></button>
           <span class="crow-gap"></span>
-          <!-- 「保存済み」: 行の空きに弱い字で。700px 以下では出さない（保存の失敗は上の #draftFail） -->
-          <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite"></button>
+          <!-- 下書きを保存できなかったときだけ、行の空きに「保存できませんでした · 再試行」。保存できている間は何も出さない。
+               700px 以下では出さない（保存の失敗は上の #draftFail） -->
+          <button type="button" class="btn draft-saved" id="draftSaved" aria-live="polite" hidden></button>
           <!-- 日時を指定した送信（編集で戻したもの）の時刻。× で外せばふつうの送信になる -->
           <span class="chip armed" id="armedChip" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span class="v" id="armedText"></span><button type="button" class="x" id="armedRemove" data-i18n-aria-label="schedule.armedRemove" data-i18n-title="schedule.armedRemove"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
           <!-- 接続先（互換の接続先）は宛先とモデルのチップの面の中で選ぶ -->
-          <!-- 承認モード。人間だけが変えられる（AI 用のツールは生やさない） -->
-          <button type="button" class="chip mode" id="modeChip" aria-controls="modePop"></button>
           <!-- 中断。狭い幅（480px 以下）では四角のアイコンだけにする -->
           <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg><span data-i18n="chat.composer.abort"></span></button>
           <!-- 再開。中断状態・走っていない・欄が空のときだけ、中断と同じ位置に（web/interrupt.mjs）。保留があれば「保留中の N 件を送って再開」。上限で止まった会話は再生の三角が時計・字は「◷ 2:30 に再開」に替わり、▾ から面が開く -->
@@ -307,7 +302,6 @@
       <div class="resume-note" id="armedNote" hidden></div>
       <div class="pop cpop" id="cwdPop" role="dialog" data-i18n-aria-label="chat.composer.cwd" hidden></div>
       <div class="pop cpop" id="modelPop" role="dialog" data-i18n-aria-label="chat.composer.model" hidden></div>
-      <div class="pop cpop" id="modePop" role="dialog" data-i18n-aria-label="chat.composer.mode" hidden></div>
       <div class="pop cpop send-pop" id="sendPop" role="menu" data-i18n-aria-label="schedule.menuTitle" hidden></div>
       <div class="send-veil" id="sendVeil" hidden></div>
     </form>
