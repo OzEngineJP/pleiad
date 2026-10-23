@@ -16,7 +16,7 @@ async (page, { url = page.url() } = {}) => {
   check(await home.locator('.grp .row[data-session]').count() > 0, 'status groups are nested inside home');
   check(await page.locator('#groups .bot-waits').count() === 0, 'waiting does not get a separate section');
 
-  // No section is trimmed by count (ADR 0255): there is no "N more" / "show less" row anywhere.
+  // No section is trimmed by count (ADR 0260): there is no "N more" / "show less" row anywhere.
   check(await page.locator('#groups .row.more, #groups .cs-more').count() === 0, 'no section folds its rows into an N more row');
 
   const inProgress = page.locator('[data-side-key="group:進行中"]');

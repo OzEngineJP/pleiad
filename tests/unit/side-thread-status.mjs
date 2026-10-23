@@ -118,7 +118,7 @@ export default async function (t) {
     dom.restore();
   }
 
-  // ---- 件数で絞らずに全部（ADR 0255）・手動の畳みの印。最後の好みは前の版の「ほか n 件」を開いた区画（chMore・statusMore）が残っているもの
+  // ---- 件数で絞らずに全部（ADR 0260）・手動の畳みの印。最後の好みは前の版の「ほか n 件」を開いた区画（chMore・statusMore）が残っているもの
   const rows = Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, title: `chat ${i}`, status: 'A', backend: 'fake', cwd: '/work', lastModified: 10000 - i }));
   for (const prefs of [{}, { filter: { status: 'A' } }, { filter: { backends: ['fake'] } }, { filter: { dir: '/work' } }, { chMore: ['a'], statusMore: ['A'] }]) {
     const d = installDom(prefs);

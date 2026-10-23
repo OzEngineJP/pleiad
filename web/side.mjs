@@ -135,7 +135,7 @@ function loadPrefs() {
       expanded: new Set(Array.isArray(p.expanded) ? p.expanded : []),
       sort: p.sort === "recent" ? "recent" : "relevance",
       chCollapsed: new Set(Array.isArray(p.chCollapsed) ? p.chCollapsed : []),
-      // 前の版の chMore・statusMore（「ほか n 件」を開いた区画）は読まない。次の保存で消える（ADR 0255）
+      // 前の版の chMore・statusMore（「ほか n 件」を開いた区画）は読まない。次の保存で消える（ADR 0260）
     };
   } catch {
     return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance", chCollapsed: new Set() };
@@ -448,7 +448,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const rowsEl = keyed(el("div", "rows"), `rows:${st ?? ''}`, true);
       rowsEl.setAttribute("role", "group");
       if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }, 3));
-      // 件数では絞らず、全部を出す（ADR 0255）
+      // 件数では絞らず、全部を出す（ADR 0260）
       for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam, 3) : row(fam.root, 3));
       if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
       sec.append(rowsEl);

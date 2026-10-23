@@ -1,4 +1,4 @@
-// 狭い画面の脇のスワイプ（docs/design-system.md「狭い画面・タッチ」、ADR 0258）。
+// 狭い画面の脇のスワイプ（docs/design-system.md「狭い画面・タッチ」、ADR 0262）。
 // 判定は DOM から分け、確定とアクセシビリティの後始末は既存の setDrawer に任せる。
 export function outsideGestureEdges(x, y, width, height, insets = {}) {
   return x >= Math.max(24, Number(insets.left) || 0)

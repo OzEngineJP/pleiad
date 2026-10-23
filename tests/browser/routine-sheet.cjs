@@ -225,7 +225,7 @@ async page => {
   check(await page.locator('.ch-routines .rt-n').textContent() === '1', '見出しの［ルーティン］に数が付く');
   await shot('07-created');
 
-  // ---- 件数で絞らずに全部・並べ方・一時停止は薄く・失敗は「✕ 失敗」（ADR 0255）
+  // ---- 件数で絞らずに全部・並べ方・一時停止は薄く・失敗は「✕ 失敗」（ADR 0260）
   const mk = (id, name, nextAt, extra = {}) => ({ id, name, botId: 'b_owl', channelId: ch.id, prompt: 'x', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false }, mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt, ...extra });
   const t0 = Date.now();
   await page.evaluate(([a, b, c]) => { window.__routines.push(a, b, c); }, [mk('r_a', '夜の失敗の見回り', t0 + 20 * 60e3, { last: { at: t0 - 3600e3, runId: 'x', state: 'failed' } }), mk('r_b', '依存の更新', null, { paused: true }), mk('r_c', '週次のまとめ', t0 + 7 * 86400e3)]);

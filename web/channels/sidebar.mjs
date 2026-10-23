@@ -206,7 +206,7 @@ export function createSidebar(host, getTabs) {
     ], b.name);
   }
 
-  // 次に動く時刻の近い順に全部（件数では絞らない。ADR 0255）。一時停止は後ろに薄く（.paused）、直近の失敗は「✕ 失敗」、時刻は「今日 23:00」
+  // 次に動く時刻の近い順に全部（件数では絞らない。ADR 0260）。一時停止は後ろに薄く（.paused）、直近の失敗は「✕ 失敗」、時刻は「今日 23:00」
   const routineStore = getRoutineStore(host);
   function paintRoutines() {
     const box = rowsOf.routines;
