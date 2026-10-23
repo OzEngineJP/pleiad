@@ -2,7 +2,7 @@
 
 Android 版（`mobile/`、Capacitor 8）の署名済み APK は、`main` への push で Android に効く変更があったときに GitHub Release へ自動で出る。デスクトップのリリース（[desktop-releases.md](desktop-releases.md)）とは別の流れで、別のタグを使う（[ADR 0066](adr/0066-android-release-on-main-push.md)）。ワークフローは `.github/workflows/android-release.yml`。
 
-Google Play へは、同じ鍵・同じ版の決め方の AAB を `.github/workflows/android-play.yml` で上げる。新しい APK を出したら、同じコミットの AAB を内部テストへ自動で上げてすぐ公開し、ほかのトラック・状態へは手動で上げる（下の「[Google Play](#google-play)」、[ADR 0142](adr/0142-android-play-distribution.md)・[ADR 0256](adr/0256-mobile-store-upload-on-main.md)）。
+Google Play へは、同じ鍵・同じ版の決め方の AAB を `.github/workflows/android-play.yml` で上げる。新しい APK を出したら、同じコミットの AAB を内部テストへ自動で上げてすぐ公開し、ほかのトラック・状態へは手動で上げる（下の「[Google Play](#google-play)」、[ADR 0142](adr/0142-android-play-distribution.md)・[ADR 0258](adr/0258-mobile-store-upload-on-main.md)）。
 
 ## いつ出るか
 
@@ -91,15 +91,17 @@ npm run icons:check    # コミット済みの PNG が今の SVG と一致する
 
 ## Google Play
 
-GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を上げる（[ADR 0142](adr/0142-android-play-distribution.md)）。内部テストへは APK の流れから自動で、ほかのトラックへは人が決めたときに手動で上げる（[ADR 0256](adr/0256-mobile-store-upload-on-main.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
+GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を上げる（[ADR 0142](adr/0142-android-play-distribution.md)）。内部テストへは APK の流れから自動で、ほかのトラックへは人が決めたときに手動で上げる（[ADR 0258](adr/0258-mobile-store-upload-on-main.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
 
-**アプリ ID（2026-10-09 に変えた）。** Play Console でアプリを作る前に、アプリ ID（パッケージ名）を `com.procway.pleiad` から `dev.pleiad.app` に替えた（パッケージ名は作ったあとで変えられないため。iOS の Bundle ID も同じ値）。`com.procway.pleiad` の GitHub の APK を入れた端末は別のアプリ扱いになり、`dev.pleiad.app` の APK は上書きにならない。旧版を消して入れ直し、ペアリングを 1 回やり直す。「同じ鍵なので GitHub の APK から Play へ移れる」は、`dev.pleiad.app` の APK 以降の話である。
+**アプリ ID（2026-10-09 に変えた）。** Play Console でアプリを作る前に、アプリ ID（パッケージ名）を `com.procway.pleiad` から `dev.pleiad.app` に替えた（パッケージ名は作ったあとで変えられないため。iOS の Bundle ID も同じ値）。`com.procway.pleiad` の GitHub の APK を入れた端末は別のアプリ扱いになり、`dev.pleiad.app` の APK は上書きにならない。旧版を消して入れ直し、ペアリングを 1 回やり直す。
+
+**アプリ ID と署名鍵（2026-10-23 に Android だけ変えた）。** Android のアプリ ID を `dev.pleiad.app` から `dev.pleiad.android` に替え、APK と Play のアプリ署名鍵も新しい鍵（SHA-256 `7F:BC:3F:2A:…:E1:F8:C8`）にした（[ADR 0259](adr/0259-android-package-dev-pleiad-android.md)）。前の鍵（`70:4C:…`）が Android デベロッパーの確認で別のデベロッパーの名義に `dev.pleiad.app` と登録されていて外せず、Play が `dev.pleiad.app` の AAB を受け付けなかったため。iOS の Bundle ID は `dev.pleiad.app` のまま（`mobile/capacitor.config.json` の `appId` は iOS の値で、Android は `mobile/android/app/build.gradle` の `applicationId`）。`dev.pleiad.app` の APK を入れた端末は別のアプリ扱いになり、`dev.pleiad.android` の APK は上書きにならない。旧版を消して入れ直し、ペアリングを 1 回やり直す。Play の `dev.pleiad.app` のアプリと、そのパッケージ名の登録は消さずに未公開のまま残す（同じ名前を第三者に使わせないため）。「同じ鍵なので GitHub の APK から Play へ移れる」は、`dev.pleiad.android` の APK 以降の話である。
 
 申請に要る資料の下書きは [play-store/](play-store/) にある（掲載文・前面サービスの申告・審査員向けのアクセス方法・データセーフティ・コンテンツのレーティング）。プライバシーポリシーはサイトの `site/privacy/`（https://pleiad.dev/privacy/ ）で、アプリのホスト一覧の下からも開ける。
 
 ### 自動の流れ（内部テスト）
 
-「Android release」が新しい版（`android-v…` のタグ）を出したら、同じワークフローの `play` のジョブが「Android Play upload」を `workflow_call` で呼び、同じコミットの AAB を内部テスト（`internal`）へ上げてすぐ公開する（`completed`。内部テストは審査が無く、テスターにすぐ届く）。版がもうあって APK を出さなかったときは上げない（同じ `versionCode` は Play が二度と受け取らない）。Play の手順が落ちても GitHub の APK のリリースは残る。2026-10-23 に、同じ入力（`internal`・`completed`）の手動の実行で、ビルド・アップロード鍵での署名と照合・Play の API への認証と鍵の受け付けまで通ることを確かめた。Play は「パッケージ名がデベロッパーの確認済みの ID に登録されていない」で受け付けず、内部テストへの公開はまだ確かめていない（Play Console の Android デベロッパー検証でのパッケージ名の登録が済めば通る見込み）。
+「Android release」が新しい版（`android-v…` のタグ）を出したら、同じワークフローの `play` のジョブが「Android Play upload」を `workflow_call` で呼び、同じコミットの AAB を内部テスト（`internal`）へ上げてすぐ公開する（`completed`。内部テストは審査が無く、テスターにすぐ届く）。版がもうあって APK を出さなかったときは上げない（同じ `versionCode` は Play が二度と受け取らない）。Play の手順が落ちても GitHub の APK のリリースは残る。2026-10-23 に、`dev.pleiad.app` のまま同じ入力（`internal`・`completed`）で手動で実行し、ビルド・アップロード鍵での署名と照合・Play の API への認証と鍵の受け付けまで通ることを確かめた（Play は上の「アプリ ID と署名鍵」の理由で受け付けなかった）。同じ日に、`dev.pleiad.android` の Play のアプリを作り、手元でアップロード鍵で署名した AAB（2582）を Play Console から内部テストへ公開した。未公開のアプリは API で下書きしか作れないので、最初の 1 回は Play Console で公開する。CI からの自動の流れは、`main` に入った後の最初の実行で確かめる。
 
 ### ワークフロー（Android Play upload）
 
@@ -120,7 +122,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
 | Secret・変数 | `PLY_ANDROID_KEYSTORE_*`・`PLY_ANDROID_KEY_*`・`PLY_ANDROID_CERT_SHA256` | APK と同じ署名鍵（上の「署名鍵」）。既定ではこれをアップロード鍵にも使う |
 | Secret・変数（任意） | `PLY_ANDROID_UPLOAD_KEYSTORE_BASE64`・`PLY_ANDROID_UPLOAD_KEYSTORE_PASSWORD`・`PLY_ANDROID_UPLOAD_KEY_ALIAS`・`PLY_ANDROID_UPLOAD_KEY_PASSWORD`・`PLY_ANDROID_UPLOAD_CERT_SHA256` | 別のアップロード鍵を Play に登録したときだけ。5 つ全部あればこちらで署名し、APK の鍵の Secrets は使わない。一部だけなら止まる |
 
-2026-10-23 の設定: アップロード鍵は 2026-10-20 にリセットで登録した別の鍵（SHA-256 `07:86:73:DD:…:87:D8:B1`）で、`PLY_ANDROID_UPLOAD_*` に入れてある。サービスアカウントは Pleiad 専用のもの（Cloud の役割なし。Play では Pleiad の閲覧とテストのトラックへのリリースだけ）。
+2026-10-23 の設定: Play のアプリは `dev.pleiad.android`。アプリ署名鍵は APK と同じ鍵（SHA-256 `7F:BC:3F:2A:…:E1:F8:C8`。PEPK で登録）。アップロード鍵は別の鍵（SHA-256 `07:86:73:DD:…:87:D8:B1`）で、`PLY_ANDROID_UPLOAD_*` に入れてある。どちらも Android デベロッパーの確認で `dev.pleiad.android` に登録済み。サービスアカウントは Pleiad 専用のもの（Cloud の役割なし。Play では Pleiad の閲覧とテストのトラックへのリリースだけ）。
 
 どれかが足りない・サービスアカウントの JSON の形でない・入力の組み合わせがおかしい（`inProgress` に割合が無い、`draft` に割合がある、呼び出しの `status` が知らない値、など）ときは、ビルドの前に `::error::` で名前を出して止まる。Secrets の値はログに出さない（壊れた JSON の例外も出さない）。`tests/unit/android-play-workflow.mjs` が、この確かめを bash で流し、APK の流れからの呼び出し（新しい版のときだけ・内部テストにすぐ公開）と版の決め方・署名鍵の Secrets・アクションの版が同じことを突き合わせる。
 
@@ -162,7 +164,7 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
    3. Play Console の「ユーザーと権限」→「新しいユーザーを招待」で、サービスアカウントのメールアドレスを入れ、Pleiad のアプリにテストのトラックへリリースする権限を与える。
    4. GitHub の Environment `release` の Secret `PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON` に JSON の全文を入れ（`gh secret set PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON --env release < <JSON>`）、手元の JSON を消す。
 9. **最初の AAB を上げる。** 「Android Play upload」を `track: internal`・`status: draft` で実行する。Play Console で内部テストのテスター（自分のアカウント）を決めてロールアウトする。内部テストは 100 人まで・アプリの設定が終わっていなくても作れる。[^testing] ここで前面サービスの申告が出るので、5 の申告を済ませる。
-10. **鍵が同じことを実機で確かめる。** `dev.pleiad.app` の GitHub の APK が入った端末で、テスターの登録の後に Play から更新し、入れ直し無しで上書きされ、ペアリングしたホストが残ることを見る。
+10. **鍵が同じことを実機で確かめる。** `dev.pleiad.android` の GitHub の APK が入った端末で、テスターの登録の後に Play から更新し、入れ直し無しで上書きされ、ペアリングしたホストが残ることを見る。
 11. **クローズドテストを 14 日続ける。** 既定のクローズドテストのトラックにテスターのリスト（メールアドレスのリストか Google グループ）を付け、配布する国を選び、ワークフローを `track: alpha` で実行するか内部テストのリリースを昇格させて、審査に出す。テスターは参加用のリンクから参加する。**12 人以上が 14 日続けて参加**している必要があり、途中で抜けて入り直した人は数え直しになる。内部テストは数えない。[^test-req][^testing]
 12. **製品版を申請する。** ダッシュボードの「製品版へのアクセスを申請」で、クローズドテスト（テスターの集め方・使われた機能・フィードバック）・アプリ（対象の利用者・価値・1 年目のインストール数の見込み）・準備（テストで直したこと）について答える。審査はふつう 7 日以内。[^test-req]
 13. **（任意）APK の配布もデベロッパー検証に登録する。** Google は、2026 年 9 月 30 日からブラジル・インドネシア・シンガポール・タイで、2027 年からほかの国でも、認定された端末に入るアプリに登録済みのデベロッパーであることを求める。Play のアプリは Play が登録し、Play の外で配るものは Play Console で登録できる。GitHub の APK は同じパッケージ名・同じ鍵なので、Play Console で登録の状態を確かめる。[^devverify]

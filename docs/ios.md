@@ -39,7 +39,7 @@ node tests/run.mjs mobile-web
 
 ## TestFlight への自動の配布
 
-`main` に iOS に効く変更が入ると、`.github/workflows/ios-testflight.yml`（Actions の **iOS TestFlight**）が署名した archive を TestFlight へ上げる。Actions の画面から手動でも起こせる（`main` の上だけ）。Android の Play の内部テストへの自動の配布と同じ考え方（[ADR 0256](adr/0256-mobile-store-upload-on-main.md)）。
+`main` に iOS に効く変更が入ると、`.github/workflows/ios-testflight.yml`（Actions の **iOS TestFlight**）が署名した archive を TestFlight へ上げる。Actions の画面から手動でも起こせる（`main` の上だけ）。Android の Play の内部テストへの自動の配布と同じ考え方（[ADR 0258](adr/0258-mobile-store-upload-on-main.md)）。
 
 - **いつ動くか**: `main` への push のうち、`mobile/ios/**`（`App/AppTests/**`・`remote-core/Tests/**` の試験だけの変更は除く）・`mobile/www/**`・`mobile/capacitor.config.json`・`mobile/package.json`・`mobile/package-lock.json`・上げる道具（`mobile/scripts/ios-testflight.sh`・`mobile/scripts/asc-build.mjs`・ワークフロー自身）に変更があるとき。PR からは上げない。
 - **流れ**: `ios-app.yml` の試験（シミュレーターのビルドと Keychain の試験。`workflow_call` で呼ぶ）→ Secrets の確かめ（足りなければ名前を出して止まる）→ 版の決定 → App Store Connect の確かめ（`asc-build.mjs`。アプリがあり、同じビルド番号がまだ無いこと）→ `npm ci`・`cap sync ios` → 署名した archive を `xcodebuild -exportArchive` で上げる（`ios-testflight.sh`）。実行は 1 つずつ順に走る。
