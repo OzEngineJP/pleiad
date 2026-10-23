@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { createMcpLedger } from '../../core/mcp-ledger.mjs';
+import { createMcpLedger, elapsedSeconds } from '../../core/mcp-ledger.mjs';
 import { ensureDataSchema } from '../../core/data-schema.mjs';
 import { openData } from '../../core/data-schema.mjs';
 import { mcpProcessTable, mcpToolCacheTable } from '../../core/db.mjs';
@@ -15,6 +15,10 @@ const alive = pid => { try { process.kill(pid, 0); return true; } catch { return
 const sleeper = () => spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', detached: process.platform !== 'win32', windowsHide: true });
 
 export default async function (t) {
+  // ps の etime（macOS の ps には etimes が無いので、両方にある etime を読む）
+  t.ok('etime の mm:ss・hh:mm:ss・dd-hh:mm:ss を秒にし、読めなければ null',
+    elapsedSeconds('00:05') === 5 && elapsedSeconds(' 01:02') === 62 && elapsedSeconds('1:02:03') === 3723
+    && elapsedSeconds('2-01:02:03') === 176523 && elapsedSeconds('x') === null && elapsedSeconds('12') === null);
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-mcp-orphans-'));
   const dataDir = path.join(dir, 'data');
   const children = [];
