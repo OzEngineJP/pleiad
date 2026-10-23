@@ -1,6 +1,6 @@
 // Catalogue identity, explicit paid selection and ACP acknowledgement are tested without a CLI or credentials.
 import assert from 'node:assert/strict';
-import { buildDevinModels, resolveDevinModel, applyDevinModel } from '../../core/backends/devin-models.mjs';
+import { buildDevinModels, resolveDevinModel, applyDevinModel, devinAcpModel, devinModelChoices } from '../../core/backends/devin-models.mjs';
 
 export const name = 'devin-models';
 export const title = 'Devin のライブ無料既定・明示した有料モデル・系列と思考と速度の設定 ACK';
@@ -76,6 +76,20 @@ export default async function (t) {
     t.ok(`系列代表・思考・標準速度を別々に ACK し variant ID を保持する（${level}）`, selected.id === `swe-2-${level}` && selected.acpModel === 'swe-2-high'
       && latest.find(o => o.id === 'thought_level').currentValue === level && selected.maxContextTokens === 262000 && fake.calls.every(c => c.sessionId === 'resumed-session'));
   }
+  // 実物（3000.11.92）のカタログの Lightning の版。ACP の model には無く、swe-2-high + 思考 + speed fast で表す
+  const lightningRaw = catalogue();
+  lightningRaw.families[0].variants.push(...['medium', 'high', 'max'].map(level => ({ model_uid: `swe-2-${level}-lightning`, label: `SWE-2 ${level} Lightning`, cost_tier: 'High cost', cost_summary: '$1 / 1M Input', max_context_tokens: 262144 })));
+  for (const level of ['medium', 'high', 'max']) {
+    const selected = resolveDevinModel(lightningRaw, `swe-2-${level}-lightning`), fake = rpc();
+    await applyDevinModel(fake.call, 's', options(), selected);
+    assert.deepEqual(fake.calls.map(c => [c.configId, c.value]), [['model', 'swe-2-high'], ['thought_level', level], ['speed', 'fast']]);
+    t.ok(`Lightning は系列代表・同じ思考・速さ fast で ACK し、有料のまま扱う（${level}）`, selected.id === `swe-2-${level}-lightning` && selected.free === false && devinAcpModel(selected.id) === 'swe-2-high');
+  }
+  const standard = rpc(); await applyDevinModel(standard.call, 's', options(), resolveDevinModel(lightningRaw, 'swe-2-max'));
+  t.ok('Lightning でない SWE-2 は標準の速さのまま', standard.calls.at(-1).value === 'standard');
+  t.ok('ACP の model の選択肢を入れ子から読み、無ければ null', devinModelChoices(options()).join() === 'swe-2-high,paid-exact'
+    && devinModelChoices(options().filter(o => o.id !== 'model')) === null && devinModelChoices(undefined) === null && devinAcpModel('paid-exact') === 'paid-exact');
+
   const resume = options(); resume.find(o => o.id === 'thought_level').currentValue = 'max';
   const resumed = rpc(resume); await applyDevinModel(resumed.call, 'resume', resume, resolveDevinModel(raw, 'swe-2-medium'));
   t.ok('再開後も以前の思考・速度を引き継がず選択を ACK し直す', resumed.calls.length === 3 && resumed.calls[1].value === 'medium' && resumed.calls[2].value === 'standard');

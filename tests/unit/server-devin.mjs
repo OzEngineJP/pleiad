@@ -226,6 +226,27 @@ export default async function (t) {
     await deliveryBackend.runTurn({ cwd, prompt: 'no shell', model: 'swe-2-high', mode: 'ask', emit: () => {} });
     t.ok('別のターンにply_shellを持ち越さない', deliveryCalls.slice(deliveryMark).find(c => c.method === 'session/new').params.mcpServers.length === 0);
 
+    // カタログにはあるが ACP の model に無い版（2026-10-23、自動の振り分けが選んで始まってすぐ止まった）
+    const wideCatalogue = async () => ({ families: [
+      { family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }, { model_uid: 'swe-2-max-lightning', cost_tier: 'High cost' }] },
+      { family_uid: 'catalogue-only', variants: [{ model_uid: 'catalogue-only', cost_tier: 'High cost' }] },
+    ] });
+    const runnableCalls = [];
+    class RunnableClient extends DevinAcp {
+      async call(method, params, options) { runnableCalls.push({ method, params }); return super.call(method, params, options); }
+    }
+    const runnable = createDevinBackend({ Acp: RunnableClient, catalogue: wideCatalogue, command, dataDir: path.join(root, 'runnable') });
+    t.ok('ACP の選択肢をまだ見ていなければ、カタログの版を振り分けから外さない', runnable.runnableModel('catalogue-only') === true);
+    const unlisted = await runnable.runTurn({ cwd, prompt: 'not runnable', model: 'catalogue-only', mode: 'ask', emit: () => {} }).catch(e => e);
+    t.ok('ACP に無い版は送る前に設定の誤りで止まる', unlisted?.code === 'DEVIN_MODEL_CONFIG_UNAVAILABLE' && !runnableCalls.some(c => c.method === 'session/prompt'), String(unlisted?.code ?? unlisted));
+    t.ok('一度止まった後は、ACP に無い版を振り分けが選ばない（Lightning・系列代表は選べる）',
+      runnable.runnableModel('catalogue-only') === false && runnable.runnableModel('swe-2-max-lightning') === true && runnable.runnableModel('swe-2-high') === true);
+    const lightningMark = runnableCalls.length;
+    const lightning = await runnable.runTurn({ cwd, prompt: 'lightning', model: 'swe-2-max-lightning', mode: 'ask', emit: () => {} });
+    const lightningSet = runnableCalls.slice(lightningMark).filter(c => c.method === 'session/set_config_option').map(c => [c.params.configId, c.params.value]);
+    t.ok('Lightning は swe-2-high・思考 max・速さ fast で走る', lightning.outcome !== 'error' && JSON.stringify(lightningSet.slice(1)) === JSON.stringify([['model', 'swe-2-high'], ['thought_level', 'max'], ['speed', 'fast']]),
+      JSON.stringify({ outcome: lightning.outcome, lightningSet }));
+
     let alwaysAnswer, canAlways;
     class AlwaysClient extends DevinAcp {
       constructor(options) { super({ ...options, onRequest: async (method, params, context) => {

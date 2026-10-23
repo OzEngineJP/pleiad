@@ -1,6 +1,10 @@
 // The catalogue's variant ID is the user selection. ACP may represent a family with a
 // different ID; only the measured SWE-2 mapping is translated here. Other IDs must
 // match an advertised ACP choice exactly before a prompt can be sent.
+// SWE-2 (Devin CLI 3000.11.92, 2026-10-23): ACP advertises only `swe-2-high` as the model,
+// with thought_level medium/high/max and speed standard/fast. The CLI's model config cache
+// gives swe-2-<level>-lightning the same "Reasoning Effort" as swe-2-<level> plus
+// "Fast Mode" on, so a Lightning variant is swe-2-high + that thought level + speed fast.
 import { t } from '../i18n.mjs';
 
 // i18n-dynamic: devin.errors.invalidCatalogue
@@ -55,6 +59,17 @@ function liveFree(row) {
     && !/^(adaptive|fusion)(?:$|[-_])/i.test(row.family.slug ?? row.family.family_uid ?? '');
 }
 
+const SWE_2 = /^swe-2-(medium|high|max)(-lightning)?$/;
+
+/** The ACP model choice a catalogue ID needs (the SWE-2 variants share one). */
+export const devinAcpModel = modelId => SWE_2.test(modelId) ? 'swe-2-high' : modelId;
+
+/** Model choices advertised in ACP configOptions, or null when they are not there. */
+export function devinModelChoices(configOptions) {
+  const model = Array.isArray(configOptions) ? configOptions.filter(o => o?.id === 'model' || o?.category === 'model') : [];
+  return model.length === 1 && Array.isArray(model[0].options) ? choices(model[0].options) : null;
+}
+
 const defaultRow = rows => rows.find(row => row.id === 'swe-2-high' && liveFree(row)) ?? rows.find(liveFree) ?? null;
 
 /** Native backend models map. Labels and prices come only from this catalogue. */
@@ -79,12 +94,12 @@ export function resolveDevinModel(rawCatalogue, modelId = '') {
   const row = modelId ? rows.find(row => row.id === modelId) : defaultRow(rows);
   if (!row) throw modelId ? fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: modelId }) : fail('DEVIN_MODEL_EXPLICIT_REQUIRED', 'explicitModelRequired');
   if (row.variant.cost_tier === 'Free' && !freeProof(row)) throw fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: row.id });
-  const sweThought = /^swe-2-(medium|high|max)$/.exec(row.id)?.[1];
+  const [, sweThought, lightning] = SWE_2.exec(row.id) ?? [];
   const swe = (row.family.family_uid === 'swe-2' || row.family.slug === 'swe-2') && sweThought;
   if (sweThought && !swe) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
   return {
     id: row.id, acpModel: swe ? 'swe-2-high' : row.id,
-    ...(swe ? { thoughtLevel: sweThought } : {}), speed: 'standard',
+    ...(swe ? { thoughtLevel: sweThought } : {}), speed: swe && lightning ? 'fast' : 'standard',
     free: liveFree(row), label: row.variant.label ?? row.id,
     maxContextTokens: Number.isFinite(row.variant.max_context_tokens) && row.variant.max_context_tokens > 0 ? row.variant.max_context_tokens : null,
   };
@@ -105,7 +120,7 @@ function choices(options) {
 
 /** Apply and acknowledge all requested settings, including after session/load. */
 export async function applyDevinModel(call, sessionId, configOptions, selection) {
-  if (!selection?.id || !selection.acpModel || selection.speed !== 'standard') throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
+  if (!selection?.id || !selection.acpModel || !['standard', 'fast'].includes(selection.speed)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
   let latest = configOptions;
   const verified = new Map();
   for (const [kind, value] of [['model', selection.acpModel], ...(selection.thoughtLevel ? [['thought_level', selection.thoughtLevel]] : []), ['speed', selection.speed]]) {
