@@ -135,6 +135,23 @@ export async function compactionContracts() {
   assert.deepEqual(turns.map(a => a.compact), [undefined, 'manual', 'idle']);
   assert.deepEqual(await claude.getCompactions(cid), [{ ...boundary[0],
     beforeMessageId: 'claude:claude-native:next', afterMessageId: 'claude:claude-native:previous' }]);
+
+  // 履歴の読み込みは ply_delegate の結果を切らない（画面が JSON の taskId でカードを子に結び付ける。tests/unit/delegate-card.mjs）
+  const long = JSON.stringify({ routing: { skipped: 'r'.repeat(2500) }, taskId: 'ply-task-22222222-2222-4222-8222-222222222222' });
+  const tools = wrapBackend({ id: 'claude', capabilities: {},
+    async runTurn(a) { a.emit({ type: 'session', sessionId: 'tools-native' }); },
+    async getMessages() { return [{ role: 'user', uuid: 'tu', text: 'go' }, { role: 'assistant', uuid: 'ta', text: '', toolCalls: [
+      { id: 'd', name: 'mcp__ply_agents__ply_delegate', input: {}, result: { text: long, isError: false } },
+      { id: 'b', name: 'Bash', input: {}, result: { text: long, isError: false } }] }]; },
+    async getSession() { return { title: 'go' }; },
+  });
+  const tid = await createConversation(tools, {});
+  await tools.runTurn({ ...args, sessionId: tid, prompt: 'go' });
+  const shown = (await tools.getMessages(tid)).find(m => m.toolCalls)?.toolCalls ?? [];
+  assert.equal(shown[0]?.result.text, long);
+  assert.equal(shown[0]?.result.truncated, undefined);
+  assert.equal(shown[1]?.result.truncated, true);
+  assert.ok(shown[1].result.text.length < long.length);
 }
 
 export async function botContextContracts() {

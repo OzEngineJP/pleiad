@@ -78,6 +78,14 @@ export function workspaceLine(locale, worktree, state) {
   return agentT(locale, 'delegation.noticeWorkspaceUnknown', { branch, path });
 }
 
+/**
+ * ply_delegate の依頼元へ返す形。taskId を先頭に置き（結果を切った履歴の画面でもカードを子に結び付けられる。web/delegate-result.mjs）、
+ * 依頼元が書いた依頼文 task は返し直さない（依頼元は持っている。画面のカードの「依頼」は入力から描く）
+ */
+export function delegateReply({ taskId, task, ...rest }) {
+  return { taskId, ...rest };
+}
+
 export function finalReply(messages) {
   const list = Array.isArray(messages) ? messages : [];
   const reply = (m) => m?.role === 'assistant' && typeof m.text === 'string' && m.text;
