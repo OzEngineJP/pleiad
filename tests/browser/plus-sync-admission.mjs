@@ -1,9 +1,9 @@
-// 同期の鍵の受け渡しの承認と回復（docs/plus.md「同期の鍵の受け渡し」）。実ブラウザーで、偽の Plus（tests/lib/fake-plus.mjs）を相手に
+// 同期の鍵の受け渡しの承認と同期のリセット（docs/plus.md「同期の鍵の受け渡し」）。実ブラウザーで、偽の Plus（tests/lib/fake-plus.mjs）を相手に
 // 隔離した Pleiad を 2 台（desk・lap）立て、本物の同期のエンジンで次を見る:
-//   1. 鍵を持つ PC が 1 台も残っていない desk: 回復を頼む → 待つ → 待ちが明けて新しい鍵で始め直す
+//   1. 鍵を持つ PC が 1 台も残っていない desk: リセットを頼む → 待つ → 待ちが明けて新しい鍵で始め直す
 //   2. 新しい PC の lap: 承認を待つ（「鍵を持つ PC が使えないとき」）→ 両方に同じ確認コード → desk の承認の窓と通知の行 → 渡す
 //   3. この版では使えない api（426）: 更新を促す
-//   4. 外された desk が今の鍵を持っていて、ほかの PC が回復を頼んだ: 知らせ（通知の一覧にも残る）と「回復を止める」
+//   4. 外された desk が今の鍵を持っていて、ほかの PC がリセットを頼んだ: 知らせ（通知の一覧にも残る）と「リセットを止める」
 // 鍵の仕組みそのもの（断る・承認の途中から戻る・外した PC の締め出し・移行・券）は tests/unit/plus-sync-admission.mjs が見る。
 // ホームと CLAUDE_CONFIG_DIR は試験の置き場に向ける（本物の ~/.claude には触らない）。
 // 実行: node tests/browser/plus-sync-admission.mjs   （PLUS_SYNC_SHOTS=<ディレクトリ> で場面ごとの画像を撮る。明暗 × 1280/360）
@@ -161,7 +161,7 @@ try {
   plus.state.accounts[UID] = PLUS_ACCOUNT;
   browser = await chromium.launch({ executablePath: chromiumPath() });
 
-  // ================= 1. 鍵を持つ PC が 1 台も残っていない: 回復 =================
+  // ================= 1. 鍵を持つ PC が 1 台も残っていない: 同期のリセット =================
   // 前に使っていた PC（OLD-DESK）が最初の鍵を作り、3 件を同期してから、アカウントのページで外された
   const oldDesk = await scriptedHost('old-desk', 'OLD-DESK');
   const first = await oldDesk.keys.setup();
@@ -173,31 +173,32 @@ try {
   plus.unbindHost(oldDesk.hostId, 'user');
 
   const desk = await startPc('desk', 'DESKTOP-3');
-  let tx = await desk.waitText('#plusSyncSection', '回復を頼む', 60_000);
-  ok('desk: 同期のデータ・鍵を持つ PC が外れていること・外れた PC の名前・回復の説明',
-    tx.includes('3 件') && tx.includes('鍵を持つ PC はどれも登録から外れています') && tx.includes('OLD-DESK') && tx.includes('72 時間後'), tx);
+  let tx = await desk.waitText('#plusSyncSection', '鍵を持つ PC がありません', 60_000);
+  ok('desk: 「鍵を持つ PC がありません」・72 時間の待ち・消えるもの。経緯の記録（外れた PC の名前など）は出さない',
+    tx.includes('リセットは 72 時間後にできます') && tx.includes('サーバーの同期のデータ（約 2.3 MB・3 件）は消えます')
+      && !tx.includes('OLD-DESK') && !tx.includes('登録から外れています') && !tx.includes('最後の更新'), tx);
   ok('desk: 鍵を持たない PC の「消して始め直す」は出ない', !tx.includes('鍵を持つ PC が使えないとき') && !(await desk.page.locator('#plusSyncSection [data-fk="syncReset"]').count()), tx);
   await desk.shots('recovery-ask');
 
   await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryRequest"]').click();
-  tx = await desk.waitText('#plusSyncSection', '回復を待っています', 15_000);
-  ok('回復を頼む: サーバーに回復の申し出（この PC・72 時間後）', ledger().recovery?.requestedBy === desk.hostId
+  tx = await desk.waitText('#plusSyncSection', 'リセットを待っています', 15_000);
+  ok('リセットを頼む: サーバーにリセットの申し出（この PC・72 時間後）', ledger().recovery?.requestedBy === desk.hostId
     && Math.abs(Date.parse(ledger().recovery.readyAt) - Date.now() - 72 * 3_600_000) < 120_000, JSON.stringify(ledger().recovery));
-  ok('待っている間: 「取り下げる」だけで、始め直すボタンは出ない', tx.includes('取り下げる') && !tx.includes('新しい鍵で始め直す'), tx);
+  ok('待っている間: 「取り下げる」だけで、リセットのボタンは出ない', tx.includes('取り下げる') && !tx.includes('同期をリセット'), tx);
   await desk.shots('recovery-waiting');
 
   // 待ちを 0 にして頼み直す（取り下げる → 頼む）: 待ちが明けた形
   await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryCancel"]').click();
-  await desk.waitText('#plusSyncSection', '回復を頼む', 15_000);
-  ok('取り下げる: サーバーの回復の申し出が消える', !ledger().recovery, JSON.stringify(ledger().recovery));
+  await desk.waitText('#plusSyncSection', '同期をリセット', 15_000);
+  ok('取り下げる: サーバーのリセットの申し出が消える', !ledger().recovery, JSON.stringify(ledger().recovery));
   plus.state.recoveryWaitMs = 0;
   await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryRequest"]').click();
-  tx = await desk.waitText('#plusSyncSection', '回復の待ちが明けました', 15_000);
-  ok('待ちが明けた: 「新しい鍵で始め直す」と「取り下げる」', tx.includes('新しい鍵で始め直す') && tx.includes('取り下げる'), tx);
+  tx = await desk.waitText('#plusSyncSection', '待ちは終わりました', 15_000);
+  ok('待ちが明けた: 「同期をリセット」と「取り下げる」', tx.includes('リセットできます') && tx.includes('同期をリセット') && tx.includes('取り下げる'), tx);
   await desk.shots('recovery-ready');
 
   await desk.page.locator('#plusSyncSection [data-fk="syncReset"]').click();
-  tx = await desk.waitText('#plusSyncSection', '同期のデータを消して、この PC で始め直しますか？', 10_000);
+  tx = await desk.waitText('#plusSyncSection', '同期をリセットしますか？', 10_000);
   ok('始め直しの確かめ: 消えるもの（3 件）・消えないもの・ほかの PC は承認で受け取る。チェックの前は押せない',
     tx.includes('3 件') && tx.includes('消えないもの') && tx.includes('この PC の画面で承認すると')
     && await desk.page.locator('#plusSyncSection [data-fk="syncResetYes"]').isDisabled(), tx);
@@ -206,7 +207,7 @@ try {
   await desk.page.locator('#plusSyncSection [data-fk="syncResetCheck"]').check();
   await desk.page.locator('#plusSyncSection [data-fk="syncResetYes"]').click();
   await desk.waitText('#plusSyncSection', '最後の同期:', 60_000);
-  ok('始め直した: 新しい鍵・回復の申し出は消える・desk が鍵を持つ', ledger().keyId !== keyBefore && !ledger().recovery && !!ledger().keys[desk.hostId], ledger().keyId);
+  ok('始め直した: 新しい鍵・リセットの申し出は消える・desk が鍵を持つ', ledger().keyId !== keyBefore && !ledger().recovery && !!ledger().keys[desk.hostId], ledger().keyId);
   plus.state.recoveryWaitMs = 72 * 3_600_000;
 
   // ================= 2. 新しい PC: 承認を通した鍵の受け渡し =================
@@ -217,7 +218,7 @@ try {
   await lap.shots('join-waiting');
   await lap.page.locator('#plusSyncSection [data-fk="syncReset"]').click();
   tx = await lap.waitText('#plusSyncSection', '手元に無い PC は、アカウントのページで外してください', 10_000);
-  ok('lap:「鍵を持つ PC が使えないとき」は外し方と回復の説明。始め直しのボタンは無い',
+  ok('lap:「鍵を持つ PC が使えないとき」は外し方とリセットの説明。始め直しのボタンは無い',
     tx.includes('72 時間待ってから') && !(await lap.page.locator('#plusSyncSection [data-fk="syncResetYes"]').count()), tx);
   await lap.shots('join-help');
   await lap.page.locator('#plusSyncSection [data-fk="syncHelpClose"]').click();
@@ -265,35 +266,35 @@ try {
   ok('426: 更新を促す。「今すぐ同期」は出さない', tx.includes('新しい版に更新すると') && !(await lap.page.locator('#plusSyncSection [data-fk="syncNow"]').count()), tx);
   await lap.shots('update-required');
 
-  // ================= 4. 外された desk が今の鍵を持っていて、ほかの PC が回復を頼んだ =================
+  // ================= 4. 外された desk が今の鍵を持っていて、ほかの PC がリセットを頼んだ =================
   plus.unbindHost(lap.hostId, 'user');
   plus.unbindHost(desk.hostId, 'user');
   const stranger = await scriptedHost('stranger', 'UNKNOWN-PC');
   const asked = await stranger.keys.recoveryRequest();
-  ok('前提: 鍵を持つ PC がどれも外れたので、別の PC が回復を頼める', !!asked.recovery, JSON.stringify(asked));
+  ok('前提: 鍵を持つ PC がどれも外れたので、別の PC がリセットを頼める', !!asked.recovery, JSON.stringify(asked));
   await desk.click('#plusSyncSection [data-fk="syncNow"]');
-  tx = await desk.waitText('#plusSyncSection', 'UNKNOWN-PC が同期の回復を頼んでいます', 60_000);
-  ok('外された desk: 回復の知らせと「回復を止める」', !!(await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').count()), tx);
+  tx = await desk.waitText('#plusSyncSection', 'UNKNOWN-PC が同期のリセットを頼んでいます', 60_000);
+  ok('外された desk: リセットの知らせと「リセットを止める」', !!(await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').count()), tx);
   await desk.shots('recovery-alert');
   // 通知の一覧にも、あなた待ちの行で残る。押すと設定 › Pleiad Plus に戻る
   await desk.page.locator('#backToChat').click();
   await desk.page.locator('#notifBell').click();
-  const recTx = await desk.waitText('#notifPanel', 'UNKNOWN-PC が同期の回復を頼んでいます', 15_000);
-  ok('通知: 回復の頼みがあなた待ちに 1 行・場所は「設定 › Pleiad Plus」', recTx.includes('設定 › Pleiad Plus'), recTx.slice(0, 300));
+  const recTx = await desk.waitText('#notifPanel', 'UNKNOWN-PC が同期のリセットを頼んでいます', 15_000);
+  ok('通知: リセットの頼みがあなた待ちに 1 行・場所は「設定 › Pleiad Plus」', recTx.includes('設定 › Pleiad Plus'), recTx.slice(0, 300));
   await desk.shots('recovery-notice');
-  await desk.page.locator('#notifPanel .nrow', { hasText: '同期の回復を頼んでいます' }).first().click();
+  await desk.page.locator('#notifPanel .nrow', { hasText: '同期のリセットを頼んでいます' }).first().click();
   await desk.page.waitForSelector('#plusSyncSection [data-fk="syncRecoveryStop"]', { timeout: 15_000 });
-  ok('通知の行から「回復を止める」のある同期のまとまりに戻る', (await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').count()) === 1);
+  ok('通知の行から「リセットを止める」のある同期のまとまりに戻る', (await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').count()) === 1);
   await desk.page.locator('#plusSyncSection [data-fk="syncRecoveryStop"]').click();
-  await desk.waitText('#plusSyncSection', '回復を止めました', 15_000);
-  ok('回復を止める: 今の鍵の署名で止まる', !ledger().recovery, JSON.stringify(ledger().recovery));
+  await desk.waitText('#plusSyncSection', 'リセットを止めました', 15_000);
+  ok('リセットを止める: 今の鍵の署名で止まる', !ledger().recovery, JSON.stringify(ledger().recovery));
   await desk.page.locator('#backToChat').click();
   await desk.page.locator('#notifBell').click();
   {
     const deadline = Date.now() + 10_000;
-    while ((await desk.page.locator('#notifPanel').innerText()).includes('同期の回復を頼んでいます') && Date.now() < deadline) await desk.page.waitForTimeout(200);
+    while ((await desk.page.locator('#notifPanel').innerText()).includes('同期のリセットを頼んでいます') && Date.now() < deadline) await desk.page.waitForTimeout(200);
   }
-  ok('回復を止めたら通知の行も消える', !(await desk.page.locator('#notifPanel').innerText()).includes('同期の回復を頼んでいます'));
+  ok('リセットを止めたら通知の行も消える', !(await desk.page.locator('#notifPanel').innerText()).includes('同期のリセットを頼んでいます'));
 
   for (const pc of [desk, lap]) await pc.ctx.close();
 } finally {

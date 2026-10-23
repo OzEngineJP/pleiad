@@ -46,7 +46,9 @@ export default async function (t) {
   t.ok('見出し「同期」とスイッチ（既定は入）と「同期するもの」', text(nodes).includes('同期') && switchOf(nodes)?.getAttribute('aria-checked') === 'true' && text(nodes).includes('同期するもの'));
   byFk(nodes, 'syncToggle').onclick();
   t.ok('スイッチは onToggle(false) を呼ぶ', calls.at(-1)[0] === 'toggle' && calls.at(-1)[1] === false);
-  t.ok('「同期するもの」の中身（する・しない・暗号）', text(nodes).includes('同期しない') && text(nodes).includes('暗号化してから送ります'));
+  t.ok('「同期するもの」の中身は箇条書きの 5 項目（「同期しない」・暗号の一言は出さない）',
+    text(nodes).includes('設定（PC ごとの値・パス・リモート・秘密を除く）') && text(nodes).includes('~/.claude/skills') && text(nodes).includes('~/.agents/skills') && text(nodes).includes('Pleiad の skill') && text(nodes).includes('Claude・Codex・Gemini の全体の指示ファイル')
+      && !text(nodes).includes('同期しない') && !text(nodes).includes('暗号化してから送ります'), text(nodes));
   t.ok('状態の行は aria-live=polite の中', liveOf(nodes) !== null);
 
   // enabled: false → 状態の行は出さない（スイッチだけ残る）
@@ -65,7 +67,7 @@ export default async function (t) {
 
   // waiting_key
   nodes = render({ ...BASE, state: 'waiting_key' });
-  t.ok('waiting_key: 文と下の案内と「同期をやり直す」', text(nodes).includes('ほかの PC が鍵を渡すのを待っています') && text(nodes).includes('別の PC で Pleiad を開いてください') && buttonTexts(nodes).includes('同期をやり直す'));
+  t.ok('waiting_key: 文と下の案内と「同期をリセット」', text(nodes).includes('ほかの PC が鍵を渡すのを待っています') && text(nodes).includes('別の PC で Pleiad を開いてください') && buttonTexts(nodes).includes('同期をリセット'));
   t.ok('waiting_key: 「今すぐ同期」は出さない', !buttonTexts(nodes).includes('今すぐ同期'));
 
   // ---- 鍵を待つ場面（docs/plus.md「同期の始め直しと登録の外れ」）
@@ -90,17 +92,18 @@ export default async function (t) {
   nodes = render({ ...BASE, state: 'waiting_key', wait: { keyId: 'key-1', itemCount: null, totalBytes: 0, updatedAt: null, holder: false, holders: [] } });
   tx = text(nodes);
   t.ok('件数が分からない（前の api）: 「あるかもしれません」で、件数・最後の更新は出さない', tx.includes('データがあるかもしれません') && !tx.includes('件）') && !tx.includes('最後の更新'), tx);
-  // 始め直された直後（自分の鍵が古い）
+  // 始め直された直後（自分の鍵が古い）: 経緯の記録は鍵を待っている間は出さない
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...WAIT, holder: true, stale: true, resetAt: '2026-10-21T03:00:00Z', resetBy: { hostId: 'h-test', name: 'test-pc' },
     holders: [{ hostId: 'h-test', name: 'test-pc', registered: true, lastSyncAt: null }] } });
-  t.ok('始め直された: 「test-pc で … に始め直されました」', text(nodes).includes('同期は test-pc で') && text(nodes).includes('に始め直されました'), text(nodes));
+  t.ok('始め直された: 「始め直されました」の記録は出さず、今の状態（待ち）だけ出す',
+    !text(nodes).includes('始め直されました') && text(nodes).includes('鍵を持つ PC: test-pc'), text(nodes));
 
   // ---- 始め直しの窓（場面 3）: チェックを入れるまで押せない
   const w2 = { ...WAIT, holder: false, holders: [] };
   nodes = render({ ...BASE, state: 'waiting_key', wait: w2 }, { confirming: true });
   tx = text(nodes);
   t.ok('始め直しの窓: 題・消えるもの（件数と大きさ）・消えないもの・ほかの PC',
-    tx.includes('同期のデータを消して、この PC で始め直しますか？') && tx.includes('消えるもの: サーバーにある同期のデータ（約 4.2 MB・312 件）') && tx.includes('手元のファイルと設定は消えません') && tx.includes('「同期の写し」に 30 日残ります'), tx);
+    tx.includes('同期をリセットしますか？') && tx.includes('消えるもの: サーバーにある同期のデータ（約 4.2 MB・312 件）') && tx.includes('手元のファイルと設定は消えません') && tx.includes('「同期の写し」に 30 日残ります'), tx);
   const check = byFk(nodes, 'syncResetCheck');
   t.ok('始め直しの窓: チェックは 1 つで、文言は「サーバーの同期のデータを消して、この PC から始め直す」', check?.type === 'checkbox' && check.checked === false && tx.includes('サーバーの同期のデータを消して、この PC から始め直す'));
   t.ok('始め直しの窓: チェックの前は「消して始め直す」を押せない', byFk(nodes, 'syncResetYes')?.textContent === '消して始め直す' && byFk(nodes, 'syncResetYes').disabled === true);
@@ -132,37 +135,39 @@ export default async function (t) {
   t.ok('sharedTo: 「新しい PC new-pc に同期の鍵を渡しました」', text(nodes).includes('新しい PC new-pc に同期の鍵を渡しました'), text(nodes));
   nodes = render({ ...BASE, state: 'disabled', sharedTo: [{ hostId: 'h-new', name: 'new-pc', at: '2026-10-21T04:00:00Z' }] });
   t.ok('sharedTo: 同期を切っているアカウントでは出さない', !text(nodes).includes('同期の鍵を渡しました'));
+  nodes = render({ ...BASE, state: 'waiting_key', wait: { ...WAIT, holder: true, holders: [{ hostId: 'h-desk', name: 'desk', registered: true }] }, sharedTo: [{ hostId: 'h-new', name: 'new-pc', at: '2026-10-21T04:00:00Z' }] });
+  t.ok('sharedTo: 鍵を待っている間（この PC が鍵を持っていない間）は出さない', !text(nodes).includes('同期の鍵を渡しました'), text(nodes));
 
   // syncing
   nodes = render({ ...BASE, state: 'syncing' });
   t.ok('syncing: 「同期しています…」', text(nodes).includes('同期しています'));
 
-  // idle: 最後の同期と「今すぐ同期」「同期をやり直す」
+  // idle: 最後の同期と「今すぐ同期」「同期をリセット」
   nodes = render(BASE);
-  t.ok('idle: 「最後の同期: 」と 2 ボタン', text(nodes).includes('最後の同期:') && buttonTexts(nodes).includes('今すぐ同期') && buttonTexts(nodes).includes('同期をやり直す'));
+  t.ok('idle: 「最後の同期: 」と 2 ボタン', text(nodes).includes('最後の同期:') && buttonTexts(nodes).includes('今すぐ同期') && buttonTexts(nodes).includes('同期をリセット'));
   byFk(nodes, 'syncNow').onclick();
   t.ok('「今すぐ同期」は onNow', calls.at(-1)[0] === 'now');
   byFk(nodes, 'syncReset').onclick();
-  t.ok('「同期をやり直す」は確かめを開く（onAskReset）', calls.at(-1)[0] === 'askReset');
+  t.ok('「同期をリセット」は確かめを開く（onAskReset）', calls.at(-1)[0] === 'askReset');
 
-  // quota: 赤・使用量・新しいものは送られない・「同期をやり直す」
+  // quota: 赤・使用量・新しいものは送られない・「同期をリセット」
   nodes = render({ ...BASE, state: 'quota', totalBytes: 6_000_000, limitBytes: 7_340_032 });
   const quotaTx = text(nodes);
   t.ok('quota: 上限・使用量（MB 小数 1 桁）・送られない', quotaTx.includes('同期の容量の上限に達しました') && quotaTx.includes('5.7 MB / 7.0 MB') && quotaTx.includes('新しく変えたものは送られません'), quotaTx);
-  t.ok('quota: 「同期をやり直す」は出るが「今すぐ同期」は出さない', buttonTexts(nodes).includes('同期をやり直す') && !buttonTexts(nodes).includes('今すぐ同期'));
+  t.ok('quota: 「同期をリセット」は出るが「今すぐ同期」は出さない', buttonTexts(nodes).includes('同期をリセット') && !buttonTexts(nodes).includes('今すぐ同期'));
 
-  // error: 誤りの code ごとの一言と「今すぐ同期」「同期をやり直す」
+  // error: 誤りの code ごとの一言と「今すぐ同期」「同期をリセット」
   for (const [error, want] of [['network', 'サーバーにつながりません'], ['rate_limited', '自動でやり直します'], ['conflict', 'もう一度お試しください']]) {
     nodes = render({ ...BASE, state: 'error', error });
     t.ok(`error(${error}): 「同期できませんでした」と「${want}」`, text(nodes).includes('同期できませんでした') && text(nodes).includes(want), text(nodes));
-    t.ok(`error(${error}): 「今すぐ同期」と「同期をやり直す」`, buttonTexts(nodes).includes('今すぐ同期') && buttonTexts(nodes).includes('同期をやり直す'));
+    t.ok(`error(${error}): 「今すぐ同期」と「同期をリセット」`, buttonTexts(nodes).includes('今すぐ同期') && buttonTexts(nodes).includes('同期をリセット'));
   }
 
   // Plus が止まっている（api の 503 unavailable）: 誤りではなく待ち。「同期できませんでした」「サーバーにつながりません」は出さない
   nodes = render({ ...BASE, state: 'error', error: 'unavailable' });
   const pausedTx = text(nodes);
   t.ok('error(unavailable): 「Pleiad Plus が一時的に止まっています（再開を待っています）」と自動で再開する旨', pausedTx.includes('Pleiad Plus が一時的に止まっています（再開を待っています）') && pausedTx.includes('再開したら自動で同期します') && !pausedTx.includes('同期できませんでした') && !pausedTx.includes('サーバーにつながりません'), pausedTx);
-  t.ok('error(unavailable): 「今すぐ同期」だけ（やり直しも断られる）', buttonTexts(nodes).includes('今すぐ同期') && !buttonTexts(nodes).includes('同期をやり直す'), buttonTexts(nodes).join());
+  t.ok('error(unavailable): 「今すぐ同期」だけ（リセットも断られる）', buttonTexts(nodes).includes('今すぐ同期') && !buttonTexts(nodes).includes('同期をリセット'), buttonTexts(nodes).join());
 
   // stopped: アカウントの停止（403 account_disabled・not_plus）。誤りではないので「同期できませんでした」は出さず、自動で戻ることを書く
   for (const [error, want] of [['account_disabled', 'このアカウントでは今は同期を使えません'], ['not_plus', 'Pleiad Plus に戻ると']]) {
@@ -172,13 +177,13 @@ export default async function (t) {
     t.ok(`stopped(${error}): ボタンは出さない（回しても断られる）`, buttonTexts(nodes).length === 0, buttonTexts(nodes).join());
   }
 
-  // 確かめ: 題・本文・「やり直す」「やめる」
+  // 確かめ: 題・本文・「リセットする」「やめる」
   nodes = render(BASE, { confirming: true });
-  t.ok('確かめ: 題と本文と 2 ボタン', text(nodes).includes('同期をやり直しますか？') && text(nodes).includes('サーバーから消して、この PC の内容で始め直します') && buttonTexts(nodes).includes('やり直す') && buttonTexts(nodes).includes('やめる'));
+  t.ok('確かめ: 題と本文と 2 ボタン', text(nodes).includes('同期をリセットしますか？') && text(nodes).includes('サーバーから消して、この PC の内容で始め直します') && buttonTexts(nodes).includes('リセットする') && buttonTexts(nodes).includes('やめる'));
   byFk(nodes, 'syncResetNo').onclick();
   t.ok('「やめる」は onCancelReset', calls.at(-1)[0] === 'cancelReset');
   byFk(nodes, 'syncResetYes').onclick();
-  t.ok('「やり直す」は onReset', calls.at(-1)[0] === 'reset');
+  t.ok('「リセットする」は onReset', calls.at(-1)[0] === 'reset');
 
   // 競合: 1 件以上で行と「フォルダーを開く」と 30 日
   nodes = render({ ...BASE, conflicts: 3 });
@@ -214,10 +219,10 @@ export default async function (t) {
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...V2, join: { state: 'denied', code: null, approver: null } } }, { now: NOW });
   tx = text(nodes);
   t.ok('v2 断られた: 「断られました」と 1 時間の案内、コードは出さない', tx.includes('鍵の受け渡しが断られました') && tx.includes('1 時間たつと') && !/\d{3} \d{3}/.test(tx), tx);
-  // 「鍵を持つ PC が使えないとき」: 始め直しではなく、外し方と回復の説明
+  // 「鍵を持つ PC が使えないとき」: 始め直しではなく、外し方と同期のリセットの説明
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...V2, join: { state: 'committed' } } }, { confirming: true, onOpenAccount: () => calls.push(['account']) });
   tx = text(nodes);
-  t.ok('v2 使えないとき: PC の外し方と回復の説明。始め直しのチェックは出さない', tx.includes('アカウントのページで外して') && tx.includes('回復を頼めます') && !buttonTexts(nodes).includes('消して始め直す'), tx);
+  t.ok('v2 使えないとき: PC の外し方とリセットの説明。始め直しのチェックは出さない', tx.includes('アカウントのページで外して') && tx.includes('同期をリセットできます') && !buttonTexts(nodes).includes('消して始め直す'), tx);
   byFk(nodes, 'syncHelpAccount').onclick();
   t.ok('v2 使えないとき: アカウントのページを開ける', calls.at(-1)[0] === 'account');
   byFk(nodes, 'syncHelpClose').onclick();
@@ -225,47 +230,53 @@ export default async function (t) {
   t.ok('v2 使えないとき: アカウントのページの URL が無ければ、そのボタンは出さない',
     byFk(render({ ...BASE, state: 'waiting_key', wait: { ...V2 } }, { confirming: true }), 'syncHelpAccount') === null);
 
-  // 鍵を持つ PC が居ない: データと回復
+  // 鍵を持つ PC が 1 台も居ない: 状態 → 取れる道と待ち → 消えるもの →「同期をリセット」（経緯の記録は出さない）
   const rec = [];
   const onRecovery = a => rec.push(a);
   const NOHOLD = { ...WAIT, v2: true, holder: false, holders: [{ hostId: 'h-old', name: 'old-desk', registered: false, lastSyncAt: null }], recovery: null };
   nodes = render({ ...BASE, state: 'waiting_key', wait: NOHOLD }, { now: NOW, onRecovery });
   tx = text(nodes);
-  t.ok('v2 回復の前: データの件数・外れた PC の名前・回復の説明', tx.includes('312 件') && tx.includes('どれも登録から外れています') && tx.includes('old-desk') && tx.includes('72 時間後'), tx);
+  t.ok('v2 リセットの前: 「鍵を持つ PC がありません」→ 72 時間の待ち → 消えるもの（件数と大きさ）',
+    tx.includes('鍵を持つ PC がありません') && tx.includes('リセットは 72 時間後にできます') && tx.includes('サーバーの同期のデータ（約 4.2 MB・312 件）は消えます'), tx);
+  t.ok('v2 リセットの前: 経緯の記録（外れた PC の名前・データがあること・最後の更新）は出さない',
+    !tx.includes('old-desk') && !tx.includes('登録から外れています') && !tx.includes('ほかの PC が同期したデータがあります') && !tx.includes('最後の更新'), tx);
+  t.ok('v2 リセットの前: 「回復」の言葉は出さない', !tx.includes('回復'), tx);
   byFk(nodes, 'syncRecoveryRequest').onclick();
-  t.ok('v2 回復の前: 「回復を頼む」は onRecovery(request)', rec.at(-1) === 'request');
+  t.ok('v2 リセットの前: 「同期をリセット」は onRecovery(request)', rec.at(-1) === 'request' && byFk(nodes, 'syncRecoveryRequest').textContent === '同期をリセット');
   const R = { requestedBy: 'h-me', requestedAt: '2026-10-21T05:00:00Z', readyAt: '2026-10-24T05:00:00Z', requestedByName: 'me' };
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...NOHOLD, recovery: R, recoveryMine: true } }, { now: NOW, onRecovery });
   tx = text(nodes);
-  t.ok('v2 回復を待つ: 明ける時刻と「取り下げる」。まだ始め直しは出さない', tx.includes('回復を待っています') && buttonTexts(nodes).includes('取り下げる') && !buttonTexts(nodes).includes('新しい鍵で始め直す'), tx);
+  t.ok('v2 リセットを待つ: 「リセットを待っています / … にリセットできます。」と消えるものと「取り下げる」。まだリセットのボタンは出さない',
+    tx.includes('リセットを待っています') && tx.includes('にリセットできます。') && tx.includes('サーバーの同期のデータ（約 4.2 MB・312 件）は消えます')
+      && buttonTexts(nodes).includes('取り下げる') && !buttonTexts(nodes).includes('同期をリセット'), tx);
   byFk(nodes, 'syncRecoveryCancel').onclick();
   t.ok('「取り下げる」は onRecovery(cancel)', rec.at(-1) === 'cancel');
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...NOHOLD, recovery: R, recoveryMine: true } }, { now: new Date('2026-10-24T06:00:00Z'), onRecovery });
-  t.ok('v2 回復の待ちが明けた: 「新しい鍵で始め直す」が出て、確かめの窓を開く', text(nodes).includes('待ちが明けました') && buttonTexts(nodes).includes('新しい鍵で始め直す'));
+  t.ok('v2 リセットの待ちが明けた: 「リセットできます / 待ちは終わりました。」と「同期をリセット」が出る', text(nodes).includes('リセットできます') && text(nodes).includes('待ちは終わりました。') && buttonTexts(nodes).includes('同期をリセット'));
   byFk(nodes, 'syncReset').onclick();
-  t.ok('「新しい鍵で始め直す」は確かめを開く（onAskReset）', calls.at(-1)[0] === 'askReset');
+  t.ok('「同期をリセット」は確かめを開く（onAskReset）', calls.at(-1)[0] === 'askReset');
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...NOHOLD, recovery: R, recoveryMine: true } }, { confirming: true, resetChecked: true, onRecovery });
   tx = text(nodes);
-  t.ok('v2 回復の確かめ: 消えるデータの件数と、ほかの PC は承認でまた同期すること', tx.includes('312 件') && tx.includes('この PC の画面で承認すると'), tx);
+  t.ok('v2 リセットの確かめ: 消えるデータの件数と、ほかの PC は承認でまた同期すること', tx.includes('312 件') && tx.includes('この PC の画面で承認すると'), tx);
   byFk(nodes, 'syncResetYes').onclick();
-  t.ok('v2 回復の確かめ: 始め直すは onRecovery(complete)（onReset ではない）', rec.at(-1) === 'complete' && calls.at(-1)[0] !== 'reset');
+  t.ok('v2 リセットの確かめ: 始め直すは onRecovery(complete)（onReset ではない）', rec.at(-1) === 'complete' && calls.at(-1)[0] !== 'reset');
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...NOHOLD, recovery: { ...R, requestedByName: 'tablet' }, recoveryMine: false, recoveryStop: false } }, { now: NOW, onRecovery });
-  t.ok('v2 ほかの PC の回復: その PC の名前と時刻。鍵が無ければ止めるボタンは出さない', text(nodes).includes('tablet が回復を頼んでいます') && byFk(nodes, 'syncRecoveryStop') === null, text(nodes));
+  t.ok('v2 ほかの PC のリセット: その PC の名前と時刻。鍵が無ければ止めるボタンは出さない', text(nodes).includes('tablet が同期のリセットを頼んでいます') && byFk(nodes, 'syncRecoveryStop') === null, text(nodes));
   nodes = render({ ...BASE, state: 'waiting_key', wait: { ...NOHOLD, recovery: { ...R, requestedByName: 'tablet' }, recoveryMine: false, recoveryStop: true } }, { now: NOW, onRecovery });
   byFk(nodes, 'syncRecoveryStop').onclick();
-  t.ok('v2 ほかの PC の回復: 今の鍵があれば「回復を止める」→ onRecovery(stop)', rec.at(-1) === 'stop');
+  t.ok('v2 ほかの PC のリセット: 今の鍵があれば「リセットを止める」→ onRecovery(stop)', rec.at(-1) === 'stop');
 
-  // 外されたこの PC が今の鍵を持っていて、回復が頼まれている
+  // 外されたこの PC が今の鍵を持っていて、リセットが頼まれている
   nodes = render({ ...BASE, state: 'unregistered', recoveryAlert: { requestedByName: 'tablet', readyAt: R.readyAt } }, { now: NOW, onRecovery });
   tx = text(nodes);
-  t.ok('回復の知らせ（外された PC）: 心当たりが無ければ止める・「回復を止める」', tx.includes('tablet が同期の回復を頼んでいます') && tx.includes('心当たりが無ければ') && buttonTexts(nodes).includes('回復を止める'), tx);
+  t.ok('リセットの知らせ（外された PC）: 心当たりが無ければ止める・「リセットを止める」', tx.includes('tablet が同期のリセットを頼んでいます') && tx.includes('心当たりが無ければ') && buttonTexts(nodes).includes('リセットを止める'), tx);
   // 操作の結果の一言
   nodes = render({ ...BASE, state: 'waiting_key', wait: NOHOLD }, { recoveryNote: 'reauth', onLogin: () => calls.push(['login']) });
-  t.ok('回復の結果 reauth: ログインし直す案内とボタン', text(nodes).includes('ログインし直してください') && buttonTexts(nodes).includes('ログインし直す'));
+  t.ok('リセットの結果 reauth: ログインし直す案内とボタン', text(nodes).includes('ログインし直してください') && buttonTexts(nodes).includes('ログインし直す'));
   byFk(nodes, 'syncRelogin').onclick();
   t.ok('「ログインし直す」は onLogin', calls.at(-1)[0] === 'login');
-  t.ok('回復の結果 other・stopped の一言', text(render({ ...BASE, state: 'waiting_key', wait: NOHOLD }, { recoveryNote: 'other' })).includes('先に回復を頼みました')
-    && text(render(BASE, { recoveryNote: 'stopped' })).includes('回復を止めました'));
+  t.ok('リセットの結果 other・stopped の一言', text(render({ ...BASE, state: 'waiting_key', wait: NOHOLD }, { recoveryNote: 'other' })).includes('先にリセットを頼みました')
+    && text(render(BASE, { recoveryNote: 'stopped' })).includes('リセットを止めました'));
 
   // 426: この版では続けられない
   nodes = render({ ...BASE, state: 'update_required' });

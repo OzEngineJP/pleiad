@@ -33,7 +33,7 @@ export function describeNotification(n, t, titleOf = () => '') {
     const line = count === 1 && n.title ? t('inbox.line.syncApproval.named', { name: n.title }) : t('inbox.line.syncApproval.plain', { count });
     return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };
   }
-  // ほかの PC が同期の回復を頼んでいる（止めるのは今の鍵を持つ PC の設定 › Pleiad Plus で）
+  // ほかの PC が同期のリセットを頼んでいる（止めるのは今の鍵を持つ PC の設定 › Pleiad Plus で）
   if (n.kind === 'wait' && n.ask === 'syncRecovery') {
     const line = n.title ? t('inbox.line.syncRecovery.named', { name: n.title }) : t('inbox.line.syncRecovery.plain');
     return { icon: 'wait', line, place: t('inbox.place.plus'), outcome: '', open: true };

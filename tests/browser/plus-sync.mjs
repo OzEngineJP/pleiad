@@ -154,7 +154,7 @@ try {
 
   // 「鍵を持つ PC が使えないとき」→ 確かめ → やめる（何も送らない）
   await page.locator('#plusSyncSection button:has-text("鍵を持つ PC が使えないとき")').click();
-  const confirmTx = await waitText('#plusSyncSection', '同期のデータを消して、この PC で始め直しますか？');
+  const confirmTx = await waitText('#plusSyncSection', '同期をリセットしますか？');
   ok('確かめ: 題と消えないものと「やめる」。チェックの前は「消して始め直す」を押せない', confirmTx.includes('消えないもの') && confirmTx.includes('やめる')
     && await page.locator('#plusSyncSection [data-fk="syncResetYes"]').isDisabled(), confirmTx);
   await shots(page, 'reset-confirm');
@@ -178,7 +178,7 @@ try {
   }
   // やり直しのあとの最初の同期で、上限を越える PUT が 413 → quota
   const quotaTx = await waitText('#plusSyncSection', '同期の容量の上限に達しました', 60_000);
-  ok('quota: 上限・使用量・送られない・「同期をやり直す」', quotaTx.includes('/ 0.0 MB') && quotaTx.includes('新しく変えたものは送られません') && quotaTx.includes('同期をやり直す'), quotaTx);
+  ok('quota: 上限・使用量・送られない・「同期をリセット」', quotaTx.includes('/ 0.0 MB') && quotaTx.includes('新しく変えたものは送られません') && quotaTx.includes('同期をリセット'), quotaTx);
   await shots(page, 'quota');
 
   // 上限を戻して、手元の変更（skill を足す → fs.watch → 5 秒まとめて run）で idle へ
@@ -191,7 +191,7 @@ try {
   };
   await touchSkill('skill-a');
   const idleTx = await waitText('#plusSyncSection', '最後の同期:', 60_000);
-  ok('idle: 「最後の同期: 」と「今すぐ同期」「同期をやり直す」', idleTx.includes('今すぐ同期') && idleTx.includes('同期をやり直す'), idleTx);
+  ok('idle: 「最後の同期: 」と「今すぐ同期」「同期をリセット」', idleTx.includes('今すぐ同期') && idleTx.includes('同期をリセット'), idleTx);
   ok('競合の写し 1 件: 行と「フォルダーを開く」と 30 日', idleTx.includes('1 件の古い方を残しました') && idleTx.includes('フォルダーを開く') && idleTx.includes('30 日で消えます'), idleTx);
   await shots(page, 'idle-conflicts');
   // 「フォルダーを開く」（AGENT_HOST_OS_OPEN=dry で成功。失敗の文言が出ないことだけ見る）

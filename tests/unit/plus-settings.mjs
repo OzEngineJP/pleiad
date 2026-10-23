@@ -255,7 +255,7 @@ export default async function (t) {
     } finally { document.getElementById = savedGet; }
   }
 
-  // ---- 同期の鍵を渡す承認の窓（status.approvals。端末の承認の窓と同じ rm-dialog）・回復の操作 ----
+  // ---- 同期の鍵を渡す承認の窓（status.approvals。端末の承認の窓と同じ rm-dialog）・リセットの操作 ----
   {
     const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
     const savedGet = document.getElementById, savedCreate = document.createElement, savedBody = document.body;
@@ -322,13 +322,13 @@ export default async function (t) {
       byFk([dialog()], 'syncApproveYes').onclick();
       await new Promise(r => setImmediate(r));
       t.ok('取り下げられていたら窓を閉じ、同期の行に「取り下げられました」', dialog().open === false && nodes2.plusPanel.textContent.includes('申し込みが取り下げられました'), nodes2.plusPanel.textContent);
-      // 回復を頼む: 最近のログインが要る → 一言とログインし直すボタン
+      // リセットを頼む: 最近のログインが要る → 一言とログインし直すボタン
       const NOHOLD = { keyId: 'key-1', itemCount: 3, totalBytes: 1000, updatedAt: null, v2: true, holder: false, holders: [], recovery: null };
       settings.event({ type: 'plusSyncStatus', status: { state: 'waiting_key', wait: NOHOLD } });
       replies['plus.syncRecoveryRequest'] = { reauth: true, status: { state: 'waiting_key', wait: NOHOLD } };
       byFk([nodes2.plusPanel], 'syncRecoveryRequest').onclick();
       await new Promise(r => setImmediate(r));
-      t.ok('「回復を頼む」は plus.syncRecoveryRequest を送り、reauth ならログインし直す案内', invoked.at(-1)?.[0] === 'plus.syncRecoveryRequest'
+      t.ok('「同期をリセット」は plus.syncRecoveryRequest を送り、reauth ならログインし直す案内', invoked.at(-1)?.[0] === 'plus.syncRecoveryRequest'
         && nodes2.plusPanel.textContent.includes('ログインし直してください') && byFk([nodes2.plusPanel], 'syncRelogin') !== null);
       // 待ちが明けた: 始め直すはチェックを入れてからだけ plus.syncRecoveryComplete
       const R = { requestedBy: 'me', requestedAt: '2026-01-01T00:00:00Z', readyAt: '2026-01-04T00:00:00Z', requestedByName: 'me' };
@@ -336,12 +336,12 @@ export default async function (t) {
       byFk([nodes2.plusPanel], 'syncReset').onclick();
       byFk([nodes2.plusPanel], 'syncResetYes').onclick();
       await new Promise(r => setImmediate(r));
-      t.ok('回復の始め直し: チェックの前は送らない', !invoked.some(([op]) => op === 'plus.syncRecoveryComplete'));
+      t.ok('リセットの始め直し: チェックの前は送らない', !invoked.some(([op]) => op === 'plus.syncRecoveryComplete'));
       byFk([nodes2.plusPanel], 'syncResetCheck').checked = true; byFk([nodes2.plusPanel], 'syncResetCheck').onchange();
       replies['plus.syncRecoveryComplete'] = { done: true, status: { state: 'idle' } };
       byFk([nodes2.plusPanel], 'syncResetYes').onclick();
       await new Promise(r => setImmediate(r));
-      t.ok('回復の始め直し: チェックを入れたら plus.syncRecoveryComplete を送り、窓を閉じる',
+      t.ok('リセットの始め直し: チェックを入れたら plus.syncRecoveryComplete を送り、窓を閉じる',
         invoked.at(-1)?.[0] === 'plus.syncRecoveryComplete' && !byFk([nodes2.plusPanel], 'syncResetCheck') && !invoked.some(([op]) => op === 'plus.syncReset'));
     } finally { document.getElementById = savedGet; document.createElement = savedCreate; document.body = savedBody; }
   }

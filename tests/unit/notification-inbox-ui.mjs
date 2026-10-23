@@ -47,9 +47,9 @@ export default async function (tt) {
     tt.ok('2 台以上・名前の無い 1 台は台数で書く', d.line === '2 台の PC が同期の鍵を待っています'
       && describeNotification({ id: 'n10', kind: 'wait', ask: 'syncApproval', count: 1, title: '', at: 1, unread: true, target: { settings: 'plus' } }, t).line === '1 台の PC が同期の鍵を待っています', d.line);
     d = describeNotification({ id: 'n11', kind: 'wait', ask: 'syncRecovery', title: 'tablet', at: 1, unread: true, target: { settings: 'plus' } }, t);
-    tt.ok('ほかの PC の回復: 「tablet が同期の回復を頼んでいます」・◆・場所は 設定 › Pleiad Plus（名前が無ければ「ほかの PC が」）',
-      d.line === 'tablet が同期の回復を頼んでいます' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true
-      && describeNotification({ id: 'n12', kind: 'wait', ask: 'syncRecovery', title: '', at: 1, unread: true, target: { settings: 'plus' } }, t).line === 'ほかの PC が同期の回復を頼んでいます', JSON.stringify(d));
+    tt.ok('ほかの PC のリセット: 「tablet が同期のリセットを頼んでいます」・◆・場所は 設定 › Pleiad Plus（名前が無ければ「ほかの PC が」）',
+      d.line === 'tablet が同期のリセットを頼んでいます' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true
+      && describeNotification({ id: 'n12', kind: 'wait', ask: 'syncRecovery', title: '', at: 1, unread: true, target: { settings: 'plus' } }, t).line === 'ほかの PC が同期のリセットを頼んでいます', JSON.stringify(d));
     d = describeNotification({ id: 'n13', kind: 'wait', ask: 'syncRestarted', title: 'tablet', at: 1, unread: true, target: { settings: 'plus' } }, t);
     tt.ok('新しい鍵で始め直された: 受け取るか選ぶ行・◆・場所は 設定 › Pleiad Plus',
       d.line === 'tablet が新しい鍵で同期を始め直しました。受け取るか選んでください' && d.icon === 'wait' && d.place === '設定 › Pleiad Plus' && d.open === true
