@@ -105,8 +105,8 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 
 /* ==================== 浮く面（候補一覧・設定・フィルター・アイコン選択・メニュー） ==================== */
 .pop{position:absolute;z-index:30;padding:8px;background:var(--surface-paper);border-radius:var(--r-m);
-  box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);min-width:0}
-.pop .head{padding:2px 8px 4px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;
+  box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-ui);min-width:0}
+.pop .head{padding:2px 8px 4px;font-size:var(--fs-meta);color:var(--ink-weak);letter-spacing:.06em;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pop .head.wrap{white-space:normal;overflow:visible;letter-spacing:0;line-height:1.5}
 .pop .head+.head,.pop .sec+.head,.pop .li+.head{margin-top:6px}
@@ -117,11 +117,11 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .pop .li.on::before{content:"✓";font-size:10px;color:var(--ink-blue)}
 .pop .li:not(.on)::before{content:"";width:9px;flex:none}
 .pop .li .lbl{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pop .li .hint{color:var(--ink-weak);margin-left:auto;font-size:var(--fs-xs);font-family:var(--font-mono);flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pop .li .hint{color:var(--ink-weak);margin-left:auto;font-size:var(--fs-meta);font-family:var(--font-mono);flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pop .li .more{color:var(--ink-weak);font-size:10px;flex:none}
 /* 項目の下の補足（押せない理由など）。字の位置は項目名に揃え（✓ の幅 9px + 間 8px）、弱い小さな本文の字で全文を折り返す */
 .pop .li.has-note{flex-wrap:wrap;row-gap:1px}
-.pop .li .note{flex-basis:100%;margin-left:17px;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;white-space:normal;overflow-wrap:anywhere}
+.pop .li .note{flex-basis:100%;margin-left:17px;font-size:var(--fs-meta);color:var(--ink-weak);line-height:1.5;white-space:normal;overflow-wrap:anywhere}
 .pop .sep{height:6px}
 .pop input.field{width:100%;background:var(--surface-1);border-radius:var(--r-pill);padding:5px 10px;margin:2px 0 4px}
 .pop input.field:focus{outline:none;background:var(--surface-2)}
@@ -164,22 +164,22 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .combo input:disabled{color:var(--ink-weak);cursor:default;background:transparent;font-weight:400}
 .combo.mono input{font-family:var(--font-mono);font-size:var(--fs-s)}
 .clist{position:absolute;left:0;z-index:20;min-width:100%;max-width:min(560px,80vw);max-height:240px;overflow-y:auto;list-style:none;margin:0;padding:6px;
-  background:var(--surface-paper);border-radius:var(--r-m);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-s);white-space:nowrap}
+  background:var(--surface-paper);border-radius:var(--r-m);box-shadow:0 8px 28px var(--shadow);font-size:var(--fs-ui);white-space:nowrap}
 .combo.up .clist{bottom:calc(100% + 6px)}
 .combo:not(.up) .clist{top:calc(100% + 6px)}
 .combo.right .clist{left:auto;right:0}
 .clist li{padding:5px 10px;border-radius:var(--r-s);cursor:pointer;color:var(--ink);display:flex;gap:10px;align-items:baseline}
 .clist li.on{background:var(--surface-sel)}
 .clist li .lbl{overflow:hidden;text-overflow:ellipsis}
-.clist li .hint{color:var(--ink-weak);margin-left:auto;font-size:var(--fs-xs);font-family:var(--font-mono);flex:none}
-.clist .head{padding:2px 10px 4px;font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:.06em;cursor:default}
+.clist li .hint{color:var(--ink-weak);margin-left:auto;font-size:var(--fs-meta);font-family:var(--font-mono);flex:none}
+.clist .head{padding:2px 10px 4px;font-size:var(--fs-meta);color:var(--ink-weak);letter-spacing:.06em;cursor:default}
 /* 2 行の候補（互換の接続先のモデル: 表示名 + display_name・コンテキスト長）と、描かなかった件数の案内 */
 .clist li.two{align-items:center}
 .clist li .body{display:flex;flex-direction:column;min-width:0}
 .clist li .body .lbl{display:flex;align-items:baseline;min-width:0}
 .clist li .lbl .txt{overflow:hidden;text-overflow:ellipsis}
-.clist li .sub{font-size:var(--fs-xs);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;font-family:var(--font)}
-.clist li.more{cursor:default;color:var(--ink-weak);font-size:var(--fs-xs);white-space:normal;font-family:var(--font)}
+.clist li .sub{font-size:var(--fs-meta);color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis;font-family:var(--font)}
+.clist li.more{cursor:default;color:var(--ink-weak);font-size:var(--fs-meta);white-space:normal;font-family:var(--font)}
 /* 小さな札（モデルの「1M」）。面は中立の灰、字は弱い字。色で意味を付けない */
 .cbadge{display:inline-block;flex:none;margin-left:6px;padding:0 6px;border-radius:var(--r-pill);background:var(--surface-2);color:var(--ink-weak);
   font-family:var(--font-mono);font-size:var(--fs-xs);font-weight:400;line-height:1.5;vertical-align:1px}
@@ -188,20 +188,22 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .combo>.cbadge{position:absolute;right:12px;top:50%;transform:translateY(-50%);margin:0;pointer-events:none}
 .combo.combo:has(>.cbadge:not([hidden]))>input{padding-right:48px}
 /* 入力欄の「/」の候補（web/slash-skills.mjs）。既存の .clist と同じ面を使い、1 件を 2 段にする */
-:is(#skillList,#thSkillList){width:100%;max-width:640px;max-height:312px;white-space:normal;top:auto;bottom:calc(100% + 6px)}   /* 入力欄の上に浮かせる（既存の .clist の up と同じ位置） */
+/* 左右端は入力欄の箱（:is(#cbox,#thCbox)）に揃える。箱の位置は .composer の左右の padding（--cpad-l / --cpad-r）で決まるので、同じ変数で縛る。
+   .clist の min-width:100%（親の幅）と max-width は外す（ADR 0256） */
+:is(#skillList,#thSkillList){left:var(--cpad-l);right:var(--cpad-r);width:auto;min-width:0;max-width:none;max-height:312px;white-space:normal;top:auto;bottom:calc(100% + 6px)}   /* 入力欄の上に浮かせる（既存の .clist の up と同じ位置） */
 :is(#skillList,#thSkillList) .head{display:flex;gap:8px}
 :is(#skillList,#thSkillList) .head .n{margin-left:auto;font-family:var(--font-mono);letter-spacing:0}
 :is(#skillList,#thSkillList) li.it{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;align-items:baseline;padding:6px 10px}
 :is(#skillList,#thSkillList) .name{display:flex;align-items:baseline;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 :is(#skillList,#thSkillList) .name b{color:var(--ink-blue)}   /* 打った文字と一致した部分。太くせず色だけ */
-:is(#skillList,#thSkillList) .args{margin-left:8px;font-family:var(--font-mono);font-size:var(--fs-xs);font-weight:400;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis}
-:is(#skillList,#thSkillList) .from{font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
-:is(#skillList,#thSkillList) .desc{grid-column:1/-1;font-size:var(--fs-xs);color:var(--ink-weak);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList) .args{margin-left:8px;font-family:var(--font-mono);font-size:var(--fs-meta);font-weight:400;color:var(--ink-weak);overflow:hidden;text-overflow:ellipsis}
+:is(#skillList,#thSkillList) .from{font-size:var(--fs-meta);color:var(--ink-weak);white-space:nowrap}
+:is(#skillList,#thSkillList) .desc{grid-column:1/-1;font-size:var(--fs-meta);color:var(--ink-weak);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* 今は使えない候補（Antigravity の会話の /compact）。名前を弱い字にし、説明の欄に理由を全文で出す */
 :is(#skillList,#thSkillList) li.it[aria-disabled=true]{cursor:default}
 :is(#skillList,#thSkillList) li.it[aria-disabled=true] .name{color:var(--ink-weak)}
 :is(#skillList,#thSkillList) li.it[aria-disabled=true] .desc{white-space:normal}
-:is(#skillList,#thSkillList) .none{padding:6px 10px;font-size:var(--fs-xs);color:var(--ink-weak);cursor:default}
+:is(#skillList,#thSkillList) .none{padding:6px 10px;font-size:var(--fs-meta);color:var(--ink-weak);cursor:default}
 /* 選んだ直後だけ、引数の書き方を入力欄の足元に薄く。打ち始めると消える */
 .slash-hint{font-size:var(--fs-xs);color:var(--ink-weak);padding:4px 16px 0;min-height:22px;font-family:var(--font-mono)}
 .slash-hint:empty{padding:0;min-height:0}
@@ -269,7 +271,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .row.sel{background:var(--surface-paper);cursor:default}   /* 選ばれているものは白へ持ち上がる */
 /* 掴んでいる行。影で持ち上げる（浮いているものにだけ影） */
 .row.dragging{background:var(--surface-paper);box-shadow:0 8px 28px var(--shadow);opacity:.9}
-.row-title{display:flex;align-items:center;gap:5px;min-width:0;font-size:var(--fs-s);line-height:1.4}
+.row-title{display:flex;align-items:center;gap:5px;min-width:0;font-size:var(--fs-target);line-height:1.4}
 .row-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row-t:empty::before{content:var(--i18n-untitled,"");color:var(--ink-weak)}
 /* fork で生まれた会話の印。題の前。グループから外しても状態を変えても消えない（§4.1） */
@@ -303,7 +305,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .fam-count{white-space:nowrap}
 /* 器の中の行。グループの行と同じだけ字下げする */
 .fam-rows{display:flex;flex-direction:column;gap:2px;padding:0 4px 4px 16px}
-.row-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:var(--fs-xs);color:var(--ink-weak);min-width:0}
+.row-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:var(--fs-meta);color:var(--ink-weak);min-width:0}
 /* ---- 検索の結果（平らな listbox。web/side.mjs。docs/design-system.md §4.1「検索」） ---- */
 .groups.flat{gap:2px}
 .res-head{display:flex;align-items:center;gap:6px;padding:0 14px 2px 22px;font-size:var(--fs-xs);color:var(--ink-weak);min-height:26px}
@@ -584,7 +586,7 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 /* ==================== 会話 ==================== */
 main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--surface-paper);position:relative}
 .top{display:flex;align-items:center;gap:6px;padding:10px 18px 4px}
-.top input{flex:1;min-width:0;background:transparent;border-radius:var(--r-m);padding:5px 10px;font-size:var(--fs-l);font-weight:600;text-overflow:ellipsis}
+.top input{flex:1;min-width:0;background:transparent;border-radius:var(--r-m);padding:5px 10px;font-size:var(--fs-title);font-weight:600;text-overflow:ellipsis}
 .top input:hover{background:var(--surface-1)}
 .top input:focus{outline:none;background:var(--surface-2)}
 .top input::placeholder{color:var(--ink-weak);font-weight:400}
@@ -650,7 +652,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 #thread .mw-body{padding-left:max(0px,calc((100% - var(--col) + 32px - 8px - var(--gut,72px)) / 2));
   padding-right:max(0px,calc((100% - var(--col) + 8px + var(--gut,72px) - 32px) / 2))}
 @media (min-width:701px){
-  #composer{padding-left:max(calc(8px + var(--gut,72px)),calc((100% - var(--col)) / 2));padding-right:max(32px,calc((100% - var(--col)) / 2))}
+  #composer{--cpad-l:max(calc(8px + var(--gut,72px)),calc((100% - var(--col)) / 2));--cpad-r:max(32px,calc((100% - var(--col)) / 2))}
 }
 .spine{position:absolute;left:0;top:0;width:var(--gut,72px);height:100%;overflow:visible;pointer-events:none}
 .spine path{fill:none;stroke:var(--line);stroke-width:var(--hair);transition:stroke var(--dur) var(--ease-out),stroke-width var(--dur) var(--ease-out)}
@@ -675,7 +677,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
    詰めるのは入れ物の側（.mw.cont）。中身（.m）を負の margin で上げると .mw-body の overflow:hidden に頭が切られる */
 .mw.cont{margin-top:-10px}
 .m.cont .who{display:none}
-.who{font-size:var(--fs-xs);color:var(--ink-weak);letter-spacing:0;margin-bottom:3px;display:flex;align-items:center;gap:10px;min-height:18px}
+.who{font-size:var(--fs-meta);color:var(--ink-weak);letter-spacing:0;margin-bottom:3px;display:flex;align-items:center;gap:10px;min-height:18px}
 /* 右端は「値の列」（時刻）と、その右の幅 24px の「操作の列」の 2 列（ツールの行・まとまりの見出しの ⌄ と同じ列）。値と操作の間は 10px。
    操作の列にはこの後 ⋯ が入る。時刻は触れている・焦点がある間（タッチは発言を押した 4 秒）だけ見える。場所は取ったままなので並びは動かない */
 .who::after{content:"";flex:none;width:24px}
@@ -720,7 +722,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .msg-att-zoom{display:block;padding:0;background:transparent;border-radius:var(--r-s);cursor:zoom-in;line-height:0}
 .msg-att-zoom img{display:block;width:auto;height:auto;max-width:min(240px,100%);max-height:144px;border-radius:var(--r-s);background:var(--surface-paper)}
 .msg-att-img figcaption{margin-top:4px;font-size:var(--fs-xs);line-height:1.5;color:var(--ink-weak);overflow-wrap:anywhere}
-.msg-att-file{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 10px;background:var(--surface-paper);border-radius:var(--r-pill);font-size:var(--fs-s);color:var(--ink-blue);text-decoration:none} /* allow-blue: ファイルを開くリンク */
+.msg-att-file{display:inline-flex;align-items:center;gap:5px;max-width:100%;padding:3px 10px;background:var(--surface-paper);border-radius:var(--r-pill);font-size:var(--fs-term);color:var(--ink-blue);text-decoration:none} /* allow-blue: ファイルを開くリンク */
 .msg-att-file span{min-width:0;overflow-wrap:anywhere}
 .msg-att-file[aria-current=true]{background:var(--surface-3)}
 @media (max-width:700px){.msg-att-img{max-width:min(220px,100%)}.msg-att-zoom img{max-width:min(220px,100%)}}
@@ -1107,9 +1109,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .activity-tip{position:absolute;left:2px;top:2px;width:36px;height:36px;display:grid;place-items:center;background:var(--surface-paper);border-radius:50%;outline:1px solid var(--line-strong)}
 .activity-tip .run,.activity-tip .run svg{width:18px;height:18px}
 .mw.activity{min-height:40px}
-.m.activity{display:flex;align-items:center;gap:10px;padding:4px 0;margin-bottom:8px;font-size:var(--fs-s);color:var(--ink-weak);min-width:0}
+.m.activity{display:flex;align-items:center;gap:10px;padding:4px 0;margin-bottom:8px;font-size:var(--fs-ui);color:var(--ink-weak);min-width:0}
 .m.activity .txt{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.m.activity .el{margin-left:auto;flex:none;font-size:var(--fs-xs)}
+.m.activity .el{margin-left:auto;flex:none;font-size:var(--fs-meta)}
 .m.activity .btn{font-size:var(--fs-xs);padding:2px 10px}
 
 /* ---- 承認カード・質問カード。会話の流れの中に出る（design.md §8.5）。モーダルは使わない ---- */
@@ -1196,7 +1198,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 
 /* ---- 入力欄（design-system.md「入力欄と上端」） ----
    1 つの角丸の箱（--surface-1・--r-l）の中に、送る前の添付 → 字の欄 → チップと送信の行を入れる。デスクトップもスマホも同じ */
-.composer{flex:none;padding:4px 18px 12px;min-width:0;position:relative}   /* 候補（.clist）を入力欄の上に浮かせる基準 */
+.composer{--cpad-l:18px;--cpad-r:18px;flex:none;padding:4px var(--cpad-r) 12px var(--cpad-l);min-width:0;position:relative}   /* 候補（.clist）を入力欄の上に浮かせる基準 */
 /* 入力欄の上の 1 本の帯（:is(#contextStrip,#thContextStrip)。compaction.css）の右端: バックグラウンドの入口（web/background-chip.mjs）。
    帯のチップは見た目 28px・押せる範囲 36px（::before で上下 4px 広げる）。種類ごとのロゴを 6px 空けて並べ、数は右下、承認待ちは右上の ◆ */
 .work-entry{display:flex;flex:none;margin-left:auto;min-width:0}
@@ -1337,7 +1339,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .md-b.md-att.flash .md-att-up{animation:note-flash 1.2s var(--ease-out)}
 @media (prefers-reduced-motion:reduce){.md-b.md-att.flash .md-att-up{animation:none;box-shadow:0 0 0 2px var(--line-blue)}}
 /* 送っている途中・失敗の札。名前・進み具合（%）・細い棒（左から右へ伸びる）と、右端の操作（キャンセル・再試行・外す） */
-.md-att-up{display:flex;align-items:center;gap:8px;position:relative;max-width:min(420px,100%);min-height:40px;padding:6px 4px 8px 12px;background:var(--surface-paper);border-radius:var(--r-m);font-size:var(--fs-s);line-height:1.5}
+.md-att-up{display:flex;align-items:center;gap:8px;position:relative;max-width:min(420px,100%);min-height:40px;padding:6px 4px 8px 12px;background:var(--surface-paper);border-radius:var(--r-m);font-size:var(--fs-term);line-height:1.5}
 .md-att-up-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
 .md-att-up-pct{flex:none;font-family:var(--font-mono);color:var(--ink-weak)}
 .md-att-up-err{flex:1 1 0;min-width:0;color:var(--ink-strong);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1937,7 +1939,7 @@ main.dropping #log{background:var(--surface-1)}
   .top{padding-left:10px;padding-right:10px;gap:4px}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])){flex-wrap:wrap}
   main > .top:has(:is(#agentTasksEntry,#backgroundEntry):not([hidden])) .title-field{flex-basis:calc(100% - 40px)}
-  .composer{padding-left:4px;padding-right:4px}
+  .composer,#composer{--cpad-l:4px;--cpad-r:4px}
   :is(#skillList,#thSkillList){max-height:240px}
   /* 「保存済み」は出さない（下書きがあることは脇の行の「未送信」で分かる）。保存の失敗は行の隙間では文が途中で切れるので、
      チップの行の上の一行（:is(#draftFail,#thDraftFail)）に出す */
@@ -2223,9 +2225,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .title-col .title-field{flex:0 1 auto;min-width:0}
   /* 題は 24px に固定する（タッチでは字が 16px になるので、行の高さで決めると 26px に伸びる） */
   .title-col .title-field input{width:100%;min-width:0;padding:1px 5px;height:24px;line-height:22px;box-sizing:border-box}
-  /* 頭の高さは 1 行のときと同じ 50px（上 2px + 題 24px + 2 行目 24px）。2 行目の語は押せる高さ 24px（WCAG 2.5.8） */
-  main > .top,:root.remote-mobile main > .top{padding-top:2px;padding-bottom:0}
-  .title-sub{display:flex;align-items:center;gap:4px;min-width:0;height:24px;overflow:hidden;padding-left:5px;color:var(--ink-weak);font-size:var(--fs-xs);white-space:nowrap}
+  /* 頭の高さは 60px。題の列（題 24px + 2 行目 24px）と 44px のボタンを縦の中央に揃える。2 行目の語は押せる高さ 24px（WCAG 2.5.8）。ADR 0256 */
+  main > .top,:root.remote-mobile main > .top{min-height:60px;padding-top:2px;padding-bottom:0}
+  .title-sub{display:flex;align-items:center;gap:4px;min-width:0;height:24px;overflow:hidden;padding-left:5px;color:var(--ink-weak);font-size:var(--fs-meta);white-space:nowrap}
   .title-sub > *{order:0;flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .title-sub > button{display:block;height:24px;line-height:24px;text-align:left}
   /* 縮めるのは長い題を持つ語（依頼元・端末の AI から）から。所属とホスト名は残す */
@@ -2250,7 +2252,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 
 /* 承認済み（2026-10-22）: スマホの会話の文字と左右の余白。 */
 @media (max-width:700px){
-  #log .m > .body{font-size:17px;line-height:1.7}
+  #log .m > .body{font-size:var(--fs-body);line-height:1.7}
   #log .m.user > .body{padding-left:8px;padding-right:8px}
   .mw.node .mw-gutter::before{left:8.5px}
   .mw.card .mw-gutter::before{left:6.5px}
@@ -2259,12 +2261,43 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .branch-tip{transform:translateX(-12px)}
   .branch-ring{margin-left:4px}
   .cbox{padding-left:2px;padding-right:2px}
-  #prompt{font-size:17px!important;line-height:1.5;padding-left:8px;padding-right:8px}
-  .row-title{font-size:16px}
-  .row-meta{font-size:13px}
-  .title-col .title-field input{font-size:20px!important}
-  .title-sub{font-size:13px}
+  /* タッチの「16px 以上」（!important）より後で、本文と同じ役割の大きさにする */
+  #prompt{font-size:var(--fs-body)!important;line-height:1.5;padding-left:8px;padding-right:8px}
+  .title-col .title-field input{font-size:var(--fs-title)!important}
   main > .top :is(#contextEntry,#gitEntry,#browserEntry){display:none!important}
+}
+
+/* 承認済み（2026-10-23）: スマホの大きさの段階（ADR 0256、docs/design-system.md「スマホの大きさの段階」）。
+   字・アイコン・押せる大きさは tokens.css の役割の変数（--fs-body … --hit）から取り、ここは部品への当てはめだけ。
+   押せる所は実体の 44px の箱にし、擬似要素で広げない（隣の当たりと重ならない） */
+@media (max-width:700px){
+  /* 上部: 44px のボタンと題の列を 60px の中で縦の中央に */
+  main > .top{gap:var(--sp-1);padding-left:var(--sp-1);padding-right:var(--sp-1)}
+  main > .top > .btn-icon{width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
+  main > .top > .btn-icon > svg.i{width:var(--icon);height:var(--icon)}
+  main > .top > .btn-icon::before,.crow > :is(.btn-icon,.chip,.abort,.send)::before{content:none}
+  /* 変更ありの点・操作中の弧・脇の印は、20px のアイコンの右上に寄せたまま */
+  main > .top .entry-dot{top:10px;right:10px}
+  main > .top .entry-run.run{top:3px;right:2px}
+  main > .top .side-mark[data-kind=unread]{top:8px;right:7px}
+  main > .top .side-mark[data-kind=wait]{top:4px;right:0}
+  /* 入力欄の下の行: 添付・チップ・中断・送信を 44px に */
+  .crow > :is(.btn-icon,.send){width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
+  .crow > :is(.btn-icon,.send) > svg.i{width:var(--icon);height:var(--icon)}
+  .crow > :is(.abort,.resume){min-height:var(--hit)}
+  .chip{height:var(--hit);font-size:var(--fs-ui)}
+  .chip svg.i{width:var(--icon);height:var(--icon)}
+  .chip svg.caret{width:var(--icon-s);height:var(--icon-s)}
+  /* 添付の札の操作（取り消し・再試行・外す） */
+  .md-att-act.btn-icon{width:var(--hit);height:var(--hit);min-width:var(--hit);min-height:var(--hit)}
+  .md-att-act svg.i{width:var(--icon-s);height:var(--icon-s)}
+  /* メニュー・候補の行 */
+  .pop .li{min-height:var(--hit)}
+  .pop .li :is(svg.i,.conversation-menu-icon){width:var(--icon);height:var(--icon)}
+  .clist li{min-height:var(--hit);align-items:center}
+  :is(#skillList,#thSkillList) li.it{align-content:center;min-height:var(--hit)}
+  /* 脇の行 */
+  .row{min-height:var(--hit)}
 }
 
 /* ==================== 端末の AI からホストへ任せる（docs/remote.md §4.5、ADR 0146） ====================

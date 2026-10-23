@@ -50,8 +50,8 @@ async page => page.evaluate(async () => {
   check(getComputedStyle(document.querySelector('.m.ai > .body')).fontSize === '17px', 'Mobile body is 17px');
   check(getComputedStyle(document.querySelector('#thread')).getPropertyValue('--gut').trim() === '24px', 'Mobile gutter is 24px');
   if (document.querySelector('.tc-main')) {
-    check(getComputedStyle(document.querySelector('.tc-main')).fontSize === '15px', 'Tool target is 15px');
-    check(getComputedStyle(document.querySelector('.tc-label')).fontSize === '13px', 'Tool verb is 13px');
+    check(getComputedStyle(document.querySelector('.tc-main')).fontSize === '16px', 'Tool target is 16px');
+    check(getComputedStyle(document.querySelector('.tc-label')).fontSize === '14px', 'Tool verb is 14px');
     check(document.querySelector('.tc-head').getBoundingClientRect().height >= 44, 'Tool row is at least 44px');
   }
   openMenu();
@@ -62,7 +62,7 @@ async page => page.evaluate(async () => {
   const buttons = [...document.querySelectorAll('.pop.menu:not([hidden]) button')];
   check(buttons.every(b => b.querySelector('svg.conversation-menu-icon')), 'All menu rows have icons');
   const iconStyle = getComputedStyle(buttons[0].querySelector('svg'));
-  check(iconStyle.width === '16px' && iconStyle.strokeWidth === '1.6px', 'Icons are 16px with 1.6px strokes');
+  check(iconStyle.width === '20px' && iconStyle.strokeWidth === '1.6px', 'Icons are 20px with 1.6px strokes');
   check(row(t('usage.header.title')).querySelector('.usage-mini i')?.style.width === '73%', 'Usage row uses most constrained window');
   check(row(t('compaction.short')).querySelector('.usage-mini i')?.style.width === '82%', 'Compact row uses context usage');
   row(t('compaction.short')).click(); await wait();
