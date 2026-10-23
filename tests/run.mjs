@@ -97,6 +97,7 @@ const SUITES = [
   './unit/header-entries.mjs',
   './unit/shortcut-labels.mjs',
   './unit/arc.mjs',
+  './unit/activity-strip.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',
   './unit/agent-browser-lifetime.mjs',

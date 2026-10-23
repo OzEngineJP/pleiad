@@ -161,10 +161,8 @@ export function layoutBranchSpine(thread) {
     row, top: row.offsetTop, width: row.clientWidth,
   }));
   let last = thread.lastElementChild;
-  while (last && !last.matches(".mw.node,.mw.activity")) last = last.previousElementSibling;
-  const tip = last?.querySelector(".activity-tip");
-  // Follow the circle's actual position, including its 1px outer outline.
-  const end = last ? last.offsetTop + (tip ? tip.offsetTop - 1 : 16) : thread.offsetHeight;
+  while (last && !last.matches(".mw.node")) last = last.previousElementSibling;
+  const end = last ? last.offsetTop + 16 : thread.offsetHeight;
   const x = originX(thread), previous = spineGeometry.get(svg);
   if (previous?.x === x && previous.end === end && previous.rows.length === rows.length &&
       rows.every((item, i) => item.row === previous.rows[i].row &&
