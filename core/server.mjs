@@ -1716,14 +1716,15 @@ async function routeDelegation(args, lng, cwd) {
     // 起動直後でまだ一度も取れていない、または古ければ取り直し、判定と同じだけ待つ
     routingUsage.ensureFresh(JUDGE_TIMEOUT_MS),
   ]);
-  // 選んだ候補のモデルを委譲先の場所で確かめ直す。取り置きの後に一覧から消えていたら、既定に落とさず次の候補へ
+  // 選んだ候補のモデルを委譲先の場所で確かめ直す。取り置きの後に一覧から消えていたら、既定に落とさず次の候補へ。
+  // 一覧に載っていても、エージェントが走らせられないと分かっている版（runnableModel。Devin の ACP に無い版）も次の候補へ
   const rejected = {};
   let ok, routing;
   for (;;) {
     ({ ok, routing } = route({ kind: args.kind, judged, settings, usage: routingUsage.snapshot(), now: Date.now(), rejected, blocked: slotBlocked }));
     if (!ok) break;
     const picked = getBackend(routing.target.backend);
-    if (picked && await validModel(picked, routing.target.model, cwd).catch(() => false)) break;
+    if (picked && await validModel(picked, routing.target.model, cwd).catch(() => false) && picked.runnableModel?.(routing.target.model) !== false) break;
     rejected[`${routing.target.backend}:${routing.target.model}`] = picked ? 'model_unknown' : 'unavailable';
   }
   if (!ok) {

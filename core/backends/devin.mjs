@@ -10,7 +10,7 @@ import { conversation } from '../conversations.mjs';
 import { NO_CAPABILITIES } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { prepareDevinLaunch } from './devin-config.mjs';
-import { buildDevinModels, resolveDevinModel, applyDevinModel } from './devin-models.mjs';
+import { buildDevinModels, resolveDevinModel, applyDevinModel, devinAcpModel, devinModelChoices } from './devin-models.mjs';
 import { createDevinMapper } from './devin-normalize.mjs';
 import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
@@ -57,6 +57,9 @@ async function captureCatalogue(launch, signal) {
 export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, command = () => cliCommand('devin'), dataDir = store.dataDir, cancelGraceMs = 2000 } = {}) {
   const cache = new Map(), rows = new Map(), active = new Map(), queues = new Map();
   const metadataQueue = Symbol('metadata');
+  // CLI が最後に session/new・session/load で示した ACP の model の選択肢（まだ見ていなければ null）。
+  // カタログには載るが ACP では選べない版（effort・速さの組み合わせの多く）を、自動の振り分けが選ばないようにする
+  let acpModels = null;
   function remember(id, mapper) {
     cache.delete(id); cache.set(id, mapper);
     while (cache.size > 16) cache.delete(cache.keys().next().value);
@@ -121,6 +124,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     modes,
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
     async models(cwd = process.cwd()) { return buildDevinModels(await rawModels(cwd)); },
+    /** 自動の振り分けが選ぶ前に聞く。CLI が示した ACP の選択肢に無い版は、走らせても設定で止まる（まだ見ていなければ通す） */
+    runnableModel(model) { return !acpModels || !model || acpModels.includes(devinAcpModel(model)); },
     async listSessions({ cwd } = {}) {
       // Common conversations add their persisted rows without starting a CLI. An
       // explicit directory may also discover native sessions in Pleiad's session root.
@@ -257,6 +262,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('devin.errors.notConnected'));
             mapper = createDevinMapper(sessionId, emit);
           }
+          acpModels = devinModelChoices(state?.configOptions) ?? acpModels;
           remember(sessionId, mapper); active.set(sessionId, client);
           check();
           const mode = args.mode || 'ask';
