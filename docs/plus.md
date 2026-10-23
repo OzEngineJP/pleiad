@@ -161,11 +161,11 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
   - 鍵を持つ PC が台帳に居る（`wait.holder`）→ その PC の名前と最後の同期・「その PC で Pleiad を開くと鍵を渡します」。ボタンは控えめな「鍵を持つ PC が使えないとき」
   - 居ない → 「ほかの PC が同期したデータがあります（約 {size}・{count} 件）」・最後の更新（書いた PC の名前つき）・登録から外れた PC の名前。ボタンは「鍵を持つ PC が使えない」。`itemCount` が無い（前の api）ときは「データがあるかもしれません」
   - 手元の鍵が古い（`wait.stale`。ほかの PC が始め直した）→ 「同期は {name} で {time} に始め直されました」
-  - v2 の api（下の「同期の券と鍵の承認」）: 鍵を持つ PC が居れば「{name} の画面で承認してください」と、明かしたあとは確認コード（6 桁を 3 桁ずつ）。ボタンの「鍵を持つ PC が使えないとき」は外し方と回復の説明だけを出す（始め直しのボタンは出さない）。居なければ回復の行（「回復を頼む」・待っている間の「取り下げる」・明けたら「新しい鍵で始め直す」）
-  - ボタンはどれも確かめの窓を開く。窓は消えるもの（サーバーの同期のデータの件数と大きさ）・消えないもの（手元のファイルと設定）・ほかの PC への影響と、チェック 1 つ（「サーバーの同期のデータを消して、この PC から始め直す」）。入れるまで「消して始め直す」を押せない。押すと見せた `keyId` と `itemCount` を `plus.syncReset { confirm }` に付ける。`confirmNeeded` が返る・確かめている間に `plusSyncStatus` の件数が変わったら、窓を開いたままチェックを外し、「確かめている間に、サーバーのデータが変わりました」と新しい件数を出す
-- 同期で届いて取り込むのを待っている skill・指示ファイルがあれば（状態の `inbox` が 1 以上）、同期のまとまりの終わりに「◆ 届いた変更 N 件」の行（`web/plus-inbox.mjs`）。押すと「届いた変更」の面に替わる（下の「同期で届いた skill と指示ファイル」）
-- `unregistered`（この PC の登録が外れた）は止めている旨と「登録し直すと、自動で再開します」だけ（ボタンは出さない）。`sharedTo`（7 日の間に鍵を渡した新しい PC）は「新しい PC {name} に同期の鍵を渡しました」（同期を切っているときは出さない）
-- 鍵を持つ PC に `approvals` があれば、承認の窓（`#plusSyncApproval`。リモートの端末の承認の窓と同じ部品）を出す。題（「「{name}」に同期の鍵を渡しますか？」）・PC の種類と版・確認コード・「{name} の画面に同じ数字が出ていることを確かめてから渡してください。」・「渡さない」「渡す」。`recoveryAlert`（ほかの PC が回復を頼んでいる）は同期のまとまりに「回復を止める」と一緒に出す。`update_required` は更新の案内だけ
+  - v2 の api（下の「同期の券と鍵の承認」）: 鍵を持つ PC が居れば「{name} の画面で承認してください」と、明かしたあとは確認コード（6 桁を 3 桁ずつ）。ボタンの「鍵を持つ PC が使えないとき」は外し方と同期のリセットの説明だけを出す（始め直しのボタンは出さない）。居なければ同期のリセットの行（承認済みの形は docs/design-system.md「設定 › Pleiad Plus › 同期」: 「鍵を持つ PC がありません」→「リセットは 72 時間後にできます。」→「サーバーの同期のデータ（約 {size}・{count} 件）は消えます。」→「同期をリセット」。頼んだあとは「リセットを待っています / {time} にリセットできます。」と「取り下げる」、明けたら「リセットできます / 待ちは終わりました。」と「取り下げる」「同期をリセット」）
+  - ボタンはどれも確かめの窓（題「同期をリセットしますか？」）を開く。窓は消えるもの（サーバーの同期のデータの件数と大きさ）・消えないもの（手元のファイルと設定）・ほかの PC への影響と、チェック 1 つ（「サーバーの同期のデータを消して、この PC から始め直す」）。入れるまで「消して始め直す」を押せない。押すと見せた `keyId` と `itemCount` を `plus.syncReset { confirm }` に付ける。`confirmNeeded` が返る・確かめている間に `plusSyncStatus` の件数が変わったら、窓を開いたままチェックを外し、「確かめている間に、サーバーのデータが変わりました」と新しい件数を出す
+- 同期で届いて取り込むのを待っている skill・指示ファイルがあれば（状態の `inbox` が 1 以上）、同期のまとまりの終わりに「◆ 届いた変更 N 件」の行（web/plus-inbox.mjs）。押すと「届いた変更」の面に替わる（下の「同期で届いた skill と指示ファイル」）
+- `unregistered`（この PC の登録が外れた）は止めている旨と「登録し直すと、自動で再開します」だけ（ボタンは出さない）。`sharedTo`（7 日の間に鍵を渡した新しい PC）は「新しい PC {name} に同期の鍵を渡しました」（同期を切っているときと、鍵を待っている間は出さない）
+- 鍵を持つ PC に `approvals` があれば、承認の窓（`#plusSyncApproval`。リモートの端末の承認の窓と同じ部品）を出す。題（「「{name}」に同期の鍵を渡しますか？」）・PC の種類と版・確認コード・「{name} の画面に同じ数字が出ていることを確かめてから渡してください。」・「渡さない」「渡す」。`recoveryAlert`（ほかの PC が同期のリセットを頼んでいる）は同期のまとまりに「リセットを止める」と一緒に出す。`update_required` は更新の案内だけ
 - この PC の行は `host.state` が `taken`（「つなぎ直す」→ 確かめの窓 → `plusHostRebind`）・`limit`・`removed`（利用者が外した。「この PC を登録し直す」→ `plus.hostReregister` 操作）のときと、`host.notice === 'reregistered'`（「この PC の登録が外れていたので、登録し直しました」）のときだけ。ほかは出さない。`plusHostRebind` は後の段階が作る。知らないコマンドが返ったら何も出さない
 - 「Pleiad Plus にする」は `urls.account` のオリジンの `/plus`（`new URL('/plus', urls.account)`。`urls.account` は `/account` のようなパスを持つ）を、「アカウントを管理」は `urls.account` を外のブラウザーで開く。「ログアウト」は `plusLogout`
 
@@ -274,7 +274,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - 同期の口（下の「同期」の表の形。`baseRev`・`previousKeyId` を照合し、`PUT` の決めた欄以外は `400`）。試験から変えるもの: `state.syncLimitBytes`（容量）・`state.syncItemLimit`（1 項目の暗号文の上限）・`state.syncFail`（誤りの差し込み `[{ method?, path, hostId?, status, code, message, headers?, extra?, count? }]`。`hostId` は券の PC で絞る）。受けた本文は `state.syncBodies` に残す（中身が平文で届いていないことの確かめに使う）。同期を切ったアカウント（`sync.enabled: false`）には `state` 以外の口が `403 forbidden`（`sync_disabled`）
 - ホストの台帳: `GET /v1/hosts`・`POST /v1/hosts/challenge`・`PUT`/`PATCH`/`DELETE /v1/hosts/{hostId}`（証明は本物と同じく X25519+HKDF+HMAC で照合し `state.hosts` に残す。`state.failNextProof` で次の 1 回だけ 422 bad_proof）
 - 同期の始め直しと登録の外れ（下の節の約束どおり）: `state` の足した欄・`reset` の `confirm` と `409 reset_confirm`・同期の口の `403 forbidden`（`host`）。ホストを外すと鍵の行に `detachedAt`・`name` を付けて残し、`state.hostsRemoved` に `by` を書く（`unbindHost(hostId, by)` で運営が外したのも作れる）。`state.legacySync = true` の間は前の版の api のふり（足した欄・`removed`・`confirm` の照合が無く、外すと鍵の行を消す）
-- 同期の券と鍵の承認（下の「同期の券と鍵の承認」）: 券の口（`POST /v1/tickets/challenge`・`/v1/tickets`。券は `/.well-known/pleiad-keys` の Ed25519 で署名）・申し込みと承認の口・回復の口。券のある要求は受け入れの規則で、券の無い要求は前の規則で答える（v2 の K のアカウントと `state.admissionRequired` の間は `426`、印だけで券が無ければ `403 ticket_invalid`）。試験から変えるもの: `state.noTickets`（券を知らない前の版の api のふり。券の口が `404`）・`state.admissionRequired`（`/v1/auth/config` の `admission`）・`state.recoveryWaitMs`（回復の待ち。既定 72 時間）。`state.calls` には `X-Pleiad-Admission` と券の有無も残す
+- 同期の券と鍵の承認（下の「同期の券と鍵の承認」）: 券の口（`POST /v1/tickets/challenge`・`/v1/tickets`。券は `/.well-known/pleiad-keys` の Ed25519 で署名）・申し込みと承認の口・リセットの口。券のある要求は受け入れの規則で、券の無い要求は前の規則で答える（v2 の K のアカウントと `state.admissionRequired` の間は `426`、印だけで券が無ければ `403 ticket_invalid`）。試験から変えるもの: `state.noTickets`（券を知らない前の版の api のふり。券の口が `404`）・`state.admissionRequired`（`/v1/auth/config` の `admission`）・`state.recoveryWaitMs`（リセットの待ち。既定 72 時間）。`state.calls` には `X-Pleiad-Admission` と券の有無も残す
 
 中継側の「公式の中継」の身代わりは `tests/lib/plus-relay-authz.mjs`（中継に差し込む authz。`X-Pleiad-Ticket` の券の確かめ（accept は制御の接続の券と同じ文字列なら通す・`4429` で券を使い切らない・公開鍵が読めないときは期限の切れた覚え）・`X-Pleiad-Account` の確かめ・ペアリングの断り・`admit: true`。`state.v2Required = true` の間は券の無い接続を `4401 'update required'` で断る。`state.seen` に見たものを残す。`remote-plus.mjs` が一連の流れを確かめる）。
 
@@ -379,7 +379,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
   - `?hostId=` を付けると、その PC の鍵の行の `lastSyncAt` を 1 時間に 1 回まで書く（自分のホストでなければ何もしない）。`GET /v1/sync/keys/{自分}` と `PUT /v1/sync/items/*` も同じく書く
   - 古い api はこれらの欄を返さない。アプリは `itemCount` が無ければ「サーバーにデータがあるかもしれない」と扱い、自分から始め直さない
 - `POST /v1/sync/reset` の入力に `confirm: { keyId, itemCount } | null` を足す
-  - 要るとき: 今の `keyId` があり、`itemCount` が 1 以上で、呼んだ PC が今の鍵を持たない（鍵の行が無い・`keyId` が違う・外された行）とき。鍵を持つ PC の「同期をやり直す」と最初の 1 台（`keyId` が無い）には要らない
+  - 要るとき: 今の `keyId` があり、`itemCount` が 1 以上で、呼んだ PC が今の鍵を持たない（鍵の行が無い・`keyId` が違う・外された行）とき。鍵を持つ PC の「同期をリセット」と最初の 1 台（`keyId` が無い）には要らない
   - 無い・今の値と合わない → `409 reset_confirm`。本文は `{"error":{"code":"reset_confirm","message":"confirm","keyId","itemCount","totalBytes","updatedAt","holders"}}`（今の値）。何も消さない
   - アプリはこの値（件数・大きさ・最後の更新・鍵を持つ PC）を人に見せ、チェックを入れて確かめたら、受けた `keyId` と `itemCount` を `confirm` に入れて送り直す。その間にデータが変わっていれば、また `409 reset_confirm`（新しい値）になる
   - `confirm` の形が違う → `400 bad_request`（`message: confirm`）。`previousKeyId` の照合が先（`409 conflict`）
@@ -410,7 +410,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 5. `409 conflict`（`previousKeyId`）なら `state` を読み直す（3 回まで）。`409 reset_confirm` は `confirm_needed`（`wait` は誤りの本文の今の値）で返し、人が確かめたら `setup({ forceNew: true, confirm: { keyId, itemCount } })` で送り直す
 6. K を持つ PC は、毎回 `state.pending` のホストへ包んで渡す（`PUT /v1/sync/keys/{T}`。T の公開鍵は台帳の `syncPublicKey`）
 
-ログアウト・アカウントの切り替えでは K と手元の覚えを捨てる（ホストの鍵対は残す）。「同期をやり直す」は新しい K で作り直し、手元の全部を上げ直す（ほかの PC は新しい K を受け直す）。
+ログアウト・アカウントの切り替えでは K と手元の覚えを捨てる（ホストの鍵対は残す）。「同期をリセット」は新しい K で作り直し、手元の全部を上げ直す（ほかの PC は新しい K を受け直す）。
 
 ### 同期の券と鍵の承認: v2 の api（ADR 0247。`core/plus/sync/ticket.mjs`・`keys.mjs`）
 
@@ -420,7 +420,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - 前の版の api への切り替え: 券の手（上の「券」の `createTicketIssuer`）が `null` を返したら券を付けずに前の節の流れで回し、5 分たったら確かめ直す（券を付けない要求に `403 ticket_invalid` が返ったら、すぐ確かめ直す）。券を取れない `404`・`403 host_removed` は登録の外れと同じに扱う
 - 前の版へは戻らない: 券を一度でも取れたアカウント（`plus:syncV2Seen` に uid と時刻を覚える。ログアウトでも残す）で券の口が `404` を返したら、前の版の流れ（K を台帳の公開鍵へ自動で包んで渡す）では回さず、`426 api_downgraded` として止める。状態は `update_required`・`error: 'api_downgraded'`。画面は「同期のサーバーが前の版の応答を返したため、同期を止めました」と、サーバーが元に戻った後に起動し直すと再開することを出し、「今すぐ同期」は出さない
 - `426 update_required`: 同期を止め、状態は `update_required`。画面は「この版の Pleiad では同期を続けられません」と更新の案内だけ（「今すぐ同期」は出さない）
-- K を作る・作り直すとき、K から作った署名の鍵（`HKDF-SHA256(K, "pleiad sync reset key v1")` の Ed25519）の公開鍵 `resetPublicKey` を置く。作り直し（`POST /v1/sync/reset`）には今の K の署名が要る。K を持たない PC は、サーバーの同期のデータを消して始め直せない（下の回復だけ）
+- K を作る・作り直すとき、K から作った署名の鍵（`HKDF-SHA256(K, "pleiad sync reset key v1")` の Ed25519）の公開鍵 `resetPublicKey` を置く。作り直し（`POST /v1/sync/reset`）には今の K の署名が要る。K を持たない PC は、サーバーの同期のデータを消して始め直せない（下の同期のリセットだけ）
 - 鍵の受け渡し（commit–reveal）。受け取る側 N・鍵を持つ側 H:
   1. N が `nonceN`（32 バイトの乱数）を作り、`commit = base64url(SHA-256(nonceN ‖ N の同期の公開鍵))` を `POST /v1/sync/join` に置く（`committed`）
   2. H が一覧（`GET /v1/sync/joins`）で見つけ、`nonceH` を覚えてから `POST /v1/sync/joins/{N}/challenge { nonceH }`（`challenged`）
@@ -433,16 +433,16 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
   - 承認を待つ申し込みは、状態の `approvals`（`[{ hostId, name, platform, code, at }]`）に出し、通知の一覧に「{name} が同期の鍵を待っています」をあなた待ち（`ask: 'syncApproval'`）で置く。押すと 設定 › Pleiad Plus を開き、承認の窓を出す。操作は `plus.syncApprove { hostId, code }`・`plus.syncDeny { hostId }`
 - PC を外したとき: 外した PC が今の K を持っていれば、api が `state.rotate` を立てる。残りの鍵を持つ PC が今の K で署名して作り直し、作り直す前の鍵を持つ PC（`sync_meta.carry`）へ承認なしで渡す（渡せていないものは `plus:syncCarry { keyId, hosts, nonces }` に覚え、次の回で渡す。`nonces` の無い前の版の覚えは渡さずに捨てる）。外した PC には新しい K は届かない
 - 承認なしで渡す包み（carry）には、前の K の印を入れる。印は包みの nonce（12 バイト）で、`HMAC-SHA256(HKDF-SHA256(前の K, "pleiad sync carry v1"), "pleiad sync carry v1\n" + uid + "\n" + previousKeyId + "\n" + keyId + "\n" + resetPublicKey + "\n" + 受け取る hostId)` の先頭 12 バイト（`core/plus/sync/crypto.mjs` の `carryNonce`）。包みは 60 バイトのままで、api の形は変えない（署名を入れる場所が無いので、前の K を持つ PC どうしだけが確かめられる HMAC にする）
-  - 前の K を持つ PC は、開いた新しい K から `resetPublicKey` を作り、手元の前の K で同じ印になるときだけ切り替える。印が合わない・無い包みでは切り替えず、手元の K・覚え・申し込みも変えない（`waiting_key`・`wait.unverified: true`）。画面は「届いた鍵を確かめられなかったため、受け取らずに止めています」と、この PC を外して登録し直し承認を受け直すこと（鍵を持つ PC が 1 台だけなら回復になること）を出す
-- ログアウトの後: `forget` は K を消すが、受け取った・作った K の指紋（`plus:syncV2Fingerprints`。uid ごとに `{ keyId, resetPublicKey }` で、`resetPublicKey` は公開鍵だけ）は消さない（`plus:syncV2Seen` と同じ扱い）。ログインし直して手元に K が無く、承認した PC の覚え（`plus:syncJoin`）も無いときは、`wrappedBy` の台帳の公開鍵で開いた K の `keyId` と `resetPublicKey` が指紋と一致する包み、または `wrappedBy` がこの PC で自分の鍵対から開けた包み（自分で作った・作り直した・回復した K）だけを受ける。合わなければ `waiting_key`・`wait.unverified: true` のまま
-- 前の K では確かめられない新しい K（回復で作った K・下の移行で作った K）: 前の K を持つ PC は自動で切り替えず、申し込みもしない。状態は `waiting_key`・`wait.restarted { keyId, unverified, by, byName, at }`。画面は「新しい鍵を受け取る」を出し、通知の一覧に「{name} が新しい鍵で同期を始め直しました。受け取るか選んでください」をあなた待ち（`ask: 'syncRestarted'`。新しい `keyId` が版）で置く。人が選んだら（`plus.syncAcceptRestart { keyId }`。見せた `keyId` がその間に替わっていたら `{ changed: true }` で何もしない）、`plus:syncRestart` に覚えて申し込み、承認の窓を通して受け取る
+  - 前の K を持つ PC は、開いた新しい K から `resetPublicKey` を作り、手元の前の K で同じ印になるときだけ切り替える。印が合わない・無い包みでは切り替えず、手元の K・覚え・申し込みも変えない（`waiting_key`・`wait.unverified: true`）。画面は「届いた鍵を確かめられなかったため、受け取らずに止めています」と、この PC を外して登録し直し承認を受け直すこと（鍵を持つ PC が 1 台だけなら同期のリセットになること）を出す
+- ログアウトの後: `forget` は K を消すが、受け取った・作った K の指紋（`plus:syncV2Fingerprints`。uid ごとに `{ keyId, resetPublicKey }` で、`resetPublicKey` は公開鍵だけ）は消さない（`plus:syncV2Seen` と同じ扱い）。ログインし直して手元に K が無く、承認した PC の覚え（`plus:syncJoin`）も無いときは、`wrappedBy` の台帳の公開鍵で開いた K の `keyId` と `resetPublicKey` が指紋と一致する包み、または `wrappedBy` がこの PC で自分の鍵対から開けた包み（自分で作った・作り直した・リセットした K）だけを受ける。合わなければ `waiting_key`・`wait.unverified: true` のまま
+- 前の K では確かめられない新しい K（同期のリセットで作った K・下の移行で作った K）: 前の K を持つ PC は自動で切り替えず、申し込みもしない。状態は `waiting_key`・`wait.restarted { keyId, unverified, by, byName, at }`。画面は「新しい鍵を受け取る」を出し、通知の一覧に「{name} が新しい鍵で同期を始め直しました。受け取るか選んでください」をあなた待ち（`ask: 'syncRestarted'`。新しい `keyId` が版）で置く。人が選んだら（`plus.syncAcceptRestart { keyId }`。見せた `keyId` がその間に替わっていたら `{ changed: true }` で何もしない）、`plus:syncRestart` に覚えて申し込み、承認の窓を通して受け取る
 - 前の版の api で作った K（`state.signedReset` が false）からの移行: 新しい版にした最初の鍵を持つ PC が、署名なしで K を作り直す（`resetPublicKey` を置く）。ほかの PC は、上の「前の K では確かめられない新しい K」として人が選んでから、承認で 1 回ずつ受け取る
-- 回復（鍵を持つ PC が台帳に 1 台も居ないとき。`wait.holder` が無い）:
-  - 「回復を頼む」→ `POST /v1/sync/recovery`。最近のログインが要る（`403 reauth_required` なら「回復を頼むには、ログインし直してください」とログインの入口）。72 時間たつと、頼んだ PC だけが「新しい鍵で始め直す」（確かめの窓のあと `POST /v1/sync/recovery/complete`）を押せる。サーバーの同期のデータは消える
-  - 待っている間は「取り下げる」（`DELETE /v1/sync/recovery`）。頼んだ PC を外すと回復も取り消される
-  - 鍵を持つ PC は、外されていても今の K を手元に持っていれば、10 分ごとに `GET /v1/sync/recovery`（券は要らない）を読み、頼まれていたら「{name} が同期の回復を頼んでいます」と「回復を止める」を出す。止めるのは今の K の署名（`DELETE /v1/sync/recovery` に `signature`）
-  - その間、通知の一覧にも「{name} が同期の回復を頼んでいます」をあなた待ち（`ask: 'syncRecovery'`。頼んだ時刻が版）で置く。押すと 設定 › Pleiad Plus を開く。頼みが取り下げられる・止められると消える
-  - 回復で作った K は前の K の印を持たないので、ほかの前の K を持つ PC は人が選ぶまで受け取らない（上の「前の K では確かめられない新しい K」）
+- 同期のリセット（鍵を持つ PC が台帳に 1 台も居ないとき。`wait.holder` が無い。api・操作・データの名前は `recovery` のまま）:
+  - 「同期をリセット」→ `POST /v1/sync/recovery`。最近のログインが要る（`403 reauth_required` なら「リセットを頼むには、ログインし直してください」とログインの入口）。72 時間たつと、頼んだ PC だけが「同期をリセット」（確かめの窓のあと `POST /v1/sync/recovery/complete`）を押せる。サーバーの同期のデータは消える
+  - 待っている間は「取り下げる」（`DELETE /v1/sync/recovery`）。頼んだ PC を外すとリセットも取り消される
+  - 鍵を持つ PC は、外されていても今の K を手元に持っていれば、10 分ごとに `GET /v1/sync/recovery`（券は要らない）を読み、頼まれていたら「{name} が同期のリセットを頼んでいます」と「リセットを止める」を出す。止めるのは今の K の署名（`DELETE /v1/sync/recovery` に `signature`）
+  - その間、通知の一覧にも「{name} が同期のリセットを頼んでいます」をあなた待ち（`ask: 'syncRecovery'`。頼んだ時刻が版）で置く。押すと 設定 › Pleiad Plus を開く。頼みが取り下げられる・止められると消える
+  - リセットで作った K は前の K の印を持たないので、ほかの前の K を持つ PC は人が選ぶまで受け取らない（上の「前の K では確かめられない新しい K」）
   - 操作は `plus.syncRecoveryRequest`・`plus.syncRecoveryCancel`・`plus.syncRecoveryComplete`・`plus.syncRecoveryStop`
 - 台帳: v2 の api には同期の公開鍵を台帳に載せない（申し込み・作り直しの本文で渡す）。v2 の K のアカウントでは、印の無い `PATCH /v1/hosts/{id}` の `syncPublicKey` は `426`、印の無い登録し直しは `syncPublicKey` を変えない
 
@@ -465,7 +465,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
   - `sharedTo`: 鍵を渡した新しい PC（新しい順に 3 つ `{ hostId, name, at }`。状態には 7 日の間だけ出す）
   - `dropped`: 人が「捨てる」を押した版（`{ <論理名>: 中身の sha256 か 'deleted' }`）。同じ版が届き直しても待ちに出さない。違う版が届いたら忘れる
 - 状態: `getSyncStatus()` → `{ state: off|disabled|waiting_key|syncing|idle|quota|stopped|unregistered|update_required|error, lastSyncedAt, totalBytes, limitBytes, conflicts, error, wait, sharedTo, inbox, inboxAt, approvals, recoveryAlert }`（`totalBytes`・`limitBytes` は `state` の値。`wait` は鍵を待つ間に見せるもの。`approvals`・`recoveryAlert` は上の「同期の券と鍵の承認」。`inbox` は取り込むのを待っている数、`inboxAt` はその中で一番新しく届いた時刻）。変わるたびに `plusSyncStatus` イベントを全接続へ送る（ポーリングはしない）
-- 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し。鍵を持たない PC は `confirm { keyId, itemCount }` を付ける。足りない・合わなければ `{ confirmNeeded: true, status }` を返して何も消さない）・`plus.hostReregister`（利用者が外した PC を登録し直す）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く。hostScreenOnly）・`plus.syncApprove`・`plus.syncDeny`・`plus.syncAcceptRestart`・`plus.syncRecoveryRequest`・`plus.syncRecoveryCancel`・`plus.syncRecoveryComplete`・`plus.syncRecoveryStop`（v2 の api。上の節）・`plus.syncInbox`・`plus.syncInboxItem`・`plus.syncInboxTake`・`plus.syncInboxDrop`（受け入れ待ち。下の節）。変更系は設定 › Pleiad Plus の画面だけが呼ぶ。そのうち `plus.syncNow`・`plus.syncRecoveryCancel` のほか（同期の入り切り・やり直し・登録し直し・鍵を渡す・渡さない・新しい鍵を受け取る・回復・届いたものを書く・捨てる・写しを開く）は hostScreenOnly（このホストの画面からだけ。リモートの端末の画面からは `HOST_SCREEN_ONLY`、agent・CLI には出さない）
+- 画面・口からの入口は操作の一覧（`core/ops/plus.mjs`）: `plus.syncStatus`（状態）・`plus.syncSetEnabled`（スイッチ。`PATCH /v1/account {"sync":{"enabled":bool}}`）・`plus.syncNow`（1 回回す）・`plus.syncReset`（やり直し。鍵を持たない PC は `confirm { keyId, itemCount }` を付ける。足りない・合わなければ `{ confirmNeeded: true, status }` を返して何も消さない）・`plus.hostReregister`（利用者が外した PC を登録し直す）・`plus.syncOpenConflicts`（写しのフォルダーをこの PC で開く。hostScreenOnly）・`plus.syncApprove`・`plus.syncDeny`・`plus.syncAcceptRestart`・`plus.syncRecoveryRequest`・`plus.syncRecoveryCancel`・`plus.syncRecoveryComplete`・`plus.syncRecoveryStop`（v2 の api。上の節）・`plus.syncInbox`・`plus.syncInboxItem`・`plus.syncInboxTake`・`plus.syncInboxDrop`（受け入れ待ち。下の節）。変更系は設定 › Pleiad Plus の画面だけが呼ぶ。そのうち `plus.syncNow`・`plus.syncRecoveryCancel` のほか（同期の入り切り・リセット・登録し直し・鍵を渡す・渡さない・新しい鍵を受け取る・同期のリセット・届いたものを書く・捨てる・写しを開く）は hostScreenOnly（このホストの画面からだけ。リモートの端末の画面からは `HOST_SCREEN_ONLY`、agent・CLI には出さない）
 
 ### 同期で届いた skill と指示ファイル（ADR 0250）
 
@@ -505,8 +505,8 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - 中身（ファイル・設定の値）と論理名（パス）は暗号文の中にある。api が受け取るのは、暗号文・包んだ鍵・項目の ID・大きさ・時刻（と書いたホストの `hostId`）だけ
 - K と同期の秘密鍵は PC の外に出さない
 - ほかの PC から届いた skill と指示ファイルは、人が中身を見て取り込むまで書かない（消すものも消さない）
-- v2 の api: K は、鍵を持つ PC の人が確認コードを見比べて承認したときだけ新しい PC に渡る。サーバーの同期のデータを消して始め直すには今の K の署名が要る（K を持たない PC は回復の 72 時間を待ち、その間は鍵を持つ PC から止められる）。PC を外すと K を作り直し、外した PC には新しい K を渡さない
-- v2 の api で受け取る K は、api の言うままには受けない。新しい PC は、承認の窓で確認コードを見比べた PC が、そのとき受けた公開鍵で包んだ K だけを受ける。前の K を持つ PC は、前の K の印がある K にだけ自動で切り替える。印の無い K（回復・移行で作ったもの）は、人が選んでから承認の窓を通して受ける
+- v2 の api: K は、鍵を持つ PC の人が確認コードを見比べて承認したときだけ新しい PC に渡る。サーバーの同期のデータを消して始め直すには今の K の署名が要る（K を持たない PC はリセットの 72 時間を待ち、その間は鍵を持つ PC から止められる）。PC を外すと K を作り直し、外した PC には新しい K を渡さない
+- v2 の api で受け取る K は、api の言うままには受けない。新しい PC は、承認の窓で確認コードを見比べた PC が、そのとき受けた公開鍵で包んだ K だけを受ける。前の K を持つ PC は、前の K の印がある K にだけ自動で切り替える。印の無い K（同期のリセット・移行で作ったもの）は、人が選んでから承認の窓を通して受ける
 - 券を一度でも取れたアカウントでは、前の版の api の流れ（人の承認の無い受け渡し）に戻らない
 - 届いた skill と指示ファイルは、人が見た版だけを取り込む・捨てる（見ている間に替わった版は書かない）
 - api が暗号文を書き換える・別の項目や別の版・別のアカウントの暗号文と入れ替える、は開けずに捨てる（aad に uid・itemId・rev、包んだ鍵の aad に uid・hostId・keyId）
@@ -516,7 +516,7 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - 項目の数・大きさ・更新の時刻・どのホストが書いたかは api に見える
 - api が項目を返さない・前の版をそのまま返し直す、は見分けない
 - 前の版の api（券を一度も取れていないアカウント）では、K を渡す相手と受け取る包みの確かめを api の返すホストの台帳（`syncPublicKey`）だけに頼る。人の承認も前の K の印も無い
-- v2 の api の承認は、人が 2 台の確認コードを見比べたときだけ確かめになる。見比べずに「渡す」を押したもの、回復・移行の K を人が「受け取る」と選んだものは、その人の判断に従う
+- v2 の api の承認は、人が 2 台の確認コードを見比べたときだけ確かめになる。見比べずに「渡す」を押したもの、同期のリセット・移行の K を人が「受け取る」と選んだものは、その人の判断に従う
 - 前の K の印は前の K を持つ PC どうしで確かめる HMAC で、署名ではない。前の K を持つどの PC も印を作れる
 - 外した PC の手元には、外す前に受けた項目と前の K が残る
 - PC そのものが乗っ取られれば、K も中身も読まれる
