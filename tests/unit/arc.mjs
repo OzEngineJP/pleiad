@@ -5,7 +5,7 @@ import { runMark, satMark, stillMark } from '../../web/arc.mjs';
 import { createHooksCard } from '../../web/hooks-card.mjs';
 
 export const name = 'arc';
-export const title = '走っている印: rAF を使わない・共通のドット・hooks の読み込み前後';
+export const title = '走っている印: rAF を使わない・点の数・hooks の読み込み前後';
 
 export default async function (t) {
   const oldRaf = globalThis.requestAnimationFrame;
@@ -14,13 +14,12 @@ export default async function (t) {
   document.createTextNode = (text) => { const node = new N('span'); node.textContent = text; return node; };
   try {
     const arc = runMark('実行中');
-    assert.equal(arc.className, 'run wait-mark');
-    assert.equal(arc.querySelectorAll('.wait-dot').length, 1);
-    assert.equal(arc.querySelectorAll('svg').length, 0);
-    assert.equal(satMark(8).querySelectorAll('.wait-dot').length, 1);
-    assert.match(satMark(1, 'offline', { paused: true }).className, /paused/);
+    assert.equal(arc.className, 'run');
+    assert.equal(arc.querySelectorAll('path').length, 1);
+    assert.equal(arc.querySelector('path').getAttribute('d'), 'M7.00,2.00 A5,5 0 1 1 2.00,7.00');
+    assert.equal(satMark(8).querySelectorAll('circle').length, 3);
     assert.equal(stillMark('done').querySelectorAll('path').length, 1);
-    t.ok('ドット・静止の印は生成時に rAF を使わない', true);
+    t.ok('弧・衛星・静止の印は生成時に rAF を使わない', true);
 
     let release;
     const pending = new Promise(resolve => { release = resolve; });

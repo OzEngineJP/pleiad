@@ -1,6 +1,6 @@
 // 入力欄の上の帯の右端にある、バックグラウンドの入口（docs/design-system.md「入力欄の上の帯」「バックグラウンドの入口」）。
 // 動いているものを種類ごとのアイコンで見せる（エージェントのロゴ・ターミナル）。2 本以上は右下に数、4 種類以上は「+N」、
-// 承認待ちを含む種類は先頭へ寄せて ◆。ドットは左に 1 つ。終わったものだけなら「✓ N」。
+// 承認待ちを含む種類は先頭へ寄せて ◆。弧は左に 1 つ。終わったものだけなら「✓ N」。
 // 出入り・数の変化は差分だけを描き替える（動かすのは新しい種類・数・チップ自体だけ）
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
@@ -38,7 +38,7 @@ function kindLogo(kind) {
   return mark;
 }
 
-function waitMark() {
+function approvalMark() {
   const svg = svgEl('svg', { viewBox: '0 0 10 10', class: 'bgc-wait', 'aria-hidden': 'true' });
   svg.append(svgEl('path', { d: 'M5 .8 9.2 5 5 9.2.8 5z' }));
   return svg;
@@ -104,7 +104,7 @@ export function createBackgroundChip(button) {
     button.classList.toggle('ended', !summary.live);
     const quiet = fresh;   // 会話を開いたときに出入りを動かさない
 
-    // 走っているドットは 1 つだけ（走っている間だけ DOM に置く。web/arc.mjs）
+    // 走っている弧は 1 つだけ（走っている間だけ DOM に置く。web/arc.mjs）
     if (summary.live && !running) { runSlot.replaceChildren(runMark()); running = true; }
     else if (!summary.live && running) { runSlot.replaceChildren(); running = false; }
 
@@ -140,7 +140,7 @@ export function createBackgroundChip(button) {
         if (count.textContent !== String(g.n)) { count.textContent = String(g.n); if (!quiet) animate(count, 'bump'); }
       } else count?.remove();
       const mark = node.querySelector('.bgc-wait');
-      if (g.waiting && !mark) node.append(waitMark());
+      if (g.waiting && !mark) node.append(approvalMark());
       else if (!g.waiting && mark) mark.remove();
       // 並びを合わせる（消えかけの種類は動かさない）
       const want = previous ? previous.nextElementSibling : slots.firstElementChild;

@@ -77,18 +77,18 @@
 .usage-pop .foot{margin-top:10px;display:flex;justify-content:flex-end}
 .usage-pop .foot button{background:transparent;color:var(--ink-blue);cursor:pointer;padding:2px 0}
 .usage-pop .foot button:hover{text-decoration:underline;text-decoration-color:var(--line-blue)}
-/* 狭い画面: 枠の名前を外して棒と数字だけ。上限は「上限 14:30」 */
+/* 狭い画面: 枠の名前を外して棒と数字だけ。上限は「上限 14:30」。列が狭い帯（.compact。compaction.css）も同じ */
 @media (max-width:700px){
   .usage-chip{padding:0 8px}
   .usage-chip .long{display:none}
   .usage-chip .short{display:inline}
 }
-/* 480px 以下は ▾ を省く。自動圧縮の予約（文脈のメーターの「◷ 17:57」）があるときは棒も外して「5時間 66%」だけにする（帯を折り返さない） */
-@media (max-width:480px){
-  .usage-chip svg.caret{display:none}
-  .context-strip:has(.context-meter-clock) .usage-chip .usage-mini{display:none}
-  .usage-chip{gap:5px;padding:0 8px}
-}
+.context-strip.compact .usage-chip .long{display:none}
+.context-strip.compact .usage-chip .short{display:inline}
+/* 480px 以下と列が狭い帯は ▾ を省く。自動圧縮の予約（文脈のメーターの「◷ 17:57」）があるときは棒も外して「5時間 66%」だけにする（帯を折り返さない） */
+.context-strip.compact .usage-chip svg.caret{display:none}
+.context-strip.compact:has(.context-meter-clock) .usage-chip .usage-mini{display:none}
+.context-strip.compact .usage-chip{gap:5px;padding:0 8px}
 
 /* Connections share the existing quota rows, with secondary connections folded. */
 .usage-agent .usage-provider{margin:10px 0 4px;font-size:var(--fs-xs);font-weight:600}

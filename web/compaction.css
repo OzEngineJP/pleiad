@@ -57,16 +57,20 @@
 .row-compaction, .row-sched { display:inline-flex; gap:3px; align-items:center; white-space:nowrap; flex:none; color:var(--ink-weak); font-size:var(--fs-xs); font-variant-numeric:tabular-nums; }
 .row-compaction svg, .row-sched svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; flex:none; }
 /* 入力欄のチップと同じく、スマホの幅（480px 以下）は ▾ を省く（style.css の「入力欄の行」） */
-@media (max-width:480px) {
-  .context-meter svg.caret { display:none; }
-  /* 圧縮中・失敗は、メーターの位置にチップで出す（予約の文は出さない。「◷ 17:57」はメーターの中） */
-  .context-strip-status { margin-left:0; }
-  .context-strip[data-phase=running] .context-strip-text, .context-strip[data-phase=failed] .context-strip-text { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border-radius:var(--r-pill); background:var(--surface-1); }
-  .context-strip[data-phase=running] .context-strip-text .run { margin-right:0; }
-  .context-strip[data-phase=failed] .context-strip-text { color:var(--ink-strong); }
-  .context-strip-text svg.i { width:14px; height:14px; flex:none; }
-  .context-strip[data-phase=failed] .context-strip-status button { padding:0 8px; }
-}
+/* 480px 以下に加え、右のパネルを開いて列が狭まり帯が入り切らないときも同じ形にする（client.mjs の fitContextStrip が .compact を付ける）。
+   それでも入り切らなければ .tight で棒を外し、最後は札の中を切る */
+.context-strip.compact .context-meter svg.caret { display:none; }
+/* 圧縮中・失敗は、メーターの位置にチップで出す（予約の文は出さない。「◷ 17:57」はメーターの中） */
+.context-strip.compact .context-strip-status { margin-left:0; }
+.context-strip.compact[data-phase=running] .context-strip-text, .context-strip.compact[data-phase=failed] .context-strip-text { display:inline-flex; align-items:center; gap:6px; height:28px; padding:0 10px; border-radius:var(--r-pill); background:var(--surface-1); }
+.context-strip.compact[data-phase=running] .context-strip-text .run { margin-right:0; }
+.context-strip.compact[data-phase=failed] .context-strip-text { color:var(--ink-strong); }
+.context-strip.compact .context-strip-text svg.i { width:14px; height:14px; flex:none; }
+.context-strip.compact[data-phase=failed] .context-strip-status button { padding:0 8px; }
+/* 棒は外す。文脈の棒は display:none にすると前後の字が 1 つの塊になって間が詰まるので、幅 0 にして間（gap）を 1 つぶんだけ残す */
+.context-strip.tight .usage-chip .usage-mini { display:none; }
+.context-strip.tight .context-meter-bar { width:0; margin-right:-6px; }
+.context-strip.tight :is(.context-meter,.usage-chip) { overflow:hidden; }
 @media (max-width:600px) {
   .auto-compaction-head, .auto-compaction-row { grid-template-columns:minmax(0,1fr) 42px 104px; gap:6px; }
   .auto-compaction-row input[type=number] { width:72px; padding:8px 12px; }
