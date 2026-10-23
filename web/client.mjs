@@ -5075,7 +5075,8 @@ const side = createSide({
   // チャンネルの見出しの ＋: 流れを開いて、流れの入力欄（新しいスレッドを書く所）へ
   onNewInChannel: (channelId) => {
     viewAddress.go({ channelId });
-    requestAnimationFrame(() => document.querySelector('#chFeed .ch-input')?.focus({ preventScroll: true }));
+    // 狭い画面では移ると引き出しが閉じる（channels:show）。背後の inert を外してから置く
+    requestAnimationFrame(() => { settleDrawer(); document.querySelector('#chFeed .ch-input')?.focus({ preventScroll: true }); });
   },
   channelExtras: () => channelExtraNodes,
   // 本文まで探す。画面は新しい WS コマンドを足さず、操作の一覧の sessions.search を汎用の invoke で呼ぶ（core/ops/sessions.mjs）
@@ -7435,11 +7436,14 @@ function initSidebar() {
   $("closeSidebar").onclick = () => setSidebar(false);
   $("openSidebar").onclick = () => setSidebar(true);
   $("sideVeil").onclick = () => setDrawer(false);
-  // 引き出しの中で会話の行・設定を押したら閉じる。メニューから開く・新しく始めるときは select / startNew が閉じる
+  // 引き出しは移動したときだけ閉じる。脇の中で済む操作（「ほか N 件」の行 .row.more・見出しの開閉・フィルター・「…」）では閉じない。
+  // 押して閉じるのは会話の行（開いている会話の行は会話へ戻る）と設定。メニューから開く・新しく始めるときは select / startNew が、
+  // チャンネルの面へ移るとき（チャンネルの名前・＋・スレッドの行・bot）は channels:show が閉じる
   $("sidebar").addEventListener("click", (e) => {
     if (!narrowView.matches || !drawerOpen()) return;
-    if (e.target.closest(".row, #settings, #authNeed")) setDrawer(false);
+    if (e.target.closest(".row:not(.more), #settings, #authNeed")) setDrawer(false);
   });
+  document.addEventListener("channels:show", () => { if (narrowView.matches) setDrawer(false); });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !drawerOpen() || e.defaultPrevented || isComposingKey(e)) return;
     if (document.querySelector("dialog[open], .pop.menu, .pop:not([hidden])")) return;
