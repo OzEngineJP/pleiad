@@ -462,6 +462,7 @@ const SUITES = [
   './unit/pending-sidebar.mjs',
   // 脇の移動の列（web/sidebar-moves.mjs）: 最新の移動先を即時に・保存は行ごとに直列・未送信は最新へまとめる・失敗しても後続は続く・応答は取り直しを待たない
   './unit/sidebar-moves.mjs',
+  './unit/drawer-swipe.mjs',
   // 脇の移動の受け口（web/client.mjs の sidebarChange・restore・deleteSessionRow）: 削除は移動の保存の後・元に戻すは生きている行だけ・失敗の札は覆われない行を知らせる
   './unit/sidebar-client-moves.mjs',
   // 脇の「状態」の並べ方（web/side.mjs）: bot のスレッドの行をドラッグで別の状態へ移せる（channels.setThreadStatus への振り分けまで）

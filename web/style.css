@@ -2131,6 +2131,9 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   body:not(.settings) > .side-veil{display:block;position:fixed;inset:var(--top-inset) 0 0 0;z-index:40;background:var(--surface-veil);opacity:0;pointer-events:none;
     transition:opacity var(--dur) var(--ease-out)}
   :root.side-open body:not(.settings) > .side-veil{opacity:1;pointer-events:auto}
+  /* 指への追従中だけ遷移を外す（ADR 0258）。確定後は通常の --dur / --ease-out に戻す。 */
+  :root.side-dragging body:not(.settings) > #sidebar{visibility:visible;transition:none}
+  :root.side-dragging body:not(.settings) > .side-veil{transition:none;pointer-events:auto}
   /* 開くボタンは常に（広い画面の「閉じている間だけ」ではない） */
   #openSidebar{display:inline-flex;margin-left:-6px}
   #sessionMore:not([hidden]){display:inline-flex}

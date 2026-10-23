@@ -655,6 +655,7 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 
 `web/` の変更（`plyRemote` の有無ではなく画面の幅・入力の種類で効かせる。ブラウザー版の狭い窓にも効く）:
 
+- **脇のスワイプ（承認済み（2026-10-23））**: 700px 以下では本文のどこからでも右へ引いて開き、開いた脇は左へ引いて閉じる。判定・追従・除外は [design-system.md「狭い画面・タッチ」](design-system.md#狭い画面タッチ2026-09-23) と [ADR 0258](adr/0258-open-sidebar-with-right-swipe.md)。Android は `systemGestures` から WebView の外側の余白を引いた領域を通知し、ページの `plyRemote.gestureInsets()` が現在の CSS px で `{ left, right, bottom }` を返す。回転などの領域変更も通知する。左右 24px・下端 28px と通知値の大きい方を開始対象から外し、通知のない殻・ブラウザーは既定の幅を使う。システムの「戻る」の除外領域は設定せず、`plyremote:back` も維持する。
 - **脇の折りたたみ**: 700px 以下（`web/style.css:733`）で脇を会話の上に重ねる引き出しにし、会話・チャンネル・スレッドへ移ると閉じる（開閉・フィルター・「…」では閉じない）。開閉は今の `#openSidebar` / `#closeSidebar`
 - **「…」ボタン**: 右クリック（`web/side.mjs:224,363,445,705`）とドラッグ（状態・グループへの移動）でしか届かない操作に、行・状態の見出し・グループの見出しの「…」を足し、同じメニューを開く。iOS は長押しで `contextmenu` が出ないため。`hover:none` では常に見せる。子メニューはタップで開く（`web/context-menu.mjs:76` はタッチでホバーを無視するので、`openSub` をタップで呼ぶ）。ホバーでしか見えないグループの ＋（`web/style.css:190`）も `hover:none` で常に見せる
 - **入力欄の文字 16px 以上**: `pointer:coarse` のときだけ入力欄・検索・combo を 16px（`--fs` は 14px、`web/tokens.css:78`）。iOS の自動拡大を防ぐ

@@ -133,6 +133,7 @@ class HostActivity : ComponentActivity() {
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             frame.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             topBand.layoutParams = topBand.layoutParams.apply { height = bars.top }
+            root.post { pushGestureInsets() }
             WindowInsetsCompat.CONSUMED
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -391,6 +392,20 @@ class HostActivity : ComponentActivity() {
         p.destroy()
     }
 
+    /** Only the part of the system gesture area inside the padded WebView. Never exclude system gestures. */
+    private fun pushGestureInsets() {
+        val r = reply ?: return
+        val insets = ViewCompat.getRootWindowInsets(root) ?: return
+        val gestures = insets.getInsets(WindowInsetsCompat.Type.systemGestures())
+        val width = web?.width ?: return
+        if (width <= 0) return
+        try { r.postMessage(JSONObject().put("type", "gesture-insets")
+            .put("left", maxOf(0, gestures.left - frame.paddingLeft))
+            .put("right", maxOf(0, gestures.right - frame.paddingRight))
+            .put("bottom", maxOf(0, gestures.bottom - frame.paddingBottom))
+            .put("viewportWidth", width).toString()) } catch (_: Exception) {}
+    }
+
     /** window.plyRemote for the proxy origin only. Never the Capacitor bridge. */
     private fun injectRemote(w: WebView, origin: String, px: DeviceProxy) {
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) ||
@@ -406,7 +421,7 @@ class HostActivity : ComponentActivity() {
             if (!isMainFrame || sourceOrigin.toString() != origin) return@addWebMessageListener
             val type = try { JSONObject(message.data ?: "").optString("type") } catch (_: Exception) { "" }
             when (type) {
-                "hello" -> { reply = replyProxy; pushStatus(px.link.status) }
+                "hello" -> { reply = replyProxy; pushStatus(px.link.status); pushGestureInsets() }
                 "retry" -> px.retryNow()
                 "theme" -> applyTheme(message.data)
                 "back" -> backToList()
@@ -434,11 +449,13 @@ class HostActivity : ComponentActivity() {
   const info = $info;
   const listeners = new Set();
   let last = null;
+  let gestureInsets = null;
   const waiting = new Map();
   let nextId = 0;
   bridge.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch (_) { return; }
     if (m && m.type === 'status') { last = m.status; for (const fn of listeners) { try { fn(last); } catch (_) {} } }
+    else if (m && m.type === 'gesture-insets') gestureInsets = m;
     else if (m && m.type === 'reply' && waiting.has(m.id)) { const done = waiting.get(m.id); waiting.delete(m.id); done(m.result); }
   };
   const post = (type, extra) => bridge.postMessage(JSON.stringify(Object.assign({ type }, extra || {})));
@@ -456,6 +473,11 @@ class HostActivity : ComponentActivity() {
   });
   const api = Object.freeze({
     hostId: info.hostId, hostName: info.hostName, relay: info.relay, device: info.device, shell: 'mobile',
+    // Native pixels to CSS pixels, including a changed viewport scale.
+    gestureInsets: () => {
+      const g = gestureInsets, scale = g && g.viewportWidth > 0 ? innerWidth / g.viewportWidth : 0;
+      return g ? { left: g.left * scale, right: g.right * scale, bottom: g.bottom * scale } : {};
+    },
     status: () => Promise.resolve(last),
     onStatus: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     retry: () => { post('retry'); return Promise.resolve(); },

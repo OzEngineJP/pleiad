@@ -1,4 +1,5 @@
 import { terminalView, updateTerminal } from './terminal.mjs';
+import { setupDrawerSwipe, drawerBlockingOverlay } from './drawer-swipe.mjs';
 import { delegateResult, delegateTaskId } from './delegate-result.mjs';
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
@@ -7380,8 +7381,10 @@ const drawerOpen = () => document.documentElement.classList.contains("side-open"
 // タップの中では開閉の印（side-open・aria-expanded）だけを付け、動き（--dur）を次のフレームから始める。
 // 一覧の描き直し・背後の inert・フォーカスは、開き始めた後（settleDrawer）へ回す。長い会話では main への inert の付け外しと
 // たまった一覧の描き直しだけで 200ms 以上かかり、押してから動くまでが止まって見えた（docs/remote.md §8.4）
+let drawerSwipe = null;
 let drawerSettle = null;   // { frame, timer, safety, from, refocus }
 function setDrawer(open, { refocus = true } = {}) {
+  drawerSwipe?.cancel();
   const root = document.documentElement;
   if (drawerOpen() === open) return;
   root.classList.toggle("side-open", open);
@@ -7433,6 +7436,7 @@ function setSidebar(open) {
 }
 
 function initSidebar() {
+  drawerSwipe = setupDrawerSwipe({ sidebar: $("sidebar"), veil: $("sideVeil"), narrowView, isOpen: drawerOpen, setDrawer });
   $("closeSidebar").onclick = () => setSidebar(false);
   $("openSidebar").onclick = () => setSidebar(true);
   $("sideVeil").onclick = () => setDrawer(false);
@@ -7446,7 +7450,7 @@ function initSidebar() {
   document.addEventListener("channels:show", () => { if (narrowView.matches) setDrawer(false); });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !drawerOpen() || e.defaultPrevented || isComposingKey(e)) return;
-    if (document.querySelector("dialog[open], .pop.menu, .pop:not([hidden])")) return;
+    if (drawerBlockingOverlay(document)) return;
     setDrawer(false);
   });
   // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
