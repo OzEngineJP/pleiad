@@ -99,7 +99,7 @@ GitHub Release の APK の流れはそのまま残し、Google Play へは同じ
 
 ### 自動の流れ（内部テスト）
 
-「Android release」が新しい版（`android-v…` のタグ）を出したら、同じワークフローの `play` のジョブが「Android Play upload」を `workflow_call` で呼び、同じコミットの AAB を内部テスト（`internal`）へ上げてすぐ公開する（`completed`。内部テストは審査が無く、テスターにすぐ届く）。版がもうあって APK を出さなかったときは上げない（同じ `versionCode` は Play が二度と受け取らない）。Play の手順が落ちても GitHub の APK のリリースは残る。2026-10-22 に、同じ入力（`internal`・`completed`）の手動の実行で、本物の Play に上がって内部テストに公開されることを確かめた。
+「Android release」が新しい版（`android-v…` のタグ）を出したら、同じワークフローの `play` のジョブが「Android Play upload」を `workflow_call` で呼び、同じコミットの AAB を内部テスト（`internal`）へ上げてすぐ公開する（`completed`。内部テストは審査が無く、テスターにすぐ届く）。版がもうあって APK を出さなかったときは上げない（同じ `versionCode` は Play が二度と受け取らない）。Play の手順が落ちても GitHub の APK のリリースは残る。2026-10-23 に、同じ入力（`internal`・`completed`）の手動の実行で、ビルド・アップロード鍵での署名と照合・Play の API への認証と鍵の受け付けまで通ることを確かめた。Play は「パッケージ名がデベロッパーの確認済みの ID に登録されていない」で受け付けず、内部テストへの公開はまだ確かめていない（Play Console の Android デベロッパー検証でのパッケージ名の登録が済めば通る見込み）。
 
 ### ワークフロー（Android Play upload）
 
@@ -119,6 +119,8 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
 | Secret | `PLY_ANDROID_PLAY_SERVICE_ACCOUNT_JSON` | サービスアカウントの鍵の JSON の全文（下の「サービスアカウント」） |
 | Secret・変数 | `PLY_ANDROID_KEYSTORE_*`・`PLY_ANDROID_KEY_*`・`PLY_ANDROID_CERT_SHA256` | APK と同じ署名鍵（上の「署名鍵」）。既定ではこれをアップロード鍵にも使う |
 | Secret・変数（任意） | `PLY_ANDROID_UPLOAD_KEYSTORE_BASE64`・`PLY_ANDROID_UPLOAD_KEYSTORE_PASSWORD`・`PLY_ANDROID_UPLOAD_KEY_ALIAS`・`PLY_ANDROID_UPLOAD_KEY_PASSWORD`・`PLY_ANDROID_UPLOAD_CERT_SHA256` | 別のアップロード鍵を Play に登録したときだけ。5 つ全部あればこちらで署名し、APK の鍵の Secrets は使わない。一部だけなら止まる |
+
+2026-10-23 の設定: アップロード鍵は 2026-10-20 にリセットで登録した別の鍵（SHA-256 `07:86:73:DD:…:87:D8:B1`）で、`PLY_ANDROID_UPLOAD_*` に入れてある。サービスアカウントは Pleiad 専用のもの（Cloud の役割なし。Play では Pleiad の閲覧とテストのトラックへのリリースだけ）。
 
 どれかが足りない・サービスアカウントの JSON の形でない・入力の組み合わせがおかしい（`inProgress` に割合が無い、`draft` に割合がある、呼び出しの `status` が知らない値、など）ときは、ビルドの前に `::error::` で名前を出して止まる。Secrets の値はログに出さない（壊れた JSON の例外も出さない）。`tests/unit/android-play-workflow.mjs` が、この確かめを bash で流し、APK の流れからの呼び出し（新しい版のときだけ・内部テストにすぐ公開）と版の決め方・署名鍵の Secrets・アクションの版が同じことを突き合わせる。
 
