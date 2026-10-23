@@ -33,15 +33,19 @@ function fold(events, { backend, model, initialMessageId, foldResult = true, onS
   const deliveredEarly = new Set(); // 吹き出しより先に届いた配達の合図（onEvent の deliveredEarly と同じ）
   let turn = null, closed = false, writing = false, thinking = false, endedWithText = false, pendingUuid = null, lastAt = null;
   const closeTurn = () => { turn = null; closed = false; writing = false; thinking = false; endedWithText = false; pendingUuid = null; };
-  // 入れ物の無いまま閉じた発言の id（pendingUuid）は、続くツールの入れ物だけが持つ（onEvent の ensureTurnEl。本文・考えた内容は閉じ直して捨てる）
-  const openTurn = (withPending = false) => {
-    if (turn && !closed) return turn;
-    const uuid = withPending ? pendingUuid : null;
-    closeTurn();
+  // 入れ物が無ければ作る。閉じた印はそのまま（onEvent の ensureTurnEl）。入れ物の無いまま閉じた発言の id（pendingUuid）は、この入れ物が持つ
+  const ensureTurn = () => {
+    if (turn) return turn;
     turn = { role: 'assistant', text: '', ...(backend ? { backend } : {}), ...(model ? { model } : {}), ...(lastAt ? { at: lastAt } : {}),
-      ...(uuid ? { uuid } : {}) };
+      ...(pendingUuid ? { uuid: pendingUuid } : {}) };
+    pendingUuid = null;
     messages.push(turn);
     return turn;
+  };
+  // 本文・考えた内容は、閉じた発言の後なら新しい入れ物に書く（onEvent の openTurnEl。閉じ直すので pendingUuid は捨てる）
+  const openTurn = () => {
+    if (closed) closeTurn();
+    return ensureTurn();
   };
   /** この出来事が新しい発言を始めるか（手前の発言はもう変わらない） */
   const starts = (ev) => {
@@ -92,7 +96,7 @@ function fold(events, { backend, model, initialMessageId, foldResult = true, onS
       case 'tool.start': {
         if (ev.id && calls.has(ev.id)) break;
         writing = false;
-        const m = turn ?? openTurn(true);
+        const m = ensureTurn();
         const call ={ id: ev.id ?? null, name: ev.name, input: ev.input ?? null };
         // 始まりの時刻（サーバーが受けた at・バックエンドが申告した startedAt）。走っている行の経過の起点（web/server-clock.mjs）
         if (Number.isFinite(ev.at)) call.at = ev.at;

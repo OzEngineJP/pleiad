@@ -57,6 +57,23 @@ export default async function (t) {
     { type: 'tool.start', id: 'long', name: 'Bash', input: {} },
     { type: 'text.end' }, { type: 'text.delta', text: 'C' },
   ]);
+  // Claude は確定した発言ごとに text.end を先に出し、その後にツールを出す（claude-normalize）。ターンの最初がツールだけの発言なら、
+  // 入れ物の無いまま閉じた後にツールが入れ物を作る。onEvent の ensureTurnEl は閉じた印を残すので、続く本文は別の発言になる
+  const claudeOrder = seq([
+    { type: 'text.end', uuid: 'u0' },
+    { type: 'tool.start', id: 'c0', name: 'Bash', input: {} }, { type: 'tool.result', id: 'c0', text: '1' },
+    { type: 'text.delta', text: 'step 1' }, { type: 'text.end', uuid: 'u1' },
+    { type: 'text.end', uuid: 'u2' },
+    { type: 'tool.start', id: 'c1', name: 'Bash', input: {} }, { type: 'tool.result', id: 'c1', text: 'step 1' },
+    { type: 'text.delta', text: 'step 2' }, { type: 'text.end', uuid: 'u3' },
+  ]);
+  t.ok('最初のツールだけの発言に続く本文は、ツールと同じ発言に入れない（onEvent と同じ）',
+    json(shape(streamMessages(claudeOrder).messages)) === json(shape([
+      { role: 'assistant', text: '', toolCalls: [{ id: 'c0', result: { text: '1' } }], uuid: 'u0' },
+      { role: 'assistant', text: 'step 1', uuid: 'u1' },
+      { role: 'assistant', text: '', toolCalls: [{ id: 'c1', result: { text: 'step 1' } }], uuid: 'u2' },
+      { role: 'assistant', text: 'step 2', uuid: 'u3' },
+    ])), json(shape(streamMessages(claudeOrder).messages)));
   t.ok('走っているツールの手前の、新しい発言が始まる所までは畳む', (() => { const s = splitLive(runningLater); return s.folded === 2 && json(shape(s.messages)) === json(shape([{ role: 'assistant', text: 'A' }])); })());
 
   const pending = seq([
