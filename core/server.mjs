@@ -9356,7 +9356,7 @@ wss.on("connection", (ws, req) => {
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
-            // 走っているターンの頭は畳んだ発言（core/live-snapshot.mjs。ADR 0255）。窓・手前の読み込みは同じ並び（ターン前の履歴＋畳んだ発言）の通し番号で数える
+            // 走っているターンの頭は畳んだ発言（core/live-snapshot.mjs。ADR 0257）。窓・手前の読み込みは同じ並び（ターン前の履歴＋畳んだ発言）の通し番号で数える
             const liveBody = (turn) => {
               const live = turn.stream;
               // 利用者の発言が無いターン（user が無い）もある

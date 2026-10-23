@@ -1,4 +1,4 @@
-// 走っているターンを開くときの形（ADR 0255）。出来事のうち、もう変わらない頭を履歴と同じ形の発言に畳み（web/stream-messages.mjs の splitLive・
+// 走っているターンを開くときの形（ADR 0257）。出来事のうち、もう変わらない頭を履歴と同じ形の発言に畳み（web/stream-messages.mjs の splitLive・
 // core/live-snapshot.mjs）、まだ動いている末尾だけを再生する出来事として返す。サーバー越しには、長いターンの途中で開いても末尾の窓だけが運ばれ、
 // 走っている間の手前の読み込みも同じ並びでつながり、ターンが終わると保存済みの履歴に戻ることを見る
 import fs from 'node:fs/promises';
