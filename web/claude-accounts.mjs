@@ -102,6 +102,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
   function draw() {
     $('caList').replaceChildren(...accounts.map(a => {
       const card = el('div', 'mp-card');
+      card.dataset.account = a.id;
       const top = el('div', 'mp-row'), info = el('div', 'mp-card-info');
       info.append(el('strong', null, a.name), el('small', null, status(a)));
       const actions = el('div', 'mp-card-actions');
@@ -298,9 +299,10 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
     catch (e) { $('caState').textContent = t('accounts.deleteFailed', { error: e.message }); }
   }
   // usageLogin: そのアカウントの「使用量の表示を認可」を始める。reissue: そのアカウントのトークンの再発行（setup-token）を始める
-  // （会話の失敗の行の［トークンを再発行］。web/auth-expired.mjs、ADR 0212）
+  // （会話の失敗の行の［トークンを再発行］。web/auth-expired.mjs、ADR 0212）。
+  // focus: そのアカウントの行の先頭のボタン（トークンを発行・再発行）へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
   let onOpen = () => {};
-  async function open({ usageLogin, reissue } = {}) {
+  async function open({ usageLogin, reissue, focus } = {}) {
     openSettings(); panel.hidden = false; onOpen('claude');   // backend-allow: この面は Claude のアカウント専用
     $('caState').textContent = t('accounts.loading');
     try {
@@ -311,6 +313,7 @@ export function setupClaudeAccounts({ cmd, openSettings, onChange = () => {} }) 
       const again = !target && reissue && accounts.find(a => a.id === reissue);
       if (again) startLogin({ kind: 'setup-token', accountId: again.id, name: again.name });
       else if (reissue && !target) $('caState').textContent = t('accounts.reissueMissing');
+      if (focus && !target && !again) $('caList').querySelector(`[data-account="${CSS.escape(focus)}"] .mp-card-actions button`)?.focus();
     }
     catch (e) { $('caState').textContent = e.message; }
   }

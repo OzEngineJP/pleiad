@@ -61,7 +61,8 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
   }
 
   async function refreshAll() {
-    const wanted = candidates().map(c => { const at = c.indexOf(':'); return { backend: c.slice(0, at), model: c.slice(at + 1) }; });
+    // 候補は `backend:model`・`backend@<account>:model`（ADR 0264。delegation-routing.mjs の parseCandidate と同じ形）
+    const wanted = candidates().map(c => { const at = c.indexOf(':'); return { backend: c.slice(0, at).split('@')[0], model: c.slice(at + 1) }; });
     const list = backends();
     const next = {};
     await Promise.all(list.map(async b => { next[b.id] = await one(b, wanted).catch(() => ({ available: false, checkedAt: null, windows: [], models: {} })); }));

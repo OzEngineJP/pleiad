@@ -4093,7 +4093,8 @@
     "unavailable": {
       "disabled": "無効",
       "not_installed": "未インストール",
-      "no_token": "認証情報なし"
+      "no_token": "認証情報なし",
+      "no_account": "アカウントが登録に無い"
     },
     "line": {
       "head": "{{kind}}・{{difficulty}} → {{target}}",
@@ -4243,6 +4244,14 @@
       "addTitle": "{{tier}} に追加",
       "addInput": "backend:model",
       "noModels": "モデルの一覧を読めません",
+      "accountLogin": "ログイン中のアカウント",
+      "accountLoginSame": "ログイン中のアカウント（{{name}}）",
+      "accountUse": "使う",
+      "accountUnused": "使わない",
+      "accountUseLabel": "{{agent}} のアカウント",
+      "relogin": "ログインし直す",
+      "accountsAllAdded": "どのアカウントも段に入っています",
+      "reloginLabel": "{{account}} にログインし直す（設定 › エージェント設定）",
       "empty": "候補がありません",
       "tableTitle": "種類 × 難しさ",
       "tableKind": "種類",

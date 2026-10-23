@@ -85,6 +85,7 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     const accounts = cache.get(backend) ?? [];
     $('aaList').replaceChildren(...accounts.map((a) => {
       const card = el('div', 'mp-card');
+      card.dataset.account = a.id;
       const top = el('div', 'mp-row'), info = el('div', 'mp-card-info');
       info.append(el('strong', null, a.name), el('small', null, status(a)));
       const actions = el('div', 'mp-card-actions');
@@ -263,7 +264,8 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
   $('aaAdd').onclick = () => { resetForm(); confirming = ''; $('aaForm').hidden = false; draw(); $('aaName').focus(); };
   $('aaCancel').onclick = () => { $('aaForm').hidden = true; resetForm(); };
 
-  async function open(id) {
+  // focus: そのアカウントの行の［ログインし直す］へフォーカスを置く（設定 › 委譲の「ログインし直す」。ADR 0264）
+  async function open(id, { focus } = {}) {
     if (flow && flow.attempt.backend !== id) void cancelFlow();
     const capturedView = Object.freeze({ backend: id });
     view = capturedView;
@@ -272,7 +274,10 @@ export function setupAgentAccounts({ cmd, openSettings, labelOf = (id) => id, on
     $('aaTitle').textContent = t('agentAccounts.title', { agent: labelOf(id) });
     $('aaIntro').textContent = t('agentAccounts.intro', { agent: labelOf(id) });
     $('aaState').textContent = t('agentAccounts.loading');
-    try { await load(id, true); if (!showing(capturedView)) return; draw(); drawFlow(); $('aaState').textContent = ''; panel.scrollIntoView({ block: 'nearest' }); }
+    try {
+      await load(id, true); if (!showing(capturedView)) return; draw(); drawFlow(); $('aaState').textContent = ''; panel.scrollIntoView({ block: 'nearest' });
+      if (focus) $('aaList').querySelector(`[data-account="${CSS.escape(focus)}"] .mp-card-actions button`)?.focus();
+    }
     catch (e) { if (showing(capturedView)) $('aaState').textContent = e.message; }
   }
   return {

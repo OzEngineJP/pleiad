@@ -80,8 +80,8 @@ export default async function (t) {
   t.ok('振り分け: 設定画面の候補の状態にも理由が出る（時刻が分からなければ until は無い）', state?.usable === false && state.reason === 'recently_limited' && !('until' in state), JSON.stringify(state));
   slots.set('claude:haiku:', { reason: 'recently_limited', until });
   const claudeHeld = checkCandidate('claude:haiku', { usage, settings, now: NOW, blocked });
-  t.ok('振り分け: アカウントごとの委譲先は、塞がったアカウントの行に理由を付けて外す', claudeHeld.ok === false && claudeHeld.reason === 'recently_limited'
-    && claudeHeld.accounts?.[0]?.reason === 'recently_limited' && claudeHeld.accounts[0].until === until, JSON.stringify(claudeHeld));
+  t.ok('振り分け: アカウントを持つ委譲先は、その候補のアカウントが塞がっていれば理由と戻る見込みを付けて外す（候補はアカウント 1 つの単位。ADR 0264）',
+    claudeHeld.ok === false && claudeHeld.reason === 'recently_limited' && claudeHeld.account === '' && claudeHeld.until === until, JSON.stringify(claudeHeld));
   slots.clear();
   const back = route({ kind: 'implement', judged, settings, usage, now: NOW, blocked });
   t.ok('振り分け: 塞がりが解ければ元の候補を選び直す', back.ok && back.routing.target.backend === 'opencode' && !back.routing.skipped.some(s => s.reason === 'retry_waiting' || s.reason === 'recently_limited'), JSON.stringify(back.routing.target));

@@ -310,8 +310,10 @@ export function compactQuota(quota, now = Date.now(), { tokens } = {}) {
  * held(b) は上限で今止まっている枠（[{ model, account, reason, until, resetsAt, window }]。Issue #111）。短い間隔の上限は日次・週次の枠には出ないので別に渡す。
  * until は振り分けが外す時刻、resetsAt は告げられた解除の見込み（分からなければ null）。
  * window はアカウント全体の枠（five_hour など）で止まったときの枠の名前（model は null）
+ * inTiers(b) は委譲の段ごとの候補に入っているそのエージェントのアカウント（Set。ログイン中は ''）。アカウントの行に inTiers を付ける
+ * （true なら自動の選択・account を省いた固定の委譲で使われうる。false は account を書いたときだけ使われる。ADR 0264）
  */
-export async function agentUsage({ backend, list, get, read, locale, accounts, held }) {
+export async function agentUsage({ backend, list, get, read, locale, accounts, held, inTiers }) {
   let targets;
   if (backend === undefined) targets = list().filter(b => b.usage);
   else {
@@ -329,7 +331,10 @@ export async function agentUsage({ backend, list, get, read, locale, accounts, h
     const stopped = (held ? held(b) : []).map(s => ({ model: s.model ?? null,
       ...(b.capabilities?.accounts ? { account: s.account || LOGIN_ACCOUNT } : {}), reason: s.reason, until: s.until ?? null,
       resetsAt: s.resetsAt ?? null, ...(s.window ? { window: s.window } : {}) }));
-    return { backend: b.id, label: b.label, ...compactQuota(quota, Date.now(), { tokens }), ...(stopped.length ? { held: stopped } : {}) };
+    const compact = compactQuota(quota, Date.now(), { tokens });
+    const placed = compact.accounts && inTiers ? inTiers(b) : null;
+    if (placed) compact.accounts = compact.accounts.map(a => ({ ...a, inTiers: placed.has(a.account === LOGIN_ACCOUNT ? '' : a.account) }));
+    return { backend: b.id, label: b.label, ...compact, ...(stopped.length ? { held: stopped } : {}) };
   }));
   return { backends };
 }

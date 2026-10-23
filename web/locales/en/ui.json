@@ -4207,7 +4207,8 @@
     "unavailable": {
       "disabled": "not enabled",
       "not_installed": "not installed",
-      "no_token": "no token"
+      "no_token": "no token",
+      "no_account": "account not registered"
     },
     "line": {
       "head": "{{kind}} · {{difficulty}} → {{target}}",
@@ -4358,6 +4359,14 @@
       "addTitle": "Add to {{tier}}",
       "addInput": "backend:model",
       "noModels": "Can't read the model list",
+      "accountLogin": "Signed-in account",
+      "accountLoginSame": "Signed-in account ({{name}})",
+      "accountUse": "Uses",
+      "accountUnused": "Not used",
+      "accountUseLabel": "{{agent}} accounts",
+      "relogin": "Sign in again",
+      "accountsAllAdded": "Every account is already in this tier",
+      "reloginLabel": "Sign in to {{account}} again (Settings › Agent settings)",
       "empty": "No candidates",
       "tableTitle": "Kind × difficulty",
       "tableKind": "Kind",

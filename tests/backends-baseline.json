@@ -32,7 +32,7 @@
     "web/compat-presets.mjs": 4,
     "web/composer-controls.mjs": 1,
     "web/context.mjs": 1,
-    "web/delegation-routing-view.mjs": 7,
+    "web/delegation-routing-view.mjs": 1,
     "web/hooks-card.mjs": 32,
     "web/hooks-unify-ui.mjs": 7,
     "web/mcp-config.mjs": 1,

@@ -66,12 +66,38 @@ export const DEFAULTS = Object.freeze({
 export const PACE_MIN_ELAPSED = 20;
 const WEEK_MINUTES = 10080;
 
-/** 候補の id（`backend:model`）。model に `:` が入っても最初の `:` で分ける */
+/** 登録したアカウントの id の形（Claude の acct-…・Codex / OpenCode の acct-…。core/claude-accounts.mjs と同じ） */
+const ACCOUNT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * 候補の id。`backend:model` と `backend@<アカウント id>:model`（ADR 0264）。最初の `:` で分け、前半に `@` があればその後ろがアカウント。
+ * model に `:`・`@` が入ってもそのまま。account は `@` が無ければ null（アカウントを持てるエージェントではログイン中のアカウント）
+ */
 export function parseCandidate(id) {
   const s = typeof id === 'string' ? id : '';
   const at = s.indexOf(':');
   if (at <= 0 || at === s.length - 1 || s.length > 240 || /[\x00-\x1f\x7f\s]/.test(s)) return null;
-  return { backend: s.slice(0, at), model: s.slice(at + 1) };
+  const head = s.slice(0, at), model = s.slice(at + 1);
+  const mark = head.indexOf('@');
+  if (mark < 0) return { backend: head, model, account: null };
+  const account = head.slice(mark + 1);
+  if (mark === 0 || !ACCOUNT_ID.test(account)) return null;
+  return { backend: head.slice(0, mark), model, account };
+}
+
+/** 候補の id を組む。account が ''・null（ログイン中・アカウントを持たない）なら `backend:model` */
+export function candidateId(backend, model, account = null) {
+  return account ? `${backend}@${account}:${model}` : `${backend}:${model}`;
+}
+
+/** 段に入っているアカウント（backend ごとの Set。ログイン中は ''）。アカウントを持てるエージェントの、自動の選択の対象 */
+export function tierAccounts(settings, backend) {
+  const out = new Set();
+  for (const tier of TIERS) for (const c of settings?.tiers?.[tier] ?? []) {
+    const parsed = parseCandidate(c);
+    if (parsed?.backend === backend) out.add(parsed.account ?? '');
+  }
+  return out;
 }
 
 /** 設定の検証で断る理由。code は辞書のキー（server の routing.settings.<code>）、detail は差し込む値 */
@@ -324,25 +350,22 @@ const pressure = (a, b, now) =>
   || fiveHour(a.windows ?? [], now) - fiveHour(b.windows ?? [], now);
 
 /**
- * Claude のアカウントの重複を落とす。今の使用量では「ログイン中のアカウント」と、登録したアカウントのうち同じ人のものが
- * 同じ値で並ぶ。組織（organizationUuid）とメールの両方が分かって一致するものだけを同一とし、1 つだけ残す。
- * 残すのは prefer を満たすもの（振り分けでは余裕あり、無ければ余裕が少ないもの）のうち先頭、
- * 無ければログイン中の方。どちらかが分からなければまとめない（docs/agent-delegation.md）
+ * 2 つのアカウントが同じ人か（組織 organizationUuid とメールの両方が分かって一致する）。ログイン中のアカウントの中身が
+ * 登録したアカウントと同じ人なら、設定画面は「ログイン中のアカウント（private）」と添える（ADR 0264）。
+ * どちらかが分からなければ同じとみなさない（docs/agent-delegation.md）
  */
-export function dedupeAccounts(accounts = [], prefer = () => false) {
-  const same = (a, b) => a?.org && b?.org && a?.email && b?.email && a.org === b.org && a.email.toLowerCase() === b.email.toLowerCase();
-  const login = accounts.find(a => a.account === '');
-  const inGroup = a => a === login || (Boolean(login) && same(a.identity, login.identity));
-  const keep = accounts.filter(inGroup).find(prefer) ?? login;
-  return accounts.filter(a => !inGroup(a) || a === keep);
+export function sameIdentity(a, b) {
+  return Boolean(a?.org && b?.org && a?.email && b?.email && a.org === b.org && a.email.toLowerCase() === b.email.toLowerCase());
 }
 
 /**
- * 1 つの候補を見る。{ ok, reason?, detail?, account?, window?, checkedAt }
+ * 1 つの候補を見る。{ ok, reason?, detail?, account?, accountLabel?, window?, windows?, checkedAt }
  * detail は unavailable の中身（画面が「使えない（入っていない）」と添える）: disabled（エージェントが有効でない）・
- * not_installed（CLI が入っていない）・no_token（登録したアカウントにトークンが無い）
+ * not_installed（CLI が入っていない）・no_token（登録したアカウントにトークンが無い）・no_account（候補のアカウントが登録に無い）
  * usage は core/delegation-usage.mjs の snapshot()：
  *   { [backend]: { available, checkedAt, windows, accounts?: [{ account, label, windows, identity, runnable }], models: { [model]: bool } } }
+ * 候補はアカウント 1 つの単位（ADR 0264）。アカウントを登録したエージェントでは、候補のアカウント（`@` が無ければログイン中）の行だけを見て、
+ * 使えなくてもほかのアカウントへは落とさない（route が次の候補へ進む）
  * blocked(backend, model, account) は、上限で再試行を待っている・上限で止まったばかりの枠（ADR 0229）。
  *   { reason: 'retry_waiting' | 'recently_limited', until? }（until は戻る見込みの時刻 ms）を返せば、その枠は使えない
  */
@@ -350,57 +373,22 @@ export function checkCandidate(candidate, { usage, settings, now, blocked = () =
   const parsed = parseCandidate(candidate);
   const entry = parsed ? usage?.[parsed.backend] : null;
   // 使用量をまだ一度も取っていない（取り置きが空）ときは、有効かどうかも分からないので中身を付けない
-  if (!parsed || !entry?.available) return { ok: false, reason: 'unavailable', ...(!parsed ? {} : entry ? { detail: 'not_installed' } : Object.keys(usage ?? {}).length ? { detail: 'disabled' } : {}) };
-  if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown',
-    ...(Array.isArray(entry.accounts) ? { accounts: dedupeAccounts(entry.accounts).map(a => ({
-      account: a.account, label: a.label ?? null, ok: false, reason: 'model_unknown', windows: [] })) } : {}) };
+  if (!parsed || !entry?.available) return { ok: false, reason: 'unavailable', ...(!parsed ? {} : entry ? { detail: 'not_installed' } : Object.keys(usage ?? {}).length ? { detail: 'disabled' } : {}),
+    ...(parsed?.account ? { account: parsed.account } : {}) };
   const checkedAt = entry.checkedAt ?? null;
-  const staleReason = checkedAt == null ? 'usage_unknown' : now - checkedAt > STALE_MS ? 'usage_stale' : null;
   const policy = { now, avoidPercent: settings.avoidPercent, paceLimit: settings.paceLimit };
-  // アカウントを登録したエージェント（ADR 0222）: アカウントごとに見て、余裕のあるものを選ぶ
+  // アカウントを登録したエージェント（ADR 0222）: 候補のアカウントの行だけ
   if (Array.isArray(entry.accounts)) {
-    const assessed = entry.accounts.map(a => {
-      if (!a.runnable) return { account: a.account, label: a.label ?? null, identity: a.identity, ok: false, reason: 'unavailable' };
-      const held = blocked(parsed.backend, parsed.model, a.account);
-      if (held) return { account: a.account, label: a.label ?? null, identity: a.identity, ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}) };
-      const windows = windowsFor(parsed.backend, parsed.model, a.windows);
-      const verdict = judgeWindows(windows, policy);
-      const rowAt = Object.hasOwn(a, 'checkedAt') ? a.checkedAt : checkedAt;
-      const rowStale = rowAt == null ? 'usage_unknown' : now - rowAt > STALE_MS ? 'usage_stale' : null;
-      return { checkedAt: rowAt, account: a.account, label: a.label ?? null, identity: a.identity, windows,
-        ...selectable(rowStale ? { ok: false, reason: rowStale } : verdict) };
-    });
-    const ranked = [...assessed].sort((a, b) =>
-      Number(!a.ok || a.deferred) - Number(!b.ok || b.deferred)
-      || Number(!a.ok) - Number(!b.ok)
-      || pressure(a, b, now));
-    let results = dedupeAccounts(ranked, r => r.ok && !r.deferred);
-    if (!results.some(r => r.ok && !r.deferred)) results = dedupeAccounts(ranked, r => r.ok);
-    const accountRows = results.map(r => ({ account: r.account, label: r.label, ok: r.ok, deferred: Boolean(r.deferred),
-      reason: r.reason ?? null, ...(r.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(r.until ? { until: r.until } : {}),
-      ...(r.window ? { window: r.window } : {}), windows: (r.windows ?? []).map(w => brief(w, usedNow(w, now))),
-      maxUsed: maxUsage(r.windows, now), weeklyRate: weeklyPace(r.windows ?? [], now),
-      checkedAt, avoidPercent: settings.avoidPercent }));
-    const usable = results.filter(r => r.ok && !r.deferred);
-    const deferred = results.filter(r => r.deferred);
-    if (!usable.length) {
-      if (deferred.length) {
-        deferred.sort((a, b) => pressure(a, b, now));
-        const chosen = deferred[0];
-        return { ok: true, deferred: true, reason: chosen.reason, ...(chosen.window ? { window: chosen.window } : {}),
-          account: chosen.account, accountLabel: chosen.label, checkedAt, avoidPercent: settings.avoidPercent,
-          maxUsed: maxUsage(chosen.windows, now), weeklyRate: weeklyPace(chosen.windows, now),
-          windows: chosen.windows.map(w => brief(w, usedNow(w, now))),
-          accounts: accountRows };
-      }
-      const first = results.find(r => r.reason !== 'unavailable') ?? results[0];
-      return { ok: false, reason: first?.reason ?? 'usage_unknown', ...(first?.reason === 'unavailable' ? { detail: 'no_token' } : {}), ...(first?.until ? { until: first.until } : {}), ...(first?.window ? { window: first.window } : {}), checkedAt,
-        accounts: accountRows };
-    }
-    usable.sort((a, b) => pressure(a, b, now));
-    return { ok: true, account: usable[0].account, accountLabel: usable[0].label, checkedAt,
-      windows: usable[0].windows.map(w => brief(w, usedNow(w, now))), accounts: accountRows };
+    const row = entry.accounts.find(a => a.account === (parsed.account ?? ''));
+    if (!row) return { ok: false, reason: 'unavailable', detail: 'no_account', account: parsed.account ?? '', accountLabel: null, checkedAt };
+    const labelled = { account: row.account, accountLabel: row.label ?? null };
+    if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown', ...labelled, checkedAt };
+    return { ...labelled, ...assessRow(parsed.backend, parsed.model, row, { checkedAt, policy, settings, now, blocked }) };
   }
+  // 登録が無い（または持てない）エージェントに、アカウントを書いた候補
+  if (parsed.account) return { ok: false, reason: 'unavailable', detail: 'no_account', account: parsed.account, accountLabel: null, checkedAt };
+  if (entry.models?.[parsed.model] !== true) return { ok: false, reason: 'model_unknown' };
+  const staleReason = checkedAt == null ? 'usage_unknown' : now - checkedAt > STALE_MS ? 'usage_stale' : null;
   const held = blocked(parsed.backend, parsed.model, entry.accountable ? '' : null);
   if (held) return { ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}), account: entry.accountable ? '' : null, checkedAt };
   const windows = windowsFor(parsed.backend, parsed.model, entry.windows);
@@ -412,14 +400,39 @@ export function checkCandidate(candidate, { usage, settings, now, blocked = () =
     ...(check.ok ? { windows: windows.map(w => brief(w, usedNow(w, now))) } : {}) };
 }
 
-/** やり直し・指定で選ばれたアカウントを、重複を除いた候補の判定から取り出す（account を渡さなければ判定のまま） */
-export function selectRetryAccount(check, backend, account) {
-  void backend;
-  if (account === undefined) return check;
-  if (!check.accounts && account === check.account) return check;
-  const selected = check.accounts?.find(a => a.account === account);
-  return selected ? { ...selected, account, accountLabel: selected.label, checkedAt: check.checkedAt }
-    : { ok: false, reason: 'unavailable' };
+/** 登録したアカウントの 1 行を見る（checkCandidate・pickAccount）。行ごとの取得時刻が古ければ、枠より先にそれで後回しにする */
+function assessRow(backend, model, row, { checkedAt, policy, settings, now, blocked }) {
+  if (!row.runnable) return { ok: false, reason: 'unavailable', detail: 'no_token', checkedAt };
+  const held = blocked(backend, model, row.account);
+  if (held) return { ok: false, reason: held.reason, ...(held.until ? { until: held.until } : {}), checkedAt };
+  const windows = windowsFor(backend, model, row.windows);
+  const verdict = judgeWindows(windows, policy);
+  const rowAt = Object.hasOwn(row, 'checkedAt') ? row.checkedAt : checkedAt;
+  const rowStale = rowAt == null ? 'usage_unknown' : now - rowAt > STALE_MS ? 'usage_stale' : null;
+  const check = selectable(rowStale ? { ok: false, reason: rowStale } : verdict);
+  // 比べる値（pressure）は元の枠から出しておく（返す windows はリセット時刻を落とした短い形）
+  return { ...check, checkedAt: rowAt, maxUsed: maxUsage(windows, now), weeklyRate: weeklyPace(windows, now),
+    ...(check.deferred ? { avoidPercent: settings.avoidPercent } : {}),
+    windows: windows.map(w => brief(w, usedNow(w, now))) };
+}
+
+/**
+ * アカウントを書かない固定の委譲で使うアカウント（ADR 0264）。accounts（段に入っているアカウント。ログイン中は ''）の中から、
+ * 余裕のあるもの → 余裕の少ないもの の順に、使用量の少ないものを選ぶ。モデルの一覧は見ない（固定の委譲はモデルを書かないことがある）。
+ * 使えるものが無ければ accounts の先頭。accounts が空なら null
+ */
+export function pickAccount({ backend, model = null, accounts, usage, settings, now, blocked = () => null }) {
+  const list = [...accounts];
+  if (!list.length) return null;
+  const entry = usage?.[backend];
+  if (!entry?.available || !Array.isArray(entry.accounts)) return list[0];
+  const policy = { now, avoidPercent: settings.avoidPercent, paceLimit: settings.paceLimit };
+  const rows = list.map((account, i) => {
+    const row = entry.accounts.find(a => a.account === account);
+    return { account, i, check: row ? assessRow(backend, model ?? '', row, { checkedAt: entry.checkedAt ?? null, policy, settings, now, blocked }) : { ok: false } };
+  }).filter(r => r.check.ok);
+  rows.sort((a, b) => Number(Boolean(a.check.deferred)) - Number(Boolean(b.check.deferred)) || pressure(a.check, b.check, now) || a.i - b.i);
+  return rows[0]?.account ?? list[0];
 }
 
 /** 振り分けの記録（ply_delegate の返り値の routing。タスクと子会話のメタデータにも同じ形で残す） */
@@ -503,32 +516,22 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
       ...(judged.escalated ? { escalated: true } : {}) };
   };
   const soft = [];
+  // アカウントを持つ候補（アカウントを書いた候補・登録のあるエージェントの候補）は、飛ばした行にアカウントを添える
+  const scopedOf = parsed => Boolean(parsed) && (parsed.account != null || Array.isArray(usage?.[parsed.backend]?.accounts));
   const inspect = (tier, chooseSoft) => {
     const localSoft = [];
     for (const candidate of settings.tiers[tier] ?? []) {
+      const parsed = parseCandidate(candidate);
       const assessed = checkCandidate(candidate, { usage, settings, now, blocked });
       const check = Object.hasOwn(rejected, candidate) ? { ok: false, reason: rejected[candidate], checkedAt: assessed.checkedAt,
-        ...(assessed.accounts ? { accounts: assessed.accounts.map(a => ({ account: a.account, label: a.label, ok: false,
-          reason: rejected[candidate], windows: a.windows })) } : {}) } : assessed;
+        account: assessed.account, accountLabel: assessed.accountLabel ?? null } : assessed;
       if (check.checkedAt != null) seen.push(check.checkedAt);
-      if (check.accounts?.length) {
-        for (const a of check.accounts) {
-          if (check.ok && !check.deferred && a.account === check.account) continue;
-          skipped.push({ candidate, tier, account: a.account, accountLabel: a.label, reason: a.reason ?? 'lower_priority',
-            ...(a.detail ? { detail: a.detail } : {}), ...(a.until ? { until: iso(a.until) } : {}), ...(a.window ? { window: a.window } : {}),
-            ...(a.windows?.length ? { windows: a.windows } : {}),
-            ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
-        }
-        if (check.ok && !check.deferred) return { tier, ...parseCandidate(candidate), ...check };
-        if (check.deferred) localSoft.push({ tier, candidate, check });
-        continue;
-      }
-      if (check.ok && !check.deferred) {
-        const { backend, model } = parseCandidate(candidate);
-        return { tier, backend, model, ...check };
-      }
+      if (check.ok && !check.deferred) return { tier, backend: parsed.backend, model: parsed.model, ...check };
       if (check.deferred) localSoft.push({ tier, candidate, check });
-      skipped.push({ candidate, tier, reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.until ? { until: iso(check.until) } : {}), ...(check.window ? { window: check.window } : {}), ...(check.accounts ? { accounts: check.accounts } : {}),
+      const scoped = scopedOf(parsed);
+      skipped.push({ candidate, tier, ...(scoped ? { account: check.account ?? parsed.account ?? '', accountLabel: check.accountLabel ?? null } : {}),
+        reason: check.reason, ...(check.detail ? { detail: check.detail } : {}), ...(check.until ? { until: iso(check.until) } : {}), ...(check.window ? { window: check.window } : {}),
+        ...(scoped && check.windows?.length ? { windows: check.windows } : {}),
         ...(check.checkedAt != null ? { checkedAt: iso(check.checkedAt) } : {}) });
     }
     if (chooseSoft && localSoft.length) return pickSoft(localSoft);
@@ -538,9 +541,10 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
   const pickSoft = rows => {
     rows.sort((a, b) => pressure(a.check, b.check, now));
     const { tier, candidate, check } = rows[0];
-    const at = skipped.findIndex(s => s.tier === tier && s.candidate === candidate && (s.account ?? null) === (check.account ?? null));
+    const at = skipped.findIndex(s => s.tier === tier && s.candidate === candidate);
     if (at >= 0) skipped.splice(at, 1);
-    return { tier, ...parseCandidate(candidate), ...check };
+    const { backend, model } = parseCandidate(candidate);
+    return { tier, backend, model, ...check };
   };
   for (const tier of sequence) {
     const target = inspect(tier, false);
@@ -555,7 +559,9 @@ export function route({ kind, judged = {}, settings, usage, now = Date.now(), re
 }
 
 /**
- * 候補ごとの今の状態（設定画面の段ごとの候補と、各候補の使用量）。settings の全段の候補を重複なく
+ * 候補ごとの今の状態（設定画面の段ごとの候補と、各候補の使用量）。settings の全段の候補を重複なく。
+ * アカウントを持つ候補（scoped: アカウントを書いた候補・アカウントを登録したエージェントの候補）は、そのアカウントの行の使用量だけ
+ * （account・accountLabel。ログイン中は ''）
  */
 export function candidateStates({ settings, usage, now = Date.now(), blocked }) {
   const ids = [...new Set(TIERS.flatMap(tier => settings.tiers[tier] ?? []))];
@@ -563,15 +569,17 @@ export function candidateStates({ settings, usage, now = Date.now(), blocked }) 
     const parsed = parseCandidate(candidate);
     const check = checkCandidate(candidate, { usage, settings, now, blocked });
     const entry = parsed ? usage?.[parsed.backend] : null;
-    const accountRows = check.accounts ?? null;
+    const scoped = Boolean(parsed) && (parsed.account != null || Array.isArray(entry?.accounts));
+    const row = scoped ? entry?.accounts?.find(a => a.account === (parsed.account ?? '')) ?? null : null;
+    const at = row && Object.hasOwn(row, 'checkedAt') ? row.checkedAt : entry?.checkedAt;
     return { candidate, backend: parsed?.backend ?? null, model: parsed?.model ?? null,
+      ...(scoped ? { scoped: true, account: parsed.account ?? '', accountLabel: row?.label ?? null } : { account: check.ok ? check.account ?? null : null }),
       tiers: TIERS.filter(tier => (settings.tiers[tier] ?? []).includes(candidate)),
       usable: check.ok, deferred: Boolean(check.deferred), reason: check.reason ?? null, ...(check.detail ? { detail: check.detail } : {}),
-      ...(check.until ? { until: new Date(check.until).toISOString() } : {}), account: check.ok ? check.account ?? null : null,
+      ...(check.until ? { until: new Date(check.until).toISOString() } : {}),
       ...(check.window ? { window: check.window } : {}),
-      checkedAt: entry?.checkedAt ? new Date(entry.checkedAt).toISOString() : null,
-      windows: parsed && !accountRows ? windowsFor(parsed.backend, parsed.model, entry?.windows).map(w => brief(w, usedNow(w, now))) : [],
-      ...(accountRows ? { accounts: accountRows.map(a => ({ ...a, usable: a.ok })) } : {}) };
+      checkedAt: at ? new Date(at).toISOString() : null,
+      windows: parsed && (!scoped || row) ? windowsFor(parsed.backend, parsed.model, row ? row.windows : entry?.windows).map(w => brief(w, usedNow(w, now))) : [] };
   });
 }
 
@@ -585,13 +593,15 @@ export function formatSkippedCandidates(skipped) {
   }).join('\n');
 }
 
-/** 設定の検証で知らせること（今のモデル一覧に無い候補・使えないバックエンド）。黙って消さない */
+/** 設定の検証で知らせること（今のモデル一覧に無い候補・使えないバックエンド・登録に無いアカウント）。黙って消さない */
 export function settingsWarnings({ settings, usage }) {
   const out = [];
   for (const candidate of [...new Set(TIERS.flatMap(tier => settings.tiers[tier] ?? []))]) {
     const parsed = parseCandidate(candidate);
     const entry = usage?.[parsed.backend];
+    const missingAccount = Array.isArray(entry?.accounts) ? !entry.accounts.some(a => a.account === (parsed.account ?? '')) : Boolean(parsed.account);
     if (!entry?.available) out.push({ candidate, reason: 'unavailable' });
+    else if (missingAccount) out.push({ candidate, reason: 'no_account' });
     else if (entry.models?.[parsed.model] !== true) out.push({ candidate, reason: 'model_unknown' });
   }
   return out;

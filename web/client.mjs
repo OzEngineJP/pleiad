@@ -10692,6 +10692,9 @@ presenceReporter.start();
 const delegationSettings = setupDelegationSettings({ cmd, page: onboarding.page, showMenu, labelOf: routingNames.backend, logo: routingLogo,
   modelsOf: async (id) => (state.backends.some((b) => b.id === id) ? (await loadVocab(id)).models : null),
   modelName: (backend, model) => routingNames.model(backend, model), openPage: name => $(`${name}Tab`)?.click(),
+  // 使えないアカウントの候補の「ログインし直す」: エージェント設定のそのエージェントのアカウントを開き、その行へフォーカス（ADR 0264）
+  openAccount: (backend, account) => capsOf(backend).accounts === 'token' ? claudeAccounts.open({ focus: account })
+    : capsOf(backend).accounts ? agentAccounts.open(backend, { focus: account }) : null,
   // 候補に足せるのは有効なエージェント（試験用の fake は出さない）
   agents: () => state.backends.map((b) => b.id).filter((id) => id !== 'fake') });
 clearThread();

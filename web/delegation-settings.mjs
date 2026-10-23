@@ -5,7 +5,9 @@
 // - 「委譲先の自動選択に使うキー」: OpenRouter（Jev・Qwen。どちらも OpenRouter で、キーは 1 つ）の「使うキー」を設定 › API キー（承認済み 2026-10-07）から選ぶ（WS の setApiKeyUse）。
 //   選ぶまでは何も送らない。未登録ならその場で登録でき（登録先は API キー）、キーは返ってこない（hasKey と keyRef だけ）。送る内容の 1 行
 // - 「詳しい設定」（details）: 段ごとの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか、段の既定と候補ごとの思考の強さ。
-//   承認済み 2026-10-08・ADR 0164）・種類 × 難しさの表・使用量の方針
+//   承認済み 2026-10-08・ADR 0164）・種類 × 難しさの表・使用量の方針。
+//   アカウントを登録したエージェントの候補は「エージェント・モデル・アカウント」の単位（「Sonnet · private」）で、段の上にエージェントごとの
+//   「使う / 使わない」の 1 行、追加はエージェント ▸ モデル ▸ アカウント（承認済み 2026-10-24・ADR 0264）
 // - 末尾の「既定に戻す」（その場の確認。キーは残る）
 //
 // 状態はサーバーが持つ（delegationRouting コマンドと、変わるたびに届く delegationRoutingChanged イベント）。
@@ -66,9 +68,10 @@ function button(text, onclick, className = 'btn') {
  * @param modelsOf   そのエージェントのモデルの一覧（backend -> Promise<{ [id]: { label } }>）
  * @param modelName  モデルの表示名（backend, model -> 文字）
  * @param openPage   設定のほかのページへ移る（API キー）
+ * @param openAccount エージェント設定のそのエージェントのアカウントを開き、その行へフォーカスを置く（backend, account -> void）
  * @param agents     候補に足せるエージェント（有効なエージェントの id。() -> string[]）
  */
-export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName, openPage = () => {}, agents = () => [] }) {
+export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, modelsOf, modelName, openPage = () => {}, openAccount = () => {}, agents = () => [] }) {
   const $ = id => document.getElementById(id);
   const root = $('delegationPanel');
   let data = null, committed = null, message = '', registering = '', keyList = null, confirmingReset = false, refreshing = false;
@@ -115,8 +118,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     if (!next) return;
     orderFocus = `order|${tier}|${candidate}`;
     saveNested('tiers', { ...data.settings.tiers, [tier]: next });
-    const { backend, model } = splitCandidate(candidate);
-    announceOrder(t('routing.settings.orderMoved', { name: names.model(backend, model), position: to + 1 }));
+    announceOrder(t('routing.settings.orderMoved', { name: candidateName(candidate), position: to + 1 }));
   }
 
   async function refresh(args = {}) {
@@ -356,6 +358,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     again.disabled = refreshing || !s.enabled;
     usageLine.append(again);
     out.push(usageLine);
+    for (const backend of Object.keys(data.accounts ?? {})) out.push(accountUseLine(backend));
     for (const tier of data.tiers) out.push(tierBlock(tier));
     // 種類 × 難しさ
     out.push(el('h3', 'rt-sub-title', t('routing.settings.tableTitle')));
@@ -370,24 +373,85 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     if (focused) [...advancedBody.querySelectorAll('button')].find(b => b.dataset?.fk === focused)?.focus({ preventScroll: true });
   }
   function stateOf(candidate) { return data.candidates.find(c => c.candidate === candidate) ?? null; }
+  // ---- アカウント（ADR 0264）。アカウントを登録したエージェント（data.accounts にある）の候補は、アカウント 1 つの単位。
+  // 書かない候補はログイン中のアカウント。登録の無いエージェントはアカウントを出さない
+  const accountsOf = backend => data.accounts?.[backend] ?? null;
+  const candidateOf = (backend, model, account) => `${backend}${account ? `@${account}` : ''}:${model}`;
+  const scopedOf = ({ backend, account }) => Boolean(accountsOf(backend)) || account != null;
+  /** アカウントの名前。ログイン中は「ログイン中のアカウント」（登録の誰かと同じ人と分かれば「（private）」を添える） */
+  function accountText(backend, account) {
+    const row = accountsOf(backend)?.find(a => a.account === (account ?? ''));
+    if (!account) return row?.sameAs ? t('routing.settings.accountLoginSame', { name: row.sameAs }) : t('routing.settings.accountLogin');
+    return row?.name ?? account;
+  }
+  /** 候補の名前の文字（「Sonnet · private」）。読み上げ・並べ替えの知らせ・強さの見出しに使う */
+  function candidateName(candidate) {
+    const parsed = splitCandidate(candidate);
+    const model = names.model(parsed.backend, parsed.model);
+    return scopedOf(parsed) ? [model, accountText(parsed.backend, parsed.account)].join(t('routing.line.join')) : model;
+  }
+  /** 候補の名前の要素。アカウントは区切りの後ろで折り返す（狭い画面ではアカウントが次の行へ。区切りの前は改行しない空白） */
+  function candidateLabel(candidate) {
+    const parsed = splitCandidate(candidate);
+    const label = el('span', 'rt-label');
+    label.append(names.model(parsed.backend, parsed.model));
+    if (scopedOf(parsed)) label.append('\u00a0', el('span', 'rt-dot', '·'), ' ', el('span', 'rt-acct', accountText(parsed.backend, parsed.account)));
+    return label;
+  }
+  /**
+   * 段の上の 1 行（「Claude 使う ログイン中のアカウント · private 使わない seamth」）。段の中身から出す（ここでは選ばない）。
+   * 並びはエージェント設定のアカウントの一覧と同じ（ログイン中が先、登録順）。使えないアカウントは弱い色
+   */
+  function accountUseLine(backend) {
+    const rows = accountsOf(backend) ?? [];
+    const inTiers = new Set(data.tiers.flatMap(tier => data.settings.tiers[tier] ?? []).map(splitCandidate)
+      .filter(c => c.backend === backend).map(c => c.account ?? ''));
+    const line = el('div', 'rt-acct-use');
+    line.setAttribute('role', 'group');
+    line.setAttribute('aria-label', t('routing.settings.accountUseLabel', { agent: labelOf(backend) }));
+    const agent = el('span', 'rt-acct-agent');
+    agent.append(logo(backend), labelOf(backend));
+    line.append(agent);
+    const group = (key, list, cls) => {
+      const g = el('span', 'rt-acct-g' + (cls ? ` ${cls}` : ''));
+      g.append(el('span', 'k', key));
+      list.forEach((a, i) => { if (i) g.append(el('span', 'sep', '·')); g.append(el('span', 'v' + (a.ready ? '' : ' na'), accountText(backend, a.account))); });
+      return g;
+    };
+    const used = rows.filter(a => inTiers.has(a.account)), unused = rows.filter(a => !inTiers.has(a.account));
+    if (used.length) line.append(group(t('routing.settings.accountUse'), used));
+    if (unused.length) line.append(group(t('routing.settings.accountUnused'), unused, 'unused'));
+    return line;
+  }
+  /**
+   * 候補の下の行。アカウントを持つ候補はそのアカウントの使用量だけ（エージェントの名前は付けない）。
+   * 登録したアカウントのトークンが無ければ「使えない（認証情報なし） · ログインし直す」
+   */
   function candidateUsage(candidate) {
     const st = stateOf(candidate);
-    const { backend } = splitCandidate(candidate);
+    const parsed = splitCandidate(candidate);
+    const scoped = scopedOf(parsed);
     const join = t('routing.line.join');
-    if (st?.accounts?.length) return { st, lines: st.accounts.map(a => {
-      const name = a.label || (a.account === '' ? t('routing.detail.loginAccount') : a.account);
-      const state = a.usable ? a.deferred ? t('routing.settings.lowHeadroom', { reason: skipText(a.reason) }) : '' : skipText(a.reason, a.detail);
-      return { text: [name, state, usageSummary({ windows: a.windows })].filter(Boolean).join(join), strong: a.reason === 'model_unknown' };
-    }) };
-    const sub = [labelOf(backend)];
+    const sub = scoped ? [] : [labelOf(parsed.backend)];
     if (st?.usable) {
       if (st.deferred) sub.push(t('routing.settings.lowHeadroom', { reason: skipText(st.reason) }));
       const u = usageSummary(st); if (u) sub.push(u);
     }
     else if (st) sub.push(skipText(st.reason, st.detail));
-    return { st, lines: [{ text: (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(join), strong: st?.reason === 'model_unknown' }] };
+    if (!sub.length) return { st, lines: [] };
+    const relogin = scoped && parsed.account && st?.detail === 'no_token' ? parsed.account : '';
+    return { st, lines: [{ text: (st?.reason === 'model_unknown' ? '⚠ ' : '') + sub.join(join), strong: st?.reason === 'model_unknown', relogin }] };
   }
-  const usageLines = lines => lines.map(line => el('small', line.strong ? 'rt-strong' : null, line.text));
+  const usageLines = (candidate, lines) => lines.map(line => {
+    const small = el('small', line.strong ? 'rt-strong' : null, line.text);
+    if (line.relogin) {
+      const { backend } = splitCandidate(candidate);
+      const go = button(t('routing.settings.relogin'), () => openAccount(backend, line.relogin), 'btn link rt-relogin');
+      go.setAttribute('aria-label', t('routing.settings.reloginLabel', { account: accountText(backend, line.relogin) }));
+      small.append(t('routing.line.join'), go);
+    }
+    return small;
+  });
   function paintUsage() {
     paintEffective();
     const at = data.candidates.map(c => c.checkedAt).filter(Boolean).sort()[0];
@@ -397,7 +461,12 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       const { st, lines } = candidateUsage(row.dataset.candidate);
       row.classList.toggle('off', Boolean(st && !st.usable));
       const info = row.querySelector('.rt-cand-info');
-      if (info) { for (const small of info.querySelectorAll('small')) small.remove(); info.append(...usageLines(lines)); }
+      if (!info) continue;
+      // 押せる「ログインし直す」にフォーカスがあれば、描き直しても同じ候補の同じ部品へ戻す
+      const had = info.contains(document.activeElement) && document.activeElement.matches('.rt-relogin');
+      for (const small of info.querySelectorAll('small')) small.remove();
+      info.append(...usageLines(row.dataset.candidate, lines));
+      if (had) info.querySelector('.rt-relogin')?.focus({ preventScroll: true });
     }
   }
   function tierBlock(tier) {
@@ -409,17 +478,17 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     block.append(tierHead);
     const rows = el('ol', 'rt-cand-list');
     list.forEach((candidate, i) => {
-      const { backend, model } = splitCandidate(candidate);
+      const { backend } = splitCandidate(candidate);
       const st = stateOf(candidate);
-      const name = names.model(backend, model);
+      const name = candidateName(candidate);
       const row = el('li', 'rt-cand-row' + (st && !st.usable ? ' off' : ''));
       row.dataset.candidate = candidate;
       const info = el('div', 'rt-cand-info');
       const title = el('span', 'rt-cand-name');
-      title.append(el('span', 'rt-n', `${i + 1}.`), logo(backend), el('span', null, name));
+      title.append(el('span', 'rt-n', `${i + 1}.`), logo(backend), candidateLabel(candidate));
       title.title = candidate;
       const usage = candidateUsage(candidate);
-      info.append(title, ...usageLines(usage.lines));
+      info.append(title, ...usageLines(candidate, usage.lines));
       const actions = el('div', 'rt-cand-actions');
       const remove = button('', () => saveNested('tiers', { ...data.settings.tiers, [tier]: list.filter(c => c !== candidate) }), 'btn btn-icon rt-move');
       remove.setAttribute('aria-label', t('routing.settings.candidateRemove', { name }));
@@ -479,20 +548,38 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
         ...e.options.map(l => ({ label: l, on: e.own === l, pick: pick(l) }))] });
     return sel.element;
   }
-  /** 候補を足すメニュー。エージェントごとにモデルの一覧（段にまだ無いもの）と、backend:model を打ち込む欄 */
+  /**
+   * 候補を足すメニュー。エージェント ▸ モデル（▸ アカウント）と、backend:model を打ち込む欄。段にもうある組み合わせは出さず、
+   * アカウントを登録したエージェントは、どのアカウントも段にあるモデルを出さない。打ち込んだエージェントにアカウントが複数あれば、
+   * Enter の後にアカウントを選ぶ（ADR 0264）
+   */
   async function addMenu(tier, anchor) {
     const list = data.settings.tiers[tier] ?? [];
     const r = anchor.getBoundingClientRect();
     const backends = [...new Set([...agents(), ...data.candidates.map(c => c.backend)].filter(Boolean))];
+    const add = candidate => saveNested('tiers', { ...data.settings.tiers, [tier]: [...list, candidate] });
+    // そのモデルで、まだ段に無いアカウント（登録の無いエージェントは「アカウント無し」の 1 つ）
+    const free = (backend, model) => (accountsOf(backend) ?? [{ account: '' }]).filter(a => !list.includes(candidateOf(backend, model, a.account)));
+    const accountItems = (backend, model) => free(backend, model).map(a => ({ label: accountText(backend, a.account),
+      ...(a.ready ? {} : { hint: t('routing.unavailable.no_token') }), onClick: () => add(candidateOf(backend, model, a.account)) }));
     const items = await Promise.all(backends.map(async backend => {
       const models = await modelsOf(backend).catch(() => null);
-      const ids = Object.keys(models ?? {}).filter(id => id && !list.includes(`${backend}:${id}`));
-      return { label: labelOf(backend), sub: () => ids.length
-        ? ids.map(id => ({ label: models[id]?.label ?? id, hint: (models[id]?.label ?? id) === id ? '' : id, onClick: () => saveNested('tiers', { ...data.settings.tiers, [tier]: [...list, `${backend}:${id}`] }) }))
-        : [{ label: t('routing.settings.noModels'), disabled: true }] };
+      const ids = Object.keys(models ?? {}).filter(id => id && free(backend, id).length);
+      const modelItem = id => {
+        const label = models[id]?.label ?? id, hint = label === id ? '' : id;
+        return accountsOf(backend) ? { label, hint, sub: () => accountItems(backend, id) } : { label, hint, onClick: () => add(candidateOf(backend, id, '')) };
+      };
+      return { label: labelOf(backend), sub: () => ids.length ? ids.map(modelItem) : [{ label: t('routing.settings.noModels'), disabled: true }] };
     }));
+    const typed = v => {
+      const parsed = splitCandidate(v);
+      if (parsed.account != null || !parsed.model || !accountsOf(parsed.backend)) { add(v); return; }
+      const rest = accountItems(parsed.backend, parsed.model);
+      showMenu(r.left, r.bottom + 4, rest.length ? rest : [{ label: t('routing.settings.accountsAllAdded'), disabled: true }],
+        names.model(parsed.backend, parsed.model));
+    };
     showMenu(r.left, r.bottom + 4, [...items, { sep: true },
-      { input: { placeholder: t('routing.settings.addInput'), onCommit: v => saveNested('tiers', { ...data.settings.tiers, [tier]: [...list, v] }) } }],
+      { input: { placeholder: t('routing.settings.addInput'), onCommit: typed } }],
       t('routing.settings.addTitle', { tier: tierText(tier) }));
   }
   function tableBlock() {
