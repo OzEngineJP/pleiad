@@ -316,6 +316,7 @@ const SUITES = [
   './unit/change-log.mjs',
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
   './unit/stream-messages.mjs',
+  './unit/live-snapshot.mjs',
   './unit/server-agent-tasks.mjs',
   // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
   './unit/server-permission-settled.mjs',
@@ -621,6 +622,8 @@ const SUITES = [
   './unit/claude-steer-stop.mjs',
   // Claude のターンの終わり: Stop フックの続き・裏へ回ったまま終わらないコマンド（stopTask で終わる）
   './unit/claude-turn-end.mjs',
+  // Claude の裏のコマンドの出力（Query.getTaskOutput）: コマンド・制御文字・末尾だけ・止めた後・ターンの後（身代わりの SDK）
+  './unit/claude-background-output.mjs',
   // Claude のログインの期限切れ（401）: 見分け・pristine・失敗の行に添える auth・設定の行の期限切れの印と CLI の在り処（ADR 0212）
   './unit/claude-auth-expired.mjs',
   // 待っているログインをやめる: 見張り・Grok・Devin・Codex の cancel と、時間切れの code（ADR 0243）

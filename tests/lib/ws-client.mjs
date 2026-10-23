@@ -31,7 +31,8 @@ export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow
 
   // 返事が来ない cmd（接続が閉じた後に送った分・サーバーが答えない分）で、試験が黙って止まらない。上限を過ぎたら、コマンド名を入れて拒否する。
   // 長く待つ cmd だけ `cmd(name, args, { ms })` で延ばす（0 は上限なし）
-  const cmd = (command, args = {}, { ms = CMD_TIMEOUT_MS } = {}) =>
+  // onReply は返事を受けた同期点で呼ぶ（出来事の境界を取る用途）。
+  const cmd = (command, args = {}, { ms = CMD_TIMEOUT_MS, onReply } = {}) =>
     new Promise((res, rej) => {
       // ws は、開いていない接続への送信を黙って捨てる（close で拒否されるのは、その時点で待っていた分だけ）。送れないものは待たせない
       if (ws.readyState !== WebSocket.OPEN) return rej(new Error(`cmd ${command} を送れない: 接続が開いていない（readyState ${ws.readyState}）`));
@@ -40,7 +41,7 @@ export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow
         if (pending.delete(id)) rej(new Error(`cmd ${command} の返事が ${ms}ms 来なかった`));
       }, ms) : null;
       timer?.unref?.();
-      pending.set(id, { res: (v) => { clearTimeout(timer); res(v); }, rej: (e) => { clearTimeout(timer); rej(e); } });
+      pending.set(id, { res: (v) => { clearTimeout(timer); onReply?.(); res(v); }, rej: (e) => { clearTimeout(timer); rej(e); } });
       try { ws.send(JSON.stringify({ kind: "command", command, id, args })); }
       catch (e) { pending.delete(id); clearTimeout(timer); rej(e); }
     });
@@ -107,19 +108,25 @@ export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow
      * 待つのはこの回の会話の turnEnd だけ。裏で別の会話のターン（委譲の完了通知など）が走っても、その終わりで返らない。
      * 新しい会話は、呼んだ時点までに見ていない ID の session をこの回の会話とする。
      * id が決まる前に終わったターンの turnEnd は sessionId が null なので、そのときは null の turnEnd で返る。
+     * 開始が拒否されたら例外を返す。結果の選択と ms の待ちは、開始を受理した応答の後を対象にする。
+     * events は準備中の通知（cwd など）も含め、呼び出し以降のものを返す。
      */
     async runTurn(args, { ms = 300000 } = {}) {
       const from = events.length;
+      let acceptedFrom = null;
       const known = new Set(events.map((e) => e.sessionId).filter(Boolean));
       let own = args?.sessionId ?? null;
       const mine = (e) => {
+        if (acceptedFrom === null) return false;
         if (!own && e.type === "session" && e.sessionId && !known.has(e.sessionId)) own = e.sessionId;
         return e.type === "turnEnd" && (e.sessionId ?? null) === own;
       };
-      const started = cmd("runTurn", args);
-      const ended = api.waitFor(mine, { ms, from });
-      await Promise.race([ended, started.then(() => ended)]);
-      return api.turnResult(from, { sessionId: own });
+      // 開始の応答より前に、同じ会話の前のターン（完了通知など）が終わることがある。
+      // 応答の受信時に境界を取る。then で取ると、同じ受信バッチの今回の出来事まで飛ばしてしまう。
+      // turnEnd が先に届いても、今回の開始要求の拒否を成功に変えない。
+      await cmd("runTurn", args, { onReply: () => { acceptedFrom = events.length; } });
+      await api.waitFor(mine, { ms, from: acceptedFrom });
+      return { ...api.turnResult(acceptedFrom, { sessionId: own }), events: events.slice(from) };
     },
 
     /**

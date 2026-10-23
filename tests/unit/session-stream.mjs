@@ -3,6 +3,7 @@ import vm from "node:vm";
 import os from "node:os";
 import path from "node:path";
 import { createLoadTiming } from '../../core/load-timing.mjs';
+import { liveSnapshot } from '../../core/live-snapshot.mjs';
 import { createSessionLoads } from "../../web/session-stream.mjs";
 import { createCompletionNotifications } from '../../web/notifications.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from '../../core/compaction-history.mjs';
@@ -154,7 +155,7 @@ export default async function (t) {
   const turns = new Map([["target", turn]]);
   // server.mjs の case "loadSession" の本文をここで走らせる。本文で新しい関数を呼んだら、ここにも渡す（無いと ReferenceError）
   const serverContext = vm.createContext({
-    createLoadTiming, performance,
+    createLoadTiming, performance, liveSnapshot,
     msg: { args: { sessionId: "target", live: true } }, runtime: { turns, waiting: new Map() }, liveReads,
     resolveBackendForSession: async () => ({}), store: { get: async () => ({}) }, compactionScheduler: { get: () => null },
     mergeCompactionHistory, attachCompactSummaries, serveFrom, serveHistory,

@@ -10,6 +10,8 @@ export function fakeClock(start = 1_000_000) {
     setTimeout(fn, ms) { const id = ++seq; timers.set(id, { at: t + Math.max(0, ms), fn }); return id; },
     clearTimeout(id) { timers.delete(id); },
     pending: () => timers.size,
+    /** ms 以内に期限の来るタイマーがあるか（実の通信の後に入る待ちを、進める前に確かめる） */
+    dueWithin: ms => [...timers.values()].some(timer => timer.at <= t + ms),
     flush,
     /** ms だけ進める。期限が来た順に走らせ、そのたびに続きを待つ */
     async advance(ms) {

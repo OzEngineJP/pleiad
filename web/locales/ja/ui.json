@@ -474,7 +474,11 @@
         "hostName": "ホスト名",
         "notEncrypted": "この起動では登録用の秘密を暗号化できません（本人だけが読めるファイルに保存します）。",
         "edit": "編集",
-        "save": "保存"
+        "save": "保存",
+        "remove": "中継の設定を消す",
+        "removeConfirm": "中継の URL と登録用の秘密を消しますか。この中継へはつながらなくなります。",
+        "removeDevices_other": "この中継でつないだ端末 {{count}} 台は、中継を設定し直すまでつながりません（取り消しはしません）。",
+        "removeConfirmButton": "消す"
       },
       "devices": {
         "unnamed": "名前のない端末",
@@ -2736,6 +2740,7 @@
       "live": "稼働中",
       "startedAt": "起動 {{time}}",
       "truncated": "出力は末尾64K文字",
+      "truncatedOf": "出力は末尾のみ（全体 {{size}}）",
       "cwd": "作業場所: {{cwd}}",
       "outputUnsupported": "出力の取得に対応していません",
       "kind": {
