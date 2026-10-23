@@ -316,6 +316,7 @@ const SUITES = [
   './unit/change-log.mjs',
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
   './unit/stream-messages.mjs',
+  './unit/live-snapshot.mjs',
   './unit/server-agent-tasks.mjs',
   // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
   './unit/server-permission-settled.mjs',

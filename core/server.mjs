@@ -125,6 +125,7 @@ import { createRemoteHost } from './remote/connector.mjs';
 import { createAgentPort } from './remote/agent-port.mjs';
 import { viewAnswer, viewInstructions, pickDescendants } from './remote/agent-view.mjs';
 import { streamMessages } from '../web/stream-messages.mjs';
+import { liveSnapshot } from './live-snapshot.mjs';
 import { parentPortRemoteAgent, createRemoteDelegation } from './remote-delegation.mjs';
 import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE } from './remote/agent-protocol.mjs';
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
@@ -9361,6 +9362,23 @@ wss.on("connection", (ws, req) => {
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
+            // 走っているターンの頭は畳んだ発言（core/live-snapshot.mjs。ADR 0257）。窓・手前の読み込みは同じ並び（ターン前の履歴＋畳んだ発言）の通し番号で数える
+            const liveBody = (turn) => {
+              const live = turn.stream;
+              // 利用者の発言が無いターン（user が無い）もある
+              const user = live.user
+                ? data.messages.slice(live.messages.length).find(m => m.role === "user" && m.text === live.user.text) ?? live.user
+                : null;
+              const snap = liveSnapshot(live, { backend: turn.backend?.id ?? null, model: turn.info?.model || null });
+              // Use a fixed pre-turn history, never an independently sampled partial
+              // transcript: it may overlap the events or lag behind them.
+              return { messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : []), ...snap.messages], sidecar), ...shellRuns.rows(sessionId, sidecar)],
+                presents: [...live.presents, ...snap.presents], events: snap.events };
+            };
+            if (msg.args?.older && read.turn && !msg.args?.live) {
+              const { messages, presents } = liveBody(read.turn);
+              return loadReply(true, serve({ messages, presents }, msg.args, subagentToolsOf));
+            }
             if (!msg.args?.live) return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
@@ -9370,17 +9388,11 @@ wss.on("connection", (ws, req) => {
               .map(([id, w]) => ({ ...w.payload, id }));
             const turn = read.turn;
             if (turn) {
-              const live = turn.stream;
-              // 利用者の発言が無いターン（user が無い）もある
-              const user = live.user
-                ? data.messages.slice(live.messages.length).find(m => m.role === "user" && m.text === live.user.text) ?? live.user
-                : null;
-              // Use a fixed pre-turn history, never an independently sampled partial
-              // transcript: it may overlap the events or lag behind them.
+              const { messages, presents, events } = liveBody(turn);
               return loadReply(true, serve({
-                messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
-                stream: { events: live.events }, streamCursor: streamSequence, permissions,
-                initialMessageId: live.initialMessageId,
+                messages, presents, completedAt, interrupted: null, draft, ...compactionData,
+                stream: { events }, streamCursor: streamSequence, permissions,
+                initialMessageId: turn.stream.initialMessageId,
               }, msg.args, subagentToolsOf));
             }
             return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));
