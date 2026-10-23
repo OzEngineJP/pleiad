@@ -609,7 +609,7 @@
         "summary": "Runs one sync round right now (receive and upload)."
       },
       "syncReset": {
-        "summary": "Starts sync over. Removes the synced content on the server and starts again with this PC's content.",
+        "summary": "Resets sync. Removes the synced content on the server and starts again with this PC's content.",
         "confirm": "The item count a person saw and confirmed (keyId and itemCount), needed when a PC without the key removes the data on the server. If missing or out of date, nothing is removed and the current values are returned."
       },
       "hostReregister": {
@@ -642,20 +642,20 @@
         "summary": "Refuses to hand the sync key to a waiting PC. That PC can't ask again for an hour."
       },
       "syncAcceptRestart": {
-        "summary": "Moves to a new sync key that another PC made (such as by recovery) and the previous key can't vouch for. The key then arrives through the approval window.",
+        "summary": "Moves to a new sync key that another PC made (such as by a sync reset) and the previous key can't vouch for. The key then arrives through the approval window.",
         "keyId": "The keyId of the new key shown on screen. If it changed again in the meantime, nothing moves"
       },
       "syncRecoveryRequest": {
-        "summary": "When no PC holds the key, asks to restart sync with a new key. Needs a recent sign-in and waits 72 hours."
+        "summary": "When no PC holds the key, asks to reset sync (start over with a new key). Needs a recent sign-in and waits 72 hours."
       },
       "syncRecoveryCancel": {
-        "summary": "Withdraws the recovery this PC asked for."
+        "summary": "Cancels the sync reset this PC asked for."
       },
       "syncRecoveryComplete": {
-        "summary": "Finishes a recovery whose wait is over. Sync restarts with a new key and the sync data on the server is deleted."
+        "summary": "Finishes a sync reset whose wait is over. Sync restarts with a new key and the sync data on the server is deleted."
       },
       "syncRecoveryStop": {
-        "summary": "Stops a recovery another PC asked for, using the current sync key."
+        "summary": "Stops a sync reset another PC asked for, using the current sync key."
       }
     },
     "accounts": {

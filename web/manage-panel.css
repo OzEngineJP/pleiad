@@ -211,8 +211,9 @@ button.rm-row:hover { background:var(--surface-hover); }
 .rm-plain-row { display:flex; align-items:center; gap:16px; min-height:44px; padding:0 8px; }
 .sync-what { margin:0 8px; font-size:var(--fs-s); color:var(--ink-weak); }
 .sync-what > summary { cursor:pointer; padding:2px 0; }
-.sync-what-body { padding:4px 0 8px; display:flex; flex-direction:column; gap:6px; }
-.sync-what-body .sync-what-line { margin:0; line-height:1.5; }
+.sync-what-body { padding:4px 0 8px; }
+.sync-what-list { margin:0; padding-left:18px; }
+.sync-what-list li { line-height:1.5; }
 .sync-confirm-title { font-weight:600; }
 /* 鍵を待つ PC の確認コード（鍵を持つ PC の承認の窓と同じ数字） */
 .sync-code { margin:8px 8px 0; }

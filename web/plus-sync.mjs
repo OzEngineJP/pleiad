@@ -10,11 +10,11 @@
 // 受け入れ待ち（status.inbox）が 1 件以上あれば、まとまりの終わりに「届いた変更 N 件」の行（押すと web/plus-inbox.mjs の面。ADR 0250）
 // 受け入れの v2 の api（wait.v2。docs/plus.md「同期の鍵の受け渡し」）では、鍵は鍵を持つ PC の承認でだけ届く:
 //   鍵を持つ PC が居る → 承認を待つ行。明かし終えたら「{PC} の画面で承認してください」と確認コード。断られたら 1 時間待つ
-//     「鍵を持つ PC が使えないとき」は、PC の外し方と回復の説明（始め直しの窓は出さない）
-//   居ない → データの件数と回復（頼む・待つ・取り下げる・待ちが明けたら始め直す。ほかの PC の回復は今の鍵で止める）
-//   外された PC が今の鍵を持っていて、回復が頼まれている（status.recoveryAlert）→ 知らせと「回復を止める」
-//   前の鍵を持つ PC で、前の鍵では確かめられない新しい鍵が置かれた（wait.restarted。回復など）→ 自動では移らず「新しい鍵を受け取る」。
-//   届いた鍵を確かめられなかった（wait.unverified・restarted.unverified）→ 受け取らずに止めていることと、直し方（外して登録し直す・鍵を持つ PC が 1 台だけなら回復）
+//     「鍵を持つ PC が使えないとき」は、PC の外し方と同期のリセットの説明（始め直しの窓は出さない）
+//   居ない → 「鍵を持つ PC がありません」→ リセットの待ち → 消えるもの → ［同期をリセット］（頼む・待つ・取り下げる・待ちが明けたらリセット。ほかの PC のリセットは今の鍵で止める）
+//   外された PC が今の鍵を持っていて、リセットが頼まれている（status.recoveryAlert）→ 知らせと「リセットを止める」
+//   前の鍵を持つ PC で、前の鍵では確かめられない新しい鍵が置かれた（wait.restarted。リセットなど）→ 自動では移らず「新しい鍵を受け取る」。
+//   届いた鍵を確かめられなかった（wait.unverified・restarted.unverified）→ 受け取らずに止めていることと、直し方（外して登録し直す・鍵を持つ PC が 1 台だけなら同期のリセット）
 //   update_required（この版では使えない api）→ 更新を促す。error が api_downgraded（券を取れた後に api が前の版を名乗った）→ 止めたことを知らせる
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
@@ -82,7 +82,8 @@ function dataLines(w, text) {
 
 /**
  * 鍵を待つ間の中身（v2）。行は live に、ボタンは act で足す。
- * 鍵を持つ PC が居れば承認を待つ・確認コード・断られた。居なければデータと回復
+ * 鍵を持つ PC が居れば承認を待つ・確認コード・断られた。居なければ同期のリセット
+ * （承認済みの形は docs/design-system.md「設定 › Pleiad Plus › 同期」）
  */
 function approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, now }) {
   if (w.unverified || w.restarted?.unverified) {
@@ -90,16 +91,16 @@ function approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, 
     return;
   }
   if (w.restarted) {
-    // 前の鍵では確かめられない新しい鍵（回復など）: 人が選ぶまで申し込まない
+    // 前の鍵では確かめられない新しい鍵（リセットなど）: 人が選ぶまで申し込まない
     live.append(el('p', 'rm-warn', t('settings.plus.syncRestarted')), el('p', 'rm-sub', t('settings.plus.syncRestartedHint')));
     act(t('settings.plus.syncAcceptRestart'), () => onAcceptRestart(w.restarted.keyId), 'btn', 'syncAcceptRestart');
     return;
   }
-  const text = el('span', 'rm-rt');
-  const box = el('div', 'rm-row rm-plain-row');
-  box.append(text);
-  live.append(box);
   if (w.holder) {
+    const text = el('span', 'rm-rt');
+    const box = el('div', 'rm-row rm-plain-row');
+    box.append(text);
+    live.append(box);
     const holders = (w.holders ?? []).filter(h => h.registered);
     const j = w.join ?? null;
     if (j?.state === 'denied') {
@@ -118,26 +119,31 @@ function approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, 
     act(t('settings.plus.syncHolderUnavailable'), onAskReset, 'btn btn-quiet', 'syncReset');
     return;
   }
-  dataLines(w, text);
-  text.append(el('span', 'rm-sub', t('settings.plus.syncHolderGoneAll')));
-  const gone = (w.holders ?? []).filter(h => !h.registered && h.name).map(h => h.name);
-  if (gone.length) text.append(el('span', 'rm-sub', t('settings.plus.syncHolderGoneNames', { names: new Intl.ListFormat(lang).format(gone) })));
+  // 鍵を持つ PC が 1 台も無い: 経緯の記録（データ・外れた PC の名前）は出さず、状態 → 取れる道 → 消えるもの → ボタン
   const r = w.recovery ?? null;
+  const lost = el('p', 'rm-sub', Number.isInteger(w.itemCount)
+    ? t('settings.plus.syncResetLost', { count: w.itemCount, size: megaBytes(w.totalBytes) })
+    : t('settings.plus.syncResetLostMaybe'));
   if (!r) {
-    live.append(el('p', 'rm-weak', t('settings.plus.syncRecoveryAbout')));
+    live.append(el('p', 'rm-warn', t('settings.plus.syncHolderGoneAll')), el('p', 'rm-sub', t('settings.plus.syncRecoveryAbout')), lost);
     act(t('settings.plus.syncRecoveryAsk'), () => onRecovery('request'), 'btn', 'syncRecoveryRequest');
   } else if (w.recoveryMine) {
     const ready = Date.parse(r.readyAt) <= now.getTime();
-    live.append(el('p', 'rm-weak', ready ? t('settings.plus.syncRecoveryReady') : t('settings.plus.syncRecoveryWaiting', { time: syncTimeText(r.readyAt, { now }) })));
+    const text = el('span', 'rm-rt');
+    text.append(el('span', 'rm-nm', ready ? t('settings.plus.syncRecoveryReady') : t('settings.plus.syncRecoveryWaiting')),
+      el('span', 'rm-sub', ready ? t('settings.plus.syncRecoveryReadyHint') : t('settings.plus.syncRecoveryWaitingHint', { time: syncTimeText(r.readyAt, { now }) })));
+    const box = el('div', 'rm-row rm-plain-row');
+    box.append(text);
+    live.append(box, lost);
     act(t('settings.plus.syncRecoveryWithdraw'), () => onRecovery('cancel'), 'btn btn-quiet', 'syncRecoveryCancel');
     if (ready) act(t('settings.plus.syncRecoveryStart'), onAskReset, 'btn', 'syncReset');
   } else {
-    live.append(el('p', 'rm-weak', t('settings.plus.syncRecoveryOther', { name: pcName(r.requestedByName), time: syncTimeText(r.readyAt, { now }) })));
+    live.append(el('p', 'rm-weak', t('settings.plus.syncRecoveryOther', { name: pcName(r.requestedByName), time: syncTimeText(r.readyAt, { now }) })), lost);
     if (w.recoveryStop) act(t('settings.plus.syncRecoveryStop'), () => onRecovery('stop'), 'btn', 'syncRecoveryStop');
   }
 }
 
-/** 「鍵を持つ PC が使えないとき」（v2）: PC の外し方と回復の説明。始め直しはできない（鍵を持つ PC の承認か回復だけ） */
+/** 「鍵を持つ PC が使えないとき」（v2）: PC の外し方と同期のリセットの説明。始め直しはできない（鍵を持つ PC の承認かリセットだけ） */
 function holderHelpBox({ onClose, onOpenAccount }) {
   const box = el('div', 'rm-confirm');
   box.append(el('p', 'sync-confirm-title', t('settings.plus.syncHolderUnavailable')),
@@ -178,16 +184,15 @@ function startOverBox(w, { checked, changed, busy, onCheck, onCancel, onReset })
   return box;
 }
 
-/** 「同期するもの」の折り畳み。開くと同期するもの・しないものと暗号の一言 */
+/** 「同期するもの」の折り畳み。開くと同期するものの箇条書き（言語で変わる 3 項目は辞書、パスはコードの定数） */
 function whatSynced() {
   const det = el('details', 'sync-what');
   det.append(el('summary', null, t('settings.plus.syncWhat')));
   const body = el('div', 'sync-what-body');
-  body.append(
-    el('p', 'sync-what-line', t('settings.plus.syncWhatYes')),
-    el('p', 'sync-what-line', t('settings.plus.syncWhatNo')),
-    el('p', 'sync-what-line', t('settings.plus.syncEncrypted')),
-  );
+  const ul = el('ul', 'sync-what-list');
+  for (const item of [t('settings.plus.syncWhatItem.settings'), '~/.claude/skills', '~/.agents/skills', t('settings.plus.syncWhatItem.pleiadSkills'), t('settings.plus.syncWhatItem.instructions')])
+    ul.append(el('li', null, item));
+  body.append(ul);
   det.append(body);
   return det;
 }
@@ -196,17 +201,17 @@ function whatSynced() {
  * 「同期」の中身（見出し・スイッチ・状態の行・ボタン・競合の行）を返す。
  * @param enabled  account.sync.enabled（null・未定義は入）
  * @param sync     getSyncStatus() の形。まだ取れていなければ null
- * @param confirming  「同期をやり直す」の確かめを出しているか
+ * @param confirming  「同期をリセット」の確かめを出しているか
  * @param message  スイッチを変えられなかったときの文言（'' なら出さない）
  * @param busy     コマンドを送っている最中（ボタンを押せなくする）
  * @param resetChecked  鍵を持たない PC の確かめの窓で、チェックを入れたか（onResetCheck で知らせる）
  * @param resetChanged  確かめている間にサーバーの件数が変わった（もう一度確かめてもらう）
- * @param recoveryNote  回復の操作の結果の一言（reauth・other・holder・waiting・gone・stopped・stopFailed。'' なら出さない）
- * @param onRecovery  回復の操作（'request'・'cancel'・'complete'・'stop'）
+ * @param recoveryNote  リセットの操作の結果の一言（reauth・other・holder・waiting・gone・stopped・stopFailed。'' なら出さない）
+ * @param onRecovery  リセットの操作（'request'・'cancel'・'complete'・'stop'）
  * @param onAcceptRestart  (keyId) 前の鍵では確かめられない新しい鍵を受け取ると選んだ
- * @param onLogin     ログインし直す（回復を頼むのに最近のログインが要るとき）
+ * @param onLogin     ログインし直す（リセットを頼むのに最近のログインが要るとき）
  * @param onOpenAccount  アカウントのページを開く（「鍵を持つ PC が使えないとき」の説明から。無ければボタンを出さない）
- * @param now         いまの時刻（回復の待ちが明けたか・時刻の書式）
+ * @param now         いまの時刻（リセットの待ちが明けたか・時刻の書式）
  */
 export function renderSync({ enabled = true, sync = null, confirming = false, message = '', busy = false,
   resetChecked = false, resetChanged = false, onResetCheck = () => {},
@@ -238,10 +243,7 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
       break;
     case 'waiting_key': {
       const w = s.wait ?? null;
-      // ほかの PC で始め直されて、手元の鍵が古くなった（場面 5）
-      if (w?.stale && w.resetAt) {
-        live.append(el('p', 'rm-weak', t('settings.plus.syncResetBy', { name: pcName(w.resetBy?.name), time: syncTimeText(w.resetAt) })));
-      }
+      // ほかの PC で始め直されて手元の鍵が古い（w.stale）・鍵を渡した記録（sharedTo）も、鍵を待っている間は出さない
       if (w?.v2) { approvalLines(w, live, act, { onAskReset, onRecovery, onAcceptRestart, now }); break; }
       const text = el('span', 'rm-rt');
       let label = t('settings.plus.syncReset'), className = 'btn btn-quiet';
@@ -301,20 +303,20 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
       live.append(el('p', 'rm-weak', t('settings.plus.syncOff')));
   }
 
-  // 外されたこの PC が今の鍵を持っていて、ほかの PC が回復を頼んでいる: 止められる
+  // 外されたこの PC が今の鍵を持っていて、ほかの PC がリセットを頼んでいる: 止められる
   const alert = s.state !== 'disabled' ? s.recoveryAlert : null;
   if (alert) {
     live.append(el('p', 'rm-warn', t('settings.plus.syncRecoveryAlert', { name: pcName(alert.requestedByName), time: syncTimeText(alert.readyAt, { now }) })));
     act(t('settings.plus.syncRecoveryStop'), () => onRecovery('stop'), 'btn', 'syncRecoveryStop');
   }
-  // 回復の操作の結果
+  // リセットの操作の結果
   if (recoveryNote) {
     // i18n-dynamic: settings.plus.syncRecoveryNote.
     live.append(el('p', recoveryNote === 'stopped' ? 'rm-sub' : 'rm-warn', t(`settings.plus.syncRecoveryNote.${recoveryNote}`)));
     if (recoveryNote === 'reauth' && onLogin) act(t('settings.plus.syncRelogin'), onLogin, 'btn btn-primary', 'syncRelogin');
   }
-  // 鍵を渡した新しい PC（場面 6。7 日の間）
-  if (s.state !== 'disabled') {
+  // 鍵を渡した新しい PC（場面 6。7 日の間）。この PC が鍵を持っている間だけ出す（鍵を待っている間は出さない）
+  if (s.state !== 'disabled' && s.state !== 'waiting_key') {
     for (const to of Array.isArray(s.sharedTo) ? s.sharedTo : []) {
       live.append(el('p', 'rm-sub', t('settings.plus.syncSharedTo', { name: pcName(to.name), time: syncTimeText(to.at) })));
     }
@@ -332,7 +334,7 @@ export function renderSync({ enabled = true, sync = null, confirming = false, me
   if (confirming && s.state === 'waiting_key' && s.wait?.v2 && s.wait.holder) {
     out.push(holderHelpBox({ onClose: onCancelReset, onOpenAccount }));
   } else if (confirming && s.state === 'waiting_key' && s.wait?.v2) {
-    // 回復の待ちが明けた: 新しい鍵で始め直す（サーバーのデータは消える）
+    // リセットの待ちが明けた: 確かめの窓（サーバーのデータは消える）
     out.push(startOverBox(s.wait, { checked: resetChecked, changed: resetChanged, busy, onCheck: onResetCheck, onCancel: onCancelReset, onReset: () => onRecovery('complete') }));
   } else if (confirming && s.state === 'waiting_key') {
     out.push(startOverBox(s.wait, { checked: resetChecked, changed: resetChanged, busy, onCheck: onResetCheck, onCancel: onCancelReset, onReset }));

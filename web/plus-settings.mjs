@@ -221,7 +221,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   let inbox = null;
   /** 前に受けた受け入れ待ちの件数と時刻（変わったときだけ一覧を読み直す） */
   let inboxSeen = { at: null, count: 0 };
-  /** 回復の操作の結果の一言（plus-sync.mjs の recoveryNote） */
+  /** リセットの操作の結果の一言（plus-sync.mjs の recoveryNote） */
   let recoveryNote = '';
 
   function syncView() {
@@ -424,7 +424,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   const waitSig = s => (s?.state === 'waiting_key' && s.wait ? `${s.wait.keyId ?? ''}:${s.wait.itemCount ?? ''}` : '');
 
   /**
-   * 「同期をやり直す」「消して始め直す」。鍵を待つ PC は、見せた keyId と件数を confirm に付けて送る。
+   * 「同期をリセット」「消して始め直す」。鍵を待つ PC は、見せた keyId と件数を confirm に付けて送る。
    * 数字が変わっていた（confirmNeeded）ら窓を開いたまま、新しい数字でもう一度チェックしてもらう
    */
   async function syncReset() {
@@ -445,8 +445,8 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
   }
 
   /**
-   * 回復の操作（plus.syncRecovery*）。結果を一言にして出す（最近のログインが要る・ほかの PC が先に頼んだ など）。
-   * complete は「新しい鍵で始め直す」の確かめの窓から（チェックを入れたときだけ）
+   * リセットの操作（plus.syncRecovery*）。結果を一言にして出す（最近のログインが要る・ほかの PC が先に頼んだ など）。
+   * complete は待ちが明けた「同期をリセット」の確かめの窓から（チェックを入れたときだけ）
    */
   async function syncRecovery(action) {
     if (syncBusy) return;
@@ -465,7 +465,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
     finally { syncBusy = false; paint(); }
   }
 
-  /** 前の鍵では確かめられない新しい鍵を受け取る（回復など）。この後、鍵を持つ PC の承認の窓を通して届く */
+  /** 前の鍵では確かめられない新しい鍵を受け取る（同期のリセットなど）。この後、鍵を持つ PC の承認の窓を通して届く */
   async function acceptSyncRestart(keyId) {
     if (syncBusy || !keyId) return;
     syncBusy = true; syncMessage = '';

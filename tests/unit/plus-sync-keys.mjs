@@ -140,7 +140,7 @@ export default async function (t) {
     const r4 = await e.keys.setup();
     t.ok('先に作った方から渡されると開ける', r4.status === 'ready' && r4.key.key.equals(dKey.key.key));
 
-    // ---- 同期をやり直す（forceNew）
+    // ---- 同期をリセットする（forceNew）
     const before = plus.state.sync[UID2].keyId;
     const r5 = await d.keys.setup({ forceNew: true });
     const forced = JSON.parse(plus.state.syncBodies.filter(b => b.path === '/v1/sync/reset').at(-1).body);

@@ -548,7 +548,7 @@ export default async function (t) {
     t.ok('C2 の手元にあったものも A2 に届く', (await fs.readFile(a2.skill('mine-c2', 'SKILL.md'), 'utf8').catch(() => '')) === 'skill on c2\n');
 
     // ================= 始め直したあと、鍵を受けた PC の設定が負けない =================
-    // A2 を止めた（PC を落とした）間に、A2 の設定を変える。C2 が同期をやり直す（鍵を持つので確かめは要らない）
+    // A2 を止めた（PC を落とした）間に、A2 の設定を変える。C2 が同期をリセットする（鍵を持つので確かめは要らない）
     a2.engine.stop();
     a2.store.colorish = 'green';
     const c2Reset2 = await c2.engine.reset();

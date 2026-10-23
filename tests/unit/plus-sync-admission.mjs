@@ -1,6 +1,6 @@
 // 同期の鍵の受け渡しの承認（core/plus/sync/keys.mjs・ticket.mjs・engine.mjs、docs/plus.md「同期の鍵の受け渡し」）。
-// 偽の Plus（tests/lib/fake-plus.mjs）の v2 の口（同期の券・申し込み・回復）と本物の api の客で、
-// 承認を通した受け渡し・確認コード・断る・承認の途中から戻る・PC を外したときの作り直し（carry）・回復・前の版の K からの移行・
+// 偽の Plus（tests/lib/fake-plus.mjs）の v2 の口（同期の券・申し込み・同期のリセット）と本物の api の客で、
+// 承認を通した受け渡し・確認コード・断る・承認の途中から戻る・PC を外したときの作り直し（carry）・同期のリセット・前の版の K からの移行・
 // 券の取り直し・券の口の無い api（今の流れのまま）・426 で更新を促す、を確かめる。
 // 承認の無い受け渡し・鍵を持たない PC の始め直し・外した PC の読み出しが断られることも見る。
 // サーバーが渡す包みをそのまま受けないこと（承認した PC 以外の包み・台帳の公開鍵のすり替え・前の K の印の無い包み・
@@ -24,7 +24,7 @@ import { b64url, newAccountKey, resetKeyPair, resetMessage, wrapKey, newSyncKeyP
 import { generateKeyPair, hostIdFor } from '../../core/remote/noise.mjs';
 
 export const name = 'plus-sync-admission';
-export const title = '同期の鍵の受け渡しの承認: 確認コード・断る・承認の途中から戻る・外した PC の締め出しと作り直し・届いた包みの確かめ・回復・移行・券・前の版の api・426';
+export const title = '同期の鍵の受け渡しの承認: 確認コード・断る・承認の途中から戻る・外した PC の締め出しと作り直し・届いた包みの確かめ・リセット・移行・券・前の版の api・426';
 
 const T0 = Date.parse('2026-03-01T00:00:00.000Z');
 let hostSeq = 0;
@@ -153,7 +153,7 @@ export default async function (t) {
     const keyId0 = ledger(UID).keyId;
     const resets0 = resets();
     const forced = await c.keys.setup({ forceNew: true });
-    t.ok('鍵を持たない PC は「新しい鍵で始め直す」でも作り直さない（reset を送らない）',
+    t.ok('鍵を持たない PC は「同期をリセット」でも作り直さない（reset を送らない）',
       forced.status === 'waiting_key' && resets() === resets0 && ledger(UID).keyId === keyId0);
     const fake = newAccountKey();
     const fakeReset = resetKeyPair(fake.key);
@@ -326,7 +326,7 @@ export default async function (t) {
     t.ok('承認していない PC の包みは受けない（unverified のまま）',
       g2Other.status === 'waiting_key' && g2Other.wait?.unverified === true && (await g2.secrets.get(SYNC_ACCOUNT_KEY)) == null);
 
-    // ================= 回復（鍵を持つ PC が 1 台も無い） =================
+    // ================= 同期のリセット（鍵を持つ PC が 1 台も無い） =================
     const UID2 = 'adm-recovery';
     account(UID2);
     const x = await makeHost(UID2, 'x');
@@ -335,28 +335,28 @@ export default async function (t) {
     const z = await makeHost(UID2, 'z');
     plus.unbindHost(x.hostId, 'user');
     const yw = await y.keys.setup();
-    t.ok('鍵を持つ PC が全部外れていたら、申し込まずに回復を待つ（holder false・回復なし）',
+    t.ok('鍵を持つ PC が全部外れていたら、申し込まずにリセットを待つ（holder false・リセットなし）',
       yw.status === 'waiting_key' && yw.wait?.holder === false && yw.wait.recovery === null && !yw.wait.join && !ledger(UID2).joins?.[y.hostId], JSON.stringify(yw.wait));
     y.tokenExtra = { auth_time: Math.floor(Date.now() / 1000) - 3600 };
-    t.ok('回復を頼むには最近のログインが要る（reauth）', (await y.keys.recoveryRequest()).reauth === true && !ledger(UID2).recovery);
+    t.ok('リセットを頼むには最近のログインが要る（reauth）', (await y.keys.recoveryRequest()).reauth === true && !ledger(UID2).recovery);
     y.tokenExtra = {};
     const req1 = await y.keys.recoveryRequest();
     const readyIn = Date.parse(req1.recovery?.readyAt) - Date.parse(req1.recovery?.requestedAt);
-    t.ok('回復を頼むと 72 時間の待ちが始まる', req1.recovery?.requestedBy === y.hostId && Math.abs(readyIn - 72 * 3_600_000) < 1000, JSON.stringify(req1));
+    t.ok('リセットを頼むと 72 時間の待ちが始まる', req1.recovery?.requestedBy === y.hostId && Math.abs(readyIn - 72 * 3_600_000) < 1000, JSON.stringify(req1));
     t.ok('ほかの PC は重ねて頼めない（other）', (await z.keys.recoveryRequest()).other === true);
     const yw2 = await y.keys.setup();
-    t.ok('待っている間は waiting_key に自分の回復が載る', yw2.wait?.recoveryMine === true && yw2.wait.recovery?.readyAt === req1.recovery.readyAt);
+    t.ok('待っている間は waiting_key に自分のリセットが載る', yw2.wait?.recoveryMine === true && yw2.wait.recovery?.readyAt === req1.recovery.readyAt);
     t.ok('待ちが明ける前は仕上げられない（waiting）', !!(await y.keys.recoveryComplete()).waiting && ledger(UID2).keyId !== null);
     // 外された PC（x）でも、手元の K の署名で止められる
     const watch = await x.keys.recoveryWatch();
-    t.ok('外された PC でも、今の K を持っていれば券なしで回復を見られる', watch?.recovery?.requestedBy === y.hostId);
+    t.ok('外された PC でも、今の K を持っていれば券なしでリセットを見られる', watch?.recovery?.requestedBy === y.hostId);
     const stop = await x.keys.recoveryStop();
-    t.ok('鍵を持つ PC は K の署名で回復を止められる', stop.stopped === true && !ledger(UID2).recovery);
-    // 回復を頼んだ PC を外すと、回復も取り消し
+    t.ok('鍵を持つ PC は K の署名でリセットを止められる', stop.stopped === true && !ledger(UID2).recovery);
+    // リセットを頼んだ PC を外すと、リセットも取り消し
     await z.keys.recoveryRequest();
     t.ok('z が頼み直す', ledger(UID2).recovery?.requestedBy === z.hostId);
     plus.unbindHost(z.hostId, 'user');
-    t.ok('回復を頼んだ PC を外すと、回復も取り消される', !ledger(UID2).recovery);
+    t.ok('リセットを頼んだ PC を外すと、リセットも取り消される', !ledger(UID2).recovery);
     // 待ちが明けたら仕上げる
     await y.keys.recoveryRequest();
     ledger(UID2).recovery.readyAt = new Date(Date.now() - 1000).toISOString();
@@ -364,7 +364,7 @@ export default async function (t) {
     const yr = await y.keys.setup();
     t.ok('待ちが明けたら新しい K で始め直す（前のデータは消える）',
       done.done === true && yr.status === 'ready' && ledger(UID2).resetBy === y.hostId && !ledger(UID2).recovery && Object.keys(ledger(UID2).keys).join() === y.hostId);
-    t.ok('回復で始め直した後は、外された PC の K では止められない', (await x.keys.recoveryStop()).stopped === false);
+    t.ok('リセットで始め直した後は、外された PC の K では止められない', (await x.keys.recoveryStop()).stopped === false);
 
     // ================= 移行: 前の版で作った K → 最初の v2 の PC が作り直す =================
     const UID3 = 'adm-migrate';
