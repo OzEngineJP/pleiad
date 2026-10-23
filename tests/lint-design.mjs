@@ -285,6 +285,9 @@ function pickDef(defs, theme) {
   return defs.light[0] || defs.dark[defs.dark.length - 1] || null;
 }
 /* var() を再帰展開。fallback 対応。循環したらそこで打ち切る（無限ループで落とさない）。 */
+// 筋の節（7px の擬似要素）。面ではないので線色で塗れる
+const NODE_SELECTORS = new Set(['.thread.branched .mw.node:not(.card) .mw-gutter::before', '.thread.branched .mw.activity .mw-gutter::before']);
+
 function expand(value, theme, tokens, seen = new Set(), miss = null) {
   let out = '', i = 0;
   while (i < value.length) {
@@ -438,8 +441,8 @@ export function lint(files, opts) {
         const group = famGroup(d.prop); if (!group) continue;
         const fam = Object.keys(FAM).find(k => FAM[k](n));
         if (group === 'background' && FAM.line(n) && /gradient\(/.test(d.value)) continue;  /* 線から作る階調は許す */
-        // This 7px pseudo-element is a graph node, not a UI surface.
-        if (group === 'background' && n === '--line-blue' && r.selector === '.thread.branched .mw.node:not(.card) .mw-gutter::before') continue;
+        // These 7px pseudo-elements are graph nodes (a message and the activity row at the end of the thread), not UI surfaces.
+        if (group === 'background' && n === '--line-blue' && NODE_SELECTORS.has(r.selector)) continue;
         if (fam === 'glow') {
           if (!(GLOW_FILE.test(r.file) && group === 'background' && /gradient\(/.test(d.value)))
             add(r.file, d.line, 'family', `${d.prop} に var(${n})：--glow-* は web/voice.css の通話中の背景（radial-gradient の background）だけで使える`);
