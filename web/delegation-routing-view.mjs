@@ -41,11 +41,16 @@ export function fallbackText(code) {
 /** 自動で選んだ記録か（固定・人が選び直したものは違う） */
 export const isAutoRouting = routing => routing?.mode === 'auto';
 
-/** 候補の id（backend:model）を分ける。model に : が入っても最初の : で分ける */
+/**
+ * 候補の id（backend:model・backend@account:model）を分ける。model に : や @ が入っても最初の : で分ける。
+ * account はアカウントを書いた候補だけ（書かない候補はログイン中のアカウントか、アカウントを持たないエージェント。ADR 0264）
+ */
 export function splitCandidate(id) {
   const s = String(id ?? '');
   const at = s.indexOf(':');
-  return at > 0 ? { backend: s.slice(0, at), model: s.slice(at + 1) } : { backend: s, model: '' };
+  if (at <= 0) return { backend: s, model: '' };
+  const head = s.slice(0, at), mark = head.indexOf('@');
+  return mark > 0 ? { backend: head.slice(0, mark), model: s.slice(at + 1), account: head.slice(mark + 1) } : { backend: head, model: s.slice(at + 1) };
 }
 
 const percent = v => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
@@ -63,7 +68,7 @@ const defaultNames = { backend: id => id ?? '', model: (_backend, model) => mode
 export function targetText(target, names = defaultNames) {
   if (!target) return '';
   const base = [names.backend(target.backend), names.model(target.backend, target.model)].filter(Boolean).join(' ');
-  return target.backend === 'claude' && target.accountLabel ? [base, target.accountLabel].join(t('routing.line.join')) : base;
+  return target.accountLabel ? [base, target.accountLabel].join(t('routing.line.join')) : base;
 }
 const accountName = row => row.accountLabel || (row.account === '' ? t('routing.detail.loginAccount') : row.account ?? '');
 
@@ -181,25 +186,22 @@ export function compactionLine(compaction) {
 }
 
 /**
- * やり直しに出す候補。今使えるもので、元の委譲先を除く。元の段から上へ、次に下の段の順（段の中は設定の順）。
- * candidates は delegationRouting の candidates、tiers は段の並び
+ * やり直しに出す候補。今使えるもので、元の委譲先（エージェント・モデル・アカウント）を除く。元の段から上へ、次に下の段の順（段の中は設定の順）。
+ * candidates は delegationRouting の candidates（候補はアカウント 1 つの単位。ADR 0264）、tiers は段の並び
  */
 export function retryCandidates(candidates, routing, tiers = ['t1', 't2', 't3', 't4', 'tv']) {
-  const used = routing?.target ? `${routing.target.backend}:${routing.target.model}` : '';
+  const from = routing?.target ?? null;
   const at = Math.max(0, tiers.indexOf(routing?.tier ?? routing?.baseTier));
   const order = [...tiers.slice(at), ...tiers.slice(0, at).reverse()];
   const rank = c => Math.min(...(c.tiers ?? []).map(tier => order.indexOf(tier)).filter(i => i >= 0), order.length);
-  const expanded = (candidates ?? []).flatMap(c => c.backend === 'claude' && c.accounts?.length
-    ? c.accounts.map(a => { const { accounts, ...base } = c; return { ...base, ...a, usable: a.usable ?? a.ok, accountLabel: a.label, windows: a.windows }; })
-    : [c]);
-  return expanded.filter(c => c.usable && !(c.candidate === used && (c.account ?? null) === (routing?.target?.account ?? null)))
+  const isFrom = c => Boolean(from) && c.backend === from.backend && c.model === from.model && (c.account ?? null) === (from.account ?? null);
+  return (candidates ?? []).filter(c => c.usable && !isFrom(c))
     .map((c, i) => ({ c, i, r: rank(c) })).sort((a, b) => a.r - b.r || a.i - b.i).map(x => x.c);
 }
 
-/** 使用量の一行（「週次 11% · 5時間 45%」）。Claude のアカウントごとの枠は、使うアカウント（account）の分 */
+/** 使用量の一行（「週次 11% · 5時間 45%」）。アカウントを持つ候補は、そのアカウントの枠だけが届く */
 export function usageSummary(state) {
-  const windows = state?.accounts ? (state.accounts.find(a => a.account === (state.account ?? ''))?.windows ?? state.accounts[0]?.windows ?? []) : state?.windows ?? [];
-  return windows.filter(w => percent(w.usedPercent) != null).map(w => `${w.label ?? ''} ${percent(w.usedPercent)}%`).join(t('routing.line.join'));
+  return (state?.windows ?? []).filter(w => percent(w.usedPercent) != null).map(w => `${w.label ?? ''} ${percent(w.usedPercent)}%`).join(t('routing.line.join'));
 }
 
 // ---------------------------------------------------------------- 自動の振り分けの失敗
@@ -222,7 +224,7 @@ export function parseRoutingFailure(text) {
       (skipped.at(-1).accounts ??= []).push({ label, reason, ...(detail ? { detail } : {}), ...(window ? { window } : {}) });
       continue;
     }
-    const m = /^- ([a-z]+:\S+)(?: \[([^\]]+)\])? \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?(?: until (\S+))?\s*$/.exec(line);
+    const m = /^- ([a-z]+(?:@[A-Za-z0-9_-]+)?:\S+)(?: \[([^\]]+)\])? \((t\d|tv)\): ([a-z_]+)(?: \(([a-z_]+)\))?(?: (.*?) (\d+(?:\.\d+)?)%)?(?: pace (\d+(?:\.\d+)?))?(?: until (\S+))?\s*$/.exec(line);
     if (!m) continue;
     const [, candidate, accountLabel, tier, reason, detail, label, used, pace, until] = m;
     const window = used != null || pace != null ? { label: label ?? '', ...(used != null ? { usedPercent: Number(used) } : {}), ...(pace != null ? { pace: Number(pace) } : {}) } : null;
@@ -395,7 +397,7 @@ export function routingDetail(routing, { names = defaultNames, logo = () => el('
       usageAt: routing.usageAt, windows: s.windows ?? (s.window && percent(s.window.usedPercent) != null ? [s.window] : []) }, { names, logo }));
   }
   if (routing.target) list.append(candidateCard({ n: ++n, backend: routing.target.backend, model: routing.target.model, used: true,
-    account: routing.target.backend === 'claude' ? routing.target.account : undefined, accountLabel: routing.target.accountLabel,
+    account: routing.target.accountLabel || routing.target.account ? routing.target.account : undefined, accountLabel: routing.target.accountLabel,
     windows: routing.targetWindows ?? [], effort: routing.target.effort ?? null }, { names, logo }));
   root.append(list);
   // やり直したタスク（client.mjs の paintRetried が中身を入れる）
@@ -435,9 +437,13 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
   return root;
 }
 
+/** やり直しの候補の名前（「Sonnet · private」）。アカウントは、アカウントを登録したエージェントの候補（scoped）だけ */
+const candidateName = (c, names) => [names.model(c.backend, c.model) || c.model,
+  ...(c.scoped ? [accountName({ account: c.account, accountLabel: c.accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'));
+
 /**
  * 「別の候補でやり直す」の面。candidates は retryCandidates の結果（今使えるもの）。
- * run({ candidate, account?, stop, approved }) はサーバーへ頼む関数で、{ confirm } が返れば承認の一行を出して待つ。
+ * run({ candidate, stop, approved }) はサーバーへ頼む関数で、{ confirm } が返れば承認の一行を出して待つ。
  * running は元のタスクが動いているか（止めるかどうかを選ばせる）
  */
 export function retryPanel({ candidates, running, names = defaultNames, logo = () => el('span'), run, close }) {
@@ -468,8 +474,7 @@ export function retryPanel({ candidates, running, names = defaultNames, logo = (
     input.onchange = () => { chosen = index; approved = false; paint(); };
     const text = el('span', 'rt-option-text');
     const title = el('span', 'rt-option-name');
-    title.append(logo(c.backend), el('span', null, [names.model(c.backend, c.model) || c.model,
-      ...(c.backend === 'claude' ? [accountName({ account: c.account, accountLabel: c.accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'))));
+    title.append(logo(c.backend), el('span', null, candidateName(c, names)));
     const sub = [...(c.tiers ?? []).map(tierText), ...(c.deferred ? [t('routing.retry.lowHeadroom', { reason: skipText(c.reason) })] : []), usageSummary(c)].filter(Boolean).join(t('routing.line.join'));
     text.append(title, el('small', null, sub));
     label.append(input, text);
@@ -481,16 +486,14 @@ export function retryPanel({ candidates, running, names = defaultNames, logo = (
   warn.hidden = true;
   const actions = el('div', 'rt-retry-actions');
   panel.append(warn, actions, note);
-  const nameOf = () => { const c = candidates[chosen]; return [names.model(c.backend, c.model) || c.model,
-    ...(c.backend === 'claude' ? [accountName({ account: c.account, accountLabel: c.accountLabel })] : [])].filter(Boolean).join(t('routing.line.join')); };
+  const nameOf = () => candidateName(candidates[chosen], names);
   const go = async (stop, button) => {
     stopChoice = stop;
     for (const b of actions.querySelectorAll('button')) b.disabled = true;
     note.textContent = '';
     try {
       const c = candidates[chosen];
-      const result = await run({ candidate: c.candidate, ...(c.backend === 'claude' && c.account != null ? { account: c.account } : {}),
-        ...(running ? { stop } : {}), ...(approved ? { approved: true } : {}) });
+      const result = await run({ candidate: c.candidate, ...(running ? { stop } : {}), ...(approved ? { approved: true } : {}) });
       if (result?.confirm) {
         approved = true;
         warn.textContent = `⚠ ${t('routing.retry.escalation', result.confirm)}`;

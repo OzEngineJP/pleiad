@@ -1,7 +1,8 @@
 // 登録アカウントの操作とログインの寿命。資格情報を返すのはバックエンドから台帳への一方向だけ。
 import { t } from './i18n.mjs';
 
-export function createAgentAccountManager({ accounts, getBackend, emit, invalidate = () => {}, openExternal = async () => {} }) {
+// removed(id) は登録を消した後に呼ぶ（server が委譲の段ごとの候補からそのアカウントを外す。ADR 0264）
+export function createAgentAccountManager({ accounts, getBackend, emit, invalidate = () => {}, openExternal = async () => {}, removed = async () => {} }) {
   const logins = new Map();
   const backendOf = (id) => {
     const b = getBackend(id);
@@ -52,6 +53,7 @@ export function createAgentAccountManager({ accounts, getBackend, emit, invalida
       await cancel(id);
       await b.accountRemove?.({ account: { ...row, credential: await accounts.credential(id) } });
       await accounts.remove(id);
+      await removed(id);
       changed(row.backend);
       return { id };
     },

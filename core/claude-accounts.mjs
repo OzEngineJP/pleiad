@@ -335,7 +335,7 @@ export function createClaudeAccounts({ dataDir, secrets, checkOrg = null, onChec
       await fs.writeFile(usageMarker(id), JSON.stringify({ at: new Date().toISOString() }) + '\n', { mode: 0o600 });
     },
     /**
-     * 委譲の振り分けで同じ人のアカウントを見分ける手がかり（core/delegation-routing.mjs の dedupeAccounts）。
+     * 委譲の振り分けで同じ人のアカウントを見分ける手がかり（core/delegation-routing.mjs の sameIdentity）。
      * login はログイン中のアカウント、accounts[].identity は使用量の設定フォルダでログインしたアカウント（{ org, email } か null）
      */
     async identities() {

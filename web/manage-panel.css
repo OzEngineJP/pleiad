@@ -86,6 +86,21 @@
 .rt-cand-effort{grid-area:effort;display:flex;justify-content:flex-end;min-width:0}
 .rt-cand-name{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
 .rt-cand-info small{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
+/* 候補の名前「Sonnet · private」。狭い画面では区切りの後ろで折り返し、アカウントの名前はひとかたまりで次の行へ（1 行に入らない長さのときだけ中で割る。ADR 0264） */
+.rt-label{min-width:0}
+.rt-acct{display:inline-block;max-width:100%;overflow-wrap:anywhere}
+.rt-dot{color:var(--ink-weak)}
+.rt-cand-row.off .rt-acct{color:var(--ink-weak)}
+.rt-cand-info small .btn.link{font-weight:400;font-size:var(--fs-xs);color:var(--ink-blue);padding:0 2px;margin-left:2px}
+.rt-cand-info small .btn.link:hover{text-decoration:underline}
+/* 段の上の「Claude 使う … 使わない …」。段の中身から出す表示で、押せる部品は無い */
+.rt-acct-use{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px;margin:10px 0 0;font-size:var(--fs-s)}
+.rt-acct-agent{display:inline-flex;align-items:center;gap:6px;font-weight:600;align-self:center}
+.rt-acct-g{display:inline-flex;flex-wrap:wrap;gap:0 6px;align-items:baseline;min-width:0}
+.rt-acct-g .k{color:var(--ink-weak)}
+.rt-acct-g .sep{color:var(--ink-weak)}
+.rt-acct-g.unused .v{color:var(--ink-weak)}
+.rt-acct-g .v.na{color:var(--ink-weak)}
 .rt-cand-info small.rt-strong{color:var(--ink-strong);font-weight:600}
 .rt-cand-actions{grid-area:actions;display:flex}
 @container (max-width:559.98px){

@@ -69,29 +69,34 @@ async function japaneseCases(t) {
     { candidate: 'antigravity:gemini-3.8-flash-high', backend: 'antigravity', model: 'gemini-3.8-flash-high', tiers: ['t1', 't2'], usable: true, windows: [] },
     { candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t3'], usable: true, windows: [] },
     { candidate: 'claude:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t2', 't3'], usable: true, deferred: true, reason: 'quota_high', windows: [] },
-    { candidate: 'claude:opus', backend: 'claude', model: 'opus', tiers: ['t4'], usable: true, account: 'work',
-      accounts: [{ account: '', label: 'main', usable: true, deferred: true, reason: 'quota_high', windows: [{ label: '週次', usedPercent: 90 }] },
-        { account: 'work', label: 'work', usable: true, windows: [{ label: '週次', usedPercent: 12.4 }, { label: '5時間', usedPercent: null }] },
-        { account: 'blocked', label: 'blocked', usable: false, reason: 'quota_full', windows: [{ label: '5時間', usedPercent: 100 }] }] },
+    // アカウントを登録したエージェントの候補は、アカウント 1 つの単位（ADR 0264）
+    { candidate: 'claude:opus', backend: 'claude', model: 'opus', tiers: ['t4'], usable: true, deferred: true, reason: 'quota_high', scoped: true, account: '', accountLabel: 'main',
+      windows: [{ label: '週次', usedPercent: 90 }] },
+    { candidate: 'claude@work:opus', backend: 'claude', model: 'opus', tiers: ['t4'], usable: true, scoped: true, account: 'work', accountLabel: 'work',
+      windows: [{ label: '週次', usedPercent: 12.4 }, { label: '5時間', usedPercent: null }] },
+    { candidate: 'claude@blocked:opus', backend: 'claude', model: 'opus', tiers: ['t4'], usable: false, reason: 'quota_full', scoped: true, account: 'blocked', accountLabel: 'blocked',
+      windows: [{ label: '5時間', usedPercent: 100 }] },
     { candidate: 'codex:gpt-6-astra', backend: 'codex', model: 'gpt-6-astra', tiers: ['tv'], usable: true, windows: [] },
   ];
-  assert.deepEqual(retryCandidates(cands, routing).map(c => c.candidate), ['claude:sonnet', 'claude:opus', 'claude:opus', 'codex:gpt-6-astra', 'antigravity:gemini-3.8-flash-high'],
+  assert.deepEqual(retryCandidates(cands, routing).map(c => c.candidate), ['claude:sonnet', 'claude:opus', 'claude@work:opus', 'codex:gpt-6-astra', 'antigravity:gemini-3.8-flash-high'],
     '使えるものだけ・元の委譲先を除く・元の段から上、次に下');
   assert.deepEqual(retryCandidates(cands, { ...routing, target: { backend: 'claude', model: 'opus', account: 'work' } })
-    .filter(c => c.candidate === 'claude:opus').map(c => c.account), [''], '同じモデルでも別の認証はやり直しに残す');
-  assert.equal(usageSummary(cands[3]), '週次 12%', 'Claude は使うアカウントの枠。率の分からない枠は出さない');
+    .filter(c => c.model === 'opus').map(c => c.candidate), ['claude:opus'], '同じモデルでも別のアカウントはやり直しに残し、元のアカウントは除く');
+  assert.equal(usageSummary(cands[4]), '週次 12%', 'そのアカウントの枠。率の分からない枠は出さない');
   const bars = usageRows([{ label: '5時間', minutes: 300, usedPercent: 87 }, { label: '週次', minutes: 10080, usedPercent: 83 }], { avoidPercent: 70 });
   assert.equal(bars.querySelectorAll('.usage-bar').filter(bar => bar.classList.contains('high')).length, 1, '5 時間は線を超えても強調せず、週次は強調する');
   const retry = retryPanel({ candidates: retryCandidates(cands, routing), running: false, names, run: async () => ({}), close() {} });
   assert.ok(retry.textContent.includes('余裕が少ない（使用量が多い）'), '後回しの候補も選択肢に理由を添える');
   let retryArgs;
-  const claudeRetry = retryPanel({ candidates: retryCandidates(cands, routing).filter(c => c.candidate === 'claude:opus'), running: false, names,
+  const claudeRetry = retryPanel({ candidates: retryCandidates(cands, routing).filter(c => c.model === 'opus'), running: false, names,
     run: async args => { retryArgs = args; return {}; }, close() {} });
   assert.ok(claudeRetry.textContent.includes('main') && claudeRetry.textContent.includes('work') && !claudeRetry.textContent.includes('blocked'),
     '認証を別々の候補として表示し、使えない認証は除く');
   claudeRetry.querySelectorAll('input')[1].onchange();
   await claudeRetry.querySelector('.btn-primary').onclick();
-  assert.deepEqual(retryArgs, { candidate: 'claude:opus', account: 'work' }, '選んだ認証をサーバーへ渡す');
+  assert.deepEqual(retryArgs, { candidate: 'claude@work:opus' }, '選んだアカウントは候補の id に入れて渡す');
+  const plain = retryPanel({ candidates: retryCandidates(cands, routing).filter(c => c.candidate === 'claude:sonnet'), running: false, names, run: async () => ({}), close() {} });
+  assert.ok(!plain.textContent.includes('ログイン中'), 'アカウントを登録していないエージェントの候補はアカウントを出さない');
   t.ok('やり直しの候補は、今使えるものを元の段から上へ、次に下の段の順', true);
 
   const detail = routingDetail(routing, { names });
@@ -142,7 +147,99 @@ async function japaneseCases(t) {
 
   failure(t, names);
   await judgePanel(t);
+  await accountPanel(t);
   await effectiveLines(t);
+}
+
+/**
+ * 設定 › 委譲の段の候補のアカウント（ADR 0264）。候補の名前「Sonnet · private」・そのアカウントだけの使用量・段の上の「使う / 使わない」・
+ * 使えないアカウントの「ログインし直す」・追加のメニュー（エージェント ▸ モデル ▸ アカウント、打ち込んだ後のアカウント）
+ */
+async function accountPanel(t) {
+  const defaults = { enabled: true, judgeByKind: { implement: 'jev' }, escalateToQwen: false, tiers: { t1: ['codex:gpt-6-sol'] }, table: { implement: ['t1', 't1', 't1'] },
+    avoidPercent: 80, paceLimit: 1.5 };
+  const settings = { ...structuredClone(defaults), tiers: { t1: ['claude:sonnet', 'claude@acct-p:sonnet', 'claude@acct-s:opus', 'codex:gpt-6-sol'] } };
+  const candidates = [
+    { candidate: 'claude:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: '', accountLabel: null, windows: [{ label: '週次', usedPercent: 21 }] },
+    { candidate: 'claude@acct-p:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: 'acct-p', accountLabel: 'private', windows: [{ label: '週次', usedPercent: 64 }] },
+    { candidate: 'claude@acct-s:opus', backend: 'claude', model: 'opus', tiers: ['t1'], usable: false, reason: 'unavailable', detail: 'no_token', scoped: true, account: 'acct-s', accountLabel: 'seamth', windows: [] },
+    { candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t1'], usable: true, windows: [] },
+  ];
+  const accounts = { claude: [{ account: '', name: null, ready: true }, { account: 'acct-p', name: 'private', ready: true }, { account: 'acct-s', name: 'seamth', ready: false },
+    { account: 'acct-w', name: 'work', ready: true }] };
+  const sent = [];
+  const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'qwen', 'none'], tiers: ['t1'], candidates, accounts,
+    keys: { openrouter: { hasKey: true } }, storage: { encrypted: true } });
+  const cmd = async (name, args) => {
+    if (name === 'setDelegationRouting') { sent.push(args.settings); if (args.settings.tiers) settings.tiers = { ...settings.tiers, ...args.settings.tiers }; }
+    return state();
+  };
+  const menus = [], opened = [];
+  const root = el('div'), tab = el('button');
+  const saved = { getElementById: document.getElementById, activeElement: document.activeElement, focus: N.prototype.focus };
+  document.getElementById = id => ({ delegationPanel: root, delegationTab: tab })[id] ?? null;
+  N.prototype.focus = function () { if (!this.disabled) document.activeElement = this; };
+  const models = { claude: { sonnet: { label: 'Sonnet' }, opus: { label: 'Opus' }, haiku: { label: 'Haiku' } }, codex: { 'gpt-6-sol': { label: 'gpt-6-sol' } } };
+  try {
+    const ui = setupDelegationSettings({ cmd, page() {}, showMenu: (x, y, items, title) => menus.push({ items, title }), labelOf: id => ({ claude: 'Claude', codex: 'Codex' })[id] ?? id,
+      logo: () => el('span'), modelsOf: async b => models[b] ?? {}, modelName: (b, m) => models[b]?.[m]?.label ?? '', agents: () => ['claude', 'codex'],
+      openAccount: (backend, account) => opened.push([backend, account]) });
+    await ui.refresh();
+    const rows = root.querySelectorAll('.rt-cand-row');
+    const label = row => row.querySelector('.rt-label').textContent.replace(/\u00a0/g, ' ');
+    t.ok('候補の名前は「モデル · アカウント」。書かない候補はログイン中のアカウント', label(rows[0]) === 'Sonnet · ログイン中のアカウント' && label(rows[1]) === 'Sonnet · private'
+      && label(rows[2]) === 'Opus · seamth', rows.map(label).join(' / '));
+    t.ok('狭い画面の折り返しは「Sonnet ·」の後ろだけ（区切りの前は改行しない空白）', rows[1].querySelector('.rt-label').textContent === 'Sonnet\u00a0· private');
+    t.ok('アカウントの無いエージェントの候補は名前だけで、下の行にエージェントの名前', label(rows[3]) === 'gpt-6-sol' && rows[3].querySelector('small').textContent === 'Codex');
+    t.ok('アカウントの候補の下の行は、そのアカウントの使用量だけ（エージェントの名前は付けない）',
+      rows[0].querySelector('small').textContent === '週次 21%' && rows[1].querySelector('small').textContent === '週次 64%');
+    const relogin = rows[2].querySelector('.rt-relogin');
+    t.ok('使えないアカウントの行は薄く、「使えない（認証情報なし） · ログインし直す」', rows[2].classList.contains('off') && relogin
+      && rows[2].querySelector('small').textContent.includes('認証情報なし') && relogin.textContent === 'ログインし直す'
+      && relogin.getAttribute('aria-label') === 'seamth にログインし直す（設定 › エージェント設定）', rows[2].querySelector('small').textContent);
+    relogin.onclick();
+    t.ok('「ログインし直す」はそのエージェントのそのアカウントを開く', JSON.stringify(opened) === '[["claude","acct-s"]]');
+    const use = root.querySelector('.rt-acct-use');
+    const groups = use.querySelectorAll('.rt-acct-g');
+    t.ok('段の上の 1 行: アカウントのあるエージェントだけ、使う（段にある）と使わないを並べる',
+      root.querySelectorAll('.rt-acct-use').length === 1 && use.getAttribute('aria-label') === 'Claude のアカウント'
+      && groups.length === 2 && groups[0].textContent === '使うログイン中のアカウント·private·seamth' && groups[1].textContent === '使わないwork'
+      && groups[1].classList.contains('unused') && use.querySelectorAll('.v')[2].classList.contains('na'), use.textContent);
+    t.ok('段の上の 1 行に押せる部品は無い', use.querySelectorAll('button').length === 0 && use.querySelectorAll('input').length === 0);
+
+    // 追加のメニュー: エージェント ▸ モデル ▸ アカウント。段にもうある組み合わせは出さない
+    const anchor = { getBoundingClientRect: () => ({ left: 0, bottom: 0 }) };
+    root.querySelector('.rt-add').onclick({ currentTarget: anchor });
+    await new Promise(r => setImmediate(r));
+    const top = menus.at(-1).items;
+    const claude = top.find(i => i.label === 'Claude').sub();
+    t.ok('モデルの一覧は、まだ段に無いアカウントが残るモデルだけ', claude.map(i => i.label).join(',') === 'Sonnet,Opus,Haiku');
+    const sonnetAccounts = claude[0].sub();
+    t.ok('アカウントの段: 段にある組み合わせを除き、使えないアカウントに理由を添える', sonnetAccounts.map(i => i.label).join(',') === 'seamth,work'
+      && sonnetAccounts[0].hint === '認証情報なし' && !sonnetAccounts[1].hint);
+    sonnetAccounts[1].onClick();
+    await new Promise(r => setImmediate(r));
+    t.ok('アカウントを選ぶと「backend@account:model」で段の末尾に足す', sent.at(-1)?.tiers?.t1?.at(-1) === 'claude@acct-w:sonnet', JSON.stringify(sent.at(-1)));
+    const codex = top.find(i => i.label === 'Codex').sub();
+    t.ok('アカウントの無いエージェントは 2 段のまま（もう段にあるモデルは出さない）', codex.length === 1 && codex[0].disabled && !codex[0].sub);
+
+    root.querySelector('.rt-add').onclick({ currentTarget: anchor });
+    await new Promise(r => setImmediate(r));
+    const input = menus.at(-1).items.find(i => i.input).input;
+    const before = menus.length;
+    input.onCommit('claude:haiku');
+    const typed = menus.at(-1);
+    t.ok('打ち込んだエージェントにアカウントが複数あれば、Enter の後にアカウントを選ぶ', menus.length === before + 1 && typed.title === 'Haiku'
+      && typed.items.map(i => i.label).join(',') === 'ログイン中のアカウント,private,seamth,work', typed.items.map(i => i.label).join(','));
+    const count = sent.length;
+    input.onCommit('codex:gpt-6-luna');
+    await new Promise(r => setImmediate(r));
+    t.ok('アカウントの無いエージェントは打ち込んだまま足す', sent.length === count + 1 && sent.at(-1).tiers.t1.at(-1) === 'codex:gpt-6-luna');
+  } finally {
+    document.getElementById = saved.getElementById;
+    document.activeElement = saved.activeElement;
+    N.prototype.focus = saved.focus;
+  }
 }
 
 /** 使える委譲先が無かった自動の委譲（エージェント向けのエラー文を読み、理由ごとにまとめる） */
@@ -309,13 +406,6 @@ async function judgePanel(t) {
     candidates = [{ ...candidates[0], usable: true, deferred: true, reason: 'quota_high' }];
     await ui.event({ type: 'delegationRoutingChanged', change: 'usage' });
     t.ok('余裕が少ない候補は選べる状態で理由を表示する', !row.classList.contains('off') && row.textContent.includes('余裕が少ない（使用量が多い）'));
-    candidates = [{ ...candidates[0], usable: true, deferred: false, reason: null, accounts: [
-      { account: '', label: 'main', usable: false, reason: 'quota_full', windows: [{ label: '5時間', usedPercent: 100 }] },
-      { account: 'oz', label: 'OZ', usable: true, deferred: true, reason: 'quota_high', windows: [{ label: '週次', usedPercent: 83 }] },
-    ] }];
-    await ui.event({ type: 'delegationRoutingChanged', change: 'usage' });
-    t.ok('設定の候補は Claude の認証ごとに状態と理由を別行に出す', row.querySelectorAll('small').length === 2
-      && row.textContent.includes('main · 使用枠を使い切った') && row.textContent.includes('OZ · 余裕が少ない（使用量が多い）'));
   } finally {
     document.getElementById = saved.getElementById;
     document.activeElement = saved.activeElement;

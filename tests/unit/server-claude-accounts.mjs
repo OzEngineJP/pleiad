@@ -90,7 +90,15 @@ export default async function (t) {
     const { sessionId: fresh } = await c.cmd('newSession', { backend: 'fake', cwd: ROOT });
     t.ok('新しい会話は前回選んだアカウントで始まる', (await row(fresh)).claudeAccount === work);
 
-    // 委譲した子の会話も親のアカウントを継ぐ
+    // アカウントを書かない固定の委譲は、段ごとの候補に入っているアカウントだけを使う（ADR 0264）。どの段にも無ければ断る
+    const from = c.mark();
+    await c.runTurn({ sessionId: plain, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'whoami' }) });
+    const refusedDelegate = await c.waitFor(e => e.type === 'tool.result' && e.sessionId === plain, { from, ms: 60000 });
+    t.ok('段にそのエージェントのアカウントが 1 つも無ければ、固定の委譲を断り、自動の選択を勧める',
+      refusedDelegate.isError && refusedDelegate.text.includes('段') && refusedDelegate.text.includes('自動'), refusedDelegate.text);
+    await c.cmd('setDelegationRouting', { settings: { tiers: { t1: [`fake@${work}:fake-model`] } } });
+
+    // 委譲した子の会話も親のアカウントを継ぐ（継ぐアカウントが段にある）
     await c.runTurn({ sessionId: plain, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'whoami' }) });
     let task;
     for (let i = 0; i < 600 && !(task = (await c.cmd('agentTasks')).find(r => r.parentSessionId === plain && r.notification === 'sent')); i++) await sleep(50);
