@@ -93,6 +93,31 @@ export default async function(t) {
       (await row(codexNew)).backend === 'codex' && (await row(backToA)).backend === 'fake');
   } finally {
     c.close(); await server.stop();
+  }
+
+  // 記録の無い場所へ替えると全体の既定のエージェントになる。引いた既定の承認モード・モデルが替えた先に無ければ
+  // 替えた先の既定に戻す（送れなくしない）。手で選んだものは今までどおり断る
+  const fresh = path.join(tmp, 'fresh');
+  await fs.mkdir(fresh);
+  const dataDir = path.join(tmp, 'data-fallback');
+  await fs.mkdir(dataDir);
+  await fs.writeFile(path.join(dataDir, 'prefs.json'), JSON.stringify({ backend: 'codex', mode: 'bypass', model: 'fast', backends: { fake: { mode: 'bypass' }, codex: { mode: 'bypass', model: 'no-such-model' } },
+    repoDefaults: { [aKey]: { backend: 'fake', mode: 'bypass', model: 'fast' } } }));
+  const server2 = await startServer({ dataDir, env: { AGENT_HOST_BACKENDS: 'fake,codex',
+    AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"` } });
+  const c2 = await open({ port: server2.port, token: server2.token, autoAllow: true });
+  try {
+    const s = (await c2.cmd('newSession', { cwd: a })).sessionId;
+    t.ok('記録した場所の会話は記録のエージェント・承認モード', (await c2.cmd('listSessions')).find(r => r.id === s)?.mode === 'bypass');
+    const next = await c2.cmd('setTurnSettings', { sessionId: s, cwd: fresh });
+    t.ok('記録の無い場所へ替えたとき、替えた先に無い承認モード・モデルは既定（Codex の最初の ask・既定のモデル）に戻す',
+      next?.backend === 'codex' && next.cwd === fresh && next.mode === 'ask' && next.model === '');
+    let refused = '';
+    await c2.cmd('setTurnSettings', { sessionId: s, cwd: a }).catch(() => {});
+    await c2.cmd('setTurnSettings', { sessionId: s, cwd: fresh, mode: 'bypass' }).catch(e => { refused = e.message; });
+    t.ok('手で選んだ承認モードが替えた先に無ければ断る', /承認モード|mode/i.test(refused));
+  } finally {
+    c2.close(); await server2.stop();
     await fs.rm(tmp, { recursive: true, force: true });
   }
 }
