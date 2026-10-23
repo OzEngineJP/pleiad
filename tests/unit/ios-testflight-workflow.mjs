@@ -133,7 +133,7 @@ export default async function (t) {
   t.ok('ios-testflight.sh は渡された版で archive する（実行番号を使わない）', sh.includes('CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" MARKETING_VERSION="$IOS_MARKETING_VERSION"')
     && !sh.includes('GITHUB_RUN_NUMBER'));
   t.ok('ios-testflight.sh はプロファイルの Bundle ID を確かめ、Keychain の検索リストを元に戻す', sh.includes("os.environ.get('IOS_BUNDLE_ID')")
-    && /cleanup\(\) \{\n\s+if \[ \$\{#original_keychains\[@\]\} -gt 0 \]; then security list-keychains -d user -s "\$\{original_keychains\[@\]\}"/.test(sh));
+    && /cleanup\(\) \{\r?\n\s+if \[ \$\{#original_keychains\[@\]\} -gt 0 \]; then security list-keychains -d user -s "\$\{original_keychains\[@\]\}"/.test(sh));
   t.ok('暗号は免除のものだけと Info.plist で宣言する（ビルドごとの輸出コンプライアンスの質問を出さない。docs/ios.md）',
     /<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/.test(read('mobile/ios/App/App/Info.plist')));
   t.ok('Bundle ID は Xcode の設定と同じ', read('mobile/ios/App/App.xcodeproj/project.pbxproj').includes(`PRODUCT_BUNDLE_IDENTIFIER = ${JSON.parse(read('mobile/capacitor.config.json')).appId};`));
