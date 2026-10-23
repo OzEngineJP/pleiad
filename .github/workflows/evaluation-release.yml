@@ -345,3 +345,12 @@ jobs:
           # BUILD-INFO.json の signing と、無署名のときの確かめ（windows のジョブの配布物と食い違えば止まる）
           PLY_WINDOWS_SIGNING: ${{ vars.PLY_WINDOWS_SIGNING == 'none' && 'none' || '' }}
         run: ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG
+      # サイト（/download）は組んだ時点の最新の Release を焼くので、公開の後に Cloudflare のデプロイフックで組み直す
+      # （site/README.md）。呼べなくても公開は済んでいるので、警告だけにする
+      - name: Rebuild site
+        env:
+          CF_SITE_DEPLOY_HOOK: ${{ secrets.CF_SITE_DEPLOY_HOOK }}
+        run: |
+          if (-not $env:CF_SITE_DEPLOY_HOOK) { Write-Output '::warning::CF_SITE_DEPLOY_HOOK is not set; the site was not rebuilt'; exit 0 }
+          try { Invoke-RestMethod -Method Post -Uri $env:CF_SITE_DEPLOY_HOOK -TimeoutSec 30 | Out-Null; Write-Output 'Site rebuild requested' }
+          catch { Write-Output "::warning::Site rebuild request failed: $($_.Exception.Response.StatusCode)" }
