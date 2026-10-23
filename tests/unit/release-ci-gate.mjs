@@ -429,11 +429,17 @@ export default async function (t) {
     // mac は skipped でも publish が走れる形に包むので、照合と windows が通ったことは publish が自分で確かめる
     const mac = rel.jobs.mac;
     const PUBLISH_IF = `\${{ !cancelled() && needs.ci-gate.result == 'success' && needs.windows.result == 'success' && (needs.mac.result == 'success' || needs.mac.result == 'skipped') && ${ACTOR_IF} }}`;
-    t.ok('どのジョブも動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && windows.if === ACTOR_IF && publishJob.if === PUBLISH_IF && mac.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'`, JSON.stringify([gate.if, windows.if, publishJob.if, mac.if]));
+    // サイトの組み直し（site/README.md）は秘密を使うので、書く権限を持つ publish から分け、publish が通ったときだけ走る
+    const siteRebuild = rel.jobs['site-rebuild'];
+    const SITE_REBUILD_IF = `\${{ !cancelled() && needs.publish.result == 'success' && ${ACTOR_IF} }}`;
+    t.ok('ジョブは照合・ビルド・公開・サイトの組み直しだけ（足したら下の権限・秘密・動かせる人の判定に入れる）', JSON.stringify(Object.keys(rel.jobs).sort()) === JSON.stringify(['ci-gate', 'mac', 'publish', 'site-rebuild', 'windows']), JSON.stringify(Object.keys(rel.jobs)));
+    t.ok('どのジョブも動かせるのは、持ち主と PLY_RELEASE_ACTORS の人の、タグの push か main からの手動実行だけ', gate.if === ACTOR_IF && windows.if === ACTOR_IF && publishJob.if === PUBLISH_IF && mac.if === `${ACTOR_IF} && vars.PLY_MAC_RELEASE == 'on'` && siteRebuild?.if === SITE_REBUILD_IF, JSON.stringify([gate.if, windows.if, publishJob.if, mac.if, siteRebuild?.if]));
     t.ok('windows と mac は照合のジョブだけを待って並んで走り、publish は全部を待つ', windows.needs === 'ci-gate' && mac.needs === 'ci-gate' && JSON.stringify(publishJob.needs) === JSON.stringify(['ci-gate', 'windows', 'mac']));
     t.ok('mac は CPU ごとのジョブで、片方が落ちたらもう片方も止める', JSON.stringify(mac.strategy?.matrix?.arch) === JSON.stringify(['x64', 'arm64']) && mac.strategy['fail-fast'] === true && mac.env.PLY_MAC_ARCH === '${{ matrix.arch }}');
     t.ok('書く権限は publish だけ（ビルドのジョブは contents: read）', JSON.stringify(publishJob.permissions) === JSON.stringify({ contents: 'write' }) && [windows, mac].every(job => JSON.stringify(job.permissions) === JSON.stringify({ contents: 'read' })));
     t.ok('publish は秘密を使わない', !JSON.stringify(publishJob).includes('secrets.'));
+    t.ok('サイトの組み直しは publish だけを待ち、権限を何も持たず、checkout しない', siteRebuild?.needs === 'publish' && JSON.stringify(siteRebuild.permissions) === '{}' && !siteRebuild.steps.some(s => String(s.uses ?? '').startsWith('actions/checkout')), JSON.stringify(siteRebuild));
+    t.ok('サイトの組み直しが使う秘密は CF_SITE_DEPLOY_HOOK だけ（publish と同じ release の環境）', JSON.stringify(JSON.stringify(siteRebuild).match(/secrets\.\w+/g)) === JSON.stringify(['secrets.CF_SITE_DEPLOY_HOOK']) && siteRebuild.environment === publishJob.environment, JSON.stringify(siteRebuild?.environment));
     const pubSteps = publishJob.steps;
     const merge = pubSteps.findIndex(s => /release-mac-merge\.mjs/.test(s.run ?? ''));
     const pub = pubSteps.findIndex(s => /publish-evaluation\.ps1 -Tag/.test(s.run ?? ''));

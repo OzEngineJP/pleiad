@@ -345,9 +345,19 @@ jobs:
           # BUILD-INFO.json の signing と、無署名のときの確かめ（windows のジョブの配布物と食い違えば止まる）
           PLY_WINDOWS_SIGNING: ${{ vars.PLY_WINDOWS_SIGNING == 'none' && 'none' || '' }}
         run: ./scripts/publish-evaluation.ps1 -Tag $env:RELEASE_TAG
-      # サイト（/download）は組んだ時点の最新の Release を焼くので、公開の後に Cloudflare のデプロイフックで組み直す
-      # （site/README.md）。呼べなくても公開は済んでいるので、警告だけにする
+  # サイト（/download）は組んだ時点の最新の Release を焼くので、公開の後に Cloudflare のデプロイフックで組み直す
+  # （site/README.md）。秘密を使うので、書く権限を持つ publish から分け、権限も checkout も持たない。
+  # 呼べなくても公開は済んでいるので、警告だけにする
+  site-rebuild:
+    needs: publish
+    environment: release
+    if: ${{ !cancelled() && needs.publish.result == 'success' && (github.actor == github.repository_owner || contains(fromJSON(vars.PLY_RELEASE_ACTORS || '[]'), github.actor)) && (github.event_name == 'push' || github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
       - name: Rebuild site
+        shell: pwsh
         env:
           CF_SITE_DEPLOY_HOOK: ${{ secrets.CF_SITE_DEPLOY_HOOK }}
         run: |
