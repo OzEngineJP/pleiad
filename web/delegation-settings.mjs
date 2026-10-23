@@ -6,7 +6,7 @@
 //   選ぶまでは何も送らない。未登録ならその場で登録でき（登録先は API キー）、キーは返ってこない（hasKey と keyRef だけ）。送る内容の 1 行
 // - 「詳しい設定」（details）: 段ごとの候補（並べ替え・追加・外す、各候補の今の使用量と使えるかどうか、段の既定と候補ごとの思考の強さ。
 //   承認済み 2026-10-08・ADR 0164）・種類 × 難しさの表・使用量の方針。
-//   アカウントを登録したエージェントの候補は「エージェント・モデル・アカウント」の単位（「Sonnet · private」）で、段の上にエージェントごとの
+//   アカウントを登録したエージェントの候補は「エージェント・モデル・アカウント」の単位（「Sonnet · personal」）で、段の上にエージェントごとの
 //   「使う / 使わない」の 1 行、追加はエージェント ▸ モデル ▸ アカウント（承認済み 2026-10-24・ADR 0264）
 // - 末尾の「既定に戻す」（その場の確認。キーは残る）
 //
@@ -378,13 +378,13 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const accountsOf = backend => data.accounts?.[backend] ?? null;
   const candidateOf = (backend, model, account) => `${backend}${account ? `@${account}` : ''}:${model}`;
   const scopedOf = ({ backend, account }) => Boolean(accountsOf(backend)) || account != null;
-  /** アカウントの名前。ログイン中は「ログイン中のアカウント」（登録の誰かと同じ人と分かれば「（private）」を添える） */
+  /** アカウントの名前。ログイン中は「ログイン中のアカウント」（登録の誰かと同じ人と分かれば「（personal）」を添える） */
   function accountText(backend, account) {
     const row = accountsOf(backend)?.find(a => a.account === (account ?? ''));
     if (!account) return row?.sameAs ? t('routing.settings.accountLoginSame', { name: row.sameAs }) : t('routing.settings.accountLogin');
     return row?.name ?? account;
   }
-  /** 候補の名前の文字（「Sonnet · private」）。読み上げ・並べ替えの知らせ・強さの見出しに使う */
+  /** 候補の名前の文字（「Sonnet · personal」）。読み上げ・並べ替えの知らせ・強さの見出しに使う */
   function candidateName(candidate) {
     const parsed = splitCandidate(candidate);
     const model = names.model(parsed.backend, parsed.model);
@@ -399,7 +399,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
     return label;
   }
   /**
-   * 段の上の 1 行（「Claude 使う ログイン中のアカウント · private 使わない seamth」）。段の中身から出す（ここでは選ばない）。
+   * 段の上の 1 行（「Claude 使う ログイン中のアカウント · personal 使わない work」）。段の中身から出す（ここでは選ばない）。
    * 並びはエージェント設定のアカウントの一覧と同じ（ログイン中が先、登録順）。使えないアカウントは弱い色
    */
   function accountUseLine(backend) {

@@ -1806,7 +1806,7 @@ async function delegationRoutingState() {
 /**
  * アカウントを登録したエージェントのアカウント（設定 › 委譲の追加メニューの 3 段目と、段の上の「使う / 使わない」。ADR 0264）。
  * { [backend]: [{ account（ログイン中は ''）, name, ready, sameAs? }] }。登録の無いエージェントは入れない（画面はアカウントを出さない）。
- * sameAs はログイン中のアカウントの中身が同じ人と分かる登録の名前（「ログイン中のアカウント（private）」）
+ * sameAs はログイン中のアカウントの中身が同じ人と分かる登録の名前（「ログイン中のアカウント（personal）」）
  */
 async function routingAccounts(usage) {
   const out = {};

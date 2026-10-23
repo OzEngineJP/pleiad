@@ -86,7 +86,7 @@
 .rt-cand-effort{grid-area:effort;display:flex;justify-content:flex-end;min-width:0}
 .rt-cand-name{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
 .rt-cand-info small{display:block;font-size:var(--fs-xs);color:var(--ink-weak);overflow-wrap:anywhere}
-/* 候補の名前「Sonnet · private」。狭い画面では区切りの後ろで折り返し、アカウントの名前はひとかたまりで次の行へ（1 行に入らない長さのときだけ中で割る。ADR 0264） */
+/* 候補の名前「Sonnet · personal」。狭い画面では区切りの後ろで折り返し、アカウントの名前はひとかたまりで次の行へ（1 行に入らない長さのときだけ中で割る。ADR 0264） */
 .rt-label{min-width:0}
 .rt-acct{display:inline-block;max-width:100%;overflow-wrap:anywhere}
 .rt-dot{color:var(--ink-weak)}
