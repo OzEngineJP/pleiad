@@ -621,6 +621,8 @@ const SUITES = [
   './unit/claude-steer-stop.mjs',
   // Claude のターンの終わり: Stop フックの続き・裏へ回ったまま終わらないコマンド（stopTask で終わる）
   './unit/claude-turn-end.mjs',
+  // Claude の裏のコマンドの出力（Query.getTaskOutput）: コマンド・制御文字・末尾だけ・止めた後・ターンの後（身代わりの SDK）
+  './unit/claude-background-output.mjs',
   // Claude のログインの期限切れ（401）: 見分け・pristine・失敗の行に添える auth・設定の行の期限切れの印と CLI の在り処（ADR 0212）
   './unit/claude-auth-expired.mjs',
   // 待っているログインをやめる: 見張り・Grok・Devin・Codex の cancel と、時間切れの code（ADR 0243）

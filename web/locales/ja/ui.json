@@ -2736,6 +2736,7 @@
       "live": "稼働中",
       "startedAt": "起動 {{time}}",
       "truncated": "出力は末尾64K文字",
+      "truncatedOf": "出力は末尾のみ（全体 {{size}}）",
       "cwd": "作業場所: {{cwd}}",
       "outputUnsupported": "出力の取得に対応していません",
       "kind": {

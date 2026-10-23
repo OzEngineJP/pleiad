@@ -11,13 +11,16 @@ const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-steer-acp-'));
+  const gateDir = path.join(scratch, 'gates');
+  await fs.mkdir(gateDir);
+  let gateSeq = 0;
   let server, c;
   try {
     server = await startServer({ dataDir: path.join(scratch, 'data'), env: {
       AGENT_HOST_BACKENDS: 'fake,devin',
       AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`,
       DEVIN_CONFIG_HOME: path.join(scratch, 'devin-config'),
-      FAKE_DEVIN_SLOW_MS: '8000',
+      FAKE_DEVIN_GATE_DIR: gateDir,
     } });
     c = await open({ port: server.port, token: server.token, autoAllow: true });
 
@@ -36,12 +39,22 @@ export default async function (t) {
     };
     // Devin の子（[slow] で回を保持）を作り、子のターンがプロンプトを受け付けるまで待つ
     // （委譲の子は会話が先に作られるので session イベントに first は付かない。thinking は prompting を立てた直後に出る）
-    const child = async (taskText) => {
+    const child = async (taskText, { requireRunning = true } = {}) => {
       const mark = c.mark();
-      const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'devin', task: taskText }) })).sessionId;
-      const task = await awaitTask(parent, r => r.status === 'running' && r.sessionId);
+      const gate = taskText.includes('[slow]') ? path.join(gateDir, `steer-${++gateSeq}`) : null;
+      const prompt = gate ? `${taskText} [gate:${path.basename(gate)}]` : taskText;
+      const parent = (await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: ply('ply_delegate', { kind: 'mechanical', backend: 'devin', task: prompt }) })).sessionId;
+      // 即完了する子は、照会の間に running を通過していてもよい。thinking は控えた出来事から確認する。
+      const task = await awaitTask(parent, r => r.sessionId && (!requireRunning || r.status === 'running'));
       await c.waitFor(e => e.type === 'activity' && e.sessionId === task.sessionId && e.state === 'thinking', { from: mark, ms: 30000 });
-      return { parent, task, mark };
+      if (gate) {
+        const end = Date.now() + 30_000;
+        while (!(await fs.stat(`${gate}.ready`).catch(() => null))) {
+          if (Date.now() >= end) throw new Error('Devin prompt gate timeout');
+          await sleep(20);
+        }
+      }
+      return { parent, task, ...(gate ? { release: () => fs.writeFile(gate, '') } : {}) };
     };
     const send = (parent, task, message) => c.runTurn({ sessionId: parent, prompt: ply('ply_task_send', { taskId: task.taskId, message }) });
     const events = (task, from, type) => c.since(from).filter(e => e.type === type && e.sessionId === task.sessionId);
@@ -55,6 +68,7 @@ export default async function (t) {
         out.pendingMessages === 0 && await awaitState(a.task, 'follow-up A:sending') === 'follow-up A:sending', await stateOf(a.task));
       const um = events(a.task, markA, 'taskInstruction');
       t.ok('子の会話の中の位置は受け付けの出来事（taskInstruction）で確定する', um.length === 1 && um[0].text === 'follow-up A' && Boolean(um[0].instructionId), JSON.stringify(um));
+      await a.release();
       const held = await awaitTask(a.parent, r => r.status === 'completed', 30_000);
       t.ok('回の決着で渡った合図（userMessage.delivered）が届き、指示は delivered になる',
         events(a.task, markA, 'userMessage.delivered').length === 1 && await stateOf(a.task) === 'follow-up A:delivered', await stateOf(a.task));
@@ -73,6 +87,7 @@ export default async function (t) {
       t.ok('受付の出来事が先、渡った合図が後の順になっている', order.join() === 'taskInstruction,userMessage.delivered', order.join());
       t.ok('指示は delivered で決着し、依頼元の pendingMessages は 0',
         out.pendingMessages === 0 && await awaitState(f.task, '[fast-steer] quick:delivered') === '[fast-steer] quick:delivered', await stateOf(f.task));
+      await f.release();
       await awaitTask(f.parent, r => r.status === 'completed', 30_000);
       t.ok('子のターンが終わっても送信中・待機に戻らず、送り直しも無い',
         await stateOf(f.task) === '[fast-steer] quick:delivered' && events(f.task, markF, 'taskInstruction').length === 1, await stateOf(f.task));
@@ -97,6 +112,7 @@ export default async function (t) {
       const markD = c.mark();
       await send(d.parent, d.task, '[drop-steer] maybe-read');
       await awaitState(d.task, '[drop-steer] maybe-read:sending');
+      await d.release();
       const doneD = await awaitTask(d.parent, r => r.status === 'completed', 30_000);
       t.ok('既読不明の決着は dropped のまま残し、待機へ戻さない',
         await stateOf(d.task) === '[drop-steer] maybe-read:dropped', await stateOf(d.task));
@@ -113,11 +129,16 @@ export default async function (t) {
       // 完了通知のターン（依頼元の会話）が切り替え中の間に ply_task_send が断られることがある。親が空くまでやり直す
       const sendIdle = async (parent, task, message) => {
         for (let i = 0; ; i++) {
-          try { return await send(parent, task, message); }
+          try {
+            const out = await send(parent, task, message);
+            const result = out.events.find(e => e.type === 'tool.result' && e.sessionId === parent);
+            if (!result || result.isError) throw new Error('ply_task_send failed: ' + (result?.text ?? 'no tool result'));
+            return out;
+          }
           catch (e) { if (i >= 60 || !String(e?.message ?? e).includes('切り替え中')) throw e; await sleep(100); }
         }
       };
-      const g = await child('anchor-check');
+      const g = await child('anchor-check', { requireRunning: false });
       await done(g.parent);
       const before = await c.cmd('loadSession', { sessionId: g.task.sessionId });
       const tailUuid = before.messages.at(-1)?.uuid;
