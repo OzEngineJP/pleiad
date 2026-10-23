@@ -46,7 +46,7 @@ node tests/run.mjs mobile-web
 - **版**: ビルド番号（`CFBundleVersion`）は Android の `versionCode` と同じ `git rev-list --count HEAD`、版（`CFBundleShortVersionString`）は `mobile/package.json` の `version`（Android の `versionName` の頭と同じ）。同じビルド番号が App Store Connect にもうあれば、ビルドせずに正常終了する（同じコミットのやり直しで二重に上げない）。
 - **版を上げるとき**: App Store で公開した版（例 `0.1.0`）には、後からビルドを足せない（Apple が拒む）。審査に出した版が公開されたら、次の変更の前に `mobile/package.json` の `version` を上げる（Android の `versionName` の頭も一緒に変わる）。
 - **秘密の扱い**: 証明書・プロファイル・API キーは実行の間だけ一時の Keychain とランナーの一時領域に復元し、成否にかかわらず消す。Keychain の検索リストは終わったら元に戻す（手元の Mac で流しても利用者の設定を残さない）。プロファイルの Bundle ID が `capacitor.config.json` の `appId` と違えば止まる。
-- **上がった後**: App Store Connect の処理が終わると TestFlight に出る。暗号の輸出コンプライアンスの質問には、Noise・X25519・AES-GCM を使う実装に即して App Store Connect で回答する（未確認の適用除外は Info.plist に宣言していない。宣言するまではビルドごとに回答が要る）。内部テスターのグループに自動で配るかは、TestFlight のグループの設定で決める。
+- **上がった後**: App Store Connect の処理が終わると TestFlight に出る。暗号の輸出コンプライアンスは Info.plist の `ITSAppUsesNonExemptEncryption` = NO で宣言し、ビルドごとの質問を出さない（暗号は HTTPS と、リモートの Noise の計算に使う iOS の CryptoKit の標準の方式〈AES-GCM・ChaChaPoly・Curve25519・SHA-256〉だけで、独自の暗号は使わない。2026-10-23 に利用者が決めた）。独自の暗号や iOS に無い暗号のライブラリを足すときは、この宣言を見直す。内部テスターのグループに自動で配るかは、TestFlight のグループの設定で決める。
 
 Secrets は Environment `release` に置く（[ADR 0214](adr/0214-release-environment-secrets.md)。`gh secret set <名前> --env release`）。秘密ファイルはリポジトリに置かない（`temporary/` も含む）。
 
@@ -83,7 +83,7 @@ Secrets は Environment `release` に置く（[ADR 0214](adr/0214-release-enviro
 
 ## iPad の TestFlight 確認
 
-App Store Connect で処理完了・コンプライアンスの回答後、内部テスターのグループにビルドを追加する。招待先の iPad に TestFlight を入れ、招待を受けて Pleiad をインストールする。外部テスターへ配る場合はベータ版の審査も必要になる。[内部テスターを招待](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)
+App Store Connect で処理が終わった後、内部テスターのグループにビルドを追加する。招待先の iPad に TestFlight を入れ、招待を受けて Pleiad をインストールする。外部テスターへ配る場合はベータ版の審査も必要になる。[内部テスターを招待](https://developer.apple.com/help/app-store-connect/test-a-beta-version/add-internal-testers/)
 
 - ホストの QR を読み、双方の 6 桁のコードを確認して承認する。カメラ拒否・キャンセル・貼り付け・外部の `pleiad://pair` リンクも試す。
 - 会話の表示・送信、添付の選択と保存、可視化の別窓、外部リンク、縦横の回転・キーボード・Split View を試す。
