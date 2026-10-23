@@ -5061,7 +5061,8 @@ const opsSessionWork = {
   // 詳細の読み出しは停止から独立した操作
   background: async (sessionId, taskId) => {
     const found = findBackgroundTask(sessionId, taskId);
-    if (!found) return { task: await SHELL_JOBS_HOST.getBackgroundTask(sessionId, taskId) };
+    // 一覧から外れた（終わった）もの。ply_shell のジョブか、まだ走っているターンが終わった直後の出力を読める（Claude の getTaskOutput）
+    if (!found) return { task: await SHELL_JOBS_HOST.getBackgroundTask(sessionId, taskId) ?? await runtime.turns.get(sessionId)?.backend?.getBackgroundTask?.(sessionId, taskId) ?? null };
     const detail = await found.backend?.getBackgroundTask?.(sessionId, taskId);
     return { task: detail ?? { ...found.task, status: 'running', output: null } };
   },

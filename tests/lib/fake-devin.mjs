@@ -209,7 +209,17 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         session.messages.push({ role: 'user', text }); persist(session);
         update(session.sessionId, { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } });
         if (text.includes('[kill]')) process.exit(17);
-        if (text.includes('[slow]') || token.stubborn) await new Promise(resolve => { const timer = setTimeout(resolve, token.stubborn ? 60000 : Number(process.env.FAKE_DEVIN_SLOW_MS || 5000)); token.wake = () => { clearTimeout(timer); resolve(); }; });
+        const gate = process.env.FAKE_DEVIN_GATE_DIR && /\[gate:([\w-]+)\]/.exec(text)?.[1];
+        if (text.includes('[slow]') && gate && !token.stubborn) {
+          // 試験が受理・決着を観測するまで保持する。負荷で固定秒数を越えても先に終わらない。
+          const file = path.join(process.env.FAKE_DEVIN_GATE_DIR, gate);
+          await new Promise(resolve => {
+            const timer = setInterval(() => { if (fs.existsSync(file)) finish(); }, 20);
+            const finish = () => { clearInterval(timer); resolve(); };
+            token.wake = finish;
+            fs.writeFileSync(`${file}.ready`, '');
+          });
+        } else if (text.includes('[slow]') || token.stubborn) await new Promise(resolve => { const timer = setTimeout(resolve, token.stubborn ? 60000 : Number(process.env.FAKE_DEVIN_SLOW_MS || 5000)); token.wake = () => { clearTimeout(timer); resolve(); }; });
         if (token.cancelled) { running.delete(session.sessionId); for (const steer of session.steerQueue ?? []) write({ id: steer.id, result: { stopReason: 'cancelled' } }); session.steerQueue = []; result = { stopReason: 'cancelled' }; break; }
         if (text.includes('[frame-malformed]')) { process.stdout.write('{not-json}\n'); break; }
         if (text.includes('[max-tokens]') || text.includes('[max-turn-requests]')) {
