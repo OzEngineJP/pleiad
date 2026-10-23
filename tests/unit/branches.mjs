@@ -53,17 +53,19 @@ export default async function (t) {
 
   const spine = new N('svg'); spine.classList.add('spine');
   const active = new N('div'); active.offsetTop = 100;
-  active.matches = selector => selector === '.mw.node';
+  active.matches = selector => selector === '.mw.node,.mw.activity';
+  // 印（.activity-tip）の位置には引かれない。節の点（行の上から 16px）で終える
+  const activityTip = new N('span'); activityTip.classList.add('activity-tip'); activityTip.offsetTop = 36; active.append(activityTip);
   const thread = { firstElementChild: spine, lastElementChild: active, children: [spine, active],
     classList: { contains: () => false }, querySelectorAll: () => { throw Error('spine layout should not scan every descendant'); } };
   layoutBranchSpine(thread);
   const firstPath = spine.firstChild;
-  t.ok('最後の発言の節まで筋を引く', firstPath.getAttribute('d').endsWith('20,116'));
+  t.ok('稼働表示の節の点の中心で筋を終える（はみ出さない）', firstPath.getAttribute('d').endsWith('20,116'), firstPath.getAttribute('d'));
   layoutBranchSpine(thread);
   t.ok('位置が変わらなければ筋を描き直さない', spine.firstChild === firstPath);
   active.offsetTop = 120;
   layoutBranchSpine(thread);
-  t.ok('最後の発言が動いたら筋の終端を更新する', spine.firstChild !== firstPath && spine.firstChild.getAttribute('d').endsWith('20,136'));
+  t.ok('稼働表示が動いたら筋の終端を更新する', spine.firstChild !== firstPath && spine.firstChild.getAttribute('d').endsWith('20,136'));
   // 枝の無い会話でも、親の会話へ戻る行があれば筋をその前後で区切る
   const back = new N('div'); back.classList.add('branch-row'); back.offsetTop = 40; back.clientWidth = 300;
   let laidOut = 0; back.layout = () => { laidOut++; };

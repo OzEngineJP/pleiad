@@ -161,7 +161,8 @@ export function layoutBranchSpine(thread) {
     row, top: row.offsetTop, width: row.clientWidth,
   }));
   let last = thread.lastElementChild;
-  while (last && !last.matches(".mw.node")) last = last.previousElementSibling;
+  while (last && !last.matches(".mw.node,.mw.activity")) last = last.previousElementSibling;
+  // End at the centre of the last node dot. The activity row draws the same dot as the spine's terminal.
   const end = last ? last.offsetTop + 16 : thread.offsetHeight;
   const x = originX(thread), previous = spineGeometry.get(svg);
   if (previous?.x === x && previous.end === end && previous.rows.length === rows.length &&

@@ -196,7 +196,7 @@ try {
     await shot();
     if (state === 'pending' || state === 'partial-pending' || state.includes('refreshing')) {
       await page.emulateMedia({ reducedMotion: 'reduce' });
-      const animations = await page.locator('.scx-state .wait-dot, #contextEntry .wait-dot').evaluateAll(es => es.map(e => getComputedStyle(e).animationName));
+      const animations = await page.locator('.scx-state .run svg, #contextEntry .run svg').evaluateAll(es => es.map(e => getComputedStyle(e).animationName));
       assert(animations.length > 0);
       assert(animations.every(name => name === 'none'), 'reduced motion stops every loading mark');
       if (state === 'partial-refreshing') behavior.fail.add('nativeInstructions');

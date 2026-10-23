@@ -392,7 +392,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       // 動いているものが 1 つでもあれば弧、裏を待っているだけなら衛星（docs/design-system.md §6）
       // 印は 1 つだけ。あなた待ち → 弧 → 衛星 → 中断の三角 → 未読の順に強い
       let stoppedMark = null;
-      if (isCollapsed && rows.some((s) => last.waitingIds.has(s.id))) head.append(waitMark(1));
+      if (isCollapsed && rows.some((s) => last.waitingIds.has(s.id))) head.append(approvalMark(1));
       else if (isCollapsed && active) head.append(runMark(t("sidebar.somethingRunning")));
       else if (isCollapsed && behind) head.append(satMark(behind, t("activity.behindCount", { count: behind })));
       else if (isCollapsed && (stoppedMark = stoppedIn(rows))) head.append(stoppedMark);
@@ -538,7 +538,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     if (mentions) head.append(el("span", "mc", String(mentions)));
     // 畳んだ中の様子（あなた待ち → 弧 → 未読の順に強い）
     if (isCollapsed) {
-      if (rows.some((s) => last.waitingIds.has(s.id))) head.append(waitMark(1));
+      if (rows.some((s) => last.waitingIds.has(s.id))) head.append(approvalMark(1));
       else if (rows.some((s) => last.runningIds.has(s.id))) head.append(runMark(t("sidebar.somethingRunning")));
       else if (rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
     }
@@ -789,7 +789,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   /** 承認待ちの印。器の見出しでは文言を出さず ◆ だけ（2 件以上なら数を添える） */
-  function waitMark(n) {
+  function approvalMark(n) {
     const label = n > 1 ? t("sidebar.waitingCount", { count: n }) : t("sidebar.waiting");
     const m = el("span", "wait only", n > 1 ? String(n) : "");
     m.setAttribute("role", "img");
@@ -819,7 +819,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     else if (behind) sum.append(satMark(behind, t("activity.behindCount", { count: behind })));
     else if ((stoppedMark = stoppedIn(list))) sum.append(stoppedMark);
     else if (list.some((s) => last.unreadIds.has(s.id))) sum.append(unreadMark());
-    if (waiting) sum.append(waitMark(waiting));
+    if (waiting) sum.append(approvalMark(waiting));
     const counts = new Map();
     for (const s of list) { const k = statusKey(s); counts.set(k, (counts.get(k) ?? 0) + 1); }
     for (const [k, n] of counts) sum.append(el("span", "fam-count", `${k ?? t("session.status.none")} ${n}`));
