@@ -33,7 +33,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `AGENT_HOST_TOKEN` | 固定のトークン（既定は起動ごとにランダム） |
 | `AGENT_HOST_PORT` | 既定 7420。予約済み・使用中なら空きポートへ移る |
 | `AGENT_HOST_BIND` | 既定 `127.0.0.1` |
-| `AGENT_HOST_DATA` | データ置き場（既定 `~/.agent-host`） |
+| `AGENT_HOST_DATA` | データ置き場（既定 `~/.agent-host`。開発のデスクトップ版 `npm run desktop` は `~/.agent-host-dev`。`desktop/dev-identity.cjs`・[ADR 0255](docs/adr/0255-separate-dev-desktop-identity.md)） |
 | `AGENT_HOST_BACKENDS` | 使うバックエンド（カンマ区切り。既定はエージェントの記述 `core/backends/agents.mjs` の fake を除く全部） |
 | `AGENT_HOST_CODEX_BIN` | codex の実行ファイル（既定 `codex`） |
 | `AGENT_HOST_AGY_BIN` | Antigravity CLI の実行ファイル（既定 `agy`） |

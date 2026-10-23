@@ -1,6 +1,8 @@
 const { app, BrowserWindow, WebContentsView, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+// 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
+require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
 const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
 const { packagedIdentity } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
