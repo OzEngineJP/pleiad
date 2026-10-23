@@ -1,4 +1,4 @@
-# 0183 アカウントと公式の中継（Pleiad Plus）
+# 0263 アカウントと公式の中継（Pleiad Plus）
 
 - 状態: 提案（2026-10-10。決定の 1〜6 は利用者が 2026-10-10 に決め、2026-10-20 に決定 3 と認証の手段を改め、2026-10-21 にサービス名を Pleiad Plus に改めて範囲・鍵の信頼・ドメインを決め、2026-10-21 に公開の文書に要らない内部の詳細を外し、認証の表現を利用者に見える約束に絞った。細部は実装の分け方で詰める）
 - 関連: [ADR 0013](0013-remote-via-relay-with-noise.md)（中継と Noise）・[ADR 0086](0086-notifications-through-relay.md)（中継の通知の線）・[ADR 0172](0172-play-review-access.md)（Play の審査）・[ADR 0174](0174-ios-capacitor-shell.md)（iOS の殻）・[docs/remote.md](../remote.md) §1・§3.4・§5・§9・[docs/play-store/data-safety.md](../play-store/data-safety.md)・[docs/play-store/app-access.md](../play-store/app-access.md)・[site/privacy/](../../site/privacy/index.html)・[ADR 0155](0155-api-keys-in-one-place.md)（送ることへの同意の考え）
