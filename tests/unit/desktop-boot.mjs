@@ -105,7 +105,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },
     './dev-identity.cjs': devIdentity,
-    './secret-bridge.cjs': { attachSecretBridge: listens(calls, 'secretBridge') },
+    './secret-bridge.cjs': { attachSecretBridge: listens(calls, 'secretBridge'), warmSecretStorage: () => { calls.bootSteps.push('secret-warm'); return true; } },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: listens(calls) },
     './resident.cjs': { attachResident: ({ worker }) => listens(calls)(worker) },
@@ -154,7 +154,9 @@ export default async function (t) {
     const shellEnv = async ({ env }) => { await tick(); env.PATH = '/opt/homebrew/bin:/usr/bin'; env.FROM_SHELL = '1'; return true; };
     const { calls } = await start({ env: { PATH: '/usr/bin' }, shellEnv });
     t.ok('utilityProcess は、ログインシェルの環境を読み終えてから起こす',
-      calls.bootSteps.indexOf('shell-env:start') === 0 && calls.bootSteps.indexOf('shell-env:done') < calls.bootSteps.indexOf('fork'), calls.bootSteps.join());
+      calls.bootSteps.indexOf('shell-env:start') === 1 && calls.bootSteps.indexOf('shell-env:done') < calls.bootSteps.indexOf('fork'), calls.bootSteps.join());
+    // キーチェーンの確認で main が止まっても起動の待ちが走っていないよう、safeStorage の鍵は boot の最初に取り出す（desktop/secret-bridge.cjs）
+    t.ok('safeStorage の鍵の取り出しは、ログインシェルの読み込み・サーバーの起動より前', calls.bootSteps[0] === 'secret-warm' && calls.bootSteps.filter(s => s === 'secret-warm').length === 1, calls.bootSteps.join());
     t.ok('utilityProcess の env にログインシェルの PATH と変数が入る（agent-browser の場所はその前に足す）',
       calls.forkOptions?.env?.FROM_SHELL === '1' && calls.forkOptions.env.PATH.endsWith('/opt/homebrew/bin:/usr/bin'), calls.forkOptions?.env?.PATH);
   }

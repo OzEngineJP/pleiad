@@ -81,7 +81,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: () => {} },
     './dev-identity.cjs': devIdentity,
-    './secret-bridge.cjs': { attachSecretBridge: () => {} },
+    './secret-bridge.cjs': { attachSecretBridge: () => {}, warmSecretStorage: () => true },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: () => {} },
     './resident.cjs': { attachResident: () => ({ keepOnClose: () => tray }) },
