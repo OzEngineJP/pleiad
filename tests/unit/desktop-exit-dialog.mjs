@@ -13,6 +13,7 @@ const desktop = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 const workerMessages = createRequire(import.meta.url)('../../desktop/worker-messages.cjs');
 const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
 const plusLink = createRequire(import.meta.url)('../../desktop/plus-link.cjs');
+const devIdentity = createRequire(import.meta.url)('../../desktop/dev-identity.cjs');
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
 async function start({ ready = true, work = { count: 0 }, argv = [], tray = false } = {}) {
@@ -28,6 +29,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
   const app = new EventEmitter();
   Object.assign(app, {
     isPackaged: false,
+    setName: () => {},
     exit: () => {},
     quit: () => { calls.quits++; },
     requestSingleInstanceLock: () => true,
@@ -78,6 +80,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     './external-url.cjs': { externalUrl: url => url },
     './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: () => {} },
+    './dev-identity.cjs': devIdentity,
     './secret-bridge.cjs': { attachSecretBridge: () => {} },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: () => {} },

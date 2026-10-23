@@ -20,6 +20,7 @@ Node integration 無効、context isolation と sandbox 有効。公開するIPC
 外部HTTPSリンクはOSブラウザーで開き、外部ページをアプリ内で実行しない。
 二重起動は既存ウィンドウに戻す。終了時はサーバーへ実行中件数を問い合わせ、作業中なら会話へ戻す。
 データは既存の `~/.agent-host`、各CLIのログイン・履歴も既存の保存先を使用する。
+開発版（パッケージ版でない起動。`npm run desktop`）は、インストール版と別のアプリとして起こす。アプリの名前を `Pleiad Dev` にし（キーチェーンの項目 `Pleiad Dev Safe Storage`・userData `Pleiad Dev`）、既定のデータ置き場を `~/.agent-host-dev` にする（`AGENT_HOST_DATA` を渡せばその場所）。インストール版に開発版のキーチェーンの確認を出さず、二つを同時に起こせる（`desktop/dev-identity.cjs`・[ADR 0255](adr/0255-separate-dev-desktop-identity.md)）。
 
 ## 利用可能になるまで
 
