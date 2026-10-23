@@ -152,7 +152,7 @@ async function japaneseCases(t) {
 }
 
 /**
- * 設定 › 委譲の段の候補のアカウント（ADR 0264）。候補の名前「Sonnet · private」・そのアカウントだけの使用量・段の上の「使う / 使わない」・
+ * 設定 › 委譲の段の候補のアカウント（ADR 0264）。候補の名前「Sonnet · personal」・そのアカウントだけの使用量・段の上の「使う / 使わない」・
  * 使えないアカウントの「ログインし直す」・追加のメニュー（エージェント ▸ モデル ▸ アカウント、打ち込んだ後のアカウント）
  */
 async function accountPanel(t) {
@@ -161,12 +161,12 @@ async function accountPanel(t) {
   const settings = { ...structuredClone(defaults), tiers: { t1: ['claude:sonnet', 'claude@acct-p:sonnet', 'claude@acct-s:opus', 'codex:gpt-6-sol'] } };
   const candidates = [
     { candidate: 'claude:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: '', accountLabel: null, windows: [{ label: '週次', usedPercent: 21 }] },
-    { candidate: 'claude@acct-p:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: 'acct-p', accountLabel: 'private', windows: [{ label: '週次', usedPercent: 64 }] },
-    { candidate: 'claude@acct-s:opus', backend: 'claude', model: 'opus', tiers: ['t1'], usable: false, reason: 'unavailable', detail: 'no_token', scoped: true, account: 'acct-s', accountLabel: 'seamth', windows: [] },
+    { candidate: 'claude@acct-p:sonnet', backend: 'claude', model: 'sonnet', tiers: ['t1'], usable: true, scoped: true, account: 'acct-p', accountLabel: 'personal', windows: [{ label: '週次', usedPercent: 64 }] },
+    { candidate: 'claude@acct-s:opus', backend: 'claude', model: 'opus', tiers: ['t1'], usable: false, reason: 'unavailable', detail: 'no_token', scoped: true, account: 'acct-s', accountLabel: 'work', windows: [] },
     { candidate: 'codex:gpt-6-sol', backend: 'codex', model: 'gpt-6-sol', tiers: ['t1'], usable: true, windows: [] },
   ];
-  const accounts = { claude: [{ account: '', name: null, ready: true }, { account: 'acct-p', name: 'private', ready: true }, { account: 'acct-s', name: 'seamth', ready: false },
-    { account: 'acct-w', name: 'work', ready: true }] };
+  const accounts = { claude: [{ account: '', name: null, ready: true }, { account: 'acct-p', name: 'personal', ready: true }, { account: 'acct-s', name: 'work', ready: false },
+    { account: 'acct-w', name: 'team', ready: true }] };
   const sent = [];
   const state = () => structuredClone({ settings, defaults, kinds: ['implement'], judges: ['jev', 'qwen', 'none'], tiers: ['t1'], candidates, accounts,
     keys: { openrouter: { hasKey: true } }, storage: { encrypted: true } });
@@ -187,23 +187,23 @@ async function accountPanel(t) {
     await ui.refresh();
     const rows = root.querySelectorAll('.rt-cand-row');
     const label = row => row.querySelector('.rt-label').textContent.replace(/\u00a0/g, ' ');
-    t.ok('候補の名前は「モデル · アカウント」。書かない候補はログイン中のアカウント', label(rows[0]) === 'Sonnet · ログイン中のアカウント' && label(rows[1]) === 'Sonnet · private'
-      && label(rows[2]) === 'Opus · seamth', rows.map(label).join(' / '));
-    t.ok('狭い画面の折り返しは「Sonnet ·」の後ろだけ（区切りの前は改行しない空白）', rows[1].querySelector('.rt-label').textContent === 'Sonnet\u00a0· private');
+    t.ok('候補の名前は「モデル · アカウント」。書かない候補はログイン中のアカウント', label(rows[0]) === 'Sonnet · ログイン中のアカウント' && label(rows[1]) === 'Sonnet · personal'
+      && label(rows[2]) === 'Opus · work', rows.map(label).join(' / '));
+    t.ok('狭い画面の折り返しは「Sonnet ·」の後ろだけ（区切りの前は改行しない空白）', rows[1].querySelector('.rt-label').textContent === 'Sonnet\u00a0· personal');
     t.ok('アカウントの無いエージェントの候補は名前だけで、下の行にエージェントの名前', label(rows[3]) === 'gpt-6-sol' && rows[3].querySelector('small').textContent === 'Codex');
     t.ok('アカウントの候補の下の行は、そのアカウントの使用量だけ（エージェントの名前は付けない）',
       rows[0].querySelector('small').textContent === '週次 21%' && rows[1].querySelector('small').textContent === '週次 64%');
     const relogin = rows[2].querySelector('.rt-relogin');
     t.ok('使えないアカウントの行は薄く、「使えない（認証情報なし） · ログインし直す」', rows[2].classList.contains('off') && relogin
       && rows[2].querySelector('small').textContent.includes('認証情報なし') && relogin.textContent === 'ログインし直す'
-      && relogin.getAttribute('aria-label') === 'seamth にログインし直す（設定 › エージェント設定）', rows[2].querySelector('small').textContent);
+      && relogin.getAttribute('aria-label') === 'work にログインし直す（設定 › エージェント設定）', rows[2].querySelector('small').textContent);
     relogin.onclick();
     t.ok('「ログインし直す」はそのエージェントのそのアカウントを開く', JSON.stringify(opened) === '[["claude","acct-s"]]');
     const use = root.querySelector('.rt-acct-use');
     const groups = use.querySelectorAll('.rt-acct-g');
     t.ok('段の上の 1 行: アカウントのあるエージェントだけ、使う（段にある）と使わないを並べる',
       root.querySelectorAll('.rt-acct-use').length === 1 && use.getAttribute('aria-label') === 'Claude のアカウント'
-      && groups.length === 2 && groups[0].textContent === '使うログイン中のアカウント·private·seamth' && groups[1].textContent === '使わないwork'
+      && groups.length === 2 && groups[0].textContent === '使うログイン中のアカウント·personal·work' && groups[1].textContent === '使わないteam'
       && groups[1].classList.contains('unused') && use.querySelectorAll('.v')[2].classList.contains('na'), use.textContent);
     t.ok('段の上の 1 行に押せる部品は無い', use.querySelectorAll('button').length === 0 && use.querySelectorAll('input').length === 0);
 
@@ -215,7 +215,7 @@ async function accountPanel(t) {
     const claude = top.find(i => i.label === 'Claude').sub();
     t.ok('モデルの一覧は、まだ段に無いアカウントが残るモデルだけ', claude.map(i => i.label).join(',') === 'Sonnet,Opus,Haiku');
     const sonnetAccounts = claude[0].sub();
-    t.ok('アカウントの段: 段にある組み合わせを除き、使えないアカウントに理由を添える', sonnetAccounts.map(i => i.label).join(',') === 'seamth,work'
+    t.ok('アカウントの段: 段にある組み合わせを除き、使えないアカウントに理由を添える', sonnetAccounts.map(i => i.label).join(',') === 'work,team'
       && sonnetAccounts[0].hint === '認証情報なし' && !sonnetAccounts[1].hint);
     sonnetAccounts[1].onClick();
     await new Promise(r => setImmediate(r));
@@ -230,7 +230,7 @@ async function accountPanel(t) {
     input.onCommit('claude:haiku');
     const typed = menus.at(-1);
     t.ok('打ち込んだエージェントにアカウントが複数あれば、Enter の後にアカウントを選ぶ', menus.length === before + 1 && typed.title === 'Haiku'
-      && typed.items.map(i => i.label).join(',') === 'ログイン中のアカウント,private,seamth,work', typed.items.map(i => i.label).join(','));
+      && typed.items.map(i => i.label).join(',') === 'ログイン中のアカウント,personal,work,team', typed.items.map(i => i.label).join(','));
     const count = sent.length;
     input.onCommit('codex:gpt-6-luna');
     await new Promise(r => setImmediate(r));

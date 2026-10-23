@@ -437,7 +437,7 @@ export function pinnedDetail(routing, { names = defaultNames, mode = '', cwd = '
   return root;
 }
 
-/** やり直しの候補の名前（「Sonnet · private」）。アカウントは、アカウントを登録したエージェントの候補（scoped）だけ */
+/** やり直しの候補の名前（「Sonnet · personal」）。アカウントは、アカウントを登録したエージェントの候補（scoped）だけ */
 const candidateName = (c, names) => [names.model(c.backend, c.model) || c.model,
   ...(c.scoped ? [accountName({ account: c.account, accountLabel: c.accountLabel })] : [])].filter(Boolean).join(t('routing.line.join'));
 

@@ -351,7 +351,7 @@ const pressure = (a, b, now) =>
 
 /**
  * 2 つのアカウントが同じ人か（組織 organizationUuid とメールの両方が分かって一致する）。ログイン中のアカウントの中身が
- * 登録したアカウントと同じ人なら、設定画面は「ログイン中のアカウント（private）」と添える（ADR 0264）。
+ * 登録したアカウントと同じ人なら、設定画面は「ログイン中のアカウント（personal）」と添える（ADR 0264）。
  * どちらかが分からなければ同じとみなさない（docs/agent-delegation.md）
  */
 export function sameIdentity(a, b) {
