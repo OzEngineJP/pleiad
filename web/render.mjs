@@ -17,6 +17,7 @@ import { copyIcon, downloadIcon, openInBrowserIcon, moreIcon } from './icons.mjs
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
+import { isPlyDelegateToolName } from './delegate-result.mjs';
 import { renderWorktreeLine } from './worktree-ui.mjs';
 import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
 import { renderChromeProfileLine } from './chrome-profile-menu.mjs';
@@ -1213,8 +1214,8 @@ export function applyToolHints(hints) {
   }
 }
 
-/** Pleiad タスクへの委譲ツール（バックエンドに依らない共通の名前） */
-export const isPlyDelegateToolName = (name) => /(^|[_./])ply_delegate$/.test(String(name ?? ""));
+/** Pleiad タスクへの委譲ツール（バックエンドに依らない共通の名前。web/delegate-result.mjs） */
+export { isPlyDelegateToolName };
 
 // サブエージェントを呼ぶツールの名前。既定の Task・Agent に、バックエンドの申告（describeBackends の subagentTools）を足す
 const DELEGATE_TOOL_NAMES = new Set(["Task", "Agent"]);

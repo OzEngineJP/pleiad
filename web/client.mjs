@@ -1,6 +1,6 @@
 import { terminalView, updateTerminal } from './terminal.mjs';
 import { setupDrawerSwipe, drawerBlockingOverlay } from './drawer-swipe.mjs';
-import { delegateResult, delegateTaskId } from './delegate-result.mjs';
+import { delegateResult, delegateTaskId, isPlyDelegateToolName } from './delegate-result.mjs';
 import { isComposingKey } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
@@ -6760,7 +6760,7 @@ async function stopBackground(button, sessionId, task) {
 
 // ---- 会話の中の委譲のカードから開く
 
-const isDelegateTool = (name) => /(^|[_./])ply_delegate$/.test(String(name ?? ''));
+const isDelegateTool = isPlyDelegateToolName;
 
 const GO_PATH = 'M9 5h10v10M19 5L6 18';
 function clockIcon() {

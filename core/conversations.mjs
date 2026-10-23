@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import * as store from "./store.mjs";
-import { MAX_RESULT_CHARS, cutText } from "./backends/shared.mjs";
+import { cutToolResult } from "./backends/shared.mjs";
 import { readPresents, keepPresents, seedPresents } from "./history.mjs";
 import { copyWindowShot, windowShotFolder } from "./chrome/window-shots.mjs";
 import { applyRewindMark, markIsLive, nativeUuid, keptPresentIndexes, removedSummary } from "./rewind.mjs";
@@ -520,10 +520,7 @@ export function wrapBackend(native) {
     const preparing = performance.now();
     const messages = classifySystemMessages(structuredClone(r.messages));
     if (!options?.fullResults) for (const m of messages) for (const call of m.toolCalls ?? []) {
-      if (call.result?.text?.length > MAX_RESULT_CHARS) {
-        call.result.text = cutText(call.result.text, MAX_RESULT_CHARS, t("conversations.truncated"));
-        call.result.truncated = true;
-      }
+      if (call.result) call.result = cutToolResult(call.name, call.result, t("conversations.truncated"));
     }
     options?.timing?.('conversation.prepare', performance.now() - preparing);
     return messages;

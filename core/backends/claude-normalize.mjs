@@ -9,7 +9,7 @@
 //      SDK を引き込むとその方針を壊す。
 //
 // 正規化イベントの一覧は docs/multi-backend.md §2.2。
-import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
+import { MAX_RESULT_CHARS, cutText, keepsFullResult } from "./shared.mjs";
 import { t } from "../i18n.mjs";
 import { ZERO_COST, resultCost, usageTotals, claudeUsageDelta } from "./claude-cost-state.mjs";
 import { computerResult, computerToolInput, isComputerTool } from "./computer-delivery.mjs";
@@ -462,6 +462,7 @@ export function transcriptToMessages(entries, { includeNested = false, fullResul
       if (!call) continue;
       call.result = isComputerTool(call.name)
         ? { ...computerResult(r.raw, raw => cutResult(raw, fullResults)), isError: r.isError }
+        : keepsFullResult(call.name) ? { ...cutResult(r.raw, true), isError: r.isError }
         : { text: r.text, isError: r.isError, truncated: r.truncated };
       // 終わった時刻は、tool_result を積んだ user エントリの timestamp（無ければ付けない）
       if (r.at != null) call.endAt = r.at;

@@ -2,12 +2,11 @@
 // まだ動いている末尾だけを画面が再生する出来事として残す。畳んだ発言はターン前の履歴の後ろに並び、保存済みの履歴と同じ末尾の窓（ADR 0182）で運ばれる。
 // 走っている間の tool.result はバックエンドが全文で流す（画面の走っているカード用）。畳んだ発言の結果は、保存済みの履歴と同じ長さに切る
 import { splitLive } from '../web/stream-messages.mjs';
-import { MAX_RESULT_CHARS, cutText } from './backends/shared.mjs';
+import { cutToolResult } from './backends/shared.mjs';
 
 const cutCall = (call) => {
-  const text = call?.result?.text;
-  if (typeof text !== 'string' || text.length <= MAX_RESULT_CHARS) return call;
-  return { ...call, result: { ...call.result, text: cutText(text, MAX_RESULT_CHARS, '\n…'), truncated: true } };
+  const result = cutToolResult(call?.name, call?.result, '\n…');
+  return result === call?.result ? call : { ...call, result };
 };
 
 /**

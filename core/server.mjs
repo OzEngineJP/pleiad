@@ -11,7 +11,7 @@ import { migrateClaudeUsage } from './usage-migrations.mjs';
 // server は「どのエージェントに聞くか」を決めて、正規化イベントを web へ配るだけ。
 // 承認の保留・猶予・中断（設計メモ §8.5）だけはここに残す。エージェントに散らすと
 // 「host が居ないあいだ deny し続ける」壊れ方がエージェントの数だけ再発する。
-import { createAgentTasks, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
+import { createAgentTasks, delegateReply, finalReply, gitLine, workspaceLine } from './agent-tasks.mjs';
 import { historyGaveUp, readWithRetry, transientStorageError } from './history-retry.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
@@ -1164,7 +1164,7 @@ async function callAgentOp(owner, name, args, { locale } = {}) {
   const result = await agentTasks.call(owner, name, decided?.mode ? { ...args, mode: decided.mode } : args, turn.ac.signal, lng);
   // 子が使い始めるので、振り分けに使う使用量を取り直しておく（待たない）
   if (name === 'ply_delegate' && routingSettingsCache.enabled && ROUTING_USAGE_AUTO) routingUsage.refresh().catch(() => {});
-  return result;
+  return name === 'ply_delegate' ? delegateReply(result) : result;
 }
 
 /**

@@ -47,6 +47,8 @@ export default async function(t) {
   try {
     const first = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: prompt('ply_delegate', { kind: 'mechanical', backend: 'fake', task: 'echo:CHILD_RESULT', title: '  子の  短い\n名前  ' }) });
     const sid = first.sessionId;
+    const reply = JSON.parse(c.events.find(e => e.type === 'tool.result' && e.sessionId === sid).text);
+    t.ok('ply_delegate の返り値は taskId が先頭で、依頼文 task を返し直さない', Object.keys(reply)[0] === 'taskId' && /^ply-task-/.test(reply.taskId) && !('task' in reply) && reply.title === '子の 短い 名前', Object.keys(reply).join());
     let rows = await awaitTasks(rows => rows.length === 1 && rows[0].notification === 'sent');
     await c.waitFor(e => e.type === 'completionReady' && e.sessionId === sid, { ms: 10000 });
     t.ok('子の結果を受け取った依頼元の完了を一度だけ知らせる',
