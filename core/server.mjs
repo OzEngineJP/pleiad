@@ -4078,7 +4078,9 @@ async function reserveTurnSettings(args) {
       if (!manual.backend && targetId === undefined) targetId = preferred;
       const bid = targetId ?? current.nextSettings?.backend ?? source.id;
       const scoped = remembered?.backend === bid ? remembered : null;
-      const global = (await store.getPrefs()).backends?.[bid] ?? await store.getPrefs();
+      // 全体の既定はそのエージェントの分だけ（resolveMode・resolveModel と同じ）。最上位の値（前の版の形）は別のエージェントのものでありうる
+      const prefs = await store.getPrefs();
+      const global = (prefs.backends ? prefs.backends[bid] : prefs) ?? {};
       if (!manual.model && model === undefined) model = scoped?.model ?? global.model ?? '';
       if (!manual.effort && args.effort === undefined) args = { ...args, effort: scoped?.effort ?? global.effort ?? '' };
       if (!manual.mode && mode === undefined) mode = scoped?.mode ?? global.mode;
@@ -4092,6 +4094,8 @@ async function reserveTurnSettings(args) {
     if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
     let target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
     if (!target) throw new Error(t('agents.notFound'));
+    // 場所を替えて引いた記録・既定の承認モードが替えた先に無ければ、替えた先の既定にする（送れなくしない）。手で選んだものは断る
+    if (!cancel && explicit.mode === undefined && mode !== undefined && !target.modes()[mode]) mode = await resolveMode(null, undefined, target);
     const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
       ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
     if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error(t('settings.modeUnavailable'));
@@ -4116,7 +4120,9 @@ async function reserveTurnSettings(args) {
     const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
     if (!cancel && !selectedEndpoint && selectedAccount) target = await backendForAccount(target, await accountResolve(target, selectedAccount));
     // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
-    const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
+    let selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
+    // 承認モードと同じく、場所を替えて引いたモデルが使えなければ既定（''）にする
+    if (!cancel && explicit.model === undefined && model !== undefined && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) selectedModel = '';
     if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
     const selectedEndpointRow = await endpointRow(selectedEndpoint);
     const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''

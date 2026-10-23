@@ -85,7 +85,9 @@ export default async function (t) {
     const env = await c.runTurn({ backend: 'devin', cwd: other, prompt: '[env]', model: 'swe-2-high' });
     const text = env.events.filter(e => e.type === 'text.delta').map(e => e.text).join('');
     const observed = JSON.parse(text);
-    t.ok('別 cwd は別プロセスで起動し native 設定の場所を保つ', observed.cwd === other && observed.configHome === nativeConfig);
+    // 子の process.cwd() は実体のパスを返す（macOS の一時フォルダーは /var → /private/var のリンクを通る）ので、実体のパスで比べる
+    t.ok('別 cwd は別プロセスで起動し native 設定の場所を保つ', await fs.realpath(observed.cwd) === await fs.realpath(other) && observed.configHome === nativeConfig,
+      JSON.stringify({ cwd: observed.cwd, configHome: observed.configHome, other, nativeConfig }));
     // ply_control は ACP の mcpServers（type: 'http'）と会話束縛の CLI の env で届く（印 plyControl。ブラウザーは Chrome の層が無い試験では渡らない）
     t.ok('ply_control を mcpServers で渡し、会話束縛の CLI の環境変数が届く', observed.mcpServers?.includes('ply_control') && observed.seenEnv?.includes('PLEIAD_CONTROL_URL') && observed.seenEnv?.includes('PLEIAD_CONTROL_TOKEN'), JSON.stringify({ mcpServers: observed.mcpServers, seenEnv: observed.seenEnv }));
 

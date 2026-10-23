@@ -193,6 +193,7 @@ button.rm-row:hover { background:var(--surface-hover); }
 .settings-content .rm-confirm p { margin:0; line-height:var(--lh); }
 .rm-confirm .rm-acts, .rm-wiz .rm-acts { margin:0; }
 .rm-confirm.rm-relay-edit { margin:8px 8px 20px; }
+.rm-relay-remove { margin-left:auto; }
 .settings-content .rm-weak { margin:16px 8px 0; color:var(--ink-weak); font-size:var(--fs-s); line-height:var(--lh); }
 .settings-content .rm-note-row { margin:-4px 8px 0; }
 .settings-content .rm-agent { margin:12px 8px 0; }
