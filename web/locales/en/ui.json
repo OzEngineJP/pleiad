@@ -2802,6 +2802,7 @@
       "live": "Running",
       "startedAt": "Started {{time}}",
       "truncated": "Output shows the last 64K chars",
+      "truncatedOf": "Output shows the end only (of {{size}})",
       "cwd": "Location: {{cwd}}",
       "outputUnsupported": "Output is unavailable",
       "kind": {

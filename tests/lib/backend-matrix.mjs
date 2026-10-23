@@ -77,6 +77,9 @@ export function renderMatrix(natives) {
     ['次の発言候補の生成（ネイティブまたは suggestNext）', b => b.capabilities?.promptSuggestions === 'native' || typeof b.suggestNext === 'function'],
     ['会話タイトル候補の生成（suggestTitle）', b => typeof b.suggestTitle === 'function'],
     ['プロバイダーの使用枠の取得口（usage。取得できる値はCLI・契約による）', b => typeof b.usage === 'function'],
+    // 画面へは describeBackends がメソッドの有無から作る印（capabilities.stopBackground・backgroundDetails）で渡る
+    ['裏のコマンドを作業ダイアログから止める（stopBackground）', b => typeof b.stopBackground === 'function'],
+    ['裏のコマンドの出力を作業ダイアログで読む（getBackgroundTask → backgroundDetails）', b => typeof b.getBackgroundTask === 'function'],
   ];
   return [
     '# エージェント × 機能の対応表',
