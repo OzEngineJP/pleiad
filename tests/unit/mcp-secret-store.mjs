@@ -67,10 +67,14 @@ export default async function (t) {
     t.ok('safeStorage が使えなければ「暗号化できない」と答える', unavailable({ type: 'secret', id: 3, op: 'status' }).value.available === false);
     t.ok('復号の失敗は値を含まない固定の文で返す', !JSON.stringify(createSecretHandler({ safeStorage: fakeSafeStorage(), platform: 'win32' })({ type: 'secret', id: 4, op: 'decrypt', value: Buffer.from('SECRET_TEXT').toString('base64') })).includes('SECRET_TEXT'));
 
-    // ---- main が答えない（古い版）なら平文扱いにして止まらない
+    // ---- main が答えない（キーチェーンの確認を待っている）間は、平文扱いにせず失敗にする（覚えない）
     const silent = new EventEmitter(); silent.postMessage = () => {};
     const quiet = parentPortCipher(silent, { timeoutMs: 50 });
-    t.ok('main が答えなければ平文扱い', (await quiet.status()).encrypted === false);
+    const quietErr = await quiet.status().then(() => null, e => e);
+    t.ok('main が答えなければ SECRET_LOCKED（pending）で失敗にする', quietErr?.code === 'SECRET_LOCKED' && quietErr.pending === true, String(quietErr?.code));
+    const quietStore = createSecretStore({ file: path.join(tmp, 'quiet.json'), cipher: quiet });
+    const quietStatus = await quietStore.status();
+    t.ok('ストアの status は「応答待ち」として返す（投げない）', quietStatus.encrypted === false && quietStatus.pending === true && quietStatus.reason.length > 0, JSON.stringify(quietStatus));
 
     // ---- 同時の書き込みで取りこぼさない（同じプロセスの中と、別の「プロセス」＝別のストア）
     const shared = path.join(tmp, 'shared', 'mcp-secrets.json');

@@ -376,6 +376,17 @@ export function createPlusSession({ config, secrets, openExternal = () => {}, la
       if (signedIn()) { startAccountPoll(); void fetchAccount(); }
       return statusShape();
     },
+    /** 保管を読めずに locked にしたなら、読み直す（暗号化の口が答えを返せるようになったとき）。読めなければ locked のまま */
+    async retryLocked() {
+      if (error?.code !== 'locked') return statusShape();
+      try { stored = (await secrets.get(STORE_KEY)) ?? null; }
+      catch { return statusShape(); }
+      error = null;
+      await loadConfig().catch(() => {});
+      emit('config');
+      if (signedIn()) { startAccountPoll(); void fetchAccount(); }
+      return statusShape();
+    },
     login,
     cancelLogin,
     /** ログアウト。api には何も送らず、ID トークンを捨てて保管を消す */
