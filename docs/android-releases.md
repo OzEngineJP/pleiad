@@ -2,7 +2,7 @@
 
 Android 版（`mobile/`、Capacitor 8）の署名済み APK は、`main` への push で Android に効く変更があったときに GitHub Release へ自動で出る。デスクトップのリリース（[desktop-releases.md](desktop-releases.md)）とは別の流れで、別のタグを使う（[ADR 0066](adr/0066-android-release-on-main-push.md)）。ワークフローは `.github/workflows/android-release.yml`。
 
-Google Play へは、同じ鍵・同じ版の決め方の AAB を `.github/workflows/android-play.yml` で上げる。新しい APK を出したら、同じコミットの AAB を内部テストへ自動で上げてすぐ公開し、ほかのトラック・状態へは手動で上げる（下の「[Google Play](#google-play)」、[ADR 0142](adr/0142-android-play-distribution.md)・[ADR 0255](adr/0255-mobile-store-upload-on-main.md)）。
+Google Play へは、同じ鍵・同じ版の決め方の AAB を `.github/workflows/android-play.yml` で上げる。新しい APK を出したら、同じコミットの AAB を内部テストへ自動で上げてすぐ公開し、ほかのトラック・状態へは手動で上げる（下の「[Google Play](#google-play)」、[ADR 0142](adr/0142-android-play-distribution.md)・[ADR 0256](adr/0256-mobile-store-upload-on-main.md)）。
 
 ## いつ出るか
 
@@ -91,7 +91,7 @@ npm run icons:check    # コミット済みの PNG が今の SVG と一致する
 
 ## Google Play
 
-GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を上げる（[ADR 0142](adr/0142-android-play-distribution.md)）。内部テストへは APK の流れから自動で、ほかのトラックへは人が決めたときに手動で上げる（[ADR 0255](adr/0255-mobile-store-upload-on-main.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
+GitHub Release の APK の流れはそのまま残し、Google Play へは同じ鍵（Play App Signing のアプリ署名鍵に今の鍵を登録する）・同じ `versionCode` の決め方の AAB を上げる（[ADR 0142](adr/0142-android-play-distribution.md)）。内部テストへは APK の流れから自動で、ほかのトラックへは人が決めたときに手動で上げる（[ADR 0256](adr/0256-mobile-store-upload-on-main.md)）。同じ鍵なので、GitHub の APK を入れた端末は入れ直さずに Play の版へ移れる（逆も同じ）。端末は、入っているものより `versionCode` が大きい方から更新を受け取る。
 
 **アプリ ID（2026-10-09 に変えた）。** Play Console でアプリを作る前に、アプリ ID（パッケージ名）を `com.procway.pleiad` から `dev.pleiad.app` に替えた（パッケージ名は作ったあとで変えられないため。iOS の Bundle ID も同じ値）。`com.procway.pleiad` の GitHub の APK を入れた端末は別のアプリ扱いになり、`dev.pleiad.app` の APK は上書きにならない。旧版を消して入れ直し、ペアリングを 1 回やり直す。「同じ鍵なので GitHub の APK から Play へ移れる」は、`dev.pleiad.app` の APK 以降の話である。
 
