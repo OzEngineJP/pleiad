@@ -4,7 +4,9 @@
 // - 出ている間だけ Tab は「候補を入れる」（Shift+Tab はフォーカスの移動のまま）。何か打つと消え、欄を空に戻すとまた出る
 // - 候補は送らない: 空の欄で Ctrl/⌘+Enter を押しても何も送らない（打たずに送ってしまうのを防ぐ）。代わりに Tab の印が 0.7 秒だけ青い輪で光り、読み上げに「Tab で候補を入れます」
 // - Esc で候補を消す（120ms で薄れる）。次の返答で新しい候補が届くまで出さない
-// - タッチの画面（Tab が無い）は、欄の右に「候補を入れる」の丸いボタン（Tab の記号 ⇥。下へ移動の矢印と取り違えない）
+// - タッチの画面（Tab が無い）は、欄の右に「候補を入れる」の丸いボタン（Tab の記号 ⇥。下へ移動の矢印と取り違えない）。
+//   ボタンは欄が使える間だけ出す: 欄か祖先が inert の間（設定が会話を覆っている・引き出しが開いている）は隠す。
+//   ボタンは欄の上に重ねる z-index を持つので、出したままだと欄を覆う面（設定のページ）の上に浮く
 // - 読み上げは欄の説明（aria-description）に「候補: …」
 // - 出るときは 240ms で薄く出る（動きを減らす設定では即座に）
 // 候補を会話ごとに持つのは呼び出し側（web/client.mjs）。ここは 1 つの欄の表示とキーだけ。
@@ -49,6 +51,9 @@ export function createSuggestion({ prompt, box, t, touch = () => false, enabled,
   ghost.insertAdjacentElement('afterend', take);
 
   const empty = () => !String(prompt.value ?? '').length;
+  // 欄が使えない（自分か祖先が inert）。覆った面の上にボタンだけが残らないように見る
+  const covered = () => Boolean(prompt.closest('[inert]'));
+  const syncTake = () => { take.hidden = !visible || !touch() || covered(); };
 
   function place() {
     ghost.style.top = `${prompt.offsetTop}px`;
@@ -69,7 +74,7 @@ export function createSuggestion({ prompt, box, t, touch = () => false, enabled,
       place();
       if (!visible) { ghost.classList.remove('on'); requestAnimationFrame(() => requestAnimationFrame(() => { if (visible) ghost.classList.add('on'); })); }
       ghost.hidden = false;
-      take.hidden = !touchMode;
+      take.hidden = !touchMode || covered();
       prompt.dataset.ghost = touchMode ? 'touch' : '1';
       prompt.style.minHeight = `${ghost.offsetHeight}px`;
       prompt.setAttribute('aria-description', t('chat.suggestion.described', { text }));
@@ -122,6 +127,11 @@ export function createSuggestion({ prompt, box, t, touch = () => false, enabled,
   addEventListener('resize', replace);
   if (typeof ResizeObserver === 'function') new ResizeObserver(replace).observe(box);
   box.addEventListener?.('transitionend', replace);
+  // 欄を覆う側（設定の画面・引き出し）は inert を付け外しするだけで、ここへは知らせない。欄と祖先の inert の変化を見て、ボタンを付け直す
+  if (typeof MutationObserver === 'function') {
+    const watch = new MutationObserver(syncTake);
+    for (let node = prompt; node; node = node.parentElement) watch.observe(node, { attributes: true, attributeFilter: ['inert'] });
+  }
 
   return {
     get text() { return text; },
