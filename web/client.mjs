@@ -490,7 +490,7 @@ const stripNarrow = matchMedia('(max-width:480px)');
 const phoneView = stripNarrow;
 function syncStripVisible() {
   const strip = $('contextStrip');
-  strip.hidden = (narrowView.matches || !contextShown) && (narrowView.matches || $('usageChip').hidden) && $('workEntry').hidden;
+  strip.hidden = !activity.el?.isConnected && (narrowView.matches || !contextShown) && (narrowView.matches || $('usageChip').hidden) && $('workEntry').hidden;
   if (strip.hidden) closeMeterPop();
 }
 /** 狭い画面（480px 以下）は、メーターを「文脈 ▬ 30% · ◷ 17:57」に縮め、数値と予約のキャンセルはメニューの頭へ移す。圧縮中・失敗はメーターの位置に出す */
@@ -799,15 +799,10 @@ const navNarrow = matchMedia("(max-width:700px)");
 const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });
 createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarrow });
 
-/**
- * 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す。
- * 稼働表示の行は activity.el が持っている。1 行ごとに筋の子孫を探すと、履歴を描く間が件数の 2 乗になる
- */
+/** 履歴の読み足しは指定の位置へ、それ以外は筋の末尾に置く。待ち行は入力欄の上にある。 */
 function place(w) {
   if (paintBefore) { paintBefore.before(w); return; }
-  const act = activity.el?.isConnected ? activity.el.closest(".mw") : null;
-  if (act && !w.classList.contains("activity")) act.before(w);
-  else thread.append(w);
+  thread.append(w);
 }
 
 // 履歴をまとめて描く間は、1 件ごとに筋を貼り直さない。筋の位置と末尾の判定はレイアウトを読むので、
@@ -1810,7 +1805,7 @@ function closeTurnEl() {
 
 /**
  * ターンが終わった。結果を持たないまま残った行（中断・エラーで tool.result が来なかった）から、走っている印と承認カードを外す。
- * 弧と経過が回り続けたり、閉じた見出しの中で押せない承認が残ったりしないように
+ * ドットと経過が動き続けたり、閉じた見出しの中で押せない承認が残ったりしないように
  */
 function settleStrays() {
   for (const row of thread.querySelectorAll(".tc.tc-running, .tc.tc-waiting")) {
@@ -2467,7 +2462,7 @@ function rowApprovalCard(ev, row) {
       line.querySelector(".tc-note")?.remove();
       if (ok) line.querySelector(".tc-res").before(said);
       fadeIn(details);
-      // 結果が確認より先に届いていたら（tc-done / tc-error）、終わった行に弧を付けない
+      // 結果が確認より先に届いていたら（tc-done / tc-error）、終わった行にドットを付けない
       const finished = row.classList.contains("tc-done") || row.classList.contains("tc-error");
       if (ok) { if (!finished) markRunning(row); }
       else if (!finished) line.querySelector(".tc-res").textContent = t("chat.approval.denied");
@@ -2853,11 +2848,10 @@ function paintPendingPerms(id) {
 
 // ---------------------------------------------------------------- 稼働表示
 // 「動いているのか分からない」を無くす。何をしているかと、経過時間を出し続ける。
-// 置き場は会話の筋の末尾の節（走っている間だけ存在し、新しい発言が来るとその下へ移る）。
-// 節の代わりに弧が筋の上に載る。固定の帯や流れる線は置かない。
+// 待ち行は入力欄の上の段に置き、ドット・文言・流れる帯をまとめる（design-system §6）。
 
 // main が返答を終え、裏の subagent などだけを待っている間（running のターン行の phase が waiting）は、
-// 弧の代わりに衛星（§6）を置き、見出しを「サブエージェントを待っている」にする。
+// 共通のドットは保ち、見出しを「サブエージェントを待っている」にする。
 // その間に来る show()（subagent 側のツール名など）は text に覚えるだけで、見出しは変えない。
 
 /** ターン行 -> 裏を待っているなら { n, label }、そうでなければ null */
@@ -2902,17 +2896,19 @@ const activity = {
     return this.shape === "none" ? el("span", "activity-none") : runMark(t("activity.turnRunning"));
   },
   paint() {
-    this.el.querySelector(".txt").textContent = this.behind ? this.behind.label : this.idleOnly() ? t("activity.backgroundOnly") : this.text;
+    const text = this.el.querySelector(".txt");
+    const label = this.behind ? this.behind.label : this.idleOnly() ? t("activity.backgroundOnly") : this.text;
+    if (text.textContent !== label) text.textContent = label;
     this.el.querySelector(".el").hidden = this.idleOnly();
   },
-  /** 印を今の状態（弧 / 衛星 / なし）に差し替える */
+  /** 印を今の状態（処理中 / 裏の結果待ち / なし）に差し替える */
   remark() {
-    this.el?.closest(".mw")?.querySelector(".activity-tip")?.replaceChildren(this.mark());
+    this.el?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
   /**
    * ツールの行（走っている最新の行・承認カード）が今の状態を語っているときは、末尾の稼働表示を出さない（同じ内容を 2 か所に書かない）。
-   * 経過は覚えておく（次に出すときも続きから数える）。裏の衛星だけは残す: 衛星の置き場はここしか無いので、
-   * ツールの文言は重ねずに衛星の行にする
+   * 経過は覚えておく（次に出すときも続きから数える）。裏の作業の待ち行は残す: 待っている対象を伝えるため、
+   * ツールの文言は重ねずに結果待ちの行にする
    */
   suspend() {
     clearTimeout(this.idleTimer);
@@ -2924,7 +2920,8 @@ const activity = {
     this.markTimer = null;
     this.behind = null;
     this.shape = "";
-    this.el?.closest(".mw")?.remove();
+    this.el?.remove();
+    syncStripVisible();
     this.el = null;
     relayoutBranches();
   },
@@ -2953,14 +2950,19 @@ const activity = {
     if (this.el?.isConnected && this.shape !== this.shapeNow()) this.remark();
     if (!this.el?.isConnected) {
       const m = el("div", "m activity");
-      m.append(el("span", "txt"), el("span", "el"));
-      const w = append(m, "activity");
       const tip = el("span", "activity-tip");
-      if (!delayMark) tip.append(this.mark());
-      w.querySelector(".mw-gutter").append(tip);
+      const copy = el('span', 'activity-copy');
+      const band = el('span', 'wait-band');
+      band.setAttribute('aria-hidden', 'true');
+      const text = el("span", "txt");
+      text.setAttribute('role', 'status');
+      copy.append(text, el("span", "el"), band);
+      m.append(tip, copy);
+      $('contextStrip').prepend(m);
       this.el = m;
+      syncStripVisible();
     }
-    const tip = this.el.closest('.mw').querySelector('.activity-tip');
+    const tip = this.el.querySelector('.activity-tip');
     if (delayMark) {
       if (!tip.children.length && !this.markTimer) this.markTimer = setTimeout(() => {
         this.markTimer = null;
@@ -3005,7 +3007,8 @@ const activity = {
     this.text = "";
     this.behind = null;
     this.shape = "";
-    this.el?.closest(".mw")?.remove();
+    this.el?.remove();
+    syncStripVisible();
     this.el = null;
   },
 };
@@ -3154,7 +3157,7 @@ function isMine(ev) {
 // ---- 途中送信の配達（server の userMessage.pending / userMessage.delivered）
 //
 // 受理（吹き出しを出す）と「エージェントに渡った」は別の瞬間。渡るまでの間だけ、吹き出しの下に
-// 回る弧と一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
+// 脈打つドットと一言を出す（docs/design-system.md §6。印は待っている間しか DOM に置かない）。
 // 渡ったら「AIへ送信済み」に戻し、渡らないままターンが終わったら、次のターンで答えることを言う。
 const deliveredEarly = new Set();   // 吹き出しより先に届いた配達の合図
 // 声で送った発言の配送の一行（3 つの言い方。web/voice/delivery.mjs）。入力欄から送った発言の言い方は変えない
@@ -3533,8 +3536,8 @@ function onEvent(ev, replay = false) {
       // 2 件目で見出しが現れ、行が伸びる間も、読んでいた下端に付いていく
       if (stick) followBottom();
       if (ev.id) state.toolCards.set(ev.id, card);
-      // 走っているツールは最新の行（弧と経過）が語る。末尾の稼働表示は重ねない。
-      // 委譲・サブエージェントの行には弧が無い（状態は 4 秒ごとの更新で追いつく）ので、それまでは従来の稼働表示を残す
+      // 走っているツールは最新の行（ドットと経過）が語る。末尾の稼働表示は重ねない。
+      // 委譲・サブエージェントの行にはドットが無い（状態は 4 秒ごとの更新で追いつく）ので、それまでは従来の稼働表示を残す
       if (boundary) activity.show(t("activity.runningTool", { tool: ev.name }));
       else activity.suspend();
       return card;
@@ -3735,7 +3738,7 @@ function onEvent(ev, replay = false) {
       // 渡った合図が来ないままターンが終わった分。Codex などは次のターンとして答える。
       // Claude は区切りで取り出された分にも同じターンの中で答え、渡った合図も出す（取りこぼしても、
       // 次の内部ターンが始まった時点で出す。core/backends/claude.mjs の takeLeftovers）ので、普通はここに残らない。
-      // 待っているものは何も走っていないので、回る弧はここで外す
+      // 待っているものは何も走っていないので、脈打つドットはここで外す
       for (const row of thread.querySelectorAll('.mw[data-delivery-pending]')) markDelivery(row, 'late');
       state.awaitingSession = false;
       state.submitting = false;
@@ -3771,8 +3774,8 @@ function applyRunning(work) {
     const b = behindOf(t);
     if (b && t.sessionId) behind.set(t.sessionId, b.n);
   }
-  // ターンの外で裏に残っている作業（Codex の端末）。ターンが走っていればそちらが優先（弧）
-  // 委譲したタスクが終わっていない依頼元の会話も衛星（ターンが走っていれば behindOf が数える）
+  // ターンの外で裏に残っている作業（Codex の端末）。ターンが走っていればそちらが優先（ドット）
+  // 委譲したタスクが終わっていない依頼元の会話も待ちのドット（ターンが走っていれば behindOf が数える）
   const idle = new Set([...(state.work.background ?? []).map((x) => x.sessionId), ...(state.work.tasks ?? []).map((x) => x.parentSessionId)]);
   for (const id of idle) {
     if (!id || running.has(id)) continue;
@@ -5613,7 +5616,7 @@ const subagentsHere = () => (state.work.subagents ?? []).filter(belongsHere);
 const subagentLive = (a) => a.status === "running" || a.status == null;
 
 /**
- * 行の左端に置く状態の印（docs/design-system.md §2.2）。running は回る弧（走っている間だけ DOM に置く）、
+ * 行の左端に置く状態の印（docs/design-system.md §2.2）。running は脈打つドット（走っている間だけ DOM に置く）、
  * 終わった子は静止した印。status が null（分からない）なら印を置かない
  */
 const STATE_MARK = {
@@ -5632,7 +5635,7 @@ function stateMark(status) {
   return run;
 }
 
-// Pleiad タスクの状態 -> 行の印（サブエージェントと同じ語彙）。まだ終わっていないものは弧、文字の状態はそのまま残す
+// Pleiad タスクの状態 -> 行の印（サブエージェントと同じ語彙）。まだ終わっていないものはドット、文字の状態はそのまま残す
 const TASK_STATUS = { queued: t('dialog.tasks.status.queued'), running: t('dialog.tasks.status.running'), cancelling: t('dialog.tasks.status.cancelling'),
   waiting: t('dialog.tasks.status.waiting'), completed: t('dialog.tasks.status.completed'), failed: t('dialog.tasks.status.failed'),
   cancelled: t('dialog.tasks.status.cancelled'), interrupted: t('dialog.tasks.status.interrupted') };
@@ -6070,7 +6073,7 @@ function modelText(item) {
 }
 
 /**
- * 状態の字。弧・印で足りる状態（実行中・待機中・完了・停止）は字にしない（読み上げ名・title は印が持つ）。
+ * 状態の字。ドット・印で足りる状態（実行中・待機中・完了・停止）は字にしない（読み上げ名・title は印が持つ）。
  * 字を残すのは、人を待っている「承認待ち」（差し色）と「✕ 失敗」だけ（ADR 0067）
  */
 function statusText(item) {
@@ -6104,10 +6107,10 @@ function elapsedText(item) {
 
 /** 行・詳細の頭の状態の印。字は出さないので、名前（読み上げ・title）は印が持つ。Pleiad タスクはタスクの状態の語（待機中・承認待ち…） */
 function markOf(item) {
-  // ホストがオフラインの間は、走っている弧の代わりに衛星（「裏で待っている」の既存の印）。時計も止める（elapsedText）
+  // ホストがオフライン・状態が古い間は、ドットと時計を止める（elapsedText）。
   if ((item.hostOffline && item.live && !item.waiting) || item.hostStale) {
     const label = item.hostStale ? t('dialog.work.hostStaleMark') : t('dialog.work.hostOfflineMark');
-    const sat = satMark(1, label);
+    const sat = satMark(1, label, { paused: true });
     sat.setAttribute('role', 'img');
     sat.setAttribute('aria-label', label);
     return sat;
@@ -6430,7 +6433,7 @@ function openOnHost(item) {
 /**
  * 読み出しで知ったホストの孫の行（一覧へ字下げで出す）。根と同じ「⇄ ホスト名」・オフラインの扱い。
  * 詳細を閉じると読み出しは止まるので、走っている印のまましばらく読めていない行は古い（hostStale）として「動いている」に数えず、
- * 弧の代わりに衛星と「HH:MM の時点」を出す（根か孫の詳細を開けば読み直す）
+ * 静止したドットと「HH:MM の時点」を出す（根か孫の詳細を開けば読み直す）
  */
 function hostDescendantItem(root, { row, depth, parentKey, childCount }) {
   const raw = row.rawStatus ?? row.status;
@@ -6482,7 +6485,7 @@ async function hostTaskThread(item) {
     for (const d of r.descendants ?? []) if (typeof d?.taskId === 'string') hostSeen.set(d.taskId, now);
     if (hostSeen.size > 2000) hostSeen.delete(hostSeen.keys().next().value);
     const before = JSON.stringify(hostTree.get(rootId) ?? []);
-    // 孫の詳細の答えは、孫自身の今の形（r.task）でその行も置き換える（終われば行の弧が止まり、読み直しも止まる）
+    // 孫の詳細の答えは、孫自身の今の形（r.task）でその行も置き換える（終われば行のドットが止まり、読み直しも止まる）
     const rows = mergeHostTree(hostTree.get(rootId), [...(r.descendants ?? []), ...(item.hostDescendant && r.task ? [r.task] : [])], { replace: !item.hostDescendant });
     if (rows.length || hostTree.has(rootId)) hostTree.set(rootId, rows);
     // 行が変わった・走っている孫がいる（読んだ時刻が新しくなり、古い印が外れる）ときは一覧を描き直す
@@ -6588,7 +6591,7 @@ async function taskThread(item) {
 
 /**
  * 読むだけの筋。メインパネルの paintHistory と同じ部品（wrap・userMsg・aiMsg・考えた内容・ツールカード・画像）で、描く先だけを変える。
- * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（弧だけ）を置く。
+ * 分岐・編集・再送は出さない（この会話の発言ではない）。走っている子は末尾に稼働表示（ドットだけ）を置く。
  * 依頼元（親）は「あなた」と同じ扱いで、最初の「依頼」も追加の指示も自分の発言と同じ部品（Markdown・吹き出し・畳み方・時刻）で描き、
  * 発言者の語だけ「依頼」「追加の指示」にする。まだ子に渡っていない追加の指示は、差し込み待ち（sending）ならメインパネルの作業中の送信と同じ状態の行、
  * 待機（queued。途中送信できない子）なら末尾に時計の印、届かず終わったもの（dropped）は弱い字（ADR 0067。docs/design-system.md「バックグラウンド」）
@@ -6672,11 +6675,11 @@ function readonlyThread(messages, { presents = [], backend, prompt = null, live 
     else if (item?.waiting) act.append(el('span', 'txt', t('activity.waitingApproval')));
     const w = put(act, 'activity');
     const tip = el('span', 'activity-tip');
-    const mark = hostOffline ? satMark(1, t('dialog.work.hostOfflineMark')) : runMark(t('activity.turnRunning'));
+    const mark = hostOffline ? satMark(1, t('dialog.work.hostOfflineMark'), { paused: true }) : runMark(t('activity.turnRunning'));
     mark.setAttribute('role', 'img');
     mark.setAttribute('aria-label', hostOffline ? t('dialog.work.hostOfflineMark') : t('activity.turnRunning'));
     tip.append(mark);
-    w.querySelector('.mw-gutter').append(tip);
+    act.prepend(tip);
   }
   if (th.childElementCount === 1) th.append(el('div', 'work-head', t('dialog.work.noMessages')));
   return th;
@@ -7086,13 +7089,13 @@ function paintDelegateCardsIn(root, scope) {
 }
 
 /**
- * 委譲カードの右端（値の列）。動いている間は弧と経過（m:ss）、承認待ちは差し色の字だけ、失敗は「✕ 失敗」、
- * 終わったものは静止した印（✓・横線）。終わった時刻は触れたときだけ。弧・印で足りる状態の字は出さない（ADR 0067）。
+ * 委譲カードの右端（値の列）。動いている間はドットと経過（m:ss）、承認待ちは差し色の字だけ、失敗は「✕ 失敗」、
+ * 終わったものは静止した印（✓・横線）。終わった時刻は触れたときだけ。ドット・印で足りる状態の字は出さない（ADR 0067）。
  * 印の名前は読み上げ・title が持つ
  */
 function delegateStateOf(item) {
   if (item.waiting) return { key: 'waiting', text: TASK_STATUS.waiting };
-  // ホストがオフライン: 時計を止め、衛星と「HH:MM まで」（知らないことを進めない）
+  // ホストがオフライン: 時計を止め、待ちのドットと「HH:MM まで」（知らないことを進めない）
   if (item.live && item.hostOffline) return { key: 'offline', mark: markOf(item), when: item.hostUntil ? t('dialog.work.hostUntil', { time: clockOf(item.hostUntil) }) : '' };
   if (item.live) return { key: 'running', mark: markOf(item), start: timeOf(item.startedAt) };
   const when = elapsedText(item);
@@ -9577,8 +9580,8 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   refreshContextEntry({ force: true }).catch(() => {});
   refreshGit({ force: true }).catch(() => {});
   thread.classList.toggle("branched", branches.has(id));   // 枝があるとき、筋は「今いる枝」として青く太い
-  if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら末尾に弧
-  else if (behindHere() || backgroundCounts().live) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は衛星（待てないものだけなら印なし）
+  if (isRunningHere()) activity.show(activity.text || ACTIVITY_LABEL.running);   // 走っている会話を開いたら入力欄の上にドット
+  else if (behindHere() || backgroundCounts().live) activity.show(t("activity.waitingBackground"));     // ターンは終わったが裏の子が残っている会話は待ちのドット（待てないものだけなら印なし）
   relayoutBranches();     // 稼働表示が出た後の高さで、今いる枝の終端ノードを置き直す
   $("prompt").placeholder = branchIsFresh(id) ? t("chat.composer.firstMessage", { name: branches.nameOf(id) }) : promptPlaceholder();
   // 対応を終えたエージェントの会話は読むだけ。入力欄を閉じ、理由を末尾に出す（送信はサーバーも断る）
@@ -9782,7 +9785,7 @@ function forkPending(button) {
   if (!button) return () => {};
   const old = [...button.childNodes].map(node => node.cloneNode(true));
   button.disabled = true;
-  // 発言の ⋯ は絵だけのボタンなので、弧だけを出す（名前は今のまま）。ほかは弧と字
+  // 発言の ⋯ は絵だけのボタンなので、ドットだけを出す（名前は今のまま）。ほかはドットと字
   const icon = button.classList.contains('who-btn');
   const timer = setTimeout(() => button.replaceChildren(...(icon ? [runMark(t('pending.creatingBranch'))] : [runMark(t('pending.creatingBranch')), t('pending.creatingBranch')])), 150);
   return () => { clearTimeout(timer); if (button.isConnected) button.replaceChildren(...old); button.disabled = false; };
@@ -9921,7 +9924,7 @@ function syncRunState() {
   controls.fit();   // 中断が出入りすると行の幅の配分が変わる
   if (!here) {
     closeTurnEl();
-    // ターンは終わったが裏の作業が残っている。末尾の節は消さずに衛星にする（中断は出さない）
+    // ターンは終わったが裏の作業が残っている。待ち行は消さずに結果待ちにする（中断は出さない）
     // 待てないもの（端末・裏のコマンド）だけが残っているときも、止める口（バックグラウンド N）のために行を残す
     if ((behindHere() || backgroundCounts().live) && !state.loadingSession) activity.show(activity.text || t("activity.waitingBackground"));
     else activity.hide();
@@ -10002,7 +10005,7 @@ async function submit({ at = armedSends.get(state.current) } = {}) {
   if (homeDest.bot) return sendToHomeBot(homeDest.bot);
   if (!state.current || state.current === freshSessionId) {
     // 新しい会話を作っている間の送信は予約する（docs/design-system.md「入力欄の待ち」）。欄は readonly にして字を保ち、
-    // 150ms を越えたら送信ボタンに弧、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る
+    // 150ms を越えたら送信ボタンにドット、欄の上に「会話ができしだい送ります · 取り消す」。できしだい下の続きで送る
     if (queuedSend) return;
     const hasContent = Boolean($('prompt').value.trim() || state.attached.length);
     const ticket = { cancelled: false };

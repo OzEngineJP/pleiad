@@ -21,13 +21,12 @@
 .onboarding-agent-item[aria-checked=true] .agent-name{color:var(--ink-blue)}
 .onboarding-agent-item .agent-desc{font-size:var(--fs-s);color:var(--ink-weak);margin-top:2px}
 .onboarding-agent-item .agent-state{font-size:var(--fs-s);color:var(--ink-weak);text-align:right;flex:none}
-/* ログインを待っている行: 回る印と「ログインを待っている」・［やめる］。開く・写す入口は名前の下（ADR 0243） */
+/* ログインを待っている行: 待ちのドットと「ログインを待っている」・［やめる］。開く・写す入口は名前の下（ADR 0243） */
 .onboarding-agent-item .agent-state:has(.wait){gap:6px}
 .onboarding-agent-item .agent-state:has(.wait)::before{display:none}
 .onboarding-agent-item .agent-state .wait{display:inline-flex;align-items:center;gap:5px;color:var(--ink-mark);white-space:nowrap}
 .onboarding-agent-item .agent-state .btn{font-size:var(--fs-s);padding:4px 10px}
 .onboarding-agent-item .wait .run,.agent-state.spin .run{width:12px;height:12px;color:inherit}
-.onboarding-agent-item .wait .run svg,.agent-state.spin .run svg{width:12px;height:12px;stroke-width:1.7}
 .ob-links{display:flex;flex-wrap:wrap;gap:2px;margin:4px 0 0 -8px}
 .ob-links .btn{font-size:var(--fs-s);padding:3px 8px;color:var(--ink-blue)}
 .onboarding-auth:not(:empty){background:var(--surface-1);border-radius:var(--r-m);padding:10px 8px;margin-bottom:16px}
@@ -568,18 +567,13 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 /* カードの短い形（長い一文は title） */
 .remote-short{color:var(--ink-weak);font-size:var(--fs-s)}
 
-/* ==================== 走っている印（web/arc.mjs） ====================
-   短い固定の弧と衛星を SVG ごと回す。線や点は毎フレーム描き直さない。 */
+/* ==================== 共通の待ちの印（web/wait-mark.mjs） ==================== */
 .run{display:inline-grid;place-items:center;width:14px;height:14px;color:var(--ink);flex:none}
-.run svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round}
-.run:not(.sat) svg{transform-origin:50% 50%;animation:run-spin 2s linear infinite;will-change:transform}
-.run:not(.sat) path{stroke-dasharray:10 100}
-@keyframes run-spin{to{transform:rotate(360deg)}}
-/* 裏で待っている印。点の間隔は固定で、弧の半分の速さで回す。 */
-.run.sat svg{fill:currentColor;stroke:none;transform-origin:50% 50%;animation:sat-spin 4s linear infinite;will-change:transform}
-@keyframes sat-spin{to{transform:rotate(360deg)}}
-.page-hidden .run svg{animation-play-state:paused}
-@media (prefers-reduced-motion:reduce){.run svg{animation:none!important}.run:not(.sat) path{stroke-dasharray:none}}
+.wait-dot{display:block;flex:none;width:8px;height:8px;border-radius:50%;background:currentColor;animation:wait-pulse 1.1s ease-in-out infinite}
+@keyframes wait-pulse{0%,100%{transform:scale(.7);opacity:.5}50%{transform:scale(1);opacity:1}}
+.wait-mark.paused .wait-dot{animation:none}
+.page-hidden .wait-dot,.page-hidden .wait-band::after{animation-play-state:paused}
+@media (prefers-reduced-motion:reduce){.wait-dot,.wait-band::after{animation:none!important}}
 
 /* ==================== 会話 ==================== */
 main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(--surface-paper);position:relative}
@@ -602,10 +596,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
    内蔵ブラウザーの操作中は右上の走っている弧（§6。14px の紙の色の丸の中に半径 4.4・線 1.5） */
 #contextEntry,#browserEntry{position:relative}
 .entry-context-state{position:absolute;bottom:-2px;right:-3px;display:flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);font-size:var(--fs-xs);font-weight:600;line-height:1;pointer-events:none}
-.entry-context-state.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 .entry-dot{position:absolute;top:4px;right:4px;width:7px;height:7px;border-radius:50%;color:var(--ink-strong);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
 .entry-run.run{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
-.entry-run.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
 .entry-requested{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;color:var(--ink-mark);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
 .entry-paused{position:absolute;top:-2px;right:-3px;width:14px;height:14px;border-radius:50%;background:var(--surface-paper);color:var(--ink);pointer-events:none}
 .entry-paused::before,.entry-paused::after{content:"";position:absolute;top:3px;width:2px;height:8px;border-radius:1px;background:currentColor}
@@ -903,7 +895,6 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .auth-fail .acts .btn.lnk{color:var(--ink-blue)}
 .auth-fail .wait{display:inline-flex;align-items:center;gap:6px}
 .auth-fail .wait .run{width:12px;height:12px}
-.auth-fail .wait .run svg{width:12px;height:12px}
 .auth-fail-note{color:var(--ink-weak)}
 .auth-fail .acts.fade{animation:auth-fail-in var(--dur-fast,.18s) var(--ease-out,ease-out)}
 @keyframes auth-fail-in{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:none}}
@@ -1102,14 +1093,21 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .think .think-body{padding:0 14px 10px;color:var(--ink-weak);font-size:var(--fs-s);white-space:pre-wrap;overflow-x:auto;max-height:420px;overflow-y:auto}
 .think.live>summary{color:var(--ink-blue)}
 
-/* ---- 稼働表示。会話の筋の末尾の節。走っている間だけあり、新しい発言が来るとその下へ移る。
-   節の代わりに弧が筋の上に載る（溝の側、x 13 で筋 20 に中心が揃う）。流れる線は置かない ---- */
-.activity-tip{position:absolute;left:2px;top:2px;width:36px;height:36px;display:grid;place-items:center;background:var(--surface-paper);border-radius:50%;outline:1px solid var(--line-strong)}
-.activity-tip .run,.activity-tip .run svg{width:18px;height:18px}
-.mw.activity{min-height:40px}
-.m.activity{display:flex;align-items:center;gap:10px;padding:4px 0;margin-bottom:8px;font-size:var(--fs-s);color:var(--ink-weak);min-width:0}
-.m.activity .txt{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.m.activity .el{margin-left:auto;flex:none;font-size:var(--fs-xs)}
+/* ---- 待ちの行。入力欄の上の段と、作業の詳細で共通の形（design-system §6） ---- */
+.m.activity{display:flex;align-items:center;gap:8px;padding:0 6px;margin:0;min-width:0;font-size:var(--fs-s);color:var(--ink)}
+.activity-tip{display:inline-flex;flex:none;align-items:center;width:8px}
+.activity-tip .run{width:8px}
+.activity-copy{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:6px;min-width:0;flex:1}
+.m.activity .txt{min-width:0;overflow-wrap:anywhere}
+.m.activity .el{margin-left:auto;flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
+.m.activity .el[hidden]{display:none}
+.wait-band{position:relative;display:block;flex-basis:100%;height:2px;margin-top:3px;overflow:hidden;border-radius:var(--r-pill);background:var(--surface-2)}
+.wait-band::after{content:"";position:absolute;inset:0 auto 0 0;width:30%;color:var(--ink-weak);background:currentColor;animation:wait-flow 1.6s cubic-bezier(.65,0,.25,1) infinite}
+@keyframes wait-flow{from{transform:translateX(-100%)}to{transform:translateX(334%)}}
+.activity-copy:has(.el[hidden]) .wait-band{display:none}
+.mw.activity{min-height:0}
+.mw.activity .mw-gutter{visibility:hidden}
+.mw.activity .m.activity{padding:4px 0 8px}
 .m.activity .btn{font-size:var(--fs-xs);padding:2px 10px}
 
 /* ---- 承認カード・質問カード。会話の流れの中に出る（design.md §8.5）。モーダルは使わない ---- */
@@ -1205,6 +1203,8 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   font:inherit;font-size:var(--fs-xs);font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out),color var(--dur-fast) var(--ease-out)}
 .strip-chip::before{content:"";position:absolute;inset:-4px -2px}
 .strip-chip:hover{background:var(--surface-2);color:var(--ink)}
+.bg-chip{background:transparent}
+.bg-chip:is(:hover,:focus-visible){background:var(--surface-2);color:var(--ink)}
 .bgc-run{display:inline-flex}
 .bgc-run:empty{display:none}
 .bgc-slots{display:inline-flex;align-items:center;gap:6px}
@@ -1981,7 +1981,7 @@ main.dropping #log{background:var(--surface-1)}
 .outbox-status { color: var(--ink-weak); font-size: 12px; margin-top: 4px; }
 /* 途中送信がまだエージェントに渡っていない間だけ、回る弧を一言の前に置く（design-system.md §6。色は本文と同じ） */
 .outbox-status-mark { display: flex; align-items: center; gap: 6px; }
-.outbox-status-mark .run, .outbox-status-mark .run svg { width: 12px; height: 12px; }
+.outbox-status-mark .run { width: 12px; height: 12px; }
 .outbox-status-failed { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .outbox-status-failed b { color: var(--ink-strong); }
 .outbox-status-failed button { font-size: 12px; padding: 1px 10px; }
@@ -2254,7 +2254,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   #log .m.user > .body{padding-left:8px;padding-right:8px}
   .mw.node .mw-gutter::before{left:8.5px}
   .mw.card .mw-gutter::before{left:6.5px}
-  .activity-tip{left:0;width:24px;height:24px}
+  .m.activity .el{margin-left:0}
   .bg-thread > .spine{left:-8px}
   .branch-tip{transform:translateX(-12px)}
   .branch-ring{margin-left:4px}
@@ -2297,3 +2297,21 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .remote-origin{flex-basis:100%;order:99;white-space:normal;font-size:var(--fs-xs)}}
 
 .pop .li .hint.context-entry-status{max-width:65%;white-space:normal;overflow:visible;text-overflow:clip;font-family:inherit}
+
+/* 承認済み（2026-10-23）: 待ち・作業・メーターを入力欄の 8px 上の 1 段にする。 */
+#contextStrip{padding:0;margin-bottom:8px;min-height:28px;gap:8px}
+#contextStrip:not(:has(> .activity))::before{content:"";flex:1}
+#contextStrip > .activity{flex:1;order:0}
+#contextStrip > .work-entry{order:1;margin-left:auto}
+#contextStrip > .context-meter-wrap{order:2;flex:none}
+#contextStrip > .context-strip-status{order:3}
+#contextStrip > .usage-chip{order:4;margin-left:0;flex:none}
+@media (max-width:700px){
+  #contextStrip{min-height:36px}
+  #contextStrip > .activity{font-size:var(--fs-l)}
+  #contextStrip .activity .el{font-size:var(--fs-s)}
+  #contextStrip .bg-chip{height:36px}
+  #contextStrip .bgc-logo,#contextStrip .bgc-logo .row-be{width:var(--fs-xl);height:var(--fs-xl)}
+  #contextStrip .bgc-logo .row-be img{height:var(--fs-xl)}
+  #contextStrip .bgc-n{font-size:var(--fs-s)}
+}

@@ -56,20 +56,9 @@ export default async function (t) {
   t.ok("発言 50 件と 500 件で、筋への querySelector の回数が変わらない", many === few, `50 件 ${few} 回、500 件 ${many} 回`);
   t.ok("履歴を描く間、筋への querySelector は 1 件あたり 1 回未満", many < 500, `${many} 回`);
 
-  // 稼働表示の行があるときは、新しい行がその手前に入る（稼働表示は常に一番下）
   const s = screen();
-  const m = s.el("div", "m activity");
-  const aw = s.append(m, "activity");
-  m.wrapper = aw;
-  s.activity.el = m;
   const first = s.append(s.el("div", "m user"), "m:0");
   const second = s.append(s.el("div", "m ai"), "m:1");
-  t.ok("稼働表示の行があれば、あとから足した行はその手前に入る",
-    s.rows.at(-1) === aw && s.rows.indexOf(first) < s.rows.indexOf(second) && s.rows.indexOf(second) < s.rows.indexOf(aw));
-  t.ok("稼働表示の行があっても、筋の子孫は探さない", s.queries() === 0, `${s.queries()} 回`);
-
-  // 外れた稼働表示（筋を作り直したあと）は無いものとして、末尾に足す
-  m.isConnected = false;
-  const third = s.append(s.el("div", "m ai"), "m:2");
-  t.ok("外れた稼働表示は無いものとして、末尾に足す", s.rows.at(-1) === third);
+  t.ok("新しい発言は順に履歴末尾に入る", s.rows.indexOf(first) < s.rows.indexOf(second) && s.rows.at(-1) === second);
+  t.ok("入力欄の上の待ち行を履歴から探さない", s.queries() === 0);
 }
