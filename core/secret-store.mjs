@@ -63,27 +63,56 @@ export const plainCipher = {
  * 切れても次の main が付け直す口（resumable）では、main が居ない間の扱いを持つ（docs/zero-downtime-update/design.md §7.2）:
  *   - 送ったのに答えが来ないまま切れた依頼は、つながるまで待つ依頼に戻す（暗号化・復号は何度頼んでも同じ。上限は最初に待ち始めた時から数える）
  *   - 復号した値はメモリに持ち続け（上限 cacheMax 件）、同じ秘密の 2 回目からは main に頼まない。暗号化した値も同じ組を覚える
- *   - 暗号化できるかの答えを得られなかった（待ちの上限を過ぎた）ときは、平文扱いに落とさず失敗にし、覚えない
- *     （main が居ないだけで、鍵束が使えない起動と取り違えて平文で書き始めない）
+ * どちらの口でも、答えが来ないまま待ちの上限を過ぎた依頼は SECRET_LOCKED（pending: true）で失敗にし、失敗を覚えない。
+ * macOS で main がキーチェーンの確認に答えを待っている間は、main が止まって何も返せない。それを「暗号化できない」と取り違えて
+ * 平文で書き始めたり、その起動のあいだ復号できないままにしたりしない。次の依頼で聞き直す。
+ * 上限を過ぎた後に答えが届いたら（確認に答えた）、onAvailable の待ち手に知らせる。秘密を読めずに止まった処理は、そこで読み直す。
  */
 export function parentPortCipher(port, { timeoutMs = 10000, connectWaitMs = 5 * 60_000, resumable = port.resumable === true, cacheMax = 500 } = {}) {
   const waiting = new Map();   // id -> { resolve, reject, message, timer（答えの待ち）, waitTimer（つながるまでの待ち）, deadline, sent }
   const instance = crypto.randomUUID(); // 同じ parentPort を使う別の秘密ストアの応答と混ざらない
   const plain = new Map();     // 暗号文 -> 平文（resumable のときだけ使う）
-  let seq = 0, cached = null;
+  let seq = 0, known = null, asking = null;
+  const late = new Map();      // 上限を過ぎた依頼の id -> op。遅れて届いた答えで、main が戻ったと分かる
+  const available = new Set(); // onAvailable の待ち手
+  let missed = false;          // 答えを得られずに失敗を返した。次に答えが届いたら待ち手に知らせる
+  const pendingError = () => Object.assign(new Error(t('secrets.noResponse')), { code: 'SECRET_LOCKED', pending: true });
+  const toState = s => ({ encrypted: Boolean(s?.available), backend: s?.backend ?? 'unknown', ...(s?.available ? {} : { reason: s?.reason }) });
+  const recovered = () => {
+    if (!missed) return;
+    missed = false;
+    for (const fn of [...available]) { try { fn(); } catch { /* 待ち手の失敗は他に響かせない */ } }
+  };
   const remember = (cipherText, value) => {
     if (!resumable) return;
     plain.delete(cipherText);
     plain.set(cipherText, value);
     if (plain.size > cacheMax) plain.delete(plain.keys().next().value);
   };
-  const fail = (id, entry) => { waiting.delete(id); clearTimeout(entry.timer); clearTimeout(entry.waitTimer); entry.reject(new Error(t('secrets.noResponse'))); };
+  const fail = (id, entry) => {
+    waiting.delete(id); clearTimeout(entry.timer); clearTimeout(entry.waitTimer);
+    if (entry.sent) {
+      late.set(id, entry.message.op);
+      if (late.size > 100) late.delete(late.keys().next().value);
+    }
+    missed = true;
+    entry.reject(pendingError());
+  };
   port.on('message', event => {
     const data = event?.data ?? event;
-    if (data?.type !== 'secret' || !waiting.has(data.id)) return;
+    if (data?.type !== 'secret') return;
+    if (late.has(data.id)) {
+      const op = late.get(data.id);
+      late.delete(data.id);
+      if (op === 'status' && data.ok) known ??= toState(data.value);
+      recovered();
+      return;
+    }
+    if (!waiting.has(data.id)) return;
     const entry = waiting.get(data.id);
     waiting.delete(data.id); clearTimeout(entry.timer); clearTimeout(entry.waitTimer);
     if (data.ok) entry.resolve(data.value); else entry.reject(new Error(data.error || t('secrets.cryptoFailed')));
+    recovered();
   });
   // 口が false を返すのは、つながっていないとき（parentPort は何も返さず、いつも送れる）
   const send = (id, entry) => {
@@ -113,15 +142,22 @@ export function parentPortCipher(port, { timeoutMs = 10000, connectWaitMs = 5 * 
   });
   return {
     async status() {
-      // 暗号化の可否は起動中に変わらない。main が答えない（古い版など）のも同じなので、失敗も覚えて平文扱いにする
-      // 覚えるのは答えだけ。既定の理由の文は、言語が途中で変わってもよいよう返すたびに引く
-      // main が付け直す口（resumable）では、答えを得られなかったのは「今 main が居ない」であって「暗号化できない」ではない。失敗は覚えず、投げる
-      const toState = s => ({ encrypted: Boolean(s?.available), backend: s?.backend ?? 'unknown', ...(s?.available ? {} : { reason: s?.reason }) });
-      cached ??= request('status').then(toState, resumable
-        ? e => { cached = null; throw e; }
-        : e => ({ encrypted: false, backend: 'unknown', reason: e.message }));
-      const state = await cached;
+      // 暗号化の可否は起動中に変わらないので、答えは覚える。答えを得られなかったのは「今 main が答えられない」なので覚えず、投げる
+      // 既定の理由の文は、言語が途中で変わってもよいよう返すたびに引く
+      if (!known) {
+        const probe = asking ??= request('status').then(toState).then(state => { known ??= state; recovered(); return state; }).finally(() => { asking = null; });
+        // 一度答えを得られなかった後は、問い合わせを裏で 1 本だけ走らせ、待たずに「応答待ち」で返す
+        // （秘密を読むたびに上限まで待つと、状態の取得が何十秒も止まり、画面のスイッチが押せないままになる）
+        if (missed) { probe.catch(() => {}); throw pendingError(); }
+        await probe;
+      }
+      const state = known;
       return state.encrypted ? state : { ...state, reason: state.reason ?? t('secrets.osUnavailable') };
+    },
+    /** 答えを得られずに失敗を返した後、main が答えたら fn を呼ぶ。外す関数を返す */
+    onAvailable(fn) {
+      available.add(fn);
+      return () => available.delete(fn);
     },
     async encrypt(value) {
       const sealed = await request('encrypt', value);
@@ -201,10 +237,14 @@ export function createSecretStore({ file, cipher = plainCipher }) {
   return {
     file,
     async status() {
-      const state = await cipher.status();
+      // main が答えを返せない間（キーチェーンの確認を待っているなど）は、その理由を出す。可否が分からないので encrypted は false
+      const state = await cipher.status().catch(e => {
+        if (!e?.pending) throw e;
+        return { encrypted: false, backend: 'unknown', reason: e.message, pending: true };
+      });
       const data = await readFile().catch(() => ({ entries: {} }));
       const plain = Object.values(data.entries).filter(e => e?.enc === 'plain').length;
-      return { encrypted: state.encrypted, backend: state.backend, ...(state.reason ? { reason: state.reason } : {}), file, plainEntries: plain };
+      return { encrypted: state.encrypted, backend: state.backend, ...(state.reason ? { reason: state.reason } : {}), ...(state.pending ? { pending: true } : {}), file, plainEntries: plain };
     },
     async get(key) {
       await queue.catch(() => {});
@@ -244,7 +284,9 @@ export function createSecretStore({ file, cipher = plainCipher }) {
      */
     migrate() {
       return serial(() => withFileLock(lock, async () => {
-        if (!(await cipher.status()).encrypted) return 0;
+        // 応答待ち（pending）も「今は暗号化できない」と同じく何もしない。答えが届いたら呼び直す（core/server.mjs の onAvailable）
+        const state = await cipher.status().catch(e => { if (e?.pending) return null; throw e; });
+        if (!state?.encrypted) return 0;
         const data = await readFile();
         const plain = Object.entries(data.entries).filter(([, e]) => e?.enc === 'plain');
         if (!plain.length) return 0;

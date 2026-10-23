@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { methodOptions, stateLine, todoList, liveRow } from '../../web/remote-parts.mjs';
 import { createRemoteStore } from '../../core/remote/devices.mjs';
-import { plusRemoteLine, ownRemoteLine, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, plusRemoteShown, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
+import { plusRemoteLine, ownRemoteLine, lockedReason, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, plusRemoteShown, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
 import { N } from '../lib/dom-stub.mjs';
 
 export const name = 'remote-plus-ui';
@@ -58,6 +58,10 @@ export default async function (t) {
   }
   t.ok('自分の中継サーバーにつながらないときは状態行ではなく注意の一行（null）',
     ownRemoteLine({ enabled: true, configured: true, relayUrl: RELAY, connection: { state: 'retrying' } }) === null);
+  // 秘密を読めずに止まっている（locked）間は、登録用の秘密が読めないだけなので「未設定」と言わない。理由はスイッチの下の一行
+  const lockedStatus = { enabled: true, configured: false, relayUrl: RELAY, connection: { state: 'error', error: { code: 'locked', message: 'waiting for keychain' } }, links: { own: { state: 'error', error: { code: 'locked', message: 'waiting for keychain' } } } };
+  t.ok('秘密を読めずに止まっている間は「未設定」を出さない', ownRemoteLine(lockedStatus) === null);
+  t.ok('止まっている理由はサーバーの文をそのまま出す（lockedReason）', lockedReason(lockedStatus) === 'waiting for keychain' && lockedReason({ enabled: true, connection: { state: 'connected', error: null } }) === '');
 
   const ok = stateLine('ok', 'つながっています · user@example.com');
   t.ok('状態行（ok）は塗りの点と文字、読み上げは status', ok.className === 'rm-st rm-st-ok' && ok.getAttribute('role') === 'status'

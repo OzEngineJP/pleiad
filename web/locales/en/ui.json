@@ -345,6 +345,7 @@
         "other": "To other PCs"
       },
       "allow": "Allow other devices to control this PC",
+      "locked": "Can't connect to the relay because the saved secrets can't be read.",
       "addDevice": "Add device",
       "addHost": "Add PC",
       "groups": {

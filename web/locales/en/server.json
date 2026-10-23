@@ -498,7 +498,7 @@
     "busy": "The secrets file is in use by another process. Wait a moment and try again.",
     "plainReason": "Electron's safeStorage isn't available in this launch (such as npm start).",
     "cryptoFailed": "Couldn't encrypt or decrypt the secrets.",
-    "noResponse": "Secret encryption didn't respond.",
+    "noResponse": "Secret encryption (the keychain on macOS) isn't responding. If a keychain prompt is showing, answer it. Pleiad reads the secrets again automatically.",
     "osUnavailable": "The OS encryption feature isn't available.",
     "fileBroken": "Can't read the secrets file. The file is corrupted.",
     "locked": "Secrets saved with encryption can't be decrypted in this launch. Open them from Pleiad desktop.",

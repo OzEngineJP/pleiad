@@ -234,8 +234,10 @@ export function createRemoteHost({
 
   async function loadConfig() {
     const s = await store.settings();
-    const secretStored = await store.enrollSecret();
     const relayUrl = s.relayUrl || env.AGENT_HOST_RELAY_URL || '';
+    // 秘密を読めない（locked）ときも、保存した許可・中継の URL は状態に出す（スイッチが保存した値と食い違って「オフ」に見えないように）
+    cfg = { ...cfg, enabled: s.enabled, relayUrl, relayUrlFromEnv: !s.relayUrl && Boolean(env.AGENT_HOST_RELAY_URL), plusConnect: s.plus?.connect !== false };
+    const secretStored = await store.enrollSecret();
     cfg = {
       enabled: s.enabled,
       relayUrl,
@@ -920,7 +922,7 @@ export function createRemoteHost({
         // 続けて断ったので、公式の中継からの申し込みを止めている間 { until }（ISO 時刻）。止めていなければ null
         paused: plusPausedStatus(),
       },
-      storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
+      storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}), ...(storage.pending ? { pending: true } : {}) } : null,
     };
   }
 
@@ -995,6 +997,11 @@ export function createRemoteHost({
     store,
     /** 起動時に 1 回。無効なら何もしない（鍵も作らない）。 */
     start: () => apply(),
+    /** 秘密を読めずに止まった（locked）link があれば、設定から読み直す。暗号化の口が答えを返せるようになったときに呼ぶ */
+    retryLocked() {
+      if (![links.own, links.plus].some(l => l.error?.code === 'locked')) return applying;
+      return apply();
+    },
     status,
 
     /** { enabled?, relayUrl?, enrollSecret?, hostName?, plusConnect? }。enrollSecret は undefined なら残し、'' か null で消す。 */
