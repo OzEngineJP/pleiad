@@ -135,11 +135,10 @@ function loadPrefs() {
       expanded: new Set(Array.isArray(p.expanded) ? p.expanded : []),
       sort: p.sort === "recent" ? "recent" : "relevance",
       chCollapsed: new Set(Array.isArray(p.chCollapsed) ? p.chCollapsed : []),
-      chMore: new Set(Array.isArray(p.chMore) ? p.chMore : []),
-      statusMore: new Set(Array.isArray(p.statusMore) ? p.statusMore : []),
+      // 前の版の chMore・statusMore（「ほか n 件」を開いた区画）は読まない。次の保存で消える（ADR 0255）
     };
   } catch {
-    return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance", chCollapsed: new Set(), chMore: new Set(), statusMore: new Set() };
+    return { filter: { backends: [], dir: null, status: undefined, period: 0 }, collapsed: new Set(), expanded: new Set(), sort: "relevance", chCollapsed: new Set() };
   }
 }
 
@@ -188,8 +187,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   const collapsed = prefs.collapsed;
   const expanded = prefs.expanded;              // 開いている家族（根の sessionId）。既定は畳んだ状態
   const chCollapsed = prefs.chCollapsed;        // 畳んだ置き場所（"home" かチャンネルの id）
-  const chMore = prefs.chMore;                  // 最近 3 件の先を開いたチャンネル
-  const statusMore = prefs.statusMore;          // 最近 5 件の先を開いた状態
   const decided = new Set();                    // 人が開閉を決めた家族。決めるまで、今いる会話の器は開いたまま
   const made = new Set();                       // この画面で作った（まだ誰も付いていない）仮の状態
   let last = { sessions: [], statuses: [], currentId: null, runningIds: new Set(), waitingIds: new Set(), chromeWaitIds: new Set(), unreadIds: new Set(), interrupted: new Map(), schedules: new Map(), draft: null, backendLabels: null, pendingRows: new Map(), pendingStatuses: new Map(), pendingNew: null, threads: [] };
@@ -266,8 +263,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         sort: sortMode,
         collapsed: [...collapsed],
         chCollapsed: [...chCollapsed],
-        chMore: [...chMore],
-        statusMore: [...statusMore],
         // 消えたセッションの id は溜めない（一覧を受け取る前は間引かない）
         expanded: last.sessions.length ? [...expanded].filter((id) => last.sessions.some((s) => s.id === id)) : [...expanded],
       }));
@@ -453,23 +448,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       const rowsEl = keyed(el("div", "rows"), `rows:${st ?? ''}`, true);
       rowsEl.setAttribute("role", "group");
       if (draftHere) rowsEl.append(row({ id: null, title: "", cwd: last.draft.cwd, status: last.draft.status }, 3));
-      // fork の器は分断しない。開いている会話と、あなた待ちを含む器は件数の外でも残す。
-      const all = statusMore.has(st ?? "");
-      let count = 0;
-      const shown = fams.filter((fam) => {
-        const list = members(fam);
-        const show = all || count < STATUS_RECENT || list.some((s) => s.id === last.currentId || last.waitingIds.has(s.id));
-        count += list.length;
-        return show;
-      });
-      for (const fam of shown) rowsEl.append(fam.kin.length ? family(fam, 3) : row(fam.root, 3));
-      const hidden = rows.length - shown.reduce((n, fam) => n + members(fam).length, 0);
-      if (hidden || all && rows.length > STATUS_RECENT) {
-        rowsEl.append(moreRow(`status:${st ?? ''}`, 3, all, hidden, () => {
-          if (all) statusMore.delete(st ?? ""); else statusMore.add(st ?? "");
-          save(); render();
-        }));
-      }
+      // 件数では絞らず、全部を出す（ADR 0255）
+      for (const fam of fams) rowsEl.append(fam.kin.length ? family(fam, 3) : row(fam.root, 3));
       if (!rows.length && !draftHere) rowsEl.append(el("div", "empty", t("sidebar.empty")));
       sec.append(rowsEl);
       wanted.append(sec);
@@ -478,10 +458,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   // ---- 置き場所の木 ---------------------------------------------------
-  // 一時チャット（会話のスレッド）を先頭に、チャンネルごとに開閉できる見出し・最近のスレッド・「ほか n 件」。続けて Bots・ルーティン（channelExtras）
-
-  const STATUS_RECENT = 5;
-  const CHANNEL_RECENT = 3;   // 見出しの下に出す最近のスレッドの数（開いているものは数えずに足す）
+  // 一時チャット（会話のスレッド）を先頭に、チャンネルごとに開閉できる見出しとスレッド（全部）。続けて Bots・ルーティン（channelExtras）
 
   /** ◆ の字。待っているものが Chrome の操作だけなら、承認ではないのでそう言う */
   const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : t("sidebar.waiting");
@@ -584,24 +561,10 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       sec.append(rowsEl);
       return sec;
     }
-    const all = chMore.has(key);
-    const shown = all ? rows : rows.filter((s, i) => i < CHANNEL_RECENT || s.id === last.currentId || last.waitingIds.has(s.id));
-    for (const s of shown) rowsEl.append(oneRow(s, 2));
-    const hidden = rows.length - shown.length;
-    if (hidden || all && rows.length > CHANNEL_RECENT) {
-      rowsEl.append(moreRow(key, 2, all, hidden, () => { if (all) chMore.delete(key); else chMore.add(key); save(); render(); }));
-    }
+    for (const s of rows) rowsEl.append(oneRow(s, 2));
     if (!rows.length) rowsEl.append(el("div", "empty", t("channels:side.noThreads")));
     sec.append(rowsEl);
     return sec;
-  }
-
-  function moreRow(key, level, all, hidden, open) {
-    const more = keyed(el("div", "row one more"), `chmore:${key}`);
-    treeItem(more, `m:${key}`, level, { open });
-    more.append(el("span", "one-mark"), el("span", "row-t", all ? t("channels:side.less") : t("channels:side.more", { count: hidden })));
-    more.onclick = open;
-    return more;
   }
 
   function buildPlaces(wanted) {

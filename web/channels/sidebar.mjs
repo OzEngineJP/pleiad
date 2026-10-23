@@ -1,7 +1,7 @@
 // 脇の Channels 側（docs/channels.md「画面」、ADR 0107、モック 01）。#channelsSide の 3 つの節を描く:
 //   チャンネル … # 名前。未読は太字、あなた宛ては件数の札。＋でその場に名前の欄を出して作る（channels.create）
 //   Bots       … アイコン・名前・エージェント・状態（待機 / 作業中の回る弧 / あなた待ち）。押すと DM、＋は bot を作る画面（W4）
-//   ルーティン … 次に動く時刻の近い順に 3 件（多いときは［ほか n 件］で全部）。一時停止中は薄く、直近の失敗は「✕ 失敗」。押すと編集のシート（routine-sheet.mjs）、＋で新規
+//   ルーティン … 次に動く時刻の近い順に全部。一時停止中は薄く、直近の失敗は「✕ 失敗」。押すと編集のシート（routine-sheet.mjs）、＋で新規
 // 見ていない側のタブの札に点（あなたを待っているものは --ink-mark、未読だけなら青）を付ける。Chats 側の数は web/side.mjs の attention()。
 // 検索は Chats と同じ欄（#q）で両方を横断する（side.connectChannels。結果の行に「Chats」「#チャンネル」）。
 // 読むのは channels.list・bots.list・channels.search・routines.list（routine-store.mjs）、更新は出来事 channelsChanged・channelPost・channelRead・channelThread・botsChanged・routinesChanged。
@@ -14,7 +14,7 @@ import { backendLogo } from '../side.mjs';
 import { sideChannels, botState, tabDots, channelNameRows, postRows, showDetail, selectedRow } from './side-model.mjs';
 import { shownBot } from './plain-bot.mjs';
 import { getRoutineStore } from './routine-store.mjs';
-import { sortForSide, SIDE_LIMIT, lastFailed } from './routine-model.mjs';
+import { sortForSide, lastFailed } from './routine-model.mjs';
 import { openRoutine, whenText, stateText } from './routine-entry.mjs';
 
 const ICONS = {
@@ -46,7 +46,6 @@ export function createSidebar(host, getTabs) {
     loaded: false,           // 一度でも読めた
     stale: true,             // 読み直しが要る（接続の前に読もうとして失敗した・出来事が来た）
     view: null,              // メインに出している面（show の view）。脇の選ばれた行
-    routinesAll: false,      // ルーティンを 3 件に絞らず全部出している
     creating: false,         // チャンネルの名前の欄を出している
     createError: '',
     focusKey: null,          // キーボードで指している行（描き直しても指し続ける）
@@ -207,15 +206,14 @@ export function createSidebar(host, getTabs) {
     ], b.name);
   }
 
-  // 次に動く時刻の近い順に 3 件。一時停止は後ろに薄く（.paused）、直近の失敗は「✕ 失敗」、時刻は「今日 23:00」
+  // 次に動く時刻の近い順に全部（件数では絞らない。ADR 0255）。一時停止は後ろに薄く（.paused）、直近の失敗は「✕ 失敗」、時刻は「今日 23:00」
   const routineStore = getRoutineStore(host);
   function paintRoutines() {
     const box = rowsOf.routines;
     if (!box) return;
     const all = sortForSide(routineStore.list());
-    const shown = S.routinesAll ? all : all.slice(0, SIDE_LIMIT);
     const channelName = (id) => S.channels.find((c) => c.id === id)?.name;
-    const nodes = shown.map((rt) => {
+    const nodes = all.map((rt) => {
       const where = channelName(rt.channelId);
       const when = rt.paused ? t('channels:routines.paused') : whenText(rt.nextAt);
       const failed = lastFailed(rt);
@@ -235,12 +233,6 @@ export function createSidebar(host, getTabs) {
       r.botMenu = (x, y) => routineMenu(rt, x, y);   // 右クリックと同じ入口をキーボード（Shift+F10）からも
       return r;
     });
-    if (all.length > SIDE_LIMIT) {
-      const more = el('button', 'cs-more', S.routinesAll ? t('channels:routines.fewer') : t('channels:routines.more', { count: all.length - SIDE_LIMIT }));
-      more.type = 'button';
-      more.addEventListener('click', () => { S.routinesAll = !S.routinesAll; paintRoutines(); roving(false); });
-      nodes.push(more);
-    }
     if (!nodes.length) nodes.push(el('div', 'empty cs-empty', routineStore.loaded ? t('channels:side.routinesEmpty') : t('channels:side.loading')));
     box.replaceChildren(...nodes);
   }

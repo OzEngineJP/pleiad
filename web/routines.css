@@ -80,9 +80,6 @@
 .cs-row.paused{opacity:.5}
 .cs-row .row-meta .cs-rt-ch{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cs-rt-fail{flex:none;font-weight:700;color:var(--ink-strong);white-space:nowrap}
-.cs-more{display:block;width:100%;background:transparent;text-align:left;padding:4px 10px;border-radius:var(--r-m);font-size:var(--fs-xs);color:var(--ink-weak);cursor:pointer}
-.cs-more:hover{background:var(--surface-hover);color:var(--ink)}
-.cs-more:focus-visible{outline:2px solid var(--line-blue);outline-offset:-1px}
 
 /* ---- チャンネルの見出しの［ルーティン n］ */
 .ch-routines{flex:none;gap:5px}

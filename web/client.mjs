@@ -7436,12 +7436,12 @@ function initSidebar() {
   $("closeSidebar").onclick = () => setSidebar(false);
   $("openSidebar").onclick = () => setSidebar(true);
   $("sideVeil").onclick = () => setDrawer(false);
-  // 引き出しは移動したときだけ閉じる。脇の中で済む操作（「ほか N 件」の行 .row.more・見出しの開閉・フィルター・「…」）では閉じない。
+  // 引き出しは移動したときだけ閉じる。脇の中で済む操作（見出しの開閉・フィルター・「…」）では閉じない。
   // 押して閉じるのは会話の行（開いている会話の行は会話へ戻る）と設定。メニューから開く・新しく始めるときは select / startNew が、
   // チャンネルの面へ移るとき（チャンネルの名前・＋・スレッドの行・bot）は channels:show が閉じる
   $("sidebar").addEventListener("click", (e) => {
     if (!narrowView.matches || !drawerOpen()) return;
-    if (e.target.closest(".row:not(.more), #settings, #authNeed")) setDrawer(false);
+    if (e.target.closest(".row, #settings, #authNeed")) setDrawer(false);
   });
   document.addEventListener("channels:show", () => { if (narrowView.matches) setDrawer(false); });
   document.addEventListener("keydown", (e) => {

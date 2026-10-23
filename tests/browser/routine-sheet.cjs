@@ -2,7 +2,7 @@
 // 実データと分離したサーバー（AGENT_HOST_BACKENDS=fake・別ポート・使い捨ての置き場。ポート 7433・トークン routine-test）を開いてから実行する。
 // ルーティンの編集のシート・脇のルーティンの節・チャンネルの見出しの［ルーティン n］・bot のページの節（web/channels/routine-sheet.mjs・routine-entry.mjs・sidebar.mjs。ADR 0112）:
 //   作る（検査・種類ごとの欄・次の時刻・承認モード・期限）・試しに動かす（一時停止で作って dryRun で走らせ、取り消すと消す）・直して保存・一時停止/再開・削除（2 度押し）・
-//   脇は次の時刻の近い順に 3 件（一時停止は薄く、失敗は「✕ 失敗」）・出来事 routinesChanged で脇と見出しが更新される・360 幅は全画面で横にはみ出さない。
+//   脇は次の時刻の近い順に全部（件数で絞らない。一時停止は薄く、失敗は「✕ 失敗」）・出来事 routinesChanged で脇と見出しが更新される・360 幅は全画面で横にはみ出さない。
 // チャンネルは本物の channels.*。routines.*（R1 の操作）と bots.list / bots.get はページの中で答える（記録は window.__rcalls）。
 async page => {
   const URL = 'http://127.0.0.1:7433/?token=routine-test';
@@ -225,23 +225,20 @@ async page => {
   check(await page.locator('.ch-routines .rt-n').textContent() === '1', '見出しの［ルーティン］に数が付く');
   await shot('07-created');
 
-  // ---- 3 件に絞る・並べ方・一時停止は薄く・失敗は「✕ 失敗」・ほか n 件
+  // ---- 件数で絞らずに全部・並べ方・一時停止は薄く・失敗は「✕ 失敗」（ADR 0255）
   const mk = (id, name, nextAt, extra = {}) => ({ id, name, botId: 'b_owl', channelId: ch.id, prompt: 'x', trigger: { kind: 'daily', at: '09:00', weekdaysOnly: false }, mode: 'default', approvalTimeoutMin: 30, paused: false, createdBy: { kind: 'human' }, createdAt: 1, nextAt, ...extra });
   const t0 = Date.now();
   await page.evaluate(([a, b, c]) => { window.__routines.push(a, b, c); }, [mk('r_a', '夜の失敗の見回り', t0 + 20 * 60e3, { last: { at: t0 - 3600e3, runId: 'x', state: 'failed' } }), mk('r_b', '依存の更新', null, { paused: true }), mk('r_c', '週次のまとめ', t0 + 7 * 86400e3)]);
   for (const id of ['r_a', 'r_b', 'r_c']) await deliver({ type: 'routinesChanged', sessionId: null, routine: await page.evaluate(i => window.__routines.find(r => r.id === i), id) });
-  await page.waitForFunction(() => document.querySelectorAll('#groups .cs-sec[data-sec="routines"] .cs-row').length === 3);
+  await page.waitForFunction(() => document.querySelectorAll('#groups .cs-sec[data-sec="routines"] .cs-row').length === 4);
   const order = await page.locator('#groups .cs-sec[data-sec="routines"] .cs-row .row-t').allTextContents();
-  check(order.join() === '夜の失敗の見回り,朝のまとめ,週次のまとめ', '脇は次に動く時刻の近い順に 3 件（4 件目は一時停止なので後ろ）');
+  check(order.join() === '夜の失敗の見回り,朝のまとめ,週次のまとめ,依存の更新', '脇は次に動く時刻の近い順に 4 件すべて（一時停止は後ろ）');
+  check(await page.locator('#groups .cs-more').count() === 0, '件数では絞らず、［ほか n 件を見る］は無い');
   check(await page.locator('#groups .cs-rt-fail').first().textContent() === '✕ 失敗', '直近の失敗は「✕ 失敗」');
-  const more = page.locator('#groups .cs-more');
-  check(await more.textContent() === 'ほか 1 件を見る', '3 件を超えると［ほか n 件を見る］');
-  await more.click();
-  check(await page.locator('#groups .cs-sec[data-sec="routines"] .cs-row').count() === 4 && await page.locator('#groups .cs-row.paused').count() === 1, '押すと全部出る。一時停止は薄い（.paused）');
+  check(await page.locator('#groups .cs-row.paused').count() === 1, '一時停止は薄い（.paused）');
   check(await page.locator('#groups .cs-row.paused .row-when').textContent() === '一時停止', '一時停止の行は時刻の代わりに「一時停止」');
   check(await page.locator('.ch-routines .rt-n').textContent() === '4', '見出しの数が出来事で 4 になる');
   await shot('08-side');
-  await page.locator('#groups .cs-more').click();
 
   // ---- 見出しの入口: 複数あればメニュー（そのルーティン … / ルーティンを作る）
   await page.locator('.ch-routines').click();
@@ -270,8 +267,7 @@ async page => {
   await page.waitForFunction(() => document.querySelector('[data-state="off"]').getAttribute('aria-pressed') === 'true');
   await page.keyboard.press('Escape');
   await sheet.waitFor({ state: 'hidden' });
-  await page.locator('#groups .cs-more').click();   // 一時停止にすると 4 番目へ回り、3 件の外に出る
-  await page.waitForSelector('#groups .cs-row.paused:has-text("朝のまとめ")');
+  await page.waitForSelector('#groups .cs-row.paused:has-text("朝のまとめ")');   // 一時停止にすると後ろへ回る（絞らないので脇に出たまま）
   check(true, '状態を「一時停止」にすると routines.pause が呼ばれ、脇の行が薄くなる（後ろへ回る）');
   await page.locator('#groups .cs-row.paused', { hasText: '朝のまとめ' }).click();
   await sheet.waitFor({ state: 'visible' });

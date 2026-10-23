@@ -118,9 +118,9 @@ export default async function (t) {
     dom.restore();
   }
 
-  // ---- 最近 5 件・開いている会話とあなた待ちは残す・手動の畳みの印
+  // ---- 件数で絞らずに全部（ADR 0255）・手動の畳みの印。最後の好みは前の版の「ほか n 件」を開いた区画（chMore・statusMore）が残っているもの
   const rows = Array.from({ length: 9 }, (_, i) => ({ id: `s${i}`, title: `chat ${i}`, status: 'A', backend: 'fake', cwd: '/work', lastModified: 10000 - i }));
-  for (const prefs of [{}, { filter: { status: 'A' } }, { filter: { backends: ['fake'] } }, { filter: { dir: '/work' } }]) {
+  for (const prefs of [{}, { filter: { status: 'A' } }, { filter: { backends: ['fake'] } }, { filter: { dir: '/work' } }, { chMore: ['a'], statusMore: ['A'] }]) {
     const d = installDom(prefs);
     try {
       const extra = new N('section'); extra.dataset.sec = 'bots';
@@ -130,12 +130,12 @@ export default async function (t) {
       side.render(rows, { statuses: [{ status: 'A', icon: '◐' }, { status: 'B' }], threads, currentId: 's7', waitingIds: new Set(['s8', 'thread:a:t6']) });
       const root = d.els.get('groups');
       const a = sectionOf(root, 'A');
-      t.ok('5 件と開いている行・待ちが残り、残りの正しい件数を出す', !!rowOf(a, 's4') && !rowOf(a, 's5') && !!rowOf(a, 's7') && !!rowOf(a, 's8') && a.textContent.includes('ほか 2 件'));
-      const more = find(a, n => n.dataset.key === 'm:status:A');
-      more.treeOpen();
-      t.ok('ほか n 件を開くと全部出て、少なく表示で戻せる', !!rowOf(sectionOf(root, 'A'), 's5') && sectionOf(root, 'A').textContent.includes('少なく表示'));
-      find(sectionOf(root, 'A'), n => n.dataset.key === 'm:status:A').treeOpen();
+      t.ok('状態の会話を 9 件すべて出し、「ほか n 件」の行は無い', rows.every(r => !!rowOf(a, r.id)) && !find(root, n => String(n.dataset.key ?? '').startsWith('m:')) && !root.textContent.includes('ほか'));
       find(sectionOf(root, 'A'), n => n.dataset.key === 'g:A').treeExpand(false);
+      if ('chMore' in prefs) {
+        const saved = JSON.parse(localStorage.getItem('agent-host-side'));
+        t.ok('前の版の chMore・statusMore は読まず、次の保存で消える', !('chMore' in saved) && !('statusMore' in saved) && saved.collapsed.includes('A'), JSON.stringify(saved));
+      }
       t.ok('畳んだ状態の見出しに待ちの印', sectionOf(root, 'A').classList.contains('collapsed') && !!find(sectionOf(root, 'A').children[0], n => n.classList.contains('wait')));
       const home = find(root, n => n.dataset.sideKey === 'chsec:home');
       home.children[0].treeExpand(false);
@@ -145,7 +145,7 @@ export default async function (t) {
       if (prefs.filter?.dir || prefs.filter?.backends) {
         t.ok('スレッドの持たない値で絞る間はチャンネルを見せない', !channel && !find(root, n => n.dataset.sideKey === 'chsec:z'));
       } else {
-        t.ok('チャンネルも同じ状態フィルターと最近 3 件・待ちを守る', !!channel && !!rowOf(channel, 'thread:a:t6') && !rowOf(channel, 'thread:a:t4') && (!prefs.filter || !rowOf(channel, 'thread:a:t0')));
+        t.ok('チャンネルは同じ状態フィルターを守り、スレッドを件数で絞らずに全部出す', !!channel && [1, 2, 3, 4, 5, 6].every(i => !!rowOf(channel, `thread:a:t${i}`)) && (prefs.filter ? !rowOf(channel, 'thread:a:t0') : !!rowOf(channel, 'thread:a:t0')));
         t.ok('スレッドの行の状態アイコンに名前がある', !!find(channel, n => n.classList.contains('row-status') && n.getAttribute('aria-label') === 'A'));
       }
       t.ok('フィルター中は Bots を隠す', prefs.filter ? !root.children.includes(extra) : root.children.includes(extra));
@@ -160,7 +160,7 @@ export default async function (t) {
     const parent = { id: 'parent', title: 'parent', status: 'A', lastModified: 9990 };
     const child = { id: 'child', title: 'child', status: 'A', lastModified: 9989, parent: { sessionId: 'parent' } };
     side.render([...rows, parent, child], { statuses: [{ status: 'A' }], currentId: 'child' });
-    t.ok('5 件の外の開いている枝は、fork の器ごと残す', !!find(root, n => n.dataset.sideKey === 'family:parent') && !!rowOf(root, 'parent') && !!rowOf(root, 'child'));
+    t.ok('多くの会話の後ろの開いている枝も、fork の器ごと出る', !!find(root, n => n.dataset.sideKey === 'family:parent') && !!rowOf(root, 'parent') && !!rowOf(root, 'child'));
     t.ok('fork の器の中の行は level 4', rowOf(root, 'child')?.getAttribute('aria-level') === '4');
   } finally { familyDom.restore(); }
 

@@ -229,8 +229,6 @@ export function sortForSide(routines) {
     || String(a.name ?? '').localeCompare(String(b.name ?? ''), undefined, { numeric: true, sensitivity: 'base' }));
 }
 
-export const SIDE_LIMIT = 3;
-
 /** 直近の実行が失敗か（脇の行に「✕ 失敗」を出す） */
 export const lastFailed = (r) => r?.last?.state === 'failed';
 

@@ -16,14 +16,8 @@ async (page, { url = page.url() } = {}) => {
   check(await home.locator('.grp .row[data-session]').count() > 0, 'status groups are nested inside home');
   check(await page.locator('#groups .bot-waits').count() === 0, 'waiting does not get a separate section');
 
-  const statusMore = home.locator('.grp .row.more').first();
-  if (await statusMore.count()) {
-    const before = await home.locator('.grp .row[data-session]').count();
-    await statusMore.click();
-    check(await home.locator('.grp .row[data-session]').count() > before, 'status more row expands the hidden chats');
-    await statusMore.click();
-    check(await home.locator('.grp .row[data-session]').count() === before, 'show less restores the five-chat limit');
-  }
+  // No section is trimmed by count (ADR 0255): there is no "N more" / "show less" row anywhere.
+  check(await page.locator('#groups .row.more, #groups .cs-more').count() === 0, 'no section folds its rows into an N more row');
 
   const inProgress = page.locator('[data-side-key="group:進行中"]');
   const review = page.locator('[data-side-key="group:レビュー待ち"]');
@@ -37,7 +31,7 @@ async (page, { url = page.url() } = {}) => {
   await inProgress.locator(`.row[data-session="${id}"]`).waitFor();
 
   const channel = page.locator('#groups > .chsec:not([data-side-key="chsec:home"])').first();
-  check(await channel.locator('.row[data-thread]').count() === 3, 'channels initially show three recent threads');
+  check(await channel.locator('.row[data-thread]').count() > 0 && await channel.locator('.row.more').count() === 0, 'channels show every thread without an N more row');
   const thread = channel.locator('.row[data-thread]').first();
   check(await thread.getAttribute('draggable') !== 'true' && await thread.locator('.row-status[aria-label]').count() === 1, 'channel rows have status icons and do not drag');
   await thread.click({ button: 'right' });

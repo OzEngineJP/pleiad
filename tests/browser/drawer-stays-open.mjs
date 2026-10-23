@@ -1,9 +1,10 @@
-// スマホの幅の引き出し（脇。web/client.mjs の initSidebar・ADR 0251 の置き場所の木）は、脇の中で移動しない操作では閉じない（実ブラウザー）:
-//   - 状態の「ほか N 件」・チャンネルの「ほか N 件」を押すと、脇は開いたままでその場で行が増える。もう一度押すと戻る
+// スマホの幅の引き出し（脇。web/client.mjs の initSidebar・ADR 0251 の置き場所の木）の実ブラウザーの確かめ:
+//   - どの区画も件数で絞らずに全部を出す（ADR 0255）。同じ状態の会話 12 件・スレッド 9 件のチャンネルがすべて並び、「ほか N 件」「表示を減らす」は無い
+//   - 前の版が保存した好み（chMore・statusMore）が残っていても崩れず、次の保存で消える
 //   - 状態の見出し・チャンネルの開閉・行の「…」・フィルターを押しても閉じない
 //   - 会話の行・チャンネルの名前・チャンネルの ＋・スレッドの行を押すと（移動する）閉じる。＋ は閉じた後に流れの入力欄へ居場所を置く
 // 実行: node tests/browser/drawer-stays-open.mjs   （playwright-core は playwright-cli 同梱のもの。PW_CORE・PW_CHROMIUM で替えられる）
-// 本物のサーバー（fake のバックエンド・一時のデータ置き場・別ポート）だけと話す。会話 7 件（同じ状態）と返信のあるスレッド 5 件のチャンネルを WS で作る
+// 本物のサーバー（fake のバックエンド・一時のデータ置き場・別ポート）だけと話す。会話 12 件（同じ状態）と返信のあるスレッド 9 件のチャンネルを WS で作る
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,8 @@ function chromiumPath() {
   return path.join(base, dirs[0], 'chrome-headless-shell-win64', 'chrome-headless-shell.exe');
 }
 
+const CHATS = 12;     // 前の版の 5 件の上限を大きく超える
+const THREADS = 9;    // 前の版の最近 3 件の上限を大きく超える
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ply-drawer-open-'));
 let server, browser, ws;
 try {
@@ -31,12 +34,11 @@ try {
   server = await startServer({ dataDir: path.join(scratch, 'data'), env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_LOCALE: 'ja' } });
   ws = await open({ port: server.port, token: server.token });
   const invoke = (op, args) => ws.cmd('invoke', { op, args });
-  // 一時チャットの同じ状態（状態なし）に 7 件。5 件を超えた 2 件が「ほか 2 件」に畳まれる
-  for (let i = 1; i <= 7; i++) await ws.runTurn({ backend: 'fake', cwd: work, prompt: `echo:会話 ${i}` });
-  // スレッド 5 件のチャンネル。最近 3 件の先の 2 件が「ほか 2 件」に畳まれる
+  // 一時チャットの同じ状態（状態なし）に 12 件
+  for (let i = 1; i <= CHATS; i++) await ws.runTurn({ backend: 'fake', cwd: work, prompt: `echo:会話 ${i}` });
   const channel = await invoke('channels.create', { name: 'dev' });
   // 脇に出るスレッドは返信のある根（core/channels/service.mjs の threadIndex）
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= THREADS; i++) {
     const root = await invoke('channels.post', { channelId: channel.id, text: `スレッド ${i}`, new: true });
     await invoke('channels.post', { channelId: channel.id, threadId: root.id, text: `返信 ${i}` });
   }
@@ -44,6 +46,12 @@ try {
 
   browser = await chromium.launch({ executablePath: chromiumPath() });
   const ctx = await browser.newContext({ viewport: { width: 360, height: 760 }, hasTouch: true, isMobile: true, locale: 'ja-JP' });
+  // 前の版の好み: 「ほか n 件」を開いた区画を覚えていた（読まずに無視する）
+  await ctx.addInitScript(([channelId]) => {
+    if (sessionStorage.getItem('oldPrefsSeeded')) return;
+    sessionStorage.setItem('oldPrefsSeeded', '1');
+    localStorage.setItem('agent-host-side', JSON.stringify({ chMore: [channelId], statusMore: ['group:'] }));
+  }, [channel.id]);
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
@@ -77,29 +85,29 @@ try {
   };
 
   await openDrawer();
-  await page.locator(`${home} .grp .row.more`).first().waitFor();
-
-  // 状態の「ほか N 件」
   const sessionRows = `${home} .grp .row[data-session]:not([data-session=""])`;
-  const before = await count(sessionRows);
-  await tapKeeps(page.locator(`${home} .grp .row.more`).first(), '状態の「ほか N 件」');
-  check(await count(sessionRows) > before, '状態の「ほか N 件」で会話の行が増える', { before, after: await count(sessionRows) });
-  await tapKeeps(page.locator(`${home} .grp .row.more`).first(), '状態の「表示を減らす」');
-  check(await count(sessionRows) === before, '状態の「表示を減らす」で 5 件に戻る');
-
-  // チャンネルの「ほか N 件」
   const threadRows = `${chan} .row[data-thread]`;
-  const threadsBefore = await count(threadRows);
-  await tapKeeps(page.locator(`${chan} .row.more`), 'チャンネルの「ほか N 件」');
-  check(threadsBefore === 3 && await count(threadRows) === 5, 'チャンネルの「ほか N 件」でスレッドの行が増える', { threadsBefore, after: await count(threadRows) });
-  await tapKeeps(page.locator(`${chan} .row.more`), 'チャンネルの「表示を減らす」');
+  const madeRows = `${home} .grp .row[data-session^="fake-"]`;   // 作った 12 件（未送信の下書きの行は数えない）
+  await page.waitForFunction(([s, n]) => document.querySelectorAll(s).length >= n, [madeRows, CHATS], { timeout: 5000 }).catch(() => {});
+
+  // 件数で絞らずに全部を出す
+  check(await count(madeRows) === CHATS, `同じ状態の会話 ${CHATS} 件がすべて並ぶ`, await count(madeRows));
+  check(await count(threadRows) === THREADS, `チャンネルのスレッド ${THREADS} 件がすべて並ぶ`, await count(threadRows));
+  const leftovers = await page.evaluate(() => [...document.querySelectorAll('#groups .row.more, #groups .cs-more')].length
+    + [...document.querySelectorAll('#groups .row-t, #groups button')].filter(n => /^ほか \d+ 件|表示を減らす|少なく表示/.test(n.textContent.trim())).length);
+  check(leftovers === 0, '「ほか N 件」「表示を減らす」の行やボタンは無い', leftovers);
 
   // ほかの、脇の中で移動しない操作
   await tapKeeps(page.locator(`${home} .grp > .grp-head .grp-name`).first(), '状態の見出し（畳む）');
   check(await count(`${home} .grp.collapsed`) === 1, '状態の見出しで畳まれる');
+  // 見出しの開閉で好みが保存され、前の版の chMore・statusMore は消える
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('agent-host-side') ?? '{}'));
+  check(!('chMore' in saved) && !('statusMore' in saved) && Array.isArray(saved.collapsed), '前の版の chMore・statusMore は次の保存で消える', saved);
   await tapKeeps(page.locator(`${home} .grp > .grp-head .grp-name`).first(), '状態の見出し（開く）');
+  check(await count(madeRows) === CHATS, '開き直しても全部が並ぶ');
   await tapKeeps(page.locator(`${chan} > .grp-head .chsec-chev`), 'チャンネルの開閉');
   await tapKeeps(page.locator(`${chan} > .grp-head .chsec-chev`), 'チャンネルの開閉（戻す）');
+  check(await count(threadRows) === THREADS, 'チャンネルを開き直してもスレッドが全部並ぶ');
   await tapKeeps(page.locator('#filterBtn'), 'フィルター');
   await page.keyboard.press('Escape');
   await page.evaluate(() => document.body.click());
@@ -126,7 +134,7 @@ try {
   check(await page.evaluate(() => Boolean(document.activeElement?.closest('#chFeed .ch-input'))), 'チャンネルの ＋ を押すと閉じ、流れの入力欄に居場所が置かれる',
     await page.evaluate(() => document.activeElement?.id || document.activeElement?.className));
   await openDrawer();
-  await page.locator(threadRows).first().click();
+  await page.locator(threadRows).last().click();   // 前の版なら畳まれていた、いちばん古いスレッド
   await page.waitForFunction(() => !document.documentElement.classList.contains('side-open'));
   check(true, 'スレッドの行を押すと閉じる');
 

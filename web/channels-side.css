@@ -22,7 +22,6 @@
 #groups .row.one .row-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #groups .row.one .row-when{flex:none;font-size:var(--fs-xs);color:var(--ink-weak)}
 #groups .row.one .av.xs{flex:none}
-#groups .row.one.more .row-t{color:var(--ink-weak)}
 
 /* ---- 一時チャットの流れの右に会話を並べる（body.home-split。流れ 4 : 会話 6。docs/design-system.md「一時チャットの流れ」） */
 body.channels.home-split:not(.settings){--home-feed-w:40%}
