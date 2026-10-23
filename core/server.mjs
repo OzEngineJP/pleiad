@@ -125,6 +125,7 @@ import { createRemoteHost } from './remote/connector.mjs';
 import { createAgentPort } from './remote/agent-port.mjs';
 import { viewAnswer, viewInstructions, pickDescendants } from './remote/agent-view.mjs';
 import { streamMessages } from '../web/stream-messages.mjs';
+import { liveSnapshot } from './live-snapshot.mjs';
 import { parentPortRemoteAgent, createRemoteDelegation } from './remote-delegation.mjs';
 import { AgentError, remoteOwnerId, isRemoteOwner, parseRemoteOwner, RESULT_PAGE } from './remote/agent-protocol.mjs';
 import { createResidentPrefs, residentSignal, enabledRoutineCount } from './remote/resident.mjs';
@@ -895,6 +896,15 @@ function syncPlusFromRemote(status) {
   if (key !== plusInputsLast) { plusInputsLast = key; remote.refreshPlus(); }
 }
 plusSession.onChange(() => { void syncPlusLink(); });
+// 暗号化の口（main の safeStorage）が答えを返せないまま待ちの上限を過ぎた後に答えた（macOS でキーチェーンの確認に答えた）。
+// 秘密を読めずに止まったリモートの接続・Plus のログインを読み直し、起動時に回せなかった平文の暗号化し直しを回す。再起動は要らない
+secretCipher.onAvailable?.(() => {
+  console.log('  secrets: 暗号化の口が答えたので、読めなかった秘密を読み直す');
+  for (const s of [mcpSecrets, claudeAccountSecrets, agentAccountSecrets, compatSecrets, voiceSecrets, apiKeySecrets, secretValueStore, plusSecrets]) s.migrate().catch(() => {});
+  remote.retryLocked().catch(() => {});
+  plusSession.retryLocked().catch(() => {});
+  void plusHost.maybeRegister();
+});
 // スマホ（離れた端末）への通知（ADR 0086）。判定は core/notify/policy.mjs、暗号は crypto.mjs、送り先は中継の通知の線。
 // 各画面が送る presence（見ている会話）で「見ている間は送らない」を決める。PC の通知の設定は <data>/notify.json
 const notifyPresence = createPresence();
@@ -4077,7 +4087,9 @@ async function reserveTurnSettings(args) {
       if (!manual.backend && targetId === undefined) targetId = preferred;
       const bid = targetId ?? current.nextSettings?.backend ?? source.id;
       const scoped = remembered?.backend === bid ? remembered : null;
-      const global = (await store.getPrefs()).backends?.[bid] ?? await store.getPrefs();
+      // 全体の既定はそのエージェントの分だけ（resolveMode・resolveModel と同じ）。最上位の値（前の版の形）は別のエージェントのものでありうる
+      const prefs = await store.getPrefs();
+      const global = (prefs.backends ? prefs.backends[bid] : prefs) ?? {};
       if (!manual.model && model === undefined) model = scoped?.model ?? global.model ?? '';
       if (!manual.effort && args.effort === undefined) args = { ...args, effort: scoped?.effort ?? global.effort ?? '' };
       if (!manual.mode && mode === undefined) mode = scoped?.mode ?? global.mode;
@@ -4091,6 +4103,8 @@ async function reserveTurnSettings(args) {
     if (current.nextSettings?.backend && !getBackend(current.nextSettings.backend)) current.nextSettings = null;
     let target = getBackend(targetId ?? current.nextSettings?.backend ?? source.id);
     if (!target) throw new Error(t('agents.notFound'));
+    // 場所を替えて引いた記録・既定の承認モードが替えた先に無ければ、替えた先の既定にする（送れなくしない）。手で選んだものは断る
+    if (!cancel && explicit.mode === undefined && mode !== undefined && !target.modes()[mode]) mode = await resolveMode(null, undefined, target);
     const selectedMode = mode ?? (target.id === (current.nextSettings?.backend ?? source.id)
       ? current.nextSettings?.mode : target.id !== source.id ? await resolveMode(null, undefined, target) : undefined);
     if (!cancel && selectedMode !== undefined && !target.modes()[selectedMode]) throw new Error(t('settings.modeUnavailable'));
@@ -4115,7 +4129,9 @@ async function reserveTurnSettings(args) {
     const accountChanged = selectedAccount !== (current.claudeAccount ?? '');
     if (!cancel && !selectedEndpoint && selectedAccount) target = await backendForAccount(target, await accountResolve(target, selectedAccount));
     // 接続先を変えたらモデルは接続先の既定（メインのモデル）に戻す（公式のモデル名を互換の先へ送らない）
-    const selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
+    let selectedModel = model ?? (target.id === previousSelection && selectedEndpoint === previousEndpoint ? current.nextSettings?.model ?? current.model ?? "" : "");
+    // 承認モードと同じく、場所を替えて引いたモデルが使えなければ既定（''）にする
+    if (!cancel && explicit.model === undefined && model !== undefined && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) selectedModel = '';
     if (!cancel && !await validModel(target, selectedModel, settingsCwd, selectedEndpoint)) throw new Error(t('settings.modelUnavailable'));
     const selectedEndpointRow = await endpointRow(selectedEndpoint);
     const previousEffort = target.id === previousBackend ? current.nextSettings?.effort ?? current.effort ?? ''
@@ -9355,6 +9371,23 @@ wss.on("connection", (ws, req) => {
               compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
+            // 走っているターンの頭は畳んだ発言（core/live-snapshot.mjs。ADR 0257）。窓・手前の読み込みは同じ並び（ターン前の履歴＋畳んだ発言）の通し番号で数える
+            const liveBody = (turn) => {
+              const live = turn.stream;
+              // 利用者の発言が無いターン（user が無い）もある
+              const user = live.user
+                ? data.messages.slice(live.messages.length).find(m => m.role === "user" && m.text === live.user.text) ?? live.user
+                : null;
+              const snap = liveSnapshot(live, { backend: turn.backend?.id ?? null, model: turn.info?.model || null });
+              // Use a fixed pre-turn history, never an independently sampled partial
+              // transcript: it may overlap the events or lag behind them.
+              return { messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : []), ...snap.messages], sidecar), ...shellRuns.rows(sessionId, sidecar)],
+                presents: [...live.presents, ...snap.presents], events: snap.events };
+            };
+            if (msg.args?.older && read.turn && !msg.args?.live) {
+              const { messages, presents } = liveBody(read.turn);
+              return loadReply(true, serve({ messages, presents }, msg.args, subagentToolsOf));
+            }
             if (!msg.args?.live) return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, ...retired }, msg.args, subagentToolsOf));
             // 承認は一度きりの配信で、streamEvents にも載らない（web/session-stream.mjs）。
             // 開き直しのたびに保留中のものを返さないと、承認が起きた後にその会話を開いても
@@ -9364,17 +9397,11 @@ wss.on("connection", (ws, req) => {
               .map(([id, w]) => ({ ...w.payload, id }));
             const turn = read.turn;
             if (turn) {
-              const live = turn.stream;
-              // 利用者の発言が無いターン（user が無い）もある
-              const user = live.user
-                ? data.messages.slice(live.messages.length).find(m => m.role === "user" && m.text === live.user.text) ?? live.user
-                : null;
-              // Use a fixed pre-turn history, never an independently sampled partial
-              // transcript: it may overlap the events or lag behind them.
+              const { messages, presents, events } = liveBody(turn);
               return loadReply(true, serve({
-                messages: [...shellRuns.placeKept([...live.messages, ...(user ? [user] : [])], sidecar), ...shellRuns.rows(sessionId, sidecar)], presents: live.presents, completedAt, interrupted: null, draft, ...compactionData,
-                stream: { events: live.events }, streamCursor: streamSequence, permissions,
-                initialMessageId: live.initialMessageId,
+                messages, presents, completedAt, interrupted: null, draft, ...compactionData,
+                stream: { events }, streamCursor: streamSequence, permissions,
+                initialMessageId: turn.stream.initialMessageId,
               }, msg.args, subagentToolsOf));
             }
             return loadReply(true, serve({ ...data, completedAt, interrupted, draft, ...compactionData, streamCursor: streamSequence, permissions, ...retired }, msg.args, subagentToolsOf));

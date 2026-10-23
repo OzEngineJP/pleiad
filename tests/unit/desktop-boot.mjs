@@ -23,6 +23,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const workerMessages = createRequire(import.meta.url)('../../desktop/worker-messages.cjs');
 const loginItem = createRequire(import.meta.url)('../../desktop/login-item.cjs');
 const plusLink = createRequire(import.meta.url)('../../desktop/plus-link.cjs');
+const devIdentity = createRequire(import.meta.url)('../../desktop/dev-identity.cjs');
 // 本物の橋と同じに message の受け手を 1 つ付ける偽物（受け手が worker の listener を増やさないことを見る）
 const listens = (calls, key) => worker => { worker.on('message', () => {}); if (key) calls[key] = worker; return { keepOnClose: () => false, close: () => {} }; };
 
@@ -58,7 +59,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
   utility.kill = () => { calls.killed = true; };
   const app = new EventEmitter();
   Object.assign(app, {
-    isPackaged: packaged, exit: () => {}, quit: () => { calls.quits++; }, requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
+    isPackaged: packaged, exit: () => {}, quit: () => { calls.quits++; }, setName: name => { calls.appName = name; }, requestSingleInstanceLock: () => true, whenReady: () => Promise.resolve(),
     setAsDefaultProtocolClient: scheme => { calls.protocolClient = scheme; return true; },
     getPath: name => name === 'userData' ? 'test-user' : 'test-home', getPreferredSystemLanguages: () => ['ja-JP'], getVersion: () => '1.2.3',
   });
@@ -103,7 +104,8 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './external-url.cjs': { externalUrl: url => url },
     './update-signature.cjs': { installUpdateSignatureVerifier: () => false },
     './server-port.cjs': { savedPort: () => 7499, rememberPort: (_file, port) => { calls.remembered = port; } },
-    './secret-bridge.cjs': { attachSecretBridge: listens(calls, 'secretBridge') },
+    './dev-identity.cjs': devIdentity,
+    './secret-bridge.cjs': { attachSecretBridge: listens(calls, 'secretBridge'), warmSecretStorage: () => { calls.bootSteps.push('secret-warm'); return true; } },
     './i18n.cjs': { t: key => key, setLocale: () => {}, resolveLocale: () => 'ja', initDesktopI18n: async () => {} },
     './file-bridge.cjs': { attachFileBridge: listens(calls) },
     './resident.cjs': { attachResident: ({ worker }) => listens(calls)(worker) },
@@ -152,7 +154,9 @@ export default async function (t) {
     const shellEnv = async ({ env }) => { await tick(); env.PATH = '/opt/homebrew/bin:/usr/bin'; env.FROM_SHELL = '1'; return true; };
     const { calls } = await start({ env: { PATH: '/usr/bin' }, shellEnv });
     t.ok('utilityProcess は、ログインシェルの環境を読み終えてから起こす',
-      calls.bootSteps.indexOf('shell-env:start') === 0 && calls.bootSteps.indexOf('shell-env:done') < calls.bootSteps.indexOf('fork'), calls.bootSteps.join());
+      calls.bootSteps.indexOf('shell-env:start') === 1 && calls.bootSteps.indexOf('shell-env:done') < calls.bootSteps.indexOf('fork'), calls.bootSteps.join());
+    // キーチェーンの確認で main が止まっても起動の待ちが走っていないよう、safeStorage の鍵は boot の最初に取り出す（desktop/secret-bridge.cjs）
+    t.ok('safeStorage の鍵の取り出しは、ログインシェルの読み込み・サーバーの起動より前', calls.bootSteps[0] === 'secret-warm' && calls.bootSteps.filter(s => s === 'secret-warm').length === 1, calls.bootSteps.join());
     t.ok('utilityProcess の env にログインシェルの PATH と変数が入る（agent-browser の場所はその前に足す）',
       calls.forkOptions?.env?.FROM_SHELL === '1' && calls.forkOptions.env.PATH.endsWith('/opt/homebrew/bin:/usr/bin'), calls.forkOptions?.env?.PATH);
   }
@@ -170,9 +174,17 @@ export default async function (t) {
     const { calls } = await start({ env: {} });
     t.ok('開発（パッケージ版でない）の既定は off: 今の utilityProcess で起こし、chooseServer は呼ばない', calls.forks === 1 && calls.chosen === null && calls.loads[0] === 'http://127.0.0.1:7499/?token=utility-token');
     t.ok('off: サーバーの出力を userData の logs/server-dev.log へ向ける（開発版。core/server-log.mjs がサーバーの中で書く）', calls.forkOptions?.env?.AGENT_HOST_SERVER_LOG === path.join('test-user', 'logs', 'server-dev.log'));
+    // 開発版はインストール版と別のアプリとして起こす（desktop/dev-identity.cjs。#126）
+    t.ok('開発版: アプリの名前を Pleiad Dev にする（キーチェーンの項目と userData をインストール版と分ける）', calls.appName === 'Pleiad Dev', calls.appName);
+    t.ok('開発版: 既定のデータ置き場は ~/.agent-host-dev（サーバーへ渡す）', calls.forkOptions?.env?.AGENT_HOST_DATA?.endsWith(`${path.sep}.agent-host-dev`), calls.forkOptions?.env?.AGENT_HOST_DATA);
+  }
+  {
+    const { calls } = await start({ env: { AGENT_HOST_DATA: 'D:/dev-data' } });
+    t.ok('開発版: AGENT_HOST_DATA を渡せばその場所を使う', calls.appName === 'Pleiad Dev' && calls.forkOptions?.env?.AGENT_HOST_DATA === 'D:/dev-data', calls.forkOptions?.env?.AGENT_HOST_DATA);
   }
   {
     const { calls, utility } = await start({ env: { AGENT_HOST_HANDOVER: 'off' }, packaged: true });
+    t.ok('パッケージ版: アプリの名前とデータ置き場は変えない', calls.appName === undefined && calls.forkOptions?.env?.AGENT_HOST_DATA === undefined, `${calls.appName} ${calls.forkOptions?.env?.AGENT_HOST_DATA}`);
     t.ok('off のパッケージ版: 出力は userData の logs/server.log', calls.forks === 1 && calls.forkOptions?.env?.AGENT_HOST_SERVER_LOG === path.join('test-user', 'logs', 'server.log'));
     t.ok('橋が 9 つ message を受けても、worker の message の listener は 1 つ（MaxListenersExceededWarning を出さない。desktop/worker-messages.cjs）', utility.listenerCount('message') === 1 && calls.secretBridge !== utility);
     const seen = [];

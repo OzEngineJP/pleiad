@@ -1,5 +1,6 @@
 # Android の署名済み APK を、main への push で Android に効く変更があったときに GitHub Release へ出す
-# （docs/android-releases.md、ADR 0066）。
+# （docs/android-releases.md、ADR 0066）。新しい版を出したら、同じコミットの AAB を Google Play の
+# 内部テストへ上げてすぐ公開する（android-play.yml を呼ぶ。docs/android-releases.md「Google Play」）。
 #
 # デスクトップの更新とは干渉しない:
 # - デスクトップの自動更新（desktop/update-auth.cjs の newestRelease）はタグから `v` を外して
@@ -32,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      released: ${{ steps.publish.outputs.released }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -140,6 +143,7 @@ jobs:
             exit 1
           fi
       - name: Create release
+        id: publish
         if: steps.version.outputs.skip != 'true'
         env:
           VERSION_NAME: ${{ steps.version.outputs.name }}
@@ -159,6 +163,19 @@ jobs:
           gh release create "$TAG" "$out/Pleiad-Android-$VERSION_NAME.apk" "$out/SHA256SUMS.txt" \
             --target "$GITHUB_SHA" --prerelease --latest=false \
             --title "Pleiad Android $VERSION_NAME" --notes-file "$RUNNER_TEMP/notes.md"
+          echo "released=true" >> "$GITHUB_OUTPUT"
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/pleiad-android.p12"
+  # 新しい版を出したときだけ、同じコミットの AAB を Play の内部テストへ上げてすぐ公開する。
+  # 版がもうある（skip）ときは上げない（同じ versionCode は Play が二度と受け取らない）
+  play:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/android-play.yml
+    with:
+      track: internal
+      status: completed
+    secrets: inherit

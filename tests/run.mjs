@@ -317,6 +317,7 @@ const SUITES = [
   './unit/change-log.mjs',
   // 作業の詳細: 走っている子の出来事（loadSession の live）を仮の発言に畳む・詳細とメインパネルが発言の描き方を共有する
   './unit/stream-messages.mjs',
+  './unit/live-snapshot.mjs',
   './unit/server-agent-tasks.mjs',
   // 承認が片付いた知らせ（permissionSettled）: 子と中継の複製の id ごと・中断でも・片付いた承認への答えは ALREADY_RESOLVED・画面の配線
   './unit/server-permission-settled.mjs',
@@ -398,6 +399,8 @@ const SUITES = [
   './unit/context-runtime.mjs',
   // 外部 MCP の認証（担当が Pleiad のとき）。秘密の置き場、OAuth はローカルのモックの認可サーバー・MCP だけと話す
   './unit/mcp-secret-store.mjs',
+  './unit/secret-pending-recover.mjs',
+  './unit/secret-warmup.mjs',
   './unit/mcp-oauth.mjs',
   './unit/mcp-oauth-more.mjs',
   './unit/mcp-registry-more.mjs',
@@ -925,6 +928,8 @@ const SUITES = [
   './unit/release-bump.mjs',
   // Google Play へ上げるワークフロー: APK の流れと同じ版・同じ鍵、入力と Secrets の確かめ（docs/android-releases.md「Google Play」）
   './unit/android-play-workflow.mjs',
+  // TestFlight へ上げるワークフロー: main の iOS の変更と手動で動き、試験の後に Android と同じ版の決め方で上げる（docs/ios.md「TestFlight への自動の配布」）
+  './unit/ios-testflight-workflow.mjs',
   // --- 通話モード (core/voice/、web/voice/。docs/voice-call.md) ---
   // 中核: PCM・WAV・先頭の無音・発話の区切り（無音・短い声・最長・投機・片）・片の重なりの除去・設定の検査・使用量の台帳
   './unit/voice-core.mjs',

@@ -168,7 +168,15 @@ export default async function (t) {
     const p = session.getIdToken({ force: true }).then(() => null, e => e);
     await tick();
     t.ok('届かない間は reachable: false', (await session.status()).reachable === false);
-    await clock.advance(5 * 60_000);
+    // 1 分ずつ進める。切られた接続の失敗は実の通信で返るので（macOS では setImmediate の数回では返らない）、
+    // 次の 1 分の待ちが入った（または諦めた）のを実時間で待ってから進める
+    let settled = false;
+    p.finally(() => { settled = true; });
+    for (let i = 0; i < 5 && !settled; i++) {
+      const deadline = Date.now() + 10_000;
+      while (!settled && !clock.dueWithin(60_000) && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
+      await clock.advance(60_000);
+    }
     const err = await p;
     const tries = plus.state.calls.filter(c => c.path.startsWith('/v1/token')).length;
     t.ok('5 回で諦める', err?.code === 'network' && tries === 5, `tries=${tries}`);
@@ -376,6 +384,31 @@ export default async function (t) {
     flag = true;
     session.refresh();
     t.ok('印を立てて refresh() → 知らせて出す', events.some(e => e.type === 'config') && session.snapshot().available === true);
+    await plus.close();
+  }
+
+  // ---- 9. 保管を読めない起動（暗号化の口が答えない）→ retryLocked で、再起動せずにログイン中へ戻る ----------------
+  {
+    const { plus, dir, secrets, clock } = await signedInSession();
+    let locked = true;
+    const gated = new Proxy(secrets, { get: (target, key) => key === 'get'
+      ? async k => { if (locked) throw Object.assign(new Error('pending'), { code: 'SECRET_LOCKED', pending: true }); return target.get(k); }
+      : Reflect.get(target, key) });
+    const config = createPlusConfig({ env: { AGENT_HOST_PLUS_API: plus.url }, dataDir: dir, appVersion: '0.32.0', now: clock.now });
+    const session = createPlusSession({ config, secrets: gated, openExternal: () => {}, now: clock.now, timers: clock, fetchFn: fetch, appVersion: '0.32.0' });
+    const events = [];
+    session.onChange(ev => events.push(ev));
+    await session.init();
+    const stuck = await session.status();
+    t.ok('保管を読めない間は locked・未ログイン（保管は消さない）', stuck.error?.code === 'locked' && stuck.signedIn === false && (await secrets.get('plus:session'))?.refreshToken);
+    await session.retryLocked();
+    t.ok('まだ読めなければ locked のまま', (await session.status()).error?.code === 'locked');
+    locked = false;
+    events.length = 0;
+    await session.retryLocked();
+    await tick(20);
+    const back = await session.status();
+    t.ok('読めるようになった後の retryLocked で、ログイン中に戻って知らせる', back.signedIn === true && back.error == null && events.some(e => e.type === 'config'), JSON.stringify(back.error));
     await plus.close();
   }
 }

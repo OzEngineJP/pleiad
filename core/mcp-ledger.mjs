@@ -33,15 +33,25 @@ function startTimesOf(pids, { now = Date.now } = {}) {
     }
     return out;
   }
-  const res = spawnSync('ps', ['-o', 'pid=,etimes=', '-p', pids.join(',')], { encoding: 'utf8', timeout: 15_000 });
+  // etimes（秒）は macOS の ps に無いので、Linux と macOS の両方にある etime（[[dd-]hh:]mm:ss）を読む
+  const res = spawnSync('ps', ['-o', 'pid=,etime=', '-p', pids.join(',')], { encoding: 'utf8', timeout: 15_000 });
   // 死んでいる pid が混ざると ps も非 0 で返る（残りの pid は出力される）
   if (res.error) throw res.error;
   const at = now();
   for (const line of String(res.stdout ?? '').split(/\r?\n/)) {
-    const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-    if (m) out.set(Number(m[1]), at - Number(m[2]) * 1000);
+    const m = /^\s*(\d+)\s+(\S+)\s*$/.exec(line);
+    const secs = m ? elapsedSeconds(m[2]) : null;
+    if (secs != null) out.set(Number(m[1]), at - secs * 1000);
   }
   return out;
+}
+
+/** ps の etime（[[dd-]hh:]mm:ss）を秒にする。読めなければ null */
+export function elapsedSeconds(text) {
+  const m = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$/.exec(String(text).trim());
+  if (!m) return null;
+  const [, d = 0, h = 0, min, sec] = m;
+  return ((Number(d) * 24 + Number(h)) * 60 + Number(min)) * 60 + Number(sec);
 }
 
 /** 木ごと止める。Windows は taskkill /T、POSIX は detached で分けたプロセスグループごと（core/context-bridge.mjs） */

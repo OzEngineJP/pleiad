@@ -1,6 +1,8 @@
 const { app, BrowserWindow, WebContentsView, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+// 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
+require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
 const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
 const { packagedIdentity } = require('./msix.cjs');
 const { prepareUpdateCheck } = require('./update-auth.cjs');
@@ -8,7 +10,7 @@ const { createUpdateLog } = require('./update-log.cjs');
 const { externalUrl } = require('./external-url.cjs');
 const { installUpdateSignatureVerifier } = require('./update-signature.cjs');
 const { savedPort, rememberPort } = require('./server-port.cjs');
-const { attachSecretBridge } = require('./secret-bridge.cjs');
+const { attachSecretBridge, warmSecretStorage } = require('./secret-bridge.cjs');
 const { t, setLocale, resolveLocale, initDesktopI18n } = require('./i18n.cjs');
 const { attachFileBridge } = require('./file-bridge.cjs');
 // ホストとして常駐する（リモートが有効な間、窓を閉じてもトレイに残す・スリープを防ぐ。docs/remote.md §6.3）
@@ -275,6 +277,8 @@ function startServerSwitch(ready, portFile, onServerExit) {
 }
 
 async function boot() {
+  // キーチェーンの確認は、サーバーの起動の待ちを始める前に済ませる（desktop/secret-bridge.cjs の warmSecretStorage）
+  warmSecretStorage(safeStorage, { log: message => console.warn('[secrets]', message) });
   // Dock・Finder から起こすと PATH が launchd の最小限なので、ログインシェルの環境を読み込む（desktop/shell-env.cjs。ADR 0213）。
   // サーバーへ渡す env（下の utilityProcess.fork・desktop/server-boot.cjs の serverEnv）を作る前に終える
   const shellEnv = applyLoginShellEnv({ log: message => console.warn('[shell-env]', message) }).catch(error => console.warn('[shell-env]', error?.message ?? error));

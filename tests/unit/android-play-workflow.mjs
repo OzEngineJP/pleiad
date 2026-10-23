@@ -1,5 +1,5 @@
 // Google Play へ上げるワークフロー（.github/workflows/android-play.yml、docs/android-releases.md「Google Play」）。
-// GitHub Release へ APK を出す android-release.yml と、版の決め方・署名鍵・アクションの版がずれていないことを突き合わせ、
+// android-release.yml が新しい版の後に呼ぶ形と、GitHub Release へ APK を出す android-release.yml と、版の決め方・署名鍵・アクションの版がずれていないことを突き合わせ、
 // 入力と Secrets を確かめる手順（Check inputs and secrets）を bash で実際に流す。Play も GitHub も呼ばない。
 import fs from 'node:fs';
 import os from 'node:os';
@@ -36,9 +36,23 @@ const UPLOAD_KEY = { UPLOAD_KEYSTORE_BASE64: 'BBBB', UPLOAD_KEYSTORE_PASSWORD: '
 const BASE = { REF: 'refs/heads/main', TRACK: 'internal', STATUS: 'draft', FRACTION: '', PLAY_JSON: SA, ...APP_KEY };
 
 export default async function (t) {
-  // ===== 形: 手動だけ・版の固定・APK の流れとの突き合わせ =====
-  t.ok('起動は workflow_dispatch だけ（main への push では上げない）', Object.keys(PLAY.on).join(',') === 'workflow_dispatch', JSON.stringify(PLAY.on));
+  // ===== 形: 手動と APK の流れからの呼び出し・版の固定・APK の流れとの突き合わせ =====
+  t.ok('起動は workflow_dispatch と workflow_call だけ（push では直に動かない）', Object.keys(PLAY.on).sort().join(',') === 'workflow_call,workflow_dispatch', JSON.stringify(PLAY.on));
   const inputs = PLAY.on.workflow_dispatch.inputs;
+  const called = PLAY.on.workflow_call.inputs;
+  t.ok('呼び出しの入力は手動と同じ名前', JSON.stringify(Object.keys(called).sort()) === JSON.stringify(Object.keys(inputs).sort()), JSON.stringify(Object.keys(called)));
+  t.ok('1 つずつ順に走る（呼び出しでも効くようにジョブの単位）', PLAY.jobs.upload.concurrency?.group === 'android-play' && PLAY.jobs.upload.concurrency?.['cancel-in-progress'] === false && !PLAY.concurrency,
+    JSON.stringify(PLAY.jobs.upload.concurrency));
+
+  // APK の流れは、新しい版を出したときだけ同じコミットの AAB を内部テストへ上げてすぐ公開する
+  const play = APK.jobs.play;
+  t.ok('android-release.yml は新しい版を出したときだけ android-play.yml を呼ぶ', play?.uses === './.github/workflows/android-play.yml' && play?.needs === 'release'
+    && play?.if === "needs.release.outputs.released == 'true'" && play?.secrets === 'inherit', JSON.stringify(play));
+  t.ok('自動の行き先は内部テストにすぐ公開（internal・completed）', play?.with?.track === 'internal' && play?.with?.status === 'completed', JSON.stringify(play?.with));
+  t.ok('呼び出しには読む権限だけを渡す', play?.permissions?.contents === 'read' && Object.keys(play?.permissions ?? {}).length === 1, JSON.stringify(play?.permissions));
+  const publish = step(apkSteps, 'Create release');
+  t.ok('released はリリースを作れた後にだけ立つ', APK.jobs.release.outputs?.released === '${{ steps.publish.outputs.released }}' && publish?.id === 'publish'
+    && /gh release create[\s\S]*\n\s*echo "released=true" >> "\$GITHUB_OUTPUT"\s*$/.test(publish.run), publish?.run?.split('\n').slice(-3).join(' / '));
   t.ok('入力は track・status・user_fraction・changes_not_sent_for_review',
     ['track', 'status', 'user_fraction', 'changes_not_sent_for_review'].every((k) => inputs[k]) && inputs.track.default === 'internal' && inputs.status.default === 'draft',
     JSON.stringify(Object.keys(inputs)));
@@ -119,6 +133,7 @@ export default async function (t) {
       ['段階公開の割合が 1 なら止まる', { STATUS: 'inProgress', FRACTION: '1' }, 'needs user_fraction'],
       ['段階公開の割合が数でなければ止まる', { STATUS: 'inProgress', FRACTION: 'half' }, 'needs user_fraction'],
       ['下書きに割合を付けたら止まる', { FRACTION: '0.5' }, 'only for status inProgress'],
+      ['呼び出しの status が知らない値なら止まる', { STATUS: 'published' }, 'Invalid status'],
     ];
     for (const [label, env, message] of fails) {
       const r = check({ ...BASE, ...env });
@@ -127,6 +142,7 @@ export default async function (t) {
     for (const [label, env] of [
       ['自分で作ったクローズドテストのトラックへは上げられる', { TRACK: 'closed-12-testers' }],
       ['既定のクローズドテスト（alpha）へ上げられる', { TRACK: 'alpha', STATUS: 'completed' }],
+      ['自動の流れ（内部テストにすぐ公開）は通る', { TRACK: 'internal', STATUS: 'completed' }],
       ['段階公開は 0 と 1 の間の割合で通る', { STATUS: 'inProgress', FRACTION: '0.2' }],
     ]) {
       const r = check({ ...BASE, ...env });

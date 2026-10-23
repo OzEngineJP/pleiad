@@ -66,6 +66,12 @@ export function connectionFailed(status) {
   return status?.enabled === true && status.configured !== false && (state === 'retrying' || state === 'error');
 }
 
+/** 秘密を読めずに止まっている理由（サーバーの文）。止まっていなければ '' */
+export function lockedReason(status) {
+  const link = [status?.links?.own ?? status?.connection, status?.links?.plus].find(l => l?.error?.code === 'locked');
+  return link ? String(link.error.message || t('settings.remote.locked')) : '';
+}
+
 /**
  * 端末の一覧の 1 行。{ name, icon, offline }。
  * 「オフライン」は許可がオンで中継にもつながっているのに、端末がつながっていないときだけ（中継につながらないときは見出しの下の一行で伝える）
@@ -109,6 +115,8 @@ export function plusRemoteLine(plusStatus, remoteStatus) {
 /** 自分の中継サーバーのまとまりの見出しの下の状態行。つながらないとき（connectionFailed）は null で、.rm-warn の一行を出す */
 export function ownRemoteLine(remoteStatus) {
   if (!remoteStatus?.enabled || connectionFailed(remoteStatus)) return null;
+  // 秘密を読めずに止まっている（locked）。「未設定」ではないので、理由はスイッチの下の一行（lockedReason）だけで伝える
+  if (remoteStatus.connection?.error?.code === 'locked') return null;
   if (remoteStatus.configured === false || !remoteStatus.relayUrl) return { kind: 'off', text: t('settings.remote.state.notSet') };
   if (remoteStatus.connection?.state === 'connected') return { kind: 'ok', text: t('settings.remote.state.connected', { where: relayHost(remoteStatus.relayUrl) }) };
   return { kind: 'connecting', text: t('settings.remote.plus.connecting') };
@@ -185,13 +193,15 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   let revokedKey = '';
   /** 自分の中継サーバー の「編集」で出している欄（relayInputs）。出していなければ null */
   let editing = null;
+  /** 「編集」の中で、中継の設定を消すかの確かめを出しているか */
+  let removingRelay = false;
 
   const hosts = setupRemoteHosts({ onChange: () => paint(), cmd, page });
   hosts.onOpen?.(() => { tab = 'other'; detailId = ''; open('remote'); hosts.startPolling?.(); refresh(); });
 
   // ---- 描く
   function paint() {
-    const sig = JSON.stringify([tab, detailId, revokedKey, confirming, busy, message, reviewMode, hostScreen, Boolean(editing), statusSig(), tab ==='other' ? hosts.sig() : '']);
+    const sig = JSON.stringify([tab, detailId, revokedKey, confirming, busy, message, reviewMode, hostScreen, Boolean(editing), removingRelay, statusSig(), tab ==='other' ? hosts.sig() : '']);
     paintInto(root, sig, () => {
       if (tab === 'other' && hosts.available) {
         const view = hosts.build();
@@ -227,7 +237,7 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (hosts.available) {
       row.append(segment(t('settings.remote.tabs.label'), [['this', t('settings.remote.tabs.this')], ['other', t('settings.remote.tabs.other')]], tab,
         value => {
-          tab = value; detailId = ''; revokedKey = ''; confirming = false; editing = null;
+          tab = value; detailId = ''; revokedKey = ''; confirming = false; editing = null; removingRelay = false;
           if (value === 'other') {
             hosts.refresh();
             hosts.startPolling?.();
@@ -256,6 +266,9 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     head.append(label, sw);
     const out = [head];
     if (message) out.push(errorLine(message));
+    // 秘密（ホストの鍵・登録用の秘密）を読めずに止まっている。許可を入れても中継につながらないので、理由をスイッチの下に出す
+    const locked = lockedReason(status);
+    if (locked) out.push(errorLine(locked));
     if (!on) return out;
     const parts = partitionRemoteDevices(status.devices);
     if (plusRemoteShown(plusStatus, status)) out.push(plusGroup(parts.plus));
@@ -455,17 +468,19 @@ export function setupRemote({ cmd, page, open = () => {} }) {
   // ---- 自分の中継サーバー の「編集」（つながっている間も中継の設定を変えられる）
   function openRelayEdit() {
     editing = relayInputs();
+    removingRelay = false;
     message = '';
     paint();
     queueMicrotask(() => editing?.relayUrl.focus());
   }
   function relayEdit() {
+    if (removingRelay) return relayRemoveConfirm();
     const box = el('div', 'rm-confirm rm-relay-edit');
     const cancel = () => { editing = null; message = ''; paint(); };
     const save = () => run(async () => {
       const patch = relayPatch(editing);
       if (Object.keys(patch).length) status = await cmd('setRemoteSettings', patch);
-      editing = null;
+      editing = null; removingRelay = false;
     });
     for (const i of Object.values(editing)) {
       i.onkeydown = e => {
@@ -480,9 +495,38 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     for (const b of [no, yes]) b.disabled = busy;
     const acts = el('div', 'rm-acts');
     acts.append(no, yes);
+    // 保存した中継の設定を消す（環境変数の値は画面から消せないので、保存した値が無ければ出さない）
+    if (relayStored()) {
+      const remove = button(t('settings.remote.relay.remove'), () => { removingRelay = true; message = ''; paint(); }, 'btn btn-quiet rm-relay-remove');
+      remove.dataset.fk = 'relayRemove';
+      remove.disabled = busy;
+      acts.append(remove);
+    }
     box.append(...relayFields(editing), acts);
     return box;
   }
+  /** 中継の設定（URL と登録用の秘密）を消す前の確かめ。この中継でつないだ端末は取り消さず、設定し直すまでつながらない */
+  function relayRemoveConfirm() {
+    const box = el('div', 'rm-confirm rm-relay-edit');
+    const own = partitionRemoteDevices(status?.devices).own.length;
+    box.append(el('p', null, t('settings.remote.relay.removeConfirm')
+      + (own ? ` ${t('settings.remote.relay.removeDevices', { count: own })}` : '')));
+    const keep = button(t('settings.remote.devices.keep'), () => { removingRelay = false; paint(); }, 'btn btn-quiet');
+    keep.dataset.fk = 'relayRemoveKeep';
+    const yes = button(t('settings.remote.relay.removeConfirmButton'), () => run(async () => {
+      status = await cmd('setRemoteSettings', { relayUrl: '', enrollSecret: '' });
+      editing = null; removingRelay = false;
+    }), 'btn btn-primary');
+    yes.dataset.fk = 'relayRemoveYes';
+    for (const b of [keep, yes]) b.disabled = busy;
+    const acts = el('div', 'rm-acts');
+    acts.append(keep, yes);
+    box.append(acts);
+    queueMicrotask(() => { if (!root.contains(document.activeElement)) keep.focus(); });
+    return box;
+  }
+  /** 画面から消せる中継の設定（環境変数ではなく保存した URL か登録用の秘密）があるか */
+  const relayStored = () => Boolean((status?.relayUrl && !status.relayUrlFromEnv) || (status?.hasEnrollSecret && !status.enrollSecretFromEnv));
 
   /** 保存する欄の差分。変えていない欄は送らない（秘密は空なら今の値を残す） */
   function relayPatch({ relayUrl, secret, hostName }) {

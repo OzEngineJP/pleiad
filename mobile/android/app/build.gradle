@@ -23,7 +23,7 @@ android {
     namespace = "dev.pleiad.app"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "dev.pleiad.app"
+        applicationId "dev.pleiad.android"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode plyVersionCode

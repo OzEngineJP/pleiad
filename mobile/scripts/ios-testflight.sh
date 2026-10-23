@@ -1,11 +1,22 @@
 #!/bin/bash
-# 登録後の配布用。秘密はランナーの一時領域だけに復元し、終了時に消す。
+# TestFlight へ署名した archive を上げる（.github/workflows/ios-testflight.yml、docs/ios.md「TestFlight への自動の配布」）。
+# 秘密はランナーの一時領域だけに復元し、終了時に消す。
+# 版は IOS_BUILD_NUMBER（CFBundleVersion。Android の versionCode と同じ git rev-list --count HEAD）と
+# IOS_MARKETING_VERSION（CFBundleShortVersionString。mobile/package.json の version）で渡す。
 set -euo pipefail
+: "${IOS_BUILD_NUMBER:?IOS_BUILD_NUMBER is required}" "${IOS_MARKETING_VERSION:?IOS_MARKETING_VERSION is required}"
 umask 077
 work=$(mktemp -d "$RUNNER_TEMP/pleiad-ios.XXXXXX")
 keychain="$work/signing.keychain-db"
 profile_path=''
+# 検索リストに一時の Keychain を足し、終わったら元のリストに戻す（手元の Mac で流しても利用者の設定を残さない）
+original_keychains=()
+while IFS= read -r line; do
+  line=${line#"${line%%[![:space:]]*}"}; line=${line#\"}; line=${line%\"}
+  [ -n "$line" ] && original_keychains+=("$line")
+done < <(security list-keychains -d user)
 cleanup() {
+  if [ ${#original_keychains[@]} -gt 0 ]; then security list-keychains -d user -s "${original_keychains[@]}" || true; fi
   security delete-keychain "$keychain" >/dev/null 2>&1 || true
   if [ -n "$profile_path" ]; then rm -f "$profile_path"; fi
   rm -rf "$work"
@@ -34,7 +45,7 @@ security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$work/distribution.p12" -k "$keychain" -P "$IOS_DISTRIBUTION_P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
 security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$keychain_password" "$keychain" >/dev/null
-security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+security list-keychains -d user -s "$keychain" ${original_keychains[@]+"${original_keychains[@]}"}
 export IOS_PROFILE_NAME="$profile_name"
 python3 - <<'PY'
 import os, plistlib
@@ -47,6 +58,9 @@ prefix = profile['ApplicationIdentifierPrefix'][0] + '.'
 if not app.startswith(prefix) or '*' in app:
     raise SystemExit('Use a profile for an explicit Bundle ID')
 bundle = app[len(prefix):]
+expected = os.environ.get('IOS_BUNDLE_ID')
+if expected and bundle != expected:
+    raise SystemExit(f'The profile is for {bundle}, not {expected}')
 if team not in profile['TeamIdentifier']:
     raise SystemExit('Profile team mismatch')
 (p / 'bundle-id').write_text(bundle)
@@ -62,7 +76,7 @@ xcodebuild archive -project mobile/ios/App/App.xcodeproj -scheme App \
   -configuration Release -destination 'generic/platform=iOS' -archivePath "$work/App.xcarchive" \
   CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY='Apple Distribution' \
   DEVELOPMENT_TEAM="$IOS_TEAM_ID" PROVISIONING_PROFILE_SPECIFIER="$profile_name" \
-  PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER.$GITHUB_RUN_ATTEMPT"
+  PRODUCT_BUNDLE_IDENTIFIER="$bundle_id" CURRENT_PROJECT_VERSION="$IOS_BUILD_NUMBER" MARKETING_VERSION="$IOS_MARKETING_VERSION"
 xcodebuild -exportArchive -archivePath "$work/App.xcarchive" -exportOptionsPlist "$work/ExportOptions.plist" \
   -exportPath "$work/export" -allowProvisioningUpdates \
   -authenticationKeyPath "$work/AuthKey.p8" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"

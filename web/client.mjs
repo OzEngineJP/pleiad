@@ -9618,6 +9618,8 @@ async function syncHistory() {
   if (state.busy) { pendingHistorySync = true; return; }
   const id = state.current;
   if (!id) return;
+  // 走っている間に開いた窓は、ターンの頭を畳んだ仮の発言（live。ADR 0257）を持つ。保存された履歴とは並びが違うので、添字で照合せずに読み直す
+  if (state.messages.some(m => m?.live)) { await select(id, { reload: true }); return; }
   const before = state.messages.length;
   const data = await loadHistory({ sessionId: id }, { messages: state.messages, presents: state.presents, base: state.base, presentBase: state.presentBase }, { window: true }).catch(() => null);
   if (!data || state.current !== id) return;

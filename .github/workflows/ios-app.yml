@@ -1,4 +1,5 @@
 # Capacitor の殻は Xcode 26 以上。remote-core 単体の Xcode 16.4 の試験は別に残す。
+# TestFlight への配布は ios-testflight.yml（このワークフローを workflow_call で呼んで試験を通してから上げる）。
 name: iOS app
 on:
   push:
@@ -7,15 +8,12 @@ on:
   pull_request:
     paths: ['mobile/**', 'tests/unit/ios-shell.mjs', '.github/workflows/ios-app.yml']
   workflow_dispatch:
-    inputs:
-      testflight:
-        description: 'TestFlight にアップロードする（登録・署名の設定後）'
-        type: boolean
-        default: false
+  workflow_call:
 permissions:
   contents: read
+# 呼び出し（workflow_call）では github.workflow が呼び出し元の名前になり、単独の実行と同じ組で待ち合わない
 concurrency:
-  group: ios-app-${{ github.ref }}
+  group: ios-app-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 env:
   DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
@@ -62,54 +60,3 @@ jobs:
           -configuration Debug -sdk iphonesimulator -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID"
           -derivedDataPath mobile/ios/DerivedData -resultBundlePath mobile/ios/App/build/tests.xcresult
           CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
-  credentials:
-    if: github.event_name == 'workflow_dispatch' && inputs.testflight
-    # 署名・ストアの Secrets は Environment「release」にだけ置く（main と v* のタグからしか使えない。ADR 0214）
-    environment: release
-    runs-on: ubuntu-latest
-    outputs:
-      ready: ${{ steps.check.outputs.ready }}
-    steps:
-      - id: check
-        name: Skip distribution when secrets are missing
-        env:
-          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
-          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
-          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
-          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
-        run: |
-          for name in IOS_TEAM_ID IOS_DISTRIBUTION_P12_BASE64 IOS_DISTRIBUTION_P12_PASSWORD IOS_PROVISION_PROFILE_BASE64 ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_BASE64; do
-            if [ -z "${!name}" ]; then
-              echo 'ready=false' >> "$GITHUB_OUTPUT"
-              echo '署名・配布の secrets が未設定のため TestFlight をスキップします。' >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          done
-          echo 'ready=true' >> "$GITHUB_OUTPUT"
-  testflight:
-    needs: [simulator, credentials]
-    if: needs.credentials.outputs.ready == 'true'
-    # 署名・ストアの Secrets は Environment「release」にだけ置く（main と v* のタグからしか使えない。ADR 0214）
-    environment: release
-    runs-on: macos-15
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      - run: npm ci && npm run sync:ios
-        working-directory: mobile
-      - name: Archive and upload to TestFlight
-        env:
-          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
-          IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
-          IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
-          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
-          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
-        run: bash mobile/scripts/ios-testflight.sh

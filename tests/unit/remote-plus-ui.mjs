@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { methodOptions, stateLine, todoList, liveRow } from '../../web/remote-parts.mjs';
 import { createRemoteStore } from '../../core/remote/devices.mjs';
-import { plusRemoteLine, ownRemoteLine, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, plusRemoteShown, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
+import { plusRemoteLine, ownRemoteLine, lockedReason, plusRemoteToggleMode, partitionRemoteDevices, plusRemoteAvailable, plusRemoteShown, initialRemoteMethod, setupRemote } from '../../web/remote.mjs';
 import { N } from '../lib/dom-stub.mjs';
 
 export const name = 'remote-plus-ui';
@@ -58,6 +58,10 @@ export default async function (t) {
   }
   t.ok('自分の中継サーバーにつながらないときは状態行ではなく注意の一行（null）',
     ownRemoteLine({ enabled: true, configured: true, relayUrl: RELAY, connection: { state: 'retrying' } }) === null);
+  // 秘密を読めずに止まっている（locked）間は、登録用の秘密が読めないだけなので「未設定」と言わない。理由はスイッチの下の一行
+  const lockedStatus = { enabled: true, configured: false, relayUrl: RELAY, connection: { state: 'error', error: { code: 'locked', message: 'waiting for keychain' } }, links: { own: { state: 'error', error: { code: 'locked', message: 'waiting for keychain' } } } };
+  t.ok('秘密を読めずに止まっている間は「未設定」を出さない', ownRemoteLine(lockedStatus) === null);
+  t.ok('止まっている理由はサーバーの文をそのまま出す（lockedReason）', lockedReason(lockedStatus) === 'waiting for keychain' && lockedReason({ enabled: true, connection: { state: 'connected', error: null } }) === '');
 
   const ok = stateLine('ok', 'つながっています · user@example.com');
   t.ok('状態行（ok）は塗りの点と文字、読み上げは status', ok.className === 'rm-st rm-st-ok' && ok.getAttribute('role') === 'status'
@@ -150,4 +154,60 @@ export default async function (t) {
     plus: { connect: true, link: { state: 'retrying', error: { code: 'unavailable' } } } }, PLUS_OFF));
   t.ok('Plus が止まっている間も「この PC へ」に Plus のまとまりと「一時的に止まっています」', Boolean(stopped)
     && (stopped.textContent ?? '').includes('Pleiad Plus が一時的に止まっています（再開を待っています）'), stopped?.textContent);
+
+  // 「編集」の中の「中継の設定を消す」: 確かめてから URL と登録用の秘密を両方消す（issue #123）
+  const SET = { enabled: true, configured: true, relayUrl: RELAY, hasEnrollSecret: true, connection: { state: 'connected' },
+    devices: [{ id: 'made-up-own', via: 'own', name: 'Pixel' }, { id: 'made-up-plus', via: 'plus', name: 'iPad' }], plus: { connect: false }, pairing: { requests: [] } };
+  const live = async (remote, fn) => {
+    const saved = { getElementById: document.getElementById, createTextNode: document.createTextNode, body: document.body };
+    const nodes = { remotePanel: new N('div'), remoteTab: new N('button') };
+    document.getElementById = id => nodes[id] ?? null;
+    document.createTextNode = text => String(text);
+    document.body = new N('body');
+    const sent = [];
+    let current = remote;
+    try {
+      const panel = setupRemote({ page: () => {}, cmd: async (name, args) => {
+        if (name === 'setRemoteSettings') {
+          sent.push(args);
+          current = { ...current, relayUrl: args.relayUrl ? current.relayUrl : null, hasEnrollSecret: args.enrollSecret === '' ? false : current.hasEnrollSecret, configured: false, connection: { state: 'disabled' } };
+          return current;
+        }
+        return name === 'remoteStatus' ? current : name === 'plusStatus' ? { available: false } : {};
+      } });
+      panel.setHostScreen(true);
+      await panel.refresh();
+      const root = nodes.remotePanel;
+      const byFk = fk => root.querySelectorAll('button').find(b => b.dataset.fk === fk) ?? null;
+      await fn({ root, byFk, sent });
+    } finally {
+      document.getElementById = saved.getElementById;
+      document.createTextNode = saved.createTextNode;
+      document.body = saved.body;
+    }
+  };
+  await live(SET, async ({ root, byFk, sent }) => {
+    t.ok('閉じている間は「中継の設定を消す」を出さない', !byFk('relayRemove'));
+    byFk('relayEdit').onclick();
+    const remove = byFk('relayRemove');
+    t.ok('「編集」の中に「中継の設定を消す」', remove?.textContent === '中継の設定を消す' && Boolean(byFk('relaySave')));
+    remove.onclick();
+    const ask = ownGroup(root)?.querySelector('.rm-relay-edit');
+    t.ok('押すと欄の代わりに確かめ（own の端末の台数を添え、Plus の端末は数えない）', Boolean(ask) && !byFk('relaySave')
+      && ask.textContent.includes('中継の URL と登録用の秘密を消しますか。') && ask.textContent.includes('この中継でつないだ端末 1 台は'), ask?.textContent);
+    byFk('relayRemoveKeep').onclick();
+    t.ok('「やめる」で欄に戻り、何も送らない', Boolean(byFk('relaySave')) && sent.length === 0);
+    byFk('relayRemove').onclick();
+    byFk('relayRemoveYes').onclick();
+    await new Promise(r => setTimeout(r, 0));
+    t.ok('「消す」は URL と秘密を空で送る', sent.length === 1 && sent[0].relayUrl === '' && sent[0].enrollSecret === '', JSON.stringify(sent));
+    const group = ownGroup(root);
+    t.ok('消した後は欄を閉じて「未設定 · …」の一行', !group?.querySelector('.rm-relay-edit')
+      && group?.querySelector('.rm-st')?.textContent === '未設定 · 「編集」で中継の URL と登録用の秘密を入れます', group?.textContent);
+  });
+  // 環境変数の値だけのときは画面から消せないので出さない
+  await live({ ...SET, relayUrlFromEnv: true, enrollSecretFromEnv: true }, async ({ byFk }) => {
+    byFk('relayEdit').onclick();
+    t.ok('環境変数の値だけなら「中継の設定を消す」を出さない', Boolean(byFk('relaySave')) && !byFk('relayRemove'));
+  });
 }

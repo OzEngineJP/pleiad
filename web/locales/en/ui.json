@@ -345,6 +345,7 @@
         "other": "To other PCs"
       },
       "allow": "Allow other devices to control this PC",
+      "locked": "Can't connect to the relay because the saved secrets can't be read.",
       "addDevice": "Add device",
       "addHost": "Add PC",
       "groups": {
@@ -478,7 +479,12 @@
         "hostName": "Host name",
         "notEncrypted": "This session cannot encrypt the enrollment secret (it is saved to a file only you can read).",
         "edit": "Edit",
-        "save": "Save"
+        "save": "Save",
+        "remove": "Remove relay settings",
+        "removeConfirm": "Remove the relay URL and enrollment secret? This PC will stop connecting to this relay.",
+        "removeDevices_one": "The {{count}} device connected through this relay will not connect until you set up a relay again (it is not revoked).",
+        "removeDevices_other": "The {{count}} devices connected through this relay will not connect until you set up a relay again (they are not revoked).",
+        "removeConfirmButton": "Remove"
       },
       "devices": {
         "unnamed": "Unnamed device",
