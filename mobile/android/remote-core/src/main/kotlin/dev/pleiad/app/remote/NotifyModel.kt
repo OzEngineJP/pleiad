@@ -84,8 +84,8 @@ sealed interface NotifyAction {
 
     /**
      * One conversation's notification (one per conversation: a newer one overwrites). [attention] = needs a reply or
-     * failed (high-priority channel), otherwise the completion channel. [silent]: re-post without alerting again
-     * (an unbundled completion coming back after its bundle shrank).
+     * failed (high-priority channel), otherwise the completion channel. [silent]: post without alerting (a completion
+     * under a bundle — the bundle carries the alert — or a quiet re-post after a re-count).
      */
     data class Post(
         override val key: String,
@@ -101,7 +101,7 @@ sealed interface NotifyAction {
         val pending: Int = 1,
     ) : NotifyAction
 
-    /** "N conversations finished" for one host: completions are bundled from the second one. */
+    /** "N conversations finished" for one host: the group summary on top of the completions' own notifications. */
     data class Bundle(
         override val key: String,
         val hostId: String,

@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import dev.pleiad.app.remote.HostRoute
 import dev.pleiad.app.remote.NotifySettings
 import org.json.JSONObject
 
@@ -95,11 +96,11 @@ object NotifyControl {
             .show()
     }
 
-    /** The host and conversation a pleiad://open link names (null when it is not one or the host is not paired here). */
+    /** The host and conversation a pleiad://open link names (null when it is not one or no route can open the host). */
     fun parseOpen(ctx: Context, uri: Uri?): Triple<String, String, Boolean>? {
         if (uri == null || uri.scheme != "pleiad" || uri.host != "open") return null
         val hostId = uri.getQueryParameter("h") ?: return null
-        if (app(ctx).device.store.host(hostId) == null) return null
+        if (!HostRoute.openable(hostId, app(ctx).device.store.hosts())) return null
         return Triple(hostId, uri.getQueryParameter("s") ?: "", uri.getQueryParameter("b") == "1")
     }
 }

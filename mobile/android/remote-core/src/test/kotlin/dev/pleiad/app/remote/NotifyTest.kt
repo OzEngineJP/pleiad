@@ -110,12 +110,15 @@ class NotifyPlannerTest {
         val first = p.onNotice(notice(NoticeKind.DONE, "a"), on).single() as NotifyAction.Post
         assertFalse(first.attention); assertFalse(first.silent)
         val second = p.onNotice(notice(NoticeKind.DONE, "b"), on)
-        assertEquals("the first one goes away, one bundle replaces it", listOf(NotifyAction.Cancel(slot("a"))), second.filterIsInstance<NotifyAction.Cancel>())
+        assertEquals("each completion keeps its own notification", listOf<NotifyAction>(), second.filterIsInstance<NotifyAction.Cancel>())
+        val child = second.filterIsInstance<NotifyAction.Post>().single()
+        assertEquals(slot("b"), child.key); assertTrue("the new child posts quietly; the bundle alerts once", child.silent)
         val bundle = second.filterIsInstance<NotifyAction.Bundle>().single()
         assertEquals(2, bundle.count); assertEquals(listOf("t-b", "t-a"), bundle.titles); assertEquals("b", bundle.session); assertFalse(bundle.silent)
         val third = p.onNotice(notice(NoticeKind.DONE, "c"), on)
         assertEquals(listOf<NotifyAction>(), third.filterIsInstance<NotifyAction.Cancel>())
-        assertEquals(3, (third.single() as NotifyAction.Bundle).count)
+        assertTrue(third.filterIsInstance<NotifyAction.Post>().single().silent)
+        assertEquals(3, third.filterIsInstance<NotifyAction.Bundle>().single().count)
     }
 
     @Test fun bundleShrinksAndComesBackToOne() {
@@ -125,9 +128,9 @@ class NotifyPlannerTest {
         val b2 = seen.filterIsInstance<NotifyAction.Bundle>().single()
         assertEquals(2, b2.count); assertTrue("shrinking a bundle is quiet", b2.silent)
         val seenB = p.onNotice(notice(NoticeKind.CANCEL, "b", cancel = "seen"), on)
-        assertTrue(seenB.contains(NotifyAction.Cancel(bundleKeyOf())))
-        val back = seenB.filterIsInstance<NotifyAction.Post>().single()
-        assertEquals(slot("a"), back.key); assertTrue("coming back from a bundle is quiet", back.silent); assertFalse(back.attention)
+        assertTrue(seenB.contains(NotifyAction.Cancel(slot("b"))))
+        assertTrue("back to one completion: the bundle goes", seenB.contains(NotifyAction.Cancel(bundleKeyOf())))
+        assertTrue("the remaining completion was never removed and needs no re-post", seenB.none { it is NotifyAction.Post })
     }
 
     private fun bundleKeyOf() = NotifyPlanner.bundleKey(host)
@@ -153,7 +156,8 @@ class NotifyPlannerTest {
         p.onNotice(notice(NoticeKind.DONE, "a"), on); p.onNotice(notice(NoticeKind.DONE, "b"), on)
         val out = p.onNotice(notice(NoticeKind.APPROVAL, "a", id = "p9"), on)
         assertTrue(out.any { it is NotifyAction.Post && it.key == slot("a") && it.attention })
-        assertTrue("one completion left: the bundle goes, the single one is back", out.any { it == NotifyAction.Cancel(bundleKeyOf()) } && out.any { it is NotifyAction.Post && it.key == slot("b") })
+        assertTrue("one completion left: the bundle goes", out.any { it == NotifyAction.Cancel(bundleKeyOf()) })
+        assertTrue("the other completion's own notification stays", out.none { it == NotifyAction.Cancel(slot("b")) } && out.none { it is NotifyAction.Post && it.key == slot("b") })
     }
 
     @Test fun replaysAndOldSequenceNumbersAreIgnored() {
@@ -195,10 +199,12 @@ class NotifyPlannerTest {
     @Test fun tappingOpensAndBundleTapClearsAllCompletions() {
         p.onNotice(notice(NoticeKind.DONE, "a"), on); p.onNotice(notice(NoticeKind.DONE, "b"), on)
         val one = p.opened(host, "b", false)
-        assertTrue("the other completion comes back alone", one.contains(NotifyAction.Cancel(bundleKeyOf())) && one.any { it is NotifyAction.Post && it.key == slot("a") })
+        assertTrue("only the tapped child goes and the bundle is re-counted",
+            one.contains(NotifyAction.Cancel(slot("b"))) && one.contains(NotifyAction.Cancel(bundleKeyOf())) && one.none { it == NotifyAction.Cancel(slot("a")) })
         p.onNotice(notice(NoticeKind.DONE, "c"), on)
         val cleared = p.opened(host, null, true)
-        assertEquals(listOf<NotifyAction>(NotifyAction.Cancel(bundleKeyOf())), cleared)
+        assertEquals("the bundle tap clears the children and the bundle itself",
+            listOf(NotifyAction.Cancel(slot("a")), NotifyAction.Cancel(slot("c")), NotifyAction.Cancel(bundleKeyOf())), cleared)
         assertEquals("nothing is left to bundle", 1, (p.onNotice(notice(NoticeKind.DONE, "d"), on).single() as NotifyAction.Post).let { 1 })
     }
 

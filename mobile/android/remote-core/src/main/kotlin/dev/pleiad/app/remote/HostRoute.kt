@@ -33,4 +33,7 @@ object HostRoute {
             else -> null
         }
     }
+
+    /** Whether [hostId] can be opened at all: any usable pairing (own or Plus). A tapped notification uses this. */
+    fun openable(hostId: String, hosts: List<HostRecord>): Boolean = reopen(hostId, hosts, null) != null
 }
