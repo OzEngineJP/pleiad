@@ -1,5 +1,5 @@
 // 会話の移動の画面（docs/design-system.md「会話の移動」、ADR 0063）。
-//   A 問いが上に残る: 返答を読んでいる間、その返答を生んだ発言の抜粋を #log の上端に 1 行で残す
+//   A 問いが上に残る: 返答を読んでいる間、その返答を生んだ発言の抜粋を #log の上端に 1 行で残す（狭い画面では出さない）
 //   C 最新へ: 末尾から離れたときだけ出る丸いボタン。読んでいる間の新着は青い丸、走っている間は弧
 //   キーボード: 会話にフォーカスがあるとき Alt+↑ / Alt+↓ で前後の自分の発言、End で最新へ
 //   地図（web/conversation-rail.mjs）へ、発言の並び・位置・いまの発言を渡す
@@ -156,7 +156,8 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   function paintSticky() {
     const index = currentIndex(), turn = turns[index];
     let show = false;
-    if (turn) {
+    // 狭い画面では残る問いを出さない（帯が表示領域を圧迫する。turn.ub の測定も走らせない）
+    if (turn && !narrow.matches) {
       if (turn.ub < 0) turn.ub = turn.user.getBoundingClientRect().bottom - turn.row.getBoundingClientRect().top;
       show = turn.top + turn.ub <= log.scrollTop + STICKY_EDGE;
     }

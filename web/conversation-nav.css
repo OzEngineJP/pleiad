@@ -17,7 +17,7 @@
 /* 会話の末尾の目印（web/conversation-nav-view.mjs）。「最新へ」を出すかを、スクロール量を読まずに決める */
 .nav-end{height:1px;pointer-events:none}
 
-/* ---- A 問いが上に残る。影は付けず、会話の白から透明へのグラデーションでつなぐ。
+/* ---- A 問いが上に残る（狭い画面では出さない。JS が隠すので media クエリの規則は無い）。影は付けず、会話の白から透明へのグラデーションでつなぐ。
    左は発言の吹き出しの左端（#log の左の余白 8px + 溝 72px）にそろえ、幅は会話の列（860px − 溝 72px）まで。文字は押せる領域だけ ---- */
 .nav-sticky{position:absolute;z-index:4;left:0;right:10px;top:0;height:58px;padding:6px 18px 14px 80px;
   background:linear-gradient(to bottom,var(--surface-paper) 76%,transparent);pointer-events:none}
@@ -90,10 +90,8 @@
 .nav-tip-legend .fillc{display:none}
 .nav-tip-legend .pending .nav-g{color:var(--ink-mark)}
 
-/* ---- 狭い画面。地図は出さない。最新へは入力欄の右上。タップ領域は 44px ---- */
+/* ---- 狭い画面。地図と残る問いは出さない（残る問いは JS が隠す）。最新へは入力欄の右上。タップ領域は 44px ---- */
 @media (max-width:700px){
-  .nav-sticky{right:0;height:62px;padding-left:42px}   /* 吹き出しの左端（#log の左 8px + 溝 40px）の 6px 左（従来と同じずれ） */
-  .nav-sticky-button{min-height:44px;padding-top:4px}
   .nav-rail{display:none}
   .nav-latest{right:16px;bottom:calc(12px + var(--composer-h,0px))}
   .nav-latest::after{content:"";position:absolute;inset:-5px;border-radius:var(--r-pill)}
