@@ -82,7 +82,7 @@ import { createBulkReplies } from './bulk-replies.mjs';
 import { createContextSettings } from './context-settings.mjs';
 import { scanContext, skillList } from './context-scan.mjs';
 import { acceptsPlyContext, followSettings, managed, nativeContextReport, pinChanges, pinnedChanges, resolveRuntime } from './context-runtime.mjs';
-import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, withAdded } from './ply-instructions.mjs';
+import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstructions, screenState as plyInstructionsScreen, turnInstructions, widenLegacyAgents, withAdded } from './ply-instructions.mjs';
 import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
@@ -3831,10 +3831,22 @@ async function dropAccountCandidates(id) {
 
 /** Pleiad の指示の項目を保存する。前の版の委譲の指示のスイッチ（addedContext）は plyInstructions に写したので消す（残すと古い版に戻したときだけ効く） */
 async function applyPlyInstructions(next) {
-  await savePref('plyInstructions', { items: next });
+  // agentsMigrated は、前の版の「Claude・Codex だけ」を今の全部へ広げる移行を済ませた印（ADR 0268）
+  await savePref('plyInstructions', { items: next, agentsMigrated: true });
   await savePref('addedContext', null);
   plyInstructionsCache = next;
   return next;
+}
+
+/**
+ * 一度だけ、前の版の「Claude・Codex だけ」（当時の全部）を今の全部へ広げる（2026-10-24、ADR 0268）。
+ * 印が無いときだけ。以後に 2 つだけ選び直した分は広げない
+ */
+async function migratePlyInstructionAgents() {
+  const prefs = await store.getPrefs();
+  if (prefs.plyInstructions?.agentsMigrated) return;
+  const widened = widenLegacyAgents(plyInstructionsCache);
+  await applyPlyInstructions(widened);
 }
 
 /** 内蔵ブラウザーの確認と「このサイトは常に」。保存して、走っているブラウザーの方針にも伝える。値の検査は呼び出し側 */
@@ -10157,5 +10169,7 @@ await recoverLimitWaits().catch(err => console.error('  上限の会話を見直
 setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' && row.held && !row.notified) notifyScheduleMissed(row); }, 15_000).unref();
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）
 await botHost.start();
+// 前の版の「Claude・Codex だけ」（当時の全部）を今の全部へ広げる（一度だけ。ADR 0268）
+await migratePlyInstructionAgents().catch(err => console.error('  Pleiad の指示の移行に失敗:', String(err?.message ?? err)));
 
 export { runTurn, prepareTurn, beginTurn, launchTurn, driveTurn, releaseTurn, endTurn, handOffTurn, restoreTurn, adoptTurn, handover as handoverState, handoverSettled, trackIn };

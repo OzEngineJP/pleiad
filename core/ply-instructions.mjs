@@ -24,6 +24,8 @@ import { estimateTokens } from '../web/token-estimate.mjs';
 import { DEFAULT_AGENT_IDS, agentOf } from './backends/agents.mjs';
 
 export const TARGETS = ['all', 'parent', 'child'];
+/** 2026-10-19 より前の対象エージェントの選択肢（当時の全部）。この 2 つだけの保存は「当時の全部」とみなす */
+export const LEGACY_AGENTS = ['claude', 'codex'];
 // 項目で選べるエージェント = 本番のエージェント全部（既定の有効一覧。試験用の fake は入らない）。
 // 保存済みの項目の agents は広げない: 前の版の ['claude','codex'] は「当時の全部」か「その 2 つだけ」か判別できないので、そのまま残す
 export const AGENTS = [...DEFAULT_AGENT_IDS];
@@ -102,6 +104,16 @@ export function resolvePlyInstructions(list, locale) {
   });
   items.push({ id: LINKED, tag: 'linked', modified: false, name: builtinName(locale, LINKED), body: builtinBody(locale, LINKED), target: 'parent', agents: [...AGENTS], on: true });
   return items;
+}
+
+/**
+ * 前の版の「Claude・Codex だけ」を今の全部へ広げる（2026-10-24、ADR 0268）。
+ * 当時は選択肢が 2 つしか無かったので、この組は「当時の全部」と読める。1 つだけ・3 つ以上の絞り込みと既定の項目は触らない
+ */
+export function widenLegacyAgents(list) {
+  return list.map(item => !isBuiltin(item.id) && Array.isArray(item.agents)
+    && item.agents.length === LEGACY_AGENTS.length && LEGACY_AGENTS.every(a => item.agents.includes(a))
+    ? { ...item, agents: [...AGENTS] } : item);
 }
 
 /** 入れる文。見出し（名前）と本文 */

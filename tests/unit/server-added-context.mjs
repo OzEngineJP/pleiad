@@ -9,7 +9,7 @@ import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { agentT } from '../../core/i18n.mjs';
-import { changePlyInstructions, normalizePlyInstructions, resolvePlyInstructions, itemText, turnInstructions } from '../../core/ply-instructions.mjs';
+import { AGENTS, changePlyInstructions, normalizePlyInstructions, resolvePlyInstructions, itemText, turnInstructions, widenLegacyAgents } from '../../core/ply-instructions.mjs';
 
 export const name = 'server-added-context';
 export const title = 'Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチを引き継ぐ・記録';
@@ -145,6 +145,12 @@ export default async function (t) {
     t.ok('Claude Code の会話には Codex だけの項目を入れず、理由 agent と対象のエージェントを記録する（画面が「… だけ」と出せる）',
       forClaude.find(r => r.name === 'Codex だけ')?.reason === 'agent' && forClaude.find(r => r.name === 'Codex だけ')?.agents?.join() === 'codex'
       && turnInstructions({ list: stored, locale: 'ja', child: false, routing: true, supported: false, canDelegate: true, bridge: true, agent: null }) === null);
+    // 前の版の「Claude・Codex だけ」（当時の全部）は今の全部へ広げる。1 つだけの絞り込みは広げない（ADR 0268）
+    const legacy = normalizePlyInstructions({ items: [{ id: 'u-legacy0001', on: true, name: '旧', body: 'x', target: 'parent', agents: ['claude', 'codex'] }] });
+    const widened = widenLegacyAgents(legacy).find(i => i.id === 'u-legacy0001');
+    t.ok('前の版の 2 つだけ（当時の全部）は今の全部へ広げる', widened.agents.length === AGENTS.length && widened.agents.includes('devin'), widened.agents.join());
+    const narrow = normalizePlyInstructions({ items: [{ id: 'u-narrow0001', on: true, name: 'Claude だけ', body: 'x', target: 'parent', agents: ['claude'] }] });
+    t.ok('1 つだけの絞り込みは広げない', widenLegacyAgents(narrow).find(i => i.id === 'u-narrow0001').agents.join() === 'claude');
     // 指示を受け取る（plyInstructions）が委譲の橋（plyAgents）を持たないエージェント: 汎用の項目は入れ、連動の route だけは入れない
     const noBridge = turnInstructions({ list: stored, locale: 'ja', child: false, routing: true, supported: true, canDelegate: true, bridge: false, agent: 'codex' });
     t.ok('橋が無いエージェントでも汎用の指示は入り、連動の項目だけ理由 noBridge で入らない', noBridge.find(r => r.id === 'route')?.reason === 'noBridge'
