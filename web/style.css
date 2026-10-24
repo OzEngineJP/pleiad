@@ -641,6 +641,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 /* ---- 会話と溝。#log の左の余白は 8px（溝の外側）。溝は 72px: 筋 x=20（24px の当たり判定を左端 8px から置く）
    + 曲線の横幅 30 + 3 本目までの逃げ 16 + 端の余白 6。溝の中には筋・節・分岐点の曲線しか置かない ---- */
 #log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:14px 22px 24px 8px;scrollbar-gutter:stable}
+#logFrame > #log{padding-bottom:calc(24px + var(--composer-h,0px))}   /* 末尾の余白は、重ねた入力欄の高さの上に 24px（ADR 0266） */
 #log.branch-transition{overflow-anchor:none}
 .thread{position:relative;max-width:860px;min-width:0}
 /* 列（ADR 0252）: 履歴と入力欄は同じ 760px の列（--col）に入れ、本文の領域（#log の左右の余白 8px と 22px + スクロールバー 10px の内側）の
@@ -1207,7 +1208,18 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 
 /* ---- 入力欄（design-system.md「入力欄と上端」） ----
    1 つの角丸の箱（--surface-1・--r-l）の中に、送る前の添付 → 字の欄 → チップと送信の行を入れる。デスクトップもスマホも同じ */
-.composer{--cpad-l:18px;--cpad-r:18px;flex:none;padding:4px var(--cpad-r) 12px var(--cpad-l);min-width:0;position:relative}   /* 候補（.clist）を入力欄の上に浮かせる基準 */
+.composer{--cpad-l:18px;--cpad-r:18px;--cpad-b:12px;flex:none;padding:4px var(--cpad-r) var(--cpad-b) var(--cpad-l);min-width:0;position:relative}   /* 候補（.clist）を入力欄の上に浮かせる基準 */
+/* 会話の入力欄は履歴（.log-frame）の下端に重ねる（ADR 0266）。履歴は main の下端まで伸び、入力欄の空いた所（帯の左・箱の左右と下）から透けて見える。
+   空いた所は押しても選んでも履歴に届く（pointer-events は見える部品だけ）。#log の末尾の余白と「最新へ」は、入力欄の高さ（--composer-h。client.mjs が
+   ResizeObserver で測る）だけ上げる */
+#composer{position:absolute;left:0;right:0;bottom:0;pointer-events:none}
+#composer > :not(.context-strip),#contextStrip > *{pointer-events:auto}
+/* 箱の下の余白（--cpad-b）は紙で塞ぐ。細い隙間に履歴の字の切れ端が覗くと散らかる（スマホは 8px）。左右の余白の履歴は箱の下端でそろって切れる */
+#composer::after{content:"";position:absolute;left:0;right:0;bottom:0;height:var(--cpad-b);background:var(--surface-paper);pointer-events:auto}
+/* 面の無い字の部品（帯の作業ボタン・帯の状態の字・欄の上の一行）は、透けた履歴の字と重ならないよう紙の面に置く */
+#composer :is(.bg-chip,.context-strip-status,.composer-note,.conn-note,.resume-note,.settings-error:not(:empty)){background:var(--surface-paper)}
+#composer .bg-chip:is(:hover,:focus-visible){background:var(--surface-2)}
+#composer .context-strip-status{border-radius:var(--r-pill);padding:0 4px}
 /* 入力欄の上の 1 本の帯（:is(#contextStrip,#thContextStrip)。compaction.css）の右端: バックグラウンドの入口（web/background-chip.mjs）。
    帯のチップは見た目 28px・押せる範囲 36px（::before で上下 4px 広げる）。種類ごとのロゴを 6px 空けて並べ、数は右下、承認待ちは右上の ◆ */
 .work-entry{display:flex;flex:none;margin-left:auto;min-width:0}
@@ -2074,7 +2086,7 @@ main.dropping #log{background:var(--surface-1)}
 :root.desktop{--top-inset:var(--bar-h)}
 @supports (height:100dvh){html,body{height:100dvh}}
 body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(safe-area-inset-left,0px)}
-.composer{padding-bottom:max(12px,env(safe-area-inset-bottom,0px))}
+.composer{--cpad-b:max(12px,env(safe-area-inset-bottom,0px))}
 .side-veil{display:none}
 
 /* 「…」。広い画面ではホバー・フォーカスで出る（行の題の右端・状態の見出しの右端・グループの器の右上）。
@@ -2154,6 +2166,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   :root.desktop:not(.remote) #sidebar header{-webkit-app-region:no-drag}
   /* 履歴の外側。筋と節も24pxの溝の中心に合わせる。 */
   #log{padding-left:0;padding-right:8px;padding-bottom:12px}   /* 末尾の余白 24→12px（conversation-nav-view.mjs の END_GAP_NARROW） */
+  #logFrame > #log{padding-bottom:calc(12px + var(--composer-h,0px))}
   /* デスクトップ版の紙の角: 脇は重なるだけなので、紙の左上は窓の縁に接する */
   :root.desktop body:not(.settings) > main{--paper-tl:0px}
   :root.desktop body:not(.settings,.file-preview-open) > .titlebar{background:var(--surface-paper);--bar-end:var(--surface-paper)}
@@ -2166,7 +2179,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (prefers-reduced-motion:reduce){body > #sidebar,.side-veil{transition:none}}
 /* ---- 入力欄の行: スマホの幅（480px 以下）は ▾ を 3 つとも省き、中断は四角のアイコンだけ。400px 未満はチップの余白も詰める ---- */
 @media (max-width:480px){
-  .composer{padding-bottom:max(8px,env(safe-area-inset-bottom,0px))}
+  .composer{--cpad-b:max(8px,env(safe-area-inset-bottom,0px))}
   .chip svg.caret{display:none}
   .abort{width:36px;height:36px;padding:0;border-radius:50%}
   .abort svg.i{display:block}

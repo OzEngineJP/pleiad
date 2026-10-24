@@ -841,6 +841,22 @@ const navNarrow = matchMedia("(max-width:700px)");
 const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });
 createConversationRail({ frame: $("logFrame"), log, thread, nav, narrow: navNarrow });
 
+// 入力欄は履歴の下端に重ねる（ADR 0266）。その高さを --composer-h に入れて、#log の末尾の余白・最新へ・末尾の判定を上げる。
+// 字の欄が伸びる・添付の札・帯の出入りで高さが変わる。末尾にいたら、伸びた分だけ末尾に合わせ直す（最後の行を入力欄の後ろに隠さない）
+{
+  const frame = $("logFrame"), composer = $("composer");
+  let height = -1;
+  new ResizeObserver(() => {
+    const next = Math.ceil(composer.offsetHeight);
+    if (next === height) return;
+    const stick = atBottom();
+    height = next;
+    frame.style.setProperty("--composer-h", `${next}px`);
+    nav.setBottomInset(next);
+    if (stick) log.scrollTop = log.scrollHeight;
+  }).observe(composer);
+}
+
 /**
  * 筋の末尾に置く。稼働表示（走っている間だけある）は常に一番下に残す。
  * 稼働表示の行は activity.el が持っている。1 行ごとに筋の子孫を探すと、履歴を描く間が件数の 2 乗になる

@@ -16,7 +16,8 @@ import { userPieces, piecesText, appendPieces } from './conversation-nav.mjs';
 
 /** 末尾からこの距離（px）以上離れたときだけ「最新へ」を出す（末尾の目印が、会話欄の下端からこの距離の内に見えなくなったとき） */
 const AWAY = 120;
-/** 目印から会話欄の下端までの余白（#log の下の余白。広い画面 24px・狭い画面 12px）。これを引いて、スクロール量の 120px にそろえる */
+/** 目印から会話欄の下端までの余白（#log の下の余白。広い画面 24px・狭い画面 12px）。これを引いて、スクロール量の 120px にそろえる。
+ *  会話欄の下端に重ねた入力欄の高さ（bottomInset。ADR 0266）は、余白に足されるので一緒に引く */
 const END_GAP_WIDE = 24;
 const END_GAP_NARROW = 12;
 /** 問いへ戻って着いたとき、吹き出しの輪（note-flash）を残す時間（ms） */
@@ -132,11 +133,14 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   endMark.setAttribute('aria-hidden', 'true');
   log.append(endMark);
   let endVisible = true;
-  // 狭い画面は #log の下の余白が 12px（style.css）。余白の差だけ判定の枠を変える（幅が変わったら張り直す）
+  // 狭い画面は #log の下の余白が 12px（style.css）。余白の差だけ判定の枠を変える（幅が変わったら張り直す）。
+  // 重ねた入力欄の高さ（setBottomInset）も #log の下の余白に入るので、変わったら張り直す
   let endObserver = null;
+  let bottomInset = 0;
   const watchEnd = () => {
     endObserver?.disconnect();
-    endObserver = new IntersectionObserver((records) => { endVisible = records.at(-1).isIntersecting; schedule(); }, { root: log, rootMargin: `0px 0px ${AWAY - (narrow.matches ? END_GAP_NARROW : END_GAP_WIDE)}px 0px` });
+    const margin = AWAY - (narrow.matches ? END_GAP_NARROW : END_GAP_WIDE) - bottomInset;
+    endObserver = new IntersectionObserver((records) => { endVisible = records.at(-1).isIntersecting; schedule(); }, { root: log, rootMargin: `0px 0px ${margin}px 0px` });
     endObserver.observe(endMark);
   };
   watchEnd();
@@ -357,6 +361,8 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     },
     /** 走っているか（弧を出すか）が変わった */
     syncRunning() { const now = isRunning(); if (now !== running) { running = now; schedule(); } },
+    /** 会話欄の下端に重ねた入力欄の高さ（px。ADR 0266）。#log の下の余白に足した分だけ、末尾の判定をずらす */
+    setBottomInset(px) { if (px !== bottomInset) { bottomInset = px; watchEnd(); } },
     goTo, neighbour, currentIndex, scrollToRow, schedule, invalidate,
     /** 発言の並びと、最後に測った位置（top）。地図の点用 */
     turns: () => ensureTurns(),

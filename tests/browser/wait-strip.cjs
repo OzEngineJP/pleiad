@@ -1,6 +1,7 @@
 // fake サーバーで案内とログインを済ませて実行する。docs/design-system.md §6・会話の圧縮。ADR 0265。
 // 稼働表示は会話の筋（#thread）の末尾の節。筋はその点の中心で終わり、ほかの発言の本文と同じ列に弧・衛星、その右に文言。
 // 入力欄の上の帯（#contextStrip）は作業・文脈・使用量だけで、右のパネルで列が狭まっても列の中に収める。
+// 入力欄は履歴の下端に重ねる（ADR 0266）。末尾までスクロールしたら、稼働表示は帯と入力欄の上に出る。
 async page => {
   const results = [];
   const check = (label, ok, detail) => {
@@ -54,7 +55,8 @@ async page => {
       stripSurface: getComputedStyle(strip).backgroundColor, column: box(q('#log')),
       input: box(q('#cbox')), logBottom: box(q('#log')).bottom,
       prev: box(row.previousElementSibling.querySelector('.m') ?? row.previousElementSibling),
-      // 筋の中で稼働表示の下に残る余白（スクロールしきった列の下端まで）
+      // 筋の中で稼働表示の下に残る余白（スクロールしきった列の下端まで。重ねた入力欄の高さ composerH を含む）
+      composerH: q('#composer').offsetHeight,
       tail: (() => { const log = q('#log'); return log.scrollHeight - (m.getBoundingClientRect().bottom - log.getBoundingClientRect().top + log.scrollTop); })(),
       work: q('#workEntry').hidden ? null : box(q('#workEntryButton')),
       context: q('#contextMeterWrap').offsetParent ? box(q('#contextMeterWrap')) : null,
@@ -83,7 +85,7 @@ async page => {
       ? Math.abs(r.el.left - r.txt.right - 8) < 1 && r.txt.width - r.textWidth < 1 : Math.abs(r.el.right - r.m.right) < 1 && r.el.left > r.txt.right, r);
     const below = r.stripShown ? r.strip.top : r.input.top;
     check(`${at}: 最後の発言のすぐ下に置き、帯の段（高さ 40px）は無い`, r.m.top - r.prev.bottom >= 0 && r.m.top - r.prev.bottom <= 24 && r.m.height <= 30, r);
-    check(`${at}: 下の余白は小さく、入力欄と重ならない`, r.tail <= 32 && r.m.bottom <= r.logBottom + 0.5 && r.logBottom <= below + 1, r);
+    check(`${at}: 下の余白は（重ねた入力欄の分を除いて）小さく、入力欄と帯に隠れない`, r.tail - r.composerH <= 32 && r.m.bottom <= below + 0.5 && r.logBottom >= r.input.bottom, r);
     if (r.stripShown) {
       check(`${at}: 帯は透明で入力欄の 8px 上`, r.stripSurface === 'rgba(0, 0, 0, 0)' && Math.abs(r.input.top - r.strip.bottom - 8) < 1, r);
       check(`${at}: 帯の札は列からはみ出さない`, r.stripRight <= r.strip.right + 0.5 && r.strip.right <= r.input.right + 1 && r.strip.left >= r.input.left - 1, r);
@@ -146,9 +148,9 @@ async page => {
       return { shown: !q('#contextStrip').hidden && !q('#workEntry').hidden,
         fits: work.right <= strip.right + 1 && work.left >= strip.left,
         gap: input.top - strip.bottom, activity: !!q('.m.activity'),
-        surface: getComputedStyle(q('#workEntryButton')).backgroundColor };
+        surface: getComputedStyle(q('#workEntryButton')).backgroundColor, paper: getComputedStyle(q('main')).backgroundColor };
     });
-    check(`${width}: 待ちがなくても作業ボタンの段が成立し、常時の背景は透明`, r.shown && r.fits && !r.activity && Math.abs(r.gap - 8) < 1 && r.surface === 'rgba(0, 0, 0, 0)', r);
+    check(`${width}: 待ちがなくても作業ボタンの段が成立し、常時の背景は紙（透けた履歴の字と重ねない）`, r.shown && r.fits && !r.activity && Math.abs(r.gap - 8) < 1 && r.surface === r.paper, r);
   }
   await page.evaluate(old => {
     document.querySelector('#workEntryButton').replaceChildren(...window.__waitStripOriginal);
