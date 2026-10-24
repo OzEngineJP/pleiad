@@ -413,6 +413,8 @@ const TOKEN = handoverStash?.token ?? BOOT_ENV.AGENT_HOST_TOKEN ?? crypto.random
 
 const NL = String.fromCharCode(10);
 const switching = new Set();
+// 会話ごとの最後の自動圧縮の区切り（効果の分からない連続した自動圧縮を 1 つに畳む。2026-10-24）
+const lastAutoCompaction = new Map();
 const forking = new Set(); // Separate ownership: a running turn retains its own lock.
 const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
@@ -3380,6 +3382,20 @@ function makeEmit(turn) {
       }
       for (const key of ['nativeId', 'turnId', 'beforeTokens', 'afterTokens', 'summary', 'reason', 'beforeMessageId', 'afterMessageId'])
         if (event[key] !== undefined && event[key] !== null) entry[key] = event[key];
+      // 位置の手掛かりが無い区切りは、そのターンの最後の発言の後ろに置く（Devin は発言の時刻を持たない。issue #105）
+      if (!entry.afterMessageId && !entry.beforeMessageId && turn.lastUuid) entry.afterMessageId = turn.lastUuid;
+      // 量の分からない自動圧縮が続けて起きる（Devin が要求ごとに内部で圧縮する）と、区切りが増え続けて
+      // 履歴の末尾に積み上がる。30 分以内の連続は最後の 1 つに畳む（2026-10-24）
+      const tokenless = e => e && !Number.isFinite(e.beforeTokens) && !Number.isFinite(e.afterTokens);
+      if (phase === 'complete' && turn.info.sessionId) {
+        const prev = lastAutoCompaction.get(turn.info.sessionId);
+        if (entry.trigger !== 'manual' && tokenless(entry) && prev && prev.trigger !== 'manual' && tokenless(prev)
+          && entry.at - prev.at < 30 * 60_000) {
+          entry.id = prev.id;
+          entry.at = Date.now();
+        }
+        lastAutoCompaction.set(turn.info.sessionId, { id: entry.id, at: entry.at, trigger: entry.trigger, beforeTokens: entry.beforeTokens, afterTokens: entry.afterTokens });
+      }
       turn.compaction = entry;
       event = { type: 'compaction', ...entry };
       if (phase !== 'start' && turn.info.sessionId && !replay) {

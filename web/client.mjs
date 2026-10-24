@@ -687,8 +687,11 @@ function paintCompactions() {
     const uuid = message.querySelector('.m[data-uuid]')?.dataset.uuid;
     if (uuid) byId.set(uuid, message);
   }
-  for (const entry of state.compactions) {
+  // 量の分からない自動圧縮が続けて起きた分は、最後の 1 つだけ出す（Devin が要求ごとに内部で圧縮する。2026-10-24）
+  const tokenlessAuto = e => e?.phase === 'complete' && e.trigger !== 'manual' && !Number.isFinite(e.beforeTokens) && !Number.isFinite(e.afterTokens);
+  for (const [index, entry] of state.compactions.entries()) {
     if (!['complete', 'failed'].includes(entry.phase)) continue;
+    if (tokenlessAuto(entry) && tokenlessAuto(state.compactions[index + 1])) continue;
     const before = byId.get(entry.beforeMessageId);
     const previous = byId.get(entry.afterMessageId);
     // Item order locates boundaries even when every message in a turn has the same timestamp.
