@@ -4380,7 +4380,9 @@
       "reset": "Reset to default",
       "resetConfirm": "Reset the delegation settings to default? Keys are kept.",
       "saveFailed": "Couldn't save: {{error}}",
-      "loadFailed": "Couldn't load: {{error}}"
+      "loadFailed": "Couldn't load: {{error}}",
+      "loading": "Loading",
+      "retry": "Retry"
     }
   },
   "schedule": {

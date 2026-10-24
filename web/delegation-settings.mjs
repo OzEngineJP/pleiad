@@ -89,10 +89,16 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   const swLabel = el('label', 'rm-switch-label', t('routing.settings.enable'));
   swLabel.htmlFor = 'routingEnable';
   const head = el('div', 'rm-switch');
-  head.append(swLabel, sw);
+  // まだ一度も読めていない間の場所取り。「オフ」に見える偽のスイッチを出さない（docs/design-system.md の場所取り）
+  const skel = el('span', 'rm-skel');
+  skel.setAttribute('role', 'img');
+  skel.setAttribute('aria-label', t('routing.settings.loading'));
+  head.append(swLabel, skel, sw);
   const stateLine = el('p', 'rm-state rm-strong');
   stateLine.setAttribute('role', 'status');
   stateLine.setAttribute('aria-live', 'polite');
+  // 初回の読み込みが失敗したときの「再試行」（設定 › Pleiad Plus と同じ）
+  const retry = button(t('routing.settings.retry'), () => refresh(), 'btn btn-quiet rt-load-retry');
   // 自動で選ぶのに効いていない理由（自動選択に使うキーが無い・使える候補が無い）。スイッチの直下に、問題があるときだけ ⚠ と直す入口
   const effective = el('div', 'rt-eff');
   effective.setAttribute('role', 'status');
@@ -123,19 +129,23 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
 
   async function refresh(args = {}) {
     const serial = ++refreshSerial;
+    // まだ何も出せていないときの取り直し（初回・失敗のあと）は、場所取りに戻す
+    if (!data) { message = ''; paint(); }
     try {
       const latest = await cmd('delegationRouting', args);
       if (serial !== refreshSerial) return;
       committed = latest;
       data = { ...latest, settings: pending.reduce((s, patch) => applyPatch(s, patch, latest.defaults), latest.settings) };
       message = '';
+      // 分かっている設定は先に出す（キー一覧・候補の名前・使用量の表示は届き次第足す）
+      paint();
       // 選べるキー。取れなくても自動選択の設定は見せる（選ぶ欄だけ使えない）
       keyList = await apiKeyList(cmd).catch(() => null);
     }
     catch (e) { message = t('routing.settings.loadFailed', { error: e.message }); }
     // 候補の名前は語彙から。まだ読んでいないエージェントの分を読んでから描く
     await Promise.all([...new Set((data?.candidates ?? []).map(c => c.backend).filter(Boolean))].map(b => modelsOf(b).catch(() => null)));
-    paint();
+    if (serial === refreshSerial) paint();
   }
   async function save(patch) {
     if (!data) return;
@@ -166,9 +176,17 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
   // ---- 描く
   function paint() {
     const s = data?.settings;
-    sw.setAttribute('aria-checked', String(Boolean(s?.enabled)));
+    // まだ一度も読めていない間は、値を出さず場所取りと読み上げ（aria-busy・「読み込んでいます」）にする。
+    // 読めた後の取り直しでは、前の値を出したまま待つ
+    const loading = !s && !message;
+    if (loading) root.setAttribute('aria-busy', 'true'); else root.removeAttribute('aria-busy');
+    skel.hidden = !loading;
+    sw.hidden = !s;
+    if (s) sw.setAttribute('aria-checked', String(Boolean(s.enabled))); else sw.removeAttribute('aria-checked');
     sw.disabled = !s;
     stateLine.textContent = message;
+    // 初回が失敗して何も出せないときだけ「再試行」を出す（読めた後の更新失敗は今の値を見せ続ける）
+    if (message && !s) stateLine.append(' ', retry);
     stateLine.hidden = !message;
     paintEffective();
     if (!s) { for (const p of [judges, keys, advanced, reset]) p.hidden = true; return; }

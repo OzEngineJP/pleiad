@@ -4265,7 +4265,9 @@
       "reset": "既定に戻す",
       "resetConfirm": "委譲の設定を既定に戻しますか。キーは残ります。",
       "saveFailed": "保存できませんでした: {{error}}",
-      "loadFailed": "読み込めませんでした: {{error}}"
+      "loadFailed": "読み込めませんでした: {{error}}",
+      "loading": "読み込んでいます",
+      "retry": "再試行"
     }
   },
   "schedule": {

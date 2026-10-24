@@ -438,6 +438,30 @@ export default async function (t) {
   await new Promise(r => setTimeout(r, 250));
   efDelayMs = 0;
 
+  // ---- 使用量の取り置き: 1 回の確認ではモデルの一覧を候補ごとに取り直さない（一覧の取りかけを分け合う）。
+  // warm の後の再確認は新しい取りかけを許す（一覧が裏で更新されているかもしれない）
+  let listCalls = 0;
+  const listBackend = { id: 'devin', usage: true, models: async () => { listCalls++; return { 'swe-2-high': {}, 'glm-5-2': {} }; } };
+  const listMonitor = createUsageMonitor({
+    backends: () => [listBackend], installed: () => true,
+    read: async () => ({ windows: [], checkedAt: Date.now() }),
+    candidates: () => ['devin:swe-2-high', 'devin:glm-5-2'],
+    modelKnown: async (b, m) => Object.hasOwn(await b.models(), m),
+  });
+  await listMonitor.refresh();
+  t.ok('1 回の取り置きでモデルの一覧は 1 回だけ引く（候補ごとではない）', listCalls === 1 && listMonitor.snapshot().devin.models['glm-5-2'] === true);
+  let warmCalls = 0, warmListCalls = 0;
+  const warmBackend = { id: 'devin', usage: true, models: async () => { warmListCalls++; return warmListCalls === 1 ? {} : { 'swe-2-high': {} }; } };
+  const warmMonitor = createUsageMonitor({
+    backends: () => [warmBackend], installed: () => true,
+    read: async () => ({ windows: [], checkedAt: Date.now() }),
+    candidates: () => ['devin:swe-2-high'],
+    modelKnown: async (b, m) => Object.hasOwn(await b.models(), m),
+    warm: async () => { warmCalls++; },
+  });
+  await warmMonitor.refresh();
+  t.ok('一覧に無ければ warm の後にもう 1 回だけ引き直す', warmListCalls === 2 && warmCalls === 1 && warmMonitor.snapshot().devin.models['swe-2-high'] === true);
+
   // ---- 子の思考の強さ（ADR 0164）
   const strictFails = (raw, code) => { try { normalizeSettings(raw, { strict: true }); return false; } catch (e) { return e instanceof RoutingSettingsError && e.code === code; } };
   t.ok('強さの既定: 段 1 low・段 2 medium・段 3 medium・段 4 high・創作は会話の既定（空）', JSON.stringify(settings.efforts)

@@ -75,10 +75,31 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     if (!value) throw Object.assign(new Error(t('devin.errors.notInstalled')), { code: 'NOT_INSTALLED' });
     return value;
   }
-  async function rawModels(cwd, signal) {
-    return serial(metadataQueue, async () => {
+  // モデルの一覧の置き場（`devin models list` の生のカタログ）。起動に秒かかるので、直近の値と取りかけを分け合う
+  // （codex.mjs の modelCache/modelFetch と同じ形）。成功した取得だけを覚え、失敗は次の要求で取り直す
+  const modelsTtlMs = () => envMs('AGENT_HOST_DEVIN_MODELS_TTL_MS', 300_000);
+  let catalogueCache = null, catalogueFetch = null;
+  function catalogueJob(cwd) {
+    // 起動する作業場所は固定（devin-config.mjs の metadata）なので、先に来た呼び出しの cwd でよい
+    catalogueFetch ??= serial(metadataQueue, async () => {
       const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, metadata: true });
-      return catalogue(launch, signal);
+      // 取りかけを分け合うので、呼び出し側の中断（signal）は spawn へ渡さない（rawModels が待ちを切る）
+      return catalogue(launch, undefined);
+    }).then(value => { catalogueCache = { value, at: Date.now() }; return value; })
+      .finally(() => { catalogueFetch = null; });
+    return catalogueFetch;
+  }
+  async function rawModels(cwd, signal, { refresh = false } = {}) {
+    const fresh = catalogueCache && Date.now() - catalogueCache.at < modelsTtlMs();
+    const job = !refresh && fresh ? Promise.resolve(catalogueCache.value) : catalogueJob(cwd);
+    if (!signal) return job;
+    // 共有の取得を呼び出し側の中断で止めない。中断はこの待ちだけを切る
+    if (signal.aborted) throw abortError();
+    return new Promise((resolve, reject) => {
+      const onAbort = () => reject(abortError());
+      signal.addEventListener('abort', onAbort, { once: true });
+      job.then(value => { signal.removeEventListener('abort', onAbort); resolve(value); },
+            error => { signal.removeEventListener('abort', onAbort); reject(error); });
     });
   }
   async function openClient(cwd, handlers = {}, extraEnv = null) {
@@ -123,7 +144,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       computerUse: { images: 'inline', waitSliceMs: null } },
     modes,
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
-    async models(cwd = process.cwd()) { return buildDevinModels(await rawModels(cwd)); },
+    async models(cwd = process.cwd(), { refresh = false } = {}) { return buildDevinModels(await rawModels(cwd, undefined, { refresh })); },
+    // 起動時に一覧を取り置く（初めての振り分けで CLI の起動を待たない）
+    async warmModels(cwd = process.cwd()) { await rawModels(cwd); },
     /** 自動の振り分けが選ぶ前に聞く。CLI が示した ACP の選択肢に無い版は、走らせても設定で止まる（まだ見ていなければ通す） */
     runnableModel(model) { return !acpModels || !model || devinAcpModel(model, acpModels) !== null; },
     async listSessions({ cwd } = {}) {
@@ -199,7 +222,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           // その間も画面が止まって見えないよう、準備中から稼働表示に出す
           emit({ type: 'activity', state: 'preparing' });
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
-          const selection = resolveDevinModel(await rawModels(cwd, local.signal), args.model ?? '');
+          let list = await rawModels(cwd, local.signal);
+          // 指定されたモデルが一覧に無いとき、置き場が古いだけかもしれないので取り直して確かめる
+          if (args.model && !Object.hasOwn(buildDevinModels(list), args.model)) list = await rawModels(cwd, local.signal, { refresh: true });
+          const selection = resolveDevinModel(list, args.model ?? '');
           check();
           // ブラウザー（AGENT_BROWSER_*）・ply_control の CLI・秘密情報と変数は、起動する CLI の env で渡す（会話のシェルへ届く）
           const extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}), ...(args.secretsRuntime?.env ?? {}) };

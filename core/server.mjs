@@ -1787,9 +1787,17 @@ async function delegationRoutingState() {
   const settings = routingSettingsCache;
   const usage = routingUsage.snapshot();
   const storage = await apiKeySecrets.status().catch(() => null);
-  // 候補ごとの強さの持ち方（選択肢の元。モデルの一覧から引く）と、会話の既定（エージェント設定の強さ。「会話の既定に従う（今は X）」）
+  // 候補ごとの強さの持ち方（選択肢の元。モデルの一覧から引く）と、会話の既定（エージェント設定の強さ。「会話の既定に従う（今は X）」）。
+  // 同じエージェントの一覧を候補ごとに取りに行かないよう、この 1 回の組み立てでは backend.models() の取りかけを分け合う
+  const modelLists = new Map();
+  const sharedBackend = backend => {
+    if (typeof backend?.models !== 'function') return backend;
+    if (!modelLists.has(backend.id)) modelLists.set(backend.id, backend.models(process.cwd()));
+    const list = modelLists.get(backend.id);
+    return { ...backend, models: () => list };
+  };
   const candidates = await Promise.all(candidateStates({ settings, usage, now: Date.now(), blocked: slotBlocked }).map(async c => {
-    const backend = c.backend ? getBackend(c.backend) : null;
+    const backend = c.backend ? sharedBackend(getBackend(c.backend)) : null;
     return backend ? { ...c, effort: await effortCapability(backend, c.model, process.cwd()) } : c;
   }));
   const prefs = await store.getPrefs();
@@ -2810,7 +2818,10 @@ async function resolveEffort(sessionId, asked, backend, model, cwd, endpoint = n
  */
 async function validModel(backend, model, cwd, endpointId = '') {
   if (endpointId) return model === '' || isModelId(model);
-  return backend.validModel ? backend.validModel(model, cwd) : Object.hasOwn(await backend.models(cwd), model);
+  if (backend.validModel) return backend.validModel(model, cwd);
+  if (Object.hasOwn(await backend.models(cwd), model)) return true;
+  // 一覧の置き場が古い間に「一覧に無い」と誤って断らないよう、取り直して確かめる（{ refresh } を読まない backend はそのまま再判定）
+  return Object.hasOwn(await backend.models(cwd, { refresh: true }), model);
 }
 /**
  * 明示して渡されたモデル名を、一覧の id に当てる（AI が書く claude-sonnet-5-5 → sonnet）。

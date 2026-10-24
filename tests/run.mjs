@@ -242,6 +242,8 @@ const SUITES = [
   './unit/grok-backend.mjs',
   './unit/grok-usage.mjs',
   './unit/grok-meter.mjs',
+  // Devin・Grok のモデルの一覧の置き場（models() の TTL キャッシュ）: 取りかけの分け合い・失敗は覚えない・強制の取り直し
+  './unit/backend-model-cache.mjs',
   './unit/backend-conformance.mjs',
   './unit/backends-lint.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
@@ -345,11 +347,15 @@ const SUITES = [
   // 同じくサーバー全体: kind の検査・自動で選んで子を作る・記録・設定とキーの口（偽の自動選択のモデルと偽の agy）
   './unit/server-delegation-routing.mjs',
   './unit/server-delegation-routing-settings.mjs',
+  // 委譲の画面の 1 回の組み立てで、同じエージェントのモデル一覧は 1 回だけ引く（偽の Devin の起動回数で確かめる）
+  './unit/server-delegation-models-share.mjs',
   './unit/server-delegation-effort.mjs',
   // 同じく画面: 委譲カードの理由・内訳の文、やり直しの候補の並び、設定の差分（web/delegation-routing-view.mjs）
   './unit/delegation-routing-view.mjs',
   './unit/delegation-effort-view.mjs',
   './unit/delegation-order.mjs',
+  // 設定 › 委譲の読み込み: 未読込は偽の OFF でなく場所取り・初回の失敗は再試行・取り直しは前の値のまま
+  './unit/delegation-loading.mjs',
   // 設定 › 委譲「委譲先の自動選択に使うキー」: 登録欄を開いたまま別の行を選ぶと畳んで印が動く
   './unit/delegation-key-choice.mjs',
   // Pleiad の指示: 担当によらず届く・依頼元と子で違う・足した指示・既定の編集・前の版のスイッチ・Codex のロード済みスレッド

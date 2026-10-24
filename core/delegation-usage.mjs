@@ -31,7 +31,13 @@ export function createUsageMonitor({ backends, installed = () => true, read, can
     const entry = { available: installed(b.id), checkedAt: null, windows: [], models: {}, accountable: Boolean(b.capabilities?.accounts) };
     if (!entry.available) return entry;
     const models = [...new Set(wanted.filter(c => c.backend === b.id).map(c => c.model))];
-    const known = async () => Object.fromEntries(await Promise.all(models.map(async m => [m, await modelKnown(b, m).catch(() => false)])));
+    // modelKnown が一覧を引くとき、候補ごとに取りに行かないよう 1 回の確認では一覧の取りかけを分け合う。
+    // warm の後の再確認では新しい取りかけを許す（一覧が裏で更新されているかもしれない）
+    const known = async () => {
+      let list = null;
+      const shared = typeof b.models === 'function' ? { ...b, models: (...args) => (list ??= b.models(...args)) } : b;
+      return Object.fromEntries(await Promise.all(models.map(async m => [m, await modelKnown(shared, m).catch(() => false)])));
+    };
     entry.models = await known();
     if (Object.values(entry.models).some(v => !v)) { await warm(b).catch(() => {}); entry.models = await known(); }
     if (!b.usage) return entry;
