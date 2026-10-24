@@ -6,7 +6,7 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { injectTaskInstructions } from '../../web/task-instructions.mjs';
 
 export const name = 'server-delegation-steer-acp';
-export const title = '委譲の追加指示（ply_task_send）: ACP の子（Devin）で受理後の決着（渡った・捨てられた）を指示の状態に反映する';
+export const title = '委譲の追加指示（ply_task_send）: ACP の子（Devin）で折り込んだ時点の「渡った」を指示の状態に反映し、中断でも送り直さない';
 const ply = (name, args) => 'ply:' + JSON.stringify({ name, arguments: args });
 
 export default async function (t) {
@@ -64,13 +64,13 @@ export default async function (t) {
       const a = await child('[slow] hold-for-steer');
       const markA = c.mark();
       const out = JSON.parse((await send(a.parent, a.task, 'follow-up A').then(r => r.events.find(e => e.type === 'tool.result'))).text);
-      t.ok('受理された時点では送信中（queued には戻さない・依頼元の pendingMessages は 0）',
-        out.pendingMessages === 0 && await awaitState(a.task, 'follow-up A:sending') === 'follow-up A:sending', await stateOf(a.task));
+      t.ok('受理された時点で渡った（queued には戻さない・依頼元の pendingMessages は 0）',
+        out.pendingMessages === 0 && await awaitState(a.task, 'follow-up A:delivered') === 'follow-up A:delivered', await stateOf(a.task));
       const um = events(a.task, markA, 'taskInstruction');
       t.ok('子の会話の中の位置は受け付けの出来事（taskInstruction）で確定する', um.length === 1 && um[0].text === 'follow-up A' && Boolean(um[0].instructionId), JSON.stringify(um));
       await a.release();
       const held = await awaitTask(a.parent, r => r.status === 'completed', 30_000);
-      t.ok('回の決着で渡った合図（userMessage.delivered）が届き、指示は delivered になる',
+      t.ok('受理の時点で渡った合図（userMessage.delivered）が 1 度だけ届き、指示は delivered になる',
         events(a.task, markA, 'userMessage.delivered').length === 1 && await stateOf(a.task) === 'follow-up A:delivered', await stateOf(a.task));
       const text = JSON.stringify((await c.cmd('loadSession', { sessionId: a.task.sessionId })).messages);
       t.ok('同じ回に折り込まれて答えられる（新しいターンは増えない）', held.result.includes('follow-up A') || text.includes('fixture: follow-up A'), held.result?.slice(0, 200));
@@ -93,29 +93,29 @@ export default async function (t) {
         await stateOf(f.task) === '[fast-steer] quick:delivered' && events(f.task, markF, 'taskInstruction').length === 1, await stateOf(f.task));
     }
 
-    // ---- 受理 → 中断で決着:「渡った」合図が無いまま捨てられた分は delivered のままにせず dropped にする
+    // ---- 受理 → 中断: 折り込んだ時点で渡ったことにした分は delivered のまま。読まれたかは区別できないので送り直さない
     {
       const b = await child('[slow] drop-me');
       const markB = c.mark();
       await send(b.parent, b.task, 'follow-up B');
-      await awaitState(b.task, 'follow-up B:sending');
+      await awaitState(b.task, 'follow-up B:delivered');
       await c.cmd('abort', { sessionId: b.task.sessionId });
-      t.ok('受理後に中断で捨てられた指示は delivered のまま残らず dropped になる',
-        await awaitState(b.task, 'follow-up B:dropped') === 'follow-up B:dropped', await stateOf(b.task));
-      t.ok('画面へも userMessage.dropped が出る', events(b.task, markB, 'userMessage.dropped').length >= 1);
       await awaitTask(b.parent, r => ['failed', 'cancelled', 'completed'].includes(r.status), 30_000);
+      t.ok('受理後に中断しても delivered のまま（送信待ちへ戻さない）',
+        await stateOf(b.task) === 'follow-up B:delivered', await stateOf(b.task));
+      t.ok('画面へ dropped は出さない（二重に送らない）', events(b.task, markB, 'userMessage.dropped').length === 0);
     }
 
-    // ---- 受理後に cancelled で決着（既読不明）: 既に実行された可能性があるので、dropped にして自動では送り直さない
+    // ---- 受理後に cancelled で決着（既読不明）: 受理の合図を出した分は delivered のまま、自動では送り直さない
     {
       const d = await child('[slow] unknown-drop');
       const markD = c.mark();
       await send(d.parent, d.task, '[drop-steer] maybe-read');
-      await awaitState(d.task, '[drop-steer] maybe-read:sending');
+      await awaitState(d.task, '[drop-steer] maybe-read:delivered');
       await d.release();
       const doneD = await awaitTask(d.parent, r => r.status === 'completed', 30_000);
-      t.ok('既読不明の決着は dropped のまま残し、待機へ戻さない',
-        await stateOf(d.task) === '[drop-steer] maybe-read:dropped', await stateOf(d.task));
+      t.ok('既読不明でも delivered のまま残し、待機へ戻さない',
+        await stateOf(d.task) === '[drop-steer] maybe-read:delivered', await stateOf(d.task));
       const turnsD = c.since(markD).filter(e => e.type === 'turnEnd' && e.sessionId === d.task.sessionId);
       const userTextsD = (await c.cmd('loadSession', { sessionId: d.task.sessionId })).messages.filter(m => m.role === 'user').map(m => m.text);
       t.ok('自動で次のターンへ送り直さない（新しいターンも重複配送も無い）',

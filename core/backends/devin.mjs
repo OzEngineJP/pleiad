@@ -315,7 +315,9 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
           // 途中送信: 走っているターンへ session/prompt を重ねる。Devin は同じ回に折り込む（実測 3000.11.92）
           steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
-            onSent: text => mapper.queueUser(text) });
+            onSent: text => mapper.queueUser(text),
+            // 応答は回の終わりまで返らない（実測 3000.11.92）。折り込んだ時点で渡ったことにする（docs/design.md「配送」）
+            confirmOnAccept: true });
           if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
           check();
           prompting = true;

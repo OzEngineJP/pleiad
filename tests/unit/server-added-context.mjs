@@ -142,7 +142,8 @@ export default async function (t) {
     t.ok('Codex の developerInstructions に入る（Codex だけの項目も）', firstTurn?.developerInstructions?.includes(routeText) && firstTurn.developerInstructions.includes('CODEX-ONLY') && firstTurn.developerInstructions.includes(bridge), String(firstTurn?.developerInstructions).slice(-160));
     const stored = normalizePlyInstructions((await prefs()).plyInstructions);
     const forClaude = turnInstructions({ list: stored, locale: 'ja', child: false, routing: true, supported: true, canDelegate: true, bridge: true, agent: 'claude' });
-    t.ok('Claude Code の会話には Codex だけの項目を入れず、理由 agent を記録する', forClaude.find(r => r.name === 'Codex だけ')?.reason === 'agent'
+    t.ok('Claude Code の会話には Codex だけの項目を入れず、理由 agent と対象のエージェントを記録する（画面が「… だけ」と出せる）',
+      forClaude.find(r => r.name === 'Codex だけ')?.reason === 'agent' && forClaude.find(r => r.name === 'Codex だけ')?.agents?.join() === 'codex'
       && turnInstructions({ list: stored, locale: 'ja', child: false, routing: true, supported: false, canDelegate: true, bridge: true, agent: null }) === null);
     // 指示を受け取る（plyInstructions）が委譲の橋（plyAgents）を持たないエージェント: 汎用の項目は入れ、連動の route だけは入れない
     const noBridge = turnInstructions({ list: stored, locale: 'ja', child: false, routing: true, supported: true, canDelegate: true, bridge: false, agent: 'codex' });

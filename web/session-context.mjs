@@ -781,9 +781,12 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     const items = data.added.map(addedItem), given = items.filter(a => a.inserted);
     const k = kindBox(t('sessionContext.added.title'), given.length ? t('sessionContext.added.who', { count: given.length }) : t('sessionContext.added.none'), given.length > 0);
     for (const a of items) {
+      // エージェントで絞った項目は、どのエージェント向けかを添える（効いていない理由が分かるように。2026-10-24）
+      const only = a.reason === 'agent' && Array.isArray(a.agents) && a.agents.length
+        ? t('sessionContext.added.reason.agentOnly', { agents: a.agents.map(id => labelOf(id)).join(t('sessionContext.chip.join')) }) : '';
       const why = a.inserted ? t('sessionContext.added.inserted') + (a.id === 'route' ? t('sessionContext.added.linked') : '')
         : a.reason === 'target' ? (a.target === 'child' ? t('sessionContext.added.reason.forChild') : t('sessionContext.added.reason.forParent'))
-        : t(`sessionContext.added.reason.${a.reason}`);
+        : only || t(`sessionContext.added.reason.${a.reason}`);
       k.append(item(a.inserted ? '✓' : '–', a.name, why, { on: a.inserted }).row);
     }
     if (given.length) {

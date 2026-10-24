@@ -354,6 +354,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           // 今の回の直後に続けて回す（実測 1.0.62。決着は drain で待つので、Pleiad の同じターンに見える）
           steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
             onSent: text => mapper?.queueUser(text),
+            // session/prompt の経路（interject が無い版）は応答が次の回の終わりまで返らない。折り込んだ時点で渡ったことにする
+            confirmOnAccept: true,
             // 走っているターンを止めずに次のモデル呼び出しへ差し込む Grok 固有の口（1.0.62 実測。
             // 応答は受理した時点で返る。{result:{status:'queued'}} はターン内の差し込み待ちへの受理）
             interject: async (text, item, interjectionId) => {

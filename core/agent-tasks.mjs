@@ -861,6 +861,9 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
       return Object.values(records).filter(r => ACTIVE.has(r.status) || UNDELIVERED.has(r.notification)).map(r => ({
         taskId: r.taskId, title: taskTitle(r.title, r.task), status: r.status, parentSessionId: r.parentSessionId, sessionId: r.sessionId,
         backend: r.backend ?? null, model: r.model ?? null, effort: r.effort ?? null, createdAt: r.createdAt ?? null, updatedAt: r.updatedAt ?? null,
+        // 走っている間の最終活動。これが変わると running の配信が抑止を破り、開いているバックグラウンドの詳細が読み直される
+        // （ネイティブのサブエージェントの行が発言数・時刻を載せているのと同じ役目。2026-10-24）
+        lastActivityAt: r.lastActivityAt ?? null,
         notification: r.notification, error: r.error ? String(r.error).slice(0, 500) : null,
         pendingMessages: r.host ? (r.hostPendingMessages ?? 0) : (r.instructions ?? []).filter(x => x.state === 'queued').length, instructionRevision: r.instructionRevision ?? 0,
         worktree: r.worktree ?? null, retryOf: r.routing?.retry?.of ?? null,

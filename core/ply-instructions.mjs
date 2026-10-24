@@ -121,7 +121,8 @@ export function turnInstructions({ list, locale, child, routing, supported, canD
   if (!supported) return child ? [{ id: 'childCommand', name: builtinName(locale, 'child'), target: 'child', inserted: true,
     text: agentT(locale, 'guide.commandLifetime') }] : null;
   return resolvePlyInstructions(list, locale).map(item => {
-    const base = { id: item.id, name: item.name, target: item.target };
+    // agents は画面が「このエージェントには入れない設定（… だけ）」と出すのに使う（2026-10-24）
+    const base = { id: item.id, name: item.name, target: item.target, agents: [...item.agents] };
     const skip = reason => ({ ...base, inserted: false, reason });
     if (item.id === LINKED && !routing) return skip('routingOff');
     if (!item.on) return skip('off');

@@ -245,7 +245,7 @@ Pleiad タスクには件数・深さの上限を置かない。同時に活動�
 
 ## 無音と長いコマンドの通知
 
-実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。Antigravity は履歴に残さない `step_update`、Claude は SDK の `tool_progress`、Codex は `item/commandExecution/outputDelta` も数える。これらの活動だけで画面の表示を増やさない。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
+実行中の子の最後の動き（バックエンドのイベント、ツールの開始・結果、本文差分、承認待ちの開始・再開）を `lastActivityAt` に持つ。この時刻は `running` の配信（全端末・4 秒）の行にも載せる。同じ中身の配信は抑止されるので、これが無いと子が黙々と動いている間は、開いているバックグラウンドの詳細を読み直すきっかけが無い（2026-10-24）。Antigravity は履歴に残さない `step_update`、Claude は SDK の `tool_progress`、Codex は `item/commandExecution/outputDelta` も数える。これらの活動だけで画面の表示を増やさない。`ply_task_status` / `ply_task_list` はこの時刻と `silenceMinutes`（実行中の無音分数。承認待ちは `null`）を返す。
 既定で 5 分、子から動きが無ければ、親が受け取れるときに専用の無音通知で親のターンを 1 回始める。`AGENT_HOST_TASK_SILENCE_MINUTES` で分数を変えられ、`0` で無効。子は止めない。同じ無音期間には重ねて通知せず、人間の承認待ちは数えず、再開時から数え直す。親が忙しい間は通知を保留し、送ったか不明な失敗では自動再送しない（[ADR 0048](adr/0048-delegation-silence-notice.md)）。
 待つためのコマンド（`until` / `while` のループ・`sleep`・`gh run watch` など。`isWaitingCommand`）が走っている間は、黙っていても知らせない。知らせるのは同じ子の同じ状態（走っているコマンドの組）で 1 回だけで、動きが戻って再び黙っても繰り返さない（別のコマンド・別の状態になれば知らせる。[ADR 0138](adr/0138-quiet-wait-notices.md)）。
 

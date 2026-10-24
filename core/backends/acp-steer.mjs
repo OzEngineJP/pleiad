@@ -4,7 +4,12 @@ import { randomUUID } from 'node:crypto';
 // request only admits input; its separate session notification confirms it.
 export const PROTOCOL_REJECT_CODES = new Set([-32600, -32601, -32602]);
 
-export function createAcpSteer({ client, sessionId, emit, ready, onSent, interject = null }) {
+/**
+ * confirmOnAccept … 呼び出しが即座に拒否されなかった時点で「渡った」を出す。Devin のように
+ * session/prompt の応答が回の終わりまで返らないバックエンド用（折り込んだ時点＝渡った時点。docs/design.md「配送」）。
+ * 受理後の cancelled・接続断は、読まれたかを区別できないので合図を出さない（送信待ちへ戻さない）
+ */
+export function createAcpSteer({ client, sessionId, emit, ready, onSent, interject = null, confirmOnAccept = false }) {
   const calls = new Map(), interjections = new Map();
   let canInterject = typeof interject === 'function';
   const remove = (key, entry) => { interjections.delete(key); entry.resolve(); };
@@ -45,7 +50,7 @@ export function createAcpSteer({ client, sessionId, emit, ready, onSent, interje
       try { call = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, { timeoutMs: 0 }); }
       catch { return false; }
       const withdraw = onSent?.(text);
-      const entry = { id: item?.id ?? null };
+      const entry = { id: item?.id ?? null, delivered: false };
       calls.set(call, entry);
       const early = await Promise.race([call.then(() => null, e => e), new Promise(resolve => setTimeout(resolve, 300)).then(() => null)]);
       if (early instanceof Error) {
@@ -55,12 +60,18 @@ export function createAcpSteer({ client, sessionId, emit, ready, onSent, interje
       }
       call.then(
         result => {
-          if (!calls.delete(call) || !entry.id) return;
+          if (!calls.delete(call) || !entry.id || entry.delivered) return;
           const nativeId = withdraw?.nativeId;
           emit({ type: result?.stopReason === 'cancelled' ? 'userMessage.dropped' : 'userMessage.delivered', messageId: entry.id,
             ...(result?.stopReason === 'cancelled' ? { unknown: true } : {}), ...(nativeId ? { nativeId } : {}) });
         },
-        () => { if (calls.delete(call) && entry.id) emit({ type: 'userMessage.dropped', messageId: entry.id, unknown: true }); });
+        () => { if (calls.delete(call) && entry.id && !entry.delivered) emit({ type: 'userMessage.dropped', messageId: entry.id, unknown: true }); });
+      // 即座の拒否が無い＝折り込まれた。応答を待たずに渡ったことにする（決着の側では何も出さない）
+      if (confirmOnAccept && entry.id && calls.has(call)) {
+        entry.delivered = true;
+        const nativeId = withdraw?.nativeId;
+        emit({ type: 'userMessage.delivered', messageId: entry.id, ...(nativeId ? { nativeId } : {}) });
+      }
       return true;
     },
     async drain({ alive = () => true, confirmationMs = 1000 } = {}) {

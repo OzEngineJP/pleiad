@@ -29,6 +29,30 @@ export default async function (t) {
     t.ok('cancelled 以外の決着で delivered が届く', events.length === 1 && events[0].type === 'userMessage.delivered' && events[0].messageId === 'm1', JSON.stringify(events));
   }
 
+  // 折り込みで渡ったことにする（Devin・Grok の session/prompt 経路）: 応答を待たずに delivered を出し、決着では何も出さない
+  {
+    const events = [];
+    let resolveNext;
+    const client = { call: () => new Promise(res => { resolveNext = res; }) };
+    const steer = createAcpSteer({ client, sessionId: 's1', emit: e => events.push(e), ready: () => true, confirmOnAccept: true });
+    const ok = await steer.steer({ id: 'm1b', args: { prompt: 'hi' } });
+    t.ok('受理した時点で渡ったことにする（応答を待たない）', ok === true && events.length === 1 && events[0].type === 'userMessage.delivered' && events[0].messageId === 'm1b', JSON.stringify(events));
+    resolveNext({ stopReason: 'end_turn' });
+    await sleep(0);
+    t.ok('決着では合図を重ねない', events.length === 1, JSON.stringify(events));
+  }
+  // 折り込みの後に中断された（読まれたか分からない）: 受理の合図は取り消さない（送信待ちへ戻さない＝二重に送らない）
+  {
+    const events = [];
+    let resolveNext;
+    const client = { call: () => new Promise(res => { resolveNext = res; }) };
+    const steer = createAcpSteer({ client, sessionId: 's1', emit: e => events.push(e), ready: () => true, confirmOnAccept: true });
+    await steer.steer({ id: 'm1c', args: { prompt: 'hi' } });
+    resolveNext({ stopReason: 'cancelled' });
+    await sleep(0);
+    t.ok('折り込み後の cancelled は delivered のまま（dropped を重ねない）', events.length === 1 && events[0].type === 'userMessage.delivered', JSON.stringify(events));
+  }
+
   // 決着も拒否も無いうちは、判定の窓（300ms）が過ぎるまで返らず、合図も出さない
   {
     const { steer, events } = mk();
