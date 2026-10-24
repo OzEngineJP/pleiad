@@ -666,6 +666,9 @@
     "preparing": "送信準備中",
     "connectingMcp": "外部 MCP に接続中 {{current}}/{{total}}",
     "mcpStarting": "{{name}} を起動しています",
+    "tool": { "run": "実行中", "read": "読み込み中", "search": "検索中", "write": "書き込み中" },
+    "toolsMore": "ほか {{count}} 件",
+    "toolsLess": "閉じる",
     "thinking": "考えている",
     "writing": "書いている",
     "compacting": "会話を圧縮しています…",
@@ -683,7 +686,6 @@
     "waitingChrome": "Chrome の操作を待っている",
     "behindCount_other": "裏で {{count}} 本が動いている",
     "turnRunning": "ターンが走っている",
-    "thinkingTokens_other": "考えている（約 {{count}} トークン）",
     "waitingBackground": "裏の作業を待っている",
     "backgroundOnly": "裏でコマンドが動いている",
     "bgKind": {

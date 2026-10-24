@@ -69,7 +69,7 @@ async page => {
     res.strayTick = qa('.tc-res').filter(r => r.textContent.includes('s') && r.querySelector('.run')).length;
     send({ type: 'activity', state: 'idle' });
 
-    // 5. activity 事象（running / waiting）は、ツールの行が語っている間は稼働表示を出さない
+    // 5. 実行中の行は末尾の節、承認を待つ行は元の場所に置く
     send({ type: 'tool.start', id: 'c1', name: 'Bash', input: { command: 'npm test' } });
     send({ type: 'activity', state: 'running' });
     await sleep(200);
@@ -95,7 +95,7 @@ async page => {
   if (!out.waitingShownAtStart || !out.waitingShownAfterToggle || !out.waitingShownAfterEsc) bad.push('waiting row hidden by bundle operation');
   if (out.arrowOnButton !== false || out.arrowOnHead !== true) bad.push('arrow keys: ' + out.arrowOnButton + '/' + out.arrowOnHead);
   if (out.strayRunning !== 0 || out.strayWaiting !== 0 || out.strayTick !== 0) bad.push('strays after abort');
-  if (out.activityWhileRunning !== 0 || out.activityWhileWaiting !== 0) bad.push('activity line stacked on the tool row');
+  if (out.activityWhileRunning !== 1 || out.activityWhileWaiting !== 0) bad.push('activity line stacked on the tool row');
   if (!out.activityForAgent) bad.push('no activity for the delegate tool');
   if (bad.length) throw Error(bad.join('; ') + ' ' + JSON.stringify(out));
   return { passed: true, out };

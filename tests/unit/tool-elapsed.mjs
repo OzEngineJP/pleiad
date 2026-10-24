@@ -65,10 +65,10 @@ export default async function (t) {
     const fresh = renderToolCall('Bash', { command: 'ls' }, { id: 'c2' });
     markRunning(fresh);
     fresh.querySelector('.tc-res').paint(Date.now());
-    t.ok('始まりが分からないときは今から数える（今までと同じ。1 分未満は 0s の形）', /^\d+s$/.test(elapsedOf(fresh)) && secondsOf(elapsedOf(fresh)) < 2, elapsedOf(fresh));
-    t.ok('行の経過の形: 1 分未満は 8s、それ以上は見出しと同じ m:ss、1 時間以上は h:mm:ss',
-      secs(8_000) === '8s' && secs(59_999) === '59s' && secs(60_000) === '1:00' && secs(125_000) === '2:05'
-      && secs(3_600_000) === '1:00:00' && secs((3600 + 62) * 1000) === '1:01:02' && secs(-5) === '0s',
+    t.ok('始まりが分からないときは今から数える（0:00 から）', /^\d+:\d\d$/.test(elapsedOf(fresh)) && secondsOf(elapsedOf(fresh)) < 2, elapsedOf(fresh));
+    t.ok('行の経過の形: 1 分未満も m:ss、1 時間以上は h:mm:ss',
+      secs(8_000) === '0:08' && secs(59_999) === '0:59' && secs(60_000) === '1:00' && secs(125_000) === '2:05'
+      && secs(3_600_000) === '1:00:00' && secs((3600 + 62) * 1000) === '1:01:02' && secs(-5) === '0:00',
       [8_000, 59_999, 60_000, 125_000, 3_600_000, (3600 + 62) * 1000].map(secs).join());
 
     const bundle = new Bundle({ live: true, since: Date.now() - 125_000 });

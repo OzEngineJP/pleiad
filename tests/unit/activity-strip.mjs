@@ -36,6 +36,7 @@ export default function(t) {
     return node;
   };
   const ctx = vm.createContext({ el: make, $: id => nodes[id], runMark, satMark, t: key => key, thread, log: {},
+    runningTools: { size: 0, clear() {}, el: new N("div") }, matchMedia: () => ({ matches: true }),
     paintingHistory: false, paintBefore: null, atBottom: () => false,
     Date, setTimeout, clearTimeout, setInterval: fn => { timers.add(fn); return fn; }, clearInterval: fn => timers.delete(fn),
     turnStartHere: () => 1, behindHere: () => behind, stoppingHere: () => false,
@@ -92,6 +93,16 @@ export default function(t) {
   ctx.syncStripVisible();
   t.ok('PCでも何も無ければ帯を隠す', strip.hidden);
 
+  behind = { n: 2, label: 'waiting for children' };
+  ctx.runningTools.size = 1;
+  a.show('writing');
+  t.ok('親のツール行は子の待ちより優先し、汎用表示を重ねない', a.behind === null && a.el.classList.contains('tools-active') && a.el.children.includes(ctx.runningTools.el));
+  a.show('thinking');
+  t.ok('本文や思考が続いても同じ末尾とツールの入れ物を保つ', a.el.children.includes(ctx.runningTools.el) && a.text === 'thinking');
+  ctx.runningTools.size = 0;
+  a.show("activity.waitingApproval");
+  t.ok("承認を待つ間は回る印を出さない", a.el.querySelectorAll(".run").length === 0);
+  a.hide();
   behind = null; live = 1; running = false;
   a.show('background');
   t.ok('待てない端末だけなら動く印と時計を出さない', a.el.querySelectorAll('.run').length === 0 && a.el.querySelector('.el').hidden);

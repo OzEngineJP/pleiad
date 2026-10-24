@@ -1491,6 +1491,10 @@ export function renderToolCall(name, input, opts) {
     if (target) drawInp = { ...inp, file_path: target };
   }
 
+  const runKind = draw === drawRead ? "read" : draw === drawGrep || draw === drawGlob ? "search"
+    : draw === drawWebFetch || draw === drawWebSearch ? "search" : draw === drawEdit || draw === drawWrite ? "write" : "run";
+  // i18n-dynamic: activity.tool.
+  card.runningVerb = t(`activity.tool.${runKind}`);
   const face = DRAW_FACE.get(draw) ?? { icon: "gear", tab: "output" };
   line.append(tic(face.icon));
   line.append(el("span", "tc-label", TOOL_LABEL[raw] ?? (computer ? computerVerb(raw) : raw.startsWith("mcp__") ? "MCP" : clip(raw, 24))));
@@ -1632,6 +1636,7 @@ function decorateComputerRow(node, head, resEl, info, result) {
 export function applyToolResult(node, result) {
   if (!node || typeof node.querySelector !== "function") return node;
 
+  node.restoreToolRow?.();
   if (node.querySelector(".tc-details")?.open) node.toolPaneChosen = true;
   // 呼び直されても二重に付かないよう、前回の結果を落としてから積む
   for (const old of [...node.querySelectorAll(".tc-out, .tc-preview, .tc-res-view, .tc-errline")]) {

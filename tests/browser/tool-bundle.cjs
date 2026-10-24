@@ -9,7 +9,7 @@ async page => {
     steps: [
       { tool: 'Read', input: { file_path: 'D:/x/a.mjs' }, result: '1\ta', ms: 700 },
       { tool: 'Grep', input: { pattern: 'foo' }, result: 'No matches found', ms: 700 },
-      { tool: 'Bash', input: { command: 'node bad.mjs' }, result: 'Error: boom\nExit code 1', error: true, ms: 700 },
+      { tool: 'Bash', input: { command: 'node bad.mjs' }, result: 'Error: boom\nExit code 1', error: true, ms: 2500 },
       { tool: 'Write', input: { file_path: 'D:/x/b.mjs', content: 'a\nb\n' }, result: 'ok', ask: true, ms: 500 },
       { text: '終わりました' },
     ],
@@ -26,9 +26,9 @@ async page => {
     return { ghost: b.querySelectorAll('.hi.ghost').length, hidden: b.querySelectorAll('.hi.hid').length, latest: b.querySelectorAll('.latest .tc').length,
       inertHidden: [...b.querySelectorAll('.hi.hid')].every(h => h.hasAttribute('inert')), head: b.querySelector('.rhead').textContent };
   });
-  if (live.ghost !== 1 || live.latest !== 1 || !live.inertHidden || !live.head.includes('3')) throw Error('live shape: ' + JSON.stringify(live));
-  // 走っているツールは最新の行が語る。末尾の稼働表示は重ねない
-  if (await page.locator('.m.activity').count()) throw Error('activity line shown while a tool row is running');
+  if (live.ghost !== 1 || live.latest !== 0 || !live.inertHidden || !live.head.includes('3')) throw Error('live shape: ' + JSON.stringify(live));
+  // 実行中の同じ行は末尾の節に置く
+  if (await page.locator('.m.activity .tc-running').count() !== 1) throw Error('running tool missing at thread end');
 
   // 承認待ち: まとまりの最新の行の場所に承認カード（まとまりは閉じない）
   await page.locator('.bundle .latest .tc-appr').waitFor();
@@ -38,11 +38,11 @@ async page => {
   if (await page.locator('.m.activity').count()) throw Error('activity line shown while waiting for approval');
   await page.locator('.tc-appr .btn-primary').click();
   await page.locator('.tc-appr').waitFor({ state: 'detached' });
-  const note = await page.locator('.bundle .latest .tc-note, .bundle .hi .tc-note').filter({ hasText: '許可した' }).count();
+  const note = await page.locator('#thread .tc-note').filter({ hasText: '許可した' }).count();
   if (!note) throw Error('allowed note missing');
 
   // ターンが終わったら見出しだけ。「ツール実行 N」と、失敗は右端の太字の「✕ 失敗 1」（内訳・変更数・経過は出さない）
-  await page.waitForFunction(() => !document.querySelector('.bundle .latest .tc') && document.querySelector('.bundle .rhead .xm')?.textContent.includes('1'));
+  await page.waitForFunction(() => document.querySelector('.bundle:not(.live)') && !document.querySelector('.bundle .latest .tc') && document.querySelector('.bundle .rhead .xm')?.textContent.includes('1'));
   const closed = await page.evaluate(() => {
     const b = document.querySelector('.bundle');
     const h = b.querySelector('.rhead');

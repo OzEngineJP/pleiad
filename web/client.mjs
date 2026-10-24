@@ -55,6 +55,7 @@ import { KIND_LABEL, CLAUDE_ROLES, lostText } from './compat-presets.mjs';
 // 人間の操作と AI のツールは、経路が違っても同じ store・同じイベントを通る（設計メモ 2.2）。
 // 見た目の規則は docs/design-system.md。
 import { renderAssistantMarkdown, renderMarkdown, renderPresent, renderToolCall, applyToolResult, applyToolHints, applySubagentTools, plainTextHtml } from "./render.mjs";
+import { RunningTools } from "./running-tools.mjs";
 import { Bundle, bundleOf, clock, fadeIn, markRunning, markWaiting, splitToolCalls, swapHeight } from "./tool-bundle.mjs";
 import { localTime, syncServerClock, toolStartedAt } from "./server-clock.mjs";
 import { createContextMenu } from "./context-menu.mjs";
@@ -463,7 +464,6 @@ const state = {
   turnClosed: false,   // text.end が来た。続くツール呼び出しは同じ発言に入り、次の本文は新しい発言になる
   streamEl: null,      // 追記中の本文
   thinkEl: null,       // 追記中の thinking 要素（平文が来たときだけ作る）
-  thinkTokens: 0,
   auth: new Map(),         // backendId -> authStatus の戻り（{ supported, loggedIn, account?, detail?, pending? }）
   authUrl: new Map(),      // backendId -> { url, message } ログインの途中で出た URL
   authNote: new Map(),     // backendId -> 直前のログインの時間切れ・失敗の一文（カードの中に出す。次のログインで消える。ADR 0243）
@@ -1827,10 +1827,6 @@ function closeBundle() {
   state.bundle = null;
   if (!b) return;
   b.close();
-  // 走っている行を抱えたまま閉じた（本文・割り込みが先に来た）。その行は閉じた見出しの中に隠れるので、稼働表示で待っていることを残す
-  if (b.cards.some((c) => c.classList.contains("tc-running"))) {
-    queueMicrotask(() => { if (isRunningHere() && !state.bundle) activity.show(activity.text || ACTIVITY_LABEL.running); });
-  }
 }
 
 /**
@@ -1872,6 +1868,7 @@ function closeTurnEl() {
  */
 function settleStrays() {
   for (const row of thread.querySelectorAll(".tc.tc-running, .tc.tc-waiting")) {
+    row.restoreToolRow?.();
     row.classList.remove("tc-running", "tc-waiting");
     const res = row.querySelector(".tc-res");
     if (res) { res.paint = null; res.replaceChildren(); }
@@ -1935,7 +1932,7 @@ function onComputerState(ev) {
 
 /** アプリの承認を出す行。ツールの行が分かればその行、無ければ今の塊の最新の行（待っているのは今の呼び出しなので）。見つからなければ null（単独のカード） */
 function computerApprovalRow(ev) {
-  const live = (row) => (row?.isConnected && row.classList.contains("tc-computer") && bundleOf(row)?.live ? row : null);
+  const live = (row) => (row?.isConnected && row.classList.contains("tc-computer") && (row.classList.contains("tc-at-end") || bundleOf(row)?.live) ? row : null);
   // 中継された承認（委譲の子の分）は、こちらの塊の行ではない
   if (relayLabel(ev.title)) return null;
   if (ev.toolUseID) return live(state.toolCards.get(ev.toolUseID));
@@ -2882,14 +2879,15 @@ function renderPermission(ev) {
   const computerApp = ev.computerApp ? approvalApps(ev.computerApp) : null;
   if (computerApp) {
     const row = computerApprovalRow(ev);
-    if (row) { activity.suspend(); return computerApproval(ev, computerApp, row); }
+    if (row) { markWaiting(row); activity.suspend(); return computerApproval(ev, computerApp, row); }
     closeTurnEl();
     activity.show(t("activity.waitingApproval"));
     return computerApproval(ev, computerApp, null);
   }
-  // ツールの承認で、そのツールの行が走っているまとまりの中にあるなら、まとまりを閉じずにその行の中に出す
+  // 実行中の行は元の所属へ戻して承認カードにする。本文が先に来てまとまりを閉じた場合も同じ。
   const row = ev.kind !== "question" && !ev.browserSite && ev.toolUseID ? state.toolCards.get(ev.toolUseID) : null;
-  if (row?.isConnected && bundleOf(row)?.live) {
+  if (row?.isConnected && (row.classList.contains("tc-at-end") || bundleOf(row)?.live)) {
+    markWaiting(row);
     activity.suspend();   // 承認カードが「承認を待っている」を語る
     return permissionCard(ev, row);
   }
@@ -2912,7 +2910,7 @@ function paintPendingPerms(id) {
 // ---------------------------------------------------------------- 稼働表示
 // 「動いているのか分からない」を無くす。何をしているかと、経過時間を出し続ける。
 // 置き場は会話の筋の末尾の節（走っている間だけ存在し、新しい発言が来るとその下へ移る）。
-// 節の代わりに弧が筋の上に載る。固定の帯や流れる線は置かない。
+// 印は本文列に置き、実行中のツール行を優先する（ADR 0267）。
 
 // main が返答を終え、裏の subagent などだけを待っている間（running のターン行の phase が waiting）は、
 // 弧の代わりに衛星（§6）を置き、見出しを「サブエージェントを待っている」にする。
@@ -2937,6 +2935,7 @@ function behindHere() {
 /** この会話で走っているターンが始まった時刻（この画面の時計の ms）。分からなければ null */
 const turnStartHere = () => localTime((state.work.turns ?? []).find(belongsHere)?.startedAt);
 
+const runningTools = new RunningTools(() => activity.toolsChanged(), { before: () => atBottom(), after: stick => { relayoutBranches(); if (stick && !paintingHistory) followBottom(); } });
 const activity = {
   t0: 0,         // 経過の起点。走っているターンの始まり（turnStartHere）。分からなければ出し始めた時刻
   timer: null,
@@ -2952,14 +2951,23 @@ const activity = {
     return !this.behind && !isRunningHere() && backgroundCounts().live > 0;
   },
   shapeNow() {
+    if (!stoppingHere() && [t("activity.waitingApproval"), t("activity.waitingAnswer"), t("activity.waitingChrome")].includes(this.text)) return "none";
     return this.behind ? `sat:${this.behind.n}` : this.idleOnly() ? "none" : "run";
   },
   mark() {
     this.shape = this.shapeNow();
+    if (this.shape === "none") return el("span", "activity-none");
     if (this.behind) return satMark(this.behind.n, t("activity.behindCount", { count: this.behind.n }));
-    return this.shape === "none" ? el("span", "activity-none") : runMark(t("activity.turnRunning"));
+    return runMark(t("activity.turnRunning"));
+  },
+  toolsChanged() {
+    if (runningTools.size) this.show(this.text || ACTIVITY_LABEL.running);
+    else { runningTools.el.remove(); this.suspend(); this.afterTool(); }
   },
   paint() {
+    const tools = runningTools.size > 0 && !stoppingHere();
+    this.el.classList.toggle("tools-active", tools);
+    if (tools) { if (runningTools.el.parentNode !== this.el) this.el.append(runningTools.el); } else runningTools.el.remove();
     this.el.querySelector(".txt").textContent = this.behind ? this.behind.label : this.idleOnly() ? t("activity.backgroundOnly") : this.text;
     this.el.querySelector(".el").hidden = this.idleOnly();
   },
@@ -2968,16 +2976,15 @@ const activity = {
     this.el?.querySelector(".activity-tip")?.replaceChildren(this.mark());
   },
   /**
-   * ツールの行（走っている最新の行・承認カード）が今の状態を語っているときは、末尾の稼働表示を出さない（同じ内容を 2 か所に書かない）。
-   * 経過は覚えておく（次に出すときも続きから数える）。裏の衛星だけは残す: 衛星の置き場はここしか無いので、
-   * ツールの文言は重ねずに衛星の行にする
+   * 汎用表示を抑える。実行中のツールがあれば同じ末尾の節に残し、承認カードだけなら節を外す。
+   * 経過の起点は次の表示まで保持する。親のツールが無いときは子の結果待ちの衛星を残す。
    */
   suspend() {
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
     this.suspended = true;
     if (!this.t0) this.t0 = turnStartHere() ?? Date.now();
-    if (behindHere()) return this.show(this.text || ACTIVITY_LABEL.running, { keepSuspended: true });
+    if (runningTools.size || behindHere()) return this.show(this.text || ACTIVITY_LABEL.running, { keepSuspended: true });
     clearTimeout(this.markTimer);
     this.markTimer = null;
     this.behind = null;
@@ -2992,13 +2999,13 @@ const activity = {
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       // 走っている・承認を待っている行が今のまとまりに無いときだけ（前のターンの残骸や他の会話の行は見ない）
-      const busy = (state.bundle?.cards ?? []).some((c) => c.classList.contains("tc-running") || c.classList.contains("tc-waiting"));
+      const busy = [...state.toolCards.values()].some((c) => c.classList.contains("tc-running") || c.classList.contains("tc-waiting"));
       if (isRunningHere() && !busy) this.show(ACTIVITY_LABEL.running);
     }, 600);
   },
   show(text, { delayMark = false, passive = false, keepSuspended = false } = {}) {
     // 汎用の事象（動いている・待っている）は、ツールの行が語っている間は出さない
-    if (passive && this.suspended && !behindHere()) return;
+    if (passive && this.suspended && !runningTools.size && !behindHere()) return;
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
     if (!keepSuspended) this.suspended = false;
@@ -3006,7 +3013,7 @@ const activity = {
     if (stoppingHere()) text = ACTIVITY_LABEL.stopping;
     this.text = text;
     if (!this.t0) this.t0 = turnStartHere() ?? Date.now();
-    this.behind = behindHere();
+    this.behind = runningTools.size || stoppingHere() ? null : behindHere();
     // ターンが終わって裏だけが残った、またはその逆。出ている節の印を差し替える
     if (this.el?.isConnected && this.shape !== this.shapeNow()) this.remark();
     if (!this.el?.isConnected) {
@@ -3016,6 +3023,9 @@ const activity = {
       if (!delayMark) tip.append(this.mark());
       m.append(tip, el("span", "txt"), el("span", "el"));
       append(m, "activity");
+      if (!matchMedia("(prefers-reduced-motion: reduce)").matches && m.animate) m.animate([
+        { transform: "translateY(6px)", opacity: .3 }, { transform: "none", opacity: 1 },
+      ], { duration: 240, easing: "cubic-bezier(.2,.7,.2,1)" });
       this.el = m;
     }
     const tip = this.el.querySelector('.activity-tip');
@@ -3034,7 +3044,7 @@ const activity = {
     syncWorkEntry();
     this.timer ??= setInterval(() => {
       const e = this.el?.querySelector(".el");
-      if (e) e.textContent = clock(Math.round((Date.now() - this.t0) / 1000));
+      if (e && !thread.classList.contains("activity-offline")) e.textContent = clock(Math.round((Date.now() - this.t0) / 1000));
     }, 1000);
   },
   /** running が変わった。裏を待っているかどうかで印と見出しを差し替える（表示中のときだけ） */
@@ -3044,7 +3054,7 @@ const activity = {
     if (this.t0 && start != null && start < this.t0) this.t0 = start;
     if (!this.el?.isConnected) return;
     const was = this.behind;
-    this.behind = behindHere();
+    this.behind = runningTools.size || stoppingHere() ? null : behindHere();
     if (this.shape !== this.shapeNow()) this.remark();
     // 待っている間に覚えた text は subagent 側のもの。main が戻ったら一旦中立の語にする
     if (was && !this.behind) this.text = ACTIVITY_LABEL.running;
@@ -3052,6 +3062,7 @@ const activity = {
     syncWorkEntry();
   },
   hide() {
+    runningTools.clear();
     clearInterval(this.timer);
     clearTimeout(this.idleTimer);
     this.idleTimer = null;
@@ -3557,25 +3568,29 @@ function onEvent(ev, replay = false) {
 
     case "thinking.start":
       endStream();
-      state.thinkTokens = 0;
       activity.show(ACTIVITY_LABEL.thinking);
       return;
 
     case "thinking.delta": {
       // 平文が来ないエージェント（Claude の thinking は署名だけ）もある。
-      // 中身が来たときだけ箱を作り、来ないときは考えている量だけを稼働表示に出す。
+      // 中身が来たときだけ箱を作る。稼働表示は文言だけにする。
+      activity.show(ACTIVITY_LABEL.thinking);
       if (ev.text) {
         const box = thinkBox().querySelector(".think-body");
         box.textContent += ev.text;
         if (state.thinkEl.open) box.scrollTop = box.scrollHeight;
       }
-      if (typeof ev.estimatedTokens === "number") state.thinkTokens = ev.estimatedTokens;
-      activity.show(state.thinkTokens ? t("activity.thinkingTokens", { count: state.thinkTokens }) : ACTIVITY_LABEL.thinking);
       return;
     }
 
     case "tool.start": {
-      if (ev.id && state.toolCards.has(ev.id)) return state.toolCards.get(ev.id);
+      if (ev.id && state.toolCards.has(ev.id)) {
+        const card = state.toolCards.get(ev.id);
+        if (!card.classList.contains("tc-done") && !card.classList.contains("tc-error") && !card.classList.contains("tc-stopped") && !card.classList.contains("tc-running") && !card.classList.contains("tc-waiting") && !isBoundaryTool(ev.name, subagentToolsOf(ev.backend ?? activeBackendId()))) {
+          markRunning(card, toolStartedAt(ev)); runningTools.add(card);
+        }
+        return card;
+      }
       endStream();
       const stick = atBottom();
       const card = renderToolCall(ev.name, ev.input, { id: ev.id, at: ev.at, startedAt: ev.startedAt });
@@ -3587,11 +3602,12 @@ function onEvent(ev, replay = false) {
         const since = toolStartedAt(ev);
         markRunning(card, since);
         liveBundle(isComputerTool(ev.name) ? "computer" : "tools", since).add(card);
+        runningTools.add(card);
       }
       // 2 件目で見出しが現れ、行が伸びる間も、読んでいた下端に付いていく
       if (stick) followBottom();
       if (ev.id) state.toolCards.set(ev.id, card);
-      // 走っているツールは最新の行（弧と経過）が語る。末尾の稼働表示は重ねない。
+      // 通常ツールは同じ行を末尾へ移し、汎用の稼働表示を重ねない。
       // 委譲・サブエージェントの行には弧が無い（状態は 4 秒ごとの更新で追いつく）ので、それまでは従来の稼働表示を残す
       if (boundary) activity.show(t("activity.runningTool", { tool: ev.name }));
       else activity.suspend();
@@ -10181,7 +10197,7 @@ async function checkToken() {
 
 function connect() {
   ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
-  ws.onopen = () => connStatus.opened();
+  ws.onopen = () => { thread.classList.remove("activity-offline"); runningTools.cards.forEach(c => c.querySelector(".tc-res")?.paint?.(Date.now())); connStatus.opened(); };
 
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
@@ -10295,6 +10311,7 @@ function connect() {
     // 開き直すのは connStatus（1.5 秒ごと。トークンが古いと分かったら開き直さない）
     for (const [, p] of pending) p.rej(new Error(t("app.disconnected")));
     pending.clear();
+    thread.classList.add("activity-offline");
     connStatus.closed();
   };
 
