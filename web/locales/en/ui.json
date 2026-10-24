@@ -5121,10 +5121,6 @@
     "log": {
       "label": "Conversation"
     },
-    "sticky": {
-      "title": "Back to this question: {{text}}",
-      "label": "Back to this question ({{time}}): {{text}}"
-    },
     "latest": {
       "label": "Jump to latest (End)",
       "running": "Reply in progress",

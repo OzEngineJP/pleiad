@@ -1,8 +1,8 @@
 /* 会話の移動（docs/design-system.md「会話の移動」、ADR 0063）。
-   A 残る問い・C 最新へ（web/conversation-nav-view.mjs）。B 地図（ADR 0064）・D 目次。
+   C 最新へ（web/conversation-nav-view.mjs）。B 地図（ADR 0064）・D 目次。
    浮く面（最新へ・地図の浮く面）は、ライトでは --surface-paper。ダークでは地（--surface-paper）と同じ面が沈むので、一段明るい --surface-1 にする */
 
-/* 会話（#log）を包む相対位置の入れ物。残る問い・最新へ・地図は #log の外に重ねて、スクロールで動かない。
+/* 会話（#log）を包む相対位置の入れ物。最新へ・地図は #log の外に重ねて、スクロールで動かない。
    重ねる部品の z-index はこの中に閉じる（isolation）。閉じないと、会話を覆う設定のページ（style.css の .settings-view、z-index:1）の上に出る */
 .log-frame{flex:1;min-height:0;position:relative;isolation:isolate;
   --surface-float:var(--surface-paper);--surface-float-hover:var(--surface-1)}
@@ -11,21 +11,13 @@
 .log-frame > #log{height:100%}   /* 入れ物は block（flex にすると、長い会話を開く時間が伸びた）。#log の flex:1 は効かないので高さで満たす */
 .log-frame > #log:focus-visible{outline:2px solid var(--line-blue);outline-offset:-3px}
 
-/* 重ねる部品は layout 包含にする。中身が変わる（残る問いの文・最新への印）たびに、包んでいる会話の再レイアウトが走らないように（長い会話のスクロールで測った） */
-.nav-sticky,.nav-latest,.nav-rail{contain:layout style}
+/* 重ねる部品は layout 包含にする。中身が変わる（最新への印・地図の節）たびに、包んでいる会話の再レイアウトが走らないように（長い会話のスクロールで測った） */
+.nav-latest,.nav-rail{contain:layout style}
 
 /* 会話の末尾の目印（web/conversation-nav-view.mjs）。「最新へ」を出すかを、スクロール量を読まずに決める */
 .nav-end{height:1px;pointer-events:none}
 
-/* ---- A 問いが上に残る（狭い画面では出さない。JS が隠すので media クエリの規則は無い）。影は付けず、会話の白から透明へのグラデーションでつなぐ。
-   左は発言の吹き出しの左端（#log の左の余白 8px + 溝 72px）にそろえ、幅は会話の列（860px − 溝 72px）まで。文字は押せる領域だけ ---- */
-.nav-sticky{position:absolute;z-index:4;left:0;right:10px;top:0;height:58px;padding:6px 18px 14px 80px;
-  background:linear-gradient(to bottom,var(--surface-paper) 76%,transparent);pointer-events:none}
-.nav-sticky-button{display:block;max-width:min(100%,788px);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  font-size:var(--fs-s);line-height:1.6;padding:8px 0;background:transparent;color:var(--ink-weak);cursor:pointer;pointer-events:auto;
-  transition:color var(--dur-fast) var(--ease-out)}
-.nav-sticky-button:hover{color:var(--ink)}
-.nav-sticky-time{font-size:var(--fs-xs)}
+/* 抜粋の中の ‹コード›・添付 の弱い字（地図の浮く面・目次の行で使う。web/conversation-nav.mjs の appendPieces） */
 .nav-token{color:var(--ink-weak)}
 
 /* ---- C 最新へ。直径 34px の丸。会話の右下（地図の左、入力欄の上）。入力欄は履歴の下端に重なるので、その高さ（--composer-h。ADR 0266）だけ上げる ---- */
@@ -90,7 +82,7 @@
 .nav-tip-legend .fillc{display:none}
 .nav-tip-legend .pending .nav-g{color:var(--ink-mark)}
 
-/* ---- 狭い画面。地図と残る問いは出さない（残る問いは JS が隠す）。最新へは入力欄の右上。タップ領域は 44px ---- */
+/* ---- 狭い画面。地図は出さない。最新へは入力欄の右上。タップ領域は 44px ---- */
 @media (max-width:700px){
   .nav-rail{display:none}
   .nav-latest{right:16px;bottom:calc(12px + var(--composer-h,0px))}

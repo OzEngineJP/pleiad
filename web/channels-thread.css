@@ -73,7 +73,6 @@
 .th-replies > .branch-row,.th-root > .branch-row{max-width:820px}
 /* 投稿の列の入れ物（会話の移動の部品が重なる。web/conversation-nav.css の .log-frame）。地図の筋の分だけ右を空ける */
 .th-frame > .th-log{height:100%;padding-right:34px}
-.th-frame .nav-sticky{padding-left:52px}
 .th-log{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:2px 10px 12px;scrollbar-width:thin;scrollbar-color:var(--surface-thumb) transparent}
 .th-log:focus-visible{outline:none}
 .th-root,.th-rdiv,.th-replies,.th-perms{max-width:820px}

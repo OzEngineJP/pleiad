@@ -1,5 +1,4 @@
 // 会話の移動の画面（docs/design-system.md「会話の移動」、ADR 0063）。
-//   A 問いが上に残る: 返答を読んでいる間、その返答を生んだ発言の抜粋を #log の上端に 1 行で残す（狭い画面では出さない）
 //   C 最新へ: 末尾から離れたときだけ出る丸いボタン。読んでいる間の新着は青い丸、走っている間は弧
 //   キーボード: 会話にフォーカスがあるとき Alt+↑ / Alt+↓ で前後の自分の発言、End で最新へ
 //   地図（web/conversation-rail.mjs）へ、発言の並び・位置・いまの発言を渡す
@@ -12,7 +11,7 @@
 import { el, svgEl } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
-import { userPieces, piecesText, appendPieces } from './conversation-nav.mjs';
+import { userPieces, piecesText } from './conversation-nav.mjs';
 
 /** 末尾からこの距離（px）以上離れたときだけ「最新へ」を出す（末尾の目印が、会話欄の下端からこの距離の内に見えなくなったとき） */
 const AWAY = 120;
@@ -20,15 +19,11 @@ const AWAY = 120;
  *  会話欄の下端に重ねた入力欄の高さ（bottomInset。ADR 0266）は、余白に足されるので一緒に引く */
 const END_GAP_WIDE = 24;
 const END_GAP_NARROW = 12;
-/** 問いへ戻って着いたとき、吹き出しの輪（note-flash）を残す時間（ms） */
-const FLASH_MS = 1300;
 /** 上端から見て、この位置より上に始まった発言を「いまの発言」とする */
 const PROBE = 48;
-/** 問いの下端がこの位置より上に出たときだけ、上に残す */
-const STICKY_EDGE = 8;
 /** 全発言の位置を測り直す間隔の下限（ms） */
 const MEASURE_EVERY = 200;
-/** 実寸の確定が続いている間、残る問い・地図の同期をまとめて行うまでの静かな時間（ms） */
+/** 実寸の確定が続いている間、地図の同期をまとめて行うまでの静かな時間（ms） */
 const SETTLE_IDLE = 250;
 
 /** 利用者の発言の行（.mw）。コマンド・シェルの行（.m.user.cmd）は問いではないので数えない */
@@ -58,11 +53,6 @@ const CHAT_ROWS = {
  */
 export function createConversationNav({ frame, log, thread, scrollToEnd, isRunning, narrow, rows = CHAT_ROWS }) {
   // ---- 部品
-  const sticky = el('div', 'nav-sticky');
-  sticky.hidden = true;
-  const stickyButton = el('button', 'nav-sticky-button');
-  stickyButton.type = 'button';
-  sticky.append(stickyButton);
   const latest = el('button', 'nav-latest');
   latest.type = 'button';
   latest.hidden = true;
@@ -70,7 +60,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   const unread = el('span', 'nav-unread');
   unread.hidden = true;
   latest.append(arrowIcon(), unread);
-  frame.append(sticky, latest);
+  frame.append(latest);
 
   // 会話の本文はキーボードで届き、Alt+↑↓・End が効く領域
   log.tabIndex = 0;
@@ -80,18 +70,18 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
 
   // ---- 発言の並び
   /**
-   * @type {{ user:HTMLElement, row:HTMLElement, top:number, ub:number }[]}
-   * top は全数測定（measureAll）の結果（会話の内容の上端からの行の上端）。ub は行の上端から吹き出しの下端まで（いまの発言になったとき 1 度だけ測る）。
+   * @type {{ user:HTMLElement, row:HTMLElement, top:number }[]}
+   * top は全数測定（measureAll）の結果（会話の内容の上端からの行の上端）。
    * 画面の外の行は中身のレイアウトを省いている（content-visibility）ので、その中の要素の位置を全数で読むと、省いた分を全部レイアウトしてしまう。
    * 全数で読むのは行そのものの位置だけにする
    */
   let turns = [];
-  // 実寸の確定中（web/history-heights.mjs の onBusy が知らせる）は、行の高さが変わり続け、位置を測るたび・残る問いを書き換えるたびに
+  // 実寸の確定中（web/history-heights.mjs の onBusy が知らせる）は、行の高さが変わり続け、位置を測るたびに
   // 再レイアウトが走ってスクロールが重くなる。最新へのボタンだけ即時にし、残りは静かになってから（または確定が済んでから）1 回にまとめる
   let finalizing = false, stale = false, idleTimer = 0;
-  let width = 0, turnsDirty = true, raf = 0, measureTimer = 0, lastMeasure = -Infinity, measured = false;
+  let turnsDirty = true, raf = 0, measureTimer = 0, lastMeasure = -Infinity, measured = false;
   const texts = new WeakMap();
-  let stickyFor = null, stickyShown = null, newReplies = 0, running = false, runningMark = null, latestState = '';
+  let newReplies = 0, running = false, runningMark = null, latestState = '';
   const listeners = new Set();
 
   const collect = () => {
@@ -100,7 +90,7 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     if (users.length === turns.length && users.every((user, i) => user === turns[i].user)) return;
     // 静かな読み直し（web/history-sync.mjs）は、変わった所から後ろの行だけを描き直す。残った行の発言は同じ要素なので、測った値を引き継ぐ
     const before = new Map(turns.map((turn) => [turn.user, turn]));
-    turns = users.map((user) => { const kept = before.get(user); const row = rows.rowOf(user); return kept?.row === row ? kept : { user, row, top: 0, ub: -1 }; });
+    turns = users.map((user) => { const kept = before.get(user); const row = rows.rowOf(user); return kept?.row === row ? kept : { user, row, top: 0 }; });
     measured = false;
   };
   /** 全発言の位置を 1 度に測る。読みだけ。fresh は「地図が点を置き直す」合図（次の update で 1 度だけ渡す） */
@@ -153,27 +143,6 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     return Math.max(0, lo - 1);
   };
 
-  function paintSticky() {
-    const index = currentIndex(), turn = turns[index];
-    let show = false;
-    // 狭い画面では残る問いを出さない（帯が表示領域を圧迫する。turn.ub の測定も走らせない）
-    if (turn && !narrow.matches) {
-      if (turn.ub < 0) turn.ub = turn.user.getBoundingClientRect().bottom - turn.row.getBoundingClientRect().top;
-      show = turn.top + turn.ub <= log.scrollTop + STICKY_EDGE;
-    }
-    if (show !== stickyShown) { stickyShown = show; sticky.hidden = !show; }
-    if (!show || stickyFor === turn) return;
-    stickyFor = turn;
-    const info = fullText(turn);
-    const head = [el('span', 'nav-sticky-mark', '↳'), ' '];
-    if (info.at) head.push(el('span', 'nav-sticky-time', info.at), ' ', el('span', 'nav-sticky-sep', '·'), ' ');
-    const body = el('span', 'nav-sticky-text');
-    appendPieces(body, info.pieces);
-    stickyButton.replaceChildren(...head, body);
-    stickyButton.title = t('nav.sticky.title', { text: info.plain });
-    stickyButton.setAttribute('aria-label', info.at ? t('nav.sticky.label', { time: info.at, text: info.plain }) : t('nav.sticky.title', { text: info.plain }));
-  }
-
   function paintLatest() {
     const away = !endVisible;
     if (!away) newReplies = 0;
@@ -203,7 +172,6 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     if ((!measured || stale) && turns.length) { measureAll(); stale = false; }
     const remeasured = fresh;
     fresh = false;
-    paintSticky();
     paintLatest();
     for (const fn of listeners) fn(remeasured);
   }
@@ -227,8 +195,6 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     const run = () => {
       measureTimer = 0;
       ensureTurns();
-      // 幅が変わると吹き出しの高さが変わる。測り直しを許す
-      if (log.clientWidth !== width) { width = log.clientWidth; for (const turn of turns) turn.ub = -1; }
       measureAll();
       schedule();
     };
@@ -263,38 +229,6 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
     const turn = ensureTurns()[Math.max(0, Math.min(turns.length - 1, index))];
     if (turn) scrollToRow(turn.row, 12, onSettled);
   }
-  /** 着いた印: 問いの吹き出しに輪を 1 度だけ（入力欄の上の一行・添付の入口と同じ note-flash） */
-  let flashTimer = 0, flashed = null;
-  function flash(turn) {
-    const body = turn ? rows.bodyOf(turn.user) : null;
-    if (!body) return;
-    clearTimeout(flashTimer);
-    flashed?.classList.remove('flash');
-    void body.offsetWidth;
-    body.classList.add('flash');
-    flashed = body;
-    flashTimer = setTimeout(() => { body.classList.remove('flash'); if (flashed === body) flashed = null; }, FLASH_MS);
-  }
-  /** 上に残っている問いへ戻る。静かな読み直し（ADR 0062）で行が置き換わっていたら、押した時点で取り直して発言の uuid（無ければ並びの位置）で引き直す */
-  function returnToQuestion() {
-    const shown = stickyFor;
-    // 並びが古いまま位置を取ると、goTo が取り直した並びと食い違う。先に取り直し、発言の要素で引く
-    ensureTurns();
-    let index = shown ? turns.findIndex((turn) => turn.user === shown.user) : -1;
-    if (index < 0) index = currentIndex();
-    if (!shown || !shown.row.isConnected || !shown.user.isConnected) {
-      const uuid = shown?.user.dataset.uuid;
-      turnsDirty = true;
-      ensureTurns();
-      const found = uuid ? turns.findIndex((turn) => turn.user.dataset.uuid === uuid) : -1;
-      index = found >= 0 ? found : Math.min(Math.max(index, 0), turns.length - 1);
-    }
-    if (index < 0) return;
-    const turn = turns[index];
-    // 着くと残る問いは隠れる。ボタンにあったフォーカスは会話へ返す（body に落とさない）
-    if (sticky.contains(document.activeElement)) log.focus({ preventScroll: true });
-    goTo(index, () => flash(turn));
-  }
   /** いまの位置より前（direction < 0）・後に始まる発言。無ければ -1。並びは上から順なので二分探索 */
   function neighbour(direction) {
     ensureTurns();
@@ -319,7 +253,6 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   }
 
   // ---- 操作
-  stickyButton.addEventListener('click', returnToQuestion);
   latest.addEventListener('click', toLatest);
   log.addEventListener('scroll', () => { if (finalizing) armIdle(true); schedule(); }, { passive: true });
   log.addEventListener('keydown', (event) => {
@@ -345,13 +278,13 @@ export function createConversationNav({ frame, log, thread, scrollToEnd, isRunni
   new MutationObserver((records) => {
     if (records.some((r) => r.addedNodes.length || r.removedNodes.length)) { turnsDirty = true; schedule(); }
   }).observe(thread, { childList: true, subtree: Boolean(rows.subtree) });
-  narrow.addEventListener('change', () => { stickyFor = null; watchEnd(); schedule(); });
+  narrow.addEventListener('change', () => { watchEnd(); schedule(); });
 
   return {
     /** 発言の並びが変わった（会話を開いた・描き直した） */
     refresh() { turnsDirty = true; schedule(); },
     /** 会話を替えた。新着と位置の記憶を捨てる */
-    reset() { newReplies = 0; stickyFor = null; turnsDirty = true; measured = false; schedule(); },
+    reset() { newReplies = 0; turnsDirty = true; measured = false; schedule(); },
     /** 返答が 1 件届いた（ターンの終わり）。末尾から離れているときだけ新着に数える */
     replyArrived() { if (!endVisible) { newReplies++; schedule(); } },
     /** 実寸の確定が続いているか（web/history-heights.mjs の onBusy）。済んだら、たまった分を 1 回まとめて行う */

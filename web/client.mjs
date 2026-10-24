@@ -838,7 +838,7 @@ function scrollToEnd() {
   requestAnimationFrame(tick);
 }
 
-// 会話の移動（残る問い・最新へ。docs/design-system.md「会話の移動」）。末尾へ送るのは上の scrollToEnd（実寸の確定を待つ）
+// 会話の移動（最新へ。docs/design-system.md「会話の移動」）。末尾へ送るのは上の scrollToEnd（実寸の確定を待つ）
 let navSession = null;   // 最新へのボタンの新着を数えている会話。替わったら数え直す（paintSession）
 const navNarrow = matchMedia("(max-width:700px)");
 const nav = createConversationNav({ frame: $("logFrame"), log, thread, scrollToEnd, isRunning: () => isRunningHere(), narrow: navNarrow });

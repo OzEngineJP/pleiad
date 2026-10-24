@@ -5000,10 +5000,6 @@
     "log": {
       "label": "会話の本文"
     },
-    "sticky": {
-      "title": "この問いへ戻る: {{text}}",
-      "label": "この問いへ戻る（{{time}}）: {{text}}"
-    },
     "latest": {
       "label": "最新へ（End）",
       "running": "返答を書いている",

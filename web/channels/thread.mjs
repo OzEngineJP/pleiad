@@ -87,7 +87,7 @@ export function createThread(host) {
   const replies = el('div', 'th-replies');
   const perms = el('div', 'th-perms bg-thread');   // 承認のカード（Chats の .mw.card をそのまま入れる。--gut は CSS で投稿の本文の位置に合わせる）
   log.append(older, rootSlot, rdiv, replies, perms);
-  // 会話の移動（残る問い・最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
+  // 会話の移動（最新へ・地図・目次と検索・Alt+↑↓・End）の部品が重なる、投稿の列の入れ物（Chats の #logFrame と同じ役）
   const frame = el('div', 'log-frame th-frame');
   frame.append(log);
   const band = el('div', 'th-band');
