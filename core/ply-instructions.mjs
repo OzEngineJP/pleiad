@@ -25,6 +25,7 @@ import { DEFAULT_AGENT_IDS, agentOf } from './backends/agents.mjs';
 
 export const TARGETS = ['all', 'parent', 'child'];
 /** 2026-10-19 より前の対象エージェントの選択肢（当時の全部）。この 2 つだけの保存は「当時の全部」とみなす */
+// backend-allow: 前の版の選択肢（2026-10-19 より前の当時の全部）を判別するための固定の組。エージェントの分岐ではない
 export const LEGACY_AGENTS = ['claude', 'codex'];
 // 項目で選べるエージェント = 本番のエージェント全部（既定の有効一覧。試験用の fake は入らない）。
 // 保存済みの項目の agents は広げない: 前の版の ['claude','codex'] は「当時の全部」か「その 2 つだけ」か判別できないので、そのまま残す

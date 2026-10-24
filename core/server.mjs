@@ -3109,13 +3109,14 @@ const completionNotices = createCompletionNotices({
 });
 
 /** 保存した既定を全画面に通知する。セッション閲覧では既定を書き換えない。 */
-async function savePref(key, value, backendId) {
+async function savePref(key, value, backendId, { quiet = false } = {}) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
   locale = localeInfo(prefs, localeEnv());
   setLocale(locale.lang);
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
   mainPort.postMessage({ type: "locale", locale: locale.lang });
-  emitGlobal({ type: "prefs", sessionId: null, prefs, locale });
+  // quiet は起動時の移行など、利用者の操作でない保存（画面へ流さない。ADR 0268）
+  if (!quiet) emitGlobal({ type: "prefs", sessionId: null, prefs, locale });
   return prefs;
 }
 
@@ -3846,7 +3847,9 @@ async function migratePlyInstructionAgents() {
   const prefs = await store.getPrefs();
   if (prefs.plyInstructions?.agentsMigrated) return;
   const widened = widenLegacyAgents(plyInstructionsCache);
-  await applyPlyInstructions(widened);
+  // 起動時の移行なので画面へ流さない（利用者の操作ではない。ADR 0268）
+  await savePref('plyInstructions', { items: widened, agentsMigrated: true }, undefined, { quiet: true });
+  plyInstructionsCache = widened;
 }
 
 /** 内蔵ブラウザーの確認と「このサイトは常に」。保存して、走っているブラウザーの方針にも伝える。値の検査は呼び出し側 */
