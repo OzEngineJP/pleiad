@@ -7,7 +7,7 @@
 // 更新: 5 分ごと（見えている間）・ターンが終わった直後（そのエージェントの分）・一覧を開いたとき・↻。
 // 取得に失敗したら直前の値を薄く出し、いつの値かを添える。（アカウントの行だけ読めなかったときは、その行の前回の枠を薄くせず出す。web/usage.mjs の carryQuota）
 import { el } from './dom.mjs';
-import { createConversationSheet, renderContextUsage } from './conversation-usage.mjs';
+import { createConversationSheet } from './conversation-usage.mjs';
 import { fmt, t } from './i18n.mjs';
 import { isExpired, heldTexts, heldSlotName, heldTime, heldWindowName, heldGuess, quotaFetchState, expiredText, connectionOf, connectionName, connectionLabel, renderConnections } from './usage.mjs';
 
@@ -186,7 +186,7 @@ export function resetText(w, now = Date.now(), row, request) {
     : t('usage.header.resetIn', { duration: duration(left) });
 }
 
-export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {}, context = () => ({}) }) {
+export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {} }) {
   const chip = $('usageChip'), pop = $('usagePop');
   const mobile = globalThis.matchMedia?.('(max-width:700px)') ?? { matches: false, addEventListener() {} };
   let sheet = null, anchor = chip;
@@ -424,7 +424,7 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
       const sheetHead = sheet.dialog.querySelector('.conversation-sheet-head');
       sheetHead.querySelector('.usage-pop-head')?.remove();
       sheetHead.insertBefore(head, sheetHead.querySelector('.conversation-sheet-close'));
-      pop.replaceChildren(renderContextUsage(context()), ...(shown.backend ? [sections[0]] : []), ...(others.children.length > 1 ? [others] : []), foot);
+      pop.replaceChildren(...(shown.backend ? [sections[0]] : []), ...(others.children.length > 1 ? [others] : []), foot);
     } else pop.replaceChildren(head, ...sections, foot);
     [...pop.querySelectorAll('details')].forEach((d, i) => { d.open = opened[i] ?? false; });
     const otherAgents = pop.querySelector('.usage-other-agents');

@@ -1394,6 +1394,7 @@
         "forChild": "Not added: for delegated conversations",
         "forParent": "Not added: for requesting conversations",
         "agent": "Not added for this agent",
+        "agentOnly": "Not added for this agent (only {{agents}})",
         "routingOff": "Not added: automatic delegate selection is off",
         "noBridge": "Not added: this agent has no delegation bridge (ply_agents)"
       }
@@ -4475,7 +4476,7 @@
   "compaction": {
     "contextUsage": "Context",
     "graphTokens": "{{used}} / {{window}} tokens",
-    "short": "Compact",
+    "short": "Context",
     "now": "Compact now",
     "automatic": "Auto-compaction",
     "remaining": "{{tokens}} tokens until auto-compaction",

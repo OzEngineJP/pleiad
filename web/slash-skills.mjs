@@ -82,6 +82,15 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
   const isOpen = () => !list.hidden;
   const cwdKey = () => String(cwd() ?? "").trim();
 
+  // 候補は入力欄のすぐ上（.cbox）に浮かせる。上に残っている高さまでにして、画面の外へ出さない
+  // （「次のターンから適用」の帯が出ていても、その上に重ねる）
+  const fit = () => {
+    const box = list.parentElement;
+    const top = box?.getBoundingClientRect?.().top;
+    if (!Number.isFinite(top)) return;
+    list.style.maxHeight = `${Math.max(0, Math.min(312, Math.round(top - 8)))}px`;
+  };
+
   const close = () => {
     if (!isOpen()) return;
     list.hidden = true;
@@ -124,6 +133,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
       li.onmousedown = (e) => { e.preventDefault(); commit(i); };
       list.append(li);
     });
+    fit();
     list.hidden = false;
     input.removeAttribute("aria-activedescendant");
     if (items.length) input.setAttribute("aria-activedescendant", `${idPrefix}-${active}`);
@@ -143,6 +153,7 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
     loadingKey = key;
     items = [];
     input.removeAttribute("aria-activedescendant");
+    fit();
     list.hidden = false;
     list.replaceChildren(el("li", "head"), el("li", "none", t("common.loading")));
     try {
@@ -211,6 +222,9 @@ export function setupSlashSkills({ input, list, hint, load, cwd = () => "", canC
     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) sync();
   });
   input.addEventListener("blur", () => { setTimeout(close, 120); });
+  // 入力欄が伸びる・キーボードで画面が低くなる・帯が出る、で上に残る高さが変わる
+  globalThis.addEventListener?.("resize", () => { if (isOpen()) fit(); });
+  if (typeof ResizeObserver === "function" && list.parentElement) new ResizeObserver(() => { if (isOpen()) fit(); }).observe(list.parentElement);
 
   /** 候補が開いている間のキーを取る。取ったら true（呼び出し側は以降を処理しない） */
   const keydown = (e) => {

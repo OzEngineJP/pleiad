@@ -250,8 +250,6 @@
       <div id="outbox" class="outbox" aria-live="polite" hidden></div>
       <div class="next-settings" id="nextSettings" role="status" hidden><div><b data-i18n="chat.next.title"></b><div id="nextSettingsText"></div><div class="next-behind" id="nextSettingsBehind" hidden></div><details class="next-handoff" id="nextHandoff" hidden></details></div><button type="button" class="btn" id="cancelSettings" data-i18n="chat.next.cancel"></button></div>
       <div class="settings-error" id="settingsError" role="alert"></div>
-      <!-- 入力欄の先頭が / の間だけ出るスキル候補（web/slash-skills.mjs）。面は .clist と同じ -->
-      <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
       <!-- 欄の上の一行（web/composer-wait.mjs）: 作成中の送信の予約「会話ができしだい送ります · 取り消す」、読み込みの失敗「… · もう一度読む」、設定を保存できなかった「… · 再試行 · 選び直す · 取り消す」 -->
       <div class="composer-note" id="composerNote" role="status" hidden></div>
       <!-- 接続の一行（脇が見えていないときだけ）と、トークンが古いときの案内（脇の幅によらず）。web/connection-status.mjs -->
@@ -262,6 +260,9 @@
       <div class="cbox" id="cbox">
         <!-- 入力欄の `!`（web/shell-composer.mjs）。シェルの形の間だけ、欄の上に「シェル · 作業ディレクトリ · 文として送る」。使えない会話では理由の一行 -->
         <div class="shell-head" id="shellHead" hidden></div>
+        <!-- 入力欄の先頭が / の間だけ出るスキル候補（web/slash-skills.mjs）。面は .clist と同じ。
+             入力欄の箱（.cbox）の中に置き、すぐ上に浮かせる（「次のターンから適用」の帯には重ねる） -->
+        <ul class="clist" id="skillList" role="listbox" data-i18n-aria-label="chat.composer.skills" hidden></ul>
         <!-- 字の欄。Markdown をその場で整える編集欄（web/md-editor.mjs、ADR 0060）。textarea と同じ窓口（value・selectionStart・placeholder など）を持つ -->
         <div id="prompt" data-i18n-aria-label="chat.composer.editorLabel" data-i18n-placeholder="chat.composer.placeholder" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="skillList"></div>
         <!-- 書けない待ち（会話を開いている・初めて接続するまで）。150ms を越えたら字の欄の上に重ねる（web/composer-wait.mjs） -->
@@ -289,7 +290,7 @@
           <span class="chip armed" id="armedChip" hidden><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span class="v" id="armedText"></span><button type="button" class="x" id="armedRemove" data-i18n-aria-label="schedule.armedRemove" data-i18n-title="schedule.armedRemove"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></span>
           <!-- 接続先（互換の接続先）は宛先とモデルのチップの面の中で選ぶ -->
           <!-- 中断。狭い幅（480px 以下）では四角のアイコンだけにする -->
-          <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg><span data-i18n="chat.composer.abort"></span></button>
+          <button type="button" class="btn btn-quiet abort" id="abort" hidden data-i18n-title="chat.composer.abort" data-i18n-aria-label="chat.composer.abort"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" rx="3"/></svg><span data-i18n="chat.composer.abort"></span></button>
           <!-- 再開。中断状態・走っていない・欄が空のときだけ、中断と同じ位置に（web/interrupt.mjs）。保留があれば「保留中の N 件を送って再開」。上限で止まった会話は再生の三角が時計・字は「◷ 2:30 に再開」に替わり、▾ から面が開く -->
           <button type="button" class="btn btn-quiet resume" id="resume" hidden data-i18n-title="interrupt.resume" data-i18n-aria-label="interrupt.resume"><svg class="i resume-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg><svg class="i resume-clock" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg><span id="resumeLabel" data-i18n="interrupt.resume"></span><span id="resumeShort" class="resume-short" aria-hidden="true"></span></button>
           <button type="submit" class="btn btn-primary send" id="send" data-i18n-title="chat.composer.sendTitle" data-i18n-aria-label="chat.composer.sendTitle"><svg class="i i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z"/></svg><svg class="i i-run" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.2v11.6a.8.8 0 0 0 1.2.7l9-5.8a.8.8 0 0 0 0-1.4l-9-5.8a.8.8 0 0 0-1.2.7z"/></svg></button>

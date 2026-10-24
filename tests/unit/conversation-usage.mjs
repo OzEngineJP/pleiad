@@ -71,20 +71,20 @@ export default async function(t) {
         callbacks.forEach(fn => fn(backend, result)); return result;
       } };
     const ui = setupHeaderUsage({ $: id => id === 'usageChip' ? chip : pop, source,
-      getBackends: () => [{ id: 'current' }, { id: 'other' }], context: () => info, openSettings() {} });
+      getBackends: () => [{ id: 'current' }, { id: 'other' }], openSettings() {} });
     ui.show({ backend: 'current' }); await new Promise(resolve => setImmediate(resolve));
     assert.equal(ui.currentPercent(), 38, 'other agent usage must not replace current usage');
     ui.open();
     assert.ok(doc.body.querySelector('.conversation-sheet'));
-    assert.ok(pop.querySelector('.conversation-context'));
+    assert.equal(pop.querySelector('.conversation-context'), null);
     assert.equal(pop.querySelector('.usage-other-agents').hasAttribute('open'), false);
     assert.equal(pop.querySelector('.usage-other-agents').querySelectorAll('.usage-agent').length, 1);
-    assert.equal(pop.querySelectorAll('.conversation-graph').length, 2);
+    assert.equal(pop.querySelectorAll('.conversation-graph').length, 0);
     assert.ok(pop.querySelector('.usage-other-agents').textContent.includes('81%'));
     doc.body.querySelector('.conversation-sheet').close();
     assert.equal(pop.hidden, true);
     assert.equal(pop.getAttribute('role'), 'dialog');
-    t.ok('スマホの使用量シートは文脈と現在の枠を先に出し、他のエージェントを畳む。PC用の役割に戻して閉じる', true);
+    t.ok('スマホの使用量シートは使用枠だけを出し（コンテキストは別のシート）、他のエージェントを畳む。PC用の役割に戻して閉じる', true);
   } finally {
     pagehide.forEach(stop => stop());
     globalThis.document = previous; globalThis.window = previousWindow; globalThis.matchMedia = previousMedia;

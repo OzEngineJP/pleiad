@@ -75,7 +75,6 @@ export function renderContextUsage(info = {}) {
     if (note) row.append(el('small', null, note));
     section.append(row);
   }
-  section.append(el('strong', null, t('compaction.context')));
   if (metrics.percent != null) graph(t('compaction.contextUsage'), metrics.used, metrics.window);
   else section.append(el('p', 'usage-note', t('usage.unknown')));
   if (metrics.remaining != null) graph(t('compaction.automatic'), metrics.used, metrics.threshold, metrics.remaining > 0 ? t('compaction.remaining', { tokens: number(metrics.remaining) }) : null);

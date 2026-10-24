@@ -84,7 +84,7 @@ async page => page.evaluate(async () => {
   openMenu(); row(t('usage.header.title')).click(); await wait();
   dialog = document.querySelector('dialog.conversation-sheet[open]');
   check(dialog && dialog.contains(document.querySelector('#usagePop')), 'Usage opens a bottom sheet');
-  check(dialog.querySelector('.conversation-context .usage-bar'), 'Usage sheet includes context graph');
+  check(!dialog.querySelector('.conversation-context'), 'Usage sheet does not repeat the context graph');
   check(dialog.querySelector('.usage-agent .usage-bar'), 'Usage sheet includes quota graphs');
   const others = dialog.querySelector('.usage-other-agents');
   check(!others || !others.open, 'Other agents start collapsed');

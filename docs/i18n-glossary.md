@@ -57,7 +57,7 @@
 | 接続先を管理… | Manage endpoints… |
 | 使用量 | usage |
 | プラグイン（指示・Skills・MCP の入口） | Plugins |
-| 文脈（会話の LLM 窓の占有） | Context |
+| コンテキスト（会話の LLM 窓の占有） | Context |
 | コンテキスト長（モデルの窓の上限） | Context length |
 | 圧縮 / 自動圧縮 | compaction / auto compaction |
 | スキル | skills |

@@ -4691,7 +4691,18 @@ function paintSettingsNotice() {
   const s = state.sessions.find(s => s.id === state.current);
   const next = s?.nextSettings;
   const pendingWorktree = Boolean(s?.unsent && s.worktreePending);
-  $("nextSettings").hidden = !next && !pendingWorktree;
+  // main が返答を終えて裏だけを待っている間（ターンの phase が waiting）は、送信が予約より先に今のターンへ届く（途中送信）。
+  const behind = Boolean(next) && (state.work.turns ?? []).find(belongsHere)?.phase === "waiting";
+  // 走っているターンが無いときは、次に送るメッセージがそのまま新しい設定で動き、チップも新しい値を出している。
+  // 帯は「今のターンには効かない」ことを伝えるためのものなので、走っているターン（と裏の作業待ち）があるときだけ出す
+  const show = pendingWorktree || Boolean(next) && (isRunningHere() || behind);
+  $("nextSettings").hidden = !show;
+  if (!show) {
+    $("nextSettingsBehind").hidden = true;
+    $("nextSettings").classList.remove("wt-compact");
+    paintHandoffNote(s, null);
+    return;
+  }
   // i18n-dynamic: worktree.pendingTitle
   // i18n-dynamic: worktree.pendingCancel
   $("nextSettings").querySelector('b').textContent = t(pendingWorktree ? 'worktree.pendingTitle' : 'chat.next.title');
@@ -4708,9 +4719,7 @@ function paintSettingsNotice() {
     return;
   }
   if (!next) $("nextSettings").classList.remove("wt-compact");
-  // main が返答を終えて裏だけを待っている間（ターンの phase が waiting）は、送信が予約より先に今のターンへ届く（途中送信）。
   // 予約は次のターンから効くので、そう書く（docs/multi-backend.md §2.2）
-  const behind = Boolean(next) && (state.work.turns ?? []).find(belongsHere)?.phase === "waiting";
   $("nextSettingsBehind").hidden = !behind;
   if (behind) $("nextSettingsBehind").textContent = t("chat.next.behindNote");
   if (next) {
@@ -10733,7 +10742,7 @@ usageSource.onResult(() => { if (controls.panels.model.open) controls.paint(); }
 // 使用量の認可が済んでいないアカウントの「使用量の表示を認可」。アカウントの画面を開いて、そのまま認可を始める
 const usageLogin = accountId => claudeAccounts.open({ usageLogin: accountId });
 const headerUsage = setupHeaderUsage({ $, source: usageSource, getBackends: () => state.backends, onUsageLogin: usageLogin,
-  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible, context: conversationContext });
+  openSettings: () => { onboarding.open('usage'); $('usageTab').click(); }, onVisibility: syncStripVisible });
 setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, endpoints: async (agent) => (await compatEndpoints.load(true)).filter((e) => e.agent === agent), page: onboarding.page, isOpen: onboarding.isOpen,
   onUsageLogin: usageLogin, current: () => ({ backend: state.shownBackend, model: state.model || state.models['']?.resolvesTo || '' }) });
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });

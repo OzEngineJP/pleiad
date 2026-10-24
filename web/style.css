@@ -188,9 +188,9 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .combo>.cbadge{position:absolute;right:12px;top:50%;transform:translateY(-50%);margin:0;pointer-events:none}
 .combo.combo:has(>.cbadge:not([hidden]))>input{padding-right:48px}
 /* 入力欄の「/」の候補（web/slash-skills.mjs）。既存の .clist と同じ面を使い、1 件を 2 段にする */
-/* 左右端は入力欄の箱（:is(#cbox,#thCbox)）に揃える。箱の位置は .composer の左右の padding（--cpad-l / --cpad-r）で決まるので、同じ変数で縛る。
+/* 左右端は入力欄の箱（.cbox）に揃える（箱の中に置くので left:0 / right:0）。
    .clist の min-width:100%（親の幅）と max-width は外す（ADR 0256） */
-:is(#skillList,#thSkillList){left:var(--cpad-l);right:var(--cpad-r);width:auto;min-width:0;max-width:none;max-height:312px;white-space:normal;top:auto;bottom:calc(100% + 6px)}   /* 入力欄の上に浮かせる（既存の .clist の up と同じ位置） */
+:is(#skillList,#thSkillList){left:0;right:0;width:auto;min-width:0;max-width:none;max-height:312px;white-space:normal;top:auto;bottom:calc(100% + 6px)}   /* 入力欄の箱（.cbox）のすぐ上に浮かせる。高さは slash-skills.mjs が上に残っている分までにする */
 :is(#skillList,#thSkillList) .head{display:flex;gap:8px}
 :is(#skillList,#thSkillList) .head .n{margin-left:auto;font-family:var(--font-mono);letter-spacing:0}
 :is(#skillList,#thSkillList) li.it{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:0 10px;align-items:baseline;padding:6px 10px}
@@ -2181,10 +2181,14 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
 @media (max-width:480px){
   .composer{--cpad-b:max(8px,env(safe-area-inset-bottom,0px))}
   .chip svg.caret{display:none}
-  .abort{width:36px;height:36px;padding:0;border-radius:50%}
-  .abort svg.i{display:block}
+  /* 中断・再開は面を出さず、押せる 44px の箱に印だけを置く（送信の丸と丸を並べない。2026-10-24 承認） */
+  .abort{width:var(--hit);height:var(--hit);padding:0;border-radius:var(--r-m);background:transparent}
+  .abort:hover,.abort:active{background:var(--surface-2)}
+  .abort svg.i{display:block;width:var(--icon);height:var(--icon)}
   .abort span{display:none}
-  .resume{width:36px;height:36px;padding:0;border-radius:50%}
+  .resume{width:var(--hit);height:var(--hit);padding:0;border-radius:var(--r-m);background:transparent}
+  .resume:hover,.resume:active{background:var(--surface-2)}
+  .resume svg.i{width:var(--icon);height:var(--icon)}
   .resume span{display:none}
   .resume.is-limit{width:auto;min-width:36px;padding:0 10px;border-radius:var(--r-pill)}
   .resume.is-limit :is(#resumeLabel,#thResumeLabel){display:none}
