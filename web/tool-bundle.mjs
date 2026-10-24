@@ -1,7 +1,7 @@
 // ツール呼び出しの「まとまり」（docs/design-system.md §4.5「ツール呼び出し」、ADR 0061・0067）。
 //
 // 本文（と委譲）で区切られたツールの連続を 1 つのまとまりにする。閉じると見出し 1 行（「≡ ツール実行 N」。右端は失敗のときの「✕ 失敗 N」と、走っている間の経過だけ）。
-// 走っている間は「見出し + 1 つ前（薄い行）+ 最新の行」の 3 行で、新しいツールが始まるたびに入れ替わる。
+// 実行中の行は末尾の節へ移す（ADR 0267）。完了した履歴の行は、見出し・薄い行・最新の行へまとめる。
 // 薄い行を押す・↑ で 1 件ずつ、最新を下端に固定したまま上へ伸びて遡れる。見出しを押すと全部を開く ⇄ 閉じる。
 // 失敗・変更したファイル・承認待ちは、まとまりの中に入れる（失敗は見出しの右端の「✕ 失敗 N」で分かる）。委譲だけは呼び出し側がまとまりの外に置く。
 // 動きは §8 の値（240ms・120ms）。prefers-reduced-motion では動かさない。
@@ -110,16 +110,16 @@ function anchored(anchor, fn) {
 
 const ticking = new Set();   // 経過を刻む要素（行の右端 .tc-res と、走っているまとまりの見出し）
 let timer = 0;
-/** 走っている行の経過。1 分未満は 8s、それ以上は見出しと同じ m:ss・h:mm:ss（長く止まっているのが読めるように） */
+/** ツールの経過は m:ss、1 時間以上は h:mm:ss。 */
 export const secs = (ms) => {
   const s = Math.max(0, Math.floor(ms / 1000));
-  return s < 60 ? `${s}s` : clock(s);
+  return clock(s);
 };
 function tickAll() {
   const now = Date.now();
   for (const n of ticking) {
     if (!n.isConnected || !n.paint) { ticking.delete(n); continue; }   // 切り離された・結果が届いて印を外した要素は刻まない
-    n.paint(now);
+    if (!n.closest?.(".activity-offline")) n.paint(now);
   }
   if (!ticking.size) { clearInterval(timer); timer = 0; }
 }
@@ -133,6 +133,7 @@ function keepTicking(node) {
  * 右端の弧は外す（走っていない）。経過の刻みも止める
  */
 export function markWaiting(card) {
+  card.restoreToolRow?.();
   card.classList.remove("tc-running");
   card.classList.add("tc-waiting");
   const res = card.querySelector(".tc-res");
@@ -164,21 +165,24 @@ export function swapHeight(host, mutate) {
 }
 
 /**
- * 走っているツールの行: 右端に §6 の弧と経過秒。結果が来たら applyToolResult が外す。
+ * 実行中は末尾の節へ移し、左に弧、右に経過を置く（ADR 0267）。結果で履歴へ戻す。
  * since はツールの始まり（この画面の時計の ms。web/server-clock.mjs の toolStartedAt）。無ければ今から数える
  */
 export function markRunning(card, since = null) {
-  since ??= Date.now();
+  since ??= card.toolStarted ?? Date.now();
   card.toolStarted = since;      // 行の右端の時刻ボタンの起点（render.mjs の updateWhen）
   card.updateWhen?.();
   card.classList.remove("tc-waiting");
   card.classList.add("tc-running");
   const res = card.querySelector(".tc-res");
   if (!res) return;
-  const sec = el("span", "tc-elapsed", "0s");
+  const sec = el("span", "tc-elapsed");
+  sec.setAttribute("aria-hidden", "true");
   res.replaceChildren(runMark(t("timeline.bundle.running")), sec);
   res.paint = (now) => { sec.textContent = secs(now - since); };
+  res.paint(Date.now());
   keepTicking(res);
+  card.resumeToolRow?.();
 }
 
 // ---------------------------------------------------------------- まとまり
@@ -292,7 +296,8 @@ export class Bundle {
     const w = el("div", "hi");
     w.setAttribute("role", "listitem");
     const inner = el("div", "in");
-    inner.append(card);
+    inner.append(card.toolHome ?? card);
+    card.toolBundle = this;
     w.append(inner);
     card.hiWrap = w;
     return w;
@@ -366,7 +371,7 @@ export class Bundle {
     const card = this.cur;
     this.cur = null;
     // 1 件だけなら見出しは要らない。行のまま置く（コンピューターの操作は 1 件でも見出しを残す）
-    if (this.cards.length === 1 && card && this.el.isConnected && !this.computer) { this.el.replaceWith(card); return; }
+    if (this.cards.length === 1 && card && this.el.isConnected && !this.computer) { this.el.replaceWith(card.toolHome ?? card); return; }
     const settle = () => {
       if (card) { const w = this.wrap(card); w.classList.add("hid"); w.setAttribute("inert", ""); this.hist.append(w); }
       this.latest.replaceChildren();
@@ -473,6 +478,7 @@ export class Bundle {
   paint(countAnimation = false) {
     // 終わった塊に遅れて結果が届いたとき（見せる行が替わりうる）は、行の出入りから決め直す
     if (this.computer && !this.live && !this.laying) return this.layout();
+    this.el.classList.toggle("tools-away", this.cards.length > 0 && this.cards.every(c => c.toolHome));
     const items = this.items;
     const st = bundleStats(items);
     this.el.dataset.n = String(st.count);   // 1 件の間は見出しを出さない（tools.css）
@@ -504,5 +510,5 @@ export class Bundle {
 
 /** ツールの行（.tc）から、それが入っているまとまりを引く。結果が届いたら見出しの数を直すのに使う */
 export function bundleOf(card) {
-  return card?.closest?.(".bundle")?.bundle ?? null;
+  return card?.toolBundle ?? card?.closest?.(".bundle")?.bundle ?? null;
 }

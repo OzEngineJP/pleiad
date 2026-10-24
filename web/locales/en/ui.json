@@ -677,6 +677,9 @@
     "preparing": "Preparing to send…",
     "connectingMcp": "Connecting to external MCP {{current}}/{{total}}",
     "mcpStarting": "Starting {{name}}…",
+    "tool": { "run": "Running", "read": "Reading", "search": "Searching", "write": "Writing" },
+    "toolsMore": "{{count}} more",
+    "toolsLess": "Show less",
     "thinking": "Thinking",
     "writing": "Writing",
     "compacting": "Compacting conversation…",
@@ -695,8 +698,6 @@
     "behindCount_one": "{{count}} task running in the background",
     "behindCount_other": "{{count}} tasks running in the background",
     "turnRunning": "Turn in progress",
-    "thinkingTokens_one": "Thinking (about {{count}} token)",
-    "thinkingTokens_other": "Thinking (about {{count}} tokens)",
     "waitingBackground": "Waiting for background tasks",
     "backgroundOnly": "Commands running in the background",
     "bgKind": {

@@ -3,7 +3,7 @@
 // 承認待ちがまとまりの中に入る、入れ替わり・遡りの動きは実ブラウザーで見る（tests/browser/tool-bundle.cjs）。
 //
 // DOM シムは tests/run.mjs が入口で入れている。
-import { bundleStats, splitToolCalls, clock } from "../../web/tool-bundle.mjs";
+import { bundleStats, splitToolCalls, clock, secs } from "../../web/tool-bundle.mjs";
 import { renderToolCall, applyToolResult, applyToolHints, applySubagentTools, toolChange, exitCodeOf, failureLine, isDelegateToolName, isPlyDelegateToolName } from "../../web/render.mjs";
 import { toolNodes } from "../../web/channels/thread-tools.mjs";
 import { parseTaskNotice } from "../../web/task-notice.mjs";
@@ -15,6 +15,7 @@ const text = (node) => String(node?.textContent ?? "").replace(/\s+/g, " ").trim
 const item = (verb, extra = {}) => ({ verb, ...extra });
 
 export default async function (t) {
+  t.ok("ツールの経過は1分未満も m:ss、1時間以上は h:mm:ss", secs(0) === "0:00" && secs(59000) === "0:59" && secs(61000) === "1:01" && secs(3661000) === "1:01:01");
   // ---- 数え方
   {
     const st = bundleStats([

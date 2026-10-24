@@ -417,3 +417,23 @@ dialog.tc-shot-dlg::backdrop{background:var(--surface-veil)}
   .tc-chev{width:var(--icon-s);height:var(--icon-s)}
   .rhead{align-items:center;min-height:var(--hit)}
 }
+
+/* Running tools occupy the final activity node; the empty home keeps history order (ADR 0267). */
+.tool-home,.hi:has(> .in > .tool-home:only-child),.bundle.tools-away{display:none}
+.m.activity.tools-active{display:block}
+.m.activity.tools-active>:is(.activity-tip,.txt,.el){display:none}
+.running-tools{width:100%;min-width:0}
+.tc-at-end .tc-line{align-items:center}
+.tc-at-end .tc-time,.tc-at-end .tc-res>.run{display:none}
+.tc-at-end>.tc-details>.tc-head{position:relative;margin:0;padding:2px 0 2px 26px}
+.tc-at-end .tc-res{margin-left:auto}
+.tc-at-end>.tc-details>.tc-head>.tc-line>.running-tool-mark{position:absolute;left:0;top:50%;transform:translateY(-50%);display:inline-grid;width:18px;height:18px}
+.running-tool-mark .run,.running-tool-mark svg{width:18px;height:18px}
+.tc-at-end .tc-label{flex:none;width:auto;min-width:0}
+.tc-at-end .tc-details-body{padding-left:26px}
+.running-tools-more{border:0;background:none;color:var(--ink-weak);font:inherit;font-size:var(--fs-s);cursor:pointer;padding:4px 0 4px 26px}
+.running-tools-more:focus-visible{outline:2px solid var(--line-blue);outline-offset:2px}
+.tc-at-end[hidden],.running-tools-more[hidden]{display:none}
+.activity-offline .run svg{animation-play-state:paused!important}
+@media(max-width:700px),(pointer:coarse){.tc-at-end .tc-head,.running-tools-more{min-height:var(--hit)}}
+@media(max-width:700px){.tc-at-end .tc-res{margin-left:0}}
