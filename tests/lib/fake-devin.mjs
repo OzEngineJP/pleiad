@@ -5,6 +5,8 @@ import readline from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 
 const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
+// 呼ばれた回数を試験が数える口（FAKE_DEVIN_LOG のファイルに 1 起動ごとにコマンド名を 1 行足す。fake-codex.mjs の FAKE_CODEX_LOG と同じ）
+if (process.env.FAKE_DEVIN_LOG) fs.appendFileSync(process.env.FAKE_DEVIN_LOG, `${command ?? argv.join(' ')}\n`);
 // 実機（3000.11.92）の形: model の選択肢は系列の代表だけで、thought_level・speed の
 // 有無と選択肢は選んだ model で変わる。model を切り替えると thought_level は代表 uid の接尾辞の段に戻る
 const MODELS = {

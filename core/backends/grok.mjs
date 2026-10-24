@@ -159,6 +159,16 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     const actual = result?.configOptions?.find(o => o.id === modeOption[0].id)?.currentValue;
     if (typeof actual === 'string' && actual !== wanted) throw fail('modeUnavailable');
   }
+  // モデルの一覧の置き場（grok agent の initialize で読む modelState）。起動に秒かかるので、直近の値と
+  // 取りかけを分け合う（codex.mjs の modelCache/modelFetch と同じ形）。一覧は場所の設定で変わりうるので
+  // 置き場（cwd）ごとに覚える。成功した取得だけを覚え、失敗は次の要求で取り直す
+  const modelsTtlMs = () => { const v = Number(process.env.AGENT_HOST_GROK_MODELS_TTL_MS); return Number.isFinite(v) ? v : 300_000; };
+  const modelsCache = new Map(), modelsFetch = new Map();
+  async function fetchModels(cwd) {
+    const client = await serial(metadataQueue, () => openClient(cwd).catch(error => { throw isAuthError(error) ? fail('loginRequired') : error; }));
+    try { return grokModels(client.init); }
+    finally { await client.close(); }
+  }
   // ログインの案内が同時に走らないよう掴む旗と、待っている見張りをやめる口（authCancel）
   let pendingAuth = null;
   const loginWatch = createLoginWatch('Grok');
@@ -182,11 +192,19 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         } finally { await client?.close(); }
       });
     },
-    async models(cwd = process.cwd()) {
-      const client = await serial(metadataQueue, () => openClient(cwd).catch(error => { throw isAuthError(error) ? fail('loginRequired') : error; }));
-      try { return grokModels(client.init); }
-      finally { await client.close(); }
+    async models(cwd = process.cwd(), { refresh = false } = {}) {
+      const key = path.resolve(cwd);
+      const hit = modelsCache.get(key);
+      if (!refresh && hit && Date.now() - hit.at < modelsTtlMs()) return hit.value;
+      if (!modelsFetch.has(key)) {
+        modelsFetch.set(key, fetchModels(key)
+          .then(value => { modelsCache.set(key, { value, at: Date.now() }); return value; })
+          .finally(() => modelsFetch.delete(key)));
+      }
+      return modelsFetch.get(key);
     },
+    // 起動時に一覧を取り置く（初めての振り分けで CLI の起動を待たない）
+    async warmModels(cwd = process.cwd()) { await models(cwd); },
     async listSessions({ cwd } = {}) {
       // Common conversations add their persisted rows without starting a CLI. An
       // explicit directory may also discover native sessions via session/list.
