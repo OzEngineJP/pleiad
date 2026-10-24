@@ -26,7 +26,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
-    "agent-browser": "0.38.1",
+    "agent-browser": "0.39.1",
     "electron-updater": "6.8.9",
     "i18next": "26.4.2",
     "koffi": "3.3.2",
