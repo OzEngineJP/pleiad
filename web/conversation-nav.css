@@ -28,8 +28,8 @@
 .nav-sticky-time{font-size:var(--fs-xs)}
 .nav-token{color:var(--ink-weak)}
 
-/* ---- C 最新へ。直径 34px の丸。会話の右下（地図の左、入力欄の上） ---- */
-.nav-latest{position:absolute;z-index:7;right:44px;bottom:14px;height:34px;width:34px;padding:0;display:flex;align-items:center;justify-content:center;gap:6px;
+/* ---- C 最新へ。直径 34px の丸。会話の右下（地図の左、入力欄の上）。入力欄は履歴の下端に重なるので、その高さ（--composer-h。ADR 0266）だけ上げる ---- */
+.nav-latest{position:absolute;z-index:7;right:44px;bottom:calc(14px + var(--composer-h,0px));height:34px;width:34px;padding:0;display:flex;align-items:center;justify-content:center;gap:6px;
   background:var(--surface-float);color:var(--ink);box-shadow:0 8px 28px var(--shadow);border-radius:var(--r-pill);cursor:pointer;
   transition:background var(--dur-fast) var(--ease-out),width var(--dur) var(--ease-out);animation:nav-rise var(--dur) var(--ease-out)}
 .nav-latest:hover{background:var(--surface-float-hover)}
@@ -95,7 +95,7 @@
   .nav-sticky{right:0;height:62px;padding-left:42px}   /* 吹き出しの左端（#log の左 8px + 溝 40px）の 6px 左（従来と同じずれ） */
   .nav-sticky-button{min-height:44px;padding-top:4px}
   .nav-rail{display:none}
-  .nav-latest{right:16px;bottom:12px}
+  .nav-latest{right:16px;bottom:calc(12px + var(--composer-h,0px))}
   .nav-latest::after{content:"";position:absolute;inset:-5px;border-radius:var(--r-pill)}
 }
 

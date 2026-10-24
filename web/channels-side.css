@@ -26,6 +26,7 @@
 /* ---- 一時チャットの流れの右に会話を並べる（body.home-split。流れ 4 : 会話 6。docs/design-system.md「一時チャットの流れ」） */
 body.channels.home-split:not(.settings){--home-feed-w:40%}
 body.channels.home-split:not(.settings) > main{padding-left:var(--home-feed-w)}
+body.channels.home-split:not(.settings) > main > #composer{left:var(--home-feed-w)}   /* 履歴に重ねた入力欄（ADR 0266）は main の padding の外から置かれるので、会話の側へ寄せる */
 body.channels.home-split:not(.settings) .channels-view{right:auto;width:var(--home-feed-w)}
 body.channels.home-split:not(.settings) .channels-view::after{content:"";position:absolute;right:0;top:14px;bottom:14px;width:1px;background:var(--surface-2);pointer-events:none}
 /* 合成の根の投稿（一時チャットの会話の最初の発言）は、押すと会話を開く */
