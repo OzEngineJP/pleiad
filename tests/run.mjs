@@ -228,6 +228,7 @@ const SUITES = [
   './unit/context-owner-capability.mjs',
   './unit/devin-models.mjs',
   './unit/devin-acp.mjs',
+  './unit/devin-variants.mjs',
   './unit/devin-config.mjs',
   './unit/devin-normalize.mjs',
   './unit/devin-meter.mjs',

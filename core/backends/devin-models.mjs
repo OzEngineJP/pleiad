@@ -1,10 +1,13 @@
-// The catalogue's variant ID is the user selection. ACP may represent a family with a
-// different ID; only the measured SWE-2 mapping is translated here. Other IDs must
-// match an advertised ACP choice exactly before a prompt can be sent.
-// SWE-2 (Devin CLI 3000.11.92, 2026-10-23): ACP advertises only `swe-2-high` as the model,
-// with thought_level medium/high/max and speed standard/fast. The CLI's model config cache
-// gives swe-2-<level>-lightning the same "Reasoning Effort" as swe-2-<level> plus
-// "Fast Mode" on, so a Lightning variant is swe-2-high + that thought level + speed fast.
+// The catalogue's variant ID is the user selection. ACP exposes one representative
+// `model` choice per variant family plus separate `thought_level` and `speed` axes
+// whose availability and choices change with the selected model (Devin CLI
+// 3000.11.92, 2026-10-24). A variant uid decomposes into a family base plus an
+// optional thought-level suffix and speed suffixes (-fast / -lightning = speed
+// fast; -priority has no ACP axis). The representative is the same-base family
+// variant advertised as a `model` choice; sibling variants become representative
+// + thought_level + speed. Setting model also resets thought_level to the
+// representative's own suffix. Anything ACP cannot express is refused rather
+// than run as a different model.
 import { t } from '../i18n.mjs';
 
 // i18n-dynamic: devin.errors.invalidCatalogue
@@ -59,10 +62,37 @@ function liveFree(row) {
     && !/^(adaptive|fusion)(?:$|[-_])/i.test(row.family.slug ?? row.family.family_uid ?? '');
 }
 
-const SWE_2 = /^swe-2-(medium|high|max)(-lightning)?$/;
+const LEVELS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+const FAST = new Set(['fast', 'lightning']);
+const NO_AXIS = new Set(['priority']);
 
-/** The ACP model choice a catalogue ID needs (the SWE-2 variants share one). */
-export const devinAcpModel = modelId => SWE_2.test(modelId) ? 'swe-2-high' : modelId;
+/**
+ * Split a variant uid into the family base, an optional thought level and speed.
+ * Fusion uids carry the driver's level/speed before `-sidekick-`; the sidekick
+ * stays part of the base. Unmappable shapes (a second level, -priority) are
+ * marked so the caller can refuse them instead of guessing.
+ */
+function parseDevinUid(uid) {
+  const at = String(uid).indexOf('-sidekick-');
+  const rest = [];
+  const parsed = { level: null, speed: 'standard', unmappable: false };
+  for (const token of (at < 0 ? String(uid) : String(uid).slice(0, at)).split('-')) {
+    if (LEVELS.has(token)) { if (parsed.level) parsed.unmappable = true; else parsed.level = token; }
+    else if (FAST.has(token)) parsed.speed = 'fast';
+    else if (NO_AXIS.has(token)) parsed.unmappable = true;
+    else rest.push(token);
+  }
+  return { ...parsed, base: rest.join('-') + (at < 0 ? '' : String(uid).slice(at)) };
+}
+
+/** The ACP model choice a catalogue ID needs, or null when it cannot be expressed. */
+export function devinAcpModel(modelId, acpChoices) {
+  if (typeof modelId !== 'string' || !Array.isArray(acpChoices)) return null;
+  const target = parseDevinUid(modelId);
+  if (target.unmappable) return null;
+  const reps = acpChoices.filter(choice => parseDevinUid(choice).base === target.base);
+  return reps.length === 1 ? reps[0] : null;
+}
 
 /** Model choices advertised in ACP configOptions, or null when they are not there. */
 export function devinModelChoices(configOptions) {
@@ -94,12 +124,10 @@ export function resolveDevinModel(rawCatalogue, modelId = '') {
   const row = modelId ? rows.find(row => row.id === modelId) : defaultRow(rows);
   if (!row) throw modelId ? fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: modelId }) : fail('DEVIN_MODEL_EXPLICIT_REQUIRED', 'explicitModelRequired');
   if (row.variant.cost_tier === 'Free' && !freeProof(row)) throw fail('DEVIN_MODEL_UNAVAILABLE', 'modelUnavailable', { model: row.id });
-  const [, sweThought, lightning] = SWE_2.exec(row.id) ?? [];
-  const swe = (row.family.family_uid === 'swe-2' || row.family.slug === 'swe-2') && sweThought;
-  if (sweThought && !swe) throw fail('DEVIN_CATALOGUE_INVALID', 'invalidCatalogue');
+  const parsed = parseDevinUid(row.id);
   return {
-    id: row.id, acpModel: swe ? 'swe-2-high' : row.id,
-    ...(swe ? { thoughtLevel: sweThought } : {}), speed: swe && lightning ? 'fast' : 'standard',
+    id: row.id, base: parsed.base, level: parsed.level, speed: parsed.speed, unmappable: parsed.unmappable,
+    family: rows.filter(r => r.family === row.family).map(r => ({ id: r.id, ...parseDevinUid(r.id) })),
     free: liveFree(row), label: row.variant.label ?? row.id,
     maxContextTokens: Number.isFinite(row.variant.max_context_tokens) && row.variant.max_context_tokens > 0 ? row.variant.max_context_tokens : null,
   };
@@ -112,18 +140,37 @@ function setting(options, kind) {
   return matches[0];
 }
 
+/** An axis the CLI may omit for some models. Absent is null; duplicated is unreadable. */
+function optionalSetting(options, kind) {
+  if (!Array.isArray(options)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
+  const matches = options.filter(option => option?.id === kind || option?.category === kind);
+  if (matches.length > 1 || (matches.length === 1 && (typeof matches[0].id !== 'string' || !matches[0].id))) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
+  return matches[0] ?? null;
+}
+
 // ACP select choices may contain arbitrarily nested groups (the groups have no value).
 function choices(options) {
   if (!Array.isArray(options)) return [];
   return options.flatMap(option => Array.isArray(option?.options) ? choices(option.options) : (typeof option?.value === 'string' ? [option.value] : []));
 }
 
+/**
+ * The level a suffix-less non-representative variant needs: the single
+ * thought_level choice no same-base family variant claims, or null when the
+ * remaining choices do not pin down exactly one (nothing is guessed).
+ */
+function impliedLevel(selection, levelChoices) {
+  const claimed = new Set(selection.family.filter(v => v.base === selection.base && v.level).map(v => v.level));
+  const left = levelChoices.filter(choice => !claimed.has(choice));
+  return left.length === 1 ? left[0] : null;
+}
+
 /** Apply and acknowledge all requested settings, including after session/load. */
 export async function applyDevinModel(call, sessionId, configOptions, selection) {
-  if (!selection?.id || !selection.acpModel || !['standard', 'fast'].includes(selection.speed)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
+  if (!selection?.id || !selection.base || !Array.isArray(selection.family) || selection.unmappable) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
   let latest = configOptions;
   const verified = new Map();
-  for (const [kind, value] of [['model', selection.acpModel], ...(selection.thoughtLevel ? [['thought_level', selection.thoughtLevel]] : []), ['speed', selection.speed]]) {
+  const send = async (kind, value) => {
     const option = setting(latest, kind);
     if (choices(option.options).filter(choice => choice === value).length !== 1) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: kind });
     const result = await call('session/set_config_option', { sessionId, configId: option.id, value });
@@ -134,11 +181,36 @@ export async function applyDevinModel(call, sessionId, configOptions, selection)
       try { actual = setting(latest, checkKind); } catch { throw fail('DEVIN_MODEL_CONFIG_NOT_ACKNOWLEDGED', 'selectionNotAcknowledged', { setting: checkKind }); }
       if (actual.id !== expected.id || actual.currentValue !== expected.value) throw fail('DEVIN_MODEL_CONFIG_NOT_ACKNOWLEDGED', 'selectionNotAcknowledged', { setting: checkKind });
     }
-    // An exact model ID alone cannot confirm an independent thought setting whose
-    // relation to this catalogue variant is unknown.
-    if (kind === 'model' && !selection.thoughtLevel && latest.some(o => o?.id === 'thought_level' || o?.category === 'thought_level')) {
-      throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
+  };
+  // The representative is the same-base family variant ACP advertises as a model.
+  const modelChoices = choices(setting(latest, 'model').options);
+  const reps = modelChoices.includes(selection.id) ? [selection.id]
+    : selection.family.filter(variant => variant.base === selection.base && !variant.unmappable && modelChoices.includes(variant.id)).map(variant => variant.id);
+  if (reps.length !== 1) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'model' });
+  const rep = reps[0];
+  await send('model', rep);
+
+  // thought_level exists only for some models; the choices also depend on the model.
+  const thought = optionalSetting(latest, 'thought_level');
+  if (thought) {
+    if (selection.id === rep && selection.level === null) {
+      // A representative without a level suffix needs no thought setting: the
+      // model choice alone is the variant, so the CLI-derived level is recorded.
+      if (!choices(thought.options).includes(thought.currentValue)) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
+      verified.set('thought_level', { id: thought.id, value: thought.currentValue });
+    } else {
+      const level = selection.level ?? impliedLevel(selection, choices(thought.options));
+      if (level === null) throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
+      await send('thought_level', level);
     }
+  } else if (selection.id !== rep) {
+    // A non-representative variant cannot be told apart from its representative
+    // when the model exposes no thought axis.
+    throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'thought_level' });
   }
-  return latest;
+
+  const speedOption = optionalSetting(latest, 'speed');
+  if (speedOption) await send('speed', selection.speed);
+  else if (selection.speed !== 'standard') throw fail('DEVIN_MODEL_CONFIG_UNAVAILABLE', 'selectionUnavailable', { setting: 'speed' });
+  return { configOptions: latest, verified };
 }

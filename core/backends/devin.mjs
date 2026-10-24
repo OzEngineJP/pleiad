@@ -125,7 +125,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
     async models(cwd = process.cwd()) { return buildDevinModels(await rawModels(cwd)); },
     /** 自動の振り分けが選ぶ前に聞く。CLI が示した ACP の選択肢に無い版は、走らせても設定で止まる（まだ見ていなければ通す） */
-    runnableModel(model) { return !acpModels || !model || acpModels.includes(devinAcpModel(model)); },
+    runnableModel(model) { return !acpModels || !model || devinAcpModel(model, acpModels) !== null; },
     async listSessions({ cwd } = {}) {
       // Common conversations add their persisted rows without starting a CLI. An
       // explicit directory may also discover native sessions in Pleiad's session root.
@@ -271,14 +271,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           if (modeOptions.length !== 1 || !choices(modeOptions[0].options).includes(mode)) throw new Error(t('devin.errors.modeUnavailable'));
           state = await client.call('session/set_config_option', { sessionId, configId: modeOptions[0].id, value: mode });
           if (state?.configOptions?.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
-          const config = await applyDevinModel(client.call.bind(client), sessionId, state.configOptions, selection);
+          const applied = await applyDevinModel(client.call.bind(client), sessionId, state.configOptions, selection);
+          const config = applied.configOptions;
           if (config.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
-          verified = new Map([['mode', { id: modeOptions[0].id, value: mode }]]);
-          for (const [kind, value] of [['model', selection.acpModel], ...(selection.thoughtLevel ? [['thought_level', selection.thoughtLevel]] : []), ['speed', selection.speed]]) {
-            const option = configSetting(config, kind);
-            if (option.length !== 1) throw new Error(t('devin.errors.configChanged'));
-            verified.set(kind, { id: option[0].id, value });
-          }
+          verified = new Map([['mode', { id: modeOptions[0].id, value: mode }], ...applied.verified]);
           if (!matchesVerified(config, verified)) throw new Error(t('devin.errors.configChanged'));
           selectedMode = mode;
           if (latestSession !== sessionId || !matchesVerified(latestSnapshot, verified) || latestMode !== mode) throw new Error(t('devin.errors.configChanged'));

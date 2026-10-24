@@ -5,8 +5,30 @@ import readline from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 
 const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
+// 実機（3000.11.92）の形: model の選択肢は系列の代表だけで、thought_level・speed の
+// 有無と選択肢は選んだ model で変わる。model を切り替えると thought_level は代表 uid の接尾辞の段に戻る
+const MODELS = {
+  'swe-2-high': { thought: ['medium', 'high', 'max'], implicit: 'high', speed: ['standard', 'fast'] },
+  'deepseek-v4-1-flash-1017-high': { thought: ['none', 'low', 'high', 'max'], implicit: 'high' },
+  'glm-5-2': { thought: ['none', 'high', 'max'], implicit: 'high' },
+  'glm-5-2-1m': { thought: ['none', 'high', 'max'], implicit: 'high' },
+  'swe-1-7-medium': { thought: ['medium', 'max'], implicit: 'medium' },
+  'claude-opus-5-5-medium': { thought: ['low', 'medium', 'high', 'xhigh', 'max'], implicit: 'medium', speed: ['standard', 'fast'] },
+  'gpt-6-astra-medium': { thought: ['low', 'medium', 'high', 'xhigh', 'max'], implicit: 'medium' },
+  'kimi-k2-6': {},
+  'paid-exact': {},
+};
 const catalogue = { families: [
-  { family_uid: 'swe-2', family_label: 'SWE-2', slug: 'swe-2', variants: ['high', 'medium', 'max'].map(level => ({ model_uid: `swe-2-${level}`, label: `SWE-2 ${level}`, cost_tier: 'Free', max_context_tokens: 262000 })) },
+  { family_uid: 'swe-2', family_label: 'SWE-2', slug: 'swe-2', variants: ['high', 'medium', 'max'].flatMap(level => [
+    { model_uid: `swe-2-${level}`, label: `SWE-2 ${level}`, cost_tier: 'Free', max_context_tokens: 262000 },
+    { model_uid: `swe-2-${level}-lightning`, label: `SWE-2 ${level} Lightning`, cost_tier: 'High cost', cost_summary: '$1 / 1M Input', max_context_tokens: 262144 },
+  ]) },
+  { family_uid: 'deepseek-v4-1-flash-1017', family_label: 'DeepSeek V4.1 Flash', slug: 'deepseek-v4.1-flash', variants: ['none', 'low', 'high', 'max'].map(level => ({ model_uid: `deepseek-v4-1-flash-1017-${level}`, label: `DeepSeek V4.1 Flash ${level}`, cost_tier: 'Low cost' })) },
+  { family_uid: 'glm-5.2', family_label: 'GLM-5.2', slug: 'glm-5.2', variants: ['glm-5-2', 'glm-5-2-max', 'glm-5-2-none', 'glm-5-2-1m', 'glm-5-2-max-1m', 'glm-5-2-none-1m'].map(id => ({ model_uid: id, label: id, cost_tier: 'Low cost' })) },
+  { family_uid: 'swe-1.7', family_label: 'SWE-1.7', slug: 'swe-1.7', variants: [{ model_uid: 'swe-1-7', label: 'SWE-1.7 Max', cost_tier: 'Low cost' }, { model_uid: 'swe-1-7-medium', label: 'SWE-1.7 Medium', cost_tier: 'Low cost' }] },
+  { family_uid: 'claude-opus-5-5', family_label: 'Claude Opus 5.5', slug: 'claude-opus-5.5', variants: ['low', 'medium', 'high', 'xhigh', 'max'].flatMap(level => [{ model_uid: `claude-opus-5-5-${level}`, cost_tier: 'High cost' }, { model_uid: `claude-opus-5-5-${level}-fast`, cost_tier: 'High cost' }]) },
+  { family_uid: 'gpt-6-astra', family_label: 'GPT-6 Astra', slug: 'gpt-6-astra', variants: ['low', 'medium', 'high', 'xhigh', 'max'].flatMap(level => [{ model_uid: `gpt-6-astra-${level}`, cost_tier: 'High cost' }, { model_uid: `gpt-6-astra-${level}-priority`, cost_tier: 'High cost' }]) },
+  { family_uid: 'kimi-k2.6', family_label: 'Kimi K2.6', slug: 'kimi-k2.6', variants: [{ model_uid: 'kimi-k2-6', label: 'Kimi K2.6', cost_tier: 'Low cost' }] },
   { family_uid: 'fixture-paid', family_label: 'Fixture paid', slug: 'fixture-paid', variants: [{ model_uid: 'paid-exact', label: 'Fixture paid', cost_tier: 'High cost', cost_summary: '$1 per unit' }] },
 ] };
 if (command === '--version' || command === 'version') { console.log('3000.11.92'); process.exit(0); }
@@ -43,12 +65,15 @@ const load = id => {
   if (!session) throw new Error('Unknown session');
   sessions.set(id, session); return session;
 };
-const configs = session => [
-  { id: 'mode', category: 'mode', type: 'select', currentValue: session.mode, options: ['ask', 'accept-edits', 'smart', 'plan', 'bypass'].map(value => ({ value, name: value })) },
-  { id: 'model', category: 'model', type: 'select', currentValue: session.model, options: [{ group: 'Models', options: [{ value: 'swe-2-high', name: 'SWE-2' }, { value: 'paid-exact', name: 'Fixture paid' }] }] },
-  ...(session.model === 'paid-exact' ? [] : [{ id: 'thought_level', category: 'thought_level', type: 'select', currentValue: session.thought_level, options: ['medium', 'high', 'max'].map(value => ({ value, name: value })) }]),
-  { id: 'speed', category: 'model_config', type: 'select', currentValue: session.speed, options: ['standard', 'fast'].map(value => ({ value, name: value })) },
-];
+const configs = session => {
+  const axes = MODELS[session.model] ?? {};
+  return [
+    { id: 'mode', category: 'mode', type: 'select', currentValue: session.mode, options: ['ask', 'accept-edits', 'smart', 'plan', 'bypass'].map(value => ({ value, name: value })) },
+    { id: 'model', category: 'model', type: 'select', currentValue: session.model, options: [{ group: 'Models', options: Object.keys(MODELS).map(value => ({ value, name: value })) }] },
+    ...(axes.thought ? [{ id: 'thought_level', category: 'thought_level', type: 'select', currentValue: session.thought_level, options: axes.thought.map(value => ({ value, name: value })) }] : []),
+    ...(axes.speed ? [{ id: 'speed', category: 'model_config', type: 'select', currentValue: session.speed, options: axes.speed.map(value => ({ value, name: value })) }] : []),
+  ];
+};
 const write = frame => process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', ...frame })}\n`);
 const update = (sessionId, value) => write({ method: 'session/update', params: { sessionId, update: value } });
 function usageUpdate(session, usage = { inputTokens: 1000, outputTokens: 100, cachedReadTokens: 800 }) {
@@ -150,7 +175,10 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         const session = load(p.sessionId), option = configs(session).find(o => o.id === p.configId);
         const flatten = values => values.flatMap(v => v.options ? flatten(v.options) : [v.value]);
         if (!option || !flatten(option.options).includes(p.value)) throw new Error('Unsupported config value');
-        session[p.configId] = p.value; persist(session);
+        session[p.configId] = p.value;
+        // 実機は model の切替で thought_level をその uid の接尾辞の段に戻し、軸の有無・選択肢も model に合わせる
+        if (p.configId === 'model') { session.thought_level = MODELS[p.value]?.implicit ?? null; session.speed = 'standard'; }
+        persist(session);
         const options = configs(session);
         if (process.env.FAKE_DEVIN_BAD_ACK === p.configId) options.find(o => o.id === p.configId).currentValue = 'wrong';
         const drift = process.env.FAKE_DEVIN_SETUP_DRIFT;

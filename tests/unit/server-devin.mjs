@@ -246,6 +246,8 @@ export default async function (t) {
     const lightningSet = runnableCalls.slice(lightningMark).filter(c => c.method === 'session/set_config_option').map(c => [c.params.configId, c.params.value]);
     t.ok('Lightning は swe-2-high・思考 max・速さ fast で走る', lightning.outcome !== 'error' && JSON.stringify(lightningSet.slice(1)) === JSON.stringify([['model', 'swe-2-high'], ['thought_level', 'max'], ['speed', 'fast']]),
       JSON.stringify({ outcome: lightning.outcome, lightningSet }));
+    t.ok('読み替えられる系・対応軸の無い -priority を振り分けで見分ける',
+      runnable.runnableModel('deepseek-v4-1-flash-1017-max') === true && runnable.runnableModel('gpt-6-astra-low-priority') === false);
 
     let alwaysAnswer, canAlways;
     class AlwaysClient extends DevinAcp {
