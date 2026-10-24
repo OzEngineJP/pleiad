@@ -6,8 +6,10 @@ package dev.pleiad.app.remote
 // Rules:
 //   - one notification per conversation (a newer notice overwrites it); approvals / questions / failures are separate
 //     "needs attention" notifications, completions are plain ones
-//   - completions are bundled per host from the second one: "N conversations finished" (the individual ones go away);
-//     when the bundle shrinks to one, that one comes back (silently)
+//   - each completion keeps its own notification; from the second one a per-host bundle ("N conversations finished")
+//     sits on top as the group summary. A new completion alerts once: the new child posts quietly and the bundle
+//     alerts; every re-count of the bundle (a child opened / seen / overwritten) is quiet, and the bundle goes away
+//     when fewer than two completions remain
 //   - a cancel (decided somewhere / looked at somewhere) removes the notification; a cancel for a conversation we have no
 //     state for (the service restarted since) still cancels, because cancelling a notification that is not there is harmless
 //   - notices are applied once, in order: a sequence number not above the last one seen for a host is a replay
@@ -17,7 +19,7 @@ package dev.pleiad.app.remote
 
 class NotifyPlanner {
     private class Slot(var kind: String, var title: String, var host: String, var at: Long, val ids: MutableSet<String> = LinkedHashSet()) {
-        /** Currently shown as its own notification (a completion inside a bundle is not). */
+        /** Its own notification was posted (completions keep it even while a bundle sits on top). */
         var shown = false
     }
 
@@ -59,19 +61,25 @@ class NotifyPlanner {
 
     /**
      * The user opened a notification (tap). [bundle] = the "N conversations finished" one: all completions of the host
-     * are acknowledged. Otherwise only that conversation's own notification (Android removes it on tap by itself).
+     * are acknowledged (their own notifications go too). Otherwise only that conversation's own notification — and the
+     * bundle is re-counted.
      */
     @Synchronized
     fun opened(hostId: String, session: String?, bundle: Boolean): List<NotifyAction> {
         val h = hosts[hostId] ?: return emptyList()
         val out = ArrayList<NotifyAction>()
         if (bundle) {
-            h.slots.entries.removeAll { it.value.kind == NoticeKind.DONE }
+            for ((s, slot) in h.slots.entries.toList()) if (slot.kind == NoticeKind.DONE) { h.slots.remove(s); out += NotifyAction.Cancel(slotKey(hostId, s)) }
             if (h.bundled) { h.bundled = false; out += NotifyAction.Cancel(bundleKey(hostId)) }
             return out
         }
-        val removed = if (session != null) h.slots.remove(session) else null
-        if (removed?.kind == NoticeKind.DONE) out += syncDone(h, hostId, alert = false)
+        if (session != null) {
+            val removed = h.slots.remove(session)
+            if (removed?.kind == NoticeKind.DONE) {
+                out += NotifyAction.Cancel(slotKey(hostId, session))
+                out += syncDone(h, hostId, alert = false)
+            }
+        }
         return out
     }
 
@@ -130,7 +138,11 @@ class NotifyPlanner {
         }
     }
 
-    /** Brings the completions of one host to the right shape: nothing, one notification, or one bundle. */
+    /**
+     * Brings the completions of one host to the right shape: each keeps its own notification, and from the second one a
+     * bundle sits on top. [alert] marks a newly arrived completion: it sounds once (the first alone, then the bundle —
+     * the new child posts quietly). Re-counts after a removal are quiet.
+     */
     private fun syncDone(h: HostState, hostId: String, alert: Boolean): List<NotifyAction> {
         val dones = h.slots.entries.filter { it.value.kind == NoticeKind.DONE }
         val out = ArrayList<NotifyAction>()
@@ -140,14 +152,17 @@ class NotifyPlanner {
                 val (session, slot) = dones[0]
                 if (h.bundled) { h.bundled = false; out += NotifyAction.Cancel(bundleKey(hostId)) }
                 if (!slot.shown || alert) {
-                    // Overwriting its own earlier notification keeps it quiet; a first showing alerts unless it comes back from a bundle
-                    val comingBack = !alert
+                    // Overwriting its own earlier notification keeps it quiet; a first showing alerts
                     slot.shown = true
-                    out += NotifyAction.Post(slotKey(hostId, session), NoticeKind.DONE, hostId, h.host, session, slot.title, slot.at, attention = false, silent = comingBack)
+                    out += NotifyAction.Post(slotKey(hostId, session), NoticeKind.DONE, hostId, h.host, session, slot.title, slot.at, attention = false, silent = !alert)
                 }
             }
             else -> {
-                for ((session, slot) in dones) if (slot.shown) { slot.shown = false; out += NotifyAction.Cancel(slotKey(hostId, session)) }
+                for ((session, slot) in dones) if (!slot.shown) {
+                    // Each completion keeps a row under the bundle; the bundle carries the alert for a new one
+                    slot.shown = true
+                    out += NotifyAction.Post(slotKey(hostId, session), NoticeKind.DONE, hostId, h.host, session, slot.title, slot.at, attention = false, silent = true)
+                }
                 val newest = dones.last()
                 h.bundled = true
                 out += NotifyAction.Bundle(bundleKey(hostId), hostId, h.host, dones.size, dones.reversed().map { it.value.title }, newest.key, newest.value.at, silent = !alert)

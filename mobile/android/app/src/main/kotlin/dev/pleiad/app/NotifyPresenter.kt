@@ -18,11 +18,13 @@ import dev.pleiad.app.remote.NotifySink
  * Turns the planner's [NotifyAction]s into Android notifications (ADR 0086, docs/design.md「通知」).
  *
  * Texts are built here in the app's language from what the host sent (kind, host name, conversation name): the title
- * says what happened, the body is the conversation name only (never message text), the sub-text is the host name. On the
- * lock screen the conversation name is hidden unless the user allowed it (VISIBILITY_PRIVATE and a generic public
- * version). Two channels: "needs attention" (high) for approvals, questions and failures, and "finished" (default).
- * Tapping opens the conversation: pleiad://open?h=<hostId>&s=<sessionId> (a bundle opens the newest one).
- * A device waiting on the host's approval window (ADR 0248) has no buttons; tapping opens the host list.
+ * is the conversation name, the body says what happened (never message text), the sub-text is the host name — so a
+ * collapsed row still names the conversation. On the lock screen the conversation name is hidden unless the user
+ * allowed it (VISIBILITY_PRIVATE and a generic public version). Two channels: "needs attention" (high) for approvals,
+ * questions and failures, and "finished" (default). All notifications of one host form one group; the bundle is the
+ * group's summary. Tapping opens the conversation: pleiad://open?h=<hostId>&s=<sessionId> (a bundle opens the newest
+ * one). A device waiting on the host's approval window (ADR 0248) keeps title=event / body="device x waits" and has no
+ * buttons; tapping opens the host list.
  */
 class NotifyPresenter(private val ctx: Context) : NotifySink {
     companion object {
@@ -96,10 +98,10 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         else -> R.string.notify_public_done
     })
 
-    private fun base(channel: String, key: String, host: String, at: Long, settings: NotifySettings, publicText: String): NotificationCompat.Builder {
+    private fun base(channel: String, hostId: String, host: String, at: Long, settings: NotifySettings, publicText: String): NotificationCompat.Builder {
         val b = NotificationCompat.Builder(ctx, channel)
-            // Our own bundling (NotifyPlanner) decides what is grouped; keep Android from folding four of them into its own group
-            .setGroup("$GROUP_KEY:$key")
+            // One group per host; the planner's bundle is the group summary (the children stay visible inside it)
+            .setGroup("$GROUP_KEY:$hostId")
             .setSmallIcon(R.drawable.ic_stat_pleiad)
             .setSubText(host.takeIf { it.isNotEmpty() })
             .setWhen(at.takeIf { it > 0 } ?: System.currentTimeMillis())
@@ -126,10 +128,12 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
 
     private fun post(a: NotifyAction.Post, settings: NotifySettings): Notification {
         val device = a.kind == NoticeKind.DEVICE
-        val body = if (device) ctx.getString(R.string.notify_device_body, a.title.ifBlank { "?" })
-            else a.title.ifBlank { ctx.getString(R.string.notify_untitled) }
-        val b = base(if (a.attention) CH_ATTENTION else CH_DONE, a.key, a.host, a.at, settings, publicText(a.kind))
-            .setContentTitle(title(a)).setContentText(body)
+        // The title is the conversation name and the body is what happened; a device notice has no conversation, so it
+        // keeps the old shape (title = the event, body = "device x is waiting to be allowed")
+        val heading = if (device) title(a) else a.title.ifBlank { ctx.getString(R.string.notify_untitled) }
+        val body = if (device) ctx.getString(R.string.notify_device_body, a.title.ifBlank { "?" }) else title(a)
+        val b = base(if (a.attention) CH_ATTENTION else CH_DONE, a.hostId, a.host, a.at, settings, publicText(a.kind))
+            .setContentTitle(heading).setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(if (device) listIntent(a.key) else intent(a.hostId, a.session, false, a.key))
         if (a.silent) b.setOnlyAlertOnce(true).setSilent(true)
@@ -143,7 +147,8 @@ class NotifyPresenter(private val ctx: Context) : NotifySink {
         val style = NotificationCompat.InboxStyle().setBigContentTitle(title)
         for (n in shown) style.addLine(n)
         if (names.size > shown.size) style.setSummaryText(ctx.getString(R.string.notify_bundle_more, names.size - shown.size))
-        val b = base(CH_DONE, a.key, a.host, a.at, settings, title)
+        val b = base(CH_DONE, a.hostId, a.host, a.at, settings, title)
+            .setGroupSummary(true)
             .setContentTitle(title).setContentText(names.take(3).joinToString(" / "))
             .setStyle(style)
             .setContentIntent(intent(a.hostId, a.session, true, a.key))

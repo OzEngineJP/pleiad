@@ -2,7 +2,9 @@ package dev.pleiad.app.remote
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -61,6 +63,23 @@ class HostRouteTest {
         d.store.saveHost(creds("own"))
         d.remove(hostId, "plus")
         assertNull(d.proxy(hostId))
+    }
+
+    @Test fun aTappedNotificationCanOpenAHostPairedAnyUsableWay() {
+        assertTrue(HostRoute.openable(hostId, device("own").store.hosts()))
+        assertTrue(HostRoute.openable(hostId, device("plus").store.hosts()))
+        assertTrue(HostRoute.openable(hostId, device("own", "plus").store.hosts()))
+        assertFalse(HostRoute.openable(hostId, device().store.hosts()))
+        // a Plus label placeholder has no device credentials yet: not openable
+        val labelled = device()
+        labelled.store.savePlusLabel(hostId, "pk", "PC", "http://127.0.0.1:9", null, "work")
+        assertFalse(HostRoute.openable(hostId, labelled.store.hosts()))
+        // revoked on one route still opens on the other; revoked everywhere does not
+        val revoked = device("own", "plus")
+        revoked.store.updateHost(hostId, "own") { it.copy(revokedAt = 1) }
+        assertTrue(HostRoute.openable(hostId, revoked.store.hosts()))
+        revoked.store.updateHost(hostId, "plus") { it.copy(revokedAt = 1) }
+        assertFalse(HostRoute.openable(hostId, revoked.store.hosts()))
     }
 
     @Test fun aRecordsStateIsOnlyItsOwnRoutesWindow() {

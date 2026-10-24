@@ -97,7 +97,7 @@ class NotifyInteropTest {
             assertEquals(NotifyAction.Cancel(askDone.key), next())
             none()
 
-            // ── completions: one, then a bundle from the second ──
+            // ── completions: one, then a bundle on top from the second (each keeps its own notification) ──
             send("turn echo:first job")
             val t1 = event("turn").getString("sessionId")
             val d1 = next() as NotifyAction.Post
@@ -105,16 +105,18 @@ class NotifyInteropTest {
             send("turn echo:second job")
             val t2 = event("turn").getString("sessionId")
             val second = (0 until 2).map { next() }
-            assertTrue("the first completion goes away", second.contains(NotifyAction.Cancel(d1.key)))
+            val d2 = second.filterIsInstance<NotifyAction.Post>().single()
+            assertEquals(NotifyPlanner.slotKey(rec.hostId, t2), d2.key)
+            assertTrue("the new completion posts quietly; the bundle alerts", d2.silent)
             val bundle = second.filterIsInstance<NotifyAction.Bundle>().single()
             assertEquals(2, bundle.count); assertEquals(t2, bundle.session)
             assertEquals(listOf("echo:second job", "echo:first job"), bundle.titles)
 
-            // looking at one of them elsewhere cancels it; the other comes back alone
+            // looking at one of them elsewhere cancels it; back to one, the bundle goes (the other stays put)
             send("read $t2")
-            val shrink = (0 until 3).map { next() }
+            val shrink = (0 until 2).map { next() }
             assertTrue(shrink.any { it is NotifyAction.Cancel && it.key == NotifyPlanner.slotKey(rec.hostId, t2) })
-            assertTrue(shrink.any { it is NotifyAction.Post && it.session == t1 && it.silent })
+            assertTrue(shrink.any { it is NotifyAction.Cancel && it.key == NotifyPlanner.bundleKey(rec.hostId) })
             none()
 
             // ── a failure ──
