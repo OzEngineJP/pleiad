@@ -100,8 +100,40 @@ export default function(t) {
   a.show('thinking');
   t.ok('本文や思考が続いても同じ末尾とツールの入れ物を保つ', a.el.children.includes(ctx.runningTools.el) && a.text === 'thinking');
   ctx.runningTools.size = 0;
-  a.show("activity.waitingApproval");
-  t.ok("承認を待つ間は回る印を出さない", a.el.querySelectorAll(".run").length === 0);
+  running = false;
+  for (const label of ['activity.waitingApproval', 'activity.waitingAnswer', 'activity.waitingChrome']) {
+    a.show(label);
+    t.ok(`${label}: 親のターンが終わっていても子を待つ衛星 2 個を残す`,
+      a.el.querySelectorAll('circle').length === 2 && a.shape === 'sat:2');
+    a.afterPermission();
+    a.sync();
+    t.ok(`${label}: 答えた後は裏の作業待ちに戻り、同期しても衛星を保つ`,
+      a.text === 'activity.waitingBackground' && a.el.querySelector('.txt').textContent === behind.label && a.shape === 'sat:2');
+  }
+  a.show('activity.waitingApproval');
+  a.afterPermission(undefined, { suspend: true });
+  t.ok('行内の承認に答えた後も、親が終了していれば子を待つ衛星に戻す',
+    a.text === 'activity.waitingBackground' && a.shape === 'sat:2');
+  running = true;
+  a.show('activity.waitingApproval');
+  a.suspend();
+  t.ok('子を待つ親の承認カードがツール行を使っても衛星を残す', a.shape === 'sat:2');
+  ctx.runningTools.size = 1;
+  a.afterPermission('activity.runningTool');
+  t.ok('親のツールが 1 本でも走れば衛星を出さず弧に戻す',
+    a.behind === null && a.shape === 'run' && a.el.querySelectorAll('circle').length === 0);
+  ctx.runningTools.size = 0;
+  behind = null;
+  for (const label of ['activity.waitingApproval', 'activity.waitingAnswer', 'activity.waitingChrome']) {
+    a.show(label);
+    t.ok(`${label}: 親自身の承認・回答・操作待ちは回る印を出さない`, a.shape === 'none' && a.el.querySelectorAll('.run').length === 0);
+  }
+  a.suspend();
+  t.ok('親自身の承認カードが状態を語る間は稼働表示を外す', a.el === null);
+  a.afterPermission(undefined, { suspend: true });
+  t.ok('親自身の行内承認を許可しても汎用の稼働表示を重ねない', a.el === null);
+  a.afterPermission();
+  t.ok('親自身の回答後は実行中の弧に戻す', a.text === 'activity.continuing' && a.shape === 'run');
   a.hide();
   behind = null; live = 1; running = false;
   a.show('background');
