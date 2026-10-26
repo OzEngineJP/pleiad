@@ -5,12 +5,13 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  CAPABILITY_KEYS, CAPABILITY_DOCS, NO_CAPABILITIES, NO_TRAITS, BACKEND_EVENTS, TRAIT_KEYS,
+  CAPABILITY_KEYS, CAPABILITY_DOCS, NO_CAPABILITIES, NO_TRAITS, BACKEND_EVENTS, RUN_ARG_FEATURES, TRAIT_KEYS,
   checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, impossible, legacyCapabilities, todo, traitProblem,
 } from '../../core/backends/contract.mjs';
 import { AGENT_TRAITS, CAPABILITY_STATES } from '../../core/backends/agent-marks.mjs';
 import { AGENTS, DESCRIPTOR_KEYS, DEFAULT_AGENT_IDS, idleCompactionKey } from '../../core/backends/agents.mjs';
 import { CAPABILITY_CONTRACTS, RIGS, TRAIT_CONTRACTS } from '../lib/backend-contracts.mjs';
+import { DELIVERY_ARG_KEYS, DELIVERY_CAPABILITIES, DELIVERY_PROBES, deliveryArgs, deliveryContractProblem, deliveryRequired } from '../lib/backend-delivery.mjs';
 import { ABOUT, loadNatives, renderMatrix } from '../lib/backend-matrix.mjs';
 import { checkTodos, collectTodos, readTodosBaseline, updateTodosBaseline } from '../lib/backend-todos.mjs';
 import { ROOT } from '../lib/server.mjs';
@@ -78,7 +79,7 @@ export default async function (t) {
   }));
   const matrix = renderMatrix(natives);
   for (const key of CAPABILITY_KEYS) {
-    const named = CAPABILITY_CONTRACTS[key] ?? [];
+    const named = CAPABILITY_CONTRACTS[key]?.suites ?? [];
     const unknown = named.filter((n) => n !== 'conformance' && !suiteNames.has(n));
     t.ok(`印 ${key}: 契約の試験がある（tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS に suite 名を書く）`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
     t.ok(`印 ${key}: 一覧の説明がある（tests/lib/backend-matrix.mjs の ABOUT に書く）`, typeof ABOUT[key] === 'string' && ABOUT[key].length > 0);
@@ -98,6 +99,35 @@ export default async function (t) {
   }
   t.ok('性質の契約の試験に、一覧に無い性質が無い', Object.keys(TRAIT_CONTRACTS).every((k) => TRAIT_KEYS.includes(k)) && TRAIT_KEYS.every((k) => !(k in CAPABILITY_CONTRACTS)));
   t.ok('一覧（端末に出す）に性質を出さない', TRAIT_KEYS.every((k) => !new RegExp(`（\`${k}\`）`).test(matrix) && !Object.hasOwn(ABOUT, k)));
+  // 配達物（runArgs の渡し物）を持つ印は、対応・補うのエージェントごとに「そのエージェントで届く」試験が要る。
+  // 新しいエージェント・新しい配達物を足したときに漏れないよう、印の値（対応か）と身代わり（DELIVERY_PROBES）から機械的に決める
+  for (const key of DELIVERY_CAPABILITIES) {
+    const agents = CAPABILITY_CONTRACTS[key]?.agents ?? {};
+    for (const id of DEFAULT_AGENT_IDS) {
+      if (!deliveryRequired(natives[id]?.capabilities?.[key])) continue;
+      const problem = deliveryContractProblem({ key, id, suite: agents[id], suites: suiteNames, probes: DELIVERY_PROBES,
+        file: AGENTS[id].module.replace(/^\.\//, '') });
+      t.ok(`印 ${key}: ${id} は対応なので、${id} で届くことを確かめる試験がある`, problem === null, problem ?? undefined);
+    }
+  }
+  const missingDelivery = deliveryContractProblem({ key: 'browser', id: 'nobody', suite: undefined, suites: suiteNames, probes: DELIVERY_PROBES });
+  t.ok('配達物の試験が無いときの案内: どのファイルに何を書くかを出す',
+    /tests\/lib\/backend-delivery\.mjs/.test(missingDelivery) && /CAPABILITY_CONTRACTS\.browser\.agents\.nobody/.test(missingDelivery)
+    && /backend-delivery/.test(missingDelivery), missingDelivery);
+  // 新しい配達物のキーを RUN_ARG_FEATURES に足したら、届け方の試験でも渡す（渡していないキーは、黙って捨てられても気づけない）
+  const untestedArgs = Object.keys(RUN_ARG_FEATURES).filter((key) => !DELIVERY_ARG_KEYS.includes(key));
+  t.ok('配達物の試験: RUN_ARG_FEATURES のキーをすべて渡している（新しいキーは tests/lib/backend-delivery.mjs の DELIVERY_ARG_KEYS と deliveryArgs にも足す）',
+    untestedArgs.length === 0, JSON.stringify(untestedArgs));
+  const allCaps = Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, true]));
+  const built = deliveryArgs(allCaps, {});
+  const unbuilt = DELIVERY_ARG_KEYS.filter((key) => !Object.hasOwn(built, key));
+  t.ok('配達物の試験: deliveryArgs が DELIVERY_ARG_KEYS を実際に渡す（一覧だけ足して渡し忘れない）', unbuilt.length === 0, JSON.stringify(unbuilt));
+  for (const [key, contract] of Object.entries(CAPABILITY_CONTRACTS)) {
+    for (const [id, suite] of Object.entries(contract.agents ?? {})) {
+      t.ok(`印 ${key}: エージェント ${id} の試験 ${suite} が実在する`, Object.hasOwn(AGENTS, id) && suiteNames.has(suite),
+        `tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS.${key}.agents.${id} を、実在するエージェントと suite（tests/run.mjs の名前）にする`);
+    }
+  }
   t.ok('一覧（端末に出す）: 対応・補う・不可能・未実装を出し、不可能の理由と未実装の Issue を添える',
     /\| ✓ \|/.test(matrix) && /補/.test(matrix) && /無理/.test(matrix) && /未実装 #98/.test(matrix)
     && /hooks \| #98/.test(matrix) && /accounts \| OS の共有キーリング/.test(matrix));
