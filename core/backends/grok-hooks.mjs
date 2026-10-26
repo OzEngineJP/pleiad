@@ -21,6 +21,18 @@ export async function writeTurnPlugin(base, pluginHooks) {
   return { dir, cleanup: () => remove(dir) };
 }
 
+/** Grok ACP 用のターン限定エージェントプロファイル。既定の道具からネイティブ shell だけを外す。 */
+export async function writeNativeShellOffProfile(base) {
+  if (!swept.has(base)) { swept.add(base); sweep(base); }
+  const dir = path.join(base, `${process.pid}-${randomBytes(6).toString('hex')}`);
+  await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
+  const file = path.join(dir, 'profile.md');
+  try {
+    await fs.promises.writeFile(file, '---\ndisallowedTools:\n  - run_terminal_cmd\n---\n', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  } catch (error) { remove(dir); throw error; }
+  return { file, cleanup: () => remove(dir) };
+}
+
 /** 持ち主の Pleiad（名前の頭の pid）が居ない置き場を消す。強制終了ではターンの終わりの cleanup が走らないため */
 export function sweep(base) {
   let names = [];

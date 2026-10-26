@@ -15,7 +15,7 @@ import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
 import { createAcpSteer, PROTOCOL_REJECT_CODES } from './acp-steer.mjs';
 import { createHeldAcp, heldAcpPlan } from './acp-held.mjs';
-import { writeTurnPlugin } from './grok-hooks.mjs';
+import { writeTurnPlugin, writeNativeShellOffProfile } from './grok-hooks.mjs';
 import { grokQuota } from './grok-usage.mjs';
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 import { defaultGrokHome, prepareGrokAccount, readGrokCredential } from './grok-accounts.mjs';
@@ -331,7 +331,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         const { emit, onPromptDelivered, control } = args;
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
-        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null, plugin = null;
+        let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null, plugin = null, shellProfile = null;
         // 保持役（無停止の更新 段 2b）: 子を載せたターンだけ。handedOff は旧サーバーが手を離した（続きは新しいサーバー）
         let held = null, handedOff = false, handingOff = false, settleHandOff = () => {}, promptId = null, replaying = false, sentText = '', shownText = '';
         const handedOffPromise = new Promise(resolve => { settleHandOff = resolve; });
@@ -481,7 +481,11 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
             const plan = await heldAcpPlan({ dataDir, argv: argv(), bot: Boolean(args.botInstructions), envName: 'AGENT_HOST_GROK_HOLDER' });
             held = plan ? createHeldAcp({ client: plan.client }) : null;
-            client = await openClient(cwd, spawnArgs(model, effort), handlers, extraEnv, { held });
+            if (args.shellRuntime?.nativeOff) shellProfile = await writeNativeShellOffProfile(path.join(dataDir, 'grok-shell-policy'));
+            const launchArgs = [...spawnArgs(model, effort), ...(shellProfile ? ['--agent-profile', shellProfile.file] : [])];
+            client = await openClient(cwd, launchArgs, handlers, extraEnv, { held });
+            // Grok reads the agent profile during ACP startup; the live process retains the resolved policy.
+            shellProfile?.cleanup(); shellProfile = null;
             check();
             verifySelection(client.init, model, effort);
             windowTokens = Number((client.init?._meta?.modelState?.availableModels ?? []).find(m => m.modelId === client.init?._meta?.modelState?.currentModelId)?._meta?.totalContextTokens) || null;
@@ -580,6 +584,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           }
           // 手を離したターンのプラグインの置き場は消さない（子が読み直すことがある。アプリの終了で片付く）
           if (!handedOff) plugin?.cleanup();
+          shellProfile?.cleanup();
           if (sessionId) active.delete(sessionId);
           if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
           mapper?.finish();
