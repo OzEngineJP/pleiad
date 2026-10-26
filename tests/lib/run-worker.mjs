@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 import { installDomStub } from "./dom-stub.mjs";
 import { killOwnTree } from "./process-reap.mjs";
 import { createGuardedRunner, serializeSuite } from "./runner.mjs";
+import { installRestartFromEnv } from "./restart.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const parentData = process.argv[2] || "";
@@ -29,6 +30,8 @@ if (!testDataOwned || (parentData && path.resolve(parentData).toLowerCase() === 
 process.on("disconnect", () => killOwnTree());
 
 installDomStub();
+// PLEIAD_TEST_RESTART があれば、suite を読み込む前に「途中でサーバーを止めて起こし直す」モードをこの worker へ入れる
+installRestartFromEnv();
 const guard = createGuardedRunner({ root: ROOT, parallel: true });
 await guard.prime();
 

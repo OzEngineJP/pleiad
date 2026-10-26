@@ -19,6 +19,7 @@ import * as testEnv from "./lib/test-env.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { main } from "./lib/runner.mjs";
+import { installRestartFromEnv } from "./lib/restart.mjs";
 
 const TESTS = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(TESTS, "..");
@@ -713,6 +714,9 @@ const SUITES = [
   // `!` の行を保持役に載せる（無停止の更新 段階 3）: 引き継ぎで新サーバーが引き取る（出力の途中・終わった直後・止める最中）。出力と終わりが 1 回だけ。切り替えの数え方
   './unit/adopt-shell.mjs',
   './unit/shell-held.mjs',
+  // 「途中でサーバーを止めて起こし直す」試験の仕掛け（issue #143 段 1・ADR 0270）: 既存の土台に被せ、普通に止めて普通に起こす。
+  // held: のターン（Claude の代用）は続き、ply_shell の start のジョブは今の作りでは消える（段 2・3 で反転する）
+  './unit/restart-mode.mjs',
   // 引き継ぎを main の切り替えの流れごと（無停止の更新 2d）: 作業の最中でも待たずに替わる・S2 が立たなければ前の版で付け直す・引き継げない作業があれば待つ
   './unit/desktop-handover.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
@@ -960,6 +964,9 @@ const SUITES = [
   './unit/voice-plus.mjs',
 ];
 
+// PLEIAD_TEST_RESTART があれば、「途中でサーバーを止めて起こし直す」モードを、suite を読み込む前にこのプロセスへ入れる
+// （--jobs 1 のとき。--jobs N は run-worker.mjs が worker ごとに入れる）。無ければ何もしない
+installRestartFromEnv();
 const code = await main({
   suites: SUITES,
   baseDir: TESTS,

@@ -4,9 +4,21 @@
 // イベントの溜め込み・承認の自動許可・turnEnd 待ち —— をここ1か所に集める。
 // 依存は既存の ws だけ（グローバル WebSocket に頼らないので Node 20 でも動く）。
 import WebSocket from "ws";
+import { restartMode } from "./restart.mjs";
 
 /** cmd の返事を待つ既定の上限（ミリ秒） */
 export const CMD_TIMEOUT_MS = 60_000;
+
+/**
+ * 1本つないで ready を受け取るまで待つ。restartMode（tests/lib/restart.mjs）が入っていれば、
+ * その口を通す（途中でサーバーを止めて起こし直しても、試験は同じ接続を使っているつもりのまま続けられる）。
+ * 引数の意味は rawOpen と同じ。
+ */
+export async function open(options = {}) {
+  const hook = restartMode();
+  if (hook) return hook.open(options, rawOpen);
+  return rawOpen(options);
+}
 
 /**
  * 1本つないで ready を受け取るまで待つ。
@@ -16,7 +28,7 @@ export const CMD_TIMEOUT_MS = 60_000;
  *   引数は 1 つだけ: `open({ ...host, autoAllow: true })`（`open(host, { autoAllow: true })` は効かない）。
  * @param headers 接続の要求に足すヘッダー（端末の中継を通った接続を装う x-forwarded-for など）。
  */
-export async function open({ port, token, host = "127.0.0.1", onEvent, autoAllow = false, headers } = {}) {
+async function rawOpen({ port, token, host = "127.0.0.1", onEvent, autoAllow = false, headers } = {}) {
   const ws = new WebSocket(`ws://${host}:${port}/ws?token=${token}`, headers ? { headers } : undefined);
   const pending = new Map();
   const events = [];

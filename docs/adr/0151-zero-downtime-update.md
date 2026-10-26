@@ -2,6 +2,7 @@
 
 - 状態: 承認（2026-10-06）
 - 置き換えた: [ADR 0036](0036-interrupt-and-update-while-running.md) の「実行中でも更新・終了できる」のうち**更新**の部分（通常は作業を中断せずに更新する。「中断して更新」は戻し道として残る）。終了の「中断して終了」と、中断を会話の状態として残す部分は 0036 のまま
+- 置き換えられた: [0270](0270-server-may-die-anytime.md)（引き継ぎの部分。決定 5・9・11 のうち、引き継ぎ専用の経路と、切り替えを先送り・確認する形。起動を復元にして、更新も「普通に止めて普通に起こす」にそろえる。決定 1〜4・6・10・12 はこのまま）
 - 詳しい設計: [docs/zero-downtime-update/design.md](../zero-downtime-update/design.md)。段階と作業項目: [plan.md](../zero-downtime-update/plan.md)。実測の記録: [stage0-claude.md](../zero-downtime-update/stage0-claude.md)・[stage0-codex-agy.md](../zero-downtime-update/stage0-codex-agy.md)・[stage0-runtime.md](../zero-downtime-update/stage0-runtime.md)。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 
 ## 状況

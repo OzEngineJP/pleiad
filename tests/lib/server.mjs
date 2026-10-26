@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertNotGuarded } from "../../core/test-guard.mjs";
 import { serverBaseEnv } from "./inherited-env.mjs";
+import { restartMode } from "./restart.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -27,7 +28,8 @@ const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)
  *   返り値の ready() が待ち受けるまで待ち、port を決める。起動前に終われば ready() が投げる
  */
 export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs"), args = [], lazy = false } = {}) {
-  const token = crypto.randomBytes(12).toString("hex");
+  // 呼び出し側がトークンを渡したらそれを使う（起こし直すときに、前のサーバーと同じトークンで起こす。tests/lib/restart.mjs）
+  const token = env.AGENT_HOST_TOKEN || crypto.randomBytes(12).toString("hex");
   // 夜の記憶整理（core/memory/learn.mjs）は、起動のときに一度「追いつく」実行をし、そのときの会話・投稿を読んで隠れた learner 会話を作る。
   // 負荷で起動直後の読み取りが遅れると、テストが投稿した直後や runTurn の最中にその会話が走り、その session イベントを
   // ws-client.runTurn が自分の会話と取り違える（会話が control-info の返事でなく {"memories":[]} になる）。テストの server は止めておく。
@@ -127,7 +129,7 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
   waiting.catch(() => {});
   const port = lazy ? null : await waiting;
 
-  return {
+  const server = {
     port,
     /** 起こした子（lazy で、待ち受けの前に pid・終了を見るため） */
     child,
@@ -162,4 +164,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       }
     },
   };
+  // 「途中でサーバーを止めて起こし直す」モード（tests/lib/restart.mjs）。入っていなければ何もしない。
+  // 起こし直す側は、この startServer をもう一度呼ぶ（同じデータ置き場・同じトークン・同じポート・保持役はそのまま）
+  restartMode()?.registerServer(server, { env, dataDir, timeoutMs, entry, args, lazy }, options => startServer(options));
+  return server;
 }
