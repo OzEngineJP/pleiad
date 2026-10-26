@@ -159,7 +159,13 @@ export function createMessageQueue({ store, active, start, changed, delivered })
         const items = await list(id);
         const steers = adopted.get(id);
         for (const item of items) {
-          if (item.status === 'sending' && !steers?.has(item.id)) item.status = 'unknown';
+          if (item.status === 'sending' && !steers?.has(item.id)) {
+            // For an adopted held turn, the server writes the steer id into its holder label
+            // before writing the input to the child. A missing id therefore means the child
+            // could not have received it, so resume the durable outbox item instead of losing it.
+            // Without an adopted turn, delivery remains ambiguous and must not be retried.
+            item.status = steers ? 'queued' : 'unknown';
+          }
           if (item.status === 'queued' && !steers && !keepQueued) item.status = 'paused';
         }
         await save(id, items);

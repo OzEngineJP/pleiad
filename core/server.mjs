@@ -6283,7 +6283,12 @@ const outbox = createMessageQueue({
       steer: steer ? async item => {
         // 渡った合図を後から出すバックエンドは、受理の応答より先に合図を出すことがある。受理を待つ前から控える（札の steers。付け直した先が合図を処理する）
         const confirms = Boolean(turn.control.steerConfirms);
-        if (confirms) { turn.pendingSteers.add(item.id); touchCard(turn); }
+        if (confirms) {
+          turn.pendingSteers.add(item.id);
+          // sendMessage の受付直後にサーバーが落ちても新サーバーがこの outbox 項目を再開できるよう、
+          // 途中送信を保持役へ書くより前に札へ記録する（ADR 0270 の規則 ②）。
+          writeTurnCard(turn);
+        }
         try {
           const accepted = await steer(item);
           if (!accepted && turn.pendingSteers.delete(item.id)) touchCard(turn);
@@ -7816,9 +7821,15 @@ function touchCard(turn) {
     turn.cardPending = false;
     const ctx = turnContexts.get(turn);
     if (!ctx || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return;
-    try { turn.control.holder.label(heldTurnCard(ctx).card); }
-    catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); }
+    writeTurnCard(turn, ctx);
   });
+}
+
+/** 保持役の入力へ先行させる必要がある札は、遅延まとめを待たず同じ接続へ書く。TCP の順序で札を先に届ける */
+function writeTurnCard(turn, ctx = turnContexts.get(turn)) {
+  if (!ctx || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return;
+  try { turn.control.holder.label(heldTurnCard(ctx).card); }
+  catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); }
 }
 
 /**

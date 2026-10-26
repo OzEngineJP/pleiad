@@ -165,6 +165,13 @@ export default async function(t) {
   await queue.recover();
   t.ok('配送中に再起動した場合も結果不明として復元', (await queue.list('s'))[1].status === 'unknown');
 
+  const heldData = { s: { outbox: [{ id: 'held-request', status: 'sending', args: { prompt: 'held' } }] } };
+  const heldStore = { get: async id => heldData[id] ?? {}, getAll: async () => heldData,
+    setSessionData: async (id, field, value) => { (heldData[id] ??= {})[field] = structuredClone(value); } };
+  const heldQueue = createMessageQueue({ store: heldStore, active: () => null, start: () => {}, changed: () => {}, delivered: () => {} });
+  await heldQueue.recover({ adopted: new Map([['s', new Set()]]) });
+  t.ok('保持役に載ったターンでは、札に ID が無い配送中の発言を安全に送信待ちへ戻す', (await heldQueue.list('s'))[0].status === 'queued');
+
   // requeue: the agent was running a turn Pleiad did not start, nothing was delivered.
   const later = {};
   const starts = [];

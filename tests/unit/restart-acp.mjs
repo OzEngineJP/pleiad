@@ -3,7 +3,7 @@
 //   1. Devin: [slow] [gate:…] のターンの途中（ツールの実行中）で止めても、CLI は走り続け、新しいサーバーが記録の再生と続きで最後まで流す
 //   2. Devin: 承認待ちの途中で止めても、新しいサーバーが同じ id の承認を聞き直し、答えるとターンが終わる
 //   3. Grok: [slow] のターンが同じように続く
-//   4. Grok: 途中送信（steer）が、止める前に CLI へ渡っていれば失われず、返答に現れる
+//   4. Devin・Grok: 途中送信（steer）を送った直後にサーバーを止めても、失われず二重にも届かない
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -138,34 +138,42 @@ export default async function (t) {
         JSON.stringify(loaded.messages.map(message => [message.role, message.text.slice(0, 40)])));
     }
 
-    // ---- 4. Grok: 途中送信（止める前に CLI へ渡ったもの）が失われない
-    {
+    // ---- 4. Devin・Grok: sendMessage の受理直後、配送通知を待たずにサーバーを止める
+    for (const item of [
+      { backend: 'devin', messageId: 'restart-acp-devin-steer-0001', prompt: 'devin-steer-across-restart', model: 'swe-2-high' },
+      { backend: 'grok', messageId: 'restart-acp-grok-steer-0001', prompt: 'grok-steer-across-restart', mode: 'auto' },
+    ]) {
       const from = c.mark();
-      const running = c.runTurn({ backend: 'grok', cwd: work, prompt: '[slow] grok hold', mode: 'auto' });
+      const running = c.runTurn({ backend: item.backend, cwd: work, prompt: `[slow] ${item.backend} hold`, model: item.model, mode: item.mode });
       const started = await c.waitFor(event => event.type === 'session' && event.first === true, { ms: WAIT_MS, from });
       const sessionId = started.sessionId;
       await heldTurn(sessionId);
-      const steerFrom = c.mark();
-      await c.cmd('sendMessage', { sessionId, messageId: 'restart-acp-steer-0001', prompt: 'steer-across-restart' });
-      // 保持役が子へ書き終えた合図（渡った）を待ってから止める（同じ接続の順序で、停止より先に子へ届く）
-      await c.waitFor(event => event.type === 'userMessage.delivered' && event.messageId === 'restart-acp-steer-0001', { ms: 10_000, from: steerFrom });
+      const accepted = await c.cmd('sendMessage', { sessionId, messageId: item.messageId, prompt: item.prompt });
+      // sendMessage の応答直後に通常停止する。配送通知を待つと競合を試せない。
       server = await controller.restart();
-      assert.equal(controller.restarts, 4);
+      assert.equal(controller.restarts, item.backend === 'devin' ? 4 : 5);
       const turn = await running;
-      t.ok('Grok: 止める前に渡した途中送信が、起こし直した後も読まれて返答に現れる',
-        turn.outcome === 'ok' && textOf(turn.events).includes('fixture: steer-across-restart'), textOf(turn.events));
+      const delivered = await c.waitFor(event => event.type === 'userMessage' && event.messageId === item.messageId, { ms: WAIT_MS, from });
+      await c.waitFor(event => event.type === 'userMessage.delivered' && event.messageId === item.messageId, { ms: WAIT_MS, from });
+      const events = c.since(from).filter(event => event.messageId === item.messageId);
+      const loaded = await c.cmd('loadSession', { sessionId });
+      const outbox = await c.cmd('invoke', { op: 'sessions.listMessages', args: { sessionId } });
+      const userRows = loaded.messages.filter(message => message.role === 'user' && message.text.includes(item.prompt));
+      t.ok(`${item.backend}: 送信直後のサーバー再起動をまたいで途中送信が保持役へ届き、発言・配送通知・履歴は各 1 回`,
+        turn.outcome === 'ok' && delivered?.messageId === item.messageId
+          && events.filter(event => event.type === 'userMessage').length === 1
+          && events.filter(event => event.type === 'userMessage.delivered').length === 1
+          && userRows.length === 1 && outbox.find(message => message.id === item.messageId)?.status === 'sent',
+        JSON.stringify({ accepted, outcome: turn.outcome, events: events.map(event => event.type), userRows: userRows.length, outbox }));
     }
 
     assert.ok(!server.tail(400).includes('[unhandledRejection]'), server.tail(30));
     assert.deepEqual(controller.errors, [], '起こし直しの間に、仕掛けの中の失敗が無い');
 
-    // 後片付けの前に、保持役に残っている子の pid を控える。終わったターンの ACP の子は残っていない
+    // 後片付けの前に、保持役に残っている子の pid を控える。ACP の子は再利用のため idle timeout まで保持される
     {
       const probe = await connectHolder({ dataDir, root });
       for (const child of probe.welcome.children) if (child.pid) childPids.add(child.pid);
-      const leftoverAcp = probe.welcome.children.filter(child => String(child.id).startsWith('acp-'));
-      assert.deepEqual(leftoverAcp.map(child => child.id), [],
-        `終わった ACP の子は保持役に残っていない: ${JSON.stringify(leftoverAcp.map(({ id, pid, launch }) => ({ id, pid, launch })))}`);
       probe.close();
     }
   } finally {
