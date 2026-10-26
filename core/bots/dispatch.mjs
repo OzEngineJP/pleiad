@@ -1031,7 +1031,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
         rec.recentAttempted = true;
       } catch (e) { log('could not build the recent-thread handoff:', errText(e)); }
     }
-    // 指示が会話の始めにしか効かないエージェント（capabilities.instructionsAtStart。Antigravity は、会話を続けるときに人格（エージェント定義）を
+    // 指示が会話の始めにしか効かないエージェント（traits.instructionsAtStart。Antigravity は、会話を続けるときに人格（エージェント定義）を
     // 渡し直しても、最初の指示のまま動く。実機の確認。2026-10-03）。
     // 人格を直した後の最初のターンに、新しい人格を末尾の文脈として渡す（会話の始めに渡した人格はこれに置き換わる）。
     // 会話が最後に受け取った人格のハッシュは、渡った（commit）ときに sidecar へ残す

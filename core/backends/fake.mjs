@@ -76,6 +76,7 @@ import { undelivered } from "./undelivered.mjs";
 import { isReviewMode, fakeScriptAllowed } from "../review-mode.mjs";
 import { runHeld, driveHeld } from "./fake-held.mjs";
 import { computerDisplay, computerToolInput } from "../computer-use/display.mjs";
+import { AGENT_TRAITS } from './agent-marks.mjs';
 
 const sessions = new Map();   // sessionId -> { sessionId, title, cwd, createdAt, lastModified, tag, messages, subagents }
 const deletedNatives = [];    // deleteSession に渡された id（台本 "deleted-natives"）
@@ -444,11 +445,7 @@ export const backend = {
     compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     promptSuggestions: covered,
     plyContext: 'turn',
-    effortInModelId: impossible('試験用の身代わりは強さをモデルの id で選ばない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    instructionsAtStart: impossible('試験用の身代わりは指示をターンごとに渡せる'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    failureDiagnostics: impossible('試験用の身代わりは失敗の記録を残さない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,
-    promptDelivery: true,   // 「渡った」合図を出せることにする（出さない backend の形は silent: の台本で踏む）
     handover: true,          // 台本 held: のターンを保持役に載せる（試験用）
     // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）
     get computerUse() {
@@ -458,6 +455,8 @@ export const backend = {
     // runArgs の配達物は台本で全部確かめられるよう、全部受け取ることにする
     browser: true, plyControl: true, secrets: true, visualize: true, hooks: true,
   },
+  // 性質（能力ではない）。fake は「渡った」合図を出せることにする（出さない backend の形は silent: の台本で踏む）
+  traits: AGENT_TRAITS.fake,
 
   subagentTools: ["Agent"],
   toolHints: TOOL_HINTS,

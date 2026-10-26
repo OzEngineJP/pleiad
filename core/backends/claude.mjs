@@ -10,7 +10,6 @@
 // SDK は静的に import しない。配布物には入っておらず、初めて要るときに npm から取る（core/claude-sdk.mjs。ADR 0208）。
 // 取っていないうちも、起動・ほかのバックエンド・会話の一覧は動く（一覧は空、会話を始めると取得の案内）。
 import { loadClaudeSdk, isClaudeSdkMissing, requestClaudeSdkConsent, claudeSdkStatus, onClaudeSdkChange, ensureClaudeSdk, startClaudeSdkMaintenance } from '../claude-sdk.mjs';
-import { impossible } from './contract.mjs';
 import { claudeAuth } from '../auth/claude-cli.mjs';
 import { t, agentT } from '../i18n.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
@@ -45,6 +44,7 @@ import { createHeldCli, heldPlan, cliVersion } from "./claude-held.mjs";
 import { CONTROL_SERVER } from "../ops/surfaces/mcp.mjs";
 import { SHELL_SERVER, RUN_TIMEOUT_MAX_MS } from "../shell-bridge.mjs";
 import { stripAnsi } from "../claude-login.mjs";
+import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 
 const NL = String.fromCharCode(10);
 
@@ -636,51 +636,9 @@ export const backend = {
   label: "Claude Code",
   get description() { return t("claude.description"); },
 
-  capabilities: {
-    // server の compactConversation が /compact を発言として送る（compact() は持たない）
-    compact: 'prompt',
-    // 委譲の子だけ自動圧縮の閾値を下げる窓（runArgs.autoCompactWindow → CLAUDE_CODE_AUTO_COMPACT_WINDOW）を受ける
-    autoCompactWindow: true,
-    // 次の発言の候補はターンの中で届く（runArgs.promptSuggestions。ターンの後に作らない。core/prompt-suggestions.mjs）
-    promptSuggestions: 'native',
-    title: true,       // renameSession / customTitle。公式 CLI・VS Code と共有される
-    tag: true,         // tagSession / tag。同上
-    fork: true,
-    forkMessage: true,
-    // 同じ会話で巻き戻せる（resume + resumeSessionAt + resumeDropsTurn。conversations.mjs の rewind）
-    rewind: 'resumeAt',
-    subagents: true,
-    liveModel: true,
-    liveMode: true,
-    hostTools: true,
-    plyAgents: true,   // ply_agents を mcpServers に、その instructions を append に渡す
-    plyInstructions: true, // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
-    // ply_computer（runArgs.computerRuntime）を mcpServers に、指示を append に渡す。MCP の image はそのままモデルに見える（docs/computer-use.md）
-    computerUse: { images: 'inline', waitSliceMs: null },
-    alwaysAllow: true,
-    login: true,
-    // 会話ごとのアカウント（claude setup-token のトークン）を選べる。server は oauthToken を渡す（core/claude-accounts.mjs）
-    accounts: 'token',
-    // 互換の接続先（Anthropic 互換）を会話ごとに選べる。server は endpoint を渡す（core/compat-endpoints.mjs）
-    compatEndpoints: true,
-    // 入力欄の `!`: Pleiad がホストで走らせ、結果を次のターンの始めに shouldQuery: false の行で渡す（runTurn の shellAppends。ADR 0054）
-    shell: 'host',
-    // ply_shell を受け取り、Bash・PowerShell を disallowedTools で切れる（ADR 0227）
-    plyShell: true,
-    nativeShellOff: true,
-    approvals: 'interactive',   // canUseTool
-    mcpApproval: 'agent',       // MCP のツールも canUseTool を通る
-    plyContext: 'turn',         // ply_context はターンごとのトークンで mcpServers に渡す
-    effortInModelId: impossible('強さは別のパラメータで渡す'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    instructionsAtStart: impossible('指示はターンごとに append に入るので、会話の始めに固定されない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    failureDiagnostics: impossible('失敗の形が構造化されているので、ログを残す必要が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    steer: true,   // 入力の流れ（streamInput）へ発言を足す
-    promptDelivery: true,   // プロンプトを入力に流したら onPromptDelivered で「渡った」と知らせる
-    handover: true,          // CLI を保持役に載せ、新しいサーバーが付け直す（claude-held.mjs）
-    // runArgs の配達物: ブラウザーは会話の env と mcpServers に、ply_control は mcpServers と env・指示に、
-    // 秘密情報は envFile と指示に、可視化の指示は append に、Pleiad の Hooks は hooksRuntime に渡す
-    browser: true, plyControl: true, secrets: true, visualize: true, hooks: true,
-  },
+  // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
+  capabilities: CAPABILITY_STATES.claude,
+  traits: AGENT_TRAITS.claude,
 
   // 親側の Task の説明を拾ってサブエージェントの見出しにする（server.mjs）。
   // ツール名はバックエンドごとに違うので、ここで宣言する。

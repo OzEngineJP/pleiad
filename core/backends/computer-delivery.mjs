@@ -7,8 +7,9 @@ export { computerToolInput, COMPUTER_TOOL_PREFIX };
 export const COMPUTER_SERVER = 'ply_computer';
 // 1 回の呼び出しの上限（秒）。ロックの待ち（最長 10 分）より少し長くする。Claude は既定 60 秒・無通信 300 秒、Codex は既定 300 秒で切る
 export const COMPUTER_CALL_TIMEOUT_SEC = 660;
-// agy は MCP の呼び出しを 3 分で切り、設定では伸びない。ロックの待ちはこの長さごとに分けて返す（橋の waitSliceMs）
-export const AGY_WAIT_SLICE_MS = 150_000;
+// agy は MCP の呼び出しを 3 分で切り、設定では伸びない。ロックの待ちはこの長さごとに分けて返す（橋の waitSliceMs）。
+// 能力の印（core/backends/agent-marks.mjs）と同じ値を使うので、値は computer-timing.mjs に置く
+export { AGY_WAIT_SLICE_MS } from './computer-timing.mjs';
 // agy はツールの定義をサーバー名の階層なしで ~/.gemini/antigravity-cli/mcp/<ツール>.json に書く。
 // screenshot のような一般的な名前は他のサーバーと衝突するので、agy にだけ接頭辞を付けて見せる（core/agy-context-relay.mjs）
 export const AGY_TOOL_PREFIX = 'ply_computer_';

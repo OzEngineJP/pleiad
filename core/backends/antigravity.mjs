@@ -18,7 +18,6 @@
 // そこで (a) 十分長い `--print-timeout` を渡し（antigravity-cli.mjs）、
 // (b) それでも打ち切られたら失敗として畳み、その agy を落とす（onPrintTimeout）。
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
-import { covered, impossible, todo } from "./contract.mjs";
 import { AgySession, START_TIMEOUT_MS } from "./antigravity-cli.mjs";
 import { AGENT_NAME, adoptHome, prepareAgent, sweep } from "./antigravity-context.mjs";
 import { nativeInstructionEntries } from "../context-session.mjs";
@@ -27,7 +26,7 @@ import * as transcript from "./antigravity-store.mjs";
 import { AGY_LEVELS, agyTarget, buildAgyModels, defaultLabelFromLog, parseAgyModels } from "./antigravity-models.mjs";
 import { MAX_RESULT_CHARS, cutText } from "./shared.mjs";
 import { antigravityLimit } from "./antigravity-limit.mjs";
-import { AGY_WAIT_SLICE_MS, agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
+import { agyComputerName, computerFailed, computerPrompt, computerResult, computerToolInput } from "./computer-delivery.mjs";
 import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
@@ -40,6 +39,7 @@ import path from "node:path";
 import * as store from '../store.mjs';
 import { recordBackendShapeMismatch } from '../backend-shape-diagnostics.mjs';
 import { readAgyRuns, rotateAgyRuns } from '../hooks-unify.mjs';
+import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 
 /**
  * 本文の無い SUCCESS を確定するまでに、打ち切りの印（stderr）を待つ時間。
@@ -270,56 +270,9 @@ export const backend = {
 
   async usage() { return (await import('./antigravity-usage.mjs')).readAntigravityUsage(); },
 
-  capabilities: {
-    title: covered,       // タイトルの口が無い -> sidecar が正本
-    tag: covered,         // 状態タグも無い -> sidecar が正本
-    fork: covered,        // 分岐の口が無い -> Pleiad の写しで分ける
-    subagents: todo('#151'),   // ACP の標準には子の一覧が無い。CLI の拡張を確かめる
-    liveModel: impossible('起動時の --model だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    liveMode: impossible('起動時の --mode だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
-    // Pleiad 担当のコンテキスト（ply_context）は、Pleiad の置き場に作ったカスタムエージェント経由で渡す（antigravity-context.mjs）。
-    // agy は会話のあいだ 1 本のプロセスを生かすので、ply_context のトークンもターンごとではなく会話ごと（'conversation'）
-    plyContext: "conversation",
-    alwaysAllow: impossible('対話の承認そのものが無い（approvals: none）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    effortInModelId: true, // 強さは段違いのモデル名に入る（--effort は渡さない）。委譲の振り分けは強さを選ばせない（core/effort.mjs の effortCapability）
-    login: true,
-    // ply_computer は 2 本目の中継（agy-context-relay.mjs --computer）で渡す。MCP の画像は agy がファイルに退避し、モデルは view_file で読む
-    // ので、保存先のパスも書く（images: 'path'）。1 回の呼び出しは 3 分で切れ、設定では伸びないので、ロックの待ちは 150 秒ごとに分けて返す
-    computerUse: { images: 'path', waitSliceMs: AGY_WAIT_SLICE_MS },
-    forkMessage: covered,
-    rewind: covered,              // 巻き戻しの口も無い -> Pleiad の写しで戻す
-    approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
-    mcpApproval: 'agent',
-    accounts: impossible('OS の共有キーリングをアプリ・外部 CLI と共有していて、Pleiad の中で分離できない（ADR 0222）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    compatEndpoints: todo('#151'),   // CLI に接続先の設定があるか未検証
-    compact: impossible('agy が自分で圧縮する。手動の圧縮の口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    autoCompactWindow: todo('#151'),
-    promptSuggestions: covered,   // ターンの後に suggestNext で作る
-    // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じくカスタムエージェントの mcpServers に束ねた中継で渡す。
-    // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため。
-    // 継続した会話でもそのターンの設定が届き、記録と実際が一致する）。カスタムエージェントが読まない作業場所の
-    // 指示ファイル（AGENTS.md・GEMINI.md）は、担当がエージェント任せの会話では Pleiad が読んで agent.md の本文へ足す
-    // （antigravity-context.mjs の prepareAgent。足さないとカスタムエージェント化で指示が抜け落ちる）
-    plyAgents: true,
-    plyInstructions: true,
-    shell: todo('#148'),
-    // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0227）
-    plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    // 会話を続けるときに人格（エージェント定義）を渡し直しても、最初の指示のまま動く（実機の確認。2026-10-03。core/bots/dispatch.mjs）
-    instructionsAtStart: true,
-    // 失敗の理由を会話の控えに残し、ターンの後に agy のログを書き出す（server.mjs の recordBackendFailure）
-    failureDiagnostics: true,
-    // 「渡った」合図は出せない: session.prompt は入力を書くだけで、agy が読んで会話に入れたかの応答は無い。
-    // 渡ったかは返答の中身（ANSWER_EVENTS）でしか分からない
-    promptDelivery: impossible('agy は入力を受け取っても黙って捨てうるので、渡った合図を出せない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    steer: impossible('agy の stream-json は走っているターンへ入力を足せない'),   // 追加指示は次のターンで渡す // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
-    // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
-    // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに渡す。可視化の指示は渡さない（発言に入れていない）
-    browser: true, plyControl: true, secrets: true, visualize: todo('#148'), hooks: true,
-  },
+  // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
+  capabilities: CAPABILITY_STATES.antigravity,
+  traits: AGENT_TRAITS.antigravity,
 
   toolHints: TOOL_HINTS,
 

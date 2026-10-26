@@ -250,7 +250,9 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 `core/backends/<id>.mjs` が 1 つずつ export する。`core/backends/index.mjs` がレジストリで、どの id があるかはエージェントの記述
 （`core/backends/agents.mjs`。下の「エージェントを足す」）から作る。
 
-能力の印（`capabilities`）の正本は `core/backends/contract.mjs` の `CAPABILITIES`。**バックエンドは全部のキーに状態を書く**
+能力の印（`capabilities`）の定義の正本は `core/backends/capability-marks.mjs` の `CAPABILITIES`、エージェントごとの状態は
+`core/backends/agent-marks.mjs` の `CAPABILITY_STATES`（[ADR 0273](adr/0273-capability-states.md)・
+[0274](adr/0274-capability-traits-and-public-marks.md)）。**バックエンドは全部のキーに状態を書く**
 （書いていないことを「対応しない」の代わりにしない）。状態は 4 つ:
 
 - **対応**: その機能の値（`true`・`'host'`・`'native'`・`'turn'`・`{ images: 'inline' }` など）
@@ -265,11 +267,17 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 （`legacyCapabilities`。`covered`・`impossible`・`todo` は `false`）。一覧は `node tests/lib/backend-matrix.mjs` で端末に出す
 （文書の写しは持たない）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
 
+**性質（`traits`）は能力ではない**（[ADR 0274](adr/0274-capability-traits-and-public-marks.md)）。`effortInModelId`・
+`instructionsAtStart`・`failureDiagnostics`・`promptDelivery` の 4 つで、`true` / `false` だけを書く。状態（`covered`・
+`impossible`・`todo`）は持たない。`false` は未対応ではなく、そのエージェントの特徴。server・bot・委譲の振り分けが
+`backend.traits` から読み、画面（`describeBackends`）・一覧・公開文書には出さない。
+
 ```js
 export const backend = {
   id: "claude",              // core/backends/agents.mjs のキーと同じ
   label: "Claude Code",
-  capabilities: { ... },     // core/backends/contract.mjs の CAPABILITIES の全部のキー
+  capabilities: CAPABILITY_STATES.claude,  // core/backends/agent-marks.mjs の自分の分（CAPABILITIES の全部のキー）
+  traits: AGENT_TRAITS.claude,             // 性質（true / false）
 
   // ---- 語彙（UI はこれを <select> に流し込むだけ。値の意味は知らない）
   modes(): { [id]: { label, note } },          // 承認モード。id はバックエンドごとに違ってよい
@@ -848,24 +856,28 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 
 ### 2.9 エージェントを足す
 
-エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)）。
+エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)・[0274](adr/0274-capability-traits-and-public-marks.md)）。
 足すときに書くもの:
 
 1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`DESCRIPTOR_KEYS` を全部書く（使わないものは null）。
    `brand` のロゴは `web/brand/` に、`cli` の `searchDirs` はそのエージェントの配置先に合わせる。`contextSources` に新しい読み込み元を書くなら、
    `core/context-scan.mjs` に読み方を足す。レジストリ・CLI の探し方・自動の圧縮の設定の行・画面のロゴと短い名前・委譲の行き先は、ここから作るので触らない。
-2. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形と、`CAPABILITIES` の全部のキーを 4 つの状態で書く。
-   状態の意味と `requires`（`compact: true` なら `compact()` など）は §2.3。
-3. **身代わり**（`tests/lib/fake-<id>.mjs`）と `tests/lib/backend-contracts.mjs` の `RIGS` の 1 行、`tests/run.mjs` への登録。
-4. **確かめる**。`npm test -- backend-contract backend-conformance`。落ちた文が「どのファイルに何を書くか」を案内する。
+2. **印の状態と性質**（`core/backends/agent-marks.mjs`）。`CAPABILITY_STATES` に `CAPABILITIES` の全部のキーを 4 つの状態で書き、
+   `AGENT_TRAITS` に `TRAITS` の全部のキーを `true` / `false` で書く。バックエンドはそこから `capabilities: CAPABILITY_STATES.<id>`・
+   `traits: AGENT_TRAITS.<id>` と読む（写しを持たない）。試験用の fake だけは環境変数で印を切り替えるので capabilities を自分に持つ。
+3. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形で書く。
+4. **身代わり**（`tests/lib/fake-<id>.mjs`）と `tests/lib/backend-contracts.mjs` の `RIGS` の 1 行、`tests/run.mjs` への登録。
+5. **確かめる**。`npm test -- backend-contract backend-conformance`。落ちた文が「どのファイルに何を書くか」を案内する。
    そのエージェント固有の試験は `tests/run.mjs` に登録する。backend-registry は CLI の差し替え・インストール案内・既定と指定順の登録を確かめる。
-5. 一覧を端末で確かめる: `node tests/lib/backend-matrix.mjs`（文書の写しは持たない）。
+6. 一覧を端末で確かめる: `node tests/lib/backend-matrix.mjs`（文書の写しは持たない）。
 
-**能力の印を足すとき**は、`contract.mjs` の `CAPABILITIES` に 1 行（対応の値・`requires`・`covered` の可否）、全バックエンドの状態、
+**能力の印を足すとき**は、`capability-marks.mjs` の `CAPABILITIES` に 1 行（対応の値・`requires`・`covered` の可否）と
+`CAPABILITY_DOCS` に利用者向けの説明（ja・en の `label`・`summary`・`unavailable`）、全バックエンドの状態（`agent-marks.mjs`）、
 一覧の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）、その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
 `'conformance'` か既存の suite の名前）を足す。どれかが欠けると backend-contract が落ちる。未実装（`todo`）は
 `tests/backend-todos.json` の基準より増やせない（減らしたら `node tests/lib/backend-todos.mjs --update-baseline`）。
 現役のエージェントは `NO_CAPABILITIES` を使えない（対応を終えたバックエンドだけ）。
+**性質を足すとき**は `TRAITS`・`AGENT_TRAITS`・`TRAIT_CONTRACTS` に足す（性質は能力の表・公開文書に出さない）。
 
 **runArgs の配達物**（エージェントへ機能を渡すキー: `browserEnv`・`controlRuntime`・`secretsRuntime` など）は `contract.mjs` の
 `RUN_ARG_FEATURES` に「キー → 能力の印」の行が要る。`server.mjs` は runArgs を組み立てるところと、バックエンドへ渡す前の `gateRunArgs` の
@@ -874,6 +886,17 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 `RUN_ARG_PLUMBING`（プロンプト・承認など全バックエンドに渡る回線）のどちらかに登録する。配達物の機能を足したら、対応する印も足し、
 受け取れないバックエンドは `covered`・`impossible('理由')`・`todo('#Issue')` のどれかで宣言する。状態なのに配達される組み合わせは起きない
 （`gateRunArgs` が状態を今までの値に引いてから見る）。
+
+#### 公開文書のエージェントのページ（ADR 0274）
+
+`site/docs/scripts/generate.mjs` が、エージェントの一覧と、エージェントごとの「できること・できないこと・対応予定」のページを
+日本語（`/docs/agents/<id>/`）と英語（`/docs/en/agents/<id>/`）で作る。材料は `core/backends/agents.mjs`・
+`capability-marks.mjs`（印の定義と `CAPABILITY_DOCS`）・`agent-marks.mjs`（状態と性質）・`computer-timing.mjs` だけで、
+SDK などを読まない。`site/tools/build-site.mjs` は、最新の安定版のタグから `site/tools/docs-sources.mjs` の
+`DOCS_SOURCE_FILES` を raw で取る（一覧は相対 import の閉包。`tests/unit/docs-source.mjs` が突き合わせる）。
+古いタグ（v0.40.0）には新しいファイルが無いので、`agents.mjs` だけを取って一覧だけを作る。ビルドは落とさない。
+手で書く「つなぎ方」は `site/docs/src/content/docs/agents/<id>/_connect.md`（英語は `en/agents/<id>/_connect.md`）に置く。
+性質はページにも表にも出さない。`todo` は「対応予定」とだけ出し、Issue 番号は出さない。
 
 #### id で分けない
 

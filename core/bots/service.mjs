@@ -259,8 +259,8 @@ export function createBotService({ dataDir, channels, host = null, emit = () => 
       for (const botId of recipients) if (store.get(botId)) await service.addSendTargets({ botId, sessionIds, source: 'shown' });
     },
     modesOf,
-    /** 指示（人格）が会話の始めにしか効かないエージェントか（capabilities.instructionsAtStart。core/bots/dispatch.mjs が人格を渡し直す） */
-    instructionsAtStart: (id) => Boolean(backendOf(id)?.capabilities?.instructionsAtStart),
+    /** 指示（人格）が会話の始めにしか効かないエージェントか（traits.instructionsAtStart。core/bots/dispatch.mjs が人格を渡し直す） */
+    instructionsAtStart: (id) => Boolean(backendOf(id)?.traits?.instructionsAtStart),
 
     async approvalOf({ botId }) {
       const bot = store.get(botId);

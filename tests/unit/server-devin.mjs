@@ -22,7 +22,7 @@ export default async function (t) {
     const models = await c.cmd('models', { backend: 'devin', cwd });
     t.ok('ライブカタログの無料既定と有料候補を返す', models[''].resolvesTo === 'swe-2-high' && models['paid-exact']);
     const backends = await c.cmd('backends');
-    t.ok('未実装機能を表示せず、思考は variant ID で選ぶ', backends[0].capabilities.plyContext === 'turn' && !backends[0].capabilities.accounts && backends[0].capabilities.effortInModelId && backends[0].capabilities.approvals === 'interactive');
+    t.ok('未実装機能を表示せず、思考は variant ID で選ぶ', backends[0].capabilities.plyContext === 'turn' && !backends[0].capabilities.accounts && !('effortInModelId' in backends[0].capabilities) && backends[0].capabilities.approvals === 'interactive');
     const first = await c.runTurn({ backend: 'devin', cwd, prompt: '[permission] alpha', model: 'swe-2-medium', mode: 'accept-edits' });
     const sid = first.sessionId, loaded = await c.cmd('loadSession', { sessionId: sid });
     t.ok('承認を Pleiad に渡し、本文・思考・ツールの結果を保存する', first.outcome === 'ok' && permissions.length === 1 && loaded.messages.some(m => m.role === 'assistant' && m.thinking && m.toolCalls?.length));
