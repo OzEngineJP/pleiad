@@ -132,6 +132,7 @@
       "releaseNotes": "Release notes",
       "docs": "User guide",
       "mcpTitle": "Use Pleiad from other AI tools",
+      "mcpMigration": "If you already registered Pleiad, replace that entry with the new config copied here. The old entry uses an executable inside the install folder and can block updates.",
       "copyMcpJson": "Copy MCP config",
       "copyMcpClaude": "Copy claude mcp add",
       "copied": "Copied",

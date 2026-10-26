@@ -46,12 +46,12 @@ export default async function (t) {
 
   // ---- 実行場所で走るサーバー（無停止の更新 1-3）: 外の AI に貼る設定は版に依らない起動口を指す
   t.ok('stableCli: env が無ければ null（npm start・今のデスクトップ版は変わらない）', stableCli({}) === null && stableCli({ PLEIAD_CLI_EXEC: 'x' }) === null);
-  const stableEnv = { PLEIAD_CLI_EXEC: 'C:/Users/me/AppData/Local/Programs/Pleiad/Ply.exe', PLEIAD_CLI_SCRIPT: 'C:/Users/me/AppData/Local/Programs/Pleiad/resources/app/bin/pleiad.mjs', PLEIAD_CLI_ELECTRON: '1' };
+  const stableEnv = { PLEIAD_CLI_EXEC: 'C:/Windows/System32/cmd.exe', PLEIAD_CLI_SCRIPT: 'C:/Users/me/AppData/Local/agent-host-runtime/pleiad-cli.cmd', PLEIAD_CLI_ELECTRON: '', PLEIAD_CLI_CMD: '1' };
   const stable = mcpSetup({ stable: stableCli(stableEnv), dataDir: path.join(home, '.agent-host'), home });
-  t.ok('実行場所のサーバー: 貼る設定は $INSTDIR の Ply.exe と resources/app/bin/pleiad.mjs・ELECTRON_RUN_AS_NODE（実行場所の版ごとのパスを含まない）',
-    stable.command === stableEnv.PLEIAD_CLI_EXEC && stable.args[0] === stableEnv.PLEIAD_CLI_SCRIPT && JSON.stringify(stable.env) === '{"ELECTRON_RUN_AS_NODE":"1"}' && !/agent-host-runtime|pleiad-node/.test(stable.json), stable.json);
-  const stableNode = mcpSetup({ stable: stableCli({ ...stableEnv, PLEIAD_CLI_ELECTRON: '' }), dataDir: path.join(home, '.agent-host'), home });
-  t.ok('実行場所のサーバー: 起動口が素の Node なら ELECTRON_RUN_AS_NODE は付けない', !('env' in JSON.parse(stableNode.json).mcpServers.pleiad));
+  const stableEntry = JSON.parse(stable.json).mcpServers.pleiad;
+  t.ok('NSIS 版: MCP 設定はインストール先の外にある固定起動口を cmd.exe から呼び、バージョン別の実行ファイルを含まない',
+    stable.command === stableEnv.PLEIAD_CLI_EXEC && JSON.stringify(stable.args) === JSON.stringify(['/d', '/s', '/c', `"${stableEnv.PLEIAD_CLI_SCRIPT}" mcp`])
+      && !('env' in stableEntry) && !stableEnv.PLEIAD_CLI_SCRIPT.includes('Programs/Pleiad') && stable.claude.includes(stableEnv.PLEIAD_CLI_SCRIPT), stable.json);
   const storeEnv = { PLEIAD_CLI_EXEC: 'C:/Users/me/AppData/Local/Microsoft/WindowsApps/Ply.exe', PLEIAD_CLI_SCRIPT: '', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CLI_STORE: '1' };
   const store = mcpSetup({ stable: stableCli(storeEnv), dataDir: path.join(home, '.agent-host'), home });
   const storeEntry = JSON.parse(store.json).mcpServers.pleiad;

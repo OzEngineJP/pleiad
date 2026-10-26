@@ -30,7 +30,45 @@ const STALE_MS = 10 * 60 * 1000;
 const MARKER_FILE = '.runtime.json';
 const NODE_POINTER_FILE = 'runtime-node.txt';
 const RUNTIME_JSON = 'runtime.json';
+const CLI_ENTRY_FILE = 'pleiad-cli.cmd';
+const CLI_POINTER_FILE = 'cli-current.txt';
 const nodeExeName = (platform = process.platform) => (platform === 'win32' ? 'pleiad-node.exe' : 'pleiad-node');
+
+// Stable external MCP/CLI entrypoint. Keep the script in the runtime root, never in a version tree or $INSTDIR.
+const CLI_LAUNCHER = [
+  '@echo off',
+  'setlocal',
+  'set "ROOT=%~dp0"',
+  'set "KEY="',
+  'if not exist "%ROOT%cli-current.txt" exit /b 5',
+  'for /f "usebackq delims=" %%K in ("%ROOT%cli-current.txt") do set "KEY=%%K"',
+  'if not defined KEY exit /b 5',
+  'set "APP=%ROOT%app\\%KEY%"',
+  'set "AGENT_HOST_RUNTIME_ROOT=%ROOT%"',
+  'set "AGENT_HOST_RUNTIME_KEY=%KEY%"',
+  'set "NODE="',
+  'if not exist "%APP%\\runtime-node.txt" exit /b 5',
+  'for /f "usebackq delims=" %%N in ("%APP%\\runtime-node.txt") do set "NODE=%%N"',
+  'if not defined NODE exit /b 5',
+  'set "PLEIAD_NODE=%ROOT%node\\%NODE%\\pleiad-node.exe"',
+  'if not exist "%PLEIAD_NODE%" exit /b 5',
+  '"%PLEIAD_NODE%" "%APP%\\bin\\pleiad.mjs" %*',
+  'exit /b %ERRORLEVEL%',
+  '',
+].join('\r\n');
+
+async function writeCurrentCli(paths, key) {
+  await fsp.mkdir(paths.root, { recursive: true });
+  const launcher = path.join(paths.root, CLI_ENTRY_FILE);
+  // The launcher has no version-specific content; do not replace a file that an external AI may be reading.
+  try { await fsp.access(launcher); }
+  catch { await fsp.writeFile(launcher, CLI_LAUNCHER, { flag: 'wx' }).catch(error => { if (error.code !== 'EEXIST') throw error; }); }
+  const pointer = path.join(paths.root, CLI_POINTER_FILE);
+  const temporary = `${pointer}.${process.pid}.${rand()}.tmp`;
+  await fsp.writeFile(temporary, `${key}\r\n`);
+  try { await fsp.rename(temporary, pointer); }
+  catch (error) { await fsp.rm(temporary, { force: true }); throw error; }
+}
 
 class RuntimeError extends Error {
   constructor(code, message, extra = {}) { super(message); this.name = 'RuntimeError'; this.code = code; Object.assign(this, extra); }
@@ -264,7 +302,10 @@ function install({ root, resourcesDir, concurrency = CONCURRENCY, link = fsp.lin
     const agentBrowserDir = await ensureAgentBrowser(paths, resourcesDir, runtime, key, link);
     const done = (reused) => ({ key, appDir: finalDir, nodeExe: nodeInfo.exe, nodeDir: nodeInfo.dir, agentBrowserDir, reused, stats: { ...stats, ms: Math.round(performance.now() - started) } });
 
-    if (await isCompleteTree(finalDir, manifest, { concurrency })) return done(true);
+    if (await isCompleteTree(finalDir, manifest, { concurrency })) {
+      await writeCurrentCli(paths, key);
+      return done(true);
+    }
     // 壊れている・途中で止まった写しは、新しく組む（使われていて消せないなら、触らずに失敗する）
     if (!await removeTree(root, finalDir)) throw new RuntimeError('tree-busy', `${finalDir} does not match the manifest and is in use`);
 
@@ -295,6 +336,7 @@ function install({ root, resourcesDir, concurrency = CONCURRENCY, link = fsp.lin
         if (!await isCompleteTree(finalDir, manifest, { concurrency })) throw error;
       }
     } finally { await removeTree(root, staging); }
+    await writeCurrentCli(paths, key);
     return done(false);
   });
 }
@@ -412,17 +454,22 @@ async function locate({ root, key }) {
 
 /**
  * 実行場所で走るサーバーが、外の AI（Claude Code など）に貼る設定の起動口。実行場所の Node・スクリプトは版ごとのパスで、
- * 古い版の掃除で壊れるので、NSIS は $INSTDIR、Store は App Execution Alias の起動口を指す（core/cli-launcher.mjs の stableCli）。
+ * 古い版の掃除で壊れるので、NSIS は実行場所の固定 pleiad-cli.cmd、Store は App Execution Alias の起動口を指す（core/cli-launcher.mjs の stableCli）。
  * サーバーの env に足す
  */
-function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath,
+function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath, runtimeRoot,
   store = require('./updates.cjs').isStoreBuild({ pkg: require('../package.json'), windowsStore: process.windowsStore }), env = process.env } = {}) {
-  return { PLEIAD_CLI_EXEC: store ? require('./msix.cjs').stableLauncher({ proc: process, env, store }) : execPath,
-    PLEIAD_CLI_SCRIPT: store ? '' : path.join(resourcesPath, 'app', 'bin', 'pleiad.mjs'), PLEIAD_CLI_ELECTRON: '1',
-    ...(store ? { PLEIAD_CLI_STORE: '1' } : {}) };
+  if (store) return { PLEIAD_CLI_EXEC: require('./msix.cjs').stableLauncher({ proc: process, env, store }),
+    PLEIAD_CLI_SCRIPT: '', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CLI_STORE: '1' };
+  if (process.platform === 'win32') {
+    const root = runtimeRoot ?? resolveRuntimeRoot({ installDir: path.dirname(execPath), env }).root;
+    return { PLEIAD_CLI_EXEC: env.ComSpec || env.COMSPEC || path.join(env.SystemRoot || 'C:\\Windows', 'System32', 'cmd.exe'),
+      PLEIAD_CLI_SCRIPT: path.join(root, CLI_ENTRY_FILE), PLEIAD_CLI_CMD: '1', PLEIAD_CLI_ELECTRON: '' };
+  }
+  return { PLEIAD_CLI_EXEC: execPath, PLEIAD_CLI_SCRIPT: path.join(resourcesPath, 'app', 'bin', 'pleiad.mjs'), PLEIAD_CLI_ELECTRON: '1' };
 }
 
 module.exports = {
   RuntimeError, RUNTIME_DIR_NAME, FALLBACK_DIR, CONCURRENCY, KEEP_TREES, STALE_MS, MARKER_FILE, NODE_POINTER_FILE, RUNTIME_JSON,
-  nodeExeName, collidesWithInstall, resolveRuntimeRoot, layout, versionKey, verifyTree, removeTree, install, cleanup, locate, stableCliEnv,
+  nodeExeName, CLI_ENTRY_FILE, CLI_POINTER_FILE, CLI_LAUNCHER, collidesWithInstall, resolveRuntimeRoot, layout, versionKey, verifyTree, removeTree, install, cleanup, locate, stableCliEnv,
 };

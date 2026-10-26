@@ -490,3 +490,14 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - 段 4b で `docs/zero-downtime-update/` の design.md・plan.md に、段 4 の通常起動による復元を追記した。ADR 0151 は過去の設計記録として保持する。
 - 保持役の子を止めるのはアプリ終了と会話の後片付けに限る。段 4b の試験後にこの worktree の保持役・Chrome 子が残らないことを確認し、漏れていた保持役子の終了待ちを試験の後片付けへ追加した。
 - 段 4b で音声・computer use・ビューアに、Electron 本体の更新で切れた理由を知らせる表示を加えた。ビューアは保存済みタブを通常起動で開き直す。
+
+## issue #143 の残件実装（2026-10-27）
+
+### 6. 外の AI に渡す MCP・CLI の起動口
+
+- **現状**: NSIS 版の `mcpSetup` は `$INSTDIR\Ply.exe` と `$INSTDIR\resources\app\bin\pleiad.mjs` を設定に出していた。外の AI が MCP を起動中だと `Ply.exe` が使用中になり、NSIS が差し替えられない。
+- **決定**: 配布版の実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）直下に固定の `pleiad-cli.cmd` を置く。設定は `cmd.exe /d /s /c "<runtime root>\pleiad-cli.cmd mcp"` を指す。起動口は `cli-current.txt` から現在の版を選び、その版の `runtime-node.txt` に記録された `pleiad-node.exe` で `bin\pleiad.mjs` を動かす。版の切替は小さなポインターだけを置き換え、固定の `.cmd` は書き換えない。
+- **更新時の扱い**: 外の AI が古い版を実行中でも、その Node とアプリ木は `$INSTDIR` の外にある。起動口は選んだ版の `AGENT_HOST_RUNTIME_ROOT`・`AGENT_HOST_RUNTIME_KEY` を MCP プロセスへ渡し、`bin/pleiad.mjs` が終了まで版使用中ロックを持つため掃除の対象から外れる。NSIS はそれらのファイルを入れ替えない。次回の起動口呼び出しは新しいポインターを使う。
+- **古い設定**: Pleiad は外部 AI の設定ファイルを自動編集しない。設定 › アプリ情報・更新の「外の AI から Pleiad を使う」に、以前登録した設定をここでコピーする内容へ置き換える案内を常時表示する。新しい設定をコピーして外部 AI 側へ貼り直す。
+- **Store 版**: 従来どおり App Execution Alias を使い、現在のパッケージ内のスクリプトを実行時に解決する。
+- **試験**: `desktop-runtime` は置き場直下の固定起動口と版ポインターの更新を確かめ、`cli-launcher` は MCP の JSON・Claude コマンドがインストール先外の固定パスを指すことを確かめる。

@@ -18,6 +18,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { callMcpTool, mcpTools } from '../core/ops/surfaces/mcp.mjs';
+import { markRuntimeInUse } from '../core/runtime-use.mjs';
 
 export const EXIT = { ok: 0, usage: 2, notRunning: 3, refused: 4, other: 5, pending: 6 };
 const REFUSED = new Set(['NEEDS_UI', 'NEEDS_APPROVAL', 'READ_ONLY_MODE', 'HOST_SCREEN_ONLY', 'DENIED', 'STALE', 'SETTING_READ_ONLY',
@@ -360,5 +361,8 @@ export async function main(argv, { env = process.env, stdout = process.stdout, s
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
+  if (process.argv[2] === 'mcp' && process.env.AGENT_HOST_RUNTIME_ROOT && process.env.AGENT_HOST_RUNTIME_KEY) {
+    markRuntimeInUse({ root: process.env.AGENT_HOST_RUNTIME_ROOT, key: process.env.AGENT_HOST_RUNTIME_KEY });
+  }
   main(process.argv.slice(2)).then((code) => { process.exitCode = code; }, (e) => { process.stderr.write(`${e?.stack ?? e}\n`); process.exitCode = EXIT.other; });
 }
