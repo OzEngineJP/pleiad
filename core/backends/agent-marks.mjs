@@ -203,10 +203,10 @@ export const CAPABILITY_STATES = {
     hooks: todo('#98'),
   },
   grok: {
-    // ACP の標準にはタイトル・状態タグ・分岐・巻き戻し・子の一覧の口が無い。Pleiad の控えと写しで補う
-    title: covered,
+    // Grok の ACP 拡張でネイティブ題名と全履歴の分岐を使う。状態タグ・巻き戻しは Pleiad の控えで補う
+    title: true,
     tag: covered,
-    fork: covered,
+    fork: true,
     forkMessage: covered,
     rewind: covered,
     subagents: todo('#108'),
