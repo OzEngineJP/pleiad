@@ -217,6 +217,15 @@ jobs:
             echo "::error::Signing certificate mismatch: got $actual, expected $expected"
             exit 1
           fi
+      # 「新機能」に、前の android-v* のタグからの変更を入れる（scripts/mobile-release-notes.mjs。
+      # 空なら dir を出さず、whatsNewDirectory は渡さない）。この実行のコミットにタグが付いていても 1 つ前を見る
+      - name: Release notes
+        id: notes
+        run: |
+          dir="$RUNNER_TEMP/whatsnew"
+          mkdir -p "$dir"
+          node scripts/mobile-release-notes.mjs android --format play --out "$dir/whatsnew-ja-JP"
+          if [ -s "$dir/whatsnew-ja-JP" ]; then echo "dir=$dir" >> "$GITHUB_OUTPUT"; fi
       - name: Upload to Google Play
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1.1.5
         with:
@@ -228,6 +237,7 @@ jobs:
           status: ${{ inputs.status }}
           userFraction: ${{ inputs.user_fraction }}
           changesNotSentForReview: ${{ inputs.changes_not_sent_for_review }}
+          whatsNewDirectory: ${{ steps.notes.outputs.dir }}
       - name: Remove signing key
         if: always()
         run: rm -f "$RUNNER_TEMP/pleiad-android.p12" serviceAccountJson.json

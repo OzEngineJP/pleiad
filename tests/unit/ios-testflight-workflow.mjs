@@ -33,13 +33,19 @@ function findBash() {
   } catch { return null; }
 }
 
-/** App Store Connect API の偽物。JWT を検証し、apps と builds だけに答える */
-function fakeAsc({ publicKey, keyId, issuerId, apps, builds }) {
+/** App Store Connect API の偽物。JWT を検証し、apps・builds・betaBuildLocalizations に答える */
+function fakeAsc({ publicKey, keyId, issuerId, apps, builds, localizations = {} }) {
   const requests = [];
+  const writes = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     requests.push(`${url.pathname}?${decodeURIComponent(url.search.slice(1))}`);
     const send = (status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+    const readBody = () => new Promise((done) => {
+      let body = '';
+      req.on('data', (d) => { body += d; });
+      req.on('end', () => done(body));
+    });
     const [h, p, sig] = (req.headers.authorization ?? '').replace(/^Bearer /, '').split('.');
     let header, payload;
     try {
@@ -58,9 +64,27 @@ function fakeAsc({ publicKey, keyId, issuerId, apps, builds }) {
       const found = builds.filter((b) => b.app === url.searchParams.get('filter[app]') && b.version === url.searchParams.get('filter[version]'));
       return send(200, { data: found.map((b) => ({ type: 'builds', id: `b-${b.version}`, attributes: { version: b.version } })) });
     }
+    const locsMatch = url.pathname.match(/^\/v1\/builds\/([^/]+)\/betaBuildLocalizations$/);
+    if (req.method === 'GET' && locsMatch) {
+      const list = localizations[locsMatch[1]] ?? [];
+      return send(200, { data: list.map((l) => ({ type: 'betaBuildLocalizations', id: l.id, attributes: { locale: l.locale, whatsNew: l.whatsNew } })) });
+    }
+    if (req.method === 'POST' && url.pathname === '/v1/betaBuildLocalizations') {
+      return readBody().then((body) => {
+        writes.push({ method: 'POST', path: url.pathname, body: JSON.parse(body) });
+        send(201, { data: { type: 'betaBuildLocalizations', id: 'loc-new', attributes: {} } });
+      });
+    }
+    const patchMatch = url.pathname.match(/^\/v1\/betaBuildLocalizations\/([^/]+)$/);
+    if (req.method === 'PATCH' && patchMatch) {
+      return readBody().then((body) => {
+        writes.push({ method: 'PATCH', path: url.pathname, body: JSON.parse(body) });
+        send(200, { data: { type: 'betaBuildLocalizations', id: patchMatch[1], attributes: {} } });
+      });
+    }
     return send(404, { errors: [{ status: '404' }] });
   });
-  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, requests, base: `http://127.0.0.1:${server.address().port}` })));
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({ server, requests, writes, base: `http://127.0.0.1:${server.address().port}` })));
 }
 
 function runAsc(args, env) {
@@ -90,7 +114,9 @@ export default async function (t) {
       && ['mobile/www/**', 'mobile/capacitor.config.json', 'mobile/package.json', 'mobile/package-lock.json'].every((p) => apkPaths.includes(p)), JSON.stringify(paths));
   t.ok('試験だけの変更では上げない', paths.includes('!mobile/ios/App/AppTests/**') && paths.includes('!mobile/ios/remote-core/Tests/**'), JSON.stringify(paths));
   t.ok('上げる道具（スクリプト）の変更でも動く', ['mobile/scripts/ios-testflight.sh', 'mobile/scripts/asc-build.mjs', '.github/workflows/ios-testflight.yml'].every((p) => paths.includes(p)));
-  t.ok('書く権限を持たない（contents: read）', FLIGHT.permissions?.contents === 'read' && !FLIGHT.jobs.upload.permissions, JSON.stringify(FLIGHT.permissions));
+  t.ok('上げるジョブは ios-v* のタグを push する分の権限だけ持つ（contents: write。ほかは read）',
+    FLIGHT.permissions?.contents === 'read' && Object.keys(FLIGHT.jobs.upload.permissions ?? {}).join(',') === 'contents' && FLIGHT.jobs.upload.permissions.contents === 'write',
+    JSON.stringify(FLIGHT.jobs.upload.permissions));
   t.ok('1 つずつ順に走る', FLIGHT.concurrency?.group === 'ios-testflight' && FLIGHT.concurrency?.['cancel-in-progress'] === false);
 
   t.ok('先に ios-app.yml の試験を呼ぶ（main のときだけ）', FLIGHT.jobs.test?.uses === './.github/workflows/ios-app.yml' && FLIGHT.jobs.test?.if === "github.ref == 'refs/heads/main'",
@@ -126,6 +152,17 @@ export default async function (t) {
     && upload.env.IOS_BUILD_NUMBER === '${{ steps.version.outputs.code }}' && upload.env.IOS_MARKETING_VERSION === '${{ steps.version.outputs.base }}'
     && upload.env.IOS_BUNDLE_ID === '${{ steps.version.outputs.bundle }}', JSON.stringify(upload.env));
   t.ok('Secrets はすべて渡す', SECRETS.every((k) => upload.env[k] === `\${{ secrets.${k} }}` && step('Check secrets').env[k] === `\${{ secrets.${k} }}`));
+  const order2 = steps.map((s) => s.name ?? s.uses);
+  const wtt = step('Set What to Test');
+  const tag = step('Tag uploaded commit');
+  t.ok('上げた後に「テスト内容」を書き、上げたコミットに ios-v* のタグを付ける（存在確認で飛ばしたときはどちらもしない）',
+    order2.indexOf('Archive and upload to TestFlight') < order2.indexOf('Set What to Test') && order2.indexOf('Set What to Test') < order2.indexOf('Tag uploaded commit')
+      && [wtt, tag].every((s) => s?.if === "steps.asc.outputs.exists != 'true'"), JSON.stringify(order2));
+  t.ok('「テスト内容」は共通のスクリプトで作り、asc-build.mjs --whats-new で書く（失敗は止めない）',
+    /mobile-release-notes\.mjs ios --format testflight/.test(wtt?.run ?? '') && /asc-build\.mjs --bundle-id "\$BUNDLE" --build "\$CODE" --whats-new /.test(wtt?.run ?? '')
+      && wtt?.env?.ASC_PRIVATE_KEY_BASE64 === '${{ secrets.ASC_PRIVATE_KEY_BASE64 }}' && wtt?.env?.CODE === '${{ steps.version.outputs.code }}', JSON.stringify(wtt?.env));
+  t.ok('タグは ios-v<版>-<ビルド> で、push だけ（失敗しても止めない）', tag?.['continue-on-error'] === true && /git tag "\$TAG" "\$GITHUB_SHA"/.test(tag?.run ?? '') && /git push origin "\$TAG"/.test(tag?.run ?? '')
+    && tag?.env?.TAG === 'ios-v${{ steps.version.outputs.base }}-${{ steps.version.outputs.code }}', JSON.stringify(tag?.env));
   const scripts = steps.filter((s) => s.run).map((s) => s.run).join('\n');
   t.ok('run の中に ${{ }} を書かない（値は env で渡す）', !scripts.includes('${{'), scripts.match(/.*\$\{\{.*/)?.[0]);
 
@@ -175,6 +212,13 @@ export default async function (t) {
     apps: [{ id: '111', bundleId: 'dev.pleiad.app.other' }, { id: '222', bundleId: 'dev.pleiad.app' }],
     builds: [{ app: '222', version: '1' }, { app: '111', version: '2565' }],
   });
+  // ja の「テスト内容」がもうあるビルド（PATCH に回るか見る）
+  const fake2 = await fakeAsc({
+    publicKey, keyId, issuerId,
+    apps: [{ id: '222', bundleId: 'dev.pleiad.app' }],
+    builds: [{ app: '222', version: '2565' }],
+    localizations: { 'b-2565': [{ id: 'loc-old', locale: 'ja', whatsNew: '前のノート' }] },
+  });
   try {
     const env = { ASC_KEY_ID: keyId, ASC_ISSUER_ID: issuerId, ASC_PRIVATE_KEY_BASE64: Buffer.from(p8).toString('base64'), ASC_API_BASE: fake.base };
     const args = (build, bundle = 'dev.pleiad.app') => ['--bundle-id', bundle, '--build', build];
@@ -202,7 +246,45 @@ export default async function (t) {
       t.ok(label, r.code === 1 && r.log.startsWith('::error::') && r.log.includes(message) && r.output === '', JSON.stringify(r));
       t.ok(`${label}（秘密を出さない）`, !r.log.includes('do-not-print') && !r.log.includes('BEGIN PRIVATE KEY'));
     }
+
+    // ===== 「テスト内容」（--whats-new）: ビルドを待って locale を書く。失敗しても止めない =====
+    const notesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pleiad-wtt-'));
+    const notesFile = path.join(notesDir, 'whats-new.txt');
+    fs.writeFileSync(notesFile, '今回の変更:\n・iOS の殻を直す\n');
+    const wttArgs = (build, extra = []) => ['--bundle-id', 'dev.pleiad.app', '--build', build, '--whats-new', notesFile, '--wait', '0', ...extra];
+    try {
+      const created = await runAsc(wttArgs('1'), env);
+      const post = fake.writes.find((w) => w.method === 'POST');
+      t.ok('ビルドが見えれば betaBuildLocalizations を作って「テスト内容」を書く',
+        created.code === 0 && post?.body?.data?.type === 'betaBuildLocalizations' && post?.body?.data?.attributes?.locale === 'ja'
+          && post?.body?.data?.attributes?.whatsNew === '今回の変更:\n・iOS の殻を直す' && post?.body?.data?.relationships?.build?.data?.id === 'b-1'
+          && created.log.includes('created the ja notes'), JSON.stringify(created));
+
+      const patched = await runAsc(wttArgs('2565'), { ...env, ASC_API_BASE: fake2.base });
+      const patch = fake2.writes.find((w) => w.method === 'PATCH');
+      t.ok('同じ locale があれば書き換える（PATCH）',
+        patched.code === 0 && patch?.path === '/v1/betaBuildLocalizations/loc-old' && patch?.body?.data?.attributes?.whatsNew === '今回の変更:\n・iOS の殻を直す'
+          && patched.log.includes('updated the ja notes'), JSON.stringify(patched));
+
+      const noBuild = await runAsc(wttArgs('9999'), env);
+      t.ok('ビルドが見えなければ警告だけで終わる（リリースを止めない）',
+        noBuild.code === 0 && noBuild.log.startsWith('::warning::') && noBuild.log.includes('did not appear'), JSON.stringify(noBuild));
+
+      fs.writeFileSync(notesFile, '');
+      const empty = await runAsc(wttArgs('1'), env);
+      t.ok('本文が空なら何も書かずに終わる', empty.code === 0 && empty.log.includes('nothing to set'), JSON.stringify(empty));
+      fs.writeFileSync(notesFile, '・かえ\n');
+
+      const down = await runAsc(wttArgs('1'), { ...env, ASC_API_BASE: 'http://127.0.0.1:1' });
+      t.ok('API に届かなくても警告だけで終わる', down.code === 0 && down.log.startsWith('::warning::'), JSON.stringify(down));
+
+      const badArgs = await runAsc(['--bundle-id', 'dev.pleiad.app', '--build', '1', '--whats-new'], env);
+      t.ok('--whats-new にファイルが無ければ引数の誤りで止まる', badArgs.code === 1 && badArgs.log.includes('--whats-new needs a file'), JSON.stringify(badArgs));
+    } finally {
+      fs.rmSync(notesDir, { recursive: true, force: true });
+    }
   } finally {
     fake.server.close();
+    fake2.server.close();
   }
 }

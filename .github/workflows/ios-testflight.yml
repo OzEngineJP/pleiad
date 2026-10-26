@@ -38,6 +38,9 @@ jobs:
     environment: release
     runs-on: macos-15
     timeout-minutes: 40
+    # 上げたコミットに ios-v* のタグを付けて push する（次のリリースノートの基点。ADR 0272）
+    permissions:
+      contents: write
     steps:
       # 重い手順の前に、Secrets を確かめる（足りなければ名前を出して止まる。値は出さない）
       - name: Check secrets
@@ -104,6 +107,28 @@ jobs:
           IOS_BUILD_NUMBER: ${{ steps.version.outputs.code }}
           IOS_MARKETING_VERSION: ${{ steps.version.outputs.base }}
         run: bash mobile/scripts/ios-testflight.sh
+      # 「テスト内容」に、前に上げたビルド（ios-v* のタグ）からの変更を入れる（asc-build.mjs --whats-new。
+      # 失敗しても ::warning:: で止まらない。前のタグが無い・変更が無いときは書かない）
+      - name: Set What to Test
+        if: steps.asc.outputs.exists != 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+          BUNDLE: ${{ steps.version.outputs.bundle }}
+          CODE: ${{ steps.version.outputs.code }}
+        run: |
+          node scripts/mobile-release-notes.mjs ios --format testflight --out "$RUNNER_TEMP/whats-new.txt"
+          node mobile/scripts/asc-build.mjs --bundle-id "$BUNDLE" --build "$CODE" --whats-new "$RUNNER_TEMP/whats-new.txt" --locale ja
+      # 次のリリースノートの基点にするタグ。push に失敗してもビルドは上がっているので止めない
+      - name: Tag uploaded commit
+        if: steps.asc.outputs.exists != 'true'
+        continue-on-error: true
+        env:
+          TAG: ios-v${{ steps.version.outputs.base }}-${{ steps.version.outputs.code }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
       - name: Summary
         if: success()
         env:
