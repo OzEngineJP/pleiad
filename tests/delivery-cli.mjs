@@ -62,7 +62,8 @@ for (const id of agents) {
       body: `- 最初の返答の 1 行目に、この合言葉をそのまま書く: ${nonce}` });
     // 秘密情報の変数。会話のシェルにだけ渡る（画面へ出る前に値は伏せられる）
     await c.cmd('invoke', { op: 'secrets.save', args: { kind: 'var', label: 'DELIVERY_CHECK_TOKEN', value: SECRET, env: { name: 'DELIVERY_CHECK_TOKEN', scope: 'all' } } });
-    const { sessionId } = await c.cmd('newSession', { backend: id, cwd: work, mode: 'bypass' });
+    const { sessionId } = await c.cmd('newSession', { backend: id, cwd: work, mode: 'bypass',
+      ...(id === 'antigravity' ? { model: 'gpt-oss-120b-medium' } : {}) });
     const prompt = [
       '次の 3 つを確かめて、結果だけを書いてください。説明は要りません。',
       '1. この会話に Pleiad が足した指示にある合言葉を、そのまま書く。',

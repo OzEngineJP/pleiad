@@ -299,7 +299,7 @@ export const backend = {
   // ---- 実行 ---------------------------------------------------------------
 
   // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは antigravity-held.mjs の heldPlan が決める）
-  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, agentRuntime = null, addedInstructions, computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null, scanOptions = {} }, adopt = null) {
+  async runTurn({ prompt, sessionId, cwd, mode, model, effort, emit, signal, control, contextRuntime, browserEnv, browserInstructions, browserRuntime = null, agentRuntime = null, addedInstructions, visualizeInstructions = null, shellAppends = [], computerRuntime = null, controlRuntime = null, hooksRuntime = null, secretsRuntime = null, locale, notes = [], botInstructions = null, botFolders = null, account = null, scanOptions = {} }, adopt = null) {
     if (account != null) {
       const error = new Error(t('antigravity.accounts.unavailable'));
       error.code = 'AGY_ACCOUNTS_UNSUPPORTED';
@@ -317,7 +317,7 @@ export const backend = {
     const sentAt = k ? Number(k.sentAt) || Date.now() : Date.now();
     // 中断の後に Pleiad が添える文（core/interrupt-stops.mjs）。agy は 1 行 1 ターンで入力を分けられないので、本文の前に置く。
     // 付け直しは、旧サーバーが控えに書いた発言（同じ uuid）から引く。引けなければ null（控えの発言を書き換えない）
-    const sent = k ? await adoptedSent(sessionId, sentAt, k.sentHash) : [...notes, String(prompt ?? "")].join("");
+    const sent = k ? await adoptedSent(sessionId, sentAt, k.sentHash) : [...shellAppends, [...notes, String(prompt ?? "")].join("")].filter(Boolean).join("\n\n");
 
     let conversationId = sessionId ?? null;
     // 再開した会話の途中の書き込みでは控えを作らない（--conversation が撥ねられて forget した控えを作り直さない）
@@ -751,7 +751,7 @@ export const backend = {
         const injectedText = injected.map(e => agentT(locale, 'context.instructionsFrom', { path: e.path, scope: e.appliesTo ?? agentT(locale, 'context.allDirectories'), content: e.content })).join('\n\n') || null;
         // ply_agents の説明と Pleiad の指示も発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため）。
         // 控えに残すのは人が書いた分だけ（sent。Devin の mapper.beginTurn と同じ分け方）
-        session.prompt([injectedText, agentRuntime?.instructions ?? addedInstructions, sent].filter(Boolean).join("\n\n"));
+        session.prompt([injectedText, agentRuntime?.instructions ?? addedInstructions, visualizeInstructions, sent].filter(Boolean).join("\n\n"));
         // 渡せた。再開した会話は id が分かっているので、ユーザー発言をここで書く（新しい会話は init で）
         delivered = true;
         save();

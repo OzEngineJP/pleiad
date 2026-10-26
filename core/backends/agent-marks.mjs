@@ -95,7 +95,7 @@ export const CAPABILITY_STATES = {
     title: covered,       // タイトルの口が無い -> sidecar が正本
     tag: covered,         // 状態タグも無い -> sidecar が正本
     fork: covered,        // 分岐の口が無い -> Pleiad の写しで分ける
-    subagents: todo('#151'),   // ACP の標準には子の一覧が無い。CLI の拡張を確かめる
+    subagents: todo('#151'),   // stream-json は子の conversation_id / log_uri を出すが、1.4.7 の log_uri から本文を読む形が未確認
     liveModel: impossible('起動時の --model だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     liveMode: impossible('起動時の --mode だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
@@ -112,9 +112,9 @@ export const CAPABILITY_STATES = {
     approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
     mcpApproval: 'agent',
     accounts: impossible('OS の共有キーリングをアプリ・外部 CLI と共有していて、Pleiad の中で分離できない（ADR 0222）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    compatEndpoints: todo('#151'),   // CLI に接続先の設定があるか未検証
+    compatEndpoints: impossible('agy 1.4.7 の customModelsConfig は Gemini API key 専用で、Google アカウントでは無視される'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: impossible('agy が自分で圧縮する。手動の圧縮の口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    autoCompactWindow: todo('#151'),
+    autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     promptSuggestions: covered,   // ターンの後に suggestNext で作る
     // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じくカスタムエージェントの mcpServers に束ねた中継で渡す。
     // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため。
@@ -123,15 +123,16 @@ export const CAPABILITY_STATES = {
     // （antigravity-context.mjs の prepareAgent。足さないとカスタムエージェント化で指示が抜け落ちる）
     plyAgents: true,
     plyInstructions: true,
-    shell: todo('#148'),
+    shell: 'host',          // Pleiad が実行し、その結果を次のターンの発言に含める（ADR 0054）
     // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0227）
     plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: impossible('agy の stream-json は走っているターンへ入力を足せない'),   // 追加指示は次のターンで渡す // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
     // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
-    // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに渡す。可視化の指示は渡さない（発言に入れていない）
-    browser: true, plyControl: true, secrets: true, visualize: todo('#148'), hooks: true,
+    // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに、可視化は各ターンの発言の前に渡す。
+    // エージェント定義の指示は起動時にしか反映されないため、visualizeInstructions は本文に前置きする。
+    browser: true, plyControl: true, secrets: true, visualize: true, hooks: true,
   },
   opencode: {
     title: true,            // PATCH /session/{id} { title }。OpenCode の TUI と共有する
