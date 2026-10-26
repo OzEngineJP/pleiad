@@ -24,7 +24,7 @@ Google Play へは、同じ鍵・同じ版の決め方の AAB を `.github/workf
 - `versionName` = `<mobile/package.json の version>-<versionCode>`（例 `0.2.0-1234`）。
 - タグ = `android-v<versionName>`。そのタグ（またはリリース）が既にあるときは、リリースを作らずに正常終了する。
 
-リリースは prerelease で、`--latest=false` で作る。成果物は `Pleiad-Android-<versionName>.apk` と `SHA256SUMS.txt`。本文は、Android 版であること・インストールの仕方・提供元不明のアプリの許可・上書き更新・対応 Android 13 以上（`minSdk` 33）だけの短い定型で、コミットの羅列は載せない。
+リリースは prerelease で、`--latest=false` で作る。成果物は `Pleiad-Android-<versionName>.apk` と `SHA256SUMS.txt`。本文は、頭に「変更」の節（前の `android-v*` のタグから今のコミットまでの、Android に効く変更のコミットの題。`scripts/mobile-release-notes.mjs` が上の paths と同じ範囲から作り、マージは除く。20 件で切って残りは「ほか N 件」。前のタグが無い・変更が無いときは節を出さない）と、Android 版であること・インストールの仕方・提供元不明のアプリの許可・上書き更新・対応 Android 13 以上（`minSdk` 33）の短い定型（[ADR 0271](adr/0271-mobile-release-notes-from-tags.md)）。同じ作り方の一覧を Play の「新機能」と iOS の TestFlight の「テスト内容」にも使う。
 
 `mobile/package.json` の `version` を上げると、次の版の頭が変わる。`versionCode` は頭の番号に関わらず増え続けるので、上げても下げても上書き更新はできる。
 
@@ -114,7 +114,9 @@ Actions の画面で「Android Play upload」を `main` で手動で実行する
 | `user_fraction` | 空 | 段階公開で配る割合（0 より大きく 1 より小さい）。`inProgress` のときだけ書く。Google の説明では段階公開は製品版のトラックのもので、テストのトラックでは Play がエラーを返すことがある |
 | `changes_not_sent_for_review` | オフ | 変更を審査へ送らずに残す（Play が「自動では審査に送れない」と返したときに使い、Play Console から送る） |
 
-流れ: 入力と Secrets の確かめ → ルートと `mobile/` の `npm ci` → `npx cap sync android` → `./gradlew :remote-core:test` → 版の決定（APK の流れと同じ行） → 署名付き `bundleRelease` → `jarsigner -verify` と `keytool -printcert -jarfile` で署名と証明書の SHA-256 を照合（AAB は jar の署名なので `apksigner` は使わない） → Google Play Developer API で上げる（`r0adkll/upload-google-play`、版は commit の SHA で固定） → 鍵を消す。リリース名は `versionName`。
+流れ: 入力と Secrets の確かめ → ルートと `mobile/` の `npm ci` → `npx cap sync android` → `./gradlew :remote-core:test` → 版の決定（APK の流れと同じ行） → 署名付き `bundleRelease` → `jarsigner -verify` と `keytool -printcert -jarfile` で署名と証明書の SHA-256 を照合（AAB は jar の署名なので `apksigner` は使わない） → 「新機能」のノートを作る → Google Play Developer API で上げる（`r0adkll/upload-google-play`、版は commit の SHA で固定） → 鍵を消す。リリース名は `versionName`。
+
+「新機能」（whatsnew）は、`scripts/mobile-release-notes.mjs` が GitHub Release と同じ一覧を Play の形（箇条書き・言語ごとに 500 文字まで）に収めたものを、`whatsnew-ja-JP` として `whatsNewDirectory` で渡す。今のコミットに `android-v*` のタグが付いているとき（APK の流れから呼ばれたとき）は 1 つ前のタグを基点にする。ノートが空なら `whatsNewDirectory` は渡さない。ノートの生成が失敗しても上げる手順は止めない。
 
 | 種類 | 名前 | 内容 |
 |---|---|---|

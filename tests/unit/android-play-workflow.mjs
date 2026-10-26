@@ -87,6 +87,15 @@ export default async function (t) {
     && /\.\/gradlew bundleRelease /.test(step(playSteps, 'Build signed release bundle').run), upload?.with?.releaseFiles);
   t.ok('入力をそのまま渡す（tracks・status・userFraction）', upload?.with?.tracks === '${{ inputs.track }}' && upload?.with?.status === '${{ inputs.status }}'
     && upload?.with?.userFraction === '${{ inputs.user_fraction }}', JSON.stringify(upload?.with));
+  const notes = step(playSteps, 'Release notes');
+  t.ok('Play の「新機能」は共通のスクリプトで作って渡す（空なら渡さない）',
+    notes?.id === 'notes' && /mobile-release-notes\.mjs android --format play/.test(notes?.run ?? '') && /whatsnew-ja-JP/.test(notes?.run ?? '')
+      && upload?.with?.whatsNewDirectory === '${{ steps.notes.outputs.dir }}', JSON.stringify(upload?.with));
+  const orderWithNotes = playSteps.map((s) => s.name ?? s.uses);
+  t.ok('ノートを作るのは上げる手順の直前', orderWithNotes.indexOf('Release notes') === orderWithNotes.indexOf('Upload to Google Play') - 1, JSON.stringify(orderWithNotes));
+  const apkNotes = step(apkSteps, 'Release notes');
+  t.ok('GitHub Release のノートも同じスクリプトで作る',
+    /mobile-release-notes\.mjs android --format github/.test(apkNotes?.run ?? '') && /changes\.md/.test(step(apkSteps, 'Create release').run), apkNotes?.run);
   const order = playSteps.map((s) => s.name ?? s.uses);
   t.ok('入力と Secrets の確かめが最初の手順', order[0] === 'Check inputs and secrets', JSON.stringify(order));
   t.ok('鍵は成否にかかわらず最後に消す', playSteps.at(-1).name === 'Remove signing key' && playSteps.at(-1).if === 'always()');
