@@ -118,8 +118,8 @@ export const AGENTS = {
       // 公式のインストーラー（install.ps1 / install.sh）は `~/.grok/bin` に置く。npm で入れたものは PATH で見つかる
       searchDirs: (env) => [path.join(env.USERPROFILE || env.HOME || '', '.grok', 'bin')].filter((d) => d.length > '.grok/bin'.length),
     },
-    // 会話を離れた後の自動の圧縮は Grok 自身が決める（config.toml の [session] auto_compact_threshold_percent）
-    idleCompaction: null,
+    // 手動・アイドル時の圧縮は ACP に /compact を送り、閾値前の自動圧縮は Grok 自身が行う
+    idleCompaction: { enabled: false, delayMinutes: 25 },
     // AGENTS.md（作業場所。common）と ~/.grok（AGENTS.md・rules・skills・config.toml の MCP。grok）と Claude 互換（既定で有効）
     contextSources: ['common', 'grok', 'claude'],
     // Grok の Hooks の形は Claude Code と同じ。セッション限定のプラグイン（_meta.pluginDirs）の hooks/hooks.json で渡す
