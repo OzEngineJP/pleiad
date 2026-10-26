@@ -881,6 +881,9 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 （一覧に無い・分岐に当たらない）。`npm test` の backends-lint（`tests/lint-backends.mjs`）が、ファイルごとの件数を基準（`tests/backends-baseline.json`）と比べ、
 増えたら落とす。減らしたら `node tests/lint-backends.mjs --update-baseline` で基準を下げる（上げる更新は拒む）。
 そのエージェントだけの事情で、印にする意味が無いもの（Claude の transcript の救済など）は、行に `backend-allow: 理由` の印を付ける。
+一覧への入れ忘れは agent-lists（`tests/lint-agent-lists.mjs`）が拾う。`{ ... }` のキー・`[ ... ]` の要素にエージェントの id が
+2 個以上並んだ一覧を、全エージェントを持つか、理由を宣言した部分一覧（`ALLOWED`。記述から引ける組は `expect` で宣言する）に限る。
+README・AGENTS.md の名簿と環境変数の表もエージェントの記述と照合する。
 基準に残っている分（フック・MCP とコンテキストの設定の読み方・互換の接続先・委譲先の自動選択・Claude のアカウント）は、[issue #91](https://github.com/OzEngineJP/pleiad/issues/91) で減らす。
 
 ### 2.10 OpenCode v2（2026-10-18）

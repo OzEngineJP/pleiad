@@ -32,7 +32,8 @@ const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
 const WORD = { instruction: t('sessionContext.word.instruction'), skill: 'Skills', mcp: 'MCP' };
 const COUNTED = { instruction: ['supplied', 'loaded'], skill: ['available', 'manual-only', 'loaded'], mcp: ['pending', 'standby', 'starting', 'connected'] };
-const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', common: t('sessionContext.source.common'), ply: 'Pleiad' };
+// backend-allow: 読み込み元（core/context-settings.mjs の SOURCES）の名前。エージェントの id と同じ語だが、エージェントの分岐ではない
+const SOURCE = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode', devin: 'Devin', antigravity: 'Antigravity', grok: 'Grok', common: t('sessionContext.source.common'), ply: 'Pleiad' };
 const GROUPS = ['user', 'dir', 'extra'];
 // 「この場所だけ変える」の担当の 2 択（設定の画面と同じ文）
 const OWNER = {

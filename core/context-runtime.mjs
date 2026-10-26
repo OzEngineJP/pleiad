@@ -6,6 +6,7 @@ import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js
 import { instructionBody, scanContext } from './context-scan.mjs';
 import { DEFAULT_OWNERS, KINDS, containsPath, legacyPlan, matchesGlobs, normalizePlan, pathKey } from './context-settings.mjs';
 import { t, agentT } from './i18n.mjs';
+import { agentOf } from './backends/agents.mjs';
 
 export const hash = value => crypto.createHash('sha256').update(typeof value === 'string' ? value : JSON.stringify(value)).digest('hex');
 export const managed = policy => Object.values(policy?.owners ?? {}).includes('ply');
@@ -116,7 +117,7 @@ export async function readSnapshot(dir, digest) {
   return fs.readFile(path.join(dir, `${digest}.txt`), 'utf8').catch(() => null);
 }
 
-const sourceLabel = source => ({ claude: 'Claude', codex: 'Codex', common: t('context.scan.fromCommon'), ply: 'Pleiad' })[source];
+const sourceLabel = source => agentOf(source)?.shortLabel ?? ({ common: t('context.scan.fromCommon'), ply: 'Pleiad' })[source];
 /**
  * 同じ名前の外部 MCP が複数あったとき（core/context-scan.mjs が 1 つを選び、残りを shadowedBy: 'choice' にする）、
  * どれを使ったかを記録に残す。使った行に choice（選び方と、使わなかった定義の数）、使わなかった行に理由。

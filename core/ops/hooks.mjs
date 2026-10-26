@@ -14,7 +14,6 @@ import { byAgent, cwdFor, hasMask, restoreMasked, run, sessionFor } from './reda
 const D = (id, key) => `agent:ops.hooks.${id}.${key}`;
 const A = (key) => `agent:ops.hooks.arg.${key}`;
 
-const AGENT = z.enum(['claude', 'codex', 'antigravity']);
 const reason = z.string().max(500).optional().describe(A('reason'));
 const cwd = z.string().max(4096).optional().describe(A('cwd'));
 const loose = z.record(z.string(), z.unknown());
