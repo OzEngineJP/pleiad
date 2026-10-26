@@ -4,12 +4,6 @@
     "antigravity": {
       "subagents": "#151"
     },
-    "devin": {
-      "accounts": "#108",
-      "autoCompactWindow": "#108",
-      "hooks": "#98",
-      "nativeShellOff": "#108"
-    },
     "grok": {
       "compatEndpoints": "#108",
       "plyContext": "#108",

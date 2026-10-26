@@ -5,6 +5,9 @@ import readline from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 
 const argv = process.argv.slice(2), command = argv.find(value => ['models', 'auth', 'acp', 'version', '--version'].includes(value));
+const configIndex = argv.indexOf('--config');
+const turnConfig = configIndex >= 0 ? JSON.parse(fs.readFileSync(argv[configIndex + 1], 'utf8')) : null;
+if (process.env.FAKE_DEVIN_CONFIG_CAPTURE && turnConfig) fs.writeFileSync(process.env.FAKE_DEVIN_CONFIG_CAPTURE, JSON.stringify(turnConfig));
 // 呼ばれた回数を試験が数える口（FAKE_DEVIN_LOG のファイルに 1 起動ごとにコマンド名を 1 行足す。fake-codex.mjs の FAKE_CODEX_LOG と同じ）
 if (process.env.FAKE_DEVIN_LOG) fs.appendFileSync(process.env.FAKE_DEVIN_LOG, `${command ?? argv.join(' ')}\n`);
 // 実機（3000.11.92）の形: model の選択肢は系列の代表だけで、thought_level・speed の

@@ -335,12 +335,15 @@ async function probeOpenCode({ scratch, caps }) {
 /** Devin: ACP の session/new の mcpServers・起動の環境変数・発言に足した指示に届いたか */
 async function probeDevin({ scratch, caps }) {
   const events = [];
+  const configCapture = path.join(scratch, 'devin-turn-config.json');
   try {
-    await withEnv({ AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: path.join(scratch, 'devin-home') }, async () => {
-      await devin.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'smart', prompt: '[env]', emit: (e) => events.push(e) }));
+    await withEnv({ AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: path.join(scratch, 'devin-home'),
+      FAKE_DEVIN_CONFIG_CAPTURE: configCapture }, async () => {
+      await devin.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'smart', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'devin'), emit: (e) => events.push(e) }));
     });
   } finally { /* runTurn が ACP を閉じる */ }
   const observed = jsonOf(textOf(events)) ?? {};
+  const config = JSON.parse(await fs.readFile(configCapture, 'utf8').catch(() => '{}'));
   const prompt = String(observed.prompt ?? '');
   const seen = { servers: observed.mcpServers ?? [], env: observed.seenEnv ?? [], prompt: prompt.slice(0, 300) };
   return {
@@ -352,7 +355,10 @@ async function probeDevin({ scratch, caps }) {
       plyControl: (observed.mcpServers ?? []).includes('ply_control') && (observed.seenEnv ?? []).includes('PLEIAD_CONTROL_TOKEN') && has(prompt, instr('control')),
       secrets: (observed.seenEnv ?? []).includes(MARK.secretName) && has(prompt, instr('secrets')),
       visualize: has(prompt, MARK.visualize),
+      hooks: config.hooks?.PreToolUse?.some(group => group.hooks?.some(h => h.type === 'command' && h.command.includes('delivery-hook.mjs')))
+        && config.read_config_from?.claude === false,
       plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt),
+      nativeShellOff: !deliveryRequired(caps?.nativeShellOff) || ['exec', 'shell_command', 'write_to_process', 'kill_shell', 'get_output'].every(name => config.disabled_tools?.includes(name)),
       plyContext: (observed.mcpServers ?? []).includes('ply_context') && has(prompt, instr('context')),
       computerUse: (observed.mcpServers ?? []).includes('ply_computer') && has(prompt, instr('computer')),
     },

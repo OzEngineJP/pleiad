@@ -230,7 +230,7 @@ export function expectedSets(root = ROOT) {
     // Hooks の統合の対象（機構そのまま＋記述の hooksAs で形を写せるもの。core/hooks-config.mjs の UNIFY_TARGETS）
     unifyTargets: new Set(UNIFY_TARGETS),
     // Hooks のイベント名の表を持つエージェント（機構そのまま＋plugin 経由で表が要るもの）
-    hookEventOwners: new Set([...HOOK_AGENTS, ...DEFAULT_AGENT_IDS.filter(id => AGENTS[id].hooksVia === 'plugin')]),
+    hookEventOwners: new Set([...HOOK_AGENTS, ...DEFAULT_AGENT_IDS.filter(id => ['plugin', 'config'].includes(AGENTS[id].hooksVia))]),
     // 互換エンドポイントを立てられるエージェント（core/backends/agent-marks.mjs の CAPABILITY_STATES.<id>.compatEndpoints が true）
     compatEndpoints: new Set(DEFAULT_AGENT_IDS.filter(id => CAPABILITY_STATES[id]?.compatEndpoints === true)),
   };
@@ -252,7 +252,6 @@ export const ALLOWED = [
   { file: 'core/hook-adapter.mjs', expect: 'nativeHooks', reason: 'Hooks の機構を持つエージェントだけを扱う単独ファイル（import しない）' },
   { file: 'core/hooks-unify.mjs', expect: 'nativeHooks', reason: 'Hooks の統合で native 側の鍵を扱う一覧' },
   { file: 'web/hooks-card.mjs', expect: 'nativeHooks', reason: 'Hooks の機構を持つエージェントの欄（HOOK_AGENTS）' },
-  { file: 'web/hooks-card.mjs', expect: 'unifyTargets', reason: 'Hooks の統合の対象の欄（UNIFY_TARGETS）' },
   // 互換エンドポイント（capabilities.compatEndpoints: true のエージェントだけ）
   { file: 'core/compat-endpoints.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントを立てられるエージェント' },
   { file: 'web/compat-endpoints.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの画面の対象' },

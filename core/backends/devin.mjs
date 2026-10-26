@@ -9,7 +9,7 @@ import { SHELL_SERVER } from '../shell-bridge.mjs';
 import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
 import { undelivered } from './undelivered.mjs';
-import { prepareDevinLaunch } from './devin-config.mjs';
+import { prepareDevinLaunch, devinTurnConfig } from './devin-config.mjs';
 import { buildDevinModels, resolveDevinModel, applyDevinModel, devinAcpModel, devinModelChoices } from './devin-models.mjs';
 import { createDevinMapper } from './devin-normalize.mjs';
 import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
@@ -115,7 +115,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
-    try { await client.start(); return client; } catch (error) { await client.close().catch(() => {}); throw error; }
+    try { await client.start(); await launch.cleanup?.().catch(() => {}); return client; }
+    catch (error) { await launch.cleanup?.().catch(() => {}); await client.close().catch(() => {}); throw error; }
   }
   async function cwdFor(id) {
     if (rows.has(id)) return rows.get(id).cwd;
@@ -349,8 +350,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             const selection = resolveDevinModel(list, args.model ?? '');
             check();
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
-            const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv } });
-            const plan = await heldAcpPlan({ dataDir, argv: launch.command, bot: Boolean(args.botInstructions), envName: 'AGENT_HOST_DEVIN_HOLDER' });
+            const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv },
+              turnConfig: devinTurnConfig({ hooksRuntime: args.hooksRuntime, nativeShellOff: Boolean(args.shellRuntime?.nativeOff) }) });
+            // ACP の起動時設定はプロセス全体に適用される。会話限定設定を共有保持役へ混ぜない。
+            const plan = launch.cleanup ? null : await heldAcpPlan({ dataDir, argv: launch.command, bot: Boolean(args.botInstructions), envName: 'AGENT_HOST_DEVIN_HOLDER' });
             held = plan ? createHeldAcp({ client: plan.client }) : null;
             client = await openClient(cwd, handlers, extraEnv, { held, launch });
             check();

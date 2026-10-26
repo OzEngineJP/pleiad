@@ -138,6 +138,10 @@ export async function prepareHooksTurn({ agent, cwd, ctx }) {
     const plan = planHooks({ hooks: owner.hooks, owner, agent, platform });
     record.skipped = plan.skipped.map(({ hook, reason }) => ({ id: hook.id, name: hook.name, reason }));
     record.unsupported = plan.unsupported.map(unsupportedSummary);
+    if (HOOK_VIA[agent] === 'config') {
+      record.supplied = plan.supplied.map(s => ({ ...suppliedSummary(s), via: 'config' }));
+      return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied: plan.supplied, record } };
+    }
     if (HOOK_VIA[agent] !== 'plugin') {
       record.supplied = plan.supplied.map(s => ({ ...suppliedSummary(s), via: 'callback' }));
       return { record, runtime: { agent, emulates: HOOK_EMULATED[agent], cwd, supplied: plan.supplied, record } };
