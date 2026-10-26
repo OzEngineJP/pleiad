@@ -2,10 +2,14 @@
 // 訳す要素は data-i18n="キー"（中身を置き換える）・data-i18n-attr="属性:キー;…"（属性を置き換える）で付ける。
 // 中身は locales/en.json の値（HTML）。{claude} {openai} {antigravity} は各ロゴの <img> に展開する。
 // ダウンロードのリンクと版は、組むときに GitHub の Releases から取って焼き込む（data-release。下の「配布物」）。
+// 使い方の文書（site/docs・Astro Starlight）は /docs/ に組む（下の「文書」）。
 //
-//     node site/tools/build-site.mjs [--out <出力先>] [--offline]   # 既定は _site/。--offline は Releases を引かない
+//     node site/tools/build-site.mjs [--out <出力先>] [--offline] [--no-install]
+//       --offline      GitHub を引かない（文書も作業ツリーの core/ から作る）
+//       --no-install   site/docs の依存（node_modules）が無くても npm ci しない
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // 公開先の URL（canonical・hreflang・og:url・og:image の元）。末尾は /
@@ -23,7 +27,7 @@ export const PAGES = [
   { src: "plus/index.html", path: "plus/" },
 ];
 // 出力先へ写さないもの（生成の材料）
-const SKIP = new Set(["tools", "locales", "README.md", "index.html", "download", "plus", "wrangler.jsonc"]);
+const SKIP = new Set(["tools", "locales", "docs", "README.md", "index.html", "download", "plus", "wrangler.jsonc"]);
 const LOGOS = {
   claude: '<img src="assets/claude.svg" alt="" width="16" height="16">',
   openai: '<img src="assets/openai.svg" alt="" width="16" height="16">',
@@ -111,9 +115,10 @@ export function localize(html, dict) {
 // PC の版は、pre-release・draft でない最新の vX.Y.Z の Release。Android は pre-release で出しているので、最新の android-v… の Release の APK。
 // 配布物の名前に版が入るので、決まった URL（releases/latest/download/<名前>）は使えない。Release を出した後にサイトを組み直すと新しい版になる。
 // API が使えないとき（回数の上限・ネットワーク）は、リンクを Releases のページに落とし、版の行を出さない。
-export const REPO_URL = "https://github.com/OzEngineJP/pleiad";
+const REPO_SLUG = "OzEngineJP/pleiad";
+export const REPO_URL = `https://github.com/${REPO_SLUG}`;
 const RELEASES_URL = `${REPO_URL}/releases`;
-const API_URL = "https://api.github.com/repos/OzEngineJP/pleiad/releases?per_page=50";
+const API_URL = `https://api.github.com/repos/${REPO_SLUG}/releases?per_page=50`;
 const PC_ASSETS = {
   "win-x64": /-win-x64\.exe$/,
   "win-arm64": /-win-arm64\.exe$/,
@@ -232,7 +237,72 @@ function copyShared(out) {
   }
 }
 
-export async function build(out, { offline = false } = {}) {
+// ---- 文書 ----
+// site/docs は Astro Starlight のプロジェクトで、自分の package.json と lockfile を持つ（アプリの依存と混ぜない）。
+// Cloudflare のビルド環境は clone が浅くタグが無いので、コードから作る部分は Releases の最新の安定版のタグから
+// raw.githubusercontent.com で必要なファイルだけを取る（core/ のファイルを足したら DOCS_SOURCE_FILES に足す）。
+// 取れないとき（--offline・API の失敗）は作業ツリーの core/ から作り、その旨をページに出す。
+const DOCS = path.join(SITE, "docs");
+const DOCS_SOURCE_FILES = ["core/backends/agents.mjs"];
+const RAW_URL = `https://raw.githubusercontent.com/${REPO_SLUG}`;
+const WORKTREE_SOURCE = { agents: path.join(SITE, "..", "core", "backends", "agents.mjs"), label: "worktree" };
+
+/** 文書の生成に使う core/ のファイル。タグから取れたらその写し、取れなければ作業ツリー */
+async function docsSource(release, offline) {
+  if (offline || !release.version) {
+    console.warn(`! ${offline ? "--offline" : "安定版の Release を取れなかった"}ので、文書の生成に使う core/ を作業ツリーから読む`);
+    return WORKTREE_SOURCE;
+  }
+  const dir = path.join(DOCS, ".cache", release.version);
+  const files = DOCS_SOURCE_FILES.map((rel) => ({ rel, file: path.join(dir, ...rel.split("/")) }));
+  if (!files.every(({ file }) => fs.existsSync(file))) {
+    try {
+      for (const { rel, file } of files) {
+        const res = await fetch(`${RAW_URL}/${release.version}/${rel}`, {
+          headers: { "user-agent": "pleiad-site-build" },
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!res.ok) throw new Error(`${rel}: HTTP ${res.status}`);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, await res.text());
+      }
+    } catch (err) {
+      console.warn(`! ${release.version} の core/ を取れなかったので、作業ツリーから読む（${err.message}）`);
+      return WORKTREE_SOURCE;
+    }
+  }
+  return { agents: files[0].file, label: release.version };
+}
+
+function run(command, args, cwd) {
+  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} が失敗した（exit ${result.status}）`);
+}
+
+/** site/docs の依存を入れる。Windows の npm は .cmd なので cmd.exe から起こす（shell: true は Node が警告を出す） */
+function installDocs() {
+  console.log("docs: site/docs の依存を入れる（npm ci）");
+  const args = ["ci", "--no-audit", "--no-fund"];
+  if (process.platform === "win32") run(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "npm", ...args], DOCS);
+  else run("npm", args, DOCS);
+}
+
+/** site/docs を組み、_site/docs/ に写す。install が false なら node_modules が無いときだけ止まる */
+export async function buildDocs(out, { offline = false, release = pickReleases([]), install = true } = {}) {
+  const astro = path.join(DOCS, "node_modules", "astro", "bin", "astro.mjs");
+  if (!fs.existsSync(astro)) {
+    if (!install) throw new Error("site/docs の依存が無い（npm ci --prefix site/docs。--no-install を外すと組むときに自動で入れる）");
+    installDocs();
+  }
+  const source = await docsSource(release, offline);
+  run(process.execPath, [path.join(DOCS, "scripts", "generate.mjs"), "--agents", source.agents, "--source", source.label], DOCS);
+  run(process.execPath, [astro, "build"], DOCS);
+  fs.cpSync(path.join(DOCS, "dist"), path.join(out, "docs"), { recursive: true });
+  console.log(`built docs: /docs/ ・/docs/en/（${source.label === "worktree" ? "作業ツリー" : source.label}）`);
+}
+
+export async function build(out, { offline = false, install = true } = {}) {
   const en = JSON.parse(fs.readFileSync(path.join(SITE, "locales", "en.json"), "utf8"));
   const release = offline ? pickReleases([]) : await fetchReleases();
   fs.rmSync(out, { recursive: true, force: true });
@@ -246,12 +316,16 @@ export async function build(out, { offline = false } = {}) {
       fs.writeFileSync(file, renderPage(source, lang, dict, { page, release }));
     }
   }
+  await buildDocs(out, { offline, release, install });
   return release;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const i = process.argv.indexOf("--out");
   const out = path.resolve(i > 0 ? process.argv[i + 1] : path.join(SITE, "..", "_site"));
-  const release = await build(out, { offline: process.argv.includes("--offline") });
-  console.log(`built ${out} (ja: /, /download/  en: /en/, /en/download/)  ${release.version ?? "Releases のページへのリンク"}`);
+  const release = await build(out, {
+    offline: process.argv.includes("--offline"),
+    install: !process.argv.includes("--no-install"),
+  });
+  console.log(`built ${out} (ja: /, /download/, /docs/  en: /en/, /en/download/, /docs/en/)  ${release.version ?? "Releases のページへのリンク"}`);
 }
