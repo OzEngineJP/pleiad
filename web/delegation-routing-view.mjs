@@ -56,7 +56,7 @@ export function splitCandidate(id) {
 const percent = v => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null);
 
 // 有効でないエージェント（語彙を読めない）の名前。固有名なので訳さない
-const BACKEND_NAMES = { claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity' };
+const BACKEND_NAMES = { claude: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity', opencode: 'OpenCode', devin: 'Devin CLI', grok: 'Grok Build' };
 const CLAUDE_ALIASES = { opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku', fable: 'Fable' };
 /** 名前が語彙から引けなかったときの補い（エージェントの id・Claude の系統名） */
 export function fallbackName(kind, backend, text) {

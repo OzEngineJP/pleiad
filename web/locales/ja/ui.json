@@ -1529,6 +1529,7 @@
       "sourceOpencode": "OpenCode 形式",
       "sourceDevin": "Devin 形式",
       "sourceAntigravity": "Antigravity 形式",
+      "sourceGrok": "Grok 形式",
       "title": "指示",
       "files": "指示ファイル",
       "fileTitle": "ファイルの指示（CLAUDE.md・AGENTS.md）",
@@ -1549,7 +1550,8 @@
       "sourceCodex": "Codex の設定",
       "sourceOpencode": "OpenCode の設定",
       "sourceDevin": "Devin の設定",
-      "sourceAntigravity": "Antigravity の設定"
+      "sourceAntigravity": "Antigravity の設定",
+      "sourceGrok": "Grok の設定"
     },
     "copyPath": "パスをコピー",
     "copied": "コピーしました",

@@ -4039,14 +4039,14 @@ function forgetVocab(id) {
 
 // ---------------------------------------------------------------- エージェントの認証
 // ログインの持ち方はエージェントごとに違う（Claude は Claude Code のログインをそのまま、
-// codex は app-server 越しに ChatGPT）。capabilities.login が真のものだけ。
+// codex は app-server 越しに ChatGPT）。カードは全エージェントに出す（login に対応しない
+// エージェントにもインストール・CLI の情報がある。サインインなどの操作は capabilities ごとに畳む）。
 // 置き場は設定メニューの中。常設しない。ログインが要るときだけ脇の下に一行で知らせる。
 // 設定モーダル内にURLを出し、コールバックを取れないときは手貼りの欄を出す。
 
 /** 認証の状態を取り直す。refresh() は毎イベント走るので、ここは起動時とログイン / ログアウトの後だけ */
 async function refreshAuth() {
-  const targets = state.backends.filter((b) => b.capabilities?.login);
-  await Promise.all(targets.map(async (b) => {
+  await Promise.all(state.backends.map(async (b) => {
     const st = await cmd("authStatus", { backend: b.id }).catch((e) => ({ supported: false, error: e.message }));
     state.auth.set(b.id, st);
   }));
@@ -4154,7 +4154,7 @@ const authSpoken = new Map();
 
 function renderAuth() {
   const sec = $("authSec");
-  const targets = state.backends.filter((b) => b.capabilities?.login);
+  const targets = state.backends;
   sec.hidden = targets.length === 0;
   const focus = parkConnPanels(sec);
   // 描き直しで消えるカードのボタン（［ログイン］［やめる］）に居たら、同じカードの同じ役のボタンへ戻す

@@ -19,7 +19,6 @@
     "core/hooks-unify.mjs": 10,
     "core/mcp-config.mjs": 8,
     "core/mcp-import.mjs": 11,
-    "core/ops/hooks.mjs": 3,
     "core/ops/settings.mjs": 1,
     "core/ply-instructions.mjs": 1,
     "core/server.mjs": 12,

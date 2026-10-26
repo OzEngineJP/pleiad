@@ -1566,6 +1566,7 @@
       "sourceOpencode": "OpenCode format",
       "sourceDevin": "Devin format",
       "sourceAntigravity": "Antigravity format",
+      "sourceGrok": "Grok format",
       "title": "Instructions",
       "files": "instruction files",
       "fileTitle": "Instructions from files (CLAUDE.md, AGENTS.md)",
@@ -1586,7 +1587,8 @@
       "sourceCodex": "Codex settings",
       "sourceOpencode": "OpenCode settings",
       "sourceDevin": "Devin settings",
-      "sourceAntigravity": "Antigravity settings"
+      "sourceAntigravity": "Antigravity settings",
+      "sourceGrok": "Grok settings"
     },
     "copyPath": "Copy path",
     "copied": "Copied",

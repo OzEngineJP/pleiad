@@ -8,6 +8,7 @@
 // 返す理由・警告はコード（画面が web/locales の hooks.copy.* で文にする）。
 import { HOOK_EVENTS } from './hooks-config.mjs';
 
+// Hooks の機構を持つエージェント（core/hooks-config.mjs の HOOK_AGENTS と同じ組。循環するので import しない）
 export const COPY_AGENTS = ['claude', 'codex', 'antigravity'];
 const AGY_EVENTS = ['PreToolUse', 'PostToolUse', 'Stop'];
 const TOOL_EVENTS = new Set(['PreToolUse', 'PostToolUse', 'PermissionRequest']);
