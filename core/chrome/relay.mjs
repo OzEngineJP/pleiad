@@ -132,7 +132,6 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   let binding = null;
   let closed = false;
   let invalidCarry = false;    // 前のサーバーの預かり物が無効だった（会話の端点を、人が送るまで止めたものとして作る）
-  let handedOff = false;       // 引き継ぎで出ていく（窓も接続も閉じない。handOff）
   let staleSessions = [];      // 前のサーバーが Chrome の接続に付けたまま残したセッション（restore で受け、最初の bind で外す）
   const orphans = new Set();   // 層が引き継げなかった窓の windowId（Chrome の接続が付いたら、その窓のタブを CDP で閉じる）
   let chromeId = null;         // 持ち越した窓・orphans の持ち主の Chrome（ws のパスの GUID）。windowId は Chrome の起動ごとに 1 から振り直されるので、別の Chrome の windowId で利用者の窓を触らないための印
@@ -173,7 +172,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   /** 持ち越す状態が変わった。聞き手（server.mjs → link.setCarry。200 ms でまとめる）へ今の状態を渡す */
   let lastCarry = '', lastMarks = '';
   function carryChanged() {
-    if (closed || handedOff || !carryListeners.size) return;
+    if (closed || !carryListeners.size) return;
     const carry = snapshot();
     const text = JSON.stringify(carry);
     if (text === lastCarry) return;
@@ -238,7 +237,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
 
   /** Chrome に接続済みなら、確認を起こさずに上りをつなぐ（つながっていなければ何もしない） */
   async function bindConnected() {
-    if (up || closed || handedOff || connection.state?.().state !== 'connected') return;
+    if (up || closed || connection.state?.().state !== 'connected') return;
     const cdp = await connection.demand().catch(() => null);
     if (cdp && !closed) await bind(cdp).catch(() => {});
   }
@@ -248,7 +247,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
    */
   let readoptChain = Promise.resolve();
   async function readoptNow() {
-    if (closed || handedOff) return 0;
+    if (closed) return 0;
     // 層が戻ったので、上りがまだなら Chrome の接続につなぐ（更新の直後は層が listen の後でないと付かず、起動時の rejoin の時点では待てない。窓の有無には依らない）
     await bindConnected();
     // Chrome に接続している間に引き継いだ窓の popup は、ここで探して隠す。接続が無ければ、層に引き継げた窓も誰にも戻せない（main が居ない間に Chrome との接続が切れた）ので閉じる
@@ -283,9 +282,9 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     up = null;
     for (const off of state.offs) off();
     for (const tab of state.tabs.values()) { tab.controller.abort(); tab.fe = null; }
-    if (!handedOff) { scope.reset?.(); orphans.clear(); chromeId = null; }   // Chrome が閉じた。窓はもう無い（閉じ待ちの windowId も、次の Chrome では別の窓を指す）
+    scope.reset?.(); orphans.clear(); chromeId = null;   // Chrome が閉じた。窓はもう無い（閉じ待ちの windowId も、次の Chrome では別の窓を指す）
     for (const entry of entries.values()) {
-      if (!handedOff && !closed) fire(lostListeners, entry.id);   // 窓はもう無い。agent-browser の縛りを捨てさせる（接続はすぐ下で閉じる）
+      if (!closed) fire(lostListeners, entry.id);   // 窓はもう無い。agent-browser の縛りを捨てさせる（接続はすぐ下で閉じる）
       entry.windows.clear();
       if (entry.paused) { entry.paused = null; changed(entry); }   // Chrome が閉じた。窓はもう無いので、引き継ぎも解く
       entry.current = null; entry.operating = false;
@@ -1296,32 +1295,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       readoptChain = run.catch(() => {});
       return run;
     },
-    /**
-     * 引き継ぎで出ていく。端点の待ち受けと、エージェントの接続（1012 で閉じる。agent-browser は新しいサーバーへつなぎ直す）だけを終える。
-     * 窓は閉じない・戻さない（上りの切れ目で scope.reset を走らせない）。返り値が最後の carry
-     */
-    handOff() {
-      if (closed || handedOff) return snapshot();
-      const carry = snapshot();
-      handedOff = true;
-      for (const entry of entries.values()) closeClients(entry, 1012, 'updating');
-      if (up) {
-        // 確認（ask）の答えを待っている止まった要求は、出ていく前に断る（abort の後の block は、接続の子へ書く道が閉じた後で届かない。
-        // 答える者が居ない要求を通さない: サイトの利用の確認を、更新の間にすり抜けさせない）
-        for (const tab of up.tabs.values()) for (const resume of [...tab.paused.values()]) resume.block();
-        for (const off of up.offs) off();
-        for (const tab of up.tabs.values()) tab.controller.abort();
-        up = null;
-      }
-      closed = true;
-      wss.close(); server.close();
-      log('chrome-relay: handed off');
-      return carry;
-    },
     /** 中継が知っている会話の id（画面がつなぎ直したときに、今の状態を配るため） */
     sessionIds() { return [...entries.keys()]; },
-    /** 引き継ぎで出ていった（更新の途中。24 時間の掃除をしない。ADR 0246・0167） */
-    isHandedOff() { return handedOff; },
     /** サイトの利用の確認（confirmAgentSites）。ON なら範囲のタブに確認の Fetch を付け、OFF なら外す（止めている要求は通す） */
     setConfirm(enabled) {
       const next = enabled === true;

@@ -409,7 +409,7 @@ async function boot() {
     if (resident?.keepOnClose()) { window.hide(); return; }
     closeSafely();
   });
-  window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown' }); });
+  window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown', stopHeld: true }); });
   // サーバーが落ちたときの起こし直し（desktop/server-restart.cjs。名前付きパイプの経路だけ）
   const restarter = linked ? require('./server-restart.cjs').createServerRestarter({ link: worker, getReady: () => serverReady, prepared: linked.prepared, root: linked.root,
     dataDir: serverBoot().resolveDataDir(), resourcesPath: runtimeResources(), execPath: process.execPath, systemLocale: systemLanguage(), cwd: app.getPath('home'), log: line => log(`restart: ${line}`) }) : null;
@@ -427,7 +427,7 @@ async function boot() {
           const restarted = await restarter.restart();
           if (restarted.ok) {
             // 起こし直している間に終了が始まったなら、終了の shutdown は切れたつながりへ送られて届いていない。起こしたサーバーを終わらせる
-            if (quitting || exitInProgress) { if (quitting && !updateLeaving) worker.postMessage({ type: 'shutdown' }); return; }
+            if (quitting || exitInProgress) { if (quitting && !updateLeaving) worker.postMessage({ type: 'shutdown', stopHeld: true }); return; }
             if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit);
             await reloadWindow(restarted.ready, portFile).catch(e => log(`restart: reloading the window failed: ${e.message}`));
             return;
@@ -514,7 +514,8 @@ ${waiting}` : t('quit.busyMessage'),
         buttons: [t('quit.backToWork'), t('quit.quitAnyway')], defaultId: 0, cancelId: 0, noLink: true });
       if (response !== 1) return;
     }
-    quitting = true; worker.postMessage({ type: 'shutdown' }); app.quit();
+    // アプリの終了: 保持役の子も止める（更新と違う。ADR 0270 決定 4）
+    quitting = true; worker.postMessage({ type: 'shutdown', stopHeld: true }); app.quit();
   } catch (e) { await dialog.showMessageBox(window, { message: e.message, buttons: [t('common.back')] }); }
   finally { closing = false; if (!quitting) exitInProgress = false; }
 }

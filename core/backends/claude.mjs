@@ -425,8 +425,7 @@ async function decidePermission(ctx, askPermission, toolName, input, options) {
       // 以下は承認 UI を読みやすくするための添え物。無くても判断はできる。
       toolUseID: options?.toolUseID ?? null,
       title: options?.title ?? null,
-      // 保持役に載せたターンは、手を離した後の SDK の止めを承認へ伝えない（runTurn の askSignal）
-      signal: ctx.askSignal ? ctx.askSignal(options?.signal) : options?.signal,
+      signal: options?.signal,
       canAlways,
       kind: isQuestion ? "question" : "tool",
       // 質問の形は docs/multi-backend.md §2.2。AskUserQuestion の入力がそのまま正規形。
@@ -579,9 +578,6 @@ const liveTrackers = new Map();  // sessionId -> tracker
 // ターンが終わっても外さない（終わり際の配信が状態を引ける）。次のターンが同じ会話の分を置き換える
 const turnTrackers = new Map();
 
-// 保持役に載せたターン（claude-held.mjs）。**Claude のネイティブ id** -> { held, q }。旧サーバーの手を離す口（handOffClaude）が引く
-const heldTurns = new Map();
-
 // SDK が自分で処理して、ループへ流さない行（control_* と keep_alive・transcript_mirror。sdk.mjs の readMessages）。付け直しの記録の読み直しでも飛ばす
 const SDK_CONSUMED = new Set(["control_request", "control_response", "control_cancel_request", "keep_alive", "transcript_mirror"]);
 /**
@@ -606,27 +602,6 @@ function trackedHooks(table, track) {
 function restoredSteers(steers) {
   return (Array.isArray(steers) ? steers : []).filter((p) => typeof p?.uuid === "string" && p.uuid)
     .map((p) => ({ id: typeof p.id === "string" ? p.id : null, uuid: p.uuid, text: null, hash: typeof p.hash === "string" ? p.hash : null, sawResult: Boolean(p.sawResult) }));
-}
-
-/**
- * 旧サーバーの手を離す口（無停止の更新 2c。2d が引き継ぎで呼ぶ形のバックエンド側。今はテストの入口 tests/lib/adopt-server.mjs が呼ぶ）:
- * 札（server の handOffTurn の card）を保持役の子に置いて detach し、その後に query を閉じる（design.md §4.4 の順序）。
- * 閉じたターンは handedOff で終わる（server は締めない）。sessionId はネイティブの id
- */
-export async function handOffClaude(sessionId, card) {
-  const entry = heldTurns.get(sessionId);
-  if (!entry) throw new Error(`claude: no held turn to hand off (${sessionId})`);
-  await entry.held.handOff(card);
-  try { entry.q?.close(); } catch { /* 既に閉じている */ }
-  return { childId: entry.held.id };
-}
-
-/** テスト用: 保持役の子への書き込み（承認の答え・hooks と MCP の応答・途中送信・中断）を止める／戻す。答えが CLI に届かないまま手を離す形を作る */
-export function muteClaudeHeld(sessionId, muted) {
-  const entry = heldTurns.get(sessionId);
-  if (!entry) throw new Error(`claude: no held turn (${sessionId})`);
-  entry.held.mute(muted);
-  return true;
 }
 
 export const backend = {
@@ -783,25 +758,15 @@ export const backend = {
     let executable = null;
     try { executable = sdk.executable(); } catch { /* 入っていない。下の query が伝える */ }
     const held = adopt ? (finished ? null : createHeldCli({ mode: 'adopt', source: adopt.source, from: acked + 1 }))
-      : await heldPlan({ dataDir: store.dataDir, executable, compact: Boolean(compact), bot: Boolean(botInstructions) })
+      : await heldPlan({ dataDir: store.dataDir, executable, compact: Boolean(compact) })
         .then(plan => plan && createHeldCli({ mode: 'spawn', client: plan.client, onSpawn: () => bindHolder() }));
-    // 手を離した後（detach）に旧サーバーの query を閉じると、SDK は答えを待っている承認の signal を止める。止めると server が承認を
-    // 取り下げて通知の一覧の行まで決着させるので、手を離した後の止めは承認へ伝えない（新しいサーバーが同じ承認を出し直す）
-    if (held) ctx.askSignal = s => {
-      if (!s) return s;
-      const ac = new AbortController();
-      const pass = () => { if (!held.detached) ac.abort(s.reason); };
-      if (s.aborted) pass(); else s.addEventListener('abort', pass, { once: true });
-      return ac.signal;
-    };
 
     let q = null;
     // 裏のコマンドの停止ボタンはターンの外（WS の stopBackground）から来る。**Pleiad の会話 id**で引けるようにする
-    // （バックエンドを乗り換えた会話では、Claude の id と会話 id が別物になる）。保持役に載せたターンは、旧サーバーの手を離す口（handOffClaude）がネイティブ id で引く
+    // （バックエンドを乗り換えた会話では、Claude の id と会話 id が別物になる）
     const holdQuery = (id) => {
       const key = hostSessionId ?? id; if (key && q) { liveQueries.set(key, q); liveTrackers.set(key, tracker); }
       if (id) turnTrackers.set(id, tracker);   // getSubagentState はネイティブ id で来る（conversations.mjs が訳す）
-      if (id && held) heldTurns.set(id, { held, get q() { return q; } });
     };
 
     // 途中送信。受け付けたら true。入力を閉じた後・中断後は false を返し、server はそのメッセージを
@@ -837,11 +802,7 @@ export const backend = {
     // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）。最初の 1 回は子を起こした直後・付け直した直後に置く
     const bindHolder = () => {
       if (!control || !held?.source) return;
-      control.holder = {
-        label: card => held.source.client.label(held.id, card),
-        // 旧サーバーの手を離す口（引き継ぎ。core/handover.mjs）: 札を子に置いて detach し、読みを止めてから query を閉じる（design.md §4.4 の順序）
-        handOff: async card => { await held.handOff(card); try { q?.close(); } catch { /* 既に閉じている */ } },
-      };
+      control.holder = { label: card => held.source.client.label(held.id, card) };
       control.backendCard = backendCard;
       control.touch?.();
     };
@@ -1196,15 +1157,12 @@ export const backend = {
           held?.ack(message.uuid);
         }
       }
-      // 旧サーバーが手を離した（handOffClaude）。このターンはここで終わる（出来事は server が捨てる。締めるのは付け直したサーバー）
-      if (held?.handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: ctx.sessionId, handedOff: true }; }
       if (stop) emit({ type: "turnResult", outcome: "aborted" });
       else if (limit) emit({ type: 'turnResult', outcome: 'limited', ...limitFields(limit) });
       // 401 の result は subtype が success のまま（is_error だけが立つ）。例外にならずに終わっても、成功として出さない
       else if (authFailed) emit({ type: 'turnResult', outcome: 'error', error: hide(authFailed.message ?? 'authentication_failed'), kind: 'auth', pristine: !produced });
       else if (heldResult) emit(heldResult);
     } catch (err) {
-      if (held?.handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: ctx.sessionId, handedOff: true }; }
       // 巻き戻しを伴うターンが、CLI から何も届かないうちに失敗した（resume の拒否。`Resume rejected by --resume-drops-turn:` の文面は SDK の例外に載るとは限らないので、
       // 文面には頼らない）か、拒否の文そのものが来たときは、失敗として見せず呼び出し側（conversations.mjs）がホスト管理に落として 1 度だけ送り直す。繰り返し再試行しない
       if (rewind && sessionId && !stop && !signal?.signal?.aborted && (!sawMessage || /Resume rejected by --resume-drops-turn/.test(String(err?.message ?? '')))) {
@@ -1227,16 +1185,14 @@ export const backend = {
       throw promptSent ? thrown : undelivered(thrown);
     } finally {
       clearStopTimer();
-      // 手を離したターンのフラグ設定のファイルは消さない（札が指す。付け直したサーバーがターンの終わりに消す）
-      if (!held?.handedOff) { await flag?.dispose(); await envFile?.dispose(); }
+      await flag?.dispose(); await envFile?.dispose();
       signal?.signal?.removeEventListener?.("abort", stopTurn);
       for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
       for (const [id, x] of liveTrackers) if (x === tracker) liveTrackers.delete(id);
-      for (const [id, x] of heldTurns) if (x.held === held) heldTurns.delete(id);
       closeInput();
       if (contextRuntime) { q.close(); releaseContext(); }
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
-      // 保持役の子の片付け（終わった子の記録を捨てる。手を離した子には触れない）
+      // 保持役の子の片付け（終わった子の記録を捨てる）
       if (held) void held.finish();
       else if (finished) { if (sawExit) adopt.source.release(); adopt.source.dispose(); }
     }

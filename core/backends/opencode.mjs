@@ -460,7 +460,6 @@ export const backend = {
     for (const key of ['setTitle', 'getSubagentMessages', 'getSubagentOrigin'])
       bound[key] = call(key, ([first, second, options = {}]) => [first, second, { ...options, account }]);
     bound.usage = call('usage', ([options = {}]) => [{ ...options, accounts: [], account }]);
-    bound.releaseIdle = call('releaseIdle', () => [{ account }]);
     for (const key of ['accountLogin', 'accountStatus', 'accountRemove'])
       bound[key] = (options = {}) => backend[key]({ ...options, account });
     bound.forAccount = next => backend.forAccount(next);
@@ -618,7 +617,6 @@ export const backend = {
     let aborted = false;
     let limitStop = false;                // 上限の再試行を見て、こちらから止めた（中断ではなく limited で終える）
     let gone = null;
-    let handedOff = false;
     let replaying = false;
     const asked = new Set();              // 出した承認・質問の id（付け直しで、一覧と出来事の両方から届く）
     let resolveAdmission;
@@ -650,7 +648,7 @@ export const backend = {
     });
 
     // 手を離した後は、このサーバーは OpenCode に何も返さない（承認の答え・中断は新しいサーバーのもの）
-    const reply = (path, body) => (handedOff ? null : srv.request('POST', path, { directory, body }).catch((err) => console.error('  opencode: reply failed:', String(err?.message ?? err).slice(0, 200))));
+    const reply = (path, body) => srv.request('POST', path, { directory, body }).catch((err) => console.error('  opencode: reply failed:', String(err?.message ?? err).slice(0, 200)));
     async function onPermission(p) {
       if (asked.has(p.id)) return;
       asked.add(p.id);
@@ -703,7 +701,7 @@ export const backend = {
       if ((p.sessionID ?? p.info?.sessionID ?? p.part?.sessionID) !== sessionId) return;
       if (mapper.handle(event)) settle();
       // 待っても通らない上限の再試行（無料枠・Go の枠など。ADR 0229）。OpenCode は 5 回まで待ち直すので、こちらで止めて limited で終える
-      if (mapper.limit && !limitStop && !aborted && !handedOff) {
+      if (mapper.limit && !limitStop && !aborted) {
         limitStop = true;
         srv.request('POST', `/session/${sessionId}/abort`, { directory }).catch(() => settle());
       }
@@ -717,7 +715,6 @@ export const backend = {
     const offGone = srv !== server ? srv.onGone((err) => onEvent({ type: 'pleiad.gone', properties: { error: err } })) : null;
 
     const onAbort = () => {
-      if (handedOff) return;
       aborted = true;
       srv.request('POST', `/session/${sessionId}/abort`, { directory }).catch(() => settle());
     };
@@ -749,7 +746,6 @@ export const backend = {
       control.holder = {
         label: (c) => heldServer.putCard(sessionId, c),
         // 旧サーバーの手を離す口: 札を置いて保持役へ detach し（全部のターンをまとめて 1 回）、このターンは終える（締めるのは付け直したサーバー）
-        handOff: async (c) => { heldServer.putCard(sessionId, c); await heldServer.handOff(); handedOff = true; srv.handedOff(); settle(); },
       };
       control.touch?.();
     };
@@ -839,9 +835,9 @@ export const backend = {
         await done;
       }
       // 終わりの前の Hooks（Stop）。続けさせる理由なら、それを次の発言として渡して、もう一度終わりを待つ（3 回まで。付け直しをまたいで数える）
-      for (; hooks?.has('Stop') && stopRounds < 3 && !aborted && !gone && !handedOff && !mapper.error && !mapper.limit; ) {
+      for (; hooks?.has('Stop') && stopRounds < 3 && !aborted && !gone && !mapper.error && !mapper.limit; ) {
         const reason = await hooks.stop(stopRounds > 0, { signal: signal?.signal });
-        if (!reason || handedOff) break;
+        if (!reason) break;
         stopRounds++;
         control?.touch?.();
         arm();
@@ -850,7 +846,6 @@ export const backend = {
         await done;
       }
     } catch (err) {
-      if (handedOff) return { sessionId, handedOff: true };
       if (err?.status === 429) {
         emit({ type: 'turnResult', outcome: 'limited', error: String(err.message), pristine: mapper.pristine });
         return { sessionId };
@@ -865,9 +860,8 @@ export const backend = {
       for (const child of children) if (turnsBySession.get(sessionKey(child, srv)) === route) turnsBySession.delete(sessionKey(child, srv));
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
       // 手を離したターンは、札も環境変数のファイルも新しいサーバーのもの
-      if (!handedOff) { heldServer?.endTurn(sessionId); void envFile?.dispose(); }
+      heldServer?.endTurn(sessionId); void envFile?.dispose();
     }
-    if (handedOff) return { sessionId, handedOff: true };
     for (const s of steers) if (s.id) emit({ type: 'userMessage.dropped', messageId: s.id });
 
     const error = gone ? { message: String(gone.message ?? gone) } : mapper.error;
@@ -894,17 +888,6 @@ export const backend = {
   async adoptTurn(args) {
     if (!args.card?.held || !args.source?.held) throw new Error('opencode: the turn was not on the holder');
     return backend.runTurn(args, { card: args.card, source: args.source });
-  },
-
-  /** 引き継ぎで、ターンの無い共有のサーバーも新しいサーバーへ渡す（札は待ち受けだけ。新しいサーバーが起こし直さずに使う） */
-  async releaseIdle(options = {}) {
-    const servers = Object.hasOwn(options, 'account') ? [serverFor(options.account)] : [server, ...accountServers.values()];
-    for (const srv of servers) {
-      const held = srv.held;
-      if (!held || held.cards.size > 0) continue;
-      await held.handOff();
-      srv.handedOff();
-    }
   },
 
   async compact(args, srv = null) {

@@ -724,10 +724,9 @@ export const backend = {
         out.text = 'failed';
         await say(emit, out.text, out.uuid);
       } else if (text.startsWith("held:")) {
-        // 偽の CLI が出す出来事をそのまま流し、履歴に積む。旧サーバーが手を離したら（handOffHeld）このターンはここで終わる（出来事は server が捨てる）
+        // 偽の CLI が出す出来事をそのまま流し、履歴に積む
         const held = await runHeld({ id, cwd, mode, model, notes, prompt: text.slice(5), userText: [...notes, String(prompt ?? "")].join(""),
           record: (m) => push(s, m), emit, askPermission, signal, control });
-        if (held.handedOff) emit({ type: "turnResult", outcome: "aborted" });
         return { sessionId: id };
       } else if (text.startsWith("steps:")) {
         // ツールの続き方（まとまり・入れ替わり・失敗・承認待ち）を画面で確かめるための台本
@@ -1130,6 +1129,3 @@ export function reset() {
   auth.account = null;
   auth.pending = null;
 }
-
-// 台本 "held:" の旧サーバーの手を離す口と、読みを止める口（tests/lib/adopt-server.mjs が呼ぶ。fake-held.mjs）
-export { handOffHeld, pauseHeld, muteHeld } from "./fake-held.mjs";

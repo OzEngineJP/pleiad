@@ -19,6 +19,8 @@ import { assertNotGuarded } from './test-guard.mjs';
 
 export const LOCK_FILE = 'pleiad.lock';       // 持ち主の表示用（PID）。判断には使わない
 export const LOCK_DB_FILE = 'pleiad.lock.db'; // OS のロックを持つ小さな SQLite
+/** 前のサーバーが放すのを待つ上限（更新・落ちた後の起こし直し。ADR 0270 決定 4） */
+export const LOCK_WAIT_MS = 30_000;
 const held = new Map();   // 解決した置き場 -> { count, token, info, db }
 
 /** 取れなかったときの例外（pid は表示用の持ち主。分からなければ null）。メッセージは画面・起動ログにそのまま出る */
@@ -94,11 +96,26 @@ export function acquireDataLock(dir, { pid = process.pid } = {}) {
  * 刻みは数十 ms でよい: 旧が放してから新が取るまで最大 18.6 ms で、遅れは待ち手の試行の間隔による（取れない試行 1 回が約 30 ms）。
  * 持ち主が居るあいだだけ待つ（DATA_LOCKED 以外の失敗はそのまま投げる）。上限を過ぎたら、取れなかった例外を投げる
  */
-export async function acquireDataLockWait(dir, { timeoutMs = 30_000, pollMs = 25, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), ...options } = {}) {
+export async function acquireDataLockWait(dir, { timeoutMs = LOCK_WAIT_MS, pollMs = 25, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), ...options } = {}) {
   const until = now() + timeoutMs;
   for (;;) {
     try { return acquireDataLock(dir, options); }
     catch (e) { if (e?.code !== 'DATA_LOCKED' || now() >= until) throw e; }
+    await sleep(pollMs);
+  }
+}
+
+/**
+ * 前のサーバーが閉じかけのファイルに当たって一時的に読めない（SQLite の disk I/O error・busy）間だけ、やり直す。
+ * 別の理由の失敗はそのまま投げる。上限を過ぎたら最後の失敗を投げる
+ */
+export async function retryTransient(fn, { timeoutMs = 3_000, pollMs = 50, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const until = now() + timeoutMs;
+  for (;;) {
+    try { return await fn(); }
+    catch (error) {
+      if (!/disk I\/O error|database is locked|SQLITE_BUSY|SQLITE_LOCKED|SQLITE_IOERR/i.test(String(error?.message ?? error)) || now() >= until) throw error;
+    }
     await sleep(pollMs);
   }
 }

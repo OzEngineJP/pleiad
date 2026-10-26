@@ -12,7 +12,7 @@ export const title = '会話ストアの即時保存（変えた項目の行だ�
 const run = (dir, script) => new Promise((resolve, reject) => execFile(process.execPath, ['--input-type=module', '-e', script], {
   env: { ...process.env, AGENT_HOST_DATA: dir, STORE_URL: pathToFileURL(path.join(ROOT, 'core', 'store.mjs')).href,
     DB_URL: pathToFileURL(path.join(ROOT, 'core', 'db.mjs')).href,
-    SHUTDOWN_URL: pathToFileURL(path.join(ROOT, 'core', 'shutdown.mjs')).href },
+    },
 }, (error, stdout, stderr) => error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve(stdout)));
 
 export default async function (t) {
@@ -50,15 +50,12 @@ export default async function (t) {
     t.ok('移行した元の JSON は消え、写しが残る', !(await fs.stat(path.join(dir, 'sessions.json')).then(() => true, () => false))
       && (await fs.readdir(dir)).some(name => name.startsWith('backup-schema1-')));
 
-    const shutdown = JSON.parse(await run(dir, `
+    await run(dir, `
       const store = await import(process.env.STORE_URL);
-      const { finishShutdown } = await import(process.env.SHUTDOWN_URL);
       await store.setSessionData('old', 'contextSession', { report: 2 });
-      let exited = false;
-      finishShutdown(store.flushNow, () => true, () => { exited = true; });
-      console.log(JSON.stringify({ exited }));
-    `));
-    t.ok('作業中の shutdown 合図でも書き終えて終了しない', shutdown.exited === false && readSessions(dir).old.contextSession.report === 2);
+      store.flushNow();
+    `);
+    t.ok('終わりに flushNow した変更は、次の起動から読める', readSessions(dir).old.contextSession.report === 2);
 
     await run(dir, `
       const store = await import(process.env.STORE_URL);

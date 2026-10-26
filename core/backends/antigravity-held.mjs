@@ -2,19 +2,19 @@
 // agy は会話ごとに 1 プロセスで、stdin に 1 行 1 JSON を書き、stdout の 1 行 1 JSON を読むだけ（握手が無い。stage0-codex-agy.md §3）。
 // 保持役の子にすれば、サーバーが入れ替わっても agy は走り続け、新しいサーバーが同じ子の記録を印から読み直して続きを受ける（antigravity.mjs の adoptTurn）。
 //   載せるか（heldPlan）: 切り替え（AGENT_HOST_AGY_HOLDER。既定は実行場所の置き場 AGENT_HOST_RUNTIME_ROOT があるとき on）・shell 無しで起こせる実行ファイル・
-//     bot の会話でない・保持役につなげる。どれかが外れたら今の流れ（サーバーが agy を直に起こす）
+//     保持役につなげる。どれかが外れたら今の流れ（サーバーが agy を直に起こす）
 //   policy 'none'（行だけ。保持役は agy のプロトコルを知らない）。ターンの印（turn）は、ターンの最初の行を書く直前に打つ（markTurn）。agy の子は会話のあいだ生きて
 //     次のターンも書かれるので、印はターンごとに打ち直す（init は最初のターンの再生にだけ入る。会話の id は札が持つ）
 //   読み: 子の stdout の行を 1 行ずつ処理し（session.feedLine。Promise を返すものはそれを待つ）、処理し終えた行を ack する。付け直しは印から ack までを
 //     処理の再生（opts.replay）として流し、続きは普通に流す（core/adopt.mjs の replayRecord）
-//   ターンが終わったら札と印を外す（endTurn）: 子は idle のまま次のターンを待つ。印の無い子は、引き継ぎで旧サーバーが止める（releaseIdle）・サーバーが落ちた後は
-//     次の起動の最初の保持役の使用で止める（sweepIdle）。札と印を持つ子は付け直す（server の restoreAdoptedTurns）
-//   detach の後: write・end・kill を保持役へ転送しない（旧サーバーが手を離した子には触れない）
+//   ターンが終わったら札と印を外す（endTurn）: 子は idle のまま次のターンを待つ。印の無い子は、次の起動の最初の保持役の使用で止める（sweepIdle）。
+//     札と印を持つ子は付け直す（server の restoreAdoptedTurns）
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
 import { directCommand } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
+import { KEEP_MS } from '../process.mjs';
 import { ADOPT_TURN_MARK, holderSource, replayRecord } from '../adopt.mjs';
 import { sweepHeldHomes } from './antigravity-context.mjs';
 
@@ -41,10 +41,10 @@ export function heldAgyCommand(argv, { platform = process.platform } = {}) {
 
 /**
  * この会話の agy を保持役に載せるか。載せるなら { client }（保持役への共有の口。core/holder/link.mjs）、載せないなら null。
- * bot の会話は付け直さない（server の restoreTurn が断る）ので載せない。保持役を起こせない（抜け道の無い Job など）ときも載せない
+ * 保持役を起こせない（抜け道の無い Job など）ときは載せない
  */
-export async function heldPlan({ dataDir, argv, bot = false, log = console.error } = {}) {
-  if (!heldEnabled() || bot) return null;
+export async function heldPlan({ dataDir, argv, log = console.error } = {}) {
+  if (!heldEnabled()) return null;
   const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
   if (!dataDir || !root || !heldAgyCommand(argv)) return null;
   try {
@@ -64,7 +64,7 @@ export async function heldPlan({ dataDir, argv, bot = false, log = console.error
 export function createHeldAgy({ client = null, source = null } = {}) {
   let id = source?.id ?? null;
   const adopting = Boolean(source);
-  let detached = false, handedOff = false, exited = null, muted = false;
+  let exited = null;
   let idle = false;   // ターンの間（endTurn の後、次の markTurn まで）。札は置かない（遅れて届いた置き直しで idle の子を付け直す対象に戻さない）
   let proc = null;
 
@@ -87,8 +87,6 @@ export function createHeldAgy({ client = null, source = null } = {}) {
       info = { code: null, signal: null, lost: true };
     }
     exited = info;
-    // 旧サーバーが手を離した（handOff）: proc は終わらせない（子は走り続ける。agent の置き場も消さない）
-    if (info.handedOff) return;
     proc.exitCode = info.code ?? null;
     proc.signalCode = info.signal ?? null;
     // 終わった子の記録を捨てる（保持役の側の控え）。つながりが切れて終わりが分からないときは触れない
@@ -103,10 +101,7 @@ export function createHeldAgy({ client = null, source = null } = {}) {
     get source() { return source; },
     get client() { return source?.client ?? client; },
     get adopting() { return adopting; },
-    /** 手を離した（detach の答えが来た）。この後の書き込み・止めは転送されない */
-    get handedOff() { return handedOff; },
-    get detached() { return detached; },
-    /** 子が終わった（または手を離した）ときの { code, signal, handedOff? } */
+    /** 子が終わったときの { code, signal } */
     get exited() { return exited; },
 
     /** AgySession.start が呼ぶ。保持役に子を起こさせ（付け直しは起こさない）、出力の読みを始める。proc は ChildProcess の最小の写し */
@@ -118,19 +113,19 @@ export function createHeldAgy({ client = null, source = null } = {}) {
         id = `${AGY_CHILD_PREFIX}${crypto.randomUUID().slice(0, 8)}`;
         // 出来事の購読は spawn より前（holderSource が先に購読を始める）。agy は spawn しただけでは何も出さない（最初の行を書いてから init）
         source = holderSource(client, { id, acked: 0, seq: 0, marks: {} }, { spawned: true });
-        client.spawn({ id, command: target.command, args: [...target.args, ...args], cwd: cwd || undefined, env, policy: 'none' });
+        client.spawn({ id, command: target.command, args: [...target.args, ...args], cwd: cwd || undefined, env, policy: 'none', keepMs: KEEP_MS });
       }
-      const onErr = frame => { if (frame.id === id && !detached && onStderr) onStderr(String(frame.chunk ?? '')); };
+      const onErr = frame => { if (frame.id === id && onStderr) onStderr(String(frame.chunk ?? '')); };
       source.client.on('err', onErr);
       const stdin = {
-        get writable() { return !detached && !exited; },
-        write(data) { if (!detached && !muted) source.write(String(data)); return true; },
-        end() { if (!detached) source.client.end(id); },
+        get writable() { return !exited; },
+        write(data) { source.write(String(data)); return true; },
+        end() { source.client.end(id); },
       };
       Object.assign(proc, { stdin, pid: null, killed: false, exitCode: null, signalCode: null });
       proc.kill = () => {
         proc.killed = true;
-        if (!detached && !exited) source.client.kill(id, { tree: true });
+        if (!exited) source.client.kill(id, { tree: true });
         return true;
       };
       proc.once('exit', () => source.client.off('err', onErr));
@@ -139,41 +134,24 @@ export function createHeldAgy({ client = null, source = null } = {}) {
     },
 
     /** ターンの最初の行を書く直前に打つ。印は次の行（保持役が子の出力の通番で数える）。再生はここから */
-    markTurn() { if (source && !detached && !exited) { idle = false; source.client.mark(id, ADOPT_TURN_MARK); } },
+    markTurn() { if (source && !exited) { idle = false; source.client.mark(id, ADOPT_TURN_MARK); } },
     /** 札を子に置く（server の touchCard が、札の中身が変わるたびに呼ぶ） */
-    label(card) { if (source && !detached && !idle) source.client.label(id, card); },
+    label(card) { if (source && !idle) source.client.label(id, card); },
 
-    /**
-     * 旧サーバーの手を離す口: 札を子に置いて detach し（答えが来た時点で、この親からの write は転送されない）、読みを止める。子は走り続ける
-     * （保持役が持つ）。呼び出し側は、これを待ってから AgySession を捨てる
-     */
-    async handOff(card) {
-      if (!source) throw new Error('antigravity: the CLI has not been started');
-      source.client.label(id, card);
-      await source.client.detach(id);
-      detached = true;
-      handedOff = true;
-      source.stop();
-    },
-
-    /** ターンが終わった（子は idle で次のターンを待つ）。札と印を外し、付け直す対象から外す。手を離した子・終わった子には触れない */
+    /** ターンが終わった（子は idle で次のターンを待つ）。札と印を外し、付け直す対象から外す。終わった子には触れない */
     endTurn() {
-      if (!source || detached || exited) return;
+      if (!source || exited) return;
       idle = true;
       // 1 回の書き込みで送る（札だけ外れて印が残る・その逆、を避ける。サーバーがすぐ落ちても半端にならない）
       source.client.sendBatch([{ t: 'label', id, label: null }, { t: 'unmark', id, name: ADOPT_TURN_MARK }]);
     },
 
-    /** プロセスが終わる間際に子を止める依頼（stdin を閉じ、木ごと止める）。続けて write せず、client.sendBatch で 1 回にまとめて送る。手を離した子・終わった子は空 */
+    /** アプリの終了で子を止める依頼（stdin を閉じ、木ごと止める）。続けて write せず、client.sendBatch で 1 回にまとめて送る。終わった子は空 */
     exitFrames() {
-      if (!source || detached || exited) return [];
+      if (!source || exited) return [];
       return [{ t: 'end', id }, { t: 'kill', id, tree: true }];
     },
 
-    /** テスト用: 子への書き込みを止める／戻す。止めている間の書き込みは捨てる */
-    mute(flag) { muted = Boolean(flag); },
-    /** テスト用: 読みを止める（子の出力は保持役に溜まり、このサーバーは処理も ack もしない）／再開する */
-    pause(flag) { source?.pause(flag); },
   };
   return held;
 }

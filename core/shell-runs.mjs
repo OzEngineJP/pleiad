@@ -9,7 +9,7 @@
 // - 'host' の会話では、行ごとに「渡さない」を選べる（ADR 0055）。渡さなかった行は次の発言の後、会話の記録の shellKept に移して会話に残す
 // - 出来事: shell.start / shell.output / shell.done / shell.skip / shell.handed（全部の接続へ）
 // - 'host' の行は、保持役があれば保持役の子に載せる（無停止の更新 段階 3。core/shell-held.mjs）。サーバーを入れ替えても走り続け、新しいサーバーが adopt で引き取って
-//   出力の続きと終わりを受ける。引き継ぎ（core/handover.mjs）の旧サーバーは handOff で手を離し、終わりでは止めない
+//   出力の続きと終わりを受ける。サーバーは終わりに子を止めない（起動で引き取る。ADR 0270）
 import { messageShellKey, runHostShell, shellKey, shellLines } from './host-shell.mjs';
 
 export const SHELL_TIMEOUT_MS = 10 * 60 * 1000;
@@ -99,11 +99,11 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     run.held = held;
     return held.drive({ signal: run.ac.signal, onOutput: (stream, text, replay) => { if (!replay) onOutput(stream, text); else if (text) run[stream] += text; } });
   }
-  /** 走り終えた（保持役の子は、手を離した・前のサーバーが記録し終えていた分を締めない。記録し終えたら子の記録を捨てる） */
+  /** 走り終えた（前のサーバーが記録し終えていた分は締めない。記録し終えたら子の記録を捨てる） */
   async function settle(run, result) {
-    if (result?.handedOff || result?.already) {
+    if (result?.already) {
       if (runs.get(run.runId) === run) runs.delete(run.runId);
-      if (result.already) run.held.finished();
+      run.held.finished();
       return;
     }
     try { await finish(run, result); } finally { run.held?.finished(); }
@@ -183,16 +183,6 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     emit({ type: 'shell.skip', sessionId, runId, skip: want });
     return { runId, skip: want };
   }
-  /**
-   * 引き継ぎ（core/server.mjs の handoverRun）: 保持役に載った分の手を離す。走っている分は一覧から外し、このサーバーの終わりで止めない。
-   * 終わりを記録に書いている最中の分は、書き終えるのを待つ（新しいサーバーが同じ終わりをもう一度書かない）
-   */
-  async function handOff() {
-    const held = [...runs.values(), ...closing.values()].filter(r => r.held);
-    for (const run of held) if (runs.get(run.runId) === run) runs.delete(run.runId);
-    await Promise.all(held.map(run => run.held.handOff().catch(e => console.error('shell: 手を離せなかった:', e?.message ?? e))));
-    return held.length;
-  }
   /** 起動: 前のサーバーが保持役に残した行を引き取る（core/shell-held.mjs の adoptable の { card, held }）。出力の続きと終わりをこのサーバーが受ける */
   function adopt(items) {
     let n = 0;
@@ -212,10 +202,9 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     for (const run of runs.values()) if (run.sessionId === sessionId) { run.ac.abort(); n++; }
     return n;
   }
-  /** 全部止める（サーバーの終わり。同期）。keepHeld は、保持役の子を止めずに手を離す（更新・落ちたときの起こし直し。ADR 0270）。
-   * 止めるときは札を外して止める（次の起動が引き取らない） */
-  function stopAll({ keepHeld = false } = {}) {
-    for (const run of runs.values()) { if (run.held) { if (!keepHeld) run.held.abandon(); } else run.ac.abort(); }
+  /** 全部止める（アプリの終了。同期）。保持役の子は札を外して止める（次の起動が引き取らない。ADR 0270 決定 4） */
+  function stopAll() {
+    for (const run of runs.values()) { if (run.held) run.held.abandon(); else run.ac.abort(); }
   }
   /** この会話で走っている分 */
   const runningIn = (sessionId) => [...runs.values()].some(r => r.sessionId === sessionId);
@@ -378,5 +367,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, wait, stop, setSkip, stopSession, stopAll, handOff, adopt, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, list, running: () => runs.size };
+  return { start, wait, stop, setSkip, stopSession, stopAll, adopt, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, list, running: () => runs.size };
 }

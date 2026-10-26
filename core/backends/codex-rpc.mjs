@@ -90,7 +90,6 @@ export class CodexRpc {
     this.acquire = acquire;
     this.heldChannel = null;    // 保持役の口（載せたとき）
     this.idPrefix = null;       // 載せたときの依頼の id の世代（文字列の id にする）
-    this.handedOff = false;     // 新しいサーバーへ手を離した（以後この app-server に書かない・読まない）
     this.lastSeq = 0;           // 載せたときに、処理し終えた記録の通番
     this.expecting = new Set(); // 付け直すスレッド。ハンドラーが付くまで、行き先の分からない frame を預かる
     this.proc = null;
@@ -246,22 +245,8 @@ export class CodexRpc {
     this.#child(id, parent, info, true);
   }
 
-  /** 新しいサーバーへ手を離した（保持役に detach した）。以後この app-server には何も書かず、何も読まない。待っている依頼は手を離したことで断る */
-  #handedOff() {
-    this.handedOff = true;
-    this.proc = null;
-    this.ready = null;
-    this.heldChannel = null;
-    const err = new Error(t("codex.errors.handedOff"));
-    for (const [, p] of [...this.pending]) p.reject(err);
-    this.pending.clear();
-    this.held = [];
-    this.expecting.clear();
-  }
-
   async start() {
     instances.add(this);
-    if (this.handedOff) throw new Error(t("codex.errors.handedOff"));
     if (this.proc && this.proc.exitCode === null && this.proc.signalCode === null) return this.ready;
     if (this.ready) return this.ready;
 
@@ -305,7 +290,6 @@ export class CodexRpc {
           },
           exit: (info) => die(info.error ? String(info.error) : `exit=${info.code} signal=${info.signal}`),
           lost: (reason) => die(String(reason)),
-          handedOff: () => this.#handedOff(),
           overflow: (frame) => this.#overflow(frame),
         });
       } else {

@@ -80,8 +80,7 @@ export function createMessageQueue({ store, active, start, changed, delivered })
           // Nothing was delivered (the agent was busy with a turn Pleiad did not start).
           // Back to the queue; that turn's end kicks the queue again.
           if (outcome === 'requeue') return serial(id, () => update(id, item.id, { status: 'queued', error: null }));
-          // 付け直しに渡したターン（handedOff）の続きは新しいサーバーが締める。このサーバーは保留にしない
-          if (outcome && outcome !== 'ok' && outcome !== 'handedOff') return pause(id);
+          if (outcome && outcome !== 'ok') return pause(id);
         }, e => serial(id, () => update(id, item.id, {
           status: accepted ? 'unknown' : 'failed', error: String(e.message ?? e),
         }))).finally(() => { ready(); kick(id).catch(() => {}); }).catch(() => {});

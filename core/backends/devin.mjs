@@ -188,9 +188,8 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         const local = new AbortController();
         let client, closePromise, sessionId = args.sessionId ?? null, mapper, verified = null, selectedMode = null, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null;
         let latestSession = null, latestSnapshot = null, latestMode = null;
-        // 保持役（無停止の更新 段 2b）: 子を載せたターンだけ。handedOff は旧サーバーが手を離した（続きは新しいサーバー）
-        let held = null, handedOff = false, handingOff = false, settleHandOff = () => {}, promptId = null, replaying = false, sentText = '', shownText = '';
-        const handedOffPromise = new Promise(resolve => { settleHandOff = resolve; });
+        // 保持役（無停止の更新 段 2b）: 子を載せたターンだけ
+        let held = null, promptId = null, replaying = false, sentText = '', shownText = '';
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -228,19 +227,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           shown: Buffer.byteLength(shownText) <= CARD_TEXT_MAX ? shownText : null,
           // 走っている途中送信の id（回の終わりの後に答えるので、付け直した側が決着を待ってから閉じる）
           prompts: client?.pendingPromptIds?.() ?? [] } });
-        // 札を保持役の子に置く口（server の touchCard が札の中身の変わるたびに呼ぶ）と、旧サーバーの手を離す口（core/handover.mjs）
+        // 札を保持役の子に置く口（server の touchCard が札の中身の変わるたびに呼ぶ）
         const bindHolder = () => {
           if (!control || !held) return;
-          control.holder = {
-            label: card => held.label(card),
-            handOff: async card => {
-              handingOff = true;
-              await held.handOff(card);
-              handedOff = true;
-              client?.markHandedOff?.();
-              settleHandOff();
-            },
-          };
+          control.holder = { label: card => held.label(card) };
           control.backendCard = backendCard;
           control.touch?.();
         };
@@ -339,7 +329,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             check();
             // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
             const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv } });
-            const plan = await heldAcpPlan({ dataDir, argv: launch.command, bot: Boolean(args.botInstructions), envName: 'AGENT_HOST_DEVIN_HOLDER' });
+            const plan = await heldAcpPlan({ dataDir, argv: launch.command, envName: 'AGENT_HOST_DEVIN_HOLDER' });
             held = plan ? createHeldAcp({ client: plan.client }) : null;
             client = await openClient(cwd, handlers, extraEnv, { held, launch });
             check();
@@ -402,9 +392,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             sent = true; onPromptDelivered?.(initialNativeId);
             control?.onReady?.();
           }
-          const result = await Promise.race([response, stopped, handedOffPromise]);
-          // 旧サーバーが手を離した。このターンはここで終わる（締めるのは付け直したサーバー）
-          if (handedOff) { emit({ type: 'turnResult', outcome: 'aborted' }); return { sessionId, handedOff: true }; }
+          const result = await Promise.race([response, stopped]);
           if (fatal) throw fatal;
           if (local.signal.aborted || result?.stopReason === 'cancelled') outcome = 'aborted';
           else if (['max_tokens', 'max_turn_requests'].includes(result?.stopReason)) outcome = 'limited';
@@ -418,23 +406,21 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
           // 途中送信で並んだ分がまだ回っていれば、その決着まで待つ（区切りが来ず次の回に回った分）。
-          // 中断・失敗・打ち切り・手を離したときは待たず、残りは close で拒否されて userMessage.dropped になる。
+          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる。
           // closing を先に立て、drain の間に届いた新しい途中送信は受理しない（次のターンで送る）。
           // drain 中に並んだ分の回が承認を求められるよう、prompting は drain が済むまで下ろさない
           closing = true;
-          if (outcome === 'ok' && !handedOff) await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
+          if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
           // 付け直したターンは、走っている途中送信の決着（回の終わりの後に届く返答）を待ってから閉じる
-          if (adopt && !handedOff) await client?.settleTrailing?.(1500);
+          if (adopt) await client?.settleTrailing?.(1500);
           prompting = false; verified = null; local.abort();
-          // ターンが終わった子は、付け直す対象から外してから止める（手を離した子には触れない）
-          if (!handedOff && !handingOff) held?.endTurn();
+          // ターンが終わった子は、付け直す対象から外してから止める
+          held?.endTurn();
           if (client) {
             try { await closeClient(); }
             catch (closeError) {
-              if (!handedOff) {
-                error = error ? new AggregateError([error, closeError], `${error.message}; ${closeError.message}`) : closeError;
-                outcome = 'error';
-              }
+              error = error ? new AggregateError([error, closeError], `${error.message}; ${closeError.message}`) : closeError;
+              outcome = 'error';
             }
           }
           if (sessionId) active.delete(sessionId);
@@ -444,7 +430,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             ...(outcome === 'limited' && error?.acpLimit ? { error: String(error.message), resetsAt: error.acpLimit.resetsAt, window: null } : {}) });
         }
         if (outcome === 'error') throw sent ? error : undelivered(error);
-        return { sessionId, ...(handedOff ? { handedOff: true } : {}) };
+        return { sessionId };
       });
     },
     /**

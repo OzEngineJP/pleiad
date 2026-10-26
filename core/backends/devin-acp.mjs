@@ -362,18 +362,6 @@ export class DevinAcp {
     }
   }
 
-  /**
-   * 旧サーバーが手を離した（保持役に detach した）。以後この子には書かない・読まない。
-   * 待っている依頼は残す（runTurn は handedOff で終わる。答えは新しいサーバーが受ける）
-   */
-  markHandedOff() {
-    if (this.gone) return;
-    this.gone = true;
-    this.closing = true;
-    this.reader.reset();
-    this.connectionAbort.abort();
-  }
-
   async close() {
     if (this.closed) return this.closed;
     this.closing = true;
@@ -383,8 +371,6 @@ export class DevinAcp {
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear();
     this.closed = (async () => {
-      // 手を離した子（保持役が持つ）は止めない
-      if (this.held?.handedOff) { this.gone = true; return; }
       if (this.held) { await this.held.close(); this.gone = true; return; }
       const child = this.proc;
       if (!child) { this.gone = true; return; }

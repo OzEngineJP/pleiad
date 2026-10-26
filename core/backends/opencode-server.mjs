@@ -175,5 +175,5 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
     begin:(id,since,accepted)=>protocol.begin(id,since,accepted),resync:options=>protocol.resync(options),
     subscribe(fn){listeners.add(fn);return()=>listeners.delete(fn);},onGone(fn){goneListeners.add(fn);return()=>goneListeners.delete(fn);},
     get running(){return Boolean((proc||heldChild)&&base);},get held(){return heldChild&&!heldChild.detached&&!heldChild.closed?heldChild:null;},
-    handedOff(){retired=true;stream?.abort();stream=null;heldChild=null;base=null;auth=null;servedOrigin=null;},stop:stopNow};
+    stop:stopNow};
 }

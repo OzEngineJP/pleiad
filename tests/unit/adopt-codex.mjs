@@ -1,7 +1,7 @@
 // 無停止の更新 段階 3: 保持役に載せた Codex の共有の app-server（fake の app-server。tests/lib/fake-codex.mjs）を、サーバーの入れ替えをまたいで引き継ぐ
 // （docs/zero-downtime-update/stage3-codex.md。載せ方は core/backends/codex-held.mjs、再生は codex-rpc.mjs の adoptThread・codex.mjs の adoptTurn）。
 //   1. 載せるかの切り替え: AGENT_HOST_CODEX_HOLDER=off では app-server は保持役の子にならない（今の流れ）。既定（置き場があって何も書かない）は保持役の子
-//   2. 途中で引き継ぐ（tests/lib/adopt-server.mjs の handOffCodex）: 共有の app-server を 1 回だけ detach し、新しいサーバー B が同じ app-server を引き継ぐ（initialize は送らない）。
+//   2. 途中で落とす（ADR 0270 の形: A を普通に止める）: 新しいサーバー B が同じ app-server を起動で引き継ぐ（initialize は送らない）。
 //      同時に走る 3 つのターン: 承認待ち（B に A と同じ id の承認が 1 つだけ）・ツールの実行中（ゲートを開くと B で終わる）・サブエージェント（子の承認が親の会話に出る）。
 //      どれも turnEnd・completedAt・使用量が 1 回だけ、restart の中断にならない
 //   3. 終わった直後: A が app-server の出力を読まないうちにターンが終わる（B が続きの側で締める）
@@ -87,10 +87,9 @@ export default async function (t) {
     try { return probe.welcome.children.filter(x => !x.id.startsWith('chrome-link-')); } finally { probe.close(); }   // 接続の子（Chrome への ws。ADR 0167）は数えない
   };
   let a = null, b = null, ca = null, cb = null, m1 = null, m2 = null, holderPid = null;
-  const adoptEntry = path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs');
-  // 旧サーバー A（手を離す口の入口つき）と、付け直す新サーバー B
-  const startA = async (extra = {}) => { a = await startServer({ env: { ...env, ...extra }, dataDir, timeoutMs: 40_000, entry: adoptEntry }); return a; };
-  const startB = async (extra = {}) => { b = await startServer({ env: { ...env, AGENT_HOST_ADOPT_HOLDER: '1', ...extra }, dataDir, timeoutMs: 40_000 }); return b; };
+  // 旧サーバー A と、付け直す新サーバー B
+  const startA = async (extra = {}) => { a = await startServer({ env: { ...env, ...extra }, dataDir, timeoutMs: 40_000 }); return a; };
+  const startB = async (extra = {}) => { b = await startServer({ env: { ...env, ...extra }, dataDir, timeoutMs: 40_000 }); return b; };
   // 1 つのターンが 1 回だけ締まったこと（turnEnd・完了時刻・restart の中断が無い・走っている印が片付く）
   const assertEndedOnce = (client, id, doneBefore, label) => {
     const ends = client.events.filter(e => e.type === 'turnEnd' && e.sessionId === id);
@@ -117,8 +116,8 @@ export default async function (t) {
       t.ok('切り替え: AGENT_HOST_CODEX_HOLDER=off では app-server は保持役の子にならない（今の流れ）', true);
     }
 
-    // サーバーが普通に終わる（main の shutdown。Windows では stop() の強制終了は 'exit' を走らせないので、本番と同じ main への口から終わらせる）ときは、
-    // 手を離していない app-server も止める（保持役の子は、サーバーが終わっても残るため）
+    // サーバーが普通に終わる（main の shutdown。Windows では stop() の強制終了は 'exit' を走らせないので、本番と同じ main への口から終わらせる）ときも、
+    // 手を離していない app-server は止めない（保持役の子は残り、次のサーバーが起動で拾う。止めるのはアプリの終了だけ。ADR 0270 決定 4）
     {
       const s = await startServer({ env: { ...base, AGENT_HOST_RUNTIME_ROOT: root, AGENT_HOST_HANDOVER: 'on' }, dataDir, timeoutMs: 40_000 });
       const main = await attachMain(dataDir, s);
@@ -133,25 +132,13 @@ export default async function (t) {
         c.close();
         main.link.postMessage({ type: 'shutdown' });
         await until(() => s.child.exitCode !== null, WAIT_MS, 'サーバーが終わる');
-        await until(() => !alive(appServer), WAIT_MS, '手を離していない app-server は、サーバーが終わると止まる').catch(async error => {
-          const log = (await fs.readFile(path.join(root, 'logs', 'holder.log'), 'utf8').catch(() => '')).split('\n').filter(l => !/parent (dis)?connected/.test(l)).slice(-15).join('\n');
-          throw new Error(`${error.message}\n${JSON.stringify((await holderChildren()).map(x => [x.id, x.alive, x.pid]))}\n${s.tail(20)}\n${log}`);
-        });
+        await sleep(500);
+        assert.ok(alive(appServer), 'サーバーが終わっても、手を離していない app-server は止まらない（次の起動が拾う）');
       } finally { c.close(); try { main.link.kill(); } catch { /* 終わっている */ } await s.stop(); }
-      t.ok('サーバーが終わるとき（main の shutdown）、手を離していない app-server は止まる（保持役の子が残らない）', true);
+      t.ok('サーバーが普通に終わる（main の shutdown）: 手を離していない app-server は止めない（次の起動が起動で拾う。アプリの終了だけが止める）', true);
     }
 
-    a = await startServer({ env, dataDir, timeoutMs: 30_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
-    const scene = async (sceneName, input = {}) => {
-      const done = path.join(scenesDir, `${sceneName}.done`);
-      await fs.writeFile(path.join(scenesDir, `${sceneName}.tmp`), JSON.stringify(input));
-      await fs.rename(path.join(scenesDir, `${sceneName}.tmp`), path.join(scenesDir, `${sceneName}.go`));
-      const text = await until(() => fs.readFile(done, 'utf8').catch(() => null), WAIT_MS, `場面 ${sceneName}\n${a.tail(10)}`);
-      await fs.rm(done);
-      const out = JSON.parse(text);
-      if (!out.ok) throw new Error(out.error);
-      return out.value;
-    };
+    a = await startServer({ env, dataDir, timeoutMs: 30_000 });
     // 承認は、準備の間だけ自動で通す（auto）。測るターンの承認は自分で見て答える
     let auto = true;
     const approver = async (ev, self) => { if (auto && ev.type === 'permission') await self.cmd('resolvePermission', { id: ev.id, allow: true }).catch(() => {}); };
@@ -168,7 +155,8 @@ export default async function (t) {
     {
       const children = await holderChildren();
       assert.deepEqual(children.map(x => [x.id, x.alive, x.policy]), [['codex-app-server', true, 'jsonrpc']], '既定: 共有の app-server が保持役の子（1 本）');
-      assert.equal((await initializes()), 3, 'initialize は app-server ごとに 1 回（off の server・終了の試験の server・この A）');
+      // 前のサーバー（終了の試験）が残した app-server を、A が起動で引き継ぐ（initialize は送らない）。initialize は off の server と、終了の試験で起こした 1 本の 2 回
+      assert.equal((await initializes()), 2, 'initialize は app-server ごとに 1 回（off の server・前のサーバーが起こした 1 本。A は引き継ぐだけ）');
     }
     t.ok('既定（置き場があって何も書かない）: 共有の app-server は保持役の子 1 本。会話をまたいで同じ app-server', true);
     const appServerPid = (await holderChildren())[0].pid;
@@ -183,25 +171,24 @@ export default async function (t) {
     const askD = await ca.waitFor(e => e.type === 'permission' && e.sessionId === ids.D, { ms: WAIT_MS, from: markA });
     await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.S, { ms: WAIT_MS, from: markA });
     await sleep(400);   // 札の置き直しが保持役へ届くまで
-    const taken = await scene('handOffCodex', { sessionIds: Object.values(ids) }).catch(e => { throw new Error(`${e.message}
-${a.tail(15)}`); });
-    for (const k of Object.keys(prompts)) assert.ok(taken[ids[k]].card.backendCard?.held, `${k}: 札に Codex の欄`);
-    assert.deepEqual(taken[ids.Q].card.waits, [askQ.id], 'Q: 札に出している承認の id');
-    await sleep(300);
-    for (const k of Object.keys(prompts)) assert.equal(ca.since(markA).filter(e => e.sessionId === ids[k] && ['turnEnd', 'turnResult'].includes(e.type)).length, 0, `A は ${k} を締めない`);
     ca.close(); ca = null;
-    await a.stop(); a = null;
+    // A を普通に落とす（更新・落ちたときと同じ道。保持役の子は止めない）
+    await a.kill(); a = null;
 
     // 保持役の子: 札つきで走り続けている（B より前にテストがつなぐ。親は 1 つ）
+    const taken = {};
     {
       const [child] = await holderChildren();
       assert.equal(child.alive, true, 'app-server は走り続けている');
       assert.equal(child.pid, appServerPid, '同じ app-server');
       assert.deepEqual(Object.keys(child.label.turns).sort(), Object.values(ids).map(id => sessionMeta(id).nativeId ?? id).sort(), '札に 3 つのターン');
       assert.equal(child.pendingRequests.length, 2, '答えていない依頼が控えにある（Q の承認と D の子の承認）');
+      for (const k of Object.keys(prompts)) taken[ids[k]] = { card: child.label.turns[sessionMeta(ids[k]).nativeId ?? ids[k]] };
     }
+    for (const k of Object.keys(prompts)) assert.ok(taken[ids[k]].card.backendCard?.held, `${k}: 札に Codex の欄`);
+    assert.deepEqual(taken[ids.Q].card.waits, [askQ.id], 'Q: 札に出している承認の id');
 
-    b = await startServer({ env: { ...env, AGENT_HOST_ADOPT_HOLDER: '1' }, dataDir, timeoutMs: 30_000 });
+    b = await startServer({ env, dataDir, timeoutMs: 30_000 });
     cb = await open({ port: b.port, token: b.token, onEvent: approver });
     const askBQ = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS });
     const askBD = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.D, { ms: WAIT_MS });
@@ -237,7 +224,7 @@ ${b.tail(20)}`); });
       assert.equal(q.messages.flatMap(x => x.toolCalls ?? []).filter(c => String(c.result?.text).endsWith('hi')).length, 1, 'Q: 承認の後のツールの結果が 1 回');
     }
     assert.equal((await holderChildren())[0].pid, appServerPid, 'B も同じ app-server を使っている');
-    assert.equal((await initializes()), 3, 'B は initialize を送らない（付け直した app-server は initialize 済み）');
+    assert.equal((await initializes()), 2, 'B は initialize を送らない（付け直した app-server は initialize 済み）');
     assert.ok(!b.tail(200).includes('[unhandledRejection]'), b.tail(20));
     assert.ok(b.tail(200).includes('ターンを付け直した'), b.tail(20));
     t.ok('承認待ち・子の承認待ち・ツールの実行中: 1 回の入れ替えで共有の app-server を引き継ぎ、B に同じ id の承認が 1 つずつ出て、答える・ゲートを開くと続いて 1 回だけ締まる（initialize は送らない）', true);
@@ -256,13 +243,17 @@ ${b.tail(20)}`); });
       void ca.cmd('sendMessage', { sessionId: ids.T, messageId: 'tail-T-0001', prompt: 'gate:t-tool' }).catch(() => {});
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.T, { ms: WAIT_MS, from: markT });
       await sleep(400);
-      await scene('pauseCodex', { paused: true });
+      ca.close(); ca = null;
+      await a.kill(); a = null;
+      // A が居ない間に、app-server はターンを終える（終わりの行は誰も読まない）
       await gates.open('t-tool');
       await until(async () => (await calls()).some(c => c.method === 'gate-completed' && c.gate === 't-tool'), WAIT_MS, 'app-server がターンを終える（A は読んでいない）');
-      const takenT = await scene('handOffCodex', { sessionIds: [ids.T] });
-      assert.equal(ca.since(markT).filter(e => e.sessionId === ids.T && ['turnEnd', 'turnResult'].includes(e.type)).length, 0, 'A は T を締めない（終わりの行を読んでいない）');
-      ca.close(); ca = null;
-      await a.stop(); a = null;
+      const takenT = {};
+      {
+        const [child] = await holderChildren();
+        takenT[ids.T] = { card: child.label.turns[sessionMeta(ids.T).nativeId ?? ids.T] };
+        assert.ok(takenT[ids.T].card, 'T: 札にターンが残る');
+      }
       await startB();
       cb = await open({ port: b.port, token: b.token });
       await cb.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids.T, { ms: WAIT_MS }).catch(e => { throw new Error(`T: ${e.message}
@@ -329,24 +320,16 @@ ${b.tail(20)}`); });
       const askH = await ca.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q2, { ms: WAIT_MS, from: markH });
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.S2, { ms: WAIT_MS, from: markH });
       const usageBefore = { Q2: readUsage(dataDir).records.filter(r => r.sessionId === ids.Q2).length, S2: readUsage(dataDir).records.filter(r => r.sessionId === ids.S2).length };
-      {
-        const running = await until(async () => { const r = await ca.cmd('running'); return r.turns.filter(x => x.held).length === 2 ? r : null; }, WAIT_MS, 'Codex の 2 つのターンが held');
-        assert.equal(running.handover.blocking, 0, '保持役に載った Codex のターンは、切り替えを待たせない');
-        assert.ok(running.permissions.find(p => p.id === askH.id)?.held, '承認待ちも held');
-      }
       await sleep(400);   // 札の置き直しが保持役へ届くまで
       const initsAtHandover = await initializes();
-      b = await startServer({ env: envH, dataDir, timeoutMs: 60_000, args: ['--handover'], lazy: true });
-      await sleep(800);
-      const reply = await m1.request('handover');
-      assert.equal(reply.ok, true, JSON.stringify(reply));
-      assert.deepEqual([...reply.handed].sort(), [ids.Q2, ids.S2].sort(), '渡したターン');
-      await until(() => a.child.exitCode !== null, 20_000, 'S1 が終わる');
-      await b.ready();
-      assert.equal(b.port, a.port, 'S2 は S1 と同じポートで待ち受ける');
-      m2 = await attachMain(dataDir, b);
+      const portA = a.port, tokenA = a.token;
       ca.close(); ca = null;
-      cb = await open({ port: a.port, token: a.token });
+      // A を普通に止める（main が更新で止めるときと同じ道）。保持役の子は止めない
+      await a.kill(); a = null;
+      b = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA), AGENT_HOST_TOKEN: tokenA }, dataDir, timeoutMs: 60_000 });
+      assert.equal(b.port, portA, 'B は A と同じポートで待ち受ける');
+      m2 = await attachMain(dataDir, b);
+      cb = await open({ port: portA, token: tokenA });
       const askB = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q2, { ms: WAIT_MS });
       await sleep(500);
       assert.equal(askB.id, askH.id, 'Q2: 承認の id は S1 と同じ');
@@ -371,20 +354,18 @@ ${b.tail(20)}`); });
         await until(async () => !bgOf(await cb.cmd('running'))?.tasks?.length, WAIT_MS, '止めた端末が running から消える');
       }
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
-      t.ok('引き継ぎ（本物の道）: 保持役に載った Codex のターン（承認待ち・ツールの実行中）は切り替えを待たせず、S1 が渡して終わり、S2（--handover）が同じトークン・ポートで付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
+      t.ok('main が起こした起動: A を普通に止めて B を同じトークン・ポートで起こすと、保持役の Codex のターン（承認待ち・ツールの実行中）を起動で付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
       t.ok('裏の端末: 引き継ぎで止まらないもの（held）。S2 が app-server に聞き直して数え直し、止めるとターンの外の item/completed で消える', true);
       cb.close(); cb = null;
       m2.link.leave(); m2 = null;
-      try { m1.link.kill(); } catch { /* S1 は終わっている */ }
-      m1 = null;
+      m1 = null;   // A と一緒に切れている
       await b.stop(); b = null;
-      a = null;
     }
 
     // 7. 後片付け: 保持役に shutdown を送り、保持役の子（fake の app-server）が全部終わる
     {
       const pids = (await holderChildren()).filter(x => x.alive && x.pid).map(x => x.pid);
-      // Windows は stop() の強制終了で server の 'exit' が走らず、手を離していない app-server が残る。Linux はシグナルで終わる server が止める（残っていなくてよい）
+      // 保持役に残っている app-server を、保持役の shutdown で止める（アプリの終了の道）
       const probe = await connectHolder({ dataDir, root });
       probe.shutdown();
       probe.close();

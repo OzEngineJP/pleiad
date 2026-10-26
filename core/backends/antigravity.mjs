@@ -374,8 +374,6 @@ export const backend = {
     let delivered = Boolean(adopt);   // プロンプトを渡した（渡せなかったターンは控えに残さない）。付け直しは旧サーバーが渡し済み
     // このターンで発言の前に足したネイティブの指示ファイル（カスタムエージェントが読めない分の補填）。server が会話の記録（contextRecord）に載せる
     let nativeInjected = null;
-    let handedOff = false;         // 旧サーバーが新しいサーバーへ手を離した（以後、このサーバーは控えに書かない・締めない）
-    let handingOff = false;        // 手を離している最中（札を子に置いて detach する）
     let writes = Promise.resolve();
     let queued = false;            // 積んだまま、まだ始まっていない書き込みがある（次のを積まない。始まるときに最新を読む）
     let final = null;              // 終わりに書く分（畳んだ後に遅れて届いた出来事を混ぜない）
@@ -390,7 +388,7 @@ export const backend = {
     ];
     const save = ({ last = false } = {}) => {
       // 畳んだ後は終わりの分（seal）だけを書く。遅れて届いた出来事で書き直さない
-      if (!delivered || !conversationId || queued || handedOff || (final && !last)) return writes;
+      if (!delivered || !conversationId || queued || (final && !last)) return writes;
       queued = true;
       writes = writes.then(() => {
         queued = false;
@@ -409,7 +407,7 @@ export const backend = {
     /** ターンの終わりの分を書く。成功なら完了の時刻で、控えが無ければ作る（今までどおり） */
     const seal = ({ ok }) => {
       clearTimeout(textTimer);
-      if (final || !delivered || handedOff) return writes;
+      if (final || !delivered) return writes;
       final = { messages: snapshot(Date.now()), create: ok || !resumed,
         turnResult: resultTrace ? { sentAt, at: new Date().toISOString(), ...resultTrace } : null };
       return save({ last: true });
@@ -690,23 +688,11 @@ export const backend = {
     const backendCard = () => ({ held: true, agy: { sentAt, resumed, sentHash: sent === null ? null : digest(sent), home: session.home ?? null, keys: session.keys ?? null,
       hookRuns: session.hookRuns ? { file: session.hookRuns.file, offset: session.hookRuns.offset,
         old: session.hookRuns.old ? { file: session.hookRuns.old.file, offset: session.hookRuns.old.offset } : null } : null } });
-    // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）と、旧サーバーの手を離す口（core/handover.mjs の detach）
+    // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）
     const bindHolder = () => {
       const held = session.held;
       if (!control || !held) return;
-      control.holder = {
-        label: (card) => held.label(card),
-        handOff: async (card) => {
-          // 手を離す最中に結果が届いてターンが終わっても、札と印は外さない（終わった直後のターンを付け直す側が、記録の結果から締める）
-          handingOff = true;
-          await save();   // 控え（会話の記録）を最新にしてから手を離す。新しいサーバーは同じ uuid で書き直す
-          await held.handOff(card);
-          handedOff = true;
-          clearTimeout(textTimer);
-          settle?.();
-        },
-      };
-      session.holder = control.holder;   // テストの入口（handOffAgy）が引く
+      control.holder = { label: (card) => held.label(card) };
       control.backendCard = backendCard;
       control.touch?.();
     };
@@ -757,8 +743,6 @@ export const backend = {
         save();
       }
       await finished;
-      // 旧サーバーが手を離した。このターンはここで終わる（出来事は server が捨てる。締めるのは付け直したサーバー）
-      if (handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: conversationId, handedOff: true }; }
       await reportHookRuns(session, hooksRuntime, emit);
 
       // 終わりの分を書く（時刻は発言ごとに変える: ユーザーは送信時、AI は完了時。提示はこの間に入る）。
@@ -773,7 +757,6 @@ export const backend = {
       }
       if (failed) throw failed;
     } catch (err) {
-      if (handedOff) { emit({ type: "turnResult", outcome: "aborted" }); return { sessionId: conversationId, handedOff: true }; }
       if (resultTrace?.outcome === "ok") resultTrace = { ...resultTrace, source: "postResultException", outcome: "error",
         error: String(err?.message ?? err).slice(0, 1000) };
       else resultTrace ??= { source: "exception", status: null, outcome: "error", error: String(err?.message ?? err).slice(0, 1000) };
@@ -787,8 +770,8 @@ export const backend = {
       // 途中で投げた（seal まで来なかった）ときも、そこまでの分を書いてから返す。
       // 積んだ書き込みを待つ（server はターンの後に控えを読む。次のターンの書き込みとも重ねない）。手を離したターンは新しいサーバーが書く
       await seal({ ok: false });
-      // 保持役の子はターンが終わっても会話のあいだ生きる（idle）。札と印を外し、付け直す対象から外す。手を離した子には触れない
-      if (!handedOff && !handingOff) session.held?.endTurn();
+      // 保持役の子はターンが終わっても会話のあいだ生きる（idle）。札と印を外し、付け直す対象から外す
+      session.held?.endTurn();
       if (control) { control.handle = null; control.steer = null; control.holder = null; control.backendCard = null; }
     }
 
@@ -803,23 +786,6 @@ export const backend = {
   async adoptTurn(args) {
     if (!args.card?.held || !args.card.agy || typeof args.source?.write !== "function") throw new Error("antigravity: the turn was not on the holder");
     return backend.runTurn(args, { source: args.source, card: args.card });
-  },
-
-  /**
-   * 引き継ぎ（core/server.mjs の handoverRun。旧サーバーが手を離した後、預かり物を置く前）: ターンの無い（idle の）保持役の agy を止める。
-   * 走っているターンは手を離して新しいサーバーが付け直すが、idle の子は新しいサーバーが知らない（札が無い）ので、残すと止める人が居なくなる。
-   * 次のターンは agy を起こし直す（会話は --conversation で続く）。止めた数を返す
-   */
-  releaseIdle() {
-    let stopped = 0;
-    for (const [id, session] of [...live]) {
-      if (!session.held || session.held.handedOff) continue;
-      try { session.kill(); } catch {}
-      release(id, session);
-      session.cleanup();
-      stopped++;
-    }
-    return stopped;
   },
 
   // ---- セッション管理 -----------------------------------------------------
@@ -1036,7 +1002,7 @@ async function stopCommand(session, command, taskId) {
 async function agyPidOf(session) {
   if (Number.isInteger(session.pid)) return session.pid;
   const held = session.held;
-  if (!held || held.handedOff) return null;
+  if (!held) return null;
   const known = held.source?.attachedState?.pid ?? held.source?.state?.pid;
   if (Number.isInteger(known)) return known;
   const holderPid = held.client?.pid;
@@ -1046,60 +1012,40 @@ async function agyPidOf(session) {
   return pickHeldAgy(await listProcesses({ parent: holderPid }), { holderPid, markers });
 }
 
+/**
+ * アプリの終了で、保持役の agy（idle の子も、走っている子も）を止める（server の stopHeldChildren）。更新・落ちたときは呼ばない
+ * （保持役の子は残り、新しいサーバーが起動で拾う。idle の子は次の起動の最初の保持役の使用が止める。sweepIdle）
+ */
+export async function stopHeldAgy() {
+  for (const [id, session] of [...live]) {
+    if (!session.held) continue;
+    try { session.kill(); } catch {}
+    release(id, session);
+    session.cleanup();
+  }
+}
+
 /** 引けた一覧だけを覚える（失敗は覚えない。前に引けた一覧を残す） */
 function rememberModels(list) {
   if (!list?.rows?.length) return;
   modelCache = buildAgyModels(list.rows, list.defaultLabel);
 }
 
-// サーバが終わったら、生かしている agy を道連れにする。
+// サーバが終わったら、サーバーの子として起こした agy を道連れにする（保持役の子には触れない。新しいサーバーが起動で拾う。ADR 0270）。
 // **SIGINT / SIGTERM のハンドラは足さない**（server はワーカースレッドでも動く。
 // 既定の終了挙動を変えないため、`exit` の範囲に留める）。
 process.once("exit", () => {
   const gone = [];
-  const frames = new Map();   // 保持役の子を止める依頼を、保持役への接続ごとに 1 回の書き込みにまとめる（続けて write すると、終わる前に最初の 1 つしか出ない）
   for (const session of live.values()) {
-    // 保持役に手を離した子は保持役が持つ（新しいサーバーが付け直す）。agent の置き場も残す
-    if (session.held?.handedOff) continue;
-    if (session.held) {
-      const client = session.held.client;
-      if (client) frames.set(client, [...(frames.get(client) ?? []), ...session.held.exitFrames()]);
-      session.proc = null;
-    } else try { session.kill(); } catch {}
+    // 保持役の子は保持役が持つ（新しいサーバーが付け直す。アプリの終了は stopHeldChildren が止める）。agent の置き場も残す
+    if (session.held) continue;
+    try { session.kill(); } catch {}
     // Pleiad のコンテキストを渡したエージェント定義も消す（agy の exit はもう受け取れない）
     session.cleanup();
     if (session.pid) gone.push(session.pid);
   }
   live.clear();
   pids.forget(...gone);
-  for (const [client, list] of frames) { try { client.sendBatch(list); } catch {} }
 });
-
-/**
- * 旧サーバーの手を離す口（テストの入口 tests/lib/adopt-server.mjs が呼ぶ。本番は core/handover.mjs が control.holder.handOff を呼ぶ）: 札（server の handOffTurn の card）を
- * 保持役の子に置いて detach する。sessionId は agy の会話の id
- */
-export async function handOffAgy(sessionId, card) {
-  const session = live.get(sessionId);
-  if (!session?.holder) throw new Error(`antigravity: no held turn to hand off (${sessionId})`);
-  await session.holder.handOff(card);
-  return { childId: session.held.id };
-}
-
-/** テスト用: 保持役の子への書き込みを止める／戻す。止めている間の書き込みは捨てる */
-export function muteAgyHeld(sessionId, muted) {
-  const session = live.get(sessionId);
-  if (!session?.held) throw new Error(`antigravity: no held session (${sessionId})`);
-  session.held.mute(muted);
-  return true;
-}
-
-/** テスト用: 読みを止める（agy の出力は保持役に溜まり、このサーバーは処理も ack もしない）／再開する */
-export function pauseAgyHeld(sessionId, paused) {
-  const session = live.get(sessionId);
-  if (!session?.held) throw new Error(`antigravity: no held session (${sessionId})`);
-  session.held.pause(paused);
-  return true;
-}
 
 export { MODES, TOOL_HINTS, botSessionKey, turnResultFor, usageFor };

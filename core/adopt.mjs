@@ -1,66 +1,30 @@
 // 走っているターンの付け直し（無停止の更新 2b-4。docs/zero-downtime-update/stage2-server-state.md §4.2-§4.4・§5、design.md §4.5）。
 // サーバーの adoptTurn とバックエンドの adoptTurn が使う、付け直す元（source）の形と、記録の再生の道。
+// サーバーは起動のたびに、保持役の子の一覧から自分の分（札とターンの印を持つ子）を拾う（ADR 0270 の規則 ③）。
 //
 // 付け直す元（source）は、保持役の子 1 つ分の見え方（core/holder/protocol.mjs の「子の状態」と replay・attach・ack）:
 //   state      … { id, alive, exitCode, signal, error, label（札）, seq, first, acked, marks: { name: seq }, truncated }
-//   attachable … 続きを受けられるか（保持役の子なら生死によらず真。ファイルの元は終わった子だけ）
+//   attachable … 続きを受けられるか（保持役の子なら生死によらず真）
 //   replay(from, to) … 記録の [seq, line] の配列
 //   attach(from)     … from 以降の { seq, line } を順に、最後に { exit: { code, signal, error } } を返す非同期の列
 //   ack(seq)         … アプリのループで処理し終えた最後の行
-// 元は 2 つ: 保持役の子につないだ元（holderSource・readHolderSources。2b-5。接続は core/holder/link.mjs の共有の口）と、
-// テストが「終わっていたターン」を置くファイルの元（readAdoptSources。AGENT_HOST_ADOPT_FROM）。
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { holderLink } from './holder/link.mjs';
 
 /** ターンの始まりの印の名前（保持役の mark。再生はここから） */
 export const ADOPT_TURN_MARK = 'turn';
-
-/** 付け直す元のファイル（テスト用。保持役の welcome.children の形に、子ごとの記録 lines を足したもの） */
-export const ADOPT_FILE = 'children.json';
-
-/**
- * ファイルの付け直す元を読む（AGENT_HOST_ADOPT_FROM。テストだけが付ける）。
- * <dir>/children.json = { children: [{ ...子の状態, lines: [[seq, line], ...] }] }。読むだけで書かない（ack はメモリに持つ）
- */
-export async function readAdoptSources(dir) {
-  const parsed = JSON.parse(await fs.readFile(path.join(dir, ADOPT_FILE), 'utf8'));
-  return (Array.isArray(parsed?.children) ? parsed.children : []).map(fileSource);
-}
-
-function fileSource(child) {
-  const { lines: raw, ...state } = child ?? {};
-  const lines = (Array.isArray(raw) ? raw : []).filter(l => Array.isArray(l) && Number.isInteger(l[0]) && typeof l[1] === 'string');
-  const source = {
-    id: String(state.id ?? ''),
-    state: { ...state, acked: Number.isInteger(state.acked) ? state.acked : 0, marks: state.marks ?? {} },
-    // ファイルの元には生きた子が無いので、終わった子だけ続きを受けられる（生きた子は 2b-5 の保持役の元）
-    attachable: state.alive === false,
-    acked: Number.isInteger(state.acked) ? state.acked : 0,
-    async replay(from, to) { return lines.filter(([seq]) => seq >= from && seq <= to); },
-    async *attach(from) {
-      if (!source.attachable) throw new Error('adopt: the child is not attachable');
-      for (const [seq, line] of lines) if (seq >= from) yield { seq, line };
-      yield { exit: { code: state.exitCode ?? null, signal: state.signal ?? null, error: state.error ?? null } };
-    },
-    ack(seq) { if (seq > source.acked) source.acked = seq; },
-  };
-  return source;
-}
 
 /**
  * 保持役の子 1 つ分の元（core/holder/client.mjs の HolderClient を包む）。state は保持役の子の状態（welcome.children の 1 件か、自分で起こした子の見込み）。
  * 生きた子も続きを受けられる。attach(from) は out・exit をキューへ溜めて順に返す（attach の答えの直後の行を取りこぼさないよう、出来事の購読は
  * ここで先に始める）。spawned: true は、自分が spawn した子（spawn で最初から親に付いている。attach を送り直さない）。
  * 付け直す側の取り分は write（子の stdin へ。承認の答え・途中送信）・release（終わった子の記録を捨てる。終わりの記録を処理し終えた後）・dispose（購読をやめる）。
- * stop() は手を離すとき（旧サーバーの detach の後）に、読みの列を { exit: { handedOff: true } } で終わらせる。paused はテスト用（読みを止めて、保持役に溜めさせる）
  * redelivered: true は、保持役が付け直しで渡し直す控え（attach の from より前の mcp_message・elicitation。core/holder/holder.mjs）も
  * { seq, line, redelivered: true } で列に入れる（Claude の付け直しは SDK へ流し直す。2c）。attach の答え（子の状態と pendingRequests）は attachedState に残す
  */
 export function holderSource(client, state, { spawned = false, redelivered = false } = {}) {
   const id = String(state.id);
   const queue = [];
-  let wake = null, stopped = false;
+  let wake = null;
   // attach の前の write は保持役が捨てる（subscribe していない親は子に触れない）。attach の後に順に送る（付け直す側が最初に出す中断など）
   let attached = spawned;
   const early = [];
@@ -81,7 +45,6 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
     state: { ...state, acked: Number.isInteger(state.acked) ? state.acked : 0, marks: state.marks ?? {} },
     attachable: true,
     acked: Number.isInteger(state.acked) ? state.acked : 0,
-    paused: false,
     async replay(from, to) {
       const { lines, truncated } = await client.replay(id, from, to);
       if (truncated) throw new Error('adopt: the record was truncated');
@@ -98,8 +61,7 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
     async *attach(from) {
       await source.open(from);
       for (;;) {
-        while (!stopped && (source.paused || !queue.length)) await new Promise(resolve => { wake = resolve; });
-        if (stopped) { yield { exit: { handedOff: true } }; return; }
+        while (!queue.length) await new Promise(resolve => { wake = resolve; });
         const item = queue.shift();
         if (item.lost) throw new Error(`adopt: the holder connection was lost (${item.lost})`);
         if (item.exit) { yield item; return; }
@@ -112,8 +74,6 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
     ack(seq) { if (seq > source.acked) { source.acked = seq; client.ack(id, seq); } },
     write(data) { if (attached) return client.write(id, data); early.push(data); return true; },
     release() { return client.release(id); },
-    stop() { stopped = true; poke(); },
-    pause(flag) { source.paused = Boolean(flag); poke(); },
     dispose() { client.off('out', onOut); client.off('exit', onExit); client.off('disconnect', onDisconnect); },
   };
   return source;
@@ -121,8 +81,7 @@ export function holderSource(client, state, { spawned = false, redelivered = fal
 
 /**
  * 起動で付け直す、保持役の子の元（無停止の更新 2b-5）。居る保持役にだけつなぐ（起こさない）。付け直せるのは、札（label）と
- * ターンの印を持つ子だけ（旧サーバーが手を離すときに置く。stage2-server-state.md §6 の 2b-5 の実装のメモ）。居なければ空。
- * 控えの渡し直しも列に入れる（Claude の付け直しが SDK へ流す。2c。fake の held: の記録には控えが無い）
+ * ターンの印を持つ子だけ。居なければ空。控えの渡し直しも列に入れる（Claude の付け直しが SDK へ流す。2c）
  */
 export async function readHolderSources({ dataDir, root, appVersion = '', log = () => {} } = {}) {
   let client;
@@ -137,22 +96,6 @@ export async function readHolderSources({ dataDir, root, appVersion = '', log = 
     else if (child.label && Number.isInteger(child.marks?.[ADOPT_TURN_MARK])) sources.push(holderSource(client, child, { redelivered: true }));
   }
   return sources;
-}
-
-/**
- * 起動で、保持役の子の札（label.waits）が今も待っている承認の id を集める（付け直さない起動でも、カードの行を
- * 取り下げてよいかを決めるため。ADR 0270 段 3）。居る保持役にだけつなぎ、起こさない。居なければ空。
- * readHolderSources と同じ共有の口を使うので、どちらが先でも取り合わない
- */
-export async function readHeldWaitIds({ dataDir, root, appVersion = '', log = () => {} } = {}) {
-  let client;
-  try { client = await holderLink({ dataDir, root, appVersion, launch: false, log }); }
-  catch (error) { if (error?.code === 'HOLDER_NONE') return new Set(); throw error; }
-  const ids = new Set();
-  for (const child of client.welcome?.children ?? []) {
-    for (const id of child.label?.waits ?? []) if (typeof id === 'string' && id) ids.add(id);
-  }
-  return ids;
 }
 
 /**

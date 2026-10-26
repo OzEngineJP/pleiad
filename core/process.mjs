@@ -162,13 +162,17 @@ export function spawnChild(command, args = [], options = {}) {
   return spawn(command, Array.isArray(args) ? args.map(String) : [], options);
 }
 
+/** 親（サーバー）が居ないまま残った子を、保持役が止めるまでの既定（アプリが落ちた後も残り続けない保険。ADR 0270 決定 4） */
+export const KEEP_MS = 10 * 60_000;
+
 /**
  * 保持役に子を起こさせる。戻り値は { id, client, source }。source は core/adopt.mjs の holderSource（記録・write・ack）。
  * marks は { 名前: 通番 }（既定は 1）。起こした子の記録を、起動で拾い直せるように印を置く。
+ * keepMs は、親が居ない状態が続いたら保持役が子を止めるまでの ms（既定は KEEP_MS。0 で止めない）。
  * 保持役を使えない（置き場が無い・Electron の off 経路）ときは null。起こせない・つなげないときは投げる（呼び出し側が今の流れに落とす）
  */
 export async function start({
-  id, command, args = [], cwd, env, policy = 'none', label = null, marks = {}, keepMs = 0,
+  id, command, args = [], cwd, env, policy = 'none', label = null, marks = {}, keepMs = KEEP_MS,
   dataDir, root, key = '', appVersion = '', log = () => {}, idleMs = undefined,
 } = {}) {
   const holderRoot = holderRootFor({ dataDir, root });

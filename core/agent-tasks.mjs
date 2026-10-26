@@ -480,11 +480,10 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
   // adopted: 付け直した子のターン（adopt）の、結果を確定する側（task, signal）=> execute と同じ形の結果。1 回目の実行だけ、実行の開始を書かずにこれを待つ
   async function run(r, controller, adopted = null, adoptedPrompt) {
     // stalled: 実行の開始を保存できなかった。子は動かしていないので queued のまま、次のタイマーでやり直す
-    let stalled = false, requeued = false, activeInstructionIds, handedOff = false;
+    let stalled = false, requeued = false, activeInstructionIds;
     // close()（正常終了）の abort。止めたことは書かず、走っていた状態のままファイルに残す（再起動で interrupted になる。
-    // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く。
-    // 子のターンを新しいサーバーへ渡した（execute が handedOff を返した）ときも、結果は新しいサーバーが書く
-    const halted = () => (closed && r.status !== 'cancelling') || handedOff;
+    // docs/agent-delegation.md「保存・画面・再起動」）。利用者の取り消しは先に cancelling にするので、それは cancelled を書く
+    const halted = () => closed && r.status !== 'cancelling';
     try {
       while (!controller.signal.aborted) {
         let prompt, instructionIds;
@@ -515,7 +514,6 @@ export async function createAgentTasks({ dataDir, prepare, rollback = async () =
         const result = finish ? await finish(structuredClone(r), controller.signal)
           : await execute(structuredClone(r), prompt, controller.signal,
             { messageId: instructionIds.length ? `task-send-${instructionIds[0]}` : undefined });
-        if (result?.handedOff) handedOff = true;
         if (halted()) return;
         if (result?.requeue) {
           await record(r.taskId, row => { row.queue.unshift(...(instructionIds.length ? instructionIds.map(instructionId => ({ instructionId })) : prompt ? [prompt] : [])); for (const id of instructionIds) setInstruction(row, id, 'queued'); row.status = 'queued'; }, 'run.requeue');

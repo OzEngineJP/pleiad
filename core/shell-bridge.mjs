@@ -235,7 +235,6 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
       map.set(job.id, job);
       job.done = held.drive({ signal: job.ac.signal, onOutput: (_stream, text) => { if (text) job.out.push(text); } })
         .then((r) => {
-          if (r?.handedOff) return job;
           Object.assign(job, { endedAt: Number.isFinite(r?.endedAt) ? r.endedAt : now(), exitCode: Number.isInteger(r?.exitCode) ? r.exitCode : null,
             stopped: Boolean(r?.stopped), timedOut: Boolean(r?.timedOut), leftover: Boolean(r?.leftover), startError: r?.startError ?? null });
           if (r?.startError || r?.error) job.out.push(`\n${r.startError ?? r.error}\n`);
@@ -276,13 +275,9 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
     cwds: () => [...sessions.values()].flatMap((m) => [...m.values()].filter((j) => j.endedAt == null).map((j) => j.cwd)),
     /** 起動で拾う（core/ply-shell-held.mjs の adoptable） */
     adopt,
-    /** サーバーの終わり（同期）。keepHeld は、保持役の子を止めずに手を離す（更新・落ちたときの起こし直し。ADR 0270）。
-     * 止めるときは札を置き直して stop を書く（次の起動が引き取らない） */
-    stopAll({ keepHeld = false } = {}) {
-      for (const map of sessions.values()) for (const j of map.values()) if (j.endedAt == null) {
-        if (j.held && keepHeld) continue;
-        stopJob(j, 'session');
-      }
+    /** アプリの終了（同期）。保持役の子は札を置き直して stop を書く（次の起動が引き取らない。ADR 0270 決定 4） */
+    stopAll() {
+      for (const map of sessions.values()) for (const j of map.values()) if (j.endedAt == null) stopJob(j, 'session');
     },
     async closeAll() { await Promise.all([...sessions.keys()].map((id) => api.stopSession(id))); },
   };

@@ -1291,22 +1291,6 @@ function codexCompactionEvent(method, params) {
   return null;
 }
 
-// 保持役に載せたターン: threadId -> control.holder。テストの入口（tests/lib/adopt-server.mjs）が、サーバーの手を離す（handOffTurn）の後に子を手放すのに使う。
-// 本番の手を離す口は server の handoverRun が control.holder.handOff を直に呼ぶ
-const heldTurns = new Map();
-async function handOffCodex(threadId, card) {
-  const holder = heldTurns.get(threadId);
-  if (!holder) throw new Error(`codex: no held turn to hand off (${threadId})`);
-  await holder.handOff(card);
-}
-/** テスト用: 共有の app-server の読みを止める／再開する（app-server の出力は保持役に溜まり、このサーバーは処理も ack もしない） */
-function pauseCodexHeld(paused) {
-  const server = heldAppServer();
-  if (!server) throw new Error('codex: the app-server is not on the holder');
-  server.source.pause(paused);
-  return true;
-}
-
 /**
  * 付け直し: 印より前に生まれて走っている子（サブエージェント）の親子を、thread/list { parentThreadId } から引き直す（孫まで 3 段）。
  * 子の thread/started は出ない版（0.160.0）があり、親の通知（collabAgentToolCall の receiverThreadIds）は印の後の分しか再生に無い。
@@ -1811,9 +1795,8 @@ const backend = {
     let promptSent = Boolean(adopt);
     // ターン専用の app-server（Pleiad がコンテキストを持つ会話）のターン。付け直しは札の dedicated で分かる
     const dedicated = Boolean(contextRuntime) || Boolean(adopt?.card?.dedicated);
-    // 保持役に載っている app-server のターン（札と印を置く。手を離す口 control.holder）
+    // 保持役に載っている app-server のターン（札と印を置く口 control.holder）
     let heldServer = null;
-    let handedOff = false;
     const bindHeld = (fresh) => {
       if (ephemeral || !control) return;
       // 共有の app-server はアカウントごとの口、ターン専用はこの rpc の口（rpc.heldChannel）を使う
@@ -1821,12 +1804,7 @@ const backend = {
       if (!heldServer) return;
       // 札のバックエンドの欄（server の takeCard が読む）: 付け直す側の記録の再生では戻らない控え
       control.backendCard = () => ({ held: true, dedicated, turnId, steered: [...steered], asked: [...asked], rollout: { path: rolloutPath, from: rolloutFrom } });
-      control.holder = {
-        label: card => heldServer.putCard(threadId, card),
-        // 旧サーバーの手を離す口: 札を置いて保持役へ detach し（全部のターンをまとめて 1 回）、このターンは終える（締めるのは付け直したサーバー）
-        handOff: async card => { heldServer.putCard(threadId, card); await heldServer.handOff(); handedOff = true; settleTurn?.(); },
-      };
-      heldTurns.set(threadId, control.holder);
+      control.holder = { label: card => heldServer.putCard(threadId, card) };
       if (fresh) heldServer.markTurn(threadId);
       control.touch?.();
     };
@@ -2050,9 +2028,8 @@ const backend = {
       // turn/completed が来ない終わり方（error 通知・中断）でも、走ったままの端末を裏へ回す
       if (!dedicated && !ephemeral) endTurn(threadId);
       if (ephemeral && threadId) await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
-      // 保持役の札と印を外す（手を離したターンは、新しいサーバーの札のまま。HeldAppServer は detach 済みなので何も送らない）
+      // 保持役の札と印を外す
       if (heldServer) heldServer.endTurn(threadId);
-      if (heldTurns.get(threadId) === control?.holder || !control) heldTurns.delete(threadId);
       if (adopt) adopt.source.dispose();
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
       // ターン用の app-server は終わるまで待ってから返す。返った直後に共有の app-server が同じ履歴の DB を読むので
@@ -2060,7 +2037,7 @@ const backend = {
       if (rpc !== nativeRpc) await rpc.stop();
     }
 
-    return { sessionId: threadId, ...(handedOff ? { handedOff: true } : {}) };
+    return { sessionId: threadId };
   },
 
   /**
@@ -2355,11 +2332,11 @@ const dispose = async () => {
   trackers.clear();
   await rpc.stop();
 };
-return { backend, rpc, dispose, hasBackground, forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexCompactionsFromHistory, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS };
+return { backend, rpc, dispose, hasBackground, forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexCompactionsFromHistory, codexContextWindow, codexCompactionEvent, MODES, TOOL_HINTS };
 }
 
 const initial = createCodexBackend();
-export const { forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexCompactionsFromHistory, codexContextWindow, codexCompactionEvent, handOffCodex, pauseCodexHeld, MODES, TOOL_HINTS } = initial;
+export const { forgetModels, sandboxForTurn, userShellCommand, titleModel, approvalTitle, probeHookHashes, codexHooksConfig, codexHookRun, threadToMessages, codexCompactionsFromHistory, codexContextWindow, codexCompactionEvent, MODES, TOOL_HINTS } = initial;
 const accountBackends = new Map();
 const readyBackends = new Map();
 const activeAccounts = new Map();

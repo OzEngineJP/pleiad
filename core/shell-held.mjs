@@ -7,8 +7,6 @@
 //       （落ちたサーバーの後でも付け直せる）。サーバーの終わりで止める子は札を外す（次の起動が付け直さない）
 //   ack: 画面へ流し終えた出力の行。付け直したサーバーは、通番 1 から ack までを出力の組み立てだけに使い（流さない）、その先を流す。
 //       終わりの行（done）は、会話の記録（shellPending）に書き終えてから ack し、子の記録を捨てる（release）。ack 済みの終わりは付け直さずに捨てる
-//   手を離す（handOff）: 読みを止めてから detach する（止めた後の行は ack しないので、新しいサーバーが流す。取りこぼし・重なりが無い）。
-//       終わりの行を受けて記録に書いている最中の子は、書き終える（release する）のを待つ
 // 載せるかの切り替え: AGENT_HOST_SHELL_HOLDER。既定は載せる（ADR 0270 段 2a）。実行場所の置き場（AGENT_HOST_RUNTIME_ROOT）が無ければ、
 // データ置き場ごとの一時の置き場（core/process.mjs の defaultHolderRoot）で保持役を起こす。Electron の utilityProcess（off 経路）は段 4 まで今の流れ。
 // `off` で今の流れ（サーバーの子として走らせる）。保持役につなげない・起こせないときも今の流れ。
@@ -25,8 +23,6 @@ export const SHELL_CARD_KIND = 'shell';
 export const SHELL_CARD_VERSION = 1;
 /** 札の上限（保持役の label の上限 256 KB より十分小さく。越える行は保持役に載せない） */
 const CARD_MAX_BYTES = 64 * 1024;
-/** 手を離すとき、記録に書いている最中の子を待つ上限 */
-const SETTLE_WAIT_MS = 5_000;
 
 const lineOf = value => `${JSON.stringify(value)}\n`;
 const parse = line => { try { const value = JSON.parse(line); return value && typeof value === 'object' ? value : null; } catch { return null; } };
@@ -48,18 +44,15 @@ export function readShellCard(card) {
 
 /**
  * 保持役の子 1 つ分（source は core/adopt.mjs の holderSource）。shell-runs が使う:
- *   drive({ onOutput(stream, text, replay), signal }) … 記録を通番 1 から読み、終わりの結果を返す（{ handedOff: true }・{ already: true }・runHostShell と同じ形）。
+ *   drive({ onOutput(stream, text, replay), signal }) … 記録を通番 1 から読み、終わりの結果を返す（{ already: true }・runHostShell と同じ形）。
  *     replay は ack 済みの出力（画面へ流し直さない）。signal の中断で子へ stop を書く
  *   finished()   … 終わりを会話の記録に書き終えた（終わりの行を ack し、子の記録を捨てる）
  *   label(run)   … 札を置き直す（「渡さない」を変えた）
- *   handOff()    … 手を離す（読みを止めて detach。記録に書いている最中なら finished を待つ）
- *   abandon()    … サーバーの終わり: 札を外して止める（同期。次の起動は付け直さない）
+ *   abandon()    … アプリの終了: 札を外して止める（同期。次の起動は付け直さない）
  */
 function heldShell(source) {
-  let state = 'driving';            // driving -> finishing -> done ／ driving -> handedOff
+  let state = 'driving';            // driving -> finishing -> done
   let doneSeq = null, lastSeq = 0;
-  let settle;
-  const settled = new Promise(resolve => { settle = resolve; });
   const client = source.client;
   const write = value => source.write(lineOf(value));
   return {
@@ -78,7 +71,6 @@ function heldShell(source) {
         for (;;) {
           const item = await Promise.race([items.next().then(next => (next.done ? { exit: null } : next.value)), faulted]);
           if (item.exit !== undefined) {
-            if (item.exit?.handedOff) return { handedOff: true };
             state = 'finishing';
             if (doneSeq !== null && doneSeq <= acked) return { already: true };
             if (result) return result;
@@ -101,7 +93,6 @@ function heldShell(source) {
       } finally {
         signal?.removeEventListener?.('abort', onAbort);
         client.off('fault', fault);
-        if (state === 'handedOff') source.dispose();
       }
     },
     finished() {
@@ -110,20 +101,8 @@ function heldShell(source) {
       if (lastSeq) source.ack(lastSeq);
       source.release();
       source.dispose();
-      settle();
     },
     label: run => client.label(source.id, shellCard(run)),
-    async handOff() {
-      if (state === 'finishing') {
-        let timer;
-        await Promise.race([settled, new Promise(resolve => { timer = setTimeout(resolve, SETTLE_WAIT_MS); })]).finally(() => clearTimeout(timer));
-        return;
-      }
-      if (state !== 'driving') return;
-      state = 'handedOff';
-      source.stop();
-      await client.detach(source.id);
-    },
     abandon() {
       if (state !== 'driving') return;
       client.label(source.id, null);
