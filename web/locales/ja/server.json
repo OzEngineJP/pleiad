@@ -959,7 +959,8 @@
       "tooManyServers": "MCP は1セッション32件までです。探索対象を絞ってください",
       "aborted": "中断しました",
       "toolTotalExceeded": "ツールの合計が上限（{{max}} 件）を超えるため外しました",
-      "mcpReaped": "mcp: {{name}}（pid {{pid}}）を回収しました — 親はもういません"
+      "mcpReaped": "mcp: {{name}}（pid {{pid}}）を回収しました — 親はもういません",
+      "mcpFolded": "mcp: {{name}}（pid {{pid}}）を畳みました — 作業場所を消すため"
     },
     "mcp": {
       "plainValue": "{{label}} は改行を含まない 8 KiB 以内の文字列で指定してください",

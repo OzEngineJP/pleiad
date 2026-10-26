@@ -405,6 +405,7 @@ const SUITES = [
   './unit/context-warm.mjs',
   './unit/context-lazy.mjs',
   './unit/mcp-orphans.mjs',
+  './unit/worktree-mcp.mjs',
   './unit/context-runtime.mjs',
   // 外部 MCP の認証（担当が Pleiad のとき）。秘密の置き場、OAuth はローカルのモックの認可サーバー・MCP だけと話す
   './unit/mcp-secret-store.mjs',

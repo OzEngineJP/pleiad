@@ -16,7 +16,9 @@ const TASK_START_MS = 120_000;
 export const writesScope = (entry) => scopeRank(modePosition(entry).scope) > scopeRank('readonly');
 
 export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => [], tasks = () => [], background = () => new Map(), emit = () => {},
-  reason = () => ({}), now = Date.now, log = () => {}, worktreeOptions = {} }) {
+  reason = () => ({}), now = Date.now, log = () => {}, worktreeOptions = {},
+  // 消す直前に、その中を cwd に持つプロセス（外部 MCP など）を畳む（server.mjs が contextBridge・mcpLedger を結線。Issue #142）
+  unhold = async () => {} }) {
   const exists = (p) => fs.stat(p).then((s) => s.isDirectory(), () => false);
 
   // ---------------------------------------------------------------- Git ルート（短いキャッシュ）
@@ -77,7 +79,7 @@ export function createWorktreeHost({ dataDir, store, turns, shellCwds = () => []
     }
   }
 
-  const worktrees = createWorktrees({ dataDir, users, release, now, log, ...worktreeOptions });
+  const worktrees = createWorktrees({ dataDir, users, release, unhold, now, log, ...worktreeOptions });
 
   // ---------------------------------------------------------------- ぶつかり
   /** 同じ Git ルートで、書き込みの範囲のターンを走らせている別の会話（委譲の子を含む）。圧縮のターンは数えない */

@@ -88,6 +88,54 @@ export default async function (t) {
       } finally { release2(); }
       t.ok('親の死んだ MCP は木ごと止めて台帳に残す。親の生きているものと、閉じたものは残す', true);
     }
+
+    // ---- worktree を消す前の回収（sweepCwd。Issue #142）----
+    {
+      const wt = path.join(dir, 'wt');
+      const dead2 = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore', windowsHide: true });
+      await new Promise(r => dead2.once('exit', r));
+      const deadParent2 = dead2.pid;
+      const otherParent = sleeper(); children.push(otherParent);   // 別の生きたサーバー役
+      const mine = sleeper(); children.push(mine);                 // cwd が wt の中・このサーバーの子 → 止める
+      const orphanIn = sleeper(); children.push(orphanIn);         // cwd が wt の中・親は死んでいる → 止める
+      const foreign = sleeper(); children.push(foreign);           // cwd が wt の中・別の生きたサーバーの子 → 止めない
+      const outside = sleeper(); children.push(outside);           // cwd が wt の外・このサーバーの子 → 止めない
+      const prefix = sleeper(); children.push(prefix);             // cwd が wt と同じ綴りで始まるだけの外（wt2）→ 止めない
+      const reused = sleeper(); children.push(reused);             // cwd が wt の中だが記録の起動時刻と違う（PID 再利用）→ 止めない
+      const gone = spawn(process.execPath, ['-e', '0'], { stdio: 'ignore', windowsHide: true });
+      await new Promise(r => gone.once('exit', r));                // もう居ない → 記録だけ締める
+
+      let seqMine, seqOrphan, seqForeign, seqOutside, seqPrefix, seqReused, seqGone;
+      const { db, release } = openData(dataDir);
+      try {
+        const procs = mcpProcessTable(db);
+        const now = Date.now();
+        seqMine = procs.add({ pid: mine.pid, parentPid: process.pid, parentStarted: now, command: 'm1', cwd: path.join(wt, 'sub'), at: now });
+        seqOrphan = procs.add({ pid: orphanIn.pid, parentPid: deadParent2, parentStarted: 1, command: 'm2', cwd: wt, at: now });
+        seqForeign = procs.add({ pid: foreign.pid, parentPid: otherParent.pid, parentStarted: now, command: 'm3', cwd: wt, at: now });
+        seqOutside = procs.add({ pid: outside.pid, parentPid: process.pid, parentStarted: now, command: 'm4', cwd: path.join(dir, 'elsewhere'), at: now });
+        seqPrefix = procs.add({ pid: prefix.pid, parentPid: process.pid, parentStarted: now, command: 'm5', cwd: `${wt}2`, at: now });
+        seqReused = procs.add({ pid: reused.pid, parentPid: process.pid, parentStarted: now, command: 'm6', cwd: wt, at: now - 3_600_000 });
+        seqGone = procs.add({ pid: gone.pid, parentPid: deadParent2, parentStarted: 1, command: 'm7', cwd: wt, at: now });
+      } finally { release(); }
+
+      const logs = [];
+      const ledger = createMcpLedger({ dataDir, log: l => logs.push(l) });
+      let swept;
+      try { swept = ledger.sweepCwd(wt); } finally { ledger.release(); }
+      assert(swept.length === 3, `wt の中の自分の子・孤児・もう居ない分の 3 件だけ: ${JSON.stringify(swept.map(r => r.pid))}`);
+      await until(() => !alive(mine.pid) && !alive(orphanIn.pid));
+      assert(alive(foreign.pid) && alive(outside.pid) && alive(prefix.pid) && alive(reused.pid), '別サーバーの子・外の cwd・接頭辞だけの外・PID 再利用は止めない');
+      assert(logs.length === 3, `ログ 3 行: ${logs.join(' | ')}`);
+
+      const { db: db2, release: release2 } = openData(dataDir);
+      try {
+        const bySeq = Object.fromEntries(mcpProcessTable(db2).rows().map(r => [r.seq, r]));
+        for (const seq of [seqMine, seqOrphan, seqGone]) assert(bySeq[seq].killedAt && bySeq[seq].reason === 'worktree', `seq ${seq} が worktree 理由で締まる`);
+        for (const seq of [seqForeign, seqOutside, seqPrefix, seqReused]) assert(bySeq[seq].killedAt == null && bySeq[seq].closedAt == null, `seq ${seq} は残る`);
+      } finally { release2(); }
+      t.ok('消す場所の中を cwd に持つ分だけ止めて台帳に残す（自分の子と孤児）。別サーバーの子・外・PID 再利用は残す', true);
+    }
   } finally {
     for (const c of children) { try { process.kill(process.platform === 'win32' ? c.pid : -c.pid, 'SIGKILL'); } catch { try { c.kill('SIGKILL'); } catch {} } }
     await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

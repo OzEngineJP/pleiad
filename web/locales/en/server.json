@@ -961,7 +961,8 @@
       "tooManyServers": "Up to 32 MCP servers per session. Narrow the search.",
       "aborted": "Stopped.",
       "toolTotalExceeded": "Removed because the total number of tools exceeds the limit ({{max}}).",
-      "mcpReaped": "mcp: reaped {{name}} (pid {{pid}}) — the parent is gone"
+      "mcpReaped": "mcp: reaped {{name}} (pid {{pid}}) — the parent is gone",
+      "mcpFolded": "mcp: folded {{name}} (pid {{pid}}) — its workspace is being removed"
     },
     "mcp": {
       "plainValue": "{{label}} must be a string of up to 8 KiB without line breaks.",

@@ -3044,6 +3044,8 @@ const worktreeHost = createWorktreeHost({
   dataDir: store.dataDir, store,
   turns: () => runtime.turns, shellCwds: () => [...shellRuns.cwds(), ...shellBridge.cwds()], tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
   emit: event => emitGlobal(event), reason: (key, params) => savedReason(key, params),
+  // worktree を消す直前に、その中を cwd に持つ MCP を畳む（Issue #142。接続の回収と、台帳に残った分の掃除）
+  unhold: async entry => { await contextBridge.closeUnder(entry.path); mcpLedger.sweepCwd(entry.path); },
   log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
   // AGENT_HOST_WORKTREES=off で worktree を作らない。テストのサーバーが開発中のリポジトリ（<リポジトリ>.pleiad）に残さないため（tests/lib/server.mjs）
   worktreeOptions: {
