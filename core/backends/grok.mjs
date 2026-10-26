@@ -11,13 +11,13 @@ import { SHELL_SERVER } from '../shell-bridge.mjs';
 import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
-import { covered, impossible, todo } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
 import { createAcpSteer, PROTOCOL_REJECT_CODES } from './acp-steer.mjs';
 import { createHeldAcp, heldAcpPlan } from './acp-held.mjs';
 import { writeTurnPlugin } from './grok-hooks.mjs';
 import { grokQuota } from './grok-usage.mjs';
+import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 
 /** 札（backendCard）に入れる発言の本文の上限（バイト）。超えたら人に書いた分だけにして、写しは人に書いた分で組み立てる */
 const CARD_TEXT_MAX = 16 * 1024;
@@ -178,44 +178,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   const loginWatch = createLoginWatch('Grok');
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
-    capabilities: {
-      // ACP の標準にはタイトル・状態タグ・分岐・巻き戻し・子の一覧の口が無い。Pleiad の控えと写しで補う
-      title: covered,
-      tag: covered,
-      fork: covered,
-      forkMessage: covered,
-      rewind: covered,
-      subagents: todo('#108'),
-      liveModel: true,     // session/set_config_option
-      liveMode: true,      // session/set_mode
-      hostTools: covered,  // ply_control の sessions.setTitle / setStatus / fork で同じことができる
-      approvals: 'interactive',
-      alwaysAllow: true,
-      mcpApproval: 'agent',
-      login: true,
-      accounts: todo('#108'),
-      compatEndpoints: todo('#108'),
-      compact: todo('#108'),            // 手動の圧縮・通知・履歴の写像
-      autoCompactWindow: todo('#108'),
-      promptSuggestions: todo('#108'),
-      plyInstructions: true,
-      plyAgents: true,
-      plyContext: todo('#108'),         // HTTP MCP で渡せるが、Pleiad 担当分の分離が未了
-      computerUse: { images: 'path', waitSliceMs: null },
-      shell: 'host',
-      plyShell: true,
-      nativeShellOff: todo('#108'),
-      effortInModelId: impossible('強さはモデルの id ではなく、別のパラメータで渡す'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-      instructionsAtStart: impossible('指示はターンごとに渡せるので、会話の始めに固定されない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-      failureDiagnostics: true,
-      promptDelivery: true,
-      steer: true,
-      handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
-      // ブラウザー・操作一覧・コンピューター・シェル・委譲を HTTP MCP で、接続情報と秘密の変数を起動環境で渡す。
-      // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
-      browser: true, plyControl: true, secrets: true, visualize: true,
-      hooks: true,
-    },
+    // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
+    capabilities: CAPABILITY_STATES.grok,
+    traits: AGENT_TRAITS.grok,
     modes,
     async usage({ cwd = process.cwd() } = {}) {
       return serial(metadataQueue, async () => {

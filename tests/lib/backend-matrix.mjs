@@ -1,4 +1,4 @@
-// エージェント × 機能の対応表を、能力の印（core/backends/contract.mjs）から作って端末に出す。
+// エージェント × 機能の対応表を、能力の印（core/backends/capability-marks.mjs。状態は agent-marks.mjs）から作って端末に出す。
 //
 //   node tests/lib/backend-matrix.mjs
 //
@@ -36,10 +36,6 @@ export const ABOUT = {
   plyShell: 'Pleiad のシェルのツール（ply_shell）を受け取る',
   nativeShellOff: 'エージェントのシェルのツールを会話ごとに切れる（ply_shell だけにする）',
   shell: '入力欄の `!`（host: Pleiad が走らせる / native: エージェントが走らせる）',
-  effortInModelId: '強さをモデルの id で選ぶ',
-  instructionsAtStart: '指示は会話の始めにしか効かない（人格を直したら次のターンで渡し直す）',
-  failureDiagnostics: '失敗の理由を会話の控えに残す',
-  promptDelivery: '発言が相手に渡った合図を返答の中身と別に出せる（— なら合図が無くても届いていることがある）',
   steer: '走っている作業へ追加指示を途中で渡す（— なら次のターンで渡す）',
   handover: '更新で走っているターンを止めない（無停止の更新。新しいサーバーが付け直す）',
   browser: 'エージェントのブラウザー（Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser）を受け取る',

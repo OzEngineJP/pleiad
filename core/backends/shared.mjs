@@ -30,4 +30,4 @@ export function cutText(text, max, notice) {
 ${urls.at(-1)[0]}` : "");
 }
 
-// 能力の印の一覧と既定（何も持たない形）は core/backends/contract.mjs
+// 能力の印の一覧と既定（何も持たない形）は core/backends/capability-marks.mjs

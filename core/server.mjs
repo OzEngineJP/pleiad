@@ -3500,9 +3500,9 @@ function makeEmit(turn) {
       if (event.outcome === "aborted") event = { ...event, reason: turn.abortReason ?? "user" };
       // バックエンドが失敗を知らせたら、server の catch では重ねて出さない（同じ失敗が 2 回並んでいた）
       if (event.outcome === "error" || event.outcome === 'limited') turn.errorShown = true;
-      if (turn.backend.capabilities?.failureDiagnostics && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
+      if (turn.backend.traits?.failureDiagnostics && (event.outcome === 'error' || event.outcome === 'limited') && !turn.failureReason)
         turn.failureReason = { source: 'backend.turnResult', error: String(event.error ?? '').slice(0, 1000) };
-      if (turn.backend.capabilities?.failureDiagnostics && event.backendFailure)
+      if (turn.backend.traits?.failureDiagnostics && event.backendFailure)
         turn.failureReason = { source: 'backend.afterReply', status: String(event.backendFailure.status ?? '').slice(0, 100),
           error: String(event.backendFailure.error ?? '').slice(0, 1000) };
       const execution = taskExecutions.get(turn.info.sessionId);
@@ -7623,15 +7623,15 @@ async function driveTurn(ctx, start) {
     if (ctx.resolvedContext) { ctx.contextRecord.report.status = 'failed'; await ctx.saveContext().catch(() => {}); }
     else if (ctx.contextRecord && err?.nativeInjected) await ctx.saveContext().catch(() => {});
     if (!turn.errorShown) {
-      if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
+      if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'server.catch', error: String(err?.message ?? err).slice(0, 1000) };
       emit({ type: "turnResult", outcome: "error", error: String(err?.message ?? err) });
     }
     // プロンプトを渡す前に失敗した（backends/undelivered.mjs）。送信済みにしたままだと、本文がどこにも残らず消える。
     // 送信待ちの「失敗」に戻し、利用者に再送か取り消しを選ばせる
     if ((err?.undelivered || !ctx.backendInvoked || !ctx.initialDelivered) && sessionId && args.messageId) {
-      // 渡った合図を出せないバックエンド（印 promptDelivery = false）では、合図が無い=渡っていないとは言えない。
+      // 渡った合図を出せないバックエンド（性質 promptDelivery = false）では、合図が無い=渡っていないとは言えない。
       // 届いているかもしれない発言を自動で送り直すとネイティブの履歴に二重に登るので、結果不明（unknown）に落とす
-      const uncertain = !err?.undelivered && ctx.backendInvoked && !ctx.initialDelivered && !turn.backend.capabilities?.promptDelivery;
+      const uncertain = !err?.undelivered && ctx.backendInvoked && !ctx.initialDelivered && !turn.backend.traits?.promptDelivery;
       await (uncertain
         ? outbox.uncertain(sessionId, args.messageId, String(err?.message ?? err))
         : outbox.undelivered(sessionId, args.messageId, String(err?.message ?? err))).catch(() => {});
@@ -7652,20 +7652,20 @@ async function closeTurn(ctx) {
   if (ctx.shellHandoff && !ctx.shellHanded) shellRuns.release(sessionId, ctx.shellHandoff);
   // ターンは始まったが渡った合図（initialDelivered）の無いまま終わった発言は、送信済みのままだと本文がどこにも残らず消える。
   // 未達（failed）に戻し、再送か取り消しを選ばせる（requeue は送信待ちに戻るので触らない。catch で戻した分は undelivered がそのまま通る）。
-  // 渡った合図を出せないバックエンド（印 promptDelivery = false。antigravity）では、届いたまま無出力で終わることがあるので、
+  // 渡った合図を出せないバックエンド（性質 promptDelivery = false。antigravity）では、届いたまま無出力で終わることがあるので、
   // 失敗（再開で自動再送される）にせず結果不明（unknown）にして、利用者に確かめて選ばせる
   if (ctx.didStart && sessionId && args.messageId && !ctx.initialDelivered && turn.outcome !== 'requeue')
-    await (turn.backend.capabilities?.promptDelivery
+    await (turn.backend.traits?.promptDelivery
       ? outbox.undelivered(sessionId, args.messageId, t('queue.undelivered'))
       : outbox.uncertain(sessionId, args.messageId, t('queue.uncertain'))).catch(() => {});
   if (ctx.didStart && turn.outcome !== 'ok' && turn.outcome !== 'requeue') await outbox.pause(sessionId).catch(() => {});
   await turn.visualizations.close().catch(err => {
-    if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
+    if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'visualizations.close', error: String(err?.message ?? err).slice(0, 1000) };
     emit({ type: 'turnResult', outcome: 'error', error: t('turn.visualizationSaveFailed', { error: err.message }) });
   });
   await Promise.allSettled([ctx.runtimeContext?.close()]);
   await ctx.saveContext().catch(() => {
-    if (turn.backend.capabilities?.failureDiagnostics) turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
+    if (turn.backend.traits?.failureDiagnostics) turn.failureReason = { source: 'saveContext', error: t('turn.contextSaveFailed') };
     emit({ type: 'turnResult', outcome: 'error', error: t('turn.contextSaveFailed') });
   });
   // git の動き（ADR 0085）: ターンの終わりの撮影と、返答の下の 1 行の元。ファイル・コミット・ブランチ・PR のどれかが動いたときだけ会話に残す
@@ -8228,8 +8228,8 @@ async function endTurn(turn, emit, { record = true } = {}) {
     : stopped ? { at: completedAt, reason: turn.abortReason ?? "user" } : null;
   if (record && !requeued) await usageStore.record({ ...turn.usage, id: turn.presentKey, backend: turn.backend.id, sessionId: turn.info.sessionId })
     .catch(() => { console.error('  使用量を記録できませんでした'); });
-  if (turn.backend.capabilities?.failureDiagnostics && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
-    // 失敗の理由を残すエージェント（capabilities.failureDiagnostics）。項目の名前は最初に使った agy の名前のまま（保存の形）
+  if (turn.backend.traits?.failureDiagnostics && turn.info.sessionId && (turn.outcome === 'error' || turn.outcome === 'limited' || turn.failureReason?.source === 'backend.afterReply')) {
+    // 失敗の理由を残すエージェント（traits.failureDiagnostics）。項目の名前は最初に使った agy の名前のまま（保存の形）
     const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).antigravityFailures ?? [];
     await store.setSessionData(turn.info.sessionId, 'antigravityFailures', [...previous, {
       at: completedAt, outcome: turn.outcome, ...(turn.failureReason ?? { source: 'unknown', error: '' }),

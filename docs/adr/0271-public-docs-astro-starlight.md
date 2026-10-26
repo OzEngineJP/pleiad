@@ -23,6 +23,7 @@
 ## 影響
 
 - main への push のビルドで、`site/docs` の `npm ci` と Astro のビルドが走る（数十秒）。Cloudflare のビルド環境の Node は 24.21.0 で、Astro 7 は 22.22 以上が要る。
-- 生成に使う `core/` のファイルを増やすときは `site/tools/build-site.mjs` の `DOCS_SOURCE_FILES` に足す（そのファイルが import するファイルも足す）。
+- 生成に使う `core/` のファイルを増やすときは `site/tools/docs-sources.mjs` の `DOCS_SOURCE_FILES` に足す（そのファイルが import するファイルも足す）。
+  一覧は、相対 import を辿った閉包と一致することを試験が確かめる（[0274](0274-capability-traits-and-public-marks.md)）。
 - タグのファイルを取れないときは作業ツリーから作り、ビルドは止めない。そのときは公開中の版と文書がずれうるので、ビルドのログの警告を見る。
-- 手で書く文書のページは `site/docs/src/content/docs/`（日本語）と `site/docs/src/content/docs/en/`（英語）に置く。コードから作るページの出力（`src/content/docs/agents/`）は追跡しない。
+- 手で書く文書のページは `site/docs/src/content/docs/`（日本語）と `site/docs/src/content/docs/en/`（英語）に置く。コードから作るページの出力（`src/content/docs/agents/` の `.mdx`）は追跡しない（手書きの断片 `agents/<id>/_connect.md` だけ追跡する。[0274](0274-capability-traits-and-public-marks.md)）。
