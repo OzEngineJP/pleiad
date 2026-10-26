@@ -1,0 +1,44 @@
+{
+  "_comment": "未実装（todo）の基準（tests/lib/backend-todos.mjs）。増やせない。減らしたら node tests/lib/backend-todos.mjs --update-baseline で下げる",
+  "todos": {
+    "antigravity": {
+      "autoCompactWindow": "#151",
+      "compatEndpoints": "#151",
+      "shell": "#148",
+      "subagents": "#151",
+      "visualize": "#148"
+    },
+    "codex": {
+      "autoCompactWindow": "#151"
+    },
+    "devin": {
+      "accounts": "#108",
+      "autoCompactWindow": "#108",
+      "compatEndpoints": "#108",
+      "handover": "#108",
+      "hooks": "#98",
+      "liveMode": "#108",
+      "liveModel": "#108",
+      "nativeShellOff": "#108",
+      "promptSuggestions": "#108",
+      "subagents": "#108"
+    },
+    "grok": {
+      "accounts": "#108",
+      "autoCompactWindow": "#108",
+      "compact": "#108",
+      "compatEndpoints": "#108",
+      "handover": "#108",
+      "nativeShellOff": "#108",
+      "plyContext": "#108",
+      "promptSuggestions": "#108",
+      "subagents": "#108"
+    },
+    "opencode": {
+      "autoCompactWindow": "#151",
+      "liveMode": "#151",
+      "liveModel": "#151",
+      "promptSuggestions": "#151"
+    }
+  }
+}

@@ -511,12 +511,12 @@ permission: { …, toolName: 'ply_computer', canAlways: true,
 
 ### エージェントへの渡し方
 
-バックエンドの `capabilities.computerUse` は `false` か `{ images: 'inline' | 'path', waitSliceMs: number | null }`。サーバーはこれを `open()` の `delivery` に渡す。既定は `{ images: 'inline', waitSliceMs: null }`。
+バックエンドの `capabilities.computerUse` は、対応なら `{ images: 'inline' | 'path', waitSliceMs: number | null }`、対応しないなら状態（`covered`・`impossible`・`todo`）で、サーバーへは今までどおり `false` が渡る（`legacyCapabilities`）。サーバーはこれを `open()` の `delivery` に渡す。既定は `{ images: 'inline', waitSliceMs: null }`。
 
 - `images: 'path'`: text に保存先の絶対パスを書き、「画像が見えなければ、そのファイルを開いて見る」と指示を足す。image ブロックも残す。
 - `waitSliceMs`: ロックの待ちを 1 回の呼び出しで最長この時間に切る。切れたら `state: 'waiting'`（`isError: true`）と「まだ待っています。同じ呼び出しをもう一度してください」を返す。10 分の上限はターンの中で最初に待ち始めた時刻から数える。画面は同じ待ちの行のまま。null なら 1 回の呼び出しで最長 10 分待つ。
 
-`runArgs.computerRuntime` は `{ url, headers, instructions } | null`。null にするのは、driver が無い（Electron でない）・`supported: false`・設定でオフ・`capabilities.computerUse` が false のとき。委譲の子の会話でも null にしない。
+`runArgs.computerRuntime` は `{ url, headers, instructions } | null`。null にするのは、driver が無い（Electron でない）・`supported: false`・設定でオフ・サーバーが見る `capabilities.computerUse` が false のとき（バックエンドの状態が `covered`・`impossible`・`todo` のとき）。委譲の子の会話でも null にしない。
 
 | | 渡し方 | 指示文 | ツールごとの承認 |
 |---|---|---|---|

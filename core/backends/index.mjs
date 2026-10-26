@@ -7,7 +7,7 @@
 import * as store from "../store.mjs";
 import { wrapBackend as wrapNative, conversationBackend } from "../conversations.mjs";
 import { t } from "../i18n.mjs";
-import { NO_CAPABILITIES } from "./contract.mjs";
+import { NO_CAPABILITIES, legacyCapabilities, impossible } from "./contract.mjs";
 import { AGENTS, DEFAULT_AGENT_IDS, agentPresentation } from "./agents.mjs";
 
 // id -> そのモジュールの場所（エージェントの記述 core/backends/agents.mjs の module）。ここに無い id は無視する（環境変数からの任意 import は許さない）
@@ -23,12 +23,17 @@ export const RETIRED = {
   procway: { label: "procway-code", get notice() { return t("backends.retired.procway"); } },
 };
 /**
- * conversations.mjs の wrapBackend は native をスプレッドで写すので、ゲッター（description など、言語で変わる文言）が
- * 包んだ時点の値で固まる。ゲッターだけ包んだ側へ付け直し、読むたびに今の言語で引けるようにする
+ * 能力の印は 4 つの状態で書く（contract.mjs）。server と画面は今までどおりの値を見るので、
+ * レジストリに入れるときに状態を今までの値へ引く（legacyCapabilities）。ゲッター（description など、言語で変わる文言）は
+ * 包んだ時点の値で固まらないよう、元のバックエンドから写し直す。
  */
 function wrapBackend(native) {
-  const wrapped = wrapNative(native);
-  nativeBackends.set(wrapped, native);
+  const projected = { ...native, capabilities: legacyCapabilities(native.capabilities) };
+  for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(native))) {
+    if (desc.get) Object.defineProperty(projected, key, { get: desc.get.bind(native), enumerable: true, configurable: true });
+  }
+  const wrapped = wrapNative(projected);
+  nativeBackends.set(wrapped, projected);
   for (const [key, desc] of Object.entries(Object.getOwnPropertyDescriptors(native))) {
     if (desc.get) Object.defineProperty(wrapped, key, { get: desc.get.bind(native), enumerable: true, configurable: true });
   }
@@ -50,7 +55,7 @@ export function offlineAccountBackend(backend, error) {
   const native = nativeBackends.get(backend) ?? backend;
   const unavailable = async () => { throw error; };
   return wrapBackend({ id: native.id, label: native.label,
-    capabilities: { ...native.capabilities, title: false, tag: false, forkMessage: false },
+    capabilities: { ...native.capabilities, title: impossible('資格情報が無い'), tag: impossible('資格情報が無い'), forkMessage: impossible('資格情報が無い') }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     modes: () => native.modes(), models: unavailable,
     listSessions: async () => [], getSession: async () => null, getMessages: async () => [], getCompactions: async () => [],
     setTitle: async () => {}, setTag: undefined, listSubagents: async () => [], getSubagentMessages: async () => [],

@@ -7,7 +7,7 @@ import { CONTROL_SERVER } from '../ops/surfaces/mcp.mjs';
 import { SHELL_SERVER } from '../shell-bridge.mjs';
 import * as store from '../store.mjs';
 import { conversation } from '../conversations.mjs';
-import { NO_CAPABILITIES } from './contract.mjs';
+import { covered, impossible, todo } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { prepareDevinLaunch } from './devin-config.mjs';
 import { buildDevinModels, resolveDevinModel, applyDevinModel, devinAcpModel, devinModelChoices } from './devin-models.mjs';
@@ -133,15 +133,46 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   const loginWatch = createLoginWatch('Devin');
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
-    capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true, promptDelivery: true, steer: true,
-      // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
-      // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
-      browser: true, plyControl: true, secrets: true, visualize: true, plyAgents: true, plyInstructions: true,
-      plyShell: true, shell: 'host',
+    capabilities: {
+      // ACP の標準にはタイトル・状態タグ・分岐・巻き戻し・子の一覧の口が無い。Pleiad の控えと写しで補う
+      title: covered,
+      tag: covered,
+      fork: covered,
+      forkMessage: covered,
+      rewind: covered,
+      subagents: todo('#108'),          // 子の一覧は CLI の拡張を確かめる
+      liveModel: todo('#108'),          // 実行中のモデル変更
+      liveMode: todo('#108'),           // 実行中の承認モード変更
+      hostTools: covered,               // ply_control の sessions.setTitle / setStatus / fork で同じことができる
+      approvals: 'interactive',
+      alwaysAllow: true,
+      mcpApproval: 'agent',
+      login: true,
+      accounts: todo('#108'),           // アカウントごとの認証の分離
+      compatEndpoints: todo('#108'),    // CLI の接続先の設定と Pleiad の選択 UI を接続する
+      compact: true,                    // /compact を prompt として送る（下の compact）
+      autoCompactWindow: todo('#108'),
+      promptSuggestions: todo('#108'),
+      plyInstructions: true,
+      plyAgents: true,
       // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
       // （load_skill・instructions_for_path）と外部 MCP は ply_context の MCP（type: 'http'）越しに渡す。口はターンごと
       plyContext: 'turn',
-      computerUse: { images: 'inline', waitSliceMs: null } },
+      computerUse: { images: 'inline', waitSliceMs: null },
+      shell: 'host',
+      plyShell: true,
+      nativeShellOff: todo('#108'),
+      effortInModelId: true,
+      instructionsAtStart: impossible('指示はターンごとに発言の前に足せるので、会話の始めに固定されない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+      failureDiagnostics: true,
+      promptDelivery: true,
+      steer: true,
+      handover: todo('#108'),
+      // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
+      // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
+      browser: true, plyControl: true, secrets: true, visualize: true,
+      hooks: todo('#98'),
+    },
     modes,
     async usage() { return (await import('./devin-usage.mjs')).readDevinUsage(); },
     async models(cwd = process.cwd(), { refresh = false } = {}) { return buildDevinModels(await rawModels(cwd, undefined, { refresh })); },

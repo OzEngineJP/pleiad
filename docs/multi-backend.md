@@ -250,10 +250,20 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 `core/backends/<id>.mjs` が 1 つずつ export する。`core/backends/index.mjs` がレジストリで、どの id があるかはエージェントの記述
 （`core/backends/agents.mjs`。下の「エージェントを足す」）から作る。
 
-能力の印（`capabilities`）の正本は `core/backends/contract.mjs` の `CAPABILITIES`。**バックエンドは全部のキーに値を書く**
-（対応しないものは `false` などで明示する。書いていないことを「対応しない」の代わりにしない）。値の形と、値ごとに要るメソッド
-（`fork: true` なら `fork()` など）もそこに書いてあり、`npm test` の backend-contract が確かめる。今の値の一覧は自動で作る
-[backend-matrix.md](backend-matrix.md)。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
+能力の印（`capabilities`）の正本は `core/backends/contract.mjs` の `CAPABILITIES`。**バックエンドは全部のキーに状態を書く**
+（書いていないことを「対応しない」の代わりにしない）。状態は 4 つ:
+
+- **対応**: その機能の値（`true`・`'host'`・`'native'`・`'turn'`・`{ images: 'inline' }` など）
+- **`covered`**: Pleiad の共通処理が補う（タイトル・状態タグ・分岐・巻き戻し・`hostTools` など）
+- **`impossible('理由')`**: 技術的に無理・該当しない。理由が必須
+- **`todo('#Issue')`**: 手段はあるが未実装。Issue 番号が必須
+
+`false` は書かない（対応しない理由を状態で書く）。値の形と、値ごとに要るメソッド（`compact: true` なら `compact()`、`forkMessage: true` なら `fork()` など）も
+`CAPABILITIES` に書いてあり、`npm test` の backend-contract が確かめる。現役のエージェントは `NO_CAPABILITIES`（対応を終えたバックエンド用の
+全部 `impossible` の雛形）を使えない。未実装（`todo`）は `tests/backend-todos.json` の基準より増やせない（減らしたら
+`node tests/lib/backend-todos.mjs --update-baseline`）。server・画面へは、レジストリ（`core/backends/index.mjs`）が状態を今までの値に引いて渡す
+（`legacyCapabilities`。`covered`・`impossible`・`todo` は `false`）。一覧は `node tests/lib/backend-matrix.mjs` で端末に出す
+（文書の写しは持たない）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
 
 ```js
 export const backend = {
@@ -711,7 +721,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 | 一覧・履歴 | **無し** → Pleiad が控える（§下） |
 | タイトル・状態タグ・fork | 無し → sidecar / Pleiad の写し（分岐は [message-fork.md の「Antigravity の境界調査」](message-fork.md#antigravity-の境界調査)） |
 | モード | **`--dangerously-skip-permissions` の 1 つだけ**（§下） |
-| モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveMode は false）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
+| モデル・effort | `--model` だけを渡す。**起動時のみ**（liveModel / liveMode は `impossible`。画面へは `false`）。effort は段違いの id（`gemini-3.8-flash-low` / `-medium` / `-high`）を選ぶことと同じなので、段は同じ系統の id に解決して `--model` に載せ、`--effort` と同時には渡さない（agy 1.2.8 で確認。`core/backends/antigravity-models.mjs`） |
 | 認証 | **端末でのサインインが要る**（Pleiad からは回せない。§下） |
 
 イベントの形:
@@ -725,7 +735,7 @@ procway-code への対応は 2026-09 に終了した（旧会話は読むだけ�
 **承認を持てない**: ターン中の対話承認は**公式に非対応**。許可が取れないツールは soft-deny され
 （ターンは止まらず、stderr に通知が出るだけ）。そのため:
 
-- `capabilities.alwaysAllow` は **false**。askPermission を一度も呼ばない
+- `capabilities.alwaysAllow` は `impossible('対話の承認そのものが無い')`（画面へは今までどおり `false` が渡る）。askPermission を一度も呼ばない
 - **選べる承認モードは「全部自動」（`--dangerously-skip-permissions`）の 1 つだけ。**
 
 `agy --help` には `--mode plan` と `--mode accept-edits` もあるが、**ヘッドレスでは選ばせない**。
@@ -832,40 +842,38 @@ DONE はコマンドが本当に終わったときにしか来ない。裏へ回
 
 公開 `present` MCP は廃止した。Claude・Codex 共通の Visualize 参照で表示・保存する。詳細は [可視化仕様](visualize.md)。
 Codexの新規・再開スレッドは `config['mcp_servers.ply']`、Claudeは `mcpServers.ply` で接続する。
-Codexの `set_status / set_title / fork` は未接続なので、
-`capabilities.hostTools: false` は維持する。可視化へ移した理由は [ADR 0008](adr/0008-retire-present-mcp-for-visualize.md)。
+Codexの `set_status / set_title / fork` は未接続なので、`capabilities.hostTools` は `covered`
+（`ply_control` の `sessions.setTitle`・`sessions.setStatus`・`sessions.fork` で同じことができる）。
+可視化へ移した理由は [ADR 0008](adr/0008-retire-present-mcp-for-visualize.md)。
 
-### 2.9 エージェントを足す（2026-10-18）
+### 2.9 エージェントを足す
 
-エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)）。
+エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)）。
 足すときに書くもの:
 
-1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`module`・`shortLabel`・`brand`（ロゴ。`web/brand/` に置く）・`cli`
-   （`exe`・`binEnv`・`npmPackage`・`installUrl`・`searchDirs`）・`idleCompaction`（会話を離れた後の自動の圧縮の既定。Pleiad が圧縮しないなら null）・
-   `shellTools`（シェルのコマンドを走らせるネイティブのツールの名前。toolHints の `shape: 'shell'` と同じ。名前で見分けられないなら `[]` にして `tool.start` に `shell: true`）・
-   `shellDefault`（エージェントのシェルのツールの既定。`'native'` か `'ply'`。§2.3「Pleiad のシェルのツール」）・
-   `contextSources`（エージェントが自分で読む指示・Skills・MCP の読み込み元。`core/context-settings.mjs` の `SOURCES`。新しい形式なら `core/context-scan.mjs` に読み方を足す）。
-   `contextSources: null` は Pleiad が読み込み元を把握しておらず推計できないという意味で、エージェント自身の設定読み込みを抑止する値ではない。
-   全部のキーを書く（使わないものは null）。レジストリ（`index.mjs`）・CLI の探し方（`core/cli-installation.mjs`）・自動の圧縮の設定の行
-   （`core/compaction-settings.mjs`・`core/ops/settings.mjs`・設定の画面）・画面のロゴと短い名前（`web/agent-brands.mjs`）・委譲の行き先
-   （`core/agent-bridge.mjs` の `backend`）は、ここから作るので触らない
-2. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形と、能力の印の全部のキー
-3. **身代わり**（`tests/lib/fake-<id>.mjs`。LLM を呼ばずにプロトコルの形だけを真似る）と、`tests/lib/backend-contracts.mjs` の `RIGS` の 1 行。
-   `npm test` の backend-conformance が、全エージェントで同じ共通の契約（1 ターン・履歴の形と uuid・続き・タイトル・分岐・イベントの形）を回す
-4. **試験の隔離**。`tests/lib/test-env.mjs` と `tests/lib/server.mjs` で実 CLI の起動・利用者の資格情報の読み出しを防ぐ。
-   そのエージェント固有の身代わり試験を `tests/run.mjs` に登録する。backend-registry は一覧の全件で CLI の差し替え・インストール案内・既定と指定順の登録を確かめる
-5. 対応表を書き直す: `node tests/lib/backend-matrix.mjs --write`
+1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`DESCRIPTOR_KEYS` を全部書く（使わないものは null）。
+   `brand` のロゴは `web/brand/` に、`cli` の `searchDirs` はそのエージェントの配置先に合わせる。`contextSources` に新しい読み込み元を書くなら、
+   `core/context-scan.mjs` に読み方を足す。レジストリ・CLI の探し方・自動の圧縮の設定の行・画面のロゴと短い名前・委譲の行き先は、ここから作るので触らない。
+2. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形と、`CAPABILITIES` の全部のキーを 4 つの状態で書く。
+   状態の意味と `requires`（`compact: true` なら `compact()` など）は §2.3。
+3. **身代わり**（`tests/lib/fake-<id>.mjs`）と `tests/lib/backend-contracts.mjs` の `RIGS` の 1 行、`tests/run.mjs` への登録。
+4. **確かめる**。`npm test -- backend-contract backend-conformance`。落ちた文が「どのファイルに何を書くか」を案内する。
+   そのエージェント固有の試験は `tests/run.mjs` に登録する。backend-registry は CLI の差し替え・インストール案内・既定と指定順の登録を確かめる。
+5. 一覧を端末で確かめる: `node tests/lib/backend-matrix.mjs`（文書の写しは持たない）。
 
-**能力の印を足すとき**は、`contract.mjs` の `CAPABILITIES`（値の形・要るメソッド）・全バックエンドの値・`NO_CAPABILITIES`・
-対応表の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）・その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
-`'conformance'` か既存の suite の名前）を足す。どれかが欠けると backend-contract が落ちる。
+**能力の印を足すとき**は、`contract.mjs` の `CAPABILITIES` に 1 行（対応の値・`requires`・`covered` の可否）、全バックエンドの状態、
+一覧の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）、その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
+`'conformance'` か既存の suite の名前）を足す。どれかが欠けると backend-contract が落ちる。未実装（`todo`）は
+`tests/backend-todos.json` の基準より増やせない（減らしたら `node tests/lib/backend-todos.mjs --update-baseline`）。
+現役のエージェントは `NO_CAPABILITIES` を使えない（対応を終えたバックエンドだけ）。
 
 **runArgs の配達物**（エージェントへ機能を渡すキー: `browserEnv`・`controlRuntime`・`secretsRuntime` など）は `contract.mjs` の
 `RUN_ARG_FEATURES` に「キー → 能力の印」の行が要る。`server.mjs` は runArgs を組み立てるところと、バックエンドへ渡す前の `gateRunArgs` の
 両方で印を見るので、印の無いバックエンドにはその配達物が届かない（消したキーはバックエンドの既定値に落ちる）。一覧に無いキーを runArgs に
 足すと試験（`PLEIAD_BACKEND_CONTRACT=strict`）で `gateRunArgs` が例外にするので、新しい配達物は必ず `RUN_ARG_FEATURES`（機能）か
 `RUN_ARG_PLUMBING`（プロンプト・承認など全バックエンドに渡る回線）のどちらかに登録する。配達物の機能を足したら、対応する印も足し、
-受け取れないバックエンドは `false` と宣言する。`false` なのに配達される組み合わせは起きない。
+受け取れないバックエンドは `covered`・`impossible('理由')`・`todo('#Issue')` のどれかで宣言する。状態なのに配達される組み合わせは起きない
+（`gateRunArgs` が状態を今までの値に引いてから見る）。
 
 #### id で分けない
 

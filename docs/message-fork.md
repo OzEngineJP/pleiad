@@ -106,7 +106,7 @@ JSONL は消さずに追記され、`getSessionMessages` は最新の葉の鎖�
 
 ## Antigravity の境界
 
-2026-09-17、実機の `agy` で確かめた。分岐の口は無いままなので `capabilities.fork` は `false` で、
+2026-09-17、実機の `agy` で確かめた。分岐の口は無いままなので `capabilities.fork` は `covered`（Pleiad が写して分ける。画面へは `false`）で、
 写しの経路に相乗りする。相乗りしているだけで固有の実装を持たないから、共通契約を
 `tests/unit/server-antigravity.mjs` からも回す。
 

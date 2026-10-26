@@ -71,6 +71,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { covered, impossible } from "./contract.mjs";
 import { undelivered } from "./undelivered.mjs";
 import { isReviewMode, fakeScriptAllowed } from "../review-mode.mjs";
 import { runHeld, driveHeld } from "./fake-held.mjs";
@@ -422,36 +423,36 @@ export const backend = {
     // 同じ会話での巻き戻し（core/conversations.mjs の rewind）。FAKE_REWIND で形を切り替える:
     //   resumeAt（既定）… Claude と同じ。次のターンが drops の手前で切る / reject … 次のターンが拒否する（ホスト管理へ落とす経路） /
     //   thread … Codex と同じ。rewind() が今すぐ切る / off … 巻き戻す口が無い（Antigravity と同じ。ホスト管理）
-    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? false : v === 'thread' ? 'thread' : 'resumeAt'; },
+    get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? impossible('試験用に巻き戻しの口を無くしている') : v === 'thread' ? 'thread' : 'resumeAt'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     subagents: true,
     liveModel: true,
     liveMode: true,
-    hostTools: false,
+    hostTools: covered,
     plyAgents: true,
     plyInstructions: true,
     alwaysAllow: true,
     login: true,
     // Claude と同じく会話ごとのアカウントを受け取れることにする（server の配線と画面をテストで通すため）
     // アカウント（Claude の台帳を共有する形）。試験が FAKE_ACCOUNTS=off で「アカウントを持てないエージェント」にする
-    get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? false : 'token'; },
+    get accounts() { return process.env.FAKE_ACCOUNTS === 'off' ? impossible('試験用にアカウントを無効にしている') : 'token'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     // 入力欄の `!` は Claude と同じく Pleiad がホストで走らせる。渡した行は発言として履歴に残す（Claude の transcript と同じ形）
     shell: 'host',
     plyShell: true,
     nativeShellOff: true,
     approvals: 'interactive',
     mcpApproval: 'agent',
-    compatEndpoints: false,
-    promptSuggestions: false,
+    compatEndpoints: impossible('試験用の身代わりは互換の接続先を持たない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    promptSuggestions: covered,
     plyContext: 'turn',
-    effortInModelId: false,
-    instructionsAtStart: false,
-    failureDiagnostics: false,
+    effortInModelId: impossible('試験用の身代わりは強さをモデルの id で選ばない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    instructionsAtStart: impossible('試験用の身代わりは指示をターンごとに渡せる'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    failureDiagnostics: impossible('試験用の身代わりは失敗の記録を残さない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,
     promptDelivery: true,   // 「渡った」合図を出せることにする（出さない backend の形は silent: の台本で踏む）
     handover: true,          // 台本 held: のターンを保持役に載せる（試験用）
     // ply_computer の渡し方（テストが環境変数で切り替える。FAKE_COMPUTER_USE=off で対応しない）
     get computerUse() {
-      if (process.env.FAKE_COMPUTER_USE === 'off') return false;
+      if (process.env.FAKE_COMPUTER_USE === 'off') return impossible('試験用にコンピューターの操作を無効にしている'); // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
       return { images: process.env.FAKE_COMPUTER_IMAGES === 'path' ? 'path' : 'inline', waitSliceMs: Number(process.env.FAKE_COMPUTER_SLICE_MS) > 0 ? Number(process.env.FAKE_COMPUTER_SLICE_MS) : null };
     },
     // runArgs の配達物は台本で全部確かめられるよう、全部受け取ることにする

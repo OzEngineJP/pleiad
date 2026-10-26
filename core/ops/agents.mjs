@@ -24,7 +24,8 @@ export const agentOps = [
     surfaces: { ui: true, mcp: 'catalog', cli: { path: ['agents', 'list'] } },
     legacyCommand: 'backends',
     handler: async (ctx) => ({ agents: (await fromHost(() => ctx.agents.list())).map((a) => ({ id: a.id, label: a.label, description: clip(a.description, 200),
-      features: Object.entries(a.capabilities ?? {}).filter(([, on]) => on === true).map(([name]) => name) })) }),
+      // compact は 'prompt'（Pleiad が /compact を発言として送る）も対応。ほかの印は true だけを「できること」に出す
+      features: Object.entries(a.capabilities ?? {}).filter(([, on]) => on === true || on === 'prompt').map(([name]) => name) })) }),
     uiHandler: (ctx) => fromHost(() => ctx.agents.list()),
   }),
 
