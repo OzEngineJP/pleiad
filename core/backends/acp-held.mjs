@@ -181,7 +181,7 @@ export function createHeldAcp({ client = null, source = null } = {}) {
     },
 
     /** 子を止める（stdin を閉じ、木ごと止める）。終わるのを待つ（上限つき）。手を離した子には触れない */
-    async close({ waitMs = 3000 } = {}) {
+    async close({ waitMs = 10_000 } = {}) {
       if (!source) return;
       closing = true;
       if (!detached && !exited) {
@@ -192,8 +192,20 @@ export function createHeldAcp({ client = null, source = null } = {}) {
         }
         try { source.client.kill(id, { tree: true }); } catch { /* つながりが切れた */ }
       }
-      const end = Date.now() + waitMs;
-      while (!exited && !detached && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 20));
+      const waitForStop = async ms => {
+        const end = Date.now() + ms;
+        while (!exited && !detached && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 20));
+      };
+      await waitForStop(waitMs);
+      if (!exited && !detached) {
+        // The holder's Windows tree kill is asynchronous. Retry once if the
+        // first request did not produce an exit before dropping this source.
+        try { source.client.kill(id, { tree: true }); } catch { /* disconnected */ }
+        await waitForStop(waitMs);
+      }
+      // それでも終わらなければ、購読元は残す（終わりの知らせを受け取れるように）。close は会話の片付けから
+      // 呼ばれるので投げない（投げると終わったターンが失敗になる）
+      if (!exited && !detached) return;
       source.dispose();
     },
 
