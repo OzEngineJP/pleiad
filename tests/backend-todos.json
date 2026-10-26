@@ -18,11 +18,6 @@
       "promptSuggestions": "#108",
       "subagents": "#108"
     },
-    "grok": {
-      "compatEndpoints": "#108",
-      "plyContext": "#108",
-      "subagents": "#108"
-    },
     "opencode": {
       "autoCompactWindow": "#151",
       "liveMode": "#151",

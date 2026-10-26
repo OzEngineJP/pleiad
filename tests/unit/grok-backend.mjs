@@ -32,6 +32,7 @@ export default async function (t) {
       const profileAt = this.options.args.indexOf('--agent-profile');
       this.profile = profileAt >= 0 ? this.options.args[profileAt + 1] : null;
       try { this.profileText = this.profile ? fs.readFileSync(this.profile, 'utf8') : null; } catch { this.profileText = null; }
+      try { this.configText = fs.readFileSync(path.join(this.options.env.GROK_HOME, 'config.toml'), 'utf8'); } catch { this.configText = null; }
       return this.init;
     }
     async call(method, params) {
@@ -39,6 +40,7 @@ export default async function (t) {
       entry.args = this.options.args;
       entry.profile = this.profile;
       entry.profileText = this.profileText;
+      entry.configText = this.configText;
       const dirs = params?._meta?.pluginDirs ?? [];
       // 呼ばれた時点で置き場に hooks.json があるか（Grok が読むのはこの時点）
       entry.pluginFiles = dirs.map(d => { try { return JSON.parse(fs.readFileSync(path.join(d, 'hooks', 'hooks.json'), 'utf8')); } catch { return null; } });
@@ -53,7 +55,11 @@ export default async function (t) {
         const sessionId = `grok-fixture-${++nextId}`; sessions.set(sessionId, params.newCwd);
         return { newSessionId: sessionId };
       }
-      if (method === 'session/load') return { sessionId: params.sessionId, ...resumeSelection };
+      if (method === 'session/load') {
+        if (params.sessionId === 'grok-child-fixture') this.options.onUpdate({ sessionId: params.sessionId,
+          update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'child fixture answer' } } });
+        return { sessionId: params.sessionId, ...resumeSelection };
+      }
       if (method === 'session/resume') {
         if (rejectResume) throw Object.assign(new Error('method not found'), { code: -32601 });
         return { sessionId: params.sessionId, models: { currentModelId: MODEL, availableModels: [{ modelId: MODEL }] }, configOptions: [], ...resumeSelection };
@@ -69,6 +75,10 @@ export default async function (t) {
         if (permissionRequest) permissionResponse = await this.options.onRequest('session/request_permission', { ...permissionRequest, sessionId: params.sessionId });
         const text = params.prompt?.map(part => part.text ?? '').join('') ?? '';
         this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'user_message_chunk', content: { type: 'text', text } } });
+        if (text.includes('fixture request child')) {
+          this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'subagent_spawned', child_session_id: 'grok-child-fixture', subagent_id: 'sub-1', description: 'fixture child' } });
+          this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'subagent_finished', child_session_id: 'grok-child-fixture', subagent_id: 'sub-1', status: 'completed' } });
+        }
         this.options.onUpdate({ sessionId: params.sessionId, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'fixture reply' } } });
         return { stopReason: 'end_turn' };
       }
@@ -88,6 +98,9 @@ export default async function (t) {
   const ownDirs = () => { try { return fs.readdirSync(base).filter(n => n.startsWith(`${process.pid}-`)); } catch { return []; } };
 
   try {
+    t.ok('Grok の native AGENTS.md・Skills と重なる Pleiad 担当は拒否し、MCP だけの担当は受ける',
+      backend.plyContextRefusal({ instruction: 'ply', skill: 'native', mcp: 'ply' })
+        && backend.plyContextRefusal({ instruction: 'native', skill: 'native', mcp: 'ply' }) === null);
     // 持ち主の居ない残り（終わったプロセスの pid）と、生きている別のプロセス（親）の置き場を先に置く
     const dead = spawnSync(process.execPath, ['-e', ''], { stdio: 'ignore' }).pid;
     for (const owner of [dead, process.ppid]) fs.mkdirSync(path.join(base, `${owner}-fixture`, 'hooks'), { recursive: true });
@@ -229,6 +242,53 @@ export default async function (t) {
     t.ok('別会話に追加MCP・秘密情報・接続用環境変数を持ち越さない', separate.params.mcpServers.length === 0
       && separate.env.PLEIAD_FIXTURE_SECRET === process.env.PLEIAD_FIXTURE_SECRET
       && separate.env.AGENT_BROWSER_CONFIG === process.env.AGENT_BROWSER_CONFIG);
+
+    // 互換の接続先と ply_context はターンだけに渡し、再開と別会話を分ける。
+    const endpoint = { id: 'ep-0123456789ab', kind: 'openai-chat-completions', baseUrl: 'http://127.0.0.1:43123/v1',
+      key: 'fixture-endpoint-key', roles: { main: 'fixture-model' } };
+    const contextRuntime = { url: 'http://127.0.0.1:43123/mcp/context', headers: { Authorization: 'Bearer fixture-context-token' },
+      prompt: 'fixture ply context instructions', owners: { instruction: 'native', skill: 'native', mcp: 'ply' } };
+    mark = calls.length;
+    const endpointTurn = await turn({ cwd, endpoint, contextRuntime });
+    const endpointNew = of('session/new', mark)[0];
+    t.ok('新規 Grok 会話に OpenAI Chat Completions の接続先と ply_context を渡す',
+      endpointNew?.env?.GROK_MODELS_BASE_URL === endpoint.baseUrl && endpointNew?.env?.XAI_API_KEY === endpoint.key
+      && endpointNew?.configText?.includes(endpoint.baseUrl) && endpointNew?.configText?.includes('env_key = "XAI_API_KEY"')
+      && !endpointNew?.configText?.includes(endpoint.key)
+      && endpointNew?.params?.mcpServers?.some(s => s.name === 'ply_context' && s.url === contextRuntime.url)
+      && endpointNew?.params?.mcpServers?.some(s => s.name === 'ply_context' && s.headers?.[0]?.value === contextRuntime.headers.Authorization)
+      && of('session/prompt', mark)[0]?.params?.prompt?.[0]?.text?.includes(contextRuntime.prompt));
+    mark = calls.length;
+    await turn({ cwd, sessionId: endpointTurn.sessionId, endpoint, contextRuntime, mode: 'plan' });
+    const endpointResume = of('session/resume', mark)[0];
+    t.ok('再開 Grok 会話にも今回の接続先・ply_context・読み取り専用モードを渡す',
+      endpointResume?.env?.GROK_MODELS_BASE_URL === endpoint.baseUrl && endpointResume?.env?.XAI_API_KEY === endpoint.key
+      && endpointResume?.env?.GROK_HOME === endpointNew?.env?.GROK_HOME && endpointResume?.configText?.includes(endpoint.baseUrl)
+      && endpointResume?.params?.mcpServers?.some(s => s.name === 'ply_context')
+      && of('session/set_mode', mark).some(c => c.params.modeId === 'plan'));
+    const restarted = createGrokBackend({ Acp: FakeAcp, command: () => ['grok-fixture'], dataDir });
+    mark = calls.length;
+    await restarted.runTurn({ prompt: 'resume after backend restart', cwd, sessionId: endpointTurn.sessionId, mode: 'ask', endpoint, emit: () => {} });
+    const afterRestart = of('session/resume', mark)[0];
+    t.ok('バックエンド再起動後も保存した会話専用ホームと互換接続先を再利用する',
+      afterRestart?.env?.GROK_HOME === endpointNew?.env?.GROK_HOME && afterRestart?.configText?.includes(endpoint.baseUrl));
+    mark = calls.length;
+    await turn({ cwd: other, endpoint });
+    const secondEndpointConversation = of('session/new', mark)[0];
+    t.ok('別の互換接続会話には別の Grok ホームを割り当てる', secondEndpointConversation?.env?.GROK_HOME !== endpointNew?.env?.GROK_HOME);
+    mark = calls.length;
+    await turn({ cwd: other });
+    const isolatedEndpoint = of('session/new', mark)[0];
+    t.ok('別会話に接続先・ply_context を持ち越さない',
+      isolatedEndpoint?.env?.GROK_MODELS_BASE_URL !== endpoint.baseUrl && isolatedEndpoint?.env?.XAI_API_KEY !== endpoint.key
+      && !isolatedEndpoint?.params?.mcpServers?.some(s => s.name === 'ply_context'));
+    mark = calls.length;
+    const parent = await turn({ cwd, prompt: 'fixture request child' });
+    const child = (await backend.listSubagents(parent.sessionId))[0];
+    const childMessages = await backend.getSubagentMessages(parent.sessionId, child);
+    t.ok('子通知から会話の子だけを一覧し、その中身を取得する', child === 'grok-child-fixture'
+      && childMessages.some(m => m.role === 'assistant' && m.text.includes('child fixture answer'))
+      && (await backend.getSubagentMessages('unrelated-parent', child)).length === 0);
 
     // 設定の途中変更は稼働中のセッションだけに渡し、モデルのACKの不一致は成功にしない。
     let ready;

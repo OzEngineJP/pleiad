@@ -36,6 +36,21 @@ const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_GROK_POLL_MS ?? 3_000);
 /** Grok の置き場（config.toml・auth.json）。試験は AGENT_HOST_GROK_HOME で差し替える */
 const grokHome = () => path.resolve(process.env.AGENT_HOST_GROK_HOME || process.env.GROK_HOME || defaultGrokHome());
 
+async function writeCompatProfile(dataDir, endpoint, dir = path.join(dataDir, 'grok-endpoint-homes', randomUUID())) {
+  await fs.promises.mkdir(dir, { recursive: true });
+  const model = endpoint.roles.main;
+  const quote = value => JSON.stringify(String(value));
+  const content = ['[endpoints]', `models_base_url = ${quote(endpoint.baseUrl)}`,
+    '[models]', `default = ${quote(model)}`,
+    `[model.${quote(model)}]`, `model = ${quote(model)}`, `base_url = ${quote(endpoint.baseUrl)}`, 'env_key = "XAI_API_KEY"'].join('\n') + '\n';
+  const file = path.join(dir, 'config.toml');
+  const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  await fs.promises.writeFile(temp, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+  await fs.promises.chmod(temp, 0o600).catch(() => {});
+  await fs.promises.rename(temp, file);
+  return dir;
+}
+
 // Pleiad のモード → Grok の permission mode（`grok --permission-mode` の値と同じ）
 const GROK_MODES = { ask: 'default', 'accept-edits': 'acceptEdits', auto: 'auto', bypass: 'bypassPermissions', plan: 'plan' };
 
@@ -83,7 +98,46 @@ function spawnArgs(model, effort) {
 }
 
 export function createGrokBackend({ Acp = null, command = () => cliCommand('grok'), dataDir = store.dataDir, cancelGraceMs = 2000, accountScope = null } = {}) {
-  const cache = new Map(), rows = new Map(), active = new Map(), queues = new Map();
+  const cache = new Map(), rows = new Map(), active = new Map(), queues = new Map(), childSessions = new Map();
+  const endpointHomes = new Map();
+  let endpointHomesLoaded = false, endpointHomesLoad = null, endpointHomesWrite = Promise.resolve();
+  const dataPath = () => path.resolve(typeof dataDir === 'function' ? dataDir() : dataDir);
+  const endpointHomesFile = () => path.join(dataPath(), 'grok-endpoint-homes.json');
+  async function loadEndpointHomes() {
+    if (endpointHomesLoaded) return;
+    endpointHomesLoad ??= (async () => {
+      try {
+        const raw = JSON.parse(await fs.promises.readFile(endpointHomesFile(), 'utf8'));
+        if (raw && typeof raw === 'object' && !Array.isArray(raw)) for (const [id, dir] of Object.entries(raw)) {
+          const resolved = typeof dir === 'string' ? path.resolve(dir) : '';
+          const relative = resolved ? path.relative(path.join(dataPath(), 'grok-endpoint-homes'), resolved) : '..';
+          if (id.length <= 200 && !/[\x00-\x1f\x7f]/.test(id) && relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) endpointHomes.set(id, resolved);
+        }
+      } catch { /* first use or damaged cache: existing Pleiad history remains authoritative */ }
+    })();
+    await endpointHomesLoad;
+    endpointHomesLoaded = true;
+  }
+  async function rememberEndpointHome(id, dir) {
+    if (!id || !dir) return;
+    await loadEndpointHomes();
+    endpointHomes.set(id, dir);
+    const write = endpointHomesWrite.catch(() => {}).then(async () => {
+      const file = endpointHomesFile();
+      await fs.promises.mkdir(path.dirname(file), { recursive: true });
+      const temp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+      await fs.promises.writeFile(temp, JSON.stringify(Object.fromEntries(endpointHomes)), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      await fs.promises.chmod(temp, 0o600).catch(() => {});
+      await fs.promises.rename(temp, file);
+    });
+    endpointHomesWrite = write.catch(() => {});
+    await write;
+  }
+  async function homeForSession(id) { await loadEndpointHomes(); return endpointHomes.get(id) ?? null; }
+  async function openSessionClient(id, cwd, args = [], handlers = {}, extraEnv = null, options = {}) {
+    const endpointHome = id ? await homeForSession(id) : null;
+    return openClient(cwd, args, handlers, { ...(endpointHome ? { GROK_HOME: endpointHome } : {}), ...(extraEnv ?? {}) }, options);
+  }
   const scopedBackends = new Map();
   const metadataQueue = Symbol('metadata');
   const homeForScope = () => accountScope?.dir ?? grokHome();
@@ -203,6 +257,11 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
     // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
     capabilities: CAPABILITY_STATES.grok,
+    plyContextRefusal(owners) {
+      return owners?.instruction === 'ply' || owners?.skill === 'ply'
+        ? 'Grok Build は AGENTS.md と Skills をネイティブに読み、会話単位で止める設定が無いため、重複を避けるにはその所有者を native にしてください'
+        : null;
+    },
     traits: AGENT_TRAITS.grok,
     modes,
     get activeCount() { return active.size; },
@@ -278,7 +337,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     async setTitle(sessionId, title) {
       const cwd = await cwdFor(sessionId);
       if (!cwd || !command()) return;
-      const client = await openClient(cwd);
+      const client = await openSessionClient(sessionId, cwd);
       try {
         await client.call('_x.ai/session/rename', { sessionId, title: String(title ?? '') });
         const row = rows.get(sessionId);
@@ -293,13 +352,15 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       }
       const cwd = await cwdFor(sessionId);
       if (!cwd || !command()) throw new Error('Grok session directory is unavailable');
-      const client = await openClient(cwd);
+      const client = await openSessionClient(sessionId, cwd);
       try {
         const result = await client.call('_x.ai/session/fork', {
           sourceSessionId: sessionId, sourceCwd: cwd, newCwd: cwd,
         });
         const newSessionId = result?.newSessionId ?? result?.result?.newSessionId;
         if (typeof newSessionId !== 'string' || !newSessionId) throw new Error('Grok session fork returned no session id');
+        const endpointHome = await homeForSession(sessionId);
+        if (endpointHome) await rememberEndpointHome(newSessionId, endpointHome);
         if (typeof options.title === 'string' && options.title) {
           await client.call('_x.ai/session/rename', { sessionId: newSessionId, title: options.title });
         }
@@ -318,12 +379,18 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         const mapper = createGrokMapper(id);
         let client;
         try {
-          client = await openClient(cwd, [], { onUpdate: p => { if (p.sessionId === id) mapper.accept(p.update); } });
+          client = await openSessionClient(id, cwd, [], { onUpdate: p => { if (p.sessionId === id) mapper.accept(p.update); } });
           await client.call('session/load', { sessionId: id, cwd, mcpServers: [] });
           remember(id, mapper); return mapper.messages();
         } catch { return []; } // The common conversation keeps its persisted transcript.
         finally { if (client) await client.close(); }
       });
+    },
+    async listSubagents(id) { return [...(childSessions.get(id)?.keys() ?? [])]; },
+    async getSubagentMessages(parentId, childId, { limit = null } = {}) {
+      if (!childSessions.get(parentId)?.has(childId)) return [];
+      const messages = await this.getMessages(childId);
+      return Number.isInteger(limit) && limit >= 0 ? (limit === 0 ? [] : messages.slice(-limit)) : messages;
     },
     // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは acp-held.mjs の heldAcpPlan が決める）
     async runTurn(args, adopt = null) {
@@ -379,8 +446,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         };
         let error = null, outcome = 'ok';
         try {
-          if (args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
-          if (args.contextRuntime) throw new Error(t('context.runtime.refused', { backend: 'Grok Build' }));
+          if (args.oauthToken) throw new Error(t('accounts.badBackend'));
           check();
           // CLI の起動・履歴の再生・モードの適用は送る前に済ませるが、数秒黙る。
           // その間も画面が止まって見えないよう、準備中から稼働表示に出す
@@ -392,6 +458,19 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           // Pleiad がそろえる Hooks を渡すターンは、Claude・Cursor・Codex 互換の読み込み元を環境変数で止める（二重実行の防止）
           let extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}),
             ...(args.secretsRuntime?.env ?? {}), ...(args.hooksRuntime?.compatHookEnv ?? {}) };
+          let endpointHome = sessionId ? await homeForSession(sessionId) : null;
+          if (args.endpoint) {
+            if (args.endpoint.kind !== 'openai-chat-completions' || !args.endpoint.baseUrl || !args.endpoint.roles?.main) throw new Error(t('accounts.badBackend'));
+            if (!endpointHome) {
+              if (sessionId) throw new Error('Grok compatible endpoint profile for this conversation is missing');
+              endpointHome = path.join(dataPath(), 'grok-endpoint-homes', randomUUID());
+            }
+            await writeCompatProfile(dataPath(), args.endpoint, endpointHome);
+            extraEnv = { ...extraEnv, GROK_HOME: endpointHome, GROK_MODELS_BASE_URL: args.endpoint.baseUrl,
+              GROK_MODELS_LIST_URL: `${args.endpoint.baseUrl.replace(/\/+$/, '')}/models`, XAI_API_KEY: args.endpoint.key || 'no-key' };
+          } else if (endpointHome) {
+            extraEnv = { ...extraEnv, GROK_HOME: endpointHome };
+          }
           if (Number.isFinite(args.autoCompactWindow) && args.autoCompactWindow > 0) {
             const available = await this.models(cwd);
             const selected = available[model] ?? available[''];
@@ -404,7 +483,20 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               if (sessionId && params.sessionId !== sessionId) return;
               if (fatal) return;
               replaying = Boolean(opts?.replay);
-              try { mapper?.accept(params.update); } finally { replaying = false; }
+              try {
+                const update = params.update;
+                if (update?.sessionUpdate === 'subagent_spawned' && typeof update.child_session_id === 'string') {
+                  const children = childSessions.get(sessionId) ?? new Map();
+                  children.set(update.child_session_id, { id: update.child_session_id, parentId: sessionId, subagentId: update.subagent_id, label: update.description ?? update.subagent_type ?? 'Grok child' });
+                  childSessions.set(sessionId, children);
+                  rows.set(update.child_session_id, { sessionId: update.child_session_id, cwd, title: update.description ?? update.subagent_type ?? 'Grok child', createdAt: new Date().toISOString(), lastModified: Date.now() });
+                  if (endpointHome) rememberEndpointHome(update.child_session_id, endpointHome).catch(() => {});
+                } else if (update?.sessionUpdate === 'subagent_finished' && typeof update.child_session_id === 'string') {
+                  const child = childSessions.get(sessionId)?.get(update.child_session_id);
+                  if (child) child.status = update.status ?? 'completed';
+                }
+                mapper?.accept(update);
+              } finally { replaying = false; }
             },
             // _x.ai/interject の受理確認通知: 通知の届いた位置へ user 行を置き、履歴の uuid を nativeId に使う
             onInterjection: params => {
@@ -492,7 +584,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             // MCP は新規・再開の両方に、そのターンの接続情報だけを渡す。
             const acpMcp = (name, runtime) => runtime?.url ? [{ name, type: 'http', url: runtime.url,
               headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : [];
-            const mcpServers = [...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime),
+            const mcpServers = [...acpMcp('ply_context', args.contextRuntime), ...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime),
               ...acpMcp(COMPUTER_SERVER, args.computerRuntime), ...acpMcp(SHELL_SERVER, args.shellRuntime), ...acpMcp('ply_agents', args.agentRuntime)];
             // Pleiad がそろえる Hooks は、このターンだけのプラグイン（hooks/hooks.json）として _meta.pluginDirs で渡す。
             // 渡した置き場は trusted になり、保存されない（session/load でも毎回渡す）。ターンの終わりに消す（grok-hooks.mjs）
@@ -517,6 +609,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               state = await client.call('session/new', { cwd, mcpServers, ...meta });
               sessionId = state?.sessionId;
               if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('grok.errors.notConnected'));
+              if (endpointHome) await rememberEndpointHome(sessionId, endpointHome);
               mapper = createGrokMapper(sessionId, mapEmit, { windowTokens });
             }
             remember(sessionId, mapper); active.set(sessionId, client);
@@ -526,7 +619,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             check();
             const browserInstructions = args.browserEnv && modes()[args.mode || 'ask']?.scope === 'readonly'
               ? agentT(args.locale, 'browser.readonlyInstructions') : args.browserInstructions;
-            prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions,
+            prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.contextRuntime?.prompt, args.agentRuntime?.instructions,
               args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale }),
               args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
             sentText = prompt;
@@ -652,7 +745,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       if (!client) {
         const cwd = await cwdFor(id);
         if (cwd && command()) {
-          try { client = await openClient(cwd); } catch {}
+          try { client = await openSessionClient(id, cwd); } catch {}
         }
       }
       if (client) {

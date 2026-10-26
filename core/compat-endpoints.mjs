@@ -69,6 +69,7 @@ export function normalizeUrl(agent, value) {
   if (agent === 'claude' && /\/v1$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeV1'));
   if (agent === 'claude' && /\/v1\/messages$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeMessages'));
   if (agent === 'codex' && /\/(responses|chat\/completions)$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.codexSuffix'));
+  if (agent === 'grok' && /\/chat\/completions$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.codexSuffix'));
   return href;
 }
 
@@ -284,6 +285,19 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
       // i18n-dynamic: compat.check.authFailed
       tried.length > 1 ? t('compat.check.authBoth', { statuses }) : t(key ? 'compat.check.authFailed' : 'compat.check.authFailedNoKey', { status: statuses }),
       t('compat.check.reached')] });
+  }
+  if (agent === 'grok') {
+    const model = probeModel || 'grok-probe';
+    const auth = !key ? 'none' : authMode;
+    const headers = { 'content-type': 'application/json', ...authHeaders(auth, key) };
+    const r = await send(fetchImpl, `${baseUrl}/chat/completions`, { headers, body: { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false }, key });
+    if (r.status === 401 || r.status === 403) throw new CheckError(t('compat.check.badKey'), { code: 'auth', lines: [t('compat.check.reached')] });
+    if (r.status === 404 || r.status === 405) throw new CheckError(t('compat.check.probeStatus', { status: r.status }), { code: 'not-found' });
+    if (r.status >= 500) throw new CheckError(t('compat.check.serverError', { status: r.status }), { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
+    if (!r.ok) { const why = errorText(r.text, key); lines.push(why ? t('compat.check.probeStatusWithReason', { status: r.status, reason: why }) : t('compat.check.probeStatus', { status: r.status })); }
+    const models = await fetchModels(fetchImpl, `${baseUrl}/models`, authHeaders(auth, key), key);
+    if (!models?.ids.length) lines.push(t('compat.check.noModels'));
+    return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
   }
   // Codex: Responses API
   const model = probeModel || 'gpt-probe';

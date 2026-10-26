@@ -34,6 +34,12 @@ const nativeShellOff = (() => {
   if (!profile) return false;
   try { return fs.readFileSync(profile, 'utf8').includes('run_terminal_cmd'); } catch { return false; }
 })();
+const compatEndpoint = (() => {
+  try {
+    const config = fs.readFileSync(path.join(process.env.GROK_HOME ?? '', 'config.toml'), 'utf8');
+    return config.includes('[endpoints]') && config.includes('[model.') && config.includes('models_base_url =');
+  } catch { return false; }
+})();
 
 const EFFORTS = [
   { id: 'xhigh', value: 'xhigh', label: 'Extra High Effort', default: false },
@@ -66,9 +72,9 @@ const file = id => path.join(stateDir, `${id}.json`);
 // ターンの始めに届いた配達物（mcpServers・環境変数・プラグインの hooks）。配達物の試験が読む（devin の身代わりと同じ形）
 const seen = (p = {}) => ({
   mcpServers: (p.mcpServers ?? []).map(s => s?.name).filter(Boolean),
-  seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_|DELIVERY_|GROK_.*HOOKS_)/.test(k)),
+  seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_|DELIVERY_|GROK_.*HOOKS_|GROK_HOME$|GROK_MODELS_BASE_URL$|GROK_MODELS_LIST_URL$|XAI_API_KEY$)/.test(k)),
   pluginDirs: (p._meta?.pluginDirs ?? []).filter(d => typeof d === 'string'),
-  nativeShellOff,
+  nativeShellOff, compatEndpoint,
 });
 const pluginFiles = dirs => dirs.map(dir => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'hooks', 'hooks.json'), 'utf8')); } catch { return null; } });
 // 書きかけのファイルを読ませない。止められても、別のプロセスが読んでも、前か後の完全な版だけが見える
