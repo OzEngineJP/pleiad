@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn as spawnChild } from 'node:child_process';
+import { spawnChild } from './process.mjs';
 import { createRequire } from 'node:module';
 import { t } from './i18n.mjs';
 

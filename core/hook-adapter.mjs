@@ -20,7 +20,17 @@
 //                                          and anything agy itself treats as a failure)
 //   at stop (Stop)              -> let the agent stop (no continue)
 //   after a tool (PostToolUse)  -> nothing
-import { spawn, spawnSync } from 'node:child_process';
+let spawn, runSync;
+try {
+  const processApi = await import('./process.mjs');
+  spawn = processApi.spawnChild;
+  runSync = processApi.runSync;
+} catch {
+  // The adapter is copied unchanged next to hooks and must still run when the Pleiad source tree is absent.
+  const { spawn: rawSpawn, spawnSync: rawSpawnSync } = await import('node:child_process');
+  spawn = (command, args, options) => rawSpawn(command, args, options);
+  runSync = (command, args, options) => rawSpawnSync(command, args, options);
+}
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -231,13 +241,13 @@ export function runCommand(command, { input, cwd, env, timeoutMs, signal }) {
     if (!shell) { resolve({ startError: 'Git Bash was not found' }); return; }
     const childEnv = { ...process.env, ...env };
     delete childEnv.__pleiadFrom;
-    try { child = spawn(command, { cwd, env: childEnv, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
+    try { child = spawn(command, [], { cwd, env: childEnv, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch (e) { resolve({ startError: String(e?.message ?? e) }); return; }
     let stdout = '', stderr = '', done = false, timedOut = false, overflow = false;
     const onAbort = () => { kill(); finish({ aborted: true, stdout, stderr }); };
     const finish = r => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort); resolve(r); };
     const kill = () => {
-      if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      if (process.platform === 'win32' && child.pid) runSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
       else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
       child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
     };

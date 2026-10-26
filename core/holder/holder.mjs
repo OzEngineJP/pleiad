@@ -63,7 +63,7 @@ function probe(pipe) {
 export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('hex'), appVersion = '', file = null, range = HOLDER_RANGE,
   maxLineBytes = DEFAULT_MAX_LINE_BYTES, maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, maxRecordBytes = DEFAULT_MAX_RECORD_BYTES,
   highWaterBytes = DEFAULT_HIGH_WATER_BYTES, helloTimeoutMs = DEFAULT_HELLO_TIMEOUT_MS, idleMs = DEFAULT_IDLE_MS, exitGraceMs = 2000,
-  platform = process.platform, spawnProcess = spawnChild, onIdle = () => {}, onShutdown = () => {}, log = () => {} } = {}) {
+  platform = process.platform, spawnChildImpl = spawnChild, onIdle = () => {}, onShutdown = () => {}, log = () => {} } = {}) {
   const generation = range[1];
   const children = new Map();   // id -> 子の状態
   const conns = new Set();      // 握手の前も含む全部の接続
@@ -224,7 +224,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     conn.subs.set(id, { cursor: 1, detached: false, exitSent: false, scheduled: false, inbuf: '' });
     let proc;
     try {
-      proc = spawnProcess(f.command, Array.isArray(f.args) ? f.args.map(String) : [], {
+      proc = spawnChildImpl(f.command, Array.isArray(f.args) ? f.args.map(String) : [], {
         cwd: f.cwd || undefined, env: f.env && typeof f.env === 'object' ? f.env : process.env,
         stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false,
         detached: platform !== 'win32',     // POSIX は木ごと止めるためにグループを分ける。Windows は libuv の Job で、保持役が落ちれば子も止まる
@@ -266,7 +266,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     try {
       if (!tree) c.proc.kill();
       else if (platform === 'win32') {
-        const killer = spawnProcess('taskkill', ['/PID', String(c.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+        const killer = spawnChildImpl('taskkill', ['/PID', String(c.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
         killer.on('error', () => { try { c.proc.kill(); } catch { /* 既に終わっている */ } });
       } else process.kill(-c.pid, 'SIGKILL');
     } catch { try { c.proc.kill('SIGKILL'); } catch { /* 既に終わっている */ } }

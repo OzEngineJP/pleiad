@@ -4,14 +4,13 @@
 //   run()        完了を待つ短命の子（git・gh・--version・taskkill・`!` の 1 回のシェルなど）。プロセスのハンドルは返さない。
 //                出力は上限つきで集め、onOutput で流す。止める・時間切れはこの中で木ごとに止める
 //   start()      保持役（core/holder/）に起こさせる長く生きる子。戻り値は { id, client, source }（source は記録・write・ack）。
-//                保持役を使えないときは null（呼び出し側は run() か、今のサーバーの子に落とす）
+//                保持役を使えないときは null（呼び出し側は短命の run() に落とすか、起動不能を返す）
 //   detach()     サーバーの子でない形で起こす（保持役自身の起動。core/holder/client.mjs）。pid だけ返す
-//   spawnChild() 保持役の本体（core/holder/holder.mjs）が子を起こすための生の口。ほかからは使わない
+//   spawnChild() 生の spawn。保持役本体と tests/lint-child-process.mjs の固定例外だけが使う
 //
 // 保持役の置き場: AGENT_HOST_RUNTIME_ROOT（パッケージ版の main が渡す）が無ければ、データ置き場ごとの一時フォルダー
 // （os.tmpdir()/pleiad-holder/<データ置き場のハッシュ>）を使う。同じデータ置き場のサーバーを起こし直しても同じ保持役につながる。
-// Electron の utilityProcess（AGENT_HOST_HANDOVER=off の開発・パッケージ版）で置き場が無いときは null（段 4 で実行場所の外の
-// 保持役を渡す。今はサーバーの子のまま）。
+// Electron の utilityProcess もデータ置き場ごとの一時フォルダーで同じ保持役を使う。
 import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -38,13 +37,11 @@ export function defaultHolderRoot(dataDir, { tmpdir = os.tmpdir() } = {}) {
 
 /**
  * この起動で保持役を使える置き場。無ければ null。
- * root（AGENT_HOST_RUNTIME_ROOT）が無いときは、Node で走っているサーバー（npm start・テスト）だけ一時の置き場を使う。
- * Electron の utilityProcess は、保持役を実行場所の外で起こす口がまだ無いので null（段 4）
+ * root（AGENT_HOST_RUNTIME_ROOT）が無いときは、データ置き場ごとの一時の置き場を使う。
  */
 export function holderRootFor({ dataDir, root = bootEnv('AGENT_HOST_RUNTIME_ROOT') } = {}) {
   if (!dataDir) return null;
   if (root) return root;
-  if (process.versions.electron) return null;
   return defaultHolderRoot(dataDir);
 }
 
@@ -157,9 +154,9 @@ export async function detach(command, args = [], { cwd, env, windowsHide = true,
   return { pid: child.pid };
 }
 
-/** 保持役の本体が子を起こすための生の口（stdin・stdout・stderr・pid・kill を持つハンドルを返す）。ほかからは使わない */
+/** 生の spawn（stdin・stdout・stderr・pid・kill を持つハンドルを返す）。利用箇所は tests/lint-child-process.mjs の固定例外だけ */
 export function spawnChild(command, args = [], options = {}) {
-  return spawn(command, Array.isArray(args) ? args.map(String) : [], options);
+  return spawn(command, args.map(String), options);
 }
 
 /** 親（サーバー）が居ないまま残った子を、保持役が止めるまでの既定（アプリが落ちた後も残り続けない保険。ADR 0270 決定 4） */
@@ -169,7 +166,7 @@ export const KEEP_MS = 10 * 60_000;
  * 保持役に子を起こさせる。戻り値は { id, client, source }。source は core/adopt.mjs の holderSource（記録・write・ack）。
  * marks は { 名前: 通番 }（既定は 1）。起こした子の記録を、起動で拾い直せるように印を置く。
  * keepMs は、親が居ない状態が続いたら保持役が子を止めるまでの ms（既定は KEEP_MS。0 で止めない）。
- * 保持役を使えない（置き場が無い・Electron の off 経路）ときは null。起こせない・つなげないときは投げる（呼び出し側が今の流れに落とす）
+ * 保持役を使えない（置き場が無い）ときは null。呼び出し側は短命の run() に落とすか起動不能を返す。起こせない・つなげないときは投げる。
  */
 export async function start({
   id, command, args = [], cwd, env, policy = 'none', label = null, marks = {}, keepMs = KEEP_MS,

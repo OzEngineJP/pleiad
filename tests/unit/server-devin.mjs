@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { DevinAcp } from '../../core/backends/devin-acp.mjs';
 import { createDevinBackend } from '../../core/backends/devin.mjs';
@@ -400,5 +401,5 @@ export default async function (t) {
       t.ok('backend を省いた ply_delegate は止まった枠を選ばず、飛ばした理由と戻す時刻を返す',
         auto.isError === true && skipLine?.[1] === heldSlot?.until && (await pc.cmd('agentTasks')).filter(x => x.backend === 'devin').length === 1, auto.text?.slice(0, 600));
     } finally { pc.close(); }
-  } finally { c?.close(); await server?.stop(); await fs.rm(root, { recursive: true, force: true }); }
+  } finally { c?.close(); await server?.stop(); await cleanupTestHolder(path.join(root, 'data')); await fs.rm(root, { recursive: true, force: true }); }
 }

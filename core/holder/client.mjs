@@ -279,6 +279,8 @@ export async function launchHolder({ dataDir, root, key = '', appVersion = '', n
   const holderEnv = { ...env, [ENV.data]: dataDir, [ENV.root]: root, [ENV.key]: key, [ENV.appVersion]: appVersion };
   delete holderEnv.AGENT_HOST_TOKEN;          // 保持役は画面のトークンを要らない
   delete holderEnv.ELECTRON_RUN_AS_NODE;
+  // 開発時の utilityProcess から保持役を起こす場合、同じ Electron 実行ファイルを Node として使う。
+  if (process.versions.electron && nodeExe === process.execPath) holderEnv.ELECTRON_RUN_AS_NODE = '1';
   if (idleMs !== undefined) holderEnv[ENV.idleMs] = String(idleMs);
   if (chosen === 'breakaway') return job.launchBreakaway({ exe: nodeExe, args: [script], cwd, env: holderEnv });
   if (spawnProcess) {

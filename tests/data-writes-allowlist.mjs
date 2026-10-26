@@ -239,6 +239,9 @@ export const DATA_WRITES = [
   { file: 'desktop/updates.cjs', sites: 2, targets: [
     { name: '(置き場の外) Electron の userData の、更新の設定', limit: '固定（チャンネル・自動確認・自動ダウンロード・最後の版）', reason: '更新の設定。一時ファイルに書いて置き換える' },
   ] },
+  { file: 'desktop/main.cjs', sites: 1, targets: [
+    { name: '(置き場の外) Electron の userData/update-restart-notice', limit: '固定の 1 文字', reason: 'Electron の入れ替えで接続が切れた画面へ、更新が理由だと次の起動で知らせる' },
+  ] },
   { file: 'desktop/update-log.cjs', sites: 2, targets: [
     { name: '(置き場の外) Electron の userData の logs/updater.log と、1 世代前の updater.log.old', limit: 'MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: '更新ライブラリーの記録。1 行ずつ追記し、回すときは名前を替えるだけ', appendOnly: true },
   ] },

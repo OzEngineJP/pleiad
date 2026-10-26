@@ -30,7 +30,6 @@ import { isSearchShortcut } from './session-find.mjs';
 import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
-import { setupSwitchNotice } from './switch-notice.mjs';
 import { setupCliSetup } from './cli-setup.mjs';
 import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
@@ -234,8 +233,6 @@ const readCompletions = createReadCompletions({ storage: readStorage, send: read
 const displayedCompletions = new Map();
 // 更新の知らせ（web/updates.mjs）。実行中の件数が変わったら脇の知らせの一行を描き直す。setupUpdates が下で入れる
 let updatesUi = null;
-// 更新の後、新しい版への切り替えを待っている間の知らせ（web/switch-notice.mjs）。main が渡す状態を描く。下で入れる
-let switchUi = null;
 
 const token = new URL(location.href).searchParams.get("token") ?? "";
 const $ = (id) => document.getElementById(id);
@@ -3884,8 +3881,6 @@ function applyRunning(work) {
   activity.sync();
   paintSettingsNotice();
   if (changed) { renderSessions(); refreshWorktree().catch(() => {}); }
-  updatesUi?.workChanged();
-  switchUi?.refresh();
   // バックグラウンドはこの会話の分だけ稼働表示に出す。他所の分は一覧の行に付く
   syncWorkEntry();
   restorePastSubagents(state.current);
@@ -10708,31 +10703,12 @@ const onboarding = setupOnboarding({ cmd, refreshAuth,
 // 実行中でも更新できる（ADR 0036）。確認の段で止まる作業を並べ、「中断して更新」で全部を reason update で中断してから保存へ進む。
 // 下の flush の count > 0 の断りは、中断が済んだ後の安全網（サーバーの更新ロックも残る）
 const cliSetup = setupCliSetup({ cmd });
-switchUi = setupSwitchNotice({
-  sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
-  agentName: (id) => (id ? labelOf(id) : ''),
-  // 設定のページの一覧から会話を開くときは、設定を閉じてから
-  openSession: (id) => { onboarding.close(); select(id); },
-  onChange: () => updatesUi?.refresh(),
-});
-updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock, cmd,
-  switchUi,
-  // 無停止の更新の確認の段: 内蔵ブラウザーのタブを開いている・コンピューターの操作中なら、開き直しの注意を出す
-  handoverNotes: () => ({ browser: (browserPanel?.state.tabs.length ?? 0) > 0 || state.computerStates.size > 0 }),
+updatesUi = setupUpdates({ page: onboarding.page, open: onboarding.open, lock: onboarding.lock,
   work: () => state.work,
   sessionName: (id) => rowLabel(state.sessions.find(s => s.id === id) ?? {}),
   agentName: (id) => (id ? labelOf(id) : ''),
-  // 無停止の更新（handover）では作業があっても断らない。切り替えは保持役に載らない作業が終わるのを main が待つ（desktop/switch.cjs）
-  flush: async ({ handover = false } = {}) => {
-  const work = await cmd('running');
-  if (!handover && work.count > 0) {
-    // どの会話が止めているかを名前で出す。数だけだと、どこを待てばよいか探し回ることになる
-    const ids = [...new Set([...work.turns, ...work.permissions.filter(p => !p.relay), ...work.subagents].map(w => w.sessionId).filter(Boolean))];
-    const titles = ids.slice(0, 3).map(id => rowLabel(state.sessions.find(s => s.id === id) ?? {}));
-    const names = t('app.update.names', { names: titles.join(t('app.update.namesJoin')) });
-    throw new Error(!titles.length ? t('app.update.blockedDelegated')
-      : ids.length > 3 ? t('app.update.blockedBusyMore', { names, count: ids.length - 3 }) : t('app.update.blockedBusy', { names }));
-  }
+  // 更新では保持役の子を止めず、下書きを保存して旧サーバーの通常停止へ進む
+  flush: async () => {
   if (creatingSession || state.loadingSession) throw new Error(t('app.update.loading'));
   if (!state.current && ($('prompt').value || state.attached.length)) throw new Error(t('app.update.draftNoSession'));
   await saveDraft();
@@ -10813,4 +10789,5 @@ fitPrompt();
 composerWait.busy("connect");
 paintBootSkeleton();
 side.skeleton();   // 会話とスレッドの一覧が届くまでの骨組み（renderSessions が揃うまで置き続ける）
+if (new URLSearchParams(location.search).get('reason') === 'update-restart') notify(t('updates.restartedForUpdate'));
 connect();

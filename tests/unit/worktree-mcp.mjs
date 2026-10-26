@@ -62,7 +62,7 @@ export default async function (t) {
     const rootPid = JSON.parse((await fs.readFile(log, 'utf8')).split('\n')[0]).pid;
     const grandPid = Number(await fs.readFile(childPidFile, 'utf8'));
     assert(alive(rootPid) && alive(grandPid));
-    assert(procs().unclosed().length === 1, '台帳に起きた根が記録されている');
+    assert(procs().unclosed().length === 0, '保持役が管理する MCP は旧 MCP 台帳に載らない');
     assert((await call(port1)).content[0].text === 'stdio-result');
     await port1.close();
     assert(alive(rootPid), 'warm に残る MCP はまだ生きている');
@@ -72,7 +72,7 @@ export default async function (t) {
     assert.equal(r1.action, 'removed', JSON.stringify(r1));
     assert(!(await exists(w.path)), 'worktree の場所が消える');
     await until(() => !alive(rootPid) && !alive(grandPid));
-    assert(procs().unclosed().length === 0, '台帳の行も締まる');
+    assert(procs().unclosed().length === 0, '保持役の記録から子が閉じる');
     t.ok('worktree の中を cwd に持つ MCP（親＋孫）を畳んでから消せる', true);
 
     // 畳まれた分は次の利用で起き直る（新しい worktree・新しいプロセス）
