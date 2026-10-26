@@ -65,7 +65,7 @@ export class HolderClient extends EventEmitter {
     this.options = { pipe, secret, appVersion, range, pid, helloTimeoutMs, requestTimeoutMs, maxFrameBytes, log };
     this.socket = null;
     this.connected = false;
-    this.welcome = null;       // { protocol, generation, range, appVersion, pid, children, stash }
+    this.welcome = null;       // { protocol, generation, range, appVersion, pid, children }
     this.byeReason = null;
     this.waiters = new Map();  // 答えの待ち（attached:<id>・detached:<id>・replay:<reqId>）
     this.reqSeq = 0;
@@ -213,7 +213,6 @@ export class HolderClient extends EventEmitter {
   mark(id, name, seq) { return this.send({ t: 'mark', id, name, ...(seq ? { seq } : {}) }); }
   unmark(id, name) { return this.send({ t: 'unmark', id, name }); }
   label(id, label) { return this.send({ t: 'label', id, label }); }
-  stash(stash) { return this.send({ t: 'stash', stash }); }
   release(id) { return this.send({ t: 'release', id }); }
   /** 手を離す（id 無しは全部）。答えが来た時点で、この親からの write・end・kill は転送されない。その後に SDK の query を閉じる（design.md §4.4） */
   detach(id) {

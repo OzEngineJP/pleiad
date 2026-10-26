@@ -214,7 +214,9 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     const d = { input: Math.max(0, live.input - rec.credited.input), output: Math.max(0, live.output - rec.credited.output), cached: Math.max(0, live.cached - rec.credited.cached) };
     if (!d.input && !d.output && !d.cached) return Promise.resolve();
     rec.credited = { input: Math.max(live.input, rec.credited.input), output: Math.max(live.output, rec.credited.output), cached: Math.max(live.cached, rec.credited.cached) };
-    return channels.threads.update(rec.channelId, rec.threadId, (cur) => ({ tokens: sum(cur.tokens, d) })).catch((e) => log('could not write the token usage:', errText(e)));
+    return channels.threads.update(rec.channelId, rec.threadId, (cur) => ({ tokens: sum(cur.tokens, d) }))
+      .then(() => { if (!rec.ended) rt()?.turns?.get(rec.sessionId)?.control?.touch?.(); })
+      .catch((e) => log('could not write the token usage:', errText(e)));
   }
 
   // ------------------------------------------------------------ 包みの組み立て
@@ -848,7 +850,10 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       const confirms = Boolean(target.control?.steerConfirms);
       await inbox.mark(ids, 'delivering');
       const callers = callersOf(group);
-      if (confirms) liveSteers.set(message.id, { sessionId, ids, text: built.prompt, cursor: built.cursor, callers });
+      if (confirms) {
+        liveSteers.set(message.id, { sessionId, ids, text: built.prompt, cursor: built.cursor, callers });
+        turn.control?.touch?.();
+      }
       let accepted = false;
       try { accepted = await target.control.steer(message); }
       catch (e) {
@@ -871,14 +876,15 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   const lngOf = async (sessionId) => (await Promise.resolve(host.agentLocaleFor?.(sessionId)).catch(() => null)) ?? locale();
 
   /** 途中送信が渡った: 渡した印を残し、会話の画面へ出す */
-  async function steered(sessionId, ids, text, cursor, callers = []) {
+  async function steered(sessionId, ids, text, cursor, callers = [], { replay = false } = {}) {
     const rec = active.get(sessionId);
     if (rec && !rec.ended) rec.receivedSteer = true;
     await inbox.mark(ids, 'sent');
     if (rec && !rec.committed && cursor) rec.cursor = cursor;
     if (rec) for (const c of callers) rec.callers.set(c.botId, c);   // 渡った呼び出しの返事も、このターンの終わりに返す
     if (cursor) await updateSidecar(sessionId, (sb) => ({ ...sb, postCursor: cursor }));
-    host.emitSession?.(sessionId, { type: 'channelEvent', rows: channelEventRows(text) });
+    rt()?.turns?.get(sessionId)?.control?.touch?.();
+    if (!replay) host.emitSession?.(sessionId, { type: 'channelEvent', rows: channelEventRows(text) });
   }
 
   /** 新しいターンで渡す */
@@ -1084,6 +1090,72 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     return { botInstructions: null, notes: [...notes, ...(pre?.payloadNotes ?? [])] };
   }
 
+  /**
+   * 起動で付け直す bot のターン用に、投稿の更新役を作り直す。
+   * チャンネルの投稿は保存済みのものを再利用し、保持役の記録の再生から本文・使用量・提示を組み立てる。
+   */
+  async function restoreTurn(turn, card) {
+    const sessionId = turn?.info?.sessionId;
+    const sb = await sidecarOf(sessionId);
+    if (!sessionId || !sb || active.has(sessionId)) return false;
+    // pulse は隠れた短い会話で、通常時もターン投稿の記録を持たない。
+    if (sb.kind === 'pulse') return true;
+    const bot = await getBot(sb.botId);
+    if (!bot) return false;
+    const channelId = sb.channelId ?? (sb.kind === 'dm' ? bot.dmChannelId : null);
+    if (!channelId && !['pulse', 'learner'].includes(sb.kind)) return false;
+    const threadId = sb.threadId ?? null;
+    const page = channelId ? await channels.read({ channelId, ...(threadId ? { threadId } : {}), limit: 100 }).catch(() => ({ posts: [] })) : { posts: [] };
+    const post = (page.posts ?? []).find(p => p.turn?.sessionId === sessionId && p.turn?.botId === bot.id) ?? null;
+    const rec = {
+      sessionId, botId: bot.id, kind: sb.kind, channelId, threadId, taint: sb.taint ?? undefined,
+      postId: post?.id ?? null, postReady: Promise.resolve(post?.id ?? null),
+      inner: null, pulseBot: Boolean(brain && bot.pulse?.on),
+      itemIds: [], cursor: sb.postCursor ?? null, tail: null, callers: new Map(),
+      deferPost: !post && ['pulse', 'learner'].includes(sb.kind),
+      cur: '', last: '', parts: [], sawText: false, presents: [],
+      spoke: false, filled: false, explicit: null, explicitMentions: new Set(), usage: { ...turn.usage },
+      credited: card?.botCredited ?? { input: 0, output: 0, cached: 0 }, waiting: new Set(card?.waits ?? []),
+      state: card?.waits?.length ? 'waiting' : 'working', postedState: post?.state ?? 'working',
+      lastWritten: post?.text ?? PLACEHOLDER, botControlled: false, error: null,
+      committed: Boolean(card?.delivery?.initialDelivered), compactedDuring: false,
+      ended: false, stopped: false, receivedSteer: false, abandoned: false,
+      timer: null, lastFlush: 0, dirty: false, chain: Promise.resolve(),
+    };
+    const restoredSteers = [];
+    await inbox.load();
+    const savedItems = await inbox.list({ sessionId });
+    const botItemIds = new Set(card?.botItemIds ?? []);
+    const savedSteers = card?.botLiveSteers ?? [];
+    const liveSteerIds = new Set(savedSteers.flatMap(saved => saved.ids ?? []));
+    const associatedItems = savedItems.filter(item => botItemIds.has(item.id));
+    const recoverable = savedItems.filter(item => (botItemIds.has(item.id) || liveSteerIds.has(item.id)) && ['delivering', 'unknown'].includes(item.status));
+    const initialItems = recoverable.filter(item => botItemIds.has(item.id));
+    rec.itemIds = initialItems.map(item => item.id);
+    rec.callers = new Map([...(card?.botCallers ?? []), ...callersOf(associatedItems)].map(caller => [caller.botId, caller]));
+    rec.inner = associatedItems.find(item => item.inner)?.inner ?? null;
+    if (savedSteers.length) {
+      for (const saved of savedSteers) {
+        const wanted = new Set(saved.ids);
+        const items = recoverable.filter(item => wanted.has(item.id));
+        if (!items.length) continue;
+        for (const group of groupByThread(items)) {
+          const messageId = 'channel-' + group[0].id;
+          if (messageId !== saved.id) continue;
+          const channel = await channels.get({ channelId: group[0].channelId }).catch(() => null);
+          if (!channel) continue;
+          const built = await buildPrompt({ sessionId, sb, channel, threadId: group[0].threadId, items: group, lng: await lngOf(sessionId) });
+          restoredSteers.push([messageId, { sessionId, ids: group.map(item => item.id), text: built.prompt, cursor: saved.cursor ?? built.cursor, callers: saved.callers?.length ? saved.callers : callersOf(group) }]);
+        }
+      }
+    }
+    active.set(sessionId, rec);
+    for (const [id, live] of restoredSteers) liveSteers.set(id, live);
+    const key = threadKeyOf(channelId, threadId);
+    if (key) failedKeys.delete(key);
+    return true;
+  }
+
   /** 終わりの届かなかったターンの記録を片付ける: 投稿は stopped にして、書き換えの予約を止める */
   async function abandon(rec, { requeue = false } = {}) {
     rec.ended = true;
@@ -1102,7 +1174,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
   }
 
   /** 最初の「渡った」で、末尾の進み・渡した出来事・投稿の進みを確定する（始める前に失敗したら進めない） */
-  function commit(rec) {
+  function commit(rec, { replay = false } = {}) {
     if (rec.committed) return;
     rec.committed = true;
     const tail = rec.tail;
@@ -1116,13 +1188,57 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
     }));
     const marked = rec.itemIds.length ? inbox.mark(rec.itemIds, 'sent').catch((e) => log('could not record a delivered event:', errText(e))) : Promise.resolve();
     // 渡る前にたまっていた出来事は、ここから途中送信で渡せる
-    marked.then(() => pump(rec.sessionId));
+    if (!replay) marked.then(() => pump(rec.sessionId));
   }
 
-  function onTurnEvent(turn, event) {
+  function onTurnEvent(turn, event, { replay = false } = {}) {
     const sessionId = turn?.info?.sessionId;
     const rec = sessionId ? active.get(sessionId) : null;
     if (!rec || rec.ended || !event?.type) return;
+    if (replay) {
+      if (ANSWER_EVENTS.has(event.type)) commit(rec, { replay: true });
+      switch (event.type) {
+        case 'text.delta':
+          rec.sawText = true;
+          rec.cur += String(event.text ?? '');
+          break;
+        case 'text.end':
+          rec.sawText = true;
+          if (rec.cur.trim()) { rec.last = rec.cur; rec.parts.push(rec.cur.trim()); }
+          rec.cur = '';
+          break;
+        case 'tool.start':
+          if (rec.cur.trim()) { rec.last = rec.cur; rec.parts.push(rec.cur.trim()); rec.cur = ''; }
+          break;
+        case 'usage':
+          rec.usage = { ...rec.usage, ...event };
+          break;
+        case 'present':
+          collectPresent(rec, event);
+          break;
+        case 'tool.result':
+          for (const image of Array.isArray(event.images) ? event.images : []) {
+            if (image?.path || image?.dataUri) collectPresent(rec, { type: 'present', by: 'ai', kind: 'image', path: image.path, dataUri: image.dataUri, caption: image.caption });
+          }
+          break;
+        case 'turnResult':
+          if (event.outcome === 'error') rec.error = event.error ?? rec.error;
+          break;
+        case 'compaction':
+          if (event.phase === 'complete') rec.compactedDuring = true;
+          break;
+        case 'userMessage.delivered': case 'userMessage.dropped': {
+          const live = liveSteers.get(event.messageId);
+          if (!live) break;
+          liveSteers.delete(event.messageId);
+          if (event.type === 'userMessage.delivered') steered(live.sessionId, live.ids, live.text, live.cursor, live.callers, { replay: true }).catch((e) => log('could not restore a delivered event:', errText(e)));
+          else inbox.mark(live.ids, 'pending').catch(() => {});
+          break;
+        }
+        default:
+      }
+      return;
+    }
     if (ANSWER_EVENTS.has(event.type)) commit(rec);
     switch (event.type) {
       case 'text.delta':
@@ -1171,6 +1287,28 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
       }
       default:
     }
+  }
+
+  function onTurnReplayEnd(turn) {
+    const rec = turn?.info?.sessionId ? active.get(turn.info.sessionId) : null;
+    if (rec && !rec.ended) progress(rec, { immediate: true });
+  }
+
+  function liveSteersFor(sessionId) {
+    return [...liveSteers].filter(([, value]) => value.sessionId === sessionId)
+      .map(([id, value]) => ({ id, ids: value.ids, cursor: value.cursor, callers: value.callers }));
+  }
+
+  function itemIdsFor(sessionId) {
+    return active.get(sessionId)?.itemIds ?? [];
+  }
+
+  function creditedFor(sessionId) {
+    return active.get(sessionId)?.credited ?? null;
+  }
+
+  function callersFor(sessionId) {
+    return [...(active.get(sessionId)?.callers.values() ?? [])];
   }
 
   /** 提示（可視化・添付）のうち、スレッドに畳む分。人の添付と、git・作業場所の行は入れない。大きすぎるものは中身を落とす */
@@ -1584,7 +1722,7 @@ export function createDispatcher({ channels, bots, memory, episodes, brain = nul
 
   return {
     channels, bots, memory, host, emit, now, inbox, budget,
-    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, onTurnEvent, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread, pendingPosts, withdrawPending,
+    start, stop, onPosted, onReacted, claimPost, wake, wakePost, handoff, wakeReserved, stopThread, turnExtras, restoreTurn, liveSteersFor, itemIdsFor, creditedFor, callersFor, onTurnEvent, onTurnReplayEnd, onTurnEnd, onPermission, onCompacted, threadSettings, branchThread, resendThread, pendingPosts, withdrawPending,
     /** テスト・診断用: 走っている bot のターンの数 */
     activeCount: () => active.size,
     /** 使用量の上限で休んでいれば解除の時刻（ms）。bots.overview の restingUntil（ADR 0119） */

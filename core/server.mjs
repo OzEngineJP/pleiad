@@ -3346,8 +3346,8 @@ function makeEmit(turn) {
     // 新しい会話の最初のリクエストの文脈（固定の部分）。委譲の子の分だけ覚え、画面へは流さない（ADR 0166）
     if (event?.type === 'contextBase') { if (!replay) rememberContextBase(turn, event.tokens); return; }
     if (event?.type === 'usage') turn.usage = { ...turn.usage, ...event };
-    // bot の会話のターンの出来事（text.end・usage・activity・present・permission・turnResult・userMessage.delivered / dropped）。bot の会話でなければ何もしない
-    if (!replay) botHost?.onTurnEvent(turn, event);
+    // bot の投稿と途中送信の状態も記録の再生から戻す。確定済みの配達印は冪等に直し、画面への二重通知は出さない
+    botHost?.onTurnEvent(turn, event, { replay });
     if (event?.type === 'contextWindow' && Number.isFinite(event.usedTokens) && Number.isFinite(event.windowTokens)) {
       turn.contextWindow = { usedTokens: event.usedTokens, windowTokens: event.windowTokens };
     }
@@ -4377,14 +4377,17 @@ async function compactionBackend(sessionId) {
  * 前の起動で走っていた圧縮のターン（印が残っている会話）を、もう一度頼む（ADR 0270 段 4）。
  * 圧縮は冪等なので、付け直すより中断してやり直す方が安い。中断の記録（interrupted）は recoverInterruptedTurns が残している
  */
-async function redoInterruptedCompactions() {
+async function redoInterruptedCompactions(resuming = new Set()) {
   const rows = Object.entries(await store.getAll()).filter(([, meta]) => meta?.compacting);
   for (const [id, meta] of rows) {
+    if (resuming.has(id)) continue;
     const trigger = typeof meta.compacting?.trigger === 'string' ? meta.compacting.trigger : 'auto';
-    await store.setMeta(id, { compacting: null }).catch(() => {});
-    if (sessionBusy(id)) continue;
     console.log(`  前の起動で終わらなかった圧縮をやり直す（${id}、${trigger}）`);
-    compactConversation(id, trigger).catch(err => console.error(`  圧縮をやり直せませんでした（${id}）:`, String(err?.message ?? err)));
+    compactConversation(id, trigger).catch(async err => {
+      await compactionStartFailed(id, trigger, err);
+      await store.setMeta(id, { compacting: null }).catch(() => {});
+      console.error(`  圧縮をやり直せませんでした（${id}）:`, String(err?.message ?? err));
+    });
   }
 }
 
@@ -6328,8 +6331,8 @@ await withdrawRestoredCards(adopting);
 // 前のサーバーが保持役に残した `!` の行（無停止の更新 段階 3。core/shell-held.mjs）も引き取る。
 // ADR 0270 の規則 ③: 起動の処理が復元の処理。保持役の子の一覧から自分の分（札が shell）を拾う（条件を付けない）
 {
-  const adoptedShells = shellRuns.adopt(await shellHolder.adoptable().catch(err => { console.error('  `!` の行を引き取れませんでした:', String(err?.message ?? err)); return []; }));
-  if (adoptedShells) console.log(`  \`!\` の行 ${adoptedShells} 件を引き取った`);
+  const restoredShells = shellRuns.restore(await shellHolder.adoptable().catch(err => { console.error('  `!` の行を復元できませんでした:', String(err?.message ?? err)); return []; }));
+  if (restoredShells) console.log(`  \`!\` の行 ${restoredShells} 件を復元した`);
 }
 // 前のサーバーが保持役に残した ply_shell のジョブ（ADR 0270 段 2a。core/ply-shell-held.mjs）は、schedule と sessionCommands を作った後に引き取る
 // （onJobStart が running の配りと見張りを使うため。規則 ③: 起動の処理が復元の処理）
@@ -7794,7 +7797,11 @@ function takeCard(ctx) {
   const tokens = entry ? { ...connectionTokens(entry), ...(live ? { context: live } : {}) } : null;
   // バックエンドの欄（backendCard）は、保持役に子を載せるバックエンドが control.backendCard で渡す（Claude の途中送信の控え・費用の基準など。2c）
   return cardOf({ ...ctx, backendCard: turn.control?.backendCard?.() ?? null, connectionTokens: tokens, waits: openWaitIds(turn.info.sessionId),
-    stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null });
+    stopping: Boolean(turn.info.stopping || turn.ac.signal.aborted), steers: steersOf(turn), execution: taskExecutions.get(turn.info.sessionId) ?? null,
+    botLiveSteers: botHost?.liveSteersFor?.(turn.info.sessionId) ?? [],
+    botItemIds: botHost?.itemIdsFor?.(turn.info.sessionId) ?? [],
+    botCredited: botHost?.creditedFor?.(turn.info.sessionId) ?? null,
+    botCallers: botHost?.callersFor?.(turn.info.sessionId) ?? [] });
 }
 
 /**
@@ -7850,8 +7857,7 @@ async function restoreTurn(card, source) {
   const meta = await store.get(sessionId);
   // 札が、この会話の走っている印（turnStartedAt）のターンのものか。合わない札は前の版のターンのもの
   if (!meta.turnStartedAt || meta.turnStartedAt !== startedAtMs) throw new Error('turn mismatch');
-  // 圧縮のターンは付け直さず、中断して新しいサーバーでやり直す（冪等なので、やり直しの方が安い。ADR 0270 段 4）
-  if (fields.compactTrigger) throw new Error('not adoptable');
+  // 圧縮も保持役の記録から続ける。付け直せない場合だけ interrupted の印を使って起動後に再試行する。
   // 委譲の子は、タスクの id が分かるときだけ（結果の確定は adoptChild が agentTasks へ引き継ぐ。2b-7）
   const taskId = meta.delegation ? (meta.delegation.taskId ?? null) : null;
   if (meta.delegation && (!taskId || (fields.taskId && fields.taskId !== taskId))) throw new Error('not adoptable');
@@ -7895,7 +7901,7 @@ async function restoreTurn(card, source) {
       agentTasks?.sendQueued(sessionId).catch(() => {});
     } },
     outcome: null,
-    compactTrigger: null,
+    compactTrigger: fields.compactTrigger,
     // 予約の版は compactionScheduler のメモリの値。待ち受けの後（adoptTurn）で取り直す（T15）
     compactionRevision: null,
     userInitiated: !fields.internal,
@@ -7992,6 +7998,7 @@ async function restoreTurn(card, source) {
   };
   bindTurnContext(ctx);
   turnContexts.set(turn, ctx);
+  if (meta.bot && !fields.compactTrigger && !await botHost?.restoreTurn(turn, fields)) throw new Error('bot turn cannot be restored');
   runtime.turns.set(turn.key, turn);
   // 途中送信の控え（札の steers）。登録の後に作り直す（ここから先は投げない）
   // 札で切った完了通知の本文は、折り込まれていれば transcript の人の発言にある（Claude）。ハッシュで引いて戻す
@@ -8011,6 +8018,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   ctx ??= await restoreTurn(card, source);
   const { turn, sessionId, backend, agentLocale } = ctx;
   const emit = ctx.emit;
+  let retryCompact = null;
   const releaseUpdateGate = updateGate.enter();
   // ply_context の口は下で開き直す。それまでに CLI から届いた呼び出しは断らずに待たせる（待ち受けた直後から呼べる。外部の MCP の起こし直しは数秒かかりうる）
   const contextToken = ctx.card.connectionTokens?.context;
@@ -8023,6 +8031,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
       const settle = () => {
         if (settled) return;
         settled = true;
+        botHost?.onTurnReplayEnd(turn);
         watchChildBackground(turn);
         broadcastRunning();
         if (turn.info.phase === 'waiting') outbox.kick(sessionId).catch(() => {});
@@ -8081,6 +8090,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         return result;
       } catch (err) {
         console.error(`  ターンを付け直せなかったので中断として残す（${sessionId}）:`, String(err?.message ?? err));
+        if (turn.compactTrigger) retryCompact = turn.compactTrigger;
         releaseContext();
         source.dispose?.();   // 付け直しの待ちを外す（Codex は共有の app-server の frame を預かっている。バックエンドを呼ぶ前に諦めたとき）
         turn.abortReason = 'restart';
@@ -8098,6 +8108,10 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
     // 決着済みの行には何もしない（出し直して答えた承認は、その答えで決着している）
     for (const id of ctx.card.waits) void inboxSources.permissionSettled({ id, answer: { messageKey: 'turnEnded' } });
     await releaseTurn(sessionId, { adopted: true });
+    if (retryCompact) setImmediate(() => compactConversation(sessionId, retryCompact).catch(async err => {
+      await compactionStartFailed(sessionId, retryCompact, err);
+      await store.setMeta(sessionId, { compacting: null }).catch(() => {});
+    }));
   }
 }
 
@@ -8788,8 +8802,8 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
 // 規則 ③: 起動の処理が復元の処理。ジョブのプロセスと出力（output・list で読む分）は保持役の子の記録にある。
 // onJobStart が running の配り（schedule を使う）と見張り（sessionCommands）を使うので、どちらも作った後に呼ぶ
 {
-  const adoptedJobs = shellBridge.adopt(await shellJobHolder.adoptable().catch(err => { console.error('  ply_shell のジョブを引き取れませんでした:', String(err?.message ?? err)); return []; }));
-  if (adoptedJobs) console.log(`  ply_shell のジョブ ${adoptedJobs} 件を引き取った`);
+  const restoredJobs = shellBridge.restore(await shellJobHolder.adoptable().catch(err => { console.error('  ply_shell のジョブを復元できませんでした:', String(err?.message ?? err)); return []; }));
+  if (restoredJobs) console.log(`  ply_shell のジョブ ${restoredJobs} 件を復元した`);
 }
 
 /**
@@ -10036,8 +10050,8 @@ async function stopHeldChildren() {
 let shuttingDown = null;
 function shutdownServer({ stopHeld = false } = {}) {
   shuttingDown ??= (async () => {
-    // 通話の使用量の台帳を書き切る（止めるのはアプリの終了だけ。上限 2 秒）
-    await Promise.race([voiceHost.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
+    // 通話の使用量の台帳を書き切る（止めるのはアプリの終了だけ）
+    await voiceHost.close().catch(error => console.error('voice host shutdown failed:', error?.code ?? error?.message ?? error));
     clearInterval(chromeIdleTimer);
     chromeWindowCloser?.stop();
     chromeScreencast?.close();
@@ -10048,17 +10062,17 @@ function shutdownServer({ stopHeld = false } = {}) {
       if (chromeConnection) await Promise.race([chromeConnection.close(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
       if (chromeLink) await Promise.race([chromeLink.quit(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
       await stopHeldChildren();
-    } else if (chromeLink?.alive && chromeRelay) {
-      // 接続の子は ws を持ったまま次のサーバーを待つ。端点と窓の印を最後の carry として書き切ってからパイプを離す（起動で welcome.carry から戻す）
-      try { chromeLink.setCarry(chromeRelay.snapshot(), { now: true }); await chromeLink.flush(); } catch (error) { console.error('  chrome-link: could not leave the carry:', String(error?.message ?? error)); }
+    } else if (chromeLink?.alive) {
+      // relay の状態変化で既に予約された carry だけを書き切る。終わり専用の状態コピーは持たない。
+      try { await chromeLink.flush(); } catch (error) { console.error('  chrome-link: could not flush its pending state:', String(error?.message ?? error)); }
     }
     try { store.flushNow(); } catch (e) { console.error('session store shutdown save failed:', e?.code ?? e?.message ?? e); }
     // 待ち受けと main との口を先に閉じる（Windows の名前付きパイプは持ち主が消えるまで同じ名前で立てられない）。新しいサーバーは同じポート・同じパイプで立つ
     server.close();
     server.closeAllConnections?.();
-    await Promise.race([mainLink?.close?.(), new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {});
+    await mainLink?.close?.().catch(error => console.error('main link shutdown failed:', error?.code ?? error?.message ?? error));
     // bot の DB（別のファイル）とデータ置き場の DB の接続を閉じてから、ロックを放す（次のサーバーが取ってすぐ開く）
-    await Promise.race([Promise.resolve(botHost?.close?.()), new Promise(resolve => setTimeout(resolve, 1500))]).catch(() => {});
+    await botHost?.close?.();
     store.closeStore();
     closeDataDb(store.dataDir);
     releaseDataLock();
@@ -10196,7 +10210,8 @@ for (const { card, source, ctx } of adopting) {
 await schedule.restore().catch(err => console.error('  再開の予定を戻せませんでした:', String(err?.message ?? err)));
 // 上限で止まった会話の送信待ちを、解除時刻に流すよう置き直す（Pleiad を閉じている間に過ぎた分はすぐ）
 await recoverLimitWaits().catch(err => console.error('  上限の会話を見直せませんでした:', String(err?.message ?? err)));
-await redoInterruptedCompactions().catch(err => console.error('  圧縮をやり直せませんでした:', String(err?.message ?? err)));
+await redoInterruptedCompactions(new Set(adopting.filter(item => item.ctx.turn.compactTrigger).map(item => item.ctx.sessionId)))
+  .catch(err => console.error('  圧縮をやり直せませんでした:', String(err?.message ?? err)));
 // 起動のときに過ぎていた送信予定の知らせは、リモートがつながってからでないと届かない。落ち着いたころにもう一度だけ確かめる
 setTimeout(() => { for (const row of schedule.list()) if (row.kind === 'send' && row.held && !row.notified) notifyScheduleMissed(row); }, 15_000).unref();
 // 届ける前の出来事の戻し・ルーティンの取りこぼし（ターンを始めるので、ポートが決まった後）

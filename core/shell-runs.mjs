@@ -8,7 +8,7 @@
 // - エージェントは返答しない。送信待ち（outbox）にも送り直しの控え（receipts）にも積まない。同じ runId は 2 度走らせない
 // - 'host' の会話では、行ごとに「渡さない」を選べる（ADR 0055）。渡さなかった行は次の発言の後、会話の記録の shellKept に移して会話に残す
 // - 出来事: shell.start / shell.output / shell.done / shell.skip / shell.handed（全部の接続へ）
-// - 'host' の行は、保持役があれば保持役の子に載せる（無停止の更新 段階 3。core/shell-held.mjs）。サーバーを入れ替えても走り続け、新しいサーバーが adopt で引き取って
+// - 'host' の行は、保持役があれば保持役の子に載せる（無停止の更新 段階 3。core/shell-held.mjs）。サーバーを再起動しても走り続け、新しいサーバーが復元して
 //   出力の続きと終わりを受ける。サーバーは終わりに子を止めない（起動で引き取る。ADR 0270）
 import { messageShellKey, runHostShell, shellKey, shellLines } from './host-shell.mjs';
 
@@ -183,8 +183,8 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     emit({ type: 'shell.skip', sessionId, runId, skip: want });
     return { runId, skip: want };
   }
-  /** 起動: 前のサーバーが保持役に残した行を引き取る（core/shell-held.mjs の adoptable の { card, held }）。出力の続きと終わりをこのサーバーが受ける */
-  function adopt(items) {
+  /** 起動: 保持役に残った行を復元する（core/shell-held.mjs の adoptable が返す { card, held }）。出力の続きと終わりを受ける */
+  function restore(items) {
     let n = 0;
     for (const { card, held } of items) {
       if (seen.has(card.runId) || runs.has(card.runId)) continue;
@@ -204,7 +204,7 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
   }
   /** 全部止める（アプリの終了。同期）。保持役の子は札を外して止める（次の起動が引き取らない。ADR 0270 決定 4） */
   function stopAll() {
-    for (const run of runs.values()) { if (run.held) run.held.abandon(); else run.ac.abort(); }
+    for (const run of runs.values()) { if (run.held) run.held.stop(); else run.ac.abort(); }
   }
   /** この会話で走っている分 */
   const runningIn = (sessionId) => [...runs.values()].some(r => r.sessionId === sessionId);
@@ -367,5 +367,5 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     return out;
   }
 
-  return { start, wait, stop, setSkip, stopSession, stopAll, adopt, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, list, running: () => runs.size };
+  return { start, wait, stop, setSkip, stopSession, stopAll, restore, runningIn, cwds, settled, appendsFor, release, delivered, switched, discard, rows, placeKept, decorate, list, running: () => runs.size };
 }

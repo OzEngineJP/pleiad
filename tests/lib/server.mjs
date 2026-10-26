@@ -23,8 +23,8 @@ const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)
  * @param env サーバプロセスに足す環境変数（AGENT_HOST_GRACE_MS など）
  * @param dataDir sidecar の置き場。使い捨ての場所を渡すこと
  * @param entry 起動するスクリプト（既定は core/server.mjs。parentPort の身代わりを置く tests/lib/parent-port-server.mjs など）
- * @param args entry の後ろに付ける引数（無停止の更新の新サーバーは `--handover`）
- * @param lazy 待ち受けるのを待たず、起こしてすぐ返す（`--handover` の新サーバーは、旧サーバーがデータ置き場を放すまで待ち受けない）。
+ * @param args entry の後ろに付ける引数
+ * @param lazy 待ち受けるのを待たず、起こしてすぐ返す
  *   返り値の ready() が待ち受けるまで待ち、port を決める。起動前に終われば ready() が投げる
  */
 export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry = path.join(ROOT, "core", "server.mjs"), args = [], lazy = false } = {}) {

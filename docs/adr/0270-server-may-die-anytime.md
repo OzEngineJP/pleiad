@@ -331,16 +331,40 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - 設定の変更の承認のカードの出し直し（安全に再実行できる形にするなら。段 4 以降の別の判断）
 - `chromeControl` の一時停止の印・音声・computer use・ビューアの「切れたら理由を出す」（段 4）
 
+## 段 4a の実装（2026-10-27。サーバー側）
+
+### 起動と停止
+
+- `restoreAdoptedTurns` は通常起動で常に呼ぶ。保持役を起こさず、データ置き場のロックを取った後に保持役の子一覧とデータベースのターン札を照合する。該当するターンは `restoreTurn` で登録し、待ち受け後に `adoptTurn` / `driveTurn` で記録を再生する。該当しないターンは `restart` の中断として記録する。`AGENT_HOST_ADOPT_*` と `--handover` は復元の条件ではない。
+- SIGTERM・SIGINT・更新では保持役の子を止めず、通話と bot の記録、Chrome の予約済み carry、データベースを書き切ってからロックを放す。アプリの終了だけは `stopHeldChildren` を通して保持役の子を止める。会話削除など、その会話の後片付けは従来どおり対象の子を止める。`keepMs` は親が消えた子を回収する保持役側の上限として残し、通常のサーバー終了では起動し直す時間があるため、終了理由の印には使わない。
+- Chrome はリレーの状態変化で保存済みの carry だけを flush する。サーバー終了時に全状態のスナップショットを作る専用の carry 経路は持たない。接続の子と通常の carry 更新は残る。
+- `shell-runs.restore` と `shellBridge.restore` は起動時の復元を表す名前にし、`shell-held.stop` はアプリ終了時に札を外して子へ停止を送る。サーバー終了だけでこれらを呼ぶことはない。
+
+### bot と圧縮
+
+- bot の通常ターンは、起動復元でチャンネルの既存投稿と sidecar、待ち受け中の inbox、ターン札に保存した投稿 ID・使用量・呼び出し元から進捗役を作り直す。保持役の記録を replay して本文・使用量・承認状態を再構成し、replay 中はチャンネル通知を再送しない。配達済みフラグの修復は同じ inbox 行への冪等な更新にする。
+- pulse bot は通常のターン投稿を持たないため、既存の短い会話として復元役だけを登録する。圧縮ターンは通常の保持役の記録から復元し、付け直せない場合は圧縮が冪等であることを使って新しいサーバーで再試行する。復元できた会話は再試行対象から外し、開始失敗時は `compacting` 印を消して次回起動でも再試行できるようにする。
+
+### 試験の対応と 4b へ回すもの
+
+- 通常停止・通常起動の `restart-*` を、専用の handover 経路を前提にした試験の置き換え先とする。再起動中のターンと承認は `restart-acp` / `restart-cards`、Codex ターンは `restart-codex-turn`、委譲の結果通知は `restart-delegation`、MCP の接続状態は `restart-mcp`、通常起動と起動引数の独立は `restart-mode` で確かめる。保持役の `!` 出力と ply_shell のジョブは各通常復元 suite と `shell-held` の復元・終了行の冪等試験で確かめる。互換性の検査は `compat-check` に改名し、handover の判定を試験しない。
+- `desktop-handover` と `handover-*` の試験登録、および旧 `adopt-*` の試験登録は runner から外し、`desktop-switch` など更新の画面・版判定の試験は残す。旧試験の物理ファイルはこの作業中に削除コマンドが実行前に拒否されたため、作業ツリーに残っている。したがって、上記の再起動試験への対応づけは予定であり、旧試験が確かめていたすべての backend 別の挙動が置き換え済みとは確認できていない。登録漏れを検出する runner の事前検査が全試験を止めるため、この状態では置き換え後の試験結果も確認できない。ファイル削除の拒否を別の手段で回避しない。
+- 4b に回す: `desktop/switch.cjs` の待機・阻止要因・stoppers・確認画面、更新 off 経路の統一、音声・computer use・ビューアが切れた理由の表示、残り 3 ファイルの `child_process` 整理。4a では main が旧サーバーを通常停止し、新サーバーを通常起動するための最小配線だけ合わせる。
+
+### 検証
+
+- `node --check` は変更した 22 本の `.mjs` で成功した。`node tests/run.mjs --list --json restart` と `node tests/run.mjs` は、未登録の旧試験ファイル 11 本を runner の事前検査が検出し、exit 1 で終了した。suite 本体は 1 本も走っていないため、restart・desktop・全体の合格条件は未確認。
+
 ## 畳むもの
 
 | 今 | 段 | 残る |
 |---|---|---|
 | `core/handover.mjs`（180 行）・`core/handover-check.mjs`（52 行）・起動の `--handover`・`HANDOVER_VERSION`/`HANDOVER_RANGE`・`running` の `handover` | 4 | 版ごとの実行場所・main の `switch.cjs` の「組み立て→止める→起こす」 |
 | `desktop/switch.cjs` の `waitIdle`・`switchBlockers`・`handoverMode`・`stoppers` の確認・`declines`（693 行のうち約 3 分の 1） | 4 | 版の判定（`needsSwitch`）・データ形式の判定・実行場所の組み立て・窓の読み直し・合わない版のダイアログ |
-| サーバーの `holdable`・`handoverSettled`・`createHandover` の deps・`handOffTurn`・`stash`・`release`（終わる順序）・`AGENT_HOST_ADOPT_HOLDER`/`AGENT_HOST_ADOPT_FROM`/`AGENT_HOST_ADOPT_PORT_WAIT_MS` | 4 | `restoreAdoptedTurns`・`restoreTurn`・`adoptTurn`・`driveTurn`・`takeCard`（札を DB と保持役へ置く口に変わる）・`touchCard` |
-| バックエンドの `handOff`（`createHeldCli.handOff`・`handOffHeld`・`handOffAgy`・`handOffCodex`・`handOffOpencode`）と `adoptable` | 4 | 保持役の子をその CLI に見せる部分（Claude の偽 `SpawnedProcess`・Codex の共有 app-server の読み書き・OpenCode の HTTP・agy の stdio）と、記録の正規化・再生。子 1 つが複数のターンを運ぶ Codex の展開（`registerChildExpander`。子の札の種類ごとの 1 関数） |
-| `shell-runs.handOff`/`adopt`・`shell-held` の `handOff`/`abandon`・`shellBridge.stopAll`（サーバーの終わり） | 4 | `drive`/`finished`・札・`runHostShell` の包み |
-| Chrome の `setCarry`/`handOff`・接続の子の「最後の carry」 | 4 | 接続の子（`core/chrome/link.mjs`）が ws を持ち続けること。サーバーは起動で端点と窓の印を子から読む |
+| サーバーの `holdable`・`handoverSettled`・`createHandover` の deps・`handOffTurn`・保持役の `stash`・`AGENT_HOST_ADOPT_*` | 4a | `restoreAdoptedTurns`・`restoreTurn`・`adoptTurn`・`driveTurn`・`takeCard`・`touchCard`。通常起動で DB と保持役の子一覧を照合する |
+| バックエンドのターンを手放す `handOff` と専用の `adoptable` 判定 | 4a | 保持役の子を各 CLI に見せる部分（Claude の偽 `SpawnedProcess`・Codex の共有 app-server の読み書き・OpenCode の HTTP・agy の stdio）、`adoptTurn` による復元、記録の正規化と再生。Codex の子の展開も残る |
+| `shell-runs.handOff`/`adopt`・`shell-held` の `handOff`/`abandon` | 4a | 起動時の `restore`・実行中の `drive`/`finished`。アプリ終了時の `stop` は残し、通常のサーバー終了では呼ばない |
+| Chrome の終了時だけ行う carry のスナップショット設定 | 4a | 状態変化ごとの `setCarry` と接続の子（`core/chrome/link.mjs`）が WebSocket を持ち続ける経路。サーバー終了時は予約済み更新を flush し、起動は保存済み端点と窓の印を読む |
 | `agent-tasks.adoptRun` の「引き継ぎ専用」の分岐 | 3・4 | 台帳の行から `running` を拾い、結果の確定を続ける道 |
 | `desktop/switch.cjs` の `askUser`（止まるものの「あとで／止めて切り替え」） | 4 | データ形式が変わる版の「あとで／中断して更新」（ADR 0036 の形） |
 

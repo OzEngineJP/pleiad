@@ -98,20 +98,16 @@ export default async function (t) {
       await a.start({ sessionId: 's2', runId: 'run-finishing-01', command: 'echo done-a; exit 7', cwd: scratch, backend });
       await until(() => store.waiting, WAIT_MS, '終わりを書き始める');
       assert.equal(a.list().length, 0, '終わった行は走っている一覧に無い');
-      let handed = false;
-      const handing = a.handOff().then(() => { handed = true; });
-      await sleep(100);
-      assert.equal(handed, false, '書き終えるまで手を離さない');
       open();
-      await handing;
+      await a.settled('s2');
       assert.equal(events.filter(e => e.type === 'shell.done' && e.runId === 'run-finishing-01').length, 1);
       assert.equal(store.data.s2.shellPending.length, 1);
       assert.equal(store.data.s2.shellPending[0].exitCode, 7);
       const client = await reconnect();
       assert.equal(shellChildren(client).length, 0, '子の記録は捨ててある（B は付け直さない）');
       const b = createShellRuns({ store: memoryStore(), emit: () => {}, holder: holder() });
-      assert.equal(b.adopt(await holder().adoptable()), 0);
-      t.ok('終わりを書いている最中の手離し: handOff は書き終える（子の記録を捨てる）まで待ち、B は付け直さない（終わりは A の 1 回）', true);
+      assert.equal(b.restore(await holder().adoptable()), 0);
+      t.ok('通常実行: 終了行を書き切った後は保持役の子を片付け、次の起動で二重処理しない', true);
     }
 
     // ---- 3. 終わりを書いて ack した後、子の記録を捨てる前に A が居なくなった
@@ -134,7 +130,7 @@ export default async function (t) {
       const storeB = memoryStore();
       const eventsB = [];
       const b = createShellRuns({ store: storeB, emit: e => eventsB.push(e), holder: holder() });
-      assert.equal(b.adopt(await holder().adoptable()), 1, 'B は札のある子を引き取る');
+      assert.equal(b.restore(await holder().adoptable()), 1, 'B は札のある子を復元する');
       await until(() => b.list().length === 0, WAIT_MS, 'B が締める');
       assert.equal(eventsB.filter(e => e.type === 'shell.done').length, 0, 'B は終わりを出さない');
       assert.equal(storeB.writes, 0, 'B は終わりを書かない');
@@ -167,7 +163,7 @@ export default async function (t) {
       const child = shellChildren(next)[0];
       assert.equal(child.label, null, '札を外してある');
       const b = createShellRuns({ store: memoryStore(), emit: () => {}, holder: holder() });
-      assert.equal(b.adopt(await holder().adoptable()), 0, '次のサーバーは付け直さない');
+      assert.equal(b.restore(await holder().adoptable()), 0, '次のサーバーは復元しない');
       t.ok('サーバーの終わり（stopAll）: 保持役の子は札を外して止める（次のサーバーは引き取らない）', true);
     }
   } finally {

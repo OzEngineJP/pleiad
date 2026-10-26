@@ -17,7 +17,7 @@ export default async function (t) {
     try {
       const a = await h.connect();
       const w = a.client.welcome;
-      t.ok('welcome: 規約 1・世代 1・保持役の pid・子は無い・預かり物は空', w.protocol === 1 && w.generation === 1 && w.pid === process.pid && w.appVersion === '9.9.9' && w.children.length === 0 && Object.keys(w.stash).length === 0);
+      t.ok('welcome: 規約 1・世代 1・保持役の pid・子は無い・余分な引き継ぎ欄は無い', w.protocol === 1 && w.generation === 1 && w.pid === process.pid && w.appVersion === '9.9.9' && w.children.length === 0 && !('stash' in w));
 
       // spawn の直後の write（SDK の最初の initialize の書き込み）が、子の stdin に届く
       a.client.spawn({ ...fakeChild('c1', 'echo'), label: { turn: 't1' } });
@@ -65,14 +65,13 @@ export default async function (t) {
       await waitFor(() => c.events.disconnect.length === 1, 8000, 'c replaced');
       t.ok('後から合格した親が勝つ: 古い親は bye replaced で切られ、子は残る', c.events.disconnect[0] === 'replaced' && !c.client.connected && d.client.welcome.children.some(x => x.id === 'c1' && x.alive));
 
-      // 札・預かり物
+      // 子の札
       d.client.label('c1', { turn: 't2', binding: { port: 7 } });
-      d.client.stash({ token: 'T', port: 7421, handover: 1 });
       d.client.close();
       await waitFor(() => !h.holder.snapshot().connected, 8000, 'd gone');
       const e = await h.connect();
-      t.ok('札・預かり物: 置き直した値が、次の親の welcome に載る（保持役は中を読まない）',
-        e.client.welcome.children.find(x => x.id === 'c1').label.binding.port === 7 && e.client.welcome.stash.token === 'T' && e.client.welcome.stash.port === 7421);
+      t.ok('子の札: 置き直した値が、次の親の welcome に載る',
+        e.client.welcome.children.find(x => x.id === 'c1').label.binding.port === 7 && !('stash' in e.client.welcome));
       e.client.label('c1', { big: 'x'.repeat(300 * 1024) });
       await waitFor(() => e.events.fault.length === 1, 8000, 'label fault');
       t.ok('札が大きすぎれば断る（label-too-large）。置き直さない', e.events.fault[0].reason === 'label-too-large' && childOf(h, 'c1').label.turn === 't2');

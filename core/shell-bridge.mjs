@@ -14,7 +14,7 @@
 //     holder                           保持役の口（core/ply-shell-held.mjs の createPlyShellHolder）。無ければジョブはサーバーの子
 //   bridge.open({ origin, locale, token?, owner })  owner() → { sessionId, cwd, mode: { scope, autonomy }, signal, env }
 //   bridge.jobs(sessionId)・bridge.job(sessionId, jobId)・bridge.stop(sessionId, jobId)・bridge.stopSession(sessionId)・bridge.stopAll({ keepHeld? })・bridge.cwds()
-//   bridge.adopt(items)  起動で、保持役に残ったジョブを拾う（core/ply-shell-held.mjs の adoptable）
+//   bridge.restore(items)  起動で、保持役に残ったジョブを復元する（core/ply-shell-held.mjs の adoptable）
 //   ジョブの見え方: { jobId, kind: 'run' | 'start', command, cwd, shell, startedAt, running, stoppedBy?: 'agent' | 'human' | 'turn' | 'session', endedAt?, exitCode?, … }
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -221,10 +221,10 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
   }
 
   /**
-   * 起動で、前のサーバーが保持役に残したジョブを拾う（ADR 0270 の規則 ③。core/ply-shell-held.mjs の adoptable）。
+   * 起動で、保持役に残ったジョブを復元する（ADR 0270 の規則 ③。core/ply-shell-held.mjs の adoptable）。
    * 走っているジョブは onJobStart で数え直し、終わりを処理していないジョブは onJobEnd を出す。ack 済みの終わりは出し直さない
    */
-  function adopt(items) {
+  function restore(items) {
     let n = 0;
     for (const { card, held } of items) {
       const map = jobsOf(card.sessionId);
@@ -274,7 +274,7 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
     sessionsWithJobs: () => [...sessions.entries()].filter(([, m]) => [...m.values()].some((j) => j.endedAt == null && j.kind === 'start')).map(([id]) => id),
     cwds: () => [...sessions.values()].flatMap((m) => [...m.values()].filter((j) => j.endedAt == null).map((j) => j.cwd)),
     /** 起動で拾う（core/ply-shell-held.mjs の adoptable） */
-    adopt,
+    restore,
     /** アプリの終了（同期）。保持役の子は札を置き直して stop を書く（次の起動が引き取らない。ADR 0270 決定 4） */
     stopAll() {
       for (const map of sessions.values()) for (const j of map.values()) if (j.endedAt == null) stopJob(j, 'session');

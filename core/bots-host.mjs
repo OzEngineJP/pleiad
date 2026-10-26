@@ -124,7 +124,13 @@ export function createBotHost(deps) {
       const extra = await dispatch.turnExtras(turn);
       return { botInstructions: extra?.botInstructions ?? setup?.botInstructions ?? null, notes: extra?.notes ?? [], folders: setup?.folders ?? null };
     }, { botInstructions: null, notes: [], folders: null }),
-    onTurnEvent: guard('onTurnEvent', (turn, event) => dispatch.onTurnEvent(turn, event)),
+    restoreTurn: guard('restoreTurn', (turn, card) => dispatch.restoreTurn(turn, card), false),
+    liveSteersFor: (sessionId) => dispatch.liveSteersFor(sessionId),
+    itemIdsFor: (sessionId) => dispatch.itemIdsFor(sessionId),
+    creditedFor: (sessionId) => dispatch.creditedFor(sessionId),
+    callersFor: (sessionId) => dispatch.callersFor(sessionId),
+    onTurnEvent: guard('onTurnEvent', (turn, event, options) => dispatch.onTurnEvent(turn, event, options)),
+    onTurnReplayEnd: guard('onTurnReplayEnd', (turn) => dispatch.onTurnReplayEnd(turn)),
     // ターンの投稿を確定した後で、ルーティンの実行なら根の投稿の状態（終了・要確認・失敗・止めた）を決める
     onTurnEnd: guard('onTurnEnd', async (turn, end) => {
       try { await dispatch.onTurnEnd(turn, end); } finally { await routines.onTurnEnd(turn, end); }

@@ -19,7 +19,7 @@ import { writeAtomic } from '../atomic-file.mjs';
 import { encodeLine, decodeLine, createLineReader } from '../link-codec.mjs';
 import {
   HOLDER_RANGE, HOLDER_FILE_VERSION, POLICIES, DEFAULT_MAX_LINE_BYTES, DEFAULT_MAX_FRAME_BYTES, HELLO_MAX_BYTES, DEFAULT_HELLO_TIMEOUT_MS,
-  DEFAULT_MAX_RECORD_BYTES, DEFAULT_HIGH_WATER_BYTES, DEFAULT_IDLE_MS, STDERR_TAIL_BYTES, STASH_MAX_BYTES, LABEL_MAX_BYTES,
+  DEFAULT_MAX_RECORD_BYTES, DEFAULT_HIGH_WATER_BYTES, DEFAULT_IDLE_MS, STDERR_TAIL_BYTES, LABEL_MAX_BYTES,
 } from './protocol.mjs';
 
 /** 1 回に親へ流す量。これを超えたら setImmediate で一度イベントループへ返す（記録が大きくても止めない） */
@@ -68,7 +68,6 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
   const children = new Map();   // id -> 子の状態
   const conns = new Set();      // 握手の前も含む全部の接続
   let current = null;           // 握手が済んだ親
-  let stash = {};
   let server = null;
   let idleTimer = null;
 
@@ -139,7 +138,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
       pendingRequests: [...c.pending].map(([requestId, p]) => ({ requestId, seq: p.seq, subtype: p.subtype })), stderr: c.stderr,
     };
   }
-  const snapshot = () => ({ pid: process.pid, generation, children: [...children.values()].map(snapshotOf), stash, connected: Boolean(current) });
+  const snapshot = () => ({ pid: process.pid, generation, children: [...children.values()].map(snapshotOf), connected: Boolean(current) });
 
   // ---- 親へ流す（記録のカーソルから。読まない親には書き溜めない）
   function pump(conn, c) {
@@ -366,10 +365,6 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
         send(conn, { t: 'replay', id: c.id, reqId: f.reqId, lines, done: true, first: head, last: c.seq, truncated: from < head });
         break;
       }
-      case 'stash':
-        if (jsonBytes(f.stash) > STASH_MAX_BYTES) return void fail('stash-too-large');
-        stash = f.stash && typeof f.stash === 'object' ? f.stash : {};
-        break;
       case 'detach': {
         const targets = typeof f.id === 'string' ? (c ? [c] : []) : [...children.values()];
         for (const target of targets) { const own = subOf(conn, target.id); if (own) { own.detached = true; own.inbuf = ''; } }
@@ -420,7 +415,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
       current = conn;
       armKeepAll();
       conn.peer = { pid: hello.pid, appVersion: typeof hello.appVersion === 'string' ? hello.appVersion : '' };
-      send(conn, { t: 'welcome', protocol: Math.min(hello.protocol[1], range[1]), ...base, children: [...children.values()].map(snapshotOf), stash });
+      send(conn, { t: 'welcome', protocol: Math.min(hello.protocol[1], range[1]), ...base, children: [...children.values()].map(snapshotOf) });
       log(`parent connected (pid ${conn.peer.pid}, version ${conn.peer.appVersion || '?'})`);
       checkIdle();
     }

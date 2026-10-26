@@ -3,7 +3,7 @@
 //
 // 名前付きパイプ \\.\pipe\pleiad-holder-<データ置き場と利用者のハッシュ>-v<規約の版>。1 行 1 JSON（core/link-codec.mjs）。**この形は版をまたいで変えない（v1）**。
 //   親 -> 保持役                                              保持役 -> 親
-//   hello   { secret, protocol: [min, max], role: 'server', pid, appVersion }   welcome { protocol, generation, range, appVersion, pid, children: [<子の状態>], stash }
+//   hello   { secret, protocol: [min, max], role: 'server', pid, appVersion }   welcome { protocol, generation, range, appVersion, pid, children: [<子の状態>] }
 //                                                                    reject  { reason: 'protocol', range, generation, appVersion, pid }（秘密が合ったうえで版が合わないときだけ。秘密が合わなければ何も返さず切る）
 //   spawn   { id, command, args, cwd, env, framing: 'lines', policy, label, keepMs? }  out     { id, seq, line, redelivered? }（記録の 1 行。通番は子ごとに 1 から。keepMs = 親が居ない間の保険）
 //   attach  { id, from? }  既存の子に付ける。from の既定は acked + 1       err     { id, chunk }（stderr のかたまり）
@@ -12,7 +12,6 @@
 //   mark    { id, name, seq? } / unmark { id, name }  印（seq の既定は次の行）  attached{ id, ...<子の状態>, from }（attach の答え。この後に控えの渡し直し・記録の続き・exit が続く）
 //   label   { id, label }  札を置き直す（不透明な JSON）                    detached{ id?, children: [<子の状態>] }（detach の答え。この時点で転送は止まっている）
 //   replay  { id, from, to, reqId }  記録の一部を読み直す                   replay  { id, reqId, lines: [[seq, line]], done, first?, last?, truncated? }
-//   stash   { stash }  預かり物を置く（全体の値）                          error   { id?, op, reason }（相手の子が居ない・形が違う など）
 //   detach  { id? }  手を離す（id 無しは全部）                              bye     { reason: 'replaced' | 'closing' }
 //   release { id }  終わった子の記録を捨てる / shutdown {}  子を木ごと止めて終わる
 //   bye     { reason }
@@ -40,7 +39,6 @@ export const DEFAULT_HIGH_WATER_BYTES = 4 * 1024 * 1024;
 /** 子が 1 つも生きておらず、親が 10 分つながっていなければ終わる（design.md §4.2） */
 export const DEFAULT_IDLE_MS = 10 * 60 * 1000;
 export const STDERR_TAIL_BYTES = 16 * 1024;
-export const STASH_MAX_BYTES = 1024 * 1024;
 export const LABEL_MAX_BYTES = 256 * 1024;
 
 function safeUser() {

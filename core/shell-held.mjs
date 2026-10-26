@@ -48,7 +48,7 @@ export function readShellCard(card) {
  *     replay は ack 済みの出力（画面へ流し直さない）。signal の中断で子へ stop を書く
  *   finished()   … 終わりを会話の記録に書き終えた（終わりの行を ack し、子の記録を捨てる）
  *   label(run)   … 札を置き直す（「渡さない」を変えた）
- *   abandon()    … アプリの終了: 札を外して止める（同期。次の起動は付け直さない）
+ *   stop()       … アプリの終了: 札を外して止める（同期。次の起動では復元しない）
  */
 function heldShell(source) {
   let state = 'driving';            // driving -> finishing -> done
@@ -103,7 +103,7 @@ function heldShell(source) {
       source.dispose();
     },
     label: run => client.label(source.id, shellCard(run)),
-    abandon() {
+    stop() {
       if (state !== 'driving') return;
       client.label(source.id, null);
       write({ t: 'stop' });
