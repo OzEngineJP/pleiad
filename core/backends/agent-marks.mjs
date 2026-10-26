@@ -174,19 +174,19 @@ export const CAPABILITY_STATES = {
     fork: covered,
     forkMessage: covered,
     rewind: covered,
-    subagents: todo('#108'),          // 子の一覧は CLI の拡張を確かめる
-    liveModel: todo('#108'),          // 実行中のモデル変更
-    liveMode: todo('#108'),           // 実行中の承認モード変更
+    subagents: true,                  // sessions.db の subagent_heads / message_nodes から一覧・履歴・発生元ツールを引く
+    liveModel: true,                  // 実行中のターンへ session/set_config_option でモデルを送る
+    liveMode: true,                   // 実行中のターンへ session/set_config_option で承認モードを送る
     hostTools: covered,               // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,
     mcpApproval: 'agent',
     login: true,
-    accounts: todo('#108'),           // アカウントごとの認証の分離
-    compatEndpoints: todo('#108'),    // CLI の接続先の設定と Pleiad の選択 UI を接続する
+    accounts: todo('#108'),           // account config の login と conversation injection の接続が未検証
+    compatEndpoints: impossible('通常版の CLI は Devin の接続先（windsurf）固定で、ACP_BACKEND=openai などの互換接続先は Unknown backend type で拒否される（エアギャップ専用ビルドのみ。CLI 3000.11.92 で確認）'), // i18n-ignore: CLI の機能確認に基づく開発者向けの理由
     compact: true,                    // /compact を prompt として送る（下の compact）
-    autoCompactWindow: todo('#108'),
-    promptSuggestions: todo('#108'),
+    autoCompactWindow: todo('#108'),   // installed CLI と公式資料で agent.compaction_threshold_tokens の実効を未確認
+    promptSuggestions: covered,       // ターンの後に suggestNext で作る
     plyInstructions: true,
     plyAgents: true,
     // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
@@ -195,13 +195,13 @@ export const CAPABILITY_STATES = {
     computerUse: { images: 'inline', waitSliceMs: null },
     shell: 'host',
     plyShell: true,
-    nativeShellOff: todo('#108'),
+    nativeShellOff: todo('#108'),      // ACP の会話設定で native exec だけを止められるか未検証
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
     // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
     browser: true, plyControl: true, secrets: true, visualize: true,
-    hooks: todo('#98'),
+    hooks: todo('#98'),               // Devin のプロジェクト Hooks と会話限定 Hooks の分離が未検証
   },
   grok: {
     // Grok の ACP 拡張でネイティブ題名と全履歴の分岐を使う。状態タグ・巻き戻しは Pleiad の控えで補う

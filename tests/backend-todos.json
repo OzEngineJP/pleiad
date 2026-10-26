@@ -10,13 +10,8 @@
     "devin": {
       "accounts": "#108",
       "autoCompactWindow": "#108",
-      "compatEndpoints": "#108",
       "hooks": "#98",
-      "liveMode": "#108",
-      "liveModel": "#108",
-      "nativeShellOff": "#108",
-      "promptSuggestions": "#108",
-      "subagents": "#108"
+      "nativeShellOff": "#108"
     },
     "grok": {
       "compatEndpoints": "#108",

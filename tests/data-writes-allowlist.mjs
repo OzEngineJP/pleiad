@@ -80,9 +80,11 @@ export const DATA_WRITES = [
   { file: 'core/backends/grok-accounts.mjs', sites: 1, targets: [
     { name: 'accounts/grok/<account-id>/auth.json', limit: '登録した Grok アカウントごとに 1 ファイル', reason: 'Grok CLI が読むアカウント別ホームの認証情報。Pleiad の保護されたデータ置き場に保存し、既定の ~/.grok は変更しない' },
   ] },
-  { file: 'core/backends/grok-hooks.mjs', sites: 1, targets: [
+  { file: 'core/backends/grok-hooks.mjs', sites: 2, targets: [
     { name: 'grok-hooks/<pid>-<乱数>/hooks/hooks.json', limit: '同時に走る Grok のターンの数まで（1 ターン 1 ファイル）。ターンの終わりに消し、持ち主の居ない残りは次の書き込みで消す',
       reason: 'Grok へそのターンだけ渡すプラグイン（_meta.pluginDirs）。Grok はセッション限定のプラグインを保存しない' },
+    { name: 'grok-hooks/<pid>-<乱数>/profile.md', limit: '同時に走る Grok のターンの数まで（1 ターン 1 ファイル）。ターンの終わりに消し、持ち主の居ない残りは次の書き込みで消す',
+      reason: 'Grok のネイティブ shell だけをそのターン中に無効にするエージェントプロファイル' },
   ] },
   { file: 'core/voice/usage.mjs', sites: 1, targets: [
     { name: 'voice-usage.json', limit: 'KEEP_DAYS=31 日分（1 日 3 つの数）。書くたびに古い日を捨てる', reason: '通話の使用量の台帳（費用の安全弁。docs/voice-call.md）。数秒にまとめて書く。固定の小ささ' },

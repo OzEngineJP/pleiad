@@ -1,4 +1,5 @@
 import path from 'node:path';
+import os from 'node:os';
 import { cliCommand, spawnCli } from '../cli-installation.mjs';
 import { t, agentT } from '../i18n.mjs';
 import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
@@ -15,6 +16,7 @@ import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
 import { createHeldAcp, heldAcpPlan } from './acp-held.mjs';
 import { devinCompactionsFromDb, devinCompactionFromNotification, devinSessionsDb } from './devin-compaction.mjs';
+import { getDevinSubagentMessages, getDevinSubagentOrigin, listDevinSubagents } from './devin-subagents.mjs';
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 
 /** 札（backendCard）に入れる発言の本文の上限（バイト）。超えたら人に書いた分だけにして、写しは人に書いた分で組み立てる */
@@ -59,7 +61,7 @@ async function captureCatalogue(launch, signal) {
 }
 
 export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, command = () => cliCommand('devin'), dataDir = store.dataDir, cancelGraceMs = 2000 } = {}) {
-  const cache = new Map(), rows = new Map(), active = new Map(), queues = new Map();
+  const cache = new Map(), rows = new Map(), active = new Map(), liveControls = new Map(), queues = new Map();
   const metadataQueue = Symbol('metadata');
   // CLI が最後に session/new・session/load で示した ACP の model の選択肢（まだ見ていなければ null）。
   // カタログには載るが ACP では選べない版（effort・速さの組み合わせの多く）を、自動の振り分けが選ばないようにする
@@ -179,6 +181,15 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         } catch { return []; } // The common conversation keeps its persisted transcript.
         finally { if (client) await client.close(); }
       });
+    },
+    async listSubagents(sessionId) {
+      return listDevinSubagents({ dataDir, sessionId });
+    },
+    async getSubagentMessages(sessionId, agentId, { limit = 200 } = {}) {
+      return getDevinSubagentMessages({ dataDir, sessionId, agentId, limit });
+    },
+    async getSubagentOrigin(sessionId, agentId) {
+      return getDevinSubagentOrigin({ dataDir, sessionId, agentId });
     },
     // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは acp-held.mjs の heldAcpPlan が決める）
     async runTurn(args, adopt = null) {
@@ -371,6 +382,41 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             verified = new Map([['mode', { id: modeOptions[0].id, value: mode }], ...applied.verified]);
             if (!matchesVerified(config, verified)) throw new Error(t('devin.errors.configChanged'));
             selectedMode = mode;
+            liveControls.set(sessionId, {
+              setMode: async next => {
+                if (!Object.hasOwn(modes(), next)) return false;
+                const options = latestSnapshot?.filter(o => o.id === 'mode' || o.category === 'mode') ?? [];
+                if (options.length !== 1 || !choices(options[0].options).includes(next)) return false;
+                const oldVerified = verified;
+                const oldMode = selectedMode;
+                verified = null;
+                try {
+                  const result = await client.call('session/set_config_option', { sessionId, configId: options[0].id, value: next });
+                  if (result?.configOptions?.find(o => o.id === options[0].id)?.currentValue !== next) { verified = oldVerified; return false; }
+                  selectedMode = next;
+                  const nextVerified = new Map(oldVerified);
+                  nextVerified.set('mode', { id: options[0].id, value: next });
+                  if (!matchesVerified(result.configOptions, nextVerified) || latestSession !== sessionId || !matchesVerified(latestSnapshot, nextVerified)) { verified = oldVerified; selectedMode = oldMode; return false; }
+                  verified = nextVerified;
+                  return true;
+                } catch { verified = oldVerified; selectedMode = oldMode; return false; }
+              },
+              setModel: async requested => {
+                if (!requested || !client?.alive) return false;
+                const oldVerified = verified;
+                verified = null;
+                try {
+                  const latestList = await rawModels(cwd, local.signal);
+                  const nextSelection = resolveDevinModel(latestList, requested);
+                  const current = latestSnapshot;
+                  const appliedLive = await applyDevinModel(client.call.bind(client), sessionId, current, nextSelection);
+                  const nextVerified = new Map([['mode', { id: [...oldVerified.values()].find(v => v.value === selectedMode)?.id ?? 'mode', value: selectedMode }], ...appliedLive.verified]);
+                  if (!matchesVerified(appliedLive.configOptions, nextVerified) || latestSession !== sessionId || !matchesVerified(latestSnapshot, nextVerified)) { verified = oldVerified; return false; }
+                  verified = nextVerified;
+                  return true;
+                } catch { verified = oldVerified; return false; }
+              },
+            });
             if (latestSession !== sessionId || !matchesVerified(latestSnapshot, verified) || latestMode !== mode) throw new Error(t('devin.errors.configChanged'));
             check();
             // 読み取り専用のモードでは、ブラウザーの指示を「操作しない」に読み替える（agent-browser は読むだけでもデーモンの書き込みが要る。Codex と同じ）
@@ -438,6 +484,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             }
           }
           if (sessionId) active.delete(sessionId);
+          if (sessionId) liveControls.delete(sessionId);
           if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('devin.errors.promptFailed')) } : {}),
@@ -560,6 +607,38 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
     // 自動圧縮を含む区切りを、会話の DB（sessions.db の継続ノード）から読む（core/compaction-history.mjs の形）
     async getCompactions(sessionId) {
       return devinCompactionsFromDb({ dataDir, sessionId });
+    },
+    /** Generate suggestions in a temporary, read-only ACP conversation. */
+    async suggestNext({ prompt, signal } = {}) {
+      if (signal?.aborted) return null;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal?.addEventListener('abort', abort, { once: true });
+      let text = '', failure = null, sessionId = null;
+      try {
+        const result = await this.runTurn({
+          prompt, cwd: os.tmpdir(), mode: 'plan', ephemeral: true, signal: controller,
+          askPermission: async () => ({ allow: false }),
+          emit: event => {
+            if (event.type === 'text.delta') text += event.text;
+            if (event.type === 'session') sessionId = event.sessionId;
+            if (event.type === 'turnResult' && event.outcome !== 'ok') failure = event.error || event.outcome;
+          },
+        });
+        sessionId ??= result?.sessionId ?? null;
+      } finally {
+        signal?.removeEventListener('abort', abort);
+        if (sessionId) await this.releaseConversation(sessionId);
+      }
+      if (controller.signal.aborted) return null;
+      if (failure) throw new Error(String(failure));
+      return text;
+    },
+    async setModelLive(handle, model) {
+      return liveControls.get(handle?.sessionId)?.setModel(model) ?? false;
+    },
+    async setModeLive(handle, mode) {
+      return liveControls.get(handle?.sessionId)?.setMode(mode) ?? false;
     },
     async releaseConversation(id) { const client = active.get(id); if (client) await client.close(); cache.delete(id); },
 
