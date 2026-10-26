@@ -275,7 +275,13 @@ export default async function (t) {
     mark = calls.length;
     await turn({ cwd: other, endpoint });
     const secondEndpointConversation = of('session/new', mark)[0];
-    t.ok('別の互換接続会話には別の Grok ホームを割り当てる', secondEndpointConversation?.env?.GROK_HOME !== endpointNew?.env?.GROK_HOME);
+    // 置き場は接続先ごとに 1 つ（会話ごとに作ると会話の数だけ増えて消えない）。同じ接続先の会話は ~/.grok と同じく置き場を共有する
+    t.ok('同じ互換接続先の別の会話は、その接続先の Grok ホームを共有する', secondEndpointConversation?.env?.GROK_HOME === endpointNew?.env?.GROK_HOME);
+    mark = calls.length;
+    await turn({ cwd: other, endpoint: { ...endpoint, id: 'ep-ba9876543210', baseUrl: 'http://127.0.0.1:43124/v1' } });
+    const otherEndpointConversation = of('session/new', mark)[0];
+    t.ok('別の互換接続先の会話には別の Grok ホームを割り当てる', otherEndpointConversation?.env?.GROK_HOME !== endpointNew?.env?.GROK_HOME
+      && otherEndpointConversation?.configText?.includes('43124'));
     mark = calls.length;
     await turn({ cwd: other });
     const isolatedEndpoint = of('session/new', mark)[0];

@@ -80,6 +80,10 @@ export const DATA_WRITES = [
   { file: 'core/backends/grok-accounts.mjs', sites: 1, targets: [
     { name: 'accounts/grok/<account-id>/auth.json', limit: '登録した Grok アカウントごとに 1 ファイル', reason: 'Grok CLI が読むアカウント別ホームの認証情報。Pleiad の保護されたデータ置き場に保存し、既定の ~/.grok は変更しない' },
   ] },
+  { file: 'core/backends/grok.mjs', sites: 4, targets: [
+    { name: 'grok-endpoint-homes/<endpoint-id>/config.toml', limit: '互換の接続先ごとに 1 ファイル（数百 bytes）。同じ接続先の会話は置き場を共有し、ターンごとに同じファイルを書き直す', reason: 'Grok CLI が読む接続先の設定（GROK_HOME）。会話限定の置き場にして、利用者の ~/.grok の設定は変えない' },
+    { name: 'grok-endpoint-homes.json', limit: '固定 1 ファイル。互換の接続先で始めた Grok の会話の id → 置き場の対応だけ', reason: '再開したときに同じ置き場（会話の記録がある GROK_HOME）を使うため' },
+  ] },
   { file: 'core/backends/grok-hooks.mjs', sites: 2, targets: [
     { name: 'grok-hooks/<pid>-<乱数>/hooks/hooks.json', limit: '同時に走る Grok のターンの数まで（1 ターン 1 ファイル）。ターンの終わりに消し、持ち主の居ない残りは次の書き込みで消す',
       reason: 'Grok へそのターンだけ渡すプラグイン（_meta.pluginDirs）。Grok はセッション限定のプラグインを保存しない' },

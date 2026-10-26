@@ -463,7 +463,8 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             if (args.endpoint.kind !== 'openai-chat-completions' || !args.endpoint.baseUrl || !args.endpoint.roles?.main) throw new Error(t('accounts.badBackend'));
             if (!endpointHome) {
               if (sessionId) throw new Error('Grok compatible endpoint profile for this conversation is missing');
-              endpointHome = path.join(dataPath(), 'grok-endpoint-homes', randomUUID());
+              // 接続先ごとに 1 つの置き場（会話ごとに作ると、会話の数だけ増えて消えない）。同じ接続先の会話は ~/.grok と同じく置き場を共有する
+              endpointHome = path.join(dataPath(), 'grok-endpoint-homes', /^ep-[a-f0-9]{12}$/.test(args.endpoint.id ?? '') ? args.endpoint.id : randomUUID());
             }
             await writeCompatProfile(dataPath(), args.endpoint, endpointHome);
             extraEnv = { ...extraEnv, GROK_HOME: endpointHome, GROK_MODELS_BASE_URL: args.endpoint.baseUrl,
