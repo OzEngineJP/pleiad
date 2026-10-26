@@ -185,7 +185,7 @@ export const CAPABILITY_STATES = {
     compatEndpoints: todo('#108'),    // CLI の接続先の設定と Pleiad の選択 UI を接続する
     compact: true,                    // /compact を prompt として送る（下の compact）
     autoCompactWindow: todo('#108'),
-    promptSuggestions: todo('#108'),
+    promptSuggestions: covered,   // ACP に提案の口が無いため、ターン後の使い捨て読み取り専用会話で補う
     plyInstructions: true,
     plyAgents: true,
     // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
@@ -217,11 +217,11 @@ export const CAPABILITY_STATES = {
     alwaysAllow: true,
     mcpApproval: 'agent',
     login: true,
-    accounts: todo('#108'),
+    accounts: 'agent',
     compatEndpoints: todo('#108'),
-    compact: todo('#108'),            // 手動の圧縮・通知・履歴の写像
-    autoCompactWindow: todo('#108'),
-    promptSuggestions: todo('#108'),
+    compact: true,                    // compact() から /compact を送り、自動圧縮通知を履歴イベントへ写す
+    autoCompactWindow: true,          // GROK_CONFIG.session.auto_compact_threshold_percent に換算
+    promptSuggestions: covered,       // ACP に提案 API がなく、ターン後の使い捨て読み取り専用会話で補う
     plyInstructions: true,
     plyAgents: true,
     plyContext: todo('#108'),         // HTTP MCP で渡せるが、Pleiad 担当分の分離が未了

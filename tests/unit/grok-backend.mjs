@@ -273,7 +273,68 @@ export default async function (t) {
       && transcript.some(m => m.liveUuid === delivery.nativeId));
 
     }
+    // 8. Grok の追加アカウントは専用 GROK_HOME を使い、既定ログインと会話の再開に混ざらない。
+    const previousHome = process.env.AGENT_HOST_GROK_HOME;
+    const defaultHome = path.join(root, 'default-grok-home');
+    process.env.AGENT_HOST_GROK_HOME = defaultHome;
+    try {
+      const accountId = 'acct-0123456789ab';
+      const accountDir = path.join(dataDir, 'accounts', 'grok', accountId);
+      fs.mkdirSync(accountDir, { recursive: true });
+      const account = { id: accountId, name: 'fixture', dir: accountDir, credential: { auth: { fixture: { token: 'private' } } } };
+      t.ok('Grok アカウントは専用の暗号化ストア資格情報を専用ホームへ復元する',
+        (await backend.accountStatus({ account })).hasCredential && fs.existsSync(path.join(accountDir, 'auth.json'))
+        && !fs.existsSync(path.join(defaultHome, 'auth.json')));
+      const scoped = await backend.forAccount(account);
+      mark = calls.length;
+      const firstAccountTurn = await scoped.runTurn({ prompt: 'private account turn', cwd, mode: 'ask', emit: () => {} });
+      const scopedNew = of('session/new', mark)[0];
+      t.ok('新しい Grok アカウント会話は専用 GROK_HOME で起動する', scopedNew?.env?.GROK_HOME === accountDir);
+      mark = calls.length;
+      await scoped.runTurn({ prompt: 'resume private account', sessionId: firstAccountTurn.sessionId, cwd, mode: 'ask', emit: () => {} });
+      t.ok('再開した Grok アカウント会話も同じ専用 GROK_HOME を使う', of('session/resume', mark)[0]?.env?.GROK_HOME === accountDir);
+      mark = calls.length;
+      await turn({ cwd });
+      t.ok('既定 Grok 会話は追加アカウントの認証ホームを使わない', of('session/new', mark)[0]?.env?.GROK_HOME === defaultHome);
+    } finally {
+      if (previousHome === undefined) delete process.env.AGENT_HOST_GROK_HOME;
+      else process.env.AGENT_HOST_GROK_HOME = previousHome;
+    }
     // 7. turn_completed の usage は呼び出しの合計で、文脈の占有ではない。usage_update の used/size だけを文脈の量にする
+    {
+      mark = calls.length;
+      const suggestion = await backend.suggestNext({ prompt: '{"suggestion":"Continue"}', signal: new AbortController().signal });
+      const suggestionSession = of('session/new', mark)[0];
+      t.ok('suggestNext は提案を返し、MCP と Hooks を持たない読み取り専用セッションを作る',
+        suggestion === 'fixture reply'
+        && suggestionSession?.params?.mcpServers?.length === 0
+        && !suggestionSession?.params?._meta?.pluginDirs
+        && of('session/set_mode', mark).some(c => c.params.modeId === 'plan')
+        && of('session/close', mark).length === 1);
+    }
+    {
+      const original = process.env.GROK_CONFIG;
+      delete process.env.GROK_CONFIG;
+      try {
+        mark = calls.length;
+        const first = await turn({ cwd, autoCompactWindow: 200 });
+        const configOf = entry => JSON.parse(entry?.env?.GROK_CONFIG ?? '{}')?.session?.auto_compact_threshold_percent;
+        const created = of('session/new', mark)[0];
+        t.ok('autoCompactWindow をコンテキスト窓に対する割合へ変換して新規会話に渡す', configOf(created) === 20);
+        mark = calls.length;
+        await turn({ cwd, sessionId: first.sessionId, autoCompactWindow: 300 });
+        t.ok('autoCompactWindow を再開会話にも渡す', configOf(of('session/resume', mark)[0]) === 30);
+      } finally {
+        if (original === undefined) delete process.env.GROK_CONFIG;
+        else process.env.GROK_CONFIG = original;
+      }
+    }
+    {
+      mark = calls.length;
+      await backend.compact({ cwd, sessionId: first.sessionId, mode: 'ask', emit: () => {} });
+      t.ok('compact() はネイティブの /compact を既存セッションへ送る',
+        of('session/prompt', mark).some(c => c.params.prompt?.some(p => p.text === '/compact')));
+    }
     const events = [];
     const mapper = createGrokMapper('grok-fixture-usage', e => events.push(e), { windowTokens: 1000 });
     mapper.beginTurn('hello');
@@ -281,6 +342,11 @@ export default async function (t) {
     t.ok('turn_completed の usage から文脈の量を出さない', !events.some(e => e.type === 'contextWindow'), JSON.stringify(events));
     mapper.accept({ sessionUpdate: 'usage_update', used: 290, size: 1000 });
     t.ok('usage_update の used/size は文脈の量にする', events.some(e => e.type === 'contextWindow' && e.usedTokens === 290 && e.windowTokens === 1000));
+    mapper.accept({ sessionUpdate: 'auto_compact_started', tokens_used: 850, context_window: 1000, percentage: 85, reason: 'threshold' });
+    mapper.accept({ sessionUpdate: 'auto_compact_completed', tokens_before: 850, tokens_after: 140, summary_preview: 'kept the plan' });
+    t.ok('Grok の自動圧縮通知を Pleiad の圧縮履歴用イベントへ写す',
+      events.some(e => e.type === 'compaction' && e.phase === 'start' && e.beforeTokens === 850)
+      && events.some(e => e.type === 'compaction' && e.phase === 'complete' && e.beforeTokens === 850 && e.afterTokens === 140 && e.summary === 'kept the plan'));
   } finally {
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   }

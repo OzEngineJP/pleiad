@@ -18,6 +18,7 @@ import { createHeldAcp, heldAcpPlan } from './acp-held.mjs';
 import { writeTurnPlugin } from './grok-hooks.mjs';
 import { grokQuota } from './grok-usage.mjs';
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
+import { defaultGrokHome, prepareGrokAccount, readGrokCredential } from './grok-accounts.mjs';
 
 /** 札（backendCard）に入れる発言の本文の上限（バイト）。超えたら人に書いた分だけにして、写しは人に書いた分で組み立てる */
 const CARD_TEXT_MAX = 16 * 1024;
@@ -33,7 +34,7 @@ const isAuthError = error => /auth|credential|login|unauthorized/i.test(String(e
 const LOGIN_TIMEOUT_MS = Number(process.env.AGENT_HOST_GROK_LOGIN_MS ?? 10 * 60_000);
 const LOGIN_POLL_MS = Number(process.env.AGENT_HOST_GROK_POLL_MS ?? 3_000);
 /** Grok の置き場（config.toml・auth.json）。試験は AGENT_HOST_GROK_HOME で差し替える */
-const grokHome = () => process.env.AGENT_HOST_GROK_HOME || path.join(os.homedir(), '.grok');
+const grokHome = () => path.resolve(process.env.AGENT_HOST_GROK_HOME || process.env.GROK_HOME || defaultGrokHome());
 
 // Pleiad のモード → Grok の permission mode（`grok --permission-mode` の値と同じ）
 const GROK_MODES = { ask: 'default', 'accept-edits': 'acceptEdits', auto: 'auto', bypass: 'bypassPermissions', plan: 'plan' };
@@ -55,16 +56,19 @@ function grokModels(init) {
   const current = entries.find(m => m.modelId === state.currentModelId) ?? entries[0];
   const effortsOf = m => (m?._meta?.reasoningEfforts ?? []).map(e => e?.value ?? e?.id).filter(v => typeof v === 'string' && v);
   const defaultEffortOf = m => (m?._meta?.reasoningEfforts?.find(e => e?.default)?.value ?? m?._meta?.reasoningEffort ?? null);
+  const contextWindowTokens = current?._meta?.totalContextTokens ?? null;
   const out = { '': {
     label: t('models.default'),
     note: current?.name ?? current?.modelId ?? '',
     resolvesTo: current?.modelId,
+    contextWindowTokens,
     efforts: effortsOf(current), defaultEffort: defaultEffortOf(current),
   } };
   for (const m of entries) {
     out[m.modelId] = {
       label: typeof m.name === 'string' && m.name ? m.name : m.modelId,
       note: typeof m.description === 'string' ? m.description : '',
+      contextWindowTokens: m?._meta?.totalContextTokens ?? null,
       efforts: effortsOf(m), defaultEffort: defaultEffortOf(m),
     };
   }
@@ -78,9 +82,28 @@ function spawnArgs(model, effort) {
   return args;
 }
 
-export function createGrokBackend({ Acp = null, command = () => cliCommand('grok'), dataDir = store.dataDir, cancelGraceMs = 2000 } = {}) {
+export function createGrokBackend({ Acp = null, command = () => cliCommand('grok'), dataDir = store.dataDir, cancelGraceMs = 2000, accountScope = null } = {}) {
   const cache = new Map(), rows = new Map(), active = new Map(), queues = new Map();
+  const scopedBackends = new Map();
   const metadataQueue = Symbol('metadata');
+  const homeForScope = () => accountScope?.dir ?? grokHome();
+  const envForScope = () => {
+    const env = { ...process.env, GROK_HOME: homeForScope() };
+    if (accountScope) { delete env.XAI_API_KEY; delete env.AGENT_HOST_GROK_HOME; }
+    return env;
+  };
+  function compactEnv(window, contextWindowTokens) {
+    if (!Number.isFinite(window) || window <= 0 || !Number.isFinite(contextWindowTokens) || contextWindowTokens <= 0) return {};
+    const percent = Math.max(0, Math.min(100, Math.round(window * 100 / contextWindowTokens)));
+    let config = {};
+    if (process.env.GROK_CONFIG) {
+      try { config = JSON.parse(process.env.GROK_CONFIG); }
+      catch { throw new Error('GROK_CONFIG must be valid JSON when Grok auto-compaction is configured'); }
+      if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('GROK_CONFIG must be a JSON object');
+    }
+    if (config.session != null && (typeof config.session !== 'object' || Array.isArray(config.session))) throw new Error('GROK_CONFIG.session must be a JSON object');
+    return { GROK_CONFIG: JSON.stringify({ ...config, session: { ...(config.session ?? {}), auto_compact_threshold_percent: percent } }) };
+  }
   function remember(id, mapper) {
     cache.delete(id); cache.set(id, mapper);
     while (cache.size > 16) cache.delete(cache.keys().next().value);
@@ -98,7 +121,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   }
   async function openClient(cwd, args = [], handlers = {}, extraEnv = null, { held = null, adopt = null } = {}) {
     const Client = Acp ?? (await import('./grok-acp.mjs')).GrokAcp;
-    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), env: extraEnv ? { ...process.env, ...extraEnv } : process.env, ...handlers, held, adopt, onRequest: handlers.onRequest ?? (async method => {
+    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), env: { ...envForScope(), ...(extraEnv ?? {}) }, ...handlers, held, adopt, onRequest: handlers.onRequest ?? (async method => {
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
@@ -182,6 +205,35 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     capabilities: CAPABILITY_STATES.grok,
     traits: AGENT_TRAITS.grok,
     modes,
+    get activeCount() { return active.size; },
+    async forAccount(account) {
+      const { dir, env } = await prepareGrokAccount(account, typeof dataDir === 'function' ? dataDir() : dataDir);
+      const key = path.resolve(dir);
+      if (!scopedBackends.has(key)) scopedBackends.set(key, createGrokBackend({ Acp, command, dataDir, cancelGraceMs, accountScope: { ...account, dir, env } }));
+      return scopedBackends.get(key);
+    },
+    async accountStatus({ account }) {
+      const data = typeof dataDir === 'function' ? dataDir() : dataDir;
+      await prepareGrokAccount(account, data, { allowUnauthenticated: true });
+      const credential = await readGrokCredential(account, data);
+      return { hasCredential: Boolean(credential), ...(credential ? { label: account.name || t('grok.auth.account') } : {}) };
+    },
+    async accountLogin({ account, emit, signal }) {
+      const scope = await prepareGrokAccount(account, typeof dataDir === 'function' ? dataDir() : dataDir, { login: true, allowUnauthenticated: true });
+      const scoped = createGrokBackend({ Acp, command, dataDir, cancelGraceMs, accountScope: { ...account, ...scope } });
+      await scoped.auth.login({ emit, signal });
+      const credential = await readGrokCredential(account, typeof dataDir === 'function' ? dataDir() : dataDir);
+      if (!credential) throw new Error(t('accounts.backend.loginNoCredential', { agent: 'Grok Build' }));
+      return { credential, label: account.name || t('grok.auth.account') };
+    },
+    async accountRemove({ account }) {
+      const key = path.resolve(account.dir);
+      const scoped = scopedBackends.get(key);
+      if (scoped) {
+        if (scoped.activeCount) throw new Error(t('accounts.backend.inUse', { agent: 'Grok Build' }));
+        scopedBackends.delete(key);
+      }
+    },
     async usage({ cwd = process.cwd() } = {}) {
       return serial(metadataQueue, async () => {
         let client;
@@ -325,7 +377,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         };
         let error = null, outcome = 'ok';
         try {
-          if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
+          if (args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
           if (args.contextRuntime) throw new Error(t('context.runtime.refused', { backend: 'Grok Build' }));
           check();
           // CLI の起動・履歴の再生・モードの適用は送る前に済ませるが、数秒黙る。
@@ -336,8 +388,14 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           const model = typeof args.model === 'string' && args.model ? args.model : '';
           const effort = typeof args.effort === 'string' && args.effort ? args.effort : '';
           // Pleiad がそろえる Hooks を渡すターンは、Claude・Cursor・Codex 互換の読み込み元を環境変数で止める（二重実行の防止）
-          const extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}),
+          let extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}),
             ...(args.secretsRuntime?.env ?? {}), ...(args.hooksRuntime?.compatHookEnv ?? {}) };
+          if (Number.isFinite(args.autoCompactWindow) && args.autoCompactWindow > 0) {
+            const available = await this.models(cwd);
+            const selected = available[model] ?? available[''];
+            const contextWindowTokens = selected?.contextWindowTokens;
+            extraEnv = { ...extraEnv, ...compactEnv(args.autoCompactWindow, contextWindowTokens) };
+          }
           const handlers = {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
             onUpdate: (params, opts) => {
@@ -538,6 +596,36 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       if (!args.card?.held || !args.card.grok || typeof args.source?.write !== 'function') throw new Error('grok: the turn was not on the holder');
       return this.runTurn(args, { source: args.source, card: args.card });
     },
+    /** Generate suggestions in an isolated, read-only ACP session. */
+    async suggestNext({ prompt, signal, account } = {}) {
+      if (signal?.aborted) return null;
+      const target = account?.account ? await this.forAccount(account.account) : this;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      signal?.addEventListener('abort', abort, { once: true });
+      let text = '', failure = null, sessionId = null;
+      try {
+        const result = await target.runTurn({
+          prompt, cwd: os.tmpdir(), mode: 'plan', ephemeral: true, signal: controller,
+          askPermission: async () => ({ allow: false }),
+          emit: event => {
+            if (event.type === 'text.delta') text += event.text;
+            if (event.type === 'session') sessionId = event.sessionId;
+            if (event.type === 'turnResult' && event.outcome !== 'ok') failure = event.error || event.outcome;
+          },
+        });
+        sessionId ??= result?.sessionId ?? null;
+      } finally {
+        signal?.removeEventListener('abort', abort);
+        if (sessionId) await target.releaseConversation(sessionId);
+      }
+      if (controller.signal.aborted) return null;
+      if (failure) throw new Error(String(failure));
+      return text;
+    },
+    async compact(args) {
+      return this.runTurn({ ...args, prompt: '/compact' });
+    },
     async setModelLive(handle, model) {
       const client = active.get(handle?.sessionId);
       if (!client || !model) return false;
@@ -581,16 +669,23 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         return { loggedIn: false, account: null, detail: t('grok.auth.notLoggedIn') };
       },
       /** ログインは端末でしか受け付けない。コマンドを出し、ログインが済むまで見張る */
-      async login({ emit }) {
+      async login({ emit, signal }) {
         if (pendingAuth) throw new Error(t('grok.auth.loginRunning'));
         pendingAuth = {};
         const watch = loginWatch.begin();
+        const abort = () => { void loginWatch.cancel(); };
+        signal?.addEventListener('abort', abort, { once: true });
         try {
           if (await signedIn()) {
             emit?.({ type: 'auth', phase: 'done', message: t('grok.auth.alreadyLoggedIn') });
             return;
           }
-          const command = [...argv(), 'login'].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+          const login = [...argv(), 'login'].map(a => (/\s/.test(a) ? `"${a}"` : a)).join(' ');
+          const home = homeForScope();
+          const escaped = String(home).replaceAll("'", "''");
+          const command = accountScope
+            ? (process.platform === 'win32' ? `$env:GROK_HOME='${escaped}'; ${login}` : `GROK_HOME='${String(home).replaceAll("'", "'\\''")}'; export GROK_HOME; ${login}`)
+            : login;
           emit?.({ type: 'auth', phase: 'url', url: command, message: t('grok.auth.runCommand') });
           const until = Date.now() + LOGIN_TIMEOUT_MS;
           while (Date.now() < until) {
@@ -606,6 +701,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           emit?.({ type: 'auth', phase: 'error', code: 'TIMEOUT', message });
           throw loginTimeoutError(message);
         } finally {
+          signal?.removeEventListener('abort', abort);
           pendingAuth = null;
           watch.end();
         }
@@ -631,7 +727,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   /** 認証まわりの小さな起動（status・logout・--version）。ターンの ACP とは別経路 */
   function runAuth(args, { timeoutMs = 15000 } = {}) {
     return new Promise((resolve, reject) => {
-      const child = spawnCli(argv(), args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      const child = spawnCli(argv(), args, { env: envForScope(), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
       let out = '', err = '', settled = false;
       const finish = (error, code = null) => { if (settled) return; settled = true; clearTimeout(timer); error ? reject(error) : resolve({ code, out, err }); };
       const timer = setTimeout(() => { try { child.kill(); } catch {} finish(new Error(t('grok.errors.timeout', { method: args.join(' '), ms: timeoutMs }))); }, timeoutMs);
@@ -646,9 +742,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   }
   /** auth.json の登録、XAI_API_KEY、`grok models` のどれかが通ればログイン済み */
   async function signedIn() {
-    if (process.env.XAI_API_KEY) return true;
+    if (envForScope().XAI_API_KEY) return true;
     try {
-      if (Object.keys(JSON.parse(fs.readFileSync(path.join(grokHome(), 'auth.json'), 'utf8'))).length) return true;
+      if (Object.keys(JSON.parse(fs.readFileSync(path.join(homeForScope(), 'auth.json'), 'utf8'))).length) return true;
     } catch {}
     if (!command()) return false;
     const { code } = await runAuth(['models'], { timeoutMs: 10000 }).catch(() => ({ code: -1 }));
