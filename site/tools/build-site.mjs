@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { DOCS_INDEX_FILE, DOCS_SOURCE_FILES } from "./docs-sources.mjs";
+import { DOCS_INDEX_FILE, DOCS_SNAPSHOT_FILE, DOCS_SOURCE_FILES } from "./docs-sources.mjs";
 
 // 公開先の URL（canonical・hreflang・og:url・og:image の元）。末尾は /
 export const SITE_URL = "https://pleiad.dev/";
@@ -313,6 +313,23 @@ async function docsSource(release, offline) {
   return { core, label: release.version };
 }
 
+/**
+ * 操作・設定の一覧の元（tests/ops-surface.snap.json）。作業ツリーから組むならそのファイル、タグから組むならタグの写し。
+ * タグから取れなければ "none"（リファレンスの章を作らない。開発中の一覧を安定版の文書に混ぜない）
+ */
+async function docsSnapshot(source) {
+  if (source.label === "worktree") return path.join(SITE, "..", ...DOCS_SNAPSHOT_FILE.split("/"));
+  const file = path.join(DOCS, ".cache", source.label, ...DOCS_SNAPSHOT_FILE.split("/"));
+  if (fs.existsSync(file)) return file;
+  try {
+    await fetchSource(DOCS_SNAPSHOT_FILE, file, source.label);
+    return file;
+  } catch (err) {
+    console.warn(`! ${source.label} の ${DOCS_SNAPSHOT_FILE} を取れなかったので、リファレンスの章を作らない（${err.message}）`);
+    return "none";
+  }
+}
+
 function run(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" });
   if (result.error) throw result.error;
@@ -335,7 +352,8 @@ export async function buildDocs(out, { offline = false, release = pickReleases([
     installDocs();
   }
   const source = await docsSource(release, offline);
-  run(process.execPath, [path.join(DOCS, "scripts", "generate.mjs"), "--core", source.core, "--source", source.label], DOCS);
+  const snap = await docsSnapshot(source);
+  run(process.execPath, [path.join(DOCS, "scripts", "generate.mjs"), "--core", source.core, "--snap", snap, "--source", source.label], DOCS);
   run(process.execPath, [astro, "build"], DOCS);
   fs.cpSync(path.join(DOCS, "dist"), path.join(out, "docs"), { recursive: true });
   console.log(`built docs: /docs/ ・/docs/en/（${source.label === "worktree" ? "作業ツリー" : source.label}）`);

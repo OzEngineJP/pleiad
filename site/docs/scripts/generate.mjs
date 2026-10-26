@@ -1,11 +1,12 @@
 // コードから作る文書のページを組む（正本は core/。site/tools/build-site.mjs が、リリースのタグから取った写しか
 // 作業ツリーの core/ を渡す）。
 //
-//     node scripts/generate.mjs [--core <core/backends のディレクトリ>] [--source <タグ|worktree>]
+//     node scripts/generate.mjs [--core <core/backends のディレクトリ>] [--snap <ops-surface.snap.json|none>] [--source <タグ|worktree>]
 //
 // 出力（追跡しない）:
 //   src/content/docs/agents/index.mdx・src/content/docs/en/agents/index.mdx … エージェントの一覧
 //   src/content/docs/agents/<id>.mdx・src/content/docs/en/agents/<id>.mdx … できること・できないこと・対応予定
+//   src/content/docs/reference/{ops,settings}.mdx（英語は en/reference/）… 操作の一覧・設定の一覧（tests/ops-surface.snap.json から）
 //
 // エージェントごとのページは、core/backends/capability-marks.mjs（印の説明）と core/backends/agent-marks.mjs（状態）が
 // あるときだけ作る。古いタグ（v0.40.0 など）には無いので、そのときは一覧だけを作る（ビルドを落とさない）。
@@ -15,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseOpsSurface } from "../../tools/docs-features.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DOCS = path.resolve(HERE, "..");
@@ -32,6 +34,9 @@ const source = opt("source", "worktree");
 const agentsFile = path.join(coreDir, "agents.mjs");
 const marksFile = path.join(coreDir, "capability-marks.mjs");
 const statesFile = path.join(coreDir, "agent-marks.mjs");
+// 操作・設定の一覧の元（tests/ops-surface.snap.json）。--snap none か無いファイルなら、リファレンスの章を作らない
+const snapOpt = opt("snap", path.join(REPO, "tests", "ops-surface.snap.json"));
+const snapFile = snapOpt === "none" ? null : path.resolve(snapOpt);
 
 const { AGENTS, DEFAULT_AGENT_IDS } = await import(pathToFileURL(agentsFile).href);
 const marks = fs.existsSync(marksFile) ? await import(pathToFileURL(marksFile).href) : null;
@@ -43,6 +48,8 @@ const perAgent = Boolean(marks?.CAPABILITY_KEYS?.length && marks?.CAPABILITY_DOC
 /** Markdown の表の 1 つのセルにする（| と改行を潰す） */
 const cell = (value) => String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 const code = (value) => (value ? `\`${String(value).replace(/`/g, "")}\`` : "—");
+const mark = (value) => (value ? "○" : "—");
+const surface = snapFile && fs.existsSync(snapFile) ? parseOpsSurface(fs.readFileSync(snapFile, "utf8")) : null;
 const isJa = (lang) => lang === "ja";
 
 function sourceNote(lang, what) {
@@ -112,7 +119,8 @@ function agentPage(lang, id) {
     works.push(`- **${doc.label[lang]}** — ${capabilityText(doc, value, lang)}`);
   }
   const fragmentFile = path.join(CONTENT, ...(ja ? [] : [lang]), "agents", id, "_connect.md");
-  const fragment = fs.existsSync(fragmentFile) ? fs.readFileSync(fragmentFile, "utf8").trim() : "";
+  // 断片の頭の <!-- --> は書く人への注記。ページは MDX で HTML のコメントを読めないので外す
+  const fragment = fs.existsSync(fragmentFile) ? fs.readFileSync(fragmentFile, "utf8").replace(/<!--[\s\S]*?-->/g, "").trim() : "";
   const description = ja ? `${name} でできること・できないこと` : `What ${name} can and cannot do`;
   const body = [
     "---",
@@ -131,6 +139,55 @@ function agentPage(lang, id) {
   return body.join("\n");
 }
 
+/** 操作の一覧（reference/ops）。名前空間ごとの見出し + 表（操作・画面・MCP・CLI・危険度） */
+function opsPage(lang) {
+  const ja = isJa(lang);
+  const lines = [
+    "---",
+    `title: ${JSON.stringify(ja ? "操作の一覧" : "Operations")}`,
+    `description: ${JSON.stringify(ja ? "Pleiad が画面・MCP・CLI へ出す操作の一覧です。" : "The operations Pleiad exposes over the UI, MCP, and CLI.")}`,
+    "---",
+    "",
+    `${ja ? "Pleiad が外へ出す操作（オペレーション）の一覧です。" : "The operations Pleiad exposes."}${ja ? "" : " "}${sourceNote(lang, ja ? "一覧" : "list")}`,
+    "",
+    ja ? "「画面・MCP・CLI」は、その操作がどの口から使えるかです。" : "The UI / MCP / CLI columns show which surface exposes each operation.",
+    "",
+  ];
+  const byNs = {};
+  for (const [id, op] of Object.entries(surface.ops)) (byNs[id.split(".")[0]] ??= []).push([id, op]);
+  for (const ns of Object.keys(byNs).sort()) {
+    lines.push(`## ${ns}`, "");
+    lines.push(ja ? "| 操作 | 画面 | MCP | CLI | 危険度 |" : "| Operation | UI | MCP | CLI | Risk |", "| --- | --- | --- | --- | --- |");
+    for (const [id, op] of byNs[ns].sort((a, b) => a[0].localeCompare(b[0]))) {
+      lines.push(`| ${code(id)} | ${mark(op.surfaces?.ui)} | ${mark(op.surfaces?.mcp)} | ${mark(op.surfaces?.cli)} | ${cell(code(op.risk))} |`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/** 設定の一覧（reference/settings）。キー・書き込めるか・危険度 */
+function settingsPage(lang) {
+  const ja = isJa(lang);
+  const lines = [
+    "---",
+    `title: ${JSON.stringify(ja ? "設定の一覧" : "Settings")}`,
+    `description: ${JSON.stringify(ja ? "Pleiad の設定の一覧です。" : "The settings Pleiad exposes.")}`,
+    "---",
+    "",
+    `${ja ? "Pleiad の設定の一覧です。" : "The settings Pleiad exposes."}${ja ? "" : " "}${sourceNote(lang, ja ? "一覧" : "list")}`,
+    "",
+    ja ? "| キー | 変更できる | 危険度 |" : "| Key | Writable | Risk |",
+    "| --- | --- | --- |",
+  ];
+  for (const key of Object.keys(surface.settings).sort()) {
+    const s = surface.settings[key];
+    lines.push(`| ${code(key)} | ${mark(s.writable)} | ${cell(code(s.risk))} |`);
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
 /** 前の回に作ったページを消す（手書きの断片は agents/<id>/ の下なので消えない） */
 function cleanGenerated(dir) {
   if (!fs.existsSync(dir)) return;
@@ -147,4 +204,15 @@ for (const lang of ["ja", "en"]) {
   if (!perAgent) continue;
   for (const id of DEFAULT_AGENT_IDS) fs.writeFileSync(path.join(dir, `${id}.mdx`), agentPage(lang, id));
 }
-console.log(`generated agents (${source}): ${DEFAULT_AGENT_IDS.length} agents${perAgent ? " with pages" : " (list only)"}`);
+for (const lang of ["ja", "en"]) {
+  const dir = path.join(CONTENT, ...(lang === "ja" ? [] : [lang]), "reference");
+  if (!surface) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    continue;
+  }
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "ops.mdx"), opsPage(lang));
+  fs.writeFileSync(path.join(dir, "settings.mdx"), settingsPage(lang));
+}
+console.log(`generated (${source}): ${DEFAULT_AGENT_IDS.length} agents${perAgent ? " with pages" : " (list only)"}`
+  + (surface ? `, ${Object.keys(surface.ops).length} ops, ${Object.keys(surface.settings).length} settings` : ", no reference"));

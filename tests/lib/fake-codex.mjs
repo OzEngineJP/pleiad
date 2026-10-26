@@ -714,7 +714,7 @@ async function handle(method, params) {
       t.model = params?.model;
       if (process.env.FAKE_CODEX_ROLLOUT_DIR && !t.ephemeral) t.path = path.join(process.env.FAKE_CODEX_ROLLOUT_DIR, `rollout-${t.id}.jsonl`);
       applyProvider(t, params);
-      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, ephemeral: t.ephemeral });
+      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, ephemeral: t.ephemeral, config: params?.config ?? null });
       return {
         thread: wire(t, false),
         approvalPolicy: params?.approvalPolicy ?? "untrusted",
@@ -731,7 +731,7 @@ async function handle(method, params) {
       if (!t) throw new Error(`知らない threadId: ${params?.threadId}`);
       if (params?.model) t.model = params.model;
       applyProvider(t, params);
-      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, hooks: Boolean(params?.config?.hooks), excludeTurns: params?.excludeTurns === true });
+      record({ method, threadId: t.id, modelProvider: params?.modelProvider ?? null, model: params?.model ?? null, hooks: Boolean(params?.config?.hooks), excludeTurns: params?.excludeTurns === true, config: params?.config ?? null });
       return {
         // 本物は excludeTurns が無ければ会話の中身（turns）ごと返す
         thread: wire(t, params?.excludeTurns !== true),

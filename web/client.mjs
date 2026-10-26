@@ -3980,6 +3980,8 @@ async function loadBackends(early = null) {
     ? state.prefs.backend : state.backendId ?? state.backends[0]?.id ?? null;
   state.shownBackend ??= state.backendId;
   controls.paint();
+  // 次の発言の候補の行も、届いたエージェントの能力で出し分ける
+  inputSettings.paint();
   // 自動の圧縮の行はエージェントの一覧から作る
   if (state.prefs.autoCompaction) paintAutoCompactionSettings();
   // 認証の状態はエージェントを引いたときに 1 回だけ。以降はログイン / ログアウトの後に取り直す
@@ -4039,14 +4041,14 @@ function forgetVocab(id) {
 
 // ---------------------------------------------------------------- エージェントの認証
 // ログインの持ち方はエージェントごとに違う（Claude は Claude Code のログインをそのまま、
-// codex は app-server 越しに ChatGPT）。capabilities.login が真のものだけ。
+// codex は app-server 越しに ChatGPT）。カードは全エージェントに出す（login に対応しない
+// エージェントにもインストール・CLI の情報がある。サインインなどの操作は capabilities ごとに畳む）。
 // 置き場は設定メニューの中。常設しない。ログインが要るときだけ脇の下に一行で知らせる。
 // 設定モーダル内にURLを出し、コールバックを取れないときは手貼りの欄を出す。
 
 /** 認証の状態を取り直す。refresh() は毎イベント走るので、ここは起動時とログイン / ログアウトの後だけ */
 async function refreshAuth() {
-  const targets = state.backends.filter((b) => b.capabilities?.login);
-  await Promise.all(targets.map(async (b) => {
+  await Promise.all(state.backends.map(async (b) => {
     const st = await cmd("authStatus", { backend: b.id }).catch((e) => ({ supported: false, error: e.message }));
     state.auth.set(b.id, st);
   }));
@@ -4154,7 +4156,7 @@ const authSpoken = new Map();
 
 function renderAuth() {
   const sec = $("authSec");
-  const targets = state.backends.filter((b) => b.capabilities?.login);
+  const targets = state.backends;
   sec.hidden = targets.length === 0;
   const focus = parkConnPanels(sec);
   // 描き直しで消えるカードのボタン（［ログイン］［やめる］）に居たら、同じカードの同じ役のボタンへ戻す
@@ -8332,10 +8334,10 @@ function rowMenu(s, x, y, lead = []) {
         cmd("setTitle", { sessionId: s.id, title: v, reasonKey: "menu" })
           .catch((e) => sideNote(t("session.titleFailed", { error: e.message }))) } },
     ] },
-    { label: t('compaction.compact'), disabled: !capsOf(s.backend).compact,
-      note: !capsOf(s.backend).compact ? t('compaction.agentManaged', { agent: labelOf(s.backend) }) : '',
+    { label: t('compaction.compact'), disabled: !capsOf(s.nextSettings?.backend ?? s.backend).compact,
+      note: !capsOf(s.nextSettings?.backend ?? s.backend).compact ? t('compaction.agentManaged', { agent: labelOf(s.nextSettings?.backend ?? s.backend) }) : '',
       onClick: () => cmd('compactConversation', { sessionId: s.id }).catch(error => showRowCompactionError(s, error)) },
-    ...(!capsOf(s.backend).compact ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
+    ...(!capsOf(s.nextSettings?.backend ?? s.backend).compact ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
       onClick: () => cmd('setConversationAutoCompaction', { sessionId: s.id, off: !s.autoCompactionOff })
         .then(({ off }) => { s.autoCompactionOff = off; renderSessions(); }).catch(error => showRowCompactionError(s, error, true)) }]),
     { label: t("session.menu.changeStatus"), hint: s.status ?? t("session.status.none"), sub: () => [
@@ -10764,7 +10766,7 @@ const plusSettings = setupPlusSettings({ cmd, page: onboarding.page, getPrefs: (
 // 設定 › アプリ情報・更新 › 常駐（デスクトップ版だけ。状態は remoteStatus の resident）
 const residentSettings = setupResidentSettings({ cmd });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
-const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
+const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getBackends: () => state.backends });
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
 const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage: name => $(`${name}Tab`)?.click() });
 // 設定 › API キー。使っている所のリンクは、接続先は設定 › エージェント設定の接続先の面、通話・委譲はそのページへ

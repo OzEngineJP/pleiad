@@ -121,7 +121,7 @@ export const settings = [
     normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.historyRecall: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('composerHistoryRecall', v) }),
   defineSetting({ key: 'composer.suggestions', summary: S('composer.suggestions'), risk: 'write',
-    riskReason: `Whether a predicted next message is shown in the empty message box (Codex and Antigravity spend a little usage to make it; turning it off only stops that). ${WRITE_ABOUT}`,
+    riskReason: `Whether a predicted next message is shown in the empty message box. Only agents that can produce it honor this (capability promptSuggestions: 'native' in-turn, or covered via suggestNext — the latter spends a little usage). ${WRITE_ABOUT}`,
     prefKeys: ['composerSuggestions'], schema: z.boolean(), default: true, read: fromPrefs('composerSuggestions'),
     normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'composer.suggestions: boolean'); return { after: v }; },
     write: (ctx, v) => ctx.writes.pref('composerSuggestions', v) }),

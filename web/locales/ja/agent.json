@@ -1946,7 +1946,7 @@
     "memoryLearnPaused": "記憶の夜の整理を止める。",
     "composer": {
       "historyRecall": "入力欄の一番上の行で ↑ を押すと、送信済みのメッセージを呼び出すか（true / false）。",
-      "suggestions": "返答の後、空の入力欄に次のメッセージの候補を出すか（true / false）。Codex と Antigravity の会話は、候補を作るのに使用量を少し使う。"
+      "suggestions": "返答の後、空の入力欄に次のメッセージの候補を出すか（true / false）。候補を出せるエージェント（能力の印 promptSuggestions）の会話だけに効く。Pleiad がターンの後に作る分は、候補を作るのに使用量を少し使う。"
     },
     "model": "新しい会話の既定のモデル。",
     "effort": "新しい会話の既定の思考の深さ。",

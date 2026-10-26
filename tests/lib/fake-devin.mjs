@@ -155,7 +155,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'session/new': {
         const session = { sessionId: `devin-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'accept-edits', model: 'swe-2-high', thought_level: 'high', speed: 'fast', used: 120000, window: 262000,
           // 起動で届いたもの（mcpServers・Pleiad からの環境変数）。配達物の試験が読む
-          mcpServers: p.mcpServers ?? [], seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_CONTROL_)/.test(k)) };
+          mcpServers: p.mcpServers ?? [], seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_|DELIVERY_)/.test(k)) };
         persist(session); update(session.sessionId, { sessionUpdate: 'config_option_update', configOptions: configs(session) });
         result = { sessionId: session.sessionId, configOptions: configs(session) }; break;
       }
@@ -307,7 +307,7 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
         let reply = `fixture: ${text}`;
         if (text.includes('[env]')) reply = JSON.stringify({ cwd: process.cwd(), configHome: process.env.DEVIN_CONFIG_HOME ?? null, sessions: process.env.DEVIN_SESSIONS_DIR,
-          mcpServers: (session.mcpServers ?? []).map(s => s.name), seenEnv: session.seenEnv ?? [] });
+          mcpServers: (session.mcpServers ?? []).map(s => s.name), seenEnv: session.seenEnv ?? [], prompt: text });
         // ply_context（Pleiad のコンテキストの口）を MCP 越しに実際に叩く。[context-tools] は一覧、末尾の行の context:{...} は tools/call
         const contextServer = (session.mcpServers ?? []).find(s => s?.name === 'ply_context' && s.url);
         const contextCall = async (method, params) => {

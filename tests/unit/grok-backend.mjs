@@ -33,6 +33,7 @@ export default async function (t) {
     notify() {}
     async call(method, params) {
       const entry = { method, params, env: this.options.env };
+      entry.args = this.options.args;
       const dirs = params?._meta?.pluginDirs ?? [];
       // 呼ばれた時点で置き場に hooks.json があるか（Grok が読むのはこの時点）
       entry.pluginFiles = dirs.map(d => { try { return JSON.parse(fs.readFileSync(path.join(d, 'hooks', 'hooks.json'), 'utf8')); } catch { return null; } });
@@ -41,6 +42,11 @@ export default async function (t) {
         if (params.cwd.includes('broken')) throw new Error('fixture: session/new failed');
         const sessionId = `grok-fixture-${++nextId}`; sessions.set(sessionId, params.cwd);
         return { sessionId };
+      }
+      if (method === '_x.ai/session/rename') return { success: true };
+      if (method === '_x.ai/session/fork') {
+        const sessionId = `grok-fixture-${++nextId}`; sessions.set(sessionId, params.newCwd);
+        return { newSessionId: sessionId };
       }
       if (method === 'session/load') return { sessionId: params.sessionId, ...resumeSelection };
       if (method === 'session/resume') {
@@ -98,6 +104,14 @@ export default async function (t) {
     t.ok('ターンが終わると置き場を消す', !fs.existsSync(firstDir) && ownDirs().length === 0, JSON.stringify(ownDirs()));
     t.ok('最初の書き込みで、持ち主の居ない残りを消し、生きている別のプロセスの置き場は残す',
       !fs.existsSync(path.join(base, `${dead}-fixture`)) && fs.existsSync(path.join(base, `${process.ppid}-fixture`)));
+
+    mark = calls.length;
+    const forked = await backend.fork(first.sessionId, { title: 'fork title' });
+    await backend.setTitle(forked.sessionId, 'fixture title');
+    t.ok('ネイティブの全履歴 fork と題名変更は Grok 拡張 RPC に届く',
+      of('_x.ai/session/fork', mark).some(c => c.params.sourceSessionId === first.sessionId && c.params.sourceCwd === cwd && c.params.newCwd === cwd)
+      && of('_x.ai/session/rename', mark).some(c => c.params.sessionId === forked.sessionId && c.params.title === 'fork title')
+      && of('_x.ai/session/rename', mark).some(c => c.params.sessionId === forked.sessionId && c.params.title === 'fixture title'));
 
     // 2. 同じ会話の次のターン: session/resume にも MCP と新しい置き場を渡す（セッション限定のプラグインは保存されない）
     mark = calls.length;

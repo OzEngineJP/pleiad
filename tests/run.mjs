@@ -226,10 +226,11 @@ const SUITES = [
   './unit/ops-registry.mjs',
   './unit/ops-coverage.mjs',
   // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
-  // core/backends/ の外のエージェントの id の直書き（ラチェット）
+  // 配達物（runArgs）が全エージェントに届くこと（印ごと・エージェントごとの偽のプロセス・プロトコル）、core/backends/ の外のエージェントの id の直書き（ラチェット）
   './unit/backend-contract.mjs',
   // 公開文書（site/docs）の生成に使う core/ の一覧（site/tools/docs-sources.mjs）: 依存を辿った閉包と一致・相対 import だけで閉じる
   './unit/docs-source.mjs',
+  './unit/backend-delivery.mjs',
   './unit/backend-registry.mjs',
   './unit/backend-test-env.mjs',
   './unit/context-owner-capability.mjs',
@@ -253,6 +254,8 @@ const SUITES = [
   './unit/backend-model-cache.mjs',
   './unit/backend-conformance.mjs',
   './unit/backends-lint.mjs',
+  // エージェントを足したときの一覧への入れ忘れ（core/backends/ の外）: 一覧の走査の lint と README・AGENTS.md の一致
+  './unit/agent-lists.mjs',
   // 子を起こす API の lint（ADR 0270 の規則 ①）: 口（core/process.mjs・desktop/process.cjs）の外で直に読むファイルを増やさない
   './unit/child-process-lint.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
@@ -291,6 +294,8 @@ const SUITES = [
   './unit/server-setting-approval.mjs',
   // 委譲の子が出した承認の結果の届け先: 子のタスクが終わっていれば依頼元の会話へ、動いていれば子へ、再起動の取り下げも同じ（ADR 0088）
   './unit/server-setting-approval-delegated.mjs',
+  // 途中切り替えに対応しないエージェントの承認モード: 走っている間の変更は次のターンへの予約（nextSettings）になる（#147）
+  './unit/server-mode-next-turn.mjs',
   './unit/server-ops.mjs',
   './unit/sessions-search-op.mjs',
   './unit/agent-tasks.mjs',
@@ -408,6 +413,8 @@ const SUITES = [
   './unit/compat-models.mjs',
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   './unit/composer-settings.mjs',
+  // 設定 › 入力（web/input-settings.mjs）: 次の発言の候補の行は、能力の印があるエージェントがいるときだけ（#147）
+  './unit/input-settings.mjs',
   './unit/context-transports.mjs',
   // 外部 MCP の接続の鍵: 起動ごとに変わる値では変わらず、${env:…} の参照先を変えたら変わる（ADR 0270 段 3）
   './unit/context-key.mjs',
@@ -982,6 +989,8 @@ const SUITES = [
   './unit/voice-wait.mjs',
   // 仮想のキー Pleiad Plus の通話: 書き起こし・読み上げに ID トークン・トークンの更新で切らない・credit_exhausted・rate_limited（偽の Plus）
   './unit/voice-plus.mjs',
+  // 公開リファレンス（site/docs）: 利用者に見える機能（コードから作る一覧）と載せるページの対応表・手書きの断片の有無
+  './unit/docs-coverage.mjs',
 ];
 
 // PLEIAD_TEST_RESTART があれば、「途中でサーバーを止めて起こし直す」モードを、suite を読み込む前にこのプロセスへ入れる

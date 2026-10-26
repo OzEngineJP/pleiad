@@ -58,6 +58,13 @@ if (stateDir) fs.mkdirSync(stateDir, { recursive: true });
 const sessions = new Map(), running = new Map(), pending = new Map();
 let seq = 0;
 const file = id => path.join(stateDir, `${id}.json`);
+// ターンの始めに届いた配達物（mcpServers・環境変数・プラグインの hooks）。配達物の試験が読む（devin の身代わりと同じ形）
+const seen = (p = {}) => ({
+  mcpServers: (p.mcpServers ?? []).map(s => s?.name).filter(Boolean),
+  seenEnv: Object.keys(process.env).filter(k => /^(AGENT_BROWSER_|PLEIAD_|DELIVERY_|GROK_.*HOOKS_)/.test(k)),
+  pluginDirs: (p._meta?.pluginDirs ?? []).filter(d => typeof d === 'string'),
+});
+const pluginFiles = dirs => dirs.map(dir => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'hooks', 'hooks.json'), 'utf8')); } catch { return null; } });
 // 書きかけのファイルを読ませない。止められても、別のプロセスが読んでも、前か後の完全な版だけが見える
 const persist = session => {
   sessions.set(session.sessionId, session);
@@ -122,7 +129,8 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       }; break;
       case 'session/new': {
         if (process.env.FAKE_GROK_AUTH === '0') throw Object.assign(new Error('Authentication required'), { code: -32002 });
-        const session = { sessionId: `grok-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'default', model: spawnModel, effort: spawnEffort };
+        const session = { sessionId: `grok-fixture-${crypto.randomUUID()}`, cwd: p.cwd, messages: [], mode: 'default', model: spawnModel, effort: spawnEffort,
+          delivery: seen(p) };
         persist(session);
         // 実機は modes を返さず、models と configOptions（model・reasoning_effort）を返す
         result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
@@ -130,12 +138,14 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
       case 'session/load': {
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
+        session.delivery = seen(p); persist(session);
         replay(session);
         result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
       case 'session/resume': {
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
+        session.delivery = seen(p); persist(session);
         result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
       case 'session/fork': {
@@ -187,7 +197,10 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
           tools.push(tool);
         }
         update(session.sessionId, { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'fixture thought' } });
-        const reply = `fixture: ${text}`;
+        const delivery = session.delivery ?? {};
+        const reply = text.includes('[env]')
+          ? JSON.stringify({ ...delivery, hooks: pluginFiles(delivery.pluginDirs ?? []), prompt: text })
+          : `fixture: ${text}`;
         const middle = Math.ceil(reply.length / 2);
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(0, middle) } });
         update(session.sessionId, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: reply.slice(middle) } });

@@ -483,9 +483,15 @@ export async function openPlyHookSheet({ cmd, hook = null, onSaved }) {
 /**
  * unify: 会話の記録（contextSession.hooks）。渡した・止めた・動き続ける・渡せなかった・漏れ。推定で「実行済み」にしない（発火は別の面）
  */
-export function unifySessionBox(unify, { kindBox, short = p => p }) {
+/** 「このエージェントには Hooks を渡せません」の文。対応しているエージェントの名前が取れたときだけ括弧を添える */
+export function unsupportedAgentText(agents = '') {
+  return t('hooks.unify.session.unsupportedAgent', {
+    agents: agents ? t('hooks.unify.session.supportedParen', { agents }) : '' });
+}
+
+export function unifySessionBox(unify, { kindBox, short = p => p, agents = '' }) {
   const k = kindBox('Hooks', t('hooks.unify.who'), true);
-  if (unify.unsupportedAgent) { k.append(el('p', 'cx-sub', t('hooks.unify.session.unsupportedAgent'))); return k; }
+  if (unify.unsupportedAgent) { k.append(el('p', 'cx-sub', unsupportedAgentText(agents))); return k; }
   k.append(el('p', 'cx-sub', t('hooks.unify.session.lead', { time: new Date(unify.at).toLocaleString() })));
   if (unify.leaks?.length) {
     const n = el('div', 'scx-notice');

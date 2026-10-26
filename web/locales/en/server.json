@@ -1298,6 +1298,7 @@
   "compaction": {
     "notStarted": "Send a message before compacting this conversation.",
     "unsupported": "Manual compaction is unavailable for this agent",
+    "autoUnsupported": "This agent cannot compact the conversation",
     "invalidSetting": "Invalid auto compaction settings",
     "noCompletion": "Could not confirm compaction completion",
     "nothingToCompact": "There was nothing to compact"

@@ -39,12 +39,21 @@ if (process.env.FAKE_AGY_ARGS_FILE && !forSuggestion) {
     fs.writeFileSync(file, JSON.stringify(list));
   } catch {}
 }
-// 起こされたときのホーム（USERPROFILE・HOME）と作業場所を控える。候補づくりの使い捨てのホームの検査用（tests/unit/prompt-suggestions.mjs）
+// 起こされたときのホーム（USERPROFILE・HOME）と作業場所を控える。候補づくりの使い捨てのホームの検査用（tests/unit/prompt-suggestions.mjs）。
+// 配達物の試験は、会話のシェルへ渡す環境変数と、--add-dir の置き場に書かれたカスタムエージェント（agent.md）・hooks.json もここで読む
 if (process.env.FAKE_AGY_ENV_FILE) {
   try {
     const file = process.env.FAKE_AGY_ENV_FILE;
     const list = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
-    list.push({ USERPROFILE: process.env.USERPROFILE ?? null, HOME: process.env.HOME ?? null, cwd: process.cwd() });
+    const home = (() => { const at = argv.indexOf("--add-dir"); for (let i = at + 1; at >= 0 && i < argv.length; i++) { const p = argv[i]; if (fs.existsSync(path.join(p, ".agents", "agents", "ply-context", "agent.md"))) return p; } return null; })();
+    const read = (p) => { try { return fs.readFileSync(p, "utf8"); } catch { return null; } };
+    list.push({
+      USERPROFILE: process.env.USERPROFILE ?? null, HOME: process.env.HOME ?? null, cwd: process.cwd(),
+      env: Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(AGENT_BROWSER_|PLEIAD_|PLY_|DELIVERY_)/.test(k))),
+      agent: argv.includes("--agent") ? argv[argv.indexOf("--agent") + 1] : null,
+      agentMd: home ? read(path.join(home, ".agents", "agents", "ply-context", "agent.md")) : null,
+      hooksJson: home ? read(path.join(home, ".agents", "hooks.json")) : null,
+    });
     fs.writeFileSync(file, JSON.stringify(list));
   } catch {}
 }
@@ -280,6 +289,8 @@ async function runTurn(text) {
     return send({ event: "result", result: { conversation_id: conversationId, status: "SUCCESS", response: answerText, duration_seconds: 0.1, num_turns: 1,
       usage: { input_tokens: 1, output_tokens: 1, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 2 } } }); };
   if (text.endsWith("wire-dump")) return answer(JSON.stringify({ paragraphs: wire.split("\n\n").length, head: wire.slice(0, 800), tail: wire.slice(-800) }));
+  // 届いた本文を丸ごと返す（配達物の試験が、発言の前に足された指示を全部読む）
+  if (text.endsWith("wire-all")) return answer(JSON.stringify({ wire }));
   // 前置き（ply_agents の説明・Pleiad の指示・注入したネイティブの指示）が付いた発言だけ末尾の段落へ切る。
   // 前置きの無い複数段落のプロンプト（候補作りなどの別経路）はそのまま
   const hasPreamble = /Pleiad が追加した指示|Pleiad の委譲ツール|の指示（適用範囲[:：]|instructions \(|Pleiad instructions/.test(wire.slice(0, wire.lastIndexOf("\n\n")));
