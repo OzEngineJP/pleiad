@@ -223,6 +223,38 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
       const cwd = await cwdFor(id);
       return cwd ? { sessionId: id, cwd, title: null, createdAt: null, lastModified: null } : null;
     },
+    async setTitle(sessionId, title) {
+      const cwd = await cwdFor(sessionId);
+      if (!cwd || !command()) return;
+      const client = await openClient(cwd);
+      try {
+        await client.call('_x.ai/session/rename', { sessionId, title: String(title ?? '') });
+        const row = rows.get(sessionId);
+        if (row) rows.set(sessionId, { ...row, title: String(title ?? '') });
+      } finally { await client.close(); }
+    },
+    async fork(sessionId, options = {}) {
+      if (options.upToMessageId !== undefined || options.beforeMessageId !== undefined || options.snapshot) {
+        throw new Error('Grok native fork only supports the complete conversation');
+      }
+      const cwd = await cwdFor(sessionId);
+      if (!cwd || !command()) throw new Error('Grok session directory is unavailable');
+      const client = await openClient(cwd);
+      try {
+        const result = await client.call('_x.ai/session/fork', {
+          sourceSessionId: sessionId, sourceCwd: cwd, newCwd: cwd,
+        });
+        const newSessionId = result?.newSessionId ?? result?.result?.newSessionId;
+        if (typeof newSessionId !== 'string' || !newSessionId) throw new Error('Grok session fork returned no session id');
+        if (typeof options.title === 'string' && options.title) {
+          await client.call('_x.ai/session/rename', { sessionId: newSessionId, title: options.title });
+        }
+        const source = rows.get(sessionId);
+        rows.set(newSessionId, { sessionId: newSessionId, cwd, title: options.title ?? source?.title ?? null,
+          createdAt: new Date().toISOString(), lastModified: Date.now() });
+        return { sessionId: newSessionId };
+      } finally { await client.close(); }
+    },
     async getMessages(id) {
       if (cache.has(id)) return cache.get(id).messages();
       const cwd = await cwdFor(id);

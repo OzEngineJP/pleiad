@@ -607,8 +607,10 @@ export function wrapBackend(native) {
     if (before !== undefined && (typeof before !== 'string' || !before || options.upToMessageId !== undefined)) {
       throw new Error(t('conversations.forkPointAmbiguous'));
     }
-    // Claude supports exact message boundaries; Codex only supports whole turns.
-    if (before === undefined && !options.snapshot && !r && native.fork && native.capabilities?.forkMessage) {
+    // ネイティブ API が会話全体だけを複製する場合、指定位置つきの分岐や保存済み会話には使わない。
+    // 指定を落として全履歴を子へ漏らさないよう、全体分岐だけをネイティブへ渡す。
+    if (before === undefined && options.upToMessageId === undefined && !options.snapshot && !r && native.fork
+      && (native.capabilities?.fork === true || native.capabilities?.forkMessage === true)) {
       // SDK の分岐は transcript だけを写す（UUID は付け直し）。提示は会話ごとの記録（core/history.mjs）にあるので、切り口までの分を選んでおき、子へ写す
       let carried = await readPresents(id, { strict: true });
       let sourceMessages = null;
