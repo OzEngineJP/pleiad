@@ -7,6 +7,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { contextTools, mcpTransportConfig, hash } from './context-runtime.mjs';
 import { t, agentT } from './i18n.mjs';
 import { createContextConnections } from './context-connections.mjs';
+import { insideDir } from './worktrees.mjs';
 
 export const CONTEXT_MCP_PATH = '/mcp/context';
 const MAX_TOOLS = 500;
@@ -416,10 +417,15 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null }
     b.pending.add(work);
     try { return reply(await work); } finally { b.pending.delete(work); }
   }
+  /**
+   * dir の中（同じ場所を含む）を cwd に起こした stdio の MCP を畳む（worktree を消す前）。
+   * http/sse はプロセスを起こさないので対象外。畳まれた分は次の利用で起き直る（遅延起動と同じ形）
+   */
+  const closeUnder = dir => connections.closeWhere(entry => entry.resolved?.config?.type === 'stdio' && insideDir(entry.resolved.config.cwd, dir));
   function dispose() {
     disposed = true;
     const closed = [...new Set([...bindings.values(), ...opening])].map(b => { b.discard = true; return b.close(); });
     return Promise.allSettled([connections.dispose(), ...closed]);
   }
-  return { open, handle, reserve, dispose };
+  return { open, handle, reserve, closeUnder, dispose };
 }

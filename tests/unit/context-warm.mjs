@@ -254,6 +254,39 @@ export default async function(t) {
       t.ok('利用中は保持し、アイドルTTL・disposeで stdio の親子を回収。dispose後は新規利用を断る', true);
     }
     {
+      // worktree を消す前の回収（Issue #142）: cwd がその中の stdio の MCP だけ畳み、dir が消せる。畳まれた分は次の利用で起き直る
+      const dirA = path.join(scratch, 'wt-a'), dirB = path.join(scratch, 'wt-b');
+      await fs.mkdir(dirA, { recursive: true }); await fs.mkdir(dirB, { recursive: true });
+      const stdio = (id, log, child) => ({ id, name: id, origins: [{ source: 'claude' }], definition: { command: process.execPath, args: [fileURLToPath(new URL('../lib/stdio-mcp.mjs', import.meta.url))], env: { MCP_TEST_LOG: log, MCP_TEST_CHILD_PID: child } } });
+      const logA = path.join(scratch, 'fold-a.jsonl'), childA = path.join(scratch, 'fold-a.pid');
+      const logB = path.join(scratch, 'fold-b.jsonl'), childB = path.join(scratch, 'fold-b.pid');
+      const itemA = stdio('fold-a', logA, childA), itemB = stdio('fold-b', logB, childB);
+      const f = await setup(m => m.method === 'initialize' ? init : m.method === 'tools/list' ? { tools: [tool()] } : m.method === 'tools/call' ? { content: [{ type: 'text', text: 'HTTP_OK' }] } : {});
+      const httpItem = f.item('fold-http');
+      const rt = (cwd, servers) => ({ owners: { mcp: 'ply' }, policy: { cwd }, prompt: '', skills: [], servers, report: { entries: servers.map(({ id }) => ({ id })) } });
+      const a = await f.open([itemA], { runtime: rt(dirA, [itemA]) });
+      const b = await f.open([itemB], { runtime: rt(dirB, [itemB]) });
+      // http/sse はプロセスを起こさないので cwd を持たない。畳む対象から外れることを確かめるため同じ dirA に置く
+      const httpPort = await f.open([httpItem], { runtime: rt(dirA, [httpItem]) });
+      await until(async () => !!await fs.readFile(childA, 'utf8').catch(() => '') && !!await fs.readFile(childB, 'utf8').catch(() => ''));
+      const pidA = JSON.parse((await fs.readFile(logA, 'utf8')).split('\n')[0]).pid;
+      const pidB = JSON.parse((await fs.readFile(logB, 'utf8')).split('\n')[0]).pid;
+      const childPidA = Number(await fs.readFile(childA, 'utf8'));
+      if (process.platform === 'win32') await assert.rejects(fs.rmdir(dirA));   // cwd に掴まれている間は消せない（事象の確認）
+      const folded = await f.bridge.closeUnder(dirA);
+      assert.equal(folded, 1);                                                 // dirA の stdio だけ（dirB と http は対象外）
+      await until(() => !alive(pidA) && !alive(childPidA));
+      assert(alive(pidB), '別の cwd の stdio は畳まない');
+      assert((await call(httpPort.port, httpItem.id)).content[0].text === 'HTTP_OK');  // http/sse は畳まない
+      await until(async () => { try { await fs.rmdir(dirA); return true; } catch { return false; } });
+      // 畳まれた分は次の利用で起き直る（遅延起動と同じ形・恒久的には壊れない）
+      await fs.mkdir(dirA, { recursive: true });
+      const a2 = await f.open([itemA], { runtime: rt(dirA, [itemA]) });
+      assert((await call(a2.port, itemA.id)).content[0].text === 'stdio-result');
+      await a2.port.close();
+      t.ok('cwd が dir の中の stdio の MCP だけ畳んで dir を消せる。別の cwd・http/sse は畳まず、次の利用で起き直る', true);
+    }
+    {
       const log = path.join(scratch, 'abort.jsonl'), pidFile = path.join(scratch, 'abort-child.pid');
       const item = { id: 'abort-stdio', name: 'abort-stdio', origins: [{ source: 'claude' }], definition: { command: process.execPath, args: [fileURLToPath(new URL('../lib/stdio-mcp.mjs', import.meta.url))], env: { MCP_TEST_LOG: log, MCP_TEST_CHILD_PID: pidFile, MCP_TEST_WAIT_INITIALIZE: '1' } } };
       const f = await setup(() => ({})), abort = new AbortController();

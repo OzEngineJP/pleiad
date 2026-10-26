@@ -32,10 +32,11 @@ export default async function (t) {
     await makeRepo(repo);
     const realRepo = slash(await fs.realpath(repo));
     const dataDir = `${scratch}/data`;
-    const state = { busy: [], attached: [], released: [], fail: null };
+    const state = { busy: [], attached: [], released: [], fail: null, unhold: [], unholdError: null };
     const make = (extra = {}) => createWorktrees({ dataDir, retryMs: [1, 1], sleep: async () => {},
       users: async () => { if (state.fail) throw new Error('boom'); return { busy: state.busy, attached: state.attached }; },
-      release: async (entry, ids) => { state.released.push([entry.id, ids]); }, ...extra });
+      release: async (entry, ids) => { state.released.push([entry.id, ids]); },
+      unhold: async (entry) => { state.unhold.push(entry.id); if (state.unholdError) throw state.unholdError; }, ...extra });
     let wts = make();
 
     // ---- 作る
@@ -190,6 +191,18 @@ export default async function (t) {
     t.ok('やり直してもだめなら「残っている」: failed・busy・台帳は ready のまま・フォルダーもブランチも残る', r5.action === 'failed' && r5.why === 'busy' && (await stubborn.get(w5.id)).state === 'ready' && (await exists(w5.path)) && (await wtgit.branchTip(repo, w5.branch)), JSON.stringify(r5));
     wts = make();
     t.ok('強制の削除は使わない: 削除に --force を渡す口は退避だけ', (await wts.settle(w5.id)).action === 'removed');
+
+    // ---- 消す直前に cwd の持ち主（外部 MCP など）を畳む（Issue #142）
+    const wU = (await wts.create({ cwd: repo })).entry;
+    state.unhold = [];
+    t.ok('消す直前に cwd の持ち主を畳む（unhold に入口が渡る）', (await wts.settle(wU.id)).action === 'removed' && state.unhold.join() === wU.id && !(await exists(wU.path)), JSON.stringify(state.unhold));
+    const wK = (await wts.create({ cwd: repo })).entry;
+    state.busy = ['turn:s1']; state.unhold = [];
+    t.ok('使っているものがあれば畳まずに消さない（unhold は呼ばない）', (await wts.settle(wK.id)).why === 'busy' && state.unhold.length === 0);
+    state.busy = [];
+    state.unholdError = new Error('unhold boom'); state.unhold = [];
+    t.ok('畳むのに失敗しても消すのは続ける（unhold の失敗は呑む）', (await wts.settle(wK.id)).action === 'removed' && state.unhold.join() === wK.id && !(await exists(wK.path)));
+    state.unholdError = null; state.unhold = [];
 
     // ---- 台帳が Pleiad の決めた形でなければ消さない
     const w6 = (await wts.create({ cwd: repo })).entry;

@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { openData } from './data-schema.mjs';
 import { mcpToolCacheTable, mcpProcessTable } from './db.mjs';
 import { t } from './i18n.mjs';
+import { insideDir } from './worktrees.mjs';
 
 export const MCP_CACHE_LIMIT = 128;
 export const MCP_PROCESS_LIMIT = 256;
@@ -118,8 +119,32 @@ export function createMcpLedger({ dataDir, log = () => {}, now = Date.now, selfP
     return killed;
   }
 
+  /**
+   * 記録に残る起動のうち、cwd が dir の中（同じ場所を含む）のものを木ごと止める（worktree を消す前）。
+   * 対象はこのサーバーが起こした分と、記録の親が死んでいる孤児（別の生きたサーバーのものは触らない）。
+   * PID を別のプロセスが使い回しているだけかもしれないので、起動時刻を記録（started_at）と突き合わせる。止めた行を返す。
+   */
+  function sweepCwd(dir) {
+    const rows = unclosed().filter(r => r.cwd && r.pid !== selfPid && insideDir(r.cwd, dir) && (r.parentPid === selfPid || !aliveP(r.parentPid)));
+    if (!rows.length) return [];
+    let starts;
+    try { starts = startTimes([...new Set(rows.map(r => r.pid))], { now }); }
+    catch { return []; }
+    const killed = [];
+    for (const row of rows) {
+      const at = starts.get(row.pid);
+      // 起動時刻が記録と違う = PID 再利用（止めない）。取れなければもう居ないので記録だけ締める
+      if (at !== undefined && Math.abs(at - row.startedAt) > START_TOLERANCE_MS) continue;
+      if (at !== undefined) kill(row.pid);
+      try { tables().procs.killed(row.seq, 'worktree', now()); } catch { /* 記録の失敗で掃除は止めない */ }
+      killed.push(row);
+      log(t('context.bridge.mcpFolded', { name: row.command ?? row.key ?? String(row.pid), pid: row.pid }));
+    }
+    return killed;
+  }
+
   /** DB を閉じる（試験。サーバーはプロセスの寿命まで持つ） */
   function release() { try { handle?.release(); } catch { /* 閉じるだけ */ } }
 
-  return { snapshots, processes, sweep, release };
+  return { snapshots, processes, sweep, sweepCwd, release };
 }

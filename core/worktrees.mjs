@@ -97,9 +97,10 @@ export const publicEntry = (e) => ({
  * @param {(entry) => Promise<{ busy: string[], attached: { sessionId: string, kind: string }[] }>} [o.users] 使っているもの。
  *   busy は走っているターン・シェル・委譲の子（あれば消さない）、attached は cwd（予約を含む）がその中の会話
  * @param {(entry, sessionIds: string[]) => Promise<void>} [o.release] 消す前に、会話の cwd を元の場所へ戻す
+ * @param {(entry) => Promise<unknown>} [o.unhold] 消す直前に、その中を cwd に持つプロセス（外部 MCP など）を畳む（Windows で cwd が掴まれていると消せない。Issue #142）
  * @param {boolean} [o.disabled] 作らない（create は reason: 'disabled'）。テストのサーバーが開発中のリポジトリに作業場所を残さないため（AGENT_HOST_WORKTREES=off）
  */
-export function createWorktrees({ dataDir, users = async () => ({ busy: [], attached: [] }), release = async () => {}, now = Date.now, io = fs,
+export function createWorktrees({ dataDir, users = async () => ({ busy: [], attached: [] }), release = async () => {}, unhold = async () => {}, now = Date.now, io = fs,
   disabled = false, retryMs = REMOVE_RETRY_MS, graceMs = NEW_GRACE_MS, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), archiveKeepMs = ARCHIVE_KEEP_MS, log = () => {},
   // 消す git の呼び出し（テストが「掴まれている」を差し込む）
   remove = wt.worktreeRemove, removeForced = wt.worktreeRemoveForced } = {}) {
@@ -297,6 +298,8 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     const links = await unlinkAll(entry.path, { io });
     if (!links.ok) return revert('links', links.error);
     if (releasing.length) await release(entry, releasing).catch(() => {});
+    // 消す直前に、その中を cwd に持つもの（warm に残った MCP など）を畳む。畳めなくても消すのを止めない（retry のあと busy で残る）
+    await unhold(entry).catch(() => {});
     const removed = await removeWithRetry(entry, archived ? removeForced : remove);
     if (!removed.ok) return revert(removed.busy ? 'busy' : 'git', removed.error);
     let container = archived?.commit ?? null;

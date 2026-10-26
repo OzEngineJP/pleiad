@@ -157,6 +157,15 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
     if (result.status === 'connected' && (result.cached || entry.stale) && !entry.background) entry.background = entry.refresh().catch(() => {}).finally(() => { entry.background = null; });
     return { entry, result };
   }
+  /**
+   * 条件に合う接続を畳む（worktree を消す前に、その中を cwd にする MCP の回収に使う）。
+   * 畳まれた分は次の利用（acquire・wake）で取り直して起き直る。畳んだ数を返す
+   */
+  function closeWhere(match) {
+    const closing = [];
+    for (const entry of all) if (match(entry)) closing.push(close(entry));
+    return Promise.allSettled(closing).then(() => closing.length);
+  }
   function prune(keys, cwd) {
     for (const entry of entries.values()) if (entry.cwd === cwd && !keys.has(entry.key)) retire(entry);
     for (const key of cache.keys()) {
@@ -170,5 +179,5 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
     cache.clear();
     return Promise.allSettled([...all].map(close));
   }
-  return { acquire, wake, keyFor, snapshotFor, prune, dispose };
+  return { acquire, wake, keyFor, snapshotFor, closeWhere, prune, dispose };
 }
