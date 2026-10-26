@@ -1,9 +1,6 @@
 {
   "_comment": "未実装（todo）の基準（tests/lib/backend-todos.mjs）。増やせない。減らしたら node tests/lib/backend-todos.mjs --update-baseline で下げる",
   "todos": {
-    "antigravity": {
-      "subagents": "#151"
-    },
     "devin": {
       "accounts": "#108",
       "autoCompactWindow": "#108",
