@@ -4,8 +4,7 @@
 //   - on（既定を含む）のパッケージ版: パイプの包みを worker にして、つなぐ前に message を付け、ready のポート・トークンで窓を読み込む。utilityProcess は起こさない
 //   - 起動の失敗: 文は describeBootError。パイプのサーバーは kill（shutdown）せず leave で切る
 //   - サーバーが居なくなったとき: bye 'replaced' なら静かに終わる・つながりだけ切れたなら付け直す・居なければ起こし直して窓を 1 回読み直す（2e。desktop/server-restart.cjs）・
-//     起こし直せない・続けて落ちるなら「サーバーが終了しました」。切り替え中・main-leaving の後・bye 'closing'・off は起こし直さない
-//   - 更新（1-6）: on は作業を止めず・ロックせず main-leaving → つながりだけ切る（shutdown しない）、off は今のまま update-lock → shutdown。
+//     起こし直せない・続けて落ちるなら server-exited。切り替え中・bye closing・off は起こし直さない//   - 更新: linked server は通常 shutdown 後に updater を起こし、失敗したら通常起動で戻す。utilityProcess は update-lock → shutdown。
 //     付け直した後は切り替え（desktop/switch.cjs）を始め、S1 を手放している間はサーバーの終了を知らせない
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,7 +33,12 @@ class FakeLink extends EventEmitter {
     this.exitReason = null;
     this.connectError = null;
   }
-  postMessage(message) { this.calls.messages.push(message); return true; }
+  postMessage(message) {
+    this.calls.messages.push(message);
+    if (message.type === 'shutdown') this.calls.order.push('shutdown');
+    if (message.type === 'shutdown' && this.exitOnShutdown) queueMicrotask(() => this.emit('exit', 0));
+    return true;
+  }
   leave(reason) { this.calls.left = reason; this.calls.order.push(`leave:${reason}`); }
   kill() { this.calls.killed = true; }
   async connect() {
@@ -246,6 +250,7 @@ export default async function (t) {
     t.ok('on のパッケージ版でも、chooseServer が null（Job が許さない・実行場所を組めない）なら utilityProcess に落ちる', calls.chosen !== null && calls.forks === 1 && calls.loads[0].includes('utility-token'));
   }
   {
+
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true });
     t.ok('on のパッケージ版: パイプの包みを worker にし、utilityProcess は起こさない', calls.forks === 0 && calls.connects === 1 && link.listenerCount('message') === 1 && (calls.secretBridge.postMessage({ type: 'via-hub' }), calls.messages.at(-1)?.type === 'via-hub'));
     t.ok('on: 付け直した ready のトークン・ポートで窓を読み込み、ポートを覚える', calls.loads[0] === 'http://127.0.0.1:7611/?token=attached-token' && calls.remembered === 7611);
@@ -361,30 +366,26 @@ export default async function (t) {
     t.ok('起こし直さない: off（utilityProcess）は今のとおり「サーバーが終了しました」', calls.restarterOptions === null && calls.restarts === 0 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.exited');
   }
   {
-    // main-leaving を送った後（更新で離れる途中）に切れても起こし直さない。更新を取りやめたら、また起こし直す
+    // 更新中の通常 shutdown 後の切断は、旧サーバーの再起動を試みない
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, hangInstall: true, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 'attached-token' } } });
+    link.exitOnShutdown = true;
     void calls.updates.install().catch(() => {});
     await tick();
     link.emit('exit', 1);
     await tick();
-    t.ok('起こし直さない: main-leaving の後（更新で離れる途中）に切れたとき', calls.messages.some(m => m.type === 'main-leaving') && calls.restarts === 0 && calls.dialogs.length === 1 && calls.dialogs[0][1].message === 'server.exited');
+    t.ok('update uses normal shutdown', calls.messages.some(m => m.type === 'shutdown') && calls.closeAlls === undefined, String(calls.closeAlls));
   }
   {
     // 更新で離れるときは、隠したエージェントの Chrome の窓を閉じない（新しい main が印から引き継ぐ。ADR 0167）
-    const { app, calls } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, hangInstall: true });
+    const { app, calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, hangInstall: true });
+    link.exitOnShutdown = true;
     void calls.updates.install().catch(() => {});
     await tick();
     app.emit('will-quit');
     app.exit(0);
-    t.ok('更新で離れるとき（main-leaving の後）は、隠した窓を閉じない', calls.messages.some(m => m.type === 'main-leaving') && calls.closeAlls === undefined, String(calls.closeAlls));
+    t.ok('update uses normal shutdown', calls.messages.some(m => m.type === 'shutdown') && calls.closeAlls === undefined, String(calls.closeAlls));
   }
-  {
-    const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, quitFails: true, restart: { ok: true, ready: { type: 'ready', port: 7611, token: 'attached-token' } } });
-    await calls.updates.install().catch(() => {});
-    link.emit('exit', 1);
-    await tick();
-    t.ok('更新を取りやめた後（main-leaving-cancel）は、また起こし直す', calls.restarts === 1 && calls.dialogs.length === 0);
-  }
+
   {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
     link.exitReason = 'closing';
@@ -404,32 +405,32 @@ export default async function (t) {
   {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
     t.ok('on: 画面の更新の状態に handover（作業を止めない）を渡す', calls.updates?.handover === true);
+    link.exitOnShutdown = true;
     calls.messages.length = 0;
+    link.exitOnShutdown = true;
     await calls.updates.install();
     const types = calls.messages.map(m => m.type);
-    t.ok('on の更新: 作業を中断せず、ロックもせず、main-leaving（update）を送る', types.join() === 'main-leaving' && calls.messages[0].reason === 'update', types.join());
-    t.ok('on の更新: shutdown を送らず、インストーラーを起こした後につながりだけを切る（サーバーは走り続ける）', calls.order.join() === 'quitAndInstall,leave:update' && calls.killed === false);
+    t.ok('on update sends normal shutdown', types.join() === 'shutdown', types.join());
+    t.ok('installer starts after shutdown', calls.order.join() === 'shutdown,quitAndInstall', calls.killed === false);
     link.emit('exit', 0);
     await tick();
     t.ok('on の更新: 切った後のつながりの切断で付け直さず、ダイアログも出さない', calls.reattaches === 0 && calls.dialogs.length === 0);
   }
   {
-    // 更新を取りやめた（インストーラーが起きなかった）: main-leaving の後に取りやめを知らせ、サーバーの「猶予を数えない」状態を解く。つながりは切らない
+    // installer の起動に失敗したら、通常起動で旧サーバーを戻す
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true, quitFails: true });
+    link.exitOnShutdown = true;
     calls.messages.length = 0;
     const failed = await calls.updates.install().then(() => false, () => true);
     const types = calls.messages.map(m => m.type);
-    t.ok('on の更新を取りやめたら、main-leaving の後に main-leaving-cancel を送る（つながりは切らず、shutdown もしない）', failed && types.join() === 'main-leaving,main-leaving-cancel' && calls.left === null && calls.killed === false, types.join());
-    link.emit('exit', 1);
-    await tick();
-    t.ok('取りやめの後のつながりの切断は、普通に付け直す（終了の扱いにしない）', calls.reattaches === 1 && calls.quits === 0);
+    t.ok('failed update restarts the old server normally', failed && types.join() === 'shutdown' && calls.restarts === 1, types.join());
   }
   {
     const { calls, utility } = await start({ env: {} });
     t.ok('off: handover は false', calls.updates?.handover === false);
     await calls.updates.install();
     const types = calls.messages.map(m => m.type);
-    t.ok('off の更新は今のまま: update-lock を取ってから shutdown', types.join() === 'update-lock,shutdown' && !types.includes('main-leaving'), types.join());
+    t.ok('off の更新は今のまま: update-lock を取ってから shutdown', types.join() === 'update-lock,shutdown' , types.join());
     void utility;
   }
   {

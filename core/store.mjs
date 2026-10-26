@@ -24,6 +24,8 @@
 //                       approvals: [{ key, tool, target }], waits: [{ key, tool, target }], dropped, reason }。次のターンで 1 回だけ伝え、渡った分を消す（addStops / takeStops。
 //                     docs/design.md「中断と再開」）。waits はターンの外の待ち（Chrome の接続・ログイン。ADR 0168）を再起動で取り下げたもの
 //   turnStartedAt   … 走っているターンの開始時刻。終わりで片付ける。起動時に残っていれば、落ちて終わりが記録されなかったターン（restart）
+//   compacting      … 走っている圧縮のターン { trigger, at }。終わりで片付ける。起動時に残っていれば、落ちて終わらなかった圧縮
+//                     （新しいサーバーが中断として残し、もう一度頼む。ADR 0270 段 4）
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
 import fs from "node:fs/promises";
@@ -42,7 +44,7 @@ const STATUSES = path.join(DIR, "statuses.json");
 
 // sidecar が持つメタ情報のうち、外から丸ごと上書きしてよいもの。
 // history / parent / mode / model は専用の口があるので、ここには入れない。
-const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent", "interrupted", "turnStartedAt"]);
+const META_KEYS = new Set(["backend", "title", "status", "cwd", "createdAt", "lastModified", "completedAt", "unsent", "interrupted", "turnStartedAt", "compacting"]);
 
 /**
  * 設定など、上限が決まっている小さな JSON ファイル（prefs.json・statuses.json）。読みは一度きりでキャッシュ、

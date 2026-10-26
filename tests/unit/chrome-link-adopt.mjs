@@ -7,7 +7,7 @@ import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { openChromeLink } from '../../core/chrome/link.mjs';
 
 export const name = 'chrome-link-adopt';
-export const title = '接続の子から引き継ぐ接続: 入れ替わりで確認が出ない・確認待ちの続き・異常終了・接続の子が居ないとき（本物の保持役と接続の子・偽の Chrome と偽の OS の層。ADR 0167）';
+export const title = '接続の子を通常起動で復元: A の終了後も Chrome 接続を保ち、B が確認なしで付け直す（本物の保持役と接続の子・偽の Chrome と偽の OS の層。ADR 0167）';
 
 const until = async (cond, ms = 5000, what = '') => {
   const end = Date.now() + ms;
@@ -19,7 +19,8 @@ const until = async (cond, ms = 5000, what = '') => {
 };
 
 export default async function (t) {
-  const holder = await startHolder();
+  let holder = null;
+  const holders = [];
   const cleanups = [];
   const newServer = async (chrome, os, clock) => {
     const { client } = await holder.connect();
@@ -29,24 +30,11 @@ export default async function (t) {
     conn.onChange(s => states.push(`${s.state}${s.reason ? `/${s.reason}` : ''}${s.state === 'permission' ? (s.dialog ? '+d' : '-d') : ''}`));
     return { link, conn, states };
   };
-  const seen = async (chrome, clock) => { await until(() => chrome.pending() >= 1, 5000, 'dialog pending'); await clock.advance(250); };
-  /** 前の場面の接続の子を片付ける（場面ごとに別の偽の Chrome につなぐため） */
-  const clearChildren = async () => {
-    for (let i = 0; i < 30; i++) {
-      const { client } = await holder.connect();
-      const children = client.welcome?.children ?? [];
-      if (!children.length) return;
-      for (const child of children) {
-        if (!child.alive) { client.release(child.id); continue; }
-        await client.attach(child.id).catch(() => null);
-        client.kill(child.id, { tree: true });
-      }
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
-    throw new Error('connection child did not go away');
-  };
+const seen = async (chrome, clock) => { await until(() => chrome.pending() >= 1, 5000, 'dialog pending'); await clock.advance(250); };
+const serverExit = async link => { await link.flush(); link.socket.destroy(); await new Promise(resolve => setTimeout(resolve, 50)); };
   const startChrome = async () => {
-    await clearChildren();
+    holder = await startHolder();
+    holders.push(holder);
     const chrome = await startFakeChrome({ permission: 'hold' });
     cleanups.push(() => chrome.stop());
     return { chrome, clock: fakeClock(), os: fakeChromeOs({ chrome }) };
@@ -65,9 +53,8 @@ export default async function (t) {
       const cdp = await first;
       t.ok('接続の子の経由: 許可で connected・product が載る', a.conn.state().state === 'connected' && a.conn.state().product === 'Chrome/154.0.8037.97' && typeof cdp.send === 'function');
 
-      // サーバーの入れ替わり（引き継ぎ）
-      a.conn.handOff();
-      await a.link.handOff();
+      // A の通常終了でパイプが切れ、B が同じ保持役の子へ接続する
+      await serverExit(a.link);
       const b = await newServer(chrome, os, clock);
       t.ok('入れ替わり: 新しいサーバーの adopt は true・確認なしで connected', await b.conn.adopt() === true && b.conn.state().state === 'connected' && b.conn.state().product === 'Chrome/154.0.8037.97', JSON.stringify(b.conn.state()));
       t.ok('入れ替わり: Chrome への upgrade は増えない・permission を経ない', chrome.upgrades === 1 && !b.states.some(s => s.startsWith('permission')), `${chrome.upgrades} ${b.states.join()}`);
@@ -104,11 +91,9 @@ export default async function (t) {
       first.catch(() => {});
       await seen(chrome, clock);
       const closesBefore = os.calls('close').length;
-      a.conn.handOff();
-      await a.link.handOff();
+      await serverExit(a.link);
       t.ok('確認待ちの入れ替わり: 出ていく側は確認の窓を閉じない・upgrade を捨てない', os.calls('close').length === closesBefore && chrome.pending() === 1);
-      const firstResult = await first.then(() => 'resolved', e => e?.code);
-      t.ok('確認待ちの入れ替わり: 出ていく側の待ちは closed で外れる', firstResult === 'closed', String(firstResult));
+      // A の待っている呼び出しはプロセス終了とともに消える。生存する接続子と確認待ちだけを B が引き取る。
       const b = await newServer(chrome, os, clock);
       t.ok('確認待ちの入れ替わり: 新しいサーバーの welcome は upgrading', b.link.welcome.phase === 'upgrading' && b.link.welcome.upgradeAt > 0);
       t.ok('確認待ちの入れ替わり: adopt は true・permission を続ける（upgrade は増えない）', await b.conn.adopt() === true && b.conn.state().state === 'permission' && chrome.upgrades === 1, JSON.stringify(b.conn.state()));
@@ -130,9 +115,7 @@ export default async function (t) {
       const a = await newServer(chrome, os, clock);
       const first = a.conn.demand().catch(e => e);
       await seen(chrome, clock);
-      a.conn.handOff();
-      await a.link.handOff();
-      await first;
+      await serverExit(a.link);
       const b = await newServer(chrome, os, clock);
       await b.conn.adopt();
       chrome.cancel();
@@ -143,6 +126,6 @@ export default async function (t) {
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 片付け */ } }
-    await holder.stop();
+    for (const h of holders) { try { await h.stop(); } catch { /* 片付け */ } }
   }
 }

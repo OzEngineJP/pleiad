@@ -183,8 +183,6 @@ const SUITES = [
   './unit/main-away.mjs',
   // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
   './unit/main-away-desktop.mjs',
-  // main が居ない間（サーバー越し）: 付け直しで ready・言語が届く・main-leaving の後は猶予で中断しない（偽の main をパイプにつなぐ）
-  './unit/main-away-server.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // wait_until: 画面の差分で静止を待つ・決定モデル（偽の OpenRouter）に聞く・キーが無い／前面が禁止のアプリ／聞けなかったとき（偽の driver）
@@ -595,7 +593,7 @@ const SUITES = [
   // 新しい版のサーバーへの切り替え（無停止の更新 1-6）: 作業が 0 件まで待つ・ロック・S1 の終わり・S2・前の版へ戻す・合わない版は聞く・今すぐ中断。事前の確かめの出力
   './unit/desktop-switch.mjs',
   './unit/desktop-switch-screen.mjs',
-  './unit/handover-check.mjs',
+  './unit/compat-check.mjs',
   // 実行場所の材料（afterPack）: 公式の Node の取得と SHA-256 の照合・runtime.json・manifest.json
   './unit/pack-runtime.mjs',
   './unit/node-pty-mode.mjs',
@@ -698,16 +696,6 @@ const SUITES = [
   './unit/server-interrupt-stops.mjs',
   // ターンの分割（prepare/begin/launch/drive/releaseTurn）と endTurn の 1 回だけの印（無停止の更新 2b-1）
   './unit/turn-phases.mjs',
-  // 付け直し（無停止の更新 2b-4）: 旧サーバーで手を離したターンを締めない・「終わっていたターン」の札と記録から付け直して 1 回だけ締める・合わない札は中断
-  './unit/adopt-finished.mjs',
-  // 付け直し（無停止の更新 2b-5）: 保持役の子に載せた台本（fake の held:。別プロセスの偽の CLI）を、サーバーの入れ替えをまたいで途中から引き継ぐ（ツールの実行中・承認待ち・終わった直後）
-  './unit/adopt-held.mjs',
-  // 付け直し（無停止の更新 2c）: 保持役に載せた Claude の CLI（stream-json を話す偽物）を、承認待ち・途中送信・裏の作業・hooks・mcp_message の最中に引き継ぐ。切り替えと版の一覧
-  './unit/adopt-claude.mjs',
-  // 付け直し（無停止の更新 段階 3）: 保持役に載せた Codex の共有の app-server（fake の app-server）を、承認待ち・ツールの実行中・サブエージェント・裏の端末の最中に引き継ぐ
-  './unit/adopt-codex.mjs',
-  // 付け直し（無停止の更新）: 保持役に載せた OpenCode の共有のサーバー（身代わり）を、承認待ち・ツールの実行中・本文の途中・ターンの無いとき・強制終了で引き継ぐ
-  './unit/adopt-opencode.mjs',
   // Codex の app-server を保持役に載せる部品（無停止の更新 段階 3）: 載せるかの切り替え・世代つきの id・付け直すスレッドの再生と預かり・手を離す
   './unit/codex-held.mjs',
   // Codex の履歴の読み出し: 画像の base64 を運ばないページ読み・上限超えと時間切れで待ち続けない・保持役の overflow で依頼を失敗にする
@@ -716,20 +704,11 @@ const SUITES = [
   './unit/server-codex-large-history.mjs',
   // Claude を保持役に載せる部品（無停止の更新 2c）: 版の一覧・npm の包みの解き方・偽の SpawnedProcess の転送と detach・付け直しで流さない行・札のフラグ設定のファイル
   './unit/claude-held.mjs',
-  // 付け直し（無停止の更新 段階 3）: 保持役に載せた agy（偽物）を、ツールの実行中・終わった直後・強制終了・引き継ぎ（idle の agy を旧サーバーが止める）で引き継ぐ。切り替え（置き場があれば既定で載る）
-  './unit/adopt-agy.mjs',
   // agy を保持役に載せる部品（無停止の更新 段階 3）: 切り替え・agent の置き場（held-*）の掃除・付け直し（再生と続き・終わった子・札に無い発言）
   './unit/antigravity-held.mjs',
   // agy の中継の再試行（無停止の更新 段階 3）: 口が数秒つながらなくても、つながる前の失敗だけやり直す。送った後の切れは二重に走らせない
   './unit/agy-relay-retry.mjs',
-  // 引き継ぎ（無停止の更新 2d）: 旧サーバーが held: のターンを渡して終わり、新サーバー（--handover）が同じトークン・ポートで付け直す。引き継げない作業があれば断る
-  './unit/handover-server.mjs',
-  // 委譲の完了通知で始まった依頼元のターンが続いていても、通知を受け取った後は引き継げる（通知は送り直さない）
-  './unit/handover-notice.mjs',
-  './unit/handover-core.mjs',
-  // `!` の行を保持役に載せる（無停止の更新 段階 3）: 引き継ぎで新サーバーが引き取る（出力の途中・終わった直後・止める最中）。出力と終わりが 1 回だけ。切り替えの数え方
-  './unit/adopt-shell.mjs',
-  './unit/shell-held.mjs',
+  // `!` の行を保持役に載せる（無停止の更新 段階 3）: 起動の復元で出力・完了・中断を引き継ぐ
   // 「途中でサーバーを止めて起こし直す」試験の仕掛け（issue #143 段 1・ADR 0270）: 既存の土台に被せ、普通に止めて普通に起こす。
   // held: のターン（Claude の代用）は続き、ply_shell の start のジョブは今の作りでは消える（段 2・3 で反転する）
   './unit/restart-mode.mjs',
@@ -743,8 +722,13 @@ const SUITES = [
   './unit/restart-cards.mjs',
   // 段 3: 委譲の子（保持役のターン）の実行の控えが続き、結果の確定と完了通知は 1 回だけ
   './unit/restart-delegation.mjs',
-  // 引き継ぎを main の切り替えの流れごと（無停止の更新 2d）: 作業の最中でも待たずに替わる・S2 が立たなければ前の版で付け直す・引き継げない作業があれば待つ
-  './unit/desktop-handover.mjs',
+  './unit/adopt-agy.mjs',
+  './unit/adopt-claude.mjs',
+  './unit/adopt-codex.mjs',
+  './unit/adopt-finished.mjs',
+  './unit/adopt-held.mjs',
+  './unit/adopt-opencode.mjs',
+  './unit/adopt-shell.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
   './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す
@@ -756,7 +740,7 @@ const SUITES = [
   './unit/agent-accounts-ui.mjs',
   './unit/account-backend-i18n.mjs',
   './unit/opencode-adopt.mjs',
-  './unit/server-agent-account-adopt.mjs',
+  './unit/server-agent-account-restart.mjs',
   './unit/antigravity-accounts.mjs',
   './unit/claude-accounts.mjs',
   './unit/server-claude-accounts.mjs',

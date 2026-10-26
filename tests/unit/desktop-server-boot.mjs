@@ -12,9 +12,10 @@ import path from 'node:path';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { createMainLink, mainLinkPipeName, LINK_FILE } from '../../core/main-link.mjs';
-import { createOrphanGuard, ORPHAN_IDLE_MS, UPDATE_IDLE_MS } from '../../core/orphan-guard.mjs';
+import { createOrphanGuard, ORPHAN_IDLE_MS } from '../../core/orphan-guard.mjs';
 import { createLogSink, redactLine, redirectOutput } from '../../core/server-log.mjs';
 import { isRuntimeInUse } from '../../core/runtime-use.mjs';
+import { connectHolder } from '../../core/holder/client.mjs';
 import { testDataDir, testDataOwned } from '../lib/test-env.mjs';
 
 const require = createRequire(import.meta.url);
@@ -231,12 +232,12 @@ export default async function (t) {
     let ticker = null;
     const guard = createOrphanGuard({ isBusy: () => busy, onExpire: info => expired.push(info), now: () => now, setTimer: fn => { ticker = fn; return { unref() {} }; }, clearTimer: () => { ticker = null; } });
     const tick = async (ms = 5000) => { now += ms; await guard.check(); };
-    t.ok('見張り: つながっている間は何もしない', (await tick(UPDATE_IDLE_MS * 2), expired.length === 0 && ticker === null));
+    t.ok('見張り: つながっている間は何もしない', (await tick(ORPHAN_IDLE_MS * 2), expired.length === 0 && ticker === null));
     guard.disconnected();
     t.ok('見張り: 切れると見張りが始まる', ticker !== null && guard.away === true);
     await tick(0);
     await tick(ORPHAN_IDLE_MS - 1);
-    t.ok('見張り: main-leaving 無しで 3 分に届くまでは終わらない', expired.length === 0);
+    t.ok('見張り: main が切れても 3 分に届くまでは終わらない', expired.length === 0);
     await tick(1);
     t.ok('見張り: 作業が 0 件のまま 3 分で終わる（reason: lost）', expired.length === 1 && expired[0].reason === 'lost' && ticker === null);
     // 作業があれば終わらない・作業が終わった時から数え直す
@@ -252,37 +253,6 @@ export default async function (t) {
     t.ok('見張り: 作業が終わった時刻から数え直す', expired.length === 1);
     await tick(1);
     t.ok('見張り: 数え直した 3 分で終わる', expired.length === 2);
-    // main-leaving（更新）は 30 分
-    guard.connected();
-    guard.leaving('update');
-    guard.disconnected();
-    await tick(0);
-    await tick(ORPHAN_IDLE_MS * 2);
-    t.ok('見張り: main-leaving（update）の後は 3 分では終わらない', expired.length === 2);
-    await tick(UPDATE_IDLE_MS - ORPHAN_IDLE_MS * 2 - 1);
-    t.ok('見張り: main-leaving（update）の後は 30 分に届くまで終わらない', expired.length === 2);
-    await tick(1);
-    t.ok('見張り: 30 分で終わる（reason: update）', expired.length === 3 && expired[2].reason === 'update');
-    // main-leaving の後に取りやめた（main はつながったまま。更新の失敗）: 次の切断は main-leaving の無い切断と同じ 3 分
-    guard.connected();
-    guard.leaving('update');
-    guard.leavingCancelled();
-    guard.disconnected();
-    await tick(0);
-    await tick(ORPHAN_IDLE_MS);
-    t.ok('見張り: main-leaving を取りやめた後の切断は、30 分でなく 3 分（reason: lost）', expired.length === 4 && expired[3].reason === 'lost');
-    // つながり直せば見張りをやめ、main-leaving も忘れる
-    guard.leaving('update');
-    guard.disconnected();
-    await tick(0);
-    guard.connected();
-    t.ok('見張り: 付け直せば見張りをやめる', ticker === null && guard.away === false);
-    guard.disconnected();
-    await tick(0);
-    await tick(ORPHAN_IDLE_MS);
-    t.ok('見張り: 付け直した後の切断は、前の main-leaving を引き継がず 3 分', expired.length === 5 && expired[4].reason === 'lost');
-    // 起こした main が最初につながる前に落ちた場合（最初から切れている）も同じ
-    t.ok('見張り: 上限の既定は 3 分と 30 分', ORPHAN_IDLE_MS === 180_000 && UPDATE_IDLE_MS === 1_800_000);
     const failing = createOrphanGuard({ isBusy: () => { throw new Error('probe failed'); }, onExpire: () => expired.push('x'), now: () => now, setTimer: () => ({ unref() {} }), clearTimer() {} });
     failing.disconnected();
     await failing.check();
@@ -393,9 +363,13 @@ export default async function (t) {
       next.kill();
       await waitFor(() => !boot.isAlive(pid), 15_000, 'server exit');
       t.ok('本物: 終わらせる握手（shutdown）でサーバーが終わり、control.json・main-link.json が消える', !fs.existsSync(path.join(dataDir, 'control.json')) && !fs.existsSync(path.join(dataDir, LINK_FILE)));
+      const holder = await connectHolder({ dataDir, root }).catch(() => null);
+      if (holder) { holder.shutdown(); holder.close(); await waitFor(() => !boot.isAlive(holder.pid), 15_000, 'holder exit'); }
       t.ok('本物: 終わった後、使用中の印は外れている', await isRuntimeInUse({ root, key: 'test-1.0.0' }) === false);
     } finally {
       if (pid && boot.isAlive(pid)) { try { process.kill(pid); } catch { /* 済み */ } await sleep(300); }
+      const holder = await connectHolder({ dataDir, root }).catch(() => null);
+      if (holder) { const holderPid = holder.pid; holder.shutdown(); holder.close(); await waitFor(() => !boot.isAlive(holderPid), 15_000, 'holder exit'); }
       rm(dataDir);
       rm(root);
     }

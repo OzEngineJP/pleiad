@@ -12,6 +12,7 @@ import { startServer, ROOT } from "../lib/server.mjs";
 import { open, sleep } from "../lib/ws-client.mjs";
 import { readSessions } from '../lib/data-store.mjs';
 import { createFakeGates } from '../lib/fake-gate.mjs';
+import { restartMode } from '../lib/restart.mjs';
 
 export const name = "server-fake";
 export const title = "サーバ全体が LLM 無しで往復する";
@@ -21,8 +22,9 @@ const textOf = (turn) => turn.events.filter((e) => e.type === "text.delta").map(
 
 export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "agent-host-fake-")));
+  const restartForWork = restartMode()?.trigger === 'work';
   const server = await startServer({
-    env: { AGENT_HOST_BACKENDS: "fake" },
+    env: { AGENT_HOST_BACKENDS: "fake", ...(restartForWork ? { AGENT_HOST_RUNTIME_ROOT: path.join(scratch, 'runtime') } : {}) },
     dataDir: path.join(scratch, "data"),
     timeoutMs: 30_000,
   });
@@ -113,7 +115,12 @@ export default async function (t) {
       `${loaded.messages.length} 件`);
 
     // ---- ツール
-    const tool = await c.runTurn({ prompt: "tool", sessionId: sid, cwd: ROOT }, { ms: 20_000 });
+    // work 再起動では、tool.start の時点でサーバーを止める。fake の通常台本は同じイベントループ内で終わるため、
+    // その場合だけ保持役上の同じ fake 台本を遅らせ、B が続きを受け取る場面にする。
+    const toolPrompt = restartForWork
+      ? 'held:steps:{"steps":[{"tool":"fake_shell","input":{"command":"echo hi"},"result":"hi","ms":5000}]}'
+      : 'tool';
+    const tool = await c.runTurn({ prompt: toolPrompt, sessionId: sid, cwd: ROOT }, { ms: 20_000 });
     t.ok("tool.start が流れる", tool.tools.join(",") === "fake_shell", tool.tools.join(",") || "(なし)");
     t.ok("tool.result が対応する id で返る",
       tool.events.some((e) => e.type === "tool.result" && e.text === "hi"));

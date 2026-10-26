@@ -208,7 +208,7 @@ export default async function test(t) {
     check('auth symlinks, overlapping homes and unexpected existing data fail closed; holder IDs are account-specific and credential-free');
 
     // A fake holder keeps its child and sequenced output alive across detach.
-    // No executable or listening socket is needed for the handover protocol.
+    // The fixture isolates holder-source expansion from process and socket startup.
     const d = await make('held-d', seed('d@example.invalid', 4));
     const e = await make('held-e', seed('e@example.invalid', 5));
     const client = new EventEmitter();
@@ -262,20 +262,15 @@ export default async function test(t) {
       assert.equal(heldThread in hd.labelObject().loaded, false);
       assert.ok(he.labelObject().loaded[heldThread]);
       hd.markTurn('held-thread'); hd.putCard('held-thread', { held: true });
-      await hd.handOff();
-      await backend.accountDispose({ account: d });
-      assert.equal(heldAppServer(d), null); assert.equal(heldAppServer(e), he);
       const sources = await expandCodexHeld({ client, child: children.get(hd.id) });
       assert.equal(sources.length, 1); assert.equal(sources[0].account.id, d.id);
-      const adopted = heldAppServer(d);
-      assert.equal(adopted.adopted, true);
       assert.equal((await sources[0].rpc.request('account/read')).account.email, d.dir);
       assert.equal(frames.filter(x => x[0] === 'write' && x[1] === hd.id && x[2].method === 'initialize').length, 1);
       await assert.rejects(backend.adoptTurn({ account: e, source: sources[0], card: { held: true } }), /mismatch/);
       sources[0].dispose();
       await backend.accountRemove({ account: d });
       await he.stop();
-      check('holder children keep account env/labels separate, adopt the selected RPC without reinitialization and reject mismatched accounts');
+      check('holder child expansion preserves the selected account RPC and rejects mismatched accounts');
     } finally {
       await backend.accountDispose({ account: d });
       if (he) await he.stop();

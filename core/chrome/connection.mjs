@@ -519,15 +519,6 @@ export function createChromeConnection({ locate, os, WebSocketImpl = NodeWebSock
       wireRound(att, rnd, socket, Math.max(0, opt.reissueMs - (clock.now() - upgradeAt)));
       return true;
     },
-    /** 引き継ぎで出ていくサーバーの終わり: 接続の子の ws も確認の窓も閉じず、この側の記録と待ちだけを終える。以後この接続は使わない */
-    handOff() {
-      if (closedForGood) return;
-      closedForGood = true;
-      const att = current; current = null; connected = null;
-      if (att) { att.stopped = true; clearTimer(att, 'pollTimer'); if (att.cur) { clearRound(att.cur); att.cur = null; } }
-      rejectWaiters(new ChromeConnectionError('closed'));
-      listeners.clear();
-    },
     /** Pleiad の終了。確認が出ていれば閉じる（Chrome に確認を残さない） */
     async close() {
       if (closedForGood) return;

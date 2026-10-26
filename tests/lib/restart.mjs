@@ -1,11 +1,10 @@
 // 「途中でサーバーを止めて起こし直す」モード（issue #143 段 1。docs/adr/0270-server-may-die-anytime.md）。
 //
 // 既存の試験の土台（tests/lib/server.mjs の startServer・tests/lib/ws-client.mjs の open）に被せる。試験は
-// 1 つのサーバー・1 つの接続を使っているつもりのまま、途中でサーバーを**普通に**止め（handover を使わない。SIGTERM → 5 秒で SIGKILL）、
+// 1 つのサーバー・1 つの接続を使っているつもりのまま、途中でサーバーを**普通に**止め（SIGTERM → 5 秒で SIGKILL）、
 // 同じデータ置き場・同じトークン・同じポートで**普通に**起こした先へ、接続とイベントを続ける。保持役（core/holder/）は生かしたまま。
 //
-// 起こし直したサーバーには AGENT_HOST_ADOPT_HOLDER=1 を渡す。これは「起動の処理が復元の処理」の今日の代わり
-// （ADR 0270 の規則 ③ を、今のコードで一番近い形にしたもの）。段 4 でこの印が無くなる。
+// 復元の有効・無効を示す環境変数は渡さない。通常の起動が常に保持役の子を復元する。
 //
 //   installRestartMode({ trigger })  このプロセスに仕掛けを入れる（1 つだけ）。戻り値は { restart(), restarts, clients }
 //   installRestartFromEnv(env)       環境変数 PLEIAD_TEST_RESTART があれば入れる（tests/run.mjs と run-worker.mjs が読む）
@@ -23,16 +22,16 @@
 //   - 接続（open）は、渡された port/token が登録したサーバーのものなら、そのサーバーに付く。起こし直すと新しい port/token へつなぎ直し、
 //     イベント・mark/since/waitFor・runTurn は続きに積む。cmd は、飛んでいるものが終わるのを 2 秒まで待ってから止め、
 //     起こし直しの最中に投げられたものは新しいサーバーへ回す（それでも長い cmd は落ちる）
-//   - startServer を 2 回呼んで 2 台を並べる試験（adopt-*・handover-*）は、それぞれのサーバーに付く。restart() は最後に登録した 1 台を対象にする
+//   - startServer を 2 回呼んで 2 台を並べる試験は、それぞれのサーバーに付く。restart() は最後に登録した 1 台を対象にする
 //   - サーバーの child・port・token・tail() を直に見る試験は、起こし直した後の値をハンドル越しに読み直すこと（同じハンドルは古い値のまま）
 const KEY = Symbol.for('pleiad.test.restart');
 const log = line => console.log(`  [restart] ${line}`);
 
 export const restartMode = () => globalThis[KEY] ?? null;
 
-export function installRestartMode({ trigger = 'manual', adopt = true, stop = 'stop', logger = log } = {}) {
+export function installRestartMode({ trigger = 'manual', stop = 'stop', logger = log } = {}) {
   if (globalThis[KEY]) return globalThis[KEY];
-  const controller = new RestartController({ trigger, adopt, stop, logger });
+  const controller = new RestartController({ trigger, stop, logger });
   globalThis[KEY] = controller;
   return controller;
 }
@@ -59,9 +58,8 @@ const triggerMatches = (trigger, event) => {
 };
 
 class RestartController {
-  constructor({ trigger, adopt, stop, logger }) {
+  constructor({ trigger, stop, logger }) {
     this.trigger = trigger;
-    this.adopt = adopt;
     this.stopMode = stop;
     this.log = logger;
     this.servers = [];        // { handle, options, start }
@@ -142,7 +140,6 @@ class RestartController {
         ...options.env,
         AGENT_HOST_TOKEN: handle.token,
         AGENT_HOST_PORT: String(handle.port),
-        ...(this.adopt ? { AGENT_HOST_ADOPT_HOLDER: '1' } : {}),
       };
       this.restartingEntry = entry;
       let next;

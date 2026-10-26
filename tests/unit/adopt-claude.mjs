@@ -2,14 +2,14 @@
 // （docs/zero-downtime-update/plan.md「2c」。載せ方は core/backends/claude-held.mjs、付け直しは claude.mjs の adoptTurn）。
 //   1. 載せるかの切り替え: 実行場所の置き場が無い（開発・テストのサーバー）・AGENT_HOST_CLAUDE_HOLDER=off・確かめた下限より古い／major が違う CLI の版では、
 //      CLI は保持役の子にならない（今の流れ）。置き場があり、確かめた版なら既定で保持役の子になり、入れ替えなしの承認も通る
-//   2. 途中で引き継ぐ（2d の形: handOffTurn → 札を子に置いて detach → query を閉じる。tests/lib/adopt-server.mjs）。A を止め、同じデータ置き場で B が付け直す。
+//   2. 途中で落とす（ADR 0270 の形: A を普通に止める。札はターンの間に保持役の子へ置き直されている）。同じデータ置き場で B が起動で付け直す。
 //      時点: 承認待ち（B に A と同じ id の承認が 1 つだけ出て、答えると続く）・ツールの実行中に受理した途中送信（B で折り込まれ、渡った合図が 1 回）・
 //      裏の作業の待ち（phase: waiting が戻り、ゲートを開くと終わる）・hooks（PreCompact）のコールバックの答えが CLI に届かないまま（CLI が取り消して圧縮を続ける）・
 //      in-process の MCP（host）の mcp_message の答えが届かないまま（B の SDK が答えて続く）。どれも turnEnd・completedAt・使用量（presentKey の 1 件。
 //      費用の基準は札の値で差し引く）が 1 回だけ、restart の中断にならない
 //   3. 強制終了（2e の形。手を離す口を経ない）: 承認待ちのまま A を SIGKILL しても、札の置き直し（touchCard）で B が付け直す
-//   5. 引き継ぎ（2d の本物の道。偽の main の handover の依頼 → 新サーバー `--handover`）: 保持役に載った Claude のターンは切り替えを待たせず、承認待ちは同じ id で 1 つ。
-//      Pleiad がコンテキストを担当する会話は、新サーバーが ply_context の口を札のトークンで開き直し、外部の stdio MCP を起こし直す（R15。最初の結果に状態が消えた旨）
+//   5. main が起こした起動（名前付きパイプ・同じトークンとポート）: A を止めて B を普通に起こすと、承認待ちは同じ id で 1 つ。
+//      Pleiad がコンテキストを担当する会話は、B が ply_context の口を札のトークンで開き直し、外部の stdio MCP は保持役の子のまま（状態が残る）
 //   4. 後片付け: 保持役・偽の CLI が残らない
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -27,7 +27,7 @@ const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
 
 export const name = 'adopt-claude';
-export const title = '付け直し: 保持役に載せた Claude の CLI（偽物）を、サーバーの入れ替えをまたいで途中から引き継ぐ';
+export const title = '付け直し: 通常停止後に保持役の Claude の CLI（偽物）を起動時に付け直す';
 
 const WAIT_MS = 20_000;
 const script = steps => `script:${JSON.stringify({ steps })}`;
@@ -42,7 +42,7 @@ async function until(check, ms, label) {
   }
 }
 
-/** 偽の main（tests/unit/handover-server.mjs と同じ）: パイプにつなぎ、受けたメッセージを溜める */
+/** 偽の main（core/main-link.mjs の口）: パイプにつなぎ、受けたメッセージを溜める */
 async function attachMain(dataDir, server) {
   const pid = server.child.pid;
   const info = await until(() => { const found = readLinkInfo(dataDir); return found?.pid === pid ? found : null; }, WAIT_MS, `main-link.json (pid ${pid})`)
@@ -66,10 +66,9 @@ export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-adopt-claude-'));
   const dataDir = path.join(scratch, 'data');
   const root = path.join(scratch, 'runtime');
-  const scenesDir = path.join(scratch, 'scenes');
   const work = path.join(scratch, 'work');
   const cliLog = path.join(scratch, 'cli.log');
-  await Promise.all([scenesDir, work].map(dir => fs.mkdir(dir, { recursive: true })));
+  await fs.mkdir(work, { recursive: true });
   const gates = await createFakeGates(scratch);
   const fake = await installFakeClaude(path.join(scratch, 'cli'));
   const sessionMeta = id => readSessions(dataDir)[id] ?? null;
@@ -79,7 +78,7 @@ export default async function (t) {
     .map(line => /^\S+ (\d+) start (\S+) resume=\S+ ppid=(\d+)/.exec(line)).filter(Boolean).map(m => ({ pid: Number(m[1]), session: m[2], ppid: Number(m[3]) }));
   const base = { AGENT_HOST_BACKENDS: 'claude', ...fake.env, CLAUDE_CONFIG_DIR: path.join(scratch, 'claude'), FAKE_CLAUDE_LOG: cliLog, ...gates.env };
   // AGENT_HOST_CLAUDE_HOLDER は付けない（既定で載る。実行場所の置き場があるときだけ）
-  const env = { ...base, AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
+  const env = { ...base, AGENT_HOST_RUNTIME_ROOT: root };
   let a = null, b = null, ca = null, cb = null, m1 = null, m2 = null, holderPid = null;
   try {
     const found = await ensureHolder({ dataDir, root, mode: 'detached', idleMs: 20_000, timeoutMs: 20_000 });
@@ -104,17 +103,7 @@ export default async function (t) {
     }
     t.ok('切り替え: 置き場が無い・off の明示・下限より古い／major が違う CLI の版では保持役に載せない（今の流れ）', true);
 
-    a = await startServer({ env, dataDir, timeoutMs: 30_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
-    const scene = async (sceneName, input = {}) => {
-      const done = path.join(scenesDir, `${sceneName}.done`);
-      await fs.writeFile(path.join(scenesDir, `${sceneName}.tmp`), JSON.stringify(input));
-      await fs.rename(path.join(scenesDir, `${sceneName}.tmp`), path.join(scenesDir, `${sceneName}.go`));
-      const text = await until(() => fs.readFile(done, 'utf8').catch(() => null), WAIT_MS, `場面 ${sceneName}\n${a.tail(10)}`);
-      await fs.rm(done);
-      const out = JSON.parse(text);
-      if (!out.ok) throw new Error(out.error);
-      return out.value;
-    };
+    a = await startServer({ env, dataDir, timeoutMs: 30_000 });
     ca = await open({ port: a.port, token: a.token });
     const ids = {};
     for (const k of ['P', 'Q', 'S', 'G', 'H', 'M']) {
@@ -155,30 +144,14 @@ export default async function (t) {
     await ca.cmd('sendMessage', { sessionId: ids.S, messageId: 's-steer-0001', prompt: 'steer-S' });
     await ca.waitFor(e => e.type === 'userMessage' && e.messageId === 's-steer-0001' && e.pending, { ms: WAIT_MS, from: markA });
     await ca.waitFor(e => e.type === 'phase' && e.sessionId === ids.G && e.state === 'waiting', { ms: WAIT_MS, from: markA });
-    // H・M: 答えが CLI に届かないようにしてから、hooks のコールバック・MCP の呼び出しを起こす（A の SDK は処理して答えるが、捨てられる）
-    for (const k of ['H', 'M']) {
-      await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids[k], { ms: WAIT_MS, from: markA });
-      await scene('muteClaude', { sessionId: ids[k], muted: true });
-      await gates.open(`${k.toLowerCase()}-pre`);
-    }
-    await ca.waitFor(e => e.type === 'compaction' && e.phase === 'start' && e.sessionId === ids.H, { ms: WAIT_MS, from: markA });
-    await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.M && e.name === 'mcp__host__set_status', { ms: WAIT_MS, from: markA });
-    await sleep(800);   // A の SDK が依頼を処理して（捨てられる）答えを書くまで・札の置き直しが届くまで
-    const cards = {};
-    for (const k of Object.keys(scripts)) cards[k] = (await scene('handOffClaude', { sessionId: ids[k] }).catch(e => { throw new Error(`${k}: ${e.message}\n${a.tail(15)}`); })).card;
-    for (const k of Object.keys(scripts)) {
-      assert.equal(cards[k].backendCard?.held, true, `${k}: 札に Claude の欄`);
-      assert.ok(cards[k].backendCard.costBase?.modelUsage, `${k}: 札に費用の基準（前のターンの cost-state）`);
-    }
-    assert.deepEqual(cards.Q.waits, [askQ.id], 'Q: 札に出している承認の id');
-    assert.deepEqual(cards.S.backendCard.steers.map(x => [x.id, typeof x.uuid, typeof x.hash]), [['s-steer-0001', 'string', 'string']], 'S: 札に途中送信の控え（uuid とハッシュ。本文は入れない）');
-    assert.ok(!JSON.stringify(cards.S).includes('steer-S'), 'S: 途中送信の本文は札に無い');
-    await sleep(300);
-    for (const k of Object.keys(scripts)) assert.equal(ca.since(markA).filter(e => e.sessionId === ids[k] && ['turnEnd', 'turnResult'].includes(e.type)).length, 0, `A は ${k} を締めない`);
+    // H・M: hooks のコールバック・MCP の呼び出しを、CLI のゲートの手前で止めたまま A を落とす（A の SDK は答えない。B の新しい query が答える）
+    for (const k of ['H', 'M']) await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids[k], { ms: WAIT_MS, from: markA });
+    await sleep(800);   // 札の置き直し（touchCard）が保持役へ届くまで
     ca.close(); ca = null;
     await a.stop(); a = null;
 
-    // 保持役の子: 札つきで走り続けている（B より前にテストがつなぐ。親は 1 つ）
+    // 保持役の子: 札つきで走り続けている（B より前にテストがつなぐ）
+    const cards = {};
     {
       const probe = await connectHolder({ dataDir, root });
       for (const k of Object.keys(scripts)) {
@@ -186,12 +159,19 @@ export default async function (t) {
         assert.ok(child, `${k}: 札つきの子が残る`);
         assert.equal(child.alive, true, `${k}: CLI は走り続けている`);
         assert.equal(child.policy, 'claude-control');
+        cards[k] = child.label;
       }
-      assert.ok(probe.welcome.children.find(c => c.label?.sessionId === ids.M).pendingRequests.some(p => p.subtype === 'mcp_message'), 'M: 答えの届いていない mcp_message が控えにある');
+      for (const k of Object.keys(scripts)) {
+        assert.equal(cards[k].backendCard?.held, true, `${k}: 札に Claude の欄`);
+        assert.ok(cards[k].backendCard.costBase?.modelUsage, `${k}: 札に費用の基準（前のターンの cost-state）`);
+      }
+      assert.deepEqual(cards.Q.waits, [askQ.id], 'Q: 札に出している承認の id');
+      assert.deepEqual(cards.S.backendCard.steers.map(x => [x.id, typeof x.uuid, typeof x.hash]), [['s-steer-0001', 'string', 'string']], 'S: 札に途中送信の控え（uuid とハッシュ。本文は入れない）');
+      assert.ok(!JSON.stringify(cards.S).includes('steer-S'), 'S: 途中送信の本文は札に無い');
       probe.close();
     }
 
-    b = await startServer({ env: { ...env, AGENT_HOST_ADOPT_HOLDER: '1' }, dataDir, timeoutMs: 30_000 });
+    b = await startServer({ env, dataDir, timeoutMs: 30_000 });
     cb = await open({ port: b.port, token: b.token });
     const askB = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS });
     await sleep(500);
@@ -206,6 +186,8 @@ export default async function (t) {
     await gates.open('s-tool');
     await cb.waitFor(e => e.type === 'userMessage.delivered' && e.messageId === 's-steer-0001', { ms: WAIT_MS });
     await gates.open('g-bg');
+    // H・M: B の新しい query が hooks・in-process の MCP を渡し直しているので、ゲートを開くと CLI の依頼に B が答える
+    for (const k of ['H', 'M']) await gates.open(`${k.toLowerCase()}-pre`);
     for (const k of Object.keys(scripts)) await cb.waitFor(e => e.type === 'turnEnd' && e.sessionId === ids[k], { ms: WAIT_MS }).catch(e => { throw new Error(`${k}: ${e.message}\n${b.tail(20)}`); });
     await sleep(500);
     for (const k of Object.keys(scripts)) {
@@ -227,7 +209,7 @@ export default async function (t) {
       if (k === 'S') assert.ok(finals[0].text.includes('受け取った: steer-S'), 'S: 途中送信が折り込まれて答えに入る');
     }
     assert.equal(cb.events.filter(e => e.type === 'userMessage.delivered' && e.messageId === 's-steer-0001').length, 1, 'S: 渡った合図は 1 回');
-    assert.ok(cb.events.some(e => e.type === 'compaction' && e.phase === 'complete' && e.sessionId === ids.H), 'H: 取り消された PreCompact の後も圧縮が続き、B で終わる');
+    assert.ok(cb.events.some(e => e.type === 'compaction' && e.phase === 'complete' && e.sessionId === ids.H), 'H: PreCompact のコールバックに B が答え、圧縮が B で終わる');
     {
       const m = await cb.cmd('loadSession', { sessionId: ids.M });
       const call = m.messages.flatMap(x => x.toolCalls ?? []).find(c => c.name === 'mcp__host__set_status');
@@ -241,7 +223,7 @@ export default async function (t) {
       const pidOf = k => starts().then(list => list.filter(x => x.session === nativeOf(k)).at(-1)?.pid);
       const linesOf = async k => { const pid = await pidOf(k); return log.split('\n').filter(line => line.split(' ')[1] === String(pid)); };
       assert.ok((await linesOf('Q')).some(line => line.includes('initialize #2 pending=1')), 'Q: CLI は 2 回目の initialize で承認待ちを 1 つ送り直した');
-      assert.ok((await linesOf('H')).some(line => line.includes('hook PreCompact cancelled')), 'H: CLI は答えの届かない PreCompact を取り消した');
+      assert.ok(!(await linesOf('H')).some(line => line.includes('hook PreCompact cancelled')), 'H: CLI の PreCompact のコールバックに B が答えた（取り消されない）');
       for (const k of Object.keys(scripts)) assert.ok((await linesOf(k)).some(line => line.includes('initialize #2')), `${k}: 同じ CLI に 2 回目の initialize が届いた（query の作り直し）`);
     }
     assert.ok(!b.tail(200).includes('[unhandledRejection]'), b.tail(20));
@@ -259,7 +241,7 @@ export default async function (t) {
 
     // 3. 強制終了: 承認待ちのまま A2 を落とす。札は子を起こした直後と中身が変わるたびに置き直されている
     {
-      a = await startServer({ env, dataDir, timeoutMs: 30_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
+      a = await startServer({ env, dataDir, timeoutMs: 30_000 });
       ca = await open({ port: a.port, token: a.token });
       const markK = ca.mark();
       void ca.cmd('sendMessage', { sessionId: ids.Q, messageId: 'crash-Q-0001', prompt: script([{ tool: 'Bash', input: { command: 'k' }, result: 'ran k', ask: true }, { text: 'final K' }]) }).catch(() => {});
@@ -267,8 +249,8 @@ export default async function (t) {
       const doneBefore = sessionMeta(ids.Q).completedAt;
       await sleep(600);
       ca.close(); ca = null;
-      await a.kill(); a = null;
-      b = await startServer({ env: { ...env, AGENT_HOST_ADOPT_HOLDER: '1' }, dataDir, timeoutMs: 30_000 });
+      await a.stop(); a = null;
+      b = await startServer({ env, dataDir, timeoutMs: 30_000 });
       cb = await open({ port: b.port, token: b.token });
       const askB2 = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS });
       assert.equal(askB2.id, askK.id, '強制終了しても承認の id は A2 と同じ');
@@ -286,7 +268,7 @@ export default async function (t) {
       await b.stop(); b = null;
     }
 
-    // 5. 引き継ぎ（2d の本物の道: main の handover の依頼 → 旧サーバーが札を取って control.holder.handOff → 新サーバー `--handover` が付け直す）。
+    // 5. main が起こした起動（名前付きパイプ・同じトークンとポート）: A を普通に止め、B を普通に起こす。
     //    承認待ち（Q）と、Pleiad がコンテキストを担当する会話（R。ply_context の口を札のトークンで開き直し、外部の stdio MCP を起こし直す。R15）
     {
       const workCtx = path.join(scratch, 'work-ctx');
@@ -298,8 +280,8 @@ export default async function (t) {
       await fs.writeFile(fixture, `import fs from 'node:fs';import readline from 'node:readline';fs.appendFileSync(${JSON.stringify(launches)},'launch\\n');if(fs.readFileSync(${JSON.stringify(launches)},'utf8').split('launch').length>2)await new Promise(r=>setTimeout(r,2000));let n=0;for await(const line of readline.createInterface({input:process.stdin})){const m=JSON.parse(line);if(m.id===undefined)continue;const result=m.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'count',description:'count',inputSchema:{type:'object'}}]}:m.method==='tools/call'?{content:[{type:'text',text:'count='+(++n)}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');}`);
       await fs.writeFile(path.join(workCtx, '.mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [fixture] } } }));
       const launchCount = async () => (await fs.readFile(launches, 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
-      const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' };
-      a = await startServer({ env: envH, dataDir, timeoutMs: 40_000, entry: path.join(ROOT, 'tests', 'lib', 'adopt-server.mjs') });
+      const envH = { ...env, AGENT_HOST_HANDOVER: 'on' };
+      a = await startServer({ env: envH, dataDir, timeoutMs: 40_000 });
       m1 = await attachMain(dataDir, a);
       ca = await open({ port: a.port, token: a.token });
       const none = { sources: [], excludePaths: [] };
@@ -311,27 +293,24 @@ export default async function (t) {
       const usageBefore = { Q: readUsage(dataDir).records.filter(r => r.sessionId === ids.Q).length, R: readUsage(dataDir).records.filter(r => r.sessionId === ids.R).length };
       const count = { http: { server: 'ply_context', tool: '[fixture / count]' } };
       const markH = ca.mark();
-      void ca.cmd('sendMessage', { sessionId: ids.Q, messageId: 'handover-Q-0001', prompt: script([{ tool: 'Bash', input: { command: 'hq' }, result: 'ran hq', ask: true }, { text: 'final HQ' }]) }).catch(() => {});
-      void ca.cmd('sendMessage', { sessionId: ids.R, messageId: 'handover-R-0001', prompt: script([count, { tool: 'Read', input: { file_path: 'r' }, result: 'read r', gate: 'r-tool' }, count, { text: 'final R' }]) }).catch(() => {});
+      void ca.cmd('sendMessage', { sessionId: ids.Q, messageId: 'restart-Q-0001', prompt: script([{ tool: 'Bash', input: { command: 'hq' }, result: 'ran hq', ask: true }, { text: 'final HQ' }]) }).catch(() => {});
+      void ca.cmd('sendMessage', { sessionId: ids.R, messageId: 'restart-R-0001', prompt: script([count, { tool: 'Read', input: { file_path: 'r' }, result: 'read r', gate: 'r-tool' }, count, { text: 'final R' }]) }).catch(() => {});
       const askHQ = await ca.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS, from: markH });
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.R && e.name === 'Read', { ms: WAIT_MS, from: markH });
       const launchesBefore = await launchCount();
       {
         const running = await until(async () => { const r = await ca.cmd('running'); return r.turns.filter(x => x.held).length === 2 ? r : null; }, WAIT_MS, 'Claude の 2 つのターンが held');
-        assert.equal(running.handover.blocking, 0, '保持役に載った Claude のターンは、切り替えを待たせない');
         assert.ok(running.permissions.find(p => p.id === askHQ.id)?.held, '承認待ちも held');
       }
-      b = await startServer({ env: envH, dataDir, timeoutMs: 60_000, args: ['--handover'], lazy: true });
-      await sleep(800);
-      const reply = await m1.request('handover');
-      assert.equal(reply.ok, true, JSON.stringify(reply));
-      assert.deepEqual([...reply.handed].sort(), [ids.Q, ids.R].sort(), '渡したターン');
-      await until(() => a.child.exitCode !== null, 20_000, 'S1 が終わる');
-      await b.ready();
-      assert.equal(b.port, a.port, 'S2 は S1 と同じポートで待ち受ける');
-      m2 = await attachMain(dataDir, b);
+      const portA = a.port, tokenA = a.token;
+      await sleep(800);   // 札の置き直しが保持役へ届くまで
       ca.close(); ca = null;
-      cb = await open({ port: a.port, token: a.token });
+      // A を普通に止める（main が更新で止めるときと同じ道）。保持役の子は止めない
+      await a.stop(); a = null;
+      b = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA), AGENT_HOST_TOKEN: tokenA }, dataDir, timeoutMs: 60_000 });
+      assert.equal(b.port, portA, 'S2 は S1 と同じポートで待ち受ける');
+      m2 = await attachMain(dataDir, b);
+      cb = await open({ port: portA, token: tokenA });
       const askB = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS });
       await sleep(500);
       assert.equal(askB.id, askHQ.id, 'Q: 承認の id は S1 と同じ');
@@ -357,14 +336,12 @@ ${b.tail(40)}`);
         assert.equal(await launchCount(), launchesBefore, 'R: 外部の MCP は S2 で起こし直さない（保持役の子がそのまま。ADR 0270 段 2c）');
       }
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
-      t.ok('引き継ぎ（2d）: 保持役に載った Claude のターン（承認待ち・ツールの実行中）は切り替えを待たせず、S1 が渡して終わり、S2（--handover）が同じトークン・ポートで付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
+      t.ok('main が起こした起動: A を普通に止めて B を同じトークン・ポートで起こすと、保持役の Claude のターン（承認待ち・ツールの実行中）を起動で付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
       t.ok('R15: Pleiad がコンテキストを担当する会話は、S2 が ply_context の口を札のトークンで開き直す。外部の stdio MCP は保持役の子のまま（同じツールの名前。中の状態が残り、起こし直さない。ADR 0270 段 2c）', true);
       cb.close(); cb = null;
       m2.link.leave(); m2 = null;
-      try { m1.link.kill(); } catch { /* S1 は終わっている */ }
-      m1 = null;
+      m1 = null;   // A と一緒に切れている
       await b.stop(); b = null;
-      a = null;
     }
 
     // 4. 後片付け

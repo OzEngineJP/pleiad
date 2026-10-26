@@ -16,7 +16,7 @@ import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
-import { run } from '../process.mjs';
+import { run, KEEP_MS } from '../process.mjs';
 import { unwrapCommandShim } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
@@ -98,10 +98,11 @@ async function askVersion(exe) {
 
 /**
  * このターンの CLI を保持役に載せるか。載せるなら { client }（保持役への共有の口。core/holder/link.mjs）、載せないなら null。
- * 圧縮・bot のターンは付け直さない（core/server.mjs の restoreTurn）ので載せない。保持役を起こせない（抜け道の無い Job など）ときも載せない
+ * 圧縮のターンは付け直さず、中断して新しいサーバーでやり直す（冪等なので、やり直しの方が安い。ADR 0270 段 4）ので載せない。
+ * 保持役を起こせない（抜け道の無い Job など）ときも載せない
  */
-export async function heldPlan({ dataDir, executable, compact = false, bot = false, log = console.error } = {}) {
-  if (!heldEnabled() || compact || bot) return null;
+export async function heldPlan({ dataDir, executable, compact = false, log = console.error } = {}) {
+  if (!heldEnabled() || compact) return null;
   const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
   if (!dataDir || !root || !executable || !commandOf(executable)) return null;
   const version = await cliVersion(executable);
@@ -118,7 +119,7 @@ export async function heldPlan({ dataDir, executable, compact = false, bot = fal
 const parse = line => { try { const value = JSON.parse(line); return value && typeof value === 'object' ? value : null; } catch { return null; } };
 
 /**
- * 保持役の子を SDK の CLI に見せる口。spawnClaudeCodeProcess（SDK の options に渡す）・ack(uuid)・handOff（旧サーバーの手を離す口）と、
+ * 保持役の子を SDK の CLI に見せる口。spawnClaudeCodeProcess（SDK の options に渡す）・ack(uuid) と、
  * 子の終わり（exited）・片付け（finish）を持つ。
  *   mode 'spawn'  SDK が起こすときに保持役へ spawn させ、印（turn）を置く。client が要る
  *   mode 'adopt'  付け直す子（source は core/adopt.mjs の holderSource。redelivered: true で作る）の、from からの続きを SDK へ流す
@@ -126,7 +127,7 @@ const parse = line => { try { const value = JSON.parse(line); return value && ty
  */
 export function createHeldCli({ mode, client = null, source = null, from = 1, onSpawn = () => {} }) {
   const seqOf = new Map();   // uuid -> 通番（SDK へ流した行のうち uuid を持つもの。ack すると前の分を捨てる）
-  let detached = false, handedOff = false, exited = null, muted = false;
+  let exited = null;
   let resolveExit;
   const exit = new Promise(resolve => { resolveExit = resolve; });
   let proc = null;
@@ -149,7 +150,6 @@ export function createHeldCli({ mode, client = null, source = null, from = 1, on
     try {
       for await (const item of source.attach(from)) {
         if (item.exit) {
-          if (item.exit.handedOff) handedOff = true;
           code = item.exit.code ?? null; signal = item.exit.signal ?? null;
           break;
         }
@@ -162,7 +162,7 @@ export function createHeldCli({ mode, client = null, source = null, from = 1, on
     } catch (error) {
       console.error('  保持役の Claude の CLI の読みが切れた:', String(error?.message ?? error));
     }
-    exited = { code, signal, handedOff };
+    exited = { code, signal };
     if (proc) { proc.exitCode = code; proc.signalCode = signal; }
     stdout.end();
     stderr.end();
@@ -181,21 +181,21 @@ export function createHeldCli({ mode, client = null, source = null, from = 1, on
       const id = `claude-${crypto.randomUUID().slice(0, 8)}`;
       // 出来事の購読は spawn より前。spawn と印は、SDK の最初の stdin の書き込み（initialize）より前（design.md §4.4）
       source = holderSource(client, { id, acked: 0, seq: 0, marks: { [ADOPT_TURN_MARK]: 1 } }, { spawned: true });
-      client.spawn({ id, command: target.command, args: target.args, cwd: options.cwd, env: options.env, policy: 'claude-control' });
+      client.spawn({ id, command: target.command, args: target.args, cwd: options.cwd, env: options.env, policy: 'claude-control', keepMs: KEEP_MS });
       client.mark(id, ADOPT_TURN_MARK);
       onSpawn(source);
     }
-    const onErr = frame => { if (frame.id === source.id && !detached) stderr.write(String(frame.chunk ?? '')); };
+    const onErr = frame => { if (frame.id === source.id) stderr.write(String(frame.chunk ?? '')); };
     source.client.on('err', onErr);
     exit.then(() => source.client.off('err', onErr));
     const stdin = new Writable({
-      write(chunk, _encoding, callback) { if (!detached && !muted) source.write(chunk.toString('utf8')); callback(); },
-      final(callback) { if (!detached) source.client.end(source.id); callback(); },
+      write(chunk, _encoding, callback) { source.write(chunk.toString('utf8')); callback(); },
+      final(callback) { source.client.end(source.id); callback(); },
     });
     Object.assign(proc, { stdin, stdout, stderr, killed: false, exitCode: null, signalCode: null });
     proc.kill = () => {
       proc.killed = true;
-      if (!detached && !exited) source.client.kill(source.id, { tree: true });
+      if (!exited) source.client.kill(source.id, { tree: true });
       return true;
     };
     void pump(stdout, stderr);
@@ -206,9 +206,7 @@ export function createHeldCli({ mode, client = null, source = null, from = 1, on
     spawnClaudeCodeProcess,
     get source() { return source; },
     get id() { return source?.id ?? null; },
-    get handedOff() { return handedOff; },
-    get detached() { return detached; },
-    /** 子が終わった（または手を離した）ときの { code, signal, handedOff } */
+    /** 子が終わったときの { code, signal } */
     exit,
     /** ループで処理し終えた SDK のメッセージの uuid。その行までを ack する */
     ack(uuid) {
@@ -217,29 +215,15 @@ export function createHeldCli({ mode, client = null, source = null, from = 1, on
       for (const [key, value] of seqOf) { if (value > seq) break; seqOf.delete(key); }
       source.ack(seq);
     },
-    /**
-     * 旧サーバーの手を離す口: 札（handOffTurn の card）を子に置き、保持役に detach する（答えが来た時点で、この親からの write は転送されない）。
-     * その後に読みを止める。query を閉じるのは呼び出し側（detach → close の順。design.md §4.4）
-     */
-    async handOff(card) {
-      if (!source) throw new Error('claude: the CLI has not been started');
-      source.client.label(source.id, card);
-      await source.client.detach(source.id);
-      detached = true;
-      source.stop();
-    },
-    /** ターンの終わりの片付け。子が終わっていれば記録を捨て（release）、終わっていなければ木ごと止めてから捨てる。手を離した子には触れない */
+    /** ターンの終わりの片付け。子が終わっていれば記録を捨て（release）、終わっていなければ木ごと止めてから捨てる */
     async finish({ waitMs = 5000 } = {}) {
       if (!source) return;
-      if (!handedOff && !detached) {
-        if (!exited) source.client.kill(source.id, { tree: true });
-        const done = await Promise.race([exit, new Promise(resolve => setTimeout(resolve, waitMs, null).unref?.())]);
-        if (done && !done.handedOff) source.release();
+      if (!exited) {
+        source.client.kill(source.id, { tree: true });
+        await Promise.race([exit, new Promise(resolve => setTimeout(resolve, waitMs, null).unref?.())]);
       }
+      source.release();
       source.dispose();
     },
-    /** テスト用: 子への書き込み（承認の答え・hooks・MCP の応答・途中送信）を止める／戻す。止めている間の書き込みは捨てる */
-    mute(flag) { muted = Boolean(flag); },
-    get muted() { return muted; },
   };
 }

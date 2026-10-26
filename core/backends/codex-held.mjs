@@ -8,9 +8,8 @@
 //   札（label）: { k: 'codex-app-server', v: 1, turns: { <threadId>: <サーバーの札> }, loaded: { <threadId>: [接続先, 指示の指紋, hooks の指紋] }, watch: { <threadId>: <会話の id> } }。
 //     loaded は、ロード済みのスレッドの設定の控え（codex.mjs の loadedProvider など。新しいサーバーが忘れると、ロード済みのスレッドの設定の変更が黙って効かなくなる）。
 //     watch は、裏の端末を数えているスレッドと報告先（新しいサーバーは thread/backgroundTerminals/list で端末を引き直す）
-//   手を離す（handOff）: 同じ tick に来た全部のターンの札を置き、ack を処理し終えた最後の行まで進めて、保持役に detach する。以後このサーバーは読まない・書かない
 //   付け直し（expand。起動で保持役の子の札を読む）: 子に付けて（attach）、札のターンごとの元（記録の再生・控えの鍵）を返す。続きの frame は、スレッドの付け直しが済むまで預かる
-// 起動の掃除: 親が居ない間の保険に spawn の keepMs（holder.mjs）を渡す。このサーバーが終わるときは子を止める（手を離していなければ）
+// 起動の掃除: 親が居ない間の保険に spawn の keepMs（holder.mjs）を渡す。子を止めるのはアプリの終了（server の stopHeldChildren）だけ
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
 import { holderLink } from '../holder/link.mjs';
@@ -77,10 +76,8 @@ export class HeldAppServer {
     this.metaSnapshot = null;          // () => 今の控え（codex.mjs が渡す）
     this.source = holderSource(client, { ...state, id: this.id }, { spawned });
     this.sink = null;
-    this.detached = false;
     this.frozen = false;
     this.closed = false;
-    this.handing = null;
     this.pendingAck = 0;
     this.ackTimer = null;
     this.labelTimer = null;
@@ -88,7 +85,7 @@ export class HeldAppServer {
     this.exited = new Promise(resolve => { this.resolveExited = resolve; });
   }
 
-  get writable() { return !this.detached && !this.closed && this.client.connected; }
+  get writable() { return !this.closed && this.client.connected; }
   write(text) { return this.writable ? this.source.write(text) : false; }
 
   /** 付け直す子は、attach の答え（控えの鍵 pendingRequests）まで先に済ませる */
@@ -97,12 +94,12 @@ export class HeldAppServer {
     return this.attachedState;
   }
 
-  /** CodexRpc が読みを始める。sink: { line(text, seq), err(chunk), exit({ code, signal, error }), lost(reason), handedOff(), overflow({ reason, bytes }) } */
+  /** CodexRpc が読みを始める。sink: { line(text, seq), err(chunk), exit({ code, signal, error }), lost(reason), overflow({ reason, bytes }) } */
   run(sink) {
     this.sink = sink;
-    const onErr = frame => { if (frame.id === this.id && !this.detached) sink.err(String(frame.chunk ?? '')); };
+    const onErr = frame => { if (frame.id === this.id) sink.err(String(frame.chunk ?? '')); };
     // 保持役が長すぎる行（1 行の上限を超えた応答）を捨てた。待っている依頼を待たせ続けないよう CodexRpc に伝える
-    const onOverflow = frame => { if (frame.id === this.id && !this.detached && frame.reason === 'line') sink.overflow?.(frame); };
+    const onOverflow = frame => { if (frame.id === this.id && frame.reason === 'line') sink.overflow?.(frame); };
     this.client.on('err', onErr);
     this.client.on('overflow', onOverflow);
     this.offErr = () => { this.client.off('err', onErr); this.client.off('overflow', onOverflow); };
@@ -111,16 +108,16 @@ export class HeldAppServer {
     void (async () => {
       try {
         for await (const item of this.source.attach(this.from)) {
-          if (this.frozen || this.detached) return;
+          if (this.frozen) return;
           if (item.exit) {
-            if (!item.exit.handedOff) this.#exited(item.exit);
+            this.#exited(item.exit);
             return;
           }
           if (item.seq <= this.skipUpTo) continue;
           sink.line(item.line, item.seq);
         }
       } catch (error) {
-        if (this.detached || this.closed) return;
+        if (this.closed) return;
         this.#lost(error);
       }
     })();
@@ -147,7 +144,7 @@ export class HeldAppServer {
 
   /** 処理し終えた最後の行まで ack する（行ごとには送らず、同じ tick のものを 1 つにまとめる） */
   ack(seq) {
-    if (this.detached || this.frozen || !(seq > this.pendingAck)) return;
+    if (this.frozen || !(seq > this.pendingAck)) return;
     this.pendingAck = seq;
     if (!this.ackTimer) this.ackTimer = setImmediate(() => { this.ackTimer = null; this.#flushAck(); });
   }
@@ -155,16 +152,16 @@ export class HeldAppServer {
   #flushAck() {
     clearImmediate(this.ackTimer);
     this.ackTimer = null;
-    if (this.pendingAck > 0 && !this.detached) this.source.ack(this.pendingAck);
+    if (this.pendingAck > 0) this.source.ack(this.pendingAck);
   }
 
   kill() {
-    if (!this.detached && !this.closed) this.client.kill(this.id, { tree: true });
+    if (!this.closed) this.client.kill(this.id, { tree: true });
   }
 
-  /** 止める（rpc.stop）。手を離していれば何もしない（新しいサーバーが引き継ぐ） */
+  /** 止める（rpc.stop） */
   async stop({ waitMs = 3000 } = {}) {
-    if (this.detached || this.closed) { this.dispose(); return; }
+    if (this.closed) { this.dispose(); return; }
     this.kill();
     await Promise.race([this.exited, sleep(waitMs)]);
     this.dispose();
@@ -202,7 +199,7 @@ export class HeldAppServer {
 
   /** 札の控え（ロード済みのスレッドの設定・裏の端末を数えているスレッド）が変わった（codex.mjs） */
   touchLabel() {
-    if (this.detached || this.frozen || this.labelTimer) return;
+    if (this.frozen || this.labelTimer) return;
     this.labelTimer = setTimeout(() => { this.labelTimer = null; this.#sendLabel(); }, 0);
     this.labelTimer.unref?.();
   }
@@ -212,41 +209,19 @@ export class HeldAppServer {
   }
 
   #sendLabel() {
-    if (this.detached || !this.writable) return;
+    if (!this.writable) return;
     let label = this.labelObject();
     // 保持役の札の上限を超えるときは、控えを外す（付け直した後の最初の送信で、ロード済みのスレッドを外してから読み直すので、設定は効く）
     if (Buffer.byteLength(JSON.stringify(label), 'utf8') > LABEL_MAX_BYTES - 1024) label = this.labelObject({ withMeta: false });
     this.client.label(this.id, label);
   }
 
-  /**
-   * 手を離す（旧サーバーの引き継ぎ。handoverRun がターンごとに呼ぶ。同じ tick に来た全部のターンの札を待って、1 回だけ detach する）:
-   * 読みを止め、処理し終えた最後の行まで ack し、札を全部置き、保持役に detach する（答えが来た時点で、この親からの write は転送されない）。
-   * 止めてからの行は処理も ack もしない（新しいサーバーが ack の次から処理する）
-   */
-  handOff() {
-    this.handing ??= (async () => {
-      await new Promise(resolve => setImmediate(resolve));
-      this.frozen = true;
-      this.#flushAck();
-      clearTimeout(this.labelTimer);
-      this.labelTimer = null;
-      this.#sendLabel();
-      await this.client.detach(this.id);
-      this.detached = true;
-      this.source.stop();
-      if (current.get(this.id) === this) current.delete(this.id);
-      this.dispose();
-      this.sink?.handedOff();
-    })();
-    return this.handing;
-  }
 }
 
 /** このプロセスが見ている app-server（子）。無ければ null */
 export const heldAppServer = (account = null) => {
   const held = current.get(codexAccountChildId(account));
-  return held && !held.closed && !held.detached ? held : null;
+  return held && !held.closed ? held : null;
 };
 
 /**
@@ -382,11 +357,11 @@ export async function expandCodexHeld({ client, child, log }) {
 registerChildExpander(CODEX_LABEL_KIND, expandCodexHeld);
 
 /**
- * このサーバーが終わるときに、手を離していない app-server を止めて、終わるのを待つ（保持役の子は、サーバーが終わっても残るため。手を離したときは新しいサーバーが引き継ぐ）。
- * server の shutdown の流れが、終わると決めてから（process.exit の前に）呼ぶ。ターン専用の app-server も止める
+ * アプリの終了で、app-server を止めて、終わるのを待つ（server の stopHeldChildren）。ターン専用の app-server も止める。
+ * 更新・落ちたときは呼ばない（保持役の子は残り、新しいサーバーが起動で拾う）
  */
 export async function stopHeldAppServer() {
   for (const held of new Set([...pendingAdopt.values(), ...current.values(), ...dedicatedServers])) {
-    if (!held.detached && !held.closed) await held.stop({ waitMs: 2000 });
+    if (!held.closed) await held.stop({ waitMs: 2000 });
   }
 }

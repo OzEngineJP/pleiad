@@ -7,7 +7,7 @@
 //   バックエンド -> 偽の CLI の stdin  start { prompt, userText, sessionId, cwd, mode, model, notes }・permission.answer { requestId, answer }・
 //                    steer { item }・interrupt {}
 // 承認待ちは記録から作る: 付け直したサーバーは、cli.ask のうち cli.settled が無いものだけ、承認の画面へ出し直す（ツールの id = requestId から決まる同じ承認の id。
-// core/approval-id.mjs）。札は子の label に置く: ターンの始まりと札の中身が変わるたび（サーバーの touchCard が control.holder.label を呼ぶ）、手を離すときも。
+// core/approval-id.mjs）。札は子の label に置く: ターンの始まりと札の中身が変わるたび（サーバーの touchCard が control.holder.label を呼ぶ）。
 // 保持役の場所は AGENT_HOST_DATA（データ置き場）と AGENT_HOST_RUNTIME_ROOT（実行場所の置き場）。無ければ台本はエラーにする
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -18,9 +18,6 @@ import { ADOPT_TURN_MARK, holderSource, replayRecord } from '../adopt.mjs';
 const FAKE_AGENT = fileURLToPath(new URL('./fake-agent.mjs', import.meta.url));
 const lineOf = value => `${JSON.stringify(value)}\n`;
 const parse = line => { try { const value = JSON.parse(line); return value && typeof value === 'object' ? value : null; } catch { return null; } };
-
-/** 会話 id -> このサーバーが偽の CLI を見ている held のターン。旧サーバーの手を離す口（handOffHeld）が引く */
-const helds = new Map();
 
 /** 偽の CLI を保持役の子として起こし、ターンの印を置いて start を書く。戻り値は付け直し元と同じ形の source */
 export async function spawnHeld({ sessionId, cwd, start }) {
@@ -34,7 +31,7 @@ export async function spawnHeld({ sessionId, cwd, start }) {
   const env = { ...process.env };
   delete env.AGENT_HOST_TOKEN;
   delete env.ELECTRON_RUN_AS_NODE;
-  client.spawn({ id, command: process.execPath, args: [FAKE_AGENT], cwd: cwd || undefined, env, policy: 'none' });
+  client.spawn({ id, command: process.execPath, args: [FAKE_AGENT], cwd: cwd || undefined, env, policy: 'none', keepMs: 10 * 60_000 });
   client.mark(id, ADOPT_TURN_MARK);
   source.write(lineOf({ type: 'start', sessionId, cwd, ...start }));
   return source;
@@ -66,8 +63,7 @@ function recorder(record, { user }) {
 
 /**
  * 記録を再生して続きを受け、承認の答え・途中送信・中断を偽の CLI の stdin へ返す。付け直しも、起こした直後のターンも同じ道（fake の runTurn・adoptTurn が呼ぶ）。
- * 戻り値は { handedOff: true }（旧サーバーが手を離した）か { exit }。終わりの記録を処理し終えたら子の記録を捨てる（release）。
- * source.write が無い元（ファイルの元。終わった子）は、書く道具を持たない
+ * 戻り値は { exit }。終わりの記録を処理し終えたら子の記録を捨てる（release）
  */
 export async function driveHeld({ source, record, emit, askPermission, signal, control, sessionId, recordUser }) {
   const history = recorder(record, { user: recordUser });
@@ -80,7 +76,7 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
   let stopped = false;
   const asked = new Set();
   const steers = new Map();
-  const send = value => { if (!stopped && !source.muted && source.write) source.write(lineOf(value)); };
+  const send = value => { if (!stopped && source.write) source.write(lineOf(value)); };
   const onAbort = () => send({ type: 'interrupt' });
   if (signal?.signal?.aborted) onAbort(); else signal?.signal?.addEventListener?.('abort', onAbort, { once: true });
   if (control && source.write) {
@@ -94,15 +90,7 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
   }
   // 札を保持役の子に置く口（サーバーの touchCard が札の中身が変わるたびに呼ぶ）。最初の 1 回は今置く（落ちたときの付け直しの元）
   if (control && source.client) {
-    control.holder = {
-      label: card => source.client.label(source.id, card),
-      // 旧サーバーの手を離す口（引き継ぎ。core/handover.mjs）: 札を子に置き、保持役に detach して（答えが来た時点で、この親からの write は転送されない）、この道の読みを止める
-      handOff: async card => {
-        source.client.label(source.id, card);
-        await source.client.detach(source.id);
-        source.stop();
-      },
-    };
+    control.holder = { label: card => source.client.label(source.id, card) };
     control.touch?.();
   }
 
@@ -130,7 +118,6 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
   };
   try {
     const result = await replayRecord({ source, normalize: line => { const m = parse(line); return m ? [m] : []; }, emit: handle });
-    if (result.exit?.handedOff) { stopped = true; return { handedOff: true }; }
     stopped = true;
     if (control) control.holder = null;
     history.finish();
@@ -149,39 +136,5 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
 /** 台本 "held:" のターン 1 つ。偽の CLI を起こして、記録の続きを受ける（fake の runTurn が呼ぶ） */
 export async function runHeld({ id, cwd, mode, model, notes, prompt, userText, record, emit, askPermission, signal, control }) {
   const source = await spawnHeld({ sessionId: id, cwd, start: { prompt, userText, mode, model, notes } });
-  helds.set(id, source);
-  try {
-    return await driveHeld({ source, record, emit, askPermission, signal, control, sessionId: id, recordUser: false });
-  } finally {
-    if (helds.get(id) === source) helds.delete(id);
-  }
-}
-
-/**
- * 旧サーバーの手を離す口（2d が呼ぶ形のバックエンド側。今はテストの入口 tests/lib/adopt-server.mjs が呼ぶ）: 札（handOffTurn の card）を子に置き、
- * 保持役に detach して（答えが来た時点で、この親からの write は転送されない）、この道の読みを止める
- */
-export async function handOffHeld(sessionId, card) {
-  const source = helds.get(sessionId);
-  if (!source) throw new Error(`fake: no held turn to hand off (${sessionId})`);
-  source.client.label(source.id, card);
-  await source.client.detach(source.id);
-  source.stop();
-  return { childId: source.id };
-}
-
-/** テスト用: 偽の CLI への書き込み（承認の答え・途中送信・中断）を止める／戻す。中断が子に届かないまま手を離す・落ちる形を作る（止めている間の書き込みは捨てる） */
-export function muteHeld(sessionId, muted) {
-  const source = helds.get(sessionId);
-  if (!source) throw new Error(`fake: no held turn (${sessionId})`);
-  source.muted = Boolean(muted);
-  return true;
-}
-
-/** テスト用: 読みを止める（偽の CLI の出力は保持役に溜まり、このサーバーは処理も ack もしない）／再開する */
-export function pauseHeld(sessionId, paused) {
-  const source = helds.get(sessionId);
-  if (!source) throw new Error(`fake: no held turn (${sessionId})`);
-  source.pause(paused);
-  return true;
+  return await driveHeld({ source, record, emit, askPermission, signal, control, sessionId: id, recordUser: false });
 }

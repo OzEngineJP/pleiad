@@ -13,8 +13,8 @@ import { connectHolder, ensureHolder } from '../../core/holder/client.mjs';
 
 const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
-export const name = 'server-agent-account-adopt';
-export const title = '登録アカウントの引き継ぎ: 並行する2つの認証と実行中のターンを維持する';
+export const name = 'server-agent-account-restart';
+export const title = '登録アカウントの通常再起動: 2つの認証と実行中のターンを維持する';
 async function until(check, label) {
   const end = Date.now() + 30_000;
   for (;;) {
@@ -27,7 +27,7 @@ async function until(check, label) {
 
 export default async function (t) {
   for (const backend of ['codex', 'opencode']) {
-    const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), `ply-account-adopt-${backend}-`)));
+    const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), `ply-account-restart-${backend}-`)));
     const dataDir = path.join(scratch, 'data'), root = path.join(scratch, 'runtime');
     const home = path.join(scratch, 'home'), state = path.join(scratch, 'state');
     await Promise.all([dataDir, home, state].map(dir => fs.mkdir(dir)));
@@ -55,8 +55,7 @@ export default async function (t) {
       a = await startServer({ env, dataDir, timeoutMs: 60_000 });
       const info = await until(() => { const x = readLinkInfo(dataDir); return x?.pid === a.child.pid && x; }, 'main link');
       link = createServerLink({ pipe: info.pipe, secret: info.secret, appVersion: '0.0.1' });
-      const replies = [];
-      link.on('message', m => { replies.push(m); if (m.type === 'chrome-os-ready-request') link.postMessage({ type: 'chrome-os-ready', supported: false, reason: 'platform' }); if (m.type === 'secret') link.postMessage({ type:'secret', id:m.id, ok:true, value:{ available:false, backend:'none' } }); });
+      link.on('message', m => { if (m.type === 'chrome-os-ready-request') link.postMessage({ type: 'chrome-os-ready', supported: false, reason: 'platform' }); if (m.type === 'secret') link.postMessage({ type:'secret', id:m.id, ok:true, value:{ available:false, backend:'none' } }); });
       await link.connect();
       ca = await open({ port: a.port, token: a.token, autoAllow: true });
       for (const account of accounts) {
@@ -67,20 +66,14 @@ export default async function (t) {
       }
       const mark = ca.mark();
       for (let i = 0; i < ids.length; i++) {
-        void ca.cmd('sendMessage', { sessionId: ids[i], messageId: `account-adopt-${i}`, prompt: `gate:account-${i}` }).catch(() => {});
+        void ca.cmd('sendMessage', { sessionId: ids[i], messageId: `account-restart-${i}`, prompt: `gate:account-${i}` }).catch(() => {});
         await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids[i], { from: mark, ms: 30_000 });
       }
       await until(async () => (await ca.cmd('running')).turns.filter(x => x.held).length === 2, 'two held account turns');
       await sleep(400);
-      b = await startServer({ env, dataDir, timeoutMs: 60_000, args: ['--handover'], lazy: true });
-      await sleep(800);
-      link.postMessage({ type: 'handover', id: 71 });
-      const reply = await until(() => replies.find(m => m.type === 'handover' && m.id === 71), 'handover response');
-      assert.equal(reply.ok, true, JSON.stringify(reply));
-      assert.deepEqual([...reply.handed].sort(), [...ids].sort());
-      await until(() => a.child.exitCode !== null, 'old server exit');
+      await a.stop();
       ca.close(); ca = null;
-      await b.ready();
+      b = await startServer({ env: { ...env, AGENT_HOST_TOKEN: a.token, AGENT_HOST_PORT: String(a.port) }, dataDir, timeoutMs: 60_000 });
       const nextInfo = await until(() => { const x = readLinkInfo(dataDir); return x?.pid === b.child.pid && x; }, 'new main link');
       nextLink = createServerLink({ pipe: nextInfo.pipe, secret: nextInfo.secret, appVersion: '0.0.1' });
       nextLink.on('message', m => { if (m.type === 'secret') nextLink.postMessage({ type:'secret', id:m.id, ok:true, value:{ available:false, backend:'none' } }); });
@@ -95,9 +88,9 @@ export default async function (t) {
         assert.equal(history.messages.filter(m => m.role === 'assistant' && m.text.includes(expected)).length, 1);
         assert.equal(readSessions(dataDir)[ids[i]].claudeAccount, accounts[i].id);
       }
-      t.ok(`${backend}: 2アカウントの実行中ターンを同時に引き継ぎ、履歴と認証を維持する`, true);
+      t.ok(`${backend}: 2アカウントの実行中ターンを同時に復元し、履歴と認証を維持する`, true);
       for (let i = 0; i < ids.length; i++) {
-        const result = await cb.runTurn({ sessionId: ids[i], prompt: backend === 'opencode' ? 'account-env' : 'hello after handover' });
+        const result = await cb.runTurn({ sessionId: ids[i], prompt: backend === 'opencode' ? 'account-env' : 'hello after restart' });
         assert.equal(result.outcome, 'ok', b.tail(20));
         if (backend === 'opencode') assert.equal(JSON.parse(result.events.filter(e => e.type === 'text.delta').map(e => e.text).join('')).accountId, accounts[i].id);
       }
@@ -107,13 +100,13 @@ export default async function (t) {
         for (const account of accounts) {
           const starts = calls.filter(c => c.method === 'turn/start' && c.threadId && !c.ephemeral && path.resolve(c.home) === path.resolve(account.dir));
           assert.equal(starts.length, 3, 'initial, adopted and subsequent turn use the same account home');
-          assert.equal(new Set(starts.map(c => c.pid)).size, 1, 'the original app-server survives handover');
+          assert.equal(new Set(starts.map(c => c.pid)).size, 1, 'the original app-server survives restart');
           homes.add(starts[0].home);
         }
         assert.equal(homes.size, 2);
       }
       assert.doesNotMatch(b.tail(200), /\[unhandledRejection\]/);
-      t.ok(`${backend}: 引き継ぎ後の続きのターンもそれぞれのアカウントで動く`, true);
+      t.ok(`${backend}: 再起動後の続きのターンもそれぞれのアカウントで動く`, true);
     } catch (error) {
       error.message += `\n${(b ?? a)?.tail(40)}`;
       failure = error;

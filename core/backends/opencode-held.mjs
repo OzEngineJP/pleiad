@@ -5,7 +5,6 @@
 //     走っていたターンは会話の発言（GET /api/session/{id}/message）と答えていない承認・質問（GET /api/session/{id}/permission・/form）から組み立て直す（opencode.mjs の adoptTurn）
 //   札（label）: { k: 'opencode-server', v: 1, server: { base, auth, origin, secret }, turns: { <OpenCode の会話の id>: <サーバーの札> } }
 //     origin は OpenCode に渡した Pleiad の待ち受け（中継の口・プラグインの env の URL）。新しいサーバーは、ファイルの URL を差し替えて plugin と MCP の口を付け直す
-//   手を離す（handOff）: 同じ tick に来た全部のターンの札を置いて、保持役に detach する。以後このサーバーは子に書かない（HTTP は新しいサーバーのもの）
 //   付け直し（expand）: 起動で保持役の子の札を読み、子に付けて、札のターンごとの元を返す。ターンの無い子も引き継ぐ（起こし直しの数秒を省く）
 // 会話のシェルの環境変数（秘密情報を含む）は札に入れず、データ置き場の run/opencode-env-<uuid>.json に 0600 で置いて名前だけを札に書く（Claude の claude-env-file.mjs と同じ扱い）
 import fs from 'node:fs/promises';
@@ -54,9 +53,7 @@ export class HeldOpencode {
     this.adopted = !spawned;
     this.server = server;                 // { base, auth, origin, secret }
     this.cards = new Map();               // OpenCode の会話の id -> 札
-    this.detached = false;
     this.closed = false;
-    this.handing = null;
     this.labelTimer = null;
     this.ackTimer = null;
     this.pendingAck = 0;
@@ -65,7 +62,7 @@ export class HeldOpencode {
     this.exitListeners = new Set();
     this.exited = new Promise(resolve => { this.resolveExited = resolve; });
     this.onOut = frame => {
-      if (frame.id !== this.id || this.detached) return;
+      if (frame.id !== this.id) return;
       for (const fn of this.lineListeners) { try { fn(String(frame.line ?? '')); } catch { /* 受け手の失敗で読みを止めない */ } }
       this.#ack(frame.seq);
     };
@@ -87,7 +84,7 @@ export class HeldOpencode {
     client.on('exit', this.onExit);
   }
 
-  get writable() { return !this.detached && !this.closed && this.client.connected; }
+  get writable() { return !this.closed && this.client.connected; }
   tail() { return this.stderr.slice(-3).join(' / '); }
   onLine(fn) { this.lineListeners.add(fn); return () => this.lineListeners.delete(fn); }
   onGone(fn) { this.exitListeners.add(fn); return () => this.exitListeners.delete(fn); }
@@ -125,7 +122,7 @@ export class HeldOpencode {
   labelObject() { return { k: OPENCODE_LABEL_KIND, v: 1, server: this.server, turns: Object.fromEntries(this.cards) }; }
 
   touchLabel() {
-    if (this.detached || this.labelTimer) return;
+    if (this.labelTimer) return;
     this.labelTimer = setTimeout(() => { this.labelTimer = null; this.#sendLabel(); }, 0);
     this.labelTimer.unref?.();
   }
@@ -138,26 +135,11 @@ export class HeldOpencode {
     this.client.label(this.id, label);
   }
 
-  /** 旧サーバーの引き継ぎ: 同じ tick に来た全部のターンの札を置き、1 回だけ detach する */
-  handOff() {
-    this.handing ??= (async () => {
-      await new Promise(resolve => setImmediate(resolve));
-      clearTimeout(this.labelTimer);
-      this.labelTimer = null;
-      this.#sendLabel();
-      await this.client.detach(this.id);
-      this.detached = true;
-      if (current.get(this.id) === this) current.delete(this.id);
-      this.dispose();
-    })();
-    return this.handing;
-  }
-
   kill() { if (this.writable) this.client.kill(this.id, { tree: true }); }
 
-  /** 止めて終わるのを待つ。手を離していれば何もしない（新しいサーバーが引き継ぐ） */
+  /** 止めて終わるのを待つ */
   async stop({ waitMs = 3000 } = {}) {
-    if (this.detached || this.closed) { this.dispose(); return; }
+    if (this.closed) { this.dispose(); return; }
     // 止め始めたら、もう使わせない（止めている最中の子を acquire が返さない）
     if (current.get(this.id) === this) current.delete(this.id);
     if (pendingAdopt.get(this.id) === this) pendingAdopt.delete(this.id);
@@ -179,11 +161,11 @@ export class HeldOpencode {
 }
 
 /** このプロセスが使っている子（無ければ null） */
-export const heldOpencode = (account = null) => { const held = current.get(opencodeChildId(account)); return held && !held.closed && !held.detached ? held : null; };
+export const heldOpencode = (account = null) => { const held = current.get(opencodeChildId(account)); return held && !held.closed ? held : null; };
 
 export function accountHeldOpencode(account) {
   const id = opencodeChildId(account), held = current.get(id) ?? pendingAdopt.get(id);
-  return held && !held.closed && !held.detached ? held : null;
+  return held && !held.closed ? held : null;
 }
 
 /**
@@ -195,7 +177,7 @@ export async function acquireHeldOpencode({ argv, account = null, allowSpawn = t
   if (!opencodeHeldEnabled()) return null;
   const id = opencodeChildId(account);
   if (heldOpencode(account)) return heldOpencode(account);
-  if (pendingAdopt.has(id)) { const held = pendingAdopt.get(id); pendingAdopt.delete(id); if (!held.closed && !held.detached) { current.set(id, held); return held; } held.dispose(); }
+  if (pendingAdopt.has(id)) { const held = pendingAdopt.get(id); pendingAdopt.delete(id); if (!held.closed) { current.set(id, held); return held; } held.dispose(); }
   // listen 前は引継ぎ済みの生存子だけを使う。保持役への新規接続・既存子の停止・新規起動はしない。
   if (!allowSpawn) return null;
   const dataDir = dataDirOf();
@@ -259,17 +241,11 @@ export async function expandHeldOpencode({ client, child, log }) {
 
 registerChildExpander(OPENCODE_LABEL_KIND, expandHeldOpencode);
 
-/** このサーバーが終わるときに、手を離していない子を止めて、終わるのを待つ（server の exitAfterStoppingHeld） */
+/** アプリの終了で、このサーバーの子を止めて、終わるのを待つ（server の stopHeldChildren） */
 export async function stopHeldOpencode() {
   for (const held of new Set([...pendingAdopt.values(), ...current.values()]))
-    if (!held.detached && !held.closed) await held.stop({ waitMs: 2000 });
+    if (!held.closed) await held.stop({ waitMs: 2000 });
 }
-
-// 上の流れを通らない終わり方の保険（同期で送れる kill の frame だけ。取りこぼしても keepMs が止める）
-process.once('exit', () => {
-  for (const held of new Set([...pendingAdopt.values(), ...current.values()]))
-    if (!held.detached && !held.closed) held.kill();
-});
 
 // ---- 会話のシェルの環境変数（秘密情報を含む）。札には名前だけを置く
 

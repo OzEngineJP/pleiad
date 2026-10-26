@@ -339,9 +339,9 @@ export default async function testOpencodeAccounts(t) {
     assert.equal(heldTwo.closed, true);
     assert.equal(heldOne.closed, false);
     assert.ok(!JSON.stringify(heldOne.labelObject()).includes('refresh-'));
-    await heldOne.handOff();
+    heldOne.dispose();
     heldTwo.dispose();
-    t.ok('holder ids, labels, exit events and handoff isolate account processes and contain no provider credentials', true);
+    t.ok('holder ids, labels, exit events and ordinary server disposal isolate account processes and contain no provider credentials', true);
 
     process.env.AGENT_HOST_OPENCODE_HOLDER = 'on';
     process.env.AGENT_HOST_RUNTIME_ROOT = path.join(scratch, 'fake-runtime');

@@ -2,17 +2,18 @@
 // Devin・Grok は 1 ターン 1 プロセスで、stdin に 1 行 1 JSON を書き、stdout の 1 行 1 JSON を読む。保持役の子にすれば、
 // サーバーが入れ替わっても CLI は走り続け、新しいサーバーが同じ子の記録を印から読み直して続きを受ける（devin.mjs・grok.mjs の adoptTurn）。
 //   載せるか（heldAcpPlan）: 切り替え（AGENT_HOST_DEVIN_HOLDER・AGENT_HOST_GROK_HOLDER。既定は実行場所の置き場 AGENT_HOST_RUNTIME_ROOT があるとき on）・
-//     shell 無しで起こせる実行ファイル（.cmd は中のスクリプトに解く）・bot の会話でない・保持役につなげる。どれかが外れたら今の流れ（サーバーが CLI を直に起こす）
+//     shell 無しで起こせる実行ファイル（.cmd は中のスクリプトに解く）・保持役につなげる。どれかが外れたら今の流れ（サーバーが CLI を直に起こす）
 //   policy 'jsonrpc': 保持役は、子が出した答えていない依頼（session/request_permission など）を控え、付け直した親へ渡し直す。
 //     再生（印から ack まで）の依頼は履歴なので出し直さない（答え済みは控えに無い）。控えに残っているものだけを、渡し直しの 1 回で聞き直す
 //   印（turn）は、session/prompt を書く直前に打つ（再生はここから）。札（label）はサーバーのターンの札（core/turn-card.mjs）で、
 //     サーバーの touchCard が control.holder.label で置き直す
-//   ターンが終わったら札と印を外してから子を止める（endTurn → close）。手を離した（handOff）子には触れない
+//   ターンが終わったら札と印を外してから子を止める（endTurn → close）
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
 import { directCommand } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
+import { KEEP_MS } from '../process.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
 
 /** 保持役の子の id の頭。ほかのバックエンドの子（agy・Codex・Claude）と見分ける */
@@ -32,10 +33,10 @@ export function acpHeldEnabled(envName, env = process.env, boot = bootEnv) {
 
 /**
  * このターンの ACP の CLI を保持役に載せるか。載せるなら { client }（保持役への共有の口）、載せないなら null。
- * bot の会話は付け直さない（server の restoreTurn が断る）ので載せない。保持役を起こせない（抜け道の無い Job など）ときも載せない
+ * 保持役を起こせない（抜け道の無い Job など）ときは載せない
  */
-export async function heldAcpPlan({ dataDir, argv, bot = false, envName, log = console.error } = {}) {
-  if (!acpHeldEnabled(envName) || bot) return null;
+export async function heldAcpPlan({ dataDir, argv, envName, log = console.error } = {}) {
+  if (!acpHeldEnabled(envName)) return null;
   const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
   if (!dataDir || !root || !argv?.length || !directCommand(argv)) return null;
   try {
@@ -57,10 +58,10 @@ export async function heldAcpPlan({ dataDir, argv, bot = false, envName, log = c
 export function createHeldAcp({ client = null, source = null } = {}) {
   let id = source?.id ?? null;
   const adopting = Boolean(source);
-  let detached = false, handedOff = false, exited = null, muted = false, closing = false;
+  let exited = null, closing = false;
   let proc = null, onLine = () => {}, onStderr = () => {}, started = false;
 
-  const writeLine = data => { if (!detached && !muted && !exited) source.write(String(data)); };
+  const writeLine = data => { if (!exited) source.write(String(data)); };
 
   async function pump() {
     let info = { code: null, signal: null };
@@ -86,12 +87,10 @@ export function createHeldAcp({ client = null, source = null } = {}) {
         }
       }
     } catch (error) {
-      if (!detached && !handedOff) console.error('  保持役の ACP の読みが切れた:', String(error?.message ?? error));
+      console.error('  保持役の ACP の読みが切れた:', String(error?.message ?? error));
       info = { code: null, signal: null, lost: true };
     }
     exited = info;
-    // 旧サーバーが手を離した（handOff）: proc は終わらせない（子は走り続ける）
-    if (info.handedOff) return;
     proc.exitCode = info.code ?? null;
     proc.signalCode = info.signal ?? null;
     // 終わった子の記録を捨てる（保持役の側の控え）。つながりが切れて終わりが分からないときは触れない
@@ -106,8 +105,6 @@ export function createHeldAcp({ client = null, source = null } = {}) {
     get source() { return source; },
     get client() { return source?.client ?? client; },
     get adopting() { return adopting; },
-    get handedOff() { return handedOff; },
-    get detached() { return detached; },
     get exited() { return exited; },
     get pid() { return source?.state?.pid ?? null; },
 
@@ -120,21 +117,21 @@ export function createHeldAcp({ client = null, source = null } = {}) {
         id = `${ACP_CHILD_PREFIX}${crypto.randomUUID().slice(0, 8)}`;
         // 出来事の購読は spawn より前（holderSource が先に購読を始める）
         source = holderSource(client, { id, acked: 0, seq: 0, marks: {} }, { spawned: true });
-        client.spawn({ id, command: target.command, args: target.args, cwd: cwd || undefined, env, policy: 'jsonrpc' });
+        client.spawn({ id, command: target.command, args: target.args, cwd: cwd || undefined, env, policy: 'jsonrpc', keepMs: KEEP_MS });
       }
-      const onErr = frame => { if (frame.id === id && !detached && !exited) onStderr(String(frame.chunk ?? '')); };
+      const onErr = frame => { if (frame.id === id && !exited) onStderr(String(frame.chunk ?? '')); };
       source.client.on('err', onErr);
       const stdin = new EventEmitter();
       Object.defineProperties(stdin, {
-        writable: { get: () => !detached && !closing && !exited },
+        writable: { get: () => !closing && !exited },
         write: { value: data => { writeLine(data); return true; } },
-        end: { value: () => { if (!detached) source.client.end(id); } },
-        destroy: { value: () => { /* 保持役の子の stdin は親が切っても閉じない（detach と同じ扱い） */ } },
+        end: { value: () => source.client.end(id) },
+        destroy: { value: () => { /* 保持役の子の stdin は親が切っても閉じない */ } },
       });
       Object.assign(proc, { stdin, stdout: new EventEmitter(), stderr: new EventEmitter(), pid: held.pid, killed: false, exitCode: null, signalCode: null });
       proc.kill = () => {
         proc.killed = true;
-        if (!detached && !exited) source.client.kill(id, { tree: true });
+        if (!exited) source.client.kill(id, { tree: true });
         return true;
       };
       proc.once('exit', () => source.client.off('err', onErr));
@@ -157,34 +154,21 @@ export function createHeldAcp({ client = null, source = null } = {}) {
     },
 
     /** ターンの最初の行（session/prompt）を書く直前に打つ。印は次の行（保持役が子の出力の通番で数える）。再生はここから */
-    markTurn() { if (source && !detached && !exited) source.client.mark(id, ADOPT_TURN_MARK); },
+    markTurn() { if (source && !exited) source.client.mark(id, ADOPT_TURN_MARK); },
     /** 札を子に置く（server の touchCard が、札の中身が変わるたびに呼ぶ） */
-    label(card) { if (source && !detached && !exited) source.client.label(id, card); },
-
-    /**
-     * 旧サーバーの手を離す口: 札を子に置いて detach し（答えが来た時点で、この親からの write は転送されない）、読みを止める。
-     * 子は走り続ける（保持役が持つ）
-     */
-    async handOff(card) {
-      if (!source) throw new Error('acp: the CLI has not been started');
-      source.client.label(id, card);
-      await source.client.detach(id);
-      detached = true;
-      handedOff = true;
-      source.stop();
-    },
+    label(card) { if (source && !exited) source.client.label(id, card); },
 
     /** ターンが終わった（子を止める前に、付け直す対象から外す）。札と印を 1 回の書き込みで外す */
     endTurn() {
-      if (!source || detached || exited) return;
+      if (!source || exited) return;
       source.client.sendBatch([{ t: 'label', id, label: null }, { t: 'unmark', id, name: ADOPT_TURN_MARK }]);
     },
 
-    /** 子を止める（stdin を閉じ、木ごと止める）。終わるのを待つ（上限つき）。手を離した子には触れない */
+    /** 子を止める（stdin を閉じ、木ごと止める）。終わるのを待つ（上限つき） */
     async close({ waitMs = 10_000 } = {}) {
       if (!source) return;
       closing = true;
-      if (!detached && !exited) {
+      if (!exited) {
         // Windows の taskkill /T は、親が先に stdin 終了で落ちると子孫を
         // たどれないことがある。Windows では end を送らず、保持役の kill で木ごと止める。
         if (process.platform !== 'win32') {
@@ -194,10 +178,10 @@ export function createHeldAcp({ client = null, source = null } = {}) {
       }
       const waitForStop = async ms => {
         const end = Date.now() + ms;
-        while (!exited && !detached && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 20));
+        while (!exited && Date.now() < end) await new Promise(resolve => setTimeout(resolve, 20));
       };
       await waitForStop(waitMs);
-      if (!exited && !detached) {
+      if (!exited) {
         // The holder's Windows tree kill is asynchronous. Retry once if the
         // first request did not produce an exit before dropping this source.
         try { source.client.kill(id, { tree: true }); } catch { /* disconnected */ }
@@ -205,17 +189,12 @@ export function createHeldAcp({ client = null, source = null } = {}) {
       }
       // それでも終わらなければ、購読元は残す（終わりの知らせを受け取れるように）。close は会話の片付けから
       // 呼ばれるので投げない（投げると終わったターンが失敗になる）
-      if (!exited && !detached) return;
+      if (!exited) return;
       source.dispose();
     },
 
     /** 子を止める（待たない。落ちたときの保険） */
-    kill() { if (source && !detached && !exited) source.client.kill(id, { tree: true }); },
-
-    /** テスト用: 子への書き込みを止める／戻す（止めている間の書き込みは捨てる） */
-    mute(flag) { muted = Boolean(flag); },
-    /** テスト用: 読みを止める（子の出力は保持役に溜まり、このサーバーは処理も ack もしない）／再開する */
-    pause(flag) { source?.pause(flag); },
+    kill() { if (source && !exited) source.client.kill(id, { tree: true }); },
   };
   return held;
 }

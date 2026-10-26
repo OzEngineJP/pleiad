@@ -44,14 +44,14 @@ export function readPlyShellCard(card) {
 
 /**
  * 保持役の子 1 つ分（source は core/adopt.mjs の holderSource）。shell-bridge が使う:
- *   drive({ onOutput(stream, text, replay), signal }) … 印から記録を読み、終わりの結果を返す（{ handedOff: true }・{ already: true, ...result }・runHostShell と同じ形）
+ *   drive({ onOutput(stream, text, replay), signal }) … 印から記録を読み、終わりの結果を返す（{ already: true, ...result }・runHostShell と同じ形）
  *     replay は ack 済みの出力（ジョブの outputBuffer に足すだけで、画面へ流し直さない）。signal の中断で子へ stop を書く
  *   finished()  … 終わりを処理し終えた（出力の行を ack し、購読をやめる。記録は output・list のために残す）
  *   release()   … 記録を捨てる（JOBS_KEPT から溢れたとき）
  *   label(job)  … 札を置き直す（止めた理由）
  */
 function heldJob(source) {
-  let state = 'driving';            // driving -> finishing -> done ／ driving -> handedOff
+  let state = 'driving';            // driving -> finishing -> done
   let doneSeq = null, lastSeq = 0;
   const client = source.client;
   const write = value => source.write(lineOf(value));
@@ -73,7 +73,6 @@ function heldJob(source) {
         for (;;) {
           const item = await Promise.race([items.next().then(next => (next.done ? { exit: null } : next.value)), faulted]);
           if (item.exit !== undefined) {
-            if (item.exit?.handedOff) return { handedOff: true };
             state = 'finishing';
             if (doneSeq !== null && doneSeq <= acked) return { already: true, ...result };
             if (result) return result;
@@ -96,7 +95,6 @@ function heldJob(source) {
       } finally {
         signal?.removeEventListener?.('abort', onAbort);
         client.off('fault', fault);
-        if (state === 'handedOff') source.dispose();
       }
     },
     finished() {

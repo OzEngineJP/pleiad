@@ -1,8 +1,8 @@
-// 付け直した委譲の子のターン（無停止の更新 段階 2 の 2b-7。docs/zero-downtime-update/stage2-server-state.md §3 の 2・S8）: agentTasks.adoptRun。
-// 旧サーバー（manager a）が子のターンを走らせたまま手を離し（execute が handedOff を返す）、新しいサーバー（manager b）が同じデータ置き場で
-// adopting にそのタスクを挙げて起き、結果の確定（execute の後半）を adoptRun() で引き継ぐ。
+// サーバーを起こし直したときの委譲の子の復元（ADR 0270）: agentTasks.adoptRun。
+// A の通常終了で manager を閉じた後も、保持役の子と DB の running 記録が残る。B は同じデータ置き場でそのタスクを復元し、
+// 結果の確定（execute の後半）を adoptRun() から続ける。
 //   - 起動の復元は付け直すタスクを interrupted にしない（付け直さないタスクは今までどおり interrupted）
-//   - 手を離した旧サーバーは結果を書かない・通知しない（結果は新しいサーバーが 1 回だけ書く）
+//   - 終了した A は結果を書かない・通知しない（結果は起動した B が 1 回だけ書く）
 //   - 途中送信で渡している最中の追加指示（sending）は claim として引き継ぎ、渡った合図（steered）で配送済みにする。合図なしで終われば待機へ戻して次のターンで 1 回
 //   - 付け直しをあきらめたら interrupted。取り消しの最中（cancelling）のタスクは、付け直しても cancelled で終わる
 import fs from 'node:fs/promises';
@@ -12,7 +12,7 @@ import { createAgentTasks } from '../../core/agent-tasks.mjs';
 import { readAgentTasks, writeAgentTasks } from '../lib/data-store.mjs';
 
 export const name = 'agent-tasks-adopt';
-export const title = '付け直した委譲の子: 起動の復元で interrupted にせず、結果の確定を 1 回だけ引き継ぐ（手を離した側は書かない・途中送信の claim・あきらめ・取り消し）';
+export const title = '委譲の子を起動で復元: 通常終了後も実行を続け、結果を 1 回だけ確定する（途中送信・あきらめ・取り消し）';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn, ms = 8000) { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return; await sleep(15); } throw new Error('timeout'); }
 
@@ -20,7 +20,7 @@ export default async function(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-adopt-tasks-'));
   const delivered = [], executed = [];
   let seq = 0;
-  // 旧サーバーの execute: 子のターンが走っている形。hand(taskId) で子のターンを新しいサーバーへ渡す（handedOff）。close の abort では何も返さず待ち続けない
+  // 実行中の子を表す execute。通常終了で manager が abort したら、ローカルの待ちだけ解いて結果は書かない
   const hands = new Map();
   const open = ({ adopting = [], execute }) => createAgentTasks({
     dataDir: dir, log: () => {}, silenceMinutes: 0, commandMinutes: 0, adopting,
@@ -28,7 +28,7 @@ export default async function(t) {
     execute: async (task, prompt, signal) => {
       executed.push([task.taskId, prompt]);
       return execute ? execute(task, prompt, signal) : new Promise(resolve => {
-        hands.set(task.taskId, () => resolve({ handedOff: true }));
+        hands.set(task.taskId, () => {});
         signal.addEventListener('abort', () => resolve({ outcome: 'aborted' }), { once: true });
       });
     },
@@ -44,21 +44,19 @@ export default async function(t) {
   };
   let a = null, b = null;
   try {
-    // ---- 旧サーバー: 子のターンを走らせ、追加指示を途中送信で渡して合図を待つ（sending）。その状態で子のターンを新しいサーバーへ渡す
+    // ---- A: 子のターンを走らせ、追加指示を途中送信で渡して合図を待つ（sending）。普通に終了する
     a = await open({});
     const id = await start(a, 'work');
     const other = await start(a, 'other');   // 付け直さないタスク
     await a.call('p', 'ply_task_send', { taskId: id, message: 'extra' });
     const extra = a.instructions(id).instructions[0];
     t.ok('旧サーバー: 途中送信で渡した追加指示は、渡った合図まで sending', extra.state === 'sending', extra.state);
-    hands.get(id)();
-    await sleep(300);
-    t.ok('旧サーバー: 手を離した子の結果は書かず、通知もしない（running のまま）', a.get(id).status === 'running' && a.get(id).notification === 'none' && delivered.length === 0,
-      JSON.stringify(a.get(id)));
     await a.close();
+    t.ok('通常終了: 実行中の子の結果を確定せず、通知もしない（running のまま）', a.get(id).status === 'running' && a.get(id).notification === 'none' && delivered.length === 0,
+      JSON.stringify(a.get(id)));
     a = null;
 
-    // ---- 新しいサーバー: 付け直すタスクだけ interrupted にしない
+    // ---- B: 起動で復元するタスクだけ interrupted にしない
     let finish;
     b = await open({ adopting: [id], execute: async () => { throw new Error('execute は呼ばれない'); } });
     t.ok('復元: 付け直すタスクは running のまま', b.get(id).status === 'running', b.get(id).status);
@@ -83,8 +81,6 @@ export default async function(t) {
     const id3 = await start(a, 'work3');
     await a.call('p', 'ply_task_send', { taskId: id3, message: 'extra3' });
     const extra3 = a.instructions(id3).instructions[0];
-    hands.get(id3)();
-    await sleep(200);
     await a.close();
     a = null;
     b = await open({ adopting: [id3], execute: async (task, prompt) => ({ outcome: 'ok', text: `second:${prompt}` }) });
@@ -98,7 +94,7 @@ export default async function(t) {
     // ---- 付け直した回のターン開始の指示: promptAccepted で delivered（途中送信の claim は除く）
     a = await open({ execute: async (task, prompt, signal) => prompt === 'work6'
       ? { outcome: 'ok', text: 'first' }
-      : new Promise(resolve => { hands.set(task.taskId, () => resolve({ handedOff: true })); signal.addEventListener('abort', () => resolve({ outcome: 'aborted' }), { once: true }); }) });
+      : new Promise(resolve => { hands.set(task.taskId, () => {}); signal.addEventListener('abort', () => resolve({ outcome: 'aborted' }), { once: true }); }) });
     const job6 = await a.call('p', 'ply_delegate', { backend: 'fake', task: 'work6' });
     const id6 = job6.taskId;
     await until(() => a.get(id6).status === 'completed');
@@ -107,8 +103,6 @@ export default async function(t) {
     await a.call('p', 'ply_task_send', { taskId: id6, message: 'steer6' });
     const steer6 = a.instructions(id6).instructions[1];
     t.ok('旧サーバー: ターン開始の指示と合図待ちの途中送信が sending で並ぶ', states(a, id6) === 'next6:sending,steer6:sending', states(a, id6));
-    hands.get(id6)();
-    await sleep(200);
     await a.close();
     a = null;
     b = await open({ adopting: [id6], execute: async () => ({ outcome: 'ok', text: 'resumed' }) });
@@ -126,8 +120,6 @@ export default async function(t) {
     // ---- 付け直しをあきらめた（待ち受けのポートが取れないなど）: interrupted
     a = await open({});
     const id4 = await start(a, 'work4');
-    hands.get(id4)();
-    await sleep(200);
     await a.close();
     a = null;
     b = await open({ adopting: [id4], execute: async () => ({ outcome: 'ok' }) });
@@ -140,8 +132,6 @@ export default async function(t) {
     // ---- 取り消しの最中（cancelling）に旧サーバーが落ちた: 付け直しても cancelled で終わる
     a = await open({});
     const id5 = await start(a, 'work5');
-    hands.get(id5)();
-    await sleep(200);
     await a.close();
     a = null;
     const rows = readAgentTasks(dir);

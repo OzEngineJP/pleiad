@@ -1,6 +1,5 @@
 // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e。docs/zero-downtime-update/plan.md 2e）。
-// AGENT_HOST_HANDOVER=on の main が、サーバーの切断を main-leaving なし・切り替え中でもなく見て、居なければ（desktop/server-boot.cjs の
-// reattachServer が false）呼ぶ。同じ版のサーバーを同じトークン・ポートで起こし、同じ包み（ServerLink）でつなぎ直す。
+// If the pipe disconnects, restart the server only when it is no longer available.
 // 窓の読み直し・見張りの付け直し・ダイアログは呼び出し側（main.cjs）。ここは「起こせたか」だけを返す。
 //
 // 起こす版: 落ちたサーバーの ready の runtimeKey の版（実行場所に残っていれば）。無ければ（掃除された・印が無い）この main の版（chooseServer の prepared）。

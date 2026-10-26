@@ -9,12 +9,13 @@ import { LineReader, peekLine, parseControl, controlLine, linkPipeName, CARRY_MA
 const OLD_CHILD = fileURLToPath(new URL('../lib/link-old-child.mjs', import.meta.url));
 
 export const name = 'chrome-link';
-export const title = '接続の子（Chrome への ws を保持役の子が持つ）: パイプ・引き継ぎ・つなぎ手が居ない間・許可待ちの続き・版の不一致（偽の Chrome・本物の保持役と子。ADR 0167）';
+export const title = '接続の子（Chrome への ws を保持役の子が持つ）: パイプ・通常停止後の再接続・つなぎ手が居ない間・許可待ちの続き・版の不一致（偽の Chrome・本物の保持役と子。ADR 0167）';
 
 const wsUrl = chrome => `ws://127.0.0.1:${chrome.port}${chrome.wsPath}`;
 const opened = socket => new Promise((resolve, reject) => { socket.on('open', () => resolve(socket)); socket.on('close', () => reject(new Error('closed before open'))); });
 const closed = socket => new Promise(resolve => socket.on('close', resolve));
 const linkChildren = client => (client.welcome?.children ?? []).filter(c => c.label?.kind === LINK_CARD_KIND);
+const serverExit = async link => { await link.flush(); link.socket.destroy(); await sleep(50); };
 
 export default async function (t) {
   // ===== 0. 部品: 行の分け方・大きい行の種類・切り替え・札 =====
@@ -70,12 +71,11 @@ export default async function (t) {
       await cdp1.send('Page.stopScreencast', {}, session);
     }
 
-    // ===== 3. サーバーが入れ替わる: handOff → 新しいサーバーが同じ接続の子に付く。ws は切れず、確認も増えない =====
+    // ===== 3. A が通常終了して B が起動: 接続の子の ws は切れず、確認も増えない =====
     const upgradesBefore = chrome.upgrades;
     cdp1.onClose(() => {});
     link1.setCarry({ v: 1, port: 5555, entries: [{ id: 'e1', key: 'K' }] });
-    await link1.handOff();
-    await sleep(50);
+    await serverExit(link1);
     const parent2 = await holder.connect();
     const link2 = await openChromeLink({ holder: parent2.client, runtimeRoot: root, runtimeKey: 'k1' });
     t.ok('入れ替わり: 新しいサーバーは同じ接続の子に付く（子は 1 つのまま）', link2 && linkChildren(parent2.client).length === 1 && link2.welcome.phase === 'open', JSON.stringify(link2?.welcome));
@@ -93,7 +93,7 @@ export default async function (t) {
       const page = link2.welcome.sessions.find(s => s.targetId)?.targetId ?? targets[0].targetId;
       const s = (await cdp2.send('Target.attachToTarget', { targetId: page, flatten: true })).sessionId;
       await cdp2.send('Fetch.enable', { patterns: [{ urlPattern: '*' }] }, s);
-      await link2.handOff();
+      await serverExit(link2);
       await sleep(50);
       // 別の接続（確認なしの偽の Chrome）から移動させる。止める側（Fetch.enable したセッション）は接続の子のもの
       const { WebSocket } = await import('ws');
@@ -135,7 +135,7 @@ export default async function (t) {
       const navOwn = within(other.send('Page.navigate', { url: 'https://held.example/x' }, mine), 4000);
       await waitFor(() => seen.length === 1, 3000, 'requestPaused to client');
       t.ok('Fetch.enable したセッションの止まった要求は、つなぎ手へ流れる（通る道は塞がない）', seen.length === 1);
-      await linkB.handOff();   // 答えずに離れる
+      await serverExit(linkB);   // 答えずに通常終了
       const heldResult = await navOwn;
       t.ok('答えずにつなぎ手が離れたら、流してあった止まった要求を断る', /BLOCKED_BY_CLIENT/.test(heldResult.errorText ?? ''), JSON.stringify(heldResult));
       other.close();
@@ -159,7 +159,7 @@ export default async function (t) {
       const gone = closed(ws3);
       ws3.terminate();
       await gone;
-      await link3.handOff();
+      await serverExit(link3);
       const parent4 = await holder.connect();
       const link4 = await openChromeLink({ holder: parent4.client, runtimeRoot: root, runtimeKey: 'k1' });
       t.ok('terminate: 接続の子は idle に戻る', link4.welcome.phase === 'idle' && link4.adopted() === null, link4.welcome.phase);
@@ -169,7 +169,7 @@ export default async function (t) {
       cleanups.push(() => holdChrome.stop());
       const wsHold = new link4.WebSocketImpl(wsUrl(holdChrome));
       await waitFor(() => holdChrome.pending() === 1, 5000, 'pending');
-      await link4.handOff();
+      await serverExit(link4);
       const parent5 = await holder.connect();
       const link5 = await openChromeLink({ holder: parent5.client, runtimeRoot: root, runtimeKey: 'k1' });
       t.ok('許可待ち: 新しいサーバーは upgrading と upgrade を始めた時刻を受ける', link5.welcome.phase === 'upgrading' && link5.welcome.upgradeAt > 0 && link5.welcome.port === holdChrome.port, JSON.stringify(link5.welcome));
@@ -194,7 +194,7 @@ export default async function (t) {
 
       // ===== 9. 版の不一致: 新しいサーバーは古い接続の子を終わらせて起こし直す =====
       const before = linkChildren(parent5.client).map(c => c.id);
-      await link5.handOff();
+      await serverExit(link5);
       const parent6 = await holder.connect();
       // 札の版は合っているが、子が返す v をずらす代わりに、サーバー側の期待する版を変えた別のサーバーを真似る
       const old = (parent6.client.welcome?.children ?? []).find(c => c.label?.kind === LINK_CARD_KIND);

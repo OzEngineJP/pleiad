@@ -1,10 +1,4 @@
-// main が居ない間（更新の約 50 秒・付け直しまで）の、サーバー側の機能ごとの扱い（無停止の更新 段階 1 の 1-5。docs/zero-downtime-update/design.md §7.2）。
-// 口は main が付け直す形の偽物（connected・resumable・connect/disconnect）。実時間は短い上限に縮める。
-//   secret（待たせる・上限・復号の保持・切れた依頼を戻す・答えを得られなかったときに平文で書かない）・computer use（Esc と同じに止める）・
-//   内蔵ブラウザー（タブの写し・戻った main への復元の答え・読み込みの方針）・screencast（ended away）・os-open と openExternal・
-//   main-leaving（画面の猶予を数えない）・main-leaving-cancel（更新の取りやめで猶予を数える状態に戻す）・既定（utilityProcess の口）は何も変わらない
-//   切り替えで替わったサーバー（空から始まる）: secret は頼み直せば通る・内蔵ブラウザーは main が送り直した写しを取り込む
-//   ホストへ任せる口（remote-agent）: 居ない間はホストを全部オフライン扱いにして依頼を待たせず OFFLINE で失敗・戻ったら main が送り直す一覧と ready で元に戻る
+// main-away notifications.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
@@ -50,38 +44,21 @@ const { attachSecretBridge } = createRequire(import.meta.url)('../../desktop/sec
 export default async function (t) {
   const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-main-away-'));
   try {
-    // ---- 出来事: away・back・main-leaving
-    {
-      const link = linkPort({ connected: false });
-      const away = createMainAway({ mainPort: createMainPort({ parentPort: link }) });
-      const events = [];
-      away.onAway(() => events.push('away'));
-      away.onBack(({ first }) => events.push(first ? 'first' : 'back'));
-      link.connect();
-      link.disconnect();
-      link.say({ type: 'main-leaving', reason: 'update' });
-      t.ok('main-leaving の後は、戻るまで画面の猶予を数えない（holdsGrace）', away.leaving?.reason === 'update' && away.holdsGrace() === true);
-      link.connect();
-      t.ok('出来事: 最初のつながり・切れた・付け直し（first が false）。戻ると main-leaving は忘れる', events.join() === 'first,away,back' && away.holdsGrace() === false && away.connects === 2);
-      // 更新を取りやめた（main は居続ける）: 猶予を数える状態に戻す。main-leaving の無いときの取りやめ・切れた後に来た取りやめは何も起こさない
-      const stays = [];
-      away.onStay(() => stays.push('stay'));
-      link.say({ type: 'main-leaving-cancel' });
-      t.ok('main-leaving が無いときの取りやめは何も起こさない', stays.length === 0 && away.holdsGrace() === false);
-      link.say({ type: 'main-leaving', reason: 'update' });
-      link.say({ type: 'main-leaving-cancel' });
-      t.ok('main-leaving の後の取りやめで、猶予を数える状態に戻る（onStay が 1 回）', stays.length === 1 && away.leaving === null && away.holdsGrace() === false);
-      link.say({ type: 'main-leaving-cancel' });
-      t.ok('取りやめを重ねて受けても 1 回', stays.length === 1);
-      link.say({ type: 'main-leaving', reason: 'update' });
-      link.disconnect();
-      link.connect();
-      t.ok('取りやめずに戻った main では、main-leaving は忘れている（前からの動き）', away.holdsGrace() === false && stays.length === 1);
-      const plain = parentPort();
-      const quiet = createMainAway({ mainPort: createMainPort({ parentPort: plain }) });
-      plain.say({ type: 'main-leaving', reason: 'update' });
-      t.ok('既定（utilityProcess の口）では何も起きない（main-leaving も猶予に効かない）', quiet.holdsGrace() === false && quiet.leaving === null);
-    }
+    // ---- 出来事: away・back
+  {
+    const link = linkPort({ connected: false });
+    const away = createMainAway({ mainPort: createMainPort({ parentPort: link }) });
+    const events = [];
+    away.onAway(() => events.push('away'));
+    away.onBack(({ first }) => events.push(first ? 'first' : 'back'));
+    link.connect();
+    link.disconnect();
+    link.connect();
+    t.ok('初回接続・切断・再接続が通知され、接続回数を数える', events.join() === 'first,away,back' && away.connects === 2);
+    const plain = parentPort();
+    const quiet = createMainAway({ mainPort: createMainPort({ parentPort: plain }) });
+    t.ok('再接続できない通常の worker 口は何も通知しない', quiet.connects === 0);
+  }
 
     // ---- secret
     {

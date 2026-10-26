@@ -138,7 +138,6 @@ export function createChromeWindowCloser({ relay, screencast, handoffs, dataDir,
      * @param [options.isLive] (sessionId) => boolean  中継の外で「今その会話が動いている」ことを見る（ターンの実行・更新の途中など）
      */
     async sweepIdle({ isLive = () => false } = {}) {
-      if (relay.isHandedOff?.() === true) return [];   // 更新の引き継ぎで出ていく途中（窓は閉じない）
       const closed = [];
       for (const sessionId of relay.sessionIds?.() ?? []) {
         if (forgotten.has(sessionId) || active.has(sessionId)) continue;

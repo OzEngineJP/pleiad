@@ -10,7 +10,7 @@ import { CodexRpc } from '../../core/backends/codex-rpc.mjs';
 import { HeldAppServer, codexHeldEnabled } from '../../core/backends/codex-held.mjs';
 
 export const name = 'codex-held';
-export const title = 'Codex の app-server を保持役に載せる部品: 載せるかの切り替え・世代つきの id・付け直すスレッドの再生と預かり・手を離す';
+export const title = 'Codex 保持役の起動復元: 載せる条件・記録再生・通常終了';
 
 const line = value => JSON.stringify({ jsonrpc: '2.0', ...value });
 const note = (method, params) => line({ method, params });
@@ -159,26 +159,7 @@ export default async function (t) {
     t.ok('付け直しをあきらめたスレッド: 預かった依頼にはエラーを返し、ack を進める', true);
   }
 
-  // ---- 4. 手を離す
-  {
-    const held = mockHeld();
-    const rpc = new CodexRpc({}, { acquire: async () => held });
-    const started = rpc.start();
-    await tick(); await tick();
-    held.push(line({ id: held.writes[0].id, result: {} }), 1);
-    await started;
-    const pending = rpc.request('thread/read', { threadId: 'X' });
-    pending.catch(() => {});
-    await tick();
-    held.state.sink.handedOff();
-    await assert.rejects(pending, /handed over|引き継いだ/, '待っている依頼は、手を離したことで断る');
-    await assert.rejects(rpc.start(), /handed over|引き継いだ/, '手を離した後は何も送らない');
-    rpc.stop();
-    assert.equal(held.state.stopped, 0, 'stop は手を離した子を止めない（新しいサーバーが引き継ぐ）');
-    t.ok('手を離す: 待っている依頼を断り、以後は書かず、stop も子を止めない', true);
-  }
-
-  // ---- 5. HeldAppServer: 札・ack・同じ tick の全部のターンをまとめて手を離す
+  // ---- 5. ふつうのサーバー終了: 保持役の子は止めず、更新済みの札と ack を保持役に残す
   {
     const order = [];
     const client = Object.assign(new EventEmitter(), {
@@ -194,36 +175,19 @@ export default async function (t) {
     });
     const held = new HeldAppServer({ client, state: { acked: 0, seq: 0, marks: {} }, spawned: true });
     held.metaSnapshot = () => ({ loaded: { X: ['default', 'fp', 'hk'] }, watch: { X: 'session-x' } });
-    const seen = [];
-    held.run({ line: (text, seq) => seen.push(seq), err() {}, exit() {}, lost() {}, handedOff: () => order.push(['handedOff']) });
+    held.run({ line() {}, err() {}, exit() {}, lost() {} });
     held.markTurn('X');
-    held.putCard('X', { sessionId: 'sx' });
-    held.putCard('Y', { sessionId: 'sy' });
-    held.ack(12);
-    await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(order.filter(([k]) => k !== 'ack').map(([k, v]) => (k === 'label' ? `label:${Object.keys(v.turns).sort()}` : `${k}${typeof v === 'string' ? `:${v}` : ''}`)),
-      ['mark:turn:X', 'label:X,Y'], '印はターンの始まり。札はまとめて 1 回で置く');
-    order.length = 0;
-    // 同じ tick に来た 2 つのターンの手を離す: 札を全部置き、ack を進めてから、1 回だけ detach
     held.putCard('X', { sessionId: 'sx', stopping: true });
+    held.putCard('Y', { sessionId: 'sy' });
     held.ack(20);
-    const both = Promise.all([held.handOff(), held.handOff()]);
-    await both;
-    const kinds = order.map(([k]) => k);
-    assert.deepEqual(kinds.filter(k => k === 'detach'), ['detach'], 'detach は 1 回だけ');
-    assert.ok(kinds.indexOf('ack') < kinds.indexOf('label') && kinds.indexOf('label') < kinds.indexOf('detach'), 'ack → label → detach の順');
-    const label = order.find(([k]) => k === 'label')[1];
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const label = order.find(([kind]) => kind === 'label')?.[1];
     assert.equal(label.k, 'codex-app-server');
     assert.deepEqual(Object.keys(label.turns).sort(), ['X', 'Y']);
-    assert.equal(label.turns.X.stopping, true, '札は最後に置いたもの');
     assert.deepEqual(label.watch, { X: 'session-x' });
-    assert.equal(order.find(([k]) => k === 'ack')[1], 20, '処理し終えた最後の行まで ack する');
-    assert.equal(held.detached, true);
-    assert.equal(kinds.at(-1), 'handedOff', '読みの口（CodexRpc）は最後に手放す');
-    held.ack(30);
-    held.kill();
-    await tick();
-    assert.equal(order.filter(([k]) => k === 'kill').length, 0, '手を離した後は ack も kill も送らない');
-    t.ok('HeldAppServer: 印はターンの始まり・札はまとめて置く・同じ tick の全部のターンは ack → label → detach の順で 1 回だけ手を離し、以後は何も送らない', true);
+    assert.equal(order.find(([kind]) => kind === 'ack')?.[1], 20);
+    held.dispose();
+    assert.equal(order.filter(([kind]) => ['kill', 'detach', 'release'].includes(kind)).length, 0);
+    t.ok('普通のサーバー終了は最新の札と ack を保持役へ残し、保持役の app-server を止めない', true);
   }
 }

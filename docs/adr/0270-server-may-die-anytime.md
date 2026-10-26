@@ -1,11 +1,13 @@
 # 0270 サーバーはいつ落ちてもよい（起動を復元にして、引き継ぎ専用の経路を畳む）
 
-- 状態: 提案（2026-10-26）
+- 状態: 段 4a を実装済み（2026-10-27）。段 4b は未実施
 - 置き換えた: [ADR 0151](0151-zero-downtime-update.md) の決定 5（サーバーの入れ替えは引き継ぎで行う）・決定 9（段階 1 の先送り）・決定 11 のうち「引き継ぎを始める前に合うかを判定する」部分。決定 6（記録の再生で組み立て直す）は起動の復元の一部として残る。決定 1〜4（3 層・版ごとの実行場所・保持役の規約）・決定 10（データの形式番号が変わる版は中断して更新）・決定 12（終了は今のまま）は残る
-- 管理: [issue #143](https://github.com/tekalu1/pleiad/issues/143)。いまの挙動の表と残件はそちら。この ADR は作り直しの形だけを決める
+- 管理: [issue #143](https://github.com/tekalu1/pleiad/issues/143) は残件の管理に使う。この ADR は作り直しの形と段ごとの実装を記録する
 - 関連: [docs/zero-downtime-update/design.md](../zero-downtime-update/design.md)・[plan.md](../zero-downtime-update/plan.md)・[ADR 0115](0115-records-in-sqlite.md)（データ置き場は 1 プロセス）・[ADR 0168](0168-permission-wait-outlives-turn.md)（ターンの外の待ち）・[ADR 0227](0227-ply-shell-and-command-notices.md)（ply_shell）
 
 ## 状況
+
+この節の挙動は段 4 の実装前（2026-10-26）の記録である。現在の復元と停止は「段 4a の実装」を参照。
 
 無停止の更新（ADR 0151）は、サーバーを入れ替えるときに、機能ごとに「手放す側（旧サーバーの `handOff`・`stash`）」と「引き取る側（新サーバーの `adoptTurn`・`adopt`）」を書く作りになっている。保持役（`core/holder/`）はすでに汎用で、子の起動・通番つきの出力の記録・`ack`・`marks`・答えていない依頼の渡し直し（`jsonrpc`・`claude-control`）を持つ。その上に、`core/backends/*-held.mjs`（約 1,300 行）・`core/shell-runs.mjs` の `handOff`/`adopt`・Chrome の `setCarry`/`handOff`・`agent-tasks` の `adoptRun`・預かり物（`stash`）が別々に乗っている。
 
@@ -234,7 +236,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
   - ターンの外の待ち（`outlivesTurn`。Chrome の接続・ログイン）は `waits` に `wait:<id>`。待っている呼び出し（`hand_to_user` など）はサーバーの終わりで切れており、出し直しても答えを返す先が無いので、出し直さずに取り下げを届ける
   - 設定の変更の承認と秘密情報の入力のカード（`detached`）は、台帳（`core/setting-approvals.mjs`）が起動で「再起動で取り下げた」結果を会話へ届けるので、`stops` は足さない
 - **設定の変更の承認を出し直さない理由**: 承認は「この引数・この前の値」への受領証つきの約束で、許可の後に `proceed()` が前の値を読み直して実行する。起動をまたぐと `proceed` の closures（引数・操作の主体・依存）が無く、引数には秘密（MCP の env・接続先のキー）が入りうるので、DB に残して再実行する形にはしない。取り下げを会話へ届ける今の形を残す（「取り下げずに出し直せるならそうする」の判断。安全に再実行できないため出し直さない）
-- **付け直さない起動**: `AGENT_HOST_ADOPT_HOLDER` も引き継ぎも無い起動では、保持役の子がまだ待っているカードの行を、子の札（`label.waits`）から読んで残す（`core/adopt.mjs` の `readHeldWaitIds`）。取り下げを嘘にしない。段 4 で起動の復元を条件なしにすれば、この道は付け直しに変わる
+- **起動の復元**: 起動ごとに保持役の子一覧と DB のターン札を照合し、`label.waits` の承認・質問を同じ ID で出し直す（`core/adopt.mjs` の `readHeldWaitIds`）。取り下げていない待ちを消さない
 - **試験**: `restart-cards`（保持役のターンの承認が同じ id で出直して続く・載らないターンのカードは `approvals`・`outlivesTurn` は `waits`・`detached` は台帳の取り下げ）。既存の `server-permission-settled`・`server-permission-update`・`server-setting-approval`・`server-setting-approval-delegated`・`restart-acp` も緑
 
 ### 委譲の実行の控え（`core/agent-tasks.mjs` と `core/server.mjs` の `taskExecutions`）
@@ -281,7 +283,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 - **短い処理（`DRAIN_MS` = 8 秒）**: 終わらなければ引き継ぎを**断る**（`busy`。旧サーバーはそのまま走り、何も渡していない）。打ち切って進むことはない。`handover-core` の「短い処理が終わらなければ、上限まで待って断る」と `handover-server` が確かめる
 - **処理中の呼び出し（`INFLIGHT_MS` = 5 秒）**: 上限を過ぎても進むが、待ち切れなかった数を `result.droppedCalls` に載せ、`handover: N call(s) were still running...` とログに残す（`handover-core` の「処理中の呼び出しは上限まで待ち、過ぎても進む」・`handover-server` の `droppedCalls`）。打ち切られるのは HTTP の MCP・in-process の host MCP・hooks のコールバックで、保持役の子から見れば 1 回失敗するだけ。モデルが読んでやり直す（冪等でなくてよい。状態を変える処理は、失敗したことがモデルに返る）
-- 段 4 で `handoverSettled`・`--handover`・`stash` を消すときに、この 2 つの上限も一緒に消える
+- 段 4a で `handoverSettled`・`--handover`・`stash` と一緒にこの 2 つの上限も削除した。飛んでいる短い呼び出しはサーバー終了時に失敗し、呼び出し元が次の試行で判断する
 
 ### 外部 MCP の接続の鍵（段 2c の退行の直し）
 
@@ -325,11 +327,66 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 `server-git-panel-load`・`agy-relay-retry` は単独でも揺れるが、触ったファイル（`core/server.mjs`・`core/store.mjs`・`core/db.mjs`・`core/waiting-cards.mjs`・`core/interrupt-stops.mjs`・`core/adopt.mjs`・`core/context-connections.mjs`）に git・worktree・agy の中継の変更は無い。`adopt-opencode` は元の場所でも落ちることを確かめた。残りは `--jobs 1` で緑。
 
-### 2b 以降に回したもの（段 3 で変えた分）
+### 段 3 完了時に段 4 へ回したもの（2026-10-26 時点）
 
-- `restoreAdoptedTurns` を条件なしで通す（段 4）。段 3 では、付け直さない起動で保持役の子がまだ待っているカードの行を残すだけ
+- `restoreAdoptedTurns` を条件なしで通す（段 4a で完了。段 3 では、付け直さない起動で保持役の子がまだ待っているカードの行を残すだけだった）
 - 設定の変更の承認のカードの出し直し（安全に再実行できる形にするなら。段 4 以降の別の判断）
-- `chromeControl` の一時停止の印・音声・computer use・ビューアの「切れたら理由を出す」（段 4）
+- `chromeControl` の一時停止の印・音声・computer use・ビューアの「切れたら理由を出す」（4b）
+
+## 段 4a の実装（2026-10-27。サーバー側）
+
+### 起動と停止
+
+- `restoreAdoptedTurns` は通常起動で常に呼ぶ。保持役を起こさず、データ置き場のロックを取った後に保持役の子一覧とデータベースのターン札を照合する。該当するターンは `restoreTurn` で登録し、待ち受け後に `adoptTurn` / `driveTurn` で記録を再生する。該当しないターンは `restart` の中断として記録する。`AGENT_HOST_ADOPT_*` と `--handover` は復元の条件ではない。
+- SIGTERM・SIGINT・更新では保持役の子を止めず、通話と bot の記録、Chrome の予約済み carry、データベースを書き切ってからロックを放す。アプリの終了だけは `stopHeldChildren` を通して保持役の子を止める。会話削除など、その会話の後片付けは従来どおり対象の子を止める。`keepMs` は親が消えた子を回収する保持役側の上限として残し、通常のサーバー終了では起動し直す時間があるため、終了理由の印には使わない。
+- desktop の自動更新は旧サーバーへ通常の `shutdown` を送り、終了通知を待ってから installer を起こす。installer が起動しなければ保持役から同じ版を通常起動し、既存の窓を読み直す。
+- Chrome はリレーの状態変化で保存済みの carry だけを flush する。サーバー終了時に全状態のスナップショットを作る専用の carry 経路は持たない。接続の子と通常の carry 更新は残る。
+- `shell-runs.restore` と `shellBridge.restore` は起動時の復元を表す名前にし、`shell-held.stop` はアプリ終了時に札を外して子へ停止を送る。サーバー終了だけでこれらを呼ぶことはない。
+
+### bot と圧縮
+
+- bot の通常ターンは、起動復元でチャンネルの既存投稿と sidecar、待ち受け中の inbox、ターン札に保存した投稿 ID・使用量・呼び出し元から進捗役を作り直す。保持役の記録を replay して本文・使用量・承認状態を再構成し、replay 中はチャンネル通知を再送しない。配達済みフラグの修復は同じ inbox 行への冪等な更新にする。`bot-dispatch` の通常再起動場面が、承認待ちの投稿と再起動中に届いた出来事を確かめる。
+- pulse bot は通常のターン投稿を持たないため、既存の短い会話として復元役だけを登録する。保持役に残る圧縮ターンは通常の復元で続け、保持役に無い圧縮ターンは `compacting` 印から新しいサーバーで再試行する。圧縮は冪等なので再試行の方を選び、復元できた会話は再試行対象から外す。開始失敗時は `compacting` 印を消して次回起動でも再試行できるようにする。
+
+### 試験の対応と 4b へ回すもの
+
+- backend 固有の付け直しを確かめていた `adopt-agy`・`adopt-claude`・`adopt-codex`・`adopt-opencode`・`adopt-shell`・`adopt-held`・`adopt-finished` は残し、A の通常停止（SIGTERM）と B の通常起動に書き換えた。記録の再生・重複防止・同じ承認 ID の再表示・Codex の複数ターン・終了済みの子・A 不在中の shell 出力を引き続き検査する。`adopt-held` の委譲の途中送信に含まれていた「札を取る前半／detach する後半」の境目の検査は削除し、委譲の子・結果確定・完了通知は `restart-delegation` に任せる。
+- 引き継ぎ専用試験の対応は次のとおり。
+
+| 削除した試験 | 削除した理由／現在の検査先 |
+|---|---|
+| `handover-core` | `stash`・手放しフラグ・引き継ぎ待ちタイマーの単体契約はなくなった。起動は特別な準備段階を持たず、通常起動の復元だけになる。 |
+| `handover-notice` | `handoverSettled` の上限待ちはなくなった。未完了の短い呼び出しは失敗してよく、失ってはいけない状態は DB または保持役の記録から復元する。状態の復元は `restart-cards`・`restart-delegation` と backend ごとの `adopt-*` が検査する。 |
+| `handover-server` | `--handover` 固有の起動・ポート待ち・ロック受け渡しはなくなった。通常起動時のロック待ちは `restart-mode` と desktop の通常再起動試験で検査する。 |
+| `tests/lib/adopt-server.mjs` と `tests/lib/slow-exit-preload.mjs` | 旧サーバーにだけ「手を離す」操作を注入する入口と、終了後もしばらく生かす仕掛けは不要になった。保持役の子を残す A の通常 SIGTERM と B の通常起動は、7 つの `adopt-*` suite が直接使う `startServer` で検査する。遅延した終了通知や通常ロック待ちは `desktop-server-restart`・`restart-mode` が検査する。 |
+| `desktop-switch` の handover 専用ブロック（held ターンを blocker から外す判定、`handoverMode` と SDK 先取り、断り直し、S1 が手放した後の復旧） | 旧サーバーが処理中に次のサーバーへ状態を渡す分岐がなくなり、更新も通常停止の後に通常起動する。サーバー側の復元・再生は `adopt-*` と `restart-*` で検査し、残る通常の切り替え・stopper UX は 4b で整理する。 |
+| `desktop-handover` | main の切り替え規約・blocker／stopper の UX を前提にした suite は 4b の desktop 整理と一緒に組み直す。4a の server 復元は `desktop-switch` と desktop の通常再起動 suite で扱う。 |
+| `main-away-server` と orphan guard の更新向け 30 分猶予 | 更新中も旧サーバーを残す `main-leaving` 例外をなくした。自動更新は `shutdown` の終了を待ち、失敗時は同じ版を通常起動で戻す。保持役の子の復元は `adopt-*`、main 切断中の通常猶予は `desktop-server-boot` が検査する。 |
+| `adopt-held` の `handOffTurnOnly`／`handOffDetach`・準備中の handOff 可否・待ち上限 | サーバーがターンを札に移す中間状態と handoverSettled の上限はなくなった。通常停止の後に保持役の記録を再生する部分は同 suite の承認・ツール・終端行試験、委譲は `restart-delegation` が検査する。 |
+| `adopt-server` の `pauseHeld`／`muteHeld` 試験用操作 | 読み・書きの途中を人為的に止める口は不要になった。`adopt-held` と `adopt-finished` が、A の通常停止後に偽 CLI を完了させ、B が記録を拾う形で検査する。B で答える承認と、B で送る中断はそれぞれの起動復元試験が確認する。 |
+| `adopt-held` の handoff 段階ごとの委譲境界 | 中間の handoff 段階がなくなった。通常停止後の保持役の子・結果確定・完了通知は `restart-delegation` が確認し、`adopt-held` は付け直し中の再生と重複防止を確認する。 |
+| `claude-held` の「handoff 時に hook 呼び出しを drain する」場面 | サーバー終了時に hook を drain する特別な契約はなくなった。未完了の呼び出しは終了で失敗してよく、保持役の記録からの復元と承認の出し直しは `adopt-claude` が通常再起動で確認する。 |
+| `codex-held` の「handoff 可否・handoff 後に子を止めない」場面 | handoff callback はなくなった。普通のサーバー終了時に保持役の Codex app-server を止めず、次の起動で複数ターンを展開することを `adopt-codex` と `restart-codex-turn` が確認する。 |
+| `codex-accounts`・`opencode-accounts` の handoff callback を使ったアカウント保持試験 | handoff callback はなくなった。保持役由来のアカウント展開・通常 dispose の停止動作は同 suite、起動後の Codex ターン再接続は `server-agent-account-restart` と `adopt-codex` が確認する。 |
+
+- `desktop-handover`・`handover-*`・`main-away-server` の旧更新経路試験は削除し、backend 別の `adopt-*` は通常再起動試験として runner に戻した。`compat-check` は保持役の接続互換だけを確認し、handover の判定をしない。
+- `adopt-server.mjs` と `slow-exit-preload.mjs` は handoff の応答・遅延終了を作る試験専用の仕掛けだったため削除した。通常の `startServer()`、SIGTERM と保持役の fake CLI で A/B を作り、試験の前提を本番の起動と停止に揃えた。
+- `shell-held` は削除した。札を保存中に handOff を待つ場面、ack の後に子を abandon する場面は handoff の二相処理がなくなったため不要。既定で保持役へ載ること、停止中も出力が続くこと、終了直後の記録、再起動後の出力と `shell.done` の一回性は `adopt-shell` が通常の A 停止・B 起動で検査する。アプリ終了で保持役の子を止める動作は `adopt-shell` と `desktop-server-boot` が検査する。
+- `handover-core`・`handover-notice`・`handover-server` は削除した。drain の可否・短い処理の待ち上限・処理中呼び出しの打ち切り件数は handoff がなくなったため振る舞い自体がない。通常停止中の未完了 RPC は接続断として呼び出し元へ返り、復元が必要な agent のターンだけ保持役の記録から再開する。
+- `desktop-handover` と `main-away-server` は削除した。前者の handoff 専用の blocker・拒否通知・stoppers は 4b で統一する通常の停止 UI に置き換えるため、後者の「main が離れたら handoff」はなくなり `orphan-guard` が停止時の子を止めて通常終了する。サーバー A の通常停止と B の通常起動は `desktop-server-restart`、main の起動と終了配線は `desktop-server-boot` が検査する。
+- `chrome-relay` の旧 5c（handOff 前に保留 Fetch を drain する場面）は削除した。通常終了では保留中の Fetch は失敗してよく、再試行可能な通信は接続元が再実行する。接続の子を通常起動で付け直すことは `chrome-link-adopt`、保存済み carry と窓の復元は `chrome-persist` が検査する。
+- 4b に回す: `desktop/switch.cjs` の待機・阻止要因・stoppers・確認画面、更新 off 経路の統一、音声・computer use・ビューアが切れた理由の表示、残り 3 ファイルの `child_process` 整理。4a では main が旧サーバーを通常停止し、新サーバーを通常起動するための最小配線だけ合わせる。
+
+### 検証
+
+- `node tests/run.mjs restart --jobs 1`: 55/55 判定、8 suite 通過。
+- `PLEIAD_TEST_RESTART=work node tests/run.mjs server-fake --jobs 1`: 118/118 判定。
+- `PLEIAD_TEST_RESTART=turnEnd node tests/run.mjs server-shell server-fake --jobs 1`: 154/154 判定。
+- `node tests/run.mjs desktop --jobs 1`: 913/913 判定、20 suite 通過（`desktop-shell-env` は macOS・Linux 専用のため skip）。
+- 個別 suite: `adopt-agy` 9/9、`chrome-persist` 53/53、`server-devin` 90/90。全体試験では `bot-dispatch` の通常再起動ケースも通過した。
+- 全体 `node tests/run.mjs`（12 worker）: 21,609 判定中 4 件が worker 負荷または並列実行の時間競合で失敗。`server-devin`（90/90）は `--jobs 1` で再実行済み。残る `server-git-panel-load`・`worktrees`・`agy-relay-retry` はまとめて `--jobs 1` で再実行し、61/61 判定が通過した。全体試験で失敗した 4 suite の直列再試行合計は 151/151。
+- 全体実行後に残ったこの worktree の保持役・Chrome 子・runner fixture は、作成時刻とコマンド行を確認して停止した。
+- runner-contract／restart 系の「本体の git worktree が増えていない」判定は共有環境の別作業に影響される。今回の全体試験で該当する失敗はなかった。
 
 ## 畳むもの
 
@@ -337,10 +394,10 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 |---|---|---|
 | `core/handover.mjs`（180 行）・`core/handover-check.mjs`（52 行）・起動の `--handover`・`HANDOVER_VERSION`/`HANDOVER_RANGE`・`running` の `handover` | 4 | 版ごとの実行場所・main の `switch.cjs` の「組み立て→止める→起こす」 |
 | `desktop/switch.cjs` の `waitIdle`・`switchBlockers`・`handoverMode`・`stoppers` の確認・`declines`（693 行のうち約 3 分の 1） | 4 | 版の判定（`needsSwitch`）・データ形式の判定・実行場所の組み立て・窓の読み直し・合わない版のダイアログ |
-| サーバーの `holdable`・`handoverSettled`・`createHandover` の deps・`handOffTurn`・`stash`・`release`（終わる順序）・`AGENT_HOST_ADOPT_HOLDER`/`AGENT_HOST_ADOPT_FROM`/`AGENT_HOST_ADOPT_PORT_WAIT_MS` | 4 | `restoreAdoptedTurns`・`restoreTurn`・`adoptTurn`・`driveTurn`・`takeCard`（札を DB と保持役へ置く口に変わる）・`touchCard` |
-| バックエンドの `handOff`（`createHeldCli.handOff`・`handOffHeld`・`handOffAgy`・`handOffCodex`・`handOffOpencode`）と `adoptable` | 4 | 保持役の子をその CLI に見せる部分（Claude の偽 `SpawnedProcess`・Codex の共有 app-server の読み書き・OpenCode の HTTP・agy の stdio）と、記録の正規化・再生。子 1 つが複数のターンを運ぶ Codex の展開（`registerChildExpander`。子の札の種類ごとの 1 関数） |
-| `shell-runs.handOff`/`adopt`・`shell-held` の `handOff`/`abandon`・`shellBridge.stopAll`（サーバーの終わり） | 4 | `drive`/`finished`・札・`runHostShell` の包み |
-| Chrome の `setCarry`/`handOff`・接続の子の「最後の carry」 | 4 | 接続の子（`core/chrome/link.mjs`）が ws を持ち続けること。サーバーは起動で端点と窓の印を子から読む |
+| サーバーの `holdable`・`handoverSettled`・`createHandover` の deps・`handOffTurn`・保持役の `stash`・`AGENT_HOST_ADOPT_*` | 4a | `restoreAdoptedTurns`・`restoreTurn`・`adoptTurn`・`driveTurn`・`heldTurnCard`・`touchCard`。通常起動で DB と保持役の子一覧を照合する |
+| バックエンドのターンを手放す `handOff` と引き継ぎ専用の `adoptable` 判定 | 4a | 保持役の子を各 CLI に見せる部分（Claude の偽 `SpawnedProcess`・Codex の共有 app-server の読み書き・OpenCode の HTTP・agy の stdio）、`adoptTurn` による復元、記録の正規化と再生。Codex の子の展開も残る。shell の起動時一覧を読む `adoptable()` は復元 API として残る |
+| `shell-runs.handOff`/`adopt`・`shell-held` の `handOff`/`abandon` | 4a | 起動時の `restore`・実行中の `drive`/`finished`。アプリ終了時の `stop` は残し、通常のサーバー終了では呼ばない |
+| Chrome の終了時だけ行う carry のスナップショット設定 | 4a | 状態変化ごとの `setCarry` と接続の子（`core/chrome/link.mjs`）が WebSocket を持ち続ける経路。サーバー終了時は予約済み更新を flush し、起動は保存済み端点と窓の印を読む |
 | `agent-tasks.adoptRun` の「引き継ぎ専用」の分岐 | 3・4 | 台帳の行から `running` を拾い、結果の確定を続ける道 |
 | `desktop/switch.cjs` の `askUser`（止まるものの「あとで／止めて切り替え」） | 4 | データ形式が変わる版の「あとで／中断して更新」（ADR 0036 の形） |
 
@@ -350,8 +407,8 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - 【確認】Codex の共有 app-server は子 1 つが複数のターンを運ぶので、`readHolderSources` の「子 → ターン」の展開（`registerChildExpander`）が要る。OpenCode は記録ではなく HTTP に聞き直す（`opencode.mjs` の `adoptTurn`）。どちらも機能ごとの「手放す/引き取る」ではなく、「子の札の種類ごとの読み方」として残る。
 - 【推測】記録の再生で戻るのは、ターンの中の状態（表示・使用量・承認・ツール）だけ。ターンの外（`runtime.waiting` の待ち・`outlivesTurn`・ply_shell の出力・圧縮の予約）は戻らない。② で移す。移し忘れは「起動で拾えない」として試験に出る（段 3 の合格条件）。
 - 【確認】再生の冪等は、今は `text.end`・`tool.start`・`tool.result` の uuid/ツール id だけ（`core/adopt.mjs` の `eventKey`）。ほかの出来事（承認の出入り・通知・委譲の完了）は、ack の位置が「アプリのループで処理し終えた最後の行」なので、落ちた行が再処理されると二重になりうる。段 3 で、状態を変える出来事すべてに冪等の鍵を付ける。
-- 【確認】データ置き場のロックは、今は `--handover` の起動だけが `acquireDataLockWait` で待つ（`core/data-lock.mjs`）。普通に起こす新サーバーも、旧サーバーが放すまで数十 ms 待つ必要がある（待たないと `DATA_LOCKED` で終わる）。起動の待ちを既定にする。
-- 【推測】保持役の `keepMs`（親が居ない間に終わらない子を止める保険。Codex・OpenCode は 10 分）は「サーバーが落ちても子を止めない」と衝突する。更新・落ちたときの復元は数秒で終わるので 10 分で足りるが、アプリを終了したときに子を止めるのは `keepMs` ではなく「アプリの終了」の道に任せる。段 2 で `keepMs` を外すか、アプリの終了だけが渡す印にするかを決める。
+- 【確認・4a】データ置き場のロックは通常起動でも、旧サーバーが放すまで `acquireDataLockWait` で待つ（`core/data-lock.mjs`）。待ちを既定にしたので、サーバー A の通常停止直後に B を起こせる。
+- 【決定・4a】`keepMs` は保持役が親を失ったままになった場合の孤児回収上限として残し、通常サーバーの SIGTERM・クラッシュ・更新時には子を止める理由に使わない。再起動が上限を超えて回復できなかった場合だけ、保持役が指定時間後に子を回収する。アプリ終了は待ち時間を使わず `stopHeldChildren` で直ちに止め、会話削除などは対象会話の子を直ちに止める。
 - 【確認・2c】外部の stdio MCP は、`jsonrpc` の policy でそのまま保持役に載る（2c で実装）。「サーバーごとの状態」（ハンドシェイク・ケーパビリティ）は、**2 回目の `initialize` を送らずに**引き継げる: initialize の結果を札（`label.init`）に残し、付け直した側の `Client.connect()` の initialize にはその結果を返す（`notifications/initialized` も送り直さない）。`restart-mcp` の試験で、起こし直した後も MCP が受けた initialize は 1 回だけ（2026-10-26）。MCP の規約が 2 回目の `initialize` を受けるかは確かめていない（送らない形にしたので要らない）。
 
 ## 段
@@ -362,7 +419,9 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
    - 2b（実装済み 2026-10-26）: Devin・Grok（ACP）・Codex のターン専用の app-server・`.cmd` の包み（「2b の実装」）
    - 2c（実装済み 2026-10-26）: 外部の stdio MCP を保持役へ・残りの `child_process` の移行（24 → 3。「2c の実装」）
 3. **状態の置き場**。承認・質問のカード、ply_shell の出力、委譲の実行の控え、`outlivesTurn`、圧縮の予約を DB か保持役の記録へ移す。`handoverSettled` の「短い処理を待つ」を消す。
-4. **引き継ぎ専用の経路を畳む**。`--handover`・`stash`・`holdable`・`switch.cjs` の `waitIdle`/`blockers`/`stoppers` を消し、更新と落ちたときの復元を「止める→普通に起こす」にそろえる。off 経路も同じにする。
+4. **引き継ぎ専用の経路を畳む**。
+   - 4a（実装済み 2026-10-27）: 通常起動で復元し、SIGTERM・クラッシュ・更新で保持役の子を止めずに終了する。backend 別の再起動試験は通常停止・起動にする。「段 4a の実装」を参照。
+   - 4b（未実施）: `switch.cjs` の `waitIdle`/`blockers`/`stoppers`、off 経路、切断理由の表示、残る `child_process` を整理する。
 
 段 1 はこの ADR と同じブランチで試作し、段 2 以降は別のブランチで行う。段ごとに、その段の変更と同じコミットで `AGENTS.md` の環境変数の表・`docs/desktop-releases.md`・`docs/zero-downtime-update/` を今の形に直す。
 
