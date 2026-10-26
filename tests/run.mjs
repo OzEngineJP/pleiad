@@ -98,6 +98,8 @@ const SUITES = [
   './unit/shortcut-labels.mjs',
   './unit/arc.mjs',
   './unit/activity-strip.mjs',
+  // mark 型ロゴの文書内シンボル化（web/brand-marks.mjs）: <use> の参照・1 回だけの取得・シンボルの登録・失敗後の取り直し
+  './unit/brand-marks.mjs',
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',
   './unit/agent-browser-lifetime.mjs',

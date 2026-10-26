@@ -31,10 +31,13 @@ import { aiMarkTitle } from "./change-log.mjs";
 import { branchIcon } from "./icons.mjs";
 import { parseTerms, matchLocal, findRanges, localOrder, periodSince, pushRecentSearch, searchShortcutLabel, searchShortcutAria } from "./session-find.mjs";
 import { agentBrand } from "./agent-brands.mjs";
+import { ensureBrandMark } from "./brand-marks.mjs";
 
 /**
  * エージェントのロゴ（14px）。一覧の行とバックグラウンドのダイアログで使う。ロゴはエージェントの記述の brand（web/agent-brands.mjs）。
  * mark のロゴは SVG の #mark を currentColor で描き、色は .row-be-<id>（web/style.css）。ロゴの無いエージェントは ◇
+ * #mark は外部参照（./brand/x.svg#mark）ではなく文書内の <symbol> を指す（web/brand-marks.mjs。
+ * 外部参照は挿すたびにファイルを取り直し、行の作り直しでロゴがちかちかする）
  */
 export function backendLogo(id, label) {
   const mark = el("span", "row-be");
@@ -45,7 +48,7 @@ export function backendLogo(id, label) {
     mark.classList.add(`row-be-${id}`);
     if (brand.mark) {
       const svg = svgEl("svg", { viewBox: "0 0 24 24", role: "img", "aria-label": label });
-      svg.append(svgEl("use", { href: `${src}#mark` }));
+      svg.append(svgEl("use", { href: `#${ensureBrandMark(brand.logo)}` }));
       mark.append(svg);
       return mark;
     }
