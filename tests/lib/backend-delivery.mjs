@@ -373,7 +373,8 @@ async function probeGrok({ scratch, caps }) {
       secrets: (observed.seenEnv ?? []).includes(MARK.secretName) && has(prompt, instr('secrets')),
       visualize: has(prompt, MARK.visualize),
       hooks: has(hookText, 'delivery-hook.mjs') && (observed.seenEnv ?? []).includes('GROK_CLAUDE_HOOKS_ENABLED'),
-      plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt),
+      plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt)
+        && (!deliveryRequired(caps?.nativeShellOff) || observed.nativeShellOff === true),
       computerUse: (observed.mcpServers ?? []).includes('ply_computer') && has(prompt, instr('computer')),
     },
   };

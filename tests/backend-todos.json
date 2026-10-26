@@ -20,7 +20,6 @@
     },
     "grok": {
       "compatEndpoints": "#108",
-      "nativeShellOff": "#108",
       "plyContext": "#108",
       "subagents": "#108"
     },

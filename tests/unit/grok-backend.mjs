@@ -26,14 +26,19 @@ export default async function (t) {
   const sessions = new Map();
   class FakeAcp {
     constructor(options) { this.options = options; this.init = null; }
+    notify() {}
     async start() {
       this.init = { _meta: { modelState: { currentModelId: MODEL, availableModels: [{ modelId: MODEL, _meta: { totalContextTokens: 1000 } }] } } };
+      const profileAt = this.options.args.indexOf('--agent-profile');
+      this.profile = profileAt >= 0 ? this.options.args[profileAt + 1] : null;
+      try { this.profileText = this.profile ? fs.readFileSync(this.profile, 'utf8') : null; } catch { this.profileText = null; }
       return this.init;
     }
-    notify() {}
     async call(method, params) {
       const entry = { method, params, env: this.options.env };
       entry.args = this.options.args;
+      entry.profile = this.profile;
+      entry.profileText = this.profileText;
       const dirs = params?._meta?.pluginDirs ?? [];
       // 呼ばれた時点で置き場に hooks.json があるか（Grok が読むのはこの時点）
       entry.pluginFiles = dirs.map(d => { try { return JSON.parse(fs.readFileSync(path.join(d, 'hooks', 'hooks.json'), 'utf8')); } catch { return null; } });
@@ -200,6 +205,24 @@ export default async function (t) {
     t.ok('履歴取得に追加MCP・秘密情報・接続用環境変数を持ち込まない', isolated.params.mcpServers.length === 0
       && isolated.env.PLEIAD_FIXTURE_SECRET === process.env.PLEIAD_FIXTURE_SECRET
       && isolated.env.AGENT_BROWSER_CONFIG === process.env.AGENT_BROWSER_CONFIG);
+
+    // ネイティブ shell を Pleiad の設定で切るプロファイルは、新規・再開の ACP 起動だけに付ける。
+    const nativeOff = { url: 'http://127.0.0.1:1/shell', headers: {}, nativeOff: true, instructions: 'fixture-shell-instructions' };
+    mark = calls.length;
+    const shellOffNew = await turn({ cwd, shellRuntime: nativeOff });
+    const shellOffProfile = of('session/new', mark)[0];
+    t.ok('shellTool=ply の新規 Grok 会話で bash を外す一時プロファイルを起動引数に渡す',
+      shellOffProfile?.profile && shellOffProfile.profileText.includes('run_terminal_cmd')
+      && of('session/set_mode', mark).some(c => c.params.modeId === 'default'));
+    t.ok('一時プロファイルをターン終了後に消す', Boolean(shellOffProfile?.profile) && !fs.existsSync(shellOffProfile.profile));
+    mark = calls.length;
+    await turn({ cwd, sessionId: shellOffNew.sessionId, shellRuntime: nativeOff, mode: 'plan' });
+    const shellOffResume = of('session/resume', mark)[0];
+    t.ok('再開会話でも bash を外し、読み取り専用モードの ACP 設定を維持する',
+      shellOffResume?.profileText?.includes('run_terminal_cmd') && of('session/set_mode', mark).some(c => c.params.modeId === 'plan'));
+    mark = calls.length;
+    await turn({ cwd: other });
+    t.ok('別会話にネイティブ shell を外すプロファイルを持ち越さない', !of('session/new', mark)[0]?.profile);
     mark = calls.length;
     await turn({ cwd: other });
     const separate = of('session/new', mark)[0];

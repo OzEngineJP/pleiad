@@ -229,7 +229,7 @@ export const CAPABILITY_STATES = {
     computerUse: { images: 'path', waitSliceMs: null },
     shell: 'host',
     plyShell: true,
-    nativeShellOff: todo('#108'),
+    nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ブラウザー・操作一覧・コンピューター・シェル・委譲を HTTP MCP で、接続情報と秘密の変数を起動環境で渡す。
