@@ -13,6 +13,7 @@
 //      fileChange の承認要求には中身が入っていない（itemId だけ）ので、
 //      item/started で見た item を覚えておいて承認カードに載せる。
 import os from "node:os";
+import { covered, impossible, todo } from './contract.mjs';
 import { codexQuota, createCodexMeter } from '../usage.mjs';
 import { codexLimitError, codexResetOf } from './codex-limit.mjs';
 import { rpc as defaultRpc, withCodexEnvironment } from './codex-rpc.mjs';
@@ -1342,14 +1343,14 @@ const backend = {
   capabilities: {
     compact: true,
     title: true,        // thread/name/set。公式クライアントとタイトルを共有できる
-    tag: false,         // 状態タグは持てない -> sidecar が正本
+    tag: covered,       // 状態タグは持てない -> sidecar が正本
     fork: true,
     // 同じ会話で巻き戻せる（thread/revert。legacy は thread/fork { beforeTurnId }。下の rewind）
     rewind: 'thread',
     subagents: true,    // 子スレッド。thread/list { parentThreadId } と thread/read で読む
-    liveModel: false,   // 走っている最中の切り替えは app-server に口が無い
-    liveMode: false,
-    hostTools: false,   // set_status / set_title / fork は未接続。可視化は共通の参照形式で提供
+    liveModel: impossible('app-server に走っているターンの切り替えの口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    liveMode: impossible('app-server に走っているターンの切り替えの口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     plyAgents: true,    // ply_agents を mcp_servers に、その instructions を developerInstructions に渡す
     plyInstructions: true, // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     // ply_computer（runArgs.computerRuntime）を mcp_servers に、指示を developerInstructions に渡す。同梱の computer use は切る（ADR 0074）。
@@ -1363,18 +1364,18 @@ const backend = {
     shell: 'native',
     // ply_shell を受け取る。Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0227）
     plyShell: true,
-    nativeShellOff: false,
-    forkMessage: false,         // thread/fork は発言の途中では切れない（Pleiad が写す）
+    nativeShellOff: impossible('Codex のシェルは切らない（features.shell_tool が会話ごとに効くか確かめていない・切るとサンドボックスも外れる。ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    forkMessage: covered,       // thread/fork は発言の途中では切れない（Pleiad が写す）
     approvals: 'interactive',
     // MCP のツールの呼び出しは Codex が承認を聞かない。確認なしの承認モードのほかは Pleiad が聞く（server.mjs の mcpApprovalByHost）
     mcpApproval: 'host',
     accounts: 'agent',
-    autoCompactWindow: false,
-    promptSuggestions: false,   // ターンの後に suggestNext で作る
+    autoCompactWindow: todo('#151'),   // 委譲の子に渡す口があるか未検証
+    promptSuggestions: covered,   // ターンの後に suggestNext で作る
     plyContext: 'turn',
-    effortInModelId: false,
-    instructionsAtStart: false,
-    failureDiagnostics: false,
+    effortInModelId: impossible('強さは別のパラメータで渡す'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    instructionsAtStart: impossible('指示はターンごとに渡せるので、会話の始めに固定されない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    failureDiagnostics: impossible('失敗の形が構造化されているので、ログを残す必要が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,   // turn/steer で走っているターンへ足す
     promptDelivery: true,   // turn/start の受理と userMessage イベントで「渡った」が分かる
     handover: true,          // 共有の app-server を保持役に載せ、新しいサーバーが付け直す（codex-held.mjs）
