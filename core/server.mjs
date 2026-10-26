@@ -6287,12 +6287,12 @@ const outbox = createMessageQueue({
           turn.pendingSteers.add(item.id);
           // sendMessage の受付直後にサーバーが落ちても新サーバーがこの outbox 項目を再開できるよう、
           // 途中送信を保持役へ書くより前に札へ記録する（ADR 0270 の規則 ②）。
-          if (!writeTurnCard(turn)) {
+          if (turn.control.holder && !writeTurnCard(turn)) {
             turn.pendingSteers.delete(item.id);
             return false;
           }
         }
-        turn.control.persistSteer = confirms ? () => writeTurnCard(turn) : null;
+        turn.control.persistSteer = confirms && turn.control.holder ? () => writeTurnCard(turn) : null;
         try {
           const accepted = await steer(item);
           if (!accepted && turn.pendingSteers.delete(item.id)) touchCard(turn);
