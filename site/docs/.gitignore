@@ -2,6 +2,18 @@ node_modules/
 dist/
 .astro/
 .cache/
-# コードから作るページ（scripts/generate.mjs が組む）
-src/content/docs/agents/
-src/content/docs/en/agents/
+# コードから作るページ（scripts/generate.mjs が組む .md・.mdx）は追跡しない。
+# agents/<id>/_connect.md（英語は en/agents/<id>/_connect.md）だけは手書きの断片で残す
+src/content/docs/agents/**/*.mdx
+src/content/docs/agents/**/*.md
+!src/content/docs/agents/**/_connect.md
+src/content/docs/en/agents/**/*.mdx
+src/content/docs/en/agents/**/*.md
+!src/content/docs/en/agents/**/_connect.md
+src/content/docs/reference/**/*.mdx
+src/content/docs/reference/**/*.md
+src/content/docs/en/reference/**/*.mdx
+src/content/docs/en/reference/**/*.md
+
+# release-bump の文書の確かめが、タグの写しの agents.mjs を import するため一時的に置く場所
+.tmp/

@@ -243,9 +243,13 @@ function copyShared(out) {
 // raw.githubusercontent.com で必要なファイルだけを取る（core/ のファイルを足したら DOCS_SOURCE_FILES に足す）。
 // 取れないとき（--offline・API の失敗）は作業ツリーの core/ から作り、その旨をページに出す。
 const DOCS = path.join(SITE, "docs");
-const DOCS_SOURCE_FILES = ["core/backends/agents.mjs"];
+const DOCS_SOURCE_FILES = ["core/backends/agents.mjs", "tests/ops-surface.snap.json"];
 const RAW_URL = `https://raw.githubusercontent.com/${REPO_SLUG}`;
-const WORKTREE_SOURCE = { agents: path.join(SITE, "..", "core", "backends", "agents.mjs"), label: "worktree" };
+const WORKTREE_SOURCE = {
+  agents: path.join(SITE, "..", "core", "backends", "agents.mjs"),
+  snap: path.join(SITE, "..", "tests", "ops-surface.snap.json"),
+  label: "worktree",
+};
 
 /** 文書の生成に使う core/ のファイル。タグから取れたらその写し、取れなければ作業ツリー */
 async function docsSource(release, offline) {
@@ -271,7 +275,11 @@ async function docsSource(release, offline) {
       return WORKTREE_SOURCE;
     }
   }
-  return { agents: files[0].file, label: release.version };
+  return {
+    agents: files.find(({ rel }) => rel === "core/backends/agents.mjs").file,
+    snap: files.find(({ rel }) => rel === "tests/ops-surface.snap.json").file,
+    label: release.version,
+  };
 }
 
 function run(command, args, cwd) {
@@ -296,7 +304,7 @@ export async function buildDocs(out, { offline = false, release = pickReleases([
     installDocs();
   }
   const source = await docsSource(release, offline);
-  run(process.execPath, [path.join(DOCS, "scripts", "generate.mjs"), "--agents", source.agents, "--source", source.label], DOCS);
+  run(process.execPath, [path.join(DOCS, "scripts", "generate.mjs"), "--agents", source.agents, "--snap", source.snap, "--source", source.label], DOCS);
   run(process.execPath, [astro, "build"], DOCS);
   fs.cpSync(path.join(DOCS, "dist"), path.join(out, "docs"), { recursive: true });
   console.log(`built docs: /docs/ ・/docs/en/（${source.label === "worktree" ? "作業ツリー" : source.label}）`);

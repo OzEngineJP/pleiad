@@ -12,6 +12,8 @@
 //   --dry-run         前提の検査だけ（何も書かない・commit しない・push しない）
 //   --offline         origin を見ない（fetch・タグの重複・main の CI の状態を飛ばす）。一時の clone での練習や試験用
 //   --skip-checks     速い確認（tests/run.mjs release-ci-gate）を飛ばす
+//   --docs-unchanged <理由>  見える機能が前の版から変わったのに site/docs が変わっていないときの逃げ道。
+//                     生成の一覧で足りるなど、ページを変えなくてよい理由を書くと通る（理由は出力に残る）
 //
 // 前提: ブランチが main・作業ツリーが clean（原稿 releases/<version>.json だけ未追跡でよい）・origin/main より遅れていない・
 // 版が今までのどれより新しい・タグ v<version> がローカルにも origin にも無い。1 つでも外れたら何も書かずに止まる。
@@ -29,12 +31,12 @@ export const VERSION_RE = /^\d+\.\d+\.\d+(?:-beta\.\d+)?$/;
 export const TEMPLATE_TITLE = '（見出しを書く）';
 export const TEMPLATE_ITEM = '（利用者に見える変更を書く）';
 
-const USAGE = 'usage: node scripts/release-bump.mjs <version> [--notes <file>] [--subject <text>] [--trailer <text>]… [--push] [--dry-run] [--offline] [--skip-checks]';
+const USAGE = 'usage: node scripts/release-bump.mjs <version> [--notes <file>] [--subject <text>] [--trailer <text>]… [--push] [--dry-run] [--offline] [--skip-checks] [--docs-unchanged <理由>]';
 
 export class UsageError extends Error {}
 
 export function parseArgs(argv) {
-  const o = { version: null, notes: null, subject: null, trailers: [], push: false, dryRun: false, offline: false, skipChecks: false, help: false };
+  const o = { version: null, notes: null, subject: null, trailers: [], push: false, dryRun: false, offline: false, skipChecks: false, docsUnchanged: null, help: false };
   const need = (i, key) => {
     const v = argv[i + 1];
     if (v === undefined || v.startsWith('--')) throw new UsageError(`${key} に値が無い`);
@@ -50,6 +52,7 @@ export function parseArgs(argv) {
       case '--dry-run': o.dryRun = true; break;
       case '--offline': o.offline = true; break;
       case '--skip-checks': o.skipChecks = true; break;
+      case '--docs-unchanged': o.docsUnchanged = need(i, a); i++; break;
       case '--help': case '-h': o.help = true; break;
       default:
         if (a.startsWith('-')) throw new UsageError(`知らないオプション: ${a}`);
@@ -198,6 +201,40 @@ export async function main(argv, { root = path.resolve(path.dirname(fileURLToPat
     warnings.push(...c.warnings);
     o.title = c.notes?.title;
   }
+
+  // 文書の確かめ（#149 公開リファレンス）: 見える機能（エージェント・操作・設定・能力の印）が前の版から変わったのに
+  // site/docs が変わっていなければ止める。生成の一覧で足りるなど、変えなくてよい理由は --docs-unchanged に書く
+  // （site/tools/docs-features.mjs は遅れて読む。文書の道具を持たない写し（試験の一時リポジトリなど）では飛ばす）
+  let docsFeatures = null;
+  try { docsFeatures = await import('../site/tools/docs-features.mjs'); } catch { /* 無ければ飛ばす */ }
+  if (!docsFeatures) warnings.push('文書の確かめ: site/tools/docs-features.mjs を読めないので飛ばした');
+  const prevTag = `v${newest}`;
+  if (docsFeatures && git(['rev-parse', '-q', '--verify', `refs/tags/${prevTag}`], { allowFail: true }).ok) {
+    const readNow = (rel) => { const p = path.join(root, ...rel.split('/')); return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : ''; };
+    const readPrev = (rel) => git(['show', `${prevTag}:${rel}`], { allowFail: true }).out ?? '';
+    // エージェントの一覧は agents.mjs を import して取る（タグ側の写しは worktree 内の一時ファイルへ書いて読み、終わったら消す）
+    let nowAgents = null, prevAgents = null;
+    try {
+      nowAgents = await docsFeatures.loadAgentsFromPath(path.join(root, 'core', 'backends', 'agents.mjs'));
+      prevAgents = await docsFeatures.loadAgentsFromSource(readPrev('core/backends/agents.mjs'), path.join(root, 'site', 'docs', '.tmp'));
+    } catch (e) {
+      warnings.push(`文書の確かめ: agents.mjs を読めなかった（${String(e?.message ?? e)}）。機能一覧の比較を飛ばす`);
+    }
+    if (nowAgents && prevAgents) {
+      const rels = [...new Set([...docsFeatures.sourceFiles(prevAgents), ...docsFeatures.sourceFiles(nowAgents)])];
+      const prevFiles = {}, nowFiles = {};
+      for (const rel of rels) { prevFiles[rel] = readPrev(rel); nowFiles[rel] = readNow(rel); }
+      let changed = null;
+      try { changed = docsFeatures.digest(docsFeatures.inventory(nowFiles, nowAgents)).body !== docsFeatures.digest(docsFeatures.inventory(prevFiles, prevAgents)).body; }
+      catch (e) { warnings.push(`文書の確かめ: 機能一覧を作れなかった（${String(e?.message ?? e)}）。人が確かめて進める`); }
+      if (changed === true) {
+        const docsChanged = git(['diff', '--name-only', prevTag, 'HEAD', '--', 'site/docs/'], { allowFail: true }).out.length > 0;
+        if (docsChanged) info.push('文書の確かめ: 見える機能が変わっている（site/docs も変わっている）');
+        else if (o.docsUnchanged) warnings.push(`文書の確かめ: 見える機能が変わっているが site/docs は変わっていない（理由で通した: ${o.docsUnchanged}）`);
+        else errors.push(`利用者に見える機能が前の版（${prevTag}）から変わっているのに site/docs が変わっていない。文書を見直すか、生成の一覧で足りるなら --docs-unchanged "理由" を付ける（機能とページの対応表は site/docs/docs-coverage.json、試験は docs-coverage）`);
+      } else if (changed === false) info.push(`文書の確かめ: 見える機能は ${prevTag} から変わっていない`);
+    }
+  } else if (docsFeatures) warnings.push(`文書の確かめ: 前の版のタグ ${prevTag} が無いので飛ばした`);
 
   for (const line of info) out(`  ${line}`);
   for (const line of warnings) out(`  注意: ${line}`);

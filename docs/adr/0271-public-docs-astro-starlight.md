@@ -23,6 +23,8 @@
 ## 影響
 
 - main への push のビルドで、`site/docs` の `npm ci` と Astro のビルドが走る（数十秒）。Cloudflare のビルド環境の Node は 24.21.0 で、Astro 7 は 22.22 以上が要る。
-- 生成に使う `core/` のファイルを増やすときは `site/tools/build-site.mjs` の `DOCS_SOURCE_FILES` に足す（そのファイルが import するファイルも足す）。
+- 生成に使う `core/`（や `tests/`）のファイルを増やすときは `site/tools/build-site.mjs` の `DOCS_SOURCE_FILES` に足す（そのファイルが import するファイルも足す）。
 - タグのファイルを取れないときは作業ツリーから作り、ビルドは止めない。そのときは公開中の版と文書がずれうるので、ビルドのログの警告を見る。
-- 手で書く文書のページは `site/docs/src/content/docs/`（日本語）と `site/docs/src/content/docs/en/`（英語）に置く。コードから作るページの出力（`src/content/docs/agents/`）は追跡しない。
+- 手で書く文書のページは `site/docs/src/content/docs/`（日本語）と `site/docs/src/content/docs/en/`（英語）に置く。コードから作るページの出力（`src/content/docs/agents/`・`src/content/docs/reference/` の `.md`・`.mdx` と英語側）は追跡しない。エージェントごとのページに差し込む手書きの断片 `agents/<id>/_connect.md`・`en/agents/<id>/_connect.md` は追跡する。
+- 利用者に見える機能（エージェント・操作・設定・能力の印）の一覧は `site/tools/docs-features.mjs` がコードから作る（エージェントの一覧は `agents.mjs` を import して取る）。`site/docs/docs-coverage.json` が機能ごとに、載せるページ（`cover`）か載せない理由（`except`）を持ち、`tests/unit/docs-coverage.mjs` が対応表と一覧・ページ・断片の有無を検査する。機能を足したら対応表を直す。
+- `scripts/release-bump.mjs` は、見える機能が前の版のタグから変わったのに `site/docs/` が変わっていなければ止める。生成の一覧で足りるなど、変えなくてよいときは `--docs-unchanged "理由"` で理由を残して通す。

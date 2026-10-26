@@ -19,13 +19,26 @@ export default defineConfig({
       customCss: ["./src/styles/docs.css"],
       credits: false,
       sidebar: [
-        { label: "はじめに", translations: { en: "Getting started" }, items: [] },
+        {
+          label: "はじめに",
+          translations: { en: "Getting started" },
+          items: [{ label: "はじめに", translations: { en: "Getting started" }, slug: "getting-started" }],
+        },
         {
           label: "エージェント",
           translations: { en: "Agents" },
-          items: [{ label: "エージェントの一覧", translations: { en: "Agent reference" }, slug: "agents" }],
+          items: [{ autogenerate: { directory: "agents" } }],
         },
-        { label: "困ったとき", translations: { en: "Troubleshooting" }, items: [] },
+        {
+          label: "リファレンス",
+          translations: { en: "Reference" },
+          items: [{ autogenerate: { directory: "reference" } }],
+        },
+        {
+          label: "困ったとき",
+          translations: { en: "Troubleshooting" },
+          items: [{ label: "困ったとき", translations: { en: "Troubleshooting" }, slug: "troubleshooting" }],
+        },
       ],
     }),
   ],

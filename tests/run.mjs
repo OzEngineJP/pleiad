@@ -972,6 +972,8 @@ const SUITES = [
   './unit/voice-wait.mjs',
   // 仮想のキー Pleiad Plus の通話: 書き起こし・読み上げに ID トークン・トークンの更新で切らない・credit_exhausted・rate_limited（偽の Plus）
   './unit/voice-plus.mjs',
+  // 公開リファレンス（site/docs）: 利用者に見える機能（コードから作る一覧）と載せるページの対応表・手書きの断片の有無
+  './unit/docs-coverage.mjs',
 ];
 
 // PLEIAD_TEST_RESTART があれば、「途中でサーバーを止めて起こし直す」モードを、suite を読み込む前にこのプロセスへ入れる
