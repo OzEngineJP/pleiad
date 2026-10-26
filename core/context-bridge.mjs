@@ -9,7 +9,7 @@ import { t, agentT } from './i18n.mjs';
 import { createContextConnections, WARM_IDLE_MS } from './context-connections.mjs';
 import { insideDir } from './worktrees.mjs';
 import { bootEnv } from './boot-env.mjs';
-import { run } from './process.mjs';
+import { run, spawnChild } from './process.mjs';
 import { holderSource } from './adopt.mjs';
 import { startHeldMcp, readHeldMcpChildren, initOfLabel, heldMcpPlan, HeldMcpTransport } from './context-mcp-held.mjs';
 
@@ -77,7 +77,7 @@ class DetachedStdioTransport extends StdioClientTransport {
       throw new Error('StdioClientTransport already started! If using Client class, note that connect() calls start() automatically.');
     }
     return new Promise((resolve, reject) => {
-      this._process = spawn(this._serverParams.command, this._serverParams.args ?? [], {
+      this._process = spawnChild(this._serverParams.command, this._serverParams.args ?? [], {
         env: { ...getDefaultEnvironment(), ...this._serverParams.env },
         stdio: ['pipe', 'pipe', this._serverParams.stderr ?? 'inherit'],
         shell: false,

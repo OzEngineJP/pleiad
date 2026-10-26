@@ -185,7 +185,11 @@ export function createHeldAcp({ client = null, source = null } = {}) {
       if (!source) return;
       closing = true;
       if (!detached && !exited) {
-        try { source.client.end(id); } catch { /* つながりが切れた */ }
+        // Windows の taskkill /T は、親が先に stdin 終了で落ちると子孫を
+        // たどれないことがある。Windows では end を送らず、保持役の kill で木ごと止める。
+        if (process.platform !== 'win32') {
+          try { source.client.end(id); } catch { /* つながりが切れた */ }
+        }
         try { source.client.kill(id, { tree: true }); } catch { /* つながりが切れた */ }
       }
       const end = Date.now() + waitMs;
