@@ -53,12 +53,11 @@ const trust = createWindowTrust();
 let remoteWindows;
 // messages はサーバーの message を 1 つの listener で受けて橋へ配る（desktop/worker-messages.cjs）。橋は worker でなくこれに付ける
 let worker, messages, linked = null, window, origin, updates, quitting = false, closing = false, exitInProgress = false;
+let serverRestarter = null, serverExitHandler = null, activePortFile = null, updateInProgress = false;
 let chromePill = null;
 let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了のときに、画面の外へ隠したエージェントの窓を片付けるために main が持つ
 // 無停止の更新で、付け直したサーバーが古い版のときの新しい版への切り替え（desktop/switch.cjs）
 let serverSwitch = null;
-// main-leaving を送った後（更新で main が離れる途中）。この間につながりが切れても、サーバーは起こし直さない
-let updateLeaving = false;
 // 最後に届いたサーバーの ready。サーバーが落ちたとき、同じトークン・ポート・版で起こし直す材料（desktop/server-restart.cjs）
 let serverReady = null;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
@@ -151,12 +150,22 @@ async function abortAll(reason, onProgress) {
 }
 
 async function installUpdate() {
-  // 無停止の更新（パイプのサーバー。ADR 0151）: 作業を中断せず、サーバーをロックしない。サーバーに main-leaving を送り
-  // （main が戻らないまま作業が 0 件で 30 分たったら終わる。core/orphan-guard.mjs）、electron-updater が終わる直前
-  // （before-quit-for-update。インストーラーを起こした後）につながりだけを切る。サーバーは走り続け、新しい main が付け直して切り替える（desktop/switch.cjs）
-  const handover = Boolean(linked);
+  // 更新でも通常の shutdown で旧サーバーを終え、新しい main が通常起動する。
+  // サーバーの shutdown は保持役の子を残し、DB のロックを解放してから終了する。
+  const linkedServer = Boolean(linked);
+  let stopped = false;
   try {
-    if (handover) { updateLeaving = true; worker.postMessage({ type: 'main-leaving', reason: 'update' }); }
+    if (linkedServer) {
+      updateInProgress = true;
+      quitting = true;
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { worker.off('exit', exited); reject(new Error('server did not stop for update')); }, 30_000);
+        const exited = () => { clearTimeout(timer); resolve(); };
+        worker.once('exit', exited);
+        worker.postMessage({ type: 'shutdown' });
+      });
+      stopped = true;
+    }
     else {
       const lock = await workerRequest('update-lock');
       if (!lock.ok) throw new Error(t('update.blocked', { reason: lock.reason }));
@@ -175,15 +184,23 @@ async function installUpdate() {
         for (const listener of native.listeners('update-downloaded')) if (!before.has(listener)) native.off('update-downloaded', listener);
         reject(new Error(t('update.applyFailed')));
       };
-      const ready = () => { cleanup(); quitting = true; if (handover) worker.leave('update'); else worker.postMessage({ type: 'shutdown' }); resolve(); };
+      const ready = () => { cleanup(); quitting = true; if (!linkedServer) worker.postMessage({ type: 'shutdown' }); resolve(); };
       updater.once('error', failed); native.once('before-quit-for-update', ready);
       // Windows はインストーラーの進捗バーだけを出して適用し、終わったら起動し直す。
       // 入れ先とインストールの種類は前回を引き継ぎ、選択と完了の画面は出さない（build/installer.nsh）
       try { updater.quitAndInstall(false, true); } catch { failed(); }
     });
   } catch (e) {
-    // 更新を取りやめた。main は居続けるので、サーバーの main-leaving（猶予を数えない・切断の上限）を解く
-    quitting = false; updateLeaving = false; worker.postMessage({ type: handover ? 'main-leaving-cancel' : 'update-unlock' }); throw e;
+    quitting = false; updateInProgress = false;
+    if (linkedServer && stopped && serverRestarter) {
+      const restarted = await serverRestarter.restart();
+      if (restarted.ok) {
+        serverReady = restarted.ready;
+        if (serverExitHandler) worker.once('exit', serverExitHandler);
+        await reloadWindow(restarted.ready, activePortFile);
+      }
+    } else if (!linkedServer) worker.postMessage({ type: 'update-unlock' });
+    throw e;
   }
 }
 
@@ -289,6 +306,7 @@ async function boot() {
   await shellEnv;
   // 開発版と配布版が同時に動いても互いのポートを奪い合わないよう、記録を分ける
   const portFile = path.join(app.getPath('userData'), app.isPackaged ? 'server-port.json' : 'server-port-dev.json');
+  activePortFile = portFile;
   const agentBrowserBin = prepareAgentBrowserBin({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, root: path.join(__dirname, '..'), dataDir: app.getPath('userData') });
   // AGENT_HOST_HANDOVER=on: サーバーを main の子でない形で起こす・走っているサーバーに付け直す（desktop/server-boot.cjs。名前付きパイプでつなぐ）。
   // 起こせない環境（Job が抜け道を許さない・実行場所を組めない）では null で、今の utilityProcess に落ちる
@@ -411,7 +429,7 @@ async function boot() {
   });
   window.on('session-end', () => { quitting = true; worker.postMessage({ type: 'shutdown', stopHeld: true }); });
   // サーバーが落ちたときの起こし直し（desktop/server-restart.cjs。名前付きパイプの経路だけ）
-  const restarter = linked ? require('./server-restart.cjs').createServerRestarter({ link: worker, getReady: () => serverReady, prepared: linked.prepared, root: linked.root,
+  serverRestarter = linked ? require('./server-restart.cjs').createServerRestarter({ link: worker, getReady: () => serverReady, prepared: linked.prepared, root: linked.root,
     dataDir: serverBoot().resolveDataDir(), resourcesPath: runtimeResources(), execPath: process.execPath, systemLocale: systemLanguage(), cwd: app.getPath('home'), log: line => log(`restart: ${line}`) }) : null;
   const onServerExit = () => {
     // 切り替え（desktop/switch.cjs）が古いサーバーを終わらせている間は、終了の知らせを出さない
@@ -419,15 +437,15 @@ async function boot() {
     void (async () => {
       let restartFailed = false;
       // 名前付きパイプの経路: 別の main が付け直した（bye 'replaced'）なら静かに終わる。つながりだけが切れたなら（サーバーは居る）付け直す。
-      // サーバーが居なければ（落ちた）、同じ版を同じトークン・ポートで起こし直して窓を 1 回だけ読み直す。main-leaving の後（更新で離れる途中）・サーバー自身が終わるところ（bye 'closing'）は起こし直さない
+      // サーバーが居なければ（落ちた）、同じ版を同じトークン・ポートで起こし直して窓を 1 回だけ読み直す。サーバー自身が終わるところ（bye 'closing'）は起こし直さない
       if (linked) {
         if (worker.exitReason === 'replaced') { quitting = true; app.quit(); return; }
         if (worker.exitReason !== 'closing' && await serverBoot().reattachServer({ link: worker, dataDir: serverBoot().resolveDataDir(), log })) { worker.once('exit', onServerExit); return; }
-        if (worker.exitReason !== 'closing' && !updateLeaving && !quitting && !exitInProgress) {
-          const restarted = await restarter.restart();
+        if (worker.exitReason !== 'closing' && !quitting && !exitInProgress) {
+        const restarted = await serverRestarter.restart();
           if (restarted.ok) {
             // 起こし直している間に終了が始まったなら、終了の shutdown は切れたつながりへ送られて届いていない。起こしたサーバーを終わらせる
-            if (quitting || exitInProgress) { if (quitting && !updateLeaving) worker.postMessage({ type: 'shutdown', stopHeld: true }); return; }
+            if (quitting || exitInProgress) { if (quitting && !updateInProgress) worker.postMessage({ type: 'shutdown', stopHeld: true }); return; }
             if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit);
             await reloadWindow(restarted.ready, portFile).catch(e => log(`restart: reloading the window failed: ${e.message}`));
             return;
@@ -440,6 +458,7 @@ async function boot() {
       await showFatalError('Pleiad', restartFailed ? t('server.restartFailed') : t('server.exited')).catch(e => console.error(e)).finally(() => app.quit());
     })();
   };
+  serverExitHandler = onServerExit;
   worker.once('exit', onServerExit);
   await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
   // 自動起動（--hidden）は静かに上がる。トレイに残る構成（resident）なら窓は出さず、トレイから開く。トレイが無い構成ではタスクバーに最小化で置く
@@ -550,10 +569,10 @@ ipcMain.on('ply:title-bar', (event, colors) => {
   window.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLE_BAR_HEIGHT });
 });
 // 画面の外・透明・マウス素通しの窓は、Pleiad が終わると誰にも戻せない。終了の道（will-quit・will-quit を通らない app.exit）で閉じる（閉じられなければ見える形へ戻す）
-// 更新で離れるとき（updateLeaving）は閉じない。窓は新しい main が exportAgent の印から引き継ぐ（ADR 0167）。引き継げなかった窓は新しい main が CDP で閉じる
+// アプリ更新では閉じない。窓は新しい main が exportAgent の印から引き継ぐ（ADR 0167）。引き継げなかった窓は新しい main が CDP で閉じる
 function closeAgentWindows() {
   chromePill?.close();
-  if (updateLeaving) { try { chromeOs?.stopGuard?.(); } catch { /* 見張りが無い層 */ } return; }
+  if (updateInProgress) { try { chromeOs?.stopGuard?.(); } catch { /* 見張りが無い層 */ } return; }
   try { chromeOs?.closeAllAgents?.(); } catch (error) { console.warn('[chrome-os]', `closeAllAgents failed: ${error.message}`); }
 }
 if (!app.requestSingleInstanceLock()) app.quit();

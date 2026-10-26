@@ -238,7 +238,7 @@ export default async function (t) {
     });
     const held = new HeldAppServer({ client, state: { acked: 0, seq: 0, marks: {} }, spawned: true });
     const seen = [];
-    held.run({ line() {}, err() {}, exit() {}, lost() {}, handedOff() {}, overflow: frame => seen.push(frame) });
+    held.run({ line() {}, err() {}, exit() {}, lost() {}, overflow: frame => seen.push(frame) });
     client.emit('overflow', { id: 'someone-else', reason: 'line', bytes: 1 });
     client.emit('overflow', { id: CODEX_CHILD, reason: 'record', first: 3 });
     client.emit('overflow', { id: CODEX_CHILD, reason: 'line', bytes: 2 });

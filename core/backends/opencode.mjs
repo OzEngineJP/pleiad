@@ -736,8 +736,6 @@ export const backend = {
         return true;
       };
     }
-
-    // 保持役の札と、引き継ぎで手を離す口（server の takeCard・handoverRun が使う）。発言を送る直前に付ける
     // （付ける前のターンは引き継げないので、短い準備のあいだは切り替えが待つ）
     const bindHeld = () => {
       if (!heldServer) return;

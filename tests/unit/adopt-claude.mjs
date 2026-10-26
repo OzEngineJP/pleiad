@@ -27,7 +27,7 @@ const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
 
 export const name = 'adopt-claude';
-export const title = '付け直し: 保持役に載せた Claude の CLI（偽物）を、サーバーの入れ替えをまたいで途中から引き継ぐ';
+export const title = '付け直し: 通常停止後に保持役の Claude の CLI（偽物）を起動時に付け直す';
 
 const WAIT_MS = 20_000;
 const script = steps => `script:${JSON.stringify({ steps })}`;
@@ -148,7 +148,7 @@ export default async function (t) {
     for (const k of ['H', 'M']) await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids[k], { ms: WAIT_MS, from: markA });
     await sleep(800);   // 札の置き直し（touchCard）が保持役へ届くまで
     ca.close(); ca = null;
-    await a.kill(); a = null;
+    await a.stop(); a = null;
 
     // 保持役の子: 札つきで走り続けている（B より前にテストがつなぐ）
     const cards = {};
@@ -249,7 +249,7 @@ export default async function (t) {
       const doneBefore = sessionMeta(ids.Q).completedAt;
       await sleep(600);
       ca.close(); ca = null;
-      await a.kill(); a = null;
+      await a.stop(); a = null;
       b = await startServer({ env, dataDir, timeoutMs: 30_000 });
       cb = await open({ port: b.port, token: b.token });
       const askB2 = await cb.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS });
@@ -280,7 +280,7 @@ export default async function (t) {
       await fs.writeFile(fixture, `import fs from 'node:fs';import readline from 'node:readline';fs.appendFileSync(${JSON.stringify(launches)},'launch\\n');if(fs.readFileSync(${JSON.stringify(launches)},'utf8').split('launch').length>2)await new Promise(r=>setTimeout(r,2000));let n=0;for await(const line of readline.createInterface({input:process.stdin})){const m=JSON.parse(line);if(m.id===undefined)continue;const result=m.method==='initialize'?{protocolVersion:'2025-06-18',capabilities:{tools:{}},serverInfo:{name:'fixture',version:'1'}}:m.method==='tools/list'?{tools:[{name:'count',description:'count',inputSchema:{type:'object'}}]}:m.method==='tools/call'?{content:[{type:'text',text:'count='+(++n)}]}:{};process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:m.id,result})+'\\n');}`);
       await fs.writeFile(path.join(workCtx, '.mcp.json'), JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [fixture] } } }));
       const launchCount = async () => (await fs.readFile(launches, 'utf8').catch(() => '')).split('\n').filter(Boolean).length;
-      const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' };
+      const envH = { ...env, AGENT_HOST_HANDOVER: 'on' };
       a = await startServer({ env: envH, dataDir, timeoutMs: 40_000 });
       m1 = await attachMain(dataDir, a);
       ca = await open({ port: a.port, token: a.token });
@@ -293,8 +293,8 @@ export default async function (t) {
       const usageBefore = { Q: readUsage(dataDir).records.filter(r => r.sessionId === ids.Q).length, R: readUsage(dataDir).records.filter(r => r.sessionId === ids.R).length };
       const count = { http: { server: 'ply_context', tool: '[fixture / count]' } };
       const markH = ca.mark();
-      void ca.cmd('sendMessage', { sessionId: ids.Q, messageId: 'handover-Q-0001', prompt: script([{ tool: 'Bash', input: { command: 'hq' }, result: 'ran hq', ask: true }, { text: 'final HQ' }]) }).catch(() => {});
-      void ca.cmd('sendMessage', { sessionId: ids.R, messageId: 'handover-R-0001', prompt: script([count, { tool: 'Read', input: { file_path: 'r' }, result: 'read r', gate: 'r-tool' }, count, { text: 'final R' }]) }).catch(() => {});
+      void ca.cmd('sendMessage', { sessionId: ids.Q, messageId: 'restart-Q-0001', prompt: script([{ tool: 'Bash', input: { command: 'hq' }, result: 'ran hq', ask: true }, { text: 'final HQ' }]) }).catch(() => {});
+      void ca.cmd('sendMessage', { sessionId: ids.R, messageId: 'restart-R-0001', prompt: script([count, { tool: 'Read', input: { file_path: 'r' }, result: 'read r', gate: 'r-tool' }, count, { text: 'final R' }]) }).catch(() => {});
       const askHQ = await ca.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS, from: markH });
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.R && e.name === 'Read', { ms: WAIT_MS, from: markH });
       const launchesBefore = await launchCount();
@@ -306,7 +306,7 @@ export default async function (t) {
       await sleep(800);   // 札の置き直しが保持役へ届くまで
       ca.close(); ca = null;
       // A を普通に止める（main が更新で止めるときと同じ道）。保持役の子は止めない
-      await a.kill(); a = null;
+      await a.stop(); a = null;
       b = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA), AGENT_HOST_TOKEN: tokenA }, dataDir, timeoutMs: 60_000 });
       assert.equal(b.port, portA, 'S2 は S1 と同じポートで待ち受ける');
       m2 = await attachMain(dataDir, b);

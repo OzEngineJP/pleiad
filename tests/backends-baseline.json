@@ -24,7 +24,6 @@
     "core/server.mjs": 12,
     "core/usage-migrations.mjs": 1,
     "core/usage.mjs": 3,
-    "desktop/switch.cjs": 1,
     "web/cli-setup.mjs": 1,
     "web/client.mjs": 6,
     "web/compat-endpoints.mjs": 4,

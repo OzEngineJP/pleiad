@@ -1286,6 +1286,21 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     async rejoin() {
       if ([...entries.values()].some(entry => entry.windows.size)) await bindConnected();
     },
+    /** 通常のサーバー終了では保存済み carry と Chrome の窓を保ち、HTTP 側の接続だけを閉じる。 */
+    releaseForRestart() {
+      if (closed) return;
+      closed = true;
+      if (up) {
+        for (const off of up.offs) off();
+        for (const tab of up.tabs.values()) { tab.controller.abort(); tab.fe = null; }
+        up = null;
+      }
+      for (const entry of entries.values()) {
+        for (const client of [...entry.clients]) { try { client.ws.close(1001, 'server restarting'); } catch { /* already closed */ } }
+        entry.clients.clear();
+      }
+      wss.close(); server.close();
+    },
     /**
      * 層（main）が窓を引き継ぐ。サーバーの入れ替わりの後・main の層が戻った後に呼ぶ（server.mjs が os.onReady で）。
      * 層が引き継げなかった窓のタブは、Chrome の接続があれば CDP で閉じ、無ければ接続が付いたときに閉じる

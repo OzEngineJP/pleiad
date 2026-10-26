@@ -183,8 +183,6 @@ const SUITES = [
   './unit/main-away.mjs',
   // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
   './unit/main-away-desktop.mjs',
-  // main が居ない間（サーバー越し）: 付け直しで ready・言語が届く・main-leaving の後は猶予で中断しない（偽の main をパイプにつなぐ）
-  './unit/main-away-server.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // wait_until: 画面の差分で静止を待つ・決定モデル（偽の OpenRouter）に聞く・キーが無い／前面が禁止のアプリ／聞けなかったとき（偽の driver）
@@ -710,7 +708,6 @@ const SUITES = [
   // agy の中継の再試行（無停止の更新 段階 3）: 口が数秒つながらなくても、つながる前の失敗だけやり直す。送った後の切れは二重に走らせない
   './unit/agy-relay-retry.mjs',
   // `!` の行を保持役に載せる（無停止の更新 段階 3）: 起動の復元で出力・完了・中断を引き継ぐ
-  './unit/shell-held.mjs',
   // 「途中でサーバーを止めて起こし直す」試験の仕掛け（issue #143 段 1・ADR 0270）: 既存の土台に被せ、普通に止めて普通に起こす。
   // held: のターン（Claude の代用）は続き、ply_shell の start のジョブは今の作りでは消える（段 2・3 で反転する）
   './unit/restart-mode.mjs',
@@ -724,6 +721,13 @@ const SUITES = [
   './unit/restart-cards.mjs',
   // 段 3: 委譲の子（保持役のターン）の実行の控えが続き、結果の確定と完了通知は 1 回だけ
   './unit/restart-delegation.mjs',
+  './unit/adopt-agy.mjs',
+  './unit/adopt-claude.mjs',
+  './unit/adopt-codex.mjs',
+  './unit/adopt-finished.mjs',
+  './unit/adopt-held.mjs',
+  './unit/adopt-opencode.mjs',
+  './unit/adopt-shell.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数
   './unit/approval-id.mjs',
   // Claude のアカウント切り替え（会話ごとのトークン）。env の組み立てと、server の配線を fake で通す

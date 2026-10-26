@@ -1,6 +1,5 @@
 // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e。desktop/server-restart.cjs、docs/zero-downtime-update/plan.md 2e）。
-// main.cjs が呼ぶかどうか（切り替え中・main-leaving の後・off は呼ばない）は desktop-boot.mjs。ここは起こす部品そのもの:
-//   - 起こす版（落ちたサーバーの runtimeKey の版が実行場所に残っていればそれ・無ければこの main の版）と、同じトークン・ポートの env
+// server process restart helper tests.//   - 起こす版（落ちたサーバーの runtimeKey の版が実行場所に残っていればそれ・無ければこの main の版）と、同じトークン・ポートの env
 //   - 起こせなかったとき（Job が許さない・実行場所が無い・起動の失敗・ready が来ない）は { ok: false, reason: 'failed' }。立ちかけたプロセスは止める
 //   - 続けて落ちる（windowMs の間に maxCrashes 回）なら起こさない・間が空けば数え直す・同時に 2 つは走らせない
 //   - 起こした後の afterRestart の口（2b 以降の付け直し）
@@ -16,6 +15,7 @@ const require = createRequire(import.meta.url);
 const { createServerRestarter, MAX_CRASHES, CRASH_WINDOW_MS } = require('../../desktop/server-restart.cjs');
 const boot = require('../../desktop/server-boot.cjs');
 const { createServerLink } = require('../../desktop/server-link.cjs');
+const { connectHolder } = await import('../../core/holder/client.mjs');
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const name = 'desktop-server-restart';
@@ -198,6 +198,15 @@ export default async function (t) {
       t.ok('本物: 起こし直したサーバーも終わらせる握手で終わる', !boot.isAlive(result.ready.pid));
     } finally {
       for (const pid of pids) if (boot.isAlive(pid)) { try { process.kill(pid); } catch { /* 済み */ } }
+      const holder = await connectHolder({ dataDir, root }).catch(() => null);
+      if (holder) {
+        const heldPids = holder.welcome.children.filter(child => child.pid && child.alive).map(child => child.pid);
+        const holderPid = holder.pid;
+        holder.shutdown();
+        holder.close();
+        await waitFor(() => !boot.isAlive(holderPid), 15_000, 'holder exit');
+        for (const pid of heldPids) await waitFor(() => !boot.isAlive(pid), 15_000, `held child exit: ${pid}`);
+      }
       await sleep(300);
       fs.rmSync(dataDir, { recursive: true, force: true });
       fs.rmSync(root, { recursive: true, force: true });

@@ -2,10 +2,10 @@
 // （載せ方は core/backends/opencode-held.mjs、組み立て直しは core/backends/opencode.mjs の adoptTurn、ADR 0221）。
 //   1. 載せるかの切り替え: AGENT_HOST_OPENCODE_HOLDER=off では OpenCode は保持役の子にならない（今の流れ）
 //   2. 本当に終わる（main の shutdown）ときは、手を離していない OpenCode も止める
-//   3. 引き継ぎ（本物の道: 偽の main の handover の依頼 → 新サーバー --handover）: 承認待ち・ツールの実行中・本文の途中の 3 つのターンを、
-//      OpenCode を起こし直さずに渡す。承認は同じ id で 1 つ、本文は欠けも重なりもなく、turnEnd・completedAt・使用量は 1 回。
-//      引き継いだ後も、中継の口（Pleiad の MCP・会話のシェルの環境変数）が前の合言葉のまま通る
-//   4. ターンの無い引き継ぎ: OpenCode を新しいサーバーへそのまま渡す（起こし直さない）
+//   3. 通常停止と起動: 承認待ち・ツールの実行中・本文の途中の 3 つのターンを、OpenCode を起こし直さずに復元する。
+//      承認は同じ id で 1 つ、本文は欠けも重なりもなく、turnEnd・completedAt・使用量は 1 回。
+//      復元後も、中継の口（Pleiad の MCP・会話のシェルの環境変数）が同じトークンで通る
+//   4. ターンの無い通常起動: OpenCode の共有サーバーは起こし直さない
 //   5. 強制終了（手を離す口を経ない）: 承認待ちのまま落ちても、札の置き直しで新しいサーバーが付け直す。待ち受けのポートが変わったら、
 //      ターンが無くなってから OpenCode を起こし直す（中継の口の URL が古い）
 //   6. 後片付け: 保持役・身代わりの OpenCode が残らない
@@ -24,7 +24,7 @@ const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
 
 export const name = 'adopt-opencode';
-export const title = '付け直し: 保持役に載せた OpenCode の共有のサーバー（身代わり）を、サーバーの入れ替えをまたいで途中から引き継ぐ';
+export const title = '付け直し: 通常停止後に保持役の OpenCode サーバー（身代わり）を起動時に付け直す';
 
 const WAIT_MS = 20_000;
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
@@ -75,7 +75,7 @@ export default async function (t) {
     AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${fake}"`, AGENT_HOST_OPENCODE_DATA: ocData, FAKE_OPENCODE_STARTED_FILE: startedFile,
     AGENT_HOST_RUNTIME_ROOT: root, ...gates.env,
   };
-  const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' };
+  const envH = { ...env, AGENT_HOST_HANDOVER: 'on' };
   /** 保持役の子（サーバーが居ない間にだけ見る。つなぐと親が替わる） */
   const holderChildren = async () => {
     const probe = await connectHolder({ dataDir, root });
@@ -87,7 +87,7 @@ export default async function (t) {
     assert.deepEqual(ends.map(e => e.outcome), ['ok'], `${label}: turnEnd は 1 回で ok`);
     const meta = sessionMeta(id);
     assert.equal(meta.interrupted ?? null, null, `${label}: restart・update の中断にならない`);
-    assert.equal(meta.stops ?? null, null, `${label}: 引き継いだ承認を取り下げた記録が残らない`);
+    assert.equal(meta.stops ?? null, null, `${label}: 付け直した承認を取り下げた記録が残らない`);
     assert.equal(meta.turnStartedAt ?? null, null, `${label}: 走っている印は片付く`);
     // 前の値と比べて大きいかではなく、書き換わったかを見る（WSL2 などは時刻合わせで時計が戻ることがある）
     assert.ok(Number.isFinite(meta.completedAt) && meta.completedAt !== doneBefore, `${label}: 完了時刻を書く`);
@@ -125,21 +125,21 @@ export default async function (t) {
         const pid = (await starts()).at(-1);
         assert.ok(alive(pid), '終わる前: OpenCode は走っている');
         c.close();
-        main.link.postMessage({ type: 'shutdown' });
+        main.link.postMessage({ type: 'shutdown', stopHeld: true });
         await until(() => s.child.exitCode !== null, WAIT_MS, 'サーバーが終わる');
         await until(() => !alive(pid), WAIT_MS, '手を離していない OpenCode は、サーバーが終わると止まる');
       } finally { c.close(); try { main.link.kill(); } catch { /* 終わっている */ } await s.stop(); }
       t.ok('本当に終わるとき: 手を離していない OpenCode（保持役の子）も止める', true);
     }
 
-    // 3. 引き継ぎ（本物の道）: 承認待ち（Q）・ツールの実行中（S）・本文の途中（T）
+    // 3. 通常停止と起動: 承認待ち（Q）・ツールの実行中（S）・本文の途中（T）
     const ids = {};
     const helloEnds = {};
     {
       s1 = await startServer({ env: envH, dataDir, timeoutMs: 40_000 });
       m1 = await attachMain(dataDir, s1);
       c1 = await open({ port: s1.port, token: s1.token });
-      // 引き継いだサーバーは、同じトークン・ポートで待ち受ける
+      // B は、同じトークン・ポートで通常起動する
       token = s1.token;
       for (const k of ['Q', 'S', 'T']) {
         const res = await c1.runTurn({ backend: 'opencode', cwd: work, prompt: `hello ${k}`, mode: 'full', model: 'fake/echo' }, { ms: WAIT_MS });
@@ -152,34 +152,23 @@ export default async function (t) {
       const doneBefore = Object.fromEntries(Object.entries(ids).map(([k, id]) => [k, sessionMeta(id).completedAt]));
       const usageBefore = Object.fromEntries(Object.entries(ids).map(([k, id]) => [k, usageOf(id)]));
       const mark = c1.mark();
-      void c1.cmd('sendMessage', { sessionId: ids.Q, messageId: 'handover-Q-0001', prompt: 'ask Q' }).catch(() => {});
-      void c1.cmd('sendMessage', { sessionId: ids.S, messageId: 'handover-S-0001', prompt: 'gate:s-tool' }).catch(() => {});
-      void c1.cmd('sendMessage', { sessionId: ids.T, messageId: 'handover-T-0001', prompt: 'stream:t-text' }).catch(() => {});
+      void c1.cmd('sendMessage', { sessionId: ids.Q, messageId: 'restart-Q-0001', prompt: 'ask Q' }).catch(() => {});
+      void c1.cmd('sendMessage', { sessionId: ids.S, messageId: 'restart-S-0001', prompt: 'gate:s-tool' }).catch(() => {});
+      void c1.cmd('sendMessage', { sessionId: ids.T, messageId: 'restart-T-0001', prompt: 'stream:t-text' }).catch(() => {});
       const askA = await c1.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS, from: mark });
       await c1.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.S, { ms: WAIT_MS, from: mark });
       await until(() => c1.since(mark).filter(e => e.type === 'text.delta' && e.sessionId === ids.T).map(e => e.text).join('').includes('first half t-text / '), WAIT_MS, 'T の本文の前半');
-      {
-        const running = await until(async () => { const r = await c1.cmd('running'); return r.turns.filter(x => x.held).length === 3 ? r : null; }, WAIT_MS, 'OpenCode の 3 つのターンが held');
-        assert.equal(running.handover.blocking, 0, '保持役に載った OpenCode のターンは、切り替えを待たせない');
-        assert.ok(running.permissions.find(p => p.id === askA.id)?.held, '承認待ちも held');
-      }
-      await sleep(400);   // 札の置き直しが保持役へ届くまで
-      s2 = await startServer({ env: envH, dataDir, timeoutMs: 60_000, args: ['--handover'], lazy: true });
-      await sleep(800);
-      const reply = await m1.request('handover');
-      assert.equal(reply.ok, true, JSON.stringify(reply));
-      assert.deepEqual([...reply.handed].sort(), Object.values(ids).sort(), '渡したターン');
-      await until(() => s1.child.exitCode !== null, 20_000, 'S1 が終わる');
-      for (const k of Object.keys(ids)) assert.equal(c1.since(mark).filter(e => e.sessionId === ids[k] && e.type === 'turnEnd').length, 0, `S1 は ${k} を締めない`);
-      await s2.ready();
-      assert.equal(s2.port, s1.port, 'S2 は S1 と同じポートで待ち受ける');
-      m2 = await attachMain(dataDir, s2);
+      const portA = s1.port;
       c1.close(); c1 = null;
+      await s1.stop(); s1 = null;
+      s2 = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA), AGENT_HOST_TOKEN: token }, dataDir, timeoutMs: 60_000 });
+      assert.equal(s2.port, portA, 'B は A と同じポートで通常起動する');
+      m2 = await attachMain(dataDir, s2);
       c2 = await open({ port: s2.port, token });
       const askB = await c2.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS }).catch(e => { throw new Error(`${e.message}\n${s2.tail(25)}`); });
       await sleep(300);
       assert.equal(askB.id, askA.id, 'Q: 承認の id は S1 と同じ');
-      assert.equal(c2.events.filter(e => e.type === 'permission' && e.sessionId === ids.Q).length, 1, 'Q: S2 に承認が 1 つだけ');
+      assert.equal(c2.events.filter(e => e.type === 'permission' && e.sessionId === ids.Q).length, 1, 'Q: B に承認が 1 つだけ');
       await c2.cmd('resolvePermission', { id: askB.id, allow: true });
       await gates.open('s-tool');
       await gates.open('t-text');
@@ -199,9 +188,9 @@ export default async function (t) {
       assert.ok(alive(ocPid), '同じ OpenCode が走り続けている');
       assert.ok(!s2.tail(300).includes('[unhandledRejection]'), s2.tail(20));
       assert.ok(s2.tail(300).includes('ターンを付け直した'), s2.tail(20));
-      t.ok('引き継ぎ（本物の道）: 承認待ち・ツールの実行中・本文の途中の OpenCode のターンは切り替えを待たせず、S2 が同じ OpenCode につなぎ直して付け直す。承認は同じ id で 1 つ、本文は欠けも重なりもなく、turnEnd・completedAt・使用量は 1 回', true);
+      t.ok('通常停止後の起動復元: 承認待ち・ツールの実行中・本文の途中の OpenCode のターンを B が同じ OpenCode につなぎ直して付け直す。承認は同じ id で 1 つ、本文は欠けも重なりもなく、turnEnd・completedAt・使用量は 1 回', true);
 
-      // 引き継いだ後も、中継の口（前の合言葉）が通る: Pleiad の MCP と会話のシェルの環境変数
+      // 起動復元の後も、中継の口（同じトークン）が通る: Pleiad の MCP と会話のシェルの環境変数
       const mcp = await c2.runTurn({ sessionId: ids.Q, prompt: `mcp:${JSON.stringify({ server: 'ply_agents', tool: 'ply_task_list', arguments: {} })}`, mode: 'full' }, { ms: WAIT_MS });
       assert.equal(mcp.outcome, 'ok', s2.tail(15));
       const mcpResult = mcp.events.find(e => e.type === 'tool.result' && e.sessionId === ids.Q)?.text ?? '';
@@ -211,33 +200,13 @@ export default async function (t) {
       assert.match(text(c2, ids.S), /env: \{/, 'シェルの環境変数の口');
       assert.doesNotMatch(text(c2, ids.S), /"status":40\d/, 'シェルの環境変数の口は前の合言葉で通る');
       assert.deepEqual(await starts(), (await starts()).slice(0, startsBefore), '続きのターンでも OpenCode を起こし直さない');
-      t.ok('引き継いだ後: 中継の口（Pleiad の MCP・会話のシェルの環境変数）は前の合言葉のまま通り、続きのターンも同じ OpenCode で走る', true);
+      t.ok('起動復元の後: 中継の口（Pleiad の MCP・会話のシェルの環境変数）は同じトークンで通り、続きのターンも同じ OpenCode で走る', true);
       try { m1.link.kill(); } catch { /* S1 は終わっている */ }
       m1 = null;
       s1 = null;
-    }
-
-    // 4. ターンの無い引き継ぎ: OpenCode をそのまま新しいサーバーへ渡す
-    {
-      const startsBefore = (await starts()).length;
-      s3 = await startServer({ env: envH, dataDir, timeoutMs: 60_000, args: ['--handover'], lazy: true });
-      await sleep(800);
-      const reply = await m2.request('handover');
-      assert.equal(reply.ok, true, JSON.stringify(reply));
-      assert.deepEqual(reply.handed, [], '渡したターンは無い');
-      await until(() => s2.child.exitCode !== null, 20_000, 'S2 が終わる');
-      await s3.ready();
-      m3 = await attachMain(dataDir, s3);
-      c2.close(); c2 = null;
-      c3 = await open({ port: s3.port, token, autoAllow: true });
-      const res = await c3.runTurn({ sessionId: ids.T, prompt: 'tool after idle handover', mode: 'full' }, { ms: WAIT_MS });
-      assert.equal(res.outcome, 'ok', s3.tail(15));
-      assert.ok(res.events.some(e => e.type === 'tool.result' && e.text === 'hello\n'), 'ツールが走る');
-      assert.equal((await starts()).length, startsBefore, 'ターンの無い引き継ぎでも OpenCode を起こし直さない');
-      t.ok('ターンの無い引き継ぎ: OpenCode を新しいサーバーへそのまま渡し、次のターンも起こし直さずに走る', true);
-      try { m2.link.kill(); } catch { /* S2 は終わっている */ }
-      m2 = null;
-      s2 = null;
+      s3 = s2; s2 = null;
+      c3 = c2; c2 = null;
+      m3 = m2; m2 = null;
     }
 
     // 5. 強制終了: 承認待ちのまま S3 を落とす。S4 は札（置き直し）で付け直す。待ち受けが変われば、ターンが無くなってから起こし直す
@@ -257,7 +226,7 @@ export default async function (t) {
       m3 = null;
       // 強制終了（SIGKILL）。stop() は Linux ではシグナルでサーバーの終わりの処理を走らせ、手を離していない OpenCode も止めてしまう（本番の落ち方ではない）
       await s3.kill(); s3 = null;
-      s4 = await startServer({ env: { ...env, AGENT_HOST_ADOPT_HOLDER: '1' }, dataDir, timeoutMs: 40_000 });
+      s4 = await startServer({ env, dataDir, timeoutMs: 40_000 });
       c4 = await open({ port: s4.port, token: s4.token });
       const askB = await c4.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q, { ms: WAIT_MS }).catch(e => { throw new Error(`${e.message}\n${s4.tail(25)}`); });
       assert.equal(askB.id, askA.id, '強制終了: 承認の id は前と同じ');

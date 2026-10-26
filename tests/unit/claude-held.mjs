@@ -122,19 +122,10 @@ export default async function (t) {
       held.ack('u-2');
       held.ack('missing');
       assert.deepEqual(client.sent.filter(x => x.t === 'ack').map(x => x.seq), [2], 'ack は処理し終えた uuid の行');
-      await held.handOff({ sessionId: 's' });
-      assert.deepEqual(client.sent.slice(-2).map(x => x.t), ['label', 'detach'], '手を離す: 札を置いてから detach');
-      const count = client.sent.length;
-      proc.stdin.write('{"type":"control_response"}\n');
-      proc.stdin.end();
-      proc.kill('SIGTERM');
-      await tick();
-      assert.equal(client.sent.length, count, 'detach の後は write・end・kill を転送しない');
-      assert.deepEqual(await held.exit, { code: null, signal: null, handedOff: true });
-      assert.equal(held.handedOff, true);
-      await held.finish();
-      assert.ok(!client.sent.some(x => x.t === 'release' || x.t === 'kill'), '手を離した子は止めず、記録も捨てない');
-      t.ok('起こす: spawn と印が最初の書き込みより前・stdin を写す・ack は uuid の行・手を離した後は write・end・kill を転送しない', true);
+      const beforeServerExit = client.sent.length;
+      held.source.dispose();
+      assert.equal(client.sent.length, beforeServerExit, 'ordinary server exit does not signal, detach, or release the held CLI');
+      t.ok('ordinary server exit drops only its local connection and leaves the held CLI running', true);
     }
 
     // 終わった子: SDK の kill は木ごと止める。終わりを見たら記録を捨てる
@@ -177,8 +168,9 @@ export default async function (t) {
       assert.deepEqual(types, ['r-mcp', 'r-wait', 'u-6', 'init-2'], '答え済みの依頼（r-done）と旧い親への応答（old）は流さない');
       held.ack('u-6');
       assert.deepEqual(client.sent.filter(x => x.t === 'ack').map(x => x.seq), [6]);
-      source.stop();
+      client.emit('exit', { id: 'c1', code: 0 });
       await held.exit;
+      await held.finish();
       t.ok('付け直し: attach の答えの時点までの答え済みの依頼・旧い親への応答は流さず、答えを待っている依頼・控えの渡し直し・続きを流す', true);
     }
 

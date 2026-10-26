@@ -5,9 +5,9 @@
 //      同時に走る 3 つのターン: 承認待ち（B に A と同じ id の承認が 1 つだけ）・ツールの実行中（ゲートを開くと B で終わる）・サブエージェント（子の承認が親の会話に出る）。
 //      どれも turnEnd・completedAt・使用量が 1 回だけ、restart の中断にならない
 //   3. 終わった直後: A が app-server の出力を読まないうちにターンが終わる（B が続きの側で締める）
-//   4. 裏の端末: 引き継ぎで止まらない（running の background は held）。B が app-server に聞き直して数え直し、止めると終わる
+//   4. 裏の端末: サーバーが止まっても保持役の子は続く。B が app-server に聞き直して数え直し、止めると終わる
 //   5. 強制終了（手を離す口を経ない）: 承認待ちのまま A を SIGKILL しても、札の置き直しで B が付け直す
-//   6. 引き継ぎ（本物の道: 偽の main の handover の依頼 → 新サーバー --handover）: 保持役に載った Codex のターンは切り替えを待たせず、承認は同じ id で 1 つ
+//   6. 通常停止と起動: 保持役に載った Codex のターンを復元する。承認は同じ id で 1 つ
 //   7. 後片付け: 保持役・fake の app-server が残らない
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -24,7 +24,7 @@ const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
 
 export const name = 'adopt-codex';
-export const title = '付け直し: 保持役に載せた Codex の共有の app-server（偽物）を、サーバーの入れ替えをまたいで途中から引き継ぐ';
+export const title = '付け直し: 通常停止後に保持役の Codex の共有 app-server（偽物）を起動時に付け直す';
 
 const WAIT_MS = 20_000;
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
@@ -63,11 +63,10 @@ export default async function (t) {
   const scratch = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'ply-adopt-codex-')));
   const dataDir = path.join(scratch, 'data');
   const root = path.join(scratch, 'runtime');
-  const scenesDir = path.join(scratch, 'scenes');
   const work = path.join(scratch, 'work');
   const home = path.join(scratch, 'home');
   const codexLog = path.join(scratch, 'codex.log');
-  await Promise.all([scenesDir, work, home, path.join(scratch, 'codex-state')].map(dir => fs.mkdir(dir, { recursive: true })));
+  await Promise.all([work, home, path.join(scratch, 'codex-state')].map(dir => fs.mkdir(dir, { recursive: true })));
   const gates = await createFakeGates(scratch);
   const fake = path.join(ROOT, 'tests', 'lib', 'fake-codex.mjs');
   const sessionMeta = id => readSessions(dataDir)[id] ?? null;
@@ -81,7 +80,7 @@ export default async function (t) {
     // fake の app-server の会話は、app-server が替わっても残す（Linux は stop() のシグナルで終わる server が app-server も止めるので、前の節の会話を次の節が使うには要る）
     FAKE_CODEX_STATE_DIR: path.join(scratch, 'codex-state'),
   };
-  const env = { ...base, AGENT_HOST_RUNTIME_ROOT: root, ADOPT_SCENES_DIR: scenesDir };
+  const env = { ...base, AGENT_HOST_RUNTIME_ROOT: root };
   const holderChildren = async () => {
     const probe = await connectHolder({ dataDir, root });
     try { return probe.welcome.children.filter(x => !x.id.startsWith('chrome-link-')); } finally { probe.close(); }   // 接続の子（Chrome への ws。ADR 0167）は数えない
@@ -172,8 +171,8 @@ export default async function (t) {
     await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.S, { ms: WAIT_MS, from: markA });
     await sleep(400);   // 札の置き直しが保持役へ届くまで
     ca.close(); ca = null;
-    // A を普通に落とす（更新・落ちたときと同じ道。保持役の子は止めない）
-    await a.kill(); a = null;
+    // A を SIGTERM で通常停止する。保持役の子は止めない。
+    await a.stop(); a = null;
 
     // 保持役の子: 札つきで走り続けている（B より前にテストがつなぐ。親は 1 つ）
     const taken = {};
@@ -227,7 +226,7 @@ ${b.tail(20)}`); });
     assert.equal((await initializes()), 2, 'B は initialize を送らない（付け直した app-server は initialize 済み）');
     assert.ok(!b.tail(200).includes('[unhandledRejection]'), b.tail(20));
     assert.ok(b.tail(200).includes('ターンを付け直した'), b.tail(20));
-    t.ok('承認待ち・子の承認待ち・ツールの実行中: 1 回の入れ替えで共有の app-server を引き継ぎ、B に同じ id の承認が 1 つずつ出て、答える・ゲートを開くと続いて 1 回だけ締まる（initialize は送らない）', true);
+    t.ok('承認待ち・子の承認待ち・ツールの実行中: 通常停止後に B が共有 app-server を付け直し、同じ id の承認が 1 つずつ出て、答える・ゲートを開くと続いて 1 回だけ締まる（initialize は送らない）', true);
     cb.close(); cb = null;
     await b.stop(); b = null;
 
@@ -244,7 +243,7 @@ ${b.tail(20)}`); });
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.T, { ms: WAIT_MS, from: markT });
       await sleep(400);
       ca.close(); ca = null;
-      await a.kill(); a = null;
+      await a.stop(); a = null;
       // A が居ない間に、app-server はターンを終える（終わりの行は誰も読まない）
       await gates.open('t-tool');
       await until(async () => (await calls()).some(c => c.method === 'gate-completed' && c.gate === 't-tool'), WAIT_MS, 'app-server がターンを終える（A は読んでいない）');
@@ -295,11 +294,10 @@ ${b.tail(20)}`); });
       await b.stop(); b = null;
     }
 
-    // 4・6. 引き継ぎ（本物の道: 偽の main の handover の依頼 → 旧サーバーが札を取って control.holder.handOff → 新サーバー --handover が付け直す）。
-    //    承認待ち（Q2）・ツールの実行中（S2）に加え、ターンの外に残る裏の端末（R。引き継ぎで止まらない。新しいサーバーが app-server に聞き直して数え直す）
+    // 4・6. 通常停止と起動。承認待ち（Q2）・ツールの実行中（S2）と、ターンの外に残る裏の端末（R）を B が復元する
     {
-      const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' };
-      await startA({ AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' });
+      const envH = { ...env, AGENT_HOST_HANDOVER: 'on' };
+      a = await startServer({ env: envH, dataDir, timeoutMs: 40_000 });
       m1 = await attachMain(dataDir, a);
       ca = await open({ port: a.port, token: a.token });
       for (const k of ['R', 'Q2', 'S2']) {
@@ -312,11 +310,11 @@ ${b.tail(20)}`); });
       const endR = await ca.runTurn({ sessionId: ids.R, backend: 'codex', cwd: work, prompt: 'bgterm go' }, { ms: WAIT_MS });
       assert.equal(endR.outcome, 'ok', a.tail(10));
       const running0 = await until(async () => { const r = await ca.cmd('running'); return bgOf(r)?.tasks?.length === 1 ? r : null; }, WAIT_MS, '裏の端末が running に載る');
-      assert.equal(bgOf(running0).held, true, '裏の端末は引き継ぎで止まらないもの（held）');
+      assert.equal(bgOf(running0).held, true, '裏の端末は保持役の子');
       const doneBefore = { Q2: sessionMeta(ids.Q2).completedAt, S2: sessionMeta(ids.S2).completedAt };
       const markH = ca.mark();
-      void ca.cmd('sendMessage', { sessionId: ids.Q2, messageId: 'handover-Q2-0001', prompt: 'approve H' }).catch(() => {});
-      void ca.cmd('sendMessage', { sessionId: ids.S2, messageId: 'handover-S2-0001', prompt: 'gate:h-tool' }).catch(() => {});
+      void ca.cmd('sendMessage', { sessionId: ids.Q2, messageId: 'restart-Q2-0001', prompt: 'approve H' }).catch(() => {});
+      void ca.cmd('sendMessage', { sessionId: ids.S2, messageId: 'restart-S2-0001', prompt: 'gate:h-tool' }).catch(() => {});
       const askH = await ca.waitFor(e => e.type === 'permission' && e.sessionId === ids.Q2, { ms: WAIT_MS, from: markH });
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.S2, { ms: WAIT_MS, from: markH });
       const usageBefore = { Q2: readUsage(dataDir).records.filter(r => r.sessionId === ids.Q2).length, S2: readUsage(dataDir).records.filter(r => r.sessionId === ids.S2).length };
@@ -325,7 +323,7 @@ ${b.tail(20)}`); });
       const portA = a.port, tokenA = a.token;
       ca.close(); ca = null;
       // A を普通に止める（main が更新で止めるときと同じ道）。保持役の子は止めない
-      await a.kill(); a = null;
+      await a.stop(); a = null;
       b = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA), AGENT_HOST_TOKEN: tokenA }, dataDir, timeoutMs: 60_000 });
       assert.equal(b.port, portA, 'B は A と同じポートで待ち受ける');
       m2 = await attachMain(dataDir, b);
@@ -343,7 +341,7 @@ ${b.tail(20)}`); });
         assertEndedOnce(cb, ids[k], doneBefore[k], k);
         assert.equal(readUsage(dataDir).records.filter(r => r.sessionId === ids[k]).length, usageBefore[k] + 1, `${k}: 使用量はこのターンの分が 1 件`);
       }
-      assert.equal(await initializes(), initsAtHandover, '引き継ぎでも initialize は送らない');
+      assert.equal(await initializes(), initsAtHandover, '通常起動で付け直しても initialize は送らない');
       // 裏の端末: S2（新しいサーバー）が app-server に聞き直して数え直している。止めると item/completed が届いて消える
       {
         const running = await until(async () => { const r = await cb.cmd('running'); return bgOf(r)?.tasks?.length === 1 ? r : null; }, WAIT_MS, '裏の端末が新しいサーバーで数え直される');
@@ -355,7 +353,7 @@ ${b.tail(20)}`); });
       }
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
       t.ok('main が起こした起動: A を普通に止めて B を同じトークン・ポートで起こすと、保持役の Codex のターン（承認待ち・ツールの実行中）を起動で付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
-      t.ok('裏の端末: 引き継ぎで止まらないもの（held）。S2 が app-server に聞き直して数え直し、止めるとターンの外の item/completed で消える', true);
+      t.ok('裏の端末: B が app-server に聞き直して数え直し、止めるとターンの外の item/completed で消える', true);
       cb.close(); cb = null;
       m2.link.leave(); m2 = null;
       m1 = null;   // A と一緒に切れている

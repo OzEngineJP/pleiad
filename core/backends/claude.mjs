@@ -297,10 +297,9 @@ const TOOL_HINTS = {
  */
 function buildToolServer(ctx, { createSdkMcpServer, tool }) {
   // 応答は CLI の stdin を通る。走っている間は入力を閉じさせない（claude-background.mjs）。
-  // 引き継ぎ（無停止の更新 2d。core/handover.mjs）は、走っている mcp_message のハンドラーが終わるのを上限つきで待つ（ctx.track）
   const hosted = (name, handler) => (args) => {
     const work = ctx.hostCalls ? ctx.hostCalls.run(name, () => handler(args)) : handler(args);
-    return ctx.track ? ctx.track(work) : work;
+    return work;
   };
   return createSdkMcpServer({
     name: "host",
@@ -591,14 +590,6 @@ export function mergeLimit(prev, ev) {
 const limitFields = (limit) => ({ resetsAt: limit.resetsAt, window: limit.window, ...(limit.scope ? { scope: limit.scope } : {}) });
 const parseLine = (line) => { try { const m = JSON.parse(line); return m && typeof m === "object" ? m : null; } catch { return null; } };
 
-/** hooks のコールバックの表の、どのコールバックの実行も track（server の control.track。引き継ぎが待つ）に数える。track が無ければそのまま */
-function trackedHooks(table, track) {
-  if (typeof track !== "function") return table;
-  return Object.fromEntries(Object.entries(table).map(([event, list]) => [event,
-    list.map((entry) => ({ ...entry, hooks: entry.hooks.map((fn) => (...args) => track(fn(...args))) }))]));
-}
-
-/** 札の途中送信の控え（backendCard.steers）を作り直す。本文は持たない（ハッシュで当てる） */
 function restoredSteers(steers) {
   return (Array.isArray(steers) ? steers : []).filter((p) => typeof p?.uuid === "string" && p.uuid)
     .map((p) => ({ id: typeof p.id === "string" ? p.id : null, uuid: p.uuid, text: null, hash: typeof p.hash === "string" ? p.hash : null, sawResult: Boolean(p.sawResult) }));
@@ -663,7 +654,7 @@ export const backend = {
     }
     const query = sdk.query ?? api.query;
     // locale は会話の言語（host ツールの説明と承認の deny の理由。core/server.mjs が会話ごとに決めて渡す）
-    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale, track: control?.track ?? null };
+    const ctx = { sessionId: sessionId ?? null, emit, hostSessionId, hostBackend, hostInvoke, locale };
     // このターンで呼んだ ply_computer の tool_use の id。tool_result に名前は載らないので、印の行を読むのはこの id の結果だけにする
     const computerIds = new Set();
     let releaseContext;
@@ -793,7 +784,7 @@ export const backend = {
     // 付け直しは札の控え（本文の代わりにハッシュ。uuid で突き合わせ、uuid の無い echo はハッシュで当てる）から作り直す
     const pendingSteers = adopt ? restoredSteers(adopt.card.steers) : [];   // { id, uuid, text, hash, sawResult } 流し込んだが、まだ折り込まれていないもの
     /**
-     * 札のバックエンドの欄（保持役に載せたターンだけ。core/server.mjs の takeCard が control.backendCard から読み、付け直す側の adoptTurn の card になる）。
+     * 札のバックエンドの欄（保持役に載せたターンだけ。core/server.mjs の heldTurnCard が control.backendCard から読み、付け直す側の adoptTurn の card になる）。
      * 途中送信は本文を入れずハッシュにする（札の上限。core/turn-card.mjs と同じ）。裏の作業と main の状態（claude-background.mjs の tracker）は、
      * 印からの再生で作り直る（付け直し直後の background_tasks_changed が全量で置き換える）ので、再生に出ない流し込みの数（pushed）だけを置く
      */
@@ -1096,8 +1087,7 @@ export const backend = {
         ...(promptSuggestions ? { promptSuggestions: true } : {}),
         // hooks の発火（hook_started / hook_response）を受け取る。会話の右パネルの「発火の記録」に使う（claude-normalize.mjs）
         includeHookEvents: true,
-        // 引き継ぎ（2d）は、走っている hooks のコールバックが終わるのを上限つきで待つ（control.track。trackedHooks）
-        hooks: trackedHooks(mergeCallbacks({
+        hooks: mergeCallbacks({
           PreCompact: [{ hooks: [async input => {
             emit({ type: 'compaction', phase: 'start', trigger: input.trigger === 'manual' ? 'manual' : 'auto' });
             return {};
@@ -1107,7 +1097,7 @@ export const backend = {
             return {};
           }] }],
         // Pleiad の Hooks の登録。コールバックは Pleiad の中で走るので、発火の記録は自分で出す（hook_started は届かない）
-        }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })), control?.track),
+        }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })),
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
     }); } catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); } void held?.finish(); throw undelivered(e); }

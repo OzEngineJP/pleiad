@@ -10,7 +10,7 @@ import { openChromeLink } from '../../core/chrome/link.mjs';
 import { parentPortChromeOs } from '../../core/chrome/os.mjs';
 
 export const name = 'chrome-persist';
-export const title = '更新を越えるエージェントのブラウザー: 中継の端点（同じポート・同じ鍵）・隠した窓の持ち越し・引き継げなかった窓を CDP で閉じる・main が居ない間の待ち・更新で窓を閉じない（本物の保持役と接続の子・偽の Chrome と偽の OS の層。ADR 0167）';
+export const title = '通常再起動を越えるエージェントのブラウザー: 中継の端点（同じポート・同じ鍵）・隠した窓の復元・付け直せない窓の処理・main が居ない間の待ち（本物の保持役と接続の子・偽の Chrome と偽の OS の層。ADR 0167）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (cond, ms = 5000, what = '') => {
@@ -84,11 +84,13 @@ export default async function (t) {
     if (os.capabilities().supported) await relay.readopt();
     return { link, conn, relay, control, captureLog, logs, adopted };
   };
-  /** サーバーの入れ替わりで出ていく側（server.mjs の stash と同じ順） */
+  /** 通常のサーバー終了: carry を flush してから保持役の接続の子とのパイプを閉じる */
   const leave = async s => {
-    s.link.setCarry(s.relay.handOff());
-    s.conn.handOff();
-    await s.link.handOff();
+    await s.link.flush();
+    s.relay.releaseForRestart();
+    s.link.socket.destroy();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    cleanups.unshift(async () => { s.relay.close(); await s.conn.close(); });
   };
   const tabsIn = (chrome, windowId) => chrome.browser.targets().filter(x => x.type === 'page' && x.windowId === windowId);
 
@@ -110,8 +112,9 @@ export default async function (t) {
       t.ok('窓を開くと隠した窓の印（token）が carry に載る', tabId && carried.windows.length === 1 && carried.windows[0].windows[0].windowId === windowId && /^fake:/.test(carried.windows[0].windows[0].token) && carried.port === a.relay.port, JSON.stringify(carried));
       await until(() => a.link.alive && a.link.welcome, 2000);
       await leave(a);
-      t.ok('更新で出ていくとき、エージェントの接続は 1012 で閉じる', await Promise.race([ag.closed, sleep(3000).then(() => 'timeout')]) === 1012);
-      t.ok('更新で出ていくとき、隠した窓も窓のタブも閉じない', os.hwnds().some(h => h.agent && h.concealed && !h.closed) && tabsIn(chrome, windowId).length === 1 && os.calls('closeAgent').length === 0);
+      const closeCode = await Promise.race([ag.closed, sleep(3000).then(() => 'timeout')]);
+      t.ok('A の通常終了でエージェントの接続が切れる', closeCode !== 'timeout' && closeCode !== 1000, String(closeCode));
+      t.ok('A が終了しても、隠した窓とタブは保持役に残る', os.hwnds().some(h => h.agent && h.concealed && !h.closed) && tabsIn(chrome, windowId).length === 1 && os.calls('closeAgent').length === 0);
 
       const b = await newServer(chrome, os);
       t.ok('新しいサーバー: 接続の子から接続を引き継ぐ（確認なし）', b.adopted === true && b.conn.state().state === 'connected', JSON.stringify(b.conn.state()));
@@ -315,11 +318,10 @@ export default async function (t) {
       t.ok('前提: 引き継ぐと窓は見える形になり、carry に一時停止の印（at）と見せている窓の印が載る',
         shown().length === 1 && Number.isFinite(pausedAt) && a.relay.snapshot().entries[0].paused?.at === pausedAt && a.relay.snapshot().windows[0].revealed === true, JSON.stringify(a.relay.snapshot()));
       // 出ていく前に carry の一時停止の印へ by を足す（第 7 段 C の by: 'device' が載っても持ち越す）
-      const carry = a.relay.handOff();
+      const carry = a.relay.snapshot();
       carry.entries[0].paused.by = 'device';
       a.link.setCarry(carry);
-      a.conn.handOff();
-      await a.link.handOff();
+      await leave(a);
       const concealCalls = os.calls('conceal').length;
       const closeCalls = os.calls('closeAgent').length;
 

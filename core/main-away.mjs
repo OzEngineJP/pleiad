@@ -1,37 +1,15 @@
-// main が居ない間（更新の約 50 秒・付け直しまで）の、サーバー側の扱いの共通部分（段階 1 の 1-5。docs/zero-downtime-update/design.md §7.2）。
-// 機能ごとの扱いは、頼む側のモジュールが持つ（口の層は居ない間の送信を溜めずに捨てるだけ。core/main-link.mjs）:
-//   secret       core/secret-store.mjs の parentPortCipher（待たせる・上限 5 分・復号した値を持つ）
-//   computer use core/computer-use/driver.mjs の onAway・lock.mjs の stopAll（Esc と同じに止める）
-//   内蔵ブラウザー core/agent-browser.mjs（中継の URL・タブの写しをサーバーが持ち、戻った main が同じ値で立て直す）
-//   screencast   core/browser-screencast.mjs（見ている端末へ ended('away')）
-//   os-open      core/os-open.mjs（居ない間は OS に直に頼む）
-//   openExternal ここの createExternalOpener（居ない間は OS の既定のブラウザーで開く）
-// ここは、main が居る・居ないの出来事（away・back）と、main-leaving（これから離れる）を 1 か所で受けて配る。
-// utilityProcess の口（切れても戻らない。resumable でない）では何も起きない（既定の起動は変わらない）。
+// main との接続・切断を通知する。再接続時は同じ server link を使い、最初の接続か付け直しかを区別する。
 import { detach } from './process.mjs';
 import path from 'node:path';
 
-/**
- * @param mainPort main への口（core/main-port.mjs）
- * @returns { onAway(cb), onBack(cb({ first })), onStay(cb), leaving, holdsGrace(), connects }
- *   away: 口が切れた。back: つながった（first は、このサーバーで最初のつながり。付け直しではない）。stay: main-leaving の後に main が取りやめた（main-leaving-cancel）。
- *   leaving: main-leaving を受けて、まだ戻っていない（reason を持つ）。holdsGrace は、画面が居ない間の猶予（AGENT_HOST_GRACE_MS）を数えない間
- */
 export function createMainAway({ mainPort }) {
-  const listeners = { away: new Set(), back: new Set(), stay: new Set() };
-  let leaving = null, connects = 0;
+  const listeners = { away: new Set(), back: new Set() };
+  let connects = 0;
   const fire = (set, ...args) => { for (const cb of [...set]) { try { cb(...args); } catch (e) { console.error('main-away:', String(e?.message ?? e)); } } };
   if (mainPort.resumable) {
-    mainPort.on('message', event => {
-      const data = event?.data ?? event;
-      if (data?.type === 'main-leaving') leaving = { reason: typeof data.reason === 'string' ? data.reason : null, at: Date.now() };
-      // 更新を取りやめた（main は居続ける）。猶予を数える状態に戻す
-      else if (data?.type === 'main-leaving-cancel' && leaving) { leaving = null; fire(listeners.stay); }
-    });
     mainPort.on('disconnect', () => fire(listeners.away));
     mainPort.on('connect', () => {
       const first = connects++ === 0;
-      leaving = null;
       fire(listeners.back, { first });
     });
   }
@@ -39,11 +17,7 @@ export function createMainAway({ mainPort }) {
   return {
     onAway: on(listeners.away),
     onBack: on(listeners.back),
-    onStay: on(listeners.stay),
-    get leaving() { return leaving; },
     get connects() { return connects; },
-    /** main が「これから離れる」と言って、まだ戻っていない間。画面の猶予（hostAway）を数えない（main が居ないのは更新のためで、人が離れたのではない） */
-    holdsGrace: () => leaving !== null,
   };
 }
 

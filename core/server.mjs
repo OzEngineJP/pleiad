@@ -2937,10 +2937,9 @@ const runtime = {
 
 /** host が居ない時間が猶予を超えたか。タイマーに頼らず、その場で判定する。猶予が無効（既定）なら常に false。 */
 function graceExpired() {
-  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && !mainAway.holdsGrace() && Date.now() - runtime.awaySince > HOST_GRACE_MS;
+  return HOST_GRACE_MS > 0 && runtime.awaySince !== 0 && Date.now() - runtime.awaySince > HOST_GRACE_MS;
 }
 
-/** main が更新で居ない間（main-leaving の後）は画面が居ないので猶予を数えない。戻った main の窓が付くまでの猶予は、戻った時から数え直す（core/main-away.mjs） */
 function restartGrace() {
   if (runtime.awaySince === 0) return;
   runtime.awaySince = Date.now();
@@ -2950,7 +2949,7 @@ function restartGrace() {
 
 /** 猶予切れの後始末。何度呼ばれても安全。走っているターンは全部止める。猶予が無効なら何もしない。 */
 function giveUp() {
-  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0 || mainAway.holdsGrace()) return;
+  if (HOST_GRACE_MS <= 0 || runtime.awaySince === 0) return;
   const seconds = Math.round((Date.now() - runtime.awaySince) / 1000);
   runtime.awaySince = 0;
   clearTimeout(runtime.graceTimer);
@@ -7788,7 +7787,7 @@ function restoreSteers(sessionId, steers, texts = new Map()) {
 }
 
 /** ターンの札（cardOf の { card, secrets }）。会話の口のトークン・出している承認の id・途中送信の控え・委譲の子の実行の控えを足す。作れなければ投げる */
-function takeCard(ctx) {
+function heldTurnCard(ctx) {
   const { turn } = ctx;
   const entry = agentConnections.get(turn.key);
   // ply_context の口は、会話のあいだ同じ値で開くバックエンド（agy）でなければ、ターンごとの値で開く（launchTurn）。CLI が持つのはその値なので、札にはその値を置く
@@ -7817,7 +7816,7 @@ function touchCard(turn) {
     turn.cardPending = false;
     const ctx = turnContexts.get(turn);
     if (!ctx || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return;
-    try { turn.control.holder.label(takeCard(ctx).card); }
+    try { turn.control.holder.label(heldTurnCard(ctx).card); }
     catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); }
   });
 }
@@ -10007,9 +10006,7 @@ mainPort.on("message", async ({ data }) => {
   }
   if (data?.type === 'update-unlock') updateGate.release();
   // main がこれから離れる（更新のためなど）。切れた後に作業が無いまま居続ける上限が決まる（core/orphan-guard.mjs）
-  if (data?.type === 'main-leaving') orphanGuard?.leaving(data.reason);
   // 更新を取りやめた（インストーラーが起きなかった・失敗した）。main は居続けるので、猶予を数える状態と切断の上限を元に戻す
-  if (data?.type === 'main-leaving-cancel') orphanGuard?.leavingCancelled();
   if (data?.type === "running") mainPort.postMessage({ type: "running", work: await runningWork() });
   // デスクトップの「中断して終了」（desktop/main.cjs の closeSafely）。全部を reason 付きで止める。
   // main は running の count が 0 になるのを待ってから終了する
@@ -10063,6 +10060,7 @@ function shutdownServer({ stopHeld = false } = {}) {
       if (chromeLink) await Promise.race([chromeLink.quit(), new Promise(resolve => setTimeout(resolve, 2000))]).catch(() => {});
       await stopHeldChildren();
     } else if (chromeLink?.alive) {
+      chromeRelay?.releaseForRestart();
       // relay の状態変化で既に予約された carry だけを書き切る。終わり専用の状態コピーは持たない。
       try { await chromeLink.flush(); } catch (error) { console.error('  chrome-link: could not flush its pending state:', String(error?.message ?? error)); }
     }
@@ -10097,7 +10095,6 @@ const orphanGuard = mainLink ? createOrphanGuard({
 mainPort.on('disconnect', () => orphanGuard?.disconnected());
 orphanGuard?.disconnected();   // 起こした main が最初につながる前に落ちても、居続けない（最初のつながりで connected になる）
 let readyMessage = null;
-mainAway.onStay(() => restartGrace());
 mainAway.onBack(({ first }) => {
   // 付け直した main へ、言語を送り直す。居ない間に過ぎた予定（送信予定・上限の解除時刻）は、wake と同じに確かめる（powerMonitor の resume は届かなかった）
   mainPort.postMessage({ type: 'locale', locale: locale.lang });

@@ -18,7 +18,7 @@ export function startupUrl(line) {
 }
 
 export function createOpencodeServer({ command, env=async()=>({}), beforeStart=()=>{}, afterStart=()=>{}, held=null, account=null, origin=async()=>null, currentOrigin=()=>null, busy=()=>false }) {
-  let proc=null, heldChild=null, base=null, auth=null, servedOrigin=null, starting=null, stream=null, retired=false, removeExitHook=null;
+  let proc=null, heldChild=null, base=null, auth=null, servedOrigin=null, starting=null, stream=null, removeExitHook=null;
   const listeners=new Set(),goneListeners=new Set();
   const accountId=account?.id ?? 'login';
   const publish=event=>{for(const fn of listeners)try{fn(event);}catch(err){console.error('  opencode: event listener failed:',err?.message);}};
@@ -105,7 +105,6 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
     } catch(err) {await stopNow();throw err;}
   }
   async function ensure() {
-    if(retired)throw new Error('OpenCode was handed over to the next Pleiad server');
     if(starting){await starting;return {base,auth};}
     const now=currentOrigin(),moved=Boolean(base&&now&&servedOrigin!==now);
     if(!moved&&(proc||heldChild)&&base)return {base,auth};

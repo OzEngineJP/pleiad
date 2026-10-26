@@ -106,7 +106,7 @@ class ChromeLink {
     this.current = null;          // 今の LinkSocket
     this.gen = Number(welcome.gen) || 0;
     this.lostFns = new Set();
-    this.ended = false;           // handOff・quit 済み
+    this.ended = false;           // releaseForRestart・quit 済み
     this.carryTimer = null; this.carryPending = undefined; this.lastCarryJson = null;
     this.onGone = onGone;
     this.retire = retire;         // 縁が途中で切れたあと、このサーバーが内の ws を張るときに、接続の子を終わらせる（retireChild）

@@ -27,7 +27,7 @@ const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
 
 export const name = 'adopt-agy';
-export const title = '付け直し: 保持役に載せた agy（偽物）を、サーバーの入れ替えをまたいで途中から引き継ぐ';
+export const title = '付け直し: 通常停止後に保持役の agy（偽物）を起動時に付け直す';
 
 const WAIT_MS = 20_000;
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
@@ -133,8 +133,8 @@ export default async function (t) {
     for (const k of ['T', 'F']) await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids[k], { ms: WAIT_MS, from: markA });
     await sleep(800);   // 札の置き直し（touchCard）が保持役へ届くまで
     ca.close(); ca = null;
-    // A を普通に落とす（更新・落ちたときと同じ道。保持役の子は止めない）
-    await a.kill(); a = null;
+    // A を SIGTERM で通常停止する。保持役の子は止めない。
+    await a.stop(); a = null;
     // F: A が居ない間に agy が result まで出す（終わった直後の形）。T はゲートのまま走り続ける
     await gates.open('f-fin');
     await until(() => gateDone('f-fin'), WAIT_MS, 'F の agy が result を出し終える');
@@ -192,7 +192,7 @@ export default async function (t) {
     cb.close(); cb = null;
     await b.stop(); b = null;
 
-    // 中断（引き継ぎとは別: 保持役に載った agy のターンを止める）: agy は木ごと止まり、保持役の子の記録は捨てられ、会話の次のターンは agy を起こし直して続く
+    // 中断: 保持役に載った agy のターンを止める。agy は木ごと止まり、保持役の子の記録は捨てられ、会話の次のターンは agy を起こし直して続く
     {
       a = await startServer({ env, dataDir, timeoutMs: 30_000 });
       ca = await open({ port: a.port, token: a.token });
@@ -225,7 +225,7 @@ export default async function (t) {
       void ca.cmd('sendMessage', { sessionId: ids.K, messageId: 'crash-K-0001', prompt: 'gated:k-tool' }).catch(() => {});
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.K, { ms: WAIT_MS, from: markK });
       ca.close(); ca = null;
-      await a.kill(); a = null;
+      await a.stop(); a = null;
       b = await startServer({ env, dataDir, timeoutMs: 30_000 });
       cb = await open({ port: b.port, token: b.token });
       await gates.open('k-tool');
@@ -244,7 +244,7 @@ export default async function (t) {
 
     // 4. main が起こした起動（名前付きパイプ・同じトークンとポート）。R は実行中（ゲートで止める）、I は ターンが終わって idle の agy
     {
-      const envH = { ...env, AGENT_HOST_HANDOVER: 'on', AGENT_HOST_GRACE_MS: '600000' };
+      const envH = { ...env, AGENT_HOST_HANDOVER: 'on' };
       a = await startServer({ env: envH, dataDir, timeoutMs: 40_000 });
       m1 = await attachMain(dataDir, a);
       ca = await open({ port: a.port, token: a.token });
@@ -253,14 +253,14 @@ export default async function (t) {
       const idleRes = await ca.runTurn({ backend: 'antigravity', sessionId: ids.I, cwd: work, prompt: 'again I' }, { ms: WAIT_MS });
       assert.equal(idleRes.outcome, 'ok', a.tail(10));
       const doneBeforeR = sessionMeta(ids.R).completedAt;
-      void ca.cmd('sendMessage', { sessionId: ids.R, messageId: 'handover-R-0001', prompt: 'gated:r-tool' }).catch(() => {});
+      void ca.cmd('sendMessage', { sessionId: ids.R, messageId: 'restart-R-0001', prompt: 'gated:r-tool' }).catch(() => {});
       await ca.waitFor(e => e.type === 'tool.start' && e.sessionId === ids.R, { ms: WAIT_MS, from: markH });
       // 起こした順（I → R）。I は idle、R は実行中
       const [idlePid, rPid] = (await spawned()).slice(-2);
       const portA = a.port, tokenA = a.token;
       await sleep(800);   // 札の置き直しが保持役へ届くまで
       ca.close(); ca = null;
-      await a.kill(); a = null;
+      await a.stop(); a = null;
       b = await startServer({ env: { ...envH, AGENT_HOST_PORT: String(portA), AGENT_HOST_TOKEN: tokenA }, dataDir, timeoutMs: 60_000 });
       assert.equal(b.port, portA, 'B は A と同じポートで待ち受ける');
       m2 = await attachMain(dataDir, b);
@@ -279,10 +279,10 @@ export default async function (t) {
       assert.equal(nextR.outcome, 'ok', b.tail(10));
       assert.equal((await spawned()).length, spawnedBefore, 'R: 付け直した agy が次のターンも使われる（起こし直さない）');
       // B の最初の agy の使用（sweepIdle）が、前のサーバーが残した idle の agy（札も印も無い）を止める
-      await until(() => !alive(idlePid), 10_000, 'idle の agy を B の最初の agy の使用が止める');
       // idle だった I の次のターンは、B が agy を起こし直して続く
-      const next = await cb.runTurn({ backend: 'antigravity', sessionId: ids.I, cwd: work, prompt: 'after handover I' }, { ms: WAIT_MS });
+      const next = await cb.runTurn({ backend: 'antigravity', sessionId: ids.I, cwd: work, prompt: 'after restart I' }, { ms: WAIT_MS });
       assert.equal(next.outcome, 'ok', b.tail(10));
+      await until(() => !alive(idlePid), 10_000, 'idle の agy を B の最初の agy の使用が止める');
       assert.equal((await spawned()).length, spawnedBefore + 1, 'I: idle だった会話の次のターンは agy を起こし直す');
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
       t.ok('main が起こした起動: A を普通に止めて B を起こすと、保持役の agy のターンを起動で付け直して 1 回だけ締まる。idle の agy は B の最初の保持役の使用が止め、次のターンは起こし直して続く', true);

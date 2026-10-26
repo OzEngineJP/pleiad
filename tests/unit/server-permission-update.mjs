@@ -1,5 +1,5 @@
 // ターンが終わっても残る承認の待ち（outlivesTurn）と、カードの中身の差し替え（permissionUpdate）。ADR 0168。fake バックエンドのサーバー越し。LLM は呼ばない。
-//   - ターンが走っている間だけ、ターンを止める待ちとして数える（running の blocking・count・handover.blocking）
+//   - ターンが走っている間だけ、ターンを止める待ちとして数える（running の blocking・count）
 //   - ターンが終わっても取り下げない・実行中の数に入らない。host が戻らなくても（giveUp）断られない
 //   - 人の「止める」・巻き戻し・会話の削除では aborted で片付く
 //   - update が祖先の中継の複製にも届く・つなぎ直した画面に新しい中身が届く・外からの settle で permissionSettled が出る
@@ -54,7 +54,7 @@ export default async function (t) {
     const [wait1] = await waitCards(held.sessionId);
     t.ok('ターンの間: 待ちは blocking（outlivesTurn の印つき）', wait1.blocking === true && wait1.outlivesTurn === true && wait1.relay === false, JSON.stringify(wait1));
     const run1 = await running();
-    t.ok('ターンの間: 実行中の数と引き継ぎを待たせる数に入る（ターン 1 + 待ち 1）', run1.count === 2 && run1.handover.blocking === 2, JSON.stringify({ count: run1.count, blocking: run1.handover?.blocking }));
+    t.ok('ターンの間: 実行中のターンを数える。カードは DB の待ちとして別に残す', run1.count === 2 && run1.handover === undefined, JSON.stringify({ count: run1.count, handover: run1.handover }));
     const abortFrom = c.mark();
     await c.cmd('abort', { sessionId: held.sessionId });
     const settledAbort = await c.waitFor((e) => e.type === 'permissionSettled' && e.id === wait1.id, { from: abortFrom, ms: 15_000 });
@@ -67,7 +67,7 @@ export default async function (t) {
     const [wait2] = await waitCards(first.sessionId);
     t.ok('ターンの後: 待ちは残るが blocking ではない', wait2.blocking === false && wait2.outlivesTurn === true, JSON.stringify(wait2));
     const run2 = await running();
-    t.ok('ターンの後: 実行中の数にも引き継ぎを待たせる数にも入らない', run2.count === 0 && run2.handover.blocking === 0, JSON.stringify({ count: run2.count, blocking: run2.handover?.blocking }));
+    t.ok('ターンの後: 実行中の数にも入らない', run2.count === 0 && run2.handover === undefined, JSON.stringify({ count: run2.count, handover: run2.handover }));
     t.ok('ターンの後: 取り下げの知らせ（permissionSettled）は出ていない', !c.since(first.from).some((e) => e.type === 'permissionSettled' && e.id === wait2.id));
 
     // ---- update: 全部のカードの payload に重ねて permissionUpdate を出す。重ねるのは browserHandoff だけ
