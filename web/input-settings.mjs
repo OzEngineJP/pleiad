@@ -16,10 +16,11 @@ const ROWS = [
 ];
 
 /**
- * @param cmd       WS コマンド
- * @param getPrefs  () => prefs（client.mjs の state.prefs。prefs イベントで新しくなる）
+ * @param cmd        WS コマンド
+ * @param getPrefs   () => prefs（client.mjs の state.prefs。prefs イベントで新しくなる）
+ * @param getBackends () => エージェントの一覧（describeBackends。capabilities.promptSuggestions が来る分だけ候補を出せる）
  */
-export function setupInputSettings({ cmd, getPrefs }) {
+export function setupInputSettings({ cmd, getPrefs, getBackends = () => [] }) {
   const root = document.getElementById('inputPanel');
   const section = el('section', 'nf-section');
   const state = el('p', 'mp-state');
@@ -40,7 +41,12 @@ export function setupInputSettings({ cmd, getPrefs }) {
 
   function paint() {
     const now = inputPrefs(getPrefs());
-    const rows = ROWS.map(([name, key, base]) => {
+    // 候補を出せるエージェントが無いのに設定だけ見せると、入れても何も起きない（#147）。ある分だけ行を出し、
+    // 説明にも対応しているエージェントの名前を載せる（Pleiad が後から作る分は料金が別途かかる）
+    const suggestible = getBackends().filter(b => b.capabilities?.promptSuggestions);
+    const agents = suggestible.map(b => b.label ?? b.id).join('・');
+    const covered = suggestible.filter(b => b.capabilities.promptSuggestions !== 'native').map(b => b.label ?? b.id).join('・');
+    const rows = ROWS.filter(([, , base]) => base !== 'settings.input.suggestions' || suggestible.length).map(([name, key, base]) => {
       const label = t(`${base}.title`);
       const sw = el('button', 'cx-sw');
       sw.type = 'button';
@@ -51,7 +57,10 @@ export function setupInputSettings({ cmd, getPrefs }) {
       sw.onclick = () => set(key, !now[name]);
       const r = el('div', 'nf-row');
       const info = el('div', 'nf-info');
-      info.append(el('span', 'nf-label', label), el('small', null, t(`${base}.description`)));
+      const desc = base === 'settings.input.suggestions'
+        ? t('settings.input.suggestions.description', { agents, covered: covered ? t('settings.input.suggestions.coveredNote', { agents: covered }) : '' })
+        : t(`${base}.description`);
+      info.append(el('span', 'nf-label', label), el('small', null, desc));
       r.append(info, sw);
       r.onclick = (e) => { if (e.target !== sw && !sw.disabled) sw.click(); };
       return r;

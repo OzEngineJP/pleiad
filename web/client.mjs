@@ -3980,6 +3980,8 @@ async function loadBackends(early = null) {
     ? state.prefs.backend : state.backendId ?? state.backends[0]?.id ?? null;
   state.shownBackend ??= state.backendId;
   controls.paint();
+  // 次の発言の候補の行も、届いたエージェントの能力で出し分ける
+  inputSettings.paint();
   // 自動の圧縮の行はエージェントの一覧から作る
   if (state.prefs.autoCompaction) paintAutoCompactionSettings();
   // 認証の状態はエージェントを引いたときに 1 回だけ。以降はログイン / ログアウトの後に取り直す
@@ -8332,10 +8334,10 @@ function rowMenu(s, x, y, lead = []) {
         cmd("setTitle", { sessionId: s.id, title: v, reasonKey: "menu" })
           .catch((e) => sideNote(t("session.titleFailed", { error: e.message }))) } },
     ] },
-    { label: t('compaction.compact'), disabled: !capsOf(s.backend).compact,
-      note: !capsOf(s.backend).compact ? t('compaction.agentManaged', { agent: labelOf(s.backend) }) : '',
+    { label: t('compaction.compact'), disabled: !capsOf(s.nextSettings?.backend ?? s.backend).compact,
+      note: !capsOf(s.nextSettings?.backend ?? s.backend).compact ? t('compaction.agentManaged', { agent: labelOf(s.nextSettings?.backend ?? s.backend) }) : '',
       onClick: () => cmd('compactConversation', { sessionId: s.id }).catch(error => showRowCompactionError(s, error)) },
-    ...(!capsOf(s.backend).compact ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
+    ...(!capsOf(s.nextSettings?.backend ?? s.backend).compact ? [] : [{ label: t('compaction.disableConversation'), checked: Boolean(s.autoCompactionOff),
       onClick: () => cmd('setConversationAutoCompaction', { sessionId: s.id, off: !s.autoCompactionOff })
         .then(({ off }) => { s.autoCompactionOff = off; renderSessions(); }).catch(error => showRowCompactionError(s, error, true)) }]),
     { label: t("session.menu.changeStatus"), hint: s.status ?? t("session.status.none"), sub: () => [
@@ -10764,7 +10766,7 @@ const plusSettings = setupPlusSettings({ cmd, page: onboarding.page, getPrefs: (
 // 設定 › アプリ情報・更新 › 常駐（デスクトップ版だけ。状態は remoteStatus の resident）
 const residentSettings = setupResidentSettings({ cmd });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）
-const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs });
+const inputSettings = setupInputSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getBackends: () => state.backends });
 const notifySettings = setupNotifySettings({ cmd, page: onboarding.page, onPc: pc => { notifyPc = pc; } });
 const voiceSettings = setupVoiceSettings({ cmd, page: onboarding.page, openPage: name => $(`${name}Tab`)?.click() });
 // 設定 › API キー。使っている所のリンクは、接続先は設定 › エージェント設定の接続先の面、通話・委譲はそのページへ

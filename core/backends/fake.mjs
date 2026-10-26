@@ -426,8 +426,9 @@ export const backend = {
     //   thread … Codex と同じ。rewind() が今すぐ切る / off … 巻き戻す口が無い（Antigravity と同じ。ホスト管理）
     get rewind() { const v = process.env.FAKE_REWIND; return v === 'off' ? impossible('試験用に巻き戻しの口を無くしている') : v === 'thread' ? 'thread' : 'resumeAt'; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     subagents: true,
-    liveModel: true,
-    liveMode: true,
+    // FAKE_LIVE=off でターンの途中切り替えの口が無いエージェントにする（Codex・OpenCode と同じ形）
+    get liveModel() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    get liveMode() { return process.env.FAKE_LIVE === 'off' ? impossible('試験用に途中切り替えを無くしている') : true; }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,
     plyAgents: true,
     plyInstructions: true,
@@ -974,17 +975,20 @@ export const backend = {
     throw new Error("fake: このタスクは止められません");
   },
 
-  async setModelLive(handle, model) {
-    if (!handle) return false;
-    handle.model = model;
-    return true;
-  },
+  // FAKE_LIVE=off のときはメソッドごと無い（契約: liveMode が対応でないのに口だけあると、できないのにできるように見える）
+  ...(process.env.FAKE_LIVE === 'off' ? {} : {
+    async setModelLive(handle, model) {
+      if (!handle) return false;
+      handle.model = model;
+      return true;
+    },
 
-  async setModeLive(handle, mode) {
-    if (!handle) return false;
-    handle.mode = mode;
-    return true;
-  },
+    async setModeLive(handle, mode) {
+      if (!handle) return false;
+      handle.mode = mode;
+      return true;
+    },
+  }),
 
   async listSessions({ limit = 100 } = {}) {
     return [...sessions.values()]

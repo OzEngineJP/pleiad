@@ -1068,7 +1068,9 @@ export function setupComposerControls({ cmd, get, on, els = {} }) {
       const modeAria = danger ? t("composer.mode.chipAriaDanger", { mode: modeFull }) : t("composer.mode.chipAria", { mode: modeFull });
       chips.model.setAttribute("aria-label", `${chips.model.getAttribute("aria-label")} · ${modeAria}`);
       chips.model.title = `${chips.model.title} · ${danger ? t("composer.mode.dangerTitle") : modeAria}`;
-      if (d.mode !== defaultModeOf(d.modes)) {
+      // 危険なモード（確認なし・制限なし）は既定のモードでも印を出す。Antigravity の yolo だけの会話で
+      // 「既定だから」と印を消すと、承認を聞かないまま走ることが目に見えない（#147）
+      if (danger || d.mode !== defaultModeOf(d.modes)) {
         const modeShort = m.short && m.short !== modeFull ? m.short : "";
         const mark = el("span", `mk${danger ? " danger" : ""}${markedMode !== undefined && markedMode !== d.mode ? " in" : ""}`);
         mark.setAttribute("aria-hidden", "true");

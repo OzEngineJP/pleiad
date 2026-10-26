@@ -64,7 +64,8 @@
       },
       "suggestions": {
         "title": "Suggest the next message",
-        "description": "After a reply, a suggestion appears in the empty message box. Press Tab to use it. In Codex and Antigravity conversations, making it uses a little usage."
+        "description": "After a reply, a suggestion appears in the empty message box. Press Tab to use it ({{agents}}).{{covered}}",
+        "coveredNote": " Generating a suggestion spends a little usage on {{agents}}"
       },
       "saveFailed": "Couldn't save: {{error}}"
     },
@@ -3527,10 +3528,11 @@
     "promptWaiting_one": "{{count}} waiting for approval",
     "promptWaiting_other": "{{count}} waiting for approval",
     "promptJoin": " · ",
+    "agentParen": " ({{agents}})",
     "handoverWork_one": "{{count}} running task will not be stopped when Pleiad switches to the new version.",
     "handoverWork_other": "{{count}} running tasks will not be stopped when Pleiad switches to the new version.",
-    "handoverWait_one": "{{count}} of them cannot be carried over, so Pleiad waits for it to finish before switching.",
-    "handoverWait_other": "{{count}} of them cannot be carried over, so Pleiad waits for them to finish before switching.",
+    "handoverWait_one": "{{count}} of them cannot be carried over, so Pleiad waits for it{{agents}} to finish before switching.",
+    "handoverWait_other": "{{count}} of them cannot be carried over, so Pleiad waits for them{{agents}} to finish before switching.",
     "handoverBrowser": "Tabs in the built-in browser will be reopened."
   },
   "switch": {
@@ -4961,7 +4963,8 @@
         "skipped": "Off or not passed in this location: {{names}}",
         "leakTitle": "{{n}} agent hooks that should have been off ran",
         "untrusted": "{{n}} registrations did not get a Codex trust hash. Codex does not run them.",
-        "unsupportedAgent": "Hooks cannot be passed to this agent (Claude Code, Codex and Antigravity only).",
+        "unsupportedAgent": "Hooks cannot be passed to this agent{{agents}}.",
+        "supportedParen": " (currently supported: {{agents}})",
         "nextNative": "This location is back to Leave to the agent. Agent hooks run from the next turn.",
         "nextPly": "This location is Managed by Pleiad. Pleiad manages hooks from the next turn.",
         "observedPleiad": "For Antigravity, only runs of hooks Pleiad passed can be recorded. Runs of the agent's own hooks are not observable.",
