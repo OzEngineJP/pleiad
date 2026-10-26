@@ -242,6 +242,7 @@ const SUITES = [
   './unit/devin-meter.mjs',
   './unit/server-devin-meter.mjs',
   './unit/devin-compaction.mjs',
+  './unit/devin-subagents.mjs',
   './unit/acp-record-merge.mjs',
   './unit/devin-usage.mjs',
   './unit/devin-grok-auth.mjs',
