@@ -38,7 +38,7 @@ jobs:
     environment: release
     runs-on: macos-15
     timeout-minutes: 40
-    # 上げたコミットに ios-v* のタグを付けて push する（次のリリースノートの基点。ADR 0271）
+    # 上げたコミットに ios-v* のタグを付けて push する（次のリリースノートの基点。ADR 0272）
     permissions:
       contents: write
     steps:

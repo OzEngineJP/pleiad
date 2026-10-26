@@ -1,4 +1,4 @@
-// モバイルのリリースノート（scripts/mobile-release-notes.mjs、docs/android-releases.md・docs/ios.md、ADR 0271）。
+// モバイルのリリースノート（scripts/mobile-release-notes.mjs、docs/android-releases.md・docs/ios.md、ADR 0272）。
 // 偽の git リポジトリで、前の <os>-v* のタグからの範囲・paths の絞り込み・マージの除外・件数と文字数の上限・
 // 前の版が無いときの空を確かめる。paths の一覧（スクリプトの RELEASE_PATHS）がワークフローの on.push.paths と
 // ずれていないこと、タグの形がワークフローと合うことも突き合わせる。GitHub・Play・Apple は呼ばない。

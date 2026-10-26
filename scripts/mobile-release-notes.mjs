@@ -2,7 +2,7 @@
 // モバイル版（Android・iOS）のリリースノートを作る。前に出した版から今のコミットまでの、
 // その OS に効く変更（ワークフローの paths と同じ範囲）のコミットの題を並べる。
 // GitHub Release（android-release.yml）・Google Play（android-play.yml）・TestFlight（ios-testflight.yml）の
-// 3 か所から使う。依存なし（Node の組み込みだけ）。docs/android-releases.md・docs/ios.md、ADR 0271。
+// 3 か所から使う。依存なし（Node の組み込みだけ）。docs/android-releases.md・docs/ios.md、ADR 0272。
 //
 //   node scripts/mobile-release-notes.mjs <android|ios> --format <github|play|testflight> [--from <ref>] [--to <ref>] [--out <file>]
 //

@@ -24,7 +24,7 @@ Google Play へは、同じ鍵・同じ版の決め方の AAB を `.github/workf
 - `versionName` = `<mobile/package.json の version>-<versionCode>`（例 `0.2.0-1234`）。
 - タグ = `android-v<versionName>`。そのタグ（またはリリース）が既にあるときは、リリースを作らずに正常終了する。
 
-リリースは prerelease で、`--latest=false` で作る。成果物は `Pleiad-Android-<versionName>.apk` と `SHA256SUMS.txt`。本文は、頭に「変更」の節（前の `android-v*` のタグから今のコミットまでの、Android に効く変更のコミットの題。`scripts/mobile-release-notes.mjs` が上の paths と同じ範囲から作り、マージは除く。20 件で切って残りは「ほか N 件」。前のタグが無い・変更が無いときは節を出さない）と、Android 版であること・インストールの仕方・提供元不明のアプリの許可・上書き更新・対応 Android 13 以上（`minSdk` 33）の短い定型（[ADR 0271](adr/0271-mobile-release-notes-from-tags.md)）。同じ作り方の一覧を Play の「新機能」と iOS の TestFlight の「テスト内容」にも使う。
+リリースは prerelease で、`--latest=false` で作る。成果物は `Pleiad-Android-<versionName>.apk` と `SHA256SUMS.txt`。本文は、頭に「変更」の節（前の `android-v*` のタグから今のコミットまでの、Android に効く変更のコミットの題。`scripts/mobile-release-notes.mjs` が上の paths と同じ範囲から作り、マージは除く。20 件で切って残りは「ほか N 件」。前のタグが無い・変更が無いときは節を出さない）と、Android 版であること・インストールの仕方・提供元不明のアプリの許可・上書き更新・対応 Android 13 以上（`minSdk` 33）の短い定型（[ADR 0272](adr/0272-mobile-release-notes-from-tags.md)）。同じ作り方の一覧を Play の「新機能」と iOS の TestFlight の「テスト内容」にも使う。
 
 `mobile/package.json` の `version` を上げると、次の版の頭が変わる。`versionCode` は頭の番号に関わらず増え続けるので、上げても下げても上書き更新はできる。
 
