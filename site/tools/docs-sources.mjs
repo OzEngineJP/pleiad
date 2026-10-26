@@ -20,6 +20,9 @@ export const DOCS_SOURCE_FILES = Object.freeze([
   "core/backends/computer-timing.mjs",
 ]);
 
+/** 操作・設定の一覧（リファレンスの章）の元。import しない JSON なので閉包の外で取る */
+export const DOCS_SNAPSHOT_FILE = "tests/ops-surface.snap.json";
+
 /** 古いタグ（新しいモジュールが無い）で、一覧だけを作るときに使うファイル */
 export const DOCS_INDEX_FILE = "core/backends/agents.mjs";
 
