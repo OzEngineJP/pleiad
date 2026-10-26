@@ -2025,7 +2025,7 @@ function computerApproval(ev, approval, row) {
       });
       bundleOf(row)?.paint();
       state.pendingPerms.delete(ev.id);
-      if (isRunningHere()) { if (ok) activity.suspend(); else activity.show(t("activity.continuing")); }
+      activity.afterPermission(undefined, { suspend: ok });
     };
     b.session.onclick = () => settle("session");
     b.always.onclick = () => settle("always");
@@ -2066,7 +2066,7 @@ function computerApproval(ev, approval, row) {
     head.append(el("span", "desc", approvalHeading(approval)), el("span", "res", `${approvalSaid(scope, ok, approval)} · ${hhmm(new Date())}`));
     body.remove();
     actions.remove();
-    if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: "ply_computer" }) : t("activity.continuing"));
+    activity.afterPermission(ok ? t("activity.runningTool", { tool: "ply_computer" }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
   };
   b.session.onclick = () => settle("session");
@@ -2409,7 +2409,7 @@ function questionCard(ev, into = null) {
       ? qs.map((q) => `${q.header || q.question}: ${answers[q.question]}`).join(" / ")
       : t("chat.ask.skipped");
     actions.replaceChildren(el("span", "res", summary));
-    if (isRunningHere()) activity.show(t("activity.continuing"));
+    activity.afterPermission();
     state.pendingPerms.delete(ev.id);
   }
 
@@ -2533,7 +2533,7 @@ function rowApprovalCard(ev, row) {
     });
     bundleOf(row)?.paint();
     state.pendingPerms.delete(ev.id);
-    if (isRunningHere()) { if (ok) activity.suspend(); else activity.show(t("activity.continuing")); }
+    activity.afterPermission(undefined, { suspend: ok });
   };
   allow.onclick = () => settle(true);
   deny.onclick = () => settle(false);
@@ -2558,7 +2558,7 @@ function foldApprovalRow(id, { box, row, details, host }) {
     row.classList.remove("tc-waiting");
   });
   bundleOf(row)?.paint();
-  if (isRunningHere()) activity.show(t("activity.continuing"));
+  activity.afterPermission();
 }
 
 /**
@@ -2695,7 +2695,7 @@ function permissionCard(ev, into = null) {
     actions.remove();
     // 決着後は一行に畳み、押せば承認したときの入力をその場で開ける（何を許可・拒否したかを後からたどれる）
     if (!ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
-    if (isRunningHere()) activity.show(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
+    activity.afterPermission(ok ? t("activity.runningTool", { tool: ev.toolName }) : t("activity.continuing"));
     state.pendingPerms.delete(ev.id);
   };
   allow.onclick = () => settle(true);
@@ -2756,7 +2756,7 @@ function onPermissionSettled(ev) {
   if (handoff) {
     openCards.fold(ev.id, { by: "handoff", settled: ev });
     // 状態の一行を「承認を待っている」から戻す。ターンが終わった後に済みになったなら、残っている一行を下げる
-    if (isRunningHere()) activity.show(t("activity.continuing"));
+    if (isRunningHere() || behindHere()) activity.afterPermission();
     else if (!activity.idleOnly()) activity.hide();
   } else foldElsewhere(ev.id);
 }
@@ -2801,7 +2801,7 @@ function registerRelayCard(ev, parts) {
   const fold = ({ by, allow, peer, settled: settledEv }) => {
     if (card.classList.contains("done")) return;
     // 誰がどこで答えたか分からない決着（つなぎ直しで消えた・タスクが止まった）は、カードごと下げる
-    if (!by) { m.remove(); state.pendingPerms.delete(ev.id); return; }
+    if (!by) { m.remove(); state.pendingPerms.delete(ev.id); activity.afterPermission(); return; }
     const what = question ? t("chat.approval.relay.answered") : allow ? t("chat.approval.allowed") : t("chat.approval.denied");
     // Chrome の操作待ちの中継は、ホストでつながった・断った・子が待つのをやめた、をカード自身の字で 1 行にする（◇ とその 1 行だけ）
     const own = doneLine && by !== "elsewhere" && by !== "handoff" ? doneLine({ by, allow, peer }) : null;
@@ -2828,6 +2828,7 @@ function registerRelayCard(ev, parts) {
     actions.remove();
     if (code && !ev.browserSite) foldSettledCard(card, head, code, approvalTarget(ev.input));
     state.pendingPerms.delete(ev.id);
+    activity.afterPermission();
   };
   // 同じ承認のカードが依頼元の会話と詳細の両方に出ることがある。先に答えた方で決まり、残りは同じ決着で畳む（名簿は id ごとの集合）
   openCards.add(ev.id, { el: m, sending: () => Boolean(card.dataset.sending), setOnline, fold, update: (patch) => parts.onUpdate?.(patch) });
@@ -2955,8 +2956,9 @@ const activity = {
     return !this.behind && !isRunningHere() && backgroundCounts().live > 0;
   },
   shapeNow() {
+    if (this.behind) return `sat:${this.behind.n}`;
     if (!stoppingHere() && [t("activity.waitingApproval"), t("activity.waitingAnswer"), t("activity.waitingChrome")].includes(this.text)) return "none";
-    return this.behind ? `sat:${this.behind.n}` : this.idleOnly() ? "none" : "run";
+    return this.idleOnly() ? "none" : "run";
   },
   mark() {
     this.shape = this.shapeNow();
@@ -2978,6 +2980,11 @@ const activity = {
   /** 印を今の状態（弧 / 衛星 / なし）に差し替える */
   remark() {
     this.el?.querySelector(".activity-tip")?.replaceChildren(this.mark());
+  },
+  /** 承認・回答の決着後。親のターンが終わっていても、残った子の結果待ちに戻す。 */
+  afterPermission(text = t("activity.continuing"), { suspend = false } = {}) {
+    if (isRunningHere()) { if (suspend) this.suspend(); else this.show(text); }
+    else if (behindHere()) this.show(t("activity.waitingBackground"));
   },
   /**
    * 汎用表示を抑える。実行中のツールがあれば同じ末尾の節に残し、承認カードだけなら節を外す。
