@@ -182,10 +182,10 @@ export const CAPABILITY_STATES = {
     alwaysAllow: true,
     mcpApproval: 'agent',
     login: true,
-    accounts: todo('#108'),           // account config の login と conversation injection の接続が未検証
+    accounts: impossible('Devin CLI 3000.11.92 は APPDATA を会話別に変えても既存ログインで応答し、資格情報が共有される。CLI がアカウント別の認証プロファイルを提供するまで分離できない'), // i18n-ignore: 実物の認証分離を確認した開発者向け理由
     compatEndpoints: impossible('通常版の CLI は Devin の接続先（windsurf）固定で、ACP_BACKEND=openai などの互換接続先は Unknown backend type で拒否される（エアギャップ専用ビルドのみ。CLI 3000.11.92 で確認）'), // i18n-ignore: CLI の機能確認に基づく開発者向けの理由
     compact: true,                    // /compact を prompt として送る（下の compact）
-    autoCompactWindow: todo('#108'),   // installed CLI と公式資料で agent.compaction_threshold_tokens の実効を未確認
+    autoCompactWindow: impossible('Devin CLI 3000.11.92 の公式設定項目・ACP configOptions に自動圧縮閾値が無い'), // i18n-ignore: CLI と公式資料の確認に基づく開発者向け理由
     promptSuggestions: covered,       // ターンの後に suggestNext で作る
     plyInstructions: true,
     plyAgents: true,
@@ -195,13 +195,13 @@ export const CAPABILITY_STATES = {
     computerUse: { images: 'inline', waitSliceMs: null },
     shell: 'host',
     plyShell: true,
-    nativeShellOff: todo('#108'),      // ACP の会話設定で native exec だけを止められるか未検証
+    nativeShellOff: true,              // 会話限定 disabled_tools で native shell tools を外す
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
     // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
     browser: true, plyControl: true, secrets: true, visualize: true,
-    hooks: todo('#98'),               // Devin のプロジェクト Hooks と会話限定 Hooks の分離が未検証
+    hooks: true,                      // 会話限定 --config の hooks。read_config_from で他形式の Hooks を読まない
   },
   grok: {
     // Grok の ACP 拡張でネイティブ題名と全履歴の分岐を使う。状態タグ・巻き戻しは Pleiad の控えで補う

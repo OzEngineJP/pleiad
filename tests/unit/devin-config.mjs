@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { prepareDevinLaunch, METADATA_CONFIG } from '../../core/backends/devin-config.mjs';
+import { prepareDevinLaunch, devinTurnConfig, METADATA_CONFIG } from '../../core/backends/devin-config.mjs';
 
 export const name = 'devin-config';
 export const title = 'Devin native 設定と認証を保ち、metadata と専用セッションの置き場を分ける';
@@ -29,5 +29,25 @@ export default async function (t) {
     t.ok('user 設定も資格情報もコピー・上書きしない', true);
     t.ok('入力の env と command を書き換えない', env.DEVIN_CONFIG_HOME === configHome && !Object.hasOwn(env, 'DEVIN_SESSIONS_DIR'));
     if (process.platform !== 'win32') t.ok('内部 metadata 設定は所有者だけ読み書きできる', ((await fs.stat(meta.command[2])).mode & 0o777) === 0o600);
+    const runtime = { supplied: [{ hook: { command: 'node marker.mjs', timeout: 12 }, d: { event: 'PreToolUse', matcher: '^exec$', timeout: 9, adapter: false } }] };
+    const turnConfig = devinTurnConfig({ hooksRuntime: runtime, nativeShellOff: true });
+    const scoped = await prepareDevinLaunch({ command: ['fake'], cwd, env, dataDir: root, turnConfig });
+    const turnPath = scoped.command.at(-1);
+    assert.equal(scoped.command.at(-2), '--config');
+    assert.deepEqual(JSON.parse(await fs.readFile(turnPath, 'utf8')), {
+      read_config_from: { agents_standard: false, cursor: false, windsurf: false, claude: false, copilot: false, opencode: false, zed: false },
+      hooks: { PreToolUse: [{ matcher: '^exec$', hooks: [{ type: 'command', command: 'node marker.mjs', timeout: 9 }] }] },
+      disabled_tools: ['exec', 'shell_command', 'write_to_process', 'kill_shell', 'get_output'],
+    });
+    if (process.platform !== 'win32') t.ok('Scoped turn config is owner-only', ((await fs.stat(turnPath)).mode & 0o777) === 0o600);
+    await scoped.cleanup();
+    await assert.rejects(fs.stat(turnPath), { code: 'ENOENT' });
+    assert.deepEqual(await fs.readdir(configHome), ['keep.json']);
+    t.ok('Hooks and native shell policy are confined to the turn config', turnConfig.read_config_from.claude === false && turnConfig.hooks.PreToolUse.length === 1 && turnConfig.disabled_tools.includes('exec'));
+    assert.equal(devinTurnConfig({ hooksRuntime: { supplied: [] } }), null);
+    assert.equal(devinTurnConfig(), null);
+    t.ok('empty hook owners keep native imports and the shared holder untouched', true);
+    await assert.rejects(prepareDevinLaunch({ command: ['fake'], cwd, env, dataDir: root, turnConfig: { marker: 'x'.repeat(1024 * 1024) } }), { code: 'DEVIN_CONFIG_TOO_LARGE' });
+    t.ok('oversized turn configs are rejected before writing', true);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }

@@ -1,11 +1,4 @@
 {
   "_comment": "未実装（todo）の基準（tests/lib/backend-todos.mjs）。増やせない。減らしたら node tests/lib/backend-todos.mjs --update-baseline で下げる",
-  "todos": {
-    "devin": {
-      "accounts": "#108",
-      "autoCompactWindow": "#108",
-      "hooks": "#98",
-      "nativeShellOff": "#108"
-    }
-  }
+  "todos": {}
 }

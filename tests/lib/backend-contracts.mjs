@@ -60,7 +60,7 @@ export const CAPABILITY_CONTRACTS = {
   plyContext: { suites: ['server-agy-context', 'server-opencode-context', 'context-owner-capability'], agents: DELIVERY_AGENTS },
   computerUse: { suites: ['computer-bridge'], agents: DELIVERY_AGENTS },
   plyShell: { suites: ['shell-bridge', 'shell-delivery'], agents: DELIVERY_AGENTS },
-  nativeShellOff: { suites: ['shell-delivery'] },
+  nativeShellOff: { suites: ['shell-delivery'], agents: { devin: 'backend-delivery' } },
   shell: { suites: ['server-shell'] },
   steer: { suites: ['server-delegation-steer', 'server-delegation-steer-acp', 'task-instructions'] },
   handover: { suites: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'] },
@@ -68,7 +68,7 @@ export const CAPABILITY_CONTRACTS = {
   plyControl: { suites: ['control-delivery', 'ops-control', 'server-devin', 'grok-backend'], agents: DELIVERY_AGENTS },
   secrets: { suites: ['server-secrets', 'mcp-secret-store'], agents: DELIVERY_AGENTS },
   visualize: { suites: ['server-visualize'], agents: { ...DELIVERY_AGENTS, antigravity: 'backend-delivery' } },
-  hooks: { suites: ['server-hooks', 'server-hooks-unify'], agents: DELIVERY_AGENTS },
+  hooks: { suites: ['server-hooks', 'server-hooks-unify'], agents: { ...DELIVERY_AGENTS, devin: 'backend-delivery' } },
 };
 
 export const TRAIT_CONTRACTS = {

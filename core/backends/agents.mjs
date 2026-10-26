@@ -103,8 +103,8 @@ export const AGENTS = {
     idleCompaction: { enabled: false, delayMinutes: 25 },
     // AGENTS.md（common）・Claude 互換のインポート（claude）・.devin 系（devin）・OpenCode の MCP のインポート（opencode）
     contextSources: ['common', 'claude', 'devin', 'opencode'],
-    hooksAs: null,
-    hooksVia: null,
+    hooksAs: 'claude',
+    hooksVia: 'config',
     // ACP のツールの名前は自由な題なので、名前では見分けない（kind: 'execute' の呼び出しに shell: true を付ける。devin-normalize.mjs）
     shellTools: [],
     shellDefault: 'native',
