@@ -46,7 +46,7 @@
 - 機能が持つのは「起動したら DB と保持役の子の一覧から自分の分を拾う」1 つだけにする。今の `restoreAdoptedTurns` を、`AGENT_HOST_ADOPT_HOLDER`・`--handover`・`AGENT_HOST_HANDOVER` の条件なしでいつも通す。`restoreTurn`・`adoptTurn`・`driveTurn` の道はそのまま使う（締めの道が 1 本であることは変えない）。
 - 「自分の分」は、子の札（`label`。不透明な JSON）と印（`marks`）で見分ける。保持役の規約は変えない（`label` は誰のものか知らない）。拾う側の一覧（`readHolderSources`・`registerChildExpander`）は汎用の 1 か所に置き、機能ごとの登録を増やさない。子 1 つが複数のターンを運ぶバックエンド（Codex の共有 app-server）の展開は、子の札の種類ごとの 1 関数として残す。
 - `holdable` の例外（bot の会話・圧縮のターン）をなくす。bot も圧縮も、起動で拾えるようにする（拾えない理由が残るなら、その機能を保持役に載せないのではなく、拾える形に直す）。
-- サーバーの終わりに子を止める後片付け（`shellRuns.stopAll`・`shellBridge.stopAll`・`backend.releaseIdle`）をやめる。**アプリの終了**（利用者が終了を選んだ・更新で本体を入れ替える）だけが子を止める。サーバーの終わりは「手を離す」だけにする。
+- サーバーの終わりに子を止める後片付け（`shellRuns.stopAll`・`shellBridge.stopAll`・`backend.releaseIdle`）をやめる。**アプリの終了**（利用者が終了を選んだ・アンインストール）だけが子を止める。更新で本体（Electron）を入れ替えても、保持役と子は止めない。サーバーの終わりは「手を離す」だけにする。
 
 ### 5. 更新の手順
 
