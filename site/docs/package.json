@@ -1,0 +1,17 @@
+{
+  "name": "pleiad-docs",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "build": "node scripts/generate.mjs && astro build",
+    "dev": "node scripts/generate.mjs && astro dev"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.6",
+    "astro": "7.4.0"
+  }
+}
