@@ -54,8 +54,9 @@ export const DATA_WRITES = [
   { file: 'core/backends/antigravity-store.mjs', sites: 1, targets: [
     { name: 'antigravity/<conversationId>.json', limit: '会話の長さ', reason: 'Antigravity の会話の控え。ターン中に何度も書き直す', unbounded: true },
   ] },
-  { file: 'core/backends/devin-config.mjs', sites: 2, targets: [
+  { file: 'core/backends/devin-config.mjs', sites: 3, targets: [
     { name: 'devin/metadata-config/devin/config.json', limit: '固定 1 ファイル。METADATA_CONFIG の 7 個の import 無効化と hooks/auto_update/notify だけ（1 KiB 未満）', reason: 'モデル一覧の取得を専用 cwd と固定設定で行う。利用者の設定・認証情報をコピーせず、会話数によって増えない' },
+    { name: 'devin/turn-configs/<uuid>.json', limit: '最大 1 MiB・会話ごとに 1 ファイル', reason: 'Hooks / nativeShellOff を会話単位で適用し、ACP 初期化が設定を読んだ直後に削除する' },
     { name: 'devin/metadata-config/devin/mcp_config.json', limit: '固定 1 ファイル。{"mcpServers":{}} の 17 bytes', reason: 'metadata 専用の空 MCP 設定。会話やカタログを保存せず、同じ固定パスだけを書き直す' },
   ] },
   { file: 'core/backends/opencode-held.mjs', sites: 1, targets: [
@@ -80,9 +81,15 @@ export const DATA_WRITES = [
   { file: 'core/backends/grok-accounts.mjs', sites: 1, targets: [
     { name: 'accounts/grok/<account-id>/auth.json', limit: '登録した Grok アカウントごとに 1 ファイル', reason: 'Grok CLI が読むアカウント別ホームの認証情報。Pleiad の保護されたデータ置き場に保存し、既定の ~/.grok は変更しない' },
   ] },
-  { file: 'core/backends/grok-hooks.mjs', sites: 1, targets: [
+  { file: 'core/backends/grok.mjs', sites: 4, targets: [
+    { name: 'grok-endpoint-homes/<endpoint-id>/config.toml', limit: '互換の接続先ごとに 1 ファイル（数百 bytes）。同じ接続先の会話は置き場を共有し、ターンごとに同じファイルを書き直す', reason: 'Grok CLI が読む接続先の設定（GROK_HOME）。会話限定の置き場にして、利用者の ~/.grok の設定は変えない' },
+    { name: 'grok-endpoint-homes.json', limit: '固定 1 ファイル。互換の接続先で始めた Grok の会話の id → 置き場の対応だけ', reason: '再開したときに同じ置き場（会話の記録がある GROK_HOME）を使うため' },
+  ] },
+  { file: 'core/backends/grok-hooks.mjs', sites: 2, targets: [
     { name: 'grok-hooks/<pid>-<乱数>/hooks/hooks.json', limit: '同時に走る Grok のターンの数まで（1 ターン 1 ファイル）。ターンの終わりに消し、持ち主の居ない残りは次の書き込みで消す',
       reason: 'Grok へそのターンだけ渡すプラグイン（_meta.pluginDirs）。Grok はセッション限定のプラグインを保存しない' },
+    { name: 'grok-hooks/<pid>-<乱数>/profile.md', limit: '同時に走る Grok のターンの数まで（1 ターン 1 ファイル）。ターンの終わりに消し、持ち主の居ない残りは次の書き込みで消す',
+      reason: 'Grok のネイティブ shell だけをそのターン中に無効にするエージェントプロファイル' },
   ] },
   { file: 'core/voice/usage.mjs', sites: 1, targets: [
     { name: 'voice-usage.json', limit: 'KEEP_DAYS=31 日分（1 日 3 つの数）。書くたびに古い日を捨てる', reason: '通話の使用量の台帳（費用の安全弁。docs/voice-call.md）。数秒にまとめて書く。固定の小ささ' },

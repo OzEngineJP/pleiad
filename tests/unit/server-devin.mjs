@@ -210,6 +210,21 @@ export default async function (t) {
 
     const catalogue = async () => ({ families: [{ family_uid: 'swe-2', variants: [{ model_uid: 'swe-2-high', cost_tier: 'Free' }] }] });
     const command = () => [process.execPath, path.join(ROOT, 'tests/lib/fake-devin.mjs')];
+    const liveCatalogue = async () => ({ families: [{ family_uid: 'swe-2', variants: ['high', 'medium'].map(level => ({ model_uid: `swe-2-${level}`, cost_tier: 'Free' })) }] });
+    class SlowClient extends DevinAcp { constructor(options) { super({ ...options, env: { ...options.env, FAKE_DEVIN_SLOW_MS: '1800' } }); } }
+    const liveBackend = createDevinBackend({ Acp: SlowClient, catalogue: liveCatalogue, command, dataDir: path.join(root, 'live-settings') });
+    let liveSessionId, deliveredResolve;
+    const deliveredPromise = new Promise(resolve => { deliveredResolve = resolve; });
+    const liveRun = liveBackend.runTurn({ cwd, prompt: '[slow] live settings', model: 'swe-2-high', mode: 'ask',
+      emit: event => { if (event.type === 'session') liveSessionId = event.sessionId; }, onPromptDelivered: deliveredResolve });
+    await deliveredPromise;
+    const liveMode = await liveBackend.setModeLive({ sessionId: liveSessionId }, 'plan');
+    const liveModel = await liveBackend.setModelLive({ sessionId: liveSessionId }, 'swe-2-medium');
+    const liveResult = await liveRun;
+    t.ok('実行中のターンへ承認モードとモデルを送り、設定応答で反映を確かめる', liveMode && liveModel && liveResult.sessionId === liveSessionId);
+    const suggestionBackend = createDevinBackend({ catalogue, command, dataDir: path.join(root, 'suggestions') });
+    const suggestion = await suggestionBackend.suggestNext({ prompt: '[permission] propose a brief next step' });
+    t.ok('次の発言候補は使い捨ての読み取り専用ターンで生成する', typeof suggestion === 'string' && suggestion.includes('fixture:'));
     const deliveryCalls = [];
     class DeliveryClient extends DevinAcp {
       async call(method, params, options) { deliveryCalls.push({ method, params }); return super.call(method, params, options); }

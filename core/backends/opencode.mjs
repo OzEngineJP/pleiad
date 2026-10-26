@@ -3,6 +3,7 @@
 // 共有プロセスは保持役が --stdio の stdin を維持する。コンテキストの担当が異なる
 // ターンは設定と HOME を隔離し、終了後に専用プロセスを止める（docs/multi-backend.md §2.10）。
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { t } from '../i18n.mjs';
 import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
@@ -113,6 +114,8 @@ const modeOf = (mode) => (Object.hasOwn(MODES, mode) ? mode : 'ask');
 // ---- 共有のサーバー
 const directories = new Map();   // 会話の id -> 作業場所（OpenCode の instance を選ぶ ?directory=）
 const appliedMode = new Map();   // 会話の id -> 最後に入れた承認モード（同じなら PATCH しない。規則は後ろに足していく形なので）
+const liveModes = new Map();     // 実行中の会話 -> 途中変更後の承認モード
+const liveModelRefs = new Map(); // 実行中の会話 -> 途中変更後のモデル
 const turnsBySession = new Map(); // 会話の id（と子の会話の id） -> 走っているターンの受け口
 let providersCache = null;       // { at, data }（/config/providers）
 const accountServers = new Map();
@@ -436,6 +439,75 @@ export const backend = {
   models: (cwd, options = {}) => listModels(cwd, serverFor(options.account)),
   usage: opencodeUsage,
 
+  async setModelLive(handle, model) {
+    const sessionId = handle?.sessionId;
+    if (!sessionId) return false;
+    const srv = serverFor(selectedAccount(sessionId));
+    const key = sessionKey(sessionId, srv);
+    if (!turnsBySession.has(key)) return false;
+    const ref = modelRef(model);
+    if (!ref) return false;
+    try {
+      await srv.request('POST', `/api/session/${encodeURIComponent(sessionId)}/model`, {
+        directory: await directoryOf(sessionId, srv), body: { model: { providerID: ref.providerID, id: ref.modelID } },
+      });
+      liveModelRefs.set(key, ref);
+      return true;
+    } catch { return false; }
+  },
+
+  async setModeLive(handle, mode) {
+    const sessionId = handle?.sessionId;
+    if (!sessionId || !Object.hasOwn(MODES, mode)) return false;
+    const srv = serverFor(selectedAccount(sessionId));
+    const key = sessionKey(sessionId, srv);
+    if (!turnsBySession.has(key)) return false;
+    const { permission, permissionKey } = sessionPermission(mode);
+    const permissions = permission.map(({ permission: action, pattern: resource, action: effect }) => ({ action, resource, effect }));
+    try {
+      await srv.request('PATCH', `/api/session/${encodeURIComponent(sessionId)}`, {
+        directory: await directoryOf(sessionId, srv), body: { permissions },
+      });
+      liveModes.set(key, mode);
+      appliedMode.set(key, permissionKey);
+      return true;
+    } catch { return false; }
+  },
+
+  /** 次の発言の候補は別 session で作り、完了後に必ず削除する（ADR 0211）。 */
+  async suggestNext({ prompt, signal, account = null } = {}) {
+    const srv = serverFor(account);
+    if (signal?.aborted) return null;
+    const ac = new AbortController();
+    const stop = () => ac.abort(signal?.reason);
+    signal?.addEventListener('abort', stop, { once: true });
+    let sessionId = null, text = '', failure = null;
+    try {
+      const result = await backend.runTurn({
+        prompt, cwd: os.tmpdir(), mode: 'plan', suggestionOnly: true, account,
+        signal: { signal: ac.signal },
+        askPermission: async () => ({ allow: false }),
+        emit: (event) => {
+          if (event.type === 'session') sessionId = event.sessionId;
+          if (event.type === 'text.delta') text += event.text;
+          if (event.type === 'turnResult' && event.outcome !== 'ok') failure = event.error || event.outcome;
+        },
+      }, null, srv);
+      sessionId ??= result?.sessionId ?? null;
+    } finally {
+      signal?.removeEventListener('abort', stop);
+      if (sessionId) {
+        await srv.request('DELETE', `/api/session/${encodeURIComponent(sessionId)}`, { directory: os.tmpdir() }).catch(() => {});
+        directories.delete(sessionKey(sessionId, srv));
+        appliedMode.delete(sessionKey(sessionId, srv));
+        sessionAccounts.delete(sessionId);
+      }
+    }
+    if (ac.signal.aborted) return null;
+    if (failure) throw new Error(failure);
+    return text;
+  },
+
   async forAccount(account) {
     accountKey(account);
     const bound = { ...backend };
@@ -533,7 +605,9 @@ export const backend = {
     const { prompt, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, notes = [], shellAppends = [] } = args;
     let sessionId = args.sessionId ?? null;
     const card = adopt?.card ?? null;
-    const { permission, permissionKey } = sessionPermission(mode, { noSkill: args.contextRuntime?.owners?.skill === 'ply', shellRuntime: args.shellRuntime });
+    const { permission, permissionKey } = args.suggestionOnly
+      ? { permission: [rule('*', 'deny')], permissionKey: 'suggestion-only' }
+      : sessionPermission(mode, { noSkill: args.contextRuntime?.owners?.skill === 'ply', shellRuntime: args.shellRuntime });
     let fresh = false;
     try {
       await srv.ensure();
@@ -586,7 +660,7 @@ export const backend = {
           if(p.tool==='opencode_session_move' && modeOf(mode)!=='yolo')return {block:t('opencode.errors.moveRestricted')};
           if(p.tool==='opencode_worktree_create' && modeOf(mode)!=='yolo')return {block:t('opencode.errors.worktreeRestricted')};
           if(['opencode_session_rename','opencode_session_move'].includes(p.tool) && p.args?.sessionID && p.args.sessionID!==p.sessionID)return {block:t('opencode.errors.otherConversation')};
-          if(p.tool==='execute' && ['ask','edit','plan'].includes(modeOf(mode))) {
+          if(p.tool==='execute' && ['ask','edit','plan'].includes(modeOf(liveModes.get(sessionKey(sessionId, srv)) ?? mode))) {
             const answer=await askPermission({toolName:'execute',input:p.args,sessionId,signal:signal?.signal,canAlways:false,kind:'tool',questions:null});
             if(!answer?.allow)return {block:answer?.message ?? t('opencode.errors.executeDenied')};
           }
@@ -600,7 +674,10 @@ export const backend = {
     // （利用者の設定の、もう使えないモデルで失敗した。2026-10-18 の実機）
     const ref = adopt ? (card.ref ?? null) : modelRef(model) ?? await defaultModelRef(directory, srv).catch(() => null);
     const data = await providers(directory, srv).catch(() => null);
-    const windowTokens = () => modelInfo(data, ref)?.limit?.context ?? null;
+    const turnKey = sessionKey(sessionId, srv);
+    const currentMode = () => liveModes.get(turnKey) ?? mode;
+    const currentModel = () => liveModelRefs.get(turnKey) ?? ref;
+    const windowTokens = () => modelInfo(data, currentModel())?.limit?.context ?? null;
 
     // ターンの終わり（session.idle）を待つ口。Stop の Hooks が続けさせたら、もう一度待つ
     let settle;
@@ -709,7 +786,8 @@ export const backend = {
     // 付け直しは、取り直した発言を流し終えるまで出来事を溜める（取り直しと出来事の間に、取りこぼしを作らない）
     let queue = adopt ? [] : null;
     const route = (event) => (queue ? queue.push(event) : onEvent(event));
-    turnsBySession.set(sessionKey(sessionId, srv), route);
+    turnsBySession.set(turnKey, route);
+    liveModes.set(turnKey, mode);
     for (const child of children) { srv.begin(child); rememberSession(child, account); opencodeRelay.alias(child, sessionId, relayAccount); turnsBySession.set(sessionKey(child, srv), route); await prepareEnvironment(child); }
     // 専用のサーバー（Pleiad 担当のコンテキスト）が落ちたら、このターンに知らせる（共有のサーバーの分は全部のターンへ配る）
     const offGone = srv !== server ? srv.onGone((err) => onEvent({ type: 'pleiad.gone', properties: { error: err } })) : null;
@@ -731,7 +809,7 @@ export const backend = {
         const nativeId=nativeMessageId(item?.id ?? crypto.randomUUID(),relayAccount);
         steers.push({id:item?.id ?? null,nativeId});
         control.touch?.();
-        await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory, signal:signal?.signal, body: { id:nativeId, ...(ref ? { model: ref } : {}), parts: [{ type: 'text', text: said }] } });
+        await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory, signal:signal?.signal, body: { id:nativeId, ...(currentModel() ? { model: currentModel() } : {}), parts: [{ type: 'text', text: said }] } });
         await srv.resync({snapshot:false});
         return true;
       };
@@ -839,7 +917,7 @@ export const backend = {
         stopRounds++;
         control?.touch?.();
         arm();
-        await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory,signal:signal?.signal, body: { id:nativeMessageId(`${userMessageId}:stop:${stopRounds}`,relayAccount), ...(ref ? { model: ref } : {}), agent: modeOf(card?.mode ?? mode) === 'plan' ? 'plan' : 'build', parts: [{ type: 'text', text: reason }] } });
+        await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory,signal:signal?.signal, body: { id:nativeMessageId(`${userMessageId}:stop:${stopRounds}`,relayAccount), ...(currentModel() ? { model: currentModel() } : {}), agent: modeOf(currentMode()) === 'plan' ? 'plan' : 'build', parts: [{ type: 'text', text: reason }] } });
         await srv.resync({snapshot:false});
         await done;
       }
@@ -854,7 +932,9 @@ export const backend = {
       resolveAdmission();
       signal?.signal?.removeEventListener?.('abort', onAbort);
       offGone?.();
-      if (turnsBySession.get(sessionKey(sessionId, srv)) === route) turnsBySession.delete(sessionKey(sessionId, srv));
+      if (turnsBySession.get(turnKey) === route) turnsBySession.delete(turnKey);
+      liveModes.delete(turnKey);
+      liveModelRefs.delete(turnKey);
       for (const child of children) if (turnsBySession.get(sessionKey(child, srv)) === route) turnsBySession.delete(sessionKey(child, srv));
       if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
       // 手を離したターンは、札も環境変数のファイルも新しいサーバーのもの

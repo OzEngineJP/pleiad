@@ -43,6 +43,7 @@ export const HOOK_EVENTS = {
     'WorktreeRemove', 'PreCompact', 'PostCompact', 'PreModelSwitch', 'PostModelSwitch', 'Elicitation', 'ElicitationResult', 'SessionEnd'],
   codex: ['SessionStart', 'SessionEnd', 'SubagentStart', 'SubagentStop', 'PreToolUse', 'PermissionRequest', 'PostToolUse', 'UserPromptSubmit',
     'PreCompact', 'PostCompact', 'Stop', 'Interrupt'],
+  devin: ['PreToolUse', 'PostToolUse', 'PermissionRequest', 'UserPromptSubmit', 'Stop', 'PostCompaction', 'SessionStart', 'SessionEnd'],
   antigravity: ['PreToolUse', 'PostToolUse', 'PreInvocation', 'PostInvocation', 'Stop'],
   // Grok の hooks.json のイベント名（Claude Code の形。snake_case でも読む。2026-10-19 時点、~/.grok/docs/user-guide/10-hooks.md）。
   // StopCancelled は Grok 固有、SubagentEnd は SubagentStop の別名

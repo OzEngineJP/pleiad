@@ -111,6 +111,19 @@ export default async function (t) {
     const codexBad = await rejects(() => eps.check({ ...codexInput, key: OTHER }));
     t.ok('Codex のキー違い', codexBad?.code === 'auth' && !codexBad.lines.join('').includes(OTHER));
 
+    // ---- Grok: OpenAI Chat Completions だけ（Anthropic / Responses は選べない）
+    const grokInput = { agent: 'grok', name: 'Chat Completions の Grok', preset: 'custom', baseUrl: api.url + '/v1', authMode: 'bearer', key: KEY, roles: { main: 'fake-large' } };
+    api.requests.length = 0;
+    const gx = await eps.check(grokInput);
+    const gr = api.requests.find(r => r.path === '/v1/chat/completions');
+    t.ok('Grok の確認は POST /chat/completions を送り、モデルは GET /models で読む', gx.ok && gr?.body?.messages?.[0]?.content === 'ping'
+      && gx.models.includes('fake-large') && api.requests.some(r => r.method === 'GET' && r.path === '/v1/models'));
+    const { id: grokId } = await eps.save(grokInput, gx.receipt);
+    t.ok('Grok 接続先の種類は OpenAI Chat Completions 互換', (await eps.get(grokId)).kind === 'openai-chat-completions');
+    t.ok('Grok の接続先 URL に /chat/completions を重ねない', (await rejects(() => normalizeUrl('grok', api.url + '/v1/chat/completions'))) instanceof CheckError);
+    const grokBad = await rejects(() => eps.resolve(codexId, 'grok'));
+    t.ok('Codex Responses の接続先は Grok で使えない', grokBad instanceof EndpointError && grokBad.code === 'agent');
+
     // ---- 既定・解決・削除
     t.ok('既定は初めは公式', (await eps.defaultFor('claude')) === '');
     const wrongAgent = await rejects(() => eps.setDefault('codex', id));

@@ -163,8 +163,9 @@ export default async function (t) {
     {
       const probe = await connectHolder({ dataDir, root });
       for (const child of probe.welcome.children) if (child.pid) childPids.add(child.pid);
-      assert.deepEqual(probe.welcome.children.filter(child => String(child.id).startsWith('acp-')).map(child => child.id), [],
-        '終わった ACP の子は保持役に残っていない');
+      const leftoverAcp = probe.welcome.children.filter(child => String(child.id).startsWith('acp-'));
+      assert.deepEqual(leftoverAcp.map(child => child.id), [],
+        `終わった ACP の子は保持役に残っていない: ${JSON.stringify(leftoverAcp.map(({ id, pid, launch }) => ({ id, pid, launch })))}`);
       probe.close();
     }
   } finally {

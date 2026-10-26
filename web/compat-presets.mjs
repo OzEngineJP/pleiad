@@ -3,15 +3,18 @@
 // エージェントごとに形式が決まっている（docs/design.md「互換の接続先」）:
 //   claude → Anthropic Messages 互換（Claude Code が {URL}/v1/messages に送る）
 //   codex  → OpenAI Responses 互換（Codex が {URL}/responses に送る。Chat Completions だけの先は使えない）
+//   grok   → OpenAI Chat Completions 互換（Grok が {URL}/chat/completions に送る）
 // Codex 側には Responses に対応していない先（DeepSeek・Kimi・Together AI など）を出さない（research §3.2）。
 // プリセットのモデル ID は 2026-09 時点の各社の案内に合わせた初期値で、利用者が確認の後に変えられる。
 // 表示の文言は読み込みの時点の言語で t() から作る（core も読むが、core が使うのは KIND・ROLE_KEYS・COMPAT_AGENTS だけ）。
 import { t } from './i18n.mjs';
 
-export const COMPAT_AGENTS = ['claude', 'codex'];
+// 互換の接続先を選べるエージェント（能力の印 compatEndpoints が対応のもの）。画面は core を読めないので並べて持ち、
+// 印との一致は agent-lists の試験が確かめる（tests/lint-agent-lists.mjs の ALLOWED の compatEndpoints）
+export const COMPAT_AGENTS = ['claude', 'codex', 'grok']; // backend-allow: 印 compatEndpoints と同じ組（agent-lists が突き合わせる）
 
-export const KIND = { claude: 'anthropic-messages', codex: 'openai-responses' };
-export const KIND_LABEL = { 'anthropic-messages': t('compat.kind.anthropic'), 'openai-responses': t('compat.kind.responses') };
+export const KIND = { claude: 'anthropic-messages', codex: 'openai-responses', grok: 'openai-chat-completions' };
+export const KIND_LABEL = { 'anthropic-messages': t('compat.kind.anthropic'), 'openai-responses': t('compat.kind.responses'), 'openai-chat-completions': 'OpenAI Chat Completions' };
 
 /** Claude Code の役割。main は会話の既定（ANTHROPIC_MODEL）、haiku は背景の処理とタイトル生成 */
 export const CLAUDE_ROLES = [
@@ -20,7 +23,7 @@ export const CLAUDE_ROLES = [
   { key: 'sonnet', label: t('compat.role.sonnet'), short: t('compat.role.sonnet') },
   { key: 'haiku', label: t('compat.role.haikuLabel'), short: t('compat.role.haiku') },
 ];
-export const ROLE_KEYS = { claude: CLAUDE_ROLES.map(r => r.key), codex: ['main'] };
+export const ROLE_KEYS = { claude: CLAUDE_ROLES.map(r => r.key), codex: ['main'], grok: ['main'] };
 
 /** 認証の送り方。auto は確認のときに Bearer と x-api-key の両方で試して決める（Claude だけ） */
 export const AUTH_LABEL = { auto: t('compat.auth.auto'), bearer: 'Bearer', 'x-api-key': 'x-api-key', 'api-key': t('compat.auth.apiKeyHeader'), none: t('compat.auth.none') };
@@ -29,6 +32,7 @@ export const AUTH_LABEL = { auto: t('compat.auth.auto'), bearer: 'Bearer', 'x-ap
 export const LOST = {
   claude: { gone: [t('compat.lost.usage'), 'Fast mode', t('compat.lost.cost')], unknown: [t('compat.lost.webSearch')] },
   codex: { gone: [t('compat.lost.usage'), t('compat.lost.webSearch'), t('compat.lost.cost')], unknown: [] },
+  grok: { gone: [t('compat.lost.usage'), t('compat.lost.webSearch'), t('compat.lost.cost')], unknown: [] },
 };
 export function lostText(agent) {
   const l = LOST[agent] ?? LOST.claude;
@@ -60,6 +64,9 @@ export const PRESETS = {
     { id: 'litellm', name: 'LiteLLM', hint: t('compat.preset.selfProxy'), urls: [{ value: 'http://localhost:4000/v1', hint: t('compat.preset.urlPreset') }], auth: 'bearer', roles: {} },
     { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.responsesUrl'), urls: [], auth: 'bearer', roles: {} },
   ],
+  grok: [
+    { id: 'custom', name: t('compat.preset.custom'), hint: t('compat.preset.custom'), urls: [], auth: 'bearer', roles: {} },
+  ],
 };
 
 export function presetOf(agent, id) {
@@ -79,6 +86,7 @@ export function urlHelp(agent, url) {
   if (/<[^>]+>/.test(v)) return t('compat.urlHelp.placeholder');
   if (agent === 'claude' && /\/v1\/?$/.test(v)) return t('compat.urlHelp.trailing', { suffix: '/v1' });
   if (agent === 'codex' && /\/responses\/?$/.test(v)) return t('compat.urlHelp.trailing', { suffix: '/responses' });
+  if (agent === 'grok' && /\/chat\/completions\/?$/.test(v)) return /* backend-allow: URL の形はエージェントの API ごとに違う */ t('compat.urlHelp.trailing', { suffix: '/chat/completions' });
   return '';
 }
 

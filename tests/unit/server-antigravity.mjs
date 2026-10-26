@@ -78,12 +78,15 @@ export default async function (t) {
     t.ok("タイトルも状態タグも持てないと申告する",
       b.capabilities?.title === false && b.capabilities?.tag === false,
       JSON.stringify({ title: b.capabilities?.title, tag: b.capabilities?.tag }));
+    t.ok("子の会話本文を取得できないため、サブエージェントには対応しないと申告する",
+      b.capabilities?.subagents === false, String(b.capabilities?.subagents));
     // agy には対話承認そのものが無い。「常に許可」も出せない
     t.ok("常に許可は出せないと申告する", b.capabilities?.alwaysAllow === false, String(b.capabilities?.alwaysAllow));
     t.ok("実行中のモード・モデル切り替えはできないと申告する",
       b.capabilities?.liveMode === false && b.capabilities?.liveModel === false,
       JSON.stringify({ liveMode: b.capabilities?.liveMode, liveModel: b.capabilities?.liveModel }));
     t.ok("ログインはできると申告する", b.capabilities?.login === true, String(b.capabilities?.login));
+    t.ok("入力欄の ! は Pleiad が実行する方式", b.capabilities?.shell === 'host', String(b.capabilities?.shell));
 
     // ---- 語彙。**選べるのは「全部自動」だけ。**
     // agy のヘッドレスは --dangerously-skip-permissions 以外だとツールを soft-deny するので、
@@ -222,6 +225,14 @@ export default async function (t) {
     t.ok("同じ会話で続きが流れる", textOf(second) === "了解: つづき", JSON.stringify(textOf(second)));
     const after = JSON.parse(await fs.readFile(path.join(dataDir, "antigravity", `${sid}.json`), "utf8"));
     t.ok("控えが積み増される", after.messages.length === 4, `${after.messages.length} 件`);
+
+    // ---- 入力欄の `!`。Pleiad が実行し、結果を次の発言の前に agy へ渡す（ADR 0054・0281）。
+    const shellFrom = c.mark();
+    await c.cmd('runShell', { sessionId: sid, runId: 'agy-host-shell-001', command: 'echo AGY_HOST_SHELL_OK', cwd: ROOT });
+    const shellDone = await c.waitFor(e => e.type === 'shell.done' && e.runId === 'agy-host-shell-001', { from: shellFrom, ms: 20_000 });
+    const shellTurn = await c.runTurn({ prompt: 'wire-all', sessionId: sid, cwd: ROOT }, { ms: 60_000 });
+    const shellWire = JSON.parse(textOf(shellTurn));
+    t.ok('! の結果を次の agy 発言に引き渡す', shellDone?.exitCode === 0 && shellWire?.wire?.includes('AGY_HOST_SHELL_OK'), JSON.stringify({ shellDone, shellTurn: shellTurn.outcome, wire: shellWire?.wire?.slice(0, 400) }));
 
     // ---- 時刻。ユーザー発言は送信時、AI の発言は完了時（理由は core/backends/antigravity.mjs）。
     // 提示の並び、ひいては分岐の切り口に効くので番人を置く

@@ -199,20 +199,29 @@ async function probeClaude({ scratch, caps }) {
   };
 }
 
-/** Codex: app-server の thread/start の config（mcp_servers・shell_environment_policy・developerInstructions・hooks）に届いたか */
+/** Codex: app-server の新規 thread/start と再開 thread/resume の config に配達物が届いたか */
 async function probeCodex({ scratch, caps }) {
   const log = path.join(scratch, 'codex.log');
+  const stateDir = path.join(scratch, 'codex-state');
+  await fs.mkdir(stateDir, { recursive: true });
   const hooks = await hookRuntime(scratch, 'codex');
-  await withEnv({ AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_LOG: log }, async () => {
-    try { await codex.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'full', hooksRuntime: hooks })); }
+  let sessionId = null;
+  await withEnv({ AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_LOG: log, FAKE_CODEX_STATE_DIR: stateDir }, async () => {
+    try {
+      const first = await codex.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'full', hooksRuntime: hooks, autoCompactWindow: 183_000 }));
+      sessionId = first.sessionId;
+      await codex.runTurn(deliveryArgs(caps, { cwd: scratch, sessionId, mode: 'full', hooksRuntime: hooks, autoCompactWindow: 183_000 }));
+    }
     finally { await codexRpc.stop().catch(() => {}); }
   });
   const rows = String(await fs.readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean).map((line) => jsonOf(line)).filter(Boolean);
   const start = rows.filter((r) => r.method === 'thread/start').at(-1) ?? {};
+  const compactStart = rows.find((r) => r.method === 'thread/start' && r.config?.model_auto_compact_token_limit === 150_000) ?? {};
+  const compactResume = rows.find((r) => r.method === 'thread/resume' && r.config?.model_auto_compact_token_limit === 150_000) ?? {};
   const config = start.config ?? {};
   const developer = String(rows.filter((r) => r.method === 'turn/start').at(-1)?.developerInstructions ?? '');
   const shellEnv = config['shell_environment_policy.set'] ?? {};
-  const seen = { configKeys: Object.keys(config), developer: developer.slice(0, 400), shellEnv: Object.keys(shellEnv) };
+  const seen = { configKeys: Object.keys(config), developer: developer.slice(0, 400), shellEnv: Object.keys(shellEnv), compactStart: Boolean(compactStart.method), compactResume: Boolean(compactResume.method) };
   return {
     seen,
     evidence: {
@@ -226,6 +235,7 @@ async function probeCodex({ scratch, caps }) {
       plyShell: shellDelivered(caps, Boolean(mcpUrl(config, 'ply_shell')), developer),
       plyContext: Boolean(mcpUrl(config, 'ply_context')) && has(developer, instr('context')),
       computerUse: Boolean(mcpUrl(config, 'ply_computer')) && has(developer, instr('computer')),
+      autoCompactWindow: Boolean(compactStart.method && compactResume.method),
     },
   };
 }
@@ -235,26 +245,38 @@ async function probeAntigravity({ scratch, caps }) {
   const envFile = path.join(scratch, 'agy-env.json');
   const promptLog = path.join(scratch, 'agy-prompts.log');
   const pidFile = path.join(scratch, 'agy-pids.json');
-  const events = [];
+  const events = { first: [], resumed: [], sibling: [] };
+  let sessionId = null;
   try {
     await withEnv({ AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`, FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_PROMPT_LOG: promptLog, FAKE_AGY_PID_FILE: pidFile }, async () => {
-      await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', hooksRuntime: await hookRuntime(scratch, 'antigravity'), emit: (e) => events.push(e) }));
+      const hooksRuntime = await hookRuntime(scratch, 'antigravity');
+      const first = await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-RESULT'], hooksRuntime, emit: (e) => events.first.push(e) }));
+      sessionId = first.sessionId;
+      await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, sessionId, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-RESUMED'], visualizeInstructions: `${MARK.visualize}-RESUMED`, hooksRuntime, emit: (e) => events.resumed.push(e) }));
+      await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-SIBLING'], visualizeInstructions: 'PLY-SIBLING-VISUALIZE-ONLY', hooksRuntime, emit: (e) => events.sibling.push(e) }));
     });
   } finally { await killAgy(pidFile); }
   const seenEntry = jsonOf(String(await fs.readFile(envFile, 'utf8').catch(() => '[]')))?.[0] ?? {};
-  const wire = jsonOf(textOf(events))?.wire ?? '';
+  const wires = Object.fromEntries(Object.entries(events).map(([key, value]) => [key, String(jsonOf(textOf(value))?.wire ?? '')]));
+  const firstMessages = sessionId ? await antigravity.getMessages(sessionId).catch(() => []) : [];
+  const siblingSessionId = events.sibling.find((event) => event.type === 'session')?.sessionId ?? null;
+  const siblingMessages = siblingSessionId ? await antigravity.getMessages(siblingSessionId).catch(() => []) : [];
   const agentMd = String(seenEntry.agentMd ?? '');
   const env = seenEntry.env ?? {};
-  const seen = { env: Object.keys(env).sort(), agent: seenEntry.agent, agentMd: agentMd.slice(0, 400), hooks: String(seenEntry.hooksJson ?? '').slice(0, 200), wire: wire.slice(0, 200) };
+  const seen = { env: Object.keys(env).sort(), agent: seenEntry.agent, agentMd: agentMd.slice(0, 400), hooks: String(seenEntry.hooksJson ?? '').slice(0, 200), wire: wires.first.slice(0, 200) };
   return {
     seen,
     evidence: {
-      plyInstructions: has(wire, MARK.instructions),
-      plyAgents: has(wire, MARK.agents) && has(agentMd, '--agents'),
+      plyInstructions: has(wires.first, MARK.instructions),
+      plyAgents: has(wires.first, MARK.agents) && has(agentMd, '--agents'),
       browser: envOf(env, 'AGENT_BROWSER_CONFIG', MARK.browserEnv.AGENT_BROWSER_CONFIG) && has(agentMd, '--browser') && has(agentMd, MARK.browserInstructions),
       plyControl: envOf(env, 'PLEIAD_CONTROL_TOKEN', 'control-token') && has(agentMd, '--control') && has(agentMd, instr('control')),
       secrets: envOf(env, MARK.secretName, MARK.secretValue) && has(agentMd, instr('secrets')),
-      visualize: has(agentMd, MARK.visualize) || has(wire, MARK.visualize),
+      visualize: has(wires.first, MARK.visualize) && has(wires.resumed, `${MARK.visualize}-RESUMED`),
+      shell: has(wires.first, 'PLY-DELIVERY-SHELL-RESULT') && has(wires.resumed, 'PLY-DELIVERY-SHELL-RESUMED'),
+      conversationIsolation: has(wires.sibling, 'PLY-SIBLING-VISUALIZE-ONLY') && !has(wires.sibling, `${MARK.visualize}-RESUMED`)
+        && !siblingMessages.some((message) => /PLY-DELIVERY-(?:VISUALIZE|SHELL-RESUMED)/.test(message.text ?? '')),
+      instructionsStayOutOfHistory: !firstMessages.some((message) => /PLY-DELIVERY-(?:INSTRUCTIONS|AGENTS|VISUALIZE)/.test(message.text ?? '')),
       hooks: has(String(seenEntry.hooksJson ?? ''), 'pleiad-delivery-hook'),
       plyContext: envOf(env, 'PLY_CONTEXT_URL', runtime('context').url) && has(agentMd, '--context') && has(agentMd, instr('context')),
       computerUse: envOf(env, 'PLY_COMPUTER_URL', runtime('computer').url) && has(agentMd, '--computer') && has(agentMd, instr('computer')),
@@ -313,12 +335,15 @@ async function probeOpenCode({ scratch, caps }) {
 /** Devin: ACP の session/new の mcpServers・起動の環境変数・発言に足した指示に届いたか */
 async function probeDevin({ scratch, caps }) {
   const events = [];
+  const configCapture = path.join(scratch, 'devin-turn-config.json');
   try {
-    await withEnv({ AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: path.join(scratch, 'devin-home') }, async () => {
-      await devin.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'smart', prompt: '[env]', emit: (e) => events.push(e) }));
+    await withEnv({ AGENT_HOST_DEVIN_BIN: `node "${path.join(ROOT, 'tests/lib/fake-devin.mjs')}"`, DEVIN_CONFIG_HOME: path.join(scratch, 'devin-home'),
+      FAKE_DEVIN_CONFIG_CAPTURE: configCapture }, async () => {
+      await devin.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'smart', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'devin'), emit: (e) => events.push(e) }));
     });
   } finally { /* runTurn が ACP を閉じる */ }
   const observed = jsonOf(textOf(events)) ?? {};
+  const config = JSON.parse(await fs.readFile(configCapture, 'utf8').catch(() => '{}'));
   const prompt = String(observed.prompt ?? '');
   const seen = { servers: observed.mcpServers ?? [], env: observed.seenEnv ?? [], prompt: prompt.slice(0, 300) };
   return {
@@ -330,7 +355,10 @@ async function probeDevin({ scratch, caps }) {
       plyControl: (observed.mcpServers ?? []).includes('ply_control') && (observed.seenEnv ?? []).includes('PLEIAD_CONTROL_TOKEN') && has(prompt, instr('control')),
       secrets: (observed.seenEnv ?? []).includes(MARK.secretName) && has(prompt, instr('secrets')),
       visualize: has(prompt, MARK.visualize),
+      hooks: config.hooks?.PreToolUse?.some(group => group.hooks?.some(h => h.type === 'command' && h.command.includes('delivery-hook.mjs')))
+        && config.read_config_from?.claude === false,
       plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt),
+      nativeShellOff: !deliveryRequired(caps?.nativeShellOff) || ['exec', 'shell_command', 'write_to_process', 'kill_shell', 'get_output'].every(name => config.disabled_tools?.includes(name)),
       plyContext: (observed.mcpServers ?? []).includes('ply_context') && has(prompt, instr('context')),
       computerUse: (observed.mcpServers ?? []).includes('ply_computer') && has(prompt, instr('computer')),
     },
@@ -344,13 +372,15 @@ async function probeGrok({ scratch, caps }) {
   await fs.mkdir(home, { recursive: true });
   try {
     await withEnv({ AGENT_HOST_GROK_BIN: `node "${path.join(ROOT, 'tests/lib/fake-grok.mjs')}"`, GROK_HOME: home, AGENT_HOST_GROK_HOME: home }, async () => {
-      await grok.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'accept-edits', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'grok'), emit: (e) => events.push(e) }));
+      await grok.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'accept-edits', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'grok'),
+        endpoint: { id: 'ep-0123456789ab', kind: 'openai-chat-completions', baseUrl: 'http://127.0.0.1:43123/v1', key: 'delivery-key', roles: { main: 'delivery-model' } },
+        emit: (e) => events.push(e) }));
     });
   } finally { /* runTurn が ACP を閉じる */ }
   const observed = jsonOf(textOf(events)) ?? {};
   const prompt = String(observed.prompt ?? '');
   const hookText = JSON.stringify(observed.hooks ?? []);
-  const seen = { servers: observed.mcpServers ?? [], env: observed.seenEnv ?? [], hooks: hookText.slice(0, 200), prompt: prompt.slice(0, 300) };
+  const seen = { servers: observed.mcpServers ?? [], env: observed.seenEnv ?? [], compatEndpoint: Boolean(observed.compatEndpoint), hooks: hookText.slice(0, 200), prompt: prompt.slice(0, 300) };
   return {
     seen,
     evidence: {
@@ -361,7 +391,10 @@ async function probeGrok({ scratch, caps }) {
       secrets: (observed.seenEnv ?? []).includes(MARK.secretName) && has(prompt, instr('secrets')),
       visualize: has(prompt, MARK.visualize),
       hooks: has(hookText, 'delivery-hook.mjs') && (observed.seenEnv ?? []).includes('GROK_CLAUDE_HOOKS_ENABLED'),
-      plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt),
+      plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt)
+        && (!deliveryRequired(caps?.nativeShellOff) || observed.nativeShellOff === true),
+      compatEndpoints: Boolean(observed.compatEndpoint) && (observed.seenEnv ?? []).includes('XAI_API_KEY'),
+      plyContext: (observed.mcpServers ?? []).includes('ply_context') && has(prompt, instr('context')),
       computerUse: (observed.mcpServers ?? []).includes('ply_computer') && has(prompt, instr('computer')),
     },
   };
@@ -387,6 +420,7 @@ export const DELIVERY_HINTS = Object.freeze({
   visualize: '可視化の指示（visualizeInstructions）',
   hooks: 'Pleiad がそろえる Hooks（コールバック・config.hooks・hooks.json・ターンのプラグイン）',
   plyShell: 'ply_shell の MCP・使い方の指示（nativeOff ならエージェントのシェルを切る）',
+  compatEndpoints: 'GROK_MODELS_BASE_URL・XAI_API_KEY の会話限定の起動環境',
   plyContext: 'ply_context の MCP と、コンテキストの指示',
   computerUse: 'ply_computer の MCP と、使い方の指示',
 });

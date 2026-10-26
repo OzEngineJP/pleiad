@@ -41,6 +41,7 @@ import { t, agentT } from "../i18n.mjs";
 import { loginCancelledError, loginTimeoutError } from "../auth/login-watch.mjs";
 import { stripInjectedContext } from "../system-messages.mjs";
 import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
+import { delegatedCompactThreshold } from '../compaction-settings.mjs';
 
 const NL = String.fromCharCode(10);
 
@@ -1515,7 +1516,7 @@ const backend = {
 
   // ---- 実行 ---------------------------------------------------------------
 
-  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
+  async runTurn({ prompt, sessionId, hostSessionId, cwd, mode, model, effort, emit, onPromptDelivered, askPermission, signal, control, ephemeral = false, autoCompactWindow = null, visualizeInstructions, browserEnv, browserInstructions, browserRuntime = null, contextRuntime, agentRuntime, computerRuntime = null, controlRuntime = null, shellRuntime = null, hooksRuntime = null, secretsRuntime = null, endpoint = null, locale, notes = [], botInstructions = null, botFolders = null }, adopt = null) {
     // 会話のシェルへ渡す秘密情報と変数（ADR 0217）。空なら渡さない
     const secretsEnv = secretsRuntime?.env && Object.keys(secretsRuntime.env).length ? secretsRuntime.env : null;
     // adopt は付け直し（{ source, card }。adoptTurn だけが渡す。無停止の更新 段階 3）。保持役の子の app-server が持つ走っているターンを、記録の再生で引き取る
@@ -1546,6 +1547,8 @@ const backend = {
     let sawText = false;
     let turnId = null;
     let settleTurn = null;
+    // 新規スレッドの最初のリクエストの入力トークン数（固定の部分の重さ。委譲の子の自動圧縮の閾値の見積もりに使う。ADR 0166）
+    let toldBase = Boolean(sessionId || adopt);
     // 実行前の拒否を拾う rollout（thread.path）と、turn/start の直前の長さ（ここから後がこのターンの分）。ephemeral では持たない
     let rolloutPath = null;
     let rolloutFrom = null;
@@ -1614,10 +1617,16 @@ const backend = {
       if (isUserShell(params?.item) || (method === 'item/commandExecution/outputDelta' && userShellItems.has(params?.itemId))) return;
       for (const event of commandActivity(method, params)) emit(event);
       switch (method) {
-        case 'thread/tokenUsage/updated':
+        case 'thread/tokenUsage/updated': {
           if (!turnId || (params.turnId && params.turnId !== turnId)) return;
+          const baseTokens = params.tokenUsage?.last?.inputTokens;
+          if (!toldBase && !replaying && Number.isFinite(baseTokens) && baseTokens > 0) {
+            toldBase = true;
+            emit({ type: 'contextBase', tokens: baseTokens });
+          }
           if (codexContextWindow(params.tokenUsage)) emit(codexContextWindow(params.tokenUsage));
           return emit({ type: 'usage', ...meter(params.tokenUsage) });
+        }
         case 'thread/compacted':
           return emit(codexCompactionEvent(method, params));
         // hooks の発火（会話の右パネルの「発火の記録」）。Pleiad が渡した定義は source: sessionFlags。
@@ -1814,6 +1823,7 @@ const backend = {
         browserInstructions = agentT(locale, 'browser.readonlyInstructions');
       }
       const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'codex' });
+      const compactLimit = delegatedCompactThreshold(autoCompactWindow);
       const common = {
         cwd,
         config: {
@@ -1850,6 +1860,7 @@ const backend = {
             ...controlRuntime?.env,
           } } : {}),
           ...(hooks ? { hooks: hooks.config } : {}),
+          ...(compactLimit ? { model_auto_compact_token_limit: compactLimit } : {}),
         },
         ...(compat ? { modelProvider: compat.modelProvider } : {}),
         // bot の人格（core/bots/sessions.mjs の botInstructions）はここに入れない。thread/resume は developerInstructions を渡し直しても、
@@ -1868,7 +1879,8 @@ const backend = {
         + (controlRuntime ? `\0${controlRuntime.url} ${controlRuntime.headers?.Authorization ?? ''}` : '')
         + (shellRuntime ? `\0${shellRuntime.url} ${shellRuntime.headers?.Authorization ?? ''}` : '')
         // 秘密情報と変数が変わったスレッドも読み直す（resume は shell_environment_policy の変更も無視する）。値は指紋にするだけで残さない
-        + (secretsEnv ? `\0${JSON.stringify(secretsEnv)}` : '');
+        + (secretsEnv ? `\0${JSON.stringify(secretsEnv)}` : '')
+        + `\0compact:${compactLimit ?? 'default'}`;
       if (adopt) {
         // 付け直し: 印より前に生まれて走っている子の親子を引き直し、印から ack までの記録を再生して状態を作る（通知は全部 replay）。
         // 答えが残っている承認の依頼（保持役の控えの鍵）は、再生で onRequest が出し直す（承認の id はツールの id から決まる同じ値）。続きは預かっていた frame から
@@ -1886,9 +1898,12 @@ const backend = {
         // 外さずに resume すると前の接続先のまま走る（スパイクで確認）
         const known = rpc === nativeRpc ? loadedProvider.get(threadId) : undefined;
         const instructionsChanged = rpc === nativeRpc && loadedInstructions.has(threadId) && loadedInstructions.get(threadId) !== fingerprint(instructionsKey);
+        // app-server はロード済み thread への resume で config を無視する。Pleiad の再起動後は
+        // 前回の compact limit を覚えていないため、Codex の自動圧縮設定を渡す会話は一度外して読み直す。
+        const compactUntracked = rpc === nativeRpc && compactLimit != null && !loadedInstructions.has(threadId);
         // hooks は追跡していないロード済みのスレッド（圧縮・分岐でロードされたもの）も外す（unloadForHooks と同じ判断）
         const hooksChanged = rpc === nativeRpc && (loadedHooks.has(threadId) ? loadedHooks.get(threadId) !== hooksKey : hooksKey !== '');
-        if ((known !== undefined && (known !== providerKey || instructionsChanged)) || hooksChanged) {
+        if ((known !== undefined && (known !== providerKey || instructionsChanged)) || hooksChanged || compactUntracked) {
           const out = await rpc.request('thread/unsubscribe', { threadId }).catch(e => ({ error: e }));
           const unloaded = !out?.error && ['unsubscribed', 'notLoaded', 'notSubscribed'].includes(out?.status);
           // 接続先が変わったのに外せなかったら、この後の resume は接続先の変更を黙って無視する。前の接続先へ送らないよう、ここで止める。

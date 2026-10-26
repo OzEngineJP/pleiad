@@ -82,7 +82,7 @@ export const CAPABILITY_STATES = {
     // MCP のツールの呼び出しは Codex が承認を聞かない。確認なしの承認モードのほかは Pleiad が聞く（server.mjs の mcpApprovalByHost）
     mcpApproval: 'host',
     accounts: 'agent',
-    autoCompactWindow: todo('#151'),   // 委譲の子に渡す口があるか未検証
+    autoCompactWindow: true,           // thread/start・thread/resume の model_auto_compact_token_limit（Claude の窓から固定部分を引く）
     promptSuggestions: covered,   // ターンの後に suggestNext で作る
     plyContext: 'turn',
     steer: true,   // turn/steer で走っているターンへ足す
@@ -95,7 +95,7 @@ export const CAPABILITY_STATES = {
     title: covered,       // タイトルの口が無い -> sidecar が正本
     tag: covered,         // 状態タグも無い -> sidecar が正本
     fork: covered,        // 分岐の口が無い -> Pleiad の写しで分ける
-    subagents: todo('#151'),   // ACP の標準には子の一覧が無い。CLI の拡張を確かめる
+    subagents: impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #151）
     liveModel: impossible('起動時の --model だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     liveMode: impossible('起動時の --mode だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる
@@ -112,9 +112,9 @@ export const CAPABILITY_STATES = {
     approvals: 'none',          // 承認モードは確認なしだけ。コンピューターの操作のアプリの承認も聞かない（2026-10-01 に決めた）
     mcpApproval: 'agent',
     accounts: impossible('OS の共有キーリングをアプリ・外部 CLI と共有していて、Pleiad の中で分離できない（ADR 0222）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    compatEndpoints: todo('#151'),   // CLI に接続先の設定があるか未検証
+    compatEndpoints: impossible('agy 1.4.7 の customModelsConfig は Gemini API key 専用で、Google アカウントでは無視される'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: impossible('agy が自分で圧縮する。手動の圧縮の口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    autoCompactWindow: todo('#151'),
+    autoCompactWindow: impossible('agy 1.4.7 は自動圧縮の閾値を設定する CLI 引数・設定を公開しない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     promptSuggestions: covered,   // ターンの後に suggestNext で作る
     // 委譲の橋（ply_agents）は、Pleiad のコンテキストと同じくカスタムエージェントの mcpServers に束ねた中継で渡す。
     // 説明（instructions）と Pleiad の指示は発言の本文の前に毎ターン足す（エージェント定義は最初の会話にしか効かないため。
@@ -123,15 +123,16 @@ export const CAPABILITY_STATES = {
     // （antigravity-context.mjs の prepareAgent。足さないとカスタムエージェント化で指示が抜け落ちる）
     plyAgents: true,
     plyInstructions: true,
-    shell: todo('#148'),
+    shell: 'host',          // Pleiad が実行し、その結果を次のターンの発言に含める（ADR 0054）
     // ply_shell はまだ渡さない（MCP は Pleiad のカスタムエージェントでしか渡せず、run_command を外すと作業場所の AGENTS.md を読まなくなる。ADR 0227）
     plyShell: impossible('Pleiad の MCP はカスタムエージェント経由でしか渡せず、必ずカスタムエージェントにすると作業場所の AGENTS.md を読まなくなる（ADR 0227）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     nativeShellOff: impossible('run_command を外すと作業場所の AGENTS.md を読まなくなる'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: impossible('agy の stream-json は走っているターンへ入力を足せない'),   // 追加指示は次のターンで渡す // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     handover: true,          // agy を保持役に載せ、新しいサーバーが付け直す（antigravity-held.mjs）
     // runArgs の配達物: ブラウザーは会話の env と 1 本の中継（--browser）に、ply_control は中継と env・指示に、
-    // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに渡す。可視化の指示は渡さない（発言に入れていない）
-    browser: true, plyControl: true, secrets: true, visualize: todo('#148'), hooks: true,
+    // 秘密情報は env と指示に、Pleiad の Hooks はカスタムエージェントに、可視化は各ターンの発言の前に渡す。
+    // エージェント定義の指示は起動時にしか反映されないため、visualizeInstructions は本文に前置きする。
+    browser: true, plyControl: true, secrets: true, visualize: true, hooks: true,
   },
   opencode: {
     title: true,            // PATCH /session/{id} { title }。OpenCode の TUI と共有する
@@ -140,8 +141,8 @@ export const CAPABILITY_STATES = {
     forkMessage: true,      // 発言の次の id を渡せば、その発言までを含めて写せる
     rewind: covered,        // revert はファイルの変更まで戻すので使わない -> Pleiad の写しで戻す
     subagents: true,        // task のツールが作る子の会話（/session/{id}/children）
-    liveModel: todo('#151'),   // v2 の API に走っているターンのモデル切替があるか未検証
-    liveMode: todo('#151'),    // 同上
+    liveModel: true,            // POST /session/{id}/model は走っているターンにも反映
+    liveMode: true,             // PATCH /session/{id} の permission 更新は走っているターンにも反映
     hostTools: covered,        // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,      // reply: always（OpenCode が出す always のパターンで、この会話の間）
@@ -150,8 +151,8 @@ export const CAPABILITY_STATES = {
     accounts: 'agent',
     compatEndpoints: impossible('OpenCode 自身の接続先としてつなぐので、Pleiad の互換の接続先は使わない（ADR 0221）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: true,          // POST /session/{id}/summarize
-    autoCompactWindow: todo('#151'),
-    promptSuggestions: todo('#151'),
+    autoCompactWindow: impossible('OpenCode 2.0.32 は compaction.buffer を全体設定でしか受けず、セッション別の自動圧縮閾値を設定する API が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    promptSuggestions: covered,  // ネイティブ通知が無いため、ターン後に別の読み取り専用 session で提案を作る
     plyAgents: true,        // ply_agents を中継の口で渡し、指示を system に入れる
     plyInstructions: true,  // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
@@ -173,19 +174,19 @@ export const CAPABILITY_STATES = {
     fork: covered,
     forkMessage: covered,
     rewind: covered,
-    subagents: todo('#108'),          // 子の一覧は CLI の拡張を確かめる
-    liveModel: todo('#108'),          // 実行中のモデル変更
-    liveMode: todo('#108'),           // 実行中の承認モード変更
+    subagents: true,                  // sessions.db の subagent_heads / message_nodes から一覧・履歴・発生元ツールを引く
+    liveModel: true,                  // 実行中のターンへ session/set_config_option でモデルを送る
+    liveMode: true,                   // 実行中のターンへ session/set_config_option で承認モードを送る
     hostTools: covered,               // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,
     mcpApproval: 'agent',
     login: true,
-    accounts: todo('#108'),           // アカウントごとの認証の分離
-    compatEndpoints: todo('#108'),    // CLI の接続先の設定と Pleiad の選択 UI を接続する
+    accounts: impossible('Devin CLI 3000.11.92 は APPDATA を会話別に変えても既存ログインで応答し、資格情報が共有される。CLI がアカウント別の認証プロファイルを提供するまで分離できない'), // i18n-ignore: 実物の認証分離を確認した開発者向け理由
+    compatEndpoints: impossible('通常版の CLI は Devin の接続先（windsurf）固定で、ACP_BACKEND=openai などの互換接続先は Unknown backend type で拒否される（エアギャップ専用ビルドのみ。CLI 3000.11.92 で確認）'), // i18n-ignore: CLI の機能確認に基づく開発者向けの理由
     compact: true,                    // /compact を prompt として送る（下の compact）
-    autoCompactWindow: todo('#108'),
-    promptSuggestions: todo('#108'),
+    autoCompactWindow: impossible('Devin CLI 3000.11.92 の公式設定項目・ACP configOptions に自動圧縮閾値が無い'), // i18n-ignore: CLI と公式資料の確認に基づく開発者向け理由
+    promptSuggestions: covered,       // ターンの後に suggestNext で作る
     plyInstructions: true,
     plyAgents: true,
     // ACP には指示の欄が無い。Pleiad 担当の指示・Skills の一覧は発言の前に注入文として足し、本文の読み出し
@@ -194,13 +195,13 @@ export const CAPABILITY_STATES = {
     computerUse: { images: 'inline', waitSliceMs: null },
     shell: 'host',
     plyShell: true,
-    nativeShellOff: todo('#108'),
+    nativeShellOff: true,              // 会話限定 disabled_tools で native shell tools を外す
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
     // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
     browser: true, plyControl: true, secrets: true, visualize: true,
-    hooks: todo('#98'),
+    hooks: true,                      // 会話限定 --config の hooks。read_config_from で他形式の Hooks を読まない
   },
   grok: {
     // Grok の ACP 拡張でネイティブ題名と全履歴の分岐を使う。状態タグ・巻き戻しは Pleiad の控えで補う
@@ -209,7 +210,7 @@ export const CAPABILITY_STATES = {
     fork: true,
     forkMessage: covered,
     rewind: covered,
-    subagents: todo('#108'),
+    subagents: true,       // _x.ai/session_notification の subagent_spawned / finished を会話単位で控え、session/load で子の記録を読む
     liveModel: true,     // session/set_config_option
     liveMode: true,      // session/set_mode
     hostTools: covered,  // ply_control の sessions.setTitle / setStatus / fork で同じことができる
@@ -218,17 +219,17 @@ export const CAPABILITY_STATES = {
     mcpApproval: 'agent',
     login: true,
     accounts: 'agent',
-    compatEndpoints: todo('#108'),
+    compatEndpoints: true, // 会話専用の GROK_HOME/config.toml と XAI_API_KEY で OpenAI Chat Completions 互換へ接続
     compact: true,                    // compact() から /compact を送り、自動圧縮通知を履歴イベントへ写す
     autoCompactWindow: true,          // GROK_CONFIG.session.auto_compact_threshold_percent に換算
     promptSuggestions: covered,       // ACP に提案 API がなく、ターン後の使い捨て読み取り専用会話で補う
     plyInstructions: true,
     plyAgents: true,
-    plyContext: todo('#108'),         // HTTP MCP で渡せるが、Pleiad 担当分の分離が未了
+    plyContext: 'turn',         // ply_context の HTTP MCP をターンごとに渡す（native の AGENTS.md・Skills と重なる owners は拒否）
     computerUse: { images: 'path', waitSliceMs: null },
     shell: 'host',
     plyShell: true,
-    nativeShellOff: todo('#108'),
+    nativeShellOff: true,       // agent-profile の disallowedTools で bash を外す（grok-hooks.mjs）
     steer: true,
     handover: true,      // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
     // ブラウザー・操作一覧・コンピューター・シェル・委譲を HTTP MCP で、接続情報と秘密の変数を起動環境で渡す。
