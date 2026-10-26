@@ -254,7 +254,6 @@ export const ALLOWED = [
   { file: 'web/hooks-card.mjs', expect: 'nativeHooks', reason: 'Hooks の機構を持つエージェントの欄（HOOK_AGENTS）' },
   { file: 'web/hooks-card.mjs', expect: 'unifyTargets', reason: 'Hooks の統合の対象の欄（UNIFY_TARGETS）' },
   // 互換エンドポイント（capabilities.compatEndpoints: true のエージェントだけ）
-  { file: 'core/compat-endpoints.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントを立てられるエージェント' },
   { file: 'web/compat-endpoints.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの画面の対象' },
   { file: 'web/compat-presets.mjs', expect: 'compatEndpoints', reason: '互換エンドポイントの preset の対象' },
   { file: 'web/api-keys-settings.mjs', expect: 'compatEndpoints', reason: 'API キーの設定カードでエージェント名を出す対象（互換エンドポイントの利用者）' },

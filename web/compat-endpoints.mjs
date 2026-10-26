@@ -12,11 +12,11 @@ import { el } from './dom.mjs';
 import { t, fmt } from './i18n.mjs';
 import { createCombo } from './combo.mjs';
 import { compatModelLabel, modelCandidates, comboModelOptions, ONE_M_TITLE, SHOW_LIMIT } from './compat-models.mjs';
-import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
+import { PRESETS, CLAUDE_ROLES, CONTEXT_CANDIDATES, AUTH_LABEL, COMPAT_AGENTS, presetOf, urlCandidates, urlHelp } from './compat-presets.mjs';
 import { keyFitsEndpoint, keyMatchesEndpoint } from './api-keys-model.mjs';
 import { apiKeyList, keySelect, notEncryptedNote, checkParts, manageLink } from './api-key-ui.mjs';
 
-const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex' };
+const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok Build' };
 const STEPS = [t('compat.step.kind'), t('compat.step.connection'), t('compat.step.check'), t('compat.step.model'), t('compat.step.save')];
 
 // 月/日 時:分（ja は「9/23 14:05」）
@@ -28,7 +28,7 @@ export function setupCompatEndpoints({ cmd, openSettings, openPage = () => {}, o
   panel.setAttribute('aria-labelledby', 'epTitle');
   document.getElementById('agentControls').append(panel);
 
-  let endpoints = [], defaults = { claude: '', codex: '' }, storage = null, loaded = null;
+  let endpoints = [], defaults = Object.fromEntries(COMPAT_AGENTS.map((a) => [a, ''])), storage = null, loaded = null;
   /** 設定 › API キーの一覧（キーの欄で選ぶ）。取れなければ null（古い置き場の入力欄にする） */
   let keyData = null;
   let agent = 'claude', view = 'list', confirming = '', checking = '', message = '';

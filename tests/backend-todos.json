@@ -9,11 +9,6 @@
       "autoCompactWindow": "#108",
       "hooks": "#98",
       "nativeShellOff": "#108"
-    },
-    "grok": {
-      "compatEndpoints": "#108",
-      "plyContext": "#108",
-      "subagents": "#108"
     }
   }
 }

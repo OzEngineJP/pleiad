@@ -69,6 +69,7 @@ export function normalizeUrl(agent, value) {
   if (agent === 'claude' && /\/v1$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeV1'));
   if (agent === 'claude' && /\/v1\/messages$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.claudeMessages'));
   if (agent === 'codex' && /\/(responses|chat\/completions)$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.codexSuffix'));
+  if (agent === 'grok' && /\/chat\/completions$/.test(u.pathname.replace(/\/+$/, ''))) throw new CheckError(t('compat.url.codexSuffix')); // backend-allow: 接続先の URL の形はエージェントの API ごとに違う（Grok は Chat Completions の base URL）
   return href;
 }
 
@@ -285,6 +286,19 @@ export async function checkEndpoint({ agent, baseUrl, authMode, key, probeModel 
       tried.length > 1 ? t('compat.check.authBoth', { statuses }) : t(key ? 'compat.check.authFailed' : 'compat.check.authFailedNoKey', { status: statuses }),
       t('compat.check.reached')] });
   }
+  if (agent === 'grok') { // backend-allow: 確かめの要求の形はエージェントの API ごとに違う（Grok は Chat Completions）
+    const model = probeModel || 'grok-probe';
+    const auth = !key ? 'none' : authMode;
+    const headers = { 'content-type': 'application/json', ...authHeaders(auth, key) };
+    const r = await send(fetchImpl, `${baseUrl}/chat/completions`, { headers, body: { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false }, key });
+    if (r.status === 401 || r.status === 403) throw new CheckError(t('compat.check.badKey'), { code: 'auth', lines: [t('compat.check.reached')] });
+    if (r.status === 404 || r.status === 405) throw new CheckError(t('compat.check.probeStatus', { status: r.status }), { code: 'not-found' });
+    if (r.status >= 500) throw new CheckError(t('compat.check.serverError', { status: r.status }), { lines: [errorText(r.text, key)].filter(Boolean), code: 'server' });
+    if (!r.ok) { const why = errorText(r.text, key); lines.push(why ? t('compat.check.probeStatusWithReason', { status: r.status, reason: why }) : t('compat.check.probeStatus', { status: r.status })); }
+    const models = await fetchModels(fetchImpl, `${baseUrl}/models`, authHeaders(auth, key), key);
+    if (!models?.ids.length) lines.push(t('compat.check.noModels'));
+    return { auth, latencyMs: r.ms, models: models?.ids ?? [], modelInfo: models?.info ?? {}, lines };
+  }
   // Codex: Responses API
   const model = probeModel || 'gpt-probe';
   const auth = !key ? 'none' : authMode;
@@ -341,10 +355,11 @@ export function createCompatEndpoints({ dataDir, secrets, apiKeys = null, fetchI
       return {
         version: 1,
         endpoints: raw.endpoints.filter(e => ID.test(e?.id ?? '') && COMPAT_AGENTS.includes(e.agent) && typeof e.name === 'string' && typeof e.baseUrl === 'string'),
-        defaults: { claude: typeof raw.defaults?.claude === 'string' ? raw.defaults.claude : '', codex: typeof raw.defaults?.codex === 'string' ? raw.defaults.codex : '' },
+        // 既定の接続先は互換の接続先を使えるエージェント全部の分を持つ（固定の 2 つだと Grok の既定が読むたびに消えていた）
+        defaults: Object.fromEntries(COMPAT_AGENTS.map(a => [a, typeof raw.defaults?.[a] === 'string' ? raw.defaults[a] : ''])),
       };
     } catch (e) {
-      if (e.code === 'ENOENT') return { version: 1, endpoints: [], defaults: { claude: '', codex: '' } };
+      if (e.code === 'ENOENT') return { version: 1, endpoints: [], defaults: Object.fromEntries(COMPAT_AGENTS.map(a => [a, ''])) };
       throw new Error(t('compat.store.unreadable'));
     }
   }

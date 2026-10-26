@@ -28,7 +28,7 @@
     "web/cli-setup.mjs": 1,
     "web/client.mjs": 6,
     "web/compat-endpoints.mjs": 4,
-    "web/compat-presets.mjs": 4,
+    "web/compat-presets.mjs": 2,
     "web/composer-controls.mjs": 1,
     "web/context.mjs": 1,
     "web/delegation-routing-view.mjs": 1,

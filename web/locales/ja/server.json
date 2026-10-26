@@ -931,6 +931,7 @@
     },
     "runtime": {
       "refused": "{{backend}} は Pleiad が担当するプラグイン（指示・Skills・外部 MCP）を受け取れないため、この会話ではエージェント自身の読み込みに任せました",
+      "nativeOwners": "{{backend}} は AGENTS.md と Skills を自分で読み、会話ごとに止める設定が無いため、二重に読まないよう指示と Skills の担当はエージェント自身にしてください",
       "choicePrefer": "同じ名前の定義が複数あり、{{source}} の設定の方を使いました（設定で選んだもの）",
       "choiceFirst": "同じ名前の定義が複数あり、{{source}} の設定の方を使いました（選んでいないので先に見つかった方）",
       "otherSource": "別",

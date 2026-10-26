@@ -210,7 +210,7 @@ export const CAPABILITY_STATES = {
     fork: true,
     forkMessage: covered,
     rewind: covered,
-    subagents: todo('#108'),
+    subagents: true,       // _x.ai/session_notification の subagent_spawned / finished を会話単位で控え、session/load で子の記録を読む
     liveModel: true,     // session/set_config_option
     liveMode: true,      // session/set_mode
     hostTools: covered,  // ply_control の sessions.setTitle / setStatus / fork で同じことができる
@@ -219,13 +219,13 @@ export const CAPABILITY_STATES = {
     mcpApproval: 'agent',
     login: true,
     accounts: 'agent',
-    compatEndpoints: todo('#108'),
+    compatEndpoints: true, // 会話専用の GROK_HOME/config.toml と XAI_API_KEY で OpenAI Chat Completions 互換へ接続
     compact: true,                    // compact() から /compact を送り、自動圧縮通知を履歴イベントへ写す
     autoCompactWindow: true,          // GROK_CONFIG.session.auto_compact_threshold_percent に換算
     promptSuggestions: covered,       // ACP に提案 API がなく、ターン後の使い捨て読み取り専用会話で補う
     plyInstructions: true,
     plyAgents: true,
-    plyContext: todo('#108'),         // HTTP MCP で渡せるが、Pleiad 担当分の分離が未了
+    plyContext: 'turn',         // ply_context の HTTP MCP をターンごとに渡す（native の AGENTS.md・Skills と重なる owners は拒否）
     computerUse: { images: 'path', waitSliceMs: null },
     shell: 'host',
     plyShell: true,
