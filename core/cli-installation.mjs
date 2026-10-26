@@ -41,7 +41,8 @@ export function unwrapCommandShim(file, { readFile = fs.readFileSync, platform =
   try { text = String(readFile(file, 'utf8')); } catch { return null; }
   const dir = path.dirname(file);
   // %dp0% は包みのフォルダー（末尾に \）。JS のスクリプトを先に、無ければ node.exe 以外の実行ファイルを取る
-  const candidates = [...text.matchAll(/%dp0%[\\/]+([^"\r\n]+?\.(?:js|mjs|cjs|exe))(?=["\s])/gi)].map(m => path.resolve(dir, m[1]));
+  const candidates = [...text.matchAll(/%dp0%[\\/]+([^"\r\n]+?\.(?:js|mjs|cjs|exe))(?=["\s])/gi)]
+    .map(m => path.resolve(dir, m[1].replace(/[\\/]+/g, path.sep)));
   const target = candidates.find(p => /\.[cm]?js$/i.test(p))
     ?? candidates.find(p => /\.exe$/i.test(p) && !/^node\.exe$/i.test(path.basename(p)));
   if (!target) return null;

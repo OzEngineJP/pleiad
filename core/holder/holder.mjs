@@ -136,6 +136,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
     return {
       id: c.id, pid: c.pid ?? null, alive: !c.exit, exitCode: c.exit?.code ?? null, signal: c.exit?.signal ?? null, error: c.exit?.error ?? null,
       label: c.label, policy: c.policy, seq: c.seq, first: first(c), acked: c.acked, marks: Object.fromEntries(c.marks), truncated: c.truncated,
+      ...(c.id.startsWith('acp-') ? { launch: { command: c.launchCommand, args: c.args } } : {}),
       pendingRequests: [...c.pending].map(([requestId, p]) => ({ requestId, seq: p.seq, subtype: p.subtype })), stderr: c.stderr,
     };
   }
@@ -207,7 +208,7 @@ export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('h
   function startChild(conn, f) {
     const id = f.id;
     const c = {
-      id, label: f.label ?? null, policy: f.policy, command: path.basename(String(f.command)), proc: null, pid: null, seq: 0, entries: [], start: 0, bytes: 0, acked: 0,
+      id, label: f.label ?? null, policy: f.policy, command: path.basename(String(f.command)), launchCommand: String(f.command), args: Array.isArray(f.args) ? f.args.map(String) : [], proc: null, pid: null, seq: 0, entries: [], start: 0, bytes: 0, acked: 0,
       marks: new Map(), truncated: false, pending: new Map(), exit: null, exitInfo: null, exitTimer: null, stderr: '', reader: null, resolveDone: null,
       keepMs: Number.isFinite(f.keepMs) && f.keepMs > 0 ? f.keepMs : 0, keepTimer: null,
     };
