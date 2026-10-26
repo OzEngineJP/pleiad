@@ -8,8 +8,8 @@ import path from 'node:path';
 /**
  * module      core/backends/ からの場所（core/backends/index.mjs が動的 import する）
  * shortLabel  入力欄のエージェントの区切りの短い名前（製品名なので訳さない）。null なら正式名（backend.label）
- * brand       ロゴ（web/brand/ のファイル）。mark: true は SVG の #mark を currentColor で描く（色は web/style.css の .row-be-<id>）、
- *             false は画像のまま。null はロゴなし（◇）
+ * brand       ロゴ（web/brand/ のファイル）。mark: true は SVG の #mark を currentColor で描く（色は web/style.css の .row-be-<id>。
+ *             画面は文書内の <symbol> として読み込む。web/brand-marks.mjs）、false は画像のまま。null はロゴなし（◇）
  * cli         実行ファイル。exe は既定の名前、binEnv は差し替えの環境変数、npmPackage は npm の包み（.cmd を node で起こす形に解く）、
  *             installUrl は「インストール」の案内、searchDirs は PATH のほかに見る置き場（起動済みの Pleiad が PATH の変更を拾えないため）。
  *             null は CLI を使わない（fake）

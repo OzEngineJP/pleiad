@@ -94,6 +94,7 @@ import { isAutoRouting, routingLine, routingDetail, pinnedDetail, retryPanel, re
 import { setupDelegationSettings } from './delegation-settings.mjs';
 import { createSide, backendLogo } from "./side.mjs";
 import { setAgentBrands } from "./agent-brands.mjs";
+import { preloadBrandMarks } from "./brand-marks.mjs";
 import { setupChannels } from "./channels/index.mjs";
 import { setupVoice } from "./voice/index.mjs";
 import { createVoiceDelivery } from "./voice/delivery.mjs";
@@ -3965,6 +3966,8 @@ async function loadBackends(early = null) {
   state.backends = Array.isArray(list) ? list : [];
   // ロゴと短い名前（エージェントの記述）。脇の行・入口のチップ・入力欄の区切りがここから引く
   setAgentBrands(state.backends);
+  // mark 型のロゴを文書内シンボルとして先に読み始める（開く前に届いていればちかちかしない）
+  preloadBrandMarks(state.backends);
   for (const b of state.backends) { applyToolHints(b.toolHints); applySubagentTools(b.subagentTools); }
   state.backendId = state.backends.some((b) => b.id === state.prefs.backend)
     ? state.prefs.backend : state.backendId ?? state.backends[0]?.id ?? null;
