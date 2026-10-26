@@ -69,6 +69,40 @@ export default async function (t) {
     await fs.rm(work, { recursive: true, force: true }).catch(() => {});
   }
 
+  // OpenCode has no native suggestion notification. Verify the covered path uses an isolated,
+  // read-only session, emits a suggestion, and removes that temporary history afterwards.
+  const opencodeScratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-prompt-suggestions-opencode-'));
+  const opencodeData = path.join(opencodeScratch, 'opencode-data');
+  const opencodeConfig = path.join(opencodeScratch, 'opencode-config');
+  const opencodeState = path.join(opencodeScratch, 'opencode-state');
+  const opencodeLog = path.join(opencodeScratch, 'opencode.log');
+  const opencodeServer = await startServer({ env: {
+    AGENT_HOST_BACKENDS: 'opencode',
+    AGENT_HOST_OPENCODE_BIN: `node "${path.resolve('tests/lib/fake-opencode.mjs')}"`,
+    XDG_DATA_HOME: opencodeData, XDG_CONFIG_HOME: opencodeConfig, XDG_STATE_HOME: path.join(opencodeScratch, 'opencode-state-home'),
+    FAKE_OPENCODE_STATE_DIR: opencodeState, FAKE_OPENCODE_LOG: opencodeLog,
+  }, dataDir: path.join(opencodeScratch, 'pleiad-data') });
+  const oc = await open({ port: opencodeServer.port, token: opencodeServer.token });
+  try {
+    await oc.cmd('setPref', { key: 'composer.suggestions', value: true });
+    const turn = await oc.runTurn({ cwd: opencodeScratch, prompt: '終わりました' }, { ms: 20_000 });
+    const suggestion = await oc.waitFor(e => e.type === 'promptSuggestion' && e.sessionId === turn.sessionId, { ms: 10_000 }).catch(() => null);
+    const saved = JSON.parse(await fs.readFile(path.join(opencodeState, 'sessions.json'), 'utf8'));
+    const log = String(await fs.readFile(opencodeLog, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    const suggestionSession = log.find(row => row.event === 'turn' && row.user.includes('This is an app-generated request'))?.session;
+    const deleted = log.find(row => row.event === 'delete' && row.session === suggestionSession);
+    t.ok('OpenCode はターンの後に候補を作り、別 session の一時履歴を消す',
+      turn.outcome === 'ok' && suggestion?.text === 'テストを流して'
+      && Object.keys(saved).length === 1 && Object.hasOwn(saved, turn.sessionId) && Boolean(deleted), JSON.stringify({ outcome: turn.outcome, suggestion, sessions: Object.keys(saved).length, suggestionSession: Boolean(suggestionSession), deleted: Boolean(deleted), log: log.map(row => ({ event: row.event, session: row.session, user: row.user?.slice(0, 70) })) }));
+    t.ok('提案用 session は全ツールを拒否する読み取り専用権限で作る',
+      deleted?.permissions?.some(p => p.permission === '*' && p.action === 'deny'));
+  } finally {
+    oc.close(); await opencodeServer.stop();
+    const { stopOpencodeServer } = await import('../../core/backends/opencode.mjs');
+    await stopOpencodeServer().catch(() => {});
+    await fs.rm(opencodeScratch, { recursive: true, force: true }).catch(() => {});
+  }
+
   // ---- 画面の配線
   const client = read('web/client.mjs');
   t.ok('画面は promptSuggestion を会話ごとに覚え、開いている会話なら出す', client.includes("ev.type === 'promptSuggestion'") && client.includes('suggestions.set(ev.sessionId, ev.text)'));

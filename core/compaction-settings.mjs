@@ -63,6 +63,14 @@ export function delegatedCompactWindow(threshold, env = process.env) {
   return String(Math.min(Math.max(tokens + AUTO_COMPACT_WINDOW_MARGIN, AUTO_COMPACT_WINDOW_MIN), AUTO_COMPACT_WINDOW_MAX));
 }
 
+/** runArgs.autoCompactWindow（Claude の窓 W）から、閾値を直接受ける CLI（Codex の model_auto_compact_token_limit）に渡すトークン数を戻す */
+export function delegatedCompactThreshold(window) {
+  const n = Number(window);
+  return Number.isInteger(n) && n >= AUTO_COMPACT_WINDOW_MIN && n <= AUTO_COMPACT_WINDOW_MAX
+    ? n - AUTO_COMPACT_WINDOW_MARGIN
+    : null;
+}
+
 /** 固定の部分として使ってよい値（最初のリクエストの文脈のトークン数） */
 export const validContextBase = (tokens) => Number.isInteger(tokens) && tokens > 0 && tokens < AUTO_COMPACT_WINDOW_MAX;
 

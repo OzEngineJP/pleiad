@@ -199,20 +199,29 @@ async function probeClaude({ scratch, caps }) {
   };
 }
 
-/** Codex: app-server の thread/start の config（mcp_servers・shell_environment_policy・developerInstructions・hooks）に届いたか */
+/** Codex: app-server の新規 thread/start と再開 thread/resume の config に配達物が届いたか */
 async function probeCodex({ scratch, caps }) {
   const log = path.join(scratch, 'codex.log');
+  const stateDir = path.join(scratch, 'codex-state');
+  await fs.mkdir(stateDir, { recursive: true });
   const hooks = await hookRuntime(scratch, 'codex');
-  await withEnv({ AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_LOG: log }, async () => {
-    try { await codex.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'full', hooksRuntime: hooks })); }
+  let sessionId = null;
+  await withEnv({ AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, FAKE_CODEX_LOG: log, FAKE_CODEX_STATE_DIR: stateDir }, async () => {
+    try {
+      const first = await codex.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'full', hooksRuntime: hooks, autoCompactWindow: 183_000 }));
+      sessionId = first.sessionId;
+      await codex.runTurn(deliveryArgs(caps, { cwd: scratch, sessionId, mode: 'full', hooksRuntime: hooks, autoCompactWindow: 183_000 }));
+    }
     finally { await codexRpc.stop().catch(() => {}); }
   });
   const rows = String(await fs.readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean).map((line) => jsonOf(line)).filter(Boolean);
   const start = rows.filter((r) => r.method === 'thread/start').at(-1) ?? {};
+  const compactStart = rows.find((r) => r.method === 'thread/start' && r.config?.model_auto_compact_token_limit === 150_000) ?? {};
+  const compactResume = rows.find((r) => r.method === 'thread/resume' && r.config?.model_auto_compact_token_limit === 150_000) ?? {};
   const config = start.config ?? {};
   const developer = String(rows.filter((r) => r.method === 'turn/start').at(-1)?.developerInstructions ?? '');
   const shellEnv = config['shell_environment_policy.set'] ?? {};
-  const seen = { configKeys: Object.keys(config), developer: developer.slice(0, 400), shellEnv: Object.keys(shellEnv) };
+  const seen = { configKeys: Object.keys(config), developer: developer.slice(0, 400), shellEnv: Object.keys(shellEnv), compactStart: Boolean(compactStart.method), compactResume: Boolean(compactResume.method) };
   return {
     seen,
     evidence: {
@@ -226,6 +235,7 @@ async function probeCodex({ scratch, caps }) {
       plyShell: shellDelivered(caps, Boolean(mcpUrl(config, 'ply_shell')), developer),
       plyContext: Boolean(mcpUrl(config, 'ply_context')) && has(developer, instr('context')),
       computerUse: Boolean(mcpUrl(config, 'ply_computer')) && has(developer, instr('computer')),
+      autoCompactWindow: Boolean(compactStart.method && compactResume.method),
     },
   };
 }

@@ -4,9 +4,6 @@
     "antigravity": {
       "subagents": "#151"
     },
-    "codex": {
-      "autoCompactWindow": "#151"
-    },
     "devin": {
       "accounts": "#108",
       "autoCompactWindow": "#108",
@@ -22,12 +19,6 @@
       "compatEndpoints": "#108",
       "plyContext": "#108",
       "subagents": "#108"
-    },
-    "opencode": {
-      "autoCompactWindow": "#151",
-      "liveMode": "#151",
-      "liveModel": "#151",
-      "promptSuggestions": "#151"
     }
   }
 }
