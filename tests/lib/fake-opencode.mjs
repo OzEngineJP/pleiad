@@ -297,6 +297,7 @@ async function run(s, user, text, { system = null } = {}) {
       return;
     }
     let reply = `echo: ${text}`;
+    if (text.includes('This is an app-generated request for a suggested next user message.')) reply = '{"suggestion":"テストを流して"}';
     if (text.startsWith('show-system')) {
       await a.text(`system: ${system ?? ''}`);
       a.finish();
@@ -367,6 +368,7 @@ async function run(s, user, text, { system = null } = {}) {
     await wait(30);
     for (const steer of ctl.steers.splice(0)) { const text=typeof steer==='string'?steer:steer.text;addUser(s,text,{messageID:steer.id}); reply += `\n受け取った: ${text}`; }
     await a.text(system ? `[system] ${reply}` : reply);
+    if (process.env.FAKE_OPENCODE_LOG) fs.appendFileSync(process.env.FAKE_OPENCODE_LOG, `${JSON.stringify({ event: 'turn', session: s.id, user: text, reply })}\n`);
     a.finish();
   } finally {
     s.run = null;
@@ -421,7 +423,11 @@ const server = http.createServer(async (req, res) => {
     const seg=wire.split('/').filter(Boolean),sid=seg[2],action=seg[3],s=lookup(sid);
     if(!s)return direct(404,{error:'not found'});
     dir=s.directory;url.pathname=wire.slice(4);
-    if(['model','agent','environment'].includes(action)) {const b=await body(req);s[action]=b.model??b.agent??b.variables;return direct(204);}
+    if(!action&&req.method==='DELETE') {
+      if(process.env.FAKE_OPENCODE_LOG)fs.appendFileSync(process.env.FAKE_OPENCODE_LOG,`${JSON.stringify({event:'delete',session:s.id,permissions:s.permission})}\n`);
+      sessions.delete(s.id);if(STATE_FILE){const all=readState();delete all[s.id];fs.writeFileSync(STATE_FILE,JSON.stringify(all));}return direct(204);
+    }
+    if(['model','agent','environment'].includes(action)) {const b=await body(req);s[action]=b.model??b.agent??b.variables;persist(sid);return direct(204);}
     if(action==='inbox') {
       if(req.method==='DELETE') {if(s.run)s.run.steers=s.run.steers.filter(x=>x.id!==seg[4]);return direct(204);}
       return direct(200,{data:(s.run?.steers??[]).map(x=>({id:x.id,sessionID:sid,type:'user',time:x.time,delivery:'steer',payload:{text:x.text}}))});

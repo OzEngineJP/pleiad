@@ -82,7 +82,7 @@ export const CAPABILITY_STATES = {
     // MCP のツールの呼び出しは Codex が承認を聞かない。確認なしの承認モードのほかは Pleiad が聞く（server.mjs の mcpApprovalByHost）
     mcpApproval: 'host',
     accounts: 'agent',
-    autoCompactWindow: todo('#151'),   // 委譲の子に渡す口があるか未検証
+    autoCompactWindow: true,           // thread/start・thread/resume の model_auto_compact_token_limit（Claude の窓から固定部分を引く）
     promptSuggestions: covered,   // ターンの後に suggestNext で作る
     plyContext: 'turn',
     steer: true,   // turn/steer で走っているターンへ足す
@@ -141,8 +141,8 @@ export const CAPABILITY_STATES = {
     forkMessage: true,      // 発言の次の id を渡せば、その発言までを含めて写せる
     rewind: covered,        // revert はファイルの変更まで戻すので使わない -> Pleiad の写しで戻す
     subagents: true,        // task のツールが作る子の会話（/session/{id}/children）
-    liveModel: todo('#151'),   // v2 の API に走っているターンのモデル切替があるか未検証
-    liveMode: todo('#151'),    // 同上
+    liveModel: true,            // POST /session/{id}/model は走っているターンにも反映
+    liveMode: true,             // PATCH /session/{id} の permission 更新は走っているターンにも反映
     hostTools: covered,        // ply_control の sessions.setTitle / setStatus / fork で同じことができる
     approvals: 'interactive',
     alwaysAllow: true,      // reply: always（OpenCode が出す always のパターンで、この会話の間）
@@ -151,8 +151,8 @@ export const CAPABILITY_STATES = {
     accounts: 'agent',
     compatEndpoints: impossible('OpenCode 自身の接続先としてつなぐので、Pleiad の互換の接続先は使わない（ADR 0221）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     compact: true,          // POST /session/{id}/summarize
-    autoCompactWindow: todo('#151'),
-    promptSuggestions: todo('#151'),
+    autoCompactWindow: impossible('OpenCode 2.0.32 は compaction.buffer を全体設定でしか受けず、セッション別の自動圧縮閾値を設定する API が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    promptSuggestions: covered,  // ネイティブ通知が無いため、ターン後に別の読み取り専用 session で提案を作る
     plyAgents: true,        // ply_agents を中継の口で渡し、指示を system に入れる
     plyInstructions: true,  // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
     plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）

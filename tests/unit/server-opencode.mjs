@@ -30,8 +30,9 @@ export default async function (t) {
   seed.close();
   await fs.writeFile(path.join(ocData, 'auth.json'), JSON.stringify({ openai: { type: 'oauth', access: 'secret-value', refresh:'refresh', expires:2000000000000 } }));
   const started = path.join(dataDir, 'oc-started.txt');
+  const fakeState = path.join(dataDir, 'oc-state');
   const server = await startServer({ dataDir, timeoutMs: 60_000, env: { AGENT_HOST_BACKENDS: 'opencode', AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"`,
-    AGENT_HOST_OPENCODE_DATA: ocData, FAKE_OPENCODE_STARTED_FILE: started } });
+    AGENT_HOST_OPENCODE_DATA: ocData, FAKE_OPENCODE_STARTED_FILE: started, FAKE_OPENCODE_STATE_DIR: fakeState } });
   const answers = [];   // 承認・質問の答え方（先頭から使う）
   const asked = [];
   const c = await open({ port: server.port, token: server.token, onEvent: async (ev, self) => {
@@ -149,6 +150,22 @@ export default async function (t) {
     await c.cmd('compactConversation', { sessionId: sid });
     const done = await c.waitFor((e) => e.type === 'compaction' && e.sessionId === sid && (e.phase === 'complete' || e.phase === 'failed'), { ms: 30_000, from: cm });
     t.ok('手動の圧縮は summarize で終わり、要約を持つ', done.phase === 'complete' && /Summary/.test(done.summary ?? ''), JSON.stringify(done));
+
+    // ---- 実行中のモデル・承認モード変更（OpenCode v2 の session API）
+    const liveMark = c.mark();
+    const liveTurn = c.runTurn({ sessionId: sid, prompt: 'hold on', mode: 'full', model: 'fake/echo' });
+    await c.waitFor((e) => e.type === 'activity' && e.sessionId === sid, { ms: 30_000, from: liveMark });
+    const modelLive = await c.cmd('setModel', { sessionId: sid, model: 'fake/tiny' });
+    const modeLive = await c.cmd('setMode', { sessionId: sid, mode: 'plan' });
+    await c.cmd('sendMessage', { sessionId: sid, messageId: 'oc-live-0001', prompt: 'release' });
+    const liveDone = await liveTurn;
+    const liveState = JSON.parse(await fs.readFile(path.join(fakeState, 'sessions.json'), 'utf8'))[sid];
+    t.ok('実行中のモデル変更は OpenCode の v2 session API で届く', modelLive?.live === true
+      && liveState?.model?.providerID === 'fake' && liveState?.model?.id === 'tiny', JSON.stringify({ modelLive, model: liveState?.model }));
+    t.ok('実行中の承認モード変更はセッション権限を書き換え、実行は完了する', modeLive?.live === true
+      && liveState?.permission?.some(p => p.permission === 'edit' && p.action === 'deny') && liveDone.outcome === 'ok', JSON.stringify({ modeLive, outcome: liveDone.outcome }));
+    await c.cmd('setMode', { sessionId: sid, mode: 'full' });
+    await c.cmd('setModel', { sessionId: sid, model: 'fake/echo' });
   } finally {
     c.close();
     await server.stop();

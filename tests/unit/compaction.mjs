@@ -1,5 +1,5 @@
 import { createCompactionScheduler, idleCompactionGuards } from '../../core/compaction-scheduler.mjs';
-import { normalizeCompactionSettings, delegatedCompactWindow, delegatedCompactPlan } from '../../core/compaction-settings.mjs';
+import { normalizeCompactionSettings, delegatedCompactWindow, delegatedCompactThreshold, delegatedCompactPlan } from '../../core/compaction-settings.mjs';
 import { createContextBases } from '../../core/context-bases.mjs';
 import { backend as claude, setClaudeSdkForTest } from '../../core/backends/claude.mjs';
 import { normalizeSdkMessage, createClaudeCompactDiagnostic, claudeCompactionsFromHistory } from '../../core/backends/claude-normalize.mjs';
@@ -217,6 +217,8 @@ export default async function (t) {
     t.ok('渡された窓を CLAUDE_CODE_AUTO_COMPACT_WINDOW にする', options?.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW === '203000');
     t.ok('再開した会話（2 ターン目から）は出さない', (await runClaude('sess-old', [said(usage(3, 1000, 90000), { session_id: 'sess-old' }), { ...done, session_id: 'sess-old' }])).length === 0);
     t.ok('窓が無ければ環境変数を付けない', !('CLAUDE_CODE_AUTO_COMPACT_WINDOW' in (options?.env ?? {})) || options.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW === process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
+    t.ok('Claude の窓から Codex の自動圧縮閾値を戻す', delegatedCompactThreshold('183000') === 150_000);
+    t.ok('Codex の閾値変換は範囲外の窓を無視する', delegatedCompactThreshold(99_999) === null && delegatedCompactThreshold(1_000_001) === null);
   } finally {
     restoreSdk?.();
     if (prevConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = prevConfig;
