@@ -6287,8 +6287,12 @@ const outbox = createMessageQueue({
           turn.pendingSteers.add(item.id);
           // sendMessage の受付直後にサーバーが落ちても新サーバーがこの outbox 項目を再開できるよう、
           // 途中送信を保持役へ書くより前に札へ記録する（ADR 0270 の規則 ②）。
-          writeTurnCard(turn);
+          if (!writeTurnCard(turn)) {
+            turn.pendingSteers.delete(item.id);
+            return false;
+          }
         }
+        turn.control.persistSteer = confirms ? () => writeTurnCard(turn) : null;
         try {
           const accepted = await steer(item);
           if (!accepted && turn.pendingSteers.delete(item.id)) touchCard(turn);
@@ -6296,6 +6300,8 @@ const outbox = createMessageQueue({
         } catch (err) {
           if (turn.pendingSteers.delete(item.id)) touchCard(turn);
           throw err;
+        } finally {
+          turn.control.persistSteer = null;
         }
       } : null };
   },
@@ -7827,9 +7833,9 @@ function touchCard(turn) {
 
 /** 保持役の入力へ先行させる必要がある札は、遅延まとめを待たず同じ接続へ書く。TCP の順序で札を先に届ける */
 function writeTurnCard(turn, ctx = turnContexts.get(turn)) {
-  if (!ctx || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return;
-  try { turn.control.holder.label(heldTurnCard(ctx).card); }
-  catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); }
+  if (!ctx || turn.ended || !turn.info.sessionId || !ctx.backendInvoked) return false;
+  try { turn.control.holder.label(heldTurnCard(ctx).card); return true; }
+  catch (e) { console.error(`  札を保持役に置き直せない（${turn.info.sessionId}）:`, String(e?.message ?? e)); return false; }
 }
 
 /**

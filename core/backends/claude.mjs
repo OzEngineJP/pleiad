@@ -806,8 +806,13 @@ export const backend = {
         if (input.closed || signal?.signal?.aborted) return false;
         // item.id（outbox の id）は UUID とは限らないので、CLI に渡す uuid は別に振る
         const uuid = randomUUID();
-        if (!input.push({ ...userMessage(text), uuid, priority: "next" })) return false;   // CLI の既定と同じだが、既定が変わっても折り込みを保つ
         pendingSteers.push({ id: item?.id ?? null, uuid, text, hash: promptHash(text), sawResult: false });
+        if (control.persistSteer && !control.persistSteer()) { pendingSteers.pop(); return false; }
+        if (!input.push({ ...userMessage(text), uuid, priority: "next" })) {
+          pendingSteers.pop();
+          control.persistSteer?.();
+          return false;
+        }   // CLI の既定と同じだが、既定が変わっても折り込みを保つ
         tracker.pushed();
         settleInput();   // 流し込んだ分がまだ手付かずなので、閉じる予約が出ていたら取り消す
         return true;

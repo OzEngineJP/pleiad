@@ -30,7 +30,7 @@ const boot = require('../../desktop/server-boot.cjs');
 const { stableCliEnv } = require('../../desktop/runtime.cjs');
 
 // 子へ渡すために main が付けるもの（外さない）
-const FOR_CHILDREN = new Set(['PATH', 'PLEIAD_CLI_EXEC', 'PLEIAD_CLI_SCRIPT', 'PLEIAD_CLI_ELECTRON']);
+const FOR_CHILDREN = new Set(['PATH', 'PLEIAD_CLI_EXEC', 'PLEIAD_CLI_SCRIPT', 'PLEIAD_CLI_ELECTRON', 'PLEIAD_CLI_CMD']);
 const leaked = (names) => names.filter(isBootEnvName);
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === 'EPERM'; } };
 /** 保持役が終わるのを待つ（上限 10 秒。過ぎたら止める） */
@@ -76,7 +76,7 @@ export default async function (t) {
   t.ok('takeBootEnv: 子へ渡すものは残す', env.PLEIAD_CONTROL_URL && env.PLEIAD_CLI_EXEC && env.AGENT_HOST_DATA && env.ELECTRON_RUN_AS_NODE && env.Path);
 
   // ---- テストのサーバーの起動（tests/lib/server.mjs）は、実行元のシェルの起動用の変数と、会話のシェルへ渡す PLEIAD_CLI_*・PLEIAD_CONTROL_* を継がない
-  const base = serverBaseEnv({ ...bootValues(scratch), PLEIAD_CLI_EXEC: 'Ply.exe', PLEIAD_CLI_SCRIPT: 's', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CONTROL_URL: 'u',
+  const base = serverBaseEnv({ ...bootValues(scratch), PLEIAD_CLI_EXEC: 'Ply.exe', PLEIAD_CLI_SCRIPT: 's', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CLI_CMD: '1', PLEIAD_CONTROL_URL: 'u',
     PLY_CONTEXT_URL: 'c', AGENT_BROWSER_SESSION: 'b', PLEIAD_TEST_GUARD_HOME: 'g', AGENT_HOST_DATA: 'd', AGENT_HOST_CODEX_BIN: 'codex', Path: 'p' });
   t.ok('serverBaseEnv: 起動用の変数・PLEIAD_CLI_*・PLEIAD_CONTROL_*・PLY_*・AGENT_BROWSER_* を除き、PLEIAD_TEST_*・テストが入れる AGENT_HOST_* は残す',
     JSON.stringify(Object.keys(base).sort()) === JSON.stringify(['AGENT_HOST_CODEX_BIN', 'AGENT_HOST_DATA', 'PLEIAD_TEST_GUARD_HOME', 'Path']), JSON.stringify(Object.keys(base)));
