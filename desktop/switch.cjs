@@ -40,7 +40,6 @@
 const path = require('node:path');
 const { run } = require('./process.cjs');
 
-const POLL_MS = 2000;
 /** S1 が shutdown を受けてから終わるまでの上限（plan.md 1-6 の 3） */
 const STOP_TIMEOUT_MS = 30_000;
 const CHECK_TIMEOUT_MS = 30_000;
@@ -51,9 +50,6 @@ const INCOMPATIBLE_REASONS = ['schema', 'ipc', 'runtime', 'job', 'check'];
 const RESTART_REASONS = new Set(['runtime', 'job', 'ipc']);
 /** S1 を手放している間（onServerExit の「サーバーが終了しました」を出さない） */
 const REPLACING = new Set(['stopping', 'starting', 'fallback', 'reloading', 'restarting']);
-const LIVE_TASK = new Set(['queued', 'running', 'cancelling']);
-/** 切り替えで止まるものの一覧に載せる字の長さの上限（`!` の行のコマンドなど） */
-const LABEL_MAX = 200;
 /** main との口の版（desktop/server-link.cjs の IPC_RANGE と同じ） */
 const MAIN_IPC = [1, 1];
 
@@ -66,29 +62,6 @@ function needsSwitch(server, target) {
   return String(server.appVersion ?? '') !== String(target.appVersion ?? '');
 }
 
-const label = value => (value == null ? null : String(value).slice(0, LABEL_MAX));
-
-/**
- * 切り替えを待たせる作業と、切り替えで止まるもの。work は core/server.mjs の runningWork。
- * count は running の count（待つ作業の数）。items は表示用の一覧（会話ごとではなく作業ごと）。
- * stoppers は `!` の行（shells）と、ターンの外に残っている裏の作業（background の tasks）。数えず、待たない（asking で聞く）
- */
-function switchBlockers(work) {
-  if (!work) return null;
-  const items = [];
-  const turnSessions = new Set();
-  for (const turn of work.turns ?? []) {
-    turnSessions.add(turn.sessionId);
-    items.push({ kind: 'turn', sessionId: turn.sessionId ?? null, backend: turn.backend ?? null });
-  }
-  for (const p of work.permissions ?? []) if (!p.relay && !p.detached) items.push({ kind: 'permission', sessionId: p.sessionId ?? null, toolName: p.toolName ?? null });
-  for (const a of work.subagents ?? []) if (a.status === 'running' || a.status == null) items.push({ kind: 'subagent', sessionId: a.sessionId ?? null, id: a.id, description: a.description ?? null });
-  for (const r of work.tasks ?? []) if (LIVE_TASK.has(r.status) && !turnSessions.has(r.sessionId)) items.push({ kind: 'task', sessionId: r.sessionId ?? null, taskId: r.taskId ?? null });
-  const shells = (work.shells ?? []).map(s => ({ kind: 'shell', sessionId: s.sessionId ?? null, runId: s.runId ?? null, command: s.command ?? null, label: label(s.command) }));
-  const background = (work.background ?? []).flatMap(b => (b.tasks ?? []).map(x => ({ kind: 'background', sessionId: b.sessionId ?? null, backend: b.backend ?? null, id: x.id, label: label(x.label) })));
-  const count = Number(work.count) || 0;
-  return { count, items, stoppers: [...shells, ...background] };
-}
 
 /** compat-check の出力を、この main と今のデータ置き場で使えるか判定する。{ ok: true } か { ok: false, reason, detail } */
 function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
@@ -124,15 +97,11 @@ function judgeCheck(check, { ipc = MAIN_IPC } = {}) {
  *     delay(ms)
  *   }
  */
-function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {}, now = () => Date.now() }) {
+function createSwitch({ server, target, effects, log = () => {}, now = () => Date.now() }) {
   let snap = { state: 'idle', server, target: typeof target === 'function' ? null : target, waiting: null, reason: null, blockedBy: null, blocked: null, error: null, previous: false,
     since: null, interrupt: null, interruptFailed: false, stopped: [], at: null };
   const listeners = new Set();
-  let interruptRequested = false;
-  // 止まるものだけが残ったときに「あとで」を選んだ（止まるものが無くなる・作業が増えるまで、もう聞かない）
-  let stoppersLater = false;
   let cancelled = false;
-  let poke = null;
   let release = null;
   let pendingAnswer = null;
   let running = null;
@@ -143,12 +112,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
       try { listener(snap); } catch (error) { log(`state listener threw: ${errorText(error)}`); }
     }
   };
-  // 数秒おきに見る。interruptNow・cancel で待たずに戻る
-  const pause = (ms = pollMs) => new Promise(resolve => {
-    poke = resolve;
-    Promise.resolve(effects.delay(ms)).then(resolve, resolve);
-  }).finally(() => { poke = null; });
-  /** 新しい版の実行場所で Claude Agent SDK を取っておく（更新の後、新しいサーバーが保持役の Claude のターンを付け直せるように）。置き場にあれば true */
+  /** 新しい版の実行場所で Claude Agent SDK を取っておく（更新後に保持役の Claude のターンを付け直すため）。置き場にあれば true */
   async function fetchClaudeSdk(runtime) {
     const out = await Promise.resolve(effects.claudeSdk(runtime)).catch(error => ({ ready: false, kind: 'run', detail: errorText(error) }));
     if (out?.ready === true) return true;
@@ -162,80 +126,18 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     Promise.resolve(effects.ask?.(info)).then(answer => { if (answer) resolve(answer); }, () => resolve('later'));
   }).finally(() => { pendingAnswer = null; });
 
-  /** 待ちの表示。待ち始めた時刻（since）は、待ちでない状態から入ったときに決める（ロックが取れず待ちに戻ったときは変えない） */
-  const waiting = blockers => emit({ state: 'waiting', reason: null, waiting: blockers, blocked: null,
-    since: ['waiting', 'locking', 'interrupting'].includes(snap.state) && snap.since ? snap.since : now() });
-
-  /**
-   * 作業が 0 件（止まるものが無いか、止めてよいとき）になったら true、main が終わるなら false。
-   * update-lock を取れたら、S1 を普通に止めて S2 を普通に起こす（ADR 0270 決定 5）
-   */
-  async function waitIdle() {
-    for (;;) {
-      if (cancelled) return false;
-      if (interruptRequested) {
-        const total = snap.waiting?.count ?? 0;
-        emit({ state: 'interrupting', interrupt: { done: 0, total }, interruptFailed: false });
-        try {
-          await effects.abortAll(progress => {
-            const left = switchBlockers(progress)?.count ?? 0;
-            const done = Math.min(total, Math.max(snap.interrupt?.done ?? 0, total - left));
-            if (done !== snap.interrupt?.done) emit({ interrupt: { done, total } });
-          });
-        } catch (error) {
-          // 止まらない作業があった（30 秒）。中断はやめて待ちに戻る（もう一度押せる）
-          interruptRequested = false;
-          log(`interrupting failed: ${errorText(error)}`);
-          emit({ state: 'waiting', error: errorText(error), interruptFailed: true, interrupt: null });
-          await pause();
-          continue;
-        }
-      }
-      const work = await effects.running().catch(() => null);
-      if (cancelled) return false;
-      const blockers = switchBlockers(work);
-      if (!work || blockers.count > 0) {
-        stoppersLater = false;
-        waiting(blockers ?? snap.waiting);
-        await pause();
-        continue;
-      }
-      if (blockers.stoppers.length > 0 && !interruptRequested) {
-        // 作業は終わったが、`!` の行・裏の端末などが残っている。サーバーが終わると止まるので、黙って切り替えず聞く
-        if (!stoppersLater) {
-          emit({ state: 'asking', reason: 'stoppers', waiting: blockers, since: null });
-          const answer = await askUser({ reason: 'stoppers', waiting: blockers });
-          if (cancelled) return false;
-          if (answer === 'now') interruptRequested = true; else stoppersLater = true;
-          continue;
-        }
-        // 「あとで」: 自動では切り替えない。止まるものが無くなる・作業が増える・「止めて切り替え」まで見続ける
-        emit({ state: 'held', reason: 'stoppers', waiting: blockers });
-        await pause();
-        continue;
-      }
-      emit({ state: 'locking', waiting: blockers, interrupt: null, reason: snap.reason === 'stoppers' ? null : snap.reason });
-      const lock = await effects.lock().catch(error => ({ ok: false, reason: errorText(error) }));
-      if (cancelled) { if (lock?.ok) effects.unlock(); return false; }
-      if (!lock?.ok) {
-        // 短い処理の最中（切り替え・送信待ちの配送など）。待ちに戻る
-        emit({ state: 'waiting', blockedBy: lock?.reason ?? null, blocked: { reason: 'lock', sessions: [] } });
-        await pause();
-        continue;
-      }
-      // 数えてからロックを取るまでの間に始まった作業・止まるものを、もう一度数える。ロックの後は新しい作業が始まらない
-      const again = await effects.running().catch(() => null);
-      const still = switchBlockers(again);
-      if (!again || still.count > 0) {
-        effects.unlock();
-        waiting(still ?? blockers);
-        await pause();
-        continue;
-      }
-      if (still.stoppers.length > 0 && !interruptRequested && !stoppersLater) { effects.unlock(); continue; }
-      emit({ blockedBy: null, error: null, stopped: still.stoppers });
-      return true;
+  /** 保持役の子を残したまま、通常の停止と通常起動に切り替える。更新を作業の終了まで待たせない。 */
+  async function beginSwitch() {
+    if (cancelled) return false;
+    emit({ state: 'locking', waiting: null, blocked: null, interrupt: null });
+    const lock = await effects.lock().catch(error => ({ ok: false, reason: errorText(error) }));
+    if (cancelled) { if (lock?.ok) effects.unlock(); return false; }
+    if (!lock?.ok) {
+      emit({ state: 'failed', error: lock?.reason ?? 'update lock is unavailable' });
+      return false;
     }
+    emit({ blockedBy: null, error: null, stopped: [] });
+    return true;
   }
 
   async function run() {
@@ -257,33 +159,26 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     if (!plan?.ok) {
       const reason = INCOMPATIBLE_REASONS.includes(plan?.reason) ? plan.reason : 'check';
       log(`the new version cannot take over while work is running (${reason}${plan?.detail ? `: ${plan.detail}` : ''})`);
-      const work = await effects.running().catch(() => null);
-      emit({ state: 'incompatible', reason, error: plan?.detail ?? null, waiting: switchBlockers(work) });
-      const answer = await askUser({ reason, waiting: switchBlockers(work) });
+      emit({ state: 'incompatible', reason, error: plan?.detail ?? null, waiting: null });
+      const answer = await askUser({ reason, waiting: null });
       if (cancelled) return cancel();
-      if (answer !== 'now' && !interruptRequested) {
+      if (answer !== 'now') {
         emit({ state: 'held' });
         await new Promise(resolve => { release = resolve; });
         release = null;
         if (cancelled) return cancel();
       }
-      interruptRequested = true;
       restart = RESTART_REASONS.has(reason);
     }
 
-    for (;;) {
-      if (!await waitIdle()) return cancel();
-      emit({ state: 'stopping', waiting: null, blocked: null });
-      const stopped = await Promise.resolve(effects.stopOld()).catch(error => ({ ok: false, error: errorText(error) }));
-      if (stopped?.ok) break;
+    if (!await beginSwitch()) return snap;
+    emit({ state: 'stopping', waiting: null, blocked: null });
+    const stopped = await Promise.resolve(effects.stopOld()).catch(error => ({ ok: false, error: errorText(error) }));
+    if (!stopped?.ok) {
       log(`the old server did not stop: ${stopped?.error ?? '?'}`);
-      // S1 が居残った（終わらなかった）なら付け直して待ちからやり直す。居なくなっていれば起こす側へ進む
-      if (await Promise.resolve(effects.reattachOld()).catch(() => false)) {
-        effects.unlock();
-        emit({ state: 'waiting', error: stopped?.error ?? null });
-        continue;
-      }
-      break;
+      if (await Promise.resolve(effects.reattachOld()).catch(() => false)) effects.unlock();
+      emit({ state: 'failed', error: stopped?.error ?? 'the old server did not stop' });
+      return snap;
     }
 
     if (restart) {
@@ -327,9 +222,7 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     onState(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     /** 「今すぐ中断して切り替える」（asking の「止めて切り替え」・incompatible の「中断して切り替え」を含む）。待ち・あとで・聞いているときだけ効く */
     interruptNow() {
-      if (!['waiting', 'locking', 'held', 'incompatible', 'asking', 'interrupting'].includes(snap.state)) return false;
-      interruptRequested = true;
-      poke?.();
+      if (!['incompatible', 'held'].includes(snap.state)) return false;
       release?.();
       pendingAnswer?.('now');
       return true;
@@ -344,8 +237,6 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     /** 前の版で動いているとき（切り替えに失敗した）、切り替えをやり直す。作業が残っていれば、また待つ */
     retry() {
       if (snap.state !== 'done' || !snap.previous) return false;
-      interruptRequested = false;
-      stoppersLater = false;
       emit({ state: 'idle', previous: false, error: null, reason: null, waiting: null, blockedBy: null, blocked: null, since: null, interrupt: null, interruptFailed: false, stopped: [], at: null });
       running = run();
       running.catch(error => log(`switching failed: ${errorText(error)}`));
@@ -354,7 +245,6 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
     /** main が終わる。待ちをやめる（S1 を手放している途中なら止めない） */
     cancel() {
       cancelled = true;
-      poke?.();
       release?.();
       pendingAnswer?.('later');
     },
@@ -552,6 +442,6 @@ function startSwitch({ linked, ready, resourcesPath, log = () => {}, readManifes
 }
 
 module.exports = {
-  POLL_MS, STOP_TIMEOUT_MS, INCOMPATIBLE_REASONS, RESTART_REASONS, MAIN_IPC,
-  needsSwitch, switchBlockers, judgeCheck, createSwitch, runCompatCheck, runClaudeSdkFetch, waitForReady, createSwitchEffects, incompatibleDialog, startSwitch,
+  STOP_TIMEOUT_MS, INCOMPATIBLE_REASONS, RESTART_REASONS, MAIN_IPC,
+  needsSwitch, judgeCheck, createSwitch, runCompatCheck, runClaudeSdkFetch, waitForReady, createSwitchEffects, incompatibleDialog, startSwitch,
 };
