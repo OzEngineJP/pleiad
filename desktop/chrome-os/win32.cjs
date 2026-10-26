@@ -6,7 +6,7 @@
 // （ほかのアプリの窓を前に出す・閉じる・隠すことが起きない）。閉じてよいのは確認の窓として出した ref だけ、隠す・戻すのは
 // エージェントの窓（題の nonce か窓の大きさで見つけた窓）として出した ref だけ。
 
-const childProcess = require('node:child_process');
+const { spawnDetached } = require('../process.cjs');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -82,7 +82,7 @@ const isInt = v => Number.isInteger(v) && Math.abs(v) < 100000;
  * @param [deps.uia] Chrome 自身の画面を UI Automation で押す口（win32-uia.cjs の createUiaRunner。テストは偽物）
  * @param [deps.sleep] 待つ（既定は setTimeout。テストは偽物）
  */
-function createWin32ChromeOs({ win32, log = () => {}, spawn = childProcess.spawn, env = process.env, exists = fs.existsSync,
+function createWin32ChromeOs({ win32, log = () => {}, spawn = spawnDetached, env = process.env, exists = fs.existsSync,
   timers = { setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: handle => clearInterval(handle) }, guardMs = GUARD_MS, now = Date.now, appHwnd = null, pointToDip = null,
   uia = createUiaRunner({ env, log }), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   agentGraceMs = AGENT_GRACE_MS, openVisibleCooldownMs = OPEN_VISIBLE_COOLDOWN_MS }) {

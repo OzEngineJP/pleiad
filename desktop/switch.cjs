@@ -43,6 +43,7 @@
 // answer('now' | 'later') が asking・incompatible の答え、interruptNow() が「今すぐ中断して切り替える」（held からも効く）、
 // retry() が前の版で動いているとき（done・previous）の切り替えのやり直し。
 const path = require('node:path');
+const { run } = require('./process.cjs');
 
 const POLL_MS = 2000;
 /** S1 が shutdown を受けてから終わるまでの上限（plan.md 1-6 の 3） */
@@ -452,18 +453,18 @@ function createSwitch({ server, target, effects, pollMs = POLL_MS, log = () => {
 
 // ---- 副作用
 
-/** 組んだ実行場所で core/<script> を走らせ、標準出力の最後の行の JSON を返す */
-function runAppScript(script, { nodeExe, appDir, dataDir, env = process.env, execFile = require('node:child_process').execFile, timeoutMs }) {
+/** 組んだ実行場所で core/<script> を走らせ、標準出力の最後の行の JSON を返す（中は desktop/process.cjs の run） */
+async function runAppScript(script, { nodeExe, appDir, dataDir, env = process.env, runFile = run, timeoutMs }) {
   const childEnv = { ...env, AGENT_HOST_DATA: dataDir };
   delete childEnv.ELECTRON_RUN_AS_NODE;
   const name = path.basename(script, '.mjs');
-  return new Promise((resolve, reject) => {
-    execFile(nodeExe, [path.join(appDir, 'core', script)], { cwd: appDir, env: childEnv, timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
-      if (error) return reject(new Error(`${name} failed: ${error.message}${stderr ? `\n${String(stderr).slice(-500)}` : ''}`));
-      const line = String(stdout).trim().split(/\r?\n/).pop();
-      try { resolve(JSON.parse(line)); } catch { reject(new Error(`${name} printed no JSON`)); }
-    });
-  });
+  const result = await runFile(nodeExe, [path.join(appDir, 'core', script)], { cwd: appDir, env: childEnv, timeoutMs, windowsHide: true, maxOutputChars: 1024 * 1024 });
+  if (result.startError || result.exitCode !== 0 || result.timedOut) {
+    const detail = result.startError ?? (result.timedOut ? 'timed out' : `exit ${result.exitCode}`);
+    throw new Error(`${name} failed: ${detail}${result.stderr ? `\n${String(result.stderr).slice(-500)}` : ''}`);
+  }
+  const line = String(result.stdout).trim().split(/\r?\n/).pop();
+  try { return JSON.parse(line); } catch { throw new Error(`${name} printed no JSON`); }
 }
 
 /** 組んだ実行場所で core/handover-check.mjs を走らせ、出力の JSON を返す */

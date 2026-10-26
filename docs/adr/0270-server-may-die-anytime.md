@@ -135,14 +135,13 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 ### 2b 以降に回したもの
 
-- 外部の stdio MCP を保持役に載せる（段 2 の残り。Devin・Grok の ACP は 2b で実装済み）
-- 残り 24 ファイルの `child_process` の移行（段 2b・4。基準は減らすときだけ更新）
 - Electron の `utilityProcess`（off 経路）で保持役を使う（段 4。実行場所の外の保持役を main が渡す）
 - `shell-runs` の `handOff`/`adopt` と `shell-held` の `handOff`/`abandon` を畳む（段 4。引き継ぎの経路がまだ使う）
 - ply_shell のジョブの `keepMs`（アプリの終了で止める道）・`stopAll` の後片付けの一本化（段 4）
 - `restoreAdoptedTurns` を条件なしで通す（段 4）。今は `!` の行と ply_shell だけ条件なし
 - 出力の包みの起動の 76 ms を減らす（常駐の包み・保持役が直にシェルを起こす。測って要れば。2b 以降）
 - 承認・質問のカード・委譲の実行の控え・`outlivesTurn`・圧縮の予約の DB 化（段 3）
+- 残った 3 ファイルの `child_process`（`core/cli-installation.mjs`・`core/claude-login.mjs`・`core/hook-adapter.mjs`。理由は「2c の実装」の「残りの `child_process` の移行」）
 
 ## 2b の実装（2026-10-26。段 2 の後半）
 
@@ -180,6 +179,42 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - `claude-held` の `--version`（`execFile`）を `run()` へ移した。`child_process` の基準は 25 → 24 ファイル（`--update-baseline`）
 - 触った範囲の既存の試験（`server-devin`・`devin-acp`・`grok-backend`・`server-grok`・`codex-held`・`server-codex`・`adopt-codex`・`adopt-held`・`adopt-agy`・`restart-mode`・`backend-contract`・`child-process-lint`・`onboarding`）が緑
 
+## 2c の実装（2026-10-26。段 2 の残り）
+
+段 2 の残り（外部の stdio MCP・残りの `child_process` の移行）を実装した。
+
+### 外部の stdio MCP（`core/context-mcp-held.mjs`）
+
+- 載せるか（`heldMcpPlan`）: `AGENT_HOST_MCP_HOLDER`。`on` は載せる・`off` は載せない。**無ければ、実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があるときだけ載せる**（2b の Devin・Grok・Codex のターン専用と同じ既定。`npm start`・テストのサーバーは今の流れ）
+- 子は `core/process.mjs` の `start()`（policy `jsonrpc`、`keepMs` 10 分。id は `mcp-<鍵の頭>-<乱数>`）。中の状態（ハンドシェイク・呼び出しの回数など）は子のプロセスに残る
+- 札（label）は `{ k: 'mcp', v: 1, key, serverId, name, cwd, init }`。`init` は **initialize の結果**（`protocolVersion`・`capabilities`・`serverInfo`・`instructions`。札の上限に収まらないときは `instructions` を落とす）。印（`marks`）は使わない（記録を initialize の行から残すと、その後の行が全部残るため）
+- **2 回目の initialize を MCP に受けさせない**（ADR の【未確認】への答え）。付け直した子に `Client.connect()` が出す initialize は送らず、札の `init` をその依頼への返事として返す（`HeldMcpTransport.send`）。`notifications/initialized` も送り直さない。**確かめた**: `restart-mcp` の試験で、MCP が受けた initialize は起こし直した後も 1 回だけ（試験用の MCP が回数を `runs` のファイルに残す）。MCP の規約が 2 回目を受けるかは確かめていない（送らない形にしたので要らない）
+- 付け直し（規則 ③）: 起動で `readHeldMcpChildren` が保持役の子のうち札の種類が `mcp` のものを読み、`contextBridge.adoptHeld` が鍵ごとに控える。**手放す/引き取るの対は書かない**。次の `open` の `acquire` が同じ鍵なら、その子に `holderSource` で付く（`attach` は `acked + 1` から。`initialize` は送らない）。`connections` の `keyFor` から env を外した（サーバーの起動ごとに変わる値が入るため。定義の env と `${env:…}` の参照は `item.definition` に載る）
+- 依頼の id は、前のサーバーが飛ばしたままの依頼とぶつからないよう、この口だけの文字列（`h<乱数>:<通番>`）に付け替える。この口が知らない id の返事（前のサーバーの依頼への返事）は捨てる
+- サーバーの終わりでは止めない: `process.on('exit')` は `contextBridge.dispose({ keepHeld: true })`（手を離すだけ）。止めるのは**アプリの終了**（`exitAfterStoppingHeld` の `dispose()`）と、**会話の後片付け**（warm の idle 10 分・`closeUnder`（worktree を消す前））
+- 使われないまま残った子は、起動で拾ってから 10 分（warm の idle と同じ）使われなければ止める。その場所の設定から外れた鍵の子は `prune` のときに止める（`closeStaleHeld`）
+- 台帳（`core/mcp-ledger.mjs`）には保持役の子を載せない（持ち主は保持役で、木ごとの停止も保持役がやる）。サーバーの子に落ちたときだけ今までどおり載せる。`sweep`・`sweepCwd` は `run()` を使うため async になった
+- 遅延起動（ADR 0238）: 一覧の写しがあっても、保持役の子が居れば standby にせず、その子に付く（既に起きているため）
+
+### 残りの `child_process` の移行
+
+24 → 3 ファイル（`--update-baseline`）。移したのは、短命を `run()`・切り離すものを `detach()` へ:
+
+- `core/` の 12: `agent-browser`・`mcp-ledger`・`git-info`・`git-prs`・`context-bridge`（stdio は保持役・`taskkill` は `run()`）・`main-away`・`os-open`（`detach()`）・`backends/antigravity-background`・`backends/antigravity-pids`・`backends/codex-accounts`・`backends/opencode-accounts`（同期の `prepareAccount` から呼ばれる `whoami`・`icacls` は、口に足した `runSync()`）・`backends/opencode-server`（`taskkill`）
+- `desktop/` の 9: `server-boot`（`spawnDetached`）・`shell-env`（`spawnRaw`）・`switch`・`update-auth`（`run()`）・`chrome-os/mac`・`chrome-os/win32`（`spawnDetached`）・`chrome-os/win32-uia`・`computer/apps`（`run()`）・`computer/mac-helper`（`spawnRaw`）
+- 口（`desktop/process.cjs`）に足した: `run()`（main は CJS なので、`core/process.mjs` の `run()` の main が使う範囲を写した。asar の中の ESM を動的 import すると配布物で読めないため）・`spawnDetached()`・`spawnRaw()`。`core/process.mjs` に足した: `runSync()`・`run()` の `shell`・`detach()` の `windowsVerbatimArguments`・`run()` の `startCode`
+- **残した 3 つと理由**:
+  - `core/cli-installation.mjs`: `spawnCli` は保持役の各口（agy・Codex・OpenCode・ACP）が使う生の spawn の落とし先で、呼び出し側は ChildProcess（stdin・stdout・kill）を期待する。保持役に載せるには口ごとの写し（2b の `acp-held.mjs` の形）が要る。段 4
+  - `core/claude-login.mjs`: 端末（node-pty）とパイプの対話で、ログインはサーバーの OAuth の流れに結び付く（サーバーの入れ替えでは続けられず、やり直す）。段 4
+  - `core/hook-adapter.mjs`: このファイルは**他のエージェントの置き場へ単体で写して走る**（Node の組み込みだけで動く。Pleiad が無くても動く）。`core/process.mjs` を読めないので生の spawn のまま（写す側の `core/hooks-unify.mjs` の性質）
+
+### 試験・基準
+
+- `node tests/run.mjs restart-mcp --jobs 1` … 呼び出しの回数を数える MCP（`tests/lib/stateful-mcp.mjs`）を `.mcp.json` から起こし、普通に止めて起こし直す。同じ子に付いて `count:2`（中の状態が残る）・同じ pid・initialize は 1 回（3 判定）
+- 触った範囲の既存の試験（`context-*`・`mcp-*`・`worktree-mcp`・`mcp-orphans`・`restart-*`・`server-hooks-unify`・`desktop-*`・`chrome-os`・`accounts`・`git`・`file-actions`・`main-away`・`agent-browser`）が緑
+- 全体の `node tests/run.mjs`（12 worker・481 秒）で、今回の変更と関係する失敗は無し（`adopt-claude` の R15 は 2c の期待に直した）。12 worker の負荷で落ちた `server-git-panel-load`・`server-delegation-routing-settings`・`adopt-opencode` は `--jobs 1` で緑（2b の時点で負荷で落ちた suite と同じ）
+- 基準は 24 → 3 ファイル（`node tests/lint-child-process.mjs --update-baseline`）
+
 ## 畳むもの
 
 | 今 | 段 | 残る |
@@ -201,14 +236,15 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - 【確認】再生の冪等は、今は `text.end`・`tool.start`・`tool.result` の uuid/ツール id だけ（`core/adopt.mjs` の `eventKey`）。ほかの出来事（承認の出入り・通知・委譲の完了）は、ack の位置が「アプリのループで処理し終えた最後の行」なので、落ちた行が再処理されると二重になりうる。段 3 で、状態を変える出来事すべてに冪等の鍵を付ける。
 - 【確認】データ置き場のロックは、今は `--handover` の起動だけが `acquireDataLockWait` で待つ（`core/data-lock.mjs`）。普通に起こす新サーバーも、旧サーバーが放すまで数十 ms 待つ必要がある（待たないと `DATA_LOCKED` で終わる）。起動の待ちを既定にする。
 - 【推測】保持役の `keepMs`（親が居ない間に終わらない子を止める保険。Codex・OpenCode は 10 分）は「サーバーが落ちても子を止めない」と衝突する。更新・落ちたときの復元は数秒で終わるので 10 分で足りるが、アプリを終了したときに子を止めるのは `keepMs` ではなく「アプリの終了」の道に任せる。段 2 で `keepMs` を外すか、アプリの終了だけが渡す印にするかを決める。
-- 【推測】外部の stdio MCP は、MCP の子を保持役に載せると、その stdio の JSON-RPC を新しいサーバーが読む形になる。`jsonrpc` の policy でそのまま載る見込み（Devin・Grok の ACP も同じ）。ただし、MCP の子が持つ「サーバーごとの状態」（ハンドシェイク・ケーパビリティ）は新しいサーバーが `initialize` を送り直すことになる。MCP の規約が 2 回目の `initialize` を受けるかは【未確認】。
+- 【確認・2c】外部の stdio MCP は、`jsonrpc` の policy でそのまま保持役に載る（2c で実装）。「サーバーごとの状態」（ハンドシェイク・ケーパビリティ）は、**2 回目の `initialize` を送らずに**引き継げる: initialize の結果を札（`label.init`）に残し、付け直した側の `Client.connect()` の initialize にはその結果を返す（`notifications/initialized` も送り直さない）。`restart-mcp` の試験で、起こし直した後も MCP が受けた initialize は 1 回だけ（2026-10-26）。MCP の規約が 2 回目の `initialize` を受けるかは確かめていない（送らない形にしたので要らない）。
 
 ## 段
 
 1. **試験の仕掛け**（この ADR と同時に試作）。「途中で止めて起こし直す」を既存の土台に被せる。今の穴を赤で出す。Claude のターン（`held:` の fake）は通る。ply_shell の `start` のジョブは、当時は落ちた（赤。段 2a で「残る」に反転した）。
 2. **プロセスの口**。`run()`/`start()` を足し、長く生きる子を `start()` へ移す。Devin・Grok（ACP）・外部の stdio MCP を保持役に載せる。`child_process` の検査を入れる。
    - 2a（実装済み 2026-10-26）: `core/process.mjs`・`desktop/process.cjs`・`child_process` の検査・`!` の行と ply_shell のジョブを `start()` へ・出力の計測（下の「2a の実装」）
-   - 2b（実装済み 2026-10-26）: Devin・Grok（ACP）・Codex のターン専用の app-server・`.cmd` の包み（「2b の実装」）。外部の stdio MCP と残り 24 ファイルの移行は段 2 の残り（下の「2b 以降に回したもの」）
+   - 2b（実装済み 2026-10-26）: Devin・Grok（ACP）・Codex のターン専用の app-server・`.cmd` の包み（「2b の実装」）
+   - 2c（実装済み 2026-10-26）: 外部の stdio MCP を保持役へ・残りの `child_process` の移行（24 → 3。「2c の実装」）
 3. **状態の置き場**。承認・質問のカード、ply_shell の出力、委譲の実行の控え、`outlivesTurn`、圧縮の予約を DB か保持役の記録へ移す。`handoverSettled` の「短い処理を待つ」を消す。
 4. **引き継ぎ専用の経路を畳む**。`--handover`・`stash`・`holdable`・`switch.cjs` の `waitIdle`/`blockers`/`stoppers` を消し、更新と落ちたときの復元を「止める→普通に起こす」にそろえる。off 経路も同じにする。
 

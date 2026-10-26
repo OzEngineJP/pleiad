@@ -45,7 +45,7 @@ export function holderRootFor({ dataDir, root = bootEnv('AGENT_HOST_RUNTIME_ROOT
 export function run(command, args = [], {
   cwd, env, input = null, timeoutMs = 0, signal = null, onOutput = null,
   maxOutputChars = Infinity, windowsHide = true, detached = process.platform !== 'win32',
-  stdio = ['ignore', 'pipe', 'pipe'], killTree = false,
+  stdio = ['ignore', 'pipe', 'pipe'], killTree = false, shell = false,
   exitCloseGraceMs = 0, killedCloseGraceMs = 0,
 } = {}) {
   return new Promise(resolve => {
@@ -73,7 +73,7 @@ export function run(command, args = [], {
     // input を渡すときは、標準入力を開ける（既定は 'ignore'）
     const childStdio = input != null && stdio[0] === 'ignore' ? ['pipe', ...stdio.slice(1)] : stdio;
     try {
-      child = spawn(command, Array.isArray(args) ? args.map(String) : [], { cwd, env, windowsHide, detached, stdio: childStdio });
+      child = spawn(command, Array.isArray(args) ? args.map(String) : [], { cwd, env, windowsHide, detached, stdio: childStdio, shell });
     } catch (error) { finish({ startError: String(error?.message ?? error) }); return; }
     signal?.addEventListener?.('abort', onAbort, { once: true });
     if (timeoutMs > 0) timer = setTimeout(() => { timedOut = true; if (exited) finish({}); else kill(); }, timeoutMs);
@@ -91,7 +91,7 @@ export function run(command, args = [], {
         onOutput?.(stream, piece);
       });
     }
-    child.on('error', error => finish({ startError: String(error?.message ?? error) }));
+    child.on('error', error => finish({ startError: String(error?.message ?? error), startCode: error?.code ?? null }));
     child.on('close', (code, sig) => finish(stopped || timedOut ? {} : { exitCode: code, signal: sig ?? null }));
     child.on('exit', (code, sig) => {
       exited = { exitCode: code, signal: sig ?? null };
@@ -108,11 +108,36 @@ export function run(command, args = [], {
 }
 
 /**
- * サーバーの子でない形（detached・stdio なし）で起こし、pid を返す。保持役自身の起動だけが使う。
- * 起こせなければ投げる（ENOENT など）。起こした後の終了は見ない（unref）
+ * 完了を待つ短命の子の同期版（spawnSync）。**イベントループを止める**ので、起動の準備・後片付けの小さなコマンドだけが使う
+ * （core/backends/opencode-accounts.mjs の whoami・icacls。同期の prepareAccount から呼ばれる）。ふだんは run()
+ * 戻り値の形は run() と同じ
  */
-export async function detach(command, args = [], { cwd, env, windowsHide = true } = {}) {
-  const child = spawn(command, Array.isArray(args) ? args.map(String) : [], { cwd, env, detached: true, stdio: 'ignore', windowsHide });
+export function runSync(command, args = [], { cwd, env, input = null, timeoutMs = 0, maxOutputChars = Infinity, windowsHide = true, stdio = ['ignore', 'pipe', 'pipe'] } = {}) {
+  const started = Date.now();
+  const result = spawnSync(command, Array.isArray(args) ? args.map(String) : [], {
+    cwd, env, windowsHide, timeout: timeoutMs > 0 ? timeoutMs : undefined, input: input ?? undefined, encoding: 'utf8', stdio,
+    ...(Number.isFinite(maxOutputChars) ? { maxBuffer: Math.max(1024, maxOutputChars * 4) } : {}),
+  });
+  const stdout = String(result.stdout ?? ''), stderr = String(result.stderr ?? '');
+  const timedOut = result.error?.code === 'ETIMEDOUT';
+  return {
+    exitCode: result.error ? null : result.status, signal: result.signal ?? null,
+    stdout: stdout.slice(0, maxOutputChars), stderr: stderr.slice(0, maxOutputChars),
+    durationMs: Date.now() - started, timedOut, stopped: false,
+    truncated: stdout.length > maxOutputChars || stderr.length > maxOutputChars,
+    ...(result.error && !timedOut ? { startError: String(result.error.message ?? result.error), startCode: result.error.code ?? null } : {}),
+  };
+}
+
+/**
+ * サーバーの子でない形（detached・stdio なし）で起こし、pid を返す。保持役自身の起動と、OS の既定のアプリで開くのが使う。
+ * 起こせなければ投げる（ENOENT など）。起こした後の終了は見ない（unref）。
+ * windowsVerbatimArguments は explorer.exe の /select,"…" を Node に引用させないために要る（core/os-open.mjs）
+ */
+export async function detach(command, args = [], { cwd, env, windowsHide = true, windowsVerbatimArguments = false } = {}) {
+  const child = spawn(command, Array.isArray(args) ? args.map(String) : [], {
+    cwd, env, detached: true, stdio: 'ignore', windowsHide, windowsVerbatimArguments,
+  });
   await new Promise((resolve, reject) => { child.once('error', reject); child.once('spawn', resolve); });
   child.on('error', () => {});
   child.unref();

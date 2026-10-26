@@ -8,7 +8,7 @@
 //   openExternal ここの createExternalOpener（居ない間は OS の既定のブラウザーで開く）
 // ここは、main が居る・居ないの出来事（away・back）と、main-leaving（これから離れる）を 1 か所で受けて配る。
 // utilityProcess の口（切れても戻らない。resumable でない）では何も起きない（既定の起動は変わらない）。
-import { spawn } from 'node:child_process';
+import { detach } from './process.mjs';
 import path from 'node:path';
 
 /**
@@ -77,17 +77,22 @@ export function urlLaunchPlan(url, { platform = process.platform, env = process.
 /**
  * OAuth の同意画面などを開く（claudeLogin・mcpOAuth の openExternal）。main が居れば main の shell に頼み（今のとおり）、
  * main の下の起動（hosted）で main が居ない間は、サーバーが OS の既定のブラウザーで開く。main の下でない起動（npm start）は何もしない
- * （画面の URL から人が開く）。spawn は差し替えられる（テスト）
+ * （画面の URL から人が開く）。spawnImpl は試験の差し替え（既定は core/process.mjs の detach。ADR 0270 の規則 ①）
  */
-export function createExternalOpener({ mainPort, spawnImpl = spawn, log = () => {} }) {
+export function createExternalOpener({ mainPort, spawnImpl = null, log = () => {} }) {
   return url => {
     if (mainPort.postMessage({ type: 'open-external', url })) return true;
     if (!mainPort.hosted) return false;
     try {
       const plan = urlLaunchPlan(url);
-      const child = spawnImpl(plan.command, plan.args, plan.options);
-      child.once?.('error', error => log(`open-external failed: ${error?.message ?? error}`));
-      child.unref?.();
+      if (spawnImpl) {
+        const child = spawnImpl(plan.command, plan.args, plan.options);
+        child.once?.('error', error => log(`open-external failed: ${error?.message ?? error}`));
+        child.unref?.();
+      } else {
+        void detach(plan.command, plan.args, { windowsHide: plan.options.windowsHide, windowsVerbatimArguments: plan.options.windowsVerbatimArguments })
+          .catch(error => log(`open-external failed: ${error?.message ?? error}`));
+      }
       return true;
     } catch (error) {
       log(`open-external failed: ${error?.message ?? error}`);

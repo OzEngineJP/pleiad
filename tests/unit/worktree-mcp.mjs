@@ -46,7 +46,7 @@ export default async function (t) {
     const wts = createWorktrees({ dataDir,
       users: async () => ({ busy: [], attached: [] }),
       release: async () => {},
-      unhold: async entry => { await bridge.closeUnder(entry.path); ledger.sweepCwd(entry.path); } });
+      unhold: async entry => { await bridge.closeUnder(entry.path); await ledger.sweepCwd(entry.path); } });
 
     const log = `${scratch}/mcp.jsonl`, childPidFile = `${scratch}/mcp-child.pid`;
     const item = { id: 'wt-mcp', name: 'wt-mcp', origins: [{ source: 'claude' }], definition: { command: process.execPath, args: [fileURLToPath(new URL('../lib/stdio-mcp.mjs', import.meta.url))], env: { MCP_TEST_LOG: log, MCP_TEST_CHILD_PID: childPidFile } } };

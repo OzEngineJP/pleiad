@@ -7,7 +7,7 @@
 // **落としてよいのは、その会話の agy の直下の子で、コマンドを走らせているシェル（とその子孫）だけ。**
 // agy 自身・中継（agy-context-relay）・会話の外のプロセスは落とさない。見つからない・あいまいなときは何も落とさない。
 // 実機（Windows）の木: agy.exe → powershell -Command "<コマンド>" → node.exe・chrome.exe …
-import { execFile } from "node:child_process";
+import { run as runProcess } from "../process.mjs";
 
 /** 一覧の札に出すコマンドの長さ */
 const LABEL_MAX = 80;
@@ -67,9 +67,12 @@ export function pickHeldAgy(list, { holderPid, markers }) {
   return hits.length === 1 ? hits[0].pid : null;
 }
 
-const run = (file, args) => new Promise((resolve, reject) => {
-  execFile(file, args, { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 30_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
-});
+const run = async (file, args) => {
+  const result = await runProcess(file, args, { windowsHide: true, maxOutputChars: 16 * 1024 * 1024, timeoutMs: 30_000 });
+  if (result.startError) throw Object.assign(new Error(result.startError), { code: result.startCode ?? "SPAWN" });
+  if (result.exitCode !== 0) throw Object.assign(new Error(`${file} exited ${result.exitCode}`), { code: result.exitCode ?? "EXIT", stderr: result.stderr });
+  return result.stdout;
+};
 
 /**
  * プロセスの一覧 [{ pid, ppid, command }]。**parent（整数）を渡すと、どの OS でも parent の直下の子だけ**。省くと全部。

@@ -3,6 +3,7 @@ import { t } from './i18n.mjs';
 
 const WARM_IDLE_MS = 10 * 60_000;
 const CACHE_LIMIT = 128;
+export { WARM_IDLE_MS };
 
 // 接続と一覧だけを共有する。認可・ターンの有効性は利用側の binding が持つ。
 // snapshots（core/mcp-ledger.mjs）があるとき、一覧の写しはデータ置き場にも残す。写しのある MCP は
@@ -10,7 +11,10 @@ const CACHE_LIMIT = 128;
 export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snapshots = null } = {}) {
   const entries = new Map(), all = new Set(), cache = new Map();
   let disposed = false;
-  const keyFor = (item, config) => `${item.id}:${hash([item.definition, { ...config, fetch: undefined }])}`;
+  let keepOnClose = false;   // dispose({ keepHeld: true }) の後は、どの entry も保持役の子を止めずに手を離す
+  // 鍵から env を外す（サーバーの起動ごとに変わる値が入る。保持役の子を起動で拾い直すときに、同じ MCP が同じ鍵になるように。
+  // 定義の env と `${env:…}` の参照は item.definition に載る。ADR 0270 段 2c）
+  const keyFor = (item, config) => `${item.id}:${hash([item.definition, { ...config, env: undefined, fetch: undefined }])}`;
   const snapshotGet = key => {
     let snapshot = cache.get(key);
     if (snapshot === undefined && snapshots) {
@@ -34,6 +38,8 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
     entry.retired = true;
     // 起きていない（standby）ままの回収は、接続も client も無いので map から外すだけ
     if (!entry.started) { all.delete(entry); return entry.closing = Promise.resolve(); }
+    // サーバーの終わり（dispose({ keepHeld: true })）は、保持役の子を止めずに手を離す
+    entry.transport?.setKeepHeld?.(keepOnClose);
     // connect が終わる前に dispose/abort されても、後から生まれた client を回収する。
     // exit イベントでも stdin を同期的に閉じ始める。通常の終了経路は完了まで await する。
     const stopped = entry.client?.close().catch(() => {});
@@ -71,7 +77,8 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
   function start(entry) {
     if (entry.started) return entry.started;
     entry.standby = false;
-    entry.started = connect(entry.item, { key: entry.key, name: entry.item.name, resolved: entry.resolved, cached: snapshotGet(entry.key), onClient: client => { entry.client = client; } }).then(result => {
+    entry.started = connect(entry.item, { key: entry.key, name: entry.item.name, resolved: entry.resolved, cached: snapshotGet(entry.key), held: entry.held,
+      onClient: (client, transport) => { entry.client = client; entry.transport = transport; } }).then(result => {
       entry.result = result;
       // standby の行を持つ全利用者へ、起きた（または失敗した）ことを知らせる
       for (const user of entry.users) { try { user.mcpStarted?.(entry, result); } catch { /* 画面の更新の失敗で接続は止めない */ } }
@@ -95,7 +102,7 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
   }
   /** 一覧の写し（遅延起動の判定。永続化されたものだけ＝プロセスをまたいで残る写し。無ければ従来どおり接続して覚える） */
   const snapshotFor = key => snapshots?.get(key);
-  async function acquire(item, resolved, user, restarted, { lazy = false } = {}) {
+  async function acquire(item, resolved, user, restarted, { lazy = false, heldFor = null } = {}) {
     if (disposed) throw new Error(t('context.bridge.aborted'));
     const key = keyFor(item, resolved.config);
     // 変更前の stdio がポート等を持つ場合もあるため、新しい接続の前に退役させる。
@@ -106,7 +113,10 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
     if (user.closed || disposed) throw new Error(t('context.bridge.aborted'));
     const reused = !!entry;
     if (!entry) {
-      entry = { key, id: item.id, cwd: user.runtime.policy.cwd, users: new Set(), retired: false, item, resolved, standby: lazy && !!snapshotFor(key), snapshot: lazy ? snapshotGet(key) : undefined };
+      // 前のサーバーが保持役に残した子（ADR 0270 段 2c）。あれば起こさずにそれへ付く（standby にもしない）
+      const held = heldFor?.(key) ?? null;
+      entry = { key, id: item.id, cwd: user.runtime.policy.cwd, users: new Set(), retired: false, item, resolved, held,
+        standby: !held && lazy && !!snapshotFor(key), snapshot: lazy ? snapshotGet(key) : undefined };
       entries.set(key, entry); all.add(entry);
       if (!entry.standby) start(entry);
     } else if (entry.standby && !lazy) start(entry);   // standby のまま残っている entry を起こす（呼び出し駆動・一覧を持たない再接続）
@@ -132,7 +142,7 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
         return acquire(item, resolved, user, false, { lazy });
       }
     }
-    const lease = { entry, result, release: discard => release(lease.entry, user, discard) };
+    const lease = { entry, result, held: Boolean(entry.held), release: discard => release(lease.entry, user, discard) };
     if (user.closed || disposed) { await lease.release(true); throw new Error(t('context.bridge.aborted')); }
     // キャッシュがあれば一覧を待たずに返す。更新失敗は次の利用時に再度試す。
     if ((result.cached || entry.stale) && !entry.background) entry.background = entry.refresh().catch(() => {}).finally(() => { entry.background = null; });
@@ -174,8 +184,9 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
     }
     snapshots?.prune(new Set([...keys].map(k => k.split(':')[0])), keys);
   }
-  function dispose() {
+  function dispose({ keepHeld = false } = {}) {
     disposed = true;
+    keepOnClose = Boolean(keepHeld);
     cache.clear();
     return Promise.allSettled([...all].map(close));
   }

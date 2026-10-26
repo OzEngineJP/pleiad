@@ -11,7 +11,7 @@
 // 画面のトークンとポートは、居るサーバーなら ready から、起こすなら AGENT_HOST_TOKEN・AGENT_HOST_PORT（保存したポート。切り替えは前のサーバーの値）で決まる。
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawnDetached } = require('./process.cjs');
 const { createServerLink, readLinkInfo } = require('./server-link.cjs');
 
 const START_TIMEOUT_MS = 60_000;
@@ -93,7 +93,7 @@ function probeRunning({ dataDir, readLink = readLinkInfo, netConnect = require('
  *   mode 'detached'  Node の child_process（detached・stdio なし・windowsHide）
  *   mode 'breakaway' koffi の CreateProcessW + CREATE_BREAKAWAY_FROM_JOB（desktop/job.cjs）
  */
-async function launchServer({ mode, nodeExe, args, cwd, env, spawnProcess = spawn, breakaway = options => require('./job.cjs').launchBreakaway(options) }) {
+async function launchServer({ mode, nodeExe, args, cwd, env, spawnProcess = spawnDetached, breakaway = options => require('./job.cjs').launchBreakaway(options) }) {
   if (mode === 'breakaway') return breakaway({ exe: nodeExe, args, cwd, env });
   const child = spawnProcess(nodeExe, args, { cwd, env, detached: true, stdio: 'ignore', windowsHide: true });
   await new Promise((resolve, reject) => { child.once('error', reject); child.once('spawn', resolve); });

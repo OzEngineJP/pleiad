@@ -3,8 +3,8 @@
 // execFile('git', …) でシェルを通さない。windowsHide・タイムアウト・GIT_OPTIONAL_LOCKS=0・読み取り系だけ。
 // 書くのは隠し ref（refs/pleiad/turn/<会話 id>/<n>-start|end）と、そのための一時 index・commit オブジェクトだけで、
 // ユーザーの index・HEAD・ブランチ・作業ツリーには触れない。git が無い・git 管理外・時間切れは、例外にせず ok: false を返す
-// （画面は静かに「情報なし」にする）。
-import { execFile } from 'node:child_process';
+// （画面は静かに「情報なし」にする）。子は core/process.mjs の run()（ADR 0270 の規則 ①）
+import { run } from './process.mjs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,20 +32,14 @@ export const setGitBin = (bin) => { gitBin = bin || 'git'; };
  * git を 1 回走らせる。例外にしない。
  * @returns {Promise<{ ok: boolean, stdout: string, stderr: string, code: number|string|null, truncated?: boolean }>}
  */
-function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUFFER, input = null } = {}) {
-  return new Promise((resolve) => {
-    let child;
-    try {
-      child = execFile(gitBin, ['-c', 'core.quotepath=false', '-c', 'commit.gpgsign=false', '-c', 'log.showSignature=false', ...args], {
-        cwd, encoding: 'utf8', windowsHide: true, timeout, maxBuffer,
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', ...env },
-      }, (error, stdout, stderr) => {
-        if (!error) return resolve({ ok: true, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code: 0 });
-        resolve({ ok: false, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), code: error.code ?? null, truncated: error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
-      });
-    } catch { return resolve({ ok: false, stdout: '', code: 'SPAWN' }); }
-    if (input !== null) { child.stdin?.on('error', () => {}); child.stdin?.end(input); }
+async function exec(cwd, args, { env = {}, timeout = READ_TIMEOUT, maxBuffer = MAX_BUFFER, input = null } = {}) {
+  const result = await run(gitBin, ['-c', 'core.quotepath=false', '-c', 'commit.gpgsign=false', '-c', 'log.showSignature=false', ...args], {
+    cwd, input, windowsHide: true, timeoutMs: timeout, maxOutputChars: maxBuffer,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_LITERAL_PATHSPECS: '1', ...env },
   });
+  if (result.startError) return { ok: false, stdout: '', stderr: '', code: result.startCode ?? 'SPAWN' };
+  if (result.exitCode === 0) return { ok: true, stdout: result.stdout, stderr: result.stderr, code: 0, ...(result.truncated ? { truncated: true } : {}) };
+  return { ok: false, stdout: result.stdout, stderr: result.stderr, code: result.timedOut ? 'TIMEOUT' : result.exitCode ?? null, ...(result.truncated ? { truncated: true } : {}) };
 }
 
 /** 許可表を通さない git。core/git-worktree.mjs（worktree の作成・削除。ADR 0089）だけが使う */

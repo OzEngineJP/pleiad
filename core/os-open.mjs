@@ -7,7 +7,7 @@
 //   - 起動するプログラムは絶対パスで指す（作業ディレクトリに置かれた explorer.exe を拾わない）
 //   - 短い時間に何度も呼ばせない（AI の出力経由で画面を操作させる類の誤用にも強くする）
 // デスクトップ版（Electron）では本体の shell.showItemInFolder / shell.openPath に頼む（desktop/file-bridge.cjs）。
-import { spawn } from 'node:child_process';
+import { detach } from './process.mjs';
 import path from 'node:path';
 import { t } from './i18n.mjs';
 import { getMainPort } from './main-port.mjs';
@@ -55,16 +55,20 @@ export function launchPlan(action, file, { directory = false, platform = process
 
 /**
  * 起動する。explorer.exe は成功しても終了コード 1 を返すことがあるので、終了コードでは失敗と判定しない
- * （起動できなかったときだけ失敗）。子は切り離して待たない。
+ * （起動できなかったときだけ失敗）。子は切り離して待たない（既定は core/process.mjs の detach。ADR 0270 の規則 ①）
  */
-export function launch(plan, { spawnImpl = spawn } = {}) {
-  return new Promise((resolve, reject) => {
-    let child;
-    try { child = spawnImpl(plan.command, plan.args, plan.options); }
-    catch (error) { reject(new Error(t('files.launchFailed', { reason: error.code ?? error.message }))); return; }
-    child.once('error', error => reject(new Error(t('files.launchFailed', { reason: error.code ?? error.message }))));
-    child.once('spawn', () => { child.unref(); resolve(); });
-  });
+export async function launch(plan, { spawnImpl = null } = {}) {
+  if (spawnImpl) {
+    return new Promise((resolve, reject) => {
+      let child;
+      try { child = spawnImpl(plan.command, plan.args, plan.options); }
+      catch (error) { reject(new Error(t('files.launchFailed', { reason: error.code ?? error.message }))); return; }
+      child.once('error', error => reject(new Error(t('files.launchFailed', { reason: error.code ?? error.message }))));
+      child.once('spawn', () => { child.unref(); resolve(); });
+    });
+  }
+  try { await detach(plan.command, plan.args, { windowsHide: plan.options.windowsHide, windowsVerbatimArguments: plan.options.windowsVerbatimArguments }); }
+  catch (error) { throw new Error(t('files.launchFailed', { reason: error.code ?? error.message })); }
 }
 
 /** 短い時間に何度も呼ばせない。limit 回 / windowMs を超えたら断る */

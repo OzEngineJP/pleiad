@@ -3,7 +3,7 @@
 // UI Automation は .NET の UIAutomationClient を Windows PowerShell 5.1 から呼ぶ（koffi から COM を組むより小さく、どの Windows にもある）。
 // 中身は win32-uia.ps1。頼みは環境変数 PLEIAD_UIA（JSON）で渡し、答えは標準出力の最後の 1 行の JSON。マウス・キーボードの入力は使わない。
 // 呼ぶのは確認の窓を見つけたとき・人が「オンにしてつなぐ」を押したときだけなので、1 回ごとに PowerShell を起こす（0.5〜2 秒）。
-const childProcess = require('node:child_process');
+const { run } = require('../process.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -29,24 +29,22 @@ function lastJson(stdout) {
 }
 
 /**
- * @param {{ execFile?: typeof childProcess.execFile, env?: NodeJS.ProcessEnv, script?: string|null, log?: (line: string) => void }} deps
+ * @param {{ runFile?: (command: string, args: string[], options: object) => Promise<{ stdout: string, stderr: string, exitCode: number|null, timedOut: boolean, startError?: string }>, env?: NodeJS.ProcessEnv, script?: string|null, log?: (line: string) => void }} deps
  * @returns {(request: object, options?: { timeoutMs?: number }) => Promise<{ ok: boolean, reason?: string, [key: string]: any }>}
  */
-function createUiaRunner({ execFile = childProcess.execFile, env = process.env, script = undefined, log = () => {} } = {}) {
-  return (request, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) => new Promise(resolve => {
+function createUiaRunner({ runFile = run, env = process.env, script = undefined, log = () => {} } = {}) {
+  return async (request, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) => {
     const command = script === undefined ? encodedScript() : script;
-    if (!command) { resolve({ ok: false, reason: 'no-script' }); return; }
+    if (!command) return { ok: false, reason: 'no-script' };
     const root = env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows';
     const exe = path.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    execFile(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', command],
-      { env: { ...env, PLEIAD_UIA: JSON.stringify(request) }, windowsHide: true, timeout: timeoutMs, maxBuffer: 64 * 1024 },
-      (error, stdout) => {
-        const result = lastJson(stdout);
-        if (result && typeof result.ok === 'boolean') { resolve(result); return; }
-        log(`chrome-os: uia ${request?.op} failed: ${error?.killed ? 'timeout' : (error?.code ?? 'no-result')}`);
-        resolve({ ok: false, reason: error?.killed ? 'timeout' : 'no-result' });
-      });
-  });
+    const result = await runFile(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', command],
+      { env: { ...env, PLEIAD_UIA: JSON.stringify(request) }, windowsHide: true, timeoutMs, maxOutputChars: 64 * 1024 });
+    const parsed = lastJson(result.stdout);
+    if (parsed && typeof parsed.ok === 'boolean') return parsed;
+    log(`chrome-os: uia ${request?.op} failed: ${result.timedOut ? 'timeout' : (result.startError ?? result.exitCode ?? 'no-result')}`);
+    return { ok: false, reason: result.timedOut ? 'timeout' : 'no-result' };
+  };
 }
 
 module.exports = { createUiaRunner, lastJson, encodedScript, SCRIPT_PATH };

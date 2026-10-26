@@ -352,13 +352,13 @@ export default async function (t) {
         const calls = loaded.messages.flatMap(m => m.toolCalls ?? []).filter(c => String(c.name).startsWith('mcp__ply_context__')).map(c => String(c.result.text));
         assert.equal(calls.length, 2, `R: ply_context の呼び出しが 2 回（${JSON.stringify(calls)}）`);
         assert.equal(calls[0], 'count=1', 'R: S1 での呼び出し');
-        assert.ok(calls[1].includes('起こし直した') && calls[1].includes('count=1'), `R: S2 は ply_context の口を同じトークンで開き直し、外部の MCP を起こし直す（状態は消え、最初の結果にその旨が添わる）: ${calls[1]}
+        assert.equal(calls[1], 'count=2', `R: S2 は ply_context の口を同じトークンで開き直し、外部の stdio MCP は保持役の子のまま（中の状態が残り、呼び出しの回数が続く）: ${calls[1]}
 ${b.tail(40)}`);
-        assert.equal(await launchCount(), launchesBefore + 1, 'R: 外部の MCP は S2 で 1 回だけ起こし直す');
+        assert.equal(await launchCount(), launchesBefore, 'R: 外部の MCP は S2 で起こし直さない（保持役の子がそのまま。ADR 0270 段 2c）');
       }
       assert.ok(!b.tail(300).includes('[unhandledRejection]'), b.tail(20));
       t.ok('引き継ぎ（2d）: 保持役に載った Claude のターン（承認待ち・ツールの実行中）は切り替えを待たせず、S1 が渡して終わり、S2（--handover）が同じトークン・ポートで付け直す。承認は同じ id で 1 つ、turnEnd・completedAt・使用量は 1 回', true);
-      t.ok('R15: Pleiad がコンテキストを担当する会話は、S2 が ply_context の口を札のトークンで開き直し、外部の stdio MCP を起こし直す（同じツールの名前。起こし直した後の最初の結果に、状態が消えた旨を添える）', true);
+      t.ok('R15: Pleiad がコンテキストを担当する会話は、S2 が ply_context の口を札のトークンで開き直す。外部の stdio MCP は保持役の子のまま（同じツールの名前。中の状態が残り、起こし直さない。ADR 0270 段 2c）', true);
       cb.close(); cb = null;
       m2.link.leave(); m2 = null;
       try { m1.link.kill(); } catch { /* S1 は終わっている */ }

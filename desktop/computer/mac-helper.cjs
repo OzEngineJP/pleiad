@@ -3,7 +3,7 @@
 // 頼み: {"id":1,"op":"capture","args":{...}} / 答え: {"id":1,"ok":true,"data":{...}} か {"id":1,"ok":false,"error":{"code":"...","message":"..."}}
 // 起きたら最初に {"event":"hello","protocol":1,...} を 1 行出す。落ちたら待っていた頼みは failed で返し、次の頼みで起こし直す。
 // spawn は注入する（試験は偽のヘルパーを渡す）。
-const childProcess = require('node:child_process');
+const { spawnRaw } = require('../process.cjs');
 const { StringDecoder } = require('node:string_decoder');
 const { ComputerError } = require('./errors.cjs');
 
@@ -47,7 +47,7 @@ function createLineReader(onLine, { maxLine = MAX_LINE } = {}) {
  * @param {Function} [deps.spawn] child_process.spawn と同じ形
  * @param {(line: string) => void} [deps.log]
  */
-function createHelperClient({ command, args = [], spawn = childProcess.spawn, log = () => {}, timeouts = {} }) {
+function createHelperClient({ command, args = [], spawn = spawnRaw, log = () => {}, timeouts = {} }) {
   const requestTimeout = timeouts.request ?? REQUEST_TIMEOUT_MS;
   const helloTimeout = timeouts.hello ?? HELLO_TIMEOUT_MS;
   let child = null;

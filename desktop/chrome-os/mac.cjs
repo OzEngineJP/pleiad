@@ -3,7 +3,7 @@
 // 窓の列挙・確認のダイアログの検出と許可・chrome://inspect/#remote-debugging のトグルは Swift ヘルパー
 // （desktop/computer/mac/ の pleiad-computer-helper）に JSON Lines で頼む。テストは偽の helper で動かす。
 
-const childProcess = require('node:child_process');
+const { spawnDetached } = require('../process.cjs');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const net = require('node:net');
@@ -87,7 +87,7 @@ function createMacChromeOs({
   helper,
   mac = null,
   log = () => {},
-  spawn = childProcess.spawn,
+  spawn = spawnDetached,
   env = process.env,
   exists = fs.existsSync,
   readFile = p => fs.readFileSync(p, 'utf8'),

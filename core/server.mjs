@@ -724,9 +724,10 @@ plusSession.onChange(({ type, status }) => {
 })().catch(e => console.error('  plus: 起動の読み込みに失敗:', String(e?.code ?? e?.message ?? e)));
 // 外部 MCP の台帳と一覧の写し（pleiad.db の行。遅延起動・孤児の掃除。core/mcp-ledger.mjs）
 const mcpLedger = createMcpLedger({ dataDir: store.dataDir, log: line => console.log(`  ${line}`) });
-const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth, ledger: mcpLedger });
+const contextBridge = createContextBridge({ plyMcp, oauth: mcpOAuth, ledger: mcpLedger, dataDir: store.dataDir, appVersion: APP_VERSION,
+  log: line => console.log(`  ${line}`) });
 // 前のサーバーが残した外部 MCP の孤児を木ごと片付ける（記録はログと台帳だけ。画面には出さない）
-try { mcpLedger.sweep(); } catch (e) { console.error('  MCP の孤児の掃除に失敗:', String(e?.message ?? e)); }
+try { await mcpLedger.sweep(); } catch (e) { console.error('  MCP の孤児の掃除に失敗:', String(e?.message ?? e)); }
 // リモートの接続口（docs/remote.md §4.2・§6.1）。既定は無効で、有効にするまで中継へはつながない。
 // 端末からのストリームはこのサーバー自身（localOrigin）へ組み立て直し、UI トークンは接続口が差し込む
 // 端末の AI 用の口 /agent（docs/remote.md §4.5、ADR 0146）。委譲の本体は remoteAgentInvoke（下の「端末の AI からの委譲」）
@@ -3049,7 +3050,7 @@ const worktreeHost = createWorktreeHost({
   turns: () => runtime.turns, shellCwds: () => [...shellRuns.cwds(), ...shellBridge.cwds()], tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
   emit: event => emitGlobal(event), reason: (key, params) => savedReason(key, params),
   // worktree を消す直前に、その中を cwd に持つ MCP を畳む（Issue #142。接続の回収と、台帳に残った分の掃除）
-  unhold: async entry => { await contextBridge.closeUnder(entry.path); mcpLedger.sweepCwd(entry.path); },
+  unhold: async entry => { await contextBridge.closeUnder(entry.path); await mcpLedger.sweepCwd(entry.path); },
   log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
   // AGENT_HOST_WORKTREES=off で worktree を作らない。テストのサーバーが開発中のリポジトリ（<リポジトリ>.pleiad）に残さないため（tests/lib/server.mjs）
   worktreeOptions: {
@@ -3092,7 +3093,7 @@ process.on('exit', () => shellRuns.stopAll({ keepHeld: true }));
 process.on('exit', () => botHost?.stop());
 process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
 process.on('exit', () => mainLink?.dispose());
-process.on('exit', () => { void contextBridge.dispose(); });
+process.on('exit', () => { void contextBridge.dispose({ keepHeld: true }); });
 // 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
@@ -6273,6 +6274,12 @@ const outbox = createMessageQueue({
 // 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
 // ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
 const adopting = await restoreAdoptedTurns();
+// 前のサーバーが保持役に残した外部の stdio MCP も拾う（ADR 0270 段 2c。core/context-mcp-held.mjs）。規則 ③: 起動の処理が復元の処理。
+// 子は保持役に居るので、次にその MCP を使うターンの acquire が付く（initialize は送り直さない。札の initialize の結果を読み直す）
+{
+  const adoptedMcp = await contextBridge.adoptHeld().catch(err => { console.error('  外部 MCP を引き取れませんでした:', String(err?.message ?? err)); return 0; });
+  if (adoptedMcp) console.log(`  外部 MCP ${adoptedMcp} 件を引き取った`);
+}
 // 前のサーバーが保持役に残した `!` の行（無停止の更新 段階 3。core/shell-held.mjs）も引き取る。
 // ADR 0270 の規則 ③: 起動の処理が復元の処理。保持役の子の一覧から自分の分（札が shell）を拾う（条件を付けない）
 {
@@ -8119,16 +8126,18 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         // 記録（contextRecord.hooks）は札の会話の記録のまま。組めなければ渡さない（そのターンの残りで Pleiad の Hooks が動かない）
         const hooksTurn = ctx.card.hooks && backend.capabilities?.hooks ? await prepareHooksTurn({ agent: backend.id, cwd: ctx.cwd, ctx: { plyHooks, hooksConfig, dataDir: store.dataDir, findNode: findNodeOnPath,
           context: { owners: ctx.policy?.owners ?? {}, delivered: false } } }).catch(e => { console.error(`  Hooks を組み直せない（${sessionId}）:`, String(e?.message ?? e)); return null; }) : null;
-        // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直し、外部の MCP はこのターンのために起こし直す（R15。ツールの名前は
-        // 項目の id とツールの名前から決まるので同じ。状態は消えるので、起こし直した後の最初の結果にその旨を添える）。開けなければ口の無いまま続ける
-        // （CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
+        // ply_context の口（Pleiad がコンテキストを担当する会話。2c）。札のトークンで開き直す。外部の stdio MCP は、保持役の子が居ればその子のまま
+        // （状態が残る。ADR 0270 段 2c）、居なければこのターンのために起こし直す（R15。ツールの名前は項目の id とツールの名前から決まるので同じ）。
+        // 開けなければ口の無いまま続ける（CLI の ply_context の呼び出しが失敗する）。CLI は口の URL・ヘッダーを持っているので、バックエンドには渡さない
         if (managed(ctx.policy) && acceptsPlyContext(backend, ctx.policy)) {
           try {
             const resolved = await resolveRuntime(ctx.policy, { plyServers: await plyMcp.scanInput(), snapshots: CONTEXT_SNAPSHOTS, locale: agentLocale });
-            ctx.runtimeContext = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
+            const opened = await contextBridge.open({ runtime: resolved, prompt: ctx.prompt, token: ctx.card.connectionTokens.context, restarted: true,
               origin: localOrigin(), signal: turn.ac.signal, isActive: () => runtime.turns.get(turn.key) === turn && !turn.ac.signal.aborted,
               activity: (state, name) => emit({ type: 'activity', state, ...(name ? { name } : {}) }) });
-            console.log(`  ply_context の口を開き直した（${sessionId}）: 外部の MCP ${resolved.servers.length} 件を起こし直した`);
+            ctx.runtimeContext = opened;
+            const kept = opened.held?.length ?? 0;
+            console.log(`  ply_context の口を開き直した（${sessionId}）: 外部の MCP ${resolved.servers.length} 件（保持役の子のまま ${kept} 件、起こし直した ${resolved.servers.length - kept} 件）`);
           } catch (e) { console.error(`  ply_context の口を開き直せない（${sessionId}）:`, String(e?.message ?? e)); }
         }
         releaseContext();

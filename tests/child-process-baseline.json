@@ -1,30 +1,6 @@
 {
   "version": 1,
   "files": {
-    "core/agent-browser.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/backends/antigravity-background.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/backends/antigravity-pids.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/backends/codex-accounts.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/backends/opencode-accounts.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/backends/opencode-server.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
     "core/claude-login.mjs": {
       "childProcess": 1,
       "utilityFork": 0
@@ -33,67 +9,7 @@
       "childProcess": 1,
       "utilityFork": 0
     },
-    "core/context-bridge.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/git-info.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/git-prs.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
     "core/hook-adapter.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/main-away.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/mcp-ledger.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/os-open.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/chrome-os/mac.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/chrome-os/win32-uia.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/chrome-os/win32.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/computer/apps.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/computer/mac-helper.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/server-boot.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/shell-env.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/switch.cjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "desktop/update-auth.cjs": {
       "childProcess": 1,
       "utilityFork": 0
     }

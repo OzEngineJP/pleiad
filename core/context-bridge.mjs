@@ -1,13 +1,17 @@
 import crypto from 'node:crypto';
-import { spawn, spawnSync } from 'node:child_process';
+import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { contextTools, mcpTransportConfig, hash } from './context-runtime.mjs';
 import { t, agentT } from './i18n.mjs';
-import { createContextConnections } from './context-connections.mjs';
+import { createContextConnections, WARM_IDLE_MS } from './context-connections.mjs';
 import { insideDir } from './worktrees.mjs';
+import { bootEnv } from './boot-env.mjs';
+import { run } from './process.mjs';
+import { holderSource } from './adopt.mjs';
+import { startHeldMcp, readHeldMcpChildren, initOfLabel, heldMcpPlan, HeldMcpTransport } from './context-mcp-held.mjs';
 
 export const CONTEXT_MCP_PATH = '/mcp/context';
 const MAX_TOOLS = 500;
@@ -95,19 +99,33 @@ class DetachedStdioTransport extends StdioClientTransport {
   }
 }
 
-export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached, onClient = () => {}, key = null, name = null, ledger = null } = {}) {
+/**
+ * 1 つの外部 MCP につなぐ。stdio は保持役の子として起こす（ADR 0270 段 2c。core/context-mcp-held.mjs）。
+ * held は付け直す子（{ id, source, adopted, init, label }）。保持役を使えないときは今の流れ（サーバーの子）に落ちる
+ */
+export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached, onClient = () => {}, key = null, name = null, ledger = null,
+  dataDir = null, appVersion = '', held = null, log = () => {} } = {}) {
   resolved ??= await resolveServer(item, { cwd, plyMcp, oauth });
   if (resolved.status) return resolved;
   const { config, tracker, ply } = resolved;
   const client = new Client({ name: 'ply-context', version: '1.0.0' }, { capabilities: {} });
   try {
     const fetchImpl = config.fetch ?? fetch;
-    const transport = config.type === 'stdio' ? new DetachedStdioTransport({ command: config.command, args: config.args, cwd: config.cwd, env: config.env, stderr: 'pipe' })
+    // 保持役に載せる子（新しく起こすか、付け直す）。載せられなければ null（サーバーの子）
+    let heldChild = held;
+    if (!heldChild && config.type === 'stdio') {
+      const started = await startHeldMcp({ command: config.command, args: config.args, cwd: config.cwd, env: config.env,
+        key: key ?? item.id, serverId: item.id, name: item.name, dataDir, root: bootEnv('AGENT_HOST_RUNTIME_ROOT'), appVersion, log });
+      if (started) heldChild = { id: started.id, source: started.source, adopted: false, init: null, label: started.label };
+    }
+    const transport = config.type === 'stdio' ? (heldChild ? new HeldMcpTransport({ ...heldChild, log })
+      : new DetachedStdioTransport({ command: config.command, args: config.args, cwd: config.cwd, env: config.env, stderr: 'pipe' }))
       : config.type === 'sse' ? new SSEClientTransport(new URL(config.url), { requestInit: { headers: config.headers, redirect: 'error' }, ...(config.fetch ? { fetch: config.fetch } : {}), eventSourceInit: { fetch: (url, options) => fetchImpl(url, { ...options, headers: { ...options?.headers, ...config.headers }, redirect: 'error' }) } })
       : new StreamableHTTPClientTransport(new URL(config.url), { requestInit: { headers: config.headers, redirect: 'error' }, ...(config.fetch ? { fetch: config.fetch } : {}) });
     transport.stderr?.resume(); // Do not publish third-party stderr (may contain credentials).
-    if (config.type === 'stdio') {
-      // 起きた根の PID を台帳に記録する（spawn の確定＝ start の解決。connect に失敗しても残す。core/mcp-ledger.mjs）
+    if (config.type === 'stdio' && !heldChild) {
+      // 起きた根の PID を台帳に記録する（spawn の確定＝ start の解決。connect に失敗しても残す。core/mcp-ledger.mjs）。
+      // 保持役の子は台帳に載せない（持ち主は保持役で、木ごとの停止も保持役がやる）
       const rawStart = transport.start.bind(transport);
       transport.start = async () => {
         const out = await rawStart();
@@ -119,7 +137,7 @@ export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached
         // SDK は直下のプロセスだけを止める。npx/uvx の子も、exit の同期処理で回収する。
         // POSIX は detached で分けたプロセスグループごと止める（DetachedStdioTransport）
         if (transport.pid) {
-          if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(transport.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 2000 });
+          if (process.platform === 'win32') await run('taskkill', ['/PID', String(transport.pid), '/T', '/F'], { windowsHide: true, timeoutMs: 2000 }).catch(() => {});
           else { try { process.kill(-transport.pid, 'SIGKILL'); } catch { /* グループは DetachedStdioTransport だけが作る */ } }
           ledger?.processes.close(transport.__ledgerSeq);
           transport.__ledgerSeq = null;
@@ -127,7 +145,7 @@ export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached
         await close();
       };
     }
-    onClient(client);
+    onClient(client, transport);
     await client.connect(transport, { timeout: config.timeout });
     transport.stderr?.resume();
     const list = () => listServerTools(client, item, config);
@@ -146,11 +164,91 @@ export async function connectServer(item, { cwd, plyMcp, oauth, resolved, cached
   }
 }
 
-export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null } = {}) {
+/**
+ * 外部 MCP の口。dataDir を渡すと、stdio の MCP を保持役の子として起こし、サーバーを起こし直しても付け直す
+ * （ADR 0270 段 2c。AGENT_HOST_MCP_HOLDER=off・実行場所の置き場が無いときは今の流れ＝サーバーの子）
+ */
+export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null, dataDir = null, appVersion = '', log = () => {} } = {}) {
   const bindings = new Map();
   const opening = new Set();
-  const connections = createContextConnections({ connect: (item, opts) => connectServer(item, { ...opts, plyMcp, oauth, ledger }), idleMs: warmIdleMs, snapshots: ledger?.snapshots ?? null });
+  const held = new Map();          // 鍵 -> { id, client, child, init, label }（起動で拾った、まだ使っていない保持役の子）
+  const heldTimers = new Map();
+  const connections = createContextConnections({
+    connect: (item, opts) => connectServer(item, { ...opts, plyMcp, oauth, ledger, dataDir, appVersion, log }),
+    idleMs: warmIdleMs, snapshots: ledger?.snapshots ?? null,
+  });
   let disposed = false;
+
+  const samePath = (a, b) => {
+    if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
+    const left = path.resolve(a), right = path.resolve(b);
+    return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
+  };
+  /** 保持役の子を木ごと止めて、記録を捨てる（止まったのを待ってから release する） */
+  function stopHeldChild({ client, id }, { timeoutMs = 3000 } = {}) {
+    return new Promise(resolve => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        client.off('exit', onExit);
+        try { client.release(id); } catch { /* 生きている・記録が無い */ }
+        resolve();
+      };
+      const onExit = frame => { if (frame?.id === id) finish(); };
+      const timer = setTimeout(finish, timeoutMs);
+      timer.unref?.();
+      client.on('exit', onExit);
+      try { client.kill(id, { tree: true }); } catch { finish(); }
+    });
+  }
+  function forgetHeld(key) {
+    clearTimeout(heldTimers.get(key));
+    heldTimers.delete(key);
+    return held.delete(key);
+  }
+  /** 付け直す保持役の子（この鍵の分）。使ったら地図から外す（子の持ち主は接続になる） */
+  function heldFor(key) {
+    const entry = held.get(key);
+    if (!entry) return null;
+    forgetHeld(key);
+    const source = holderSource(entry.client, entry.child, { redelivered: true });
+    return { id: entry.id, source, adopted: true, init: entry.init, label: entry.label };
+  }
+  /** この場所の設定から外れた保持役の子を止める（prune と同じ扱い。使われないまま残さない） */
+  function closeStaleHeld(keys, cwd) {
+    for (const [key, entry] of [...held]) {
+      if (keys.has(key) || !samePath(entry.label?.cwd, cwd)) continue;
+      forgetHeld(key);
+      log(`  external MCP: ${entry.label?.name || key} is no longer in the settings of this place; stopping it`);
+      void stopHeldChild(entry);
+    }
+  }
+  /**
+   * 起動で、前のサーバーが保持役に残した MCP の子（札の種類が mcp）を拾う（規則 ③: 起動の処理が復元の処理）。
+   * 子はまだ使わない（次の利用で acquire が heldFor で取る）。WARM_IDLE_MS 使われなければ止める
+   */
+  async function adoptHeld() {
+    if (disposed || !dataDir || !heldMcpPlan()) return 0;
+    const { client, children } = await readHeldMcpChildren({ dataDir, root: bootEnv('AGENT_HOST_RUNTIME_ROOT'), appVersion, log });
+    let count = 0;
+    for (const child of children) {
+      const key = child.label?.key;
+      const init = initOfLabel(child.label);
+      if (!key || !init || child.alive === false || held.has(key)) { void stopHeldChild({ client, id: child.id }); continue; }
+      held.set(key, { id: child.id, client, child, init, label: child.label });
+      const timer = setTimeout(() => {
+        if (!forgetHeld(key)) return;
+        log(`  external MCP: ${child.label?.name || key} was not used after the restart; stopping it`);
+        void stopHeldChild({ client, id: child.id });
+      }, WARM_IDLE_MS);
+      timer.unref?.();
+      heldTimers.set(key, timer);
+      count++;
+    }
+    return count;
+  }
 
   // 並列の接続や一覧の更新が先に終わっても、登録・500 件の会計は常に設定の順。
   function register(binding) {
@@ -264,7 +362,7 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null }
             // 一覧の写しがあれば起こさず standby。無いものだけ、従来どおりこの場で 1 回つないで一覧を覚える（progress はつなぐものだけ）
             const snapshot = connections.snapshotFor(key);
             if (!snapshot) progress({ current: index + 1, total: runtime.servers.length, name: item.name });
-            const lease = await connections.acquire(item, resolved, binding, restarted, { lazy: Boolean(snapshot) });
+            const lease = await connections.acquire(item, resolved, binding, restarted, { lazy: Boolean(snapshot), heldFor });
             if (signal?.aborted || binding.closed) { await lease.release(true); return; }
             results[index] = lease;
             binding.leases.set(item.id, lease);
@@ -277,8 +375,11 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null }
       if (failed) throw failed.reason;
       if (signal?.aborted || binding.closed) throw new Error(t('context.bridge.aborted'));
       connections.prune(keys, runtime.policy.cwd);
+      closeStaleHeld(keys, runtime.policy.cwd);
       for (const [index, item] of runtime.servers.entries()) binding.leases.set(item.id, results[index]);
       register(binding);
+      // 保持役の子に付け直した分は、状態が消えていない（initialize も送り直していない）。「起こし直した」の断りを付けない
+      for (const [id, lease] of binding.leases) if (lease?.held) binding.restarted.delete(id);
       for (const item of runtime.servers) {
         const row = runtime.report.entries.find(e => e.id === item.id);
         if (row.status !== 'connected' && row.status !== 'standby') {
@@ -298,8 +399,10 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null }
       // shape: 担当と渡すツールの名前。会話のあいだプロセスを生かすバックエンド（antigravity）は、これが変わったら起こし直す
       // （設定の変更で担当や外部 MCP が変わっても、起動時に受け取ったツール一覧のままになるため）
       const shape = hash([runtime.owners, binding.tools.map(tool => tool.name)]);
+      // held: 保持役の子に付け直した外部 MCP の id（起こし直していない。状態が残っている）
+      const heldIds = [...binding.leases].filter(([, lease]) => lease?.held).map(([id]) => id);
       // sections: prompt の内訳（Pleiad が足した文の量を数える。core/instruction-amount.mjs）
-      return { owners: runtime.owners, prompt: helpers.prompt, sections: helpers.sections, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, close };
+      return { owners: runtime.owners, prompt: helpers.prompt, sections: helpers.sections, locale: runtime.locale, url: `${origin}${CONTEXT_MCP_PATH}`, headers: { Authorization: `Bearer ${token}` }, shape, held: heldIds, close };
     } catch (e) { binding.discard = true; await close(); throw e; }
     finally { opening.delete(binding); }
   }
@@ -419,13 +522,27 @@ export function createContextBridge({ plyMcp, oauth, warmIdleMs, ledger = null }
   }
   /**
    * dir の中（同じ場所を含む）を cwd に起こした stdio の MCP を畳む（worktree を消す前）。
-   * http/sse はプロセスを起こさないので対象外。畳まれた分は次の利用で起き直る（遅延起動と同じ形）
+   * http/sse はプロセスを起こさないので対象外。畳まれた分は次の利用で起き直る（遅延起動と同じ形）。
+   * 保持役に残っていてまだ使っていない子（起動で拾った分）も、同じ場所なら止める
    */
-  const closeUnder = dir => connections.closeWhere(entry => entry.resolved?.config?.type === 'stdio' && insideDir(entry.resolved.config.cwd, dir));
-  function dispose() {
+  const closeUnder = async dir => {
+    const unused = [...held].filter(([, entry]) => insideDir(entry.label?.cwd, dir));
+    for (const [key] of unused) forgetHeld(key);
+    const [folded] = await Promise.all([
+      connections.closeWhere(entry => entry.resolved?.config?.type === 'stdio' && insideDir(entry.resolved.config.cwd, dir)),
+      ...unused.map(([, entry]) => stopHeldChild(entry)),
+    ]);
+    return folded + unused.length;
+  };
+  /**
+   * 口を閉じる。keepHeld: true はサーバーの終わり（更新・落ちたとき）で、保持役の子を止めずに手を離す
+   * （止めるのはアプリの終了と、会話の後片付け＝ warm の idle・worktree を消す前だけ。ADR 0270）
+   */
+  function dispose({ keepHeld = false } = {}) {
     disposed = true;
+    for (const key of [...held.keys()]) forgetHeld(key);
     const closed = [...new Set([...bindings.values(), ...opening])].map(b => { b.discard = true; return b.close(); });
-    return Promise.allSettled([connections.dispose(), ...closed]);
+    return Promise.allSettled([connections.dispose({ keepHeld }), ...closed]);
   }
-  return { open, handle, reserve, closeUnder, dispose };
+  return { open, handle, reserve, closeUnder, dispose, adoptHeld };
 }

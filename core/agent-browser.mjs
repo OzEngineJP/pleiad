@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { rmSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { run } from './process.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -113,23 +113,18 @@ const RM = { recursive: true, force: true, maxRetries: 5, retryDelay: 100 };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** 動いているプロセスの pid -> 実行ファイル名。引けなければ null（そのときは落とさない） */
-export function listProcesses() {
+export async function listProcesses() {
   const win = process.platform === 'win32';
   const [command, args] = win ? ['tasklist', ['/FO', 'CSV', '/NH']] : ['ps', ['-A', '-o', 'pid=,comm=']];
-  return new Promise(resolve => {
-    try {
-      execFile(command, args, { windowsHide: true, timeout: 10_000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
-        if (error) return resolve(null);
-        const map = new Map();
-        for (const line of String(stdout ?? '').split(/\r?\n/)) {
-          // "agent-browser.exe","12345","Console","1","10,000 K" / "  12345 /path/to/agent-browser"
-          const hit = win ? /^"([^"]+)","(\d+)"/.exec(line) : /^\s*(\d+)\s+(.+)$/.exec(line);
-          if (hit) map.set(Number(win ? hit[2] : hit[1]), path.basename((win ? hit[1] : hit[2]).trim()));
-        }
-        resolve(map.size ? map : null);
-      });
-    } catch { resolve(null); }
-  });
+  const result = await run(command, args, { windowsHide: true, timeoutMs: 10_000, maxOutputChars: 32 * 1024 * 1024 });
+  if (result.startError || result.exitCode !== 0) return null;
+  const map = new Map();
+  for (const line of String(result.stdout ?? '').split(/\r?\n/)) {
+    // "agent-browser.exe","12345","Console","1","10,000 K" / "  12345 /path/to/agent-browser"
+    const hit = win ? /^"([^"]+)","(\d+)"/.exec(line) : /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (hit) map.set(Number(win ? hit[2] : hit[1]), path.basename((win ? hit[1] : hit[2]).trim()));
+  }
+  return map.size ? map : null;
 }
 
 function alive(pid) {

@@ -3,7 +3,7 @@
 // 名前での検索（findApp）と起動（launch）もここ。実行ファイルの識別は Codex の computer_use の考え方（AUMID か実行ファイル）に倣う。
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
+const { run } = require('../process.cjs');
 const { ComputerError } = require('./errors.cjs');
 
 const WS_EX_TRANSPARENT = 0x20;
@@ -35,18 +35,15 @@ function knownFolders(env) {
 }
 
 /** スタートメニューのアプリの一覧（Get-StartApps）。COM を使わずに済ませる。失敗したら空 */
-function defaultListStartApps() {
+async function defaultListStartApps() {
   const script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-StartApps | Select-Object Name,AppID | ConvertTo-Json -Compress";
-  return new Promise(resolve => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-      { timeout: 8000, windowsHide: true, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
-        if (error) return resolve([]);
-        try {
-          const parsed = JSON.parse(String(stdout).replace(/^\uFEFF/, '').trim() || '[]');
-          resolve((Array.isArray(parsed) ? parsed : [parsed]).filter(e => e?.Name && e?.AppID).map(e => ({ name: String(e.Name), appId: String(e.AppID) })));
-        } catch { resolve([]); }
-      });
-  });
+  const result = await run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+    { timeoutMs: 8000, windowsHide: true, maxOutputChars: 8 * 1024 * 1024 });
+  if (result.startError || result.exitCode !== 0) return [];
+  try {
+    const parsed = JSON.parse(String(result.stdout).replace(/^\uFEFF/, '').trim() || '[]');
+    return (Array.isArray(parsed) ? parsed : [parsed]).filter(e => e?.Name && e?.AppID).map(e => ({ name: String(e.Name), appId: String(e.AppID) }));
+  } catch { return []; }
 }
 
 function createApps({ win32, selfPid = process.pid, selfExe = process.execPath, listStartApps = defaultListStartApps, env = process.env,

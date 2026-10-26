@@ -14,7 +14,7 @@
 //
 // 置き場は会話の控えと同じ `AGENT_HOST_DATA/antigravity/`（antigravity-store.mjs の `dir()`）。
 // 読み書きは壊れていても落ちない（無い・壊れている、はどちらも「控えが無い」と同じ）。
-import { execFile } from "node:child_process";
+import { run } from "../process.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { cliCommand } from "../cli-installation.mjs";
@@ -151,24 +151,17 @@ async function imageName(pid) {
   return psName(pid);
 }
 
-function psName(pid) {
+async function psName(pid) {
   const [command, args] = process.platform === "win32"
     ? ["tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]]
     : ["ps", ["-p", String(pid), "-o", "comm="]];
-  return new Promise((resolve) => {
-    try {
-      execFile(command, args, { windowsHide: true, timeout: 5_000 }, (err, stdout) => {
-        if (err) return resolve(null);
-        const text = String(stdout ?? "").trim();
-        if (process.platform === "win32") {
-          // "node.exe","12345","Console","1","10,000 K" / 居なければ INFO: No tasks …
-          const hit = /^"([^"]+)","(\d+)"/.exec(text);
-          return resolve(hit && Number(hit[2]) === pid ? hit[1] : null);
-        }
-        return resolve(text.split(NL)[0]?.trim() || null);
-      });
-    } catch {
-      resolve(null);
-    }
-  });
+  const result = await run(command, args, { windowsHide: true, timeoutMs: 5_000 });
+  if (result.startError || result.exitCode !== 0) return null;
+  const text = String(result.stdout ?? "").trim();
+  if (process.platform === "win32") {
+    // "node.exe","12345","Console","1","10,000 K" / 居なければ INFO: No tasks …
+    const hit = /^"([^"]+)","(\d+)"/.exec(text);
+    return hit && Number(hit[2]) === pid ? hit[1] : null;
+  }
+  return text.split(NL)[0]?.trim() || null;
 }

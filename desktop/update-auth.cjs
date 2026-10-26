@@ -1,10 +1,16 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
+const { run } = require('./process.cjs');
 const { parse } = require('yaml');
 
-const runFile = promisify(execFile);
+/** execFile の形（失敗は投げる）。中は core/process.mjs の run()（ADR 0270 の規則 ①） */
+async function runFile(command, args, options) {
+  const result = await run(command, args, options);
+  if (result.startError) throw Object.assign(new Error(result.startError), { code: result.startCode ?? 'SPAWN', stdout: result.stdout, stderr: result.stderr });
+  if (result.timedOut) throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT', stdout: result.stdout, stderr: result.stderr });
+  if (result.exitCode !== 0) throw Object.assign(new Error(`${command} exited ${result.exitCode}`), { code: result.exitCode ?? 'EXIT', stdout: result.stdout, stderr: result.stderr });
+  return { stdout: result.stdout, stderr: result.stderr };
+}
 
 // 配布先は public なので、トークンが無くても更新は取れる（認証なしは 1 IP で 1 時間 60 回まで）。
 // トークンがあればレート制限を避けるために使う。取れなければ null を返す。

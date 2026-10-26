@@ -70,7 +70,7 @@ export default async function (t) {
       const logs = [];
       const ledger = createMcpLedger({ dataDir, log: l => logs.push(l) });
       let swept;
-      try { swept = ledger.sweep(); } finally { ledger.release(); }
+      try { swept = await ledger.sweep(); } finally { ledger.release(); }
       assert(swept.length === 2, `孤児 2 件だけ: ${JSON.stringify(swept.map(r => r.pid))}`);
       await until(() => !alive(orphan.pid) && !alive(orphanOnReused.pid));
       assert(alive(stillHasParent.pid) && alive(liveParent.pid) && alive(reusedParent.pid), '親の生きているものは止めない');
@@ -122,7 +122,7 @@ export default async function (t) {
       const logs = [];
       const ledger = createMcpLedger({ dataDir, log: l => logs.push(l) });
       let swept;
-      try { swept = ledger.sweepCwd(wt); } finally { ledger.release(); }
+      try { swept = await ledger.sweepCwd(wt); } finally { ledger.release(); }
       assert(swept.length === 3, `wt の中の自分の子・孤児・もう居ない分の 3 件だけ: ${JSON.stringify(swept.map(r => r.pid))}`);
       await until(() => !alive(mine.pid) && !alive(orphanIn.pid));
       assert(alive(foreign.pid) && alive(outside.pid) && alive(prefix.pid) && alive(reused.pid), '別サーバーの子・外の cwd・接頭辞だけの外・PID 再利用は止めない');

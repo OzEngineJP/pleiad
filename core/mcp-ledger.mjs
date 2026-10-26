@@ -4,7 +4,7 @@
 // 遅延起動（core/context-connections.mjs）が、起きたときに覚えた一覧を次の起動でも広告するために使う。
 // 台帳（mcp_processes）: stdio で起こした根の PID と、当時のサーバー（親）の PID・起動時刻を記録する。
 // 起動時の掃除（sweep）で、記録の親が死んでいる分を木ごと止める。画面には出さず、サーバーのログと台帳に残す（承認済みの形）。
-import { spawnSync } from 'node:child_process';
+import { run } from './process.mjs';
 import { openData } from './data-schema.mjs';
 import { mcpToolCacheTable, mcpProcessTable } from './db.mjs';
 import { t } from './i18n.mjs';
@@ -19,15 +19,15 @@ const FILETIME_EPOCH_DIFF = 116444736000000000n; // FILETIME（1601 起点の 10
 const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
 
 /** pids のプロセスの起動時刻（epoch ms）の一覧。居ない pid は載らない。一覧そのものが取れなければ投げる（取れなければ止めない、誤爆を防ぐ側） */
-function startTimesOf(pids, { now = Date.now } = {}) {
+async function startTimesOf(pids, { now = Date.now } = {}) {
   const out = new Map();
   if (!pids.length) return out;
   if (process.platform === 'win32') {
-    const res = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+    const res = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command',
       `Get-Process -Id ${pids.join(',')} -ErrorAction SilentlyContinue | ForEach-Object { "$($_.Id):$($_.StartTime.ToFileTimeUtc())" }`],
-      { encoding: 'utf8', timeout: 15_000, windowsHide: true });
+      { timeoutMs: 15_000, windowsHide: true, maxOutputChars: 4 * 1024 * 1024 });
     // 死んでいる pid が混ざると Get-Process は出力しつつ status 1 で返る。起動自体が失敗したときだけ取れないとみなす
-    if (res.error) throw res.error;
+    if (res.startError) throw new Error(res.startError);
     for (const line of String(res.stdout ?? '').split(/\r?\n/)) {
       const m = /^(\d+):(\d+)\s*$/.exec(line.trim());
       if (m) out.set(Number(m[1]), Number((BigInt(m[2]) - FILETIME_EPOCH_DIFF) / 10000n));
@@ -35,9 +35,9 @@ function startTimesOf(pids, { now = Date.now } = {}) {
     return out;
   }
   // etimes（秒）は macOS の ps に無いので、Linux と macOS の両方にある etime（[[dd-]hh:]mm:ss）を読む
-  const res = spawnSync('ps', ['-o', 'pid=,etime=', '-p', pids.join(',')], { encoding: 'utf8', timeout: 15_000 });
+  const res = await run('ps', ['-o', 'pid=,etime=', '-p', pids.join(',')], { timeoutMs: 15_000 });
   // 死んでいる pid が混ざると ps も非 0 で返る（残りの pid は出力される）
-  if (res.error) throw res.error;
+  if (res.startError) throw new Error(res.startError);
   const at = now();
   for (const line of String(res.stdout ?? '').split(/\r?\n/)) {
     const m = /^\s*(\d+)\s+(\S+)\s*$/.exec(line);
@@ -56,9 +56,9 @@ export function elapsedSeconds(text) {
 }
 
 /** 木ごと止める。Windows は taskkill /T、POSIX は detached で分けたプロセスグループごと（core/context-bridge.mjs） */
-function killTree(pid) {
+async function killTree(pid) {
   if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 });
+    await run('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, timeoutMs: 5000 });
     return;
   }
   try { process.kill(-pid, 'SIGKILL'); return; } catch { /* グループで無ければ根だけ */ }
@@ -100,23 +100,7 @@ export function createMcpLedger({ dataDir, log = () => {}, now = Date.now, selfP
    * 起動時刻が取れなければ止めない（誤爆を防ぐ側）。止めた行を返す。
    */
   function sweep() {
-    const rows = unclosed().filter(r => r.parentPid !== selfPid && r.pid !== selfPid);
-    if (!rows.length) return [];
-    let starts;
-    try { starts = startTimes([...new Set(rows.map(r => r.parentPid))], { now }); }
-    catch { return []; }
-    const killed = [];
-    for (const row of rows) {
-      const parentAt = starts.get(row.parentPid);
-      const parentGone = parentAt === undefined && !aliveP(row.parentPid);
-      const reused = parentAt !== undefined && (row.parentStarted == null || Math.abs(parentAt - row.parentStarted) > START_TOLERANCE_MS);
-      if (!parentGone && !reused) continue;
-      kill(row.pid);
-      try { tables().procs.killed(row.seq, 'orphaned', now()); } catch { /* 記録の失敗で掃除は止めない */ }
-      killed.push(row);
-      log(t('context.bridge.mcpReaped', { name: row.command ?? row.key ?? String(row.pid), pid: row.pid }));
-    }
-    return killed;
+    return sweepRows(async () => unclosed().filter(r => r.parentPid !== selfPid && r.pid !== selfPid), 'orphaned');
   }
 
   /**
@@ -125,20 +109,38 @@ export function createMcpLedger({ dataDir, log = () => {}, now = Date.now, selfP
    * PID を別のプロセスが使い回しているだけかもしれないので、起動時刻を記録（started_at）と突き合わせる。止めた行を返す。
    */
   function sweepCwd(dir) {
-    const rows = unclosed().filter(r => r.cwd && r.pid !== selfPid && insideDir(r.cwd, dir) && (r.parentPid === selfPid || !aliveP(r.parentPid)));
-    if (!rows.length) return [];
+    return sweepRows(async () => unclosed().filter(r => r.cwd && r.pid !== selfPid && insideDir(r.cwd, dir) && (r.parentPid === selfPid || !aliveP(r.parentPid))), 'worktree', dir);
+  }
+
+  /**
+   * 掃除の本体（sweep・sweepCwd）。rows() が対象の行、reason は台帳に残す理由。
+   * 親の死は、親の PID の起動時刻を台帳と突き合わせて見分ける（PID の使い回しで誤爆しない）。取れなければ止めない
+   */
+  async function sweepRows(rows, reason) {
+    const targets = await rows();
+    if (!targets.length) return [];
+    const pidOf = reason === 'worktree' ? row => row.pid : row => row.parentPid;
     let starts;
-    try { starts = startTimes([...new Set(rows.map(r => r.pid))], { now }); }
+    try { starts = await startTimes([...new Set(targets.map(pidOf))], { now }); }
     catch { return []; }
     const killed = [];
-    for (const row of rows) {
-      const at = starts.get(row.pid);
-      // 起動時刻が記録と違う = PID 再利用（止めない）。取れなければもう居ないので記録だけ締める
-      if (at !== undefined && Math.abs(at - row.startedAt) > START_TOLERANCE_MS) continue;
-      if (at !== undefined) kill(row.pid);
-      try { tables().procs.killed(row.seq, 'worktree', now()); } catch { /* 記録の失敗で掃除は止めない */ }
+    for (const row of targets) {
+      if (reason === 'worktree') {
+        const at = starts.get(row.pid);
+        // 起動時刻が記録と違う = PID 再利用（止めない）。取れなければもう居ないので記録だけ締める
+        if (at !== undefined && Math.abs(at - row.startedAt) > START_TOLERANCE_MS) continue;
+        if (at !== undefined) await kill(row.pid);
+      } else {
+        const parentAt = starts.get(row.parentPid);
+        const parentGone = parentAt === undefined && !aliveP(row.parentPid);
+        const reused = parentAt !== undefined && (row.parentStarted == null || Math.abs(parentAt - row.parentStarted) > START_TOLERANCE_MS);
+        if (!parentGone && !reused) continue;
+        await kill(row.pid);
+      }
+      try { tables().procs.killed(row.seq, reason, now()); } catch { /* 記録の失敗で掃除は止めない */ }
       killed.push(row);
-      log(t('context.bridge.mcpFolded', { name: row.command ?? row.key ?? String(row.pid), pid: row.pid }));
+      const name = row.command ?? row.key ?? String(row.pid);
+      log(reason === 'worktree' ? t('context.bridge.mcpFolded', { name, pid: row.pid }) : t('context.bridge.mcpReaped', { name, pid: row.pid }));
     }
     return killed;
   }

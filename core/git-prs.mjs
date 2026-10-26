@@ -3,7 +3,7 @@
 // 画面へは正規化した形だけを返す: { number, url, repo, title?, state?: open|draft|merged|closed, checks?: pass|fail|pending, child? }。
 // gh が無い・ログインしていないときは state・title・checks を付けず、reason（no-gh | no-auth）で理由を返す。
 // 試験と画面の確認のために AGENT_HOST_GH で gh の代わりを指せる（.mjs / .js ならこの node で動かす）。
-import { execFile } from 'node:child_process';
+import { run } from './process.mjs';
 import { parsePrUrl } from './session-prs.mjs';
 
 export const PR_TTL_MS = 60_000;
@@ -50,16 +50,18 @@ export function reasonOf(error) {
 }
 
 /** 既定の gh の呼び出し。stdout を返し、失敗は error（code・stderr 付き）で投げる */
-export function runGh(args, { env = process.env } = {}) {
+export async function runGh(args, { env = process.env } = {}) {
   const custom = env.AGENT_HOST_GH;
   const script = custom && /\.m?js$/i.test(custom);
   const file = script ? process.execPath : (custom || 'gh');
-  return new Promise((resolve, reject) => {
-    execFile(file, script ? [custom, ...args] : args, {
-      timeout: GH_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true, encoding: 'utf8',
-      env: { ...env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1', GH_PAGER: '' },
-    }, (error, stdout, stderr) => (error ? reject(Object.assign(error, { stderr: String(stderr ?? '') })) : resolve(String(stdout))));
+  const result = await run(file, script ? [custom, ...args] : args, {
+    timeoutMs: GH_TIMEOUT_MS, maxOutputChars: 1024 * 1024, windowsHide: true,
+    env: { ...env, GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1', GH_PAGER: '' },
   });
+  if (result.startError) throw Object.assign(new Error(result.startError), { code: result.startCode ?? 'SPAWN', stderr: '' });
+  if (result.timedOut) throw Object.assign(new Error('gh timed out'), { code: 'ETIMEDOUT', stderr: result.stderr });
+  if (result.exitCode !== 0) throw Object.assign(new Error(`gh exited ${result.exitCode}`), { code: result.exitCode ?? 'EXIT', stderr: result.stderr });
+  return result.stdout;
 }
 
 /** 一覧の PR の基本の形（番号・URL・repo。gh を呼ばない） */

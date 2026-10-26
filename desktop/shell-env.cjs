@@ -2,7 +2,7 @@
 // macOS の Dock・Finder・ログイン項目から起こしたアプリは launchd の最小限の PATH（/usr/bin:/bin:/usr/sbin:/sbin）しか持たず、
 // ~/.zprofile・~/.zshrc で足した PATH（Homebrew・gcloud など）が、サーバー経由でエージェントの CLI と `!` の行のシェルに届かない。
 // サーバーを起こす前に利用者のログインシェルを対話で 1 回だけ走らせ、その環境を main の process.env へ写す。
-const { spawn } = require('node:child_process');
+const { spawnRaw } = require('./process.cjs');
 const crypto = require('node:crypto');
 const os = require('node:os');
 const path = require('node:path');
@@ -47,7 +47,7 @@ function parseEnvBlock(text) {
  * rc が出す文字に紛れないよう、前後に一度きりの印を置いた `env -0` の出力だけを読む。
  * 失敗・時間切れは null（呼ぶ側は今の環境のまま続ける）
  */
-function resolveShellEnv({ shell, env = process.env, timeoutMs = RESOLVE_TIMEOUT_MS, spawnProcess = spawn } = {}) {
+function resolveShellEnv({ shell, env = process.env, timeoutMs = RESOLVE_TIMEOUT_MS, spawnProcess = spawnRaw } = {}) {
   if (!shell) return Promise.resolve(null);
   const mark = `__PLEIAD_SHELL_ENV_${crypto.randomBytes(8).toString('hex')}__`;
   const command = `printf '%s' '${mark}'; /usr/bin/env -0; printf '%s' '${mark}'`;
