@@ -77,7 +77,7 @@
 | `core/handover.mjs`（180 行）・`core/handover-check.mjs`（52 行）・起動の `--handover`・`HANDOVER_VERSION`/`HANDOVER_RANGE`・`running` の `handover` | 4 | 版ごとの実行場所・main の `switch.cjs` の「組み立て→止める→起こす」 |
 | `desktop/switch.cjs` の `waitIdle`・`switchBlockers`・`handoverMode`・`stoppers` の確認・`declines`（693 行のうち約 3 分の 1） | 4 | 版の判定（`needsSwitch`）・データ形式の判定・実行場所の組み立て・窓の読み直し・合わない版のダイアログ |
 | サーバーの `holdable`・`handoverSettled`・`createHandover` の deps・`handOffTurn`・`stash`・`release`（終わる順序）・`AGENT_HOST_ADOPT_HOLDER`/`AGENT_HOST_ADOPT_FROM`/`AGENT_HOST_ADOPT_PORT_WAIT_MS` | 4 | `restoreAdoptedTurns`・`restoreTurn`・`adoptTurn`・`driveTurn`・`takeCard`（札を DB と保持役へ置く口に変わる）・`touchCard` |
-| バックエンドの `handOff`（`createHeldCli.handOff`・`handOffHeld`・`handOffAgy`・`handOffCodex`・`handOffOpencode`）と `adoptable`/`registerChildExpander` の登録側 | 4 | 保持役の子をその CLI に見せる部分（Claude の偽 `SpawnedProcess`・Codex の共有 app-server の読み書き・OpenCode の HTTP・agy の stdio）と、記録の正規化・再生 |
+| バックエンドの `handOff`（`createHeldCli.handOff`・`handOffHeld`・`handOffAgy`・`handOffCodex`・`handOffOpencode`）と `adoptable` | 4 | 保持役の子をその CLI に見せる部分（Claude の偽 `SpawnedProcess`・Codex の共有 app-server の読み書き・OpenCode の HTTP・agy の stdio）と、記録の正規化・再生。子 1 つが複数のターンを運ぶ Codex の展開（`registerChildExpander`。子の札の種類ごとの 1 関数） |
 | `shell-runs.handOff`/`adopt`・`shell-held` の `handOff`/`abandon`・`shellBridge.stopAll`（サーバーの終わり） | 4 | `drive`/`finished`・札・`runHostShell` の包み |
 | Chrome の `setCarry`/`handOff`・接続の子の「最後の carry」 | 4 | 接続の子（`core/chrome/link.mjs`）が ws を持ち続けること。サーバーは起動で端点と窓の印を子から読む |
 | `agent-tasks.adoptRun` の「引き継ぎ専用」の分岐 | 3・4 | 台帳の行から `running` を拾い、結果の確定を続ける道 |
@@ -123,7 +123,7 @@
 
 - `core/` のモジュール構成が変わる（`core/process.mjs` を足し、`child_process` の読みをそこへ集める）。`npm test` に `child-process` の検査が増える。
 - `desktop/switch.cjs` が大きく短くなる。更新の UX（待ちの表示・止まるものの確認）は「データ形式が変わる版」だけに残る。`docs/design-system.md` の切り替えの待ちの表示は、その 1 通りに絞る。
-- `AGENTS.md` の環境変数の表から `AGENT_HOST_ADOPT_*`・`AGENT_HOST_HANDOVER`（off 経路の切り替えとしての意味は残るか、段 4 で決める）を外し、`AGENT_HOST_HOLDER_*` の説明を「いつも載せる」に直す。
+- `AGENTS.md` の環境変数の表から `AGENT_HOST_ADOPT_*`・`AGENT_HOST_HANDOVER`（off 経路の切り替えとしての意味は残るか、段 4 で決める）を外し、`AGENT_HOST_*_HOLDER` の説明を「いつも載せる」に直す。
 - `docs/zero-downtime-update/` の design.md・plan.md は、段ごとに「今の形」へ書き換える（ADR 0151 の本文は書き換えない）。
 - 保持役の子を止めるのは「アプリの終了」だけになる。利用者が Pleiad を終了したときに、Codex の app-server・OpenCode のサーバー・`!` の行・ply_shell のジョブが残らないことを、終了の試験で守る。
 - 音声・computer use・ビューアは、main の入れ替えで切れることを理由つきで会話に出す（今は音声だけ理由が無い）。
