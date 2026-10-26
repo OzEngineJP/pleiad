@@ -1,6 +1,6 @@
 // OpenCode v2 HTTP/SSE transport. The holder owns the --stdio lease during updates.
 import crypto from 'node:crypto';
-import { runSync } from '../process.mjs';
+import { runSync, onExit } from '../process.mjs';
 import { spawnCli, directCommand } from '../cli-installation.mjs';
 import { killTree } from './antigravity-background.mjs';
 import { createV2Protocol } from './opencode-v2.mjs';
@@ -18,13 +18,14 @@ export function startupUrl(line) {
 }
 
 export function createOpencodeServer({ command, env=async()=>({}), beforeStart=()=>{}, afterStart=()=>{}, held=null, account=null, origin=async()=>null, currentOrigin=()=>null, busy=()=>false }) {
-  let proc=null, heldChild=null, base=null, auth=null, servedOrigin=null, starting=null, stream=null, retired=false, exitHooked=false;
+  let proc=null, heldChild=null, base=null, auth=null, servedOrigin=null, starting=null, stream=null, retired=false, removeExitHook=null;
   const listeners=new Set(),goneListeners=new Set();
   const accountId=account?.id ?? 'login';
   const publish=event=>{for(const fn of listeners)try{fn(event);}catch(err){console.error('  opencode: event listener failed:',err?.message);}};
   const protocol=createV2Protocol({call:rawRequest,publish,setSystem:(id,text)=>opencodeRelay.setSystem(id,text,accountId)});
 
   function lost(reason) {
+    unwatchExit();
     proc=null;heldChild=null;base=null;auth=null;servedOrigin=null;stream?.abort();stream=null;
     for(const fn of goneListeners)try{fn(new Error(`opencode serve exited: ${String(reason).slice(0,200)}`));}catch{}
   }
@@ -97,7 +98,7 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
         });
         child.stdout.on('data',()=>{});
         child.once('exit',code=>{if(proc===child)lost(code);});
-        if(!exitHooked){exitHooked=true;process.once('exit',stopSync);}
+        removeExitHook??=onExit(stopSync);
         servedOrigin=await origin();
       }
       await verify();await openStream();
@@ -153,11 +154,14 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
       })();
     });
   }
+  function unwatchExit() {removeExitHook?.();removeExitHook=null;}
   function stopSync() {
+    unwatchExit();
     const child=proc;proc=null;if(!child?.pid)return;
     try{if(process.platform==='win32')runSync('taskkill',['/pid',String(child.pid),'/t','/f'],{windowsHide:true,stdio:'ignore'});else child.kill('SIGKILL');}catch{}
   }
   async function stopNow() {
+    unwatchExit();
     const child=proc,h=heldChild;stream?.abort();stream=null;proc=null;heldChild=null;base=null;auth=null;servedOrigin=null;
     if(h)await h.stop();else if(child?.pid) {
       const exited=child.exitCode!==null||child.signalCode!==null?Promise.resolve():new Promise(resolve=>child.once('exit',resolve));

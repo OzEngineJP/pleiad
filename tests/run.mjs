@@ -169,6 +169,8 @@ const SUITES = [
   './unit/computer-driver.mjs',
   // main への口（core/main-port.mjs）: parentPort の素通し・main が居ない起動・つながっていない口・差し込める形
   './unit/main-port.mjs',
+  './unit/process-exit.mjs',
+  './unit/opencode-server-exit.mjs',
   // main とサーバーを結ぶ名前付きパイプの口（段階 1 の 1-2）: 符号化・行の分け方・握手の拒否・往復と順序・大きなバイナリー・切断と再接続・別プロセスのサーバー
   './unit/main-link.mjs',
   // ターンの保持役の本体（段階 2 の 2a）: 切断と付け直し・控えの渡し直し・読まない親でも詰まらない・detach 後は転送しない・記録の上限・印と ack・終わり方・木ごとの強制終了・idle

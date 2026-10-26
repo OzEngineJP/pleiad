@@ -189,6 +189,7 @@ import {
 } from "./backends/index.mjs";
 import { takeBootEnv } from './boot-env.mjs';
 import { isReviewMode, prepareReviewHost, reviewWorkDir, commandAllowed } from './review-mode.mjs';
+import { onExit } from './process.mjs';
 
 // main が起動の時にだけ渡す変数（AGENT_HOST_HANDOVER・PORT・RUNTIME_KEY・SERVER_LOG など。core/boot-env.mjs）を写して process.env から外す。
 // 子（エージェントの CLI・`!` の行・MCP）は process.env を継ぐので、どれを起こすより前に外す。以後の読み出しはこの写しから。
@@ -526,7 +527,7 @@ const claudeLogin = createClaudeLogin({
   // デスクトップ版は main に頼んで既定のブラウザーで開く（main が居ない間は OS に直に頼む。npm start では画面のリンクから開く）
   openExternal,
 });
-process.on('exit', () => claudeLogin.cancelAll());
+onExit(() => claudeLogin.cancelAll());
 // Claude 以外のエージェントのアカウント（capabilities.accounts が 'agent'。ADR 0222、core/agent-accounts.mjs）。資格情報はエージェントが決めた形で暗号化してしまう
 const agentAccountSecrets = createSecretStore({ file: path.join(store.dataDir, 'agent-account-secrets.json'), cipher: secretCipher });
 agentAccountSecrets.migrate().catch(() => {});
@@ -534,7 +535,7 @@ const agentAccounts = createAgentAccounts({ dataDir: store.dataDir, secrets: age
 const accountManager = createAgentAccountManager({ accounts: agentAccounts, getBackend, emit: emitGlobal,
   invalidate: () => { quotaStore.invalidate(); routingUsage?.refresh().catch(() => {}); }, openExternal,
   removed: id => dropAccountCandidates(id) });
-process.on('exit', () => accountManager.cancelAll());
+onExit(() => accountManager.cancelAll());
 /** アカウントの持ち方（capabilities.accounts）。false・'token'（Claude の台帳。core/claude-accounts.mjs）・'agent'（core/agent-accounts.mjs） */
 const accountKind = backend => backend?.capabilities?.accounts || false;
 /**
@@ -2115,7 +2116,7 @@ const shellBridge = createShellBridge({
     if (job.kind === 'start' && !['agent', 'session', 'turn'].includes(job.stoppedBy)) void deliverJobEnd(sessionId, job, tail);
   },
 });
-process.on('exit', () => shellBridge.stopAll({ keepHeld: true }));
+onExit(() => shellBridge.stopAll({ keepHeld: true }));
 /** ply_shell の口を開く。token があれば、その値で開き直す（restoreConnection） */
 function openShellPort(entry, token) {
   return shellBridge.open({ origin: localOrigin(), locale: entry.locale, token,
@@ -3090,11 +3091,11 @@ const GIT_BEGIN_WAIT_MS = 6_000;
 // AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
 const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
 const GIT_END_WAIT_MS = 6_000;
-process.on('exit', () => shellRuns.stopAll({ keepHeld: true }));
-process.on('exit', () => botHost?.stop());
-process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
-process.on('exit', () => mainLink?.dispose());
-process.on('exit', () => { void contextBridge.dispose({ keepHeld: true }); });
+onExit(() => shellRuns.stopAll({ keepHeld: true }));
+onExit(() => botHost?.stop());
+onExit(() => removeControlFile({ dataDir: store.dataDir }));
+onExit(() => mainLink?.dispose());
+onExit(() => { void contextBridge.dispose({ keepHeld: true }); });
 // 端末の Ctrl-C・kill でも 'exit' を通し、control.json を消す
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
 const completionNotices = createCompletionNotices({
@@ -8141,14 +8142,7 @@ async function restoreTurn(card, source) {
 async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   ctx ??= await restoreTurn(card, source);
   const { turn, sessionId, backend, agentLocale } = ctx;
-  // 記録の再生が終わった（最初の生の出来事・ターンの終わり・失敗）ら、出し直されなかったカードを取り下げる。
-  // 再生の間の askPermission は、同じ id でカードを出し直し、DB の行を「拾った」に変える（core/waiting-cards.mjs）
-  const rawEmit = ctx.emit;
-  const emit = (event, opts) => {
-    if (!opts?.replay) finalizeAdoptedCards(sessionId);
-    return rawEmit(event, opts);
-  };
-  ctx.emit = emit;
+  const emit = ctx.emit;
   const releaseUpdateGate = updateGate.enter();
   // ply_context の口は下で開き直す。それまでに CLI から届いた呼び出しは断らずに待たせる（待ち受けた直後から呼べる。外部の MCP の起こし直しは数秒かかりうる）
   const contextToken = ctx.card.connectionTokens?.context;
@@ -8229,7 +8223,8 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   } finally {
     releaseUpdateGate();
     releaseContext();
-    // 生の出来事もターンの終わりも来なかった（付け直しをあきらめた・止めたまま終わった）ときの分
+    // session・activity は承認の再提示より先に届く。askPermission の登録も非同期なので、
+    // 初期の出来事では取り下げず、ターンの終わりで出し直されなかった行を確定する。
     finalizeAdoptedCards(sessionId);
     // 札の承認のうち、出し直されず決着の行も付かなかったもの（答えが旧サーバーの手を離す前後で記録に入った・付け直しをあきらめた）の通知の一覧の行を畳む。
     // 決着済みの行には何もしない（出し直して答えた承認は、その答えで決着している）
@@ -8315,7 +8310,7 @@ async function withdrawRestoredCards(adopting) {
   await withdrawCards(rows.filter(row => !held.has(row.id)));
 }
 
-/** 付け直したターンの記録の再生が終わった（出し直されなかったカードを取り下げる。1 会話 1 回） */
+/** 付け直したターンが終わった（出し直されなかったカードを取り下げる。1 会話 1 回） */
 function finalizeAdoptedCards(sessionId) {
   if (!sessionId || cardsFinalized.has(sessionId)) return;
   cardsFinalized.add(sessionId);

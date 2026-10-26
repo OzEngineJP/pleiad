@@ -18,6 +18,19 @@ import path from 'node:path';
 import { bootEnv } from './boot-env.mjs';
 import { holderKey } from './holder/protocol.mjs';
 
+// 同期の終了処理を、process には 1 本だけ登録して配る。短命の子を片付けたら戻り値で解除する。
+const exitCleanups = new Set();
+const dispatchExit = code => { for (const cleanup of [...exitCleanups]) cleanup(code); };
+export function onExit(cleanup) {
+  const entry = code => cleanup(code);
+  if (!exitCleanups.size) process.once('exit', dispatchExit);
+  exitCleanups.add(entry);
+  return () => {
+    exitCleanups.delete(entry);
+    if (!exitCleanups.size) process.off('exit', dispatchExit);
+  };
+}
+
 /** 保持役の置き場が無いときの、データ置き場ごとの一時の置き場（同じデータ置き場なら同じ場所） */
 export function defaultHolderRoot(dataDir, { tmpdir = os.tmpdir() } = {}) {
   return path.join(tmpdir, 'pleiad-holder', holderKey(dataDir));

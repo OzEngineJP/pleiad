@@ -128,7 +128,15 @@ export function createV2Protocol({ call, publish, setSystem = () => {} }) {
   async function pending(kind) {
     await discoverChildren();
     const lists=await Promise.all([...sessions].map(async sid=>{
-      const rows=await value('GET',`/api/session/${sid}/${kind}`);
+      let rows;
+      try {rows=await value('GET',`/api/session/${sid}/${kind}`);}
+      catch(error) {
+        // 履歴の索引から知った会話は、削除済み・別の OpenCode のものかもしれない。
+        // 実行中の会話の失敗と、404 以外の取得失敗は呼び出し側へ返す。
+        if(error.status!==404 || turns.has(sid))throw error;
+        sessions.delete(sid);
+        return [];
+      }
       if(!Array.isArray(rows)) throw new Error('OpenCode v2: invalid pending response');
       return rows.map(kind==='permission'?permission:question);
     }));

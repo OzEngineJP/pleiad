@@ -13,6 +13,14 @@
 // AGENT_HOST_HANDOVER=on のとき）は、connected と、'connect'・'disconnect' を足した同じ形の物で、setMainPortSource で差し込む。
 
 const EVENTS = new Set(['message', 'connect', 'disconnect']);
+// 同じ実体を包む口が複数あっても、実体の購読は出来事ごとに 1 本。最後の受け手が外れたら実体からも外す。
+const subscriptions = new WeakMap();
+
+function listenersFor(port) {
+  let events = subscriptions.get(port);
+  if (!events) { events = new Map(); subscriptions.set(port, events); }
+  return events;
+}
 
 /** @param port parentPort と同じ形の物（on・postMessage。あれば off・connected）。無ければ main が居ない起動 */
 export function createMainPort({ parentPort = null } = {}) {
@@ -27,10 +35,32 @@ export function createMainPort({ parentPort = null } = {}) {
       return port.postMessage(message) !== false;
     },
     on(type, listener) {
-      if (port && EVENTS.has(type)) port.on(type, listener);
+      if (!port || !EVENTS.has(type)) return;
+      const events = listenersFor(port);
+      let entry = events.get(type);
+      if (!entry) {
+        entry = { listeners: [], dispatch: (...args) => {
+          for (const fn of [...entry.listeners]) fn.apply(port, args);
+        } };
+        events.set(type, entry);
+        port.on(type, entry.dispatch);
+      }
+      entry.listeners.push(listener);
     },
     off(type, listener) {
-      if (port && EVENTS.has(type)) (port.off ?? port.removeListener)?.call(port, type, listener);
+      if (!port || !EVENTS.has(type)) return;
+      const events = subscriptions.get(port);
+      const entry = events?.get(type);
+      if (!entry) return;
+      const index = entry.listeners.lastIndexOf(listener);
+      if (index < 0) return;
+      entry.listeners.splice(index, 1);
+      if (entry.listeners.length) return;
+      const remove = port.off ?? port.removeListener;
+      if (!remove) return;
+      remove.call(port, type, entry.dispatch);
+      events.delete(type);
+      if (!events.size) subscriptions.delete(port);
     },
   };
 }

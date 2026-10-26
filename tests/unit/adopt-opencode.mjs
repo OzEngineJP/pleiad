@@ -87,6 +87,7 @@ export default async function (t) {
     assert.deepEqual(ends.map(e => e.outcome), ['ok'], `${label}: turnEnd は 1 回で ok`);
     const meta = sessionMeta(id);
     assert.equal(meta.interrupted ?? null, null, `${label}: restart・update の中断にならない`);
+    assert.equal(meta.stops ?? null, null, `${label}: 引き継いだ承認を取り下げた記録が残らない`);
     assert.equal(meta.turnStartedAt ?? null, null, `${label}: 走っている印は片付く`);
     // 前の値と比べて大きいかではなく、書き換わったかを見る（WSL2 などは時刻合わせで時計が戻ることがある）
     assert.ok(Number.isFinite(meta.completedAt) && meta.completedAt !== doneBefore, `${label}: 完了時刻を書く`);
@@ -118,8 +119,9 @@ export default async function (t) {
       const main = await attachMain(dataDir, s);
       const c = await open({ port: s.port, token: s.token, autoAllow: true });
       try {
+        assert.doesNotMatch(s.tail(200), /MaxListenersExceededWarning/, 'main につないだサーバーの起動時の購読は上限を超えない');
         const res = await c.runTurn({ backend: 'opencode', cwd: work, prompt: 'shutdown check', mode: 'full', model: 'fake/echo' }, { ms: WAIT_MS });
-        assert.equal(res.outcome, 'ok', s.tail(10));
+        assert.equal(res.outcome, 'ok', JSON.stringify(res.events.filter(e => e.type === 'turnResult').map(e => e.error)) + '\n' + s.tail(10));
         const pid = (await starts()).at(-1);
         assert.ok(alive(pid), '終わる前: OpenCode は走っている');
         c.close();
@@ -280,6 +282,8 @@ export default async function (t) {
     }
   } catch (error) {
     const brief = client => (client?.events ?? []).slice(-25).map(e => `${e.type}${e.sessionId ? `:${String(e.sessionId).slice(-6)}` : ''}`).join(' ');
+    const failures = (c4 ?? c3 ?? c2 ?? c1)?.events.filter(e => e.type === 'turnResult' && e.outcome === 'error').map(e => ({ sessionId: e.sessionId, error: e.error }));
+    error.message += `\n  turn failures: ${JSON.stringify(failures ?? [])}`;
     error.message += `\n  events: ${brief(c4 ?? c3 ?? c2 ?? c1)}\n  tail: ${(s4 ?? s3 ?? s2 ?? s1)?.tail(20)}`;
     throw error;
   } finally {

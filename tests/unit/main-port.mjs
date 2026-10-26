@@ -34,6 +34,46 @@ export default async function (t) {
   port.on('other', () => {});
   t.ok('知らない種類の登録は parentPort へ渡さない', parent.eventNames().length === 0);
 
+  // ---- 複数の機能・同じ実体の別の包みでも、実体には出来事ごとに 1 本だけ登録する
+  const many = fakeParentPort();
+  const wrappers = Array.from({ length: 20 }, () => createMainPort({ parentPort: many }));
+  for (const type of ['message', 'connect', 'disconnect']) {
+    const received = [];
+    const handlers = wrappers.map((wrapper, i) => {
+      const fn = function (event) { received.push([i, event, this === many]); };
+      wrapper.on(type, fn);
+      return fn;
+    });
+    t.ok(`${type}: 20 個の購読でも実体の待ち受けは 1 本`, many.listenerCount(type) === 1);
+    const event = { data: 'hello' };
+    many.emit(type, event);
+    t.ok(`${type}: 全員が登録順に同じ出来事を受ける`, received.length === 20 && received.every(([i, value, bound], n) => i === n && value === event && bound));
+    wrappers.forEach((wrapper, i) => wrapper.off(type, handlers[i]));
+    t.ok(`${type}: 全員が外れたら実体の待ち受けも外れる`, many.listenerCount(type) === 0);
+  }
+
+  const duplicate = () => got.push('duplicate');
+  port.on('message', duplicate);
+  port.on('message', duplicate);
+  port.off('message', duplicate);
+  parent.emitMessage('one');
+  t.ok('同じ関数を 2 回登録したら off は 1 回分だけ外す', got.filter(x => x === 'duplicate').length === 1);
+  port.off('message', duplicate);
+  t.ok('最後の同じ関数を外すと実体の購読も外れる', parent.listenerCount('message') === 0);
+
+  const changing = [];
+  const later = () => changing.push('later');
+  const added = () => changing.push('added');
+  const first = () => { changing.push('first'); port.off('message', later); port.on('message', added); };
+  port.on('message', first);
+  port.on('message', later);
+  parent.emitMessage('change');
+  t.ok('配信中の追加・解除は次の出来事から反映する', changing.join() === 'first,later');
+  port.off('message', first);
+  parent.emitMessage('next');
+  t.ok('解除した受け手に次の出来事は届かない', changing.join() === 'first,later,added');
+  port.off('message', added);
+
   // ---- main が居ない起動（npm start）
   const none = createMainPort({});
   t.ok('main が居ない起動: hosted でも connected でもない', none.hosted === false && none.connected === false);

@@ -80,6 +80,34 @@ export default async function(t) {
   pendingFailure=true;await assert.rejects(protocol.request('GET','/permission'),/lookup failure/);pendingFailure=false;
   t.ok('Reconnect discovers children recursively, restores requests, maps choice values and propagates failed lookups',true);
 
+  // 履歴の索引から読んだ古い会話が、今の OpenCode には無い。別のターンの承認・質問を巻き込まない。
+  for(const kind of ['permission','form']) {
+    const lookups=[];
+    let unavailable=false;
+    const stale=createV2Protocol({publish:()=>{},call:async(method,url)=>{
+      lookups.push(url);
+      if(url==='/api/session')return {data:[],cursor:{}};
+      if(url.startsWith('/api/session/gone/'))throw Object.assign(new Error('Conversation not found'),{status:404});
+      if(unavailable&&url.startsWith('/api/session/unavailable/'))throw Object.assign(new Error('Temporarily unavailable'),{status:503});
+      if(url.endsWith('/permission'))return {data:[{id:'live-permission',sessionID:'live',action:'shell',resources:[],save:[]}]};
+      if(url.endsWith('/form'))return {data:[{id:'live-form',sessionID:'live',fields:[]}]};
+      return {data:[],cursor:{}};
+    }});
+    await assert.rejects(stale.request('GET','/session/gone/message'),{status:404});
+    stale.begin('live',1,true);
+    const route=kind==='permission'?'/permission':'/question';
+    assert.equal((await stale.request('GET',route))[0].sessionID,'live');
+    await stale.request('GET',route);
+    assert.equal(lookups.filter(url=>url===`/api/session/gone/${kind}`).length,1);
+    stale.begin('unavailable');
+    unavailable=true;
+    await assert.rejects(stale.request('GET',route),{status:503});
+    unavailable=false;
+    stale.begin('gone',1,true);
+    await assert.rejects(stale.request('GET',route),{status:404});
+    t.ok(`${kind}: 非実行中の 404 だけ除外し、実行中の 404 と一時障害は伝える`,true);
+  }
+
   events.length=0;active={};inbox.set(sid,[{id:'msg_waiting'}]);
   await protocol.resync();assert(!events.some(e=>e.type==='session.idle'));
   inbox.set(sid,[]);await protocol.resync();assert(events.some(e=>e.type==='session.idle'));
