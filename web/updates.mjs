@@ -2,7 +2,7 @@ import { renderMarkdown } from './render.mjs';
 import { fmt, t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
 import { el } from './dom.mjs';
-import { warnMark, workRows, workCounts, handoverWaits, interruptProgress } from './interrupt.mjs';
+import { warnMark, workRows, workCounts, handoverWaits, handoverWaitAgents, interruptProgress } from './interrupt.mjs';
 
 // i18n-dynamic: updates.phase.
 const PHASES = ['idle', 'checking', 'current', 'available', 'downloading', 'downloaded', 'installing', 'error', 'unavailable'];
@@ -126,7 +126,11 @@ export function setupUpdates({ page, open, lock, flush, cmd, work: currentWork =
     $('updateHandoverWork').hidden = !running;
     if (running) $('updateHandoverWork').textContent = t('updates.handoverWork', { count: running });
     $('updateHandoverWait').hidden = !waits;
-    if (waits) $('updateHandoverWait').textContent = t('updates.handoverWait', { count: waits });
+    if (waits) {
+      const names = handoverWaitAgents(confirmWork).map(agentName);
+      $('updateHandoverWait').textContent = t('updates.handoverWait', { count: waits,
+        agents: names.length ? t('updates.agentParen', { agents: names.join(t('updates.promptJoin')) }) : '' });
+    }
     $('updateHandoverBrowser').hidden = !(confirming && state?.handover && handoverNotes().browser);
     $('updateWork').hidden = !rows.length;
     $('updateWorkAfter').hidden = !stops;

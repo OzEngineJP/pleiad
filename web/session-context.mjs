@@ -26,7 +26,7 @@ import { findingCount, reviewDraft, reviewUrged } from './context-review.mjs';
 import { toggleExclude } from './context.mjs';
 import { toggleMcp, unifyConfirm } from './mcp-config.mjs';
 import { openHookSheet, openCopySheet, copyBlocked, agentLabel, rowName, eventLabel, order, codexState, scopeLabel } from './hooks-card.mjs';
-import { unifySessionBox, unifyConfirmPanel, resetPlan } from './hooks-unify-ui.mjs';
+import { unifySessionBox, unifyConfirmPanel, resetPlan, unsupportedAgentText } from './hooks-unify-ui.mjs';
 
 const KEY = 'session-context';
 const KINDS = ['instruction', 'skill', 'mcp'];
@@ -840,19 +840,25 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       })
       .catch(e => { if (hooks.key === key) { hooks.data = { failed: e.message }; refresh(); } });
   }
+  /** Hooks を渡せるエージェントの名前（能力の印 hooks の宣言から。固定の一覧は持たない。渡せない会話の説明に出す） */
+  function hookAgentNames() {
+    const part = backendCache.get('backends');
+    const list = Array.isArray(part?.value) ? part.value : [];
+    return list.filter(b => b.capabilities?.hooks).map(b => labelOf(b.id)).join('・');
+  }
   function hookBoxes(data) {
     loadHooks(data);
     const h = hooks.data;
     // Hooks を Pleiad がそろえた会話: そのターンの記録（渡した・止めた・渡せなかった・漏れ）と発火の記録
     if (h?.unify?.owner === 'ply') {
-      const box = unifySessionBox(h.unify, { kindBox, short: shortPath });
+      const box = unifySessionBox(h.unify, { kindBox, short: shortPath, agents: hookAgentNames() });
       if (h.owner !== 'ply') box.append(el('p', 'cx-strong', t('hooks.unify.session.nextNative')));
       return [box, hookRuns(h)];
     }
     const k = kindBox('Hooks', t('sessionContext.native'), false);
     if (!h) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.reading'))); return [k]; }
     if (h.failed) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.failed', { error: h.failed }))); return [k]; }
-    if (h.unify?.unsupportedAgent || (h.owner === 'ply' && !h.agent)) { k.append(el('p', 'cx-sub', t('hooks.unify.session.unsupportedAgent'))); return [k]; }
+    if (h.unify?.unsupportedAgent || (h.owner === 'ply' && !h.agent)) { k.append(el('p', 'cx-sub', unsupportedAgentText(hookAgentNames()))); return [k]; }
     if (!h.agent || !h.report) { k.append(el('p', 'cx-sub', t('sessionContext.hooks.unknownAgent', { agent: backendLabel() }))); return [k]; }
     if (h.owner === 'ply') k.append(el('p', 'cx-strong', t('hooks.unify.session.nextPly')));
     k.append(el('p', 'cx-sub', h.observable ? t('sessionContext.hooks.lead') : t('sessionContext.hooks.leadUnobserved')));

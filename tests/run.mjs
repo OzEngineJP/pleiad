@@ -287,6 +287,8 @@ const SUITES = [
   './unit/server-setting-approval.mjs',
   // 委譲の子が出した承認の結果の届け先: 子のタスクが終わっていれば依頼元の会話へ、動いていれば子へ、再起動の取り下げも同じ（ADR 0088）
   './unit/server-setting-approval-delegated.mjs',
+  // 途中切り替えに対応しないエージェントの承認モード: 走っている間の変更は次のターンへの予約（nextSettings）になる（#147）
+  './unit/server-mode-next-turn.mjs',
   './unit/server-ops.mjs',
   './unit/sessions-search-op.mjs',
   './unit/agent-tasks.mjs',
@@ -404,6 +406,8 @@ const SUITES = [
   './unit/compat-models.mjs',
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   './unit/composer-settings.mjs',
+  // 設定 › 入力（web/input-settings.mjs）: 次の発言の候補の行は、能力の印があるエージェントがいるときだけ（#147）
+  './unit/input-settings.mjs',
   './unit/context-transports.mjs',
   './unit/context-warm.mjs',
   './unit/context-lazy.mjs',

@@ -64,7 +64,8 @@
       },
       "suggestions": {
         "title": "次のメッセージの候補を表示する",
-        "description": "返答の後、空の入力欄に候補を表示します。Tab で入力できます。Codex と Antigravity の会話では、候補を作るのに使用量を少し使います。"
+        "description": "返答の後、空の入力欄に候補を表示します。Tab で入力できます（{{agents}}）。{{covered}}",
+        "coveredNote": "{{agents}} は候補を作るのに使用量を少し使います"
       },
       "saveFailed": "保存できませんでした: {{error}}"
     },
@@ -3427,8 +3428,9 @@
     "promptRunning_other": "実行中 {{count}} 件",
     "promptWaiting_other": "承認待ち {{count}} 件",
     "promptJoin": "・",
+    "agentParen": "（{{agents}}）",
     "handoverWork_other": "実行中の作業 {{count}} 件は止まりません。",
-    "handoverWait_other": "うち {{count}} 件は新しい版へ引き継げないため、その作業が終わってから切り替わります。",
+    "handoverWait_other": "うち {{count}} 件は新しい版へ引き継げないため、その作業{{agents}}が終わってから切り替わります。",
     "handoverBrowser": "内蔵ブラウザーのタブは開き直されます。"
   },
   "switch": {
@@ -4837,7 +4839,8 @@
         "skipped": "オフ・この場所では渡さない登録: {{names}}",
         "leakTitle": "止めたはずのネイティブの hooks が {{n}} 件走りました",
         "untrusted": "Codex の信頼の hash を取れなかった登録が {{n}} 件あります。Codex はその登録を実行しません。",
-        "unsupportedAgent": "このエージェントには Hooks を渡せません（Claude Code・Codex・Antigravity だけ）。",
+        "unsupportedAgent": "このエージェントには Hooks を渡せません{{agents}}。",
+        "supportedParen": "（今は {{agents}} に対応しています）",
         "nextNative": "この場所の担当はエージェントに戻っています。次のターンからネイティブの hooks が動きます。",
         "nextPly": "この場所の担当は Pleiad です。次のターンから Pleiad がそろえます。",
         "observedPleiad": "Antigravity は Pleiad が渡した hooks の発火だけを記録できます。ネイティブの hooks の発火は観測できません。",

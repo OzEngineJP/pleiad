@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import {
   REASONS, reasonOf, isInterrupted, interruptUnread, interruptReadPoint, showsReasonInMeta, interruptLabel, interruptLineText,
-  warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, handoverWaits, interruptProgress,
+  warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, handoverWaits, handoverWaitAgents, interruptProgress,
   limitResumeState, limitLineNote, limitTime, resumeShortLabel, versionReload,
 } from '../../web/interrupt.mjs';
 
@@ -106,6 +106,12 @@ export default function (t) {
   }) === 3);
   t.ok('全部が保持役に載っていれば待たない（blocking 0）', handoverWaits({ turns: [{ sessionId: 's1', held: true }], permissions: [{ sessionId: 's1', held: true }], handover: { blocking: 0 } }) === 0);
   t.ok('ターンの無い作業（委譲のタスクなど）だけが待つときは handover.blocking', handoverWaits({ turns: [{ sessionId: 's1', held: true }], handover: { blocking: 2 } }) === 2 && handoverWaits(null) === 0 && handoverWaits({}) === 0);
+  // 待つ作業のエージェント（確認の段の「その作業（◯◯）が終わってから」）。サーバーの handover.agents が正本、無ければターンから拾う
+  t.ok('待つ作業のエージェントは handover.agents（重複しない・空は外れる）',
+    JSON.stringify(handoverWaitAgents({ handover: { agents: ['devin', 'grok', 'devin', null] } })) === '["devin","grok"]');
+  t.ok('handover.agents が無い版では、待つ会話のターンの backend から拾う（held・中継は外れる）',
+    JSON.stringify(handoverWaitAgents({ turns: [{ sessionId: 's1', backend: 'devin' }, { sessionId: 's2', backend: 'grok', held: true }], permissions: [{ sessionId: 's1' }] })) === '["devin"]');
+  t.ok('どちらも無ければ空', handoverWaitAgents(null).length === 0 && handoverWaitAgents({ turns: [{ sessionId: 's1' }] }).length === 0);
 
   // ---- 中断の進み（N / M）
   t.ok('止まった数を数える', JSON.stringify(interruptProgress(3, 1)) === '{"done":2,"total":3,"finished":false}');

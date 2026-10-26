@@ -160,6 +160,17 @@ export function handoverWaits(work) {
   return waiting.size || Number(work?.handover?.blocking) || 0;
 }
 
+/** 終わるのを待つ作業のエージェントの id（サーバーの handover.agents。無ければ待つ会話のターンから拾う） */
+export function handoverWaitAgents(work) {
+  const agents = new Set((work?.handover?.agents ?? []).filter(Boolean));
+  if (!agents.size) {
+    for (const x of work?.turns ?? []) {
+      if (x?.sessionId && x.backend && !x.held && (x.blocking ?? !x.detached)) agents.add(x.backend);
+    }
+  }
+  return [...agents];
+}
+
 /** 脇の更新の知らせに足す件数（実行中 N 件・承認待ち M 件） */
 export function workCounts(work) {
   const rows = workRows(work);

@@ -3875,7 +3875,7 @@ async function forkConversation({ sessionId, upToMessageId, beforeMessageId, tit
   try {
     await settingsWrites.get(sessionId);
     const backend = refuseRetired(await pickBackend(sessionId, given));
-    if (!backend.fork) throw new Error(t('session.cannotFork'));
+    if (!backend.fork) throw Object.assign(new Error(t('session.cannotFork')), { code: 'UNSUPPORTED' });
     const snapshot = running ? {
       messageIds: running.stream.messages.map(m => m.uuid),
       presents: structuredClone(running.stream.presents),
@@ -3927,7 +3927,7 @@ async function rewindConversation({ sessionId, beforeMessageId, stopRunning = fa
     compactionScheduler.cancel(sessionId);
     await settingsWrites.get(sessionId);
     const backend = refuseRetired(await pickBackend(sessionId));
-    if (!backend.rewind) throw new Error(t('session.cannotRewind'));
+    if (!backend.rewind) throw Object.assign(new Error(t('session.cannotRewind')), { code: 'UNSUPPORTED' });
     // 委譲された会話（子）は、同じ会話では送り直せない。走らせた委譲タスクの結果・状態が、巻き戻した履歴と食い違う（画面は分岐して送るだけを出す）
     if ((await store.get(sessionId)).delegation) throw new Error(t('rewind.delegated'));
     // 検証は、走っているターンを止める・委譲の子を取り消すより前に済ませる（止めてから断られると戻せない）。時刻は委譲の子を取り消す境目に使う
@@ -4386,13 +4386,20 @@ async function deleteSessionOf(sessionId) {
   }
 }
 
+/** 圧縮を走らせるエージェント（切り替えの予約があれば次のターンのエージェント。compact は runTurn 経由で予約が効く） */
+async function compactionBackend(sessionId) {
+  const reserved = sessionId ? (await store.get(sessionId).catch(() => null))?.nextSettings?.backend : null;
+  if (reserved && getBackend(reserved)) return getBackend(reserved);
+  return sessionId ? resolveBackendForSession(sessionId) : null;
+}
+
 /** 会話の圧縮を頼む（sessions.compact。WS の compactConversation の中身） */
 async function requestCompaction(args) {
   const sessionId = args?.sessionId;
   compactionScheduler.cancel(sessionId);
-  const backend = sessionId ? await resolveBackendForSession(sessionId) : null;
+  const backend = await compactionBackend(sessionId);
   if (!backend) throw new Error(t('session.notFound'));
-  if (!backend.capabilities?.compact) throw new Error(t('compaction.unsupported'));
+  if (!backend.capabilities?.compact) throw Object.assign(new Error(t('compaction.unsupported')), { code: 'UNSUPPORTED' });
   const queued = sessionBusy(sessionId);
   void compactConversation(sessionId).catch(err => compactionStartFailed(sessionId, 'manual', err));
   return { status: queued ? 'queued' : 'started' };
@@ -4413,7 +4420,11 @@ async function setConversationAutoCompactionOf(args) {
   if (typeof off !== 'boolean') throw new Error(t('compaction.invalidSetting'));
   if (!sessionId) throw new Error(t('session.notFound'));
   if (off) compactionScheduler.cancel(sessionId);
-  if (!(await resolveBackendForSession(sessionId))) throw new Error(t('session.notFound'));
+  const backend = await resolveBackendForSession(sessionId);
+  if (!backend) throw new Error(t('session.notFound'));
+  // 有効にする向きだけ能力を見る（止めるのはいつでも効く）。圧縮できないエージェントで入れても何も起きない
+  if (!off && !(await compactionBackend(sessionId))?.capabilities?.compact)
+    throw Object.assign(new Error(t('compaction.autoUnsupported')), { code: 'UNSUPPORTED' });
   await store.setSessionData(sessionId, 'autoCompactionOff', off);
   emitGlobal({ type: 'conversationAutoCompaction', sessionId, off });
   return { off };
@@ -4425,7 +4436,7 @@ async function suggestTitleOf(args) {
   if (!sessionId) throw new Error(t('session.required'));
   const backend = await resolveBackendForSession(sessionId);
   if (!backend) throw new Error(t('agents.notFound'));
-  if (!backend.suggestTitle) throw new Error(t('title.unsupported'));
+  if (!backend.suggestTitle) throw Object.assign(new Error(t('title.unsupported')), { code: 'UNSUPPORTED' });
   const { messages } = await history.loadTranscript(sessionId, backend);
   // タイトルは会話の言語で作る（渡す見出しもその言語）
   const lng = await ensureAgentLocale(sessionId);
@@ -4644,16 +4655,23 @@ async function changeModel(sessionId, model, { actor, reason, backend: given } =
   const endpointId = endpointCapable(backend) ? (await store.get(sessionId)).compatEndpoint ?? '' : '';
   if (!(await validModel(backend, model, undefined, endpointId))) throw new OpError('INVALID', t('settings.unknownModel', { value: model }));
   const from = (await store.get(sessionId)).model ?? "";
-  await store.setModel(sessionId, model);
-  // bot の会話（スレッドだけの設定）で選んだものは、Chats の新しい会話の既定にしない
-  if (!endpointId && who.by === 'human' && !(await store.get(sessionId)).bot) await savePref("model", model, backend.id);
-  await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend });
-  let live = false;
   const liveTurn = runtime.turns.get(sessionId);
+  // 走っている最中でも切り替える（できるエージェントだけ。能力の印 liveModel）
+  let live = false;
   if (model && liveTurn?.control.handle && backend.setModelLive) {
     live = await backend.setModelLive(liveTurn.control.handle, model)
       .catch((err) => { console.error("  モデルの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
   }
+  // ターンが走っていて即時には切り替えられない（非対応・失敗）ときは、今のターンは前のモデルのまま走る。
+  // チップだけ替えて黙らせないよう、承認モード（setMode）と同じく次のターンへの予約にする
+  if (liveTurn && !live) {
+    await reserveTurnSettings({ sessionId, model, ...(who.by === 'human' && !(await store.get(sessionId)).bot ? { rememberModel: true } : {}) });
+  } else {
+    await store.setModel(sessionId, model);
+    // bot の会話（スレッドだけの設定）で選んだものは、Chats の新しい会話の既定にしない
+    if (!endpointId && who.by === 'human' && !(await store.get(sessionId)).bot) await savePref("model", model, backend.id);
+  }
+  await store.recordChange(sessionId, { ...who, field: "model", from, to: model, ...reason, backend });
   emitGlobal({ type: "model", sessionId, model, by: who.by, live });
   return { live };
 }
@@ -5190,7 +5208,7 @@ const opsSessionWork = {
   stopBackground: async (sessionId, taskId) => {
     const found = findBackgroundTask(sessionId, taskId);
     if (!found) throw new Error(t('background.notRunning'));
-    if (!found.backend?.stopBackground) throw new Error(t('background.cannotStop', { backend: found.backendId }));
+    if (!found.backend?.stopBackground) throw Object.assign(new Error(t('background.cannotStop', { backend: found.backendId })), { code: 'UNSUPPORTED' });
     const res = await found.backend.stopBackground(sessionId, taskId);
     return { stopped: res?.stopped !== false };
   },
@@ -5706,6 +5724,16 @@ async function runningWork() {
   // 渡せる作業の数（count のうち、保持役に載ったターンとその承認待ち・サブエージェント）。blocking は引き継ぎを待たせる作業（無ければ作業の最中でも切り替わる）
   const heldCount = turns.filter(x => x.held).length + permissions.filter(p => p.held && !p.relay && p.blocking).length
     + subagents.filter(a => a.held && (a.status === "running" || a.status == null)).length;
+  // 待たせる作業（blocking の内訳）のエージェント。確認の段の「その作業（◯◯）が終わってから」に出す
+  const turnSessions = new Set(turns.map(x => x.sessionId));
+  const handoverAgents = new Set(turns.filter(x => !x.held).map(x => x.backend));
+  for (const p of permissions) {
+    if (!p.relay && p.blocking && !p.held && p.sessionId && !turnSessions.has(p.sessionId))
+      handoverAgents.add((await store.get(p.sessionId).catch(() => null))?.backend);
+  }
+  for (const a of subagents) if (!a.held && (a.status === "running" || a.status == null)) handoverAgents.add(a.backend);
+  for (const r of tasks) if (!r.host && ["queued", "running", "cancelling"].includes(r.status) && !runtime.turns.has(r.sessionId)) handoverAgents.add(r.backend);
+  handoverAgents.delete(undefined); handoverAgents.delete(null);
   return {
     turns,
     permissions,
@@ -5726,7 +5754,7 @@ async function runningWork() {
     // 設定の変更の承認（detached）は期限なしで残るので数えない（数えると、答えるまで終了も更新もできない）
     count,
     // 引き継ぎ（core/handover.mjs）に対応しているサーバーだけが載せる。main の切り替えは blocking が 0 なら待たずに引き継ぐ
-    handover: { v: HANDOVER_VERSION, holder: HOLDER_PROTOCOL, held: heldCount, blocking: count - heldCount },
+    handover: { v: HANDOVER_VERSION, holder: HOLDER_PROTOCOL, held: heldCount, blocking: count - heldCount, agents: [...handoverAgents] },
   };
 }
 
@@ -8394,7 +8422,7 @@ async function restoreCompactionSchedule() {
   const revived = [];
   for (const [id, saved] of await readCompactionSchedule()) {
     if (!Number.isFinite(saved?.at) || typeof saved.backend !== 'string' || !(compactionScheduler.now() <= saved.at + compactionScheduler.graceMs)) continue;
-    const backend = await resolveBackendForSession(id).catch(() => null);
+    const backend = await compactionBackend(id).catch(() => null);
     if (backend?.id === saved.backend) revived.push([id, saved]);
   }
   for (const [id, saved] of revived)
@@ -8405,7 +8433,8 @@ async function restoreCompactionSchedule() {
 const compactionScheduler = createCompactionScheduler({
   changed: (sessionId, at) => { emitGlobal({ type: 'compactionSchedule', sessionId, at }); saveCompactionSchedule(); },
   canRun: async (id, expectedBackend) => {
-    const [meta, backend, queued] = await Promise.all([store.get(id), resolveBackendForSession(id), outbox.list(id)]);
+    // 圧縮のターンは runTurn 経由なので、切り替えの予約があれば次のエージェントで走る。可否はそのエージェントで見る
+    const [meta, backend, queued] = await Promise.all([store.get(id), compactionBackend(id), outbox.list(id)]);
     const row = compactionSettings[idleCompactionKey(backend?.id)];
     return backend?.id === expectedBackend && !sessionBusy(id) && !meta.autoCompactionOff && !meta.delegation
       && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
@@ -8428,8 +8457,8 @@ async function compactionStartFailed(sessionId, trigger, err) {
   emitGlobal({ type: 'compaction', sessionId, ...entry });
 }
 async function compactConversation(sessionId, trigger = 'manual') {
-  const backend = await resolveBackendForSession(sessionId);
-  if (!backend?.capabilities?.compact) throw new Error(t('compaction.unsupported'));
+  const backend = await compactionBackend(sessionId);
+  if (!backend?.capabilities?.compact) throw Object.assign(new Error(t('compaction.unsupported')), { code: 'UNSUPPORTED' });
   if (sessionBusy(sessionId)) {
     if (queuedCompactions.has(sessionId)) return 'queued';
     queuedCompactions.add(sessionId);
@@ -9874,19 +9903,31 @@ wss.on("connection", (ws, req) => {
           const backend = refuseRetired(await pickBackend(sessionId, msg.args?.backend));
           if (!backend.modes()[mode]) return reply(false, t('settings.unknownMode', { value: mode }));
           const from = (await store.get(sessionId)).mode ?? "default";
+          const liveTurn = runtime.turns.get(sessionId);
+          // 走っている最中でも切り替える。次のターンまで待たせない（できるエージェントだけ。能力の印 liveMode）
+          let live = false;
+          if (liveTurn?.control.handle && backend.setModeLive) {
+            live = await backend.setModeLive(liveTurn.control.handle, mode)
+              .catch((err) => { console.error("  承認モードの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
+          }
+          // ターンが走っていて即時には切り替えられない（非対応・失敗）ときは、今のターンは前のモードのまま走る。
+          // チップだけ替えて黙らせないよう、次のターンへの予約にして「次のターンから適用」の帯で示す
+          // （store.setMode はしない。予約は runTurn が使ってから取り込む）
+          if (liveTurn && !live) {
+            // 予約先のエージェント（切り替えの予約があればそちら）の既定にも覚える。bot の会話のモードは全体の既定にしない
+            await reserveTurnSettings({ sessionId, mode, ...(!(await store.get(sessionId)).bot ? { rememberMode: true } : {}) });
+            await store.recordChange(sessionId, {
+              by: "human", field: "mode", from, to: mode, ...clientReason(msg.args), backend,
+            });
+            emitGlobal({ type: "mode", sessionId, mode, by: "human", live: false });
+            return reply(true, { live: false });
+          }
           await store.setMode(sessionId, mode);
           // 人間が選んだものを、次に新しく始めるときの既定にする（bot の会話のモードは、その会話だけのもの。既定にしない）
           if (!(await store.get(sessionId)).bot) await savePref("mode", mode, backend.id);
           await store.recordChange(sessionId, {
             by: "human", field: "mode", from, to: mode, ...clientReason(msg.args), backend,
           });
-          // 走っている最中でも切り替える。次のターンまで待たせない
-          let live = false;
-          const liveTurn = runtime.turns.get(sessionId);
-          if (liveTurn?.control.handle && backend.setModeLive) {
-            live = await backend.setModeLive(liveTurn.control.handle, mode)
-              .catch((err) => { console.error("  承認モードの即時切り替えに失敗:", String(err?.message ?? err)); return false; });
-          }
           emitGlobal({ type: "mode", sessionId, mode, by: "human", live });
           return reply(true, { live });
         }

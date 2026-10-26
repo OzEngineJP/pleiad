@@ -1945,7 +1945,7 @@
     "memoryLearnPaused": "Pause nightly memory organization.",
     "composer": {
       "historyRecall": "Whether pressing Up on the top line of the message box recalls sent messages (true / false).",
-      "suggestions": "Whether a predicted next message is shown in the empty message box after a reply (true / false). Codex and Antigravity conversations use a little usage to make it."
+      "suggestions": "Whether a predicted next message is shown in the empty message box after a reply (true / false). Only honored by agents that can produce it (capability promptSuggestions); where Pleiad generates it after the turn, making it spends a little usage."
     },
     "model": "The default model for new conversations.",
     "effort": "The default thinking depth for new conversations.",

@@ -157,6 +157,12 @@ export function describeBackends() {
       stopBackground: typeof b.stopBackground === "function",
       backgroundDetails: typeof b.getBackgroundTask === "function",
       subagents: Boolean(b.capabilities?.subagents && typeof b.listSubagents === "function"),
+      // 次の発言の候補。'native' はターンの中で届く、covered は Pleiad が suggestNext で後から作る。
+      // b.capabilities は今までの値へ引いたもの（covered は false になっている）なので、
+      // covered かどうかは契約で要る作る口（suggestNext）の有無で見る（suggestAfterTurn と同じ）。
+      // 宣言があっても作る口が無いものは出せないので、画面には false で渡す
+      promptSuggestions: b.capabilities?.promptSuggestions === 'native' ? 'native'
+        : typeof b.suggestNext === "function",
       // サブエージェントの状態（running / completed / failed / stopped）を返せるか。無ければ status は null
       subagentState: typeof b.getSubagentState === "function",
       fork: Boolean(b.capabilities?.fork && typeof b.fork === "function"),
