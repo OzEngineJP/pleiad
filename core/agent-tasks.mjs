@@ -114,7 +114,7 @@ export function finalReply(messages) {
 // 読み直し後の表示位置をその位置へ戻すための永続の錨）。Promise を返してよい（呼び出し側で await する）
 // deliver / deliverSilence / deliverCommand / deliverBackground の最後の引数 { accepted } は「親の会話がこの通知を受け取った」合図で、
 // 通知でターンが始まるときは、ターンが終わるまで待たずに呼ぶ。呼ぶと台帳は先に 'sent' を保存し（notify のみ）、通知を settling から外す。
-// 無停止の更新の引き継ぎ（core/handover.mjs）は settling が空になるのを待つので、ターンの終わりまで数えると、長いターンのあいだ引き継げない。
+// この一覧は実行中の作業を表示するための写し。更新は作業件数を待たず、DB と保持役の記録から通常起動で復元する（ADR 0270）。
 // 受理の前（送ったかどうか分からない短い間）だけ settling に残す。受理の後は送り直さないので二重には届かない。
 export async function createAgentTasks({ dataDir, prepare, rollback = async () => {}, execute, deliver, deliverSilence = async () => 'ok', deliverCommand = async () => 'ok', cancelBackground = async () => {}, ready = async () => true, steerable = async () => false, childSteerable = async () => false, steer = async () => 'requeue', changed = () => {}, waiting = () => false, accepted = () => {}, anchorProbe = () => null,
   // リモートのホストに任せたタスクの写し（row.host を持つ行。docs/agent-delegation.md「リモートのホストへ任せる」）: 今、依頼元の会話に中継された承認を待っているか・ホストのタスクを止める口

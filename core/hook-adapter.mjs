@@ -20,7 +20,7 @@
 //                                          and anything agy itself treats as a failure)
 //   at stop (Stop)              -> let the agent stop (no continue)
 //   after a tool (PostToolUse)  -> nothing
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnProcess as spawn, runSync } from './process.mjs';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -237,7 +237,7 @@ export function runCommand(command, { input, cwd, env, timeoutMs, signal }) {
     const onAbort = () => { kill(); finish({ aborted: true, stdout, stderr }); };
     const finish = r => { if (done) return; done = true; clearTimeout(timer); signal?.removeEventListener?.('abort', onAbort); resolve(r); };
     const kill = () => {
-      if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+      if (process.platform === 'win32' && child.pid) runSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
       else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
       child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy();
     };

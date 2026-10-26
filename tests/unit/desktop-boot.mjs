@@ -1,10 +1,10 @@
 // desktop/main.cjs の boot() の、サーバーの起こし方の選び方（無停止の更新 1-4。docs/zero-downtime-update/plan.md 1-4）。
 // 既存の desktop-exit-dialog.mjs と同じく vm で main.cjs を評価し、Electron と desktop/ の部品は偽物に差し替える。
-//   - 既定: パッケージ版は on（env が無ければ on）・開発（パッケージ版でない）は off。off を明示・on でもパッケージ版でない・chooseServer が null → 今の utilityProcess（変わらない）
+//   - パッケージ版は既定で名前付きパイプ、開発版は utilityProcess。utilityProcess も同じ保持役の場所を渡す
 //   - on（既定を含む）のパッケージ版: パイプの包みを worker にして、つなぐ前に message を付け、ready のポート・トークンで窓を読み込む。utilityProcess は起こさない
 //   - 起動の失敗: 文は describeBootError。パイプのサーバーは kill（shutdown）せず leave で切る
 //   - サーバーが居なくなったとき: bye 'replaced' なら静かに終わる・つながりだけ切れたなら付け直す・居なければ起こし直して窓を 1 回読み直す（2e。desktop/server-restart.cjs）・
-//     起こし直せない・続けて落ちるなら server-exited。切り替え中・bye closing・off は起こし直さない//   - 更新: linked server は通常 shutdown 後に updater を起こし、失敗したら通常起動で戻す。utilityProcess は update-lock → shutdown。
+//     起こし直せない・続けて落ちるなら server-exited。切り替え中・bye closing・off は起こし直さない//   - 更新: 更新ロック → 旧サーバーの通常停止 → 新サーバーの通常起動。
 //     付け直した後は切り替え（desktop/switch.cjs）を始め、S1 を手放している間はサーバーの終了を知らせない
 import fs from 'node:fs';
 import path from 'node:path';
@@ -133,7 +133,6 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './worker-messages.cjs': workerMessages,
     './login-item.cjs': loginItem,
     './plus-link.cjs': plusLink,
-    './switch-screen.cjs': { createSwitchScreen: () => ({ attach: control => { calls.screenAttached = control; }, reset() {}, supported: () => false, ask: async () => 'later' }) },
     './switch.cjs': {
       startSwitch: options => { const control = { replacing: false, cancelled: false, cancel() { this.cancelled = true; }, options }; calls.switches.push(control); return control; },
       incompatibleDialog: () => async () => 'later',
@@ -177,7 +176,7 @@ export default async function (t) {
   }
   {
     const { calls } = await start({ env: {} });
-    t.ok('開発（パッケージ版でない）の既定は off: 今の utilityProcess で起こし、chooseServer は呼ばない', calls.forks === 1 && calls.chosen === null && calls.loads[0] === 'http://127.0.0.1:7499/?token=utility-token');
+    t.ok('開発（パッケージ版でない）は utilityProcess を使い、同じ保持役の root を渡す', calls.forks === 1 && calls.chosen === null && calls.loads[0] === 'http://127.0.0.1:7499/?token=utility-token' && calls.forkOptions?.env?.AGENT_HOST_RUNTIME_ROOT === path.join('test-user', 'holder'));
     t.ok('off: サーバーの出力を userData の logs/server-dev.log へ向ける（開発版。core/server-log.mjs がサーバーの中で書く）', calls.forkOptions?.env?.AGENT_HOST_SERVER_LOG === path.join('test-user', 'logs', 'server-dev.log'));
     // 開発版はインストール版と別のアプリとして起こす（desktop/dev-identity.cjs。#126）
     t.ok('開発版: アプリの名前を Pleiad Dev にする（キーチェーンの項目と userData をインストール版と分ける）', calls.appName === 'Pleiad Dev', calls.appName);
@@ -404,7 +403,6 @@ export default async function (t) {
   // ---- 更新の流れ（1-6）
   {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
-    t.ok('on: 画面の更新の状態に handover（作業を止めない）を渡す', calls.updates?.handover === true);
     link.exitOnShutdown = true;
     calls.messages.length = 0;
     link.exitOnShutdown = true;
@@ -427,7 +425,6 @@ export default async function (t) {
   }
   {
     const { calls, utility } = await start({ env: {} });
-    t.ok('off: handover は false', calls.updates?.handover === false);
     await calls.updates.install();
     const types = calls.messages.map(m => m.type);
     t.ok('off の更新は今のまま: update-lock を取ってから shutdown', types.join() === 'update-lock,shutdown' , types.join());
@@ -441,8 +438,8 @@ export default async function (t) {
     const { calls, link } = await start({ env: { AGENT_HOST_HANDOVER: 'on' }, packaged: true, reattach: true });
     const control = calls.switches[0];
     t.ok('on: 付け直した後に切り替えを始め、S1 の ready・resources・main の部品を渡す', calls.switches.length === 1 && control.options.ready.token === 'attached-token' && control.options.resourcesPath === 'C:\\inst\\resources'
-      && typeof control.options.reload === 'function' && typeof control.options.abortAll === 'function' && typeof control.options.request === 'function');
-    t.ok('on: 状態機械を切り替えの表示の橋（desktop/switch-screen.cjs）へつなぎ、聞くのは橋を通す（表示を持たない画面にだけダイアログ）', calls.screenAttached === control && await control.options.ask({ reason: 'schema', waiting: { count: 0 } }) === 'later');
+      && typeof control.options.reload === 'function' && !('abortAll' in control.options) && !('runningWork' in control.options));
+    t.ok('互換性に問題がある場合だけダイアログで「あとで」を選べる', await control.options.ask({ reason: 'schema', waiting: null }) === 'later');
     control.replacing = true;
     link.emit('exit', 0);
     await tick();

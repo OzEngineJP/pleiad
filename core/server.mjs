@@ -5750,7 +5750,7 @@ async function runningWork() {
       nextSendAt: Math.min(Infinity, ...dueRows.filter(r => r.kind === 'send' && !r.held).map(r => r.at)) },
     tasks,
     background,
-    // `!` の行。count には入れない（終了・中断して更新では止まる。デスクトップの無停止の切り替えは終わるのを待つ。保持役に載った行（held）は待たずに渡す。desktop/switch.cjs）
+    // `!` の行。実行中の作業数には含めない。更新時は通常停止し、保持役に載った行は新しいサーバーが起動時に復元する。
     shells: shellRuns.list(),
     // ホストに任せたタスクの印（⇄ ホスト名とオンラインか）。docs/remote.md §4.5
     remoteHosts: remoteHostsNow(),
@@ -8116,7 +8116,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
 
 /**
  * 起動で付け直すターンを読み、登録する（restoreTurn。ADR 0270 の規則 ③）。**条件を付けない**: 保持役に居る子のうち、札とターンの印を持つものを
- * 自分の分として拾う（core/adopt.mjs の readHolderSources）。保持役が無い起動（Electron の utilityProcess。段 4b）は空。
+ * 自分の分として拾う（core/adopt.mjs の readHolderSources）。utilityProcess 起動でも保持役を使う。
  * 付け直せない元は何もせず、起動時の restart の回復（中断）に任せる
  */
 async function restoreAdoptedTurns() {

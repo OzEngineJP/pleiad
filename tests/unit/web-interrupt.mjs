@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import {
   REASONS, reasonOf, isInterrupted, interruptUnread, interruptReadPoint, showsReasonInMeta, interruptLabel, interruptLineText,
-  warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted, workRows, workCounts, handoverWaits, handoverWaitAgents, interruptProgress,
+  warnMark, pausedCount, resumeLabel, resumeNoteText, resumeVisible, updateInterrupted,
   limitResumeState, limitLineNote, limitTime, resumeShortLabel, versionReload,
 } from '../../web/interrupt.mjs';
 
@@ -87,42 +87,10 @@ export default function (t) {
   t.ok('起動の後の更新の中断（更新が失敗した）だけなら出さない', !updateInterrupted(sessions, 0, { startedAt: 50 }).show);
   t.ok('起動時刻が分からなければ出さない', !updateInterrupted(sessions, 0, { startedAt: null }).show && !updateInterrupted(sessions, 0, { startedAt: 0 }).show);
 
-  // ---- 更新の確認に並べる作業
-  const work = {
-    count: 5,
-    turns: [{ sessionId: 's1', backend: 'claude' }, { sessionId: 's2', backend: 'codex' }, { sessionId: 's3', backend: 'claude' }],
-    permissions: [{ sessionId: 's3' }, { sessionId: 's4' }, { sessionId: 's1', relay: true }],
-    subagents: [{ sessionId: 's1' }],
-  };
-  const rows = workRows(work);
-  t.ok('会話ごとに 1 行（実行中・承認待ち・エージェント）', JSON.stringify(rows.map(r => [r.sessionId, r.state, r.backend]))
-    === JSON.stringify([['s1', 'running', 'claude'], ['s2', 'running', 'codex'], ['s3', 'waiting', 'claude'], ['s4', 'waiting', null]]));
-  t.ok('中継の複製は承認待ちに数えない', rows.find(r => r.sessionId === 's1').state === 'running');
-  t.ok('脇の知らせの件数（実行中 2・承認待ち 2）', JSON.stringify(workCounts(work)) === '{"running":2,"waiting":2}');
-  t.ok('running が無くても落ちない', workRows(null).length === 0 && JSON.stringify(workCounts(undefined)) === '{"running":0,"waiting":0}');
-  // 無停止の更新で待つ作業: 保持役に載ったもの（held）は待たない。会話ごとに数え、中継の複製・detached は数えない
-  t.ok('待つ作業は、保持役に載っていない会話の数（s1 が載り、s2・s3・s4 が載っていない → 3）', handoverWaits({
-    turns: [{ sessionId: 's1', held: true }, { sessionId: 's2' }, { sessionId: 's3' }], permissions: [{ sessionId: 's3' }, { sessionId: 's4' }, { sessionId: 's1', held: true }, { sessionId: 's5', relay: true }, { sessionId: 's6', detached: true }],
-  }) === 3);
-  t.ok('全部が保持役に載っていれば待たない（blocking 0）', handoverWaits({ turns: [{ sessionId: 's1', held: true }], permissions: [{ sessionId: 's1', held: true }], handover: { blocking: 0 } }) === 0);
-  t.ok('ターンの無い作業（委譲のタスクなど）だけが待つときは handover.blocking', handoverWaits({ turns: [{ sessionId: 's1', held: true }], handover: { blocking: 2 } }) === 2 && handoverWaits(null) === 0 && handoverWaits({}) === 0);
-  // 待つ作業のエージェント（確認の段の「その作業（◯◯）が終わってから」）。サーバーの handover.agents が正本、無ければターンから拾う
-  t.ok('待つ作業のエージェントは handover.agents（重複しない・空は外れる）',
-    JSON.stringify(handoverWaitAgents({ handover: { agents: ['devin', 'grok', 'devin', null] } })) === '["devin","grok"]');
-  t.ok('handover.agents が無い版では、待つ会話のターンの backend から拾う（held・中継は外れる）',
-    JSON.stringify(handoverWaitAgents({ turns: [{ sessionId: 's1', backend: 'devin' }, { sessionId: 's2', backend: 'grok', held: true }], permissions: [{ sessionId: 's1' }] })) === '["devin"]');
-  t.ok('どちらも無ければ空', handoverWaitAgents(null).length === 0 && handoverWaitAgents({ turns: [{ sessionId: 's1' }] }).length === 0);
-
-  // ---- 中断の進み（N / M）
-  t.ok('止まった数を数える', JSON.stringify(interruptProgress(3, 1)) === '{"done":2,"total":3,"finished":false}');
-  t.ok('進みは戻らない（一覧が一時的に増えても）', interruptProgress(3, 3, 2).done === 2);
-  t.ok('0 件になったら終わり', interruptProgress(3, 0).finished && interruptProgress(3, 0).done === 3);
-
   // ---- 理由の辞書が全言語にある
   for (const lng of ['ja', 'en']) {
     const ui = JSON.parse(read(`web/locales/${lng}/ui.json`));
     t.ok(`${lng}: 理由ごとの短い字と一行`, REASONS.every(r => ui.interrupt.label[r] && ui.interrupt.line[r]));
-    t.ok(`${lng}: 更新の確認の説明に {{mark}}（三角の位置）`, ui.updates.workAfter.includes('{{mark}}'));
     t.ok(`${lng}: 保留があるときの欄の下の一行（複数形）`, ui.interrupt.resumeNoteHeld_other?.includes('{{count}}') && (lng === 'ja' || ui.interrupt.resumeNoteHeld_one?.includes('{{count}}')));
     const server = JSON.parse(read(`web/locales/${lng}/server.json`));
     t.ok(`${lng}: 結果不明の未送信で再開を断る文`, Boolean(server.resume.outboxUnknown));
@@ -131,14 +99,14 @@ export default function (t) {
   // ---- 配線
   const client = read('web/client.mjs'), side = read('web/side.mjs'), updates = read('web/updates.mjs');
   const html = read('web/index.html'), css = read('web/style.css');
-  t.ok('再開は WS resume、更新の中断は abort {reason:"update"}', client.includes("cmd('resume', { sessionId })") && updates.includes("cmd('abort', { reason: 'update' })"));
+  t.ok('再開は WS resume。更新は下書きを保存してからデスクトップへ渡す', client.includes("cmd('resume', { sessionId })") && updates.includes('await flush()') && updates.includes("bridge.update(name, value)"));
   t.ok('turnEnd の interrupted を会話に写し、ターンが始まれば消す', client.includes("s.interrupted = ev.interrupted ?? null") && /running\.has\(s\.id\)\) \{ s\.interrupted = null/.test(client));
   t.ok('ライブの中断も保存された中断と同じ一行で描く（二重に出さない）', client.includes('paintInterruptLine({ at: ev.at ?? Date.now(),') && !client.includes('chat.sys.aborted'));
   t.ok('脇の行・畳んだ見出し・器の要約に三角', (side.match(/warnMark\(/g) ?? []).length >= 2 && side.includes('stoppedIn(rows)') && side.includes('stoppedIn(list)'));
-  t.ok('index.html: 中断の隣に再開、欄の下の一行、脇の下の一行、更新の確認の作業一覧',
-    ['id="resume"', 'id="resumeNote"', 'id="resumeStrip"', 'id="updateWork"', 'id="updateWorkAfter"', 'id="updatePromptWork"'].every(x => html.includes(x)));
+  t.ok('index.html: 中断の隣に再開、欄の下の一行、脇の下の一行。切り替え確認の一覧はない',
+    ['id="resume"', 'id="resumeNote"', 'id="resumeStrip"'].every(x => html.includes(x)) && !html.includes('updateWork'));
   t.ok('style.css: 三角は --ink、既読は --ink-weak（差し色は使わない）', /\.warn-mark\{[^}]*color:var\(--ink\)/.test(css) && /\.warn-mark\.read\{color:var\(--ink-weak\)\}/.test(css) && !/\.warn-mark[^{]*\{[^}]*--ink-mark/.test(css));
-  t.ok('30 秒で止まらなければやめる', updates.includes('STOP_WAIT_MS = 30000'));
+  t.ok('旧サーバーの通常停止には 30 秒の上限がある', read('desktop/switch.cjs').includes('STOP_TIMEOUT_MS = 30_000'));
   // 再開の後、中断の印はターンの開始（applyRunning・turnEnd）まで下ろさない。ボタンは送っている間押せない
   const resumeFn = client.slice(client.indexOf('async function resumeSession('), client.indexOf("$('resume').onclick"));
   t.ok('再開で中断の印を先に下ろさない', resumeFn.length > 0 && !resumeFn.includes('interrupted = null') && resumeFn.includes('resuming.set(sessionId'));
@@ -147,12 +115,7 @@ export default function (t) {
   t.ok('まとめて再開は、もう続いた会話を飛ばし、失敗に数えない', resumeAll.includes('if (!isInterrupted(state.sessions.find(s => s.id === id)) || resuming.has(id)) continue;') && resumeAll.includes("e.code !== 'NOT_INTERRUPTED'"));
   t.ok('更新の後の一行は、サーバーの起動時刻より前の中断だけ・更新を進めている間は出さない',
     client.includes('startedAt: state.serverStartedAt ?? 0') && client.includes('updatesUi?.applying') && client.includes('state.serverStartedAt = Number.isFinite(m.startedAt)'));
-  // 待つ間に始まったターンも止める: 残っている間は見るたびに abort を送り直す（画面の更新・デスクトップの終了）
-  const stopLoop = updates.slice(updates.indexOf('async function stopWork'), updates.indexOf('async function action'));
-  t.ok('更新: 待つ間は abort {reason:update} を送り直す', (stopLoop.match(/cmd\('abort', \{ reason: 'update' \}\)/g) ?? []).length === 2 && stopLoop.indexOf("cmd('abort', { reason: 'update' }).catch") > stopLoop.indexOf('for (;;)'));
-  const main = read('desktop/main.cjs');
-  const abortAll = main.slice(main.indexOf('async function abortAll'), main.indexOf('async function installUpdate'));
-  t.ok('終了: 待つ間は abort {reason} を送り直す', abortAll.indexOf("workerRequest('abort'") > abortAll.indexOf('for (;;)') && abortAll.indexOf('for (;;)') > 0);
+  t.ok('更新の確認に実行作業の一覧や中断確認を持たない', !updates.includes('stopWork') && !updates.includes('workRows') && !html.includes('updatePromptWork'));
 
   // ---- 版の違うサーバーにつながったときの読み直し（無停止の更新 1-6。docs/zero-downtime-update/design.md §8）
   t.ok('配った版と同じ版・ビルドなら読み直さない', versionReload('1.0.0+aaaaaaaaaaaa', { version: '1.0.0', build: 'aaaaaaaaaaaa' }) === null);
@@ -170,6 +133,5 @@ export default function (t) {
   const reloadFn = client.slice(client.indexOf('function reloadForVersion('), client.indexOf('function applyLocale('));
   t.ok('画面: 印を sessionStorage に残してから、下書きを保存して読み直す（印を残せなければ読み直さない）',
     reloadFn.indexOf('sessionStorage.setItem("ply-version-reload", key)') < reloadFn.indexOf('saveDraft()') && reloadFn.includes('catch { return false; }') && reloadFn.includes('location.reload()'));
-  t.ok('無停止の更新（state.handover）では「中断して更新」をしない（止まる作業を並べない・中断しない）',
-    stopLoop.includes('state?.handover') && updates.includes('confirming && !state?.handover ? workRows(confirmWork)'));
+  t.ok('画面の旧更新待ちコメントを持たない', !read('web/client.mjs').includes('載らない作業が終わるのを main が待つ'));
 }

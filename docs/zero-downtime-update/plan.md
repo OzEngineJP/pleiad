@@ -1,5 +1,8 @@
 # 無停止の更新 — 段階に分けた実装計画
 
+> 履歴資料: ここにある設計・計画は旧 handover 方式の記録で、現行実装ではない。更新と復元の規則は [ADR 0270](../adr/0270-server-may-die-anytime.md) 段 4b を参照する。
+
+
 > ブラウザーの記述について（2026-10-08）: この文書に残る内蔵ブラウザーのエージェント操作・CDP の中継・中継の復元の計画と計測は、Chrome へ移す前の記録。ADR 0148 の第 7 段で `desktop/browser-relay.cjs`・`browser-navigation.cjs`・`agent-browser-bridge.cjs` と `AGENT_HOST_AGENT_BROWSER` は削除した。現在のエージェント操作は Chrome の中継だけで、ビューアのタブの写しと読み込みの方針は `core/browser-viewer.mjs` と `desktop/browser-viewer-bridge.cjs` が扱う。現在の動きは [ブラウザー](../inapp-browser.md) を参照。
 
 - 状態: 確定（2026-10-06）。段階 0 は完了し、その実測で段階 1 以降を直した。**段階 1 は実装・検証済み**（2026-10-06。パッケージ版の既定は on。署名した版・スマホ・利用者の操作が要る確認だけが残り、手順は [stage1-7.md](stage1-7.md) の「利用者に頼む確認」） **段階 2 は実装済み**（2026-10-07。0.12.0-beta.3。Claude を保持役に載せるのは既定で on）。**段階 3 は実装済み**（2026-10-07。Codex・agy・`!` の行。既定で on。本物のインストーラーをまたぐ確認はまだ）。**OpenCode も載せた**（2026-10-18。共有の `opencode serve` を保持役の子にし、新しいサーバーがつなぎ直して OpenCode に聞き直す。[multi-backend.md](../multi-backend.md) §2.10「無停止の更新」）

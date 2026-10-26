@@ -1,17 +1,4 @@
 {
   "version": 1,
-  "files": {
-    "core/claude-login.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/cli-installation.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
-    "core/hook-adapter.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    }
-  }
+  "files": {}
 }

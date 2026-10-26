@@ -1,5 +1,8 @@
 # 更新で走っているターンを止めない（無停止の更新）— 設計
 
+> 履歴資料: ここにある設計・計画は旧 handover 方式の記録で、現行実装ではない。更新と復元の規則は [ADR 0270](../adr/0270-server-may-die-anytime.md) 段 4b を参照する。
+
+
 > ブラウザーの記述について（2026-10-08）: この文書に残る内蔵ブラウザーのエージェント操作・CDP の中継・中継の復元の計画と計測は、Chrome へ移す前の記録。ADR 0148 の第 7 段で `desktop/browser-relay.cjs`・`browser-navigation.cjs`・`agent-browser-bridge.cjs` と `AGENT_HOST_AGENT_BROWSER` は削除した。現在のエージェント操作は Chrome の中継だけで、ビューアのタブの写しと読み込みの方針は `core/browser-viewer.mjs` と `desktop/browser-viewer-bridge.cjs` が扱う。現在の動きは [ブラウザー](../inapp-browser.md) を参照。
 
 - 状態: 確定（2026-10-06）。段階 0 の実測と、段階 1 の 1-0（頭の確認）の実測を反映した（この文書は設計。実装は [plan.md](plan.md) の段階ごと）

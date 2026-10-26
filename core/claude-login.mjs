@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn as spawnChild } from 'node:child_process';
+import { spawnProcess } from './process.mjs';
 import { createRequire } from 'node:module';
 import { t } from './i18n.mjs';
 
@@ -180,7 +180,7 @@ export function ptySpawner(pty = loadPty()) {
 export function pipeSpawner() {
   return (argv, args, { env, cwd }) => {
     const { file, args: fullArgs } = commandLine(argv, args);
-    const child = spawnChild(file, fullArgs, { env, cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawnProcess(file, fullArgs, { env, cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const dataFns = [], exitFns = [];
     let exited = false;
     const data = chunk => { for (const fn of dataFns) fn(String(chunk)); };
@@ -194,7 +194,7 @@ export function pipeSpawner() {
       write: s => { try { child.stdin.write(s.replace(/\r$/, '\n')); } catch {} },
       kill: () => {
         if (exited) return;
-        if (process.platform === 'win32' && child.pid) spawnChild('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
+        if (process.platform === 'win32' && child.pid) spawnProcess('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
         else try { child.kill('SIGTERM'); } catch {}
       },
     };

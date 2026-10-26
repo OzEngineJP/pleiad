@@ -12,7 +12,7 @@ const bp = require('../../desktop/browser-panel.cjs');
 const { attachRemoteAgentBridge } = require('../../desktop/remote-agent-bridge.cjs');
 
 export const name = 'main-away-desktop';
-export const title = '内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ';
+export const title = '内蔵ブラウザー: タブの写しをサーバーへ保存し、起動時に開き直す';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const until = async (check, ms = 3000) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) return false; await sleep(10); } return true; };
@@ -161,7 +161,7 @@ export default async function (t) {
   // ---- 橋の流れ
   {
     const kit = bridgeKit();
-    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
+    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel, { reportMs: 30, restoreWaitMs: 400 });
     t.ok('起動で browser-restore-request を送る（読み込みの方針の依頼の後）', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request,browser-restore-request');
     kit.changed();
     await sleep(80);
@@ -187,7 +187,7 @@ export default async function (t) {
   {
     // 切り替えで替わったサーバー（S2）は空から始まる。つながるたびに届く ready で、写しを 1 回送り直す（中身が変わらなくても）
     const kit = bridgeKit();
-    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 30, restoreWaitMs: 400 });
+    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel, { reportMs: 30, restoreWaitMs: 400 });
     const reports = () => kit.worker.sent.filter(m => m.type === 'browser-state-report');
     kit.worker.say({ type: 'ready', port: 7611, token: 'early' });
     t.ok('復元が済む前の ready では送らない（復元の流れが報告を始める）', reports().length === 0);
@@ -201,34 +201,38 @@ export default async function (t) {
     bridge.close();
   }
   {
-    // 復元の待ちの上限を過ぎて報告を始めた後（古いサーバーなど）の ready でも送り直す。handover なしは何もしない
+    // 復元の待ちの上限を過ぎて報告を始めた後（古いサーバーなど）の ready でも送り直す
     const kit = bridgeKit();
-    attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 10, restoreWaitMs: 40 });
+    attachBrowserViewerBridge(kit.worker, kit.panel, { reportMs: 10, restoreWaitMs: 40 });
     await sleep(120);
     kit.worker.say({ type: 'ready', port: 7611, token: 't' });
     t.ok('復元の答えが無いまま待ちの上限を過ぎた後の ready でも、写しを送り直す', kit.worker.sent.filter(m => m.type === 'browser-state-report').length === 2);
-    const plain = bridgeKit();
-    attachBrowserViewerBridge(plain.worker, plain.panel);
-    plain.worker.say({ type: 'ready', port: 7611, token: 't' });
-    t.ok('既定（handover なし）: ready で何も送らない', !plain.worker.sent.some(m => m.type === 'browser-state-report'));
+    const ordinary = bridgeKit();
+    const ordinaryBridge = attachBrowserViewerBridge(ordinary.worker, ordinary.panel, { reportMs: 10, restoreWaitMs: 40 });
+    ordinary.worker.say({ type: 'ready', port: 7611, token: 't' });
+    t.ok('通常起動でも復元の答えを受け取ってからタブの写しを報告する', !ordinary.worker.sent.some(m => m.type === 'browser-state-report'));
+    ordinary.worker.say({ type: 'browser-restore', tabs: ordinary.log.state.tabs, relay: null });
+    await until(() => ordinary.worker.sent.some(m => m.type === 'browser-state-report'));
+    t.ok('通常起動でも復元後にタブの写しを報告する', ordinary.worker.sent.some(m => m.type === 'browser-state-report'));
+    ordinaryBridge.close();
   }
   {
     // 答えが来ない（古いサーバー）ときも、少し待てば報告を始める
     const kit = bridgeKit();
-    attachBrowserViewerBridge(kit.worker, kit.panel, { handover: true, reportMs: 10, restoreWaitMs: 60 });
+    attachBrowserViewerBridge(kit.worker, kit.panel, { reportMs: 10, restoreWaitMs: 60 });
     await sleep(150);
     kit.changed();
     await until(() => kit.worker.sent.some(m => m.type === 'browser-state-report'));
     t.ok('復元の答えが無くても、待ちの上限の後は報告を始める', kit.worker.sent.some(m => m.type === 'browser-state-report'));
   }
   {
-    // 既定（handover なし）: 復元の依頼も報告もしない
+    // 通常起動のたびに写しを復元し、以後の変更を報告する
     const kit = bridgeKit();
-    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel);
+    const bridge = attachBrowserViewerBridge(kit.worker, kit.panel, { reportMs: 10, restoreWaitMs: 20 });
     kit.changed();
     await sleep(80);
     bridge.close();
-    t.ok('既定（handover なし）: 起動で読み込みの方針の依頼だけ。報告も復元もしない・状態の購読もしない', kit.worker.sent.map(m => m.type).join() === 'browser-load-policy-request' && kit.stateListeners.size === 0);
+    t.ok('既定の起動でも写しの復元を依頼し、終了時に状態の購読を外す', kit.worker.sent.some(m => m.type === 'browser-restore-request') && kit.stateListeners.size === 0);
   }
   {
     // 読み込みの方針（ADR 0079）: worker からの browser-load-policy を panel.setLoadPolicy へ

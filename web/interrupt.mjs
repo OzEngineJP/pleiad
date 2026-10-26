@@ -130,54 +130,6 @@ export function updateInterrupted(sessions, dismissedAt = 0, { startedAt } = {})
 }
 
 /**
- * 更新の確認に並べる、止まる作業。running（server の runningWork）から会話ごとに 1 行。
- * ターンが走っていれば「実行中」、承認だけを待っていれば「承認待ち」（中継の複製は数えない）
- */
-export function workRows(work) {
-  const rows = new Map();
-  for (const turn of work?.turns ?? []) {
-    if (!turn?.sessionId || rows.has(turn.sessionId)) continue;
-    rows.set(turn.sessionId, { sessionId: turn.sessionId, state: "running", backend: turn.backend ?? null });
-  }
-  for (const p of work?.permissions ?? []) {
-    if (!p?.sessionId || p.relay) continue;
-    const row = rows.get(p.sessionId);
-    if (row) row.state = "waiting";
-    else rows.set(p.sessionId, { sessionId: p.sessionId, state: "waiting", backend: null });
-  }
-  return [...rows.values()];
-}
-
-/**
- * 無停止の更新（ADR 0151）で、新しい版へ引き継げず、終わるのを待つ作業の数。保持役に載ったターンとその承認待ち（held）は待たない。
- * workRows と同じく会話ごとに数える。ターンの無い作業（委譲のタスクなど）だけが待つときは、サーバーが数えた handover.blocking
- */
-export function handoverWaits(work) {
-  const waiting = new Set();
-  for (const x of [...(work?.turns ?? []), ...(work?.permissions ?? [])]) {
-    if (x?.sessionId && !x.relay && (x.blocking ?? !x.detached) && !x.held) waiting.add(x.sessionId);
-  }
-  return waiting.size || Number(work?.handover?.blocking) || 0;
-}
-
-/** 終わるのを待つ作業のエージェントの id（サーバーの handover.agents。無ければ待つ会話のターンから拾う） */
-export function handoverWaitAgents(work) {
-  const agents = new Set((work?.handover?.agents ?? []).filter(Boolean));
-  if (!agents.size) {
-    for (const x of work?.turns ?? []) {
-      if (x?.sessionId && x.backend && !x.held && (x.blocking ?? !x.detached)) agents.add(x.backend);
-    }
-  }
-  return [...agents];
-}
-
-/** 脇の更新の知らせに足す件数（実行中 N 件・承認待ち M 件） */
-export function workCounts(work) {
-  const rows = workRows(work);
-  return { running: rows.filter((r) => r.state === "running").length, waiting: rows.filter((r) => r.state === "waiting").length };
-}
-
-/**
  * 版の違うサーバーにつながったとき（無停止の更新の切り替え。docs/zero-downtime-update/design.md §8）、画面を 1 回だけ読み直すか。
  * served は画面を配ったサーバーの版（index.html の pleiad-build。サーバーが「<版>+<ビルド>」を埋める）。空なら
  * アプリに同梱した画面（スマホ）なので読み直さない（版ずれは今どおり protocolVersion で見る）。
@@ -188,11 +140,4 @@ export function versionReload(served, ready, done = null) {
   if (!served) return null;
   const key = `${ready?.version ?? ""}+${ready?.build ?? ""}`;
   return key === served || key === done ? null : key;
-}
-
-/** 中断の進み。total は押した時点の件数、count は今の件数。done は止まった数（戻らない） */
-export function interruptProgress(total, count, prevDone = 0) {
-  const all = Math.max(0, Number(total) || 0);
-  const done = Math.min(all, Math.max(prevDone, all - Math.max(0, Number(count) || 0)));
-  return { done, total: all, finished: (Number(count) || 0) <= 0 };
 }

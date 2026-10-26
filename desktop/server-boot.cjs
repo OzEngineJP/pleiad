@@ -1,5 +1,5 @@
 // main がサーバーを見つける・起こす・付け直す（段階 1 の 1-4。docs/zero-downtime-update/plan.md、design.md §3.2・§7.1）。
-// AGENT_HOST_HANDOVER=on のときだけ main.cjs が使う。off の経路（utilityProcess）は変わらない。
+// AGENT_HOST_HANDOVER=on のとき main.cjs が使う配布用サーバー接続。off の utilityProcess も同じ保持役・復元規則を使う。
 //
 // 流れ（chooseServer が決め、connect() が実行する）:
 //   1. 走っているサーバーが居るか: データ置き場の main-link.json（パイプの名前・秘密）のパイプにつながれるか。居れば付け直す（起こさない）

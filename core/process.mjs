@@ -118,6 +118,16 @@ export function run(command, args = [], {
 }
 
 /**
+ * 子の標準入出力を呼び出し側が対話的に扱う必要がある短命処理の起動口。
+ * 呼び出し側は終了時に必ず kill/close し、アプリ終了後まで残る処理には start() を使う。
+ */
+export function spawnProcess(command, args = [], options = {}) {
+  const argv = Array.isArray(args) ? args.map(String) : [];
+  const spawnOptions = Array.isArray(args) ? options : args;
+  return spawn(command, argv, spawnOptions);
+}
+
+/**
  * 完了を待つ短命の子の同期版（spawnSync）。**イベントループを止める**ので、起動の準備・後片付けの小さなコマンドだけが使う
  * （core/backends/opencode-accounts.mjs の whoami・icacls。同期の prepareAccount から呼ばれる）。ふだんは run()
  * 戻り値の形は run() と同じ

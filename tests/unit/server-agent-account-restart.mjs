@@ -48,6 +48,7 @@ export default async function (t) {
       AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`,
       AGENT_HOST_OPENCODE_BIN: `node "${path.join(ROOT, 'tests/lib/fake-opencode.mjs')}"` };
     let a, b, ca, cb, link, nextLink, holderPid, failure;
+    const holderChildPids = new Set();
     const ids = [];
     try {
       const found = await ensureHolder({ dataDir, root, mode: 'detached', idleMs: 120_000 });
@@ -117,10 +118,21 @@ export default async function (t) {
       await cleanup(() => b?.stop()); await cleanup(() => a?.stop());
       await cleanup(async () => {
         const holder = await connectHolder({ dataDir, root }).catch(error => { if (error.code === 'HOLDER_NONE') return null; throw error; });
-        if (holder) { holder.shutdown(); holder.close(); }
+        if (holder) {
+          for (const child of holder.welcome.children ?? []) if (child.pid && child.alive) holderChildPids.add(child.pid);
+          holder.shutdown(); holder.close();
+        }
       });
       let stopped = !holderPid;
       if (holderPid) await cleanup(async () => { await until(() => { try { process.kill(holderPid, 0); return false; } catch { return true; } }, 'holder exit'); stopped = true; });
+      for (const pid of holderChildPids) await cleanup(async () => {
+        try { await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, `held child ${pid} exit`); }
+        catch (error) {
+          try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ }
+          await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, `held child ${pid} cleanup`);
+          if (!stopped) throw error;
+        }
+      });
       if (stopped) await cleanup(() => fs.rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
       else errors.push(new Error(`Holder still running; retained ${scratch}`));
       if (errors.length) throw new AggregateError([...(failure ? [failure] : []), ...errors], errors.map(e => e.message).join('\n'));

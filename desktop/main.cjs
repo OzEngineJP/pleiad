@@ -22,8 +22,6 @@ const { createLoginItem, attachLoginItem, launchedHidden } = require('./login-it
 // 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
 const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
-// 無停止の更新の切り替えを待つ表示（desktop/switch-screen.cjs）。画面が表示を持つかを知り、状態を渡し、画面の操作を状態機械へ返す
-const { createSwitchScreen } = require('./switch-screen.cjs');
 // 内蔵ブラウザー（右パネルに重ねる WebContentsView。docs/inapp-browser.md、ADR 0041）。ローカルの窓にだけ置く
 const { createBrowserPanel } = require('./browser-panel.cjs');
 const { attachBrowserViewerBridge } = require('./browser-viewer-bridge.cjs');
@@ -60,11 +58,12 @@ let chromeOs = null;   // Chrome の OS の層（boot が作る）。終了の�
 let serverSwitch = null;
 // 最後に届いたサーバーの ready。サーバーが落ちたとき、同じトークン・ポート・版で起こし直す材料（desktop/server-restart.cjs）
 let serverReady = null;
+let updateRestartNotice = false;
 // サーバーの起こし方の記録。updater.log（desktop/update-log.cjs）が出来るまでは溜め、出来たら流す（Job が抜け道を許さず今の流れに落ちた理由などを残す）
 let bootLogger = null;
 const pendingServerLog = [];
 const log = line => { console.warn('[server]', line); if (bootLogger) bootLogger.info?.(`[server] ${line}`); else pendingServerLog.push(line); };
-// 無停止の更新（ADR 0151）のサーバーの起こし方・付け直し。AGENT_HOST_HANDOVER=on のときだけ読む
+// サーバーの起こし方・付け直し。配布版の名前付きパイプ経路で使い、utilityProcess 経路も保持役と通常起動復元を使う。
 const serverBoot = () => require('./server-boot.cjs');
 // 配布物の resources\。開発の確認用に AGENT_HOST_RUNTIME_RESOURCES（desktop:pack の win-unpacked\resources など）で差し替えられる
 const runtimeResources = () => process.env.AGENT_HOST_RUNTIME_RESOURCES || process.resourcesPath;
@@ -107,7 +106,6 @@ const loginItem = createLoginItem({ app, platform: process.platform, execPath: p
 
 // ローカルの窓の本体フレームで、ローカルのサーバーの画面からの IPC だけを通す（リモートの窓・同梱の窓は別の口）
 function trusted(event) { trust.check(event, ['local']); }
-const switchScreen = createSwitchScreen({ ipcMain, trusted, getWindow: () => window });
 function workerRequest(type, extra = {}, { timeoutMs = 10000 } = {}) {
   return new Promise((resolve, reject) => {
     const id = ++requestId;
@@ -184,7 +182,11 @@ async function installUpdate() {
         for (const listener of native.listeners('update-downloaded')) if (!before.has(listener)) native.off('update-downloaded', listener);
         reject(new Error(t('update.applyFailed')));
       };
-      const ready = () => { cleanup(); quitting = true; if (!linkedServer) worker.postMessage({ type: 'shutdown' }); resolve(); };
+      const ready = () => {
+        cleanup();
+        try { fs.writeFileSync(path.join(app.getPath('userData'), 'update-restart-notice'), '1'); } catch (error) { log(`update restart notice could not be saved: ${error.message}`); }
+        quitting = true; if (!linkedServer) worker.postMessage({ type: 'shutdown' }); resolve();
+      };
       updater.once('error', failed); native.once('before-quit-for-update', ready);
       // Windows はインストーラーの進捗バーだけを出して適用し、終わったら起動し直す。
       // 入れ先とインストールの種類は前回を引き継ぎ、選択と完了の画面は出さない（build/installer.nsh）
@@ -249,7 +251,7 @@ function systemLanguage() {
 }
 
 /**
- * パイプでつなぐサーバーを選ぶ。パッケージ版は既定で on（AGENT_HOST_HANDOVER が無ければ on。off で今の utilityProcess）。
+ * 配布版のパイプでつなぐサーバーを選ぶ。AGENT_HOST_HANDOVER=off は開発時の utilityProcess 接続を残す。
  * 開発（electron .）は既定が off で、on にするなら AGENT_HOST_RUNTIME_RESOURCES つき（desktop:pack の resources を指す確認用）。
  * 使えなければ null（今の utilityProcess。理由を log に残す）
  */
@@ -275,26 +277,26 @@ async function reloadWindow(next, portFile) {
   await window.loadURL(`${origin}/?token=${encodeURIComponent(next.token)}`);
 }
 
-/** 付け直したサーバーが古い版なら、作業が終わるのを待って新しい版のサーバーへ切り替える（desktop/switch.cjs）。待ちの表示は今は main のログ（[server] switch: …） */
+/** 付け直したサーバーが古い版なら、保持役の子を残して通常停止・通常起動する（desktop/switch.cjs）。 */
 function startServerSwitch(ready, portFile, onServerExit) {
   const { startSwitch, incompatibleDialog } = require('./switch.cjs');
   const control = startSwitch({ linked, ready, resourcesPath: runtimeResources(), execPath: process.execPath, dataDir: serverBoot().resolveDataDir(), systemLocale: systemLanguage(),
-    cwd: app.getPath('home'), request: workerRequest, runningWork, abortAll, log: line => log(`switch: ${line}`),
-    // 画面が切り替えの表示を持つなら画面が答える（switchScreen）。持たない版の画面には、今までのダイアログ
-    ask: info => switchScreen.ask(info, incompatibleDialog({ dialog, getWindow: () => window, t })),
+    cwd: app.getPath('home'), request: workerRequest, log: line => log(`switch: ${line}`),
+    ask: info => incompatibleDialog({ dialog, getWindow: () => window, t })(info),
     // 同じ包みにつなぎ直したので、once('exit') の見張りを付け直す
     rearm: () => { if (!worker.listeners('exit').includes(onServerExit)) worker.once('exit', onServerExit); },
     reload: next => reloadWindow(next, portFile),
     // 自動起動の --hidden は引き継がない（利用者が押した「再起動」で、窓が出ないままにならないように）
     restart: () => { quitting = true; app.relaunch({ args: process.argv.slice(1).filter(arg => arg !== '--hidden') }); app.exit(0); },
-    fallback: () => { if (!switchScreen.supported()) void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
+    fallback: () => { void dialog.showMessageBox(window, { type: 'warning', title: 'Pleiad', message: t('switch.fallback') }).catch(() => {}); },
     failed: error => { quitting = true; return showFatalError('Pleiad', t('switch.failed', { detail: error?.message ?? '' })).catch(e => console.error(e)).finally(() => app.quit()); },
   });
-  switchScreen.attach(control);
   return control;
 }
 
 async function boot() {
+  const updateNoticeFile = path.join(app.getPath('userData'), 'update-restart-notice');
+  try { updateRestartNotice = fs.readFileSync(updateNoticeFile, 'utf8') === '1'; fs.unlinkSync(updateNoticeFile); } catch { updateRestartNotice = false; }
   // キーチェーンの確認は、サーバーの起動の待ちを始める前に済ませる（desktop/secret-bridge.cjs の warmSecretStorage）
   warmSecretStorage(safeStorage, { log: message => console.warn('[secrets]', message) });
   // Dock・Finder から起こすと PATH が launchd の最小限なので、ログインシェルの環境を読み込む（desktop/shell-env.cjs。ADR 0213）。
@@ -314,11 +316,12 @@ async function boot() {
   // utilityProcess の経路でも、サーバーの標準出力・標準エラー（Chrome の接続の移り変わり `chrome: …` など）を userData\logs\server.log に残す。
   // パイプの経路（<実行場所>\logs\server.log）と同じに、サーバー自身が書く（core/server-log.mjs。token=… は伏せ、1MB で .old へ回す）。開発版は別の名前
   const utilityLogFile = process.env.AGENT_HOST_SERVER_LOG || path.join(app.getPath('userData'), 'logs', app.isPackaged ? 'server.log' : 'server-dev.log');
+  const utilityHolderRoot = process.env.AGENT_HOST_RUNTIME_ROOT || path.join(app.getPath('userData'), 'holder');
   worker = linked ? linked.link : forkUtility(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）
-    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile },
+    env: { ...process.env, PATH: `${agentBrowserBin}${path.delimiter}${process.env.PATH || ''}`, AGENT_HOST_BIND: '127.0.0.1', AGENT_HOST_PORT: String(savedPort(portFile)), AGENT_HOST_SYSTEM_LOCALE: systemLanguage(), AGENT_HOST_SERVER_LOG: utilityLogFile, AGENT_HOST_RUNTIME_ROOT: utilityHolderRoot },
     stdio: 'pipe', serviceName: 'Pleiad server',
   });
   messages = createWorkerMessages(worker);
@@ -389,7 +392,6 @@ async function boot() {
   window.removeMenu();
   trust.register(window, { kind: 'local', origin });
   // 読み込み直した画面は別の版かもしれない。切り替えの表示を持つかは、その画面の hello で知る
-  window.webContents.on('did-start-loading', () => switchScreen.reset());
   remoteWindows = createRemoteWindows({ app, BrowserWindow, session, ipcMain, nativeImage, nativeTheme, Notification, Menu, safeStorage, trust,
     icon: path.join(__dirname, 'icon.png'), external, workerRequest });
   remoteWindows.attach();
@@ -397,8 +399,8 @@ async function boot() {
   browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'),
     openExternal: external, beforeBrowserOpen: () => frontVisibleBrowser('html') });
   browserPanel.attach();
-  // 名前付きパイプの経路（無停止の更新）では、タブの写しをサーバーへ渡し、付け直したときにサーバーの写しからタブを立て直す（core/browser-viewer.mjs）
-  browserViewerBridge = attachBrowserViewerBridge(messages, browserPanel, { handover: Boolean(linked) });
+  // 起動時にサーバーへタブの写しを戻し、保存済みのタブを開き直す（core/browser-viewer.mjs）
+  browserViewerBridge = attachBrowserViewerBridge(messages, browserPanel);
   computerOverlay = attachComputerOverlay(messages, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
   browserScreencastBridge = attachBrowserScreencastBridge(messages, browserPanel, {
     // 隠れた窓（常駐で閉じた）ではページが描かれない。見られている間だけ最小化で出し、終われば隠し直す
@@ -460,7 +462,7 @@ async function boot() {
   };
   serverExitHandler = onServerExit;
   worker.once('exit', onServerExit);
-  await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}`);
+  await window.loadURL(`${origin}/?token=${encodeURIComponent(ready.token)}${updateRestartNotice ? '&reason=update-restart' : ''}`);
   // 自動起動（--hidden）は静かに上がる。トレイに残る構成（resident）なら窓は出さず、トレイから開く。トレイが無い構成ではタスクバーに最小化で置く
   // （窓もトレイも無いと入口が無くなる）。普通の起動は今までどおり前面に出す
   if (loginItem.launchedHidden(process.argv)) { if (!resident?.keepOnClose()) { window.showInactive(); window.minimize(); } }
@@ -485,7 +487,7 @@ async function boot() {
   if (updaterOn) try { installUpdateSignatureVerifier(autoUpdater); } catch (e) { bootLogger.warn?.(`update signature verifier: ${e.message}`); }
   updates = new Updates({ updater: autoUpdater, version: app.getVersion(), file: path.join(app.getPath('userData'), 'updates.json'),
     store: isStoreBuild({ pkg, windowsStore: process.windowsStore }),
-    enabled: updaterOn, install: installUpdate, handover: Boolean(linked),
+    enabled: updaterOn, install: installUpdate,
     prepareCheck: () => prepareUpdateCheck(autoUpdater, path.join(process.resourcesPath, 'app-update.yml')) });
   updates.on('state', state => { if (!window.isDestroyed()) window.webContents.send('ply:update-state', state); });
   try { await updates.init(); }
