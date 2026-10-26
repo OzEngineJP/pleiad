@@ -848,7 +848,7 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 
 ### 2.9 エージェントを足す
 
-エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0271](adr/0271-capability-states.md)）。
+エージェントごとの知識は `core/backends/` に置き、ほかの場所は能力の印とエージェントの記述から引く（[ADR 0220](adr/0220-backend-contract-and-agent-descriptors.md)・[0273](adr/0273-capability-states.md)）。
 足すときに書くもの:
 
 1. **エージェントの記述**（`core/backends/agents.mjs` の `AGENTS`）。`DESCRIPTOR_KEYS` を全部書く（使わないものは null）。

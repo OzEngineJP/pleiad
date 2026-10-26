@@ -2,7 +2,7 @@
 //
 //   node tests/lib/backend-matrix.mjs
 //
-// 文書の写し（docs/backend-matrix.md）は持たない（ADR 0271）。正本はコードだけにする。
+// 文書の写し（docs/backend-matrix.md）は持たない（ADR 0273）。正本はコードだけにする。
 // 表は手で書かない。印・エージェントを足したら、このコマンドで一覧を確かめる。
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -105,7 +105,7 @@ export function renderMatrix(natives) {
   return [
     '# エージェント × 機能の対応表',
     '',
-    '<!-- 端末に出す一覧（node tests/lib/backend-matrix.mjs）。文書の写しは持たない（ADR 0271） -->',
+    '<!-- 端末に出す一覧（node tests/lib/backend-matrix.mjs）。文書の写しは持たない（ADR 0273） -->',
     '',
     '✓ = 対応（値はそのまま） / 補 = Pleiad の共通処理が補う / 無理 = 不可能（理由は下） / 未実装 = Issue（下）',
     '',

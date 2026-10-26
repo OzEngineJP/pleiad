@@ -1,4 +1,4 @@
-# 0271 能力の印を対応・補う・不可能・未実装の 4 つの状態にし、コードを唯一の正本にする
+# 0273 能力の印を対応・補う・不可能・未実装の 4 つの状態にし、コードを唯一の正本にする
 
 - 状態: 承認（2026-10-26）
 - 関連: [0220](0220-backend-contract-and-agent-descriptors.md)（能力の印の明示）、[0231](0231-run-args-delivery-capabilities.md)（配達物を印で絞る）、[0234](0234-common-backend-delivery-minimum.md)（標準の最低限）、[0020](0020-i18n-dictionary-and-ratchet.md)（ラチェットの形）、[0081](0081-control-surface-registry.md)（載せ忘れの lint）
