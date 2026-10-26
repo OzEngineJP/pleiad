@@ -1,7 +1,7 @@
 // OpenCode v2 HTTP/SSE transport. The holder owns the --stdio lease during updates.
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { spawnCli } from '../cli-installation.mjs';
+import { spawnCli, directCommand } from '../cli-installation.mjs';
 import { killTree } from './antigravity-background.mjs';
 import { createV2Protocol } from './opencode-v2.mjs';
 import { opencodeRelay } from '../opencode-relay.mjs';
@@ -72,8 +72,9 @@ export function createOpencodeServer({ command, env=async()=>({}), beforeStart=(
     try {
       if(h) {
         heldChild=h;
-        const [file,...prefix]=argv;
-        base=await h.spawn({command:file,args:[...prefix,...args],env:childEnv,cwd:process.cwd(),timeoutMs:START_TIMEOUT_MS});
+        // .cmd の包みは解いた形で起こす。解けない argv（試験の差し替え）はそのまま渡す（保持役の口が起こせなければ exit で返る）
+        const target=directCommand(argv) ?? { command: argv[0], args: argv.slice(1) };
+        base=await h.spawn({command:target.command,args:[...target.args,...args],env:childEnv,cwd:process.cwd(),timeoutMs:START_TIMEOUT_MS});
         servedOrigin=await origin();
         h.setServer({protocol:2,base,auth,origin:servedOrigin,secret:extra.PLEIAD_OPENCODE_SECRET??null,...(account?{account}:{})});
         h.onGone(exit=>{if(heldChild===h)lost(exit.code ?? exit.signal ?? exit.error);});

@@ -9,7 +9,7 @@ export const PROTOCOL_REJECT_CODES = new Set([-32600, -32601, -32602]);
  * session/prompt の応答が回の終わりまで返らないバックエンド用（折り込んだ時点＝渡った時点。docs/design.md「配送」）。
  * 受理後の cancelled・接続断は、読まれたかを区別できないので合図を出さない（送信待ちへ戻さない）
  */
-export function createAcpSteer({ client, sessionId, emit, ready, onSent, interject = null, confirmOnAccept = false }) {
+export function createAcpSteer({ client, sessionId, emit, ready, onSent, interject = null, confirmOnAccept = false, onCall = null }) {
   const calls = new Map(), interjections = new Map();
   let canInterject = typeof interject === 'function';
   const remove = (key, entry) => { interjections.delete(key); entry.resolve(); };
@@ -49,6 +49,8 @@ export function createAcpSteer({ client, sessionId, emit, ready, onSent, interje
       let call;
       try { call = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text }] }, { timeoutMs: 0 }); }
       catch { return false; }
+      // 走っている依頼が増えたことを札に反映させる（保持役に載せたターンは、サーバーが落ちても付け直す側が応答を拾えるように）
+      try { onCall?.(); } catch {}
       const withdraw = onSent?.(text);
       const entry = { id: item?.id ?? null, delivered: false };
       calls.set(call, entry);

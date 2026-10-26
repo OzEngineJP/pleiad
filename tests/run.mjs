@@ -719,6 +719,10 @@ const SUITES = [
   // 「途中でサーバーを止めて起こし直す」試験の仕掛け（issue #143 段 1・ADR 0270）: 既存の土台に被せ、普通に止めて普通に起こす。
   // held: のターン（Claude の代用）は続き、ply_shell の start のジョブは今の作りでは消える（段 2・3 で反転する）
   './unit/restart-mode.mjs',
+  // 段 2b: Devin・Grok の ACP の子を保持役に載せ、普通に止めて起こし直してもターン・承認・途中送信が続く
+  './unit/restart-acp.mjs',
+  // 段 2b: Codex のターン専用の app-server（Pleiad がコンテキストを持つ会話）も、普通に止めて起こし直してもターンが続く
+  './unit/restart-codex-turn.mjs',
   // 引き継ぎを main の切り替えの流れごと（無停止の更新 2d）: 作業の最中でも待たずに替わる・S2 が立たなければ前の版で付け直す・引き継げない作業があれば待つ
   './unit/desktop-handover.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数

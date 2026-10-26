@@ -30,6 +30,38 @@ export function findExecutable(command, env = process.env, platform = process.pl
   return null;
 }
 
+/**
+ * npm の .cmd/.bat の包み（"%_prog%" "%dp0%\node_modules\…\bin\x.js" %*）を、中のスクリプトに解く。
+ * 戻り値は { kind: 'node', script } か { kind: 'exe', script }、解けなければ null。
+ * 包みは cmd.exe 経由でしか起こせず、保持役（shell: false）では起こせない（ADR 0270 の規則 ①）
+ */
+export function unwrapCommandShim(file, { readFile = fs.readFileSync, platform = process.platform } = {}) {
+  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(String(file))) return null;
+  let text;
+  try { text = String(readFile(file, 'utf8')); } catch { return null; }
+  const dir = path.dirname(file);
+  // %dp0% は包みのフォルダー（末尾に \）。JS のスクリプトを先に、無ければ node.exe 以外の実行ファイルを取る
+  const candidates = [...text.matchAll(/%dp0%[\\/]+([^"\r\n]+?\.(?:js|mjs|cjs|exe))(?=["\s])/gi)].map(m => path.resolve(dir, m[1]));
+  const target = candidates.find(p => /\.[cm]?js$/i.test(p))
+    ?? candidates.find(p => /\.exe$/i.test(p) && !/^node\.exe$/i.test(path.basename(p)));
+  if (!target) return null;
+  try { if (!fs.statSync(target).isFile()) return null; } catch { return null; }
+  return { kind: /\.exe$/i.test(target) ? 'exe' : 'node', script: target };
+}
+
+/**
+ * 保持役が shell 無しで起こせる形に直す。.cmd/.bat は包みの中身（node のスクリプト・実行ファイル）に解く。
+ * 解けなければ null（その子は保持役に載せない）
+ */
+export function directCommand(argv, { platform = process.platform, node = process.execPath } = {}) {
+  const [command, ...args] = Array.isArray(argv) ? argv : [];
+  if (!command) return null;
+  if (platform !== 'win32' || !/\.(cmd|bat)$/i.test(String(command))) return { command, args };
+  const inner = unwrapCommandShim(command, { platform });
+  if (!inner) return null;
+  return inner.kind === 'node' ? { command: node, args: [inner.script, ...args] } : { command: inner.script, args };
+}
+
 export function cliCommand(id) {
   // **id は必ずバックエンド id で引く**（installation() は backend.id で引かれる。実行ファイル名は記述の cli.exe）
   const cli = agentOf(id)?.cli ?? null;
@@ -48,6 +80,11 @@ export function cliCommand(id) {
       if (script && process.platform === 'win32' && /\.exe$/i.test(script) && fs.statSync(script).isFile()) return [script, ...argv.slice(1)];
     } catch {}
   }
+  // 包みの中身の場所が分からない（npmPackage の書かれていない CLI・別の置き方の包み）ときは、包みの本文から解く
+  if (exe && /\.(cmd|bat)$/i.test(exe)) {
+    const direct = directCommand([exe, ...argv.slice(1)]);
+    if (direct) return [direct.command, ...direct.args];
+  }
   return exe ? [exe, ...argv.slice(1)] : null;
 }
 
@@ -65,6 +102,9 @@ export function spawnCli(argv, args, options = {}) {
   if (!argv) throw new Error(t('cli.installAgent'));
   const [command, ...prefix] = argv;
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
+    // 包みの中身を直に起こせるなら cmd.exe を挟まない（保持役と同じ形。木に cmd.exe が残らない）
+    const direct = directCommand([command, ...prefix, ...args]);
+    if (direct) return spawn(direct.command, direct.args, { ...options, windowsHide: true });
     const quote = value => {
       if (/["%\r\n]/.test(value)) throw new Error(t('cli.badArgument'));
       return `"${value}"`;

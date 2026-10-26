@@ -12,11 +12,12 @@
 //   detach の後: write・end・kill を保持役へ転送しない（旧サーバーの query を閉じても、CLI の stdin は閉じず止めない）
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
-import { execFile } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
+import { run } from '../process.mjs';
+import { unwrapCommandShim } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
 
@@ -65,6 +66,9 @@ export function heldCommand({ command, args = [] }, { platform = process.platfor
         }
       } catch { /* 次の置き場 */ }
     }
+    // 置き方が違う包み（別の版・別の置き場）は、包みの本文から中のスクリプトを解く
+    const inner = unwrapCommandShim(command, { platform });
+    if (inner) return inner.kind === 'node' ? { command: execPath, args: [inner.script, ...args] } : { command: inner.script, args };
     return null;
   }
   return { command, args };
@@ -84,11 +88,12 @@ export function cliVersion(exe, { run = askVersion } = {}) {
   }
   return versions.get(key);
 }
-function askVersion(exe) {
+async function askVersion(exe) {
   const target = commandOf(exe);
   if (!target) return null;
-  return new Promise(resolve => execFile(target.command, [...target.args, '--version'], { timeout: 10_000, windowsHide: true },
-    (error, stdout) => resolve(error ? null : parseCliVersion(stdout))));
+  // 完了を待つ短命の子（ADR 0270 の規則 ①。core/process.mjs の run）
+  const result = await run(target.command, [...target.args, '--version'], { timeoutMs: 10_000, killTree: true }).catch(() => null);
+  return result && result.exitCode === 0 ? parseCliVersion(result.stdout) : null;
 }
 
 /**

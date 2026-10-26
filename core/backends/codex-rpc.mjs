@@ -644,4 +644,5 @@ export class CodexRpc {
 }
 
 export const rpc = new CodexRpc({}, { acquire: acquireHeldAppServer });
-process.once('exit', () => { for (const instance of instances) instance.stop(); });
+// サーバーが落ちても、保持役の子は止めない（新しいサーバーが拾う。ADR 0270 の規則 ①）。直に起こした子だけ止める
+process.once('exit', () => { for (const instance of instances) if (!instance.heldChannel) instance.stop(); });

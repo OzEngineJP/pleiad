@@ -13,6 +13,7 @@
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
+import { directCommand } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource, replayRecord } from '../adopt.mjs';
 import { sweepHeldHomes } from './antigravity-context.mjs';
@@ -31,11 +32,11 @@ export function heldEnabled(env = process.env, boot = bootEnv) {
   return Boolean(boot('AGENT_HOST_RUNTIME_ROOT') ?? env.AGENT_HOST_RUNTIME_ROOT);
 }
 
-/** 保持役に起こさせるコマンド。保持役は command と args を解釈せず shell: false で起こす。shell が要る .cmd・.bat は null（載せない） */
+/** 保持役に起こさせるコマンド。保持役は command と args を解釈せず shell: false で起こす。shell が要る .cmd・.bat は包みの中身に解く（解けなければ null で載せない） */
 export function heldAgyCommand(argv, { platform = process.platform } = {}) {
   const [command, ...args] = Array.isArray(argv) ? argv : [];
-  if (!command || (platform === 'win32' && /\.(cmd|bat)$/i.test(command))) return null;
-  return { command, args };
+  if (!command) return null;
+  return directCommand([command, ...args], { platform });
 }
 
 /**

@@ -282,6 +282,8 @@
     "relay": 3419,
     "release-bump": 18209,
     "release-ci-gate": 5459,
+    "restart-acp": 75000,
+    "restart-codex-turn": 15000,
     "remote-agent": 6380,
     "remote-agent-e2e": 70726,
     "remote-agent-hardening": 4826,

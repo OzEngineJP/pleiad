@@ -29,7 +29,9 @@ function waitForExit(child, timeoutMs) {
 }
 
 export class DevinAcp {
-  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onNotification = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  devin: dropped an oversize ACP line (${bytes} bytes)`), timeoutMs = 30_000 } = {}) {
+  // held: 保持役の子に載せた CLI の口（core/backends/acp-held.mjs の createHeldAcp）。無ければ今の形（spawnCli）
+  // adopt: 付け直し（{ promptId }。走っている session/prompt の応答を拾い直す）。initialize も session の作成も送らない
+  constructor({ command = cliCommand('devin'), cwd, env, onUpdate = () => {}, onNotification = () => {}, onResponse = () => {}, onRequest = async () => { throw rpcError('Unsupported client request', -32601); }, onGone = () => {}, onDrop = ({ bytes }) => console.error(`  devin: dropped an oversize ACP line (${bytes} bytes)`), timeoutMs = 30_000, held = null, adopt = null } = {}) {
     this.command = command;
     this.cwd = cwd;
     this.env = env;
@@ -39,6 +41,13 @@ export class DevinAcp {
     this.onRequest = onRequest;
     this.onGone = onGone;
     this.timeoutMs = timeoutMs;
+    this.held = held;
+    this.adopt = adopt;
+    this.adopted = Boolean(adopt);
+    // 付け直し: 記録の再生で出てくる依頼のうち、まだ答えていないもの（保持役の控え）だけを聞き直す。聞いた依頼の id
+    this.pendingRequests = new Set();
+    this.asked = new Set();
+    this.trailing = [];   // 付け直したターンで、走っている途中送信の応答を待つ約束
     this.proc = null;
     this.starting = null;
     this.closing = false;
@@ -75,8 +84,93 @@ export class DevinAcp {
   start() {
     if (this.closing || this.gone) return Promise.reject(rpcError('Devin ACP is closed'));
     if (this.starting) return this.starting;
-    this.starting = this.#start();
+    this.starting = this.held ? this.#startHeld() : this.#start();
     return this.starting;
+  }
+
+  /**
+   * 保持役の子として起動する。付け直し（adopt）は子が走っているので initialize を送らず、走っている session/prompt の応答だけを待つ。
+   * 読み（記録の再生と続き）は、付け直しでは写しを組み立てた後に begin() で始める（core/backends/acp-held.mjs）
+   */
+  async #startHeld() {
+    try {
+      const child = this.held.start({ argv: [...this.command, 'acp'], cwd: this.cwd, env: this.env ?? process.env });
+      this.proc = child;
+      child.stdin.on('error', () => this.#fail(rpcError('Devin ACP input pipe failed')));
+      child.stdout.on('error', () => this.#fail(rpcError('Devin ACP output pipe failed')));
+      child.stderr.on('error', () => this.#fail(rpcError('Devin ACP error pipe failed')));
+      child.stdout.on('data', (chunk) => this.#stdout(chunk));
+      child.stderr.on('data', (chunk) => this.#stderr(chunk));
+      child.on('error', error => this.#fail(processError(error)));
+      child.on('exit', () => this.#fail(rpcError('Devin ACP exited')));
+      if (this.adopted) {
+        // 2 回目の initialize は送らない（子は initialize 済み）。走っている prompt の応答の枠だけを開ける
+        this.#awaitResponse(this.adopt?.promptId, 'session/prompt');
+        return null;
+      }
+      this.held.begin({ onLine: (line, opts) => this.#line(line, opts) });
+      if (this.closing) throw rpcError('Devin ACP closed during startup', -32800);
+      return await this.call('initialize', {
+        protocolVersion: 1,
+        clientInfo: CLIENT_INFO,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+      }, { timeoutMs: this.timeoutMs });
+    } catch (error) {
+      const safe = error?.[SAFE_ERROR] ? error : processError(error);
+      this.#fail(safe);
+      throw safe;
+    }
+  }
+
+  /** 付け直し: 読みを始める（写しを組み立てた後に呼ぶ） */
+  begin() {
+    if (!this.held) return;
+    this.held.begin({ onLine: (line, opts) => this.#line(line, opts) });
+  }
+
+  /** 付け直した子の attach の答え（pendingRequests。答えていない依頼）。起こした子は null */
+  async open(from = 1) {
+    const state = this.held ? await this.held.open(from) : null;
+    if (Array.isArray(state?.pendingRequests)) this.pendingRequests = new Set(state.pendingRequests.map(p => p.requestId));
+    return state;
+  }
+
+  /** 走っている session/prompt の id（走っているターンと途中送信）。札に置き、付け直した側が応答を拾い直す */
+  pendingPromptIds() {
+    return [...this.pending].filter(([, p]) => p.method === 'session/prompt').map(([id]) => id);
+  }
+
+  /**
+   * 付け直し: 走っている途中送信の応答の枠を開ける（本文は要らない。決着を待つためだけ）。
+   * 途中送信は回の終わりの後に答えるので、本文の応答だけを待って閉じると、続けて届く途中送信の返答を読めない
+   */
+  adoptTrailing(ids = []) {
+    for (const id of ids) {
+      if (this.pending.has(id)) continue;
+      const promise = new Promise((resolve, reject) => { this.pending.set(id, { resolve, reject, timer: null, method: 'session/prompt', params: null }); });
+      promise.catch(() => {});
+      this.trailing.push(promise);
+    }
+  }
+
+  /** 付け直したターン: 途中送信の決着を待つ（上限つき）。閉じる前に呼ぶ */
+  async settleTrailing(ms = 2000) {
+    if (!this.trailing.length) return;
+    let timer;
+    try { await Promise.race([Promise.allSettled(this.trailing), new Promise(resolve => { timer = setTimeout(resolve, ms); timer.unref?.(); })]); }
+    finally { clearTimeout(timer); this.trailing = []; }
+  }
+
+  /** 走っている依頼の応答の枠を開ける（付け直し）。id は前のサーバーが付けたもの（pleiad-<n>）。応答は this.running で待つ */
+  #awaitResponse(id, method) {
+    if (typeof id !== 'string' && typeof id !== 'number') throw rpcError('Devin ACP adoption has no running request');
+    if (this.pending.has(id)) throw rpcError('Duplicate JSON-RPC id');
+    this.running = new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject, timer: null, method, params: null });
+    });
+    this.running.catch(() => {});
+    const n = /^pleiad-(\d+)$/.exec(String(id))?.[1];
+    if (n) this.nextId = Math.max(this.nextId, Number(n));
   }
 
   async #start() {
@@ -115,20 +209,23 @@ export class DevinAcp {
     }
   }
 
-  call(method, params, { timeoutMs = this.timeoutMs } = {}) {
+  call(method, params, { timeoutMs = this.timeoutMs, id = null } = {}) {
     if (!this.proc || this.gone || this.closing) return Promise.reject(rpcError('Devin ACP is not running'));
-    const id = `pleiad-${++this.nextId}`;
-    if (this.pending.has(id)) return Promise.reject(rpcError('Duplicate JSON-RPC id'));
+    const requestId = id ?? `pleiad-${++this.nextId}`;
+    if (this.pending.has(requestId)) return Promise.reject(rpcError('Duplicate JSON-RPC id'));
     return new Promise((resolve, reject) => {
       const timer = timeoutMs > 0 ? setTimeout(() => {
-        if (!this.pending.delete(id)) return;
+        if (!this.pending.delete(requestId)) return;
         reject(rpcError('Devin ACP request timed out', -32001));
       }, timeoutMs) : null;
-      this.pending.set(id, { resolve, reject, timer, method, params });
-      try { this.#write({ jsonrpc: '2.0', id, method, params }); }
-      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
+      this.pending.set(requestId, { resolve, reject, timer, method, params });
+      try { this.#write({ jsonrpc: '2.0', id: requestId, method, params }); }
+      catch (error) { clearTimeout(timer); this.pending.delete(requestId); reject(error); }
     });
   }
+
+  /** 次に送る依頼の id（server/prompt の id を、書く前に札へ置くため）。使うと番号が進む */
+  newId() { return `pleiad-${++this.nextId}`; }
 
   notify(method, params) {
     if (!this.proc || this.gone || this.closing) throw rpcError('Devin ACP is not running');
@@ -146,13 +243,13 @@ export class DevinAcp {
     this.reader.push(chunk);
   }
 
-  #line(line) {
+  #line(line, opts = null) {
     if (this.gone || this.closing) return;
     if (!line.trim()) return;
     let frame;
     try { frame = JSON.parse(line); } catch { return this.#fail(rpcError('Invalid Devin ACP JSON frame', -32700)); }
     if (!frame || frame.jsonrpc !== '2.0' || typeof frame !== 'object') return this.#fail(rpcError('Invalid Devin ACP JSON-RPC frame', -32600));
-    this.#frame(frame);
+    this.#frame(frame, opts);
   }
 
   #stderr(chunk) {
@@ -162,22 +259,22 @@ export class DevinAcp {
     this.stderrTail = tail.toString('utf8');
   }
 
-  #frame(frame) {
+  #frame(frame, opts = null) {
     if (Object.hasOwn(frame, 'method')) {
       if (typeof frame.method !== 'string' || !frame.method) return this.#fail(rpcError('Invalid Devin ACP method', -32600));
       if (Object.hasOwn(frame, 'id')) {
         if (!(typeof frame.id === 'string' || (typeof frame.id === 'number' && Number.isFinite(frame.id)))) return this.#fail(rpcError('Invalid Devin ACP request id', -32600));
-        return this.#serverRequest(frame);
+        return this.#serverRequest(frame, opts);
       }
       if (frame.method === 'session/update') {
         try {
-          const result = this.onUpdate(frame.params);
+          const result = this.onUpdate(frame.params, opts);
           if (result && typeof result.then === 'function') result.catch(() => this.#fail(rpcError('Devin ACP update handler failed')));
         } catch { this.#fail(rpcError('Devin ACP update handler failed')); }
       } else {
         // session/update 以外の通知（_cognition.ai/compaction などの ext_notification）。要求（id 付き）は上で処理する
         try {
-          const result = this.onNotification(frame.method, frame.params);
+          const result = this.onNotification(frame.method, frame.params, opts);
           if (result && typeof result.then === 'function') result.catch(() => this.#fail(rpcError('Devin ACP notification handler failed')));
         } catch { this.#fail(rpcError('Devin ACP notification handler failed')); }
       }
@@ -212,9 +309,14 @@ export class DevinAcp {
     }
   }
 
-  #serverRequest(frame) {
+  #serverRequest(frame, opts = null) {
     const idKey = `${typeof frame.id}:${String(frame.id)}`;
+    // 記録の再生（印から ack まで）の依頼は履歴。まだ答えていないもの（保持役の控え。付け直しで渡し直される）だけを聞き直す
+    if (opts?.replay && !opts?.redelivered && !this.pendingRequests.has(JSON.stringify(frame.id))) { this.seenIncoming.add(idKey); return; }
+    // 記録の続きと控えの渡し直しで同じ依頼が 2 回来る。聞くのは 1 回だけ
+    if (this.asked.has(idKey)) return;
     if (this.seenIncoming.has(idKey) || this.seenIncoming.size >= 10_000) return this.#fail(rpcError('Duplicate or excessive Devin ACP request id', -32600));
+    this.asked.add(idKey);
     this.seenIncoming.add(idKey);
     this.incoming.add(idKey);
     const signal = this.connectionAbort.signal;
@@ -246,6 +348,7 @@ export class DevinAcp {
   }
 
   async #terminateTree() {
+    if (this.held) { this.held.kill(); return; }
     const child = this.proc;
     if (!child?.pid) return;
     // Each POSIX child owns a detached process group. The group can survive the
@@ -259,6 +362,18 @@ export class DevinAcp {
     }
   }
 
+  /**
+   * 旧サーバーが手を離した（保持役に detach した）。以後この子には書かない・読まない。
+   * 待っている依頼は残す（runTurn は handedOff で終わる。答えは新しいサーバーが受ける）
+   */
+  markHandedOff() {
+    if (this.gone) return;
+    this.gone = true;
+    this.closing = true;
+    this.reader.reset();
+    this.connectionAbort.abort();
+  }
+
   async close() {
     if (this.closed) return this.closed;
     this.closing = true;
@@ -268,6 +383,9 @@ export class DevinAcp {
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear();
     this.closed = (async () => {
+      // 手を離した子（保持役が持つ）は止めない
+      if (this.held?.handedOff) { this.gone = true; return; }
+      if (this.held) { await this.held.close(); this.gone = true; return; }
       const child = this.proc;
       if (!child) { this.gone = true; return; }
       if (this.reaping) {

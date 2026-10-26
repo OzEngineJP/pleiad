@@ -21,7 +21,7 @@ import { createTerminalTracker } from "./codex-background.mjs";
 import { codexContextRpc } from './context-options.mjs';
 import { promptTitle } from '../prompt-title.mjs';
 import { CodexRpc as BaseCodexRpc } from './codex-rpc.mjs';
-import { configureCodexHeld, heldAppServer as heldForAccount, acquireHeldAppServer } from './codex-held.mjs';
+import { configureCodexHeld, heldAppServer as heldForAccount, acquireHeldAppServer, acquireHeldTurnAppServer } from './codex-held.mjs';
 import { codexAccountKey, prepareCodexAccount, readCodexCredential, validateCodexAccount, codexAccountLoggedOut, markCodexLoggedOut } from './codex-accounts.mjs';
 import { ADOPT_TURN_MARK } from '../adopt.mjs';
 import { codexHooksState, codexListProblem } from '../hooks-plan.mjs';
@@ -54,8 +54,12 @@ const loginCancels = new Set();
 class CodexRpc extends BaseCodexRpc {
   constructor(config = {}, options = {}) { super({ ...(account ? { cli_auth_credentials_store: 'file' } : {}), ...config }, { ...(env ? { env } : {}), ...options }); }
 }
-const contextRpc = async (context, cwd, native) => {
-  const client = await withCodexEnvironment(env, () => codexContextRpc(context, cwd, native));
+const contextRpc = async (context, cwd, native, { held = true } = {}) => {
+  // ターン専用の app-server（Pleiad がコンテキストを持つ会話）も保持役の子に載せる（無停止の更新 段 2b）。
+  // 載せられなければ今の流れ（このサーバーの子。サーバーの入れ替えで止まる）。圧縮のターンは載せない（付け直さないので、残すと止める人が居なくなる）
+  const client = await withCodexEnvironment(env, () => codexContextRpc(context, cwd, native, {
+    acquire: held ? config => acquireHeldTurnAppServer(config, { env, account }) : null,
+  }));
   if (account) client.config.cli_auth_credentials_store = 'file';
   return client;
 };
@@ -1385,7 +1389,7 @@ const backend = {
   async compact({ sessionId, emit, cwd, hooksRuntime = null, contextRuntime = null }) {
     if (!validId(sessionId)) throw new Error(t('codex.errors.noThreadId', { method: 'thread/compact/start' }));
     // 通常のターンと同じ設定のサーバーを使う。共有サーバーで開いたままにすると、次の専用サーバーが書き込みロックで再開できない。
-    const rpc = contextRuntime ? await contextRpc(contextRuntime, cwd, nativeRpc) : nativeRpc;
+    const rpc = contextRuntime ? await contextRpc(contextRuntime, cwd, nativeRpc, { held: false }) : nativeRpc;
     let off, timer;
     try {
       // 圧縮でも PreCompact / PostCompact の hooks が動く。通常のターンと同じく、Hooks を Pleiad がそろえる会話は登録と止める key を渡し、
@@ -1844,15 +1848,18 @@ const backend = {
     // 付け直しは adoptThread が（記録の再生の後に）付ける。先に付けると、続きの frame が再生より前に届く
     let detach = adopt ? () => {} : threadId ? rpc.attach(threadId, handlers) : rpc.claimOrphan(handlers);
     let promptSent = Boolean(adopt);
-    // 保持役に載っている共有の app-server のターン（札と印を置く。手を離す口 control.holder）
+    // ターン専用の app-server（Pleiad がコンテキストを持つ会話）のターン。付け直しは札の dedicated で分かる
+    const dedicated = Boolean(contextRuntime) || Boolean(adopt?.card?.dedicated);
+    // 保持役に載っている app-server のターン（札と印を置く。手を離す口 control.holder）
     let heldServer = null;
     let handedOff = false;
     const bindHeld = (fresh) => {
-      if (rpc !== nativeRpc || ephemeral || !control) return;
-      heldServer = heldAppServer();
+      if (ephemeral || !control) return;
+      // 共有の app-server はアカウントごとの口、ターン専用はこの rpc の口（rpc.heldChannel）を使う
+      heldServer = rpc === nativeRpc ? (rpc.heldChannel ?? heldAppServer()) : rpc.heldChannel;
       if (!heldServer) return;
       // 札のバックエンドの欄（server の takeCard が読む）: 付け直す側の記録の再生では戻らない控え
-      control.backendCard = () => ({ held: true, turnId, steered: [...steered], asked: [...asked], rollout: { path: rolloutPath, from: rolloutFrom } });
+      control.backendCard = () => ({ held: true, dedicated, turnId, steered: [...steered], asked: [...asked], rollout: { path: rolloutPath, from: rolloutFrom } });
       control.holder = {
         label: card => heldServer.putCard(threadId, card),
         // 旧サーバーの手を離す口: 札を置いて保持役へ detach し（全部のターンをまとめて 1 回）、このターンは終える（締めるのは付け直したサーバー）
@@ -1991,9 +1998,9 @@ const backend = {
       }
 
       // ターンの外でも生き続ける端末を見張る（issue #6）。
-      // contextRuntime のターンはターンの終わりに app-server ごと落とす（端末も道連れ）。
+      // ターン専用の app-server はターンの終わりに落とす（端末も道連れ）。
       // ephemeral（タイトル生成）はそもそも会話ではないので数えない
-      if (!contextRuntime && !ephemeral) watchThread(threadId, hostSessionId ?? threadId);
+      if (!dedicated && !ephemeral) watchThread(threadId, hostSessionId ?? threadId);
       if (computerRuntime && !adopt) checkBundledComputerUse(rpc, threadId);
 
       if (control) control.handle = { threadId, get turnId() { return turnId; } };
@@ -2080,7 +2087,7 @@ const backend = {
     } finally {
       detach();
       // turn/completed が来ない終わり方（error 通知・中断）でも、走ったままの端末を裏へ回す
-      if (!contextRuntime && !ephemeral) endTurn(threadId);
+      if (!dedicated && !ephemeral) endTurn(threadId);
       if (ephemeral && threadId) await rpc.request("thread/unsubscribe", { threadId }).catch(() => {});
       // 保持役の札と印を外す（手を離したターンは、新しいサーバーの札のまま。HeldAppServer は detach 済みなので何も送らない）
       if (heldServer) heldServer.endTurn(threadId);
@@ -2458,6 +2465,13 @@ backend.holdsBackground = ({ account = null } = {}) => Boolean(heldForAccount(ac
 export async function codexRpcForAccount(account) {
   await codexBackendForAccount(account);
   return account ? (await accountBackends.get(codexAccountKey(account))).rpc : defaultRpc;
+}
+/**
+ * ターン専用の app-server（Pleiad がコンテキストを持つ会話。1 ターン 1 本）を、起動で拾った子に話させる rpc を作る。
+ * core/backends/codex-held.mjs の expandCodexHeld が呼ぶ（子は initialize 済みなので、start は initialize を送らない）
+ */
+export async function codexRpcForHeld({ held }) {
+  return new BaseCodexRpc({}, { acquire: async () => held });
 }
 backend.accountDispose = async ({ account }) => {
   const key = codexAccountKey(account), pending = accountBackends.get(key);

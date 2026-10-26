@@ -135,14 +135,50 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 ### 2b 以降に回したもの
 
-- Devin・Grok の ACP、外部の stdio MCP を保持役に載せる（段 2 の残り）
-- 残り 25 ファイルの `child_process` の移行（段 2b・4。基準は減らすときだけ更新）
+- 外部の stdio MCP を保持役に載せる（段 2 の残り。Devin・Grok の ACP は 2b で実装済み）
+- 残り 24 ファイルの `child_process` の移行（段 2b・4。基準は減らすときだけ更新）
 - Electron の `utilityProcess`（off 経路）で保持役を使う（段 4。実行場所の外の保持役を main が渡す）
 - `shell-runs` の `handOff`/`adopt` と `shell-held` の `handOff`/`abandon` を畳む（段 4。引き継ぎの経路がまだ使う）
 - ply_shell のジョブの `keepMs`（アプリの終了で止める道）・`stopAll` の後片付けの一本化（段 4）
 - `restoreAdoptedTurns` を条件なしで通す（段 4）。今は `!` の行と ply_shell だけ条件なし
 - 出力の包みの起動の 76 ms を減らす（常駐の包み・保持役が直にシェルを起こす。測って要れば。2b 以降）
 - 承認・質問のカード・委譲の実行の控え・`outlivesTurn`・圧縮の予約の DB 化（段 3）
+
+## 2b の実装（2026-10-26。段 2 の後半）
+
+段 2 の残りを実装した。対象は Devin・Grok の ACP、Codex のターン専用の app-server、npm の `.cmd` の包みで保持役に載らなかった経路。
+
+### Devin・Grok の ACP（`core/backends/acp-held.mjs`）
+
+- 載せるか（`heldAcpPlan`）: `AGENT_HOST_DEVIN_HOLDER`・`AGENT_HOST_GROK_HOLDER`。`on` は載せる・`off` は載せない。**無ければ、実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）があるときだけ載せる**（2a の `!` の行・ply_shell と同じ既定）。bot の会話は載せない（`restoreTurn` が付け直さない）。`.cmd` は包みの中身に解いてから載せる（解けなければ今の流れ）
+- 子は policy `jsonrpc`（1 ターン 1 プロセス。id は `acp-…`）。`createHeldAcp` が ChildProcess の最小の写し（stdin・stdout・stderr・kill・exit）を返し、`DevinAcp`・`GrokAcp` は `spawnCli` の代わりにこれを使う
+- 印（`turn`）は `session/prompt` を書く直前に打つ。札はサーバーのターンの札（`core/turn-card.mjs`）をそのまま置く。札を先に置いて 1 tick 待ち、印を打ってから書く（落ちた瞬間に印だけあって札が無い、を減らす）
+- 札のバックエンドの欄（`backendCard`）は `{ held: true, devin|grok: { promptId, sessionId, sent, shown, prompts } }`。`promptId` は走っている `session/prompt` の id（付け直した側が応答を拾い直す）、`prompts` は走っている途中送信の id（本文の応答の後に届く返答を、閉じる前に待つ）、`sent`・`shown` は写しのエコー合わせ（16 KB を超えるときは入れない＝人が書いた分で組み立てる）
+- 付け直しは既存の道（規則 ③）。`readHolderSources` が札と印を持つ子を拾い、`restoreTurn` → バックエンドの `adoptTurn` → `runTurn(args, { source, card })`。**initialize も session の作成も設定の適用も送らない**。印から ack までを再生（emit の replay。画面へは流さない）し、続きを流して行ごとに ack する
+- 承認・質問: 保持役の `jsonrpc` の控え（`pendingRequests`）が、**答えていない依頼だけ**を attach で渡し直す。再生の履歴に残っている答え済みの依頼は出し直さない。記録の続きと控えで同じ依頼が 2 回来ても、聞くのは 1 回（`asked`）。承認の id はツールの id から決まるので、旧サーバーと同じ id で出直す（`core/approval-id.mjs`）
+- 途中送信（steer）: 渡った合図（`confirmOnAccept`）を出す前に、依頼の id を札へ反映する（`acp-steer.mjs` の `onCall` → `touchCard`）。止める前に子へ書けた途中送信は、子の待ち行列に残り、新しいサーバーが返答まで読む。書けなかった分は送信待ちに戻る（今のまま）
+- 手放し（引き継ぎ）: `control.holder.handOff` が札を置いて保持役へ detach し、`markHandedOff` で以後の読み書きを止め、`runTurn` は `handedOff` で終わる（締めるのは新しいサーバー）。ターンが終わった子は、札と印を外してから止める（`endTurn` → `close`）
+- サーバーの終わりは子を止めない。2c の `codex-held.mjs` と `codex-rpc.mjs` にあった `process.once('exit')` の kill を外した（アプリの終了だけが `exitAfterStoppingHeld` で止める。落ちた後は `keepMs` の保険）
+
+### Codex のターン専用の app-server
+
+- Pleiad がコンテキストを持つ会話（`contextRuntime`）の app-server は 1 ターン 1 本。`context-options.mjs` の `codexContextRpc` に acquire を渡し、`acquireHeldTurnAppServer` が保持役の子として起こす（id は `codex-turn-…`、policy `jsonrpc`、`keepMs` は共有と同じ 10 分）
+- 札は共有の app-server と同じ種類（`k: 'codex-app-server'`）に `dedicated: true` と起こしたときの `-c`（`config`）を足したもの。ターンの札は `putCard` で入れる（`bindHeld` が `rpc.heldChannel` を使う。共有は `heldAppServer()`）
+- 起動で拾った子は `expandCodexHeld` が `dedicated` を見て、その子だけを話す `CodexRpc` を作り（`codexRpcForHeld`）、initialize を送らずに `adoptThread` で印からの記録と続きを渡す。ターンの終わりに `rpc.stop()` で子を止める（1 ターン 1 本なので、idle で残さない）
+- 圧縮のターンは載せない（付け直さないので、残すと止める人が居なくなる。今の流れ＝サーバーの子）
+- サーバーの終わりに止める一覧（`stopHeldAppServer`）にターン専用の子も入れた（アプリの終了で残さない）
+
+### `.cmd` の包み（`core/cli-installation.mjs`）
+
+- `unwrapCommandShim` が npm の包みの本文から中のスクリプトを解く（`%dp0%\…\.js`／`node.exe` 以外の `.exe`）。`directCommand` は `.cmd`/`.bat` を「node とスクリプト」の形に直し、解けなければ null
+- `spawnCli`・`cliCommand` と、保持役の各口（agy・Claude・Codex・OpenCode・ACP）がこれを使う。**`.cmd` を保持役で起こせない理由は「cmd.exe 経由でしか起こせない」だけ**で、包みの中身は直に起こせるので、載せない理由にはならない。解けない包み（本文からスクリプトを見つけられない・`node_modules` の外を指す）だけ今の流れ（shell: true）に落ちる
+
+### 試験・基準
+
+- `node tests/run.mjs restart-acp --jobs 1` … Devin のツールの実行中・承認待ち、Grok のターンの途中・途中送信を、普通に止めて起こし直しても続く（7 判定）
+- `node tests/run.mjs restart-codex-turn --jobs 1` … ターン専用の app-server のターン（ゲートしたツールの実行中）が続く（2 判定）
+- `claude-held` の `--version`（`execFile`）を `run()` へ移した。`child_process` の基準は 25 → 24 ファイル（`--update-baseline`）
+- 触った範囲の既存の試験（`server-devin`・`devin-acp`・`grok-backend`・`server-grok`・`codex-held`・`server-codex`・`adopt-codex`・`adopt-held`・`adopt-agy`・`restart-mode`・`backend-contract`・`child-process-lint`・`onboarding`）が緑
 
 ## 畳むもの
 
@@ -172,7 +208,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 1. **試験の仕掛け**（この ADR と同時に試作）。「途中で止めて起こし直す」を既存の土台に被せる。今の穴を赤で出す。Claude のターン（`held:` の fake）は通る。ply_shell の `start` のジョブは、当時は落ちた（赤。段 2a で「残る」に反転した）。
 2. **プロセスの口**。`run()`/`start()` を足し、長く生きる子を `start()` へ移す。Devin・Grok（ACP）・外部の stdio MCP を保持役に載せる。`child_process` の検査を入れる。
    - 2a（実装済み 2026-10-26）: `core/process.mjs`・`desktop/process.cjs`・`child_process` の検査・`!` の行と ply_shell のジョブを `start()` へ・出力の計測（下の「2a の実装」）
-   - 2b: Devin・Grok（ACP）・外部の stdio MCP・残り 25 ファイルの移行
+   - 2b（実装済み 2026-10-26）: Devin・Grok（ACP）・Codex のターン専用の app-server・`.cmd` の包み（「2b の実装」）。外部の stdio MCP と残り 24 ファイルの移行は段 2 の残り（下の「2b 以降に回したもの」）
 3. **状態の置き場**。承認・質問のカード、ply_shell の出力、委譲の実行の控え、`outlivesTurn`、圧縮の予約を DB か保持役の記録へ移す。`handoverSettled` の「短い処理を待つ」を消す。
 4. **引き継ぎ専用の経路を畳む**。`--handover`・`stash`・`holdable`・`switch.cjs` の `waitIdle`/`blockers`/`stoppers` を消し、更新と落ちたときの復元を「止める→普通に起こす」にそろえる。off 経路も同じにする。
 
@@ -199,6 +235,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 - `core/` のモジュール構成が変わる（`core/process.mjs` を足し、`child_process` の読みをそこへ集める）。`npm test` に `child-process` の検査が増える。
 - 段 2a の影響: `core/process.mjs`・`desktop/process.cjs`・`core/ply-shell-held.mjs` を足した。`core/host-shell.mjs`・`core/holder/client.mjs`・`core/holder/holder.mjs` は口へ移した。`AGENTS.md` に `AGENT_HOST_PLY_SHELL_HOLDER`・`AGENT_HOST_HOLDER_IDLE_MS` を足し、`AGENT_HOST_SHELL_HOLDER` の説明を「既定は載せる」に直した（ほかの `AGENT_HOST_*_HOLDER` は段 2b・3）。`tests/lint-child-process.mjs`・`tests/child-process-baseline.json`（25 ファイル）を足した。ply_shell のジョブの出力と終わりの記録は保持役に残り、終わったジョブ 20 件までは `output`・`list` で読める。
+- 段 2b の影響: `core/backends/acp-held.mjs` を足した。`core/backends/devin.mjs`・`devin-acp.mjs`・`grok.mjs`・`grok-acp.mjs` は `runTurn(args, adopt)` と `adoptTurn` を持ち、能力の `handover` を true にした。`codex-held.mjs` に `acquireHeldTurnAppServer`・`codexRpcForHeld` と `dedicated` の札を足し、`codex-rpc.mjs`・`codex-held.mjs` の `process.once('exit')` から保持役の子を止める分を外した。`cli-installation.mjs` に `unwrapCommandShim`・`directCommand` を足した。`AGENTS.md` に `AGENT_HOST_DEVIN_HOLDER`・`AGENT_HOST_GROK_HOLDER`・`AGENT_HOST_CODEX_TURN_HOLDER` を足した。`child_process` の基準は 24 ファイルになった。
 - `desktop/switch.cjs` が大きく短くなる。更新の UX（待ちの表示・止まるものの確認）は「データ形式が変わる版」だけに残る。`docs/design-system.md` の切り替えの待ちの表示は、その 1 通りに絞る。
 - `AGENTS.md` の環境変数の表から `AGENT_HOST_ADOPT_*`・`AGENT_HOST_HANDOVER`（off 経路の切り替えとしての意味は残るか、段 4 で決める）を外し、`AGENT_HOST_*_HOLDER` の説明を「いつも載せる」に直す。
 - `docs/zero-downtime-update/` の design.md・plan.md は、段ごとに「今の形」へ書き換える（ADR 0151 の本文は書き換えない）。

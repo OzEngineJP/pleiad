@@ -4,7 +4,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { createClaudeAuth } from '../../core/auth/claude-cli.mjs';
-import { cliCommand, installation, findExecutable } from '../../core/cli-installation.mjs';
+import { cliCommand, installation, findExecutable, unwrapCommandShim, directCommand } from '../../core/cli-installation.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { shouldShowOnboarding } from '../../web/onboarding.mjs';
@@ -50,6 +50,20 @@ export default async function(t) {
   await fs.writeFile(path.join(dir, 'agent'), '#!/bin/sh');
   await fs.writeFile(path.join(dir, 'agent.cmd'), '@echo off');
   t.ok('Windows chooses command shim instead of extensionless POSIX script', findExecutable(path.join(dir, 'agent'), {}, 'win32') === path.join(dir, 'agent.cmd'));
+  // npm の .cmd の包みは、中の node のスクリプトに解いてから起こす（保持役は shell: false で起こす。ADR 0270 の規則 ①）
+  const shimDir = path.join(dir, 'node_modules', 'some-cli', 'bin');
+  await fs.mkdir(shimDir, { recursive: true });
+  const shimScript = path.join(shimDir, 'some-cli.js');
+  await fs.writeFile(shimScript, '');
+  const shim = path.join(dir, 'some-cli.cmd');
+  await fs.writeFile(shim, ['@ECHO off', 'GOTO start', ':find_dp0', 'SET dp0=%~dp0', 'EXIT /b', ':start', 'SETLOCAL', 'CALL :find_dp0', '',
+    'IF EXIST "%dp0%\\node.exe" (', '  SET "_prog=%dp0%\\node.exe"', ') ELSE (', '  SET "_prog=node"', ')', '',
+    'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\some-cli\\bin\\some-cli.js" %*', ''].join('\r\n'));
+  const unwrapped = unwrapCommandShim(shim, { platform: 'win32' });
+  t.ok('npm の .cmd の包みを、中の node のスクリプトに解く', unwrapped?.kind === 'node' && unwrapped.script === shimScript, JSON.stringify(unwrapped));
+  const direct = directCommand([shim, '--flag'], { platform: 'win32', node: process.execPath });
+  t.ok('解いた包みを、node とスクリプトの形で起こせる（shell 無し）', direct?.command === process.execPath && direct.args[0] === shimScript && direct.args[1] === '--flag', JSON.stringify(direct));
+  t.ok('解けない包みは載せない（directCommand は null）', directCommand([path.join(dir, 'missing.cmd')], { platform: 'win32' }) === null);
 
   // Antigravity の Windows インストーラは `%LOCALAPPDATA%gyin` へ置き、PATH はそのあと
   // `agy install` が書く。起動済みの Pleiad は PATH の変更を拾えないので、置き場を直接見ないと

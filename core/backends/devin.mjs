@@ -14,7 +14,11 @@ import { buildDevinModels, resolveDevinModel, applyDevinModel, devinAcpModel, de
 import { createDevinMapper } from './devin-normalize.mjs';
 import { COMPUTER_SERVER, computerPrompt } from './computer-delivery.mjs';
 import { createAcpSteer } from './acp-steer.mjs';
+import { createHeldAcp, heldAcpPlan } from './acp-held.mjs';
 import { devinCompactionsFromDb, devinCompactionFromNotification, devinSessionsDb } from './devin-compaction.mjs';
+
+/** 札（backendCard）に入れる発言の本文の上限（バイト）。超えたら人に書いた分だけにして、写しは人に書いた分で組み立てる */
+const CARD_TEXT_MAX = 16 * 1024;
 
 const choices = values => (values ?? []).flatMap(v => Array.isArray(v?.options) ? choices(v.options) : [v?.value]);
 const abortError = () => Object.assign(new Error('Devin turn cancelled'), { aborted: true });
@@ -102,10 +106,10 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             error => { signal.removeEventListener('abort', onAbort); reject(error); });
     });
   }
-  async function openClient(cwd, handlers = {}, extraEnv = null) {
-    const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: extraEnv ? { ...process.env, ...extraEnv } : process.env });
+  async function openClient(cwd, handlers = {}, extraEnv = null, { held = null, adopt = null, launch = null } = {}) {
+    launch ??= await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: extraEnv ? { ...process.env, ...extraEnv } : process.env });
     const Client = Acp ?? (await import('./devin-acp.mjs')).DevinAcp;
-    const client = new Client({ ...launch, ...handlers, onRequest: handlers.onRequest ?? (async method => {
+    const client = new Client({ ...launch, ...handlers, held, adopt, onRequest: handlers.onRequest ?? (async method => {
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
@@ -134,6 +138,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
   return {
     id: 'devin', label: 'Devin CLI', get description() { return t('devin.description'); },
     capabilities: { ...NO_CAPABILITIES, compact: true, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', effortInModelId: true, failureDiagnostics: true, login: true, promptDelivery: true, steer: true,
+      handover: true,          // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
       // ACP の session/new の mcpServers（type: 'http'）にブラウザー・操作一覧・コンピューター・コンテキスト・シェル・委譲を、
       // CLI の env と指示にブラウザー・秘密情報・可視化を渡す。Pleiad の指示は発言の前に足す（ACP に指示の欄が無い）
       browser: true, plyControl: true, secrets: true, visualize: true, plyAgents: true, plyInstructions: true,
@@ -182,13 +187,17 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         finally { if (client) await client.close(); }
       });
     },
-    async runTurn(args) {
+    // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは acp-held.mjs の heldAcpPlan が決める）
+    async runTurn(args, adopt = null) {
       return serial(args.sessionId ?? Symbol('new'), async () => {
         const { emit, onPromptDelivered, control } = args;
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
         let client, closePromise, sessionId = args.sessionId ?? null, mapper, verified = null, selectedMode = null, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null;
         let latestSession = null, latestSnapshot = null, latestMode = null;
+        // 保持役（無停止の更新 段 2b）: 子を載せたターンだけ。handedOff は旧サーバーが手を離した（続きは新しいサーバー）
+        let held = null, handedOff = false, handingOff = false, settleHandOff = () => {}, promptId = null, replaying = false, sentText = '', shownText = '';
+        const handedOffPromise = new Promise(resolve => { settleHandOff = resolve; });
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -214,22 +223,46 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
           }
           if (verified && (!matchesVerified(latestSnapshot, verified) || latestMode !== selectedMode)) stop(new Error(t('devin.errors.configChanged')));
         };
+        // 付け直しの再生（印から ack まで）は画面へ流さない（server の makeEmit が状態だけ作る）
+        const mapEmit = event => emit(event, replaying ? { replay: true } : undefined);
+        /**
+         * 札のバックエンドの欄（保持役に載せたターンだけ。server の takeCard が control.backendCard から読み、付け直す側の adoptTurn の card になる）。
+         * 付け直しに要る、再生では作れないもの: 走っている session/prompt の id（応答を拾い直す）と、送った本文・人が書いた分（写しのエコー合わせ。
+         * 大きいときは入れない＝人に書いた分で組み立て直す）
+         */
+        const backendCard = () => ({ held: true, devin: { promptId, sessionId,
+          sent: Buffer.byteLength(sentText) <= CARD_TEXT_MAX ? sentText : null,
+          shown: Buffer.byteLength(shownText) <= CARD_TEXT_MAX ? shownText : null,
+          // 走っている途中送信の id（回の終わりの後に答えるので、付け直した側が決着を待ってから閉じる）
+          prompts: client?.pendingPromptIds?.() ?? [] } });
+        // 札を保持役の子に置く口（server の touchCard が札の中身の変わるたびに呼ぶ）と、旧サーバーの手を離す口（core/handover.mjs）
+        const bindHolder = () => {
+          if (!control || !held) return;
+          control.holder = {
+            label: card => held.label(card),
+            handOff: async card => {
+              handingOff = true;
+              await held.handOff(card);
+              handedOff = true;
+              client?.markHandedOff?.();
+              settleHandOff();
+            },
+          };
+          control.backendCard = backendCard;
+          control.touch?.();
+        };
         let error = null, outcome = 'ok';
         try {
           if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
           check();
           // モデル一覧・CLI の起動・履歴の再生・設定の適用は送る前に済ませるが、数秒黙る。
           // その間も画面が止まって見えないよう、準備中から稼働表示に出す
-          emit({ type: 'activity', state: 'preparing' });
+          // 付け直しは、記録の再生が稼働表示を作り直す（準備中から出し直さない）
+          if (!adopt) emit({ type: 'activity', state: 'preparing' });
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
-          let list = await rawModels(cwd, local.signal);
-          // 指定されたモデルが一覧に無いとき、置き場が古いだけかもしれないので取り直して確かめる
-          if (args.model && !Object.hasOwn(buildDevinModels(list), args.model)) list = await rawModels(cwd, local.signal, { refresh: true });
-          const selection = resolveDevinModel(list, args.model ?? '');
-          check();
           // ブラウザー（AGENT_BROWSER_*）・ply_control の CLI・秘密情報と変数は、起動する CLI の env で渡す（会話のシェルへ届く）
           const extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}), ...(args.secretsRuntime?.env ?? {}) };
-          client = await openClient(cwd, {
+          const handlers = {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
             onResponse: ({ method, params, result }) => {
               if (!['session/new', 'session/load', 'session/set_config_option'].includes(method)) return;
@@ -237,25 +270,27 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               if (method === 'session/new' && typeof id === 'string') sessionId = id;
               observe(id, result?.configOptions);
             },
-            onUpdate: params => {
+            onUpdate: (params, opts) => {
               if (sessionId && params.sessionId !== sessionId) return;
               const update = params.update;
               if (update?.sessionUpdate === 'config_option_update') observe(params.sessionId, update.configOptions);
               if (update?.sessionUpdate === 'current_mode_update') observe(params.sessionId, update.currentModeId, true);
               if (fatal) return;
-              mapper?.accept(update);
+              replaying = Boolean(opts?.replay);
+              try { mapper?.accept(update); } finally { replaying = false; }
             },
             // Devin 内部の自動圧縮の合図。transcript にも残る（getCompactions が区切りとして読む）が、
             // 走っているターンではここで区切りを出す（読み直すまで見えないため）
-            onNotification: (method, params) => {
+            onNotification: (method, params, opts) => {
               if (method !== '_cognition.ai/compaction' || fatal) return;
               if (sessionId && params?.sessionId && params.sessionId !== sessionId) return;
               const event = devinCompactionFromNotification(params);
               if (!event) return;
-              if (event.status === 'started') { emit({ type: 'compaction', phase: 'start', trigger: 'auto' }); emit({ type: 'activity', state: 'compacting' }); }
+              const send = value => emit(value, opts?.replay ? { replay: true } : undefined);
+              if (event.status === 'started') { send({ type: 'compaction', phase: 'start', trigger: 'auto' }); send({ type: 'activity', state: 'compacting' }); }
               // 完了・失敗のあとは稼働表示を compacting のまま残さない。ターンは続くので thinking に戻す（次の出来事で更に変わる）
-              else if (event.status === 'completed') { emit({ type: 'compaction', phase: 'complete', trigger: 'auto', ...(event.summary ? { summary: event.summary } : {}) }); emit({ type: 'activity', state: 'thinking' }); }
-              else if (event.status === 'failed') { emit({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: event.reason ?? t('compaction.noCompletion') }); emit({ type: 'activity', state: 'thinking' }); }
+              else if (event.status === 'completed') { send({ type: 'compaction', phase: 'complete', trigger: 'auto', ...(event.summary ? { summary: event.summary } : {}) }); send({ type: 'activity', state: 'thinking' }); }
+              else if (event.status === 'failed') { send({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: event.reason ?? t('compaction.noCompletion') }); send({ type: 'activity', state: 'thinking' }); }
             },
             onRequest: async (method, params) => {
               if (method !== 'session/request_permission') throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
@@ -273,60 +308,110 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
               const selected = answer?.allow ? (answer.always && typeof always?.optionId === 'string' ? always : allow) : deny;
               return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
             },
-          }, extraEnv);
-          check();
-          // Pleiad の MCP は ACP の mcpServers で渡す（type: 'http' が要る。外すと session/new が Invalid params で断る）
-          const acpMcp = (name, runtime) => (runtime?.url ? [{ name, type: 'http', url: runtime.url, headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : []);
-          const mcpServers = [...acpMcp('ply_context', args.contextRuntime), ...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime), ...acpMcp(COMPUTER_SERVER, args.computerRuntime), ...acpMcp(SHELL_SERVER, args.shellRuntime), ...acpMcp('ply_agents', args.agentRuntime)];
-          let state;
-          if (sessionId) {
-            mapper = createDevinMapper(sessionId, emit);
-            state = await client.call('session/load', { sessionId, cwd, mcpServers });
+          };
+          let prompt = null, response = null, initialNativeId = null;
+          if (adopt) {
+            // 付け直し: 子は initialize 済みで、session も設定も済んでいる。走っている session/prompt の応答を拾い直し、
+            // 印から ack までの記録を再生して状態を作る（initialize・session/load・設定の適用・発言は送らない）
+            const card = adopt.card?.devin;
+            if (!adopt.card?.held || !card || typeof adopt.source?.write !== 'function') throw new Error('devin: the turn was not on the holder');
+            if (typeof card.promptId !== 'string' && typeof card.promptId !== 'number') throw new Error('devin: the card has no prompt id');
+            promptId = card.promptId;
+            sentText = typeof card.sent === 'string' ? card.sent : String(args.prompt ?? '');
+            shownText = typeof card.shown === 'string' ? card.shown : String(args.prompt ?? '');
+            held = createHeldAcp({ source: adopt.source });
+            client = await openClient(cwd, handlers, extraEnv, { held, adopt: { promptId } });
+            check();
+            mapper = createDevinMapper(sessionId, mapEmit);
+            mapper.beginTurn(sentText, shownText);
+            remember(sessionId, mapper); active.set(sessionId, client);
+            // attach の答え（答えていない依頼）。再生の依頼のうち、これに入っているものだけを聞き直す
+            await client.open(1);
+            // 走っている途中送信の応答の枠を開ける（本文の応答の後に続けて届く返答を、閉じる前に読む）
+            client.adoptTrailing((Array.isArray(card.prompts) ? card.prompts : []).filter(id => id !== promptId));
+            steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+              onSent: text => mapper.queueUser(text), confirmOnAccept: true, onCall: () => control?.touch?.() });
+            if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
+            bindHolder();
+            sent = true;
+            prompting = true;
+            // 再生と続き（印から）。応答は replay の途中か、その後に届く
+            client.begin();
+            response = client.running;
           } else {
-            state = await client.call('session/new', { cwd, mcpServers });
-            sessionId = state?.sessionId;
-            if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('devin.errors.notConnected'));
-            mapper = createDevinMapper(sessionId, emit);
+            let list = await rawModels(cwd, local.signal);
+            // 指定されたモデルが一覧に無いとき、置き場が古いだけかもしれないので取り直して確かめる
+            if (args.model && !Object.hasOwn(buildDevinModels(list), args.model)) list = await rawModels(cwd, local.signal, { refresh: true });
+            const selection = resolveDevinModel(list, args.model ?? '');
+            check();
+            // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
+            const launch = await prepareDevinLaunch({ command: argv(), cwd, dataDir, env: { ...process.env, ...extraEnv } });
+            const plan = await heldAcpPlan({ dataDir, argv: launch.command, bot: Boolean(args.botInstructions), envName: 'AGENT_HOST_DEVIN_HOLDER' });
+            held = plan ? createHeldAcp({ client: plan.client }) : null;
+            client = await openClient(cwd, handlers, extraEnv, { held, launch });
+            check();
+            // Pleiad の MCP は ACP の mcpServers で渡す（type: 'http' が要る。外すと session/new が Invalid params で断る）
+            const acpMcp = (name, runtime) => (runtime?.url ? [{ name, type: 'http', url: runtime.url, headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : []);
+            const mcpServers = [...acpMcp('ply_context', args.contextRuntime), ...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime), ...acpMcp(COMPUTER_SERVER, args.computerRuntime), ...acpMcp(SHELL_SERVER, args.shellRuntime), ...acpMcp('ply_agents', args.agentRuntime)];
+            let state;
+            if (sessionId) {
+              mapper = createDevinMapper(sessionId, mapEmit);
+              state = await client.call('session/load', { sessionId, cwd, mcpServers });
+            } else {
+              state = await client.call('session/new', { cwd, mcpServers });
+              sessionId = state?.sessionId;
+              if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('devin.errors.notConnected'));
+              mapper = createDevinMapper(sessionId, mapEmit);
+            }
+            acpModels = devinModelChoices(state?.configOptions) ?? acpModels;
+            remember(sessionId, mapper); active.set(sessionId, client);
+            check();
+            const mode = args.mode || 'ask';
+            if (!Object.hasOwn(modes(), mode)) throw new Error(t('devin.errors.modeUnavailable'));
+            const modeOptions = state?.configOptions?.filter(o => o.id === 'mode' || o.category === 'mode') ?? [];
+            if (modeOptions.length !== 1 || !choices(modeOptions[0].options).includes(mode)) throw new Error(t('devin.errors.modeUnavailable'));
+            state = await client.call('session/set_config_option', { sessionId, configId: modeOptions[0].id, value: mode });
+            if (state?.configOptions?.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
+            const applied = await applyDevinModel(client.call.bind(client), sessionId, state.configOptions, selection);
+            const config = applied.configOptions;
+            if (config.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
+            verified = new Map([['mode', { id: modeOptions[0].id, value: mode }], ...applied.verified]);
+            if (!matchesVerified(config, verified)) throw new Error(t('devin.errors.configChanged'));
+            selectedMode = mode;
+            if (latestSession !== sessionId || !matchesVerified(latestSnapshot, verified) || latestMode !== mode) throw new Error(t('devin.errors.configChanged'));
+            check();
+            // 読み取り専用のモードでは、ブラウザーの指示を「操作しない」に読み替える（agent-browser は読むだけでもデーモンの書き込みが要る。Codex と同じ）
+            let browserInstructions = args.browserInstructions;
+            if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
+            prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions, args.contextRuntime?.prompt, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+            sentText = prompt;
+            shownText = [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+            // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
+            initialNativeId = mapper.beginTurn(prompt, shownText);
+            rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
+            emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
+            // 途中送信: 走っているターンへ session/prompt を重ねる。Devin は同じ回に折り込む（実測 3000.11.92）
+            steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+              onSent: text => mapper.queueUser(text),
+              // 応答は回の終わりまで返らない（実測 3000.11.92）。折り込んだ時点で渡ったことにする（docs/design.md「配送」）
+              confirmOnAccept: true, onCall: () => control?.touch?.() });
+            if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
+            check();
+            prompting = true;
+            // 札を先に置き、印を打ってから書く（落ちたとき、新しいサーバーがこのターンを拾えるように）
+            bindHolder();
+            await new Promise(resolve => setImmediate(resolve));
+            held?.markTurn();
+            // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
+            emit({ type: 'activity', state: 'thinking' });
+            promptId = typeof client.newId === 'function' ? client.newId() : null;
+            response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0, ...(promptId ? { id: promptId } : {}) });
+            sent = true; onPromptDelivered?.(initialNativeId);
+            control?.onReady?.();
           }
-          acpModels = devinModelChoices(state?.configOptions) ?? acpModels;
-          remember(sessionId, mapper); active.set(sessionId, client);
-          check();
-          const mode = args.mode || 'ask';
-          if (!Object.hasOwn(modes(), mode)) throw new Error(t('devin.errors.modeUnavailable'));
-          const modeOptions = state?.configOptions?.filter(o => o.id === 'mode' || o.category === 'mode') ?? [];
-          if (modeOptions.length !== 1 || !choices(modeOptions[0].options).includes(mode)) throw new Error(t('devin.errors.modeUnavailable'));
-          state = await client.call('session/set_config_option', { sessionId, configId: modeOptions[0].id, value: mode });
-          if (state?.configOptions?.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
-          const applied = await applyDevinModel(client.call.bind(client), sessionId, state.configOptions, selection);
-          const config = applied.configOptions;
-          if (config.find(o => o.id === modeOptions[0].id)?.currentValue !== mode) throw new Error(t('devin.errors.modeUnavailable'));
-          verified = new Map([['mode', { id: modeOptions[0].id, value: mode }], ...applied.verified]);
-          if (!matchesVerified(config, verified)) throw new Error(t('devin.errors.configChanged'));
-          selectedMode = mode;
-          if (latestSession !== sessionId || !matchesVerified(latestSnapshot, verified) || latestMode !== mode) throw new Error(t('devin.errors.configChanged'));
-          check();
-          // 読み取り専用のモードでは、ブラウザーの指示を「操作しない」に読み替える（agent-browser は読むだけでもデーモンの書き込みが要る。Codex と同じ）
-          let browserInstructions = args.browserInstructions;
-          if (args.browserEnv && modes()[mode]?.scope === 'readonly') browserInstructions = agentT(args.locale, 'browser.readonlyInstructions');
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions, args.contextRuntime?.prompt, args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale, agent: 'devin' }), args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
-          // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
-          const initialNativeId = mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
-          rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
-          emit({ type: 'session', sessionId, model: selection.id, ...(args.sessionId ? {} : { first: true }) });
-          // 途中送信: 走っているターンへ session/prompt を重ねる。Devin は同じ回に折り込む（実測 3000.11.92）
-          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
-            onSent: text => mapper.queueUser(text),
-            // 応答は回の終わりまで返らない（実測 3000.11.92）。折り込んだ時点で渡ったことにする（docs/design.md「配送」）
-            confirmOnAccept: true });
-          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
-          check();
-          prompting = true;
-          // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
-          emit({ type: 'activity', state: 'thinking' });
-          const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
-          sent = true; onPromptDelivered?.(initialNativeId);
-          control?.onReady?.();
-          const result = await Promise.race([response, stopped]);
+          const result = await Promise.race([response, stopped, handedOffPromise]);
+          // 旧サーバーが手を離した。このターンはここで終わる（締めるのは付け直したサーバー）
+          if (handedOff) { emit({ type: 'turnResult', outcome: 'aborted' }); return { sessionId, handedOff: true }; }
           if (fatal) throw fatal;
           if (local.signal.aborted || result?.stopReason === 'cancelled') outcome = 'aborted';
           else if (['max_tokens', 'max_turn_requests'].includes(result?.stopReason)) outcome = 'limited';
@@ -340,28 +425,43 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
           // 途中送信で並んだ分がまだ回っていれば、その決着まで待つ（区切りが来ず次の回に回った分）。
-          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる。
+          // 中断・失敗・打ち切り・手を離したときは待たず、残りは close で拒否されて userMessage.dropped になる。
           // closing を先に立て、drain の間に届いた新しい途中送信は受理しない（次のターンで送る）。
           // drain 中に並んだ分の回が承認を求められるよう、prompting は drain が済むまで下ろさない
           closing = true;
-          if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
+          if (outcome === 'ok' && !handedOff) await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
+          // 付け直したターンは、走っている途中送信の決着（回の終わりの後に届く返答）を待ってから閉じる
+          if (adopt && !handedOff) await client?.settleTrailing?.(1500);
           prompting = false; verified = null; local.abort();
+          // ターンが終わった子は、付け直す対象から外してから止める（手を離した子には触れない）
+          if (!handedOff && !handingOff) held?.endTurn();
           if (client) {
             try { await closeClient(); }
             catch (closeError) {
-              error = error ? new AggregateError([error, closeError], `${error.message}; ${closeError.message}`) : closeError;
-              outcome = 'error';
+              if (!handedOff) {
+                error = error ? new AggregateError([error, closeError], `${error.message}; ${closeError.message}`) : closeError;
+                outcome = 'error';
+              }
             }
           }
           if (sessionId) active.delete(sessionId);
-          if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
+          if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('devin.errors.promptFailed')) } : {}),
             ...(outcome === 'limited' && error?.acpLimit ? { error: String(error.message), resetsAt: error.acpLimit.resetsAt, window: null } : {}) });
         }
         if (outcome === 'error') throw sent ? error : undelivered(error);
-        return { sessionId };
+        return { sessionId, ...(handedOff ? { handedOff: true } : {}) };
       });
+    },
+    /**
+     * 付け直し（無停止の更新 段 2b。acp-held.mjs）: 保持役が持つ走っている ACP の続きを受ける。card は runTurn が札に置いた分
+     * （control.backendCard の { held, devin }）、source は保持役の子（core/adopt.mjs の holderSource）。印から ack までは記録を読み直して
+     * 状態を作り（emit の replay）、続きは普通に流して行ごとに ack する。initialize も session の作成も設定の適用も送らない
+     */
+    async adoptTurn(args) {
+      if (!args.card?.held || !args.card.devin || typeof args.source?.write !== 'function') throw new Error('devin: the turn was not on the holder');
+      return this.runTurn(args, { source: args.source, card: args.card });
     },
     /**
      * 会話の圧縮（/compact）。ACP のスラッシュコマンドは、host が prompt の本文として送る。

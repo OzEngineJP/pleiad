@@ -12,6 +12,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { bootEnv } from '../boot-env.mjs';
+import { directCommand } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { LABEL_MAX_BYTES } from '../holder/protocol.mjs';
 import { ADOPT_TURN_MARK, registerChildExpander } from '../adopt.mjs';
@@ -199,8 +200,8 @@ export async function acquireHeldOpencode({ argv, account = null, allowSpawn = t
   if (!allowSpawn) return null;
   const dataDir = dataDirOf();
   const root = bootEnv('AGENT_HOST_RUNTIME_ROOT');
-  // npm の .cmd の包みは、保持役が shell 無しで起こせない
-  if (!dataDir || !root || !argv?.length || /\.(cmd|bat)$/i.test(argv[0])) return null;
+  // npm の .cmd の包みは、中の node のスクリプトに解いてから起こす（shell 無しでは起こせない）
+  if (!dataDir || !root || !argv?.length || !directCommand(argv)) return null;
   const client = await holderLink({ dataDir, root, key: bootEnv('AGENT_HOST_RUNTIME_KEY') ?? '' });
   const known = (client.welcome?.children ?? []).find(child => child.id === id);
   if (known?.alive) {

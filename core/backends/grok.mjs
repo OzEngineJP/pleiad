@@ -15,8 +15,12 @@ import { NO_CAPABILITIES } from './contract.mjs';
 import { undelivered } from './undelivered.mjs';
 import { createGrokMapper } from './grok-normalize.mjs';
 import { createAcpSteer, PROTOCOL_REJECT_CODES } from './acp-steer.mjs';
+import { createHeldAcp, heldAcpPlan } from './acp-held.mjs';
 import { writeTurnPlugin } from './grok-hooks.mjs';
 import { grokQuota } from './grok-usage.mjs';
+
+/** 札（backendCard）に入れる発言の本文の上限（バイト）。超えたら人に書いた分だけにして、写しは人に書いた分で組み立てる */
+const CARD_TEXT_MAX = 16 * 1024;
 
 // i18n-dynamic: grok.errors.modelUnavailable
 // i18n-dynamic: grok.errors.effortUnavailable
@@ -92,9 +96,9 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
     if (!value) throw Object.assign(new Error(t('grok.errors.notInstalled')), { code: 'NOT_INSTALLED' });
     return value;
   }
-  async function openClient(cwd, args = [], handlers = {}, extraEnv = null) {
+  async function openClient(cwd, args = [], handlers = {}, extraEnv = null, { held = null, adopt = null } = {}) {
     const Client = Acp ?? (await import('./grok-acp.mjs')).GrokAcp;
-    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), env: extraEnv ? { ...process.env, ...extraEnv } : process.env, ...handlers, onRequest: handlers.onRequest ?? (async method => {
+    const client = new Client({ command: argv(), args, cwd: path.resolve(cwd), env: extraEnv ? { ...process.env, ...extraEnv } : process.env, ...handlers, held, adopt, onRequest: handlers.onRequest ?? (async method => {
       if (method === 'session/request_permission') return { outcome: { outcome: 'cancelled' } };
       throw Object.assign(new Error('Unsupported ACP client request'), { code: -32601 });
     }) });
@@ -175,6 +179,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
   return {
     id: 'grok', label: 'Grok Build', get description() { return t('grok.description'); },
     capabilities: { ...NO_CAPABILITIES, approvals: 'interactive', alwaysAllow: true, mcpApproval: 'agent', shell: 'host', failureDiagnostics: true, login: true, promptDelivery: true, steer: true,
+      handover: true,          // ACP の CLI を保持役に載せ、新しいサーバーが付け直す（acp-held.mjs）
       // ブラウザー・操作一覧・コンピューター・シェル・委譲をHTTP MCPで、接続情報と秘密の変数を起動環境で渡す。
       // Pleiad がそろえる Hooks は hooksRuntime（セッション限定のプラグイン。_meta.pluginDirs で渡す）を受け取る
       plyAgents: true, plyInstructions: true, hooks: true, liveModel: true, liveMode: true,
@@ -238,12 +243,16 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         finally { if (client) await client.close(); }
       });
     },
-    async runTurn(args) {
+    // adopt は付け直し（{ source, card }。adoptTurn だけが渡す）。無ければ普通のターン（保持役に載せるかは acp-held.mjs の heldAcpPlan が決める）
+    async runTurn(args, adopt = null) {
       return serial(args.sessionId ?? Symbol('new'), async () => {
         const { emit, onPromptDelivered, control } = args;
         const hostSignal = args.signal?.signal ?? args.signal;
         const local = new AbortController();
         let client, closePromise, sessionId = args.sessionId ?? null, mapper, prompting = false, sent = false, fatal = null, closing = false, watchdog, steered = null, plugin = null;
+        // 保持役（無停止の更新 段 2b）: 子を載せたターンだけ。handedOff は旧サーバーが手を離した（続きは新しいサーバー）
+        let held = null, handedOff = false, handingOff = false, settleHandOff = () => {}, promptId = null, replaying = false, sentText = '', shownText = '';
+        const handedOffPromise = new Promise(resolve => { settleHandOff = resolve; });
         const closeClient = () => closePromise ??= Promise.resolve().then(() => client.close());
         let forceReject;
         const stopped = new Promise((_, reject) => { forceReject = reject; }); stopped.catch(() => {});
@@ -258,6 +267,34 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         hostSignal?.addEventListener('abort', onAbort, { once: true });
         if (hostSignal?.aborted) local.abort();
         const check = () => { if (fatal) throw fatal; if (local.signal.aborted) throw abortError(); };
+        // 付け直しの再生（印から ack まで）は画面へ流さない（server の makeEmit が状態だけ作る）
+        const mapEmit = event => emit(event, replaying ? { replay: true } : undefined);
+        /**
+         * 札のバックエンドの欄（保持役に載せたターンだけ。server の takeCard が control.backendCard から読み、付け直す側の adoptTurn の card になる）。
+         * 付け直しに要る、再生では作れないもの: 走っている session/prompt の id（応答を拾い直す）と、送った本文・人が書いた分（写しのエコー合わせ。
+         * 大きいときは入れない＝人に書いた分で組み立て直す）
+         */
+        const backendCard = () => ({ held: true, grok: { promptId, sessionId,
+          sent: Buffer.byteLength(sentText) <= CARD_TEXT_MAX ? sentText : null,
+          shown: Buffer.byteLength(shownText) <= CARD_TEXT_MAX ? shownText : null,
+          // 走っている途中送信の id（回の終わりの後に答えるので、付け直した側が決着を待ってから閉じる）
+          prompts: client?.pendingPromptIds?.() ?? [] } });
+        // 札を保持役の子に置く口（server の touchCard が札の中身の変わるたびに呼ぶ）と、旧サーバーの手を離す口（core/handover.mjs）
+        const bindHolder = () => {
+          if (!control || !held) return;
+          control.holder = {
+            label: card => held.label(card),
+            handOff: async card => {
+              handingOff = true;
+              await held.handOff(card);
+              handedOff = true;
+              client?.markHandedOff?.();
+              settleHandOff();
+            },
+          };
+          control.backendCard = backendCard;
+          control.touch?.();
+        };
         let error = null, outcome = 'ok';
         try {
           if (args.account != null || args.oauthToken || args.endpoint) throw new Error(t('accounts.badBackend'));
@@ -265,19 +302,21 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           check();
           // CLI の起動・履歴の再生・モードの適用は送る前に済ませるが、数秒黙る。
           // その間も画面が止まって見えないよう、準備中から稼働表示に出す
-          emit({ type: 'activity', state: 'preparing' });
+          // 付け直しは、記録の再生が稼働表示を作り直す（準備中から出し直さない）
+          if (!adopt) emit({ type: 'activity', state: 'preparing' });
           const cwd = path.resolve(args.cwd ?? (sessionId && await cwdFor(sessionId)) ?? process.cwd());
           const model = typeof args.model === 'string' && args.model ? args.model : '';
           const effort = typeof args.effort === 'string' && args.effort ? args.effort : '';
           // Pleiad がそろえる Hooks を渡すターンは、Claude・Cursor・Codex 互換の読み込み元を環境変数で止める（二重実行の防止）
           const extraEnv = { ...(args.browserEnv ?? {}), ...(args.controlRuntime?.env ?? {}),
             ...(args.secretsRuntime?.env ?? {}), ...(args.hooksRuntime?.compatHookEnv ?? {}) };
-          client = await openClient(cwd, spawnArgs(model, effort), {
+          const handlers = {
             onGone: e => { if (!closing) { fatal = e; local.abort(); forceReject(e); } },
-            onUpdate: params => {
+            onUpdate: (params, opts) => {
               if (sessionId && params.sessionId !== sessionId) return;
               if (fatal) return;
-              mapper?.accept(params.update);
+              replaying = Boolean(opts?.replay);
+              try { mapper?.accept(params.update); } finally { replaying = false; }
             },
             // _x.ai/interject の受理確認通知: 通知の届いた位置へ user 行を置き、履歴の uuid を nativeId に使う
             onInterjection: params => {
@@ -302,60 +341,12 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
               const selected = answer?.allow ? (answer.always && typeof always?.optionId === 'string' ? always : allow) : deny;
               return { outcome: typeof selected?.optionId === 'string' ? { outcome: 'selected', optionId: selected.optionId } : { outcome: 'cancelled' } };
             },
-          }, extraEnv);
-          check();
-          verifySelection(client.init, model, effort);
-          const windowTokens = Number((client.init?._meta?.modelState?.availableModels ?? []).find(m => m.modelId === client.init?._meta?.modelState?.currentModelId)?._meta?.totalContextTokens) || null;
-          // MCP は新規・再開の両方に、そのターンの接続情報だけを渡す。
-          const acpMcp = (name, runtime) => runtime?.url ? [{ name, type: 'http', url: runtime.url,
-            headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : [];
-          const mcpServers = [...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime),
-            ...acpMcp(COMPUTER_SERVER, args.computerRuntime), ...acpMcp(SHELL_SERVER, args.shellRuntime), ...acpMcp('ply_agents', args.agentRuntime)];
-          // Pleiad がそろえる Hooks は、このターンだけのプラグイン（hooks/hooks.json）として _meta.pluginDirs で渡す。
-          // 渡した置き場は trusted になり、保存されない（session/load でも毎回渡す）。ターンの終わりに消す（grok-hooks.mjs）
-          if (args.hooksRuntime?.pluginHooks) plugin = await writeTurnPlugin(path.join(dataDir, 'grok-hooks'), args.hooksRuntime.pluginHooks);
-          const meta = plugin ? { _meta: { pluginDirs: [plugin.dir] } } : {};
-          let state;
-          if (sessionId) {
-            try {
-              state = await client.call('session/resume', { sessionId, cwd, mcpServers, ...meta });
-              // Reuse a mapper that already owns the transcript. After a server restart,
-              // resume has no replay to seed positional UUIDs, so namespace this turn's
-              // new rows until the next explicit history load can align them by content.
-              mapper = cache.get(sessionId) ?? createGrokMapper(sessionId, emit, { windowTokens, messageNamespace: randomUUID() });
-              mapper.setEmit(emit);
-            } catch (error) {
-              // Older Grok CLI releases expose session/load but not session/resume.
-              if (![-32601, -32602].includes(error?.code)) throw error;
-              mapper = createGrokMapper(sessionId, emit, { windowTokens });
-              state = await client.call('session/load', { sessionId, cwd, mcpServers, ...meta });
-            }
-          } else {
-            state = await client.call('session/new', { cwd, mcpServers, ...meta });
-            sessionId = state?.sessionId;
-            if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('grok.errors.notConnected'));
-            mapper = createGrokMapper(sessionId, emit, { windowTokens });
-          }
-          remember(sessionId, mapper); active.set(sessionId, client);
-          check();
-          await applySelection(client, sessionId, state, model, effort);
-          await applyMode(client, sessionId, state, args.mode || 'ask');
-          check();
-          const browserInstructions = args.browserEnv && modes()[args.mode || 'ask']?.scope === 'readonly'
-            ? agentT(args.locale, 'browser.readonlyInstructions') : args.browserInstructions;
-          const prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions,
-            args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale }),
-            args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
-          // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
-          const initialNativeId = mapper.beginTurn(prompt, [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n'));
-          rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
-          emit({ type: 'session', sessionId, model: model || client.init?._meta?.modelState?.currentModelId || undefined, ...(args.sessionId ? {} : { first: true }) });
-          // 途中送信: 走っているターンへ session/prompt を重ねる。Grok は内蔵の待ち行列に積み、
-          // 今の回の直後に続けて回す（実測 1.0.62。決着は drain で待つので、Pleiad の同じターンに見える）
-          steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
+          };
+          // 途中送信: 走っているターンへ session/prompt を重ねる（Grok は内蔵の待ち行列に積み、今の回の直後に続けて回す）。
+          // interject が無い版は応答が次の回の終わりまで返らないので、折り込んだ時点で渡ったことにする
+          const makeSteer = () => createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
             onSent: text => mapper?.queueUser(text),
-            // session/prompt の経路（interject が無い版）は応答が次の回の終わりまで返らない。折り込んだ時点で渡ったことにする
-            confirmOnAccept: true,
+            confirmOnAccept: true, onCall: () => control?.touch?.(),
             // 走っているターンを止めずに次のモデル呼び出しへ差し込む Grok 固有の口（1.0.62 実測。
             // 応答は受理した時点で返る。{result:{status:'queued'}} はターン内の差し込み待ちへの受理）
             interject: async (text, item, interjectionId) => {
@@ -369,15 +360,107 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
                 throw error;   // 結果不明（読まれたか分からない）— 呼ぶ側は送り直さない
               }
             } });
-          if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
-          check();
-          prompting = true;
-          // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
-          emit({ type: 'activity', state: 'thinking' });
-          const response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0 });
-          sent = true; onPromptDelivered?.(initialNativeId);
-          control?.onReady?.();
-          const result = await Promise.race([response, stopped]);
+          let prompt = null, response = null, initialNativeId = null, windowTokens = null;
+          if (adopt) {
+            // 付け直し: 子は initialize 済みで、session も設定も済んでいる。走っている session/prompt の応答を拾い直し、
+            // 印から ack までの記録を再生して状態を作る（initialize・session/resume・設定の適用・発言は送らない）
+            const card = adopt.card?.grok;
+            if (!adopt.card?.held || !card || typeof adopt.source?.write !== 'function') throw new Error('grok: the turn was not on the holder');
+            if (typeof card.promptId !== 'string' && typeof card.promptId !== 'number') throw new Error('grok: the card has no prompt id');
+            promptId = card.promptId;
+            sentText = typeof card.sent === 'string' ? card.sent : String(args.prompt ?? '');
+            shownText = typeof card.shown === 'string' ? card.shown : String(args.prompt ?? '');
+            held = createHeldAcp({ source: adopt.source });
+            client = await openClient(cwd, [], handlers, extraEnv, { held, adopt: { promptId } });
+            check();
+            mapper = createGrokMapper(sessionId, mapEmit, { windowTokens: null });
+            mapper.beginTurn(sentText, shownText);
+            remember(sessionId, mapper); active.set(sessionId, client);
+            // attach の答え（答えていない依頼）。再生の依頼のうち、これに入っているものだけを聞き直す
+            await client.open(1);
+            // 走っている途中送信の応答の枠を開ける（本文の応答の後に続けて届く返答を、閉じる前に読む）
+            client.adoptTrailing((Array.isArray(card.prompts) ? card.prompts : []).filter(id => id !== promptId));
+            steered = makeSteer();
+            if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
+            bindHolder();
+            sent = true;
+            prompting = true;
+            // 再生と続き（印から）。応答は replay の途中か、その後に届く
+            client.begin();
+            response = client.running;
+          } else {
+            check();
+            // 保持役に載せるか（実行場所の置き場があるときだけ。acp-held.mjs）。載せると、CLI はサーバーの入れ替えをまたいで走り続ける
+            const plan = await heldAcpPlan({ dataDir, argv: argv(), bot: Boolean(args.botInstructions), envName: 'AGENT_HOST_GROK_HOLDER' });
+            held = plan ? createHeldAcp({ client: plan.client }) : null;
+            client = await openClient(cwd, spawnArgs(model, effort), handlers, extraEnv, { held });
+            check();
+            verifySelection(client.init, model, effort);
+            windowTokens = Number((client.init?._meta?.modelState?.availableModels ?? []).find(m => m.modelId === client.init?._meta?.modelState?.currentModelId)?._meta?.totalContextTokens) || null;
+            // MCP は新規・再開の両方に、そのターンの接続情報だけを渡す。
+            const acpMcp = (name, runtime) => runtime?.url ? [{ name, type: 'http', url: runtime.url,
+              headers: Object.entries(runtime.headers ?? {}).map(([header, value]) => ({ name: header, value })) }] : [];
+            const mcpServers = [...acpMcp(BROWSER_SERVER, args.browserRuntime), ...acpMcp(CONTROL_SERVER, args.controlRuntime),
+              ...acpMcp(COMPUTER_SERVER, args.computerRuntime), ...acpMcp(SHELL_SERVER, args.shellRuntime), ...acpMcp('ply_agents', args.agentRuntime)];
+            // Pleiad がそろえる Hooks は、このターンだけのプラグイン（hooks/hooks.json）として _meta.pluginDirs で渡す。
+            // 渡した置き場は trusted になり、保存されない（session/load でも毎回渡す）。ターンの終わりに消す（grok-hooks.mjs）
+            if (args.hooksRuntime?.pluginHooks) plugin = await writeTurnPlugin(path.join(dataDir, 'grok-hooks'), args.hooksRuntime.pluginHooks);
+            const meta = plugin ? { _meta: { pluginDirs: [plugin.dir] } } : {};
+            let state;
+            if (sessionId) {
+              try {
+                state = await client.call('session/resume', { sessionId, cwd, mcpServers, ...meta });
+                // Reuse a mapper that already owns the transcript. After a server restart,
+                // resume has no replay to seed positional UUIDs, so namespace this turn's
+                // new rows until the next explicit history load can align them by content.
+                mapper = cache.get(sessionId) ?? createGrokMapper(sessionId, mapEmit, { windowTokens, messageNamespace: randomUUID() });
+                mapper.setEmit(mapEmit);
+              } catch (error) {
+                // Older Grok CLI releases expose session/load but not session/resume.
+                if (![-32601, -32602].includes(error?.code)) throw error;
+                mapper = createGrokMapper(sessionId, mapEmit, { windowTokens });
+                state = await client.call('session/load', { sessionId, cwd, mcpServers, ...meta });
+              }
+            } else {
+              state = await client.call('session/new', { cwd, mcpServers, ...meta });
+              sessionId = state?.sessionId;
+              if (typeof sessionId !== 'string' || !sessionId) throw new Error(t('grok.errors.notConnected'));
+              mapper = createGrokMapper(sessionId, mapEmit, { windowTokens });
+            }
+            remember(sessionId, mapper); active.set(sessionId, client);
+            check();
+            await applySelection(client, sessionId, state, model, effort);
+            await applyMode(client, sessionId, state, args.mode || 'ask');
+            check();
+            const browserInstructions = args.browserEnv && modes()[args.mode || 'ask']?.scope === 'readonly'
+              ? agentT(args.locale, 'browser.readonlyInstructions') : args.browserInstructions;
+            prompt = [...(args.shellAppends ?? []), ...(args.notes ?? []), args.botInstructions, args.addedInstructions, args.agentRuntime?.instructions,
+              args.visualizeInstructions, browserInstructions, computerPrompt(args.computerRuntime, { locale: args.locale }),
+              args.controlRuntime?.instructions, args.shellRuntime?.instructions, args.secretsRuntime?.instructions, String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+            sentText = prompt;
+            shownText = [...(args.shellAppends ?? []), ...(args.notes ?? []), String(args.prompt ?? '')].filter(Boolean).join('\n\n');
+            // ACP には指示の欄が無いので、指示は本文の前に足して送る。記録の発言には人が書いた分だけを残す（#97）
+            initialNativeId = mapper.beginTurn(prompt, shownText);
+            rows.set(sessionId, { sessionId, cwd, title: rows.get(sessionId)?.title ?? String(args.prompt ?? '').slice(0, 80), createdAt: rows.get(sessionId)?.createdAt ?? new Date().toISOString(), lastModified: Date.now() });
+            emit({ type: 'session', sessionId, model: model || client.init?._meta?.modelState?.currentModelId || undefined, ...(args.sessionId ? {} : { first: true }) });
+            steered = makeSteer();
+            if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
+            check();
+            prompting = true;
+            // 札を先に置き、印を打ってから書く（落ちたとき、新しいサーバーがこのターンを拾えるように）
+            bindHolder();
+            await new Promise(resolve => setImmediate(resolve));
+            held?.markTurn();
+            // prompt を渡してから最初の session/update が来るまでも黙っている（Codex・Antigravity と同じく、送る直前に出す）
+            emit({ type: 'activity', state: 'thinking' });
+            promptId = typeof client.newId === 'function' ? client.newId() : null;
+            response = client.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: prompt }] }, { timeoutMs: 0, ...(promptId ? { id: promptId } : {}) });
+            sent = true; onPromptDelivered?.(initialNativeId);
+            control?.onReady?.();
+          }
+          const result = await Promise.race([response, stopped, handedOffPromise]);
+          // 旧サーバーが手を離した。このターンはここで終わる（締めるのは付け直したサーバー）
+          if (handedOff) { emit({ type: 'turnResult', outcome: 'aborted' }); return { sessionId, handedOff: true }; }
           if (fatal) throw fatal;
           if (local.signal.aborted || result?.stopReason === 'cancelled') outcome = 'aborted';
           else if (['max_tokens', 'max_turn_requests'].includes(result?.stopReason)) outcome = 'limited';
@@ -388,28 +471,44 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
         } finally {
           clearTimeout(watchdog); hostSignal?.removeEventListener('abort', onAbort);
           // 途中送信で待ち行列に並んだ分がまだ回っていれば、その決着まで待つ（Grok は今の回の直後に続けて回す）。
-          // 中断・失敗・打ち切りでは待たず、残りは close で拒否されて userMessage.dropped になる。
+          // 中断・失敗・打ち切り・手を離したときは待たず、残りは close で拒否されて userMessage.dropped になる。
           // closing を先に立て、drain の間に届いた新しい途中送信は受理しない（次のターンで送る）。
           // drain 中に並んだ分の回が承認を求められるよう、prompting は drain が済むまで下ろさない
           closing = true;
-          if (outcome === 'ok') await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
+          if (outcome === 'ok' && !handedOff) await steered?.drain({ alive: () => !local.signal.aborted && !fatal });
+          // 付け直したターンは、走っている途中送信の決着（回の終わりの後に届く返答）を待ってから閉じる
+          if (adopt && !handedOff) await client?.settleTrailing?.(1500);
           prompting = false; local.abort();
+          // ターンが終わった子は、付け直す対象から外してから止める（手を離した子には触れない）
+          if (!handedOff && !handingOff) held?.endTurn();
           if (client) {
             try { await closeClient(); }
             catch (closeError) {
-              error = error ? new AggregateError([error, closeError], `${error.message}; ${closeError.message}`) : closeError;
-              outcome = 'error';
+              if (!handedOff) {
+                error = error ? new AggregateError([error, closeError], `${error.message}; ${closeError.message}`) : closeError;
+                outcome = 'error';
+              }
             }
           }
-          plugin?.cleanup();
+          // 手を離したターンのプラグインの置き場は消さない（子が読み直すことがある。アプリの終了で片付く）
+          if (!handedOff) plugin?.cleanup();
           if (sessionId) active.delete(sessionId);
-          if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; }
+          if (control) { control.handle = null; control.steer = null; control.steerConfirms = false; control.holder = null; control.backendCard = null; }
           mapper?.finish();
           emit({ type: 'turnResult', outcome, ...(sessionId ? { sessionId } : {}), ...(outcome === 'error' ? { error: String(error?.message ?? t('grok.errors.promptFailed')) } : {}) });
         }
         if (outcome === 'error') throw sent ? error : undelivered(error);
-        return { sessionId };
+        return { sessionId, ...(handedOff ? { handedOff: true } : {}) };
       });
+    },
+    /**
+     * 付け直し（無停止の更新 段 2b。acp-held.mjs）: 保持役が持つ走っている ACP の続きを受ける。card は runTurn が札に置いた分
+     * （control.backendCard の { held, grok }）、source は保持役の子（core/adopt.mjs の holderSource）。印から ack までは記録を読み直して
+     * 状態を作り（emit の replay）、続きは普通に流して行ごとに ack する。initialize も session の作成も設定の適用も送らない
+     */
+    async adoptTurn(args) {
+      if (!args.card?.held || !args.card.grok || typeof args.source?.write !== 'function') throw new Error('grok: the turn was not on the holder');
+      return this.runTurn(args, { source: args.source, card: args.card });
     },
     async setModelLive(handle, model) {
       const client = active.get(handle?.sessionId);

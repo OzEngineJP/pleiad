@@ -13,10 +13,6 @@
       "childProcess": 1,
       "utilityFork": 0
     },
-    "core/backends/claude-held.mjs": {
-      "childProcess": 1,
-      "utilityFork": 0
-    },
     "core/backends/codex-accounts.mjs": {
       "childProcess": 1,
       "utilityFork": 0
