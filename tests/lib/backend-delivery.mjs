@@ -235,26 +235,38 @@ async function probeAntigravity({ scratch, caps }) {
   const envFile = path.join(scratch, 'agy-env.json');
   const promptLog = path.join(scratch, 'agy-prompts.log');
   const pidFile = path.join(scratch, 'agy-pids.json');
-  const events = [];
+  const events = { first: [], resumed: [], sibling: [] };
+  let sessionId = null;
   try {
     await withEnv({ AGENT_HOST_AGY_BIN: `node "${path.join(ROOT, 'tests/lib/fake-agy.mjs')}"`, FAKE_AGY_ENV_FILE: envFile, FAKE_AGY_PROMPT_LOG: promptLog, FAKE_AGY_PID_FILE: pidFile }, async () => {
-      await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', hooksRuntime: await hookRuntime(scratch, 'antigravity'), emit: (e) => events.push(e) }));
+      const hooksRuntime = await hookRuntime(scratch, 'antigravity');
+      const first = await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-RESULT'], hooksRuntime, emit: (e) => events.first.push(e) }));
+      sessionId = first.sessionId;
+      await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, sessionId, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-RESUMED'], visualizeInstructions: `${MARK.visualize}-RESUMED`, hooksRuntime, emit: (e) => events.resumed.push(e) }));
+      await antigravity.runTurn(deliveryArgs(caps, { cwd: scratch, prompt: 'wire-all', shellAppends: ['PLY-DELIVERY-SHELL-SIBLING'], visualizeInstructions: 'PLY-SIBLING-VISUALIZE-ONLY', hooksRuntime, emit: (e) => events.sibling.push(e) }));
     });
   } finally { await killAgy(pidFile); }
   const seenEntry = jsonOf(String(await fs.readFile(envFile, 'utf8').catch(() => '[]')))?.[0] ?? {};
-  const wire = jsonOf(textOf(events))?.wire ?? '';
+  const wires = Object.fromEntries(Object.entries(events).map(([key, value]) => [key, String(jsonOf(textOf(value))?.wire ?? '')]));
+  const firstMessages = sessionId ? await antigravity.getMessages(sessionId).catch(() => []) : [];
+  const siblingSessionId = events.sibling.find((event) => event.type === 'session')?.sessionId ?? null;
+  const siblingMessages = siblingSessionId ? await antigravity.getMessages(siblingSessionId).catch(() => []) : [];
   const agentMd = String(seenEntry.agentMd ?? '');
   const env = seenEntry.env ?? {};
-  const seen = { env: Object.keys(env).sort(), agent: seenEntry.agent, agentMd: agentMd.slice(0, 400), hooks: String(seenEntry.hooksJson ?? '').slice(0, 200), wire: wire.slice(0, 200) };
+  const seen = { env: Object.keys(env).sort(), agent: seenEntry.agent, agentMd: agentMd.slice(0, 400), hooks: String(seenEntry.hooksJson ?? '').slice(0, 200), wire: wires.first.slice(0, 200) };
   return {
     seen,
     evidence: {
-      plyInstructions: has(wire, MARK.instructions),
-      plyAgents: has(wire, MARK.agents) && has(agentMd, '--agents'),
+      plyInstructions: has(wires.first, MARK.instructions),
+      plyAgents: has(wires.first, MARK.agents) && has(agentMd, '--agents'),
       browser: envOf(env, 'AGENT_BROWSER_CONFIG', MARK.browserEnv.AGENT_BROWSER_CONFIG) && has(agentMd, '--browser') && has(agentMd, MARK.browserInstructions),
       plyControl: envOf(env, 'PLEIAD_CONTROL_TOKEN', 'control-token') && has(agentMd, '--control') && has(agentMd, instr('control')),
       secrets: envOf(env, MARK.secretName, MARK.secretValue) && has(agentMd, instr('secrets')),
-      visualize: has(agentMd, MARK.visualize) || has(wire, MARK.visualize),
+      visualize: has(wires.first, MARK.visualize) && has(wires.resumed, `${MARK.visualize}-RESUMED`),
+      shell: has(wires.first, 'PLY-DELIVERY-SHELL-RESULT') && has(wires.resumed, 'PLY-DELIVERY-SHELL-RESUMED'),
+      conversationIsolation: has(wires.sibling, 'PLY-SIBLING-VISUALIZE-ONLY') && !has(wires.sibling, `${MARK.visualize}-RESUMED`)
+        && !siblingMessages.some((message) => /PLY-DELIVERY-(?:VISUALIZE|SHELL-RESUMED)/.test(message.text ?? '')),
+      instructionsStayOutOfHistory: !firstMessages.some((message) => /PLY-DELIVERY-(?:INSTRUCTIONS|AGENTS|VISUALIZE)/.test(message.text ?? '')),
       hooks: has(String(seenEntry.hooksJson ?? ''), 'pleiad-delivery-hook'),
       plyContext: envOf(env, 'PLY_CONTEXT_URL', runtime('context').url) && has(agentMd, '--context') && has(agentMd, instr('context')),
       computerUse: envOf(env, 'PLY_COMPUTER_URL', runtime('computer').url) && has(agentMd, '--computer') && has(agentMd, instr('computer')),

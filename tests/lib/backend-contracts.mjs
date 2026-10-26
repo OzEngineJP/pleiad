@@ -67,7 +67,7 @@ export const CAPABILITY_CONTRACTS = {
   browser: { suites: ['agent-browser-env', 'browser-bridge', 'server-devin', 'grok-backend'], agents: DELIVERY_AGENTS },
   plyControl: { suites: ['control-delivery', 'ops-control', 'server-devin', 'grok-backend'], agents: DELIVERY_AGENTS },
   secrets: { suites: ['server-secrets', 'mcp-secret-store'], agents: DELIVERY_AGENTS },
-  visualize: { suites: ['server-visualize'], agents: DELIVERY_AGENTS },
+  visualize: { suites: ['server-visualize'], agents: { ...DELIVERY_AGENTS, antigravity: 'backend-delivery' } },
   hooks: { suites: ['server-hooks', 'server-hooks-unify'], agents: DELIVERY_AGENTS },
 };
 
