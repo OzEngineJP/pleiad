@@ -2,7 +2,8 @@
 
 > ブラウザーの記述について（2026-10-08）: この文書に残る内蔵ブラウザーのエージェント操作・CDP の中継・中継の復元の計画と計測は、Chrome へ移す前の記録。ADR 0148 の第 7 段で `desktop/browser-relay.cjs`・`browser-navigation.cjs`・`agent-browser-bridge.cjs` と `AGENT_HOST_AGENT_BROWSER` は削除した。現在のエージェント操作は Chrome の中継だけで、ビューアのタブの写しと読み込みの方針は `core/browser-viewer.mjs` と `desktop/browser-viewer-bridge.cjs` が扱う。現在の動きは [ブラウザー](../inapp-browser.md) を参照。
 
-- 状態: 確定（2026-10-06）。段階 0 の実測と、段階 1 の 1-0（頭の確認）の実測を反映した。コードは変えていない（実装は [plan.md](plan.md) の段階ごと）
+- 状態: 確定（2026-10-06）。段階 0 の実測と、段階 1 の 1-0（頭の確認）の実測を反映した（この文書は設計。実装は [plan.md](plan.md) の段階ごと）
+- **ADR 0270 の作り直し**: 段 1（試験の仕掛け）と段 2a（プロセスの口・`child_process` の検査・`!` の行と ply_shell のジョブを保持役へ・出力の計測）を実装（2026-10-26）。更新の手順・引き継ぎの経路は [ADR 0270](../adr/0270-server-may-die-anytime.md) が置き換える（この文書の §5 は ADR 0151 のときの記録）
 - 決定: [ADR 0151](../adr/0151-zero-downtime-update.md)。段階と作業項目: [plan.md](plan.md)。管理: [issue #54](https://github.com/tekalu1/pleiad/issues/54)
 - 実測の記録: [stage0-claude.md](stage0-claude.md)・[stage0-codex-agy.md](stage0-codex-agy.md)・[stage0-runtime.md](stage0-runtime.md)・[stage1-0.md](stage1-0.md)・[stage1-7.md](stage1-7.md)（実機の確認。測るスクリプトは `scripts/zero-downtime/`）
 - 関係する決定: [ADR 0036](../adr/0036-interrupt-and-update-while-running.md)（中断して更新。更新の部分を 0151 が置き換える）・[ADR 0115](../adr/0115-records-in-sqlite.md)（データ置き場の単独の持ち主）・[ADR 0019](../adr/0019-rename-ply-to-pleiad-keep-identifiers.md)（識別子を変えない）・[ADR 0043](../adr/0043-agent-browser-via-per-session-cdp-relay.md)（会話ごとの CDP 中継）・[ADR 0083](../adr/0083-control-surface-cli.md)（control.json）・[ADR 0090](../adr/0090-cli-in-desktop-app.md)（CLI の起動口）

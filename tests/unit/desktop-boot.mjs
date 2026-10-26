@@ -124,6 +124,7 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './shell-env.cjs': { applyLoginShellEnv: options => { calls.bootSteps.push('shell-env:start'); return shellEnv({ env, options }).then(result => { calls.bootSteps.push('shell-env:done'); return result; }); } },
     './notifications.cjs': { createDesktopNotifications: () => () => {} },
     './server-boot.cjs': serverBoot,
+    './process.cjs': { forkUtility: (file, args, options) => electron.utilityProcess.fork(file, args, options) },
     './server-restart.cjs': { createServerRestarter: options => { calls.restarterOptions = options; return { restart: async () => { calls.restarts++; calls.order.push('restart'); return typeof restart === 'function' ? restart(calls) : restart; } }; } },
     './worker-messages.cjs': workerMessages,
     './login-item.cjs': loginItem,

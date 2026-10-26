@@ -5,7 +5,7 @@
 //   ほかの OS は $SHELL、無ければ /bin/sh
 // - 標準入力は渡さない（閉じる）。対話が要るコマンドは入力を待たずに終わるか、止めるまで止まっている
 // - 上限の時間を過ぎたら、子のプロセスごと止める
-import { spawn, spawnSync } from 'node:child_process';
+import { run } from './process.mjs';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,59 +45,16 @@ export function hostShell(env = process.env) {
  *   leftover は、シェルは終わったが出力のパイプを握ったプロセスが残った（裏で起こしたサーバーなど。その後の出力は読まない）
  */
 export function runHostShell({ command, cwd, timeoutMs, signal, onOutput = () => {}, env = process.env }) {
-  return new Promise(resolve => {
-    const started = Date.now();
-    const out = { stdout: '', stderr: '' };
-    let truncated = false, timedOut = false, stopped = false, done = false;
-    const finish = (r) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      signal?.removeEventListener?.('abort', onAbort);
-      resolve({ exitCode: null, signal: null, ...out, durationMs: Date.now() - started, timedOut, stopped, truncated, ...r });
-    };
-    if (signal?.aborted) { stopped = true; finish({}); return; }
-    const shell = hostShell(env);
-    let child;
-    try {
-      child = spawn(shell.file, argsFor(shell.file, command), {
-        cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (e) { finish({ startError: String(e?.message ?? e) }); return; }
-    const kill = () => {
-      if (process.platform === 'win32' && child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
-      else if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
-    };
-    let exited = null;   // シェルの終わり（exit）。close の前に来る
-    const onAbort = () => { stopped = true; if (exited) finish({}); else kill(); };
-    signal?.addEventListener?.('abort', onAbort, { once: true });
-    const timer = setTimeout(() => { timedOut = true; if (exited) finish({}); else kill(); }, timeoutMs);
-    for (const stream of ['stdout', 'stderr']) {
-      child[stream].setEncoding('utf8');
-      child[stream].on('data', (text) => {
-        const room = OUTPUT_LIMIT - out[stream].length;
-        if (room <= 0) { truncated = true; return; }
-        const piece = text.length > room ? text.slice(0, room) : text;
-        if (piece.length < text.length) truncated = true;
-        out[stream] += piece;
-        onOutput(stream, piece);
-      });
-    }
-    child.on('error', e => finish({ startError: String(e?.message ?? e) }));
-    child.on('close', (code, sig) => finish(stopped || timedOut ? {} : { exitCode: code, signal: sig ?? null }));
-    // シェルが終わっても、出力のパイプを握った子が残って close が来ないことがある。
-    //   - 止めたとき: Git Bash のループを止めると、fork の途中の子が親を失って止まったまま残る（40 回に 1 回ほど）
-    //   - 自分で終わったとき: PowerShell の `Start-Process -RedirectStandardOutput` で起こしたサーバーが、シェルの出力のパイプを継いで握り続ける
-    //     （シェルの子でなくなるので、上限で木ごと止めても届かない。2026-10-18）
-    // どちらも、シェルが終わってから少し待って締める。自分で終わったときは終了コードを残し、パイプが残ったこと（leftover）を返す
-    child.on('exit', (code, sig) => {
-      exited = { exitCode: code, signal: sig ?? null };
-      const grace = stopped || timedOut ? KILLED_CLOSE_GRACE_MS : EXIT_CLOSE_GRACE_MS;
-      setTimeout(() => {
-        child.stdout?.destroy(); child.stderr?.destroy();
-        finish(stopped || timedOut ? {} : { ...exited, leftover: true });
-      }, grace).unref?.();
-    });
+  // シェルが終わっても、出力のパイプを握った子が残って close が来ないことがある。
+  //   - 止めたとき: Git Bash のループを止めると、fork の途中の子が親を失って止まったまま残る（40 回に 1 回ほど）
+  //   - 自分で終わったとき: PowerShell の `Start-Process -RedirectStandardOutput` で起こしたサーバーが、シェルの出力のパイプを継いで握り続ける
+  //     （シェルの子でなくなるので、上限で木ごと止めても届かない。2026-10-18）
+  // どちらも、シェルが終わってから少し待って締める。自分で終わったときは終了コードを残し、パイプが残ったこと（leftover）を返す（core/process.mjs の exitCloseGraceMs）
+  const shell = hostShell(env);
+  return run(shell.file, argsFor(shell.file, command), {
+    cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'],
+    timeoutMs, signal, onOutput, maxOutputChars: OUTPUT_LIMIT, killTree: true,
+    exitCloseGraceMs: EXIT_CLOSE_GRACE_MS, killedCloseGraceMs: KILLED_CLOSE_GRACE_MS,
   });
 }
 

@@ -1,6 +1,7 @@
-const { app, BrowserWindow, WebContentsView, utilityProcess, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, WebContentsView, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const { forkUtility } = require('./process.cjs');
 // 開発版はインストール版と別の名前・userData・データ置き場で起こす（desktop/dev-identity.cjs）。userData・safeStorage を使う前に決める
 require('./dev-identity.cjs').applyDevIdentity({ app, env: process.env });
 const { Updates, isStoreBuild, updaterEnabled } = require('./updates.cjs');
@@ -280,7 +281,7 @@ async function boot() {
   // キーチェーンの確認は、サーバーの起動の待ちを始める前に済ませる（desktop/secret-bridge.cjs の warmSecretStorage）
   warmSecretStorage(safeStorage, { log: message => console.warn('[secrets]', message) });
   // Dock・Finder から起こすと PATH が launchd の最小限なので、ログインシェルの環境を読み込む（desktop/shell-env.cjs。ADR 0213）。
-  // サーバーへ渡す env（下の utilityProcess.fork・desktop/server-boot.cjs の serverEnv）を作る前に終える
+  // サーバーへ渡す env（下の forkUtility（desktop/process.cjs）・desktop/server-boot.cjs の serverEnv）を作る前に終える
   const shellEnv = applyLoginShellEnv({ log: message => console.warn('[shell-env]', message) }).catch(error => console.warn('[shell-env]', error?.message ?? error));
   // サーバーが起動するまでは、設定（prefs.json）と OS の言語で決める。起動後はサーバーが解決した言語に合わせる（desktop/i18n.cjs）。
   // main の中のリモートの端末側（core/remote/device.mjs）が引く core/i18n.mjs もここで同じ言語にそろえる
@@ -295,7 +296,7 @@ async function boot() {
   // utilityProcess の経路でも、サーバーの標準出力・標準エラー（Chrome の接続の移り変わり `chrome: …` など）を userData\logs\server.log に残す。
   // パイプの経路（<実行場所>\logs\server.log）と同じに、サーバー自身が書く（core/server-log.mjs。token=… は伏せ、1MB で .old へ回す）。開発版は別の名前
   const utilityLogFile = process.env.AGENT_HOST_SERVER_LOG || path.join(app.getPath('userData'), 'logs', app.isPackaged ? 'server.log' : 'server-dev.log');
-  worker = linked ? linked.link : utilityProcess.fork(path.join(__dirname, 'server.cjs'), [], {
+  worker = linked ? linked.link : forkUtility(path.join(__dirname, 'server.cjs'), [], {
     cwd: app.getPath('home'),
     // OS の言語はサーバーからは確実に取れない（utilityProcess の Intl は OS の表示言語と一致しないことがある）ので、ここで渡す。
     // 画面の言語を「OS に合わせる」ときに使う（core/i18n.mjs）

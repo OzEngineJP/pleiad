@@ -249,6 +249,8 @@ const SUITES = [
   './unit/backend-model-cache.mjs',
   './unit/backend-conformance.mjs',
   './unit/backends-lint.mjs',
+  // 子を起こす API の lint（ADR 0270 の規則 ①）: 口（core/process.mjs・desktop/process.cjs）の外で直に読むファイルを増やさない
+  './unit/child-process-lint.mjs',
   // OpenCode（身代わりの opencode serve）: 語彙・ツール・承認・質問・Pleiad の MCP の中継・シェルの環境変数・途中送信・中断・失敗・サブエージェント・圧縮
   './unit/server-opencode.mjs',
   './unit/opencode-parts.mjs',

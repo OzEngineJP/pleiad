@@ -22,8 +22,9 @@
 ### 2. ① 長く生きる子プロセスは保持役でしか起こせない
 
 - プロセスの口を 2 つにする。`run()` は完了を待つ短命の子（`git`・`gh`・`--version`・`taskkill` など）。プロセスを掴んだまま返さない。`start()` は保持役に起こさせ、`source`（記録・`write`・`ack`）を返す。
-- `node:child_process` を読んでよいのはこの口（`core/process.mjs` のような 1 ファイル）だけにする。ほかのモジュールが読んでいたら `npm test` が落とす（`tests/lint-child-process.mjs`。基準は今の 28 ファイルから減らすときだけ更新する）。
+- `node:child_process` を読んでよいのはこの口（`core/process.mjs` と、Electron main の `desktop/process.cjs`）だけにする。ほかのモジュールが読んでいたら `npm test` が落とす（`tests/lint-child-process.mjs`。基準は 2026-10-26 の 25 ファイル（移行中）から減らすときだけ更新する）。
 - これで「切り替えで止まる子」が定義から消える。`desktop/switch.cjs` の blocker と stopper の区別、止まるものの確認のダイアログの大半は要らなくなる。
+- 実装（段 2a。2026-10-26）: `core/process.mjs` が `run()`・`start()`・`detach()`・`spawnChild()` を持つ。`start()` は保持役の子を起こし、`core/adopt.mjs` の `holderSource`（記録・`write`・`ack`）を返す。`detach()` は保持役自身の起動（`core/holder/client.mjs`）、`spawnChild()` は保持役の本体（`core/holder/holder.mjs`）だけが使う生の口。Electron main の `utilityProcess.fork` は `desktop/process.cjs` の `forkUtility()` に集めた。`child_process` の検査は `tests/lint-child-process.mjs`（基準は今の 25 ファイル。増えたら落ちる）。
 - 例外は、保持役に載せられない子（`.cmd` の包みを解けない・保持役を起こせない環境）だけ。そのときは「サーバーの子として走り、切り替えで止まる」ことを会話に知らせる（黙って止めない）。
 
 ### 3. ② 続きに要る状態は DB か保持役の記録にしか置かない
@@ -70,6 +71,79 @@
 
 既存の土台（`tests/lib/server.mjs`・`tests/lib/ws-client.mjs`・`tests/lib/backend-matrix.mjs`）に「途中でサーバーを止めて起こし直す」動かし方を 1 つ足す（`tests/lib/restart.mjs`）。`startServer` と `open` がこの仕掛けを通り、試験は 1 つのサーバー・1 つの接続を使っているつもりのまま、途中で普通に止めて普通に起こした先へ繋ぎ直す。イベントは続きに積む。既存の試験をそのまま流す。新しい機能は普通の試験を持っていれば自動で網にかかる（登録・宣言は要らない）。
 
+## 2a の実装（2026-10-26。段 2 の前半）
+
+段 2 を 2a（口・検査・`!` の行・ply_shell）と 2b（Devin・Grok の ACP・外部の stdio MCP・残りの移行）に分けた。2a で決めたこと:
+
+### 計測（危うい点「出力が保持役を通る遅れ」）
+
+Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバーに `runShell` を投げ、`shell.start` から `shell.done` まで。出力は 64 KB ずつ、drain を待って書く。
+
+| 経路 | 100 KB | 10 MB |
+|---|---|---|
+| 保持役なし（`AGENT_HOST_SHELL_HOLDER=off`。サーバーの子） | 83.2 ms | 97.5 ms |
+| 保持役あり（保持役の子の包み） | 159.7 ms | 173.7 ms |
+
+- `!` の行の出力は `runHostShell` が stdout・stderr それぞれ 256 KB で切る。10 MB のうち保持役を通るのは 256 KB だけで、差は 10 MB に比例しない。差は約 76 ms の一定（保持役の子の包み（Node）の起動）。包みの中の `runHostShell` の時間は 97 → 104 ms（+7 ms）
+- 保持役の記録をそのまま 10 MB 流す場合（包みを通さない）: 直に spawn して読む 66 ms、保持役を通す 96 ms（+30 ms、約 1.45 倍、約 109 MB/s）。1 MB ずつのまとめ（`PUMP_BATCH_BYTES`）と 4 MB の高水位（`highWaterBytes`）はこの量で足りる。**2a ではまとめ方を直さない**
+- 結論: 10 MB の出力で「大きく遅い」とは言えない。一定の 76 ms は、短い `!` の行（100 ms 程度）では目立つが、包み 1 プロセスの起動の分で、出力の量に比例しない。包みを常駐させる・保持役が直にシェルを起こす、は 2b 以降に測って要れば行う
+
+### 口
+
+`core/process.mjs`:
+- `run(command, args, { cwd, env, input, timeoutMs, signal, onOutput, maxOutputChars, killTree, exitCloseGraceMs, killedCloseGraceMs, ... })` … 完了を待つ。ハンドルを返さない。戻り値は `{ exitCode, signal, stdout, stderr, durationMs, timedOut, stopped, truncated, leftover?, startError? }`。`core/host-shell.mjs` の `runHostShell` はこの口の包みになった（`OUTPUT_LIMIT`・`leftover` の猶予は同じ）
+- `start({ id, command, args, cwd, env, policy, label, marks, keepMs, dataDir, root, key, appVersion, log, idleMs })` … 保持役に起こさせ、`{ id, client, source }` を返す。`source` は `core/adopt.mjs` の `holderSource`（記録・`write`・`ack`）。保持役を使えないときは `null`、つなげない・起こせないときは投げる（呼び出し側が今の流れに落とす）
+- `detach(command, args, { cwd, env })` … サーバーの子でない形で起こし、`{ pid }` を返す。`core/holder/client.mjs` の `launchHolder` が使う
+- `spawnChild(...)` … 保持役の本体（`core/holder/holder.mjs`）が子を起こすための生の口（ハンドルを返す）。ほかからは使わない
+- `desktop/process.cjs` の `forkUtility()` … Electron main の `utilityProcess.fork`。`desktop/main.cjs` はこれだけを使う
+
+### 保持役の無い経路（off・`AGENT_HOST_RUNTIME_ROOT` が無いとき）
+
+- `AGENT_HOST_RUNTIME_ROOT` があればそれ。無ければ、Node で走っているサーバー（`npm start`・テスト）はデータ置き場ごとの一時の置き場（`os.tmpdir()/pleiad-holder/<データ置き場のハッシュ>`）で保持役を起こす。同じデータ置き場のサーバーを起こし直すと同じ保持役につながる
+- Electron の `utilityProcess`（`AGENT_HOST_HANDOVER=off` の開発・パッケージ版）で置き場が無いときは、まだ保持役を使わない（`start()` は `null`。今のサーバーの子）。実行場所の外の保持役を main が渡すのは段 4。**off を同じ作りにするのは段 4 に回す**（理由: off のサーバーは `$INSTDIR` の中で走り、保持役を `$INSTDIR` の外で起こす口がまだ無い。`npm run desktop` の `utilityProcess` は `process.execPath` が Electron で、`ELECTRON_RUN_AS_NODE` を外して起こす今の `launchHolder` では Node として起動できない）
+- テストは `AGENT_HOST_HOLDER_IDLE_MS=5000` を渡し、親も子も居なくなった保持役が 5 秒で終わる（後片付けで残さない）
+
+### 検査
+
+- `tests/lint-child-process.mjs` が `core/`・`desktop/`・`bin/` の `node:child_process`（import・require・動的 import）と `utilityProcess.fork(` を数える。口（`core/process.mjs`・`desktop/process.cjs`）は除く
+- 基準は `tests/child-process-baseline.json` の 25 ファイル（「移行中」）。基準に無いファイル・基準より多い件数は落ちる。減った分は通す（`--update-baseline` で下げる）。**段 4 の終わりに空にする**
+- 2a で移した: `core/host-shell.mjs`（`run()`）・`core/holder/client.mjs`（`detach()`）・`core/holder/holder.mjs`（`spawnChild()`）・`desktop/main.cjs`（`forkUtility()`）。ADR が書いた 28 ファイルから 3 減って 25
+- `tests/unit/child-process-lint.mjs` が `npm test` から回す。`tests/unit/desktop-boot.mjs` の vm の require に `./process.cjs` を足した
+
+### ply_shell のジョブ
+
+- `core/ply-shell-held.mjs`。子は `!` の行と同じ `core/shell-held-child.mjs`（`runHostShell` の包み）。印は `ply_shell` を通番 1、札は `{ kind: 'ply_shell', v: 1, sessionId, jobId, jobKind, command, cwd, shell, startedAt, stoppedBy? }`
+- ジョブの出力は保持役の記録（`o`・`e`・`done` の行）にあり、`output` と `list` はそれを読む。`done` の行は `endedAt` を持つ。終わったジョブの記録は `JOBS_KEPT`（20 件）から溢れるまで残す（`release` はそのとき）
+- 新しいサーバーは起動で `shellJobHolder.adoptable()` を読み、`shellBridge.adopt` が `sessionId` ごとの一覧に戻す。**手放す/引き取るの対は書かない**（規則 ③。`schedule` と `sessionCommands` を作った後に読む。`onJobStart` が `running` の配りと見張りを使うため）
+- `ack` 済みの `done` は前のサーバーが終わりを処理済みとして `onJobEnd` を出し直さない。ack より後なら、このサーバーが `onJobEnd` を出す（終わりの知らせが 1 回）。終わりを処理したら `finished()` で `done` まで ack し、購読をやめる（記録は `output`・`list` のために残す）
+- `stop`・`stopSession` は札を置き直してから `stop` を書く。`stopAll({ keepHeld: true })` はサーバーの終わり（SIGTERM・落ちたとき）で保持役の子を止めずに手を離す。アプリの終了（`exitAfterStoppingHeld`）は `closeAll()` で止める
+- `running` の `background` と `shells` に `held` を付け、引き継ぎのときの `switchBlockers` は保持役の ply_shell のジョブを待たない
+
+### `!` の行
+
+- `core/shell-held.mjs` は `core/process.mjs` の `start()` を使う。`shellHolderEnabled()` は「`AGENT_HOST_SHELL_HOLDER=off` でなければ載せる」になった（実行場所の置き場の有無では決めない）
+- `shell.start` は、保持役の子を起こし終えてから出す（`core/shell-runs.mjs` の `markStarted`）。前は `runShell` の返事より前に出していたので、`PLEIAD_TEST_RESTART=shell` の試験が「保持役の子がまだ無い」時点で止め、ジョブが消えていた。今は `shell.start` の時点で保持役の子が居る
+- サーバーの終わりは `stopAll({ keepHeld: true })` で手を離す。アプリの終了は `shellRuns.stopAll()`（今のまま止める）
+
+### 試験
+
+- `node tests/run.mjs restart-mode --jobs 1` … held: のターンと ply_shell の start のジョブが、普通に止めて普通に起こした後も続く。`list` と `output` で読める
+- `PLEIAD_TEST_RESTART=shell node tests/run.mjs server-shell --jobs 1` … `!` の行が保持役の子として残り、`shell.done` が 1 回
+- `server-shell`・`shell-runs`・`adopt-shell`・`shell-held`・`shell-bridge`・`shell-delivery`・`host-shell-leftover`・`holder-*`・`desktop-boot`・`desktop-server-boot`・`desktop-job`・`runner-contract`・`child-process-lint`・`i18n-lint` が緑（2026-10-26）
+- 全体の `node tests/run.mjs`（12 worker・401 秒）で、今回の変更と関係する失敗は `desktop-boot`・`desktop-exit-dialog`（vm の require に `./process.cjs` が無い）・`secret-warmup`（`forkUtility` の位置）・`server-boot-env`（`forkUtility` の env）・`shell-bridge`（900 ms で output を待ちすぎ）で、直して個別に緑。残る失敗は、`whoami.exe` が Git の GNU whoami に解決される環境（`codex-accounts`・`opencode-accounts`・`server-agent-accounts`・`account-backend-i18n`・`server-agent-account-adopt`。`PATH` の先頭を `C:\Windows\System32` にすると緑）と、12 worker の負荷（`server-session-delete`・`server-limit-resume`・`plus-hosts`・`server-git`・`server-git-panel-load`。`--jobs 1` で緑）、`runner-contract` の「worktree が増えていない」の検査（他の作業の worktree が `D:/dev/pleiad.pleiad/` にある。登録の検査は 589/589 で緑）
+- `shell-held` の「実行場所の置き場が無ければ載せない」は「既定は載せる」に直した。`restart-mode` の ply_shell の判定は「消える」から「残る」に反転した。`restart-mode` の ply_shell のターンは同じ会話（`sessionId`）で始める（前は別の会話で始め、別の会話の `list` を見ていた）
+
+### 2b 以降に回したもの
+
+- Devin・Grok の ACP、外部の stdio MCP を保持役に載せる（段 2 の残り）
+- 残り 25 ファイルの `child_process` の移行（段 2b・4。基準は減らすときだけ更新）
+- Electron の `utilityProcess`（off 経路）で保持役を使う（段 4。実行場所の外の保持役を main が渡す）
+- `shell-runs` の `handOff`/`adopt` と `shell-held` の `handOff`/`abandon` を畳む（段 4。引き継ぎの経路がまだ使う）
+- ply_shell のジョブの `keepMs`（アプリの終了で止める道）・`stopAll` の後片付けの一本化（段 4）
+- `restoreAdoptedTurns` を条件なしで通す（段 4）。今は `!` の行と ply_shell だけ条件なし
+- 出力の包みの起動の 76 ms を減らす（常駐の包み・保持役が直にシェルを起こす。測って要れば。2b 以降）
+- 承認・質問のカード・委譲の実行の控え・`outlivesTurn`・圧縮の予約の DB 化（段 3）
+
 ## 畳むもの
 
 | 今 | 段 | 残る |
@@ -95,8 +169,10 @@
 
 ## 段
 
-1. **試験の仕掛け**（この ADR と同時に試作）。「途中で止めて起こし直す」を既存の土台に被せる。今の穴を赤で出す。Claude のターン（`held:` の fake）は通る。ply_shell の `start` のジョブは、今の作りでは落ちる（赤）。
+1. **試験の仕掛け**（この ADR と同時に試作）。「途中で止めて起こし直す」を既存の土台に被せる。今の穴を赤で出す。Claude のターン（`held:` の fake）は通る。ply_shell の `start` のジョブは、当時は落ちた（赤。段 2a で「残る」に反転した）。
 2. **プロセスの口**。`run()`/`start()` を足し、長く生きる子を `start()` へ移す。Devin・Grok（ACP）・外部の stdio MCP を保持役に載せる。`child_process` の検査を入れる。
+   - 2a（実装済み 2026-10-26）: `core/process.mjs`・`desktop/process.cjs`・`child_process` の検査・`!` の行と ply_shell のジョブを `start()` へ・出力の計測（下の「2a の実装」）
+   - 2b: Devin・Grok（ACP）・外部の stdio MCP・残り 25 ファイルの移行
 3. **状態の置き場**。承認・質問のカード、ply_shell の出力、委譲の実行の控え、`outlivesTurn`、圧縮の予約を DB か保持役の記録へ移す。`handoverSettled` の「短い処理を待つ」を消す。
 4. **引き継ぎ専用の経路を畳む**。`--handover`・`stash`・`holdable`・`switch.cjs` の `waitIdle`/`blockers`/`stoppers` を消し、更新と落ちたときの復元を「止める→普通に起こす」にそろえる。off 経路も同じにする。
 
@@ -106,8 +182,8 @@
 
 - **保持役の責任が増えないか。** 増やさない。規約は v1 のまま（`spawn`・`attach`・`write`・`ack`・`mark`・`label`・`replay`・`release`・`shutdown`）。新しいサーバーが子の一覧を読むのは `welcome.children` で足りる。`stash` と `detach` は使わなくなるが、規約 v1 からは外さない（古い保持役・古いサーバーとの互換のため。外すなら規約の版を上げる段 4 の判断にする）。危ういのは `keepMs` の意味（上記）と、`spawn` の id が前のサーバーと重なったとき（`exists`）の扱い。起動で拾う前に同じ id で起こし直す機能は、`exists` を受けたら `attach` に切り替える。
 - **記録の再生で全部戻るか。** ターンの中は戻る（Claude・Codex・agy・OpenCode・`!` で実績がある）。戻らないのはターンの外で、② で移す。危ういのは、再生の冪等が今は 3 種類の出来事だけなこと（上記）。段 3 で鍵を足すまで、再処理で二重になりうる出来事（承認の出入り・通知）は再生では流さず、DB の行から作り直す。
-- **出力が保持役を通る遅れ。** Claude・Codex・agy・OpenCode・`!` はすでに通っている（今より悪くならない）。ply_shell と外部 MCP を載せると、今まで直だった出力が 1 ホップ増える。保持役は 1 MB ずつまとめて流し、親が読まなければ 4 MB で止める（`PUMP_BATCH_BYTES`・`highWaterBytes`）。行ごとの JSON 化と名前付きパイプの往復で、`npm install` のような大量の出力がどれだけ遅れるかは測っていない【推測】。段 2 の前に、`!` の行で 10 MB の出力を流して測る。
-- **仕掛けの適用範囲（段 1 の試作で分かったこと）。** 既存の試験は「1 つのサーバー・1 つの接続・メモリの状態」を前提に書かれている。仕掛けは `startServer`/`open` を通すので、接続とイベントは続けられる。試作では、既存の `server-shell`（36 判定）を 1 行も変えずに `PLEIAD_TEST_RESTART=turnEnd` で流して全部通った。同じ試験を `shell`（`!` の出力の途中）で流すと、`!` の行が保持役に載っていない設定（`AGENT_HOST_RUNTIME_ROOT` が無い）なのでジョブが消え、`shell.done` を待って落ちた。`server-fake` を `work`（ツールの実行中）で流すと、保持役に載らない fake のターンが `restart` の中断になり、`turnEnd` を待って落ちた。**どれも「今の穴」が出ただけで、仕掛けの不具合ではない。**
+- **出力が保持役を通る遅れ。** Claude・Codex・agy・OpenCode・`!` はすでに通っている（今より悪くならない）。ply_shell と外部 MCP を載せると、今まで直だった出力が 1 ホップ増える。保持役は 1 MB ずつまとめて流し、親が読まなければ 4 MB で止める（`PUMP_BATCH_BYTES`・`highWaterBytes`）。**段 2a で測った**（「2a の実装」の計測）: `!` の行の 10 MB 出力で、保持役ありはなしより約 76 ms 遅いが、これは包み 1 プロセスの起動の一定分で、10 MB に比例しない（`runHostShell` が 256 KB で切るため、保持役を通るのは 256 KB だけ）。保持役の記録をそのまま 10 MB 流すと +30 ms（約 1.45 倍、約 109 MB/s）で、まとめ方は足りる。2a ではまとめ方を直さない。包みを常駐させる・保持役が直にシェルを起こす、は 2b 以降に測って要れば行う。
+- **仕掛けの適用範囲（段 1 の試作で分かったこと）。** 既存の試験は「1 つのサーバー・1 つの接続・メモリの状態」を前提に書かれている。仕掛けは `startServer`/`open` を通すので、接続とイベントは続けられる。試作では、既存の `server-shell`（36 判定）を 1 行も変えずに `PLEIAD_TEST_RESTART=turnEnd` で流して全部通った。同じ試験を `shell`（`!` の出力の途中）で流すと、`!` の行が保持役に載っていない設定（`AGENT_HOST_RUNTIME_ROOT` が無い）なのでジョブが消え、`shell.done` を待って落ちた。`server-fake` を `work`（ツールの実行中）で流すと、保持役に載らない fake のターンが `restart` の中断になり、`turnEnd` を待って落ちた。**どれも「今の穴」が出ただけで、仕掛けの不具合ではない。** 段 2a で `!` の行が既定で保持役に載るようになり（`shell.start` は保持役の子を起こした後に出す）、`server-shell` を `PLEIAD_TEST_RESTART=shell` で流しても緑になった。
   被せられない・足りないもの: (1) サーバーの `child`・`port`・`tail()` を直に見る試験（起こし直すと値が変わる。ハンドル越しに読み直す形へ直す手間が要る）、(2) `startServer` を 2 回呼んで 2 台を並べる試験（`adopt-*`・`handover-*`。それぞれのサーバーには付くが、自動の起こし直しは最後の 1 台だけが対象）、(3) メモリの状態を直に読む単体試験（サーバーを立てない）、(4) 起こし直しの最中に投げた `cmd`（仕掛けは、短い `cmd` が終わるのを 2 秒まで待ち、その間に投げられた分は新しいサーバーへ回す。それでも長い `cmd` は落ちる）、(5) 境目の直後に試験が開く 2 本目の接続（仕掛けは起こし直しの終わりを待ってからつなぐ）。
 - **二重起動。** 旧サーバーが生きている間に新サーバーが起動すると、両方が同じ保持役の子を拾う。データ置き場のロックが 1 つしか取れないので、新サーバーはロック待ちで止まる。main は旧サーバーの終了を待ってから起こす。保持役は「後から来た親が勝つ」で古い親を切るが、これは最後の砦にする。
 - **起動の復元が機能ごとの登録に戻らないか。** 子の札の `k` は機能が自分で置くが、拾う側は汎用の 1 か所（`readHolderSources`）にする。`registerChildExpander`（子 1 つが複数のターンを運ぶ Codex の共有 app-server の展開）は今の 1 つだけ残し、機能を足すたびに登録を増やさない。増やしたくなったら、それは ② の置き場が足りない印として扱う。
@@ -122,6 +198,7 @@
 ## 影響
 
 - `core/` のモジュール構成が変わる（`core/process.mjs` を足し、`child_process` の読みをそこへ集める）。`npm test` に `child-process` の検査が増える。
+- 段 2a の影響: `core/process.mjs`・`desktop/process.cjs`・`core/ply-shell-held.mjs` を足した。`core/host-shell.mjs`・`core/holder/client.mjs`・`core/holder/holder.mjs` は口へ移した。`AGENTS.md` に `AGENT_HOST_PLY_SHELL_HOLDER`・`AGENT_HOST_HOLDER_IDLE_MS` を足し、`AGENT_HOST_SHELL_HOLDER` の説明を「既定は載せる」に直した（ほかの `AGENT_HOST_*_HOLDER` は段 2b・3）。`tests/lint-child-process.mjs`・`tests/child-process-baseline.json`（25 ファイル）を足した。ply_shell のジョブの出力と終わりの記録は保持役に残り、終わったジョブ 20 件までは `output`・`list` で読める。
 - `desktop/switch.cjs` が大きく短くなる。更新の UX（待ちの表示・止まるものの確認）は「データ形式が変わる版」だけに残る。`docs/design-system.md` の切り替えの待ちの表示は、その 1 通りに絞る。
 - `AGENTS.md` の環境変数の表から `AGENT_HOST_ADOPT_*`・`AGENT_HOST_HANDOVER`（off 経路の切り替えとしての意味は残るか、段 4 で決める）を外し、`AGENT_HOST_*_HOLDER` の説明を「いつも載せる」に直す。
 - `docs/zero-downtime-update/` の design.md・plan.md は、段ごとに「今の形」へ書き換える（ADR 0151 の本文は書き換えない）。

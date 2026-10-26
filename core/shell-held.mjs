@@ -9,13 +9,15 @@
 //       終わりの行（done）は、会話の記録（shellPending）に書き終えてから ack し、子の記録を捨てる（release）。ack 済みの終わりは付け直さずに捨てる
 //   手を離す（handOff）: 読みを止めてから detach する（止めた後の行は ack しないので、新しいサーバーが流す。取りこぼし・重なりが無い）。
 //       終わりの行を受けて記録に書いている最中の子は、書き終える（release する）のを待つ
-// 載せるかの切り替え: AGENT_HOST_SHELL_HOLDER。既定は、実行場所の置き場（AGENT_HOST_RUNTIME_ROOT。AGENT_HOST_HANDOVER=on のパッケージ版で main が渡す）があれば載せる。
+// 載せるかの切り替え: AGENT_HOST_SHELL_HOLDER。既定は載せる（ADR 0270 段 2a）。実行場所の置き場（AGENT_HOST_RUNTIME_ROOT）が無ければ、
+// データ置き場ごとの一時の置き場（core/process.mjs の defaultHolderRoot）で保持役を起こす。Electron の utilityProcess（off 経路）は段 4 まで今の流れ。
 // `off` で今の流れ（サーバーの子として走らせる）。保持役につなげない・起こせないときも今の流れ。
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { bootEnv } from './boot-env.mjs';
 import { holderLink } from './holder/link.mjs';
 import { holderSource } from './adopt.mjs';
+import { start as startProcess, holderRootFor } from './process.mjs';
 
 const CHILD = fileURLToPath(new URL('./shell-held-child.mjs', import.meta.url));
 export const SHELL_MARK = 'shell';
@@ -29,9 +31,8 @@ const SETTLE_WAIT_MS = 5_000;
 const lineOf = value => `${JSON.stringify(value)}\n`;
 const parse = line => { try { const value = JSON.parse(line); return value && typeof value === 'object' ? value : null; } catch { return null; } };
 
-/** 保持役に載せる切り替え。既定は載せる（実行場所の置き場があるとき）。AGENT_HOST_SHELL_HOLDER=off で載せない（戻し道） */
-export const shellHolderEnabled = (env = process.env) => String(bootEnv('AGENT_HOST_SHELL_HOLDER') ?? env.AGENT_HOST_SHELL_HOLDER ?? '').trim().toLowerCase() !== 'off'
-  && Boolean(bootEnv('AGENT_HOST_RUNTIME_ROOT'));
+/** 保持役に載せる切り替え。既定は載せる（置き場は core/process.mjs が決める）。AGENT_HOST_SHELL_HOLDER=off で載せない（戻し道） */
+export const shellHolderEnabled = (env = process.env) => String(bootEnv('AGENT_HOST_SHELL_HOLDER') ?? env.AGENT_HOST_SHELL_HOLDER ?? '').trim().toLowerCase() !== 'off';
 
 /** 走っている行の札 */
 export const shellCard = run => ({ kind: SHELL_CARD_KIND, v: SHELL_CARD_VERSION, sessionId: run.sessionId, runId: run.runId, command: run.command, cwd: run.cwd,
@@ -140,29 +141,33 @@ export function createShellHolder({ dataDir, root = bootEnv('AGENT_HOST_RUNTIME_
   enabled = shellHolderEnabled, log = console.error } = {}) {
   return {
     async start(run, { timeoutMs }) {
-      if (!enabled() || !dataDir || !root) return null;
+      if (!enabled() || !dataDir) return null;
       const card = shellCard(run);
       if (Buffer.byteLength(JSON.stringify(card), 'utf8') > CARD_MAX_BYTES) return null;
-      let client;
-      try { client = await holderLink({ dataDir, root, key, appVersion }); }
-      catch (error) {
+      const id = `shell-${run.runId}-${crypto.randomBytes(3).toString('hex')}`;
+      let started;
+      try {
+        started = await startProcess({
+          dataDir, root, key, appVersion,
+          id, command: process.execPath, args: [CHILD], cwd: run.cwd || undefined,
+          // run.env は秘密情報と変数（ADR 0217。shell-runs の envFor）。札（label）には載せない
+          env: { ...process.env, ...(run.env ?? {}) }, policy: 'none', label: card, marks: { [SHELL_MARK]: 1 }, log,
+        });
+      } catch (error) {
         // i18n-ignore: サーバーのログ（log は console.error）
         log('  保持役につなげないので、`!` の行を今の形で走らせる:', String(error?.code ?? error?.message ?? error));
         return null;
       }
-      const id = `shell-${run.runId}-${crypto.randomBytes(3).toString('hex')}`;
-      // 出来事の購読は spawn より前に始める。印と始めの行は spawn の直後（同じ接続の中の順序は保たれる）
-      const source = holderSource(client, { id, acked: 0, seq: 0, marks: { [SHELL_MARK]: 1 } }, { spawned: true });
-      // run.env は秘密情報と変数（ADR 0217。shell-runs の envFor）。札（label）には載せない
-      client.spawn({ id, command: process.execPath, args: [CHILD], cwd: run.cwd || undefined, env: { ...process.env, ...(run.env ?? {}) }, policy: 'none', label: card });
-      client.mark(id, SHELL_MARK, 1);
-      source.write(lineOf({ t: 'run', command: run.command, cwd: run.cwd, timeoutMs }));
-      return heldShell(source);
+      if (!started) return null;
+      started.source.write(lineOf({ t: 'run', command: run.command, cwd: run.cwd, timeoutMs }));
+      return heldShell(started.source);
     },
     async adoptable() {
-      if (!dataDir || !root) return [];
+      if (!enabled() || !dataDir) return [];
+      const holderRoot = holderRootFor({ dataDir, root });
+      if (!holderRoot) return [];
       let client;
-      try { client = await holderLink({ dataDir, root, appVersion, launch: false }); }
+      try { client = await holderLink({ dataDir, root: holderRoot, appVersion, launch: false }); }
       catch (error) { if (error?.code === 'HOLDER_NONE') return []; throw error; }
       return (client.welcome?.children ?? [])
         .filter(child => readShellCard(child.label) && Number.isInteger(child.marks?.[SHELL_MARK]))

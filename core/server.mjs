@@ -400,6 +400,7 @@ import { createShellRuns, shellMode } from './shell-runs.mjs';
 import { createSessionCommands } from './session-commands.mjs';
 import { createShellBridge, SHELL_MCP_PATH } from './shell-bridge.mjs';
 import { createShellHolder } from './shell-held.mjs';
+import { createPlyShellHolder } from './ply-shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
 import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
@@ -2096,9 +2097,12 @@ function controlRuntimeFor(turn) {
 }
 
 // ply_shell: Pleiad がホストでシェルのコマンドを走らせる口（core/shell-bridge.mjs、ADR 0227 §1）。承認は会話の承認モードで Pleiad が決める。
-// ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブが終わったら会話へ知らせる（エージェントが自分で止めたものを除く）
+// ジョブは長いコマンドの見張り（sessionCommands）と会話の裏の一覧に載せ、start のジョブが終わったら会話へ知らせる（エージェントが自分で止めたものを除く）。
+// 保持役があればジョブは保持役の子に載り、サーバーを入れ替えても続く（ADR 0270 段 2a。core/ply-shell-held.mjs）
+const shellJobHolder = createPlyShellHolder({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, key: BOOT_ENV.AGENT_HOST_RUNTIME_KEY ?? '', appVersion: APP_VERSION });
 const shellBridge = createShellBridge({
   askPermission: request => askPermission(request),
+  holder: shellJobHolder,
   onJobStart: (sessionId, job) => {
     sessionCommands?.track(sessionId, { id: job.jobId, command: job.command, cwd: job.cwd, startedAt: job.startedAt });
     shellJobsChanged(sessionId);
@@ -2109,7 +2113,7 @@ const shellBridge = createShellBridge({
     if (job.kind === 'start' && !['agent', 'session', 'turn'].includes(job.stoppedBy)) void deliverJobEnd(sessionId, job, tail);
   },
 });
-process.on('exit', () => shellBridge.stopAll());
+process.on('exit', () => shellBridge.stopAll({ keepHeld: true }));
 /** ply_shell の口を開く。token があれば、その値で開き直す（restoreConnection） */
 function openShellPort(entry, token) {
   return shellBridge.open({ origin: localOrigin(), locale: entry.locale, token,
@@ -2142,9 +2146,9 @@ async function shellRuntimeFor(turn) {
 function plyShellOffered(sessionId) {
   return [...agentConnections.values()].some(e => e.sessionId === sessionId && e.shell);
 }
-/** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない） */
+/** ply_shell のジョブの裏の一覧（会話の裏の処理。kind: shell。終わりを待たない）。保持役の子は held */
 const shellBackground = sessionId => shellBridge.jobs(sessionId).filter(j => j.running && j.kind === 'start')
-  .map(j => ({ id: j.jobId, kind: 'shell', label: String(j.command).slice(0, 200), source: 'ply_shell' }));
+  .map(j => ({ id: j.jobId, kind: 'shell', label: String(j.command).slice(0, 200), source: 'ply_shell', ...(j.held ? { held: true } : {}) }));
 /** 裏の一覧の止める・読む口（findBackgroundTask が返す backend の形） */
 const SHELL_JOBS_HOST = {
   id: 'ply_shell',
@@ -3084,7 +3088,7 @@ const GIT_BEGIN_WAIT_MS = 6_000;
 // AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
 const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
 const GIT_END_WAIT_MS = 6_000;
-process.on('exit', () => shellRuns.stopAll());
+process.on('exit', () => shellRuns.stopAll({ keepHeld: true }));
 process.on('exit', () => botHost?.stop());
 process.on('exit', () => removeControlFile({ dataDir: store.dataDir }));
 process.on('exit', () => mainLink?.dispose());
@@ -5687,10 +5691,10 @@ async function runningWork() {
   const background = [...runtime.background.values()].map((b) => ({
     kind: "background", ...b, tasks: b.tasks.map((x) => ({ ...x })), ...(getBackend(b.backend)?.holdsBackground?.() ? { held: true } : {}),
   }));
-  // ply_shell の裏のジョブ（ADR 0227）。Pleiad のサーバーの子なので、引き継ぎでは止まる（held を付けない）
+  // ply_shell の裏のジョブ（ADR 0227）。保持役の子なら held（引き継ぎで止まらない。ADR 0270 段 2a）
   for (const sessionId of shellBridge.sessionsWithJobs()) {
     const tasks = shellBackground(sessionId);
-    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, capabilities: { backgroundDetails: true, stopBackground: true }, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString() });
+    if (tasks.length) background.push({ kind: "background", sessionId, backend: SHELL_JOBS_HOST.id, capabilities: { backgroundDetails: true, stopBackground: true }, tasks, since: new Date(Math.min(...shellBridge.jobs(sessionId).filter(j => j.running).map(j => j.startedAt))).toISOString(), ...(tasks.every(t => t.held) ? { held: true } : {}) });
   }
 
   const dueRows = schedule.list();
@@ -6269,11 +6273,14 @@ const outbox = createMessageQueue({
 // 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
 // ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
 const adopting = await restoreAdoptedTurns();
-// 前のサーバーが保持役に残した `!` の行（無停止の更新 段階 3。core/shell-held.mjs）も引き取る。元を読む条件はターンと同じ
-if ((process.env.AGENT_HOST_ADOPT_HOLDER === '1' || HANDOVER_START || handoverEnabled(BOOT_ENV)) && BOOT_ENV.AGENT_HOST_RUNTIME_ROOT) {
+// 前のサーバーが保持役に残した `!` の行（無停止の更新 段階 3。core/shell-held.mjs）も引き取る。
+// ADR 0270 の規則 ③: 起動の処理が復元の処理。保持役の子の一覧から自分の分（札が shell）を拾う（条件を付けない）
+{
   const adoptedShells = shellRuns.adopt(await shellHolder.adoptable().catch(err => { console.error('  `!` の行を引き取れませんでした:', String(err?.message ?? err)); return []; }));
   if (adoptedShells) console.log(`  \`!\` の行 ${adoptedShells} 件を引き取った`);
 }
+// 前のサーバーが保持役に残した ply_shell のジョブ（ADR 0270 段 2a。core/ply-shell-held.mjs）は、schedule と sessionCommands を作った後に引き取る
+// （onJobStart が running の配りと見張りを使うため。規則 ③: 起動の処理が復元の処理）
 // 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
 // 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
@@ -8801,6 +8808,13 @@ const schedule = createSchedule({ file: path.join(store.dataDir, 'schedule.json'
     throw new Error(`Unsupported schedule kind: ${row.kind}`);
   },
 });
+// 前のサーバーが保持役に残した ply_shell のジョブ（ADR 0270 段 2a。core/ply-shell-held.mjs）を引き取る。
+// 規則 ③: 起動の処理が復元の処理。ジョブのプロセスと出力（output・list で読む分）は保持役の子の記録にある。
+// onJobStart が running の配り（schedule を使う）と見張り（sessionCommands）を使うので、どちらも作った後に呼ぶ
+{
+  const adoptedJobs = shellBridge.adopt(await shellJobHolder.adoptable().catch(err => { console.error('  ply_shell のジョブを引き取れませんでした:', String(err?.message ?? err)); return []; }));
+  if (adoptedJobs) console.log(`  ply_shell のジョブ ${adoptedJobs} 件を引き取った`);
+}
 
 /**
  * 送信予定の時刻が来た。ふつうの送信と同じ入口（acceptSend）から送信待ちの末尾へ入れるので、会話が走っていれば
@@ -10032,9 +10046,12 @@ async function shutdownChromeHolder() {
   const client = await holderLink({ dataDir: store.dataDir, root: BOOT_ENV.AGENT_HOST_RUNTIME_ROOT, launch: false }).catch(() => null) ?? chromeHolder;
   await shutdownHolderIfIdle(client);
 }
-/** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server・OpenCode のサーバーは、止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3） */
+/** 終わる（main の shutdown・孤児の見張り）。手を離していない保持役の子の app-server・OpenCode のサーバー・`!` の行・ply_shell のジョブは、
+ * 止めてから終わる（保持役の子は、サーバーが終わっても残るため。無停止の更新 段階 3・ADR 0270）。更新・落ちたときの起こし直しはこの道を通らない
+ * （process.on('exit') は stopAll({ keepHeld: true }) で手を離すだけ） */
 function exitAfterStoppingHeld(code) {
-  void Promise.race([Promise.all([stopHeldAppServer(), stopHeldOpencode(), contextBridge.dispose()]), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
+  shellRuns.stopAll();
+  void Promise.race([Promise.all([stopHeldAppServer(), stopHeldOpencode(), contextBridge.dispose(), shellBridge.closeAll()]), new Promise(resolve => setTimeout(resolve, 2500))]).catch(() => {})
     .then(() => shutdownChromeHolder()).catch(() => {})
     .finally(() => process.exit(code));
 }

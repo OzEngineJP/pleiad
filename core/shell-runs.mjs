@@ -62,11 +62,17 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     const env = mode === 'host' ? await Promise.resolve().then(() => envFor({ sessionId, cwd })).catch(e => { console.error('shell: 秘密情報と変数を読めなかった:', e?.code ?? e?.message ?? e); return {}; }) ?? {} : {};
     const run = { sessionId, runId, command, cwd, at: new Date().toISOString(), backend: backend.id, mode, stdout: '', stderr: '', skip: false, ac: new AbortController(), env };
     runs.set(runId, run);
-    emit({ type: 'shell.start', sessionId, runId, command, cwd, at: run.at, backend: backend.id, mode });
     const onOutput = outputOf(run);
+    // shell.start は、ジョブが実際に走り出したとき（保持役の子を起こし終えたとき）に出す。保持役の子は、この時点で切り替えをまたいで残る
+    let started = false;
+    const markStarted = () => {
+      if (started) return;
+      started = true;
+      emit({ type: 'shell.start', sessionId, runId, command, cwd, at: run.at, backend: backend.id, mode });
+    };
     const work = mode === 'host'
-      ? hostWork(run, onOutput)
-      : backend.shell({ sessionId, command, cwd, timeoutMs, signal: run.ac.signal, onOutput });
+      ? hostWork(run, onOutput, markStarted)
+      : (markStarted(), backend.shell({ sessionId, command, cwd, timeoutMs, signal: run.ac.signal, onOutput }));
     run.done = Promise.resolve(work).then(result => settle(run, result), error => finish(run, { error: String(error?.message ?? error), exitCode: null }));
     return { runId };
   }
@@ -77,11 +83,16 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     emit({ type: 'shell.output', sessionId: run.sessionId, runId: run.runId, stream, text });
   };
 
-  /** 'host' の行を走らせる。保持役に載せられれば保持役の子、載せられなければ今の流れ（サーバーの子） */
-  async function hostWork(run, onOutput) {
-    const held = holder && !run.ac.signal.aborted ? await holder.start(run, { timeoutMs }).catch(e => { console.error('shell: 保持役に載せられなかった:', e?.message ?? e); return null; }) : null;
-    if (!held) return runHost({ command: run.command, cwd: run.cwd, timeoutMs, signal: run.ac.signal, onOutput, ...(Object.keys(run.env).length ? { env: { ...process.env, ...run.env } } : {}) });
-    return driveHeld(run, held, onOutput);
+  /** 'host' の行を走らせる。保持役に載せられれば保持役の子、載せられなければ今の流れ（サーバーの子）。
+   * started は、プロセスを起こし終えたとき（保持役の子を spawn し終えたとき）に 1 回呼ぶ */
+  async function hostWork(run, onOutput, started) {
+    try {
+      const held = holder && !run.ac.signal.aborted ? await holder.start(run, { timeoutMs }).catch(e => { console.error('shell: 保持役に載せられなかった:', e?.message ?? e); return null; }) : null;
+      if (held) { started(); return driveHeld(run, held, onOutput); }
+      const result = runHost({ command: run.command, cwd: run.cwd, timeoutMs, signal: run.ac.signal, onOutput, ...(Object.keys(run.env).length ? { env: { ...process.env, ...run.env } } : {}) });
+      started();
+      return result;
+    } finally { started(); }
   }
   /** 保持役の子の記録を読む。ack 済みの出力（付け直す前のサーバーが流した分）は組み立てるだけで流さない */
   function driveHeld(run, held, onOutput) {
@@ -201,9 +212,10 @@ export function createShellRuns({ store, emit, timeoutMs = Number(process.env.AG
     for (const run of runs.values()) if (run.sessionId === sessionId) { run.ac.abort(); n++; }
     return n;
   }
-  /** 全部止める（サーバーの終わり。同期）。保持役の子は札を外して止める（次の起動が引き取らない） */
-  function stopAll() {
-    for (const run of runs.values()) { if (run.held) run.held.abandon(); else run.ac.abort(); }
+  /** 全部止める（サーバーの終わり。同期）。keepHeld は、保持役の子を止めずに手を離す（更新・落ちたときの起こし直し。ADR 0270）。
+   * 止めるときは札を外して止める（次の起動が引き取らない） */
+  function stopAll({ keepHeld = false } = {}) {
+    for (const run of runs.values()) { if (run.held) { if (!keepHeld) run.held.abandon(); } else run.ac.abort(); }
   }
   /** この会話で走っている分 */
   const runningIn = (sessionId) => [...runs.values()].some(r => r.sessionId === sessionId);

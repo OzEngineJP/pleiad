@@ -74,7 +74,7 @@ export default async function (t) {
       const on = shellHolderEnabled();
       process.env.AGENT_HOST_SHELL_HOLDER = 'OFF';
       const off = shellHolderEnabled();
-      t.ok('切り替え: 実行場所の置き場があれば既定で載せる・無ければ載せない・AGENT_HOST_SHELL_HOLDER=off は載せない', !none && on && !off);
+      t.ok('切り替え: 既定は載せる（置き場が無ければデータ置き場ごとの一時の置き場。ADR 0270 段 2a）・AGENT_HOST_SHELL_HOLDER=off は載せない', none && on && !off);
       const card = shellCard({ sessionId: 's1', runId: 'run-0001', command: 'ls', cwd: '/x', at: '2026-10-07T00:00:00.000Z', backend: 'fake', skip: true, stdout: 'big' });
       assert.deepEqual(readShellCard(card), { sessionId: 's1', runId: 'run-0001', command: 'ls', cwd: '/x', at: '2026-10-07T00:00:00.000Z', backend: 'fake', skip: true });
       assert.equal(card.stdout, undefined, '札に出力は入れない');

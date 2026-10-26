@@ -47,6 +47,7 @@ const bootValues = (scratch) => ({
   AGENT_HOST_RUNTIME_ROOT: path.join(scratch, 'runtime'), AGENT_HOST_RUNTIME_KEY: 'test-key',
   AGENT_HOST_RUNTIME_RESOURCES: path.join(scratch, 'resources'), AGENT_HOST_RUNTIME_DIR: path.join(scratch, 'runtime-dir'),
   AGENT_HOST_SHELL_HOLDER: 'on',
+  AGENT_HOST_PLY_SHELL_HOLDER: 'on', AGENT_HOST_HOLDER_IDLE_MS: '5000',
 });
 
 export default async function (t) {
@@ -58,7 +59,7 @@ export default async function (t) {
   const bootMissing = Object.keys(fromBoot).filter(k => !FOR_CHILDREN.has(k) && !isBootEnvName(k));
   t.ok('serverEnv が渡すもの（PATH・PLEIAD_CLI_* 以外）は全部一覧にある', bootMissing.length === 0, JSON.stringify(bootMissing));
   const mainSource = await fs.readFile(path.join(ROOT, 'desktop', 'main.cjs'), 'utf8');
-  const forkEnv = /utilityProcess\.fork\([\s\S]*?env: \{([^\n]*)\}/.exec(mainSource)?.[1] ?? '';
+  const forkEnv = /forkUtility\([\s\S]*?env: \{([^\n]*)\}/.exec(mainSource)?.[1] ?? '';
   const forkNames = [...forkEnv.matchAll(/\b([A-Z][A-Z0-9_]+):/g)].map(m => m[1]);
   t.ok('utilityProcess が渡すもの（PATH 以外）も全部一覧にある', forkNames.length >= 4 && forkNames.every(k => FOR_CHILDREN.has(k) || isBootEnvName(k)), JSON.stringify(forkNames));
   t.ok('子へ渡すもの（PLEIAD_CONTROL_*・PLEIAD_CLI_*・AGENT_HOST_DATA・ELECTRON_RUN_AS_NODE）は一覧にない',
