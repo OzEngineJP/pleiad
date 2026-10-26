@@ -95,7 +95,7 @@ export const CAPABILITY_STATES = {
     title: covered,       // タイトルの口が無い -> sidecar が正本
     tag: covered,         // 状態タグも無い -> sidecar が正本
     fork: covered,        // 分岐の口が無い -> Pleiad の写しで分ける
-    subagents: todo('#151'),   // stream-json は子の conversation_id / log_uri を出すが、1.4.7 の log_uri から本文を読む形が未確認
+    subagents: impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #151）
     liveModel: impossible('起動時の --model だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     liveMode: impossible('起動時の --mode だけで、走らせたままは変えられない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     hostTools: covered,   // ply_control の sessions.setTitle / setStatus / fork で同じことができる

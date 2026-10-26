@@ -11,7 +11,7 @@ Antigravity の可視化・入力欄の `!`・子の会話・互換接続・自�
 
 - 可視化の指示は、カスタムエージェントの定義に固定せず、各ターンの発言の前に渡す。Antigravity はエージェント定義を起動時に読むため、会話の途中で追加された指示も新規・再開の両方で届く。指示文は Pleiad の履歴にユーザー発言として保存しない。
 - 入力欄の `!` は `shell: 'host'` とする。Pleiad が実行した結果を次のターンの本文に含める。
-- Antigravity CLI 1.4.7 の `stream-json` は子の `conversation_id` と `log_uri` を含む `subagent_info` を出す。`agy agent` / `agy agents` は利用可能なエージェント定義の一覧であり、子の会話の本文を得る操作ではない。`log_uri` の実体・形式と完了後の読み方を確かめられていないため、`subagents` は `todo('#151')` のままにする。
+- Antigravity CLI 1.4.7 の `stream-json` は子の `conversation_id` と `log_uri` を含む `subagent_info` を出す。`agy agent` / `agy agents` は利用可能なエージェント定義の一覧であり、子の会話の本文を得る操作ではない。2026-10-27 に既存の `~/.gemini/antigravity-cli` の会話データを読み取りで調べた。292 件の会話データベースのうち、子通知の構造を含む親の記録は見つかったが、子の会話 ID で引ける会話データベースや本文記録は無かった。親の `brain/<conversation_id>/.system_generated/tasks/task-<番号>.log` にはテキストログがあるものの、会話の役割付き履歴ではなく、通知の `log_uri` と子 ID から読み出す対応も確認できなかった。記録の本文は出力・複製していない。CLI に子の本文を返す取得口が無く、手元の保存データからも対応付けて読めないため、`subagents` は `impossible('1.4.7 は子の conversation_id / log_uri だけを通知し、子の会話本文を取得する口が無い')` とする。
 - 同じ版の `customModelsConfig` は Gemini API key の設定に限られ、Google アカウントの認証では無視される。セッションごとの互換接続先を選べないため `compatEndpoints` は不可能とする。
 - 同じ版の公式 CLI 引数・設定には、自動圧縮の開始しきい値を指定する手段がないため `autoCompactWindow` は不可能とする。自動圧縮自体は CLI の機能として残す。
 - 実機 CLI の確認では、Gemini の枠を消費しない Claude または GPT のモデルを `--model` で指定する。
@@ -23,4 +23,4 @@ Antigravity の可視化・入力欄の `!`・子の会話・互換接続・自�
 ## 影響
 
 - 可視化と `!` の配達は `tests/lib/backend-delivery.mjs` で偽 CLI に渡ることを検査する。既存の `server-shell`・`server-visualize` 契約も維持する。
-- CLI の拡張やヘッドレス API が後の版で追加された場合は、実機・公式資料を再確認して該当する不可能の印を更新する。
+- CLI の拡張やヘッドレス API が後の版で追加された場合は、実機・公式資料を再確認して該当する不可能の印を更新する。子の会話を ID から取得できる公式の口が追加された場合は `subagents` を再判定する。

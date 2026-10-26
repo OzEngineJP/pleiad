@@ -42,7 +42,7 @@ export const CAPABILITY_CONTRACTS = {
   fork: { suites: ['conformance', 'server-fork', 'server-antigravity'] },
   forkMessage: { suites: ['server-fork'] },
   rewind: { suites: ['server-rewind', 'server-antigravity'] },
-  subagents: { suites: ['server-background', 'server-codex', 'devin-subagents', 'grok-backend'], agents: { devin: 'devin-subagents', grok: 'grok-backend' } },
+  subagents: { suites: ['server-background', 'server-codex', 'devin-subagents', 'grok-backend', 'server-antigravity'], agents: { devin: 'devin-subagents', grok: 'grok-backend', antigravity: 'server-antigravity' } },
   liveModel: { suites: ['server-delegation-settings', 'server-ux', 'grok-backend', 'server-opencode', 'server-devin'], agents: { opencode: 'server-opencode', devin: 'server-devin' } },
   liveMode: { suites: ['server-ux', 'grok-backend', 'server-opencode', 'server-devin'], agents: { opencode: 'server-opencode', devin: 'server-devin' } },
   hostTools: { suites: ['event-session-id'] },
