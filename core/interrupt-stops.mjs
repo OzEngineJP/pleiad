@@ -31,6 +31,11 @@ export function backgroundStop(x) {
 /** 承認待ちの対象の要約。コマンド・パス・URL を優先し、無ければ入力を JSON で（秘密は伏せる） */
 function approvalTarget(payload) {
   if (payload?.kind === 'question') return oneLine(payload.questions?.[0]?.question ?? '');
+  // ターンの外の待ち（Chrome の接続・ログイン。ADR 0168）は、人に何を頼んだかが対象
+  if (payload?.browserHandoff) return oneLine(payload.browserHandoff.message || payload.browserHandoff.reason || '');
+  // 設定の変更の承認（detached。ADR 0088）と秘密情報の入力のカード（ADR 0217）
+  if (payload?.settingChange) return oneLine(payload.settingChange.key ?? payload.settingChange.op ?? '');
+  if (payload?.secretRequest) return oneLine(payload.secretRequest.name ?? payload.secretRequest.label ?? '');
   const input = payload?.input;
   if (!input || typeof input !== 'object') return '';
   for (const k of ['command', 'file_path', 'path', 'notebook_path', 'url', 'pattern', 'query', 'description']) {
@@ -45,6 +50,11 @@ export function approvalStop(id, payload) {
   return { key: `ap:${id}`, tool: oneLine(payload?.toolName ?? '', 80), target: approvalTarget(payload) };
 }
 
+/** ターンの外で待っていたもの（outlivesTurn。Chrome の接続・ログイン。ADR 0168）。再起動で取り下げた分 */
+export function waitStop(id, payload) {
+  return { key: `wait:${id}`, tool: oneLine(payload?.toolName ?? '', 80), target: approvalTarget(payload) };
+}
+
 /**
  * エージェントへ添える文。止めたものが無ければ null。
  * 返り: { text, body, keys, dropped }。text はエージェントへ渡す文（印で囲む）、body は画面に出す中身。
@@ -52,9 +62,9 @@ export function approvalStop(id, payload) {
  */
 export function interruptionNote(lng, stops, reason = null) {
   if (!stops) return null;
-  const tasks = stops.tasks ?? [], background = stops.background ?? [], approvals = stops.approvals ?? [];
+  const tasks = stops.tasks ?? [], background = stops.background ?? [], approvals = stops.approvals ?? [], waits = stops.waits ?? [];
   const cancelled = tasks.filter(x => !x.unread && !x.restart), unread = tasks.filter(x => x.unread), restarted = tasks.filter(x => x.restart && !x.unread);
-  if (!tasks.length && !background.length && !approvals.length) return null;
+  if (!tasks.length && !background.length && !approvals.length && !waits.length) return null;
   const item = x => agentT(lng, 'stops.taskItem', { taskId: x.taskId, title: x.title || '-', status: x.status || '-' });
   const sections = [];
   if (cancelled.length) sections.push(agentT(lng, 'stops.cancelled', { items: cancelled.map(item).join('\n') }));
@@ -66,10 +76,12 @@ export function interruptionNote(lng, stops, reason = null) {
     agentT(lng, 'stops.backgroundItem', { id: x.id, kind: agentT(lng, `stops.kind.${x.kind}`), label: x.label || '-' })).join('\n') }));
   if (approvals.length) sections.push(agentT(lng, 'stops.approvals', { items: approvals.map(x =>
     agentT(lng, 'stops.approvalItem', { tool: x.tool || '-', target: x.target || '-' })).join('\n') }));
+  if (waits.length) sections.push(agentT(lng, 'stops.waits', { items: waits.map(x =>
+    agentT(lng, 'stops.waitItem', { tool: x.tool || '-', target: x.target || '-' })).join('\n') }));
   if (stops.dropped) sections.push(agentT(lng, 'stops.dropped', { count: stops.dropped }));
   // i18n-dynamic: agent:stops.reason.
   const why = REASONS.has(reason) ? agentT(lng, `stops.reason.${reason}`) : agentT(lng, 'stops.reason.unknown');
   const body = [agentT(lng, 'stops.heading', { reason: why }), ...sections, agentT(lng, 'stops.footer')].join('\n\n');
   // 後ろを空けておく（人の発言と 1 つの文につながる履歴でも、読みやすく切れる）
-  return { text: `${OPEN}\n${body}\n${CLOSE}\n\n`, body, keys: [...tasks, ...background, ...approvals].map(x => x.key), dropped: Boolean(stops.dropped) };
+  return { text: `${OPEN}\n${body}\n${CLOSE}\n\n`, body, keys: [...tasks, ...background, ...approvals, ...waits].map(x => x.key), dropped: Boolean(stops.dropped) };
 }

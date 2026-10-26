@@ -21,8 +21,8 @@
 //                     ターンが中断で終わったら書き、次のターンの開始で null にする（core/server.mjs。docs/design.md「中断と再開」）
 //   stops           … 中断（と再起動）で Pleiad が止めたもののうち、まだエージェントに伝えていないもの
 //                     { tasks: [{ key, taskId, title, status, unread, restart? }], background: [{ key, id, kind, label }],
-//                       approvals: [{ key, tool, target }], dropped, reason }。次のターンで 1 回だけ伝え、渡った分を消す（addStops / takeStops。
-//                     docs/design.md「中断と再開」）
+//                       approvals: [{ key, tool, target }], waits: [{ key, tool, target }], dropped, reason }。次のターンで 1 回だけ伝え、渡った分を消す（addStops / takeStops。
+//                     docs/design.md「中断と再開」）。waits はターンの外の待ち（Chrome の接続・ログイン。ADR 0168）を再起動で取り下げたもの
 //   turnStartedAt   … 走っているターンの開始時刻。終わりで片付ける。起動時に残っていれば、落ちて終わりが記録されなかったターン（restart）
 //   agentLocale     … 会話の言語（ja|en）。エージェントに渡す文（指示・ツールの説明・通知）の言語。会話を始めたときに
 //                     画面の言語で決め、以後は変えない（core/server.mjs。docs/design.md「多言語対応」）
@@ -33,7 +33,7 @@ import { isDeepStrictEqual } from "node:util";
 import { t } from "./i18n.mjs";
 import { assertNotGuarded } from "./test-guard.mjs";
 import { openData } from "./data-schema.mjs";
-import { sessionTable, transaction } from "./db.mjs";
+import { sessionTable, transaction, waitingCardTable } from "./db.mjs";
 import { COMPUTER_APP_LIMIT, computerAppRow, computerUsePrefs } from "../web/computer-prefs.mjs";
 
 const DIR = process.env.AGENT_HOST_DATA ?? path.join(os.homedir(), ".agent-host");
@@ -84,12 +84,14 @@ const statuses = jsonFile(STATUSES);
 // cache にある会話は、DB に行がある会話に限る。
 let handle = null;
 let table = null;
+let cards = null;
 let cache = null;
 
 function open() {
   if (!handle) {
     handle = openData(DIR);
     table = sessionTable(handle.db);
+    cards = waitingCardTable(handle.db);
   }
 }
 const load = async () => {
@@ -146,7 +148,26 @@ export function flushNow() {
 /** DB の接続とロックを離す（データ置き場を消す前。テストの後片付け用）。以後に呼べば開き直す */
 export function closeStore() {
   handle?.release();
-  handle = null; table = null; cache = null;
+  handle = null; table = null; cards = null; cache = null;
+}
+
+// ---- 承認・質問のカード（runtime.waiting の控え。ADR 0270 段 3 の ②） ----------------------------
+// カードの一覧は、起動でこの行から拾う（答えを待つ約束は保持役の子の控えから作り直す）。
+// 書きは同期（node:sqlite）。store の直列化の外で 1 行ずつ書くが、transaction の中には割り込まない
+/** 起動で拾うカードの行（出した順） */
+export function loadWaitingCards() {
+  open();
+  return cards.load();
+}
+/** 1 枚を置く（同じ id は置き換える） */
+export function putWaitingCard(card) {
+  open();
+  cards.put(card);
+}
+/** 決着したカードの行を消す */
+export function removeWaitingCards(ids) {
+  open();
+  cards.remove(ids);
 }
 
 // 書き込みを直列化する。人間と AI が同時に触っても read-modify-write が交錯しない
@@ -547,11 +568,11 @@ export async function recoverInterruptedTurns(at = Date.now(), { except = new Se
 
 // 「止めたもの」の種類ごとの上限。超えた分は数だけ残す（dropped）
 const STOPS_MAX = 30;
-const STOP_LISTS = ["tasks", "background", "approvals"];
+const STOP_LISTS = ["tasks", "background", "approvals", "waits"];
 
 /**
  * 中断で止めたもの（stops）を会話に足す。同じ key のものは新しい方で置き換える（同じタスクを 2 度止めても 1 件）。
- * patch: { tasks?, background?, approvals? }（それぞれ key を持つ項目の配列）。会話の行が無ければ書かない
+ * patch: { tasks?, background?, approvals?, waits? }（それぞれ key を持つ項目の配列）。会話の行が無ければ書かない
  */
 export async function addStops(sessionId, patch) {
   if (!sessionId || !patch) return null;

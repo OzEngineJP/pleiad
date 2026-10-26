@@ -15,6 +15,7 @@ import { createAgentTasks, delegateReply, finalReply, gitLine, workspaceLine } f
 import { historyGaveUp, readWithRetry, transientStorageError } from './history-retry.mjs';
 import { createCompletionNotices, hasPendingChild, canSteerNotice } from './completion-notices.mjs';
 import { createSettingApprovals } from './setting-approvals.mjs';
+import { createWaitingCards } from './waiting-cards.mjs';
 import { createAgentBridge, AGENTS_MCP_PATH, DELEGATING_TOOLS, kindList } from './agent-bridge.mjs';
 import { createComputerBridge, COMPUTER_MCP_PATH } from './computer-bridge.mjs';
 import { createComputerLock } from './computer-use/lock.mjs';
@@ -157,7 +158,7 @@ import { createMainAway, createExternalOpener } from './main-away.mjs';
 import { readBuildInfo } from './handover-check.mjs';
 import { markRuntimeInUse } from './runtime-use.mjs';
 import { cardOf, restoreFields, promptHash, CARD_MAX_BYTES } from './turn-card.mjs';
-import { readAdoptSources, readHolderSources, ADOPT_TURN_MARK } from './adopt.mjs';
+import { readAdoptSources, readHolderSources, readHeldWaitIds, ADOPT_TURN_MARK } from './adopt.mjs';
 import { holderLink } from './holder/link.mjs';
 import { HOLDER_PROTOCOL } from './holder/protocol.mjs';
 import { handoverStart, createHandover, stashOf, readStash, retryTransient, HANDOVER_VERSION, LOCK_WAIT_MS } from './handover.mjs';
@@ -402,7 +403,7 @@ import { createShellBridge, SHELL_MCP_PATH } from './shell-bridge.mjs';
 import { createShellHolder } from './shell-held.mjs';
 import { createPlyShellHolder } from './ply-shell-held.mjs';
 import { createHostSessionSearch } from './session-search-host.mjs';
-import { taskStop, backgroundStop, approvalStop, interruptionNote } from './interrupt-stops.mjs';
+import { taskStop, backgroundStop, approvalStop, waitStop, interruptionNote } from './interrupt-stops.mjs';
 import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
@@ -5266,6 +5267,30 @@ const clipValue = (value) => { const text = JSON.stringify(value) ?? 'null'; ret
 // 出している設定の変更の承認カード（requestId -> 取り下げ用の AbortController）。カードはメモリだけで、台帳は settingApprovals
 const settingCards = new Map();
 
+// ---- 承認・質問のカードの控え（ADR 0270 段 3 の ②） ------------------------------------------------
+// runtime.waiting は写し。正本は DB の waiting_cards の行（core/store.mjs の loadWaitingCards・putWaitingCard・removeWaitingCards）。
+// 起動で行を読み、付け直したターンが同じ id で出し直したカードは拾い、拾わなかった行は取り下げを会話へ届ける（core/waiting-cards.mjs）
+const waitingCards = createWaitingCards({
+  load: () => store.loadWaitingCards(),
+  put: card => store.putWaitingCard(card),
+  remove: ids => store.removeWaitingCards(ids),
+  log: line => console.error(line),
+});
+// 行に置く中身の上限。入力（Write の本文など）は大きく、秘密も混ざりうるので、切り詰めて種別と見出しだけ残す。
+// stops に出す対象（target）は、切り詰める前の payload から作る
+const WAITING_INPUT_MAX = 4 * 1024;
+const WAITING_PAYLOAD_MAX = 16 * 1024;
+function compactWaitingPayload(payload) {
+  const out = { ...payload };
+  if (out.input && typeof out.input === 'object' && JSON.stringify(out.input).length > WAITING_INPUT_MAX) out.input = { truncated: true };
+  if (JSON.stringify(out).length <= WAITING_PAYLOAD_MAX) return out;
+  if (out.settingChange) out.settingChange = { ...out.settingChange, rows: [] };
+  delete out.questions;
+  if (JSON.stringify(out).length <= WAITING_PAYLOAD_MAX) return out;
+  return { type: out.type, kind: out.kind, toolName: out.toolName, sessionId: out.sessionId ?? null, toolUseID: out.toolUseID,
+    title: out.title, conversationTitle: out.conversationTitle, truncated: true };
+}
+
 /**
  * 会話の承認カードで設定の変更を聞く（registry.invoke の approve。ADR 0088）。カードを出し、答えを待たずに { pending: true, requestId } を返す。
  * カードは期限なしで残り（ターンの終わり・中断・host の不在では取り下げない。detached）、人の答えで決着する。
@@ -6021,6 +6046,9 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
       let found = false;
       for (const card of cards) if (runtime.waiting.delete(card.id)) found = true;
       if (!found) return;
+      // 決着したカードの行を DB から消す（続きに要るのは答えていないカードだけ。ADR 0270 段 3 の ②）。
+      // 中継の複製の id は行に無い（消しても何も起きない）
+      waitingCards.remove(cards.map(card => card.id));
       touchCard(runtime.turns.get(sessionId));
       // 片付いたことを画面へ知らせる。本来のカードも、祖先の会話の中継の複製も、ほかの窓・リモートの画面に残った写しも、これで畳める
       // （running の permissions から消えるだけでは、開いたままのカードは変わらない）。複製は id ごと・会話ごとに 1 つずつ
@@ -6040,6 +6068,14 @@ const askPermission = async ({ toolName, input, sessionId, toolUseID, title, sig
     };
 
     for (const card of cards) runtime.waiting.set(card.id, { settle, payload: card.payload, askedAt: new Date().toISOString(), relay: card.relay, notified: false, detached, outlivesTurn, origin: sessionId ?? null });
+    // 続きに要る状態（カードの中身）を DB に置く（ADR 0270 段 3 の ②）。中継の複製は元のカードから作り直せるので置かない。
+    // 起動で拾えなかった行は、取り下げを会話へ届ける（core/waiting-cards.mjs・withdrawRestoredCards）
+    waitingCards.put({
+      id: cards[0].id, sessionId: payload.sessionId ?? null, origin: sessionId ?? null,
+      toolName: payload.toolName ?? null, askedAt: new Date().toISOString(),
+      payload: compactWaitingPayload(payload), target: approvalStop(cards[0].id, payload).target,
+      detached: Boolean(detached), outlivesTurn: Boolean(outlivesTurn),
+    });
     // 呼び出し側へ、元のカードの id と中身の差し替え・外からの決着の口を渡す（最初の送信より前に同期で。ADR 0168）
     onOpen?.({
       id: cards[0].id,
@@ -6273,7 +6309,12 @@ const outbox = createMessageQueue({
 });
 // 付け直すターン（無停止の更新 2b-4。stage2-server-state.md §5.1）。後片付け（送信待ちの戻し・中断の記録・worktree の整理）と、
 // ターンを始めうるもの（予定・上限の再開・bot）より前に runtime.turns に載せる。口を開き直して記録を流すのは待ち受けの後
+// 前の起動が残した承認・質問のカードの行も読む（ADR 0270 段 3 の ②）。付け直すターンが同じ id で出し直すまでは、まだ何も出さない
+const restoredCards = waitingCards.load();
+if (restoredCards.size) console.log(`  前の起動が残した承認・質問のカード ${restoredCards.size} 件を読んだ`);
 const adopting = await restoreAdoptedTurns();
+// 付け直さない会話のカードは、ここで取り下げを会話へ届ける（黙って消さない）。付け直すターンの分は、記録の再生が終わってから
+await withdrawRestoredCards(adopting);
 // 前のサーバーが保持役に残した外部の stdio MCP も拾う（ADR 0270 段 2c。core/context-mcp-held.mjs）。規則 ③: 起動の処理が復元の処理。
 // 子は保持役に居るので、次にその MCP を使うターンの acquire が付く（initialize は送り直さない。札の initialize の結果を読み直す）
 {
@@ -8099,7 +8140,15 @@ async function restoreTurn(card, source) {
  */
 async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   ctx ??= await restoreTurn(card, source);
-  const { turn, sessionId, backend, agentLocale, emit } = ctx;
+  const { turn, sessionId, backend, agentLocale } = ctx;
+  // 記録の再生が終わった（最初の生の出来事・ターンの終わり・失敗）ら、出し直されなかったカードを取り下げる。
+  // 再生の間の askPermission は、同じ id でカードを出し直し、DB の行を「拾った」に変える（core/waiting-cards.mjs）
+  const rawEmit = ctx.emit;
+  const emit = (event, opts) => {
+    if (!opts?.replay) finalizeAdoptedCards(sessionId);
+    return rawEmit(event, opts);
+  };
+  ctx.emit = emit;
   const releaseUpdateGate = updateGate.enter();
   // ply_context の口は下で開き直す。それまでに CLI から届いた呼び出しは断らずに待たせる（待ち受けた直後から呼べる。外部の MCP の起こし直しは数秒かかりうる）
   const contextToken = ctx.card.connectionTokens?.context;
@@ -8180,6 +8229,8 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
   } finally {
     releaseUpdateGate();
     releaseContext();
+    // 生の出来事もターンの終わりも来なかった（付け直しをあきらめた・止めたまま終わった）ときの分
+    finalizeAdoptedCards(sessionId);
     // 札の承認のうち、出し直されず決着の行も付かなかったもの（答えが旧サーバーの手を離す前後で記録に入った・付け直しをあきらめた）の通知の一覧の行を畳む。
     // 決着済みの行には何もしない（出し直して答えた承認は、その答えで決着している）
     for (const id of ctx.card.waits) void inboxSources.permissionSettled({ id, answer: { messageKey: 'turnEnded' } });
@@ -8208,6 +8259,68 @@ async function restoreAdoptedTurns() {
     catch (err) { source.dispose?.(); console.error(`  ターンを付け直せないので中断として残す（記録 ${source.id}）:`, String(err?.message ?? err)); }
   }
   return adopted;
+}
+
+// ---- 前の起動が残した承認・質問のカード（ADR 0270 段 3 の ②） ----------------------------------------
+// 付け直したターンが同じ id で出し直したカードは、記録の再生の間に runtime.waiting へ戻る（core/waiting-cards.mjs の put が印を付ける）。
+// 出し直されなかった行は、黙って消さずに「止めたもの」（stops）と permissionSettled で取り下げを届ける。
+// ターンの外の待ち（outlivesTurn。Chrome の接続・ログイン）は waits、ターンの中のカードは approvals に残す。
+// 設定の変更の承認（detached）は、台帳（core/setting-approvals.mjs）が起動で「取り下げ」を会話へ届けるので、ここでは stops を足さない。
+const cardsFinalized = new Set();
+
+/** カード 1 枚を取り下げる（DB の行を消し、stops と画面の決着を残す） */
+async function withdrawCards(rows) {
+  if (!rows.length) return;
+  const stops = new Map();
+  for (const row of rows) {
+    const sessionId = row.origin ?? row.sessionId;
+    if (!row.detached && sessionId) {
+      const list = row.outlivesTurn ? 'waits' : 'approvals';
+      const item = row.outlivesTurn ? waitStop(row.id, row.payload ?? {}) : approvalStop(row.id, row.payload ?? {});
+      // 行の target・toolName は切り詰める前の payload から作った値（payload の入力は落ちていることがある）
+      if (row.target) item.target = row.target;
+      if (row.toolName) item.tool = row.toolName;
+      const entry = stops.get(sessionId) ?? { approvals: [], waits: [] };
+      entry[list].push(item);
+      stops.set(sessionId, entry);
+    }
+    // 開いている画面のカードを畳み、スマホの通知と通知の一覧のあなた待ちを決着させる
+    emitGlobal({ type: 'permissionSettled', id: row.id, sessionId: row.sessionId ?? null, allow: false, reason: 'restart' });
+    pushNotifier.approvalResolved({ id: row.id, sessionId: row.sessionId });
+    void inboxSources.permissionSettled({ id: row.id, answer: { messageKey: 'turnEnded' } });
+    botHost?.onPermission({ id: row.id, ...(row.payload ?? {}) }, 'settled');
+  }
+  for (const [sessionId, patch] of stops) {
+    const lists = Object.fromEntries(Object.entries(patch).filter(([, list]) => list.length));
+    await store.addStops(sessionId, { ...lists, reason: 'restart' }).catch(error => {
+      console.error(`  取り下げた承認・待ちを会話に残せませんでした（${sessionId}）:`, String(error?.message ?? error));
+    });
+  }
+  waitingCards.remove(rows.map(row => row.id));
+  console.log(`  前の起動が残した承認・質問のカード ${rows.length} 件を取り下げた（会話へ届ける）`);
+}
+
+/**
+ * 起動で、付け直さない会話のカードを取り下げる。付け直すターンの分は、記録の再生が終わってから（finalizeAdoptedCards）。
+ * 付け直さない起動でも、保持役の子の札（label.waits）がまだ待っているカードは取り下げない（段 4 で必ず付け直す。今は子が生きている）
+ */
+async function withdrawRestoredCards(adopting) {
+  const adopted = new Set(adopting.map(item => item.ctx?.sessionId).filter(Boolean));
+  const rows = waitingCards.unclaimed().filter(row => !adopted.has(row.origin) && !adopted.has(row.sessionId));
+  if (!rows.length) return;
+  const root = BOOT_ENV.AGENT_HOST_RUNTIME_ROOT;
+  const held = root ? await readHeldWaitIds({ dataDir: store.dataDir, root, appVersion: APP_VERSION }).catch(() => new Set()) : new Set();
+  const waiting = rows.filter(row => held.has(row.id));
+  if (waiting.length) console.log(`  保持役の子がまだ待っているカード ${waiting.length} 件は残す`);
+  await withdrawCards(rows.filter(row => !held.has(row.id)));
+}
+
+/** 付け直したターンの記録の再生が終わった（出し直されなかったカードを取り下げる。1 会話 1 回） */
+function finalizeAdoptedCards(sessionId) {
+  if (!sessionId || cardsFinalized.has(sessionId)) return;
+  cardsFinalized.add(sessionId);
+  const rows = waitingCards.unclaimed(sessionId);
+  if (rows.length) void withdrawCards(rows).catch(error => console.error(`  取り下げに失敗（${sessionId}）:`, String(error?.message ?? error)));
 }
 
 /**

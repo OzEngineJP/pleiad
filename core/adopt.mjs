@@ -140,6 +140,22 @@ export async function readHolderSources({ dataDir, root, appVersion = '', log = 
 }
 
 /**
+ * 起動で、保持役の子の札（label.waits）が今も待っている承認の id を集める（付け直さない起動でも、カードの行を
+ * 取り下げてよいかを決めるため。ADR 0270 段 3）。居る保持役にだけつなぎ、起こさない。居なければ空。
+ * readHolderSources と同じ共有の口を使うので、どちらが先でも取り合わない
+ */
+export async function readHeldWaitIds({ dataDir, root, appVersion = '', log = () => {} } = {}) {
+  let client;
+  try { client = await holderLink({ dataDir, root, appVersion, launch: false, log }); }
+  catch (error) { if (error?.code === 'HOLDER_NONE') return new Set(); throw error; }
+  const ids = new Set();
+  for (const child of client.welcome?.children ?? []) {
+    for (const id of child.label?.waits ?? []) if (typeof id === 'string' && id) ids.add(id);
+  }
+  return ids;
+}
+
+/**
  * 子の札の種類（label.k）ごとの、子 → ターンごとの元の展開（Codex の共有の app-server。core/backends/codex-held.mjs が登録する）。
  * expand({ client, child, log }) は、付け直す元（restoreTurn が読む state・attachable・dispose を持つもの）の配列を返す
  */

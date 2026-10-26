@@ -165,6 +165,15 @@ CREATE TABLE IF NOT EXISTS mcp_processes (
   cwd TEXT,
   key TEXT
 );
+CREATE TABLE IF NOT EXISTS waiting_cards (
+  id TEXT PRIMARY KEY,
+  session_id TEXT,
+  origin TEXT,
+  tool_name TEXT,
+  asked_at TEXT NOT NULL,
+  data TEXT NOT NULL
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS waiting_cards_origin ON waiting_cards (origin);
 `;
 const lateEnsured = new WeakSet();
 function ensureLateTables(db) {
@@ -756,6 +765,29 @@ export function mcpProcessTable(db, { limit = 256 } = {}) {
     unclosed() { return prepared(db, 'SELECT * FROM mcp_processes WHERE closed_at IS NULL AND killed_at IS NULL').all().map(row); },
     /** 全行（作った順。テスト・調査用） */
     rows() { return prepared(db, 'SELECT * FROM mcp_processes ORDER BY seq').all().map(row); },
+  };
+}
+
+// ---- 承認・質問のカード（runtime.waiting の控え。ADR 0270 段 3 の ②）------------------------------------
+// 続きに要る状態だけを持つ。答えを待つ約束は保持役の子の控え（jsonrpc・claude-control）から作り直す。
+// 件数は「答えていないカード」の数だけで、決着すると消える。カードの入力は大きくても切り詰める（core/server.mjs の compactWaitingPayload）。
+// 欠けても失った記録は無い（起動で拾えなかったカードは、取り下げとして会話へ届ける）ので後から足す表。形式番号は上げない
+export function waitingCardTable(db, { ensure = true } = {}) {
+  if (ensure) ensureLateTables(db);
+  const row = r => ({ id: r.id, sessionId: r.session_id, origin: r.origin, toolName: r.tool_name, askedAt: r.asked_at, ...JSON.parse(r.data) });
+  return {
+    /** 起動で拾う行（出した順） */
+    load() { return prepared(db, 'SELECT id, session_id, origin, tool_name, asked_at, data FROM waiting_cards ORDER BY asked_at').all().map(row); },
+    /** 1 枚を置く（同じ id は置き換える。付け直しで出し直したカードは、元の askedAt を使う） */
+    put(card) {
+      const data = jsonOf({ payload: card.payload ?? null, target: card.target ?? '', detached: card.detached === true, outlivesTurn: card.outlivesTurn === true });
+      prepared(db, 'INSERT INTO waiting_cards (id, session_id, origin, tool_name, asked_at, data) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET session_id = excluded.session_id, origin = excluded.origin, tool_name = excluded.tool_name, asked_at = excluded.asked_at, data = excluded.data')
+        .run(card.id, card.sessionId ?? null, card.origin ?? null, card.toolName ?? null, card.askedAt, data);
+    },
+    remove(ids) {
+      for (const id of ids ?? []) prepared(db, 'DELETE FROM waiting_cards WHERE id = ?').run(id);
+    },
+    count() { return Number(prepared(db, 'SELECT COUNT(*) AS n FROM waiting_cards').get().n); },
   };
 }
 

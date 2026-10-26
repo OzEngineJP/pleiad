@@ -405,6 +405,8 @@ const SUITES = [
   // 入力欄の設定のチップ: フォルダーの一覧（listDirs）・「既定」の解決・エフォートの既定の段
   './unit/composer-settings.mjs',
   './unit/context-transports.mjs',
+  // 外部 MCP の接続の鍵: 起動ごとに変わる値では変わらず、${env:…} の参照先を変えたら変わる（ADR 0270 段 3）
+  './unit/context-key.mjs',
   './unit/context-warm.mjs',
   './unit/context-lazy.mjs',
   './unit/mcp-orphans.mjs',
@@ -725,6 +727,10 @@ const SUITES = [
   './unit/restart-codex-turn.mjs',
   // 段 2c: 外部の stdio MCP を保持役に載せ、普通に止めて起こし直しても子と中の状態が残る（initialize は送り直さない）
   './unit/restart-mcp.mjs',
+  // 段 3: 承認・質問のカードを DB に置き、普通に止めて起こし直しても失わない（保持役のターンは同じ id で出直す・ほかは取り下げを会話へ）
+  './unit/restart-cards.mjs',
+  // 段 3: 委譲の子（保持役のターン）の実行の控えが続き、結果の確定と完了通知は 1 回だけ
+  './unit/restart-delegation.mjs',
   // 引き継ぎを main の切り替えの流れごと（無停止の更新 2d）: 作業の最中でも待たずに替わる・S2 が立たなければ前の版で付け直す・引き継げない作業があれば待つ
   './unit/desktop-handover.mjs',
   // 承認のカードの id（無停止の更新 2b-6）: ツールの id と会話の id から決まる値・同じプロセスの 2 回目と、ツールの id が無い承認は乱数

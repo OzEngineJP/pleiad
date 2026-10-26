@@ -517,6 +517,8 @@
     },
     "approvals": "Pending approvals that were treated as denied (not run):\n{{items}}",
     "approvalItem": "- {{tool}}: {{target}}",
+    "waits": "Waits that were outside a turn (ended by the restart; no longer waiting):\n{{items}}",
+    "waitItem": "- {{tool}}: {{target}}",
     "dropped": "{{count}} more were left out.",
     "footer": "Do not simply redo what was stopped. Check the current state (files, command output, ply_task_status) first, then decide whether to delegate again or rerun commands."
   },

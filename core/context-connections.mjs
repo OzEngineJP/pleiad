@@ -1,9 +1,37 @@
 import { hash } from './context-runtime.mjs';
 import { t } from './i18n.mjs';
+import { isBootEnvName } from './boot-env.mjs';
 
 const WARM_IDLE_MS = 10 * 60_000;
 const CACHE_LIMIT = 128;
 export { WARM_IDLE_MS };
+
+const ENV_REF = /\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
+
+/**
+ * 定義が参照している環境変数の名前（${env:…}・env_vars・env_http_headers・bearer_token_env_var）。
+ * 起動ごとに変わる起動用の変数（core/boot-env.mjs）は外す（その値を変えても MCP を起こし直さない）
+ */
+function referencedEnvNames(definition) {
+  const names = new Set();
+  const scan = value => {
+    if (typeof value !== 'string') return;
+    for (const match of value.matchAll(ENV_REF)) names.add(match[1]);
+  };
+  for (const value of [definition?.command, definition?.url, definition?.baseUrl, definition?.cwd, ...(Array.isArray(definition?.args) ? definition.args : [])]) scan(value);
+  for (const value of Object.values(definition?.env ?? {})) scan(value);
+  for (const value of Object.values(definition?.headers ?? definition?.http_headers ?? {})) scan(value);
+  for (const name of Object.values(definition?.env_http_headers ?? {})) if (typeof name === 'string') names.add(name);
+  for (const name of definition?.env_vars ?? []) if (typeof name === 'string') names.add(name);
+  if (typeof definition?.bearer_token_env_var === 'string') names.add(definition.bearer_token_env_var);
+  return [...names].filter(name => !isBootEnvName(name)).sort();
+}
+
+/** 鍵に入れる env: 参照先の値だけ（起動ごとに変わる値と、定義が参照していない値を除く） */
+function envKeyOf(definition, config) {
+  const env = config?.env && typeof config.env === 'object' ? config.env : {};
+  return Object.fromEntries(referencedEnvNames(definition).map(name => [name, env[name] ?? null]));
+}
 
 // 接続と一覧だけを共有する。認可・ターンの有効性は利用側の binding が持つ。
 // snapshots（core/mcp-ledger.mjs）があるとき、一覧の写しはデータ置き場にも残す。写しのある MCP は
@@ -12,9 +40,9 @@ export function createContextConnections({ connect, idleMs = WARM_IDLE_MS, snaps
   const entries = new Map(), all = new Set(), cache = new Map();
   let disposed = false;
   let keepOnClose = false;   // dispose({ keepHeld: true }) の後は、どの entry も保持役の子を止めずに手を離す
-  // 鍵から env を外す（サーバーの起動ごとに変わる値が入る。保持役の子を起動で拾い直すときに、同じ MCP が同じ鍵になるように。
-  // 定義の env と `${env:…}` の参照は item.definition に載る。ADR 0270 段 2c）
-  const keyFor = (item, config) => `${item.id}:${hash([item.definition, { ...config, env: undefined, fetch: undefined }])}`;
+  // 鍵には、定義と、定義が参照している env の値だけを入れる（サーバーの起動ごとに変わる値が入らないように。
+  // 利用者が変えうる秘密・変数（${env:…} の参照先）を変えたら、同じ MCP でも別の鍵にして起こし直す。ADR 0270 段 3）
+  const keyFor = (item, config) => `${item.id}:${hash([item.definition, { ...config, env: envKeyOf(item.definition, config), fetch: undefined }])}`;
   const snapshotGet = key => {
     let snapshot = cache.get(key);
     if (snapshot === undefined && snapshots) {

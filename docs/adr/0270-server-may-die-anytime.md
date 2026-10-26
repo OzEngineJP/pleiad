@@ -215,6 +215,122 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - 全体の `node tests/run.mjs`（12 worker・481 秒）で、今回の変更と関係する失敗は無し（`adopt-claude` の R15 は 2c の期待に直した）。12 worker の負荷で落ちた `server-git-panel-load`・`server-delegation-routing-settings`・`adopt-opencode` は `--jobs 1` で緑（2b の時点で負荷で落ちた suite と同じ）
 - 基準は 24 → 3 ファイル（`node tests/lint-child-process.mjs --update-baseline`）
 
+## 段 3 の実装（2026-10-26。状態の置き場）
+
+段 3 の範囲（規則 ②）を実装した。承認・質問のカードは DB の行にし、委譲の実行の控え・圧縮の予約・その他のメモリだけの台帳を洗い出して、続きに要るものの扱いを決めた。
+
+### 承認・質問のカード（`core/server.mjs` の `runtime.waiting`）
+
+- **DB の行**: `waiting_cards`（後から足す表。`core/db.mjs` の `waitingCardTable`。形式番号は上げない）。
+  `id`（カードの id）・`session_id`（カードの会話）・`origin`（カードを出した会話。中継の複製は置かない）・`tool_name`・`asked_at`・`data`（`{ payload, target, detached, outlivesTurn }` の JSON）。
+  行は「答えていないカード」の数だけで、決着すると消える。`core/store.mjs` の `loadWaitingCards`・`putWaitingCard`・`removeWaitingCards` が読み書きする（同期。1 行ずつ）
+- **置く**: `askPermission` がカードを `runtime.waiting` に載せた後に、元のカード（`cards[0]`）の 1 行を置く（`core/waiting-cards.mjs` の `put`）。中継の複製は元のカードから作り直せるので置かない。リモートのホストに任せたタスクの写し（`w.remote`）は、ホストの `sync` で作り直すので置かない
+- **消す**: `settle` が `runtime.waiting` から消した後に、同じ id の行を消す（決着の前に落ちても、行が残るのは「答えていない」側だけ）
+- **中身の上限**: 行には入力（Write の本文など）をそのまま置かない。`input` が 4 KB を超えたら `{ truncated: true }`、全体が 16 KB を超えたら `settingChange.rows` と `questions` を落とし、それでも超えたら種別と見出しだけにする（`compactWaitingPayload`）。stops に出す対象（`target`）は切り詰める前の payload から作って別に持つ
+- **起動で拾う**: `waitingCards.load()` の後に `withdrawRestoredCards(adopting)`。付け直すターンの会話（`adopting` の `sessionId`）の行は、記録の再生が終わるまで残す。ほかの会話の行は、その場で取り下げる。付け直したターンは、最初の生の出来事・ターンの終わり・失敗のどれかで `finalizeAdoptedCards(sessionId)` を呼び、その会話の拾わなかった行を取り下げる（`adoptTurn` の `emit` の包みと `finally`）
+- **拾えたかの印**: 付け直したターンが同じ id で `askPermission` を呼ぶと、`core/waiting-cards.mjs` の `put` が「拾った」と印を付け、元の `askedAt` を残す。カードの id はツールの id から決まるので（`core/approval-id.mjs`）、旧サーバーと同じ id で出直す。答えは保持役の子の控え（`jsonrpc`・`claude-control`）へ届く（段 2b の道。Devin・Grok・Codex は `restart-acp`・`restart-codex-turn`、fake は `restart-cards` の 1）
+- **取り下げの届け方**: 拾わなかった行は、黙って消さずに `store.addStops` へ残し、画面へ `permissionSettled { allow: false, reason: 'restart' }`、スマホの通知と通知の一覧のあなた待ちも決着させる。
+  - ターンの中のカード（保持役に載らないターン・付け直せなかったターン）は `approvals` に `ap:<id>`（ツール名と対象）
+  - ターンの外の待ち（`outlivesTurn`。Chrome の接続・ログイン）は `waits` に `wait:<id>`。待っている呼び出し（`hand_to_user` など）はサーバーの終わりで切れており、出し直しても答えを返す先が無いので、出し直さずに取り下げを届ける
+  - 設定の変更の承認と秘密情報の入力のカード（`detached`）は、台帳（`core/setting-approvals.mjs`）が起動で「再起動で取り下げた」結果を会話へ届けるので、`stops` は足さない
+- **設定の変更の承認を出し直さない理由**: 承認は「この引数・この前の値」への受領証つきの約束で、許可の後に `proceed()` が前の値を読み直して実行する。起動をまたぐと `proceed` の closures（引数・操作の主体・依存）が無く、引数には秘密（MCP の env・接続先のキー）が入りうるので、DB に残して再実行する形にはしない。取り下げを会話へ届ける今の形を残す（「取り下げずに出し直せるならそうする」の判断。安全に再実行できないため出し直さない）
+- **付け直さない起動**: `AGENT_HOST_ADOPT_HOLDER` も引き継ぎも無い起動では、保持役の子がまだ待っているカードの行を、子の札（`label.waits`）から読んで残す（`core/adopt.mjs` の `readHeldWaitIds`）。取り下げを嘘にしない。段 4 で起動の復元を条件なしにすれば、この道は付け直しに変わる
+- **試験**: `restart-cards`（保持役のターンの承認が同じ id で出直して続く・載らないターンのカードは `approvals`・`outlivesTurn` は `waits`・`detached` は台帳の取り下げ）。既存の `server-permission-settled`・`server-permission-update`・`server-setting-approval`・`server-setting-approval-delegated`・`restart-acp` も緑
+
+### 委譲の実行の控え（`core/agent-tasks.mjs` と `core/server.mjs` の `taskExecutions`）
+
+- `taskExecutions`（`outcome`・`error`・`limit`・`rejections`・`waitingSince`・`streamed`・`streamEnded`）は、付け直したターンでは札の `delegation.waitingSince` と記録の再生（`turnResult`・`tool.result` の `rejection`・`text.delta` / `text.end`）から作り直す（`newExecution`・`makeEmit`・`restoreTurn`）。結果の確定は `adoptChild` → `agentTasks.adoptRun` が 1 回だけ行う（段 2b-7 の道）
+- 付け直さないタスクは、今までどおり起動で `interrupted` にし、依頼元の会話の `stops` に `restart` として残す（`agentTasks.restored`）
+- **試験**: `restart-delegation`（保持役の子のターンがサーバーの入れ替えをまたいで最後まで走り、完了通知と結果の確定が 1 回だけ）・`agent-tasks-adopt`（manager の単体）
+
+### 圧縮の予約
+
+- 見えている予約は `compaction-schedule.json` に保存し、起動で戻す（ADR 0069。`core/server.mjs` の `saveCompactionSchedule`・`restoreCompactionSchedule`）。猶予（8 分）を過ぎたもの・会話の無いもの・バックエンドが変わったものは捨てる
+- `compactionScheduler` の版（`revision`）とタイマーはメモリだけ。版は「古いタイマーの発火を捨てる」ためで、起動をまたぐ続きには要らない。`queuedCompactions`（走っているターンの後ろに並んだ手動の圧縮）は失うが、そのターンは起動で中断になり、人・エージェントがもう一度頼める
+- **試験**: `server-compaction`（予約がファイルに残り、同じデータ置き場で立て直すと戻る・猶予を過ぎたものは戻らない）
+
+### メモリだけの台帳（洗い出し）
+
+続きに要るものと、写しでよいものを分けた。表の「写し」は、起動で作り直す・落ちてもやり直せるもので、DB へは移さない。
+
+| 今の置き場 | 何を持つか | 扱い |
+|---|---|---|
+| `runtime.waiting` | 承認・質問のカード | DB の `waiting_cards`（上の節） |
+| `runtime.turns` | 走っているターン | 保持役の札と記録（段 2） |
+| `runtime.background` | ターンの外の裏の作業（Codex の端末など） | バックエンド・保持役の子から聞き直す。ターンの子は中断で止まる（写し） |
+| `taskExecutions` | 委譲の子の実行の控え | 札の `delegation` と再生（上の節） |
+| `liveNotices`・`liveInstructions` | 走っているターンへ途中送信で渡した通知・追加指示の控え | 札の `steers` と `outbox`・`agent_tasks` の行から作り直す（写し） |
+| `limitStates` | 使用量の上限で止まった会話の待ち | 会話の `interrupted`（reason: limit）と `recoverLimitWaits`（写し） |
+| `limitedSlots` | 上限で止まったばかりの枠（振り分けの回避） | メモリだけの回避の印。次の上限で付け直す（写し） |
+| `settingCards`・`secretRequests` | 設定の変更・秘密情報の入力のカードの決着の口 | 台帳（`setting-approvals.json`）と DB のカード行。カードは出し直さない（上の節） |
+| `agentTasks` の `live`・`notices`・`persisted`・`steers`・`instructionSends`・`deferredInstructions`・`settlingInstructions`・`waited` | 委譲の実行・通知・追加指示の配送の途中 | 台帳の行（`status`・`notification`・`instructions`）から作り直す。`sending` は起動で `delivered`（二重に送らない）。`waited`（`ply_task_wait` の待ち）は呼び出しが 1 回失敗し、エージェントがやり直す（写し） |
+| `agentTasks` の `commandNotices`・`backgroundNotices`・`silenceNotices`・`silenceWaiting` | 通知の重複を防ぐ印 | メモリだけ。起動後に 1 回多く知らせることがある（記録は失わない。写し） |
+| `compactionScheduler` の `revision`・タイマー・`queuedCompactions` | 圧縮の予約の版と待ち | 予約は `compaction-schedule.json`。版・待ちはメモリ（上の節） |
+| `shellRuns`・`shellBridge`・`shellHolder`・`plyShellHolder` | `!` の行・ply_shell のジョブ | 保持役の記録（段 2a） |
+| `contextBridge`・`context-connections` の entries | 外部 MCP の接続と中の状態 | 保持役の子（段 2c）と `mcp_tool_cache`。鍵は定義と参照先の env の値（下の節） |
+| `chromeHandoffs` の `open`・`unclaimed` | Chrome の接続・ログインの待ち | DB のカード行（`outlivesTurn`）。起動で取り下げを `waits` に残す（上の節） |
+| `chromeLoginGroups`・`chromeProfiles` | ログイン待ちの束ねの鍵・プロフィールの選択 | 鍵の材料は接続の子の carry（`chromeRelay.carryExtra`）に預ける。開いている束ね（待ち）は `outlivesTurn` のカードとして取り下げる（上の節） |
+| `chromeControl` の一時停止の印 | 人が Chrome を操作中の状態 | メモリ。Chrome の接続の子が持つ端点・窓の印から作り直す。人が操作中の印は段 4 で「切れたら理由を出す」にそろえる（下の残り） |
+| `remoteDelegation` の写し | ホストに任せたタスク・中継する承認 | ホストの `sync` で作り直す。`w.remote` のカードは DB に置かない |
+| `voiceHost` の通話・`computerLock`・ビューア | 通話・computer use・内蔵ブラウザーのタブ | main（Electron）の入れ替えで必ず切れる。段 4 で「切れたら繋ぎ直し、理由を出す」にそろえる（今は音声だけ理由が無い） |
+| `runtime.buffer`・`runningSent`・`nativeLists`・`placeCheckCache`・`chromeWindowSent`・`relayHops`・`remotePushed`・`lastWarm`・`authExpired`・`authAccounts` など | 画面への配り・一覧・接続の写し | 起動で作り直す（写し） |
+
+### 待つ上限を超えて打ち切った短い処理（8 秒・5 秒）
+
+段 4 で引き継ぎ自体を畳むので、ここでは今の打ち切りが「記録が残る」か「冪等で困らない」かを確かめた（コードの変更は無し）。
+
+- **短い処理（`DRAIN_MS` = 8 秒）**: 終わらなければ引き継ぎを**断る**（`busy`。旧サーバーはそのまま走り、何も渡していない）。打ち切って進むことはない。`handover-core` の「短い処理が終わらなければ、上限まで待って断る」と `handover-server` が確かめる
+- **処理中の呼び出し（`INFLIGHT_MS` = 5 秒）**: 上限を過ぎても進むが、待ち切れなかった数を `result.droppedCalls` に載せ、`handover: N call(s) were still running...` とログに残す（`handover-core` の「処理中の呼び出しは上限まで待ち、過ぎても進む」・`handover-server` の `droppedCalls`）。打ち切られるのは HTTP の MCP・in-process の host MCP・hooks のコールバックで、保持役の子から見れば 1 回失敗するだけ。モデルが読んでやり直す（冪等でなくてよい。状態を変える処理は、失敗したことがモデルに返る）
+- 段 4 で `handoverSettled`・`--handover`・`stash` を消すときに、この 2 つの上限も一緒に消える
+
+### 外部 MCP の接続の鍵（段 2c の退行の直し）
+
+段 2c で `core/context-connections.mjs` の `keyFor` から env を丸ごと外したため、`${env:…}` の参照先（秘密・変数）だけを変えても MCP を起こし直さなかった。鍵を「定義 + 定義が参照している env の値」に直した（`referencedEnvNames`・`envKeyOf`）。
+
+- 参照は `${env:…}`（`command`・`args`・`url`・`baseUrl`・`cwd`・`env`・`headers`）・`env_vars`・`env_http_headers`・`bearer_token_env_var` から拾う
+- 起動ごとに変わる起動用の変数（`core/boot-env.mjs` の `isBootEnvName`）は鍵から外す。サーバーは起動の時に `process.env` から外しているので、MCP へも渡らない
+- 参照していない env の値（`PATH` など）は鍵に入れない（関係のない変更で MCP を起こし直さない）
+- **試験**: `context-key`（参照先を変えると別の鍵・起動ごとに変わる値と参照していない値では同じ鍵・HTTP のヘッダーも同じ）
+
+### 記録の再生の冪等（危うい点への答え）
+
+段 3 の移行で、新しい鍵は要らなかった。
+
+- カードは「記録の出来事」として再生しない。付け直したターンは、保持役の子の控え（`jsonrpc` の `pendingRequests`・Claude の `pending_permission_requests`）から**答えていない依頼だけ**を出し直し、バックエンド側の `asked` / `settled` の集合が二重を防ぐ（段 2b）。カードの id はツールの id から決まる
+- 取り下げは起動で 1 回だけ（`cardsFinalized` と行の削除）。再生の中では走らない
+- 設定の変更の承認の台帳は再生しない（`delivering` / `queued` の状態を持ち、送り直しを自分で決める）
+- 委譲の実行の控えは、`text.end`（uuid）・`tool.start` / `tool.result`（ツールの id）の既存の 3 種類の鍵で足りる。`turnResult` は最後の 1 行で、結果の確定は `adoptRun` が 1 回だけ行う。承認の出入り・通知は再生に載せない（DB の行・台帳・stops から作り直す）
+- 残る危うい点（再生に載る出来事を増やしたときに鍵が要る）は、段 4 で引き継ぎを畳むときに、再生の対象を「ターンの中の表示・使用量・ツール」に限ることで閉じる
+
+### 試験・基準
+
+- 新しい suite: `restart-cards`（9 判定）・`restart-delegation`（4 判定）・`context-key`（7 判定）
+- 触った範囲の既存の suite: `restart-mode`・`restart-acp`・`restart-codex-turn`・`restart-mcp`・`server-permission-settled`・`server-permission-update`・`server-setting-approval`・`server-setting-approval-delegated`・`agent-tasks`・`agent-tasks-adopt`・`chrome-handoff`・`chrome-handoff-flow`・`context-warm`・`context-lazy`・`server-context`・`worktree-mcp`・`mcp-orphans`・`adopt-held`・`adopt-claude`・`adopt-codex`・`adopt-agy`・`data-writes`・`store-write-scale`・`server-store-failures`・`i18n-lint`・`ops-coverage`・`child-process-lint`（2026-10-26。`--jobs 1`）
+- 全体の `node tests/run.mjs` の結果は下の「段 3 の全体の試験」に書く
+
+### 段 3 の全体の試験（2026-10-26）
+
+`node tests/run.mjs`（12 worker・693.7 秒・suite の合計 6975.6 秒）は終了コード 1。新しい 3 本（`restart-cards` 9/9・`restart-delegation` 4/4・`context-key` 7/7）と、上の触った範囲の suite は全部緑。落ちたのは次の 8 本で、今回の変更の外（負荷・時計・前からある揺れ）だった。
+
+| suite | 落ち方 | 単独（`--jobs 1`） |
+|---|---|---|
+| `restart-codex-turn` | 「終わったターンの専用 app-server は保持役に残っていない」— 停止が間に合わず `codex-turn-…` が残った | 12.2 秒で 2/2 緑 |
+| `server-devin` | suite の上限（3 分）を過ぎた（12 worker の負荷） | 90/90 緑 |
+| `server-session-delete` | 前提の「記録がある」— `refs` が空（git の撮影が負荷で間に合わない） | 23/23 緑 |
+| `worktrees` | suite の上限（3 分）を過ぎた | 44/44 緑 |
+| `server-git-panel-load` | 「間隔の中でもう一度開いても、片付けは走らない」— `kept=null`（`git worktree` の作成が 8 秒を超え、間隔の条件に入らなかった。10 秒の間隔を試す試験。git のコードは触っていない） | 単独でも同じ（他の作業の負荷）。今回の変更の外 |
+| `agy-relay-retry` | 「返事は口が開いた後に届く」— 408 ms（期待は 600 ms 以上。空きポートの取り合いで、開く前につながった。中継のコードは触っていない） | 3 回中 1 回緑。前からある揺れ |
+| `adopt-opencode` | 2 回目以降の `mcp:` の中継が空、または最初のターンが `error`。`MaxListenersExceededWarning` は試験の `attachMain` のもの | **元の場所（`D:/dev/pleiad`、同じ HEAD `2cd883a1`）でも同じように落ちた**。今回の変更の外 |
+| `runner-contract` | suite の上限（3 分 55 秒）と、PowerShell のプロセス表が読めなかった（12 worker の負荷） | ランナーの整合の検査は今回の変更の外（ADR の段 2a でも同じ扱い） |
+
+`server-git-panel-load`・`agy-relay-retry` は単独でも揺れるが、触ったファイル（`core/server.mjs`・`core/store.mjs`・`core/db.mjs`・`core/waiting-cards.mjs`・`core/interrupt-stops.mjs`・`core/adopt.mjs`・`core/context-connections.mjs`）に git・worktree・agy の中継の変更は無い。`adopt-opencode` は元の場所でも落ちることを確かめた。残りは `--jobs 1` で緑。
+
+### 2b 以降に回したもの（段 3 で変えた分）
+
+- `restoreAdoptedTurns` を条件なしで通す（段 4）。段 3 では、付け直さない起動で保持役の子がまだ待っているカードの行を残すだけ
+- 設定の変更の承認のカードの出し直し（安全に再実行できる形にするなら。段 4 以降の別の判断）
+- `chromeControl` の一時停止の印・音声・computer use・ビューアの「切れたら理由を出す」（段 4）
+
 ## 畳むもの
 
 | 今 | 段 | 残る |

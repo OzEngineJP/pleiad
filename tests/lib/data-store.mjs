@@ -2,7 +2,7 @@
 // 記録は JSON ファイルではなく pleiad.db にある（ADR 0115）。サーバーが動いている間でも読める（WAL）。
 import fs from 'node:fs';
 import path from 'node:path';
-import { openRaw, openReadOnly, dbPath, sessionTable, taskTable, usageTable, conversationTable, transaction } from '../../core/db.mjs';
+import { openRaw, openReadOnly, dbPath, sessionTable, taskTable, usageTable, conversationTable, waitingCardTable, transaction } from '../../core/db.mjs';
 
 function withDb(dir, fn, { write = false } = {}) {
   const db = write ? openRaw(dbPath(dir), { create: true }) : openReadOnly(dir);
@@ -17,6 +17,11 @@ export const readAgentTasks = dir => withDb(dir, db => taskTable(db).loadAll()) 
 /** { version, since, migrations, records }。無ければ null */
 export const readUsage = dir => withDb(dir, db => usageTable(db).snapshot()) ?? null;
 export const readConversationIndex = dir => withDb(dir, db => conversationTable(db).loadAll()) ?? {};
+/** 承認・質問のカードの控え（core/waiting-cards.mjs）。無ければ空 */
+export const readWaitingCards = dir => withDb(dir, db => {
+  try { return waitingCardTable(db, { ensure: false }).load(); }
+  catch { return []; }
+}) ?? [];
 
 /**
  * 会話の記録を置き換える（サーバーを止めている間に、記録を書き換えて起動し直すテスト用）。
