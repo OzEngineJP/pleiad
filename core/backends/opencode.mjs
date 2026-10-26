@@ -3,7 +3,6 @@
 // 共有プロセスは保持役が --stdio の stdin を維持する。コンテキストの担当が異なる
 // ターンは設定と HOME を隔離し、終了後に専用プロセスを止める（docs/multi-backend.md §2.10）。
 import fs from 'node:fs';
-import { covered, impossible, todo } from './contract.mjs';
 import path from 'node:path';
 import { t } from '../i18n.mjs';
 import { createLoginWatch, loginTimeoutError } from '../auth/login-watch.mjs';
@@ -24,6 +23,7 @@ import { opencodeUsage } from './opencode-usage.mjs';
 import { v2Message, replayV2Messages } from './opencode-v2.mjs';
 import crypto from 'node:crypto';
 import {backupV1Database,verifyV1Conversation,v2MigrationComplete,opencodeDatabase} from './opencode-migration.mjs';
+import { CAPABILITY_STATES, AGENT_TRAITS } from './agent-marks.mjs';
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
 const LOGIN_POLL_MS = 3_000;
@@ -425,43 +425,9 @@ export const backend = {
   label: 'OpenCode',
   get description() { return t('opencode.description'); },
 
-  capabilities: {
-    title: true,            // PATCH /session/{id} { title }。OpenCode の TUI と共有する
-    tag: covered,           // 状態タグは無い -> Pleiad の控えが正本
-    fork: true,             // POST /session/{id}/fork { messageID }（その発言の手前まで写す。発言の id は振り直される）
-    forkMessage: true,      // 発言の次の id を渡せば、その発言までを含めて写せる
-    rewind: covered,        // revert はファイルの変更まで戻すので使わない -> Pleiad の写しで戻す
-    subagents: true,        // task のツールが作る子の会話（/session/{id}/children）
-    liveModel: todo('#151'),   // v2 の API に走っているターンのモデル切替があるか未検証
-    liveMode: todo('#151'),    // 同上
-    hostTools: covered,        // ply_control の sessions.setTitle / setStatus / fork で同じことができる
-    approvals: 'interactive',
-    alwaysAllow: true,      // reply: always（OpenCode が出す always のパターンで、この会話の間）
-    mcpApproval: 'agent',   // MCP のツールも権限の規則（*）を通り、OpenCode が聞く
-    login: true,            // 端末で opencode auth login を案内して待つ
-    accounts: 'agent',
-    compatEndpoints: impossible('OpenCode 自身の接続先としてつなぐので、Pleiad の互換の接続先は使わない（ADR 0221）'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    compact: true,          // POST /session/{id}/summarize
-    autoCompactWindow: todo('#151'),
-    promptSuggestions: todo('#151'),
-    plyAgents: true,        // ply_agents を中継の口で渡し、指示を system に入れる
-    plyInstructions: true,  // Pleiad の指示は ply_agents の instructions の後ろに足されて同じ欄に届く
-    plyContext: 'turn',     // そのターンだけ専用のサーバーを起こし、ply_context はターンごとの口を中継で渡す（opencode-context.mjs）
-    computerUse: { images: 'inline', waitSliceMs: null },
-    shell: 'host',          // 入力欄の `!` は Pleiad が走らせ、次のターンの始めに返答を起こさない行（noReply）で渡す
-    // ply_shell を受け取り、会話の権限で bash を拒否して切れる（ADR 0227。既定は切る: エージェントの記述の shellDefault）
-    plyShell: true,
-    nativeShellOff: true,
-    effortInModelId: impossible('強さはモデルの variants（prompt の variant）で渡す'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    instructionsAtStart: impossible('指示はターンごとに渡せるので、会話の始めに固定されない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    failureDiagnostics: impossible('失敗の形が構造化されているので、ログを残す必要が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
-    steer: true,   // inbox へ足す
-    promptDelivery: true,   // inbox の受理・配送（session.inbox.delivered / メッセージの再生）で「渡った」が分かる
-    handover: true,         // 共有のサーバーを保持役に載せ、新しいサーバーがつなぎ直して付け直す（opencode-held.mjs）
-    // runArgs の配達物: ブラウザーは shell.env の env と中継の ply_browser に、ply_control は中継と env・指示に、
-    // 秘密情報は env と指示に、可視化・Pleiad の Hooks の指示は system と hooksRuntime に渡す
-    browser: true, plyControl: true, secrets: true, visualize: true, hooks: true,
-  },
+  // 能力の印と性質は core/backends/agent-marks.mjs（公開文書も同じデータから作る）
+  capabilities: CAPABILITY_STATES.opencode,
+  traits: AGENT_TRAITS.opencode,
 
   subagentTools: ['task', 'subagent'],
   toolHints: TOOL_HINTS,

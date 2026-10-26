@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { DOCS_INDEX_FILE, DOCS_SOURCE_FILES } from "./docs-sources.mjs";
 
 // 公開先の URL（canonical・hreflang・og:url・og:image の元）。末尾は /
 export const SITE_URL = "https://pleiad.dev/";
@@ -240,38 +241,76 @@ function copyShared(out) {
 // ---- 文書 ----
 // site/docs は Astro Starlight のプロジェクトで、自分の package.json と lockfile を持つ（アプリの依存と混ぜない）。
 // Cloudflare のビルド環境は clone が浅くタグが無いので、コードから作る部分は Releases の最新の安定版のタグから
-// raw.githubusercontent.com で必要なファイルだけを取る（core/ のファイルを足したら DOCS_SOURCE_FILES に足す）。
+// raw.githubusercontent.com で必要なファイルだけを取る（一覧は tools/docs-sources.mjs の DOCS_SOURCE_FILES。
+// ファイルを足したら一覧にも足す。tests/unit/docs-source.mjs が閉包と突き合わせる）。
+// 古いタグ（新しいモジュールが無い v0.40.0 など）は、一覧だけを作る形に落とす（ビルドを落とさない）。
 // 取れないとき（--offline・API の失敗）は作業ツリーの core/ から作り、その旨をページに出す。
 const DOCS = path.join(SITE, "docs");
-const DOCS_SOURCE_FILES = ["core/backends/agents.mjs"];
 const RAW_URL = `https://raw.githubusercontent.com/${REPO_SLUG}`;
-const WORKTREE_SOURCE = { agents: path.join(SITE, "..", "core", "backends", "agents.mjs"), label: "worktree" };
+const WORKTREE_SOURCE = { core: path.join(SITE, "..", "core", "backends"), label: "worktree" };
 
-/** 文書の生成に使う core/ のファイル。タグから取れたらその写し、取れなければ作業ツリー */
+async function fetchSource(rel, file, version) {
+  const res = await fetch(`${RAW_URL}/${version}/${rel}`, {
+    headers: { "user-agent": "pleiad-site-build" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) {
+    const err = new Error(`${rel}: HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, await res.text());
+}
+
+/**
+ * 文書の生成に使う core/backends の写し。タグから取れたらその写し、取れなければ作業ツリー。
+ * 古いタグで新しいモジュールが無いときは、一覧だけの元（agents.mjs）を取って .index-only を残す。
+ */
 async function docsSource(release, offline) {
   if (offline || !release.version) {
     console.warn(`! ${offline ? "--offline" : "安定版の Release を取れなかった"}ので、文書の生成に使う core/ を作業ツリーから読む`);
     return WORKTREE_SOURCE;
   }
   const dir = path.join(DOCS, ".cache", release.version);
+  const core = path.join(dir, "core", "backends");
+  const marker = path.join(dir, ".index-only");
+  const indexPath = path.join(dir, ...DOCS_INDEX_FILE.split("/"));
+  if (fs.existsSync(marker)) {
+    if (!fs.existsSync(indexPath)) {
+      try {
+        await fetchSource(DOCS_INDEX_FILE, indexPath, release.version);
+      } catch (err) {
+        console.warn(`! ${release.version} の ${DOCS_INDEX_FILE} を取れなかったので、作業ツリーから読む（${err.message}）`);
+        return WORKTREE_SOURCE;
+      }
+    }
+    return { core, label: release.version };
+  }
   const files = DOCS_SOURCE_FILES.map((rel) => ({ rel, file: path.join(dir, ...rel.split("/")) }));
   if (!files.every(({ file }) => fs.existsSync(file))) {
     try {
-      for (const { rel, file } of files) {
-        const res = await fetch(`${RAW_URL}/${release.version}/${rel}`, {
-          headers: { "user-agent": "pleiad-site-build" },
-          signal: AbortSignal.timeout(15000),
-        });
-        if (!res.ok) throw new Error(`${rel}: HTTP ${res.status}`);
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, await res.text());
-      }
+      for (const { rel, file } of files) if (!fs.existsSync(file)) await fetchSource(rel, file, release.version);
     } catch (err) {
-      console.warn(`! ${release.version} の core/ を取れなかったので、作業ツリーから読む（${err.message}）`);
-      return WORKTREE_SOURCE;
+      // 404 は古いタグ（新しいモジュールが無い）。一覧だけを作り、次のビルドで取り直さないよう印を残す。
+      // 通信の失敗・上限は一時的なものなので印を残さず、作業ツリーから作る（次のビルドで取り直す）
+      if (err.status !== 404) {
+        console.warn(`! ${release.version} の core/ を取れなかったので、作業ツリーから読む（${err.message}）`);
+        return WORKTREE_SOURCE;
+      }
+      console.warn(`! ${release.version} のエージェントのページの元を取れなかったので、一覧だけを作る（${err.message}）`);
+      try {
+        if (!fs.existsSync(indexPath)) await fetchSource(DOCS_INDEX_FILE, indexPath, release.version);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(marker, "");
+        return { core, label: release.version };
+      } catch (indexErr) {
+        console.warn(`! ${release.version} の ${DOCS_INDEX_FILE} も取れなかったので、作業ツリーから読む（${indexErr.message}）`);
+        return WORKTREE_SOURCE;
+      }
     }
   }
-  return { agents: files[0].file, label: release.version };
+  return { core, label: release.version };
 }
 
 function run(command, args, cwd) {
@@ -296,7 +335,7 @@ export async function buildDocs(out, { offline = false, release = pickReleases([
     installDocs();
   }
   const source = await docsSource(release, offline);
-  run(process.execPath, [path.join(DOCS, "scripts", "generate.mjs"), "--agents", source.agents, "--source", source.label], DOCS);
+  run(process.execPath, [path.join(DOCS, "scripts", "generate.mjs"), "--core", source.core, "--source", source.label], DOCS);
   run(process.execPath, [astro, "build"], DOCS);
   fs.cpSync(path.join(DOCS, "dist"), path.join(out, "docs"), { recursive: true });
   console.log(`built docs: /docs/ ・/docs/en/（${source.label === "worktree" ? "作業ツリー" : source.label}）`);

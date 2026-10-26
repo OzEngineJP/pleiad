@@ -2,9 +2,10 @@
 //
 // RIGS: エージェントごとの身代わり（LLM を呼ばない）でサーバーを起こす形。エージェントを足すときは、身代わり（tests/lib/fake-<id>.mjs）を書き、
 //   ここに 1 つ足す。core/backends/agents.mjs のエージェント（fake を含む）に RIGS が無いと backend-contract が落とす。
-// CAPABILITY_CONTRACTS: 能力の印（core/backends/contract.mjs）ごとに、その印の契約を確かめる試験。
+// CAPABILITY_CONTRACTS: 能力の印（core/backends/capability-marks.mjs）ごとに、その印の契約を確かめる試験。
 //   'conformance' は下の checkConformance が全バックエンドで確かめる、文字列の配列は既存の suite（tests/run.mjs の名前）。
 //   印を足すときはここにも足す（無い・名前の suite が無いと backend-contract が落とす）。
+// TRAIT_CONTRACTS: 性質（能力ではない。ADR 0274）ごとの契約の試験。性質を足すときはここにも足す。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ROOT } from './server.mjs';
@@ -55,10 +56,6 @@ export const CAPABILITY_CONTRACTS = {
   plyShell: ['shell-bridge', 'shell-delivery'],
   nativeShellOff: ['shell-delivery'],
   shell: ['server-shell'],
-  effortInModelId: ['effort', 'devin-models', 'server-devin'],
-  instructionsAtStart: ['bot-dispatch'],
-  failureDiagnostics: ['server-antigravity', 'server-devin'],
-  promptDelivery: ['message-queue', 'server-antigravity'],
   steer: ['server-delegation-steer', 'server-delegation-steer-acp', 'task-instructions'],
   handover: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'],
   browser: ['agent-browser-env', 'browser-bridge', 'server-devin', 'grok-backend'],
@@ -66,6 +63,13 @@ export const CAPABILITY_CONTRACTS = {
   secrets: ['server-secrets', 'mcp-secret-store'],
   visualize: ['server-visualize'],
   hooks: ['server-hooks', 'server-hooks-unify'],
+};
+
+export const TRAIT_CONTRACTS = {
+  effortInModelId: ['effort', 'devin-models', 'server-devin'],
+  instructionsAtStart: ['bot-dispatch'],
+  failureDiagnostics: ['server-antigravity', 'server-devin'],
+  promptDelivery: ['message-queue', 'server-antigravity'],
 };
 
 /**

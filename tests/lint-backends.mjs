@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* ==================== エージェントの id の直書きの lint ====================
    エージェントごとの知識は core/backends/（バックエンドと、エージェントの記述 agents.mjs）に置き、ほかの場所は能力の印
-   （core/backends/contract.mjs）とエージェントの記述から引く（docs/multi-backend.md「エージェントを足す」）。
+   （core/backends/capability-marks.mjs。エージェントごとの状態は agent-marks.mjs）とエージェントの記述から引く（docs/multi-backend.md「エージェントを足す」）。
    その外に id を直に書くと、エージェントを足したときに黙って足りなくなる（一覧に無い・分岐に当たらない）ので、数えて増やさない。
 
      node tests/lint-backends.mjs [--update-baseline] [--json]
@@ -98,7 +98,7 @@ export function checkBaseline(scanned, baseline) {
     const was = base[file] ?? 0;
     if (n > was) {
       const lines = scanned[file].hits.map((h) => `${h.line}:${h.id}`).join(' ');
-      problems.push({ rule: 'increased', file, message: `${file}: エージェントの id の直書きが ${was} → ${n} に増えた（${lines}）。能力の印（core/backends/contract.mjs）かエージェントの記述（core/backends/agents.mjs）から引く。どうしても要るなら \`backend-allow: 理由\` の印` });
+      problems.push({ rule: 'increased', file, message: `${file}: エージェントの id の直書きが ${was} → ${n} に増えた（${lines}）。能力の印（core/backends/capability-marks.mjs）かエージェントの記述（core/backends/agents.mjs）から引く。どうしても要るなら \`backend-allow: 理由\` の印` });
     }
   }
   for (const [file, was] of Object.entries(base)) {

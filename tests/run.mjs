@@ -226,6 +226,8 @@ const SUITES = [
   // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
   // core/backends/ の外のエージェントの id の直書き（ラチェット）
   './unit/backend-contract.mjs',
+  // 公開文書（site/docs）の生成に使う core/ の一覧（site/tools/docs-sources.mjs）: 依存を辿った閉包と一致・相対 import だけで閉じる
+  './unit/docs-source.mjs',
   './unit/backend-registry.mjs',
   './unit/backend-test-env.mjs',
   './unit/context-owner-capability.mjs',

@@ -7,7 +7,7 @@
 import * as store from "../store.mjs";
 import { wrapBackend as wrapNative, conversationBackend } from "../conversations.mjs";
 import { t } from "../i18n.mjs";
-import { NO_CAPABILITIES, legacyCapabilities, impossible } from "./contract.mjs";
+import { NO_CAPABILITIES, NO_TRAITS, legacyCapabilities, impossible } from "./contract.mjs";
 import { AGENTS, DEFAULT_AGENT_IDS, agentPresentation } from "./agents.mjs";
 
 // id -> そのモジュールの場所（エージェントの記述 core/backends/agents.mjs の module）。ここに無い id は無視する（環境変数からの任意 import は許さない）
@@ -56,6 +56,7 @@ export function offlineAccountBackend(backend, error) {
   const unavailable = async () => { throw error; };
   return wrapBackend({ id: native.id, label: native.label,
     capabilities: { ...native.capabilities, title: impossible('資格情報が無い'), tag: impossible('資格情報が無い'), forkMessage: impossible('資格情報が無い') }, // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    traits: { ...(native.traits ?? NO_TRAITS) },
     modes: () => native.modes(), models: unavailable,
     listSessions: async () => [], getSession: async () => null, getMessages: async () => [], getCompactions: async () => [],
     setTitle: async () => {}, setTag: undefined, listSubagents: async () => [], getSubagentMessages: async () => [],
@@ -75,6 +76,7 @@ function retiredBackend(id, info) {
     id, label: info.label,
     get retired() { return info.notice; },
     capabilities: { ...NO_CAPABILITIES },
+    traits: { ...NO_TRAITS },
     modes: () => ({}),
     models: async () => ({}),
     listSessions: async () => [],

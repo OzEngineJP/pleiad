@@ -48,7 +48,7 @@ export async function effortOptions(backend, model = '', cwd, endpoint = null) {
  * 一覧を引けない・知らないモデルは levels が [] になる（振り分けでは「調整なし」として何も送らない）
  */
 export async function effortCapability(backend, model = '', cwd) {
-  if (backend.capabilities?.effortInModelId) {
+  if (backend.traits?.effortInModelId) {
     const entry = (typeof backend.models === 'function' ? await backend.models(cwd).catch(() => null) : null)?.[model];
     return { levels: [], fixed: entry?.efforts?.length ? entry.defaultEffort ?? null : null };
   }

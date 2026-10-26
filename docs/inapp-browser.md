@@ -126,7 +126,7 @@ WS の口は `browserScreencast`・`browserScreencastStop`・`browserScreencastA
 
 ## エージェントのブラウザー（Chrome）
 
-エージェントの `agent-browser` は、PC の Chrome の専用の窓を会話ごとに使う（[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0219](adr/0219-agent-browser-in-chrome-macos.md)）。使えるのは Windows と macOS（14 以上）のデスクトップ版で、Chrome の OS の層が使えるホスト。それ以外の OS・Electron の無い `npm start` では、ブラウザー用の環境変数・指示・`ply_browser` をエージェントへ渡さない。受け取るかは能力の印 `browser`（`core/backends/contract.mjs`）。印の無いバックエンドには `runArgs.browserEnv`・`browserInstructions`・`browserRuntime` を渡さず、会話の中継の設定も書かない（`server.mjs`）。内蔵ブラウザーへの切り替えは無い。
+エージェントの `agent-browser` は、PC の Chrome の専用の窓を会話ごとに使う（[ADR 0148](adr/0148-agent-browser-in-chrome.md)・[ADR 0219](adr/0219-agent-browser-in-chrome-macos.md)）。使えるのは Windows と macOS（14 以上）のデスクトップ版で、Chrome の OS の層が使えるホスト。それ以外の OS・Electron の無い `npm start` では、ブラウザー用の環境変数・指示・`ply_browser` をエージェントへ渡さない。受け取るかは能力の印 `browser`（`core/backends/capability-marks.mjs`）。印の無いバックエンドには `runArgs.browserEnv`・`browserInstructions`・`browserRuntime` を渡さず、会話の中継の設定も書かない（`server.mjs`）。内蔵ブラウザーへの切り替えは無い。
 
 ### Chrome への接続
 

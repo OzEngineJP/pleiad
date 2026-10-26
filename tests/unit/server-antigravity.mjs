@@ -322,7 +322,7 @@ export default async function (t) {
       c.since(mark).some((e) => e.type === "turnResult" && e.outcome === "aborted"),
       JSON.stringify(c.since(mark).filter((e) => e.type === "turnResult")));
 
-    // ---- 渡った合図を出せない backend（capabilities.promptDelivery = false）:
+    // ---- 渡った合図を出せない backend（traits.promptDelivery = false）:
     // 発言を受け取ったかもしれないまま無出力で終わったとき、failed（再開で自動再送）にせず結果不明（unknown）にする。
     // 自動再送されると、ネイティブの履歴に同じ発言が二重に登る
     const quietSession = await c.cmd("newSession", { backend: "antigravity", cwd: ROOT });

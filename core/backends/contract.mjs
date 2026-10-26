@@ -1,133 +1,31 @@
-// バックエンドの契約の正本（docs/multi-backend.md §2.3）。SDK にもネットワークにも依存しない。
+// バックエンドの契約（docs/multi-backend.md §2.3、ADR 0273・0274）。SDK にもネットワークにも依存しない。
+//
+// 能力の印と性質の定義・状態・利用者向けの説明は core/backends/capability-marks.mjs（公開文書の生成も読む軽いファイル）。
+// エージェントごとの状態は core/backends/agent-marks.mjs。ここは契約の検査（形・値・要るメソッド）とイベントの検査を持つ。
 //
 // 1. 能力の印（CAPABILITIES）: バックエンドは**全部のキーに状態を書く**。状態は 4 つ:
 //    対応（true・'host'・'native'・'turn' などの値）/ covered（Pleiad の共通処理が補う）/
 //    impossible('理由')（技術的に無理・該当しない）/ todo('#Issue')（手段はあるが未実装）。
 //    false は書かない。書いていないことを「対応しない」の代わりにしない（tests/unit/backend-contract.mjs が落とす）。
 //    現役のエージェントは NO_CAPABILITIES を使えない（対応を終えたバックエンドだけ）。
-//    印を足すときは、ここに 1 行足し、全バックエンドに状態を書き、一覧の説明（tests/lib/backend-matrix.mjs の ABOUT）と
+//    印を足すときは、capability-marks.mjs に 1 行足し、全バックエンドに状態を書き、一覧の説明（tests/lib/backend-matrix.mjs の ABOUT）と
 //    印の契約の試験（tests/lib/backend-contracts.mjs）を足す。未実装（todo）は tests/backend-todos.json の基準より増やせない。
 //    server・画面へは、レジストリ（core/backends/index.mjs）が状態を今までの値へ引いて渡す（legacyCapabilities）。
-// 2. バックエンドが出すイベント（BACKEND_EVENTS）: runTurn の emit・compact の emit・attachHost の host.event に渡してよい種類と、
+// 2. 性質（TRAITS）: 機能ではなくエージェントの特徴。true / false だけで書き、状態は持たない（ADR 0274）。
+//    server・bot・委譲の振り分けが backend.traits から読み、画面へは出さない。
+// 3. バックエンドが出すイベント（BACKEND_EVENTS）: runTurn の emit・compact の emit・attachHost の host.event に渡してよい種類と、
 //    必ず付けるフィールド。試験のサーバーは PLEIAD_BACKEND_CONTRACT=strict で受け口ごとに確かめ、外れたら [backend-contract] の行を出す
 //    （tests/lib/server.mjs が拾い、stop() で落とす）。
+import { CAPABILITIES, CAPABILITY_KEYS, TRAITS, TRAIT_KEYS, capabilityValue, isCapabilityState } from './capability-marks.mjs';
+
+export {
+  CAPABILITIES, CAPABILITY_KEYS, CAPABILITY_DOCS, TRAITS, TRAIT_KEYS, NO_TRAITS,
+  covered, impossible, todo, isCapabilityState, capabilityValue, legacyCapabilities,
+} from './capability-marks.mjs';
 
 /** 対応の値の検査。v が許される形なら true */
 const oneOf = (...values) => (v) => values.includes(v);
-const yes = (v) => v === true;
 const bool = oneOf(true, false);
-
-// ---- 状態（対応しない理由） --------------------------------------------------------------
-//
-// 値は 1 行で読める形にする: `hooks: todo('#98')`・`accounts: impossible('…')`・`fork: covered`。
-// impossible の reason は今は作る人向けの短い日本語。後で利用者向けの文（#149）に引くときは、
-// このオブジェクトに `key` を足せる（今は足さない）。
-
-/** Pleiad の共通処理が補う（タイトル・タグ・分岐・巻き戻しなど） */
-export const covered = Object.freeze({ state: 'covered' });
-
-/** 技術的に無理・該当しない。reason は必須 */
-export const impossible = (reason) => Object.freeze({ state: 'impossible', reason });
-
-/** 手段はあるが未実装。issue は '#98' の形（必須） */
-export const todo = (issue) => Object.freeze({ state: 'todo', issue });
-
-/** 状態の値か（形だけ見る。state の中身は capabilityProblem が確かめる） */
-export function isCapabilityState(v) {
-  return Boolean(v) && typeof v === 'object' && !Array.isArray(v) && Object.hasOwn(v, 'state');
-}
-
-/** 状態を、今まで server・画面へ渡していた値に引く（covered・impossible・todo は false） */
-export function capabilityValue(v) {
-  return isCapabilityState(v) ? false : v;
-}
-
-/** バックエンドの capabilities を、今まで server・画面へ渡していた値の表に引く */
-export function legacyCapabilities(capabilities) {
-  return Object.fromEntries(Object.entries(capabilities ?? {}).map(([key, value]) => [key, capabilityValue(value)]));
-}
-
-/**
- * 能力の印。valid は対応のときの値、requires は「この値ならこのメソッドが要る」。
- * absent は状態のときに server・画面へ渡す今までの値（false など）。無ければ状態を持てない（approvals・mcpApproval）。
- * covered は Pleiad の共通処理が補える印だけ true。coveredRequires は covered のときに要るメソッド。
- * hint は落ちたときの文に出す値の形。意味は一覧（node tests/lib/backend-matrix.mjs。説明は ABOUT）
- */
-export const CAPABILITIES = {
-  // ネイティブにタイトル・状態タグを持つ（無ければ Pleiad の控えが正本）
-  title: { valid: yes, absent: false, covered: true, hint: 'true', requires: (v) => (v === true ? ['setTitle'] : []) },
-  tag: { valid: yes, absent: false, covered: true, hint: 'true', requires: (v) => (v === true ? ['setTag'] : []) },
-  // ネイティブに分岐できる（無ければ Pleiad が写して分ける）。forkMessage は発言の途中まで（upToMessageId）
-  fork: { valid: yes, absent: false, covered: true, hint: 'true', requires: (v) => (v === true ? ['fork'] : []) },
-  forkMessage: { valid: yes, absent: false, covered: true, hint: 'true', requires: (v) => (v === true ? ['fork'] : []) },
-  // 同じ会話で巻き戻す形（resumeAt: 次のターンで切る / thread: rewind() で今切る / 補: Pleiad が写す。core/conversations.mjs の rewind）
-  rewind: { valid: oneOf('resumeAt', 'thread'), absent: false, covered: true, hint: "'resumeAt' or 'thread'", requires: (v) => (v === 'thread' ? ['rewind'] : []) },
-  subagents: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['listSubagents', 'getSubagentMessages'] : []) },
-  // 走っている最中にモデル・承認モードを替えられる
-  liveModel: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['setModelLive'] : []) },
-  liveMode: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['setModeLive'] : []) },
-  // set_status / set_title / fork を AI 側から呼べる（§2.6）。covered は ply_control の sessions.* で同じことができる
-  hostTools: { valid: yes, absent: false, covered: true, hint: 'true' },
-  // 対話の承認（askPermission）を使う。none は承認モードが確認なししか無い（agy）。コンピューターの操作のアプリの承認も聞かない
-  approvals: { valid: oneOf('interactive', 'none'), hint: "'interactive' or 'none'" },
-  alwaysAllow: { valid: yes, absent: false, hint: 'true' },
-  // MCP のツールの承認。host は、エージェント自身が聞かないので、確認なしの承認モード（autonomy: full）のほかは Pleiad が聞く（Codex）
-  mcpApproval: { valid: oneOf('agent', 'host'), hint: "'agent' or 'host'" },
-  login: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['auth'] : []) },
-  // 会話ごとにアカウントを選べる（ADR 0222）。token: Pleiad がトークンを持ち、server は oauthToken を渡す（Claude の setup-token）。
-  // agent: アカウントごとの置き場でエージェント自身がログインし、server は account（core/agent-accounts.mjs の resolve）を渡す
-  accounts: { valid: oneOf('token', 'agent'), absent: false, hint: "'token' or 'agent'", requires: (v) => (v === 'agent' ? ['accountLogin', 'accountStatus', 'forAccount'] : []) },
-  compatEndpoints: { valid: yes, absent: false, hint: 'true' },
-  // true は compact() で圧縮する。prompt は /compact を発言として送る（Claude。server の compactConversation）
-  compact: { valid: oneOf(true, 'prompt'), absent: false, hint: "true (with compact()) or 'prompt' (send /compact)", requires: (v) => (v === true ? ['compact'] : []) },
-  // 委譲の子の自動圧縮の閾値を受け取る（runArgs.autoCompactWindow）
-  autoCompactWindow: { valid: yes, absent: false, hint: 'true' },
-  // 次の発言の候補をターンの中で受け取る（native）。covered はターンの後に suggestNext で作る
-  promptSuggestions: { valid: oneOf('native'), absent: false, covered: true, coveredRequires: ['suggestNext'], hint: "'native'" },
-  // Pleiad の指示（core/ply-instructions.mjs。追加の文）を受け取る。委譲の橋（plyAgents）とは別の印:
-  // 文を受け取れるだけのバックエンドと、委譲ツールまで繋がるバックエンドを分ける（issue #107）
-  plyInstructions: { valid: yes, absent: false, hint: 'true' },
-  // ply_agents（委譲の橋）を受け取る。agentRuntime（url・headers・instructions）が渡る。
-  // instructions の後ろには Pleiad の指示（plyInstructions の分）も足される
-  plyAgents: { valid: yes, absent: false, hint: 'true' },
-  // Pleiad のコンテキスト（ply_context）の受け取り方（turn: ターンごと / conversation: 会話ごとの同じトークン）
-  plyContext: { valid: oneOf('turn', 'conversation'), absent: false, hint: "'turn' or 'conversation'" },
-  // ply_computer を受け取る（画像の渡し方と待ちの区切り。docs/computer-use.md）
-  computerUse: { valid: (v) => Boolean(v) && typeof v === 'object' && !Array.isArray(v) && ['inline', 'path'].includes(v.images) && (v.waitSliceMs === null || Number.isFinite(v.waitSliceMs)), absent: false, hint: "{ images: 'inline' | 'path', waitSliceMs: number | null }" },
-  // 入力欄の `!`（host: Pleiad が走らせて次のターンで渡す / native: エージェントが走らせる。ADR 0054）
-  shell: { valid: oneOf('host', 'native'), absent: false, hint: "'host' or 'native'", requires: (v) => (v === 'native' ? ['shell'] : []) },
-  // Pleiad のシェルのツール（ply_shell。runArgs.shellRuntime）を受け取る（ADR 0227 §1）
-  plyShell: { valid: yes, absent: false, hint: 'true' },
-  // エージェントのシェルのツールを会話ごとに切れる（runArgs.shellRuntime.nativeOff。ADR 0227 §3）。切るのは ply_shell を受け取るときだけ
-  nativeShellOff: { valid: yes, absent: false, hint: 'true' },
-  // 強さがモデルの id に入る（エフォートを別に渡さない。core/effort.mjs）
-  effortInModelId: { valid: yes, absent: false, hint: 'true' },
-  // 指示（bot の人格など）は会話の始めにしか効かない。直した人格は次のターンの文脈で渡し直す（core/bots/dispatch.mjs）
-  instructionsAtStart: { valid: yes, absent: false, hint: 'true' },
-  // 失敗の理由を会話の控え（failureReason）に残し、失敗のログを書く（server.mjs の recordBackendFailure）
-  failureDiagnostics: { valid: yes, absent: false, hint: 'true' },
-  // プロンプトが相手に渡った合図を、返答の出来事とは別に出せる（runArgs.onPromptDelivered → server の initialDelivered）。
-  // 無いなら「合図が無い = 渡っていない」とは言えない（agy は入力を受け取っても黙って捨てうる）ので、
-  // 無出力で終わった発言を未達（failed・自動再送の対象）にせず結果不明（unknown）にする（server.mjs の closeTurn）
-  promptDelivery: { valid: yes, absent: false, hint: 'true' },
-  // 走っているターンへ途中で入力を渡せる（runArgs.control.steer。委譲の追加指示・完了通知）。
-  // 無いなら追加指示は待機のまま、次のターンの入力として渡す（server.mjs の childTarget。画面は「次のターンで届く」と出す）
-  steer: { valid: yes, absent: false, hint: 'true' },
-  // 更新で走っているターンを止めない（無停止の更新。CLI・共有のサーバーを保持役に載せ、新しいサーバーが adoptTurn で付け直す。docs/zero-downtime-update/）
-  handover: { valid: yes, absent: false, hint: 'true', requires: (v) => (v === true ? ['adoptTurn'] : []) },
-  // エージェントのブラウザー（会話の Chrome の窓。AGENT_BROWSER_* の環境変数と ply_browser と指示）を受け取る（docs/inapp-browser.md）
-  browser: { valid: yes, absent: false, hint: 'true' },
-  // ply_control（操作の一覧の MCP）と、会話に束縛した CLI の環境変数（PLEIAD_CONTROL_*）を受け取る（ADR 0081）
-  plyControl: { valid: yes, absent: false, hint: 'true' },
-  // 秘密情報と変数（runArgs.secretsRuntime。会話のシェルの環境変数と一覧の文）を受け取る（ADR 0217）
-  secrets: { valid: yes, absent: false, hint: 'true' },
-  // 可視化の指示（runArgs.visualizeInstructions）を受け取る
-  visualize: { valid: yes, absent: false, hint: 'true' },
-  // Pleiad がそろえる Hooks（runArgs.hooksRuntime）を受け取る（ADR 0049）
-  hooks: { valid: yes, absent: false, hint: 'true' },
-};
-
-export const CAPABILITY_KEYS = Object.freeze(Object.keys(CAPABILITIES));
 
 /** 印の値の説明（落ちたときの文に出す） */
 function expectedOf(spec) {
@@ -141,7 +39,7 @@ function expectedOf(spec) {
  */
 export function capabilityProblem(key, value) {
   const spec = CAPABILITIES[key];
-  if (!spec) return `capability ${key} is not in core/backends/contract.mjs CAPABILITIES`;
+  if (!spec) return `capability ${key} is not in core/backends/capability-marks.mjs CAPABILITIES`;
   if (isCapabilityState(value)) {
     if (spec.absent === undefined) return `capability ${key} cannot be a state (${spec.hint})`;
     if (!['covered', 'impossible', 'todo'].includes(value.state)) return `capability ${key} has unknown state ${JSON.stringify(value.state)} (use covered, impossible('reason'), or todo('#Issue'))`;
@@ -153,15 +51,19 @@ export function capabilityProblem(key, value) {
   return spec.valid(value) ? null : `capability ${key} value ${JSON.stringify(value)} is not allowed (${expectedOf(spec)})`;
 }
 
+/**
+ * 性質の値の違反（無ければ null）。状態は持てない（true / false だけ）。
+ * checkBackendShape が id とファイルを添えて出す。
+ */
+export function traitProblem(key, value) {
+  if (!TRAITS[key]) return `trait ${key} is not in core/backends/capability-marks.mjs TRAITS`;
+  return typeof value === 'boolean' ? null : `trait ${key} value ${JSON.stringify(value)} is not allowed (true or false)`;
+}
+
 /** 何も持たない能力（対応を終えたバックエンドだけが使う。core/backends/index.mjs の retiredBackend） */
 const RETIRED = Object.freeze({ state: 'impossible', reason: '対応を終えた' }); // i18n-ignore: 対応を終えたバックエンドの理由（開発者向け。利用者向けの文は #149）
-export const NO_CAPABILITIES = Object.freeze({
-  title: RETIRED, tag: RETIRED, fork: RETIRED, forkMessage: RETIRED, rewind: RETIRED, subagents: RETIRED, liveModel: RETIRED, liveMode: RETIRED,
-  hostTools: RETIRED, approvals: 'none', alwaysAllow: RETIRED, mcpApproval: 'agent', login: RETIRED, accounts: RETIRED, compatEndpoints: RETIRED,
-  compact: RETIRED, autoCompactWindow: RETIRED, promptSuggestions: RETIRED, plyInstructions: RETIRED, plyAgents: RETIRED, plyContext: RETIRED, computerUse: RETIRED,
-  shell: RETIRED, plyShell: RETIRED, nativeShellOff: RETIRED, effortInModelId: RETIRED, instructionsAtStart: RETIRED, failureDiagnostics: RETIRED, promptDelivery: RETIRED, steer: RETIRED, handover: RETIRED,
-  browser: RETIRED, plyControl: RETIRED, secrets: RETIRED, visualize: RETIRED, hooks: RETIRED,
-});
+export const NO_CAPABILITIES = Object.freeze(Object.fromEntries(CAPABILITY_KEYS.map((key) => [key,
+  key === 'approvals' ? 'none' : key === 'mcpApproval' ? 'agent' : RETIRED])));
 
 /** バックエンドの必須のメンバー（retiredBackend が持つ最小の形） */
 export const REQUIRED_MEMBERS = ['id', 'label', 'capabilities', 'modes', 'models', 'listSessions', 'getSession', 'getMessages', 'runTurn'];
@@ -174,16 +76,17 @@ export function checkBackendShape(native) {
   const problems = [];
   const id = native?.id ?? '(no id)';
   const file = `core/backends/${id}.mjs`;
+  const marksFile = 'core/backends/agent-marks.mjs';
   for (const key of REQUIRED_MEMBERS) if (native?.[key] === undefined) problems.push(`${id}: required member ${key} is missing (${file})`);
   const caps = native?.capabilities ?? {};
   for (const key of CAPABILITY_KEYS) {
     if (!Object.hasOwn(caps, key)) {
-      problems.push(`${id}: capability ${key} has no state (write ${expectedOf(CAPABILITIES[key])} in ${file})`);
+      problems.push(`${id}: capability ${key} has no state (write ${expectedOf(CAPABILITIES[key])} for ${id} in ${marksFile})`);
       continue;
     }
     const value = caps[key];
     const problem = capabilityProblem(key, value);
-    if (problem) { problems.push(`${id}: ${problem} (${file})`); continue; }
+    if (problem) { problems.push(`${id}: ${problem} (write it for ${id} in ${marksFile})`); continue; }
     const spec = CAPABILITIES[key];
     if (isCapabilityState(value)) {
       for (const member of spec.coveredRequires ?? []) {
@@ -195,14 +98,25 @@ export function checkBackendShape(native) {
       if (native[member] === undefined) problems.push(`${id}: ${key}=${JSON.stringify(value)} needs ${member} (${file})`);
     }
   }
-  for (const key of Object.keys(caps)) if (!Object.hasOwn(CAPABILITIES, key)) problems.push(`${id}: capability ${key} is not in core/backends/contract.mjs CAPABILITIES (add it to the list or remove it from ${file})`);
+  for (const key of Object.keys(caps)) if (!Object.hasOwn(CAPABILITIES, key)) problems.push(`${id}: capability ${key} is not in core/backends/capability-marks.mjs CAPABILITIES (add it to the list or remove it from ${marksFile} (${id}))`);
+  // 性質は能力ではない。true / false だけを全部書く（状態は持てない。false は未対応ではない）
+  const traits = native?.traits ?? {};
+  for (const key of TRAIT_KEYS) {
+    if (!Object.hasOwn(traits, key)) {
+      problems.push(`${id}: trait ${key} has no value (write true or false for ${id} in ${marksFile})`);
+      continue;
+    }
+    const problem = traitProblem(key, traits[key]);
+    if (problem) problems.push(`${id}: ${problem} (write it for ${id} in ${marksFile})`);
+  }
+  for (const key of Object.keys(traits)) if (!Object.hasOwn(TRAITS, key)) problems.push(`${id}: trait ${key} is not in core/backends/capability-marks.mjs TRAITS (add it to the list or remove it from ${marksFile} (${id}))`);
   // 印とメソッドの逆向き: メソッドがあるのに印が対応（true）でないと、画面がその機能を出さない（書いたのに使われない）
   for (const [member, key] of [['setModelLive', 'liveModel'], ['setModeLive', 'liveMode'], ['setTitle', 'title'], ['setTag', 'tag'], ['fork', 'fork'], ['compact', 'compact']]) {
     if (typeof native?.[member] === 'function' && caps[key] !== true) {
-      problems.push(`${id}: ${member}() exists but ${key} is not true (${file}; set ${key} to true or remove the method)`);
+      problems.push(`${id}: ${member}() exists but ${key} is not true (${file}; set ${key} to true for ${id} in ${marksFile} or remove the method)`);
     }
   }
-  if (typeof native?.shell === 'function' && caps.shell !== 'native') problems.push(`${id}: shell() exists but shell is not 'native' (${file})`);
+  if (typeof native?.shell === 'function' && caps.shell !== 'native') problems.push(`${id}: shell() exists but shell is not 'native' (${file}; set shell to 'native' for ${id} in ${marksFile} or remove the method)`);
   return problems;
 }
 
