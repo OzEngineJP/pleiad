@@ -22,10 +22,11 @@ export default async function run(t) {
   try {
     Object.assign(process.env, env);
     const { backend } = await import('../../core/backends/antigravity.mjs');
+    const { legacyCapabilities } = await import('../../core/backends/contract.mjs');
     const account = { id: 'acct-a', name: 'A', dir: path.join(dir, 'account-a'),
       get credential() { throw new Error('secret-sentinel must never be read'); } };
     const emissions = [];
-    assert.equal(backend.capabilities.accounts, false);
+    assert.equal(legacyCapabilities(backend.capabilities).accounts, false);
     for (const selected of [account, {}, '', false]) {
       await assert.rejects(backend.runTurn({ account: selected, emit: event => emissions.push(event) }), unsupported);
     }

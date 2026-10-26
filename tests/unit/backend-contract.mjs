@@ -1,30 +1,43 @@
-// バックエンドの契約（core/backends/contract.mjs）の静的な検査: 全エージェントの能力の印の明示・印とメソッドの食い違い・
-// エージェントの記述（core/backends/agents.mjs）のキー・印ごとの契約の試験と説明の置き場・身代わり・対応表の文書が最新か。
+// バックエンドの契約（core/backends/contract.mjs）の静的な検査: 全エージェントの能力の印の状態・印とメソッドの食い違い・
+// エージェントの記述（core/backends/agents.mjs）のキー・印ごとの契約の試験と説明の置き場・身代わり・未実装のラチェット。
 // 動かして確かめる共通の契約は tests/unit/backend-conformance.mjs
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { CAPABILITIES, CAPABILITY_KEYS, NO_CAPABILITIES, BACKEND_EVENTS, checkBackendShape, checkBackendEvent } from '../../core/backends/contract.mjs';
+import {
+  CAPABILITY_KEYS, NO_CAPABILITIES, BACKEND_EVENTS,
+  checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, impossible, legacyCapabilities, todo,
+} from '../../core/backends/contract.mjs';
 import { AGENTS, DESCRIPTOR_KEYS, DEFAULT_AGENT_IDS, idleCompactionKey } from '../../core/backends/agents.mjs';
 import { CAPABILITY_CONTRACTS, RIGS } from '../lib/backend-contracts.mjs';
-import { ABOUT, MATRIX_FILE, loadNatives, renderMatrix } from '../lib/backend-matrix.mjs';
+import { ABOUT, loadNatives, renderMatrix } from '../lib/backend-matrix.mjs';
+import { checkTodos, collectTodos, readTodosBaseline, updateTodosBaseline } from '../lib/backend-todos.mjs';
 import { ROOT } from '../lib/server.mjs';
 
 export const name = 'backend-contract';
-export const title = 'バックエンドの契約: 能力の印を全部明示する・印とメソッドが合う・記述のキー・印ごとの契約の試験・対応表が最新';
+export const title = 'バックエンドの契約: 能力の印を 4 つの状態で全部書く・印とメソッドが合う・記述のキー・印ごとの契約の試験・未実装のラチェット';
 
 export default async function (t) {
   const natives = await loadNatives();
   for (const [id, native] of Object.entries(natives)) {
     const problems = checkBackendShape(native);
-    t.ok(`${id}: 能力の印を全部明示し、印とメソッドが合う`, problems.length === 0, problems.join(' / '));
+    t.ok(`${id}: 能力の印を 4 つの状態で全部書き、印とメソッドが合う`, problems.length === 0, problems.join(' / '));
     t.ok(`${id}: id が記述のキーと同じ`, native.id === id, String(native.id));
   }
-  // 共通の配達機能をfalseへ戻しても形の検査だけでは通るため、製品としての最低限を別に守る。
+  // 共通の配達機能を状態に戻しても形の検査だけでは通るため、製品としての最低限を別に守る。
   for (const id of DEFAULT_AGENT_IDS) for (const key of ['plyInstructions', 'plyAgents', 'browser', 'plyControl', 'secrets']) {
-    t.ok(`${id}: 共通機能 ${key} を受け取れる`, Boolean(natives[id].capabilities[key]));
+    t.ok(`${id}: 共通機能 ${key} を受け取れる`, Boolean(capabilityValue(natives[id].capabilities[key])), JSON.stringify(natives[id].capabilities[key]));
   }
-  t.ok('何も持たない能力（対応を終えたバックエンド）も全部のキーを持ち、値が許される形', CAPABILITY_KEYS.every((k) => Object.hasOwn(NO_CAPABILITIES, k) && CAPABILITIES[k].valid(NO_CAPABILITIES[k]))
+  t.ok('何も持たない能力（対応を終えたバックエンド）も全部のキーを持ち、値が許される形',
+    CAPABILITY_KEYS.every((k) => Object.hasOwn(NO_CAPABILITIES, k) && capabilityProblem(k, NO_CAPABILITIES[k]) === null)
     && Object.keys(NO_CAPABILITIES).length === CAPABILITY_KEYS.length);
+  // 現役のエージェントは「全部 impossible の雛形」から始められない（対応を終えたバックエンドだけが NO_CAPABILITIES を使える）
+  for (const [id, a] of Object.entries(AGENTS)) {
+    const file = a.module.replace(/^\.\//, '');
+    const source = readFileSync(path.join(ROOT, 'core', 'backends', file), 'utf8');
+    t.ok(`${id}: 現役のエージェントは NO_CAPABILITIES を使わない（全キーを状態で書く）`, !/\bNO_CAPABILITIES\b/.test(source),
+      `core/backends/${file} に NO_CAPABILITIES がある。全部のキーを 4 つの状態で書く`);
+  }
 
   for (const [id, a] of Object.entries(AGENTS)) {
     const missing = DESCRIPTOR_KEYS.filter((k) => !Object.hasOwn(a, k));
@@ -35,7 +48,7 @@ export default async function (t) {
     if (a.cli) t.ok(`${id}: CLI の記述に exe・binEnv・installUrl がある`, typeof a.cli.exe === 'string' && /^AGENT_HOST_[A-Z_]+_BIN$/.test(a.cli.binEnv) && /^https:\/\//.test(a.cli.installUrl));
     const key = idleCompactionKey(id);
     t.ok(`${id}: 自動の圧縮の行は、compact を持つときだけ（行の無い compact は黙って自動の圧縮が動かない）`,
-      Boolean(key) === Boolean(natives[id]?.capabilities?.compact), JSON.stringify({ key, compact: natives[id]?.capabilities?.compact }));
+      Boolean(key) === Boolean(capabilityValue(natives[id]?.capabilities?.compact)), JSON.stringify({ key, compact: natives[id]?.capabilities?.compact }));
     // シェルのツールの名前（core/shell-tools.mjs の正本）は、画面の見た目の手がかり（toolHints の shape: 'shell'）と同じ
     const hinted = Object.entries(natives[id]?.toolHints ?? {}).filter(([, h]) => h?.shape === 'shell').map(([n]) => n).sort();
     t.ok(`${id}: 記述の shellTools が、toolHints の shape: 'shell' と同じ名前`, Array.isArray(a.shellTools) && JSON.stringify([...a.shellTools].sort()) === JSON.stringify(hinted),
@@ -55,14 +68,71 @@ export default async function (t) {
   for (const key of CAPABILITY_KEYS) {
     const named = CAPABILITY_CONTRACTS[key] ?? [];
     const unknown = named.filter((n) => n !== 'conformance' && !suiteNames.has(n));
-    t.ok(`印 ${key}: 契約の試験があり、名前の suite が登録されている`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
-    t.ok(`印 ${key}: 対応表の説明がある`, typeof ABOUT[key] === 'string' && ABOUT[key].length > 0);
+    t.ok(`印 ${key}: 契約の試験がある（tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS に suite 名を書く）`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
+    t.ok(`印 ${key}: 一覧の説明がある（tests/lib/backend-matrix.mjs の ABOUT に書く）`, typeof ABOUT[key] === 'string' && ABOUT[key].length > 0);
   }
   t.ok('契約の試験・説明に、一覧に無い印が無い', Object.keys(CAPABILITY_CONTRACTS).every((k) => CAPABILITY_KEYS.includes(k)) && Object.keys(ABOUT).every((k) => CAPABILITY_KEYS.includes(k)));
+  const matrix = renderMatrix(natives);
+  t.ok('一覧（端末に出す）: 対応・補う・不可能・未実装を出し、不可能の理由と未実装の Issue を添える',
+    /\| ✓ \|/.test(matrix) && /補/.test(matrix) && /無理/.test(matrix) && /未実装 #98/.test(matrix)
+    && /hooks \| #98/.test(matrix) && /accounts \| OS の共有キーリング/.test(matrix));
 
-  // 対応表の文書が今の印と一致する
-  const doc = readFileSync(MATRIX_FILE, 'utf8').replace(/\r\n/g, '\n');
-  t.ok('docs/backend-matrix.md が今の能力の印と一致する（node tests/lib/backend-matrix.mjs --write）', doc === renderMatrix(natives));
+  // 状態と値の検査そのもの
+  const base = { id: 'state-check', label: 'S', capabilities: { ...NO_CAPABILITIES }, modes: () => ({}), models: async () => ({}),
+    listSessions: async () => [], getSession: async () => null, getMessages: async () => [], runTurn: async () => ({}) };
+  const withCaps = (over) => ({ ...base, capabilities: { ...base.capabilities, ...over } });
+  const stateProblems = (over) => checkBackendShape(withCaps(over)).join('\n');
+  t.ok('状態の検査: 理由の無い impossible・Issue の無い todo・補えない covered・false を落とす',
+    /impossible needs a reason/.test(stateProblems({ title: impossible('') }))
+    && /todo needs an issue number/.test(stateProblems({ title: todo('98') }))
+    && /todo needs an issue number/.test(stateProblems({ title: todo('#x') }))
+    && /compact cannot be covered/.test(stateProblems({ compact: covered }))
+    && /title value false is not allowed/.test(stateProblems({ title: false }))
+    && /approvals cannot be a state/.test(stateProblems({ approvals: impossible('x') })));
+  t.ok('印に要るメソッド: compact=true で compact() が無いと落ちる（Claude は prompt）',
+    /compact=true needs compact/.test(stateProblems({ compact: true }))
+    && checkBackendShape(withCaps({ compact: 'prompt' })).length === 0);
+  t.ok('印に要るメソッド: forkMessage=true には fork が要る', /forkMessage=true needs fork/.test(stateProblems({ forkMessage: true })));
+  t.ok('状態から今までの値を引く: 対応はそのまま、covered・impossible・todo は false',
+    capabilityValue(true) === true && capabilityValue('host') === 'host' && capabilityValue('prompt') === 'prompt'
+    && capabilityValue(covered) === false && capabilityValue(impossible('x')) === false && capabilityValue(todo('#1')) === false
+    && JSON.stringify(legacyCapabilities({ title: covered, shell: 'host', compact: 'prompt', hooks: todo('#98') }))
+      === JSON.stringify({ title: false, shell: 'host', compact: 'prompt', hooks: false }));
+
+  const broken = { ...base, capabilities: { ...NO_CAPABILITIES, fork: true, extra: 1 }, setModelLive: async () => true };
+  delete broken.capabilities.tag;
+  const problems = checkBackendShape(broken).join('\n');
+  t.ok('形の検査: 書いていない印・一覧に無い印・印に要るメソッドの欠け・メソッドがあるのに対応でない印を落とす',
+    /tag has no state/.test(problems) && /extra is not in core\/backends\/contract\.mjs CAPABILITIES/.test(problems)
+    && /fork=true needs fork/.test(problems) && /setModelLive\(\) exists but liveModel is not true/.test(problems), problems);
+
+  const missing = withCaps({});
+  delete missing.capabilities.hooks;
+  const missingProblems = checkBackendShape(missing).join('\n');
+  t.ok('印を足したときの案内: どのファイルに何を書くかを出す',
+    /hooks has no state \(write true, or impossible\('reason'\), todo\('#Issue'\) in core\/backends\/state-check\.mjs\)/.test(missingProblems), missingProblems);
+
+  // 未実装（todo）は減る方向にしか動かせない
+  const baseline = { todos: { a: { x: '#1' } } };
+  t.ok('未実装の基準: 同じなら通る', checkTodos({ a: { x: '#1' } }, baseline).length === 0);
+  t.ok('未実装の基準: 増えたら落ちる', checkTodos({ a: { x: '#1', y: '#2' } }, baseline).some((p) => p.rule === 'increased'));
+  t.ok('未実装の基準: 減ったら基準を下げさせる', checkTodos({}, baseline).some((p) => p.rule === 'decreased'));
+  t.ok('未実装の基準: Issue が変わったら基準を更新させる', checkTodos({ a: { x: '#2' } }, baseline).some((p) => p.rule === 'changed'));
+  const todoDir = mkdtempSync(path.join(os.tmpdir(), 'pleiad-todos-'));
+  const todoFile = path.join(todoDir, 'todos.json');
+  try {
+    writeFileSync(todoFile, JSON.stringify({ todos: { a: { x: '#1' } } }));
+    t.ok('未実装の基準の更新: 増える更新は拒む',
+      updateTodosBaseline({ a: { x: '#1', y: '#2' } }, { file: todoFile }).ok === false
+      && JSON.parse(readFileSync(todoFile, 'utf8')).todos.a.y === undefined);
+    t.ok('未実装の基準の更新: 減る更新は通す',
+      updateTodosBaseline({ a: { x: '#1' } }, { file: todoFile }).ok === true
+      && JSON.parse(readFileSync(todoFile, 'utf8')).todos.a.x === '#1');
+  } finally {
+    rmSync(todoDir, { recursive: true, force: true });
+  }
+  const todoProblems = checkTodos(collectTodos(natives), readTodosBaseline());
+  t.ok('未実装（todo）は基準（tests/backend-todos.json）より増えない', todoProblems.length === 0, todoProblems.map((p) => p.message).join(' / '));
 
   // イベントの検査そのもの
   t.ok('イベントの検査: 契約どおりのものは通す', ['session', 'text.delta', 'turnResult'].every((type) => Object.hasOwn(BACKEND_EVENTS, type))
@@ -72,9 +142,4 @@ export default async function (t) {
     /event type/.test(checkBackendEvent({ type: 'permission' })) && /text/.test(checkBackendEvent({ type: 'text.delta' }))
     && /outcome/.test(checkBackendEvent({ type: 'turnResult', outcome: 'done' })) && /outside a turn/.test(checkBackendEvent({ type: 'text.delta', text: 'x' }, { outsideTurn: true }))
     && /without type/.test(checkBackendEvent(null)));
-  const broken = { id: 'broken', label: 'B', capabilities: { ...NO_CAPABILITIES, fork: true, extra: 1 }, modes: () => ({}), models: async () => ({}), listSessions: async () => [], getSession: async () => null, getMessages: async () => [], runTurn: async () => ({}), setModelLive: async () => true };
-  delete broken.capabilities.tag;
-  const problems = checkBackendShape(broken).join('\n');
-  t.ok('形の検査: 書いていない印・一覧に無い印・印に要るメソッドの欠け・メソッドがあるのに false の印を落とす',
-    /tag has no value/.test(problems) && /extra is not in/.test(problems) && /fork=true needs fork/.test(problems) && /setModelLive but liveModel is false/.test(problems));
 }

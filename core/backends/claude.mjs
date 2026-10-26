@@ -10,6 +10,7 @@
 // SDK は静的に import しない。配布物には入っておらず、初めて要るときに npm から取る（core/claude-sdk.mjs。ADR 0208）。
 // 取っていないうちも、起動・ほかのバックエンド・会話の一覧は動く（一覧は空、会話を始めると取得の案内）。
 import { loadClaudeSdk, isClaudeSdkMissing, requestClaudeSdkConsent, claudeSdkStatus, onClaudeSdkChange, ensureClaudeSdk, startClaudeSdkMaintenance } from '../claude-sdk.mjs';
+import { impossible } from './contract.mjs';
 import { claudeAuth } from '../auth/claude-cli.mjs';
 import { t, agentT } from '../i18n.mjs';
 import { readClaudeAccountsUsage } from './claude-usage.mjs';
@@ -636,7 +637,8 @@ export const backend = {
   get description() { return t("claude.description"); },
 
   capabilities: {
-    compact: true,
+    // server の compactConversation が /compact を発言として送る（compact() は持たない）
+    compact: 'prompt',
     // 委譲の子だけ自動圧縮の閾値を下げる窓（runArgs.autoCompactWindow → CLAUDE_CODE_AUTO_COMPACT_WINDOW）を受ける
     autoCompactWindow: true,
     // 次の発言の候補はターンの中で届く（runArgs.promptSuggestions。ターンの後に作らない。core/prompt-suggestions.mjs）
@@ -669,9 +671,9 @@ export const backend = {
     approvals: 'interactive',   // canUseTool
     mcpApproval: 'agent',       // MCP のツールも canUseTool を通る
     plyContext: 'turn',         // ply_context はターンごとのトークンで mcpServers に渡す
-    effortInModelId: false,
-    instructionsAtStart: false, // 人格（botInstructions）はターンごとに append に入る
-    failureDiagnostics: false,
+    effortInModelId: impossible('強さは別のパラメータで渡す'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    instructionsAtStart: impossible('指示はターンごとに append に入るので、会話の始めに固定されない'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
+    failureDiagnostics: impossible('失敗の形が構造化されているので、ログを残す必要が無い'), // i18n-ignore: 能力の印の理由（開発者向け。利用者向けの文は #149）
     steer: true,   // 入力の流れ（streamInput）へ発言を足す
     promptDelivery: true,   // プロンプトを入力に流したら onPromptDelivered で「渡った」と知らせる
     handover: true,          // CLI を保持役に載せ、新しいサーバーが付け直す（claude-held.mjs）
