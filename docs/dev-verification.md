@@ -40,6 +40,27 @@ v2 の新規 DB 作成は旧 `auth.json` を自動で取り込まない。Pleiad
 
 Pleiad が指示を担当する場合、圧縮に残った native 指示はモデル送信前にも除外する。署名済みの本文を安全に変更できない場合は要求を断る。戻し方と対応版は [利用案内](backends.md#opencode) と [接続契約](multi-backend.md) を参照。
 
+### 配達物を実物の CLI で確かめる
+
+偽のプロセスで全エージェントを確かめる `npm test -- backend-delivery`（`tests/unit/backend-delivery.mjs`）とは別に、本物の CLI で
+1 エージェント 1 ターンだけ流す入口がある（issue #146。CI では回さない）:
+
+```powershell
+npm run test:delivery                 # 6 エージェントを順に（1 エージェント 1 ターン）
+npm run test:delivery -- claude devin # 選ぶ
+```
+
+1 ターンで 3 つを見る: **instructions**（設定 › 指示に足した合言葉が返答に入る = `plyInstructions`・`plyAgents` の届け方）、
+**plyControl**（`ply_control` の `list_ops` を呼び、操作の id が返る）、**secrets**（秘密情報の変数が会話のシェルにある。
+値は読まず `[ -n "$DELIVERY_CHECK_TOKEN" ]` で有る無しを答えさせる）。データ置き場と作業場所は一時ディレクトリ、モードは Bypass。
+
+- 落ちたときは `instructions=NG` などと、返答・ツールの結果の末尾を出す。CLI が無い・ログインしていないエージェントは `SKIP` と理由を出す。
+- `tests/lib/server.mjs` は実 Devin・Grok を起こさないよう `AGENT_HOST_DEVIN_BIN`・`AGENT_HOST_GROK_BIN` に身代わりを指し、`GROK_HOME` を
+  空の一時ディレクトリにする。この入口はそれらを実物（PATH の `devin`・`grok`、`~/.grok`）へ戻す（2026-10-26。戻さないと Devin は
+  「見つかりません」、Grok は「ACP request failed」になる）。
+- Bypass にしないと、Devin は MCP のツールを「読み取り専用の注釈が無い」として断り、`ply_control`・`ply_shell` を呼べない（2026-10-26）。
+- 秘密の値を表示させると、Grok の自動モードが「秘密の抜き出し」としてコマンドを止める。有る無しだけを答えさせる（2026-10-26）。
+
 - `tests/lint-design.mjs --strict`（`npm test` の design-lint）は、CSS の `background` に `--surface-*`・`--fill-*`、`color` に `--ink-*` 以外を許さない。`--line-*` は svg の `fill`/`stroke`、`linear-gradient(var(--line-x),var(--line-x))` の背景、border だけ。独自の変数（`--rail-line` など）を経由した色も族が判らず落ちる。普段と触れたときで色を替えるときは、規則ごとに `--surface-*` / `--ink-*` を書くか、`opacity` で濃さを替える（2026-09-30、会話の地図）。単体の確認は `node tests/lint-design.mjs web/tokens.css <css> --strict`。
 - 設定のページ（左のメニューの項目）を足すときは、`web/onboarding.mjs` の `pages` の配列に加えて、同じファイルの `$('<名前>Tab').onclick = () => page('<名>')` の行も足す。配列だけだと札は出るが、押しても（`.click()` でも）ページが切り替わらない（2026-10-01、コンピューターの操作の節）。`hostCapabilities` に項目を足すと、返り値を `deepEqual` で比べる `tests/unit/file-actions.mjs` の 2 か所の期待値も変わる。
 - `web/client.mjs` の `onEvent` などに新しい部品（`setupXxx` が返すオブジェクト）の呼び出しを足したら、関数を切り出して `vm` で動かすテスト（`tests/unit/session-stream.mjs` など。`vm.createContext` で探す）の文脈にも身代わりを足す。足さないと全件のときに `ReferenceError: xxx is not defined` で落ちる（2026-10-03、`mobileNotify`・`notifySettings`。git の動きの `refreshGit`・`gitPanel` でも同じことが起きた）。

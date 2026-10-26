@@ -2,13 +2,16 @@
 //
 // RIGS: エージェントごとの身代わり（LLM を呼ばない）でサーバーを起こす形。エージェントを足すときは、身代わり（tests/lib/fake-<id>.mjs）を書き、
 //   ここに 1 つ足す。core/backends/agents.mjs のエージェント（fake を含む）に RIGS が無いと backend-contract が落とす。
-// CAPABILITY_CONTRACTS: 能力の印（core/backends/contract.mjs）ごとに、その印の契約を確かめる試験。
-//   'conformance' は下の checkConformance が全バックエンドで確かめる、文字列の配列は既存の suite（tests/run.mjs の名前）。
-//   印を足すときはここにも足す（無い・名前の suite が無いと backend-contract が落とす）。
+// CAPABILITY_CONTRACTS: 能力の印（core/backends/contract.mjs）ごとの契約の試験。
+//   suites は既存の suite（tests/run.mjs の名前。'conformance' は下の checkConformance が全バックエンドで確かめる）。
+//   agents は「印 → エージェントごとの試験」。配達物（runArgs の渡し物）を持つ印は、対応・補うのエージェントごとに、
+//   そのエージェントで届くことを確かめる試験（tests/lib/backend-delivery.mjs の DELIVERY_PROBES）が要る。
+//   印を足すときはここにも足す（無い・名前の suite が無い・エージェントの試験が無いと backend-contract が落とす）。
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ROOT } from './server.mjs';
 import { installFakeClaude } from './fake-claude.mjs';
+import { DELIVERY_PROBES } from './backend-delivery.mjs';
 
 export const RIGS = {
   fake: async () => ({ env: { AGENT_HOST_BACKENDS: 'fake' }, prompt: (text) => text }),
@@ -29,43 +32,46 @@ export const RIGS = {
   },
 };
 
+/** 配達物を持つ印の、エージェントごとの試験（同じ suite が全エージェントを通す） */
+const DELIVERY_AGENTS = Object.freeze(Object.fromEntries(Object.keys(DELIVERY_PROBES).map((id) => [id, 'backend-delivery'])));
+
 export const CAPABILITY_CONTRACTS = {
-  title: ['conformance', 'server-codex'],
-  tag: ['server-fake'],
-  fork: ['conformance', 'server-fork', 'server-antigravity'],
-  forkMessage: ['server-fork'],
-  rewind: ['server-rewind', 'server-antigravity'],
-  subagents: ['server-background', 'server-codex'],
-  liveModel: ['server-delegation-settings', 'server-ux', 'grok-backend'],
-  liveMode: ['server-ux', 'grok-backend'],
-  hostTools: ['event-session-id'],
-  approvals: ['computer-policy', 'server-antigravity', 'devin-acp', 'server-devin'],
-  alwaysAllow: ['server-fake', 'grok-backend', 'server-devin'],
-  mcpApproval: ['server-codex', 'server-devin'],
-  login: ['server-codex', 'server-fake'],
-  accounts: ['server-claude-accounts', 'agent-accounts', 'codex-accounts', 'opencode-accounts', 'server-agent-accounts', 'server-agent-account-adopt'],
-  compatEndpoints: ['compat-endpoints'],
-  compact: ['server-compaction', 'server-codex-compaction'],
-  autoCompactWindow: ['server-compaction-delegated'],
-  promptSuggestions: ['server-prompt-suggestions'],
-  plyAgents: ['agent-tasks'],
-  plyInstructions: ['server-added-context', 'agent-tasks'],
-  plyContext: ['server-agy-context', 'server-opencode-context', 'context-owner-capability'],
-  computerUse: ['computer-bridge'],
-  plyShell: ['shell-bridge', 'shell-delivery'],
-  nativeShellOff: ['shell-delivery'],
-  shell: ['server-shell'],
-  effortInModelId: ['effort', 'devin-models', 'server-devin'],
-  instructionsAtStart: ['bot-dispatch'],
-  failureDiagnostics: ['server-antigravity', 'server-devin'],
-  promptDelivery: ['message-queue', 'server-antigravity'],
-  steer: ['server-delegation-steer', 'server-delegation-steer-acp', 'task-instructions'],
-  handover: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'],
-  browser: ['agent-browser-env', 'browser-bridge', 'server-devin', 'grok-backend'],
-  plyControl: ['control-delivery', 'ops-control', 'server-devin', 'grok-backend'],
-  secrets: ['server-secrets', 'mcp-secret-store'],
-  visualize: ['server-visualize'],
-  hooks: ['server-hooks', 'server-hooks-unify'],
+  title: { suites: ['conformance', 'server-codex'] },
+  tag: { suites: ['server-fake'] },
+  fork: { suites: ['conformance', 'server-fork', 'server-antigravity'] },
+  forkMessage: { suites: ['server-fork'] },
+  rewind: { suites: ['server-rewind', 'server-antigravity'] },
+  subagents: { suites: ['server-background', 'server-codex'] },
+  liveModel: { suites: ['server-delegation-settings', 'server-ux', 'grok-backend'] },
+  liveMode: { suites: ['server-ux', 'grok-backend'] },
+  hostTools: { suites: ['event-session-id'] },
+  approvals: { suites: ['computer-policy', 'server-antigravity', 'devin-acp', 'server-devin'] },
+  alwaysAllow: { suites: ['server-fake', 'grok-backend', 'server-devin'] },
+  mcpApproval: { suites: ['server-codex', 'server-devin'] },
+  login: { suites: ['server-codex', 'server-fake'] },
+  accounts: { suites: ['server-claude-accounts', 'agent-accounts', 'codex-accounts', 'opencode-accounts', 'server-agent-accounts', 'server-agent-account-adopt'] },
+  compatEndpoints: { suites: ['compat-endpoints'] },
+  compact: { suites: ['server-compaction', 'server-codex-compaction'] },
+  autoCompactWindow: { suites: ['server-compaction-delegated'] },
+  promptSuggestions: { suites: ['server-prompt-suggestions'] },
+  plyAgents: { suites: ['agent-tasks'], agents: DELIVERY_AGENTS },
+  plyInstructions: { suites: ['server-added-context', 'agent-tasks'], agents: DELIVERY_AGENTS },
+  plyContext: { suites: ['server-agy-context', 'server-opencode-context', 'context-owner-capability'], agents: DELIVERY_AGENTS },
+  computerUse: { suites: ['computer-bridge'], agents: DELIVERY_AGENTS },
+  plyShell: { suites: ['shell-bridge', 'shell-delivery'], agents: DELIVERY_AGENTS },
+  nativeShellOff: { suites: ['shell-delivery'] },
+  shell: { suites: ['server-shell'] },
+  effortInModelId: { suites: ['effort', 'devin-models', 'server-devin'] },
+  instructionsAtStart: { suites: ['bot-dispatch'] },
+  failureDiagnostics: { suites: ['server-antigravity', 'server-devin'] },
+  promptDelivery: { suites: ['message-queue', 'server-antigravity'] },
+  steer: { suites: ['server-delegation-steer', 'server-delegation-steer-acp', 'task-instructions'] },
+  handover: { suites: ['adopt-held', 'adopt-claude', 'adopt-codex', 'adopt-agy', 'adopt-opencode'] },
+  browser: { suites: ['agent-browser-env', 'browser-bridge', 'server-devin', 'grok-backend'], agents: DELIVERY_AGENTS },
+  plyControl: { suites: ['control-delivery', 'ops-control', 'server-devin', 'grok-backend'], agents: DELIVERY_AGENTS },
+  secrets: { suites: ['server-secrets', 'mcp-secret-store'], agents: DELIVERY_AGENTS },
+  visualize: { suites: ['server-visualize'], agents: DELIVERY_AGENTS },
+  hooks: { suites: ['server-hooks', 'server-hooks-unify'], agents: DELIVERY_AGENTS },
 };
 
 /**

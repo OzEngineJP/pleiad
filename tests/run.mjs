@@ -224,8 +224,9 @@ const SUITES = [
   './unit/ops-registry.mjs',
   './unit/ops-coverage.mjs',
   // バックエンドの契約（ADR 0220）: 能力の印の明示・記述・印ごとの契約の試験・対応表（静的）、全バックエンドの共通の契約（身代わりで動かす）、
-  // core/backends/ の外のエージェントの id の直書き（ラチェット）
+  // 配達物（runArgs）が全エージェントに届くこと（印ごと・エージェントごとの偽のプロセス・プロトコル）、core/backends/ の外のエージェントの id の直書き（ラチェット）
   './unit/backend-contract.mjs',
+  './unit/backend-delivery.mjs',
   './unit/backend-registry.mjs',
   './unit/backend-test-env.mjs',
   './unit/context-owner-capability.mjs',

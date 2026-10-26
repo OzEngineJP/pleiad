@@ -265,6 +265,14 @@ questions: [{ question, header?, multiSelect?, options: [{ label, description?, 
 （`legacyCapabilities`。`covered`・`impossible`・`todo` は `false`）。一覧は `node tests/lib/backend-matrix.mjs` で端末に出す
 （文書の写しは持たない）。id で分けたくなったら、id を比べずに印を足す（下の「id で分けない」）。
 
+**配達物を持つ印は、エージェントごとに「届いたか」を確かめる試験が要る**（[ADR 0278](adr/0278-capability-delivery-tests.md)）。配達物の印は
+`RUN_ARG_FEATURES` の値（`browser`・`computerUse`・`plyControl`・`secrets`・`plyShell`・`plyAgents`・`plyContext`・`plyInstructions`・`visualize`・`hooks`）。
+対応（または `covered`）のエージェントには、そのエージェントの偽のプロセス・プロトコル（`tests/lib/fake-<id>.mjs`・Claude の SDK の `query` の身代わり・
+Codex の app-server の身代わり）に 1 ターン流し、起動の引数・環境変数・MCP の登録・発言に足した指示のどこで受け取ったかを見る試験がある
+（`tests/unit/backend-delivery.mjs`。届け方は `tests/lib/backend-delivery.mjs` の `DELIVERY_PROBES`）。印が対応なのに試験が無いと
+backend-contract が落ち、書き先を案内する。`todo`・`impossible` のエージェントには要求しない（印と実際の届け方が食い違わないよう、
+`gateRunArgs` が状態の配達物を消す）。
+
 ```js
 export const backend = {
   id: "claude",              // core/backends/agents.mjs のキーと同じ
@@ -857,13 +865,17 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 2. **バックエンド**（`core/backends/<id>.mjs`）。§2.3 の形と、`CAPABILITIES` の全部のキーを 4 つの状態で書く。
    状態の意味と `requires`（`compact: true` なら `compact()` など）は §2.3。
 3. **身代わり**（`tests/lib/fake-<id>.mjs`）と `tests/lib/backend-contracts.mjs` の `RIGS` の 1 行、`tests/run.mjs` への登録。
-4. **確かめる**。`npm test -- backend-contract backend-conformance`。落ちた文が「どのファイルに何を書くか」を案内する。
+   配達物（`RUN_ARG_FEATURES` の印）を 1 つでも対応にするなら、`tests/lib/backend-delivery.mjs` の `DELIVERY_PROBES` にそのエージェントの
+   1 ターンの確かめを書き、`CAPABILITY_CONTRACTS.<印>.agents.<id>` に `'backend-delivery'` を書く（backend-contract が案内する）。
+4. **確かめる**。`npm test -- backend-contract backend-delivery backend-conformance`。落ちた文が「どのファイルに何を書くか」を案内する。
    そのエージェント固有の試験は `tests/run.mjs` に登録する。backend-registry は CLI の差し替え・インストール案内・既定と指定順の登録を確かめる。
-5. 一覧を端末で確かめる: `node tests/lib/backend-matrix.mjs`（文書の写しは持たない）。
+5. 実物の CLI で 1 ターン流す: `npm run test:delivery -- <id>`（1 エージェント 1 ターン。CI では回さない。下の「実物の CLI で確かめる」）。
+6. 一覧を端末で確かめる: `node tests/lib/backend-matrix.mjs`（文書の写しは持たない）。
 
 **能力の印を足すとき**は、`contract.mjs` の `CAPABILITIES` に 1 行（対応の値・`requires`・`covered` の可否）、全バックエンドの状態、
 一覧の説明（`tests/lib/backend-matrix.mjs` の `ABOUT`）、その印の契約を確かめる試験（`tests/lib/backend-contracts.mjs` の `CAPABILITY_CONTRACTS`。
-`'conformance'` か既存の suite の名前）を足す。どれかが欠けると backend-contract が落ちる。未実装（`todo`）は
+`'conformance'` か既存の suite の名前）を足す。**その印が配達物**（`RUN_ARG_FEATURES` の値）なら、対応・`covered` のエージェントごとに
+`CAPABILITY_CONTRACTS.<印>.agents.<id>` と `DELIVERY_PROBES` も要る（ADR 0278）。どれかが欠けると backend-contract が落ちる。未実装（`todo`）は
 `tests/backend-todos.json` の基準より増やせない（減らしたら `node tests/lib/backend-todos.mjs --update-baseline`）。
 現役のエージェントは `NO_CAPABILITIES` を使えない（対応を終えたバックエンドだけ）。
 
@@ -874,6 +886,14 @@ Codexの `set_status / set_title / fork` は未接続なので、`capabilities.h
 `RUN_ARG_PLUMBING`（プロンプト・承認など全バックエンドに渡る回線）のどちらかに登録する。配達物の機能を足したら、対応する印も足し、
 受け取れないバックエンドは `covered`・`impossible('理由')`・`todo('#Issue')` のどれかで宣言する。状態なのに配達される組み合わせは起きない
 （`gateRunArgs` が状態を今までの値に引いてから見る）。
+
+#### 実物の CLI で確かめる
+
+偽のプロセスで確かめる `tests/unit/backend-delivery.mjs` とは別に、本物の CLI で 1 エージェント 1 ターンだけ流す入口を持つ:
+`npm run test:delivery`（引数なしは 6 エージェント。`npm run test:delivery -- claude devin` で選ぶ）。1 ターンで、Pleiad の指示
+（設定 › 指示に足した合言葉）が返答に入るか、`ply_control` の `list_ops` を呼べるか、秘密情報の変数が会話のシェルにあるかを見る。
+データ置き場と作業場所は一時ディレクトリ、モードは Bypass（承認で止まらないように）。CI では回さない。CLI が無い・ログインしていない
+エージェントは SKIP と理由を出す。手順は `docs/dev-verification.md`「配達物を実物の CLI で確かめる」。
 
 #### id で分けない
 

@@ -12,6 +12,7 @@
     "postinstall": "node scripts/node-pty-mode.cjs",
     "test": "node tests/run.mjs",
     "test:e2e": "node tests/e2e.mjs",
+    "test:delivery": "node tests/delivery-cli.mjs",
     "lint:i18n": "node tests/lint-i18n.mjs",
     "test:safe-storage": "electron tests/desktop/safe-storage-smoke.cjs",
     "desktop": "electron .",

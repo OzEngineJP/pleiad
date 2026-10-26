@@ -5,11 +5,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  CAPABILITY_KEYS, NO_CAPABILITIES, BACKEND_EVENTS,
+  CAPABILITY_KEYS, NO_CAPABILITIES, BACKEND_EVENTS, RUN_ARG_FEATURES,
   checkBackendShape, checkBackendEvent, capabilityProblem, capabilityValue, covered, impossible, legacyCapabilities, todo,
 } from '../../core/backends/contract.mjs';
 import { AGENTS, DESCRIPTOR_KEYS, DEFAULT_AGENT_IDS, idleCompactionKey } from '../../core/backends/agents.mjs';
 import { CAPABILITY_CONTRACTS, RIGS } from '../lib/backend-contracts.mjs';
+import { DELIVERY_ARG_KEYS, DELIVERY_CAPABILITIES, DELIVERY_PROBES, deliveryArgs, deliveryContractProblem, deliveryRequired } from '../lib/backend-delivery.mjs';
 import { ABOUT, loadNatives, renderMatrix } from '../lib/backend-matrix.mjs';
 import { checkTodos, collectTodos, readTodosBaseline, updateTodosBaseline } from '../lib/backend-todos.mjs';
 import { ROOT } from '../lib/server.mjs';
@@ -66,10 +67,39 @@ export default async function (t) {
     return /export const name = ['"]([^'"]+)['"]/.exec(text)?.[1] ?? file;
   }));
   for (const key of CAPABILITY_KEYS) {
-    const named = CAPABILITY_CONTRACTS[key] ?? [];
+    const named = CAPABILITY_CONTRACTS[key]?.suites ?? [];
     const unknown = named.filter((n) => n !== 'conformance' && !suiteNames.has(n));
     t.ok(`印 ${key}: 契約の試験がある（tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS に suite 名を書く）`, named.length > 0 && unknown.length === 0, JSON.stringify({ named, unknown }));
     t.ok(`印 ${key}: 一覧の説明がある（tests/lib/backend-matrix.mjs の ABOUT に書く）`, typeof ABOUT[key] === 'string' && ABOUT[key].length > 0);
+  }
+  // 配達物（runArgs の渡し物）を持つ印は、対応・補うのエージェントごとに「そのエージェントで届く」試験が要る。
+  // 新しいエージェント・新しい配達物を足したときに漏れないよう、印の値（対応か）と身代わり（DELIVERY_PROBES）から機械的に決める
+  for (const key of DELIVERY_CAPABILITIES) {
+    const agents = CAPABILITY_CONTRACTS[key]?.agents ?? {};
+    for (const id of DEFAULT_AGENT_IDS) {
+      if (!deliveryRequired(natives[id]?.capabilities?.[key])) continue;
+      const problem = deliveryContractProblem({ key, id, suite: agents[id], suites: suiteNames, probes: DELIVERY_PROBES,
+        file: AGENTS[id].module.replace(/^\.\//, '') });
+      t.ok(`印 ${key}: ${id} は対応なので、${id} で届くことを確かめる試験がある`, problem === null, problem ?? undefined);
+    }
+  }
+  const missingDelivery = deliveryContractProblem({ key: 'browser', id: 'nobody', suite: undefined, suites: suiteNames, probes: DELIVERY_PROBES });
+  t.ok('配達物の試験が無いときの案内: どのファイルに何を書くかを出す',
+    /tests\/lib\/backend-delivery\.mjs/.test(missingDelivery) && /CAPABILITY_CONTRACTS\.browser\.agents\.nobody/.test(missingDelivery)
+    && /backend-delivery/.test(missingDelivery), missingDelivery);
+  // 新しい配達物のキーを RUN_ARG_FEATURES に足したら、届け方の試験でも渡す（渡していないキーは、黙って捨てられても気づけない）
+  const untestedArgs = Object.keys(RUN_ARG_FEATURES).filter((key) => !DELIVERY_ARG_KEYS.includes(key));
+  t.ok('配達物の試験: RUN_ARG_FEATURES のキーをすべて渡している（新しいキーは tests/lib/backend-delivery.mjs の DELIVERY_ARG_KEYS と deliveryArgs にも足す）',
+    untestedArgs.length === 0, JSON.stringify(untestedArgs));
+  const allCaps = Object.fromEntries(CAPABILITY_KEYS.map((key) => [key, true]));
+  const built = deliveryArgs(allCaps, {});
+  const unbuilt = DELIVERY_ARG_KEYS.filter((key) => !Object.hasOwn(built, key));
+  t.ok('配達物の試験: deliveryArgs が DELIVERY_ARG_KEYS を実際に渡す（一覧だけ足して渡し忘れない）', unbuilt.length === 0, JSON.stringify(unbuilt));
+  for (const [key, contract] of Object.entries(CAPABILITY_CONTRACTS)) {
+    for (const [id, suite] of Object.entries(contract.agents ?? {})) {
+      t.ok(`印 ${key}: エージェント ${id} の試験 ${suite} が実在する`, Object.hasOwn(AGENTS, id) && suiteNames.has(suite),
+        `tests/lib/backend-contracts.mjs の CAPABILITY_CONTRACTS.${key}.agents.${id} を、実在するエージェントと suite（tests/run.mjs の名前）にする`);
+    }
   }
   t.ok('契約の試験・説明に、一覧に無い印が無い', Object.keys(CAPABILITY_CONTRACTS).every((k) => CAPABILITY_KEYS.includes(k)) && Object.keys(ABOUT).every((k) => CAPABILITY_KEYS.includes(k)));
   const matrix = renderMatrix(natives);
