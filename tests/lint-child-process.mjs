@@ -27,6 +27,8 @@ export const SPAWN_CHILD_EXCEPTIONS = Object.freeze({
   'core/claude-login.mjs': 'Claude の対話ログインを端末へ接続して実行する',
   'core/hook-adapter.mjs': 'コピーされた単体アダプターも hook コマンドを実行できるようにする',
 });
+/** 生の child_process API を口の外で読んでよいファイル（Pleiad のソースが無い場所へ単体で写されて動くもの） */
+export const RAW_EXCEPTIONS = Object.freeze(['core/hook-adapter.mjs']);
 
 /** コメントを空白に置き換える（行番号は保つ）。// は行頭のものだけ。文字列の中の // は消さない */
 export function stripComments(text) {
@@ -91,7 +93,7 @@ export function scanRepo(root = ROOT) {
   for (const file of listFiles(root)) {
     const source = readFileSync(path.join(root, file), 'utf8');
     const uses = countUses(source);
-    if ((!MOUTH.includes(file) && !Object.hasOwn(SPAWN_CHILD_EXCEPTIONS, file) && uses.childProcess)
+    if ((!MOUTH.includes(file) && !RAW_EXCEPTIONS.includes(file) && uses.childProcess)
       || (!MOUTH.includes(file) && uses.utilityFork)) found[file] = uses;
     const imports = countSpawnChildImports(file, source);
     if (imports) spawnChildImports[file] = imports;
@@ -127,7 +129,8 @@ export function selftest() {
   check('コメント', countUses("// import { spawn } from 'node:child_process';\n/* require('child_process') */\n"), { childProcess: 0, utilityFork: 0 });
   check('口の経由', countUses("import { run, start } from './process.mjs';"), { childProcess: 0, utilityFork: 0 });
   check('一覧外の直読み', !MOUTH.includes('core/not-allowed.mjs') && countUses("import { spawn } from 'node:child_process';").childProcess > 0, true);
-  check('固定例外 hook-adapter の直読み', Object.hasOwn(SPAWN_CHILD_EXCEPTIONS, 'core/hook-adapter.mjs'), true);
+  check('固定例外 hook-adapter の直読み', RAW_EXCEPTIONS.includes('core/hook-adapter.mjs'), true);
+  check('spawnChild の例外でも child_process は読めない', RAW_EXCEPTIONS.includes('core/cli-installation.mjs'), false);
   check('登録外 spawnChild', spawnChildProblem('core/not-allowed.mjs', countSpawnChildImports('core/not-allowed.mjs', "import { spawnChild } from './process.mjs';"))?.file, 'core/not-allowed.mjs');
   check('別名 import', countSpawnChildImports('core/not-allowed.mjs', "import { spawnChild as rawSpawn } from './process.mjs';"), 1);
   check('許可された例外', spawnChildProblem('core/cli-installation.mjs', countSpawnChildImports('core/cli-installation.mjs', "import { spawnChild } from './process.mjs';")), null);
