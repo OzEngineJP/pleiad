@@ -19,10 +19,10 @@ export default async function (t) {
   t.ok('使えない起動では取り出さない', warmSecretStorage({ isEncryptionAvailable: () => false, encryptString: () => { throw new Error('x'); } }) === false);
   t.ok('safeStorage が無くても投げない', warmSecretStorage(undefined) === false);
 
-  // boot() の中で、サーバーを起こす（chooseLinkedServer・utilityProcess.fork）・起動の待ちを始めるより前に呼ぶ
+  // boot() の中で、サーバーを起こす（chooseLinkedServer・desktop/process.cjs の forkUtility）・起動の待ちを始めるより前に呼ぶ
   const src = await fs.readFile(new URL('../../desktop/main.cjs', import.meta.url), 'utf8');
   const boot = src.slice(src.indexOf('async function boot()'));
   const at = boot.indexOf('warmSecretStorage(safeStorage');
-  const before = ['chooseLinkedServer(', 'utilityProcess.fork(', "t('server.startTimeout')"].map(s => boot.indexOf(s));
+  const before = ['chooseLinkedServer(', 'forkUtility(', "t('server.startTimeout')"].map(s => boot.indexOf(s));
   t.ok('boot() でサーバーを起こす・起動の待ちを始める前に鍵を取り出す', at > 0 && before.every(i => i > at), JSON.stringify({ at, before }));
 }

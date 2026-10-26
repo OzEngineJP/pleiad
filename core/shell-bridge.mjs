@@ -4,14 +4,17 @@
 // - 走らせる口は core/host-shell.mjs。シェルが終わったら、パイプを握ったプロセスが残っていても少し待って戻る（leftover）
 // - 承認: 読み取りだけのモードでは断る。確認なし（autonomy: never）のモードのほかは、走らせる前に会話へ承認のカードを出す
 //   （エージェントのサンドボックスの外になるので、エージェント側の承認とは別に Pleiad が決める。エージェント側では ply_shell を自動で通す）
-// - ジョブの出力はメモリだけ（OUTPUT_KEEP。古い方から捨て、どこまで捨てたかを数える）。データ置き場に書かない
+// - ジョブの出力はメモリだけ（OUTPUT_KEEP。古い方から捨て、どこまで捨てたかを数える）。データ置き場に書かない。
+//   保持役に載せたジョブ（ADR 0270 段 2a）は、保持役の子の記録にも残る（サーバーを入れ替えても output・list で読める）
 // - 会話ごとの同時のジョブは JOBS_PER_SESSION まで。終わったジョブは JOBS_KEPT まで覚える（output で読み直せる）
 //
-//   createShellBridge({ askPermission, onJobStart, onJobEnd, now? })
+//   createShellBridge({ askPermission, onJobStart, onJobEnd, now?, holder? })
 //     askPermission(request)            server の askPermission（{ toolName, input, title, sessionId, signal, kind, canAlways, locale }）
 //     onJobStart(sessionId, job)・onJobEnd(sessionId, job)  見張り（core/session-commands.mjs）・裏の一覧・終わりの知らせ
+//     holder                           保持役の口（core/ply-shell-held.mjs の createPlyShellHolder）。無ければジョブはサーバーの子
 //   bridge.open({ origin, locale, token?, owner })  owner() → { sessionId, cwd, mode: { scope, autonomy }, signal, env }
-//   bridge.jobs(sessionId)・bridge.job(sessionId, jobId)・bridge.stop(sessionId, jobId)・bridge.stopSession(sessionId)・bridge.stopAll()・bridge.cwds()
+//   bridge.jobs(sessionId)・bridge.job(sessionId, jobId)・bridge.stop(sessionId, jobId)・bridge.stopSession(sessionId)・bridge.stopAll({ keepHeld? })・bridge.cwds()
+//   bridge.adopt(items)  起動で、保持役に残ったジョブを拾う（core/ply-shell-held.mjs の adoptable）
 //   ジョブの見え方: { jobId, kind: 'run' | 'start', command, cwd, shell, startedAt, running, stoppedBy?: 'agent' | 'human' | 'turn' | 'session', endedAt?, exitCode?, … }
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -84,17 +87,23 @@ function outputBuffer() {
   };
 }
 
-export function createShellBridge({ askPermission, onJobStart = () => {}, onJobEnd = () => {}, now = Date.now } = {}) {
+export function createShellBridge({ askPermission, onJobStart = () => {}, onJobEnd = () => {}, now = Date.now, holder = null } = {}) {
   const sessions = new Map();   // sessionId -> Map(jobId -> job)
 
   const jobsOf = (sessionId) => { if (!sessions.has(sessionId)) sessions.set(sessionId, new Map()); return sessions.get(sessionId); };
   const viewOf = (job) => ({ jobId: job.id, kind: job.kind, command: job.command, cwd: job.cwd, shell: job.shell, startedAt: job.startedAt, running: job.endedAt == null,
+    ...(job.held ? { held: true } : {}),
     ...(job.stoppedBy ? { stoppedBy: job.stoppedBy } : {}),
     ...(job.endedAt != null ? { endedAt: job.endedAt, exitCode: job.exitCode, ...(job.stopped ? { stopped: true } : {}), ...(job.timedOut ? { timedOut: true } : {}), ...(job.leftover ? { leftover: true } : {}) } : {}),
     outputEnd: job.out.end });
   const trim = (map) => {
     const ended = [...map.values()].filter((j) => j.endedAt != null).sort((a, b) => a.endedAt - b.endedAt);
-    while (ended.length > JOBS_KEPT) map.delete(ended.shift().id);
+    while (ended.length > JOBS_KEPT) {
+      const job = ended.shift();
+      job.held?.finished();
+      job.held?.release();
+      map.delete(job.id);
+    }
   };
 
   async function gate(owner, args, lng, signal) {
@@ -119,24 +128,37 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
     return { command, cwd, shell: choice, env: { ...env, AGENT_HOST_SHELL: file } };
   }
 
-  /** ジョブを始める。終わったら onJobEnd。job.done は結果の Promise */
+  /** ジョブを始める。終わったら onJobEnd。job.done は結果の Promise。
+   * 保持役があれば保持役の子に載せ（ADR 0270 段 2a）、載せられなければ今の流れ（サーバーの子） */
   function launch(sessionId, plan, { timeoutMs, kind }) {
     const map = jobsOf(sessionId);
     const job = { id: `sh-${crypto.randomUUID().slice(0, 8)}`, kind, stoppedBy: null, sessionId, command: plan.command, cwd: plan.cwd, shell: plan.shell, startedAt: now(),
-      endedAt: null, exitCode: null, stopped: false, timedOut: false, leftover: false, out: outputBuffer(), ac: new AbortController() };
+      endedAt: null, exitCode: null, stopped: false, timedOut: false, leftover: false, out: outputBuffer(), ac: new AbortController(), env: plan.env, held: null };
     map.set(job.id, job);
     onJobStart(sessionId, viewOf(job));
-    job.done = runHostShell({ command: plan.command, cwd: plan.cwd, timeoutMs, signal: job.ac.signal, env: plan.env,
-      onOutput: (_stream, piece) => job.out.push(piece) })
-      .then((r) => {
-        Object.assign(job, { endedAt: now(), exitCode: r.exitCode ?? null, stopped: Boolean(r.stopped), timedOut: Boolean(r.timedOut), leftover: Boolean(r.leftover),
-          startError: r.startError ?? null });
-        if (r.startError) job.out.push(`\n${r.startError}\n`);
-        trim(map);
-        onJobEnd(sessionId, viewOf(job), job.out.tail(4000));
-        return job;
-      });
+    job.done = (async () => {
+      // i18n-ignore: サーバーのログ（console.error）
+      const held = holder && !job.ac.signal.aborted ? await holder.start(job, { timeoutMs }).catch(e => { console.error('shell: 保持役に載せられなかった:', e?.message ?? e); return null; }) : null;
+      if (held) { job.held = held; return driveHeld(job, held); }
+      return runHostShell({ command: plan.command, cwd: plan.cwd, timeoutMs, signal: job.ac.signal, env: plan.env,
+        onOutput: (_stream, piece) => job.out.push(piece) });
+    })().then((r) => {
+      Object.assign(job, { endedAt: Number.isFinite(r?.endedAt) ? r.endedAt : now(), exitCode: Number.isInteger(r?.exitCode) ? r.exitCode : null,
+        stopped: Boolean(r?.stopped), timedOut: Boolean(r?.timedOut), leftover: Boolean(r?.leftover), startError: r?.startError ?? null });
+      if (r?.startError || r?.error) job.out.push(`\n${r.startError ?? r.error}\n`);
+      trim(map);
+      // 付け直したジョブで、前のサーバーが終わりを処理済み（ack 済み）なら、知らせを出し直さない
+      if (!r?.already) onJobEnd(sessionId, viewOf(job), job.out.tail(4000));
+      return job;
+    });
     return job;
+  }
+
+  /** 保持役の子の記録を読む。ack 済みの出力（付け直す前のサーバーが流した分）も、ジョブの outputBuffer に足す（画面へは流さない）。
+   * 終わりの行まで処理し終えたら ack して購読をやめる（記録は output・list のために残す。core/ply-shell-held.mjs の finished） */
+  function driveHeld(job, held) {
+    return held.drive({ signal: job.ac.signal, onOutput: (_stream, text) => { if (text) job.out.push(text); } })
+      .finally(() => held.finished());
   }
 
   function resultText(job, lng, { from = 0 } = {}) {
@@ -182,11 +204,54 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
     if (name === 'stop') {
       const job = map.get(String(args.jobId ?? ''));
       if (!job) throw new Error(agentT(lng, 'shell.noJob', { jobId: String(args.jobId ?? '') }));
-      if (job.endedAt == null) { job.stoppedBy = 'agent'; job.ac.abort(); await job.done; }
+      if (job.endedAt == null) { stopJob(job, 'agent'); await job.done; }
       return resultText(job, lng, { from: Math.max(0, job.out.end - 4000) });
     }
     if (name === 'list') return JSON.stringify({ jobs: [...map.values()].map(viewOf) });
     throw new Error(`Unknown tool: ${name}`);
+  }
+
+  /** 走っているジョブを止める（同期）。保持役の子は札を置き直してから stop を書く（core/ply-shell-held.mjs の drive が signal で書く） */
+  function stopJob(job, stoppedBy) {
+    if (job.endedAt != null) return false;
+    job.stoppedBy = stoppedBy;
+    if (job.held) job.held.label(job);
+    job.ac.abort();
+    return true;
+  }
+
+  /**
+   * 起動で、前のサーバーが保持役に残したジョブを拾う（ADR 0270 の規則 ③。core/ply-shell-held.mjs の adoptable）。
+   * 走っているジョブは onJobStart で数え直し、終わりを処理していないジョブは onJobEnd を出す。ack 済みの終わりは出し直さない
+   */
+  function adopt(items) {
+    let n = 0;
+    for (const { card, held } of items) {
+      const map = jobsOf(card.sessionId);
+      if (map.has(card.jobId)) continue;
+      const job = { id: card.jobId, kind: card.jobKind, stoppedBy: card.stoppedBy ?? null, sessionId: card.sessionId, command: card.command, cwd: card.cwd,
+        shell: card.shell, startedAt: card.startedAt, endedAt: null, exitCode: null, stopped: false, timedOut: false, leftover: false,
+        out: outputBuffer(), ac: new AbortController(), env: null, held };
+      map.set(job.id, job);
+      job.done = held.drive({ signal: job.ac.signal, onOutput: (_stream, text) => { if (text) job.out.push(text); } })
+        .then((r) => {
+          if (r?.handedOff) return job;
+          Object.assign(job, { endedAt: Number.isFinite(r?.endedAt) ? r.endedAt : now(), exitCode: Number.isInteger(r?.exitCode) ? r.exitCode : null,
+            stopped: Boolean(r?.stopped), timedOut: Boolean(r?.timedOut), leftover: Boolean(r?.leftover), startError: r?.startError ?? null });
+          if (r?.startError || r?.error) job.out.push(`\n${r.startError ?? r.error}\n`);
+          trim(map);
+          if (!r?.already) onJobEnd(card.sessionId, viewOf(job), job.out.tail(4000));
+          return job;
+        }, error => {
+          Object.assign(job, { endedAt: now(), exitCode: null, startError: String(error?.message ?? error) });
+          trim(map);
+          onJobEnd(card.sessionId, viewOf(job), job.out.tail(4000));
+          return job;
+        }).finally(() => held.finished());
+      if (held.alive) onJobStart(card.sessionId, viewOf(job));
+      n++;
+    }
+    return n;
   }
 
   const bridge = createMcpBridge({ path: SHELL_MCP_PATH, serverName: SHELL_SERVER, tools: (locale) => shellTools(locale), call });
@@ -197,20 +262,28 @@ export function createShellBridge({ askPermission, onJobStart = () => {}, onJobE
     async stop(sessionId, jobId) {
       const job = sessions.get(sessionId)?.get(jobId);
       if (!job || job.endedAt != null) return false;
-      job.stoppedBy = 'human'; job.ac.abort(); await job.done; return true;
+      stopJob(job, 'human'); await job.done; return true;
     },
     async stopSession(sessionId) {
       const map = sessions.get(sessionId);
       if (!map) return;
-      await Promise.all([...map.values()].filter((j) => j.endedAt == null).map((j) => { j.stoppedBy = 'session'; j.ac.abort(); return j.done; }));
+      await Promise.all([...map.values()].filter((j) => j.endedAt == null).map((j) => { stopJob(j, 'session'); return j.done; }));
       sessions.delete(sessionId);
     },
     running: (sessionId) => [...(sessions.get(sessionId)?.values() ?? [])].some((j) => j.endedAt == null),
     /** start のジョブが走っている会話 */
     sessionsWithJobs: () => [...sessions.entries()].filter(([, m]) => [...m.values()].some((j) => j.endedAt == null && j.kind === 'start')).map(([id]) => id),
     cwds: () => [...sessions.values()].flatMap((m) => [...m.values()].filter((j) => j.endedAt == null).map((j) => j.cwd)),
-    /** サーバーの終わり（同期。子のプロセスごと止める） */
-    stopAll() { for (const map of sessions.values()) for (const j of map.values()) if (j.endedAt == null) { j.stoppedBy = 'session'; j.ac.abort(); } },
+    /** 起動で拾う（core/ply-shell-held.mjs の adoptable） */
+    adopt,
+    /** サーバーの終わり（同期）。keepHeld は、保持役の子を止めずに手を離す（更新・落ちたときの起こし直し。ADR 0270）。
+     * 止めるときは札を置き直して stop を書く（次の起動が引き取らない） */
+    stopAll({ keepHeld = false } = {}) {
+      for (const map of sessions.values()) for (const j of map.values()) if (j.endedAt == null) {
+        if (j.held && keepHeld) continue;
+        stopJob(j, 'session');
+      }
+    },
     async closeAll() { await Promise.all([...sessions.keys()].map((id) => api.stopSession(id))); },
   };
   return api;

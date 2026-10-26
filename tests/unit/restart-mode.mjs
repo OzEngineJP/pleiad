@@ -3,8 +3,7 @@
 // 保持役（core/holder/）は生かしたまま。起こし直したサーバーには AGENT_HOST_ADOPT_HOLDER=1 を渡す（今日の「起動＝復元」の代わり）。
 //   1. Claude のターン（fake の held: で代用）: ツールの実行中に止めて起こし直すと、ターンは最後まで流れ、turnEnd・完了時刻・使用量が 1 回。
 //      履歴の本文とツールの結果も 1 回ずつ（記録の再生と続きが重ならない）
-//   2. ply_shell の start のジョブ: ジョブを始めてターンを終え、止めて起こし直した後に list で読む。今の作りではジョブは消える（赤。
-//      段 2・3 で保持役の子に載せたら「残る」に反転する。この判定は今の穴を記録するためのもの）
+//   2. ply_shell の start のジョブ: ジョブを始め、止めて起こし直した後に list と output で読む。保持役の子に載っているので残る（ADR 0270 段 2a）
 // サーバーは試験用のデータ置き場で起こす（利用者の ~/.agent-host には触れない）。
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -17,7 +16,7 @@ import { ensureHolder, connectHolder } from '../../core/holder/client.mjs';
 import { installRestartMode, uninstallRestartMode } from '../lib/restart.mjs';
 
 export const name = 'restart-mode';
-export const title = '途中でサーバーを止めて起こし直す: 保持役の子（held:）のターンは続き、ply_shell の start のジョブは今の作りでは消える';
+export const title = '途中でサーバーを止めて起こし直す: 保持役の子（held:）のターンも ply_shell の start のジョブも続く';
 
 const WAIT_MS = 30_000;
 const steps = list => `held:steps:${JSON.stringify({ steps: list })}`;
@@ -113,7 +112,7 @@ export default async function (t) {
     // ジョブのプロセスは、サーバーが止まっても残るかもしれない。pid を控えて後片付けで止める
     const command = `${node} -e "require('fs').writeFileSync('${pidFile.replace(/\\/g, '/')}', String(process.pid)); setInterval(() => console.log('tick'), 300)"`;
     const startFrom = c.mark();
-    const started = await c.runTurn({ backend: 'fake', cwd: ROOT, prompt: shellCall('start', { command, cwd: ROOT }) }, { ms: WAIT_MS });
+    const started = await c.runTurn({ backend: 'fake', sessionId, cwd: ROOT, prompt: shellCall('start', { command, cwd: ROOT }) }, { ms: WAIT_MS });
     assert.equal(started.outcome, 'ok');
     const startResult = c.since(startFrom).find(event => event.type === 'tool.result' && /ジョブ sh-[a-f0-9]+/.test(String(event.text ?? '')));
     const jobId = /sh-[a-f0-9]+/.exec(String(startResult?.text ?? ''))?.[0] ?? null;
@@ -123,6 +122,8 @@ export default async function (t) {
 
     server = await restart(controller);
     assert.equal(controller.restarts, 2);
+    // ジョブは保持役の子として残っている。出力が溜まるのを少し待つ
+    await sleep(600);
     // 起こし直したサーバーで、同じ会話の新しいターンからジョブの一覧を読む
     const listFrom = c.mark();
     const listed = await c.runTurn({ backend: 'fake', sessionId, cwd: ROOT, prompt: shellCall('list') }, { ms: WAIT_MS });
@@ -130,14 +131,14 @@ export default async function (t) {
     const listText = c.since(listFrom).filter(event => event.type === 'tool.result').at(-1)?.text ?? '';
     const jobs = JSON.parse(listText).jobs ?? [];
     const survived = jobs.some(job => job.jobId === jobId);
-    // 今の作りでは、ジョブの一覧はサーバーのメモリにしかないので、起こし直すと空になる（段 2・3 で保持役の子に載せる）
-    t.ok('ply_shell の start のジョブは、今の作りではサーバーを止めて起こし直すと消える（赤。段 2・3 で「残る」に反転する）', !survived, JSON.stringify({ jobId, jobs, listText }));
-    t.ok('起こし直したサーバーでも、同じ会話のターンは始められる（会話の記録は DB から戻る）', listed.outcome === 'ok' && Boolean(listed.sessionId), JSON.stringify(listed.sessionId));
-    // 消えた側の口も確かめる（output はジョブが無いと言う）
+    // ジョブのプロセスと出力は保持役の子に載っている（ADR 0270 段 2a）。起こし直したサーバーが起動で拾う
+    t.ok('ply_shell の start のジョブは、サーバーを止めて起こし直しても残る（list に出る）', survived, JSON.stringify({ jobId, jobs, listText }));
+    t.ok('起こし直したサーバーでも、同じ会話のターンは始められる（会話の記録は DB から戻る）', listed.outcome === 'ok' && listed.sessionId === sessionId, JSON.stringify(listed.sessionId));
+    // 出力も読める（起こし直す前の分と、後の分が続いている）
     const outputFrom = c.mark();
     await c.runTurn({ backend: 'fake', sessionId, cwd: ROOT, prompt: shellCall('output', { jobId, since: 0 }) }, { ms: WAIT_MS });
     const outputText = c.since(outputFrom).filter(event => event.type === 'tool.result').at(-1)?.text ?? '';
-    t.ok('ジョブが消えているので output も「ジョブがありません」になる（今の作り）', /ジョブがありません/.test(outputText), outputText);
+    t.ok('ジョブの出力も、起こし直した後に output で読める（tick が続いている）', /tick/.test(outputText), outputText);
 
     // 後片付け: 走ったままのジョブ（残っていれば）を止める
     if (alive(jobPid)) {
@@ -152,11 +153,12 @@ export default async function (t) {
     assert.ok(!server.tail(300).includes('[unhandledRejection]'), server.tail(20));
     assert.deepEqual(controller.errors, [], '起こし直しの間に、仕掛けの中の失敗が無い');
 
-    // 保持役の子（held: の偽の CLI）は、ターンが終わったら記録ごと捨てられている
+    // 保持役の子（held: の偽の CLI）は、ターンが終わったら記録ごと捨てられている。
+    // ply_shell のジョブの記録は、output・list で読めるように残す（JOBS_KEPT から溢れるまで）
     {
       const probe = await connectHolder({ dataDir, root });
       for (const child of probe.welcome.children) if (child.pid) childPids.add(child.pid);
-      assert.deepEqual(probe.welcome.children.map(child => child.id), [], '終わったターンの子の記録は捨てられている');
+      assert.deepEqual(probe.welcome.children.map(child => child.id).filter(id => !id.startsWith('ply-')), [], '終わったターンの子の記録は捨てられている');
       probe.close();
     }
   } finally {

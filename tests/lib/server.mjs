@@ -63,6 +63,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       DEVIN_SESSIONS_DIR: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), 'devin-sessions'),
       AGENT_HOST_PORT: "0",
       AGENT_HOST_TOKEN: token,
+      // 保持役（core/holder/）は、子も親も居なくなったら 5 秒で終わる。テストの後片付けで保持役のプロセスを残さない
+      AGENT_HOST_HOLDER_IDLE_MS: "5000",
       // Claude のトークンの持ち主の確認（api.anthropic.com）へは送らない。確かめるテストは偽の送り先を渡す
       AGENT_HOST_ANTHROPIC_API: "off",
       // 委譲の振り分け用の使用量を定期的に取らない（agy などの子プロセスを勝手に起こさない）。確かめるテストは "on" を渡す

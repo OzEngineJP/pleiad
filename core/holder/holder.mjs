@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
-import { spawn } from 'node:child_process';
+import { spawnChild } from '../process.mjs';
 import { writeAtomic } from '../atomic-file.mjs';
 import { encodeLine, decodeLine, createLineReader } from '../link-codec.mjs';
 import {
@@ -63,7 +63,7 @@ function probe(pipe) {
 export function createHolder({ pipe, secret = crypto.randomBytes(32).toString('hex'), appVersion = '', file = null, range = HOLDER_RANGE,
   maxLineBytes = DEFAULT_MAX_LINE_BYTES, maxFrameBytes = DEFAULT_MAX_FRAME_BYTES, maxRecordBytes = DEFAULT_MAX_RECORD_BYTES,
   highWaterBytes = DEFAULT_HIGH_WATER_BYTES, helloTimeoutMs = DEFAULT_HELLO_TIMEOUT_MS, idleMs = DEFAULT_IDLE_MS, exitGraceMs = 2000,
-  platform = process.platform, spawnProcess = spawn, onIdle = () => {}, onShutdown = () => {}, log = () => {} } = {}) {
+  platform = process.platform, spawnProcess = spawnChild, onIdle = () => {}, onShutdown = () => {}, log = () => {} } = {}) {
   const generation = range[1];
   const children = new Map();   // id -> 子の状態
   const conns = new Set();      // 握手の前も含む全部の接続

@@ -10,7 +10,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
+import { detach } from '../process.mjs';
 import { encodeLine, decodeLine, createLineReader } from '../link-codec.mjs';
 import { HOLDER_RANGE, HOLDER_PROTOCOL, HOLDER_FILE_VERSION, DEFAULT_MAX_FRAME_BYTES, DEFAULT_HELLO_TIMEOUT_MS, ENV, holderPipeName, holderFilePath } from './protocol.mjs';
 
@@ -260,12 +260,12 @@ export async function connectHolder({ dataDir, root, appVersion = '', generation
 
 /**
  * 保持役を、サーバーの子でない形で起こす。戻り値 { pid }。
- *   mode 'detached'   Node の child_process（detached・stdio なし・windowsHide）。段階 1 のサーバーと同じ
+ *   mode 'detached'   サーバーの子でない形（core/process.mjs の detach。detached・stdio なし・windowsHide）。段階 1 のサーバーと同じ
  *   mode 'breakaway'  koffi の CreateProcessW + CREATE_BREAKAWAY_FROM_JOB（desktop/job.cjs）
  *   mode 'auto'（既定）自分の Job の制限を調べて分ける（desktop/job.cjs の inspectJob・decideLaunch）。unsupported なら code 'HOLDER_UNSUPPORTED'
  */
 export async function launchHolder({ dataDir, root, key = '', appVersion = '', nodeExe = process.execPath, script = HOLDER_MAIN, env = process.env, cwd = undefined, idleMs = undefined,
-  mode = 'auto', spawnProcess = spawn, jobModule = () => createRequire(import.meta.url)('../../desktop/job.cjs'), log = () => {} } = {}) {
+  mode = 'auto', spawnProcess = null, jobModule = () => createRequire(import.meta.url)('../../desktop/job.cjs'), log = () => {} } = {}) {
   let chosen = mode;
   let job = null;
   if (mode === 'auto' || mode === 'breakaway') {
@@ -282,11 +282,15 @@ export async function launchHolder({ dataDir, root, key = '', appVersion = '', n
   delete holderEnv.ELECTRON_RUN_AS_NODE;
   if (idleMs !== undefined) holderEnv[ENV.idleMs] = String(idleMs);
   if (chosen === 'breakaway') return job.launchBreakaway({ exe: nodeExe, args: [script], cwd, env: holderEnv });
-  const child = spawnProcess(nodeExe, [script], { cwd, env: holderEnv, detached: true, stdio: 'ignore', windowsHide: true });
-  await new Promise((resolve, reject) => { child.once('error', reject); child.once('spawn', resolve); });
-  child.on('error', () => {});
-  child.unref();
-  return { pid: child.pid };
+  if (spawnProcess) {
+    // 試験が起こし方（引数・env・detached）を見るための口。既定は core/process.mjs の detach
+    const child = spawnProcess(nodeExe, [script], { cwd, env: holderEnv, detached: true, stdio: 'ignore', windowsHide: true });
+    await new Promise((resolve, reject) => { child.once('error', reject); child.once('spawn', resolve); });
+    child.on('error', () => {});
+    child.unref();
+    return { pid: child.pid };
+  }
+  return detach(nodeExe, [script], { cwd, env: holderEnv });
 }
 
 /**

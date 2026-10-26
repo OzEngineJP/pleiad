@@ -104,6 +104,7 @@ async function start({ ready = true, work = { count: 0 }, argv = [], tray = fals
     './plus-link.cjs': plusLink,
     // 起動の失敗の理由は、サーバーが書いた logs\server.log の末尾（core/server-log.mjs）
     './server-boot.cjs': { readLogTail: () => 'tail of the log' },
+    './process.cjs': { forkUtility: (file, args, options) => electron.utilityProcess.fork(file, args, options) },
     './switch-screen.cjs': { createSwitchScreen: () => ({ attach() {}, reset() {}, supported: () => false, ask: async () => 'later' }) },
     'electron-updater': { autoUpdater: {} },
   };

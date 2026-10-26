@@ -59,9 +59,13 @@ export default async function (t) {
     r = await call('start', { command: `${node} -e "let i = 0; const h = setInterval(() => { console.log('tick ' + (++i)); if (i === 3) clearInterval(h); }, 150); setTimeout(() => {}, 30000)"` });
     const jobId = /ジョブ (sh-[a-f0-9]+)/.exec(r.text)?.[1];
     t.ok('start: すぐ戻り、ジョブの id を返す・見張りに知らせる', Boolean(jobId) && started.some((x) => x.job.jobId === jobId), r.text);
-    await sleep(900);
-    r = await call('output', { jobId });
-    const since = Number(/since=(\d+)/.exec(r.text)?.[1]);
+    // ジョブのプロセスが立ち上がって 3 回目の tick が出るまで待つ（重い試験と並走すると 900ms では足りない）
+    let since = 0;
+    for (let i = 0; i < 100; i++) {
+      await sleep(100);
+      r = await call('output', { jobId });
+      if (r.text.includes('tick 3')) { since = Number(/since=(\d+)/.exec(r.text)?.[1]); break; }
+    }
     t.ok('output: ここまでの出力と、続きの位置を返す（まだ走っている）', r.text.includes('tick 3') && r.text.includes('まだ走っています') && since > 0, r.text);
     r = await call('output', { jobId, since });
     t.ok('output: since から先だけを返す', !r.text.includes('tick 1'), r.text);
