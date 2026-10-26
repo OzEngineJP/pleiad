@@ -77,6 +77,9 @@ export const DATA_WRITES = [
   { file: 'core/backends/antigravity-context.mjs', sites: 3, targets: [
     { name: 'antigravity/context/<pid>-<乱数>/…', limit: '1 ターン分の一時の home。数ファイル', reason: '終了時に消す一時ファイル' },
   ] },
+  { file: 'core/backends/grok-accounts.mjs', sites: 1, targets: [
+    { name: 'accounts/grok/<account-id>/auth.json', limit: '登録した Grok アカウントごとに 1 ファイル', reason: 'Grok CLI が読むアカウント別ホームの認証情報。Pleiad の保護されたデータ置き場に保存し、既定の ~/.grok は変更しない' },
+  ] },
   { file: 'core/backends/grok-hooks.mjs', sites: 1, targets: [
     { name: 'grok-hooks/<pid>-<乱数>/hooks/hooks.json', limit: '同時に走る Grok のターンの数まで（1 ターン 1 ファイル）。ターンの終わりに消し、持ち主の居ない残りは次の書き込みで消す',
       reason: 'Grok へそのターンだけ渡すプラグイン（_meta.pluginDirs）。Grok はセッション限定のプラグインを保存しない' },

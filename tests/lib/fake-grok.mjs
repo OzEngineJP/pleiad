@@ -8,7 +8,7 @@ const argv = process.argv.slice(2);
 const version = argv.find(v => ['version', '--version'].includes(v));
 if (version) { console.log('grok 1.0.62 (fixture)'); process.exit(0); }
 // ログイン状態は AGENT_HOST_GROK_HOME の auth.json（無ければログイン済みとして扱う。本物の ~/.grok には触れない）
-const grokHome = process.env.AGENT_HOST_GROK_HOME || '';
+const grokHome = process.env.AGENT_HOST_GROK_HOME || process.env.GROK_HOME || '';
 const authFile = grokHome ? path.join(grokHome, 'auth.json') : '';
 const loggedIn = () => !authFile || fs.existsSync(authFile);
 if (argv[0] === 'login') {
@@ -142,11 +142,23 @@ readline.createInterface({ input: process.stdin, crlfDelay: Infinity }).on('line
         replay(session);
         result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
       }
-      case 'session/resume': {
+    case 'session/resume': {
         const session = load(p.sessionId);
         if (p.cwd && session.cwd !== p.cwd) throw new Error('cwd mismatch');
         session.delivery = seen(p); persist(session);
-        result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
+      result = { sessionId: session.sessionId, models: { currentModelId: session.model, availableModels: MODELS }, configOptions: configOptions(session) }; break;
+    }
+      case '_x.ai/session/fork': {
+        const source = load(p.sourceSessionId);
+        if (source.cwd !== p.sourceCwd || typeof p.newCwd !== 'string') throw new Error('fork cwd mismatch');
+        const child = { ...structuredClone(source), sessionId: `grok-fixture-${crypto.randomUUID()}`, cwd: p.newCwd };
+        persist(child);
+        result = { newSessionId: child.sessionId }; break;
+      }
+      case '_x.ai/session/rename': {
+        const session = load(p.sessionId);
+        if (typeof p.title !== 'string') throw new Error('title is required');
+        session.title = p.title; persist(session); result = {}; break;
       }
       case 'session/fork': {
         const source = load(p.sessionId);

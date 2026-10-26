@@ -108,6 +108,24 @@ export function createGrokMapper(sessionId, emit = () => {}, { windowTokens = nu
       turnBoundary = true;
       return;
     }
+    if (kind === 'auto_compact_started') {
+      send({ type: 'compaction', phase: 'start', trigger: 'auto', beforeTokens: update.tokens_used,
+        windowTokens: update.context_window, reason: update.reason });
+      return;
+    }
+    if (kind === 'auto_compact_completed') {
+      send({ type: 'compaction', phase: 'complete', trigger: 'auto', beforeTokens: update.tokens_before,
+        afterTokens: update.tokens_after, summary: update.summary_preview });
+      return;
+    }
+    if (kind === 'auto_compact_failed') {
+      send({ type: 'compaction', phase: 'failed', trigger: 'auto', reason: update.error });
+      return;
+    }
+    if (kind === 'auto_compact_cancelled') {
+      send({ type: 'compaction', phase: 'aborted', trigger: 'auto', reason: update.reason });
+      return;
+    }
     // Grok のフックの実行（_x.ai/session_notification で届く）
     if (kind === 'hook_run_started') { send({ type: 'hookRun', phase: 'started' }); return; }
     if (kind === 'hook_execution') { send({ type: 'hookRun', phase: 'response' }); return; }

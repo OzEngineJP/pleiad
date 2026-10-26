@@ -474,7 +474,7 @@ export async function nativeForkPresentContracts() {
     { role: 'user', uuid: 'u2', text: 'more', at: '2026-01-01T00:00:10.000Z' },
     { role: 'assistant', uuid: 'a2', text: 'done', at: '2026-01-01T00:00:11.000Z' }]]]);
   let forks = 0;
-  const native = { id: 'sdkfork', capabilities: { fork: true, forkMessage: false },
+  const native = { id: 'sdkfork', capabilities: { forkMessage: true },
     async getMessages(id) { return structuredClone(transcripts.get(id) ?? []); },
     async getSession(id) { return transcripts.has(id) ? { sessionId: id, title: 'sdk' } : null; },
     async fork(id, { upToMessageId } = {}) {

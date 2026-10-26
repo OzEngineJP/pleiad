@@ -23,13 +23,9 @@
       "subagents": "#108"
     },
     "grok": {
-      "accounts": "#108",
-      "autoCompactWindow": "#108",
-      "compact": "#108",
       "compatEndpoints": "#108",
       "nativeShellOff": "#108",
       "plyContext": "#108",
-      "promptSuggestions": "#108",
       "subagents": "#108"
     },
     "opencode": {
