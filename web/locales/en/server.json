@@ -933,6 +933,7 @@
     },
     "runtime": {
       "refused": "{{backend}} cannot receive context managed by Pleiad (instructions, Skills, external MCP), so this conversation uses the agent's own loading.",
+      "nativeOwners": "{{backend}} reads AGENTS.md and Skills on its own and cannot turn that off per conversation. To avoid loading them twice, leave instructions and Skills to the agent.",
       "choicePrefer": "Multiple definitions share this name; used the one from {{source}} (chosen in settings).",
       "choiceFirst": "Multiple definitions share this name; used the one from {{source}} (none chosen, so the first one found).",
       "otherSource": "another source",

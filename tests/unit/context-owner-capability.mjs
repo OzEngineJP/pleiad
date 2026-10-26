@@ -1,6 +1,8 @@
 // 会話の場所別コンテキスト設定は、実装された能力だけを選べる。保存済みの設定は表示を保つ。
 import { setupSessionContext } from '../../web/session-context.mjs';
 import { N } from '../lib/dom-stub.mjs';
+import { createGrokBackend } from '../../core/backends/grok.mjs';
+import { acceptsPlyContext } from '../../core/context-runtime.mjs';
 
 export const name = 'context-owner-capability';
 export const title = 'Pleiad コンテキスト非対応の会話は担当を選べず、保存済みの担当と理由を表示する';
@@ -9,6 +11,11 @@ const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(
 const nodes = (root) => [root, ...root.children.flatMap(nodes)];
 
 export default async function (t) {
+  const grok = createGrokBackend({ command: () => null });
+  t.ok('Grok は native の AGENTS.md・Skills と重なる Pleiad 所有を拒み、MCP だけを受ける',
+    !acceptsPlyContext(grok, { owners: { instruction: 'ply', skill: 'native', mcp: 'ply' } })
+    && !acceptsPlyContext(grok, { owners: { instruction: 'native', skill: 'ply', mcp: 'ply' } })
+    && acceptsPlyContext(grok, { owners: { instruction: 'native', skill: 'native', mcp: 'ply' } }));
   const { lang: originalLanguage, setLanguage } = await import('../../web/i18n.mjs');
   const saved = { document: globalThis.document, window: globalThis.window, raf: globalThis.requestAnimationFrame };
   globalThis.document = {

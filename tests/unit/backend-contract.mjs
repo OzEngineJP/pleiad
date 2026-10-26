@@ -129,9 +129,9 @@ export default async function (t) {
     }
   }
   t.ok('一覧（端末に出す）: 対応・補う・不可能・未実装を出し、不可能の理由と未実装の Issue を添える',
-    /\| ✓ \|/.test(matrix) && /補/.test(matrix) && /無理/.test(matrix) && /未実装 #151/.test(matrix)
-    && matrix.split(/\r?\n/).some(line => /hooksRuntime/.test(line) && line.split('|')[5]?.trim() === '✓')
-    && /accounts \| OS の共有キーリング/.test(matrix));
+    /\| ✓ \|/.test(matrix) && /補/.test(matrix) && /無理/.test(matrix) && /Antigravity \| subagents \| 1\.4\.7/.test(matrix)
+    && matrix.split(/\r?\n/).some(line => /hooksRuntime/.test(line) && line.split('|')[6]?.trim() === '✓')
+    && /Devin CLI \| accounts \| Devin CLI 3000\.11\.92/.test(matrix));
 
   // 状態と値の検査そのもの
   const base = { id: 'state-check', label: 'S', capabilities: { ...NO_CAPABILITIES }, traits: { ...NO_TRAITS }, modes: () => ({}), models: async () => ({}),

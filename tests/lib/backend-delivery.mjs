@@ -372,13 +372,15 @@ async function probeGrok({ scratch, caps }) {
   await fs.mkdir(home, { recursive: true });
   try {
     await withEnv({ AGENT_HOST_GROK_BIN: `node "${path.join(ROOT, 'tests/lib/fake-grok.mjs')}"`, GROK_HOME: home, AGENT_HOST_GROK_HOME: home }, async () => {
-      await grok.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'accept-edits', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'grok'), emit: (e) => events.push(e) }));
+      await grok.runTurn(deliveryArgs(caps, { cwd: scratch, mode: 'accept-edits', prompt: '[env]', hooksRuntime: await hookRuntime(scratch, 'grok'),
+        endpoint: { id: 'ep-0123456789ab', kind: 'openai-chat-completions', baseUrl: 'http://127.0.0.1:43123/v1', key: 'delivery-key', roles: { main: 'delivery-model' } },
+        emit: (e) => events.push(e) }));
     });
   } finally { /* runTurn が ACP を閉じる */ }
   const observed = jsonOf(textOf(events)) ?? {};
   const prompt = String(observed.prompt ?? '');
   const hookText = JSON.stringify(observed.hooks ?? []);
-  const seen = { servers: observed.mcpServers ?? [], env: observed.seenEnv ?? [], hooks: hookText.slice(0, 200), prompt: prompt.slice(0, 300) };
+  const seen = { servers: observed.mcpServers ?? [], env: observed.seenEnv ?? [], compatEndpoint: Boolean(observed.compatEndpoint), hooks: hookText.slice(0, 200), prompt: prompt.slice(0, 300) };
   return {
     seen,
     evidence: {
@@ -391,6 +393,8 @@ async function probeGrok({ scratch, caps }) {
       hooks: has(hookText, 'delivery-hook.mjs') && (observed.seenEnv ?? []).includes('GROK_CLAUDE_HOOKS_ENABLED'),
       plyShell: shellDelivered(caps, (observed.mcpServers ?? []).includes('ply_shell'), prompt)
         && (!deliveryRequired(caps?.nativeShellOff) || observed.nativeShellOff === true),
+      compatEndpoints: Boolean(observed.compatEndpoint) && (observed.seenEnv ?? []).includes('XAI_API_KEY'),
+      plyContext: (observed.mcpServers ?? []).includes('ply_context') && has(prompt, instr('context')),
       computerUse: (observed.mcpServers ?? []).includes('ply_computer') && has(prompt, instr('computer')),
     },
   };
@@ -416,6 +420,7 @@ export const DELIVERY_HINTS = Object.freeze({
   visualize: '可視化の指示（visualizeInstructions）',
   hooks: 'Pleiad がそろえる Hooks（コールバック・config.hooks・hooks.json・ターンのプラグイン）',
   plyShell: 'ply_shell の MCP・使い方の指示（nativeOff ならエージェントのシェルを切る）',
+  compatEndpoints: 'GROK_MODELS_BASE_URL・XAI_API_KEY の会話限定の起動環境',
   plyContext: 'ply_context の MCP と、コンテキストの指示',
   computerUse: 'ply_computer の MCP と、使い方の指示',
 });

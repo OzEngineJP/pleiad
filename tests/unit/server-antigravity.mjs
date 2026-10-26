@@ -78,6 +78,8 @@ export default async function (t) {
     t.ok("タイトルも状態タグも持てないと申告する",
       b.capabilities?.title === false && b.capabilities?.tag === false,
       JSON.stringify({ title: b.capabilities?.title, tag: b.capabilities?.tag }));
+    t.ok("子の会話本文を取得できないため、サブエージェントには対応しないと申告する",
+      b.capabilities?.subagents === false, String(b.capabilities?.subagents));
     // agy には対話承認そのものが無い。「常に許可」も出せない
     t.ok("常に許可は出せないと申告する", b.capabilities?.alwaysAllow === false, String(b.capabilities?.alwaysAllow));
     t.ok("実行中のモード・モデル切り替えはできないと申告する",

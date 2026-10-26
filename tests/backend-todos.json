@@ -1,13 +1,4 @@
 {
   "_comment": "未実装（todo）の基準（tests/lib/backend-todos.mjs）。増やせない。減らしたら node tests/lib/backend-todos.mjs --update-baseline で下げる",
-  "todos": {
-    "antigravity": {
-      "subagents": "#151"
-    },
-    "grok": {
-      "compatEndpoints": "#108",
-      "plyContext": "#108",
-      "subagents": "#108"
-    }
-  }
+  "todos": {}
 }
