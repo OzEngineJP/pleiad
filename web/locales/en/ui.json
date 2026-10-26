@@ -2739,12 +2739,6 @@
       "progress": "Update progress",
       "view": "View update",
       "later": "Later",
-      "names": "\"{{names}}\"",
-      "namesJoin": "\", \"",
-      "blockedBusy": "Can't update: {{names}} still has work running or waiting for approval. Restart after it finishes. The update stays ready.",
-      "blockedBusyMore_one": "Can't update: {{names}} and {{count}} more still have work running or waiting for approval. Restart after they finish. The update stays ready.",
-      "blockedBusyMore_other": "Can't update: {{names}} and {{count}} more still have work running or waiting for approval. Restart after they finish. The update stays ready.",
-      "blockedDelegated": "Can't update: delegated tasks are still running. Restart after they finish. The update stays ready.",
       "loading": "Update after the conversation finishes loading.",
       "draftNoSession": "Open a conversation to save the draft to, then update."
     },
@@ -4398,8 +4392,7 @@
     "resumeAll": "Resume all",
     "stripClose": "Close",
     "resumeAllFailed_one": "Couldn't resume {{count}} conversation: {{error}}",
-    "resumeAllFailed_other": "Couldn't resume {{count}} conversations: {{error}}",
-    "markName": "warning triangle"
+    "resumeAllFailed_other": "Couldn't resume {{count}} conversations: {{error}}"
   },
   "compaction": {
     "contextUsage": "Context",

@@ -2678,11 +2678,6 @@
       "progress": "更新の進捗",
       "view": "更新を見る",
       "later": "あとで",
-      "names": "「{{names}}」",
-      "namesJoin": "」「",
-      "blockedBusy": "更新できません：{{names}}で作業か承認待ちが続いています。完了してから再起動してください。更新は準備済みのまま残ります。",
-      "blockedBusyMore_other": "更新できません：{{names}} ほか {{count}} 件で作業か承認待ちが続いています。完了してから再起動してください。更新は準備済みのまま残ります。",
-      "blockedDelegated": "更新できません：委譲した作業が続いています。完了してから再起動してください。更新は準備済みのまま残ります。",
       "loading": "会話の読み込みが完了してから更新してください。",
       "draftNoSession": "下書きを保存する会話を開いてから更新してください。"
     },
@@ -4286,8 +4281,7 @@
     "strip_other": "更新で中断した会話が {{count}} 件あります",
     "resumeAll": "まとめて再開",
     "stripClose": "閉じる",
-    "resumeAllFailed_other": "{{count}} 件を再開できませんでした: {{error}}",
-    "markName": "注意の三角"
+    "resumeAllFailed_other": "{{count}} 件を再開できませんでした: {{error}}"
   },
   "compaction": {
     "contextUsage": "コンテキスト",

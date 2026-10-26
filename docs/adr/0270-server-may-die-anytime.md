@@ -26,7 +26,7 @@
 - プロセスの口を 2 つにする。`run()` は完了を待つ短命の子（`git`・`gh`・`--version`・`taskkill` など）。プロセスを掴んだまま返さない。`start()` は保持役に起こさせ、`source`（記録・`write`・`ack`）を返す。
 - `node:child_process` を読んでよいのはこの口（`core/process.mjs` と、Electron main の `desktop/process.cjs`）だけにする。ほかのモジュールが読んでいたら `npm test` が落とす（`tests/lint-child-process.mjs`。基準は 2026-10-26 の 25 ファイル（移行中）から減らすときだけ更新する）。
 - これで「切り替えで止まる子」が定義から消える。`desktop/switch.cjs` の blocker と stopper の区別、止まるものの確認のダイアログの大半は要らなくなる。
-- 実装（段 2a。2026-10-26）: `core/process.mjs` が `run()`・`start()`・`detach()`・`spawnChild()` を持つ。`start()` は保持役の子を起こし、`core/adopt.mjs` の `holderSource`（記録・`write`・`ack`）を返す。`detach()` は保持役自身の起動（`core/holder/client.mjs`）、`spawnChild()` は保持役の本体（`core/holder/holder.mjs`）だけが使う生の口。Electron main の `utilityProcess.fork` は `desktop/process.cjs` の `forkUtility()` に集めた。`child_process` の検査は `tests/lint-child-process.mjs`（基準は今の 25 ファイル。増えたら落ちる）。
+- 実装（段 2a。2026-10-26）: `core/process.mjs` が `run()`・`start()`・`detach()`・`spawnChild()` を持つ。`start()` は保持役の子を起こし、`core/adopt.mjs` の `holderSource`（記録・`write`・`ack`）を返す。`detach()` は保持役自身の起動（`core/holder/client.mjs`）。`spawnChild()` は保持役本体と、段 4b で固定した例外だけが使う生の `spawn` 口。コピー後も単独で動く `core/hook-adapter.mjs` には限定した Node API の fallback がある。Electron main の `utilityProcess.fork` は `desktop/process.cjs` の `forkUtility()` に集めた。段 4b で lint を固定例外方式にした。
 - 例外は、保持役に載せられない子（`.cmd` の包みを解けない・保持役を起こせない環境）だけ。そのときは「サーバーの子として走り、切り替えで止まる」ことを会話に知らせる（黙って止めない）。
 
 ### 3. ② 続きに要る状態は DB か保持役の記録にしか置かない
@@ -96,20 +96,20 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - `run(command, args, { cwd, env, input, timeoutMs, signal, onOutput, maxOutputChars, killTree, exitCloseGraceMs, killedCloseGraceMs, ... })` … 完了を待つ。ハンドルを返さない。戻り値は `{ exitCode, signal, stdout, stderr, durationMs, timedOut, stopped, truncated, leftover?, startError? }`。`core/host-shell.mjs` の `runHostShell` はこの口の包みになった（`OUTPUT_LIMIT`・`leftover` の猶予は同じ）
 - `start({ id, command, args, cwd, env, policy, label, marks, keepMs, dataDir, root, key, appVersion, log, idleMs })` … 保持役に起こさせ、`{ id, client, source }` を返す。`source` は `core/adopt.mjs` の `holderSource`（記録・`write`・`ack`）。保持役を使えないときは `null`、つなげない・起こせないときは投げる（呼び出し側が今の流れに落とす）
 - `detach(command, args, { cwd, env })` … サーバーの子でない形で起こし、`{ pid }` を返す。`core/holder/client.mjs` の `launchHolder` が使う
-- `spawnChild(...)` … 保持役の本体（`core/holder/holder.mjs`）が子を起こすための生の口（ハンドルを返す）。ほかからは使わない
+- `spawnChild(...)` … 生の `spawn`。保持役本体と lint の固定例外一覧にあるファイルだけが使う。未登録 import は lint で失敗する。`hook-adapter.mjs` はアプリ内ではこの口を使い、コピー先では Pleiad のソースが無い場合に限り Node の API に fallback する
 - `desktop/process.cjs` の `forkUtility()` … Electron main の `utilityProcess.fork`。`desktop/main.cjs` はこれだけを使う
 
-### 保持役の無い経路（off・`AGENT_HOST_RUNTIME_ROOT` が無いとき）
+### 開発版と配布版の経路
 
-- `AGENT_HOST_RUNTIME_ROOT` があればそれ。無ければ、Node で走っているサーバー（`npm start`・テスト）はデータ置き場ごとの一時の置き場（`os.tmpdir()/pleiad-holder/<データ置き場のハッシュ>`）で保持役を起こす。同じデータ置き場のサーバーを起こし直すと同じ保持役につながる
-- Electron の `utilityProcess`（`AGENT_HOST_HANDOVER=off` の開発・パッケージ版）で置き場が無いときは、まだ保持役を使わない（`start()` は `null`。今のサーバーの子）。実行場所の外の保持役を main が渡すのは段 4。**off を同じ作りにするのは段 4 に回す**（理由: off のサーバーは `$INSTDIR` の中で走り、保持役を `$INSTDIR` の外で起こす口がまだ無い。`npm run desktop` の `utilityProcess` は `process.execPath` が Electron で、`ELECTRON_RUN_AS_NODE` を外して起こす今の `launchHolder` では Node として起動できない）
+- `AGENT_HOST_RUNTIME_ROOT` があればそれ。無ければ、Node で走るサーバーはデータ置き場ごとの一時置き場（`os.tmpdir()/pleiad-holder/<データ置き場のハッシュ>`）で保持役を使う。同じデータ置き場のサーバーを起こし直すと同じ保持役につながる。
+- 開発版の Electron も配布版と同じ保持役を使う。`utilityProcess` はサーバーの親として残るが、長く生きる孫は保持役が起こし、通常起動で復元する。親の輸送方式は開発時の Electron API と配布版の runtime 起動条件が異なるため共通化せず、保持役・子の寿命・復元経路を共通にする。
 - テストは `AGENT_HOST_HOLDER_IDLE_MS=5000` を渡し、親も子も居なくなった保持役が 5 秒で終わる（後片付けで残さない）
 
 ### 検査
 
-- `tests/lint-child-process.mjs` が `core/`・`desktop/`・`bin/` の `node:child_process`（import・require・動的 import）と `utilityProcess.fork(` を数える。口（`core/process.mjs`・`desktop/process.cjs`）は除く
-- 基準は `tests/child-process-baseline.json` の 25 ファイル（「移行中」）。基準に無いファイル・基準より多い件数は落ちる。減った分は通す（`--update-baseline` で下げる）。**段 4 の終わりに空にする**
-- 2a で移した: `core/host-shell.mjs`（`run()`）・`core/holder/client.mjs`（`detach()`）・`core/holder/holder.mjs`（`spawnChild()`）・`desktop/main.cjs`（`forkUtility()`）。ADR が書いた 28 ファイルから 3 減って 25
+- `tests/lint-child-process.mjs` が `core/`・`desktop/`・`bin/` の `node:child_process`（import・require・動的 import）と `utilityProcess.fork(` を検査する。生の import は `core/process.mjs`・`desktop/process.cjs` と、コピー後に単独実行が必要な `core/hook-adapter.mjs` だけに限る。`spawnChild` の import は保持役本体と固定例外一覧のファイルだけに限り、未登録のファイルは selftest でも失敗を確認する。
+- 例外一覧は移行中の基準ではなく、ファイルごとの理由を lint に固定した決定事項である。baseline ファイルと `--update-baseline` の仕組みは段 4b で削除した。
+- 2a 当時は `core/host-shell.mjs`（`run()`）・`core/holder/client.mjs`（`detach()`）・`core/holder/holder.mjs`（`spawnChild()`）・`desktop/main.cjs`（`forkUtility()`）を移し、baseline は 28 から 25 ファイルになった。これは当時の経過記録であり、現行 lint の基準ではない。
 - `tests/unit/child-process-lint.mjs` が `npm test` から回す。`tests/unit/desktop-boot.mjs` の vm の require に `./process.cjs` を足した
 
 ### ply_shell のジョブ
@@ -383,7 +383,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - `desktop/switch.cjs` に残すのは、版・データ形式・IPC 互換の検査、更新ロック、通常停止・起動、旧版への復旧、窓の再読み込みである。互換性検査に失敗した場合の「あとで／今すぐ更新」は、不適合なサーバーを起動してデータを壊さないため残す。作業の有無や stopper を理由に尋ねるダイアログはない。
 - 開発版のサーバー親は既存の `utilityProcess` のままにした。開発ツリーには配布用の版別 Node 実行場所と安定した main-link の起動条件がなく、開発版の Electron 実行環境と画面・OS bridge も必要になるため、親プロセスの輸送方式は切り替えない。保持役の置き場は `AGENT_HOST_RUNTIME_ROOT` が無ければデータ置き場から決まり、`ELECTRON_RUN_AS_NODE=1` を付けた Electron から保持役を起こす。したがって `utilityProcess` でも子の寿命・DB と保持役の記録・通常起動での復元は配布版と同じである。
 - Electron 本体の更新で切れる通話・computer use・内蔵ビューアには、次の起動で「更新のため切れた」と知らせる。ビューアは保存済みタブを通常起動で開き直し、computer use は再接続を促す。音声通話と computer use の接続自体は OS 側の main が終了するため再利用しない。
-- `core/cli-installation.mjs`・`core/claude-login.mjs`・`core/hook-adapter.mjs` の起動を `core/process.mjs` の `spawnProcess` に集約した。これらは CLI shim の探索、対話ログイン、hook の完了を呼び出し側が扱う短い処理で、保持役に移す長寿命 backend の起動ではない。`tests/child-process-baseline.json` は空になり、lint は直接 import の再発防止として残した。
+- `core/cli-installation.mjs`・`core/claude-login.mjs`・`core/hook-adapter.mjs` の限定した起動は `spawnChild` に集めた。hook adapter の単体コピーは `core/process.mjs` が無いため、コピーされた場合の fallback だけ `node:child_process` を読む。保持役本体を含む固定一覧 4 ファイルと各理由を `tests/lint-child-process.mjs` に置き、一覧外の `spawnChild` import を selftest で失敗させる。これは移行基準ではなく決定済みの例外である。`spawnProcess` と `tests/child-process-baseline.json` は削除した。外部 MCP も保持役が使えない場合にサーバーの子へ落とさず、接続を失敗させる。
 - 古い handover コメント・画面文言・更新 blocker 用設定を削除または通常起動・復元の説明へ直した。`core/agent-tasks.mjs` の削除済み `core/handover.mjs` 参照も修正した。
 
 #### desktop-switch 試験の置き換え
@@ -399,7 +399,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 | `desktop-switch-screen`・`web-switch-notice` | 削除 | 新規 suite `desktop-switch` の通常停止・起動試験。UI に待機表示を持たない |
 | `desktop-handover` suite | 前段で削除済み | `adopt-*`・`restart-*` と `desktop-switch` の試験 |
 
-- `desktop/switch.cjs` は 529 行から 408 行へ 121 行削減した。画面の「切り替え待ち」状態・一覧・中断ボタンと、対応する locale・CSS・preload API を削除した。
+- `desktop/switch.cjs` は 529 行から 347 行へ 182 行削減した。画面の「切り替え待ち」状態・一覧・中断ボタンと、対応する locale・CSS・preload API を削除した。
 - `main-away-desktop` は通常起動でも `browser-restore-request` の応答後にタブを報告する試験にした。close 後に状態変更の購読が残らないことも検査する。
 
 ### 段 4b の検証
@@ -407,10 +407,13 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - `desktop-switch`: 11/11。`main-away-desktop`: 32/32。
 - `restart-acp restart-cards restart-codex-turn restart-delegation restart-mcp restart-mode --jobs 1`: 29/29。
 - `PLEIAD_TEST_RESTART=work node tests/run.mjs server-fake --jobs 1`: 118/118。`PLEIAD_TEST_RESTART=turnEnd node tests/run.mjs server-shell server-fake --jobs 1`: 154/154。
-- `node tests/run.mjs desktop --jobs 1`: 791/791、19 suite（`desktop-shell-env` は対象 OS ではないため skip）。`node tests/lint-child-process.mjs`: 通過、移行 0 ファイル・baseline 0。
-- 全体 `node tests/run.mjs` は 12 worker で 553 秒後に終了コード 1 となった。出力で確認できた `runner-contract` の worker 負荷による timeout を `--jobs 1` で再実行し、155/155 で通過した。`server-devin --jobs 1` も個別に再実行して 92/92 で通過した。全体実行の終了コードは 1 のため、全体試験を緑とは扱わない。
-- `chrome-link-adopt --jobs 1`: 18/18。片付け確認を加えた `server-agent-account-restart --jobs 1`: 4/4。試験終了後にこの worktree の保持役・Chrome 子が残らないことをプロセス一覧で確認した。
-- runner-contract／restart 系の「本体の git worktree が増えていない」判定は、同時に別作業が worktree を作ると落ちうる。今回の直列再実行では `runner-contract` は通過した。
+- `node tests/run.mjs restart --jobs 1`: 55/55。指定された `PLEIAD_TEST_RESTART=work ... server-fake --jobs 1`: 118/118、`PLEIAD_TEST_RESTART=turnEnd ... server-shell server-fake --jobs 1`: 154/154。`node tests/run.mjs desktop --jobs 1`: 791/791、19 suite（`desktop-shell-env` は対象 OS ではないため skip）。
+- `node tests/lint-child-process.mjs` と `node tests/run.mjs child-process-lint --jobs 1`: 通過。固定例外は 4 ファイル、登録外 import は 0。`node tests/run.mjs worktree-mcp hooks-unify server-hooks-unify composer-wait data-writes i18n-lint --jobs 1`: 211/211。
+- 12 worker の全体実行は 8/21,462 判定が失敗し、終了コード 1 だった。失敗した 6 suite は `server-limit-resume`・`server-git-panel-load`・`worktrees`・`server-devin`・`server-ops-send`・`agy-relay-retry`。全体出力では `worktrees` が 3 分 4 秒で 3 分の上限を、`server-devin` が 3 分 2 秒で 3 分の上限を超え、`server-ops-send` の待ちが 30 秒で timeout した。残る 3 suite は解除時刻・キャッシュ期限・遅延時間の時間依存判定で失敗した。
+- 全体で失敗した 6 suite を `--jobs 1` で再実行し、360/360 判定が通過した。直列では期限内に終わり、時間依存判定も成立したため、12 worker の負荷と並列実行時の時間競合による失敗と判断した。先の全体実行で落ちた 21 suite もまとめて `--jobs 1` で再実行し、857/857 判定が通過した。直列で残る失敗は無い。
+- 直列化で修正した実際の不具合は、`spawnChild` の呼び出し引数、更新 blocker を前提とした test/locale/data-write 許可、旧 MCP 台帳を期待した assertion、終了後に保持役の子が残る 4 suite の cleanup だった。cleanup は各 suite の隔離データ置き場の保持役だけを止める。
+- 12 worker で `runner-contract` の内部 3 秒 stall fixture は負荷時に 10〜12 秒まで遅れたが、suite 自体は直列再実行で通過した。`runner-contract`／restart 系の「本体の git worktree が増えていない」判定は同時に別作業が worktree を作ると落ちうる（環境要因）。
+- 試験後にこの worktree の保持役・Chrome 子をコマンド行で特定し、残ったプロセスを停止した。ユーザーの Pleiad とそのデータ置き場は対象にしていない。
 
 ### 検証
 
@@ -428,7 +431,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 | 今 | 段 | 残る |
 |---|---|---|
 | `core/handover.mjs`（180 行）・`core/handover-check.mjs`（52 行）・起動の `--handover`・`HANDOVER_VERSION`/`HANDOVER_RANGE`・`running` の `handover` | 4 | 版ごとの実行場所・main の `switch.cjs` の「組み立て→止める→起こす」 |
-| `desktop/switch.cjs` の作業待ち・`switchBlockers`・handover 分岐・stoppers の確認（529 行中 121 行を削除） | 4b | 版・データ形式・IPC 互換の判定、更新ロック、通常停止と起動、旧版への復旧、窓の読み直し。非互換の版をいつ切り替えるかの確認は残す |
+| `desktop/switch.cjs` の作業待ち・`switchBlockers`・handover 分岐・stoppers の確認（529 行中 182 行を削除） | 4b | 版・データ形式・IPC 互換の判定、更新ロック、通常停止と起動、旧版への復旧、窓の読み直し。非互換の版をいつ切り替えるかの確認は残す |
 | サーバーの `holdable`・`handoverSettled`・`createHandover` の deps・`handOffTurn`・保持役の `stash`・`AGENT_HOST_ADOPT_*` | 4a | `restoreAdoptedTurns`・`restoreTurn`・`adoptTurn`・`driveTurn`・`heldTurnCard`・`touchCard`。通常起動で DB と保持役の子一覧を照合する |
 | バックエンドのターンを手放す `handOff` と引き継ぎ専用の `adoptable` 判定 | 4a | 保持役の子を各 CLI に見せる部分（Claude の偽 `SpawnedProcess`・Codex の共有 app-server の読み書き・OpenCode の HTTP・agy の stdio）、`adoptTurn` による復元、記録の正規化と再生。Codex の子の展開も残る。shell の起動時一覧を読む `adoptable()` は復元 API として残る |
 | `shell-runs.handOff`/`adopt`・`shell-held` の `handOff`/`abandon` | 4a | 起動時の `restore`・実行中の `drive`/`finished`。アプリ終了時の `stop` は残し、通常のサーバー終了では呼ばない |
@@ -482,7 +485,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - `core/` のモジュール構成が変わる（`core/process.mjs` を足し、`child_process` の読みをそこへ集める）。`npm test` に `child-process` の検査が増える。
 - 段 2a の影響: `core/process.mjs`・`desktop/process.cjs`・`core/ply-shell-held.mjs` を足した。`core/host-shell.mjs`・`core/holder/client.mjs`・`core/holder/holder.mjs` は口へ移した。`AGENTS.md` に `AGENT_HOST_PLY_SHELL_HOLDER`・`AGENT_HOST_HOLDER_IDLE_MS` を足し、`AGENT_HOST_SHELL_HOLDER` の説明を「既定は載せる」に直した（ほかの `AGENT_HOST_*_HOLDER` は段 2b・3）。`tests/lint-child-process.mjs`・`tests/child-process-baseline.json`（25 ファイル）を足した。ply_shell のジョブの出力と終わりの記録は保持役に残り、終わったジョブ 20 件までは `output`・`list` で読める。
 - 段 2b の影響: `core/backends/acp-held.mjs` を足した。`core/backends/devin.mjs`・`devin-acp.mjs`・`grok.mjs`・`grok-acp.mjs` は `runTurn(args, adopt)` と `adoptTurn` を持ち、能力の `handover` を true にした。`codex-held.mjs` に `acquireHeldTurnAppServer`・`codexRpcForHeld` と `dedicated` の札を足し、`codex-rpc.mjs`・`codex-held.mjs` の `process.once('exit')` から保持役の子を止める分を外した。`cli-installation.mjs` に `unwrapCommandShim`・`directCommand` を足した。`AGENTS.md` に `AGENT_HOST_DEVIN_HOLDER`・`AGENT_HOST_GROK_HOLDER`・`AGENT_HOST_CODEX_TURN_HOLDER` を足した。`child_process` の基準は 24 ファイルになった。
-- 段 4b で `desktop/switch.cjs` を 529 行から 408 行へ短くした。作業待ちと stopper の確認を削除し、データ形式・IPC・runtime の非互換を安全に延期する確認だけを残した。画面の待ち表示と blocker 設定を削除した。
+- 段 4b で `desktop/switch.cjs` を 529 行から 347 行へ短くした。作業待ちと stopper の確認を削除し、データ形式・IPC・runtime の非互換を安全に延期する確認だけを残した。画面の待ち表示と blocker 設定を削除した。
 - 段 4b で `AGENTS.md` を更新した。引き継ぎ固有の設定はなくし、`AGENT_HOST_HANDOVER` は Electron とサーバーの接続方式を選ぶ旧名として残した。`AGENT_HOST_*_HOLDER` の opt-out は fallback を検査する試験・互換用途に残し、通常の配布版と開発版は保持役を使う。
 - 段 4b で `docs/zero-downtime-update/` の design.md・plan.md に、段 4 の通常起動による復元を追記した。ADR 0151 は過去の設計記録として保持する。
 - 保持役の子を止めるのはアプリ終了と会話の後片付けに限る。段 4b の試験後にこの worktree の保持役・Chrome 子が残らないことを確認し、漏れていた保持役子の終了待ちを試験の後片付けへ追加した。

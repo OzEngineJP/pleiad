@@ -11,6 +11,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { agentDefinition, contextRefusal } from '../../core/backends/antigravity-context.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'server-agy-context';
@@ -162,7 +163,7 @@ export default async function (t) {
     const left = await fs.readdir(path.join(dataDir, 'antigravity', 'context')).catch(() => []);
     t.ok('持ち主の居ない置き場は次の起動で消える', !left.includes('999999-deadbeef0000') && !left.includes(path.basename(home)), JSON.stringify(left));
   } finally {
-    client?.close(); await host?.stop();
+    client?.close(); await host?.stop(); await cleanupTestHolder(dataDir);
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }

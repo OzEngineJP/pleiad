@@ -1,30 +1,32 @@
 #!/usr/bin/env node
 /* ==================== 子を起こす API の lint ====================
-   ADR 0270 の規則 ①: 長く生きる子プロセスは保持役でしか起こせない。そのために、子を起こす API を読んでよいモジュールを
-   口（core/process.mjs・desktop/process.cjs）だけにする。ほかのモジュールが直に読むと、切り替えで止まる子がまた増える。
+   ADR 0270 の規則 ①: 長く生きる子プロセスは保持役でしか起こせない。
+   生の child_process API は口（core/process.mjs・desktop/process.cjs）と、固定例外の hook-adapter だけが読む。
+   core/process.mjs の spawnChild は固定例外一覧にあるファイルだけが読む。例外は「移行中の基準」ではなく、
+   ファイルと理由をこの lint に固定した決定事項。未登録の import は必ず失敗する。
 
-     node tests/lint-child-process.mjs [--update-baseline] [--json]
+     node tests/lint-child-process.mjs [--json]
 
-   検査すること（基準は tests/child-process-baseline.json。i18n・エージェントの id と同じ「下がる一方の基準（ラチェット）」）:
-   1. core/・desktop/・bin/ の JS で、node:child_process（import・require・動的 import）と utilityProcess.fork を数える。
-      口（core/process.mjs・desktop/process.cjs）は数えない。コメントの中は数えない。
-   2. ファイルごとの件数を基準と比べ、増えた・基準に無いファイルに出た → 失敗。減った → 通す（--update-baseline で下げる）。
-      基準は「移行中」の一覧で、段 4 の終わりに空になる。空にするときは --update-baseline を使う。
-   3. 自己診断（selftest。npm test でも回す）。
-
+   core/・desktop/・bin/ の JS で child_process（import・require・動的 import）、utilityProcess.fork、
+   core/process.mjs からの spawnChild import を検査する。コメントは数えない。自己診断も行う。
    npm test からは tests/unit/child-process-lint.mjs が lintRepo() と selftest() を直接呼ぶ。 */
-import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const BASELINE_FILE = path.join(ROOT, 'tests', 'child-process-baseline.json');
-export const BASELINE_VERSION = 1;
 
 const SCAN_DIRS = ['core', 'desktop', 'bin'];
 const JS_EXT = new Set(['.mjs', '.js', '.cjs']);
-/** 子を起こしてよい口。サーバー・保持役の側（core/process.mjs）と Electron main の側（desktop/process.cjs） */
+/** 生の child_process API を使う口 */
 export const MOUTH = Object.freeze(['core/process.mjs', 'desktop/process.cjs']);
+/** spawnChild の固定例外。各ファイルがこの起動を担当する理由を 1 行で書く */
+export const SPAWN_CHILD_EXCEPTIONS = Object.freeze({
+  'core/holder/holder.mjs': '保持役の本体が、管理する子プロセスを起動する',
+  'core/cli-installation.mjs': 'spawnCli が保持役を使えない CLI shim の互換 fallback を起動する',
+  'core/claude-login.mjs': 'Claude の対話ログインを端末へ接続して実行する',
+  'core/hook-adapter.mjs': 'コピーされた単体アダプターも hook コマンドを実行できるようにする',
+});
 
 /** コメントを空白に置き換える（行番号は保つ）。// は行頭のものだけ。文字列の中の // は消さない */
 export function stripComments(text) {
@@ -39,6 +41,33 @@ export function countUses(text) {
   const childProcess = code.match(/(?:from\s*['"](?:node:)?child_process['"]|require\s*\(\s*['"](?:node:)?child_process['"]|import\s*\(\s*['"](?:node:)?child_process['"])/g)?.length ?? 0;
   const utilityFork = code.match(/\butilityProcess\s*\.\s*fork\s*\(/g)?.length ?? 0;
   return { childProcess, utilityFork };
+}
+
+/** core/process.mjs から spawnChild を import または再 export している数 */
+export function countSpawnChildImports(file, text) {
+  const code = stripComments(String(text));
+  let count = 0;
+  const isProcessModule = source => path.posix.normalize(path.posix.join(path.posix.dirname(file), source)) === 'core/process.mjs';
+  const hasName = names => names.split(',').some(spec => /^\s*spawnChild(?:\s+as\s+[\w$]+)?\s*$/.test(spec));
+  for (const match of code.matchAll(/\b(?:import|export)\s*\{([^}]+)\}\s*from\s*['"]([^'"]+)['"]/g)) {
+    if (isProcessModule(match[2]) && hasName(match[1])) count++;
+  }
+  for (const match of code.matchAll(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(?:await\s*)?import\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    if (isProcessModule(match[2]) && hasName(match[1])) count++;
+  }
+  const namespacePatterns = [
+    /\bimport\s+\*\s+as\s+([\w$]+)\s+from\s*['"]([^'"]+)['"]/g,
+    /\b(?:const|let|var)\s+([\w$]+)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\b(?:const|let|var)\s+([\w$]+)\s*=\s*(?:await\s*)?import\(\s*['"]([^'"]+)['"]\s*\)/g,
+  ];
+  for (const pattern of namespacePatterns) for (const match of code.matchAll(pattern)) {
+    if (isProcessModule(match[2]) && new RegExp(`\\b${match[1]}\\s*\\.\\s*spawnChild\\b`).test(code)) count++;
+  }
+  for (const match of code.matchAll(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)/g)) {
+    if (isProcessModule(match[2]) && hasName(match[1])) count++;
+  }
+  for (const match of code.matchAll(/\bexport\s+\*\s+from\s*['"]([^'"]+)['"]/g)) if (isProcessModule(match[1])) count++;
+  return count;
 }
 
 function walk(dir, out = []) {
@@ -56,58 +85,35 @@ export function listFiles(root = ROOT) {
     .map((file) => path.relative(root, file).replace(/\\/g, '/')).sort();
 }
 
-/** 直に子を起こしているファイルと件数（口は除く） */
+/** 生の child_process API の直読みと spawnChild import を列挙する */
 export function scanRepo(root = ROOT) {
-  const found = {};
+  const found = {}, spawnChildImports = {};
   for (const file of listFiles(root)) {
-    if (MOUTH.includes(file)) continue;
-    const uses = countUses(readFileSync(path.join(root, file), 'utf8'));
-    if (uses.childProcess || uses.utilityFork) found[file] = uses;
+    const source = readFileSync(path.join(root, file), 'utf8');
+    const uses = countUses(source);
+    if ((!MOUTH.includes(file) && !Object.hasOwn(SPAWN_CHILD_EXCEPTIONS, file) && uses.childProcess)
+      || (!MOUTH.includes(file) && uses.utilityFork)) found[file] = uses;
+    const imports = countSpawnChildImports(file, source);
+    if (imports) spawnChildImports[file] = imports;
   }
-  return found;
+  return { found, spawnChildImports };
 }
 
-export function readBaseline(file = BASELINE_FILE) {
-  try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8'));
-    return parsed?.version === BASELINE_VERSION && parsed.files && typeof parsed.files === 'object' ? parsed.files : {};
-  } catch { return {}; }
-}
-
-const totalOf = uses => (uses.childProcess ?? 0) + (uses.utilityFork ?? 0);
-
-/** 基準と今の使用を比べる。増えた・基準に無い → problems。減った → reduced（通す） */
-export function compare(found, baseline) {
-  const problems = [];
-  const reduced = [];
-  for (const [file, uses] of Object.entries(found)) {
-    const limit = baseline[file];
-    if (limit === undefined) {
-      problems.push({ file, message: `${file}: 子を起こす API を直に読んでいる（口は ${MOUTH.join('・')} だけ。移行中なら基準に載せる）` });
-      continue;
-    }
-    if (totalOf(uses) > totalOf(limit)) problems.push({ file, message: `${file}: 子を起こす API が ${totalOf(limit)} → ${totalOf(uses)} に増えた` });
-    else if (totalOf(uses) < totalOf(limit)) reduced.push({ file, from: totalOf(limit), to: totalOf(uses) });
-  }
-  const stale = Object.keys(baseline).filter((file) => !(file in found));
-  return { problems, reduced, stale };
+/** 例外一覧に無いファイルからの spawnChild import は常に不合格 */
+export function spawnChildProblem(file, count = 1) {
+  if (!count || Object.hasOwn(SPAWN_CHILD_EXCEPTIONS, file)) return null;
+  return { file, message: `${file}: core/process.mjs の spawnChild を import している。例外一覧に理由を追加しない限り使えない` };
 }
 
 /** リポジトリ全体。problems が空なら合格 */
 export function lintRepo(root = ROOT) {
-  const found = scanRepo(root);
-  const baseline = readBaseline(path.join(root, 'tests', 'child-process-baseline.json'));
-  const { problems, reduced, stale } = compare(found, baseline);
-  return { found, baseline, problems, reduced, stale, migrating: Object.keys(baseline).filter((file) => file in found), baselineCount: Object.keys(baseline).length };
-}
-
-/** 基準を今の使用に合わせる（減らすときだけ。増えるなら書かずに失敗する） */
-export function updateBaseline(root = ROOT) {
-  const result = lintRepo(root);
-  if (result.problems.length && result.baselineCount) throw new Error(result.problems.map((problem) => problem.message).join('\n'));
-  const files = Object.fromEntries(Object.entries(result.found).sort(([a], [b]) => a.localeCompare(b)));
-  writeFileSync(path.join(root, 'tests', 'child-process-baseline.json'), `${JSON.stringify({ version: BASELINE_VERSION, files }, null, 2)}\n`);
-  return { files, previous: result.baselineCount };
+  const { found, spawnChildImports } = scanRepo(root);
+  const problems = Object.entries(found).map(([file]) => ({ file, message: `${file}: child_process / utilityProcess.fork は口 ${MOUTH.join('・')} だけが使える` }));
+  for (const [file, count] of Object.entries(spawnChildImports)) {
+    const problem = spawnChildProblem(file, count);
+    if (problem) problems.push(problem);
+  }
+  return { found, spawnChildImports, problems };
 }
 
 /** 走査の自己診断。失敗の理由の配列（空なら合格） */
@@ -120,32 +126,28 @@ export function selftest() {
   check('utilityProcess.fork', countUses('utilityProcess.fork(module, [], {});'), { childProcess: 0, utilityFork: 1 });
   check('コメント', countUses("// import { spawn } from 'node:child_process';\n/* require('child_process') */\n"), { childProcess: 0, utilityFork: 0 });
   check('口の経由', countUses("import { run, start } from './process.mjs';"), { childProcess: 0, utilityFork: 0 });
+  check('一覧外の直読み', !MOUTH.includes('core/not-allowed.mjs') && countUses("import { spawn } from 'node:child_process';").childProcess > 0, true);
+  check('固定例外 hook-adapter の直読み', Object.hasOwn(SPAWN_CHILD_EXCEPTIONS, 'core/hook-adapter.mjs'), true);
+  check('登録外 spawnChild', spawnChildProblem('core/not-allowed.mjs', countSpawnChildImports('core/not-allowed.mjs', "import { spawnChild } from './process.mjs';"))?.file, 'core/not-allowed.mjs');
+  check('別名 import', countSpawnChildImports('core/not-allowed.mjs', "import { spawnChild as rawSpawn } from './process.mjs';"), 1);
+  check('許可された例外', spawnChildProblem('core/cli-installation.mjs', countSpawnChildImports('core/cli-installation.mjs', "import { spawnChild } from './process.mjs';")), null);
+  check('動的 import', countSpawnChildImports('core/not-allowed.mjs', "const { spawnChild } = await import('./process.mjs');"), 1);
+  check('namespace import', countSpawnChildImports('core/not-allowed.mjs', "import * as proc from './process.mjs'; proc.spawnChild('x');"), 1);
+  check('require destructuring', countSpawnChildImports('core/not-allowed.mjs', "const { spawnChild } = require('./process.mjs');"), 1);
   check('同名のメソッド', countUses("db.exec('select 1'); re.exec(text);"), { childProcess: 0, utilityFork: 0 });
   check('複数', countUses("import { spawn } from 'node:child_process';\nimport { execFile } from 'node:child_process';\nutilityProcess.fork(x);"), { childProcess: 2, utilityFork: 1 });
-  const base = { 'a.mjs': { childProcess: 1, utilityFork: 0 } };
-  check('増えた', compare({ 'a.mjs': { childProcess: 2, utilityFork: 0 } }, base).problems.length, 1);
-  check('基準に無い', compare({ 'b.mjs': { childProcess: 1, utilityFork: 0 } }, base).problems.length, 1);
-  check('同じ', compare({ 'a.mjs': { childProcess: 1, utilityFork: 0 } }, base).problems.length, 0);
-  check('減った', compare({ 'a.mjs': { childProcess: 0, utilityFork: 0 } }, base).reduced.length, 1);
-  check('消えた', compare({}, base).stale, ['a.mjs']);
   return fails;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   const json = process.argv.includes('--json');
-  if (process.argv.includes('--update-baseline')) {
-    const { files, previous } = updateBaseline();
-    console.log(`基準を ${previous} → ${Object.keys(files).length} ファイルに更新しました`);
-  }
   const result = lintRepo();
   if (json) console.log(JSON.stringify({ ...result, selftest: selftest() }, null, 2));
   else {
     if (result.problems.length) console.log(result.problems.map((problem) => problem.message).join('\n'));
-    if (result.reduced.length) console.log(`減った（--update-baseline で基準を下げられます）: ${result.reduced.map((item) => item.file).join(', ')}`);
-    if (result.stale.length) console.log(`基準から消えた（--update-baseline で下げられます）: ${result.stale.join(', ')}`);
     const fails = selftest();
     if (fails.length) console.log(`自己診断: ${fails.join(' / ')}`);
-    console.log(`移行中 ${result.migrating.length} ファイル（基準 ${result.baselineCount}）${result.problems.length || fails.length ? ' — 不合格' : ''}`);
+    console.log(`spawnChild の固定例外 ${Object.keys(SPAWN_CHILD_EXCEPTIONS).length} ファイル、登録外 ${Object.keys(result.spawnChildImports).filter(file => !Object.hasOwn(SPAWN_CHILD_EXCEPTIONS, file)).length} ファイル${result.problems.length || fails.length ? ' — 不合格' : ''}`);
   }
   process.exitCode = result.problems.length || selftest().length ? 1 : 0;
 }

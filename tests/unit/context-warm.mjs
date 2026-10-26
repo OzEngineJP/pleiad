@@ -7,6 +7,7 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createContextBridge } from '../../core/context-bridge.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 import { hash } from '../../core/context-runtime.mjs';
 import { mcpHttpFixture } from './context-transports.mjs';
 
@@ -312,6 +313,7 @@ export default async function(t) {
   } finally {
     await Promise.allSettled(ports.map(p => p.close()));
     for (const dispose of resources.reverse()) await dispose();
+    await cleanupTestHolder(process.env.AGENT_HOST_DATA);
     await fs.rm(scratch, { recursive: true, force: true });
   }
 }

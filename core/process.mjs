@@ -4,9 +4,9 @@
 //   run()        完了を待つ短命の子（git・gh・--version・taskkill・`!` の 1 回のシェルなど）。プロセスのハンドルは返さない。
 //                出力は上限つきで集め、onOutput で流す。止める・時間切れはこの中で木ごとに止める
 //   start()      保持役（core/holder/）に起こさせる長く生きる子。戻り値は { id, client, source }（source は記録・write・ack）。
-//                保持役を使えないときは null（呼び出し側は run() か、今のサーバーの子に落とす）
+//                保持役を使えないときは null（呼び出し側は短命の run() に落とすか、起動不能を返す）
 //   detach()     サーバーの子でない形で起こす（保持役自身の起動。core/holder/client.mjs）。pid だけ返す
-//   spawnChild() 保持役の本体（core/holder/holder.mjs）が子を起こすための生の口。ほかからは使わない
+//   spawnChild() 生の spawn。保持役本体と tests/lint-child-process.mjs の固定例外だけが使う
 //
 // 保持役の置き場: AGENT_HOST_RUNTIME_ROOT（パッケージ版の main が渡す）が無ければ、データ置き場ごとの一時フォルダー
 // （os.tmpdir()/pleiad-holder/<データ置き場のハッシュ>）を使う。同じデータ置き場のサーバーを起こし直しても同じ保持役につながる。
@@ -118,16 +118,6 @@ export function run(command, args = [], {
 }
 
 /**
- * 子の標準入出力を呼び出し側が対話的に扱う必要がある短命処理の起動口。
- * 呼び出し側は終了時に必ず kill/close し、アプリ終了後まで残る処理には start() を使う。
- */
-export function spawnProcess(command, args = [], options = {}) {
-  const argv = Array.isArray(args) ? args.map(String) : [];
-  const spawnOptions = Array.isArray(args) ? options : args;
-  return spawn(command, argv, spawnOptions);
-}
-
-/**
  * 完了を待つ短命の子の同期版（spawnSync）。**イベントループを止める**ので、起動の準備・後片付けの小さなコマンドだけが使う
  * （core/backends/opencode-accounts.mjs の whoami・icacls。同期の prepareAccount から呼ばれる）。ふだんは run()
  * 戻り値の形は run() と同じ
@@ -164,9 +154,9 @@ export async function detach(command, args = [], { cwd, env, windowsHide = true,
   return { pid: child.pid };
 }
 
-/** 保持役の本体が子を起こすための生の口（stdin・stdout・stderr・pid・kill を持つハンドルを返す）。ほかからは使わない */
+/** 生の spawn（stdin・stdout・stderr・pid・kill を持つハンドルを返す）。利用箇所は tests/lint-child-process.mjs の固定例外だけ */
 export function spawnChild(command, args = [], options = {}) {
-  return spawn(command, Array.isArray(args) ? args.map(String) : [], options);
+  return spawn(command, args.map(String), options);
 }
 
 /** 親（サーバー）が居ないまま残った子を、保持役が止めるまでの既定（アプリが落ちた後も残り続けない保険。ADR 0270 決定 4） */
@@ -176,7 +166,7 @@ export const KEEP_MS = 10 * 60_000;
  * 保持役に子を起こさせる。戻り値は { id, client, source }。source は core/adopt.mjs の holderSource（記録・write・ack）。
  * marks は { 名前: 通番 }（既定は 1）。起こした子の記録を、起動で拾い直せるように印を置く。
  * keepMs は、親が居ない状態が続いたら保持役が子を止めるまでの ms（既定は KEEP_MS。0 で止めない）。
- * 保持役を使えない（置き場が無い）ときは null。起こせない・つなげないときは投げる（呼び出し側が今の流れに落とす）
+ * 保持役を使えない（置き場が無い）ときは null。呼び出し側は短命の run() に落とすか起動不能を返す。起こせない・つなげないときは投げる。
  */
 export async function start({
   id, command, args = [], cwd, env, policy = 'none', label = null, marks = {}, keepMs = KEEP_MS,

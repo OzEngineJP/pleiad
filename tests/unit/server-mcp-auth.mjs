@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'server-mcp-auth';
@@ -108,7 +109,7 @@ export default async function (t) {
     // 拒否しない: 記録は Pleiad 担当のまま（instruction は native のまま残し、補填は nativeInjected が持つ）
     t.ok('MCP を Pleiad 担当にしたまま受ける（断って native に倒さない）', guarded?.report?.status === 'ready' && !guarded.report.guardedBackend && guarded.owners.mcp === 'ply' && guarded.owners.instruction === 'native', JSON.stringify({ status: guarded?.report?.status, guarded: guarded?.report?.guardedBackend, owners: guarded?.owners }));
   } finally {
-    client?.close(); await host?.stop();
+    client?.close(); await host?.stop(); await cleanupTestHolder(dataDir);
     await fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }

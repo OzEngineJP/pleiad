@@ -24,22 +24,18 @@ export const MCP_KEEP_MS = 10 * 60_000;
 const INIT_LABEL_MAX_BYTES = 64 * 1024;
 
 /**
- * MCP の子を保持役に載せるか。`AGENT_HOST_MCP_HOLDER` が `off` なら載せない・`on` なら載せる。
- * 無ければ実行場所の置き場（AGENT_HOST_RUNTIME_ROOT。パッケージ版の main が渡す）があるときだけ載せる
- * （2b の Devin・Grok・Codex のターン専用と同じ既定。`npm start`・テストは置き場が無いので今の流れ）
+ * MCP の子は常に保持役に載せる。明示的な off は起動拒否として扱い、サーバーの子へ落とさない。
  */
 export function heldMcpPlan({ value = bootEnv('AGENT_HOST_MCP_HOLDER'), root = bootEnv('AGENT_HOST_RUNTIME_ROOT') } = {}) {
   const flag = String(value ?? '').trim();
   if (flag === 'off') return false;
-  if (flag === 'on') return true;
-  return Boolean(root);
+  return true;
 }
 
 const labelOf = ({ key, serverId, name, cwd }) => ({ k: MCP_LABEL_KIND, v: 1, key: String(key ?? ''), serverId: String(serverId ?? ''), name: String(name ?? ''), cwd: String(cwd ?? '') });
 
 /**
- * 保持役に MCP の子を起こす。戻り値 { id, client, source, label }。保持役を使わない・起こせないときは null
- * （呼び出し側は今の流れ＝サーバーの子に落ちる。黙って止まらないよう、理由は log に残す）
+ * 保持役に MCP の子を起こす。戻り値 { id, client, source, label }。保持役を使えない・起こせないときは失敗させる。
  */
 export async function startHeldMcp({ command, args = [], cwd, env, key, serverId, name, dataDir, root = bootEnv('AGENT_HOST_RUNTIME_ROOT'), appVersion = '', log = () => {} } = {}) {
   if (!dataDir || !command || !heldMcpPlan({ root })) return null;
@@ -48,10 +44,7 @@ export async function startHeldMcp({ command, args = [], cwd, env, key, serverId
   try {
     const started = await start({ id, command, args, cwd, env, policy: 'jsonrpc', label, keepMs: MCP_KEEP_MS, dataDir, root, appVersion, log });
     return started ? { ...started, label } : null;
-  } catch (error) {
-    log(`  external MCP: the holder could not start ${name ?? command} (${error?.code ?? error?.message ?? error}); it runs as the server's child`);
-    return null;
-  }
+  } catch (error) { throw Object.assign(error, { code: error?.code ?? 'MCP_HOLDER_START_FAILED' }); }
 }
 
 /**
@@ -59,7 +52,7 @@ export async function startHeldMcp({ command, args = [], cwd, env, key, serverId
  * 戻り値 { client, children }。保持役が居なければ { client: null, children: [] }
  */
 export async function readHeldMcpChildren({ dataDir, root = bootEnv('AGENT_HOST_RUNTIME_ROOT'), appVersion = '', log = () => {} } = {}) {
-  if (!dataDir || !root || !heldMcpPlan({ root })) return { client: null, children: [] };
+  if (!dataDir || !heldMcpPlan({ root })) return { client: null, children: [] };
   let client;
   try { client = await holderLink({ dataDir, root, appVersion, launch: false, log }); }
   catch (error) { if (error?.code === 'HOLDER_NONE') return { client: null, children: [] }; throw error; }

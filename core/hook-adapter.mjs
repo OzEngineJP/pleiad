@@ -20,7 +20,17 @@
 //                                          and anything agy itself treats as a failure)
 //   at stop (Stop)              -> let the agent stop (no continue)
 //   after a tool (PostToolUse)  -> nothing
-import { spawnProcess as spawn, runSync } from './process.mjs';
+let spawn, runSync;
+try {
+  const processApi = await import('./process.mjs');
+  spawn = processApi.spawnChild;
+  runSync = processApi.runSync;
+} catch {
+  // The adapter is copied unchanged next to hooks and must still run when the Pleiad source tree is absent.
+  const { spawn: rawSpawn, spawnSync: rawSpawnSync } = await import('node:child_process');
+  spawn = (command, args, options) => rawSpawn(command, args, options);
+  runSync = (command, args, options) => rawSpawnSync(command, args, options);
+}
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -231,7 +241,7 @@ export function runCommand(command, { input, cwd, env, timeoutMs, signal }) {
     if (!shell) { resolve({ startError: 'Git Bash was not found' }); return; }
     const childEnv = { ...process.env, ...env };
     delete childEnv.__pleiadFrom;
-    try { child = spawn(command, { cwd, env: childEnv, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
+    try { child = spawn(command, [], { cwd, env: childEnv, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
     catch (e) { resolve({ startError: String(e?.message ?? e) }); return; }
     let stdout = '', stderr = '', done = false, timedOut = false, overflow = false;
     const onAbort = () => { kill(); finish({ aborted: true, stdout, stderr }); };

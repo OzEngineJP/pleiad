@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnProcess } from './process.mjs';
+import { spawnChild } from './process.mjs';
 import { parseCommand } from './command-line.mjs';
 import { t } from './i18n.mjs';
 import { AGENTS, agentOf } from './backends/agents.mjs';
@@ -105,12 +105,12 @@ export function spawnCli(argv, args, options = {}) {
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
     // 包みの中身を直に起こせるなら cmd.exe を挟まない（保持役と同じ形。木に cmd.exe が残らない）
     const direct = directCommand([command, ...prefix, ...args]);
-    if (direct) return spawnProcess(direct.command, direct.args, { ...options, windowsHide: true });
+    if (direct) return spawnChild(direct.command, direct.args, { ...options, windowsHide: true });
     const quote = value => {
       if (/["%\r\n]/.test(value)) throw new Error(t('cli.badArgument'));
       return `"${value}"`;
     };
-    return spawnProcess([command, ...prefix, ...args].map(quote).join(' '), [], { ...options, shell: true, windowsHide: true });
+    return spawnChild([command, ...prefix, ...args].map(quote).join(' '), [], { ...options, shell: true, windowsHide: true });
   }
-  return spawnProcess(command, [...prefix, ...args], { ...options, windowsHide: true });
+  return spawnChild(command, [...prefix, ...args], { ...options, windowsHide: true });
 }

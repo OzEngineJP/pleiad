@@ -86,11 +86,11 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 - 設計は `docs/design.md`、画面の変更は `docs/design-system.md` を参照する。
 - 画面・AI・CLI へ外に出す機能は、WS の case を足すだけにせず `core/ops/` に操作として定義する（ADR 0081）。足し忘れは `npm test` の ops-coverage が落とす（`tests/ops-baseline.json` の `todo` は増やせない）。設定（prefs.json）を足す・変えるときは `core/ops/settings.mjs` の `defineSetting`（危険度・`normalize`・`write`）に書き、`store.setPref` を直に呼ばない（画面の `setPref` も AI の `settings.set` も同じ定義を通る。`ops-coverage` が落とす）。操作の危険度・出す口を変えたら `OPS_UPDATE_SNAPSHOT=1 npm test -- ops-surface` で snapshot を更新し、差分を確認する。
 - エージェントごとに違う振る舞いは、`core/backends/` の外で id（`'claude'` など）を比べずに、能力の印（`core/backends/capability-marks.mjs`。エージェントごとの状態は `core/backends/agent-marks.mjs`）かエージェントの記述（`core/backends/agents.mjs`）から引く（`docs/multi-backend.md`「エージェントを足す」、ADR 0220・0273・0274）。印は 4 つの状態（対応の値・`covered`・`impossible('理由')`・`todo('#Issue')`）で全部のキーに書き、`false` は書かない。性質（`traits`。`effortInModelId`・`instructionsAtStart`・`failureDiagnostics`・`promptDelivery`）は能力ではないので、`agent-marks.mjs` の `AGENT_TRAITS` に `true` / `false` だけで書く（状態は持たない。画面・一覧・公開文書に出さない）。現役のエージェントは `NO_CAPABILITIES` を使えない。未実装（`todo`）は `tests/backend-todos.json` の基準より増やせない（減らしたら `node tests/lib/backend-todos.mjs --update-baseline`）。id の直書きは `npm test` の backends-lint が数え、増やせない（基準 `tests/backends-baseline.json` の更新は減らすときだけ。`node tests/lint-backends.mjs --update-baseline`）。エージェントの id をキー・要素にする一覧への入れ忘れは agent-lists（`tests/lint-agent-lists.mjs`・試験は unit/agent-lists.mjs）が拾う。README・AGENTS.md の名簿と環境変数の表も記述と照合する。一覧は `node tests/lib/backend-matrix.mjs` で端末に出す（文書の写しは持たない。性質は出さない）。
-- 子を起こす API（`node:child_process`・`utilityProcess.fork`）を読んでよいのは口（`core/process.mjs`・`desktop/process.cjs`）だけ（ADR 0270 の規則 ①）。ほかで直に読むと `npm test` の child-process-lint が落ちる。基準 `tests/child-process-baseline.json` は空で、lint の仕組みは新しい直呼びを防ぐため残す。
+- 子を起こす API（`node:child_process`・`utilityProcess.fork`）は口（`core/process.mjs`・`desktop/process.cjs`）に集める（ADR 0270 の規則 ①）。コピー後も単独実行する `core/hook-adapter.mjs` の fallback は lint の固定例外に含む。生の `spawnChild` は保持役本体と lint の固定例外一覧にあるファイルだけが import できる。一覧は移行中の基準ではなく決まった例外で、理由は `tests/lint-child-process.mjs` に 1 行ずつ記す。
 
 ## サーバーの再起動と子プロセス
 
-- ① 長く生きる子プロセスは保持役だけが起こす。短いコマンドは `core/process.mjs` の `run()`、保持役自身は `detach()`、保持役の本体だけは `spawnChild()` を使う。サーバーや機能から生の `spawn` を呼ばない。
+- ① 長く生きる子プロセスは保持役だけが起こす。短いコマンドは `core/process.mjs` の `run()`、保持役自身は `detach()` を使う。生の `spawnChild()` は保持役本体と child-process-lint の固定例外だけが使う。
 - ② 続きに要る状態はデータベースか保持役の記録に置く。メモリは表示や処理用の写しとして組み直す。
 - ③ サーバーの起動処理が復元処理を行う。通常起動でデータベースと保持役の子一覧を照合し、再接続して記録を再生する。特別な引き継ぎ起動を作らない。
 - 開発用 `utilityProcess` と配布用の名前付きパイプは Electron とサーバーの接続方式だけが異なる。保持役の場所・通常起動での復元・更新時の停止と再起動は同じである（ADR 0270「段 4b の実装」）。
