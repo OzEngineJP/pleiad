@@ -10068,7 +10068,7 @@ let shuttingDown = null;
 function shutdownServer({ stopHeld = false } = {}) {
   shuttingDown ??= (async () => {
     if (!stopHeld) {
-      // Normal server shutdown leaves held children available for the next server.
+      // 通常の停止では、保持役の Claude CLI を Claude SDK の終了時の後片付け（killAll）から外し、次のサーバーが付け直せるようにする
       preserveClaudeProcessesForRestart();
     }
     // 通話の使用量の台帳を書き切る（止めるのはアプリの終了だけ）
