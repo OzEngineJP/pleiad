@@ -186,10 +186,37 @@ export function resetText(w, now = Date.now(), row, request) {
     : t('usage.header.resetIn', { duration: duration(left) });
 }
 
+/** Visible conversation bounds, including the desktop title bar and visual viewport. */
+export function usagePopBounds(chip, column, viewport, titleBottom = 0) {
+  const left = Math.max(column.left, viewport.left) + 8;
+  const right = Math.min(column.right, viewport.right) - 8;
+  const width = Math.max(0, Math.min(340, right - left));
+  const top = Math.max(column.top, viewport.top, titleBottom) + 8;
+  const bottom = Math.min(chip.top - 6, viewport.bottom - 8);
+  return { left: Math.max(left, Math.min(chip.left, right - width)), width,
+    bottom, maxHeight: Math.max(0, Math.min(560, bottom - top)) };
+}
+
 export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSettings, onVisibility = () => {} }) {
   const chip = $('usageChip'), pop = $('usagePop');
   const mobile = globalThis.matchMedia?.('(max-width:700px)') ?? { matches: false, addEventListener() {} };
   let sheet = null, anchor = chip;
+  const column = chip.closest?.('main');
+  document.body?.append(pop);
+  pop.tabIndex = -1;
+  pop.setAttribute('aria-label', t('usage.header.title'));
+  chip.setAttribute('aria-controls', pop.id || 'usagePop');
+  const head = el('div', 'usage-pop-head');
+  const heading = el('b', null, t('usage.header.title'));
+  const when = el('span', 'when');
+  const again = el('button', 'rf', '↻'); again.type = 'button';
+  const dismiss = el('button', 'usage-pop-close', '×'); dismiss.type = 'button';
+  dismiss.setAttribute('aria-label', t('usage.header.close'));
+  dismiss.onclick = () => close(true);
+  again.onclick = () => { if (again.getAttribute('aria-disabled') !== 'true') refresh(ids(), { force: true }); };
+  head.append(heading, when, again, dismiss);
+  const body = el('div', 'usage-pop-body'); body.tabIndex = 0;
+  pop.append(head, body);
   mobile.addEventListener('change', () => { close(); onVisibility(); });
   // エージェントごとの最後の値。{ label, quota, failed }。failed は直前の取得に失敗した（quota はその前の値）
   const data = new Map();
@@ -310,13 +337,23 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     const grid = el('div', 'usage-rows'), now = Date.now();
     for (const w of windows) {
       const used = usedOf(w, now), high = used != null && used >= HIGH ? ' high' : '';
-      const name = el('span', 'wl', shortLabel(w)); name.title = w.label;
+      const name = el('span', 'wl', w.label); name.title = w.label;
       const bar = el('span', 'usage-bar' + high);
-      bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', `${w.label} ${percentText(used)}`);
+      name.setAttribute('aria-hidden', 'true');
+      if (used != null) {
+        bar.setAttribute('role', 'meter'); bar.setAttribute('aria-label', w.label);
+        bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
+        bar.setAttribute('aria-valuenow', String(Math.max(0, Math.min(100, used))));
+        bar.setAttribute('aria-valuetext', percentText(used));
+      } else {
+        bar.setAttribute('role', 'img'); bar.setAttribute('aria-label', `${w.label} ${t('usage.unknown')}`);
+      }
       const fill = el('i'); fill.style.width = `${Math.max(0, Math.min(100, used ?? 0))}%`; bar.append(fill);
       const note = el('span', 'rs' + high, resetText(w, now, row, request));
+      bar.setAttribute('aria-description', note.textContent);
       if (isExpired(w, now)) note.setAttribute('role', 'status');
-      grid.append(name, bar, el('span', 'v' + high, percentText(used)), note);
+      const value = el('span', 'v' + high, percentText(used)); value.setAttribute('aria-hidden', 'true');
+      grid.append(name, value, bar, note);
     }
     return grid;
   }
@@ -387,48 +424,55 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
   }
   function paintPop() {
     if (pop.hidden) return;
-    const head = el('div', 'usage-pop-head');
     const quota = data.get(shown.backend)?.quota;
     const selected = connectionOf(quotaOf(quota, shown.account), shown.model);
     const checked = shown.endpoint ? null : selected ? selected.checkedAt : Array.isArray(quotaOf(quota, shown.account)?.connections) ? null : quota?.checkedAt;
-    const again = el('button', 'rf', '↻');
     const busy = ids().some(id => {
       const quota = data.get(id)?.quota, request = source.state?.(id);
       const rows = Array.isArray(quota?.accounts) ? quota.accounts : [quota];
       return rows.some(row => quotaFetchState(row, request) === 'pending');
     });
     pop.setAttribute('aria-busy', String(busy));
-    again.type = 'button'; again.disabled = busy;
+    again.setAttribute('aria-disabled', String(busy));
     again.setAttribute('aria-label', busy ? t('usage.header.refreshing') : t('usage.header.refresh')); again.title = t('usage.header.refresh');
+    again.replaceChildren('↻');
     if (busy) {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'usage-refresh-icon'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('aria-hidden', 'true');
       const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       arc.setAttribute('d', 'M20 12a8 8 0 1 1-4-6.9'); svg.append(arc); again.replaceChildren(svg);
     }
-    again.onclick = () => refresh(ids(), { force: true });
-    if (!sheet) head.append(el('b', null, t('usage.header.title')));
-    head.append(el('span', 'when', checked ? fmt.relative(checked) : ''), again);
+    when.textContent = checked ? fmt.relative(checked) : '';
     const order = [shown.backend, ...ids().filter(id => id !== shown.backend)].filter(Boolean);
     const sections = order.map(id => agentSection(id, data.get(id), id === shown.backend));
+    const focusable = 'button, summary, a';
+    sections.forEach((section, index) => {
+      for (const node of section.querySelectorAll(focusable)) {
+        node.dataset.usageFocus = JSON.stringify([order[index], order[index] === shown.backend ? shown.account : '', node.tagName, node.className, node.textContent]);
+      }
+    });
     const foot = el('div', 'foot');
     const more = el('button', null, t('usage.header.openSettings'));
+    more.dataset.usageFocus = 'settings';
     more.type = 'button'; more.onclick = () => { close(); openSettings(); };
     foot.append(more);
-    const opened = [...pop.querySelectorAll('details')].map(d => d.open);
-    const othersOpen = pop.querySelector('.usage-other-agents')?.open ?? false;
-    if (sheet) {
-      const others = el('details', 'usage-other-agents');
-      others.append(el('summary', null, t('usage.header.otherAgents')), ...sections.slice(shown.backend ? 1 : 0));
-      others.open = othersOpen;
-      const sheetHead = sheet.dialog.querySelector('.conversation-sheet-head');
-      sheetHead.querySelector('.usage-pop-head')?.remove();
-      sheetHead.insertBefore(head, sheetHead.querySelector('.conversation-sheet-close'));
-      pop.replaceChildren(...(shown.backend ? [sections[0]] : []), ...(others.children.length > 1 ? [others] : []), foot);
-    } else pop.replaceChildren(head, ...sections, foot);
+    const focusKey = document.activeElement?.getAttribute('data-usage-focus');
+    const focusedInside = body.contains(document.activeElement);
+    const scroll = body.scrollTop;
+    const opened = [...pop.querySelectorAll('details')].map(d => d.hasAttribute('open'));
+    const othersOpen = pop.querySelector('.usage-other-agents')?.hasAttribute('open') ?? false;
+    const others = el('details', 'usage-other-agents');
+    const summary = el('summary', null, t('usage.header.otherAgents')); summary.dataset.usageFocus = 'other-agents';
+    others.append(summary, ...sections.slice(shown.backend ? 1 : 0));
+    body.replaceChildren(...(shown.backend ? [sections[0]] : []), ...(others.children.length > 1 ? [others] : []), foot);
     [...pop.querySelectorAll('details')].forEach((d, i) => { d.open = opened[i] ?? false; });
     const otherAgents = pop.querySelector('.usage-other-agents');
     if (otherAgents) otherAgents.open = othersOpen;
+    if (focusedInside) {
+      const matches = [...body.querySelectorAll(focusable)].filter(node => focusKey && node.getAttribute('data-usage-focus') === focusKey);
+      (matches.length === 1 ? matches[0] : body).focus({ preventScroll: true });
+    }
+    body.scrollTop = scroll;
   }
   function paint() {
     paintChip(); paintPop();
@@ -443,48 +487,87 @@ export function setupHeaderUsage({ $, source, getBackends, onUsageLogin, openSet
     }
   }
 
-  function positionPop() {
-    if (sheet) { pop.style.cssText = ''; return; }
-    const r = chip.getBoundingClientRect();
-    const width = Math.min(340, document.documentElement.clientWidth - 16);
-    pop.style.left = `${Math.max(8, Math.min(r.left, document.documentElement.clientWidth - width - 8))}px`;
-    pop.style.bottom = `${Math.round(window.innerHeight - r.top + 6)}px`;
-    pop.style.width = `${width}px`;
+  function bounds() {
+    const view = window.visualViewport;
+    const viewport = { left: view?.offsetLeft ?? 0, top: view?.offsetTop ?? 0,
+      right: (view?.offsetLeft ?? 0) + (view?.width ?? document.documentElement.clientWidth),
+      bottom: (view?.offsetTop ?? 0) + (view?.height ?? window.innerHeight) };
+    return usagePopBounds(chip.getBoundingClientRect(), column?.getBoundingClientRect() ?? { ...viewport, top: 0 }, viewport,
+      document.querySelector?.('.titlebar')?.getBoundingClientRect().bottom ?? 0);
   }
-  function open(opener = chip) {
-    anchor = opener;
-    if (mobile.matches && !sheet) {
+  function openSheet() {
+    if (!sheet) {
       sheet = createConversationSheet(t('usage.header.title'), anchor);
+      sheet.dialog.classList.add('usage-sheet');
       pop.removeAttribute('role');
       sheet.body.append(pop);
+      heading.hidden = true; dismiss.hidden = true;
+      sheet.dialog.querySelector('.conversation-sheet-head').insertBefore(head, sheet.dialog.querySelector('.conversation-sheet-close'));
       sheet.dialog.addEventListener('close', () => {
+        stopFollowing();
         pop.hidden = true; document.body.append(pop); sheet = null;
+        pop.prepend(head); heading.hidden = false; dismiss.hidden = false;
         pop.setAttribute('role', 'dialog');
-        chip.setAttribute('aria-expanded', 'false');
+        expanded(false);
       }, { once: true });
+      pop.style.cssText = '';
+      sheet.open();
+      sheet.dialog.tabIndex = -1; sheet.dialog.focus({ preventScroll: true });
     }
-    pop.hidden = false; chip.setAttribute('aria-expanded', 'true');
+  }
+  function expanded(value) {
+    chip.setAttribute('aria-expanded', String(value));
+    anchor.setAttribute('aria-expanded', String(value));
+    anchor.setAttribute('aria-controls', sheet?.dialog.id || pop.id || 'usagePop');
+  }
+  function positionPop() {
+    if (sheet) return;
+    const box = bounds();
+    // No room for the heading and one quota: use the existing modal sheet.
+    if (box.maxHeight < 180 || box.width < 200) { openSheet(); return; }
+    const next = { left: `${box.left}px`, bottom: `${window.innerHeight - box.bottom}px`, width: `${box.width}px`, maxHeight: `${box.maxHeight}px` };
+    for (const [key, value] of Object.entries(next)) if (pop.style[key] !== value) pop.style[key] = value;
+  }
+  let followFrame = 0;
+  function stopFollowing() { if (followFrame) window.cancelAnimationFrame(followFrame); followFrame = 0; }
+  function follow() {
+    if (pop.hidden) return;
+    positionPop();
+    if (!sheet) followFrame = window.requestAnimationFrame?.(follow) ?? 0;
+  }
+  function open(opener = chip) {
+    if (!pop.hidden) return;
+    anchor = opener;
+    pop.hidden = false;
+    if (mobile.matches) openSheet();
+    expanded(true);
     positionPop(); paintPop(); refresh();
-    sheet?.open();
+    if (!sheet) pop.focus({ preventScroll: true });
+    follow();
   }
   window.addEventListener('resize', () => { if (!pop.hidden) positionPop(); });
   document.addEventListener('ply-context-usage', () => { if (sheet) paintPop(); });
   function close(focus = false) {
     if (pop.hidden) return;
+    stopFollowing();
     if (sheet) { sheet.dialog.close(); return; }
-    pop.hidden = true; chip.setAttribute('aria-expanded', 'false');
-    if (focus) anchor.focus();
+    pop.hidden = true; expanded(false);
+    if (focus) anchor.focus({ preventScroll: true });
   }
-  chip.onclick = e => { e.stopPropagation(); if (pop.hidden) open(); else close(); };
+  chip.onclick = e => { e.stopPropagation(); if (pop.hidden) open(); else close(true); };
   // 面の中の押下は描き直しで要素が外れることがあるので、closest ではなく押した時点の経路で見る
   document.addEventListener('click', e => { if (!sheet && !pop.hidden && !e.composedPath().includes(pop)) close(); });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.isComposing && !pop.hidden) close(true); });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || e.isComposing || pop.hidden) return;
+    e.preventDefault?.(); e.stopImmediatePropagation?.();
+    close(true);
+  }, true);
 
   // 5 分ごと。隠れている間は取らず、見えたときに古ければ取る
   const due = () => !document.hidden && Date.now() - lastRefresh >= EVERY - 1000;
   const timer = setInterval(() => { if (due()) refresh(); }, 60_000);
   document.addEventListener('visibilitychange', () => { source.resume?.(); paint(); if (due()) refresh(); });
-  window.addEventListener('pagehide', () => { clearInterval(timer); source.dispose?.(); }, { once: true });
+  window.addEventListener('pagehide', () => { stopFollowing(); clearInterval(timer); source.dispose?.(); }, { once: true });
 
   return {
     open,
