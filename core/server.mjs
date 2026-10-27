@@ -117,7 +117,6 @@ import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { stopHeldAppServer } from './backends/codex-held.mjs';
 import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart } from './backends/claude-held.mjs';
-import { preserveHeldProcessesForRestart as preserveAcpProcessesForRestart } from './backends/acp-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { stopHeldAgy } from './backends/antigravity.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
@@ -10071,7 +10070,6 @@ function shutdownServer({ stopHeld = false } = {}) {
     if (!stopHeld) {
       // Normal server shutdown leaves held children available for the next server.
       preserveClaudeProcessesForRestart();
-      preserveAcpProcessesForRestart();
     }
     // 通話の使用量の台帳を書き切る（止めるのはアプリの終了だけ）
     await voiceHost.close().catch(error => console.error('voice host shutdown failed:', error?.code ?? error?.message ?? error));

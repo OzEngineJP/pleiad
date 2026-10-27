@@ -16,15 +16,6 @@ import { holderLink } from '../holder/link.mjs';
 import { KEEP_MS } from '../process.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
 
-const heldProcesses = new Set();
-/** SDK の終了時処理に保持役の ACP を止めさせない。 */
-export function preserveHeldProcessesForRestart() {
-  for (const proc of heldProcesses) {
-    // SDK の ChildProcessTracker.killAll は killed が false の子を終了時に止める。
-    proc.killed = true;
-  }
-}
-
 /** 保持役の子の id の頭。ほかのバックエンドの子（agy・Codex・Claude）と見分ける */
 export const ACP_CHILD_PREFIX = 'acp-';
 
@@ -106,7 +97,10 @@ export function createHeldAcp({ client = null, source = null } = {}) {
     if (!info.lost) { try { source.release(); } catch { /* つながりが切れた */ } }
     source.dispose();
     // ChildProcess と同じ順（close → exit）
-    setImmediate(() => { proc.emit('close', proc.exitCode, proc.signalCode); proc.emit('exit', proc.exitCode, proc.signalCode); });
+    setImmediate(() => {
+      proc.emit('close', proc.exitCode, proc.signalCode, { lost: Boolean(info.lost) });
+      proc.emit('exit', proc.exitCode, proc.signalCode, { lost: Boolean(info.lost) });
+    });
   }
 
   const held = {
@@ -143,8 +137,6 @@ export function createHeldAcp({ client = null, source = null } = {}) {
         if (!exited) source.client.kill(id, { tree: true });
         return true;
       };
-      heldProcesses.add(proc);
-      proc.once('exit', () => heldProcesses.delete(proc));
       proc.once('exit', () => source.client.off('err', onErr));
       return proc;
     },
