@@ -517,7 +517,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
           // interject が無い版は応答が次の回の終わりまで返らないので、折り込んだ時点で渡ったことにする
           const makeSteer = () => createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
             onSent: text => mapper?.queueUser(text),
-            confirmOnAccept: true, onCall: () => control?.touch?.(),
+            confirmOnAccept: true, onCall: () => control?.persistSteer?.() ?? control?.touch?.(),
             // 走っているターンを止めずに次のモデル呼び出しへ差し込む Grok 固有の口（1.0.62 実測。
             // 応答は受理した時点で返る。{result:{status:'queued'}} はターン内の差し込み待ちへの受理）
             interject: async (text, item, interjectionId) => {
@@ -546,6 +546,7 @@ export function createGrokBackend({ Acp = null, command = () => cliCommand('grok
             check();
             mapper = createGrokMapper(sessionId, mapEmit, { windowTokens: null });
             mapper.beginTurn(sentText, shownText);
+            for (const message of args.restoredSteers ?? []) mapper.queueUser(message.prompt);
             remember(sessionId, mapper); active.set(sessionId, client);
             // attach の答え（答えていない依頼）。再生の依頼のうち、これに入っているものだけを聞き直す
             await client.open(1);

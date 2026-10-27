@@ -158,6 +158,7 @@ export function createMessageQueue({ store, active, start, changed, delivered })
         if (!meta.outbox?.length) continue;
         const items = await list(id);
         const steers = adopted.get(id);
+        const recovered = [];
         for (const item of items) {
           if (item.status === 'sending' && !steers?.has(item.id)) {
             // For an adopted held turn, the server writes the steer id into its holder label
@@ -165,10 +166,20 @@ export function createMessageQueue({ store, active, start, changed, delivered })
             // could not have received it, so resume the durable outbox item instead of losing it.
             // Without an adopted turn, delivery remains ambiguous and must not be retried.
             item.status = steers ? 'queued' : 'unknown';
+          } else if (item.status === 'sending' && steers?.has(item.id)) {
+            // The held backend has the request. Complete the durable acceptance and
+            // notification after adoption; the old server's in-memory callback is gone.
+            item.status = 'sent';
+            recovered.push(item);
           }
           if (item.status === 'queued' && !steers && !keepQueued) item.status = 'paused';
         }
         await save(id, items);
+        for (const item of recovered) {
+          const current = active(id);
+          const turn = current?.turn ?? current;
+          if (turn) await delivered(id, item, { turn, recovered: true });
+        }
       }
     },
     async accept(id, messageId, args) {

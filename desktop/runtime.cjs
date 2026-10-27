@@ -476,11 +476,11 @@ async function locate({ root, key }) {
  * 古い版の掃除で壊れるので、NSIS は実行場所の固定 Node と .mjs、Store は App Execution Alias の起動口を指す（core/cli-launcher.mjs の stableCli）。
  * サーバーの env に足す
  */
-function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath, runtimeRoot,
+function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath, runtimeRoot, platform = process.platform,
   store = require('./updates.cjs').isStoreBuild({ pkg: require('../package.json'), windowsStore: process.windowsStore }), env = process.env } = {}) {
   if (store) return { PLEIAD_CLI_EXEC: require('./msix.cjs').stableLauncher({ proc: process, env, store }),
     PLEIAD_CLI_SCRIPT: '', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CLI_STORE: '1' };
-  if (process.platform === 'win32') {
+  if (platform === 'win32') {
     const root = runtimeRoot ?? resolveRuntimeRoot({ installDir: path.dirname(execPath), env }).root;
     const cli = path.join(root, CLI_DIR_NAME);
     return { PLEIAD_CLI_EXEC: path.join(cli, CLI_NODE_FILE), PLEIAD_CLI_SCRIPT: path.join(cli, CLI_ENTRY_FILE), PLEIAD_CLI_ELECTRON: '' };

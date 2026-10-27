@@ -16,6 +16,14 @@ import { holderLink } from '../holder/link.mjs';
 import { KEEP_MS } from '../process.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
 
+const heldProcesses = new Set();
+/** Normal server shutdown must leave held ACP processes for the next server to adopt. */
+export function preserveHeldProcessesForRestart() {
+  for (const proc of heldProcesses) {
+    proc.kill = () => true;
+  }
+}
+
 /** 保持役の子の id の頭。ほかのバックエンドの子（agy・Codex・Claude）と見分ける */
 export const ACP_CHILD_PREFIX = 'acp-';
 
@@ -134,6 +142,8 @@ export function createHeldAcp({ client = null, source = null } = {}) {
         if (!exited) source.client.kill(id, { tree: true });
         return true;
       };
+      heldProcesses.add(proc);
+      proc.once('exit', () => heldProcesses.delete(proc));
       proc.once('exit', () => source.client.off('err', onErr));
       return proc;
     },
