@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
-import { setupHeaderUsage } from '../../web/header-usage.mjs';
+import { setupHeaderUsage, usagePopBounds } from '../../web/header-usage.mjs';
 import { createUsageSource } from '../../web/usage.mjs';
 import { t as tr } from '../../web/i18n.mjs';
 
@@ -22,7 +22,8 @@ export default async function(t) {
   chip.focus = () => { document.activeElement = chip; };
   globalThis.document = {
     hidden: false, documentElement: { clientWidth: 1280 },
-    createElement: tag => new N(tag), createElementNS: (_ns, tag) => new N(tag),
+    createElement: tag => { const node = new N(tag); node.focus = () => { document.activeElement = node; }; return node; },
+    createElementNS: (_ns, tag) => new N(tag),
     addEventListener: (type, fn) => { documentEvents[type] = fn; },
   };
   globalThis.window = { innerHeight: 900, addEventListener: (type, fn) => { if (type === 'pagehide') pagehide.push(fn); } };
@@ -48,14 +49,19 @@ export default async function(t) {
     ui.show({}); unknownChip();
     ui.show({ backend: 'current' }); unknownChip(); open();
     assert.equal(sections().length, 2);
+    assert.equal(pop.querySelector('.usage-other-agents').hasAttribute('open'), false);
+    assert.equal(pop.getAttribute('aria-label'), tr('usage.header.title'));
     assert.match(sections()[0].textContent, /Current/);
     assert.ok(sections()[0].textContent.includes(tr('usage.loading')));
     initial.current.reject(new Error('offline')); await tick();
     unknownChip();
     assert.ok(sections()[0].textContent.includes(tr('usage.header.unavailable')));
+    const summary = pop.querySelector('.usage-other-agents').querySelector('summary');
+    summary.focus();
     assert.ok(!sections()[0].textContent.includes(tr('usage.loading')));
     assert.ok(sections()[1].textContent.includes(tr('usage.loading')));
     initial.other.resolve({ label: 'Other', quota: quota(38) }); await tick();
+    assert.equal(document.activeElement, pop.querySelector('.usage-other-agents').querySelector('summary'));
     unknownChip();
     assert.equal(pop.hidden, false);
     assert.match(sections()[1].textContent, /38%/);
@@ -91,15 +97,21 @@ export default async function(t) {
     documentEvents.click({ composedPath: () => [] }); assert.equal(pop.hidden, true); await tick();
     t.ok('互換の接続先にはサブスクの率を出さず、一覧を開いて Esc・外側で閉じられる', true);
 
+    open(); await tick(); pop.querySelector('.usage-other-agents').querySelector('summary').focus();
     replies.set('current', () => Promise.resolve({ quota: { windows: [], accounts: [
       { label: 'Default', ...quota(63) },
       { label: 'Work', windows: [], needsUsageLogin: true, accountId: 'work' },
     ] } }));
     ui.turnEnded('current'); await tick(); ui.show({ backend: 'current', account: 'work' });
-    unknownChip(); open();
+    unknownChip();
     const authorize = sections()[0].querySelector('button');
     assert.ok(authorize);
-    authorize.onclick();
+    assert.equal(document.activeElement, pop.querySelector('.usage-other-agents').querySelector('summary'));
+    authorize.focus();
+    ui.show({ backend: 'current' });
+    assert.equal(document.activeElement, pop.querySelector('.usage-pop-body'));
+    ui.show({ backend: 'current', account: 'work' });
+    sections()[0].querySelector('button').onclick();
     assert.deepEqual(logins, ['work']); assert.equal(pop.hidden, true);
     await tick();
     ui.show({ backend: 'current' });
@@ -159,17 +171,31 @@ export default async function(t) {
     assert.ok(chip.getAttribute('aria-label').includes(tr('usage.header.windowRefreshing', { window: '5h' })));
     updating.reject(new Error('offline')); await tick();
     assert.equal(pop.getAttribute('aria-busy'), 'false');
-    assert.equal(pop.querySelector('.rf').disabled, false);
+    assert.equal(pop.querySelector('.rf').getAttribute('aria-disabled'), 'false');
     assert.equal(pop.querySelector('.usage-refresh-icon'), null);
     assert.ok(sections()[0].textContent.includes(tr('usage.refreshFailed')));
     assert.equal(sections()[0].querySelectorAll('.usage-note').length, 0, '失敗理由を重ねて出さない');
     assert.match(chip.textContent, /27%/);
     const fresh = deferred(); replies.set('current', () => fresh.promise);
+    const refreshButton = pop.querySelector('.rf');
+    document.activeElement = refreshButton;
+    pop.querySelector('.usage-other-agents').open = true;
+    pop.querySelector('.usage-pop-body').scrollTop = 45;
     pop.querySelector('.rf').onclick(); await tick();
     assert.ok(sections()[0].textContent.includes(tr('usage.refreshing')));
     fresh.resolve({ label: 'Current', quota: { windows: [quota(4).windows[0], weekly] }, held: [] }); await tick();
     assert.equal(sections()[0].querySelector('.v').textContent, '4%');
     assert.equal(pop.getAttribute('aria-busy'), 'false'); assert.match(chip.textContent, /27%/);
+    assert.equal(pop.querySelector('.rf'), refreshButton);
+    assert.equal(document.activeElement, refreshButton);
+    assert.equal(pop.querySelector('.usage-other-agents').hasAttribute('open'), true);
+    assert.equal(pop.querySelector('.usage-pop-body').scrollTop, 45);
+    const meter = sections()[0].querySelector('.usage-bar');
+    assert.equal(meter.getAttribute('role'), 'meter');
+    assert.equal(meter.getAttribute('aria-valuenow'), '4');
+    assert.ok(meter.getAttribute('aria-description'));
+    assert.equal(sections()[0].querySelector('.v').getAttribute('aria-hidden'), 'true');
+    t.ok('更新中も更新ボタンとフォーカス・展開・本文のスクロールを保ち、枠の率を一度だけ読み上げる', true);
     replies.set('current', () => Promise.resolve(staleResult));
     ui.turnEnded('current'); await tick();
     assert.ok(sections()[0].textContent.includes(tr('usage.retryWait')));
@@ -210,6 +236,16 @@ export default async function(t) {
     assert.match(chip.textContent, /6%/); assert.ok(chip.classList.contains('dim'));
     assert.ok(chip.getAttribute('aria-label').includes(tr('usage.connection.failed')));
     t.ok('Go default resolves provider; current connection leads, others fold, states and stale chip stay distinct', true);
+
+    const view = { left: 0, top: 0, right: 1280, bottom: 900 };
+    assert.deepEqual(usagePopBounds({ left: 648, top: 780 }, { left: 292, right: 806, top: 0 }, view),
+      { left: 458, width: 340, bottom: 774, maxHeight: 560 });
+    assert.deepEqual(usagePopBounds({ left: 648, top: 235 }, { left: 292, right: 652, top: 0 }, { ...view, bottom: 360 }, 32),
+      { left: 304, width: 340, bottom: 229, maxHeight: 189 });
+    assert.deepEqual(usagePopBounds({ left: 400, top: 200 }, { left: 292, right: 580, top: 40 }, view),
+      { left: 300, width: 272, bottom: 194, maxHeight: 146 });
+    assert.equal(usagePopBounds({ left: 400, top: 300 }, { left: 292, right: 806, top: 0 }, { ...view, top: 100, bottom: 450 }).maxHeight, 186);
+    t.ok('会話列・上端の帯・表示ビューポートの内側に幅と高さを収める', true);
   } finally {
     for (const stop of pagehide) stop();
     globalThis.document = globals.document;
