@@ -47,6 +47,7 @@ export function installRestartFromEnv(env = process.env) {
 export function uninstallRestartMode() {
   const controller = globalThis[KEY];
   delete globalThis[KEY];
+  controller?.dispose();
   return controller;
 }
 
@@ -69,10 +70,13 @@ class RestartController {
     this.restarts = 0;
     this.triggered = false;
     this.errors = [];
+    this.disposed = false;
+    this.timers = new Set();
     if (String(trigger).startsWith('ms:')) {
       const ms = Number(String(trigger).slice(3));
       if (Number.isFinite(ms) && ms >= 0) {
-        const timer = setTimeout(() => { void this.restart().catch(error => this.#fail(error)); }, ms);
+        const timer = setTimeout(() => { this.timers.delete(timer); void this.restart().catch(error => this.#fail(error)); }, ms);
+        this.timers.add(timer);
         timer.unref?.();
       }
     }
@@ -180,6 +184,15 @@ class RestartController {
   }
 
   removeClient(client) { this.clients.delete(client); }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const timer of this.timers) clearTimeout(timer);
+    this.timers.clear();
+    for (const client of this.clients) client.dispose();
+    this.clients.clear();
+  }
 }
 
 /**
@@ -197,6 +210,7 @@ class RestartClient {
     this.inner = null;
     this.connecting = null;
     this.closed = false;
+    this.disposed = false;
     this.inflight = 0;      // 飛んでいる cmd（起こし直す前に 0 になるのを少し待つ）
     const self = this;
     this.api = {
@@ -241,6 +255,7 @@ class RestartClient {
     for (const watcher of [...this.watchers]) {
       if (!watcher.pred(event)) continue;
       this.watchers.delete(watcher);
+      clearTimeout(watcher.timer);
       watcher.res(event);
     }
     this.controller.noteEvent(event);
@@ -263,11 +278,12 @@ class RestartClient {
     const hit = this.events.slice(from).find(pred);
     if (hit) return Promise.resolve(hit);
     return new Promise((res, rej) => {
-      const watcher = { pred, res };
+      const watcher = { pred, res, rej, timer: null };
       this.watchers.add(watcher);
-      setTimeout(() => {
+      watcher.timer = setTimeout(() => {
         if (this.watchers.delete(watcher)) rej(new Error(`waitFor が ${ms}ms で timeout`));
-      }, ms).unref?.();
+      }, ms);
+      watcher.timer.unref?.();
     });
   }
 
@@ -303,13 +319,28 @@ class RestartClient {
 
   close() {
     this.closed = true;
+    for (const watcher of this.watchers) { clearTimeout(watcher.timer); watcher.res(undefined); }
+    this.watchers.clear();
     this.controller.removeClient(this);
     try { this.inner?.close(); } catch { /* 既に閉じている */ }
   }
 
   terminate() {
     this.closed = true;
+    for (const watcher of this.watchers) { clearTimeout(watcher.timer); watcher.res(undefined); }
+    this.watchers.clear();
     this.controller.removeClient(this);
     try { this.inner?.terminate(); } catch { /* 既に切れている */ }
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const watcher of this.watchers) {
+      clearTimeout(watcher.timer);
+      watcher.res(undefined);
+    }
+    this.watchers.clear();
+    this.close();
   }
 }

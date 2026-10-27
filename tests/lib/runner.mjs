@@ -23,6 +23,7 @@ import path from "node:path";
 import { fork, spawnSync } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { Suite, runCase, summarize, pick } from "./harness.mjs";
+import { uninstallRestartMode } from "./restart.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
 import { reapOwned, killTagged, WORKER_TAG_ENV } from "./process-reap.mjs";
@@ -50,6 +51,7 @@ export function createGuardedRunner({ root, parallel = false }) {
     async prime() { seen = await snapshotPleiadWorktrees(root); },
     async run(mod, expectedName) {
       const suite = await runCase(mod);
+      uninstallRestartMode();
       if (expectedName && mod.name !== expectedName) suite.ok("登録した名前と export const name が一致する", false, `登録 ${expectedName} / 実際 ${mod.name}`);
       const now = await snapshotPleiadWorktrees(root);
       const leaked = leakedWorktrees(seen, now);
