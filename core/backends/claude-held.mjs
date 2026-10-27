@@ -22,10 +22,11 @@ import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
 
 const heldProcesses = new Set();
-/** Normal server shutdown must leave held CLI processes for the next server to adopt. */
+/** Claude SDK の終了時処理に保持役の CLI を止めさせない。 */
 export function preserveHeldProcessesForRestart() {
   for (const proc of heldProcesses) {
-    proc.kill = () => true;
+    // SDK の ChildProcessTracker.killAll は killed が false の子を終了時に止める。
+    proc.killed = true;
   }
 }
 

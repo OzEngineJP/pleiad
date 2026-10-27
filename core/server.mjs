@@ -6288,8 +6288,7 @@ const outbox = createMessageQueue({
         if (confirms) {
           turn.pendingSteers.add(item.id);
         }
-        // ACP calls this after writing the request to the held child. Persist the label after
-        // that write so recovery never mistakes an unsent input for one already held by the child.
+        // ACP は保持役の子へ要求を書いた直後に呼ぶ。送信済みの札を残し、再起動後の二重送信を防ぐ。
         turn.control.persistSteer = confirms && turn.control.holder ? () => writeTurnCard(turn) : null;
         try {
           const accepted = await steer(item);

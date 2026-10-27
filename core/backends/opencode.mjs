@@ -807,9 +807,16 @@ export const backend = {
         if (signal?.signal?.aborted) return false;
         const said = String(item?.args?.prompt ?? '');
         const nativeId=nativeMessageId(item?.id ?? crypto.randomUUID(),relayAccount);
-        steers.push({id:item?.id ?? null,nativeId});
-        control.touch?.();
-        await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory, signal:signal?.signal, body: { id:nativeId, ...(currentModel() ? { model: currentModel() } : {}), parts: [{ type: 'text', text: said }] } });
+        const steer = {id:item?.id ?? null,nativeId};
+        steers.push(steer);
+        try {
+          await srv.request('POST', `/session/${sessionId}/prompt_async`, { directory, signal:signal?.signal, body: { id:nativeId, ...(currentModel() ? { model: currentModel() } : {}), parts: [{ type: 'text', text: said }] } });
+        } catch (error) {
+          const index = steers.indexOf(steer);
+          if (index >= 0) steers.splice(index, 1);
+          throw error;
+        }
+        control.persistSteer?.() ?? control.touch?.();
         await srv.resync({snapshot:false});
         return true;
       };
