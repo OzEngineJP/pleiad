@@ -52,12 +52,15 @@ export default async function (t) {
     for (let i = 0; i < 30; i++) {
       const { client } = await holder.connect();
       const children = client.welcome?.children ?? [];
-      if (!children.length) return;
+      let alive = false;
       for (const child of children) {
         if (!child.alive) { client.release(child.id); continue; }
+        alive = true;
         await client.attach(child.id).catch(() => null);
         client.kill(child.id, { tree: true });
       }
+      client.close();
+      if (!alive) return;
       await sleep(150);
     }
     throw new Error('connection child did not go away');

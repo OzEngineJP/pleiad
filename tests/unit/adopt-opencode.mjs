@@ -19,6 +19,7 @@ import { open, sleep } from '../lib/ws-client.mjs';
 import { readSessions, readUsage } from '../lib/data-store.mjs';
 import { createFakeGates } from '../lib/fake-gate.mjs';
 import { ensureHolder, connectHolder } from '../../core/holder/client.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
@@ -266,6 +267,7 @@ export default async function (t) {
       probe?.close();
       await until(() => !alive(holderPid), 10_000, '保持役が終わる').catch(() => { try { process.kill(holderPid); } catch { /* 既に終わっている */ } });
     }
+    await cleanupTestHolder(dataDir, root);
     for (const pid of await starts()) if (alive(pid)) { await until(() => !alive(pid), 5_000, `身代わりの OpenCode（${pid}）が終わる`).catch(() => { try { process.kill(pid); } catch { /* 既に終わっている */ } }); }
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }

@@ -5,6 +5,7 @@ import WebSocket from 'ws';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 export const name = 'server-chrome-screencast';
 export const title = 'Chrome の窓の映像（サーバー越し）: chromeWindow イベントがホストの画面にもリモートの端末にも届く・接続の直後に今の分・hostCapabilities.chromeWindow・source: chrome の映像と view-only（偽の Chrome・parentPort の身代わり。ADR 0148 第 5 段）';
@@ -163,6 +164,7 @@ export default async function (t) {
   } finally {
     a?.close(); remote?.close(); late?.close(); c?.close();
     await server.stop();
+    await cleanupTestHolder(dataDir);
     await chrome.stop();
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
   }

@@ -16,6 +16,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open as openHost } from '../lib/ws-client.mjs';
 import fs from 'node:fs/promises';
 import { backend as codex } from '../../core/backends/codex.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 export const name = 'chrome-relay';
 export const title = 'Chrome の絞り込みの中継: 会話の窓の範囲・断る／真似る一覧・sessionId の持ち主・サイトの利用の確認（Fetch・window.open の後追い）・止める・鍵・agent-browser の本物の通し（偽の Chrome。ADR 0148・0153）';
@@ -664,7 +665,7 @@ export default async function (t) {
       t.ok('鍵の文字列はサーバーのログに出ない', !server.tail(200).includes(config.cdp.split('/').pop()));
       t.ok('会話の id が決まった後のターンも同じ設定ファイル・同じ端点（中継の rebind）', second.sessionId === turn.sessionId && after?.cdp === config.cdp && configsAfter.length === 1 && configsAfter[0] === configs[0], JSON.stringify({ configsAfter, after }));
     } finally {
-      a?.close(); c?.close?.(); await server.stop(); await chrome.stop();
+      a?.close(); c?.close?.(); await server.stop(); await cleanupTestHolder(dataDir); await chrome.stop();
       if (configDir) await rm(browserSocketDirectory(configDir), { recursive: true, force: true }).catch(() => {});
       await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }

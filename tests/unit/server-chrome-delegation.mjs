@@ -6,6 +6,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { readSessions } from '../lib/data-store.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 export const name = 'server-chrome-delegation';
 export const title = '委譲の子の Chrome: プロフィール・親の操作待ち・窓一覧・親から閉じる（偽の Chrome と fake の子）';
@@ -89,6 +90,6 @@ export default async function (t) {
     assert(outsider.some(event => event.type === 'tool.result' && event.isError));
     t.ok('親の close_browser_window({ task }) は自分の子だけ閉じ、別の会話からは断る', true);
   } finally {
-    c.close(); await server.stop(); await chrome.stop(); await fs.rm(scratch, { recursive: true, force: true });
+    c.close(); await server.stop(); await cleanupTestHolder(dataDir); await chrome.stop(); await fs.rm(scratch, { recursive: true, force: true });
   }
 }

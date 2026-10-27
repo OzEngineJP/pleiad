@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,14 @@ async function until(check, label) {
     if (Date.now() > end) throw new Error(`timeout: ${label}`);
     await sleep(30);
   }
+}
+
+function holderCommandLine(pid) {
+  if (process.platform !== 'win32' || !Number.isInteger(pid) || pid <= 0) return '';
+  const script = `$p=Get-CimInstance Win32_Process -Filter \"ProcessId = ${pid}\"; if($p){[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($p.CommandLine))}`;
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+  if (result.status !== 0) throw new Error(`could not check holder process ${pid}: ${result.stderr || result.error || result.status}`);
+  return result.stdout.trim() ? Buffer.from(result.stdout.trim(), 'base64').toString('utf8') : '';
 }
 
 export default async function (t) {
@@ -114,17 +123,36 @@ export default async function (t) {
     } finally {
       const errors = [];
       const cleanup = async fn => { try { await fn(); } catch (error) { errors.push(error); } };
+      let stopped = !holderPid;
       ca?.close(); cb?.close(); try { link?.kill(); nextLink?.kill(); } catch { /* already closed */ }
       await cleanup(() => b?.stop()); await cleanup(() => a?.stop());
       await cleanup(async () => {
         const holder = await connectHolder({ dataDir, root }).catch(error => { if (error.code === 'HOLDER_NONE') return null; throw error; });
         if (holder) {
           for (const child of holder.welcome.children ?? []) if (child.pid && child.alive) holderChildPids.add(child.pid);
-          holder.shutdown(); holder.close();
+          if (!holder.shutdown()) throw new Error('holder shutdown could not be sent');
+          await until(() => holder.byeReason === 'closing', 'holder acknowledged shutdown');
+          await until(() => { try { process.kill(holderPid, 0); return false; } catch { return true; } }, 'holder shutdown');
+          await sleep(250);
+          const commandLine = holderCommandLine(holderPid);
+          if (commandLine) {
+            if (!commandLine.toLowerCase().includes('core\\holder\\main.mjs')) throw new Error(`holder pid ${holderPid} was reused by another process`);
+            const killed = spawnSync('taskkill.exe', ['/PID', String(holderPid), '/T', '/F'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+            if (killed.status !== 0) throw new Error(`could not finish holder process tree ${holderPid}: ${killed.stderr || killed.error || killed.status}`);
+            await until(() => holderCommandLine(holderPid) === '', 'holder process tree cleanup');
+          }
+          try {
+            process.kill(holderPid, 0);
+            process.kill(holderPid, 'SIGKILL');
+            await until(() => { try { process.kill(holderPid, 0); return false; } catch { return true; } }, 'holder process tree cleanup');
+          } catch (error) {
+            if (error.code !== 'ESRCH') throw error;
+          }
+          holder.close();
+          stopped = true;
         }
       });
-      let stopped = !holderPid;
-      if (holderPid) await cleanup(async () => { await until(() => { try { process.kill(holderPid, 0); return false; } catch { return true; } }, 'holder exit'); stopped = true; });
+      if (holderPid && !stopped) await cleanup(async () => { await until(() => { try { process.kill(holderPid, 0); return false; } catch { return true; } }, 'holder exit'); stopped = true; });
       for (const pid of holderChildPids) await cleanup(async () => {
         try { await until(() => { try { process.kill(pid, 0); return false; } catch { return true; } }, `held child ${pid} exit`); }
         catch (error) {

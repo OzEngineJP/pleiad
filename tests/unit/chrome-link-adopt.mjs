@@ -126,6 +126,26 @@ const serverExit = async link => { await link.flush(); link.socket.destroy(); aw
     }
   } finally {
     for (const fn of cleanups) { try { await fn(); } catch { /* 片付け */ } }
-    for (const h of holders) { try { await h.stop(); } catch { /* 片付け */ } }
+    for (const h of holders) {
+      try {
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const { client } = await h.connect();
+          const children = client.welcome?.children ?? [];
+          if (!children.some(child => child.alive)) {
+            for (const child of children) client.release(child.id);
+            client.close();
+            break;
+          }
+          for (const child of children) {
+            if (child.alive) client.kill(child.id, { tree: true });
+            else client.release(child.id);
+          }
+          client.close();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          if (attempt === 39) throw new Error('connection children remained after kill');
+        }
+      } catch { /* 片付け */ }
+      try { await h.stop(); } catch { /* 片付け */ }
+    }
   }
 }

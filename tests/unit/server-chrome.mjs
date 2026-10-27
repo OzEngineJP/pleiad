@@ -6,6 +6,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { registry } from '../../core/ops/index.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 export const name = 'server-chrome';
 export const title = 'Chrome への接続（サーバー越し）: browser.chrome* の操作・chromeBrowser イベントはホストの画面だけ・使えない OS / Electron の無いホスト（偽の Chrome・parentPort の身代わり。ADR 0148・0153）';
@@ -97,6 +98,7 @@ export default async function (t) {
     remote?.terminate();
     c?.close();
     await server.stop();
+    await cleanupTestHolder(dirs('data'));
   }
 
   // ---- OS の層が使えない OS（main が chrome-os-ready { supported: false } を返す）
@@ -111,7 +113,7 @@ export default async function (t) {
       t.ok('chromeConnect は「この OS ではまだ使えません」で断る（UNSUPPORTED。upgrade は投げない）', connect?.code === 'UNSUPPORTED' && /まだ使えません/.test(connect.message) && chrome.upgrades === 1, JSON.stringify(connect));
       t.ok('状態の便りも unsupported', states(u).at(-1) === 'unsupported', states(u).join());
       t.ok('使えない OS のターンには、ブラウザーの環境変数・指示・ply_browser を渡さない', await said(u, 'browser-instructions') === '(none)' && await said(u, 'browser:{"name":"hand_to_user","arguments":{}}') === 'browser: unavailable');
-    } finally { u?.close(); await s.stop(); }
+    } finally { u?.close(); await s.stop(); await cleanupTestHolder(dirs('data2')); }
   }
 
   // ---- Electron の無いホスト（parentPort が無い。npm start）
@@ -126,7 +128,7 @@ export default async function (t) {
       t.ok('chromeConnect は UNSUPPORTED で断る', connect?.code === 'UNSUPPORTED', JSON.stringify(connect));
       t.ok('chromeStatus は unsupported', (await p.cmd('chromeStatus')).state === 'unsupported');
       t.ok('Electron の無いホストのターンにも、ブラウザーの環境変数・指示・ply_browser を渡さない', await said(p, 'browser-instructions') === '(none)' && await said(p, 'browser:{"name":"hand_to_user","arguments":{}}') === 'browser: unavailable');
-    } finally { p?.close(); await s.stop(); }
+    } finally { p?.close(); await s.stop(); await cleanupTestHolder(dirs('data3')); }
   }
 
   // ---- エージェントの Chrome の窓の止める・引き継ぐ・戻す（chromeTakeOver・chromeResume・chromeStop。Chrome の中継があるデスクトップ版）
@@ -211,7 +213,7 @@ export default async function (t) {
       t.ok('会話を消すと開き直した窓も閉じ、閉じた行を新しく残さない', deleted === 'deleted'
         && !chrome.browser.targets().some(tab => tab.targetId === reopened.targetId)
         && u.events.filter(e => e.type === 'present' && e.sessionId === turn.sessionId && e.kind === 'chromeClosed').length === closedLines);
-    } finally { v?.terminate(); u?.close(); await s.stop(); }
+    } finally { v?.terminate(); u?.close(); await s.stop(); await cleanupTestHolder(dirs('data4')); }
   }
 
   // ---- 中継が無い（Electron の無いホスト）→ 操作は UNSUPPORTED、便りは出ない
@@ -225,7 +227,7 @@ export default async function (t) {
       t.ok('中継が無ければ chromeTakeOver は UNSUPPORTED', take?.code === 'UNSUPPORTED', JSON.stringify(take));
       await u.runTurn({ backend: 'fake', cwd: ROOT, prompt: 'ok' });
       t.ok('chromeControl の便りは出さない', !u.events.some(e => e.type === 'chromeControl'));
-    } finally { u?.close(); await s.stop(); }
+    } finally { u?.close(); await s.stop(); await cleanupTestHolder(dirs('data5')); }
   }
 
   await chrome.stop();

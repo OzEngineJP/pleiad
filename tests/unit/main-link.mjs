@@ -15,6 +15,7 @@ import { createMainPort, getMainPort, setMainPortSource } from '../../core/main-
 import { writeControlFile, controlFilePath } from '../../core/control-file.mjs';
 import { parentPortCipher } from '../../core/secret-store.mjs';
 import { startServer } from '../lib/server.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
@@ -446,6 +447,7 @@ export default async function (t) {
       t.ok('サーバー（on）: kill（shutdown）でサーバーが終わり、control.json・main-link.json を消す', !fs.existsSync(controlFilePath(dataDir)) && !fs.existsSync(linkFilePath(dataDir)));
     } finally {
       await server.stop();
+      await cleanupTestHolder(dataDir);
       fs.rmSync(dataDir, { recursive: true, force: true });
     }
   }
