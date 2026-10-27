@@ -89,15 +89,33 @@ export default async function (t) {
     t.ok('Codex の専用 app-server: 止めた後の続きが届き、記録の再生で二重にならない',
       String(result.text).includes('built') && tail.filter(event => event.type === 'text.delta' && event.text === 'end codex-dedicated').length === 1,
       JSON.stringify(tail.map(event => [event.type, event.text])));
+
+    // 途中送信を受け付けた直後に止める。Codex は turn/steer の応答と、userMessage の通知が別なので両方の境目を守る。
+    {
+      const steerFrom = c.mark();
+      const steering = c.runTurn({ backend: 'codex', cwd: work, prompt: 'slow:codex-steer-across-restart', mode: 'auto' }, { ms: WAIT_MS });
+      const started = await c.waitFor(event => event.type === 'session' && event.first === true, { ms: WAIT_MS, from: steerFrom });
+      const steerSession = started.sessionId;
+      await until(async () => (await c.cmd('running')).turns.find(row => row.sessionId === steerSession)?.held ? true : null, WAIT_MS, 'Codex の steer 用ターンが保持役に載る');
+      await c.cmd('sendMessage', { sessionId: steerSession, messageId: 'restart-codex-steer-0001', prompt: 'codex-steer-across-restart' });
+      server = await controller.restart();
+      assert.equal(controller.restarts, 2);
+      const delivered = await c.waitFor(event => event.type === 'userMessage' && event.messageId === 'restart-codex-steer-0001', { ms: WAIT_MS, from: steerFrom });
+      const matching = c.since(steerFrom).filter(event => event.type === 'userMessage' && event.messageId === 'restart-codex-steer-0001');
+      t.ok('Codex の途中送信: 送信の受理直後に止めても、新サーバーで同じ発言が一度だけ届く',
+        delivered?.messageId === 'restart-codex-steer-0001' && matching.length === 1, JSON.stringify(matching));
+      // Codex の fake は steer を記録した後もターンの終了通知を返さないため、終了待ちはしない。
+      void steering;
+    }
     assert.ok(!server.tail(400).includes('[unhandledRejection]'), server.tail(30));
     assert.deepEqual(controller.errors, [], '起こし直しの間に、仕掛けの中の失敗が無い');
 
-    // 後片付けの前に、保持役に残っている子の pid を控える。終わったターンの専用の子は残っていない
+    // 後片付けの前に、保持役に残っている子の pid を控える。steer 後のターンはまだ進行中なので app-server は保持される
     {
       const probe = await connectHolder({ dataDir, root });
       for (const child of probe.welcome.children) if (child.pid) childPids.add(child.pid);
-      assert.deepEqual(probe.welcome.children.filter(child => String(child.id).startsWith('codex-turn-')).map(child => child.id), [],
-        '終わったターンの専用 app-server は保持役に残っていない');
+      assert.equal(probe.welcome.children.filter(child => String(child.id).startsWith('codex-turn-')).length, 1,
+        'steer を受けた進行中ターンの専用 app-server は保持役に残る');
       probe.close();
     }
   } finally {

@@ -44,7 +44,7 @@ function fake({ job = { mode: 'detached', reason: 'test' }, located = OLD, prepa
     link, getReady: () => LAST, prepared: Promise.resolve(prepared), root: 'R', dataDir: 'D', resourcesPath: 'C:\\inst\\resources', execPath: 'C:\\inst\\Ply.exe', systemLocale: 'ja-JP', cwd: 'C:\\home', env: { Path: 'x' },
     log: line => calls.logs.push(line), boot: bootFake,
     job: () => ({ inspectJob: () => ({}), decideLaunch: () => job }),
-    runtimeLib: () => ({ locate: async options => { calls.located.push(options); return located; }, stableCliEnv: () => ({ PLEIAD_CLI_EXEC: 'C:\\inst\\Ply.exe' }) }),
+    runtimeLib: () => ({ locate: async options => { calls.located.push(options); return located; }, activateCli: async options => { calls.activated = options; }, stableCliEnv: () => ({ PLEIAD_CLI_EXEC: 'C:\\inst\\Ply.exe' }) }),
     waitForReady: () => { calls.waited++; const promise = readyError ? Promise.reject(readyError) : Promise.resolve(ready); promise.catch(() => {}); return { promise, cancel: () => { calls.cancelled = true; } }; },
     alive: () => alive, afterRestart, ...rest,
   });
@@ -183,7 +183,7 @@ export default async function (t) {
       const restarter = createServerRestarter({ link, getReady: () => messages.filter(m => m.type === 'ready').at(-1), prepared: Promise.resolve({ root, key: 'test-1.0.0', appDir: ROOT, nodeExe: process.execPath, agentBrowserDir: null }),
         root, dataDir, resourcesPath: ROOT, execPath: process.execPath, cwd: ROOT, env: baseEnv,
         job: () => ({ inspectJob: () => ({}), decideLaunch: () => ({ mode: 'detached', reason: 'test' }) }),
-        runtimeLib: () => ({ locate: async () => null, stableCliEnv: () => ({}) }) });
+        runtimeLib: () => ({ locate: async () => null, stableCliEnv: () => ({}), activateCli: async () => {} }) });
       const result = await restarter.restart();
       if (result.ready?.pid) pids.push(result.ready.pid);
       t.ok('本物: 起こし直すと同じトークン・同じポートで立ち、別のプロセス（古い control.json・main-link.json は新しいものに替わる）', result.ok === true && result.ready.token === ready1.token && result.ready.port === ready1.port

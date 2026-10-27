@@ -286,7 +286,7 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
 
   async function start(runtime, mode) {
     const env2 = boot.serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: boot.serverLogFile(runtime.root),
-      port: ready.port, token: ready.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath }) });
+      port: ready.port, token: ready.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath, runtimeRoot: runtime.root }) });
     let launched = null;
     const next = waitForReady(link, readyTimeoutMs);
     try {
@@ -294,6 +294,7 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
         launch: async () => (launched = await boot.launchServer({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: env2 })) });
       rearm();
       const started = await next.promise;
+      await runtimeLib().activateCli({ root: runtime.root, key: runtime.key });
       // 切り替えをやり直すとき（前の版で動いている）の古いサーバーは、今起こしたもの
       Object.assign(ready, { port: started.port, token: started.token, pid: started.pid, runtimeKey: started.runtimeKey });
       return started;

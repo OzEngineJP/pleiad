@@ -11,6 +11,7 @@ import { startServer, ROOT } from '../lib/server.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { installFakeClaude } from '../lib/fake-claude.mjs';
 import { startFakeAnthropicApi } from '../lib/fake-anthropic-api.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 export const name = 'server-delegate-account';
 export const title = '依頼元の AI が ply_delegate・ply_task_send の account で子の Claude のアカウントを選ぶ';
@@ -138,5 +139,7 @@ export default async function (t) {
     c.close();
     await server.stop();
     await api.close?.();
+    await cleanupTestHolder(scratch);
+    await fs.rm(scratch, { recursive: true, force: true });
   }
 }

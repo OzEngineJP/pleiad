@@ -3,9 +3,8 @@
 // - 起動口は bin/ の pleiad.cmd（Windows）と pleiad（シェルスクリプト）。デスクトップ版では resources/app/bin に入り、
 //   Ply.exe（mac は Pleiad.app の MacOS/Pleiad）の内蔵 Node で bin/pleiad.mjs を走らせる。リポジトリでは node で走らせる
 // - サーバーは起動時に bin/ を自分の PATH の先頭に足す。会話のシェル（Claude・Codex・Antigravity のプロセスと `!` の行）はそれを継ぐ
-// - 外の AI の MCP の設定は、起動口ではなく実行ファイルと bin/pleiad.mjs を直に指す（Windows の .cmd はシェル無しでは起動できないため）
-// - サーバーが版ごとの実行場所（desktop/runtime.cjs。パスが版ごとに変わり、古い版は掃除で消える）で走るときは、外の AI に貼る設定を
-//   版に依らない起動口（NSIS は $INSTDIR、Store は App Execution Alias）に向ける。main が env（PLEIAD_CLI_*）で渡す（stableCli）
+// - 外の AI の MCP 設定は実行場所の外にある固定の Node 実行ファイルと起動スクリプトを指す
+// - サーバーが版ごとの実行場所で走るときは、NSIS は置き場直下の固定起動口、Store は App Execution Alias を使う
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,8 +34,8 @@ const quoteArg = (s) => (/^[A-Za-z0-9_\-./:=@]+$/.test(s) ? s : `"${s}"`);
 
 /**
  * 版に依らない pleiad CLI の起動口。実行場所で走るサーバーに main が env で渡す（desktop/runtime.cjs の stableCliEnv）。無ければ null:
- *   PLEIAD_CLI_EXEC      実行ファイル（$INSTDIR の Ply.exe）
- *   PLEIAD_CLI_SCRIPT    bin/pleiad.mjs（$INSTDIR の resources/app/bin）
+ *   PLEIAD_CLI_EXEC      実行ファイル（Windows は runtime の外にある Node）
+ *   PLEIAD_CLI_SCRIPT    固定の起動用 .mjs（版ごとの runtime の外）
  *   PLEIAD_CLI_ELECTRON  1 なら EXEC は Electron の内蔵 Node（ELECTRON_RUN_AS_NODE=1 を付ける）
  *   PLEIAD_CLI_STORE     1 なら SCRIPT を起動時に現在のパッケージから探す
  */

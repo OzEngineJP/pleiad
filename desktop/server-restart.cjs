@@ -36,13 +36,15 @@ function createServerRestarter({ link, getReady, prepared, root, dataDir, resour
     if (!runtime) throw new Error('the runtime location is not available');
     log(`restarting the server (${same ? `version ${last.runtimeKey}` : 'this version'}, port ${last.port ?? '?'})`);
     const env2 = boot.serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: boot.serverLogFile(runtime.root),
-      port: last.port, token: last.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath }) });
+      port: last.port, token: last.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath, runtimeRoot: runtime.root }) });
     let launched = null;
     const next = waitForReady(link, readyTimeoutMs ?? boot.START_TIMEOUT_MS);
     try {
       await boot.startAndConnect({ link, dataDir, logFile: boot.serverLogFile(runtime.root), log,
         launch: async () => (launched = await boot.launchServer({ mode: decision.mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: env2 })) });
-      return await next.promise;
+      const started = await next.promise;
+      await runtimeLib().activateCli({ root: runtime.root, key: runtime.key });
+      return started;
     } catch (error) {
       next.cancel();
       // 立ちかけたサーバーがデータ置き場を持ったままだと、次の試みが起こせない。自分が起こしたものだけを止める

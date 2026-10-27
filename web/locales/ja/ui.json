@@ -132,6 +132,7 @@
       "releaseNotes": "リリースノート",
       "docs": "使い方の文書",
       "mcpTitle": "外の AI から Pleiad を使う",
+      "mcpMigration": "以前に登録した設定は、ここからコピーした新しい設定に置き換えてください。古い設定はインストール先の実行ファイルを使うため、更新を妨げることがあります。",
       "copyMcpJson": "MCP の設定をコピー",
       "copyMcpClaude": "claude mcp add をコピー",
       "copied": "コピーしました",

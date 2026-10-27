@@ -6,7 +6,8 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { CLI_DIR, CLI_SCRIPT, STORE_CLI_ENTRY, addCliToPath, mcpSetup, pathKey, prependPath, stableCli } from '../../core/cli-launcher.mjs';
 import { agentDefinition } from '../../core/backends/antigravity-context.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
@@ -14,6 +15,9 @@ import { open } from '../lib/ws-client.mjs';
 
 export const name = 'cli-launcher';
 export const title = 'pleiad CLI の起動口: 会話のシェルの PATH・外の AI の MCP の設定・同梱';
+
+const require = createRequire(import.meta.url);
+const runtime = require('../../desktop/runtime.cjs');
 
 export default async function (t) {
   // ---- PATH
@@ -46,12 +50,50 @@ export default async function (t) {
 
   // ---- 実行場所で走るサーバー（無停止の更新 1-3）: 外の AI に貼る設定は版に依らない起動口を指す
   t.ok('stableCli: env が無ければ null（npm start・今のデスクトップ版は変わらない）', stableCli({}) === null && stableCli({ PLEIAD_CLI_EXEC: 'x' }) === null);
-  const stableEnv = { PLEIAD_CLI_EXEC: 'C:/Users/me/AppData/Local/Programs/Pleiad/Ply.exe', PLEIAD_CLI_SCRIPT: 'C:/Users/me/AppData/Local/Programs/Pleiad/resources/app/bin/pleiad.mjs', PLEIAD_CLI_ELECTRON: '1' };
+  const stableEnv = { PLEIAD_CLI_EXEC: 'C:/Users/me/AppData/Local/agent-host-runtime/cli/pleiad-node.exe', PLEIAD_CLI_SCRIPT: 'C:/Users/me/AppData/Local/agent-host-runtime/cli/pleiad-cli.mjs', PLEIAD_CLI_ELECTRON: '' };
   const stable = mcpSetup({ stable: stableCli(stableEnv), dataDir: path.join(home, '.agent-host'), home });
-  t.ok('実行場所のサーバー: 貼る設定は $INSTDIR の Ply.exe と resources/app/bin/pleiad.mjs・ELECTRON_RUN_AS_NODE（実行場所の版ごとのパスを含まない）',
-    stable.command === stableEnv.PLEIAD_CLI_EXEC && stable.args[0] === stableEnv.PLEIAD_CLI_SCRIPT && JSON.stringify(stable.env) === '{"ELECTRON_RUN_AS_NODE":"1"}' && !/agent-host-runtime|pleiad-node/.test(stable.json), stable.json);
-  const stableNode = mcpSetup({ stable: stableCli({ ...stableEnv, PLEIAD_CLI_ELECTRON: '' }), dataDir: path.join(home, '.agent-host'), home });
-  t.ok('実行場所のサーバー: 起動口が素の Node なら ELECTRON_RUN_AS_NODE は付けない', !('env' in JSON.parse(stableNode.json).mcpServers.pleiad));
+  const stableEntry = JSON.parse(stable.json).mcpServers.pleiad;
+  t.ok('NSIS 版: MCP 設定はインストール先の外にある Node と固定 .mjs を直接指す',
+    stable.command === stableEnv.PLEIAD_CLI_EXEC && JSON.stringify(stable.args) === JSON.stringify([stableEnv.PLEIAD_CLI_SCRIPT, 'mcp'])
+      && !('env' in stableEntry) && !stableEnv.PLEIAD_CLI_SCRIPT.includes('Programs/Pleiad') && stable.claude.includes(stableEnv.PLEIAD_CLI_SCRIPT), stable.json);
+
+  // ---- 固定起動口を child_process.spawn(shell:false) で本当に動かす。空白を含む一時パスを使う。
+  const fixedRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad fixed cli ')));
+  try {
+    const cliDir = path.join(fixedRoot, 'cli');
+    const fixedNode = path.join(cliDir, runtime.CLI_NODE_FILE);
+    const fixedScript = path.join(cliDir, runtime.CLI_ENTRY_FILE);
+    await fs.mkdir(cliDir, { recursive: true });
+    await fs.copyFile(process.execPath, fixedNode);
+    await fs.writeFile(fixedScript, runtime.CLI_LAUNCHER);
+    const fakeNode = path.join(fixedRoot, 'node', 'fixture-node', runtime.CLI_NODE_FILE);
+    await fs.mkdir(path.dirname(fakeNode), { recursive: true });
+    await fs.copyFile(process.execPath, fakeNode);
+    const resultFile = path.join(fixedRoot, 'argv.json');
+    const lockFile = path.join(fixedRoot, 'runtime-lock.json');
+    for (const [key, code] of [['v1-fixture', 17], ['v2-fixture', 23]]) {
+      const app = path.join(fixedRoot, 'app', key);
+      await fs.mkdir(path.join(app, 'bin'), { recursive: true });
+      await fs.mkdir(path.join(app, 'core'), { recursive: true });
+      await fs.writeFile(path.join(app, 'runtime-node.txt'), 'fixture-node\n');
+      await fs.writeFile(path.join(app, 'core', 'process.mjs'), "import { spawn } from 'node:child_process'; export const spawnChild = (command, args, options) => spawn(command, args, options);\n");
+      await fs.writeFile(path.join(app, 'core', 'runtime-use.mjs'), "import fs from 'node:fs'; export function markRuntimeInUse(value) { fs.writeFileSync(process.env.PLY_CLI_LOCK_CAPTURE, JSON.stringify(value)); return () => {}; }\n");
+      await fs.writeFile(path.join(app, 'bin', 'pleiad.mjs'), `import fs from 'node:fs'; fs.writeFileSync(process.env.PLY_CLI_CAPTURE, JSON.stringify(process.argv.slice(2))); process.exitCode = Number(process.env.PLY_CLI_EXIT);\n`);
+      const config = mcpSetup({ stable: stableCli({ PLEIAD_CLI_EXEC: fixedNode, PLEIAD_CLI_SCRIPT: fixedScript }), home });
+      const child = JSON.parse(config.json).mcpServers.pleiad;
+      await runtime.activateCli({ root: fixedRoot, key });
+      const processResult = await new Promise((resolve, reject) => {
+        const spawned = spawn(child.command, child.args, { shell: false, stdio: 'ignore', windowsHide: true,
+          env: { ...process.env, PLY_CLI_CAPTURE: resultFile, PLY_CLI_LOCK_CAPTURE: lockFile, PLY_CLI_EXIT: String(code) } });
+        spawned.once('error', reject);
+        spawned.once('exit', (status, signal) => resolve({ status, signal }));
+      });
+      const argv = JSON.parse(await fs.readFile(resultFile, 'utf8'));
+      const lock = JSON.parse(await fs.readFile(lockFile, 'utf8'));
+      t.ok(`固定起動口: spawn(shell:false) は空白を含むパスで ${key} を選び、MCP 引数・使用中の版・終了コードを渡す`, processResult.status === code && argv.join(' ') === 'mcp'
+        && lock.root === fixedRoot && lock.key === key && Number.isInteger(lock.pid), JSON.stringify({ processResult, argv, lock }));
+    }
+  } finally { await fs.rm(fixedRoot, { recursive: true, force: true }); }
   const storeEnv = { PLEIAD_CLI_EXEC: 'C:/Users/me/AppData/Local/Microsoft/WindowsApps/Ply.exe', PLEIAD_CLI_SCRIPT: '', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CLI_STORE: '1' };
   const store = mcpSetup({ stable: stableCli(storeEnv), dataDir: path.join(home, '.agent-host'), home });
   const storeEntry = JSON.parse(store.json).mcpServers.pleiad;

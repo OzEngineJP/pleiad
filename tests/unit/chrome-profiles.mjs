@@ -16,6 +16,7 @@ import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
 import { startServer, ROOT } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 import { readSessions } from '../lib/data-store.mjs';
 
 export const name = 'chrome-profiles';
@@ -228,6 +229,6 @@ export default async function (t) {
     assert.deepEqual(readSessions(dataDir)[sessionId].chromeProfile, ref(personal));
     assert(client.events.some(e => e.type === 'present' && e.kind === 'chromeProfile' && e.chromeProfile.dir === 'Default'));
     assert(!JSON.stringify(listed).includes('SECRET'));
-  } finally { client?.close(); await server.stop(); await fs.rm(scratch, { recursive: true, force: true }); }
+  } finally { client?.close(); await server.stop(); await cleanupTestHolder(dataDir); await fs.rm(scratch, { recursive: true, force: true }); }
   t.ok('サーバー越しに新規会話の既定を保存し、ツールの切り替えと会話の記録を画面に配る', true);
 }

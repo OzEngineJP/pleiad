@@ -12,6 +12,7 @@ import { startServer } from '../lib/server.mjs';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { open } from '../lib/ws-client.mjs';
 import { parentPortChromeOs } from '../../core/chrome/os.mjs';
+import { cleanupTestHolder } from '../lib/cleanup-test-holder.mjs';
 
 const require = createRequire(import.meta.url);
 const { createServerLink, readLinkInfo } = require('../../desktop/server-link.cjs');
@@ -78,6 +79,7 @@ export default async function (t) {
     client?.close();
     try { main.link?.kill(); } catch { /* 終わっていれば何もしない */ }
     await server.stop();
+    await cleanupTestHolder(scratch);
     await chrome.stop?.();
     fs.rmSync(scratch, { recursive: true, force: true });
   }

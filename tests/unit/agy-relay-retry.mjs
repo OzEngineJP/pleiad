@@ -23,14 +23,19 @@ async function freePort() {
 }
 
 /** 中継を起こし、JSON-RPC を 1 つ流して、返事を待つ。{ reply, ms } */
-async function ask(port, message, { retryMs, env = {} } = {}) {
+async function ask(port, message, { retryMs, env = {}, onSpawn } = {}) {
   const child = spawn(process.execPath, [path.join(ROOT, 'core', 'agy-context-relay.mjs')], {
     env: { ...process.env, PLY_CONTEXT_URL: `http://127.0.0.1:${port}/mcp/context`, PLY_CONTEXT_AUTHORIZATION: AUTH, ...(retryMs !== undefined ? { PLY_RELAY_RETRY_MS: String(retryMs) } : {}), ...env },
     stdio: ['pipe', 'pipe', 'ignore'],
   });
+  await new Promise((resolve, reject) => {
+    child.once('spawn', resolve);
+    child.once('error', reject);
+  });
   let out = '';
   child.stdout.setEncoding('utf8');
   const started = Date.now();
+  onSpawn?.();
   const got = new Promise(resolve => child.stdout.on('data', chunk => { out += chunk; if (out.includes('\n')) resolve(JSON.parse(out.split('\n')[0])); }));
   child.stdin.write(`${JSON.stringify(message)}\n`);
   try { return { reply: await Promise.race([got, sleep(30_000).then(() => null)]), ms: Date.now() - started }; }
@@ -49,9 +54,11 @@ export default async function (t) {
   {
     const port = await freePort();
     let server = null;
-    const opened = (async () => { await sleep(700); server = await serve(port, (req, res) => { req.resume(); req.on('end', () => ok(res, { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'after_reopen' }] } })); }); })();
+    let opened;
     try {
-      const { reply, ms } = await ask(port, listed);
+      const { reply, ms } = await ask(port, listed, { onSpawn: () => {
+        opened = (async () => { await sleep(700); server = await serve(port, (req, res) => { req.resume(); req.on('end', () => ok(res, { jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'after_reopen' }] } })); }); })();
+      } });
       await opened;
       t.ok('閉じた口が数秒で開き直せば、中継は再試行して返事を返す（エラーを agy に見せない）', reply?.result?.tools?.[0]?.name === 'after_reopen' && !reply.error, JSON.stringify(reply));
       t.ok('返事は口が開いた後に届く（待った分だけ遅れる）', ms >= 600, `${ms} ms`);

@@ -30,7 +30,65 @@ const STALE_MS = 10 * 60 * 1000;
 const MARKER_FILE = '.runtime.json';
 const NODE_POINTER_FILE = 'runtime-node.txt';
 const RUNTIME_JSON = 'runtime.json';
+const CLI_DIR_NAME = 'cli';
+const CLI_ENTRY_FILE = 'pleiad-cli.mjs';
+const CLI_NODE_FILE = process.platform === 'win32' ? 'pleiad-node.exe' : 'pleiad-node';
+const CLI_POINTER_FILE = 'cli-current.txt';
 const nodeExeName = (platform = process.platform) => (platform === 'win32' ? 'pleiad-node.exe' : 'pleiad-node');
+
+// Stable external MCP/CLI entrypoint. Keep the script and executable outside $INSTDIR.
+const CLI_LAUNCHER = [
+  "import fs from 'node:fs';",
+  "import path from 'node:path';",
+  "import { fileURLToPath, pathToFileURL } from 'node:url';",
+  "const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));",
+  "const key = fs.readFileSync(path.join(root, 'cli-current.txt'), 'utf8').trim();",
+  "if (!/^[\\w.+-]+$/.test(key)) process.exit(5);",
+  "const app = path.join(root, 'app', key);",
+  "const nodeKey = fs.readFileSync(path.join(app, 'runtime-node.txt'), 'utf8').trim();",
+  "if (!/^[\\w.+-]+$/.test(nodeKey)) process.exit(5);",
+  "const node = path.join(root, 'node', nodeKey, process.platform === 'win32' ? 'pleiad-node.exe' : 'pleiad-node');",
+  "const entry = path.join(app, 'bin', 'pleiad.mjs');",
+  "const env = { ...process.env, AGENT_HOST_RUNTIME_ROOT: root, AGENT_HOST_RUNTIME_KEY: key };",
+  "const { markRuntimeInUse } = await import(pathToFileURL(path.join(app, 'core', 'runtime-use.mjs')).href);",
+  "if (!markRuntimeInUse({ root, key, pid: process.pid })) process.exit(6);",
+  "const { spawnChild } = await import(pathToFileURL(path.join(app, 'core', 'process.mjs')).href);",
+  "const child = spawnChild(node, [entry, ...process.argv.slice(2)], { stdio: 'inherit', env, windowsHide: true });",
+  "child.once('error', error => { console.error(error.message); process.exitCode = 1; });",
+  "child.once('exit', (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });",
+  '',
+].join('\n');
+
+async function replaceIfChanged(target, contents) {
+  let old;
+  try { old = await fsp.readFile(target); } catch {}
+  const next = Buffer.isBuffer(contents) ? contents : Buffer.from(contents);
+  if (old?.equals(next)) return true;
+  const temporary = `${target}.${process.pid}.${rand()}.tmp`;
+  await fsp.writeFile(temporary, next);
+  try { await fsp.rename(temporary, target); return true; }
+  catch (error) {
+    await fsp.rm(temporary, { force: true }).catch(() => {});
+    if (['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(error.code)) return false;
+    throw error;
+  }
+}
+
+async function prepareStableCli(paths, nodeExe) {
+  const dir = path.join(paths.root, CLI_DIR_NAME);
+  await fsp.mkdir(dir, { recursive: true });
+  await replaceIfChanged(path.join(dir, CLI_ENTRY_FILE), CLI_LAUNCHER);
+  await replaceIfChanged(path.join(dir, CLI_NODE_FILE), await fsp.readFile(nodeExe));
+}
+
+async function activateCli({ root, key }) {
+  await fsp.mkdir(root, { recursive: true });
+  const pointer = path.join(root, CLI_POINTER_FILE);
+  const temporary = `${pointer}.${process.pid}.${rand()}.tmp`;
+  await fsp.writeFile(temporary, `${key}\n`);
+  try { await fsp.rename(temporary, pointer); }
+  catch (error) { await fsp.rm(temporary, { force: true }); throw error; }
+}
 
 class RuntimeError extends Error {
   constructor(code, message, extra = {}) { super(message); this.name = 'RuntimeError'; this.code = code; Object.assign(this, extra); }
@@ -261,10 +319,13 @@ function install({ root, resourcesDir, concurrency = CONCURRENCY, link = fsp.lin
     await fsp.mkdir(paths.store, { recursive: true });
     await fsp.mkdir(paths.app, { recursive: true });
     const nodeInfo = await ensureNode(paths, runtimeSrc, runtime);
+    await prepareStableCli(paths, nodeInfo.exe);
     const agentBrowserDir = await ensureAgentBrowser(paths, resourcesDir, runtime, key, link);
     const done = (reused) => ({ key, appDir: finalDir, nodeExe: nodeInfo.exe, nodeDir: nodeInfo.dir, agentBrowserDir, reused, stats: { ...stats, ms: Math.round(performance.now() - started) } });
 
-    if (await isCompleteTree(finalDir, manifest, { concurrency })) return done(true);
+    if (await isCompleteTree(finalDir, manifest, { concurrency })) {
+      return done(true);
+    }
     // 壊れている・途中で止まった写しは、新しく組む（使われていて消せないなら、触らずに失敗する）
     if (!await removeTree(root, finalDir)) throw new RuntimeError('tree-busy', `${finalDir} does not match the manifest and is in use`);
 
@@ -412,17 +473,22 @@ async function locate({ root, key }) {
 
 /**
  * 実行場所で走るサーバーが、外の AI（Claude Code など）に貼る設定の起動口。実行場所の Node・スクリプトは版ごとのパスで、
- * 古い版の掃除で壊れるので、NSIS は $INSTDIR、Store は App Execution Alias の起動口を指す（core/cli-launcher.mjs の stableCli）。
+ * 古い版の掃除で壊れるので、NSIS は実行場所の固定 Node と .mjs、Store は App Execution Alias の起動口を指す（core/cli-launcher.mjs の stableCli）。
  * サーバーの env に足す
  */
-function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath,
+function stableCliEnv({ execPath = process.execPath, resourcesPath = process.resourcesPath, runtimeRoot,
   store = require('./updates.cjs').isStoreBuild({ pkg: require('../package.json'), windowsStore: process.windowsStore }), env = process.env } = {}) {
-  return { PLEIAD_CLI_EXEC: store ? require('./msix.cjs').stableLauncher({ proc: process, env, store }) : execPath,
-    PLEIAD_CLI_SCRIPT: store ? '' : path.join(resourcesPath, 'app', 'bin', 'pleiad.mjs'), PLEIAD_CLI_ELECTRON: '1',
-    ...(store ? { PLEIAD_CLI_STORE: '1' } : {}) };
+  if (store) return { PLEIAD_CLI_EXEC: require('./msix.cjs').stableLauncher({ proc: process, env, store }),
+    PLEIAD_CLI_SCRIPT: '', PLEIAD_CLI_ELECTRON: '1', PLEIAD_CLI_STORE: '1' };
+  if (process.platform === 'win32') {
+    const root = runtimeRoot ?? resolveRuntimeRoot({ installDir: path.dirname(execPath), env }).root;
+    const cli = path.join(root, CLI_DIR_NAME);
+    return { PLEIAD_CLI_EXEC: path.join(cli, CLI_NODE_FILE), PLEIAD_CLI_SCRIPT: path.join(cli, CLI_ENTRY_FILE), PLEIAD_CLI_ELECTRON: '' };
+  }
+  return { PLEIAD_CLI_EXEC: execPath, PLEIAD_CLI_SCRIPT: path.join(resourcesPath, 'app', 'bin', 'pleiad.mjs'), PLEIAD_CLI_ELECTRON: '1' };
 }
 
 module.exports = {
   RuntimeError, RUNTIME_DIR_NAME, FALLBACK_DIR, CONCURRENCY, KEEP_TREES, STALE_MS, MARKER_FILE, NODE_POINTER_FILE, RUNTIME_JSON,
-  nodeExeName, collidesWithInstall, resolveRuntimeRoot, layout, versionKey, verifyTree, removeTree, install, cleanup, locate, stableCliEnv,
+  nodeExeName, CLI_DIR_NAME, CLI_ENTRY_FILE, CLI_NODE_FILE, CLI_POINTER_FILE, CLI_LAUNCHER, collidesWithInstall, resolveRuntimeRoot, layout, versionKey, verifyTree, removeTree, install, cleanup, locate, activateCli, stableCliEnv,
 };

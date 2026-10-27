@@ -490,3 +490,28 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - 段 4b で `docs/zero-downtime-update/` の design.md・plan.md に、段 4 の通常起動による復元を追記した。ADR 0151 は過去の設計記録として保持する。
 - 保持役の子を止めるのはアプリ終了と会話の後片付けに限る。段 4b の試験後にこの worktree の保持役・Chrome 子が残らないことを確認し、漏れていた保持役子の終了待ちを試験の後片付けへ追加した。
 - 段 4b で音声・computer use・ビューアに、Electron 本体の更新で切れた理由を知らせる表示を加えた。ビューアは保存済みタブを通常起動で開き直す。
+
+## issue #143 の残件実装（2026-10-27）
+
+### 6. 外の AI に渡す MCP・CLI の起動口
+
+- **現状**: NSIS 版の `mcpSetup` は `$INSTDIR\Ply.exe` と `$INSTDIR\resources\app\bin\pleiad.mjs` を設定に出していた。外の AI が MCP を起動中だと `Ply.exe` が使用中になり、NSIS が差し替えられない。
+- **決定**: 配布版の実行場所の置き場（`AGENT_HOST_RUNTIME_ROOT`）の `cli/` に固定の `pleiad-node.exe` と `pleiad-cli.mjs` を置く。MCP 設定は `command` に固定 Node、`args` に `[固定 .mjs, "mcp"]` を指定し、`cmd.exe` と `.cmd` を経由しない。固定スクリプトは `cli-current.txt` の版を選び、その版の `runtime-node.txt` にある Node で `bin/pleiad.mjs` を `spawn` する。子の標準入出力を引き継ぎ、終了コードを返す。起動口自身も版の使用中ロックを持つ。
+- **版の切替**: runtime の install は固定 Node とスクリプトを用意・更新するが、active pointer は変えない。Node またはスクリプトは中身が異なる時だけ一時ファイルから置換し、Windows が使用中ファイルを置き換えられない場合はその更新を次の install に延期する。サーバーが起動して ready を返した時点で、その版を `cli-current.txt` に原子的に記録する。互換性確認で新しい版を延期している間、外部 AI がその版を先に起動することはない。
+- **更新時の扱い**: 外の AI が古い版を実行中でも、固定 Node・スクリプト・版ごとの Node とアプリ木はすべて `$INSTDIR` の外にある。起動口は選んだ版の `AGENT_HOST_RUNTIME_ROOT`・`AGENT_HOST_RUNTIME_KEY` を子へ渡す。起動口と `bin/pleiad.mjs` が版使用中ロックを持つため、実行中のファイルは runtime cleanup の対象から外れる。NSIS はこれらを入れ替えない。次の起動口呼び出しは active pointer の版を使う。
+- **古い設定**: Pleiad は外部 AI の設定ファイルを自動編集しない。既存の `$INSTDIR` を指す設定は次回の「外の AI から Pleiad を使う」画面で新しい設定をコピーし、外部 AI 側へ貼り直すよう案内する。実際の利用者設定ファイルは変更しない。
+- **Store 版**: 従来どおり App Execution Alias を使い、現在のパッケージ内のスクリプトを実行時に解決する。
+- **試験**: `cli-launcher` は生成設定の command/args を `spawn(shell:false)` にそのまま渡し、空白を含む一時 runtime の偽版が起動すること、引数と終了コード、pointer 切替後に次の起動が別版を選ぶことを確かめる。`desktop-runtime` は install が pointer を変更しないこと、固定ファイルが runtime の外側にあることを確かめる。
+
+### 試験の仕掛けと Chrome 接続子の後片付け
+
+- restart 仕掛けは suite 終了時に controller のタイマーと全 `waitFor` watcher を解除する。破棄時に未完了の待機を reject せず解決し、未待機の timeout reject が次の suite の worker を落とさないようにする。`PLEIAD_TEST_RESTART` の指定は、外した直後に新しい controller で入れ直す（入れ直さないと、全体の掃引が worker の最初の suite にしか効かない）。
+- `chrome-link-adopt` は保持役を止める前に接続子を列挙し、生存中の子を木ごと終了してから保持役を閉じる。全体試験後は suite を特定するため worker データ置き場とコマンド行を照合し、この worktree を含む Node プロセスが残らないことを確認する。
+- `server-agent-account-restart` は保持役へ終了要求を送ってから、プロセス終了を確認するまでクライアント接続を保つ。要求を送った直後にパイプを閉じると保持役が残るため、終了確認後に接続を閉じ、保持役の子の終了を待つ。
+- サーバーを直接起動する `main-link`・`server-chrome`・`server-chrome-screencast`・`server-chrome-delegation`・`chrome-profiles`・`chrome-relay`・`chrome-os-link`・`server-delegate-account` は、`server.stop()` の後にテスト専用データ置き場の保持役と子を明示的に停止し、その置き場を消す。通常のサーバー停止は保持役の寿命を終わらせないため、テスト側で専用の後片付けを行う。全体試験後の `core/holder/main.mjs` と `core/chrome/link-child.mjs` を、Chrome の接続を有効にするサーバー suite 群に絞って見直した結果、これらの後片付け漏れを修正した。
+
+### 1. 途中送信（steer）の再起動
+
+- **確認した不具合**: 途中送信の outbox を `sending` にしてから保持役の子へ入力を送る間にサーバーが止まると、再起動後の復元札に ID が無い場合も outbox が `unknown` になり、送信が再開されず失われることがあった。
+- **決定**: 保持役に載ったターンでは、steer を子へ送る前に途中送信 ID を含む札を同期的に書く。Claude のように子へ渡す固有 ID も必要なバックエンドは、その ID とハッシュも入力前に札へ書く。同じ保持役接続上で札の書き込みを入力より先に行うため、再起動後に ID が札にあれば子へ送った可能性があり再送しない。採用済み保持ターンで ID が札に無ければ子へ届いていないので outbox を `queued` に戻して再送する。保持役に載っていないターンは従来どおり送信する。採用済みターンが無い `sending` は結果が曖昧なため `unknown` のままにする。
+- **範囲と確認**: Devin・Grok の ACP、Codex のターン専用 app-server で、送信直後に通常停止・起動し、発言・配送通知・履歴・outbox が一度ずつであることを試験する。Claude は `adopt-claude` で、途中送信 ID と子側 UUID・ハッシュが札に残り、付け直し側が一度だけ渡った通知を出すことを確かめる。通常停止・起動の試験は `tests/lib/restart.mjs` の仕掛けを使う。
