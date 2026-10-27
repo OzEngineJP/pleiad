@@ -410,7 +410,7 @@ export default async function (t) {
       const installDir = path.join(scratch, 'Programs', 'Ply');
       const runtimeRoot = path.join(scratch, 'Local', 'agent-host-runtime');
       const env = runtime.stableCliEnv({ execPath: path.join(installDir, 'Ply.exe'), resourcesPath: path.join(installDir, 'resources'), runtimeRoot,
-        env: { SystemRoot: 'C:\\Windows', LOCALAPPDATA: path.join(scratch, 'Local') } });
+        platform: 'win32', env: { SystemRoot: 'C:\\Windows', LOCALAPPDATA: path.join(scratch, 'Local') } });
       t.ok('stableCliEnv: MCP 設定は版ごとの実行木と $INSTDIR の外にある固定 Node と .mjs を指す', env.PLEIAD_CLI_EXEC === path.join(runtimeRoot, 'cli', runtime.CLI_NODE_FILE)
         && env.PLEIAD_CLI_SCRIPT === path.join(runtimeRoot, 'cli', runtime.CLI_ENTRY_FILE) && !env.PLEIAD_CLI_CMD && env.PLEIAD_CLI_ELECTRON === ''
         && !env.PLEIAD_CLI_SCRIPT.startsWith(installDir) && !env.PLEIAD_CLI_SCRIPT.includes('app\\'));

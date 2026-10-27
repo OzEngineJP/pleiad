@@ -80,10 +80,14 @@ export async function driveHeld({ source, record, emit, askPermission, signal, c
   const onAbort = () => send({ type: 'interrupt' });
   if (signal?.signal?.aborted) onAbort(); else signal?.signal?.addEventListener?.('abort', onAbort, { once: true });
   if (control && source.write) {
-    control.steer = item => new Promise(resolve => {
-      steers.set(item?.id, resolve);
-      send({ type: 'steer', item: { id: item?.id, args: { prompt: item?.args?.prompt } } });
-    });
+    control.steer = async item => {
+      const accepted = await new Promise(resolve => {
+        steers.set(item?.id, resolve);
+        send({ type: 'steer', item: { id: item?.id, args: { prompt: item?.args?.prompt } } });
+      });
+      if (accepted) control.persistSteer?.();
+      return accepted;
+    };
     // 渡った合図を後から出す台本（偽の CLI の fake も同じ env で steerConfirms を立てる）のとき、サーバーにも合図を待つ途中送信として扱わせる（札の steers）
     if (Number(process.env.AGENT_HOST_FAKE_STEER_CONFIRM_MS) > 0) control.steerConfirms = true;
     control.onReady?.();

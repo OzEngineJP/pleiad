@@ -97,7 +97,10 @@ export function createHeldAcp({ client = null, source = null } = {}) {
     if (!info.lost) { try { source.release(); } catch { /* つながりが切れた */ } }
     source.dispose();
     // ChildProcess と同じ順（close → exit）
-    setImmediate(() => { proc.emit('close', proc.exitCode, proc.signalCode); proc.emit('exit', proc.exitCode, proc.signalCode); });
+    setImmediate(() => {
+      proc.emit('close', proc.exitCode, proc.signalCode, { lost: Boolean(info.lost) });
+      proc.emit('exit', proc.exitCode, proc.signalCode, { lost: Boolean(info.lost) });
+    });
   }
 
   const held = {

@@ -2020,6 +2020,7 @@ const backend = {
           if ([-32600, -32601, -32602].includes(e.code)) return false;
           throw e;
         }
+        control?.persistSteer?.();
         return true;
       };
       control?.onReady?.();

@@ -21,6 +21,15 @@ import { unwrapCommandShim } from '../cli-installation.mjs';
 import { holderLink } from '../holder/link.mjs';
 import { ADOPT_TURN_MARK, holderSource } from '../adopt.mjs';
 
+const heldProcesses = new Set();
+/** Claude SDK の終了時処理に保持役の CLI を止めさせない。 */
+export function preserveHeldProcessesForRestart() {
+  for (const proc of heldProcesses) {
+    // SDK の ChildProcessTracker.killAll は killed が false の子を終了時に止める。
+    proc.killed = true;
+  }
+}
+
 /**
  * 付け直しを確かめた CLI の版の下限（backend-shape-diagnostics.mjs の VERIFIED とは別。あちらは記録の形を確かめた版）。
  * 2.1.284（ネイティブ・npm の包み）・2.1.288 で、承認待ち・サブエージェント・裏の作業・途中送信・圧縮・elicitation の最中の付け直しを
@@ -198,6 +207,8 @@ export function createHeldCli({ mode, client = null, source = null, from = 1, on
       if (!exited) source.client.kill(source.id, { tree: true });
       return true;
     };
+    heldProcesses.add(proc);
+    proc.once('exit', () => heldProcesses.delete(proc));
     void pump(stdout, stderr);
     return proc;
   };

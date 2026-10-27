@@ -319,13 +319,14 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             check();
             mapper = createDevinMapper(sessionId, mapEmit);
             mapper.beginTurn(sentText, shownText);
+            for (const message of args.restoredSteers ?? []) mapper.queueUser(message.prompt);
             remember(sessionId, mapper); active.set(sessionId, client);
             // attach の答え（答えていない依頼）。再生の依頼のうち、これに入っているものだけを聞き直す
             await client.open(1);
             // 走っている途中送信の応答の枠を開ける（本文の応答の後に続けて届く返答を、閉じる前に読む）
             client.adoptTrailing((Array.isArray(card.prompts) ? card.prompts : []).filter(id => id !== promptId));
             steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
-              onSent: text => mapper.queueUser(text), confirmOnAccept: true, onCall: () => control?.touch?.() });
+              onSent: text => mapper.queueUser(text), confirmOnAccept: true, onCall: () => control?.persistSteer?.() ?? control?.touch?.() });
             if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
             bindHolder();
             sent = true;
@@ -426,7 +427,7 @@ export function createDevinBackend({ Acp = null, catalogue = captureCatalogue, c
             steered = createAcpSteer({ client, sessionId, emit, ready: () => prompting && !closing && !fatal && !local.signal.aborted,
               onSent: text => mapper.queueUser(text),
               // 応答は回の終わりまで返らない（実測 3000.11.92）。折り込んだ時点で渡ったことにする（docs/design.md「配送」）
-              confirmOnAccept: true, onCall: () => control?.touch?.() });
+              confirmOnAccept: true, onCall: () => control?.persistSteer?.() ?? control?.touch?.() });
             if (control) { control.handle = { sessionId }; control.steer = item => steered.steer(item); control.steerConfirms = true; }
             check();
             prompting = true;

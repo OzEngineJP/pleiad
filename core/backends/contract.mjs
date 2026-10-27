@@ -206,7 +206,7 @@ export const RUN_ARG_PLUMBING = Object.freeze(new Set([
   // scanOptions: コンテキスト探索の置き場（home など）。探索するバックエンド（agy のネイティブ指示の注入）だけが使う。
   // 試験で home を差し替えるための配管で、能力の配達物ではない
   'scanOptions',
-  'prompt', 'sessionId', 'messageId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke',
+  'prompt', 'sessionId', 'messageId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke', 'restoredSteers',
   'signal', 'control', 'locale', 'delegatedChild', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
   'compact', 'oauthToken', 'account', 'endpoint', 'autoCompactWindow', 'promptSuggestions',
   'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',

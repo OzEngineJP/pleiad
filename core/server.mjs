@@ -116,6 +116,7 @@ import { importNativeMcp } from './mcp-import.mjs';
 import { createMcpConfig } from './mcp-config.mjs';
 import { createHooksConfig, HOOK_AGENTS, HOOK_EMULATED, HOOK_VIA, UNIFY_TARGETS, applyCodexHooks, trimHookRuns, findNodeOnPath } from './hooks-config.mjs';
 import { stopHeldAppServer } from './backends/codex-held.mjs';
+import { preserveHeldProcessesForRestart as preserveClaudeProcessesForRestart } from './backends/claude-held.mjs';
 import { stopHeldOpencode, sweepOpencodeEnvFiles } from './backends/opencode-held.mjs';
 import { stopHeldAgy } from './backends/antigravity.mjs';
 import { createVoiceHost, VOICE_PATH } from './voice/host.mjs';
@@ -234,7 +235,7 @@ if (BOOT_ENV.AGENT_HOST_RUNTIME_ROOT && BOOT_ENV.AGENT_HOST_RUNTIME_KEY) markRun
 // 審査モード（AGENT_HOST_REVIEW=1。ADR 0172）: fake だけ・審査用の置き場でなければ、データ置き場に触れる前に起動を止める（core/review-mode.mjs）
 if (isReviewMode()) prepareReviewHost({ dataDir: store.dataDir, backendIds: listBackends().map((b) => b.id) });
 const lockFrom = Date.now();
-const releaseDataLock = STARTED_BY_MAIN ? await acquireDataLockWait(store.dataDir, { timeoutMs: LOCK_WAIT_MS }) : acquireDataLockWait(store.dataDir, { timeoutMs: 0 });
+const releaseDataLock = await acquireDataLockWait(store.dataDir, { timeoutMs: STARTED_BY_MAIN ? LOCK_WAIT_MS : 0 });
 const lockWaitedMs = Date.now() - lockFrom;
 if (STARTED_BY_MAIN && lockWaitedMs > 0) console.log(`  [start] got the data lock after ${lockWaitedMs} ms at=${Date.now()}`);
 const migrated = await retryTransient(() => ensureDataSchema(store.dataDir));
@@ -6285,13 +6286,8 @@ const outbox = createMessageQueue({
         const confirms = Boolean(turn.control.steerConfirms);
         if (confirms) {
           turn.pendingSteers.add(item.id);
-          // sendMessage の受付直後にサーバーが落ちても新サーバーがこの outbox 項目を再開できるよう、
-          // 途中送信を保持役へ書くより前に札へ記録する（ADR 0270 の規則 ②）。
-          if (turn.control.holder && !writeTurnCard(turn)) {
-            turn.pendingSteers.delete(item.id);
-            return false;
-          }
         }
+        // ACP は保持役の子へ要求を書いた直後に呼ぶ。送信済みの札を残し、再起動後の二重送信を防ぐ。
         turn.control.persistSteer = confirms && turn.control.holder ? () => writeTurnCard(turn) : null;
         try {
           const accepted = await steer(item);
@@ -6310,12 +6306,13 @@ const outbox = createMessageQueue({
     emitGlobal({ type: 'outbox', sessionId, messages });
     for (const watch of [...(outboxWatchers.get(sessionId) ?? [])]) watch(messages);
   },
-  delivered: async (sessionId, item, { turn }) => {
+  delivered: async (sessionId, item, { turn, recovered = false }) => {
     // 受理と「エージェントに渡った」は別。後から合図を出せるバックエンド（steerConfirms）の分だけ
     // pending を立て、画面は渡るまで待っていることを出す。出せないバックエンドは今までどおり即時扱い
     emitGlobal({ type: 'userMessage', sessionId, messageId: item.id, text: item.args.prompt, at: item.at,
       ...(item.args.scheduledFor ? { scheduledFor: item.args.scheduledFor } : {}),
       ...(turn.control.steerConfirms ? { pending: true } : {}), ...(item.args.sentBy ? { sentBy: publicSender(item.args.sentBy) } : {}) });
+    if (recovered) emitGlobal({ type: 'userMessage.delivered', sessionId, messageId: item.id });
     noteRelayHops(sessionId, item.args, { steered: true });
     if (item.args.attachments?.length) {
       (turn.steeredAttachments ??= []).push({ key: item.id, prompt: item.args.prompt });
@@ -7891,6 +7888,10 @@ async function restoreTurn(card, source) {
     presents: (transcript.presents ?? []).filter(p => !turnKeys.has(p.turnKey)) };
   // 発言の本文は札に入れていない（core/turn-card.mjs）。履歴の切り口の後ろか、送信待ちの項目から引き、ハッシュで突き合わせる
   const queued = fields.messageId ? (await outbox.list(sessionId).catch(() => [])).find(m => m.id === fields.messageId) : null;
+  const restoredSteers = (await outbox.list(sessionId).catch(() => []))
+    .filter(item => item.status === 'sending' && Object.hasOwn(fields.steers, item.id) && typeof item.args?.prompt === 'string')
+    .filter(item => !transcript.messages.slice(count).some(message => message.role === 'user' && message.text === item.args.prompt))
+    .map(item => ({ id: item.id, prompt: item.args.prompt }));
   const prompt = [...transcript.messages.slice(count).filter(m => m.role === 'user').map(m => m.text), queued?.args?.prompt]
     .find(text => typeof text === 'string' && promptHash(text) === fields.promptHash) ?? '';
 
@@ -8008,6 +8009,7 @@ async function restoreTurn(card, source) {
     shellHanded: fields.delivery.shellHanded,
     runArgs: null,
     card: fields,
+    restoredSteers,
     // 委譲の子のターン: タスクの id と実行の控え（結果の確定は adoptChild。rejections・streamed は再生の出来事から作り直る。waitingSince は札）
     taskId,
     execution: taskId ? newExecution(fields.delegation) : null,
@@ -8080,6 +8082,7 @@ async function adoptTurn(card, source, ctx = null, { abandon = null } = {}) {
         ctx.runArgs = {
           sessionId, cwd: ctx.cwd, mode: ctx.permissionMode, model: ctx.model || undefined, effort: ctx.effort,
           card: ctx.card.backendCard, source, ...(ctx.account ? { account: ctx.account } : {}),
+          restoredSteers: ctx.restoredSteers,
           ...(hooksTurn?.runtime ? { hooksRuntime: hooksTurn.runtime } : {}),
           emit: contractEmit((event, opts) => {
             if (opts?.replay) replayed = true;
@@ -10064,6 +10067,10 @@ async function stopHeldChildren() {
 let shuttingDown = null;
 function shutdownServer({ stopHeld = false } = {}) {
   shuttingDown ??= (async () => {
+    if (!stopHeld) {
+      // 通常の停止では、保持役の Claude CLI を Claude SDK の終了時の後片付け（killAll）から外し、次のサーバーが付け直せるようにする
+      preserveClaudeProcessesForRestart();
+    }
     // 通話の使用量の台帳を書き切る（止めるのはアプリの終了だけ）
     await voiceHost.close().catch(error => console.error('voice host shutdown failed:', error?.code ?? error?.message ?? error));
     clearInterval(chromeIdleTimer);

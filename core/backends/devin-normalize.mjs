@@ -202,7 +202,18 @@ export function createDevinMapper(sessionId, emit = () => {}) {
       return withdraw;
     },
     // 発言の id はネイティブの会話の行の uuid。ホスト記録の会話では、記録の行に合わせて liveUuid に替える（core/conversations.mjs の hostEvent）
-    finish() { if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid, ...(current.liveUuid ? { liveUuid: current.liveUuid } : {}) }); live = false; pendingUsers.length = 0; queuedEcho = null; },
+    finish() {
+      if (current?.role === 'assistant') send({ type: 'text.end', uuid: current.uuid, ...(current.liveUuid ? { liveUuid: current.liveUuid } : {}) });
+      while (pendingUsers.length) {
+        const entry = pendingUsers.shift();
+        current = null;
+        const message = row('user');
+        message.text = entry.text;
+        entry.nativeId = message.liveUuid ?? message.uuid;
+      }
+      live = false;
+      queuedEcho = null;
+    },
     messages: () => structuredClone(messages),
   };
 }

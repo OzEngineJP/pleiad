@@ -102,7 +102,7 @@ export class DevinAcp {
       child.stdout.on('data', (chunk) => this.#stdout(chunk));
       child.stderr.on('data', (chunk) => this.#stderr(chunk));
       child.on('error', error => this.#fail(processError(error)));
-      child.on('exit', () => this.#fail(rpcError('Devin ACP exited')));
+      child.on('exit', (_code, _signal, status) => this.#fail(rpcError('Devin ACP exited'), { terminateTree: status?.lost !== true }));
       if (this.adopted) {
         // 2 回目の initialize は送らない（子は initialize 済み）。走っている prompt の応答の枠だけを開ける
         this.#awaitResponse(this.adopt?.promptId, 'session/prompt');
@@ -336,14 +336,14 @@ export class DevinAcp {
     ).catch(() => this.#fail(rpcError('Devin ACP request response failed'))).finally(() => { signal.removeEventListener('abort', onAbort); this.incoming.delete(idKey); });
   }
 
-  #fail(error) {
+  #fail(error, { terminateTree = true } = {}) {
     if (this.gone || this.closing) return;
     this.gone = true;
     this.reader.reset();
     this.connectionAbort.abort();
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(error); }
     this.pending.clear();
-    this.reaping = this.#terminateTree().finally(() => { try { this.proc?.stdin?.destroy(); } catch {} });
+    this.reaping = (terminateTree ? this.#terminateTree() : Promise.resolve()).finally(() => { try { this.proc?.stdin?.destroy(); } catch {} });
     try { this.onGone(error); } catch {}
   }
 

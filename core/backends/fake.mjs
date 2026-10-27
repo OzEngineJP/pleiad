@@ -279,6 +279,7 @@ async function background(text, { s, out, emit, signal, control }) {
       if (/^task-(notice|send)-/.test(String(item?.id ?? "")) && String(item?.args?.prompt ?? "").includes("DECLINE_STEER")) { announce("steer-declined"); return false; }
       if (String(item?.id ?? "").startsWith("task-send-") && String(item?.args?.prompt ?? "").includes("THROW_STEER")) throw new Error("steer failed");
       inbox.push({ id: item?.id ?? null, text: String(item?.args?.prompt ?? "") });
+      control.persistSteer?.();
       poke();
       return true;
     };
