@@ -21,7 +21,7 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)/i;
 const testHolders = new Map();
 
-/** suite が終了した後、テストサーバーが使った保持役が idle で終了するまで待つ。 */
+/** suite が終了した後、テストサーバーが使った保持役が idle で終了するまで待つ。終わらなかったものは止めて、漏れとして返す */
 export async function waitForTestHolders({ timeoutMs = 12_000 } = {}) {
   const entries = [...testHolders.values()];
   testHolders.clear();
@@ -56,7 +56,11 @@ export async function waitForTestHolders({ timeoutMs = 12_000 } = {}) {
   const forcedEnd = Date.now() + 5000;
   while (Date.now() < forcedEnd && remaining.some(alive)) await new Promise(resolve => setTimeout(resolve, 100));
   for (const client of connected) client?.close();
-  return remaining.filter(alive).map(holder => `保持役 pid ${holder.pid} が suite 終了後も残った (${holder.dataDir})`);
+  // 置き場が消えていてつなげない保持役は、試験が起こしたものの pid なので直に止める
+  for (const holder of remaining) if (alive(holder)) { try { process.kill(holder.pid); } catch { /* 既に終わっている */ } }
+  await new Promise(resolve => setTimeout(resolve, 200));
+  // 回収できても漏れとして出す（idle で終わらない保持役は、本番でも残る。黙って止めると次の漏れが見えない）
+  return remaining.map(holder => `保持役 pid ${holder.pid} が子も親も無いのに ${timeoutMs}ms で終わらなかった（${alive(holder) ? '止めても残った' : '最後に止めた'}。${holder.dataDir}）`);
 }
 
 /**
