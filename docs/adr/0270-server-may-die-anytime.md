@@ -505,7 +505,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 
 ### 試験の仕掛けと Chrome 接続子の後片付け
 
-- restart 仕掛けは suite 終了時に controller のタイマーと全 `waitFor` watcher を解除する。破棄時に未完了の待機を reject せず解決し、未待機の timeout reject が次の suite の worker を落とさないようにする。
+- restart 仕掛けは suite 終了時に controller のタイマーと全 `waitFor` watcher を解除する。破棄時に未完了の待機を reject せず解決し、未待機の timeout reject が次の suite の worker を落とさないようにする。`PLEIAD_TEST_RESTART` の指定は、外した直後に新しい controller で入れ直す（入れ直さないと、全体の掃引が worker の最初の suite にしか効かない）。
 - `chrome-link-adopt` は保持役を止める前に接続子を列挙し、生存中の子を木ごと終了してから保持役を閉じる。全体試験後は suite を特定するため worker データ置き場とコマンド行を照合し、この worktree を含む Node プロセスが残らないことを確認する。
 - `server-agent-account-restart` は保持役へ終了要求を送ってから、プロセス終了を確認するまでクライアント接続を保つ。要求を送った直後にパイプを閉じると保持役が残るため、終了確認後に接続を閉じ、保持役の子の終了を待つ。
 - サーバーを直接起動する `main-link`・`server-chrome`・`server-chrome-screencast`・`server-chrome-delegation`・`chrome-profiles`・`chrome-relay`・`chrome-os-link`・`server-delegate-account` は、`server.stop()` の後にテスト専用データ置き場の保持役と子を明示的に停止し、その置き場を消す。通常のサーバー停止は保持役の寿命を終わらせないため、テスト側で専用の後片付けを行う。全体試験後の `core/holder/main.mjs` と `core/chrome/link-child.mjs` を、Chrome の接続を有効にするサーバー suite 群に絞って見直した結果、これらの後片付け漏れを修正した。
