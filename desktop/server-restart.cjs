@@ -42,7 +42,9 @@ function createServerRestarter({ link, getReady, prepared, root, dataDir, resour
     try {
       await boot.startAndConnect({ link, dataDir, logFile: boot.serverLogFile(runtime.root), log,
         launch: async () => (launched = await boot.launchServer({ mode: decision.mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: env2 })) });
-      return await next.promise;
+      const started = await next.promise;
+      await runtimeLib().activateCli({ root: runtime.root, key: runtime.key });
+      return started;
     } catch (error) {
       next.cancel();
       // 立ちかけたサーバーがデータ置き場を持ったままだと、次の試みが起こせない。自分が起こしたものだけを止める

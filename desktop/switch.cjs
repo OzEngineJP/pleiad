@@ -294,6 +294,7 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
         launch: async () => (launched = await boot.launchServer({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: env2 })) });
       rearm();
       const started = await next.promise;
+      await runtimeLib().activateCli({ root: runtime.root, key: runtime.key });
       // 切り替えをやり直すとき（前の版で動いている）の古いサーバーは、今起こしたもの
       Object.assign(ready, { port: started.port, token: started.token, pid: started.pid, runtimeKey: started.runtimeKey });
       return started;

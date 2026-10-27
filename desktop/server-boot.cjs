@@ -232,8 +232,10 @@ async function chooseServer({ resourcesPath, execPath, dataDir = resolveDataDir(
       const { runtime, mode } = plan;
       const startEnv = serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: serverLogFile(runtime.root), port, token, systemLocale, execPath, resourcesPath,
         stableCliEnv: stableCliEnv({ execPath, resourcesPath }) });
-      return startAndConnect({ link: serverLink, dataDir, logFile: serverLogFile(runtime.root), readLink, log, timeoutMs: startTimeoutMs,
+      const started = await startAndConnect({ link: serverLink, dataDir, logFile: serverLogFile(runtime.root), readLink, log, timeoutMs: startTimeoutMs,
         launch: () => launch({ mode, nodeExe: runtime.nodeExe, args: [path.join(runtime.appDir, 'core', 'server.mjs')], cwd, env: startEnv }) });
+      if (!started.attached) await require('./runtime.cjs').activateCli({ root: runtime.root, key: runtime.key });
+      return started;
     },
   };
 }

@@ -3,7 +3,7 @@
 // - 起動口は bin/ の pleiad.cmd（Windows）と pleiad（シェルスクリプト）。デスクトップ版では resources/app/bin に入り、
 //   Ply.exe（mac は Pleiad.app の MacOS/Pleiad）の内蔵 Node で bin/pleiad.mjs を走らせる。リポジトリでは node で走らせる
 // - サーバーは起動時に bin/ を自分の PATH の先頭に足す。会話のシェル（Claude・Codex・Antigravity のプロセスと `!` の行）はそれを継ぐ
-// - 外の AI の MCP 設定は実行ファイルとスクリプトを指す。Windows では固定の .cmd を cmd.exe 経由で起動する
+// - 外の AI の MCP 設定は実行場所の外にある固定の Node 実行ファイルと起動スクリプトを指す
 // - サーバーが版ごとの実行場所で走るときは、NSIS は置き場直下の固定起動口、Store は App Execution Alias を使う
 import os from 'node:os';
 import path from 'node:path';
@@ -34,17 +34,16 @@ const quoteArg = (s) => (/^[A-Za-z0-9_\-./:=@]+$/.test(s) ? s : `"${s}"`);
 
 /**
  * 版に依らない pleiad CLI の起動口。実行場所で走るサーバーに main が env で渡す（desktop/runtime.cjs の stableCliEnv）。無ければ null:
- *   PLEIAD_CLI_EXEC      実行ファイル（Windows は cmd.exe）
- *   PLEIAD_CLI_SCRIPT    固定の pleiad-cli.cmd（版ごとの runtime の外）
+ *   PLEIAD_CLI_EXEC      実行ファイル（Windows は runtime の外にある Node）
+ *   PLEIAD_CLI_SCRIPT    固定の起動用 .mjs（版ごとの runtime の外）
  *   PLEIAD_CLI_ELECTRON  1 なら EXEC は Electron の内蔵 Node（ELECTRON_RUN_AS_NODE=1 を付ける）
- *   PLEIAD_CLI_CMD       1 なら Windows の cmd.exe から SCRIPT を起動する
  *   PLEIAD_CLI_STORE     1 なら SCRIPT を起動時に現在のパッケージから探す
  */
 export function stableCli(env = process.env) {
   const execPath = env.PLEIAD_CLI_EXEC;
   const script = env.PLEIAD_CLI_SCRIPT;
   const store = env.PLEIAD_CLI_STORE === '1';
-  return execPath && (script || store) ? { execPath, script, electron: env.PLEIAD_CLI_ELECTRON === '1', cmd: env.PLEIAD_CLI_CMD === '1', store } : null;
+  return execPath && (script || store) ? { execPath, script, electron: env.PLEIAD_CLI_ELECTRON === '1', store } : null;
 }
 
 // App Execution Alias は現在の版を起こす。-e の中でその実行ファイルの隣のスクリプトを探すため、貼る設定には版ごとのパスが残らない。
@@ -62,9 +61,7 @@ export function mcpSetup({ stable = stableCli(), execPath = stable?.execPath ?? 
     ...(electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
     ...(dataDir && path.resolve(dataDir) !== path.resolve(home, '.agent-host') ? { AGENT_HOST_DATA: dataDir } : {}),
   };
-  const args = stable?.store ? ['-e', STORE_CLI_ENTRY, 'mcp']
-    : stable?.cmd ? ['/d', '/s', '/c', `"${script}" mcp`]
-      : [script, 'mcp'];
+  const args = stable?.store ? ['-e', STORE_CLI_ENTRY, 'mcp'] : [script, 'mcp'];
   const json = JSON.stringify({ mcpServers: { pleiad: { command: execPath, args, ...(Object.keys(env).length ? { env } : {}) } } }, null, 2);
   const claude = ['claude', 'mcp', 'add', '--scope', 'user', 'pleiad', ...Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]), '--', execPath, ...args].map(quoteArg).join(' ');
   return { command: execPath, args, env, json, claude };

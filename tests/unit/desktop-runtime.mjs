@@ -131,12 +131,11 @@ export default async function (t) {
       t.ok('組む: Node は node\\<版>-<sha256 の先頭>\\pleiad-node.exe に 1 つ・名前は Ply.exe でない', installed.nodeExe === path.join(root, 'node', `24.21.0-${sha(fs.readFileSync(path.join(res1.dir, 'runtime', 'node.exe'))).slice(0, 12)}`, runtime.nodeExeName())
         && fs.readFileSync(installed.nodeExe).equals(fs.readFileSync(path.join(res1.dir, 'runtime', 'node.exe'))) && !/ply\.exe$/i.test(installed.nodeExe));
       t.ok('組む: 起動口が読む runtime-node.txt（Node の置き場の名前 1 行）', fs.readFileSync(path.join(installed.appDir, runtime.NODE_POINTER_FILE), 'utf8') === `${path.basename(installed.nodeDir)}\n`);
-      t.ok('外部 AI 起動口: runtime 直下の pleiad-cli.cmd は版に依らず、現在の版を指すファイルを更新する',
-        fs.readFileSync(path.join(root, runtime.CLI_ENTRY_FILE), 'utf8') === runtime.CLI_LAUNCHER
-          && runtime.CLI_LAUNCHER.includes('set "AGENT_HOST_RUNTIME_ROOT=%ROOT%"')
-          && runtime.CLI_LAUNCHER.includes('set "AGENT_HOST_RUNTIME_KEY=%KEY%"')
-          && fs.readFileSync(path.join(root, runtime.CLI_POINTER_FILE), 'utf8').trim() === installed.key
-          && !path.join(root, runtime.CLI_ENTRY_FILE).startsWith(res1.dir));
+      t.ok('外部 AI 起動口: 固定 Node と .mjs は runtime の cli にあり、install だけでは版ポインターを進めない',
+        fs.readFileSync(path.join(root, runtime.CLI_DIR_NAME, runtime.CLI_ENTRY_FILE), 'utf8') === runtime.CLI_LAUNCHER
+          && fs.readFileSync(path.join(root, runtime.CLI_DIR_NAME, runtime.CLI_NODE_FILE)).equals(fs.readFileSync(installed.nodeExe))
+          && !fs.existsSync(path.join(root, runtime.CLI_POINTER_FILE))
+          && !path.join(root, runtime.CLI_DIR_NAME, runtime.CLI_ENTRY_FILE).startsWith(res1.dir));
       t.ok('組む: agent-browser は agent-browser\\<版>\\ に store へのハードリンクで置く', installed.agentBrowserDir === path.join(root, 'agent-browser', installed.key)
         && fs.readFileSync(path.join(installed.agentBrowserDir, 'agent-browser.exe')).equals(Buffer.from('agent-browser-binary')) && fs.statSync(path.join(installed.agentBrowserDir, 'agent-browser.exe')).nlink >= 2);
       t.ok('組む: 組み立ての残り（staging・一時ファイル）を残さない', dotEntries(root).length === 0 && fs.readdirSync(path.join(root, 'store')).every(n => !n.endsWith('.tmp')));
@@ -159,9 +158,11 @@ export default async function (t) {
       res2 = await makeResources(path.join(scratch, 'res2'), { version: '1.0.1', files: { 'core/server.mjs': 'export const s = 2; // changed\n' } });
       const before = storeCount(root);
       const installed = await runtime.install({ root, resourcesDir: res2.dir, now: () => Date.parse('2026-10-06T00:00:10Z') });
-      t.ok('外部 AI 起動口: 更新後も固定 .cmd のまま現在の版へ切り替わる',
-        fs.readFileSync(path.join(root, runtime.CLI_ENTRY_FILE), 'utf8') === runtime.CLI_LAUNCHER
-          && fs.readFileSync(path.join(root, runtime.CLI_POINTER_FILE), 'utf8').trim() === installed.key);
+      t.ok('外部 AI 起動口: install 後も固定起動ファイルは準備し、active pointer は起動前まで据え置く',
+        fs.readFileSync(path.join(root, runtime.CLI_DIR_NAME, runtime.CLI_ENTRY_FILE), 'utf8') === runtime.CLI_LAUNCHER
+          && !fs.existsSync(path.join(root, runtime.CLI_POINTER_FILE)));
+      await runtime.activateCli({ root, key: res1.key });
+      t.ok('外部 AI 起動口: 起動中の版だけを active pointer に記録する', fs.readFileSync(path.join(root, runtime.CLI_POINTER_FILE), 'utf8').trim() === res1.key);
       const t1 = path.join(root, 'app', res1.key, 'core', 'util.mjs'), t2 = path.join(installed.appDir, 'core', 'util.mjs');
       t.ok('2 版目: 木が増える・変わった分（server.mjs と package.json の 2 つ）だけ store が増える', treeKeys(root).length === 2 && storeCount(root) === before + 2 && installed.stats.stored === 2, `${before} -> ${storeCount(root)}`);
       t.ok('2 版目: 変わっていないファイルは 1 版目と同じ実体（ハードリンク 3）・Node と agent-browser の実体も共有', fs.statSync(t1).ino === fs.statSync(t2).ino && fs.statSync(t2).nlink === 3
@@ -410,8 +411,8 @@ export default async function (t) {
       const runtimeRoot = path.join(scratch, 'Local', 'agent-host-runtime');
       const env = runtime.stableCliEnv({ execPath: path.join(installDir, 'Ply.exe'), resourcesPath: path.join(installDir, 'resources'), runtimeRoot,
         env: { SystemRoot: 'C:\\Windows', LOCALAPPDATA: path.join(scratch, 'Local') } });
-      t.ok('stableCliEnv: MCP 設定は版ごとの実行木と $INSTDIR の外にある固定 pleiad-cli.cmd を指す', env.PLEIAD_CLI_EXEC === 'C:\\Windows\\System32\\cmd.exe'
-        && env.PLEIAD_CLI_SCRIPT === path.join(runtimeRoot, 'pleiad-cli.cmd') && env.PLEIAD_CLI_CMD === '1' && env.PLEIAD_CLI_ELECTRON === ''
+      t.ok('stableCliEnv: MCP 設定は版ごとの実行木と $INSTDIR の外にある固定 Node と .mjs を指す', env.PLEIAD_CLI_EXEC === path.join(runtimeRoot, 'cli', runtime.CLI_NODE_FILE)
+        && env.PLEIAD_CLI_SCRIPT === path.join(runtimeRoot, 'cli', runtime.CLI_ENTRY_FILE) && !env.PLEIAD_CLI_CMD && env.PLEIAD_CLI_ELECTRON === ''
         && !env.PLEIAD_CLI_SCRIPT.startsWith(installDir) && !env.PLEIAD_CLI_SCRIPT.includes('app\\'));
       const store = runtime.stableCliEnv({ execPath: 'C:\\Program Files\\WindowsApps\\Pleiad_0.9.2.0_x64__abc\\app\\Ply.exe',
         resourcesPath: 'C:\\Program Files\\WindowsApps\\Pleiad_0.9.2.0_x64__abc\\app\\resources', store: true,
