@@ -1,8 +1,8 @@
 {
-  "version": "0.41.0-beta.5",
+  "version": "0.41.0-beta.6",
   "releases": [
     {
-      "version": "0.41.0-beta.5",
+      "version": "0.41.0-beta.6",
       "date": "2026-10-27",
       "title": "更新中も AI の作業やシェルの実行を続けられるようにしました",
       "sections": [
