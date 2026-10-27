@@ -36,7 +36,7 @@ function createServerRestarter({ link, getReady, prepared, root, dataDir, resour
     if (!runtime) throw new Error('the runtime location is not available');
     log(`restarting the server (${same ? `version ${last.runtimeKey}` : 'this version'}, port ${last.port ?? '?'})`);
     const env2 = boot.serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: boot.serverLogFile(runtime.root),
-      port: last.port, token: last.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath }) });
+      port: last.port, token: last.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath, runtimeRoot: runtime.root }) });
     let launched = null;
     const next = waitForReady(link, readyTimeoutMs ?? boot.START_TIMEOUT_MS);
     try {

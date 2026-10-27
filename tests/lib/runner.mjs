@@ -23,7 +23,7 @@ import path from "node:path";
 import { fork, spawnSync } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { Suite, runCase, summarize, pick } from "./harness.mjs";
-import { uninstallRestartMode } from "./restart.mjs";
+import { installRestartFromEnv, uninstallRestartMode } from "./restart.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
 import { reapOwned, killTagged, WORKER_TAG_ENV } from "./process-reap.mjs";
@@ -51,7 +51,9 @@ export function createGuardedRunner({ root, parallel = false }) {
     async prime() { seen = await snapshotPleiadWorktrees(root); },
     async run(mod, expectedName) {
       const suite = await runCase(mod);
+      // suite の仕掛け（待ち・タイマー・接続）は次の suite に持ち越さない。PLEIAD_TEST_RESTART の指定は、次の suite 用に新しく入れ直す
       uninstallRestartMode();
+      installRestartFromEnv();
       if (expectedName && mod.name !== expectedName) suite.ok("登録した名前と export const name が一致する", false, `登録 ${expectedName} / 実際 ${mod.name}`);
       const now = await snapshotPleiadWorktrees(root);
       const leaked = leakedWorktrees(seen, now);

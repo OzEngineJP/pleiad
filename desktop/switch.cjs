@@ -286,7 +286,7 @@ function createSwitchEffects({ link, ready, prepared, dataDir, resourcesPath, ex
 
   async function start(runtime, mode) {
     const env2 = boot.serverEnv({ baseEnv: env, agentBrowserDir: runtime.agentBrowserDir, root: runtime.root, key: runtime.key, logFile: boot.serverLogFile(runtime.root),
-      port: ready.port, token: ready.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath }) });
+      port: ready.port, token: ready.token, systemLocale, execPath, resourcesPath, stableCliEnv: runtimeLib().stableCliEnv({ execPath, resourcesPath, runtimeRoot: runtime.root }) });
     let launched = null;
     const next = waitForReady(link, readyTimeoutMs);
     try {
