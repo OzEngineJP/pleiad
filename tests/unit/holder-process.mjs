@@ -5,6 +5,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { ensureHolder, connectHolder, holderLogFile, readHolderFile } from '../../core/holder/client.mjs';
+import { holderLink } from '../../core/holder/link.mjs';
+import { BOOT_ENV_NAMES, takeBootEnv } from '../../core/boot-env.mjs';
 import { holderFilePath } from '../../core/holder/protocol.mjs';
 import { fakeChild, collect, waitFor, sleep, isAlive, tempDir, removeDir } from '../lib/holder-harness.mjs';
 
@@ -95,6 +97,22 @@ export default async function (t) {
     pids.add(idle.pid);
     idle.client.close();
     t.ok('idle: 子が無く親が居なければ終わる（秘密のファイルも消える）', await gone(idle.pid, 'idle exit') && !fs.existsSync(file));
+
+    // サーバー起動時に退避した idle 上書きは、core/process.start を通らない holderLink にも届く。
+    const savedBootEnv = Object.fromEntries(BOOT_ENV_NAMES.map(name => [name, process.env[name]]));
+    let linked;
+    try {
+      process.env.AGENT_HOST_HOLDER_IDLE_MS = '800';
+      takeBootEnv(process.env);
+      linked = await holderLink({ dataDir: path.join(dir, 'link-idle-data'), root, mode: 'detached' });
+      pids.add(linked.pid);
+      linked.close();
+      t.ok('holderLink: boot env の idle 上書きを渡し、親も子も無ければ保持役がその時間で終わる', await gone(linked.pid, 'holderLink idle exit'));
+    } finally {
+      for (const name of BOOT_ENV_NAMES) delete process.env[name];
+      for (const [name, value] of Object.entries(savedBootEnv)) if (value !== undefined) process.env[name] = value;
+      takeBootEnv(process.env);
+    }
   } finally {
     // 起こしたものが残っていれば止める（保持役が落ちれば子も止まる）。試験の後に残さない
     for (const pid of pids) if (isAlive(pid)) { try { process.kill(pid); } catch { /* 既に終わっている */ } }

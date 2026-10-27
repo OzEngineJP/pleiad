@@ -5,19 +5,27 @@
 //   launch: false 居る保持役にだけつなぐ（connectHolder。起動の付け直しの元。居なければ code 'HOLDER_NONE'）
 // つながりが切れていれば（保持役が終わった・つなぎ直し）、次の呼び出しがつなぎ直す。
 import path from 'node:path';
+import { bootEnv } from '../boot-env.mjs';
 import { ensureHolder, connectHolder } from './client.mjs';
 
 let shared = null;   // { id, promise }
 
 /** 同じデータ置き場・実行場所の保持役への口。残りの options は ensureHolder / connectHolder へ渡す */
-export async function holderLink({ dataDir, root, launch = true, ...options } = {}) {
+export async function holderLink({ dataDir, root, launch = true, idleMs = undefined, ...options } = {}) {
   if (!dataDir || !root) throw Object.assign(new Error('holderLink needs dataDir and root'), { code: 'HOLDER_CONFIG' });
+  // 長く生きる子を core/process.start 以外から保持役へ載せる道も、起動時の idle 上書きを使う。
+  // テストのサーバーは AGENT_HOST_HOLDER_IDLE_MS を bootEnv に退避するため、呼び出し側が渡さないと既定の 10 分になる。
+  if (idleMs === undefined) {
+    const configured = bootEnv('AGENT_HOST_HOLDER_IDLE_MS');
+    if (configured) idleMs = Number(configured);
+  }
   const id = `${path.resolve(dataDir)}\n${root}`;
   if (shared?.id === id) {
     const client = await shared.promise.catch(() => null);
     if (client?.connected) return client;
   }
-  const promise = (launch ? ensureHolder({ dataDir, root, ...options }).then(found => found.client) : connectHolder({ dataDir, root, ...options }));
+  const holderOptions = { ...options, ...(idleMs !== undefined ? { idleMs } : {}) };
+  const promise = (launch ? ensureHolder({ dataDir, root, ...holderOptions }).then(found => found.client) : connectHolder({ dataDir, root, ...options }));
   const entry = { id, promise };
   shared = entry;
   // つなげなかった口は覚えない（次の呼び出しがやり直す）
