@@ -508,6 +508,7 @@ Windows・Node v24.22.1。5 回の中央値。`!` の行は fake のサーバー
 - restart 仕掛けは suite 終了時に controller のタイマーと全 `waitFor` watcher を解除する。破棄時に未完了の待機を reject せず解決し、未待機の timeout reject が次の suite の worker を落とさないようにする。`PLEIAD_TEST_RESTART` の指定は、外した直後に新しい controller で入れ直す（入れ直さないと、全体の掃引が worker の最初の suite にしか効かない）。
 - `chrome-link-adopt` は保持役を止める前に接続子を列挙し、生存中の子を木ごと終了してから保持役を閉じる。全体試験後は suite を特定するため worker データ置き場とコマンド行を照合し、この worktree を含む Node プロセスが残らないことを確認する。
 - `server-agent-account-restart` は保持役へ終了要求を送ってから、プロセス終了を確認するまでクライアント接続を保つ。要求を送った直後にパイプを閉じると保持役が残るため、終了確認後に接続を閉じ、保持役の子の終了を待つ。
+- テスト用 `AGENT_HOST_HOLDER_IDLE_MS=5000` はサーバーが `bootEnv` に退避する。`core/process.start` を通らず `holderLink` から保持役を起こす fake の held ターンは、この値を渡しておらず、保持役が本番既定の 10 分待つため `server-fake` の終了後に残っていた。`holderLink` が起動時の idle 値を引き継ぐようにし、本物の保持役を使う試験で親・子が無いと idle 後に終了することを確かめる。テスト runner はテストサーバーごとの置き場を記録し、suite の終了時に保持役の idle 終了を待つ。通常の停止・再起動では保持役を維持し、suite 後にまだ残るテスト専用の保持役だけを最後に回収する。回収した保持役は、その suite の失敗として出す（idle で終わらない保持役は本番でも残るので、黙って止めると次の漏れが見えない。`holderLink` の直しを外すと `server-fake` がこの判定で落ちることを確かめた）。置き場が消えていてつなげない保持役は、試験が起こした pid を直に止める。
 - サーバーを直接起動する `main-link`・`server-chrome`・`server-chrome-screencast`・`server-chrome-delegation`・`chrome-profiles`・`chrome-relay`・`chrome-os-link`・`server-delegate-account` は、`server.stop()` の後にテスト専用データ置き場の保持役と子を明示的に停止し、その置き場を消す。通常のサーバー停止は保持役の寿命を終わらせないため、テスト側で専用の後片付けを行う。全体試験後の `core/holder/main.mjs` と `core/chrome/link-child.mjs` を、Chrome の接続を有効にするサーバー suite 群に絞って見直した結果、これらの後片付け漏れを修正した。
 
 ### 1. 途中送信（steer）の再起動

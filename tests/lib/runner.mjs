@@ -24,6 +24,7 @@ import { fork, spawnSync } from "node:child_process";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { Suite, runCase, summarize, pick } from "./harness.mjs";
 import { installRestartFromEnv, uninstallRestartMode } from "./restart.mjs";
+import { waitForTestHolders } from "./server.mjs";
 import { snapshotPleiadWorktrees, leakedWorktrees } from "./worktree-guard.mjs";
 import { installDomStub } from "./dom-stub.mjs";
 import { reapOwned, killTagged, WORKER_TAG_ENV } from "./process-reap.mjs";
@@ -54,6 +55,7 @@ export function createGuardedRunner({ root, parallel = false }) {
       // suite の仕掛け（待ち・タイマー・接続）は次の suite に持ち越さない。PLEIAD_TEST_RESTART の指定は、次の suite 用に新しく入れ直す
       uninstallRestartMode();
       installRestartFromEnv();
+      for (const problem of await waitForTestHolders()) suite.ok("テスト用の保持役が suite 終了後に idle で終わる", false, problem);
       if (expectedName && mod.name !== expectedName) suite.ok("登録した名前と export const name が一致する", false, `登録 ${expectedName} / 実際 ${mod.name}`);
       const now = await snapshotPleiadWorktrees(root);
       const leaked = leakedWorktrees(seen, now);

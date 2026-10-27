@@ -9,6 +9,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { defaultHolderRoot } from '../../core/process.mjs';
+import { connectHolder } from '../../core/holder/client.mjs';
 import { assertNotGuarded } from "../../core/test-guard.mjs";
 import { serverBaseEnv } from "./inherited-env.mjs";
 import { restartMode } from "./restart.mjs";
@@ -17,6 +19,49 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 
 
 const LAUNCHED = /http:\/\/(localhost|[\d.]+|\[[\da-f:]+\]):(\d+)\/\?token=(\S+)/i;
+const testHolders = new Map();
+
+/** suite が終了した後、テストサーバーが使った保持役が idle で終了するまで待つ。終わらなかったものは止めて、漏れとして返す */
+export async function waitForTestHolders({ timeoutMs = 12_000 } = {}) {
+  const entries = [...testHolders.values()];
+  testHolders.clear();
+  const found = (await Promise.all(entries.map(async entry => {
+    try {
+      const client = await connectHolder(entry);
+      const holder = { ...entry, client, pid: client.pid };
+      client.close();
+      return holder;
+    } catch (error) {
+      if (error?.code === 'HOLDER_NONE' || error?.code === 'ENOENT' || error?.code === 'ECONNREFUSED') return null;
+      return { ...entry, error: error?.message ?? String(error) };
+    }
+  }))).filter(Boolean);
+  if (!found.length) return [];
+
+  const alive = holder => {
+    if (!holder.pid) return false;
+    try { process.kill(holder.pid, 0); return true; }
+    catch (error) { return error.code === 'EPERM'; }
+  };
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end && found.some(alive)) await new Promise(resolve => setTimeout(resolve, 100));
+  const remaining = found.filter(alive);
+  if (!remaining.length) return [];
+
+  // suite 終了時にだけ使うテスト置き場の最終回収。通常停止・再起動では保持役へ shutdown を送らない。
+  const connected = await Promise.all(remaining.map(async holder => {
+    try { return await connectHolder(holder); } catch { return null; }
+  }));
+  for (const client of connected) if (client) client.shutdown();
+  const forcedEnd = Date.now() + 5000;
+  while (Date.now() < forcedEnd && remaining.some(alive)) await new Promise(resolve => setTimeout(resolve, 100));
+  for (const client of connected) client?.close();
+  // 置き場が消えていてつなげない保持役は、試験が起こしたものの pid なので直に止める
+  for (const holder of remaining) if (alive(holder)) { try { process.kill(holder.pid); } catch { /* 既に終わっている */ } }
+  await new Promise(resolve => setTimeout(resolve, 200));
+  // 回収できても漏れとして出す（idle で終わらない保持役は、本番でも残る。黙って止めると次の漏れが見えない）
+  return remaining.map(holder => `保持役 pid ${holder.pid} が子も親も無いのに ${timeoutMs}ms で終わらなかった（${alive(holder) ? '止めても残った' : '最後に止めた'}。${holder.dataDir}）`);
+}
 
 /**
  * サーバを起動し、ready になるまで待つ。
@@ -47,9 +92,7 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       fs.writeFileSync(file, JSON.stringify({ memoryLearnPaused: true, composerSuggestions: false, ...prefs }));
     }
   }
-  const child = spawn(process.execPath, [entry, ...args], {
-    cwd: ROOT,
-    env: {
+  const childEnv = {
       // main がサーバーを起こすときにだけ渡す変数（AGENT_HOST_HANDOVER・SERVER_LOG・RUNTIME_KEY など。core/boot-env.mjs）と、Pleiad が会話のシェルへ渡す
       // PLEIAD_CLI_*・PLEIAD_CONTROL_* などは、実行元から継がない（tests/lib/inherited-env.mjs の serverBaseEnv）。test-env を読まずに startServer を使う入口
       // （tests/browser/*）でも、インストール版の実行場所・server.log・Ply.exe へ向かない。確かめるテストは env で渡す
@@ -92,7 +135,15 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       PLEIAD_SCAN_HOME: path.join(dataDir ?? process.env.AGENT_HOST_DATA ?? os.tmpdir(), "scan-home"),
       ...(dataDir ? { AGENT_HOST_DATA: dataDir } : {}),
       ...env,
-    },
+  };
+  const holderDataDir = childEnv.AGENT_HOST_DATA;
+  if (holderDataDir) {
+    const holderRoot = childEnv.AGENT_HOST_RUNTIME_ROOT || defaultHolderRoot(holderDataDir);
+    testHolders.set(`${path.resolve(holderDataDir).toLowerCase()}\n${path.resolve(holderRoot).toLowerCase()}`, { dataDir: holderDataDir, root: holderRoot });
+  }
+  const child = spawn(process.execPath, [entry, ...args], {
+    cwd: ROOT,
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
 
