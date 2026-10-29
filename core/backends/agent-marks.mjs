@@ -244,12 +244,13 @@ export const CAPABILITY_STATES = {
  * 能力ではないので、false は「未対応」ではなく、そのエージェントの特徴（そろえる対象ではない）。
  */
 export const AGENT_TRAITS = {
-  claude: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true },
-  codex: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true },
+  // 秘密情報は CLAUDE_ENV_FILE（値ファイルを読むスクリプト）で Bash のシェルにだけ届く。PowerShell ツールには渡らない（ADR 0284）
+  claude: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, secretsViaEnvFile: true },
+  codex: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, secretsViaEnvFile: false },
   // 強さはモデル名に入り、人格は会話の始めに固定され、失敗の理由は Pleiad が控えに残す。渡った合図は出せない
-  antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: false },
-  opencode: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true },
-  devin: { effortInModelId: true, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true },
-  grok: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true },
-  fake: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true },
+  antigravity: { effortInModelId: true, instructionsAtStart: true, failureDiagnostics: true, promptDelivery: false, secretsViaEnvFile: false },
+  opencode: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, secretsViaEnvFile: false },
+  devin: { effortInModelId: true, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, secretsViaEnvFile: false },
+  grok: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: true, promptDelivery: true, secretsViaEnvFile: false },
+  fake: { effortInModelId: false, instructionsAtStart: false, failureDiagnostics: false, promptDelivery: true, secretsViaEnvFile: false },
 };

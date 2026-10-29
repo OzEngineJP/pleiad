@@ -8,11 +8,13 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
 import { createSecrets, reservedEnvName, siteMatches, normalizeSite, inFolder } from '../../core/secrets.mjs';
 import { createSecretStore, plainCipher } from '../../core/secret-store.mjs';
 import { createSecretMasker, createStreamMasker, SECRET_MASK } from '../../core/secret-mask.mjs';
-import { envScript, writeClaudeEnvFile, sweepClaudeEnvFiles, shQuote } from '../../core/claude-env-file.mjs';
+import { envScript, envValues, writeClaudeEnvFile, adoptClaudeEnvFile, sweepClaudeEnvFiles, shQuote } from '../../core/claude-env-file.mjs';
 import { secretsPrompt } from '../../core/secrets-prompt.mjs';
+import { resolveShell } from '../../core/shell-bridge.mjs';
 import { parseDotenv, looksSecret, reservedName } from '../../web/dotenv.mjs';
 import { agentT } from '../../core/i18n.mjs';
 
@@ -20,6 +22,14 @@ export const name = 'secrets-store';
 export const title = '秘密情報と変数の置き場: 値を出さない・使えない名前・渡す場所の勝ち負け・worktree・.env・origin の照合・伏せる・Claude のシェルへ渡すファイル';
 
 const rejects = async (p) => { try { await p; return null; } catch (e) { return e; } };
+/** プロセスのコマンドライン（Windows は Win32_Process.CommandLine、それ以外は /proc/<pid>/cmdline） */
+const commandLineOf = async (pid) => {
+  if (process.platform === 'win32') {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`], { encoding: 'utf8', timeout: 30_000 });
+    return r.status === 0 ? String(r.stdout).trim() : null;
+  }
+  return fs.readFile(`/proc/${pid}/cmdline`, 'utf8').then((s) => s.replace(/\0/g, ' ').trim(), () => null);
+};
 const SECRET = 'sk_test_' + 'x'.repeat(24);
 const PASSWORD = 'p@ss"w\\ord-' + 'y'.repeat(12);
 const KEY = 'sk-or-v1-' + 'k'.repeat(30);
@@ -145,19 +155,57 @@ export default async function (t) {
       && (await fs.readFile(path.join(scratch, 'secrets.json'), 'utf8')) === '{ broken');
   } finally {}
 
-  // ---- Claude のシェルへ渡すファイル
+  // ---- Claude のシェルへ渡すファイル（ADR 0284: 値は .vals にだけ書き、CLAUDE_ENV_FILE の .sh は読む行だけ）
   t.ok("sh の単一引用符: ' は '\\'' にする", shQuote("a'b") === `'a'\\''b'`);
-  const script = envScript({ A: "x'y", B: 'line1\nline2', 'bad-name': 'z' }, { inherit: 'C:\\Users\\me\\own.sh' });
-  t.ok('スクリプト: 元の CLAUDE_ENV_FILE を先に読み（区切りは /）、export で値を入れる。名前の形が違うものは書かない',
-    script.includes(`[ -f 'C:/Users/me/own.sh' ] && . 'C:/Users/me/own.sh'`) && script.includes(`export A='x'\\''y'`) && script.includes("export B='line1\nline2'") && !script.includes('bad-name')
-    && script.indexOf('own.sh') < script.indexOf('export A'));
+  const vals = envValues({ A: "x'y", B: 'line1\nline2', 'bad-name': 'z' });
+  t.ok('値ファイル: export で値を入れる。名前の形が違うものは書かない',
+    vals.includes(`export A='x'\\''y'`) && vals.includes("export B='line1\nline2'") && !vals.includes('bad-name'));
+  const script = envScript({ valuesFile: 'D:\\data\\run\\claude-env-abc.vals', inherit: 'C:\\Users\\me\\own.sh' });
+  t.ok('スクリプト: 元の CLAUDE_ENV_FILE を先に読み（区切りは /）、値ファイルを読む行だけ。値（export 行）は書かない',
+    script.includes(`[ -f 'C:/Users/me/own.sh' ] && . 'C:/Users/me/own.sh'`) && script.includes(`[ -f 'D:/data/run/claude-env-abc.vals' ] && . 'D:/data/run/claude-env-abc.vals'`)
+    && !script.includes('export ') && script.indexOf('own.sh') < script.indexOf('.vals'));
   const file = await writeClaudeEnvFile(dataDir, { TOKEN: SECRET }, { inherit: null });
-  const st = await fs.stat(file.file);
-  t.ok('ファイルは データ置き場の run/ に書き、ターンの終わりに消す', path.dirname(file.file) === path.join(dataDir, 'run') && st.isFile() && (await fs.readFile(file.file, 'utf8')).includes(SECRET)
-    && (await file.dispose(), await fs.stat(file.file).then(() => false, () => true)));
+  const st = await fs.stat(file.file), stv = await fs.stat(file.values);
+  const scriptText = await fs.readFile(file.file, 'utf8'), valuesText = await fs.readFile(file.values, 'utf8');
+  t.ok('値は .vals（0600）にだけ書き、.sh の中身は読む行だけ（値を含まない。中身が bash.exe -c の引数に載るため）',
+    path.dirname(file.file) === path.join(dataDir, 'run') && st.isFile() && stv.isFile() && file.values === file.file.replace(/\.sh$/, '.vals')
+    && !scriptText.includes(SECRET) && valuesText.includes(`export TOKEN='${SECRET}'`)
+    && (process.platform === 'win32' || (st.mode & 0o077) === 0 && (stv.mode & 0o077) === 0));
+  t.ok('ターンの終わりに両方消す', (await file.dispose(), await fs.stat(file.file).then(() => false, () => true) && await fs.stat(file.values).then(() => false, () => true)));
   t.ok('値が無ければ書かない（CLAUDE_ENV_FILE を付けない）', (await writeClaudeEnvFile(dataDir, {})) === null);
+  const adoptedSrc = await writeClaudeEnvFile(dataDir, { X: 'y' }, { inherit: null });
+  const adopted = adoptClaudeEnvFile(dataDir, path.basename(adoptedSrc.file));
+  t.ok('付け直し: 札のスクリプトの名前から両方を引く。名前の形が違う・run の外は引かない',
+    adopted && adopted.file === adoptedSrc.file && adopted.values === adoptedSrc.values
+    && adoptClaudeEnvFile(dataDir, '../secrets.json') === null && adoptClaudeEnvFile(dataDir, 'claude-env-x.txt') === null);
+  t.ok('付け直した分も終わりに両方消す', (await adopted.dispose(), await fs.stat(adoptedSrc.file).then(() => false, () => true) && await fs.stat(adoptedSrc.values).then(() => false, () => true)));
   const left = await writeClaudeEnvFile(dataDir, { X: 'y' }, { inherit: null });
-  t.ok('起動時の片付け: 消し損ねたファイルを消す（付け直すターンの分は残す）', (await sweepClaudeEnvFiles(dataDir, { except: [] })) === 1 && await fs.stat(left.file).then(() => false, () => true));
+  const keep = await writeClaudeEnvFile(dataDir, { X: 'y' }, { inherit: null });
+  const orphan = path.join(dataDir, 'run', 'claude-env-0d0a5b1c-0000-4000-8000-0000000000aa.vals');
+  await fs.writeFile(orphan, 'export ORPHAN=1');
+  t.ok('起動時の片付け: 消し損ねたスクリプトと値ファイル（対のスクリプトの無い残りも）を消し、札が指す組は残す',
+    (await sweepClaudeEnvFiles(dataDir, { except: [path.basename(keep.file)] })) === 3
+    && await fs.stat(left.file).then(() => false, () => true) && await fs.stat(left.values).then(() => false, () => true)
+    && await fs.stat(orphan).then(() => false, () => true) && await fs.stat(keep.file).then(() => true, () => false) && await fs.stat(keep.values).then(() => true, () => false));
+  await keep.dispose();
+
+  // ---- Claude Code の Bash ツールと同じ形（bash -c '<env file の中身>\n: && <command>'）で動かし、値がプロセスのコマンドラインに出ないか（ADR 0284）
+  const bash = resolveShell('bash');
+  if (!bash) t.ok('bash が見つかる（この環境ではプロセスの検査はできない）', false, 'bash not found');
+  else {
+    const env = await writeClaudeEnvFile(dataDir, { PROBE_TOKEN: SECRET }, { inherit: null });
+    const scriptBody = await fs.readFile(env.file, 'utf8');
+    const echo = spawnSync(bash, ['-c', `${scriptBody}\n: && printf %s "$PROBE_TOKEN"`], { encoding: 'utf8' });
+    t.ok('値ファイルを読むと、シェルの中では値が使える', echo.status === 0 && echo.stdout === SECRET, `status=${echo.status} stdout=${JSON.stringify(echo.stdout)} stderr=${JSON.stringify(String(echo.stderr ?? '').slice(0, 200))}`);
+    const proc = spawn(bash, ['-c', `${scriptBody}\n: && sleep 30`], { stdio: 'ignore' });
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      const cmdline = await commandLineOf(proc.pid);
+      t.ok('走っている bash のコマンドラインに値が無い（.sh の中身は読む行だけなので。中身は argv に載る）',
+        typeof cmdline === 'string' && cmdline.length > 0 && !cmdline.includes(SECRET) && cmdline.includes('.vals'), cmdline?.slice(0, 300));
+    } finally { try { proc.kill('SIGKILL'); } catch { /* もう居ない */ } }
+    await env.dispose();
+  }
 
   // ---- .env の読み方
   const parsed = parseDotenv('# c\nexport A=1\nB="x \\"y\\"\\nz"\nC=\'raw $X\'\nD=plain # note\nE="multi\nline"\nbad line\n1X=2\nA=2\n');
@@ -172,5 +220,9 @@ export default async function (t) {
   const noBrowser = secretsPrompt({ entries: [], logins: [{ id: 'sec-aaaaaaaaaaaa', label: 'GitHub', sites: ['github.com'] }], browser: false, agentT, locale: 'en' });
   t.ok('一覧が空なら文を足さない', none === null && noBrowser === null);
   t.ok('文は名前・種類・メモ・サイト・id だけ（値は無い）', text.includes('API_TOKEN（秘密 · 本番では使わない）') && text.includes('GitHub [sec-aaaaaaaaaaaa] · github.com · ユーザー名 bot') && text.includes('fill_secret'));
+  // env file 経由のエージェント（Claude）は Bash・ply_shell にだけ届き、PowerShell ツールには渡らないことを書く（ADR 0284）
+  const envFileText = secretsPrompt({ entries: [{ name: 'API_TOKEN', kind: 'secret', label: 'API_TOKEN', secret: true }], envFile: true, agentT, locale: 'ja' });
+  t.ok('env file のエージェント向け: Bash ツールか ply_shell にだけ届き、PowerShell ツールには渡らないと書く',
+    envFileText.includes('Bash ツールか ply_shell') && envFileText.includes('PowerShell ツールには渡されていません'));
   await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
 }

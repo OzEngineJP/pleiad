@@ -1,5 +1,5 @@
 // ply_control（Pleiad の操作の一覧。ADR 0081）を 3 つのエージェントへ渡す形。LLM も本物の CLI も呼ばない（tests/unit/computer-delivery.mjs と同じ作り）:
-//   - Claude: SDK の query を身代わりにして、mcpServers・env（会話のシェルへ渡す PLEIAD_CONTROL_*）・指示文・ツールごとの承認を見る
+//   - Claude: SDK の query を身代わりにして、--mcp-config のファイル（ADR 0284）・env（会話のシェルへ渡す PLEIAD_CONTROL_*）・指示文・ツールごとの承認を見る
 //   - Codex: app-server の rpc を身代わりにして、thread/start の config（mcp_servers.ply_control・shell_environment_policy.set・developerInstructions）を見る
 //   - Antigravity: エージェント定義と環境変数（prepareAgent）と、4 本目の接続先として束ねる中継（agy は mcpServers の先頭の 1 本しか起こさない）を別プロセスで見る
 import http from 'node:http';
@@ -24,6 +24,9 @@ const runtime = {
   env: { PLEIAD_CONTROL_URL: 'http://127.0.0.1:1', PLEIAD_CONTROL_TOKEN: TOKEN },
 };
 const other = { ...runtime, url: 'http://127.0.0.1:2/mcp/control', headers: { Authorization: `Bearer ${'c'.repeat(64)}` }, env: { PLEIAD_CONTROL_URL: 'http://127.0.0.1:2', PLEIAD_CONTROL_TOKEN: 'c'.repeat(64) } };
+
+/** Claude の HTTP の MCP は --mcp-config に渡すファイルに載る（options.mcpServers は sdk 型だけ。ADR 0284）。ターンの中で読む */
+const mcpConfOf = (options) => { const conf = options?.extraArgs?.['mcp-config']; return conf && fs.existsSync(conf) ? JSON.parse(fs.readFileSync(conf, 'utf8')).mcpServers ?? {} : {}; };
 
 function fakeClaudeSdk() {
   const q = { options: null, close() {}, interrupt: async () => ({}) };
@@ -73,8 +76,8 @@ export default async function (t) {
         signal: new AbortController(), control: {}, hostSessionId: 'host-control', controlRuntime: runtime });
       done.catch(() => {});
       for (let i = 0; i < 200 && !q.options; i++) await sleep(5);
-      const server = q.options?.mcpServers?.ply_control;
-      t.ok('Claude: mcpServers に ply_control（http・Bearer）', server?.type === 'http' && server.url === runtime.url && server.headers?.Authorization === runtime.headers.Authorization, JSON.stringify(server));
+      const server = mcpConfOf(q.options).ply_control;
+      t.ok('Claude: --mcp-config のファイルに ply_control（http・Bearer）', server?.type === 'http' && server.url === runtime.url && server.headers?.Authorization === runtime.headers.Authorization, JSON.stringify(server));
       t.ok('Claude: ply_control の待ちの上限はほかの Pleiad の MCP と同じ既定（承認は待たずに返る。ADR 0088）', !('timeout' in server), JSON.stringify(server));
       t.ok('Claude: 会話のシェルへ PLEIAD_CONTROL_URL・PLEIAD_CONTROL_TOKEN を渡す（CLI がこの会話に束縛される）', q.options?.env?.PLEIAD_CONTROL_URL === runtime.env.PLEIAD_CONTROL_URL && q.options.env.PLEIAD_CONTROL_TOKEN === TOKEN);
       t.ok('Claude: 指示文を systemPrompt.append に足す', q.options?.systemPrompt?.append?.includes('CONTROL-INSTRUCTIONS'), JSON.stringify(q.options?.systemPrompt ?? null).slice(0, 200));
@@ -92,7 +95,7 @@ export default async function (t) {
       const done = claude.runTurn({ prompt: 'p', sessionId: null, cwd: process.cwd(), mode: 'default', locale: 'ja', emit: () => {}, askPermission: async () => ({ allow: true }), signal: new AbortController(), control: {}, hostSessionId: 'host-control-2' });
       done.catch(() => {});
       for (let i = 0; i < 200 && !q.options; i++) await sleep(5);
-      t.ok('Claude: controlRuntime が無ければ（直接呼ぶテスト）何も足さない', q.options && !q.options.mcpServers?.ply_control && !('PLEIAD_CONTROL_TOKEN' in (q.options.env ?? {})) && !String(q.options.systemPrompt?.append ?? '').includes('CONTROL-INSTRUCTIONS'));
+      t.ok('Claude: controlRuntime が無ければ（直接呼ぶテスト）何も足さない', q.options && !mcpConfOf(q.options).ply_control && !q.options.mcpServers?.ply_control && !('PLEIAD_CONTROL_TOKEN' in (q.options.env ?? {})) && !String(q.options.systemPrompt?.append ?? '').includes('CONTROL-INSTRUCTIONS'));
       q.finish();
       await Promise.race([done.catch(() => {}), sleep(3000)]);
     } finally { restore(); }
