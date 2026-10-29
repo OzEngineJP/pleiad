@@ -210,8 +210,9 @@ export const DATA_WRITES = [
   { file: 'core/visualize.mjs', sites: 1, targets: [
     { name: 'visualization-snapshots/<key>.html', limit: '1 つ 1 ファイル。24 時間で掃除する', reason: '可視化の写し。書き換えない' },
   ] },
-  { file: 'core/agent-browser.mjs', sites: 1, targets: [
+  { file: 'core/agent-browser.mjs', sites: 3, targets: [
     { name: 'agent-browser/<hash>/agent-browser.json', limit: '固定（{ cdp }）', reason: 'エージェントのブラウザー（Chrome の中継）の接続先。ターンごとに上書き' },
+    { name: '(置き場の外) %TEMP%/ply-ab-<hash> の <セッション名>.config・<セッション名>.ply-prestart', limit: '固定（16 桁の指紋・pid）', reason: 'Windows で agent-browser のデーモンを先に起こすとき（ADR 0284）の、CLI が見る設定の指紋と、先に起こした印。デーモンを起こすたびに上書き' },
   ] },
   { file: 'core/hooks-unify.mjs', sites: 2, targets: [
     { name: 'hooks-runtime/hook-adapter-<hash>.mjs', limit: 'アダプターごとに 1 つ。コードの複製', reason: '生成したコード' },

@@ -122,6 +122,8 @@ export async function startServer({ env = {}, dataDir, timeoutMs = 90_000, entry
       // worktree（git worktree。ADR 0089）は作らない。cwd がこのリポジトリのテストが <リポジトリ>.pleiad に作業場所を残すため。
       // 確かめるテスト（server-worktree）は一時のリポジトリを cwd にして "on" を渡す
       AGENT_HOST_WORKTREES: "off",
+      // agent-browser のデーモンを先に起こさない（ADR 0284）。偽の中継のテストが PATH の上の本物を起こし、ターンの cwd を掴んだまま残すため
+      AGENT_HOST_AGENT_BROWSER_PRESTART: "off",
       // 言語は日本語に固定する。テストは日本語の文言に依存している（CI の OS の言語で変わらないように）
       AGENT_HOST_LOCALE: process.env.AGENT_HOST_LOCALE || "ja",
       // Antigravity の次の発言の候補を作る agy の使い捨てのホーム（core/backends/antigravity-suggest.mjs）は、利用者の一時フォルダーでなくデータ置き場の下に

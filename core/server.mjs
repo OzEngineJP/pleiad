@@ -145,7 +145,7 @@ import { createVisualizationCollector, visualizeInstructions, snapshotResponse, 
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
-import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, discardBrowserEnvironment, settleBrowserEnvironment, sweepBrowserEnvironments, chromeRelayBrowser } from './agent-browser.mjs';
+import { browserEnvironment, browserInstruction, forgetBrowserEnvironment, discardBrowserEnvironment, settleBrowserEnvironment, sweepBrowserEnvironments, chromeRelayBrowser, locateAgentBrowser } from './agent-browser.mjs';
 import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
 import { createChromeLoginGroups } from './chrome/login-groups.mjs';
@@ -3071,6 +3071,9 @@ const publicWorktree = entry => ({ id: entry.id, branch: entry.branch, path: ent
 const GIT_BEGIN_WAIT_MS = 6_000;
 // AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
 const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
+// AGENT_HOST_AGENT_BROWSER_PRESTART=off で agent-browser のデーモンを先に起こさない（ADR 0284）。偽の中継を使うテストのサーバーが、
+// PATH の上の本物の agent-browser を起こして残さないため（tests/lib/server.mjs）。戻し道も兼ねる
+const BROWSER_PRESTART = process.env.AGENT_HOST_AGENT_BROWSER_PRESTART !== 'off';
 const GIT_END_WAIT_MS = 6_000;
 onExit(() => botHost?.stop());
 onExit(() => removeControlFile({ dataDir: store.dataDir }));
@@ -7506,7 +7509,9 @@ async function beginTurn(ctx) {
     visualizeInstructions: delegatedChild || !backend.capabilities?.visualize ? null : visualizeInstructions(agentLocale),
     ...(delegatedChild ? { delegatedChild: true } : {}),
     // Chrome の層が使えないホスト（Windows 以外・Electron なし）や、ブラウザーを受け取れないエージェント（印 browser）では、環境・指示・ply_browser のどれも渡さない
-    browserEnv: !backend.capabilities?.browser || chromeConnection?.state().state === 'unsupported' ? null : await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
+    // Windows では agent-browser のデーモンを Pleiad が先に起こす（子のシェルのパイプをデーモンが持ったまま残らないように。ADR 0284）
+    browserEnv: !backend.capabilities?.browser || chromeConnection?.state().state === 'unsupported' ? null : await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated,
+      daemon: agentBrowserEndpoints && BROWSER_PRESTART ? await locateAgentBrowser() : null, cwd, log: line => console.log(`  ${line}`) }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
     browserInstructions: null,
     // ply_browser。エージェントのブラウザー（Chrome）を渡すターンだけ（下で入れる）
     browserRuntime: null,
@@ -8289,7 +8294,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     }
   }
   agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
-  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0180）
+  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0180）。先に起こしたまま使わなかったデーモンも止める（ADR 0284）
   if (agentBrowserEndpoints && turn.browserRelayId) settleBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: turn.browserRelayId, busy: agentBrowserBusy }).catch(() => {});
   chromeHandoffs?.turnChanged(turn.info.sessionId || turn.key, false);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）
