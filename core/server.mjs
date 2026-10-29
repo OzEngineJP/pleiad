@@ -1108,6 +1108,7 @@ function backgroundOutput(file, at = Date.now()) {
     return { bytes: s.size, quietMinutes: Math.max(0, Math.floor((at - s.mtimeMs) / 60000)) };
   } catch { return null; }
 }
+// backgroundWaiting と、リモートの依頼元への telemetry に載せる形。出力ファイルのパスは載せず、派生値（output）だけ
 const waitingBackground = x => { const output = backgroundOutput(x.outputFile); return { ...peerBackground(x), ...(output ? { output } : {}) }; };
 // 裏待ちの最初の知らせに載せる子の返答の上限（全文は完了通知と ply_task_status で渡る）
 const BACKGROUND_REPLY_MAX = 4000;
@@ -1447,7 +1448,7 @@ function remoteTaskEvent(row) {
   const execution = taskExecutions.get(row.sessionId);
   const turn = runtime.turns.get(row.sessionId);
   const background = execution?.waitingSince && turn?.info.phase === 'waiting'
-    ? (turn.info.background ?? []).map(peerBackground) : [];
+    ? (turn.info.background ?? []).map(waitingBackground) : [];
   return {
     taskId: row.taskId, requesterSessionId: parsed?.sessionId ?? null, title: row.title ?? null,
     status: waiting ? 'waiting' : row.status, rawStatus: row.status, notification: row.notification ?? null,

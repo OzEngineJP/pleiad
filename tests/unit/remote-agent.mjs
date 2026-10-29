@@ -8,6 +8,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { createRelay } from '../../relay/server.mjs';
 import { startServer } from '../lib/server.mjs';
+import { createFakeGates } from '../lib/fake-gate.mjs';
 import { open, sleep } from '../lib/ws-client.mjs';
 import { pairDevice, connectDevice } from '../lib/remote-device.mjs';
 import { openAgent, requesterOf } from '../lib/remote-agent-client.mjs';
@@ -305,7 +306,8 @@ export default async function (t) {
   const dataDir = path.join(scratch, 'data');
   const relay = createRelay({ enrollSecret: SECRET, trustProxy: false, logger: () => {} });
   const relayPort = (await relay.listen(0, '127.0.0.1')).port;
-  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake' }, dataDir, timeoutMs: 30_000 });
+  const gates = await createFakeGates(scratch);
+  const server = await startServer({ env: { AGENT_HOST_BACKENDS: 'fake', ...gates.env }, dataDir, timeoutMs: 30_000 });
   const c = await open({ port: server.port, token: server.token });
   const cmd = (command, args = {}) => within(c.cmd(command, args), 15_000, `コマンド ${command}`);
   const devices = [], agents = [];
@@ -530,6 +532,18 @@ export default async function (t) {
     await ax.next(e => e.t === 'task' && e.task.taskId === qId && e.task.status === 'waiting', 15_000, '質問の待ち');
     t.ok('子の質問のカード（kind: question）は端末へ中継しない', (await ax.none(e => e.t === 'relay' && e.relay.taskId === qId)) === true);
     await ax.call('cancel', { taskId: qId }, reqP);
+
+    // 裏待ちの子の telemetry に、裏の出力の大きさと最後に伸びてからの分が乗る。出力ファイルのパスは線を越えない（ADR 0284）
+    const bgOutput = path.join(scratch, 'remote-bg.output');
+    await fs.writeFile(bgOutput, 'running 1/40\n');
+    const bg = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: `bg-shell gate:remote-bg output:${bgOutput} 子の報告: 裏で流している` }, reqP);
+    const bgId = bg.result.task.taskId;
+    const bgTask = await within((async () => { for (;;) { const s = await ax.call('status', { taskId: bgId }, reqP); if (s.result?.task?.telemetry?.background) return s.result.task; await sleep(100); } })(), 15_000, '裏待ちの telemetry');
+    t.ok('裏待ちの telemetry の background.tasks[].output に、出力の大きさと最後に伸びてからの分が乗る',
+      bgTask.telemetry.background.tasks[0]?.output?.bytes === 13 && bgTask.telemetry.background.tasks[0].output.quietMinutes === 0, JSON.stringify(bgTask.telemetry.background));
+    t.ok('出力ファイルのパスは端末へ送らない', !JSON.stringify(bgTask).includes('remote-bg.output') && !('outputFile' in bgTask.telemetry.background.tasks[0]));
+    await gates.open('remote-bg');
+    await ax.next(e => e.t === 'task' && e.task.taskId === bgId && e.task.status === 'completed', 15_000, '裏待ちの子の完了');
 
     // AI の無い端末（スマホ）は、承認の ID と受領証を知っていても答えられない
     const ask3 = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: 'ask' }, reqP);
