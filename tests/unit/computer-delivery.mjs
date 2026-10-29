@@ -1,8 +1,9 @@
 // コンピューターの操作（ply_computer）を 3 つのエージェントへ渡す形と、結果の正規化（docs/computer-use.md「エージェントへの渡し方」
 // 「tool.start / tool.result」「エージェントごとの値」）。LLM も本物の CLI も呼ばない:
-//   - Claude: SDK の query を身代わりにして、mcpServers・timeout・指示文・ツールごとの承認を見る。正規化は純粋な関数で
+//   - Claude: SDK の query を身代わりにして、--mcp-config のファイル（ADR 0284）・timeout・指示文・ツールごとの承認を見る。正規化は純粋な関数で
 //   - Codex: app-server の rpc を身代わりにして、thread/start の config（ply_computer・同梱を切るキー・tool_timeout_sec）と mcpToolCall の正規化を見る
 //   - Antigravity: 置き場を分けた別プロセス（tests/lib/agy-computer-worker.mjs）で、偽の agy と 2 本目の中継を通す
+import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -24,6 +25,9 @@ const MARK = `[ply_computer] {"v":1,"tool":"screenshot","state":"ok","title":"�
 const SHOT_TEXT = `ディスプレイ 1 / 1・1460×821\n${MARK}`;
 const IMAGE = "/9j/4AAQSkZJRgABAQAAAQABAAD" + "A".repeat(4000);
 const runtime = { url: "http://127.0.0.1:1/mcp/computer", headers: { Authorization: `Bearer ${"a".repeat(64)}` }, instructions: "COMPUTER-COMMON-INSTRUCTIONS" };
+
+/** Claude の HTTP の MCP は --mcp-config に渡すファイルに載る（options.mcpServers は sdk 型だけ。ADR 0284）。ターンの中で読む */
+const mcpConfOf = (options) => { const conf = options?.extraArgs?.['mcp-config']; return conf && fs.existsSync(conf) ? JSON.parse(fs.readFileSync(conf, 'utf8')).mcpServers ?? {} : {}; };
 
 /** 中継を env なしで起こし（--computer）、JSON-RPC を流して返事を集める */
 async function relayAlone(messages) {
@@ -130,8 +134,8 @@ export default async function (t) {
         askPermission: async () => { asked++; return { allow: false }; }, signal: new AbortController(), control: {}, hostSessionId: "host-computer", computerRuntime: runtime });
       done.catch(() => {});
       for (let i = 0; i < 200 && !q.options; i++) await sleep(5);
-      const server = q.options?.mcpServers?.ply_computer;
-      t.ok("Claude: mcpServers に ply_computer（http・Bearer・timeout 660000）", server?.type === "http" && server.url === runtime.url && server.headers?.Authorization === runtime.headers.Authorization && server.timeout === 660_000, JSON.stringify(server));
+      const server = mcpConfOf(q.options).ply_computer;
+      t.ok("Claude: --mcp-config のファイルに ply_computer（http・Bearer・timeout 660000）", server?.type === "http" && server.url === runtime.url && server.headers?.Authorization === runtime.headers.Authorization && server.timeout === 660_000, JSON.stringify(server));
       t.ok("Claude: 指示文を systemPrompt.append に足す", q.options?.systemPrompt?.append?.includes("COMPUTER-COMMON-INSTRUCTIONS"), JSON.stringify(q.options?.systemPrompt ?? null).slice(0, 200));
       const decision = await q.options?.canUseTool?.("mcp__ply_computer__left_click", { coordinate: [1, 2] }, { signal: new AbortController().signal, suggestions: [] });
       t.ok("Claude: ply_computer はツールごとに聞かずに allow（アプリの承認は橋で行う）", decision?.behavior === "allow" && asked === 0, JSON.stringify(decision));
@@ -148,7 +152,7 @@ export default async function (t) {
       const done = claude.runTurn({ prompt: "p", sessionId: null, cwd: process.cwd(), mode: "default", locale: "ja", emit: () => {}, askPermission: async () => ({ allow: true }), signal: new AbortController(), control: {}, hostSessionId: "host-computer-2" });
       done.catch(() => {});
       for (let i = 0; i < 200 && !q.options; i++) await sleep(5);
-      t.ok("Claude: computerRuntime が無ければ ply_computer も指示文も足さない", q.options && !q.options.mcpServers?.ply_computer && !String(q.options.systemPrompt?.append ?? "").includes("COMPUTER-COMMON"), Object.keys(q.options?.mcpServers ?? {}).join(","));
+      t.ok("Claude: computerRuntime が無ければ ply_computer も指示文も足さない", q.options && !q.options.mcpServers?.ply_computer && !mcpConfOf(q.options).ply_computer && !String(q.options.systemPrompt?.append ?? "").includes("COMPUTER-COMMON"), Object.keys(q.options?.mcpServers ?? {}).join(","));
       q.finish();
       await Promise.race([done.catch(() => {}), sleep(3000)]);
     } finally { restore(); }

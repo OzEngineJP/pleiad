@@ -1,4 +1,5 @@
 import { backend as claude, setClaudeSdkForTest, DELEGATED_CHILD_DISALLOWED_TOOLS } from '../../core/backends/claude.mjs';
+import fss from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,9 +13,12 @@ export default async function (t) {
   let restoreSdk = null;
   try {
     process.env.CLAUDE_CONFIG_DIR = dir;
-    let options = null;
+    let options = null, mcpConf = {};
     restoreSdk = setClaudeSdkForTest({ executable: () => 'claude-fake', query: ({ prompt, options: o }) => {
       options = o;
+      // HTTP の MCP は --mcp-config に渡すファイルに載る（ADR 0284）。ターンの終わりに消すので、走っている最中に読む
+      const conf = o?.extraArgs?.['mcp-config'];
+      mcpConf = conf && fss.existsSync(conf) ? JSON.parse(fss.readFileSync(conf, 'utf8')).mcpServers ?? {} : {};
       (async () => { for await (const _ of prompt) { /* 入力は読み捨てる */ } })();
       const done = { type: 'result', subtype: 'success', num_turns: 1, session_id: 's-1', total_cost_usd: 0 };
       return { close() {}, interrupt: async () => ({}), async *[Symbol.asyncIterator]() { yield done; } };
@@ -33,7 +37,7 @@ export default async function (t) {
 
     await run({ agentRuntime, controlRuntime: { url: 'http://127.0.0.1:1/mcp/control', headers: {}, instructions: 'CONTROL-GUIDE', env: {} }, visualizeInstructions: 'VIZ-GUIDE' });
     t.ok('親の会話は道具を外さない', !options.disallowedTools);
-    t.ok('親の会話は ply_control と可視化の指示を渡す', Object.keys(options.mcpServers).some(k => k.includes('control'))
+    t.ok('親の会話は ply_control と可視化の指示を渡す', Object.keys(mcpConf).some(k => k.includes('control'))
       && options.systemPrompt.append.includes('CONTROL-GUIDE') && options.systemPrompt.append.includes('VIZ-GUIDE'));
   } finally {
     restoreSdk?.();

@@ -33,8 +33,14 @@ const cwd = process.cwd();
 const configDir = process.env.CLAUDE_CONFIG_DIR;
 const transcript = configDir ? path.join(configDir, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'), `${sessionId}.jsonl`) : null;
 const gateDir = process.env.AGENT_HOST_FAKE_GATE_DIR;
-// SDK が渡す MCP の設定（--mcp-config <JSON>。HTTP の Pleiad の口の URL とヘッダー）
-const mcpConfig = (() => { const i = argv.indexOf('--mcp-config'); try { return i >= 0 ? JSON.parse(argv[i + 1]).mcpServers ?? {} : {}; } catch { return {}; } })();
+// SDK が渡す MCP の設定（--mcp-config <JSON または ファイルのパス>。HTTP の Pleiad の口の URL とヘッダー。ADR 0284 でパス渡しになった）
+const mcpConfig = (() => {
+  const i = argv.indexOf('--mcp-config');
+  if (i < 0) return {};
+  const raw = argv[i + 1];
+  try { return JSON.parse(raw).mcpServers ?? {}; } catch { /* ファイルのパス */ }
+  try { return JSON.parse(fs.readFileSync(raw, 'utf8')).mcpServers ?? {}; } catch { return {}; }
+})();
 async function httpMcp(serverName, method, params) {
   const server = mcpConfig[serverName];
   if (!server?.url) throw new Error(`no MCP server ${serverName}`);
