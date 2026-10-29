@@ -26,8 +26,18 @@ export default async function (t) {
   const spawned = [];
   let nextPid = 910001;
   const fakes = { processes: async () => new Map(table), kill: pid => { killed.push(pid); table.delete(pid); }, isAlive: pid => table.has(pid), waitMs: 300 };
-  const spawn = async (exe, args, options) => { const pid = nextPid++; spawned.push({ exe, args, options, pid }); table.set(pid, 'agent-browser.exe'); return { pid }; };
   const ports = new Set();
+  // 偽のデーモンは、起きて少し後に自分の記録（.pid・.version・.port）を書いてポートを開く（実物は 45ms ほど）。silent は書かない（起きるのが遅い）
+  let silent = false;
+  const spawn = async (exe, args, options) => {
+    const pid = nextPid++; spawned.push({ exe, args, options, pid }); table.set(pid, 'agent-browser.exe');
+    if (!silent) setTimeout(async () => {
+      const at = suffix => path.join(options.env.AGENT_BROWSER_SOCKET_DIR, `${options.env.AGENT_BROWSER_SESSION}.${suffix}`);
+      await fs.writeFile(at('pid'), String(pid)); await fs.writeFile(at('version'), '0.38.1'); await fs.writeFile(at('port'), '50001');
+      ports.add(50001);
+    }, 40);
+    return { pid };
+  };
   const probe = async port => ports.has(port);
   const daemon = { exe: 'C:/fake/agent-browser.exe', version: '0.38.1', platform: 'win32', spawn, probe, baseEnv: { PATH: 'x' }, ...fakes };
   const bridge = { pinTab: true, endpoint: async () => 'ws://127.0.0.1:1/devtools/browser/key', configSessionId: id => id };
@@ -59,6 +69,7 @@ export default async function (t) {
       && first.options.env.AGENT_BROWSER_PIN_TAB === '1' && first.options.env.PATH === 'x', JSON.stringify(first.options.env));
     t.ok('デーモンの作業場所は会話の作業場所（相対パスの保存先）', first.options.cwd === dataDir);
     t.ok('CLI が見る設定の指紋と、先に起こした印（pid）を書く', await f.read('config') === 'c0f0068199d04f06' && await f.read('ply-prestart') === String(first.pid));
+    t.ok('起こしたデーモンがポートにつながるまで待ってから返す（その間に CLI が自分で起こさない）', await f.read('port') === '50001' && await f.read('pid') === String(first.pid));
     const pid1 = await boot(env);
 
     // ---- 次のターン: CLI がそのまま使えるデーモンが居れば起こさない
@@ -67,7 +78,7 @@ export default async function (t) {
     // 版が違う（Pleiad を更新した）デーモンは、CLI が起こし直す前に Pleiad が止めて起こし直す
     await f.write('version', '0.37.0');
     t.ok('版が違うデーモンは止めて起こし直す', await prestartBrowserDaemon({ dir: path.dirname(env.AGENT_BROWSER_CONFIG), env, cdp: 'ws://x', ...daemon }) === 'started'
-      && killed.includes(pid1) && spawned.length === 2 && await f.read('version') === null && await f.read('ply-prestart') === String(spawned[1].pid));
+      && killed.includes(pid1) && spawned.length === 2 && await f.read('version') === '0.38.1' && await f.read('pid') === String(spawned[1].pid) && await f.read('ply-prestart') === String(spawned[1].pid));
     const pid2 = await boot(env);
     await f.write('config', 'ffffffffffffffff');
     t.ok('指紋が違う（エージェントが --debug などで起こし直した）デーモンも、止めて起こし直す', await prestartBrowserDaemon({ dir: path.dirname(env.AGENT_BROWSER_CONFIG), env, cdp: 'ws://x', ...daemon }) === 'started'
@@ -84,6 +95,17 @@ export default async function (t) {
     const broken = await browserEnvironment({ bridge, dataDir, sessionId: 'pre-broken', daemon: { ...daemon, spawn: async () => { throw new Error('ENOENT'); } }, log: line => failed.push(line) });
     socketDirs.add(broken.AGENT_BROWSER_SOCKET_DIR);
     t.ok('起こせなくてもターンの環境は返す（エージェントの最初の呼び出しが今までどおり起こす）', broken.AGENT_BROWSER_SESSION && failed.some(line => line.includes('ENOENT')));
+    t.ok('起こせなかったら書いた指紋（.config）を消す（ソケットの置き場に何も残らない）', (await fs.readdir(broken.AGENT_BROWSER_SOCKET_DIR).catch(() => [])).length === 0);
+    t.ok('起こせなかった会話の置き場は、ターンの終わりに消える', await settleBrowserEnvironment({ bridge, dataDir, sessionId: 'pre-broken', ...fakes }) === true
+      && !(await exists(path.dirname(broken.AGENT_BROWSER_CONFIG))));
+    silent = true;
+    const slowLog = [];
+    const startedAt = Date.now();
+    const slow = await browserEnvironment({ bridge, dataDir, sessionId: 'pre-slow', daemon: { ...daemon, readyMs: 200 }, log: line => slowLog.push(line) });
+    socketDirs.add(slow.AGENT_BROWSER_SOCKET_DIR);
+    silent = false;
+    t.ok('上限の内にポートにつながらなければ、待つのをやめてログだけ残す（ターンの環境は返す）', slow.AGENT_BROWSER_SESSION && slowLog.some(line => line.includes('slow'))
+      && Date.now() - startedAt < 2000 && await files(slow).read('ply-prestart') === String(spawned.at(-1).pid), JSON.stringify(slowLog));
     const before = spawned.length;
     const unix = await browserEnvironment({ bridge, dataDir, sessionId: 'pre-unix', daemon: { ...daemon, platform: 'linux' } });
     socketDirs.add(unix.AGENT_BROWSER_SOCKET_DIR);

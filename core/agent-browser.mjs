@@ -196,9 +196,11 @@ function portOpen(port, timeoutMs = 300) {
 /**
  * 設定の置き場 dir のデーモンを、標準入出力を受け継がない形で先に起こす。CLI がそのまま使えるデーモンがもう居れば何もしない。
  * env はエージェントのシェルへ渡す agent-browser の環境（browserEnvironment）、cdp は中継の接続先。
- * @returns 'running'（使えるデーモンが居る）・'started'・'skipped'（指紋を変える環境変数がある）・'busy'（古いデーモンを止められない）
+ * readyMs は起こした後にポートへつながるまで待つ上限。起こせなければ投げる（書いた .config は消す）。
+ * @returns 'running'（使えるデーモンが居る）・'started'（起こしてつながった）・'slow'（起こしたが readyMs の内につながらない）・
+ *   'skipped'（指紋を変える環境変数がある）・'busy'（古いデーモンを止められない）
  */
-export async function prestartBrowserDaemon({ dir, env, cdp, exe, version, cwd, baseEnv = process.env, spawn = detach, probe = portOpen, ...options }) {
+export async function prestartBrowserDaemon({ dir, env, cdp, exe, version, cwd, baseEnv = process.env, spawn = detach, probe = portOpen, readyMs = 2000, ...options }) {
   if (FINGERPRINT_ENV.some(name => baseEnv[name])) return 'skipped';
   const session = sessionName(dir);
   const socketDir = env.AGENT_BROWSER_SOCKET_DIR;
@@ -217,10 +219,24 @@ export async function prestartBrowserDaemon({ dir, env, cdp, exe, version, cwd, 
   await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
   await fs.writeFile(file('config'), fingerprint);
   // CLI の apply_daemon_env が渡すもののうち、Pleiad の設定で決まるもの。ほかの AGENT_BROWSER_* は今の環境のまま受け継ぐ（CLI が起こすときと同じ）
-  const { pid } = await spawn(exe, [], { cwd, windowsHide: true, env: { ...baseEnv, ...env, AGENT_BROWSER_DAEMON: '1', AGENT_BROWSER_CDP: cdp,
-    AGENT_BROWSER_HIDE_SCROLLBARS: '1', AGENT_BROWSER_PLUGINS: '[]' } });
+  let pid;
+  try {
+    ({ pid } = await spawn(exe, [], { cwd, windowsHide: true, env: { ...baseEnv, ...env, AGENT_BROWSER_DAEMON: '1', AGENT_BROWSER_CDP: cdp,
+      AGENT_BROWSER_HIDE_SCROLLBARS: '1', AGENT_BROWSER_PLUGINS: '[]' } }));
+  } catch (error) {
+    // 起こせなければ書いた指紋を消す。.config だけが残ると、使った会話（daemonUsed）に見えるのに先に起こした印が無く、置き場が消えない
+    await fs.rm(file('config'), { force: true });
+    throw error;
+  }
   await fs.writeFile(file(PRESTART_MARK), String(pid));
-  return 'started';
+  // デーモンが .port を書いてつながるまで待つ（実機で 45ms ほど）。待たずに返すと、その間に呼んだ CLI がデーモンを自分で起こしうる。
+  // 間に合わなければ 'slow' を返す（ターンは止めない。遅れて起きたデーモンは CLI がつなぐ）
+  for (const end = Date.now() + readyMs; ;) {
+    const ready = Number(await read('port'));
+    if (Number.isInteger(ready) && ready > 0 && await probe(ready)) return 'started';
+    if (Date.now() >= end) return 'slow';
+    await sleep(25);
+  }
 }
 
 /**
