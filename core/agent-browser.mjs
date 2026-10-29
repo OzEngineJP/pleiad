@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import { rmSync } from 'node:fs';
-import { run } from './process.mjs';
+import { run, detach } from './process.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
+import net from 'node:net';
 
 export function browserSocketDirectory(dir, platform = process.platform) {
   const hash = crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24);
@@ -81,7 +82,11 @@ export function chromeRelayBrowser(relay, { dataDir } = {}) {
   };
 }
 
-export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = false }) {
+/**
+ * daemon: Pleiad が先にデーモンを起こすときの agent-browser（locateAgentBrowser の { exe, version }）。null なら起こさない（今までどおり、エージェントの最初の呼び出しが起こす）。
+ * Windows だけ（platform は試験用）。cwd はデーモンの作業場所（相対パスの保存先。エージェントのシェルの最初の場所に合わせる）
+ */
+export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = false, daemon = null, cwd = undefined, log = () => {} }) {
   if (!bridge || !sessionId) return null;
   const url = await bridge.endpoint(sessionId, { unlock });
   // Keep the shell config path and agent-browser namespace stable after a new thread gets its native ID.
@@ -90,15 +95,160 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   const dir = path.dirname(file);
   const session = sessionName(dir);
   const socketDir = browserSocketDirectory(dir);
+  const env = { AGENT_BROWSER_CONFIG: file, AGENT_BROWSER_SESSION: session, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_NAMESPACE: '',
+    AGENT_BROWSER_IDLE_TIMEOUT_MS: String(BROWSER_IDLE_TIMEOUT_MS), ...(bridge.pinTab ? { AGENT_BROWSER_PIN_TAB: '1' } : {}) };
   await inOrder(dir, async () => {
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     // Windows のデーモンはソケットの置き場を自分で作る（無くても動く。実機、2026-10-09）。前もって作ると、ブラウザーを使わなかった会話の空の置き場が
     // 一時領域に残るので作らない。Unix は確かめていないので今どおり作り、使わなかったターンの終わりに消す（settleBrowserEnvironment。ADR 0180）
     if (process.platform !== 'win32') await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
     await fs.writeFile(file, JSON.stringify({ cdp: url }), { mode: 0o600 });
+    if (daemon?.exe && (daemon.platform ?? process.platform) === 'win32') {
+      // 起こせなくてもターンは止めない（エージェントの最初の呼び出しが今までどおり起こす）
+      const state = await prestartBrowserDaemon({ dir, env, cdp: url, cwd, ...daemon }).catch(error => { log(`agent-browser prestart failed: ${error.message}`); return 'failed'; });
+      if (state !== 'running' && state !== 'started') log(`agent-browser prestart: ${state}`);
+    }
   });
-  return { AGENT_BROWSER_CONFIG: file, AGENT_BROWSER_SESSION: session, AGENT_BROWSER_SOCKET_DIR: socketDir, AGENT_BROWSER_NAMESPACE: '',
-    AGENT_BROWSER_IDLE_TIMEOUT_MS: String(BROWSER_IDLE_TIMEOUT_MS), ...(bridge.pinTab ? { AGENT_BROWSER_PIN_TAB: '1' } : {}) };
+  return env;
+}
+
+// ---- デーモンを先に起こす（Windows。ADR 0285）
+//
+// Windows の agent-browser の CLI は、デーモンを CreateProcess の bInheritHandles=TRUE で起こすので、CLI の標準出力・標準エラーが
+// パイプ（`agent-browser … | tail`・`$(agent-browser …)`）だと、デーモンがそのパイプの書き口を持ったまま残り、シェルのコマンドが返らない（Issue #156）。
+// Pleiad がターンの初めに、標準入出力を受け継がない形（detach）で先に起こしておくと、CLI は起きているデーモンにつなぐだけになる。
+// CLI が「使える」と見なす条件（agent-browser 0.38.1 の cli/src/connection.rs の ensure_daemon）を全部満たして起こす:
+//   - <セッション名>.port のポートに TCP でつながる（デーモンが自分で書く）
+//   - <セッション名>.version が CLI の版と同じ（デーモンが自分で書く）
+//   - <セッション名>.config が CLI の設定の指紋と同じ（CLI が書く。無いと 1 秒待ってから起こし直す）→ Pleiad が書く（daemonConfigFingerprint）
+
+/** 先に起こしたデーモンの印（中身は起こした pid）。CLI もデーモンも触らない名前 */
+const PRESTART_MARK = 'ply-prestart';
+
+/** 設定の指紋を変える環境変数。利用者が付けていたら、指紋を合わせられないので先に起こさない */
+const FINGERPRINT_ENV = ['AGENT_BROWSER_DEBUG', 'AGENT_BROWSER_ACTION_POLICY', 'AGENT_BROWSER_CONFIRM_ACTIONS', 'AGENT_BROWSER_DEFAULT_TIMEOUT', 'AGENT_BROWSER_NO_AUTO_DIALOG'];
+
+const U64 = (1n << 64n) - 1n;
+const rotl = (x, b) => ((x << BigInt(b)) | (x >> BigInt(64 - b))) & U64;
+
+/** Rust の std の DefaultHasher（鍵 0 の SipHash-1-3）の 16 桁 */
+function sipHash13(bytes) {
+  let v0 = 0x736f6d6570736575n, v1 = 0x646f72616e646f6dn, v2 = 0x6c7967656e657261n, v3 = 0x7465646279746573n;
+  const round = () => {
+    v0 = (v0 + v1) & U64; v1 = rotl(v1, 13); v1 ^= v0; v0 = rotl(v0, 32);
+    v2 = (v2 + v3) & U64; v3 = rotl(v3, 16); v3 ^= v2;
+    v0 = (v0 + v3) & U64; v3 = rotl(v3, 21); v3 ^= v0;
+    v2 = (v2 + v1) & U64; v1 = rotl(v1, 17); v1 ^= v2; v2 = rotl(v2, 32);
+  };
+  const word = (at, count) => { let m = 0n; for (let i = 0; i < count; i++) m |= BigInt(bytes[at + i]) << BigInt(8 * i); return m; };
+  const full = bytes.length - (bytes.length % 8);
+  for (let at = 0; at < full; at += 8) { const m = word(at, 8); v3 ^= m; round(); v0 ^= m; }
+  const last = (BigInt(bytes.length & 0xff) << 56n) | word(full, bytes.length - full);
+  v3 ^= last; round(); v0 ^= last;
+  v2 ^= 0xffn; round(); round(); round();
+  return (v0 ^ v1 ^ v2 ^ v3).toString(16).padStart(16, '0');
+}
+
+/**
+ * CLI が <セッション名>.config に書く設定の指紋（connection.rs の daemon_config_fingerprint）。
+ * (debug, action_policy, confirm_actions, idle_timeout, default_timeout, no_auto_dialog) を Rust の Hash の並びで混ぜる:
+ * bool は 1 バイト、Option は判別子（isize の 8 バイト）と中身、str は UTF-8 の後に 0xff、u64 は 8 バイト（どれもリトルエンディアン）。
+ * Pleiad が渡すのは idle_timeout（AGENT_BROWSER_IDLE_TIMEOUT_MS）だけ。実物の CLI と同じ値になることは tests/unit/agent-browser-prestart.mjs が確かめる
+ */
+export function daemonConfigFingerprint({ idleTimeout = null } = {}) {
+  const isize = n => { const b = Buffer.alloc(8); b.writeBigInt64LE(BigInt(n)); return [...b]; };
+  const optionText = text => (text == null ? isize(0) : [...isize(1), ...Buffer.from(String(text), 'utf8'), 0xff]);
+  return sipHash13(Uint8Array.from([0, ...optionText(null), ...optionText(null), ...optionText(idleTimeout), ...isize(0), 0]));
+}
+
+const located = new Map();
+/**
+ * PATH の上の agent-browser.exe（デスクトップ版が先頭に足す同梱のもの。desktop/agent-browser-bin.cjs）と、その版（`--version`）。
+ * 子のシェルが呼ぶのと同じものを起こす。Windows 以外・見つからない・版が読めないなら null（先に起こさない）。PATH ごとに 1 回だけ引く
+ */
+export function locateAgentBrowser({ env = process.env, platform = process.platform, runner = run } = {}) {
+  if (platform !== 'win32') return Promise.resolve(null);
+  const pathValue = env[Object.keys(env).find(name => name.toLowerCase() === 'path') ?? 'PATH'] ?? '';
+  if (!located.has(pathValue)) located.set(pathValue, (async () => {
+    for (const entry of pathValue.split(';').filter(Boolean)) {
+      const exe = path.join(entry.replace(/^"|"$/g, ''), 'agent-browser.exe');
+      if (!(await fs.stat(exe).then(stat => stat.isFile(), () => false))) continue;
+      const result = await runner(exe, ['--version'], { windowsHide: true, timeoutMs: 10_000 });
+      const version = /agent-browser\s+(\S+)/.exec(String(result.stdout ?? ''))?.[1];
+      return result.exitCode === 0 && version ? { exe, version } : null;
+    }
+    return null;
+  })().catch(() => null));
+  return located.get(pathValue);
+}
+
+/** 127.0.0.1:port に TCP でつながるか（CLI の daemon_ready と同じ見方） */
+function portOpen(port, timeoutMs = 300) {
+  return new Promise(resolve => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    const done = value => { socket.destroy(); resolve(value); };
+    socket.setTimeout(timeoutMs, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
+}
+
+/**
+ * 設定の置き場 dir のデーモンを、標準入出力を受け継がない形で先に起こす。CLI がそのまま使えるデーモンがもう居れば何もしない。
+ * env はエージェントのシェルへ渡す agent-browser の環境（browserEnvironment）、cdp は中継の接続先。
+ * readyMs は起こした後にポートへつながるまで待つ上限。起こせなければ投げる（書いた .config は消す）。
+ * @returns 'running'（使えるデーモンが居る）・'started'（起こしてつながった）・'slow'（起こしたが readyMs の内につながらない）・
+ *   'skipped'（指紋を変える環境変数がある）・'busy'（古いデーモンを止められない）
+ */
+export async function prestartBrowserDaemon({ dir, env, cdp, exe, version, cwd, baseEnv = process.env, spawn = detach, probe = portOpen, readyMs = 2000, ...options }) {
+  if (FINGERPRINT_ENV.some(name => baseEnv[name])) return 'skipped';
+  const session = sessionName(dir);
+  const socketDir = env.AGENT_BROWSER_SOCKET_DIR;
+  const file = suffix => path.join(socketDir, `${session}.${suffix}`);
+  const read = suffix => fs.readFile(file(suffix), 'utf8').then(text => text.trim(), () => null);
+  const fingerprint = daemonConfigFingerprint({ idleTimeout: env.AGENT_BROWSER_IDLE_TIMEOUT_MS });
+  const port = Number(await read('port'));
+  if (Number.isInteger(port) && port > 0 && await probe(port)) {
+    if (await read('version') === version && await read('config') === fingerprint) return 'running';
+  }
+  // 起きていない・版や指紋が合わない（CLI が起こし直す）デーモンは、Pleiad が止めてから起こし直す。止められなければ触らない
+  const state = await stopBrowserDaemon(dir, options);
+  if (state === 'unknown' || state === 'alive') return 'busy';
+  // CLI の cleanup_stale_files と同じ記録を消す（デーモンは起きるときに .port・.stream などを自分で消す）
+  for (const suffix of ['pid', 'version', 'config', 'stream', 'port', PRESTART_MARK]) await fs.rm(file(suffix), { force: true });
+  await fs.mkdir(socketDir, { recursive: true, mode: 0o700 });
+  await fs.writeFile(file('config'), fingerprint);
+  // CLI の apply_daemon_env が渡すもののうち、Pleiad の設定で決まるもの。ほかの AGENT_BROWSER_* は今の環境のまま受け継ぐ（CLI が起こすときと同じ）
+  let pid;
+  try {
+    ({ pid } = await spawn(exe, [], { cwd, windowsHide: true, env: { ...baseEnv, ...env, AGENT_BROWSER_DAEMON: '1', AGENT_BROWSER_CDP: cdp,
+      AGENT_BROWSER_HIDE_SCROLLBARS: '1', AGENT_BROWSER_PLUGINS: '[]' } }));
+  } catch (error) {
+    // 起こせなければ書いた指紋を消す。.config だけが残ると、使った会話（daemonUsed）に見えるのに先に起こした印が無く、置き場が消えない
+    await fs.rm(file('config'), { force: true });
+    throw error;
+  }
+  await fs.writeFile(file(PRESTART_MARK), String(pid));
+  // デーモンが .port を書いてつながるまで待つ（実機で 45ms ほど）。待たずに返すと、その間に呼んだ CLI がデーモンを自分で起こしうる。
+  // 間に合わなければ 'slow' を返す（ターンは止めない。遅れて起きたデーモンは CLI がつなぐ）
+  for (const end = Date.now() + readyMs; ;) {
+    const ready = Number(await read('port'));
+    if (Number.isInteger(ready) && ready > 0 && await probe(ready)) return 'started';
+    if (Date.now() >= end) return 'slow';
+    await sleep(25);
+  }
+}
+
+/**
+ * Pleiad が先に起こしたまま、エージェントが一度もタブを使っていないデーモンか。
+ * 印の pid が今の .pid と同じ（CLI が起こし直していない）で、縛りの記録（.target。ブラウザーを触るたびにデーモンが書く）が無い
+ */
+async function prestartedIdle(dir) {
+  const socketDir = browserSocketDirectory(dir), session = sessionName(dir);
+  const read = suffix => fs.readFile(path.join(socketDir, `${session}.${suffix}`), 'utf8').then(text => text.trim(), () => null);
+  const mark = await read(PRESTART_MARK);
+  if (!mark || mark !== await read('pid')) return false;
+  return await read('target') === null;
 }
 
 // ---- デーモンと置き場の寿命（ADR 0180）
@@ -201,13 +351,19 @@ export async function forgetBrowserEnvironment({ bridge, dataDir, sessionId, ...
 
 /**
  * ターンの終わり: このターンでエージェントが agent-browser を呼ばなかった（デーモンが一度も起きていない）なら、ターンの初めに書いた設定の置き場を消す。
- * ブラウザーを使わない会話の置き場を残さない。使った会話は、縛りの記録（.target）を次のターンへ残すため消さない
+ * Pleiad が先に起こしたデーモン（ADR 0285）のうち、エージェントが一度もタブを使っていないものは、止めてから消す。
+ * ブラウザーを使わない会話の置き場とデーモンを残さない。使った会話は、縛りの記録（.target）を次のターンへ残すため消さない
  */
-export async function settleBrowserEnvironment({ bridge, dataDir, sessionId, busy = () => false }) {
+export async function settleBrowserEnvironment({ bridge, dataDir, sessionId, busy = () => false, ...options }) {
   if (!sessionId) return false;
   const dir = path.dirname(browserConfigFile(dataDir, bridge?.configSessionId?.(sessionId) ?? sessionId));
   return inOrder(dir, async () => {
-    if (await daemonUsed(dir) || busy(sessionId)) return false;
+    if (busy(sessionId)) return false;
+    if (await daemonUsed(dir)) {
+      if (!(await prestartedIdle(dir))) return false;
+      const state = await stopBrowserDaemon(dir, options);
+      if (state === 'unknown' || state === 'alive' || busy(sessionId)) return false;
+    }
     await fs.rm(browserSocketDirectory(dir), RM);
     await fs.rm(dir, RM);
     return true;
@@ -244,7 +400,12 @@ export async function sweepBrowserEnvironments({ bridge, dataDir, sessions, fini
       continue;
     }
     known.add(path.basename(browserSocketDirectory(dir)));
-    if (await daemonUsed(dir)) { result.kept++; continue; }
+    if (await daemonUsed(dir)) {
+      // 先に起こしたまま使われなかったデーモン（ターンの終わりの片付けが届かなかった。ADR 0285）は止める
+      const state = await prestartedIdle(dir) ? await discard(dir, { processes: once, busy: () => busy(id), ...options }) : null;
+      if (state) { result.unused++; if (state === 'stopped') result.stopped++; } else result.kept++;
+      continue;
+    }
     const removed = await inOrder(dir, async () => {
       const stat = await fs.stat(path.join(dir, 'agent-browser.json')).catch(() => fs.stat(dir)).catch(() => null);
       if (!stat || now - stat.mtimeMs <= unusedMs || busy(id) || await daemonUsed(dir)) return false;

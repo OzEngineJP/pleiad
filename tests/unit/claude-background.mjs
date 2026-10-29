@@ -84,6 +84,22 @@ export default function (t) {
     t.ok("止める前は waiting のまま閉じない", s.phase === "waiting" && !s.canCloseInput());
     run(s, [notified("S1", "stopped")]);
     t.ok("停止の通知でも一覧から消えて閉じられる", s.tasks.length === 0 && s.canCloseInput() && s.phase === "active");
+
+    // 裏のシェルの出力ファイルは、シェルのツールの結果の本文から拾う（task 系のメッセージは走っている間の置き場を運ばない。#156）。
+    // 本文は Claude Code 2.1 の実物（~/.claude/projects の transcript）と同じ形
+    const file = "C:\\Users\\me\\AppData\\Local\\Temp\\claude\\D--work\\sess\\tasks\\bf8bjkfx1.output";
+    const o = createTurnTracker();
+    run(o, [init(), start(), changed(["bf8bjkfx1", "local_bash"]), started("bf8bjkfx1", "local_bash", true)]);
+    const picked = run(o, [agentResult("toolu_bg", { stdout: "", stderr: "", interrupted: false, backgroundTaskId: "bf8bjkfx1" },
+      `Command running in background with ID: bf8bjkfx1. Output is being written to: ${file}. You will be notified when it completes. To check interim output, use Read on that file path.\nSession cwd remains D:\\work; directory changes made by the backgrounded command do not apply to subsequent commands.`)]);
+    t.ok("裏のシェルの出力ファイルを一覧に載せ、background を出し直す", o.tasks[0]?.outputFile === file
+      && picked.some((e) => e.type === "background" && e.tasks[0]?.outputFile === file), JSON.stringify(o.tasks));
+    run(o, [changed(["bf8bjkfx1", "local_bash"])]);
+    t.ok("一覧が置き換わっても出力ファイルを残す", o.tasks[0]?.outputFile === file, JSON.stringify(o.tasks));
+    const echoed = createTurnTracker();
+    run(echoed, [init(), start(), changed(["B2", "local_bash"]),
+      agentResult("toolu_cat", { stdout: "x", stderr: "", interrupted: false }, "Command running in background with ID: B2. Output is being written to: /tmp/x.output. ")]);
+    t.ok("backgroundTaskId の無い結果（ファイルを cat した出力など）からは拾わない", !("outputFile" in echoed.tasks[0]), JSON.stringify(echoed.tasks));
   }
 
   // ---- r5: 2 本、2 つ目以降の result が保留される

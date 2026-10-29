@@ -402,6 +402,7 @@ Codex の履歴が大きすぎて読めない・30 秒で応答が無い（`core
   - 待っている間は、無音の通知とコマンドの 5 分の通知を送らない（同じ待ちを重ねて知らせない）。
   - 送る前に、送った回数と時刻をタスクの行（`backgroundNotice`）に保存する。待ち始めた時刻は札（turn card の `delegation`）に載るので、無停止の更新の後も最初からやり直さない。ホストに任せたタスクの依頼元（リモート）には送らない。
   - `ply_task_status` / `ply_task_list` のタスクには `backgroundWaiting`（`{ minutes, tasks }`）が載り、`silenceMinutes` は null になる。
+  - 裏のシェルの出力ファイルが分かる作業（Claude の `local_bash`）は、`tasks` の行に `output`（`{ bytes, quietMinutes }`）が載り、通知の見出しにも「出力 N バイト。最後に伸びてから M 分」と添える。大きさと mtime は知らせるたびにファイルから読む（`core/server.mjs` の `backgroundOutput`）。出力の置き場は SDK の task 系のメッセージに無いので、シェルのツールの結果の本文（`Output is being written to: <パス>.output`）から拾う（`core/backends/claude-background.mjs`）。出力が伸びないまま待っている作業は、終わらないか、出力の口を握られて戻れなくなっている（Windows の agent-browser のデーモン。[ADR 0285](adr/0285-prestart-agent-browser-daemon.md)）。止めるかは今までどおり依頼元が決める。ホストに任せたタスクは、端末へ送る telemetry の `background.tasks` にも同じ `output` が載る。ファイルの場所はどちらの依頼元へも渡さない。
   - 裏の作業が終わると CLI が main を再開させ、ターンが終わる。結果は今までどおり最後の返答で、完了通知で届く。
 - **Codex**: 端末はターンの外に残り、終わっても main は再開しない。子の結果と完了通知は端末を待たない。端末はターンの終わりに `background` になり、Codex が挙げている間は子の完了後も `activeCommands` に残る（長いコマンドの通知は送らない）。子の完了後も `ply_task_cancel` で、台帳とバックグラウンド一覧の ID が一致する端末を明示的に止められる。
 - **Antigravity**: バックグラウンド移行の情報がなくても、`run_command` の ACTIVE から DONE まで監視する。

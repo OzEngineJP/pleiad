@@ -69,7 +69,12 @@ ${server.tail(40)}`);
   try {
     // ---- 1. 裏へ回ったコマンド（長い試験など）を抱えたまま main が返答を終えた子（Claude の形）。止めずに知らせ、終われば完了
     {
-      const { parent, task, from } = await delegate('bg-shell gate:long-test 子の報告: 試験を裏で流している');
+      // 裏のコマンドの出力ファイル（Claude の tracker が拾う outputFile）。3 分前から伸びていない形にする（#156）
+      const outputFile = path.join(scratch, 'long-test.output');
+      await fs.writeFile(outputFile, 'running 1/40\n');
+      const quietSince = new Date(Date.now() - 3 * 60000 - 5000);
+      await fs.utimes(outputFile, quietSince, quietSince);
+      const { parent, task, from } = await delegate(`bg-shell gate:long-test output:${outputFile} 子の報告: 試験を裏で流している`);
       await c.waitFor((e) => e.type === 'phase' && e.sessionId === task.sessionId && e.state === 'waiting', { from, ms: 20000 });
       const early = await taskOf(task.taskId);
       t.ok('報告直後は裏のコマンドと台帳を残して待つ', early.status === 'running' && early.activeCommands.length === 1);
@@ -78,6 +83,7 @@ ${server.tail(40)}`);
       t.ok('裏待ちの最初の通知に、子の返答・走っている作業・止め方が載る', first?.text.includes(task.taskId) && first.text.includes('子の報告: 試験を裏で流している')
         && first.text.includes('cat >> /dev/null') && first.text.includes('完了通知で届けます') && first.text.includes('ply_task_cancel')
         && first.text.includes('作業ダイアログの停止ボタン'), first?.text);
+      t.ok('裏待ちの通知に、出力の大きさと最後に伸びてからの時間が載る', first?.text.includes('- cat >> /dev/null（出力 13 バイト。最後に伸びてから 3 分）'), first?.text);
       const again = await until(async () => (await bgNotices()).find(m => m.text.includes('たってもまだ走っています')));
       t.ok('走り続けている間は周期で知らせ直す', again?.text.includes('cat >> /dev/null') && !again.text.includes('子のここまでの返答'), again?.text);
       await sleep(INTERVAL_MS + 300);
@@ -86,6 +92,12 @@ ${server.tail(40)}`);
         && (await phaseOf(task.sessionId)) === 'waiting' && !(await notices(parent)).some(m => m.text.includes('Pleiad タスク完了通知')));
       t.ok('タスクの状態に待っている裏の作業が載る', waiting?.backgroundWaiting?.tasks?.[0]?.label === 'cat >> /dev/null' && Number.isInteger(waiting.backgroundWaiting.minutes)
         && waiting.silenceMinutes === null, JSON.stringify(waiting?.backgroundWaiting));
+      t.ok('タスクの状態の裏の作業に、出力の大きさと最後に伸びてからの分が載る（出力ファイルの場所は渡さない）',
+        waiting?.backgroundWaiting?.tasks?.[0]?.output?.bytes === 13 && waiting.backgroundWaiting.tasks[0].output.quietMinutes === 3
+        && !('outputFile' in waiting.backgroundWaiting.tasks[0]), JSON.stringify(waiting?.backgroundWaiting));
+      await fs.appendFile(outputFile, 'running 2/40\n');
+      const grown = await until(async () => { const r = await taskOf(task.taskId); return r?.backgroundWaiting?.tasks?.[0]?.output?.bytes === 26 ? r : null; }, 5000);
+      t.ok('出力が伸びると、最後に伸びてからの分が 0 に戻る', grown?.backgroundWaiting.tasks[0].output.quietMinutes === 0, JSON.stringify(grown?.backgroundWaiting));
       t.ok('裏待ちの間は無音・コマンドの時間の通知を重ねない', !(await notices(parent)).some(m => m.text.includes('Pleiad タスク無音通知') || m.text.includes('Pleiad コマンド長時間通知')));
 
       await gates.open('long-test');

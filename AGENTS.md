@@ -45,6 +45,7 @@ core が web へ流すのは正規化イベントだけで、バックエンド�
 | `PLEIAD_CONTROL_URL` / `PLEIAD_CONTROL_TOKEN` | `pleiad` CLI のつなぎ先。Pleiad が会話のシェルへ渡し、その会話に束縛される（無ければ `AGENT_HOST_DATA` の `control.json`） |
 | `AGENT_HOST_GIT_SNAPSHOTS` | `off` でターンの始まりと終わりの git の撮影（`refs/pleiad/`。ADR 0085）を止める。テストが使う（`tests/lib/server.mjs`） |
 | `AGENT_HOST_WORKTREES` | `off` で worktree（ADR 0136）を作らない。テストが使う（`tests/lib/server.mjs`。このリポジトリが cwd のテストが `<リポジトリ>.pleiad` に残すのを防ぐ）。確かめるテストは一時のリポジトリで `on` を渡す |
+| `AGENT_HOST_AGENT_BROWSER_PRESTART` | `off` で、Windows のターンの初めに agent-browser のデーモンを先に起こす処理（ADR 0285）を止める。テストが使う（`tests/lib/server.mjs`。偽の中継の試験が PATH の上の実物を起こし、作業場所を掴んだまま残るのを防ぐ） |
 | `AGENT_HOST_HANDOVER` | Electron main とサーバーの通信方式を選ぶ旧名の設定。`on` は名前付きパイプのサーバー（配布版の通常経路）、`off` は `utilityProcess`（開発の通常経路）。どちらも `core/process.mjs` の `start()` で保持役を使い、同じ通常起動で子とターンを復元する。これは復元の条件ではない。配布版は既定で `on`、開発版は既定で `off`。開発版で `on` を試すには `AGENT_HOST_RUNTIME_RESOURCES` が要る。実行場所や Job の条件が合わない場合は `utilityProcess` に落ちる |
 | `AGENT_HOST_SERVER_LOG` | main の子でない形のサーバー（stdio が無い）が標準出力・標準エラーを書くファイル（`core/server-log.mjs`。1 MB で `.old` へ回す。トークンは伏せる）。`on` の main が実行場所の `logs\server.log` を、`off`（`utilityProcess`）の main が `userData\logs\server.log`（開発版は `server-dev.log`）を渡す。無ければ今のとおり標準出力 |
 | `AGENT_HOST_RUNTIME_ROOT` / `AGENT_HOST_RUNTIME_KEY` | サーバーが走っている版ごとの実行場所の置き場と版の名前。サーバーがその版の使用中の印（`core/runtime-use.mjs`）を付ける。`on` の main が渡す。この表の `AGENT_HOST_PORT`・`BIND`・`TOKEN`・`HANDOVER`・`SERVER_LOG`・`RUNTIME_*`・main が渡す `AGENT_HOST_SYSTEM_LOCALE` は起動の時だけのもので、サーバーは読んだ後に process.env から外し、エージェントの CLI・`!` の行・MCP へ渡さない（`core/boot-env.mjs`） |
