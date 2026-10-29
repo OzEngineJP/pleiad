@@ -76,6 +76,7 @@ export const TRAIT_CONTRACTS = {
   instructionsAtStart: ['bot-dispatch'],
   failureDiagnostics: ['server-antigravity', 'server-devin'],
   promptDelivery: ['message-queue', 'server-antigravity'],
+  secretsViaEnvFile: ['secrets-store'],
 };
 
 /**

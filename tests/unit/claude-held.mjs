@@ -4,7 +4,7 @@
 //   - 偽の SpawnedProcess: spawn と印を SDK の最初の書き込みより前に送る・stdin の書き込みを保持役へ写す・ack は処理し終えた uuid の行・
 //     手を離した（detach）後は write・end・kill を転送しない
 //   - 付け直し: attach の答えの時点までの、答え済みの control_request と旧い親への control_response を SDK へ流さない。控えの渡し直しは流す
-//   - 札のフラグ設定のファイル（名前の形だけを受ける）と、起動の掃除が札の指すファイルを外す
+//   - 札のフラグ設定・MCP の設定（--mcp-config の 0600 の JSON。ADR 0284）のファイル（名前の形だけを受ける）と、起動の掃除が札の指すファイルを外す
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -13,6 +13,7 @@ import { EventEmitter } from 'node:events';
 import { HELD_CLI_MIN_VERSION, heldVersionOk, parseCliVersion, heldCommand, heldEnabled, cliVersion, createHeldCli } from '../../core/backends/claude-held.mjs';
 import { holderSource } from '../../core/adopt.mjs';
 import { adoptClaudeFlagSettings, sweepClaudeFlagSettings } from '../../core/compat-endpoints.mjs';
+import { writeClaudeMcpFile, adoptClaudeMcpFile, sweepClaudeMcpFiles } from '../../core/claude-mcp-file.mjs';
 
 export const name = 'claude-held';
 export const title = 'Claude を保持役に載せる部品: 版の下限・既定・npm の包みの解き方・偽の SpawnedProcess・付け直しで流さない行・札のフラグ設定';
@@ -189,6 +190,30 @@ export default async function (t) {
       await flag.dispose();
       assert.deepEqual(await fs.readdir(path.join(dataDir, 'run')), [], '付け直したターンの終わりに消す');
       t.ok('札のフラグ設定のファイル: 名前の形だけを受け、起動の掃除は札の指すファイルを外し、付け直したターンの終わりに消す', true);
+    }
+
+    // 札の MCP の設定のファイル（ADR 0284。--mcp-config に渡す 0600 の JSON）
+    {
+      const dataDir = path.join(scratch, 'data-mcp');
+      await fs.mkdir(path.join(dataDir, 'run'), { recursive: true });
+      const TOKEN = 'mcp-token-' + 'f'.repeat(24);
+      const file = await writeClaudeMcpFile(dataDir, { ply_agents: { type: 'http', url: 'http://127.0.0.1:1/mcp/agents', headers: { Authorization: `Bearer ${TOKEN}` } } });
+      const st = await fs.stat(file.file);
+      assert.ok(path.dirname(file.file) === path.join(dataDir, 'run') && path.basename(file.file).startsWith('claude-mcp-') && file.file.endsWith('.json'));
+      assert.ok(process.platform === 'win32' || (st.mode & 0o077) === 0, '他人に読めないモード');
+      assert.equal(JSON.parse(await fs.readFile(file.file, 'utf8')).mcpServers.ply_agents.headers.Authorization, `Bearer ${TOKEN}`, 'トークンはファイルの中身に残る');
+      assert.equal(await writeClaudeMcpFile(dataDir, {}), null, 'HTTP の設定が無ければファイルを作らない');
+      assert.equal(adoptClaudeMcpFile(dataDir, '../prefs.json'), null, '名前の形が違えば null');
+      assert.equal(adoptClaudeMcpFile(dataDir, null), null);
+      const name = path.basename(file.file);
+      assert.equal(adoptClaudeMcpFile(dataDir, name).file, file.file, '札の名前から引き直す');
+      const drop = await writeClaudeMcpFile(dataDir, { x: { type: 'http', url: 'http://127.0.0.1:1/mcp/x' } });
+      assert.equal(await sweepClaudeMcpFiles(dataDir, { except: [name] }), 1, '起動の掃除は札が指すファイルを外す');
+      assert.deepEqual((await fs.readdir(path.join(dataDir, 'run'))).sort(), [name].sort());
+      await file.dispose();
+      assert.deepEqual(await fs.readdir(path.join(dataDir, 'run')), [], 'ターンの終わりに消す');
+      assert.ok(drop && (await fs.stat(drop.file).catch(() => null)) === null, '掃除済みのファイルは無い');
+      t.ok('札の MCP の設定のファイル: 0600 で書き、名前の形だけを受け、起動の掃除は札を外し、終わりに消す', true);
     }
   } finally {
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});

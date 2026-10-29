@@ -16,6 +16,7 @@ import { readClaudeAccountsUsage } from './claude-usage.mjs';
 import { claudeEnv, redactToken } from '../claude-accounts.mjs';
 import { claudeCompatEnv, writeClaudeFlagSettings, adoptClaudeFlagSettings, redactSecret } from '../compat-endpoints.mjs';
 import { writeClaudeEnvFile, adoptClaudeEnvFile } from '../claude-env-file.mjs';
+import { writeClaudeMcpFile, adoptClaudeMcpFile } from '../claude-mcp-file.mjs';
 import { claudeExecutable } from '../cli-installation.mjs';
 import { AUTO_COMPACT_WINDOW_ENV } from '../compaction-settings.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from './context-options.mjs';
@@ -722,6 +723,11 @@ export const backend = {
       ...(controlRuntime ? { [CONTROL_SERVER]: { type: 'http', url: controlRuntime.url, headers: controlRuntime.headers } } : {}),
       // Pleiad のシェルのツール（core/shell-bridge.mjs。ADR 0227）。run は最長 10 分待つので、待ちの上限をそれより長くする
       ...(shellRuntime ? { [SHELL_SERVER]: { type: 'http', url: shellRuntime.url, headers: shellRuntime.headers, timeout: RUN_TIMEOUT_MAX_MS + 60_000 } } : {}) };
+    // SDK がインプロセスで持つ sdk 型（host）と、CLI の設定に載るもの（HTTP。トークンを headers に持つ）に分ける。
+    // mcpServers に入れたものは SDK が --mcp-config の JSON に直列化して argv に載せるので、
+    // HTTP 系は 0600 のファイルに書き、--mcp-config にはパスだけを渡す（ADR 0284。core/claude-mcp-file.mjs）
+    const sdkServers = {}, httpServers = {};
+    for (const [name, s] of Object.entries(plyServers)) (s && s.type === 'sdk' && s.instance ? sdkServers : httpServers)[name] = s;
     const computerInstructions = computerPrompt(computerRuntime, { locale, agent: 'claude' });
     // 互換の接続先（core/compat-endpoints.mjs）。env を組み替え（親の ANTHROPIC_* と OAuth トークンを外して接続先の値を入れる）、
     // 同じ値をフラグ設定のファイルにも書く（ユーザーの settings.json の env が options.env に勝つため。オブジェクトで渡すと argv にキーが載る）。
@@ -733,9 +739,13 @@ export const backend = {
     const flag = adopt ? adoptClaudeFlagSettings(store.dataDir, adopt.card.flag) : endpoint ? await writeClaudeFlagSettings(store.dataDir, endpoint, contextOptions.settings) : null;
     // 秘密情報と変数（ADR 0217）。CLI 本体の env には入れず、CLAUDE_ENV_FILE で Bash ツールのシェルにだけ渡す（core/claude-env-file.mjs）。
     // 付け直しは旧サーバーが書いたファイルを札から引き継ぐ（Bash の各コマンドの前に読まれるので、ターンの終わりまで消さない）
-    let envFile = null;
-    try { envFile = adopt ? adoptClaudeEnvFile(store.dataDir, adopt.card.envFile) : await writeClaudeEnvFile(store.dataDir, secretsRuntime?.env); }
-    catch (e) { if (!adopt) await flag?.dispose(); throw undelivered(e); }
+    let envFile = null, mcpFile = null;
+    try {
+      envFile = adopt ? adoptClaudeEnvFile(store.dataDir, adopt.card.envFile) : await writeClaudeEnvFile(store.dataDir, secretsRuntime?.env);
+      // HTTP の MCP の設定。付け直しは CLI が起動済みなので新たに書かず、旧サーバーのファイルを札から引き継ぐ
+      mcpFile = adopt ? adoptClaudeMcpFile(store.dataDir, adopt.card.mcpFile) : await writeClaudeMcpFile(store.dataDir, httpServers);
+    }
+    catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); } throw undelivered(e); }
     const hide = text => redactSecret(redactToken(text, oauthToken), endpoint?.key);
     // resume する前に読む（CLI はこの値を読み戻し、result はそこからの累計になる）。1 つの query の result は全部これから引く。
     // 付け直しは札の値（旧サーバーがターンの始まりに読んだもの。CLI が query の終わりに書く値を読み直すとずれる）
@@ -788,7 +798,7 @@ export const backend = {
      * 途中送信は本文を入れずハッシュにする（札の上限。core/turn-card.mjs と同じ）。裏の作業と main の状態（claude-background.mjs の tracker）は、
      * 印からの再生で作り直る（付け直し直後の background_tasks_changed が全量で置き換える）ので、再生に出ない流し込みの数（pushed）だけを置く
      */
-    const backendCard = () => ({ held: true, costBase, flag: flag ? path.basename(flag.file) : null, envFile: envFile ? path.basename(envFile.file) : null,
+    const backendCard = () => ({ held: true, costBase, flag: flag ? path.basename(flag.file) : null, envFile: envFile ? path.basename(envFile.file) : null, mcpFile: mcpFile ? path.basename(mcpFile.file) : null,
       steers: pendingSteers.map(p => ({ id: p.id, uuid: p.uuid, hash: p.hash, sawResult: p.sawResult })), pushed: tracker.pending });
     // 札を保持役の子に置く口（server の touchCard が、札の中身が変わるたびに呼ぶ）。最初の 1 回は子を起こした直後・付け直した直後に置く
     const bindHolder = () => {
@@ -1057,12 +1067,12 @@ export const backend = {
         // 既定ではストリームに合図が無く、途中送信が会話に入ったことを外から確かめられない。
         // 返ってくるのは最初のプロンプトと自分が push した分だけで、CLI 内部の通知は replay されない
         // （実測 2026-09、CLI 2.1.273）。content が文字列の user から normalize は何も作らないので表示は変わらない
-        mcpServers: plyServers,
+        mcpServers: sdkServers,
         // ~/.claude と .claude を読ませる。R1（skill / command / hooks / memory）はここで効く。
         settingSources: ["user", "project", "local"],
         skills: "all",
         ...contextOptions,
-        extraArgs: claudeQueryExtraArgs(contextOptions),
+        extraArgs: { ...claudeQueryExtraArgs(contextOptions), ...(mcpFile ? { 'mcp-config': mcpFile.file } : {}) },
         ...(flag ? { settings: flag.file } : {}),
         // bot の人格（core/bots/sessions.mjs の botInstructions）は並びの最後。同じ bot なら毎ターン同じバイト列（キャッシュを壊さない）。
         // snapshot: false は bot の会話だけ。CLI は最初のターンのシステムプロンプトを記録して、後のターンで別の append を渡しても使い回す（既定）。
@@ -1104,7 +1114,7 @@ export const backend = {
         }, claudeHookCallbacks(hooksRuntime, { onRun: run => emit({ type: 'hookRun', ...run }) })),
         canUseTool: makeCanUseTool(ctx, askPermission),
       },
-    }); } catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); } void held?.finish(); throw undelivered(e); }
+    }); } catch (e) { if (!adopt) { await flag?.dispose(); await envFile?.dispose(); await mcpFile?.dispose(); } void held?.finish(); throw undelivered(e); }
 
     // 実行中に承認モードやモデルを変えられるようにする。
     // ターン開始時の options だけだと、走り出した後の切り替えが効かない。
@@ -1179,7 +1189,7 @@ export const backend = {
       throw promptSent ? thrown : undelivered(thrown);
     } finally {
       clearStopTimer();
-      await flag?.dispose(); await envFile?.dispose();
+      await flag?.dispose(); await envFile?.dispose(); await mcpFile?.dispose();
       signal?.signal?.removeEventListener?.("abort", stopTurn);
       for (const [id, x] of liveQueries) if (x === q) liveQueries.delete(id);
       for (const [id, x] of liveTrackers) if (x === tracker) liveTrackers.delete(id);

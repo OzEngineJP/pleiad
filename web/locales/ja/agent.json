@@ -3,6 +3,7 @@
     "prompt": {
       "head": "Pleiad の秘密情報と変数（人が設定 › 秘密情報と変数で預けたもの）:",
       "env": "この会話のシェルには次の環境変数が渡されています。値はシェルの中にだけあります。コマンドでは環境変数として参照し（bash は $NAME、PowerShell は $env:NAME）、値を表示・ログ・ファイル・コミット・会話に書き出さないでください: {{list}}",
+      "envFile": "この会話のシェルには次の環境変数が渡されています。値はシェルの中にだけあります。コマンドでは環境変数として参照し（Bash ツールか ply_shell。bash は $NAME、PowerShell は $env:NAME）、値を表示・ログ・ファイル・コミット・会話に書き出さないでください。PowerShell ツールには渡されていません: {{list}}",
       "envItem": "{{name}}（{{kind}}{{note}}）",
       "note": " · {{note}}",
       "separator": "、",

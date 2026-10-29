@@ -3,6 +3,7 @@
     "prompt": {
       "head": "Pleiad secrets and variables (entrusted by the user in Settings › Secrets and variables):",
       "env": "These environment variables are set in this conversation's shell. The values exist only in the shell. Refer to them as environment variables in commands ($NAME in bash, $env:NAME in PowerShell), and never print, log, write to files, commit, or repeat the values: {{list}}",
+      "envFile": "These environment variables are set in this conversation's shell. The values exist only in the shell. Refer to them as environment variables in commands (with the Bash tool or ply_shell; $NAME in bash, $env:NAME in PowerShell), and never print, log, write to files, commit, or repeat the values. They are not passed to the PowerShell tool: {{list}}",
       "envItem": "{{name}} ({{kind}}{{note}})",
       "note": " · {{note}}",
       "separator": ", ",

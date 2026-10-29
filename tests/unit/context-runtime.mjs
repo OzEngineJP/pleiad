@@ -69,9 +69,9 @@ export default async function(t) {
     t.ok('Pleiad が渡した ply_agents・ply_context はネイティブ MCP と見なさない',unexpectedNativeMcp([{name:'host'},{name:'ply_agents'},{name:'ply_context'}],passed).length===0);
     t.ok('止められなかったネイティブ MCP は名前で見つける',JSON.stringify(unexpectedNativeMcp([{name:'host'},{name:'ply_agents'},{name:'github'}],passed))==='["github"]');
     t.ok('渡していない名前はネイティブとして見つける（ply_agents を渡さないターン）',JSON.stringify(unexpectedNativeMcp([{name:'host'},{name:'ply_agents'}],['host']))==='["ply_agents"]');
-    // claude.mjs が渡す MCP と確認に使う名前が同じもの（plyServers）であること
+    // claude.mjs が渡す MCP と確認に使う名前が同じもの（plyServers。sdk 型は mcpServers、HTTP は --mcp-config のファイル）であること
     const claudeSource=await fs.readFile(new URL('../../core/backends/claude.mjs',import.meta.url),'utf8');
-    t.ok('Claude は渡した mcpServers の名前で確認する',/mcpServers: plyServers/.test(claudeSource)&&/unexpectedNativeMcp\(native, Object\.keys\(plyServers\)\)/.test(claudeSource));
+    t.ok('Claude は渡した mcpServers の名前で確認する',/mcpServers: sdkServers/.test(claudeSource)&&/'mcp-config': mcpFile\.file/.test(claudeSource)&&/unexpectedNativeMcp\(native, Object\.keys\(plyServers\)\)/.test(claudeSource));
     const settings=createContextSettings(path.join(tmp,'prefs'),home);
     for(const kind of KINDS)await settings.set({place:null,kind,value:{...defaultKind(),owner:'ply'}});
     t.ok('担当のユーザー既定を子ディレクトリへ継承',(await settings.get(path.join(cwd,'sub'))).owners.skill==='ply');

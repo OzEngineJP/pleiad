@@ -94,6 +94,7 @@ import { createSecrets, SecretsError, ENV_NAME as SECRET_ENV_NAME, reservedEnvNa
 import { createSecretMasker, createStreamMasker } from './secret-mask.mjs';
 import { secretsPrompt } from './secrets-prompt.mjs';
 import { sweepClaudeEnvFiles } from './claude-env-file.mjs';
+import { sweepClaudeMcpFiles } from './claude-mcp-file.mjs';
 import { createSecretFill } from './secret-fill.mjs';
 import { createCompatEndpoints, sweepClaudeFlagSettings, isModelId, redactSecret, CheckError, delegatedEndpoint } from './compat-endpoints.mjs';
 import { createClaudeAccounts, redactToken, normalizeName as normalizeAccountName, fetchTokenOrg, ANTHROPIC_API } from './claude-accounts.mjs';
@@ -2200,14 +2201,14 @@ async function deliverJobEnd(sessionId, job, tail) {
  * このターンに渡す秘密情報と変数（ADR 0217）。{ env: 会話のシェルへ渡す環境変数, instructions: 名前だけの一覧の文 }。どちらも無ければ null。
  * ログイン情報は、ply_browser を渡すターンだけ一覧に書く（fill_secret はそのターンでしか使えない）。読めないときは渡さず、ターンは止めない
  */
-async function secretsRuntimeFor(cwd, lng, { browser = false } = {}) {
+async function secretsRuntimeFor(cwd, lng, { browser = false, envFile = false } = {}) {
   let timer;
   try {
     // 値の復号は main に頼む（デスクトップ版）。main が居ない間（更新の途中など）はターンを長く止めず、上限を過ぎたら渡さずに始める
     const read = Promise.all([secrets.envFor(cwd), secrets.agentList()]);
     const late = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('timeout'), { code: 'SECRETS_TIMEOUT' })), SECRETS_TURN_WAIT_MS); timer.unref?.(); });
     const [{ vars, entries, unreadable }, { items }] = await Promise.race([read, late]);
-    const instructions = secretsPrompt({ entries, logins: items.filter(i => i.kind === 'login'), unreadable, browser, agentT, locale: lng });
+    const instructions = secretsPrompt({ entries, logins: items.filter(i => i.kind === 'login'), unreadable, browser, envFile, agentT, locale: lng });
     if (!Object.keys(vars).length && !instructions) return null;
     return { env: vars, instructions };
   } catch (e) {
@@ -6367,8 +6368,10 @@ await withdrawRestoredCards(adopting);
 // 前の起動で消し損ねた Claude のフラグ設定のファイル（core/compat-endpoints.mjs）。同じデータ置き場を別の Pleiad（開発版と配布版）が使っていることがあるので、
 // 走っている会話のファイルは消さない（1 日より古いものだけ）。付け直すターンの札が指すファイル（無停止の更新 2c）も消さない（そのターンの終わりに消える）
 sweepClaudeFlagSettings(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.flag).filter(Boolean) }).catch(() => {});
-// 同じく、秘密情報と変数を Claude のシェルへ渡すファイル（core/claude-env-file.mjs。値を含む）
+// 同じく、秘密情報と変数を Claude のシェルへ渡すファイル（core/claude-env-file.mjs。値ファイルに値を含む）
 sweepClaudeEnvFiles(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.envFile).filter(Boolean) }).catch(() => {});
+// 同じく、Claude へ渡す HTTP の MCP の設定のファイル（core/claude-mcp-file.mjs。トークンを含む）
+sweepClaudeMcpFiles(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.mcpFile).filter(Boolean) }).catch(() => {});
 sweepOpencodeEnvFiles(store.dataDir, { olderThanMs: 24 * 60 * 60_000, except: adopting.map(a => a.ctx.card.backendCard?.envFile).filter(Boolean) }).catch(() => {});
 await outbox.recover({ adopted: new Map(adopting.map(a => [a.ctx.sessionId, new Set(Object.keys(a.ctx.card.steers))])) });
 // 前の起動で走っていたのに終わりが記録されていないターン（落ちた・強制終了）を、会話の中断（reason: restart）として残す
@@ -7567,7 +7570,8 @@ async function beginTurn(ctx) {
   }
   // 秘密情報と変数（ADR 0217）。この会話の場所に渡す環境変数（シェルにだけ入る）と、名前だけの一覧の文。圧縮のターンには渡さない
   if (!hooks.compact && backend.capabilities?.secrets) {
-    const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime) });
+    // env file 経由（CLAUDE_ENV_FILE）のエージェントは Bash のシェルにだけ届く。文の出し分けは性質の印から（agent-marks.mjs）
+    const secretsRuntime = await secretsRuntimeFor(cwd, agentLocale, { browser: Boolean(runArgs.browserRuntime), envFile: Boolean(backend.traits?.secretsViaEnvFile) });
     if (secretsRuntime) runArgs.secretsRuntime = secretsRuntime;
   }
   // ply_shell のコマンドへ渡す、会話のシェルの環境変数（エージェントのシェルと同じ: ブラウザー・CLI の接続・秘密情報）

@@ -4,6 +4,7 @@
 //   - サーバー（fake）: 設定 shellTool で切り替わる・run が走る・start のジョブが裏の一覧に出て人が止められる・終わりを会話へ知らせる・
 //     長い start のジョブを会話へ知らせる
 import fs from 'node:fs/promises';
+import fss from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer, ROOT } from '../lib/server.mjs';
@@ -33,15 +34,19 @@ export default async function (t) {
   // ---- Claude の渡し方
   {
     const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'ply-shell-claude-'));
-    let options;
+    let options, mcpConf = {};
     const restore = setClaudeSdkForTest({ executable: () => 'fake-claude', query: ({ options: received }) => {
       options = received;
+      // HTTP の MCP は options.mcpServers に置かず、--mcp-config に渡す 0600 のファイルに載る（トークンを argv に出さない。ADR 0284）。
+      // ファイルはターンの終わりに消すので、走っている最中に読む
+      const conf = received?.extraArgs?.['mcp-config'];
+      mcpConf = conf ? JSON.parse(fss.readFileSync(conf, 'utf8')).mcpServers ?? {} : {};
       return { close() {}, async *[Symbol.asyncIterator]() { yield { type: 'result', subtype: 'success', num_turns: 1 }; } };
     } });
     try {
       const shellRuntime = { url: 'http://127.0.0.1:1/mcp/shell', headers: { Authorization: 'Bearer x' }, nativeOff: true, instructions: 'use ply_shell' };
       await claude.runTurn({ prompt: 'hello', sessionId: null, cwd: scratch, mode: 'default', emit() {}, signal: new AbortController(), shellRuntime });
-      t.ok('Claude: ply_shell を MCP に足す（待ちの上限は run より長い）', options?.mcpServers?.ply_shell?.url === shellRuntime.url && options.mcpServers.ply_shell.timeout > 600_000);
+      t.ok('Claude: ply_shell を MCP に足す（待ちの上限は run より長い）', mcpConf.ply_shell?.url === shellRuntime.url && mcpConf.ply_shell.timeout > 600_000 && !options?.mcpServers?.ply_shell);
       t.ok('Claude: 切る会話は Bash・PowerShell を外し、使い方の指示を足す', ['Bash', 'PowerShell'].every((n) => options?.disallowedTools?.includes(n)) && options?.systemPrompt?.append?.includes('use ply_shell'));
       const decided = await options.canUseTool('mcp__ply_shell__run', { command: 'echo' }, { signal: new AbortController().signal, suggestions: [] });
       t.ok('Claude: ply_shell は聞かない（承認は橋）', decided?.behavior === 'allow', JSON.stringify(decided));

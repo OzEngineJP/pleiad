@@ -137,6 +137,9 @@ export const TRAITS = {
   // 無いなら「合図が無い = 渡っていない」とは言えない（agy は入力を受け取っても黙って捨てうる）ので、
   // 無出力で終わった発言を未達（failed・自動再送の対象）にせず結果不明（unknown）にする（server.mjs の closeTurn）
   promptDelivery: { hint: 'true' },
+  // 秘密情報と変数は、値ファイルを読むスクリプト（CLAUDE_ENV_FILE。core/claude-env-file.mjs）経由で Bash 系のシェルにだけ届く。
+  // エージェント自身の PowerShell ツールには渡らないので、AI への一覧の文を替える（core/secrets-prompt.mjs・ADR 0284）
+  secretsViaEnvFile: { hint: 'true' },
 };
 
 export const TRAIT_KEYS = Object.freeze(Object.keys(TRAITS));

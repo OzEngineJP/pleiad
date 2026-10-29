@@ -143,6 +143,12 @@ export const DATA_WRITES = [
     { name: 'compat-endpoints.json', limit: '互換の接続先。ユーザーが数個作る', reason: '設定の台帳' },
     { name: 'run/claude-compat-<uuid>.json', limit: 'ターンごとに 1 つ。dispose で消す', reason: 'ターン中だけの一時ファイル' },
   ] },
+  { file: 'core/claude-env-file.mjs', sites: 2, targets: [
+    { name: 'run/claude-env-<uuid>.sh・run/claude-env-<uuid>.vals', limit: 'ターンごとに 1 組。dispose で消す（消し損ねは起動時に片付ける）', reason: 'Claude のシェルへ渡す秘密情報と変数（権限 0600）。値は .vals にだけ書き、CLAUDE_ENV_FILE の .sh は読む行だけ（値が bash.exe -c の引数に載らないように。ADR 0284）' },
+  ] },
+  { file: 'core/claude-mcp-file.mjs', sites: 1, targets: [
+    { name: 'run/claude-mcp-<uuid>.json', limit: 'ターンごとに 1 つ。dispose で消す（消し損ねは起動時に片付ける）', reason: 'Claude へ渡す HTTP の MCP の設定（トークンを含む、権限 0600）。--mcp-config にはパスだけを渡し、トークンが argv に載らないようにする（ADR 0284）。ターン中だけの一時ファイル' },
+  ] },
   { file: 'core/ply-mcp.mjs', sites: 2, targets: [
     { name: 'mcp-servers.json', limit: 'Pleiad に登録した MCP サーバー。ユーザーが数個作る', reason: '設定の台帳' },
   ] },

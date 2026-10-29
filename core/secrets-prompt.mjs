@@ -8,10 +8,12 @@ const clip = (value, max) => (String(value ?? '').length > max ? `${String(value
  * @param {Array<{ id, label, username, sites, note? }>} o.logins  サイトで入力できるログイン情報（agentList の login）
  * @param {string[]} [o.unreadable]  値を読めず渡していない名前
  * @param {boolean} [o.browser]  このターンにエージェントのブラウザー（ply_browser）を渡すか。無ければログイン情報は書かない
+ * @param {boolean} [o.envFile]  秘密情報を env file 経由で渡すエージェント（traits.secretsViaEnvFile。Claude）。
+ *   値ファイルを読むスクリプトが Bash のシェルにだけ届くので、エージェントの PowerShell ツールには渡らないことを文に書く
  * @param {(locale: string, key: string, params?: object) => string} o.agentT
  * @param {string} o.locale
  */
-export function secretsPrompt({ entries = [], logins = [], unreadable = [], browser = false, agentT, locale }) {
+export function secretsPrompt({ entries = [], logins = [], unreadable = [], browser = false, envFile = false, agentT, locale }) {
   // i18n-dynamic: agent:secrets.prompt.
   const tr = (key, params) => agentT(locale, `secrets.prompt.${key}`, params);
   const shown = browser ? logins.filter(l => l.sites?.length) : [];
@@ -21,7 +23,7 @@ export function secretsPrompt({ entries = [], logins = [], unreadable = [], brow
   if (entries.length) {
     // i18n-dynamic: agent:secrets.prompt.kind.
     const list = entries.map(e => tr('envItem', { name: e.name, kind: tr(`kind.${e.kind}`), note: note(e.note) })).join(tr('separator'));
-    lines.push(tr('env', { list }));
+    lines.push(tr(envFile ? 'envFile' : 'env', { list }));
   }
   if (shown.length) {
     const list = shown.map(l => tr('loginItem', { label: clip(l.label, 60), id: l.id, sites: l.sites.join(', '),

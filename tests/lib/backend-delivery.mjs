@@ -158,12 +158,18 @@ async function killAgy(pidFile) {
 
 /** Claude Code: SDK の query の options（mcpServers・env・systemPrompt.append・hooks）に届いたか */
 async function probeClaude({ scratch, caps }) {
-  let received = null, envFileText = null;
+  let received = null, envFileText = null, envValuesText = null, mcpConfText = null;
   const restore = setClaudeSdkForTest({
     executable: () => 'fake-claude',
     query: ({ prompt, options }) => {
       received = options;
       envFileText = options?.env?.CLAUDE_ENV_FILE ? fss.readFileSync(options.env.CLAUDE_ENV_FILE, 'utf8') : null;
+      // 値ファイル: CLAUDE_ENV_FILE のスクリプトが読む .vals（ADR 0284。値はこちらにだけある。スクリプトの中身は argv に載る）
+      const valsPath = envFileText && /\. '([^']+\.vals)'/.exec(envFileText)?.[1];
+      envValuesText = valsPath && fss.existsSync(valsPath) ? fss.readFileSync(valsPath, 'utf8') : null;
+      // HTTP の MCP は --mcp-config のファイルに載る（トークンを argv に出さない）
+      const mcpConf = options?.extraArgs?.['mcp-config'];
+      mcpConfText = mcpConf && fss.existsSync(mcpConf) ? fss.readFileSync(mcpConf, 'utf8') : null;
       const q = { options, close() {}, initializationResult: async () => ({}), getContextUsage: async () => ({ memoryFiles: [] }), mcpServerStatus: async () => [] };
       q[Symbol.asyncIterator] = async function* () {
         // 最初の発言が届くまで待つ（入力はターンの終わりまで開いたままなので、読み切ろうとしない）
@@ -179,7 +185,8 @@ async function probeClaude({ scratch, caps }) {
   } finally { restore(); }
   const options = received ?? {};
   const append = String(options.systemPrompt?.append ?? '');
-  const servers = Object.keys(options.mcpServers ?? {});
+  // 届いた MCP の一覧 = インプロセスの sdk 型（options.mcpServers）+ --mcp-config のファイルの中身
+  const servers = [...Object.keys(options.mcpServers ?? {}), ...Object.keys((JSON.parse(mcpConfText ?? '{}').mcpServers) ?? {})];
   const env = options.env ?? {};
   const seen = { servers, env: Object.keys(env).filter((k) => /^(AGENT_BROWSER_|PLEIAD_|CLAUDE_ENV_FILE)/.test(k)), append: append.slice(0, 400), envFile: String(envFileText ?? '').slice(0, 200) };
   return {
@@ -189,7 +196,8 @@ async function probeClaude({ scratch, caps }) {
       plyAgents: servers.includes('ply_agents') && has(append, MARK.agents),
       browser: servers.includes('ply_browser') && envOf(env, 'AGENT_BROWSER_CONFIG', MARK.browserEnv.AGENT_BROWSER_CONFIG) && has(append, MARK.browserInstructions),
       plyControl: servers.includes('ply_control') && envOf(env, 'PLEIAD_CONTROL_TOKEN', 'control-token') && has(append, instr('control')),
-      secrets: has(envFileText, `${MARK.secretName}='${MARK.secretValue}'`) && has(append, instr('secrets')),
+      // 値は .vals にだけあり、スクリプトの中身（argv に載る）には無い。MCP のトークンはファイルにあり options.mcpServers には無い
+      secrets: has(envValuesText, `${MARK.secretName}='${MARK.secretValue}'`) && !has(envFileText, MARK.secretValue) && has(append, instr('secrets')),
       visualize: has(append, MARK.visualize),
       hooks: Boolean(options.hooks?.PreToolUse?.length),
       plyShell: shellDelivered(caps, servers.includes('ply_shell'), append) && (!deliveryRequired(caps?.nativeShellOff) || (options.disallowedTools ?? []).some((name) => /Bash/.test(name))),

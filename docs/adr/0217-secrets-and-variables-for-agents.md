@@ -58,7 +58,7 @@ ADR 0155 と同じ分け方にする。登録は置くだけで、**使い道を
 - **渡す場所**: 「すべてのフォルダー」か、選んだフォルダー（リポジトリ）。会話の cwd を含むリポジトリの根で引く。worktree（ADR 0136）と委譲の子は、元のリポジトリの設定を引く。フォルダーの値が「すべて」の値に勝つ。
 - **効き始め**: 次のターンから。走っているターンと、保持役に載ったプロセス（ADR 0151）の env は変えない。
 - **道は今の 1 本だけ**: 会話ごとの env（`controlRuntimeFor(turn).env`・`browserEnv` と同じ所）に載せる。新しい注入の道は作らない。
-  - **Claude**: CLI の `options.env` には入れず、`CLAUDE_ENV_FILE` で Bash ツールのシェルにだけ渡す。これは Claude Code が各 Bash コマンドの前に読むスクリプトで、データ置き場の `run/claude-env-<uuid>.sh`（0600）に書き、ターンの終わりに消す（消し損ねは起動時に片付ける。`run/claude-compat-<uuid>.json` と同じ扱い）。CLI 本体の env に入れないので、利用者が自分のアプリのために登録した `ANTHROPIC_API_KEY`・`ANTHROPIC_BASE_URL` が、Claude Code 自身の認証・接続先を替えることはない。
+  - **Claude**: CLI の `options.env` には入れず、`CLAUDE_ENV_FILE` で Bash ツールのシェルにだけ渡す。これは Claude Code が各 Bash コマンドの前に読むスクリプトで、データ置き場の `run/claude-env-<uuid>.sh`（0600）に書き、ターンの終わりに消す（消し損ねは起動時に片付ける。`run/claude-compat-<uuid>.json` と同じ扱い）。CLI 本体の env に入れないので、利用者が自分のアプリのために登録した `ANTHROPIC_API_KEY`・`ANTHROPIC_BASE_URL` が、Claude Code 自身の認証・接続先を替えることはない。**（2026-10-29 の [ADR 0284](0284-secrets-off-claude-command-line.md) で書き方を変えた: env file の中身は `bash.exe -c` の引数に載り値がコマンドラインに出るため、値は別の `run/claude-env-<uuid>.vals`（0600）に置き、`.sh` は読み込む行だけにした。Claude の PowerShell ツールには値が届かなくなった）**
   - **Codex**: スレッドの config の `shell_environment_policy.set`（今の `PLEIAD_CONTROL_*` と同じ所）。シェルにだけ届き、共有の app-server の env は変えない。
   - **Antigravity**: 会話ごとの agy のプロセスの env。agy が自分の認証に読む名前は agy のプロセスに入れず、ページのその行に ⚠ を出す（名前の一覧は段階 1 で確かめる）。
   - **入力欄の `!` の行**: そのシェルの env。
