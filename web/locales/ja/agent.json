@@ -342,6 +342,8 @@
     "backgroundStillNotice": "[Pleiad タスク裏作業通知 / {{taskId}}]\n{{title}} の子の裏の作業が、返答から {{minutes}} 分たってもまだ走っています:\n{{items}}\nタスクは実行中のままで、終われば結果を完了通知で届けます。止めるなら ply_task_cancel か、作業ダイアログの停止ボタンを使ってください。まだ走っていれば {{interval}} 分後にもう一度知らせます。",
     "backgroundReply": "子のここまでの返答:\n{{reply}}",
     "backgroundItem": "- {{label}}",
+    "backgroundOutputQuiet": "（出力 {{bytes}} バイト。最後に伸びてから {{minutes}} 分）",
+    "backgroundOutputEmpty": "（出力はまだありません。出力のファイルができてから {{minutes}} 分）",
     "notice": "[Pleiad タスク完了通知 / {{taskId}}]\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}元の依頼に必要な作業を続けてください。",
     "noticeBatch": "[Pleiad タスク完了通知 / {{count}} 件]\n{{count}} 件の子タスクが完了しました。結果は次のとおりです。\n\n{{sections}}元の依頼に必要な作業を続けてください。",
     "noticeSection": "--- {{taskId}} ---\n{{retry}}実行先: {{backend}}\n状態: {{status}}\n依頼: {{task}}\n結果（子エージェントの報告）:\n{{result}}{{more}}\n{{error}}\n{{rejections}}{{git}}\n",

@@ -110,6 +110,7 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
   // 前面で終わるシェルの分も入るので、古いものから捨てる
   const toolCommands = new Map();   // tool_use id -> コマンド
   const taskCommands = new Map();   // task_id -> コマンド
+  const taskOutputs = new Map();    // task_id -> 裏のシェルの出力ファイル（backgroundOutput）
   const remember = (map, key, value) => {
     map.delete(key);
     map.set(key, value);
@@ -131,10 +132,33 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
     }
   }
 
+  /**
+   * 裏に回ったシェルの出力ファイル。task 系のメッセージは走っている間の置き場を運ばない（task_notification の output_file は終わった後）。
+   * シェルのツールの結果（tool_use_result.backgroundTaskId 付き）の本文
+   * 「Command running in background with ID: <id>. Output is being written to: <path>.output. …」から拾う（Claude Code 2.1 の実物で確認）。
+   * 依頼元への裏待ちの知らせが、出力が最後に伸びてからの時間をこのファイルの大きさ・mtime で出す（server の backgroundWaiting）
+   */
+  function backgroundOutput(r, blocks) {
+    const id = typeof r?.backgroundTaskId === "string" ? r.backgroundTaskId : null;
+    if (!id) return;
+    for (const b of blocks) {
+      if (b?.type !== "tool_result") continue;
+      const text = typeof b.content === "string" ? b.content
+        : Array.isArray(b.content) ? b.content.map((c) => (typeof c?.text === "string" ? c.text : "")).join("\n") : "";
+      const file = text.match(/Output is being written to:\s*(.+?\.output)(?=\.?\s|\.?$)/)?.[1];
+      if (!file) continue;
+      remember(taskOutputs, id, file);
+      const cur = bg.get(id);
+      if (cur) bg.set(id, { ...cur, outputFile: file });
+      return;
+    }
+  }
+
   /** 委譲ツールの結果（前面で待った子の完了）。task 系のメッセージが来ない場合の備え */
   function toolResult(m) {
     const r = m.tool_use_result;
     const blocks = Array.isArray(m.message?.content) ? m.message.content : [];
+    backgroundOutput(r, blocks);
     if (r && typeof r === "object" && typeof r.agentId === "string" && AGENT_RESULT_DONE.has(r.status)) {
       const cur = states.get(r.agentId);
       // 終わった状態（失敗・停止）を完了で上書きしない
@@ -166,7 +190,8 @@ export function createTurnTracker({ now = () => new Date() } = {}) {
     if (ambient || bg.has(id)) return;
     // waitable は「終わりの通知が必ず来るので待てる」の印。web はこれで終わりの合図が無い裏の作業と
     // 区別し、待っていることを画面に出す（web/work-status.mjs）
-    bg.set(id, { id, kind, label: String(label ?? ""), waitable: true });
+    const outputFile = taskOutputs.get(id);
+    bg.set(id, { id, kind, label: String(label ?? ""), waitable: true, ...(outputFile ? { outputFile } : {}) });
   }
 
   function update(m) {

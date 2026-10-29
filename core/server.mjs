@@ -22,7 +22,7 @@ import { createComputerLock } from './computer-use/lock.mjs';
 import { createShots as createComputerShots } from './computer-use/shots.mjs';
 import { parentPortComputer, fakeComputerDriver } from './computer-use/driver.mjs';
 import { normalizeComputerUse } from './computer-use/policy.mjs';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, statSync } from 'node:fs';
 import { KINDS, JUDGES, TIERS, SIGNALS, normalizeSettings, migrateLegacySettings, pruneEfforts, decideEffort, effortTierFor, RETIRED_KEYS, RoutingSettingsError, pinnedRouting, manualRouting, route, candidateStates, settingsWarnings, checkCandidate, parseCandidate, candidateId, tierAccounts, pickAccount, sameIdentity, formatSkippedCandidates } from './delegation-routing.mjs';
 import { judgeDifficulty, normalizeKey, SERVICES as ROUTING_JUDGE, JUDGE_SERVICE, JUDGE_TIMEOUT_MS } from './delegation-judges.mjs';
 import { createUsageMonitor } from './delegation-usage.mjs';
@@ -1098,11 +1098,28 @@ function rejectionNotice(lng, list) {
 }
 // 子が返答を終えた後も走っている裏の作業を依頼元へ知らせる形（ADR 0170）。見出しはコマンドのことがあるので、拒否と同じく秘密を伏せて切る
 const peerBackground = x => ({ kind: pick(x.kind, 20) ?? 'other', label: redactForPeer(String(x.label ?? ''), REJECTION_TEXT_MAX) ?? '' });
+// 裏のシェルの出力ファイル（Claude の tracker が拾う outputFile）の大きさと、最後に伸びてからの分（mtime から）。読めなければ null。
+// 出力が長く伸びない裏の作業は、終わらないか、出力の口を握られて戻れない（Windows の agent-browser のデーモン。#156・ADR 0284）。
+// 止めるかは依頼元が決める（ADR 0170）。ここは見せるだけ
+function backgroundOutput(file, at = Date.now()) {
+  if (typeof file !== 'string' || !file) return null;
+  try {
+    const s = statSync(file);
+    return { bytes: s.size, quietMinutes: Math.max(0, Math.floor((at - s.mtimeMs) / 60000)) };
+  } catch { return null; }
+}
+const waitingBackground = x => { const output = backgroundOutput(x.outputFile); return { ...peerBackground(x), ...(output ? { output } : {}) }; };
 // 裏待ちの最初の知らせに載せる子の返答の上限（全文は完了通知と ply_task_status で渡る）
 const BACKGROUND_REPLY_MAX = 4000;
 const delegatedNoticeTitle = task => task.host ? `${task.title || task.taskId} ⇄ ${task.host.name}` : task.title;
+// 出力の様子は、リモートのホストから来た分（hostBackground）も同じ形で読む。数でなければ載せない
+function backgroundItemOutput(lng, output) {
+  const bytes = Number(output?.bytes), quiet = Number(output?.quietMinutes);
+  if (!Number.isFinite(bytes) || !Number.isFinite(quiet)) return '';
+  return bytes > 0 ? agentT(lng, 'delegation.backgroundOutputQuiet', { bytes, minutes: quiet }) : agentT(lng, 'delegation.backgroundOutputEmpty', { minutes: quiet });
+}
 function backgroundNotice(lng, task, { count, minutes, interval, tasks }, reply) {
-  const items = tasks.slice(0, NOTICE_REJECTIONS).map(x => agentT(lng, 'delegation.backgroundItem', { label: x.label || x.kind })).join('\n');
+  const items = tasks.slice(0, NOTICE_REJECTIONS).map(x => agentT(lng, 'delegation.backgroundItem', { label: x.label || x.kind }) + backgroundItemOutput(lng, x.output)).join('\n');
   const vars = { taskId: task.taskId, title: task.title, minutes, interval, items };
   if (count > 1) return agentT(lng, 'delegation.backgroundStillNotice', vars);
   const text = String(reply ?? '').trim();
@@ -6949,7 +6966,7 @@ agentTasks = await createAgentTasks({
     const execution = taskExecutions.get(sessionId);
     const turn = runtime.turns.get(sessionId);
     if (!execution?.waitingSince || turn?.info.phase !== 'waiting') return null;
-    const tasks = (turn.info.background ?? []).map(peerBackground);
+    const tasks = (turn.info.background ?? []).map(waitingBackground);
     return tasks.length ? { since: execution.waitingSince, tasks } : null;
   },
   deliverBackground: async (task, notice, { accepted } = {}) => {

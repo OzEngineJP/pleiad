@@ -39,6 +39,7 @@
 //   "bg-shell <本文>" … 本文で返答した後、終わらない裏のコマンド（Claude の local_bash）を抱えて phase: waiting で待つ。
 //                    stopBackground で止めると main が再開して一言返し、ターンが終わる。
 //                    "bg-shell gate:<名前> <本文>" はゲートが開いたら裏のコマンドが終わり、main が再開して「裏のコマンドが終わった」と返す
+//                    "bg-shell output:<パス> …" は裏のコマンドの出力ファイルをそのパスにする（gate: と並べられる。ファイルは試験が書く）
 //   "term <本文>"  … 本文で返答して終わり、ターンの外に端末（Codex の unified_exec と同じ kind: terminal）を残す
 //   "history-ioerr <回数> <本文>" … 本文で返答して終わり、その後のこの会話の getMessages を <回数> だけ Codex と同じ
 //                    `(code: 1546) disk I/O error` で失敗させる（止めたばかりのターン用の app-server とぶつかった形。core/history-retry.mjs）
@@ -363,14 +364,17 @@ async function background(text, { s, out, emit, signal, control }) {
  * （local_bash の完了通知が来ないので、入力を閉じられずターンが続く）。本文で返答し、phase: waiting で待つ。
  * stopBackground（Query.stopTask に当たる）で止めると、完了通知で main が再開して一言返し、ターンが終わる。
  * "bg-shell gate:<名前> <本文>" は、ゲートが開いたら裏のコマンドが終わる（長い試験が裏で終わった形）。完了通知で main が再開して一言返す。
+ * "bg-shell output:<パス> …" は、裏のコマンドの出力ファイル（Claude の tracker が拾う outputFile）をそのパスにする。書くのは試験の側
  * "active-shell" は報告せず、main が結果を待っている形（phase: active）。
  * 中断されたら true。
  */
 async function hangingShell(text, { s, out, emit, signal, keys }) {
   const reported = !text.startsWith("active-shell");
-  const gate = text.match(/^bg-shell\s+gate:([\w.-]+)/)?.[1] ?? null;
-  const body = text.replace(/^bg-shell\s*/, "").replace(/^gate:[\w.-]+\s*/, "");
-  const task = { id: `fake-shell-${crypto.randomUUID().slice(0, 8)}`, kind: "shell", label: "cat >> /dev/null", waitable: true };
+  const opts = text.match(/^bg-shell((?:\s+(?:gate|output):\S+)*)/)?.[1] ?? "";
+  const gate = opts.match(/gate:([\w.-]+)/)?.[1] ?? null;
+  const outputFile = opts.match(/output:(\S+)/)?.[1] ?? null;
+  const body = text.replace(/^bg-shell(?:\s+(?:gate|output):\S+)*\s*/, "");
+  const task = { id: `fake-shell-${crypto.randomUUID().slice(0, 8)}`, kind: "shell", label: "cat >> /dev/null", waitable: true, ...(outputFile ? { outputFile } : {}) };
   let stopped = false, finished = false, wake = null;
   const poke = () => { const w = wake; wake = null; w?.(); };
   const stop = () => { stopped = true; poke(); };
