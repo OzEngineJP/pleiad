@@ -1,8 +1,8 @@
 {
-  "version": "0.41.0",
+  "version": "0.41.1",
   "releases": [
     {
-      "version": "0.41.0",
+      "version": "0.41.1",
       "date": "2026-10-30",
       "title": "更新をまたいで AI の作業やシェルの実行が続くようになり、Devin CLI・Grok Build でできることが増えました",
       "sections": [
