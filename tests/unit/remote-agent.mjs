@@ -533,7 +533,7 @@ export default async function (t) {
     t.ok('子の質問のカード（kind: question）は端末へ中継しない', (await ax.none(e => e.t === 'relay' && e.relay.taskId === qId)) === true);
     await ax.call('cancel', { taskId: qId }, reqP);
 
-    // 裏待ちの子の telemetry に、裏の出力の大きさと最後に伸びてからの分が乗る。出力ファイルのパスは線を越えない（ADR 0284）
+    // 裏待ちの子の telemetry に、裏の出力の大きさと最後に伸びてからの分が乗る。出力ファイルのパスは線を越えない（ADR 0285）
     const bgOutput = path.join(scratch, 'remote-bg.output');
     await fs.writeFile(bgOutput, 'running 1/40\n');
     const bg = await ax.call('delegate', { kind: 'mechanical', backend: 'fake', task: `bg-shell gate:remote-bg output:${bgOutput} 子の報告: 裏で流している` }, reqP);

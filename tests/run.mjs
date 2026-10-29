@@ -104,7 +104,7 @@ const SUITES = [
   // 会話別の agent-browser の設定ファイル・環境変数・指示（Chrome の中継の形の偽物。各 backend へ届く）
   './unit/agent-browser-env.mjs',
   './unit/agent-browser-lifetime.mjs',
-  // Windows でデーモンを先に起こす（指紋・起こし直し・ターンの終わりの片付け・実物の CLI のパイプ。ADR 0284）
+  // Windows でデーモンを先に起こす（指紋・起こし直し・ターンの終わりの片付け・実物の CLI のパイプ。ADR 0285）
   './unit/agent-browser-prestart.mjs',
   // ply_browser の骨組み（ADR 0148）: 鍵付きの口・プロフィール（ADR 0078）の削除後の形・agy の束ね
   './unit/browser-bridge.mjs',

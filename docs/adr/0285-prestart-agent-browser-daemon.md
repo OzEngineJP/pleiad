@@ -1,4 +1,4 @@
-# 0284 Windows では agent-browser のデーモンを Pleiad が先に起こす（標準入出力を受け継がせない）
+# 0285 Windows では agent-browser のデーモンを Pleiad が先に起こす（標準入出力を受け継がせない）
 
 - 状態: 提案（2026-10-29）
 - 関連: [0180](0180-agent-browser-daemon-lifetime.md)（agent-browser のデーモンと置き場の寿命）、[0170](0170-delegation-background-notify-not-stop.md)（返答後の裏の作業は止めず、依頼元に知らせる）、[0242](0242-settle-commands-of-stopped-children.md)（止まった子に残ったコマンド）、Issue #156、docs/inapp-browser.md「中継とエージェントへの渡し方」、docs/agent-delegation.md「子に残った裏の作業」

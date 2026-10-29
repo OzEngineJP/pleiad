@@ -112,7 +112,7 @@ export async function browserEnvironment({ bridge, dataDir, sessionId, unlock = 
   return env;
 }
 
-// ---- デーモンを先に起こす（Windows。ADR 0284）
+// ---- デーモンを先に起こす（Windows。ADR 0285）
 //
 // Windows の agent-browser の CLI は、デーモンを CreateProcess の bInheritHandles=TRUE で起こすので、CLI の標準出力・標準エラーが
 // パイプ（`agent-browser … | tail`・`$(agent-browser …)`）だと、デーモンがそのパイプの書き口を持ったまま残り、シェルのコマンドが返らない（Issue #156）。
@@ -351,7 +351,7 @@ export async function forgetBrowserEnvironment({ bridge, dataDir, sessionId, ...
 
 /**
  * ターンの終わり: このターンでエージェントが agent-browser を呼ばなかった（デーモンが一度も起きていない）なら、ターンの初めに書いた設定の置き場を消す。
- * Pleiad が先に起こしたデーモン（ADR 0284）のうち、エージェントが一度もタブを使っていないものは、止めてから消す。
+ * Pleiad が先に起こしたデーモン（ADR 0285）のうち、エージェントが一度もタブを使っていないものは、止めてから消す。
  * ブラウザーを使わない会話の置き場とデーモンを残さない。使った会話は、縛りの記録（.target）を次のターンへ残すため消さない
  */
 export async function settleBrowserEnvironment({ bridge, dataDir, sessionId, busy = () => false, ...options }) {
@@ -401,7 +401,7 @@ export async function sweepBrowserEnvironments({ bridge, dataDir, sessions, fini
     }
     known.add(path.basename(browserSocketDirectory(dir)));
     if (await daemonUsed(dir)) {
-      // 先に起こしたまま使われなかったデーモン（ターンの終わりの片付けが届かなかった。ADR 0284）は止める
+      // 先に起こしたまま使われなかったデーモン（ターンの終わりの片付けが届かなかった。ADR 0285）は止める
       const state = await prestartedIdle(dir) ? await discard(dir, { processes: once, busy: () => busy(id), ...options }) : null;
       if (state) { result.unused++; if (state === 'stopped') result.stopped++; } else result.kept++;
       continue;

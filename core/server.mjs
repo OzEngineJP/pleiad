@@ -1099,7 +1099,7 @@ function rejectionNotice(lng, list) {
 // 子が返答を終えた後も走っている裏の作業を依頼元へ知らせる形（ADR 0170）。見出しはコマンドのことがあるので、拒否と同じく秘密を伏せて切る
 const peerBackground = x => ({ kind: pick(x.kind, 20) ?? 'other', label: redactForPeer(String(x.label ?? ''), REJECTION_TEXT_MAX) ?? '' });
 // 裏のシェルの出力ファイル（Claude の tracker が拾う outputFile）の大きさと、最後に伸びてからの分（mtime から）。読めなければ null。
-// 出力が長く伸びない裏の作業は、終わらないか、出力の口を握られて戻れない（Windows の agent-browser のデーモン。#156・ADR 0284）。
+// 出力が長く伸びない裏の作業は、終わらないか、出力の口を握られて戻れない（Windows の agent-browser のデーモン。#156・ADR 0285）。
 // 止めるかは依頼元が決める（ADR 0170）。ここは見せるだけ
 function backgroundOutput(file, at = Date.now()) {
   if (typeof file !== 'string' || !file) return null;
@@ -3089,7 +3089,7 @@ const publicWorktree = entry => ({ id: entry.id, branch: entry.branch, path: ent
 const GIT_BEGIN_WAIT_MS = 6_000;
 // AGENT_HOST_GIT_SNAPSHOTS=off でターンの撮影（隠し ref）を止める。テストが開発中のリポジトリの .git に ref を残さないため（tests/lib/server.mjs）
 const GIT_SNAPSHOTS = process.env.AGENT_HOST_GIT_SNAPSHOTS !== 'off';
-// AGENT_HOST_AGENT_BROWSER_PRESTART=off で agent-browser のデーモンを先に起こさない（ADR 0284）。偽の中継を使うテストのサーバーが、
+// AGENT_HOST_AGENT_BROWSER_PRESTART=off で agent-browser のデーモンを先に起こさない（ADR 0285）。偽の中継を使うテストのサーバーが、
 // PATH の上の本物の agent-browser を起こして残さないため（tests/lib/server.mjs）。戻し道も兼ねる
 const BROWSER_PRESTART = process.env.AGENT_HOST_AGENT_BROWSER_PRESTART !== 'off';
 const GIT_END_WAIT_MS = 6_000;
@@ -7527,7 +7527,7 @@ async function beginTurn(ctx) {
     visualizeInstructions: delegatedChild || !backend.capabilities?.visualize ? null : visualizeInstructions(agentLocale),
     ...(delegatedChild ? { delegatedChild: true } : {}),
     // Chrome の層が使えないホスト（Windows 以外・Electron なし）や、ブラウザーを受け取れないエージェント（印 browser）では、環境・指示・ply_browser のどれも渡さない
-    // Windows では agent-browser のデーモンを Pleiad が先に起こす（子のシェルのパイプをデーモンが持ったまま残らないように。ADR 0284）
+    // Windows では agent-browser のデーモンを Pleiad が先に起こす（子のシェルのパイプをデーモンが持ったまま残らないように。ADR 0285）
     browserEnv: !backend.capabilities?.browser || chromeConnection?.state().state === 'unsupported' ? null : await browserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: sessionId || turn.key, unlock: turn.userInitiated,
       daemon: agentBrowserEndpoints && BROWSER_PRESTART ? await locateAgentBrowser() : null, cwd, log: line => console.log(`  ${line}`) }).catch(error => { console.error('agent browser unavailable:', error.message); return null; }),
     browserInstructions: null,
@@ -8312,7 +8312,7 @@ async function endTurn(turn, emit, { record = true } = {}) {
     }
   }
   agentBrowserEndpoints?.endTurn(turn.info.sessionId || turn.key);
-  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0180）。先に起こしたまま使わなかったデーモンも止める（ADR 0284）
+  // このターンで agent-browser を呼ばなかったなら、ターンの初めに書いた設定の置き場を消す（ADR 0180）。先に起こしたまま使わなかったデーモンも止める（ADR 0285）
   if (agentBrowserEndpoints && turn.browserRelayId) settleBrowserEnvironment({ bridge: agentBrowserEndpoints, dataDir: store.dataDir, sessionId: turn.browserRelayId, busy: agentBrowserBusy }).catch(() => {});
   chromeHandoffs?.turnChanged(turn.info.sessionId || turn.key, false);
   // ロックの解放、止めた印・このターンの拒否の消去、main への後始末（押したままの入力を離し、オーバーレイを消す）

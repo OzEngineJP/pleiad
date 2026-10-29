@@ -9,7 +9,7 @@ import { browserConfigFile, browserEnvironment, browserSocketDirectory, daemonCo
 import { run, spawnChild } from '../../core/process.mjs';
 
 export const name = 'agent-browser-prestart';
-export const title = 'Windows で agent-browser のデーモンを Pleiad が先に起こす（子のシェルのパイプを持たせない。ADR 0284）';
+export const title = 'Windows で agent-browser のデーモンを Pleiad が先に起こす（子のシェルのパイプを持たせない。ADR 0285）';
 
 const sessionName = dir => `ply-${crypto.createHash('sha256').update(path.resolve(dir)).digest('hex').slice(0, 24)}`;
 const exists = file => fs.stat(file).then(() => true, () => false);

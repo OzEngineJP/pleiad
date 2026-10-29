@@ -2,7 +2,7 @@
 
 - 状態: 提案（2026-10-10）
 - 日付: 2026-10-10
-- 関連: [ADR 0284](0284-prestart-agent-browser-daemon.md)（Windows では Pleiad がデーモンを先に起こす。先に起こしたまま使われなかったデーモンはターンの終わりにも止める）、[ADR 0148](0148-agent-browser-in-chrome.md)（Chrome の中継とエージェントへの渡し方。未確認の 1 の `agent-browser close` をこの ADR で確かめた）、[ADR 0147](0147-delete-sent-conversations.md)（会話を消したときの片付け）、docs/inapp-browser.md「中継とエージェントへの渡し方」
+- 関連: [ADR 0285](0285-prestart-agent-browser-daemon.md)（Windows では Pleiad がデーモンを先に起こす。先に起こしたまま使われなかったデーモンはターンの終わりにも止める）、[ADR 0148](0148-agent-browser-in-chrome.md)（Chrome の中継とエージェントへの渡し方。未確認の 1 の `agent-browser close` をこの ADR で確かめた）、[ADR 0147](0147-delete-sent-conversations.md)（会話を消したときの片付け）、docs/inapp-browser.md「中継とエージェントへの渡し方」
 
 ## 状況
 
