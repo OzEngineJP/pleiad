@@ -197,7 +197,8 @@ export default async function (t) {
     const scriptBody = await fs.readFile(env.file, 'utf8');
     const echo = spawnSync(bash, ['-c', `${scriptBody}\n: && printf %s "$PROBE_TOKEN"`], { encoding: 'utf8' });
     t.ok('値ファイルを読むと、シェルの中では値が使える', echo.status === 0 && echo.stdout === SECRET, `status=${echo.status} stdout=${JSON.stringify(echo.stdout)} stderr=${JSON.stringify(String(echo.stderr ?? '').slice(0, 200))}`);
-    const proc = spawn(bash, ['-c', `${scriptBody}\n: && sleep 30`], { stdio: 'ignore' });
+    // sleep を最後のコマンドにしない（Linux の bash は -c の末尾を exec で置き換え、cmdline が sleep になって .sh の中身が消える）
+    const proc = spawn(bash, ['-c', `${scriptBody}\n: && sleep 30; :`], { stdio: 'ignore' });
     try {
       await new Promise((r) => setTimeout(r, 800));
       const cmdline = await commandLineOf(proc.pid);
