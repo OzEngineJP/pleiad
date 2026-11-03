@@ -41,6 +41,15 @@ export default async function (t) {
       killed.includes(-900010) && killed.includes(900011) && killed.includes(900012) && !killed.includes(900013) && !killed.includes(process.pid) && !killed.includes(4), JSON.stringify(killed));
   }
 
+  // ---- POSIX: プロセスグループ（-pid）で止められなければ、pid で止める（detached でない子はグループが無い）
+  {
+    const killed = [];
+    trackChild(fakeHandle(900030), 'D:/x/wt');
+    await killUnder('d:/x/wt', { platform: 'linux', list: [], exec: async () => ({}),
+      kill: pid => { if (pid < 0) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' }); killed.push(pid); return true; } });
+    t.ok('killUnder: グループで止められなければ pid で止める（根が残らない）', killed.length > 0 && killed.every(p => p > 0) && killed.includes(900030), JSON.stringify(killed));
+  }
+
   // ---- pid の使い回し: 根が死んだ後に生まれたもの・根より前に生まれたものは止めない
   {
     const killed = [];

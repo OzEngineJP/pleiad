@@ -143,6 +143,8 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   }
 
   async function exists(p) { return (await io.stat(p).catch(() => null))?.isDirectory() === true; }
+  /** worktree の直下に .git（ファイルかフォルダー）があるか。git は消しにかかるとき先にこれを消すので、無ければ半分消えた形の印 */
+  async function hasGitDir(dir) { return (await io.stat(path.join(dir, '.git')).catch(() => null)) != null; }
 
   /** 片付けの出来事をデータ置き場のログに残す（追記だけ。失敗しても止めない） */
   async function writeLog(event) {
@@ -402,9 +404,10 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     if (!container && kind === 'merged') container = await containerFor(entry);
     if (!container && kind === 'empty') container = entry.base;
     if (removed.ok) return finishRemoval(entry, container);
-    // git が中身と登録を消してから落ちた形を拾う: 登録が外れていれば失敗にせず、残りを自分で消しきる
+    // git が中身と登録を消してから落ちた形を拾う: 登録が外れ、直下の .git も無い（git は消しにかかるとき先に .git を消す）なら、
+    // 失敗にせず残りを自分で消しきる。.git が残るなら登録だけ失われた無傷の作業場所かもしれないので触らない
     const list = await wt.worktreeList(entry.root);
-    if (!list || list.some((w) => sameDir(w.path, entry.path))) return revert(removed.busy ? 'busy' : 'git', removed.error);
+    if (!list || list.some((w) => sameDir(w.path, entry.path)) || await hasGitDir(entry.path)) return revert(removed.busy ? 'busy' : 'git', removed.error);
     await writeLog({ ev: 'half-removed', id: entry.id, error: removed.error ?? null, attempts });
     return cleanupLeftovers(entry, container);
   }
@@ -440,9 +443,10 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
         return { action: 'removed', kind };
       }
       if (kind === 'unknown' && owned(entry)) {
-        // git が中身と登録を消してから落ちた形（半分消えた）なら、続きを自分で消しきる
+        // git が中身と登録を消してから落ちた形（半分消えた）なら、続きを自分で消しきる。
+        // 直下に .git が残るものは登録だけ失われた無傷の作業場所かもしれない（元のリポジトリの clone し直しなど）ので残す
         const list = await wt.worktreeList(entry.root);
-        if (list && !list.some((w) => sameDir(w.path, entry.path))) return cleanupLeftovers(entry, await containerFor(entry));
+        if (list && !list.some((w) => sameDir(w.path, entry.path)) && !await hasGitDir(entry.path)) return cleanupLeftovers(entry, await containerFor(entry));
       }
       if (kind !== 'empty' && kind !== 'merged') return { action: 'kept', kind, info };
       const result = await removeEntry(entry, { kind, release: releasing });

@@ -215,6 +215,7 @@ export default async function (t) {
 
     // ---- 半分消えた: git が中身と登録を消してから落ちた形（Windows の掴まれた remove）→ 最後まで片付く
     const halfDelete = async (root, dir) => {
+      await fs.rm(`${dir}/.git`, { force: true });                                                    // git は消しにかかるとき先に .git を消す
       await fs.rm(`${root}/.git/worktrees/${path.basename(dir)}`, { recursive: true, force: true });   // 登録だけ消す
       await fs.rm(`${dir}/core`, { recursive: true, force: true });                                   // 中身の一部だけ消えた
       return { ok: false, busy: true, error: 'Permission denied' };
@@ -239,6 +240,20 @@ export default async function (t) {
     const rL2 = await sticky.settle(wL.id);
     t.ok('次の片付けでフォルダーと台帳も消える（leftover の消し直し）',
       rL2.action === 'removed' && !(await exists(wL.path)) && !(await sticky.get(wL.id)), JSON.stringify(rL2));
+
+    // ---- 登録だけ外れた形の見分け: 直下に .git が残るなら中身のある作業場所かもしれないので消さない
+    const ghost2 = (await wts.create({ cwd: repo })).entry;
+    sh(repo, 'worktree', 'remove', ghost2.path);
+    await fs.mkdir(ghost2.path, { recursive: true });
+    await fs.writeFile(`${ghost2.path}/.git`, 'gitdir: /nonexistent');
+    await fs.writeFile(`${ghost2.path}/wip.txt`, 'user work');
+    const keptG = await wts.settle(ghost2.id);
+    t.ok('登録は外れたが .git が残るものは消さない（kept・中身が残る。clone し直しで登録だけ失った作業場所を守る）',
+      keptG.action === 'kept' && (await exists(`${ghost2.path}/wip.txt`)) && (await exists(`${ghost2.path}/.git`)) && (await wts.get(ghost2.id))?.state === 'ready', JSON.stringify(keptG));
+    await fs.rm(`${ghost2.path}/.git`, { force: true });
+    const goneG = await wts.settle(ghost2.id);
+    t.ok('登録も .git も無いものは半分消えた形: 最後まで片付く（フォルダー・ブランチ・台帳）',
+      goneG.action === 'removed' && !(await exists(ghost2.path)) && !(await wts.get(ghost2.id)) && !(await wtgit.branchTip(repo, ghost2.branch)), JSON.stringify(goneG));
 
     // ---- 消す直前に cwd の持ち主（外部 MCP など）を畳む（Issue #142）
     const wU = (await wts.create({ cwd: repo })).entry;

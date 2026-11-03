@@ -132,7 +132,7 @@ export async function killUnder(dir, { platform = process.platform, exec = null,
     if (root.endedAt != null) continue;
     try {
       if (platform === 'win32') await exec('taskkill', ['/PID', String(root.pid), '/T', '/F']);
-      else kill(-root.pid, 'SIGKILL');
+      else { try { kill(-root.pid, 'SIGKILL'); } catch { kill(root.pid, 'SIGKILL'); } }   // グループの頭でなければ単体で
       killed.add(root.pid);
     } catch { /* もう居ない */ }
   }
