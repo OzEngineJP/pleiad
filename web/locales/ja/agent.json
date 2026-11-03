@@ -1948,7 +1948,7 @@
     "memoryLearnAt": "記憶の整理を始める現地時刻（HH:MM）。",
     "memoryLearnPaused": "記憶の夜の整理を止める。",
     "composer": {
-      "historyRecall": "入力欄の一番上の行で ↑ を押すと、送信済みのメッセージを呼び出すか（true / false）。",
+      "historyRecall": "入力欄の先頭で ↑ を押すと、送信済みのメッセージを呼び出すか（true / false）。",
       "suggestions": "返答の後、空の入力欄に次のメッセージの候補を出すか（true / false）。候補を出せるエージェント（能力の印 promptSuggestions）の会話だけに効く。Pleiad がターンの後に作る分は、候補を作るのに使用量を少し使う。"
     },
     "model": "新しい会話の既定のモデル。",
