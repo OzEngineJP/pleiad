@@ -1,0 +1,13 @@
+{
+  "version": "0.41.2-beta.1",
+  "date": "2026-11-03",
+  "title": "Skills や MCP を Pleiad がそろえる会話で、Codex が作業の前に止まるのを直しました",
+  "sections": [
+    {
+      "title": "直したこと",
+      "items": [
+        "Skills や MCP を Pleiad がそろえる設定の会話で、Codex がターンを始める前に「codex app-server が落ちた」で止まり、委譲した Codex の子も作業の前に失敗していたのを直しました。0.41.0 から起きていました。"
+      ]
+    }
+  ]
+}
