@@ -47,9 +47,13 @@ export default async function (t) {
     const compaction = rpc.find(e => e.method === 'thread/compact/start');
     t.ok('手動圧縮が完了する', events.some(e => e.type === 'compaction' && e.phase === 'complete'));
     const launch = rpc.find(e => e.method === 'initialize' && e.pid === compaction?.pid);
-    t.ok('圧縮にもネイティブの指示・Skill・MCP を止める起動設定が渡る',
+    // codex は -c の値を TOML として読む。JSON（"key":）だと文字列になり skills.config・mcp_servers で落ちる（issue #157）
+    const cValue = key => launch?.args.find(x => x.startsWith(`${key}=`))?.slice(key.length + 1) ?? '';
+    const isToml = v => Boolean(v) && !/"[^"\\]*":/.test(v);
+    t.ok('圧縮にもネイティブの指示・Skill・MCP を止める起動設定を TOML で渡す',
       compaction?.pid !== first?.pid && launch?.args.some(x => x === 'project_doc_max_bytes=0')
-      && launch.args.some(x => x.startsWith('skills.config=')) && launch.args.some(x => x.startsWith('mcp_servers=')));
+      && isToml(cValue('skills.config')) && cValue('skills.config').startsWith('[')
+      && isToml(cValue('mcp_servers')) && cValue('mcp_servers').startsWith('{'));
     t.ok('圧縮のターンが終わる前に専用サーバーを終了する', Boolean(compaction) && !alive(compaction.pid));
     t.ok('手動圧縮の後に同じ会話へ送れる', (await c.runTurn({ sessionId: sid, prompt: 'large-context', cwd: scratch }, { ms: 20_000 })).outcome === 'ok');
     const scheduled = await c.waitFor(e => e.type === 'compactionSchedule' && e.sessionId === sid && e.at, { ms: 5000 });

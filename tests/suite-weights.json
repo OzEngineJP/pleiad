@@ -103,6 +103,7 @@
     "cli-launcher": 1809,
     "codex-background": 3,
     "codex-child-routing": 5612,
+    "codex-cli-args": 8000,
     "codex-held": 10,
     "codex-history": 300,
     "codex-mode": 4,
