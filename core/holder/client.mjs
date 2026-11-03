@@ -69,6 +69,8 @@ export class HolderClient extends EventEmitter {
     this.byeReason = null;
     this.waiters = new Map();  // 答えの待ち（attached:<id>・detached:<id>・replay:<reqId>）
     this.reqSeq = 0;
+    this.spawned = new Map();  // この接続が起こした子の id -> cwd（cwd が載る前の版の保持役も cwd で選べるように）
+    this.attached = new Set(); // この接続が生きている sub を持つ子（保持役側で kill が届く条件）
   }
 
   get pid() { return this.welcome?.pid; }
@@ -116,6 +118,7 @@ export class HolderClient extends EventEmitter {
         if (!settled) return void settle(reject, holderError('HOLDER_CLOSED', 'the holder closed the connection during the handshake'));
         if (!this.connected) return;
         this.connected = false;
+        this.attached.clear();
         for (const waiter of this.waiters.values()) waiter.reject(holderError('HOLDER_CLOSED', 'the holder connection was closed'));
         this.waiters.clear();
         this.emit('disconnect', this.byeReason ?? 'closed');
@@ -198,12 +201,15 @@ export class HolderClient extends EventEmitter {
    * keepMs: 親が居ない状態がこれだけ続いたら、保持役が子を木ごと止める（終わらない子の保険。古い保持役は知らない欄で、読み捨てる）
    */
   spawn({ id, command, args = [], cwd, env, policy = 'none', label = null, keepMs = 0 }) {
-    return this.send({ t: 'spawn', id, command, args, cwd, env, framing: 'lines', policy, label, ...(keepMs > 0 ? { keepMs } : {}) });
+    const sent = this.send({ t: 'spawn', id, command, args, cwd, env, framing: 'lines', policy, label, ...(keepMs > 0 ? { keepMs } : {}) });
+    if (sent) { if (this.spawned.size >= 4096) this.spawned.delete(this.spawned.keys().next().value); this.spawned.set(id, typeof cwd === 'string' ? cwd : null); this.attached.add(id); }
+    return sent;
   }
   /** 既存の子に付ける。from（既定は ack の次）から記録を流し直す。答えは子の状態。控えの渡し直し（redelivered の out）と記録の続きが、その後に続く */
   attach(id, { from } = {}) {
     const answer = this.wait(`attached:${id}`);
     if (!this.send({ t: 'attach', id, ...(from ? { from } : {}) })) { this.waiters.delete(`attached:${id}`); return Promise.reject(holderError('HOLDER_CLOSED', 'not connected')); }
+    answer.then(() => this.attached.add(id), () => {});
     return answer;
   }
   write(id, data) { return this.send({ t: 'write', id, data }); }
@@ -213,12 +219,48 @@ export class HolderClient extends EventEmitter {
   mark(id, name, seq) { return this.send({ t: 'mark', id, name, ...(seq ? { seq } : {}) }); }
   unmark(id, name) { return this.send({ t: 'unmark', id, name }); }
   label(id, label) { return this.send({ t: 'label', id, label }); }
-  release(id) { return this.send({ t: 'release', id }); }
+  release(id) { this.spawned.delete(id); this.attached.delete(id); return this.send({ t: 'release', id }); }
   /** 手を離す（id 無しは全部）。答えが来た時点で、この親からの write・end・kill は転送されない。その後に SDK の query を閉じる（design.md §4.4） */
   detach(id) {
     const answer = this.wait(`detached:${id ?? '*'}`);
     if (!this.send({ t: 'detach', ...(id ? { id } : {}) })) { this.waiters.delete(`detached:${id ?? '*'}`); return Promise.reject(holderError('HOLDER_CLOSED', 'not connected')); }
+    answer.then(() => { if (id) this.attached.delete(id); else this.attached.clear(); }, () => {});
     return answer;
+  }
+
+  /**
+   * cwd が dir の中（同じ場所を含む）にある子を木ごと止める（worktree を消す前。Windows は cwd が掴まれた場所を消せない）。
+   * この接続が sub を持たない子（前の世代のサーバーが起こしたもの）は、付けてから止めて手を離す。戻りは止めた子の id の一覧
+   */
+  async killUnder(dir, { inside, waitMs = 3000 } = {}) {
+    if (!this.connected || !dir || typeof inside !== 'function') return [];
+    const seen = new Map();
+    for (const c of this.welcome?.children ?? []) if (c?.id) seen.set(c.id, c.cwd ?? null);
+    for (const [id, cwd] of this.spawned) if (!seen.has(id)) seen.set(id, cwd);
+    const killed = [];
+    for (const [id, cwd] of seen) {
+      if (!inside(cwd, dir)) continue;
+      let grabbed = false;
+      let alive = this.welcome?.children?.find(c => c.id === id)?.alive ?? true;
+      if (!this.attached.has(id)) {
+        try { const state = await this.attach(id); grabbed = true; alive = Boolean(state?.alive); }
+        catch { continue; }
+      }
+      if (alive) {
+        this.kill(id, { tree: true });
+        let timer = null;
+        await new Promise(resolve => {
+          const onExit = frame => { if (frame.id === id) { this.off('exit', onExit); resolve(); } };
+          this.on('exit', onExit);
+          timer = setTimeout(resolve, waitMs);
+          timer.unref?.();
+        });
+        clearTimeout(timer);
+      }
+      if (grabbed) void this.detach(id).catch(() => {});
+      killed.push(id);
+    }
+    return killed;
   }
   /** 記録の [from, to] を読み直す（再生用）。記録から落ちた分があれば truncated */
   replay(id, from, to) {

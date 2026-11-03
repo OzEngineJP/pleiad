@@ -16,6 +16,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { bootEnv } from './boot-env.mjs';
 import { holderKey } from './holder/protocol.mjs';
+import { trackChild } from './proc-track.mjs';
 
 // 同期の終了処理を、process には 1 本だけ登録して配る。短命の子を片付けたら戻り値で解除する。
 const exitCleanups = new Set();
@@ -84,6 +85,7 @@ export function run(command, args = [], {
     const childStdio = input != null && stdio[0] === 'ignore' ? ['pipe', ...stdio.slice(1)] : stdio;
     try {
       child = spawn(command, Array.isArray(args) ? args.map(String) : [], { cwd, env, windowsHide, detached, stdio: childStdio, shell });
+      trackChild(child, cwd);
     } catch (error) { finish({ startError: String(error?.message ?? error) }); return; }
     signal?.addEventListener?.('abort', onAbort, { once: true });
     if (timeoutMs > 0) timer = setTimeout(() => { timedOut = true; if (exited) finish({}); else kill(); }, timeoutMs);
@@ -151,12 +153,15 @@ export async function detach(command, args = [], { cwd, env, windowsHide = true,
   await new Promise((resolve, reject) => { child.once('error', reject); child.once('spawn', resolve); });
   child.on('error', () => {});
   child.unref();
+  trackChild(child, cwd);
   return { pid: child.pid };
 }
 
 /** 生の spawn（stdin・stdout・stderr・pid・kill を持つハンドルを返す）。利用箇所は tests/lint-child-process.mjs の固定例外だけ */
 export function spawnChild(command, args = [], options = {}) {
-  return spawn(command, args.map(String), options);
+  const child = spawn(command, args.map(String), options);
+  trackChild(child, options?.cwd);
+  return child;
 }
 
 /** 親（サーバー）が居ないまま残った子を、保持役が止めるまでの既定（アプリが落ちた後も残り続けない保険。ADR 0270 決定 4） */

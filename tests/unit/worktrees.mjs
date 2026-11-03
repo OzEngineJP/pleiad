@@ -110,9 +110,8 @@ export default async function (t) {
     await fs.mkdir(ghost.entry.path, { recursive: true });
     await fs.writeFile(`${ghost.entry.path}/keep.txt`, 'mine');
     const rec4 = await wts.reconcile();
-    t.ok('起動時: フォルダーはあるのに git が知らないものは、中身に触れず台帳から外す', rec4.dropped.includes(ghost.entry.id) && (await exists(`${ghost.entry.path}/keep.txt`)));
+    t.ok('起動時: フォルダーはあるのに git が知らないものは、中身に触れず台帳とブランチを片付ける（孤児のブランチが残らない）', rec4.dropped.includes(ghost.entry.id) && (await exists(`${ghost.entry.path}/keep.txt`)) && !(await wtgit.branchTip(repo, ghost.entry.branch)) && !(await wts.get(ghost.entry.id)));
     await fs.rm(ghost.entry.path, { recursive: true, force: true });
-    sh(repo, 'branch', '-q', '-d', ghost.entry.branch);
 
     // ---- 片付けの判定
     await fs.writeFile(`${e.path}/note.txt`, 'wip\n');
@@ -191,6 +190,55 @@ export default async function (t) {
     t.ok('やり直してもだめなら「残っている」: failed・busy・台帳は ready のまま・フォルダーもブランチも残る', r5.action === 'failed' && r5.why === 'busy' && (await stubborn.get(w5.id)).state === 'ready' && (await exists(w5.path)) && (await wtgit.branchTip(repo, w5.branch)), JSON.stringify(r5));
     wts = make();
     t.ok('強制の削除は使わない: 削除に --force を渡す口は退避だけ', (await wts.settle(w5.id)).action === 'removed');
+
+    // ---- 掴まれたまま: 別のプロセスが cwd に持つ間は消さない（git を呼ぶ前に rename で確かめる）
+    if (process.platform === 'win32') {
+      const { spawn } = await import('node:child_process');
+      const held = (await wts.create({ cwd: repo })).entry;
+      const holder = spawn('powershell.exe', ['-NoProfile', '-Command', 'Start-Sleep 30'], { cwd: held.path, windowsHide: true });
+      try {
+        await new Promise(r => setTimeout(r, 500));
+        const rb = await wts.settle(held.id);
+        t.ok('掴まれている間は git を呼ばない: failed・busy・フォルダーと登録とブランチと台帳は全部残る',
+          rb.action === 'failed' && rb.why === 'busy' && (await exists(held.path)) && (await wtgit.worktreeList(repo)).some((w) => w.path === held.path)
+          && (await wtgit.branchTip(repo, held.branch)) && (await wts.get(held.id)).state === 'ready'
+          && ((await wts.get(held.id)).removeAttempts ?? []).length > 0, JSON.stringify(rb));
+        t.ok('消せなかった記録はデータ置き場のログに残る（worktrees.log）',
+          (await fs.readFile(`${dataDir}/worktrees.log`, 'utf8')).split('\n').some((line) => line.includes('"remove-failed"') && line.includes(held.id)));
+      } finally { holder.kill('SIGKILL'); }
+      await new Promise(r => setTimeout(r, 300));
+      const freed = await wts.settle(held.id);
+      t.ok('掴むものが終わったら、フォルダー・登録・ブランチ・台帳の全部が消える',
+        freed.action === 'removed' && !(await exists(held.path)) && !(await wtgit.worktreeList(repo)).some((w) => w.path === held.path)
+        && !(await wtgit.branchTip(repo, held.branch)) && !(await wts.get(held.id)), JSON.stringify(freed));
+    }
+
+    // ---- 半分消えた: git が中身と登録を消してから落ちた形（Windows の掴まれた remove）→ 最後まで片付く
+    const halfDelete = async (root, dir) => {
+      await fs.rm(`${root}/.git/worktrees/${path.basename(dir)}`, { recursive: true, force: true });   // 登録だけ消す
+      await fs.rm(`${dir}/core`, { recursive: true, force: true });                                   // 中身の一部だけ消えた
+      return { ok: false, busy: true, error: 'Permission denied' };
+    };
+    const halfGone = make({ remove: halfDelete });
+    const wH = (await halfGone.create({ cwd: repo })).entry;
+    const rH = await halfGone.settle(wH.id);
+    t.ok('登録だけ外れて中身が残った状態から最後まで片付く（フォルダー・ブランチ・台帳も消える）',
+      rH.action === 'removed' && !(await exists(wH.path)) && !(await wtgit.worktreeList(repo)).some((w) => w.path === wH.path)
+      && !(await wtgit.branchTip(repo, wH.branch)) && !(await halfGone.get(wH.id)), JSON.stringify(rH));
+
+    // ---- フォルダーだけ残った: 台帳に leftover の印を付け、次の settle で消し直す
+    let rmFails = true;
+    const stickyIo = { ...fs, rm: async (...a) => { if (rmFails) throw Object.assign(new Error('busy'), { code: 'EBUSY' }); return fs.rm(...a); } };
+    const sticky = make({ io: stickyIo, remove: halfDelete });
+    const wL = (await sticky.create({ cwd: repo })).entry;
+    const rL = await sticky.settle(wL.id);
+    t.ok('登録が外れた後にフォルダーだけ残ったら、台帳に leftover の印（ブランチはもう消えている）',
+      rL.action === 'kept' && rL.why === 'leftover' && (await exists(wL.path)) && (await sticky.get(wL.id)).leftover === 'folder'
+      && !(await wtgit.branchTip(repo, wL.branch)) && !(await wtgit.worktreeList(repo)).some((w) => w.path === wL.path), JSON.stringify(rL));
+    rmFails = false;
+    const rL2 = await sticky.settle(wL.id);
+    t.ok('次の片付けでフォルダーと台帳も消える（leftover の消し直し）',
+      rL2.action === 'removed' && !(await exists(wL.path)) && !(await sticky.get(wL.id)), JSON.stringify(rL2));
 
     // ---- 消す直前に cwd の持ち主（外部 MCP など）を畳む（Issue #142）
     const wU = (await wts.create({ cwd: repo })).entry;

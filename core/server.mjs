@@ -34,6 +34,7 @@ import { worktreeList } from './git-worktree.mjs';
 import { createWorktreeHost, writesScope } from './worktree-host.mjs';
 import { rememberableRepoTurn } from './repo-defaults.mjs';
 import { insideDir, sameDir } from './worktrees.mjs';
+import { killUnder, killHeldUnder } from './proc-track.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
 import { createPrReader, basicPr, PR_READ_MAX } from './git-prs.mjs';
 import { mergePrs, unionPrs } from './session-prs.mjs';
@@ -3051,8 +3052,13 @@ const worktreeHost = createWorktreeHost({
   dataDir: store.dataDir, store,
   turns: () => runtime.turns, shellCwds: () => [...shellRuns.cwds(), ...shellBridge.cwds()], tasks: () => agentTasks?.list() ?? [], background: () => runtime.background,
   emit: event => emitGlobal(event), reason: (key, params) => savedReason(key, params),
-  // worktree を消す直前に、その中を cwd に持つ MCP を畳む（Issue #142。接続の回収と、台帳に残った分の掃除）
-  unhold: async entry => { await contextBridge.closeUnder(entry.path); await mcpLedger.sweepCwd(entry.path); },
+  // worktree を消す直前に、その中を cwd に持つプロセスを畳む（Issue #142。外部 MCP の接続と台帳・保持役の子・Pleiad が起こした子と子孫）
+  unhold: async entry => {
+    await contextBridge.closeUnder(entry.path);
+    await mcpLedger.sweepCwd(entry.path);
+    await killUnder(entry.path).catch(() => {});
+    await killHeldUnder(entry.path, { dataDir: store.dataDir, inside: insideDir }).catch(() => {});
+  },
   log: line => { if (process.env.AGENT_HOST_WORKTREE_LOG) console.log(`  worktree: ${line}`); },
   // AGENT_HOST_WORKTREES=off で worktree を作らない。テストのサーバーが開発中のリポジトリ（<リポジトリ>.pleiad）に残さないため（tests/lib/server.mjs）
   worktreeOptions: {
