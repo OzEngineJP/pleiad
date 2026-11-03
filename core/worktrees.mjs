@@ -5,6 +5,10 @@
 //   - 台帳（<データ置き場>/worktrees.json）に「作成中」を書いてから作り、途中で落ちたら巻き戻す（起動時に reconcile で台帳と git worktree list を突き合わせる）
 //   - 片付け（settle）: 変更なし → 消す / 元のブランチへ取り込み済み → 消す / 未取り込み → 残す。状態が分からない・使っているものがある → 消さない。
 //     消す前に中の ReparsePoint（ジャンクション・シンボリックリンク）を全部列挙してリンクだけを外し（リンク先を辿らない）、外せなければ中止する。
+//     消す前にフォルダーを一時の名前へ rename して戻し、掴まれていない（cwd が中に無い）ことを確かめてから git を呼ぶ。
+//     Windows で掴まれたまま `git worktree remove` を呼ぶと、中身と登録を消してから落ちてフォルダーとブランチだけ残るので、
+//     登録が外れていれば続きを自分で消しきる。フォルダーだけ残ったら台帳に leftover の印を付け、settle のたびに消し直す。
+//     片付けの失敗（試した回数ごとのエラー）とブランチの残りは <データ置き場>/worktrees.log（追記）と台帳の lastError・removeAttempts に残す。
 //     強制の削除（--force・branch -D）は使わない。例外は「退避して消す」だけ（退避の隠し ref を撮って検証した後。archive）
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -30,6 +34,12 @@ const REMOVE_RETRY_MS = [200, 500, 1000, 2000];
 const LINK_WALK_LIMIT_MS = 120_000;
 /** 作ったばかりのものを、使われていない（予約の前）と見て自動で消さない時間 */
 const NEW_GRACE_MS = 60_000;
+/** rename の確かめで使う一時の名前の語尾（落ちても分かるよう、フォルダー名から決まる） */
+const PROBE_SUFFIX = '.ply-removing';
+/** 片付けの出来事の記録（worktrees.log）の大きさの上限。超えたら新しい半分だけ残す */
+const LOG_MAX_BYTES = 64 * 1024;
+/** 台帳に残す、消す呼び出し 1 回分のエラーの数 */
+const ATTEMPTS_KEEP = 5;
 
 /** 退避の時刻の印（ref の名前に使う。20261003T031500Z） */
 export const archiveStamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
@@ -105,6 +115,7 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   // 消す git の呼び出し（テストが「掴まれている」を差し込む）
   remove = wt.worktreeRemove, removeForced = wt.worktreeRemoveForced } = {}) {
   const file = path.join(dataDir, 'worktrees.json');
+  const logFile = path.join(dataDir, 'worktrees.log');
   let entries = null;          // id -> entry
   let chain = Promise.resolve();
   const busyIds = new Set();   // 作成・片付けの途中の id（同じものを二重に動かさない）
@@ -132,6 +143,75 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
   }
 
   async function exists(p) { return (await io.stat(p).catch(() => null))?.isDirectory() === true; }
+  /** worktree の直下に .git（ファイルかフォルダー）があるか。git は消しにかかるとき先にこれを消すので、無ければ半分消えた形の印 */
+  async function hasGitDir(dir) { return (await io.stat(path.join(dir, '.git')).catch(() => null)) != null; }
+
+  /** 片付けの出来事をデータ置き場のログに残す（追記だけ。失敗しても止めない） */
+  async function writeLog(event) {
+    try {
+      await io.mkdir(dataDir, { recursive: true });
+      await io.appendFile(logFile, `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`);
+      const st = await io.stat(logFile).catch(() => null);
+      if (st && st.size > LOG_MAX_BYTES) {
+        const text = await io.readFile(logFile, 'utf8');
+        const cut = text.indexOf('\n', Math.ceil(text.length / 2));
+        await io.writeFile(logFile, cut >= 0 ? text.slice(cut + 1) : '');
+      }
+    } catch { /* 記録の失敗で片付けは止めない */ }
+  }
+
+  const probeName = (dir) => `${trimEnd(dir)}${PROBE_SUFFIX}`;
+
+  /**
+   * git を呼ぶ前の確かめ: フォルダーを一時の名前へ rename して戻す。
+   * Windows は cwd（またはその下のフォルダー）を掴んでいるプロセスがあると rename が失敗する（EBUSY・EPERM）。
+   * git は掴まれたまま呼ぶと中身と登録を消してから落ちるので、消せないことを先に確かめる。
+   * 戻せなければ busy + moved（一時名はフォルダー名から決まるので、次の機会に restoreProbe が戻す）
+   */
+  async function probeMovable(dir) {
+    const tmp = probeName(dir);
+    try { await io.rename(dir, tmp); }
+    catch (e) {
+      if (e?.code === 'ENOENT') return { ok: true };
+      return { ok: false, busy: true, error: `probe: ${e?.code ?? e}` };
+    }
+    let last = null;
+    for (let i = 0; i < 10; i++) {
+      try { await io.rename(tmp, dir); return { ok: true }; }
+      catch (e) { last = e; await sleep(30); }
+    }
+    return { ok: false, busy: true, moved: true, error: `probe restore: ${last?.code ?? last}` };
+  }
+
+  /** probeMovable で残った一時名を元に戻す（落ちた・戻せなかった次の機会）。戻せなければ busy。残っていなければ ok */
+  async function restoreProbe(entry) {
+    const tmp = probeName(entry.path);
+    if (await exists(entry.path)) { await io.rmdir(tmp).catch(() => {}); return { ok: true }; }
+    if (!await exists(tmp)) return { ok: true };
+    try { await io.rename(tmp, entry.path); return { ok: true }; }
+    catch (e) { return { ok: false, busy: true, error: `probe restore: ${e?.code ?? e}` }; }
+  }
+
+  /** ブランチの取り込み先として確かめるコミット（ベースのブランチの先頭 → ルートの HEAD → ベース。消えたものの台帳・ブランチを片付けるときに使う） */
+  async function containerFor(entry) {
+    return (entry.baseBranch ? await wt.branchTip(entry.root, entry.baseBranch) : null) ?? (await git.headCommit(entry.root)) ?? entry.base ?? null;
+  }
+
+  /**
+   * 登録が外れた後の続き: リンクを外し、残りを消し、ブランチと台帳を片付ける（登録だけ外れた形を最後まで片付ける）。
+   * フォルダーが残ったら（また掴まれた）台帳に leftover の印を付け、次の settle・sweep で消し直す
+   */
+  async function cleanupLeftovers(entry, container) {
+    await unlinkAll(entry.path, { io }).catch(() => {});
+    await io.rm(entry.path, { recursive: true, force: true }).catch(() => {});
+    if (await exists(entry.path)) {
+      await finishRemoval(entry, container, { keepEntry: true });
+      await setState(entry.id, 'ready', { leftover: 'folder' });
+      await writeLog({ ev: 'leftover', id: entry.id });
+      return { action: 'kept', why: 'leftover' };
+    }
+    return finishRemoval(entry, container);
+  }
 
   // ---------------------------------------------------------------- 作る
 
@@ -270,16 +350,17 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     }
   }
 
-  /** 消した後の片付け: 登録の掃除・ブランチ・台帳・空になった置き場 */
-  async function finishRemoval(entry, container = null) {
+  /** 消した後の片付け: 登録の掃除・ブランチ・台帳・空になった置き場。keepEntry はフォルダーが残ったとき（台帳に leftover の印を付けて消し直す分） */
+  async function finishRemoval(entry, container = null, { keepEntry = false } = {}) {
     await wt.worktreePrune(entry.root);
     const tip = await wt.branchTip(entry.root, entry.branch);
     let branchLeft = false;
     if (tip) {
       const ok = (await wt.branchDelete(entry.root, entry.branch)) || (container && await wt.branchDeleteContained(entry.root, entry.branch, tip, container));
       branchLeft = !ok;
+      if (branchLeft) await writeLog({ ev: 'branch-left', id: entry.id, branch: entry.branch, tip, container });
     }
-    await mutate((all) => { delete all[entry.id]; });
+    if (!keepEntry) await mutate((all) => { delete all[entry.id]; });
     await io.rmdir(path.dirname(entry.path)).catch(() => {});
     log(`worktree removed ${entry.id}`);
     return { action: 'removed', branchLeft };
@@ -291,21 +372,44 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
    */
   async function removeEntry(entry, { kind, release: releasing = [], archived = null }) {
     if (!owned(entry)) return { action: 'kept', why: 'unowned' };
-    const revert = (why, error) => setState(entry.id, 'ready', error ? { lastError: String(error).slice(0, 300) } : {}).then(() => ({ action: 'failed', why, ...(error ? { error } : {}) }));
+    const attempts = [];
+    const revert = async (why, error) => {
+      await setState(entry.id, 'ready', { ...(error ? { lastError: String(error).slice(0, 300) } : {}), ...(attempts.length ? { removeAttempts: attempts.slice(-ATTEMPTS_KEEP) } : {}) });
+      if (error || attempts.length) await writeLog({ ev: 'remove-failed', id: entry.id, why, error: error ?? null, attempts });
+      return { action: 'failed', why, ...(error ? { error } : {}) };
+    };
     await setState(entry.id, 'removing');
     const g = await guard(entry, releasing);
     if (g) { await setState(entry.id, 'ready'); return { action: 'kept', why: g }; }
+    // 前の回の rename の確かめで残った一時名を先に戻す（戻せなければまだ掴まれている）
+    const restored = await restoreProbe(entry);
+    if (!restored.ok) { await setState(entry.id, 'ready'); return { action: 'kept', why: 'busy' }; }
     const links = await unlinkAll(entry.path, { io });
     if (!links.ok) return revert('links', links.error);
     if (releasing.length) await release(entry, releasing).catch(() => {});
-    // 消す直前に、その中を cwd に持つもの（warm に残った MCP など）を畳む。畳めなくても消すのを止めない（retry のあと busy で残る）
+    // 消す直前に、その中を cwd に持つもの（warm に残った MCP・保持役の子・Pleiad が起こした子と子孫）を畳む。畳めなくても消すのを止めない（probe が掴まれたことを見る）
     await unhold(entry).catch(() => {});
-    const removed = await removeWithRetry(entry, archived ? removeForced : remove);
-    if (!removed.ok) return revert(removed.busy ? 'busy' : 'git', removed.error);
+    const doRemove = async (root, dir) => {
+      // git は掴まれたまま呼ぶと中身と登録を消してから落ちる（Windows）。先に rename で消せるか確かめ、掴まれていれば git を呼ばない
+      const again = await restoreProbe(entry);
+      if (!again.ok) { attempts.push(again.error); return { ok: false, busy: true, error: again.error }; }
+      const probe = await probeMovable(dir);
+      if (!probe.ok) { attempts.push(probe.error); return { ok: false, busy: true, error: probe.error }; }
+      const r = await (archived ? removeForced : remove)(root, dir);
+      if (!r.ok) attempts.push(String(r.error ?? '').slice(0, 300));
+      return r;
+    };
+    const removed = await removeWithRetry(entry, doRemove);
     let container = archived?.commit ?? null;
-    if (!container && kind === 'merged') container = (await wt.branchTip(entry.root, entry.baseBranch ?? '')) ?? (await git.headCommit(entry.root));
+    if (!container && kind === 'merged') container = await containerFor(entry);
     if (!container && kind === 'empty') container = entry.base;
-    return finishRemoval(entry, container);
+    if (removed.ok) return finishRemoval(entry, container);
+    // git が中身と登録を消してから落ちた形を拾う: 登録が外れ、直下の .git も無い（git は消しにかかるとき先に .git を消す）なら、
+    // 失敗にせず残りを自分で消しきる。.git が残るなら登録だけ失われた無傷の作業場所かもしれないので触らない
+    const list = await wt.worktreeList(entry.root);
+    if (!list || list.some((w) => sameDir(w.path, entry.path)) || await hasGitDir(entry.path)) return revert(removed.busy ? 'busy' : 'git', removed.error);
+    await writeLog({ ev: 'half-removed', id: entry.id, error: removed.error ?? null, attempts });
+    return cleanupLeftovers(entry, container);
   }
 
   /**
@@ -319,14 +423,30 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
     if (!entry || entry.state !== 'ready' || busyIds.has(id)) return { action: 'skip' };
     busyIds.add(id);
     try {
+      // フォルダーだけ残ったもの（登録は外れている）を消し直す
+      if (entry.leftover === 'folder') {
+        if (entry.kept) return { action: 'kept', why: 'kept' };
+        const g = await guard(entry, releasing);
+        if (g) return { action: 'kept', why: g };
+        return cleanupLeftovers(entry, await containerFor(entry));
+      }
+      // 前の回の rename の確かめで残った一時名を先に戻す
+      const restored = await restoreProbe(entry);
+      if (!restored.ok) return { action: 'kept', why: 'busy' };
       const g = await guard(entry, releasing);
       if (g) return { action: 'kept', why: g };
       const info = await inspect(entry);
       const kind = classify(info);
       if (kind === 'missing') {
         if (!owned(entry)) return { action: 'kept', why: 'unowned' };
-        await finishRemoval(entry, null).catch(() => {});
+        await finishRemoval(entry, await containerFor(entry)).catch(() => {});
         return { action: 'removed', kind };
+      }
+      if (kind === 'unknown' && owned(entry)) {
+        // git が中身と登録を消してから落ちた形（半分消えた）なら、続きを自分で消しきる。
+        // 直下に .git が残るものは登録だけ失われた無傷の作業場所かもしれない（元のリポジトリの clone し直しなど）ので残す
+        const list = await wt.worktreeList(entry.root);
+        if (list && !list.some((w) => sameDir(w.path, entry.path)) && !await hasGitDir(entry.path)) return cleanupLeftovers(entry, await containerFor(entry));
       }
       if (kind !== 'empty' && kind !== 'merged') return { action: 'kept', kind, info };
       const result = await removeEntry(entry, { kind, release: releasing });
@@ -377,16 +497,27 @@ export function createWorktrees({ dataDir, users = async () => ({ busy: [], atta
       const registered = list.some((w) => sameDir(w.path, entry.path));
       if (entry.state === 'creating') { await rollbackCreating(entry); report.rolledBack.push(entry.id); continue; }
       if (entry.state === 'removing') {
-        if (!dir) { await finishRemoval(entry, null); report.finished.push(entry.id); }
+        // 片付けの途中で落ちた。rename の確かめで残った一時名を先に戻してから、フォルダーの有無で終わらせるか戻すか決める
+        const restored = await restoreProbe(entry);
+        if (restored.ok && !await exists(entry.path)) { await finishRemoval(entry, await containerFor(entry)); report.finished.push(entry.id); }
         else { await setState(entry.id, 'ready'); report.restored.push(entry.id); }
         continue;
       }
       if (!dir) {
-        await finishRemoval(entry, null);
+        await finishRemoval(entry, await containerFor(entry));
         report.dropped.push(entry.id);
       } else if (!registered) {
-        // フォルダーはあるのに git が知らない（登録だけ外された）。中身は触らず台帳から外す
-        await mutate((all) => { delete all[entry.id]; });
+        if (entry.leftover === 'folder') {
+          // 前の回でフォルダーだけ残った（自分が付けた印。登録は外れている）→ 消し直す
+          const r = await cleanupLeftovers(entry, await containerFor(entry));
+          if (r.action === 'removed') report.dropped.push(entry.id);
+          continue;
+        }
+        // フォルダーはあるのに git が知らない（登録だけ外れた）。ブランチと台帳は container で片付けるが、
+        // 中身は利用者のものかもしれないので触らない（空なら置き場ごと畳む）。半分消えた残りは settle の側で消しきる
+        await finishRemoval(entry, await containerFor(entry));
+        const names = await io.readdir(entry.path).catch(() => null);
+        if (names && names.length === 0) await io.rmdir(entry.path).catch(() => {});
         report.dropped.push(entry.id);
       }
     }

@@ -100,8 +100,10 @@ export const DATA_WRITES = [
   { file: 'core/setting-approvals.mjs', sites: 1, targets: [
     { name: 'setting-approvals.json', limit: '承認待ちと通知の件数。決着・配達で消える', reason: '一時の台帳。通常は数件。件数に上限は無い', unbounded: true },
   ] },
-  { file: 'core/worktrees.mjs', sites: 1, targets: [
+  { file: 'core/worktrees.mjs', sites: 6, targets: [
     { name: 'worktrees.json', limit: 'worktree の数。削除で行が消える', reason: '台帳。通常は数個から数十。件数に上限は無い', unbounded: true },
+    { name: 'worktrees.log', limit: 'LOG_MAX_BYTES=64KB（超えたら古い半分を捨てて書き直す）', reason: '片付けの出来事の追記（消せなかった経緯の調査用）。1 行 1 出来事' },
+    { name: '(置き場の外) <wt>.ply-removing', limit: 'worktree ごとに 1 つ（rename の往復で残るのは戻せなかったときだけ。次の機会に戻す）', reason: '消す前にフォルダーが掴まれていないか rename で確かめる一時名' },
   ] },
   { file: 'core/context-settings.mjs', sites: 5, targets: [
     { name: 'context-scans.json', limit: 'ユーザーが設定した場所（places）の数。通常は数個から数十', reason: '探索の設定。件数に上限は無い', unbounded: true },

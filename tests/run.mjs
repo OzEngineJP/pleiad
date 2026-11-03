@@ -216,6 +216,8 @@ const SUITES = [
   './unit/server-worktree.mjs',
   // worktree を会話・委譲・画面につなぐ層: ぶつかりの判定・委譲で isolate が指定されたか・子の完了と片付け・準備中は消さない・残りの絞り込み・cwd を戻す・退避と作り直し
   './unit/worktree-host.mjs',
+  // 起こした子の追跡（worktree を消す前に cwd が中のものを子孫ごと止める）: cwd の絞り込み・プロセス表の子孫・pid 使い回し・保持役の子
+  './unit/proc-track.mjs',
   // テストが本体の git に worktree を残さない守り（run.mjs の各テストの後の検査・AGENT_HOST_WORKTREES=off）: 増えた作業場所を見つける・他の worktree は数えない・off では作らない
   './unit/worktree-leak-guard.mjs',
   // 委譲の子の worktree: 子への指示・完了通知と status の「作業場所」の行・isolate の検査・ツールの定義
