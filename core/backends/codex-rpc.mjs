@@ -18,6 +18,7 @@
 import { cliCommand, spawnCli } from "../cli-installation.mjs";
 import { t } from "../i18n.mjs";
 import { acquireHeldAppServer } from "./codex-held.mjs";
+import { codexConfigArgs } from "./codex-cli-args.mjs";
 import { LINE_OVERFLOW, RPC_TIMEOUT } from "./codex-history.mjs";
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -63,13 +64,8 @@ const threadIdOf = (params) =>
 
 export { parseCommand } from "../command-line.mjs";
 
-export function tomlValue(v) {
-  if (Array.isArray(v)) return '[' + v.map(tomlValue).join(',') + ']';
-  if (v && typeof v === 'object') return '{' + Object.entries(v).map(([k,s]) => JSON.stringify(k) + '=' + tomlValue(s)).join(',') + '}';
-  return JSON.stringify(v);
-}
 function launch(config = {}, env) {
-  return spawnCli(cliCommand("codex"), ["app-server", ...Object.entries(config).flatMap(([k,v]) => ['-c', `${k}=${tomlValue(v)}`])], { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
+  return spawnCli(cliCommand("codex"), ["app-server", ...codexConfigArgs(config)], { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
 }
 
 /** 保持役の口（held。core/backends/codex-held.mjs）を ChildProcess のように見せる（stdin の書き込みと kill だけ） */
