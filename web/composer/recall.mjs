@@ -1,6 +1,6 @@
 // 入力欄の ↑ で送信済みのメッセージを呼び出す（docs/design-system.md「入力欄の呼び出しと候補」。設定 › 入力でオン・オフ）。
 //
-// - ↑ が効くのは、カーソルが一番上の行（見た目の行）にあり、範囲を選んでいないときだけ。↓ は呼び出している間の一番下の行で
+// - ↑ が効くのは、カーソルが欄の先頭（左上）にあり、範囲を選んでいないときだけ（欄が空ならそのまま 1 回で呼ぶ。一番上の行の途中では先頭へ動くだけ）。↓ は呼び出している間、カーソルが欄の末尾（右下）にあるときだけ（途中なら末尾へ動くだけ）
 // - 最初の ↑ で書きかけ（字と添付）を脇へ取る。↓ で一番新しいものを越えるか Esc で戻す。呼び出した文を直したら、それが新しい書きかけになる
 // - 呼び出した直後のカーソルは先頭（↓ なら末尾）。↑ を続けて押せば遡れる
 // - 欄の上に「3 / 5 · 10/14 18:20 [会話名]」の行を出す（ほかの会話の分だけ、吹き出しのアイコンと会話名の札。Esc の印を押しても戻る）
@@ -33,24 +33,13 @@ export function recallWhen(at, now = Date.now()) {
 }
 
 /**
- * カーソルが欄の一番上（edge: 'top'）・一番下（'bottom'）の見た目の行にあるか。
- * 論理の行（改行）で先に見て、同じ段落が折り返しているときは位置で見る（折り返した 2 行目の ↑ はふつうに上へ動く）
+ * カーソルが欄の先頭（edge: 'top'）・末尾（'bottom'）にあり、範囲を選んでいないか。
+ * 見た目の行ではなく字の位置で見る。一番上の行の途中の ↑ は先頭へ動くブラウザーの動きに任せ、動いた先（先頭）の ↑ が取る
  */
 export function caretAtEdge(prompt, edge) {
-  const value = String(prompt.value ?? '');
-  if (!value) return true;
   const start = prompt.selectionStart ?? 0, end = prompt.selectionEnd ?? 0;
   if (start !== end) return false;
-  if (edge === 'top' ? value.lastIndexOf('\n', start - 1) !== -1 : value.indexOf('\n', end) !== -1) return false;
-  const sel = globalThis.getSelection?.();
-  if (!sel?.rangeCount || !prompt.contains?.(sel.anchorNode)) return true;
-  const range = sel.getRangeAt(0).cloneRange();
-  const rect = range.getClientRects?.()[0] ?? null;
-  const block = edge === 'top' ? prompt.firstElementChild : prompt.lastElementChild;
-  if (!rect || !block || (!rect.height && !rect.top)) return true;
-  const box = block.getBoundingClientRect();
-  const line = parseFloat(getComputedStyle(prompt).lineHeight) || 22;
-  return edge === 'top' ? rect.top - box.top < line * 0.8 : box.bottom - rect.bottom < line * 0.8;
+  return start === (edge === 'top' ? 0 : String(prompt.value ?? '').length);
 }
 
 const plainArrow = (e) => !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;

@@ -60,7 +60,7 @@
     "input": {
       "historyRecall": {
         "title": "Recall sent messages with the Up key",
-        "description": "Press Up on the top line of the message box to bring back a message you sent before."
+        "description": "Press Up at the start of the message box to bring back a message you sent before."
       },
       "suggestions": {
         "title": "Suggest the next message",

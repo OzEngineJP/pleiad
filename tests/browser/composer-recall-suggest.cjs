@@ -5,6 +5,7 @@
 //   - 候補が出ている空の欄の Ctrl+Enter は送らず、Tab の印が光り、読み上げに「Tab で候補を入れます」
 //   - Esc で候補が薄れて消え、欄を打って空に戻しても出ない
 //   - ↑ はこの会話 → ほかの会話。ほかの会話の分だけ会話名の札。一番古いものでさらに ↑ は数が跳ねる（字は変わらない）
+//   - ↑・↓ が履歴を辿るのは欄の先頭・末尾の角だけ。行の途中の ↑ は先頭へ動くだけ（折り返した 1 行目でも）、呼び出し中の行の途中の ↓ は末尾へ動くだけ。範囲を選んでいる間は取らない（ADR 0286）
 //   - ↑ から戻すと、候補は欄と同じ位置に出る（閉じかけの行の分だけずれない）
 //   - 読み込みが遅いときは「読み込み中…」（Esc の印は出さない）。待つ間に打った字は上書きしない
 //   - タッチの画面: 候補のボタンは ⇥。欄が空で候補も無いときは履歴のボタン（面なし）。押すと行に「前へ」「次へ」「下書きに戻す」
@@ -126,6 +127,74 @@ async page => {
   s = await ui(page);
   check('待つ間に打った字は上書きしない', s.value === '打った字' && !s.row, JSON.stringify(s));
   await page.evaluate(() => { window.__recallDelay = 0; });
+
+  // ---- ↑・↓ が履歴を辿るのは欄の先頭・末尾の角だけ（ADR 0286）
+  const caret = (p) => p.evaluate(() => { const pr = document.querySelector('#prompt'); return { start: pr.selectionStart, end: pr.selectionEnd, len: String(pr.value ?? '').length }; });
+  const setCaret = (p, a, b = a) => p.evaluate(([x, y]) => { const pr = document.querySelector('#prompt'); pr.focus(); pr.setSelectionRange(x, y); }, [a, b]);
+  const setDraft = (p, text) => p.evaluate((t) => { const pr = document.querySelector('#prompt'); pr.value = t; pr.focus(); }, text);
+
+  // 一番上の行の途中の ↑ は呼ばず先頭へ動き、続けて ↑ で呼ぶ
+  await setDraft(page, '1 行目の下書きです\n2 行目です');
+  await setCaret(page, 4);
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(300);
+  s = await ui(page);
+  let c = await caret(page);
+  check('一番上の行の途中の ↑ は呼ばず先頭へ動く', s.value === '1 行目の下書きです\n2 行目です' && !s.row && c.start === 0 && c.end === 0, JSON.stringify({ s, c }));
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(400);
+  s = await ui(page);
+  check('先頭へ着いた後の ↑ で呼び出す', Boolean(s.row) && s.value.startsWith('echo:'), JSON.stringify(s));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(600);
+
+  // 折り返した 1 行目の途中でも同じ（長い 1 行。先頭へ着くまでは呼ばず、着いた後の ↑ で呼ぶ）
+  const long = 'とても長い 1 行の下書きです。'.repeat(12);
+  await setDraft(page, long);
+  await setCaret(page, long.length - 2);
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(250);
+  c = await caret(page);
+  s = await ui(page);
+  check('折り返した 1 行目の途中の ↑ は呼ばず上へ動く', s.value === long && !s.row && c.start < long.length - 2, JSON.stringify({ s, c }));
+  let upGuard = 0;
+  while ((c = await caret(page)).start !== 0 && !s.row && upGuard++ < 20) {
+    await page.keyboard.press('ArrowUp'); await page.waitForTimeout(120); s = await ui(page);
+  }
+  check('先頭へ着くまでは呼ばない（折り返し）', !s.row && c.start === 0, JSON.stringify({ s, c }));
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(400);
+  s = await ui(page);
+  check('先頭の ↑ で呼び出す（折り返し）', Boolean(s.row) && s.value.startsWith('echo:'), JSON.stringify(s));
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(600);
+
+  // 呼び出し中、一番下の行の途中の ↓ は末尾へ動くだけ。続けて ↓ で新しい方へ（書きかけへ戻る）
+  await setDraft(page, '');
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(400);
+  s = await ui(page);
+  check('空の欄では 1 回の ↑ で呼ぶ', Boolean(s.row) && s.value.length > 0, JSON.stringify(s));
+  const recalled = s.value;
+  await setCaret(page, Math.floor(recalled.length / 2));
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(300);
+  c = await caret(page);
+  s = await ui(page);
+  check('呼び出し中、一番下の行の途中の ↓ は末尾へ動くだけ', s.value === recalled && Boolean(s.row) && c.start === recalled.length && c.end === recalled.length, JSON.stringify({ s, c }));
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(400);
+  s = await ui(page);
+  check('末尾の ↓ で新しい方へ（書きかけへ戻る）', s.value === '' && !s.row, JSON.stringify(s));
+
+  // 範囲を選んでいる間は取らない
+  await setDraft(page, '範囲を選ぶ試し\n2 行目');
+  await setCaret(page, 0, 5);
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(300);
+  s = await ui(page);
+  check('範囲を選んでいる間は ↑ を取らない', s.value === '範囲を選ぶ試し\n2 行目' && !s.row, JSON.stringify(s));
+  await setDraft(page, '');
 
   // ---- タッチの画面（360px）
   const ctx = await page.context().browser().newContext({ viewport: { width: 360, height: 760 }, hasTouch: true, isMobile: true });
