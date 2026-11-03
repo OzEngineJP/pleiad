@@ -17,6 +17,7 @@ import { LABEL_MAX_BYTES } from '../holder/protocol.mjs';
 import { ADOPT_TURN_MARK, holderSource, registerChildExpander } from '../adopt.mjs';
 import { cliCommand, directCommand } from '../cli-installation.mjs';
 import { codexAccountChildId, prepareCodexAccount } from './codex-accounts.mjs';
+import { codexConfigArgs } from './codex-cli-args.mjs';
 
 export const CODEX_CHILD = 'codex-app-server';
 export const CODEX_LABEL_KIND = 'codex-app-server';
@@ -259,7 +260,7 @@ export async function acquireHeldAppServer(config = {}, { account = null, env = 
   if (known) client.release(id);   // 終わった子の記録は、同じ id で起こす前に捨てる
   const held = new HeldAppServer({ client, state: { id, acked: 0, seq: 0, marks: {} }, spawned: true, account });
   // 出来事の購読（holderSource）は spawn より前に始まっている。起こした直後の札で、付け直しの元になる（札の無いターンは付け直せない）
-  client.spawn({ id, command: target.command, args: [...target.args, 'app-server', ...Object.entries(config).flatMap(([k, v]) => ['-c', `${k}=${JSON.stringify(v)}`])], cwd: process.cwd(), env: env ?? { ...process.env }, policy: 'jsonrpc',
+  client.spawn({ id, command: target.command, args: [...target.args, 'app-server', ...codexConfigArgs(config)], cwd: process.cwd(), env: env ?? { ...process.env }, policy: 'jsonrpc',
     label: held.labelObject(), keepMs: KEEP_MS });
   current.set(id, held);
   return held;
@@ -280,7 +281,7 @@ export async function acquireHeldTurnAppServer(config = {}, { env = null, accoun
   const client = await link({ dataDir, root, key: bootEnv('AGENT_HOST_RUNTIME_KEY') ?? '' });
   const id = `${CODEX_TURN_PREFIX}${crypto.randomUUID().slice(0, 8)}`;
   const held = new HeldAppServer({ client, state: { id, acked: 0, seq: 0, marks: {} }, spawned: true, account, dedicated: true, config });
-  client.spawn({ id, command: target.command, args: [...target.args, 'app-server', ...Object.entries(config).flatMap(([k, v]) => ['-c', `${k}=${JSON.stringify(v)}`])], cwd: process.cwd(), env: env ?? { ...process.env }, policy: 'jsonrpc',
+  client.spawn({ id, command: target.command, args: [...target.args, 'app-server', ...codexConfigArgs(config)], cwd: process.cwd(), env: env ?? { ...process.env }, policy: 'jsonrpc',
     label: held.labelObject(), keepMs: KEEP_MS });
   dedicatedServers.add(held);
   return held;
