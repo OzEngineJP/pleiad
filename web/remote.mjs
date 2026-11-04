@@ -22,6 +22,7 @@ import {
 } from './remote-parts.mjs';
 import { setupRemoteHosts } from './remote-hosts.mjs';
 import { openExternalLink } from './link-open.mjs';
+import { inIosShell } from './remote-badge.mjs';
 
 const RELAY_GUIDE_URL = 'https://github.com/OzEngineJP/pleiad/blob/main/relay/README.md';
 
@@ -166,10 +167,11 @@ export function approverName(approvedBy, approvedByName) {
   return approvedByName || t('settings.remote.devices.unnamed');
 }
 
-export const plusRemoteAvailable = plusStatus => plusStatus?.available !== false;
-/** 「この PC へ」に Plus のまとまりを出すか。Plus が止まって入口が隠れている（available: false）間も、つながりが再開を待っているなら出す */
-export const plusRemoteShown = (plusStatus, remoteStatus) => plusRemoteAvailable(plusStatus) || remoteStatus?.plus?.link?.error?.code === 'unavailable';
-export const initialRemoteMethod = plusStatus => plusStatus?.account?.status === 'plus' ? 'plus' : 'own';
+// iOS の殻では Plus の入口を出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）。plusRemoteAvailable 自体も iOS なら false を返す
+export const plusRemoteAvailable = plusStatus => !inIosShell() && plusStatus?.available !== false;
+/** 「この PC へ」に Plus のまとまりを出すか。Plus が止まって入口が隠れている（available: false）間も、つながりが再開を待っているなら出す。iOS の殻では出さない */
+export const plusRemoteShown = (plusStatus, remoteStatus) => plusRemoteAvailable(plusStatus) || (!inIosShell() && remoteStatus?.plus?.link?.error?.code === 'unavailable');
+export const initialRemoteMethod = plusStatus => (inIosShell() ? 'own' : plusStatus?.account?.status === 'plus' ? 'plus' : 'own');
 
 /**
  * @param cmd  WS コマンド

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
-import { remoteInfo, badgeView } from '../../web/remote-badge.mjs';
+import { remoteInfo, badgeView, inIosShell } from '../../web/remote-badge.mjs';
 
 export const name = 'mobile-shell';
 export const title = 'モバイルの殻: plyRemote の形・平文はループバックだけ・依存の版の固定・殻の辞書';
@@ -76,6 +76,11 @@ export default async function (t) {
     /addEventListener\("plyremote:back"/.test(client) && /watchShellBack\(\);/.test(client) && /setTheme\(dark, colors\)/.test(client) && /watchShellTheme\(\);/.test(client));
   const info = remoteInfo({ hostId: 'trleh4p5diok2b3hxpcck5nsba', hostName: 'desk', relay: 'https://relay.example', device: 'Pixel', shell: 'mobile' });
   t.ok('remoteInfo はモバイルの形を受ける（shell: mobile）', info?.shell === 'mobile' && info.host === 'desk');
+  // iOS の殻だけが platform: 'ios' を付け、Android は付けない（Plus の入口の出し分け。docs/plus.md「iOS」）
+  t.ok('Android の殻は iOS の印（platform）を付けない', !script.includes('platform:') && info.platform === '');
+  t.ok('platform 無し・android は iOS の殻ではない。ios だけ iOS の殻',
+    !inIosShell({ hostId: 'h', shell: 'mobile' }) && !inIosShell({ hostId: 'h', shell: 'mobile', platform: 'android' })
+    && inIosShell({ hostId: 'h', shell: 'mobile', platform: 'ios' }) && !inIosShell({ shell: 'mobile', platform: 'ios' }));
   t.ok('殻の状態の名前はバッジの状態と同じ（revoked）', badgeView(info, { state: 'revoked' }).state === 'revoked');
 
   // ---- 平文はループバックだけ・バックアップしない

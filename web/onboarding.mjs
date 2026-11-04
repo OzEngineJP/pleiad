@@ -1,6 +1,7 @@
 import { isComposingKey } from './keyboard.mjs';
 import { t } from './i18n.mjs';
 import { runMark } from './arc.mjs';
+import { inIosShell } from './remote-badge.mjs';
 
 // ページを足したら、下の `$('<名前>Tab').onclick = () => page('<名>')` も足す（無いと札は出るが切り替わらない）
 const pages = [['setup', 'setupTab', 'setupPanel'], ['apiKeys', 'apiKeysTab', 'apiKeysPanel'], ['usage', 'usageTab', 'usagePanel'], ['delegation', 'delegationTab', 'delegationPanel'], ['appearance', 'appearanceTab', 'appearancePanel'], ['input', 'inputTab', 'inputPanel'], ['context', 'openContext', 'contextPanel'], ['autoCompaction', 'autoCompactionTab', 'autoCompactionPanel'], ['browser', 'browserTab', 'browserPanel'], ['computer', 'computerTab', 'computerPanel'], ['notify', 'notifyTab', 'notifyPanel'], ['voice', 'voiceTab', 'voicePanel'], ['remote', 'remoteTab', 'remotePanel'], ['plus', 'plusTab', 'plusPanel'], ['updates', 'updatesTab', 'updatesPanel']];
@@ -35,6 +36,8 @@ export function setupOnboarding({ cmd, refreshAuth, getAuth, authLogin, cancelLo
   // 別のページへ移ったら本文を先頭に戻す（前のページの位置のまま途中から始まらないように）。同じページを押し直したときは動かさない
   let shown = null;
   function page(active = 'setup') {
+    // iOS の殻では Plus のページは無い（隠すだけでなく、別の経路から開かれても setup へ寄せる。docs/plus.md「iOS」）
+    if (active === 'plus' && inIosShell()) active = 'setup';
     for (const [name, button, panel] of pages) {
       $(panel).hidden = name !== active;
       $(button).setAttribute('aria-pressed', String(name === active));

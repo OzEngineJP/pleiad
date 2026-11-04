@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { N } from '../lib/dom-stub.mjs';
 import { renderPlus, setupPlusSettings } from '../../web/plus-settings.mjs';
-import { plusKeyRow } from '../../web/plus-key-row.mjs';
+import { plusKeyRow, plusRowVisible } from '../../web/plus-key-row.mjs';
 
 export const name = 'plus-settings';
 export const title = '設定 › Pleiad Plus: 状態ごとの中身とボタン・コマンド・届かない行・メニューの出し入れ・登録の外れ・始め直しの確かめ（DOM の代役）';
@@ -197,6 +197,27 @@ export default async function (t) {
       await new Promise(r => setImmediate(r));
       t.ok(`available === ${available} → つながったあと plusTab は ${want ? '出さない' : '出す'}`, calls > 0 && nodes2.plusTab.hidden === want);
     } finally { document.getElementById = savedGet; }
+  }
+
+  // ---- iOS の殻では Plus のページごと出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）。印は plyRemote.platform === 'ios'
+  {
+    const savedWindow = globalThis.window, savedGet = document.getElementById;
+    globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile', platform: 'ios' } };
+    const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
+    document.getElementById = id => nodes2[id] ?? null;
+    try {
+      const settings = setupPlusSettings({ cmd: async name => name === 'plusStatus' ? { ...BASE, signedIn: true, account: ACCOUNT } : {}, page: () => {} });
+      settings.reconnected();
+      await new Promise(r => setImmediate(r));
+      t.ok('iOS の殻: Plus が使えてもメニューの項目は出さない', nodes2.plusTab.hidden === true);
+      settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT } });
+      t.ok('iOS の殻: ページの中身も空（ログイン・購入・アカウント管理の行は無い）',
+        nodes2.plusPanel.children.length === 0 && !buttonTexts(nodes2.plusPanel.children).length, nodes2.plusPanel.textContent);
+      t.ok('iOS の殻: 鍵の画面の Pleiad Plus の行も出さない', plusRowVisible({ available: true, state: 'on', signedIn: true, status: 'plus' }) === false);
+      // 印が無ければ今までどおり出す（Android・ブラウザー）
+      globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'Pixel', shell: 'mobile' } };
+      t.ok('印が無い殻では鍵の行は出る', plusRowVisible({ available: true, state: 'on', signedIn: true, status: 'plus' }) === true);
+    } finally { document.getElementById = savedGet; globalThis.window = savedWindow; }
   }
 
   // ---- 始め直しの確かめ（鍵を待つ PC）: 見せた keyId と件数を confirm に付けて送る・数字が変わったらチェックを外す ----

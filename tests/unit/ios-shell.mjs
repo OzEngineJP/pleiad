@@ -10,7 +10,7 @@ const APP = 'mobile/ios/App/App';
 
 export default async function (t) {
   const template = read(`${APP}/plyremote.js`);
-  const info = { hostId: 'host', hostName: '机"\n</script>', relay: 'https://relay.example', device: 'iPad' };
+  const info = { hostId: 'host', hostName: '机"\n</script>', relay: 'https://relay.example', device: 'iPad', platform: 'ios' };
   const source = template.replaceAll('__PLY_ORIGIN__', JSON.stringify('http://127.0.0.1:51234'))
     .replaceAll('__PLY_RECEIVER__', JSON.stringify('__receive')).replaceAll('__PLY_INFO__', JSON.stringify(info));
   function load({ origin = 'http://127.0.0.1:51234', frame = false, opener = false } = {}) {
@@ -22,6 +22,8 @@ export default async function (t) {
   }
   const { w, sent } = load();
   t.ok('ホスト名の引用符・改行を壊さず渡す', w.plyRemote.hostName === info.hostName);
+  t.ok('iOS の殻の印を plyRemote.platform に載せる（Plus の入口を消すため。docs/plus.md「iOS」）',
+    w.plyRemote.platform === 'ios' && w.plyRemote.shell === 'mobile');
   t.ok('開いたら hello を一度送る', sent.length === 1 && sent[0].type === 'hello');
   t.ok('API は書換え・再定義できない', Object.isFrozen(w.plyRemote) && !Object.getOwnPropertyDescriptor(w, 'plyRemote').configurable);
   t.ok('初期状態は未受信', await w.plyRemote.status() === null);
@@ -57,6 +59,7 @@ export default async function (t) {
   t.ok('www のスキャナー呼出しをそのまま受ける', scannerCalls.every(n => scanner.includes(`CAPPluginMethod(name: "${n}"`)));
   const host = read(`${APP}/HostViewController.swift`);
   t.ok('ネイティブでも窓・main frame・オリジンを確認する', host.includes('message.webView === web') && host.includes('message.frameInfo.isMainFrame') && host.includes('message.frameInfo.securityOrigin') && host.includes('== origin') && !host.includes('import Capacitor'));
+  t.ok('殻は info に iOS の印（platform: ios）を入れる', host.includes('"platform": .string("ios")'));
   const pbx = read('mobile/ios/App/App.xcodeproj/project.pbxproj');
   const dir = fileURLToPath(new URL(`../../${APP}/`, import.meta.url));
   t.ok('殻の Swift ファイルをすべてビルドに登録する', fs.readdirSync(dir).filter(n => n.endsWith('.swift')).every(n => pbx.includes(`${n} in Sources`)));

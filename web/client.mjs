@@ -31,7 +31,7 @@ import { captureViewState, restoreViewState } from './view-state.mjs';
 setupCodeCopy();
 import { setupUpdates } from './updates.mjs';
 import { setupCliSetup } from './cli-setup.mjs';
-import { setupRemoteBadge, remoteInfo } from './remote-badge.mjs';
+import { setupRemoteBadge, remoteInfo, inIosShell } from './remote-badge.mjs';
 import { setupUsage, createUsageSource } from './usage.mjs';
 import { setupHeaderUsage, weekUsage } from './header-usage.mjs';
 import { contextMetrics, conversationMenuItems, menuMeter, createConversationSheet, renderContextUsage } from './conversation-usage.mjs';
@@ -9403,7 +9403,9 @@ async function openFromSearch(id, jump) {
 async function openFromNotification(target) {
   if (narrowView.matches) setDrawer(false);
   // 同期で届いた変更（ADR 0250）は 設定 › Pleiad Plus の「届いた変更」、鍵を待つ PC（同期の鍵の承認）は Plus の面を開く
+  // iOS の殻では Plus の面が無いので何もしない（docs/plus.md「iOS」）
   if (target?.settings === 'plus') {
+    if (inIosShell()) return;
     if ($('onboardingDialog').open) $('onboardingDialog').close();
     onboarding.open('plus');
     if (target.pane === 'inbox') plusSettings.openInbox();

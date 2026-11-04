@@ -117,6 +117,31 @@ export default async function (t) {
     }
   }
 
+  // ---- iOS の殻では「ほかの PC へ」の Plus のまとまりごと出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）
+  {
+    const savedWindow = globalThis.window, savedBody = document.body;
+    // iOS の印（plyRemote.platform === 'ios'）。plyRemote があると bridge は使えないが、描いた一覧でも Plus を出さないことを確かめる
+    globalThis.window = {
+      plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile', platform: 'ios' },
+      plyDesktop: { hosts: { onChange: () => {}, onCode: () => {}, init: async () => ({ ok: true, hosts: [], encrypted: true, plus: { status: 'free', available: true, urls: { account: 'https://account.example.com' }, hosts: [] } }), list: async () => ({ ok: true, hosts: [] }) } },
+    };
+    document.body = new N('body');
+    try {
+      const hostsPanel = setupRemoteHosts({ onChange: () => {}, cmd: async () => {}, page: () => {} });
+      await hostsPanel.refresh();
+      const rows = hostsPanel.build();
+      const walk = ns => { for (const n of ns ?? []) { if ((n?.textContent ?? '').includes('Pleiad Plus')) return n; const hit = walk(n?.children); if (hit) return hit; } return null; };
+      t.ok('iOS の殻では「Pleiad Plus」のまとまり・「Pleiad Plus にする」の行は出さない', !walk(rows));
+      // 印が無い殻（Android）では変わらない: 同じ一覧でも Plus のまとまりを出す
+      globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'Pixel', shell: 'mobile' } };
+      const androidRows = setupRemoteHosts({ onChange: () => {}, cmd: async () => {}, page: () => {} }).build();
+      t.ok('印が無い殻（Android）では Plus のまとまりを出す', Boolean(walk(androidRows)));
+    } finally {
+      globalThis.window = savedWindow;
+      document.body = savedBody;
+    }
+  }
+
   // ---- 常駐の設定
   t.ok('既定は「窓を閉じても続ける」「作業中だけ防ぐ」', DEFAULT_RESIDENT.keepRunning === true && DEFAULT_RESIDENT.sleep === 'working');
   t.ok('知らない値は既定に丸める', JSON.stringify(normalizeResident({ keepRunning: 'yes', sleep: 'never' })) === JSON.stringify(DEFAULT_RESIDENT)

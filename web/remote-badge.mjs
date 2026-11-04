@@ -16,8 +16,14 @@ const STATES = new Set(['connecting', 'connected', 'offline', 'host-offline', 'r
 export function remoteInfo(remote) {
   if (!remote || typeof remote !== 'object' || typeof remote.hostId !== 'string' || !remote.hostId) return null;
   const text = v => (typeof v === 'string' ? v : '');
-  return { hostId: remote.hostId, host: text(remote.hostName) || remote.hostId.slice(0, 8), relay: text(remote.relay), device: text(remote.device), shell: text(remote.shell) || 'desktop' };
+  return { hostId: remote.hostId, host: text(remote.hostName) || remote.hostId.slice(0, 8), relay: text(remote.relay), device: text(remote.device), platform: text(remote.platform), shell: text(remote.shell) || 'desktop' };
 }
+
+/**
+ * iOS のアプリの殻の中か。殻が plyRemote に platform: 'ios' を付ける（Android は付けない）。
+ * App Store の 3.1.3(f) のため、iOS では Plus の購入・ログイン・アカウント管理の入口を出さない（ADR 0263 決定 5。docs/plus.md「iOS」）
+ */
+export const inIosShell = (remote = globalThis.window?.plyRemote) => remoteInfo(remote)?.platform === 'ios';
 
 /**
  * バッジと面に出すもの。status は plyRemote.status() / onStatus の値。
