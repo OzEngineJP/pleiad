@@ -1,6 +1,19 @@
 {
-  "version": "0.41.3",
+  "version": "0.41.4",
   "releases": [
+    {
+      "version": "0.41.4",
+      "date": "2026-11-04",
+      "title": "iOS アプリの中では Pleiad Plus の項目が出なくなりました",
+      "sections": [
+        {
+          "title": "iOS アプリ",
+          "items": [
+            "iPhone・iPad のアプリからホストへつないだときの画面に、Pleiad Plus のログイン・購入・アカウント管理の入口が出なくなりました。PC やブラウザーの Pleiad ではこれまでどおり使えます。"
+          ]
+        }
+      ]
+    },
     {
       "version": "0.41.3",
       "date": "2026-11-03",
