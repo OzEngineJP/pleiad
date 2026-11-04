@@ -636,7 +636,17 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 
 ## iOS
 
-この段階の iOS のアプリは Pleiad Plus に対応しない。`pleiad://auth` を受けても「まだ使えません」と記録するだけで、画面にもホストの窓にも触れない。ログインを足すときの流れ:
+この段階の iOS のアプリは Pleiad Plus に対応しない。`pleiad://auth` を受けても「まだ使えません」と記録するだけで、画面にもホストの窓にも触れない。
+
+### ホストの窓の中の Plus の入口は出さない
+
+課金は Web だけ（App Store の 3.1.3(f)。[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 5: 「アプリは無料のコンパニオン」）なので、iOS の殻の中の web の画面には Plus の購入・ログイン・アカウント管理の入口を出さない。PC が Plus にログインしていても、iPad では入口ごと消す。
+
+- 印: 殻が `window.plyRemote` に `platform: 'ios'` を付ける（`HostViewController.swift` の `remoteScript()` が `info` に入れ、`plyremote.js` が `api` に載せる。`shell: 'mobile'` は Android と共通のまま）。web 側は `web/remote-badge.mjs` の `inIosShell()` で読む。Android は印を付けないので変わらない。`platform` が無い・`ios` 以外も変わらない
+- 消すもの（`available === false` のときと同じく、行・まとまりごと出さない）: 設定のメニューの「Pleiad Plus」とページ全体・設定 › リモート「この PC へ」の Plus のまとまり（ログイン・「Pleiad Plus にする」・Plus の設定の行・Plus の端末の行）・「ほかの PC へ」の Plus のまとまりと PC を追加のつなぎ方の Plus の選択肢・設定 › 委譲と通話の仮想のキー「Pleiad Plus」の行・通話の通知の「アカウントを管理」・通知から Plus のページを開く道
+- 消さないもの: 「この PC へ」の自分の中継サーバーのまとまり・もう一度の許可が要る端末の承認・同期の鍵の承認の窓・状態を伝えるだけの文（通知の置き場「設定 › Pleiad Plus」・登録の外れや Plus が止まっている旨の案内。開いても Plus の面へは行かない）
+
+ログインを足すときの流れ:
 
 1. Android と同じログインのページを `ASWebAuthenticationSession`（`callbackURLScheme` は `pleiad`）で開き、`client=ios`・`redirect_uri=pleiad://auth` を渡す。
 2. 戻りの `pleiad://auth?code=…&state=…` を `SceneDelegate` の受け口（`offerLink`）で受け、`state` を照合してから `POST https://api.pleiad.dev/v1/auth/token` に `{code, codeVerifier, redirectUri: "pleiad://auth"}` を送ってトークンに替える。

@@ -11,6 +11,7 @@ import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, rmIcon, keyValues, errorLine, waitLine, paintInto } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
+import { inIosShell } from './remote-badge.mjs';
 import { renderSync, syncCodeText, pcPlatform } from './plus-sync.mjs';
 import { renderInbox } from './plus-inbox.mjs';
 import { loadingMark } from './plus-key-row.mjs';
@@ -368,6 +369,8 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
 
   function paint() {
     paintApproval();
+    // iOS の殻では Plus のページそのものを出さず、メニューの項目も消す（App Store 3.1.3(f)。docs/plus.md「iOS」）
+    if (inIosShell()) { tab.hidden = true; paintInto(root, 'ios', () => []); return; }
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
     // 届いた変更の面は、ログインしていて Plus のときだけ（外れたら Pleiad Plus のページに戻す）

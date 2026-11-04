@@ -4,6 +4,14 @@ iPhone・iPad（iOS / iPadOS 16 以上）向けの Capacitor の殻は `mobile/i
 
 ログインの受け口（`pleiad://auth`）だけを置いてある。流れは [plus.md](plus.md) の iOS の節。
 
+## ホストの窓の中の Plus の入口は出さない
+
+この版の iOS アプリは Pleiad Plus のログイン・購入・アカウント管理に対応しない。PC が Plus にログインしているとホストの画面の設定・委譲・通話・リモートに入口が並ぶが、iOS の殻の中ではそれらを全部隠す（App Store の 3.1.3(f)・[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 5: 課金は Web だけ、アプリは無料のコンパニオン）。隠す面の一覧と消さないものは [plus.md](plus.md) の iOS の節。
+
+殻は `window.plyRemote` に `platform: 'ios'` を付ける（`HostViewController.swift` の `remoteScript()` が `info` に入れる）。`web/remote-badge.mjs` の `inIosShell()` がその印を読んで、上の入口を出さない。Android は印を付けないので今までどおり。
+
+Windows で確かめられるのは下の `swift test` と `node tests/run.mjs ios-shell`・`mobile-shell`・`mobile-web`（殻と JS の取り決め・画面の分岐の単体試験）。Xcode の型検査・全体のビルド・実機での見え方は macOS CI と TestFlight の確認に委ねる。
+
 ## 登録前にできること
 
 Apple Developer Program の登録も署名も、シミュレーターのビルドには要らない。

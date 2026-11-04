@@ -188,8 +188,9 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
               let template = try? String(contentsOf: file, encoding: .utf8) else { return nil }
         let rec = try? device.store.host(hostId)
         let name = rec.map { $0.label.isEmpty ? $0.hostName : $0.label } ?? ""
+        // platform: iOS の殻の印。ページはこれで Plus の購入・ログイン・アカウント管理の入口を消す（ADR 0263 決定 5。docs/plus.md「iOS」）
         let info: JSON = ["hostId": .string(hostId), "hostName": .string(name), "relay": .string(rec?.relayUrl ?? ""),
-                          "device": .string(PleiadShell.deviceName)]
+                          "device": .string(PleiadShell.deviceName), "platform": .string("ios")]
         return ShellBridge.hostScript(template: template, info: info, origin: origin, receiver: receiver)
     }
 

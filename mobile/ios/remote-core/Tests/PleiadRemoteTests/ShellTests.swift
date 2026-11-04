@@ -89,6 +89,13 @@ final class ShellBridgeTests: XCTestCase {
         XCTAssertEqual(d, "(() => { const f = window[\"__ply_r_abc\"]; if (typeof f === 'function') f(\"{\\\"type\\\":\\\"status\\\"}\"); })()")
     }
 
+    // iOS の殻の印（platform: ios）は info ごとそのまま埋める。ページはこれで Plus の入口を消す（docs/plus.md「iOS」）
+    func testHostScriptPassesThePlatformMarker() {
+        let s = ShellBridge.hostScript(template: "const info = __PLY_INFO__;", info: ["hostId": "h1", "platform": "ios"],
+                                       origin: "http://127.0.0.1:51234", receiver: "__ply_r_abc")
+        XCTAssertTrue(s.contains("\"platform\":\"ios\""), s)
+    }
+
     func testStatusListenersCanStop() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ply-shell-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
