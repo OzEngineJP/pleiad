@@ -1,10 +1,12 @@
-// Isolated fake server only. Seed 18/50 sessions (at least 6 with the same status) and 4/10 channels.
+// Isolated fake server only. Seed 18/50 sessions (at least 6 with the same status), 4/10 channels whose threads a bot has answered
+// (post "@<bot> ..." in each), and one chat whose title contains サイドバー.
 // Run with the existing dedicated browser; this test never launches a browser or reads real data.
 async (page, { url = page.url() } = {}) => {
   const results = [];
   const check = (ok, text) => { if (!ok) throw Error(text); results.push(text); };
-  await page.evaluate(() => localStorage.removeItem('agent-host-side'));
-  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(() => { localStorage.removeItem('agent-host-side'); localStorage.removeItem('agent-host-side-routines-open'); });
+  // Tall enough that a drag between two status groups needs no scrolling (rows are two lines; the Bots strip sits above the tree).
+  await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto(url);
   await page.locator('#closeOnboarding').click({ timeout: 1500 }).catch(() => {});
   await page.locator('#backToChat').click({ timeout: 1000 }).catch(() => {});
@@ -12,7 +14,10 @@ async (page, { url = page.url() } = {}) => {
   check(await page.locator('#sideOrder').count() === 0, 'one tree without the order switch');
   const home = page.locator('[data-side-key="chsec:home"]');
   const headings = await page.locator('#groups > .chsec > .grp-head .chsec-name').allTextContents();
-  check(headings[0] === '一時チャット' && headings.slice(1).join() === [...headings.slice(1)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).join(), 'home then channels by name');
+  check(headings[0] === 'ルーティン' && headings[1] === '一時チャット' && headings.slice(2).join() === [...headings.slice(2)].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).join(), 'routines, home, then channels by name (ADR 0288)');
+  const order = await page.locator('#groups > *').evaluateAll(ns => ns.map(n => n.dataset.sec ?? n.dataset.sideKey));
+  check(order.indexOf('channels') === order.indexOf('chsec:home') + 1, 'the 「チャンネル ＋」 label sits between home and the channels');
+  check(await page.locator('#groups .cs-sec[data-sec="bots"]').count() === 0 && await page.locator('#botStrip .bt').count() > 0, 'bots are a strip above the tree, not a tree section');
   check(await home.locator('.grp .row[data-session]').count() > 0, 'status groups are nested inside home');
   check(await page.locator('#groups .bot-waits').count() === 0, 'waiting does not get a separate section');
 
@@ -27,10 +32,20 @@ async (page, { url = page.url() } = {}) => {
   await source.dragTo(review.locator(':scope > .grp-head'));
   await review.locator(`.row[data-session="${id}"]`).waitFor();
   check(await review.locator(`.row[data-session="${id}"]`).count() === 1, 'dragging a quick chat changes its status');
+  // The tree starts below the Bots strip, so put both ends of the drag on screen first (scrolling mid-drag cancels it).
+  const bothShown = await page.evaluate(sid => {
+    const g = document.getElementById('groups'), box = g.getBoundingClientRect();
+    const head = document.querySelector('[data-side-key="group:進行中"] > .grp-head').getBoundingClientRect();
+    const row = document.querySelector(`.row[data-session="${sid}"]`).getBoundingClientRect();
+    g.scrollTop += Math.max(0, row.bottom - box.bottom + 4);
+    const h = document.querySelector('[data-side-key="group:進行中"] > .grp-head').getBoundingClientRect();
+    return h.top >= box.top && head.top - box.top >= row.bottom - box.bottom;
+  }, id);
+  check(bothShown, 'the moved row and the 進行中 heading fit on screen together');
   await review.locator(`.row[data-session="${id}"]`).dragTo(inProgress.locator(':scope > .grp-head'));
   await inProgress.locator(`.row[data-session="${id}"]`).waitFor();
 
-  const channel = page.locator('#groups > .chsec:not([data-side-key="chsec:home"])').first();
+  const channel = page.locator('#groups > .chsec:not([data-side-key="chsec:home"]):not(.cs-sec)').first();
   check(await channel.locator('.row[data-thread]').count() > 0 && await channel.locator('.row.more').count() === 0, 'channels show every thread without an N more row');
   const thread = channel.locator('.row[data-thread]').first();
   check(await thread.getAttribute('draggable') !== 'true' && await thread.locator('.row-status[aria-label]').count() === 1, 'channel rows have status icons and do not drag');
@@ -42,6 +57,8 @@ async (page, { url = page.url() } = {}) => {
   // Keyboard nesting: home -> status -> row, then back to both parent headings.
   await page.locator('#groups').focus();
   await page.keyboard.press('Home');
+  check(await page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.dataset.key) === 'c:routines', 'Home reaches the routines heading first');
+  await page.keyboard.press('ArrowDown');
   await page.keyboard.press('ArrowRight');
   const activeLevel = () => page.evaluate(() => document.getElementById(document.getElementById('groups').getAttribute('aria-activedescendant'))?.getAttribute('aria-level'));
   check(await activeLevel() === '2', 'right arrow enters the home status headings');
@@ -96,7 +113,7 @@ async (page, { url = page.url() } = {}) => {
     }));
     window.__sidebarAsk = window.__sidebarCmd('runTurn', { prompt: 'ask', backend: 'fake', mode: 'default', cwd: window.__sidebarHome }).catch(e => String(e));
   });
-  const waitFor = async (fn) => { for (let i = 0; i < 80; i++) { const result = await page.evaluate(fn); if (result) return result; await new Promise(r => setTimeout(r, 100)); } throw Error('waiting state timeout'); };
+  const waitFor = async (fn) => { for (let i = 0; i < 80; i++) { const result = await page.evaluate(fn); if (result) return result; await page.waitForTimeout(100); } throw Error('waiting state timeout'); };
   const permission = await waitFor(() => window.__sidebarEvents.find(e => e.type === 'permission'));
   await page.evaluate(async sid => { await window.__sidebarCmd('setStatus', { sessionId: sid, status: '進行中' }); }, permission.sessionId);
   await waitFor(() => document.querySelector('[data-side-key="group:進行中"] .wait'));
@@ -119,7 +136,7 @@ async (page, { url = page.url() } = {}) => {
   await waitFor(() => !document.querySelector('#notifBell .bell-badge .mark'));
   check(true, 'answering the approval removes the waiting diamond');
   await page.setViewportSize({ width: 390, height: 844 });
-  await new Promise(r => setTimeout(r, 400));
+  await page.waitForTimeout(400);
   if (!await home.isVisible()) await page.locator('#openSidebar').click();
   check(await home.isVisible() && await home.locator('.grp').count() >= 2, '390px drawer uses the same tree');
   return { passed: true, results };

@@ -213,7 +213,9 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 /* 控えめなグリッド。脇と、デスクトップ版で脇から続く窓の上端の帯にだけ。どちらも窓の左上が原点なので点が揃う */
 #sidebar,.titlebar{background:var(--surface-0);background-image:radial-gradient(var(--line-faint) 1px,transparent 1.2px);background-size:24px 24px}
 #sidebar header{display:flex;align-items:center;justify-content:flex-end;gap:4px;padding:10px 12px 4px;position:relative}
-.brand{display:flex;align-items:center;gap:6px;margin-right:auto;flex:none;color:var(--ink)}
+/* 開閉は左上の端（ブラウザーのタブの並びやほかの道具と同じ所）。閉じた後の #openSidebar も同じ x に出る。ロゴはその右 */
+#sidebar header .side-toggle{margin-left:0}
+.brand{display:flex;align-items:center;gap:6px;margin:0 auto 0 2px;flex:none;color:var(--ink)}
 .brand-icon{display:block;width:24px;height:24px}
 .brand-wordmark{display:block;width:86.5px;height:26px}
 .search{display:flex;align-items:center;gap:4px;padding:4px 12px 6px;position:relative}
@@ -240,7 +242,7 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .fchip .v{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fchip .x{background:transparent;color:var(--ink-weak);cursor:pointer;padding:0 6px;line-height:1;border-radius:var(--r-pill);flex:none}
 .fchip .x:hover{color:var(--ink)}
-.groups{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 10px 16px;display:flex;flex-direction:column;gap:14px}
+.groups{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:4px 10px 16px;display:flex;flex-direction:column;gap:2px}
 .grp-head{display:flex;align-items:center;gap:4px;padding:2px 4px 6px 2px;font-size:var(--fs-s);min-height:28px}
 /* 状態のアイコン。既定は無し。触れると空の枠が現れ、押すと選べる。状態は自由文字列なのでアイコンはラベルに紐付かず、
    人間でも AI でも付けられる（sidecar に { [statusId]: { icon } } で持つ） */
@@ -444,8 +446,8 @@ button.conn-lost:hover{color:var(--ink)}
    歯車を押すと、脇のセッション一覧が設定メニューに、会話が選んだページに入れ替わる。
    列の幅も面もそのままなので、切り替わったことは列の中身だけで分かる。モーダルは重ねない */
 .settings-menu,.settings-view,.back-chat{display:none}
-body.settings > #sidebar > :is(.search,.fchips,.filter-outside,.res-head,.groups,#authNeed),
-body.settings .brand,body.settings #notifBell,body.settings #newSession,body.settings #settings,body.settings #closeSidebar{display:none}
+body.settings > #sidebar > :is(.search,.botstrip,.fchips,.filter-outside,.res-head,.groups,#authNeed),
+body.settings .brand,body.settings #notifBell,body.settings #settings,body.settings #closeSidebar{display:none}
 /* 会話は場所も描いた状態も残したまま、設定のページで覆う（下の .settings-view）。display:none にすると筋のスクロール位置と
    入力欄の高さが失われる。visibility:hidden で伏せると、開閉のたびに会話の全要素のスタイルを計算し直して止まっていた。
    キーボードと読み上げは inert で届かなくする（web/onboarding.mjs） */

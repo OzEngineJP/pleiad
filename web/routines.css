@@ -76,9 +76,8 @@
   .routine-sheet .sheet-foot .res{flex-basis:100%;margin-right:0;order:-1}
 }
 
-/* ---- 脇のルーティンの行（web/channels/sidebar.mjs）。2 行（名前 / #チャンネル · 時刻）。一時停止は薄く、直近の失敗は「✕ 失敗」 */
+/* ---- 脇のルーティンの行（web/channels/sidebar.mjs）。1 行（名前・次の時刻。#チャンネルは title と読み上げ）。一時停止は薄く、直近の失敗は「✕ 失敗」 */
 .cs-row.paused{opacity:.5}
-.cs-row .row-meta .cs-rt-ch{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cs-rt-fail{flex:none;font-weight:700;color:var(--ink-strong);white-space:nowrap}
 
 /* ---- チャンネルの見出しの［ルーティン n］ */

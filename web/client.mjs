@@ -5250,8 +5250,8 @@ const slashSkills = chatComposer.useSlash({
 
 // ---------------------------------------------------------------- セッション一覧（web/side.mjs）
 
-// Bots・ルーティンの節（web/channels/sidebar.mjs が描く）。絞り込んでいないとき一覧の末尾に入る
-const channelExtraNodes = [...document.querySelectorAll('#channelsSide .cs-sec[data-sec="bots"], #channelsSide .cs-sec[data-sec="routines"]')];
+// ルーティンの見出しと「チャンネル ＋」の節（web/channels/sidebar.mjs が描く）。絞り込んでいないとき一覧に入る（web/side.mjs の buildPlaces）
+const channelExtraNodes = [...document.querySelectorAll('#channelsSide .cs-sec[data-sec="routines"], #channelsSide .cs-sec[data-sec="channels"]')];
 // メインの面（会話 / Channels）。channelsUi はこの後で作るので、作る前（起動の途中）は会話の面とみなす
 const surface = () => { try { return channelsUi.tab; } catch { return 'chats'; } };
 /** 脇の行の id がスレッドの行（"thread:<チャンネル>:<根>"）なら { channelId, threadId } */
@@ -5274,7 +5274,8 @@ const side = createSide({
   channelExtras: () => channelExtraNodes,
   // 本文まで探す。画面は新しい WS コマンドを足さず、操作の一覧の sessions.search を汎用の invoke で呼ぶ（core/ops/sessions.mjs）
   onSearch: (input) => cmd("invoke", { op: "sessions.search", args: input }),
-  onNew: startNew,
+  // 新しいチャットは会話の面で始める（Channels の面を見ていたら戻す）
+  onNew: (o) => { channelsUi.setTab('chats'); return startNew(o); },
   onSetStatus: (id, status) => {
     if (id == null) {
       state.draft.status = status || null;
@@ -7655,6 +7656,13 @@ function initSidebar() {
     if (document.querySelector("dialog[open]")) return;
     e.preventDefault();
     setSidebar(document.documentElement.classList.contains("side-closed"));
+  });
+  // Ctrl+Shift+O（macOS は ⌘⇧O）で新しいチャット。一時チャットの見出しの ＋ と同じく絞り込みを引き継ぐ。脇を閉じていても効く
+  document.addEventListener("keydown", (e) => {
+    if (isComposingKey(e) || e.altKey || !e.shiftKey || (mac ? !e.metaKey || e.ctrlKey : !e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "o") return;
+    if (document.querySelector("dialog[open]") || document.body.classList.contains("settings")) return;
+    e.preventDefault();
+    side.newChat();
   });
 }
 

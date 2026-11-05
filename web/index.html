@@ -63,6 +63,8 @@
   <!-- ==================== 脇のパネル（セッション一覧、web/side.mjs） ==================== -->
   <aside id="sidebar">
     <header>
+      <!-- 開閉は左上。閉じた後の #openSidebar も同じ位置に出る（docs/design-system.md「脇」、ADR 0288） -->
+      <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" data-shortcut="B" data-i18n-title="app.closeSidebarTitle" data-i18n-aria-label="app.closeSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
       <div class="brand" role="img" aria-label="Pleiad">
         <svg class="brand-icon" viewBox="0 0 96 96" aria-hidden="true"><use href="/brand/pleiad-icon.svg#mark"/></svg>
         <svg class="brand-wordmark" viewBox="0 0 346 104" aria-hidden="true"><use href="/brand/pleiad-wordmark.svg#wordmark"/></svg>
@@ -71,9 +73,7 @@
       <button type="button" class="btn back-chat" id="backToChat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span data-i18n="app.backToChat"></span></button>
       <!-- 通知ボタン（web/notification-inbox.mjs）。名前（aria-label）と右上の件数は未読に合わせて書く -->
       <button type="button" class="btn btn-icon" id="notifBell" aria-controls="notifPanel"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
-      <button type="button" class="btn btn-icon" id="newSession" data-i18n-title="app.newSessionTitle"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button type="button" class="btn btn-icon" id="settings" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
-      <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" data-shortcut="B" data-i18n-title="app.closeSidebarTitle" data-i18n-aria-label="app.closeSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
     </header>
     <div class="search">
       <!-- 題・状態・場所と会話の本文を探す（web/side.mjs）。語があるときは下の一覧が結果の listbox になる。Ctrl+Shift+F（macOS は ⌘⇧F）でどこからでも入れる -->
@@ -85,7 +85,9 @@
       <div class="pop" id="filterPop" hidden></div>
       <div class="pop recent" id="recentPop" role="listbox" data-i18n-aria-label="sidebar.search.recent" hidden></div>
     </div>
-    <!-- 脇の並べ方（docs/design-system.md「脇」）。同じスレッドを「チャンネル」（一時チャット・チャンネル・Bots・ルーティン）と「状態」（利用者の状態のグループ）の 2 通りに並べる。メインの面は替えない -->
+    <!-- Bots の帯（web/channels/sidebar.mjs）。名前付きのアイコンを横に並べ、木をスクロールしても隠れない。入りきらない分は「+N」のメニュー -->
+    <div class="botstrip" id="botStrip" role="toolbar" data-i18n-aria-label="channels:side.sections.bots"></div>
+    <!-- 絞り込みの札（docs/design-system.md「脇」） -->
     <div class="fchips" id="fchips"></div>
     <div class="filter-outside" id="filterOutside" hidden><span data-i18n="app.filterOutside"></span><button type="button" class="btn" id="clearFilterOutside" data-i18n="app.clearFilter"></button></div>
     <div class="res-head" id="resHead" hidden>
@@ -94,11 +96,11 @@
     </div>
     <span class="sr-live" id="resLive" role="status" aria-live="polite"></span>
     <div class="groups" id="groups"></div>
-    <!-- Bots・ルーティンの節の置き場（web/channels/sidebar.mjs が行を作る。行は .cs-row[data-kind][data-id]）。チャンネルの並べ方の間は、節ごと #groups の末尾へ移る（web/side.mjs の channelExtras）。チャンネルの節は使わない -->
+    <!-- ルーティンの見出しと「チャンネル ＋」の置き場（web/channels/sidebar.mjs が中を作る）。絞り込んでいないとき、ルーティンは #groups の先頭、
+         チャンネルは一時チャットのすぐ下へ移る（web/side.mjs の channelExtras） -->
     <div class="channels-side" id="channelsSide" hidden>
-      <section class="cs-sec" data-sec="channels"><h2 data-i18n="channels:side.sections.channels"></h2><div class="cs-rows"></div></section>
-      <section class="cs-sec" data-sec="bots"><h2 data-i18n="channels:side.sections.bots"></h2><div class="cs-rows"></div></section>
-      <section class="cs-sec" data-sec="routines"><h2 data-i18n="channels:side.sections.routines"></h2><div class="cs-rows"></div></section>
+      <section class="cs-sec" data-sec="routines"></section>
+      <section class="cs-sec" data-sec="channels"></section>
     </div>
     <!-- 設定を開いている間、セッション一覧と入れ替わる。見出しと行は状態・セッションと同じ形 -->
     <nav class="settings-menu" id="settingsNav" data-i18n-aria-label="app.settings">

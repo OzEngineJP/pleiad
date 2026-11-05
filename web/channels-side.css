@@ -1,8 +1,10 @@
 /* ==================== 脇（web/side.mjs・web/channels/sidebar.mjs。docs/design-system.md「脇」） ====================
-   一時チャット（状態ごと）→ チャンネル → Bots → ルーティンの木。
+   上から 検索 → Bots の帯 → 絞り込みの札 → 木（ルーティン → 一時チャット（状態ごと）→「チャンネル ＋」→ チャンネル）。ADR 0288。
    面は --surface-*、字は --ink-*、枠線は使わない（選んでいる側は面の持ち上がりで示す） */
 
 /* ---- 置き場所の木（一時チャットの状態の見出し・チャンネルの最近のスレッド） */
+.grp.chsec:not(.collapsed):not(.no-threads){margin-bottom:10px}
+.grp.chsec > .grp-head{min-height:30px;padding-bottom:2px}
 .chsec .grp .grp-head{padding-left:0}
 .chsec > .rows{gap:6px}
 .chsec > .rows > .grp > .grp-head{min-height:26px;padding-bottom:2px}
@@ -37,32 +39,51 @@ body.channels.home-split:not(.settings) .channels-view::after{content:"";positio
 .crumb-hash{color:var(--ink-weak)}
 .crumb-sep{flex:none;color:var(--ink-weak);margin:0 2px}
 
-/* ---- Bots・ルーティンの節の置き場（#channelsSide）。節は #groups の末尾に入るので、置き場そのものは出さない */
+/* ---- ルーティンの見出しと「チャンネル ＋」の置き場（#channelsSide）。節は #groups の木に入るので、置き場そのものは出さない */
 .channels-side{display:none}
-.cs-icon{cursor:default}
-.cs-icon:hover{background:transparent}
-.cs-head h2.cs-name{margin:0;font-size:inherit;cursor:default;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cs-sec .empty{padding:4px 10px}
+/* スレッドの無いチャンネル・まだ無いルーティンは開くものが無いので、畳む印を出さない（場所だけ残して名前の頭を揃える） */
+.chsec.no-threads .chsec-chev{visibility:hidden}
+/* 見出しの ＋ のうち、触れなくても見せるもの（一時チャットの「新しいチャット」） */
+.grp-add.always{opacity:1}
 
-/* 行（1 行の .row.one）: チャンネルは # 名前・あなた宛ての件数、bot はアイコン・名前・エージェント・状態 */
-.cs-row.one{display:flex;align-items:center;gap:7px;padding-top:6px;padding-bottom:6px;font-size:13px}
+/* 「チャンネル ＋」。チャンネルの見出しの並びの上に置く小さな見出し。＋ は常に見せる（チャンネルを作る入口） */
+.cs-sec[data-sec="channels"]{margin-top:6px}
+.cs-label{display:flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);border-radius:var(--r-s)}
+.cs-label-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-label .btn-icon{width:26px;height:26px}
+.cs-label .btn-icon svg.i{width:14px;height:14px}
+
+/* 畳んだルーティンの見出しの印（動いているものの輪・失敗の数） */
+.cs-rt-marks{flex:none;display:inline-flex;align-items:center;gap:6px}
+.cs-rt-marks:empty{display:none}
+.cs-rt-fails{font-size:var(--fs-xs);font-weight:700;color:var(--ink-strong);white-space:nowrap}
 .cs-row:focus-visible{outline:2px solid var(--line-blue);outline-offset:-1px}
-.cs-row .row-t{flex:1}
-.cs-row .hash{color:var(--ink-weak);flex:none;width:12px;text-align:center}
-.cs-row.unread .row-t{font-weight:700;color:var(--ink-strong)}
-.cs-row.quiet .row-t{color:var(--ink-weak)}
-.cs-row .mc{flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);background:var(--surface-3);font:600 var(--fs-xs)/18px var(--font-mono);text-align:center;color:var(--ink-strong)}
-.cs-row.sel .mc{background:var(--surface-2)}
-.cs-row .av.s{width:22px;height:22px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--surface-paper);font-size:13px;line-height:1;color:var(--ink)}
-.cs-row.sel .av.s{background:var(--surface-1)}
-.cs-row .row-t.cs-bot-name{flex:0 1 auto}
-.cs-row .cs-fill{flex:1}
-.cs-row .st-r{flex:none;font-size:var(--fs-xs);color:var(--ink-weak);white-space:nowrap}
-.cs-row .wait{font-size:var(--fs-xs);white-space:nowrap}
+
+/* ---- Bots の帯（#botStrip。web/channels/sidebar.mjs）。アイコンの下に名前。押すとその bot との DM、右クリックで bot のメニュー。
+   入りきらない分は「+N」にまとめ、押すと全部の一覧。動いている bot はアイコンを輪で囲み、あなた待ちは ◆ */
+.botstrip{display:flex;align-items:flex-start;gap:2px;padding:2px 10px 6px;position:relative;min-height:62px}
+.bt{position:relative;flex:none;display:flex;flex-direction:column;align-items:center;gap:3px;width:48px;padding:4px 2px 3px;border-radius:var(--r-m);
+  background:transparent;color:var(--ink);cursor:pointer;transition:background-color var(--dur-fast) var(--ease-out)}
+.bt:hover{background:var(--surface-hover)}
+.bt.sel{background:var(--surface-paper)}
+.bt:focus-visible{outline:2px solid var(--line-blue);outline-offset:-2px}
+.bt .av{position:relative;width:30px;height:30px;display:grid;place-items:center;border-radius:50%;background:var(--surface-paper);font-size:17px;line-height:1}
+.bt.sel .av{background:var(--surface-1)}
+.bt .nm{max-width:44px;font-size:var(--fs-xs);line-height:1.3;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt .nm:empty::before{content:"\00a0"}
+.bt.add .av,.bt.more .av{background:transparent;color:var(--ink-weak);font-size:var(--fs-s);font-weight:600}
+.bt.add:hover .av,.bt.more:hover .av{color:var(--ink)}
+.bt.add .av svg.i{width:16px;height:16px}
+.bt .ring{position:absolute;inset:-3px;width:36px;height:36px;color:var(--ink-blue);pointer-events:none}
+.bt .ring svg{width:36px;height:36px;stroke-width:1}
+.bt .ring path{stroke-dasharray:14 100}
+.bt .bw{position:absolute;top:-3px;right:-4px;display:inline-grid;place-items:center;width:15px;height:15px;border-radius:50%;background:var(--surface-paper);
+  color:var(--ink-mark);font-size:9px;line-height:1}
 
 /* チャンネルを作る（＋ で出るその場の名前の欄） */
 .cs-new{display:flex;flex-direction:column;gap:2px}
-.cs-new-line{display:flex;align-items:center;gap:7px;padding:3px 10px;border-radius:var(--r-m);background:var(--surface-paper);font-size:var(--fs-s)}
+.cs-new-line{display:flex;align-items:center;gap:7px;margin:2px 0 4px 18px;padding:3px 10px;border-radius:var(--r-m);background:var(--surface-paper);font-size:var(--fs-s)}
 .cs-new-line .hash{color:var(--ink-weak);flex:none;width:12px;text-align:center}
 .cs-new-input{flex:1;min-width:0;padding:3px 0;background:transparent;font:inherit;color:var(--ink);outline:none}
 .cs-new-input::placeholder{color:var(--ink-weak)}

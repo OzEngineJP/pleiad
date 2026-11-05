@@ -2727,7 +2727,6 @@
     "listSeparator": ", ",
     "notConnected": "Not connected",
     "backToChat": "Back to chat",
-    "newSessionTitle": "New session (keeps the current filters)",
     "settings": "Settings",
     "closeSidebarTitle": "Close sidebar ({{key}})",
     "closeSidebar": "Close sidebar",
