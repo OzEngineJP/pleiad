@@ -2,6 +2,7 @@
 // 実データと分離したサーバー（AGENT_HOST_BACKENDS=fake・別ポート・使い捨ての置き場。ポート 7434・トークン sidebar-create）を開いてから実行する。
 // 脇の作る入口（web/channels/sidebar.mjs・web/side.mjs・web/client.mjs。ADR 0288）:
 //   「チャンネル ＋」の ＋ で名前の欄が出て、Enter で本物の channels.create が作り、木に出てそのチャンネルが開く・同じ名前は欄の下に理由が出て字が残る・Esc で閉じて ＋ へ戻る・
+//   見出しの文字を押しても欄が出る・打った名前は絞り込みを掛けて外しても残る・欄の中でも Ctrl+Shift+O が効く・
 //   木のキーボードで「チャンネル」の見出しに来て Enter でも欄が出る・
 //   一時チャットの見出しの ＋（#newSession）は触れなくても見え、Ctrl+Shift+O（macOS は ⌘⇧O）と同じく新しい会話を始める・
 //   どちらも絞り込みの条件（エージェントが 1 つ・状態・作業場所）を newSession に引き継ぐ・入力中の字（IME の変換中）では始めない。
@@ -115,6 +116,23 @@ async page => {
   await page.locator('#prompt').dispatchEvent('keydown', { key: 'O', code: 'KeyO', ctrlKey: true, shiftKey: true, isComposing: true });
   await page.waitForTimeout(400);
   check((await sent('newSession')).length === before, '変換中の Ctrl+Shift+O では始めない');
+
+  // 「チャンネル」の見出しは文字を押しても欄が出る。打った名前は絞り込みを掛けて外しても残り、欄の中でも Ctrl+Shift+O は効く
+  await label.locator('.cs-label-t').click();
+  await input.waitFor();
+  check(await input.evaluate(n => n === document.activeElement), '「チャンネル」の見出しの文字を押しても名前の欄が出る');
+  await input.fill('draft-x');
+  await page.locator('#filterBtn').click();
+  await page.locator('#filterPop [data-backend="fake"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('#fchips .fchip .x').first().click();
+  await input.waitFor();
+  check(await input.inputValue() === 'draft-x', '打った名前は、絞り込みを掛けて外しても残る');
+  await input.focus();
+  before = (await sent('newSession')).length;
+  await input.press('Control+Shift+O');
+  await waitNew(before);
+  check(true, '名前の欄の中でも Ctrl+Shift+O で新しい会話を始める');
 
   // 絞り込み: エージェント（fake だけ）・状態（進行中）・作業場所
   const home = await page.evaluate(() => window.__homeDir);

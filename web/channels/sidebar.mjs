@@ -77,6 +77,8 @@ export function createSidebar(host, getTabs) {
     label.setAttribute('aria-level', '1');
     label.setAttribute('aria-label', `${t('channels:side.sections.channels')}, ${t('channels:side.newChannel')}`);
     label.treeOpen = () => startCreate();
+    // 見出しのどこを押しても欄を出す（ルーティンの見出しが全体で開閉するのと同じく、文字も押せる）
+    label.addEventListener('click', () => startCreate());
     const name = el('span', 'cs-label-t', t('channels:side.sections.channels'));
     const add = el('button', 'btn btn-icon cs-add');
     add.type = 'button';
@@ -293,7 +295,7 @@ export function createSidebar(host, getTabs) {
   // 「+N」: すべての bot（状態つき）と「bot を作る」
   function allBotsMenu(bots, x, y) {
     const items = bots.map(({ b, state }) => {
-      const av = botIcon(b, 'av s');
+      const av = botIcon(b, 'av bt-menu-av');
       av.setAttribute('aria-hidden', 'true');
       // i18n-dynamic: channels:side.botState.
       const said = t(`channels:side.botState.${state}`);
@@ -381,6 +383,7 @@ export function createSidebar(host, getTabs) {
   function endCreate() {
     S.creating = false;
     S.createError = '';
+    S.createDraft = '';
     paintCreate();
   }
   function paintCreate() {
@@ -403,6 +406,9 @@ export function createSidebar(host, getTabs) {
     input.setAttribute('aria-label', t('channels:side.newChannel'));
     input.autocomplete = 'off';
     input.spellcheck = false;
+    // 打った名前は覚えておき、描き直し（絞り込みを掛けて外すなど）でも戻す
+    input.value = S.createDraft ?? '';
+    input.addEventListener('input', () => { S.createDraft = input.value; });
     line.append(hash, input);
     wrap.append(line);
     if (S.createError) {
@@ -415,6 +421,7 @@ export function createSidebar(host, getTabs) {
     let busy = false;
     input.addEventListener('keydown', async (e) => {
       if (e.isComposing || e.keyCode === 229) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;   // 修飾キー付きはアプリの近道（Ctrl+Shift+O・Ctrl+B・Ctrl+Shift+F）へ通す
       e.stopPropagation();   // 木（#groups）の文字での移動・Enter に渡さない
       if (e.key === 'Escape') { e.preventDefault(); endCreate(); chan.add?.focus(); return; }
       if (e.key !== 'Enter' || busy) return;
@@ -426,6 +433,7 @@ export function createSidebar(host, getTabs) {
         const channel = await host.invoke('channels.create', { name });
         S.creating = false;
         S.createError = '';
+        S.createDraft = '';
         S.channels = [...S.channels.filter((c) => c.id !== channel.id), { ...channel, unread: 0, mentions: 0 }];
         side?.setDirectory?.({ channels: S.channels, bots: S.bots });   // 木にすぐ出す（読み直しを待たない）
         paintCreate();

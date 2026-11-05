@@ -18,6 +18,23 @@ async (page, { url = page.url() } = {}) => {
   const order = await page.locator('#groups > *').evaluateAll(ns => ns.map(n => n.dataset.sec ?? n.dataset.sideKey));
   check(order.indexOf('channels') === order.indexOf('chsec:home') + 1, 'the 「チャンネル ＋」 label sits between home and the channels');
   check(await page.locator('#groups .cs-sec[data-sec="bots"]').count() === 0 && await page.locator('#botStrip .bt').count() > 0, 'bots are a strip above the tree, not a tree section');
+  // A narrow strip folds the rest into "+N". In its menu an image icon (iconImage) gets the same small circle as an emoji, so rows line up.
+  await page.locator('#botStrip').evaluate(n => { n.style.width = '150px'; });
+  await page.locator('#botStrip .bt.more').click();
+  const menu = page.locator('.pop.menu').last();
+  await menu.locator('.li .bt-menu-av').first().waitFor();
+  const icons = await menu.evaluate(async m => {
+    const avs = [...m.querySelectorAll('.li .bt-menu-av')];
+    // The same markup botIcon() makes for an image bot, with a 256px picture
+    const c = document.createElement('canvas'); c.width = c.height = 256;
+    const img = document.createElement('img'); img.className = 'bot-icon-image'; img.src = c.toDataURL();
+    avs[0].replaceChildren(img);
+    await img.decode();
+    return avs.map(a => [a.getBoundingClientRect().width, a.getBoundingClientRect().height, a.closest('.li').getBoundingClientRect().height]);
+  });
+  check(icons.length >= 2 && icons.every(([w, h]) => w <= 20 && h <= 20) && icons.every(([, , r]) => Math.abs(r - icons[0][2]) < 1), 'the +N menu shows image and emoji bot icons at one small size with even rows');
+  await page.keyboard.press('Escape');
+  await page.locator('#botStrip').evaluate(n => { n.style.width = ''; });
   check(await home.locator('.grp .row[data-session]').count() > 0, 'status groups are nested inside home');
   check(await page.locator('#groups .bot-waits').count() === 0, 'waiting does not get a separate section');
 

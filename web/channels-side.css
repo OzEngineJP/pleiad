@@ -49,7 +49,8 @@ body.channels.home-split:not(.settings) .channels-view::after{content:"";positio
 
 /* 「チャンネル ＋」。チャンネルの見出しの並びの上に置く小さな見出し。＋ は常に見せる（チャンネルを作る入口） */
 .cs-sec[data-sec="channels"]{margin-top:6px}
-.cs-label{display:flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);border-radius:var(--r-s)}
+.cs-label{display:flex;align-items:center;gap:4px;padding:2px 4px 2px 8px;font-size:var(--fs-xs);font-weight:600;color:var(--ink-weak);border-radius:var(--r-s);cursor:pointer}
+.cs-label:hover{color:var(--ink)}
 .cs-label-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cs-label .btn-icon{width:26px;height:26px}
 .cs-label .btn-icon svg.i{width:14px;height:14px}
@@ -75,6 +76,8 @@ body.channels.home-split:not(.settings) .channels-view::after{content:"";positio
 .bt.add .av,.bt.more .av{background:transparent;color:var(--ink-weak);font-size:var(--fs-s);font-weight:600}
 .bt.add:hover .av,.bt.more:hover .av{color:var(--ink)}
 .bt.add .av svg.i{width:16px;height:16px}
+/* 「+N」のメニューの行の bot のアイコン。絵文字も画像（.bot-icon-image）も同じ円に収め、行の高さをそろえる */
+.pop .li .bt-menu-av{flex:none;width:18px;height:18px;display:inline-grid;place-items:center;border-radius:50%;overflow:hidden;font-size:14px;line-height:1}
 .bt .ring{position:absolute;inset:-3px;width:36px;height:36px;color:var(--ink-blue);pointer-events:none}
 .bt .ring svg{width:36px;height:36px;stroke-width:1}
 .bt .ring path{stroke-dasharray:14 100}

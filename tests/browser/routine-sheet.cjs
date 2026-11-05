@@ -117,7 +117,10 @@ async page => {
   check(await page.locator('#rsChannelChip .v').textContent().then(s => s.includes(name)), 'チャンネルは今開いているもの');
   check(await page.locator('#rsBotChip .v').textContent().then(s => s.includes('Owl')), 'bot は先頭');
   check(await page.locator('[data-when="daily"]').getAttribute('aria-pressed') === 'true', '種類は毎日');
-  check(await page.locator('[data-when="webhook"]').isDisabled(), 'webhook は選べない形だけ（無効）');
+  await page.locator('[data-when="webhook"]').click();
+  check(await page.locator('[data-when="webhook"]').getAttribute('aria-pressed') === 'true', 'webhook も選べる（無効にしない）');
+  await page.locator('[data-when="daily"]').click();
+  check(await page.locator('[data-when="daily"]').getAttribute('aria-pressed') === 'true', '毎日へ戻せる');
   await page.waitForFunction(() => document.querySelector('#rsModeChip .v')?.textContent === '都度確認');
   check(await page.locator('#rsModeChip').getAttribute('data-value') === 'default', '承認モードは bot のモード（都度確認）');
   check(await page.locator('#rsTimeoutChip .v').textContent() === '30 分', '承認待ちの期限は 30 分');
