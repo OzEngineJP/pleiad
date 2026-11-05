@@ -21,7 +21,8 @@ final class PlusStore {
 
     private func seal(_ vault: KeychainVault, _ j: JSON) { try? vault.save(Bytes(j.serialized.utf8)) }
     private func unseal(_ vault: KeychainVault) -> JSON? {
-        guard let b = try? vault.load(), let data = b, !data.isEmpty else { return nil }
+        // load() は throws -> Bytes?。try? が二重の Optional を 1 つに畳むので、ここで 1 回だけ外す。
+        guard let data = try? vault.load(), !data.isEmpty else { return nil }
         return try? JSON.parse(data)
     }
 

@@ -75,7 +75,7 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
             guard hid == id else { return }
             DispatchQueue.main.async { self?.pushStatus(s) }
         }
-        HostViewController.worker.async { [weak self, device] in
+        HostViewController.worker.async { [weak self, device, via] in
             do {
                 let px = try device.open(id, via: via)
                 DispatchQueue.main.async { if let self, !self.left { self.showHost(px) } }

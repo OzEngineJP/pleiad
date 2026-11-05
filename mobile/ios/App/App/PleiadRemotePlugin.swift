@@ -78,7 +78,7 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
             if ledgerRead {
                 for rec in PlusHostList.gone(try device.store.hosts(), fetched.hosts) {
                     _ = try device.remove(rec.hostId, via: "plus")
-                    forgetWhen(rec.hostId)
+                    self.forgetWhen(rec.hostId)
                 }
             }
             // 1 台 1 行。via はタップで開く経路（PlusHostList.combine）、both は両方の経路でペアリング済みの印。
@@ -89,13 +89,13 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
                 let h = row.record
                 let plusHost = row.plus
                 guard let hostId = h?.hostId ?? plusHost?.hostId else { continue }
-                let other = row.both ? try device.store.host(hostId, via: row.via == "own" ? "plus" : "own") : nil
+                // ?? と && の右（autoclosure）には try を置けないので、先に読んでから組み合わせる
+                let other: HostRecord? = row.both ? try device.store.host(hostId, via: row.via == "own" ? "plus" : "own") : nil
+                let ownLabel = try device.store.host(hostId, via: "own")?.label
                 var o = ShellBridge.foundationObject(h?.publicJson ?? [:])
                 o["hostId"] = hostId
-                o["hostName"] = (h?.label).flatMap { $0.isEmpty ? nil : $0 }
-                    ?? (other?.label).flatMap { $0.isEmpty ? nil : $0 }
-                    ?? (try device.store.host(hostId, via: "own")?.label).flatMap { $0.isEmpty ? nil : $0 }
-                    ?? plusHost?.name ?? h?.hostName ?? ""
+                let label = [h?.label, other?.label, ownLabel].compactMap { $0 }.first { !$0.isEmpty }
+                o["hostName"] = label ?? plusHost?.name ?? h?.hostName ?? ""
                 o["via"] = row.via
                 o["both"] = row.both
                 let lastConnected = [h?.lastConnectedAt, other?.lastConnectedAt].compactMap { $0 }.max()
@@ -105,11 +105,12 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
                 let st = device.proxy(hostId).flatMap { $0.creds.via == row.via ? $0.link.status : nil }
                 // Plus の行で、まだ許可の無い鍵（"unpaired"）かもう一度許可が要る鍵（"reapprove"。ADR 0248）は、
                 // タップでホストの画面へ問い合わせる（admit()）。
-                let plusRec = row.via == "plus" ? try device.store.host(hostId, via: "plus") : nil
+                let plusRec: HostRecord? = row.via == "plus" ? try device.store.host(hostId, via: "plus") : nil
+                let plusCreds = row.via == "plus" ? try device.store.credentials(hostId, via: "plus") : nil
                 let idle: String
                 if row.via == "plus" && plusRec?.reapproveAt != nil { idle = "reapprove" }
                 else if h?.revokedAt != nil && h?.via == row.via { idle = "revoked" }
-                else if row.via == "plus" && (try device.store.credentials(hostId, via: "plus")) == nil { idle = "unpaired" }
+                else if row.via == "plus" && plusCreds == nil { idle = "unpaired" }
                 else { idle = "closed" }
                 o["state"] = st?.state ?? idle
                 o["open"] = st != nil
@@ -168,7 +169,7 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
             guard let relay = plus.currentRelayUrl() else { throw PairError("unreachable") }
             let uid = plus.currentUid()
             let rec = try device.admitPlus(hostId, mode: PlusAdmission.MODE_PAIR, uid: uid) { kp in
-                try PlusAdmission.admit(host, relayUrl: relay, idToken: token, keyPair: kp, name: PleiadShell.deviceName,
+                try PlusAdmission.admit(host: host, relayUrl: relay, idToken: token, keyPair: kp, name: PleiadShell.deviceName,
                                         app: device.app, mode: PlusAdmission.MODE_PAIR,
                                         onCode: { code in self?.notifyListeners("pairCode", data: ["code": code]) },
                                         handle: handle,
@@ -192,12 +193,14 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
         bg(call) { [weak self] device in
             guard let plus = PleiadShell.plus else {
                 if try device.store.host(hostId) == nil { throw UnknownHost() }
-                return self?.presentHost(hostId, via: "own", call: call)
+                self?.presentHost(hostId, via: "own", call: call)
+                return
             }
             let listed = plus.cachedHosts().hosts.first(where: { $0.hostId == hostId })
             let plusVisible = plus.plusUsable
             let hasOwn = try device.store.credentials(hostId, via: "own") != nil
-            let hasPlus = plusVisible && ((try device.store.host(hostId, via: "plus")) != nil || listed != nil)
+            let plusRec = try device.store.host(hostId, via: "plus")
+            let hasPlus = plusVisible && (plusRec != nil || listed != nil)
             // ページが経路をくれたときはそれ（一覧が選んだもの）。無いときは同じ規則: 接続中の窓は経路を保ち、
             // Plus の台帳でオンラインなら Plus、それ以外は自分の中継。「アカウントに見えるなら何でも Plus」ではない。
             guard let via = requested.flatMap({ ($0 == "own" && hasOwn) || ($0 == "plus" && hasPlus) ? $0 : nil })
@@ -242,7 +245,7 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
                 guard let own = try device.rename(hostId, label, via: "own") else { throw UnknownHost() }
                 if try device.store.host(hostId, via: "plus") != nil { _ = try device.rename(hostId, label, via: "plus") }
                 rec = own
-            } else if via == "plus" && (try device.store.host(hostId, via: "plus")) == nil {
+            } else if try via == "plus" && device.store.host(hostId, via: "plus") == nil {
                 guard let plus = PleiadShell.plus,
                       let host = plus.cachedHosts().hosts.first(where: { $0.hostId == hostId }) else { throw UnknownHost() }
                 guard let relay = plus.currentRelayUrl() else { throw PairError("unreachable") }

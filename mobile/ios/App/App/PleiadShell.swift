@@ -27,7 +27,7 @@ enum PleiadShell {
                 guard let relay = plus.currentRelayUrl() else { throw PairError("unreachable") }
                 // バックグラウンドのつなぎ直し: ホストが許可済みの鍵だけが戻れる（承認の窓は出ない）
                 try device.admitPlus(hostId, mode: PlusAdmission.MODE_ADMIT, uid: plus.currentUid()) { kp in
-                    try PlusAdmission.admit(host, relayUrl: relay, idToken: token, keyPair: kp, name: deviceName, app: app,
+                    try PlusAdmission.admit(host: host, relayUrl: relay, idToken: token, keyPair: kp, name: deviceName, app: app,
                                             ticket: { try plus.deviceTicket(hostId, keyPair: kp) }).with(uid: plus.currentUid())
                 }
                 return try device.store.credentials(hostId, via: "plus")
