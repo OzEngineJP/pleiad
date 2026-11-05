@@ -41,7 +41,8 @@
   main が argv（Windows・Linux の単一インスタンス・初回起動）と `open-url`（macOS）からリンクを拾い、
   `{ type: 'plus-entrance', action }` でサーバーへ渡す（desktop/plus-link.cjs）。ほかの `pleiad://…` は無視する
 - リンクを受け取ったら主の窓を前に出す（起動前に届いた分は起動後に流す）
-- ほかのプラットフォーム（iOS）は対象外
+- ほかのプラットフォーム（iOS）は `PleiadBridgeViewController.offerLink` が `pleiad://plus/enable|disable` を受けて
+  この端末の印（UserDefaults `plus.entrance`。`PlusStore`）を変える。デスクトップと同じく、印を外してもログアウトしない
 
 ## ログインの流れ（`core/plus/session.mjs`）
 
@@ -636,22 +637,69 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 
 ## iOS
 
-この段階の iOS のアプリは Pleiad Plus に対応しない。`pleiad://auth` を受けても「まだ使えません」と記録するだけで、画面にもホストの窓にも触れない。
+対象: `mobile/ios/`（Capacitor の殻）。ログインの計算と更新の決まりは OS に依らない Swift（`remote-core` の
+`PleiadRemote` に置いた `Plus.swift`。Android の `dev.pleiad.app.plus` と同じ口・同じ決まり）に置き、
+単体試験は `mobile/ios/remote-core` で `swift test` を回す。App 層は `PlusStore`（Keychain の保管）・
+`PlusManager`（Android の `PlusManager.kt` と同じ仕事）・`PleiadPlusPlugin`（画面の橋 `PleiadPlus`）で、
+どれも Android の同名のものと同じ形。
 
-### ホストの窓の中の Plus の入口は出さない
+**モバイルは OS で差を作らない**。分けるのはストアの規則がはっきり求める所だけ: 購入・支払い・プランや
+購入への誘導（値段・プランの案内・購入画面へのリンク・「アップグレード」の入口）は Android・iOS のどちらにも
+置かない（課金は Web だけ。App Store の 3.1.3(f)。[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 5）。
+それ以外——ログイン・アカウントの管理・ホストの一覧と接続——は両 OS で同じだけ出す。web 側が見る印は
+`shell: 'mobile'`（`web/remote-badge.mjs` の `inMobileShell()`）だけで、OS を分ける `platform` の印は置かない。
 
-課金は Web だけ（App Store の 3.1.3(f)。[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 5: 「アプリは無料のコンパニオン」）なので、iOS の殻の中の web の画面には Plus の購入・ログイン・アカウント管理の入口を出さない。PC が Plus にログインしていても、iPad では入口ごと消す。
+### ログイン（ASWebAuthenticationSession + PKCE）
 
-- 印: 殻が `window.plyRemote` に `platform: 'ios'` を付ける（`HostViewController.swift` の `remoteScript()` が `info` に入れ、`plyremote.js` が `api` に載せる。`shell: 'mobile'` は Android と共通のまま）。web 側は `web/remote-badge.mjs` の `inIosShell()` で読む。Android は印を付けないので変わらない。`platform` が無い・`ios` 以外も変わらない
-- 消すもの（`available === false` のときと同じく、行・まとまりごと出さない）: 設定のメニューの「Pleiad Plus」とページ全体・設定 › リモート「この PC へ」の Plus のまとまり（ログイン・「Pleiad Plus にする」・Plus の設定の行・Plus の端末の行）・「ほかの PC へ」の Plus のまとまりと PC を追加のつなぎ方の Plus の選択肢・設定 › 委譲と通話の仮想のキー「Pleiad Plus」の行・通話の通知の「アカウントを管理」・通知から Plus のページを開く道
-- 消さないもの: 「この PC へ」の自分の中継サーバーのまとまり・もう一度の許可が要る端末の承認・同期の鍵の承認の窓・状態を伝えるだけの文（通知の置き場「設定 › Pleiad Plus」・登録の外れや Plus が止まっている旨の案内。開いても Plus の面へは行かない）
+1. 「Pleiad Plus にログイン」で、`verifier`・`state` = 32 バイトの乱数の base64url、
+   `challenge` = `base64url(SHA-256(verifier))`（RFC 7636）を作る
+2. `verifier`・`state`・作った時刻を Keychain（`KeychainVault`、別名 `plus-pending`）に置く
+   （認証画面の間にプロセスが消えても戻れるように）。10 分で捨てる
+3. `ASWebAuthenticationSession`（`callbackURLScheme` は `pleiad`。Safari とクッキーを共有する）で開く:
+   `<urls.login>?client=ios&redirect_uri=<enc(pleiad://auth)>&state=…&code_challenge=…&code_challenge_method=S256&lang=<ja|en>`
+4. 戻りの `pleiad://auth?code=…&state=…` は認証のセッションが直接受け取る。届かないとき（セッションが
+   閉じられたあと等）は `SceneDelegate` → `PleiadBridgeViewController.offerLink` が拾い、どちらも
+   `PlusManager.onAuthLink` に渡す。`error` のクエリー・`state` が `pending` と合わない（定数時間で比べる）・
+   `pending` が無いか 10 分を超えた → 「ログインできませんでした」と「もう一度」
+5. コードをトークンに替える: `POST <api>/v1/auth/token`、本文 `{"code","codeVerifier","redirectUri"}` で
+   `redirectUri` は `pleiad://auth`。`400 invalid_grant` → 「ログインできませんでした」。
+   ネットの誤り → 「サーバーへの接続に失敗しました」
 
-ログインを足すときの流れ:
+### 保管と更新
 
-1. Android と同じログインのページを `ASWebAuthenticationSession`（`callbackURLScheme` は `pleiad`）で開き、`client=ios`・`redirect_uri=pleiad://auth` を渡す。
-2. 戻りの `pleiad://auth?code=…&state=…` を `SceneDelegate` の受け口（`offerLink`）で受け、`state` を照合してから `POST https://api.pleiad.dev/v1/auth/token` に `{code, codeVerifier, redirectUri: "pleiad://auth"}` を送ってトークンに替える。
-3. ログインに使う設定（`token.projectId`・`token.apiKey`・`urls`・`minClient`）はアプリに焼き込まず、起動時に `GET https://api.pleiad.dev/v1/auth/config` から受け取る。Firebase の SDK と `GoogleService-Info.plist` は足さない。
-4. 保管は更新トークンだけを Keychain（`KeychainVault`）に `{refreshToken, uid, email, tokenProjectId, apiKey, savedAt}` の形で置き、ID トークンはメモリにだけ置く。更新の決まり（期限の 5 分前に取り直す・同時に呼ばれても 1 本にまとめる・`400` の `TOKEN_EXPIRED`・`USER_DISABLED`・`USER_NOT_FOUND`・`INVALID_REFRESH_TOKEN` なら保管を消す）は Android と同じ。
-5. `minClient` に `ios` の欄が増えたらそれに従う。
+- 保管するのは更新トークンだけ。Keychain（`KeychainVault`、別名 `plus-session`）に
+  `{refreshToken, uid, email, tokenProjectId, apiKey, savedAt}`。ID トークンはメモリだけ（保管に入らない）
+- 更新の決まり（期限の 5 分前に取り直す・同時に呼ばれても 1 本にまとめる・`400` の `TOKEN_EXPIRED`・
+  `USER_DISABLED`・`USER_NOT_FOUND`・`INVALID_REFRESH_TOKEN` なら保管を消す）は Android と同じ
+  （`PlusSession`）
+- 設定は起動時と前面の間 5 分ごとに `GET <api>/v1/auth/config` を読み、`minClient.ios` に従う。
+  読めないときは最後に読んだ値（UserDefaults `plus.config`）を使う
+- `visibility` が `optin` の間は、この端末の印（UserDefaults `plus.entrance`）が無い限り入口を全部隠す。
+  `pleiad://plus/enable|disable` が印を変える（「入口を出すリンク」の節）
+- ログアウト: 保管と `pending` を消し、メモリの ID トークンを捨てる。サーバーには何も送らない
+- ログに出さないのも Android と同じ: ID トークン・更新トークン・`code`・`verifier`・`state`
+
+### アカウントの状態と画面
+
+- 画面のプラグインは `PleiadPlus`（`PleiadPlusPlugin.swift`）: `state()`・`login()`・`logout()`・
+  `openAccount()` とイベント `state`。Android と同じ形・同じ応答を返し、ID トークンは
+  `PlusManager.currentIdToken()` からネイティブ側だけで使う
+- 「アカウントを管理」は `urls.profile`（プランと支払いを含まないプロフィールのページ）を
+  `SFSafariViewController` ではなく既定のブラウザーで開く。アカウントの削除はそのページから
+  （Apple 5.1.1(v)。Android と同じく、購入・プラン・支払いへの道は置かない）
+
+### iOS のホスト一覧と接続
+
+- Android の節（上の「Android のホスト一覧と接続」）と同じ: `PlusHostList` で `hostId` ごとに 1 行、
+  台帳の読み取りに失敗したら前回の一覧を残す、台帳から外れた PC は Plus の記録ごと消す、開く経路は
+  `HostRoute`（つながっている窓は経路を保ち、台帳でオンラインなら Plus、そうでなければ自分の中継）。
+  前回開いていたホストとその経路は `ResumeStore` が `resume.hostId`・`resume.via` に覚える
+- Plus のホストへの受け入れ（`admit`）・券（`PlusTicketIssuer`）・閉じ方の見分け（4401 の表）は
+  `remote-core` の `Plus.swift`・`DeviceLink.swift` が持ち、Android の対応するものと同じ決まり
+- 認証のサーバー（`/v1/auth/authorize`・`/v1/auth/token`・アカウントと台帳）のコードは公開のリポジトリに
+  置かない（[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 4）。公開のリポジトリの試験用の偽 api
+  （`tests/lib/fake-plus.mjs`）は `client=ios`・`redirect_uri=pleiad://auth`・`minClient.ios` を受ける
+- 通知は iOS の対象外（[ADR 0086](adr/0086-notifications-through-relay.md)）。`/v1/device/notify` の線と
+  通知からの `pleiad://open` は Android だけ
 
 審査の注意（ログインを入れると Sign in with Apple とアカウントの削除の道が要る）は [ios.md](ios.md) の冒頭の段落を参照。

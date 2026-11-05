@@ -2,13 +2,16 @@
 
 iPhone・iPad（iOS / iPadOS 16 以上）向けの Capacitor の殻は `mobile/ios/App/`。ホスト一覧は Android と同じ `mobile/www`、暗号とループバックの中継は `mobile/ios/remote-core/` を使う（[ADR 0174](adr/0174-ios-capacitor-shell.md)）。通知は対象外（ADR 0086）。公式の中継とログインを入れるときの App Review の危険（4.2.7 のリモートデスクトップのクライアント・4.8 の Sign in with Apple・5.1.1(v) のアカウントの削除）は [ADR 0263](adr/0263-accounts-and-hosted-relay.md)（提案）の「影響」。
 
-ログインの受け口（`pleiad://auth`）だけを置いてある。流れは [plus.md](plus.md) の iOS の節。
+Pleiad Plus のログインと Plus のホストへの接続は Android と同じだけ入っている（`pleiad://auth` + `ASWebAuthenticationSession` + PKCE。`mobile/ios/App/App/` の `PlusStore`・`PlusManager`・`PleiadPlusPlugin`）。流れと保管の決まりは [plus.md](plus.md) の iOS の節。
 
-## ホストの窓の中の Plus の入口は出さない
+## モバイルは OS で差を作らない——隠すのは購入と購入への誘導だけ
 
-この版の iOS アプリは Pleiad Plus のログイン・購入・アカウント管理に対応しない。PC が Plus にログインしているとホストの画面の設定・委譲・通話・リモートに入口が並ぶが、iOS の殻の中ではそれらを全部隠す（App Store の 3.1.3(f)・[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 5: 課金は Web だけ、アプリは無料のコンパニオン）。隠す面の一覧と消さないものは [plus.md](plus.md) の iOS の節。
+モバイル（Android・iOS）は Plus の機能で OS による差を作らない。分けるのはストアの規則がはっきり求める所だけ（App Store の 3.1.3(f)・[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 5: 課金は Web だけ、アプリは無料のコンパニオン）。購入・支払い・プラン・「アップグレード」への誘導は両 OS のアプリに置かず、ログイン・アカウント管理・ホストの一覧と接続は両 OS で出す。
 
-殻は `window.plyRemote` に `platform: 'ios'` を付ける（`HostViewController.swift` の `remoteScript()` が `info` に入れる）。`web/remote-badge.mjs` の `inIosShell()` がその印を読んで、上の入口を出さない。Android は印を付けないので今までどおり。
+- **Plus へのログイン・ホストの一覧からの Plus の行・ホストの窓**: Android と同じ。Plus のホストは QR 無しで一覧に並び、初回に開いても確認コードやホスト側の承認は要らない（決定 1 のアカウントの台帳）。自分の中継で追加したホストと `hostId` ごとに 1 行にまとめ、経路は `HostRoute` の規則（remote.md §8.2）
+- **ホストの窓の中**: PC が Plus にログインしているとホストの画面に Plus のまとまりが並ぶが、モバイルの殻（`shell: 'mobile'`。`web/remote-badge.mjs` の `inMobileShell()`）の中では購入・支払い・アップグレードへの誘導を出さない（Android でも同じ）
+- **置かないもの**: 購入・支払い・プランの案内・Web の購入画面へのリンク・「アップグレード」の入口。アカウントの管理（プロフィールのページへ）は残し、アカウントの削除はそのページから行う（Apple 5.1.1(v)）
+- **通知**: iOS は通知の対象外（ADR 0086）なので、通知の線・通知からの `pleiad://open`・通知の入口は Android だけ。Plus の回線と通知の回線を分ける Android の取り決めのうち、通知の側は iOS に無い
 
 Windows で確かめられるのは下の `swift test` と `node tests/run.mjs ios-shell`・`mobile-shell`・`mobile-web`（殻と JS の取り決め・画面の分岐の単体試験）。Xcode の型検査・全体のビルド・実機での見え方は macOS CI と TestFlight の確認に委ねる。
 
