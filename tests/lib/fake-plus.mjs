@@ -78,7 +78,7 @@ export async function startFakePlus({ relayUrl = 'wss://relay.example.invalid' }
   const state = {
     state: 'on',
     visibility: 'public',     // 'optin' にすると端末の印（pleiad://plus/enable）が無い限り入口が隠れる
-    minClient: { desktop: '0.0.0', android: '0.0.0' },
+    minClient: { desktop: '0.0.0', android: '0.0.0', ios: '0.0.0' },
     nextLogin: null,          // { uid, email } | { error: 'access_denied' }
     accounts: {},             // uid -> account の欄
     refreshError: null,       // 'TOKEN_EXPIRED' など
