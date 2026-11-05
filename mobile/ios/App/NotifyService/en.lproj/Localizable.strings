@@ -1,0 +1,8 @@
+/* Notification extension texts (same wording as Android's strings.xml). The title is the conversation name. */
+"notify_untitled" = "Pleiad conversation";
+"notify_approval" = "◆ Waiting for approval";
+"notify_question" = "◆ A question for you";
+"notify_failed" = "✕ Work failed";
+"notify_schedule_missed" = "A scheduled message was not sent because its time passed. Tap to check";
+"notify_done" = "Work finished";
+"notify_device_body" = "Device \"%@\" is waiting to be allowed";

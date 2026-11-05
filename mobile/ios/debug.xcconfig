@@ -1,1 +1,2 @@
+#include "pleiad.xcconfig"
 CAPACITOR_DEBUG = true

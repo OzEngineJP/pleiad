@@ -1,0 +1,8 @@
+/* 通知拡張の文（Android の strings.xml と同じ言い方）。題は会話名、本文が「何があったか」。 */
+"notify_untitled" = "Pleiad の会話";
+"notify_approval" = "◆ 承認を待っています";
+"notify_question" = "◆ 質問があります";
+"notify_failed" = "✕ 作業が失敗しました";
+"notify_schedule_missed" = "送信予定の時刻を過ぎたので送っていません。押して確認";
+"notify_done" = "作業が完了しました";
+"notify_device_body" = "端末「%@」が追加の許可を待っています";

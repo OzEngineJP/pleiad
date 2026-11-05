@@ -1,0 +1,10 @@
+// 署名と Bundle ID の既定値（docs/ios.md「TestFlight への自動の配布」）。
+// ローカル（Xcode の自動署名）ではこの値が使われる。TestFlight の CI（mobile/scripts/ios-testflight.sh）は
+// プロファイルから読んだ値を xcodebuild のコマンドラインで上書きする —— 全ターゲットに同じ上書きは
+// 掛けられないので、ターゲットごとに別の変数を持つ。
+PLEIAD_APP_BUNDLE = dev.pleiad.app
+// 通知拡張（Notification Service Extension）。本体の末尾 + .notify（ADR 0086 iOS）
+PLEIAD_NSE_BUNDLE = dev.pleiad.app.notify
+// プロファイルの名前（PROVISIONING_PROFILE_SPECIFIER）。空 = 自動署名に任せる
+PLEIAD_APP_PROFILE =
+PLEIAD_NSE_PROFILE =

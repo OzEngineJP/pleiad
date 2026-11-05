@@ -33,13 +33,36 @@ B17400000000000000000301 = {isa = PBXBuildFile; fileRef = A174000000000000000003
 B17400000000000000000302 = {isa = PBXBuildFile; fileRef = A17400000000000000000302; };
 B17400000000000000000303 = {isa = PBXBuildFile; productRef = C17400000000000000000100; };
 B17400000000000000000304 = {isa = PBXBuildFile; fileRef = A17400000000000000000304; };
+		B17400000000000000000400 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000400 /* NotificationService.swift */; };
+		B17400000000000000000401 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000403 /* Localizable.strings */; };
+		B17400000000000000000402 /* PleiadRemote in Frameworks */ = {isa = PBXBuildFile; productRef = C17400000000000000000100 /* PleiadRemote */; };
+		B17400000000000000000403 /* NotifyService.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A17400000000000000000407 /* NotifyService.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B17400000000000000000404 /* NotifyControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000408 /* NotifyControl.swift */; };
+		B17400000000000000000405 /* PushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000409 /* PushRegistrar.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 E17400000000000000000307 = {isa = PBXContainerItemProxy; containerPortal = 504EC2FC1FED79650016851F; proxyType = 1; remoteGlobalIDString = 504EC3031FED79650016851F; remoteInfo = App; };
+		E17400000000000000000407 = {isa = PBXContainerItemProxy; containerPortal = 504EC2FC1FED79650016851F; proxyType = 1; remoteGlobalIDString = E17400000000000000000400; remoteInfo = NotifyService; };
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		E17400000000000000000409 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B17400000000000000000403 /* NotifyService.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXTargetDependency section */
 E17400000000000000000306 = {isa = PBXTargetDependency; target = 504EC3031FED79650016851F; targetProxy = E17400000000000000000307; };
+		E17400000000000000000408 = {isa = PBXTargetDependency; target = E17400000000000000000400; targetProxy = E17400000000000000000407; };
 /* End PBXTargetDependency section */
 /* Begin PBXFileReference section */
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
@@ -70,6 +93,16 @@ A17400000000000000000301 = {isa = PBXFileReference; lastKnownFileType = sourceco
 A17400000000000000000302 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../remote-core/Tests/PleiadRemoteTests/ShellTests.swift"; sourceTree = SOURCE_ROOT; };
 A17400000000000000000304 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = App/PrivacyInfo.xcprivacy; sourceTree = SOURCE_ROOT; };
 A17400000000000000000305 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = AppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A17400000000000000000400 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		A17400000000000000000401 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A17400000000000000000402 /* NotifyService.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NotifyService.entitlements; sourceTree = "<group>"; };
+		A17400000000000000000404 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		A17400000000000000000405 /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/Localizable.strings; sourceTree = "<group>"; };
+		A17400000000000000000406 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		A17400000000000000000407 /* NotifyService.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = NotifyService.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A17400000000000000000408 /* NotifyControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotifyControl.swift; sourceTree = "<group>"; };
+		A17400000000000000000409 /* PushRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistrar.swift; sourceTree = "<group>"; };
+		A1740000000000000000040A /* pleiad.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = pleiad.xcconfig; path = ../pleiad.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -83,6 +116,7 @@ A17400000000000000000305 = {isa = PBXFileReference; explicitFileType = wrapper.c
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 E17400000000000000000302 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B17400000000000000000303,); runOnlyForDeploymentPostprocessing = 0; };
+		E17400000000000000000402 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (B17400000000000000000402,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -90,7 +124,9 @@ E17400000000000000000302 = {isa = PBXFrameworksBuildPhase; buildActionMask = 214
 			isa = PBXGroup;
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
+				A1740000000000000000040A /* pleiad.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				E17400000000000000000410 /* NotifyService */,
 A17400000000000000000301, A17400000000000000000302, A17400000000000000000304,
 				504EC3051FED79650016851F /* Products */,
 			);
@@ -101,6 +137,7 @@ A17400000000000000000301, A17400000000000000000302, A17400000000000000000304,
 			children = (
 				504EC3041FED79650016851F /* App.app */,
 A17400000000000000000305,
+				A17400000000000000000407 /* NotifyService.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -123,14 +160,28 @@ A17400000000000000000305,
 				A1740000000000000000000B /* PleiadPlusPlugin.swift */,
 				A1740000000000000000000A /* PlusManager.swift */,
 				A17400000000000000000009 /* PlusStore.swift */,
+				A17400000000000000000408 /* NotifyControl.swift */,
+				A17400000000000000000409 /* PushRegistrar.swift */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
 				504EC3131FED79650016851F /* Info.plist */,
 				A17400000000000000000200 /* InfoPlist.strings */,
+				A17400000000000000000406 /* App.entitlements */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		E17400000000000000000410 /* NotifyService */ = {
+			isa = PBXGroup;
+			children = (
+				A17400000000000000000400 /* NotificationService.swift */,
+				A17400000000000000000401 /* Info.plist */,
+				A17400000000000000000402 /* NotifyService.entitlements */,
+				A17400000000000000000403 /* Localizable.strings */,
+			);
+			path = NotifyService;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -143,10 +194,12 @@ A17400000000000000000305,
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				E17400000000000000000409 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				E17400000000000000000408 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -158,6 +211,26 @@ A17400000000000000000305,
 			productType = "com.apple.product-type.application";
 		};
 E17400000000000000000300 /* AppTests */ = {isa = PBXNativeTarget; buildConfigurationList = E17400000000000000000303; buildPhases = (E17400000000000000000301, E17400000000000000000302,); buildRules = (); dependencies = (E17400000000000000000306,); name = AppTests; productName = AppTests; productReference = A17400000000000000000305; productType = "com.apple.product-type.bundle.unit-test"; packageProductDependencies = (C17400000000000000000100,); };
+		E17400000000000000000400 /* NotifyService */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E17400000000000000000404 /* Build configuration list for PBXNativeTarget "NotifyService" */;
+			buildPhases = (
+				E17400000000000000000401 /* Sources */,
+				E17400000000000000000402 /* Frameworks */,
+				E17400000000000000000403 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NotifyService;
+			packageProductDependencies = (
+				C17400000000000000000100 /* PleiadRemote */,
+			);
+			productName = NotifyService;
+			productReference = A17400000000000000000407 /* NotifyService.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -170,6 +243,10 @@ E17400000000000000000300 /* AppTests */ = {isa = PBXNativeTarget; buildConfigura
 					504EC3031FED79650016851F = {
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1100;
+						ProvisioningStyle = Automatic;
+					};
+					E17400000000000000000400 = {
+						CreatedOnToolsVersion = 16.0;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -193,6 +270,7 @@ E17400000000000000000300 /* AppTests */ = {isa = PBXNativeTarget; buildConfigura
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				E17400000000000000000400 /* NotifyService */,
 E17400000000000000000300 /* AppTests */,
 			);
 		};
@@ -214,6 +292,7 @@ B17400000000000000000304 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E17400000000000000000403 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (B17400000000000000000401,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -233,11 +312,14 @@ B17400000000000000000304 /* PrivacyInfo.xcprivacy in Resources */,
 				B1740000000000000000000B /* PleiadPlusPlugin.swift in Sources */,
 				B1740000000000000000000A /* PlusManager.swift in Sources */,
 				B17400000000000000000009 /* PlusStore.swift in Sources */,
+				B17400000000000000000404 /* NotifyControl.swift in Sources */,
+				B17400000000000000000405 /* PushRegistrar.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B17400000000000000000301, B17400000000000000000302,); runOnlyForDeploymentPostprocessing = 0; };
+		E17400000000000000000401 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B17400000000000000000400,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXVariantGroup section */
@@ -250,6 +332,7 @@ E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 			sourceTree = "<group>";
 		};
 		A17400000000000000000200 = {isa = PBXVariantGroup; children = (A17400000000000000000201, A17400000000000000000202,); name = InfoPlist.strings; sourceTree = "<group>"; };
+		A17400000000000000000403 = {isa = PBXVariantGroup; children = (A17400000000000000000404, A17400000000000000000405,); name = Localizable.strings; sourceTree = "<group>"; };
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
@@ -313,6 +396,7 @@ E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 		};
 		504EC3151FED79650016851F /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A1740000000000000000040A /* pleiad.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_NONNULL = YES;
@@ -366,7 +450,9 @@ E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = App/Info.plist;
@@ -376,8 +462,9 @@ E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.pleiad.app;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLEIAD_APP_BUNDLE)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(PLEIAD_APP_PROFILE)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -387,7 +474,9 @@ E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 		504EC3181FED79650016851F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = App/Info.plist;
@@ -397,8 +486,9 @@ E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.pleiad.app;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLEIAD_APP_BUNDLE)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(PLEIAD_APP_PROFILE)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -407,6 +497,56 @@ E17400000000000000000301 = {isa = PBXSourcesBuildPhase; buildActionMask = 214748
 		};
 E17400000000000000000304 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/App"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = dev.pleiad.app.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",); }; name = Debug; };
 E17400000000000000000305 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/App"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; PRODUCT_BUNDLE_IDENTIFIER = dev.pleiad.app.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGN_STYLE = Automatic; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",); }; name = Release; };
+		E17400000000000000000405 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotifyService/NotifyService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NotifyService/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLEIAD_NSE_BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(PLEIAD_NSE_PROFILE)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E17400000000000000000406 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NotifyService/NotifyService.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NotifyService/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(PLEIAD_NSE_BUNDLE)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "$(PLEIAD_NSE_PROFILE)";
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -429,6 +569,7 @@ E17400000000000000000305 = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_
 			defaultConfigurationName = Release;
 		};
 E17400000000000000000303 = {isa = XCConfigurationList; buildConfigurations = (E17400000000000000000304, E17400000000000000000305,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		E17400000000000000000404 = {isa = XCConfigurationList; buildConfigurations = (E17400000000000000000405, E17400000000000000000406,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
