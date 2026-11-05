@@ -533,4 +533,51 @@ export default async function (t) {
       await relay.close();
     }
   }
+
+  // ── 出来事: notify・device-revoke（§5.7 の差し込みへ届ける。APNs などの外の連携が使う）──
+  {
+    const events = [];
+    const { relay, port } = await startRelay({ authz: { event(e) { events.push(e); } } });
+    const blob = (n = 'a') => Buffer.from(`${n}`.padEnd(40, 'x')).toString('base64url');
+    try {
+      const hostId = newHostId();
+      const tk = newToken();
+      const ctl = await host(port, hostId, [{ id: 'phone', tokenHash: tk.hash }]);
+
+      // 線が無いときに溜めた分: online: false。ttlMs の無いものは中継の既定
+      ctl.send({ type: 'notify', deviceId: 'phone', blob: blob('one') });
+      await sleep(60);
+      const ev1 = events.find((e) => e.type === 'notify');
+      t.ok('出来事: 通知を積むと { hostId, deviceId, blob, ttlMs, online:false } が届く',
+        ev1?.hostId === hostId && ev1.deviceId === 'phone' && ev1.blob === blob('one')
+        && ev1.ttlMs === 5 * 60_000 && ev1.online === false, JSON.stringify(events));
+
+      // つながっている線へ流した分: online: true。ホストの ttlMs はそのまま見える
+      const line = client(port, '/v1/device/notify', { authorization: `Bearer ${tk.token}`, 'x-pleiad-host': hostId, 'x-pleiad-device': 'phone', 'x-forwarded-for': newIp() });
+      await line.opened;
+      await line.json();   // 溜めた分の送り直し
+      ctl.send({ type: 'notify', deviceId: 'phone', blob: blob('two'), ttlMs: 30_000 });
+      await line.json();
+      const ev2 = events.filter((e) => e.type === 'notify').at(-1);
+      t.ok('出来事: 線へ流した通知は online: true で ttlMs はホストの指定',
+        ev2?.hostId === hostId && ev2.deviceId === 'phone' && ev2.blob === blob('two') && ev2.ttlMs === 30_000 && ev2.online === true);
+
+      // 載せなかった分（表に無い端末・形の違うもの）は出来事を出さない
+      const before = events.length;
+      ctl.send({ type: 'notify', deviceId: 'ghost', blob: blob('g') });
+      ctl.send({ type: 'notify', deviceId: 'phone', blob: 'not base64url!' });
+      await sleep(80);
+      t.ok('出来事: 載せなかった通知は出ない', events.length === before, JSON.stringify(events));
+
+      ctl.send({ type: 'revoke', id: 'phone' });
+      await sleep(60);
+      const rv = events.find((e) => e.type === 'device-revoke');
+      t.ok('出来事: revoke で { type:device-revoke, hostId, deviceId } が届く',
+        rv?.hostId === hostId && rv.deviceId === 'phone', JSON.stringify(events));
+      t.ok('出来事: 取り消された端末の線は 4401', (await line.closedWithin())?.code === CLOSE.UNAUTHORIZED);
+      closeAll(ctl);
+    } finally {
+      await relay.close();
+    }
+  }
 }
