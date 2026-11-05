@@ -371,6 +371,7 @@ CMD ["node", "server.mjs"]
 - 線は電池のために軽くする: 中継の ping は 5 分ごと（会話の線は 30 秒）、端末は OkHttp の ping を 4 分ごと。切れたら端末は 5 秒から 5 分まで延ばしながら張り直す
 - `sync`・`revoke` で表から消えた端末の線は 4401 で切り、溜めた分も捨てる
 - 互換: 古い中継には `/v1/device/notify` が無い（404）。端末は張り直しを延ばしながら続け、会話の線には影響しない。古い中継は知らない制御メッセージ `notify` を無視する
+- iOS: 背面で線を保てないので、通知の線は張らない。Pleiad Plus の経路の組では、ホストが送った `notify` の `blob` を Plus の api がそのまま APNs へ運び（カスタム領域 `p: { h, d, b }`）、端末の通知拡張が開く（§11-5、[ADR 0288](adr/0288-ios-notify-apns.md)）。自分の中継だけの組は APNs を使わない
 
 ### 5.7 認可の差し込み（authz）
 
@@ -405,7 +406,7 @@ const authz = {
 - `admit: true` は `/v1/device` で `deviceId` も `pairing` も無いときだけ意味を持つ（ほかの経路・ほかの場合は無視する）。そのとき中継は端末のトークンを見ずに接続を始め、ホストの制御用の接続へ `{"type":"incoming","conn":"…","admit":true}` を送る（相手を確かめるのはホスト。Noise のハンドシェイクの中）。1 ホストにつき 1 分 10 回まで（`admitPerMinute`。超えたら `4429 'admit rate'`）。1 ホストあたりの接続数の上限にも数える。ホストが居ない・`sync` の前なら今と同じ 4404
 - `tags`（文字列の配列。1 つ 64 字・16 個まで。外れたものは捨てる）を接続に覚えさせる（制御用・データ用・端末・通知の線のどれも）。`/v1/host/accept` のデータ用の接続は、差し込みが返した `tags` に、対応する制御用の接続の `tags` を足す（重ねない）
 - `handle` = `{ closeTag(tag, code, reason) → 閉じた数, stats() }`。`closeTag` はその tag を持つ接続を全部閉じる（端末の接続は両側を閉じる）。`code` は 4000〜4999 か 1000/1001/1008/1013 のどれか（外れたら投げる）
-- `event(e)`: `{ type: 'host-open' | 'host-close', hostId, tags }`、`{ type: 'device-open' | 'device-close', hostId, deviceId, tags, admit }` を待たずに呼ぶ。置き換わった古い制御用の接続の close では呼ばない。例外はつかんでログに出すだけ
+- `event(e)`: `{ type: 'host-open' | 'host-close', hostId, tags }`、`{ type: 'device-open' | 'device-close', hostId, deviceId, tags, admit }`、`{ type: 'device-revoke', hostId, deviceId }`（`revoke`・`sync` で表から消えた端末）、`{ type: 'notify', hostId, deviceId, blob, ttlMs, online }`（ホストから通知の塊が届いた。`blob` は暗号文そのまま。`online` はそのとき端末がつながっていたか）を待たずに呼ぶ。置き換わった古い制御用の接続の close では呼ばない。例外はつかんでログに出すだけ
 - `RELAY_AUTHZ_MODULE=<絶対パス>` があれば、`node server.mjs` の起動口で `import()` し、そのモジュールの `createAuthz({ log, env: process.env })` の返り値を差し込みにする。読めない・`createAuthz` が無い・投げたときは理由を標準エラーに出して起動しない（exit 1）。`createRelay` を import して使う側はこの環境変数を見ない
 - 差し込みがあっても `RELAY_ENROLL_SECRET` は必須のまま（`enrollOk` を見て通すかは差し込みが決める）
 
@@ -636,7 +637,7 @@ iOS も A 案にした（2026-10-06、[ADR 0144](adr/0144-ios-remote-core-in-swi
 
 実装（iOS の第 1 段階、2026-10-06。[ADR 0144](adr/0144-ios-remote-core-in-swift.md)）:
 
-- **端末側を Swift に移した**（`mobile/ios/remote-core/`。Swift Package `PleiadRemote`、iOS 16・macOS 13 以上）。Android の `remote-core` と 1 対 1: `X25519.swift`・`Noise.swift`・`Frames.swift`・`Channel.swift`・`Loop.swift`（直列の DispatchQueue。Kotlin の `Loop` の代わり）・`RelaySocket.swift`・`Pairing.swift`・`DeviceLink.swift`・`DeviceProxy.swift` + `WebSocketFrames.swift`・`Socket.swift`・`Policies.swift`（`LinkPolicy`・`ResumePolicy`）・`RemoteDevice.swift`。通知（`Notify*`）は移さない（iOS は通知の対象外。ADR 0086）ので、ホストの `ready` の `notify` は見ず、`notifyRegister` も送らない
+- **端末側を Swift に移した**（`mobile/ios/remote-core/`。Swift Package `PleiadRemote`、iOS 16・macOS 13 以上）。Android の `remote-core` と 1 対 1: `X25519.swift`・`Noise.swift`・`Frames.swift`・`Channel.swift`・`Loop.swift`（直列の DispatchQueue。Kotlin の `Loop` の代わり）・`RelaySocket.swift`・`Pairing.swift`・`DeviceLink.swift`・`DeviceProxy.swift` + `WebSocketFrames.swift`・`Socket.swift`・`Policies.swift`（`LinkPolicy`・`ResumePolicy`）・`RemoteDevice.swift`・通知の `Notify*`（`NotifyCrypto`・`NotifyModel`・`NotifyPlanner`・`NotifyRegistrar`。2026-11 に移した。iOS の届け方は APNs。[ADR 0288](adr/0288-ios-notify-apns.md)）
 - Android と違うところ:
   - 待ち受けは BSD ソケット（Windows は Winsock）で `127.0.0.1` だけ。POSIX では `SO_REUSEADDR` を付け、前面に戻ったときに TIME_WAIT が残っていても同じポートで待ち受け直せるようにする（Windows では付けない。ほかのプロセスが同じポートを取れてしまうため）
   - 中継への線は、Apple の上では `URLSessionWebSocketTask`（Cookie・キャッシュなし、転送は断る）。Apple 以外では `ws://` の IPv4 のループバックだけに張れる小さな RFC 6455 のクライアント（手元の試験のためだけ。書き込みが同期なので `bufferedAmount` は常に 0）
@@ -746,7 +747,7 @@ Google Play の審査員に見せるホストは、全権限の端末を前提�
 2. ~~**QR を作る部品**~~ 決定（2026-09-23）: `web/vendor/qrcode-generator.mjs`（MIT）を同梱（§6.1）。読み取りはモバイルのネイティブ（Capacitor のバーコードのプラグイン）
 3. ~~**Android の最低版**~~ 決定（2026-09-23）: **API 33（Android 13）以上**。X25519 を標準の `XDH` だけで済ませるため（`XDH` は API 33 から。31–32 のために自前の X25519 を持つ案は採らない。Tink も足さない）
 4. **WKWebView と `127.0.0.1` の secure context**: 実機で確かめる（iOS の殻を作る第 2 段階で）。だめなら §8.3 の代わりの UUID、それでもだめなら B 案
-5. ~~**通知**~~ 決定（2026-10-03）: FCM・APNs は使わず、Android のアプリが前面サービス（`remoteMessaging`）で中継へ軽い通知の線（§5.6）を保つ（[ADR 0086](adr/0086-notifications-through-relay.md)）。
+5. ~~**通知**~~ 決定（2026-10-03・iOS は 2026-11）: Android は FCM を使わず、アプリが前面サービス（`remoteMessaging`）で中継へ軽い通知の線（§5.6）を保つ（[ADR 0086](adr/0086-notifications-through-relay.md)）。iOS は背面で線を保てないので、Pleiad Plus の経路の組にだけ APNs で届ける（[ADR 0288](adr/0288-ios-notify-apns.md)。自分の中継だけの組は対象外）
    - 鍵: 端末が 32 バイトの通知鍵を作り、ペアリング済みの E2E の線の中で `notifyRegister { key, settings }` を送ってホストに登録する（設定を変えるたび・6 時間ごとにも登録し直す）。ホストは `ready` の `notify: 1` で対応を示し、無いホスト（古い版）には登録しない。鍵は秘密の置き場の `notify:<deviceId>`、設定・止めたか・最後に送った時刻は `devices.json` の端末の `notify`
    - 暗号: `blob = base64url(nonce 12 || AES-256-GCM(平文 512 バイト) || tag 16)`。平文は `u16(JSON の長さ) || JSON || 0 埋め` で、種類によらず同じ大きさ。AAD は `"pleiad-notify/1\n" + hostId + "\n" + deviceId`。JSON は `{ v: 1, seq, at, kind, hostId, host, session, title, id?, cancel? }`（`kind` は `approval`・`question`・`failed`・`done`・`scheduleMissed`（送信予定の時刻に Pleiad が動いていなかったので送らずに確かめを待っている）・`cancel`。`cancel` は `approval`（決着した）か `seen`（どこかで見た））。会話名とホスト名は収まるまで詰める。Node（`core/notify/crypto.mjs`）と Kotlin（`NotifyCrypto.kt`）は `tests/remote/notify-vectors.json` で突き合わせる
    - 判定（ホスト）: 種類・端末の設定・見ている会話（各画面の `presence`）・2 分より古い完了・30 秒未満のターンの完了で絞る（`docs/design.md`「通知」）。束ねる・上書きする・文面は端末が決める

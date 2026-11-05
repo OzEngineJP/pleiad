@@ -712,7 +712,20 @@ K は手元の `plus:syncAccountKey`（`{ keyId, key }`）に置く。保管は 
 - 認証のサーバー（`/v1/auth/authorize`・`/v1/auth/token`・アカウントと台帳）のコードは公開のリポジトリに
   置かない（[ADR 0263](adr/0263-accounts-and-hosted-relay.md) 決定 4）。公開のリポジトリの試験用の偽 api
   （`tests/lib/fake-plus.mjs`）は `client=ios`・`redirect_uri=pleiad://auth`・`minClient.ios` を受ける
-- 通知は iOS の対象外（[ADR 0086](adr/0086-notifications-through-relay.md)）。`/v1/device/notify` の線と
-  通知からの `pleiad://open` は Android だけ
+- iOS の通知は APNs で届く（[ADR 0288](adr/0288-ios-notify-apns.md)）。Plus の経路の組だけが対象で、
+  `/v1/device/notify` の線は Android だけ。届け先の登録と解除は `PUT`/`DELETE /v1/push/apns`（下の節）、
+  中身はホストの暗号文 `blob` を api がそのまま APNs へ運ぶので api・中継・Apple は読めない。
+  タップは `pleiad://open?h=<hostId>&s=<会話>` で開く
+
+### iOS の通知の届け先（`PUT`/`DELETE /v1/push/apns`）
+
+- 登録: `PUT /v1/push/apns`（`Authorization: Bearer <ID トークン>`。`X-Pleiad-Client`・`X-Pleiad-Admission` は「api を呼ぶ手」と同じ）
+  に `{ hostId, deviceId, token, env, bundle }` を送る。`env` は `production`（配布）か `sandbox`（開発）、
+  `bundle` はアプリの bundle ID。送るのは、ホストへの通知鍵の登録（E2E の `notifyRegister`）が
+  通ったあとで、通知の設定が入・OS の許可あり・有効な Plus の組があるときだけ
+- 解除: `DELETE /v1/push/apns` に `{ token }` を送る。通知を切・サインアウト・OS の許可の剥奪・
+  Plus の組が無くなったときに送る
+- api が運ぶ APNs のカスタム領域は `p: { h, d, b }`（`h` = hostId、`d` = deviceId、`b` = ホストの
+  `notify` の `blob` をそのまま）。`aps` には `mutable-content: 1` と汎用の文だけ。通知拡張が端末の中で開く
 
 審査の注意（ログインを入れると Sign in with Apple とアカウントの削除の道が要る）は [ios.md](ios.md) の冒頭の段落を参照。

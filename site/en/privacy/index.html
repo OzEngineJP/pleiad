@@ -42,13 +42,15 @@
 <p>The app stores, in its own storage, the list of paired hosts (host name, relay URL and identifiers), the keys and tokens used to talk to them, your notification settings, and the host you opened last. Keys and tokens are encrypted with a key in the Android Keystore. None of this is backed up, and it is deleted when you uninstall the app. Removing a host from the list deletes that host’s information.</p>
 
 <h2>4. Notifications</h2>
-<p>While notifications are on, the app keeps running with one ongoing notification so that it stays connected to the relay. The host encrypts each notification (its kind, the host name, the conversation name and the time) with a key for your device before handing it to the relay, so the relay cannot read it. Notifications never contain message text. You can turn notifications off at any time on the app’s Notifications screen.</p>
+<p>On Android, while notifications are on, the app keeps running with one ongoing notification so that it stays connected to the relay. On iOS, while notifications are on, notifications for hosts connected through Pleiad Plus (the official relay) are delivered via Apple's push notification service (APNs). iOS push notifications are not used for hosts connected only through your own relay server.</p>
+<p>The host encrypts each notification (its kind, the host name, the conversation name and the time) with a key for your device before handing it off, so the relay, the Pleiad Plus operator and Apple cannot read it. Notifications never contain message text. You can turn notifications off at any time on the app’s Notifications screen.</p>
+<p>When you enable notifications on iOS, the Pleiad Plus operator stores your APNs device token linked to your account, host and device identifiers so notifications can be delivered. The registration is removed when you turn notifications off, sign out, revoke the system permission, or disconnect from the host.</p>
 
 <h2>5. Permissions</h2>
 <ul>
   <li>Camera: used only to scan the pairing QR code.</li>
   <li>Notifications: used to tell you about approvals, failures and finished work. The app asks when you turn notifications on.</li>
-  <li>Foreground service and start at boot: used, while notifications are on, to stay connected to the relay and to reconnect after a restart or an app update.</li>
+  <li>Foreground service and start at boot (Android): used, while notifications are on, to stay connected to the relay and to reconnect after a restart or an app update.</li>
   <li>Internet: used to connect to the relay.</li>
 </ul>
 

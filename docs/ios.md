@@ -1,6 +1,6 @@
 # iOS の殻と TestFlight
 
-iPhone・iPad（iOS / iPadOS 16 以上）向けの Capacitor の殻は `mobile/ios/App/`。ホスト一覧は Android と同じ `mobile/www`、暗号とループバックの中継は `mobile/ios/remote-core/` を使う（[ADR 0174](adr/0174-ios-capacitor-shell.md)）。通知は対象外（ADR 0086）。公式の中継とログインを入れるときの App Review の危険（4.2.7 のリモートデスクトップのクライアント・4.8 の Sign in with Apple・5.1.1(v) のアカウントの削除）は [ADR 0263](adr/0263-accounts-and-hosted-relay.md)（提案）の「影響」。
+iPhone・iPad（iOS / iPadOS 16 以上）向けの Capacitor の殻は `mobile/ios/App/`。ホスト一覧は Android と同じ `mobile/www`、暗号とループバックの中継は `mobile/ios/remote-core/` を使う（[ADR 0174](adr/0174-ios-capacitor-shell.md)）。通知は Pleiad Plus の経路だけ APNs で届く（[ADR 0288](adr/0288-ios-notify-apns.md)。自分の中継だけの組は対象外）。公式の中継とログインを入れるときの App Review の危険（4.2.7 のリモートデスクトップのクライアント・4.8 の Sign in with Apple・5.1.1(v) のアカウントの削除）は [ADR 0263](adr/0263-accounts-and-hosted-relay.md)（提案）の「影響」。
 
 Pleiad Plus のログインと Plus のホストへの接続は Android と同じだけ入っている（`pleiad://auth` + `ASWebAuthenticationSession` + PKCE。`mobile/ios/App/App/` の `PlusStore`・`PlusManager`・`PleiadPlusPlugin`）。流れと保管の決まりは [plus.md](plus.md) の iOS の節。
 
@@ -11,7 +11,7 @@ Pleiad Plus のログインと Plus のホストへの接続は Android と同�
 - **Plus へのログイン・ホストの一覧からの Plus の行・ホストの窓**: Android と同じ。Plus のホストは QR 無しで一覧に並び、初回に開いても確認コードやホスト側の承認は要らない（決定 1 のアカウントの台帳）。自分の中継で追加したホストと `hostId` ごとに 1 行にまとめ、経路は `HostRoute` の規則（remote.md §8.2）
 - **ホストの窓の中**: PC が Plus にログインしているとホストの画面に Plus のまとまりが並ぶが、モバイルの殻（`shell: 'mobile'`。`web/remote-badge.mjs` の `inMobileShell()`）の中では購入・支払い・アップグレードへの誘導を出さない（Android でも同じ）
 - **置かないもの**: 購入・支払い・プランの案内・Web の購入画面へのリンク・「アップグレード」の入口。アカウントの管理（プロフィールのページへ）は残し、アカウントの削除はそのページから行う（Apple 5.1.1(v)）
-- **通知**: iOS は通知の対象外（ADR 0086）なので、通知の線・通知からの `pleiad://open`・通知の入口は Android だけ。Plus の回線と通知の回線を分ける Android の取り決めのうち、通知の側は iOS に無い
+- **通知**: iOS では APNs が Pleiad Plus の経路の組だけに届く（ADR 0288）。画面・ブリッジ（`plyRemote.notify`）・設定は Android と同じで、`notifyState` の `plusOnly`/`targets` が Plus 限定であることを画面に伝える。自分の中継だけの組は通知の対象外。通知拡張（`NotifyService`、`<本体>.notify`）が共有の Keychain グループの通知鍵で端末の中で開き、タップは `pleiad://open?h=&s=` で会話へ。許可はインストール時に尋ねず、入れる操作のときだけ尋ねる
 
 Windows で確かめられるのは下の `swift test` と `node tests/run.mjs ios-shell`・`mobile-shell`・`mobile-web`（殻と JS の取り決め・画面の分岐の単体試験）。Xcode の型検査・全体のビルド・実機での見え方は macOS CI と TestFlight の確認に委ねる。
 
@@ -52,8 +52,10 @@ node tests/run.mjs mobile-web
 
 `main` に iOS に効く変更が入ると、`.github/workflows/ios-testflight.yml`（Actions の **iOS TestFlight**）が署名した archive を TestFlight へ上げる。Actions の画面から手動でも起こせる（`main` の上だけ）。Android の Play の内部テストへの自動の配布と同じ考え方（[ADR 0258](adr/0258-mobile-store-upload-on-main.md)）。
 
-- **いつ動くか**: `main` への push のうち、`mobile/ios/**`（`App/AppTests/**`・`remote-core/Tests/**` の試験だけの変更は除く）・`mobile/www/**`・`mobile/capacitor.config.json`・`mobile/package.json`・`mobile/package-lock.json`・上げる道具（`mobile/scripts/ios-testflight.sh`・`mobile/scripts/asc-build.mjs`・ワークフロー自身）に変更があるとき。PR からは上げない。
+- **いつ動くか**: `main` への push のうち、`mobile/ios/**`（`App/AppTests/**`・`remote-core/Tests/**` の試験だけの変更は除く）・`mobile/www/**`・`mobile/capacitor.config.json`・`mobile/package.json`・`mobile/package-lock.json`・上げる道具（`mobile/scripts/ios-testflight.sh`・`mobile/scripts/asc-build.mjs`・`mobile/scripts/asc-provision.mjs`・ワークフロー自身）に変更があるとき。PR からは上げない。
 - **流れ**: `ios-app.yml` の試験（シミュレーターのビルドと Keychain の試験。`workflow_call` で呼ぶ）→ Secrets の確かめ（足りなければ名前を出して止まる）→ 版の決定 → App Store Connect の確かめ（`asc-build.mjs`。アプリがあり、同じビルド番号がまだ無いこと）→ `npm ci`・`cap sync ios` → 署名した archive を `xcodebuild -exportArchive` で上げる（`ios-testflight.sh`）→ 「テスト内容」を書き（`asc-build.mjs --whats-new`）、上げたコミットに `ios-v<版>-<ビルド>` のタグを付けて push する。実行は 1 つずつ順に走る。
+- **署名（2 つのプロファイル）**: 本体 `dev.pleiad.app`（Push 通知の capability・`aps-environment=production`）と通知拡張 `dev.pleiad.app.notify`（共有の Keychain グループだけ）の App Store プロファイルが要る。`ios-testflight.sh` は毎回 ASC API で名前（`Pleiad <bundle>`・`Pleiad <bundle>.notify`）で取り、取れなければ Secrets（`IOS_PROVISION_PROFILE_BASE64`・`IOS_NSE_PROVISION_PROFILE_BASE64`）に戻る。本体は App Store のプロファイル（`aps-environment=production`）か確かめ、ワイルドカード・チーム違い・Bundle ID 違いで止まる。ターゲットごとの署名は `PLEIAD_APP_BUNDLE`・`PLEIAD_NSE_BUNDLE`・`PLEIAD_APP_PROFILE`・`PLEIAD_NSE_PROFILE` の変数で渡す（既定値 `mobile/ios/pleiad.xcconfig`）
+- **プロビジョニング**: App ID 2 つ・本体の Push 通知の capability・プロファイル 2 つは、Actions の **iOS provisioning**（`ios-provision.yml`、手動だけ）が `asc-provision.mjs` で冪等に整える。ASC キーの役割が足りなければ人が Developer のサイトで作る（下の「作り直すとき」）。APNs の送信用の鍵（Token の .p8）は api が持つもので、アプリ側には要らない
 - **版**: ビルド番号（`CFBundleVersion`）は Android の `versionCode` と同じ `git rev-list --count HEAD`、版（`CFBundleShortVersionString`）は `mobile/package.json` の `version`（Android の `versionName` の頭と同じ）。同じビルド番号が App Store Connect にもうあれば、ビルドせずに正常終了する（同じコミットのやり直しで二重に上げない。その場合「テスト内容」とタグも書かない）。
 - **`ios-v*` のタグ**: 上げたコミットには `ios-v<版>-<ビルド>`（例 `ios-v0.2.0-2663`）の軽いタグを付けて push する（upload ジョブにだけ `contents: write`）。次のビルドの「テスト内容」に載せる変更の基点（前に出した版の印）に使う（[ADR 0272](adr/0272-mobile-release-notes-from-tags.md)）。Android の `android-v*` やデスクトップの `v*` のタグとは別の接頭辞なので、どちらの検索にも当たらない。push に失敗してもビルド自体は上がっているので、止めずに警告だけ出す。
 - **「テスト内容」（What to Test）**: `scripts/mobile-release-notes.mjs` が、前の `ios-v*` のタグから今のコミットまでの iOS に効く変更（上の paths と同じ範囲・マージは除く）のコミットの題を並べたものを、`asc-build.mjs --whats-new` が App Store Connect の `betaBuildLocalizations`（locale `ja`、4000 文字まで）へ書く。ビルドが API に見えるまで待ってから書く。前のタグが無い・変更が無いときは書かない。書き込みに失敗（API に届かない・ビルドが見えない）しても警告だけでリリースを止めない。
@@ -68,7 +70,8 @@ Secrets は Environment `release` に置く（[ADR 0214](adr/0214-release-enviro
 | `IOS_TEAM_ID` | Developer の Team ID |
 | `IOS_DISTRIBUTION_P12_BASE64` | 秘密鍵付き Apple Distribution 証明書 `.p12` の Base64 |
 | `IOS_DISTRIBUTION_P12_PASSWORD` | `.p12` のパスワード（空にしない） |
-| `IOS_PROVISION_PROFILE_BASE64` | `dev.pleiad.app` の App Store Connect 用 `.mobileprovision` の Base64 |
+| `IOS_PROVISION_PROFILE_BASE64` | `dev.pleiad.app` の App Store Connect 用 `.mobileprovision` の Base64（任意。ASC API で取れないときの代替） |
+| `IOS_NSE_PROVISION_PROFILE_BASE64` | `dev.pleiad.app.notify` の App Store Connect 用 `.mobileprovision` の Base64（任意。同上） |
 | `ASC_KEY_ID` | API キーの Key ID |
 | `ASC_ISSUER_ID` | API キーの Issuer ID |
 | `ASC_PRIVATE_KEY_BASE64` | API キー `.p8` の Base64 |
@@ -79,9 +82,11 @@ Secrets は Environment `release` に置く（[ADR 0214](adr/0214-release-enviro
 
 1. CSR を作る: `openssl genrsa -out dist.key 2048` と `openssl req -new -key dist.key -out dist.csr -subj "/emailAddress=<メール>/CN=<名前>/C=JP"`。Apple Developer の Certificates で「Apple Distribution」を選んで CSR を上げ、`.cer` を落とす。
 2. `.p12` にする: `openssl x509 -inform DER -in dist.cer -out dist.pem` と `openssl pkcs12 -export -legacy -inkey dist.key -in dist.pem -out dist.p12`（macOS の `security import` が読める形にするため `-legacy`）。
-3. Profiles で「App Store Connect」を選び、App ID `dev.pleiad.app` と 1 の証明書でプロファイルを作って落とす。
-4. App Store Connect の「ユーザとアクセス」→「統合」→「チームキー」で App Manager のキーを作る（`.p8` は一度しか落とせない）。[API キーの管理](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/)
-5. 上の表の Secrets を入れ、手元のファイルを消す。
+3. App ID を整える: `dev.pleiad.app`（Push Notifications の capability 付き）と `dev.pleiad.app.notify`（通知拡張）。**iOS provisioning** ワークフローを回せば全部揃う（ASC キーの役割が App Manager 以上なら）。手で作るなら Identifiers で両方登録し、本体に Push Notifications を付ける。
+4. Profiles で「App Store Connect」を選び、App ID `dev.pleiad.app` と `dev.pleiad.app.notify` それぞれに 1 の証明書でプロファイルを作って落とす（名前は `Pleiad <bundle>` にすると API が見つける）。共有の Keychain グループはアクセスグループ `<prefix>.*` に含まれるので、別途の App Groups 登録は要らない。
+5. App Store Connect の「ユーザとアクセス」→「統合」→「チームキー」で App Manager のキーを作る（`.p8` は一度しか落とせない）。[API キーの管理](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/)
+6. 上の表の Secrets を入れ、手元のファイルを消す。プロファイルは API で取れるので Secrets は空でも動く（API が取れないときの代替）。
+7. APNs の送信用の鍵（`api` が持つ Token の .p8）は Pleiad Plus 側の作業で、このリポジトリには要らない。
 
 手元で同じことを確かめるときは、上の Secrets と同じ名前の環境変数に `RUNNER_TEMP`・`IOS_BUNDLE_ID`・`IOS_BUILD_NUMBER`・`IOS_MARKETING_VERSION` を足して、`mobile/` の `npm ci`・`npm run sync:ios` の後に `bash mobile/scripts/ios-testflight.sh` を流す（本当に TestFlight へ上がる。ビルド番号は CI の番号より小さいものにしない）。2026-10-22 に、この手順でビルド 2565 を上げられること（archive・署名・アップロード）と、`asc-build.mjs` が本物の App Store Connect でアプリ・ビルドの有無と鍵・Bundle ID の誤りを見分けることを確かめた。`tests/unit/ios-testflight-workflow.mjs` が、起動の条件・版の決め方（Android との突き合わせ）・Secrets の確かめ・偽の App Store Connect API への `asc-build.mjs` を確かめる。
 
