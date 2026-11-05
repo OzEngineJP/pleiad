@@ -217,6 +217,15 @@ final class PlusTicketIssuerTests: XCTestCase {
         PlusTicketIssuer(post: post, admission: { admission })
     }
 
+    func testProofMatchesTheDesktop() throws {
+        // the same inputs as core/plus/tickets.mjs proofFor and PlusAdmissionTest.kt proofMatchesTheDesktop
+        let proof = try PlusTickets.proof(privateKey: Bytes(repeating: 7, count: 32), hostId: "abcdefghijklmnopqrstuvwxyz",
+                                          nonce: PairingCodec.b64urlEncode(Bytes(repeating: 9, count: 32)),
+                                          serverPublicKey: "rxhVyV5WGzRkxs5GodeRTeYYPPsWKc7PnOH4qCUzJ2s",
+                                          purpose: PlusTickets.PURPOSE_DEVICE)
+        XCTAssertEqual("gJCNGnow_8H31LdtWtwXoh-R8oG6Vy_Y05Mji-cYVOQ", proof)
+    }
+
     func testChallenge404MeansNoTicketsUntilTheCacheExpires() throws {
         var calls = 0
         let t = issuer(post: { _, _ in calls += 1; throw PlusApiError(404, "not_found") })
@@ -301,6 +310,12 @@ final class PlusHostListTests: XCTestCase {
         XCTAssertEqual(false, row.both)
         XCTAssertNil(row.plus)
         XCTAssertEqual([record("h", "plus")], PlusHostList.gone(saved, []))
+    }
+
+    // 台帳に同じ hostId が 2 行あっても落ちず、1 行にまとまる（後の行を採る。Kotlin の associateBy と同じ）。
+    func testADuplicateLedgerRowDoesNotCrash() {
+        let rows = PlusHostList.combine([], [listed("h", online: false), listed("h", online: true)], true)
+        XCTAssertEqual(true, rows.single().online)
     }
 
     func testFailedListCanUseLastKnownPlusRowsAndUnavailableAccountHidesThem() {

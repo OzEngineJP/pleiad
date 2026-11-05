@@ -569,6 +569,10 @@ public final class DeviceLink {
             channel = ch
             hostName = h["hostName"]?.string ?? ""
             connectedAt = nowMs()
+            // connected: start the readmit / ticket / paused counts over (DeviceLink.kt)
+            readmitAttempts = 0
+            tokenFailures = 0
+            pausedAttempts = 0
             stableTimer?.cancel()
             stableTimer = loop.schedule(backoff.stableMs) { [weak self] in
                 if let self, self.channel === ch { self.attempt = 0 }

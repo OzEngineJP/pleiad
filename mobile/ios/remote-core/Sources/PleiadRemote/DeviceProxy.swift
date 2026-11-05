@@ -303,7 +303,9 @@ public final class DeviceProxy {
     }
 
     public func unavailablePage(_ state: String) -> String {
-        let revoked = state == "revoked"
+        // no automatic reload while the host refuses this device (revoked, or waiting to be allowed again), or the PC
+        // was removed from the Plus account
+        let revoked = state == "revoked" || state == "reapprove" || state == "removed"
         let title = texts.title(state)
         let body = texts.body(state)
         let hostName = creds.hostName

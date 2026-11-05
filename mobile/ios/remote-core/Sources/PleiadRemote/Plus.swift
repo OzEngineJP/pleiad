@@ -265,7 +265,11 @@ public enum PlusHttp {
         var out: (Data?, URLResponse?, Error?) = (nil, nil, nil)
         let task = URLSession.shared.dataTask(with: req) { d, r, e in out = (d, r, e); sem.signal() }
         task.resume()
-        _ = sem.wait(timeout: .now() + timeout + 5)
+        // timed out: cancel and throw without reading out (the completion handler may still be writing it)
+        if sem.wait(timeout: .now() + timeout + 5) == .timedOut {
+            task.cancel()
+            throw URLError(.timedOut)
+        }
         if let e = out.2 { throw e }
         let res = out.1 as? HTTPURLResponse
         let status = res?.statusCode ?? 0
@@ -278,8 +282,10 @@ public enum PlusHttp {
             }
             throw PlusApiError(status, code, detail)
         }
+        // Only an empty body is {}. A 200 that is not JSON (a proxy's HTML page) throws, as JSONObject(text) does on
+        // Android: read as {}, the host list would look read and empty and the Plus pairings would be forgotten.
         guard !body.isEmpty else { return .object([:]) }
-        return (try? JSON.parse(Bytes(body))) ?? .object([:])
+        return try JSON.parse(Bytes(body))
     }
 }
 
@@ -385,9 +391,12 @@ public final class PlusSession {
 
     private var idTokenValue: String?
     private var idTokenExpiresAt: Int64 = 0
-    public private(set) var account: PlusAccount?
+    private var accountValue: PlusAccount?
+    private var errorValue: String?
+    /// The last /v1/account read. Read from any thread (the screen's state and the plugin's list), written on the worker.
+    public var account: PlusAccount? { lock.lock(); defer { lock.unlock() }; return accountValue }
     /// "failed" (the login itself failed) | "unreachable" | "relogin" | null.
-    public private(set) var error: String?
+    public var error: String? { lock.lock(); defer { lock.unlock() }; return errorValue }
     /// Failed refreshes in a row; at MAX_ATTEMPTS only a UI poke (force) tries again.
     private var failures = 0
     /// A background ask does not refresh again before this time (the gap after a failure).
@@ -409,7 +418,7 @@ public final class PlusSession {
     public func onConfig(_ config: PlusConfig?) {
         guard let s = store.load(), let pid = config?.tokenProjectId, pid != s.tokenProjectId else { return }
         signOut()
-        lock.lock(); error = "relogin"; lock.unlock()
+        lock.lock(); errorValue = "relogin"; lock.unlock()
     }
 
     public func signIn(_ t: TokenBundle) {
@@ -418,7 +427,7 @@ public final class PlusSession {
         lock.lock()
         idTokenValue = t.idToken
         idTokenExpiresAt = t.expiresAtMs
-        error = nil
+        errorValue = nil
         failures = 0
         retryAt = 0
         lock.unlock()
@@ -429,7 +438,7 @@ public final class PlusSession {
         lock.lock()
         idTokenValue = nil
         idTokenExpiresAt = 0
-        account = nil
+        accountValue = nil
         lock.unlock()
     }
 
@@ -459,7 +468,7 @@ public final class PlusSession {
                 next.refreshToken = rt
                 store.save(next)
             }
-            error = nil
+            errorValue = nil
             failures = 0
             retryAt = 0
             return
@@ -469,15 +478,15 @@ public final class PlusSession {
                 store.clear()
                 idTokenValue = nil
                 idTokenExpiresAt = 0
-                account = nil
-                error = nil   // signed out, not an error banner
+                accountValue = nil
+                errorValue = nil   // signed out, not an error banner
                 return
             }
             log("refresh: \(e)")
         } catch {
             log("refresh: \(type(of: error))")
         }
-        error = "unreachable"
+        errorValue = "unreachable"
         failures = min(failures + 1, PlusSession.MAX_ATTEMPTS)
         retryAt = nowMs() + PlusSession.RETRY_DELAY_MS
     }
@@ -487,15 +496,15 @@ public final class PlusSession {
     public func fetchAccount(_ apiBase: String, refreshUrl: String?, clientTag: String) {
         lock.lock(); defer { lock.unlock() }
         var t = idToken(refreshUrl)
-        if t == nil { account = nil; return }
+        if t == nil { accountValue = nil; return }
         do {
-            account = try PlusApi.fetchAccount(apiBase, idToken: t!, clientTag: clientTag)
+            accountValue = try PlusApi.fetchAccount(apiBase, idToken: t!, clientTag: clientTag)
         } catch let e as PlusApiError {
             if e.status == 401 {
                 t = idTokenUnlocked(refreshUrl)
                 guard let token = t else { signOutUnlocked(); return }
                 do {
-                    account = try PlusApi.fetchAccount(apiBase, idToken: token, clientTag: clientTag)
+                    accountValue = try PlusApi.fetchAccount(apiBase, idToken: token, clientTag: clientTag)
                     return
                 } catch let e2 as PlusApiError {
                     if e2.status == 401 { signOutUnlocked(); return }
@@ -503,14 +512,14 @@ public final class PlusSession {
                 } catch {
                     log("account: \(type(of: error))")
                 }
-                error = "unreachable"
+                errorValue = "unreachable"
                 return
             }
             log("account: \(e)")
-            error = "unreachable"
+            errorValue = "unreachable"
         } catch {
             log("account: \(type(of: error))")
-            self.error = "unreachable"
+            self.errorValue = "unreachable"
         }
     }
 
@@ -526,7 +535,7 @@ public final class PlusSession {
         store.clear()
         idTokenValue = nil
         idTokenExpiresAt = 0
-        account = nil
+        accountValue = nil
     }
 }
 
@@ -587,7 +596,13 @@ public final class PlusTicketIssuer {
     private let post: (String, JSON) throws -> JSON
     private let admission: () -> Int?
     private let nowMs: () -> Int64
-    private var unsupportedUntil: Int64 = 0
+    // links of several hosts ask from their own queues
+    private let lock = NSLock()
+    private var unsupportedUntilValue: Int64 = 0
+    private var unsupportedUntil: Int64 {
+        get { lock.lock(); defer { lock.unlock() }; return unsupportedUntilValue }
+        set { lock.lock(); unsupportedUntilValue = newValue; lock.unlock() }
+    }
 
     public init(post: @escaping (String, JSON) throws -> JSON, admission: @escaping () -> Int?,
                 nowMs: @escaping () -> Int64 = { Int64((Date().timeIntervalSince1970 * 1000).rounded()) }) {
@@ -655,7 +670,8 @@ public enum PlusHostList {
         let dropped: Set<HostRecord> = (available && ledgerRead) ? Set(gone(saved, listed)) : []
         let kept = saved.filter { !dropped.contains($0) }
         let savedById = Dictionary(grouping: kept, by: \.hostId)
-        let listedById = available ? Dictionary(uniqueKeysWithValues: listed.map { ($0.hostId, $0) }) : [:]
+        // a duplicate hostId keeps the last row, like associateBy (uniqueKeysWithValues traps on duplicates)
+        let listedById = available ? Dictionary(listed.map { ($0.hostId, $0) }, uniquingKeysWith: { _, b in b }) : [:]
         var ids = [String]()
         var seen = Set<String>()
         for h in kept where seen.insert(h.hostId).inserted { ids.append(h.hostId) }

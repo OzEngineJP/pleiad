@@ -504,6 +504,8 @@ public final class RemoteDevice {
         if try store.hosts().allSatisfy({ $0.hostId != hostId }) {
             close(hostId)
             try? FileManager.default.removeItem(at: staticCacheFile(hostId))
+        } else if proxy(hostId)?.creds.via == via {
+            close(hostId)   // its credentials are gone; the other route stays paired
         }
         return removed
     }
@@ -523,7 +525,7 @@ public final class RemoteDevice {
             do {
                 if try px.resumeForeground() {
                     moved.append(hostId)
-                    try store.updateHost(hostId) { $0.port = px.port }
+                    try store.updateHost(hostId, via: px.creds.via) { $0.port = px.port }
                 }
             } catch {
                 log("remote device: cannot listen again for \(hostId): \(error)")

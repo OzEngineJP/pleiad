@@ -104,6 +104,16 @@ final class UnavailablePageTests: XCTestCase {
         }
     }
 
+    // Like UnavailablePageTest.kt: no automatic reload while the host refuses the device or the PC left the account
+    func testReloadsOnlyWhileTheHostMayComeBack() {
+        for state in ["revoked", "reapprove", "removed"] {
+            XCTAssertFalse(page(state).contains(#"http-equiv="refresh""#), state)
+        }
+        for state in ["offline", "host-offline"] {
+            XCTAssertTrue(page(state).contains(#"http-equiv="refresh""#), state)
+        }
+    }
+
     private struct Japanese: ProxyTexts {
         let base = DefaultTexts()
         func title(_ state: String) -> String { base.title(state) }
