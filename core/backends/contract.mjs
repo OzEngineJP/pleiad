@@ -209,6 +209,8 @@ export const RUN_ARG_PLUMBING = Object.freeze(new Set([
   'prompt', 'sessionId', 'messageId', 'cwd', 'mode', 'model', 'effort', 'emit', 'onPromptDelivered', 'askPermission', 'hostInvoke', 'restoredSteers',
   'signal', 'control', 'locale', 'delegatedChild', 'notes', 'shellAppends', 'botInstructions', 'botFolders',
   'compact', 'oauthToken', 'account', 'endpoint', 'autoCompactWindow', 'promptSuggestions',
+  // onContextRebuild: 記録からの組み立て直し（ADR 0287）の区切りを会話へ記録する受け口。conversations.mjs の引き継ぎの包みが呼ぶ
+  'onContextRebuild',
   'hostSessionId', 'hostBackend', 'ephemeral', 'rewind', 'card', 'source', 'trigger',
   'authorize', 'backend', 'isActive', 'origin', 'progress',
 ]));

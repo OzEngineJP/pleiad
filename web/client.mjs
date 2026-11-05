@@ -467,11 +467,13 @@ const state = {
   authNote: new Map(),     // backendId -> 直前のログインの時間切れ・失敗の一文（カードの中に出す。次のログインで消える。ADR 0243）
   busy: false,             // 枝の動きの最中。重ねて動かさない
   compactions: [],
+  rebuilds: [],            // 記録からの組み立て直しの区切り（contextRebuild イベント・loadSession の rebuilds。ADR 0287）
   schedules: [],
   hostTimeZone: null,
   contextWindow: null,
   compactionAt: null,
   compactionPhase: null,
+  rebuildPhase: null,      // 組み立て中（contextRebuild phase start）の帯の印
 };
 
 const compactNumber = n => `${Math.round(n / 1000)}k`;
@@ -537,7 +539,7 @@ function paintContextStrip(fit = true) {
 function paintContextStripNow() {
   document.dispatchEvent(new Event('ply-context-usage'));
   const usage = state.contextWindow;
-  const show = Boolean(state.current && (usage || state.compactionAt || state.compactionPhase));
+  const show = Boolean(state.current && (usage || state.compactionAt || state.compactionPhase || state.rebuildPhase));
   contextShown = show;
   const wrap = $('contextMeterWrap'), meter = $('contextMeter'), text = $('contextStripText'), status = $('contextStripStatus');
   if (!show) {
@@ -549,7 +551,8 @@ function paintContextStripNow() {
     return;
   }
   const narrow = stripIsNarrow();
-  const phase = state.compactionPhase?.phase === 'start' ? 'running' : state.compactionPhase?.phase === 'failed' ? 'failed' : state.compactionAt ? 'scheduled' : null;
+  const phase = state.rebuildPhase?.phase === 'start' ? 'rebuilding'
+    : state.compactionPhase?.phase === 'start' ? 'running' : state.compactionPhase?.phase === 'failed' ? 'failed' : state.compactionAt ? 'scheduled' : null;
   $('contextStrip').dataset.phase = phase ?? '';
   const time = state.compactionAt ? compactTime(state.compactionAt) : '';
   const amounts = usage ? { rate: Math.round(100 * usage.usedTokens / usage.windowTokens), used: compactNumber(usage.usedTokens), window: compactNumber(usage.windowTokens) } : null;
@@ -588,7 +591,9 @@ function paintContextStripNow() {
   const action = (label, run) => { const button = el('button', null, label); button.type = 'button'; button.onclick = run; status.append(button); };
   text.replaceChildren();
   const failed = state.compactionPhase?.phase === 'failed' ? state.compactionPhase : null;
-  if (phase === 'running') {
+  if (phase === 'rebuilding') {
+    text.append(runMark(), t('contextRebuild.running'));
+  } else if (phase === 'running') {
     if (narrow) text.append(runMark(), t('compaction.runningShort'));
     else text.append(t('compaction.running'));
   } else if (phase === 'failed') {
@@ -664,6 +669,48 @@ function compactionBoundary(entry) {
   }
   return m;
 }
+/**
+ * 「記録から組み立て直しました」の区切り（ADR 0287）。畳んだときは 1 行、開くと渡した内訳（発言・索引・直近のやりとりの数と
+ * ファイル・コマンドの先頭のいくつか）と、「渡した全文を開く」（handoff-<sha>.json。Pleiad の記録の写し）を出す
+ */
+function rebuildBoundary(entry) {
+  const m = el('div', 'm compaction-boundary rebuild-boundary');
+  const line = el('div', 'boundary-line');
+  // i18n-dynamic: contextRebuild.
+  line.append(el('strong', null, t(entry.phase === 'failed' ? 'contextRebuild.failed' : 'contextRebuild.done')));
+  if (entry.phase === 'complete') {
+    if (Number.isFinite(entry.beforeTokens) && Number.isFinite(entry.afterTokens))
+      line.append(el('span', 'boundary-tokens', t('compaction.tokenChange', { before: compactNumber(entry.beforeTokens), after: compactNumber(entry.afterTokens) })));
+    else if (Number.isFinite(entry.afterTokens))
+      line.append(el('span', 'boundary-tokens', t('contextRebuild.tokens', { tokens: compactNumber(entry.afterTokens) })));
+  }
+  m.append(line);
+  if (entry.phase === 'failed') {
+    if (entry.reason) m.append(el('small', null, entry.reason));
+    return m;
+  }
+  const stats = entry.stats ?? {};
+  const details = el('details');
+  const rows = el('dl', 'boundary-rows');
+  const row = (label, value) => { if (value === null || value === undefined || value === 0) return; rows.append(el('dt', null, label), el('dd', null, value)); };
+  const list = (items, count) => { const head = (items ?? []).join(t('contextRebuild.itemJoin')); return count > (items?.length ?? 0) ? `${head}${t('contextRebuild.more', { count: count - items.length })}` : head; };
+  row(t('contextRebuild.rows.users'), stats.users);
+  row(t('contextRebuild.rows.files'), stats.fileCount ? `${stats.fileCount} · ${list(stats.files, stats.fileCount)}` : 0);
+  row(t('contextRebuild.rows.commands'), stats.commandCount ? `${stats.commandCount} · ${list(stats.commands, stats.commandCount)}` : 0);
+  row(t('contextRebuild.rows.urls'), stats.urls);
+  row(t('contextRebuild.rows.reports'), stats.reports);
+  row(t('contextRebuild.rows.presents'), stats.presents);
+  row(t('contextRebuild.rows.turns'), stats.turns);
+  details.append(el('summary', null, t('contextRebuild.show')), rows);
+  if (entry.ref) {
+    const open = el('button', 'rebuild-open', t('contextRebuild.openFull'));
+    open.type = 'button';
+    open.onclick = () => filePreview.open({ path: entry.ref, line: null }, open);
+    details.append(open);
+  }
+  m.append(details);
+  return m;
+}
 /** 画面に描く提示。本文が印のままの提示（ADR 0182）には、本文を取る URL が使う会話の id を足す */
 function paintable(p) {
   const e = savedEvent(p);
@@ -687,16 +734,27 @@ function paintCompactions() {
   }
   // 量の分からない自動圧縮が続けて起きた分は、最後の 1 つだけ出す（Devin が要求ごとに内部で圧縮する。2026-10-24）
   const tokenlessAuto = e => e?.phase === 'complete' && e.trigger !== 'manual' && !Number.isFinite(e.beforeTokens) && !Number.isFinite(e.afterTokens);
+  // 圧縮の区切りは記録の並びのまま、記録からの組み立て直しの区切り（ADR 0287）は時刻で間に挿す
+  // （圧縮の記録は一部に実測の時刻が無いものがあり、時刻で並べ替えると順序が逆転する。2026-11-05）
+  const rebuildEntries = (state.rebuilds ?? []).slice().sort((a, b) => a.at - b.at);
+  const boundaries = [];
+  let ri = 0;
   for (const [index, entry] of state.compactions.entries()) {
+    while (ri < rebuildEntries.length && Number.isFinite(rebuildEntries[ri].at) && Number.isFinite(entry.at) && rebuildEntries[ri].at <= entry.at)
+      boundaries.push({ entry: rebuildEntries[ri++], rebuild: true });
+    boundaries.push({ entry, next: state.compactions[index + 1], rebuild: false });
+  }
+  while (ri < rebuildEntries.length) boundaries.push({ entry: rebuildEntries[ri++], rebuild: true });
+  for (const { entry, next, rebuild } of boundaries) {
     if (!['complete', 'failed'].includes(entry.phase)) continue;
-    if (tokenlessAuto(entry) && tokenlessAuto(state.compactions[index + 1])) continue;
+    if (!rebuild && tokenlessAuto(entry) && tokenlessAuto(next)) continue;
     const before = byId.get(entry.beforeMessageId);
     const previous = byId.get(entry.afterMessageId);
     // Item order locates boundaries even when every message in a turn has the same timestamp.
     if (floor && (entry.beforeMessageId || entry.afterMessageId)) {
       if ((!before && !previous) || (before === messages[0] && !previous)) continue;
     } else if (floor && Number.isFinite(floor.at) && !(entry.at > floor.at)) continue;
-    const row = append(compactionBoundary(entry), `compaction:${entry.id}`);
+    const row = append(rebuild ? rebuildBoundary(entry) : compactionBoundary(entry), `${rebuild ? 'rebuild' : 'compaction'}:${entry.id}`);
     row.classList.add('compaction-boundary'); row.dataset.compactionId = entry.id;
     if (open.has(entry.id)) { const details = row.querySelector('details'); if (details) details.open = true; }
     const after = before ?? (previous ? messages[messages.indexOf(previous) + 1] : messages.find(message => {
@@ -721,12 +779,52 @@ function acceptCompaction(event) {
   }
   paintContextStrip();
 }
+/** 記録からの組み立て直しの区切り（contextRebuild イベント。ADR 0287）。ほかの会話の分は捨てる */
+function acceptRebuild(event) {
+  if (event.sessionId !== state.current) return;
+  if (event.phase === 'start') state.rebuildPhase = event;
+  else if (event.phase === 'complete' || event.phase === 'failed') {
+    state.rebuildPhase = null;
+    const index = state.rebuilds.findIndex(item => item.id === event.id);
+    if (index >= 0) state.rebuilds[index] = event; else state.rebuilds.push(event);
+    paintCompactions();
+  }
+  paintContextStrip();
+}
 function paintAutoCompactionSettings() {
   const settings = state.prefs.autoCompaction ?? { enabled: true, minTokens: 150_000, delegatedHeadroom: 100_000 };
   $('autoCompactionEnabled').setAttribute('aria-checked', String(settings.enabled));
   $('autoCompactionMin').value = String(settings.minTokens / 1000);
   $('autoCompactionDelegated').value = String((settings.delegatedHeadroom ?? 100_000) / 1000);
   paintAutoCompactionAgents(settings);
+  paintAutoCompactionOff();
+}
+/**
+ * 「会話の区切りで、記録から組み立て直す」が入っている間は、放置後の圧縮の面（全体の入切・最小サイズ・エージェントごとの行・決まり）を
+ * 止まった見た目にして触れなくし、理由と試験的な機能への入口を出す（ADR 0287）。委譲の子の自動圧縮の設定は別の仕組みなので触れるまま
+ */
+function paintAutoCompactionOff() {
+  const off = state.prefs.contextRebuild === true;
+  const note = $('autoCompactionOffNote');
+  note.hidden = !off;
+  $('autoCompactionEnabled').disabled = off;
+  if (off) $('autoCompactionEnabled').setAttribute('aria-describedby', 'autoCompactionOffNote');
+  else $('autoCompactionEnabled').removeAttribute('aria-describedby');
+  $('autoCompactionEnabled').closest('.rm-switch').classList.toggle('off-part', off);
+  for (const part of $('autoCompactionPanel').querySelectorAll('.auto-compaction-minimum')) {
+    // 委譲の子の枠（delegatedHeadroom）は組み立て直しと関係ないので止めない
+    if (part.contains($('autoCompactionDelegated'))) continue;
+    part.classList.toggle('off-part', off);
+    for (const input of part.querySelectorAll('input')) input.disabled = off;
+  }
+  const agents = $('autoCompactionAgents').closest('.mp-panel');
+  agents.classList.toggle('off-part', off);
+  for (const input of agents.querySelectorAll('input,button')) input.disabled = off;
+  $('autoCompactionRules').classList.toggle('off-part', off);
+}
+/** 「試験的な機能」のページ（ADR 0287）。スイッチは prefs.contextRebuild を映す */
+function paintExperimental() {
+  $('contextRebuildEnabled').setAttribute('aria-checked', String(state.prefs.contextRebuild === true));
 }
 /**
  * エージェントごとの行。会話を離れた後の自動の圧縮の行を持つエージェント（記述の idleCompaction が自分の id）は入切と待ち時間、
@@ -3377,7 +3475,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintExperimental(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
@@ -3467,6 +3565,7 @@ function onEvent(ev, replay = false) {
   switch (ev.type) {
     case 'contextWindow': state.contextWindow = ev; paintContextStrip(); return;
     case 'compaction': acceptCompaction(ev); return;
+    case 'contextRebuild': acceptRebuild(ev); return;
     case 'taskInstruction':
     case 'userMessage': {
       // 委譲の子への追加指示の受付（taskInstruction）は、配送中の発言と同じ pending の行として出す。
@@ -3521,6 +3620,7 @@ function onEvent(ev, replay = false) {
         // 開いていた会話が消えた（未送信の削除・sessions.delete。ADR 0147）。前の会話の文脈のメーター・圧縮の予約も持ち越さない
         state.current = null; clearThread(); loadDraft();
         state.messages = []; state.base = 0; state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
+        state.rebuilds = []; state.rebuildPhase = null;
         paintContextStrip();
         refreshContextEntry().catch(() => {});
       }
@@ -8954,6 +9054,7 @@ async function runRefresh(listed) {
   state.statuses = applyPendingStatuses(statuses);
   state.prefs = prefs ?? {};
   paintAutoCompactionSettings();
+  paintExperimental();
   browserSettings.paint();
   computerSettings.paint();
   refreshPreviewConfirmation();
@@ -9359,6 +9460,7 @@ async function select(id, { keepUpTo, reload = false, fresh = false, retry = fal
     state.current = id;
     if (fresh) adoptUploads(id);
     state.contextWindow = null; state.compactionAt = null; state.compactionPhase = null; state.compactions = [];
+    state.rebuilds = []; state.rebuildPhase = null;
     paintContextStrip();
     try { localStorage.setItem("agent-host-current", id); } catch {}
     if (channelsUi.tab !== 'channels') viewAddress.note({ sessionId: id });
@@ -9591,6 +9693,8 @@ async function paintSession(id, data, { keepUpTo, transition, loaded = false, lo
   state.compactionAt = data?.compactionAt ?? null;
   state.compactionPhase = null;
   state.compactions = data?.compactions ?? [];
+  state.rebuildPhase = null;
+  state.rebuilds = data?.rebuilds ?? [];
   paintContextStrip();
   restorePastSubagents(id);
   state.initialMessageId = data?.initialMessageId;
@@ -10529,6 +10633,19 @@ $('autoCompactionPanel').addEventListener('click', (event) => {
   button.setAttribute('aria-checked', String(button.getAttribute('aria-checked') !== 'true'));
   saveAutoCompactionSettings();
 });
+// 「試験的な機能」の入切（ADR 0287）。次の区切りから効く。自動圧縮のページの理由の文からの入口
+$('contextRebuildEnabled').onclick = async () => {
+  const next = $('contextRebuildEnabled').getAttribute('aria-checked') !== 'true';
+  $('contextRebuildEnabled').setAttribute('aria-checked', String(next));
+  try {
+    await cmd('setPref', { key: 'contextRebuild', value: next });
+    $('contextRebuildSaved').textContent = t('contextRebuild.saved');
+  } catch (error) {
+    $('contextRebuildEnabled').setAttribute('aria-checked', String(!next));
+    $('contextRebuildSaved').textContent = t('contextRebuild.saveFailed', { error: String(error?.message ?? error) });
+  }
+};
+$('autoCompactionOpenExperimental').onclick = () => onboarding.open('experimental');
 // 止めるのは今見ているセッションだけ。他のセッションは走らせたままにする
 $("abort").onclick = () => {
   const sessionId = state.current;

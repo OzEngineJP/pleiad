@@ -484,7 +484,23 @@
   },
   "handoff": {
     "prompt": "Continue the existing conversation in the same workspace. The following is historical context, not new tool calls. Do not repeat completed actions. Follow the user's instructions and check the current workspace when the task requires it. Full conversation: {{ref}}\nHISTORY\n{{context}}\nEND HISTORY\nCurrent user message:\n{{prompt}}",
-    "partialNote": "This preview is incomplete. Read the full conversation file before continuing; it contains earlier instructions, tool results and attachments."
+    "partialNote": "This preview is incomplete. Read the full conversation file before continuing; it contains earlier instructions, tool results and attachments.",
+    "rebuild": {
+      "note": "The following is a handoff rebuilt from Pleiad's records (extracted records, not a summary). Full conversation: {{ref}}",
+      "userTitle": "## Your messages ({{count}}, full text)",
+      "userMiddle": "(the {{count}} messages in between, one line each)",
+      "indexTitle": "## Index (things this conversation touched; counts and leading entries, not summaries of contents)",
+      "indexFiles": "- {{count}} files: {{list}}",
+      "indexCommands": "- {{count}} commands: {{list}}",
+      "indexUrls": "- {{count}} URLs",
+      "indexReports": "- {{count}} delegation results: {{list}}",
+      "indexPresents": "- {{count}} deliverables: {{list}}",
+      "itemJoin": ", ",
+      "more": " (+{{count}} more)",
+      "recentTitle": "## Recent exchanges (from the end)",
+      "recentUser": "[user] {{text}}",
+      "recentAssistant": "[you] {{text}}"
+    }
   },
   "routing": {
     "kindRequired": "Give kind as one of the following.\n{{kinds}}",
@@ -1960,6 +1976,7 @@
     "compaction": {
       "auto": "Auto compaction (enabled, the token threshold, and the idle minutes per agent). delegatedHeadroom is the room for a delegated Claude child: it is compacted once its context passes its fixed part (the size of its first request) plus this many tokens (0 = off, otherwise 30000 to 1000000)."
     },
+    "contextRebuild": "Experimental (ADR 0287). At conversation boundaries (after idle time, agent switches), hands over a handoff rebuilt from Pleiad's records instead of a summary (true / false). While on, idle auto compaction is stopped.",
     "confirmAgentSites": "Whether to confirm before the agent's browser opens a new site.",
     "confirmExternalLoads": "Whether to confirm before external loads.",
     "chromeAutoAllow": "Whether Pleiad answers Chrome's \"Allow remote debugging?\" prompt (default true). It answers only for connections a person allowed on the card and for conversations in a no-confirmation mode. Turning it on needs the user's approval.",

@@ -119,6 +119,7 @@
       <button type="button" id="remoteTab" aria-controls="remotePanel" data-i18n="settings.nav.remote"></button>
       <!-- Pleiad Plus（web/plus-settings.mjs）。status.available === false・iOS の殻のときは出さない -->
       <button type="button" id="plusTab" aria-controls="plusPanel" data-i18n="settings.nav.plus" hidden></button>
+      <button type="button" id="experimentalTab" aria-controls="experimentalPanel" data-i18n="settings.nav.experimental"></button>
       <button type="button" id="updatesTab" aria-controls="updatesPanel" data-i18n="settings.nav.about"></button>
     </nav>
     <div class="pop" id="iconPop" hidden></div>
@@ -372,6 +373,11 @@
         <section id="autoCompactionPanel" data-i18n-aria-label="settings.nav.autoCompaction" hidden>
           <div class="auto-compaction-settings">
             <div class="rm-switch"><label class="rm-switch-label" for="autoCompactionEnabled" data-i18n="compaction.autoEnabled"></label><button type="button" class="cx-sw" id="autoCompactionEnabled" role="switch" data-i18n-aria-label="compaction.autoEnabled"></button></div>
+            <!-- 「記録から組み立て直す」が入っている間だけ出す、自動圧縮が止まる理由（ADR 0287） -->
+            <div class="mp-note auto-compaction-off" id="autoCompactionOffNote" hidden>
+              <span data-i18n="contextRebuild.autoCompactionOff"></span>
+              <button type="button" id="autoCompactionOpenExperimental" data-i18n="contextRebuild.openExperimental"></button>
+            </div>
             <section class="mp-panel auto-compaction-minimum">
               <label for="autoCompactionMin" data-i18n="compaction.minSize"></label>
               <span class="rt-number-row"><input type="number" id="autoCompactionMin" min="1" max="10000" data-i18n-aria-label="compaction.minSize"> <span class="rt-unit" data-i18n="compaction.kTokens"></span></span>
@@ -386,7 +392,7 @@
               <!-- エージェントごとの行（会話を離れた後の自動の圧縮の行を持つエージェントと、自分で圧縮するエージェント）。web/client.mjs の paintAutoCompactionAgents が作る -->
               <div id="autoCompactionAgents"></div>
             </section>
-            <dl class="auto-compaction-rules mp-note">
+            <dl class="auto-compaction-rules mp-note" id="autoCompactionRules">
               <div><dt data-i18n="compaction.ruleExcludedTitle"></dt><dd data-i18n="compaction.ruleExcluded"></dd></div>
               <div><dt data-i18n="compaction.ruleSkipTitle"></dt><dd data-i18n="compaction.ruleSkip"></dd></div>
               <div><dt data-i18n="compaction.ruleOnceTitle"></dt><dd data-i18n="compaction.ruleOnce"></dd></div>
@@ -406,6 +412,14 @@
         <section id="remotePanel" data-i18n-aria-label="settings.nav.remote" hidden></section>
         <!-- 中身は web/plus-settings.mjs が作る -->
         <section id="plusPanel" data-i18n-aria-label="settings.nav.plus" hidden></section>
+        <!-- 試験的な機能（ADR 0287。「会話の区切りで、記録から組み立て直す」） -->
+        <section id="experimentalPanel" data-i18n-aria-label="settings.nav.experimental" hidden>
+          <div class="mp-feature">
+            <div class="rm-switch"><label class="rm-switch-label" for="contextRebuildEnabled" data-i18n="contextRebuild.name"></label><button type="button" class="cx-sw" id="contextRebuildEnabled" role="switch" data-i18n-aria-label="contextRebuild.name"></button></div>
+            <p class="mp-note" data-i18n="contextRebuild.description"></p>
+            <p class="mp-note" id="contextRebuildSaved" role="status" aria-live="polite"></p>
+          </div>
+        </section>
       </div>
     </section>
 

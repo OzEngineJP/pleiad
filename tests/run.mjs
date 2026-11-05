@@ -56,6 +56,7 @@ const SUITES = [
   './unit/slot-limits.mjs',
   './unit/opencode-v2.mjs',
   './unit/compaction.mjs',
+  './unit/context-rebuild.mjs',
   './unit/server-compaction.mjs',
   // 委譲の子だけ自動圧縮の窓（CLAUDE_CODE_AUTO_COMPACT_WINDOW = 閾値 + 33000）を渡す: 親・0（オフ）・利用者の環境変数が先、では渡さない
   './unit/server-compaction-delegated.mjs',

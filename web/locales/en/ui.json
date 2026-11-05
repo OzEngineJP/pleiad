@@ -55,7 +55,8 @@
       "delegation": "Delegation",
       "autoCompaction": "Auto compaction",
       "browser": "Browser",
-      "computer": "Computer use"
+      "computer": "Computer use",
+      "experimental": "Experimental"
     },
     "input": {
       "historyRecall": {
@@ -4453,6 +4454,31 @@
     "agentDelay": "{{agent}} delay",
     "minutes": "min",
     "saveFailed": "Could not save auto compaction settings: {{error}}"
+  },
+  "contextRebuild": {
+    "name": "Rebuild context from records at conversation boundaries",
+    "description": "Instead of a summary, hands over your messages, an index, and recent exchanges. The change applies from the next boundary",
+    "saved": "Saved",
+    "saveFailed": "Could not save: {{error}}",
+    "autoCompactionOff": "Idle auto compaction is stopped while \"Rebuild context from records at conversation boundaries\" is on",
+    "openExperimental": "Open Experimental",
+    "running": "Rebuilding context from records…",
+    "done": "Rebuilt context from records",
+    "failed": "Could not rebuild, so resumed from the previous context",
+    "tokens": "· handed over {{tokens}} tokens",
+    "show": "What was handed over",
+    "openFull": "Open the full handoff",
+    "itemJoin": ", ",
+    "more": " (+{{count}} more)",
+    "rows": {
+      "users": "Your messages",
+      "files": "Files",
+      "commands": "Commands",
+      "urls": "URLs",
+      "reports": "Delegation results",
+      "presents": "Deliverables",
+      "turns": "Recent exchanges"
+    }
   },
   "hooks": {
     "lead": "Run commands at agent events",

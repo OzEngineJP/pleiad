@@ -70,7 +70,7 @@ const onBackend = ${onBackend[1]};`;
     },
     listSessions: () => { const g = gate(); listings.push(g); return g.promise; },
     moveLanes: { confirm: noop }, serverMoveFields: new Map(), applyPendingPatches: (rows) => rows, readCompletions: { fromSessions: noop },
-    applyPendingStatuses: (rows) => rows, paintAutoCompactionSettings: noop, browserSettings: { paint: noop }, computerSettings: { paint: noop },
+    applyPendingStatuses: (rows) => rows, paintAutoCompactionSettings: noop, paintExperimental: noop, browserSettings: { paint: noop }, computerSettings: { paint: noop },
     refreshPreviewConfirmation: noop, filePreview: { prefsChanged: noop }, loadBackends: async () => {}, applyRunning: noop, listLoaded: { sessions: true, threads: true },
     REFRESH_REPLY_TIMEOUT_MS: 1000,
     setTimeout, clearTimeout,
