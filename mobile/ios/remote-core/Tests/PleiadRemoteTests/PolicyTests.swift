@@ -60,7 +60,7 @@ final class ResumePolicyTests: XCTestCase {
     }
 
     func testOpensTheSavedHostOnAFreshLauncherStart() {
-        XCTAssertEqual(ResumeDecision("a", false), decide("a"))
+        XCTAssertEqual(ResumeDecision("a", false, "own"), decide("a"))
     }
 
     func testShowsTheListWhenNothingIsSaved() {
