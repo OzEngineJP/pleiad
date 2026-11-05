@@ -6,7 +6,7 @@ import Foundation
 import PleiadRemote
 
 final class PlusManager {
-    private static let TICK_MS: TimeInterval = 5 * 60
+    private static let TICK_S: TimeInterval = 5 * 60
     private static let ACCOUNT_MIN_INTERVAL_MS: Int64 = 60 * 1000
 
     private let store = PlusStore()
@@ -18,11 +18,21 @@ final class PlusManager {
     private let worker = DispatchQueue(label: "pleiad-plus", qos: .userInitiated)
     private var ticker: DispatchSourceTimer?
 
-    private var config: PlusConfig?
+    // config と flowError は worker が書き、画面の state()・プラグインの list/open が別のスレッドから読む
+    private let lock = NSLock()
+    private var configValue: PlusConfig?
+    private var config: PlusConfig? {
+        get { lock.lock(); defer { lock.unlock() }; return configValue }
+        set { lock.lock(); configValue = newValue; lock.unlock() }
+    }
+    private var flowErrorValue: String?
+    private var flowError: String? {
+        get { lock.lock(); defer { lock.unlock() }; return flowErrorValue }
+        set { lock.lock(); flowErrorValue = newValue; lock.unlock() }
+    }
     private var started = false
     private var foreground = false
     private var lastAccountAt: Int64 = 0
-    private var flowError: String?
     private var hosts: [PlusHost] = []
     private var hostsError: String?
     var onChanged: (() -> Void)?
@@ -42,7 +52,7 @@ final class PlusManager {
             if started { emit(); return }
             started = true
             let t = DispatchSource.makeTimerSource(queue: worker)
-            t.schedule(deadline: .now() + Self.TICK_MS, repeating: Self.TICK_MS)
+            t.schedule(deadline: .now() + Self.TICK_S, repeating: Self.TICK_S)
             t.setEventHandler { [weak self] in self?.tick() }
             t.resume()
             ticker = t
@@ -66,14 +76,10 @@ final class PlusManager {
 
     private func tick() {
         if !foreground { return }
-        do {
-            refreshConfig()
-            if session.signedIn() {
-                _ = session.idToken(config?.refreshUrl)   // 前面のあいだ ID トークンを新しく保つ
-                if now() - lastAccountAt > Self.ACCOUNT_MIN_INTERVAL_MS { fetchAccount() }
-            }
-        } catch {
-            log("tick: \(error)")
+        refreshConfig()
+        if session.signedIn() {
+            _ = session.idToken(config?.refreshUrl)   // 前面のあいだ ID トークンを新しく保つ
+            if now() - lastAccountAt > Self.ACCOUNT_MIN_INTERVAL_MS { fetchAccount() }
         }
         emit()
     }
@@ -93,14 +99,27 @@ final class PlusManager {
 
     // ── ログイン ──
 
-    /// ログインの試行を始めて認証画面の URL を返す（プラグインが ASWebAuthenticationSession で開く）。config 未着なら nil。
-    func login(lang: String) -> String? {
-        guard let cfg = config, !cfg.loginUrl.isEmpty else { return nil }
-        let pending = PlusAuth.Pending(verifier: PlusAuth.b64url(randomBytes(32)), state: PlusAuth.b64url(randomBytes(32)), createdAt: now())
-        store.savePending(pending)
-        flowError = nil
-        emit()
-        return PlusAuth.loginUrl(cfg.loginUrl, state: pending.state, codeChallenge: PlusAuth.challenge(pending.verifier), lang: lang)
+    /// ログインの試行を始めて、認証画面の URL を worker から done に渡す（プラグインが ASWebAuthenticationSession で開く）。
+    /// config 未着なら nil。
+    func login(lang: String, _ done: @escaping (String?) -> Void) {
+        worker.async { [self] in
+            guard let cfg = config, !cfg.loginUrl.isEmpty else { return done(nil) }
+            let pending = PlusAuth.Pending(verifier: PlusAuth.b64url(randomBytes(32)), state: PlusAuth.b64url(randomBytes(32)), createdAt: now())
+            store.savePending(pending)
+            flowError = nil
+            emit()
+            done(PlusAuth.loginUrl(cfg.loginUrl, state: pending.state, codeChallenge: PlusAuth.challenge(pending.verifier), lang: lang))
+        }
+    }
+
+    /// 認証画面が閉じられた（キャンセル）・開けなかった。進行中の試行を捨てて、画面を「ログイン」に戻す。
+    /// Android の Custom Tabs は閉じたことを知れないので pending の TTL まで待つが、iOS はセッションが知らせる。
+    func cancelLogin() {
+        worker.async { [self] in
+            if store.pending() == nil { return }
+            store.clearPending()
+            emit()
+        }
     }
 
     /// pleiad://auth の戻り。worker で回る; ページが無いうちに来てもよい。
