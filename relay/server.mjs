@@ -480,6 +480,7 @@ export function createRelay(opts = {}) {
         if (typeof msg.id !== 'string') return closeWs(h.ws, CLOSE.BAD_REQUEST, 'revoke');
         h.devices.delete(msg.id);
         log('info', 'revoke', { host: short(h.id), device: msg.id });
+        emit({ type: 'device-revoke', hostId: h.id, deviceId: msg.id });
         return cutRevoked(h);
       }
       case 'notify':
@@ -560,7 +561,9 @@ export function createRelay(opts = {}) {
     while (queue.length > o.notifyQueueMax) queue.shift();
     const line = notifyLines.get(h.id)?.get(msg.deviceId);
     if (line) sendLine(line, entry);
-    log('debug', 'notify', { host: short(h.id), device: msg.deviceId, bytes: msg.blob.length, online: Boolean(line) });
+    const online = Boolean(line);
+    log('debug', 'notify', { host: short(h.id), device: msg.deviceId, bytes: msg.blob.length, online });
+    emit({ type: 'notify', hostId: h.id, deviceId: msg.deviceId, blob: msg.blob, ttlMs: ttl, online });
   }
 
   function onNotifyLine(ws, req, grant = null) {
