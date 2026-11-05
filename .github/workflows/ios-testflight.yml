@@ -17,6 +17,7 @@ on:
       - 'mobile/package-lock.json'
       - 'mobile/scripts/ios-testflight.sh'
       - 'mobile/scripts/asc-build.mjs'
+      - 'mobile/scripts/asc-provision.mjs'
       - '.github/workflows/ios-testflight.yml'
       - '!mobile/ios/App/AppTests/**'
       - '!mobile/ios/remote-core/Tests/**'
@@ -43,13 +44,14 @@ jobs:
       contents: write
     steps:
       # 重い手順の前に、Secrets を確かめる（足りなければ名前を出して止まる。値は出さない）
+      # プロファイルは ASC API で名前で取る（ios-provision.yml で整えた "Pleiad <bundle>"）。
+      # IOS_PROVISION_PROFILE_BASE64・IOS_NSE_PROVISION_PROFILE_BASE64 は API が取れなかったときの任意の代替
       - name: Check secrets
         env:
           REF: ${{ github.ref }}
           IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
           IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
-          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
@@ -57,7 +59,7 @@ jobs:
           fail() { echo "::error::$1 (docs/ios.md)"; exit 1; }
           [ "$REF" = "refs/heads/main" ] || fail "Run this workflow on main (got $REF)"
           missing=""
-          for name in IOS_TEAM_ID IOS_DISTRIBUTION_P12_BASE64 IOS_DISTRIBUTION_P12_PASSWORD IOS_PROVISION_PROFILE_BASE64 ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_BASE64; do
+          for name in IOS_TEAM_ID IOS_DISTRIBUTION_P12_BASE64 IOS_DISTRIBUTION_P12_PASSWORD ASC_KEY_ID ASC_ISSUER_ID ASC_PRIVATE_KEY_BASE64; do
             [ -n "${!name}" ] || missing="$missing secrets.$name"
           done
           [ -z "$missing" ] || fail "TestFlight upload is not configured. Empty:$missing"
@@ -100,6 +102,7 @@ jobs:
           IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
           IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
           IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          IOS_NSE_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_NSE_PROVISION_PROFILE_BASE64 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
