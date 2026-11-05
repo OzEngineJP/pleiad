@@ -1,4 +1,4 @@
-import { isComposingKey } from "./keyboard.mjs";
+import { isComposingKey, shortcutLabel, shortcutAria } from "./keyboard.mjs";
 import { openEmojiPicker, closeEmojiPicker } from "./emoji-picker.mjs";
 // 脇のパネル（セッション一覧）。docs/design-system.md §4.1〜4.3。
 //
@@ -157,7 +157,7 @@ function loadRecentSearches() {
  * @param {(sessionId: string|null, jump?: { uuid: string, role: string, query: string, speaker: string }|null) => void} o.onOpen
  *   行を押した（null = まだ id の無い新しいセッション）。検索の抜粋を押したときは jump（その発言の uuid・探した語）も渡す
  * @param {(input: object) => Promise<object>} [o.onSearch]  本文まで探す（sessions.search の入力を渡し、結果を返す）
- * @param {({status, cwd}) => void} o.onNew                 ＋（引き継ぐ状態と作業ディレクトリ付き）
+ * @param {({backend, status, cwd}) => void} o.onNew        一時チャットの見出しの ＋・Ctrl+Shift+O（絞り込みのエージェント・状態・作業ディレクトリを引き継ぐ）
  * @param {(sessionId: string|null, status: string) => void} o.onSetStatus  選ばれた行の combo で状態を変えた
  * @param {(status: string, icon: string) => void} o.onSetIcon         アイコンを選んだ（空 = なし）
  * @param {(session: object, x: number, y: number) => void} [o.onContext]  行の右クリック
@@ -170,7 +170,7 @@ function loadRecentSearches() {
  * @param {() => string} o.cwdNow  入力欄の今の作業ディレクトリ（絞っていないときの引き継ぎ元）
  * @param {(channelId: string) => void} [o.onOpenChannel]  置き場所の木の見出しの名前を押した（流れを開く）
  * @param {(channelId: string) => void} [o.onNewInChannel]  チャンネルの見出しの ＋（そのチャンネルの流れの入力欄へ）
- * @param {() => Element[]} [o.channelExtras]  置き場所の木の末尾に置く節（Bots・ルーティン。web/channels/sidebar.mjs が描く）
+ * @param {() => Element[]} [o.channelExtras]  置き場所の木に差し込む節（data-sec が routines は先頭、channels は一時チャットのすぐ下。web/channels/sidebar.mjs が描く）
  */
 export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, onGroupContext, onFamilyContext,
                              onSetGrouped, onJoinGroup, onMoveGroup, onListContext, onSettings, onSearch, cwdNow, visible: isVisible = () => true,
@@ -318,7 +318,7 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     buildPlaces(wanted);
 
     const old = new Map([...root.querySelectorAll('[data-side-key]')].map((n) => [n.dataset.sideKey, n]));
-    // Bots・ルーティンの節（web/channels/sidebar.mjs が描く）は、絞り込んでいないとき、この一覧の末尾に入る
+    // ルーティン・「チャンネル ＋」の節（web/channels/sidebar.mjs が描く）は、絞り込んでいないとき、この一覧に入る（buildPlaces）
     for (const node of channelExtras()) if (node?.dataset.sideKey) old.set(node.dataset.sideKey, node);
     reconcile(root, wanted, old);
     renderedRows = nextRows;
@@ -461,7 +461,8 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   // ---- 置き場所の木 ---------------------------------------------------
-  // 一時チャット（会話のスレッド）を先頭に、チャンネルごとに開閉できる見出しとスレッド（全部）。続けて Bots・ルーティン（channelExtras）
+  // 畳めるルーティン（channelExtras）→ 一時チャット（会話のスレッド）→「チャンネル ＋」（channelExtras）→ チャンネルごとに開閉できる見出しとスレッド（全部）。
+  // Bots は木の外の帯（#botStrip）。ADR 0288
 
   /** ◆ の字。待っているものが Chrome の操作だけなら、承認ではないのでそう言う */
   const waitingLabel = (id) => last.chromeWaitIds.has(id) ? t("sidebar.waitingChrome") : t("sidebar.waiting");
@@ -520,11 +521,14 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   function channelSection(key, { name, home = false, unread = false, mentions = 0, rows, onName, onAdd, addLabel }) {
     const sec = keyed(el("section", "grp chsec"), `chsec:${key}`, true);
     sec.setAttribute("role", "none");
-    const isCollapsed = chCollapsed.has(key);
+    // スレッドの無いチャンネルは開くものが無い（chevron を隠し、「スレッドはまだありません」も出さない）
+    const empty = !home && !rows.length;
+    const isCollapsed = chCollapsed.has(key) || empty;
     if (isCollapsed) sec.classList.add("collapsed");
+    if (empty) sec.classList.add("no-threads");
     const head = el("div", "grp-head chsec-head");
     const setOpen = (open) => { if (open) chCollapsed.delete(key); else chCollapsed.add(key); save(); render(); };
-    treeItem(head, `c:${key}`, 1, { expanded: !isCollapsed, open: () => (onName ? onName() : setOpen(isCollapsed)), expand: setOpen });
+    treeItem(head, `c:${key}`, 1, { expanded: empty ? null : !isCollapsed, open: () => (onName ? onName() : setOpen(isCollapsed)), expand: empty ? undefined : setOpen });
     const chev = el("button", "chsec-chev");
     chev.type = "button";
     chev.tabIndex = -1;
@@ -546,11 +550,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       else if (rows.some((s) => last.unreadIds.has(s.id))) head.append(unreadMark());
     }
     if (onAdd) {
-      const add = el("button", "btn btn-icon grp-add");
+      // 一時チャットの ＋ は新しいチャットの入口なので、いつも見せる（#newSession。近道 Ctrl+Shift+O を title と aria-keyshortcuts に添える）
+      const add = el("button", "btn btn-icon grp-add" + (home ? " always" : ""));
       add.type = "button";
       add.tabIndex = -1;
-      add.title = addLabel;
+      add.title = home ? t("channels:side.newChatTitle", { key: shortcutLabel("O", { shift: true }) }) : addLabel;
       add.setAttribute("aria-label", addLabel);
+      if (home) { add.id = "newSession"; add.setAttribute("aria-keyshortcuts", shortcutAria("O", { shift: true })); }
       add.append(icon(PLUS));
       add.onclick = (e) => { e.stopPropagation(); onAdd(); };
       head.append(add);
@@ -565,7 +571,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       return sec;
     }
     for (const s of rows) rowsEl.append(oneRow(s, 2));
-    if (!rows.length) rowsEl.append(el("div", "empty", t("channels:side.noThreads")));
     sec.append(rowsEl);
     return sec;
   }
@@ -573,11 +578,13 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   function buildPlaces(wanted) {
     // 一時チャット: 会話のスレッド（bot の会話・委譲の子は除く）と、一時チャットで bot に話しかけたスレッドを新しい順。作成中の新しい会話は先頭
     const homeIds = new Set([...directory.channels.values()].filter((c) => c.home).map((c) => c.id));
+    if (!filtering()) putExtra(wanted, "routines");
     const homeRows = [...(last.pendingNew ? [last.pendingNew] : []),
       ...[...last.sessions.filter((s) => !s.bot && matchesFilter(s)), ...last.threads.filter((s) => homeIds.has(s.thread.channelId) && matchesFilter(s))]
         .sort((a, b) => (b.lastModified ?? 0) - (a.lastModified ?? 0))];
     wanted.append(channelSection("home", { name: t("channels:side.home"), home: true, rows: homeRows, onName: () => onOpenChannel?.("home"),
-      onAdd: () => onNew?.({ cwd: filter.dir ?? cwdNow?.() ?? "" }), addLabel: t("channels:side.newHome") }));
+      onAdd: newChat, addLabel: t("channels:side.newChat") }));
+    if (!filtering()) putExtra(wanted, "channels");
     const channels = [...directory.channels.values()].filter((c) => c.kind === "channel" && !c.archivedAt && !c.home)
       .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: "base" }));
     const byChannel = new Map();
@@ -591,13 +598,25 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
       wanted.append(channelSection(c.id, { name: c.name, unread: (c.unread ?? 0) > 0, mentions: c.mentions ?? 0, rows,
         onName: () => onOpenChannel?.(c.id), onAdd: onNewInChannel && (() => onNewInChannel(c.id)), addLabel: t("channels:side.newInChannel", { name: c.name }) }));
     }
-    for (const node of filtering() ? [] : channelExtras()) {
-      if (!node) continue;
-      node.dataset.sideKey ??= `extra:${node.dataset.sec ?? ''}`;
-      const keep = keyed(el("span"), node.dataset.sideKey);
-      keep.dataset.sideKeep = '1';
-      wanted.append(keep);
-    }
+  }
+
+  /** channelExtras の節（data-sec）の置き場の印を足す。描くと元の節がそこへ入る（reconcile）。節が無ければ何も置かない */
+  function putExtra(wanted, sec) {
+    const node = channelExtras().find((n) => n?.dataset.sec === sec);
+    if (!node) return;
+    node.dataset.sideKey ??= `extra:${sec}`;
+    const keep = keyed(el("span"), node.dataset.sideKey);
+    keep.dataset.sideKeep = '1';
+    wanted.append(keep);
+  }
+
+  /** 新しいチャット（一時チャットの見出しの ＋・Ctrl+Shift+O）。絞り込みのエージェント（1 つだけのとき）・状態・作業ディレクトリを引き継ぐ */
+  function newChat() {
+    onNew?.({
+      backend: filter.backends.length === 1 ? filter.backends[0] : undefined,
+      status: filter.status !== undefined ? filter.status : null,
+      cwd: filter.dir ?? cwdNow?.() ?? "",
+    });
   }
 
   // ---- キーボード（一覧をひとつのツリーとして扱う。web/tree.mjs と同じ規則） ----------------------
@@ -1451,10 +1470,9 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
         recentAt = down ? recentAt + 1 : Math.max(-1, recentAt - 1);
         syncRecent();
       } else if (down && !searching) {
-        // 検索欄で ↓ を押すと一覧の先頭の行へ入る（Channels のタブを見ていれば、そちらの一覧へ）
+        // 検索欄で ↓ を押すと一覧の先頭の行へ入る
         e.preventDefault();
-        if (channelsLink?.active()) channelsLink.enterList();
-        else enterTree();
+        enterTree();
       }
       return;
     }
@@ -1609,11 +1627,6 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
   }
 
   $("clearFilterOutside").onclick = () => { filter.backends = []; filter.dir = null; filter.status = undefined; filter.period = 0; save(); render(); };
-  $("newSession").onclick = () => onNew?.({
-    backend: filter.backends.length === 1 ? filter.backends[0] : undefined,
-    status: filter.status !== undefined ? filter.status : null,
-    cwd: filter.dir ?? cwdNow?.() ?? "",
-  });
   // 一覧の空白の右クリック（行や見出しの上は各自のメニュー）
   root.oncontextmenu = (e) => {
     if (!onListContext || e.target.closest(".row,.grp-head,.fam-head")) return;
@@ -1709,10 +1722,11 @@ export function createSide({ onOpen, onNew, onSetStatus, onSetIcon, onContext, o
     /**
      * 検索をチャンネルへ広げる口（web/channels/sidebar.mjs）:
      *   matchNames(terms) → 行（名前の一致。手元で即座に）、searchPosts(q) → Promise<行>（channels.search）、open(行)、
-     *   active() → Channels のタブを見ているか、enterList() → 検索欄の ↓ で Channels の一覧へ入る
      * 行は { id, channelId, channelName, title, postId?, threadId?, who?, snippet?, lastModified? }
      */
     connectChannels(link) { channelsLink = link; },
+    /** 新しいチャット（Ctrl+Shift+O。web/client.mjs）。一時チャットの見出しの ＋ と同じ */
+    newChat,
     /** この画面で作った、まだ誰も付いていない状態を一覧に出す */
     keep(status) { if (status) made.add(status); },
     get filter() { return { ...filter }; },

@@ -2666,7 +2666,6 @@
     "listSeparator": "・",
     "notConnected": "未接続",
     "backToChat": "会話に戻る",
-    "newSessionTitle": "新しいセッション（絞り込みの条件を引き継ぐ）",
     "settings": "設定",
     "closeSidebarTitle": "サイドバーを閉じる（{{key}}）",
     "closeSidebar": "サイドバーを閉じる",

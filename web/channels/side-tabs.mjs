@@ -34,8 +34,7 @@ export function createSideTabs({ onChange = () => {} } = {}) {
     }
   }
 
-  // 新しい会話・会話を開く・設定は Chats の側の操作。Channels を見ていたら Chats へ戻す
-  document.getElementById('newSession')?.addEventListener('click', () => set('chats'), true);
+  // 新しい会話（web/client.mjs の onNew）・会話を開く・設定は Chats の側の操作で、それぞれが set('chats') で戻す
   paint();
 
   return {
