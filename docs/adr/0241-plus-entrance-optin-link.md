@@ -27,7 +27,7 @@ Pleiad Plus の入口（設定のメニューの項目・委譲・通話・リ�
   起動前に届いた分は起動後に流す。
 - **開発と試験のために `AGENT_HOST_PLUS=1` を足す。** 印が無くても `optin` の間でも入口を出す。
   `0` はこれまでどおり全部隠す。
-- **iOS は対象外。** この段階の iOS アプリは Pleiad Plus に対応しない。
+- **iOS は対象外。** この段階の iOS アプリは Pleiad Plus に対応しない。2026-11 追記: iOS も Android と同じ形で対応した（[ADR 0263](0263-accounts-and-hosted-relay.md) 決定 5・[docs/plus.md](../plus.md)「iOS」）。iOS の印は UserDefaults `plus.entrance`。
 
 ## 理由
 

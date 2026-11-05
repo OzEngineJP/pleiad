@@ -195,7 +195,20 @@ export default async function (t) {
       t.ok('モバイルの殻: free でも Plus のまとまりと「このアカウントでは公式の中継を使えません」',
         Boolean(plusGroupOf(freeRoot)) && (plusGroupOf(freeRoot).textContent ?? '').includes('このアカウントでは公式の中継を使えません'), freeRoot.textContent);
       t.ok('モバイルの殻: 購入への誘導は出さない', !freeRoot.querySelectorAll('button').some(b => b.dataset?.fk === 'plusGet'), freeRoot.textContent);
+      t.ok('モバイルの殻: free では代わりに「アカウントを管理」を出す', freeRoot.querySelectorAll('button').some(b => b.dataset?.fk === 'plusManage'), freeRoot.textContent);
+      const noProfile = await drawn({ enabled: true, configured: false, connection: { state: 'idle' }, devices: [], pairing: { requests: [] },
+        plus: { connect: true, link: { state: 'idle' }, host: { state: 'registered' } } },
+        { ...PLUS, account: { status: 'free' }, urls: { account: 'https://a.example', profile: null } });
+      t.ok('モバイルの殻: プロフィールの URL が無ければ「アカウントを管理」も出さない', !noProfile.querySelectorAll('button').some(b => ['plusManage', 'plusGet'].includes(b.dataset?.fk)), noProfile.textContent);
     } finally { globalThis.window = savedWindow; }
+  }
+  // デスクトップ（殻の外）の free では「Pleiad Plus にする」を出す
+  {
+    const desktopFree = await drawn({ enabled: true, configured: false, connection: { state: 'idle' }, devices: [], pairing: { requests: [] },
+      plus: { connect: true, link: { state: 'idle' }, host: { state: 'registered' } } },
+      { ...PLUS, account: { status: 'free' }, urls: { account: 'https://a.example', profile: 'https://a.example/me' } });
+    const fks = desktopFree.querySelectorAll('button').map(b => b.dataset?.fk);
+    t.ok('デスクトップ: free では「Pleiad Plus にする」を出し、「アカウントを管理」の行は出さない', fks.includes('plusGet') && !fks.includes('plusManage'), desktopFree.textContent);
   }
 
   // 「編集」の中の「中継の設定を消す」: 確かめてから URL と登録用の秘密を両方消す（issue #123）

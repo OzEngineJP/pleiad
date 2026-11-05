@@ -170,6 +170,19 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 - この PC の行は `host.state` が `taken`（「つなぎ直す」→ 確かめの窓 → `plusHostRebind`）・`limit`・`removed`（利用者が外した。「この PC を登録し直す」→ `plus.hostReregister` 操作）のときと、`host.notice === 'reregistered'`（「この PC の登録が外れていたので、登録し直しました」）のときだけ。ほかは出さない。`plusHostRebind` は後の段階が作る。知らないコマンドが返ったら何も出さない
 - 「Pleiad Plus にする」は `urls.account` のオリジンの `/plus`（`new URL('/plus', urls.account)`。`urls.account` は `/account` のようなパスを持つ）を、「アカウントを管理」は `urls.account` を外のブラウザーで開く。「ログアウト」は `plusLogout`
 
+### モバイルの殻で隠すもの（Android・iOS 共通。ADR 0263 決定 5）
+
+印は `inMobileShell()`（`web/remote-badge.mjs`。殻が `plyRemote` に付ける `shell: 'mobile'`）だけで、OS では分けない。
+隠すのは購入への誘導だけ:
+
+- 設定 › Pleiad Plus: `free` のときの「Pleiad Plus にする」を出さない。「アカウントを管理」と同期の説明の
+  「アカウントを管理」は `urls.account` ではなく `urls.profile`（プランと支払いを含まないページ）を開く。
+  `urls.profile` が無ければボタンを出さない
+- リモート › 「この PC へ」の Plus のまとまりと「つなぐ」の段: `free` のときは「Pleiad Plus にする」の代わりに
+  「このアカウントでは公式の中継を使えません」と、`urls.profile` があれば「アカウントを管理」
+- それ以外（ログイン・ログアウト・アカウントの行・プランの名前・今月の利用・同期・ホストの一覧と接続）は両 OS で出す。
+  リモートの「Pleiad Plus」の面（`web/remote-hosts.mjs`）はデスクトップのローカルの窓だけ
+
 ## ID トークンの検証（`core/plus/verify.mjs`）
 
 `createIdTokenVerifier({ jwksUrl, projectId, now, fetchFn })` → `verify(token)` → `{ uid, email }`。合わなければ `PlusError({ code: 'bad_token' })`。

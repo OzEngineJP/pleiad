@@ -36,5 +36,5 @@ api が、用途と鍵に結びついた短い券を出すようになった（`
 - `core/remote/plus-link.mjs`: 制御の接続の券・accept の同じ券・受け入れの券の既定の確かめ（`verifyAdmission` の差し込みは残す）・`update` の誤り。
 - `core/remote/device*.mjs`・`desktop/remote-windows.cjs`: 端末の券（PC の端末として他の PC へつなぐとき）。`update` の状態。
 - `core/plus/hosts.mjs`・`web/plus-settings.mjs`・`web/remote-hosts.mjs`: `removed`（`permanent`）・`update`。
-- Android の `remote-core`（`PlusTickets`・`PlusAdmission`・`DeviceLink`・`NotifyLine`）と app（`PlusManager`）: 同じ券の道。`4401 'ticket'` は取り直し、`4401 'update required'` と `426` は更新を促す。iOS は公式の中継の受け入れをまだ持たない。
+- Android の `remote-core`（`PlusTickets`・`PlusAdmission`・`DeviceLink`・`NotifyLine`）と app（`PlusManager`）: 同じ券の道。`4401 'ticket'` は取り直し、`4401 'update required'` と `426` は更新を促す。iOS は公式の中継の受け入れをまだ持たない。2026-11 追記: iOS も Android と同じ形で対応した（[ADR 0263](0263-accounts-and-hosted-relay.md) 決定 5・[docs/plus.md](../plus.md)「iOS」）。
 - 試験: `tests/unit/plus-tickets.mjs`・`tests/unit/remote-tickets.mjs`、偽の Plus（`tests/lib/fake-plus.mjs`）と中継の身代わり（`tests/lib/plus-relay-authz.mjs`）、Android の `PlusAdmissionTest`・`PlusInteropTest`。
