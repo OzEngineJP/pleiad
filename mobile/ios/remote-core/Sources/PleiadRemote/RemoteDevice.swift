@@ -114,17 +114,23 @@ public struct HostRecord: Hashable {
 public final class DeviceStore {
     public let dir: URL
     private let hostsFile: URL
+    private let notifyFile: URL
     private let vault: SecretVault
+    /// The notification key's own item (nil: it lives inside the secrets blob). The app passes a Keychain item in the
+    /// shared access group so the notification extension can read it (ADR 0086 iOS).
+    private let notifyVault: SecretVault?
     private let lock = NSRecursiveLock()
     private var keyPair: KeyPair?
 
     public var protected: Bool { vault.protected }
 
-    public init(dir: URL, vault: SecretVault? = nil) throws {
+    public init(dir: URL, vault: SecretVault? = nil, notifyVault: SecretVault? = nil) throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         self.dir = dir
         hostsFile = dir.appendingPathComponent("hosts.json")
+        notifyFile = dir.appendingPathComponent("notify.json")
         self.vault = vault ?? FileVault(file: dir.appendingPathComponent("secrets.json"))
+        self.notifyVault = notifyVault
     }
 
     private func readSecrets() throws -> [String: JSON] {
@@ -161,6 +167,60 @@ public final class DeviceStore {
         }
         keyPair = kp
         return kp
+    }
+
+    // ── Notifications while away (docs/remote.md §11-5): the device's notification key (one for all hosts; the AAD
+    //    binds each notice to a host and this device), the settings, and whether the "turn on notifications?" band was
+    //    dismissed. notify.json holds only settings — never the key. ──
+
+    /// The device's notification key. Created on first use, sealed with the other secrets (or its own item when a
+    /// notifyVault was given — the shared Keychain group, so the notification extension reads the same key).
+    public func notifyKey() throws -> Bytes {
+        lock.lock(); defer { lock.unlock() }
+        if let notifyVault {
+            if let b = try notifyVault.load(), b.count == NotifyCrypto.KEY_BYTES { return b }
+            let key = NotifyCrypto.generateKey()
+            try notifyVault.save(key)
+            return key
+        }
+        var secrets = try readSecrets()
+        if let s = secrets["notifyKey"]?.string, let b = Base64URL.decode(s), b.count == NotifyCrypto.KEY_BYTES { return b }
+        let key = NotifyCrypto.generateKey()
+        secrets["notifyKey"] = .string(Base64URL.encode(key))
+        try writeSecrets(secrets)
+        return key
+    }
+
+    private func readNotify() -> [String: JSON] {
+        guard FileManager.default.fileExists(atPath: notifyFile.path),
+              let o = try? JSON.parse(Bytes(try Data(contentsOf: notifyFile))).object else { return [:] }
+        return o
+    }
+
+    public func notifySettings() -> NotifySettings {
+        lock.lock(); defer { lock.unlock() }
+        return NotifySettings.from(.object(readNotify()))
+    }
+
+    @discardableResult
+    public func saveNotifySettings(_ s: NotifySettings) throws -> NotifySettings {
+        lock.lock(); defer { lock.unlock() }
+        var o = readNotify()
+        if let merged = s.json.object { for (k, v) in merged { o[k] = v } }
+        try Data(JSON.object(o).data).write(to: notifyFile, options: .atomic)
+        return s
+    }
+
+    public func notifyBandDismissed() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return readNotify()["bandDismissed"]?.bool ?? false
+    }
+
+    public func setNotifyBandDismissed(_ value: Bool) throws {
+        lock.lock(); defer { lock.unlock() }
+        var o = readNotify()
+        o["bandDismissed"] = .bool(value)
+        try Data(JSON.object(o).data).write(to: notifyFile, options: .atomic)
     }
 
     public func hosts() throws -> [HostRecord] {
