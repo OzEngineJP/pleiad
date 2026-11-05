@@ -8,6 +8,7 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
     private static let darkPaper = UIColor(red: 0x1b / 255.0, green: 0x1c / 255.0, blue: 0x23 / 255.0, alpha: 1)
 
     let hostId: String
+    let via: String
     var onLeave: (() -> Void)?
     private let device: RemoteDevice
     private var proxy: DeviceProxy?
@@ -30,8 +31,9 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
     private var statusToken: Int?
     private var left = false
 
-    init(hostId: String, device: RemoteDevice) {
+    init(hostId: String, via: String = "own", device: RemoteDevice) {
         self.hostId = hostId
+        self.via = via
         self.device = device
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
@@ -43,7 +45,7 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        ResumeStore.remember(hostId)
+        ResumeStore.remember(hostId, via: via)
         let isDark = traitCollection.userInterfaceStyle == .dark
         let paper = isDark ? HostViewController.darkPaper : .white
         applyBars(isDark, paper, paper)
@@ -75,7 +77,7 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
         }
         HostViewController.worker.async { [weak self, device] in
             do {
-                let px = try device.open(id)
+                let px = try device.open(id, via: via)
                 DispatchQueue.main.async { if let self, !self.left { self.showHost(px) } }
             } catch {
                 NSLog("Pleiad: open host: %@", String(describing: error))
@@ -186,11 +188,10 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
     private func remoteScript() -> String? {
         guard let file = Bundle.main.url(forResource: "plyremote", withExtension: "js"),
               let template = try? String(contentsOf: file, encoding: .utf8) else { return nil }
-        let rec = try? device.store.host(hostId)
+        let rec = try? device.store.host(hostId, via: via)
         let name = rec.map { $0.label.isEmpty ? $0.hostName : $0.label } ?? ""
-        // platform: iOS の殻の印。ページはこれで Plus の購入・ログイン・アカウント管理の入口を消す（ADR 0263 決定 5。docs/plus.md「iOS」）
         let info: JSON = ["hostId": .string(hostId), "hostName": .string(name), "relay": .string(rec?.relayUrl ?? ""),
-                          "device": .string(PleiadShell.deviceName), "platform": .string("ios")]
+                          "device": .string(PleiadShell.deviceName)]
         return ShellBridge.hostScript(template: template, info: info, origin: origin, receiver: receiver)
     }
 
