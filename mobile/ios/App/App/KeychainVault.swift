@@ -39,4 +39,9 @@ final class KeychainVault: SecretVault {
         }
         guard st == errSecSuccess else { throw VaultError("keychain write \(st)") }
     }
+
+    func delete() throws {
+        let st = SecItemDelete(query as CFDictionary)
+        guard st == errSecSuccess || st == errSecItemNotFound else { throw VaultError("keychain delete \(st)") }
+    }
 }

@@ -30,7 +30,8 @@ public struct PairingOffer {
     public let hostName: String
 }
 
-/// What the device keeps per host. token is secret.
+/// What the device keeps per host. token is secret. via: the route ("own" relay | "plus" official relay).
+/// uid: the Plus account the pairing was made with (nil for own-relay pairings).
 public struct HostCreds: Equatable {
     public let hostId: String
     public let hostPublicKey: Bytes
@@ -38,14 +39,24 @@ public struct HostCreds: Equatable {
     public let deviceId: String
     public let token: String
     public let hostName: String
+    public let via: String
+    public let uid: String?
 
-    public init(hostId: String, hostPublicKey: Bytes, relayUrl: String, deviceId: String, token: String, hostName: String) {
+    public init(hostId: String, hostPublicKey: Bytes, relayUrl: String, deviceId: String, token: String, hostName: String,
+                via: String = "own", uid: String? = nil) {
         self.hostId = hostId
         self.hostPublicKey = hostPublicKey
         self.relayUrl = relayUrl
         self.deviceId = deviceId
         self.token = token
         self.hostName = hostName
+        self.via = via
+        self.uid = uid
+    }
+
+    public func with(uid: String?) -> HostCreds {
+        HostCreds(hostId: hostId, hostPublicKey: hostPublicKey, relayUrl: relayUrl, deviceId: deviceId, token: token,
+                  hostName: hostName, via: via, uid: uid)
     }
 }
 

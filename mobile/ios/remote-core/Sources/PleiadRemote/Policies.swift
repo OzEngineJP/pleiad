@@ -45,13 +45,51 @@ public enum LinkPolicy {
     }
 }
 
-/// What the launch should do about the host the user was in last: open [hostId], or [forget] the saved one.
+/**
+ * Which route (own relay or Pleiad Plus) a host is opened with, when the device has a pairing for it each way
+ * (docs/remote.md §8.2, docs/plus.md, approved 2026-10-21). Pure, so the rules are unit-tested (HostRoute.kt).
+ *
+ * - A host window that is already connected keeps its route (opening it again must not drop that connection).
+ * - Otherwise Plus while the PC is online on the Plus ledger, the own relay when it is not (or the ledger is unknown).
+ * - A host paired only one way uses that way.
+ */
+public enum HostRoute {
+    public static func choose(hasOwn: Bool, hasPlus: Bool, plusOnline: Bool?, connectedVia: String? = nil) -> String? {
+        if connectedVia == "own" && hasOwn { return "own" }
+        if connectedVia == "plus" && hasPlus { return "plus" }
+        if hasPlus && (plusOnline == true || !hasOwn) { return "plus" }
+        if hasOwn { return "own" }
+        return nil
+    }
+
+    /// A saved record that can be opened: not revoked, and with device credentials (a Plus label placeholder has none).
+    public static func usable(_ h: HostRecord) -> Bool { h.revokedAt == nil && !h.deviceId.isEmpty }
+
+    /**
+     * The route to open [hostId] with when nothing on screen chose one (the last host at a launch, a tapped
+     * notification): [preferred] when that pairing is usable, else own, else Plus. Nil when there is no usable pairing.
+     */
+    public static func reopen(_ hostId: String, _ hosts: [HostRecord], _ preferred: String? = nil) -> String? {
+        let vias = Set(hosts.filter { $0.hostId == hostId && usable($0) }.map(\.via))
+        if let preferred, vias.contains(preferred) { return preferred }
+        if vias.contains("own") { return "own" }
+        if vias.contains("plus") { return "plus" }
+        return nil
+    }
+
+    /// Whether [hostId] can be opened at all: any usable pairing (own or Plus).
+    public static func openable(_ hostId: String, _ hosts: [HostRecord]) -> Bool { reopen(hostId, hosts) != nil }
+}
+
+/// What the launch should do about the host the user was in last: open [hostId] with the route [via], or [forget] the saved one.
 public struct ResumeDecision: Equatable {
     public let hostId: String?
     public let forget: Bool
-    public init(_ hostId: String?, _ forget: Bool) {
+    public let via: String?
+    public init(_ hostId: String?, _ forget: Bool, _ via: String? = nil) {
         self.hostId = hostId
         self.forget = forget
+        self.via = via
     }
 }
 
@@ -59,12 +97,13 @@ public struct ResumeDecision: Equatable {
 ///
 /// Opens only when the start is a fresh launch (not a state restoration, not a pleiad://pair link) and the saved host is
 /// still paired and not revoked. A saved host that no longer qualifies is forgotten, so it is not checked again at
-/// every start.
+/// every start. It reopens with the route it was open with ([savedVia]) while that pairing is usable, else with the
+/// other one (HostRoute.reopen): a host paired only with Plus never falls to own.
 public enum ResumePolicy {
-    public static func decide(saved: String?, hosts: [HostRecord], freshStart: Bool, launcherStart: Bool) -> ResumeDecision {
+    public static func decide(saved: String?, hosts: [HostRecord], freshStart: Bool, launcherStart: Bool, savedVia: String? = nil) -> ResumeDecision {
         guard let saved, !saved.isEmpty else { return ResumeDecision(nil, false) }
-        guard let host = hosts.first(where: { $0.hostId == saved }), host.revokedAt == nil else { return ResumeDecision(nil, true) }
+        guard let via = HostRoute.reopen(saved, hosts, savedVia) else { return ResumeDecision(nil, true) }
         if !freshStart || !launcherStart { return ResumeDecision(nil, false) }
-        return ResumeDecision(saved, false)
+        return ResumeDecision(saved, false, via)
     }
 }

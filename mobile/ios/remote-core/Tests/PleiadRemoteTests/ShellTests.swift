@@ -89,7 +89,7 @@ final class ShellBridgeTests: XCTestCase {
         XCTAssertEqual(d, "(() => { const f = window[\"__ply_r_abc\"]; if (typeof f === 'function') f(\"{\\\"type\\\":\\\"status\\\"}\"); })()")
     }
 
-    // iOS の殻の印（platform: ios）は info ごとそのまま埋める。ページはこれで Plus の入口を消す（docs/plus.md「iOS」）
+    // info は手を加えずにそのまま埋める（Plus の購入の導線を隠すのは shell: 'mobile' で、OS では分けない。ADR 0263 決定 5）
     func testHostScriptPassesThePlatformMarker() {
         let s = ShellBridge.hostScript(template: "const info = __PLY_INFO__;", info: ["hostId": "h1", "platform": "ios"],
                                        origin: "http://127.0.0.1:51234", receiver: "__ply_r_abc")

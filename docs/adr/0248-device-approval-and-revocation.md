@@ -37,5 +37,5 @@ ADR 0240 では、Pleiad Plus の公式の中継から来た端末は、ID ト�
 - `core/server.mjs`・`core/ops/policy.mjs`: `host_only`、取り消した機器、承認待ちの通知。
 - `core/notify/*`・`desktop/notifications.cjs`・`web/notifications.mjs`・`web/notification-inbox.mjs`: 承認待ちの知らせ。
 - `web/remote.mjs`・`web/remote-hosts.mjs`: 承認の窓（公式の中継の申し込み・もう一度の許可）、取り消した端末の一覧、端末の画面での見せ方。
-- `core/remote/device*.mjs`・Android の `remote-core`: `admit` / `pair`、待ちの画面、`approval`・`revoked`・`rejected` の断りの表示。iOS の `remote-core` は公式の中継の受け入れをまだ持たない（QR で足す端末だけ。取り消した鍵の扱いは PC 側で効く）。
+- `core/remote/device*.mjs`・Android の `remote-core`: `admit` / `pair`、待ちの画面、`approval`・`revoked`・`rejected` の断りの表示。iOS の `remote-core` は公式の中継の受け入れをまだ持たない（QR で足す端末だけ。取り消した鍵の扱いは PC 側で効く）。2026-11 追記: iOS も Android と同じ形で対応した（[ADR 0263](0263-accounts-and-hosted-relay.md) 決定 5・[docs/plus.md](../plus.md)「iOS」）。
 - 試験: `tests/unit/remote-admission.mjs`（同じアカウントの知らない鍵・取り消した鍵・一緒に外れる端末・ホストだけの操作・もう一度の許可）。

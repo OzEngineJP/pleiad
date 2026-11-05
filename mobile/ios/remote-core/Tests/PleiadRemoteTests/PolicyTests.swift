@@ -60,7 +60,7 @@ final class ResumePolicyTests: XCTestCase {
     }
 
     func testOpensTheSavedHostOnAFreshLauncherStart() {
-        XCTAssertEqual(ResumeDecision("a", false), decide("a"))
+        XCTAssertEqual(ResumeDecision("a", false, "own"), decide("a"))
     }
 
     func testShowsTheListWhenNothingIsSaved() {
@@ -101,6 +101,16 @@ final class UnavailablePageTests: XCTestCase {
             XCTAssertTrue(html.contains(#"<button type="button" id="back-to-hosts" hidden>Back to hosts</button>"#), state)
             XCTAssertTrue(html.contains("window.backToHosts()"), state)
             XCTAssertTrue(html.contains("typeof window.backToHosts==='function'"), state)
+        }
+    }
+
+    // Like UnavailablePageTest.kt: no automatic reload while the host refuses the device or the PC left the account
+    func testReloadsOnlyWhileTheHostMayComeBack() {
+        for state in ["revoked", "reapprove", "removed"] {
+            XCTAssertFalse(page(state).contains(#"http-equiv="refresh""#), state)
+        }
+        for state in ["offline", "host-offline"] {
+            XCTAssertTrue(page(state).contains(#"http-equiv="refresh""#), state)
         }
     }
 

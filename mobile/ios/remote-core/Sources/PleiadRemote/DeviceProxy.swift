@@ -130,10 +130,13 @@ public final class DeviceProxy {
     public init(loop: Loop, creds: HostCreds, keyPair: KeyPair, wantPort: Int = 0, app: String = "", name: String = "",
                 shell: String = "mobile", backoff: Backoff = Backoff(), connectTimeoutMs: Int = 15_000,
                 requestWaitMs: Int = 10_000, texts: ProxyTexts = DefaultTexts(), log: @escaping (String) -> Void = { _ in },
-                staticCacheFile: URL? = nil) {
+                staticCacheFile: URL? = nil,
+                plusIdToken: (() -> String?)? = nil, plusReadmit: ((String) throws -> HostCreds?)? = nil,
+                plusTicket: ((String, KeyPair) throws -> String?)? = nil) {
         self.loop = loop
         self.link = DeviceLink(loop: loop, creds: creds, keyPair: keyPair, app: app, name: name, shell: shell, backoff: backoff,
-                               connectTimeoutMs: connectTimeoutMs, log: log)
+                               connectTimeoutMs: connectTimeoutMs, log: log,
+                               plusIdToken: plusIdToken, plusReadmit: plusReadmit, plusTicket: plusTicket)
         self.wantPort = (1024...65535).contains(wantPort) ? wantPort : 0
         self.requestWaitMs = requestWaitMs
         self.texts = texts
@@ -193,11 +196,17 @@ public final class DeviceProxy {
         return port != old
     }
 
-    public func retryNow(_ newCreds: HostCreds? = nil) {
+    /// The relay the record points at moved (config refresh): hand the link the new credentials without forcing a retry.
+    public func updateCredentials(_ next: HostCreds) {
+        lock.lock(); _creds = next; lock.unlock()
+        link.retryNow(next)
+    }
+
+    public func retryNow(_ newCreds: HostCreds? = nil, _ newKeyPair: KeyPair? = nil) {
         if let newCreds {
             lock.lock(); _creds = newCreds; lock.unlock()
         }
-        link.retryNow(newCreds)
+        link.retryNow(newCreds, newKeyPair)
     }
 
     public func close() {
@@ -294,7 +303,9 @@ public final class DeviceProxy {
     }
 
     public func unavailablePage(_ state: String) -> String {
-        let revoked = state == "revoked"
+        // no automatic reload while the host refuses this device (revoked, or waiting to be allowed again), or the PC
+        // was removed from the Plus account
+        let revoked = state == "revoked" || state == "reapprove" || state == "removed"
         let title = texts.title(state)
         let body = texts.body(state)
         let hostName = creds.hostName

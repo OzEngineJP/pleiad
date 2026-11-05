@@ -20,10 +20,11 @@ export function remoteInfo(remote) {
 }
 
 /**
- * iOS のアプリの殻の中か。殻が plyRemote に platform: 'ios' を付ける（Android は付けない）。
- * App Store の 3.1.3(f) のため、iOS では Plus の購入・ログイン・アカウント管理の入口を出さない（ADR 0263 決定 5。docs/plus.md「iOS」）
+ * モバイル（Android・iOS）のアプリの殻の中か。殻が plyRemote に shell: 'mobile' を付ける。
+ * モバイルでは Plus の購入への誘導（値段・プランの案内・Web の購入画面へのリンク）を出さない（ADR 0263 決定 5）。
+ * ログイン・アカウントの管理・Plus の機能は両 OS で出す（docs/plus.md「iOS」）
  */
-export const inIosShell = (remote = globalThis.window?.plyRemote) => remoteInfo(remote)?.platform === 'ios';
+export const inMobileShell = (remote = globalThis.window?.plyRemote) => remoteInfo(remote)?.shell === 'mobile';
 
 /**
  * バッジと面に出すもの。status は plyRemote.status() / onStatus の値。

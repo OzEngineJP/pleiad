@@ -15,7 +15,7 @@
   Object.defineProperty(window, __PLY_RECEIVER__, { value: receive, writable: false, configurable: false, enumerable: false });
   const post = (type, extra) => bridge.postMessage(JSON.stringify(Object.assign({ type }, extra || {})));
   const api = Object.freeze({
-    hostId: info.hostId, hostName: info.hostName, relay: info.relay, device: info.device, platform: info.platform, shell: 'mobile',
+    hostId: info.hostId, hostName: info.hostName, relay: info.relay, device: info.device, shell: 'mobile',
     status: () => Promise.resolve(last),
     onStatus: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
     retry: () => { post('retry'); return Promise.resolve(); },

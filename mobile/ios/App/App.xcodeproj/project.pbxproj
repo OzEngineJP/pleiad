@@ -24,6 +24,9 @@
 		B17400000000000000000006 /* ResumeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000006 /* ResumeStore.swift */; };
 		B17400000000000000000007 /* ShellTexts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000007 /* ShellTexts.swift */; };
 		B17400000000000000000008 /* plyremote.js in Resources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000008 /* plyremote.js */; };
+		B17400000000000000000009 /* PlusStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17400000000000000000009 /* PlusStore.swift */; };
+		B1740000000000000000000A /* PlusManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1740000000000000000000A /* PlusManager.swift */; };
+		B1740000000000000000000B /* PleiadPlusPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1740000000000000000000B /* PleiadPlusPlugin.swift */; };
 		B17400000000000000000100 /* PleiadRemote in Frameworks */ = {isa = PBXBuildFile; productRef = C17400000000000000000100; };
 		B17400000000000000000200 = {isa = PBXBuildFile; fileRef = A17400000000000000000200; };
 B17400000000000000000301 = {isa = PBXBuildFile; fileRef = A17400000000000000000301; };
@@ -58,6 +61,9 @@ E17400000000000000000306 = {isa = PBXTargetDependency; target = 504EC3031FED7965
 		A17400000000000000000006 /* ResumeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeStore.swift; sourceTree = "<group>"; };
 		A17400000000000000000007 /* ShellTexts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellTexts.swift; sourceTree = "<group>"; };
 		A17400000000000000000008 /* plyremote.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = plyremote.js; sourceTree = "<group>"; };
+		A17400000000000000000009 /* PlusStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusStore.swift; sourceTree = "<group>"; };
+		A1740000000000000000000A /* PlusManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlusManager.swift; sourceTree = "<group>"; };
+		A1740000000000000000000B /* PleiadPlusPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PleiadPlusPlugin.swift; sourceTree = "<group>"; };
 		A17400000000000000000201 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		A17400000000000000000202 = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 A17400000000000000000301 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTests/KeychainVaultTests.swift; sourceTree = SOURCE_ROOT; };
@@ -114,6 +120,9 @@ A17400000000000000000305,
 				A17400000000000000000002 /* PleiadShell.swift */,
 				A17400000000000000000001 /* PleiadRemotePlugin.swift */,
 				A17400000000000000000000 /* PleiadBridgeViewController.swift */,
+				A1740000000000000000000B /* PleiadPlusPlugin.swift */,
+				A1740000000000000000000A /* PlusManager.swift */,
+				A17400000000000000000009 /* PlusStore.swift */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
 				504EC3131FED79650016851F /* Info.plist */,
@@ -221,6 +230,9 @@ B17400000000000000000304 /* PrivacyInfo.xcprivacy in Resources */,
 				B17400000000000000000002 /* PleiadShell.swift in Sources */,
 				B17400000000000000000001 /* PleiadRemotePlugin.swift in Sources */,
 				B17400000000000000000000 /* PleiadBridgeViewController.swift in Sources */,
+				B1740000000000000000000B /* PleiadPlusPlugin.swift in Sources */,
+				B1740000000000000000000A /* PlusManager.swift in Sources */,
+				B17400000000000000000009 /* PlusStore.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

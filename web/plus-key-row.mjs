@@ -3,8 +3,6 @@
 // 状態はサーバーの delegationRouting・voice.status の plus（core/server.mjs の plusKeyInfo）をそのまま描くだけ。
 import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
-import { inIosShell } from './remote-badge.mjs';
-
 /** 「{date} に戻ります」の date（resetAt を画面の言語の日付に。例 11月1日・Nov 1） */
 export const resetDateText = resetAt =>
   resetAt ? new Intl.DateTimeFormat(lang, { month: 'long', day: 'numeric' }).format(new Date(resetAt)) : '';
@@ -57,8 +55,8 @@ export function loadingMark() {
   return s;
 }
 
-/** Plus の行を出すか（state: off・AGENT_HOST_PLUS=0・iOS の殻のときは行ごと出さない。docs/plus.md「iOS」） */
-export const plusRowVisible = info => !inIosShell() && info && info.available !== false && info.state !== 'off';
+/** Plus の行を出すか（state: off・AGENT_HOST_PLUS=0 のときは行ごと出さない。docs/plus.md） */
+export const plusRowVisible = info => info && info.available !== false && info.state !== 'off';
 
 /**
  * Pleiad Plus の行。状態ごとの右と選べるかは docs/plus.md「画面の行」の表。

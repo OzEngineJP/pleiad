@@ -23,10 +23,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidBecomeActive(_ scene: UIScene) {
+        PleiadShell.setForeground(true)
         (window?.rootViewController as? PleiadBridgeViewController)?.hostWindow?.enterForeground()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
+        PleiadShell.setForeground(false)
         (window?.rootViewController as? PleiadBridgeViewController)?.hostWindow?.enterBackground()
     }
 
