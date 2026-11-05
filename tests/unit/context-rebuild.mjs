@@ -66,4 +66,42 @@ export default async function (t) {
   t.ok('発言の無い会話でも写しの場所だけは渡る', empty.context.includes('/data/handoff-abc.json') && empty.stats.users === 0);
   const onlyAssistant = build({ messages: [assistant('先に話した')] });
   t.ok('人の発言が無くても直近のやりとりは組めないので発言節は無い', onlyAssistant.stats.turns === 0);
+
+  // --- 内部の行は「あなたの発言」に混ざらない（classifySystemMessages 済みの行を渡す）---
+  const internal = build({ messages: [
+    user('最初のお願いです'),
+    { role: 'user', kind: 'shell', text: '! npm test', command: 'npm test', stdout: 'passed https://example.com/ci', stderr: null },
+    { role: 'user', kind: 'command', text: '/review 結果', command: '/review', output: 'ok' },
+    { role: 'system', kind: 'compactSummary', text: '', summary: '要約の文' },
+    { role: 'system', kind: 'channelEvent', text: '', body: '<pleiad-channel>包み</pleiad-channel>' },
+    user('ついでに b.ts も'),
+  ] });
+  t.ok('内部の行は発言に数えない（発言 2 件）', internal.stats.users === 2 && !internal.context.includes('<pleiad-channel>') && !internal.context.includes('要約の文'));
+  t.ok('`!` とスラッシュコマンドはコマンドの索引に載る', internal.stats.commandCount === 2);
+  t.ok('シェルの出力の URL も索引に数える', internal.stats.urls === 1);
+
+  // --- internalTaskNotice の行は発言ではなく委譲の結果（sha が無くても見分ける）---
+  const flagged = build({ messages: [user('お願い'), { role: 'user', internalTaskNotice: true, text: '[タスク完了通知] x' }] });
+  t.ok('internalTaskNotice の行は発言に数えない', flagged.stats.users === 1 && flagged.stats.reports === 1);
+
+  // --- Windows のパス（\\ 区切り・ドライブ文字つき）もファイル索引に載る ---
+  const win = build({ messages: [user('読んで'),
+    assistant('', [{ name: 'read', input: { file_path: 'D:\\dev\\app\\win.ts' }, result: { text: 'x' } }]),
+    assistant('', [{ name: 'read', input: { file_path: 'src\\rel\\r.ts' }, result: { text: 'x' } }])] });
+  t.ok('バックスラッシュのパスも拾う', win.stats.fileCount === 2 && win.stats.files[0] === 'D:\\dev\\app\\win.ts' && win.stats.files[1] === 'src\\rel\\r.ts');
+
+  // --- 切り詰めの向き: 先頭が巨大でも末尾の発言・直近の往復は残る ---
+  const hugeHead = [
+    user('最初のお願い ' + 'h'.repeat(20_000)),
+    assistant('返答 ' + 'a'.repeat(10_000)),
+    user('2 番目のお願い ' + 'i'.repeat(20_000)),
+    assistant('返答 2 ' + 'b'.repeat(10_000)),
+    user('最後のお願い'),
+    assistant('最後の返答'),
+  ];
+  const squeezed = build({ messages: hugeHead });
+  t.ok('末尾の発言は全文残る（切り詰めで消えない）', squeezed.context.includes('最後のお願い'));
+  t.ok('直近の往復は新しい方を優先して残る', squeezed.context.includes('最後の返答'));
+  const userBlock = squeezed.context.slice(0, squeezed.context.indexOf('## 直近'));
+  t.ok('発言の節は枠の中に収まる', userBlock.length <= REBUILD_LIMITS.userChars + 600);
 }

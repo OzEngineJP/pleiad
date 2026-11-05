@@ -971,6 +971,8 @@ export function wrapBackend(native) {
     }
     let checkpoint = Promise.resolve();
     let pendingDeliveryId = null;
+    let pendingRebuildComplete = null;
+    const reportRebuild = (info) => Promise.resolve(args.onContextRebuild?.(info)).catch(() => {});
     const promptDelivered = nativeMessageId => {
       if (typeof nativeMessageId === 'string' && !r.nativeId) { pendingDeliveryId = nativeMessageId; return; }
       args.onPromptDelivered?.(typeof nativeMessageId === 'string' && r.nativeId ? `${native.id}:${r.nativeId}:${nativeMessageId}` : nativeMessageId);
@@ -985,19 +987,23 @@ export function wrapBackend(native) {
       // JSON の写しではなく、人の発言・索引・直近のやりとりに畳んだ引き継ぎを渡す。組み立てに失敗したら今の経路に戻す
       const rebuildMark = r.rebuild && typeof r.rebuild === 'object' ? r.rebuild : null;
       const kind = rebuildMark && rebuildEnabled(await store.getPrefs()) ? (rebuildMark.kind ?? 'switch') : null;
-      const report = (info) => Promise.resolve(args.onContextRebuild?.(info)).catch(() => {});
       let context = null;
       if (kind) {
         try {
-          await report({ kind, phase: 'start' });
+          await reportRebuild({ kind, phase: 'start' });
           const taskNotices = (await store.get(id).catch(() => null))?.taskNotices ?? [];
-          const built = buildRebuildPackage({ messages, presents, taskNotices, ref, locale: args.locale });
+          // 画面と同じ分類（classifySystemMessages）を掛けてから渡す。`!` の入出力・コマンド・要約・包みの行は人の発言に混ざらない
+          const built = buildRebuildPackage({ messages: classifySystemMessages(messages), presents, taskNotices, ref, locale: args.locale });
           context = built.context;
           await fs.writeFile(ref, transcript);
-          await report({ kind, phase: 'complete', stats: built.stats, ref,
-            beforeTokens: Number.isFinite(rebuildMark.beforeTokens) ? rebuildMark.beforeTokens : null, afterTokens: Math.max(1, Math.round(context.length / 4)) });
+          // 組み立てが済んだだけでは区切りにしない。新しい会話を採用（session イベント）したときに complete を残す
+          // （ターンの開始に失敗しても印が残るので、次の送信で重複せずにやり直せる）
+          pendingRebuildComplete = { kind, phase: 'complete', stats: built.stats, ref,
+            beforeTokens: Number.isFinite(rebuildMark.beforeTokens) ? rebuildMark.beforeTokens : null,
+            // 実測は次のターンの contextWindow で後から置き換える。それまでは試し（context-rebuild-probe.md）の 0.70 トークン/字で見積もる
+            afterTokens: Math.max(1, Math.round(context.length * 0.70)), afterEstimated: true };
         } catch (e) {
-          await report({ kind, phase: 'failed', reason: String(e?.message ?? e) });
+          await reportRebuild({ kind, phase: 'failed', reason: String(e?.message ?? e) });
           if (rebuildMark.from) {
             // 放置後の送信の区切り: 組み立てられなかったので、捨てる前の会話へ戻してそのまま続ける
             r.nativeId = rebuildMark.from;
@@ -1038,6 +1044,7 @@ export function wrapBackend(native) {
           if (ev.type === "session" && ev.sessionId && ev.sessionId !== r.nativeId) {
             r.nativeId = ev.sessionId;
             delete r.rebuild;   // 組み立て直しの印は、新しい会話を採用したこの区切りで使い切る
+            if (pendingRebuildComplete) { const pending = pendingRebuildComplete; pendingRebuildComplete = null; reportRebuild(pending); }
             r.segments.push({ backend: native.id, nativeId: ev.sessionId });
             r._dirty = true;
             checkpoint = save();

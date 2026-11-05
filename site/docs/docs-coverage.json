@@ -97,6 +97,7 @@
     "setting:confirmAgentSites": "reference/settings",
     "setting:confirmExternalLoads": "reference/settings",
     "setting:context.default": "reference/settings",
+    "setting:contextRebuild": "reference/settings",
     "setting:delegationRouting": "reference/settings",
     "setting:effort": "reference/settings",
     "setting:externalSitePermissions": "reference/settings",

@@ -7485,7 +7485,8 @@ async function recordContextRebuild(turn, info) {
   const entry = { id: crypto.randomUUID(), at: (turn.userSentAt ?? Date.now()) - 1, kind: info.kind, phase: info.phase,
     ...(info.reason ? { reason: info.reason } : {}), ...(info.stats ? { stats: info.stats } : {}), ...(info.ref ? { ref: info.ref } : {}),
     ...(Number.isFinite(info.beforeTokens) ? { beforeTokens: info.beforeTokens } : {}),
-    ...(Number.isFinite(info.afterTokens) ? { afterTokens: info.afterTokens } : {}) };
+    ...(Number.isFinite(info.afterTokens) ? { afterTokens: info.afterTokens } : {}),
+    ...(info.afterEstimated ? { afterEstimated: true } : {}) };
   if (entry.phase === 'start') { emitGlobal({ type: 'contextRebuild', sessionId, ...entry }); return; }
   const previous = (await store.get(sessionId)).rebuilds ?? [];
   await store.setSessionData(sessionId, 'rebuilds', [...previous, entry].slice(-REBUILD_LIMITS.entries));
@@ -8330,7 +8331,20 @@ async function endTurn(turn, emit, { record = true } = {}) {
   if (turn.info.sessionId) {
     await turn.setup?.catch(() => {});
     await turn.compactionWrite;
-    if (turn.contextWindow) await store.setSessionData(turn.info.sessionId, 'contextWindow', turn.contextWindow).catch(() => {});
+    if (turn.contextWindow) {
+      await store.setSessionData(turn.info.sessionId, 'contextWindow', turn.contextWindow).catch(() => {});
+      // 区切りの記録で見積もり（0.70 トークン/字）にしていた afterTokens を、このターンの実際の使用量で置き換える（区切りの札の数を本物に）
+      if (Number.isFinite(turn.contextWindow.usedTokens)) {
+        const rebuilds = (await store.get(turn.info.sessionId).catch(() => null))?.rebuilds;
+        const estimated = rebuilds?.findLast(e => e.phase === 'complete' && e.afterEstimated);
+        if (estimated) {
+          const entry = { ...estimated, afterTokens: turn.contextWindow.usedTokens };
+          delete entry.afterEstimated;
+          await store.setSessionData(turn.info.sessionId, 'rebuilds', rebuilds.map(e => e.id === entry.id ? entry : e)).catch(() => {});
+          emitGlobal({ type: 'contextRebuild', sessionId: turn.info.sessionId, ...entry });
+        }
+      }
+    }
     if (turn.hookRuns?.length) {
       const previous = (await store.get(turn.info.sessionId).catch(() => ({}))).hookRuns ?? [];
       await store.setSessionData(turn.info.sessionId, 'hookRuns', trimHookRuns([...previous, ...turn.hookRuns])).catch(() => {});
