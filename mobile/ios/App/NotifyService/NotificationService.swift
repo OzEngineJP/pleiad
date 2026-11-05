@@ -26,7 +26,7 @@ final class NotificationService: UNNotificationServiceExtension {
             return finish()   // 私たちの形でない → 一般文のまま
         }
         var notice: PushNotice?
-        if let key = try? NotifyKeychain().load(), let key {
+        if let key = try? NotifyKeychain().load() {
             notice = NotifyCrypto.open(key: key, hostId: h, deviceId: d, blob: b)
         }
         guard let notice, notice.kind != NoticeKind.CANCEL else { return finish() }   // 取り消しは届いたまま（アプリが整える）
