@@ -4,6 +4,7 @@ import PleiadRemote
 enum PleiadShell {
     private(set) static var device: RemoteDevice?
     private(set) static var plus: PlusManager?
+    private(set) static var push: PushRegistrar?
     private static var startError: Error?
     private(set) static var deviceName = ""
 
@@ -34,6 +35,29 @@ enum PleiadShell {
             }
             self.plus = plus
             self.device = device
+            // 通知（ADR 0086 iOS）: ホストへの登録は E2E の中、APNs の結び付けは api の PUT /v1/push/apns。
+            // 届くのは Pleiad Plus の経路の組だけ（自分の中継だけの組は対象外）。
+            let registrar = NotifyRegistrar(loop: device.loop,
+                                            keyFor: { creds in
+                                                try device.store.keyFor(creds.hostId, via: creds.via) ?? device.store.identity()
+                                            },
+                                            app: app, name: deviceName,
+                                            log: { NSLog("Pleiad: %@", $0) },
+                                            plusIdToken: { plus.idToken() },
+                                            plusTicket: device.plusTicket)
+            #if DEBUG
+            let apnsEnv = "sandbox"
+            #else
+            let apnsEnv = "production"
+            #endif
+            let push = PushRegistrar(store: device.store, registrar: registrar,
+                                     idToken: { plus.idToken() },
+                                     apiBase: plus.apiBase, clientTag: "ios/\(app)",
+                                     bundle: Bundle.main.bundleIdentifier ?? "dev.pleiad.app",
+                                     env: apnsEnv, log: { NSLog("Pleiad: %@", $0) })
+            self.push = push
+            plus.onSignOut = { push.unregister() }
+            plus.onSync = { push.sync() }
         } catch {
             startError = VaultError("remote store: \(error)")
         }
@@ -57,7 +81,10 @@ enum PleiadShell {
         let fm = FileManager.default
         let support = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         var dir = support.appendingPathComponent("remote", isDirectory: true)
-        let store = try DeviceStore(dir: dir, vault: KeychainVault())
+        // 通知の鍵は共有アクセスグループの項目に置き、通知拡張（NotifyService）も同じものを読む。
+        // 共有グループが結べていないビルドではアプリの項目に入り、通知は一般文で開かれる。
+        let notifyVault = KeychainVault.sharedAccessGroup().map { KeychainVault(account: "notify", accessGroup: $0) }
+        let store = try DeviceStore(dir: dir, vault: KeychainVault(), notifyVault: notifyVault)
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
         try dir.setResourceValues(values)

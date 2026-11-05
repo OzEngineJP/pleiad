@@ -115,6 +115,7 @@
       'notify.denied': 'Notifications are blocked for Pleiad.',
       'notify.openSettings': 'Open system settings',
       'notify.foot': 'Notifications carry only the conversation name. The host sends them encrypted through the relay.',
+      'notify.plusOnly': 'On iOS, only PCs connected through Pleiad Plus can notify this device. Notifications carry only the conversation name, encrypted by the host.',
     },
     ja: {
       'hosts.title': 'ホスト',
@@ -201,6 +202,7 @@
       'notify.denied': 'Pleiad の通知が許可されていません。',
       'notify.openSettings': '端末の設定を開く',
       'notify.foot': '通知に載せるのは会話名だけです。ホストが暗号化して中継に渡します。',
+      'notify.plusOnly': 'iOS では Pleiad Plus でつないだ PC だけ通知が届きます。通知に載せるのは会話名だけで、ホストが暗号化します。',
       'common.back': '戻る',
       'common.cancel': 'やめる',
       'plus.account': 'アカウント',

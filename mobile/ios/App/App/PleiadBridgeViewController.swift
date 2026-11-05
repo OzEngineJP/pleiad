@@ -8,21 +8,20 @@ final class PleiadBridgeViewController: CAPBridgeViewController {
     var resumeOnLaunch = false
     private(set) var hostWindow: HostViewController?
     private var firstAppearance = true
+    /// 通知のタップの行き先（開いてからその会話を渡す）。窓の交代のあいだ覚えておく。
+    private var notifyTarget: (hostId: String, session: String)?
 
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(PleiadRemotePlugin())
         bridge?.registerPluginInstance(PleiadPlusPlugin())
         bridge?.registerPluginInstance(QRScannerPlugin())
-        // 通知は iOS の対象外（ADR 0086）。共通の www を変えずに入口を隠す。
-        let script = "document.getElementById('notifyOpen')?.setAttribute('hidden', '');"
-        webView?.configuration.userContentController.addUserScript(
-            WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard firstAppearance else { return }
         firstAppearance = false
+        if notifyTarget != nil { openNotifyTarget(); return }
         guard resumeOnLaunch else { return }
         do {
             let d = ResumePolicy.decide(saved: ResumeStore.hostId(), hosts: try PleiadShell.requireDevice().store.hosts(),
@@ -40,10 +39,35 @@ final class PleiadBridgeViewController: CAPBridgeViewController {
         let host = HostViewController(hostId: hostId, via: via, device: device)
         hostWindow = host
         host.onLeave = { [weak self, weak host] in
-            host?.dismiss(animated: true) { self?.hostWindow = nil }
+            host?.dismiss(animated: true) {
+                self?.hostWindow = nil
+                self?.openNotifyTarget()
+            }
         }
         present(host, animated: true)
         return true
+    }
+
+    /// 通知のタップ（AppDelegate から）: そのホストの窓を開き、名指しの会話を渡す（web/mobile-notify.mjs の行き先）。
+    func openNotification(hostId: String, session: String) {
+        resumeOnLaunch = false
+        notifyTarget = (hostId, session)
+        if hostWindow?.hostId == hostId {   // 同じホストの窓が開いていれば、それに渡すだけ
+            notifyTarget = nil
+            hostWindow?.openSession(session)
+            return
+        }
+        if let w = hostWindow { w.leave(forget: false) }   // 別ホストの窓は畳んでから開き直す（onLeave が続きを呼ぶ）
+        else { openNotifyTarget() }
+    }
+
+    private func openNotifyTarget() {
+        guard let t = notifyTarget else { return }
+        notifyTarget = nil
+        guard let device = PleiadShell.device,
+              let via = HostRoute.reopen(t.hostId, (try? device.store.hosts()) ?? []),
+              openHost(t.hostId, via: via) else { return }
+        hostWindow?.openSession(t.session)
     }
 
     func offerLink(_ url: URL) {
@@ -60,6 +84,14 @@ final class PleiadBridgeViewController: CAPBridgeViewController {
             case "/enable": PleiadShell.plus?.setEntrance(true)
             case "/disable": PleiadShell.plus?.setEntrance(false)
             default: break   // その他の pleiad://plus/… は無視
+            }
+            return
+        }
+        // pleiad://open?h=<hostId>&s=<会話>: 通知と同じ行き先（タップの経路は AppDelegate → openNotification）
+        if url.scheme?.lowercased() == "pleiad", url.host?.lowercased() == "open" {
+            let q = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if let h = q.first(where: { $0.name == "h" })?.value, !h.isEmpty {
+                openNotification(hostId: h, session: q.first(where: { $0.name == "s" })?.value ?? "")
             }
             return
         }

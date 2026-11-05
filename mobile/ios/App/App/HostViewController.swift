@@ -4,6 +4,7 @@ import WebKit
 import PleiadRemote
 final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate, UIDocumentPickerDelegate {
     private static let bridgeName = "plyRemoteBridge"
+    private static let queryValue = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
     private static let worker = DispatchQueue(label: "pleiad-host")
     private static let darkPaper = UIColor(red: 0x1b / 255.0, green: 0x1c / 255.0, blue: 0x23 / 255.0, alpha: 1)
 
@@ -30,6 +31,8 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
     private var dark = false
     private var statusToken: Int?
     private var left = false
+    /// 通知のタップで開く会話。ページが立つまで覚えておき、load で ?open= に乗せる（開いたあと開き直しにも効く）。
+    private var pendingOpen: String?
 
     init(hostId: String, via: String = "own", device: RemoteDevice) {
         self.hostId = hostId
@@ -171,7 +174,11 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
         load(px)
     }
     private func load(_ px: DeviceProxy) {
-        guard let w = web, let url = URL(string: px.url) else { return }
+        // 通知のタップは会話を名指す: ページが立ってから 1 回だけ取り出す ?open=（web/mobile-notify.mjs）
+        let open = pendingOpen
+            .map { "&open=" + ($0.addingPercentEncoding(withAllowedCharacters: HostViewController.queryValue) ?? "") } ?? ""
+        if !open.isEmpty { pendingOpen = nil }
+        guard let w = web, let url = URL(string: px.url + open) else { return }
         errorPanel?.removeFromSuperview()
         errorPanel = nil
         origin = "http://127.0.0.1:\(px.port)"
@@ -203,6 +210,14 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
         web?.evaluateJavaScript("window.dispatchEvent(new Event('plyremote:stop'))")
     }
 
+    /// 通知のタップが名指した会話を開く: ページが立っていれば出来事で、まだなら load の ?open= に回す。
+    func openSession(_ sessionId: String) {
+        if sessionId.isEmpty { return }
+        guard let w = web else { pendingOpen = sessionId; return }
+        let quoted = JSON.string(sessionId).serialized
+        w.evaluateJavaScript("window.dispatchEvent(new CustomEvent('plyremote:open', { detail: { sessionId: \(quoted) } }))")
+    }
+
     // 戻ったシーンだけを復帰させる。ポートが移った場合は新しい URL を開く。
     func enterForeground() {
         let id = hostId
@@ -230,7 +245,34 @@ final class HostViewController: UIViewController, WKNavigationDelegate, WKUIDele
         case "retry": proxy?.retryNow()
         case "theme": applyTheme(m)
         case "back": leave(forget: true)
+        // 通知の帯（web/mobile-notify.mjs）: 帯が殻に状態を聞き、入にする（許可はここで初めて尋ねる）
+        case "notify.state": replyTo(m["id"] as? Int ?? 0) { done in NotifyControl.state(done) }
+        case "notify.enable": replyTo(m["id"] as? Int ?? 0) { done in NotifyControl.enable(done) }
+        case "notify.dismiss": NotifyControl.dismissBand()
         default: break
+        }
+    }
+
+    /// ページの ask に答える: { type: "reply", id, result }（plyremote.js の Promise が受ける）。
+    private func replyTo(_ id: Int, _ body: @escaping (@escaping ([String: Any]) -> Void) -> Void) {
+        body { [weak self] result in
+            guard let self, let w = self.web else { return }
+            var o = result
+            o["type"] = "reply"
+            o["id"] = id
+            w.evaluateJavaScript(ShellBridge.deliver(receiver: self.receiver, message: HostViewController.jsonObject(o)))
+        }
+    }
+
+    /// Foundation の辞書を remote-core の JSON に（NSNumber は真偽と数を分ける）。
+    private static func jsonObject(_ v: Any) -> JSON {
+        switch v {
+        case let n as NSNumber where CFGetTypeID(n) == CFBooleanGetTypeID(): return .bool(n.boolValue)
+        case let n as NSNumber: return n.doubleValue.rounded() == n.doubleValue ? .int(n.int64Value) : .double(n.doubleValue)
+        case let s as String: return .string(s)
+        case let a as [Any]: return .array(a.map(jsonObject))
+        case let o as [String: Any]: return .object(o.mapValues(jsonObject))
+        default: return .null
         }
     }
     private func applyBars(_ dark: Bool, _ top: UIColor, _ bottom: UIColor) {

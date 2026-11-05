@@ -1,4 +1,4 @@
-// 同梱の一覧用の API。Android と同じメソッド・応答・イベントを返す。通知は対象外（ADR 0086）。
+// 同梱の一覧用の API。Android と同じメソッド・応答・イベントを返す（通知の 4 メソッドを含む。ADR 0086 iOS）。
 import Foundation
 import Capacitor
 import PleiadRemote
@@ -17,6 +17,10 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "rename", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remove", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "takePairLink", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "notifyState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "notifyUpdate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "notifyEnable", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "notifyOpenSystemSettings", returnType: CAPPluginReturnPromise),
     ]
 
     private static let worker = DispatchQueue(label: "pleiad-plugin", qos: .userInitiated, attributes: .concurrent)
@@ -79,6 +83,7 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
                 for rec in PlusHostList.gone(try device.store.hosts(), fetched.hosts) {
                     _ = try device.remove(rec.hostId, via: "plus")
                     self.forgetWhen(rec.hostId)
+                    PleiadShell.push?.hostGone(rec.hostId)
                 }
             }
             // 1 台 1 行。via はタップで開く経路（PlusHostList.combine）、both は両方の経路でペアリング済みの印。
@@ -175,6 +180,7 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
                                         handle: handle,
                                         ticket: { try plus.deviceTicket(hostId, keyPair: kp) }).with(uid: uid)
             }
+            PleiadShell.push?.sync()   // 新しい Plus の組は通知の対象に加わる
             call.resolve(["host": ShellBridge.foundation(rec.publicJson)])
         }
     }
@@ -264,9 +270,34 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
             let hostId = call.getString("hostId") ?? ""
             _ = try device.remove(hostId, via: call.getString("via") ?? "own")
             self.forgetWhen(hostId)
+            PleiadShell.push?.hostGone(hostId)
             call.resolve()
         }
     }
+
+    // ── 通知（ADR 0086 iOS）: アプリの通知の設定の画面。Android の NotifyControl に当たるのは NotifyControl ──
+
+    /** { settings, permission, enabled, dismissed, plusOnly, targets } */
+    @objc func notifyState(_ call: CAPPluginCall) {
+        NotifyControl.state { call.resolve($0) }
+    }
+
+    /** 設定の一部を変える（reply / failed / done / lockNames / skipPc、または enabled = false）。入は notifyEnable から。 */
+    @objc func notifyUpdate(_ call: CAPPluginCall) {
+        NotifyControl.update(call.options) { call.resolve($0) }
+    }
+
+    /** 許可がまだならここで尋ね、通知を入れて APNs の登録を合わせる。{ ok, permission, state } */
+    @objc func notifyEnable(_ call: CAPPluginCall) {
+        NotifyControl.enable { call.resolve($0) }
+    }
+
+    /** 端末の設定のアプリのページ（許可を断られたあと）。 */
+    @objc func notifyOpenSystemSettings(_ call: CAPPluginCall) {
+        NotifyControl.openSystemSettings()
+        call.resolve()
+    }
+
     @objc func takePairLink(_ call: CAPPluginCall) {
         PleiadRemotePlugin.linkLock.lock()
         let p = PleiadRemotePlugin.pendingLink

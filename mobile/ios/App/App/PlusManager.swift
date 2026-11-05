@@ -12,7 +12,8 @@ final class PlusManager {
     private let store = PlusStore()
     private let session: PlusSession
     private let clientTag: String
-    private let apiBase: String
+    /// 画面に出さない口（PushRegistrar の api 宛て）。
+    let apiBase: String
     private let log: (String) -> Void
 
     private let worker = DispatchQueue(label: "pleiad-plus", qos: .userInitiated)
@@ -36,6 +37,10 @@ final class PlusManager {
     private var hosts: [PlusHost] = []
     private var hostsError: String?
     var onChanged: (() -> Void)?
+    /// 画面以外の同期（APNs の登録合わせ = PushRegistrar）。onChanged と並んで emit から呼ぶ。
+    var onSync: (() -> Void)?
+    /// サインアウトの直前（ID トークンがまだ使えるうち）に呼ぶ。APNs の登録の解除が使う。
+    var onSignOut: (() -> Void)?
 
     init(apiBase: String = "https://api.pleiad.dev", log: @escaping (String) -> Void = { _ in }) {
         self.apiBase = apiBase
@@ -157,6 +162,7 @@ final class PlusManager {
 
     func logout() {
         worker.async { [self] in
+            onSignOut?()   // APNs の登録は ID トークンが要る: 捨てる前に解除する
             session.signOut()
             store.clearPending()
             flowError = nil
@@ -299,6 +305,6 @@ final class PlusManager {
         return s["plus"]?.string == "on" && s["login"]?.string == "in" && s["status"]?.string == "plus"
     }
 
-    private func emit() { onChanged?() }
+    private func emit() { onChanged?(); onSync?() }
     private func now() -> Int64 { Int64((Date().timeIntervalSince1970 * 1000).rounded()) }
 }

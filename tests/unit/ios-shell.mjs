@@ -50,8 +50,8 @@ export default async function (t) {
   const plugin = read(`${APP}/PleiadRemotePlugin.swift`);
   const methods = [...plugin.matchAll(/CAPPluginMethod\(name: "([^"]+)"/g)].map(m => m[1]).sort();
   const android = read('mobile/android/app/src/main/kotlin/dev/pleiad/app/PleiadRemotePlugin.kt');
-  const expected = [...android.matchAll(/@PluginMethod(?:\([^\n]*\))?\s+fun (\w+)/g)].map(m => m[1]).filter(n => !n.startsWith('notify')).sort();
-  t.ok('通知以外の Android の API が揃う', JSON.stringify(methods) === JSON.stringify(expected), JSON.stringify(methods));
+  const expected = [...android.matchAll(/@PluginMethod(?:\([^\n]*\))?\s+fun (\w+)/g)].map(m => m[1]).sort();
+  t.ok('Android の API が揃う（通知も同じ）', JSON.stringify(methods) === JSON.stringify(expected), JSON.stringify(methods));
   t.ok('公開メソッドに実装がある', methods.every(n => plugin.includes(`@objc func ${n}(`)));
   const scanner = read(`${APP}/QRScannerPlugin.swift`);
   const www = read('mobile/www/app.js');

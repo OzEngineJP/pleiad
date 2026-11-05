@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- APNs は Plus 経路だけに使う（ADR 0086）。環境はビルド設定の APS_ENVIRONMENT（Debug=development / Release=production） -->
+	<key>aps-environment</key>
+	<string>$(APS_ENVIRONMENT)</string>
+	<!-- 通知鍵は共有グループへ書き、通知拡張（NotifyService）と分かち合う -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)dev.pleiad.app</string>
+		<string>$(AppIdentifierPrefix)dev.pleiad.app.shared</string>
+	</array>
+</dict>
+</plist>

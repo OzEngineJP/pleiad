@@ -322,6 +322,8 @@
     }
     for (const g of document.querySelectorAll('#notify .dep')) g.classList.toggle('off', !master);
     $('notifyDenied').hidden = granted || !(s.enabled === true || deniedOnce);
+    const foot = document.querySelector('#notify .foot');
+    if (foot) foot.textContent = t(nstate?.plusOnly ? 'notify.plusOnly' : 'notify.foot');
   }
 
   async function loadNotify() {
