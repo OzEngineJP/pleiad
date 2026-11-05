@@ -55,8 +55,38 @@ jobs:
       # 署名しないと試験の宿主に entitlement が付かず、Keychain が -34018（errSecMissingEntitlement）で断る。
       # シミュレーターは ad-hoc の署名（-）で足り、Team も証明書も要らない
       - name: Test the shell bridge and Keychain on iPad Simulator
-        run: >-
-          xcodebuild test -project mobile/ios/App/App.xcodeproj -scheme App
-          -configuration Debug -sdk iphonesimulator -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID"
-          -derivedDataPath mobile/ios/DerivedData -resultBundlePath mobile/ios/App/build/tests.xcresult
-          CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER=
+        run: |
+          DIAG="$RUNNER_TEMP/diag"; mkdir -p "$DIAG"
+          xcodebuild test -project mobile/ios/App/App.xcodeproj -scheme App \
+            -configuration Debug -sdk iphonesimulator -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_ID" \
+            -derivedDataPath mobile/ios/DerivedData -resultBundlePath mobile/ios/App/build/tests.xcresult \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= PROVISIONING_PROFILE_SPECIFIER= &
+          XB=$!
+          n=0
+          while kill -0 $XB 2>/dev/null; do
+            sleep 20; n=$((n+20))
+            if [ $n -ge 840 ]; then
+              echo "::warning::xcodebuild test still running after ${n}s; collecting diagnostics"
+              ps axo pid,ppid,etime,command | grep -Ei 'App.app|xctest|simctl|installd|testmanager' | grep -v grep > "$DIAG/ps.txt" || true
+              cat "$DIAG/ps.txt"
+              for p in $(pgrep -f 'App.app/App$'); do sample "$p" 5 -file "$DIAG/sample-$p.txt" || true; head -200 "$DIAG/sample-$p.txt" || true; done
+              for p in $(pgrep -x xctest); do sample "$p" 3 -file "$DIAG/sample-xctest-$p.txt" || true; done
+              xcrun simctl io "$IOS_SIMULATOR_ID" screenshot "$DIAG/screen.png" || true
+              xcrun simctl spawn "$IOS_SIMULATOR_ID" launchctl list > "$DIAG/launchctl.txt" 2>&1 || true
+              xcrun simctl spawn "$IOS_SIMULATOR_ID" log show --last 20m --style compact \
+                --predicate 'process == "App" OR eventMessage CONTAINS[c] "dev.pleiad" OR process == "testmanagerd" OR process == "installd"' \
+                > "$DIAG/sim.log" 2>&1 || true
+              tail -400 "$DIAG/sim.log" || true
+              kill $XB || true
+              sleep 10
+              exit 1
+            fi
+          done
+          wait $XB
+      - name: Upload hang diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-hang-diagnostics
+          path: ${{ runner.temp }}/diag
+          if-no-files-found: ignore
