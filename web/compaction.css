@@ -36,6 +36,18 @@
 /* 要約の本文は見出しの行と同じ大きさ（--fs-s）。見出しより大きくしない */
 /* 要約は 1 万字前後になる。区切りの中でスクロールする（高さの上限） */
 .compaction-boundary .summary-body { white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--fs-s); line-height:1.7; background:var(--surface-2); border-radius:var(--r-s); padding:8px 12px; margin-top:4px; max-height:260px; overflow:auto; }
+/* 記録からの組み立て直しの区切りの中身（ADR 0287）。段の項目の名前と、その段に入った先頭のいくつかを出す */
+.compaction-boundary .boundary-rows { display:grid; grid-template-columns:auto minmax(0,1fr); gap:2px 10px; font-size:var(--fs-xs); line-height:1.7; color:var(--ink-weak); margin:4px 0 0; }
+.compaction-boundary .boundary-rows dt { color:var(--ink-weak); }
+.compaction-boundary .boundary-rows dt::after { content:"："; }
+.compaction-boundary .boundary-rows dd { margin:0; overflow:hidden; }
+.compaction-boundary .rebuild-open { display:block; margin-top:4px; }
+/* 自動圧縮のページで「記録から組み立て直す」のために止まっている面（ADR 0287）。触れないので薄くして指も通さない */
+.auto-compaction-off { margin-bottom:8px; }
+.auto-compaction-off .mp-note { margin:0 0 6px; }
+.off-part { opacity:.5; }
+.off-part * { pointer-events:none; }
+#autoCompactionRules.off-part { user-select:none; }
 .auto-compaction-settings { width:100%; }
 .auto-compaction-settings > .rm-switch { min-height:34px; }
 .auto-compaction-minimum { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }

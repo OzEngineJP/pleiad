@@ -55,7 +55,8 @@
       "delegation": "委譲",
       "autoCompaction": "自動圧縮",
       "browser": "ブラウザー",
-      "computer": "コンピューターの操作"
+      "computer": "コンピューターの操作",
+      "experimental": "試験的な機能"
     },
     "input": {
       "historyRecall": {
@@ -4342,6 +4343,31 @@
     "agentDelay": "{{agent}} の待ち時間",
     "minutes": "分",
     "saveFailed": "自動圧縮の設定を保存できませんでした：{{error}}"
+  },
+  "contextRebuild": {
+    "name": "会話の区切りで、記録から組み立て直す",
+    "description": "要約の代わりに、あなたの発言・索引・直近のやりとりを渡します。入切は次の区切りから効きます",
+    "saved": "保存しました",
+    "saveFailed": "保存できませんでした：{{error}}",
+    "autoCompactionOff": "「会話の区切りで、記録から組み立て直す」が入っているため、放置した会話の自動圧縮は止まっています",
+    "openExperimental": "試験的な機能を開く",
+    "running": "記録から組み立て直しています…",
+    "done": "記録から組み立て直しました",
+    "failed": "組み立て直せなかったため、前の続きから再開しました",
+    "tokens": "· {{tokens}} トークンを渡しました",
+    "show": "渡した内容",
+    "openFull": "渡した全文を開く",
+    "itemJoin": "、",
+    "more": "（ほか {{count}} 件）",
+    "rows": {
+      "users": "あなたの発言",
+      "files": "ファイル",
+      "commands": "コマンド",
+      "urls": "URL",
+      "reports": "委譲の結果",
+      "presents": "成果物",
+      "turns": "直近のやりとり"
+    }
   },
   "hooks": {
     "lead": "イベントに合わせて処理を実行",

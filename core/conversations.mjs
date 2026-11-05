@@ -16,6 +16,7 @@ import { classifySystemMessages, BOT_RECENT_TAG } from "./system-messages.mjs";
 import { promptTitle } from "./prompt-title.mjs";
 import { WORK_NOTES_VERSION } from "./brain/inner.mjs";
 import { historyGaveUp, readWithRetry, transientStorageError } from "./history-retry.mjs";
+import { rebuildEnabled, buildRebuildPackage } from "./context-rebuild.mjs";
 
 // 会話の索引（本文を除いたメタ情報）は SQLite の conversations（1 会話 1 行。core/db.mjs、ADR 0115）、本文は
 // conversations/<id>.json（会話ごとに 1 ファイル）。索引は変えた会話の行だけを書く。本文はまだ変更のたびに 1 会話分を丸ごと書く
@@ -447,6 +448,9 @@ export async function switchBackend(id, source, target, { restart = false } = {}
   entry.backend = target.id;
   entry.nativeId = null;
   entry.base = messages.length;
+  // 試験的な機能「会話の区切りで、記録から組み立て直す」が入っていれば、次の送信の引き継ぎを記録から組み立てる印（ADR 0287）
+  if (rebuildEnabled(await store.getPrefs())) entry.rebuild = { kind: 'switch', beforeTokens: meta.contextWindow?.usedTokens ?? null };
+  else delete entry.rebuild;
   entry._dirty = true;
   (await all())[id] = entry;
   try { await save(); } catch (e) { if (existing) records[id] = existing; else delete records[id]; throw e; }
@@ -842,6 +846,33 @@ export function wrapBackend(native) {
     // 生きているネイティブのプロセス（antigravity は 1 会話 1 プロセスを生かしておく）は使わない
     if (nativeId) await Promise.resolve(native.releaseConversation?.(nativeId)).catch(() => {});
   }
+  /**
+   * 放置後の送信の区切り（ADR 0287）: 今のネイティブの会話を捨て、次の送信を記録からの引き継ぎで新しいネイティブの会話として始める印。
+   * 戻せるように捨てる id と base を rebuild に残す（組み立てに失敗したときは元の続きに戻す）。
+   * 記録が要るのはこの印（rebuild）なので、Pleiad の記録の無いネイティブだけの会話は、先にホスト管理へ変える（becomeHostManaged。
+   * 切り替えや巻き戻しの救済と同じ作り）。会話が無い・本文が無い・すでに区切りにあるときは何もしない
+   */
+  wrapped.markForRebuild = async (id, { kind, beforeTokens = null } = {}) => {
+    const existing = await conversation(id);
+    if (existing && !existing.nativeId) return false;
+    let r = existing;
+    const from = existing ? existing.nativeId : id;
+    const previousBase = existing ? (existing.base ?? 0) : null;
+    if (!r) {
+      // ネイティブだけの会話は、履歴を持ったままホスト管理へ変える（一覧の見え方・発言の重なりは切り替えと同じになる）
+      const messages = await wrapped.getMessages(id, { fullResults: true });
+      if (!Array.isArray(messages) || !messages.length) return false;
+      await becomeHostManaged(id, null, messages, await wrapped.getPresents(id));
+      r = await conversation(id);
+    }
+    if (!r || !Array.isArray(r.messages) || !r.messages.length) return false;
+    r.rebuild = { kind, from, base: previousBase ?? (r.base ?? 0), ...(Number.isFinite(beforeTokens) ? { beforeTokens } : {}) };
+    r.nativeId = null;
+    r.base = r.messages.length;
+    r._dirty = true;
+    await save();
+    return true;
+  };
   // 巻き戻した次のターン。resumeDropsTurn が拒否したら（切り口が合わない。拒否の文面には依らず、バックエンドが rewindRejected を付けたもの）、
   // ホスト管理に落として一度だけやり直す。拒否は繰り返し再試行しない（SDK の注意）。拒否はプロンプトを渡す前に起きるので、やり直しても二重に送らない
   wrapped.runTurn = async (args) => {
@@ -950,19 +981,50 @@ export function wrapBackend(native) {
       const messages = r.messages.slice(r.contextStart ?? 0).map(({ thinking, ...m }) => m);
       const transcript = JSON.stringify({ messages, presents });
       const ref = handoffPath(id);
-      await fs.writeFile(ref, transcript);
-      const context = transcript.length <= 60000 ? transcript : JSON.stringify({
-        partial: true,
-        instructionsPreview: messages.filter(m => m.role === "user").map(m => m.text).join("\n").slice(0, 20000),
-        recent: messages.slice(-12).map(m => ({ role: m.role, text: m.text?.slice(0, 2500) })),
-        note: agentT(args.locale, 'handoff.partialNote'),
-      });
-      // Avoid implying a write request in the handoff boilerplate: an agent's intent
-      // heuristic may pair "editing" with the .json reference below.
-      // 引き継ぎの文はエージェントが読むので会話の言語（args.locale。core/server.mjs が渡す）で
-      prompt = agentT(args.locale, 'handoff.prompt', { ref, context, prompt: String(args.prompt ?? '') });
-      r.injected = prompt;
-      r.original = String(args.prompt ?? "");
+      // 試験的な機能「会話の区切りで、記録から組み立て直す」（ADR 0287）。切り替え・放置後の送信で立てた印（rebuild）があれば、
+      // JSON の写しではなく、人の発言・索引・直近のやりとりに畳んだ引き継ぎを渡す。組み立てに失敗したら今の経路に戻す
+      const rebuildMark = r.rebuild && typeof r.rebuild === 'object' ? r.rebuild : null;
+      const kind = rebuildMark && rebuildEnabled(await store.getPrefs()) ? (rebuildMark.kind ?? 'switch') : null;
+      const report = (info) => Promise.resolve(args.onContextRebuild?.(info)).catch(() => {});
+      let context = null;
+      if (kind) {
+        try {
+          await report({ kind, phase: 'start' });
+          const taskNotices = (await store.get(id).catch(() => null))?.taskNotices ?? [];
+          const built = buildRebuildPackage({ messages, presents, taskNotices, ref, locale: args.locale });
+          context = built.context;
+          await fs.writeFile(ref, transcript);
+          await report({ kind, phase: 'complete', stats: built.stats, ref,
+            beforeTokens: Number.isFinite(rebuildMark.beforeTokens) ? rebuildMark.beforeTokens : null, afterTokens: Math.max(1, Math.round(context.length / 4)) });
+        } catch (e) {
+          await report({ kind, phase: 'failed', reason: String(e?.message ?? e) });
+          if (rebuildMark.from) {
+            // 放置後の送信の区切り: 組み立てられなかったので、捨てる前の会話へ戻してそのまま続ける
+            r.nativeId = rebuildMark.from;
+            r.base = rebuildMark.base;
+            delete r.rebuild;
+            r._dirty = true;
+            await save().catch(() => {});
+          }
+        }
+      }
+      if (!r.nativeId) {
+        if (context === null) {
+          await fs.writeFile(ref, transcript);
+          context = transcript.length <= 60000 ? transcript : JSON.stringify({
+            partial: true,
+            instructionsPreview: messages.filter(m => m.role === "user").map(m => m.text).join("\n").slice(0, 20000),
+            recent: messages.slice(-12).map(m => ({ role: m.role, text: m.text?.slice(0, 2500) })),
+            note: agentT(args.locale, 'handoff.partialNote'),
+          });
+        }
+        // Avoid implying a write request in the handoff boilerplate: an agent's intent
+        // heuristic may pair "editing" with the .json reference below.
+        // 引き継ぎの文はエージェントが読むので会話の言語（args.locale。core/server.mjs が渡す）で
+        prompt = agentT(args.locale, 'handoff.prompt', { ref, context, prompt: String(args.prompt ?? '') });
+        r.injected = prompt;
+        r.original = String(args.prompt ?? "");
+      }
     }
     // このターンの中で初めて nativeId を採用したか（ターン前に nativeId が無かった）。採用した id の transcript が無ければ戻す（finally）
     const before = { nativeId: r.nativeId, segments: r.segments?.length ?? 0 };
@@ -975,6 +1037,7 @@ export function wrapBackend(native) {
         emit: ev => {
           if (ev.type === "session" && ev.sessionId && ev.sessionId !== r.nativeId) {
             r.nativeId = ev.sessionId;
+            delete r.rebuild;   // 組み立て直しの印は、新しい会話を採用したこの区切りで使い切る
             r.segments.push({ backend: native.id, nativeId: ev.sessionId });
             r._dirty = true;
             checkpoint = save();

@@ -76,7 +76,7 @@ import { createSlotLimits, slotKey, slotAccount } from './slot-limits.mjs';
 import { buildSendRow, buildPostRow, decideFire, sendArgs, decorateScheduled, addRecord, MAX_PER_SESSION, MAX_TOTAL } from './send-schedule.mjs';
 import { createCompactionScheduler, idleCompactionGuards } from './compaction-scheduler.mjs';
 import { normalizeCompactionSettings, delegatedCompactPlan, validContextBase } from './compaction-settings.mjs';
-import { agentOf, idleCompactionKey } from './backends/agents.mjs';
+import { agentOf, idleCompactionKey, rebuildIdleMinutes } from './backends/agents.mjs';
 import { createContextBases } from './context-bases.mjs';
 import { mergeCompactionHistory, attachCompactSummaries } from './compaction-history.mjs';
 import { slimRow, createListDeltas } from './session-list-delta.mjs';
@@ -184,6 +184,7 @@ import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
 import { serveHistory, subagentToolSet } from "../web/history-sync.mjs";
 import { switchBackend, createConversation, deleteUnsentConversation, deleteHiddenConversation, deleteConversation, pendingHandoff, conversation } from "./conversations.mjs";
+import { rebuildEnabled, REBUILD_LIMITS } from "./context-rebuild.mjs";
 import { familyOf } from "./lineage.mjs";
 import {
   getBackend, sessionBackend, listBackends, defaultBackend, describeBackends, resolveBackendForSession as rawBackendForSession, backendForAccount, offlineAccountBackend,
@@ -3801,6 +3802,19 @@ async function applyAutoCompaction(settings) {
   return settings;
 }
 
+/**
+ * 試験的な機能「会話の区切りで、記録から組み立て直す」（ADR 0287）の入切。次の区切りから効く。
+ * 入れたときは、置いてある放置の圧縮の予約は全部取り消す（同じ区切りで 2 回は区切らない）。切れば今の経路へそのまま戻る
+ */
+async function applyContextRebuild(enabled) {
+  const prefs = await savePref('contextRebuild', enabled);
+  if (enabled) {
+    compactionScheduler.cancelFiring();
+    for (const entry of compactionScheduler.entries()) await compactionScheduler.cancel(entry.sessionId);
+  }
+  return prefs;
+}
+
 /** 委譲先の自動選択の設定。patch は prefs.json の delegationRouting に重ねる項目（null の項目は既定に戻す）。全体を検証してから保存する */
 async function applyRoutingSettings(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error(t('routing.settings.notObject', { key: 'settings' }));
@@ -3963,7 +3977,7 @@ async function rewindConversation({ sessionId, beforeMessageId, stopRunning = fa
     // 切り口より後の記録（圧縮・渡さなかった `!` の行・hooks の発火）は捨てる。渡していない `!` の結果（shellPending）は次の発言と一緒に渡るので残す
     if (Number.isFinite(since)) {
       const time = at => (typeof at === 'number' ? at : Date.parse(at ?? ''));
-      for (const [field, list, at] of [['compactions', entry.compactions, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)]]) {
+      for (const [field, list, at] of [['compactions', entry.compactions, c => Number(c.at)], ['rebuilds', entry.rebuilds, c => Number(c.at)], ['shellKept', entry.shellKept, e => time(e.at)], ['hookRuns', entry.hookRuns, h => Number(h.at)]]) {
         if (list?.some(x => at(x) >= since)) await store.setSessionData(sessionId, field, list.filter(x => !(at(x) >= since)));
       }
     }
@@ -5636,6 +5650,7 @@ function opsDeps(lng = currentLocale()) {
       loginItem: (enabled) => loginItem.set(enabled),
       browserPref: applyBrowserPref,
       compaction: applyAutoCompaction,
+      contextRebuild: applyContextRebuild,
       routing: applyRoutingSettings,
       plyInstructions: applyPlyInstructions,
       context: (args) => contextSettings.set(args),
@@ -7129,6 +7144,30 @@ async function runTurnInternal(args, onStarted, hooks) {
   }
 }
 
+/**
+ * 区切り（放置後の送信。「会話の区切りで、記録から組み立て直す」ADR 0287）: 送信のターンの直前に確かめ、条件がそろえば
+ * 今のネイティブの会話を捨てて、次の送信を新しい会話＋記録からの引き継ぎで始める印を立てる。
+ * 条件は放置の圧縮と同じ組（全体・そのエージェントの行が入っていて、使用トークンが最小サイズ以上）に、
+ * キャッシュの持ち時間を過ぎた（エージェントごとの rebuildIdleMinutes）ことを足す。圧縮のターン・中断中・委譲の子・bot は対象外。
+ * ここで条件に合わなければ今の経路（同じ会話の続き。予約があれば放置の圧縮）のまま
+ */
+async function maybeRebuildForSend(sessionId, backend) {
+  if (!sessionId || !rebuildEnabled(await store.getPrefs())) return;
+  const meta = await store.get(sessionId).catch(() => null);
+  if (!meta || meta.delegation || meta.bot || meta.autoCompactionOff || interruptedOf(meta.interrupted)) return;
+  const row = compactionSettings[idleCompactionKey(backend.id)];
+  if (!compactionSettings.enabled || !row?.enabled) return;
+  const minutes = rebuildIdleMinutes(backend.id);
+  if (!Number.isFinite(minutes)) return;
+  if (!Number.isFinite(meta.contextWindow?.usedTokens) || meta.contextWindow.usedTokens < compactionSettings.minTokens) return;
+  const last = toMs(meta.completedAt);
+  if (!Number.isFinite(last) || Date.now() - last < minutes * 60_000) return;
+  if (await backend.markForRebuild?.(sessionId, { kind: 'idle', beforeTokens: meta.contextWindow.usedTokens })) {
+    // i18n-ignore: サーバーのログ
+    console.log(`  会話の区切り: ${sessionId} を記録から組み立て直す`);
+  }
+}
+
 async function prepareTurn(args, hooks, compactionRevision) {
   const { prompt, sessionId = null } = args ?? {};
 
@@ -7167,6 +7206,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
     backend = target;
   }
   await backend.prepareTurn?.(sessionId);
+  if (!hooks.compact) await maybeRebuildForSend(sessionId, backend);
   // Reject before marking the conversation sent or consuming its pending handoff.
   if (hooks.compact && backend.compact) {
     const record = await conversation(sessionId);
@@ -7434,6 +7474,24 @@ function bindTurnContext(ctx) {
   };
 }
 
+/**
+ * 記録からの組み立て直しの区切り（ADR 0287）を会話へ残し、全画面へ配る。conversations.mjs の引き継ぎの包みが
+ * args.onContextRebuild 経由で渡す。start は組み立て中の帯だけ（会話へは残さない）。complete/failed は区切りの記録（rebuilds）へ。
+ * at は区切りの直後の発言の前に置くため、その発言の時刻の直前（区切りは発言がエージェントへ渡る直前に組み立てる）
+ */
+async function recordContextRebuild(turn, info) {
+  const sessionId = turn.info.sessionId;
+  if (!sessionId || !info?.kind) return;
+  const entry = { id: crypto.randomUUID(), at: (turn.userSentAt ?? Date.now()) - 1, kind: info.kind, phase: info.phase,
+    ...(info.reason ? { reason: info.reason } : {}), ...(info.stats ? { stats: info.stats } : {}), ...(info.ref ? { ref: info.ref } : {}),
+    ...(Number.isFinite(info.beforeTokens) ? { beforeTokens: info.beforeTokens } : {}),
+    ...(Number.isFinite(info.afterTokens) ? { afterTokens: info.afterTokens } : {}) };
+  if (entry.phase === 'start') { emitGlobal({ type: 'contextRebuild', sessionId, ...entry }); return; }
+  const previous = (await store.get(sessionId)).rebuilds ?? [];
+  await store.setSessionData(sessionId, 'rebuilds', [...previous, entry].slice(-REBUILD_LIMITS.entries));
+  emitGlobal({ type: 'contextRebuild', sessionId, ...entry });
+}
+
 async function beginTurn(ctx) {
   const { args, hooks, sessionId, prompt, backend, cwd, account, accountId, endpoint, endpointId, agentLocale,
     permissionMode, model, effort, attachments, contextRecord, hooksTurn, turn, emit,
@@ -7524,6 +7582,8 @@ async function beginTurn(ctx) {
     // 試験のサーバー（PLEIAD_BACKEND_CONTRACT=strict）では、バックエンドが出したイベントを契約（core/backends/contract.mjs）に照らす
     emit: contractEmit((event, opts) => { if (ANSWER_EVENTS.has(event?.type)) ctx.onPromptDelivered(); return emit(event, opts); }, backend.id),
     onPromptDelivered: ctx.onPromptDelivered,
+    // 記録からの組み立て直しの区切り（conversations.mjs が start/complete/failed で呼ぶ。失敗は渡し損なわないよう内側で握りつぶす）
+    onContextRebuild: (info) => recordContextRebuild(turn, info).catch(error => { console.error('  区切りの記録に失敗:', String(error?.message ?? error)); }),
     // 拒否・中断の理由をこの会話の言語で返すため、会話の言語を添えて聞く
     askPermission: request => askPermission({ ...request, locale: agentLocale }),
     hostInvoke: hostInvokeFor(agentLocale),
@@ -8349,10 +8409,12 @@ async function endTurn(turn, emit, { record = true } = {}) {
     const queued = await outbox.list(id);
     const row = compactionSettings[idleCompactionKey(turn.backend.id)];
     const usage = turn.contextWindow ?? meta.contextWindow;
+    // 「記録から組み立て直す」が入っている間は放置の圧縮を予約しない（区切りは次の送信で記録からの引き継ぎになる。ADR 0287）
     if (compactionScheduler.revision(id) === turn.compactionRevision && !runtime.turns.has(id)
         && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
         && compactionSettings.enabled && row?.enabled && turn.backend.capabilities?.compact
         && usage?.usedTokens >= compactionSettings.minTokens && !meta.autoCompactionOff
+        && !rebuildEnabled(await store.getPrefs())
         && !blockingWaits().some(w => w.payload.sessionId === id))
       compactionScheduler.schedule(id, turn.backend.id, row.delayMinutes * 60_000,
         turn.compactionRevision, usage.usedTokens);
@@ -8440,7 +8502,9 @@ const compactionScheduler = createCompactionScheduler({
     // 圧縮のターンは runTurn 経由なので、切り替えの予約があれば次のエージェントで走る。可否はそのエージェントで見る
     const [meta, backend, queued] = await Promise.all([store.get(id), compactionBackend(id), outbox.list(id)]);
     const row = compactionSettings[idleCompactionKey(backend?.id)];
+    // 「記録から組み立て直す」が入っている間は発火しない（予約は予約のまま消える。ADR 0287）
     return backend?.id === expectedBackend && !sessionBusy(id) && !meta.autoCompactionOff && !meta.delegation
+      && !rebuildEnabled(await store.getPrefs())
       && !queued.some(m => !['sent', 'cancelled'].includes(m.status))
       && compactionSettings.enabled && row?.enabled && backend?.capabilities?.compact
       && meta.contextWindow?.usedTokens >= compactionSettings.minTokens
@@ -9529,7 +9593,8 @@ wss.on("connection", (ws, req) => {
             // 圧縮の要約は発言として出さず、区切りの「要約を表示」に入れる（ADR 0053）
             const compactions = attachCompactSummaries(compactSummaries, mergeCompactionHistory(nativeCompactions, savedCompactions));
             const compactionData = { compactions, contextWindow: read.turn?.contextWindow ?? sidecar.contextWindow ?? null,
-              compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff) };
+              compactionAt: compactionScheduler.get(sessionId), autoCompactionOff: Boolean(sidecar.autoCompactionOff),
+              rebuilds: sidecar.rebuilds ?? [] };
             // from・check（web/history-sync.mjs）を付けて頼まれたら、持っている先頭が合うときだけ続きを返す（ADR 0062）。合わなければ全量。
             // tail・lazy・older を付けて頼まれたら、末尾の窓・提示の本文の印・手前の分だけを返す（ADR 0182）
             // 走っているターンの頭は畳んだ発言（core/live-snapshot.mjs。ADR 0257）。窓・手前の読み込みは同じ並び（ターン前の履歴＋畳んだ発言）の通し番号で数える

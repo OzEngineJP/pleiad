@@ -153,6 +153,11 @@ export const settings = [
       } catch (e) { throw invalid(ctx, 'compaction.auto', String(e?.message ?? e)); }
     },
     write: (ctx, value) => ctx.writes.compaction(value) }),
+  // 試験的な機能「会話の区切りで、記録から組み立て直す」（ADR 0287）。次の区切りから効く。入れても関所（承認モード・許可）には触れない
+  defineSetting({ key: 'contextRebuild', summary: S('contextRebuild'), risk: 'write', riskReason: `At conversation boundaries, passes a handoff rebuilt from Pleiad's records instead of asking the agent for a summary. ${WRITE_ABOUT}`,
+    prefKeys: ['contextRebuild'], schema: z.boolean(), default: false, read: fromPrefs('contextRebuild'),
+    normalize: (ctx, v) => { if (typeof v !== 'boolean') throw invalid(ctx, 'contextRebuild: boolean'); return { after: v }; },
+    write: (ctx, v) => ctx.writes.contextRebuild(v) }),
   // 確認を切る向き（オン → オフ）は関所を緩めるので guarded（広げる向きだけ確認する。ADR 0031・0082）
   defineSetting({ key: 'confirmAgentSites', sync: false, summary: S('confirmAgentSites'), risk: 'write', riskReason: `Turning the confirmation on only narrows the gate; turning it off is raised to guarded by riskOf`,
     riskOf: confirmRiskOf, riskExamples: confirmExamples, schema: z.boolean(), default: false, read: fromPrefs('confirmAgentSites'),

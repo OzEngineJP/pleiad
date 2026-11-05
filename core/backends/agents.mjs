@@ -15,6 +15,9 @@ import path from 'node:path';
  *             null は CLI を使わない（fake）
  * idleCompaction  会話を離れた後の自動の圧縮（ADR 0068）の既定 { enabled, delayMinutes }。null は Pleiad が圧縮しない
  *             （エージェントが自分で決める）。文字列なら、その id の設定の行を借りる（fake は claude の行で試験する）
+ * rebuildIdleMinutes  記録からの組み立て直し（ADR 0287。設定「会話の区切りで、記録から組み立て直す」）が区切りとみなす放置の分。
+ *             プロンプトのキャッシュの持ち時間の目安（Claude は 60）。null はそのエージェントでは組み立て直さない。
+ *             文字列なら、その id の値を借りる（fake は claude の値で試験する）
  * hooksAs     Pleiad がそろえる Hooks を、このエージェントへ、どのエージェントの形を真似て渡すか（core/hooks-config.mjs の UNIFY_TARGETS）。
  *             ネイティブの Hooks を持つエージェント（core/hooks-config.mjs の HOOK_AGENTS）と、渡さないエージェントは null
  * hooksVia    hooksAs のエージェントへの渡し方。'callback' は Pleiad の中で走らせてエージェントのプラグインの口から呼ぶ（OpenCode）、
@@ -34,6 +37,7 @@ export const AGENTS = {
     brand: { logo: 'claude.svg', mark: false },
     cli: { exe: 'claude', binEnv: 'AGENT_HOST_CLAUDE_BIN', npmPackage: '@anthropic-ai/claude-code', installUrl: 'https://code.claude.com/docs/en/setup', searchDirs: null },
     idleCompaction: { enabled: true, delayMinutes: 50 },
+    rebuildIdleMinutes: 60,
     contextSources: ['claude'],
     hooksAs: null,
     hooksVia: null,
@@ -46,6 +50,7 @@ export const AGENTS = {
     brand: { logo: 'openai.svg', mark: true },
     cli: { exe: 'codex', binEnv: 'AGENT_HOST_CODEX_BIN', npmPackage: '@openai/codex', installUrl: 'https://developers.openai.com/codex/cli/', searchDirs: null },
     idleCompaction: { enabled: false, delayMinutes: 25 },
+    rebuildIdleMinutes: 60,
     contextSources: ['codex'],
     hooksAs: null,
     hooksVia: null,
@@ -63,6 +68,7 @@ export const AGENTS = {
       searchDirs: (env) => (env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'agy', 'bin')] : []),
     },
     idleCompaction: null,
+    rebuildIdleMinutes: null,
     // AGENTS.md（作業場所。common）と、~/.gemini・.agents 系（antigravity）
     contextSources: ['common', 'antigravity'],
     hooksAs: null,
@@ -81,6 +87,7 @@ export const AGENTS = {
     },
     // 会話を離れた後の自動の圧縮（summarize）。既定は切る（OpenCode 自身も文脈があふれる前に圧縮する）
     idleCompaction: { enabled: false, delayMinutes: 25 },
+    rebuildIdleMinutes: 60,
     // AGENTS.md（作業場所。common）と、設定の置き場の AGENTS.md・skills・opencode.json の mcp
     contextSources: ['common', 'opencode'],
     // OpenCode のフックは JS のプラグインで、コマンドの Hooks の形が無い。Pleiad のプラグインと中継の口で、Claude Code の Hooks と同じ形で渡す（opencode-hooks.mjs）
@@ -101,6 +108,7 @@ export const AGENTS = {
     },
     // 会話を離れた後の自動の圧縮（/compact を prompt として送る）。既定は切る（Devin 自身も文脈があふれる前に圧縮する）
     idleCompaction: { enabled: false, delayMinutes: 25 },
+    rebuildIdleMinutes: 60,
     // AGENTS.md（common）・Claude 互換のインポート（claude）・.devin 系（devin）・OpenCode の MCP のインポート（opencode）
     contextSources: ['common', 'claude', 'devin', 'opencode'],
     hooksAs: 'claude',
@@ -120,6 +128,7 @@ export const AGENTS = {
     },
     // 手動・アイドル時の圧縮は ACP に /compact を送り、閾値前の自動圧縮は Grok 自身が行う
     idleCompaction: { enabled: false, delayMinutes: 25 },
+    rebuildIdleMinutes: 60,
     // AGENTS.md（作業場所。common）と ~/.grok（AGENTS.md・rules・skills・config.toml の MCP。grok）と Claude 互換（既定で有効）
     contextSources: ['common', 'grok', 'claude'],
     // Grok の Hooks の形は Claude Code と同じ。セッション限定のプラグイン（_meta.pluginDirs）の hooks/hooks.json で渡す
@@ -135,6 +144,7 @@ export const AGENTS = {
     brand: null,
     cli: null,
     idleCompaction: 'claude',
+    rebuildIdleMinutes: 'claude',
     contextSources: null,
     hooksAs: null,
     hooksVia: null,
@@ -143,7 +153,7 @@ export const AGENTS = {
   },
 };
 
-export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault']);
+export const DESCRIPTOR_KEYS = Object.freeze(['module', 'shortLabel', 'brand', 'cli', 'idleCompaction', 'rebuildIdleMinutes', 'contextSources', 'hooksAs', 'hooksVia', 'shellTools', 'shellDefault']);
 
 /** 既定で有効にするエージェント（AGENT_HOST_BACKENDS が無いとき）。試験用の fake は入れない */
 export const DEFAULT_AGENT_IDS = Object.freeze(Object.keys(AGENTS).filter((id) => id !== 'fake'));
@@ -161,6 +171,13 @@ export function idleCompactionKey(id) {
   const rule = agentOf(id)?.idleCompaction;
   if (typeof rule === 'string') return rule;
   return rule ? id : null;
+}
+
+/** id の会話が組み立て直しの区切りとみなす放置の分（キャッシュの持ち時間の目安。借りる先があればそれ）。組み立て直さないなら null */
+export function rebuildIdleMinutes(id) {
+  const rule = agentOf(id)?.rebuildIdleMinutes;
+  if (typeof rule === 'string') return rebuildIdleMinutes(rule);
+  return Number.isFinite(rule) ? rule : null;
 }
 
 /** 画面に渡す記述（describeBackends に載せる分） */

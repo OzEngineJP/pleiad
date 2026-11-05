@@ -101,6 +101,7 @@ export default async function (t) {
     ['composer.historyRecall', true, '入力欄の呼び出しの好み'],
     ['composer.suggestions', true, '入力欄の候補の好み'],
     ['compaction.auto', true, '自動の圧縮のしきい値と待ち時間'],
+    ['contextRebuild', true, '試験的な機能（区切りで記録から組み立て直す）の入切の好み'],
     ['mode', false, 'human-only（承認モードの既定）'],
     ['claudeAccount', false, 'human-only（既定のアカウント。アカウントは PC ごと）'],
     ['account', false, 'human-only（既定のアカウント。アカウントは PC ごと）'],

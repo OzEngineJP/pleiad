@@ -5149,6 +5149,15 @@
       "prefKeys": []
     },
     {
+      "key": "contextRebuild",
+      "risk": "write",
+      "riskOf": false,
+      "writable": true,
+      "prefKeys": [
+        "contextRebuild"
+      ]
+    },
+    {
       "key": "delegationRouting",
       "risk": "guarded",
       "riskOf": false,
@@ -5398,6 +5407,13 @@
       "agent-bound-ask": "guarded=ask",
       "agent-bound-never-full": "guarded=allow",
       "agent-bound-readonly": "guarded=deny:READ_ONLY_MODE"
+    },
+    "contextRebuild": {
+      "human": "write=allow",
+      "agent-unbound": "write=allow",
+      "agent-bound-ask": "write=allow",
+      "agent-bound-never-full": "write=allow",
+      "agent-bound-readonly": "write=deny:READ_ONLY_MODE"
     },
     "delegationRouting": {
       "human": "guarded=allow",
