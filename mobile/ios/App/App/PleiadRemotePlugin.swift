@@ -284,7 +284,9 @@ final class PleiadRemotePlugin: CAPPlugin, CAPBridgedPlugin {
 
     /** 設定の一部を変える（reply / failed / done / lockNames / skipPc、または enabled = false）。入は notifyEnable から。 */
     @objc func notifyUpdate(_ call: CAPPluginCall) {
-        NotifyControl.update(call.options) { call.resolve($0) }
+        var options: [String: Any] = [:]
+        for (key, value) in call.options ?? [:] { if let key = key as? String { options[key] = value } }
+        NotifyControl.update(options) { call.resolve($0) }
     }
 
     /** 許可がまだならここで尋ね、通知を入れて APNs の登録を合わせる。{ ok, permission, state } */
