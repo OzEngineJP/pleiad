@@ -102,22 +102,23 @@ export default async function (t) {
   t.ok('Plus が止まっている間の一行', plusRemoteLine(PLUS_OFF, WAITING)?.text === 'Pleiad Plus が一時的に止まっています（再開を待っています）');
   t.ok('Plus 契約中だけ手順の既定選択が Plus', initialRemoteMethod({ account: { status: 'plus' } }) === 'plus' && initialRemoteMethod({ account: { status: 'free' } }) === 'own');
 
-  // ---- iOS の殻では Plus の入口ごと出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）。印は plyRemote.platform === 'ios'
+  // ---- モバイルの殻でも Plus の入口・まとまり・既定の選択は同じ（両 OS。出さないのは購入への誘導だけ。docs/plus.md「iOS」）
   {
     const savedWindow = globalThis.window;
-    globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile', platform: 'ios' } };
-    try {
-      t.ok('iOS の殻: available: true でも Plus の選択肢は出さない', !plusRemoteAvailable({ available: true }));
-      t.ok('iOS の殻: まとまりは出さない（再開を待っている間も）', !plusRemoteShown(PLUS, REMOTE) && !plusRemoteShown(PLUS_OFF, WAITING));
-      t.ok('iOS の殻: 手順の既定選択は Plus にしない', initialRemoteMethod({ account: { status: 'plus' } }) === 'own');
-    } finally { globalThis.window = savedWindow; }
-  }
-  // platform が無い・ios 以外なら変わらない（Android・デスクトップの殻・ブラウザー）
-  {
-    const savedWindow = globalThis.window;
-    for (const remote of [{ hostId: 'h1', shell: 'mobile' }, { hostId: 'h1', shell: 'mobile', platform: 'android' }, { hostId: 'h1', shell: 'desktop' }]) {
+    for (const remote of [{ hostId: 'h1', hostName: 'iPad', shell: 'mobile' }, { hostId: 'h1', hostName: 'Pixel', shell: 'mobile' }]) {
       globalThis.window = { plyRemote: remote };
-      t.ok(`platform: ${remote.platform ?? '無し'} では今までどおり`, plusRemoteAvailable({ available: true }) && initialRemoteMethod({ account: { status: 'plus' } }) === 'plus', JSON.stringify(remote));
+      t.ok('モバイルの殻: available: true なら Plus の選択肢を出す', plusRemoteAvailable({ available: true }), JSON.stringify(remote));
+      t.ok('モバイルの殻: まとまりも出す（再開を待っている間も）', plusRemoteShown(PLUS, REMOTE) && plusRemoteShown(PLUS_OFF, WAITING), JSON.stringify(remote));
+      t.ok('モバイルの殻: 手順の既定選択は Plus', initialRemoteMethod({ account: { status: 'plus' } }) === 'plus', JSON.stringify(remote));
+    }
+    globalThis.window = savedWindow;
+  }
+  // デスクトップの殻・ブラウザーも同じ
+  {
+    const savedWindow = globalThis.window;
+    for (const remote of [{ hostId: 'h1', shell: 'desktop' }, { hostId: 'h1' }]) {
+      globalThis.window = { plyRemote: remote };
+      t.ok(`shell: ${remote.shell ?? '無し'} でも同じ`, plusRemoteAvailable({ available: true }) && initialRemoteMethod({ account: { status: 'plus' } }) === 'plus', JSON.stringify(remote));
     }
     globalThis.window = savedWindow;
   }
@@ -175,24 +176,25 @@ export default async function (t) {
   t.ok('Plus が止まっている間も「この PC へ」に Plus のまとまりと「一時的に止まっています」', Boolean(stopped)
     && (stopped.textContent ?? '').includes('Pleiad Plus が一時的に止まっています（再開を待っています）'), stopped?.textContent);
 
-  // iOS の殻では「この PC へ」の Plus のまとまりごと出さない（描いた面でも。docs/plus.md「iOS」）
+  // モバイルの殻でも「この PC へ」の Plus のまとまりと端末の行は出す（両 OS）。出さないのは購入への誘導だけ（docs/plus.md「iOS」）
   {
     const savedWindow = globalThis.window;
-    globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile', platform: 'ios' } };
+    globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile' } };
     try {
-      const iosRoot = await drawn({ enabled: true, configured: false, connection: { state: 'idle' },
+      const mobileRoot = await drawn({ enabled: true, configured: false, connection: { state: 'idle' },
         devices: [{ id: 'made-up-plus', via: 'plus', name: 'iPad' }], pairing: { requests: [] },
         plus: { connect: true, link: { state: 'connected' }, host: { state: 'registered' } } }, PLUS);
-      t.ok('iOS の殻: 「この PC へ」に Plus のまとまりは出ない', !plusGroupOf(iosRoot), iosRoot.textContent);
-      t.ok('iOS の殻: 自分の中継サーバーのまとまりは変わらず出す', Boolean(ownGroup(iosRoot)), iosRoot.textContent);
+      t.ok('モバイルの殻: 「この PC へ」に Plus のまとまりを出す', Boolean(plusGroupOf(mobileRoot)), mobileRoot.textContent);
+      t.ok('モバイルの殻: 自分の中継サーバーのまとまりは変わらず出す', Boolean(ownGroup(mobileRoot)), mobileRoot.textContent);
       const deviceRowOf = root => root.querySelectorAll('.rm-row').find(r => r.dataset?.fk === 'device-made-up-plus') ?? null;
-      t.ok('iOS の殻: Plus 経由の端末の行も出さない', !deviceRowOf(iosRoot), iosRoot.textContent);
-      // 印が無ければ同じ状態で出す（Android・ブラウザーは今までどおり）
-      globalThis.window = undefined;
-      const androidRoot = await drawn({ enabled: true, configured: false, connection: { state: 'idle' },
-        devices: [{ id: 'made-up-plus', via: 'plus', name: 'iPad' }], pairing: { requests: [] },
-        plus: { connect: true, link: { state: 'connected' }, host: { state: 'registered' } } }, PLUS);
-      t.ok('印が無ければ同じ状態で Plus のまとまりと端末の行を出す', Boolean(plusGroupOf(androidRoot)) && Boolean(deviceRowOf(androidRoot)));
+      t.ok('モバイルの殻: Plus 経由の端末の行も出す', Boolean(deviceRowOf(mobileRoot)), mobileRoot.textContent);
+      // free のアカウントでも購入への誘導（「Pleiad Plus にする」）は出さない
+      const freeRoot = await drawn({ enabled: true, configured: false, connection: { state: 'idle' }, devices: [], pairing: { requests: [] },
+        plus: { connect: true, link: { state: 'idle' }, host: { state: 'registered' } } },
+        { ...PLUS, account: { status: 'free' }, urls: { account: 'https://a.example', profile: 'https://a.example/me' } });
+      t.ok('モバイルの殻: free でも Plus のまとまりと「このアカウントでは公式の中継を使えません」',
+        Boolean(plusGroupOf(freeRoot)) && (plusGroupOf(freeRoot).textContent ?? '').includes('このアカウントでは公式の中継を使えません'), freeRoot.textContent);
+      t.ok('モバイルの殻: 購入への誘導は出さない', !freeRoot.querySelectorAll('button').some(b => b.dataset?.fk === 'plusGet'), freeRoot.textContent);
     } finally { globalThis.window = savedWindow; }
   }
 

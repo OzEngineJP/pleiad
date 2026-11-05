@@ -199,24 +199,30 @@ export default async function (t) {
     } finally { document.getElementById = savedGet; }
   }
 
-  // ---- iOS の殻では Plus のページごと出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）。印は plyRemote.platform === 'ios'
+  // ---- モバイルの殻でも Plus のページは出す。出さないのは購入への誘導だけ（両 OS。ADR 0263 決定 5）
   {
     const savedWindow = globalThis.window, savedGet = document.getElementById;
-    globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile', platform: 'ios' } };
+    globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile' } };
     const nodes2 = { plusTab: new N('button'), plusPanel: new N('section') };
     document.getElementById = id => nodes2[id] ?? null;
     try {
       const settings = setupPlusSettings({ cmd: async name => name === 'plusStatus' ? { ...BASE, signedIn: true, account: ACCOUNT } : {}, page: () => {} });
       settings.reconnected();
       await new Promise(r => setImmediate(r));
-      t.ok('iOS の殻: Plus が使えてもメニューの項目は出さない', nodes2.plusTab.hidden === true);
+      t.ok('モバイルの殻: Plus が使えればメニューの項目は出す', nodes2.plusTab.hidden === false);
       settings.event({ type: 'plusStatus', status: { ...BASE, signedIn: true, account: ACCOUNT } });
-      t.ok('iOS の殻: ページの中身も空（ログイン・購入・アカウント管理の行は無い）',
-        nodes2.plusPanel.children.length === 0 && !buttonTexts(nodes2.plusPanel.children).length, nodes2.plusPanel.textContent);
-      t.ok('iOS の殻: 鍵の画面の Pleiad Plus の行も出さない', plusRowVisible({ available: true, state: 'on', signedIn: true, status: 'plus' }) === false);
-      // 印が無ければ今までどおり出す（Android・ブラウザー）
-      globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'Pixel', shell: 'mobile' } };
-      t.ok('印が無い殻では鍵の行は出る', plusRowVisible({ available: true, state: 'on', signedIn: true, status: 'plus' }) === true);
+      t.ok('モバイルの殻: ページの中身（アカウント・ログアウト）は出る',
+        nodes2.plusPanel.children.length > 0 && buttonTexts(nodes2.plusPanel.children).includes('ログアウト'), nodes2.plusPanel.textContent);
+      t.ok('モバイルの殻: 鍵の画面の Pleiad Plus の行も出す', plusRowVisible({ available: true, state: 'on', signedIn: true, status: 'plus' }) === true);
+      // free でも「Pleiad Plus にする」（購入への誘導）は出さない
+      const FREE = { ...BASE, signedIn: true, account: { ...ACCOUNT, status: 'free', plan: null, limits: null, usage: null }, urls: { account: 'https://account.example.com', profile: 'https://account.example.com/me' } };
+      nodes = render(FREE);
+      t.ok('モバイルの殻: free でも購入への誘導は出さず「アカウントを管理」は出す',
+        !buttonTexts(nodes).includes('Pleiad Plus にする') && buttonTexts(nodes).includes('アカウントを管理'), buttonTexts(nodes).join('・'));
+      byFk(nodes, 'manage').onclick();
+      t.ok('モバイルの殻: 「アカウントを管理」は購入ではないプロフィールのページを開く', opened.at(-1) === 'https://account.example.com/me');
+      nodes = render({ ...FREE, urls: { account: 'https://account.example.com', profile: null } });
+      t.ok('モバイルの殻: プロフィールの URL が無ければ「アカウントを管理」も出さない', !buttonTexts(nodes).includes('アカウントを管理'));
     } finally { document.getElementById = savedGet; globalThis.window = savedWindow; }
   }
 

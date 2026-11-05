@@ -11,7 +11,7 @@ import { el } from './dom.mjs';
 import { t, lang } from './i18n.mjs';
 import { button, rmIcon, keyValues, errorLine, waitLine, paintInto } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
-import { inIosShell } from './remote-badge.mjs';
+import { inMobileShell } from './remote-badge.mjs';
 import { renderSync, syncCodeText, pcPlatform } from './plus-sync.mjs';
 import { renderInbox } from './plus-inbox.mjs';
 import { loadingMark } from './plus-key-row.mjs';
@@ -190,8 +190,11 @@ export function renderPlus(status, { send = () => {}, openExternal = () => {}, a
   }
 
   const acts = el('div', 'rm-acts');
-  if (account?.status === 'free' && s.urls?.account) acts.append(actButton(t('settings.plus.getPlus'), () => openExternal(plusUrl(s.urls.account)), 'btn btn-primary', { external: true, fk: 'getPlus' }));
-  if (s.urls?.account) acts.append(actButton(t('settings.plus.manage'), () => openExternal(s.urls.account), 'btn btn-quiet', { external: true, fk: 'manage' }));
+  // モバイルの殻では購入画面への誘導を出さない（両 OS。ADR 0263 決定 5）。「アカウントを管理」はプランと支払いを
+  // 含まないプロフィールのページを開く
+  if (account?.status === 'free' && s.urls?.account && !inMobileShell()) acts.append(actButton(t('settings.plus.getPlus'), () => openExternal(plusUrl(s.urls.account)), 'btn btn-primary', { external: true, fk: 'getPlus' }));
+  const manageUrl = inMobileShell() ? s.urls?.profile : s.urls?.account;
+  if (manageUrl) acts.append(actButton(t('settings.plus.manage'), () => openExternal(manageUrl), 'btn btn-quiet', { external: true, fk: 'manage' }));
   acts.append(actButton(t('settings.plus.signOut'), () => send('plusLogout'), 'btn', { fk: 'logout' }));
   out.push(acts);
   return out;
@@ -235,7 +238,7 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
       onOpenConflicts: () => syncSend('plus.syncOpenConflicts'),
       onOpenInbox: openInbox,
       recoveryNote, onRecovery: syncRecovery, onAcceptRestart: acceptSyncRestart, onLogin: () => send('plusLogin'),
-      onOpenAccount: status?.urls?.account ? () => openExternalLink(status.urls.account) : null,
+      onOpenAccount: (inMobileShell() ? status?.urls?.profile : status?.urls?.account) ? (() => openExternalLink(inMobileShell() ? status.urls.profile : status.urls.account)) : null,
     };
   }
 
@@ -369,8 +372,6 @@ export function setupPlusSettings({ cmd, page, getPrefs = () => ({}) }) {
 
   function paint() {
     paintApproval();
-    // iOS の殻では Plus のページそのものを出さず、メニューの項目も消す（App Store 3.1.3(f)。docs/plus.md「iOS」）
-    if (inIosShell()) { tab.hidden = true; paintInto(root, 'ios', () => []); return; }
     // status.available === false のときはメニューの項目ごと出さない（ページにも行けない）
     if (status) tab.hidden = status.available === false;
     // 届いた変更の面は、ログインしていて Plus のときだけ（外れたら Pleiad Plus のページに戻す）

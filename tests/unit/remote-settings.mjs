@@ -117,25 +117,23 @@ export default async function (t) {
     }
   }
 
-  // ---- iOS の殻では「ほかの PC へ」の Plus のまとまりごと出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）
+  // ---- モバイルの殻（ホストの窓の中）では「ほかの PC へ」の面自体を出さない。plyRemote のある窓には
+  //      plyDesktop.hosts の橋が無いので、設定の「ほかの PC へ」タブは使えない（デスクトップの窓と同じ。
+  //      モバイルでは購入への誘導を出さない規則は plus-settings.mjs・remote.mjs の分岐が受け持つ）
   {
     const savedWindow = globalThis.window, savedBody = document.body;
-    // iOS の印（plyRemote.platform === 'ios'）。plyRemote があると bridge は使えないが、描いた一覧でも Plus を出さないことを確かめる
-    globalThis.window = {
-      plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile', platform: 'ios' },
-      plyDesktop: { hosts: { onChange: () => {}, onCode: () => {}, init: async () => ({ ok: true, hosts: [], encrypted: true, plus: { status: 'free', available: true, urls: { account: 'https://account.example.com' }, hosts: [] } }), list: async () => ({ ok: true, hosts: [] }) } },
-    };
+    globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'iPad', shell: 'mobile' }, plyDesktop: {} };
     document.body = new N('body');
     try {
       const hostsPanel = setupRemoteHosts({ onChange: () => {}, cmd: async () => {}, page: () => {} });
       await hostsPanel.refresh();
-      const rows = hostsPanel.build();
-      const walk = ns => { for (const n of ns ?? []) { if ((n?.textContent ?? '').includes('Pleiad Plus')) return n; const hit = walk(n?.children); if (hit) return hit; } return null; };
-      t.ok('iOS の殻では「Pleiad Plus」のまとまり・「Pleiad Plus にする」の行は出さない', !walk(rows));
-      // 印が無い殻（Android）では変わらない: 同じ一覧でも Plus のまとまりを出す
-      globalThis.window = { plyRemote: { hostId: 'h1', hostName: 'Pixel', shell: 'mobile' } };
-      const androidRows = setupRemoteHosts({ onChange: () => {}, cmd: async () => {}, page: () => {} }).build();
-      t.ok('印が無い殻（Android）では Plus のまとまりを出す', Boolean(walk(androidRows)));
+      t.ok('モバイルの殻では「ほかの PC へ」の面は出さない（bridge が無く available === false）', hostsPanel.available === false);
+      // デスクトップの殻では変わらない: free なら「Pleiad Plus にする」を出す（直前の節で確かめた通り）
+      globalThis.window = { plyDesktop: { hosts: { onChange: () => {}, onCode: () => {}, init: async () => ({ ok: true, hosts: [], encrypted: true, plus: { status: 'free', available: true, urls: { account: 'https://account.example.com' }, hosts: [] } }), list: async () => ({ ok: true, hosts: [] }) } } };
+      const deskPanel = setupRemoteHosts({ onChange: () => {}, cmd: async () => {}, page: () => {} });
+      await deskPanel.refresh();
+      const find = (ns, pred) => { for (const n of ns ?? []) { if (pred(n)) return n; const hit = find(n?.children, pred); if (hit) return hit; } return null; };
+      t.ok('デスクトップの殻では free に「Pleiad Plus にする」を出す', Boolean(find(deskPanel.build(), n => n?.dataset?.fk === 'plus-upgrade')));
     } finally {
       globalThis.window = savedWindow;
       document.body = savedBody;

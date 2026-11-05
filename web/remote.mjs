@@ -22,7 +22,7 @@ import {
 } from './remote-parts.mjs';
 import { setupRemoteHosts } from './remote-hosts.mjs';
 import { openExternalLink } from './link-open.mjs';
-import { inIosShell } from './remote-badge.mjs';
+import { inMobileShell } from './remote-badge.mjs';
 
 const RELAY_GUIDE_URL = 'https://github.com/OzEngineJP/pleiad/blob/main/relay/README.md';
 
@@ -167,11 +167,10 @@ export function approverName(approvedBy, approvedByName) {
   return approvedByName || t('settings.remote.devices.unnamed');
 }
 
-// iOS の殻では Plus の入口を出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）。plusRemoteAvailable 自体も iOS なら false を返す
-export const plusRemoteAvailable = plusStatus => !inIosShell() && plusStatus?.available !== false;
-/** 「この PC へ」に Plus のまとまりを出すか。Plus が止まって入口が隠れている（available: false）間も、つながりが再開を待っているなら出す。iOS の殻では出さない */
-export const plusRemoteShown = (plusStatus, remoteStatus) => plusRemoteAvailable(plusStatus) || (!inIosShell() && remoteStatus?.plus?.link?.error?.code === 'unavailable');
-export const initialRemoteMethod = plusStatus => (inIosShell() ? 'own' : plusStatus?.account?.status === 'plus' ? 'plus' : 'own');
+export const plusRemoteAvailable = plusStatus => plusStatus?.available !== false;
+/** 「この PC へ」に Plus のまとまりを出すか。Plus が止まって入口が隠れている（available: false）間も、つながりが再開を待っているなら出す */
+export const plusRemoteShown = (plusStatus, remoteStatus) => plusRemoteAvailable(plusStatus) || remoteStatus?.plus?.link?.error?.code === 'unavailable';
+export const initialRemoteMethod = plusStatus => (plusStatus?.account?.status === 'plus' ? 'plus' : 'own');
 
 /**
  * @param cmd  WS コマンド
@@ -339,7 +338,14 @@ export function setupRemote({ cmd, page, open = () => {} }) {
     if (line?.kind === 'login') {
       group.append(listRow({ icon: 'monitor', name: line.text, key: 'plusLogin', onclick: () => cmd('plusLogin').catch(() => {}) }));
     } else if (line?.kind === 'getPlus') {
-      group.append(listRow({ icon: 'monitor', name: line.text, key: 'plusGet', onclick: () => openExternalLink(new URL('/plus', plusStatus?.urls?.account).href) }));
+      // モバイルの殻では購入画面への誘導を出さない（両 OS。ADR 0263 決定 5）: 「アカウントを管理」はプランと支払いを
+      // 含まないページを開く
+      if (inMobileShell()) {
+        group.append(el('p', 'rm-warn', t('settings.remote.plus.account')));
+        if (plusStatus?.urls?.profile) group.append(listRow({ icon: 'monitor', name: t('settings.plus.manage'), key: 'plusManage', onclick: () => openExternalLink(plusStatus.urls.profile) }));
+      } else {
+        group.append(listRow({ icon: 'monitor', name: line.text, key: 'plusGet', onclick: () => openExternalLink(new URL('/plus', plusStatus?.urls?.account).href) }));
+      }
     } else if (line?.kind === 'settings') {
       const row = button(line.text, () => { page('plus'); open('plus'); }, 'rm-row rm-plus-settings');
       row.dataset.fk = 'plusSettings';
@@ -627,7 +633,15 @@ export function setupRemote({ cmd, page, open = () => {} }) {
    */
   function plusConnectBody(newDevice) {
     const line = plusRemoteLine(plusStatus, status);
-    if (line?.kind === 'getPlus') return [listRow({ icon: 'monitor', name: line.text, key: 'plusGet', onclick: () => openExternalLink(new URL('/plus', plusStatus?.urls?.account).href) })];
+    if (line?.kind === 'getPlus') {
+      // モバイルの殻では購入画面への誘導を出さない（両 OS。ADR 0263 決定 5）
+      if (inMobileShell()) {
+        return plusStatus?.urls?.profile
+          ? [el('p', 'rm-warn', t('settings.remote.plus.account')), listRow({ icon: 'monitor', name: t('settings.plus.manage'), key: 'plusManage', onclick: () => openExternalLink(plusStatus.urls.profile) })]
+          : [el('p', 'rm-warn', t('settings.remote.plus.account'))];
+      }
+      return [listRow({ icon: 'monitor', name: line.text, key: 'plusGet', onclick: () => openExternalLink(new URL('/plus', plusStatus?.urls?.account).href) })];
+    }
     if (line && line.kind !== 'login' && !STATE_KINDS.has(line.kind)) return [el('p', 'rm-warn', line.text)];
     if (!plusStatus?.signedIn) {
       const acts = el('div', 'rm-acts');

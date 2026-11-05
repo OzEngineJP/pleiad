@@ -14,7 +14,7 @@ import {
   installPcBody, methodOptions, doneBody, errorLine, switchButton, rmIcon, deviceIcon,
 } from './remote-parts.mjs';
 import { openExternalLink } from './link-open.mjs';
-import { inIosShell } from './remote-badge.mjs';
+import { inMobileShell } from './remote-badge.mjs';
 
 const STATES = ['connected', 'connecting', 'offline', 'host-offline', 'revoked', 'reapprove', 'unpaired', 'closed', 'stopped', 'blocked', 'limit', 'paused', 'readmit', 'update', 'removed'];
 
@@ -178,10 +178,10 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
     const out = [];
     if (loadError) out.push(errorLine(loadError));
 
-    // ---- まとまり 1: Pleiad Plus。iOS の殻ではまとまりごと出さない（App Store 3.1.3(f)。docs/plus.md「iOS」）
-    if (!inIosShell() && plus.needsUpdate) {
+    // ---- まとまり 1: Pleiad Plus。モバイルの殻では購入への誘導だけを出さない（ADR 0263 決定 5。docs/plus.md「iOS」）
+    if (plus.needsUpdate) {
       out.push(el('p', 'rm-warn', t('settings.remote.groups.plusNeedsUpdate')));
-    } else if (!inIosShell() && plus.available !== false) {
+    } else if (plus.available !== false) {
       const plusSec = el('section', 'rm-group');
 
       if (!plus.status || plus.status === 'signedOut') {
@@ -198,15 +198,26 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
         out.push(plusSec);
       } else if (plus.status === 'free') {
         plusSec.append(groupHead(t('settings.remote.groups.plus')));
-        plusSec.append(listRow({
-          icon: 'user',
-          name: t('settings.remote.groups.plusUpgrade'),
-          key: 'plus-upgrade',
-          onclick: () => {
-            const u = plus.urls?.account ? new URL('/plus', plus.urls.account).href : 'https://pleiad.dev/plus';
-            openExternalLink(u);
-          },
-        }));
+        if (inMobileShell()) {
+          // モバイルでは購入画面への誘導を出さない。アカウントの管理はプランと支払いを含まないページを開く
+          plusSec.append(el('p', 'rm-warn', t('settings.remote.groups.plusBlocked')));
+          if (plus.urls?.profile) plusSec.append(listRow({
+            icon: 'user',
+            name: t('settings.plus.manage'),
+            key: 'plus-manage',
+            onclick: () => openExternalLink(plus.urls.profile),
+          }));
+        } else {
+          plusSec.append(listRow({
+            icon: 'user',
+            name: t('settings.remote.groups.plusUpgrade'),
+            key: 'plus-upgrade',
+            onclick: () => {
+              const u = plus.urls?.account ? new URL('/plus', plus.urls.account).href : 'https://pleiad.dev/plus';
+              openExternalLink(u);
+            },
+          }));
+        }
         out.push(plusSec);
       } else if (plus.status === 'disabled') {
         plusSec.append(groupHead(t('settings.remote.groups.plus')));
@@ -396,7 +407,7 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
     payload.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing && payload.value.trim()) { e.preventDefault(); pairOwn(); } };
 
     const initialHostIds = new Set((plus.hosts || hosts.filter(h => h.via === 'plus') || []).map(h => h.hostId));
-    const defaultMethod = (!inIosShell() && plus.status === 'plus' && plus.use !== false) ? 'plus' : 'own';
+    const defaultMethod = (plus.status === 'plus' && plus.use !== false) ? 'plus' : 'own';
 
     wz = {
       step: 0,
@@ -432,13 +443,12 @@ export function setupRemoteHosts({ onChange, cmd, page }) {
       const ownSub = ownHost?.relay || 'relay.example.net';
 
       const items = [
-        // iOS の殻では Plus のつなぎ方を選ばせない（docs/plus.md「iOS」）
-        ...(inIosShell() ? [] : [{
+        {
           key: 'plus',
           name: t('settings.remote.groups.plus'),
           sub: plusSub,
           disabled: plus.status !== 'plus',
-        }]),
+        },
         {
           key: 'own',
           name: t('settings.remote.groups.own'),
