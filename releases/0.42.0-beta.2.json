@@ -1,0 +1,20 @@
+{
+  "version": "0.42.0-beta.2",
+  "date": "2026-11-05",
+  "title": "iPhone・iPad のアプリでも Pleiad Plus を使えるようにしました",
+  "sections": [
+    {
+      "title": "iOS アプリ",
+      "items": [
+        "iPhone・iPad のアプリで Pleiad Plus にログインできるようになりました。Android と同じく、同じアカウントの PC が一覧に並び、QR コードを使わずにつなげます。",
+        "iPhone・iPad のアプリからホストへつないだときの画面に、Pleiad Plus のログイン・アカウント管理・Plus でつなぐ設定が、また出るようになりました。"
+      ]
+    },
+    {
+      "title": "スマホのアプリ",
+      "items": [
+        "Android・iOS のアプリの中では、Pleiad Plus の購入やプランの案内を出さないようにしました。購入は PC やブラウザーの Pleiad から行えます。"
+      ]
+    }
+  ]
+}
