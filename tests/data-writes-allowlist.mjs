@@ -209,6 +209,9 @@ export const DATA_WRITES = [
   { file: 'core/chrome/window-shots.mjs', sites: 1, targets: [
     { name: 'uploads/chrome-window/<会話の SHA-256>/<元のファイル名>', limit: '分岐した会話へ 1 枚ずつ複製（元の 1 枚は close-window.mjs の MAX_IMAGE=10MiB 以下）。会話の削除で消す', reason: '分岐した会話の閉じた窓の静止画。元の会話を消してもパスが残るよう、複製を持たせる（ADR 0115）' },
   ] },
+  { file: 'core/chrome/input.mjs', sites: 1, targets: [
+    { name: '(置き場の外) os.tmpdir() の pleiad-browser-input-*/<ファイル名>', limit: '1 回の選択で合計 8 MiB まで。失敗したらすぐ、入力を閉じたら消す', reason: 'スマホの映像からファイルの選択に渡すファイル（DOM.setFileInputFiles はパスしか受けない）。データ置き場には書かない' },
+  ] },
   { file: 'core/browser-unify-listeners.mjs', sites: 1, targets: [
     { name: 'page-ports.json', limit: '固定（{ pages, isolated }）', reason: 'ファイルのページと隔離のリスナーの port（ADR 0292）。次の起動でも同じ port を試し、開いたページのタブの URL を変えないための控え。port が変わったときだけ書く' },
   ] },

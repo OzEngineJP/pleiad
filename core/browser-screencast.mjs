@@ -388,7 +388,9 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     entry.clients.set(client, viewer);
     let result;
     try {
-      await syncViewers(sessionId, entry);
+      // 見る人の端末を知らせる口があるのは会話の Chrome（旗が on）だけ。無い橋（内蔵ブラウザー）は待たずに start を送る（今までの順のまま）
+      const synced = syncViewers(sessionId, entry);
+      if (synced) await synced;
       if (entry.multi && !entry.formats) {
         const f = tierFormat(viewer.tier, box);
         entry.formats = [f];
