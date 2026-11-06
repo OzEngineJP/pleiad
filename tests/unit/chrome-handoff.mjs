@@ -1,6 +1,7 @@
 // Chrome の操作待ちの台帳（core/chrome/handoff.mjs。ADR 0148・0168）。偽の askPermission・接続・第 6 段の control で、サーバーも Chrome も立てない。
 //   - connect は 1 会話に 1 枚（ターンが走っている間だけ。ターンの外の接続では出さない）。状態の変化は update で届く。つながったら決着する
 //   - ask は開いている依頼があれば新しく出さない。接続が無ければ接続の案内に読み替える。一時停止中（第 6 段の paused）なら「あなたが操作中」から
+//   - 端末・映像から人が持ったタブ（useHolders）でも「あなたが操作中」になり、全部 AI に戻ったら決着する（ADR 0293 の 1）
 //   - wait は sliceMs で waiting（カードは残る）、signal で aborted。ターンの中で誰にも返していない答えは次の wait が返し、ターンの終わりで捨てる
 //   - ターンの外で戻した・つながった → 「続けてください」が 1 回だけ。busy・断った・中断のときは送らない
 import { readFileSync } from 'node:fs';
@@ -59,6 +60,17 @@ function fakeControl() {
     state: id => states.get(id) ?? { state: 'running' },
     onChange: fn => { listeners.add(fn); return () => listeners.delete(fn); },
     set(id, next) { states.set(id, next); for (const fn of listeners) fn(id); },
+  };
+}
+
+/** タブの持ち手（core/chrome/tab-holder.mjs）の身代わり（held・onChange だけ） */
+function fakeHolders() {
+  const held = new Map();
+  const listeners = new Set();
+  return {
+    held: id => held.get(id) ?? [],
+    onChange: fn => { listeners.add(fn); return () => listeners.delete(fn); },
+    set(id, tabs) { held.set(id, tabs); for (const fn of listeners) fn(id); },
   };
 }
 
@@ -284,6 +296,38 @@ export default async function (t) {
     await tick();
     t.ok('断った・中断のときは送らない', no.env.sent.length === 0 && ab.env.sent.length === 0);
     busy.handoffs.close(); no.handoffs.close(); ab.handoffs.close();
+  }
+
+  // ---- 端末・映像から人が持ったタブ（useHolders）
+  {
+    const r = rig({ connection: 'connected', withControl: true });
+    const holders = fakeHolders();
+    r.handoffs.useHolders(holders);
+    r.handoffs.ask('s1', { reason: 'login', message: 'x' });
+    holders.set('s1', [{ targetId: 't1', by: 'device', pinned: false }]);
+    await tick();
+    t.ok('人がタブを持つと「あなたが操作中」（by: device）に替わる', r.cards[0].updates.at(-1)?.state === 'operating' && r.cards[0].updates.at(-1).by === 'device', JSON.stringify(r.cards[0].updates));
+    holders.set('s2', [{ targetId: 't9', by: 'device' }]);
+    await tick();
+    t.ok('ほかの会話の持ち手では決着しない', !r.cards[0].answer);
+    const waiting = r.handoffs.wait('s1', { sliceMs: 1000 });
+    holders.set('s1', []);
+    const got = await waiting;
+    t.ok('全部 AI に戻ったら（「Claude に戻す」）resumed で決着する', got.kind === 'resumed' && r.cards[0].answer?.allow === true, JSON.stringify(got));
+    r.handoffs.close();
+  }
+  {
+    const r = rig({ connection: 'connected', withControl: true });
+    const holders = fakeHolders();
+    holders.set('s1', [{ targetId: 't1', by: 'device' }]);
+    r.handoffs.useHolders(holders);
+    r.handoffs.ask('s1', { reason: 'captcha', message: 'x' });
+    t.ok('先に端末で操作していたら operating から始める', r.cards[0].updates.at(-1)?.state === 'operating');
+    holders.set('s1', [{ targetId: 't1', by: 'pc', pinned: true }]);
+    r.control.set('s1', { state: 'paused', by: 'pc' });
+    await tick();
+    t.ok('「PC で操作する」の窓のタブは control の paused が受け持つ（by: pc）', !r.cards[0].answer && r.cards[0].updates.at(-1)?.by === 'pc');
+    r.handoffs.close();
   }
 
   // ---- 偽の「つながった」を返さない: つながっていないのに外から allow:true が来ても（端末の中継の「許可」）、子へ connected を返さない

@@ -18,6 +18,8 @@
 //   - 範囲のタブが window.open の popup で開いた別窓にも、同じ置き方を当てる（scope.adoptPopup）
 // 引き継ぎ（一時停止。ADR 0148・0154。状態機械は core/chrome/control.mjs）: pause() の間は、エージェントのコマンドを全部 PAUSED_MESSAGE で断る
 // （人が窓を操作している。エージェントは hand_to_user で戻るのを待つ）。unpause() で解く。Chrome との接続が切れたときも解く。
+// ADR 0293 からは、人の操作はタブごとの持ち手（tab-holder.mjs）で断る。一時停止に入るのは、前の版から持ち越した引き継ぎ（restore の paused）だけで、
+// 呼び手は「任せる」（control の resume）か窓を閉じる操作で unpause() する。pause()・handOver() を呼ぶ本番の呼び手は無い（試験と、持ち越しの形のために残す）。
 //   - pause に入るときに、エージェントのブラウザーとタブの接続を切る（上りのセッションを外し、ws を 1000 で閉じる）。Chrome からの通知（Network の postData・Fetch.requestPaused など）が
 //     エージェントへ流れ続けず、エージェントの Fetch の横取りが人のページを固めないため。戻した後は agent-browser がつなぎ直す（つなぎ直した接続のコマンドは全部断る）
 //   - 一時停止の間は、タブを「エージェントが動かしている」と見なさない（人の移動をサイトの利用の確認にかけない）。確認の待ちも取り下げる
@@ -39,7 +41,7 @@ import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { createChromeWindows } from './windows.mjs';
 import { CARRY_MAX_BYTES } from './link-wire.mjs';
-// ブラウザーの一本化（ADR 0291〜0294）の 4 つの口。既定の実装は今の動きのまま（旗が off でも on でも、置き換えるまでは変わらない）
+// ブラウザーの一本化（ADR 0291〜0294）の 4 つの口。試験では hooks で差し替える
 import { createPagePolicy, safeUrl } from './page-policy.mjs';
 import { createTabHolder, PAUSED_MESSAGE, HUMAN_MESSAGE } from './tab-holder.mjs';
 import { createTabInfo } from './tab-info.mjs';
@@ -149,8 +151,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
   const changeListeners = new Set(), tapListeners = new Set(), lostListeners = new Set();
   const fire = (set, ...args) => { for (const fn of [...set]) { try { fn(...args); } catch (error) { log(`chrome-relay: listener failed: ${error?.message ?? error}`); } } };
   // ---- ブラウザーの一本化の口（ADR 0291〜0294） ----
-  let pagePorts = null;        // サーバーの 3 つの port（setPagePorts）。{ main, pages, isolated }。main は旗に依らず入る
-  let pageCookie = null;       // ファイルのページの Cookie（setPageCookie。旗が on のときだけ入る。ログに書かない）
+  let pagePorts = null;        // サーバーの 3 つの port（setPagePorts）。{ main, pages, isolated }
+  let pageCookie = null;       // ファイルのページの Cookie（setPageCookie。ログに書かない）
   const tabEventListeners = new Set();
   const emitTab = (type, payload) => { if (TAB_EVENTS.includes(type)) fire(tabEventListeners, type, payload); };
   const pagePolicy = (hooks.pagePolicy ?? createPagePolicy)({ ports: () => pagePorts, cookie: () => pageCookie, log });
@@ -450,8 +452,8 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
     if (!tab.agentClosed && !tabsOf(state, tab.entry).length) tabsLost(tab.entry);   // 人が窓を閉じた・窓を閉じる操作
   }
 
-  /** エージェントが動かしているタブか（一時停止中は人が動かしているので、いつも false。確認にかけるかを決める） */
-  const driven = tab => tab.active && !tab.entry.paused;
+  /** エージェントが動かしているタブか（一時停止中と、人の操作のタブ（tab-holder.mjs）は人が動かしているので false。確認にかけるかを決める） */
+  const driven = tab => tab.active && !tab.entry.paused && tabHolder.holder?.(tab.entry.id, tab.targetId)?.holder !== 'human';
 
   /** タブの窓のプロフィールのフォルダー名（'chrome:<dir>' を外す。分からなければ null）。popup の窓を隠すときに渡す */
   const profileDirOfTab = tab => scope.profileOf?.(tab.entry.id, { windowId: tab.windowId, context: tab.info?.browserContextId ?? null })?.replace(/^chrome:/, '') ?? null;
@@ -1227,7 +1229,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       return `ws://127.0.0.1:${address.port}/devtools/browser/${entry.key}`;
     },
     /**
-     * 人がビューアの⋯から、会話の窓に URL を開く（browser.chromeOpen）。エージェントには知らせない（タブは範囲に入るので、次の tab list で見える）。
+     * 人が右パネルのアドレス欄の新しいタブから、会話の窓に URL を開く（browser.chromeNavigate の action: new）。エージェントには知らせない（タブは範囲に入るので、次の tab list で見える）。
      * 会話の記録が無ければ作る（ターンは始めない）。接続が無ければ Chrome の許可を待つ（接続の案内のカードは出さない。signal で待ちをやめる）。
      * 人が開くので、サイトの利用の確認は通さない。開いたタブを今のタブにする（右パネルの映像が追う）
      */

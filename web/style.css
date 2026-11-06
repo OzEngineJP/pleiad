@@ -659,9 +659,9 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
 .title-field:is(:hover,:focus-within) #titleWand,#titleWand.busy{opacity:1;transform:none}
 @media (hover:none){.title-field:hover:not(:focus-within) #titleWand:not(.busy){opacity:0;transform:translateX(-4px)}}
 @media (prefers-reduced-motion:reduce){#titleWand{transition:none;transform:none}}
-/* タイトル行の右の、右パネルを開くアイコンボタン（目次・プラグイン・内蔵ブラウザー。docs/design-system.md「会話の頭の行のアイコン」）。
+/* タイトル行の右の、右パネルを開くアイコンボタン（目次・プラグイン・ブラウザー。docs/design-system.md「会話の頭の行のアイコン」）。
    プラグインの「変更あり」は右上の強い字の点（紙の色の 2px の切り欠き）。件数は字にせず名前にだけ入れる。
-   内蔵ブラウザーの操作中は右上の走っている弧（§6。14px の紙の色の丸の中に半径 4.4・線 1.5） */
+   エージェントの Chrome の操作中は右上の走っている弧（§6。14px の紙の色の丸の中に半径 4.4・線 1.5） */
 #contextEntry,#browserEntry{position:relative}
 .entry-context-state{position:absolute;bottom:-2px;right:-3px;display:flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:var(--r-pill);background:var(--surface-paper);color:var(--ink);font-size:var(--fs-xs);font-weight:600;line-height:1;pointer-events:none}
 .entry-context-state.run svg{width:12.32px;height:12.32px;stroke-width:1.7}
@@ -1056,8 +1056,7 @@ main{display:flex;flex-direction:column;min-height:0;min-width:0;background:var(
   transition:opacity var(--dur-fast) var(--ease-out),transform var(--dur-fast) var(--ease-out)}
 .url-status.on{opacity:1;transform:none}
 .url-status svg.i{width:13px;height:13px;flex:none;color:var(--ink-weak)}
-.url-status .dest,.url-status .k{flex:none;white-space:nowrap}
-.url-status .k{color:var(--ink-weak)}
+.url-status .dest{flex:none;white-space:nowrap}
 .url-status .u{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);color:var(--ink-weak)}
 @media (hover:none){.url-status{display:none}}
 /* 許可していないスキームのリンク。押せない字として残す */

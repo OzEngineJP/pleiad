@@ -66,7 +66,7 @@ export default async function (t) {
       if (redirect && calls.length === 1) return new Response(null, { status: 302, headers: { location: redirect } });
       return new Response('png', { status: 200, headers: { 'content-type': 'image/png' } });
     };
-    const info = createTabInfo({ enabled: true, fetchResource });
+    const info = createTabInfo({ fetchResource });
     info.setPagePorts({ main: 7420, pages: 7421, isolated: 7422 });
     const tab = { sessionId: 's', targetId: 't', windowId: 1, info: { url, title: '' }, async attach() {
       return { async send(method) {

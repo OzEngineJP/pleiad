@@ -39,7 +39,7 @@ export default async function (t) {
 
   // ---- defineSetting の検査
   const setting = (key, extra = {}) => ({ key, summary: `agent:settings.${key}`, risk: 'read', schema: z.string(), default: '', read: () => '', write: () => {}, ...extra });
-  t.ok('defineSetting: 正しい定義は通り、prefKeys の既定は key', defineSetting(setting('linkOpen')).prefKeys[0] === 'linkOpen');
+  t.ok('defineSetting: 正しい定義は通り、prefKeys の既定は key', defineSetting(setting('memoryLearnAt')).prefKeys[0] === 'memoryLearnAt');
   t.ok('defineSetting: prefKeys を [] にできる（prefs 以外に保存するもの）', defineSetting(setting('hooks.owner', { prefKeys: [] })).prefKeys.length === 0);
   for (const [label, def] of [
     ['key が不正', setting('Bad-Key')], ['summary が合わない', setting('a', { summary: 'agent:settings.b' })], ['schema が無い', setting('a', { schema: null })],

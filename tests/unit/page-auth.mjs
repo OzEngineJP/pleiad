@@ -1,12 +1,11 @@
-// Pleiad のページの 2 つの入口の認証（core/page-auth.mjs）と旗（core/browser-unify-flag.mjs）。純粋な関数だけを見る。
+// Pleiad のページの 2 つの入口の認証（core/page-auth.mjs）。純粋な関数だけを見る。
 import crypto from 'node:crypto';
 import {
   MAIN_COOKIE, PAGES_COOKIE, PAGES_PATH, fetchSiteOk, mainCookieOk, pageRequestOk, pagesCookie, pagesCookieOk, pagesSecret, readCookies, sameSecret,
 } from '../../core/page-auth.mjs';
-import { BROWSER_UNIFY_ENV, browserUnifyOn } from '../../core/browser-unify-flag.mjs';
 
 export const name = 'page-auth';
-export const title = 'ページの入口の認証（ページの Cookie・本体の Cookie・?token= を受けない）と旗の読み方';
+export const title = 'ページの入口の認証（ページの Cookie・本体の Cookie・?token= を受けない）';
 
 export default async function (t) {
   const token = 'tok-' + crypto.randomBytes(8).toString('hex');
@@ -54,10 +53,4 @@ export default async function (t) {
     && !pageRequestOk({ via: 'pages', cookie: `${PAGES_COOKIE}=${secret}`, token, site: 'cross-site' })
     && pageRequestOk({ via: 'main', cookie: `${MAIN_COOKIE}=${token}`, token, site: 'same-origin' })
     && !pageRequestOk({ via: 'main', cookie: `${MAIN_COOKIE}=${token}`, token, site: 'same-site' }));
-
-  t.ok('旗は AGENT_HOST_BROWSER_UNIFY が on のときだけ（前後の空白・大小文字は見ない）',
-    BROWSER_UNIFY_ENV === 'AGENT_HOST_BROWSER_UNIFY'
-    && browserUnifyOn({ AGENT_HOST_BROWSER_UNIFY: 'on' }) && browserUnifyOn({ AGENT_HOST_BROWSER_UNIFY: ' ON ' })
-    && !browserUnifyOn({}) && !browserUnifyOn({ AGENT_HOST_BROWSER_UNIFY: '' }) && !browserUnifyOn({ AGENT_HOST_BROWSER_UNIFY: '1' })
-    && !browserUnifyOn({ AGENT_HOST_BROWSER_UNIFY: 'off' }) && !browserUnifyOn({ AGENT_HOST_BROWSER_UNIFY: 'true' }));
 }

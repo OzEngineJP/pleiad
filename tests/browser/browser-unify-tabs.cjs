@@ -138,7 +138,7 @@ window.ready=true;
     const web = http.createServer(server.listeners('request')[0]);
     await new Promise(resolve => web.listen(0, '127.0.0.1', resolve));
     const livePages = [], targets = new Map(), events = [], delivered = [];
-    const info = createTabInfo({ enabled:true, emit(type,event) { events.push(event); delivered.push(page.evaluate(event => ui.onEvent({type:'tab:info',...event}), event)); } });
+    const info = createTabInfo({ emit(type,event) { events.push(event); delivered.push(page.evaluate(event => ui.onEvent({type:'tab:info',...event}), event)); } });
     info.setPagePorts({pages:server.address().port});
     const discovery = await browser.newBrowserCDPSession();
     discovery.on('Target.targetInfoChanged', ({targetInfo}) => {

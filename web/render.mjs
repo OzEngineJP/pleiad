@@ -1,7 +1,6 @@
 import { withoutVisualizeReferences } from './visualize-reference.mjs';
 import { fileReference, looksLikePath, findWindowsPaths, baseName, dirName, WINDOWS_PATH_SOURCE } from './file-reference.mjs';
 import { visualizationFrame, downloadVisualization, openVisualizationTab, visualizationBundleNotice } from './visualize-frame.mjs';
-import { browserUnifyEnabled } from './link-open.mjs';
 import { wireWiden } from './visualize-widen.mjs';
 import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // md 描画と present カードの描画。外部ライブラリを足さない方針なので自前で持つ（設計メモ §11）。
@@ -14,7 +13,7 @@ import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
-import { copyIcon, downloadIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
+import { copyIcon, downloadIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
@@ -677,7 +676,7 @@ export function renderPresent(ev) {
       wireWiden(card, widen);
       widen.addEventListener('click', event => {
         if (openVisualizationTab(e.bundle, widen)) { event.stopImmediatePropagation(); return; }
-        if (browserUnifyEnabled() && globalThis.matchMedia?.('(max-width: 760px)').matches) {
+        if (globalThis.matchMedia?.('(max-width: 760px)').matches) {
           event.stopImmediatePropagation();
           return withContent(content => widen.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
             detail:{ content, title:e.caption ?? '', bundle:e.bundle } })));
@@ -693,14 +692,6 @@ export function renderPresent(ev) {
       tool(downloadIcon, t('timeline.present.download')).onclick =
         () => withContent((content) => downloadVisualization({ path: e.path, title: e.caption, content }));
 
-      // 開くのは「ブラウザーで開く」の 1 つだけ（どの画面でも。開き先は web/file-preview.mjs の htmlRoute）。ここは会話に載る面だけを組み立て、
-      // 開く側とは要求イベントで繋ぐ（ファイルリンクと同じ一枚の面に集める）。
-      // at・id は会話の記録の印。開く側がサーバーから写しを引く（core/server.mjs /visualization-snapshot。docs/visualize.md）
-      const detailOf = (content) => ({ content, title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null, bundle:e.bundle });
-      if (!browserUnifyEnabled()) {
-        const open = tool(openInBrowserIcon, t('timeline.present.browser'), 'visualize-open-browser');
-        open.onclick = () => withContent((content) => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles: true, detail: detailOf(content) })));
-      }
       card.append(controls);
       if (e.mode === 'wide') card.classList.add('visualize-wide');
     }

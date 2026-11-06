@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { createPageFrame, createFilePageRouter, pageHeading } from '../../web/page-frame.mjs';
-import { fileMenuItems, browserTabMenuItems } from '../../web/file-actions.mjs';
-import { configureLinkOpen } from '../../web/link-open.mjs';
-import { linkDestination, linkMenuItems, statusParts } from '../../web/link-menu.mjs';
+import { fileMenuItems } from '../../web/file-actions.mjs';
+import { linkMenuItems, statusParts } from '../../web/link-menu.mjs';
 import { configureIsolatedOrigin, isolatedVisualizationUrl, configureVisualizationTabs, openVisualizationTab, visualizationBundleNotice } from '../../web/visualize-frame.mjs';
 
 export const name = 'browser-unify-b3';
@@ -74,18 +73,15 @@ export default async function(t) {
     [{ path:'D:/folder', kind:'directory' }, false, ['エクスプローラーで開く', '既定のブラウザーで開く', '—', 'パスをコピー', '相対パスをコピー', '—', '会話で使う']],
   ];
   for (const [target, allowed, expected] of cases) {
-    const env = { unify:true, osActions:true, defaultAppAllowed:allowed, run(){} };
+    const env = { osActions:true, defaultAppAllowed:allowed, platform:'Win32', run(){} };
     assert.deepEqual(labels(fileMenuItems(target, env)), expected);
-    assert.deepEqual(labels(browserTabMenuItems('file', { ...target, directory:target.kind === 'directory' }, env)), expected);
     assert(!labels(fileMenuItems(target, { ...env, osActions:false })).some(label => /エクスプローラー|既定の/.test(label)));
   }
-  assert.equal(labels(fileMenuItems({ path:'/doc.md' }, { unify:true, osActions:true, platform:'MacIntel', run(){} }))[0], 'Finder で表示');
-  t.ok('タブと行のメニューの順序を統一。フォルダーは保存なし、非許可拡張子は既定アプリなし、遠隔は外部操作なし', true);
+  assert.equal(labels(fileMenuItems({ path:'/doc.md' }, { osActions:true, platform:'MacIntel', run(){} }))[0], 'Finder で表示');
+  t.ok('ファイルのメニューの順序。フォルダーは保存なし、非許可拡張子は既定アプリなし、遠隔は外部操作なし', true);
 
-  configureLinkOpen({ browserUnify:() => true });
-  assert.equal(linkDestination({ href:'https://example.test', inAppAvailable:true }), 'external');
-  assert.equal(statusParts({ href:'https://example.test', dest:'external', inAppSetting:true, hostScreen:true })[2], '');
-  assert.equal(linkMenuItems({ href:'https://example.test', act:{} }).length, 3);
+  assert.deepEqual(statusParts({ href:'https://example.test' }), ['既定のブラウザーで開く', 'example.test']);
+  assert.equal(linkMenuItems({ act:{} }).length, 3);
   configureIsolatedOrigin({ port:8125 });
   const bundle = { hash:'a'.repeat(64), entry:'図/index.html', htmlOnly:true, reason:'too-large' };
   assert.match(isolatedVisualizationUrl(bundle, { host:'192.168.1.7' }), /^http:\/\/192\.168\.1\.7:8125\/viz\//);
@@ -96,9 +92,9 @@ export default async function(t) {
   assert.match(viz[0].url, /\?embed=tab$/); assert.equal(viz[0].reuse, false);
   assert.match(visualizationBundleNotice(bundle), /合計サイズ/);
   assert.equal(visualizationBundleNotice({ ...bundle, reason:'constructor' }), '画像などの関連ファイルは含めていません。');
-  configureLinkOpen({ browserUnify:() => false });
-  assert.equal(openVisualizationTab(bundle, {}), false); assert.equal(visualizationBundleNotice(bundle), '');
-  assert.equal(linkDestination({ href:'https://example.test', inAppAvailable:true }), 'inapp');
+  configureVisualizationTabs({ sessionId:() => 's1', connected:() => false, openTab:args => viz.push(args) });
+  assert.equal(openVisualizationTab(bundle, {}), false, 'Chrome がつながっていなければ開かない（呼び出し元が既定のブラウザーへ回す）');
+  assert.equal(visualizationBundleNotice({ ...bundle, htmlOnly:false }), '');
   configureIsolatedOrigin(null); configureVisualizationTabs(null); frame.dispose();
-  t.ok('Web は既定ブラウザー。可視化は隔離 URL の新しいタブへ。LAN は端末から届くホスト名、旗 off は従来どおり', true);
+  t.ok('Web は既定ブラウザー。可視化は隔離 URL の新しいタブへ。LAN は端末から届くホスト名', true);
 }

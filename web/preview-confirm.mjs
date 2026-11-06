@@ -7,15 +7,6 @@ const blocked = new Set();
 const listeners = new Set();
 export const blockedPreviewOrigins = () => [...blocked];
 export function onBlockedPreviewOrigins(listener) { listeners.add(listener); return () => listeners.delete(listener); }
-/** 内蔵ブラウザーの file: のタブが止めた https の出どころ（設定 › ブラウザーの「止めた出どころ」に並べる。desktop/browser-panel.cjs） */
-export function noteBlockedOrigins(origins) {
-  let added = false;
-  for (const origin of origins ?? []) {
-    if (externalOrigin(origin) !== origin || blocked.has(origin) || blocked.size >= 500) continue;
-    blocked.add(origin); added = true;
-  }
-  if (added) for (const listener of listeners) listener();
-}
 export function configurePreviewConfirmation(options) { getPrefs = options.getPrefs; openSettings = options.openSettings; }
 export const openPreviewSettings = () => openSettings();
 export const currentPreviewPolicy = () => previewPolicy(getPrefs());

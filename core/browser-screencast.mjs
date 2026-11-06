@@ -1,7 +1,6 @@
-// リモートの画面から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」、ADR 0041）。
-// ページを持つのはデスクトップ版の main（desktop/browser-screencast.cjs）。ここは worker 側で、
-//   - parentPortScreencast: main との口（依頼と応答、フレーム・状態・終わりの受け取り、ack）
+// エージェントの Chrome の窓の映像を、見ている端末へ配る（ADR 0148・0291・0294）。撮影元は core/chrome/screencast.mjs（bridge）。
 //   - createScreencastHub: 会話ごとに見ている端末を束ね、フレームを配る。見る端末がいなくなったら止める
+//   - screencastCommand: WS のコマンド（args.source === 'chrome'）を hub と bridge へ渡す
 // 映像の送り方（ADR 0294。ADR 0148 の画質の選び方を置き換える）:
 //   - フレームが届いたら、見ている端末を待たずにすぐ撮影元へ ack を返す（Chrome は ack のあと次を出す。返事を待つと 5 fps を超えない）
 //   - 見る人（接続）ごとに「届いていない 1 枚」だけを持つ。見る人の返事（browserScreencastAck）が来たら、そのときの最新の 1 枚をすぐ送る。
@@ -10,119 +9,40 @@
 //     S = フレームの返事の時刻 − 印の返事の時刻（往復の遅れを除いた、中身を運ぶのにかかった時間）で、段を自動で上下する
 //   - 段は SCREENCAST_TIERS（k 0.4/0.67/1 × q 30/55/80 の 7 段）。段ごとの撮影の口は bridge の能力で分かれる:
 //       · bridge.setFormats がある（core/chrome/screencast.mjs）: 段ごとに中継のセッションを分ける（フレームは stream（段）つきで届く）
-//       · 無い（内蔵ブラウザー）: 見ている人の中で一番低い段にそろえ、変わったら start を掛け直す（画質だけ。大きさは端末の箱のまま）
+//       · 無い: 見ている人の中で一番低い段にそろえ、変わったら start を掛け直す（画質だけ。大きさは端末の箱のまま）
 //   - 見る人に 300 ms フレームが届かなければ、bridge.capture（あれば）で最上段の 1 枚を 1 回だけ送る（止まった絵を鮮明に）
 //   - 段 0 でも S の中央値が 50 ms を超え続ける → lag、返事が 3 秒来ない → stale を、type: 'video' のメッセージで見る人へ知らせる
-// 映像の出どころは 2 つ（bridge を差し替える）。内蔵ブラウザー（main が持つ。上の parentPortScreencast）と、エージェントの Chrome の窓
-// （core/chrome/screencast.mjs。同じ形の bridge。args.source === 'chrome'）。Chrome の窓はホストの画面からもリモートの端末からも見られ、入力は受けない（見るだけ）。
-// hub は source を messages に載せ、画面が内蔵ブラウザーの映像と取り違えないようにする。
-// main が居なくなった（更新）ときは、ページ（内蔵ブラウザーのタブ）ごと消えるので、見ている端末へ ended('away') を送って畳む
-// （待っていた依頼は失敗にし、新しい main の browser-screencast-ready まで ready は false。docs/zero-downtime-update/design.md §7.2）。
-
-export function parentPortScreencast(port, { timeoutMs = 15_000 } = {}) {
-  if (!port) return null;
-  const pending = new Map();
-  let next = 0, ready = false;
-  const listeners = { frame: new Set(), state: new Set(), ended: new Set(), away: new Set() };
-  port.on('message', event => {
-    const message = event?.data ?? event;
-    switch (message?.type) {
-      case 'browser-screencast-ready': ready = true; return;
-      case 'browser-screencast-frame': for (const fn of listeners.frame) fn(message.sessionId, message.frame); return;
-      case 'browser-screencast-state': for (const fn of listeners.state) fn(message.sessionId, message.state); return;
-      case 'browser-screencast-ended': for (const fn of listeners.ended) fn(message.sessionId, message.reason); return;
-      case 'browser-screencast': {
-        const item = pending.get(message.id);
-        if (!item) return;
-        pending.delete(message.id); clearTimeout(item.timer);
-        if (message.ok) item.resolve(message.result ?? {}); else item.reject(new Error(message.error || 'screencast failed'));
-      }
-    }
-  });
-  // 名前付きパイプの口（main が付け直す）で main が切れた。見ている端末の画は戻らないので、依頼を落とし、ready を下げて、畳ませる
-  port.on('disconnect', () => {
-    ready = false;
-    for (const [id, item] of [...pending]) { pending.delete(id); clearTimeout(item.timer); item.reject(new Error('main is away')); }
-    for (const fn of listeners.away) fn();
-  });
-  const on = kind => fn => { listeners[kind].add(fn); return () => listeners[kind].delete(fn); };
-  return {
-    get ready() { return ready; },
-    request(action, sessionId, args = {}) {
-      return new Promise((resolve, reject) => {
-        const id = `sc${++next}`;
-        const timer = setTimeout(() => { pending.delete(id); reject(new Error('screencast timeout')); }, timeoutMs);
-        pending.set(id, { resolve, reject, timer });
-        port.postMessage({ type: 'browser-screencast', id, action, sessionId, ...args });
-      });
-    },
-    ack(sessionId, frameId) { port.postMessage({ type: 'browser-screencast-ack', sessionId, frameId }); },
-    onFrame: on('frame'), onState: on('state'), onEnded: on('ended'), onAway: on('away'),
-  };
-}
-
-export const SCREENCAST_COMMANDS = ['browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav'];
+// hub は source を messages に載せる（画面は source: 'chrome' の映像だけを受ける）。
+// 撮影元が居なくなった（bridge.onAway）ときは、見ている端末へ ended('away') を送って畳む。
 
 /**
  * WS のコマンドを処理する（core/server.mjs から呼ぶ）。戻り値は { ok, result } か { ok: false, code }。
- * 内蔵ブラウザーの映像は、リモートの接続（ADR 0010 の isLocalRequest が false）からだけ受ける。ホストの画面には内蔵ブラウザーそのものがある。
- * args.source === 'chrome' は、エージェントの Chrome の窓の映像（chrome = { hub, bridge }）。ホストの画面もリモートも見られるが、見るだけ（移動は view-only）。
- * 入力はリモートの端末からだけ受け、端末が引き継いでいる間かは bridge（core/chrome/screencast.mjs）が決める（それ以外は view-only）。
- * 入力・移動は、その会話を見ている接続からだけ。
- * snapshotFile({ sessionId, id, at, allow? }) は可視化の写しを書き出して file: の URL を返す（見つからなければ null）。
- * allow は「読み込む」で、そのタブだけに加える https の出どころ
+ * 映像はエージェントの Chrome の窓だけ（args.source === 'chrome'、chrome = { hub, bridge }）。ホストの画面もリモートも見られる。
+ * 入力は bridge.unified（タブの持ち手がある）ならどの端末からも、
+ * 無ければリモートの端末からだけ受け、端末が引き継いでいる間かは bridge（core/chrome/screencast.mjs）が決める（それ以外は view-only）。
+ * 入力は、その会話を見ている接続からだけ。
  */
-export async function screencastCommand({ command, args = {}, local, hub, bridge, client, snapshotFile, chrome = null }) {
-  const viaChrome = args.source === 'chrome';
-  if (viaChrome) {
-    if (!chrome?.hub || !chrome.bridge?.ready) return { ok: false, code: 'unavailable' };
-    ({ hub, bridge } = chrome);
-    if (command === 'browserScreencastNav' || (command === 'browserScreencastInput' && local && !bridge.unified)) return { ok: false, code: 'view-only' };
-    if (command === 'browserScreencast' && (args.url != null || args.visualization)) return { ok: false, code: 'view-only' };
-  } else if (local) return { ok: false, code: 'remote-only' };
-  if (!hub || !bridge?.ready) return { ok: false, code: 'unavailable' };
+export async function screencastCommand({ command, args = {}, local, client, chrome = null }) {
+  if (args.source !== 'chrome' || !chrome?.hub || !chrome.bridge?.ready) return { ok: false, code: 'unavailable' };
+  const { hub, bridge } = chrome;
+  if (command === 'browserScreencastInput' && local && !bridge.unified) return { ok: false, code: 'view-only' };
+  if (command === 'browserScreencast' && (args.url != null || args.visualization)) return { ok: false, code: 'view-only' };
   const sessionId = args.sessionId;
   if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200) return { ok: false, code: 'invalid-session' };
   try {
     switch (command) {
       case 'browserScreencast': {
-        let url, fileUrl, source;
-        if (args.visualization) {
-          const v = args.visualization;
-          const owner = typeof v.sessionId === 'string' ? v.sessionId : sessionId;
-          fileUrl = await snapshotFile?.({ sessionId: owner, id: v.id, at: v.at });
-          if (!fileUrl) return { ok: false, code: 'not-found' };
-          // 同じ記録は同じタブ・「読み込む」で書き直せるよう、ホストの内蔵ブラウザーのタブに記録の印を付ける
-          source = { kind: 'snapshot', sessionId: owner, ...(v.id ? { id: String(v.id) } : {}), ...(v.at ? { at: String(v.at) } : {}) };
-        } else if (args.url != null) {
-          if (typeof args.url !== 'string' || !/^https?:\/\//i.test(args.url)) return { ok: false, code: 'invalid-url' };
-          url = args.url;
-        }
         const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
-        return { ok: true, result: await hub.watch(client, sessionId, { url, fileUrl, source, tabId, width: args.width, height: args.height, scale: args.scale, device: args.device }) };
+        return { ok: true, result: await hub.watch(client, sessionId, { tabId, width: args.width, height: args.height, scale: args.scale, device: args.device }) };
       }
       case 'browserScreencastStop': await hub.unwatch(client, sessionId); return { ok: true, result: {} };
       // args.mark は印（type: 'mark'）への返事。フレームの返事と区別して、中身を運ぶ時間 S を測る
       case 'browserScreencastAck': hub.received(client, sessionId, Number(args.seq), { mark: args.mark === true }); return { ok: true, result: {} };
-      case 'browserScreencastInput': case 'browserScreencastNav': {
+      case 'browserScreencastInput': {
         if (!hub.watching(client, sessionId)) return { ok: false, code: 'not-watching' };
-        if (command === 'browserScreencastInput') {
-          const viewer = hub.viewer?.(client, sessionId);
-          const result = await bridge.request('input', sessionId, { input: args.input, client, tabId: args.tabId, device: viewer?.device, viewport: viewer?.box });
-          return { ok: true, result: result ?? {} };
-        }
-        // select・close・newTab は内蔵ブラウザーのタブ列の操作（tabId はその会話のタブ）。見るタブが替わったら { tabId, state } が返る
-        const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
-        const result = await bridge.request('navigate', sessionId, { nav: args.action, url: args.url, tabId });
-        // allowOnce（止めた外部の読み込みを通して読み直す）の写しは、一時の許可付きで書き直した写しを同じタブへ開き直す
-        const { rewrite, ...rest } = result ?? {};
-        if (rewrite?.source?.kind === 'snapshot') {
-          const { source, origins } = rewrite;
-          const fileUrl = await snapshotFile?.({ sessionId: source.sessionId, id: source.id, at: source.at, allow: origins });
-          if (!fileUrl) return { ok: false, code: 'not-found' };
-          await bridge.request('openTab', sessionId, { fileUrl, source });
-        }
-        return { ok: true, result: rest };
+        const viewer = hub.viewer?.(client, sessionId);
+        const result = await bridge.request('input', sessionId, { input: args.input, client, tabId: args.tabId, device: viewer?.device, viewport: viewer?.box });
+        return { ok: true, result: result ?? {} };
       }
       default: return { ok: false, code: 'unknown' };
     }
@@ -159,7 +79,7 @@ function tierFormat(tier, box) {
 }
 
 /**
- * @param bridge parentPortScreencast の戻り値か core/chrome/screencast.mjs（テストでは偽物）
+ * @param bridge core/chrome/screencast.mjs（テストでは偽物）
  *   bridge.setFormats(sessionId, formats) があれば段ごとのセッションに分かれ、フレームは { id, stream, data, metadata } で届く。
  *   bridge.capture(sessionId, options) があれば、止まった絵を最上段で 1 枚撮る。
  * client は { send(message) }。message は WS の { kind: 'screencast', type: mark|frame|state|ended|video, sessionId, ... }
@@ -340,7 +260,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     }
     await syncShared(sessionId, entry);
   }
-  /** 段ごとに分けられない撮影（内蔵ブラウザー・分けられなかった中継）は、一番低い段の画質にそろえる（大きさは端末の箱のまま） */
+  /** 段ごとに分けられない撮影（分けられなかった中継）は、一番低い段の画質にそろえる（大きさは端末の箱のまま） */
   async function syncShared(sessionId, entry) {
     if (entryOf(sessionId) !== entry || !entry.clients.size) return;
     let lowest = null;
@@ -370,8 +290,8 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     Promise.resolve(bridge.setViewers?.(sessionId, [])).catch(() => {});
   }
 
-  /** 見始める。url か fileUrl（サーバーが確かめた可視化の写し）があれば新しいタブで開き、tabId があればその会話のそのタブを見る。同じ会話を見ている端末とはタブを共有する */
-  async function watch(client, sessionId, { url, fileUrl, source, tabId, width, height, scale, device } = {}) {
+  /** 見始める。tabId があればその会話のそのタブを見る。同じ会話を見ている端末とはタブを共有する */
+  async function watch(client, sessionId, { tabId, width, height, scale, device } = {}) {
     const box = { width: Number(width) || 800, height: Number(height) || 800, scale: Math.min(Number(scale) || 1, 2) };
     let entry = entryOf(sessionId);
     const created = !entry;
@@ -388,18 +308,18 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     entry.clients.set(client, viewer);
     let result;
     try {
-      // 見る人の端末を知らせる口があるのは会話の Chrome（旗が on）だけ。無い橋（内蔵ブラウザー）は待たずに start を送る（今までの順のまま）
+      // 見る人の端末を知らせる口（setViewers）が無い橋は、待たずに start を送る
       const synced = syncViewers(sessionId, entry);
       if (synced) await synced;
       if (entry.multi && !entry.formats) {
         const f = tierFormat(viewer.tier, box);
         entry.formats = [f];
-        result = await bridge.request('start', sessionId, { options: { url, fileUrl, source, tabId, formats: entry.formats } });
+        result = await bridge.request('start', sessionId, { options: { tabId, formats: entry.formats } });
       } else if (entry.multi) {
         result = { tabId: entry.state?.tabId ?? null, state: entry.state };
         await syncFormats(sessionId, entry);
       } else {
-        const options = { url, fileUrl, source, tabId, width: box.width, height: box.height, scale: box.scale, quality: SCREENCAST_TIERS[lowestTierOf(entry)].q };
+        const options = { tabId, width: box.width, height: box.height, scale: box.scale, quality: SCREENCAST_TIERS[lowestTierOf(entry)].q };
         entry.shared = { width: box.width, height: box.height, scale: box.scale, quality: SCREENCAST_TIERS[lowestTierOf(entry)].q };
         result = await bridge.request('start', sessionId, { options });
       }

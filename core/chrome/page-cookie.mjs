@@ -7,7 +7,7 @@ import { PAGES_PATH } from '../page-auth.mjs';
 /**
  * CDP の CookieParam。url で localhost の host-only にし、sourcePort を付ける（Chrome が Cookie を port に結ぶようになっても、ファイルのページの port にだけ送られる）
  * @param {{ cookie: object|null, pages: number|null }} given cookie は core/page-auth.mjs の pagesCookie の形
- * @returns CookieParam か null（旗が off・port が立っていない）
+ * @returns CookieParam か null（Cookie か port がまだ無い）
  */
 export function pageCookieParam({ cookie, pages }) {
   if (!cookie?.name || typeof cookie.value !== 'string' || !Number.isInteger(pages) || pages <= 0) return null;
@@ -31,7 +31,7 @@ export function isPagesUrl(value, pages) {
 /**
  * @param {object} [deps]
  * @param [deps.ports]  () => { main, pages, isolated } か null
- * @param [deps.cookie] () => pagesCookie の形か null（旗が on のときだけ入る）
+ * @param [deps.cookie] () => pagesCookie の形か null（サーバーが渡す前は null）
  * @param [deps.log]    ログの 1 行（値・URL を書かない）
  */
 export function createPageCookie({ ports = () => null, cookie = () => null, log = () => {} } = {}) {
@@ -47,7 +47,7 @@ export function createPageCookie({ ports = () => null, cookie = () => null, log 
   return {
     /** 上りにつながった（つなぎ直しのたび） */
     connected: ({ send } = {}) => browserCookie(send),
-    /** この URL を開く前に入れる物があるか（旗が on で、ファイルのページを開く） */
+    /** この URL を開く前に入れる物があるか（Cookie があって、ファイルのページを開く） */
     wanted: url => Boolean(param()) && isPagesUrl(url, ports()?.pages ?? null),
     /** タブを開く前。ファイルのページを開くときだけ入れ直す（人が閲覧データを消した後でも開けるように） */
     beforeOpen: async ({ url, send } = {}) => isPagesUrl(url, ports()?.pages ?? null) ? browserCookie(send) : false,

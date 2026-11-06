@@ -13,7 +13,6 @@ import crypto from 'node:crypto';
 import * as store from "./store.mjs";
 import { writeAtomic } from "./atomic-file.mjs";
 import { splitLeadingNotes } from "./system-messages.mjs";
-import { browserUnifyOn } from "./browser-unify-flag.mjs";
 import { cleanBundle, entryName, htmlOnlyBundle } from "./viz-bundle.mjs";
 
 const PRESENT_DIR = path.join(store.dataDir, "presents");
@@ -136,9 +135,9 @@ export async function recordPresent(sessionId, payload) {
     // 添付の caption は日本語の文のまま残し、画面はキーで今の言語に訳す（core/server.mjs presentAttachments・web/saved-text.mjs）
     ...(payload.captionKey ? { captionKey: payload.captionKey, captionParams: payload.captionParams ?? null } : {}),
     path: payload.path ?? null,
-    // id は写しを後から指すため（core/server.mjs の /visualization-snapshot。別タブで開く）。以前の記録は at で指す
+    // id は可視化を後から指すため（隔離の origin の束・ファイルのページの一覧）。以前の記録は at で指す
     ...(payload.kind === 'visualization' ? { id: crypto.randomUUID(), mode: payload.mode, error: payload.error, reference: payload.reference } : {}),
-    // 可視化の束（ブラウザーの一本化の旗が on のときだけ core/visualize.mjs が載せる。ADR 0292 の 3 の 4）。隔離の origin が /viz/<hash>/ で配る
+    // 可視化の束（core/visualize.mjs が載せる。ADR 0292 の 3 の 4）。隔離の origin が /viz/<hash>/ で配る
     ...(payload.kind === 'visualization' && cleanBundle(payload.bundle) ? { bundle: cleanBundle(payload.bundle) } : {}),
     // 誰が置いたか。人間の添付と AI の提示は同じ流れに並ぶので、履歴でも区別できるようにする
     by: payload.by === "human" ? "human" : "ai",
@@ -174,18 +173,7 @@ export async function recordPresent(sessionId, payload) {
   return record;
 }
 
-/**
- * 会話に保存された可視化の写しを 1 つ探す（別タブで開く /visualization-snapshot）。
- * id（新しい記録）か at（id の無い以前の記録。同じ時刻が複数あれば最初）で指す。中身の無いもの・エラーのカードは null
- */
-export async function findVisualization(sessionId, backend, { id, at } = {}) {
-  if (!sessionId || (!id && !at)) return null;
-  const presents = backend?.getPresents ? await backend.getPresents(sessionId) : await readPresents(sessionId);
-  const found = presents.find(p => p?.kind === 'visualization' && (id ? p.id === id : p.at === at));
-  return found && typeof found.content === 'string' && !found.error ? (await withLegacyBundles([found]))[0] : null;
-}
-
-// 束の無い可視化の行（前の版の記録・旗を入れる前の記録）は、読むときに HTML だけの束を書いて付ける（ADR 0292 の 3 の 4）。
+// 束の無い可視化の行（束を持つ前の版の記録）は、読むときに HTML だけの束を書いて付ける（ADR 0292 の 3 の 4）。
 // 記録の行は書き換えない（付けるのは返す写し）。同じ中身は書き直さないよう、中身のハッシュで覚えておく。
 // 書いた束は記録に名前が出ないので、起動の片付けの猶予（1 時間）を過ぎれば消え、次に読むときにまた書く
 const legacyBundles = new Map();
@@ -201,9 +189,9 @@ async function legacyBundle(row) {
   return bundle;
 }
 
-/** 旗が on のとき、束の無い可視化の行に HTML だけの束を付けた写しを返す（旗が off なら並びをそのまま返す） */
+/** 束の無い可視化の行に HTML だけの束を付けた写しを返す */
 export async function withLegacyBundles(presents) {
-  if (!browserUnifyOn(process.env) || !Array.isArray(presents)) return presents;
+  if (!Array.isArray(presents)) return presents;
   const out = [];
   for (const p of presents) {
     if (p?.kind === 'visualization' && typeof p.content === 'string' && !p.error && !cleanBundle(p.bundle)) {

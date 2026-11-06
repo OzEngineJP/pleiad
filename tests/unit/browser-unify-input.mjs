@@ -19,7 +19,7 @@ export default async function (t) {
         return { result: { value: true } };
       }, detach: async () => {} };
     } };
-  const bridge = createChromeScreencast({ host, relay, enabled: true }), hub = createScreencastHub({ bridge, source: 'chrome' });
+  const bridge = createChromeScreencast({ host, relay }), hub = createScreencastHub({ bridge, source: 'chrome' });
   const messages = [], phoneMessages = [], pc = { send: message => messages.push(message) }, phone = { send: message => phoneMessages.push(message) };
   const cmd = (client, input, tabId = 'T', local = true) => screencastCommand({ command: 'browserScreencastInput', args: { source: 'chrome', sessionId: 's', tabId, input }, local, chrome: { hub, bridge }, client });
   const metrics = () => calls.filter(call => call.method === 'Emulation.setDeviceMetricsOverride').at(-1)?.params;
@@ -63,8 +63,5 @@ export default async function (t) {
     const stopped = await Promise.race([hub.unwatch(phone, 's').then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), 500); })]);
     clearTimeout(timer); unblock?.({}); blockTap = false; await interrupted;
     t.ok('ダイアログ中に最後の端末を閉じても撮影の停止が詰まらない', stopped);
-    const legacy = createChromeScreencast({ host, relay, enabled: false });
-    t.ok('旗が off なら PC からの入力は従来どおり断る', (await screencastCommand({ command: 'browserScreencastInput', args: { source: 'chrome', sessionId: 's', input: { type: 'tap' } }, local: true, chrome: { hub, bridge: legacy }, client: pc })).code === 'view-only');
-    legacy.close();
   } finally { await hub.unwatch(pc, 's'); await hub.unwatch(phone, 's'); bridge.close(); holder.forget({ sessionId: 's' }); }
 }

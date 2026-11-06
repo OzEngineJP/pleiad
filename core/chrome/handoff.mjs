@@ -3,7 +3,9 @@
 //     Chrome の状態 A〜D（setup / consent / permission / denied）はカードの中身として写し、つながったら決着する。
 //     確認なしのモードの会話（autoConsent）は Pleiad の中の許可（consent）を飛ばす。トグル（setup）はどのモードでも人が「オンにしてつなぐ」を押す（ADR 0218）
 //   - 人への依頼（ask）: ログイン・CAPTCHA・2 段階認証・支払いなど。ply_browser の hand_to_user から出す。
-//     「Chrome で操作する」（一時停止）→「Claude に戻す」（再開）は第 6 段の core/chrome/control.mjs が持ち、ここは control の変化を見て決着させる
+//     「PC で操作する」→「Claude に戻す」は core/chrome/control.mjs が持ち、ここは control の変化を見て決着させる。
+//     「この端末で操作する」・映像に触れた（ADR 0293 の 1）は、タブの持ち手（core/chrome/tab-holder.mjs）が人になる。
+//     持ち手の変化（useHolders）も見て、人の操作のタブがあれば「あなたが操作中」、全部 AI に戻ったら（「Claude に戻す」の releaseAll）決着させる
 // 待ちは askPermission の outlivesTurn（ターンが終わっても残る。ADR 0168）で出す。カードの id は替えず、中身は onOpen の update で差し替える。
 // 会話ごとに開いている依頼は 1 つまで。決着したとき、待っている hand_to_user があればそこへ答え、無くてターンが走っていれば次の wait のために置き、
 // ターンが終わっていれば（かつ切り替え・分岐の最中でなければ）会話へ「続けてください」を 1 回だけ送る。
@@ -13,6 +15,7 @@
 //   onChange(fn(sessionId | { sessionId, ... })) -> off（core/chrome/control.mjs は状態そのものを配る）
 //   takeOver(sessionId, opts)・resume(sessionId) はカードのボタンが ops から呼ぶので、ここでは使わない
 // control は中継の後に作られる（中継はこの台帳を受け取る）ので、後から useControl(control) で差し込める。
+// 持ち手の形（useHolders）: held(sessionId) -> [{ targetId, by, pinned, ... }]・onChange(fn(sessionId)) -> off
 import crypto from 'node:crypto';
 
 export const HANDOFF_REASONS = ['login', 'captcha', 'two_factor', 'payment', 'other'];
@@ -148,19 +151,31 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
 
   let control = null;
   let offControl = null;
-  const onControlChange = change => {
-    const sessionId = typeof change === 'string' ? change : change?.sessionId;
+  let holders = null;
+  let offHolders = null;
+  /** 端末・映像から人が持っているタブ（「PC で操作する」の窓のタブは control の paused が受け持つので除く） */
+  const peopleTabs = sessionId => {
+    let list = [];
+    try { list = holders?.held?.(sessionId) ?? []; } catch { list = []; }
+    return list.filter(tab => !(tab.by === 'pc' && tab.pinned));
+  };
+  /** 依頼のカードを今の操作の状態に合わせる。人が操作していれば「あなたが操作中」、操作していた人が全部戻したら決着 */
+  const evaluate = sessionId => {
     const h = open.get(sessionId);
     if (!h || h.done || h.reason === 'connect') return;
-    const status = control.state(sessionId) ?? {};
-    if (status.state === 'paused') {
+    const status = control?.state?.(sessionId) ?? {};
+    const paused = status.state === 'paused';
+    if (paused || peopleTabs(sessionId).length) {
       h.operating = true;
       h.window = { url: status.url ?? h.window.url, title: status.title ?? h.window.title };
-      patch(h, { state: 'operating', by: status.by ?? 'pc', windowTitle: h.window.title });
+      patch(h, { state: 'operating', by: paused ? status.by ?? 'pc' : 'device', windowTitle: h.window.title });
     } else if (h.operating) {
       resolveWith(h, 'resumed');
     }
   };
+  const onControlChange = change => evaluate(typeof change === 'string' ? change : change?.sessionId);
+  // 持ち手の変化は続けて来る（PC の窓のタブを放してから端末の人に持たせる）ので、出来事が落ち着いてから見る
+  const onHolderChange = sessionId => { if (typeof sessionId === 'string') queueMicrotask(() => evaluate(sessionId)); };
   /** control を差し込む・差し替える（前の聞き手は外す） */
   const useControl = next => {
     offControl?.();
@@ -168,9 +183,16 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
     offControl = control?.onChange?.(onControlChange) ?? null;
   };
   useControl(initialControl);
+  /** タブの持ち手（上の形）を差し込む・差し替える */
+  const useHolders = next => {
+    offHolders?.();
+    holders = next ?? null;
+    offHolders = holders?.onChange?.(onHolderChange) ?? null;
+  };
 
   return {
     useControl(next) { if (!closed) useControl(next); },
+    useHolders(next) { if (!closed) useHolders(next); },
 
     /** 接続の案内を出す（開いていれば何もしない。つながっていれば出さない）。中継の upFor から */
     connect(sessionId) {
@@ -198,13 +220,8 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
       const kind = HANDOFF_REASONS.includes(reason) ? reason : 'other';
       const text = cleanMessage(message);
       const h = create(sessionId, kind, text, { reason: kind, message: text, state: 'asked', dialog: false });
-      // 人が先に「引き継ぐ」を押していた（一時停止中）なら、「あなたが操作中」から始める
-      const paused = control?.state?.(sessionId);
-      if (paused?.state === 'paused') {
-        h.operating = true;
-        h.window = { url: paused.url ?? null, title: paused.title ?? null };
-        patch(h, { state: 'operating', by: paused.by ?? 'pc', windowTitle: h.window.title });
-      }
+      // 人が先に操作していた（PC で操作する・この端末で操作する）なら、「あなたが操作中」から始める
+      evaluate(sessionId);
       return h;
     },
 
@@ -257,6 +274,7 @@ export function createChromeHandoffs({ askPermission, connection, control: initi
       closed = true;
       offConnection?.();
       offControl?.();
+      offHolders?.();
       for (const h of [...open.values()]) { if (h.card) h.card.settle({ allow: false, messageKey: 'aborted' }); else h.ac.abort(); }
       open.clear();
       unclaimed.clear();

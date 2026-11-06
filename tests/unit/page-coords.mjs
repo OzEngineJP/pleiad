@@ -1,5 +1,5 @@
-// 映像の座標の変換（web/page-coords.mjs）。web/remote-browser.mjs から引っ越した前後で同じ値を返す（ADR 0291 の 5 の 2）。
-// 下の期待値は、引っ越す前の web/remote-browser.mjs の関数で出したもの。
+// 映像の座標の変換（web/page-coords.mjs）。前の内蔵ブラウザーの全面の表示から引っ越した前後で同じ値を返す（ADR 0291 の 5 の 2）。
+// 下の期待値は、引っ越す前の関数で出したもの。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +47,6 @@ export default async function (t) {
     t.ok(`#${i} 移動量`, near(toPageDelta(37, got, meta), delta));
   });
 
-  // 使う側は page-coords.mjs から読む（remote-browser.mjs に同じ関数を残さない）
-  t.ok('remote-browser.mjs に定義が残っていない', !/export function (containRect|toPageCoords|toPageDelta)\b/.test(read('web/remote-browser.mjs')));
+  // 使う側は page-coords.mjs から読む
   t.ok('chrome-panel.mjs は page-coords.mjs から読む', /from '\.\/page-coords\.mjs'/.test(read('web/chrome-panel.mjs')));
 }

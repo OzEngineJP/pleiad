@@ -1,5 +1,5 @@
 // ファイルのページと隔離の 2 つのリスナー（ADR 0292 の 1・2。core/page-listener.mjs・pages-server.mjs・isolated-server.mjs・browser-unify-listeners.mjs）と、
-// サーバーの旗（AGENT_HOST_BROWSER_UNIFY）。off なら何も立たず、on なら 2 つの port が立って /_pleiad/ が 404 を返す（中身は A3・A4）。
+// サーバー（いつも 2 つの port が立ち、中身の無い /_pleiad/ は 404 を返す。中身は A3・A4）。
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
@@ -17,7 +17,7 @@ import { startServer } from '../lib/server.mjs';
 import { open } from '../lib/ws-client.mjs';
 
 export const name = 'pages-listeners';
-export const title = 'ファイルのページと隔離のリスナー（Host・メソッド・::1・port の引き継ぎ・入口の認証）とサーバーの旗';
+export const title = 'ファイルのページと隔離のリスナー（Host・メソッド・::1・port の引き継ぎ・入口の認証）とサーバー';
 
 /** Host を自分で決めて 1 回だけ投げる（fetch は Host を変えられない） */
 function request({ address = '127.0.0.1', port, pathname = '/', method = 'GET', host = `localhost:${port}`, headers = {} }) {
@@ -218,35 +218,20 @@ async function portChecks(t, scratch) {
 }
 
 async function hostChecks(t, scratch) {
-  // 旗が off: 何も立たず、能力にも出ない
-  const offDir = path.join(scratch, 'off');
-  await fs.mkdir(offDir);
-  const off = await startServer({ dataDir: offDir, env: { AGENT_HOST_BACKENDS: 'fake' } });
-  let client;
-  try {
-    client = await open({ port: off.port, token: off.token });
-    const caps = await client.cmd('hostCapabilities');
-    const files = await fs.readdir(offDir);
-    t.ok('旗が off なら 2 つのリスナーは立たず、hostCapabilities に browserUnify が無い', !('browserUnify' in caps) && !files.includes(PAGE_PORTS_FILE));
-  } finally {
-    client?.close();
-    await off.stop();
-  }
-
-  // 旗が on: 2 つの port が立ち、本体の /_pleiad/ は本体の Cookie だけで答える
+  // 2 つの port が立ち、本体の /_pleiad/ は本体の Cookie だけで答える
   const onDir = path.join(scratch, 'on'), work = path.join(scratch, 'work');
   await fs.mkdir(path.join(work, 'sub'), { recursive: true });
   for (const name of ['doc.pdf', 'run.bat']) await fs.writeFile(path.join(work, name), 'x');
   await fs.mkdir(onDir);
   await fs.writeFile(path.join(onDir, 'sessions.json'), JSON.stringify({ fixture: { cwd: work, backend: 'fake' } }));
-  const on = await startServer({ dataDir: onDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_BROWSER_UNIFY: 'on', AGENT_HOST_OS_OPEN: 'dry' } });
-  client = null;
+  const on = await startServer({ dataDir: onDir, env: { AGENT_HOST_BACKENDS: 'fake', AGENT_HOST_OS_OPEN: 'dry' } });
+  let client = null;
   try {
     client = await open({ port: on.port, token: on.token });
     let caps;
     await waitFor(async () => { caps = await client.cmd('hostCapabilities'); return caps.browserUnify?.pages > 0; }, 15_000, 'browserUnify ports');
     const saved = await readPagePorts(onDir);
-    t.ok('旗が on なら 2 つの port が立ち、hostCapabilities.browserUnify と page-ports.json に出る',
+    t.ok('2 つの port が立ち、hostCapabilities.browserUnify と page-ports.json に出る',
       caps.browserUnify.isolated > 0 && saved.pages === caps.browserUnify.pages && saved.isolated === caps.browserUnify.isolated);
 
     const pagesRes = await request({ port: caps.browserUnify.pages, pathname: '/_pleiad/s/a/b', headers: { cookie: `${PAGES_COOKIE}=${pagesSecret(on.token)}` } });
@@ -267,7 +252,7 @@ async function hostChecks(t, scratch) {
       pdf.defaultAppAllowed === true && bat.defaultAppAllowed === false && dir.defaultAppAllowed === false && dir.kind === 'directory');
     const opened = await client.cmd('openPath', { path: 'sub', sessionId: 'fixture' });
     const noSession = await client.cmd('openPath', { path: path.join(work, 'sub') }).then(() => 'opened', e => e.message);
-    t.ok('openPath: 旗が on ならフォルダーをフォルダーのページで既定のブラウザーに開く（会話の無いフォルダーは今のとおり断る）',
+    t.ok('openPath: フォルダーをフォルダーのページで既定のブラウザーに開く（会話の無いフォルダーは断る）',
       opened.path === await fs.realpath(path.join(work, 'sub')) && noSession !== 'opened');
   } finally {
     client?.close();

@@ -30,7 +30,7 @@ async page => {
       send(d) {
         try {
           const m = JSON.parse(d);
-          if (m.kind === 'command' && ['browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav'].includes(m.command)) {
+          if (m.kind === 'command' && ['browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput'].includes(m.command)) {
             window.__sent.push({ command: m.command, args: m.args });
             const result = m.command === 'browserScreencast' ? { tabId: 'T1', state: { tabId: 'T1', agent: false, suspended: false, tabs: 1 } } : {};
             queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ kind: 'response', id: m.id, ok: true, result }) })));
@@ -89,7 +89,7 @@ async page => {
   check(start.sessionId === sessionId && start.source === 'chrome' && start.width > 100 && start.height > 100 && start.scale >= 1, `start request: ${JSON.stringify(start)}`);
   check(await page.locator('.cp-foot').textContent() !== undefined, 'footer exists');
 
-  // ============ 3. 映像が描かれ、描き終えたら ack を返す。内蔵ブラウザーの映像（source なし）は混ざらない
+  // ============ 3. 映像が描かれ、描き終えたら ack を返す
   await page.evaluate(([id, data]) => window.__deliver({ kind: 'screencast', source: 'chrome', type: 'frame', sessionId: id, seq: 7, data, metadata: { deviceWidth: 1100, deviceHeight: 720 } }), [sessionId, PNG]);
   await page.waitForFunction(() => window.__sent.some((x) => x.command === 'browserScreencastAck' && x.args.seq === 7));
   const ack = (await sent('browserScreencastAck')).find((x) => x.args.seq === 7).args;
@@ -127,7 +127,7 @@ async page => {
   await page.keyboard.type('a');
   await page.waitForFunction(() => 'shown' in document.querySelector('.cp-hint').dataset);
   check(true, 'typing shows the hint');
-  const inputs = await page.evaluate(() => window.__sent.filter((x) => ['browserScreencastInput', 'browserScreencastNav'].includes(x.command)).length);
+  const inputs = await page.evaluate(() => window.__sent.filter((x) => x.command === 'browserScreencastInput').length);
   check(inputs === 0, 'pressing and typing send no input');
   await page.waitForFunction(() => !('shown' in document.querySelector('.cp-hint').dataset), null, { timeout: 6000 });
   await page.evaluate(() => document.querySelector('.cp-screen').dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true })));

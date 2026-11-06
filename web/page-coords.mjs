@@ -1,6 +1,5 @@
 // 映像（JPEG のフレーム）の上の点・移動量を、ページの CSS px へ直す純粋な関数。
-// Chrome の窓の映像（web/chrome-panel.mjs）と内蔵ブラウザーの映像（web/remote-browser.mjs）が共有する。
-// 内蔵ブラウザーをやめても残すため、web/remote-browser.mjs から分けた（ADR 0291 の 5 の 2）。
+// Chrome の窓の映像（web/chrome-panel.mjs）と、そのページ側の入力（web/screencast-frame.mjs）が使う。
 
 /** object-fit: contain で箱に収めた画像の、実際に描かれた範囲 */
 export function containRect(box, natural) {

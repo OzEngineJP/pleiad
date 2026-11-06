@@ -89,7 +89,6 @@ function hostRow(rec, { windowOpen = false } = {}) {
     agentAllowed: rec.agent?.allowed === true, agentState: rec.agent?.state ?? 'offline' };
 }
 
-const SNAPSHOT_PATH = '/visualization-snapshot';
 const LOOPBACK_V4 = /^127(?:\.\d{1,3}){3}$/;
 
 /** localhost・ループバック。WHATWG の URL が正規化した hostname（IPv6 は [] 付き）を受ける */
@@ -101,16 +100,15 @@ function isLoopbackHost(hostname) {
 
 /**
  * リモートの窓で押したリンクの行き先（docs/remote.md §8.5。Android の LinkPolicy、web/host-only-links.mjs と同じ規則）。
- *   'snapshot'  この窓のプロキシの /visualization-snapshot。プロキシの Cookie はこの窓の保存領域にしか無いので、アプリの中の窓で開く
  *   'external'  Web のページ。この PC の既定のブラウザー
  *   'host-only' localhost。ホストの PC を指すが、ここで開くとこの PC を指してしまう（画面が知らせる）
- *   'blocked'   それ以外（ほかのスキーム・URL の中の資格情報・プロキシのほかのページ）
+ *   'blocked'   それ以外（ほかのスキーム・URL の中の資格情報・プロキシのページ）
  */
 function linkTarget(url, origin) {
   let u;
   try { u = new URL(url); } catch { return 'blocked'; }
   if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password) return 'blocked';
-  if (u.origin === origin) return u.pathname === SNAPSHOT_PATH ? 'snapshot' : 'blocked';
+  if (u.origin === origin) return 'blocked';
   return isLoopbackHost(u.hostname) ? 'host-only' : 'external';
 }
 
@@ -414,7 +412,7 @@ function createRemoteWindows(deps) {
     const origin = `http://127.0.0.1:${proxy.port}`;
     const ses = session.fromPartition(partitionFor(hostId));
     // 権限は断るのが基本。コピーのボタン（clipboard-sanitized-write）だけ、このホストの画面の本体に通す（main.cjs と同じ）
-    // 写しの窓（openSnapshot）は同じ保存領域・同じ URL のオリジンなので、窓そのものでも確かめる
+    // 同じ保存領域のほかの中身（iframe など）には出さないよう、窓そのものとオリジンで確かめる
     ses.setPermissionRequestHandler((contents, permission, callback, details) => {
       let own = false;
       try { own = details.isMainFrame && contents === windows.get(hostId)?.win.webContents && originOf(details.requestingUrl) === windows.get(hostId)?.origin; } catch {}
@@ -431,16 +429,14 @@ function createRemoteWindows(deps) {
     });
     win.removeMenu();
     trust.register(win, { kind: 'remote', origin, hostId });
-    const entry = { win, name, origin, state: proxy.status?.state, snapshots: new Set(),
+    const entry = { win, name, origin, state: proxy.status?.state,
       notify: createDesktopNotifications({ Notification, getWindow: () => win, icon }), via };
     windows.set(hostId, entry);
     // 画面の <title> ではなく、どのホストかが分かる名前を OS に出す（§7.2 の 3）
     win.on('page-title-updated', event => event.preventDefault());
     // 新しい窓は開かせず、行き先で振り分ける（linkTarget）。localhost は画面が知らせる（web/host-only-links.mjs）
     win.webContents.setWindowOpenHandler(({ url }) => {
-      const kind = linkTarget(url, entry.origin);
-      if (kind === 'snapshot') openSnapshot(entry, ses, url);
-      else if (kind === 'external') openOutside(url);
+      if (linkTarget(url, entry.origin) === 'external') openOutside(url);
       return { action: 'deny' };
     });
     win.webContents.on('will-navigate', (event, url) => {
@@ -450,7 +446,6 @@ function createRemoteWindows(deps) {
     });
     win.once('ready-to-show', () => { setOverlay(win); win.show(); });
     win.on('closed', () => {
-      for (const s of entry.snapshots) if (!s.isDestroyed()) s.close();
       windows.delete(hostId);
       d.close(hostId).catch(() => {});   // 手元のプロキシを閉じるだけ。ホストの作業は止めない
       pushHosts();
@@ -463,26 +458,6 @@ function createRemoteWindows(deps) {
   /** リモートの窓のリンクを、この PC の既定のブラウザーで（http も。linkTarget が 'external' と決めたものだけ来る） */
   function openOutside(url) {
     try { void external(url); } catch {}
-  }
-
-  /**
-   * 可視化の写し（「ブラウザーで開く」）を、リモートの窓と同じ保存領域の窓で開く。既定のブラウザーにはプロキシの Cookie が無く 401 になる。
-   * preload は入れない（plyRemote もブリッジも無い）。写しはホストが sandbox の CSP で返すので、不透明なオリジンで動く（docs/visualize.md）。
-   * 中のリンクは写しの窓では開かず、行き先で振り分ける
-   */
-  function openSnapshot(entry, ses, url) {
-    const child = new BrowserWindow({
-      width: 1000, height: 760, minWidth: 320, minHeight: 240, icon, autoHideMenuBar: true,
-      backgroundColor: nativeTheme.shouldUseDarkColors ? '#1b1c23' : '#ffffff',
-      webPreferences: { session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true },
-    });
-    child.removeMenu();
-    entry.snapshots.add(child);
-    child.on('closed', () => entry.snapshots.delete(child));
-    const route = to => { if (linkTarget(to, entry.origin) === 'external') openOutside(to); };
-    child.webContents.setWindowOpenHandler(({ url: to }) => { route(to); return { action: 'deny' }; });
-    child.webContents.on('will-navigate', (event, to) => { event.preventDefault(); route(to); });
-    child.loadURL(url).catch(() => {});
   }
 
   /** ローカルの窓を前に出し、設定 › リモート › ほかの PC へ を開かせる（読み込みの前に届いた合図は plyDesktop.hosts.onOpen が後で渡す） */

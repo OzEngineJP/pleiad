@@ -107,13 +107,12 @@ export default async function (t) {
     chrome.browser.screencastFrame(opened);
     const frame = await until(() => remote.frames.find(f => f.kind === 'screencast' && f.type === 'frame'), 10000, 'frame');
     t.ok('フレームは source: chrome 付きで、見ている端末にだけ届く', frame.source === 'chrome' && frame.sessionId === id && !late.frames.some(f => f.kind === 'screencast') && !c.events.some(e => e.type === 'frame'));
-    const input = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', input: { type: 'tap', x: 1, y: 1 } });
-    t.ok('入力は view-only で断る（見るだけ）', input.ok === false && input.code === 'view-only', JSON.stringify(input));
-    const nav = await remote.ask('browserScreencastNav', { sessionId: id, source: 'chrome', action: 'reload' });
-    t.ok('移動も view-only', nav.ok === false && nav.code === 'view-only');
+    // 映像への入力は見ている端末から受ける（触れたタブは人の操作になる。ADR 0293 の 1）
+    const input = await remote.ask('browserScreencastInput', { sessionId: id, source: 'chrome', tabId: watch.result.tabId, input: { type: 'tap', x: 1, y: 1 } });
+    t.ok('入力は view-only で断らない', input.code !== 'view-only', JSON.stringify(input));
     const hostWatch = await c.cmd('browserScreencast', { sessionId: id, source: 'chrome', width: 400, height: 300 });
-    const inapp = await c.cmd('browserScreencast', { sessionId: id, width: 400, height: 300 }).then(() => null, e => e.code);
-    t.ok('ホストの画面（local）からも source: chrome で見られる（source なしの内蔵ブラウザーは remote-only のまま）', typeof hostWatch.tabId === 'string' && inapp === 'remote-only', String(inapp));
+    const sourceless = await c.cmd('browserScreencast', { sessionId: id, width: 400, height: 300 }).then(() => null, e => e.code);
+    t.ok('ホストの画面（local）からも source: chrome で見られる（source の無い映像は無い: unavailable）', typeof hostWatch.tabId === 'string' && sourceless === 'unavailable', String(sourceless));
     const nobody = await remote.ask('browserScreencast', { sessionId: 'nobody', source: 'chrome' });
     t.ok('窓の無い会話は no-window', nobody.ok === false && nobody.code === 'no-window', JSON.stringify(nobody));
 

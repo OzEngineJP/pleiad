@@ -3,8 +3,7 @@
 import { t } from './i18n.mjs';
 import { el, svgEl } from './dom.mjs';
 import { createCombo } from './combo.mjs';
-import { LINK_OPEN_VALUES, linkOpenPref } from './browser-address.mjs';
-import { modifierKey } from './link-open.mjs';
+import { desktopHost } from './link-open.mjs';
 import { blockedPreviewOrigins, onBlockedPreviewOrigins } from './preview-confirm.mjs';
 import { profileKey, noteOf, browserLabel, validProfileRef, profileLabel, NOTE_MAX } from './chrome-profile-model.mjs';
 const AGENT_BROWSER_VERSION = '0.38.1';
@@ -24,37 +23,18 @@ function chromeMark() {
 /** product（Chrome/154.0.8037.97）から「Chrome 154」を作る。読めなければ「Chrome」 */
 export const chromeLabel = product => { const m = /^(\w+)\/(\d+)/.exec(String(product ?? '')); return m ? `${m[1]} ${m[2]}` : 'Chrome'; };
 
-export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel = id => id, getHostCaps = () => null, getChromeWaiting = () => [] }) {
+// available: エージェントの Chrome を選べる画面か（既定はホストの画面＝デスクトップ版のローカルの窓）
+export function setupBrowserSettings({ available = desktopHost(), cmd, getPrefs, getAgentLabel = id => id, getHostCaps = () => null, getChromeWaiting = () => [] }) {
   const $ = id => document.getElementById(id);
   const tab = $('browserTab'), root = $('browserPanel');
   tab.hidden = false;
-  const row = el('div', 'browser-setting');
-  const label = el('strong', null, t('settings.browser.linkOpen.title')); label.id = 'browserLinkOpenLabel';
-  const seg = el('div', 'seg sec browser-link-open'); seg.setAttribute('role', 'group'); seg.setAttribute('aria-labelledby', label.id);
-  const buttons = LINK_OPEN_VALUES.map(value => {
-    // i18n-dynamic: settings.browser.linkOpen.
-    const b = el('button', null, t(`settings.browser.linkOpen.${value}`)); b.type = 'button'; b.dataset.linkOpen = value;
-    b.onclick = () => {
-      if (value === linkOpenPref(getPrefs())) return;
-      error.textContent = '';
-      cmd('setPref', { key: 'linkOpen', value }).catch(e => { error.textContent = t('settings.browser.saveFailed', { error: e.message }); });
-    };
-    return b;
-  });
-  seg.append(...buttons);
-  row.append(label, seg);
   const error = el('p', 'browser-setting-error'); error.setAttribute('role', 'status');
   const chromeSection = el('section', 'browser-confirm-settings browser-chrome-setting'); chromeSection.hidden = true;
   const profileSection = el('section', 'browser-confirm-settings browser-profile-setting'); profileSection.hidden = true;
   const agentSection = el('div', 'browser-agent-setting');
   agentSection.append(el('strong', null, t('settings.browser.agentOperation.title')), el('p', null, t('settings.browser.agentOperation.bundled', { version: AGENT_BROWSER_VERSION })));
-  // 近道の説明。修飾キーの名前は <kbd> にする（辞書の {{key}} の所に入れる）
-  const shortcuts = el('p', 'browser-setting-note');
-  const [before, after = ''] = t('settings.browser.linkOpen.shortcuts', { key: '\u0000' }).split('\u0000');
-  shortcuts.append(...[before && el('span', null, before), el('kbd', null, modifierKey()), after && el('span', null, after)].filter(Boolean));
-  // どの画面でも効く範囲を書く。リンクの開き先はホストの画面だけなので、ほかの画面にはその理由を一言（docs/inapp-browser.md）
-  root.replaceChildren(el('p', null, available ? t('settings.browser.description') : t('settings.browser.descriptionRemote')), row, el('p', 'browser-setting-note', t('settings.browser.linkOpen.note')), shortcuts, error);
-  if (!available) { row.remove(); agentSection.remove(); root.querySelectorAll('.browser-setting-note').forEach(n => n.remove()); }
+  root.replaceChildren(el('p', null, available ? t('settings.browser.description') : t('settings.browser.descriptionRemote')), error);
+  if (!available) agentSection.remove();
   const confirmation = el('section', 'browser-confirm-settings');
   error.remove(); root.append(confirmation); if (available) root.append(chromeSection, profileSection, agentSection); root.append(error);
   async function save(key, value) {
@@ -278,8 +258,6 @@ export function setupBrowserSettings({ available, cmd, getPrefs, getAgentLabel =
   }
 
   function paint() {
-    const value = linkOpenPref(getPrefs());
-    for (const b of buttons) { b.classList.toggle('on', b.dataset.linkOpen === value); b.setAttribute('aria-pressed', String(b.dataset.linkOpen === value)); }
     paintConfirmation();
     paintChrome();
     // 書いているメモの欄は描き直さない（打っている途中の字と位置を保つ）

@@ -4,7 +4,7 @@
 //   - 頼みに載ったパスを、ファイルのページの API と同じ検査（ADR 0050。core/file-preview.mjs の inspectFile）でかけ直し、検査した実体のパスに置き換える
 //   - 通った頼みは中継が 'tab:page-request' で出し、画面への配り（core/browser-unify-ws.mjs）は by（最後に触った画面）だけへ送る
 // 書き込みの頼み（worktree）は、画面が確認と実行を終えたら result で結果を返す。テーマと言語の変化は env でページへ知らせる。
-// 旗 AGENT_HOST_BROWSER_UNIFY が off なら、サーバーはこれを作らない。ログにパス・文・頼みの中身を書かない。
+// ログにパス・文・頼みの中身を書かない。
 import { inspectFile as defaultInspect } from './file-preview.mjs';
 
 /** 受ける頼みの種類（web/pages/README.md の「ホストへの操作要求」。commit は今のページが送らないので受けない） */

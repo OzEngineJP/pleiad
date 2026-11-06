@@ -109,19 +109,17 @@ export default async function(t) {
     t.ok('Windows breadcrumbs preserve drive roots and absolute destinations', addressCrumbs('D:\\work\\notes.md').map(item => item.path).join('|') === 'D:\\|D:\\work|D:\\work\\notes.md');
     t.ok('POSIX breadcrumbs preserve absolute destinations', addressCrumbs('/work/notes.md').at(-1).path === '/work/notes.md');
     ws.close(); t.ok('relay subscription can be removed', emit === null);
-    for (const flag of ['off', 'on']) {
-      const server = await startServer({dataDir:path.join(root, 'server-' + flag), env:{AGENT_HOST_BACKENDS:'fake', AGENT_HOST_BROWSER_UNIFY:flag}});
+    {
+      const server = await startServer({dataDir:path.join(root, 'server'), env:{AGENT_HOST_BACKENDS:'fake'}});
       let screen;
       try {
         screen = await open(server);
         const caps = await screen.cmd('hostCapabilities');
-        t.ok('server exposes browser capabilities only with flag ' + flag, Boolean(caps.browserUnify) === (flag === 'on'));
+        t.ok('server always exposes browser capabilities', Number.isInteger(caps.browserUnify?.pages) && Number.isInteger(caps.browserUnify?.isolated));
         const address = await screen.cmd('chromeAddress', {sessionId:'one',input:''}, {ms:5000}).then(value => ({value}), error => ({code:error.code}));
-        t.ok('address requests always receive an explicit response with flag ' + flag, flag === 'on' ? Array.isArray(address.value?.suggestions) : address.code === 'UNSUPPORTED');
-        if (flag === 'on') {
-          await screen.cmd('watchSession', {sessionId:'one'});
-          t.ok('real server sends a reconnect snapshot to the watching socket', screen.events.some(event => event.type === 'tab:info' && event.sessionId === 'one' && event.reset));
-        }
+        t.ok('address requests always receive an explicit response', Array.isArray(address.value?.suggestions));
+        await screen.cmd('watchSession', {sessionId:'one'});
+        t.ok('real server sends a reconnect snapshot to the watching socket', screen.events.some(event => event.type === 'tab:info' && event.sessionId === 'one' && event.reset));
       } finally { screen?.close(); await server.stop(); }
     }
   } finally { ws?.close(); await fs.rm(root, { recursive:true, force:true }); }

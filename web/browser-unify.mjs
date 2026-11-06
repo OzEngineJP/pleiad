@@ -4,7 +4,7 @@ import { createAddressBar, hasFileViews } from './address-bar.mjs';
 import { createControlBadge, createTabActivityDot, createPhoneBrowserStrip } from './chrome-control.mjs';
 import { pageRequestOf, framePoint } from './page-frame.mjs';
 
-// Local to the flagged browser: the legacy panel keeps its existing styles.
+// Right-pane browser styles; injected once when the host reports browserUnify (always, since ADR 0291 stage C1).
 const css = `
 .bu-chrome{--bu-frame:var(--surface-3);--bu-bar:var(--surface-1);--bu-omni:var(--surface-2);color:var(--ink);flex:none;min-width:0}
 [data-theme=dark] .bu-chrome{--bu-frame:var(--surface-0);--bu-bar:var(--surface-3);--bu-omni:var(--surface-paper)}

@@ -221,9 +221,6 @@ export const DATA_WRITES = [
   { file: 'core/context-runtime.mjs', sites: 1, targets: [
     { name: 'context-snapshots/<hash>.txt', limit: '内容アドレス。同じ中身は 1 つ（flag wx）', reason: '会話に固定した指示の本文。書き換えない' },
   ] },
-  { file: 'core/visualize.mjs', sites: 1, targets: [
-    { name: 'visualization-snapshots/<key>.html', limit: '1 つ 1 ファイル。24 時間で掃除する', reason: '可視化の写し。書き換えない' },
-  ] },
   { file: 'core/viz-bundle.mjs', sites: 2, targets: [
     { name: 'viz-blobs/<sha256>（一時ファイル <sha256>.<乱数>.tmp から名前を変える）', limit: '内容アドレス。束は 200 ファイル・32 MiB・1 ファイル 8 MiB まで。同じ中身は 1 つ', reason: '可視化の束の中身と目録（ADR 0292 の 3 の 4）。書き換えない。記録に名前が出ないものは起動の片付けで消す' },
   ] },
@@ -260,6 +257,9 @@ export const DATA_WRITES = [
   ] },
   { file: 'desktop/main.cjs', sites: 1, targets: [
     { name: '(置き場の外) Electron の userData/update-restart-notice', limit: '固定の 1 文字', reason: 'Electron の入れ替えで接続が切れた画面へ、更新が理由だと次の起動で知らせる' },
+  ] },
+  { file: 'desktop/browser-partition-cleanup.cjs', sites: 1, targets: [
+    { name: '(置き場の外) Electron の userData/browser-partition-cleared', limit: '固定の小ささ（{ done, attempts }）', reason: '前の版の内蔵ブラウザーの保存領域を消した印。2 回目の起動から何もしないため（ADR 0291 の 6）' },
   ] },
   { file: 'desktop/update-log.cjs', sites: 2, targets: [
     { name: '(置き場の外) Electron の userData の logs/updater.log と、1 世代前の updater.log.old', limit: 'MAX_BYTES=1MB を超えたら .old へ回す（2 つで約 2MB まで）', reason: '更新ライブラリーの記録。1 行ずつ追記し、回すときは名前を替えるだけ', appendOnly: true },

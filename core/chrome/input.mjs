@@ -1,5 +1,5 @@
 // 端末からの入力（押す・スクロール・文字・キー）を CDP の Input.* のコマンドの列にする。
-// 内蔵ブラウザーの映像（desktop/browser-screencast.cjs）と、端末から操作する PC の Chrome の窓（core/chrome/screencast.mjs）が同じ変換を使う。
+// 端末から操作する PC の Chrome の窓（core/chrome/screencast.mjs）が使う。
 
 export const KEYS = {
   Enter: { code: 'Enter', keyCode: 13, text: '\r' },

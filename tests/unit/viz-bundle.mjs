@@ -113,25 +113,17 @@ export default async function (t) {
     const unreadable = await sweepVizBlobs({ dataDir, now: later });
     t.ok('記録が読めなければ片付けない', unreadable.removed === 0 && (await fs.readdir(path.join(dataDir, BLOB_DIR))).length === kept.size);
 
-    // 前の版の記録（束の無い行）。旗が on のときだけ、読むときに HTML だけの束を付ける
+    // 前の版の記録（束の無い行）。読むときに HTML だけの束を付ける
     const sessionId = `viz-bundle-${Date.now()}`;
     await history.recordPresent(sessionId, { kind: 'visualization', caption: 'c', path: 'C:/w/old.html', content: '<p>old</p>' });
-    const flag = process.env.AGENT_HOST_BROWSER_UNIFY;
     try {
-      delete process.env.AGENT_HOST_BROWSER_UNIFY;
-      const offRows = (await history.loadTranscript(sessionId, null)).presents;
-      process.env.AGENT_HOST_BROWSER_UNIFY = 'on';
       const onRows = (await history.loadTranscript(sessionId, null)).presents;
       const onAgain = (await history.loadTranscript(sessionId, null)).presents;
       const stored = await history.readPresents(sessionId);
-      t.ok('旗が off なら前の版の行に束を付けない', !offRows[0].bundle);
-      t.ok('旗が on なら前の版の行に HTML だけの束（legacy）を付け、記録の行は書き換えない',
+      t.ok('前の版の行に HTML だけの束（legacy）を付け、記録の行は書き換えない',
         onRows[0].bundle?.htmlOnly === true && onRows[0].bundle.reason === 'legacy' && onRows[0].bundle.entry === 'old.html'
         && onAgain[0].bundle.hash === onRows[0].bundle.hash && !stored[0].bundle);
-      const found = await history.findVisualization(sessionId, null, { id: stored[0].id });
-      t.ok('別のタブで開く写し（findVisualization）にも束を付ける', found?.bundle?.hash === onRows[0].bundle.hash);
     } finally {
-      if (flag === undefined) delete process.env.AGENT_HOST_BROWSER_UNIFY; else process.env.AGENT_HOST_BROWSER_UNIFY = flag;
       await history.forgetPresents(sessionId).catch(() => {});
     }
 

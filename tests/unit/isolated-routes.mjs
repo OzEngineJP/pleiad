@@ -165,24 +165,18 @@ async function serverChecks(t, scratch) {
   await fs.writeFile(path.join(work, 'img', 'a.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
   const prompt = `\n${S}${JSON.stringify({ path: file })}${E}`;
   const env = { AGENT_HOST_BACKENDS: 'codex', AGENT_HOST_CODEX_BIN: `node "${path.join(ROOT, 'tests/lib/fake-codex.mjs')}"`, AGENT_HOST_OS_OPEN: 'dry' };
-  for (const flag of ['off', 'on']) {
-    const server = await startServer({ env: { ...env, ...(flag === 'on' ? { AGENT_HOST_BROWSER_UNIFY: 'on' } : {}) }, dataDir: path.join(scratch, `srv-${flag}`) });
+  {
+    const server = await startServer({ env, dataDir: path.join(scratch, 'srv') });
     const client = await open({ ...server, autoAllow: true });
     try {
       const sessionId = (await client.cmd('newSession', { backend: 'codex', cwd: work })).sessionId;
       const turn = await client.runTurn({ sessionId, prompt });
       const present = turn.events.find(event => event.type === 'present' && event.kind === 'visualization');
-      if (flag === 'off') {
-        const saved = await client.cmd('loadSession', { sessionId });
-        t.ok('旗が off なら可視化の行は束を持たず、viz-blobs も作らない', present && !('bundle' in present) && !saved.presents[0].bundle
-          && !(await fs.readdir(path.join(scratch, 'srv-off'))).includes('viz-blobs'));
-        continue;
-      }
       let caps;
       await waitFor(async () => { caps = await client.cmd('hostCapabilities'); return caps.browserUnify?.isolated > 0; }, 15_000, 'isolated port');
       const saved = await client.cmd('loadSession', { sessionId });
       const bundle = present?.bundle;
-      t.ok('旗が on なら可視化の行（配信と保存の両方）が束を持つ', bundle?.entry === 'chart.html' && bundle.files.map(f => f.path).join(',') === 'chart.html,img/a.svg'
+      t.ok('可視化の行（配信と保存の両方）が束を持つ', bundle?.entry === 'chart.html' && bundle.files.map(f => f.path).join(',') === 'chart.html,img/a.svg'
         && saved.presents[0].bundle?.hash === bundle.hash);
       const isolated = caps.browserUnify.isolated;
       const entry = await request({ port: isolated, pathname: `/viz/${bundle.hash}/chart.html?embed=conversation` });

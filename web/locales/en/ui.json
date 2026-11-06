@@ -535,13 +535,6 @@
     "browser": {
       "description": "Choose where links in conversations and previews open, and whether to confirm external loads.",
       "descriptionRemote": "Choose whether to confirm external loads. Where links open is chosen on the PC (host) screen.",
-      "linkOpen": {
-        "title": "Open links in",
-        "inapp": "Built-in browser",
-        "external": "Default browser",
-        "note": "The built-in browser opens beside the conversation, and HTML files open there too. If you choose the default browser, HTML files open in the default browser as well. Sign-ins stay in this app.",
-        "shortcuts": "{{key}}+click and middle click always open in the default browser. Right-click to choose either."
-      },
       "saveFailed": "Couldn't save: {{error}}",
       "agentOperation": { "title": "Agent operation", "bundled": "agent-browser {{version}} · Bundled" },
       "profiles": {
@@ -1192,7 +1185,6 @@
     "besideChat": "Show beside chat",
     "backToChat": "Back to chat",
     "closePreview": "Close preview",
-    "visualPanel": "Visualization preview",
     "loading": "Loading…",
     "status": {
       "directory_one": "Directory · {{count}} item",
@@ -1220,17 +1212,6 @@
       "text": "Text on this page"
     },
     "visual": {
-      "source": "Visualization source",
-      "title": "Visualization",
-      "save": "Save the HTML kept in the conversation",
-      "status": "Saved visualization",
-      "statusTitle": "This is the content saved with this reply, not the current content of the file on the host.",
-      "note": "This is a copy saved in the conversation. To see the current file, use “Open original file”.",
-      "noOrigin": "Saved in the conversation",
-      "savedAt": "Saved at {{time}}",
-      "browserTitle": "Opens the copy saved in the conversation in a new tab (not the original file)",
-      "originTitle": "Opens the current content of the original file in this panel",
-      "popupBlocked": "Couldn't open a new tab. Check whether the browser is blocking pop-ups.",
       "actions": "Actions for this visualization"
     },
     "dir": {
@@ -1257,8 +1238,7 @@
     "someImages": "Some images can't be displayed.",
     "original": "Source",
     "mode": {
-      "file": "File",
-      "visualization": "Visualization"
+      "file": "File"
     }
   },
   "sessionContext": {
@@ -2896,8 +2876,6 @@
   "files": {
     "menu": {
       "openInPreview": "Open in preview",
-      "viewSource": "View source",
-      "openInBrowser": "Open in browser",
       "revealFile": "Show in Explorer",
       "revealFolder": "Open in Explorer",
       "revealFinder": "Show in Finder",
@@ -2905,14 +2883,10 @@
       "copyPath": "Copy path",
       "copyRelative": "Copy relative path",
       "save": "Save",
-      "use": "Use in conversation",
-      "copyOriginPath": "Copy original path",
-      "openOrigin": "Open original file",
-      "saveHtml": "Save HTML"
+      "use": "Use in conversation"
     },
     "actionsFor": "Actions for {{name}}",
     "currentActions": "Actions for this file",
-    "browserTitle": "Opens in a browser",
     "revealTitle": "Opens File Explorer on this PC with the file selected",
     "copiedPath": "Path copied",
     "copiedRelative": "Relative path copied",
@@ -2931,17 +2905,9 @@
     "link": {
       "blocked": "Disabled because the link is unsafe",
       "hostOnly": "localhost links open only on the host's PC.",
-      "openSheet": "Open link in",
-      "openOnDeviceSub": "This device's default browser",
-      "openInApp": "Open in built-in browser",
-      "chooseDest": "Choose where to open",
       "copy": "Copy link",
       "copied": "Link copied",
-      "copyFailed": "Couldn't copy the link",
-      "clickHint": "Click",
-      "ctrlClickHint": "{{key}}+click",
-      "ctrlHint": "· {{key}} for default",
-      "close": "Close"
+      "copyFailed": "Couldn't copy the link"
     },
     "present": {
       "height": {
@@ -2958,7 +2924,6 @@
       "namedVisualization": "Visualization: {{title}}",
       "copyPath": "Copy path",
       "download": "Save HTML",
-      "browser": "Open in browser",
       "widen": "Widen",
       "narrow": "Back to normal width",
       "resourcesOmitted": "Related files, such as images, are not included.",
@@ -4983,55 +4948,15 @@
     "duration": { "minutes": "{{m}} min {{s}} s", "seconds": "{{s}} s" }
   },
   "browser": {
-    "panel": "Browser",
     "unifiedEntryLabel": "Browser",
     "entryState": { "requested": "Waiting for your help", "paused": "You are operating Chrome", "working": "{{name}} is operating Chrome" },
-    "tabs": "Browser tabs",
-    "newTab": "New tab",
-    "untitled": "New tab",
-    "closeTab": "Close tab: {{title}}",
-    "back": "Back",
-    "forward": "Forward",
-    "reload": "Reload",
-    "stop": "Stop loading",
-    "loading": "Loading",
-    "address": "Address",
-    "addressPlaceholder": "Enter a URL",
     "openExternal": "Open in default browser",
-    "actions": "Browser actions",
-    "menu": {
-      "devtools": "DevTools",
-      "detach": "Move to new window",
-      "openInChrome": "Open in Chrome (agent window)",
-      "clearSiteData": "Clear data for this site"
-    },
-    "kind": {
-      "secure": "Secure connection (https)",
-      "local": "This PC (localhost)",
-      "insecure": "Not encrypted",
-      "file": "File on this PC"
-    },
-    "empty": {
-      "title": "Enter a URL to open",
-      "hint": "URLs on this PC such as localhost:5173 open with http. Others open with https."
-    },
-    "invalid": "Can't open this URL. Enter an http or https URL, or something like localhost:5173.",
-    "externalUnavailable": "This page can't be opened in the default browser.",
-    "externalTooMany": "Too many open requests in a row. Wait a moment and try again.",
-    "siteDataCleared": "Cleared data for this site.",
-    "failed": "The browser action failed.",
-    "reloaded": "Reloaded",
     "chromeWindow": {
-      "tab": "{{name}}'s Chrome",
-      "fixedTab": "{{name}}'s Chrome (can't be closed)",
       "windowActions": "Chrome window actions",
       "windowNumber": "Window {{n}}",
       "childUntitled": "Child conversation",
       "childWaiting": "Waiting for you",
-      "windowCount": "{{n}} windows",
       "panel": "Chrome window",
-      "entry": "{{name}}'s Chrome window",
-      "entryWorking": "{{name}}'s Chrome window · working",
       "screen": "Video of {{name}}'s Chrome window (view only)",
       "viewOnly": "View only · take over to use it",
       "suspended": "Video paused",
@@ -5042,8 +4967,6 @@
       "screenOperating": "Video of {{name}}'s Chrome window (operating from this device)",
       "deviceNote": "Password managers and passkeys can't be used from this device",
       "inputFailed": "Couldn't send that to the Chrome window",
-      "waitingPermission": "Waiting for Chrome to allow the connection",
-      "openFailed": "Couldn't open it in Chrome",
       "closeShown": "Close the window being shown", "closeFailed": "Couldn't close the Chrome window",
       "closeAsk": "Close this window?", "closeAskNumber": "Close window {{n}}?", "closeYes": "Close",
       "closeRiskHuman": "You have taken over this window. Closing it ends what you are doing midway.",
@@ -5057,14 +4980,9 @@
     },
     "video": { "lag": "The video is lagging", "stale": "Reconnecting" },
     "remote": {
-      "screen": "Browser screen",
-      "connecting": "Connecting…",
-      "ended": "The browser tab was closed",
-      "textInput": "Type text",
       "textLabel": "Text to type into the page",
       "textPlaceholder": "Text for the page",
-      "textSend": "Send",
-      "failed": "Couldn't open the browser."
+      "textSend": "Send"
     }
   },
   "nav": {

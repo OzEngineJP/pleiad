@@ -28,7 +28,7 @@ export default async function (t) {
   t.ok('ループバックの http(s) はホストの PC でだけ開ける（10 進の IPv4・IPv4 射影の IPv6 も）',
     LOOPBACK.every(u => isHostOnlyUrl(u, page)), LOOPBACK.filter(u => !isHostOnlyUrl(u, page)).join(' '));
   t.ok('Web のページ・画面自身のオリジン・相対・ほかのスキームは止めない',
-    [...WEB, `${page}/visualization-snapshot?id=x`, '/local-file?path=x', '#top', 'mailto:a@example.com', 'not a url']
+    [...WEB, `${page}/viz/x/index.html`, '/local-file?path=x', '#top', 'mailto:a@example.com', 'not a url']
       .every(u => !isHostOnlyUrl(u, page)));
 
   const listeners = {};
@@ -53,11 +53,10 @@ export default async function (t) {
 
   // ---- デスクトップ版のリモートの窓（desktop/remote-windows.cjs）
   const origin = 'http://127.0.0.1:51234';
-  t.ok('写しはこの窓のプロキシの /visualization-snapshot だけ（ほかのページ・ほかのポートは写しにしない）',
-    linkTarget(`${origin}/visualization-snapshot?sessionId=s&id=i`, origin) === 'snapshot'
-      && linkTarget(`${origin}/`, origin) === 'blocked' && linkTarget(`${origin}/local-file?path=x`, origin) === 'blocked'
-      && linkTarget(`${origin}/visualization-snapshot/x`, origin) === 'blocked'
-      && linkTarget('http://127.0.0.1:51235/visualization-snapshot?id=i', origin) === 'host-only');
+  t.ok('この窓のプロキシのページはどれも開かない（前の版の写しの口も）、ほかのポートは host-only',
+    linkTarget(`${origin}/`, origin) === 'blocked' && linkTarget(`${origin}/local-file?path=x`, origin) === 'blocked'
+      && linkTarget(`${origin}/visualization-snapshot?sessionId=s&id=i`, origin) === 'blocked'
+      && linkTarget('http://127.0.0.1:51235/x', origin) === 'host-only');
   t.ok('Web は http も https も既定のブラウザー、localhost は host-only',
     WEB.every(u => linkTarget(u, origin) === 'external') && LOOPBACK.every(u => linkTarget(u, origin) === 'host-only'));
   t.ok('資格情報つき・ほかのスキーム・壊れた URL は開かない',
@@ -65,11 +64,10 @@ export default async function (t) {
       .every(u => linkTarget(u, origin) === 'blocked'));
   t.ok('isLoopbackHost は [] 付きの IPv6 と末尾の点を受ける', isLoopbackHost('[::1]') && isLoopbackHost('localhost.') && !isLoopbackHost('128.0.0.1'));
   const rw = read('desktop/remote-windows.cjs');
-  t.ok('リモートの窓は新しい窓を開かせず行き先で振り分け、写しは preload の無い同じ保存領域の窓で開く',
-    /setWindowOpenHandler\(\(\{ url \}\) => \{\s*const kind = linkTarget\(url, entry\.origin\);/.test(rw)
-      && /webPreferences: \{ session: ses, contextIsolation: true, nodeIntegration: false, sandbox: true \}/.test(rw)
-      && !/function openSnapshot[\s\S]*?preload[\s\S]*?function openHostsTab/.test(rw));
-  t.ok('クリップボードの許可はリモートの窓そのものだけ（同じオリジンの写しの窓には出さない）',
+  t.ok('リモートの窓は新しい窓を開かせず、Web だけ既定のブラウザーへ（アプリの中の窓は作らない）',
+    /setWindowOpenHandler\(\(\{ url \}\) => \{\s*if \(linkTarget\(url, entry\.origin\) === 'external'\) openOutside\(url\);\s*return \{ action: 'deny' \};/.test(rw)
+      && !/openSnapshot/.test(rw));
+  t.ok('クリップボードの許可はリモートの窓そのものだけ',
     /contents === windows\.get\(hostId\)\?\.win\.webContents/.test(rw));
 
   // ---- Android の殻（HostActivity）
@@ -82,16 +80,12 @@ export default async function (t) {
       && /allowFileAccess = false/.test(popup));
   t.ok('振り分けは LinkPolicy（写しはシート、Web は ACTION_VIEW、localhost は知らせ）',
     /LinkPolicy\.classify\(/.test(host) && /LinkTarget\.SNAPSHOT/.test(host) && /Intent\.ACTION_VIEW/.test(host) && /R\.string\.link_host_only/.test(host));
-  const policy = read('mobile/android/remote-core/src/main/kotlin/dev/pleiad/app/remote/LinkPolicy.kt');
-  t.ok('LinkPolicy の写しのパスは画面・サーバーと同じ', policy.includes('const val SNAPSHOT_PATH = "/visualization-snapshot"'));
   const ui = { ja: JSON.parse(read('web/locales/ja/ui.json')), en: JSON.parse(read('web/locales/en/ui.json')) };
   const res = lang => read(`mobile/android/app/src/main/res/${lang === 'ja' ? 'values-ja' : 'values'}/strings.xml`);
   const str = (xml, key) => xml.match(new RegExp(`<string name="${key}">([^<]*)</string>`))?.[1]?.replace(/\\'/g, "'");
   t.ok('殻の知らせは画面の辞書と同じ文言（ja・en）',
     ['ja', 'en'].every(l => str(res(l), 'link_host_only') === ui[l].timeline.link.hostOnly) && str(res('ja'), 'sheet_close') && str(res('en'), 'sheet_close'));
 
-  // ---- 「ブラウザーで開く」（web/file-preview.mjs）
-  const fp = read('web/file-preview.mjs');
-  t.ok('リモートの窓では写しの URL を直接渡す（空の窓では殻が行き先を知れない）',
-    /if \(window\.plyRemote\) \{\s*window\.open\(new URL\(`\/visualization-snapshot\?\$\{query\}`, window\.location\.href\)\.href, '_blank', 'noopener'\);/.test(fp));
+  // ---- 「ブラウザーで開く」は写しの口（/visualization-snapshot）を使わない（ADR 0291 の 6）
+  t.ok('画面は写しの URL を作らない', !/visualization-snapshot/.test(read('web/file-preview.mjs')));
 }

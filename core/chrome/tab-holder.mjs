@@ -6,9 +6,8 @@
 //     AI が hand_to_user で人に頼んでいる間（handoffs.current）と、PC の窓を出している間（pinned）は時間では戻さない
 //   - 戻した直後のそのタブへの最初の操作のコマンドは 1 回だけ RESNAPSHOT_MESSAGE で断る
 //     （古い snapshot の参照で、入力の途中のフォームをエージェントが送らないため）
-//   - 会話の一時停止（entry.paused。「止める」・旗が off の引き継ぎ）の間は、タブの持ち手に関係なく全部 PAUSED_MESSAGE で断る
+//   - 会話の一時停止（entry.paused。「止める」・前の版から持ち越した引き継ぎ）の間は、タブの持ち手に関係なく全部 PAUSED_MESSAGE で断る
 // 手元の拡大・移動（映像を見るためのもの）では人の操作に移さない（呼び手が送らない）。
-// 旗 AGENT_HOST_BROWSER_UNIFY が off なら、人の操作に移す呼び口を呼ぶものが無いので、今の動き（一時停止だけを断る）のまま。
 
 // i18n-ignore: エージェントへの断りの文。会話の言語に依らず、日本語と英語を並べる（中継は言語を持たない）
 export const PAUSED_MESSAGE = 'The user is operating the Chrome window now (paused). Call hand_to_user and wait until they hand it back. / 人が Chrome のウィンドウを操作中です（一時停止）。hand_to_user を呼んで、戻るのを待ってください';

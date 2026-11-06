@@ -69,8 +69,6 @@ const SUITES = [
   './unit/prompt-suggestions.mjs',
   './unit/server-prompt-suggestions.mjs',
   './unit/file-preview.mjs',
-  // HTML の開き先（htmlRoute）: 列（H-in / H-ex / L / R / R0）ごとの行き先と、起点（クリック・Ctrl・中クリック・チップ・メニュー・可視化のカード）の通り道
-  './unit/html-route.mjs',
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   './unit/file-preview-tree.mjs',
   './unit/file-access.mjs',
@@ -87,8 +85,6 @@ const SUITES = [
   './unit/command-reply.mjs',
   './unit/session-list-delta.mjs',
   './unit/server-session-list-delta.mjs',
-  // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
-  './unit/inapp-browser.mjs',
 
   // computer use のオーバーレイと Esc: 窓・フェード・Esc の登録と解除・止める流れ・倍率の違うモニターの座標（偽の electron。OS の入力は送らない）
   './unit/computer-overlay.mjs',
@@ -118,6 +114,8 @@ const SUITES = [
   './unit/chrome-window-shots.mjs',
   './unit/chrome-close-confirm.mjs',
   './unit/chrome-panel-lifecycle.mjs',
+  // スマホで端末内のページを描いている間は Chrome の映像を止め、外したら映し直す（ADR 0292 の追記 2）
+  './unit/browser-unify-local-pause.mjs',
   './unit/chrome-window-switch.mjs',
   './unit/chrome-pill-resume.mjs',
   './unit/browser-handoff-card.mjs',
@@ -182,10 +180,8 @@ const SUITES = [
   './unit/holder-handshake.mjs',
   // ターンの保持役の本物のプロセス（段階 2 の 2a）: 起こした側が終わっても残る・秘密のファイルとログ・同時に起こしても 1 つ・shutdown・idle・後に残らない
   './unit/holder-process.mjs',
-  // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
+  // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・screencast・os-open・openExternal・猶予
   './unit/main-away.mjs',
-  // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
-  './unit/main-away-desktop.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // wait_until: 画面の差分で静止を待つ・決定モデル（偽の OpenRouter）に聞く・キーが無い／前面が禁止のアプリ／聞けなかったとき（偽の driver）
@@ -590,6 +586,8 @@ const SUITES = [
   './unit/desktop-server-boot.mjs',
   // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
   './unit/desktop-boot.mjs',
+  // 前の版の内蔵ブラウザーの保存領域を 1 回だけ消す（desktop/browser-partition-cleanup.cjs）: 印・2 回目は何もしない・失敗しても投げない・消し直し
+  './unit/desktop-browser-partition.mjs',
   // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e）: 同じ版・トークン・ポートで起こす・起こせなければ失敗・続けて落ちたらやめる・本物のサーバーを強制終了して起こし直す
   './unit/desktop-server-restart.mjs',
   // main の橋の message の受け手を 1 つの listener で配る（MaxListenersExceededWarning を出さない）
@@ -858,8 +856,6 @@ const SUITES = [
   // リモートでリンクを押したときの行き先（localhost の知らせ・写しはアプリの中・Web は端末のブラウザー）
   './unit/remote-links.mjs',
   './unit/desktop-external-link.mjs',
-  // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
-  './unit/remote-browser-view.mjs',
 
   // ==== ブラウザーの一本化（ADR 0291〜0294、temporary/browser-unify-plan.md）。段ごとの区画。各段は自分の区画の下にだけ足す（並列の衝突を避ける）====
   // --- S0（差し込み口） ---

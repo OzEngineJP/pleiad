@@ -42,14 +42,8 @@ function fake({ sessionId = 'one', targetId = 'tab', url = 'https://example.test
 
 export default async function(t) {
   {
-    const f = fake(), events = [];
-    const off = createTabInfo({ enabled: false, emit: (...v) => events.push(v) });
-    off.added(f.tab); off.changed(f.tab); off.removed(f.tab); await settle();
-    t.ok('flag off does not attach or publish', !f.calls.length && !events.length && !off.list('one').length);
-  }
-  {
     const events = [], logs = [], f = fake();
-    const info = makeInfo(f, { enabled: true, emit: (type, value) => events.push({ type, ...value }), log: value => logs.push(value) });
+    const info = makeInfo(f, { emit: (type, value) => events.push({ type, ...value }), log: value => logs.push(value) });
     info.added(f.tab); await settle();
     const row = info.list('one')[0];
     t.ok('metadata scoped to owner', row.url === f.tab.info.url && row.title === 'Title' && row.sessionId === 'one' && !info.list('two').length);
@@ -90,7 +84,7 @@ export default async function(t) {
     { url: 'http://localhost:8000/_pleiad/s/one/file?path=C%3A%5Cwork%5Ca.md' },
     { url: 'http://localhost:8000/_pleiad/unknown' },
   ]) {
-    const f = fake(options), info = makeInfo(f, { enabled: true });
+    const f = fake(options), info = makeInfo(f);
     info.added(f.tab); await settle();
     t.ok('unsafe or oversized icon omitted', info.list('one')[0].favicon === null);
     if (options.length || options.mime) t.ok('reject before reading stream', !f.calls.some(x => x.method === 'HTTP.read'));
@@ -98,7 +92,7 @@ export default async function(t) {
     info.removed(f.tab);
   }
   {
-    const f = fake({ bytes: Buffer.alloc(FAVICON_MAX_BYTES) }), info = makeInfo(f, { enabled: true });
+    const f = fake({ bytes: Buffer.alloc(FAVICON_MAX_BYTES) }), info = makeInfo(f);
     info.added(f.tab); await settle();
     t.ok('64 KiB boundary accepted', info.list('one')[0].favicon !== null); info.removed(f.tab);
     const ports = { pages: 8000 }, url = 'http://localhost:8000/_pleiad/s/one/file?path=C%3A%5Cwork%5Ca.md';
@@ -111,7 +105,7 @@ export default async function(t) {
     info.removed(local.tab);
   }
   {
-    const f = fake({ href: 'https://cdn.example.test/icon.png' }), info = makeInfo(f, { enabled: true });
+    const f = fake({ href: 'https://cdn.example.test/icon.png' }), info = makeInfo(f);
     info.added(f.tab); await settle();
     t.ok('CDN icon supported without credentials', info.list('one')[0].favicon !== null && f.calls.find(x => x.method === 'HTTP.fetch').params.credentials === 'omit');
     info.removed(f.tab);
@@ -120,7 +114,7 @@ export default async function(t) {
     let first = true;
     const f = fake({ send: method => {
       if (method === 'HTTP.fetch' && first) { first = false; return new Response(null, { status: 302, headers: { location } }); }
-    } }), info = makeInfo(f, { enabled: true });
+    } }), info = makeInfo(f);
     info.added(f.tab); await settle();
     const allowed = location === 'https://cdn.example.test/icon.png';
     t.ok('redirect is checked before following', f.calls.filter(x => x.method === 'HTTP.fetch').length === (allowed ? 2 : 1) && Boolean(info.list('one')[0].favicon) === allowed);
@@ -129,14 +123,14 @@ export default async function(t) {
   }
   {
     const f = fake({ send: method => method === 'HTTP.fetch' ? new Response(null, { status: 302, headers: { location: '/loop' } }) : undefined });
-    const info = makeInfo(f, { enabled: true }); info.added(f.tab); await settle();
+    const info = makeInfo(f); info.added(f.tab); await settle();
     t.ok('redirect count bounded', f.calls.filter(x => x.method === 'HTTP.fetch').length === 4 && info.list('one')[0].favicon === null);
     info.removed(f.tab);
   }
   {
     let resolveRead;
     const f = fake({ send: method => method === 'HTTP.read' ? new Promise(resolve => { resolveRead = resolve; }) : undefined });
-    const events = [], info = makeInfo(f, { enabled: true, emit: (type, value) => events.push(value) });
+    const events = [], info = makeInfo(f, { emit: (type, value) => events.push(value) });
     info.added(f.tab); await settle();
     f.tab.info.url = 'https://new.example/'; info.changed(f.tab);
     resolveRead({ data: 'old', eof: true }); await settle();
@@ -147,24 +141,24 @@ export default async function(t) {
   }
   {
     const logs = [], f = fake({ send: method => { if (method === 'Page.getFrameTree') throw new Error('secret URL and title'); } });
-    const info = makeInfo(f, { enabled: true, log: value => logs.push(value) });
+    const info = makeInfo(f, { log: value => logs.push(value) });
     info.added(f.tab); await settle();
     t.ok('CDP errors redacted in logs', logs.length === 1 && !logs[0].includes('secret')); info.removed(f.tab);
   }
   {
-    const f = fake({ ready: false }), info = makeInfo(f, { enabled: true });
+    const f = fake({ ready: false }), info = makeInfo(f);
     info.added(f.tab); await settle();
     t.ok('attach during navigation marks loading', info.list('one')[0].loading && !f.calls.some(x => x.method === 'HTTP.fetch'));
     info.removed(f.tab);
   }
   {
-    const f = fake({ ready: false, url: 'http://localhost:8000/_pleiad/s/one/file?path=x' }), info = makeInfo(f, { enabled: true });
+    const f = fake({ ready: false, url: 'http://localhost:8000/_pleiad/s/one/file?path=x' }), info = makeInfo(f);
     info.setPagePorts({ pages: 8000 }); info.added(f.tab); await settle();
     t.ok('Pleiad page readiness is read without requesting an icon', info.list('one')[0].loading && !f.calls.some(x => x.method === 'HTTP.fetch') && !f.calls.find(x => x.method === 'Runtime.evaluate').params.expression.includes('querySelector'));
     info.removed(f.tab);
   }
   {
-    const f = fake(), info = makeInfo(f, { enabled: true });
+    const f = fake(), info = makeInfo(f);
     info.added(f.tab); await settle();
     f.event('Page.frameStoppedLoading', { frameId: 'main' }); await settle();
     f.tab.info.url = 'https://second.test/'; info.changed(f.tab); await settle();
@@ -175,7 +169,7 @@ export default async function(t) {
     let release, first = true;
     const f = fake({ send: method => {
       if (method === 'Runtime.evaluate' && first) { first = false; return new Promise(resolve => { release = resolve; }); }
-    } }), info = makeInfo(f, { enabled: true });
+    } }), info = makeInfo(f);
     info.added(f.tab); await settle();
     f.event(ready ? 'Page.frameStartedLoading' : 'Page.frameStoppedLoading', { frameId: 'main' });
     release({ result: { value: { ready, href: 'https://example.test/icon.png' } } }); await settle();
@@ -189,7 +183,7 @@ export default async function(t) {
         if (first) { first = false; return new Promise(resolve => { release = resolve; }); }
         return { currentIndex: 0, entries: [{}] };
       }
-    } }), info = makeInfo(f, { enabled: true });
+    } }), info = makeInfo(f);
     info.added(f.tab); await settle();
     t.ok('pending history does not hold up favicon', info.list('one')[0].favicon !== null);
     f.event('Page.navigatedWithinDocument', { frameId: 'main' }); await settle();
@@ -200,7 +194,7 @@ export default async function(t) {
   {
     let release, detached = 0;
     const tab = { sessionId: 'one', targetId: 'gone', info: {}, attach: () => new Promise(resolve => { release = resolve; }) };
-    const info = createTabInfo({ enabled: true });
+    const info = createTabInfo();
     info.added(tab); info.removed(tab);
     release({ detach: async () => { detached++; } }); await settle();
     t.ok('removal during attach releases session', detached === 1 && !info.list('one').length);

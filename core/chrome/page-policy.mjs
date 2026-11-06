@@ -1,6 +1,6 @@
 // 中継（core/chrome/relay.mjs）の移動の検査と、エージェントのコマンドの前後のふるい（ADR 0292 の 2 の 4）。
-//   - 本体の port は、どのホスト名でも断る（Page.navigate・タブを開く・ページの中の JS の移動とサブリソース）。旗に依らない（ports().main は旗が off でも入る）
-//   - ファイルのページの port は localhost のその会話の /_pleiad/s/<会話 id>/ だけ、隔離の port は localhost だけを通す（旗が off なら port が無いので何もしない）
+//   - 本体の port は、どのホスト名でも断る（Page.navigate・タブを開く・ページの中の JS の移動とサブリソース）。ports().main が分かれば、いつも検査する
+//   - ファイルのページの port は localhost のその会話の /_pleiad/s/<会話 id>/ だけ、隔離の port は localhost だけを通す（その port がまだ無ければ何もしない）
 //   - エージェントに pleiad_* の Cookie を見せない・2 つの port の Cookie を読み書きさせない
 // 中継は会話の窓のタブのことしか渡さない。URL と Cookie の値はログに書かない。
 import { PAGES_PATH } from '../page-auth.mjs';
@@ -175,8 +175,8 @@ const refused = () => new PolicyError('Pleiad\'s own cookies are not available t
 
 /**
  * @param {object} [deps]
- * @param [deps.ports]  () => { main, pages, isolated }（数。立っていなければ null）。サーバーが relay.setPagePorts で渡したもの。main は旗に依らず入る
- * @param [deps.cookie] () => ファイルのページの Cookie（core/page-auth.mjs の pagesCookie の形）か null。旗が on のときだけ入る（relay.setPageCookie）
+ * @param [deps.ports]  () => { main, pages, isolated }（数。立っていなければ null）。サーバーが relay.setPagePorts で渡したもの
+ * @param [deps.cookie] () => ファイルのページの Cookie（core/page-auth.mjs の pagesCookie の形）か null（relay.setPageCookie）
  * @param [deps.log]   ログの 1 行（URL を書かない）
  * @returns 中継が呼ぶ口
  *   - allowUrl(url, { sessionId, via }): 移動を通すか。via は 'navigate'（Page.navigate）・'create'（Target.createTarget）・'open'（人がビューアから開く）
@@ -219,7 +219,7 @@ export function createPagePolicy({ ports = () => null, cookie = () => null, log 
       const cookies = stripCookies(result.cookies);
       return cookies.length === result.cookies.length ? result : { ...result, cookies };
     },
-    /** 本体の port が分かっていれば（旗に依らない）、どのタブにも中継のセッションを付ける */
+    /** 本体の port が分かっていれば、どのタブにも中継のセッションを付ける */
     get intercepts() { return known().length > 0; },
     fetchPatterns(patterns) {
       const extra = known().map(port => ({ urlPattern: port === 80 || port === 443 ? '*' : `*:${port}/*`, requestStage: 'Request' }));
@@ -229,7 +229,7 @@ export function createPagePolicy({ ports = () => null, cookie = () => null, log 
       return pleiadVerdict(url, { ports: current(), sessionId }) === false ? 'block' : null;
     },
     connected: ({ send } = {}) => { void pageCookie.connected({ send }); },
-    // 入れる物が無い（旗が off・ファイルのページでない）ときは待たせない
+    // 入れる物が無い（Cookie が無い・ファイルのページでない）ときは待たせない
     beforeOpen: ({ url, send } = {}) => {
       if (!pageCookie.wanted(url)) return undefined;
       return pageCookie.beforeOpen({ url, send }).then(() => undefined);

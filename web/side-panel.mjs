@@ -1,17 +1,16 @@
-// 右パネルの枠（docs/design-system.md「右パネルの枠」）。ファイル・可視化・会話のコンテキスト・内蔵ブラウザーが同じ 1 つの枠を使う。
+// 右パネルの枠（docs/design-system.md「右パネルの枠」）。ファイル・会話のコンテキスト・git・会話の Chrome の窓が同じ 1 つの枠を使う。
 // どのモードで何を出すかは、ここの *Slots だけが決める。枠（applySlots）は渡された部品だけを並べ、
 // **渡されなかった部品は必ず隠す**。モードごとに出したり消したりを書き足すと、前のモードの部品が残る
-// （可視化にエクスプローラーの枠が残った不具合。docs/design-system.md「右パネル」）。
+// （docs/design-system.md「右パネル」）。
 // 部品は名前（id）で指す。実際のボタンは web/file-preview.mjs が 1 度だけ作り、ここへ渡す。
 import { t } from './i18n.mjs';
 
 /**
- * ファイル。取得の前後で呼び直す（⋯・ブラウザーで開く・エクスプローラーで表示・保存は取得できてから）。
- * HTML は原文だけを見せる（描画はブラウザーが受け持つ）ので、プレビュー / 原文の切り替えは出さない。
- * @param {{ file?:object|null, osActions?:boolean, htmlBrowser?:boolean }} s
- *   htmlBrowser は HTML をブラウザーで開けるか（PC の画面とリモートの端末）
+ * ファイル。取得の前後で呼び直す（⋯・エクスプローラーで表示・保存は取得できてから）。
+ * HTML は原文だけを見せる（描画は Pleiad のページが受け持つ）ので、プレビュー / 原文の切り替えは出さない。
+ * @param {{ file?:object|null, osActions?:boolean }} s
  */
-export function fileSlots({ file = null, osActions = false, htmlBrowser = osActions } = {}) {
+export function fileSlots({ file = null, osActions = false } = {}) {
   const local = osActions && !!file;
   return {
     mode: 'file',
@@ -19,52 +18,17 @@ export function fileSlots({ file = null, osActions = false, htmlBrowser = osActi
     kind: t('filePreview.mode.file'),
     head: ['tree', file && 'more', 'wide', 'close'].filter(Boolean),
     views: !!file && typeof file.text === 'string' && file.kind !== 'text' && file.kind !== 'directory' && file.kind !== 'html',
-    // HTML の「ブラウザーで開く」は道具の列の先頭（可視化と同じ位置）
-    toolbar: [htmlBrowser && !!file && file.kind === 'html' && 'browser', 'path', 'reload'].filter(Boolean),
+    toolbar: ['path', 'reload'],
     aside: true,
     footer: ['reveal', 'save', 'use'].filter(id => (id === 'reveal' ? local : id === 'save' ? !!file?.downloadable : true)),
   };
 }
 
 /**
- * 会話に保存された可視化（写し）。元のパス（origin）はホスト上の在り処で、分かるときだけ
- * パス・元のファイルを開く・会話で使うを出す。ツリーは中身が無いので出さない。
- * 本文は原文だけで、プレビュー / 原文の切り替えは出さない（描画はブラウザーの仕事）。
- * @param {{ origin?:string|null, canBrowse?:boolean, canUse?:boolean }} s
- *   canBrowse は写しをサーバーから引けるか（会話と記録の印が分かる）
+ * 会話の Chrome の窓の映像（web/chrome-panel.mjs。ADR 0291）。見出しの行は広げると閉じるだけ、道具の列は窓の側が渡す
  */
-export function visualizationSlots({ origin = null, canBrowse = true, canUse = true } = {}) {
-  return {
-    mode: 'visualization',
-    label: t('filePreview.visualPanel'),
-    kind: t('filePreview.mode.visualization'),
-    head: ['more', 'wide', 'close'],
-    views: false,   // 原文だけ。描画はブラウザーの仕事で、プレビューの切り替えは出さない
-    toolbar: [canBrowse && 'visualBrowser', origin && 'path', origin && 'origin'].filter(Boolean),
-    aside: false,
-    note: origin ? t('filePreview.visual.note') : '',
-    footer: ['visualSave', origin && canUse && 'use'].filter(Boolean),
-  };
-}
-
-/**
- * 統合ブラウザー（docs/inapp-browser.md、ADR 0041）。見出しの行にタブ列を置く。
- * ビューアと Chrome で道具の列を替え、ビューアのない端末では閉じるボタンも道具の列に置く。
- */
-export function browserSlots({ chrome = false, toolbar = [], tabs = true, remote = false } = {}) {
-  return {
-    mode: 'browser',
-    label: t('browser.panel'),
-    kind: '',
-    head: tabs ? ['wide', 'close'] : [],
-    tabs,
-    views: false,
-    // リモートの端末は映像を見るので、ホストの既定のブラウザーで開く・DevTools などを持つ ⋯ は出さない
-    toolbar: chrome ? (tabs ? toolbar : ['close', ...toolbar]) : remote ? ['back', 'forward', 'reloadPage', 'address'] : ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore'],
-    aside: false,
-    note: '',
-    footer: null,
-  };
+export function chromeSlots({ label = '', toolbar = [] } = {}) {
+  return { mode: 'browser', label, kind: '', head: ['wide', 'close'], views: false, toolbar, aside: false, note: '', footer: null };
 }
 
 /** ファイル以外の中身（この会話のコンテキスト）。見出しと本文と閉じるだけ */
@@ -84,7 +48,7 @@ export function gitSlots({ label = '', footer = null, head = null, toolbar = nul
 
 /**
  * 見出しの下の行。作業ディレクトリの中なら相対、外ならそのまま（区切りは / にそろえる。ファイルと同じ）。
- * 元が無い可視化は、会話に保存された表示であることを書く
+ * パスが無ければ fallback
  */
 export function subtitleFor(path, cwd, fallback = '') {
   if (!path) return fallback;
@@ -112,10 +76,7 @@ export function applySlots(parts, config) {
   parts.kind.textContent = config.kind ?? '';
   parts.kind.hidden = !config.kind;
   parts.actions.replaceChildren(...pick(config.head));
-  // タブの列（内蔵ブラウザーだけ）
-  const unifiedChrome = document.body?.classList.contains('browser-unify') && parts.panel.dataset.panel === 'chrome-window';
-  if (parts.tabs) parts.tabs.hidden = unifiedChrome || !config.tabs;
-  parts.switcher.hidden = unifiedChrome || !config.views;
+  parts.switcher.hidden = !config.views;
   parts.tools.replaceChildren(...pick(config.toolbar));
   parts.toolbar.hidden = !config.views && !config.toolbar?.length;
   // パスの行は「パス」を押したときだけ開く。「パス」が無いモードでは必ず閉じる

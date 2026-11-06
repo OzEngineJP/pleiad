@@ -24,7 +24,7 @@ const svgButton = (cls, label, paths) => {
 
 /**
  * @param {object} o
- * @param {object} o.host  web/channels/index.mjs の host（cmd・filePreview・browser・openSidebar）
+ * @param {object} o.host  web/channels/index.mjs の host（cmd・filePreview・openSidebar）
  * @param {() => void} o.onClose  ✕
  * @param {() => void} o.onBack  チャンネル名（流れに戻る）
  * @param {(button: HTMLElement) => void} o.onToc  目次
@@ -117,25 +117,19 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
 
   const browser = svgButton('th-browser', t('channels:thread.entry.browser'), GLOBE_PATHS);
   browser.setAttribute('aria-pressed', 'false');
-  // リモートの端末は、ホストが映像を送れる（pcBrowser）と分かってから出す（web/client.mjs が ply-browser-availability で知らせる）
-  const unified = () => document.body.classList.contains('browser-unify');
+  // ブラウザーの部品（web/browser-unify.mjs）がホストの caps を受けて使えるようになってから出す（ply-browser-availability で知らせる）
+  const ready = () => document.body.classList.contains('browser-unify');
   const paintAvailability = () => {
-    browser.hidden = !unified() && host.browser?.available() !== true;
-    if (unified() && !browser.dataset.unifiedIcon) { const icon = browserIcon('panel'); icon.classList.add('i'); browser.querySelector('svg')?.replaceWith(icon); browser.dataset.unifiedIcon = 'true'; }
+    browser.hidden = !ready();
+    if (ready() && !browser.dataset.unifiedIcon) { const icon = browserIcon('panel'); icon.classList.add('i'); browser.querySelector('svg')?.replaceWith(icon); browser.dataset.unifiedIcon = 'true'; }
   };
   paintAvailability();
   document.addEventListener('ply-browser-availability', paintAvailability);
-  browser.onclick = () => {
-    if (unified()) { browser.dispatchEvent(new CustomEvent('ply-browser-toggle', { bubbles:true, detail:{ sessionId } })); return; }
-    const preview = host.filePreview;
-    if (preview.browserOpen()) preview.close(false);
-    else { preview.openBrowser(browser); host.browser?.open(); }
-    paintBrowser();
-  };
+  browser.onclick = () => browser.dispatchEvent(new CustomEvent('ply-browser-toggle', { bubbles:true, detail:{ sessionId } }));
   const paintBrowser = () => {
-    const open = Boolean(host.filePreview?.browserOpen?.() || (unified() && document.querySelector('#filePreview[data-panel=chrome-window]:not([hidden])')));
+    const open = Boolean(document.querySelector('#filePreview[data-panel=chrome-window]:not([hidden])'));
     browser.setAttribute('aria-pressed', String(open));
-    if (unified()) { browser.title = t(open ? 'tabs:address.closePanel' : 'tabs:address.openPanel'); browser.setAttribute('aria-label', browser.title); }
+    browser.title = t(open ? 'tabs:address.closePanel' : 'tabs:address.openPanel'); browser.setAttribute('aria-label', browser.title);
     browser.classList.toggle('on', open);
   };
 

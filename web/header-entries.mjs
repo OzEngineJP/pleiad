@@ -1,12 +1,11 @@
 // 会話の頭の行の、右パネルを開くアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」）。
 //   - プラグイン（#contextEntry）: 件数は画面に出さず、title と読み上げの名前にだけ入れる。「変更あり」は右上の点
-//   - ブラウザー（#browserEntry）: ホストではビューアと Chrome、リモートでは窓がある会話の Chrome を開閉する。
-//     近道は Ctrl+Shift+B（macOS は ⌘⇧B）。内蔵ブラウザーのページにフォーカスがあるときは main が拾って知らせる
+//   - ブラウザー（#browserEntry）: 会話の右の欄（会話の Chrome のタブ。ADR 0291）を開閉する。
+//     近道は Ctrl+Shift+B（macOS は ⌘⇧B）
 import { t } from './i18n.mjs';
 // i18n-dynamic: tabs:address.openPanel
 import { runMark } from './arc.mjs';
 // i18n-dynamic: browser.entryState
-// i18n-dynamic: browser.chromeWindow.entry
 import { isComposingKey } from './keyboard.mjs';
 import { browserIcon } from './tab-strip.mjs';
 
@@ -67,7 +66,7 @@ export function paintContextEntry(button, { visible, report, summary, changed, s
 }
 
 const isMac = () => typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
-/** 内蔵ブラウザーの近道か（Ctrl+Shift+B、macOS は ⌘⇧B）。IME の変換中は奪わない */
+/** 右の欄の近道か（Ctrl+Shift+B、macOS は ⌘⇧B）。IME の変換中は奪わない */
 export function isBrowserShortcut(event, mac = isMac()) {
   if (!event || event.defaultPrevented || isComposingKey(event) || event.altKey || !event.shiftKey) return false;
   if (mac ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) return false;
@@ -80,29 +79,17 @@ export const browserShortcutLabel = (mac = isMac()) => (mac ? '⌘⇧B' : 'Ctrl+
 export const browserEntryMark = ({ requested = false, paused = false, working = false } = {}) =>
   requested ? 'requested' : paused ? 'paused' : working ? 'working' : '';
 
-/** 開く瞬間に選ぶ中身。開いた後の状態変化では呼ばない */
-export const browserViewToOpen = ({ viewer = false, chrome = false, urgent = false, last = null } = {}) =>
-  chrome && (urgent || last === 'chrome' || !viewer) ? 'chrome' : viewer ? 'viewer' : null;
-
 /**
- * 統合したブラウザーのボタン。browser は web/browser-panel.mjs の createBrowserPanel の返り値（ホストの内蔵ブラウザーを見られない画面では available() が false）、
- * preview は web/file-preview.mjs の返り値（openBrowser・browserOpen・close）。
- * bridge は preload の plyDesktop.browser（ページにフォーカスがあるときの近道）。blocked() が true の間は近道を効かせない（設定・ダイアログ）。
- * ビューアも Chrome の窓も無い画面では隠す
+ * 右の欄のボタン。chrome() は web/chrome-panel.mjs の返り値（open・close・isOpen）。
+ * blocked() が true の間は近道を効かせない（設定・ダイアログ）。会話を開いていない間は隠す
  */
-export function setupBrowserEntry({ button, browser, preview, chrome = () => null, windows = null, getSessionId = () => null,
+export function setupBrowserEntry({ button, chrome = () => null, windows = null, getSessionId = () => null,
   getAgentName = () => 'Claude', getChromeState = () => 'idle', waiting = () => false, chromeAvailable = () => false,
-  unified = () => false, mac = isMac(), bridge = null, blocked = () => false, mark: makeMark = runMark, announce = () => {} }) {
+  mac = isMac(), blocked = () => false, announce = () => {} }) {
   if (!button) return null;
-  if (!browser && !windows) { button.hidden = true; return null; }
   button.setAttribute('aria-keyshortcuts', mac ? 'Meta+Shift+B' : 'Control+Shift+B');
-  // 会話ごとの「前に人が選んだ中身」。人が開いた・タブを押したときだけ書く（自動で開いた・別の会話から開いたままの表示では書かない）
-  const lastView = new Map();
   const activeId = () => getSessionId() ?? null;
-  // リモートの端末は、ホストが映像を送れる（pcBrowser）ときだけビューアがある。ホストの画面は常にある
-  const viewable = () => browser?.available() === true;
-  const chromeOpen = () => chrome()?.isOpen() === true;
-  const open = () => preview.browserOpen() || chromeOpen();
+  const open = () => chrome()?.isOpen() === true;
 
   /** いまの会話の角の印（requested / paused / working / ''）。Chrome のタブの印も同じものを読む */
   function currentMark() {
@@ -124,53 +111,37 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
   function paint() {
     const id = activeId();
     const hasWindow = Boolean(id && chromeAvailable() && windows?.has(id));
-    button.hidden = unified() ? !id : !viewable() && !hasWindow;
+    button.hidden = !id;
     if (hasWindow) button.setAttribute('data-mobile-chrome', ''); else button.removeAttribute('data-mobile-chrome');
     if (button.hidden) return;
     const state = currentMark();
-    if (unified() && !button.dataset.unifiedIcon) {
+    if (!button.dataset.unifiedIcon) {
       const icon = browserIcon('panel'); icon.classList.add('i'); button.querySelector('svg')?.replaceWith(icon); button.dataset.unifiedIcon = 'true';
     }
-    if (id) announceChange(id, state);
-    const label = unified() ? t(open() ? 'tabs:address.closePanel' : 'tabs:address.openPanel') : [t('browser.unifiedEntryLabel'), state ? t(`browser.entryState.${state}`, { name: getAgentName() || 'Claude' }) : ''].filter(Boolean).join(' · ');
+    announceChange(id, state);
+    const label = t(open() ? 'tabs:address.closePanel' : 'tabs:address.openPanel');
     button.title = `${label}（${browserShortcutLabel(mac)}）`;
     button.setAttribute('aria-label', label);
     button.setAttribute('aria-expanded', String(open()));
     button.classList.toggle('on', open());
     button.querySelector('.entry-browser-mark')?.remove();
-    // 旗が on: 開いている間はアドレスバーの札とタブの点が状態を見せるので、角の印は出さない。
-    // 閉じている間の「動いている」は点にする（右の欄の印の角に弧を重ねると「›」に見える）
-    const shown = unified() && open() ? '' : state;
+    // 開いている間はアドレスバーの札とタブの点が状態を見せるので、角の印は出さない。閉じている間の「動いている」も点にする
+    // （右の欄の印の角に弧を重ねると「›」に見える）
+    const shown = open() ? '' : state;
     if (shown) {
-      const arc = shown === 'working' && !unified();
-      const mark = arc ? makeMark() : document.createElement('span');
-      mark.classList.add('entry-browser-mark', arc ? 'entry-run' : `entry-${shown}`);
+      const mark = document.createElement('span');
+      mark.classList.add('entry-browser-mark', `entry-${shown}`);
       mark.setAttribute('aria-hidden', 'true');
       button.append(mark);
     }
   }
 
-  /** 開いたときだけ、Chrome の動き・依頼待ちを優先する。開いている間の切り替えはタブから行う */
   function toggle(anchor = button) {
     if (open()) {
-      if (unified() && chromeOpen()) chrome()?.close(); else preview.close(false);
+      chrome()?.close();
       anchor.focus({ preventScroll: true });
-    } else {
-      const id = activeId();
-      const state = id ? getChromeState(id) : 'idle';
-      const urgent = id && (waiting(id) || windows?.operating(id) || state === 'running' || state === 'paused');
-      const view = unified() ? 'chrome' : browserViewToOpen({ viewer: viewable(), chrome: chromeAvailable() && !!id, urgent, last: lastView.get(id) });
-      if (view === 'chrome') chrome()?.open(anchor);
-      else if (view === 'viewer') { preview.openBrowser(anchor); browser.open(); }
-      if (id && view) lastView.set(id, view);
-    }
+    } else chrome()?.open(anchor);
     paint();
-  }
-
-  /** 人が内蔵ブラウザーのパネルのタブ（ビューア / Chrome）を押した。今の会話の「前に選んだ中身」にする */
-  function noteView(view) {
-    const id = activeId();
-    if (id && (view === 'chrome' || view === 'viewer')) lastView.set(id, view);
   }
 
   button.addEventListener('click', () => toggle());
@@ -179,8 +150,6 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
     event.preventDefault();
     toggle();
   });
-  // 内蔵ブラウザーのページにフォーカスがあるときの近道（desktop/browser-panel.cjs の before-input-event）
-  bridge?.onShortcut?.(() => { if (!button.hidden && !blocked()) toggle(); });
   paint();
-  return { paint, toggle, noteView, lastView, currentMark, available: () => viewable() || (chromeAvailable() && !!activeId()) };
+  return { paint, toggle, currentMark, available: () => !!activeId() };
 }

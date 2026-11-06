@@ -2,7 +2,6 @@
 // allow-same-origin: the surrounding app carries authenticated cookies.
 import { t } from './i18n.mjs';
 import { visualizationDocument } from './visualize-document.mjs';
-import { browserUnifyEnabled } from './link-open.mjs';
 import { confirmedPreview, currentPreviewPolicy } from './preview-confirm.mjs';
 export { VISUALIZE_CSP, visualizationDocument } from './visualize-document.mjs';
 
@@ -25,8 +24,8 @@ export function isolateFrame(frame) {
   return frame;
 }
 
-// 隔離の origin（ADR 0292 の 3）。ブラウザーの一本化の旗が on のとき、画面の起動が port と「一度だけ読み込む」の印の頼み方を渡す。
-// 渡されるまで（旗が off）は、どの可視化も今のまま srcdoc で描く
+// 隔離の origin（ADR 0292 の 3）。画面の起動がサーバーの hostCapabilities から port と「一度だけ読み込む」の印の頼み方を渡す。
+// 渡されるまでと、束の無い記録は srcdoc で描く（相対パスの画像・fetch は読めない）
 let isolated = null;
 /** @param {{ port: number, mintOnce?: (origins: string[]) => Promise<string|null> } | null} options */
 export function configureIsolatedOrigin(options) {
@@ -36,7 +35,6 @@ let visualizationTabs = null;
 export function configureVisualizationTabs(options) { visualizationTabs = options; }
 /** Returns false only when the no-Chrome layout must handle the expansion. */
 export function openVisualizationTab(bundle, element) {
-  if (!browserUnifyEnabled()) return false;
   const tabs = visualizationTabs;
   const sessionId = tabs?.sessionId?.(element);
   const url = isolatedVisualizationUrl(bundle, { embed:'tab', host:'localhost' });
@@ -46,7 +44,7 @@ export function openVisualizationTab(bundle, element) {
   return true;
 }
 export function visualizationBundleNotice(bundle) {
-  if (!browserUnifyEnabled() || !bundle?.htmlOnly) return '';
+  if (!bundle?.htmlOnly) return '';
   const reasons = {
     'too-many-files': t('timeline.present.resourcesTooMany'),
     'too-large': t('timeline.present.resourcesTooLarge'),

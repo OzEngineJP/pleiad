@@ -15,9 +15,6 @@ const BASE = `
 const RESIZE = `<script>(()=>{let queued=false;const report=()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;parent.postMessage({type:'ply-visualize-height',height:Math.ceil(document.body.getBoundingClientRect().height)},'*')})};new ResizeObserver(report).observe(document.body);addEventListener('load',report);report()})()</script>`;
 const CONVERSATION_STYLE = `body{padding:4px}html[data-more]::after{content:"";position:fixed;left:0;right:0;bottom:0;height:36px;background:linear-gradient(to bottom,transparent,var(--background));pointer-events:none}`;
 const CONVERSATION_FADE = `<script>(()=>{const root=document.documentElement;const update=()=>root.toggleAttribute('data-more',innerHeight>=899&&root.scrollHeight-root.scrollTop-root.clientHeight>2);addEventListener('scroll',update,{passive:true});addEventListener('resize',update);new ResizeObserver(update).observe(document.body);addEventListener('load',update);update()})()</script>`;
-// A snapshot opened in the in-app browser has no parent to tell, so it reports to the console and the main process listens
-// (desktop/browser-panel.cjs, docs/inapp-browser.md). Written only for that case: other browsers get no script.
-export const CONSOLE_BRIDGE = `<script>document.addEventListener('securitypolicyviolation',event=>{if(event.disposition==='enforce'&&/^https?:\\/\\//i.test(event.blockedURI))console.debug('ply-preview-blocked '+event.blockedURI)})</script>`;
 // Only framed documents need the bridge. Standalone snapshots keep ordinary links.
 // A bundle served from the isolated origin (core/isolated-routes.mjs) follows its own relative links inside the frame;
 // a srcdoc frame has no http location, so every link still goes through the parent.
@@ -35,10 +32,10 @@ export const STORAGE_SHIM = `<script>(()=>{for(const name of['localStorage','ses
 const escapeText = s => String(s).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 // meta: false when the response header already carries the policy (the isolated origin). A meta CSP is
 // intersected with the header and would block the bundle's own files. storage: put STORAGE_SHIM first (the isolated origin).
-export function visualizationDocument(content, { theme = '', resize = true, title = '', policy = {}, report = false, conversation = false, meta = true, storage = false } = {}) {
+export function visualizationDocument(content, { theme = '', resize = true, title = '', policy = {}, conversation = false, meta = true, storage = false } = {}) {
   const scheme = ['light', 'dark'].includes(theme) ? `:root{color-scheme:${theme}}` : '';
   // Place policy before ALL model content, even full documents with an existing
   // head, scripts or meta refresh. Nothing from the model enters the parent DOM.
-  return `<!doctype html><html><head><meta charset="utf-8">${storage ? STORAGE_SHIM : ''}${meta ? `<meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">` : ''}${resize ? VIOLATION_BRIDGE : report ? CONSOLE_BRIDGE : ''}<meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}${conversation && resize ? CONVERSATION_STYLE : ''}</style>${resize ? LINK_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}${conversation && resize ? CONVERSATION_FADE : ''}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8">${storage ? STORAGE_SHIM : ''}${meta ? `<meta http-equiv="Content-Security-Policy" content="${previewCsp(policy)}">` : ''}${resize ? VIOLATION_BRIDGE : ''}<meta name="viewport" content="width=device-width,initial-scale=1">${title ? `<title>${escapeText(title)}</title>` : ''}<style>${BASE}${scheme}${conversation && resize ? CONVERSATION_STYLE : ''}</style>${resize ? LINK_BRIDGE : ''}</head><body>${String(content)}${resize ? RESIZE : ''}${conversation && resize ? CONVERSATION_FADE : ''}</body></html>`;
 }
 

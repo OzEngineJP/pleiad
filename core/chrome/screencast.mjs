@@ -22,12 +22,12 @@
 //   - focus emulation の理由は、映像の見張り（watch）ごとの札で数える（relay の view.focus の owner）。閉じてすぐ開き直しても、古い見張りの「手放す」が新しい見張りの理由を消さない
 // core/browser-screencast.mjs の createScreencastHub の bridge の形（ready・request・ack・onFrame・onState・onEnded・onAway）に、
 // 段の口（setFormats）と止まった絵の口（capture）を足した形で使う。
-// 見る側の入力（タップ・文字・移動）は受けない（見るだけ）。URL は状態に載せない。
-// ただし端末が引き継いでいる間（第 7 段の by: 'device'。operate(sessionId, viewport)）だけは、映像のセッション（エージェントの接続ではない）で入力を送り、
+// 見る側の入力（タップ・文字）は、中継のタブごとの持ち手（relay.unify.tabHolder。ADR 0293）があれば入力の口のセッションで今のタブへ送り、そのタブを人の操作にする。
+// ページの大きさは見る人と持ち手から決める（core/chrome/viewport.mjs）。移動は受けない。URL は状態に載せない。
+// 持ち手の無い形（中継を渡さない）では見るだけで、operate(sessionId, viewport) の間だけ、映像のセッション（エージェントの接続ではない）で入力を送り、
 // ページの大きさを端末の映像の箱に合わせる（Emulation.setDeviceMetricsOverride。operate(sessionId, null) で clearDeviceMetricsOverride）。タブの列の × で、タブを閉じられる（closeTab）。
 import { inputCommands, deviceMetrics, createPageInput } from './input.mjs';
 import { decideViewport } from './viewport.mjs';
-import { browserUnifyOn } from '../browser-unify-flag.mjs';
 
 const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 
@@ -44,9 +44,10 @@ export function chromeScreencastSettings({ width, height, scale, quality } = {})
 /**
  * @param {object} deps
  * @param deps.host  core/chrome/relay.mjs の view（onChange・summary・tabs・current・attach・focus）
+ * @param [deps.relay] core/chrome/relay.mjs の中継（unify.tabHolder・onTabEvent）。無ければ映像は見るだけ（入力は operate の間だけ）
  */
-export function createChromeScreencast({ host, relay = null, enabled = browserUnifyOn(), log = () => {} } = {}) {
-  const unified = enabled && !!relay?.unify?.tabHolder;
+export function createChromeScreencast({ host, relay = null, log = () => {} } = {}) {
+  const unified = !!relay?.unify?.tabHolder;   // タブごとの持ち手（relay.unify.tabHolder）があれば、映像から入力し、ページの大きさを見る人に合わせる（ADR 0293・0294）
   const viewers = new Map();
   const watches = new Map();   // 会話の id -> { formats: Map<段の鍵, 撮る形>, views: Map<段の鍵, セッション>, view（代表。入力・大きさ）, tabId, generation, queue, suspended, announced, metrics, pin, known, multi }
   const lastFrames = new Map(); // 人が窓を直接閉じたときの最後の映像（JPEG）。一時停止中も更新しない

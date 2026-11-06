@@ -1,5 +1,4 @@
 import net from 'node:net';
-import { browserUnifyOn } from '../browser-unify-flag.mjs';
 import { createIconFetch } from './icon-fetch.mjs';
 
 export const FAVICON_MAX_BYTES = 64 * 1024;
@@ -46,7 +45,7 @@ export function sameLocalHost(url, page, ports = {}) {
  *   - list(sessionId): その会話だけの初期一覧（追加した順の写し）
  *   - setPagePorts({ main, pages, isolated }): サーバーの port。設定前は page を null とする。favicon はこの port へ取りに行かない
  */
-export function createTabInfo({ emit = () => {}, log = () => {}, enabled = browserUnifyOn(), fetchResource = createIconFetch() } = {}) {
+export function createTabInfo({ emit = () => {}, log = () => {}, fetchResource = createIconFetch() } = {}) {
   const tabs = new Map(), icons = new Map();
   let pagePorts = {};
   const key = tab => JSON.stringify([tab.sessionId, tab.targetId]);
@@ -178,7 +177,7 @@ export function createTabInfo({ emit = () => {}, log = () => {}, enabled = brows
 
   return {
     added(tab) {
-      if (!enabled || !tab?.sessionId || !tab.targetId || typeof tab.attach !== 'function') return;
+      if (!tab?.sessionId || !tab.targetId || typeof tab.attach !== 'function') return;
       if (tabs.has(key(tab))) return;
       const state = { data: { sessionId: tab.sessionId, targetId: tab.targetId, windowId: tab.windowId, url: '', title: '', loading: false, canGoBack: false, canGoForward: false, favicon: null, page: null }, generation: 0, historyTicket: 0, loadingTicket: 0, own: null };
       tabs.set(key(tab), state);
@@ -186,7 +185,7 @@ export function createTabInfo({ emit = () => {}, log = () => {}, enabled = brows
       run(connect(state, tab));
     },
     changed(tab) {
-      if (!enabled || !tab?.sessionId || !tab.targetId) return;
+      if (!tab?.sessionId || !tab.targetId) return;
       const state = tabs.get(key(tab));
       if (!state) return;
       const oldUrl = state.data.url;
@@ -194,7 +193,7 @@ export function createTabInfo({ emit = () => {}, log = () => {}, enabled = brows
       if (state.own && oldUrl !== state.data.url) { run(history(state)); run(favicon(state)); }
     },
     removed(tab) {
-      if (!enabled || !tab?.sessionId || !tab.targetId) return;
+      if (!tab?.sessionId || !tab.targetId) return;
       const state = tabs.get(key(tab));
       if (!state) return;
       tabs.delete(key(tab));

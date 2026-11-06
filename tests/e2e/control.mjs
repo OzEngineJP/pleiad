@@ -14,7 +14,7 @@ export default async function (t, ctx) {
     const agents = await c.cmd('backends');
     if (!agents.some((a) => a.id === 'claude')) { t.ok('claude が利用可能', false); return; }
     before = await c.cmd('prefs');
-    await c.cmd('setPref', { key: 'linkOpen', value: 'external' });
+    await c.cmd('setPref', { key: 'memoryLearnAt', value: '03:30' });
 
     // 1. 探される側の会話: 目印を含む発言を残す
     const marker = `CTRL_${crypto.randomBytes(5).toString('hex').toUpperCase()}`;
@@ -28,7 +28,7 @@ export default async function (t, ctx) {
     await c.cmd('setTurnSettings', { sessionId: asker.sessionId, backend: 'claude', model: 'haiku' });
     const turn = await c.runTurn({
       sessionId: asker.sessionId,
-      prompt: `Pleiad の ply_control の MCP ツールを使って答えて（シェルやファイル操作は使わない）。1) search_sessions で ${marker} を検索し、見つかった会話の sessionId をそのまま書く。2) get_setting で key が linkOpen の設定の value を書く。最後に「SESSION=<sessionId> LINKOPEN=<value>」の 1 行で答える。`,
+      prompt: `Pleiad の ply_control の MCP ツールを使って答えて（シェルやファイル操作は使わない）。1) search_sessions で ${marker} を検索し、見つかった会話の sessionId をそのまま書く。2) get_setting で key が memoryLearnAt の設定の value を書く。最後に「SESSION=<sessionId> LEARNAT=<value>」の 1 行で答える。`,
     }, { ms: 240000 });
     t.ok('ターンが完了した', turn.outcome === 'ok', turn.outcome ?? turn.events.find((e) => e.error)?.error);
     t.ok('search_sessions が呼ばれた（mcp__ply_control__search_sessions）', turn.tools.some((n) => /ply_control.*search_sessions/.test(n)), turn.tools.join(', '));
@@ -36,7 +36,7 @@ export default async function (t, ctx) {
     const history = await c.cmd('loadSession', { sessionId: asker.sessionId });
     const reply = history.messages.filter((m) => m.role === 'assistant').map((m) => m.text).join('\n');
     t.ok('検索の結果（目印の会話の id）を答えに使った', reply.includes(target.sessionId), reply.slice(-300));
-    t.ok('設定の値（linkOpen = external）を答えに使った', /LINKOPEN\s*=\s*external/i.test(reply), reply.slice(-300));
+    t.ok('設定の値（memoryLearnAt = 03:30）を答えに使った', /LEARNAT\s*=\s*03:30/i.test(reply), reply.slice(-300));
 
     // 3. 承認が要る設定の変更: 待たずに返り、ターンは終わる。後で許可すると、結果がその会話に届く
     await c.cmd('setPref', { key: 'confirmAgentSites', value: true });
@@ -64,7 +64,7 @@ export default async function (t, ctx) {
         JSON.stringify(answered.slice(at >= 0 ? at : -2).map((m) => ({ role: m.role, notice: m.internalTaskNotice, text: String(m.text).slice(0, 120) }))));
     }
   } finally {
-    if (before) await c.cmd('setPref', { key: 'linkOpen', value: before.linkOpen ?? 'inapp' }).catch(() => {});
+    if (before) await c.cmd('setPref', { key: 'memoryLearnAt', value: before.memoryLearnAt ?? '02:00' }).catch(() => {});
     if (before) await c.cmd('setPref', { key: 'confirmAgentSites', value: before.confirmAgentSites ?? false }).catch(() => {});
     c.close();
   }

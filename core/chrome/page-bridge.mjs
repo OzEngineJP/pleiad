@@ -7,7 +7,7 @@
 //   - 通った頼みは 'tab:page-request' で出す（{ sessionId, targetId, by, request }。by は最後に触った画面）
 //   - テーマと言語の変化（pleiad:env）と、書き込みの頼みの結果（pleiad:page-result）は、隔離した world から CustomEvent でページへ知らせる
 //     （ページのスクリプトが書き換えた関数を通らない。detail は Chrome が world をまたいで写す）
-// 旗 AGENT_HOST_BROWSER_UNIFY が off なら、ファイルのページの port が無いので何も付けない（今の動きのまま）。
+// サーバーがファイルのページの port を渡す前（setPagePorts の前）は、何も付けない。
 // ログに URL・パス・頼みの中身を書かない。
 
 /** ページに足す binding の名前（web/pages/bridge.mjs が呼ぶ） */
