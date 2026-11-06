@@ -138,9 +138,13 @@ export function setupBrowserEntry({ button, browser, preview, chrome = () => nul
     button.setAttribute('aria-expanded', String(open()));
     button.classList.toggle('on', open());
     button.querySelector('.entry-browser-mark')?.remove();
-    if (state) {
-      const mark = state === 'working' ? makeMark() : document.createElement('span');
-      mark.classList.add('entry-browser-mark', state === 'working' ? 'entry-run' : `entry-${state}`);
+    // 旗が on: 開いている間はアドレスバーの札とタブの点が状態を見せるので、角の印は出さない。
+    // 閉じている間の「動いている」は点にする（右の欄の印の角に弧を重ねると「›」に見える）
+    const shown = unified() && open() ? '' : state;
+    if (shown) {
+      const arc = shown === 'working' && !unified();
+      const mark = arc ? makeMark() : document.createElement('span');
+      mark.classList.add('entry-browser-mark', arc ? 'entry-run' : `entry-${shown}`);
       mark.setAttribute('aria-hidden', 'true');
       button.append(mark);
     }

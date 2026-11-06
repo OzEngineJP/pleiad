@@ -4,6 +4,22 @@ import { samePath } from './file-actions.mjs';
 const REQUESTS = new Set(['file-menu', 'use-file', 'use-text', 'jump', 'commit', 'worktree']);
 const PAGES = new Set(['file', 'dir', 'attachment', 'git', 'plugins', 'new']);
 
+/**
+ * Chrome の無い会話の右の欄の頭に出すパス。作業フォルダーの中なら相対（スマホのアドレスバーと同じ規則）、外なら全体。
+ * フォルダーは弱く、名前は太く。全体のパスは title に持たせる
+ */
+export function pageHeading(path, cwd = '', doc = globalThis.document) {
+  const full = String(path ?? ''), base = String(cwd ?? '').replaceAll('\\', '/').replace(/\/+$/, '');
+  const inside = base && full.replaceAll('\\', '/').toLowerCase().startsWith(base.toLowerCase() + '/');
+  const shown = inside ? full.slice(base.length + 1) : full;
+  const at = Math.max(shown.lastIndexOf('/'), shown.lastIndexOf('\\')) + 1;
+  const box = doc.createElement('span'), dir = doc.createElement('span'), name = doc.createElement('span');
+  box.className = 'page-frame-heading'; box.title = full;
+  dir.className = 'page-frame-dir'; dir.textContent = shown.slice(0, at);
+  name.className = 'page-frame-file'; name.textContent = shown.slice(at);
+  box.append(dir, name); return box;
+}
+
 /** The fallback serves only Pleiad's own pages, authenticated by the app cookie. */
 export function createPageFrame({ doc = globalThis.document, preview, onRequest = () => {}, getSessionId = () => null } = {}) {
   let frame = null, sessionId = null;
@@ -33,7 +49,7 @@ export function createPageFrame({ doc = globalThis.document, preview, onRequest 
   }
   doc?.defaultView?.addEventListener('message', receive);
   return {
-    open(url, { sessionId: id = getSessionId(), title = t('filePreview.panel'), element } = {}) {
+    open(url, { sessionId: id = getSessionId(), title = t('filePreview.panel'), heading = null, element } = {}) {
       let parsed;
       try { parsed = new URL(url, origin()); } catch { return false; }
       const match = /^\/_pleiad\/s\/([^/]+)\/([^/]+)$/.exec(parsed.pathname);
@@ -44,7 +60,7 @@ export function createPageFrame({ doc = globalThis.document, preview, onRequest 
       frame.setAttribute('referrerpolicy', 'no-referrer');
       frame.style.cssText = 'border:0;width:100%;height:100%;min-height:0;display:block;flex:1';
       frame.src = parsed.href;
-      preview?.openPanel({ key: 'page-frame', title, label: title, body: frame, element, onClose: close });
+      preview?.openPanel({ key: 'page-frame', title: heading ?? title, label: title, body: frame, element, onClose: close });
       return true;
     },
     close, receive,
@@ -76,6 +92,6 @@ export function createFilePageRouter({ cmd, frame, caps, connected = () => false
       await openTab({ sessionId, url: `http://localhost:${caps().pages}${suffix}`, path: where.path, kind: where.kind, reuse: true });
       return true;
     }
-    return frame.open(suffix, { sessionId, title: where.path, element });
+    return frame.open(suffix, { sessionId, title: where.path, heading: pageHeading(where.path, where.cwd), element });
   };
 }

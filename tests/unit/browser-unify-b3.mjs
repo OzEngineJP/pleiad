@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createPageFrame, createFilePageRouter } from '../../web/page-frame.mjs';
+import { createPageFrame, createFilePageRouter, pageHeading } from '../../web/page-frame.mjs';
 import { fileMenuItems, browserTabMenuItems } from '../../web/file-actions.mjs';
 import { configureLinkOpen } from '../../web/link-open.mjs';
 import { linkDestination, linkMenuItems, statusParts } from '../../web/link-menu.mjs';
@@ -44,6 +44,12 @@ export default async function(t) {
     openTab:async args => opened.push(args), tabs:() => existing, focusTab:async tab => focused.push(tab.id), flashTab:tab => flashed.push(tab.id) });
   await route({ path:'./doc.md', line:9 }, { sessionId:'s1', at:'now' });
   assert.equal(opened.length, 0); assert.match(iframe[0][0], /^\/_pleiad\/s\/s1\/file\?/); assert.match(iframe[0][0], /line=9/);
+  // 右の欄の頭のパス: 作業フォルダーの中は相対、外は全体。全体は title
+  const stub = { createElement:() => ({ children:[], append(...nodes) { this.children.push(...nodes); } }) };
+  const parts = (path, cwd) => { const box = pageHeading(path, cwd, stub); return [box.title, ...box.children.map(child => child.textContent)]; };
+  assert.deepEqual(parts('D:\\work\\docs\\a.md', 'D:/Work/'), ['D:\\work\\docs\\a.md', 'docs\\', 'a.md']);
+  assert.deepEqual(parts('D:/other/a.md', 'D:/work'), ['D:/other/a.md', 'D:/other/', 'a.md']);
+  assert.deepEqual(parts('D:/work2/a.md', 'D:/work'), ['D:/work2/a.md', 'D:/work2/', 'a.md']);
   connected = true; await route({ path:'alias.md' }, { sessionId:'s1' });
   assert.match(opened[0].url, /^http:\/\/localhost:8124\/_pleiad\/s\/s1\/file\?/);
   existing = [{ id:'tab1', file:{ path:'d:\\WORK\\doc.md' } }];

@@ -49,6 +49,14 @@ const css = `
 .browser-unify #filePreview[data-panel=chrome-window]>.file-preview-head,.browser-unify #filePreview[data-panel=chrome-window]>.file-preview-toolbar{display:none}
 .browser-unify #filePreview[data-panel=chrome-window] .file-preview-body-layout{padding:0;gap:0}
 .browser-unify #filePreview[data-panel=chrome-window] .file-preview-content{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.browser-unify #filePreview[data-panel=page-frame]{padding:0;gap:0;overflow:hidden;background:var(--surface-paper)}
+.browser-unify #filePreview[data-panel=page-frame]>.file-preview-head{flex:none;align-items:center;height:46px;padding:0 6px 0 16px;background:var(--surface-1)}
+.browser-unify #filePreview[data-panel=page-frame]>.file-preview-toolbar,.browser-unify #filePreview[data-panel=page-frame] .file-preview-path{display:none}
+.browser-unify #filePreview[data-panel=page-frame] .file-preview-title h2{display:block;font-size:13.5px;font-weight:400;line-height:46px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.browser-unify #filePreview[data-panel=page-frame] .file-preview-body-layout{padding:0;gap:0}
+.browser-unify #filePreview[data-panel=page-frame] .file-preview-content{border-radius:0;overflow:hidden;display:flex;flex-direction:column}
+.browser-unify .entry-working{position:absolute;top:3px;right:3px;width:7px;height:7px;border-radius:50%;background:var(--ink-blue);box-shadow:0 0 0 2px var(--surface-paper);pointer-events:none}
+.page-frame-dir{color:var(--ink-weak)}.page-frame-file{font-weight:600}
 .browser-unify .cp.bu-panel{display:flex;flex-direction:column;flex:1;min-height:0;gap:0;padding:0}
 .browser-unify .bu-panel>.cp-sw,.browser-unify .bu-panel>.cp-foot{display:none!important}
 .browser-unify .bu-panel>.cp-screen{flex:1;min-height:0;border:0;border-radius:0;margin:0}
