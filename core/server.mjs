@@ -36,6 +36,7 @@ import { rememberableRepoTurn } from './repo-defaults.mjs';
 import { insideDir, sameDir } from './worktrees.mjs';
 import { killUnder, killHeldUnder } from './proc-track.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
+import { recentFilesOf, visualizationLinksOf } from './session-files.mjs';
 import { createPrReader, basicPr, PR_READ_MAX } from './git-prs.mjs';
 import { mergePrs, unionPrs } from './session-prs.mjs';
 import { createUpdateGate } from './update-gate.mjs';
@@ -2360,9 +2361,27 @@ const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 let pagePorts = null, pageListeners = null;
 const pagesLog = line => console.log(`  [pages] ${line}`);
 const htmlKeys = BROWSER_UNIFY ? createHtmlKeys({ log: pagesLog }) : null;   // HTML のファイルの鍵。ファイルのページが出し、隔離が引く
+// 会話の記録（発言・ツールの呼び出し・present の行）。ファイルのページの最近のファイル・可視化・git のグラフから発言への移動に使う
+// 新しいタブは最近のファイルと可視化を 1 回の api/recent で読むので、同じ会話の読み込みを 2 秒だけ使い回す
+const pageTranscripts = new Map();
+function pageTranscript(sessionId) {
+  const held = pageTranscripts.get(sessionId);
+  if (held && Date.now() - held.at < 2_000) return held.promise;
+  const promise = (async () => {
+    const backend = await resolveBackendForSession(sessionId).catch(() => null);
+    const got = await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [], presents: [] }));
+    return { ...got, toolHints: backend?.toolHints ?? {}, actor: backend?.label ?? backend?.id };
+  })();
+  pageTranscripts.set(sessionId, { at: Date.now(), promise });
+  while (pageTranscripts.size > 20) pageTranscripts.delete(pageTranscripts.keys().next().value);
+  return promise;
+}
 const pagesRoutes = BROWSER_UNIFY ? createPagesRoutes({ ops: (caller, id, input) => opsRegistry.invoke(caller, id, input, opsDeps()),
-  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, ports: () => pagePorts, log: pagesLog }) : null;
-const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, ports: () => pagePorts, log: pagesLog }) : null;
+  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, ports: () => pagePorts, log: pagesLog,
+  recentFiles: async sessionId => recentFilesOf(await pageTranscript(sessionId)),
+  visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
+  gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) }) : null;
+const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, fileAccessFor, ports: () => pagePorts, log: pagesLog }) : null;
 const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, log: pagesLog }) : null;
 
 /** ファイルのページと隔離のリスナーを立て、port を中継へ渡す（旗が on のときだけ。待ち受けの後に呼ぶ） */

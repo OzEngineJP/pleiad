@@ -52,6 +52,7 @@ export async function createFixture() {
     ports:() => ({ main:0, pages:0, isolated:49199 }), env:() => env,
     recentFiles:id => id === 'alpha' ? [{ path:path.join(cwd, 'README.md'), source:'edited' }, { path:path.join(dataDir, 'secret.json'), source:'read' }, { path:path.join(uploadDir, 'beta.txt'), source:'attached' }] : [],
     htmlKeys:{ issue:async args => { issued.push(args); return 'fixture-key'; } },
+    visualizations:id => id === 'alpha' ? [{ title:'図', url:'http://localhost:49199/viz/abc/index.html?embed=tab' }, { title:'外', url:'http://localhost:5173/viz/abc/index.html' }] : [],
     ops:async (actor, id, input) => {
       calls.push({ actor, id, input });
       let result;
@@ -79,7 +80,7 @@ export async function createFixture() {
 
 export default async function (t) {
   const f = await createFixture();
-  const get = async (route, params, id) => { const r = await fetch(f.url(route, params, id)); return { status:r.status, body:await r.json(), headers:r.headers }; };
+  const get = async (route, params, id, headers) => { const r = await fetch(f.url(route, params, id), { headers }); return { status:r.status, body:await r.json(), headers:r.headers }; };
   try {
     const file = await get('api/preview', { path:'README.md' });
     t.ok('既存のプレビューで Markdown と取得時刻・大きさ・ツリーを返す', file.status === 200 && file.body.kind === 'markdown' && file.body.fetchedAt && file.body.size > 0 && file.body.tree.length === 1);
@@ -114,8 +115,24 @@ export default async function (t) {
     t.ok('HTML の原本を同じ origin で実行しない', raw.headers.get('content-type') === 'application/octet-stream' && raw.headers.get('content-disposition').startsWith('attachment') && raw.headers.get('content-security-policy').includes('sandbox'));
     const key = await get('api/html-key', { path:'index.html' });
     t.ok('HTML は A3 の鍵と隔離 URL を返す', key.body.url === 'http://localhost:49199/f/fixture-key/index.html' && f.issued[0].sessionId === 'alpha');
+    t.ok('鍵に会話のファイルの検査の範囲を渡す（隔離の側も同じ範囲で読む）', f.issued[0].access?.dataDir === f.dataDir && Array.isArray(f.issued[0].once) && f.issued[0].once.length === 0);
+    const onceParams = new URLSearchParams([['path', 'index.html'], ...Array.from({ length:60 }, (_, i) => ['once', `https://cdn${i}.example`])]);
+    await fetch(`${f.origin}/_pleiad/s/alpha/api/html-key?${onceParams}`);
+    t.ok('「一度だけ読み込む」の出どころを鍵へ渡す（50 まで）', f.issued.length === 2 && f.issued[1].once.length === 50 && f.issued[1].once[0] === 'https://cdn0.example');
     const invalidKey = await get('api/html-key', { path:'README.md' });
-    t.ok('HTML 以外に鍵を発行しない', invalidKey.status === 400 && f.issued.length === 1);
+    t.ok('HTML 以外に鍵を発行しない', invalidKey.status === 400 && f.issued.length === 2);
+    const devicePorts = JSON.stringify({ main:43001, pages:43001, isolated:43002 });
+    const deviceKey = await get('api/html-key', { path:'index.html' }, 'alpha', { 'x-test-via':'main', 'x-pleiad-page-ports':devicePorts });
+    const deviceEnv = await get('api/env', {}, 'alpha', { 'x-test-via':'main', 'x-pleiad-page-ports':devicePorts });
+    t.ok('スマホの道（本体の入口の x-pleiad-page-ports）: 隔離の URL と api/env を端末の port にする',
+      deviceKey.body.url === 'http://localhost:43002/f/fixture-key/index.html' && deviceEnv.body.isolatedPort === 43002);
+    const pagesHeader = await get('api/env', {}, 'alpha', { 'x-pleiad-page-ports':devicePorts });
+    const malformed = await Promise.all([
+      JSON.stringify({ main:43001, pages:43001 }), JSON.stringify({ main:43001, pages:43001, isolated:70000 }), JSON.stringify({ main:43001, pages:43001, isolated:43002, extra:1 }),
+      JSON.stringify([43001, 43001, 43002]), JSON.stringify({ main:'43001', pages:43001, isolated:43002 }), '{', 'x'.repeat(300),
+    ].map(value => get('api/env', {}, 'alpha', { 'x-test-via':'main', 'x-pleiad-page-ports':value })));
+    t.ok('x-pleiad-page-ports は本体の入口でだけ読み、形の違うもの（欠け・範囲外・余分・文字列・壊れた JSON・長すぎ）は使わない',
+      pagesHeader.body.isolatedPort === 49199 && malformed.every(r => r.status === 200 && r.body.isolatedPort === 49199));
     const metadata = await get('api/preview', { path:'shape.svg', content:'raw' });
     const textMetadata = await get('api/preview', { path:'README.md', content:'raw' });
     t.ok('ページの本文は JSON の base64・エスケープで膨らませず原本の口で読む', metadata.body.content.binary && metadata.body.content.text && !metadata.body.data && !metadata.body.text && textMetadata.body.content.text && !textMetadata.body.text);
@@ -137,9 +154,15 @@ export default async function (t) {
     const worktreeDenied = await get('api/git', { kind:'worktree', worktree:f.dataDir });
     const worktree = await get('api/git', { kind:'worktree', worktree:f.cwd });
     t.ok('改名前のパスと Worktree も会話のファイル検査を通す', rename.status === 400 && worktreeDenied.status === 403 && worktree.body.worktree.uncommitted.files.length === 1);
-    const specs = await Promise.all([':(glob)**', '*.mjs', 'notes/[ab].md', 'file?.mjs'].map(value => get('api/git', { kind:'diff', path:value })));
-    const origSpec = await get('api/git', { kind:'diff', path:'app.mjs', orig:'*.mjs' });
-    t.ok('Git の pathspec が検査していないファイルへ展開される指定を断る', specs.every(r => r.status === 400) && origSpec.status === 400);
+    const literal = [];
+    for (const value of ['notes/[ab].md', '[id].mjs', '*.mjs', 'file?.mjs']) {
+      const r = await get('api/git', { kind:'diff', path:value });
+      literal.push(r.status === 200 && f.calls.at(-1).id === 'git.diff' && f.calls.at(-1).input.path === value);
+    }
+    t.ok('記号を含む名前はそのまま git へ渡す（core/git-info.mjs が GIT_LITERAL_PATHSPECS=1 で文字どおりに読む）', literal.every(Boolean));
+    const specs = await Promise.all([':(glob)**', 'a:b', 'notes\\note.md'].map(value => get('api/git', { kind:'diff', path:value })));
+    const origSpec = await get('api/git', { kind:'diff', path:'app.mjs', orig:':(glob)*' });
+    t.ok('`:`（Windows のドライブ相対）とバックスラッシュの名前は断る', specs.every(r => r.status === 400) && origSpec.status === 400);
     const confinedWorktrees = await get('api/git', { kind:'worktrees' }, 'review');
     t.ok('Worktree の基準の場所も閉じ込めの範囲外なら隠す', confinedWorktrees.body.worktrees.base === null);
     await get('api/git', { kind:'changes', only:'light' });
@@ -150,6 +173,9 @@ export default async function (t) {
     t.ok('プラグインの一覧は保護されたパス・設定・注入した本文を返さない', plugins.body.report.entries.length === 3 && !JSON.stringify(plugins.body).includes('SECRET') && !JSON.stringify(plugins.body).includes('private injected'));
     const recent = await get('api/recent');
     t.ok('最近のファイルは会話の範囲を検査し重複を除く', recent.body.files.some(e => e.name === 'README.md' && e.source === 'edited') && recent.body.files.filter(e => e.name === 'README.md').length === 1 && !recent.body.files.some(e => ['beta.txt', 'secret.json'].includes(e.name)));
+    t.ok('可視化はこの会話の隔離の origin のものだけ出す', recent.body.visualizations.length === 1 && recent.body.visualizations[0].url === 'http://localhost:49199/viz/abc/index.html?embed=tab');
+    const deviceRecent = await get('api/recent', {}, 'alpha', { 'x-test-via':'main', 'x-pleiad-page-ports':JSON.stringify({ main:43001, pages:43001, isolated:43002 }) });
+    t.ok('スマホの道では可視化の URL を端末の隔離の port にする', deviceRecent.body.visualizations[0].url === 'http://localhost:43002/viz/abc/index.html?embed=tab');
     const other = await get('api/recent', {}, 'beta');
     t.ok('最近開いたファイルをほかの会話に混ぜない', other.body.files.length === 0 && recent.body.folders[0].path === f.cwd);
     const big = path.join(f.cwd, 'large.txt'); await fs.writeFile(big, 'x'.repeat(8 * 1024 * 1024 + 1));

@@ -18,6 +18,21 @@ const fault = (code, status = 400) => Object.assign(new Error(code), { pageCode:
 export function createPagesRoutes(deps = {}) {
   const visited = new Map();
   const ports = () => deps.ports?.() ?? {};
+  const validPort = value => Number.isInteger(value) && value > 0 && value < 65536;
+  // The ports the viewer reaches. On the main listener, the remote forwarder
+  // (core/remote/forward.mjs) adds x-pleiad-page-ports from the authenticated
+  // channel header: the device proxy's ports. Anything malformed is ignored.
+  function viewPorts(req, via) {
+    const raw = via === 'main' ? req.headers['x-pleiad-page-ports'] : undefined;
+    if (typeof raw !== 'string' || raw.length > 200) return ports();
+    try {
+      const value = JSON.parse(raw);
+      const keys = value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value).sort().join() : '';
+      if (keys === 'isolated,main,pages' && validPort(value.main) && validPort(value.pages) && validPort(value.isolated)) return { main:value.main, pages:value.pages, isolated:value.isolated };
+    } catch { /* not JSON */ }
+    deps.log?.({ type:'pages:error', code:'invalid-page-ports' });
+    return ports();
+  }
   function headers(via) {
     const isolated = Number(ports().isolated);
     return {
@@ -70,6 +85,7 @@ export function createPagesRoutes(deps = {}) {
       // A query cannot choose a different session from the URL.
       if (q.has('sessionId') && q.get('sessionId') !== sessionId) throw fault('access-denied', 403);
       const access = deps.fileAccessFor(sessionId), roots = deps.fileRoots(sessions);
+      const view = viewPorts(req, via);
       async function resolve(raw = q.get('path')) {
         if (typeof raw !== 'string' || !raw || raw.length > 32768) throw fault('invalid-path');
         const base = q.get('base');
@@ -87,7 +103,7 @@ export function createPagesRoutes(deps = {}) {
         case 'api/env': {
           const prefs = await deps.store.getPrefs?.() ?? {};
           const env = await deps.env?.(sessionId) ?? {};
-          json(req, res, via, { lang:env.lang ?? currentLocale(), theme:env.theme ?? prefs.theme ?? 'auto', sessionId, isolatedPort:ports().isolated ?? null }); break;
+          json(req, res, via, { lang:env.lang ?? currentLocale(), theme:env.theme ?? prefs.theme ?? 'auto', sessionId, isolatedPort:view.isolated ?? null }); break;
         }
         case 'api/preview': {
           const ref = await resolve();
@@ -122,9 +138,10 @@ export function createPagesRoutes(deps = {}) {
           const ref = await resolve();
           if (!ref.stat.isFile() || !/\.html?$/i.test(ref.file)) throw fault('unsupported');
           if (ref.stat.size > 8 * 1024 * 1024) throw fault('over-limit', 413);
-          const key = await deps.htmlKeys?.issue({ sessionId, path:ref.file });
-          if (!key || !ports().isolated) throw fault('unavailable', 503);
-          json(req, res, via, { url:`http://localhost:${ports().isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(ref.file))}` }); break;
+          // once: https origins the person allowed to load one time (core/html-keys.mjs keeps only external origins).
+          const key = await deps.htmlKeys?.issue({ sessionId, path:ref.file, once:q.getAll('once').slice(0, 50), access });
+          if (!key || !ports().isolated || !view.isolated) throw fault('unavailable', 503);
+          json(req, res, via, { url:`http://localhost:${view.isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(ref.file))}` }); break;
         }
         case 'api/git': {
           const kind = q.get('kind') ?? 'changes';
@@ -144,10 +161,11 @@ export function createPagesRoutes(deps = {}) {
           if (kind === 'changes') input.only = 'changes';
           if (kind === 'diff') {
             const raw = q.get('path');
-            // Git interprets pathspec magic/globs even after `--`. Until the
-            // shared reader supports literal pathspecs, never expand a checked
-            // name into unchecked files (also applies to the rename source).
-            const validName = value => value && value.length <= 4096 && !/[\\:*?\[\]]/.test(value) && !path.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.split('/').some(p => !p || p === '.' || p === '..');
+            // core/git-info.mjs runs git with GIT_LITERAL_PATHSPECS=1, so globs and
+            // pathspec magic in a checked name never expand to unchecked files
+            // (`[id].mjs` is fine). `:` stays rejected: on Windows `a:b` resolves
+            // drive-relative, so the checked path would differ from the one git reads.
+            const validName = value => value && value.length <= 4096 && !/[\\:]/.test(value) && !path.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.split('/').some(p => !p || p === '.' || p === '..');
             if (!validName(raw) || (q.has('orig') && !validName(q.get('orig')))) throw fault('invalid-path');
             // Git names are relative to the repository root, not the conversation cwd.
             // A deleted path is valid, but its closest existing ancestor must pass
@@ -232,7 +250,9 @@ export function createPagesRoutes(deps = {}) {
           for (const item of (await deps.visualizations?.(sessionId) ?? []).slice(0, 20)) {
             try {
               const target = new URL(item.url);
-              if (target.origin === `http://localhost:${ports().isolated}` && !target.username && !target.password) visualizations.push({ title:String(item.title ?? ''), url:target.href });
+              if (target.origin !== `http://localhost:${ports().isolated}` || target.username || target.password || !view.isolated) continue;
+              target.port = String(view.isolated);   // the device proxy's isolated port when viewed from a phone
+              visualizations.push({ title:String(item.title ?? ''), url:target.href });
             } catch { /* Only this conversation's host supplies visualization links. */ }
           }
           json(req, res, via, { files, visualizations, folders:folders.slice(0, 8), session:{ id:sessionId, title:meta.title ?? '' } }); break;
