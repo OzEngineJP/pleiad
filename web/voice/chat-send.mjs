@@ -21,6 +21,9 @@ const READY_MAX_MS = 8000;
  * @param {(ms: number) => Promise<void>} [o.sleep]
  */
 export function createChatVoiceSender({ state, cmd, randomId, freshId, ensureSession, settingsSettled, place, delivery, sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
+  const writable = (id) => {
+    if (state.sessions?.find(s => s.id === id)?.deletedBot) throw new Error(t('ui:deletedBotReadOnly'));
+  };
   /** 会話を開いている途中・切り替えている途中は、終わるまで待つ（submit() はこの間、黙って送らない） */
   async function settled() {
     for (let waited = 0; (state.busy || state.loadingSession) && waited < READY_MAX_MS; waited += READY_POLL_MS) await sleep(READY_POLL_MS);
@@ -33,6 +36,7 @@ export function createChatVoiceSender({ state, cmd, randomId, freshId, ensureSes
   return async function send(text, to = null) {
     if (to) {
       if (!to.sessionId) throw new Error(t('voice.note.notSent'));
+      writable(to.sessionId);
       const messageId = randomId();
       await cmd('sendMessage', { sessionId: to.sessionId, messageId, prompt: text });
       return { sessionId: to.sessionId, messageId };
@@ -40,9 +44,11 @@ export function createChatVoiceSender({ state, cmd, randomId, freshId, ensureSes
     let sessionId = state.current;
     if (!sessionId || sessionId === freshId()) sessionId = await ensureSession();
     if (!sessionId) throw new Error(t('voice.note.notSent'));
+    writable(sessionId);
     await settled();
     await settingsSettled().catch(() => {});
     if (state.current !== sessionId) throw new Error(t('voice.note.notSent'));   // 話している間に別の会話へ移った
+    writable(sessionId);
     const messageId = randomId();
     delivery.claim(messageId);
     try {

@@ -1,15 +1,15 @@
 // 会話の頭の行のアイコンボタン（docs/design-system.md「会話の頭の行のアイコン」、web/header-entries.mjs）。
 //   - プラグイン: 件数は title と名前にだけ。「変更あり」は右上の点（変更がある間だけ DOM に置く）。管理していない会話は件数を入れない
-//   - 内蔵ブラウザーの近道の判定（Ctrl+Shift+B・macOS は ⌘⇧B・IME の変換中は奪わない）
-//   - 内蔵ブラウザーのボタンは、ブラウザーの部品が無い画面では出さない
+//   - 右の欄（会話の Chrome のウィンドウ）の近道の判定（Ctrl+Shift+B・macOS は ⌘⇧B・IME の変換中は奪わない）
+//   - 右の欄のボタンは会話を開いている間だけ出し、押すと開け閉めする
 //   - 頭の行の並び（目次・プラグイン・ブラウザーが同じ 30px のアイコンボタン）と、プラグインの字・件数の要素が無いこと
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { N, installDomStub } from '../lib/dom-stub.mjs';
-import { contextTotal, isManagedContext, contextEntryText, paintContextEntry, isBrowserShortcut, browserShortcutLabel, browserEntryMark, browserViewToOpen, setupBrowserEntry } from '../../web/header-entries.mjs';
+import { contextTotal, isManagedContext, contextEntryText, paintContextEntry, isBrowserShortcut, browserShortcutLabel, browserEntryMark, setupBrowserEntry } from '../../web/header-entries.mjs';
 
 export const name = 'header-entries';
-export const title = '会話の頭の行: プラグインの件数と変更ありの出し方・内蔵ブラウザーの近道と出す画面';
+export const title = '会話の頭の行: プラグインの件数と変更ありの出し方・右の欄の近道と開け閉め';
 
 export default async function (t) {
   // ---- プラグインの名前と点
@@ -85,60 +85,34 @@ export default async function (t) {
   assert.equal(browserEntryMark({ paused:true, working:true }), 'paused');
   assert.equal(browserEntryMark({ working:true }), 'working');
   assert.equal(browserEntryMark({}), '');
-  assert.equal(browserViewToOpen({ viewer:true, chrome:true, urgent:true, last:'viewer' }), 'chrome');
-  assert.equal(browserViewToOpen({ viewer:true, chrome:true, last:'viewer' }), 'viewer');
-  assert.equal(browserViewToOpen({ viewer:true, chrome:true, last:'chrome' }), 'chrome');
-  assert.equal(browserViewToOpen({ viewer:false, chrome:true }), 'chrome');
-  t.ok('統合した入口: 依頼待ち・人の操作・エージェントの操作の順。開くときだけ状態と最後に見た方を使う', true);
+  t.ok('右の欄のボタンの印: 依頼待ち・人の操作・エージェントの操作の順', true);
 
-  // ---- 出す画面（ブラウザーの部品が無い画面では出さない）
-  const hiddenButton = new N('button'); hiddenButton.hidden = false;
-  assert.equal(setupBrowserEntry({ button: hiddenButton, browser: null, preview: {} }), null);
-  assert.equal(hiddenButton.hidden, true, 'ブラウザーで開いた Pleiad・リモートの窓・スマホでは出さない');
-  t.ok('内蔵ブラウザーのボタン: 内蔵ブラウザーの無い画面では出さない', true);
-
-  // ---- 前に見た中身は、人が開いた・タブを押したときだけ覚える
+  // ---- ボタンが無ければ何もしない。会話を開いていない間は隠す
+  assert.equal(setupBrowserEntry({ button: null }), null);
   installDomStub();
   document.addEventListener = () => {};
   {
-    let viewer = false, chrome = true, openedAt = null;
-    const entryButton = new N('button'), menuAnchor = new N('button');
-    const entry = setupBrowserEntry({ button: entryButton, mac: false,
-      browser: { available: () => viewer }, preview: { browserOpen: () => false, close() {}, openBrowser() {} },
-      chrome: () => ({ isOpen: () => false, open: anchor => { openedAt = anchor; } }),
-      windows: { has: () => false, operating: () => false }, getSessionId: () => 'a', chromeAvailable: () => chrome });
-    assert.equal(entryButton.hidden, true);
-    assert.equal(entry.available(), true, 'Chrome can be opened from menu before a window exists');
-    entry.toggle(menuAnchor); assert.equal(openedAt, menuAnchor);
-    chrome = false; assert.equal(entry.available(), false);
-    viewer = true; assert.equal(entry.available(), true);
-    t.ok('スマホのブラウザー入口はビューアかChromeの利用可否で決め、窓が無くてもメニューから開ける', true);
+    let current = null;
+    const entryButton = new N('button'); entryButton.hidden = false;
+    const entry = setupBrowserEntry({ button: entryButton, mac: false, getSessionId: () => current });
+    t.ok('会話を開いていない間はボタンを隠し、使えない', entryButton.hidden === true && entry.available() === false);
+    current = 'a'; entry.paint();
+    t.ok('会話を開くとボタンを出す（Chrome の窓がまだ無くても右の欄を開ける）', entryButton.hidden === false && entry.available() === true);
   }
+
+  // ---- 押すと右の欄（会話の Chrome のウィンドウ）を開け閉めする
   {
-    let current = 'a', chromeIsOpen = false, viewerIsOpen = false;
-    const opened = [];
-    const entryButton = new N('button');
-    entryButton.focus = () => {};
-    const entry = setupBrowserEntry({ button: entryButton, mac: false,
-      browser: { available: () => true, open: () => { viewerIsOpen = true; opened.push('viewer'); } },
-      preview: { browserOpen: () => viewerIsOpen, openBrowser: () => {}, close: () => { chromeIsOpen = false; viewerIsOpen = false; } },
-      chrome: () => ({ isOpen: () => chromeIsOpen, open: () => { chromeIsOpen = true; opened.push('chrome'); } }),
-      windows: { has: () => true, operating: () => false }, getSessionId: () => current, chromeAvailable: () => true });
-    assert.equal(entry.available(), true, 'viewer or Chrome can be reached from mobile menu');
-    // 会話 a で Chrome の窓が（人の操作でなく）開いたまま、会話 b へ移って描き直す
-    chromeIsOpen = true;
-    entry.paint(); current = 'b'; entry.paint();
-    t.ok('人の操作でない表示（開いたままの Chrome の窓）は、移った先の会話の「前に見た中身」にしない', entry.lastView.size === 0);
-    chromeIsOpen = false;
-    entry.toggle();
-    t.ok('前に見た中身が無ければ、ビューアを開く（Chrome は依頼・操作中のときだけ優先）', opened.at(-1) === 'viewer' && entry.lastView.get('b') === 'viewer');
-    entry.toggle();
-    entry.noteView('chrome');
-    t.ok('パネルのタブを押すと、今の会話の前に見た中身になり、次に開くときそれを開く', entry.lastView.get('b') === 'chrome' && entry.lastView.get('a') === undefined && (entry.toggle(), opened.at(-1) === 'chrome'));
-    current = 'a';
-    chromeIsOpen = false; viewerIsOpen = false;
-    entry.toggle();
-    t.ok('別の会話の選びは持ち込まない（a は b で選んだ Chrome でなくビューア）', opened.at(-1) === 'viewer' && entry.lastView.get('b') === 'chrome');
+    let isOpen = false, openedAt = null, closed = 0, focused = 0;
+    const entryButton = new N('button'), menuAnchor = new N('button');
+    menuAnchor.focus = () => { focused += 1; };
+    const entry = setupBrowserEntry({ button: entryButton, mac: false, getSessionId: () => 'a', chromeAvailable: () => true,
+      windows: { has: () => true, operating: () => false },
+      chrome: () => ({ isOpen: () => isOpen, open: anchor => { isOpen = true; openedAt = anchor; }, close: () => { isOpen = false; closed += 1; } }) });
+    entry.toggle(menuAnchor);
+    t.ok('閉じているときに押すと、押した所を起点に右の欄を開く', isOpen && openedAt === menuAnchor && entryButton.getAttribute('aria-expanded') === 'true');
+    entry.toggle(menuAnchor);
+    t.ok('開いているときに押すと閉じ、押した所へ焦点を戻す', !isOpen && closed === 1 && focused === 1 && entryButton.getAttribute('aria-expanded') === 'false');
+    t.ok('Chrome の窓のある会話はスマホのメニューの印を付ける', entryButton.hasAttribute('data-mobile-chrome'));
   }
 
   // ---- 依頼待ち・人の操作中が「変わった」ときだけ一度読み上げる
@@ -147,7 +121,6 @@ export default async function (t) {
     const said = [];
     const entryButton = new N('button');
     const entry = setupBrowserEntry({ button: entryButton, mac: false,
-      browser: { available: () => true, open: () => {} }, preview: { browserOpen: () => false, openBrowser: () => {}, close: () => {} },
       windows: { has: () => true, operating: () => false }, getSessionId: () => 'a', chromeAvailable: () => true,
       waiting: () => waiting, getChromeState: () => state, announce: text => said.push(text) });
     entry.paint(); entry.paint();

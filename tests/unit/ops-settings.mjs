@@ -89,7 +89,6 @@ export default async function (t) {
   const SYNC_TABLE = [
     ['plus', false, 'Pleiad Plus の案内を閉じた印と入口を出す印。その PC の記憶・端末ごとの印なので運ばない'],
     ['locale', true, '表示の言語。どの PC でも同じでよい'],
-    ['linkOpen', true, 'リンクを開く場所の好み'],
     ['instructionBudget', true, '指示の量の目安の表示'],
     ['backend', true, '新しい会話の既定のエージェント。受けた PC に無いエージェントは normalize で落ちる'],
     ['memoryLearnBackend', true, '記憶の学習に使うエージェント。無いエージェントは normalize で落ちる'],

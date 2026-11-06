@@ -1,10 +1,9 @@
-// 端末から PC の Chrome の窓を操作する（第 7 段 C。by: 'device'）と、ビューアの⋯「Chrome で開く」（openForConversation）。偽の Chrome・偽の OS の層。
-//   - core/chrome/input.mjs の変換は、内蔵ブラウザー（desktop/browser-screencast.cjs）と Chrome の窓（core/chrome/screencast.mjs）で同じ CDP になる
-//   - 入力が通るのは端末が引き継いでいる間（paused・by: 'device'）だけ。ホストの画面の接続からは受けない
-//   - 端末が引き継ぐと、窓は見せず映像も止めず、ページの大きさを端末の映像の箱にする。戻すと大きさを戻す。後から押したほうは今の状態を返すだけ
+// 端末から PC の Chrome の窓を操作する（「この端末で操作する」。by: 'device'。ADR 0296）と、ビューアの⋯「Chrome で開く」（openForConversation）。偽の Chrome・偽の OS の層。
+//   - core/chrome/input.mjs の変換は決まった CDP の形になる
+//   - 端末が「この端末で操作する」を押すと、見ているタブをその端末の人の操作にする（core/chrome/tab-holder.mjs の touch）。窓は見せず、映像も止めず、
+//     会話の一時停止もしない。ページの大きさは端末の映像の箱にする（映像の側が持ち手を見て決める）。任せると AI に戻し、大きさも戻す
+//   - 「PC で操作する」の窓を出している所へ端末が後から押しても今の状態を返すだけ。fromPc のときは PC の窓を隠してから端末へ移す
 //   - openForConversation は接続が無ければ Chrome の許可を待つ（接続の案内のカードは出さない）。開いたタブを今のタブにする
-import { createRequire } from 'node:module';
-import { EventEmitter } from 'node:events';
 import { WebSocket } from 'ws';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
 import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
@@ -13,15 +12,13 @@ import { createChromeRelay } from '../../core/chrome/relay.mjs';
 import { createChromeWindows } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 import { createChromeScreencast } from '../../core/chrome/screencast.mjs';
-import { createScreencastHub, screencastCommand } from '../../core/browser-screencast.mjs';
+import { createScreencastHub } from '../../core/browser-screencast.mjs';
+import { HUMAN_MESSAGE } from '../../core/chrome/tab-holder.mjs';
 import { inputCommands, deviceViewport, deviceMetrics } from '../../core/chrome/input.mjs';
 import { browserOps } from '../../core/ops/browser.mjs';
 
-const require = createRequire(import.meta.url);
-const { createBrowserScreencast } = require('../../desktop/browser-screencast.cjs');
-
 export const name = 'chrome-device';
-export const title = '端末から Chrome の窓を操作する（第 7 段 C）: 入力の変換は内蔵ブラウザーと同じ CDP・by: device の間だけ入力が通る・ページの大きさを合わせて戻す・窓は見せず映像も止めない・後から押したほうは断る・Chrome で開く（偽の Chrome・偽の OS の層）';
+export const title = '端末から Chrome の窓を操作する（ADR 0296）: 入力の変換・この端末で操作するは見ているタブだけを端末の人の操作にする・窓は見せず映像も会話も止めない・ページの大きさを合わせて戻す・PC の窓を出している所へ後から押したほうは今の状態を返す・Chrome で開く（偽の Chrome・偽の OS の層）';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(check, ms = 3000) {
@@ -52,31 +49,6 @@ function agent(url) {
   });
 }
 
-/** desktop/browser-panel.cjs の身代わり（タブの webContents.debugger が受けたコマンドを残す） */
-function fakePanel() {
-  let serial = 0;
-  const tabs = [], commands = [];
-  return {
-    commands,
-    createFor(sessionId, url = '') {
-      const id = `t${++serial}`;
-      const dbg = new EventEmitter();
-      let attached = false;
-      dbg.isAttached = () => attached; dbg.attach = () => { attached = true; };
-      dbg.sendCommand = async (method, params) => { commands.push([method, params]); return {}; };
-      const contents = new EventEmitter();
-      Object.assign(contents, { debugger: dbg, url, isDestroyed: () => false, getURL: () => contents.url, getTitle: () => 'page', isLoading: () => false,
-        navigationHistory: { canGoBack: () => false, canGoForward: () => false } });
-      const tab = { id, sessionId, webContents: contents };
-      tabs.push(tab);
-      return tab;
-    },
-    tabsFor: sessionId => tabs.filter(tab => tab.sessionId === sessionId),
-    pin() {},
-    onTabsChanged: () => () => {},
-  };
-}
-
 const TIMING = { hwndWaitMs: 200, hwndPollMs: 10, targetWaitMs: 500, targetPollMs: 10, popupWaitMs: 200, boundsWaitMs: 100 };
 
 async function rig({ permission = 'auto', handoff = null } = {}) {
@@ -87,13 +59,12 @@ async function rig({ permission = 'auto', handoff = null } = {}) {
   const logs = [];
   const scope = createChromeWindows({ os: os_, locate, log: line => logs.push(line), timing: TIMING });
   const relay = createChromeRelay({ connection: conn, os: os_, locate, scope, log: line => logs.push(line), ...(handoff ? { handoff } : {}) });
-  const bridge = createChromeScreencast({ host: relay.view, log: line => logs.push(line) });
-  // control が映像の口（suspend・resume・operate）に何を頼んだかも残す
+  const bridge = createChromeScreencast({ host: relay.view, relay, log: line => logs.push(line) });
+  // control が映像の口（suspend・resume）に何を頼んだかも残す
   const captureLog = [];
   const capture = {
     suspend: id => { captureLog.push(['suspend', id]); return bridge.suspend(id); },
     resume: id => { captureLog.push(['resume', id]); return bridge.resume(id); },
-    operate: (id, viewport) => { captureLog.push(['operate', id, viewport]); return bridge.operate(id, viewport); },
   };
   const control = createChromeControl({ relay, os: os_, capture, log: line => logs.push(line) });
   const hub = createScreencastHub({ bridge, source: 'chrome' });
@@ -102,33 +73,21 @@ async function rig({ permission = 'auto', handoff = null } = {}) {
   const live = [];
   return {
     chrome, fake: chrome.browser, os: os_, conn, scope, relay, bridge, control, hub, client, messages, captureLog, logs,
+    /** そのタブの持ち手（無ければ AI） */
+    held: (sessionId, targetId) => relay.unify.tabHolder.holder(sessionId, targetId) ?? { holder: 'ai' },
     async agent(sessionId) { const a = await agent(await relay.endpoint(sessionId)); live.push(a); return a; },
-    /** WS の browserScreencastInput（リモートの端末から。local: true はホストの画面） */
-    input: (sessionId, input, { local = false } = {}) => screencastCommand({ command: 'browserScreencastInput', args: { sessionId, source: 'chrome', input }, local, client, chrome: { hub, bridge } }),
     async stop() { for (const a of live) { try { a.close(); } catch { /* 閉じていてもよい */ } } hub.close?.(); bridge.close(); control.close(); relay.close(); await conn.close(); await chrome.stop(); },
   };
 }
 
-const viewSession = (r, targetId) => r.fake.sessions().find(s => s.targetId === targetId && s.screencast)?.id ?? null;
-const callsOn = (r, sessionId, from = 0) => r.chrome.calls.slice(from).filter(c => c.sessionId === sessionId);
-const inputsOn = (r, sessionId, from = 0) => callsOn(r, sessionId, from).filter(c => c.method.startsWith('Input.')).map(c => [c.method, c.params]);
 const concealed = (r, targetId) => {
   const windowId = r.fake.targets().find(x => x.targetId === targetId)?.windowId;
   const h = r.os.hwnds().find(x => x.windowId === windowId);
   return h?.concealed === true && h.alpha === 0;
 };
-
-/** 端末から送る入力の見本（範囲の外の座標・大きすぎるスクロールも混ぜる） */
-const SAMPLES = [
-  { type: 'tap', x: 100, y: 200 },
-  { type: 'tap', x: 5000, y: -3 },
-  { type: 'scroll', x: 10, y: 20, dx: 0, dy: 300 },
-  { type: 'scroll', x: 10, y: 20, dx: -99999, dy: 0 },
-  { type: 'text', text: 'こんにちは' },
-  { type: 'key', key: 'Enter' },
-  { type: 'key', key: 'Backspace' },
-  { type: 'key', key: 'ArrowDown' },
-];
+/** mark より後に送ったページの大きさのうち最後のもの */
+const lastMetrics = (r, mark = 0) => r.chrome.calls.slice(mark).filter(c => c.method === 'Emulation.setDeviceMetricsOverride').at(-1)?.params ?? null;
+const DEVICE = { width: 390, height: 700, scale: 2 };
 
 export default async function (t) {
   // ===== 1. 入力の変換（core/chrome/input.mjs）: 決まった CDP の形 =====
@@ -149,22 +108,44 @@ export default async function (t) {
     t.ok('ページの大きさのコマンドは mobile: false（meta の無いページで座標がずれない）', JSON.stringify(deviceMetrics({ width: 390, height: 700, scale: 2 })) === JSON.stringify({ width: 390, height: 700, deviceScaleFactor: 2, mobile: false }));
   }
 
-  // ===== 2. 内蔵ブラウザーの映像（desktop）と端末から操作する Chrome の窓が、同じ入力に同じ CDP を出す =====
-  const desktop = [];
+  // ===== 2. 「この端末で操作する」: 見ているタブだけを端末の人の操作にする。窓は見せず・映像は止めず・会話も止めず・ページの大きさは端末の箱 =====
   {
-    const panel = fakePanel();
-    const sc = createBrowserScreencast(panel, { post: () => {} });
-    await sc.start('s1', { width: 390, height: 700, scale: 2 });
-    for (const input of SAMPLES) {
-      const from = panel.commands.length;
-      await sc.input('s1', input);
-      desktop.push(panel.commands.slice(from).filter(([method]) => method.startsWith('Input.')));
-    }
-    t.ok('内蔵ブラウザーの映像は core/chrome/input.mjs の変換をそのまま送る', JSON.stringify(desktop) === JSON.stringify(SAMPLES.map(input => inputCommands(input, { width: 390, height: 700 }))));
-    sc.close();
+    const r = await rig();
+    try {
+      r.os.setForeground('pleiad-window');
+      const a = await r.agent('one');
+      const tab = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const other = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const sid = (await a.cmd('Target.attachToTarget', { targetId: tab, flatten: true })).result.sessionId;
+      const sidOther = (await a.cmd('Target.attachToTarget', { targetId: other, flatten: true })).result.sessionId;
+      await a.cmd('Page.getFrameTree', {}, sid);   // 今のタブを 1 つ目に戻す
+      await until(() => r.relay.view.current('one') === tab);
+      await r.hub.watch(r.client, 'one', { device: 'phone', ...DEVICE, quality: 'auto' });
+      t.ok('映像を見始めた（中継自身のセッション）', await until(() => r.fake.screencasting(tab)));
+
+      const invalid = await r.control.takeOver('one', { by: 'device' }).then(() => null, error => error);
+      t.ok('端末の箱の大きさが無ければ INVALID（人の操作にしない・接続も切らない）', invalid?.code === 'INVALID' && r.control.state('one').state === 'running' && r.held('one', tab).holder === 'ai' && a.ws.readyState === 1, JSON.stringify(invalid?.code));
+      const reveals = r.os.calls('reveal').length;
+      const mark = r.chrome.calls.length;
+      const took = await r.control.takeOver('one', { by: 'device', ...DEVICE });
+      const held = r.held('one', tab);
+      t.ok('端末から → 見ているタブをその端末の人の操作にする（by: device・箱の大きさ・時間で AI に戻せる形）', held.holder === 'human' && held.by === 'device' && held.viewport?.width === 390 && !held.pinned && r.held('one', other).holder === 'ai', JSON.stringify(held));
+      t.ok('会話は止めない（running のまま・一時停止にしない）', took.state === 'running' && took.by === null && !r.relay.state('one').paused, JSON.stringify(took));
+      t.ok('窓は PC の画面に見せない（reveal も前に出すも呼ばない。隠れたまま）', r.os.calls('reveal').length === reveals && concealed(r, tab));
+      t.ok('映像は止めない（suspend を呼ばない・screencast も続く）', r.captureLog.length === 0 && !r.bridge.isSuspended('one') && r.fake.screencasting(tab), JSON.stringify(r.captureLog));
+      const held1 = (await a.cmd('Runtime.evaluate', { expression: '1' }, sid)).error?.message;
+      const passed = (await a.cmd('Runtime.evaluate', { expression: '1' }, sidOther)).error;
+      t.ok('エージェントの接続は切らない。そのタブへの操作は断り、ほかのタブは通る', a.ws.readyState === 1 && held1 === HUMAN_MESSAGE && !passed, JSON.stringify([held1, passed]));
+      t.ok('ページの大きさを端末の箱にする', await until(() => lastMetrics(r, mark)?.width === 390 && lastMetrics(r, mark)?.deviceScaleFactor === 2), JSON.stringify(lastMetrics(r, mark)));
+
+      const mark2 = r.chrome.calls.length;
+      const back = await r.control.resume('one');
+      t.ok('任せる → そのタブを AI に戻す（窓は隠れたまま）', back.state === 'running' && r.held('one', tab).holder === 'ai' && concealed(r, tab), JSON.stringify(back));
+      t.ok('任せるとページの大きさを見ているだけの大きさへ戻す', await until(() => lastMetrics(r, mark2) && lastMetrics(r, mark2).width !== 390), JSON.stringify(lastMetrics(r, mark2)));
+    } finally { await r.stop(); }
   }
 
-  // ===== 3. 端末から引き継ぐ: 窓は見せず・映像は止めず・大きさを合わせ・入力は映像のセッションで =====
+  // ===== 3. 「PC で操作する」の窓を出している所へ端末が押す: fromPc でなければ今の状態を返すだけ。fromPc なら PC の窓を隠してから端末へ移す =====
   {
     const r = await rig();
     try {
@@ -172,74 +153,25 @@ export default async function (t) {
       const a = await r.agent('one');
       const tab = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
       await until(() => r.relay.view.current('one') === tab);
-      await r.hub.watch(r.client, 'one', { width: 390, height: 700, scale: 2, quality: 'auto' });
-      const view = viewSession(r, tab);
-      t.ok('映像を見始めた（中継自身のセッション）', !!view && r.fake.screencasting(tab));
-
-      const before = await r.input('one', { type: 'tap', x: 10, y: 10 });
-      t.ok('引き継ぐ前の入力は view-only（見るだけ）', before.ok === false && before.code === 'view-only' && inputsOn(r, view).length === 0, JSON.stringify(before));
-      const pcPaused = await r.control.takeOver('one');
-      const pcInput = await r.input('one', { type: 'tap', x: 10, y: 10 });
-      t.ok('PC で引き継いでいる間（by: pc）の入力も view-only', pcPaused.by === 'pc' && pcInput.code === 'view-only' && inputsOn(r, view).length === 0, JSON.stringify(pcInput));
-      const lateDevice = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2 });
-      t.ok('PC が引き継いでいる所へ端末が後から押しても、今の状態（by: pc）を返すだけ（大きさを変えない）', lateDevice.state === 'paused' && lateDevice.by === 'pc' && !r.captureLog.some(([op]) => op === 'operate'), JSON.stringify(lateDevice));
-      // 「この端末で操作する」（fromPc）: PC の窓を隠せなければ移さない
+      const onPc = await r.control.takeOver('one');
+      const ops = () => r.captureLog.map(([op]) => op);
+      t.ok('（前提）PC で操作する → paused・by: pc・PC の持ち手で固定・映像を断つ', onPc.state === 'paused' && onPc.by === 'pc' && r.held('one', tab).by === 'pc' && r.held('one', tab).pinned === true && ops().includes('suspend') && !ops().includes('resume'), JSON.stringify([onPc, r.captureLog]));
+      const late = await r.control.takeOver('one', { by: 'device', ...DEVICE });
+      t.ok('後から端末が押しても、今の状態（by: pc）を返すだけ（PC の持ち手のまま）', late.state === 'paused' && late.by === 'pc' && r.held('one', tab).by === 'pc' && r.held('one', tab).pinned === true, JSON.stringify(late));
       r.os.opts.concealFails = true;
-      const stuck = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2, fromPc: true });
-      t.ok('fromPc でも PC の窓を隠せなければ移さない（by: pc のまま・conceal-failed・映像は断ったまま）', stuck.by === 'pc' && stuck.error === 'conceal-failed' && r.control.captureBlocked('one') === true && !r.captureLog.some(([op]) => op === 'operate'), JSON.stringify(stuck));
+      const stuck = await r.control.takeOver('one', { by: 'device', ...DEVICE, fromPc: true });
+      t.ok('fromPc でも PC の窓を隠せなければ移さない（by: pc のまま・conceal-failed・映像は断ったまま）', stuck.by === 'pc' && stuck.error === 'conceal-failed' && r.held('one', tab).by === 'pc' && !ops().includes('resume'), JSON.stringify(stuck));
       r.os.opts.concealFails = false;
-      const moved = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2, fromPc: true });
-      t.ok('fromPc: PC の窓を隠して端末の操作へ移す（一時停止は続き、始まりの時刻は同じ・理由は消える）', moved.state === 'paused' && moved.by === 'device' && moved.since === pcPaused.since && moved.error === null && concealed(r, tab), JSON.stringify(moved));
-      t.ok('fromPc: 映像の断りを解き、ページの大きさを端末に合わせる', r.captureLog.some(([op]) => op === 'resume') && r.captureLog.some(([op, , v]) => op === 'operate' && v?.width === 390) && r.control.captureBlocked('one') === false && await until(() => r.fake.screencasting(tab)), JSON.stringify(r.captureLog));
-      const movedInput = await r.input('one', { type: 'tap', x: 10, y: 10 });
-      t.ok('fromPc: 移した後は端末の入力が通る', movedInput.ok === true, JSON.stringify(movedInput));
+      const moved = await r.control.takeOver('one', { by: 'device', ...DEVICE, fromPc: true });
+      const held = r.held('one', tab);
+      t.ok('fromPc: PC の窓を隠して端末の人の操作へ移す（paused は解け、理由も消える）', moved.state === 'running' && moved.by === null && moved.error === null && concealed(r, tab) && held.holder === 'human' && held.by === 'device' && !held.pinned, JSON.stringify([moved, held]));
+      t.ok('fromPc: 映像の断りを解く', ops().includes('resume') && !r.bridge.isSuspended('one'), JSON.stringify(r.captureLog));
       await r.control.resume('one');
-      // 戻すと agent-browser がつなぎ直す。映像は付け直しで同じタブを追う
-      const a2 = await r.agent('one');
-      await until(() => r.fake.screencasting(tab) && r.control.captureBlocked('one') === false);
-      const view2 = viewSession(r, tab);
-      r.captureLog.length = 0;
-
-      const invalid = await r.control.takeOver('one', { by: 'device' }).then(() => null, error => error);
-      t.ok('端末の箱の大きさが無ければ INVALID（一時停止にしない・接続も切らない）', invalid?.code === 'INVALID' && r.control.state('one').state === 'running' && a2.ws.readyState === 1, JSON.stringify(invalid?.code));
-      const reveals = r.os.calls('reveal').length;
-      const mark = r.chrome.calls.length;
-      const took = await r.control.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2 });
-      t.ok('端末から引き継ぐ → paused・by: device', took.state === 'paused' && took.by === 'device', JSON.stringify(took));
-      t.ok('窓は PC の画面に見せない（reveal も前に出すも呼ばない。隠れたまま）', r.os.calls('reveal').length === reveals && concealed(r, tab));
-      t.ok('エージェントの接続は切る（1000 paused）', (await a2.closed).reason === 'paused');
-      t.ok('映像は止めない（suspend を呼ばない・captureBlocked は false・screencast も続く）', !r.captureLog.some(([op]) => op === 'suspend') && r.control.captureBlocked('one') === false && !r.bridge.isSuspended('one') && r.fake.screencasting(tab), JSON.stringify(r.captureLog));
-      const metrics = callsOn(r, view2, mark).filter(c => c.method === 'Emulation.setDeviceMetricsOverride');
-      t.ok('映像のセッションでページの大きさを端末の箱にする（mobile: false）', metrics.length === 1 && JSON.stringify(metrics[0].params) === JSON.stringify({ width: 390, height: 700, deviceScaleFactor: 2, mobile: false }), JSON.stringify(metrics));
-      const lateOnPc = await r.control.takeOver('one');
-      t.ok('端末が引き継いでいる所へ PC が後から押しても、今の状態（by: device）を返すだけ（窓は見せない）', lateOnPc.by === 'device' && r.os.calls('reveal').length === reveals);
-
-      const local = await r.input('one', { type: 'tap', x: 10, y: 10 }, { local: true });
-      t.ok('ホストの画面の接続からの入力は受けない（view-only）', local.ok === false && local.code === 'view-only');
-      const chromeSide = [];
-      for (const input of SAMPLES) {
-        const from = r.chrome.calls.length;
-        const sent = await r.input('one', input);
-        if (!sent.ok) chromeSide.push(['failed', sent.code]);
-        else chromeSide.push(inputsOn(r, view2, from));
-      }
-      t.ok('端末の入力は映像のセッションで送り、内蔵ブラウザーと同じ CDP になる', JSON.stringify(chromeSide) === JSON.stringify(desktop), JSON.stringify(chromeSide).slice(0, 400));
-      t.ok('入力はエージェントのセッションでは送らない（映像のセッションだけ）', r.chrome.calls.slice(mark).filter(c => c.method.startsWith('Input.')).every(c => c.sessionId === view2));
-      const bad = await r.input('one', { type: 'drag' });
-      t.ok('知らない入力は invalid-input', bad.ok === false && bad.code === 'invalid-input');
-
-      const mark2 = r.chrome.calls.length;
-      const back = await r.control.resume('one');
-      t.ok('戻す → 一時停止が解ける（窓を隠し直さない。もともと見せていない）', back.state !== 'paused' && back.by === null && concealed(r, tab), JSON.stringify(back));
-      const cleared = callsOn(r, view2, mark2).map(c => c.method);
-      t.ok('戻すとページの大きさを戻す（clearDeviceMetricsOverride）', cleared.includes('Emulation.clearDeviceMetricsOverride'), cleared.join());
-      t.ok('大きさを戻してから解く（operate(null) の後に running）', JSON.stringify(r.captureLog.filter(([op]) => op === 'operate').map(([, , v]) => v === null)) === '[false,true]');
-      const after = await r.input('one', { type: 'tap', x: 10, y: 10 });
-      t.ok('戻した後の入力は view-only に戻る', after.code === 'view-only' && !r.bridge.operating('one'));
+      t.ok('任せると AI に戻す', r.held('one', tab).holder === 'ai');
     } finally { await r.stop(); }
   }
 
-  // ===== 4. 窓の無い会話・見ていない間に引き継いだ・見るのをやめた =====
+  // ===== 4. 窓の無い会話・見ていない間に押した =====
   {
     const r = await rig();
     try {
@@ -247,23 +179,17 @@ export default async function (t) {
       t.ok('会話が中継に無ければ NO_WINDOW', none?.code === 'NO_WINDOW');
       const a = await r.agent('one');
       const early = await r.control.takeOver('one', { by: 'device', width: 390, height: 700 }).then(() => null, error => error);
-      t.ok('タブがまだ無ければ NO_WINDOW（一時停止を残さない）', early?.code === 'NO_WINDOW' && r.control.state('one').state === 'running' && a.ws.readyState === 1);
+      t.ok('タブがまだ無ければ NO_WINDOW（何も残さない）', early?.code === 'NO_WINDOW' && r.control.state('one').state === 'running' && a.ws.readyState === 1);
       const tab = (await a.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
       await until(() => r.relay.view.current('one') === tab);
       await r.control.takeOver('one', { by: 'device', width: 400, height: 640, scale: 1 });
-      t.ok('映像を見ていなくても引き継げる（大きさは付けたときに合わせる）', r.control.state('one').by === 'device' && r.bridge.operating('one'));
+      t.ok('映像を見ていなくても端末の人の操作にできる', r.held('one', tab).holder === 'human' && r.held('one', tab).viewport?.width === 400, JSON.stringify(r.held('one', tab)));
       const mark = r.chrome.calls.length;
-      await r.hub.watch(r.client, 'one', { width: 400, height: 640, scale: 1, quality: 'auto' });
-      const view = viewSession(r, tab);
-      const methods = callsOn(r, view, mark).map(c => c.method);
-      const set = callsOn(r, view, mark).find(c => c.method === 'Emulation.setDeviceMetricsOverride');
-      t.ok('見始めると、screencast の前にページの大きさを端末に合わせる', set?.params.width === 400 && set.params.mobile === false && methods.indexOf('Emulation.setDeviceMetricsOverride') < methods.indexOf('Page.startScreencast'), methods.join());
-      const mark2 = r.chrome.calls.length;
+      await r.hub.watch(r.client, 'one', { device: 'phone', width: 400, height: 640, scale: 1, quality: 'auto' });
+      t.ok('見始めると、ページの大きさを端末の箱に合わせる', await until(() => lastMetrics(r, mark)?.width === 400), JSON.stringify(lastMetrics(r, mark)));
       await r.hub.unwatch(r.client, 'one');
-      t.ok('見るのをやめると、映像のセッションを外す前に大きさを戻す', callsOn(r, view, mark2).some(c => c.method === 'Emulation.clearDeviceMetricsOverride'), callsOn(r, view, mark2).map(c => c.method).join());
-      const mark3 = r.chrome.calls.length;
       await r.control.resume('one');
-      t.ok('見ていない間に戻しても、大きさのコマンドは送らない（もう外してある）', !r.chrome.calls.slice(mark3).some(c => c.method.startsWith('Emulation.') && c.method.includes('DeviceMetrics')) && !r.bridge.operating('one'));
+      t.ok('見ていない間に任せても AI に戻る', r.held('one', tab).holder === 'ai');
     } finally { await r.stop(); }
   }
 

@@ -9,6 +9,8 @@
 // - 状態は下書きと一緒に保存する（snapshot / restore）。会話を切り替えても、読み込み直しても続く
 //
 // 何を送るか（巻き戻して送る・分岐して送る・元の位置の見せ方）は呼び出し側（host）が持つ。ここは状態・帯・ボタン・キー・書きかけの出し入れ。
+import { normalizeEditingState } from '../md-editing-state.mjs';
+import { mergeEditingContent } from '../md-doc.mjs';
 import { el } from '../dom.mjs';
 import { runMark } from '../arc.mjs';
 import { isComposingKey } from '../keyboard.mjs';
@@ -35,10 +37,10 @@ export function changedFrom(base, now) {
 
 /** 脇に取った書きかけを、編集中の中身へ足す（編集の相手が無くなったとき、書きかけを失わないように） */
 export function mergeContent(edited, stash) {
-  const text = [String(edited.text ?? '').trim(), String(stash?.text ?? '').trim()].filter(Boolean).join('\n\n');
+  const { text, editing } = mergeEditingContent([edited, stash]);
   const seen = new Set();
   const attached = [...(edited.attached ?? []), ...(stash?.attached ?? [])].filter((a) => !seen.has(a.path) && seen.add(a.path));
-  return { text, attached };
+  return { text, attached, ...(editing ? { editing } : {}) };
 }
 
 /**
@@ -270,7 +272,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
       st = {
         id: target.id, time: target.time, quote: target.quote ?? quoteOf(content.text),
         base: { text: content.text, paths: content.attached.map((a) => a.path) },
-        stash: { text: current.text, attached: current.attached.slice(), ...(extra != null ? { extra } : {}) },
+        stash: { text: current.text, attached: current.attached.slice(), ...(current.editing ? { editing: current.editing } : {}), ...(extra != null ? { extra } : {}) },
         tail: target.tail, confirm: null,
       };
       host.write(content);
@@ -286,7 +288,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
     snapshot() {
       if (!st) return null;
       return { v: 1, id: st.id, time: st.time, quote: st.quote, base: { text: st.base.text, paths: st.base.paths.slice() },
-        stash: { text: st.stash.text, attached: st.stash.attached.map((a) => ({ ...a })) } };
+        stash: { text: st.stash.text, attached: st.stash.attached.map((a) => ({ ...a })), ...(st.stash.editing ? { editing: st.stash.editing } : {}) } };
     },
     /**
      * 保存した状態を戻す（入力欄の中身は下書きの側で戻してある）。resolve(id) は { tail, time? }、元の発言が無ければ null。
@@ -296,7 +298,8 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
       this.reset();
       if (!saved || typeof saved.id !== 'string') return false;
       const found = resolve(saved.id);
-      const stash = { text: String(saved.stash?.text ?? ''), attached: Array.isArray(saved.stash?.attached) ? saved.stash.attached : [] };
+      const editing = normalizeEditingState(saved.stash?.text, saved.stash?.editing);
+      const stash = { text: String(saved.stash?.text ?? ''), attached: Array.isArray(saved.stash?.attached) ? saved.stash.attached : [], ...(editing ? { editing } : {}) };
       if (!found) {
         host.write(mergeContent(host.read(), stash));
         announce(t('chat.resend.lost'));
@@ -339,7 +342,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
     },
     get tail() { return st?.tail ?? null; },
     /** 脇に取った書きかけ（分岐して送ったあと、元の会話の下書きへ戻すため） */
-    stashed() { return st ? { text: st.stash.text, attached: st.stash.attached.slice(), ...(st.stash.extra != null ? { extra: st.stash.extra } : {}) } : null; },
+    stashed() { return st ? { text: st.stash.text, attached: st.stash.attached.slice(), ...(st.stash.editing ? { editing: st.stash.editing } : {}), ...(st.stash.extra != null ? { extra: st.stash.extra } : {}) } : null; },
     /** 元の発言の札・薄めを付け直す（履歴を描き直したあと） */
     redecorate() { if (st) host.decorate?.(st.id, true, st.tail); },
     /** 編集をやめて、書きかけを戻す。restore: false なら入力欄を触らない（送れたあと、別の会話へ移ったあと） */
@@ -351,7 +354,7 @@ export function createEditMode({ composer, t, announce = () => {}, host, kind = 
       sending = false;
       unmount();
       if (restore) {
-        host.write({ text: stash.text, attached: stash.attached });
+        host.write({ text: stash.text, attached: stash.attached, ...(stash.editing ? { editing: stash.editing } : {}) });
         if (stash.extra != null) host.putExtra?.(stash.extra);
       }
       if (focus) composer.focus({ preventScroll: true });

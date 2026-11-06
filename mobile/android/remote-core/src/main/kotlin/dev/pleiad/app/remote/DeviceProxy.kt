@@ -24,6 +24,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
@@ -101,6 +102,25 @@ class DeviceProxy(
         private const val MAX_HEAD = 32 * 1024
         private const val BIND_ATTEMPTS = 6
         private const val BIND_RETRY_MS = 250L
+        internal fun normalizedPagePath(path: String): String? = try {
+            val uri = java.net.URI(path).normalize()
+            if (!path.startsWith("/") || uri.rawAuthority != null || uri.isAbsolute) null
+            else java.net.URI(null, null, uri.path, null).normalize().path
+        } catch (_: Exception) { null }
+
+        internal fun isIsolatedPath(path: String): Boolean = normalizedPagePath(path)?.let {
+            it.startsWith("/viz/") || it.startsWith("/f/")
+        } ?: false
+
+        /** Sec-Fetch-Site of a file-page request: absent, same-origin or none (core/page-auth.mjs fetchSiteOk). */
+        internal fun fetchSiteOk(site: String?): Boolean = site == null || site == "same-origin" || site == "none"
+
+        internal fun pageResponseLimit(path: String, isolated: Boolean = false): Long {
+            if (isolated) return 32L * 1024 * 1024
+            val p = normalizedPagePath(path) ?: return 0
+            if (!p.startsWith("/_pleiad/")) return 0
+            return (if (p.endsWith("/api/raw")) 32L else 8L) * 1024 * 1024
+        }
         private val PASS_REQUEST = setOf(
             "accept", "accept-language", "accept-encoding", "cache-control", "pragma",
             "if-none-match", "if-modified-since", "if-range", "range", "user-agent",
@@ -123,9 +143,11 @@ class DeviceProxy(
     val link = DeviceLink(loop, creds, keyPair, app, name, shell, backoff, connectTimeoutMs, log = log, plusIdToken = plusIdToken, plusReadmit = plusReadmit, plusTicket = plusTicket)
     private val wantPort = if (wantPort in 1024..65535) wantPort else 0
     @Volatile var port = 0; private set
+    @Volatile var isolatedPort = 0; private set
     val token: String = PairingCodec.b64urlEncode(randomBytes(32))
     @Volatile var creds: HostCreds = creds; private set
     private var server: ServerSocket? = null
+    private val isolatedServers = mutableListOf<ServerSocket>()
     private val sockets = ConcurrentHashMap.newKeySet<Socket>()
     @Volatile var closed = false; private set
     val staticCache = staticCacheFile?.let { StaticCache(it, log) }
@@ -151,8 +173,29 @@ class DeviceProxy(
         server = ss
         port = ss.localPort
         pool.execute { acceptLoop(ss) }
+        try {
+            val listeners = bindIsolatedListeners(lo)
+            isolatedServers.addAll(listeners)
+            isolatedPort = listeners.first().localPort
+            for (listener in listeners) pool.execute { acceptLoop(listener, true) }
+        } catch (e: IOException) { log("remote proxy: isolated pages unavailable (${e.message})") }
         link.start()
         return this
+    }
+
+    private fun bindIsolatedListeners(lo: InetAddress): List<ServerSocket> {
+        val v6 = InetAddress.getByName("::1")
+        val hasIPv6 = NetworkInterface.getByInetAddress(v6) != null
+        for (attempt in 0 until BIND_ATTEMPTS) {
+            val v4 = ServerSocket(0, 64, lo)
+            try {
+                return if (hasIPv6) listOf(v4, ServerSocket(v4.localPort, 64, v6)) else listOf(v4)
+            } catch (e: IOException) {
+                v4.close()
+                if (attempt == BIND_ATTEMPTS - 1) throw e
+            }
+        }
+        throw IOException("page listeners unavailable")
     }
 
     /**
@@ -200,16 +243,18 @@ class DeviceProxy(
         closed = true
         link.stop()
         try { server?.close() } catch (_: IOException) {}
+        for (ss in isolatedServers) try { ss.close() } catch (_: IOException) {}
         for (s in sockets) try { s.close() } catch (_: IOException) {}
         sockets.clear()
     }
 
-    private fun acceptLoop(ss: ServerSocket) {
+    private fun acceptLoop(ss: ServerSocket, isolated: Boolean = false) {
         while (!closed) {
             val s = try { ss.accept() } catch (_: IOException) { break }
             sockets.add(s)
+            if (closed) { sockets.remove(s); s.close(); break }
             pool.execute {
-                try { handle(s) } catch (_: Exception) {} finally {
+                try { handle(s, isolated) } catch (_: Exception) {} finally {
                     sockets.remove(s)
                     try { s.close() } catch (_: IOException) {}
                 }
@@ -339,29 +384,36 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         object LocalGone : Ev()
     }
 
-    private fun handle(s: Socket) {
+    private fun handle(s: Socket, isolated: Boolean = false) {
         s.tcpNoDelay = true
         s.soTimeout = 30_000
         val input = BufferedInputStream(s.getInputStream())
         val out = s.getOutputStream().buffered()
         val req = readHead(input) ?: return
-        if (req.headers["host"] != "127.0.0.1:$port") return writeSimple(out, 403, "text/plain; charset=utf-8", "forbidden".toByteArray())
+        val expectedHost = if (isolated) "localhost:$isolatedPort" else "127.0.0.1:$port"
+        if (req.headers["host"] != expectedHost) return writeSimple(out, 403, "text/plain; charset=utf-8", "forbidden".toByteArray())
         val (path, restQuery, qToken) = splitTarget(req.target) ?: return writeSimple(out, 400, null, ByteArray(0))
+        if (normalizedPagePath(path) == null) return writeSimple(out, 400, null, ByteArray(0))
         val forwardPath = if (restQuery.isEmpty()) path else "$path?$restQuery"
         val isUpgrade = (req.headers["upgrade"] ?: "").equals("websocket", ignoreCase = true)
+        if (isolated && (isUpgrade || !isIsolatedPath(path))) return writeSimple(out, 403, null, ByteArray(0))
+        // File pages: same check as the host's page entrance (core/page-auth.mjs). Only same-origin or the address bar
+        if (!isolated && !isUpgrade && pageResponseLimit(path) > 0 && !fetchSiteOk(req.headers["sec-fetch-site"])) {
+            return writeSimple(out, 403, "text/plain; charset=utf-8", "forbidden".toByteArray())
+        }
         if (isUpgrade) {
             if (path != "/ws") return writeSimple(out, 404, null, ByteArray(0))
             if (!tokenEq(qToken, token)) return writeSimple(out, 401, null, ByteArray(0))
             return handleWs(s, input, out, req, forwardPath)
         }
-        val queryOk = tokenEq(qToken, token)
-        if (!queryOk && !tokenEq(tokenFromCookie(req.headers["cookie"]), token)) {
+        val queryOk = !isolated && pageResponseLimit(path) == 0L && tokenEq(qToken, token)
+        if (!isolated && !queryOk && !tokenEq(tokenFromCookie(req.headers["cookie"]), token)) {
             return writeSimple(out, 401, "text/plain; charset=utf-8", texts.tokenRequired().toByteArray(Charsets.UTF_8))
         }
         if (req.method != "GET" && req.method != "HEAD") {
             return writeSimple(out, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(), mapOf("Allow" to "GET, HEAD"))
         }
-        handleHttp(s, out, req, path, restQuery, queryOk)
+        handleHttp(s, out, req, path, restQuery, queryOk, isolated)
     }
 
     private fun awaitChannel(q: LinkedBlockingQueue<Ev>): Ev.Ready {
@@ -445,20 +497,27 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         out.flush()
     }
 
-    private fun handleHttp(s: Socket, out: OutputStream, req: Request, path: String, restQuery: String, queryOk: Boolean) {
+    private fun pagePorts() = JSONObject().put("main", port).put("pages", port).put("isolated", isolatedPort)
+
+    private fun handleHttp(s: Socket, out: OutputStream, req: Request, path: String, restQuery: String, queryOk: Boolean, isolated: Boolean = false) {
         val forwardPath = if (restQuery.isEmpty()) path else "$path?$restQuery"
         val q = LinkedBlockingQueue<Ev>()
         val ready = awaitChannel(q)
         val ch = ready.ch ?: return unavailable(out, req, ready.err?.state ?: "offline", null)
         val cache = staticCache
-        if (cache != null && restQuery.isEmpty()) {
+        if (!isolated && cache != null && restQuery.isEmpty()) {
             val pageLoad = path == "/" || path == "/index.html"
             val file = localBundle(cache, ch, pageLoad)?.files?.get(if (pageLoad) "/index.html" else path)
             if (file != null) return writeLocal(out, req, file, queryOk)
         }
         val headers = JSONObject()
         for ((k, v) in req.headers) if (k in PASS_REQUEST) headers.put(k, v)
-        val head = JSONObject().put("method", req.method).put("path", forwardPath).put("headers", headers)
+        val limit = pageResponseLimit(path, isolated)
+        if (limit > 0) headers.put("accept-encoding", "identity")
+        // The host checks the same header, so pass it on page routes only
+        if (limit > 0 && !isolated) req.headers["sec-fetch-site"]?.let { headers.put("sec-fetch-site", it) }
+        val head = JSONObject().put("method", req.method).put("path", forwardPath).put("headers", headers).put("pagePorts", pagePorts())
+        if (isolated) head.put("destination", "isolated")
         loop.post {
             try {
                 val st = ch.openHttp(head)
@@ -477,6 +536,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         val opened = q.take() as Ev.Opened
         val stream = opened.stream ?: return unavailable(out, req, "offline", opened.err?.message)
         var headersSent = false
+        var received = 0L
         try {
             while (true) {
                 val ev = q.poll(10, TimeUnit.MINUTES) ?: break
@@ -485,6 +545,12 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                         val status = ev.head.optInt("status", 502).let { if (it in 100..599) it else 502 }
                         val sb = StringBuilder("HTTP/1.1 $status ${REASONS[status] ?: ""}\r\n")
                         val hs = ev.head.optJSONObject("headers") ?: JSONObject()
+                        if (limit > 0 && req.method != "HEAD") {
+                            for (k in hs.keys()) {
+                                if (k.equals("content-length", true) && (hs.optString(k).toLongOrNull() ?: 0) > limit) throw IOException("page response too large")
+                                if (k.equals("content-encoding", true) && hs.optString(k) != "identity") throw IOException("compressed page response")
+                            }
+                        }
                         for (k in hs.keys()) {
                             val key = k.lowercase()
                             if (key in DROP_RESPONSE || key.startsWith("proxy-")) continue
@@ -499,6 +565,8 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
                     }
                     is Ev.Data -> {
                         try {
+                            received += ev.chunk.size
+                            if (limit > 0 && received > limit) throw IOException("page response too large")
                             out.write(ev.chunk)
                             if (q.isEmpty()) out.flush()
                         } finally {
@@ -521,6 +589,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
             // The WebView cancelled the load: drop the stream too
             val st = stream
             loop.post { if (!st.destroyed) st.reset(ResetCode.CANCEL) }
+            if (!headersSent) try { writeSimple(out, 502, "text/plain; charset=utf-8", "bad gateway".toByteArray()) } catch (_: IOException) {}
             // Return the credit of anything still queued
             while (true) { val ev = q.poll() ?: break; if (ev is Ev.Data) ev.release() }
         }
@@ -533,7 +602,7 @@ var b=document.getElementById('back-to-hosts');if(typeof window.backToHosts==='f
         val ready = awaitChannel(q)
         val ch = ready.ch ?: return writeSimple(out, 502, null, ByteArray(0))
         val protocols = (req.headers["sec-websocket-protocol"] ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }
-        val head = JSONObject().put("path", forwardPath).put("protocols", JSONArray(protocols))
+        val head = JSONObject().put("path", forwardPath).put("protocols", JSONArray(protocols)).put("pagePorts", pagePorts())
         loop.post {
             try {
                 val st = ch.openWs(head)

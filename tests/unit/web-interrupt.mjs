@@ -71,6 +71,7 @@ export default function (t) {
 
   // ---- 更新で止めた会話（脇の下の一行）
   const sessions = [
+    { id: 'gone', deletedBot: { id: 'b_gone', name: 'Gone' }, interrupted: { at: 900, reason: 'update' } },
     { id: 'u1', interrupted: { at: 100, reason: 'update' } },
     { id: 'u2', interrupted: { at: 300, reason: 'update' } },
     { id: 'me', interrupted: { at: 400, reason: 'user' } },
@@ -112,7 +113,7 @@ export default function (t) {
   t.ok('再開で中断の印を先に下ろさない', resumeFn.length > 0 && !resumeFn.includes('interrupted = null') && resumeFn.includes('resuming.set(sessionId'));
   t.ok('ターンの開始・終わりで再開の受け付けを解く', /for \(const id of running\) if \(resumeSettled\(id\)\)/.test(client) && client.includes('resumeSettled(ev.sessionId)'));
   const resumeAll = client.slice(client.indexOf("$('resumeAll').onclick"), client.indexOf("$('closeResumeStrip').onclick"));
-  t.ok('まとめて再開は、もう続いた会話を飛ばし、失敗に数えない', resumeAll.includes('if (!isInterrupted(state.sessions.find(s => s.id === id)) || resuming.has(id)) continue;') && resumeAll.includes("e.code !== 'NOT_INTERRUPTED'"));
+  t.ok('まとめて再開は、もう続いた会話と閲覧用会話を飛ばし、失敗に数えない', resumeAll.includes('if (session?.deletedBot || !isInterrupted(session) || resuming.has(id)) continue;') && resumeAll.includes("e.code !== 'NOT_INTERRUPTED'"));
   t.ok('更新の後の一行は、サーバーの起動時刻より前の中断だけ・更新を進めている間は出さない',
     client.includes('startedAt: state.serverStartedAt ?? 0') && client.includes('updatesUi?.applying') && client.includes('state.serverStartedAt = Number.isFinite(m.startedAt)'));
   t.ok('更新の確認に実行作業の一覧や中断確認を持たない', !updates.includes('stopWork') && !updates.includes('workRows') && !html.includes('updatePromptWork'));

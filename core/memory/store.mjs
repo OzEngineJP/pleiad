@@ -1,4 +1,5 @@
-// 記憶の正本（ADR 0110）。markdown（<dir>/user.md・<dir>/bots/<botId>.md）と、変更の記録 <dir>/log.jsonl（rev・墓石・誰がしたか）。
+// 記憶の正本（ADR 0110）。markdown（<dir>/user.md・<dir>/bots/<botId>.md）と変更履歴（rev・墓石・誰がしたか）。
+// 履歴は <dir>/log.jsonl。bot の削除時には既存 memory_state の memory.log / memory.log.meta へ移し、以降は行単位で保存・削除する（ADR 0293）。
 // 索引（index.mjs）は派生で、ここが持つのは正本だけ。
 //
 // markdown の形（docs/channels.md の元の計画 §1.6）:
@@ -19,6 +20,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { writeAtomic } from '../atomic-file.mjs';
+import { openData } from '../data-schema.mjs';
+import { memoryStateTable } from '../db.mjs';
 import { newId, isId, isAuthor, authorKey } from '../channels/types.mjs';
 import { isMemoryKind, isMemoryStatus, isWeight } from './strength.mjs';
 
@@ -126,6 +129,11 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
   let rev = 0;
   let queue = Promise.resolve();
   let ready = false;
+  let handle = null, journal = null, inDatabase = false;
+  const openJournal = () => {
+    if (!handle) { handle = openData(path.dirname(dir)); journal = memoryStateTable(handle.db); }
+    return journal;
+  };
 
   /** 変更・読み込みを 1 本に並べる */
   const serial = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
@@ -145,8 +153,11 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
   }
 
   async function readLog() {
+    const exists = await fs.access(path.join(path.dirname(dir), 'pleiad.db')).then(() => true, () => false);
+    const table = exists ? openJournal() : null;
+    inDatabase = table?.get('memory.log.meta', 'migrated') === true;
     let raw = '';
-    try { raw = await fs.readFile(logFile, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (!inDatabase) try { raw = await fs.readFile(logFile, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
     records = [];
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
@@ -154,6 +165,13 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
         const rec = JSON.parse(line);
         if (Number.isInteger(rec?.rev) && typeof rec.op === 'string') records.push(rec);
       } catch { /* 最後の行が書きかけで壊れていたら捨てる */ }
+    }
+    if (inDatabase) {
+      records = Object.values(table.ofKind('memory.log')).sort((a, b) => a.rev - b.rev);
+      // 移行の保存後、旧ログの削除前に停止しても、旧い本文を残さず再開する。
+      const legacy = await fs.readFile(logFile).catch(e => { if (e.code !== 'ENOENT') throw e; return null; });
+      if (legacy && crypto.createHash('sha256').update(legacy).digest('hex') !== table.get('memory.log.meta', 'legacyHash')) throw new Error('memory/log.jsonl changed after migration; restore or reconcile the history before continuing');
+      if (legacy) await fs.unlink(logFile);
     }
     known.clear(); forgotten.clear(); tombstones.clear();
     for (const rec of records) apply(rec);
@@ -174,9 +192,12 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
 
   async function appendLog(rec) {
     const full = { rev: rev + 1, at: now(), ...rec };
-    await fs.mkdir(dir, { recursive: true });
-    const lead = (await endsWithNewline()) ? '' : '\n';
-    await fs.appendFile(logFile, `${lead}${JSON.stringify(full)}\n`, 'utf8');
+    if (inDatabase) openJournal().save([['memory.log', String(full.rev), full]]);
+    else {
+      await fs.mkdir(dir, { recursive: true });
+      const lead = (await endsWithNewline()) ? '' : '\n';
+      await fs.appendFile(logFile, `${lead}${JSON.stringify(full)}\n`, 'utf8');
+    }
     rev = full.rev;
     records.push(full);
     apply(full);
@@ -267,6 +288,30 @@ export function createMemoryStore({ dir, now = Date.now, titleOf = (layer) => la
     get: (id) => { for (const list of cache.values()) { const e = list.find((x) => x.id === id); if (e) return publicEntry(e); } return null; },
     layers: () => [...cache.keys()],
     rev: () => rev,
+    close() { handle?.release(); handle = null; journal = null; ready = false; },
+    // bot 削除では「忘れる」の取り消しも残さない。共通層の履歴は保持する。
+    purgeLayer: (layer) => serial(async () => {
+      if (layer === USER_LAYER || !isLayer(layer)) throw new Error('invalid bot memory layer');
+      await ensureReady();
+      await fs.unlink(layerFile(layer)).catch(e => { if (e.code !== 'ENOENT') throw e; });
+      const next = records.filter(r => r.layer !== layer);
+      next.push({ rev: rev + 1, at: now(), op: 'purge', layer });
+      // 初回の削除で履歴を行へ移す。以降は対象の行だけ消す（全件のファイル書き直しを増やさない）。
+      const changes = inDatabase
+        ? records.filter(r => r.layer === layer).map(r => ['memory.log', String(r.rev), undefined])
+        : next.slice(0, -1).map(r => ['memory.log', String(r.rev), r]);
+      const purge = next.at(-1);
+      changes.push(['memory.log', String(purge.rev), purge], ['memory.log.meta', 'migrated', true]);
+      const legacy = await fs.readFile(logFile).catch(e => { if (e.code !== 'ENOENT') throw e; return null; });
+      if (legacy) changes.push(['memory.log.meta', 'legacyHash', crypto.createHash('sha256').update(legacy).digest('hex')]);
+      openJournal().save(changes);
+      inDatabase = true;
+      records = next; rev++;
+      cache.delete(layer); sigs.delete(layer);
+      known.clear(); forgotten.clear(); tombstones.clear();
+      for (const rec of records) apply(rec);
+      await fs.unlink(logFile).catch(e => { if (e.code !== 'ENOENT') throw e; });
+    }),
     recordsSince: (since) => records.filter((r) => r.rev > since),
     isTombstoned: (fp) => tombstones.has(fp),
     /** 忘れた直後で、戻せる記憶（最後の操作が forget）の写し。無ければ null */

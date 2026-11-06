@@ -1,7 +1,8 @@
 // Chrome の操作待ち（core/chrome/handoff.mjs）と、引き継ぐ・戻す（core/chrome/control.mjs）の通し（第 7 段 C）。偽の Chrome・偽の OS の層・偽の askPermission。
 // サーバーと同じく、台帳を先に作って中継へ渡し、control を後から useControl で差し込む。カードのボタンは ops（browser.chromeTakeOver・chromeResume）を呼ぶ。
 //   - カードの「Chrome で操作する」→ 引き継ぐ → カードが「あなたが操作中」（by: pc）。「Claude に戻す」→ 戻す → カードが決着し、待っていた hand_to_user が resumed を受ける
-//   - 人がパネルから先に引き継いでいたら、hand_to_user は「お願い」を出さずに「あなたが操作中」から待つ（端末から引き継いでいれば by: device）
+//   - 人がパネルから先に「PC で操作する」を押していたら、hand_to_user は「お願い」を出さずに「あなたが操作中」から待つ
+//   - 「この端末で操作する」はタブを人の操作にするだけで会話を paused にしない（ADR 0296）ので、カードの状態は替えない（頼みの終わりは人の「終わった」か AI の待ちの終わり）
 //   - ターンが終わっていたら、戻したときに「続けてください」がちょうど 1 回
 import { WebSocket } from 'ws';
 import { startFakeChrome } from '../lib/fake-chrome.mjs';
@@ -172,14 +173,6 @@ export default async function (t) {
       const result = await waiting;
       t.ok('戻すと決着する（resumed）', result.kind === 'resumed' && r.cards[0].answer?.response.kind === 'resumed' && r.env.sent.length === 0);
 
-      // 端末から先に引き継いでいた（by: device）
-      const took = await r.press.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2 });
-      t.ok('端末から引き継ぐ（by: device。窓は見せない）', took.by === 'device' && r.os.calls('reveal').length === 1, JSON.stringify(took));
-      r.handoffs.ask('one', { reason: 'payment' });
-      t.ok('カードは「端末で操作中」（by: device）から', r.cards.length === 2 && r.cards[1].updates[0]?.state === 'operating' && r.cards[1].updates[0].by === 'device', JSON.stringify(r.cards[1].updates));
-      const waiting2 = r.handoffs.wait('one');
-      await r.press.resume('one');
-      t.ok('端末の「Claude に戻す」でも決着する', (await waiting2).kind === 'resumed');
     } finally { await r.stop(); }
   }
 
@@ -195,8 +188,8 @@ export default async function (t) {
       t.ok('区切りで waiting を返してもカードは残る', (await r.handoffs.wait('one', { sliceMs: 20 })).kind === 'waiting' && r.cards[0].answer === null);
       r.endTurn('one');
       t.ok('ターンの外になったことがカードに届く（「Claude に戻して続ける」）', r.cards[0].updates.some(u => u.turnLive === false));
-      await r.press.takeOver('one', { by: 'device', width: 390, height: 700, scale: 2 });
-      t.ok('端末から「この端末で操作する」→ カードが「この端末で操作中」', lastUpdate(r.cards[0]).state === 'operating' && lastUpdate(r.cards[0]).by === 'device', JSON.stringify(r.cards[0].updates));
+      await r.press.takeOver('one');
+      t.ok('「PC で操作する」→ カードが「あなたが操作中」', lastUpdate(r.cards[0]).state === 'operating' && lastUpdate(r.cards[0]).by === 'pc', JSON.stringify(r.cards[0].updates));
       await r.press.resume('one');
       await until(() => r.env.sent.length > 0);
       t.ok('戻すと「続けてください」を 1 回送る（kind: resumed・決まった messageId）', r.env.sent.length === 1 && r.env.sent[0].sessionId === 'one' && r.env.sent[0].kind === 'resumed' && typeof r.env.sent[0].messageId === 'string', JSON.stringify(r.env.sent));

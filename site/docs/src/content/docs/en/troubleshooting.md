@@ -109,7 +109,6 @@ Running work did not stop. Update again once it finishes or you stop it.
 | The screen is locked, or an administrator confirmation screen is showing | Unlock the PC, then continue |
 | The computer operation was stopped because Pleiad is updating | Wait for the update to finish, then retry |
 | Computer use is not available in this environment | Computer use only works on the desktop host |
-| This PC can't use the built-in browser (desktop app only) | The built-in browser is only available in the desktop app |
 | The agent browser (Chrome) is not available on this OS or in this environment yet | Chrome control is not supported on that OS/environment yet |
 | Some attachments couldn't be sent. Retry or remove them | Re-attach or remove the attachment, then send |
 | Fetching the image did not finish in time | Check the connection and attach again |

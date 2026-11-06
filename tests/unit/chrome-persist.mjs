@@ -4,6 +4,7 @@ import { fakeChromeOs, fakeMainPort } from '../lib/fake-chrome-os.mjs';
 import { startHolder } from '../lib/holder-harness.mjs';
 import { createChromeConnection } from '../../core/chrome/connection.mjs';
 import { createChromeRelay, PAUSED_MESSAGE } from '../../core/chrome/relay.mjs';
+import { HUMAN_MESSAGE, RESNAPSHOT_MESSAGE } from '../../core/chrome/tab-holder.mjs';
 import { createChromeWindows, WINDOW_DIP } from '../../core/chrome/windows.mjs';
 import { createChromeControl } from '../../core/chrome/control.mjs';
 import { openChromeLink } from '../../core/chrome/link.mjs';
@@ -76,9 +77,9 @@ export default async function (t) {
       authorize: async () => ({ allow: true }), deniedMessage: () => 'DENIED', log: line => logs.push(line), ...(carryExtra ? { carryExtra } : {}), ...(relayOptions ?? {}) });
     await relay.restore(link.welcome.carry, { staleSessions: link.welcome.sessions });
     const adopted = await conn.adopt();
-    // 第 6 段の control（server.mjs と同じく、restore の後に作る。一時停止のまま引き継がれた会話の撮影を断つ）
+    // control（server.mjs と同じく、restore の後に作る。一時停止・PC で操作するのまま持ち越した会話の撮影を断つ）
     const captureLog = [];
-    const control = createChromeControl({ relay, os, capture: { suspend: id => captureLog.push(`suspend:${id}`), resume: id => captureLog.push(`resume:${id}`), operate: (id, viewport) => captureLog.push(`operate:${id}:${viewport ? `${viewport.width}x${viewport.height}@${viewport.scale}` : 'off'}`) }, log: line => logs.push(line) });
+    const control = createChromeControl({ relay, os, capture: { suspend: id => captureLog.push(`suspend:${id}`), resume: id => captureLog.push(`resume:${id}`) }, log: line => logs.push(line) });
     relay.onCarry(carry => link.setCarry(carry));
     if (manual) return { link, conn, relay, control, captureLog, logs, adopted };   // rejoin・readopt は試験が呼ぶ
     await relay.rejoin();
@@ -303,7 +304,7 @@ export default async function (t) {
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 
-    // ===== 5. 一時停止（引き継ぎ）のまま更新を越える: 一時停止は解けず、人が操作している窓へエージェントのコマンドが通らない（ADR 0154・0167）=====
+    // ===== 5. 「PC で操作する」のまま更新を越える: 窓は見せたまま・paused（by: pc）に戻り、そのタブはエージェントに触らせない。「任せる」で隠して AI に戻す（ADR 0167・0296）=====
     {
       await clearChildren();
       const chrome = await startFakeChrome({ permission: 'auto' });
@@ -315,30 +316,74 @@ export default async function (t) {
       await ag.cmd('Target.setDiscoverTargets', { discover: true });
       const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
       const windowId = chrome.browser.targets().find(x => x.targetId === tabId)?.windowId;
-      await a.control.takeOver('conv-5');
-      const pausedAt = a.relay.state('conv-5').paused?.at;
+      await until(() => a.relay.view.current('conv-5') === tabId, 3000, 'current tab');
+      const onPc = await a.control.takeOver('conv-5');
       const shown = () => os.hwnds().filter(h => h.agent && !h.concealed && !h.closed);
-      t.ok('前提: 引き継ぐと窓は見える形になり、carry に一時停止の印（at）と見せている窓の印が載る',
-        shown().length === 1 && Number.isFinite(pausedAt) && a.relay.snapshot().entries[0].paused?.at === pausedAt && a.relay.snapshot().windows[0].revealed === true, JSON.stringify(a.relay.snapshot()));
-      // 出ていく前に carry の一時停止の印へ by を足す（第 7 段 C の by: 'device' が載っても持ち越す）
-      const carry = a.relay.snapshot();
-      carry.entries[0].paused.by = 'device';
-      a.link.setCarry(carry);
+      t.ok('前提: PC で操作すると窓は見える形になり、carry には見せている窓の印だけが載る（会話の一時停止はしない）',
+        onPc.state === 'paused' && onPc.by === 'pc' && shown().length === 1 && !a.relay.snapshot().entries[0].paused && a.relay.snapshot().windows[0].revealed === true, JSON.stringify(a.relay.snapshot()));
       await leave(a);
+      ag.close();
       const concealCalls = os.calls('conceal').length;
       const closeCalls = os.calls('closeAgent').length;
 
       const b = await newServer(chrome, os);
-      const paused = b.relay.state('conv-5')?.paused;
-      t.ok('新しいサーバー: 一時停止は解けない（始まりの時刻 at と by も同じ）', !!paused && paused.at === pausedAt && paused.by === 'device', JSON.stringify(paused));
-      t.ok('新しいサーバー: control も一時停止と見る（状態・撮影を断つ・since）',
-        b.control.state('conv-5').state === 'paused' && b.control.state('conv-5').since === pausedAt && b.control.captureBlocked('conv-5') && b.captureLog.includes('suspend:conv-5'), JSON.stringify([b.control.state('conv-5'), b.captureLog]));
+      const state = b.control.state('conv-5');
+      t.ok('新しいサーバー: control は「PC で操作する」（paused・by: pc）と見て、撮影を断つ',
+        state.state === 'paused' && state.by === 'pc' && b.captureLog.includes('suspend:conv-5') && !b.relay.state('conv-5')?.paused, JSON.stringify([state, b.captureLog]));
       t.ok('新しいサーバー: 人が操作している窓は見える形のまま・隠さない・閉じない（層は revealed で引き継ぐ）',
         shown().length === 1 && os.calls('conceal').length === concealCalls && os.calls('closeAgent').length === closeCalls && tabsIn(chrome, windowId).length === 1
         && os.calls('adoptAgent').at(-1)?.revealed === true, JSON.stringify(os.calls('adoptAgent')));
-      t.ok('新しいサーバー: 見せている窓の印も持ち越す（戻すまで popup も隠さない）', b.relay.scope.isRevealed('conv-5') === true);
+      t.ok('新しいサーバー: 見せている窓の印も持ち越す（任せるまで popup も隠さない）', b.relay.scope.isRevealed('conv-5') === true);
 
-      // エージェントがつなぎ直しても、コマンドは全部断られ、Chrome の窓へ届かない
+      // エージェントがつなぎ直しても、人の窓のタブへの操作は断られる
+      const ag2 = await agent(url);
+      await ag2.cmd('Target.setDiscoverTargets', { discover: true });
+      const sid = (await ag2.cmd('Target.attachToTarget', { targetId: tabId, flatten: true })).result?.sessionId;
+      await until(() => b.relay.unify.tabHolder.holder('conv-5', tabId)?.holder === 'human', 3000, 'carried pc holder');
+      const held = b.relay.unify.tabHolder.holder('conv-5', tabId);
+      const refused = await ag2.cmd('Runtime.evaluate', { expression: '1' }, sid);
+      t.ok('更新の後、つなぎ直したエージェントの人の窓のタブへの操作は断られる（PC の持ち手で固定）',
+        held.by === 'pc' && held.pinned === true && refused.error?.message === HUMAN_MESSAGE, JSON.stringify([held, refused]));
+
+      // 任せる: 窓は画面の外の見えない窓に戻り、タブは AI に戻る（最初の操作は snapshot の撮り直しを頼む）
+      await b.control.resume('conv-5');
+      t.ok('更新の後に「任せる」: 窓は隠れ、paused が解け、撮影も戻る',
+        b.control.state('conv-5').state !== 'paused' && shown().length === 0 && os.hwnds().some(h => h.agent && h.concealed && !h.closed) && b.captureLog.includes('resume:conv-5') && b.relay.scope.isRevealed('conv-5') === false);
+      const first = await ag2.cmd('Runtime.evaluate', { expression: '1' }, sid);
+      const second = await ag2.cmd('Runtime.evaluate', { expression: '1' }, sid);
+      t.ok('任せた後のエージェントの最初の操作は撮り直しを頼まれ、次から通る', first.error?.message === RESNAPSHOT_MESSAGE && !second.error, JSON.stringify([first, second]));
+      ag2.close();
+      await b.relay.close(); await b.conn.close(); await b.link.quit();
+    }
+
+    // ===== 5b. 前の版（引き継ぎ＝会話の一時停止の形）から一時停止のまま更新した: 一時停止は解けず、全部断る。「任せる」で隠して解く（ADR 0154・0167）=====
+    {
+      await clearChildren();
+      const chrome = await startFakeChrome({ permission: 'auto' });
+      cleanups.push(() => chrome.stop());
+      const os = fakeChromeOs({ chrome });
+      const a = await newServer(chrome, os);
+      const url = await a.relay.endpoint('conv-5b');
+      const ag = await agent(url);
+      await ag.cmd('Target.setDiscoverTargets', { discover: true });
+      const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      const windowId = chrome.browser.targets().find(x => x.targetId === tabId)?.windowId;
+      await a.control.takeOver('conv-5b');
+      // 前の版の carry の形にする（一時停止の印 at・by を足す）
+      const pausedAt = 1_700_000_000_000;
+      const carry = a.relay.snapshot();
+      carry.entries[0].paused = { at: pausedAt, by: 'pc' };
+      a.link.setCarry(carry);
+      await leave(a);
+      ag.close();
+      const shown = () => os.hwnds().filter(h => h.agent && !h.concealed && !h.closed);
+
+      const b = await newServer(chrome, os);
+      const paused = b.relay.state('conv-5b')?.paused;
+      t.ok('前の版の一時停止: 新しいサーバーでも解けない（始まりの時刻 at と by も同じ）', !!paused && paused.at === pausedAt && paused.by === 'pc', JSON.stringify(paused));
+      t.ok('前の版の一時停止: control も paused と見る（撮影を断つ・since）',
+        b.control.state('conv-5b').state === 'paused' && b.control.state('conv-5b').since === pausedAt && b.captureLog.includes('suspend:conv-5b'), JSON.stringify([b.control.state('conv-5b'), b.captureLog]));
+      t.ok('前の版の一時停止: 窓は見える形のまま', shown().length === 1 && tabsIn(chrome, windowId).length === 1);
       const pagesBefore = chrome.browser.targets().filter(x => x.type === 'page').length;
       const ag2 = await agent(url);
       const replies = [];
@@ -346,22 +391,20 @@ export default async function (t) {
       replies.push(await ag2.cmd('Target.setDiscoverTargets', { discover: true }));
       replies.push(await ag2.cmd('Target.createTarget', { url: 'about:blank' }));
       replies.push(await ag2.cmd('Target.attachToTarget', { targetId: tabId, flatten: true }));
-      t.ok('更新の後、つなぎ直したエージェントのコマンドは全部 PAUSED で断られる（人の窓へ通らない）',
+      t.ok('前の版の一時停止: つなぎ直したエージェントのコマンドは全部 PAUSED で断られる（人の窓へ通らない）',
         replies.every(r => r.error?.message === PAUSED_MESSAGE) && tabsIn(chrome, windowId).length === 1 && chrome.browser.targets().filter(x => x.type === 'page').length === pagesBefore, JSON.stringify(replies));
-
-      // 戻す: 窓は画面の外の見えない窓に戻り、一時停止が解け、エージェントのコマンドが通る
-      await b.control.resume('conv-5');
+      await b.control.resume('conv-5b');
       ag2.close();
       const ag3 = await agent(url);
       await ag3.cmd('Target.setDiscoverTargets', { discover: true });
       await until(async () => (await ag3.cmd('Target.getTargets')).result?.targetInfos?.length === 1, 3000, 'resumed tab in scope');
-      t.ok('更新の後に「戻す」: 窓は隠れ、一時停止が解け、撮影も戻り、エージェントのコマンドが通る',
-        b.control.state('conv-5').state !== 'paused' && shown().length === 0 && os.hwnds().some(h => h.agent && h.concealed && !h.closed) && b.captureLog.includes('resume:conv-5') && b.relay.scope.isRevealed('conv-5') === false);
+      t.ok('前の版の一時停止に「任せる」: 窓は隠れ、一時停止が解け、撮影も戻り、エージェントのコマンドが通る',
+        b.control.state('conv-5b').state !== 'paused' && !b.relay.state('conv-5b').paused && shown().length === 0 && b.captureLog.includes('resume:conv-5b') && b.relay.scope.isRevealed('conv-5b') === false);
       ag3.close();
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 
-    // ===== 7. 端末から引き継いでいる間に更新: by・映像の箱が載り、新しいサーバーでも端末の引き継ぎのまま。openForConversation は新しい待ち受けでも動く =====
+    // ===== 7. 「この端末で操作する」の間に更新: 会話の一時停止は無いので carry に載らず、窓も見せない。openForConversation は新しい待ち受けでも動く =====
     {
       await clearChildren();
       const chrome = await startFakeChrome({ permission: 'auto' });
@@ -372,24 +415,18 @@ export default async function (t) {
       const ag = await agent(url);
       await ag.cmd('Target.setDiscoverTargets', { discover: true });
       const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
+      await until(() => a.relay.view.current('conv-7') === tabId, 3000, 'current tab');
       const took = await a.control.takeOver('conv-7', { by: 'device', width: 390, height: 700, scale: 2 });
-      t.ok('前提: 端末から引き継ぐと by: device・窓は見せない', took.state === 'paused' && took.by === 'device' && os.hwnds().filter(h => h.agent && !h.concealed && !h.closed).length === 0, JSON.stringify(took));
+      t.ok('前提: この端末で操作する → 会話は running のまま・そのタブは端末の人の操作・窓は見せない',
+        took.state !== 'paused' && took.by === null && a.relay.unify.tabHolder.holder('conv-7', tabId)?.by === 'device' && os.hwnds().filter(h => h.agent && !h.concealed && !h.closed).length === 0, JSON.stringify(took));
       const entry = a.relay.snapshot().entries.find(e => e.id === 'conv-7');
-      t.ok('carry の一時停止の印に by と映像の箱が載る', entry?.paused?.by === 'device' && entry.paused.viewport?.width === 390 && entry.paused.viewport.scale === 2 && !a.relay.snapshot().windows.some(w => w.revealed), JSON.stringify(entry));
+      t.ok('carry には一時停止も見せている窓の印も載らない', entry && !entry.paused && !a.relay.snapshot().windows.some(w => w.revealed), JSON.stringify(entry));
       await leave(a);
       ag.close();
 
       const b = await newServer(chrome, os);
       const state = b.control.state('conv-7');
-      t.ok('新しいサーバー: 端末の引き継ぎのまま（by: device・since 同じ）で、映像は断たず、箱を映像に伝え直す',
-        state.state === 'paused' && state.by === 'device' && state.since === entry.paused.at && !b.control.captureBlocked('conv-7')
-        && !b.captureLog.includes('suspend:conv-7') && b.captureLog.includes('operate:conv-7:390x700@2'), JSON.stringify([state, b.captureLog]));
-      const ag2 = await agent(url);
-      const refused = await ag2.cmd('Target.createTarget', { url: 'about:blank' });
-      t.ok('新しいサーバー: 端末が操作している間もエージェントのコマンドは PAUSED で断られる', refused.error?.message === PAUSED_MESSAGE, JSON.stringify(refused));
-      ag2.close();
-      await b.control.resume('conv-7');
-      t.ok('端末の引き継ぎを戻すと、箱を戻して一時停止が解ける', b.control.state('conv-7').state !== 'paused' && b.captureLog.includes('operate:conv-7:off'), JSON.stringify([b.control.state('conv-7'), b.captureLog]));
+      t.ok('新しいサーバー: paused にしない・撮影も断たない', state.state !== 'paused' && !b.captureLog.includes('suspend:conv-7'), JSON.stringify([state, b.captureLog]));
 
       // openForConversation: 同じポート・同じ鍵の新しい待ち受けで、新しい会話の窓を開く
       const port = b.relay.snapshot().port;
@@ -412,12 +449,13 @@ export default async function (t) {
       await ag.cmd('Target.setDiscoverTargets', { discover: true });
       const tabId = (await ag.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
       const windowId = chrome.browser.targets().find(x => x.targetId === tabId)?.windowId;
+      await until(() => a.relay.view.current('conv-6') === tabId, 3000, 'current tab');
       await a.control.takeOver('conv-6');
       await leave(a);
       os.opts.adoptFails = true;
       const b = await newServer(chrome, os);
       await sleep(300);
-      t.ok('見せている窓を引き継げなくても、人が操作中の窓のタブは閉じない。一時停止も解けない', tabsIn(chrome, windowId).length === 1 && !!b.relay.state('conv-6')?.paused, JSON.stringify(b.relay.state('conv-6')));
+      t.ok('見せている窓を引き継げなくても、人が操作中の窓のタブは閉じない。「PC で操作する」も解けない', tabsIn(chrome, windowId).length === 1 && b.control.state('conv-6').state === 'paused' && b.control.state('conv-6').by === 'pc', JSON.stringify(b.control.state('conv-6')));
       await b.relay.close(); await b.conn.close(); await b.link.quit();
     }
 

@@ -25,6 +25,31 @@ const DROP_RESPONSE = new Set([
 const WS_RELEASE_BELOW = 64 * 1024;
 const WS_PAUSE_ABOVE = 256 * 1024;
 
+/** ADR 0295 §5。圧縮された本体で上限を逃れないよう、ページの転送は identity にする。 */
+export function pageResponseLimit(path, isolated = false) {
+  let p;
+  try { p = decodeURIComponent(new URL(path, 'http://host.invalid').pathname); } catch { return 0; }
+  if (isolated) return 32 * 1024 * 1024;
+  if (!p.startsWith('/_pleiad/')) return 0;
+  return /\/api\/raw$/.test(p) ? 32 * 1024 * 1024 : 8 * 1024 * 1024;
+}
+
+export function isIsolatedPagePath(path) {
+  const checked = checkPath(path);
+  if (!checked) return false;
+  let p;
+  try { p = decodeURIComponent(checked.pathname); } catch { return false; }
+  if (p.split('/').some(part => part === '.' || part === '..') || p.includes('\\')) return false;
+  return p.startsWith('/viz/') || p.startsWith('/f/');
+}
+
+function validPort(port) { return Number.isInteger(port) && port > 0 && port <= 65535; }
+
+function devicePagePorts(ports) {
+  return ports && validPort(ports.main) && validPort(ports.isolated)
+    ? { main: ports.main, pages: ports.main, isolated: ports.isolated } : null;
+}
+
 /**
  * 端末の言うパスを検める。通すなら { path }（組み立て直したもの。token は落とす）、通さないなら null。
  * WHATWG の URL で読み直してから判定し、判定したものをそのまま送る（`/x/../mcp` や `\mcp` の抜け道を作らない）。
@@ -40,6 +65,15 @@ export function checkPath(raw) {
   for (const p of [lower, decoded]) if (p === '/mcp' || p.startsWith('/mcp/') || p === '/api/ops' || p.startsWith('/api/ops/') || p === '/hooks' || p.startsWith('/hooks/')) return null;
   u.searchParams.delete('token');
   return { path: u.pathname + u.search, pathname: u.pathname };
+}
+
+/** 端末から来た Sec-Fetch-Site。知らない値は cross-site として渡す（ホストで断られる） */
+function fetchSiteOf(from) {
+  if (!from || typeof from !== 'object' || Array.isArray(from)) return null;
+  const entry = Object.entries(from).find(([k]) => String(k).toLowerCase() === 'sec-fetch-site');
+  if (!entry) return null;
+  const value = String(entry[1] ?? '');
+  return ['same-origin', 'same-site', 'cross-site', 'none'].includes(value) ? value : 'cross-site';
 }
 
 function requestHeaders(from) {
@@ -76,25 +110,40 @@ function sendableCode(code) {
  * device は { id, platform }（この線の端末。ハンドシェイクで確かめた端末）。/ws には x-pleiad-device で渡し、
  * サーバーが「どの端末の画面か」（スマホへの通知の見ている印・通知鍵の登録）を知る。端末が自分で名乗ったヘッダーは通さない（requestHeaders）。
  */
-export function forwardStream(stream, { target, token, device = null }) {
+export function forwardStream(stream, { target, token, device = null, pagePorts = null }) {
   const head = stream.request ?? {};
   const checked = checkPath(head.path);
+  const isolated = head.destination === 'isolated';
+  if (head.destination != null && head.destination !== 'main' && !isolated) return stream.reset(RESET_CODE.FORBIDDEN);
+  const ports = devicePagePorts(head.pagePorts);
   // /agent は接続口が自分で受ける（connector.mjs → agent-port.mjs）。ローカルのサーバーへは通さない（docs/remote.md §4.5）
   if (checked?.pathname === AGENT_PATH) return stream.reset(RESET_CODE.FORBIDDEN);
   if (stream.kind === 'http') {
     const method = String(head.method ?? '').toUpperCase();
     if (!checked || (method !== 'GET' && method !== 'HEAD')) return stream.reset(RESET_CODE.FORBIDDEN);
-    return forwardHttp(stream, method, checked.path, requestHeaders(head.headers), target(), token);
+    const limit = pageResponseLimit(checked.path, isolated);
+    if ((isolated || limit) && !validPort(pagePorts?.isolated)) return stream.reset(RESET_CODE.FORBIDDEN);
+    if (isolated && !isIsolatedPagePath(checked.path)) return stream.reset(RESET_CODE.FORBIDDEN);
+    const headers = requestHeaders(head.headers);
+    if (limit) headers['accept-encoding'] = 'identity';
+    // このヘッダーは端末の HTTP 要求からは通さず、認証済みチャネルの頭からだけ作る。
+    // ファイルページの api/env と CSP を端末の origin にするための情報（ADR 0295 §5）。
+    if (!isolated && limit && ports) headers['x-pleiad-page-ports'] = JSON.stringify(ports);
+    // ファイルのページの出どころ（Sec-Fetch-Site）は、ページの道だけ通す。ホストの入口が same-origin・none のほかを断る（core/page-auth.mjs）
+    if (!isolated && limit) { const site = fetchSiteOf(head.headers); if (site) headers['sec-fetch-site'] = site; }
+    const dest = isolated ? { host: '127.0.0.1', port: pagePorts.isolated } : target();
+    return forwardHttp(stream, method, checked.path, headers, dest, isolated ? null : token, limit, pagePorts, ports);
   }
-  if (!checked || checked.pathname !== '/ws') return stream.reset(RESET_CODE.FORBIDDEN);
-  return forwardWs(stream, checked.path, head.protocols, target(), token, device);
+  if (isolated || !checked || checked.pathname !== '/ws') return stream.reset(RESET_CODE.FORBIDDEN);
+  return forwardWs(stream, checked.path, head.protocols, target(), token, device, ports, validPort(pagePorts?.isolated));
 }
 
-function forwardHttp(stream, method, path, headers, { host, port }, token) {
+function forwardHttp(stream, method, path, headers, { host, port }, token, limit, pagePorts, ports) {
   let responded = false;
   const req = http.request({
     host, port, method, path, agent: false,
-    headers: { ...headers, cookie: `${COOKIE_NAME}=${encodeURIComponent(token)}` },
+    headers: token == null ? { ...headers, host: `localhost:${port}` }
+      : { ...headers, cookie: `${COOKIE_NAME}=${encodeURIComponent(token)}` },
   });
   stream.on('reset', () => req.destroy());
   req.on('error', () => {
@@ -106,9 +155,20 @@ function forwardHttp(stream, method, path, headers, { host, port }, token) {
   });
   req.on('response', res => {
     if (stream.destroyed) { res.destroy(); return; }
+    const tooLarge = () => { stream.reset(RESET_CODE.FORBIDDEN); res.destroy(); req.destroy(); };
+    if (limit && method !== 'HEAD' && (Number(res.headers['content-length']) > limit ||
+      (res.headers['content-encoding'] && res.headers['content-encoding'] !== 'identity'))) return tooLarge();
     responded = true;
-    stream.respond({ status: res.statusCode ?? 502, headers: responseHeaders(res.headers) }).catch(() => {});
+    const out = responseHeaders(res.headers);
+    if (limit && ports && typeof out['content-security-policy'] === 'string') {
+      out['content-security-policy'] = out['content-security-policy'].split(/(\s+|;)/).map(source =>
+        source === `http://localhost:${pagePorts.isolated}` ? `http://localhost:${ports.isolated}` : source).join('');
+    }
+    stream.respond({ status: res.statusCode ?? 502, headers: out }).catch(() => {});
+    let received = 0;
     res.on('data', chunk => {
+      received += chunk.length;
+      if (limit && received > limit) return tooLarge();
       res.pause();
       stream.write(chunk).then(() => res.resume(), () => res.destroy());
     });
@@ -118,7 +178,7 @@ function forwardHttp(stream, method, path, headers, { host, port }, token) {
   req.end();
 }
 
-function forwardWs(stream, path, protocols, { host, port }, token, device) {
+function forwardWs(stream, path, protocols, { host, port }, token, device, ports, pagesEnabled) {
   const sep = path.includes('?') ? '&' : '?';
   const url = `ws://${host.includes(':') ? `[${host}]` : host}:${port}${path}${sep}token=${encodeURIComponent(token)}`;
   const list = Array.isArray(protocols) ? protocols.filter(p => typeof p === 'string' && /^[\x21-\x7e]{1,64}$/.test(p)).slice(0, 8) : [];
@@ -148,7 +208,17 @@ function forwardWs(stream, path, protocols, { host, port }, token, device) {
   });
   // ホスト → 端末。窓が詰まったらローカルの読み出しを止める
   local.on('message', (data, isBinary) => {
-    const buf = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
+    let buf = Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data)]);
+    if (pagesEnabled && !isBinary) {
+      try {
+        const msg = JSON.parse(buf.toString('utf8'));
+        if (msg.kind === 'response' && msg.result?.browserUnify) {
+          if (ports) msg.result.browserUnify = { ...msg.result.browserUnify, pages: ports.pages, isolated: ports.isolated };
+          else delete msg.result.browserUnify;
+          buf = Buffer.from(JSON.stringify(msg));
+        }
+      } catch { /* JSON 以外のメッセージはそのまま通す */ }
+    }
     inflight += buf.length;
     if (inflight > WS_PAUSE_ABOVE && !local.isPaused) local.pause();
     stream.send(buf, { text: !isBinary }).then(() => {

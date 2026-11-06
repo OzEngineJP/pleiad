@@ -90,7 +90,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
     clearTimeout(saveTimer);
     saveTimer = null;
     if (!draftKey) return;
-    const d = { text: input.value ?? '', attached: attach.items, at: Date.now() };
+    const d = { text: input.value ?? '', attached: attach.items, editing: input.editor.snapshotEditing(), at: Date.now() };
     if (!d.text.trim() && !d.attached.length) draftStore().delete(draftKey); else draftStore().set(draftKey, d);
     persistDrafts();
   }
@@ -243,7 +243,7 @@ export function createChComposer({ id, host, bucket = () => null, candidates, su
       draftKey = key;
       const d = key ? draftStore().get(key) : null;
       attach.restore(d?.attached);   // 添付の実体が先（本文の印は、ここにあるものだけが札になる）
-      input.value = d?.text ?? '';
+      input.editor.restoreDraft(d?.text ?? '', d?.editing);
       attach.placeTail();   // 文中に無い添付は末尾に札で（一覧の面が無いので）
       say('');
       paintHint();

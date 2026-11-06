@@ -1,0 +1,26 @@
+.code-block{position:relative;background:var(--surface-1);border-radius:6px;overflow:hidden;min-width:0;max-width:100%;margin:12px 0}
+.file-preview-document .code-block pre{margin:0;padding:14px 70px 14px 16px;background:transparent}
+.code-actions{position:absolute;display:flex;align-items:center;gap:6px;right:6px;top:6px}
+.code-actions svg{width:16px;height:16px;display:block;fill:none;stroke:currentColor}
+.code-actions .code-lang{font-size:10px;color:var(--ink-weak);background:var(--surface-1)}
+.code-copy{background:var(--surface-1);padding:4px;opacity:0}
+.code-block:hover .code-copy,.code-block:focus-within .code-copy{opacity:1}
+.folder-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 16px;margin-top:8px}
+.folder-grid .file-row{display:flex;padding:4px 8px;min-height:36px;gap:8px}
+.folder-grid .file-size,.folder-grid .file-date{display:none}
+.folder-grid .file-name{flex:1;font-size:12px}
+.git-page{min-width:0}
+.git-page-tools{display:flex;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line);gap:8px;margin-bottom:12px}
+.git-page-tools>.gp-prs{flex-basis:100%}
+.git-page-tools>.gp-tabs{flex:1;width:auto;min-width:0}
+.git-page-branch{flex-basis:100%;min-width:0;padding-top:4px}
+.git-page-foot{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:16px;color:var(--ink-weak);font-size:var(--fs-s)}
+.git-page-foot[hidden]{display:none}
+.git-page .i{width:16px;height:16px;display:inline-block;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:1.7;flex-shrink:0}
+.git-page .btn-icon{display:inline-flex;align-items:center;justify-content:center;padding:6px}
+.git-page .grow,.git-page .sp{flex:1}
+.git-page .seg{display:inline-flex;gap:2px;border-radius:6px;background:var(--surface-1);padding:2px}
+.git-page .seg button{font-size:11px;padding:4px 8px;background:transparent}
+.git-page .seg [aria-pressed=true]{background:var(--surface-paper)}
+@media(hover:none){.code-copy{opacity:1}}
+@media(max-width:600px){.folder-grid{gap:2px}.shortcuts{flex-wrap:wrap}.shortcut{min-width:130px}.recent-row{flex-wrap:wrap}.recent-source{white-space:normal}}

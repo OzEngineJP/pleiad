@@ -32,57 +32,17 @@ export default async function(t) {
     assert.equal(saved.presents[1].mode,'wide');
     t.ok('作業場所外の HTML を会話に配信し、再開・削除後も各版を保存',true);
 
-    // 右パネルの「ブラウザーで開く」: 写しをサーバーの記録から、sandbox の応答ヘッダー付きで返す
-    const base = `http://127.0.0.1:${server.port}/visualization-snapshot`;
-    const auth = { headers:{ cookie:`agent_host_token=${server.token}` } };
+    // 「ブラウザーで開く」は隔離の origin の束（/viz/<hash>/）を開く。内蔵ブラウザー向けの写し（/visualization-snapshot・openVisualization）は無くした（ADR 0294 の 6）
     assert(saved.presents[0].id, '新しい可視化の記録は id を持つ');
-    const byId = await fetch(`${base}?sessionId=${id}&id=${saved.presents[0].id}`, auth);
-    assert.equal(byId.status, 200);
-    const csp = byId.headers.get('content-security-policy');
-    assert.match(csp, /^sandbox allow-scripts;/); assert(!/allow-same-origin/.test(csp));
-    assert.match(csp, /connect-src https:/); assert.match(csp, /frame-ancestors 'none'/);
-    assert.match(byId.headers.get('content-type'), /^text\/html/);
-    assert.equal(byId.headers.get('cache-control'), 'private, no-store');
-    assert.equal(byId.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(byId.headers.get('referrer-policy'), 'no-referrer');
-    const html = await byId.text();
-    assert(html.includes('first') && html.includes('Content-Security-Policy'), '中身は会話に残った最初の版（ファイルは消えている）');
-    assert(!html.includes('ply-visualize-height'), '単体では高さを知らせるスクリプトを持たない');
-    const byAt = await fetch(`${base}?sessionId=${id}&at=${encodeURIComponent(saved.presents[1].at)}`, auth);
-    assert.equal(byAt.status, 200); assert((await byAt.text()).includes('second'), 'id の無い以前の記録は at で指す');
-    assert.equal((await fetch(`${base}?sessionId=${id}&id=${saved.presents[0].id}`)).status, 401, '認証が無ければ断る');
-    assert.equal((await fetch(`${base}?sessionId=${id}&id=missing`, auth)).status, 404);
-    assert.equal((await fetch(`${base}?sessionId=other&id=${saved.presents[0].id}`, auth)).status, 404, '別の会話からは引けない');
-    assert.equal((await fetch(`${base}?sessionId=${id}`, auth)).status, 400);
-    t.ok('写しを sandbox allow-scripts の CSP で返す（認証・不明・別の会話・指定なし）', true);
-    // 殻（デスクトップ版）は新しい窓を開かないので、写しをファイルにして既定のブラウザーへ渡す（OS の起動は dry）
-    const opened = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id });
-    assert(opened.path.startsWith(path.join(scratch,'data')), '写しはデータ置き場に書く');
-    const written = await fs.readFile(opened.path, 'utf8');
-    assert(written.includes('first') && written.includes('Content-Security-Policy'));
-    const inApp = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id, returnPath:true });
-    assert(inApp.path.startsWith(path.join(scratch,'data','visualization-snapshots')), '内蔵ブラウザー向けにもデータ置き場の写しのパスを返す');
-    const inAppWritten = await fs.readFile(inApp.path, 'utf8');
-    assert(inAppWritten.includes('Content-Security-Policy') && inAppWritten.includes("default-src 'none'"), 'file: の写しにも meta CSP を付ける');
-    assert(inAppWritten.includes("console.debug('ply-preview-blocked "), '内蔵ブラウザーの写しだけ、止めた資源を console へ知らせる橋を持つ（親が無いので postMessage ではない）');
-    assert(!written.includes('ply-preview-blocked') && !inAppWritten.includes('parent.postMessage'), '既定のブラウザーで開く写しには何も足さない');
-    // 内蔵ブラウザーの「読み込む」: そのタブだけの一時の許可（https の出どころ）を CSP に加えた写しを書き直す。設定の許可は変えない
-    await c.cmd('setPref', { key:'confirmExternalLoads', value:true });
-    const blockedCopy = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id, returnPath:true });
-    const allowedCopy = await c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id, returnPath:true, allow:['https://once.example', 'http://bad.example', 'javascript:1', 'https://u:p@x.example'] });
-    assert.notEqual(allowedCopy.path, blockedCopy.path, '一時の許可が違えば別のファイル');
-    const allowedText = await fs.readFile(allowedCopy.path, 'utf8'), blockedText = await fs.readFile(blockedCopy.path, 'utf8');
-    assert(allowedText.includes('img-src https://once.example data:') && !allowedText.includes('bad.example') && !allowedText.includes('x.example'), 'https の出どころだけが加わる');
-    assert(!blockedText.includes('once.example'), '許可の無い写しには加えない');
-    assert.deepEqual((await c.cmd('prefs'))?.externalSitePermissions ?? [], [], '一時の許可は保存しない');
-    await c.cmd('setPref', { key:'confirmExternalLoads', value:false });
-    await assert.rejects(c.cmd('openVisualization', { sessionId:id, id:'missing' }));
-    await assert.rejects(c.cmd('openVisualization', { sessionId:id, id:'missing', returnPath:true }));
+    const auth = { headers:{ cookie:`agent_host_token=${server.token}` } };
+    const retired = await fetch(`http://127.0.0.1:${server.port}/visualization-snapshot?sessionId=${id}&id=${saved.presents[0].id}`, auth);
+    assert.notEqual(retired.status, 200, '写しの口は無い');
+    await assert.rejects(c.cmd('openVisualization', { sessionId:id, id:saved.presents[0].id }), '写しを開くコマンドは無い');
     // 元のファイルが消えていても、在り処と作業ディレクトリは分かる（見出しの下の相対パス）
     const where = await c.cmd('resolvePath', { path:file, sessionId:id, lenient:true });
     assert.equal(path.resolve(where.path), path.resolve(file)); assert.equal(path.resolve(where.cwd), path.resolve(cwd));
     await assert.rejects(c.cmd('resolvePath', { path:file, sessionId:id }), '読むときは今までどおり実在を確かめる');
-    t.ok('殻向けに写しをファイルで開き、消えた元のファイルも在り処だけは引ける', true);
+    t.ok('写しの口は無く、消えた元のファイルも在り処だけは引ける', true);
     const third = await c.runTurn({sessionId:id,prompt});
     assert(third.events.some(e=>e.kind==='visualization'&&e.error));
     t.ok('欠損ファイルはエラーカードになり、ターンは終了する',true);

@@ -83,9 +83,9 @@ export default async function (t) {
 
     // ---- 見始める: 今のタブに自分のセッション + focus emulation + screencast ----
     const before = sessionsOf(first).length;
-    const watched = await hub.watch(client, 's1', { width: 480, height: 320, scale: 2, quality: 'auto' });
-    t.ok('見始めると、今のタブに中継自身のセッションを付けて screencast を始める（引数は表示の大きさ × 倍率・画質）',
-      watched.tabId === first && fake.screencasting(first) && fake.screencastParams(first)?.maxWidth === 960 && fake.screencastParams(first)?.maxHeight === 640 && fake.screencastParams(first)?.quality === 55,
+    const watched = await hub.watch(client, 's1', { width: 480, height: 320, scale: 2 });
+    t.ok('見始めると、今のタブに中継自身のセッションを付けて screencast を始める（最初は段 3: 大きさ 0.67・画質 55）',
+      watched.tabId === first && fake.screencasting(first) && fake.screencastParams(first)?.maxWidth === Math.round(480 * 2 * 0.67) && fake.screencastParams(first)?.maxHeight === Math.round(320 * 2 * 0.67) && fake.screencastParams(first)?.quality === 55,
       JSON.stringify([watched, fake.screencastParams(first)]));
     const view = fake.sessions().find(s => s.targetId === first && s.screencast);
     t.ok('映像のセッションは、エージェントのセッションとも、focus emulation を持つ中継のセッションとも別（映像のセッションは focus emulation を触らない）',
@@ -93,26 +93,22 @@ export default async function (t) {
     t.ok('state: 操作中の印・タブ数・撮影を断っていない・タブの並びと題（URL は載せない）', JSON.stringify(watched.state) === JSON.stringify({ tabId: first, agent: true, suspended: false, tabs: 1, pinnedWindowId: null, pinnedTabId: null,
       agentTabId: first, list: [{ tabId: first, windowId: windowOf(first), title: 'about:blank' }] }) && !JSON.stringify(watched.state).includes('url'), JSON.stringify(watched.state));
 
-    // ---- フレームと ack の間引き ----
-    const t0 = Date.now();
+    // ---- フレームと ack（ADR 0297: 撮影元へはすぐ返し、見る人ごとに返事ごとの 1 枚）----
     const frameId = fake.screencastFrame(first);
     await until(() => messages.some(m => m.type === 'frame'));
     const frame = messages.find(m => m.type === 'frame');
-    t.ok('フレームは source: chrome の screencast メッセージで端末へ（metadata に大きさ）', frame?.kind === 'screencast' && frame.source === 'chrome' && frame.sessionId === 's1' && frame.data === 'QUJD' && frame.metadata.deviceWidth === 1100, JSON.stringify(frame));
-    await sleep(300);
-    const acks = () => r.chrome.calls.filter(c => c.method === 'Page.screencastFrameAck' && c.params.sessionId === frameId);
-    t.ok('端末が受け取る（ack）まで、Chrome へ ack しない', acks().length === 0);
-    hub.received(client, 's1', frame.seq);
-    await until(() => acks().length === 1);
-    const ack = acks()[0];
-    t.ok('受け取った後、前のフレームから最小の間隔（200 ms）が過ぎてから、映像のセッションで Chrome へ ack する', ack?.sessionId !== undefined && ack.sessionId === view.id && Date.now() - t0 >= 190, `${Date.now() - t0}ms`);
-    // 端末が遅いとき: 受け取りを待つ（ackTimeout まで ack しない）
+    t.ok('フレームは印（mark）の直後に source: chrome の screencast メッセージで端末へ（metadata に大きさ）',
+      frame?.kind === 'screencast' && frame.source === 'chrome' && frame.sessionId === 's1' && frame.data === 'QUJD' && frame.metadata.deviceWidth === 1100
+      && messages[messages.indexOf(frame) - 1]?.type === 'mark' && messages[messages.indexOf(frame) - 1]?.seq === frame.seq, JSON.stringify(frame));
+    t.ok('見る人の返事を待たず、届いたらすぐ Chrome へ ack を返す（映像のセッションから）',
+      await until(() => r.chrome.calls.some(c => c.method === 'Page.screencastFrameAck' && c.params.sessionId === frameId && c.sessionId === view.id)),
+      JSON.stringify({ calls: r.chrome.calls.filter(c => c.method === 'Page.screencastFrameAck'), view: view?.id, frameId }));
     const slow = fake.screencastFrame(first);
-    await until(() => messages.filter(m => m.type === 'frame').length === 2);
     await sleep(400);
-    t.ok('端末の ack が無ければ、間隔が過ぎても Chrome へ ack しない（遅い回線で頻度が下がる）', !r.chrome.calls.some(c => c.method === 'Page.screencastFrameAck' && c.params.sessionId === slow));
-    hub.received(client, 's1', messages.filter(m => m.type === 'frame')[1].seq);
-    await until(() => r.chrome.calls.some(c => c.method === 'Page.screencastFrameAck' && c.params.sessionId === slow));
+    t.ok('見る人の返事を待つ間に届いたフレームは最新で上書き（まだ 1 枚だけ届いている）', messages.filter(m => m.type === 'frame').length === 1);
+    hub.received(client, 's1', frame.seq, { mark: true });
+    hub.received(client, 's1', frame.seq);
+    t.ok('返事（印 → フレーム）のあとは、そのときの最新の 1 枚をすぐ送る', await until(() => messages.filter(m => m.type === 'frame').length === 2));
 
     // ---- 今のタブが替わったら付け替える ----
     const second = (await a1.cmd('Target.createTarget', { url: 'about:blank' })).result.targetId;
@@ -123,6 +119,8 @@ export default async function (t) {
     await a1.cmd('Runtime.evaluate', { expression: '1' }, sid1);
     t.ok('エージェントが前のタブにコマンドを送ると、映像はそこへ戻る（今のタブ = 最後にコマンドを送ったタブ）', await until(() => fake.screencasting(first) && !fake.screencasting(second)));
     const frameAfter = fake.screencastFrame(first);
+    hub.received(client, 's1', messages.filter(m => m.type === 'frame').at(-1).seq, { mark: true });
+    hub.received(client, 's1', messages.filter(m => m.type === 'frame').at(-1).seq);
     t.ok('付け替えた先でフレームが流れる', frameAfter !== null && await until(() => messages.filter(m => m.type === 'frame').length === 3));
     void sid2;
 
@@ -182,13 +180,13 @@ export default async function (t) {
       const host = { hub, bridge };
       const run = (command, args, local = true) => screencastCommand({ command, args: { sessionId: 's1', source: 'chrome', ...args }, local, hub: null, bridge: null, chrome: host, client, snapshotFile: async () => null });
       t.ok('ホストの画面（local）からも Chrome の窓の映像を見始められる', (await run('browserScreencast', { width: 400, height: 300 }, true)).ok === true);
-      t.ok('入力・移動は view-only で断る（見るだけ）', (await run('browserScreencastInput', { input: { type: 'tap', x: 1, y: 1 } })).code === 'view-only'
-        && (await run('browserScreencastNav', { action: 'reload' })).code === 'view-only');
+      t.ok('タブの持ち手の無い映像（relay を渡さない）では、ホストの画面からの入力は view-only で断る。移動のコマンドはもう無い（unknown）', (await run('browserScreencastInput', { input: { type: 'tap', x: 1, y: 1 } })).code === 'view-only'
+        && (await run('browserScreencastNav', { action: 'reload' })).code === 'unknown');
       t.ok('url・可視化を開く指定も断る', (await run('browserScreencast', { url: 'https://example.com/' })).code === 'view-only' && (await run('browserScreencast', { visualization: { id: 'x' } })).code === 'view-only');
       const nobody = await screencastCommand({ command: 'browserScreencast', args: { sessionId: 'nobody', source: 'chrome' }, local: true, chrome: host, client });
       t.ok('窓の無い会話は code: no-window', nobody.ok === false && nobody.code === 'no-window', JSON.stringify(nobody));
       t.ok('Chrome の窓の映像が無いホスト（chrome が null）では unavailable', (await screencastCommand({ command: 'browserScreencast', args: { sessionId: 's1', source: 'chrome' }, local: true, chrome: null, client })).code === 'unavailable');
-      t.ok('source なしは今までどおり、ホストの画面では内蔵ブラウザーの映像を断る（remote-only）', (await screencastCommand({ command: 'browserScreencast', args: { sessionId: 's1' }, local: true, hub: null, bridge: null, chrome: host, client })).code === 'remote-only');
+      t.ok('source なし（内蔵ブラウザーの映像）はもう無い（unavailable）', (await screencastCommand({ command: 'browserScreencast', args: { sessionId: 's1' }, local: true, chrome: host, client })).code === 'unavailable');
       t.ok('停止も ack も source で選ぶ', (await run('browserScreencastStop', {})).ok === true && (await run('browserScreencastAck', { seq: 1 })).ok === true);
       await sleep(50);
     }

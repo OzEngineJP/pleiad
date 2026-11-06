@@ -1,19 +1,15 @@
 // 右パネルの枠（web/side-panel.mjs）: モードごとの部品の表と、渡されなかった部品を必ず隠す当て方。
-// 可視化の ⋯ の中身（web/file-actions.mjs の visualizationMenuItems）もここで見る。
 import assert from 'node:assert/strict';
-import { applySlots, fileSlots, visualizationSlots, customSlots, browserSlots, subtitleFor } from '../../web/side-panel.mjs';
-import { visualizationMenuItems } from '../../web/file-actions.mjs';
+import { applySlots, fileSlots, customSlots, chromeSlots, subtitleFor } from '../../web/side-panel.mjs';
 import { visualizationDocument } from '../../web/visualize-document.mjs';
 
 export const name = 'side-panel';
-export const title = '右パネルの枠: モードごとの部品・渡さない部品は隠す・可視化の ⋯ と見出しの下の行';
-
-const labels = items => items.filter(i => !i.sep).map(i => i.label);
+export const title = '右パネルの枠: モードごとの部品・渡さない部品は隠す・見出しの下の行';
 
 /** 枠の部品を最小の DOM（tests/lib/dom-stub.mjs）で作る */
 function makeParts() {
   const node = (tag = 'div') => document.createElement(tag);
-  const ids = ['tree', 'more', 'wide', 'close', 'browser', 'visualBrowser', 'path', 'reload', 'origin', 'reveal', 'save', 'visualSave', 'use'];
+  const ids = ['tree', 'more', 'wide', 'close', 'path', 'reload', 'reveal', 'save', 'use', 'status', 'profile', 'windowMore'];
   const buttons = Object.fromEntries(ids.map(id => { const b = node('button'); b.textContent = id; return [id, b]; }));
   return { panel: node('aside'), name: node('span'), kind: node('span'), path: node('div'), actions: node(), toolbar: node(), switcher: node(),
     tools: node(), location: node(), note: node(), treePane: node(), footer: node('footer'), footActions: node(), status: node('span'),
@@ -29,42 +25,25 @@ export default async function (t) {
   assert.deepEqual(loading.footer, ['use']);
   const html = fileSlots({ file: { kind: 'html', text: '<p>', downloadable: true }, osActions: true });
   assert.deepEqual(html.head, ['tree', 'more', 'wide', 'close']);
-  assert.deepEqual(html.toolbar, ['browser', 'path', 'reload'], 'HTML の「ブラウザーで開く」は切り替えのすぐ右');
+  assert.deepEqual(html.toolbar, ['path', 'reload'], 'HTML の描画は Pleiad のページの仕事なので、道具の列にブラウザーの口は無い');
   assert.deepEqual(html.footer, ['reveal', 'save', 'use']);
   const remote = fileSlots({ file: { kind: 'html', text: '<p>', downloadable: true }, osActions: false });
   assert.deepEqual(remote.toolbar, ['path', 'reload']); assert.deepEqual(remote.footer, ['save', 'use']);
   assert.equal(html.views, false, 'HTML は原文だけ（描画の切り替えは無い）');
-  assert.deepEqual(fileSlots({ file: { kind: 'html', text: '<p>' }, osActions: false, htmlBrowser: true }).toolbar, ['browser', 'path', 'reload'], 'リモートはホストの内蔵ブラウザーへ');
   assert.equal(fileSlots({ file: { kind: 'text', text: 'x' } }).views, false, 'テキストは切り替えを出さない');
   assert.equal(fileSlots({ file: { kind: 'markdown', text: '# x' } }).kind, 'ファイル');
   t.ok('ファイル: 取得の前後・HTML・遠隔で出す部品', true);
 
-  const visual = visualizationSlots({ origin: 'D:/w/out/q.html', html: '<p>', canBrowse: true, canUse: true });
-  assert.equal(visual.aside, false, '可視化はツリーの枠を出さない');
-  assert.deepEqual(visual.head, ['more', 'wide', 'close'], 'ツリーの切り替えは無く、⋯ はある');
-  assert.deepEqual(visual.toolbar, ['visualBrowser', 'path', 'origin']);
-  assert.deepEqual(visual.footer, ['visualSave', 'use']);
-  assert.equal(visual.kind, '可視化'); assert(visual.note.includes('元のファイルを開く'));
-  assert.equal(visual.views, false, '可視化の HTML も原文だけ（右パネルで描画する切り替えは出さない。描画はブラウザーの仕事）');
-  assert.equal(visualizationSlots({ origin: null, html: null }).views, false, '写しの中身が無いときも切り替えは出さない');
-  const orphan = visualizationSlots({ origin: null, html: '<p>', canBrowse: true });
-  assert.deepEqual(orphan.toolbar, ['visualBrowser'], '元が無ければパス・元のファイルを開くは出さない');
-  assert.deepEqual(orphan.footer, ['visualSave']); assert.equal(orphan.note, '');
-  assert.deepEqual(visualizationSlots({ origin: 'D:/a.html', canBrowse: false, canUse: false }).toolbar, ['path', 'origin']);
-  assert.deepEqual(visualizationSlots({ origin: 'D:/a.html', canUse: false }).footer, ['visualSave']);
   const custom = customSlots({ label: 'コンテキスト' });
   assert.deepEqual(custom.head, ['close']); assert.equal(custom.footer, null); assert.equal(custom.aside, false);
-  t.ok('可視化: ツリー無し・⋯ あり・元の有無で出し分け。コンテキストは閉じるだけ', true);
+  t.ok('コンテキストは閉じるだけ', true);
 
-  const viewer = browserSlots(), chrome = browserSlots({ chrome:true, toolbar:['status', 'profile', 'windowMore'] });
-  assert.equal(viewer.tabs, true); assert.equal(chrome.tabs, true);
-  assert.deepEqual(viewer.toolbar, ['back', 'forward', 'reloadPage', 'address', 'openExternal', 'browserMore']);
-  assert.deepEqual(chrome.toolbar, ['status', 'profile', 'windowMore']);
+  const chrome = chromeSlots({ label: '会話の Chrome', toolbar: ['status', 'profile', 'windowMore'] });
+  assert.equal(chrome.mode, 'browser');
   assert.deepEqual(chrome.head, ['wide', 'close']);
-  const remoteChrome = browserSlots({ chrome:true, toolbar:['status', 'profile', 'windowMore'], tabs:false });
-  assert.deepEqual(remoteChrome.head, []);
-  assert.deepEqual(remoteChrome.toolbar, ['close', 'status', 'profile', 'windowMore']);
-  t.ok('ブラウザーの固定タブ: Chrome を選ぶと道具の列を状態・プロフィールの口・窓の操作へ替える', true);
+  assert.deepEqual(chrome.toolbar, ['status', 'profile', 'windowMore'], '道具の列は窓の側が渡したまま');
+  assert.equal(chrome.aside, false); assert.equal(chrome.footer, null); assert.equal(chrome.views, false);
+  t.ok('会話の Chrome の窓: 見出しは広げると閉じる、道具の列は窓の側が渡す', true);
 
   // ---- 枠に当てる。前のモードの部品が残らない
   const parts = makeParts();
@@ -72,24 +51,23 @@ export default async function (t) {
   assert.deepEqual(shown(parts, 'actions'), ['tree', 'more', 'wide', 'close']);
   assert.equal(parts.treePane.hidden, false); assert.equal(parts.kind.textContent, 'ファイル');
   parts.location.hidden = false;
-  applySlots(parts, { ...visual, title: '売上', subtitle: 'out/q.html', note: visual.note, status: '14:31 に保存した表示' });
-  assert.equal(parts.treePane.hidden, true, 'ファイルの次に可視化を開いてもツリーの枠が残らない');
-  assert.deepEqual(shown(parts, 'actions'), ['more', 'wide', 'close']);
-  assert.deepEqual(shown(parts, 'tools'), ['visualBrowser', 'path', 'origin']);
-  assert.deepEqual(shown(parts, 'footActions'), ['visualSave', 'use']);
+  applySlots(parts, { ...html, title: 'a.html' });
   assert.equal(parts.location.hidden, false, '「パス」があれば開いた行はそのまま');
-  assert.equal(parts.note.hidden, false); assert.equal(parts.panel.dataset.mode, 'visualization');
-  assert.equal(parts.panel.getAttribute('aria-label'), '可視化のプレビュー');
-  applySlots(parts, { ...orphan, subtitle: '会話に保存された表示', note: '' });
+  applySlots(parts, { ...chrome, title: '会話の Chrome', subtitle: '', note: '' });
+  assert.equal(parts.treePane.hidden, true, 'ファイルの次に Chrome の窓を開いてもツリーの枠が残らない');
+  assert.deepEqual(shown(parts, 'actions'), ['wide', 'close']);
+  assert.deepEqual(shown(parts, 'tools'), ['status', 'profile', 'windowMore']);
+  assert.equal(parts.footer.hidden, true);
   assert.equal(parts.location.hidden, true, '「パス」が無いモードではパスの行を閉じる');
-  assert.equal(parts.note.hidden, true);
+  assert.equal(parts.note.hidden, true); assert.equal(parts.panel.dataset.mode, 'browser');
+  assert.equal(parts.panel.getAttribute('aria-label'), '会話の Chrome');
   applySlots(parts, { ...custom, title: 'コンテキスト', subtitle: '', note: '' });
   assert.equal(parts.toolbar.hidden, true); assert.equal(parts.footer.hidden, true); assert.equal(parts.kind.hidden, true);
   assert.deepEqual(shown(parts, 'actions'), ['close']); assert(parts.panel.classList.contains('custom'));
   applySlots(parts, { ...loading, title: 'b.md' });
   assert(!parts.panel.classList.contains('custom')); assert.equal(parts.footer.hidden, false); assert.equal(parts.treePane.hidden, false);
   assert.equal(parts.name.textContent, 'b.md');
-  t.ok('枠: 渡された部品だけを並べ、ほかは隠す（ファイル → 可視化 → コンテキスト → ファイル）', true);
+  t.ok('枠: 渡された部品だけを並べ、ほかは隠す（ファイル → Chrome の窓 → コンテキスト → ファイル）', true);
 
   // ---- 見出しの下の行
   assert.equal(subtitleFor('D:\\w\\out\\q.html', 'D:\\w'), 'out/q.html');
@@ -98,17 +76,6 @@ export default async function (t) {
   assert.equal(subtitleFor('/home/a/x.html', null), '/home/a/x.html');
   assert.equal(subtitleFor(null, '/w', '会話に保存された表示'), '会話に保存された表示');
   t.ok('見出しの下: 作業ディレクトリの中は相対、外はそのまま、元が無ければ説明', true);
-
-  // ---- 可視化の ⋯
-  const run = () => {};
-  assert.deepEqual(labels(visualizationMenuItems({ origin: 'D:/a.html' }, { osActions: true, run })),
-    ['元のパスをコピー', '相対パスをコピー', 'ブラウザーで開く', '元のファイルを開く', 'エクスプローラーで表示', 'HTML を保存', '会話で使う']);
-  assert.deepEqual(labels(visualizationMenuItems({ origin: 'D:/a.html' }, { osActions: false, canUse: false, run })),
-    ['元のパスをコピー', '相対パスをコピー', 'ブラウザーで開く', '元のファイルを開く', 'HTML を保存'], '遠隔ではエクスプローラーを出さない');
-  const bare = visualizationMenuItems({ origin: null }, { osActions: true, canBrowse: false, run });
-  assert.deepEqual(labels(bare), ['HTML を保存'], '元も写しの印も無ければ保存だけ');
-  assert(!bare.some(i => i.sep));
-  t.ok('可視化の ⋯: 並びと、使えない項目を出さないこと', true);
 
   // ---- 単体で開く写し（サーバーが返す文書）
   const doc = visualizationDocument('<p>x</p>', { resize: false, title: '<売上>' });

@@ -15,7 +15,7 @@ import { attachmentHtml } from './user-message.mjs';
 import { richFromClipboard } from './html-paste.mjs';
 import { baseName } from './file-reference.mjs';
 import {
-  markdownToDoc, docToMarkdown, mergeRuns, runsText, runsLength, newMark, normalizeFences, ensureShape, emptyBlock,
+  markdownToDoc, docToMarkdown, layoutMarkdown, snapshotEditing, restoreEditing, replaceMarkdownRange, editingNode, mergeRuns, runsText, runsLength, newMark, normalizeFences, ensureShape, emptyBlock,
   caret, isCollapsed, orderSel, deleteSelection, insertText, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom,
   atomKey, atomKeys, normalizeAttachmentPath, pasteText, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
   posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy, indentList, docStructure,
@@ -112,14 +112,15 @@ export function createMarkdownEditor(root, o) {
   function readBlock(div) {
     const kind = KINDS.has(div.dataset.k) ? div.dataset.k : 'p';
     if (kind === 'att') {
-      return { kind, marker: '', runs: [], raw: div.dataset.raw ?? '', ...(div.dataset.path ? { path: div.dataset.path } : {}), ...(div.dataset.pid ? { pid: div.dataset.pid } : {}) };
+      return { kind, marker: '', runs: [], ...(div.dataset.breakBefore !== undefined ? { breakBefore: div.dataset.breakBefore } : {}), raw: div.dataset.raw ?? '', ...(div.dataset.path ? { path: div.dataset.path } : {}), ...(div.dataset.pid ? { pid: div.dataset.pid } : {}) };
     }
     const runs = [];
     walk(div, [], runs);
     let merged = mergeRuns(runs);
-    if (kind === 'code' || plain()) merged = mergeRuns(merged.map(r => ({ text: r.text, marks: [] })));
+    if (kind === 'code') merged = mergeRuns(merged.map(r => ({ text: r.text, marks: [] })));
     const b = { kind, marker: div.dataset.m ?? '', runs: merged };
     if (div.dataset.pad !== undefined && !runsLength(merged)) b.pad = true;
+    if (div.dataset.breakBefore !== undefined) b.breakBefore = div.dataset.breakBefore;
     return b;
   }
 
@@ -165,7 +166,7 @@ export function createMarkdownEditor(root, o) {
     return docBlocks;
   }
   const layout = () => docLayoutCache ??= docLayout(readDoc(), layoutMemo);
-  const markdownNow = () => docMd ??= layout().lines.map(l => l.raw).join('\n');
+  const markdownNow = () => docMd ??= layoutMarkdown(layout());
   const atomsNow = () => { const blocks = readDoc(); return docAtoms ??= atomKeys(blocks); };
 
   /** ブラウザーの編集で block の外に出た字・空の欄を直す */
@@ -357,6 +358,7 @@ export function createMarkdownEditor(root, o) {
     div.dataset.k = b.kind;
     if (b.marker) div.dataset.m = b.marker;
     if (b.pad) div.dataset.pad = '';
+    if (b.breakBefore !== undefined) div.dataset.breakBefore = b.breakBefore;
     if (b.kind === 'att') {
       div.contentEditable = 'false';
       div.dataset.raw = b.raw ?? '';
@@ -372,9 +374,9 @@ export function createMarkdownEditor(root, o) {
   }
 
   const keyOf = (b) => {
-    if (b.kind === 'att') return `att|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
+    if (b.kind === 'att') return `att|${JSON.stringify(b.breakBefore)}|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
     const body = () => { let k = keyMemo.get(b); if (k === undefined) { k = `|${JSON.stringify(b.runs.map(r => [r.text, r.marks.map(m => [m.id, m.t, m.d, m.url])]))}`; keyMemo.set(b, k); } return k; };
-    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}${body()}`;
+    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${JSON.stringify(b.breakBefore)}${body()}`;
   };
 
   // ---- 行の飾り（字下げ・項目の記号・引用の線・コードの角）。どれも前後の行で決まる（親の項目・番号・引用の深さ）ので、
@@ -383,9 +385,9 @@ export function createMarkdownEditor(root, o) {
   const decoKey = new WeakMap();
   const CODE_ROLES = new Set(['fence-open', 'code', 'fence-close', 'icode']);
   const BAR = 'linear-gradient(var(--line-strong),var(--line-strong))';
-  function decoOf(b, li, prevCode, code, nextCode) {
+  function decoOf(b, li, prevCode, code, nextCode, blocks, S) {
     if (!li) return { key: '' };
-    const at = lineIndent(li.node);
+    const at = lineIndent(editingNode(blocks, S, b, li));
     const d = { ind: indentCss(at), mkAt: '', mk: '', bt: '', bars: '', barPos: '', q: at.bars.length, pos: '', fence: false };
     // 行で始まる項目のうち、一番内側のものの記号を、その項目の中身の手前に置く（"- - a" は内側の記号だけ）
     const item = li.marks.findLast((m) => m.node.t === 'item' && m.opened && m.end <= b.marker.length)?.node;
@@ -406,7 +408,7 @@ export function createMarkdownEditor(root, o) {
     const S = docStructure(blocks, rawOf);
     const codeOf = (i) => { const li = S.info[i]; return li && CODE_ROLES.has(li.role) ? li.node : null; };
     divs.forEach((div, i) => {
-      const d = decoOf(blocks[i], S.info[i], codeOf(i - 1), codeOf(i), codeOf(i + 1));
+      const d = decoOf(blocks[i], S.info[i], codeOf(i - 1), codeOf(i), codeOf(i + 1), blocks, S);
       if (decoKey.get(div) === d.key) return;
       decoKey.set(div, d.key);
       setVar(div, '--md-ind', d.ind);
@@ -515,7 +517,7 @@ export function createMarkdownEditor(root, o) {
   }
 
   // ------------------------------------------------------------ ブラウザーの編集のあと
-  function syncFromDom(ch) {
+  function syncFromDom(ch, reason = 'type') {
     sanitize();
     let st = getState();
     if (ch && !plain()) {
@@ -537,7 +539,7 @@ export function createMarkdownEditor(root, o) {
     outside = null;
     if (normalizeFences(st.blocks, { resolve, plain: plain(), raw: rawOf, sel: st.sel })) { paint(st.blocks); if (hasFocus()) setDomSel(st.sel); }
     else decorate(st.blocks);
-    history.push(st, 'type');
+    history.push(st, reason);
     syncEmpty();
     report();
   }
@@ -703,7 +705,7 @@ export function createMarkdownEditor(root, o) {
     // 変換の最中と、確定の直後に来る変換の input（読み直しは finishComposition が）
     if (composing || e.isComposing || (endTimer !== null && /Composition/.test(e.inputType))) { syncEmpty(); return; }
     const ch = e.inputType === 'insertText' && typeof e.data === 'string' && e.data.length === 1 ? e.data : null;
-    syncFromDom(ch);
+    syncFromDom(ch, e.inputType?.startsWith('delete') ? 'delete' : 'type');
   });
 
   const undo = () => { const s = history.undo(); if (s) restore(s); };
@@ -924,8 +926,8 @@ export function createMarkdownEditor(root, o) {
   }
 
   // ------------------------------------------------------------ textarea と同じ窓口
-  function setValue(md) {
-    const blocks = markdownToDoc(String(md ?? ''), { resolve, plain: plain() });
+  function setValue(md, editing) {
+    const blocks = restoreEditing(String(md ?? ''), editing, { resolve, plain: plain() });
     paint(blocks);
     const sel = endSel(blocks);
     lastSel = sel;
@@ -975,11 +977,8 @@ export function createMarkdownEditor(root, o) {
   root.setSelectionRange = (a, b) => setRange(a, b);
   root.setRangeText = (text, start = offsets().start, end = offsets().end) => {
     const s = getState();
-    const p1 = offsetToPos(s.blocks, start), p2 = offsetToPos(s.blocks, end);
-    if (p1.b === p2.b) { apply(insertText({ blocks: s.blocks, sel: orderSel(p1, p2) }, text), 'edit', { silent: true }); return; }
-    const md = docToMarkdown(s.blocks);
-    setValue(md.slice(0, start) + text + md.slice(end));
-    setRange(start + text.length, start + text.length);
+    const next = replaceMarkdownRange(s, String(text), start, end, { resolve, plain: plain() });
+    apply(next, 'edit', { silent: true });
   };
   root.setAttribute('placeholder', root.getAttribute('placeholder') ?? '');
   root.setAttribute('aria-placeholder', root.getAttribute('placeholder'));
@@ -987,6 +986,8 @@ export function createMarkdownEditor(root, o) {
   // ------------------------------------------------------------ 外から使う窓口
   const editor = {
     getState,
+    snapshotEditing() { return snapshotEditing(readDoc()); },
+    restoreDraft(text, editing) { setValue(text, editing); },
     /** 打ち込み中の位置が、コードブロック・インラインコードの中か（スキル候補を出さない） */
     inCode() {
       const sel = getSel();

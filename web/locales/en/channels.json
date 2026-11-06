@@ -1,4 +1,18 @@
 {
+  "botDelete": {
+    "menu": "Delete bot…",
+    "more": "Bot menu",
+    "title": "Delete “{{name}}”",
+    "irreversible": "This cannot be undone.",
+    "remove": "Delete its persona, setup, activity notes, and memories private to this bot.",
+    "shared": "Shared “About you” memories will remain.",
+    "conversations": "{{count}} conversations will remain available to read in Quick chats.",
+    "routines": "{{count}} routines will be paused.",
+    "cancel": "Cancel",
+    "confirm": "Delete",
+    "deleting": "Deleting…",
+    "failed": "Could not delete: {{error}}"
+  },
   "plain": { "name": "Agent" },
   "homeDest": { "none": "No bot" },
   "side": {
@@ -164,7 +178,7 @@
     "noReplies": "No replies yet",
     "entry": {
       "toc": "Outline of this thread",
-      "browser": "Built-in browser"
+      "browser": "Browser"
     },
     "composer": {
       "placeholder": "Reply in thread",

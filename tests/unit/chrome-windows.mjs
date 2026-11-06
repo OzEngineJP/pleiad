@@ -434,7 +434,10 @@ export default async function (t) {
       t.ok('エージェントの接続が閉じても、ターンの間は FE を保つ', r.fake.focusEmulated(first) && r.fake.focusEmulated(second));
 
       r.relay.endTurn('one');
-      t.ok('ターンが終わったら FE を外し、中継のセッションも外す', await until(() => !r.fake.focusEmulated(first) && !r.fake.focusEmulated(second) && feSessions().length === 0 && r.fake.sessions().length === 0), JSON.stringify(r.fake.sessions()));
+      // タブの情報（core/chrome/tab-info.mjs）の読み取りのセッションはタブごとに 1 本残る（FE も映像も付けない）
+      const rest = () => r.fake.sessions();
+      t.ok('ターンが終わったら FE を外し、FE の中継のセッションも外す（残るのはタブの情報の読み取りの分だけ）', await until(() => !r.fake.focusEmulated(first) && !r.fake.focusEmulated(second) && feSessions().length === 0
+        && rest().every(s => !s.fe && !s.screencast && [first, second].includes(s.targetId)) && new Set(rest().map(s => s.targetId)).size === rest().length), JSON.stringify(r.fake.sessions()));
       t.ok('FE を外すとき Emulation.setFocusEmulationEnabled(false) も送る', r.chrome.calls.some(c => c.method === 'Emulation.setFocusEmulationEnabled' && c.params.enabled === false));
 
       await r.relay.endpoint('one');   // 次のターンの始まり

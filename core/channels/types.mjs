@@ -64,6 +64,7 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   calls: number,                                        // bot が起こされた回数（表示だけ。上限には使わない）
  *   spend?: { day: string, percent: number },             // チャンネルの予算に数えた、その日（現地の日付）に使った分（bot のバックエンドの週の使用枠に対する %。origin の根のスレッドに持つ。ADR 0119）
  *   digest?: { [botId: string]: { text: string, at: number, lastAt: number, fingerprint: string } }, // bot ごとのエピソード要約（ADR 0125）
+ *   deletedBot?: { id: string, name: string },            // 削除した bot の由来。ほかの生存 bot の会話・投稿は制限しない（ADR 0293）
  *   stopped: null | { by: Author, at: number },           // [止める]。人が次に書くまで新しく起こさない
  *   origin?: { channelId: string, threadId: string },     // bot が自分のスレッドからチャンネルの流れへ @ を書いて新しくできたスレッドの、起こした元。[止める] は origin で結ばれた派生のスレッドにも届く
  *   status?: string,                                      // 利用者の状態（脇の「状態」の並べ方のグループ。会話の status と同じ器。60 字まで）
@@ -84,9 +85,12 @@ import { CHANNEL_TAG, CHANNEL_THREAD_TAG, MEMORY_CORE_TAG, TURN_CONTEXT_TAG, INN
  *   sendTargetSources?: { [sessionId: string]: 'shown'|'created'|'manual' }, // 外しても残し、自動で戻さない。入力では受け取らない
  *   pulse: { on: boolean, everyMin: number, backend: string, model: string, channelId: string },   // 心拍（ADR 0126）。既定は on: false。everyMin = 既定の間隔（5〜60 分）、backend・model = 安いモデル（空なら memoryLearnBackend）、channelId = 予算を引く「家」のチャンネル（空なら入っている最初のチャンネル）
  *   dmChannelId: string, dmSessionId: string|null,
+ *   deletionPending?: boolean,                           // 削除途中の再試行用。新しい活動は受け付けない（ADR 0293）
  *   createdAt: number, updatedAt: number }} Bot */
 
-/** 会話の記録（DB の session_fields）の新しい欄 `bot`（core/store.mjs の setSessionData の許可リスト）
+/** 会話の記録（DB の session_fields）には `deletedBot: { id, name }` も保存する。
+ * 削除した bot の会話は本文を保持して閲覧専用。`bot` が null でも実行の入口で拒否する（ADR 0293）。
+ * 会話の記録の欄 `bot`（core/store.mjs の setSessionData の許可リスト）
  * @typedef {{
  *   overrides?: { model?: true, effort?: true, mode?: true, cwd?: true },   // このスレッドだけで人が変えた欄（channels.threadSettings）。bot の既定を変えても上書きしない（ADR 0157）
  *   botId: string, kind: 'thread'|'dm'|'routine'|'learner'|'pulse',   // pulse = 心拍の安いモデルの隠れた会話（ADR 0126。投稿は作らず、channels.* の書き込みは断る）

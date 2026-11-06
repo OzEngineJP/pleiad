@@ -9,10 +9,7 @@ import { createMainPort } from '../../core/main-port.mjs';
 import { createMainAway, createExternalOpener, openableUrl, urlLaunchPlan } from '../../core/main-away.mjs';
 import { parentPortCipher, createSecretStore } from '../../core/secret-store.mjs';
 import { parentPortComputer, ComputerError } from '../../core/computer-use/driver.mjs';
-import { cleanTabState } from '../../core/agent-browser.mjs';
-import { parentPortViewer } from '../../core/browser-viewer.mjs';
 import { parentPortRemoteAgent } from '../../core/remote-delegation.mjs';
-import { parentPortScreencast, createScreencastHub } from '../../core/browser-screencast.mjs';
 import { defaultOpener } from '../../core/os-open.mjs';
 import { createHarness, sleep } from '../lib/computer-harness.mjs';
 
@@ -245,64 +242,6 @@ export default async function (t) {
       plain.say({ type: 'remote-agent', id: req.id, ok: true, result: { ok: 2 } });
       t.ok('既定（utilityProcess の口）: 今までどおり main に頼む', req.action === 'request' && (await answer).ok === 2 && bridge.hosts[0].state === 'ready');
       t.ok('main の口が無い起動（Electron でない）は null のまま', parentPortRemoteAgent(null) === null);
-    }
-
-    // ---- 内蔵ブラウザー（サーバー側。エージェントの操作は無く、タブの写しと読み込みの方針だけ）
-    {
-      const port = linkPort();
-      const viewer = parentPortViewer(port);
-      port.say({ type: 'browser-restore-request' });
-      t.ok('タブの写しが無いうちの復元の答えは、空のタブ（中継の写しは持たない）', JSON.stringify(port.take('browser-restore').at(-1)) === '{"type":"browser-restore","tabs":[],"relay":null}');
-      port.say({ type: 'browser-state-report',
-        tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }, { sessionId: 's1', url: 'file:///C:/secret.html', selected: false },
-          { sessionId: null, url: 'http://localhost:3000/', selected: false }, { sessionId: 'x'.repeat(201), url: 'https://example.com/long' }, { sessionId: 's1', url: 'about:blank' }] });
-      port.say({ type: 'browser-restore-request' });
-      const restore = port.take('browser-restore').at(-1);
-      t.ok('browser-restore: http(s) のタブだけ（file:・空・長すぎる会話の id は落とす）', restore.tabs.length === 2 && restore.tabs[0].url === 'https://example.com/a' && restore.tabs[0].selected === true && restore.tabs[1].sessionId === null
-        && !('profile' in restore.tabs[0]) && !('profiles' in restore) && restore.relay === null);
-      t.ok('cleanTabState: 配列でないものは空', JSON.stringify(cleanTabState({ tabs: 'x' })) === '{"tabs":[]}');
-      port.say({ type: 'browser-state-report', tabs: [] });
-      port.say({ type: 'browser-restore-request' });
-      t.ok('写しは最後の報告で上書きする', port.take('browser-restore').at(-1).tabs.length === 0);
-      // main が居ない間も、写しは持ったまま。戻った main の復元の依頼にそのまま答える
-      port.say({ type: 'browser-state-report', tabs: [{ sessionId: 's1', url: 'https://example.com/a', selected: true }] });
-      port.disconnect();
-      port.connect();
-      port.say({ type: 'browser-restore-request' });
-      t.ok('main が付け直されても、持っている写しで復元の答えを返す', port.take('browser-restore').at(-1).tabs.length === 1);
-
-      // 外部の読み込みの確認の設定を main へ（内蔵ブラウザーの file: のタブが使う。docs/inapp-browser.md）
-      port.say({ type: 'browser-load-policy-request' });
-      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: false, origins: [] }, '設定が来る前は確認 OFF');
-      viewer.loadPolicy({ confirmExternalLoads: true, externalSitePermissions: [{ origin: 'https://cdn.example', mode: 'always' }, { origin: 'https://ask.example', mode: 'ask' }] });
-      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: true, origins: ['https://cdn.example'] }, '「常に」だけを渡す');
-      port.say({ type: 'browser-load-policy-request' });
-      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: true, origins: ['https://cdn.example'] }, 'main が起動時に聞き直したら最新を返す');
-      viewer.loadPolicy({});
-      assert.deepEqual(port.take('browser-load-policy').at(-1), { type: 'browser-load-policy', confirm: false, origins: [] });
-      t.ok('外部の読み込みの確認の設定を main へ届ける（ON と「常に」の https だけ・main の問い合わせに最新を返す）', true);
-      t.ok('main の口が無い起動（Electron でない）は null のまま', parentPortViewer(null) === null);
-    }
-
-    // ---- screencast
-    {
-      const port = linkPort();
-      const bridge = parentPortScreencast(port, { timeoutMs: 500 });
-      port.say({ type: 'browser-screencast-ready' });
-      const hub = createScreencastHub({ bridge });
-      const got = [];
-      const client = { send: message => got.push(message) };
-      const watching = hub.watch(client, 's1', { url: 'https://example.com/' });
-      const req = port.take('browser-screencast').at(-1);
-      port.say({ type: 'browser-screencast', id: req.id, ok: true, result: { tabId: 't1', state: { loading: false } } });
-      await watching;
-      const hanging = bridge.request('input', 's1', {}).catch(error => error.message);
-      port.disconnect();
-      t.ok('main が切れたら、見ている端末へ ended（reason: away）を送り、会話を畳む', got.some(m => m.type === 'ended' && m.reason === 'away' && m.sessionId === 's1') && hub.sessions().length === 0);
-      t.ok('待っていた依頼は失敗にし、ready を下げる（新しい main の ready まで使えない）', await hanging === 'main is away' && bridge.ready === false);
-      port.connect();
-      port.say({ type: 'browser-screencast-ready' });
-      t.ok('新しい main の ready で使える', bridge.ready === true);
     }
 
     // ---- os-open・openExternal

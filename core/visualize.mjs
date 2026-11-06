@@ -1,11 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { readLocalFile } from './local-files.mjs';
 import { visualizeReferences } from '../web/visualize-reference.mjs';
-import { visualizationDocument, VISUALIZE_CSP } from '../web/visualize-document.mjs';
-import { previewCsp, previewPolicy } from '../web/browser-confirm-policy.mjs';
 import { t } from './i18n.mjs';
+import { collectBundle } from './viz-bundle.mjs';
 
 // Visualize の案内（エージェントに渡す）。会話の言語ごとの本文: en は skills/visualize/SKILL.md、ja は SKILL.ja.md。
 // 1 つの文書として長く、表示の約束（参照の形式・特殊な印）をそのまま保つ必要があるので、辞書ではなく Skill の形のファイルで持つ
@@ -28,7 +26,9 @@ export async function prepareVisualization(ref, access) {
 
 // Serialize snapshots in response order, and drain before turnEnd. A missing or
 // rejected file gets a durable error card, rather than a disappearing reference.
-export function createVisualizationCollector({ access, publish }) {
+// dataDir はブラウザーの一本化の旗が on のときだけ入る（可視化の束の置き場。ADR 0295 の 3 の 4）。入るときは、HTML と同じフォルダーの
+// 下のファイルを束にして viz-blobs/ に書き、行に bundle を載せる（core/viz-bundle.mjs）。束を作れなくても可視化は出す（bundle 無し）
+export function createVisualizationCollector({ access, publish, dataDir = null }) {
   let text = '', chain = Promise.resolve(), count = 0;
   function end() {
     const refs = visualizeReferences(text); text = '';
@@ -40,6 +40,10 @@ export function createVisualizationCollector({ access, publish }) {
         try {
           if (overLimit) throw new Error(t('filePreview.visualize.tooMany', { max: 32 }));
           payload = await prepareVisualization(ref, access);
+          if (dataDir) {
+            try { payload.bundle = await collectBundle(payload.path, access, { dataDir, entryBody: payload.content }); }
+            catch { /* 束は無しで出す（枠は srcdoc のまま） */ }
+          }
         }
         catch (e) { payload = { kind: 'visualization', caption: ref.value?.title ?? t('filePreview.visualize.caption'), error: String(e.message) }; }
         await publish({ ...payload, reference: ref.raw });
@@ -60,45 +64,3 @@ export function createVisualizationCollector({ access, publish }) {
   };
 }
 
-// ---- 会話に保存された写しを単体で開く（右パネルの「ブラウザーで開く」。docs/visualize.md）
-// 写しはモデルが書いた HTML で、スクリプトも動く。Pleiad と同じオリジンで開くと保存領域やトークンに届くので、
-// 応答ヘッダーの sandbox（allow-same-origin を付けない）で不透明なオリジンに閉じ込める。
-// 読み込める先は会話の中の枠と同じ（VISUALIZE_CSP）。frame-ancestors で他の画面への埋め込みも断る
-export const SNAPSHOT_CSP = `sandbox allow-scripts; ${VISUALIZE_CSP}; frame-ancestors 'none'`;
-
-/** 別タブへ返す応答。record は history.findVisualization の結果 */
-export function snapshotResponse(record, prefs = {}) {
-  const policy = previewPolicy(prefs);
-  return {
-    headers: {
-      'content-type': 'text/html; charset=utf-8',
-      'content-security-policy': `sandbox allow-scripts; ${previewCsp(policy)}; frame-ancestors 'none'`,
-      'cache-control': 'private, no-store',
-      'x-content-type-options': 'nosniff',
-      'referrer-policy': 'no-referrer',
-      'cross-origin-resource-policy': 'same-origin',
-      'permissions-policy': 'camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=()',
-    },
-    body: visualizationDocument(record.content, { resize: false, title: record.caption ?? '', policy }),
-  };
-}
-
-/**
- * 殻（デスクトップ版）は新しい窓を開かないので、サーバーのある PC の既定のブラウザーへ写しをファイルで渡す。
- * 置き場は dir（データ置き場の下）。1 日より古い写しは書くたびに消す。返すのは書いたファイルの絶対パス。
- * once は内蔵ブラウザーの「読み込む」（そのタブだけの一時の許可）で加える https の出どころ。report は内蔵ブラウザーで開く写しで、
- * 止めた資源を console へ知らせる橋を入れる（main が数える）
- */
-export async function writeSnapshotFile(record, dir, { now = Date.now(), prefs = {}, once = [], report = false } = {}) {
-  await fs.mkdir(dir, { recursive: true });
-  for (const name of await fs.readdir(dir).catch(() => [])) {
-    const old = path.join(dir, name);
-    const stat = await fs.stat(old).catch(() => null);
-    if (stat && now - stat.mtimeMs > 24 * 60 * 60 * 1000) await fs.rm(old, { force: true }).catch(() => {});
-  }
-  const policy = previewPolicy(prefs, once);
-  const key = crypto.createHash('sha256').update(`${record.id ?? ''}\n${record.at ?? ''}\n${record.content}\n${JSON.stringify(policy)}\n${report ? 'report' : ''}`).digest('hex').slice(0, 24);
-  const file = path.join(dir, `${key}.html`);
-  await fs.writeFile(file, visualizationDocument(record.content, { resize: false, title: record.caption ?? '', policy, report }), 'utf8');
-  return file;
-}

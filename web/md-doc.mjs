@@ -1,6 +1,6 @@
 // 入力欄の Markdown 文書モデル（DOM を触らない。ADR 0060）。
 //
-// 入力欄（web/md-editor.mjs）は「ソースの 1 行 = 1 ブロック」の編集欄。正本は Markdown の文字列で、この文書モデルとの往復では
+// 入力欄（web/md-editor.mjs）は「編集上の 1 行 = 1 ブロック」の編集欄。正本は Markdown の文字列で、この文書モデルとの往復では
 // 文字が 1 つも変わらない（docToMarkdown(markdownToDoc(s)) === s）。往復を保つため、ブロックの記号（`## `・`- `・`> `）と、
 // インラインの区切り（`**`・`_`・`` ` ``・URL）は捨てずにモデルが持つ。行の入れ子（リスト・引用・項目の中の見出しやコード）は、
 // 履歴と同じ CommonMark の構造の解析（web/md-structure.mjs の parseStructure）で読む（ADR 0292）。入力欄で整えない構造（表・HTML・
@@ -13,10 +13,12 @@
 //   marker 行頭の記号と字下げ（`## `・`  - `・`3. `・`> > `・`> # `・cont は項目の中身の始まりまでの空白）。p は ''、code は外側の分だけ
 //   runs   インラインの並び [{ text, marks: [{ id, t: 'strong'|'em'|'code'|'link', d?, url? }] }]。code の行は印の無い 1 つの run
 //   att    添付の 1 行（原子）。raw は送る 1 行（`[添付] パス`）、path は解決済みのパス、pid は送っている途中の仮の ID
+//   breakBefore 直前にシリアライズする段落境界（外側の引用・字下げだけ）。編集行やカーソル位置を増やさない
 //   pad    添付の前後・閉じたコードブロックの後ろに、キャレットを置くために足した空行。空のうちは Markdown に出さない
 // 位置: { b: ブロックの添字, v: ブロックの見える文字の中の位置 }（記号・区切りは数えない）。選択は { s, e }（s ≤ e）
 //
 // 操作はどれも状態 { blocks, sel } を受けて新しい状態を返す（元は変えない）。DOM との結び付けは md-editor.mjs。
+import { editingState, normalizeEditingState } from './md-editing-state.mjs';
 import { parseStructure, codeRoles, prefixEnd } from './md-structure.mjs';
 import { ATTACHMENT_LINE, ATTACHMENT_MARKS, attachmentLine, normalizeAttachmentPath } from './timeline.mjs';
 
@@ -237,21 +239,34 @@ const CODE_ROLES = new Set(['fence-open', 'code', 'fence-close', 'icode']);
 const codeBlock = (line, marker = '') => ({ kind: 'code', marker, runs: plainRun(line) });
 
 // ------------------------------------------------------------------ 構造（web/md-structure.mjs。履歴と同じ読み方。ADR 0292）
+// An unfinished upload has no Markdown row; carry its boundary to the next
+// serialized row until it resolves. Keep the boundary on the atom in the model.
+function* serializedRows(blocks) {
+  let before;
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.breakBefore !== undefined) before = b.breakBefore;
+    if (omitted(b)) continue;
+    yield { b, i, before };
+    before = undefined;
+  }
+}
+
 /**
  * ブロックの並びの構造。info[i] はブロック i の行の情報（md-structure.mjs の行。Markdown に出ないブロックは null）、idx[行] はブロックの添字。
- * 中身の無い箇条書き・番号の行は、中身があるものとして読む（CommonMark では空の項目は段落を打ち切れないが、打っている途中の行は項目として扱う）
+ * 中身の無い箇条書き・番号・引用の行は、中身があるものとして読む（CommonMark では空の項目は段落を打ち切れないが、打っている途中の行は項目として扱う）
  */
 export function docStructure(blocks, raw = blockRaw) {
   const idx = [], src = [];
-  blocks.forEach((b, i) => {
-    if (omitted(b)) return;
+  for (const { b, i, before } of serializedRows(blocks)) {
+    if (idx.length && before !== undefined) { idx.push(null); src.push(before); }
     idx.push(i);
     const r = raw(b);
-    src.push(r + ((b.kind === 'ul' || b.kind === 'ol') && !runsLength(b.runs) && /[ \t]$/.test(r) ? 'x' : ''));
-  });
+    src.push(r + ((b.kind === 'ul' || b.kind === 'ol' || b.kind === 'quote') && !runsLength(b.runs) && /[ \t]$/.test(r) ? 'x' : ''));
+  }
   const { root, lines } = parseStructure(src);
   const info = blocks.map(() => null);
-  idx.forEach((bi, k) => { info[bi] = lines[k]; });
+  idx.forEach((bi, k) => { if (bi !== null) info[bi] = lines[k]; });
   return { root, lines, info, idx };
 }
 
@@ -361,7 +376,105 @@ export function markdownToDoc(md, opts = {}) {
 }
 
 export function docToMarkdown(blocks) {
-  return blocks.filter(b => !omitted(b)).map(blockRaw).join('\n');
+  return [...serializedRows(blocks)].map(({ b, before }, i) => (i && before !== undefined ? before + '\n' : '') + blockRaw(b)).join('\n');
+}
+
+export const layoutMarkdown = (layout) => layout.lines.map(l => (l.before !== undefined ? l.before + '\n' : '') + l.raw).join('\n');
+
+/** Only committed containers participate in editing decoration; parsing stays CommonMark. */
+export function editingNode(blocks, S, b, li) {
+  let accepted = li.node;
+  for (let node = li.node; node && node.t !== 'root'; node = node.parent) {
+    if (node.t !== 'bq' && node.t !== 'item') continue;
+    const bi = S.idx[node.start], opener = S.info[bi]?.marks.find(m => m.node === node && m.opened);
+    const owned = li.marks.some(m => m.node === node && m.end > 0 && m.end <= b.marker.length);
+    const pending = !owned && opener && opener.end > (blocks[bi]?.marker.length ?? 0);
+    const unownedBlank = node.t === 'item' && li.role === 'blank' && !li.marks.some(m => m.node === node && m.end > 0 && m.end <= b.marker.length);
+    if (pending || unownedBlank) accepted = node.t === 'item' ? node.parent.parent : node.parent;
+  }
+  return accepted;
+}
+
+/** Draft sidecars contain no DOM, attachment credentials or inline mark identities. */
+export function snapshotEditing(blocks) {
+  const layout = docLayout(blocks), text = layoutMarkdown(layout);
+  return editingState(text, layout.lines.map(l => ({ at: l.start, kind: blocks[l.b].kind, marker: l.marker, ...(l.before !== undefined ? { before: l.before } : {}) })));
+}
+
+function restoreRow(raw, row, opts) {
+  if (row.kind === 'att') return lineBlock(raw, parseStructure([raw]).lines[0], opts);
+  return { kind: row.kind, marker: row.marker, runs: row.kind === 'code' || opts.plain ? plainRun(raw.slice(row.marker.length)) : parseInline(raw.slice(row.marker.length)) };
+}
+
+export function restoreEditing(text, saved, opts = {}) {
+  const state = normalizeEditingState(text, saved);
+  if (!state) return markdownToDoc(text, opts);
+  const blocks = state.rows.map(row => {
+    const end = text.indexOf('\n', row.at), raw = text.slice(row.at, end < 0 ? text.length : end);
+    const b = restoreRow(raw, row, opts);
+    if (row.before !== undefined) b.breakBefore = row.before;
+    return b;
+  });
+  // A sidecar can affect editing, never change the accompanying Markdown.
+  return docToMarkdown(blocks) === text ? ensureShape(blocks) : markdownToDoc(text, opts);
+}
+
+/** Raw-offset replacement retains unaffected editing rows and their boundaries. */
+export function replaceMarkdownRange(st, value, start, end, opts = {}) {
+  const layout = docLayout(st.blocks), text = layoutMarkdown(layout);
+  start = Math.max(0, Math.min(text.length, Math.trunc(start) || 0));
+  end = Math.max(start, Math.min(text.length, Math.trunc(end) || 0));
+  value = value.replace(/\r\n?/g, '\n');
+  const result = text.slice(0, start) + value + text.slice(end), delta = value.length - (end - start);
+  const preserved = new Map();
+  for (const l of layout.lines) {
+    const rowEnd = l.start + l.raw.length;
+    const outside = rowEnd < start || l.start >= end;
+    const inside = start >= l.start + l.marker.length && start <= rowEnd && !(start === 0 && end === text.length);
+    if (!outside && !inside) continue;
+    const movedStart = l.start === start && start === end && value.endsWith('\n');
+    const at = l.start >= end && (l.start > start || movedStart) ? l.start + delta : l.start;
+    const oldBoundary = l.start - (l.before?.length ?? -1) - 1;
+    const boundaryUntouched = l.before !== undefined && (end <= oldBoundary || start >= l.start);
+    preserved.set(at, { kind: st.blocks[l.b].kind, marker: l.marker, ...(boundaryUntouched ? { before: l.before } : {}) });
+  }
+  const blocks = markdownToDoc(result, opts).filter(b => !b.pad);
+  const physical = result.split('\n');
+  let at = 0;
+  const out = [];
+  physical.forEach((raw, i) => {
+    const row = preserved.get(at);
+    let b = blocks[i];
+    if (row && raw.startsWith(row.marker)) {
+      b = restoreRow(raw, row, opts);
+      if (row.before !== undefined && out.length > 1 && blockRaw(out.at(-1)) === row.before) { out.pop(); b.breakBefore = row.before; }
+    }
+    out.push(b);
+    at += raw.length + 1;
+  });
+  ensureShape(out);
+  const p = offsetToPos(out, start + value.length);
+  return { blocks: out, sel: caret(p.b, p.v) };
+}
+
+/** Existing edit-cancellation merge trims its edges; retain interior editing state. */
+export function mergeEditingContent(parts) {
+  const blocks = [], strings = [];
+  for (const part of parts) {
+    const text = String(part?.text ?? ''), trimmed = text.trim();
+    if (!trimmed) continue;
+    const paths = new Set((part?.attached ?? []).map(a => a.path));
+    const opts = { resolve: path => paths.has(path) };
+    let st = { blocks: restoreEditing(text, part?.editing, opts), sel: caret(0, 0) };
+    const from = text.length - text.trimStart().length, to = text.trimEnd().length;
+    st = replaceMarkdownRange(st, '', to, text.length, opts);
+    st = replaceMarkdownRange(st, '', 0, from, opts);
+    if (strings.length) blocks.push(emptyBlock());
+    blocks.push(...st.blocks.filter(b => !b.pad));
+    strings.push(trimmed);
+  }
+  const text = strings.join('\n\n');
+  return { text, ...(blocks.length && docToMarkdown(blocks) === text ? { editing: snapshotEditing(blocks) } : {}) };
 }
 
 /**
@@ -371,8 +484,7 @@ export function docToMarkdown(blocks) {
 export function docLayout(blocks, memo = null) {
   const lines = [];
   let start = 0;
-  blocks.forEach((b, i) => {
-    if (omitted(b)) return;
+  for (const { b, i, before: boundary } of serializedRows(blocks)) {
     // memo（WeakMap）を渡すと、変わらないブロックの分を使い回す。渡す側は、ブロックを作った後に書き換えないこと
     let e = memo?.get(b);
     if (!e) {
@@ -381,9 +493,11 @@ export function docLayout(blocks, memo = null) {
       e = { raw, marker: b.kind === 'att' ? '' : b.marker, map, len: b.kind === 'att' ? raw.length : runsLength(b.runs) };
       memo?.set(b, e);
     }
-    lines.push({ b: i, start, ...e });
+    const before = lines.length ? boundary : undefined;
+    if (before !== undefined) start += before.length + 1;
+    lines.push({ b: i, start, ...e, before });
     start += e.raw.length + 1;
-  });
+  }
   return { lines, length: Math.max(0, start - 1) };
 }
 
@@ -408,7 +522,10 @@ export function posToOffset(blocks, pos, layout = docLayout(blocks)) {
 export function offsetToPos(blocks, offset, layout = docLayout(blocks)) {
   if (!layout.lines.length) return { b: 0, v: 0 };
   let line = layout.lines[0];
-  for (const l of layout.lines) if (l.start <= offset) line = l;
+  for (const l of layout.lines) {
+    if (l.start <= offset) line = l;
+    else if (offset > line.start + line.raw.length) return { b: l.b, v: 0 };
+  }
   const r = Math.max(0, Math.min(offset - line.start, line.raw.length));
   const inner = r - line.marker.length;
   if (!line.map) return { b: line.b, v: Math.max(0, Math.min(inner, line.len)) };
@@ -448,7 +565,7 @@ export function deleteSelection(st) {
   const { s, e } = next.sel;
   const bs = next.blocks[s.b], be = next.blocks[e.b];
   if (s.b === e.b) {
-    if (bs.kind === 'att') { next.blocks.splice(s.b, 1); ensureShape(next.blocks); next.sel = caret(Math.min(s.b, next.blocks.length - 1), 0); return next; }
+    if (bs.kind === 'att') { removeAtomAt(next.blocks, s.b); ensureShape(next.blocks); next.sel = caret(Math.min(s.b, next.blocks.length - 1), 0); return next; }
     bs.runs = mergeRuns([...sliceRuns(bs.runs, 0, s.v), ...sliceRuns(bs.runs, e.v)]);
     next.sel = caret(s.b, s.v);
     return next;
@@ -461,7 +578,7 @@ export function deleteSelection(st) {
     // コードの行と本文の行をつなぐときは、つないだ側の種類に合わせて文字にそろえる
     if (bs.kind === 'code') merged.runs = plainRun(runsText(head) + (be.kind === 'code' ? runsText(tail) : (e.v === 0 ? be.marker : '') + serializeRuns(tail)));
     else if (be.kind === 'code') merged.runs = mergeRuns([...head, ...plainRun(runsText(tail))]);
-  } else if (tail) merged = { ...be, runs: tail, marker: e.v === 0 ? be.marker : '' };
+  } else if (tail) merged = { ...be, runs: tail, marker: e.v === 0 ? be.marker : '', ...(be.breakBefore === undefined && bs.breakBefore !== undefined ? { breakBefore: bs.breakBefore } : {}) };
   else if (head) merged = { ...bs, runs: head };
   else merged = null;
   const at = s.b;
@@ -553,15 +670,17 @@ function shiftRun(marker, p, delta) {
   return marker.slice(0, p) + ' '.repeat(Math.max(0, width + delta)) + marker.slice(q);
 }
 
-/** 項目 item の範囲で、その項目の記号を持つ行（空行・遅延の続きは除く）。{ i: ブロックの添字, k: 記号の並びの中の項目の位置 } */
+/** 項目 item の記号を持つ編集行と出力境界。空の編集行・遅延の続きは除く。field は字下げを持つ marker / breakBefore。 */
 function itemLines(S, blocks, item) {
   const out = [];
   for (let ln = item.start; ln <= item.end; ln++) {
-    const i = S.idx[ln], li = S.info[i];
-    if (!li || li.role === 'blank' || li.role === 'lazy') continue;
-    const own = ownMarks(li, blocks[i]);
+    const separator = S.idx[ln] === null;
+    const i = separator ? S.idx[ln + 1] : S.idx[ln], li = S.lines[ln];
+    if (!li || (!separator && li.role === 'blank') || li.role === 'lazy') continue;
+    const field = separator ? 'breakBefore' : 'marker';
+    const own = li.marks.filter(m => m.end <= (blocks[i]?.[field]?.length ?? 0));
     const k = own.findIndex((m) => m.node === item);
-    if (k >= 0) out.push({ i, k, li, own });
+    if (k >= 0) out.push({ i, k, li, own, field });
   }
   return out;
 }
@@ -572,7 +691,7 @@ function itemLines(S, blocks, item) {
  */
 export function renumber(blocks) {
   const S = docStructure(blocks);
-  const edits = [];   // { i, p, del, ins }（ブロックの記号の中の文字の位置）
+  const edits = [];   // { i, field = 'marker', p, del, ins }（記号または出力境界の中の位置）
   const walk = (node) => {
     for (const c of node.children) {
       if (c.t === 'list' && c.ordered) {
@@ -589,9 +708,9 @@ export function renumber(blocks) {
           if (!d) return;
           for (const l of lines) {
             if (l === open) continue;
-            const at = l.own[l.k].at, mk = blocks[l.i].marker;
-            if (d > 0) edits.push({ i: l.i, p: at, del: 0, ins: ' '.repeat(d) });
-            else edits.push({ i: l.i, p: at, del: Math.min(-d, /^ */.exec(mk.slice(at))[0].length), ins: '' });
+            const at = l.own[l.k].at, mk = blocks[l.i][l.field];
+            if (d > 0) edits.push({ i: l.i, field: l.field, p: at, del: 0, ins: ' '.repeat(d) });
+            else edits.push({ i: l.i, field: l.field, p: at, del: Math.min(-d, /^ */.exec(mk.slice(at))[0].length), ins: '' });
           }
         });
       }
@@ -604,9 +723,12 @@ export function renumber(blocks) {
   const byBlock = new Map();
   for (const e of edits) (byBlock.get(e.i) ?? byBlock.set(e.i, []).get(e.i)).push(e);
   for (const [i, list] of byBlock) {
-    let marker = blocks[i].marker;
-    for (const e of list.sort((a, b) => b.p - a.p)) marker = marker.slice(0, e.p) + e.ins + marker.slice(e.p + e.del);
-    blocks[i] = { ...blocks[i], marker };
+    const block = { ...blocks[i] };
+    for (const e of list.sort((a, b) => b.p - a.p)) {
+      const field = e.field ?? 'marker', value = block[field];
+      block[field] = value.slice(0, e.p) + e.ins + value.slice(e.p + e.del);
+    }
+    blocks[i] = block;
   }
   return true;
 }
@@ -661,10 +783,10 @@ export function indentList(st, dir) {
       const h = holder(l);
       if (h < -1 || (dir < 0 && !l.own.some((x) => x.node === list.parent))) continue;
       const b = next.blocks[l.i];
-      let marker = shiftRun(b.marker, h >= 0 ? l.own[h].end : 0, delta);
+      let marker = shiftRun(b[l.field], h >= 0 ? l.own[h].end : 0, delta);
       // 深くした番号の項目は、新しいリストの 1 番から（入る先に番号のリストがあれば、振り直しがそろえる）
-      if (dir > 0 && l.i === i && list.ordered) marker = marker.replace(/\d{1,9}(?=[.)][ \t]*$)/, '1');
-      next.blocks[l.i] = { ...b, marker };
+      if (dir > 0 && l.i === i && l.field === 'marker' && list.ordered) marker = marker.replace(/\d{1,9}(?=[.)][ \t]*$)/, '1');
+      next.blocks[l.i] = { ...b, [l.field]: marker };
       moved.add(l.i);
     }
     any = true;
@@ -701,17 +823,13 @@ export function enter(st, { plain = false, soft = false } = {}) {
     return finish();
   };
   /**
-   * 空の行で抜ける: 記号の並びの upto 個目から後ろを外す。上の行が段落なら、間に入れ物の中の空行を挟んでから下の行へ
-   * （挟まないと、次に打った字が上の項目・引用の続き（遅延の続き）として読まれる）
+   * 空の行の Enter でも 1 行進む。今の空行を区切りにして、次の行を 1 段浅くする。
    */
   const leave = (upto) => {
     const marker = contPrefix(raw, own, upto);
-    next.blocks[b] = { kind: marker ? contKind(own, upto) : 'p', marker, runs: [] };
-    const k = S.idx.indexOf(b), above = S.lines[k - 1]?.role;
-    if (above === 'para' || above === 'lazy' || above === 'table') {
-      next.blocks.splice(b + 1, 0, { ...next.blocks[b] });
-      next.sel = caret(b + 1, 0);
-    } else next.sel = caret(b, 0);
+    next.blocks[b] = { ...blk, kind: marker ? contKind(own, upto) : 'p', marker, runs: [] };
+    next.blocks.splice(b + 1, 0, { kind: next.blocks[b].kind, marker, runs: [] });
+    next.sel = caret(b + 1, 0);
     return finish();
   };
   if (!plain && blk.kind === 'cont') {
@@ -748,8 +866,9 @@ export function enter(st, { plain = false, soft = false } = {}) {
       if (parentAt >= 0) {
         const parent = own[parentAt].node, seg = itemSegOf(S, next.blocks, parent);
         if (seg !== null) {
-          next.blocks[b] = { kind: parent.parent.ordered ? 'ol' : 'ul', marker: contPrefix(raw, own, parentAt) + nextItemSeg(seg), runs: plainRun(carry) };
-          next.sel = caret(b, carry.length);
+          blk.runs = [];
+          next.blocks.splice(b + 1, 0, { kind: parent.parent.ordered ? 'ol' : 'ul', marker: contPrefix(raw, own, parentAt) + nextItemSeg(seg), runs: plainRun(carry) });
+          next.sel = caret(b + 1, carry.length);
           return finish();
         }
       }
@@ -786,10 +905,26 @@ export function backspaceAtStart(st) {
   const { b } = next.sel.s;
   const blk = next.blocks[b];
   if (blk.kind === 'h' || blk.kind === 'ul' || blk.kind === 'ol' || blk.kind === 'quote' || blk.kind === 'cont') {
-    const own = ownMarks(docStructure(next.blocks).info[b], blk);
+    const S = docStructure(next.blocks);
+    const own = ownMarks(S.info[b], blk);
     const n = blk.kind === 'h' ? own.length : Math.max(0, own.length - 1);
     const marker = blk.marker.slice(0, own[n - 1]?.end ?? 0);
     next.blocks[b] = { ...blk, kind: kindOfMarks(own, n, marker), marker };
+    // Ask the common parser whether future text would be a lazy continuation.
+    // A nested item's first row can become its parent's continuation without a separator.
+    const probe = next.blocks.slice();
+    if (!runsLength(probe[b].runs)) probe[b] = { ...probe[b], runs: plainRun('x') };
+    let depth = 0;
+    for (let node = docStructure(probe).info[b]?.node; node; node = node.parent) {
+      if (node.t === 'bq' || node.t === 'item') depth++;
+    }
+    if (n < own.length && depth > n) next.blocks[b].breakBefore = contPrefix(blockRaw(blk), own, n);
+    // A following committed ordered item may no longer interrupt the new paragraph.
+    const following = next.blocks[b + 1];
+    if (following && !agrees(following, docStructure(next.blocks).info[b + 1], blockRaw(following))) {
+      const marks = ownMarks(S.info[b + 1], following);
+      next.blocks[b + 1] = { ...following, breakBefore: contPrefix(blockRaw(following), marks, Math.max(0, marks.length - 1)) };
+    }
     next.sel = caret(b, 0);
     renumber(next.blocks);
     return next;
@@ -797,7 +932,7 @@ export function backspaceAtStart(st) {
   if (b === 0) return next;
   const prev = next.blocks[b - 1];
   if (prev.kind === 'att') {
-    next.blocks.splice(b - 1, 1);
+    removeAtomAt(next.blocks, b - 1);
     ensureShape(next.blocks);
     next.sel = caret(Math.min(b - 1, next.blocks.length - 1), 0);
     return next;
@@ -822,7 +957,7 @@ export function deleteAtEnd(st) {
   const after = next.blocks[b + 1];
   const here = next.blocks[b];
   if (after.kind === 'att') {
-    next.blocks.splice(b + 1, 1);
+    removeAtomAt(next.blocks, b + 1);
     ensureShape(next.blocks);
     next.sel = caret(b, next.sel.s.v);
     return next;
@@ -858,9 +993,11 @@ export function insertAtom(st, atom) {
     next.blocks.splice(at, 0, atom);
   } else if (!blk.runs.length) {
     at = b;
+    if (blk.breakBefore !== undefined) atom = { ...atom, breakBefore: blk.breakBefore };
     next.blocks.splice(b, 1, atom);
   } else if (v === 0) {
     at = b;
+    if (blk.breakBefore !== undefined) { atom = { ...atom, breakBefore: blk.breakBefore }; delete blk.breakBefore; }
     next.blocks.splice(b, 0, atom);
   } else if (v >= runsLength(blk.runs)) {
     at = b + 1;
@@ -882,16 +1019,26 @@ export function insertAtom(st, atom) {
   return next;
 }
 
+// Removing an atom does not remove the paragraph boundary it temporarily owns.
+function removeAtomAt(blocks, i) {
+  const before = blocks[i].breakBefore, following = blocks[i + 1];
+  if (before !== undefined && following && following.breakBefore === undefined) {
+    blocks[i + 1] = { ...following, breakBefore: before, pad: undefined };
+  }
+  blocks.splice(i, 1);
+}
+
 /** 条件に合う添付を外す */
 export function removeAtoms(st, pred) {
   const next = clone(st);
   const at = next.sel.s.b;
   let shift = 0;
-  next.blocks = next.blocks.filter((b, i) => {
-    const drop = b.kind === 'att' && pred(b);
-    if (drop && i < at) shift++;
-    return !drop;
-  });
+  for (let i = next.blocks.length - 1; i >= 0; i--) {
+    const b = next.blocks[i];
+    if (b.kind !== 'att' || !pred(b)) continue;
+    if (i < at) shift++;
+    removeAtomAt(next.blocks, i);
+  }
   ensureShape(next.blocks);
   const idx = Math.max(0, Math.min(at - shift, next.blocks.length - 1));
   next.sel = caret(idx, Math.min(next.sel.s.v, next.blocks[idx].kind === 'att' ? 0 : runsLength(next.blocks[idx].runs)));
@@ -968,6 +1115,7 @@ function spliceParsed(cur, parsed, { plain = false, resolve = () => null, rich =
   if (left && (left.runs.length || left.marker)) seq.push(left);
   const firstIdx = seq.length;
   seq.push(...clone(parsed));
+  if (blk.breakBefore !== undefined) seq[0].breakBefore = blk.breakBefore;
   // 空の頭の行は貼った先頭の行と一体（記号ごと置き換える）。中身のある行なら、貼った先頭の行の中身を後ろにつなぐ
   if (firstIdx === 1 && seq[1].kind !== 'att' && seq[0].kind !== 'att' && !(inCode) && (!rich || seq[1].kind === 'p')) {
     seq[0] = { ...seq[0], runs: mergeRuns([...seq[0].runs, ...seq[1].runs]) };
@@ -1017,6 +1165,7 @@ export function normalizeFences(blocks, { resolve = () => null, plain = false, r
     const nb = lineBlock(text, li, { resolve });
     if (nb.kind === b.kind && nb.marker === b.marker) return;
     if (sel) for (const k of ['s', 'e']) if (sel[k].b === i) sel[k] = { b: i, v: vOfRaw(nb, rawOffsetOf(b, sel[k].v)) };
+    if (b.breakBefore !== undefined) nb.breakBefore = b.breakBefore;
     blocks[i] = nb;
     changed = true;
   });
@@ -1090,7 +1239,7 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
     if (m && serializeRuns(sliceRuns(blk.runs, 0, v)) === head) {
       const next = clone(st);
       const kind = head[0] === '#' ? 'h' : head[0] === '>' ? 'quote' : /\d/.test(head[0]) ? 'ol' : 'ul';
-      const nb = { kind, marker: blk.marker + head, runs: sliceRuns(blk.runs, v) };
+      const nb = { ...blk, kind, marker: blk.marker + head, runs: sliceRuns(blk.runs, v) };
       next.blocks[b] = nb;
       if (agrees(nb, docStructure(next.blocks).info[b], blockRaw(nb))) {
         next.sel = caret(b, 0);
@@ -1101,7 +1250,7 @@ export function applyTriggers(st, ch, { plain = false } = {}) {
   if (lineStart && ch === '`' && text.slice(0, v) === '```') {
     const next = clone(st);
     const own = ownMarks(docStructure(st.blocks).info[b], blk), inner = contPrefix(blockRaw(blk), own);
-    next.blocks[b] = codeBlock('```' + text.slice(v), blk.marker);
+    next.blocks[b] = { ...codeBlock('```' + text.slice(v), blk.marker), ...(blk.breakBefore !== undefined ? { breakBefore: blk.breakBefore } : {}) };
     next.blocks.splice(b + 1, 0, codeBlock('', inner), codeBlock('```', inner));
     ensureShape(next.blocks);
     next.sel = caret(b, 3);
@@ -1163,8 +1312,10 @@ export function selectionMarkdown(st) {
   const { s, e } = st.sel;
   if (isCollapsed(st.sel)) return '';
   const lines = [];
+  const boundaries = new Map(docLayout(st.blocks).lines.map(l => [l.b, l.before]));
   for (let i = s.b; i <= e.b; i++) {
     const b = st.blocks[i];
+    if (i > s.b && boundaries.get(i) !== undefined) lines.push(boundaries.get(i));
     if (b.kind === 'att') { if (!omitted(b)) lines.push(blockRaw(b)); continue; }
     const from = i === s.b ? s.v : 0, to = i === e.b ? e.v : runsLength(b.runs);
     const whole = from === 0 && to >= runsLength(b.runs);

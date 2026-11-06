@@ -20,6 +20,7 @@ const D = (id, key) => `agent:ops.bots.${id}.${key}`;
 /** BotStoreError を OpError にする（保存の側の失敗の code を、辞書にある code に写す）。ほかの例外はそのまま投げる */
 function asOpError(ctx, err) {
   if (!(err instanceof BotStoreError)) return err;
+  if (err.code === 'CANNOT_DELETE') return new OpError('CANNOT_DELETE', err.message);
   if (err.code === 'BOT_NOT_FOUND') return new OpError('BOT_NOT_FOUND', agentT(ctx.locale, 'ops.errors.BOT_NOT_FOUND', { id: err.id ?? '' }));
   if (err.code === 'BOT_NAME_TAKEN') return new OpError('BOT_NAME_TAKEN', agentT(ctx.locale, 'ops.errors.BOT_NAME_TAKEN', { name: err.name ?? '' }));
   return new OpError('INVALID', agentT(ctx.locale, 'ops.errors.INVALID', { detail: err.detail ?? err.message }));
@@ -40,11 +41,13 @@ const botShape = {
   dmChannelId: z.string(), dmSessionId: z.string().nullable(),
   createdAt: z.number(), updatedAt: z.number(),
   plain: z.boolean().optional(),   // 組み込みの bot（チャンネルのスレッドの「bot なし」。ADR 0157）
+  deletionPending: z.boolean().optional(),
 };
 const botRow = z.object({
   ...botShape,
   usage: z.object({ weekTokens: z.number(), cacheRatio: z.number().nullable() }),
   state: z.enum(['idle', 'working', 'waiting']),
+  deletion: z.object({ conversations: z.number(), routines: z.number(), blockedReason: z.string().nullable() }).optional(),
   sendTargetDetails: z.array(z.object({ sessionId: z.string(), title: z.string(), source: z.enum(['shown', 'created', 'manual']) })).optional(),
 });
 

@@ -149,6 +149,12 @@ export function createBrainStore({ dataDir, now = Date.now, emit = () => {} } = 
       changed(botId);
       return out;
     },
+    purgeBot(botId) {
+      service.clear(botId);
+      const changes = [['brain', botId, undefined]];
+      for (const key of Object.keys(states.ofKind('brain.spend'))) if (key.endsWith('/' + botId)) changes.push(['brain.spend', key, undefined]);
+      states.save(changes);
+    },
     close() { handle?.release(); handle = null; stream = null; states = null; },
   };
   return service;

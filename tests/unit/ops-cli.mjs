@@ -101,7 +101,7 @@ export default async function (t) {
     t.ok('sessions list --limit 1 で絞り、next で続き（--cursor）', (() => { const a = JSON.parse(run('sessions', 'list', '--limit', '1', '--json').out); const b = JSON.parse(run('sessions', 'list', '--limit', '1', '--cursor', a.next, '--json').out); return a.sessions.length === 1 && b.sessions.length === 1 && a.sessions[0].id !== b.sessions[0].id; })());
     t.ok('位置引数: sessions get <id>', JSON.parse(run('sessions', 'get', turn.sessionId, '--json').out).id === turn.sessionId);
     t.ok('位置引数と --<名前>: sessions read <id> --after 0 --before 0', JSON.parse(run('sessions', 'read', turn.sessionId, '--before', '0', '--after', '0', '--json').out).messages.length === 1);
-    t.ok('settings get <key> と settings list --prefix', /value: external|value: inapp/.test(run('settings', 'get', 'linkOpen').out) && /compaction\.auto/.test(run('settings', 'list', '--prefix', 'compaction.').out) && !/linkOpen/.test(run('settings', 'list', '--prefix', 'compaction.').out));
+    t.ok('settings get <key> と settings list --prefix', /value: \d\d:\d\d/.test(run('settings', 'get', 'memoryLearnAt').out) && /compaction\.auto/.test(run('settings', 'list', '--prefix', 'compaction.').out) && !/memoryLearnAt/.test(run('settings', 'list', '--prefix', 'compaction.').out));
 
     // 終了コード
     t.ok('無い会話は 2（SESSION_NOT_FOUND）。文は標準エラーへ', (() => { const r = run('sessions', 'get', 'nope'); return r.code === 2 && /見つかりません/.test(r.err) && r.out === ''; })());
@@ -154,13 +154,13 @@ export default async function (t) {
     t.ok('許可すると実行され、その結果（結果: 許可）が会話に届く', /結果: 許可/.test(allowedNotice.text), allowedNotice.text);
 
     // settings set（値は JSON として読み、読めなければ文字列）
-    const setOk = run('settings', 'set', 'linkOpen', 'external');
-    t.ok('settings set <key> <value>: 文字列の値（束縛されない CLI の write は通る）', setOk.code === 0 && /changed: true/.test(setOk.out) && (await c.cmd('prefs')).linkOpen === 'external', setOk.out + setOk.err);
+    const setOk = run('settings', 'set', 'memoryLearnAt', '03:30');
+    t.ok('settings set <key> <value>: 文字列の値（束縛されない CLI の write は通る）', setOk.code === 0 && /changed: true/.test(setOk.out) && (await c.cmd('prefs')).memoryLearnAt === '03:30', setOk.out + setOk.err);
     t.ok('settings set: 真偽・数は JSON として読む。同じ値は changed: false', run('settings', 'set', 'confirmAgentSites', 'true').code === 0 && (await c.cmd('prefs')).confirmAgentSites === true
       && run('settings', 'set', 'instructionBudget', '9000').code === 0 && (await c.cmd('prefs')).instructionBudget === 9000 && /changed: false/.test(run('settings', 'set', 'instructionBudget', '9000').out));
     const loosen = run('settings', 'set', 'confirmAgentSites', 'false');
     t.ok('束縛されない CLI が関所を緩める設定（確認を切る）を変えると 4（NEEDS_UI。画面へ誘導）。値は変わらない', loosen.code === 4 && /画面/.test(loosen.err) && (await c.cmd('prefs')).confirmAgentSites === true, loosen.err);
-    t.ok('settings set: 値の誤りは 2、知らないキーは 2', run('settings', 'set', 'linkOpen', 'javascript:').code === 2 && run('settings', 'set', 'nothing', '1').code === 2 && run('settings', 'set', 'mode', 'auto').code === 2);
+    t.ok('settings set: 値の誤りは 2、知らないキーは 2', run('settings', 'set', 'memoryLearnAt', 'javascript:').code === 2 && run('settings', 'set', 'nothing', '1').code === 2 && run('settings', 'set', 'mode', 'auto').code === 2);
     t.ok('settings set --help は json の value を示す', /<value> json/.test(run('settings', 'set', '--help').out));
     t.ok('間違ったトークンは未起動と同じ 3', cli(['status'], baseEnv(dataDir, { PLEIAD_CONTROL_URL: info.envUrl, PLEIAD_CONTROL_TOKEN: 'e'.repeat(64) })).code === 3);
     t.ok('英語の文（--lang en）: サーバーが返す説明と失敗も英語', /Return|version/i.test(run('status', '--lang', 'en').out) && /No conversation found/.test(run('sessions', 'get', 'nope', '--lang', 'en').err));

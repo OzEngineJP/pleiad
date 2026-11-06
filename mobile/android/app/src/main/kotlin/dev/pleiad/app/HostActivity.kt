@@ -200,6 +200,7 @@ class HostActivity : ComponentActivity() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
                 if ("${u.scheme}://${u.authority}" == origin) return false
+                if (!request.isForMainFrame && LinkPolicy.isIsolatedPage(u.scheme, u.host, u.port, u.path, u.userInfo != null, px.isolatedPort)) return false
                 // Links out of the host UI (docs, OAuth pages to copy a code from) open in the browser
                 if (request.isForMainFrame) openOutside(u)
                 return true
@@ -293,7 +294,7 @@ class HostActivity : ComponentActivity() {
 
     /** Where a link goes on this device (LinkPolicy). Web pages open in the device's browser, localhost only tells why not. */
     private fun linkTarget(u: Uri): LinkTarget =
-        LinkPolicy.classify(u.scheme, u.host, u.port, u.path, u.userInfo != null, proxy?.port ?: -1)
+        LinkPolicy.classify(u.scheme, u.host, u.port, u.path, u.userInfo != null, proxy?.port ?: -1, proxy?.isolatedPort ?: -1)
 
     private fun openOutside(u: Uri) {
         when (linkTarget(u)) {

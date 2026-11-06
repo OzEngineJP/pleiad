@@ -94,6 +94,9 @@ export function createEpisodes({ channels, bots, summarize, localeOf = () => 'ja
     }
     for (const botId of Object.keys(thread.sessions)) {
       if (closed) return;
+      let release;
+      try { release = bots.acquire?.(botId); } catch { continue; }
+      try {
       const bot = await bots.get({ botId }).catch(() => null);
       if (!bot || bot.plain) continue;   // 組み込みの bot（bot なし）はエピソードを持たない（ADR 0157）
       const recent = episodePosts(page.posts, threadId, botId);
@@ -112,6 +115,7 @@ export function createEpisodes({ channels, bots, summarize, localeOf = () => 'ja
       await channels.threads.update(channelId, threadId, (old) => ({ digest: {
         ...(old.digest ?? {}), [botId]: { text: clip(episode.text, 500), at: now(), lastAt: Math.max(...recent.map((p) => p.editedAt ?? p.at ?? 0)), fingerprint: currentFingerprint },
       } }));
+      } finally { release?.(); }
     }
     deferrals.delete(keyOf(channelId, threadId));
   }
