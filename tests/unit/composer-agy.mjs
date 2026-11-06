@@ -62,8 +62,9 @@ export default async function (t) {
   t.ok("一覧が引けていないときも同じ", buildAgyModels([], null)[""].label === "既定（agy の設定）");
 
   // ---- agy に渡す引数
-  t.ok("段が無ければ model だけ（'' なら何も渡さない）",
-    JSON.stringify(agyTarget("", "", m)) === "{}" && agyTarget("gemini-3.1-pro-low", "", m).model === "gemini-3.1-pro-low");
+  t.ok("段が無ければ model だけ（'' なら既定のモデルを明示する。既定が分からなければ何も渡さない）",
+    JSON.stringify(agyTarget("", "", m)) === '{"model":"gemini-3.8-flash-high"}' && agyTarget("gemini-3.1-pro-low", "", m).model === "gemini-3.1-pro-low"
+      && JSON.stringify(agyTarget("", "", unknown)) === "{}" && JSON.stringify(agyTarget("", "", {})) === "{}");
   t.ok("段があれば同じ系統の段違いの id に解決し、--effort は渡さない",
     JSON.stringify(agyTarget("gemini-3.8-flash-low", "high", m)) === '{"model":"gemini-3.8-flash-high"}'
       && JSON.stringify(agyTarget("", "low", m)) === '{"model":"gemini-3.8-flash-low"}');
