@@ -817,7 +817,7 @@ export function setupDelegationSettings({ cmd, page, showMenu, labelOf, logo, mo
       td.append(box);
     } else {
       const foot = el('div', 'rt-kind-foot');
-      const del = button(t('routing.settings.kindDelete'), () => { ui.delKind = k.id; paintAdvanced(); advancedBody.querySelector(`#rt-kind-ed-${k.id} .mp-confirm .btn`)?.focus({ preventScroll: true }); });
+      const del = button(t('routing.settings.kindDelete'), () => { ui.delKind = k.id; paintAdvanced(); advancedBody.querySelector(`#rt-kind-ed-${k.id} .mp-confirm .btn`)?.focus({ preventScroll: true }); }, 'btn danger');
       del.dataset.fk = `kdel:${k.id}`;
       del.disabled = kinds().length < 2;
       foot.append(del);
