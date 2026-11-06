@@ -78,7 +78,7 @@ export async function renderFile(root, file) {
         link.href = pageUrl('file', ref, { base:file.path }); delete link.dataset.filePath;
       }
       for (const copy of result.article.querySelectorAll('.code-copy')) copy.addEventListener('click', () => { void navigator.clipboard.writeText(copy.closest('.code-block').querySelector('code').textContent).catch(() => {}); });
-      for (const menu of result.article.querySelectorAll('[data-file-menu]')) menu.addEventListener('click', () => request('file-menu', { path:menu.dataset.fileMenu, base:file.path }));
+      for (const menu of result.article.querySelectorAll('[data-file-menu]')) menu.addEventListener('click', event => request('file-menu', { path:menu.dataset.fileMenu, base:file.path, kind:'file', x:event.clientX, y:event.clientY }));
       content.append(result.article); if (result.note) content.append(node('p', 'limit-note', result.note));
     } else if (file.kind === 'html') {
       await htmlFrame(content, file, signal);
