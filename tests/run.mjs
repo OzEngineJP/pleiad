@@ -875,6 +875,10 @@ const SUITES = [
   // --- A1 映像 ---
 
   // --- A2 ページの Cookie と中継の範囲 ---
+  // 中継の移動の検査（本体の port はどの名前でも断る・ファイルのページはその会話だけ・隔離は localhost だけ）・止めた要求・pleiad_* の Cookie を隠す（表と偽の Chrome）
+  './unit/chrome-page-policy.mjs',
+  // ページの Cookie を入れる形（localhost・Path・HttpOnly・Strict・port）と、入れる時点（つながったとき・ファイルのページを開く前・タブのセッション）
+  './unit/page-cookie.mjs',
 
   // --- A3 可視化と HTML のファイル ---
 
