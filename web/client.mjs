@@ -8097,6 +8097,11 @@ function openLightbox(src, caption, path, origin) {
   d.querySelector(".lb-path-text").title = path ?? "";
   d.querySelector(".lb-panel").hidden = !path;
   d.querySelector(".lb-reveal").hidden = !path || state.osActions !== true;
+  // 既定のアプリで開く: 旗が on のホストの画面で、実体（添付なら uploads の中のファイル）が許した種類のときだけ。サーバーに聞いてから出す
+  const openDefault = d.querySelector(".lb-default");
+  openDefault.hidden = true;
+  const asked = lightboxFile;
+  if (asked) filePreview.defaultAppAllowed({ path, element: origin ?? null }).then((ok) => { if (ok && lightboxFile === asked && d.open) openDefault.hidden = false; });
   const save = d.querySelector(".lb-save");
   const name = (path ?? caption ?? "image").split(/[\\/]/).at(-1) || "image";
   // 絶対パスは認証付きの /local-file?download=1、パスの無い画像は data URI をそのまま保存する
@@ -8155,6 +8160,7 @@ function wireDropZone() {
     filePreview.open({ path: target.path, line: null }, target.element?.isConnected ? target.element : null);
   };
   lb.querySelector(".lb-reveal").onclick = () => { if (lightboxFile) filePreview.reveal(lightboxFile); };
+  lb.querySelector(".lb-default").onclick = () => { if (lightboxFile) filePreview.openDefault(lightboxFile); };
   const zone = document.querySelector("main");
   let depth = 0;
   const show = (on) => zone.classList.toggle("dropping", on);

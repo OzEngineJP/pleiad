@@ -938,6 +938,12 @@ export function setupFilePreview({ getContext, useFile, onLayout, showMenu, cmd,
     open: (ref, element) => activate(ref, element),
     /** ファイルの操作メニュー（拡大表示・会話の画像） */
     menu, reveal: (target) => osAction('revealPath', target),
+    /** 拡大表示の「既定のアプリで開く」を出してよいか（旗が on のホストの画面で、サーバーが許した種類の実体だけ） */
+    defaultAppAllowed: async (target) => {
+      if (!cmd || !unifiedEnabled() || !osActions() || !target?.path) return false;
+      try { return (await cmd('resolvePath', whereFrom(target)))?.defaultAppAllowed === true; } catch { return false; }
+    },
+    openDefault: (target) => run('default', target),
     /** 見ている場所（OS の操作の可否）が分かった・変わった */
     osChanged: () => { if (!panel.hidden) show(); },
     /** 設定（リンクの開き先）が変わった */
