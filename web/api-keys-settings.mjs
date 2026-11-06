@@ -15,7 +15,6 @@ import { apiKeyList, keyName, statusLine, spinner, keyInput, keepFocus, CHEV } f
 import { parseDotenv, ENV_NAME, reservedName, looksSecret } from './dotenv.mjs';
 
 const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex', grok: 'Grok Build' };
-const JUDGE_NAME = { jev: 'Jev / Qwen' };
 /** 使っている所が多いカードは先頭 3 件と［ほか N か所］に畳む（4 件までは全部出す） */
 const FOLD_AT = 4;
 const FOLD_SHOWN = 3;
@@ -185,7 +184,7 @@ export function setupApiKeysSettings({ cmd, page, openEndpoints = () => {}, rece
     if (u.kind === 'endpoint') return t('apiKeys.uses.endpoint', { agent: AGENT_NAME[u.agent] ?? u.agent, name: u.name });
     if (u.kind === 'voice') return t('apiKeys.uses.voice');
     if (u.kind === 'computer') return t('apiKeys.uses.computer');
-    return t('apiKeys.uses.judge', { judge: JUDGE_NAME[u.judge] ?? u.judge });
+    return t('apiKeys.uses.judge');
   }
   // i18n-dynamic: apiKeys.effect.
   const useEffect = u => t(`apiKeys.effect.${['endpoint', 'voice', 'computer'].includes(u.kind) ? u.kind : 'judge'}`);

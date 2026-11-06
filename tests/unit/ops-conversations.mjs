@@ -56,7 +56,7 @@ export default async function (t) {
       call: rec('call', { stopped: true }), cancel: rec('cancel', owned),
       instructions: (id) => (id === 'ply-task-own' ? { taskId: id, revision: 3, instructions: Array.from({ length: 3 }, (_, i) => ({ id: `i${i}`, text: 'あ'.repeat(i === 0 ? 5000 : 3), at: i, state: 'queued' })) } : null),
       retry: rec('retry', (a) => (a.candidate === 'strong:model' ? { confirm: { agent: 'Strong', mode: 'bypass' } } : { task: { ...owned, taskId: 'ply-task-new' } })),
-      routing: async ({ refresh }) => ({ settings: { enabled: true }, defaults: { big: 1 }, kinds: ['a'], warnings: [], keys: { openrouter: { hasKey: true } }, candidates: Array.from({ length: 60 }, (_, i) => ({ candidate: `c:${i}` })), refresh }),
+      routing: async ({ refresh }) => ({ settings: { enabled: true }, defaults: { big: 1 }, kinds: ['a'], warnings: [], key: { via: 'key', hasKey: true, keyRef: 'ref', plus: null }, candidates: Array.from({ length: 60 }, (_, i) => ({ candidate: `c:${i}` })), refresh }),
       providerUsage: rec('providerUsage', { backend: 'codex', label: 'Codex', quota: {}, local: {} }),
     },
   });
@@ -179,7 +179,7 @@ export default async function (t) {
     && (await run(agent(), 'delegation.instructions', { taskId: 'ply-task-own' })).result.instructions[2].text.length === INSTRUCTION_CHARS && (await run(human, 'delegation.instructions', { taskId: 'ply-task-own' })).result.instructions[0].text.length === 5000);
   t.ok('無いタスクは TASK_NOT_FOUND', (await run(agent(), 'delegation.instructions', { taskId: 'nope' })).code === 'TASK_NOT_FOUND' && (await run(human, 'delegation.instructions', { taskId: 'nope' })).code === 'TASK_NOT_FOUND');
   const route = await run(agent(), 'delegation.routing', { limit: 20 });
-  t.ok('delegation.routing: AI には設定・警告・キーの有無・候補の一部（20 件ずつ）だけ。語彙（defaults・kinds）は画面だけ', route.result.candidates.length === 20 && route.result.total === 60 && route.result.keys.openrouter.hasKey === true
+  t.ok('delegation.routing: AI には設定・警告・キーの有無・候補の一部（20 件ずつ）だけ。語彙（defaults・kinds）は画面だけ', route.result.candidates.length === 20 && route.result.total === 60 && route.result.key.hasKey === true
     && route.result.defaults === undefined && (await run(human, 'delegation.routing', {})).result.defaults.big === 1 && (await run(human, 'delegation.routing', { refresh: true })).result.refresh === true);
   t.ok('delegation.usage（providerUsage）: 画面には使用枠と実績。AI は従来の ply_usage', (await run(human, 'delegation.usage', { backend: 'codex' })).result.label === 'Codex'
     && (await run(agent(), 'delegation.usage', {})).result.stopped === true);

@@ -117,9 +117,9 @@
 
 ## キー無しの機能（仮想のキー `plus`）
 
-Pleiad Plus にログインしていれば、自分の OpenRouter のキーが無くても「委譲先の自動選択」と「音声通話」が動く。台帳（`core/api-keys.mjs`）に値を持たない仮想のキー `plus`（`{ id: 'plus', provider: 'plus', label: 'Pleiad Plus', virtual: true }`）がいて、`judge:jev` と `voice` にだけ選べる（ほかの使い道は `UNSUPPORTED_USE`）。削除・名前の変更・値の確認・probe の対象にはならない。
+Pleiad Plus にログインしていれば、自分の OpenRouter のキーが無くても「委譲先の自動選択」と「音声通話」が動く。台帳（`core/api-keys.mjs`）に値を持たない仮想のキー `plus`（`{ id: 'plus', provider: 'plus', label: 'Pleiad Plus', virtual: true }`）がいて、`judge:routing` と `voice` にだけ選べる（ほかの使い道は `UNSUPPORTED_USE`）。削除・名前の変更・値の確認・probe の対象にはならない。
 
-- ログインしたとき、委譲先の自動選択と音声通話の**両方**が「使わない」なら、両方に `plus` を自動で選ぶ（`onChange` に `{ uses: ['judge:jev', 'voice'], autoPlus: true }`）。どちらかでもキーを選んでいれば何もしない。ログアウトしても選択は消さない。
+- ログインしたとき、委譲先の自動選択と音声通話の**両方**が「使わない」なら、両方に `plus` を自動で選ぶ（`onChange` に `{ uses: ['judge:routing', 'voice'], autoPlus: true }`）。どちらかでもキーを選んでいれば何もしない。ログアウトしても選択は消さない。
 - 使う側は `apiKeys.useEndpoint(use)` が返す `{ kind, baseUrl, authorization }` で送る。`useKey` は `plus` に対して `null` を返し続ける（値が無いので）。`hasUse` は送り先があるときだけ true。
 - `kind: 'openrouter'`（自分のキー）: `baseUrl` は OpenRouter（`AGENT_HOST_OPENROUTER_API`・`AGENT_HOST_VOICE_API`）、`authorization` は `Bearer <キー>`。
 - `kind: 'plus'`: `baseUrl` は `<PLUS_API>/v1/proxy/openrouter`（判定）・`<PLUS_API>/v1/proxy/voice`（通話）。`authorization()` は送るたびに `session.getIdToken()` で ID トークンを取る（覚えない）。取れなければ `ApiKeyError('PLUS_SIGNED_OUT')` を投げる。`AGENT_HOST_OPENROUTER_API` は効かない。
@@ -133,7 +133,7 @@ Pleiad Plus にログインしていれば、自分の OpenRouter のキーが�
 | `rate_limited`（429） | 試し直さず `mid` | 今の 429 と同じにやり直す |
 | `not_plus`・`account_disabled`（403） | `mid`・セッションにアカウントを読み直させる | 通話を終える（`code` はそのまま） |
 | `unauthenticated`（401） | ID トークンを 1 回だけ取り直して送り直す。取り直せなければ `mid` | 同じく 1 回だけ取り直して送り直す |
-| `upstream_error`（502） | 今の 5xx と同じ（もう一方を試す） | 今の 5xx と同じ（1 回やり直す） |
+| `upstream_error`（502） | 今の 5xx と同じ（別のモデルは試さず `mid`） | 今の 5xx と同じ（1 回やり直す） |
 
 判定は `plus` のときだけ待ち時間の上限を 8 秒にする（`PLUS_JUDGE_TIMEOUT_MS`。OpenRouter のままなら 3 秒）。通話が続いている間に ID トークンが替わっても切らない（キーの変わりを比べる印は `kind` と `uid`）。
 

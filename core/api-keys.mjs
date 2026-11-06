@@ -4,7 +4,7 @@
 //   <data>/api-keys.json         秘密でない台帳: { keys: [{ id, provider, label, createdAt, lastCheck }], uses, guide, migration }
 //   <data>/api-key-secrets.json  キーの値（core/secret-store.mjs。エントリ key:<id>。Claude のアカウント・MCP と同じ暗号化）
 //   接続先の割り当ては compat-endpoints.json の各行の keyRef（値を持たない。書くのは compatEndpointSave・このモジュールの削除・まとめ）。
-//   通話・自動選択・wait_until の問いの割り当ては uses（voice・judge:jev・computer:decider。judge:jev は OpenRouter の自動選択のモデル 2 つ（Jev・Qwen）が使う）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
+//   通話・自動選択・wait_until の問いの割り当ては uses（voice・judge:routing・computer:decider。judge:routing は OpenRouter の自動選択の判定モデルが使う）。prefs の voice は AI も書ける設定なので、割り当てはそこに置かない。
 // 登録しただけでは、どの機能も外部に送らない。送るのは「使うキー」を人が選んだときから（ADR 0022・0150 の「キーの登録＝同意」を選ぶ操作へ移した）。
 // キーの値は返り値・ログ・エラー文に出さない（list は値を持たず、使っている所の名前だけを返す）。
 //
@@ -20,7 +20,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { writeAtomic } from './atomic-file.mjs';
-import { SECRET_PREFIX as JUDGE_PREFIX, JUDGE_SERVICE, openRouterApiBase } from './delegation-judges.mjs';
+import { SECRET_PREFIX as JUDGE_PREFIX, JUDGE_SERVICE, JUDGE_USE, openRouterApiBase } from './delegation-judges.mjs';
 import { voiceBaseUrl } from './voice/openrouter.mjs';
 import { USE_PROVIDER, FIXED_HOST_PROVIDERS, providerName, providerOfEndpoint, hostOf, keyFitsEndpoint } from '../web/api-keys-model.mjs';
 import { t } from './i18n.mjs';
@@ -28,23 +28,25 @@ import { t } from './i18n.mjs';
 export { providerOfEndpoint };
 
 export const SECRET_PREFIX = 'key:';
-/** 仮想のキー「Pleiad Plus」の id。値を持たない（秘密の置き場に何も書かない）。選べるのは judge:jev と voice だけ（docs/plus.md「キー無しの機能」） */
+/** 仮想のキー「Pleiad Plus」の id。値を持たない（秘密の置き場に何も書かない）。選べるのは judge:routing と voice だけ（docs/plus.md「キー無しの機能」） */
 export const PLUS_KEY_ID = 'plus';
-const PLUS_USES = new Set(['judge:jev', 'voice']);
+const PLUS_USES = new Set([JUDGE_USE, 'voice']);
 /** 古い置き場（互換の接続先のキー）の項目名 */
 export const LEGACY_ENDPOINT_PREFIX = 'compat-endpoint:';
 const LEGACY_VOICE_KEY = 'openrouter';
 
 /** キーを割り当てる先（接続先は keyRef で、ここには入らない） */
-export const USES = Object.freeze(['voice', 'judge:jev', 'computer:decider']);
+export const USES = Object.freeze(['voice', JUDGE_USE, 'computer:decider']);
 /**
- * 前の版の割り当て（Cerebras の直の自動選択。2026-10-09 に廃止、ADR 0177）。読み込むたびに、自動選択に使うキーがまだ無ければ OpenRouter のキーを judge:jev に選んだ状態にし、
- * 台帳からは次に書くときに消える（起動だけでは書き直さない。同じ置き場を読む前の版の割り当てを、何もしないうちに消さない）
+ * 前の版の割り当て。読み込むたびに、自動選択に使うキーがまだ無ければそのまま（judge:jev）・OpenRouter のキーを judge:routing に
+ * 選んだ状態にし（judge:cerebras）、台帳からは次に書くときに消える（起動だけでは書き直さない。同じ置き場を読む前の版の割り当てを、何もしないうちに消さない）
+ *   judge:jev      … 前の版の自動選択（Jev・Qwen が 1 つの OpenRouter のキーを使う）。2026-11-06 に判定を 1 つのモデルへ変えたとき judge:routing へ
+ *   judge:cerebras … さらに前の Cerebras の直の自動選択（2026-10-09 に廃止、ADR 0177）
  */
-const RETIRED_JUDGE_USE = 'judge:cerebras';
+const RETIRED_JUDGE_USES = Object.freeze({ 'judge:jev': 'same', 'judge:cerebras': 'adopt' });
 /** 古い置き場を持たない割り当て（ADR 0155 の後に足したもの。移行・古い置き場への書き写しの対象にしない） */
 const NO_LEGACY = new Set(['computer:decider']);
-const SERVICE_OF_USE = Object.freeze({ 'judge:jev': JUDGE_SERVICE.jev });
+const SERVICE_OF_USE = Object.freeze({ [JUDGE_USE]: JUDGE_SERVICE });
 
 export const MAX_KEYS = 200;
 export const MAX_LABEL = 60;
@@ -83,7 +85,7 @@ function normalizeHost(provider, host) {
 
 /** Cerebras の自動選択にキーを選んでいた人の割り当てを、OpenRouter の自動選択へ移す（自動選択に使うキーが無く、OpenRouter のキーがあるときだけ。最初に登録したもの） */
 function adoptRetiredJudge(uses, keys) {
-  if (!uses['judge:jev']) uses['judge:jev'] = keys.find(k => k.provider === USE_PROVIDER['judge:jev'])?.id ?? null;
+  if (!uses[JUDGE_USE]) uses[JUDGE_USE] = keys.find(k => k.provider === USE_PROVIDER[JUDGE_USE])?.id ?? null;
 }
 
 function clean(raw) {
@@ -94,7 +96,11 @@ function clean(raw) {
       host: normalizeHost(normalizeProvider(k.provider), k.host), lastCheck: k.lastCheck && typeof k.lastCheck === 'object' ? k.lastCheck : null }));
   const ids = new Set(keys.map(k => k.id));
   const uses = Object.fromEntries(USES.map(u => [u, (ids.has(raw.uses?.[u]) || raw.uses?.[u] === PLUS_KEY_ID) ? raw.uses[u] : null]));
-  if (ids.has(raw.uses?.[RETIRED_JUDGE_USE])) adoptRetiredJudge(uses, keys);
+  for (const [retired, how] of Object.entries(RETIRED_JUDGE_USES)) {
+    const id = raw.uses?.[retired];
+    if (!ids.has(id) && id !== PLUS_KEY_ID) continue;
+    if (how === 'same') { if (!uses[JUDGE_USE]) uses[JUDGE_USE] = id; } else adoptRetiredJudge(uses, keys);
+  }
   return { version: 1, migration: raw.migration?.done ? { done: true, at: String(raw.migration.at ?? '') } : null, keys, uses,
     guide: raw.guide === 'pending' || raw.guide === 'done' ? raw.guide : null };
 }
@@ -257,8 +263,8 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
         const value = normalizeApiKey((await read(() => legacy.compat.get(LEGACY_ENDPOINT_PREFIX + row.id)))?.key);
         if (value) sources.push({ kind: 'endpoint', value, provider: providerOfEndpoint(row), row });
       }
-      const value = normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + SERVICE_OF_USE['judge:jev'])))?.key);
-      if (value) sources.push({ kind: 'judge', use: 'judge:jev', value, provider: USE_PROVIDER['judge:jev'] });
+      const value = normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + SERVICE_OF_USE[JUDGE_USE])))?.key);
+      if (value) sources.push({ kind: 'judge', use: JUDGE_USE, value, provider: USE_PROVIDER[JUDGE_USE] });
       // Cerebras の自動選択のキー（delegation-routing:cerebras）は取り込まない（使う所が無い。古い置き場には残す）。自動選択へ選んでいたことだけ引き継ぐ
       hadRetiredJudge = Boolean(normalizeApiKey((await read(() => legacy.compat.get(JUDGE_PREFIX + 'cerebras')))?.key));
     }
@@ -341,7 +347,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
     const out = [];
     for (const e of (await eps()?.keyUsers?.()) ?? []) if (e.keyRef === id) out.push({ kind: 'endpoint', id: e.id, agent: e.agent, name: e.name });
     if (state.uses.voice === id) out.push({ kind: 'voice' });
-    if (state.uses['judge:jev'] === id) out.push({ kind: 'judge', judge: 'jev' });
+    if (state.uses[JUDGE_USE] === id) out.push({ kind: 'judge' });
     if (state.uses['computer:decider'] === id) out.push({ kind: 'computer' });
     return out;
   }
@@ -383,7 +389,7 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
         migration: migrated() ? { state: 'done' } : { state: 'deferred', reason: deferred ?? 'broken' },
         storage: storage ? { encrypted: storage.encrypted, backend: storage.backend, ...(storage.reason ? { reason: storage.reason } : {}) } : null,
         keys, uses: { ...state.uses }, guide: guideOf(),
-        // 仮想のキー「Pleiad Plus」。値を持たない（削除・名前の変更・値の確認・probe の対象にしない）。judge:jev と voice だけ選べる
+        // 仮想のキー「Pleiad Plus」。値を持たない（削除・名前の変更・値の確認・probe の対象にしない）。judge:routing と voice だけ選べる
         virtual: [{ id: PLUS_KEY_ID, provider: 'plus', label: 'Pleiad Plus', virtual: true, uses: await usersOf(PLUS_KEY_ID) }],
       };
     },
@@ -462,15 +468,15 @@ export function createApiKeys({ dataDir, secrets, legacy = {}, endpoints = () =>
       return { id, affected };
     },
     /**
-     * Pleiad Plus にログインしたときの自動の選択（onChange に { uses: ['judge:jev','voice'], autoPlus: true } を出す）。
+     * Pleiad Plus にログインしたときの自動の選択（onChange に { uses: ['judge:routing','voice'], autoPlus: true } を出す）。
      * 委譲先の自動選択と音声通話の両方が「使わない」のときだけ、両方に仮想のキー plus を選ぶ。ログアウトでは消さない
      */
     async plusSignedIn() {
       await ensure();
-      if (!migrated() || state.uses['judge:jev'] || state.uses.voice) return false;
-      await mutate(s => { s.uses['judge:jev'] = PLUS_KEY_ID; s.uses.voice = PLUS_KEY_ID; });
-      for (const u of ['judge:jev', 'voice']) await mirrorUse(u);
-      emit({ uses: ['judge:jev', 'voice'], autoPlus: true });
+      if (!migrated() || state.uses[JUDGE_USE] || state.uses.voice) return false;
+      await mutate(s => { s.uses[JUDGE_USE] = PLUS_KEY_ID; s.uses.voice = PLUS_KEY_ID; });
+      for (const u of [JUDGE_USE, 'voice']) await mirrorUse(u);
+      emit({ uses: [JUDGE_USE, 'voice'], autoPlus: true });
       return true;
     },
     /** 中継が credit_exhausted を返した月の状態（{ resetAt }。無ければ null）。過ぎた・上限未満に戻った値は返さない */

@@ -73,14 +73,12 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 **流れ**（`backend` が無いとき。`core/server.mjs` の `routeDelegation`。選んだ後は、書いた `backend` と同じく承認の強さの判定・承認カードを通る）:
 
-1. **難しさを自動で決めるモデルを選ぶ。** 設定の種類ごとの自動選択（`jev` / `qwen` / `none`）。既定は `ux_change` `ux_new` `visual` が `none`、ほかは `jev`。
-2. **難しさの手がかりを得る。** 自動選択のモデルへ送るのは `kind` と依頼文（`task`。8,000 文字で切る）だけ。`context`・使用量・振り分けの表・会話の記録は送らない。答えは 6 つの手がかりの真偽。
-   - `jev`: OpenRouter `POST https://openrouter.ai/api/alpha/decisions`、`typesafe/jev-1.13`、Noul 6 つ。はいの確率を手がかりごとの閾値で真偽にする（`diagnose` 0.50・`choose` 0.31・`long_procedure` 0.685・`many_parts` 0.68・`writes_shared` 0.50・`security_gate` 0.19）。問いの文面（英語）と閾値は検証で決めたもので、`core/delegation-routing.mjs` の `QUESTIONS` / `JEV_THRESHOLDS`。Noul の false 側は「The statement for <id> is false for this task.」（閾値を選んだときと同じ文面）。
-   - `qwen`: OpenRouter `POST https://openrouter.ai/api/v1/chat/completions`、`qwen/qwen3.8-27b`、`reasoning: { effort: "none" }`、`temperature: 0`、`provider: { order: ["cerebras"], allow_fallbacks: true, require_parameters: true }`（速さのため Cerebras を先に。受けなければ関数の呼び出しを受けるほかの provider）。6 つの boolean は strict な関数 `routing_v3` を 1 つだけ渡して呼ばせ、その引数で受け取る（OpenRouter の Cerebras は `response_format` の JSON schema を受けない）。キーは Jev と同じ OpenRouter のキー。2026-10-09 までは Cerebras へ直に送る `cerebras`（`api.cerebras.ai`）だった（[ADR 0177](adr/0177-judges-via-openrouter.md)）。
-   - 「Jev が迷ったら Qwen に聞き直す」（既定 OFF）: どれかの確率が閾値 ± 0.15 以内なら Qwen の答えを使う（Jev の確率も残す）。
-   - 時間切れは 1 回 3 秒。選んだモデルが使えなければ、もう一方を試し（どちらも OpenRouter のキー）、それも無理なら難しさ `mid` で続ける。`fallback` に最初の理由のコード: `no_key` `key_unreadable` `timeout` `network` `http_<status>` `bad_response` `judge_none`（自動選択しない種類）。
+1. **難しさを決めるモデルは 1 つ。** 設定の `judge`（2026-11-06、[ADR 0291](adr/0291-delegation-routing-user-levels.md)。前の版の種類ごとの自動選択 `judgeByKind` と「Jev が迷ったら Qwen」は廃止）。`none` なら難しさはいつも `mid`。
+2. **難しさの手がかりを得る。** 作業の種類の低・中・高がすべて同じレベルなら判定を呼ばず、`judge: 'none'`・`fallback: 'same_level'` を記録する。それ以外では判定のモデルへ `kind` の名前（名前が空なら id）・依頼文（`task`。8,000 文字で切る）と固定の判定指示を送る。種類の説明・`context`・使用量・振り分けの表・会話の記録は送らない。答えは 6 つの手がかりの真偽。
+   - 既定は OpenRouter `POST https://openrouter.ai/api/alpha/decisions`、`perplexity/pplx-decider-v1.2`、Noul 6 つ。はいの確率はすべて 0.5 の閾値で真偽にする（`DECISION_THRESHOLD`。前の版の手がかりごとの閾値は廃止）。問いの文面（英語）は `core/delegation-judges.mjs` の `QUESTIONS`。Noul の false 側は「The statement for <id> is false for this task.」。
+   - 時間切れは 1 回 3 秒（Pleiad Plus 経由は 8 秒）。判定が失敗・使えなければ別のモデルは試さず難しさ `mid` で続ける。`fallback` に理由のコード: `no_key` `key_unreadable` `timeout` `network` `http_<status>` `bad_response` `judge_none`（判定しない設定）、Plus 経由では `rate_limited` `credit_exhausted` `not_plus` `account_disabled` `unauthenticated` `upstream_error` など中継の `code`。
 3. **難しさの規則（v3・規則 A）。** `security_gate` → `high`。それ以外は `diagnose` `choose` `long_procedure` `many_parts` のはいの数 0 → `low`、1〜2 → `mid`、3〜4 → `high`。`writes_shared` がはいで `low` なら `mid`。
-4. **段。** 種類 × 難しさの表（既定）:
+4. **レベル。** 種類 × 難しさの表（`table`。セルはレベルの id。利用者がレベルを足せるので id は `t1`〜`t4` とは限らない。既定の表）:
 
    | kind | low | mid | high |
    |---|---|---|---|
@@ -89,9 +87,9 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    | investigate / implement / review | t2 | t3 | t4 |
    | design | t3 | t4 | t4 |
    | ux_change / ux_new | t4 | t4 | t4 |
-   | visual | tv | tv | tv |
+   | visual | t4 | t4 | t4 |
 
-   段の候補（既定、左から）: t1 = antigravity `gemini-3.8-flash-high` → claude `haiku`。t2 = antigravity `gemini-3.8-flash-high` → codex `gpt-6-luna` → antigravity `claude-opus-4-6-thinking` → claude `sonnet`。t3 = codex `gpt-6-sol` → claude `sonnet`。t4 = claude `opus` → claude `fable`。tv = codex `gpt-6-astra`（クリエイティブ作業＝`visual` だけに使う。新しい画面の `ux_new` は t4 の opus で足りる。[ADR 0058](adr/0058-delegation-creative-tier.md)）。
+   レベルの候補（既定、左から）: t1 = antigravity `gemini-3.8-flash-high` → claude `haiku`。t2 = antigravity `gemini-3.8-flash-high` → codex `gpt-6-luna` → antigravity `claude-opus-4-6-thinking` → claude `sonnet`。t3 = codex `gpt-6-sol` → claude `sonnet`。t4 = claude `opus` → claude `fable` → codex `gpt-6-astra`（前の版のクリエイティブの段 tv の候補は最後のレベルの末尾に畳む。`visual` の表の行は t4。レベルは利用者が名前を付けて足せる・順を変えられる・消せる。[ADR 0291](adr/0291-delegation-routing-user-levels.md)）。
 5. **候補を 3 組に分ける。** アカウントの候補は、そのアカウントの使用枠だけで判定する（[ADR 0040](adr/0040-delegation-routing-headroom.md)、2026-10-24 から [ADR 0264](adr/0264-delegation-account-scope.md)）。候補のアカウントが登録に無ければ `unavailable`（`no_account`）で、ほかのアカウントへは落とさない。
    - **使えない（外す）:** `unavailable`（バックエンドが有効でない・CLI が無い・Claude の登録アカウントにトークンが無い）、`model_unknown`（今のモデル一覧に無い）、委譲先でのモデル再確認による `rejected`、効く枠の今の使用率が 100% 以上の `quota_full`。`unavailable` の中身は `skipped[].detail`（`disabled`・`not_installed`・`no_token`。使用量をまだ一度も取っていないときは付けない）で、画面は「使えない（未インストール）」と添える。
    - **余裕が少ない（後回し）:** `usage_unknown`（取得失敗・取得中・枠なし・不明な枠あり）、`usage_stale`（取得間隔の 3 倍＝15 分を超えて古い。閾値は設定にはなく内部の定数）、`quota_high`（効く 5 時間以外の枠のどれかが後回しの線、既定 80%、以上）、`pace_high`、`pace_unknown`。`avoidPercent` は候補を除く線ではなく後回しにする線。5 時間の枠（`minutes === 300`）は 100% 以上のときだけ使えないと判定し、100% 未満なら後回しの判定には使わない。5 時間の使用率が不明でも、それだけでは `usage_unknown` にしない。
@@ -102,16 +100,16 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
    - リセット時刻を過ぎた枠は、使い直しが始まっているので使用率 0 とみなす。
    - 候補に効く枠: claude は 5 時間・週次と、そのモデルの系統の週次（`seven_day_opus` など。`seven_day_oauth_apps` も念のため全モデルに効かせる）。codex は主の枠と、名前がそのモデルに当たる追加の枠。antigravity はモデル名の語をいちばん多く含むグループ（`gemini-*` → Gemini のグループ、`claude-*` / `gpt-*` → Claude and GPT のグループ）。ただし専用のグループ（`Gemini 4 Argon` など）は、系統・汎用の語を除いた名前の語がすべてモデルの id に含まれるときだけ当たる。グループが見つからなければ `usage_unknown`。
 6. **アカウント。** 候補ごとにアカウントが決まっているので、振り分けはアカウントの間で釣り合わせない（2026-10-24、[ADR 0264](adr/0264-delegation-account-scope.md)。前の版の「余裕のあるアカウントを使用量で選ぶ」・同じ人の重複のまとめ・`lower_priority` は無くした）。ログイン中のアカウントが登録したアカウントと同じ人（**組織（`.claude.json` の `oauthAccount.organizationUuid`）とメールアドレスの両方が分かって一致する**。`sameIdentity`）なら、画面は「ログイン中のアカウント（<表示名>）」と書くだけで、候補は別々のまま。
-7. **段を選ぶ。** 基準の段から上へ、各段の候補を左から見て余裕ありを先に選ぶ。無ければ基準の段から上へ 1 段ずつ余裕が少ない候補を選ぶ。同じ段では使用量が分かるもの（`usage_unknown` / `usage_stale` 以外）→ 5 時間以外の効く枠の最大使用率が低い順 → 週次のペースが低い順 → 5 時間の使用率が低い順 → 段の候補の順。基準から上がすべて使えないときは 1 段ずつ下り、各段で余裕あり、次に余裕が少ない候補を選ぶ。tv は tv だけを見る。見たすべての段で全候補が使えないときだけエラー。エラー文は後回しの線と Claude のアカウントごとの理由を含む。行は言語によらない `- <候補の id> [アカウントの表示名] (段): 理由 (中身) 枠 使用率% pace ペース` の形（アカウントの無い候補は角括弧なし。ログイン中のアカウントの候補は `[login]`）にし、画面はこの行を読む。
+7. **レベルを選ぶ。** 表のレベル（`baseTier`）から上へ、各レベルの候補を左から見て余裕ありを先に選ぶ。無ければ表のレベルから上へ 1 レベルずつ余裕が少ない候補を選ぶ。同じレベルでは使用量が分かるもの（`usage_unknown` / `usage_stale` 以外）→ 5 時間以外の効く枠の最大使用率が低い順 → 週次のペースが低い順 → 5 時間の使用率が低い順 → レベルの候補の順。表のレベルから上がすべて使えないときは 1 レベルずつ下り、各レベルで余裕あり、次に余裕が少ない候補を選ぶ。見たすべてのレベルで全候補が使えないときだけエラー。エラー文は後回しの線と Claude のアカウントごとの理由を含む。行は言語によらない `- <候補の id> [アカウントの表示名] (レベル): 理由 (中身) 枠 使用率% pace ペース` の形（アカウントの無い候補は角括弧なし。ログイン中のアカウントの候補は `[login]`）にし、画面はこの行を読む。
 8. 選んだ backend / model / account で子の会話を作る（`prepare`）。**自動で選んだ子は親の会話の接続先を継がず公式で走る**（候補を公式の使用枠で選んでいるため）。アカウントは選んだ候補のもの（`''` はログイン中）。選んだ候補のモデルは、委譲先の作業場所（`cwd`）で一覧にあるかを確かめ直し、無ければ `model_unknown` として次の候補から選び直す。それでも子の会話を作る時点で使えなければ、既定に落とさずエラー。子の思考の強さも、このとき段・候補から決める（次の節）。
 
 **子の思考の強さ**（[ADR 0164](adr/0164-delegation-child-effort.md)。承認済み 2026-10-08）。自動の振り分け・人が選び直した（やり直し）子は、`prefs.json` の `delegationRouting.efforts` で強さを決める。決めるのは `prepare`（`core/server.mjs`。`decideEffort`）で、`ply_delegate` の `effort` は自動のときは書けない（`backend` を書いた固定の委譲だけ。持たない値は今までどおり断る）。
 
-- **決まり方**: ① `efforts[段][候補の id]`（その候補だけの上書き）→ ② `efforts[段]["*"]`（段の既定。無ければ組み込みの段の既定）→ ③ そのモデルが持つ強さに合わせる。値は `low` `medium` `high` `xhigh` `max`、`""` は会話の既定（エージェント設定の強さ。`resolveEffort` の継ぎ先）に従う。持たない強さは、いちばん近い下の強さに合わせる（`xhigh` → `high`。下が無ければ持つ中でいちばん弱いもの）。**振り分けでは断らず**、合わせたことを記録に残す。段は選んだ候補の段（`routing.tier`）。やり直しは、元の段にその候補があればその段、無ければ候補が入っている最初の段（`effortTierFor`）。どの段にも無ければ会話の既定。
+- **決まり方**: ① `efforts[レベル][候補の id]`（その候補だけの上書き）→ ② `efforts[レベル]["*"]`（レベルの既定。無ければ組み込みの既定）→ ③ そのモデルが持つ強さに合わせる。値は `low` `medium` `high` `xhigh` `max`、`""` は会話の既定（エージェント設定の強さ。`resolveEffort` の継ぎ先）に従う。持たない強さは、いちばん近い下の強さに合わせる（`xhigh` → `high`。下が無ければ持つ中でいちばん弱いもの）。**振り分けでは断らず**、合わせたことを記録に残す。レベルは選んだ候補のレベル（`routing.tier`）。やり直しは、元のレベルにその候補があればそのレベル、無ければ候補が入っている最初のレベル（`effortTierFor`）。どのレベルにも無ければ会話の既定。
 - **持たない・選べない**: 強さを持たないモデル（Claude の Haiku など）には送らない（`none`）。強さがモデル名に入るモデル（Antigravity。`traits.effortInModelId`）にも `--effort` は渡さず、名前の強さ（`gemini-3.8-flash-high` なら `high`）を記録する（`model`）。モデルが持つ強さは `core/effort.mjs` の `effortCapability`（`effortOptions` と各 backend のモデル一覧の `efforts`）から取り、固定の表は持たない。
-- **既定**: 段 1 = low・段 2 = medium・段 3 = medium・段 4 = high・創作（tv）= `""`（会話の既定に従う）。既存の利用者にも告知なしで効く。
-- **保存の形**: `efforts = { <段>: { "*": <段の既定>, "<backend:model>": <上書き> } }`。候補の id で結ぶので並べ替えでも別の候補に付かず、段から外した候補の上書きは読むときに持ち越さず、保存のときも捨てる（`pruneEfforts`）。保存では形だけ（段・語彙・候補の id の書式）を検証し、モデルが持つかは走らせるときに確かめる。`tiers` は文字列の列のまま。
-- **記録**（`routing`）: `target.effort`（実際に走る強さ。送らないときは `null`。固定の委譲にも付く）、`effortSource`（`override` `tier` `conversation` `model` `none`。依頼元が替えたら `parent`。固定の委譲には付けない）、`effortTier`（`tier` `override` のときの段）、`effortAsked`（モデルに合わせたときの元の強さ）。会話の既定に従ったときの `target.effort` は、走る強さ（未設定なら `null`）。`ply_task_send` で `effort` を替えると `target.effort` を新しい値にし、由来は `parent` にする（[ADR 0134](adr/0134-parent-changes-child-settings.md)）。
+- **既定**: レベル 1 = low・レベル 2 = medium・レベル 3 = medium・レベル 4 = high。既存の利用者にも告知なしで効く（前の版の tv の `""` は引き継がず、t4 の既定 high のまま）。
+- **保存の形**: `efforts = { <レベル>: { "*": <レベルの既定>, "<backend:model>": <上書き> } }`。候補の id で結ぶので並べ替えでも別の候補に付かず、レベルから外した候補の上書きは読むときに持ち越さず、保存のときも捨てる（`pruneEfforts`）。保存では形だけ（レベル・語彙・候補の id の書式）を検証し、モデルが持つかは走らせるときに確かめる。`tiers` は文字列の列のまま。
+- **記録**（`routing`）: `target.effort`（実際に走る強さ。送らないときは `null`。固定の委譲にも付く）、`effortSource`（`override` `tier` `conversation` `model` `none`。依頼元が替えたら `parent`。固定の委譲には付けない）、`effortTier`（`tier` `override` のときのレベル）、`effortAsked`（モデルに合わせたときの元の強さ）。会話の既定に従ったときの `target.effort` は、走る強さ（未設定なら `null`）。`ply_task_send` で `effort` を替えると `target.effort` を新しい値にし、由来は `parent` にする（[ADR 0134](adr/0134-parent-changes-child-settings.md)）。
 
 **使用量の取り置き。** 振り分けのたびに使用量を取りに行って待たない。サーバーは待ち受けを始めてから、既存の使用量の取得（`providerQuota`。設定の「使用量」・`ply_usage` と同じ 1 分のキャッシュを通す）を 5 分ごとと委譲の直後に呼び直し、振り分けはその値を同期的に読む。起動直後でまだ一度も取れていない、または有効なバックエンドのどれかの値が古い（取得間隔の 3 倍を超える。取得中ならそれに相乗り）ときだけ、取り直しを判定と同じ 3 秒まで待つ（`createUsageMonitor` の `ensureFresh`）。それでも間に合わなければ、これまで通り `usage_stale` / `usage_unknown` で後回しになる。候補のモデルが一覧に無いバックエンド（agy はログインの確認でモデル一覧を覚える）は、30 分に 1 回までログインの確認で一覧を引き直す。振り分けが無効なら取らない。
 
@@ -119,9 +117,9 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 ```jsonc
 { "mode": "auto" | "pinned" | "manual", "kind": "implement",   // manual は人が「別の候補でやり直す」で選んだもの（下）
-  "judge": "jev" | "qwen" | "none" | null,              // 答えを使ったモデル。固定なら null（2026-10-09 より前の記録は "cerebras" もある）
-  "signals": { "diagnose": false, … } | null, "probabilities": { "diagnose": 0.12, … } | null,  // 確率は Jev のとき
-  "difficulty": "low" | "mid" | "high" | null, "baseTier": "t2", "tier": "t3",   // baseTier は表の段、tier は選んだ候補の段（自動のときだけ）
+  "judge": "<モデルの id>" | "none" | null,              // 答えを使った判定のモデル（失敗・判定しないは "none"）。固定なら null（前の版の記録は "jev"・"qwen"・"cerebras" もある）
+  "signals": { "diagnose": false, … } | null, "probabilities": { "diagnose": 0.12, … } | null,  // 判定に答えさせたとき
+  "difficulty": "low" | "mid" | "high" | null, "baseTier": "t2", "tier": "t3",   // baseTier は表のレベル、tier は選んだ候補のレベル（自動のときだけ）。それぞれ Name（レベルの名前）・Index（表の順）も持つ
   "target": { "backend": "claude", "model": "opus", "account": "oz", "accountLabel": "OZ", "effort": "high" }, // accountLabel は伏せた表示名。account の '' はログイン中。effort は走る強さ（送らなければ null）
   "effortSource": "tier", "effortTier": "t4", "effortAsked": "max",  // 強さの由来（自動・やり直しのとき）。effortAsked はモデルに合わせたときだけ
   "targetWindows": [{ "label": "…", "minutes": 10080, "usedPercent": 11 }],      // 選んだ候補に効いた枠の、選んだ時点の使用率（委譲カードの内訳）
@@ -130,7 +128,7 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
                 "window": { "label": "週次", "minutes": 10080, "usedPercent": 85 }, "windows": [ … ] }], // Claude は認証ごとに 1 行
   "usageAt": "2026-09-26T03:00:00.000Z",   // 選んだ候補の使用量の取得時刻（選べなければ見た中で最も古いもの）。skipped[] にも各自の checkedAt
   "fallback": null,                        // モデルを使えなかった理由（no_key など）
-  "escalated": true,                       // 「Jev が迷ったら Qwen」で聞き直したときだけ
+  "escalated": true,                       // 前の版の「Jev が迷ったら Qwen」で聞き直した記録にだけある（2026-11-06 以降は付かない）
   "retry": { "of": "ply-task-…", "from": { "backend": "…", "model": "…", "account": null }, "by": "user" } }  // manual のときだけ
 ```
 
@@ -150,19 +148,20 @@ Claude・Codex の会話から、`ply_agents` MCP の `ply_delegate` で別の�
 
 ```jsonc
 { "enabled": true,
-  "judgeByKind": { "trivial": "jev", …, "ux_change": "none", "ux_new": "none", "visual": "none" },
-  "escalateToQwen": false,                 // 前の版の escalateToCerebras・judgeByKind の "cerebras" は読むときに直す（下）
+  "judge": "perplexity/pplx-decider-v1.2",   // 難しさを決めるモデル 1 つ。"none" は判定しない
   "avoidPercent": 80, "paceLimit": 1.2,
+  "levels": [{ "id": "t1", "name": "" }, { "id": "t2", "name": "" }, { "id": "t3", "name": "" }, { "id": "t4", "name": "" }],  // 利用者が足せる・名前・順。弱い方から強い方
+  "kinds": [{ "id": "trivial", "name": "", "desc": "" }, …],   // 利用者が足せる。desc は依頼元の AI へ渡す説明（判定のモデルへは送らない）
   "tiers": { "t1": ["antigravity:gemini-3.8-flash-high", "claude:haiku"], … },   // 候補は "backend:model" か "backend@acct-…:model"
-  "table": { "trivial": ["t1", "t1", "t2"], … },                               // low・mid・high の段
-  "efforts": { "t1": { "*": "low" }, "t2": { "*": "medium" }, "t3": { "*": "medium", "claude:sonnet": "high" }, "t4": { "*": "high" }, "tv": { "*": "" } } } // 子の思考の強さ
+  "table": { "trivial": ["t1", "t1", "t2"], … },                               // low・mid・high のレベル
+  "efforts": { "t1": { "*": "low" }, "t2": { "*": "medium" }, "t3": { "*": "medium", "claude:sonnet": "high" }, "t4": { "*": "high" } } } // 子の思考の強さ
 ```
 
-前の版（2026-10-09 より前）の `escalateToCerebras` は `escalateToQwen`、`judgeByKind` の `"cerebras"` は `"qwen"` として読む（`core/delegation-routing.mjs` の `migrateLegacySettings`。画面・操作からの保存でも断らない）。`prefs.json` は起動では書き直さず、次に委譲の設定を保存したときに今の名前で書く（[ADR 0177](adr/0177-judges-via-openrouter.md)）。
+前の版の `judgeByKind`・`escalateToQwen`・`escalateToCerebras`・クリエイティブの段（`tiers.tv`・表の `tv`・`efforts.tv`）は読むときに今の形へ直す（`core/delegation-routing.mjs` の `migrateLegacySettings`: 種類ごとに判定器が 1 つでもあれば `judge` は既定のモデル、全部 `none` なら `none`。tv の候補は最後のレベルの末尾、表の `tv` は最後のレベル、tv の行の既定は捨てる。画面・操作からの保存でも断らない）。`prefs.json` は起動では書き直さず、次に委譲の設定を保存したときに今の形で書く（[ADR 0291](adr/0291-delegation-routing-user-levels.md)。2026-10-09 の Cerebras → OpenRouter は [ADR 0177](adr/0177-judges-via-openrouter.md)）。
 
-画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`。候補ごとにそのモデルの強さの持ち方 `effort: { levels, fixed }` を持ち、エージェントごとの会話の既定を `conversationEfforts` に返す）、`setDelegationRouting { settings }`、`setApiKeyUse { use: 'judge:jev', id | null }`（自動選択のモデル（Jev・Qwen）に使う OpenRouter のキーを設定 › 秘密情報と変数から選ぶ。human-only。`judge:cerebras` は 2026-10-09 に廃止）。古い口 `setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter` だけ。`cerebras` は断る）は、同じ値のキーを登録して選ぶ橋渡しとして残してある（後片付けで外す）。`delegationRouting` の `keys` は `{ via, hasKey, keyRef, plus }`（`via` は `'plus'`・`'key'`・`null`。`plus` は Pleiad Plus の行の状態 — docs/plus.md「画面の行」）。変わったら `delegationRoutingChanged` イベント（`change: 'settings'`）。使用量の取り直しが終わったときは同じイベントの `change: 'usage'`。種類のない旧イベントは設定の変更として扱える。設定保存は使用量の取得を待たない。自動選択をオンにしたとき、または使用量をまだ持たない候補を増やしたときだけ裏で取り直す。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` には載せない。下の「保存・画面・再起動」）。やり直しは `retryAgentTask`（上）。
+画面（委譲カード・設定 › 委譲。design-system.md）が使う WebSocket のコマンド（`core/protocol.mjs`）: `delegationRouting { refresh? }`（設定・既定値・一覧・キーの `hasKey`・秘密の置き場の状態・今のモデル一覧に無い候補と使えないバックエンド `warnings`・候補ごとの今の使用量と使えるかどうか `candidates`。候補ごとにそのモデルの強さの持ち方 `effort: { levels, fixed }` を持ち、エージェントごとの会話の既定を `conversationEfforts` に返す）、`setDelegationRouting { settings }`、`setApiKeyUse { use: 'judge:routing', id | null }`（判定に使うモデルへ送る OpenRouter のキーか Pleiad Plus を設定 › 秘密情報と変数から選ぶ。human-only。前の版の `judge:jev`・`judge:cerebras` は読み替える）。古い口 `setDelegationRoutingKey { service, key }`・`deleteDelegationRoutingKey { service }`（`service` は `openrouter` だけ。`cerebras` は断る）は、同じ値のキーを登録して選ぶ橋渡しとして残してある（後片付けで外す）。`delegationRouting` の `key` は `{ via, hasKey, keyRef, plus }`（`via` は `'plus'`・`'key'`・`null`。`plus` は Pleiad Plus の行の状態 — docs/plus.md「画面の行」）。変わったら `delegationRoutingChanged` イベント（`change: 'settings'`）。使用量の取り直しが終わったときは同じイベントの `change: 'usage'`。種類のない旧イベントは設定の変更として扱える。設定保存は使用量の取得を待たない。自動選択をオンにしたとき、または使用量をまだ持たない候補を増やしたときだけ裏で取り直す。タスクごとの `routing` は `agentTasks` の各行（`running` の配信の `tasks` には載せない。下の「保存・画面・再起動」）。やり直しは `retryAgentTask`（上）。
 
-**鍵と外部送信。** 自動選択に使うキーは設定 › 秘密情報と変数（`api-key-secrets.json`。[ADR 0155](adr/0155-api-keys-in-one-place.md)）に登録し、自動選択の「使うキー」を 1 つ選ぶ（`api-keys.json` の `uses` の `judge:jev`。Jev と Qwen が同じ OpenRouter のキーで送る）。画面には `hasKey` と `keyRef` だけ返す。キーの中身は確かめない（判定のときに初めて送る）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーを選ぶこと**（0022 のときは登録）: キーを選んでいなければ外へは何も送らず、難しさは `mid`。移行では、今キーを登録済みだった自動選択のサービスだけ選んだ状態で引き継ぐ。送り先の URL は固定で、リダイレクトは追わない。
+**鍵と外部送信。** 自動選択に使うキーは設定 › 秘密情報と変数（`api-key-secrets.json`。[ADR 0155](adr/0155-api-keys-in-one-place.md)）に登録し、自動選択の「使うキー」を 1 つ選ぶ（`api-keys.json` の `uses` の `judge:routing`。前の版の `judge:jev`・`judge:cerebras` の割り当ては読み替える）。画面には `hasKey` と `keyRef` だけ返す。キーの中身は確かめない（判定のときに初めて送る）。キーをログ・タスク・会話の記録・エラーに出さない。**外部送信の同意はキーを選ぶこと**（0022 のときは登録）: キーを選んでいなければ外へは何も送らず、難しさは `mid`。移行では、今キーを登録済みだった自動選択のサービスだけ選んだ状態で引き継ぐ。送り先の URL は固定で、リダイレクトは追わない。
 
 ## リモートのホストへ任せる（`host`）
 
@@ -496,7 +495,7 @@ Windows では、別のプロセス（ウイルス対策・PowerShell の `Get-C
 止まった子に残ったコマンドは `tests/unit/agent-tasks-command-settle.mjs`（上限の `failed`・例外・取り消しの後に `activeCommands` が空で通知が出ない・返答の後の裏の作業はバックエンドが挙げている間だけ残る・止まった後の終わりの合図）と `tests/unit/task-command-notice.mjs`（Codex の端末は子の完了後も残るが知らせない）。
 子に残った裏の作業と子の結果は `tests/unit/server-delegation-background.mjs`（fake の台本 `bg-shell` / `active-shell` / `bg` / `term` / `hook-follow` で、報告後のコマンドを上限まで待って止める・台帳を閉じて完了通知に載せる・結果に止める前の報告を残す・返答前とユーザーの会話では止めない・サブエージェントは止めない・端末は子でも親でも待たない・Stop フックの続きの一言を結果にしない）と `tests/unit/delegation-result.mjs`（2026-09-27 の transcript と同じ行の形で、続きの印・中身の仕事をした続き・区切り・結果の選び方）と `tests/unit/claude-turn-end.mjs`（SDK の身代わりで、Stop フックの続きではターンが終わり、裏へ回ったまま終わらないコマンドがあると終わらず、`stopTask` で終わる）。
 履歴が一時的に読めないときは `tests/unit/history-retry.mjs`（見分け・0.5・1・2 秒の読み直し・一時的でないエラーはすぐ投げる・`CodexRpc.stop()` がプロセスの終わりを待つ）と `tests/unit/server-delegation-history-retry.mjs`（fake の台本 `history-ioerr <回数>` で、読み直して読める・取り込みを見送っても結果は読める・読めないままなら流れた返答で注意書き付きの `completed`）。
-振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。自動選択のモデルは偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の Jev と偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、自動選択のモデルの送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API`。本物へは送らない）。
+振り分けは `tests/unit/delegation-routing.mjs`（規則・段・使用量・アカウント。自動選択のモデルは偽の fetch）と `tests/unit/server-delegation-routing.mjs`（偽の判定モデルと偽の agy でサーバー全体。別の候補でやり直す・承認モードの確かめ・動いている元のタスク・完了通知の一行も）、画面の文と並びは `tests/unit/delegation-routing-view.mjs`。テストのサーバーは使用量を定期的に取らず（`AGENT_HOST_ROUTING_USAGE=off`）、自動選択のモデルの送り先を手元に向ける（`AGENT_HOST_OPENROUTER_API`。本物へは送らない）。
 子の設定を替えるのは `tests/unit/server-delegation-settings.mjs`（fake・身代わりの Codex と agy で、走っている子のモデル・思考の強さ、message なしと一緒、無いモデル・選べない思考の強さ、走っていない子のエージェントの切り替えと引き継ぎ、親より緩くなる切り替えの承認、他人のタスク、変更の記録）。
 `npm run test:e2e -- agent-delegation` は実サービスを呼び、Claude → Codex、Codex → Claude と結果通知による再開を確認する。
 単独確認には `E2E_DELEGATION_PARENT=codex` などを使える。

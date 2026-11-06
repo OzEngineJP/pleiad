@@ -41,6 +41,13 @@ export default async function (t) {
   t.ok("ply_delegate の説明に 9 種類の kind が載る", ["trivial", "mechanical", "investigate", "implement", "review", "design", "ux_change", "ux_new", "visual"]
     .every(k => toolsEn.find(x => x.name === "ply_delegate").description.includes(`- ${k}: `) && toolsJa.find(x => x.name === "ply_delegate").description.includes(`- ${k}: `)));
   t.ok("ja のツールの説明は日本語", toolsJa.every(x => JP.test(x.description)), toolsJa.map(x => x.description.slice(0, 20)).join(" / "));
+  for (const locale of ['ja', 'en']) {
+    const edited = agentTools(locale, [], ['fake'], [{ id: 'implement', name: 'Changed', desc: 'CUSTOM_KIND_DESCRIPTION' }]).find(x => x.name === 'ply_delegate');
+    t.ok(`${locale}: 種類を削除・書き換えると元の説明や固定の境目は残らない`, edited.description.includes('- implement: CUSTOM_KIND_DESCRIPTION')
+      && !edited.description.includes('ux_change') && !edited.description.includes(agentT(locale, 'bridge.kinds.implement')));
+    const kinds = ['trivial', 'mechanical', 'investigate', 'implement', 'review', 'design', 'ux_change', 'ux_new', 'visual'];
+    t.ok(`${locale}: 種類の既定の説明は各 300 字以内`, kinds.every(k => agentT(locale, `bridge.kinds.${k}`).length <= 300));
+  }
 
   // 橋は会話ごとに開く。接続した会話の言語で instructions・一覧・エラーを返す
   const bridge = createAgentBridge({ call: async (_owner, _name, _args, { locale } = {}) => { throw new Error(agentT(locale, "delegation.notRunning")); } });

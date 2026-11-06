@@ -1270,13 +1270,15 @@
       "outOfRange": "{{key}} は {{min}}〜{{max}} で指定してください",
       "notObject": "{{key}} の形が不正です",
       "unknownKind": "{{key}} に知らない種類があります: {{kind}}",
-      "unknownJudge": "{{kind}} の自動選択が不正です: {{judge}}",
-      "unknownTier": "知らない段です: {{tier}}",
-      "badCandidates": "{{tier}} の候補が不正です（backend:model の形で、重複なし、20 件まで）",
-      "badRow": "{{kind}} の段の並びが不正です（低・中・高の 3 つ）",
-      "badEfforts": "{{tier}} の思考の強さの形が不正です",
-      "badEffortKey": "{{tier}} の思考の強さの対象が不正です（段の既定は *、候補は backend:model）: {{key}}",
-      "badEffort": "{{tier}} の思考の強さが不正です（low・medium・high・xhigh・max、会話の既定に従うなら空）: {{value}}"
+      "badJudge": "判定に使うモデルが不正です: {{judge}}",
+      "badLevels": "レベルの一覧が不正です（1〜10 件、id は半角英数と _ - の 40 字まで、名前は 80 字まで、重複なし）",
+      "badKinds": "作業の種類の一覧が不正です（1〜30 件、id は半角小文字ではじまる英数と _ の 40 字まで、名前は 80 字まで、説明は 300 字まで、重複なし）",
+      "unknownLevel": "知らないレベルです: {{level}}",
+      "badCandidates": "「{{level}}」の候補が不正です（backend:model の形で、重複なし、20 件まで）",
+      "badRow": "「{{kind}}」のレベルの並びが不正です（低・中・高の 3 つ）",
+      "badEfforts": "「{{level}}」の思考の強さの形が不正です",
+      "badEffortKey": "「{{level}}」の思考の強さの対象が不正です（行の既定は *、あとは backend:model）: {{key}}",
+      "badEffort": "「{{level}}」の思考の強さが不正です（low・medium・high・xhigh・max、会話の既定に従うなら空）: {{value}}"
     },
     "key": {
       "unknownService": "委譲先の自動選択で知らないサービスです: {{service}}",

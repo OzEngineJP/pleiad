@@ -36,11 +36,11 @@ export const COMMANDS = new Set([
   'agentTasks', 'agentTaskInstructions', 'cancelAgentTask',
   'retryAgentTask',             // { taskId, candidate: 'backend:model', account?, stop?, approved? } -> { task } | { confirm: { agent, mode } }。Claude の account は選んだ認証（'' はログイン中）。委譲カードの「別の候補でやり直す」
   // 委譲先の自動選択（core/delegation-routing.mjs。docs/agent-delegation.md「委譲先の自動選択」）。自動選択に使うキーは返さない（hasKey だけ）
-  'delegationRouting',          // { refresh? } -> { settings, defaults, kinds, judges, tiers, signals, keys: { openrouter: { hasKey, keyRef } }, storage, warnings, candidates }
+  'delegationRouting',          // { refresh? } -> { settings, defaults, difficulties, signals, conversationEfforts, key: { hasKey, via, keyRef }, limit, storage, warnings, candidates, accounts }
   'setDelegationRouting',       // { settings } -> 同上。prefs.json の delegationRouting に重ねて保存（null の項目は既定に戻す）。不正なら全体を断る
   'setApiKey',          // { id?, provider, label?, key } -> { id }（id があれば値の差し替え）。キーは返さない。人だけ（秘密の値。ADR 0155）
   'deleteApiKey',       // { id } -> { id, affected }。使っていた通話・自動選択・wait_until の問いは「使わない」に、接続先はキー無しになる
-  'setApiKeyUse',       // { use: voice|judge:jev|computer:decider, id|null } -> { use, id }。使うキーを選んだときから外部へ送り始める
+  'setApiKeyUse',       // { use: voice|judge:routing|computer:decider, id|null } -> { use, id }。使うキーを選んだときから外部へ送り始める
   'resolveApiKeyGuide', // { keep: id|null } -> { merged }。移行の案内への答え（まとめる / このままにする）
   'setDelegationRoutingKey',    // { service: openrouter, key } -> 同上。登録が自動選択への外部送信の同意になる
   'deleteDelegationRoutingKey', // { service } -> 同上
