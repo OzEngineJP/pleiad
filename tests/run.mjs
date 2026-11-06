@@ -891,6 +891,7 @@ const SUITES = [
   './unit/isolated-routes.mjs',
 
   // --- A4 Pleiad のページ ---
+  './unit/pages-routes.mjs',
 
   // --- A5 タブの情報とアドレスバー ---
   './unit/address-input.mjs',

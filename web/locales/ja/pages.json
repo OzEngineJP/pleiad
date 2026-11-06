@@ -1,1 +1,29 @@
-{}
+{
+  "newTab": "新しいタブ",
+  "fetched": "{{time}} に取得 · {{size}}",
+  "name": "名前", "size": "大きさ", "modified": "更新日時",
+  "fileMenu": "ファイルのメニュー", "useFile": "この会話で使う", "download": "ダウンロード",
+  "emptyFolder": "このフォルダーは空です。", "expandFolder": "{{name}} の中身を表示", "more": "続きを表示",
+  "source": "原文", "sourceLimit": "全 {{total}} 行のうち {{from}}〜{{to}} 行を表示しています。",
+  "tableLimit": "表は先頭の 500 行・100 列まで表示しています。",
+  "previous": "前のページ", "next": "次のページ", "pdfPage": "{{page}} / {{total}} ページ", "pdfText": "ページのテキスト",
+  "errors": {
+    "not-found": "ファイルが見つかりません。", "session-not-found": "会話が見つかりません。",
+    "access-denied": "このファイルは表示できません。", "protected-data": "このファイルは表示できません。",
+    "network-path": "ネットワークのパスは表示できません。", "different-host": "この PC のパスを指定してください。",
+    "cwd-unknown": "作業フォルダーが分からないため、絶対パスを指定してください。", "not-file": "ファイルかフォルダーを指定してください。",
+    "invalid-path": "ファイルのパスを確かめてください。", "over-limit": "表示できる大きさを超えています。",
+    "unsupported": "この形式はプレビューできません。", "unavailable": "プレビューを準備できません。もう一度開いてください。",
+    "read-failed": "読み込めませんでした。もう一度開いてください。"
+  },
+  "new": {
+    "changes": "変更 {{count}} ファイル",
+    "conversation": "この会話", "git": "git", "plugins": "プラグイン", "recent": "最近のファイル", "folders": "作業フォルダー",
+    "emptyRecent": "この会話で開いたファイルがここに並びます。", "emptyFolders": "作業フォルダーがまだありません。",
+    "sources": { "read": "読み取り", "edited": "編集", "attached": "添付", "opened": "開いたファイル" }
+  },
+  "plugins": {
+    "instruction": "指示", "skill": "Skills", "mcp": "接続先", "empty": "この会話に読み込まれた項目はありません。",
+    "status": { "supplied": "読み込み済み", "conditional": "条件付き", "shadowed": "ほかの項目を優先", "connected": "接続中", "standby": "待機中", "starting": "接続中", "pending": "確認待ち", "needs-auth": "認証が必要", "failed": "接続できません", "removed": "この会話では使わない" }
+  }
+}

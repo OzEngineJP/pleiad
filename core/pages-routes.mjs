@@ -1,23 +1,250 @@
-// Pleiad のページ（/_pleiad/s/<会話 id>/<ページ>・/_pleiad/s/<会話 id>/api/…）の中身（ADR 0292 の 2、0291 の 2 の 5・6）。
-// 2 つの入口（ファイルのページの port と本体の port の /_pleiad/）から、認証を済ませた要求だけが来る（core/page-auth.mjs）。
-// S0 では 404 を返すだけ。中身は A4 が置く。
-import { sendStatus } from './page-listener.mjs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { inspectFile, readPreview, listTreeFolder, previewFailure, FILE_LIMIT } from './file-preview.mjs';
+import { readLocalFile } from './local-files.mjs';
+import { currentLocale } from './i18n.mjs';
 
-/**
- * @param {object} [deps] サーバーから渡すもの（core/server.mjs が作る）
- * @param [deps.ops]               (caller, id, input) => 操作の呼び出し（registry.invoke。caller は { by, via, sessionId? }）
- * @param [deps.store]             会話の台帳（core/store.mjs）
- * @param [deps.fileRoots]         (sessions) => プレビューのツリーの基準（読み取りの許可には使わない。ADR 0050）
- * @param [deps.fileAccessFor]     (sessionId) => ファイルの読み取りの範囲（inspectFile に渡す。審査モードは confine 付き）
- * @param [deps.resolveSessionFile] ({ path, sessionId, at, base }, sessions, roots) => 会話の中のファイル参照の絶対パス
- * @param [deps.htmlKeys]          HTML のファイルの鍵（core/html-keys.mjs。api/html-key が issue を呼ぶ。隔離の中身と同じもの）
- * @param [deps.ports]             () => { main, pages, isolated }（CSP の frame-src・frame-ancestors に使う）
- * @param [deps.log]               ログの 1 行
- * @returns {{ handle(req, res, { url: URL, via: 'pages'|'main' }): any }}
+const web = fileURLToPath(new URL('../web/', import.meta.url));
+const pdf = path.dirname(fileURLToPath(import.meta.resolve('pdfjs-dist/package.json')));
+const pages = new Set(['file', 'dir', 'git', 'plugins', 'new', 'attachment']);
+const types = { '.mjs':'text/javascript; charset=utf-8', '.css':'text/css; charset=utf-8', '.json':'application/json; charset=utf-8', '.bcmap':'application/octet-stream', '.pfb':'application/octet-stream', '.ttf':'font/ttf', '.wasm':'application/wasm' };
+const fault = (code, status = 400) => Object.assign(new Error(code), { pageCode:code, status });
+
+/** Authenticated GET/HEAD only. Both listeners use these routes; no operation here writes files.
+ * deps has the S0 server contract, plus optional recentFiles(sessionId) and env(sessionId).
+ * recentFiles returns [{path, source, at?}]; env returns {theme?,lang?} from the host UI.
  */
 export function createPagesRoutes(deps = {}) {
-  void deps;
-  return {
-    handle(req, res) { return sendStatus(req, res, 404, 'not found'); },
-  };
+  const visited = new Map();
+  const ports = () => deps.ports?.() ?? {};
+  function headers(via) {
+    const isolated = Number(ports().isolated);
+    return {
+      'cache-control':'private, no-store', 'referrer-policy':'no-referrer', 'x-content-type-options':'nosniff',
+      'content-security-policy':`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src ${isolated > 0 ? `http://localhost:${isolated}` : "'none'"}; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors ${via === 'main' ? "'self'" : "'none'"}`,
+    };
+  }
+  function send(req, res, via, status, body, extra = {}) {
+    const data = Buffer.isBuffer(body) ? body : Buffer.from(body);
+    res.writeHead(status, { ...headers(via), 'content-type':'application/json; charset=utf-8', ...extra, 'content-length':data.length });
+    res.end(req.method === 'HEAD' ? undefined : data);
+  }
+  const json = (req, res, via, value) => send(req, res, via, 200, JSON.stringify(value));
+
+  async function asset(url) {
+    const prefix = '/_pleiad/assets/';
+    if (url.pathname === '/_pleiad/vendor/i18next.mjs') return { body:await fs.readFile(fileURLToPath(import.meta.resolve('i18next'))), type:types['.mjs'] };
+    let base, name;
+    if (url.pathname.startsWith(prefix)) { base = web; name = decodeURIComponent(url.pathname.slice(prefix.length)); }
+    else if (url.pathname.startsWith('/_pleiad/vendor/pdfjs/')) { base = pdf; name = decodeURIComponent(url.pathname.slice('/_pleiad/vendor/pdfjs/'.length)); }
+    else return null;
+    if (!name || name.includes('\\') || name.split('/').some(p => !p || p === '.' || p === '..')) throw fault('not-found', 404);
+    const ext = path.extname(name), type = types[ext];
+    // Only Pleiad's public modules/styles/dictionaries and the PDF viewer's resources.
+    if (!type || (base === web && !(ext === '.mjs' || ext === '.css' || (ext === '.json' && /^locales\/(ja|en)\/[a-z-]+\.json$/.test(name))))) throw fault('not-found', 404);
+    if (base === pdf && !/^(build|cmaps|standard_fonts|wasm)\//.test(name)) throw fault('not-found', 404);
+    let body = await fs.readFile(path.join(base, name));
+    // Keep script-src 'self' without an inline import map on either listener.
+    if (base === web && name === 'i18n.mjs') body = Buffer.from(body.toString('utf8').replace("from 'i18next'", "from '/_pleiad/vendor/i18next.mjs'"));
+    return { body, type };
+  }
+
+  async function handle(req, res, { url = new URL(req.url, 'http://localhost'), via = 'pages' } = {}) {
+    try {
+      if (!['GET', 'HEAD'].includes(req.method)) {
+        send(req, res, via, 405, JSON.stringify({ error:{ code:'method-not-allowed' } }), { allow:'GET, HEAD' }); return;
+      }
+      const staticFile = await asset(url);
+      if (staticFile) { send(req, res, via, 200, staticFile.body, { 'content-type':staticFile.type }); return; }
+      const match = /^\/_pleiad\/s\/([^/]+)\/(file|dir|git|plugins|new|attachment|api\/[a-z-]+)$/.exec(url.pathname);
+      if (!match) throw fault('not-found', 404);
+      const sessionId = decodeURIComponent(match[1]), route = match[2];
+      const sessions = await deps.store.getAll();
+      if (!Object.hasOwn(sessions, sessionId)) throw fault('session-not-found', 404);
+      const meta = sessions[sessionId];
+      if (pages.has(route)) {
+        send(req, res, via, 200, await fs.readFile(path.join(web, 'pages/index.html')), { 'content-type':'text/html; charset=utf-8' }); return;
+      }
+      const q = url.searchParams;
+      // A query cannot choose a different session from the URL.
+      if (q.has('sessionId') && q.get('sessionId') !== sessionId) throw fault('access-denied', 403);
+      const access = deps.fileAccessFor(sessionId), roots = deps.fileRoots(sessions);
+      async function resolve(raw = q.get('path')) {
+        if (typeof raw !== 'string' || !raw || raw.length > 32768) throw fault('invalid-path');
+        const base = q.get('base');
+        if (base) await inspectFile(base, access);
+        const ref = await deps.resolveSessionFile({ path:raw, sessionId, at:q.get('at') ?? undefined, base:base ?? undefined }, sessions, roots);
+        // Resolve and inspect once more here, including relative bases and symlinks.
+        return { ...ref, ...(await inspectFile(ref.path, access)) };
+      }
+      async function op(id, input = {}) {
+        const result = await deps.ops({ by:'human', via:'ui', sessionId }, id, { ...input, sessionId });
+        if (!result?.ok) throw fault('read-failed', 502);
+        return result.result;
+      }
+      switch (route) {
+        case 'api/env': {
+          const prefs = await deps.store.getPrefs?.() ?? {};
+          const env = await deps.env?.(sessionId) ?? {};
+          json(req, res, via, { lang:env.lang ?? currentLocale(), theme:env.theme ?? prefs.theme ?? 'auto', sessionId, isolatedPort:ports().isolated ?? null }); break;
+        }
+        case 'api/preview': {
+          const ref = await resolve();
+          const result = await readPreview(ref.file, roots, { access, resource:q.get('resource') === '1' });
+          // API errors and unsupported content use codes; translations belong to the page.
+          if (result.kind === 'unsupported') { delete result.reason; result.reasonCode = result.size > (result.downloadable ? 8 * 1024 * 1024 : FILE_LIMIT) ? 'over-limit' : 'unsupported'; }
+          // The relay's text limit is 8 MiB, while binary responses allow 32 MiB.
+          // Send page content separately so JSON escaping/base64 cannot inflate it.
+          if (q.get('content') === 'raw' && q.get('resource') !== '1' && (typeof result.text === 'string' || result.data)) {
+            result.content = { binary:!!result.data, text:typeof result.text === 'string' };
+            delete result.data; delete result.text;
+          }
+          if (q.get('resource') !== '1') {
+            const list = visited.get(sessionId) ?? [];
+            visited.delete(sessionId); visited.set(sessionId, [{ path:result.path, source:'opened', at:result.fetchedAt }, ...list.filter(f => f.path !== result.path)].slice(0, 30));
+            if (visited.size > 100) visited.delete(visited.keys().next().value);
+          }
+          json(req, res, via, { ...result, line:ref.line, cwd:ref.cwd }); break;
+        }
+        case 'api/raw': {
+          const ref = await resolve();
+          const raw = await readLocalFile(ref.file, access, { download:q.get('download') === '1' });
+          send(req, res, via, 200, raw.body, raw.headers); break;
+        }
+        case 'api/tree': {
+          const ref = await resolve();
+          const offset = Number(q.get('offset') ?? 0);
+          if (!Number.isSafeInteger(offset) || offset < 0) throw fault('invalid-path');
+          json(req, res, via, await listTreeFolder(ref.file, { access, offset })); break;
+        }
+        case 'api/html-key': {
+          const ref = await resolve();
+          if (!ref.stat.isFile() || !/\.html?$/i.test(ref.file)) throw fault('unsupported');
+          if (ref.stat.size > 8 * 1024 * 1024) throw fault('over-limit', 413);
+          const key = await deps.htmlKeys?.issue({ sessionId, path:ref.file });
+          if (!key || !ports().isolated) throw fault('unavailable', 503);
+          json(req, res, via, { url:`http://localhost:${ports().isolated}/f/${encodeURIComponent(key)}/${encodeURIComponent(path.basename(ref.file))}` }); break;
+        }
+        case 'api/git': {
+          const kind = q.get('kind') ?? 'changes';
+          if (!['status', 'changes', 'diff', 'history', 'commit', 'worktrees', 'worktree', 'prs'].includes(kind)) throw fault('unsupported');
+          await inspectFile(meta.cwd, access);
+          if (kind === 'prs') {
+            json(req, res, via, await op('git.prs', { states:q.get('states') !== 'false' })); break;
+          }
+          const input = {};
+          if (q.has('worktree')) {
+            const ref = await resolve(q.get('worktree'));
+            if (!ref.stat.isDirectory()) throw fault('not-file');
+            // The existing git reader also checks membership in this repository.
+            input.worktree = ref.file;
+          }
+          if (['changes', 'diff'].includes(kind)) input.range = q.get('range') === 'session' ? 'session' : 'uncommitted';
+          if (kind === 'changes') input.only = 'changes';
+          if (kind === 'diff') {
+            const raw = q.get('path');
+            // Git interprets pathspec magic/globs even after `--`. Until the
+            // shared reader supports literal pathspecs, never expand a checked
+            // name into unchecked files (also applies to the rename source).
+            const validName = value => value && value.length <= 4096 && !/[\\:*?\[\]]/.test(value) && !path.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.split('/').some(p => !p || p === '.' || p === '..');
+            if (!validName(raw) || (q.has('orig') && !validName(q.get('orig')))) throw fault('invalid-path');
+            // Git names are relative to the repository root, not the conversation cwd.
+            // A deleted path is valid, but its closest existing ancestor must pass
+            // the same protection/ownership/confine checks as a live preview.
+            const state = await op('git.status');
+            if (!state?.git?.root) throw fault('not-found', 404);
+            for (const name of [raw, q.get('orig')].filter(Boolean)) {
+              let candidate = path.resolve(input.worktree ?? state.git.root, name);
+              for (;;) {
+                try { await inspectFile(candidate, access); break; }
+                catch (error) {
+                  if (error.code !== 'ENOENT' || path.dirname(candidate) === candidate) throw error;
+                  candidate = path.dirname(candidate);
+                }
+              }
+            }
+            input.path = raw;
+            if (q.has('orig')) input.orig = q.get('orig');
+            input.after = true;
+            for (const key of ['commit', 'from', 'to']) {
+              if (q.has(key)) { if (!/^[a-f0-9]{7,64}$/i.test(q.get(key))) throw fault('unsupported'); input[key] = q.get(key); }
+            }
+            if (q.has('context')) {
+              const context = Number(q.get('context'));
+              if (!Number.isInteger(context) || context < 0 || context > 1000) throw fault('unsupported');
+              input.context = context;
+            }
+            if (q.has('stage')) {
+              if (!['staged', 'work'].includes(q.get('stage'))) throw fault('unsupported');
+              input.stage = q.get('stage');
+            }
+          }
+          if (kind === 'commit') { if (!/^[a-f0-9]{7,64}$/i.test(q.get('hash') ?? '')) throw fault('unsupported'); input.hash = q.get('hash'); }
+          if (kind === 'history') { input.limit = 50; if (q.has('cursor')) input.cursor = q.get('cursor'); if (q.get('through') === 'true') input.through = true; }
+          if (kind === 'worktrees' && q.get('only') === 'list') input.only = 'list';
+          if (kind === 'worktree' && !input.worktree) throw fault('invalid-path');
+          const result = await op(`git.${kind}`, input);
+          if (kind === 'worktrees' && result.worktrees?.rows) {
+            const rows = [];
+            for (const row of result.worktrees.rows) { try { await inspectFile(row.path, access); rows.push(row); } catch { /* No path outside the conversation's file policy. */ } }
+            result.worktrees = { ...result.worktrees, rows, total:rows.length };
+            if (result.worktrees.base?.path) {
+              try { await inspectFile(result.worktrees.base.path, access); }
+              catch { result.worktrees.base = null; }
+            }
+          }
+          if (kind === 'changes' && q.get('only') === 'light') result.timeline = await deps.gitTimeline?.(sessionId) ?? [];
+          json(req, res, via, result); break;
+        }
+        case 'api/plugins': {
+          const data = await op('context.session', { compare:false });
+          const entries = [];
+          for (const entry of data?.report?.entries ?? []) {
+            if (!['instruction', 'skill', 'mcp'].includes(entry.kind)) continue;
+            if (entry.path) { try { await inspectFile(entry.path, access); } catch { continue; } }
+            // Configuration, injected content and environment variables are not page data.
+            entries.push(Object.fromEntries(['id', 'name', 'title', 'kind', 'status', 'description', 'path'].filter(k => entry[k] != null).map(k => [k, entry[k]])));
+          }
+          json(req, res, via, { report:{ entries } }); break;
+        }
+        case 'api/recent': {
+          const entries = [...(await deps.recentFiles?.(sessionId) ?? []), ...(visited.get(sessionId) ?? [])];
+          const files = [], seen = new Set();
+          for (const entry of entries.slice(0, 200)) {
+            if (!entry || typeof entry.path !== 'string') continue;
+            try {
+              const { file, stat } = await inspectFile(entry.path, access);
+              const key = process.platform === 'win32' ? file.toLowerCase() : file;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              if (!stat.isFile()) continue;
+              files.push({ path:file, name:path.basename(file), source:['read', 'edited', 'attached', 'opened'].includes(entry.source) ? entry.source : 'opened', at:entry.at, ...(typeof entry.actor === 'string' ? { actor:entry.actor } : {}) });
+              if (files.length === 20) break;
+            } catch { /* A recent reference never grants access. */ }
+          }
+          const folders = [];
+          const past = (meta.history ?? []).filter(v => v.field === 'cwd').slice().reverse().flatMap(v => [v.to, v.from]);
+          for (const dir of [meta.cwd, ...past].filter(Boolean)) {
+            try { const { file, stat } = await inspectFile(dir, access); if (stat.isDirectory() && !folders.some(f => f.path === file)) folders.push({ path:file, name:path.basename(file) || file }); } catch { /* unavailable cwd */ }
+          }
+          const visualizations = [];
+          for (const item of (await deps.visualizations?.(sessionId) ?? []).slice(0, 20)) {
+            try {
+              const target = new URL(item.url);
+              if (target.origin === `http://localhost:${ports().isolated}` && !target.username && !target.password) visualizations.push({ title:String(item.title ?? ''), url:target.href });
+            } catch { /* Only this conversation's host supplies visualization links. */ }
+          }
+          json(req, res, via, { files, visualizations, folders:folders.slice(0, 8), session:{ id:sessionId, title:meta.title ?? '' } }); break;
+        }
+        default: throw fault('not-found', 404);
+      }
+    } catch (error) {
+      const code = error.pageCode ?? previewFailure(error).code;
+      const status = error.status ?? (['access-denied', 'protected-data'].includes(code) ? 403 : code === 'not-found' ? 404 : 400);
+      deps.log?.({ type:'pages:error', code });
+      send(req, res, via, status, JSON.stringify({ error:{ code } }));
+    }
+  }
+  return { handle };
 }
