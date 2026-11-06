@@ -407,6 +407,13 @@ import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
+import { browserUnifyOn } from './browser-unify-flag.mjs';
+import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
+import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
+import { createPagesRoutes } from './pages-routes.mjs';
+import { createIsolatedRoutes } from './isolated-routes.mjs';
+import { PAGES_PATH, pageRequestOk } from './page-auth.mjs';
+import { COMMON_HEADERS, sendStatus } from './page-listener.mjs';
 
 const PORT = Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
 const HOST = BOOT_ENV.AGENT_HOST_BIND ?? "127.0.0.1";
@@ -419,6 +426,8 @@ const lastAutoCompaction = new Map();
 const forking = new Set(); // Separate ownership: a running turn retains its own lock.
 const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
+// ブラウザーの一本化（ADR 0291〜0294）の旗。off のあいだは、ページの口・リスナー・WS の口をどれも作らない（今の動きのまま）
+const BROWSER_UNIFY = browserUnifyOn(process.env);
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
 // 閉じた Chrome の窓の静止画は持ち主の会話を見ている要求にだけ見せる（guard。要求の sessionId が持ち主）。ここは持ち主を名乗らない口の分で、断る
@@ -2341,6 +2350,30 @@ async function resolveSessionFile({ path: requested, sessionId, at, base }, sess
 const openOnHost = defaultOpener();
 const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
 
+// ブラウザーの一本化: Pleiad のページの中身（core/pages-routes.mjs）・隔離の中身（core/isolated-routes.mjs）・WS の口（core/browser-unify-ws.mjs）。
+// 旗が off なら作らない。port はリスナーが立ってから入る（startPageListeners）
+let pagePorts = null, pageListeners = null;
+const pagesLog = line => console.log(`  [pages] ${line}`);
+const pagesRoutes = BROWSER_UNIFY ? createPagesRoutes({ ops: (caller, id, input) => opsRegistry.invoke(caller, id, input, opsDeps()),
+  store, fileRoots, fileAccessFor, resolveSessionFile, ports: () => pagePorts, log: pagesLog }) : null;
+const isolatedRoutes = BROWSER_UNIFY ? createIsolatedRoutes({ dataDir: store.dataDir, ports: () => pagePorts, log: pagesLog }) : null;
+const browserUnifyWs = BROWSER_UNIFY ? createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, log: pagesLog }) : null;
+
+/** ファイルのページと隔離のリスナーを立て、port を中継へ渡す（旗が on のときだけ。待ち受けの後に呼ぶ） */
+async function startPageListeners() {
+  try {
+    const listeners = await startBrowserUnifyListeners({ dataDir: store.dataDir, env: process.env, token: TOKEN, waitMs: waitsForPort() ? PORT_WAIT_MS : 0,
+      pagesRoutes, isolatedRoutes, log: pagesLog });
+    if (shuttingDown) return void listeners.close();
+    pageListeners = listeners;
+    pagePorts = Object.freeze({ main: server.address().port, ...listeners.ports });
+    chromeRelay?.setPagePorts(pagePorts);
+    pagesLog(`pages http://localhost:${pagePorts.pages}/ isolated http://localhost:${pagePorts.isolated}/`);
+  } catch (error) {
+    console.error('  [pages] could not start the page listeners:', String(error?.message ?? error));
+  }
+}
+
 const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, SHELL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -2358,6 +2391,14 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
   if (!isReviewMode() && await botHost?.handleHttp(req, res)) return;
+  // Pleiad のページの本体の入口（画面の iframe。ADR 0292 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない。旗が off なら今のまま（下の 401・404）
+  if (pagesRoutes && url.pathname.startsWith(PAGES_PATH)) {
+    for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.setHeader('allow', 'GET, HEAD'); return sendStatus(req, res, 405, 'method not allowed'); }
+    if (!pageRequestOk({ via: 'main', cookie: req.headers.cookie, token: TOKEN })) return sendStatus(req, res, 401, 'unauthorized');
+    try { return await pagesRoutes.handle(req, res, { url, via: 'main' }); }
+    catch (error) { pagesLog(`request failed: ${String(error?.message ?? error)}`); return sendStatus(req, res, 500, 'internal error'); }
+  }
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -9109,6 +9150,15 @@ wss.on("connection", (ws, req) => {
     let releaseUpdateGate;
     try {
       releaseUpdateGate = updateGate.enter();
+      // ブラウザーの一本化の WS のコマンド（旗が on のときだけ。core/browser-unify-ws.mjs）
+      if (browserUnifyWs && isBrowserUnifyCommand(msg.command)) {
+        try {
+          return reply(true, await browserUnifyWs.handle({ command: msg.command, args: msg.args ?? {}, local,
+            client: { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } } }));
+        } catch (err) {
+          return reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
+        }
+      }
       switch (msg.command) {
         case 'listMcpConfig':
           return await viaOp('mcp.nativeList');
@@ -9698,7 +9748,9 @@ wss.on("connection", (ws, req) => {
           return reply(true, { osActions: local, hostName: os.hostname(), ...(isReviewMode() ? { reviewMode: true } : {}), pcBrowser: !local && !!screencastBridge?.ready, chromeWindow: Boolean(chromeScreencast),
             // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
             chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
-            computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
+            computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }),
+            // ブラウザーの一本化の旗が on のときだけ。ファイルのページと隔離の port（リスナーが立つ前は null）
+            ...(BROWSER_UNIFY ? { browserUnify: { pages: pagePorts?.pages ?? null, isolated: pagePorts?.isolated ?? null } } : {}) });
         // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
         case "computerStop":
           return await viaOp('computer.stop');
@@ -10204,6 +10256,8 @@ function shutdownServer({ stopHeld = false } = {}) {
     // 待ち受けと main との口を先に閉じる（Windows の名前付きパイプは持ち主が消えるまで同じ名前で立てられない）。新しいサーバーは同じポート・同じパイプで立つ
     server.close();
     server.closeAllConnections?.();
+    // ファイルのページと隔離のリスナーも放す（新しいサーバーが同じ port を取る）
+    if (pageListeners) await Promise.race([pageListeners.close(), new Promise(resolve => setTimeout(resolve, 1000))]).catch(() => {});
     await mainLink?.close?.().catch(error => console.error('main link shutdown failed:', error?.code ?? error?.message ?? error));
     // bot の DB（別のファイル）とデータ置き場の DB の接続を閉じてから、ロックを放す（次のサーバーが取ってすぐ開く）
     await botHost?.close?.();
@@ -10333,6 +10387,8 @@ const listening = new Promise(resolve => server.once('listening', resolve));
 portDeadline = Date.now() + PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
+// ブラウザーの一本化: ファイルのページと隔離のリスナー（旗が on のときだけ）。待たない（覚えた port を前のサーバーが放すのを待つことがある）
+if (BROWSER_UNIFY) void startPageListeners();
 // 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
 for (const { card, source, ctx } of adopting) {
   const turnPromise = adoptTurn(card, source, ctx, { abandon: adoptAbandoned });

@@ -209,6 +209,9 @@ export const DATA_WRITES = [
   { file: 'core/chrome/window-shots.mjs', sites: 1, targets: [
     { name: 'uploads/chrome-window/<会話の SHA-256>/<元のファイル名>', limit: '分岐した会話へ 1 枚ずつ複製（元の 1 枚は close-window.mjs の MAX_IMAGE=10MiB 以下）。会話の削除で消す', reason: '分岐した会話の閉じた窓の静止画。元の会話を消してもパスが残るよう、複製を持たせる（ADR 0115）' },
   ] },
+  { file: 'core/browser-unify-listeners.mjs', sites: 1, targets: [
+    { name: 'page-ports.json', limit: '固定（{ pages, isolated }）', reason: 'ファイルのページと隔離のリスナーの port（ADR 0292）。次の起動でも同じ port を試し、開いたページのタブの URL を変えないための控え。port が変わったときだけ書く' },
+  ] },
   { file: 'core/context-bases.mjs', sites: 1, targets: [
     { name: 'context-bases.json', limit: 'CONTEXT_BASES_LIMIT=50 件（作業場所 × モデル）', reason: '委譲の子の固定の部分（最初のリクエストの文脈）の直近の値。自動圧縮の閾値の見積もり（ADR 0166）' },
   ] },

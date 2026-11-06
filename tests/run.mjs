@@ -867,6 +867,10 @@ const SUITES = [
   './unit/page-coords.mjs',
   // 中継の 4 つの口（既定は今のまま・差し替えた口が決めた場所で呼ばれる）
   './unit/chrome-relay-hooks.mjs',
+  // ページの入口の認証（ページの Cookie・本体の Cookie）と旗の読み方
+  './unit/page-auth.mjs',
+  // 2 つのリスナー（Host が違えば 421・GET と HEAD だけ・::1・port の引き継ぎ）と、旗が off なら立たず on なら /_pleiad/ が 404
+  './unit/pages-listeners.mjs',
 
   // --- A1 映像 ---
 
