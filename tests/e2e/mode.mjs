@@ -8,7 +8,7 @@ export const title = "承認モードの切り替え";
 export default async function (t, ctx) {
   const c = await ctx.open({ autoAllow: true });
   try {
-    const modes = await c.cmd("modes");
+    const modes = await c.cmd("modes", { backend: "claude" });   // Claude の会話で確かめる（サーバーの既定のエージェントに左右されない）
     t.ok("modes が返る", Object.keys(modes).length >= 3, Object.keys(modes).join(", "));
     t.ok("bypassPermissions は出さない", !("bypassPermissions" in modes));
 
@@ -20,7 +20,7 @@ export default async function (t, ctx) {
     const write = (file, mode) =>
       c.runTurn({
         prompt: `Write ツールで ${path.join(ctx.work, file)} に "x" と1行書いて。説明不要。`,
-        sessionId: null, cwd: ctx.work, mode,
+        sessionId: null, backend: "claude", cwd: ctx.work, mode,
       });
 
     const a = await write("mode-default.md", "default");

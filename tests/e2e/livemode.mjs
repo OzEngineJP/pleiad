@@ -36,7 +36,7 @@ export default async function (t, ctx) {
       prompt:
         `Write ツールで次の3つを順に作って。説明は不要。\n` +
         files.map((f, i) => `${i + 1}. ${f} に "${"abc"[i]}"`).join("\n"),
-      sessionId: null, cwd: ctx.work, mode: "default",
+      sessionId: null, backend: "claude", cwd: ctx.work, mode: "default",   // Claude の会話で確かめる（サーバーの既定のエージェントに左右されない）
     });
 
     t.ok("最初は承認を聞かれる", perms.length >= 1, `${perms.length} 件`);

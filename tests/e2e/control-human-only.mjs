@@ -23,7 +23,7 @@ export default async function (t, ctx) {
     t.ok('Codex が list_ops・settings.get（mode）・worktrees.check を呼んだ', Boolean(listCall && modeCall && checkCall), JSON.stringify(starts.map((e) => e.input)).slice(0, 900));
     const listed = resultOf(listCall);
     t.ok('廃止した worktree 設定操作と承認モードの操作は一覧に無い',
-      listed.includes('sessions.setModel') && !/worktrees\.(settings|setSettings)|sessions\.setMode|resolvePermission/.test(listed), listed.slice(0, 400));
+      listed.includes('sessions.setModel') && !/worktrees\.(settings|setSettings)|sessions\.setMode\b|resolvePermission/.test(listed), listed.slice(0, 400));
     t.ok('settings.get の mode は SETTING_NOT_FOUND', /SETTING_NOT_FOUND/.test(resultOf(modeCall)), resultOf(modeCall).slice(0, 400));
     t.ok('worktrees.check は canSplit を返す', /canSplit/.test(resultOf(checkCall)), resultOf(checkCall).slice(0, 400));
     const history = await c.cmd('loadSession', { sessionId });
