@@ -1,4 +1,6 @@
+import net from 'node:net';
 import { browserUnifyOn } from '../browser-unify-flag.mjs';
+import { createIconFetch } from './icon-fetch.mjs';
 
 export const FAVICON_MAX_BYTES = 64 * 1024;
 const CACHE_ORIGINS = 128;
@@ -19,19 +21,32 @@ export function pleiadPage(url, sessionId, { pages } = {}) {
 }
 
 /**
+ * 宛先が、ページと同じ host（名前と port）で、その host が localhost か IP の直書きか。
+ * このときだけアドレスの検査を外す（手元の開発サーバーの favicon。直書きなので DNS の付け替えでは作れない）。Pleiad の port は除く
+ */
+export function sameLocalHost(url, page, ports = {}) {
+  if (url.host !== page.host || url.protocol !== page.protocol) return false;
+  const hostname = url.hostname.replace(/^\[|\]$/g, '');
+  if (hostname !== 'localhost' && !net.isIP(hostname)) return false;
+  const port = Number(url.port || (url.protocol === 'https:' ? 443 : 80));
+  return ![ports.main, ports.pages, ports.isolated].includes(port);
+}
+
+/**
  * @param {object} [deps]
  * @param [deps.emit] (type, payload) => 中継の出来事（relay.onTabEvent）。情報が変わったら 'tab:info'
  * @param [deps.log]  ログの 1 行（URL・題を書かない）
- * @param [deps.fetchResource] 中継側の HTTP クライアント（試験では差し替える）。ブラウザーの Cookie を使わない
+ * @param [deps.fetchResource] 中継側の HTTP クライアント（試験では差し替える）。ブラウザーの Cookie を使わない。
+ *   既定は core/chrome/icon-fetch.mjs（名前解決の後の IP を検査し、手元・ネットワークの中のアドレスへは繋がない）
  * @returns 中継が呼ぶ口。tab は { sessionId, targetId, windowId, info（Target の targetInfo の写し）, attach(onEvent) }。
  *   attach は中継自身のセッションをそのタブに付ける（relay.view.attach と同じ形の { sessionId, send, detach } を返す）
  *   - added(tab): タブが会話の範囲に入った
  *   - changed(tab): targetInfo が替わった（URL・題）
  *   - removed({ sessionId, targetId }): タブが無くなった
  *   - list(sessionId): その会話だけの初期一覧（追加した順の写し）
- *   - setPagePorts({ pages }): 起動したページ用リスナーの port。設定前は page を null とする
+ *   - setPagePorts({ main, pages, isolated }): サーバーの port。設定前は page を null とする。favicon はこの port へ取りに行かない
  */
-export function createTabInfo({ emit = () => {}, log = () => {}, enabled = browserUnifyOn(), fetchResource = globalThis.fetch } = {}) {
+export function createTabInfo({ emit = () => {}, log = () => {}, enabled = browserUnifyOn(), fetchResource = createIconFetch() } = {}) {
   const tabs = new Map(), icons = new Map();
   let pagePorts = {};
   const key = tab => JSON.stringify([tab.sessionId, tab.targetId]);
@@ -62,14 +77,15 @@ export function createTabInfo({ emit = () => {}, log = () => {}, enabled = brows
     notify(state);
   }
 
-  async function readIcon(href) {
+  async function readIcon(href, page) {
     // Chrome maps loadNetworkResource(includeCredentials:false) to same-origin,
     // not omit. Use the relay's HTTP client, which has no browser cookie store.
+    // Every hop (redirects too) goes through the address check in icon-fetch.mjs, unless it stays on the page's own literal local host.
     const signal = AbortSignal.timeout(5_000);
     for (let redirect = 0; redirect <= 3; redirect++) {
       const url = new URL(href);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname.startsWith('/_pleiad/')) return null;
-      const response = await fetchResource(url.href, { credentials: 'omit', redirect: 'manual', cache: 'no-store', signal });
+      const response = await fetchResource(url.href, { credentials: 'omit', redirect: 'manual', cache: 'no-store', signal, local: sameLocalHost(url, page, pagePorts) });
       try {
         if ([301, 302, 303, 307, 308].includes(response.status)) {
           const location = response.headers.get('location');
@@ -120,7 +136,7 @@ export function createTabInfo({ emit = () => {}, log = () => {}, enabled = brows
       let icon;
       if (icons.has(page.origin)) icon = icons.get(page.origin);
       else {
-        icon = await readIcon(href.href);
+        icon = await readIcon(href.href, page);
         if (!live(state) || generation !== state.generation) return;
         if (icons.size >= CACHE_ORIGINS) icons.delete(icons.keys().next().value);
         icons.set(page.origin, icon);
@@ -189,8 +205,8 @@ export function createTabInfo({ emit = () => {}, log = () => {}, enabled = brows
     // Initial ordered snapshots are explicitly scoped, including after reconnect.
     list(sessionId) { return [...tabs.values()].filter(s => s.data.sessionId === sessionId).map(s => ({ ...s.data, page: s.data.page && { ...s.data.page } })); },
     // The relay's constructor has no ports dependency; the server supplies the page listener after binding.
-    setPagePorts({ pages } = {}) {
-      pagePorts = { pages };
+    setPagePorts({ main, pages, isolated } = {}) {
+      pagePorts = { main, pages, isolated };
       for (const state of tabs.values()) {
         state.data.page = pleiadPage(state.data.url, state.data.sessionId, pagePorts);
         notify(state);

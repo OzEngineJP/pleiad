@@ -1585,6 +1585,7 @@ export function createChromeRelay({ connection, os, locate, log = () => {}, prof
       const next = ports ? Object.freeze({ main: ports.main ?? null, pages: ports.pages ?? null, isolated: ports.isolated ?? null }) : null;
       if (JSON.stringify(next) === JSON.stringify(pagePorts)) return;
       pagePorts = next;
+      callHook('tabInfo', () => tabInfo.setPagePorts?.(next ?? {}));   // ファイルのページの印（page）と、favicon を取りに行かない port
       refreshInterception(up);   // 後から決まった port を、もう開いているタブの Fetch にも効かせる
     },
     /** ファイルのページの Cookie（core/page-auth.mjs の pagesCookie の形）。移動の検査の口が接続のたびと開く前に入れる */

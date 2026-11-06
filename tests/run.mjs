@@ -896,6 +896,8 @@ const SUITES = [
   // --- A5 タブの情報とアドレスバー ---
   './unit/address-input.mjs',
   './unit/chrome-tab-info.mjs',
+  // favicon の取得の行き先の検査（名前解決の後の IP・リダイレクトの先・手元の host・Pleiad の port）
+  './unit/icon-fetch.mjs',
   './unit/search-provider.mjs',
 
   // --- A6 タブごとの持ち手と大きさ ---

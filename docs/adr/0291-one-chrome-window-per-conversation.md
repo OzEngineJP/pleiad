@@ -30,7 +30,7 @@
    - URL と題: `Target.targetInfoChanged`。
    - 読み込み中: `Page.frameStartedLoading` / `Page.frameStoppedLoading`（主フレーム）。
    - 戻る・進むが効くか: `Page.getNavigationHistory`（主フレームが移ったときに読む）。
-   - favicon: 読み込みが終わったら、隔離した world（`Page.createIsolatedWorld`。ページのスクリプトは動かない）で `link[rel~="icon"]` の href（無ければ `/favicon.ico`）を読み、中継自身のセッションで `Network.loadNetworkResource` を使って取る。64 KiB までの画像だけを data URL にし、origin ごとにメモリに覚える。取れなければ、ホストの頭文字を描いた札にする。Pleiad のページのタブは、取りに行かず種類のアイコン（文書・コード・フォルダー・枝分かれ・パズル。単色）を出す。
+   - favicon: 読み込みが終わったら、隔離した world（`Page.createIsolatedWorld`。ページのスクリプトは動かない）で `link[rel~="icon"]` の href（無ければ `/favicon.ico`）を読み、中継のプロセスの HTTP（Cookie を持たない）で取る。`Network.loadNetworkResource` は `includeCredentials:false` でも same-origin の資格で送り Cookie が付くので使わない（Chrome 156 で確かめた）。favicon はブラウザーのプロセスが読むので、Chrome が読み込み済みのものを CDP でページの資源として取ることもできない。ページは favicon の URL を好きに書けるので、行き先を絞る（`core/chrome/icon-fetch.mjs`）。名前を解決した後の IP が loopback・private・link-local・CGNAT・文書用・マルチキャスト・この PC のアドレス（IPv4 を埋めた IPv6 も中の IPv4 で）なら繋がず、検査した IP へそのまま繋ぐ（DNS の付け替えで抜けられない）。リダイレクトは 3 回まで 1 段ずつ同じ検査をかけ、`/_pleiad/` は取りに行かない。例外は、ページと同じ host（名前・port・scheme）で、その host が `localhost` か IP の直書きのとき（手元の開発サーバーの favicon）だけで、Pleiad の 3 つの port は例外にしない。64 KiB までの画像だけを data URL にし、origin ごとにメモリに覚える。取れなければ、ホストの頭文字を描いた札にする。Pleiad のページのタブは、取りに行かず種類のアイコン（文書・コード・フォルダー・枝分かれ・パズル。単色）を出す。
 3. **URL の扱いを緩める。** 今は窓の題だけを画面に出し、URL は出していない（docs/inapp-browser.md「URL の扱い」）。これからは URL・favicon・読み込み中も画面に送る。ただし送る先はその会話を開いている画面だけで、WS の `chromeWindow` のように全画面へ配ることはしない。ログには今と同じく題・URL を書かない。
 4. アドレスバーは URL とパスの両方を受ける。
    - パスとして読む入力: Windows は `C:\`・`\\`・`~\`・`.\`・`..\`、macOS・Linux は `/`・`~/`・`./`・`../`。`file://` の URL もパスに直す。相対パスの基準は会話の作業場所。パスとして読める入力は検索に送らない。候補にファイルとフォルダーを出す（`listTreeFolder` を使う）。
