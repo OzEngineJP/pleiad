@@ -1,6 +1,6 @@
 import { withoutVisualizeReferences } from './visualize-reference.mjs';
 import { fileReference, looksLikePath, findWindowsPaths, baseName, dirName, WINDOWS_PATH_SOURCE } from './file-reference.mjs';
-import { visualizationFrame, downloadVisualization } from './visualize-frame.mjs';
+import { visualizationFrame, downloadVisualization, openVisualizationTab, visualizationBundleNotice } from './visualize-frame.mjs';
 import { wireWiden } from './visualize-widen.mjs';
 import { URL_SOURCE, bareUrl, wholeUrl } from './url-detect.mjs';
 // md 描画と present カードの描画。外部ライブラリを足さない方針なので自前で持つ（設計メモ §11）。
@@ -13,7 +13,7 @@ import { el, chevron, svgEl } from "./dom.mjs";
 import { fmt, t } from "./i18n.mjs";
 import { terminalView, updateTerminal } from "./terminal.mjs";
 import { localTime, toolTimeShort, toolTimeLong, toolDuration } from "./server-clock.mjs";
-import { copyIcon, downloadIcon, openInBrowserIcon, moreIcon } from './icons.mjs';
+import { copyIcon, downloadIcon, moreIcon } from './icons.mjs';
 import { copyPathText } from './file-actions.mjs';
 import { isLazy, presentBodyUrl, fetchPresentBody, whenNear } from './present-lazy.mjs';
 import { renderGitSummary } from './git-view.mjs';
@@ -201,7 +201,7 @@ function fileAnchor(ref, inner, extra = "") {
 }
 
 /**
- * 文中の URL のリンク。押すと設定「リンクの開き先」に従う（web/link-open.mjs）。u は bareUrl / wholeUrl が通したもの、
+ * 文中の URL のリンク。押すと既定のブラウザーで開く（web/link-open.mjs）。u は bareUrl / wholeUrl が通したもの、
  * inner はエスケープ済みの HTML。字が URL そのものなので、名前で偽る余地は無い
  */
 function urlAnchor(u, inner, extra = "") {
@@ -577,8 +577,8 @@ export function renderPresent(ev) {
       if (lazyContent) {
         const hold = lazyHold();
         body.append(hold);
-        loadWhenNear(hold, e, (text) => hold.replaceWith(visualizationFrame(text, e.caption, { conversation: true })));
-      } else body.append(visualizationFrame(e.content ?? '', e.caption, { conversation: true }));
+        loadWhenNear(hold, e, (text) => hold.replaceWith(visualizationFrame(text, e.caption, { conversation: true, bundle: e.bundle })));
+      } else body.append(visualizationFrame(e.content ?? '', e.caption, { conversation: true, bundle: e.bundle }));
       // 本文が印のままの提示は、保存・サイドパネル・ブラウザーで開くを押したときに本文を取ってから渡す
       const withContent = (use) => lazyContent ? fetchPresentBody(e, 'content').then(use).catch(() => {}) : use(e.content ?? '');
       const controls = el('span', 'present-tools');
@@ -593,7 +593,18 @@ export function renderPresent(ev) {
         return b;
       };
       // 左端は「広げる / 元の幅に戻す」（列の幅を越えて本文の領域の右端まで。web/visualize-widen.mjs、ADR 0252）
-      wireWiden(card, tool('', ''));
+      const widen = tool('', '');
+      wireWiden(card, widen);
+      widen.addEventListener('click', event => {
+        if (openVisualizationTab(e.bundle, widen, e.caption ?? '')) { event.stopImmediatePropagation(); return; }
+        if (globalThis.matchMedia?.('(max-width: 760px)').matches) {
+          event.stopImmediatePropagation();
+          return withContent(content => widen.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
+            detail:{ content, title:e.caption ?? '', bundle:e.bundle } })));
+        }
+      }, { capture:true });
+      const notice = visualizationBundleNotice(e.bundle);
+      if (notice) body.append(el('p', 'present-note', notice));
       // コピーと保存は右パネル（⋯・下の行）と同じ処理を呼ぶ。知らせの文言も同じ（web/file-actions.mjs・web/visualize-frame.mjs）
       if (e.path) tool(copyIcon, t('timeline.present.copyPath')).onclick = () => copyPathText(String(e.path));
 
@@ -602,12 +613,6 @@ export function renderPresent(ev) {
       tool(downloadIcon, t('timeline.present.download')).onclick =
         () => withContent((content) => downloadVisualization({ path: e.path, title: e.caption, content }));
 
-      // 開くのは「ブラウザーで開く」の 1 つだけ（どの画面でも。開き先は web/file-preview.mjs の htmlRoute）。ここは会話に載る面だけを組み立て、
-      // 開く側とは要求イベントで繋ぐ（ファイルリンクと同じ一枚の面に集める）。
-      // at・id は会話の記録の印。開く側がサーバーから写しを引く（core/server.mjs /visualization-snapshot。docs/visualize.md）
-      const detailOf = (content) => ({ content, title: e.caption ?? '', path: e.path ?? '', at: e.at ?? null, id: e.id ?? null });
-      const open = tool(openInBrowserIcon, t('timeline.present.browser'), 'visualize-open-browser');
-      open.onclick = () => withContent((content) => open.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles: true, detail: detailOf(content) })));
       card.append(controls);
       if (e.mode === 'wide') card.classList.add('visualize-wide');
     }
@@ -987,7 +992,7 @@ function drawWebFetch(card, head, inp) {
   if (u === null) {
     if (raw.trim()) head.append(codeSpan(clip(raw, 160), "tc-main"));
   } else {
-    // md-link: 会話の文中の URL と同じく、押すと設定「リンクの開き先」に従う（web/link-open.mjs）
+    // md-link: 会話の文中の URL と同じく、押すと既定のブラウザーで開く（web/link-open.mjs）
     const a = el("a", "md-link tc-main tc-link", clip(raw, 160));
     a.setAttribute("href", u); // 絶対 http(s) かつ safeUrl を通ったものだけ
     a.setAttribute("target", "_blank");

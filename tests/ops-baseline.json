@@ -50,7 +50,7 @@
     "resolvePath": "ui-internal",
     "revealPath": "host-screen-only",
     "openPath": "host-screen-only",
-    "openVisualization": "host-screen-only",
+    "openDefault": "host-screen-only",
     "authLogin": "human-only",
     "authLogout": "human-only",
     "authSubmit": "human-only",
@@ -74,7 +74,10 @@
     "browserScreencastStop": "stream",
     "browserScreencastAck": "stream",
     "browserScreencastInput": "stream",
-    "browserScreencastNav": "stream"
+    "vizOnce": "ui-internal",
+    "chromeAddress": "ui-internal",
+    "pageResult": "ui-internal",
+    "pageEnv": "ui-internal"
   },
   "todoMax": 0,
   "setPrefAllowed": 3

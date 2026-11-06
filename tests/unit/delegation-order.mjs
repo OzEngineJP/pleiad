@@ -78,7 +78,7 @@ export default async function (t) {
   N.prototype.getBoundingClientRect = () => ({ width: 200, height: 180 });
   N.prototype.closest = function (selector) { for (let node = this; node; node = node.parent) if (node.matches(selector)) return node; return null; };
   N.prototype.querySelectorAll = function (selector) {
-    return selector === ':scope > button, :scope > input, :scope > .menu-row > .li'
+    return selector.startsWith(':scope > button, :scope > input, :scope > .menu-row > .li')
       ? this.children.flatMap(row => row.matches('.menu-row') ? row.children.filter(c => c.matches('.li')) : ['BUTTON', 'INPUT'].includes(row.tagName) ? [row] : [])
       : menuSaved.query.call(this, selector);
   };

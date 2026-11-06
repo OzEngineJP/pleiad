@@ -1,0 +1,126 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { createBrowserUnifyWs } from '../../core/browser-unify-ws.mjs';
+import { registry } from '../../core/ops/index.mjs';
+import { addressCrumbs } from '../../web/address-bar.mjs';
+import { startServer } from '../lib/server.mjs';
+import { open } from '../lib/ws-client.mjs';
+
+export const name = 'browser-unify-ws';
+export const title = 'Conversation tab privacy, address policy and human navigation';
+export default async function(t) {
+  const origins = [];
+  const isolated = createBrowserUnifyWs({ isolatedRoutes:{ once:value => { origins.push(value); return 'once-token'; } } });
+  t.ok('vizOnce continues to issue isolated-page grants', (await isolated.handle({ command:'vizOnce', args:{ origins:['https://cdn.example'] } })).token === 'once-token' && origins.length === 1);
+  for (const args of [{}, { origins:'https://a.example' }, { origins:[1] }, { origins:Array(51).fill('https://a.example') }, { origins:['x'.repeat(2049)] }]) {
+    const code = await isolated.handle({ command:'vizOnce', args }).then(() => null, error => error.code);
+    t.ok('invalid isolated-page grant inputs are rejected', code === 'INVALID');
+  }
+  t.ok('unknown commands fail explicitly', await isolated.handle({command:'unknown'}).then(() => false, error => error.code === 'UNKNOWN_COMMAND'));
+  t.ok('unavailable isolated listener returns no grant', (await createBrowserUnifyWs().handle({command:'vizOnce',args:{origins:[]}})).token === null);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pleiad-b1-'));
+  let ws;
+  try {
+    const work = path.join(root, 'work'), dataDir = path.join(root, 'data'), profile = path.join(root, 'profile');
+    await Promise.all([work, dataDir, profile].map(dir => fs.mkdir(dir)));
+    const file = path.join(work, 'notes.md'); await fs.writeFile(file, '# Notes');
+    await fs.writeFile(path.join(profile, 'Preferences'), JSON.stringify({ default_search_provider_data:{ url:'https://search.example/?q={searchTerms}' } }));
+    let emit, detached = 0, touched = [], calls = [], opened = [];
+    const tabs = [{ sessionId:'one', targetId:'a', windowId:1, url:'https://example.com/', title:'One' }];
+    const relay = {
+      onTabEvent(fn) { emit = fn; return () => { emit = null; }; },
+      unify:{ tabInfo:{ list:id => id === 'one' ? tabs : [] }, tabHolder:{ touch:detail => touched.push(detail) } },
+      async openForConversation(id, url) { opened.push({ id, url }); return { targetId:'new-tab' }; },
+      view:{ async closeTab(id, targetId) { calls.push(['close', id, targetId]); }, async attach() { return {
+        async send(method, params) { calls.push([method, params]); return method === 'Page.getNavigationHistory' ? { currentIndex:1, entries:[{ id:10 }, { id:20 }, { id:30 }] } : {}; },
+        async detach() { detached++; },
+      }; } },
+    };
+    const messages = [[], [], [], []];
+    const clients = messages.map(list => ({ readyState:1, OPEN:1, send:message => list.push(JSON.parse(message)) }));
+    const authenticated = new Set(clients.slice(0, 3)), watching = new Map([[clients[0], 'one'], [clients[1], 'two'], [clients[3], 'one']]);
+    ws = createBrowserUnifyWs({ relay, mask:text => text.replaceAll('Private', '[masked]'), clients:() => authenticated, watching:client => watching.get(client), cwd:() => work, access:() => ({ dataDir }), profileDir:() => profile, ports:() => ({ pages:12345 }) });
+    emit('tab:info', tabs[0]);
+    t.ok('tab metadata goes only to the authenticated watcher', messages[0].length === 1 && messages.slice(1).every(list => !list.length));
+    t.ok('tab payload is an event', messages[0][0].kind === 'event' && messages[0][0].event.type === 'tab:info');
+    ws.snapshot(clients[0], 'one'); ws.snapshot(clients[1], 'one'); ws.snapshot(clients[3], 'one');
+    t.ok('reconnect snapshot obeys the same watcher and auth checks', messages[0].at(-1).event.reset && messages[0].at(-1).event.tabs.length === 1 && messages.slice(1).every(list => !list.length));
+    tabs[0].title='Private'; emit('tab:info', tabs[0]); ws.snapshot(clients[0], 'one');
+    t.ok('updates and reconnect snapshots use the existing secret masking boundary', messages[0].at(-2).event.title === '[masked]' && messages[0].at(-1).event.tabs[0].title === '[masked]');
+    watching.set(clients[0], 'two'); emit('tab:info', { ...tabs[0], title:'Private' });
+    t.ok('switching conversations immediately stops old tab events', messages[0].length === 4);
+    t.ok('screen identities are stable and distinct', ws.clientId(clients[0]) === ws.clientId(clients[0]) && ws.clientId(clients[0]) !== ws.clientId(clients[1]));
+    watching.set(clients[0], 'one'); watching.set(clients[1], 'one');
+    const before = messages.map(list => list.length);
+    emit('tab:page-request', {sessionId:'one',by:ws.clientId(clients[0]),request:{type:'use'}});
+    t.ok('page requests go only to their last touching screen', messages[0].length === before[0]+1 && messages[1].length === before[1]);
+    emit('tab:page-request', {sessionId:'one',request:{type:'use'}});
+    t.ok('page requests without a destination are never broadcast', messages[0].length === before[0]+1 && messages[1].length === before[1]);
+    const results = [], envs = [];
+    const paged = createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client),
+      pageRequests:{ result:async reply => { results.push(reply); return true; }, env:async change => { envs.push(change); return 2; } } });
+    const reply = { sessionId:'one', targetId:'a', requestId:'req-12345678', ok:true, result:{ kept:true } };
+    const delivered = await paged.handle({ command:'pageResult', args:reply, client:clients[0] });
+    t.ok('pageResult hands the screen result to the page requests', delivered.delivered === true && results.length === 1 && results[0].requestId === 'req-12345678' && results[0].result.kept === true);
+    const refusedBy = async (client, args) => paged.handle({ command:'pageResult', args, client }).then(() => null, error => error.code);
+    const refusals = [await refusedBy(clients[2], reply), await refusedBy(clients[3], reply), await refusedBy(clients[0], { ...reply, sessionId:'two' })];
+    t.ok('pageResult is refused unless the connection is authenticated and watching that conversation', refusals.every(code => code === 'INVALID') && results.length === 1);
+    const env = await paged.handle({ command:'pageEnv', args:{ theme:'dark' }, client:clients[0] });
+    const badTheme = await paged.handle({ command:'pageEnv', args:{ theme:'neon' } }).then(() => null, error => error.code);
+    t.ok('pageEnv passes only known themes to the file pages', env.tabs === 2 && envs.length === 1 && envs[0].theme === 'dark' && badTheme === 'INVALID');
+    const holding = [];
+    const heldRelay = { onTabEvent:() => () => {}, unify:{ tabInfo:{ list:() => [] }, tabHolder:{ held:id => id === 'one' ? [{ targetId:'a', holder:'human', by:'screen:1', since:1, last:2, pinned:false, viewport:null }] : [] } } };
+    const heldClient = { readyState:1, OPEN:1, send:message => holding.push(JSON.parse(message).event) };
+    createBrowserUnifyWs({ relay:heldRelay, clients:() => new Set([heldClient]), watching:() => 'one' }).snapshot(heldClient, 'one');
+    t.ok('the reconnect snapshot also tells the human-held tabs after the tab list', holding.length === 2 && holding[0].reset && holding[1].type === 'tab:holder' && holding[1].targetId === 'a' && holding[1].holder === 'human' && holding[1].sessionId === 'one');
+    const unwired = await createBrowserUnifyWs({ clients:() => authenticated, watching:client => watching.get(client) }).handle({ command:'pageResult', args:reply, client:clients[0] });
+    t.ok('without page requests the result is simply not delivered', unwired.delivered === false);
+    const suggestion = await ws.handle({ command:'chromeAddress', args:{ sessionId:'one', input:path.join(work, 'no') } });
+    t.ok('partial paths suggest inspected files', suggestion.suggestions.some(row => row.path === file));
+    const missing = await ws.handle({command:'chromeAddress', args:{sessionId:'one',input:path.join(work,'missing.md')}});
+    t.ok('a missing filename has an explanation before navigation', missing.reason === 'not-found' && !missing.suggestions.length);
+    await ws.navigate({ sessionId:'one', targetId:'a', input:file }, { by:'screen:1' });
+    const destination = new URL(calls.at(-1)[1].url);
+    t.ok('file navigation uses the conversation page and encoded absolute path', destination.port === '12345' && destination.pathname === '/_pleiad/s/one/file' && destination.searchParams.get('path') === file);
+    t.ok('navigation marks this tab as human before sending CDP', touched.at(-1).targetId === 'a' && touched.at(-1).by === 'screen:1');
+    await ws.navigate({ sessionId:'one', targetId:'a', input:'two words' });
+    t.ok('search uses the selected Chrome profile provider', calls.at(-1)[1].url === 'https://search.example/?q=two%20words');
+    const count = calls.length;
+    let blocked = false;
+    try { await ws.navigate({ sessionId:'one', targetId:'a', input:path.join(work, 'missing.md') }); } catch (error) { blocked = error.code === 'not-found'; }
+    t.ok('missing paths give a reason and never become searches', blocked && calls.length === count);
+    try { await ws.navigate({ sessionId:'two', targetId:'a', action:'reload' }); } catch {}
+    t.ok('another conversation cannot operate the target', calls.length === count);
+    await ws.navigate({ sessionId:'one', targetId:'a', action:'back' });
+    t.ok('back follows this tab navigation history', calls.at(-1)[0] === 'Page.navigateToHistoryEntry' && calls.at(-1)[1].entryId === 10);
+    await ws.navigate({ sessionId:'one', action:'new' });
+    t.ok('new tabs belong to the conversation and are human-held', opened.at(-1).url.endsWith('/_pleiad/s/one/new') && touched.at(-1).targetId === 'new-tab');
+    t.ok('temporary CDP sessions are detached', detached === 3);
+    await ws.navigate({sessionId:'one',action:'new',input:file}, {by:'screen:1'});
+    t.ok('modified folder clicks may open the chosen location in a new tab', new URL(opened.at(-1).url).searchParams.get('path') === file);
+    await ws.navigate({sessionId:'one',input:'about:blank'});
+    t.ok('blank addresses work with no previous target', opened.at(-1).url.endsWith('/new') && calls.at(-1)[1].url === 'about:blank');
+    tabs[0].page={kind:'file',path:file};
+    await ws.navigate({sessionId:'one',targetId:'a',action:'view',view:'source'});
+    t.ok('view changes persist in the page URL before painting', calls.at(-1)[1].expression.includes('history.replaceState') && calls.at(-1)[1].expression.includes('source'));
+    const agent = await registry.invoke({ by:'agent', via:'mcp', sessionId:'one', mode:{ scope:'full', autonomy:'never' } }, 'browser.chromeNavigate', { sessionId:'one', input:'example.com' }, { chromeNavigate:() => { throw new Error('must not run'); } });
+    t.ok('navigation is absent from agent surfaces', !agent.ok);
+    t.ok('Windows breadcrumbs preserve drive roots and absolute destinations', addressCrumbs('D:\\work\\notes.md').map(item => item.path).join('|') === 'D:\\|D:\\work|D:\\work\\notes.md');
+    t.ok('POSIX breadcrumbs preserve absolute destinations', addressCrumbs('/work/notes.md').at(-1).path === '/work/notes.md');
+    ws.close(); t.ok('relay subscription can be removed', emit === null);
+    {
+      const server = await startServer({dataDir:path.join(root, 'server'), env:{AGENT_HOST_BACKENDS:'fake'}});
+      let screen;
+      try {
+        screen = await open(server);
+        const caps = await screen.cmd('hostCapabilities');
+        t.ok('server always exposes browser capabilities', Number.isInteger(caps.browserUnify?.pages) && Number.isInteger(caps.browserUnify?.isolated));
+        const address = await screen.cmd('chromeAddress', {sessionId:'one',input:''}, {ms:5000}).then(value => ({value}), error => ({code:error.code}));
+        t.ok('address requests always receive an explicit response', Array.isArray(address.value?.suggestions));
+        await screen.cmd('watchSession', {sessionId:'one'});
+        t.ok('real server sends a reconnect snapshot to the watching socket', screen.events.some(event => event.type === 'tab:info' && event.sessionId === 'one' && event.reset));
+      } finally { screen?.close(); await server.stop(); }
+    }
+  } finally { ws?.close(); await fs.rm(root, { recursive:true, force:true }); }
+}

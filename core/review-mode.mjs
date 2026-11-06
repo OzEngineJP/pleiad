@@ -92,13 +92,17 @@ export const COMMAND_REFUSE = [
   'scanHooks', 'readHook', 'hookTargets', 'saveHooks', 'copyHooks', 'sessionHooks', 'plyHooks', 'readPlyHook', 'savePlyHook',
   'removePlyHook', 'togglePlyHook', 'plyHookPreview', 'hooksUnifyPreview', 'setHooksOwner', 'repairPlyHooks',
   'setAutoCompaction', 'setConversationAutoCompaction', 'runShell', 'stopShell', 'skipShell', 'switchBackend', 'setMode',
-  'revealPath', 'openPath', 'openVisualization', 'authLogin', 'authLogout', 'authSubmit', 'authCancel',
+  'revealPath', 'openPath', 'openDefault', 'authLogin', 'authLogout', 'authSubmit', 'authCancel',
   'plusStatus', 'plusLogin', 'plusLoginCancel', 'plusLogout',
   'attachFile', 'attachStart', 'attachChunk', 'attachFinish', 'attachCancel', 'attachImport', 'attachImportCancel',
   'uploadCheck', 'uploadStart', 'uploadChunk', 'uploadFinish', 'uploadCancel',
-  'browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'browserScreencastNav', 'computerStop',
+  'browserScreencast', 'browserScreencastStop', 'browserScreencastAck', 'browserScreencastInput', 'computerStop',
   'chromeStatus', 'chromeConnect', 'chromeDisconnect', 'chromeRaiseDialog', 'chromeConsent', 'chromeEnable', 'chromeTakeOver', 'chromeResume', 'chromeStop',
-  'chromeOpen', 'chromeCloseWindow', 'chromePinWindow', 'chromeCloseTab',
+  'chromeCloseWindow', 'chromePinWindow', 'chromeCloseTab', 'chromeNavigate', 'chromeAddress',
+  // 断ると、可視化の「一度だけ読み込む」は会話の中身の srcdoc で描く（web/visualize-frame.mjs）
+  'vizOnce',
+  // ファイルのページの頼みの結果・テーマの知らせ（審査モードでは会話の Chrome を使わない）
+  'pageResult', 'pageEnv',
 ];
 
 /** 全命令 → 通すか。載っていない命令は undefined（断る） */
@@ -127,8 +131,8 @@ export const OP_ALLOW = new Set([
   'drafts.save', 'drafts.load', 'files.listDirs',
 ]);
 
-// settings.set で変えてよい設定のキー（言語・リンクの開き方・既定のモデルと段）。バックエンド・モード・各種の鍵や許可は変えられない
-export const SETTING_SET_ALLOW = new Set(['locale', 'linkOpen', 'model', 'effort']);
+// settings.set で変えてよい設定のキー（言語・既定のモデルと段）。バックエンド・モード・各種の鍵や許可は変えられない
+export const SETTING_SET_ALLOW = new Set(['locale', 'model', 'effort']);
 
 /**
  * 操作の一覧の関所を、許可の一覧で絞った版にする（core/ops/index.mjs が審査モードのときだけ使う）。

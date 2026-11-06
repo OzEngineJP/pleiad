@@ -4,20 +4,17 @@ import { delegateResult, delegateTaskId, isPlyDelegateToolName } from './delegat
 import { isComposingKey, shortcutLabel } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
-import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
 import { isManagedContext, paintContextEntry as paintContextEntryButton, setupBrowserEntry } from './header-entries.mjs';
 import { setupChromePanel, createWindowTable } from './chrome-panel.mjs';
 import { setupChromeProfilePill } from './chrome-profile-pill.mjs';
 import { setupBrowserSettings } from './browser-settings.mjs';
 import { setupComputerSettings } from './computer-settings.mjs';
 import { configurePreviewConfirmation, refreshPreviewConfirmation } from './preview-confirm.mjs';
-import { configureLinkOpen } from './link-open.mjs';
+import { configureIsolatedOrigin } from './visualize-frame.mjs';
 import { setupLinkMenu } from './link-menu.mjs';
 import { download, notify, copyPathText } from './file-actions.mjs';
 import { paintUserBody, userTools, attachmentImageSrc } from './user-message.mjs';
 import { watchHostOnlyLinks } from './host-only-links.mjs';
-import { linkChoices, showLinkSheet, hideLinkSheet, linkSheetOpen } from './link-sheet.mjs';
-import { createRemoteBrowser } from './remote-browser.mjs';
 import { fileDownloadUrl } from './file-reference.mjs';
 import { setupCodeCopy, copyText } from './code-copy.mjs';
 import { setupMessagePeek } from './message-peek.mjs';
@@ -3315,7 +3312,6 @@ function isMine(ev) {
   // 再開ターンのモデル通知でも流れるので、それを掴むと他所の id を自分のものにしてしまう）。
   if (state.awaitingSession && ev.type === "session" && ev.first) {
     state.current = id;
-    filePreview.sessionAssigned(id);
     syncWorkEntry();
     state.awaitingSession = false;
     // 自分が走らせたターン。サーバの running が id を載せて来るまでの間も「走っている」扱いにする
@@ -3428,6 +3424,7 @@ function syncOutboxRows(messages) {
 }
 
 function onEvent(ev, replay = false) {
+  if (['tab:info', 'tab:holder', 'tab:page-request', 'tab:viewport'].includes(ev.type)) { loadBrowserUnify().then(ui => ui.onEvent(ev)); return; }
   // bot・Channels・ルーティンの画面（web/channels/）。この画面の出来事ならここで終わる。ほかの出来事（permission など）も部品へ渡る
   // スレッドが動いた・投稿が増えた・既読が進んだ: 脇のスレッドの行を読み直す（まとめて 1 回）
   if (THREAD_INDEX_EVENTS.has(ev.type)) loadThreadIndexSoon();
@@ -3477,7 +3474,7 @@ function onEvent(ev, replay = false) {
     completionNotifications.waiting(ev, state.sessions.find(s => s.id === ev.sessionId), replay);
   }
   if (!replay && sessionLoads.capture(ev, state.current)) return;
-  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintExperimental(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); filePreview.prefsChanged(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
+  if (ev.type === "prefs") { state.prefs = ev.prefs ?? {}; applyLocale(ev.locale); paintAutoCompactionSettings(); paintExperimental(); browserSettings.paint(); computerSettings.paint(); refreshPreviewConfirmation(); sessionContext.refresh(); inputSettings.paint(); chatSuggestion.refresh(); return; }
   if (ev.type === 'autoCompactionSettings') { state.prefs.autoCompaction = ev.settings; paintAutoCompactionSettings(); document.dispatchEvent(new Event('ply-context-usage')); return; }
   if (ev.type === 'schedules') {
     state.schedules = ev.entries ?? [];
@@ -3540,11 +3537,11 @@ function onEvent(ev, replay = false) {
   // コンピューターの操作の状態（別の会話が操作中で待っている）。全部の会話の分が届くので、開いている会話の分だけ行に出す
   if (ev.type === 'computer.state') { onComputerState(ev); return; }
   // エージェントのブラウザー（PC の Chrome）への接続の状態。ホストの画面だけに届く（設定 › ブラウザー）
-  if (ev.type === 'chromeBrowser') { browserSettings.chromeEvent(ev); return; }
+  if (ev.type === 'chromeBrowser') { chromeLink = ev.state ?? null; browserSettings.chromeEvent(ev); return; }
   // エージェントの Chrome の窓の状態（会話ごと。running・idle・stopped・paused）と、エージェントが押した位置。右パネルの「Chrome の窓」が置き場から引く（web/chrome-control.mjs）
   if (ev.type === 'chromeControl' || ev.type === 'chromeTap') { chromeControlStore.event(ev); if (ev.type === 'chromeControl') refreshTaskChromeWindows(); return; }
   // 会話の Chrome の窓の有無と、エージェントが操作中か（リモートの端末にも届く）
-  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl(); refreshTaskChromeWindows(); } return; }
+  if (ev.type === 'chromeWindow') { if (chromePanel ? chromePanel.windowEvent(ev) : chromeWindows.apply(ev)) { browserEntry?.paint(); paintChromeControl(); refreshTaskChromeWindows(); } return; }
   if (ev.type === 'chromeProfile') { chromeProfilePill?.onProfileEvent(ev); refreshTaskChromeWindows(); return; }
   // 次のメッセージの候補（どの会話のものも覚える。開いている会話なら出す）。発言が入った会話の候補は捨てる
   if (ev.type === 'promptSuggestion' && ev.sessionId) {
@@ -3835,7 +3832,6 @@ function onEvent(ev, replay = false) {
     case "session":
       if (ev.sessionId && state.current !== ev.sessionId) {
         state.current = ev.sessionId;
-        filePreview.sessionAssigned(ev.sessionId);
         syncTopbar();
       }
       return;
@@ -3948,7 +3944,7 @@ function applyRunning(work) {
   let settledPerm = false;
   for (const id of state.pendingPerms.keys()) if (!unresolved.has(id)) { state.pendingPerms.delete(id); settledPerm = true; }
   // 依頼待ちの印（頭の行のボタンと Chrome のタブ）は、承認が片付いたらすぐ消す
-  if (settledPerm) { browserEntry?.paint(); browserSettings.chromeRepaint(); browserPanel?.refreshTabs(); }
+  if (settledPerm) { browserEntry?.paint(); browserSettings.chromeRepaint(); }
   reconcileOpenCards();
   const behind = new Map();
   for (const t of state.work.turns ?? []) {
@@ -5882,8 +5878,6 @@ function closeChildChromeWindow(row, anchor) {
   confirmCloseWindow({ risk: closeRiskOf({ state: live.state, waiting: live.waiting === true || handoffWaiting(id) }), run, anchor, t,
     showMenu: (x, y, items, title) => showMenu(x, y, items, title) });
 }
-/** 直接の子が開いている窓の数（browser.chromeWindows の行。この会話の分は chromeWindows の表が持つ） */
-const childChromeWindowCount = () => chromeWindowRows.reduce((sum, row) => sum + (row.taskId && row.windows > 0 ? row.windows : 0), 0);
 async function refreshTaskChromeWindows(sessionId = state.current) {
   const request = ++taskChromeRequest;
   if (!sessionId) return;
@@ -5893,7 +5887,7 @@ async function refreshTaskChromeWindows(sessionId = state.current) {
   chromeWindowRows = Array.isArray(rows) ? rows : [];
   for (const row of chromeWindowRows) if (row.taskId) taskChromeRows.set(row.taskId, row);
   paintDelegateCards();
-  browserEntry?.paint(); browserPanel?.refreshTabs();
+  browserEntry?.paint();
   chromePanel?.refresh();   // 右パネルの上の列（窓のある子の会話の題）
 }
 /**
@@ -7433,6 +7427,8 @@ function applyTheme(mode) {
   for (const b of $("themeSeg").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === m);
   paintTitleBar();
   paintShellTheme();
+  // 旗が on: 会話の Chrome のファイルのページと右パネルの iframe も同じ配色にする（ADR 0295）
+  if (state.hostCaps?.browserUnify) { cmd('pageEnv', { theme: m }).catch(() => {}); filePreview.pageEnvChanged({ theme: m }); browserUnifyLoad?.then((ui) => ui.envChanged({ theme: m })); }
 }
 
 /**
@@ -7838,51 +7834,46 @@ $("draftFailRetry").onclick = () => { $("prompt").focus(); saveDraft().catch(() 
 // 引き継いで戻した行（present kind: 'chromeHandover'）の「Claude に戻しました」の名前
 setChromeHandoverAgentName(() => labelOf(activeBackendId()));
 setChromeClosedSession(() => state.current);
-// 内蔵ブラウザー（web/browser-panel.mjs）。デスクトップ版のホストの画面だけ。右パネルの 1 つのモードになる
 let browserEntry = null;   // 頭の行のボタン（下の setupBrowserEntry）。状態の知らせが先に届いても落ちないよう先に宣言する
 // エージェントの Chrome の窓（右パネル「Chrome の窓」。web/chrome-panel.mjs）。会話ごとの窓の有無はサーバーの chromeWindow イベントで届く。知らせが先に届いても受けられるよう表を先に作る
 const chromeWindows = createWindowTable();
 let chromePanel = null, chromeControlView = null, chromeProfilePill = null;   // 状態の知らせが先に届いても落ちないよう先に宣言する
-// ホストの画面（デスクトップ版）は plyDesktop.browser のページそのもの。それ以外の端末（リモートの窓・LAN のブラウザー）は、
-// ホストの内蔵ブラウザーの映像を同じ部品で見る（web/remote-browser.mjs。ホストが映像を送れる＝pcBrowser の間だけ。docs/inapp-browser.md）
-const remoteBrowser = browserPanelAvailable() ? null : createRemoteBrowser({ cmd: (command, args) => cmd(command, args), getSessionId: () => state.current ?? null });
-const browserPanel = createBrowserPanel({ showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts), getSessionId: () => state.current ?? null,
-  onChange: () => browserEntry?.paint(),
-  ...(remoteBrowser ? { bridge: remoteBrowser.bridge, viewport: remoteBrowser.viewport,
-    available: () => state.osActions !== true && state.hostCaps?.pcBrowser === true } : {}) });
-/** ホストの内蔵ブラウザーが見られるか・見られるようになった（hostCaps と osActions は接続のあとで届く）。入口の出し入れはここで知らせる */
-const announceBrowserAvailability = () => { browserEntry?.paint(); document.dispatchEvent(new CustomEvent('ply-browser-availability')); };
-/**
- * リモートの端末でリンクを押した。シートを出す（内蔵ブラウザーで開く / 既定のブラウザーで開く / リンクをコピー）か、
- * localhost（この端末では開けない）ならシートを挟まずホストの内蔵ブラウザーのタブで開く。true なら受けた。
- * ホストの画面・ホストの内蔵ブラウザーを見られない端末では何もせず false（呼び出し側が今までどおりに開く）
- */
-function chooseRemote({ url = '', openHere = () => {} }) {
-  const choices = linkChoices({ url, pageOrigin: location.origin, hostScreen: state.osActions === true, pcBrowser: browserPanel.remote && browserPanel.available() });
-  if (!choices) return false;
-  const openInApp = () => { browserPanel.open({ url, newTab: true }); };
-  if (choices.pcOnly) { openInApp(); return true; }
-  showLinkSheet({ label: url, hostName: state.hostCaps?.hostName ?? '', onInApp: openInApp, onExternal: openHere,
-    onCopy: () => navigator.clipboard.writeText(url).then(() => notify(t('timeline.link.copied')), () => notify(t('timeline.link.copyFailed'))) });
-  return true;
-}
+// 会話の右の欄（ADR 0294〜0297）。サーバーの hostCapabilities.browserUnify（ページと隔離の origin の口）が届いてから読む
+let browserUnifyLoad = null;
+const loadBrowserUnify = () => (browserUnifyLoad ??= import("./browser-unify.mjs").then((m) => m.createBrowserUnify({ cmd, state, chrome:() => chromePanel, showMenu, notify, preview:filePreview,
+  controlStore:chromeControlStore, agentName:id => chromeAgentName(id), onPageRequest:handlePageRequest, composer:() => $('composer'), osActions:() => state.osActions === true })));
 const filePreview = setupFilePreview({
-  browser: browserPanel,
   // サブエージェントの会話（作業のダイアログ）は、親の会話の sessionId を data-session-id に持つ
   // Channels の中のリンクは、そのスレッドの bot の会話を基準にする（web/channels/）。それ以外は今の会話
   getContext: anchor => channelsUi.contextForPanel(anchor) ?? ({ sessionId:anchor?.closest('#workBody')?.dataset.sessionId || state.current, at:anchor?.closest('.m')?.dataset.at }),
-  onLayout: () => requestAnimationFrame(relayoutBranches),
+  onLayout: () => { requestAnimationFrame(relayoutBranches); browserEntry?.paint(); },
   // ファイルの操作メニューは会話一覧と同じ 1 つを使う。OS の操作はサーバーが「この PC の画面」と答えたときだけ
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   cmd: (command, args) => cmd(command, args),
   osActions: () => state.osActions === true,
-  getPrefs: () => state.prefs,
   useFile: file => { if (attachHostFiles([file])) $('prompt').focus(); },
-  onBrowsing: () => browserEntry?.paint(),
 });
-// 頭の行の内蔵ブラウザーのボタンと近道（web/header-entries.mjs）。使えない画面では出さない
-browserEntry = setupBrowserEntry({ button: $('browserEntry'), browser: browserPanel, preview: filePreview, bridge: window.plyDesktop?.browser,
-  chrome: () => chromePanel, windows: chromeWindows, getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
+// 頭の行の右の欄のボタンと近道（web/header-entries.mjs）。会話を開いていない間は出さない
+// 右の欄の開け閉め。Chrome の窓かタブがあればその窓を映す。つないであって窓がまだ無ければ、新しいタブ（Pleiad の新しいタブのページ）で窓を作る
+// （ADR 0294 の 4 の 5 と同じ。Chrome の窓はいつもタブを 1 つ持つ）。Chrome が無ければ、新しいタブのページを 1 枚の iframe で出す
+// （4 の 2。git・プラグイン・作業フォルダーへの入口はこのページだけ。5 の 5）
+let chromeLink = null;   // 中継の接続の状態（chromeBrowser の便り。ホストの PC の画面だけに届く）
+const rightPane = {
+  isOpen: () => chromePanel?.isOpen() === true || filePreview.panelOpen('page-frame'),
+  close() { if (chromePanel?.isOpen()) chromePanel.close(); else if (filePreview.panelOpen('page-frame')) filePreview.close(); },
+  open(anchor) {
+    const id = state.current; if (!id) return;
+    loadBrowserUnify().then(unify => {
+      if (state.current !== id) return;
+      if (chromeWindows.has(id) || unify.tabsOf(id).length) chromePanel?.open(anchor);
+      else if (chromeLink === 'connected') unify.openTab({ sessionId: id }).catch(error => notify(error?.message || t('tabs:address.failed')));
+      else filePreview.pageFrame?.open(`/_pleiad/s/${encodeURIComponent(id)}/new`, { sessionId: id, title: t('tabs:strip.new'), element: anchor });
+      browserEntry?.paint();
+    });
+  },
+};
+browserEntry = setupBrowserEntry({ button: $('browserEntry'),
+  chrome: () => rightPane, windows: chromeWindows, pagesOnly: () => chromeLink !== 'connected' && !chromeWindows.has(state.current), getSessionId: () => state.current ?? null, getAgentName: () => labelOf(activeBackendId()),
   getChromeState: id => chromeControlStore.get(id).state,
   waiting: handoffWaiting, announce,
   chromeAvailable: () => state.hostCaps?.chromeWindow === true,
@@ -7905,7 +7896,6 @@ const channelsUi = setupChannels({
   cmd: (command, args) => cmd(command, args),
   invoke: async (op, args = {}) => cmd('invoke', { op, args }),
   state, filePreview, side, t,
-  browser: browserPanel,   // 内蔵ブラウザー（スレッドの見出しの入口が右パネルをブラウザーにする。使えない画面では null）
   whenOnline,              // 切れている間、つながり直すのを待つ（入力欄の添付の断片の送り手。web/attach-upload.mjs）
   openImage: (src, caption, path, origin) => openLightbox(src, caption, path, origin),   // 添付の画像を大きく見る（会話と同じライトボックス）
   permissionCard: (ev, into) => (ev.kind === 'question' ? questionCard(ev, into) : permissionCard(ev, into)),   // 質問も同じ口（bot の質問）
@@ -7964,7 +7954,7 @@ const notificationInbox = setupNotificationInbox({
 });
 // External resource confirmation is available on every screen.
 const computerSettings = setupComputerSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getHostCaps: () => state.hostCaps, openPage: name => $(`${name}Tab`)?.click() });
-const browserSettings = setupBrowserSettings({ available: browserPanelAvailable(), cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf, getHostCaps: () => state.hostCaps,
+const browserSettings = setupBrowserSettings({ cmd: (command, args) => cmd(command, args), getPrefs: () => state.prefs, getAgentLabel: labelOf, getHostCaps: () => state.hostCaps,
   getChromeWaiting: () => [...state.pendingPerms.values()].filter(p => p.browserHandoff && !p.remote).map(p => state.sessions.find(s => s.id === p.sessionId)?.title || t("session.untitled")) });
 // 通話モードの差し込み口（Chats の会話）。契約は web/voice/index.mjs の冒頭。入力欄・頭・メインの面へは、ここの 1 か所だけで繋ぐ
 const voiceWraps = new WeakMap();
@@ -7986,12 +7976,8 @@ voiceUi.mount({
   sendTo: (target, text) => submitVoiceText(text, target),
   follow: () => { const log = $('log'); if (log.scrollHeight - log.scrollTop - log.clientHeight < 160) log.scrollTop = log.scrollHeight; },
 });
-// 会話とプレビューの外部リンクは設定の開き先へ（web/link-open.mjs）
-configureLinkOpen({ getPrefs: () => state.prefs, chooseRemote: (url, openHere) => chooseRemote({ url, openHere }) });
-// 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）
-setupLinkMenu({ showMenu: (x, y, items, title) => showMenu(x, y, items, title), getPrefs: () => state.prefs,
-  screen: () => ({ hostScreen: state.osActions === true, pcBrowser: browserPanel.remote && browserPanel.available() }),
-  openRemote: url => browserPanel.open({ url, newTab: true }) });
+// 文中の URL・名前付きのリンクの、行き先の一行と右クリックのメニュー（web/link-menu.mjs）。押したリンクは既定のブラウザーへ（web/link-open.mjs）
+setupLinkMenu({ showMenu: (x, y, items, title) => showMenu(x, y, items, title) });
 configurePreviewConfirmation({ getPrefs: () => state.prefs, openSettings: () => {
   onboarding.open('browser');
   const heading = $('browserAllowedSites'); heading?.focus({ preventScroll: true }); heading?.scrollIntoView({ block: 'start' });
@@ -8093,6 +8079,11 @@ function openLightbox(src, caption, path, origin) {
   d.querySelector(".lb-path-text").title = path ?? "";
   d.querySelector(".lb-panel").hidden = !path;
   d.querySelector(".lb-reveal").hidden = !path || state.osActions !== true;
+  // 既定のアプリで開く: 旗が on のホストの画面で、実体（添付なら uploads の中のファイル）が許した種類のときだけ。サーバーに聞いてから出す
+  const openDefault = d.querySelector(".lb-default");
+  openDefault.hidden = true;
+  const asked = lightboxFile;
+  if (asked) filePreview.defaultAppAllowed({ path, element: origin ?? null }).then((ok) => { if (ok && lightboxFile === asked && d.open) openDefault.hidden = false; });
   const save = d.querySelector(".lb-save");
   const name = (path ?? caption ?? "image").split(/[\\/]/).at(-1) || "image";
   // 絶対パスは認証付きの /local-file?download=1、パスの無い画像は data URI をそのまま保存する
@@ -8151,6 +8142,7 @@ function wireDropZone() {
     filePreview.open({ path: target.path, line: null }, target.element?.isConnected ? target.element : null);
   };
   lb.querySelector(".lb-reveal").onclick = () => { if (lightboxFile) filePreview.reveal(lightboxFile); };
+  lb.querySelector(".lb-default").onclick = () => { if (lightboxFile) filePreview.openDefault(lightboxFile); };
   const zone = document.querySelector("main");
   let depth = 0;
   const show = (on) => zone.classList.toggle("dropping", on);
@@ -8677,7 +8669,7 @@ function openContextPage() {
 }
 /** タイトル行の右の入口。押すと右パネル「この会話のコンテキスト」を開閉する。セッションを選んでいないときは出さない */
 function paintContextEntry() {
-  chromePanel?.reset(); browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl();   // 会話が替わった
+  chromePanel?.reset(); browserEntry?.paint(); paintChromeControl();   // 会話が替わった
   paintContextEntryStatus();
 }
 function paintContextEntryStatus() {
@@ -8880,6 +8872,66 @@ function jumpToConversation({ uuid, toolId }) {
   const row = target.closest('.mw') ?? target;
   if (animated) setTimeout(() => nav.scrollToRow(row, 90), 320); else nav.scrollToRow(row, 90);
   return true;
+}
+/**
+ * 旗が on: ファイル・フォルダー・git のページ（会話の Chrome のタブと右パネルの iframe。web/pages/）を Pleiad の画面へつなぐ。
+ * タブを開けるのは Chrome につながっているか、その会話にもうタブがあるとき。それ以外は右パネルの iframe で開く（web/page-frame.mjs）
+ */
+let filePagesConnected = false;
+function connectFilePages(unify) {
+  if (filePagesConnected) return;
+  filePagesConnected = true;
+  filePreview.configureBrowserUnify({
+    caps: () => state.hostCaps?.browserUnify ?? null,
+    connected: (id) => chromeLink === 'connected' || unify.tabsOf(id).length > 0,
+    tabs: (id) => unify.tabsOf(id),
+    openTab: (args) => unify.openTab(args),
+    focusTab: (tab, id) => unify.focusTab(tab, id),
+    flashTab: (tab, id) => unify.flashTab(tab, id),
+    onRequest: (request) => handlePageRequest(request, { sessionId: request?.sessionId }),
+    pageBar: (frame, context) => unify.frameBar(frame, context),
+  });
+}
+/**
+ * ファイルのページからの頼み（web/pages/bridge.mjs の request）。ページは書き込まず、ここで Pleiad の画面の操作にする。
+ * 入力欄・会話の場所に触る頼みは今の会話の分だけ。worktree の頼みは戻り値・例外をページへ返す（web/browser-unify.mjs・web/page-frame.mjs）
+ */
+async function handlePageRequest(request, { sessionId } = {}) {
+  const here = typeof sessionId === 'string' && sessionId === state.current;
+  const path = typeof request?.path === 'string' && request.path ? request.path : null;
+  switch (request?.type) {
+    case 'file-menu':
+      if (!path || !Number.isFinite(request.x) || !Number.isFinite(request.y)) return false;
+      await filePreview.menu(request.x, request.y, { path, kind: request.kind === 'directory' ? 'directory' : 'file', sessionId, ...(typeof request.base === 'string' ? { base: request.base } : {}) });
+      return true;
+    case 'use-file': {
+      if (!here || !path) return false;
+      const where = await cmd('resolvePath', { path, sessionId });
+      if (sessionId !== state.current || !where?.path) return false;
+      if (!attachHostFiles([{ path: where.path, name: where.path.split(/[\\/]/).at(-1), mime: '' }])) return false;
+      $('prompt').focus();
+      return true;
+    }
+    case 'use-text':
+      if (!here || typeof request.text !== 'string') return false;
+      useGitText(request.text);
+      return true;
+    case 'jump':
+      return here && jumpToConversation(request.event ?? {});
+    case 'worktree':
+      return pageWorktree(request);
+  }
+  return false;
+}
+/** git のページの「残っている worktree」の操作。右パネルの git と同じ worktreeOps を通す。取り込みを頼む先は知っている会話だけ */
+async function pageWorktree({ action, id, kept, row, ask, ref }) {
+  const known = (sessionId) => typeof sessionId === 'string' && state.sessions.some((s) => s.id === sessionId);
+  if (action === 'keep' && typeof id === 'string') { await worktreeOps.keep(id, kept === true); return true; }
+  if (action === 'ask' && row && known(row.mergeSessionId)) return worktreeOps.ask(row);
+  if (action === 'unask' && known(ask?.sessionId) && typeof ask.messageId === 'string') return worktreeOps.unask(ask);
+  if (action === 'archive' && typeof row?.id === 'string') return worktreeOps.archive(row);
+  if (action === 'restore' && row && (ref == null || typeof ref === 'string')) return worktreeOps.restore(row, ref);
+  throw new Error('unavailable');
 }
 /** 「会話で使う」: 入力欄の末尾へ字を足す */
 function useGitText(text) {
@@ -9142,7 +9194,6 @@ async function runRefresh(listed) {
   browserSettings.paint();
   computerSettings.paint();
   refreshPreviewConfirmation();
-  filePreview.prefsChanged();
   await loadBackends(backends);
   if (version !== refreshVersion) return;
   // 走っている作業の印は、最初の一覧を描く前に載せる（描いた後に印が足されて行が変わらないように）
@@ -10441,7 +10492,7 @@ function connect() {
       folderUpload?.online();
       for (const wake of [...onlineWaiters]) wake();
       // Chrome の窓の表はつなぎ直しで作り直す（サーバーは続けて今の分を送る）
-      chromeWindows.clear(); chromeControlStore.clear(); browserEntry?.paint(); browserPanel?.refreshTabs(); paintChromeControl();
+      chromeWindows.clear(); chromeControlStore.clear(); browserEntry?.paint(); paintChromeControl();
       // 設定 › アプリ情報の「外の AI から Pleiad を使う」。ホストの画面でだけ取れて、取れたら出す（web/cli-setup.mjs）
       cliSetup.load();
       // OS の操作（エクスプローラー・ブラウザーで開く）を出してよいか。接続元を見てサーバーが答える（遠隔なら false）
@@ -10454,12 +10505,22 @@ function connect() {
         browserSettings.hostCapsChanged();
         state.osActions = c?.osActions === true && !window.plyRemote;
         remoteSettings.setHostScreen(state.osActions);
+        // 可視化を隔離の origin（ADR 0295 の 3）の localhost で描く。隔離のリスナーはループバックだけで待つので、LAN のブラウザーの画面では使わず srcdoc で描く
+        // （端末のアプリは端末の中のプロキシの port が来る）
+        const loopbackScreen = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+        configureIsolatedOrigin(c?.browserUnify?.isolated && loopbackScreen ? { port: c.browserUnify.isolated,
+          mintOnce: (origins) => cmd("vizOnce", { origins }).then((r) => r?.token ?? null) } : null);
         filePreview.osChanged();
         syncAttachButton();
         renderAttached();
-        remoteBrowser?.reconnected();
         chromePanel?.reconnected();
-        announceBrowserAvailability(); browserPanel.refreshTabs(); chromeProfilePill?.refresh();
+        browserEntry?.paint(); chromeProfilePill?.refresh();
+        if (c?.browserUnify) loadBrowserUnify().then((unify) => {
+          unify.capsChanged(c);
+          connectFilePages(unify);
+          cmd('pageEnv', { theme: document.documentElement.dataset.theme ?? 'auto' }).catch(() => {});
+          if (state.osActions) cmd('chromeStatus').then((status) => { chromeLink = status?.state ?? null; }, () => {});
+        }).catch(() => {});
       }).catch(() => {});
       // 開く前から承認待ちがあれば、ここでダイアログに出す
       remoteSettings.refresh();
@@ -10507,7 +10568,7 @@ function connect() {
     // 保存される文言（変更の理由・添付の見出し）を今の言語に（web/saved-text.mjs）
     if (m.kind === "event") return onEvent(savedEvent(m.event));
     // PC の内蔵ブラウザーの画面（見ている接続にだけ届く）
-    if (m.kind === "screencast") return m.source === 'chrome' ? chromePanel?.onMessage(m) : remoteBrowser?.onMessage(m);
+    if (m.kind === "screencast") return m.source === 'chrome' ? chromePanel?.onMessage(m) : undefined;
 
     if (m.kind === "response") {
       const p = pending.get(m.id);
@@ -10589,7 +10650,7 @@ async function takeOverOnDevice(id, { fromPc = false } = {}) {
   if (!size) throw new Error(t('chromeControl.failed'));
   return cmd('chromeTakeOver', { sessionId: id, by: 'device', ...size, ...(fromPc ? { fromPc: true } : {}) });
 }
-chromePanel = setupChromePanel({ cmd, preview: filePreview, browser: browserPanel,
+chromePanel = setupChromePanel({ cmd, preview: filePreview,
   showMenu: (x, y, items, title) => showMenu(x, y, items, title),
   session: () => state.current ?? null, getAgentName: id => chromeAgentName(id), windows: chromeWindows,
   children: () => chromeWindowRows,
@@ -10603,15 +10664,11 @@ chromePanel = setupChromePanel({ cmd, preview: filePreview, browser: browserPane
   menuItems: id => (window.plyRemote && actionsFor(chromeControlStore.get(id).state).includes('takeOver')
     ? [{ label: t('chromeControl.takeOverPc'), onClick: () => cmd('chromeTakeOver', { sessionId: id }).catch(error => notify(error?.message || t('chromeControl.failed'))) }] : []),
   openConversation: async id => { await select(id); if (state.current === id) chromePanel?.open($('browserEntry')); } });
-chromePanel.onOpenChange(() => { browserEntry?.paint(); browserPanel?.refreshTabs(); });
-browserPanel?.connect({ chromeAvailable: () => state.hostCaps?.chromeWindow === true,
-  chromeOpen: () => chromePanel?.isOpen() === true,
-  chromeCount: () => chromeWindows.count(state.current) + childChromeWindowCount(),
-  chromeOperating: () => chromeWindows.operating(state.current),
-  chromeMark: () => browserEntry?.currentMark() ?? '',
-  chromeName: () => labelOf(activeBackendId()),
-  openChrome: () => chromePanel?.open($('browserEntry')),
-  noteView: view => browserEntry?.noteView(view) });
+document.addEventListener('ply-browser-toggle', event => {
+  if (chromePanel?.isOpen() && chromePanel.sessionId === event.detail?.sessionId) chromePanel.close();
+  else chromePanel?.open(event.target, { target:event.detail?.sessionId });
+});
+chromePanel.onOpenChange(() => { browserEntry?.paint(); });
 // エージェントの Chrome の窓の状態の一行・止める・引き継ぐ・戻す（web/chrome-control.mjs。ADR 0154）。状態の一行は右パネルの映像の上の差し込み口、押した位置の輪は映像の上、
 // 一時停止中の帯は会話の側（入力欄の上）。撮影を断っている間の幕は映像の側が出す。窓があるか一時停止中の会話だけに出す
 chromeControlView = createChromeControlView({
@@ -10628,7 +10685,11 @@ $('chromeBanner').append(chromeControlView.banner);
 chromeProfilePill = setupChromeProfilePill({
   slot: chromePanel.profileSlot,
   cmd: (command, args) => cmd(command, args),
-  showMenu: (x, y, items, title, opts) => showMenu(x, y, items, title, opts),
+  showMenu: (x, y, items, title, opts) => {
+    const anchor = document.querySelector('.bu-more');
+    const box = anchor?.getBoundingClientRect();
+    showMenu(box ? box.left : x, box ? box.bottom + 4 : y, items, title, opts);
+  },
   getSessionId: () => chromeTarget(),
   getPrefs: () => state.prefs,
   getHostCaps: () => state.hostCaps,
@@ -10648,18 +10709,7 @@ function paintChromeControl() {
   chromePanel?.setOperating(Boolean(window.plyRemote) && row?.state === 'paused' && row.by === 'device');
   chromeProfilePill?.onStateChange();
 }
-// 内蔵ブラウザーの⋯「Chrome で開く（エージェントの窓へ）」（browser.chromeOpen）。開いたら右パネルを Chrome の窓の映像に替える。
-// つながっていなければ Chrome の許可を待つ（カードは出さない。パネルに「Chrome の許可を待っています」）。エージェントには知らせない
-browserPanel?.connect({
-  canOpenInChrome: () => state.hostCaps?.chromeBrowser === 'available',
-  openInChrome: async ({ sessionId, url }) => {
-    const status = await cmd('chromeStatus').catch(() => null);
-    chromePanel.openWaiting(status?.state === 'connected' ? t('browser.chromeWindow.connecting') : t('browser.chromeWindow.waitingPermission'));
-    try { await cmd('chromeOpen', { sessionId, url }); }
-    catch (error) { chromePanel.cancelWaiting(); notify(error?.message || t('browser.chromeWindow.openFailed')); }
-  },
-});
-chromeControlStore.onChange((id) => { if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); browserPanel?.refreshTabs(); } });
+chromeControlStore.onChange((id) => { if (id === state.current || id === chromePanel.sessionId) { paintChromeControl(); chromePanel.refresh(); browserEntry?.paint(); } });
 chromeControlStore.onTap((tap) => { if (tap.sessionId === chromeTarget() && chromePanel.isOpen()) chromeControlView?.ring(tap.x, tap.y, chromePanel.frameSize()); });
 // 右パネルが映す会話を替えた（子の会話の Chrome を映した・戻した・閉じた）: 状態の一行とプロフィールをその会話に合わせる
 chromePanel.onTargetChange(() => { paintChromeControl(); chromeProfilePill?.refresh(); });
@@ -10834,7 +10884,7 @@ function openConversationMenu(s, r) {
   const items = conversationMenuItems({
     plugins: !$('contextEntry').hidden && { label: t('session.context.label'), onClick: () => sessionContext.open($('sessionMore')) },
     git: !$('gitEntry').hidden && { label: $('gitEntry').getAttribute('aria-label'), onClick: () => gitPanel?.open($('sessionMore')) },
-    browser: browserEntry?.available() && { label: t('browser.unifiedEntryLabel'), onClick: () => browserEntry.toggle($('sessionMore')) },
+    browser: browserEntry?.available() && { label: chromeLink === 'connected' || chromeWindows.has(state.current) ? t('browser.unifiedEntryLabel') : (rightPane.isOpen() ? t('tabs:address.closePanel') : t('tabs:address.openPagePanel')), onClick: () => browserEntry.toggle($('sessionMore')) },
     usage: { label: t('usage.header.title'), hint: used == null ? null : () => menuMeter(used), onClick: () => headerUsage.open($('sessionMore')) },
     compact: { label: t('compaction.short'), disabled: !supported,
       note: supported ? '' : t('compaction.agentManaged', { agent: labelOf(s.backend) }),
@@ -10852,8 +10902,6 @@ function openConversationMenu(s, r) {
 function watchShellBack() {
   const escape = target => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
   addEventListener("plyremote:back", (e) => {
-    // リンクの開き先のシート（web/link-sheet.mjs）。ブラウザーの右パネルは、ほかのパネルと同じ閉じ方（ファイルのプレビューの段）
-    if (linkSheetOpen()) { e.preventDefault(); hideLinkSheet(); return; }
     const dialog = [...document.querySelectorAll("dialog[open]")].at(-1);
     if (dialog) {
       e.preventDefault();
@@ -10990,7 +11038,7 @@ watchTitleBar();
 watchShellTheme();
 watchShellBack();
 // localhost のリンクは、サーバーのある PC の画面でなければ開かずに知らせる（docs/remote.md §8.5）
-watchHostOnlyLinks({ onHostScreen: () => state.osActions === true, notify, choose: url => chooseRemote({ url }) });
+watchHostOnlyLinks({ onHostScreen: () => state.osActions === true, notify });
 wireDropZone();
 fitPrompt();
 // 初めて接続して会話を開く（または新しい会話を始める）までは書けない。書いても開いた会話の下書きで上書きされる

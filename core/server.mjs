@@ -36,6 +36,7 @@ import { rememberableRepoTurn } from './repo-defaults.mjs';
 import { insideDir, sameDir } from './worktrees.mjs';
 import { killUnder, killHeldUnder } from './proc-track.mjs';
 import { createCallTracker, timelineOf } from './git-timeline.mjs';
+import { recentFilesOf, visualizationLinksOf } from './session-files.mjs';
 import { createPrReader, basicPr, PR_READ_MAX } from './git-prs.mjs';
 import { mergePrs, unionPrs } from './session-prs.mjs';
 import { createUpdateGate } from './update-gate.mjs';
@@ -51,10 +52,10 @@ import os from "node:os";
 import { readLocalFile } from "./local-files.mjs";
 import { createStaticBundle } from './static-bundle.mjs';
 import { BUNDLE_PATH } from './remote/static-bundle.mjs';
-import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE } from './os-open.mjs';
+import { isLocalRequest, defaultOpener, createRateLimit, OPENABLE, defaultAppAllowed } from './os-open.mjs';
 import { readPreview, listTreeFolder, resolveReference, cwdAt, inspectFile, previewFailure, PreviewError } from './file-preview.mjs';
 import { windowShotGuard } from './chrome/window-shots.mjs';
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import * as P from "./protocol.mjs";
 import { registry as opsRegistry } from './ops/index.mjs';
@@ -143,7 +144,7 @@ import { createFolderUploads } from './folder-uploads.mjs';
 import { createImageImporter, testImportOrigin } from './image-import.mjs';
 import { createUrlGuard } from './mcp-url-guard.mjs';
 import { pinnedFetch } from './pinned-fetch.mjs';
-import { createVisualizationCollector, visualizeInstructions, snapshotResponse, writeSnapshotFile } from './visualize.mjs';
+import { createVisualizationCollector, visualizeInstructions } from './visualize.mjs';
 import { plyParts } from './instruction-amount.mjs';
 import { computerPrompt } from './backends/computer-delivery.mjs';
 import { MIN_BUDGET, MAX_BUDGET } from '../web/instruction-amount.mjs';
@@ -152,7 +153,6 @@ import { createChromeWindowCloser } from './chrome/close-window.mjs';
 import { delegatedChromeTarget as resolveDelegatedChromeTarget, delegatedChromeWindows } from './chrome/delegation.mjs';
 import { createChromeLoginGroups } from './chrome/login-groups.mjs';
 import { resumeFromPill } from './chrome/pill-resume.mjs';
-import { parentPortViewer } from './browser-viewer.mjs';
 import { getMainPort, setMainPortSource } from './main-port.mjs';
 import { createLoginItemClient } from './login-item.mjs';
 import { createMainLink, handoverEnabled } from './main-link.mjs';
@@ -165,10 +165,10 @@ import { readHolderSources, ADOPT_TURN_MARK } from './adopt.mjs';
 import { holderLink } from './holder/link.mjs';
 import { closeAll as closeDataDb } from './db.mjs';
 import { createApprovalIds } from './approval-id.mjs';
-import { parentPortScreencast, createScreencastHub, screencastCommand } from './browser-screencast.mjs';
+import { createScreencastHub, screencastCommand } from './browser-screencast.mjs';
 import { createChromeConnection } from './chrome/connection.mjs';
 import { chromeLinkEnabled, openChromeLink, shutdownHolderIfIdle } from './chrome/link.mjs';
-import { chromeHomes } from './chrome/locate.mjs';
+import { chromeHomes, readLastUsedProfile } from './chrome/locate.mjs';
 import { parentPortChromeOs } from './chrome/os.mjs';
 import { createChromeRelay } from './chrome/relay.mjs';
 import { createChromeHandoffs } from './chrome/handoff.mjs';
@@ -178,7 +178,7 @@ import { createChromeControl } from './chrome/control.mjs';
 import { createChromeScreencast } from './chrome/screencast.mjs';
 import { createBrowserSiteApprovals } from './browser-confirm.mjs';
 import { createBrowserBridge, BROWSER_MCP_PATH } from './browser-bridge.mjs';
-import { validBrowserPref, externalOrigin } from '../web/browser-confirm-policy.mjs';
+import { validBrowserPref } from '../web/browser-confirm-policy.mjs';
 import { computerUsePrefs, validComputerUse } from '../web/computer-prefs.mjs';
 import { computerUseCapability } from './computer-use-capability.mjs';
 import { streamEvents } from "../web/session-stream.mjs";
@@ -264,11 +264,7 @@ const hostedPort = mainPort.hosted ? mainPort : null;
 const mainAway = createMainAway({ mainPort });
 const loginItem = createLoginItemClient({ port: mainPort });
 const openExternal = createExternalOpener({ mainPort, log: line => console.log(`  [main-away] ${line}`) });
-const browserViewer = parentPortViewer(hostedPort);
-// リモートの端末から PC の内蔵ブラウザーを見る（core/browser-screencast.mjs）。デスクトップ版だけ
-const screencastBridge = parentPortScreencast(hostedPort);
-const screencastHub = screencastBridge ? createScreencastHub({ bridge: screencastBridge }) : null;
-const screencastClients = new WeakMap();   // ws -> hub に渡す端末
+const screencastClients = new WeakMap();   // ws -> 映像の hub（core/browser-screencast.mjs）に渡す端末
 // エージェントのブラウザー（PC の Chrome）への接続 1 本（core/chrome/connection.mjs、ADR 0148・0153）。デスクトップ版だけ。OS ごとの層は main（desktop/chrome-os）
 const chromeLocate = chromeHomes()[0] ?? null;
 const chromeOs = hostedPort ? parentPortChromeOs(hostedPort) : null;
@@ -344,8 +340,8 @@ if (chromeRelay && chromeOs) {
   if (chromeOs.capabilities().supported) readoptChromeWindows();
 }
 // 会話の Chrome の窓の映像（右パネルの「Chrome の窓」。ホストの画面もリモートの端末も見られる。見るだけ。core/chrome/screencast.mjs、ADR 0148）。
-// 内蔵ブラウザーの映像（上の screencastHub）とは別のハブで、WS のコマンドは args.source === 'chrome' で選ぶ
-const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, log: line => console.log(`  ${line}`) }) : null;
+// WS のコマンドは args.source === 'chrome' のものだけを受ける（core/browser-screencast.mjs の screencastCommand）
+const chromeScreencast = chromeRelay ? createChromeScreencast({ host: chromeRelay.view, relay: chromeRelay, log: line => console.log(`  ${line}`) }) : null;
 const chromeScreencastHub = chromeScreencast ? createScreencastHub({ bridge: chromeScreencast, source: 'chrome' }) : null;
 // エージェントの Chrome の窓の止める・引き継ぐ・戻す（core/chrome/control.mjs、ADR 0148・0154）。戻したときの会話の行は recordChromeHandover
 const chromeControl = chromeRelay ? createChromeControl({ relay: chromeRelay, os: chromeOs, capture: chromeScreencast, log: line => console.log(`  ${line}`), record: ({ sessionId, seconds }) => recordChromeHandover(sessionId, seconds) }) : null;
@@ -353,6 +349,13 @@ const chromeWindowCloser = chromeRelay ? createChromeWindowCloser({ relay: chrom
   dataDir: store.dataDir, record: recordChromeWindowClose, log: line => console.log(`  ${line}`) }) : null;
 // 人への依頼のカードは、この引き継ぐ・戻すの変化で「あなたが操作中」になり、戻したときに決着する
 chromeHandoffs?.useControl(chromeControl);
+// 端末・映像から人が持ったタブ（ADR 0296 の 1）も、hand_to_user の「あなたが操作中」と「Claude に戻す」の決着に使う
+if (chromeRelay) chromeHandoffs?.useHolders({
+  held: sessionId => chromeRelay.unify.tabHolder.held(sessionId),
+  onChange: fn => chromeRelay.onTabEvent((type, payload) => { if (type === 'tab:holder') fn(payload?.sessionId); }),
+});
+// 操作の前の門（core/chrome/tab-holder.mjs）が、hand_to_user の頼みの最中かを読めるように渡す（ADR 0296 の 1。既定の門は使わない）
+chromeRelay?.unify.tabHolder.attach?.({ handoffs: chromeHandoffs });
 // 会話の端点を出す口（ターンの開始・新しい会話の id の付け替え・ターンの終わり・会話の削除）。Chrome の中継があるホスト（デスクトップ版）だけ。Windows 以外（unsupported）では渡さない（下の browserEnv）
 const agentBrowserEndpoints = chromeRelay ? chromeRelayBrowser(chromeRelay, { dataDir: store.dataDir }) : null;
 // その会話の agent-browser の置き場を今は触れないか: ターンが走っている（ID 確定前の id も）・中継でターンの印が付いている・人が引き継いでいる（ADR 0180）
@@ -407,6 +410,15 @@ import { splitLeadingNotes } from './system-messages.mjs';
 import { createBotHost } from './bots-host.mjs';
 import { channelEventRows, HIDDEN_BOT_KINDS } from './channels/types.mjs';
 import { textForTitleModel } from './prompt-title.mjs';
+import { startBrowserUnifyListeners } from './browser-unify-listeners.mjs';
+import { createBrowserUnifyWs, isBrowserUnifyCommand } from './browser-unify-ws.mjs';
+import { createPagesRoutes } from './pages-routes.mjs';
+import { createPageRequests } from './page-requests.mjs';
+import { createPageTickets } from './page-tickets.mjs';
+import { createIsolatedRoutes } from './isolated-routes.mjs';
+import { createHtmlKeys } from './html-keys.mjs';
+import { PAGES_PATH, pageRequestOk, pagesCookie } from './page-auth.mjs';
+import { COMMON_HEADERS, sendStatus } from './page-listener.mjs';
 
 const PORT = Number(BOOT_ENV.AGENT_HOST_PORT ?? 7420);
 const HOST = BOOT_ENV.AGENT_HOST_BIND ?? "127.0.0.1";
@@ -419,6 +431,12 @@ const lastAutoCompaction = new Map();
 const forking = new Set(); // Separate ownership: a running turn retains its own lock.
 const settingsWrites = new Map();
 const COOKIE_NAME = "agent_host_token";
+// ページからの頼みの検査と、テーマ・言語のページへの知らせ（ADR 0295 の 2 の 6）。下で作る（savePref が先に呼ばれても困らないよう let で置く）
+let pageRequests = null;
+// 既定のブラウザーでフォルダーのページを開くときの 1 回だけの入場券（core/page-tickets.mjs）
+const pageTickets = createPageTickets();
+// 可視化の束（相対の資源を含めて隔離の origin で配る。ADR 0295 の 3）を置くデータの置き場
+const VIZ_BUNDLE_DIR = store.dataDir;
 // 人間が渡したファイルの置き場。作業ディレクトリを汚さないよう外に出す
 const UPLOAD_DIR = path.join(store.dataDir, "uploads");
 // 閉じた Chrome の窓の静止画は持ち主の会話を見ている要求にだけ見せる（guard。要求の sessionId が持ち主）。ここは持ち主を名乗らない口の分で、断る
@@ -2345,7 +2363,72 @@ async function resolveSessionFile({ path: requested, sessionId, at, base }, sess
 
 // サーバーのある PC で開く（エクスプローラー・既定のブラウザー）。デスクトップ版は本体に頼む。連打は断る
 const openOnHost = defaultOpener();
+// ループバックの URL を既定のブラウザーで開く（main が居れば main の shell。npm start のように main の下でなければ OS に直に頼む）
+const openUrlDirect = createExternalOpener({ mainPort: { postMessage: () => false, hosted: true }, log: line => console.log(`  [open-url] ${line}`) });
+const openUrlOnHost = url => openExternal(url) || openUrlDirect(url);
 const osActionAllowed = createRateLimit({ limit: 5, windowMs: 10_000 });
+
+// Pleiad のページの中身（core/pages-routes.mjs）・隔離の中身（core/isolated-routes.mjs）・WS の口（core/browser-unify-ws.mjs）。
+// port はリスナーが立ってから入る（startPageListeners）
+let pagePorts = null, pageListeners = null;
+const pagesLog = line => console.log(`  [pages] ${line}`);
+const htmlKeys = createHtmlKeys({ log: pagesLog });   // HTML のファイルの鍵。ファイルのページが出し、隔離が引く
+// 会話の記録（発言・ツールの呼び出し・present の行）。ファイルのページの最近のファイル・可視化・git のグラフから発言への移動に使う
+// 新しいタブは最近のファイルと可視化を 1 回の api/recent で読むので、同じ会話の読み込みを 2 秒だけ使い回す
+const pageTranscripts = new Map();
+function pageTranscript(sessionId) {
+  const held = pageTranscripts.get(sessionId);
+  if (held && Date.now() - held.at < 2_000) return held.promise;
+  const promise = (async () => {
+    const backend = await resolveBackendForSession(sessionId).catch(() => null);
+    const got = await history.loadTranscript(sessionId, backend).catch(() => ({ messages: [], presents: [] }));
+    return { ...got, toolHints: backend?.toolHints ?? {}, actor: backend?.label ?? backend?.id };
+  })();
+  pageTranscripts.set(sessionId, { at: Date.now(), promise });
+  while (pageTranscripts.size > 20) pageTranscripts.delete(pageTranscripts.keys().next().value);
+  return promise;
+}
+pageRequests = createPageRequests({ relay: chromeRelay ?? null, store, fileAccessFor, fileRoots, resolveSessionFile, log: pagesLog });
+void pageRequests.env({ lang: locale.lang });
+const pagesRoutes = createPagesRoutes({ ops: (caller, id, input) => opsRegistry.invoke(caller, id, input, opsDeps()),
+  store, fileRoots, fileAccessFor, resolveSessionFile, htmlKeys, ports: () => pagePorts, log: pagesLog, env: () => pageRequests.envOf(),
+  recentFiles: async sessionId => recentFilesOf(await pageTranscript(sessionId)),
+  visualizations: async sessionId => visualizationLinksOf((await pageTranscript(sessionId)).presents, pagePorts?.isolated),
+  gitTimeline: async sessionId => timelineOf((await pageTranscript(sessionId)).messages) });
+const isolatedRoutes = createIsolatedRoutes({ dataDir: store.dataDir, store, htmlKeys, fileAccessFor, ports: () => pagePorts, log: pagesLog });
+const browserUnifyWs = createBrowserUnifyWs({ relay: chromeRelay ?? null, ports: () => pagePorts, isolatedRoutes, pageRequests, log: pagesLog,
+  mask: message => secretMasker.json(message),
+  clients: () => runtime.sockets, watching: client => watching.get(client), access: fileAccessFor,
+  cwd: async id => {
+    const cached = store.peek(id)?.cwd;
+    if (cached) return cached;
+    const backend = await resolveBackendForSession(id);
+    return (await backend?.getSession(id).catch(() => null))?.cwd;
+  },
+  profileDir: async id => {
+    const chosen = chromeProfiles?.current(id);
+    const home = chromeHomes().find(item => item.browser === (chosen?.browser ?? 'chrome'));
+    if (!home) return null;
+    const dir = chosen?.dir ?? await readLastUsedProfile(home.userDataDir);
+    return dir ? path.join(home.userDataDir, dir) : null;
+  } });
+
+/** ファイルのページと隔離のリスナーを立て、port を中継へ渡す（待ち受けの後に呼ぶ） */
+async function startPageListeners() {
+  try {
+    const listeners = await startBrowserUnifyListeners({ dataDir: store.dataDir, env: process.env, token: TOKEN, waitMs: waitsForPort() ? PORT_WAIT_MS : 0,
+      pagesRoutes, isolatedRoutes, tickets: pageTickets, log: pagesLog });
+    if (shuttingDown) return void listeners.close();
+    pageListeners = listeners;
+    pagePorts = Object.freeze({ main: server.address().port, ...listeners.ports });
+    chromeRelay?.setPagePorts(pagePorts);
+    chromeRelay?.setPageCookie(pagesCookie(TOKEN));
+    remote.setPagePorts(pagePorts);   // スマホの道（端末のプロキシの 2 つ目・隔離の行き先。ADR 0295 の 5）
+    pagesLog(`pages http://localhost:${pagePorts.pages}/ isolated http://localhost:${pagePorts.isolated}/`);
+  } catch (error) {
+    console.error('  [pages] could not start the page listeners:', String(error?.message ?? error));
+  }
+}
 
 const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, SHELL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
 const server = http.createServer(async (req, res) => {
@@ -2364,6 +2447,14 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === OPS_PATH || url.pathname.startsWith(`${OPS_PATH}/`)) return opsHttp(req, res, url);
   // webhook の受け口（P3。/hooks/<id>。画面のトークンの前。ADR 0113）。自分の要求でなければ false
   if (!isReviewMode() && await botHost?.handleHttp(req, res)) return;
+  // Pleiad のページの本体の入口（画面の iframe。ADR 0295 の 2 の 3）。本体の Cookie だけで認証し、?token= は受けない。旗が off なら今のまま（下の 401・404）
+  if (pagesRoutes && url.pathname.startsWith(PAGES_PATH)) {
+    for (const [key, value] of Object.entries(COMMON_HEADERS)) res.setHeader(key, value);
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.setHeader('allow', 'GET, HEAD'); return sendStatus(req, res, 405, 'method not allowed'); }
+    if (!pageRequestOk({ via: 'main', cookie: req.headers.cookie, token: TOKEN, site: req.headers['sec-fetch-site'] })) return sendStatus(req, res, 401, 'unauthorized');
+    try { return await pagesRoutes.handle(req, res, { url, via: 'main' }); }
+    catch (error) { pagesLog(`request failed: ${String(error?.message ?? error)}`); return sendStatus(req, res, 500, 'internal error'); }
+  }
 
   // 静的ファイルもトークンで守る。守られているのが WebSocket だけだと、
   // リモートに出したときに UI 一式が誰でも取れてしまう。
@@ -2419,21 +2510,6 @@ const server = http.createServer(async (req, res) => {
       const { body, headers } = await readLocalFile(url.searchParams.get("path"), access, { download:url.searchParams.get('download') === '1' });
       res.writeHead(200, headers);
       return res.end(body);
-    }
-    // 会話に保存された可視化の写しを単体で返す（右パネルの「ブラウザーで開く」）。中身はサーバーの記録から引き、
-    // 画面から HTML を受け取らない（リモートの接続口は GET だけを通す）。守りは応答ヘッダーの sandbox（core/visualize.mjs）
-    if (url.pathname === '/visualization-snapshot') {
-      const sessionId = url.searchParams.get('sessionId'), id = url.searchParams.get('id'), at = url.searchParams.get('at');
-      const record = sessionId && (id || at)
-        ? await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at }).catch(() => null)
-        : null;
-      if (!record) {
-        res.writeHead(sessionId && (id || at) ? 404 : 400, { 'content-type':'text/plain; charset=utf-8', 'cache-control':'private, no-store', 'x-content-type-options':'nosniff' });
-        return res.end(t('filePreview.visualize.snapshotNotFound'));
-      }
-      const { headers, body } = snapshotResponse(record, await store.getPrefs());
-      res.writeHead(200, headers);
-      return res.end(req.method === 'HEAD' ? undefined : body);
     }
     // 会話の提示（Visualize の HTML・画像）の本文を 1 件ずつ返す（ADR 0182）。loadSession は大きい本文を運ばず、画面が見える近くに来た提示だけをここから取る。
     // 本文は記録に追記されるだけで変わらないので、(sessionId, i, at) ごとに長く覚えさせてよい。画像は画像のまま（<img src> が直に読む）、HTML は文字で返す。
@@ -3137,6 +3213,8 @@ async function savePref(key, value, backendId, { quiet = false } = {}) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
   locale = localeInfo(prefs, localeEnv());
   setLocale(locale.lang);
+  // 開いているファイルのページへも言語を知らせる（旗が off なら作らない）
+  void pageRequests?.env({ lang: locale.lang });
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
   mainPort.postMessage({ type: "locale", locale: locale.lang });
   // quiet は起動時の移行など、利用者の操作でない保存（画面へ流さない。ADR 0268）
@@ -3887,10 +3965,9 @@ async function migratePlyInstructionAgents() {
   plyInstructionsCache = widened;
 }
 
-/** 内蔵ブラウザーの確認と「このサイトは常に」。保存して、走っているブラウザーの方針にも伝える。値の検査は呼び出し側 */
+/** ブラウザーの確認（ファイルの外部の読み込み・エージェントのサイト）と「このサイトは常に」。保存して、中継にも伝える。値の検査は呼び出し側 */
 async function applyBrowserPref(key, value) {
   const prefs = await savePref(key, value);
-  browserViewer?.loadPolicy(prefs);
   chromeRelay?.setConfirm(prefs.confirmAgentSites === true);
   return prefs;
 }
@@ -4823,35 +4900,6 @@ const opsCompat = {
   },
 };
 
-// リモートの端末から、PC のファイル（HTML）をホストの内蔵ブラウザーに開く（browser.openFile。docs/inapp-browser.md「リモートから見る」）。
-// 範囲は /file-preview と同じ（会話の作業場所・実体を解決した後のパスの検査）で、読み込みの確認（confirmExternalLoads）はホストの画面が file: のタブに掛けているものがそのまま効く。
-// 開くだけで見ない。端末は返った tabId で browserScreencast を始める。ホストの窓は前に出さない
-const opsHostBrowser = screencastBridge ? {
-  openFile: async ({ sessionId, path: requested, at, base }) => {
-    const refuse = message => Object.assign(new Error(message), { userMessage: true });
-    let file, label;
-    try {
-      const sessions = await store.getAll();
-      const roots = fileRoots(sessions);
-      const resolved = await resolveSessionFile({ path: requested, sessionId, at, base }, sessions, roots);
-      const inspected = await inspectFile(resolved.path, fileAccessFor(sessionId));
-      if (inspected.stat.isDirectory() || !OPENABLE.test(inspected.file)) throw refuse(t('files.htmlOnly'));
-      file = inspected.file;
-      // ホストの画面の ⋯・バッジの見出し: 作業ディレクトリからの相対（外にあればフルパス）。画面が開くときの displayPath（web/file-actions.mjs）と同じ
-      const rel = resolved.cwd ? path.relative(resolved.cwd, resolved.path) : '';
-      label = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : resolved.path).replaceAll('\\', '/');
-    } catch (error) {
-      if (error?.userMessage) throw error;
-      const failure = previewFailure(error);
-      throw refuse(failure.code === 'read-failed' && error?.message ? error.message : failure.message);
-    }
-    if (!screencastBridge.ready) throw refuse(t('remoteBrowser.unavailable'));
-    if (!osActionAllowed()) throw refuse(t('files.tooMany'));
-    try { return await screencastBridge.request('openTab', sessionId, { fileUrl: pathToFileURL(file).href, source: { kind: 'file', label } }); }
-    catch { throw refuse(t('remoteBrowser.failed')); }
-  },
-} : null;
-
 // エージェントのブラウザー（PC の Chrome）への接続（browser.chrome*。core/ops/browser.mjs）。状態は chromeBrowser イベントでホストの画面へ流す
 const opsChromeControl = chromeControl ? {
   takeOver: (sessionId, options) => chromeControl.takeOver(sessionId, options),
@@ -4867,8 +4915,6 @@ const opsChrome = chromeConnection ? {
   raiseDialog: async () => { const result = await chromeConnection.raiseDialog(); return { raised: result.ok === true, method: String(result.method ?? 'none') }; },
   consent: () => chromeConnection.consent(),
   enable: () => chromeConnection.enable(),
-  // ビューアの⋯「Chrome で開く」。つながっていなければ Chrome の許可を待つ（カードは出さない）
-  open: chromeRelay ? (sessionId, url) => chromeRelay.openForConversation(sessionId, url) : null,
   closeWindow: chromeWindowCloser ? (sessionId, windowId = null) => chromeWindowCloser.close(sessionId, { by: 'human', windowId }) : null,
   // 右パネルの映像に映すウィンドウを固定する・解く（core/chrome/screencast.mjs の pin）
   pinWindow: chromeScreencast ? async (sessionId, windowId, tabId = null) => { const result = await chromeScreencast.request('pin', sessionId, { windowId, tabId }); return { pinnedWindowId: result.pinnedWindowId, pinnedTabId: result.pinnedTabId ?? null }; } : null,
@@ -5608,8 +5654,8 @@ function opsDeps(lng = currentLocale()) {
     compat: opsCompat,
     computer: opsComputer,
     chrome: opsChrome,
-    hostBrowser: opsHostBrowser,
     chromeControl: opsChromeControl,
+    chromeNavigate: args => browserUnifyWs.navigate(args),
     chromeProfiles: opsChromeProfiles,
     // MCP・Hooks・コンテキスト・リモート・接続先の操作（core/ops/mcp.mjs・hooks.mjs・context.mjs・remote.mjs。ADR 0095）。WS の同じ名前のコマンドがしていた処理
     mcp: opsMcp,
@@ -6222,7 +6268,6 @@ const browserSiteApprovals = createBrowserSiteApprovals({
   remember: async site => { const prefs = await store.rememberBrowserSite(site); emitGlobal({ type: 'prefs', sessionId: null, prefs, locale }); },
 });
 chromeRelay?.setConfirm((await store.getPrefs()).confirmAgentSites === true);
-browserViewer?.loadPolicy(await store.getPrefs());
 
 // ---- コンピューターの操作（docs/computer-use.md、ADR 0070〜0075） ----------------------------
 // driver は main（Electron）への口。Electron でない起動では null で、ply_computer は渡さない。
@@ -7408,6 +7453,7 @@ async function prepareTurn(args, hooks, compactionRevision) {
   const emit = makeEmit(turn);
   turn.visualizations = createVisualizationCollector({
     access: fileAccess,
+    dataDir: VIZ_BUNDLE_DIR,
     publish: async payload => {
       await turn.setup;
       const id = turn.info.sessionId;
@@ -8083,6 +8129,7 @@ async function restoreTurn(card, source) {
   const emit = makeEmit(turn);
   turn.visualizations = createVisualizationCollector({
     access: fileAccess,
+    dataDir: VIZ_BUNDLE_DIR,
     publish: async payload => {
       const record = await history.recordPresent(sessionId, { ...payload, turnKey: turn.presentKey });
       emit({ type: 'present', sessionId, ...record }, { recorded: true });
@@ -9097,9 +9144,9 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => {
     detach(ws);
     notifyPresence.clear(ws);
-    // 見ていたホストの内蔵ブラウザーの映像は、見る端末がいなくなれば止める
+    // 見ていた Chrome の窓の映像は、見る端末がいなくなれば止める
     const viewer = screencastClients.get(ws);
-    if (viewer) { screencastHub?.forget(viewer); chromeScreencastHub?.forget(viewer); }
+    if (viewer) chromeScreencastHub?.forget(viewer);
   });
 
   ws.on("message", async (raw) => {
@@ -9140,7 +9187,7 @@ wss.on("connection", (ws, req) => {
         : Object.fromEntries(Object.entries(second ?? {}).filter(([, v]) => v !== null && v !== undefined));
       // 操作が投げても必ず返事をする。返事が無いと画面の cmd は待ち続け、一覧の取り直し（refresh）が後の分まで止まる
       try {
-        const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock });
+        const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, id, input, { ...opsDeps(locale.lang), scanLock: wsScanLock, chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws) }) });
         return r.ok ? reply(true, await then(r.result)) : reply(false, r.error, r.code === FAILED ? undefined : r.code, r.issues ? { issues: r.issues } : undefined);
       } catch (err) {
         console.error(`  [command ${msg.command}]`, String(err?.stack ?? err));
@@ -9151,7 +9198,22 @@ wss.on("connection", (ws, req) => {
     let releaseUpdateGate;
     try {
       releaseUpdateGate = updateGate.enter();
+      // ブラウザーの一本化の WS のコマンド（旗が on のときだけ。core/browser-unify-ws.mjs）
+      if (isBrowserUnifyCommand(msg.command)) {
+        try {
+          // client は接続そのもの（pageResult が「この会話を見ている接続か」を確かめる）
+          return reply(true, await browserUnifyWs.handle({ command: msg.command, args: msg.args ?? {}, local, client: ws }));
+        } catch (err) {
+          return reply(false, String(err?.message ?? err), typeof err?.code === 'string' ? err.code : undefined);
+        }
+      }
       switch (msg.command) {
+        case 'chromeAddress':
+        case 'pageResult':
+        case 'pageEnv':
+          return reply(false, 'UNSUPPORTED', 'UNSUPPORTED');
+        case 'chromeNavigate':
+          return await viaOp('browser.chromeNavigate');
         case 'listMcpConfig':
           return await viaOp('mcp.nativeList');
         case 'readMcpServer':
@@ -9571,6 +9633,7 @@ wss.on("connection", (ws, req) => {
         case "watchSession": {
           const { sessionId } = msg.args ?? {};
           if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
+          browserUnifyWs.snapshot(ws, sessionId);
           return reply(true, "ok");
         }
 
@@ -9595,6 +9658,7 @@ wss.on("connection", (ws, req) => {
           // 以後の流れはこの会話の分だけが届き、読み出しの間に来た分は streamCursor で重複を除く
           if (msg.args?.watch) {
             if (sessionId) watching.set(ws, sessionId); else watching.delete(ws);
+            browserUnifyWs.snapshot(ws, sessionId);
           }
           if (!sessionId) return reply(true, { messages: [], presents: [] });
           // Hold the reference even if the turn ends during the asynchronous reads.
@@ -9713,20 +9777,12 @@ wss.on("connection", (ws, req) => {
           return await viaOp('files.listDirs', { path: msg.args?.path, files: msg.args?.files === true });
 
 
-        // リモートの端末から PC の内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）
-        case 'browserScreencast': case 'browserScreencastStop': case 'browserScreencastAck':
-        case 'browserScreencastInput': case 'browserScreencastNav': {
+        // 会話の Chrome の窓の映像を見る・操作する（core/browser-screencast.mjs、ADR 0294・0297）
+        case 'browserScreencast': case 'browserScreencastStop': case 'browserScreencastAck': case 'browserScreencastInput': {
           if (!screencastClients.has(ws)) screencastClients.set(ws, { send: message => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message)); } });
-          const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local, hub: screencastHub, bridge: screencastBridge,
+          const answer = await screencastCommand({ command: msg.command, args: msg.args ?? {}, local,
             chrome: chromeScreencastHub ? { hub: chromeScreencastHub, bridge: chromeScreencast } : null,
-            client: screencastClients.get(ws),
-            snapshotFile: async ({ sessionId, id, at, allow }) => {
-              const record = await history.findVisualization(sessionId, await resolveBackendForSession(sessionId).catch(() => null), { id, at });
-              if (!record) return null;
-              const once = Array.isArray(allow) ? [...new Set(allow.slice(0, 50).map(externalOrigin).filter(Boolean))] : [];
-              const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs(), once, report: true });
-              return pathToFileURL(file).href;
-            } });
+            client: screencastClients.get(ws) });
           // i18n-dynamic: server:remoteBrowser.
           return answer.ok ? reply(true, answer.result) : reply(false, t(`remoteBrowser.${answer.code}`), answer.code);
         }
@@ -9735,12 +9791,13 @@ wss.on("connection", (ws, req) => {
         // ホストで開く・検査済みのパスを画面へ返す操作は遠隔から断る。開けるのは HTML だけ
         case "hostCapabilities":
           // hostName は添付の「ホストから <ホスト名>」の見出し（リモートの印の無いブラウザーで使う）
-          // pcBrowser: この接続から PC の内蔵ブラウザーを見られるか（デスクトップ版で、リモートの接続のとき）
           // chromeWindow: 会話の Chrome の窓の映像を見られるか（リモートの端末も。見るだけ）
-          return reply(true, { osActions: local, hostName: os.hostname(), ...(isReviewMode() ? { reviewMode: true } : {}), pcBrowser: !local && !!screencastBridge?.ready, chromeWindow: Boolean(chromeScreencast),
+          return reply(true, { osActions: local, hostName: os.hostname(), ...(isReviewMode() ? { reviewMode: true } : {}), chromeWindow: Boolean(chromeScreencast),
             // エージェントのブラウザー（PC の Chrome）への接続の入口。ホストの PC の画面だけ。Electron の無いホストは false、OS の層が使えなければ 'unsupported'
             chromeBrowser: local && chromeConnection ? (chromeConnection.state().state === 'unsupported' ? 'unsupported' : 'available') : false,
-            computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }) });
+            computerUse: computerUseCapability({ hasParentPort: Boolean(computerDriver), platform: computerDriver?.kind === 'fake' ? 'win32' : undefined, ready: computerDriver?.state() ?? null }),
+            // ファイルのページと隔離の port（リスナーが立つ前は null）
+            browserUnify: { pages: pagePorts?.pages ?? null, isolated: pagePorts?.isolated ?? null } });
         // コンピューターの操作を止める（docs/computer-use.md「computerStop」）。ホストの OS を操作する命令ではなく、止める側なので、リモートの端末からも受ける（computer.stop）
         case "computerStop":
           return await viaOp('computer.stop');
@@ -9756,11 +9813,11 @@ wss.on("connection", (ws, req) => {
         case 'chromeTakeOver': return await viaOp('browser.chromeTakeOver');
         case 'chromeResume': return await viaOp('browser.chromeResume');
         case 'chromeStop': return await viaOp('browser.chromeStop');
-        case 'chromeOpen': return await viaOp('browser.chromeOpen');
         case 'chromeCloseWindow': return await viaOp('browser.chromeCloseWindow');
         case 'chromePinWindow': return await viaOp('browser.chromePinWindow');
         case 'chromeCloseTab': return await viaOp('browser.chromeCloseTab');
-        case "resolvePath": case "revealPath": case "openPath": {
+        // openDefault は許した拡張子のファイルを既定のアプリで（ADR 0294 の 3）。拡張子はリンクを解いた実体で見る
+        case "resolvePath": case "revealPath": case "openPath": case "openDefault": {
           const hostAction = msg.command !== 'resolvePath';
           if (hostAction && !local) return reply(false, t('files.remoteOnly'));
           try {
@@ -9772,35 +9829,25 @@ wss.on("connection", (ws, req) => {
             if (!hostAction && args.lenient === true) return reply(true, { path: resolved.path, cwd: resolved.cwd ?? null });
             const { file, stat } = await inspectFile(resolved.path, fileAccess);
             const directory = stat.isDirectory();
-            if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file' });
-            if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));
-            if (!osActionAllowed()) return reply(false, t('files.tooMany'));
-            if (msg.command !== 'openPath' || args.returnPath !== true) {
-              await openOnHost(msg.command === 'openPath' ? 'open' : 'reveal', file, { directory });
+            // defaultAppAllowed: 「既定のアプリで開く」を出してよいか（検査した実体の名前で決める。core/os-open.mjs）
+            if (!hostAction) return reply(true, { path: file, cwd: resolved.cwd ?? null, kind: directory ? 'directory' : 'file', defaultAppAllowed: !directory && defaultAppAllowed(file) });
+            // フォルダーの「既定のブラウザーで開く」: フォルダーのページを、入場券を付けた URL で既定のブラウザーに開く（ページの port があるとき）
+            if (msg.command === 'openPath' && directory && pagePorts?.pages) {
+              const sessionId = typeof args.sessionId === 'string' && Object.hasOwn(sessions, args.sessionId) ? args.sessionId : null;
+              if (!sessionId) return reply(false, t('files.htmlOnly'));
+              if (!osActionAllowed()) return reply(false, t('files.tooMany'));
+              const ticket = pageTickets.issue(`/_pleiad/s/${encodeURIComponent(sessionId)}/dir?${new URLSearchParams({ path: file })}`);
+              if (process.env.AGENT_HOST_OS_OPEN !== 'dry') openUrlOnHost(`http://localhost:${pagePorts.pages}/_pleiad/enter?ticket=${ticket}`);
+              return reply(true, { path: file, cwd: resolved.cwd ?? null });
             }
+            if (msg.command === 'openPath' && (directory || !OPENABLE.test(file))) return reply(false, t('files.htmlOnly'));
+            if (msg.command === 'openDefault' && (directory || !defaultAppAllowed(file))) return reply(false, t('files.typeNotAllowed'));
+            if (!osActionAllowed()) return reply(false, t('files.tooMany'));
+            await openOnHost({ openPath: 'open', openDefault: 'default' }[msg.command] ?? 'reveal', file, { directory });
             return reply(true, { path: file, cwd: resolved.cwd ?? null });
           } catch (error) {
             const failure = previewFailure(error);
             return reply(false, failure.code === 'read-failed' && error?.message ? error.message : failure.message);
-          }
-        }
-
-        // 可視化の写しをデータ置き場へ書く。returnPath:true なら内蔵ブラウザーへ渡すパスを返し、
-        // そうでなければ既定のブラウザーで開く。写しの CSP は文書の meta に含める。
-        case "openVisualization": {
-          if (!local) return reply(false, t('files.remoteOnly'));
-          const args = msg.args ?? {};
-          try {
-            const record = await history.findVisualization(args.sessionId, await resolveBackendForSession(args.sessionId).catch(() => null), { id: args.id, at: args.at });
-            if (!record) return reply(false, t('filePreview.visualize.snapshotNotFound'));
-            if (!osActionAllowed()) return reply(false, t('files.tooMany'));
-            // allow: 内蔵ブラウザーの「読み込む」で、そのタブだけに加える https の出どころ（docs/inapp-browser.md）
-            const once = Array.isArray(args.allow) ? [...new Set(args.allow.slice(0, 50).map(externalOrigin).filter(Boolean))] : [];
-            const file = await writeSnapshotFile(record, path.join(store.dataDir, 'visualization-snapshots'), { prefs: await store.getPrefs(), once, report: args.returnPath === true });
-            if (args.returnPath !== true) await openOnHost('open', file, { directory: false });
-            return reply(true, { path: file });
-          } catch (error) {
-            return reply(false, String(error?.message ?? error));
           }
         }
 
@@ -9868,7 +9915,7 @@ wss.on("connection", (ws, req) => {
 
         // 操作の一覧（core/ops/）の汎用の口。画面は新しい機能をここから呼ぶ（protocol.mjs を触らずに増やせる。ADR 0080）
         case 'invoke': {
-          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, opsDeps(locale.lang));
+          const r = await opsRegistry.invoke({ by: 'human', via: 'ui', local }, msg.args?.op, msg.args?.args, { ...opsDeps(locale.lang), chromeNavigate: args => browserUnifyWs.navigate(args, { by:browserUnifyWs.clientId(ws) }) });
           return r.ok ? reply(true, r.result) : reply(false, r.error, r.code, r.issues ? { issues: r.issues } : undefined);
         }
 
@@ -10246,6 +10293,9 @@ function shutdownServer({ stopHeld = false } = {}) {
     // 待ち受けと main との口を先に閉じる（Windows の名前付きパイプは持ち主が消えるまで同じ名前で立てられない）。新しいサーバーは同じポート・同じパイプで立つ
     server.close();
     server.closeAllConnections?.();
+    // ファイルのページと隔離のリスナーも放す（新しいサーバーが同じ port を取る）
+    if (pageListeners) await Promise.race([pageListeners.close(), new Promise(resolve => setTimeout(resolve, 1000))]).catch(() => {});
+    htmlKeys.close();
     await mainLink?.close?.().catch(error => console.error('main link shutdown failed:', error?.code ?? error?.message ?? error));
     // bot の DB（別のファイル）とデータ置き場の DB の接続を閉じてから、ロックを放す（次のサーバーが取ってすぐ開く）
     await botHost?.close?.();
@@ -10375,6 +10425,12 @@ const listening = new Promise(resolve => server.once('listening', resolve));
 portDeadline = Date.now() + PORT_WAIT_MS;
 server.listen(PORT, HOST, announce);
 await listening;
+// 中継の移動の検査が本体の port を知る（ページのリスナーが立つ前から、本体の port を断る手当てを効かせる。ADR 0295 の 4）
+chromeRelay?.setPagePorts({ main: server.address().port });
+// ファイルのページと隔離のリスナー。待たない（覚えた port を前のサーバーが放すのを待つことがある）
+void startPageListeners();
+// 前の版が可視化を内蔵ブラウザーで開くために書いた写し（visualization-snapshots/。ADR 0294 の 6 で無くした）を消す。待たない・失敗しても続ける
+void fs.rm(path.join(store.dataDir, "visualization-snapshots"), { recursive: true, force: true }).catch(() => {});
 // 登録しておいた付け直すターンの口を開き直し、記録を流して締める（待たない。ターンが終わるまで続く）
 for (const { card, source, ctx } of adopting) {
   const turnPromise = adoptTurn(card, source, ctx, { abandon: adoptAbandoned });

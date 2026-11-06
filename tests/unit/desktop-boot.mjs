@@ -115,14 +115,12 @@ async function start({ env = {}, packaged = false, choice = 'link', connectError
     './resident.cjs': { attachResident: ({ worker }) => listens(calls)(worker) },
     './window-trust.cjs': { createWindowTrust: () => ({ register: () => {}, update: (_window, patch) => { calls.trusted = patch.origin; } }) },
     './remote-windows.cjs': { createRemoteWindows: () => ({ attach: () => {}, attachWorker: listens(calls), handleArgv: () => false }) },
-    './browser-panel.cjs': { createBrowserPanel: () => ({ attach: () => {} }) },
-    './browser-viewer-bridge.cjs': { attachBrowserViewerBridge: listens(calls) },
+    './browser-partition-cleanup.cjs': { clearOldBrowserPartition: async options => { calls.partitionCleanup = options; return { state: 'done', attempts: 1 }; } },
     './computer/service.cjs': { attachComputerService: listens(calls), withPerMonitorDpi: win32 => win32 },
     './computer/win32.cjs': { loadWin32: () => { throw Object.assign(new Error('not windows'), { reason: 'platform' }); } },
     './computer/mac.cjs': { loadMac: () => { throw Object.assign(new Error('not macOS'), { reason: 'platform' }); } },
     './chrome-pill.cjs': { attachChromePill: (worker, options) => { calls.chromePillOptions = options; return listens(calls, 'chromePill')(worker); } },
     './chrome-os/index.cjs': { createChromeOs: () => ({ reconceal: () => { calls.reconceals = (calls.reconceals ?? 0) + 1; }, closeAllAgents: () => { calls.closeAlls = (calls.closeAlls ?? 0) + 1; if (calls.failCloseAll) throw new Error('boom'); return 0; } }), attachChromeOs: listens(calls) },
-    './browser-screencast-bridge.cjs': { attachBrowserScreencastBridge: listens(calls) },
     './computer-overlay.cjs': { attachComputerOverlay: listens(calls) },
     './agent-browser-bin.cjs': { prepareAgentBrowserBin: () => '' },
     './shell-env.cjs': { applyLoginShellEnv: options => { calls.bootSteps.push('shell-env:start'); return shellEnv({ env, options }).then(result => { calls.bootSteps.push('shell-env:done'); return result; }); } },
@@ -181,6 +179,8 @@ export default async function (t) {
     // 開発版はインストール版と別のアプリとして起こす（desktop/dev-identity.cjs。#126）
     t.ok('開発版: アプリの名前を Pleiad Dev にする（キーチェーンの項目と userData をインストール版と分ける）', calls.appName === 'Pleiad Dev', calls.appName);
     t.ok('開発版: 既定のデータ置き場は ~/.agent-host-dev（サーバーへ渡す）', calls.forkOptions?.env?.AGENT_HOST_DATA?.endsWith(`${path.sep}.agent-host-dev`), calls.forkOptions?.env?.AGENT_HOST_DATA);
+    // 前の版の内蔵ブラウザーの保存領域の掃除（desktop/browser-partition-cleanup.cjs）は userData と session を渡して、待たずに走らせる
+    t.ok('起動で前の版の内蔵ブラウザーの保存領域を消しに行く（userData・session を渡す）', calls.partitionCleanup?.userData === 'test-user' && typeof calls.partitionCleanup?.session === 'object' && typeof calls.partitionCleanup?.log === 'function');
   }
   {
     const { calls } = await start({ env: { AGENT_HOST_DATA: 'D:/dev-data' } });

@@ -1,14 +1,11 @@
 import net from 'node:net';
-import { WebSocket } from 'ws';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startFakeChrome, } from '../lib/fake-chrome.mjs';
 import { USER_TABS } from '../lib/fake-chrome-browser.mjs';
-import { fakeChromeOs } from '../lib/fake-chrome-os.mjs';
+import { agent, refused, rig } from '../lib/chrome-relay-rig.mjs';
 import { runAgentBrowser } from '../lib/agent-browser-cli.mjs';
-import { createChromeConnection } from '../../core/chrome/connection.mjs';
-import { createChromeRelay } from '../../core/chrome/relay.mjs';
 import { WINDOW_DIP } from '../../core/chrome/windows.mjs';
 import { browserEnvironment, chromeRelayBrowser, browserSocketDirectory } from '../../core/agent-browser.mjs';
 import { rpc as nativeRpc } from '../../core/backends/codex-rpc.mjs';
@@ -29,50 +26,6 @@ async function until(check, ms = 3000) {
     await sleep(10);
   }
   return true;
-}
-
-/** エージェントの側（agent-browser の代わり）。受けた生の文字列も全部残す（範囲の外の URL が漏れていないかを見る） */
-function agent(url, options) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, options);
-    const events = [], raw = [], waiting = new Map();
-    let next = 0;
-    ws.on('message', data => {
-      const text = data.toString();
-      raw.push(text);
-      const msg = JSON.parse(text);
-      if (msg.id !== undefined) { waiting.get(msg.id)?.(msg); waiting.delete(msg.id); }
-      else events.push(msg);
-    });
-    ws.once('open', () => resolve({
-      ws, events, raw,
-      cmd(method, params = {}, sessionId) {
-        const id = ++next;
-        return new Promise(done => { waiting.set(id, done); ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) })); });
-      },
-      closed: new Promise(done => ws.once('close', (code, reason) => done({ code, reason: reason.toString() }))),
-      close() { ws.close(); },
-    }));
-    ws.once('error', reject);
-  });
-}
-const refused = (url, options) => agent(url, options).then(client => { client.close(); return false; }, () => true);
-
-async function rig({ permission = 'auto', connectWaitMs, authorize, handoff, connectWaitText, turnLive, turnSignal } = {}) {
-  const chrome = await startFakeChrome({ permission });
-  const os_ = fakeChromeOs({ chrome });
-  const conn = createChromeConnection({ locate: { browser: 'chrome', userDataDir: chrome.userDataDir }, os: os_, pollMs: 20 });
-  const logs = [];
-  const asked = [];
-  let answer = async () => ({ allow: true });
-  const locate = { browser: 'chrome', userDataDir: chrome.userDataDir, custom: true };
-  const relay = createChromeRelay({ connection: conn, os: os_, locate, deniedMessage: () => 'DENIED-TEXT', log: line => logs.push(line), ...(connectWaitMs ? { connectWaitMs } : {}), ...(handoff ? { handoff } : {}), ...(connectWaitText ? { connectWaitText } : {}), ...(turnLive ? { turnLive } : {}), ...(turnSignal ? { turnSignal } : {}),
-    authorize: authorize ?? (async (request, signal) => { asked.push(request); return answer(request, signal); }) });
-  return {
-    chrome, conn, relay, logs, asked, fake: chrome.browser, os: os_,
-    answer: fn => { answer = fn; },
-    async stop() { relay.close(); await conn.close(); await chrome.stop(); },
-  };
 }
 
 export default async function (t) {

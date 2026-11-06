@@ -75,7 +75,8 @@ export default function (t) {
   const index = read('web/channels/index.mjs');
   t.ok('部品の一覧にスレッドが、流れの後ろに入っている（流れの板を窓へ移すため）', /createFeed\(host\)[\s\S]*createThread\(host\)/.test(index) && index.includes("from './thread.mjs'"));
   const client = read('web/client.mjs');
-  t.ok('client.mjs の host は、質問のカードと内蔵ブラウザーの口を渡す（それ以外は足していない）', /browser: browserPanel/.test(client) && /ev\.kind === 'question' \? questionCard\(ev, into\)/.test(client));
+  // ブラウザーの入口は host を通さず、ply-browser-toggle の出来事で右パネルを開く（web/channels/thread-head.mjs）
+  t.ok('client.mjs の host は、質問のカードの口を渡し、内蔵ブラウザーの口は無い', !/browser: browserPanel/.test(client) && /ev\.kind === 'question' \? questionCard\(ev, into\)/.test(client));
   const thread = read('web/channels/thread.mjs');
   t.ok('承認のカードは host.permissionCard を通す（Chats と同じ部品。決着は resolvePermission）', thread.includes('host.permissionCard(ev, perms)') && !thread.includes("'resolvePermission'"));
   t.ok('止めるは channels.stopThread・返信は channels.post の threadId・読み込みは channels.read の threadId', thread.includes("'channels.stopThread'") && /channels\.post', \{ channelId: S\.channelId, threadId: S\.threadId/.test(thread)

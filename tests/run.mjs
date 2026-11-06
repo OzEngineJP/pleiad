@@ -69,8 +69,6 @@ const SUITES = [
   './unit/prompt-suggestions.mjs',
   './unit/server-prompt-suggestions.mjs',
   './unit/file-preview.mjs',
-  // HTML の開き先（htmlRoute）: 列（H-in / H-ex / L / R / R0）ごとの行き先と、起点（クリック・Ctrl・中クリック・チップ・メニュー・可視化のカード）の通り道
-  './unit/html-route.mjs',
   // プレビューの横のツリー: 経路の段は必ず返す・遅延読み込み・件数の枠と枠の外の経路・除外名も全部出す・roots の外は読めない
   './unit/file-preview-tree.mjs',
   './unit/file-access.mjs',
@@ -87,8 +85,6 @@ const SUITES = [
   './unit/command-reply.mjs',
   './unit/session-list-delta.mjs',
   './unit/server-session-list-delta.mjs',
-  // 内蔵ブラウザー: 右パネルの表・アドレス欄・リンクの開き先・使える画面・main のタブと位置（偽の electron）
-  './unit/inapp-browser.mjs',
 
   // computer use のオーバーレイと Esc: 窓・フェード・Esc の登録と解除・止める流れ・倍率の違うモニターの座標（偽の electron。OS の入力は送らない）
   './unit/computer-overlay.mjs',
@@ -118,6 +114,8 @@ const SUITES = [
   './unit/chrome-window-shots.mjs',
   './unit/chrome-close-confirm.mjs',
   './unit/chrome-panel-lifecycle.mjs',
+  // スマホで端末内のページを描いている間は Chrome の映像を止め、外したら映し直す（ADR 0295 の追記 2）
+  './unit/browser-unify-local-pause.mjs',
   './unit/chrome-window-switch.mjs',
   './unit/chrome-pill-resume.mjs',
   './unit/browser-handoff-card.mjs',
@@ -182,10 +180,8 @@ const SUITES = [
   './unit/holder-handshake.mjs',
   // ターンの保持役の本物のプロセス（段階 2 の 2a）: 起こした側が終わっても残る・秘密のファイルとログ・同時に起こしても 1 つ・shutdown・idle・後に残らない
   './unit/holder-process.mjs',
-  // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・内蔵ブラウザーの写しと復元・screencast・os-open・openExternal・猶予
+  // main が居ない間の機能ごとの扱い（段階 1 の 1-5）: secret の待ち・computer use の停止・screencast・os-open・openExternal・猶予
   './unit/main-away.mjs',
-  // 内蔵ブラウザーの付け直し（main 側）: 中継を同じポートと鍵で立て直す・タブの写しの書き出しと開き直し・橋の流れ
-  './unit/main-away-desktop.mjs',
   // 橋: MCP の面・座標の基準・ゲートの順・アプリの承認・止める・ロック画面・画像の渡し方（偽の driver）
   './unit/computer-bridge.mjs',
   // wait_until: 画面の差分で静止を待つ・決定モデル（偽の OpenRouter）に聞く・キーが無い／前面が禁止のアプリ／聞けなかったとき（偽の driver）
@@ -590,6 +586,8 @@ const SUITES = [
   './unit/desktop-server-boot.mjs',
   // main.cjs の boot の選び方（vm）: AGENT_HOST_HANDOVER の既定（パッケージ版は on・開発は off）と off の utilityProcess・パイプの包み・起動の失敗・サーバーが居なくなったとき・更新の流れ
   './unit/desktop-boot.mjs',
+  // 前の版の内蔵ブラウザーの保存領域を 1 回だけ消す（desktop/browser-partition-cleanup.cjs）: 印・2 回目は何もしない・失敗しても投げない・消し直し
+  './unit/desktop-browser-partition.mjs',
   // サーバーが落ちたときの起こし直し（無停止の更新 段階 2 の 2e）: 同じ版・トークン・ポートで起こす・起こせなければ失敗・続けて落ちたらやめる・本物のサーバーを強制終了して起こし直す
   './unit/desktop-server-restart.mjs',
   // main の橋の message の受け手を 1 つの listener で配る（MaxListenersExceededWarning を出さない）
@@ -859,8 +857,73 @@ const SUITES = [
   // リモートでリンクを押したときの行き先（localhost の知らせ・写しはアプリの中・Web は端末のブラウザー）
   './unit/remote-links.mjs',
   './unit/desktop-external-link.mjs',
-  // リモートから PC の内蔵ブラウザーを見る: フレームの間引き・止める条件・ローカルとエージェント操作中の断り・入力の変換・シートの出し分け
-  './unit/remote-browser-view.mjs',
+
+  // ==== ブラウザーの一本化（ADR 0294〜0297、temporary/browser-unify-plan.md）。段ごとの区画。各段は自分の区画の下にだけ足す（並列の衝突を避ける）====
+  // --- S0（差し込み口） ---
+  // 映像の座標の変換の引っ越し（web/page-coords.mjs）・ページの port の認証（core/page-auth.mjs）・2 つのリスナー（Host・GET だけ・::1・旗・port の引き継ぎ）
+  './unit/page-coords.mjs',
+  // 中継の 4 つの口（既定は今のまま・差し替えた口が決めた場所で呼ばれる）
+  './unit/chrome-relay-hooks.mjs',
+  // ページの入口の認証（ページの Cookie・本体の Cookie）と旗の読み方
+  './unit/page-auth.mjs',
+  // 2 つのリスナー（Host が違えば 421・GET と HEAD だけ・::1・port の引き継ぎ）と、旗が off なら立たず on なら /_pleiad/ が 404
+  './unit/pages-listeners.mjs',
+
+  // --- A1 映像 ---
+  // 映像の返事ごとの 1 枚と 7 段（ADR 0297）: 見る人ごとの ack・印の時間 S・段の上下・still・stale・lag（偽の Chrome・偽の見る人 2 つ）
+  './unit/screencast-pacing.mjs',
+
+  // --- A2 ページの Cookie と中継の範囲 ---
+  // 中継の移動の検査（本体の port はどの名前でも断る・ファイルのページはその会話だけ・隔離は localhost だけ）・止めた要求・pleiad_* の Cookie を隠す（表と偽の Chrome）
+  './unit/chrome-page-policy.mjs',
+  // ページの Cookie を入れる形（localhost・Path・HttpOnly・Strict・port）と、入れる時点（つながったとき・ファイルのページを開く前・タブのセッション）
+  './unit/page-cookie.mjs',
+
+  // --- A3 可視化と HTML のファイル ---
+  // プレビューの CSP（core と web で同じ関数・文字列は今までと同じ）・隔離の応答の CSP・「一度だけ読み込む」の印
+  './unit/preview-policy.mjs',
+  // 可視化の束（同じフォルダーの下・除くもの・上限・同じ中身は 1 つ・片付け・前の版の記録・集め役）
+  './unit/viz-bundle.mjs',
+  // 隔離の origin の /viz/ と /f/（ヘッダーの CSP・フォルダーの外・鍵の期限・一度だけの印）と、旗が on の実際のサーバー
+  './unit/isolated-routes.mjs',
+
+  // --- A4 Pleiad のページ ---
+  './unit/pages-routes.mjs',
+
+  // --- A5 タブの情報とアドレスバー ---
+  './unit/address-input.mjs',
+  './unit/chrome-tab-info.mjs',
+  // favicon の取得の行き先の検査（名前解決の後の IP・リダイレクトの先・手元の host・Pleiad の port）
+  './unit/icon-fetch.mjs',
+  './unit/session-files.mjs',
+  './unit/search-provider.mjs',
+
+  // --- A6 タブごとの持ち手と大きさ ---
+  // タブごとの持ち手（人の操作・60 秒・戻した後の 1 回の断り・hand_to_user の間は戻さない）と、中継の門への効き方
+  './unit/chrome-tab-holder.mjs',
+  // タブのページの大きさの決め方（4 つの順・モバイルの表示・既定の窓）
+  './unit/chrome-viewport.mjs',
+
+  // --- A7 スマホの道 ---
+  './unit/remote-forward-pages.mjs',
+  './unit/device-proxy-pages.mjs',
+
+  // --- A8 既定のアプリで開く ---
+  // 許す拡張子の一覧（サーバーと本体で同じ）・リンクとジャンクションは実体で判断・ホストの画面だけ・10 秒に 5 回
+  './unit/os-open.mjs',
+
+  // --- B（組 B） ---
+  // --- B4 ページからの頼みと env ---
+  // 形とパスの検査し直し・ファイルのページのタブの主フレームの既定の world だけ・人の操作のタブだけ（AI の evaluate の頼みを捨てる）・結果と env は隔離した world から
+  './unit/page-requests.mjs',
+  './unit/browser-unify-b3.mjs',
+  './unit/browser-unify-ws.mjs',
+  './unit/browser-unify-tabs.mjs',
+
+  // --- B2 映像からの操作・スマホの入力 ---
+  './unit/phone-input.mjs',
+  './unit/chrome-input.mjs',
+  './unit/browser-unify-input.mjs',
 
   // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
   // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し

@@ -33,7 +33,7 @@ const SKIP_DIRS = new Set(['remote']);
 // 名前を 1 つずつ挙げるやり方は、次に足される秘密の置き場（名前の形が違うもの・書きかけの .tmp）を黙って写す。広く除けば、
 // 外れたときに起きるのは「写しに無害なファイルが 1 つ足りない」だけで、秘密が漏れる向きには外れない（写しは画面と測定にしか使わない）
 const isSecret = name => /secret/i.test(name);
-const LIGHT_SKIP_DIRS = new Set(['conversations', 'uploads', 'presents', 'visualization-snapshots', 'context-snapshots', 'agent-browser', 'claude-login-tmp', 'mcp-locks', 'computer-use', 'antigravity', 'claude-usage', 'run', 'hooks-runtime']);
+const LIGHT_SKIP_DIRS = new Set(['conversations', 'uploads', 'presents', 'context-snapshots', 'agent-browser', 'claude-login-tmp', 'mcp-locks', 'computer-use', 'antigravity', 'claude-usage', 'run', 'hooks-runtime']);
 // worktree の台帳は写さない。写すと、写しで立てたサーバーが起動の後の整理（core/worktrees.mjs の reconcile・sweep）で本物のリポジトリの
 // worktree を自分のものとして片付けに行く（git worktree prune・取り込み済みのブランチの削除・変更の無い worktree の削除。2026-10-18 に起きた）
 const skipFile = name => isSecret(name) || /\.lock$/.test(name) || /^pleiad\.lock/.test(name) || name === 'control.json' || name === 'worktrees.json' || /^pleiad\.db(-wal|-shm)?$/.test(name)

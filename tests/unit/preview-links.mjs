@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { LINK_BRIDGE, visualizationDocument } from '../../web/visualize-document.mjs';
-import { handlePreviewLinkMessage, openExternalLink, configureLinkOpen } from '../../web/link-open.mjs';
+import { handlePreviewLinkMessage, openExternalLink } from '../../web/link-open.mjs';
 
 export const name = 'preview-links';
 export const title = '隔離したプレビューのリンクを親で確認して開く';
@@ -68,14 +68,14 @@ export default function(t) {
   // デスクトップのホストの画面: 既定のブラウザーへは殻の口で渡す（窓の setWindowOpenHandler は https しか通さない）
   const originalWindow=globalThis.window;
   const commands=[];
-  globalThis.window={plyDesktop:{browser:{command:(action,args)=>{commands.push([action,args]);return Promise.resolve({ok:true});}}}};
+  globalThis.window={plyDesktop:{openExternal:url=>{commands.push(url);return Promise.resolve(true);}}};
   try {
-    configureLinkOpen({getPrefs:()=>({linkOpen:'external'})});
     assert.equal(openExternalLink('http://localhost:5173/x'),true);
-    assert.equal(openExternalLink('https://example.com/',{external:true}),true);
-    assert.deepEqual(commands,[['openExternal',{url:'http://localhost:5173/x'}],['openExternal',{url:'https://example.com/'}]]);
+    assert.equal(openExternalLink('https://example.com/'),true);
+    assert.deepEqual(commands,['http://localhost:5173/x','https://example.com/']);
     assert.equal(openExternalLink('file:///C:/a.html'),false);
+    assert.equal(openExternalLink('https://user:pass@example.com/'),false);
     assert.equal(commands.length,2);
-  } finally { globalThis.window=originalWindow; configureLinkOpen({getPrefs:()=>({})}); }
+  } finally { globalThis.window=originalWindow; }
   t.ok('デスクトップでは既定のブラウザーを殻の口で開き、http の localhost も渡せる',true);
 }

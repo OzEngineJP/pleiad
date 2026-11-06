@@ -1,13 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { N } from '../lib/dom-stub.mjs';
 import { previewCsp, previewPolicy, validBrowserPref, blockedOrigin, externalOrigin } from '../../web/browser-confirm-policy.mjs';
 import { VISUALIZE_CSP, visualizationDocument } from '../../web/visualize-document.mjs';
-import { snapshotResponse, writeSnapshotFile } from '../../core/visualize.mjs';
 import { createBrowserSiteApprovals } from '../../core/browser-confirm.mjs';
-import { configurePreviewConfirmation, confirmedPreview, receivePreviewViolation, refreshPreviewConfirmation, blockedPreviewOrigins, noteBlockedOrigins } from '../../web/preview-confirm.mjs';
+import { configurePreviewConfirmation, confirmedPreview, receivePreviewViolation, refreshPreviewConfirmation, blockedPreviewOrigins } from '../../web/preview-confirm.mjs';
 import { setupBrowserSettings } from '../../web/browser-settings.mjs';
 export const name = 'browser-confirm';
 export const title = 'Preview CSP, per-display grants and site approval';
@@ -22,12 +18,9 @@ export default async function(t) {
   assert(!validBrowserPref('externalSitePermissions', [{ origin: 'https://ok.example/; *', mode: 'always' }]));
   assert(!validBrowserPref('confirmAgentSites', 'true'));
   const record = { content: '<img src="https://ask.example/a.png">', caption: 'Demo' };
-  assert(snapshotResponse(record, prefs).headers['content-security-policy'].includes(csp));
-  assert(snapshotResponse(record, prefs).body.includes(csp));
+  assert(visualizationDocument(record.content, { policy: previewPolicy(prefs) }).includes(csp));
   assert(visualizationDocument(record.content, { policy: previewPolicy(prefs) }).indexOf('securitypolicyviolation') < visualizationDocument(record.content).indexOf('<img'));
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'preview-confirm-'));
-  try { assert((await readFile(await writeSnapshotFile(record, dir, { prefs }), 'utf8')).includes(csp)); } finally { await rm(dir, { recursive: true, force: true }); }
-  t.ok('OFF preserves HTTPS; ON limits every snapshot and frame to exact allowed origins', true);
+  t.ok('OFF preserves HTTPS; ON limits every frame to exact allowed origins', true);
 
   let currentPrefs = { confirmExternalLoads: true }, opened = 0;
   configurePreviewConfirmation({ getPrefs: () => currentPrefs, openSettings: () => opened++ });
@@ -57,8 +50,7 @@ export default async function(t) {
   assert.equal(blockedOrigin('http://127.0.0.1:8080/a.png'), 'http://127.0.0.1:8080'); assert.equal(externalOrigin('http://127.0.0.1:8080/a.png'), null);
   assert.equal(blockedOrigin('javascript:1'), null); assert.equal(blockedOrigin('http://u:p@x.example/'), null);
   assert.match(visualizationDocument('x'), /\^https\?:/, '写しの枠の橋は http も知らせる');
-  assert(!visualizationDocument('x', { resize: false }).includes('console.debug') && visualizationDocument('x', { resize: false, report: true }).includes("console.debug('ply-preview-blocked "), 'console の橋は内蔵ブラウザーの写し（report）だけ');
-  assert(!visualizationDocument('x', { report: true }).includes('console.debug'), '枠（親に知らせられる）には console の橋を足さない');
+  assert(!visualizationDocument('x', { resize: false }).includes('console.debug') && !visualizationDocument('x').includes('console.debug'), 'console の橋は無い');
   {
     currentPrefs = { confirmExternalLoads: true };
     configurePreviewConfirmation({ getPrefs: () => currentPrefs, openSettings() {} });
@@ -78,12 +70,8 @@ export default async function(t) {
       bar.children[1].onclick();
       assert(frame.srcdoc.includes('connect-src https://s.example;') && !frame.srcdoc.includes('127.0.0.1'), '読み込むは https だけを通す');
     } finally { document.querySelectorAll = saved; currentPrefs = {}; configurePreviewConfirmation({ getPrefs: () => ({}), openSettings() {} }); }
-    let heard = 0;
-    // 内蔵ブラウザーの file: のタブが止めた https の出どころも、設定の「止めた出どころ」に並ぶ
-    noteBlockedOrigins(['https://tab.example', 'http://tab-http.example', 'https://tab.example/path', 'nope']);
-    assert(blockedPreviewOrigins().includes('https://tab.example')); assert(!blockedPreviewOrigins().some(origin => /tab-http|path|nope/.test(origin)));
   }
-  t.ok('Blocked count includes http, Load and the allow list take https only, tab origins reach Settings', true);
+  t.ok('Blocked count includes http, Load and the allow list take https only', true);
 
   const get = document.getElementById, nodes = { browserPanel: new N('section'), browserTab: new N('button') };
   document.getElementById = id => nodes[id];

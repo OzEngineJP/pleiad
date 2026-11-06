@@ -30,8 +30,6 @@ const sessionName = dir => `ply-${crypto.createHash('sha256').update(path.resolv
  */
 export const BROWSER_IDLE_TIMEOUT_MS = 24 * 60 * 60_000;
 
-const TABS_MAX = 500;
-
 // 設定の置き場ごとの順番待ち。ターンの終わりの片付け（settle）は待たずに走るので、次のターンが置き場を書くのと、片付けが消すのを重ねない
 const queues = new Map();
 function inOrder(dir, fn) {
@@ -40,22 +38,6 @@ function inOrder(dir, fn) {
   queues.set(dir, tail);
   tail.then(() => { if (queues.get(dir) === tail) queues.delete(dir); });
   return run;
-}
-
-/**
- * main が報告した内蔵ブラウザーのタブの写し（{ tabs: [{ sessionId, url, selected }] }）の形を整える。
- * 戻った main がタブを開き直すのに使う（core/browser-viewer.mjs）。http(s) の URL だけ（file: のタブ・空のタブは戻さない）
- */
-export function cleanTabState(message) {
-  const text = (value, max) => (typeof value === 'string' && value.length <= max ? value : null);
-  const tabs = [];
-  for (const tab of Array.isArray(message?.tabs) ? message.tabs : []) {
-    const url = text(tab?.url, 4096), sessionId = tab?.sessionId == null ? null : text(tab.sessionId, 200);
-    if (!url || !/^https?:\/\//i.test(url) || (tab.sessionId != null && !sessionId)) continue;
-    tabs.push({ sessionId, url, selected: tab.selected === true });
-    if (tabs.length >= TABS_MAX) break;
-  }
-  return { tabs };
 }
 
 /**

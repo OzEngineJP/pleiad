@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, shell, dialog, ipcMain, Notification, nativeTheme, safeStorage, session, nativeImage, Menu, screen, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { forkUtility } = require('./process.cjs');
@@ -22,11 +22,8 @@ const { createLoginItem, attachLoginItem, launchedHidden } = require('./login-it
 // 窓ごとのオリジンの表と、ほかのホストへつなぐ端末の窓（docs/remote.md §7。desktop/remote-windows.cjs）
 const { createWindowTrust } = require('./window-trust.cjs');
 const { createRemoteWindows } = require('./remote-windows.cjs');
-// 内蔵ブラウザー（右パネルに重ねる WebContentsView。docs/inapp-browser.md、ADR 0041）。ローカルの窓にだけ置く
-const { createBrowserPanel } = require('./browser-panel.cjs');
-const { attachBrowserViewerBridge } = require('./browser-viewer-bridge.cjs');
-// リモートの端末から内蔵ブラウザーを見る・操作する（docs/inapp-browser.md「リモートから見る」）
-const { attachBrowserScreencastBridge } = require('./browser-screencast-bridge.cjs');
+// 前の版の内蔵ブラウザーの保存領域を 1 回だけ消す（desktop/browser-partition-cleanup.cjs、ADR 0294 の 6）
+const { clearOldBrowserPartition } = require('./browser-partition-cleanup.cjs');
 const { prepareAgentBrowserBin } = require('./agent-browser-bin.cjs');
 const { applyLoginShellEnv } = require('./shell-env.cjs');
 // pleiad://plus/enable|disable リンクの解析（docs/plus.md「入口を出すリンク」。desktop/plus-link.cjs）
@@ -41,9 +38,6 @@ const { createChromeOs, attachChromeOs } = require('./chrome-os/index.cjs');
 const { attachChromePill } = require('./chrome-pill.cjs');
 const { createWorkerMessages } = require('./worker-messages.cjs');
 let computerService;
-let browserPanel;
-let browserViewerBridge;
-let browserScreencastBridge;
 // コンピューターの操作中のオーバーレイと Esc（docs/computer-use.md、ADR 0073）。画面を撮る・入力する側（desktop/computer）はこの overlay を受け取って使う
 const { attachComputerOverlay } = require('./computer-overlay.cjs');
 let computerOverlay;
@@ -222,7 +216,7 @@ async function frontVisibleBrowser(scheme) {
 }
 
 /**
- * 既定のブラウザーで開く全部の経路の出口（本体の窓の window.open・外のオリジンへの遷移・内蔵ブラウザーの道具・リモートの窓・OAuth の同意）。
+ * 既定のブラウザーで開く全部の経路の出口（本体の窓の window.open・外のオリジンへの遷移・画面のリンク（ply:open-external）・リモートの窓・OAuth の同意）。
  * 失敗しても投げず、ログに残して false を返す
  */
 async function external(url) {
@@ -297,6 +291,8 @@ function startServerSwitch(ready, portFile, onServerExit) {
 async function boot() {
   const updateNoticeFile = path.join(app.getPath('userData'), 'update-restart-notice');
   try { updateRestartNotice = fs.readFileSync(updateNoticeFile, 'utf8') === '1'; fs.unlinkSync(updateNoticeFile); } catch { updateRestartNotice = false; }
+  // 待たない（大きい保存領域を消すのに時間が掛かっても、起動を遅らせない）。失敗しても投げない
+  void clearOldBrowserPartition({ userData: app.getPath('userData'), session, log: line => log(`browser partition: ${line}`) });
   // キーチェーンの確認は、サーバーの起動の待ちを始める前に済ませる（desktop/secret-bridge.cjs の warmSecretStorage）
   warmSecretStorage(safeStorage, { log: message => console.warn('[secrets]', message) });
   // Dock・Finder から起こすと PATH が launchd の最小限なので、ログインシェルの環境を読み込む（desktop/shell-env.cjs。ADR 0213）。
@@ -396,20 +392,7 @@ async function boot() {
     icon: path.join(__dirname, 'icon.png'), external, workerRequest });
   remoteWindows.attach();
   remoteWindows.attachWorker(messages);
-  browserPanel = createBrowserPanel({ window, WebContentsView, BrowserWindow, session, shell, ipcMain, app, trust, icon: path.join(__dirname, 'icon.png'),
-    openExternal: external, beforeBrowserOpen: () => frontVisibleBrowser('html') });
-  browserPanel.attach();
-  // 起動時にサーバーへタブの写しを戻し、保存済みのタブを開き直す（core/browser-viewer.mjs）
-  browserViewerBridge = attachBrowserViewerBridge(messages, browserPanel);
   computerOverlay = attachComputerOverlay(messages, { onEscape: owner => computerService?.escape({ owner, notify: false }) });
-  browserScreencastBridge = attachBrowserScreencastBridge(messages, browserPanel, {
-    // 隠れた窓（常駐で閉じた）ではページが描かれない。見られている間だけ最小化で出し、終われば隠し直す
-    keepVisible: () => {
-      if (!window || window.isDestroyed() || window.isVisible()) return () => {};
-      window.showInactive(); window.minimize();
-      return () => { if (!quitting && window && !window.isDestroyed() && window.isMinimized()) window.hide(); };
-    },
-  });
   window.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
   window.webContents.on('will-navigate', (event, url) => {
     if (new URL(url).origin !== origin) { event.preventDefault(); external(url); }
@@ -550,6 +533,11 @@ ipcMain.handle('ply:notify-completion', (event, notice) => {
   trusted(event);
   return notifyCompletion(notice);
 });
+// 画面のリンクを既定のブラウザーで開く（web/link-open.mjs）。http・https だけを通す確かめは external の中
+ipcMain.handle('ply:open-external', (event, url) => {
+  trusted(event);
+  return external(url);
+});
 // 設定の「サインインしたら Pleiad を起動する」。ローカルの窓だけ。状態は毎回 OS から読む（desktop/login-item.cjs）
 ipcMain.handle('ply:login-item', (event, action, value) => {
   trusted(event);
@@ -581,7 +569,7 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   // 配布版だけプロトコルを OS に登録する。開発（electron .）は electron.exe を登録してしまい、インストール版の登録を奪うので呼ばない
   if (app.isPackaged) app.setAsDefaultProtocolClient('pleiad');
-  app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); browserScreencastBridge?.close(); browserViewerBridge?.close(); computerOverlay?.close(); });
+  app.on('will-quit', () => { closeAgentWindows(); serverSwitch?.cancel(); computerOverlay?.close(); });
   // macOS の pleiad://… の受け口（Windows・Linux は argv。扱うのは plus/enable|disable だけ。ほかの pleiad://… は無視する）
   app.on('open-url', (event, url) => { event.preventDefault(); if (handlePlusLink(url)) frontMainWindow(); });
   // 自動起動（--hidden）が、すでに動いている Pleiad に重なっただけなら、窓を前に出さない

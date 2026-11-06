@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import WebSocket from 'ws';
 import { looksLikePath, findWindowsPaths, fileReference } from '../../web/file-reference.mjs';
 import { renderMarkdown, renderToolCall, renderPresent, applyToolResult } from '../../web/render.mjs';
-import { fileMenuItems, browserTabMenuItems, displayPath, relativeTo, samePath, fileUrl, openHostFile } from '../../web/file-actions.mjs';
+import { fileMenuItems, relativeTo, samePath } from '../../web/file-actions.mjs';
 import { launchPlan, launch, isLocalRequest, createRateLimit, bridgeError } from '../../core/os-open.mjs';
 import { startServer } from '../lib/server.mjs';
 import { open as openWs } from '../lib/ws-client.mjs';
@@ -81,59 +81,23 @@ export default async function (t) {
 
   // ---- 操作メニュー
   const run = () => {};
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, run })),
-    ['ブラウザーで開く', '原文を見る', 'エクスプローラーで表示', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う'], 'HTML の右パネルは原文だけ');
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, current: true, run })).slice(0, 2), ['ブラウザーで開く', 'エクスプローラーで表示'], '表示中は原文を出さない');
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/doc.md' }, { osActions: true, run })).slice(0, 2), ['プレビューで開く', 'エクスプローラーで表示'], 'HTML 以外はプレビュー');
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: false, run })),
-    ['原文を見る', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う'], 'ブラウザーの無い端末は原文だけ');
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: false, htmlBrowser: true, run })).slice(0, 2),
-    ['ブラウザーで開く', '原文を見る'], 'リモートはホストの内蔵ブラウザーに開ける');
-  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a', kind: 'directory' }, { osActions: true, current: true, run })),
-    ['エクスプローラーで開く', 'パスをコピー', '相対パスをコピー']);
-  assert(!labels(fileMenuItems({ path: 'D:/a/run.bat' }, { osActions: true, run })).includes('ブラウザーで開く'));
-  const seps = fileMenuItems({ path: 'D:/a', kind: 'directory' }, { osActions: false, current: true, run });
+  const win = { run, platform: 'Win32' };
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: true, ...win })),
+    ['エクスプローラーで表示', '既定のブラウザーで開く', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う'], 'HTML は既定のブラウザーで開ける');
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/doc.md' }, { osActions: true, ...win })).slice(0, 2), ['エクスプローラーで表示', 'パスをコピー'], 'HTML 以外はブラウザーを出さない');
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/doc.md' }, { osActions: true, defaultAppAllowed: true, ...win })).slice(0, 2), ['エクスプローラーで表示', '既定のアプリで開く']);
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a/page.html' }, { osActions: false, ...win })),
+    ['パスをコピー', '相対パスをコピー', '保存', '会話で使う'], '遠隔の端末は OS の操作を出さない');
+  assert.deepEqual(labels(fileMenuItems({ path: 'D:/a', kind: 'directory' }, { osActions: true, ...win })),
+    ['エクスプローラーで開く', '既定のブラウザーで開く', 'パスをコピー', '相対パスをコピー', '会話で使う']);
+  assert.equal(labels(fileMenuItems({ path: '/a/x.html' }, { osActions: true, run, platform: 'MacIntel' }))[0], 'Finder で表示');
+  const seps = fileMenuItems({ path: 'D:/a', kind: 'directory' }, { osActions: false, canUse: false, run });
   assert(!seps[0].sep && !seps.at(-1).sep);
   assert.equal(relativeTo('D:\\Dev\\app\\src\\a.ts', 'd:/dev/app'), 'src\\a.ts');
   assert.equal(relativeTo('/home/u/app/a.ts', '/home/u/app/'), 'a.ts');
   assert.equal(relativeTo('/home/u/other/a.ts', '/home/u/app'), null);
   assert(samePath('D:\\A\\b.md', 'd:/a/b.md') && !samePath('/a/B.md', '/a/b.md'));
-  t.ok('メニュー: 遠隔では OS の操作を出さない・HTML だけブラウザー・フォルダーは「開く」で保存なし・表示中は右パネルを出さない', true);
-
-  const sent = [], tabs = [];
-  const openCmd = async (command, args) => { sent.push([command, args]); return { path:'D:\\work\\a #?.html' }; };
-  const openTab = (url, options) => { tabs.push([url, options]); return true; };
-  assert.equal(fileUrl('D:\\work\\a #?.html'), 'file:///D:/work/a%20%23%3F.html');
-  assert.equal(fileUrl('D:\\work\\100%.html'), 'file:///D:/work/100%25.html');
-  await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd, inApp:true, openInPanel:openTab });
-  assert.deepEqual(sent, [['openPath', { path:'page.html', returnPath:true }]]);
-  assert.deepEqual(tabs, [['file:///D:/work/a%20%23%3F.html', { newTab:true, reuse:false }]]);
-  sent.length = 0;
-  await openHostFile('openVisualization', { sessionId:'s', id:'v' }, { cmd:openCmd, inApp:true, openInPanel:openTab });
-  assert.deepEqual(sent, [['openVisualization', { sessionId:'s', id:'v', returnPath:true }]]);
-  sent.length = 0;
-  // 同じファイル・同じ記録のタブを使い回す指定と、タブの印（⋯ のファイルの操作とアドレス欄）
-  tabs.length = 0;
-  const opened = await openHostFile('openPath', { path:'page.html' }, { cmd:async () => ({ path:'D:\\work\\sub\\a.html', cwd:'D:\\work' }), inApp:true, openInPanel:openTab, reuse:true,
-    source:found => ({ kind:'file', label:displayPath(found.path, found.cwd) }) });
-  assert.deepEqual(tabs, [['file:///D:/work/sub/a.html', { newTab:true, reuse:true, source:{ kind:'file', label:'sub/a.html' } }]]);
-  assert.equal(opened.inApp, true, '内蔵ブラウザーで開けたと分かる（リンクに「表示中」を添える）');
-  assert.equal(displayPath('D:\\w\\x\\a.html', 'D:\\w'), 'x/a.html'); assert.equal(displayPath('E:\\o\\a.html', 'D:\\w'), 'E:/o/a.html', '外は完全なパス');
-  sent.length = 0;
-  await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd });
-  assert.deepEqual(sent, [['openPath', { path:'page.html' }]], '既定のブラウザーは従来の経路');
-  sent.length = 0;
-  await openHostFile('openPath', { path:'page.html' }, { cmd:openCmd, inApp:true, openInPanel:() => false });
-  assert.deepEqual(sent, [['openPath', { path:'page.html', returnPath:true }], ['openPath', { path:'page.html' }]], '内蔵ブラウザーを開けなければ既定へ');
-  // 内蔵ブラウザーの ⋯ のファイルの操作（画面が開いた PC のファイル・可視化の写しのタブだけ）
-  assert.deepEqual(labels(browserTabMenuItems('file', {}, { osActions: true, run })),
-    ['原文を見る', 'エクスプローラーで表示', 'パスをコピー', '相対パスをコピー', '保存', '会話で使う']);
-  assert.deepEqual(labels(browserTabMenuItems('file', {}, { osActions: false, canUse: false, run })), ['原文を見る', 'パスをコピー', '相対パスをコピー', '保存']);
-  assert.deepEqual(labels(browserTabMenuItems('snapshot', { origin: 'D:/w/a.html', hasHtml: true }, { osActions: true, run })),
-    ['原文を見る', '元のファイルを開く', 'エクスプローラーで表示', '元のパスをコピー', '相対パスをコピー', 'HTML を保存', '会話で使う']);
-  assert.deepEqual(labels(browserTabMenuItems('snapshot', { origin: null, hasHtml: true }, { osActions: true, run })), ['原文を見る', 'HTML を保存'], '元が分からない写しは元のパスの操作を出さない');
-  assert.deepEqual(labels(browserTabMenuItems('snapshot', { origin: 'D:/w/a.html', hasHtml: false }, { osActions: false, run })), ['元のファイルを開く', '元のパスをコピー', '相対パスをコピー', '会話で使う'], '手元に中身が無ければ原文と保存は出さない');
-  t.ok('設定に応じた開き先と、検査済みパスの file: URL・新しいタブを使う・同じファイルのタブの使い回しと印・内蔵ブラウザーの ⋯ のファイルの操作', true);
+  t.ok('メニュー: 遠隔では OS の操作を出さない・HTML とフォルダーだけ既定のブラウザー・フォルダーは「開く」で保存なし', true);
 
   // ---- 起動の組み立て（起動はしない）
   const env = { SystemRoot: 'C:\\Windows' };
@@ -209,31 +173,24 @@ export default async function (t) {
   try {
     client = await openWs({ port: server.port, token: server.token });
     const real = p => fs.realpath(p);
-    // npm start（デスクトップ版でない）には内蔵ブラウザーが無いので pcBrowser は false
-    assert.deepEqual(await client.cmd('hostCapabilities'), { osActions: true, hostName: os.hostname(), pcBrowser: false, chromeWindow: false, chromeBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
+    // ページの port（browserUnify）は起動ごとに変わるので、形だけ見る
+    const withoutPorts = ({ browserUnify, ...rest }) => (Number.isInteger(browserUnify?.pages) ? rest : { browserUnify });
+    assert.deepEqual(withoutPorts(await client.cmd('hostCapabilities')), { osActions: true, hostName: os.hostname(), chromeWindow: false, chromeBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
     assert.equal((await client.cmd('revealPath', { path: path.join(outside, 'secret.html') })).path, await real(path.join(outside, 'secret.html')));
     assert.equal((await client.cmd('revealPath', { path: 'sub', sessionId: 'fixture' })).path, await real(path.join(work, 'sub')));
     assert.equal((await client.cmd('openPath', { path: 'escape/secret.html:3', sessionId: 'fixture' })).path, await real(path.join(outside, 'secret.html')));
-    assert.equal((await client.cmd('openPath', { path:'./escape/secret.html', sessionId:'fixture', returnPath:true })).path, await real(path.join(outside, 'secret.html')));
-    const opened = await client.cmd('openPath', { path:'page.html', sessionId:'fixture', returnPath:true });
-    assert.equal(path.resolve(opened.cwd), path.resolve(work), '作業ディレクトリも返す（内蔵ブラウザーのタブの相対パス。docs/inapp-browser.md）');
-    const htmlUrl = fileUrl(opened.path);
-    assert((await fs.readFile(new URL(htmlUrl), 'utf8')).includes('style.css'));
-    assert((await fs.readFile(new URL('./style.css', htmlUrl), 'utf8')).includes('color: red'));
-    assert((await fs.readFile(new URL('./script.js', htmlUrl), 'utf8')).includes('window.proof'));
-    assert((await fs.readFile(new URL('./proof.svg', htmlUrl), 'utf8')).includes('<svg'));
-    t.ok('検査済み HTML の file: URL から相対 CSS・JS・画像を同じフォルダーで解決する', true);
+    assert.equal((await client.cmd('openPath', { path:'./escape/secret.html', sessionId:'fixture' })).path, await real(path.join(outside, 'secret.html')));
+    const opened = await client.cmd('openPath', { path:'page.html', sessionId:'fixture' });
+    assert.equal(path.resolve(opened.cwd), path.resolve(work), '作業ディレクトリも返す');
     const resolved = await client.cmd('resolvePath', { path: './page.html', sessionId: 'fixture' });
-    assert.deepEqual(resolved, { path: await real(path.join(work, 'page.html')), cwd: work, kind: 'file' });
+    assert.deepEqual(resolved, { path: await real(path.join(work, 'page.html')), cwd: work, kind: 'file', defaultAppAllowed: false });
     assert.equal((await client.cmd('resolvePath', { path: path.join(work, 'escape', 'secret.html') })).path, await real(path.join(outside, 'secret.html')));
     t.ok('作業場所外も実体を解決して通す（相対は会話の作業ディレクトリ、フォルダーも可）', true);
 
     await assert.rejects(client.cmd('revealPath', { path: path.join(data, 'secret.html') }), /データ置き場/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'private', 'secret.html') }), /データ置き場/);
-    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'private', 'secret.html'), returnPath:true }), /データ置き場/);
     await assert.rejects(client.cmd('resolvePath', { path: path.join(work, 'private', 'secret.html') }), /データ置き場/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'run.bat') }), /HTML だけ/);
-    await assert.rejects(client.cmd('openPath', { path: path.join(work, 'run.bat'), returnPath:true }), /HTML だけ/);
     await assert.rejects(client.cmd('openPath', { path: path.join(work, 'sub') }), /HTML だけ/);
     await assert.rejects(client.cmd('revealPath', { path: '\\\\host\\share\\a.html' }), /UNC/);
     await assert.rejects(client.cmd('revealPath', { path: path.join(work, 'missing.html') }), /見つかりません/);
@@ -244,11 +201,10 @@ export default async function (t) {
     const replies = new Map();
     await new Promise((resolve, reject) => { remote.once('error', reject); remote.on('message', raw => { const m = JSON.parse(raw); if (m.kind === 'ready') resolve(); if (m.kind === 'response') replies.get(m.id)?.(m); }); });
     const ask = (command, args) => new Promise(resolve => { const id = `r${replies.size + 1}`; replies.set(id, resolve); remote.send(JSON.stringify({ kind: 'command', command, id, args })); });
-    assert.deepEqual((await ask('hostCapabilities', {})).result, { osActions: false, hostName: os.hostname(), pcBrowser: false, chromeWindow: false, chromeBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
+    assert.deepEqual(withoutPorts((await ask('hostCapabilities', {})).result), { osActions: false, hostName: os.hostname(), chromeWindow: false, chromeBrowser: false, computerUse: { supported: false, reason: 'desktop' } });
     const refused = await ask('revealPath', { path: path.join(work, 'page.html') });
     assert(!refused.ok && /サーバーのある PC/.test(refused.error), JSON.stringify(refused));
     assert.equal((await ask('openPath', { path: path.join(work, 'page.html') })).ok, false);
-    assert.equal((await ask('openPath', { path: path.join(work, 'page.html'), returnPath:true })).ok, false);
     assert.equal((await ask('resolvePath', { path: path.join(work, 'page.html') })).ok, true);
     t.ok('遠隔（ループバック以外・中継経由）からの OS の操作はサーバーが断る。パスの解決はできる', true);
 

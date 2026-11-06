@@ -1041,8 +1041,7 @@
       "htmlRequired": "可視化には HTML ファイルを指定してください",
       "notUtf8": "可視化を UTF-8 の HTML として読めません",
       "tooMany": "可視化は1ターン{{max}}件までです",
-      "caption": "可視化",
-      "snapshotNotFound": "会話に保存された可視化が見つかりません。"
+      "caption": "可視化"
     }
   },
   "usage": {
@@ -1130,6 +1129,7 @@
   "files": {
     "remoteOnly": "この操作はサーバーのある PC の画面からだけ使えます。保存かパスのコピーを使ってください。",
     "htmlOnly": "ブラウザーで開けるのは HTML だけです。",
+    "typeNotAllowed": "この種類のファイルは既定のアプリで開けません。開いたときに中身が実行されるおそれがあるためです。",
     "tooMany": "続けて開きすぎています。少し待ってからもう一度押してください。",
     "invalidPath": "このパスは開けません。",
     "notFound": "ファイルが見つかりません。",
@@ -1370,7 +1370,7 @@
   },
   "remoteBrowser": {
     "remote-only": "内蔵ブラウザーは、この PC の画面の右パネルで開いてください。",
-    "unavailable": "この PC では内蔵ブラウザーを使えません（デスクトップ版だけ）。",
+    "unavailable": "Chrome につながっていないので、Chrome のウィンドウを映せません。",
     "invalid-session": "会話を開いてから使ってください。",
     "not-found": "可視化の写しが見つかりません。",
     "invalid-url": "開けない URL です。",

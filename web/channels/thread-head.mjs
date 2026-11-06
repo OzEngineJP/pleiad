@@ -6,6 +6,7 @@ import { el, svgEl } from '../dom.mjs';
 import { t } from '../i18n.mjs';
 import { shortcutLabel } from '../keyboard.mjs';
 import { closeIcon, branchIcon } from '../icons.mjs';
+import { browserIcon } from '../tab-strip.mjs';
 
 const TOC_PATH = 'M9 6h12M9 12h12M9 18h12M3 6h1M3 12h1M3 18h1';
 const GLOBE_PATHS = ['M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z', 'M3 12h18', 'M12 3c2.6 2.5 3.9 5.5 3.9 9s-1.3 6.5-3.9 9c-2.6-2.5-3.9-5.5-3.9-9s1.3-6.5 3.9-9z'];
@@ -23,7 +24,7 @@ const svgButton = (cls, label, paths) => {
 
 /**
  * @param {object} o
- * @param {object} o.host  web/channels/index.mjs の host（cmd・filePreview・browser・openSidebar）
+ * @param {object} o.host  web/channels/index.mjs の host（cmd・filePreview・openSidebar）
  * @param {() => void} o.onClose  ✕
  * @param {() => void} o.onBack  チャンネル名（流れに戻る）
  * @param {(button: HTMLElement) => void} o.onToc  目次
@@ -116,19 +117,19 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
 
   const browser = svgButton('th-browser', t('channels:thread.entry.browser'), GLOBE_PATHS);
   browser.setAttribute('aria-pressed', 'false');
-  // リモートの端末は、ホストが映像を送れる（pcBrowser）と分かってから出す（web/client.mjs が ply-browser-availability で知らせる）
-  const paintAvailability = () => { browser.hidden = host.browser?.available() !== true; };
+  // ブラウザーの部品（web/browser-unify.mjs）がホストの caps を受けて使えるようになってから出す（ply-browser-availability で知らせる）
+  const ready = () => document.body.classList.contains('browser-unify');
+  const paintAvailability = () => {
+    browser.hidden = !ready();
+    if (ready() && !browser.dataset.unifiedIcon) { const icon = browserIcon('panel'); icon.classList.add('i'); browser.querySelector('svg')?.replaceWith(icon); browser.dataset.unifiedIcon = 'true'; }
+  };
   paintAvailability();
   document.addEventListener('ply-browser-availability', paintAvailability);
-  browser.onclick = () => {
-    const preview = host.filePreview;
-    if (preview.browserOpen()) preview.close(false);
-    else { preview.openBrowser(browser); host.browser?.open(); }
-    paintBrowser();
-  };
+  browser.onclick = () => browser.dispatchEvent(new CustomEvent('ply-browser-toggle', { bubbles:true, detail:{ sessionId } }));
   const paintBrowser = () => {
-    const open = Boolean(host.filePreview?.browserOpen?.());
+    const open = Boolean(document.querySelector('#filePreview[data-panel=chrome-window]:not([hidden])'));
     browser.setAttribute('aria-pressed', String(open));
+    browser.title = t(open ? 'tabs:address.closePanel' : 'tabs:address.openPanel'); browser.setAttribute('aria-label', browser.title);
     browser.classList.toggle('on', open);
   };
 
