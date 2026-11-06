@@ -4,7 +4,7 @@
 // 見る会話: パネルは開いた会話（owner）のもの。映すのはその会話か、窓のある直接の子の会話（sessionId）。子の Chrome を見ても会話は移らない（open(element, { target })・上の列の会話の題）。
 //   子の会話へ移るのは ⋯「会話を開く」だけ。状態の一行・引き継ぎ・入力は、映している会話に向く（呼ぶ側が target() で引く）
 // 端末から操作する（第 7 段。setOperating(true)。リモートの端末で by: 'device' の一時停止の間だけ）: タップ・ドラッグのスクロール・ホイール・文字・少数のキーを
-// browserScreencastInput（source: 'chrome'）で送る（座標の変換は web/remote-browser.mjs と同じ）。文字の欄と「パスワード管理・パスキーは使えない」の添え書きを出す。
+// browserScreencastInput（source: 'chrome'）で送る（座標の変換は web/page-coords.mjs）。文字の欄と「パスワード管理・パスキーは使えない」の添え書きを出す。
 // ページの大きさは measure() が返す映像の箱の大きさ（「この端末で操作する」がサーバーへ渡し、Emulation.setDeviceMetricsOverride で合わせる）
 // 右パネルの枠は web/file-preview.mjs の openPanel（git パネルと同じ）。ここは中身だけを作る。
 //   - 状態の一行の差し込み口（.cp-slot）: web/chrome-control.mjs が mountStatus で差し込む（「Claude が操作中」「止める」「引き継ぐ」など）。空の間は場所を取らない。
@@ -22,7 +22,7 @@ import { el } from './dom.mjs';
 import { t } from './i18n.mjs';
 import { notify } from './file-actions.mjs';
 import { createFrameSink } from './screencast-frame.mjs';
-import { containRect, toPageCoords, toPageDelta } from './remote-browser.mjs';
+import { containRect, toPageCoords, toPageDelta } from './page-coords.mjs';
 import { createWindowSwitch, createTabStrip, createCloseDialog, pinIcon } from './chrome-window-switch.mjs';
 
 const KEY = 'chrome-window';
