@@ -247,7 +247,7 @@ export const COMMANDS = new Set([
   'chromeNavigate',
   'chromeAddress',
   'chromePinWindow',         // { sessionId, windowId|null, tabId? } -> { pinnedWindowId, pinnedTabId }。右パネルの映像に映すウィンドウ・タブを固定する・解く（null）。固定は会話に 1 つで、chromeWindow イベントの pinnedWindowId で全部の端末に配る。映像を見ている間だけ
-  // ブラウザーの一本化（旗が on のときだけ。core/browser-unify-ws.mjs）
+  // ブラウザーの一本化（core/browser-unify-ws.mjs）
   'vizOnce',                 // { origins: string[] } -> { token: string|null }。可視化の「一度だけ読み込む」の印（隔離の origin の ?once=。10 分）。https の出どころが 1 つも無ければ null
   'pageResult',              // { sessionId, targetId?, requestId, ok, result?, error? } -> { delivered }。ページからの書き込みの頼み（worktree）の結果をページへ返す（pleiad:page-result）。その会話を見ている接続だけ
   'pageEnv',                 // { theme: auto|light|dark } -> { tabs }。画面のテーマの変化をファイルのページのタブへ知らせる（pleiad:env）

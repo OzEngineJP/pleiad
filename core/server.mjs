@@ -3215,7 +3215,7 @@ async function savePref(key, value, backendId, { quiet = false } = {}) {
   const prefs = await store.setPref(key, value, backendId);   // ops-allow-setpref: prefs.json への書き込みの出口（設定の一覧 core/ops/settings.mjs と、既定の記憶だけがここを通る）
   locale = localeInfo(prefs, localeEnv());
   setLocale(locale.lang);
-  // 開いているファイルのページへも言語を知らせる（旗が off なら作らない）
+  // 開いているファイルのページへも言語を知らせる（起動の途中で、まだ作っていなければ飛ばす）
   void pageRequests?.env({ lang: locale.lang });
   // デスクトップ版の main（ダイアログ・通知・更新のエラー文）にも知らせる（desktop/main.cjs）
   mainPort.postMessage({ type: "locale", locale: locale.lang });
@@ -9198,7 +9198,7 @@ wss.on("connection", (ws, req) => {
     let releaseUpdateGate;
     try {
       releaseUpdateGate = updateGate.enter();
-      // ブラウザーの一本化の WS のコマンド（旗が on のときだけ。core/browser-unify-ws.mjs）
+      // ブラウザーの一本化の WS のコマンド（core/browser-unify-ws.mjs）
       if (isBrowserUnifyCommand(msg.command)) {
         try {
           // client は接続そのもの（pageResult が「この会話を見ている接続か」を確かめる）
