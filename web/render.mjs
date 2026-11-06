@@ -31,6 +31,8 @@ const ESC = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ESC[c]);
 /** 段落中の改行は <br> にする（チャットの見た目に合わせる） */
 const text = (s) => esc(s).replace(/\n/g, "<br>");
+/** 右の欄を開いている（会話の列は狭まり、可視化を列の中で広げる余地が無い） */
+const paneOpen = () => globalThis.document?.body?.classList.contains('file-preview-open') === true;
 
 /** Local files are served by the authenticated host, never by file://. */
 function localFileUrl(raw) {
@@ -597,7 +599,8 @@ export function renderPresent(ev) {
       wireWiden(card, widen);
       widen.addEventListener('click', event => {
         if (openVisualizationTab(e.bundle, widen, e.caption ?? '')) { event.stopImmediatePropagation(); return; }
-        if (globalThis.matchMedia?.('(max-width: 760px)').matches) {
+        // 狭い画面と、右の欄を開いている間（会話の列に広げる余地が無い）は、右の欄に映す（ADR 0294 の 3）
+        if (globalThis.matchMedia?.('(max-width: 760px)').matches || (paneOpen() && !card.classList.contains('visualize-widened'))) {
           event.stopImmediatePropagation();
           return withContent(content => widen.dispatchEvent(new CustomEvent('ply-visualize-browser', { bubbles:true,
             detail:{ content, title:e.caption ?? '', bundle:e.bundle } })));
