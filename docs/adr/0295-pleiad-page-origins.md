@@ -139,8 +139,9 @@ ADR 0294 で、ファイル・フォルダー・git・プラグイン・新し�
 
 ## 現在の制約（2026-11-06）
 
-1. **LAN のブラウザーの画面の可視化**: `AGENT_HOST_BIND` で本体を LAN に開き、別の PC のブラウザーで `http://<LAN のアドレス>:<port>/` を開いた画面では、可視化を隔離の origin で描かず、以前の srcdoc の iframe で描く（`web/client.mjs` の `loopbackScreen`。`web/visualize-frame.mjs` の `isolatedVisualizationUrl` が null を返す）。
+1. **LAN のブラウザーの画面の可視化**: `AGENT_HOST_BIND` で本体を LAN に開き、別の PC のブラウザーで `http://<LAN のアドレス>:<port>/` を開いた画面では、可視化を隔離の origin で描かず、srcdoc の iframe で描く（`web/client.mjs` の `loopbackScreen`。`web/visualize-frame.mjs` の `isolatedVisualizationUrl` が null を返す）。
    - 理由: 隔離のリスナーはループバックだけで待ち、`Host` が `localhost:<port>` のときだけ答える（上の 1）。LAN の画面の `localhost` はその PC 自身を指すので、届かない。
-   - 起きること: 束の中の相対パスの画像・CSS・スクリプト・fetch・WASM・localStorage は読めない（隔離の前と同じ）。会話の中の HTML の本文と、外部の読み込みの確認（ADR 0042）は今までどおり動く。「ブラウザーで開く」は会話の中の拡大になる（会話の Chrome のタブには開かない）。
-   - 直さない理由: 直すには隔離のリスナーを LAN にも開き、LAN の名前の `Host` を受けることになる。ファイルの中身を配る口を LAN に増やすので、この ADR の 1 の線（本体だけを LAN に開く）を変える判断になる。LAN のブラウザーの画面は使う人が少なく、スマホ・リモートの窓は端末のプロキシの `localhost` で隔離の origin を使えるので、beta では今の形にとどめる。
+   - 安全: srcdoc の iframe の sandbox は `allow-scripts` だけで、`allow-same-origin` を付けない（`web/visualize-frame.mjs`）。可視化は不透明な origin で動き、Pleiad の画面の document・Cookie・保存領域に触れないので、安全は保たれる。
+   - 起きること: 束の同じフォルダーの資源（相対パスの画像・CSS・スクリプト）・相対パスの fetch・WASM・localStorage は読めない（隔離の前と同じ）。会話の中の HTML の本文と、外部の読み込みの確認（ADR 0042）は今までどおり動く。「ブラウザーで開く」は会話の中の拡大になる（会話の Chrome のタブには開かない）。
+   - 直さない理由: 隔離の origin から配る形を 2 つ調べ、採らなかった。(1) 本体の port に可視化の専用の道を作り、sandbox を二重にかける。(2) 隔離のリスナーを LAN にも開き、別の `Host` を受ける。どちらもファイルの中身を配る口を LAN に増やし、この ADR の 1 の線（本体だけを LAN に開く）を変える。本体は既定では LAN に待ち受けず（`AGENT_HOST_BIND` の既定は `127.0.0.1`）、この画面は環境変数で開いた人にだけある。スマホ・リモートの窓は端末のプロキシの `localhost` で隔離の origin を使えるので、今の形にとどめる。
    - スマホのアプリとデスクトップのリモートの窓は対象外（端末のプロキシの `localhost:<p2>` で隔離の origin を使う。上の 5 の 3）。
