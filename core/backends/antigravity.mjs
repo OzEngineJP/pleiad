@@ -31,7 +31,7 @@ import { createHeldAgy, heldPlan, sweepIdle } from "./antigravity-held.mjs";
 import { runAgySuggestion, suggestModel } from "./antigravity-suggest.mjs";
 import { commandLabel, killTree, listProcesses, pickCommandProcess, pickHeldAgy } from "./antigravity-background.mjs";
 import { t, agentT } from "../i18n.mjs";
-import { mcpContacted } from "../mcp-contact.mjs";
+import { mcpContacted, mcpContactsWatched } from "../mcp-contact.mjs";
 import { createLoginWatch, loginTimeoutError } from "../auth/login-watch.mjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -241,7 +241,7 @@ function adminNotice(session, { askedSkip, deniedTurn }) {
     session.reviewNoticed = true;
     if (!deniedTurn) parts.push(t("antigravity.admin.reviewMode", { mode, ask: t("antigravity.admin.askTools") }));
   }
-  if (!session.mcpChecked && session.mcpTokens?.length) {
+  if (!session.mcpChecked && session.mcpTokens?.length && mcpContactsWatched()) {
     session.mcpChecked = true;
     if (!session.mcpTokens.some(mcpContacted)) parts.push(t("antigravity.admin.mcpMissing", { ask: t("antigravity.admin.askMcp") }));
   }

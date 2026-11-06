@@ -89,7 +89,7 @@ import { AGENTS as INSTRUCTION_AGENTS, changePlyInstructions, normalizePlyInstru
 import { DEFAULT_OWNERS, pathKey, scanDirectory } from './context-settings.mjs';
 import { createContextBridge, CONTEXT_MCP_PATH, connectServer } from './context-bridge.mjs';
 import { createMcpLedger } from './mcp-ledger.mjs';
-import { noteMcpContact } from './mcp-contact.mjs';
+import { noteMcpContact, watchMcpContacts } from './mcp-contact.mjs';
 import { createContextSession } from './context-session.mjs';
 import { createSecretStore, defaultCipher } from './secret-store.mjs';
 import { createApiKeys, ApiKeyError, USES as API_KEY_USES } from './api-keys.mjs';
@@ -2432,6 +2432,7 @@ async function startPageListeners() {
 }
 
 const AGY_RELAY_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH];
+watchMcpContacts();
 const REVIEW_CLOSED_PATHS = [AGENTS_MCP_PATH, CONTEXT_MCP_PATH, COMPUTER_MCP_PATH, BROWSER_MCP_PATH, CONTROL_MCP_PATH, SHELL_MCP_PATH, OPENCODE_RELAY_PATH, OPS_PATH];
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
