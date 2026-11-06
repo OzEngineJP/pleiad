@@ -893,6 +893,9 @@ const SUITES = [
   // --- A4 Pleiad のページ ---
 
   // --- A5 タブの情報とアドレスバー ---
+  './unit/address-input.mjs',
+  './unit/chrome-tab-info.mjs',
+  './unit/search-provider.mjs',
 
   // --- A6 タブごとの持ち手と大きさ ---
   // タブごとの持ち手（人の操作・60 秒・戻した後の 1 回の断り・hand_to_user の間は戻さない）と、中継の門への効き方
