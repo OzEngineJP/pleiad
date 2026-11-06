@@ -2,7 +2,7 @@
 // allow-same-origin: the surrounding app carries authenticated cookies.
 import { t } from './i18n.mjs';
 import { visualizationDocument } from './visualize-document.mjs';
-import './link-open.mjs';
+import { browserUnifyEnabled } from './link-open.mjs';
 import { confirmedPreview, currentPreviewPolicy } from './preview-confirm.mjs';
 export { VISUALIZE_CSP, visualizationDocument } from './visualize-document.mjs';
 
@@ -26,24 +26,48 @@ export function isolateFrame(frame) {
 }
 
 // 隔離の origin（ADR 0292 の 3）。ブラウザーの一本化の旗が on のとき、画面の起動が port と「一度だけ読み込む」の印の頼み方を渡す。
-// 渡されるまで（旗が off・リモートの画面）は、どの可視化も今のまま srcdoc で描く
+// 渡されるまで（旗が off）は、どの可視化も今のまま srcdoc で描く
 let isolated = null;
 /** @param {{ port: number, mintOnce?: (origins: string[]) => Promise<string|null> } | null} options */
 export function configureIsolatedOrigin(options) {
-  isolated = Number.isInteger(options?.port) && options.port > 0 ? { port: options.port, mintOnce: options.mintOnce ?? null } : null;
+  isolated = Number.isInteger(options?.port) && options.port > 0 && options.port <= 65535 ? { port: options.port, mintOnce: options.mintOnce ?? null } : null;
+}
+let visualizationTabs = null;
+export function configureVisualizationTabs(options) { visualizationTabs = options; }
+/** Returns false only when the no-Chrome layout must handle the expansion. */
+export function openVisualizationTab(bundle, element) {
+  if (!browserUnifyEnabled()) return false;
+  const tabs = visualizationTabs;
+  const sessionId = tabs?.sessionId?.(element);
+  const url = isolatedVisualizationUrl(bundle, { embed:'tab', host:'localhost' });
+  if (!sessionId || !url || !tabs.connected?.(sessionId) || !tabs.openTab) return false;
+  try { Promise.resolve(tabs.openTab({ sessionId, url, reuse:false })).catch(error => tabs.onError?.(error)); }
+  catch (error) { tabs.onError?.(error); }
+  return true;
+}
+export function visualizationBundleNotice(bundle) {
+  if (!browserUnifyEnabled() || !bundle?.htmlOnly) return '';
+  const reasons = {
+    'too-many-files': t('timeline.present.resourcesTooMany'),
+    'too-large': t('timeline.present.resourcesTooLarge'),
+    'file-too-large': t('timeline.present.resourceTooLarge'),
+    legacy: t('timeline.present.resourcesLegacy'),
+  };
+  return Object.hasOwn(reasons, bundle.reason) ? reasons[bundle.reason] : t('timeline.present.resourcesOmitted');
 }
 const BUNDLE_HASH = /^[0-9a-f]{64}$/;
 /**
  * 束の URL（隔離の origin の /viz/<束のハッシュ>/<入口>）。隔離の origin が無い・束の形が違うときは null。
  * embed: conversation（会話の枠）| panel（右の欄）| tab（別のタブ。高さの知らせ・橋を入れない）
  */
-export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null } = {}) {
+export function isolatedVisualizationUrl(bundle, { embed = 'panel', theme = '', once = null, host = globalThis.location?.hostname || 'localhost' } = {}) {
   if (!isolated || !BUNDLE_HASH.test(bundle?.hash ?? '') || typeof bundle.entry !== 'string' || !bundle.entry) return null;
+  if (!['conversation', 'panel', 'tab'].includes(embed) || bundle.entry.split('/').some(part => !part || part === '.' || part === '..' || /[\\\x00-\x1f]/.test(part))) return null;
   const entry = bundle.entry.split('/').map(encodeURIComponent).join('/');
   const params = new URLSearchParams({ embed });
   if (['light', 'dark'].includes(theme)) params.set('theme', theme);
   if (once) params.set('once', once);
-  return `http://localhost:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
+  return `http://${host}:${isolated.port}/viz/${bundle.hash}/${entry}?${params}`;
 }
 
 // fill: the frame gets its height from the container (the preview panel), so the

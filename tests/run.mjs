@@ -920,6 +920,7 @@ const SUITES = [
   // --- B4 ページからの頼みと env ---
   // 形とパスの検査し直し・ファイルのページのタブの主フレームの既定の world だけ・人の操作のタブだけ（AI の evaluate の頼みを捨てる）・結果と env は隔離した world から
   './unit/page-requests.mjs',
+  './unit/browser-unify-b3.mjs',
 
 
   // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
