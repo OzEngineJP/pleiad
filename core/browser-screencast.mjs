@@ -77,7 +77,7 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
   if (viaChrome) {
     if (!chrome?.hub || !chrome.bridge?.ready) return { ok: false, code: 'unavailable' };
     ({ hub, bridge } = chrome);
-    if (command === 'browserScreencastNav' || (command === 'browserScreencastInput' && local)) return { ok: false, code: 'view-only' };
+    if (command === 'browserScreencastNav' || (command === 'browserScreencastInput' && local && !bridge.unified)) return { ok: false, code: 'view-only' };
     if (command === 'browserScreencast' && (args.url != null || args.visualization)) return { ok: false, code: 'view-only' };
   } else if (local) return { ok: false, code: 'remote-only' };
   if (!hub || !bridge?.ready) return { ok: false, code: 'unavailable' };
@@ -99,14 +99,18 @@ export async function screencastCommand({ command, args = {}, local, hub, bridge
           url = args.url;
         }
         const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
-        return { ok: true, result: await hub.watch(client, sessionId, { url, fileUrl, source, tabId, width: args.width, height: args.height, scale: args.scale }) };
+        return { ok: true, result: await hub.watch(client, sessionId, { url, fileUrl, source, tabId, width: args.width, height: args.height, scale: args.scale, device: args.device }) };
       }
       case 'browserScreencastStop': await hub.unwatch(client, sessionId); return { ok: true, result: {} };
       // args.mark は印（type: 'mark'）への返事。フレームの返事と区別して、中身を運ぶ時間 S を測る
       case 'browserScreencastAck': hub.received(client, sessionId, Number(args.seq), { mark: args.mark === true }); return { ok: true, result: {} };
       case 'browserScreencastInput': case 'browserScreencastNav': {
         if (!hub.watching(client, sessionId)) return { ok: false, code: 'not-watching' };
-        if (command === 'browserScreencastInput') { await bridge.request('input', sessionId, { input: args.input }); return { ok: true, result: {} }; }
+        if (command === 'browserScreencastInput') {
+          const viewer = hub.viewer?.(client, sessionId);
+          const result = await bridge.request('input', sessionId, { input: args.input, client, tabId: args.tabId, device: viewer?.device, viewport: viewer?.box });
+          return { ok: true, result: result ?? {} };
+        }
         // select・close・newTab は内蔵ブラウザーのタブ列の操作（tabId はその会話のタブ）。見るタブが替わったら { tabId, state } が返る
         const tabId = typeof args.tabId === 'string' && args.tabId.length <= 100 ? args.tabId : undefined;
         const result = await bridge.request('navigate', sessionId, { nav: args.action, url: args.url, tabId });
@@ -168,6 +172,16 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
 
   function entryOf(sessionId) { return sessions.get(sessionId) ?? null; }
   const deliver = (client, message) => { try { client.send(message); } catch {} };
+  const syncViewers = (sessionId, entry) => bridge.setViewers?.(sessionId, [...entry.clients.values()].map(viewer => ({ device: viewer.device, box: viewer.box })));
+  bridge.onInteraction?.((sessionId, message, owner = null) => {
+    const entry = entryOf(sessionId);
+    if (!entry) return;
+    if (message.type === 'fields') entry.fields = message;
+    if (message.type === 'dialog') entry.dialog = { message, owner };
+    if (message.type === 'dismiss') { entry.dialog = null; owner = null; }
+    if (owner && !entry.clients.has(owner)) owner = null;
+    for (const client of entry.clients.keys()) if (!owner || owner === client) deliver(client, { kind: 'screencast', ...tag, type: 'interaction', sessionId, interaction: message });
+  });
   /** 段ごとのセッションに分かれている間は段が流れの鍵、そろえるときは 'shared' */
   const keyOf = (entry, tier) => (entry.multi ? tier : 'shared');
   const streamKeyOf = (entry, frame) => (entry.multi ? frame.stream : 'shared');
@@ -341,6 +355,11 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
   function dropViewer(client, sessionId, entry, viewer) {
     clearTimer(viewer.staleTimer); clearTimer(viewer.stillTimer);
     entry.clients.delete(client);
+    if (entry.dialog?.owner === client) {
+      entry.dialog.owner = null;
+      for (const remaining of entry.clients.keys()) deliver(remaining, { kind: 'screencast', ...tag, type: 'interaction', sessionId, interaction: entry.dialog.message });
+    }
+    Promise.resolve(syncViewers(sessionId, entry)).catch(() => {});
   }
 
   function drop(sessionId) {
@@ -348,10 +367,11 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     if (!entry) return;
     for (const viewer of entry.clients.values()) { clearTimer(viewer.staleTimer); clearTimer(viewer.stillTimer); }
     sessions.delete(sessionId);
+    Promise.resolve(bridge.setViewers?.(sessionId, [])).catch(() => {});
   }
 
   /** 見始める。url か fileUrl（サーバーが確かめた可視化の写し）があれば新しいタブで開き、tabId があればその会話のそのタブを見る。同じ会話を見ている端末とはタブを共有する */
-  async function watch(client, sessionId, { url, fileUrl, source, tabId, width, height, scale } = {}) {
+  async function watch(client, sessionId, { url, fileUrl, source, tabId, width, height, scale, device } = {}) {
     const box = { width: Number(width) || 800, height: Number(height) || 800, scale: Math.min(Number(scale) || 1, 2) };
     let entry = entryOf(sessionId);
     const created = !entry;
@@ -364,9 +384,11 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     const viewer = previous ?? { tier: START_TIER, samples: [], blocked: new Map(), raised: null,
       pending: null, sent: null, lag: false, stale: false, staleTimer: null, stillTimer: null, stillSent: false, sentFlags: null };
     viewer.box = box;
+    viewer.device = device === 'phone' ? 'phone' : 'pc';
     entry.clients.set(client, viewer);
     let result;
     try {
+      await syncViewers(sessionId, entry);
       if (entry.multi && !entry.formats) {
         const f = tierFormat(viewer.tier, box);
         entry.formats = [f];
@@ -385,6 +407,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
       throw error;
     }
     if (result?.state) entry.state = result.state;
+    if (entry.fields) deliver(client, { kind: 'screencast', ...tag, type: 'interaction', sessionId, interaction: entry.fields });
     if (!entry.multi) void syncShared(sessionId, entry);   // 分けられない撮影は全員の段でそろえ直す
     send(client, sessionId, entry, viewer);
     armStill(client, sessionId, entry, viewer);
@@ -437,5 +460,7 @@ export function createScreencastHub({ bridge, source = null, now = () => Date.no
     return { frames, bytes, maxBytes, avgBytes: frames ? Math.round(bytes / frames) : 0, fps: frames > 1 ? +(frames / seconds).toFixed(2) : frames };
   }
 
-  return { watch, unwatch, forget, received, watching, stats, sessions: () => [...sessions.keys()] };
+  return { watch, unwatch, forget, received, watching, stats,
+    viewer: (client, sessionId) => { const viewer = entryOf(sessionId)?.clients.get(client); return viewer ? { device: viewer.device, box: { ...viewer.box } } : null; },
+    sessions: () => [...sessions.keys()] };
 }

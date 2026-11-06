@@ -922,6 +922,10 @@ const SUITES = [
   './unit/page-requests.mjs',
   './unit/browser-unify-b3.mjs',
 
+  // --- B2 映像からの操作・スマホの入力 ---
+  './unit/phone-input.mjs',
+  './unit/chrome-input.mjs',
+  './unit/browser-unify-input.mjs',
 
   // ==== bot・Channels・ルーティン（docs/channels.md、ADR 0106〜0114）。パッケージごとの区画。各パッケージは自分の区画の下にだけ足す（並列の衝突を避ける）====
   // つなぎ目（core/bots-host.mjs）と土台: 空のままでは何も変えない・例外を出さない・使用量の sessionId・fake の台本の包み外し

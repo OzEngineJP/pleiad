@@ -25,7 +25,9 @@
 // 見る側の入力（タップ・文字・移動）は受けない（見るだけ）。URL は状態に載せない。
 // ただし端末が引き継いでいる間（第 7 段の by: 'device'。operate(sessionId, viewport)）だけは、映像のセッション（エージェントの接続ではない）で入力を送り、
 // ページの大きさを端末の映像の箱に合わせる（Emulation.setDeviceMetricsOverride。operate(sessionId, null) で clearDeviceMetricsOverride）。タブの列の × で、タブを閉じられる（closeTab）。
-import { inputCommands, deviceMetrics } from './input.mjs';
+import { inputCommands, deviceMetrics, createPageInput } from './input.mjs';
+import { decideViewport } from './viewport.mjs';
+import { browserUnifyOn } from '../browser-unify-flag.mjs';
 
 const clamp = (value, min, max, fallback) => Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 
@@ -43,12 +45,14 @@ export function chromeScreencastSettings({ width, height, scale, quality } = {})
  * @param {object} deps
  * @param deps.host  core/chrome/relay.mjs の view（onChange・summary・tabs・current・attach・focus）
  */
-export function createChromeScreencast({ host, log = () => {} } = {}) {
+export function createChromeScreencast({ host, relay = null, enabled = browserUnifyOn(), log = () => {} } = {}) {
+  const unified = enabled && !!relay?.unify?.tabHolder;
+  const viewers = new Map();
   const watches = new Map();   // 会話の id -> { formats: Map<段の鍵, 撮る形>, views: Map<段の鍵, セッション>, view（代表。入力・大きさ）, tabId, generation, queue, suspended, announced, metrics, pin, known, multi }
   const lastFrames = new Map(); // 人が窓を直接閉じたときの最後の映像（JPEG）。一時停止中も更新しない
   const suspended = new Set(); // 'sessionId' か 'sessionId#windowId'
   const operated = new Map();  // 会話の id -> 端末の映像の箱（{ width, height, scale }。端末が引き継いでいる間）
-  const listeners = { frame: new Set(), state: new Set(), ended: new Set(), away: new Set(), pin: new Set() };
+  const listeners = { frame: new Set(), state: new Set(), ended: new Set(), away: new Set(), pin: new Set(), interaction: new Set() };
   const emit = (kind, ...args) => { for (const fn of [...listeners[kind]]) { try { fn(...args); } catch { /* 聞き手の失敗は映像を壊さない */ } } };
 
   const isSuspended = (sessionId, windowId = null) => suspended.has(sessionId) || (windowId != null && suspended.has(`${sessionId}#${windowId}`));
@@ -137,7 +141,9 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
   /** 映像のセッションを全部外し、focus emulation を手放す */
   async function release(watch, sessionId) {
     const tabId = watch.tabId;
-    watch.tabId = null; watch.generation += 1;
+    watch.tabId = null; watch.viewport = null; watch.pageScaleFactor = 1; watch.generation += 1;
+    if (watch.pageInput) { await watch.pageInput.dispose(); watch.pageInput = null; }
+    if (watch.inputView) { await watch.inputView.send('Emulation.clearDeviceMetricsOverride').catch(() => {}); await watch.inputView.detach().catch(() => {}); watch.inputView = null; }
     for (const key of [...watch.views.keys()]) await detachView(watch, key, sessionId);
     watch.view = null;
     if (tabId) await host.focus(sessionId, tabId, false, watch).catch(() => {});   // ターンの間・ほかの見張りがいれば、その分は残る
@@ -194,6 +200,18 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     await syncStreams(sessionId, watch, targetId, generation);
     if (watches.get(sessionId) !== watch || watch.generation !== generation) return;
     if (watch.views.size) watch.tabId = targetId;
+    if (unified && watch.tabId) {
+      const view = await host.attach(sessionId, targetId, (method, params) => {
+        if (watch.generation === generation) watch.pageInput?.event(method, params);
+      });
+      if (watch.generation !== generation || watches.get(sessionId) !== watch) { await view.detach(); return; }
+      watch.inputView = view;
+      watch.pageInput = createPageInput({ send: (method, params) => view.send(method, params), emit: message => {
+        if (watch.generation === generation) emit('interaction', sessionId, { ...message, tabId: targetId }, message.type === 'fields' ? null : watch.inputClient);
+      } });
+      await watch.pageInput.start().catch(() => {}); // Unsupported pages retain keyboard fallback.
+      await syncViewport(sessionId, watch);
+    }
     await host.focus(sessionId, targetId, true, watch);
   }
 
@@ -203,6 +221,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
       // 撮影を断っている間は流さない（順番待ちの外でも、断りの鍵を直に見る）
       if (watch.suspended || isSuspended(sessionId, windowOf(sessionId, watch.tabId)) || typeof params.data !== 'string') return;
       const m = params.metadata ?? {};
+      if (unified) watch.pageScaleFactor = m.pageScaleFactor > 0 ? m.pageScaleFactor : 1;
       lastFrames.set(sessionId, params.data);
       emit('frame', sessionId, { id: params.sessionId, stream: key, data: params.data,
         metadata: { deviceWidth: m.deviceWidth, deviceHeight: m.deviceHeight, pageScaleFactor: m.pageScaleFactor, offsetTop: m.offsetTop, scrollOffsetX: m.scrollOffsetX, scrollOffsetY: m.scrollOffsetY } });
@@ -221,6 +240,8 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
 
   /** 今のタブ（と撮影を断つかどうか）に映像のセッションを合わせる。同じ会話の呼び出しは順に流す */
   function follow(sessionId, watch) {
+    const next = targetOf(sessionId, watch);
+    if (next !== watch.tabId || isSuspended(sessionId, windowOf(sessionId, next))) watch.pageInput?.cancelDialogs().catch(() => {});
     const run = watch.queue.then(async () => {
       if (watches.get(sessionId) !== watch) return;
       const targetId = targetOf(sessionId, watch);
@@ -305,6 +326,7 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     if (!watch) return;
     watches.delete(sessionId);
     setPin(sessionId, watch, null);
+    await watch.pageInput?.cancelDialogs();
     await watch.queue;
     await release(watch, sessionId);
   }
@@ -379,15 +401,23 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
   }
 
   const on = kind => fn => { listeners[kind].add(fn); return () => listeners[kind].delete(fn); };
+  const offTab = unified ? relay.onTabEvent?.((type, payload) => {
+    if (type !== 'tab:holder') return;
+    const watch = watches.get(payload.sessionId);
+    if (!watch || payload.targetId !== watch.tabId) return;
+    const run = watch.queue.then(() => syncViewport(payload.sessionId, watch));
+    watch.queue = run.catch(() => {});
+  }) : null;
   return {
     ready: true,
+    unified,
     async request(action, sessionId, args = {}) {
       switch (action) {
         case 'start': return start(sessionId, args.options ?? {});
         case 'stop': await stop(sessionId); return {};
         case 'pin': return pin(sessionId, args.windowId ?? null, args.tabId ?? null);
         case 'closeTab': return closeTab(sessionId, args.tabId);
-        case 'input': return input(sessionId, args.input);
+        case 'input': return input(sessionId, args.input, args);
         default: throw new Error('view-only');   // 移動・エージェントの操作は受けない。入力も端末が引き継いでいる間だけ
       }
     },
@@ -401,6 +431,16 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     onFrame: on('frame'), onState: on('state'), onEnded: on('ended'), onAway: on('away'),
     /** 固定したウィンドウの変化（sessionId, windowId|null）。chromeWindow の配信が聞く */
     onPin: on('pin'),
+    onInteraction: on('interaction'),
+    async setViewers(sessionId, list) {
+      if (!unified) return;
+      if (list.length) viewers.set(sessionId, list); else viewers.delete(sessionId);
+      const watch = watches.get(sessionId);
+      if (!watch) return;
+      const run = watch.queue.then(() => syncViewport(sessionId, watch));
+      watch.queue = run.catch(() => {});
+      await run;
+    },
     /** 今固定しているウィンドウの id（タブを固定していればその窓。無ければ null） */
     pinned: sessionId => { const watch = watches.get(sessionId); return watch ? pinWindowOf(sessionId, watch) : null; },
 
@@ -441,11 +481,43 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     watching: () => [...watches.keys()],
     lastFrame(sessionId) { return lastFrames.get(sessionId) ?? null; },
     forgetFrame(sessionId) { lastFrames.delete(sessionId); },
-    close() { off(); lastFrames.clear(); for (const sessionId of [...watches.keys()]) end(sessionId, 'closed'); },
+    close() { off(); offTab?.(); viewers.clear(); lastFrames.clear(); for (const sessionId of [...watches.keys()]) end(sessionId, 'closed'); },
   };
 
   /** 端末からの入力を、映像のセッションで今のタブへ送る（端末が引き継いでいる間だけ） */
-  async function input(sessionId, value) {
+  async function input(sessionId, value, context = {}) {
+    if (unified) {
+      const watch = watches.get(sessionId);
+      if (!watch?.inputView) throw new Error('not-watching');
+      // A delayed packet from the previous tab must never reach the newly selected tab.
+      if (context.tabId !== watch.tabId) throw new Error('no-tab');
+      const scale = watch.pageScaleFactor || 1;
+      const commands = inputCommands(value, watch.viewport ? { width: watch.viewport.width / scale, height: watch.viewport.height / scale } : {});
+      const sheet = ['dialog', 'field', 'select', 'files'].includes(value?.type);
+      if (!commands.length && !sheet) throw new Error('invalid-input');
+      // Chrome holds the triggering input response until its modal dialog is answered.
+      // The answer must bypass that response's queue, while still checking the watched tab.
+      if (value?.type === 'dialog') {
+        if (!await watch.pageInput.input(value)) throw new Error('invalid-input');
+        relay.unify.tabHolder.touch({ sessionId, targetId: context.tabId, by: context.device === 'phone' ? 'device' : 'pc',
+          viewport: context.device === 'phone' ? context.viewport : null });
+        return {};
+      }
+      const run = watch.queue.then(async () => {
+        if (watches.get(sessionId) !== watch || watch.tabId !== context.tabId || !watch.inputView) throw new Error('no-tab');
+        watch.inputClient = context.client;
+        if (sheet && !await watch.pageInput.input(value)) throw new Error('invalid-input');
+        relay.unify.tabHolder.touch({ sessionId, targetId: watch.tabId, by: context.device === 'phone' ? 'device' : 'pc',
+          viewport: context.device === 'phone' ? context.viewport : null });
+        // Dispatch the first tap against the geometry that produced the frame. Resize after it.
+        for (const [method, params] of commands) await watch.inputView.send(method, params);
+        if (value?.type === 'tap' && context.device === 'phone') await watch.pageInput.afterTap().catch(() => {});
+        await syncViewport(sessionId, watch);
+        return {};
+      });
+      watch.queue = run.catch(() => {});
+      return run;
+    }
     const viewport = operated.get(sessionId);
     if (!viewport) throw new Error('view-only');
     const view = watches.get(sessionId)?.view;
@@ -454,6 +526,20 @@ export function createChromeScreencast({ host, log = () => {} } = {}) {
     if (!commands.length) throw new Error('invalid-input');
     for (const [method, params] of commands) await view.send(method, params);
     return {};
+  }
+
+  async function syncViewport(sessionId, watch) {
+    if (!unified || !watch.inputView || !watch.tabId) return;
+    const list = viewers.get(sessionId) ?? [];
+    const holder = relay.unify.tabHolder.holder(sessionId, watch.tabId);
+    const viewport = decideViewport({ operating: holder?.holder === 'human' && holder.by === 'device' ? holder.viewport : null,
+      panel: list.find(viewer => viewer.device !== 'phone')?.box,
+      watching: list.find(viewer => viewer.device === 'phone')?.box });
+    const { source, ...metrics } = viewport;
+    if (JSON.stringify(metrics) === JSON.stringify(watch.viewport)) return;
+    await watch.inputView.send('Emulation.setDeviceMetricsOverride', metrics);
+    watch.viewport = metrics;
+    emit('interaction', sessionId, { type: 'viewport', tabId: watch.tabId, ...metrics, source });
   }
 
   function refollow(sessionId) {
