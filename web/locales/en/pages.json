@@ -6,6 +6,7 @@
   "emptyFolder": "This folder is empty.", "expandFolder": "Expand {{name}}", "more": "Show more",
   "source": "Source", "sourceLimit": "Showing lines {{from}}–{{to}} of {{total}}.",
   "tableLimit": "Showing up to 500 rows and 100 columns.",
+  "blocked": { "count_one": "Blocked {{count}} external load", "count_other": "Blocked {{count}} external loads", "loadOnce": "Load once" },
   "previous": "Previous page", "next": "Next page", "pdfPage": "Page {{page}} / {{total}}", "pdfText": "Page text",
   "errors": {
     "not-found": "File not found.", "session-not-found": "Conversation not found.",

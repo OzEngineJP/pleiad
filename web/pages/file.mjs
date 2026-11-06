@@ -1,6 +1,7 @@
 import { markdownContent, parseTable } from '../file-preview-content.mjs';
 import { node, text, button, query, api, metadata, pageUrl, request, errorView } from './bridge.mjs';
 import { renderTree } from './dir.mjs';
+import { htmlFrame } from './html-once.mjs';
 
 let controller;
 export function sourceContent(value, line = null) {
@@ -80,8 +81,7 @@ export async function renderFile(root, file) {
       for (const menu of result.article.querySelectorAll('[data-file-menu]')) menu.addEventListener('click', () => request('file-menu', { path:menu.dataset.fileMenu, base:file.path }));
       content.append(result.article); if (result.note) content.append(node('p', 'limit-note', result.note));
     } else if (file.kind === 'html') {
-      const { url } = await api('html-key', { path:file.path });
-      const frame = node('iframe', 'html-preview'); frame.title = file.name; frame.sandbox = 'allow-scripts'; frame.referrerPolicy = 'no-referrer'; frame.src = url; content.append(frame);
+      await htmlFrame(content, file, signal);
     } else if (file.kind === 'image') {
       const image = node('img', 'image-preview'); image.alt = file.name;
       if (file.bytes) {
