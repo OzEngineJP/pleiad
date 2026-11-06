@@ -1,7 +1,7 @@
 import { terminalView, updateTerminal } from './terminal.mjs';
 import { setupDrawerSwipe, drawerBlockingOverlay } from './drawer-swipe.mjs';
 import { delegateResult, delegateTaskId, isPlyDelegateToolName } from './delegate-result.mjs';
-import { isComposingKey } from "./keyboard.mjs";
+import { isComposingKey, shortcutLabel } from "./keyboard.mjs";
 import { createCompletionNotifications } from './notifications.mjs';
 import { setupFilePreview } from './file-preview.mjs';
 import { browserPanelAvailable, createBrowserPanel } from './browser-panel.mjs';
@@ -3524,8 +3524,8 @@ function onEvent(ev, replay = false) {
     remoteSettings.event(ev); residentSettings.event(ev); return;
   }
   // Pleiad Plus のアカウントの状態（設定 › Pleiad Plus）
-  if (ev.type === 'plusStatus') { plusSettings.event(ev); remoteSettings.event(ev); return; }
-  if (ev.type === 'plusSyncStatus') { plusSettings.event(ev); return; }
+  if (ev.type === 'plusStatus') { plusSettings.event(ev); remoteSettings.event(ev); paintSideFoot(); return; }
+  if (ev.type === 'plusSyncStatus') { plusSettings.event(ev); paintSideFoot(); return; }
   // worktree が増えた・消えた。開いている右パネルの「残っている worktree」を取り直す
   // 委譲の子の worktree が片付くと、カードの「未取り込み」の印が変わる（worktree.live）
   if (ev.type === 'worktreesChanged') { gitPanel?.changed(); loadTaskCards(state.current).then(repaintTasks).catch(() => {}); return; }
@@ -4259,7 +4259,7 @@ function renderAuth() {
   const keepAct = actFocus ? { agent: actFocus.closest(".agent-card")?.dataset.agent, act: actFocus.dataset.act } : null;
   for (const id of authCancelling) if (!state.auth.get(id)?.pending) authCancelling.delete(id);
   sec.replaceChildren();
-  if (!targets.length) { $("authNeed").hidden = true; return; }
+  if (!targets.length) { $("authNeed").hidden = true; syncAuthDot(); return; }
   const need = [];
   const list = el("div", "agent-list");
   for (const b of targets) {
@@ -4392,6 +4392,7 @@ function renderAuth() {
   const line = $("authNeed");
   line.hidden = need.length === 0;
   if (need.length) line.textContent = t("app.authNeed", { agents: need.join(t("app.listSeparator")) });
+  syncAuthDot();
 }
 
 /**
@@ -5381,9 +5382,11 @@ function renderSessions() {
   const where = (() => { try { return viewAddress.current; } catch { return null; } })();   // 起動の途中（アドレスを作る前）は無い
   const currentId = surface() === 'channels' && !document.body.classList.contains('home-split') ? (where?.threadId ? `thread:${where.channelId}:${where.threadId}` : null)
     : pendingNewSession && !state.current ? pendingNewSession.id : state.current;
-  // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない
-  paintOpenSidebar($("openSidebar"), attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
-    busyIds: new Set([...state.runningIds, ...state.bgWaiting.keys()]) }), t);
+  // 脇が見えていない間の印（web/open-sidebar-mark.mjs）。今の会話は数えない。閉じたレールの P の印にも同じ印を付ける
+  lastAttention = attentionCounts(listed, { currentId: state.current, waitingIds: state.waitingIds, unreadIds,
+    busyIds: new Set([...state.runningIds, ...state.bgWaiting.keys()]) });
+  paintOpenSidebar($("openSidebar"), lastAttention, t);
+  paintSideChrome();
   if (!(listLoaded.sessions && listLoaded.threads)) side.skeleton();
   else side.render(listed, {
     statuses: state.statuses,
@@ -7611,6 +7614,61 @@ function settleDrawer() {
   else if (refocus && (!from || from === document.body || $("sidebar").contains(from))) $("openSidebar").focus({ preventScroll: true });
 }
 
+/** 広い画面で脇がレールに畳まれている（閉じている）間か。狭い画面の引き出しと設定の間は数えない */
+const sideClosedRail = () => !narrowView.matches && document.documentElement.classList.contains("side-closed") && !document.body.classList.contains("settings");
+
+// 脇の外枠（P の印・レール・Plus の丸）の押し方と名前。開閉・狭い画面・設定の出入りで塗り直す。
+//   閉じている間: P の印は「サイドバーを開く」のボタン（件数の印・名前は #openSidebar と同じ。web/open-sidebar-mark.mjs）、
+//   レールのボタンと Plus の丸は押せる。開いている間: P は名札の絵（role=img）、レールは出ない、Plus の丸は #sidePlus の絵
+let lastAttention = { waiting: 0, unread: 0 };
+function paintSideChrome() {
+  const closed = sideClosedRail();
+  const pm = $("sideMark");
+  if (closed) {
+    pm.removeAttribute("role");                     // ボタンとして読ませる（開いている間は role=img の絵）
+    pm.tabIndex = 0;
+    pm.title = t("app.openSidebarTitle", { key: shortcutLabel("B") });
+    paintOpenSidebar(pm, lastAttention, t);
+  } else {
+    pm.setAttribute("role", "img");
+    pm.setAttribute("aria-label", "Pleiad");
+    pm.removeAttribute("title");
+    pm.tabIndex = -1;
+    pm.querySelector(".side-mark")?.remove();
+  }
+  const rail = $("sideRail");
+  rail.setAttribute("aria-hidden", String(!closed));
+  for (const b of rail.querySelectorAll("button")) b.tabIndex = closed ? 0 : -1;
+  $("sideAvatar").tabIndex = closed ? 0 : -1;
+}
+
+// 脇の下端の一行: Pleiad Plus の丸と名（設定 › Pleiad Plus の status で塗る。web/plus-settings.mjs）。
+//   ログイン中は頭文字の丸とメール、ログアウト中は人の形の丸と「Pleiad Plus にログイン」、
+//   使えない（status.available === false）は左を出さず設定だけ。どれも押すと設定 › Pleiad Plus を開く
+function paintSideFoot() {
+  const s = plusSettings.status;
+  const off = !s || s.available === false;
+  $("sidebar").classList.toggle("plus-off", off);
+  const email = s?.account?.email ?? s?.email ?? "";
+  const signedIn = Boolean(s?.signedIn && email);
+  const face = signedIn ? document.createTextNode((email.trim()[0] ?? "?").toUpperCase())
+    : (() => { const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("class", "i"); svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
+      svg.innerHTML = '<circle cx="12" cy="8.5" r="3.5"/><path d="M5.5 19c1.2-3.2 3.6-4.8 6.5-4.8s5.3 1.6 6.5 4.8"/>';
+      return svg; })();
+  for (const av of [$("sideAvatarIn"), $("sidePlusAv")]) av.replaceChildren(face.cloneNode(true));
+  $("sidePlusName").textContent = signedIn ? email : t("settings.remote.groups.plusLogin");
+  $("sidePlus").setAttribute("aria-label", signedIn ? `Pleiad Plus（${email}）` : t("settings.remote.groups.plusLogin"));
+}
+/** 設定 › Pleiad Plus のページを開く（脇の下端の丸・名・レールの丸から）。引き出しは閉じておく */
+function openPlusPage() { setDrawer(false); onboarding.open("plus"); plusSettings.openMain(); }
+
+// 「ログインが要る」の印は #authNeed の行と、下端・レールの設定の点の両方に出す
+function syncAuthDot() {
+  const need = !$("authNeed").hidden;
+  $("settingsAuthDot").hidden = $("railAuthDot").hidden = !need;
+}
+
 function setSidebar(open) {
   const root = document.documentElement;
   if (narrowView.matches && !document.body.classList.contains("settings")) return setDrawer(open);
@@ -7619,10 +7677,11 @@ function setSidebar(open) {
   root.classList.toggle("side-closed", !open);
   if (open) side.redraw();
   try { localStorage.setItem(SIDEBAR_STORE, open ? "open" : "closed"); } catch { /* 保存できなくても動く */ }
-  // 押したボタンは消える。居場所を body に落とさず、反対側のボタンへ移す
+  paintSideChrome();
+  // 押したボタンは消える。居場所を body に落とさず、反対側のボタンへ移す（閉じると P の印、開くと閉じるボタン）
   const from = document.activeElement;
-  if (!open && $("sidebar").contains(from)) $("openSidebar").focus();
-  else if (open && from === $("openSidebar")) $("closeSidebar").focus();
+  if (!open && $("sidebar").contains(from)) $("sideMark").focus();
+  else if (open && (from === $("sideMark") || from === $("openSidebar"))) $("closeSidebar").focus();
   // 動き終わったら動きを外し、会話の幅が変わった分だけプレビューの幅と枝のグラフを測り直す。--dur（240ms）より少し待つ
   clearTimeout(sidebarMoving);
   sidebarMoving = setTimeout(() => { document.body.classList.remove("side-moving"); filePreview.layout(); relayoutBranches(); }, motionDuration(240) + 40);
@@ -7633,6 +7692,14 @@ function initSidebar() {
   $("closeSidebar").onclick = () => setSidebar(false);
   $("openSidebar").onclick = () => setSidebar(true);
   $("sideVeil").onclick = () => setDrawer(false);
+  // 閉じている間の P の印は「サイドバーを開く」。検索は脇を開いて検索欄へ、ルーティン（時計）は脇を開いて
+  // ルーティンの見出しを開いて指す（Ctrl+Shift+F・木の項目と同じ動き）。設定は脇を開かずに設定の画面へ
+  $("sideMark").onclick = () => { if (sideClosedRail()) { setSidebar(true); $("closeSidebar").focus(); } };
+  $("railSearch").onclick = () => { setSidebar(true); side.focusSearch(); };
+  $("railRoutines").onclick = () => { setSidebar(true); channelsUi.openRoutines?.(); side.focusKey("c:routines"); };
+  $("railSettings").onclick = () => openSettings();
+  $("sideAvatar").onclick = () => { if (sideClosedRail()) openPlusPage(); };
+  $("sidePlus").onclick = () => openPlusPage();
   // 引き出しは移動したときだけ閉じる。脇の中で済む操作（見出しの開閉・フィルター・「…」）では閉じない。
   // 押して閉じるのは会話の行（開いている会話の行は会話へ戻る）と設定。メニューから開く・新しく始めるときは select / startNew が、
   // チャンネルの面へ移るとき（チャンネルの名前・＋・スレッドの行・bot）は channels:show が閉じる
@@ -7646,8 +7713,10 @@ function initSidebar() {
     if (drawerBlockingOverlay(document)) return;
     setDrawer(false);
   });
-  // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）
-  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); paintMoreEntry(); });
+  // 広い画面へ戻ったら引き出しの印を外す（幕が残らないように）。P・レール・Plus の押し方も画面の幅に合わせる
+  narrowView.addEventListener("change", () => { setDrawer(false, { refocus: false }); side.redraw(); paintMoreEntry(); paintSideChrome(); });
+  // 設定の出入り（body.settings）でも P・レール・Plus の押し方が変わるので塗り直す
+  new MutationObserver(() => paintSideChrome()).observe(document.body, { attributes: true, attributeFilter: ["class"] });
   // Ctrl+B（macOS は ⌘B）。入力欄でも太字などの既定の意味は無いので、どこからでも効かせる。
   // macOS の Ctrl+B は入力欄で「1 文字戻る」なので奪わない
   const mac = /Mac/.test(navigator.platform);
@@ -7664,6 +7733,8 @@ function initSidebar() {
     e.preventDefault();
     side.newChat();
   });
+  // P の印・レール・Plus の丸の押し方と名前（閉じている間だけボタンになる）
+  paintSideChrome();
 }
 
 // ---------------------------------------------------------------- 下書き
@@ -10385,6 +10456,7 @@ function connect() {
       residentSettings.refresh();
       // 設定 › Pleiad Plus の項目の出し入れと開いているページ。WS が開くまでは取れないので、つなぐたびに取り直す
       plusSettings.reconnected();
+      paintSideFoot();
       // この PC の通知の設定。見ている会話を知らせ直す（つなぎ直した接続には、まだ印が無い）
       notifySettings.refresh();
       notificationInbox.reconnected();
@@ -10864,6 +10936,7 @@ setupUsage({ $, cmd, source: usageSource, getBackends: () => state.backends, end
 const remoteSettings = setupRemote({ cmd, page: onboarding.page, open: onboarding.open });
 // 設定 › Pleiad Plus（docs/plus.md「設定 › Pleiad Plus」）
 const plusSettings = setupPlusSettings({ cmd, page: onboarding.page, getPrefs: () => state.prefs });
+paintSideFoot();   // 脇の下端の丸と名（status が届くまで「使えない」の出し方）
 // 設定 › アプリ情報・更新 › 常駐（デスクトップ版だけ。状態は remoteStatus の resident）
 const residentSettings = setupResidentSettings({ cmd });
 // 設定 › 通知。この PC の設定とスマホの一覧（スマホの種類・ロック画面の会話名はスマホのアプリで変える）

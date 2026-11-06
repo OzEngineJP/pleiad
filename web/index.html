@@ -62,18 +62,24 @@
   <div class="titlebar" aria-hidden="true"></div>
   <!-- ==================== 脇のパネル（セッション一覧、web/side.mjs） ==================== -->
   <aside id="sidebar">
+    <!-- 閉じている間だけ脇の位置に残る細いレール（701px 以上）。上に検索・ルーティン、下に設定。Plus の丸は #sideAvatar（docs/design-system.md「脇」） -->
+    <nav class="side-rail" id="sideRail" aria-hidden="true" data-i18n-aria-label="sidebar.keyHint.sidebar">
+      <button type="button" class="btn btn-icon" id="railSearch" data-shortcut="shift+F" tabindex="-1" data-i18n-title="app.searchTitle" data-i18n-aria-label="app.search"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/></svg></button>
+      <button type="button" class="btn btn-icon" id="railRoutines" tabindex="-1" data-i18n-title="channels:side.sections.routines" data-i18n-aria-label="channels:side.sections.routines"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5l3 1.8"/></svg></button>
+      <button type="button" class="btn btn-icon side-rail-gear" id="railSettings" tabindex="-1" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg><span class="auth-dot" id="railAuthDot" hidden></span></button>
+    </nav>
+    <!-- P の印（脇の左上に固定。開いている間は名札の絵、閉じている間は「サイドバーを開く」ボタンに替わる。
+         引き出し（700px 以下）では見出しの左の絵としても出る。文字のロゴは出さない） -->
+    <button type="button" class="side-pm" id="sideMark" role="img" aria-label="Pleiad" tabindex="-1" aria-keyshortcuts="Control+B"><svg class="pm-mk" viewBox="0 0 96 96" aria-hidden="true"><use href="/brand/pleiad-icon.svg#mark"/></svg><svg class="i pm-op" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+    <!-- Pleiad Plus の丸（脇の左下に固定。開いている間は下端の #sidePlus の左の絵、閉じている間は押せるボタン） -->
+    <button type="button" class="side-avb" id="sideAvatar" tabindex="-1" title="Pleiad Plus" aria-label="Pleiad Plus"><span class="side-av" id="sideAvatarIn"></span></button>
     <header>
-      <!-- 開閉は左上。閉じた後の #openSidebar も同じ位置に出る（docs/design-system.md「脇」、ADR 0288） -->
-      <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" data-shortcut="B" data-i18n-title="app.closeSidebarTitle" data-i18n-aria-label="app.closeSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
-      <div class="brand" role="img" aria-label="Pleiad">
-        <svg class="brand-icon" viewBox="0 0 96 96" aria-hidden="true"><use href="/brand/pleiad-icon.svg#mark"/></svg>
-        <svg class="brand-wordmark" viewBox="0 0 346 104" aria-hidden="true"><use href="/brand/pleiad-wordmark.svg#wordmark"/></svg>
-      </div>
       <!-- 設定を開いている間だけ、ロゴの位置に出る。Esc でも会話へ戻る -->
       <button type="button" class="btn back-chat" id="backToChat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg><span data-i18n="app.backToChat"></span></button>
       <!-- 通知ボタン（web/notification-inbox.mjs）。名前（aria-label）と右上の件数は未読に合わせて書く -->
       <button type="button" class="btn btn-icon" id="notifBell" aria-controls="notifPanel"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></button>
-      <button type="button" class="btn btn-icon" id="settings" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+      <!-- 閉じるボタンは通知の右（脇の右上の端）。広い画面は脇の印、700px 以下の引き出しは右上の ✕ -->
+      <button type="button" class="btn btn-icon side-toggle" id="closeSidebar" data-shortcut="B" data-i18n-title="app.closeSidebarTitle" data-i18n-aria-label="app.closeSidebar" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i ic-side" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg><svg class="i ic-x" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
     </header>
     <div class="search">
       <!-- 題・状態・場所と会話の本文を探す（web/side.mjs）。語があるときは下の一覧が結果の listbox になる。Ctrl+Shift+F（macOS は ⌘⇧F）でどこからでも入れる -->
@@ -147,6 +153,12 @@
     <div class="conn-lost" id="connLost" hidden></div>
     <!-- ログインが要るエージェントがあるときだけ。押すと設定メニューが開く -->
     <button type="button" class="conn-lost" id="authNeed" hidden></button>
+    <!-- 脇の下端に固定の一行（docs/design-system.md「脇の下端」）。左は Pleiad Plus の丸と名、右端は設定。
+         状況の一行（上の #authNeed など）はこの上にそのまま出る -->
+    <footer class="side-foot">
+      <button type="button" class="side-me" id="sidePlus" title="Pleiad Plus"><span class="side-av" id="sidePlusAv" aria-hidden="true"></span><span class="side-me-nm" id="sidePlusName"></span></button>
+      <button type="button" class="btn btn-icon" id="settings" data-i18n-title="app.settings" data-i18n-aria-label="app.settings"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 3-.5 2a8 8 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A8 8 0 0 0 9 19l.5 2h5l.5-2a8 8 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A8 8 0 0 0 15 5l-.5-2z"/><circle cx="12" cy="12" r="3"/></svg><span class="auth-dot" id="settingsAuthDot" hidden></span></button>
+    </footer>
   </aside>
   <!-- 狭い画面（700px 以下）で脇を引き出しにしている間だけ、会話の上に敷く幕。押すと閉じる（client.mjs の「脇の開閉」） -->
   <div class="side-veil" id="sideVeil" aria-hidden="true"></div>
@@ -187,9 +199,9 @@
   <!-- ==================== 会話 ==================== -->
   <main>
     <header class="top">
-      <!-- 脇を閉じている間だけ出る。閉じるボタンと同じ絵。名前（aria-label）は件数を入れて client.mjs が書く（web/open-sidebar-mark.mjs）。
-           data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
-      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+      <!-- 700px 以下の引き出しを開くハンバーガー（広い画面の開閉は P の印 #sideMark が持つ）。名前（aria-label）は件数を入れて
+           client.mjs が書く（web/open-sidebar-mark.mjs）。data-i18n-aria-label は置かない（訳し直しで件数の無い名前に戻るため） -->
+      <button type="button" class="btn btn-icon side-toggle" id="openSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
       <!-- タイトルの列（docs/design-system.md「会話の頭（狭い画面）」）。題と、所属・出どころの行（#titleSub）。
            701px 以上は 1 行で、#titleSub（パンくず「# 一時チャット ›」）を題の左に置く。700px 以下は 2 行で、題の下に
            「# 一時チャット · ⇄ ホスト名」（モバイル版の殻。web/remote-badge.mjs）・「↖ 依頼元の会話」・「⇄ 端末の AI から」を弱い字で並べる -->
@@ -428,7 +440,7 @@
     <!-- ==================== Channels（脇のタブが Channels の間だけ会話を覆う。web/channels/） ==================== -->
     <section class="channels-view" id="channelsView" aria-labelledby="channelsPageTitle" inert>
       <header class="top">
-        <button type="button" class="btn btn-icon side-toggle" id="chOpenSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="M9.5 4v16"/></svg></button>
+        <button type="button" class="btn btn-icon side-toggle" id="chOpenSidebar" data-shortcut="B" data-i18n-title="app.openSidebarTitle" data-i18n-aria-label="app.openSidebarTitle" aria-controls="sidebar" aria-keyshortcuts="Control+B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
         <h2 id="channelsPageTitle" data-i18n="channels:side.tabs.channels"></h2>
       </header>
       <!-- チャンネルの流れ・スレッド・bot のページ・ルーティンの編集は、各パッケージがこの中に作る -->

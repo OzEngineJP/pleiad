@@ -58,9 +58,9 @@ html,body{overscroll-behavior:none}
 html{overflow:hidden}
 /* スマホのブラウザーが押している間に塗る青い面を消す。押した手応えは各部品の :hover / 選択の地で出す */
 html{-webkit-tap-highlight-color:transparent}
-/* 脇の列の幅。--side-w は脇そのものの幅で、閉じても変えない（列だけ 0 にして会話の下へ隠す）。
-   脇の中身が開閉の途中で折り返し直さないため */
-body{--side-w:292px;--side-col:var(--side-w)}
+/* 脇の列の幅。--side-w は脇そのものの幅で、閉じても変えない（脇の中身が開閉の途中で折り返し直さないため）。
+   --rail-w は閉じている間に残る細いレールの幅 */
+body{--side-w:292px;--side-col:var(--side-w);--rail-w:52px}
 /* 開閉・設定で値が変わる変数は、使う要素（--side-col は body、--paper-* は main）の外へ受け継がない。
    受け継ぐ変数が変わると子孫すべてのスタイルを計算し直すので、長い会話を開いたまま脇を開閉すると止まっていた */
 @property --side-col{syntax:'*';inherits:false}
@@ -209,15 +209,58 @@ svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stro
 .slash-hint:empty{padding:0;min-height:0}
 
 /* ==================== 脇のパネル（セッション一覧、web/side.mjs） ==================== */
-#sidebar{display:flex;flex-direction:column;min-height:0;min-width:0;width:var(--side-w);position:relative}
+#sidebar{display:flex;flex-direction:column;min-height:0;min-width:0;width:var(--side-w);position:relative;--p-top:9px;--rail-top:49px}
+/* 脇の左上の P の印の位置（--p-top）と、閉じたレールの上端（--rail-top）。デスクトップ版は帯の中、
+   macOS は信号（x 16–52・y 14–26）の下の検索の行の左（信号と重ならない） */
+:root.desktop:not(.remote) > body > #sidebar{--p-top:4px;--rail-top:48px}
+:root.desktop:not(.remote).mac > body > #sidebar{--p-top:44px;--rail-top:84px}
 /* 控えめなグリッド。脇と、デスクトップ版で脇から続く窓の上端の帯にだけ。どちらも窓の左上が原点なので点が揃う */
 #sidebar,.titlebar{background:var(--surface-0);background-image:radial-gradient(var(--line-faint) 1px,transparent 1.2px);background-size:24px 24px}
-#sidebar header{display:flex;align-items:center;justify-content:flex-end;gap:4px;padding:10px 12px 4px;position:relative}
-/* 開閉は左上の端（ブラウザーのタブの並びやほかの道具と同じ所）。閉じた後の #openSidebar も同じ x に出る。ロゴはその右 */
-#sidebar header .side-toggle{margin-left:0}
-.brand{display:flex;align-items:center;gap:6px;margin:0 auto 0 2px;flex:none;color:var(--ink)}
-.brand-icon{display:block;width:24px;height:24px}
-.brand-wordmark{display:block;width:86.5px;height:26px}
+#sidebar header{display:flex;align-items:center;justify-content:flex-end;gap:4px;padding:10px 8px 4px;position:relative}
+/* P の印は開いても閉じても左上の同じ位置（--p-top）。開いている間は名札の絵（role=img）で、pointer-events を切ってあるので
+   下の見出しや窓の帯へそのまま届く。閉じている間（下の「脇の開閉」）は「サイドバーを開く」ボタンに替わり、
+   載せる・焦点・押すと開くの印（pm-op）になる。文字のロゴはどこにも出さない */
+.side-pm{position:absolute;left:10px;top:var(--p-top);z-index:2;width:32px;height:32px;padding:0;border:0;border-radius:var(--r-m);
+  background:transparent;display:grid;place-items:center;color:var(--ink);cursor:default;pointer-events:none;
+  transition:background-color var(--dur-fast) var(--ease-out)}
+.side-pm .pm-mk{width:24px;height:24px;display:block}
+.side-pm .pm-op{display:none;width:18px;height:18px}
+/* 閉じるボタンの印: 広い画面は脇の印（ic-side）、700px 以下の引き出しは右上の ✕（ic-x） */
+#closeSidebar .ic-x{display:none}
+/* 閉じている間だけ脇の位置に残る細いレール。上に検索・ルーティン、下（Plus の丸の上）に設定。
+   脇が visibility で隠れていても子の visible を上書きして見えるようにする（下の「脇の開閉」） */
+.side-rail{position:absolute;left:0;top:0;bottom:0;z-index:1;width:var(--rail-w);display:none;flex-direction:column;align-items:center;gap:8px;
+  padding:var(--rail-top) 0 48px;
+  background:var(--surface-0);background-image:radial-gradient(var(--line-faint) 1px,transparent 1.2px);background-size:24px 24px;
+  opacity:0;visibility:hidden;
+  transition:opacity var(--dur-fast) linear, visibility 0s linear var(--dur-fast)}
+.side-rail .btn-icon{width:36px;height:36px}
+.side-rail .side-rail-gear{margin-top:auto}
+/* Pleiad Plus の丸は開いても閉じても左下の同じ位置。開いている間は #sidePlus の左の絵（pointer-events は切ってある）、
+   閉じている間は押せるボタン */
+.side-avb{position:absolute;left:8px;bottom:8px;z-index:2;width:36px;height:36px;padding:0;border:0;border-radius:50%;
+  background:transparent;display:none;place-items:center;color:var(--ink);cursor:default;pointer-events:none;
+  transition:background-color var(--dur-fast) var(--ease-out)}
+/* 頭文字・人の形の丸（#sideAvatar と #sidePlus の中。設定 › Pleiad Plus の .rm-av と同じ形） */
+.side-av{width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;flex:none;
+  background:var(--surface-paper);box-shadow:inset 0 0 0 1px var(--line);color:var(--ink-strong);font-weight:600;font-size:var(--fs-s);overflow:hidden}
+.side-av svg.i{width:16px;height:16px}
+/* 脇の下端に固定の一行。左は Pleiad Plus の丸と名、右端は設定。状況の一行（ログインが要る・接続が切れたなど）はこの上に出る */
+.side-foot{flex:none;display:flex;align-items:center;gap:6px;height:52px;padding:0 10px 0 8px}
+.side-me{flex:1;min-width:0;height:36px;border:0;background:transparent;font-size:var(--fs-s);color:var(--ink);cursor:pointer;
+  border-radius:var(--r-pill);padding:0 10px 0 44px;text-align:left;overflow:hidden;
+  transition:background-color var(--dur-fast) var(--ease-out)}
+.side-me:hover{background:var(--surface-2)}
+.side-me-nm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-me .side-av{display:none}   /* 広い画面は、同じ位置に重なって出る #sideAvatar の丸を使う */
+/* 設定を開いている間、下端の設定は押された状態（メニューの選択中と同じ出し方） */
+body.settings #sidebar .side-foot #settings{background:var(--surface-paper);color:var(--ink-blue)}
+/* ログインが要る間、設定（下端とレールの両方）に付ける印（#authNeed の行と同じ知らせ） */
+#settings,#railSettings{position:relative}
+.auth-dot{position:absolute;top:1px;right:1px;width:8px;height:8px;border-radius:50%;color:var(--ink-mark);background:currentColor;box-shadow:0 0 0 2px var(--surface-0)}
+/* Pleiad Plus を使えないとき（status.available === false）は、左（丸と名・閉じたレールの丸）を出さず設定だけ */
+#sidebar.plus-off .side-me{visibility:hidden}
+#sidebar.plus-off .side-avb{display:none}
 .search{display:flex;align-items:center;gap:4px;padding:4px 12px 6px;position:relative}
 /* 検索欄。消すボタンは欄の中の右端（語があるときだけ）。焦点の輪は欄全体に付く */
 .qbox{flex:1;min-width:0;display:flex;align-items:center;background:var(--surface-paper);border-radius:var(--r-pill)}
@@ -447,13 +490,14 @@ button.conn-lost:hover{color:var(--ink)}
    列の幅も面もそのままなので、切り替わったことは列の中身だけで分かる。モーダルは重ねない */
 .settings-menu,.settings-view,.back-chat{display:none}
 body.settings > #sidebar > :is(.search,.botstrip,.fchips,.filter-outside,.res-head,.groups,#authNeed),
-body.settings .brand,body.settings #notifBell,body.settings #settings,body.settings #closeSidebar{display:none}
+body.settings #notifBell,body.settings #closeSidebar{display:none}
 /* 会話は場所も描いた状態も残したまま、設定のページで覆う（下の .settings-view）。display:none にすると筋のスクロール位置と
    入力欄の高さが失われる。visibility:hidden で伏せると、開閉のたびに会話の全要素のスタイルを計算し直して止まっていた。
    キーボードと読み上げは inert で届かなくする（web/onboarding.mjs） */
-/* ロゴの位置。文字だけのボタン */
+/* ロゴの位置（P の印の右）。文字だけのボタン */
 body.settings .back-chat{display:inline-flex;align-items:center;gap:4px;margin-right:auto;flex:none;
   padding:4px 10px 4px 6px;font-size:var(--fs-s);color:var(--ink-weak);background:transparent;border-radius:var(--r-pill);cursor:pointer}
+@media (min-width:701px){body.settings .back-chat{margin-left:34px}}   /* 左上の P の印の右に並べる */
 .back-chat:hover{background:var(--surface-hover);color:var(--ink)}
 .back-chat svg{width:14px;height:14px}
 /* メニュー。見出しと行の高さ・字下げはグループとセッションに合わせる */
@@ -472,24 +516,45 @@ body.settings .settings-view{display:flex;flex-direction:column;position:absolut
 .settings-content .locale-now{margin:6px 0 0;color:var(--ink-weak);font-size:var(--fs-s)}
 
 /* ==================== 脇の開閉（web/client.mjs の「脇の開閉」） ====================
-   閉じると列の幅が 0 になり、会話が脇の上へ滑ってきて覆う。脇は幅を保ったまま下に残り、
-   visibility で触れず・読み上げず・Tab も止まらなくなる。設定の間はメニューが脇にあるので必ず開く */
-:root.side-closed body:not(.settings){--side-col:0px}
+   閉じると列の幅が 52px のレール（--rail-w）になり、会話が脇の上へ滑ってくる。脇は幅を保ったまま下に残り、
+   visibility で触れず・読み上げず・Tab も止まらなくなる。P の印・レール・Plus の丸だけは子の visible の上書きで残る。
+   設定の間はメニューが脇にあるので必ず開く */
+:root.side-closed body:not(.settings){--side-col:var(--rail-w)}
 :root.side-closed body:not(.settings) > #sidebar{visibility:hidden}
-#openSidebar{display:none}
-:root.side-closed #openSidebar{display:inline-flex;margin-left:-6px}   /* タイトルの字の頭と左の余白を揃えたまま置く */
+/* 脇の中身は --dur-fast（120ms）で消え、レールは --dur（240ms）の紙の滑りの後半に入れ替わる */
+body.side-moving > #sidebar > :not(.side-pm):not(.side-rail):not(.side-avb){transition:opacity var(--dur-fast) linear}
+:root.side-closed body:not(.settings) > #sidebar > :not(.side-pm):not(.side-rail):not(.side-avb){opacity:0}
+/* 開くボタンは 700px 以下の引き出しだけ（広い画面の開閉は P の印 #sideMark が持つ） */
+#openSidebar{display:none;position:relative}
+@media (min-width:701px){
+  /* 脇が隠れても P の印・レール・Plus の丸は残す（visibility は子が visible を上書きできる） */
+  :root.side-closed body:not(.settings) > #sidebar > :is(.side-pm,.side-rail,.side-avb){visibility:visible}
+  .side-rail{display:flex}
+  .side-avb{display:grid}
+  :root.side-closed body:not(.settings) > #sidebar > .side-rail{opacity:1;
+    transition:opacity var(--dur-fast) linear var(--dur-fast), visibility 0s}
+  /* 閉じている間、P の印は「サイドバーを開く」のボタン。載せる・焦点・押すと開くの印に替わる（動いている途中は替えない）。
+     Plus の丸は設定 › Pleiad Plus を開く */
+  :root.side-closed body:not(.settings) > #sidebar > .side-pm{pointer-events:auto;cursor:pointer}
+  :root.side-closed body:not(.settings) > #sidebar > .side-avb{pointer-events:auto;cursor:pointer}
+  :root.side-closed body:not(.settings,.side-moving) > #sidebar > .side-pm:is(:hover,:focus-visible,:active){background:var(--surface-2)}
+  :root.side-closed body:not(.settings,.side-moving) > #sidebar > .side-pm:is(:hover,:focus-visible,:active) .pm-mk{display:none}
+  :root.side-closed body:not(.settings,.side-moving) > #sidebar > .side-pm:is(:hover,:focus-visible,:active) .pm-op{display:block}
+  :root.side-closed body:not(.settings,.side-moving) > #sidebar > .side-avb:hover{background:var(--surface-2)}
+}
 /* 脇が見えていない間の印（web/open-sidebar-mark.mjs）。未確認は一覧と同じ青い丸（地との間に紙の色の 2px の切り欠き）、
-   承認待ちは ◆（差し色。2 件以上なら数）。件数はボタンの名前に入れ、印は読み上げない */
-#openSidebar{position:relative}
+   承認待ちは ◆（差し色。2 件以上なら数）。件数はボタンの名前に入れ、印は読み上げない。
+   閉じている間は #sideMark（P の印）に同じ印を付ける */
 .side-mark{position:absolute;pointer-events:none}
 .side-mark[data-kind=unread]{top:3px;right:2px;width:9px;height:9px;border-radius:50%;color:var(--ink-unread);background:currentColor;box-shadow:0 0 0 2px var(--surface-paper)}
 .side-mark[data-kind=wait]{top:-1px;right:-5px;display:inline-flex;align-items:center;gap:1px;padding:0 3px;border-radius:var(--r-pill);
   background:var(--surface-paper);color:var(--ink-mark);font:600 10px/14px var(--font)}
 .side-mark[data-kind=wait]::before{content:"◆";font-size:9px}
 /* 開閉の操作の間だけ動かす。常に付けると、プレビューの幅を掴むときや窓の幅を変えるときまで遅れて追いかける。
-   visibility は「どちらかが visible の間は visible」なので、閉じるときは滑り終わってから消える */
+   visibility は「どちらかが visible の間は visible」なので、閉じるときは滑り終わってから消える。
+   開くときは visibility を遷移させない（t=0 で hidden の間は閉じるボタンに焦点を置けない。狭い画面の :root.side-open と同じ理屈） */
 body.side-moving{transition:grid-template-columns var(--dur) var(--ease-out)}
-body.side-moving > #sidebar{transition:visibility var(--dur)}
+:root.side-closed body.side-moving > #sidebar{transition:visibility var(--dur)}
 body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 
 /* ==================== デスクトップ版の窓の枠（desktop/main.cjs の titleBar） ====================
@@ -502,28 +567,23 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 :root.desktop #sidebar{grid-area:1/1/-1/2}   /* 帯（.titlebar）と同じ升に重ねる。位置を決めないと自動配置が重なりを避けて列を足す */
 :root.desktop body > :is(main,.file-preview){grid-row:2}
 :root.desktop body > main{grid-column:2}
-/* 紙の角。左上は脇の面に、右上は並べたプレビューの面に接するので丸める。
-   窓の縁に接する角は立てる（丸めると縁に欠けが出る）。脇を閉じたら左上は窓の縁に接する */
+/* 紙の角。左上は脇の面に、右上は並べたプレビューの面に接するので丸める。閉じても脇の面（レール）が残るので角は変わらない。
+   窓の縁に接する角は立てる（丸めると縁に欠けが出る） */
 :root.desktop body > main{--paper-tl:var(--r-l);--paper-tr:0px;border-radius:var(--paper-tl) var(--paper-tr) 0 0}
 :root.desktop body.file-preview-open > main{--paper-tr:var(--r-l)}
-:root.desktop.side-closed body:not(.settings) > main{--paper-tl:0px}
-/* 脇が見えていない間、帯の真下は会話の紙。帯も紙にして、窓の上端から会話までを一枚に見せる（点は脇の面の印なので載せない）。
-   右にプレビューが並ぶときは、その幅だけ帯を脇の面のまま残す（プレビューの面が上へ延びる）。紙も上へ延びるので右上の角は無くなる。
-   --bar-end は帯の右端の色。窓のボタンの地として client.mjs の paintTitleBar が読んで OS へ送る。
-   ボタンの地は OS が描くので徐々には変わらない。帯も動かさず同じ瞬間に切り替え、帯とボタンの色が食い違う時間を作らない。
-   その瞬間は脇が少しも見えていないときに限る（side-moving を外す）：閉じるときは滑り終えて隠れきってから紙に、
-   開くときは滑り出す前に脇の面へ戻す。途中で紙にすると、まだ見えている脇の上に白い帯が載って段になる */
+/* 帯は脇と同じ面のまま。閉じても左の 52px にレールが残るので、帯・紙の角は開いているときと同じにする。
+   --bar-end は帯の右端の色。窓のボタンの地として client.mjs の paintTitleBar が読んで OS へ送る */
 .titlebar{--bar-end:var(--surface-0)}
-:root.desktop.side-closed body:not(.settings,.side-moving,.file-preview-open) > .titlebar{background:var(--surface-paper);--bar-end:var(--surface-paper)}
-/* 広げたプレビュー（760px 以下では全面のプレビュー）だけが帯の下にあるときは、プレビューと同じ点の無い面 */
-:root.desktop.side-closed body.file-preview-open:not(.settings,.side-moving) > .titlebar{background:var(--surface-0)}
-@media(min-width:761px){
-  :root.desktop.side-closed body.file-preview-open:not(.settings,.side-moving,.file-preview-wide) > .titlebar{background:linear-gradient(to left,var(--surface-0) var(--file-preview-width),var(--surface-paper) 0)}
-  :root.desktop.side-closed body.file-preview-open:not(.settings,.side-moving,.file-preview-wide) > main{--paper-tr:0px}
-}
 :root.desktop #sidebar header{height:var(--bar-h);padding:0 8px 0 12px;-webkit-app-region:drag}
-:root.desktop:not(.side-closed) #sidebar header button,:root.desktop body.settings #sidebar header button{-webkit-app-region:no-drag}
-:root.mac #sidebar header{padding-left:80px}   /* 左の信号 3 つ（x=16 から 52px）を避ける */
+/* 帯の中・帯に掛かる押せるものは no-drag にしないと押せない（P の印・レール・Plus の丸・見出しのボタン） */
+:root.desktop #sidebar :is(header button,.side-pm,.side-avb,.side-rail button){-webkit-app-region:no-drag}
+/* 閉じたレールの押せるボタンの合間は、帯と同じく掴んで窓を動かせるようにする */
+:root.desktop:not(.remote) #sidebar .side-rail{-webkit-app-region:drag}
+:root.desktop:not(.remote) #sidebar .side-rail button{-webkit-app-region:no-drag}
+/* macOS は信号の下（検索の行の左）に P の印が来るので、検索の行の左を P の分だけ開ける */
+:root.mac:not(.remote) #sidebar > .search{padding-left:50px}
+/* 設定の間は検索の行が無いので、メニューを P の分だけ下げる */
+:root.mac:not(.remote) body.settings > #sidebar > .settings-menu{padding-top:36px}
 /* 重ねたダイアログは帯の下の範囲で中央に置く。帯に掛かると右上の閉じるボタンが窓のボタンの下に潜って押せない */
 :root.desktop dialog:modal{top:var(--bar-h)}
 :root.desktop #lightbox img{max-height:calc(92vh - 124px - var(--bar-h))}
@@ -554,13 +614,11 @@ body.side-moving > main{transition:border-radius var(--dur) var(--ease-out)}
 /* タイトル行を帯に上げる（701px 以上。狭い窓では脇が引き出しになるので会話の上に残す）。帯の空いている所は掴んで窓を動かせる。
    左端は脇の幅（脇を閉じても同じ。バッジの右）、右端は窓のボタン（Windows は 3 つで 138px、macOS は信号が左なので 8px） */
 @media (min-width:701px){
-  :root.desktop.remote:not(.remote-mobile) body > main > .top{position:fixed;top:0;left:var(--side-w);right:var(--wc-w,138px);z-index:6;height:var(--bar-h);
+  :root.desktop.remote:not(.remote-mobile) body > main > .top{position:fixed;top:0;left:var(--side-col);right:var(--wc-w,138px);z-index:6;height:var(--bar-h);
     padding:0 8px;-webkit-app-region:drag}
   :root.mac.remote:not(.remote-mobile) body > main > .top{--wc-w:8px}
   :root.desktop.remote:not(.remote-mobile) body > main > .top > *{-webkit-app-region:no-drag}
   :root.desktop.remote:not(.remote-mobile) body > main > .top input{font-size:var(--fs);padding:3px 8px}
-  /* 帯の上の開くボタンは要らない（脇の見出しの閉じるボタンの対は帯の下の脇にある）。閉じている間は帯の左のバッジの右に置く */
-  :root.desktop.remote:not(.remote-mobile).side-closed #openSidebar{margin-left:0}
 }
 .remote-pop .remote-host{font-family:var(--font-mono);overflow-wrap:anywhere}
 .remote-pop dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 12px;margin:8px 0 10px}
@@ -1972,8 +2030,7 @@ main.dropping #log{background:var(--surface-1)}
   .draft-fail:not([hidden]){display:flex}
   /* 設定の左列は脇と同じに畳まれる（body の列幅）。ページ側の余白も会話に合わせる */
   .settings-content{padding-left:10px;padding-right:10px}
-  /* macOS は信号の分だけ字のロゴを畳む */
-  :root.mac .brand-wordmark{display:none}
+
   .next-settings{flex-wrap:wrap;padding:10px}
   .conn-note[data-kind=lost]:not([hidden]){display:flex}
   .conn-note[data-kind=stale],.conn-note[data-kind=stop]{flex-wrap:wrap;padding:10px}
@@ -2161,8 +2218,19 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   /* 指への追従中だけ遷移を外す（ADR 0262）。確定後は通常の --dur / --ease-out に戻す。 */
   :root.side-dragging body:not(.settings) > #sidebar{visibility:visible;transition:none}
   :root.side-dragging body:not(.settings) > .side-veil{transition:none;pointer-events:auto}
-  /* 開くボタンは常に（広い画面の「閉じている間だけ」ではない） */
-  #openSidebar{display:inline-flex;margin-left:-6px}
+  /* 引き出しの見出し: 左は P の印（.side-pm の重ね置き）、右端は通知と ✕（どちらも 44px、✕ は引き出しの右端から 4px） */
+  #sidebar header{padding:9px 4px 4px}
+  #sidebar header .btn-icon{width:44px;height:44px;min-width:44px;min-height:44px}
+  #closeSidebar .ic-side{display:none}
+  #closeSidebar .ic-x{display:block}
+  /* 設定の帯では「← 会話に戻る」が左端に来るので P の印は出さない（広い画面は出したまま） */
+  body.settings #sidebar > .side-pm{display:none}
+  /* 開くボタンは常に（広い画面の「閉じている間だけ」ではない）。top の左端に揃え、44px の箱ごと中に収める（hover の地が欠けない） */
+  #openSidebar{display:inline-flex;margin-left:-4px}
+  /* 引き出しの下端のアカウントと設定の一行（60px）。丸は 30px で名の左に入れる（重ね置きの #sideAvatar は出さない） */
+  .side-foot{height:60px;padding:0 4px 0 6px}
+  .side-me{height:44px;display:flex;align-items:center;gap:10px;padding:0 12px 0 10px}
+  .side-me .side-av{display:inline-flex;width:30px;height:30px}
   #sessionMore:not([hidden]){display:inline-flex}
   /* 脇の見出しは 1 行（引き出しの幅なら入る） */
   :root.desktop:not(.remote) #sidebar header{-webkit-app-region:no-drag}
@@ -2178,7 +2246,7 @@ body{padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) 0 env(s
   .egrid{grid-template-columns:repeat(auto-fill,30px);justify-content:space-between}
   .clist{max-width:calc(100vw - 24px)}
 }
-@media (prefers-reduced-motion:reduce){body > #sidebar,.side-veil{transition:none}}
+@media (prefers-reduced-motion:reduce){body > #sidebar,.side-veil,.side-rail,.side-pm,.side-avb,#sidebar > *{transition:none}}
 /* ---- 入力欄の行: スマホの幅（480px 以下）は ▾ を 3 つとも省き、中断は四角のアイコンだけ。400px 未満はチップの余白も詰める ---- */
 @media (max-width:480px){
   .composer{--cpad-b:max(8px,env(safe-area-inset-bottom,0px))}

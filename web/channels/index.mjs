@@ -90,6 +90,8 @@ export function setupChannels(host) {
     homeChanged() { each('homeChanged'); },
     /** 予定（schedule.json）が動いた（スレッドへの返信の予定の行。web/channels/thread.mjs） */
     schedulesChanged() { each('schedulesChanged'); },
+    /** 脇のルーティンの見出しを開く（閉じたレールの時計から。web/channels/sidebar.mjs） */
+    openRoutines() { each('openRoutines'); },
     /** 右パネルの作業場所の基準。Channels の中の要素でなければ null */
     contextForPanel(anchor) {
       if (!anchor?.closest?.('#channelsView')) return null;

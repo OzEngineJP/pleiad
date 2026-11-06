@@ -490,5 +490,7 @@ export function createSidebar(host, getTabs) {
     show(view) { S.view = view ?? null; paint(); },
     hide() { S.view = null; paint(); },
     sideTabChanged() { paintDots(); if (S.stale) load(); },
+    /** ルーティンの見出しを開く（閉じたレールの時計から。中身は次の描き直しで出る） */
+    openRoutines() { setRoutinesOpen(true); },
   };
 }

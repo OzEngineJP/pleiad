@@ -54,9 +54,8 @@
 .th-entries .btn-icon{position:relative}
 .th-entries .btn-icon.on{color:var(--ink-blue)}
 .th-close{flex:none;margin-left:2px}
-/* 脇を閉じている間の入口は、流れの見出しが見えないとき（solo）だけスレッドの見出しに */
+/* 700px 以下の引き出しを開くハンバーガー（#openSidebar と同じ。広い画面の開閉は P の印 #sideMark が持つ） */
 .th-side{display:none}
-:root.side-closed .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-6px}
 
 /* ---- 投稿の列 */
 /* 頭の ✦（題の候補）。考えている間は弱い字 */
@@ -187,5 +186,5 @@
   .th-subs{margin:0 10px 2px}
   .th-band-tokens{position:relative;flex:none}
   .th-tok-aux{position:absolute;width:1px;height:1px;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}   /* 数字だけ見せる。語は読み上げに残す */
-  .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-6px}
+  .deck[data-deck=solo] .th-side{display:inline-flex;margin-left:-4px}
 }

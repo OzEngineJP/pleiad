@@ -112,11 +112,10 @@ body.channels:not(.settings) .channels-view{display:flex;flex-direction:column;p
 .channels-view .top.bot-top{padding-top:0;padding-bottom:0}
 .channels-view .top.bot-top h2{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);flex:none}
 :root.side-closed .channels-view .top.bot-top{padding:10px 18px 0}
-/* 脇を閉じている間の入口（#openSidebar と同じ出し方） */
+/* 700px 以下で引き出しを開くハンバーガー（#openSidebar と同じ出し方。広い画面の開閉は P の印 #sideMark が持つ） */
 #chOpenSidebar{display:none}
-:root.side-closed #chOpenSidebar{display:inline-flex;margin-left:-6px}
 @media (max-width:700px){
-  #chOpenSidebar{display:inline-flex;margin-left:-6px}
+  #chOpenSidebar{display:inline-flex;margin-left:-4px}
   .channels-view .top.bot-top{padding:10px 18px 0}
 }
 /* 脇のスレッドの行の「分岐」の札（枝のスレッド） */

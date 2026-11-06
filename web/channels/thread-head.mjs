@@ -40,7 +40,7 @@ export function createThreadHead({ host, onClose, onBack, onToc, onRename, sugge
   side.title = t('app.openSidebarTitle', { key: shortcutLabel('B') });
   side.setAttribute('aria-label', side.title);
   const sideSvg = svgEl('svg', { class: 'i', viewBox: '0 0 24 24', 'aria-hidden': 'true' });
-  sideSvg.append(svgEl('rect', { x: 3, y: 4, width: 18, height: 16, rx: 4 }), svgEl('path', { d: 'M9.5 4v16' }));
+  sideSvg.append(svgEl('path', { d: 'M4 7h16M4 12h16M4 17h16' }));
   side.append(sideSvg);
   side.onclick = () => host.openSidebar?.();
 
