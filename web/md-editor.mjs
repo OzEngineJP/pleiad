@@ -15,11 +15,12 @@ import { attachmentHtml } from './user-message.mjs';
 import { richFromClipboard } from './html-paste.mjs';
 import { baseName } from './file-reference.mjs';
 import {
-  markdownToDoc, docToMarkdown, mergeRuns, runsText, runsLength, newMark, fenceRoles, normalizeFences, ensureShape, emptyBlock,
+  markdownToDoc, docToMarkdown, mergeRuns, runsText, runsLength, newMark, normalizeFences, ensureShape, emptyBlock,
   caret, isCollapsed, orderSel, deleteSelection, insertText, enter, backspaceAtStart, deleteAtEnd, insertAtom, removeAtoms, newAtom,
   atomKey, atomKeys, normalizeAttachmentPath, pasteText, applyTriggers, toggleMark, marksInRange, selectionMarkdown, createHistory,
-  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy, indentList, indentLevel, quoteDepth,
+  posToOffset, offsetToPos, insertPlain, docLayout, memoRaw, pasteRich, removeAtomsTidy, indentList, docStructure,
 } from './md-doc.mjs';
+import { lineIndent, indentCss, itemMarker, itemBullet } from './md-structure.mjs';
 
 /** 札の操作のアイコン（外す・キャンセルの ×、再試行の ↻） */
 const X = 'M6 6l12 12M18 6L6 18';
@@ -350,7 +351,7 @@ export function createMarkdownEditor(root, o) {
     return box;
   }
 
-  function renderBlock(b, i, roles) {
+  function renderBlock(b) {
     const div = document.createElement('div');
     div.className = `md-b md-${b.kind}`;
     div.dataset.k = b.kind;
@@ -365,46 +366,81 @@ export function createMarkdownEditor(root, o) {
       return div;
     }
     if (b.kind === 'h') div.dataset.l = String(Math.min(4, /#+/.exec(b.marker)?.[0].length ?? 1));
-    if (b.kind === 'ul') div.dataset.mk = '•';
-    if (b.kind === 'ol') div.dataset.mk = b.marker.trim();
-    if (b.kind === 'ul' || b.kind === 'ol') div.style.setProperty('--ind', String(indentLevel(b.marker)));
-    if (b.kind === 'cont') div.style.setProperty('--ind', String(Math.max(0, indentLevel(b.marker) - 1)));
-    if (b.kind === 'quote') div.style.setProperty('--q', String(quoteDepth(b.marker)));
-    if (b.kind === 'code') {
-      div.spellcheck = false;
-      const role = roles[i], nextRole = roles[i + 1];
-      div.dataset.pos = `${role === 'open' ? 'top' : ''}${!nextRole || nextRole === 'open' || role === 'close' ? 'bottom' : ''}` || 'mid';
-    }
+    if (b.kind === 'code') div.spellcheck = false;
     if (b.runs.length) appendRuns(div, b.runs); else div.append(document.createElement('br'));
     return div;
   }
 
-  const keyOf = (b, i, roles) => {
+  const keyOf = (b) => {
     if (b.kind === 'att') return `att|${b.raw}|${b.path ?? ''}|${b.pid ?? ''}|${b.path ? '' : opts.pending(b.pid)?.state ?? (resolvedPids.has(b.pid) ? 'r' : 'x')}`;
     const body = () => { let k = keyMemo.get(b); if (k === undefined) { k = `|${JSON.stringify(b.runs.map(r => [r.text, r.marks.map(m => [m.id, m.t, m.d, m.url])]))}`; keyMemo.set(b, k); } return k; };
-    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}|${b.kind === 'code' ? roles[i] ?? '' : ''}${b.kind === 'code' ? roles[i + 1] ?? '' : ''}${body()}`;
+    return `${b.kind}|${b.marker}|${b.pad ? 1 : 0}${body()}`;
   };
+
+  // ---- 行の飾り（字下げ・項目の記号・引用の線・コードの角）。どれも前後の行で決まる（親の項目・番号・引用の深さ）ので、
+  // 行の中身とは別に、文書の構造（md-structure.mjs。履歴の web/render.mjs と同じ解析と同じ決まり）から毎回つける。
+  // 中身（子の要素）には触らず属性だけを替えるので、キャレット・選択・IME の途中の字は動かない
+  const decoKey = new WeakMap();
+  const CODE_ROLES = new Set(['fence-open', 'code', 'fence-close', 'icode']);
+  const BAR = 'linear-gradient(var(--line-strong),var(--line-strong))';
+  function decoOf(b, li, prevCode, code, nextCode) {
+    if (!li) return { key: '' };
+    const at = lineIndent(li.node);
+    const d = { ind: indentCss(at), mkAt: '', mk: '', bt: '', bars: '', barPos: '', q: at.bars.length, pos: '', fence: false };
+    // 行で始まる項目のうち、一番内側のものの記号を、その項目の中身の手前に置く（"- - a" は内側の記号だけ）
+    const item = li.marks.findLast((m) => m.node.t === 'item' && m.opened && m.end <= b.marker.length)?.node;
+    if (item) { d.mk = itemMarker(item); d.bt = itemBullet(item); d.mkAt = indentCss(lineIndent(item)); }
+    if (at.bars.length) { d.bars = at.bars.map(() => BAR).join(','); d.barPos = at.bars.map((x) => `${indentCss(x)} 0`).join(','); }
+    if (code) {
+      const top = prevCode !== code, bottom = nextCode !== code;
+      d.pos = top && bottom ? 'topbottom' : top ? 'top' : bottom ? 'bottom' : 'mid';
+      d.fence = li.role === 'fence-open' || li.role === 'fence-close';
+    }
+    d.key = JSON.stringify(d);
+    return d;
+  }
+  const setVar = (div, name, v) => { if (v) div.style.setProperty(name, v); else div.style.removeProperty(name); };
+  const setData = (div, name, v) => { if (v) div.dataset[name] = v; else delete div.dataset[name]; };
+  function decorate(blocks = readDoc()) {
+    const divs = blockDivs();
+    const S = docStructure(blocks, rawOf);
+    const codeOf = (i) => { const li = S.info[i]; return li && CODE_ROLES.has(li.role) ? li.node : null; };
+    divs.forEach((div, i) => {
+      const d = decoOf(blocks[i], S.info[i], codeOf(i - 1), codeOf(i), codeOf(i + 1));
+      if (decoKey.get(div) === d.key) return;
+      decoKey.set(div, d.key);
+      setVar(div, '--md-ind', d.ind);
+      setVar(div, '--md-mk-at', d.mkAt);
+      setVar(div, '--md-bar-img', d.bars);
+      setVar(div, '--md-bar-pos', d.barPos);
+      setData(div, 'mk', d.mk);
+      setData(div, 'bt', d.bt);
+      setData(div, 'q', d.q ? String(d.q) : '');
+      setData(div, 'pos', d.pos);
+      setData(div, 'fence', d.fence ? '1' : '');
+    });
+    observer.takeRecords();   // 飾りの属性は中身ではないので、読み直さない
+  }
 
   /**
    * 文書に合わせて DOM を作り直す。頭と尻で同じ行はそのまま残す（添付の画像を読み直さない）。
    * 同じかどうかは、いまの DOM を読んだ中身で比べる（打った字は DOM にだけあるので、描いたときの印は当てにならない）
    */
   function paint(blocks, { force = false } = {}) {
-    const roles = fenceRoles(blocks.map(rawOf));
-    const keys = blocks.map((b, i) => keyOf(b, i, roles));
+    const keys = blocks.map(keyOf);
     const old = blockDivs();
     const oldBlocks = readDoc();
-    const oldRoles = fenceRoles(oldBlocks.map(rawOf));
-    const oldKeys = force ? [] : oldBlocks.map((b, i) => keyOf(b, i, oldRoles));
+    const oldKeys = force ? [] : oldBlocks.map(keyOf);
     let head = 0;
     while (head < old.length && head < blocks.length && oldKeys[head] === keys[head]) head++;
     let tail = 0;
     while (tail < old.length - head && tail < blocks.length - head && oldKeys.at(-1 - tail) === keys.at(-1 - tail)) tail++;
     const fresh = [];
-    for (let i = head; i < blocks.length - tail; i++) fresh.push(renderBlock(blocks[i], i, roles));
+    for (let i = head; i < blocks.length - tail; i++) fresh.push(renderBlock(blocks[i]));
     const after = tail ? old.at(-tail) : null;
     for (let i = head; i < old.length - tail; i++) old[i].remove();
     for (const d of fresh) root.insertBefore(d, after);
+    decorate(blocks);
     markGalleries();
     syncEmpty();
   }
@@ -453,6 +489,9 @@ export function createMarkdownEditor(root, o) {
   /** 文書を反映する。reason は履歴の分け方（'type' 以外はまとめない）。native: false なら input イベントを自分で出す */
   function apply(next, reason = 'edit', { silent = false } = {}) {
     clearAtomSel();
+    // 操作の結果を構造に合わせて読み直す（親の項目を消した子・字下げを変えた行の種類）。キャレットも同じ字の上に置き直す
+    next = { ...next, blocks: next.blocks.slice(), sel: { ...next.sel, s: { ...next.sel.s }, e: { ...next.sel.e } } };
+    normalizeFences(next.blocks, { resolve, plain: plain(), raw: rawOf, sel: next.sel });
     fixPids(next.blocks);
     paint(next.blocks);
     if (hasFocus()) { setDomSel(next.sel, next.sel.after); reveal(next.sel); } else lastSel = next.sel;
@@ -484,7 +523,7 @@ export function createMarkdownEditor(root, o) {
       if (trig) {
         history.push(st, 'type');
         st = trig.state;
-        normalizeFences(st.blocks, { resolve, raw: rawOf });
+        normalizeFences(st.blocks, { resolve, raw: rawOf, sel: st.sel });
         fixPids(st.blocks);
         paint(st.blocks);
         setDomSel(st.sel, st.sel.after);
@@ -496,7 +535,8 @@ export function createMarkdownEditor(root, o) {
       }
     }
     outside = null;
-    if (normalizeFences(st.blocks, { resolve, plain: plain(), raw: rawOf })) { paint(st.blocks); if (hasFocus()) setDomSel(st.sel); }
+    if (normalizeFences(st.blocks, { resolve, plain: plain(), raw: rawOf, sel: st.sel })) { paint(st.blocks); if (hasFocus()) setDomSel(st.sel); }
+    else decorate(st.blocks);
     history.push(st, 'type');
     syncEmpty();
     report();

@@ -65,11 +65,12 @@ async page => {
   await reset(); await K.type('## Title'); await K.press('Home'); await K.press('Backspace');
   check('見出しの行頭の Backspace は本文に戻す', await val(), 'Title');
   await reset(); await K.type('> quoted'); await K.press('Enter'); await K.type('more'); await K.press('Enter'); await K.press('Enter'); await K.type('out');
-  check('引用の続き・空の行で抜ける', await val(), '> quoted\n> more\nout');
+  // 抜けた行の前に空行を挟む（挟まないと、次の行は引用・項目の段落の続き（CommonMark の遅延の続き）として履歴に描かれる。ADR 0292）
+  check('引用の続き・空の行で抜ける', await val(), '> quoted\n> more\n\nout');
   await reset(); await K.type('1. one'); await K.press('Enter'); await K.type('two');
   check('番号は 1 つ進む', await val(), '1. one\n2. two');
   await reset(); await K.press('Minus'); await K.press('Space'); await K.type('a'); await K.press('Enter'); await K.type('b'); await K.press('Enter'); await K.press('Enter'); await K.type('c');
-  check('箇条書きの続き・空の項目で抜ける', await val(), '- a\n- b\nc');
+  check('箇条書きの続き・空の項目で抜ける', await val(), '- a\n- b\n\nc');
   await reset(); await K.type('```');
   check('``` でコードブロック（閉じも足す）', await val(), '```\n\n```');
   await K.press('ArrowDown'); await K.type('const a = 1;'); await K.press('Enter'); await K.type('const b = 2;');
@@ -90,7 +91,7 @@ async page => {
     const sel = getSelection(); sel.selectAllChildren(p);
     if (where === 'end') sel.collapseToEnd(); else sel.collapseToStart();
   }, [s, at]);
-  const qdepth = () => page.evaluate(() => [...document.querySelector('#prompt').children].map(b => b.style.getPropertyValue('--q')).join(','));
+  const qdepth = () => page.evaluate(() => [...document.querySelector('#prompt').children].map(b => b.dataset.q ?? '').join(','));
   await reset(); await K.type('・foo');
   check('行頭に ・ を打っただけでは何も変わらない', [await val(), await kinds()], ['・foo', 'p']);
   await K.press('Enter'); await K.type('bar');
@@ -103,19 +104,21 @@ async page => {
   check('引用の行頭で > を打つと 1 段深くなる', [await val(), await qdepth()], ['> a\n> > b', '1,2']);
   await K.press('Enter'); await K.type('c');
   check('入れ子の引用の Enter は深さを保つ', await val(), '> a\n> > b\n> > c');
-  check('引用の行に深さの数だけ縦線が付く（computed style・面は敷かない・行の間で切れない）', await page.evaluate(() => [...document.querySelectorAll('#prompt .md-quote')].map(b => { const c = getComputedStyle(b), l = getComputedStyle(b, '::before'); return [l.backgroundImage.includes('repeating-linear-gradient') && l.backgroundImage.includes('rgb'), l.width, c.backgroundColor, c.marginTop, c.marginBottom].join('/'); })), ['true/16px/rgba(0, 0, 0, 0)/0px/0px', 'true/32px/rgba(0, 0, 0, 0)/0px/0px', 'true/32px/rgba(0, 0, 0, 0)/0px/0px']);
+  // 線は引用ごとに 1 本（::after の背景の層）。幅は中身の始まり（12px、入れ子は 12 + 4 + 12 = 28px。tokens.css の --md-quote-*）
+  check('引用の行に深さの数だけ縦線が付く（computed style・面は敷かない・行の間で切れない）', await page.evaluate(() => [...document.querySelectorAll('#prompt .md-b[data-q]')].map(b => { const c = getComputedStyle(b), l = getComputedStyle(b, '::after'); return [l.backgroundImage.split('linear-gradient').length - 1, l.width, c.backgroundColor, c.marginTop, c.marginBottom].join('/'); })), ['1/12px/rgba(0, 0, 0, 0)/0px/0px', '2/28px/rgba(0, 0, 0, 0)/0px/0px', '2/28px/rgba(0, 0, 0, 0)/0px/0px']);
   await K.press('Enter'); await K.press('Enter');
-  check('空の深い引用の Enter は 1 段戻る', await val(), '> a\n> > b\n> > c\n> ');
+  // 「> 」だけの行を挟まないと、次の行は内側の引用の続き（CommonMark の遅延の続き）になる
+  check('空の深い引用の Enter は 1 段戻る（区切りの「> 」の行を挟む）', await val(), '> a\n> > b\n> > c\n> \n> ');
   await K.press('Enter');
-  check('最後の段の空の引用の Enter は抜ける', [await val(), await kinds()], ['> a\n> > b\n> > c\n', 'quote,quote,quote,p']);
+  check('最後の段の空の引用の Enter は抜ける', [await val(), await kinds()], ['> a\n> > b\n> > c\n> \n', 'quote,quote,quote,quote,p']);
   await reset(); await setText('＞ x'); await K.press('End'); await K.press('Enter'); await K.type('y');
-  check('全角の ＞ も引用として続く', await val(), '＞ x\n＞ y');
+  check('全角の ＞ は引用にしない（履歴と同じ CommonMark の読み方）', [await val(), await kinds()], ['＞ x\ny', 'p,p']);
   await reset(); await K.type('- [ ] todo'); await K.press('Enter'); await K.type('next');
   check('チェック欄 - [ ] は - [ ] で続く（字のまま）', [await val(), await kinds()], ['- [ ] todo\n- [ ] next', 'ul,ul']);
   await setText('- [x] done'); await K.press('Enter');
   check('- [x] の次は - [ ]', await val(), '- [x] done\n- [ ] ');
   await K.press('Enter');
-  check('チェック欄だけの項目で Enter すると抜ける', await val(), '- [x] done\n');
+  check('チェック欄だけの項目で Enter すると抜ける（前に空行を挟む）', await val(), '- [x] done\n\n');
   await reset(); await K.type('- a'); await K.press('Enter'); await K.type('b'); await K.press('Tab');
   check('箇条書きの Tab は字下げ', [await val(), await page.evaluate(() => document.activeElement.id)], ['- a\n  - b', 'prompt']);
   await K.press('Shift+Tab');
@@ -133,7 +136,8 @@ async page => {
   await setText('1. a\n2. b\n3. c\n4. d'); await K.press('Control+Home'); await K.press('End'); await K.press('Delete');
   check('番号は行をつないだあとも数え直す', await val(), '1. ab\n2. c\n3. d');
   await setText('1. a\n2. b\n3. c'); await K.press('Control+Home'); await K.press('ArrowDown'); await K.press('Tab');
-  check('番号の行を字下げすると 1 から数え直し、上の並びは詰まる', await val(), '1. a\n  1. b\n2. c');
+  // 字下げは親の項目の中身の始まり（「1. 」の 3 字）にそろえる（CommonMark）
+  check('番号の行を字下げすると 1 から数え直し、上の並びは詰まる', await val(), '1. a\n   1. b\n2. c');
   await reset();
   await page.evaluate(() => {
     const dt = new DataTransfer(); dt.setData('text/plain', '1. a\n5. b');
@@ -145,7 +149,7 @@ async page => {
   await K.press('Enter'); await K.type('b');
   check('続きの行の Enter は次の項目', await val(), '- a\n  more\n- b');
   await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.press('Enter'); await K.type('z');
-  check('空の続きの行の Enter は抜ける', await val(), '- a\nz');
+  check('空の続きの行の Enter は抜ける（前に空行を挟む）', await val(), '- a\n\nz');
   await reset(); await K.type('> a'); await K.press('Shift+Enter'); await K.type('b');
   check('引用の Shift+Enter は引用のまま', await val(), '> a\n> b');
   await reset(); await K.type('- a'); await K.press('Shift+Enter'); await K.type('b');

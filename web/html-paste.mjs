@@ -250,10 +250,11 @@ export function htmlToRich(html, { parse = parseHtml, maxImages = PASTE_IMAGE_MA
       let num = parseInt(n.getAttribute('start') ?? '1', 10);
       if (!Number.isFinite(num)) num = 1;
       const res = [];
+      let width = ordered ? `${num}. `.length : 2;
       for (const c of n.childNodes) {
         if (c.nodeType !== 1 || SKIP.test(c.tagName) || hidden(c)) continue;
-        if (c.tagName === 'LI') res.push(...item(c, ordered ? `${num++}. ` : '- ', ctx2));
-        else res.push(...blocks([c], ctx2).map((x) => (x.md ? { ...x, md: `  ${x.md}` } : x)));   // li の外に置かれた入れ子のリスト
+        if (c.tagName === 'LI') { const marker = ordered ? `${num++}. ` : '- '; width = marker.length; res.push(...item(c, marker, ctx2)); }
+        else res.push(...blocks([c], ctx2).map((x) => (x.md ? { ...x, md: ' '.repeat(width) + x.md } : x)));   // li の外に置かれた入れ子のリスト（前の項目の中身の桁へ）
       }
       if (res.some((x) => x.md)) structure = true;
       return res;
@@ -265,7 +266,7 @@ export function htmlToRich(html, { parse = parseHtml, maxImages = PASTE_IMAGE_MA
         if (x.md === undefined || x.raw) return x;
         if (!x.md) return x;
         if (!placed && !x.list) { placed = true; return { md: marker + x.md, list: true }; }
-        return { md: `  ${x.md}`, list: true };
+        return { md: ' '.repeat(marker.length) + x.md, list: true };   // 項目の中身の桁へ（CommonMark: 番号の項目は記号の幅だけ下げる）
       });
     }
 

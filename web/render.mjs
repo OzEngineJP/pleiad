@@ -21,6 +21,7 @@ import { isPlyDelegateToolName } from './delegate-result.mjs';
 import { renderWorktreeLine } from './worktree-ui.mjs';
 import { renderChromeHandoverLine, renderChromeClosedLine } from './chrome-control.mjs';
 import { renderChromeProfileLine } from './chrome-profile-menu.mjs';
+import { parseStructure, codeRoles, listClass, markerExtra, lineIndent, nestDepth } from './md-structure.mjs';
 import { COMPUTER_PREFIX, isComputerTool, computerToolName, computerVerb, computerInfo, reasonShort, reasonLong, shotsOf, shotButton, stopMark } from './computer-use.mjs';
 
 // ---------------------------------------------------------------- エスケープ
@@ -356,26 +357,8 @@ function link(isImg, label, href, title, depth, noLink = false) {
 }
 
 // -------------------------------------------------------------------- ブロック
-
-const RE_FENCE = /^([ \t]{0,3})(`{3,}|~{3,})[ \t]*([^\s`]{0,30})/;
-const RE_HEAD = /^[ ]{0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/;
-const RE_HR = /^[ ]{0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/;
-const RE_QUOTE = /^[ ]{0,3}>/;
-const RE_ITEM = /^([ \t]*)([-*+]|\d{1,9}[.)])[ \t]+(.*)$/;
-const RE_DELIM = /^[ ]{0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
-
-const isDelimRow = (l) => l !== undefined && l.includes("|") && l.includes("-") && RE_DELIM.test(l);
-const isTableTop = (lines, i) => lines[i].includes("|") && isDelimRow(lines[i + 1]);
-
-/** その行が段落を打ち切る種類のブロックを始めるか */
-function startsBlock(lines, i) {
-  const l = lines[i];
-  return RE_FENCE.test(l) || RE_HEAD.test(l) || RE_HR.test(l) ||
-    RE_QUOTE.test(l) || RE_ITEM.test(l) || isTableTop(lines, i);
-}
-
-/** リストのネスト段数。契約どおり2段までに丸める */
-const level = (indent) => Math.min(1, Math.floor(indent.replace(/\t/g, "    ").length / 2));
+// 構造は web/md-structure.mjs（入力欄と同じ解き方。CommonMark のブロック。ADR 0292）。ここは木を HTML にするだけ。
+// 入れ子の深さは切らない（引用・リストの何段目でも同じ部品で描く）。字下げ・記号・番号の決まりも md-structure.mjs と web/style.css。
 
 /** `|` 区切りのセル分割。\| はセル内の縦棒として扱う */
 function cells(line) {
@@ -383,6 +366,13 @@ function cells(line) {
   if (s.startsWith("|")) s = s.slice(1);
   if (/(^|[^\\])\|$/.test(s)) s = s.slice(0, -1);
   return s.split(/(?<!\\)\|/).map((c) => c.trim());
+}
+
+/** 字の幅（全角 1 字を 2、半角を 1） */
+function widthOf(s) {
+  let width = 0;
+  for (const ch of s) width += ch.charCodeAt(0) > 0xff ? 2 : 1;
+  return width;
 }
 
 /**
@@ -393,139 +383,85 @@ export function visualLines(text) {
   let n = 0;
   for (const line of String(text ?? "").split("\n")) {
     if (!line.trim()) continue;
-    let width = 0;
-    for (const ch of line) width += ch.charCodeAt(0) > 0xff ? 2 : 1;
-    n += Math.max(1, Math.ceil(width / 88));
+    n += Math.max(1, Math.ceil(widthOf(line) / 88));
   }
   return n;
 }
 
+const inLooseList = (node) => {
+  for (let n = node; n; n = n.parent) if (n.t === "list" && !n.tight) return true;
+  return false;
+};
+
 /**
- * ブロックに分ける。meta を渡すと、out の各要素に対応する { lines }（元の行の見た目の行数。visualLines）を積む
- * （自分の発言の畳み込みが行数を見積もる。renderMarkdownBlocks）
+ * 一番外のブロック 1 つの見た目の行数（visualLines と同じ数え方）。入れ子の字下げの分だけ 1 行に入る字数を減らし
+ * （リスト 1 段で 3 桁、引用 1 段で 2 桁。24 桁より狭くはしない）、緩いリストの中の空行（段落の間）は 2 つで 1 行と数える
  */
-function parseBlocks(lines, depth = 0, meta = null) {
-  const out = [];
-  let i = 0, from = 0, seen = 0;
-  const note = () => {
-    if (!meta || out.length <= seen) return;
-    meta.push({ lines: visualLines(lines.slice(from, i).join("\n")) });
-    seen = out.length;
-  };
-  while (i < lines.length) {
-    note();
-    from = i;
-    const line = lines[i];
-    if (!line.trim()) { i++; continue; }
-
-    // コードフェンス。閉じが無いまま終わっても pre は必ず閉じる
-    const f = RE_FENCE.exec(line);
-    if (f) {
-      const [, indent, marker, lang] = f;
-      const close = new RegExp(`^[ ]{0,3}${marker[0] === "`" ? "`" : "~"}{${marker.length},}[ \\t]*$`);
-      const body = [];
-      i++;
-      while (i < lines.length && !close.test(lines[i])) {
-        body.push(lines[i].startsWith(indent) ? lines[i].slice(indent.length) : lines[i]);
-        i++;
-      }
-      if (i < lines.length) i++; // 閉じフェンスを捨てる
-      out.push(codeBlock(body.join("\n"), lang));
-      continue;
-    }
-
-    // 表（見出し行 + 区切り行）
-    if (isTableTop(lines, i)) {
-      const head = cells(lines[i]);
-      const align = cells(lines[i + 1]).map((c) =>
-        /^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : /^:-+/.test(c) ? "left" : "");
-      i += 2;
-      const rows = [];
-      while (i < lines.length && lines[i].trim() && lines[i].includes("|")) { rows.push(cells(lines[i])); i++; }
-      const at = (n) => (align[n] ? ` style="text-align:${align[n]}"` : "");
-      const th = head.map((c, n) => `<th${at(n)}>${inline(c)}</th>`).join("");
-      const tb = rows.map((r) =>
-        `<tr>${head.map((_, n) => `<td${at(n)}>${inline(r[n] ?? "")}</td>`).join("")}</tr>`).join("");
-      out.push(`<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div>`);
-      continue;
-    }
-
-    // 見出し
-    const h = RE_HEAD.exec(line);
-    if (h) { const n = h[1].length; out.push(`<h${n}>${inline(h[2])}</h${n}>`); i++; continue; }
-
-    // 水平線
-    if (RE_HR.test(line)) { out.push("<hr>"); i++; continue; }
-
-    // 引用（中身は再帰。深すぎるところで打ち切る）
-    if (RE_QUOTE.test(line)) {
-      const body = [];
-      while (i < lines.length && RE_QUOTE.test(lines[i])) {
-        body.push(lines[i].replace(/^[ ]{0,3}>[ ]?/, ""));
-        i++;
-      }
-      out.push(`<blockquote>${depth < 5 ? parseBlocks(body, depth + 1) : text(body.join("\n"))}</blockquote>`);
-      continue;
-    }
-
-    // リスト
-    if (RE_ITEM.test(line)) {
-      const buf = [];
-      while (i < lines.length) {
-        const l = lines[i];
-        if (RE_ITEM.test(l)) { buf.push(l); i++; continue; }
-        if (!l.trim()) {
-          const nx = lines[i + 1];
-          if (nx !== undefined && (RE_ITEM.test(nx) || /^[ \t]{2,}\S/.test(nx))) { buf.push(l); i++; continue; }
-          break;
-        }
-        if (/^[ \t]+\S/.test(l)) { buf.push(l); i++; continue; } // インデントされた継続行
-        break;
-      }
-      out.push(buildList(buf));
-      continue;
-    }
-
-    // 段落
-    const buf = [];
-    while (i < lines.length && lines[i].trim() && !startsBlock(lines, i)) { buf.push(lines[i]); i++; }
-    out.push(`<p>${inline(buf.join("\n").replace(/[ \t]+$/gm, ""))}</p>`);
+function blockLines(node, src, lines) {
+  let n = 0, gaps = 0;
+  for (let i = node.start; i <= node.end && i < src.length; i++) {
+    const s = src[i].slice(lines[i].at);
+    if (!s.trim()) { if (inLooseList(lines[i].node)) gaps++; continue; }
+    const { l1, ln, q } = lineIndent(lines[i].node);
+    n += Math.max(1, Math.ceil(widthOf(s) / Math.max(24, 88 - (l1 + ln) * 3 - q * 2)));
   }
-  note();
-  return meta ? out : out.join("");
+  return Math.max(1, n + Math.floor(gaps / 2));
 }
 
-/** 収集済みのリスト行から <ul>/<ol> を組む。ネストは2段まで */
-function buildList(buf) {
-  const items = [];
-  let cur = null, sub = null, ordered = null;
-  for (const line of buf) {
-    const m = RE_ITEM.exec(line);
-    if (m) {
-      const ord = /\d/.test(m[2]);
-      if (level(m[1]) === 0) {
-        if (ordered === null) ordered = ord;
-        cur = { text: [m[3]], sub: [], ordered: null };
-        items.push(cur);
-        sub = null;
-      } else {
-        if (!cur) { cur = { text: [""], sub: [], ordered: null }; items.push(cur); if (ordered === null) ordered = ord; }
-        if (cur.ordered === null) cur.ordered = ord;
-        sub = { text: [m[3]] };
-        cur.sub.push(sub);
-      }
-    } else if (line.trim()) {
-      (sub ?? cur)?.text.push(line.trim());
+function tableHtml(node) {
+  const [headRow, delimRow, ...body] = node.rows;
+  const head = cells(headRow.text);
+  const align = cells(delimRow.text).map((c) =>
+    /^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : /^:-+/.test(c) ? "left" : "");
+  const at = (n) => (align[n] ? ` style="text-align:${align[n]}"` : "");
+  const th = head.map((c, n) => `<th${at(n)}>${inline(c)}</th>`).join("");
+  const tb = body.map((row) => {
+    const r = cells(row.text);
+    return `<tr>${head.map((_, n) => `<td${at(n)}>${inline(r[n] ?? "")}</td>`).join("")}</tr>`;
+  }).join("");
+  return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table></div>`;
+}
+
+/** リスト。番号は最初の番号から（start）、2 桁以上の番号は記号の幅（--mk）を足す。記号はクラス（md-structure.mjs の listClass） */
+function listHtml(list) {
+  const tag = list.ordered ? "ol" : "ul";
+  const start = list.ordered && list.startNum !== 1 ? ` start="${list.startNum}"` : "";
+  const mk = markerExtra(list);
+  const items = list.children.map((item) => `<li>${blocksHtml(item.children, list.tight)}</li>`).join("");
+  return `<${tag} class="${listClass(list)}"${start}${mk ? ` style="--mk:${mk}"` : ""}>${items}</${tag}>`;
+}
+
+/** tight: 詰めたリストの項目の中（段落を <p> で包まない） */
+function blockHtml(node, tight = false) {
+  switch (node.t) {
+    case "para": {
+      const s = inline(node.rows.map((r) => r.text).join("\n").replace(/[ \t]+$/gm, ""));
+      return tight ? s : `<p>${s}</p>`;
     }
+    case "heading": return `<h${node.level}>${inline(node.text)}</h${node.level}>`;
+    case "hr": return "<hr>";
+    case "code": return codeBlock(node.rows.map((r) => r.text).join("\n"), (node.info.split(/[ \t]/)[0] ?? "").slice(0, 30));
+    case "table": return tableHtml(node);
+    case "bq": return `<blockquote>${blocksHtml(node.children)}</blockquote>`;
+    case "list": return listHtml(node);
+    default: return "";
   }
-  const li = (it) => {
-    const inner = inline(it.text.join("\n"));
-    if (!it.sub?.length) return `<li>${inner}</li>`;
-    const t = it.ordered ? "ol" : "ul";
-    return `<li>${inner}<${t}>${it.sub.map(li).join("")}</${t}></li>`;
-  };
-  const tag = ordered ? "ol" : "ul";
-  return `<${tag}>${items.map(li).join("")}</${tag}>`;
+}
+const blocksHtml = (nodes, tight = false) => nodes.map((n) => blockHtml(n, tight)).join("");
+
+/** 深い入れ子は、狭い幅でも中身の字が読めるよう、その囲みだけを横にスクロールさせる（Tab で入れ、読み上げで名前が分かる囲み） */
+const SCROLL_DEPTH = 6;
+function topHtml(node) {
+  const html = blockHtml(node);
+  if ((node.t !== "list" && node.t !== "bq") || nestDepth(node) < SCROLL_DEPTH) return html;
+  return `<div class="md-scroll" tabindex="0" role="region" aria-label="${esc(t("timeline.md.scroll"))}">${html}</div>`;
+}
+
+function structureOf(src) {
+  const s = String(src ?? "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
+  if (!s.trim()) return null;
+  const lines = s.split("\n");
+  return { src: lines, ...parseStructure(lines) };
 }
 
 /**
@@ -536,38 +472,23 @@ function buildList(buf) {
 export function renderAssistantMarkdown(src, savedReferences) { return renderMarkdown(withoutVisualizeReferences(src, savedReferences)); }
 
 export function renderMarkdown(src) {
-  const s = String(src ?? "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
-  if (!s.trim()) return "";
-  return parseBlocks(s.split("\n"));
+  const st = structureOf(src);
+  return st ? st.root.children.map(topHtml).join("") : "";
 }
 
 /**
- * renderMarkdown と同じ描画を、一番外のブロックごとに分けて返す（自分の発言。段落の境目で畳むため）。
- * @returns {{html: string, lines: number}[]} lines は見た目の行数の見積もり（visualLines）
+ * renderMarkdown と同じ描画を、一番外のブロックごとに分けて返す（自分の発言。段落の境目で畳むため。リストは途中で切らない）。
+ * @returns {{html: string, lines: number}[]} lines は見た目の行数の見積もり（blockLines）
  */
 export function renderMarkdownBlocks(src) {
-  const s = String(src ?? "").replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
-  if (!s.trim()) return [];
-  const meta = [];
-  const blocks = parseBlocks(s.split("\n"), 0, meta);
-  return blocks.map((html, n) => ({ html, lines: meta[n]?.lines ?? 1 }));
+  const st = structureOf(src);
+  if (!st) return [];
+  return st.root.children.map((node) => ({ html: topHtml(node), lines: blockLines(node, st.src, st.lines) }));
 }
 
-/** 行ごとに、コードフェンスの中（開き・閉じの行も含む）か。renderMarkdown がコードとして読む範囲と同じ */
+/** 行ごとに、コードフェンスの中（開き・閉じの行も含む）か。renderMarkdown がコードとして読む範囲と同じ（リスト・引用の中のフェンスも） */
 export function codeFenceMask(lines) {
-  const mask = [];
-  let close = null;
-  for (const line of lines) {
-    if (close) {
-      mask.push(true);
-      if (close.test(line)) close = null;
-      continue;
-    }
-    const f = RE_FENCE.exec(line);
-    mask.push(Boolean(f));
-    if (f) close = new RegExp(`^[ ]{0,3}${f[2][0] === "`" ? "`" : "~"}{${f[2].length},}[ \\t]*$`);
-  }
-  return mask;
+  return codeRoles(parseStructure(lines).lines).map(Boolean);
 }
 
 // ------------------------------------------------------------------- present
