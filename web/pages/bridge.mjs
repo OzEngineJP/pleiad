@@ -1,4 +1,5 @@
 import { t, setLanguage } from '../i18n.mjs';
+import { moreIcon } from '../icons.mjs';
 
 const match = /^\/_pleiad\/s\/([^/]+)\/([^/]+)$/.exec(location.pathname);
 export const sessionId = match ? decodeURIComponent(match[1]) : '';
@@ -12,6 +13,8 @@ export const node = (tag, className, value) => {
   if (value != null) el.textContent = value;
   return el;
 };
+/** web/icons.mjs の固定の SVG を要素にする（中身は手元の定数だけ） */
+export const icon = markup => { const template = document.createElement('template'); template.innerHTML = markup; return template.content.firstElementChild; };
 export const button = (label, action, className = '') => {
   const el = node('button', className, label); el.type = 'button'; el.addEventListener('click', action); return el;
 };
@@ -74,8 +77,8 @@ const receiveResult = reply => pending.get(reply?.requestId)?.(reply);
 window.addEventListener('pleiad:page-result', event => receiveResult(event.detail));
 export function fileActions(row, path, kind = 'file') {
   row.addEventListener('contextmenu', event => { event.preventDefault(); request('file-menu', { path, kind, x:event.clientX, y:event.clientY }); });
-  const more = button('⋯', event => { event.stopPropagation(); request('file-menu', { path, kind, x:event.clientX, y:event.clientY }); }, 'more');
-  more.setAttribute('aria-label', text('fileMenu')); row.append(more);
+  const more = button(null, event => { event.stopPropagation(); request('file-menu', { path, kind, x:event.clientX, y:event.clientY }); }, 'more');
+  more.append(icon(moreIcon)); more.title = text('fileMenu'); more.setAttribute('aria-label', text('fileMenu')); row.append(more);
 }
 export function size(value) { return value < 1024 ? `${value} B` : value < 1024 * 1024 ? `${(value / 1024).toFixed(1)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`; }
 export function date(value) { const d = new Date(value); return Number.isNaN(+d) ? '' : d.toLocaleString(document.documentElement.lang, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }); }
