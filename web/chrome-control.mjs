@@ -14,7 +14,7 @@ export function ensureBrowserControlStyles() {
   if (document.getElementById('browser-control-styles')) return;
   const style = el('style'); style.id = 'browser-control-styles';
   style.textContent = `
-.b2-control{position:relative;flex:0 1 84px;min-width:26px;container-type:inline-size;width:84px}
+.b2-control{position:relative;flex:0 1 84px;min-width:26px;width:84px}
 .b2-control[hidden],.b2-pop[hidden],.b2-strip[hidden],.b2-full[hidden],.b2-sheet[hidden],.b2-fallback[hidden],.b2-phone-note[hidden]{display:none!important}
 .b2-chip{display:flex;align-items:center;justify-content:center;gap:6px;height:26px;width:100%;border:0;border-radius:13px;background:transparent;color:var(--ink);font:inherit;font-size:12px;cursor:pointer;white-space:nowrap}
 .b2-chip:hover,.b2-chip[aria-expanded=true]{background:var(--surface-2)}
@@ -35,7 +35,6 @@ export function ensureBrowserControlStyles() {
 .b2-phone-note{position:fixed;z-index:96;left:8px;right:8px;bottom:8px;padding:6px 10px;border-radius:8px;background:var(--surface-1);box-shadow:0 4px 16px var(--shadow);color:var(--ink-weak);font-size:12px;line-height:1.5;text-align:center;pointer-events:none}
 .b2-fallback{position:fixed;z-index:96;left:8px;right:8px;bottom:8px;display:flex;gap:8px;padding:8px;border-radius:12px;background:var(--surface-1);box-shadow:0 8px 28px var(--shadow)}.b2-fallback input{min-width:0;flex:1;font:inherit;font-size:16px;color:var(--ink);background:var(--surface-2);border:0;padding:10px;border-radius:8px}
 .b2-sheet{position:fixed;inset:0;z-index:100;display:flex;align-items:flex-end;justify-content:center;background:var(--surface-veil)}.b2-sheet-body{width:min(100%,480px);max-height:70dvh;overflow:auto;padding:20px;box-sizing:border-box;border-radius:16px 16px 0 0;background:var(--surface-1);color:var(--ink);box-shadow:0 -8px 28px var(--shadow)}.b2-sheet-title{font-size:16px;font-weight:600;margin:0 0 12px}.b2-sheet-message{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}.b2-sheet-option{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px}.b2-sheet input[type=text]{box-sizing:border-box;width:100%;font:inherit;font-size:16px;padding:10px;margin:10px 0}.b2-sheet-error{color:var(--ink-strong);font-size:13px;margin:8px 0}
-@container(max-width:40px){.b2-chip-label{display:none}}
 @media(prefers-reduced-motion:reduce){.b2-full{transition:none}.b2-ripple{animation:none;opacity:.7}}
 `;
   document.head.append(style);
@@ -55,6 +54,10 @@ export function createControlBadge({ mount, onStop = () => {}, onResume = () => 
   const close = (restore = false) => { popup.hidden = true; button.setAttribute('aria-expanded', 'false'); if (restore) button.focus(); };
   // 窓の大きさが変わったら閉じるだけ（札へ戻さない。スマホではキーボードが開くと窓が縮み、ページの欄から札へ移ってキーボードが閉じた）
   const shrink = () => close();
+  // 名前が収まらない幅では点だけにする（途中で切れた名前を出さない。名前の長さは担当ごとに違うので幅の閾値では決めない）
+  const fit = () => { label.hidden = false; label.hidden = button.scrollWidth > button.clientWidth; };
+  const sizes = typeof ResizeObserver === 'function' ? new ResizeObserver(fit) : null;
+  sizes?.observe(root);
   const outside = event => { if (!root.contains(event.target) && !popup.contains(event.target)) close(); };
   const key = event => { if (event.key === 'Escape' && !popup.hidden) { event.stopPropagation(); close(true); } };
   const place = () => { const rect = button.getBoundingClientRect(); popup.style.top = `${rect.bottom + 8}px`; popup.style.left = `${Math.max(8, Math.min(innerWidth - 264, rect.right - 256))}px`; };
@@ -78,9 +81,10 @@ export function createControlBadge({ mount, onStop = () => {}, onResume = () => 
     action.classList.toggle('primary', human || !!next.paused);
     for (const node of [dot, stateDot]) { node.dataset.holder = human ? 'human' : 'ai'; node.dataset.waiting = String(!!next.waiting); }
     if (root.hidden) close();
+    fit();
   }
   update();
-  return { element: root, update, close, destroy() { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); window.removeEventListener('resize', shrink); root.remove(); popup.remove(); } };
+  return { element: root, update, close, destroy() { sizes?.disconnect(); document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); window.removeEventListener('resize', shrink); root.remove(); popup.remove(); } };
 }
 
 /** Mount beside a tab title; active means the agent is currently operating this tab. */

@@ -149,6 +149,22 @@ window.ready=true;
     await page.locator('.bu-count').click(); check('phone tab overview shows two thumbnails', await page.locator('.bu-card').count() === 2 && await page.locator('.bu-card-label .bu-favicon').count() === 2 && await page.locator('.bu-overview-new').count() === 1); await shot('360-tabs'); await page.locator('.bu-count').click();
     await page.evaluate(() => document.documentElement.dataset.theme='dark'); await shot('360-dark');
     await page.setViewportSize({width:1280,height:720}); await shot('1280-dark');
+    const badges = await page.evaluate(async () => {
+      const { createControlBadge } = await import('/web/chrome-control.mjs');
+      const frame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const measure = async (name, width, resize) => {
+        const mount = document.createElement('div'); mount.style.cssText = `display:flex;width:${width}px`; document.body.append(mount);
+        const badge = createControlBadge({ mount }); badge.update({ agentUsed: true, name, holder: name ? 'ai' : 'human' }); await frame();
+        if (resize) { mount.style.width = `${resize}px`; await frame(); }
+        const chip = badge.element.querySelector('.b2-chip'), label = badge.element.querySelector('.b2-chip-label');
+        const result = { shown: !label.hidden && label.getBoundingClientRect().width > 0, fits: chip.scrollWidth <= chip.clientWidth };
+        badge.destroy(); mount.remove(); return result;
+      };
+      return { wide: await measure('Claude', 84), narrow: await measure('Claude', 40), long: await measure('Antigravity', 56), you: await measure(null, 84), shrunk: await measure('Claude', 84, 40) };
+    });
+    check('control badge shows the name when it fits', badges.wide.shown && badges.wide.fits && badges.you.shown && badges.you.fits, JSON.stringify(badges));
+    check('control badge shows only the dot instead of a cut-off name', !badges.narrow.shown && badges.narrow.fits && !badges.long.shown && badges.long.fits, JSON.stringify(badges));
+    check('control badge hides the name when its place narrows later', !badges.shrunk.shown && badges.shrunk.fits, JSON.stringify(badges));
     check('browser components render without JavaScript errors', errors.length === 0, errors.join('; '));
     // Actual Chrome targets feed the same tab-info producer and rendered strip.
     const { createTabInfo } = await import(pathToFileURL(path.join(repo, 'core/chrome/tab-info.mjs')).href);
