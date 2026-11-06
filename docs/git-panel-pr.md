@@ -1,6 +1,6 @@
-# git パネルの PR（頭の PR の行）
+# git のページの PR（頭の PR の行）
 
-右パネル「git」の頭に、**この会話の PR と、委譲した子の会話の PR** を 1 つの一覧で出す（承認済み（2026-10-14）、[ADR 0206](adr/0206-git-panel-prs-of-conversation-and-children.md)）。画面は `docs/design-system.md`「git の動き」の右パネル「頭」。PR は git パネルの頭にだけ出し、会話の頭の行・委譲カード・脇の一覧には出さない（[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。
+会話の Chrome の git のページの頭に、**この会話の PR と、委譲した子の会話の PR** を 1 つの一覧で出す（承認済み（2026-10-14）、[ADR 0206](adr/0206-git-panel-prs-of-conversation-and-children.md)）。画面は `docs/design-system.md`「git の動き」のページの「頭」。PR は git のページの頭にだけ出し、会話の頭の行・委譲カード・脇の一覧には出さない（[ADR 0085](adr/0085-host-reads-git-and-turn-snapshots.md)）。
 
 ## PR の決め方
 

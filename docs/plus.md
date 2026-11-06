@@ -316,7 +316,7 @@ Plus のアカウントの PC どうしで、設定・スキル・全体の指�
 
 | 運ぶ | 運ばない |
 | --- | --- |
-| `locale`・`linkOpen`・`instructionBudget`・`backend`・`memoryLearnBackend`・`memoryLearnAt`・`memoryLearnPaused`・`model`・`effort`・`shellTool`・`composer.historyRecall`・`composer.suggestions`・`compaction.auto` | human-only（`mode`・`claudeAccount`・`account`）・guarded（`launchAtLogin`・`delegationRouting`・`plyInstructions`・`addedContext`・`context.default`）・`riskOf`（`confirmAgentSites`・`chromeAutoAllow`・`confirmExternalLoads`・`agentSitePermissions`・`externalSitePermissions`・`computerUse`・`voice`）・読むだけ（`repoDefaults`）・この PC に固有（`chromeProfileNotes`・`chromeNewProfile`） |
+| `locale`・`instructionBudget`・`backend`・`memoryLearnBackend`・`memoryLearnAt`・`memoryLearnPaused`・`model`・`effort`・`shellTool`・`composer.historyRecall`・`composer.suggestions`・`compaction.auto` | human-only（`mode`・`claudeAccount`・`account`）・guarded（`launchAtLogin`・`delegationRouting`・`plyInstructions`・`addedContext`・`context.default`）・`riskOf`（`confirmAgentSites`・`chromeAutoAllow`・`confirmExternalLoads`・`agentSitePermissions`・`externalSitePermissions`・`computerUse`・`voice`）・読むだけ（`repoDefaults`）・この PC に固有（`chromeProfileNotes`・`chromeNewProfile`） |
 
 全部の判断と理由は `tests/unit/ops-settings.mjs` の表にある（設定を足すと、表に無いことで試験が落ちる）。
 

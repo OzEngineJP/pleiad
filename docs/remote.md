@@ -193,7 +193,7 @@ stream 0 はチャネル自体。端末が開くストリームは奇数、ホ�
 - 端末から来た `Cookie`・`Authorization`・`?token=`・`Host`・`Origin`・hop-by-hop のヘッダーを捨て、**ホストの UI トークンを接続口が付ける**（HTTP は Cookie、`/ws` は `?token=`）。接続口はサーバーと同じプロセスにいるので `TOKEN` と実際のポートを知っている
 - 応答の `Set-Cookie`（`agent_host_token`。`core/server.mjs` の静的配信）を捨てる。**ホストの UI トークンは端末に届かない**
 - **WebSocket の `/agent` は接続口が自分で受ける**（ローカルのサーバーへは転送しない。§4.5）。`forward.mjs` は `/agent` を通さない（RESET 3）ので、同じパスがホストのローカルのサーバーに届くことは無い。端末の AI からの依頼は、この口の上の決まった種類の便りだけ
-- 既存サーバーのコード（トークン照合・静的配信・`/ws`）は変えない。変えるのは起動時に接続口を立てる数行だけ
+- Pleiad のページは本体の `/_pleiad/` へ、隔離の資源は決めた隔離のリスナーへ転送する。転送先・パス・応答量を両端で検査する（§8.5）
 
 実装（`core/remote/forward.mjs`）では、端末のヘッダーは決まったものだけを通す（`accept`・`accept-language`・`accept-encoding`・`cache-control`・`pragma`・`if-none-match`・`if-modified-since`・`if-range`・`range`・`user-agent`）。パスは WHATWG の URL で読み直し、`/mcp` の判定は小文字にしたものと復号したものの両方で行い、判定した形のまま送る。通さないもの（`/mcp`・`/api/ops`・GET/HEAD 以外・`/ws` 以外の WebSocket）はどれも RESET 3。
 
@@ -627,7 +627,7 @@ iOS も A 案にした（2026-10-06、[ADR 0144](adr/0144-ios-remote-core-in-swi
 - 起動時に前回のホストを開く（2026-10-01）: ランチャーから起動したときは、ホスト一覧ではなく最後に使ったホストの窓を開く（一覧はその下に残る）。ホストの窓（`HostActivity`）を開いたら、そのホストの ID だけを `SharedPreferences`（`ResumeStore`）に覚える（秘密は含まない）。最後の会話は web/ の `agent-host-current`（localStorage）が復元するので、殻は会話を覚えない（プロキシのポートはホストごとに覚えているので、オリジンが変わらず localStorage が残る）。覚えたホストは次のとき**消す**: 「ホスト一覧に戻る」（`backToHosts` / `closeWindow`）、窓がまだ無いときの戻るボタン、ホストの削除、覚えたホストが未登録・取り消し済みと判ったとき。戻るボタンでの背面（`moveTaskToBack`）・OS による終了・最近使ったアプリからの消去では消さないので、次の起動でまた同じホストが開く。開くのは、画面が復元でない（`savedInstanceState == null`）・起動の intent が `ACTION_MAIN`（`pleiad://pair` のリンクでの起動ではない）・覚えたホストが登録済みで取り消されていない、のすべてを満たすときだけ（`remote-core` の `ResumePolicy`。JVM の試験つき）。それ以外は今までどおり一覧を出す。判定は `MainActivity.onCreate` の先頭、Capacitor の WebView を作る前に行って `HostActivity` を起こす。ランチャーの入口は `MainActivity` とは別の `LauncherActivity`（画面を持たない透過のトランポリン、`standard`）に分けてある（2026-10-20、[ADR 0237](adr/0237-android-launcher-trampoline.md)）。`singleTask` の殻を入口にすると、OS がタスクの上の画面（ホストの窓）を終了させてから `onNewIntent` に `ACTION_MAIN` を届けるので、アイコンを押すたびに窓が作り直されていた。入口が透過の画面なら、既存のタスクへのタップはそのタスクを前へ出すだけ（上に置かれた入口がすぐ閉じる）で、生きているホストの窓が最近使ったアプリから戻ったときと同じくそのまま出る。新しいタスクのときだけ入口は起動を `MainActivity` へ渡して閉じる（分岐は `ResumePolicy.launcherRoute`）。`MainActivity` は `singleTask` のままなので、`pleiad://pair`・`pleiad://open` のリンクは従来どおり既存のインスタンスの `onNewIntent`（または新規の `onCreate`）へ届く。殻へ `ACTION_MAIN` が届く経路（明示のコンポーネント起動）でも同じ判定でホストの窓を開き直す（`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY` の付いた履歴からの復元は開き直さない。`ResumePolicy.isLauncherStart`）
 - オフライン・取り消しの案内（`DeviceProxy.unavailablePage`）には「ホスト一覧に戻る」のボタンを置く（2026-10-01）。ホストがつながらないまま自動で開いた窓から一覧へ出る口が、これしか無いため。ボタンは `window.backToHosts`（ホストの窓が入れる。上の「ホストの窓」の項）があるときだけ出し、押すと一覧へ戻って覚えたホストも消す。案内のページはプロキシ自身が返す応答で CSP を付けていないので、インラインのスクリプトで足りる。5 秒ごとの再読み込みはそのまま（取り消し済みは再読み込みしない）。文言は `ProxyTexts.backToHosts()`（アプリは `strings.xml` の `remote_back_to_hosts`。画面の `remote.backToHosts` と同じ）
 - 画面の端: 状態バー・ナビゲーションバー・切り欠きの下には画面を描かない（2026-09-24。それまでは edge-to-edge で web/ の `env(safe-area-inset-*)` に任せていたが、全面に重なる面（ファイルのプレビューなど）や WebView の版によって状態バーの時刻とタイトル・本文が重なった）。殻が WebView をバーとキーボードの分だけ内側に寄せ、insets を消費するので web/ の `env(safe-area-inset-*)` は 0 になる。バーには色だけを塗る: 状態バーは画面の上端の地の色、ナビゲーションバーと左右は下端の地の色（画面が `plyRemote.setTheme(dark, { top, bottom })` で知らせる。client.mjs の `paintShellTheme` が上端・下端の中ほどの要素の地の色を読み、脇・設定の開閉と幅の変化で送り直す）。記号の明暗も画面の配色に合わせる（初めは OS の明暗と紙の色。`HostActivity.applyBars`）。**殻の作り直しが要る**。`window.backToHosts` も `plyRemote.backToHosts` と同じものを入れる（web/remote-badge.mjs が両方を見る）
-- 添付は WebView のファイル選択（`#fileIn`）。複数選択の返りは結果 intent の `clipData` に入り `getData()` は空なので、殻は `remote-core` の `PickedFiles` で読む（`FileChooserParams.parseResult` が `getData()` しか見ない WebView の版では複数選択がキャンセル扱いになった。2026-10）。複数選択の要求（`MODE_OPEN_MULTIPLE`）では `EXTRA_ALLOW_MULTIPLE` を殻が付け直す（`createIntent()` が付けない版がある）。ダウンロードは DownloadManager にプロキシの Cookie を付けて渡す。リンクと可視化の「ブラウザーで開く」は §8.5
+- 添付は WebView のファイル選択（`#fileIn`）。複数選択の返りは結果 intent の `clipData` に入り `getData()` は空なので、殻は `remote-core` の `PickedFiles` で読む（`FileChooserParams.parseResult` が `getData()` しか見ない WebView の版では複数選択がキャンセル扱いになった。2026-10）。複数選択の要求（`MODE_OPEN_MULTIPLE`）では `EXTRA_ALLOW_MULTIPLE` を殻が付け直す（`createIntent()` が付けない版がある）。ダウンロードは DownloadManager にプロキシの Cookie を付けて渡す。リンクと可視化の「広げる」は §8.5
 - 版: Capacitor 8.5.2、@capacitor/app 8.1.1、@capacitor-mlkit/barcode-scanning 8.2.1、AGP 8.13.0、Gradle 8.14.3、Kotlin 2.2.21、OkHttp 4.12.0、compile / target 36、**minSdk 33**。アプリ ID `dev.pleiad.android`（iOS の Bundle ID は `dev.pleiad.app`。2026-10-23 に Android だけ変えた。`docs/android-releases.md`「Google Play」。デスクトップは `jp.ply.desktop`。ストアに出す前に揃えるか決める）
 
 - ビルドと手元の確認: `cd mobile && npm ci && npx cap sync android && cd android && gradlew assembleDebug`（**JDK 21 以上**。Capacitor の `capacitor-android` が Java 21 でコンパイルするため、JDK 19 では「21は無効なソース・リリースです」で落ちる（2026-09-24）。`JAVA_HOME` を 21 以上に向けてから打つ。`local.properties` に `sdk.dir`）。`cap sync` を省くと `capacitor-cordova-android-plugins/cordova.variables.gradle` が無いと言って落ちる。Windows では `cap sync` が追跡中の `app/capacitor.build.gradle` と `capacitor.settings.gradle` を改行だけ書き換えるので、`git checkout --` で戻してからコミットする。本番の中継を使わずに確かめるなら `node mobile/scripts/fake-host.mjs --relay-port 8787` と `adb reverse tcp:8787 tcp:8787` で、端末の `http://127.0.0.1:8787` が手元の中継になる（出てくる `pleiad://pair?...` を `adb shell am start -a android.intent.action.VIEW -d '<それ>'` で渡すか貼り付ける）
@@ -675,24 +675,23 @@ App Store の審査: 殻がホスト一覧・QR ペアリング・Keychain の�
 - **タップの反応**: 引き出しの開閉は `side-open` と `aria-expanded` だけをタップの中で切り替え、一覧の描き直し・背後の `inert`・フォーカスは次のフレームの後（`settleDrawer`）へ回す。開く動きは次のコマで始まる。Tab は開いている間は脇の中だけを巡り、読み上げの扱いも変えない。連打しても最後の状態に落ち着く（300 ms の安全の timer が rAF の止まった背面でも後始末を通す）
 
 
-### 8.5 リンク
+### 8.5 会話のブラウザーとリンク
 
-リモートの窓・モバイル版・LAN のブラウザー（ホストの PC の画面ではないところ）で、会話のリンクや可視化の「ブラウザーで開く」を押したときの行き先（2026-09-27、issue #33 の段階 0）。ホストがデスクトップ版なら、先に下からのシートで「内蔵ブラウザーで開く / 既定のブラウザーで開く / リンクをコピー」を選ぶ（2026-09-28、段階 4。2026-10-14 に [ADR 0207](adr/0207-html-route-and-remote-browser-panel.md) でこの 3 つにした。docs/inapp-browser.md「リモートから見る」）。下の表は「既定のブラウザーで開く」を選んだとき、またはホストに内蔵ブラウザーが無いとき（`npm start`）の行き先。規則は 3 か所が同じ表で持つ: 画面の `web/host-only-links.mjs`、デスクトップ版の `desktop/remote-windows.cjs` の `linkTarget`、Android の `LinkPolicy`（`mobile/android/remote-core`）。
+リモートの端末でも、その会話の Chrome のタブを使う。Web・HTML はホストの Chrome の映像で見て、ファイル・フォルダー・git・プラグインは端末内の Pleiad のページで読む。ホストの localhost のリンクを端末自身の localhost に開き直さない。Chrome が無いホストでは、Web のリンクは端末の既定のブラウザーへ、ファイルなどは本体の iframe へ開く。
 
-| 行き先 | 例 | 開く場所 |
-|---|---|---|
-| Web のページ（http・https） | 会話の外部リンク、認可のページ | 端末の既定のブラウザー。デスクトップ版はその PC、Android は `Intent.ACTION_VIEW`、LAN のブラウザーは新しいタブ。URL に資格情報（`user:pass@`）があるものと、ほかのスキームは開かない |
-| 可視化の写し（`/visualization-snapshot`） | 右パネルの可視化の「ブラウザーで開く」 | アプリの中。デスクトップ版はリモートの窓と同じ保存領域の別の窓（preload なし）、Android はホストの窓の上のシート（題と「閉じる」。戻るでも閉じる）。LAN のブラウザーは新しいタブ |
-| localhost・ループバック（`localhost`・`*.localhost`・`127.0.0.0/8`・`0.0.0.0`・`[::1]`） | エージェントが立てた開発サーバー | 端末では開かない（端末で開くと端末自身を指す）。ホストがデスクトップ版ならシートを挟まずホストの内蔵ブラウザーのタブで開き、そうでなければ「localhost のリンクはホストの PC でだけ開けます。」と知らせる。ホストの PC の画面（`osActions`）では普通に開く |
+端末内のファイルのページは、本体と同じ出どころの `/_pleiad/` を使う。端末の Cookie で入り、ホストの本体の鍵は端末へ渡さない。ホストへの転送では入口が鍵を付け直す。URL に `?token=` を入れない。端末内の入口は GET・HEAD、Host・Cookie を検査する。ホストのページ専用の入口が行う `Sec-Fetch-Site` の検査とは分ける。現在の Node 版の端末内プロキシはこのヘッダーを検査・転送しない。ホスト側の規則は [会話のブラウザー](inapp-browser.md#pleiad-のページと認証) を参照。
 
-- **写しを端末のブラウザーへ渡さない。** 写しは端末内プロキシ（`127.0.0.1:<p>`）を通って届き、プロキシはトークンの Cookie（`HttpOnly`・`SameSite=Strict`）で守る。Cookie はアプリの保存領域にしか無いので、端末のブラウザーでは 401 になる。URL に鍵を載せる案（短い寿命・1 回限り・その写しだけに効く）は採らない: プロキシが 2 つ（Node と Kotlin）あり両方に鍵の発行と検証が要る、鍵がブラウザーの履歴に残る、アプリを離れるとプロキシが止まって開けない。アプリの中で開けば、認証は今の Cookie のままで、写しの応答（`sandbox allow-scripts` の CSP で不透明なオリジン。docs/visualize.md）も変わらない
-- 画面は `plyRemote` があれば、写しの URL を `window.open(url, '_blank', 'noopener')` で直接渡す（空の窓では殻が行き先を知れない）。殻は窓を返さないので、null でも「開けなかった」とは出さない
-- localhost の知らせは画面が出す（`watchHostOnlyLinks`。取り込みの段階で `click` と中クリックを見る。サーバーのある PC の画面なら何もしない）。iframe の中のリンクは画面に届かないので、殻が同じ規則で止める
-- **Android**: `setSupportMultipleWindows(true)` で新しい窓（`target=_blank`・`window.open`）を `onCreateWindow` で受ける。押したとき（`isUserGesture`）だけ。受けた窓は素の WebView（`plyRemote`・ダウンロード・さらに窓を開く口を入れない。スクリプトは写しのために動かす）で、最初の遷移で振り分け、写しでなければ捨てる（10 秒どこへも行かない窓も捨てる）。WebView は新しい窓の最初の遷移で `shouldOverrideUrlLoading` を呼ばないことがあるので、`onPageStarted` でも振り分ける。本体の画面から出る遷移も同じ規則。殻の知らせは Toast（文言は画面の辞書と同じ `link_host_only`）
-- **デスクトップ版のリモートの窓**: `setWindowOpenHandler` は窓を開かせず（`deny`）、行き先で振り分ける。Web は http も https も既定のブラウザー（ローカルの窓の `external` は https だけ）。写しの窓の中の遷移と新しい窓も同じ規則で外へ出し、写しの窓自体は移らない。クリップボードの許可はリモートの窓そのものだけ（写しの窓も同じオリジンの URL を持つので、窓でも確かめる）。リモートの窓を閉じると写しの窓も閉じる
-- 写しの中の `target=_blank` は写しの sandbox（`allow-popups` なし）が止める。`target` の無いリンクは上の規則で端末のブラウザーへ
-- ホストの内蔵ブラウザーの映像を右パネルの「ブラウザー」で見る（画面の転送）は docs/inapp-browser.md「リモートから見る」。フレームと入力は中継の既存の WS 経路（`{ kind: "screencast" }` と `browserScreencast*` のコマンド）を通り、新しいポートは開けない。殻の変更は無い（戻るボタンは `plyremote:back` でシートと画面を閉じる）。HTML ファイルは、リモートではホストの内蔵ブラウザーにこの会話のタブを足して右パネルで見る（ホストの OS の既定のアプリで開く経路は出さない。§7.3）
-- 確かめ方（2026-09-27）: Android はエミュレーター（API 33）で `mobile/scripts/fake-host.mjs` と `adb reverse` の中継につなぎ、WebView の DevTools の口（`webview_devtools_remote_<pid>`）から押した。デスクトップ版は Electron の中で `createRemoteWindows` を偽のホストにつないで押した。LAN のブラウザーは、エミュレーターの Chrome から `X-Forwarded-For` を足すプロキシ経由で開いた。単体の試験は `tests/unit/remote-links.mjs` と `LinkPolicyTest`
+隔離した HTML と可視化は、端末内にも別のリスナーを立てる。許すのは `/viz/` と `/f/` だけで、任意の URL やポートを中継しない。端末とホストの両方で転送先を検査し、本体の Cookie を隔離の入口へ渡さない。ページ内のポートは端末内の値へ置き換え、CSP も合わせる。
+
+ページの返送量は、ファイルのページと API が 8 MiB、raw の取得と隔離の資源が 32 MiB までにする。ホストの接続口と端末内プロキシの両方で検査し、超えた応答は止める。暗号化したまま運ぶ中継サーバーは本文を解釈せず、既存のフレームの大きさと接続の認証を検査する。
+
+Chrome の映像と入力は、既存の暗号化された WebSocket の道を使う。見る画面ごとに返事待ちの 1 枚だけを送り、古い映像を最新で置き換える。画質は 7 段で自動調整し、遅い端末がほかの端末を待たせない。映像だけの帯域の上限はまだ設けず、送信量を記録する（[ADR 0294](adr/0294-screencast-ack-paced-quality.md)）。
+
+スマホの会話の上にはホスト名・アドレス・タブの数・⋮ の帯を出す。タブの数から縮小画像の一覧を開く。人が入力や移動でタブに触ったら、そのタブだけ人の操作にする。最後の操作から 60 秒で戻し、`hand_to_user` の依頼中と PC の窓を出している間は戻さない。「止める」は会話全体に効く。
+
+スマホの文字は、ページの入力位置に重ねた透明な入力欄から直接送る。入力モード・確定キーと日本語の変換を合わせ、既存の値は写さない。パスワード欄は現在、直接入力できない案内のシートを出す。キーボードの出入りではページの大きさを変えず、映像を手元で動かす。JavaScript の確認・選択肢・ファイルの選択はシートにする。端末で選んだファイルは 10 個・合計 8 MiB までホストへ送り、ホストのパスを返さない。
+
+外で開く操作は URL のメニューから選ぶ。端末の既定のブラウザーには、資格情報を含まない http(s) の Web リンクだけを渡す。ホストのファイルを既定のアプリやエクスプローラー／Finder で開く操作は、リモートには出さない。可視化は認証した端末内の表示で読み、外部のブラウザーへ本体の鍵や Cookie を渡さない。
 
 ### 8.6 画面の殻を端末に持つ（2026-10-09、[ADR 0181](adr/0181-mobile-static-shell-cache.md)）
 

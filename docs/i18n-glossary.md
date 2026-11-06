@@ -29,8 +29,8 @@
 | Pleiad タスク | Pleiad task |
 | 承認 | approval |
 | 外部の読み込み（ブラウザーの設定の見出し。旧「確認」） | External resources |
-| 内蔵ブラウザー（Pleiad の中のブラウザー。リモートでは「ホストの内蔵ブラウザー」） | built-in browser（「in-app browser」は使わない） |
-| ブラウザー（右パネルのモード名。ホストの画面もリモートも同じ。「PC のブラウザー」とは言わない） | Browser |
+| 会話のブラウザー（その会話の Chrome のウィンドウ） | conversation browser（Chrome window） |
+| ブラウザー（会話の Chrome を開く入口。ホストの画面もリモートも同じ） | Browser |
 | 既定のブラウザー | default browser |
 | 外部の読み込み / 許可したサイト / 止めた出どころ | External resources / Allowed sites / Blocked origins |
 | 一度だけ / このサイトは常に / 断る | Just once / Always for this site / Deny |
