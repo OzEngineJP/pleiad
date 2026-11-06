@@ -145,6 +145,11 @@ export default async function (t) {
     await fresh.set({ place: null, kind: 'mcp', value: { ...defaultKind(), owner: 'ply', disabled: ['b', 'a', 'a'], prefer: { dup: 'x/.mcp.json' } } });
     here = await fresh.get(abc);
     t.ok('外部 MCP の名前での除外と、同名の定義の選択を持てる', here.plan.mcp.disabled.join() === 'a,b' && here.plan.mcp.prefer.dup === path.join(home, 'x/.mcp.json'));
+    // Skills も同じ名前の定義の選択（名前 → SKILL.md）を持てる。場所に保存した選択は、保存した場所から解決する
+    await fresh.set({ place: a, kind: 'skill', value: { ...defaultKind(), owner: 'ply', prefer: { same: '.claude/skills/same/SKILL.md' } } });
+    here = await fresh.get(abc);
+    t.ok('Skills の同名の定義の選択を持ち、計画に載せる', here.plan.skill.prefer.same === path.join(a, '.claude/skills/same/SKILL.md') && here.plan.mcp.prefer.dup === path.join(home, 'x/.mcp.json'));
+    await fresh.set({ place: a, kind: 'skill', value: null });
     await fresh.set({ place: other, add: true });
     const shown = await fresh.view(abc);
     const current = shown.places.find(p => p.current);

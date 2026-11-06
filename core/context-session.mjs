@@ -33,7 +33,7 @@ export async function nativeInstructionEntries(cwd, agent, scanOptions = {}) {
   if (!sources) return { cwd, agent, entries: null };
   const scope = { sources, excludePaths: [] };
   const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'instruction' ? scope : null]));
-  const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
+  const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} }, skill: { prefer: {} } } }, scanOptions);
   const seen = new Set(), entries = [];
   for (const e of scan.entries) {
     if (e.kind !== 'instruction' || e.status !== 'candidate' || typeof e.content !== 'string') continue;
@@ -119,7 +119,7 @@ export function createContextSession({ store, snapshots, plyServers = async () =
     const owners = mcpAgents();
     const scope = { sources: [...new Set(owners.flatMap(([, s]) => s))], excludePaths: [] };
     const kinds = Object.fromEntries(KINDS.map(k => [k, k === 'mcp' ? scope : null]));
-    const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} } } }, scanOptions);
+    const scan = await scanContext({ cwd, plan: { user: { roots: [], kinds }, directory: { roots: [], kinds }, mcp: { disabled: [], prefer: {} }, skill: { prefer: {} } } }, scanOptions);
     const agents = Object.fromEntries(owners.map(([id]) => [id, []]));
     for (const e of scan.entries) {
       if (e.kind !== 'mcp') continue;

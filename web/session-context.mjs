@@ -134,6 +134,8 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let hooks = { key: null, data: null };
   // 「この場所だけ変える」の間の Hooks の担当（plyHooks { cwd }）と、開いている切り替えの確認（'ply' | 'native' | null。ADR 0049）
   let hooksPlace = { cwd: null, view: null }, hooksConfirm = null;
+  // 同じ名前の Skill の定義の選択肢を［変更］で開いている名前（ADR 0290）
+  const choiceOpen = new Set();
 
   const title = t('sessionContext.title');
   function subtitle(data) {
@@ -187,7 +189,7 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
   let shownFor = null;
   function render() {
     // 別の会話へ移った。前の会話の差分・ログインの途中経過・変えている途中は持ち越さない
-    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; reviewError = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; hooksConfirm = null; }
+    if (session()?.id !== shownFor) { shownFor = session()?.id ?? null; diff = null; diffOpen = false; notice = ''; reviewError = ''; logins.clear(); removedPending.clear(); edit = false; editScan = null; unifying = false; hooksConfirm = null; choiceOpen.clear(); }
     const data = info();
     const box = el('div', 'scx');
     if (data?.pending || data?.error) box.append(stateLine(t(data.pending
@@ -697,7 +699,13 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
     if (!ply) { k.append(el('p', 'cx-sub', t('sessionContext.skill.native', { agent: backendLabel() }))); return k; }
     // 使ったものを先に。多いので最初の数件だけ並べ、残りは畳む
     const sorted = [...offered.filter(e => e.status === 'loaded'), ...offered.filter(e => e.status !== 'loaded')];
-    const make = e => item('✓', e.name, [shortPath(dir(dir(e.path))), e.status === 'loaded' ? t('sessionContext.skill.usedMark') : e.status === 'manual-only' ? t('sessionContext.skill.manualOnly') : ''].filter(Boolean).join(' · '), { on: true }).row;
+    // 同じ名前の定義が複数あったとき、使わなかった方（core/context-runtime.mjs の markChoices）
+    const unused = rows.filter(e => e.shadowedBy === 'choice');
+    const make = e => {
+      const { row, body } = item('✓', e.name, [shortPath(dir(dir(e.path))), e.status === 'loaded' ? t('sessionContext.skill.usedMark') : e.status === 'manual-only' ? t('sessionContext.skill.manualOnly') : ''].filter(Boolean).join(' · '), { on: true });
+      if (e.choice) body.append(...skillChoice(e, [e, ...unused.filter(x => x.name === e.name)]));
+      return row;
+    };
     grouped(k, sorted.slice(0, SKILLS_SHOWN), make);
     if (!offered.length) k.append(el('p', 'cx-sub', t('sessionContext.skill.noneOffered')));
     if (sorted.length > SKILLS_SHOWN) {
@@ -705,9 +713,54 @@ export function setupSessionContext({ cmd, preview, session, info, refreshInfo, 
       grouped(rest, sorted.slice(SKILLS_SHOWN), make);
       k.append(fold(t('sessionContext.more', { count: sorted.length - SKILLS_SHOWN }), [...rest.childNodes]));
     }
-    const other = rows.filter(e => !offered.includes(e));
+    if (unused.length) k.append(fold(t('sessionContext.mcp.unusedDefs', { count: unused.length }), unused.map(e => item('–', e.name, `${shortPath(dir(dir(e.path)))} · ${reasonOf(e)}`).row)));
+    const other = rows.filter(e => !offered.includes(e) && !unused.includes(e));
     if (other.length) k.append(fold(t('sessionContext.skill.notOffered', { count: other.length }), other.map(e => item('–', e.name, reasonOf(e)).row)));
     return k;
+  }
+  /** 定義の置き場所の呼び方。出どころ（ユーザー・この場所）がほかの定義と違えばその呼び方、同じ出どころの定義があれば Skills のフォルダー */
+  const skillPlace = (x, group) => group.some(g => g !== x && groupOf(g) === groupOf(x)) ? shortPath(dir(dir(x.path))) : t(`sessionContext.findings.scope.${groupOf(x)}`);
+  const samePath = (a, b) => { const k = p => { const s = String(p ?? '').replace(/\\/g, '/'); return /^[A-Za-z]:/.test(s) ? s.toLowerCase() : s; }; return k(a) === k(b); };
+  /**
+   * 同じ名前の Skill の定義が複数あったとき: どれを使ったかの 1 行と［変更］、開くと定義の選択肢（ADR 0290）。
+   * 1 行は記録どおり（このターンに使った方）。選び直したものは次のターンから使うので、違えばその旨を添える
+   */
+  function skillChoice(used, group) {
+    const name = used.name, id = `scx-skill-choice-${String(used.id).replace(/[^\w-]/g, '_')}`;
+    const line = el('div', 'ln');
+    line.append(el('span', null, t('sessionContext.skill.choice', { n: used.choice.others + 1, place: skillPlace(used, group),
+      by: used.choice.by === 'prefer' ? t('sessionContext.mcp.byPrefer') : t('sessionContext.mcp.byFirst') })));
+    const open = choiceOpen.has(name);
+    const change = button(t('mcp.change'), 'btn', () => { if (open) choiceOpen.delete(name); else choiceOpen.add(name); refresh(); focusIn(`#${CSS.escape(id)}-change`); });
+    change.id = `${id}-change`;
+    change.setAttribute('aria-expanded', String(open)); change.setAttribute('aria-controls', id);
+    line.append(change);
+    const saved = here()?.kinds?.skill?.value?.prefer?.[name];
+    const pick = group.find(x => saved && samePath(x.path, saved)) ?? used;
+    const box = el('div', 'cx-choice'); box.id = id; box.hidden = !open;
+    box.setAttribute('role', 'radiogroup'); box.setAttribute('aria-label', t('mcp.choice.aria', { name }));
+    for (const x of group) {
+      const label = el('label'), input = el('input');
+      input.type = 'radio'; input.name = `${id}-pick`; input.checked = x === pick; input.disabled = editBusy || !place.view;
+      input.onchange = () => saveSkillPrefer(name, x.path, group, `#${CSS.escape(id)} input:checked`);
+      label.append(input, el('span', null, t(`sessionContext.findings.scope.${groupOf(x)}`)), el('span', 'cx-mono', shortPath(dir(dir(x.path)))));
+      box.append(label);
+    }
+    return [line, ...(pick !== used ? [el('div', 'p', t('sessionContext.skill.nextTurn', { place: skillPlace(pick, group) }))] : []), box];
+  }
+  /**
+   * 選んだ定義を保存する。この場所の定義が絡むなら この場所に、ユーザーの定義どうしなら今効いている設定（上の場所か全体）に。
+   * 設定の画面（設定 › プラグイン › Skills）はユーザーの定義どうしを全体の設定で選ぶので、同じところへ書く
+   */
+  function saveSkillPrefer(name, file, group, focus) {
+    const view = here();
+    const target = group.some(x => groupOf(x) !== 'user') ? place.cwd : view?.kinds.skill.from ?? null;
+    return placeWork(async () => {
+      const value = structuredClone(view?.kinds.skill.value ?? place.view.defaults.kinds.skill.value);
+      value.prefer = { ...(value.prefer ?? {}), [name]: file };
+      place.view = await cmd('setContextSettings', { cwd: place.cwd, place: target, kind: 'skill', value });
+      if (edit) await loadEditScan();
+    }, focus);
   }
   function reasonOf(e) {
     // paths 付きの Claude rules。当たるファイルを扱うまでは渡さない

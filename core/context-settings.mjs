@@ -4,14 +4,14 @@
 //   { version: 3,
 //     defaults: { roots: { instruction: [..], skill: [..], mcp: [..] }, kinds: { instruction: K, skill: K, mcp: K } },
 //     places: { <pathKey>: { path, roots?: { <kind>?: [..] }, kinds: { <kind>?: K } } } }
-//   K = { owner: native|ply, user: S|null, directory: S|null, disabled?: [名前], prefer?: { 名前: 設定ファイル } }
+//   K = { owner: native|ply, user: S|null, directory: S|null, disabled?: [名前], prefer?: { 名前: 設定ファイル（Skills は SKILL.md） } }
 //   S = { sources: [common|claude|codex], excludePaths: [..] }
 // user は home（ユーザー共通）の探索、directory は Git ルート〜作業場所の探索。null はその範囲を探さない
 // （形式 1 の「対象（kinds）」から外していた種類。移行で意味を保つためだけに残る）。
 // 種類ごとに、作業場所に一番近い上書きを持つ場所が勝ち、無ければ既定。追加ルート（探す場所を足す）も種類ごとに同じ
 // （defaults.roots[kind] はどの場所でも探すユーザーの範囲のルート、places[].roots[kind] はその場所から下で探すルート）。
 // 足した場所は、その種類の、その範囲の探す形式（sources）で探す（core/context-scan.mjs）。
-// disabled / prefer は外部 MCP だけ。disabled は名前で外すもの、prefer は同じ名前の定義が複数あるときに使う方。
+// disabled は外部 MCP だけで、名前で外すもの。prefer は外部 MCP と Skills で、同じ名前の定義が複数あるときに使う方。
 //
 // 形式 2（version: 2）は追加ルートを種類によらない 1 つの並び（roots: [..]）で持ち、足した場所をすべての種類で探していた。
 // 形式 1（version: 1）は読み込み担当（owners / directoryOwners）と探索設定（user / directories）を別々に継承していた。
@@ -119,7 +119,8 @@ export function normalizeKind(kind, value, base, home = os.homedir()) {
   const parsed = kindSchema.safeParse(value);
   if (!parsed.success) throw new Error(t('context.settings.kindInvalid'));
   const v = parsed.data;
-  if (kind !== 'mcp' && (v.disabled || v.prefer)) throw new Error(t('context.settings.disabledMcpOnly'));
+  if (kind !== 'mcp' && v.disabled) throw new Error(t('context.settings.disabledMcpOnly'));
+  if (kind === 'instruction' && v.prefer) throw new Error(t('context.settings.kindInvalid'));
   const scope = s => s && { sources: liveSources(s.sources), excludePaths: resolveAll(s.excludePaths, base, home) };
   const out = { owner: v.owner, user: scope(v.user), directory: scope(v.directory) };
   if (v.disabled?.length) out.disabled = unique(v.disabled).sort();
@@ -144,14 +145,14 @@ function normalizeKindRoots(value, base, home, { all = false } = {}) {
 
 // ------------------------------------------------------------------ 探索の計画（context-scan が読む形）
 //
-// plan = { user: { roots: { <kind>: [..] }, kinds: { <kind>: S|null } }, directory: { roots, kinds }, mcp: { disabled, prefer } }
+// plan = { user: { roots: { <kind>: [..] }, kinds: { <kind>: S|null } }, directory: { roots, kinds }, mcp: { disabled, prefer }, skill: { prefer } }
 // 形式 2 の設定で記録された会話の計画は roots が並び 1 つ（すべての種類で探す）。読むときに種類ごとへ直す（normalizePlan）
 
 /** 形式 1 の探索設定（user / directory の 2 つ）を計画にする。形式 1 のまま記録された会話と、移行の検証に使う */
 export function legacyPlan(user, directory) {
   const scope = spec => ({ roots: perKindRoots(spec.additionalRoots ?? []),
     kinds: Object.fromEntries(KINDS.map(k => [k, spec.kinds.includes(k) ? { sources: [...spec.sources], excludePaths: [...spec.excludePaths] } : null])) });
-  return { user: scope(user), directory: scope(directory), mcp: { disabled: [], prefer: {} } };
+  return { user: scope(user), directory: scope(directory), mcp: { disabled: [], prefer: {} }, skill: { prefer: {} } };
 }
 /** 計画の追加ルートを種類ごとの形にそろえる（形式 2 のまま記録された計画も読む）。元の値は変えない */
 export function normalizePlan(plan) {
@@ -190,6 +191,7 @@ export function resolveConfig(config, key) {
     user: { roots: Object.fromEntries(KINDS.map(k => [k, [...(defaultRoots[k] ?? [])]])), kinds: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.user])) },
     directory: { roots: Object.fromEntries(KINDS.map(k => [k, [...roots[k].value]])), kinds: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.directory])) },
     mcp: { disabled: kinds.mcp.value.disabled ?? [], prefer: kinds.mcp.value.prefer ?? {} },
+    skill: { prefer: kinds.skill.value.prefer ?? {} },
   };
   return { owners: Object.fromEntries(KINDS.map(k => [k, kinds[k].value.owner])), plan, kinds, roots };
 }

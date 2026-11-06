@@ -118,23 +118,38 @@ export async function readSnapshot(dir, digest) {
 }
 
 const sourceLabel = source => agentOf(source)?.shortLabel ?? ({ common: t('context.scan.fromCommon'), ply: 'Pleiad' })[source];
+/** Skill の置き場所（…/skills）。home の下は ~ から書く（右パネルの行と同じ書き方） */
+const skillsDir = (file, home) => {
+  const d = path.dirname(path.dirname(String(file ?? '')));
+  return home && containsPath(home, d) ? `~${path.sep}${path.relative(home, d)}` : d;
+};
 /**
- * 同じ名前の外部 MCP が複数あったとき（core/context-scan.mjs が 1 つを選び、残りを shadowedBy: 'choice' にする）、
+ * 同じ名前の外部 MCP・Skill が複数あったとき（core/context-scan.mjs が 1 つを選び、残りを shadowedBy: 'choice' にする）、
  * どれを使ったかを記録に残す。使った行に choice（選び方と、使わなかった定義の数）、使わなかった行に理由。
- * 以前は実行時に「同名の MCP があります」で止めていたので、どちらが使われたかを右パネルで確かめられるようにする
+ * 以前は実行時に「同名の MCP / Skill があります」で止めていたので、どちらが使われたかを右パネルで確かめられるようにする。
+ * Skill の理由は、範囲（ユーザー／この場所）が違えば範囲で、同じなら置き場所で、使った方を示す
  */
-function markChoices(rows, plan) {
-  const mcp = rows.filter(r => r.kind === 'mcp');
-  for (const row of mcp.filter(r => r.shadowedBy === 'choice')) {
-    const used = mcp.find(r => r.name === row.name && r.shadowedBy !== 'choice' && !['shadowed', 'excluded', 'disabled', 'duplicate'].includes(r.status));
-    if (!used) continue;
-    const want = plan?.mcp?.prefer?.[row.name];
-    const by = want && used.origins?.some(o => pathKey(o.path) === pathKey(want)) ? 'prefer' : 'first';
-    const source = used.origins?.[0]?.source;
-    used.choice ??= { by, source, others: 0 };
-    used.choice.others++;
-    // i18n-dynamic: context.runtime.choice
-    row.reason = t(by === 'prefer' ? 'context.runtime.choicePrefer' : 'context.runtime.choiceFirst', { source: sourceLabel(source) ?? source ?? t('context.runtime.otherSource') });
+function markChoices(rows, plan, home) {
+  for (const kind of ['mcp', 'skill']) {
+    const list = rows.filter(r => r.kind === kind);
+    for (const row of list.filter(r => r.shadowedBy === 'choice')) {
+      const used = list.find(r => r.name === row.name && r.shadowedBy !== 'choice' && !['shadowed', 'excluded', 'disabled', 'duplicate'].includes(r.status));
+      if (!used) continue;
+      const want = plan?.[kind]?.prefer?.[row.name];
+      const by = want && used.origins?.some(o => pathKey(o.path) === pathKey(want)) ? 'prefer' : 'first';
+      const source = used.origins?.[0]?.source;
+      used.choice ??= { by, source, others: 0 };
+      used.choice.others++;
+      if (kind === 'skill') {
+        // i18n-dynamic: context.runtime.place
+        // i18n-dynamic: context.runtime.skillChoice
+        const place = used.scope !== row.scope ? t(used.scope === 'user' ? 'context.runtime.placeUser' : 'context.runtime.placeHere') : skillsDir(used.path, home);
+        row.reason = t(by === 'prefer' ? 'context.runtime.skillChoicePrefer' : 'context.runtime.skillChoiceFirst', { place });
+        continue;
+      }
+      // i18n-dynamic: context.runtime.choice
+      row.reason = t(by === 'prefer' ? 'context.runtime.choicePrefer' : 'context.runtime.choiceFirst', { source: sourceLabel(source) ?? source ?? t('context.runtime.otherSource') });
+    }
   }
 }
 
@@ -176,8 +191,9 @@ export async function resolveRuntime(policy, options = {}) {
       row.tokens = item.tokens;
       instructions.push({ ...item, content: instructionBody(item) });
     } else {
+      // 同じ名前は探索が 1 つに絞っている（core/context-scan.mjs）。ここで重なっても止めず、先の方だけを渡す
       const nameKey = `${item.kind}:${item.name}`;
-      if (names.has(nameKey)) throw new Error(t('context.runtime.duplicateName', { kind: item.kind === 'mcp' ? 'MCP' : 'Skill', name: item.name }));
+      if (names.has(nameKey)) { row.status = 'duplicate'; continue; }
       names.set(nameKey, item);
       if (item.kind === 'skill') {
         const unsupported = Object.keys(item.metadata ?? {}).filter(k => !['name','description','license','compatibility','metadata','allowed-tools','user-invocable','disable-model-invocation','argument-hint'].includes(k));
@@ -188,7 +204,7 @@ export async function resolveRuntime(policy, options = {}) {
       } else { row.status = 'pending'; servers.push(item); }
     }
   }
-  markChoices(report.entries, settings.plan);
+  markChoices(report.entries, settings.plan, scan.home);
   const prompt = instructions.map(i => agentT(locale, 'context.instructionsFrom', { path: i.path, scope: i.appliesTo ?? agentT(locale, 'context.allDirectories'), content: i.content })).join('\n\n');
   if (Buffer.byteLength(prompt) > 128 * 1024) throw new Error(t('context.runtime.instructionsTooLarge'));
   const pin = contextPin(scan.entries);

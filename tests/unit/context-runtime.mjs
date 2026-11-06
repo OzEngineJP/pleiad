@@ -4,6 +4,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { DEFAULT_SCAN, KINDS, containsPath, createContextSettings, defaultKind, matchesGlobs } from '../../core/context-settings.mjs';
 import { resolveRuntime, contextTools, mcpTransportConfig } from '../../core/context-runtime.mjs';
+import { scanContext, skillList } from '../../core/context-scan.mjs';
 import { createContextBridge } from '../../core/context-bridge.mjs';
 import { claudeContextOptions, claudeQueryExtraArgs, unexpectedNativeMcp } from '../../core/backends/context-options.mjs';
 import { startServer } from '../lib/server.mjs';
@@ -146,6 +147,27 @@ export default async function(t) {
     const chosen=await resolveRuntime(dupPolicy({dup:unusedFirst.path}),{home:dupHome});
     const usedChosen=chosen.report.entries.find(e=>e.name==='dup'&&e.choice);
     t.ok('設定で選んだ定義を使い、「設定で選んだもの」と記録する',usedChosen?.path===unusedFirst.path&&usedChosen.choice.by==='prefer'&&/設定で選んだもの/.test(chosen.report.entries.find(e=>e.name==='dup'&&e.shadowedBy==='choice')?.reason??''));
+    // 同じ名前の Skill が 2 つ（ユーザーの ~/.claude/skills とこの場所の .claude/skills）: 発言を止めずに 1 つを渡し、どちらを使ったかを記録に残す。
+    // 選んだ定義（plan.skill.prefer: 名前 → SKILL.md）があればそれ。「/」の候補（skillList）も同じ定義を出す
+    await write(path.join(dupHome,'.claude/skills/same/SKILL.md'),'---\nname: same\ndescription: home copy\n---\nHOME_SAME');
+    await write(path.join(dupCwd,'.claude/skills/same/SKILL.md'),'---\nname: same\ndescription: repo copy\n---\nREPO_SAME');
+    const skillPolicy=prefer=>({version:2,cwd:dupCwd,owners:{instruction:'native',skill:'ply',mcp:'native'},
+      plan:{user:{roots:[],kinds:{instruction:null,skill:mcpOnly,mcp:null}},directory:{roots:[],kinds:{instruction:null,skill:mcpOnly,mcp:null}},mcp:{disabled:[],prefer:{}},skill:{prefer}}});
+    const skillFirst=await resolveRuntime(skillPolicy({}),{home:dupHome});
+    const usedSkill=skillFirst.report.entries.find(e=>e.name==='same'&&e.choice),unusedSkill=skillFirst.report.entries.find(e=>e.name==='same'&&e.shadowedBy==='choice');
+    t.ok('同じ名前の Skill があっても止めずに 1 つを渡し、先に見つかったユーザーの方を使う',skillFirst.skills.filter(s=>s.name==='same').length===1&&skillFirst.skills.find(s=>s.name==='same').description==='home copy'&&usedSkill?.scope==='user'&&usedSkill.choice.by==='first'&&usedSkill.choice.others===1,JSON.stringify(skillFirst.report.entries));
+    t.ok('使わなかった Skill には、範囲で使った方を示す理由を残す',/ユーザーの方/.test(unusedSkill?.reason??'')&&/先に見つかった方/.test(unusedSkill.reason)&&unusedSkill.scope==='directory',unusedSkill?.reason);
+    const skillChosen=await resolveRuntime(skillPolicy({same:unusedSkill.path}),{home:dupHome});
+    const usedChosenSkill=skillChosen.report.entries.find(e=>e.name==='same'&&e.choice);
+    t.ok('選んだ Skill の定義を渡し、「設定で選んだもの」と記録する',skillChosen.skills.find(s=>s.name==='same')?.description==='repo copy'&&usedChosenSkill?.path===unusedSkill.path&&usedChosenSkill.choice.by==='prefer'&&/この場所の方.*設定で選んだもの/.test(skillChosen.report.entries.find(e=>e.name==='same'&&e.shadowedBy==='choice')?.reason??''));
+    const listed=skillList(await scanContext(skillPolicy({same:unusedSkill.path}),{home:dupHome})).find(s=>s.name==='same');
+    t.ok('「/」の候補も選んだ定義を出す',listed?.description==='repo copy'&&skillList(await scanContext(skillPolicy({}),{home:dupHome})).find(s=>s.name==='same')?.description==='home copy',JSON.stringify(listed));
+    // 同じ範囲（ユーザー）の 2 つの置き場所: 理由は置き場所で示す
+    await write(path.join(dupHome,'.agents/skills/same/SKILL.md'),'---\nname: same\ndescription: common copy\n---\nCOMMON_SAME');
+    const userOnly={...skillPolicy({}),plan:{...skillPolicy({}).plan,user:{roots:[],kinds:{instruction:null,skill:{sources:['common','claude'],excludePaths:[]},mcp:null}},directory:{roots:[],kinds:{instruction:null,skill:null,mcp:null}}}};
+    const bothUser=await resolveRuntime(userOnly,{home:dupHome});
+    const sameScope=bothUser.report.entries.find(e=>e.name==='same'&&e.shadowedBy==='choice');
+    t.ok('同じ範囲で同じ名前のときは、使った方を置き場所で示す',bothUser.skills.filter(s=>s.name==='same').length===1&&/^同じ名前の定義が複数あり、~[\\/]\.agents[\\/]skillsの方/.test(sameScope?.reason??''),sameScope?.reason);
     // 作業場所が home そのもの: ~/.claude/skills は user と directory の両方で見つかるが、同じ実体なので 1 つとして渡す
     const selfHome=path.join(tmp,'self-home');
     await write(path.join(selfHome,'.claude/skills/twice/SKILL.md'),'---\nname: twice\ndescription: found twice\n---\nTWICE_BODY');
