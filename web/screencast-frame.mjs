@@ -12,17 +12,19 @@ export function framesPerSecond(times, now) {
 /**
  * @param img     フレームを描く <img>
  * @param onAck   描き終えた seq で呼ぶ
+ * @param onMark  印（type: 'mark'）が届いた seq で呼ぶ（すぐ返事を返す。ホストは印とフレームの返事の差で中身を運ぶ時間を測る）
  * @param now     時刻（ms）。テストで差し替える
  */
-export function createFrameSink({ img, onAck = () => {}, now = () => performance.now() }) {
+export function createFrameSink({ img, onAck = () => {}, onMark = () => {}, now = () => performance.now() }) {
   let frame = null, times = [];
   img.addEventListener('load', () => {
     const seq = img.dataset.seq;
     if (seq) onAck(Number(seq));
   });
   return {
-    /** メッセージのフレームを描く */
+    /** メッセージを描く。フレームなら <img> へ、印ならそのまま返事へ */
     push(message) {
+      if (message?.type === 'mark') { onMark(Number(message.seq)); return; }
       frame = { seq: message.seq, metadata: message.metadata ?? {} };
       times.push(now()); if (times.length > 40) times.shift();
       img.dataset.seq = String(message.seq);

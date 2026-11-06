@@ -39,22 +39,31 @@ export function createRemoteBrowser({ cmd, getSessionId }) {
   let wanted = null;   // パネルが「今の会話」として知らせてきた会話
   let wantTab = null;   // 次に見始めるとき、このタブを見る
   let wantSnapshot = null;   // 次に見始めるとき、会話に残った可視化の写し（{ sessionId, id | at }）を開く
-  let visible = false, ended = false, quality = 'auto';
+  let visible = false, ended = false, video = { lag: false, stale: false };
   let starting = null, visibleWaiters = [];
   let panelState = { tabs: [], current: null, sessionId: null };
   let listener = null;
 
-  // ---- 本文: 映像・画質と文字入力
+  // ---- 本文: 映像・遅れの札と文字入力
   const root = el('div', 'rbv');
   const screen = el('div', 'rbv-screen'); screen.setAttribute('aria-label', t('browser.remote.screen'));
   const img = el('img', 'rbv-frame'); img.alt = ''; img.draggable = false;
-  screen.append(img);
-  const sink = createFrameSink({ img, onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, seq }).catch(() => {}); } });
+  // 遅れ・途切れの札（ADR 0294 §5。起きたときだけ出す）
+  const lag = el('div', 'rbv-lag', t('browser.video.lag')); lag.hidden = true;
+  Object.assign(lag.style, { position: 'absolute', left: '10px', top: '10px', background: 'rgba(15,19,48,.78)', color: '#f4f6ff', borderRadius: '999px', fontSize: '12px', padding: '2px 10px', zIndex: '2' });
+  const stale = el('div', 'rbv-stale'); stale.hidden = true;
+  Object.assign(stale.style, { position: 'absolute', inset: '0', display: 'grid', placeItems: 'center', background: 'rgba(236,238,244,.55)', backdropFilter: 'grayscale(1)', zIndex: '2' });
+  const staleText = el('span', 'rbv-stale-text', t('browser.video.stale'));
+  Object.assign(staleText.style, { background: 'rgba(15,19,48,.78)', color: '#f4f6ff', borderRadius: '999px', fontSize: '13px', padding: '4px 14px' });
+  stale.append(staleText);
+  screen.append(img, lag, stale);
+  const sink = createFrameSink({ img,
+    onAck: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, seq }).catch(() => {}); },
+    onMark: seq => { if (sessionId) cmd('browserScreencastAck', { sessionId, seq, mark: true }).catch(() => {}); } });
   const status = el('span', 'rbv-status weak', t('browser.remote.connecting')); status.setAttribute('role', 'status');
-  const qualityButton = el('button', 'btn rbv-tool'); qualityButton.type = 'button';
   const textButton = el('button', 'btn rbv-tool', t('browser.remote.textInput')); textButton.type = 'button';
   textButton.setAttribute('aria-expanded', 'false');
-  const toolRow = el('div', 'rbv-tool-row'); toolRow.append(qualityButton, textButton);
+  const toolRow = el('div', 'rbv-tool-row'); toolRow.append(textButton);
   const tools = el('div', 'rbv-tools'); tools.append(status, toolRow);
   const text = el('div', 'rbv-text'); text.hidden = true;
   const textInput = el('input'); textInput.setAttribute('aria-label', t('browser.remote.textLabel')); textInput.placeholder = t('browser.remote.textPlaceholder');
@@ -67,7 +76,6 @@ export function createRemoteBrowser({ cmd, getSessionId }) {
   const blocked = () => ended || !sessionId;
   const send = input => (sessionId ? cmd('browserScreencastInput', { sessionId, input }) : Promise.resolve());
 
-  qualityButton.onclick = () => { quality = quality === 'auto' ? 'low' : 'auto'; paintTools(); if (sessionId) begin({ keep: true }).catch(failed); };
   textButton.onclick = () => {
     text.hidden = !text.hidden; textButton.setAttribute('aria-expanded', String(!text.hidden));
     if (!text.hidden) textInput.focus();
@@ -132,10 +140,11 @@ export function createRemoteBrowser({ cmd, getSessionId }) {
   }, { passive: false });
 
   function paintTools() {
-    qualityButton.textContent = t('browser.remote.quality', { level: quality === 'auto' ? t('browser.remote.qualityAuto') : t('browser.remote.qualityLow') });
+    lag.hidden = !video.lag || ended;
+    stale.hidden = !video.stale || ended;
     if (ended) status.textContent = t('browser.remote.ended');
     else if (!sink.frame) status.textContent = t('browser.remote.connecting');
-    else status.textContent = t('browser.remote.connectedFps', { fps: sink.fps() });
+    else status.textContent = '';
   }
   paintTools();
 
@@ -167,7 +176,7 @@ export function createRemoteBrowser({ cmd, getSessionId }) {
     const snapshot = wantSnapshot;
     wantTab = wantSnapshot = null;
     const size = boxSize(); lastBox = size;
-    const result = await cmd('browserScreencast', { sessionId: id, ...(tab ? { tabId: tab } : {}), ...(snapshot ? { visualization: snapshot } : {}), quality, ...size });
+    const result = await cmd('browserScreencast', { sessionId: id, ...(tab ? { tabId: tab } : {}), ...(snapshot ? { visualization: snapshot } : {}), ...size });
     const changed = sessionId !== id;
     sessionId = id; ended = false; wanted = id;
     if (changed) sink.reset();
@@ -280,6 +289,11 @@ export function createRemoteBrowser({ cmd, getSessionId }) {
     if (message.source === 'chrome' || message.sessionId !== sessionId) return;
     if (message.type === 'frame' && typeof message.data === 'string') {
       sink.push(message); paintTools();
+    } else if (message.type === 'mark') {
+      sink.push(message);
+    } else if (message.type === 'video') {
+      video = { lag: message.lag === true, stale: message.stale === true };
+      paintTools();
     } else if (message.type === 'state') {
       apply(message.state);
     } else if (message.type === 'ended') {
