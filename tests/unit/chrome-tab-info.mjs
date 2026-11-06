@@ -192,6 +192,26 @@ export default async function(t) {
     info.removed(f.tab);
   }
   {
+    // Chrome は題だけの変化で targetInfoChanged を送らない。読み込みが止まったら題を読む
+    let pageTitle = 'Shop B';
+    const f = fake({ url: 'http://127.0.0.1:1462/', title: '127.0.0.1:1462', send: (method, params) => {
+      if (method === 'Runtime.evaluate' && params.expression === 'document.title') return { result: { value: pageTitle } };
+    } }), info = makeInfo(f);
+    info.added(f.tab); await settle();
+    t.ok('title read after attach', info.list('one')[0].title === 'Shop B');
+    f.tab.info.title = '127.0.0.1:1462'; info.changed(f.tab);
+    t.ok('same Chrome title keeps read title', info.list('one')[0].title === 'Shop B');
+    pageTitle = 'Shop C'; f.event('Page.frameStoppedLoading', { frameId: 'main' }); await settle();
+    t.ok('title read when loading stops', info.list('one')[0].title === 'Shop C');
+    f.tab.info = { url: 'http://127.0.0.1:1462/next', title: '127.0.0.1:1462/next' }; info.changed(f.tab);
+    t.ok('URL change drops read title', info.list('one')[0].title === '127.0.0.1:1462/next');
+    info.removed(f.tab);
+    const marker = fake({ url: '', title: 'PLY-963b7ae6e2f8e765' }), markers = makeInfo(marker);
+    markers.added(marker.tab); await settle();
+    t.ok('window marker title hidden', markers.list('one')[0].title === '');
+    markers.removed(marker.tab);
+  }
+  {
     let release, detached = 0;
     const tab = { sessionId: 'one', targetId: 'gone', info: {}, attach: () => new Promise(resolve => { release = resolve; }) };
     const info = createTabInfo();

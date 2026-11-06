@@ -6,6 +6,9 @@ const CACHE_ORIGINS = 128;
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon']);
 const iconExpression = `({ href: document.querySelector('link[rel~="icon"]')?.href || new URL('/favicon.ico', location.href).href, ready: document.readyState === 'complete' })`;
 const readyExpression = `({ ready: document.readyState === 'complete' })`;
+const titleExpression = 'document.title';
+// 会話の窓を見分ける印のページ（core/chrome/windows.mjs の nonceUrl）の題。タブの名前には出さない
+const markerTitle = (url, title) => (!url || url.startsWith('data:')) && /^PLY-[0-9a-f]+$/.test(title);
 
 /** Pleiad pages use kind icons and paths, never an icon resource request. */
 export function pleiadPage(url, sessionId, { pages } = {}) {
@@ -62,8 +65,26 @@ export function createTabInfo({ emit = () => {}, log = () => {}, fetchResource =
       state.data.canGoBack = false;
       state.data.canGoForward = false;
     }
-    Object.assign(state.data, { url, title: tab.info?.title ?? '', windowId: tab.windowId, page: pleiadPage(url, tab.sessionId, pagePorts) });
+    // Chrome は題だけの変化では targetInfoChanged を送らない（URL の替わり目の題は URL のまま）。読み込みの後に読んだ題（pageTitle）を、
+    // 次に URL か Chrome の題が替わるまで使う
+    const infoTitle = tab.info?.title ?? '';
+    if (state.data.url !== url || state.infoTitle !== infoTitle) state.pageTitle = '';
+    state.infoTitle = infoTitle;
+    const title = state.pageTitle || infoTitle;
+    Object.assign(state.data, { url, title: markerTitle(url, title) ? '' : title, windowId: tab.windowId, page: pleiadPage(url, tab.sessionId, pagePorts) });
     notify(state);
+  }
+
+  async function readTitle(state) {
+    if (!state.frameId) return;
+    const generation = state.generation, url = state.data.url;
+    const world = await state.own.send('Page.createIsolatedWorld', { frameId: state.frameId, worldName: 'pleiad-tab-info' });
+    const evaluated = await state.own.send('Runtime.evaluate', { expression: titleExpression, contextId: world.executionContextId, returnByValue: true });
+    const title = evaluated.result?.value;
+    if (!live(state) || generation !== state.generation || url !== state.data.url || typeof title !== 'string' || !title.trim()) return;
+    const shown = title.trim().slice(0, 512);
+    if (shown === state.data.title) return;
+    state.pageTitle = shown; state.data.title = shown; notify(state);
   }
 
   async function history(state) {
@@ -151,14 +172,14 @@ export function createTabInfo({ emit = () => {}, log = () => {}, fetchResource =
       state.generation++;
       if (state.own) run(history(state));
     } else if (method === 'Page.navigatedWithinDocument' && params.frameId === state.frameId) {
-      if (state.own) run(history(state));
+      if (state.own) { run(history(state)); run(readTitle(state)); }
     } else if (method === 'Page.frameStartedLoading' && params.frameId === state.frameId) {
       state.loadingTicket++;
       state.data.loading = true; notify(state);
     } else if (method === 'Page.frameStoppedLoading' && params.frameId === state.frameId) {
       state.loadingTicket++;
       state.data.loading = false; notify(state);
-      if (state.own) { run(history(state)); run(favicon(state, true)); }
+      if (state.own) { run(history(state)); run(readTitle(state)); run(favicon(state, true)); }
     }
   }
 
@@ -173,6 +194,7 @@ export function createTabInfo({ emit = () => {}, log = () => {}, fetchResource =
     if (generation === state.generation) state.frameId = tree.frameTree?.frame?.id;
     run(history(state));
     await favicon(state);
+    if (live(state)) await readTitle(state);
   }
 
   return {
